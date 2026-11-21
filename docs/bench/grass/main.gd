@@ -62,6 +62,7 @@ extends Node3D
 #                    edge, under deer browsing pressure P over the clearing and the wood (WorldStand.add_browse): P > 0
 #                    the deer wood (STAND_DEER_WOOD: the browse line under the crowns) with make_floor's browse set, the
 #                    sward cropped; P = 0 the beech stand unbrowsed (the before shot)
+#   --taa            temporal antialiasing on (still shots: give it 20 frames or more)
 #   --trails         game trails (VegetationField3D.make_game_trails between five places over the meadow, published on
 #                    WorldStand.set_trails): the sward and plants worn along them, from 1.6 m on the busiest stretch
 #   --graze=P        a deer browse disc of pressure P (WorldStand.add_browse, 6.5 m) 6 m ahead, framed from 1.6 m: a
@@ -149,6 +150,7 @@ var trails_view := false # --trails
 var deer_trees: Array = [] # Its TreeGenerator species (logs, stumps and saplings too): all kept out of the clearing.
 var ug_dir := Vector3(0, 0, 1)
 var mushroom_view := "" # --mushrooms[=name]: in the wood, close on a group of mushrooms (make_floor's).
+var mounds_view := "" # --mounds[=meadow|wood]: PlantGenerator.make_mounds, from 1.6 m, a few metres off the nearest group.
 var ug_edge := false # --undergrowth-edge: the stand's edge seen along it from 1 m up.
 var no_rock_foot := false # --no-rock-foot: the floor species without their rock_foot.
 var no_margin := false # --no-margin: undergrowth stands without their margin.
@@ -268,6 +270,7 @@ func _ready() -> void:
 			forest = true
 			clearing = 2
 		elif a == "--trails": trails_view = true
+		elif a == "--taa": get_viewport().use_taa = true
 		elif a.begins_with("--deer-wood="):
 			deer_wood = float(a.get_slice("=", 1))
 			graze = deer_wood
@@ -289,6 +292,11 @@ func _ready() -> void:
 			forest_in = true
 		elif a == "--notex": notex = true
 		elif a.begins_with("--mushrooms"): mushroom_view = a.substr(12) if a.length() > 12 else "any"
+		elif a.begins_with("--mounds"):
+			mounds_view = a.substr(9) if a.length() > 9 else "meadow"
+			if mounds_view == "wood":
+				forest = true
+				stand = "spruce"
 		elif a.begins_with("--grass-density="): grass_density = float(a.substr(16))
 		elif a == "--cpu-fill": gpu_fill = false
 		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
@@ -792,7 +800,7 @@ func _set_clearing() -> void:
 		for x in res:
 			var w := Vector2((x + 0.5) / res * SIZE - SIZE * 0.5, (y + 0.5) / res * SIZE - SIZE * 0.5) - CLEARING_C
 			var a := atan2(w.y, w.x)
-			var r := (20.0 if deer_wood >= 0.0 else 11.0) + 2.5 * sin(3.0 * a) + 1.5 * sin(5.0 * a + 1.0)
+			var r := (24.0 if deer_wood >= 0.0 else 11.0) + 2.5 * sin(3.0 * a) + 1.5 * sin(5.0 * a + 1.0)
 			var v := smoothstep(r - 1.5, r + 1.5, w.length())
 			img.set_pixel(x, y, Color(v, v, v, 1.0))
 	cover.density_mask = ImageTexture.create_from_image(img)
@@ -829,11 +837,13 @@ func _frame_clearing() -> void:
 	if deer_wood >= 0.0:
 		# At eye height (1.6 m) in the clearing's near half, looking across it to the far edge: the trees' browse line
 		# and the cropped sward between.
-		var e2 := CLEARING_C + Vector2(1.0, -5.0)
+		# In the clearing's south half (trunks 48 m apart, the edge trees' crowns leaning in to leave about 30 m of open sky), clear of the rim's
+		# crowns, looking over it to the north edge, tipped up for the sky.
+		var e2 := CLEARING_C + Vector2(1.0, -6.0)
 		var t2 := CLEARING_C + Vector2(-1.0, 20.0)
-		cam.fov = 70.0
+		cam.fov = 75.0
 		cam.position = Vector3(e2.x, height(e2.x, e2.y) + 1.6, e2.y)
-		cam.look_at(Vector3(t2.x, height(t2.x, t2.y) + 6.5, t2.y))
+		cam.look_at(Vector3(t2.x, height(t2.x, t2.y) + 1.6 + 26.0 * tan(deg_to_rad(19.0)), t2.y))
 		return
 	# From above the pond side, steep and narrow, so the wood frames the clearing and neither
 	# the pond nor the map's edge is in view.
@@ -931,6 +941,34 @@ func _frame_undergrowth_edge(c: Vector3) -> void:
 
 # --mushrooms[=preset index]: the group of mushrooms nearest the view (of that preset), from 0.9 m at
 # 0.35 m up, the sun behind; the stand-in trunks only cast their shadows. Prints each species' count.
+# --mounds: the nearest mound to the eye (an ant hill, a wood ant nest), seen from 1.6 m about 5 m off down-sun, so
+# its group and the molehills round it are in the frame.
+func _frame_mounds() -> void:
+	var best := Vector3()
+	var best_d := 1e9
+	for si in cover.biome.species.size():
+		var sp: PlantSpecies = cover.biome.species[si]
+		if not sp.has_meta("sward_mound"):
+			continue
+		var pl := cover.get_placements(si)
+		print("GRASS_MOUNDS species %d (%s) count %d" % [si, str(sp.get_meta("plant_preset", -1)), pl.size()])
+		if float(sp.get_meta("sward_mound")) < 0.3:
+			continue # Frame the ant hills and nests; the molehills come with them.
+		for q in pl:
+			var d := Vector2(q.x - cam.global_position.x, q.z - cam.global_position.z).length()
+			if d < best_d:
+				best_d = d
+				best = q
+	if best_d > 1e8:
+		print("GRASS_MOUNDS none placed")
+		return
+	var f := -sun_node.global_transform.basis.z
+	f.y = 0.0
+	f = f.normalized()
+	var eye := best - f * 5.0
+	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 1.6, eye.z)
+	cam.look_at(best + Vector3(0, 0.1, 0))
+
 func _frame_mushrooms() -> void:
 	var best := Vector3()
 	var best_d := 1e9
@@ -1334,6 +1372,9 @@ func _cover_biome() -> Biome:
 		# Bigger plants first: the edge shrubs and bracken claim their space before the herbs.
 		var floor_sp := _stand_floor()
 		b.species = _stand_trees() + floor_sp.slice(0, 3) + b.species + floor_sp.slice(3)
+	if mounds_view != "":
+		# Ant hills and molehills (or wood ant nests): listed first, so the herbs make room round them.
+		b.species = Array(PlantGenerator.make_mounds(PlantGenerator.MOUNDS_WOOD if mounds_view == "wood" else PlantGenerator.MOUNDS_MEADOW, 3, not notex)) + b.species
 	if swamp:
 		b.species = _wetland_species() + b.species
 	if no_far:
@@ -1467,8 +1508,9 @@ func _stand_trees() -> Array:
 		deer_trees = Array(tb.species)
 		# The clearing's edge (make_edge, by the canopy's edge distance): unbrowsed, a mantle of shrubs and low-limbed
 		# edge trees; under the deer, edge trees clipped to the browse line and no mantle.
-		var eb: Biome = tg.make_edge(which, 2)
-		return deer_trees + Array(eb.species)
+		var eb: Biome = tg.make_edge(which, 1)
+		deer_trees += Array(eb.species) # Edge trees and mantle too: none stands in the open clearing.
+		return deer_trees
 	match stand:
 		"spruce", "larch": return [_conifer_species(false)]
 		"pine": return [_conifer_species(true)]
@@ -1761,6 +1803,61 @@ func _season_checks() -> void:
 
 # Bracken stands shade the sward out (GrassField3D.undergrowth_field, PlantSpecies.sward_shade):
 # under the stands the blades thin by the shade, in the open they are as before.
+# Mounds (PlantGenerator.make_mounds) the undergrowth field places: their "sward_mound" discs keep the blades out, and
+# the grass comes back when they go.
+func _mound_check(c: Vector2) -> void:
+	var mf := VegetationField3D.new()
+	mf.far_volume = false
+	mf.populate_on_ready = false
+	var sp := PlantSpecies.new()
+	sp.meshes = [BoxMesh.new()]
+	sp.spacing = 2.5
+	sp.scale_range = Vector2(1.0, 1.0)
+	sp.set_meta("sward_mound", 0.4)
+	var mb := Biome.new()
+	mb.species = [sp]
+	mf.biome = mb
+	add_child(mf)
+	mf.data_map = mf.get_path_to(dm)
+	mf.populate()
+	var was := grass.undergrowth_field
+	grass.undergrowth_field = grass.get_path_to(mf)
+	var count := func() -> Array:
+		var discs := PackedVector3Array()
+		for q in mf.get_placements(0):
+			if Vector2(q.x, q.z).distance_to(c) < 9.0: # Only the ones over the counted blades (GDScript loops are slow).
+				discs.append(q)
+		var inside := 0
+		var by := 0
+		for ch in grass.get_children(true):
+			if ch is MultiMeshInstance3D:
+				var mm: MultiMesh = ch.multimesh
+				for i in mm.instance_count:
+					var xf := mm.get_instance_transform(i)
+					if xf.basis.x.length_squared() == 0.0 or Vector2(xf.origin.x, xf.origin.z).distance_to(c) > 8.0:
+						continue
+					for q in discs:
+						var d := Vector2(xf.origin.x - q.x, xf.origin.z - q.z).length() - 0.4 * 0.9
+						if d < 0.019:
+							inside += 1
+						elif d < 0.2:
+							by += 1
+		return [inside, by, discs.size()]
+	for i in 40: # The fields poll their mounds twice a second.
+		await get_tree().process_frame
+		grass.update_at(cam.global_position)
+		if i == 20:
+			await get_tree().create_timer(0.6).timeout
+	var on: Array = count.call()
+	grass.undergrowth_field = was
+	mf.free()
+	for i in 40:
+		await get_tree().process_frame
+		grass.update_at(cam.global_position)
+		if i == 20:
+			await get_tree().create_timer(0.6).timeout
+	_check("no grass under a mound (sward_mound), grass up to its foot", on[2] > 5 and on[0] == 0 and on[1] > 10, on)
+
 func _sward_shade_check(c: Vector2, open_density: float) -> void:
 	var brk := VegetationField3D.new()
 	brk.far_volume = false # Not under test here.
@@ -1973,6 +2070,11 @@ func _field_checks() -> void:
 		fails += 1
 		print("GRASS_FAIL fields: meadow grass inside the fields")
 
+var checks_done := false
+func _run_checks() -> void:
+	await _checks()
+	checks_done = true
+
 func _checks() -> void:
 	_season_checks()
 	var count := grass.get_blade_count()
@@ -2044,6 +2146,7 @@ func _checks() -> void:
 	grass.obstacles = PackedVector4Array()
 	for i in 20:
 		grass.update_at(cam.global_position)
+	await _mound_check(c)
 	# GPU tile fill (grass.md, stage 3a) against the CPU loop: the same blades but at rule edges.
 	if grass.gpu_fill and GrassField3D.is_gpu_fill_available():
 		_fill_compare(grass, "tall grass")
@@ -2414,6 +2517,11 @@ func _process(dt: float) -> void:
 					if g:
 						g.rebuild()
 				_frame_undergrowth()
+			if mounds_view != "":
+				for g in [grass, under, turf]:
+					if g:
+						g.undergrowth_field = g.get_path_to(cover) # Its mounds keep the blades out.
+				_frame_mounds()
 			if forest:
 				grass.rebuild()
 				under.rebuild()
@@ -2500,8 +2608,10 @@ func _process(dt: float) -> void:
 			get_tree().quit(1 if fails > 0 else 0)
 		return
 	if test and n == frames:
-		_checks()
+		_run_checks()
 	if test and n > frames:
+		if not checks_done: # The checks wait a few frames (mounds are followed twice a second).
+			return
 		if _trample_checks(dt):
 			print("GRASS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 			get_tree().quit(1 if fails > 0 else 0)
@@ -2634,6 +2744,14 @@ func _process(dt: float) -> void:
 	if prims:
 		await _print_prims()
 	# CPU and GPU memory at the capture (the path tracer's CPU copies of MultiMesh records count in static memory).
+	if deer_wood >= 0.0:
+		# The crowns' shade along the view (0 open sky): the sward rule wants it under 0.3.
+		var sh := PackedStringArray()
+		var fwd := -cam.global_transform.basis.z
+		fwd = Vector3(fwd.x, 0.0, fwd.z).normalized()
+		for d in [1.0, 3.0, 6.0, 10.0, 15.0, 20.0, 25.0]:
+			sh.append("%d m %.2f" % [d, cover.get_shade_at(cam.global_position + fwd * d)])
+		print("GRASS_DEER_SHADE ", ", ".join(sh))
 	print("GRASS_MEM static_mb=%.1f video_mb=%.1f" % [Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0])
 	if not out.is_empty():
 		if burn_age >= 0.0 and OS.get_environment("GRASS_NO_FLUSH") != "":

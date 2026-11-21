@@ -172,6 +172,11 @@ public:
 		PRESET_REINDEER_LICHEN, // Cladonia rangiferina / stellaris: pale branched cushions on dry boreal pine floors.
 		PRESET_RASPBERRY, // Rubus idaeus: upright suckering canes of clearings and windthrows, pinnate leaves, red fruit.
 		PRESET_GRAZED_LAWN, // A deer lawn: a dense mat of fine grasses grazed to 2-8 cm, the blade ends torn and drying.
+		PRESET_ROOTED_SOD, // Boar rooting: turf clods torn up and flung over, roots up, the grass drying; slumping and greening by the season's "rooting_age".
+		// Mounds (plant_mounds.cpp).
+		PRESET_ANTHILL, // Lasius flavus: a grassed dome of fine soil in old pasture, crest to the east, fine turf and thyme, fresh workings.
+		PRESET_WOOD_ANT_NEST, // Formica rufa group: a thatch dome of needles and twig bits on an earth bank, at sunny gaps in conifer woods.
+		PRESET_MOLEHILL, // Talpa europaea: a heap of loose crumbly soil pushed up from a run; crusting, slumping and greening by the season's "mound_age".
 		PRESET_MAX,
 	};
 
@@ -308,6 +313,13 @@ private:
 	// Burnt ground (plant_burn.cpp): the season's "burn_age" sets each one's stage.
 	float _burn_age() const;
 	float _browse() const; // Deer browsing pressure from the season's "browse" (0..1), 0 without.
+	float _rooting_age() const; // Years since boar rooting, from the season's "rooting_age"; a month without.
+	void _build_rooted_sod();
+	void _lump_since(int p_from, const Vector3 &p_centre, float p_radius, float p_amount);
+	float _mound_age() const; // Years since a molehill was thrown up, from the season's "mound_age"; a fortnight without.
+	void _build_anthill();
+	void _build_wood_ant_nest();
+	void _build_molehill();
 	void _tint_since(Surface p_surface, int p_from, const Color &p_tint);
 	void _build_fireweed();
 	void _build_fire_moss();
@@ -621,6 +633,21 @@ public:
 	// The WorldStand disturbance kind a drained beaver pond is reported as (appended after beetle, 3).
 	static constexpr int DISTURBANCE_BEAVER_KIND = 4;
 	static TypedArray<Resource> make_beaver(BeaverStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Boar rooting (docs/ideas/vegetation.md, "Boar rooting"), placed by PlantSpecies.RULE_ROOTING.
+	enum RootingStand {
+		ROOTING_WOOD, // Woodland floor: rooted sods, then herb Robert, nettle and dock.
+		ROOTING_MEADOW, // Meadow and wood edge: rooted sods, then mayweed, dock, thistle and plantain.
+		ROOTING_MAX,
+	};
+	static TypedArray<Resource> make_rooting(RootingStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Anthills and molehills (docs/ideas/vegetation.md, "Anthills and molehills"). Their species carry the meta
+	// "sward_mound" (the mound's radius at scale 1, m): GrassField3D keeps its blades out from under them.
+	enum MoundSet {
+		MOUNDS_MEADOW, // Old pasture: yellow meadow ant hills, molehills fresh, crusted and grassing over.
+		MOUNDS_WOOD, // Woodland: wood ant nests at sunny conifer gaps and edges, a few molehills under broadleaves.
+		MOUNDS_MAX,
+	};
+	static TypedArray<Resource> make_mounds(MoundSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
 	enum AlpineStand {
@@ -685,6 +712,8 @@ VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
 VARIANT_ENUM_CAST(PlantGenerator::DesertStand);
 VARIANT_ENUM_CAST(PlantGenerator::BurnStand);
 VARIANT_ENUM_CAST(PlantGenerator::BeaverStand);
+VARIANT_ENUM_CAST(PlantGenerator::RootingStand);
+VARIANT_ENUM_CAST(PlantGenerator::MoundSet);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
 VARIANT_ENUM_CAST(PlantGenerator::MarginStand);
