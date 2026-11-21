@@ -198,7 +198,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Soft soil → sinkage, grip, ruts | linked | ground terramechanics | |
 | Puddles → spray, washed tread | linked | ground | |
 | Wet, flooded, icy firm ground → grip, aquaplaning | linked (18 Nov) | weather contract, ground ice | |
-| Snow, lake ice → tyre grip | linked (18 Nov) | WorldSnow (depth, density, wetness, crust, lake ice) | packed snow 0.2-0.35, slush lower, crust near ice; tread_firm_grip scales by tread (chains, lugs) |
+| Snow, lake ice → tyre grip | linked (18 Nov; snow's own friction 21 Nov) | WorldSnow (depth, density, wetness, crust, lake ice; `grip_at` from SnowCover3D traffic packing and glaze) | the snow's own friction where it keeps one (loose 0.3, packed road 0.25, polished to ice 0.05-0.15, which chains bite as ice), else packed snow 0.2-0.35, slush lower, crust near ice; tread_firm_grip scales by tread (chains, lugs) |
 | Vehicles → water wakes | linked | buoyancy | |
 | Vehicles → grass, branches, snow | linked (18 Nov) | world_contact | snow ruts: snow checks the wheel stamp |
 | Vehicles → Flow (bodies as solids) | linked | Flow | |

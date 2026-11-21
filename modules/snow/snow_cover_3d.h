@@ -564,6 +564,7 @@ public:
 		const float a = get_albedo_at(p_position);
 		return a > 0.0f ? a : -1.0f;
 	}
+	float contract_snow_grip_at(const Vector3 &p_position) const override { return get_grip_at(p_position); }
 	float contract_snow_avalanche_pressure_at(const Vector3 &p_position) const override;
 	float contract_snow_avalanche_peak_pressure_at(const Vector3 &p_position) const override;
 	float contract_snow_canopy_load_at(const Vector3 &p_position) const override { return get_canopy_load_at(p_position); }

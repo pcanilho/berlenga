@@ -574,6 +574,14 @@ float WorldSnow::albedo_at(const Vector3 &p_position) const {
 	return a >= 0.0f ? a : 0.8f;
 }
 
+float WorldSnow::grip_at(const Vector3 &p_position) const {
+	float r = -1.0f;
+	if (GDVIRTUAL_CALL(_grip_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_grip_at(p_position) : -1.0f;
+}
+
 float WorldSnow::avalanche_pressure_at(const Vector3 &p_position) const {
 	float r = 0.0f;
 	if (GDVIRTUAL_CALL(_avalanche_pressure_at, p_position, r)) {
@@ -625,6 +633,7 @@ void WorldSnow::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_impurity", "position", "radius", "mg_per_m2"), &WorldSnow::add_impurity);
 	ClassDB::bind_method(D_METHOD("impurity_at", "position"), &WorldSnow::impurity_at);
 	ClassDB::bind_method(D_METHOD("albedo_at", "position"), &WorldSnow::albedo_at);
+	ClassDB::bind_method(D_METHOD("grip_at", "position"), &WorldSnow::grip_at);
 	ClassDB::bind_method(D_METHOD("avalanche_pressure_at", "position"), &WorldSnow::avalanche_pressure_at);
 	ClassDB::bind_method(D_METHOD("avalanche_peak_pressure_at", "position"), &WorldSnow::avalanche_peak_pressure_at);
 	ClassDB::bind_method(D_METHOD("canopy_load_at", "position"), &WorldSnow::canopy_load_at);
@@ -639,6 +648,7 @@ void WorldSnow::_bind_methods() {
 	GDVIRTUAL_BIND(_add_impurity, "position", "radius", "mg_per_m2");
 	GDVIRTUAL_BIND(_impurity_at, "position");
 	GDVIRTUAL_BIND(_albedo_at, "position");
+	GDVIRTUAL_BIND(_grip_at, "position");
 	GDVIRTUAL_BIND(_avalanche_pressure_at, "position");
 	GDVIRTUAL_BIND(_avalanche_peak_pressure_at, "position");
 	GDVIRTUAL_BIND(_canopy_load_at, "position");

@@ -697,6 +697,8 @@ public:
 	virtual float contract_snow_impurity_at(const Vector3 &p_position) const { return 0.0f; }
 	// The snow surface's broadband albedo (aged, less the particles on it); < 0 not known.
 	virtual float contract_snow_albedo_at(const Vector3 &p_position) const { return -1.0f; }
+	// Tyre-road friction on the snow (loose 0.3, packed 0.25, polished to ice 0.05-0.15); < 0 bare or not known.
+	virtual float contract_snow_grip_at(const Vector3 &p_position) const { return -1.0f; }
 	// Avalanches: the impact pressure at the point now (Pa; the dense flow where it runs, else the powder cloud) and the
 	// highest any avalanche has put there.
 	virtual float contract_snow_avalanche_pressure_at(const Vector3 &p_position) const { return 0.0f; }
@@ -727,6 +729,7 @@ protected:
 	GDVIRTUAL3(_add_impurity, Vector3, float, float)
 	GDVIRTUAL1RC(float, _impurity_at, Vector3)
 	GDVIRTUAL1RC(float, _albedo_at, Vector3)
+	GDVIRTUAL1RC(float, _grip_at, Vector3)
 	GDVIRTUAL1RC(float, _avalanche_pressure_at, Vector3)
 	GDVIRTUAL1RC(float, _avalanche_peak_pressure_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_load_at, Vector3)
@@ -755,6 +758,10 @@ public:
 	// The snow surface's broadband albedo: fresh about 0.85, old dry toward 0.7, melting toward 0.5, less soot and
 	// dust. 0.8 where the snow system does not say (and 0 with no snow system).
 	float albedo_at(const Vector3 &p_position) const;
+	// Tyre-road friction coefficient on the snow at the point: about 0.3 in loose snow, 0.25 packed by traffic, down to
+	// 0.05-0.15 where tyres polished it to ice (by the air and its wetness). -1 bare, or where the snow system does not
+	// say (readers then estimate from density, wetness and crust).
+	float grip_at(const Vector3 &p_position) const;
 	// Avalanche impact pressure at the point (Pa): now (the dense flow where it runs, else the powder cloud; 0 with
 	// none), and the highest any avalanche has put there (trees break, buildings fail by it).
 	float avalanche_pressure_at(const Vector3 &p_position) const;

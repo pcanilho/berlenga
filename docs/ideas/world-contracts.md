@@ -151,6 +151,7 @@ terramechanics and pressing calls, which stay on the producer for now).
 | `avalanche_pressure_at(pos)`, `avalanche_peak_pressure_at(pos)` | Pa (dense flow, else powder cloud; peak so far) | 0 |
 | `add_impurity(pos, radius, mg_per_m2)`, `impurity_at(pos)` | mg/m2 black carbon equivalent (dust 0.013 of its mass) | no-op, 0 |
 | `albedo_at(pos)` | broadband albedo of the surface (aged, less impurities) | 0.8 where the producer does not say; 0 with no snow system |
+| `grip_at(pos)` | tyre-road friction: loose 0.3, packed 0.25, polished to ice 0.05-0.15 (SnowCover3D.get_grip_at: traffic packing and glaze, ice by air and wetness) | -1 bare or not known (PhysXVehicle3D then estimates from density, wetness and crust) |
 | shader globals `snow_cover`, `snow_rect`, `snow_depth` | | |
 
 Consumers: ground, plants (burial), trees (load), vehicles (grip, ruts), cloth and hair, weather (runoff into the

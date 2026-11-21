@@ -757,6 +757,21 @@ func _snow_fire_tests() -> void:
 	var beside: float = snow.get_depth_at(Vector3(-10, 0, 0))
 	_check("snow: a fire melts the pack under it, not beside it, at -4 C", before > 0.05 and burning < 0.6 * beside and beside > 0.9 * before, "%.3f m before, %.3f m under the fire, %.3f m beside it" % [before, burning, beside])
 	WorldContracts.clear_overrides()
+	# Tyre grip from the snow's own friction (WorldSnow.grip_at): loose snow, a packed road, the road polished to ice.
+	if ClassDB.class_exists("PhysXVehicle3D"):
+		var p_loose := Vector3(-24, 0, -20)
+		var p_packed := Vector3(-24, 0, 0)
+		var p_polished := Vector3(-24, 0, 20)
+		snow.add_traffic(p_packed, 3.0, 1.0, 0.0)
+		snow.add_traffic(p_polished, 3.0, 1.0, 2.0)
+		var g_loose: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", p_loose, 10.0, 0)
+		var g_packed: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", p_packed, 10.0, 0)
+		var g_polished: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", p_polished, 10.0, 0)
+		var g_chains: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", p_polished, 10.0, 3)
+		var c_polished: float = WorldContracts.get_snow().grip_at(p_polished)
+		_check("tyres: grip from the snow's own friction, loose over packed, dropping on snow polished to ice; chains bite the ice", is_equal_approx(c_polished, snow.get_grip_at(p_polished)) and g_loose > g_packed and g_polished < 0.6 * g_packed and g_polished <= 0.15 and g_chains > 2.5 * g_polished, "loose %.3f, packed %.3f, polished %.3f (contract %.3f), polished with chains %.3f" % [g_loose, g_packed, g_polished, c_polished, g_chains])
+	else:
+		_skip("tyres: snow's own grip", "no PhysX in this build")
 	snow.queue_free()
 	ground_node.queue_free()
 	m.queue_free()
