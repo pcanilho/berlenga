@@ -672,6 +672,10 @@ func _run_rime_tests() -> void:
 	for h in 24:
 		rime.grow(1.0, 4.0, Vector3(2.0, 0.0, 0.0), 0.0)
 	_check("a thaw takes it off", rime.get_target_thickness(0) < 0.001, "%.1f mm left" % (rime.get_target_thickness(0) * 1000.0))
+	# A twig at 45 degrees: its collector is its own width, not its world box's.
+	pole.rotation_degrees = Vector3(45.0, 30.0, 0.0)
+	rime.refresh_targets()
+	_check("a slanted twig's collector is its width", rime.get_target_diameter(0) < 0.025, "%.1f mm for a 20 mm pole at 45 degrees" % (rime.get_target_diameter(0) * 1000.0))
 	rime.queue_free()
 	holder.queue_free()
 	await get_tree().process_frame

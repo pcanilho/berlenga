@@ -60,7 +60,7 @@ class SnowRime3D : public Node3D {
 	float droplet_diameter = 20.0f; // um, median volume
 	float fog_water = -1.0f; // g/m3; < 0: the weather's
 	float feather_spacing = 0.012f; // m
-	int max_feathers = 40000;
+	int max_feathers = 60000;
 	float max_thickness = 0.25f; // m
 	int seed = 0;
 	bool targets_dirty = true;
@@ -68,6 +68,7 @@ class SnowRime3D : public Node3D {
 	Ref<Material> material;
 	Ref<StandardMaterial3D> default_material;
 	float drawn_change = 0.0f;
+	static Ref<Texture2D> _feather_texture();
 	uint64_t seen_update = 0;
 	float last_rate = 0.0f; // m/h on the most exposed point, last step
 	float last_density = 0.0f;

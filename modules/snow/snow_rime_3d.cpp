@@ -39,6 +39,7 @@
 #include "modules/world/world_contracts.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/main/scene_tree.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/mesh.h"
 
 namespace {
@@ -49,6 +50,13 @@ constexpr float RIME_MIN_DENSITY = 100.0f; // kg/m3: soft rime
 constexpr float RIME_MAX_DENSITY = 890.0f; // kg/m3: hard rime toward glaze
 constexpr float MELT_RATE = 0.004f; // m/h of rime lost per C above 0 (sun and warm air together)
 constexpr float SHOWN = 0.0008f; // m: thinner rime draws nothing
+// A wide face still rimes: its grain, splinters and the first rime grains are small collectors of their own,
+// and feathers grow from them (Makkonen 1984: rime on large structures grows from roughness elements). A
+// collector this wide, at this share of its efficiency, sets the least a face catches.
+constexpr float ROUGH_COLLECTOR = 0.01f; // m
+constexpr float ROUGH_SHARE = 0.35f;
+constexpr float CRUST_SHADE = 0.7f; // the crust's share of light under its feathers
+constexpr float THIN_PART = 0.02f; // m: parts thinner than this keep all their feathers under the budget
 } // namespace
 
 float SnowRime3D::collision_efficiency(float p_wind, float p_droplet_um, float p_diameter) {
@@ -93,14 +101,59 @@ void SnowRime3D::_ensure_children() {
 	}
 	if (default_material.is_null()) {
 		// Rime is ice full of air: white and matte, the air pockets scattering (albedo about 0.85, like old
-		// snow), a little light through its thin feathers.
+		// snow), light through its thin feathers. Each feather is a vane card cut to a feather's outline with
+		// its barbs (alpha tested, so both renderers cut the same edge), the way grass and fur cards draw fine
+		// plates: geometry for the vane, the texture for the barbs too fine to model.
 		default_material.instantiate();
 		default_material->set_albedo(Color(0.88f, 0.9f, 0.93f));
-		default_material->set_roughness(0.8f);
+		default_material->set_roughness(0.85f);
 		default_material->set_specular(0.335f);
 		default_material->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
-		default_material->set_backlight(Color(0.35f, 0.38f, 0.42f));
+		default_material->set_backlight(Color(0.55f, 0.58f, 0.62f));
+		default_material->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA_SCISSOR);
+		default_material->set_alpha_scissor_threshold(0.35f);
+		default_material->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _feather_texture());
+		default_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
 	}
+}
+
+Ref<Texture2D> SnowRime3D::_feather_texture() {
+	// The vane, u across (0.5 its rachis), v from root to tip: barbs leaving the rachis toward the tip at about
+	// 40 degrees, an outline widest past the middle and pointed at the tip (rime feathers, Makkonen 2000's
+	// photographs). White; alpha the coverage, a little soft so the mips keep the barbs' share.
+	constexpr int W = 64, H = 128, SS = 4;
+	Ref<Image> img = Image::create_empty(W, H, false, Image::FORMAT_RGBA8);
+	for (int y = 0; y < H; y++) {
+		for (int x = 0; x < W; x++) {
+			float cover = 0.0f;
+			for (int sy = 0; sy < SS; sy++) {
+				for (int sx = 0; sx < SS; sx++) {
+					const float u = (x + (sx + 0.5f) / SS) / W;
+					const float v = (y + (sy + 0.5f) / SS) / H;
+					const float across = Math::abs(u - 0.5f) * 2.0f; // 0 at the rachis, 1 at the card's side
+					// The outline: from a narrow root, widest at 0.6, closing to the tip.
+					const float width = v < 0.6f ? 0.35f + 0.65f * Math::sin(float(Math::PI) * 0.5f * v / 0.6f) : Math::sqrt(MAX(1.0f - (v - 0.6f) / 0.4f, 0.0f));
+					if (across > width) {
+						continue;
+					}
+					if (across < 0.08f) {
+						cover += 1.0f; // the rachis
+						continue;
+					}
+					// Barbs: lines v + 0.84 across = const (about 40 degrees toward the tip), 7 along the vane (coarse
+					// enough to stay open at a feather's few pixels), each tapering to its point at the outline.
+					const float phase = (v - 0.84f * across * 0.5f) * 7.0f;
+					const float f = phase - Math::floor(phase);
+					if (f < 0.55f * (1.0f - 0.7f * across / MAX(width, 1e-3f))) {
+						cover += 1.0f;
+					}
+				}
+			}
+			img->set_pixel(x, y, Color(1, 1, 1, cover / (SS * SS)));
+		}
+	}
+	img->generate_mipmaps();
+	return ImageTexture::create_from_image(img);
 }
 
 void SnowRime3D::_add_target(Node *p_node) {
@@ -151,6 +204,49 @@ void SnowRime3D::_add_target(Node *p_node) {
 					t.triangles.push_back(w[k]);
 				}
 			}
+		}
+		// The collector's width across the part's own long axis, not the world box's (a twig at 45 degrees has a
+		// box as wide as it is long): principal axes of its points by power iteration on their covariance, the
+		// smaller extent across the two minor ones.
+		if (t.points.size() >= 4) {
+			Vector3 mean;
+			for (const Vector3 &q : t.points) {
+				mean += q;
+			}
+			mean /= float(t.points.size());
+			float cov[3][3] = {};
+			for (const Vector3 &q : t.points) {
+				const Vector3 d = q - mean;
+				for (int r = 0; r < 3; r++) {
+					for (int c = 0; c < 3; c++) {
+						cov[r][c] += d[r] * d[c];
+					}
+				}
+			}
+			auto principal = [&](const Vector3 &p_not) {
+				Vector3 v = Vector3(0.577f, 0.578f, 0.576f);
+				v = (v - p_not * v.dot(p_not)).normalized();
+				for (int it = 0; it < 48; it++) {
+					Vector3 w(cov[0][0] * v.x + cov[0][1] * v.y + cov[0][2] * v.z, cov[1][0] * v.x + cov[1][1] * v.y + cov[1][2] * v.z, cov[2][0] * v.x + cov[2][1] * v.y + cov[2][2] * v.z);
+					w -= p_not * w.dot(p_not);
+					if (w.length_squared() < 1e-20f) {
+						break;
+					}
+					v = w.normalized();
+				}
+				return v;
+			};
+			const Vector3 ax0 = principal(Vector3());
+			const Vector3 ax1 = principal(ax0);
+			const Vector3 ax2 = ax0.cross(ax1).normalized();
+			float lo1 = 1e9f, hi1 = -1e9f, lo2 = 1e9f, hi2 = -1e9f;
+			for (const Vector3 &q : t.points) {
+				lo1 = MIN(lo1, q.dot(ax1));
+				hi1 = MAX(hi1, q.dot(ax1));
+				lo2 = MIN(lo2, q.dot(ax2));
+				hi2 = MAX(hi2, q.dot(ax2));
+			}
+			t.diameter = CLAMP(MIN(MIN(hi1 - lo1, hi2 - lo2), t.diameter), 0.003f, 3.0f);
 		}
 		t.normals.resize(t.points.size());
 		for (uint32_t i = 0; i < t.points.size(); i++) {
@@ -234,7 +330,8 @@ void SnowRime3D::grow(float p_hours, float p_celsius, const Vector3 &p_wind, flo
 					// itself widens the collector as it builds, so the growth slows (Makkonen's time-dependent
 					// accretion).
 					const float d = (t.diameter + 2.0f * t.thickness[i]) * (1.0f - 0.9f * t.sharpness[i]);
-					dt = accretion_rate(speed, p_fog_water, p_celsius, droplet_diameter, d) * facing * p_hours;
+					const float rough = ROUGH_SHARE * accretion_rate(speed, p_fog_water, p_celsius, droplet_diameter, ROUGH_COLLECTOR + 2.0f * t.thickness[i]);
+					dt = MAX(accretion_rate(speed, p_fog_water, p_celsius, droplet_diameter, d), rough) * facing * p_hours;
 					most = MAX(most, dt / p_hours);
 					t.growth[i] += into * dt;
 				}
@@ -303,8 +400,26 @@ void SnowRime3D::_build_mesh() {
 			}
 		}
 	}
-	const float keep = expected > float(max_feathers) ? float(max_feathers) / expected : 1.0f;
-	const float widen = 1.0f / Math::sqrt(keep);
+	// Thin parts (twigs, wires) keep every feather: their vanes are what shows on them. The rest share what is
+	// left.
+	float thin_expected = 0.0f;
+	for (const Target &t : targets) {
+		if (t.diameter >= THIN_PART) {
+			continue;
+		}
+		for (uint32_t i = 0; i + 2 < t.triangles.size(); i += 3) {
+			const int a = t.triangles[i], b = t.triangles[i + 1], c = t.triangles[i + 2];
+			if (MAX(t.thickness[a], MAX(t.thickness[b], t.thickness[c])) > SHOWN) {
+				thin_expected += 0.5f * (t.points[c] - t.points[a]).cross(t.points[b] - t.points[a]).length() * part_density(t);
+			}
+		}
+	}
+	const float thin_keep = thin_expected > 0.5f * float(max_feathers) ? 0.5f * float(max_feathers) / thin_expected : 1.0f;
+	const float left = MAX(float(max_feathers) - thin_expected * thin_keep, 0.0f);
+	const float wide_expected = expected - thin_expected;
+	const float wide_keep = wide_expected > left ? left / MAX(wide_expected, 1.0f) : 1.0f;
+	PackedVector2Array uvs;
+	PackedColorArray colors;
 	PackedVector3Array verts;
 	PackedVector3Array normals;
 	auto tri = [&](const Vector3 &p_a, const Vector3 &p_b, const Vector3 &p_c) {
@@ -319,6 +434,19 @@ void SnowRime3D::_build_mesh() {
 		normals.push_back(n);
 		normals.push_back(n);
 		normals.push_back(n);
+		for (int k = 0; k < 3; k++) {
+			uvs.push_back(Vector2(0.5f, 0.5f)); // the vane's solid middle: the crust is opaque
+			colors.push_back(Color(CRUST_SHADE, CRUST_SHADE, CRUST_SHADE)); // shaded by the feathers over it
+		}
+	};
+	// A feather's triangle, with its own normals and vane UVs.
+	auto vane_tri = [&](const Vector3 *p_p, const Vector3 *p_n, const Vector2 *p_uv, const float *p_shade) {
+		for (int k = 0; k < 3; k++) {
+			verts.push_back(p_p[k]);
+			normals.push_back(p_n[k]);
+			uvs.push_back(p_uv[k]);
+			colors.push_back(Color(p_shade[k], p_shade[k], p_shade[k]));
+		}
 	};
 	for (uint32_t ti = 0; ti < targets.size(); ti++) {
 		const Target &t = targets[ti];
@@ -339,6 +467,8 @@ void SnowRime3D::_build_mesh() {
 			// little off it and of its own length; the same ones every rebuild (seeded per triangle).
 			RandomPCG rng(hash_murmur3_one_32(i, hash_murmur3_one_32(ti, uint32_t(seed))));
 			const float area = 0.5f * (t.points[v[2]] - t.points[v[0]]).cross(t.points[v[1]] - t.points[v[0]]).length();
+			const float keep = MAX(t.diameter < THIN_PART ? thin_keep : wide_keep, 0.02f);
+			const float widen = 1.0f / Math::sqrt(keep);
 			const float want = area * part_density(t) * keep;
 			int count = int(want);
 			if (rng.randf() < want - count) {
@@ -367,34 +497,45 @@ void SnowRime3D::_build_mesh() {
 				const float spin = rng.randf() * Math::TAU;
 				dir = (dir + (side_a * Math::cos(spin) + side_b * Math::sin(spin)) * (0.25f * rng.randf())).normalized();
 				const float length = MAX(thick - 0.003f, 0.5f * thick) * (0.6f + 0.8f * jitter);
-				const float half = CLAMP(0.22f * length, 0.0006f, 0.008f) * widen;
+				const float half = CLAMP(0.3f * length, 0.0008f, 0.01f) * widen;
 				const Vector3 tip = root + dir * length;
 				Vector3 s0 = dir.cross(n);
 				if (s0.length_squared() < 1e-6f) {
 					s0 = side_a;
 				}
 				s0.normalize();
+				// A flat vane across the wind's sideways direction (a rime feather grows as a plate), turned a little
+				// about its axis each, drawn from both sides. Its normals bend from the surface's at the root to the
+				// growth direction at the tip, so the plates shade as soft tufts, not facets (as grass cards do).
+				const float roll = (rng.randf() - 0.5f) * 0.9f;
 				const Vector3 s1 = dir.cross(s0).normalized();
-				// A flat vane (a rime feather grows as a plate across the wind's sideways direction), with a ridge
-				// so it is not a card from the side.
+				s0 = (s0 * Math::cos(roll) + s1 * Math::sin(roll)).normalized();
 				const Vector3 l = root + s0 * half;
 				const Vector3 r = root - s0 * half;
-				const Vector3 ridge = root + s1 * (0.35f * half);
-				const Vector3 back = root - s1 * (0.35f * half);
-				// Wound to face out of the vane (clockwise seen from outside), so both renderers see its outer faces.
-				const Vector3 mid = root + dir * (0.25f * length);
-				auto face = [&](const Vector3 &p_a, const Vector3 &p_b) {
-					const Vector3 n = (tip - p_a).cross(p_b - p_a);
-					if (n.dot((p_a + p_b + tip) / 3.0f - mid) >= 0.0f) {
-						tri(p_a, p_b, tip);
-					} else {
-						tri(p_b, p_a, tip);
+				const Vector3 pts[4] = { root - dir * (0.05f * length), l + dir * (0.6f * length), tip, r + dir * (0.6f * length) };
+				const Vector2 uv[4] = { Vector2(0.5f, 0.0f), Vector2(0.0f, 0.6f), Vector2(0.5f, 1.0f), Vector2(1.0f, 0.6f) };
+				// Occlusion down the tuft (its neighbours shade a feather's root, its tip is open), and each feather a
+				// little brighter or duller, as the grains in it are packed: depth instead of one flat white.
+				const float own = 0.86f + 0.14f * rng.randf();
+				const float shade[4] = { 0.62f * own, 0.86f * own, own, 0.86f * own };
+				const Vector3 vn = s0.cross(dir).normalized(); // the vane's own normal (one side)
+				// Clockwise from one side, then the other.
+				const int sides[2][6] = { { 0, 1, 2, 0, 2, 3 }, { 0, 2, 1, 0, 3, 2 } };
+				for (int sd = 0; sd < 2; sd++) {
+					const Vector3 face_n = sd == 0 ? vn : -vn;
+					const Vector3 nr = (n * 0.8f + face_n * 0.2f).normalized();
+					const Vector3 nt = (dir * 0.5f + n * 0.2f + face_n * 0.3f).normalized();
+					const Vector3 nm = (nr + nt).normalized();
+					const Vector3 nn[4] = { nr, nm, nt, nm };
+					for (int q = 0; q < 2; q++) {
+						const int *o = &sides[sd][q * 3];
+						const Vector3 tp[3] = { pts[o[0]], pts[o[1]], pts[o[2]] };
+						const Vector3 tn[3] = { nn[o[0]], nn[o[1]], nn[o[2]] };
+						const Vector2 tu[3] = { uv[o[0]], uv[o[1]], uv[o[2]] };
+						const float ts[3] = { shade[o[0]], shade[o[1]], shade[o[2]] };
+						vane_tri(tp, tn, tu, ts);
 					}
-				};
-				face(l, ridge);
-				face(ridge, r);
-				face(r, back);
-				face(back, l);
+				}
 			}
 		}
 	}
@@ -405,6 +546,8 @@ void SnowRime3D::_build_mesh() {
 		arrays.resize(Mesh::ARRAY_MAX);
 		arrays[Mesh::ARRAY_VERTEX] = verts;
 		arrays[Mesh::ARRAY_NORMAL] = normals;
+		arrays[Mesh::ARRAY_TEX_UV] = uvs;
+		arrays[Mesh::ARRAY_COLOR] = colors;
 		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 		mesh->surface_set_material(0, material.is_valid() ? material : Ref<Material>(default_material));
 	}
