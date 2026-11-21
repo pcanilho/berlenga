@@ -1053,6 +1053,12 @@ Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour
     the path tracer's merged-MultiMesh path when MultiMeshes become merged, not in the rocks.
   - Ruled out: widening (`--no-far-widen` still breaks), `persistent_instances` off, build budget (60 more frames
     make it worse), allocation errors (none logged).
+  - 21 Nov, later (main 1259619e on): still broken, and now worse since PT stills wait for first captures. Every
+    TLAS entry has its camera bit, none is shadow-only, every row index is in range, and the MultiMeshes within 40 m
+    of the camera are planned identically thinned and unthinned (same counts, all expanded or merged alike). The dark
+    spots left where boulders were match the ground's contact darkening, so the boulders are likely gone from the
+    TLAS altogether rather than hidden from camera rays. Next suspect: the per-mesh BLAS that expanded copies share
+    (cache key = mesh RID index and surface), lost when far copies of the same mesh turn merged.
 - The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
   world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
   Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.
