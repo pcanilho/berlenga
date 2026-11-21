@@ -477,6 +477,19 @@ func _ready() -> void:
 	_build_camera()
 	if args.has("fov"):
 		get_viewport().get_camera_3d().fov = float(args["fov"]) # --fov=DEG: a wider or narrower lens
+	if args.has("storm-approach"):
+		# --storm-approach[=KM]: a storm cell KM (17) km ahead of the camera, upwind (clouds cd3dd60b): the wind blows
+		# from it toward the camera so its shelf faces us; --storm-radius (2500) m, --storm-rain (40) mm/h,
+		# --storm-outflow (15) m/s, grown --storm-grow (900) s. Shoot with --frames=24 or more.
+		var sc: Camera3D = get_viewport().get_camera_3d()
+		var sf := -sc.global_basis.z
+		var sf2 := Vector2(sf.x, sf.z).normalized()
+		var skm := float(args["storm-approach"]) if String(args["storm-approach"]) != "" else 17.0
+		var sp := Vector2(sc.global_position.x, sc.global_position.z) + sf2 * skm * 1000.0
+		weather.wind_direction = -sf2
+		weather.add_storm(sp, float(args.get("storm-radius", "2500")), float(args.get("storm-rain", "40")), float(args.get("storm-outflow", "15")), 0.0)
+		weather.advance(float(args.get("storm-grow", "900")))
+		_log("storm approach: cell at %s, %.1f km ahead, wind toward the camera %s" % [str(sp.round()), skm, str(-sf2)])
 	if args.has("deer-lawn"):
 		# --deer-lawn[=P]: deer browse a disc --lawn-dist (25) m ahead of the camera, --lawn-radius (22) m, pressure P
 		# (0.9) through WorldStand.add_browse (cef8dbd7): grass grazes to a lawn there, bramble bitten at its edge,
