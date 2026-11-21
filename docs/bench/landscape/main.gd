@@ -6905,7 +6905,81 @@ func _suncups() -> void:
 	snow.call("add_suncups", mm)
 	for i in 10:
 		await get_tree().process_frame
+	if args.has("snow-tracks"):
+		await _snow_tracks(surf, c3, look_dir)
 	_log("suncups: %.2f m cups on %.2f m snow at %s, cam %s, sun %.1f deg" % [mm, best_d, str(best.round()), str(c3.global_position.round()), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+
+
+func _snow_tracks(surf: Node3D, c3: Camera3D, fwd: Vector3) -> void:
+	# --snow-tracks: a walker's boot prints and a car's two ruts across the spring snow in front of the camera, pressed
+	# by the snow's own movers (a sole-flagged box on a CharacterBody3D, wheels by their deform_wheel_radius meta), so
+	# the pack's wetness decides the depth (rotten snow postholes, snow 51d3fa6b) and any slush at the base shows in
+	# the holes. --tracks-hours=H (0) first runs the snow H hours on in today's weather (an afternoon's melt).
+	var hrs := float(args.get("tracks-hours", "0"))
+	if hrs > 0.0:
+		snow.advance(hrs * 3600.0)
+	var f := Vector3(fwd.x, 0, fwd.z).normalized()
+	var side := f.cross(Vector3.UP).normalized()
+	var base := Vector3(c3.global_position.x, 0, c3.global_position.z)
+	var probe := base + f * 6.0
+	var gw = WorldContracts.get_ground()
+	_log("snow tracks: at %s depth %.2f m, density %.0f, wetness %.2f, slush %.3f m, frost %s, rotten share %.2f" % [str(probe.round()), snow.get_depth_at(probe), snow.get_density_at(probe), snow.call("get_wetness_at", probe), snow.call("get_slush_at", probe), str(gw.frost_at(Vector3(probe.x, gen.get_height(probe), probe.z))) if gw else "none", ClassDB.class_call_static("SnowSurface3D", "rotten_share", float(snow.call("get_wetness_at", probe)))])
+	get_viewport().disable_3d = true
+	# The walker: from the near left across to the far right, a step every 0.7 m, feet 0.12 m off the line.
+	var boot := CharacterBody3D.new()
+	boot.name = "TrackBoot"
+	var bs := CollisionShape3D.new()
+	var bx := BoxShape3D.new()
+	bx.size = Vector3(0.11, 0.3, 0.29)
+	bs.shape = bx
+	boot.add_child(bs)
+	boot.set_meta("ground_sole", true)
+	boot.add_to_group("snow_deform")
+	add_child(boot)
+	var a := base + f * float(args.get("boots-near", "2.5")) - side * 1.5
+	var b := base + f * float(args.get("boots-far", "16")) + side * 2.5
+	var dir := (b - a).normalized()
+	var bside := dir.cross(Vector3.UP).normalized()
+	var n := int(a.distance_to(b) / 0.7)
+	for i in n + 1:
+		var q := a + dir * (0.7 * i) + bside * (0.12 if i % 2 == 0 else -0.12)
+		boot.global_basis = Basis.looking_at(-dir, Vector3.UP)
+		boot.global_position = Vector3(q.x, surf.call("get_surface_height_at", q) + 0.15, q.z)
+		for k in 4:
+			surf.call("sync_deformation")
+			await get_tree().physics_frame
+	boot.queue_free()
+	# The car: two tyres 1.6 m apart on a line from the near right to the far left, 0.1 m a frame.
+	var tyres := []
+	for k in 2:
+		var w := Node3D.new()
+		w.name = "TrackTyre%d" % k
+		w.set_meta("deform_wheel_radius", 0.36)
+		w.set_meta("deform_wheel_width", 0.22)
+		w.set_meta("snow_mass", float(args.get("tyre-mass", "400")))
+		w.add_to_group("snow_deform")
+		add_child(w)
+		tyres.append(w)
+	var ta := base + f * float(args.get("ruts-near", "4")) + side * 3.5
+	var tb := base + f * float(args.get("ruts-far", "40")) - side * 6.0
+	var tdir := (tb - ta).normalized()
+	var tside := tdir.cross(Vector3.UP).normalized()
+	var m := int(ta.distance_to(tb) / 0.1)
+	for i in m + 1:
+		for k in 2:
+			var q: Vector3 = ta + tdir * (0.1 * i) + tside * ((k - 0.5) * 1.6)
+			var w: Node3D = tyres[k]
+			w.global_basis = Basis.looking_at(-tdir, Vector3.UP)
+			w.global_position = Vector3(q.x, surf.call("get_surface_height_at", q) + 0.36, q.z)
+		surf.call("sync_deformation")
+		await get_tree().physics_frame
+	for w in tyres:
+		w.queue_free()
+	get_viewport().disable_3d = false
+	for i in 10:
+		await get_tree().process_frame
+	var hole := a + dir * 0.7 * float(n / 2)
+	_log("snow tracks: %d boot steps, posthole %.3f m at %s; %d m of ruts" % [n + 1, snow.get_depth_at(hole) - (surf.call("get_surface_height_at", hole) - gen.get_height(hole)), str(hole.round()), int(ta.distance_to(tb))])
 
 
 func _powder_avalanche() -> void:
