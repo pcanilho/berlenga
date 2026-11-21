@@ -34,6 +34,12 @@
 				The rate (1/s) at which the last step's rain and snow washed smoke out of the gas, from [method WorldWeather.washout_at] at the gas's centre: coarse when [member smoke_buoyancy] is below 0 (dust). 0 without [member rain_washout] or a weather producer.
 			</description>
 		</method>
+		<method name="get_world_ground_albedo" qualifiers="const">
+			<return type="Color" />
+			<description>
+				What [member ground_from_world] last read under the gas: linear rgb, alpha the share known (0: none).
+			</description>
+		</method>
 		<method name="is_running" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -131,6 +137,9 @@
 		</member>
 		<member name="ground_color" type="Color" setter="set_ground_color" getter="get_ground_color" default="Color(1, 1, 1, 1)">
 			The colour of the ground under the gas, for the raster light scattering pass; [member ground_albedo] scales it. The light the ground sends up into the gas takes this colour, as the path tracer's bounces take the ground's own: a blue-grey ground or a snowfield under a blue sky lights a cloud's base bluer than a brown field does. White leaves the ground grey.
+		</member>
+		<member name="ground_from_world" type="bool" setter="set_ground_from_world" getter="is_ground_from_world" default="true">
+			The light the ground sends up into the gas takes the colour of the real ground under it ([method WorldGround.albedo_at]: terrain layers, wet ground, snow), read at five points over the gas every half second, blended over [member ground_albedo] and [member ground_color] by how much of it the world knows. Off, or with no ground colour in the world, those two alone.
 		</member>
 		<member name="heat_ramp" type="Gradient" setter="set_heat_ramp" getter="get_heat_ramp">
 			How the gas glows by temperature, from [code]0[/code] to [member temperature_range]: each color is the glow at that temperature, its alpha how much it glows instead of showing the lit smoke. Empty uses a blackbody: [code]0[/code] to [member temperature_range] spans 600 K to 1,500 K, coloured as a blackbody at that temperature and as bright as Planck's law makes it at 580 nm (alpha above [code]1[/code] at the top), so a flame has a bright core and sharp tongues and the cooler gas over it reads as smoke.

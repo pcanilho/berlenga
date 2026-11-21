@@ -18,6 +18,13 @@
 				Override in a stub to replace [method add_runoff_load].
 			</description>
 		</method>
+		<method name="_albedo_at" qualifiers="virtual const">
+			<return type="Color" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method albedo_at].
+			</description>
+		</method>
 		<method name="_blown_sand_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -143,6 +150,13 @@
 			<param index="2" name="ash_kg" type="float" />
 			<description>
 				Loose material washed off the ground at [param position] since the caller's last call, in kg of mineral (soil) and of ash and char. The runoff producer ([code]WeatherRunoff3D[/code]) carries it down its drainage and hands it to [method WorldWater.add_sediment] where the flow reaches a river or lake. Dropped when there is no runoff producer.
+			</description>
+		</method>
+		<method name="albedo_at" qualifiers="const">
+			<return type="Color" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The ground as drawn at [param position], a few metres' mean: linear rgb, and in alpha how much of it is known (1 where a ground colour answers; the snow's cover alone where no colour does; 0 nothing). The terrain material's layer colours (TerrainMaterial3D, by its generator's geology and slope), darkened by the weather's surface wetness by the layers' porosity, under the snowpack ([method WorldSnow.albedo_at]). Readers blend their own setting toward rgb by alpha, as PhysXFlow3D does for the light the ground sends up into gas.
 			</description>
 		</method>
 		<method name="blown_sand_at" qualifiers="const">

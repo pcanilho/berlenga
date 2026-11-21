@@ -517,6 +517,10 @@ public:
 	Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const override;
 	void contract_snow_add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2) override { add_impurity(p_position, p_radius, p_mg_per_m2); }
 	float contract_snow_impurity_at(const Vector3 &p_position) const override { return get_impurity_at(p_position); }
+	float contract_snow_albedo_at(const Vector3 &p_position) const override {
+		const float a = get_albedo_at(p_position);
+		return a > 0.0f ? a : -1.0f;
+	}
 	float contract_snow_avalanche_pressure_at(const Vector3 &p_position) const override;
 	float contract_snow_avalanche_peak_pressure_at(const Vector3 &p_position) const override;
 	float contract_snow_canopy_load_at(const Vector3 &p_position) const override { return get_canopy_load_at(p_position); }

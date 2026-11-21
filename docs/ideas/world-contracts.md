@@ -121,6 +121,7 @@ the live ground.
 | `blown_sand_at(pos)` | share of the sand the wind moves there now (dry, out of shelter), 0..1 | 0 |
 | `track_mud(pos, radius, depth, wet, print)` | m of film in; returns m3 laid | 0 laid with no provider | Clay a body carries pressed onto the ground; print x 1 tyre, 2 sole (0 a thrown lump), y yaw, z w length and width. Callers: WeatherMap3D wet tracks (round 7) |
 | `coarse_cover_at(pos)` | share of the ground 0..1: (pebbles, gravel, fine grains) | 0 | The stone fields' cover maps (RockField3D, a separate `WorldCoverProvider` slot, any number of fields, the largest answers). Reader: GroundSurface3D sand (a gravel lag armours the sand: blown share and ripples x 1 - smoothstep(0.1, 0.35, pebble + gravel); Bagnold 1941, Sharp 1963) |
+| `albedo_at(pos)` | linear rgb; a: share known (1 a ground colour answers, the snow's cover alone past it, 0 nothing) | (0, 0, 0, 0) | The ground as drawn, a few metres' mean: TerrainMaterial3D's layer colours weighed as its shader weighs them (generator geology and slope, no texture detail; a separate `WorldGroundColorProvider` slot, registered by `use_generator`), wet by the weather's surface wetness (x mix(1, 0.2, porosity), Lagarde 2013), under the snow (WorldSnow.albedo_at by the materials' level-ground cover). Reader: PhysXFlow3D `ground_from_world` (the light the ground sends up into gas). Not yet: grass and plant cover (vegetation's colour over the soil) |
 | pressing | | through the `world_contact` group |
 
 The ground also publishes a shader global, `ground_wet_map` (GroundSurface3D; drawn by `material.cpp`, the path
@@ -149,6 +150,7 @@ terramechanics and pressing calls, which stay on the producer for now).
 | `lake_ice_at(pos)` | (m, white share) | (0, 0) |
 | `avalanche_pressure_at(pos)`, `avalanche_peak_pressure_at(pos)` | Pa (dense flow, else powder cloud; peak so far) | 0 |
 | `add_impurity(pos, radius, mg_per_m2)`, `impurity_at(pos)` | mg/m2 black carbon equivalent (dust 0.013 of its mass) | no-op, 0 |
+| `albedo_at(pos)` | broadband albedo of the surface (aged, less impurities) | 0.8 where the producer does not say; 0 with no snow system |
 | shader globals `snow_cover`, `snow_rect`, `snow_depth` | | |
 
 Consumers: ground, plants (burial), trees (load), vehicles (grip, ruts), cloth and hair, weather (runoff into the

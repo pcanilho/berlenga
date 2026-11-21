@@ -562,6 +562,18 @@ float WorldSnow::impurity_at(const Vector3 &p_position) const {
 	return provider ? provider->contract_snow_impurity_at(p_position) : 0.0f;
 }
 
+float WorldSnow::albedo_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_albedo_at, p_position, r)) {
+		return r;
+	}
+	if (!provider) {
+		return has_provider() ? 0.8f : 0.0f;
+	}
+	const float a = provider->contract_snow_albedo_at(p_position);
+	return a >= 0.0f ? a : 0.8f;
+}
+
 float WorldSnow::avalanche_pressure_at(const Vector3 &p_position) const {
 	float r = 0.0f;
 	if (GDVIRTUAL_CALL(_avalanche_pressure_at, p_position, r)) {
@@ -612,6 +624,7 @@ void WorldSnow::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("lake_ice_at", "position"), &WorldSnow::lake_ice_at);
 	ClassDB::bind_method(D_METHOD("add_impurity", "position", "radius", "mg_per_m2"), &WorldSnow::add_impurity);
 	ClassDB::bind_method(D_METHOD("impurity_at", "position"), &WorldSnow::impurity_at);
+	ClassDB::bind_method(D_METHOD("albedo_at", "position"), &WorldSnow::albedo_at);
 	ClassDB::bind_method(D_METHOD("avalanche_pressure_at", "position"), &WorldSnow::avalanche_pressure_at);
 	ClassDB::bind_method(D_METHOD("avalanche_peak_pressure_at", "position"), &WorldSnow::avalanche_peak_pressure_at);
 	ClassDB::bind_method(D_METHOD("canopy_load_at", "position"), &WorldSnow::canopy_load_at);
@@ -625,6 +638,7 @@ void WorldSnow::_bind_methods() {
 	GDVIRTUAL_BIND(_lake_ice_at, "position");
 	GDVIRTUAL_BIND(_add_impurity, "position", "radius", "mg_per_m2");
 	GDVIRTUAL_BIND(_impurity_at, "position");
+	GDVIRTUAL_BIND(_albedo_at, "position");
 	GDVIRTUAL_BIND(_avalanche_pressure_at, "position");
 	GDVIRTUAL_BIND(_avalanche_peak_pressure_at, "position");
 	GDVIRTUAL_BIND(_canopy_load_at, "position");
@@ -985,9 +999,53 @@ void WorldGround::coarse_cover_points(const Vector2 *p_points, int p_count, Vect
 	}
 }
 
+Color WorldGround::albedo_at(const Vector3 &p_position) const {
+	Color r;
+	if (GDVIRTUAL_CALL(_albedo_at, p_position, r)) {
+		return r;
+	}
+	Color c(0, 0, 0, 0);
+	const LocalVector<WorldGroundColorProvider *> *list = WorldContracts::ground_color_providers_list();
+	if (list) {
+		for (const WorldGroundColorProvider *g : *list) {
+			const Color v = g->contract_ground_albedo_at(p_position);
+			if (v.a >= 0.0f) {
+				// Rain soaks the ground by its porosity, as the materials draw it (weather_wetness_apply on level
+				// ground, Lagarde 2013): a saturated porous soil keeps 0.2 of its dry albedo.
+				const float wet = CLAMP(WorldContracts::weather()->surface_wetness_at(p_position), 0.0f, 1.0f);
+				const float f = Math::lerp(1.0f, Math::lerp(1.0f, 0.2f, CLAMP(v.a, 0.0f, 1.0f)), wet);
+				c = Color(v.r * f, v.g * f, v.b * f, 1.0f);
+				break;
+			}
+		}
+	}
+	// The snowpack over it, by the materials' cover on level ground (snow_cover_weight: the facets fill from about
+	// 1 cm, all buried by about 17 cm).
+	const WorldSnow *snow = WorldContracts::snow();
+	if (snow->has_provider()) {
+		const float depth = snow->depth_at(p_position);
+		if (depth > 0.0f) {
+			const float d = MIN(depth, 1.0f);
+			const float cover = MAX(Math::smoothstep(1.0f - 1.2f * d, 1.2f - 1.2f * d, 1.0f), Math::smoothstep(0.9f, 1.0f, d));
+			if (cover > 0.0f) {
+				const float a = snow->albedo_at(p_position);
+				const Color sc(a, a, a);
+				if (c.a > 0.0f) {
+					c = Color(Math::lerp(c.r, sc.r, cover), Math::lerp(c.g, sc.g, cover), Math::lerp(c.b, sc.b, cover), 1.0f);
+				} else {
+					c = Color(sc.r, sc.g, sc.b, cover);
+				}
+			}
+		}
+	}
+	return c;
+}
+
 void WorldGround::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("coarse_cover_at", "position"), &WorldGround::coarse_cover_at);
 	GDVIRTUAL_BIND(_coarse_cover_at, "position");
+	ClassDB::bind_method(D_METHOD("albedo_at", "position"), &WorldGround::albedo_at);
+	GDVIRTUAL_BIND(_albedo_at, "position");
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
 	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &WorldGround::track_mud);
 	ClassDB::bind_method(D_METHOD("has_runoff"), &WorldGround::has_runoff);
@@ -1097,6 +1155,18 @@ void WorldContracts::register_cover(WorldCoverProvider *p_provider) {
 void WorldContracts::unregister_cover(WorldCoverProvider *p_provider) {
 	if (singleton) {
 		singleton->cover_providers.erase(p_provider);
+	}
+}
+
+void WorldContracts::register_ground_color(WorldGroundColorProvider *p_provider) {
+	if (singleton && p_provider && singleton->ground_color_providers.find(p_provider) < 0) {
+		singleton->ground_color_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_ground_color(WorldGroundColorProvider *p_provider) {
+	if (singleton) {
+		singleton->ground_color_providers.erase(p_provider);
 	}
 }
 
