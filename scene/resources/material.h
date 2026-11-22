@@ -764,6 +764,8 @@ public:
 	static String get_wetness_shader_code();
 	static String get_snow_shader_code();
 	static String get_surface_rain_shader_code();
+	static String get_camera_cutout_functions_code();
+	static String get_camera_cutout_shader_code();
 	// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b): the functions, and the instance uniforms PhysXVehicle3D writes.
 	static String get_mud_functions_code();
 

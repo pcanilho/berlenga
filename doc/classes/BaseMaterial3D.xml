@@ -43,6 +43,12 @@
 				Returns the [Texture2D] associated with the specified texture [param param].
 			</description>
 		</method>
+		<method name="get_camera_cutout_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Returns the shader code [BaseMaterial3D] uses for the camera cut-out, for use in a [ShaderMaterial]: the global uniforms [code]camera_cutout[/code] (the target, such as the player's chest, in world space, and the hole's radius in metres; radius 0 turns it off) and [code]camera_cutout_floor[/code] (the lowest height cut, such as the player's feet), and [code]camera_cutout_discard(world_pos, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)[/code], true where the surface is cut. Call it first in [code]fragment()[/code] with [code]if (!IN_SHADOW_PASS &amp;&amp; camera_cutout.w &gt; 0.0 &amp;&amp; camera_cutout_discard(...)) { discard; }[/code]. Every [BaseMaterial3D] does this: a surface between the camera and the target, within the radius of the line between them, more than half a metre before the target and above the floor, is cut away with soft dithered edges, so a top-down camera sees the player through walls, roofs and trees. Shadows keep the cut geometry. The path tracer starts its camera rays past the same cut. Set the globals with [method RenderingServer.global_shader_parameter_set].
+			</description>
+		</method>
 		<method name="get_surface_rain_shader_code" qualifiers="static">
 			<return type="String" />
 			<description>

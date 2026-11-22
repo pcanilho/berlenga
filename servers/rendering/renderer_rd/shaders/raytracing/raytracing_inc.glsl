@@ -148,6 +148,11 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_HAZE_REACH 84 // how far rays that reach the sky carry it (the sky's own aerosol starts there)
 #define RT_PARAM_PRECIP_NOSE 85 // WeatherMap3D's warm layer aloft (weather_warm_nose): peak (C)
 #define RT_PARAM_PRECIP_NOSE_BASE 86 // and base (m above RT_PARAM_PRECIP_GROUND)
+#define RT_PARAM_CUTOUT_X 92 // the camera cut-out (camera_cutout global): target (world), radius (m, 0 none), floor (world m)
+#define RT_PARAM_CUTOUT_Y 93
+#define RT_PARAM_CUTOUT_Z 94
+#define RT_PARAM_CUTOUT_RADIUS 95
+#define RT_PARAM_CUTOUT_FLOOR 96
 #define RT_PARAM_WIND_MAP 89 // WeatherMap3D's 10 m wind (weather_wind_map, m/s in rg) over the wetness rect; 0 none
 
 // ============================================================================
