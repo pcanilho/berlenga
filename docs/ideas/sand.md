@@ -1122,4 +1122,15 @@ WeatherMap3D `dust_storms` (on), weather_dust.cpp, as designed above, with what 
 - docs/bench/haboob --test: source law (threshold, wetness, clay), a ring of 4 g/m2 round a 25 m/s outflow with its
   head marked outside the peak, the nose at 1.7 x the depth, the profile, the sun at 7 % through it, the contract,
   rain washing it out. `--map` prints the column.
-- Next: the wall in the cloud march (clouds thread, against weather_dust_map), near-field Flow billows here.
+- Next: the wall in the cloud march (clouds thread, against weather_dust_map).
+
+### Built, stage 3: the near-field billows (22 Nov 2026)
+
+PhysXHaboobFront3D (PhysX Flow), after the gravity-current head (Simpson, Gravity Currents, 1997): a raised nose that
+rolls Kelvin-Helmholtz billows back over the current, split into lobes and clefts along the front. Twice a second it
+finds the head share (`get_dust_head_at` above 0.4 with dust) nearest the camera within `near_range` (300 m), lays
+`emitter_count` (10) points across the front's travel over 1.6 x that, each slid onto the head's crest, and moves
+them with the front between scans. Each is a wide box emitter pushing dust forward at 1.1 x the front's speed and up
+at half of it; Flow's own vorticity confinement rolls the shear into billows, so no shape is authored. Its Flow:
+2 m cells, no buoyancy, slow fade, shimmer and fire light off. docs/bench/haboob --test: 10 points, all on the head,
+all travelling outward (about 11 m/s). Look: PC queue (Flow raster needs the GPU at this size).

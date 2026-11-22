@@ -87,6 +87,28 @@ func _run_tests() -> void:
 	_check("the sun dims through it, a little more in the blue", tr.y < 0.7 and tr.z < tr.y and tr.x > tr.y, "transmittance %s" % tr)
 	var ww = WorldContracts.get_weather()
 	_check("the contract carries it", absf(ww.dust_at(p) - m.get_dust_at(p)) < 1e-4 and ww.dust_top_at(p) > 0.0 and ww.dust_concentration_at(p + Vector3(0, 100, 0)) > 0.0, "dust_at %.2f, top %.0f" % [ww.dust_at(p), ww.dust_top_at(p)])
+	# The near field: Flow billows ride the head where it passes the camera.
+	if ClassDB.class_exists("PhysXHaboobFront3D"):
+		var cam := Node3D.new()
+		add_child(cam)
+		cam.global_position = Vector3(head_at - 150.0, 0, 40.0)
+		var hf = ClassDB.instantiate("PhysXHaboobFront3D")
+		add_child(hf)
+		hf.follow_target = hf.get_path_to(cam)
+		hf.scan_now()
+		var n: int = hf.get_front_point_count()
+		var on_head := 0
+		var outward := 0
+		for i in n:
+			var fp: Vector3 = hf.get_front_point(i)
+			if m.get_dust_head_at(fp) > 0.3:
+				on_head += 1
+			var v: Vector3 = hf.get_front_velocity(i)
+			if v.dot(Vector3(fp.x, 0, fp.z).normalized()) > 0.5 * v.length():
+				outward += 1
+		_check("billows sit on the head and travel outward", n > 0 and on_head >= n * 0.8 and outward >= n * 0.8, "%d points, %d on the head, %d outward, first %s at %s m/s" % [n, on_head, outward, hf.get_front_point(0) if n > 0 else Vector3(), hf.get_front_velocity(0) if n > 0 else Vector3()])
+		hf.queue_free()
+		cam.queue_free()
 	# Rain over it: washed out as a coarse aerosol.
 	m.remove_storm(id)
 	var before: float = m.get_dust_at(p)
