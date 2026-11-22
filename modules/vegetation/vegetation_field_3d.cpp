@@ -4929,7 +4929,7 @@ PackedFloat32Array VegetationField3D::get_crowns_in(const Rect2 &p_rect) const {
 		if (c.xz.x + c.radius < p_rect.position.x || c.xz.y + c.radius < p_rect.position.y || c.xz.x - c.radius > p_rect.get_end().x || c.xz.y - c.radius > p_rect.get_end().y) {
 			continue;
 		}
-		const float rec[7] = { c.xz.x, c.xz.y, c.radius, c.top, c.base, c.conifer, c.opacity };
+		const float rec[7] = { float(c.xz.x), float(c.xz.y), float(c.radius), float(c.top), float(c.base), float(c.conifer), float(c.opacity) };
 		for (float f : rec) {
 			res.push_back(f);
 		}
