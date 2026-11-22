@@ -2872,6 +2872,20 @@ bool LightStorage::shadow_atlas_update_light(RID p_atlas, RID p_light_instance, 
 	return should_redraw;
 }
 
+void LightStorage::shadow_atlas_release_light(RID p_atlas, RID p_light_instance) {
+	ShadowAtlas *shadow_atlas = shadow_atlas_owner.get_or_null(p_atlas);
+	if (!shadow_atlas) {
+		return;
+	}
+	const uint32_t *key = shadow_atlas->shadow_owners.getptr(p_light_instance);
+	if (!key) {
+		return;
+	}
+	const uint32_t q = (*key >> QUADRANT_SHIFT) & 0x3;
+	const uint32_t s = *key & SHADOW_INDEX_MASK;
+	_shadow_atlas_invalidate_shadow(&shadow_atlas->quadrants[q].shadows.write[s], p_atlas, shadow_atlas, q, s);
+}
+
 void LightStorage::_shadow_atlas_invalidate_shadow(ShadowAtlas::Quadrant::Shadow *p_shadow, RID p_atlas, ShadowAtlas *p_shadow_atlas, uint32_t p_quadrant, uint32_t p_shadow_idx) {
 	if (p_shadow->owner.is_valid()) {
 		LightInstance *sli = light_instance_owner.get_or_null(p_shadow->owner);

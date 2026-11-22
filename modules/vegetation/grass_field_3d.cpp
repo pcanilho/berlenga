@@ -58,6 +58,7 @@
 #include "scene/resources/3d/sky_material.h"
 #include "scene/resources/environment.h"
 #include "scene/resources/sky.h"
+#include "scene/resources/material.h"
 #include "scene/3d/multimesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/main/scene_tree.h"
@@ -382,6 +383,23 @@ void GrassField3D::_ensure_resources() {
 static float _relief_y(const Vector3 &p_at) {
 	const float r = WorldContracts::ground()->relief_at(p_at).x;
 	return Math::is_finite(r) ? r : 0.0f;
+}
+
+String GrassField3D::add_camera_cutout(const String &p_code) {
+	String code = p_code;
+	int at = code.find("\nvoid ");
+	if (at < 0) {
+		return code;
+	}
+	code = code.insert(at + 1, BaseMaterial3D::get_camera_cutout_shader_code() + "\n");
+	const String head = "void fragment() {";
+	const String cut = "\n\t// The camera cut-out (camera_cutout global): first, so nothing else runs where the surface is cut.\n\tif (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)) {\n\t\tdiscard;\n\t}";
+	int from = 0;
+	while ((at = code.find(head, from)) >= 0) {
+		code = code.insert(at + head.length(), cut);
+		from = at + head.length() + cut.length();
+	}
+	return code;
 }
 
 String GrassField3D::get_ground_opened_shader_code() {
@@ -1570,7 +1588,7 @@ void fragment() {
 	// only the material is new, so no pipeline recompiles on a settings change.
 	if (blade_shader.is_null() || blade_shader->get_code() != code) {
 		blade_shader.instantiate();
-		blade_shader->set_code(code);
+		blade_shader->set_code(add_camera_cutout(code));
 	}
 	const Ref<Shader> shader = blade_shader;
 	material.instantiate();
@@ -3720,7 +3738,7 @@ void fragment() {
 	SPECULAR = grass_ground_specular(v_wp, 0.3);
 }
 )";
-		sh->set_code(code);
+		sh->set_code(add_camera_cutout(code));
 		shell_material.instantiate();
 		shell_material->set_shader(sh);
 	}

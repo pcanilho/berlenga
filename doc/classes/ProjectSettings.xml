@@ -3204,6 +3204,9 @@
 		<member name="rendering/lights_and_shadows/positional_shadow/atlas_16_bits" type="bool" setter="" getter="" default="true">
 			Use 16 bits for the omni/spot shadow depth map. Enabling this results in shadows having less precision and may result in shadow acne, but can lead to performance improvements on some devices.
 		</member>
+		<member name="rendering/lights_and_shadows/positional_shadow/max_shadowed_lights" type="int" setter="" getter="" default="0">
+			The shadow budget: at most this many positional lights ([OmniLight3D], [SpotLight3D], [AreaLight3D]) keep a shadow each frame, the most important first (light energy times the light's size on screen, as Unreal's shadow priority and HDRP's maximum shadows on screen). The others shade unshadowed and give their space in the shadow atlas back. At [code]0[/code], every light that fits keeps its shadow, still placed in the atlas most important first, so when the atlas is full it is the least important lights that go without. The path tracer is unaffected: it traces every light's shadow.
+		</member>
 		<member name="rendering/lights_and_shadows/positional_shadow/atlas_quadrant_0_subdiv" type="int" setter="" getter="" default="2">
 			The subdivision amount of the first quadrant on the shadow atlas. See the [url=$DOCS_URL/tutorials/3d/lights_and_shadows.html#shadow-atlas]documentation[/url] for more information.
 		</member>

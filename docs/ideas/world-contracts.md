@@ -257,7 +257,7 @@ scripts; `set_stand(stub)` for a test.
 | `browse_reach_at(pos)` | m, that disc's browse line (red deer 1.8, fallow 1.6, roe 1.1) | 0 |
 | `add_browse(center, radius, pressure, reach_m = 1.8)`, `set_browse(id, pressure)`, `remove_browse(id)`, `clear_browse()` | a disc; returns an id; changes go through `stand_changed` | |
 | `advance_years(years)` | ages every event and strike added here (fire ages through its producers) | |
-| signal `stand_changed(area)`, `get_stand_generation()`, `stand_changes_since(gen, area)` / `get_stand_changes_since(gen)` | world xz Rect2; as WorldFire's burn changes, which are forwarded here | |
+| signal `stand_changed(area)` (raised by `notify_stand_changed(area)`), `get_stand_generation()`, `stand_changes_since(gen, area)` / `get_stand_changes_since(gen)` | world xz Rect2; as WorldFire's burn changes, which are forwarded here | |
 
 The youngest disturbance at a point wins. Fire comes from `WorldFire.burn_age_at`, stand-replacing unless
 `crown_scorch_at` is between 0 and 5 m (a surface fire); an authored burn scar (no scorch on record) counts. Wind and

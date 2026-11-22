@@ -16,6 +16,8 @@ extends Node3D
 #             windward wall running with streaks and its lee wall drier, or the same block dry
 #   godot --path docs/bench/links -- --curtains=out.png [--curtains-off] [--pt]   a downpour's haze across a row of dark
 #             blocks, in curtains carried by the wind, or even (rain_curtains off)
+#   godot --path docs/bench/links -- --cutout=out.png [--cutout-off] [--pt]   a figure behind a wall and under a roof seen
+#             from a high camera, the camera cut-out opening a hole to it, or none
 #             after a clear night at -2 C (hoarfrost), or the same night with dew_and_frost off
 #
 # Links checked:
@@ -251,6 +253,10 @@ func _ready() -> void:
 			await _valley_fog_view(a.substr(13), OS.get_cmdline_user_args().has("--fog-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
 			return
+		if a.begins_with("--cutout="):
+			await _cutout_view(a.substr(9), OS.get_cmdline_user_args().has("--cutout-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
 		if a.begins_with("--curtains="):
 			await _curtain_view(a.substr(11), OS.get_cmdline_user_args().has("--curtains-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
@@ -327,6 +333,9 @@ func _ready() -> void:
 	await _surface_rain_tests()
 	await _wall_rain_tests()
 	await _curtain_tests()
+	await _cutout_tests()
+	await _shadow_budget_tests()
+	await _flicker_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
@@ -3075,6 +3084,198 @@ func _curtain_tests() -> void:
 			"change over 3 s %.4f even, %.4f in curtains; mean %.3f in curtains over the even" % [stats[0][1], stats[1][1], stats[1][0] / stats[0][0]])
 
 
+# A bright figure behind a wall and under a roof, seen from a high camera; the camera cut-out (BaseMaterial3D,
+# camera_cutout globals) opens a hole to it.
+func _cutout_scene(off: bool, pt: bool) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.4, 0.45, 0.5)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.6, 0.6)
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	root.add_child(env)
+	root.set_meta("env", env)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-55, 30, 0)
+	sun.shadow_enabled = true
+	root.add_child(sun)
+	var grey := StandardMaterial3D.new()
+	grey.albedo_color = Color(0.45, 0.43, 0.4)
+	var floor_mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(30, 30)
+	floor_mi.mesh = pm
+	floor_mi.material_override = grey
+	root.add_child(floor_mi)
+	var wall := MeshInstance3D.new()
+	var wm := BoxMesh.new()
+	wm.size = Vector3(8, 3, 0.3)
+	wall.mesh = wm
+	wall.material_override = grey
+	wall.position = Vector3(0, 1.5, 1.5)
+	root.add_child(wall)
+	var roof := MeshInstance3D.new()
+	var rm := BoxMesh.new()
+	rm.size = Vector3(8, 0.2, 4)
+	roof.mesh = rm
+	roof.material_override = grey
+	roof.position = Vector3(0, 3.1, -0.3)
+	root.add_child(roof)
+	var figure := MeshInstance3D.new()
+	var cm := CapsuleMesh.new()
+	cm.radius = 0.3
+	cm.height = 1.8
+	figure.mesh = cm
+	var red := StandardMaterial3D.new()
+	red.albedo_color = Color(0.9, 0.1, 0.05)
+	figure.material_override = red
+	figure.position = Vector3(0, 0.9, 0)
+	root.add_child(figure)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 9, 9)
+	cam.rotation_degrees = Vector3(-40, 0, 0)
+	cam.fov = 50.0
+	root.add_child(cam)
+	cam.make_current()
+	root.set_meta("cam", cam)
+	RenderingServer.global_shader_parameter_set("camera_cutout", Vector4(0, 1.2, 0, 0.0 if off else 2.0))
+	RenderingServer.global_shader_parameter_set("camera_cutout_floor", 0.05)
+	return root
+
+
+func _cutout_view(path: String, off: bool, pt: bool) -> void:
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var root := _cutout_scene(off, pt)
+	for i in 30:
+		await RenderingServer.frame_post_draw
+	if pt:
+		root.get_meta("env").environment.pathtracing_enabled = true
+		for i in 60:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+func _red_share(img: Image, cam: Camera3D, at: Vector3) -> float:
+	var c := cam.unproject_position(at)
+	var sx := float(img.get_width()) / float(get_viewport().get_visible_rect().size.x)
+	var red := 0
+	var n := 0
+	for dy in range(-12, 13, 2):
+		for dx in range(-12, 13, 2):
+			var px := img.get_pixel(clampi(int(c.x * sx) + dx, 0, img.get_width() - 1), clampi(int(c.y * sx) + dy, 0, img.get_height() - 1))
+			if px.r > 2.0 * px.g and px.r > 0.2:
+				red += 1
+			n += 1
+	return float(red) / n
+
+
+func _cutout_tests() -> void:
+	if DisplayServer.get_name() == "headless":
+		_skip("camera cut-out", "needs a rendering device")
+		return
+	var shares := []
+	for off in [true, false]:
+		var root := _cutout_scene(off, false)
+		for i in 20:
+			await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var cam: Camera3D = root.get_meta("cam")
+		shares.append([_red_share(img, cam, Vector3(0, 1.0, 0)), _centre_luminance(img)])
+		root.queue_free()
+		await get_tree().process_frame
+	RenderingServer.global_shader_parameter_set("camera_cutout", Vector4())
+	_check("camera cut-out: a figure hidden behind a wall and a roof shows through the hole (camera_cutout globals)",
+			shares[0][0] < 0.1 and shares[1][0] > 0.4,
+			"figure's share of its spot: %.2f without, %.2f with the cut-out" % [shares[0][0], shares[1][0]])
+
+
+# The shadow budget (rendering/lights_and_shadows/positional_shadow/max_shadowed_lights): two lamps over two posts,
+# a bright one and a dim one; with a budget of one, the bright lamp keeps its shadow and the dim one gives its up.
+func _shadow_budget_tests() -> void:
+	if DisplayServer.get_name() == "headless":
+		_skip("shadow budget", "needs a rendering device")
+		return
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0, 0, 0)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_DISABLED
+	root.add_child(env)
+	var white := StandardMaterial3D.new()
+	var floor_mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(40, 40)
+	floor_mi.mesh = pm
+	floor_mi.material_override = white
+	root.add_child(floor_mi)
+	var spots := []
+	var lamps := []
+	for k in 2:
+		var x := -5.0 if k == 0 else 5.0
+		var post := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.6, 2.0, 0.6)
+		post.mesh = bm
+		post.material_override = white
+		post.position = Vector3(x, 1.0, 0)
+		root.add_child(post)
+		var lamp := OmniLight3D.new()
+		lamp.position = Vector3(x, 4.0, -2.0)
+		lamp.omni_range = 12.0
+		lamp.light_energy = 4.0 if k == 0 else 1.0
+		lamp.shadow_enabled = true
+		root.add_child(lamp)
+		lamps.append(lamp)
+		spots.append(Vector3(x, 0.0, 1.6))
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 12, 10)
+	cam.rotation_degrees = Vector3(-50, 0, 0)
+	root.add_child(cam)
+	cam.make_current()
+	var res := []
+	for budget in [0, 1]:
+		ProjectSettings.set_setting("rendering/lights_and_shadows/positional_shadow/max_shadowed_lights", budget)
+		for i in 15:
+			await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var row := []
+		for k in 2:
+			# Shadowed spot behind the post over the lit floor beside it.
+			var shade := _face_luminance(img, cam, spots[k])
+			var lit := _face_luminance(img, cam, spots[k] + Vector3(2.0, 0, 0))
+			row.append(shade / maxf(lit, 1e-4))
+		res.append(row)
+	# Hysteresis: the dim lamp a little brighter than the holder doesn't take the shadow; far brighter, it does.
+	var swap := []
+	for e in [4.8, 9.0]:
+		lamps[1].light_energy = e
+		for i in 10:
+			await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var row := []
+		for k in 2:
+			row.append(_face_luminance(img, cam, spots[k]) / maxf(_face_luminance(img, cam, spots[k] + Vector3(2.0, 0, 0)), 1e-4))
+		swap.append(row)
+	ProjectSettings.set_setting("rendering/lights_and_shadows/positional_shadow/max_shadowed_lights", 0)
+	root.queue_free()
+	await get_tree().process_frame
+	_check("shadow budget: with room for one shadow the brighter lamp keeps it and the dimmer one gives it up; no budget, both shadow",
+			res[0][0] < 0.85 and res[0][1] < 0.85 and absf(res[1][0] - res[0][0]) < 0.05 and res[1][1] > res[0][1] + 0.2,
+			"shadow over lit floor: no budget bright %.2f dim %.2f; budget 1 bright %.2f dim %.2f" % [res[0][0], res[0][1], res[1][0], res[1][1]])
+	_check("shadow budget: the lamp holding the shadow keeps it until another is clearly more important",
+			swap[0][0] < res[1][1] - 0.2 and swap[0][1] > swap[0][0] + 0.2 and swap[1][1] < swap[1][0] - 0.2,
+			"1.2x: holder %.2f other %.2f; 2.25x: holder %.2f other %.2f" % [swap[0][0], swap[0][1], swap[1][0], swap[1][1]])
+
+
 func _centre_luminance(img: Image) -> float:
 	var w := img.get_width()
 	var h := img.get_height()
@@ -3396,3 +3597,114 @@ func _ground_color_meadow_tests() -> void:
 	root.queue_free()
 	await get_tree().process_frame
 	_check("ground colour: gas over a meadow takes the sward's green (its far colour), over a worn path through it little of it", meadow.a > 0.8 and meadow.g > meadow.r and absf(meadow.g - far.g) < 0.02 and path.a < 0.5 * meadow.a, "meadow %s (far %s), path %s" % [meadow, far, path])
+
+
+func _flicker_run(light: Light3D, seconds: float, step: float = 0.05) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	var t := 0.0
+	while t < seconds:
+		light.advance_flicker(step)
+		out.append(light.get_flicker_level())
+		t += step
+	return out
+
+
+func _flicker_tests() -> void:
+	# Light styles: 'a' dark, 'm' normal, 'z' about double, stepped at flicker_rate.
+	var lamp := OmniLight3D.new()
+	lamp.light_energy = 3.0
+	lamp.flicker_pattern = "amz"
+	lamp.flicker_rate = 2.0
+	lamp.flicker_mode = Light3D.FLICKER_PATTERN
+	var lv := _flicker_run(lamp, 1.5, 0.01)
+	# Levels at the end of each half-second letter (snapped by then).
+	var a := lv[48]
+	var m := lv[98]
+	var z := lv[148]
+	_check("flicker: a light style steps dark, normal, double; the stored energy stays",
+			a < 0.02 and absf(m - 1.0) < 0.02 and absf(z - 25.0 / 12.0) < 0.03 and is_equal_approx(lamp.light_energy, 3.0),
+			"a %.3f m %.3f z %.3f energy %.2f" % [a, m, z, lamp.light_energy])
+	# Failing lamp: seeded, so the same seed fails the same way; mostly on, with real faults.
+	var runs := []
+	for seed in [7, 7, 8]:
+		var f := OmniLight3D.new()
+		f.flicker_seed = seed
+		f.flicker_failure = 0.5
+		f.flicker_mode = Light3D.FLICKER_FAILING
+		runs.append(_flicker_run(f, 120.0, 1.0 / 60.0))
+		f.free()
+	var same: bool = runs[0] == runs[1]
+	var differ: bool = runs[0] != runs[2]
+	var total := 0.0
+	var low := 0
+	for v: float in runs[0]:
+		total += v
+		if v < 0.3:
+			low += 1
+	var mean: float = total / (runs[0] as PackedFloat32Array).size()
+	_check("flicker: a failing lamp is the same every run for its seed, mostly on, with drop-outs",
+			same and differ and mean > 0.75 and mean < 0.99 and low > 10,
+			"same %s differ %s mean %.2f dark frames %d" % [same, differ, mean, low])
+	# A healthy lamp (failure 0) only hums; its emissive partner follows; off restores.
+	var g := OmniLight3D.new()
+	var mat := StandardMaterial3D.new()
+	mat.emission_enabled = true
+	mat.emission_energy_multiplier = 9.0
+	g.flicker_material = mat
+	g.flicker_failure = 0.0
+	g.flicker_mode = Light3D.FLICKER_FAILING
+	var hv := _flicker_run(g, 10.0, 1.0 / 60.0)
+	var lo := 9.0
+	var hi := 0.0
+	for v in hv:
+		lo = minf(lo, v)
+		hi = maxf(hi, v)
+	var follows := absf(mat.emission_energy_multiplier - 9.0 * g.get_flicker_level()) < 1e-3
+	g.flicker_mode = Light3D.FLICKER_NONE
+	_check("flicker: a healthy lamp only hums, its glow follows, and switching flicker off restores both",
+			lo > 0.96 and hi < 1.04 and follows and is_equal_approx(g.get_flicker_level(), 1.0) and is_equal_approx(mat.emission_energy_multiplier, 9.0),
+			"hum %.3f..%.3f follows %s after %.3f / %.2f" % [lo, hi, follows, g.get_flicker_level(), mat.emission_energy_multiplier])
+	g.free()
+	lamp.free()
+	if DisplayServer.get_name() == "headless":
+		_skip("flicker render", "needs a rendering device")
+		return
+	# The renderer sees the flicker: a lamp held on 'a' leaves the floor dark, on 'm' lit.
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0, 0, 0)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_DISABLED
+	root.add_child(env)
+	var floor_mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(20, 20)
+	floor_mi.mesh = pm
+	floor_mi.material_override = StandardMaterial3D.new()
+	root.add_child(floor_mi)
+	var o := OmniLight3D.new()
+	o.position = Vector3(0, 3, 0)
+	o.omni_range = 10.0
+	o.light_energy = 2.0
+	root.add_child(o)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 8, 6)
+	cam.rotation_degrees = Vector3(-55, 0, 0)
+	root.add_child(cam)
+	cam.make_current()
+	var lum := []
+	for pat in ["m", "a"]:
+		o.flicker_pattern = pat
+		o.flicker_mode = Light3D.FLICKER_PATTERN
+		o.advance_flicker(1.0)
+		for i in 6:
+			await RenderingServer.frame_post_draw
+		lum.append(_face_luminance(get_viewport().get_texture().get_image(), cam, Vector3(0, 0, 0)))
+		o.flicker_mode = Light3D.FLICKER_NONE
+	root.queue_free()
+	await get_tree().process_frame
+	_check("flicker: the renderer draws the flickered energy",
+			lum[0] > 0.05 and lum[1] < lum[0] * 0.05,
+			"floor under the lamp: normal %.3f dark %.3f" % [lum[0], lum[1]])

@@ -244,6 +244,7 @@ private:
 		float far_top = 0.0f; // Trees (far_widen): the first mesh's top, for the skyline test (trees.md 9c).
 		bool far_widen = false; // Meta "far_widen" (trees, trees.md 9a): the far tail's survivors widened in their transforms per tile.
 		float clone_scale = 0.0f; // Meta "clone_scale" (m; aspen, trees.md 5bf): one variant per clone, clones as jittered cells this wide.
+		LocalVector<float> face_slopes; // Per variant, mesh meta "bank_face_slope" (radians; bank roots); empty: none.
 		LocalVector<float> bank_slopes; // Per variant, mesh meta "tree_ground_slope".x (radians); empty: no bank forms.
 		// Per variant, mesh meta "tree_fire_years" (years since the fire the tree was grown for, -1 unburnt); empty: none.
 		// A tree takes the variant whose years are nearest the ground's burn age, unburnt ones off burns.
@@ -255,6 +256,9 @@ private:
 		LocalVector<float> strike_years;
 		float strike_years_max = 0.0f;
 		LocalVector<uint8_t> browsed; // Per variant: 1 for a browsed one (mesh meta tree_browse), empty when none is.
+		// Per variant, mesh meta "tree_flood" (x the last flood's height on the stem, m; y years since; 0 and -1 for the
+		// unflooded): empty when no variant carries one. A tree takes the variant nearest WorldWater.high_water_at's mark.
+		LocalVector<Vector2> flood_marks;
 		LocalVector<float> base_lifts; // Per variant, mesh meta "tree_base_lift" (m in mesh space: stilt roots, the origin that far above the ground); empty: none.
 		Vector2 open_side; // Mesh meta "tree_open_side" (xz, unit) of its first mesh carrying it: turned to face the open (forest edges); zero none.
 	};
@@ -283,6 +287,15 @@ private:
 		VegetationObstacles stone_tops; // Caps of stones that stone_top species grow on (a copy).
 		PackedVector3Array stone_top_normals; // Their surface normals, matched to stone_tops.items (empty: domes).
 		VegetationHoles holes; // Openings in the ground (cave mouths): no plant there (a copy).
+		LocalVector<Vector4> removals; // Plants taken away (add_plant_removal): x, z, radius, species (-1 any); a copy.
+		bool removed_at(const Vector2 &p_xz, int p_species) const {
+			for (const Vector4 &r : removals) {
+				if ((r.w < 0.0f || int(r.w) == p_species) && Vector2(r.x, r.y).distance_squared_to(p_xz) < r.z * r.z) {
+					return true;
+				}
+			}
+			return false;
+		}
 		const TerrainGenerator3D *dunes = nullptr; // The map's geology source when it has coastal dunes (PlantSpecies.RULE_DUNE); read only.
 		const TerrainGenerator3D *coast = nullptr; // The map's geology source when it has a sea (PlantSpecies.RULE_TIDE_HEIGHT and the other coast rules); read only.
 		float sea_y = 0.0f; // Its sea's surface, world y.
@@ -442,6 +455,8 @@ private:
 	// Felled crowns (add_canopy_loss()): x, z, radius, the share of leaf area kept. Every repaint of the canopy
 	// (WeatherMap3D.canopy_map) and the crowns' shade takes them out again.
 	LocalVector<Vector4> canopy_losses;
+	LocalVector<Vector4> plant_removals; // add_plant_removal(): x, z, radius, species.
+	Rect2 removal_dirty;
 	static void _apply_canopy_losses(LocalVector<Crown> &r_crowns, const LocalVector<Vector4> &p_losses, int p_from = 0);
 	static void _compute_maps(Maps &r_maps, const LocalVector<const LocalVector<Crown> *> &p_crowns, const LocalVector<const LocalVector<FarAdd> *> &p_far);
 	void _apply_maps(Maps &p_maps);
@@ -857,6 +872,14 @@ public:
 	float get_spring_wetness_at(const Vector3 &p_global_position) const { return springs_seen.at(Vector2(p_global_position.x, p_global_position.z)); }
 	PackedVector4Array get_springs() const;
 	void add_canopy_loss(const Vector2 &p_xz, float p_radius, float p_keep = 0.0f);
+	// Plants taken away for good (a sod lip that broke off, a mown swath's cut plants): no plant of p_species (-1: any)
+	// within p_radius of p_position's xz is placed again; the tiles there are placed again without them.
+	void add_plant_removal(const Vector3 &p_position, float p_radius, int p_species = -1);
+	PackedVector4Array get_plant_removals() const;
+	void clear_plant_removals();
+	// The drawn instances of p_species within p_radius of p_position (horizontal): one Dictionary each, "transform"
+	// (global) and "mesh".
+	Array get_instances_near(int p_species, const Vector3 &p_position, float p_radius) const;
 	PackedVector4Array get_canopy_losses() const;
 	void clear_canopy_losses() { canopy_losses.clear(); }
 };

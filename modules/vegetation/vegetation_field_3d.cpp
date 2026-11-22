@@ -200,8 +200,9 @@ static float _relief_y(const Vector3 &p_at) {
 
 // The top edge of a steep drop in the drawn ground (heightfield plus relief) within 1 m of p_xz (RULE_BANK_EDGE):
 // along each of 16 directions from a point not on a face itself, the first 5 cm step steeper than 45 degrees, and how
-// far the ground falls over the 0.6 m past it. Returns the largest fall (m, 0 with no edge near); r_dir the way it falls, r_ahead the edge's distance.
-static float _bank_edge(const TerrainDataMap3D *p_map, const Vector2 &p_xz, Vector2 &r_dir, float &r_ahead) {
+// far the ground falls over the 0.6 m past it. Returns the largest fall (m, 0 with no edge near); r_dir the way it falls, r_ahead the edge's distance;
+// r_face (if given) the face's angle that way (radians from level: its fall over its run while steeper than 35 degrees, up to 1.5 m).
+static float _bank_edge(const TerrainDataMap3D *p_map, const Vector2 &p_xz, Vector2 &r_dir, float &r_ahead, float *r_face = nullptr) {
 	auto h = [&](const Vector2 &q) {
 		const Vector3 p(q.x, 0.0f, q.y);
 		return p_map->get_height_at(p) + _relief_y(p);
@@ -231,6 +232,29 @@ static float _bank_edge(const TerrainDataMap3D *p_map, const Vector2 &p_xz, Vect
 				break;
 			}
 			prev = hq;
+		}
+	}
+	if (r_face && best > 0.0f) {
+		// The 16 directions are 22.5 degrees apart: the steepest of the found one and its two neighbours, so a face
+		// met at an angle does not read as a gentler one.
+		const Vector2 top = p_xz + r_dir * r_ahead;
+		const float h0 = h(top);
+		*r_face = float(Math::PI * 0.25);
+		for (int k = -1; k <= 1; k++) {
+			const Vector2 d = r_dir.rotated(float(k) * float(Math::TAU / 16.0));
+			float hp = h0;
+			int n = 0;
+			for (int i = 1; i <= 30; i++) {
+				const float hq = h(top + d * (step * i));
+				if (hp - hq < step * 0.7f) {
+					break;
+				}
+				hp = hq;
+				n = i;
+			}
+			if (n > 0) {
+				*r_face = MAX(*r_face, float(Math::atan2(h0 - hp, step * n)));
+			}
 		}
 	}
 	return best;
@@ -547,6 +571,79 @@ void VegetationField3D::add_canopy_loss(const Vector2 &p_xz, float p_radius, flo
 	// its next repaint (the caller cuts the live map itself).
 	RWLockWrite guard(crown_lock);
 	_apply_canopy_losses(crowns, canopy_losses, canopy_losses.size() - 1);
+}
+
+void VegetationField3D::add_plant_removal(const Vector3 &p_position, float p_radius, int p_species) {
+	ERR_FAIL_COND(p_radius <= 0.0f);
+	plant_removals.push_back(Vector4(p_position.x, p_position.z, p_radius, float(MAX(p_species, -1))));
+	const Rect2 area(p_position.x - p_radius, p_position.z - p_radius, 2.0f * p_radius, 2.0f * p_radius);
+	if (streaming) {
+		if (stream_setup_valid) {
+			removal_dirty = removal_dirty.has_area() ? removal_dirty.merge(area) : area;
+		}
+	} else if (plant_count > 0) {
+		queue_populate();
+	}
+}
+
+PackedVector4Array VegetationField3D::get_plant_removals() const {
+	PackedVector4Array out;
+	for (const Vector4 &r : plant_removals) {
+		out.push_back(r);
+	}
+	return out;
+}
+
+void VegetationField3D::clear_plant_removals() {
+	if (plant_removals.is_empty()) {
+		return;
+	}
+	plant_removals.clear();
+	if (streaming) {
+		if (stream_setup_valid) {
+			removal_dirty = stream_setup.rect;
+		}
+	} else if (plant_count > 0) {
+		queue_populate();
+	}
+}
+
+Array VegetationField3D::get_instances_near(int p_species, const Vector3 &p_position, float p_radius) const {
+	Array out;
+	if (biome.is_null() || p_species < 0 || p_species >= biome->get_species().size()) {
+		return out;
+	}
+	const Ref<PlantSpecies> sp = biome->get_species()[p_species];
+	if (sp.is_null()) {
+		return out;
+	}
+	const TypedArray<Mesh> meshes = sp->get_meshes();
+	const Vector2 c(p_position.x, p_position.z);
+	const float r2 = p_radius * p_radius;
+	for (int i = 0; i < get_child_count(true); i++) {
+		const MultiMeshInstance3D *mmi = Object::cast_to<MultiMeshInstance3D>(get_child(i, true));
+		if (!mmi || !mmi->is_visible() || mmi->get_multimesh().is_null()) {
+			continue;
+		}
+		const Ref<MultiMesh> mm = mmi->get_multimesh();
+		const Ref<Mesh> mesh = mm->get_mesh();
+		if (mesh.is_null() || !meshes.has(mesh)) {
+			continue;
+		}
+		const Transform3D xf = mmi->get_global_transform();
+		const int n = mm->get_visible_instance_count() >= 0 ? mm->get_visible_instance_count() : mm->get_instance_count();
+		for (int k = 0; k < n; k++) {
+			const Transform3D t = xf * mm->get_instance_transform(k);
+			if (Vector2(t.origin.x, t.origin.z).distance_squared_to(c) > r2) {
+				continue;
+			}
+			Dictionary d;
+			d["transform"] = t;
+			d["mesh"] = mesh;
+			out.push_back(d);
+		}
+	}
+	return out;
 }
 
 PackedVector4Array VegetationField3D::get_canopy_losses() const {
@@ -1491,6 +1588,18 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 		}
 	}
 	{
+		// Bank roots (PlantGenerator.make_bank_roots): per variant, the face angle it was grown on.
+		bool any_face = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			any_face = any_face || (m.is_valid() && m->has_meta(SNAME("bank_face_slope")));
+		}
+		if (any_face) {
+			for (const Ref<Mesh> &m : ps.meshes) {
+				ps.face_slopes.push_back(m.is_valid() ? float(m->get_meta(SNAME("bank_face_slope"), 0.0f)) : 0.0f);
+			}
+		}
+	}
+	{
 		// Stilt-rooted trees (trees' wet forests): the mesh origin is the stem's foot on its tussock, the ground at
 		// the root tips lies tree_base_lift below it.
 		bool any_lift = false;
@@ -1536,6 +1645,17 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 				const float sy = (m.is_valid() && m->has_meta(SNAME("tree_lightning_years"))) ? float(m->get_meta(SNAME("tree_lightning_years"))) : -1.0f;
 				ps.strike_years.push_back(sy);
 				ps.strike_years_max = MAX(ps.strike_years_max, sy);
+			}
+		}
+		// Flood-marked variants (trees.md 5av): their silt line's height and age, unflooded ones (0, -1).
+		ps.flood_marks.clear();
+		bool any_flood = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			any_flood = any_flood || (m.is_valid() && m->has_meta(SNAME("tree_flood")));
+		}
+		if (any_flood) {
+			for (const Ref<Mesh> &m : ps.meshes) {
+				ps.flood_marks.push_back((m.is_valid() && m->has_meta(SNAME("tree_flood"))) ? Vector2(m->get_meta(SNAME("tree_flood"))) : Vector2(0.0f, -1.0f));
 			}
 		}
 		// Browsed variants (trees.md 5az): marked by mesh meta tree_browse.
@@ -1634,6 +1754,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	r_setup.crop_fields = GrassField3D::get_crop_field_mask();
 	_follow_holes(map);
 	r_setup.holes.read(VegetationHoles::source_of(map));
+	r_setup.removals = plant_removals;
 	{
 		const TerrainGenerator3D *gen = VegetationHoles::source_of(map);
 		r_setup.dunes = gen && gen->get_dune_rect().has_area() ? gen : nullptr;
@@ -2326,6 +2447,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					Vector3 p3(xz.x, 0.0f, xz.y);
 					float suit = sp->get_suitability(map, p3, false);
 					Vector2 bank_dir; // RULE_BANK_EDGE: over the drop, and how far ahead the edge is.
+					float bank_face = 0.0f; // RULE_BANK_EDGE: the face's angle below the edge (radians).
 					float bank_ahead = 0.0f;
 					// Patches (clonal stands), except that a rock's foot is a patch of its own
 					// for species that gather there: the patch weight is lifted towards 1 there.
@@ -2469,7 +2591,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					if (bank_edge_rule && suit > 0.0f) {
 						// The top edge of a cut bank or scarp in the drawn ground: stood on it, facing the drop.
-						const float drop = _bank_edge(map, xz, bank_dir, bank_ahead);
+						const float drop = _bank_edge(map, xz, bank_dir, bank_ahead, ps.face_slopes.is_empty() ? nullptr : &bank_face);
 						suit *= sp->rule_weight(PlantSpecies::RULE_BANK_EDGE, drop);
 						if (suit > 0.0f && bank_dir != Vector2()) {
 							xz += bank_dir * bank_ahead;
@@ -2679,6 +2801,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (canopy_r <= 0.0f && !is_log && (stem_in(local_crown_grid, local_crowns, xz, STEM_MARGIN, CROWN_CELL) || (p_setup.other && p_setup.other->_in_stem(xz, STEM_MARGIN)))) {
 						continue;
 					}
+					if (!p_setup.removals.is_empty() && p_setup.removed_at(xz, s)) {
+						continue; // Taken away (add_plant_removal).
+					}
 					// Footprints of earlier species.
 					bool blocked = false;
 					const Vector2i gc(int(Math::floor(xz.x / grid_cell)), int(Math::floor(xz.y / grid_cell)));
@@ -2821,12 +2946,63 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 						}
 					}
+					if (bank_dir != Vector2() && !ps.face_slopes.is_empty() && bank_face > 0.0f) {
+						// Bank roots: the variant grown on the face angle nearest this face's, ties broken by the plant's random number.
+						float best = 1e9f;
+						const int nv = ps.face_slopes.size();
+						const int start = MIN(int(r * nv), nv - 1);
+						for (int k = 0; k < nv; k++) {
+							const int vi = (start + k) % nv;
+							const float d = Math::abs(ps.face_slopes[vi] - bank_face);
+							if (d < best - 1e-4f) {
+								best = d;
+								bank_variant = vi;
+							}
+						}
+					}
+					int flood_variant = -1;
+					Vector2 flood_flow;
+					if (!ps.flood_marks.is_empty() && WorldContracts::water() && WorldContracts::water()->has_provider()) {
+						// Flood-marked trees (TreeGenerator.flood_height, trees.md 5av): the variant whose silt line is
+						// nearest the last flood's mark over this ground (WorldWater.high_water_at: its peak above the
+						// ground, then its age), turned with mesh +X down the peak's flow so the line rides higher on the
+						// upstream face; with no mark here (or one under 10 cm) an unflooded variant. With no water
+						// producer at all the variants stay as drawn (their marks are then the generator's own).
+						const float ground = map ? map->get_height_at(Vector3(xz.x, 0.0f, xz.y)) : y;
+						const Vector4 hw = WorldContracts::water()->high_water_at(Vector3(xz.x, ground, xz.y));
+						const bool known = hw.x > -1e20f && hw.y >= 0.0f && hw.x - ground > 0.1f;
+						const float want_h = known ? hw.x - ground : 0.0f;
+						const float want_y = known ? hw.y / 365.25f : -1.0f;
+						const int nv = ps.flood_marks.size();
+						const int start = MIN(int(Math::fmod(r * 2903.0f, 1.0f) * nv), nv - 1);
+						float best = 1e9f;
+						for (int k = 0; k < nv; k++) {
+							const int vi = (start + k) % nv;
+							const Vector2 fm = ps.flood_marks[vi];
+							if ((fm.x > 0.0f) != known) {
+								continue;
+							}
+							// 30 cm of line weighs as much as 1.5 years of fading.
+							const float d = known ? Math::abs(fm.x - want_h) / 0.3f + Math::abs(fm.y - want_y) / 1.5f : 0.0f;
+							if (d < best - 1e-4f) {
+								best = d;
+								flood_variant = vi;
+							}
+						}
+						if (flood_variant >= 0 && known) {
+							flood_flow = Vector2(hw.z, hw.w);
+						}
+					}
 					if (bank_dir != Vector2()) {
 						// A sod lip (RULE_BANK_EDGE): mesh +X out over the drop, a little scatter along the edge.
 						yaw = Math::atan2(-bank_dir.y, bank_dir.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.2f;
 					} else if (wood_out != Vector2()) {
 						yaw = Math::atan2(-wood_out.y, wood_out.x);
-					} else if (bank_variant >= 0 && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
+					} else if (flood_flow.length_squared() > 1e-6f) {
+						// Its silt line is higher on mesh -X (the upstream face, where the flood piled against it).
+						const Vector2 fd = flood_flow.normalized();
+						yaw = Math::atan2(-fd.y, fd.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.3f;
+					} else if (bank_variant >= 0 && !ps.bank_slopes.is_empty() && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
 						// Its ground falls towards mesh +Z: turn +Z downhill.
 						yaw = Math::atan2(downhill.x, downhill.y);
 					} else if (ps.fall_downhill && slope > 1e-3f) {
@@ -2952,6 +3128,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (pick >= 0 && (struck || fire_variant < 0 || ps.strike_years[fire_variant] >= 0.0f)) {
 							fire_variant = pick;
 						}
+					}
+					if (flood_variant >= 0 && fire_variant < 0) {
+						fire_variant = flood_variant;
 					}
 					if (!ps.browsed.is_empty()) {
 						// Browsed trees (TreeGenerator.browse, trees.md 5az): where deer press (WorldStand.browse_at, the
@@ -6016,6 +6195,18 @@ void VegetationField3D::_stream_update(double p_delta) {
 	LocalVector<Vector2i> gone;
 	// Ground opened or closed (cave mouths): once no tile is being placed (the workers read the
 	// setup), the setup takes the new holes and the tiles near them are placed again.
+	// Plants taken away (add_plant_removal): once no tile is being placed, the setup takes the new list and the tiles
+	// there are placed again without them.
+	if (removal_dirty.has_area() && stream_jobs.is_empty()) {
+		stream_setup.removals = plant_removals;
+		const Rect2 near = removal_dirty.grow(stream_setup.max_footprint + 0.5f);
+		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
+				kv.value->stale = true; // Placed again; the old one shows until the new one is in.
+			}
+		}
+		removal_dirty = Rect2();
+	}
 	if (holes_dirty.has_area() && stream_jobs.is_empty()) {
 		stream_setup.holes.read(VegetationHoles::source_of(stream_setup.map));
 		stream_setup.crop_fields = GrassField3D::get_crop_field_mask();
@@ -6180,7 +6371,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 
 	// Missing tiles within the radius, nearest first, as many at once as there are workers.
 	const int max_jobs = MAX(1, WorkerThreadPool::get_singleton()->get_thread_count());
-	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area() && !stand_dirty.has_area()) {
+	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area() && !stand_dirty.has_area() && !removal_dirty.has_area()) {
 		const int r = int(Math::ceil(stream_radius / ts)) + 2;
 		const Vector2i ct(int(Math::floor(centre.x / ts)), int(Math::floor(centre.y / ts)));
 		const Rect2i map_tiles(Vector2i(int(Math::floor(rect.position.x / ts)), int(Math::floor(rect.position.y / ts))),
@@ -6457,7 +6648,7 @@ void VegetationField3D::_follow_floods(double p_delta) {
 	flood_check = 2.0;
 	bool wanted = false;
 	for (const PlaceSpecies &ps : stream_setup.species) {
-		wanted = wanted || (ps.sp.is_valid() && ps.sp->uses_high_water());
+		wanted = wanted || (ps.sp.is_valid() && ps.sp->uses_high_water()) || !ps.flood_marks.is_empty();
 	}
 	if (!wanted) {
 		flood_follow = false;
@@ -6813,6 +7004,10 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_canopy_loss", "xz", "radius", "keep"), &VegetationField3D::add_canopy_loss, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_canopy_losses"), &VegetationField3D::get_canopy_losses);
 	ClassDB::bind_method(D_METHOD("clear_canopy_losses"), &VegetationField3D::clear_canopy_losses);
+	ClassDB::bind_method(D_METHOD("add_plant_removal", "position", "radius", "species"), &VegetationField3D::add_plant_removal, DEFVAL(-1));
+	ClassDB::bind_method(D_METHOD("get_plant_removals"), &VegetationField3D::get_plant_removals);
+	ClassDB::bind_method(D_METHOD("clear_plant_removals"), &VegetationField3D::clear_plant_removals);
+	ClassDB::bind_method(D_METHOD("get_instances_near", "species", "position", "radius"), &VegetationField3D::get_instances_near);
 	ClassDB::bind_method(D_METHOD("set_cover_map_enabled", "enable"), &VegetationField3D::set_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("is_cover_map_enabled"), &VegetationField3D::is_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("set_cover_grass", "path"), &VegetationField3D::set_cover_grass);

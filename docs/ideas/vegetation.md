@@ -1896,3 +1896,44 @@ RULE_BANK_EDGE (37, RULE_MAX 38).
 - Not yet: lips breaking off and falling as the bank erodes (a PhysX/Blast job), and roots on bare scarp faces with
   no lip.
 
+## Sod lips breaking off (round 8, first pick)
+The overhanging sod of a composite bank fails as a cantilever (Thorne and Tovey 1981: shear, beam and tensile
+failures of the overhang) once the flow has cut far enough under it, or under a load; the failed blocks lie at the
+bank's foot until the next flows carry them off.
+Built: SodLipFall3D (sod_lip_fall_3d.*) and VegetationField3D plant removals.
+- VegetationField3D.add_plant_removal(position, radius, species): plants taken away for good; streamed tiles there are
+  placed again without them (a populated field populates again); get_instances_near(species, position, radius)
+  reads the drawn instances' transforms and meshes from the field's MultiMeshes. Mowing will use the removals too.
+- SodLipFall3D, twice a second over the lips within range of the camera: a body of the load group (grass_trample)
+  standing on an overhang breaks it at once; water at the foot (WorldWater.height_at 0.6 m out over the drop, between
+  0.7 m under the lip and its top) is a hazard of 1/undercut_time (600 s); a soaked bank in heavy rain (wetness over
+  0.8, rain over 5 mm/h) 1/soaked_time (3600 s). Both times are estimates on the game's time scale, with a
+  deterministic draw per lip and look.
+- A failed lip: removed (0.6 m), and its mesh falls as a RigidBody3D box of sod (the slab's 20 cm, 1500 kg/m3 wet
+  topsoil, an estimate), turning about the edge and pushed out over the drop. Past max_blocks (24) the oldest freeze
+  where they lie.
+- Check: vegetation --test "sod lips" (dry bank: none; a step: that lip alone, not placed again; the river 0.3 m
+  under the lips: exactly the 14 lips in that band break).
+- Not yet: breaking the block on landing (Blast), and the river carrying blocks off.
+
+
+## Roots on bare scarps (round 8, second pick)
+A cut bank or slump scarp shows the roots of what grows on top. Their depth follows the global profiles of Jackson et
+al. 1996 (Oecologia 108: 389-411; share of roots above depth d cm = 1 - beta^d, beta 0.952 for grasses, 0.970 for
+trees): the sward's fine roots a dense mat in the top 15 cm or so, thinning to 50 cm; trees' woody laterals deeper
+and wider. The roots are grown by space colonization (Runions, Lane and Prusinkiewicz 2007, "Modeling trees with a
+space colonization algorithm", Eurographics Workshop on Natural Phenomena), here in the face's plane: attraction
+points scattered by that depth profile, tips stepping toward the points near them with a downward pull, radii by the
+pipe model (exponent 2.5).
+Built: PlantGenerator.make_bank_roots (plant_bank.cpp), two species.
+- PRESET_BANK_ROOTS: the sward's fibrous roots, on any earthen face of 0.4 m or more past an edge (RULE_BANK_EDGE),
+  off rock (RULE_ROCK under 0.4).
+- PRESET_BANK_ROOTS_WOODY: a few woody laterals (to about 4.5 cm across) coming out of the face, branching to fine
+  ends; within 4 m of the canopy's edge (RULE_FOREST_EDGE from -4 m; the laterals' reach past the crown is an estimate).
+- The roots lie on the face, a little proud of it and now and then dipping under it; about a third of the finest ends
+  hang free off it.
+- Each variant is grown on its own face angle (50 to 88 degrees, mesh meta "bank_face_slope"); VegetationField3D
+  measures the face below the edge (its fall over its run while steeper than 35 degrees, up to 1.5 m) and takes the
+  variant nearest it, so the roots sit on slumped and near-vertical faces alike.
+- Check: vegetation --test "bank roots"; plants bench --close=113 --bank.
+- Not yet: roots shown in the sod blocks' undersides when a lip falls; roots on rock clefts (trees' cliff roots).

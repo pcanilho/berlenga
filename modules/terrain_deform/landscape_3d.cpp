@@ -1444,7 +1444,7 @@ void Landscape3D::_relief_changed(const Rect2 &p_area) {
 	Rect2 r = p_area.has_area() ? p_area : Rect2(origin, Vector2((gw - 1) * spacing, (gh - 1) * spacing));
 	const Vector3 o = get_global_transform().origin;
 	r.position += Vector2(o.x, o.z);
-	WorldContracts::ground()->relief_changed(r);
+	WorldContracts::ground()->notify_relief_changed(r);
 }
 
 void Landscape3D::set_material(const Ref<Material> &p_material) {

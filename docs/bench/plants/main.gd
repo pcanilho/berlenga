@@ -7,8 +7,8 @@ extends Node3D
 #   --spp=N          path tracing samples (default 16)
 #   --close=P        close view of preset P (index in NAMES)
 #   --macro          with --close, one plant from a hand span away
-#   --bank           with --close: a row of the preset along the top edge of a 1.2 m undercut step (turf lips), seen
-#                    from below the step
+#   --bank           with --close: a row of the preset along the top edge of a 1.2 m undercut step (turf lips, bank
+#                    roots grown on a near-vertical face), seen from below the step
 #   --low            with --macro: from 2.5 cm above the ground (a mushroom's gills)
 #   --notex          without the generated leaf textures
 #   --push           with --close: a body stands on the middle plant (bent through the trample field)
@@ -33,7 +33,7 @@ extends Node3D
 #   --dew=D          dew 0..1 on the spider webs (season dew), in place of a WeatherMap3D's
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn", "rooted_sod", "anthill", "wood_ant_nest", "molehill", "leaf_bank", "cow_pat", "horse_dung", "deer_pellets", "dung_rough", "fairy_ring_mushroom", "sheet_web", "orb_web", "flood_wrack", "turf_lip"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn", "rooted_sod", "anthill", "wood_ant_nest", "molehill", "leaf_bank", "cow_pat", "horse_dung", "deer_pellets", "dung_rough", "fairy_ring_mushroom", "sheet_web", "orb_web", "flood_wrack", "turf_lip", "bank_roots", "bank_roots_woody"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -118,6 +118,8 @@ func _ready() -> void:
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	var gen := PlantGenerator.new()
+	if bank:
+		gen.bank_face = deg_to_rad(88.0) # Bank roots: on the step's cut face.
 	gen.textures = not notex
 	if wear >= 0.0:
 		gen.leaf_wear = wear
@@ -244,6 +246,8 @@ func _ready() -> void:
 		fb.material = gm
 		face.mesh = fb
 		face.position = Vector3(-0.58, -0.6, 0)
+		if NAMES[close].begins_with("bank_roots"):
+			face.position.x = -0.5 # Bank roots: on a face cut straight down from the edge.
 		add_child(face)
 	var env := Environment.new()
 	var sky := Sky.new()
@@ -420,9 +424,11 @@ func _checks() -> void:
 		var other := gen.generate()
 		print("PLANT %s tris=%d height=%.2f width=%.2f ms=%.2f surfaces=%d" % [NAMES[p], _tris(m), aabb.end.y, max(aabb.size.x, aabb.size.z), ms, m.get_surface_count()])
 		_check(NAMES[p] + " has geometry", _tris(m) > 50, _tris(m))
-		_check(NAMES[p] + " plausible size", aabb.end.y > 0.005 and aabb.end.y < 3.0 and aabb.size.x < 3.0, aabb)
+		# Bank roots lie on the face below the edge the mesh stands on: wholly under it, the woody ones down to 1 m.
+		var on_face: bool = NAMES[p].begins_with("bank_roots")
+		_check(NAMES[p] + " plausible size", (aabb.end.y > -0.5 if on_face else aabb.end.y > 0.005) and aabb.end.y < 3.0 and aabb.size.x < 3.0, aabb)
 		# A sod lip hangs over a drop: its cut face and roots go down past the edge it stands on.
-		_check(NAMES[p] + " grows from the ground", aabb.position.y > (-0.75 if NAMES[p] == "turf_lip" else -0.08), aabb.position.y)
+		_check(NAMES[p] + " grows from the ground", aabb.position.y > (-1.05 if on_face else (-0.75 if NAMES[p] == "turf_lip" else -0.08)), aabb.position.y)
 		_check(NAMES[p] + " same seed, same plant", _tris(again) == _tris(m) and again.get_aabb() == aabb, _tris(again))
 		_check(NAMES[p] + " other seed, other plant", other.get_aabb() != aabb, other.get_aabb())
 	# Forest floor sets per stand type: species with meshes, placed by shade or by water.

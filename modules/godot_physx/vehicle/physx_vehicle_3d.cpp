@@ -100,7 +100,16 @@ struct PhysXVehicleSoilWheel {
 	// brought, and the suction holding the tyre (N, the last substep's).
 	float rest = 0.0f;
 	float moved = 0.0f; // m rolled since it last stood
-	float bite_owed = 0.0f; // m3 of soil the tread's links have cut and not yet thrown (round 23.3)
+	float bite_owed = 0.0f;
+	bool tearing = false; // its load tears a peat bog's root mat (round 24.2)
+	float tear_hold = 0.0f; // s its load has been past the mat's tearing depth // m3 of soil the tread's links have cut and not yet thrown (round 23.3)
+	// Clay balled up on the tyre past its full tread (round 24.1): the cake's thickness (m), how lopsided it is
+	// (0 even .. 0.25, a quarter of it out of balance), the tyre's own radius, and the shake it gives (N, the last substep's).
+	float cake = 0.0f;
+	float lopsided = 0.0f;
+	float base_radius = -1.0f;
+	float shudder = 0.0f;
+	uint32_t cake_seed = 0x9e3779b9u;
 	float bite_thrown = 0.0f; // kg thrown since start
 	float creep = 0.0f;
 	float suction = 0.0f;
@@ -162,10 +171,62 @@ static void _clog_update(PhysXVehicleSoilWheel &p_sw, Vehicle4W &p_v, PxU32 p_i,
 	if (f < before) {
 		p_sw.shed += (before - f) * full_kg;
 	}
+	// Balling up (round 24.1). Past the plastic limit, toward the sticky point, clay sticks to clay better than to
+	// anything (Atterberg's sticky limit; soil-to-metal adhesion studies from Fountaine 1954 on): once the tread is
+	// packed, each turn through sticky clay lays a further skin on the cake, a few millimetres a turn at full slip,
+	// until the tyre is a smooth drum of clay a few centimetres larger. The cake goes when the tread turns past its
+	// own shedding speed, sqrt(ca r / (rho t)) for its thickness t (the thicker, the sooner), and goes in chunks:
+	// what is left is lopsided, and the out-of-balance mass m e w^2 shakes the axle (rotor unbalance, ISO 21940),
+	// the truck shudders until it is spun clean. Washed and dried off as the tread's clay.
+	if (p_sw.base_radius < 0.0f) {
+		p_sw.base_radius = r;
+	}
+	const float r0 = p_sw.base_radius;
+	float &c = p_sw.cake;
+	const float c_before = c;
+	if (p_soft && p_sw.soil.stickiness > 0.3f && f > 0.3f) {
+		const float grow = 0.003f * Math::smoothstep(0.3f, 0.5f, f) * Math::smoothstep(0.3f, 0.8f, p_sw.soil.stickiness) * (0.4f + 0.6f * Math::abs(p_sw.slip)) * revs * (1.0f - c / 0.06f) * p_dt;
+		if (grow > 0.0f) {
+			c += grow;
+			// Laid on all round as it turns: the cake evens out.
+			p_sw.lopsided *= MAX(1.0f - grow / MAX(c, 1e-4f), 0.0f);
+		}
+	}
+	if (c > 0.0f) {
+		const float c_speed = Math::sqrt(1000.0f * MAX(p_sw.soil.adhesion, 0.05f) * r / (CLAY_DENSITY * MAX(c, 0.005f))) * ts.shed;
+		float lose = 0.0f;
+		if (tread > c_speed) {
+			lose = MIN(2.0f * (tread / c_speed - 1.0f) * p_dt, 1.0f);
+		}
+		if (!p_soft || p_sw.soil.stickiness <= 0.0f) {
+			lose = MAX(lose, MIN((0.02f + 0.05f * revs) * p_dt, 1.0f));
+		}
+		if (p_water > 0.02f) {
+			lose = MAX(lose, MIN(MIN(p_water / 0.1f, 1.0f) * (0.2f + 0.5f * revs) * p_dt, 1.0f));
+		}
+			if (lose > 0.0f) {
+			c -= c * lose;
+			// In chunks: what stays is lopsided by a random share of what went.
+			p_sw.cake_seed = p_sw.cake_seed * 1664525u + 1013904223u;
+			const float u = float(p_sw.cake_seed >> 8) / 16777216.0f;
+			p_sw.lopsided = CLAMP(p_sw.lopsided + (u - 0.3f) * 3.0f * lose, 0.0f, 0.25f);
+			if (c < 0.001f) {
+				// The last skin goes with it.
+				c = 0.0f;
+				p_sw.lopsided = 0.0f;
+			}
+		}
+	}
+	const float cake_kg_per_m = (float)Math::TAU * 2.0f * wp.halfWidth * CLAY_DENSITY; // per m of thickness, at radius 1
+	if (c < c_before) {
+		p_sw.shed += (c_before - c) * cake_kg_per_m * (r0 + 0.5f * c_before);
+	}
+	p_v.wheelParams[p_i].radius = r0 + c;
 	if (p_sw.base_moi < 0.0f) {
 		p_sw.base_moi = p_v.wheelParams[p_i].moi;
 	}
-	p_v.wheelParams[p_i].moi = p_sw.base_moi + f * full_kg * r * r;
+	const float cake_kg = c * cake_kg_per_m * (r0 + 0.5f * c);
+	p_v.wheelParams[p_i].moi = p_sw.base_moi + f * full_kg * r0 * r0 + cake_kg * (r0 + 0.5f * c) * (r0 + 0.5f * c);
 }
 
 // Grip of firm ground for its state (docs/ideas/world-links.md, link 3), as a share of the surface's dry friction:
@@ -362,7 +423,25 @@ public:
 			// Sliding sideways (off camber, in a drift) it digs in as it does spinning (mud round 13.3).
 			// Only a real slide: at a crawl the slip angle is noise, so it comes in over 0.1 to 0.4 m/s of side speed.
 			const float side_slip = v.tireSlipStates[i].slips[PxVehicleTireDirectionModes::eLATERAL] * Math::smoothstep(0.1f, 0.4f, Math::abs(v.tireSpeedStates[i].speedStates[PxVehicleTireDirectionModes::eLATERAL]));
-			const GroundWheelSoil probe = GroundTerramechanics::wheel(sw.soil, load, wp.radius, width, sw.inflation, slip, side_slip, 0.0f);
+			GroundWheelSoil probe = GroundTerramechanics::wheel(sw.soil, load, wp.radius, width, sw.inflation, slip, side_slip, 0.0f);
+			// A peat bog's root mat (round 24.2) torn by this load: the wheel bears on the peat under it from now on,
+			// and the ground keeps the tear (below, with the print). The fibres are viscous (peat's strength grows
+			// with the strain rate, about a tenth per tenfold): a jolt or a landing passes, a load kept on the mat
+			// for a quarter of a second tears it.
+			sw.tearing = false;
+			if (probe.torn) {
+				sw.tear_hold += p_dt;
+				if (sw.tear_hold < 0.25f) {
+					GroundSoil held = sw.soil;
+					held.mat_tear = 0.0f;
+					probe = GroundTerramechanics::wheel(held, load, wp.radius, width, sw.inflation, slip, side_slip, 0.0f);
+				} else {
+					sw.tearing = true;
+					sw.soil = GroundTerramechanics::torn_mat(sw.soil);
+				}
+			} else {
+				sw.tear_hold = 0.0f;
+			}
 			const float ahead = (v_lng >= 0.0f ? 1.0f : -1.0f) * (0.5f * probe.contact_length + 0.05f);
 			const Vector3 front = at + Vector3(lng.x, lng.y, lng.z) * ahead;
 			sw.already = MAX(ground->get_dent_at(front) - ground->get_rim_at(front), 0.0f);
@@ -462,6 +541,9 @@ public:
 			if (sw.sinkage > 0.002f) {
 				ground->press_wheel(center, Vector2(across, length), yaw, sw.sinkage, Vector2(slip_vel.x, slip_vel.z), sw.tread);
 			}
+			if (sw.tearing) {
+				ground->tear_mat(center, Vector2(across, length), yaw);
+			}
 			// A wheel turning faster than it travels shears its tread through the sand and throws it back
 			// (roost); one sliding sideways drags and shoves sand out of the side of the turn: reported for a
 			// grains node to lift out of the field (sand stage 2). The grains leave the edge of the contact
@@ -548,6 +630,23 @@ public:
 					v.tireForces[i].forces[PxVehicleTireDirectionModes::eLONGITUDINAL] += dF;
 					v.tireForces[i].torques[PxVehicleTireDirectionModes::eLONGITUDINAL] += arm.cross(dF);
 				}
+			}
+			// The lopsided cake's shake (round 24.1): its out-of-balance mass at the cake's middle, turning with the
+			// wheel, pulls the axle round at m e w^2, up and down and fore and aft.
+			sw.shudder = 0.0f;
+			if (sw.cake > 0.0f && sw.lopsided > 0.0f && v.roadGeomStates[i].hitState) {
+				const float r0 = MAX(sw.base_radius, 0.05f);
+				const float e = r0 + 0.5f * sw.cake;
+				const float m = sw.lopsided * sw.cake * (float)Math::TAU * 2.0f * v.wheelParams[i].halfWidth * CLAY_DENSITY * e;
+				const float w = v.wheelRigidBody1dStates[i].rotationSpeed;
+				sw.shudder = m * e * w * w;
+				const float a = v.wheelRigidBody1dStates[i].rotationAngle;
+				const PxVec3 lng_r = v.tireDirectionStates[i].directions[PxVehicleTireDirectionModes::eLONGITUDINAL];
+				const PxVec3 up_r = v.rigidBodyState.pose.q.getBasisVector1();
+				const PxVec3 dF = (up_r * Math::cos(a) + lng_r * Math::sin(a)) * sw.shudder;
+				const PxVec3 arm = v.rigidBodyState.pose.rotate(v.suspensionParams[i].suspensionAttachment.transform(v.suspensionComplianceStates[i].tireForceAppPoint));
+				v.tireForces[i].forces[PxVehicleTireDirectionModes::eLONGITUDINAL] += dF;
+				v.tireForces[i].torques[PxVehicleTireDirectionModes::eLONGITUDINAL] += arm.cross(dF);
 			}
 			if (!sw.soft || !v.roadGeomStates[i].hitState) {
 				sw.resistance = 0.0f;
@@ -987,7 +1086,14 @@ void PhysXVehicle3D::_notification(int p_what) {
 			// offset instead).
 			const PxTransform cmass_local_pose = v.physxActor.rigidBody->getCMassLocalPose();
 			for (uint32_t i = 0; i < 4; i++) {
-				wheels[impl->wheel_order[i]]->_set_simulated_transform(to_godot(cmass_local_pose * v.wheelLocalPoses[i].localPose));
+				Transform3D wt = to_godot(cmass_local_pose * v.wheelLocalPoses[i].localPose);
+				// A tyre balled up with clay (round 24.1) is drawn as large as it rolls: scaled across its axle.
+				const PhysXVehicleSoilWheel &cw = impl->soil_wheels[i];
+				if (cw.cake > 0.0f && cw.base_radius > 0.0f) {
+					const float sc = (cw.base_radius + cw.cake) / cw.base_radius;
+					wt.basis = wt.basis.scaled_local(Vector3(1.0f, sc, sc));
+				}
+				wheels[impl->wheel_order[i]]->_set_simulated_transform(wt);
 			}
 			_cache_chassis();
 			if (get_physics_process_delta_time() > 0.0) {
@@ -1058,6 +1164,16 @@ void PhysXVehicle3D::set_parked_settling(bool p_enabled) {
 	parked_settling = p_enabled;
 	impl->soil_road.parked = p_enabled;
 	impl->soil_tire.parked = p_enabled;
+}
+
+real_t PhysXVehicle3D::get_wheel_cake(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].cake;
+}
+
+real_t PhysXVehicle3D::get_wheel_shudder(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].shudder;
 }
 
 real_t PhysXVehicle3D::get_wheel_clods_thrown(int p_wheel) const {
@@ -2520,6 +2636,8 @@ void PhysXVehicle3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "parked_settling"), "set_parked_settling", "is_parked_settling");
 	ClassDB::bind_method(D_METHOD("get_wheel_creep", "wheel"), &PhysXVehicle3D::get_wheel_creep);
 	ClassDB::bind_method(D_METHOD("get_wheel_clods_thrown", "wheel"), &PhysXVehicle3D::get_wheel_clods_thrown);
+	ClassDB::bind_method(D_METHOD("get_wheel_cake", "wheel"), &PhysXVehicle3D::get_wheel_cake);
+	ClassDB::bind_method(D_METHOD("get_wheel_shudder", "wheel"), &PhysXVehicle3D::get_wheel_shudder);
 	ClassDB::bind_method(D_METHOD("get_wheel_suction", "wheel"), &PhysXVehicle3D::get_wheel_suction);
 	ClassDB::bind_method(D_METHOD("set_belly_drag", "enabled"), &PhysXVehicle3D::set_belly_drag);
 	ClassDB::bind_method(D_METHOD("is_belly_drag"), &PhysXVehicle3D::is_belly_drag);

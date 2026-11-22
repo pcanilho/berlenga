@@ -141,6 +141,36 @@
 				How many logs the last placement put down (with their axes).
 			</description>
 		</method>
+		<method name="add_plant_removal">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="species" type="int" default="-1" />
+			<description>
+				Takes plants away for good: no plant of [param species] (its index in the [Biome]; -1 any) within [param radius] of [param position] (horizontal) is placed again. Streamed tiles there are placed again without them; a populated field populates again.
+			</description>
+		</method>
+		<method name="clear_plant_removals">
+			<return type="void" />
+			<description>
+				Forgets every [method add_plant_removal]; the plants come back.
+			</description>
+		</method>
+		<method name="get_instances_near" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="species" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<description>
+				The drawn instances of [param species] within [param radius] of [param position] (horizontal), one [Dictionary] each: [code]transform[/code] (global) and [code]mesh[/code].
+			</description>
+		</method>
+		<method name="get_plant_removals" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<description>
+				The removals: x, z, radius and species (-1 any) each.
+			</description>
+		</method>
 		<method name="get_flood_replaced_tiles" qualifiers="const">
 			<return type="int" />
 			<description>

@@ -251,6 +251,36 @@ Plan, after the bisect fixes:
    material while a hit group compiles (b06913a5), and a feature variant can keep the full shader until its
    own is ready.
 
+## Indoor scene regression: suspects in 73a3e160..50273c52 (read before the split builds report)
+
+The first and largest step (+3.3 ms on the indoor scene) spans clearcoat (d029458f), back lighting (fbb60149),
+thin glass (effa664d), layer textures and glass shadows (381dda05) and refraction with media (50273c52). Read for
+costs every pixel pays whether or not the scene uses the feature, ranked by how likely they are to matter:
+
+1. **Shadow any-hit for every candidate.** Shadow rays trace with `gl_RayFlagsNoOpaqueEXT`, so the any-hit runs for
+   every surface a shadow ray meets, opaque ones included. Before 381dda05 it left at once for an opaque surface;
+   since then it first loaded the entry's whole material (now 176 bytes) and the geometry record, then decided.
+   Fix (lossless, done): decide from the flags word, and read the geometry and material only past the early out.
+   Larger follow-up: build truly opaque surfaces as opaque geometry and drop `NoOpaque` from shadow rays, so the
+   hardware never calls the any-hit for them. Blocked today by transparent entries in the main TLAS, which camera
+   rays must keep seeing as opaque; needs its own instance mask or TLAS for shadow-only casters.
+2. **Material record growth**, 128 to 144 bytes in this range (176 now). Every closest hit and every
+   transmissive or scissored shadow candidate copies `materials[i]`; a 144 or 176-byte stride also puts most
+   records across two 128-byte cache lines. Fix (lossless): a hot record of 128 bytes (textures, colours, flags,
+   UV transforms) and a cold one for coat, hair, subsurface, medium and layer textures, read under their flags.
+3. **Clearcoat in every light evaluation.** `MaterialProperties` carries five more values through
+   `evalCombinedBRDFSeparate()` for every light; `materialSpecularF0()` and the coat's early out are cheap, but
+   the bigger struct adds registers to the whole closest hit. Fix (lossless): a hit-group variant compiled
+   without the coat for custom shaders that never write CLEARCOAT (as raster's LIGHT_CLEARCOAT_USED).
+4. **Glass now passes shadow rays** (381dda05): rays that stopped at the first window now continue, call the
+   any-hit with texture reads, and pay the rest of the traversal. That is the feature working (light through
+   windows), not waste; a cost to measure, not remove.
+5. **Medium tracking in raygen** (50273c52): a branch per segment while no medium is entered, plus the camera
+   probe, already skipped without media (81753d3a).
+
+The four split builds (d029458f, fbb60149, effa664d, 381dda05) say which step holds the time; 1 and 2 are the
+first fixes to try on the one that does.
+
 ## Research round 2 (22 Nov 2026): beyond the regression
 
 What shipped path tracers and recent papers did for speed, and where the fork stands.

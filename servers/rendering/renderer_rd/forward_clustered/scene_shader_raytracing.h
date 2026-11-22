@@ -87,6 +87,9 @@ public:
 		RT_FLAG_TIMING_ENABLED = (1 << 6),
 		RT_FLAG_VOLUMETRIC_FOG_ENABLED = (1 << 7),
 		RT_FLAG_DECALS_ENABLED = (1 << 8), // rendering/pathtracing/max_decals > 0.
+		// Off-by-default reuse passes: compiled out while off, so their per-pixel state is not kept live across traces.
+		RT_FLAG_INDIRECT_REUSE_ENABLED = (1 << 9), // rendering/pathtracing/indirect_reuse.
+		RT_FLAG_LIGHT_REUSE_ENABLED = (1 << 10), // rendering/pathtracing/light_reuse.
 	};
 
 	// Sample count encoding (must match shader RT_SAMPLE_MODE_* defines).
@@ -108,7 +111,7 @@ public:
 
 	static_assert(RT_SAMPLE_MODE_SHIFT + 2 == RT_MAX_BOUNCES_SHIFT && RT_MAX_BOUNCES_SHIFT + 4 == 32, "Sample mode and bounces occupy the top 6 bits.");
 	static_assert(RT_MAX_BOUNCES_LIMIT <= RT_MAX_BOUNCES_MASK, "Bounce limit must fit the bounce field.");
-	static_assert(uint32_t(RT_FLAG_DECALS_ENABLED) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
+	static_assert(uint32_t(RT_FLAG_LIGHT_REUSE_ENABLED) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
 
 	// RT pipeline limits (must match GLSL payload/hit attribute struct sizes).
 	// 1: primary/bounce from raygen
@@ -116,7 +119,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 92;
+	static constexpr int RT_PARAM_COUNT = 100;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -261,6 +264,12 @@ public:
 	static constexpr int RT_PARAM_PRECIP_NOSE_BASE = 86;
 	// WeatherMap3D's 10 m wind (weather_wind_map) over the wetness rect, for the rain a face catches. 0 = none.
 	static constexpr int RT_PARAM_WIND_MAP = 89;
+	// The camera cut-out round the player (camera_cutout, camera_cutout_floor): target (world), radius (m, 0 none), floor.
+	static constexpr int RT_PARAM_CUTOUT_X = 92;
+	static constexpr int RT_PARAM_CUTOUT_Y = 93;
+	static constexpr int RT_PARAM_CUTOUT_Z = 94;
+	static constexpr int RT_PARAM_CUTOUT_RADIUS = 95;
+	static constexpr int RT_PARAM_CUTOUT_FLOOR = 96;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

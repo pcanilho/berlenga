@@ -204,6 +204,8 @@ public:
 	void set_parked_settling(bool p_enabled);
 	bool is_parked_settling() const { return parked_settling; }
 	real_t get_wheel_creep(int p_wheel) const;
+	real_t get_wheel_cake(int p_wheel) const; // m of clay balled up on the tyre past its tread (round 24.1)
+	real_t get_wheel_shudder(int p_wheel) const; // N, the lopsided cake's out-of-balance force
 	real_t get_wheel_clods_thrown(int p_wheel) const; // kg of soil its tread has cut and flung (round 23.3)
 	real_t get_wheel_suction(int p_wheel) const;
 	void set_belly_drag(bool p_enabled);

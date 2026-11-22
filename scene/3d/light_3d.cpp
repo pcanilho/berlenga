@@ -35,13 +35,14 @@
 #include "core/object/class_db.h"
 #include "core/os/os.h"
 #include "scene/main/scene_tree.h"
+#include "scene/resources/material.h"
 #include "servers/rendering/rendering_server.h"
 
 void Light3D::set_param(Param p_param, real_t p_value) {
 	ERR_FAIL_INDEX(p_param, PARAM_MAX);
 	param[p_param] = p_value;
 
-	RS::get_singleton()->light_set_param(light, RSE::LightParam(p_param), p_value);
+	RS::get_singleton()->light_set_param(light, RSE::LightParam(p_param), p_param == PARAM_ENERGY ? p_value * flicker_level : p_value);
 
 	if (p_param == PARAM_SPOT_ANGLE || p_param == PARAM_RANGE) {
 		update_gizmos();
@@ -330,8 +331,194 @@ void Light3D::_notification(int p_what) {
 		case NOTIFICATION_VISIBILITY_CHANGED:
 		case NOTIFICATION_ENTER_TREE: {
 			_update_visibility();
+			_flicker_update_processing();
+		} break;
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			advance_flicker(get_process_delta_time());
 		} break;
 	}
+}
+
+// Flicker. Two established models: Quake's light styles (a pattern of letters 'a' dark to 'z' double,
+// 'm' normal, stepped at 10 Hz; kept by Source and id Tech) and a failing lamp (a seeded stream of
+// spells: long on, then a stutter of drop-outs, a blackout and restrike, or a brown-out). Both snap
+// with a 25 ms time constant (a filament or ballast, not a fade), and scale only the energy sent to
+// the server, so the stored light_energy, the rasterizer and the path tracer all agree.
+
+void Light3D::_flicker_reset() {
+	flicker_time = 0.0;
+	flicker_rng_state = (uint64_t(flicker_seed) << 1) * 0x9E3779B97F4A7C15ull + 0x632BE59BD9B4E019ull;
+	flicker_spells.clear();
+	flicker_spell_end = 0.0;
+	flicker_spell_level = 1.0;
+}
+
+float Light3D::_flicker_rand() {
+	// SplitMix64: one seed, one stream, the same every run.
+	uint64_t z = (flicker_rng_state += 0x9E3779B97F4A7C15ull);
+	z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+	z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+	z ^= z >> 31;
+	return float(z >> 40) / float(1 << 24);
+}
+
+void Light3D::_flicker_plan() {
+	// A while on (shorter the more it fails), then one kind of fault.
+	const float f = CLAMP(flicker_failure, 0.0f, 1.0f);
+	if (f <= 0.0f) {
+		flicker_spells.push_back(Vector2(3600.0, 1.0));
+		return;
+	}
+	const float on = Math::lerp(1.5f, 7.0f, _flicker_rand()) * 0.5f / MAX(f, 0.02f);
+	flicker_spells.push_back(Vector2(on, 1.0));
+	const float r = _flicker_rand();
+	if (r < 0.6f) { // stutter: quick drop-outs
+		const int n = 2 + int(_flicker_rand() * 4.999f);
+		for (int i = 0; i < n; i++) {
+			flicker_spells.push_back(Vector2(Math::lerp(0.03f, 0.12f, _flicker_rand()), Math::lerp(0.0f, 0.25f, _flicker_rand())));
+			flicker_spells.push_back(Vector2(Math::lerp(0.04f, 0.2f, _flicker_rand()), 1.0));
+		}
+	} else if (r < 0.9f) { // out, then a restrike
+		flicker_spells.push_back(Vector2(Math::lerp(0.4f, 2.5f, _flicker_rand()), 0.0));
+		flicker_spells.push_back(Vector2(Math::lerp(0.05f, 0.1f, _flicker_rand()), 0.6));
+		flicker_spells.push_back(Vector2(Math::lerp(0.05f, 0.1f, _flicker_rand()), 0.1));
+	} else { // brown-out
+		flicker_spells.push_back(Vector2(Math::lerp(0.2f, 0.6f, _flicker_rand()), 0.45));
+	}
+}
+
+float Light3D::_flicker_target(double p_time) {
+	if (flicker_mode == FLICKER_PATTERN) {
+		const int len = flicker_pattern.length();
+		if (len == 0) {
+			return 1.0;
+		}
+		const int64_t step = int64_t(Math::floor(p_time * double(MAX(flicker_rate, 0.001f))));
+		const char32_t c = flicker_pattern[int(step % len)];
+		const int v = (c >= 'a' && c <= 'z') ? int(c - 'a') : ((c >= 'A' && c <= 'Z') ? int(c - 'A') : 12);
+		return float(v) / 12.0f;
+	}
+	// FLICKER_FAILING: play the spells in order, planning more as they run out.
+	while (p_time >= flicker_spell_end) {
+		if (flicker_spells.is_empty()) {
+			_flicker_plan();
+		}
+		const Vector2 s = flicker_spells[0];
+		flicker_spells.remove_at(0);
+		flicker_spell_end += double(s.x);
+		flicker_spell_level = s.y;
+	}
+	float level = flicker_spell_level;
+	if (level > 0.5f) {
+		// A little hum while it burns: hashed at 60 Hz, +/-3%.
+		uint32_t h = uint32_t(int64_t(p_time * 60.0)) * 747796405u + flicker_seed * 2891336453u;
+		h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+		h = (h >> 22u) ^ h;
+		level *= 1.0f + (float(h & 0xFFFF) / 65535.0f - 0.5f) * 0.06f;
+	}
+	return level;
+}
+
+void Light3D::_flicker_apply(float p_level, bool p_force) {
+	if (!p_force && Math::abs(p_level - flicker_level) < 1e-4f) {
+		return;
+	}
+	flicker_level = p_level;
+	RS::get_singleton()->light_set_param(light, RSE::LIGHT_PARAM_ENERGY, param[PARAM_ENERGY] * flicker_level);
+	Ref<BaseMaterial3D> bm = flicker_material;
+	if (bm.is_valid()) {
+		bm->set_emission_energy_multiplier(flicker_material_energy * flicker_level);
+	}
+}
+
+void Light3D::advance_flicker(double p_seconds) {
+	if (flicker_mode == FLICKER_NONE) {
+		return;
+	}
+	// Step in at most 1/60 s so the snap and the schedule read the same at any frame rate.
+	double left = MAX(p_seconds, 0.0);
+	float level = flicker_level;
+	do {
+		const double dt = MIN(left, 1.0 / 60.0);
+		flicker_time += dt;
+		left -= dt;
+		const float target = _flicker_target(flicker_time);
+		level = Math::lerp(level, target, float(1.0 - Math::exp(-dt * 40.0)));
+	} while (left > 0.0);
+	_flicker_apply(level);
+}
+
+void Light3D::_flicker_update_processing() {
+	set_process_internal(flicker_mode != FLICKER_NONE && is_inside_tree() && is_visible_in_tree());
+}
+
+void Light3D::set_flicker_mode(FlickerMode p_mode) {
+	if (flicker_mode == p_mode) {
+		return;
+	}
+	flicker_mode = p_mode;
+	_flicker_reset();
+	_flicker_apply(1.0, true);
+	_flicker_update_processing();
+	notify_property_list_changed();
+}
+
+Light3D::FlickerMode Light3D::get_flicker_mode() const {
+	return flicker_mode;
+}
+
+void Light3D::set_flicker_pattern(const String &p_pattern) {
+	flicker_pattern = p_pattern;
+}
+
+String Light3D::get_flicker_pattern() const {
+	return flicker_pattern;
+}
+
+void Light3D::set_flicker_rate(float p_rate) {
+	flicker_rate = MAX(p_rate, 0.001f);
+}
+
+float Light3D::get_flicker_rate() const {
+	return flicker_rate;
+}
+
+void Light3D::set_flicker_seed(uint32_t p_seed) {
+	flicker_seed = p_seed;
+	_flicker_reset();
+}
+
+uint32_t Light3D::get_flicker_seed() const {
+	return flicker_seed;
+}
+
+void Light3D::set_flicker_failure(float p_failure) {
+	flicker_failure = CLAMP(p_failure, 0.0f, 1.0f);
+}
+
+float Light3D::get_flicker_failure() const {
+	return flicker_failure;
+}
+
+void Light3D::set_flicker_material(const Ref<Material> &p_material) {
+	Ref<BaseMaterial3D> old = flicker_material;
+	if (old.is_valid()) {
+		old->set_emission_energy_multiplier(flicker_material_energy);
+	}
+	flicker_material = p_material;
+	Ref<BaseMaterial3D> bm = flicker_material;
+	if (bm.is_valid()) {
+		flicker_material_energy = bm->get_emission_energy_multiplier();
+		bm->set_emission_energy_multiplier(flicker_material_energy * flicker_level);
+	}
+}
+
+Ref<Material> Light3D::get_flicker_material() const {
+	return flicker_material;
+}
+
+float Light3D::get_flicker_level() const {
+	return flicker_level;
 }
 
 void Light3D::set_editor_only(bool p_editor_only) {
@@ -353,6 +540,12 @@ void Light3D::_validate_property(PropertyInfo &p_property) const {
 		p_property.usage = PROPERTY_USAGE_NONE;
 	} else if (get_light_type() == RSE::LIGHT_AREA && p_property.name == "light_projector") {
 		p_property.usage = PROPERTY_USAGE_NONE;
+	} else if ((p_property.name == "flicker_pattern" || p_property.name == "flicker_rate") && flicker_mode != FLICKER_PATTERN) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+	} else if ((p_property.name == "flicker_seed" || p_property.name == "flicker_failure") && flicker_mode != FLICKER_FAILING) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+	} else if (p_property.name == "flicker_material" && flicker_mode == FLICKER_NONE) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
 }
 
@@ -406,6 +599,21 @@ void Light3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_temperature"), &Light3D::get_temperature);
 	ClassDB::bind_method(D_METHOD("get_correlated_color"), &Light3D::get_correlated_color);
 
+	ClassDB::bind_method(D_METHOD("set_flicker_mode", "mode"), &Light3D::set_flicker_mode);
+	ClassDB::bind_method(D_METHOD("get_flicker_mode"), &Light3D::get_flicker_mode);
+	ClassDB::bind_method(D_METHOD("set_flicker_pattern", "pattern"), &Light3D::set_flicker_pattern);
+	ClassDB::bind_method(D_METHOD("get_flicker_pattern"), &Light3D::get_flicker_pattern);
+	ClassDB::bind_method(D_METHOD("set_flicker_rate", "rate"), &Light3D::set_flicker_rate);
+	ClassDB::bind_method(D_METHOD("get_flicker_rate"), &Light3D::get_flicker_rate);
+	ClassDB::bind_method(D_METHOD("set_flicker_seed", "seed"), &Light3D::set_flicker_seed);
+	ClassDB::bind_method(D_METHOD("get_flicker_seed"), &Light3D::get_flicker_seed);
+	ClassDB::bind_method(D_METHOD("set_flicker_failure", "failure"), &Light3D::set_flicker_failure);
+	ClassDB::bind_method(D_METHOD("get_flicker_failure"), &Light3D::get_flicker_failure);
+	ClassDB::bind_method(D_METHOD("set_flicker_material", "material"), &Light3D::set_flicker_material);
+	ClassDB::bind_method(D_METHOD("get_flicker_material"), &Light3D::get_flicker_material);
+	ClassDB::bind_method(D_METHOD("get_flicker_level"), &Light3D::get_flicker_level);
+	ClassDB::bind_method(D_METHOD("advance_flicker", "seconds"), &Light3D::advance_flicker);
+
 	ADD_GROUP("Light", "light_");
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "light_intensity_lumens", PROPERTY_HINT_RANGE, "0,100000.0,0.01,or_greater,suffix:lm"), "set_param", "get_param", PARAM_INTENSITY);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "light_intensity_lux", PROPERTY_HINT_RANGE, "0,150000.0,0.01,or_greater,suffix:lx"), "set_param", "get_param", PARAM_INTENSITY);
@@ -440,6 +648,14 @@ void Light3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "distance_fade_shadow", PROPERTY_HINT_RANGE, "0.0,4096.0,0.01,or_greater,suffix:m"), "set_distance_fade_shadow", "get_distance_fade_shadow");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "distance_fade_length", PROPERTY_HINT_RANGE, "0.0,4096.0,0.01,or_greater,suffix:m"), "set_distance_fade_length", "get_distance_fade_length");
 
+	ADD_GROUP("Flicker", "flicker_");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "flicker_mode", PROPERTY_HINT_ENUM, "None,Pattern,Failing"), "set_flicker_mode", "get_flicker_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::STRING, "flicker_pattern"), "set_flicker_pattern", "get_flicker_pattern");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flicker_rate", PROPERTY_HINT_RANGE, "0.1,60,0.1,suffix:Hz"), "set_flicker_rate", "get_flicker_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "flicker_seed", PROPERTY_HINT_RANGE, "0,65535,1,or_greater"), "set_flicker_seed", "get_flicker_seed");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flicker_failure", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_flicker_failure", "get_flicker_failure");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "flicker_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D"), "set_flicker_material", "get_flicker_material");
+
 	ADD_GROUP("Editor", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "editor_only"), "set_editor_only", "is_editor_only");
 
@@ -471,6 +687,10 @@ void Light3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(BAKE_DISABLED);
 	BIND_ENUM_CONSTANT(BAKE_STATIC);
 	BIND_ENUM_CONSTANT(BAKE_DYNAMIC);
+
+	BIND_ENUM_CONSTANT(FLICKER_NONE);
+	BIND_ENUM_CONSTANT(FLICKER_PATTERN);
+	BIND_ENUM_CONSTANT(FLICKER_FAILING);
 }
 
 Light3D::Light3D(RSE::LightType p_type) {

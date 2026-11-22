@@ -597,7 +597,7 @@ float lake_effect_at(const float *p_field, int p_n, Vector2 p_corner, float p_si
 	// Rolls wander across the wind and break along it every 20 km or so.
 	const float rolls = 0.5f + 0.5f * Math::cos(float(Math::TAU) * across / lambda + 6.0f * (value_noise(Vector2(along / 20000.0f, across / (2.0f * lambda))) - 0.5f));
 	const float band = smoothstep(0.7f, 0.97f, v[1]);
-	const float pattern = Math::lerp(band, rolls, p_params.y) + 0.25f * (value_noise(p_xz / 6000.0f + Vector2(17.3f, 5.1f)) - 0.5f);
+	const float pattern = Math::lerp(band, rolls, float(p_params.y)) + 0.25f * (value_noise(p_xz / 6000.0f + Vector2(17.3f, 5.1f)) - 0.5f);
 	return grow * smoothstep(0.4f, 0.8f, pattern);
 }
 
@@ -612,8 +612,10 @@ float storm_column_type(const State &p_state, Vector2 p_xz) {
 	float t = 0.0f;
 	for (int i = 0; i < p_state.storm_count; i++) {
 		const float *s = p_state.storms[i];
-		const Vector2 ac = Vector2(s[0], s[1]) + p_state.high_dir * (3.2f * s[2]);
-		t = MAX(t, s[3] * (1.0f - smoothstep(5.0f, 5.6f, (p_xz - ac).length() / s[2])));
+		// The body's radius as storm_body_at() takes it, so the anvil's whole reach is in the tall column.
+		const float r = MAX(s[2], 0.3f * top_height(p_state, 1.0f) * s[3] * Math::lerp(0.45f, 1.0f, smoothstep(-10.0f, 20.0f, p_state.air_t0)));
+		const Vector2 ac = Vector2(s[0], s[1]) + p_state.high_dir * (3.2f * r);
+		t = MAX(t, s[3] * (1.0f - smoothstep(5.0f, 5.6f, (p_xz - ac).length() / r)));
 	}
 	return t;
 }
@@ -791,7 +793,7 @@ float cells_at(const State &p_state, const Vector3 &p_pos, float p_base, Vector2
 			const float lowc = 1.0f - smoothstep(0.2f, 0.3f, p_ct.x);
 			if (lowc > 0.0f && present > draw - 0.15f) {
 				const Vector2 cc = (Vector2(cx, cz) + Vector2(0.5f, 0.5f)) * cell + p_state.drift;
-				pres = Math::lerp(present, cover_type_at(p_state, cc).x * (p_state.evolve >= 0.0f ? 2.9f : 2.2f), lowc);
+				pres = Math::lerp(present, float(cover_type_at(p_state, cc).x) * (p_state.evolve >= 0.0f ? 2.9f : 2.2f), lowc);
 			}
 			const float keep = CLAMP((pres - draw) * 4.0f, 0.0f, 1.0f);
 			if (keep <= 0.0f) {
@@ -1155,12 +1157,16 @@ float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, fl
 		// its tropopause lower: from 45% of the full height at -10 C to all of it at 20 C.
 		const float cold = Math::lerp(0.45f, 1.0f, smoothstep(-10.0f, 20.0f, p_state.air_t0));
 		const float hgt = top_height(p_state, 1.0f) * s[3] * cold;
+		// The body's radius: the storm's core radius (its rain and outflow), but no less than 0.3 of its height. A
+		// mature cumulonimbus is about as wide as it is tall (5 to 15 km; Houze 2014, ch. 8); a small core under a full
+		// 12 km column stood as a thin stem under a round cap, a mushroom cloud.
+		const float r = MAX(s[2], 0.3f * hgt);
 		const Vector2 d = xz - Vector2(s[0], s[1]);
-		const float a = d.dot(dir) / s[2];
-		const float c = (d.x * -dir.y + d.y * dir.x) / s[2];
+		const float a = d.dot(dir) / r;
+		const float c = (d.x * -dir.y + d.y * dir.x) / r;
 		// The tower.
 		const float hh = (p_pos.y - p_base) / hgt;
-		const float ax = (d - dir * (s[2] * 0.3f * hh * hh)).length() / s[2];
+		const float ax = (d - dir * (r * 0.3f * hh * hh)).length() / r;
 		// The single cells give way over the whole updraft region and its inflow (about three radii), so the tower
 		// stands alone above its flanking cloud instead of hidden in a crowd of congestus as tall as itself.
 		near = MAX(near, (1.0f - smoothstep(2.6f, 3.8f, ax)) * s[3]);
@@ -1168,7 +1174,7 @@ float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, fl
 		float k = 1.0f;
 		if (hh > 0.0f && hh < 1.0f && ax < 2.4f) {
 			// Hard outlines (the last fifth of each bubble): a wide soft rim let the erosion bore through into foam.
-			e = storm_tower(d - dir * (s[2] * 0.3f * hh * hh), p_pos.y - p_base, s[2], hgt, p_noise, i);
+			e = storm_tower(d - dir * (r * 0.3f * hh * hh), p_pos.y - p_base, r, hgt, p_noise, i);
 		}
 		// The anvil: smaller in cold air (a shallow winter storm's outflow spreads less), so it does not shade the
 		// whole tower.
@@ -1261,7 +1267,9 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	}
 	const Vector2 ct = cover_type_at(p_state, Vector2(p_pos.x, p_pos.z));
 	const float eff = p_state.effector_count > 0 ? effector_at(p_state, p_pos) : 0.0f;
-	if (ct.x <= 0.001f && eff <= 0.0f) {
+	// A storm's anvil spreads far past the low cover round its core (several core radii downwind): the cover alone
+	// cut it to a round cap over the tower.
+	if (ct.x <= 0.001f && eff <= 0.0f && (p_state.storm_count == 0 || storm_column_type(p_state, Vector2(p_pos.x, p_pos.z)) <= 0.0f)) {
 		return 0.0f;
 	}
 	// Under a storm's anvil the column reaches the storm's height for its body only; the single cells keep their own
@@ -1352,7 +1360,7 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	}
 	// Frostbite's measured extinction: stratus about 0.04, cumulus up to 0.1 per metre; a fair sky's clouds a
 	// little lighter than a deck's.
-	return shape * Math::lerp(0.4f, 1.0f, ct.x) * Math::lerp(0.04f, 0.1f, ct.y) * p_state.density;
+	return shape * Math::lerp(0.4f, 1.0f, float(ct.x)) * Math::lerp(0.04f, 0.1f, float(ct.y)) * p_state.density;
 }
 
 const Vector<float> &shape_noise() {
@@ -1627,16 +1635,17 @@ float wc_storm_body(vec3 p, float b, float n, float p_step, out float r_near, ou
 		}
 		float cold = mix(0.45, 1.0, smoothstep(-10.0, 20.0, cloud_air.x)); // shallower in cold air (storm_body_at() on the CPU)
 		float hgt = wc_top_height(1.0) * s.w * cold;
+		float r = max(s.z, 0.3 * hgt); // the body no narrower than 0.6 of its height (storm_body_at() on the CPU)
 		vec2 d = p.xz - s.xy;
-		float a = dot(d, dir) / s.z;
-		float c = (d.x * -dir.y + d.y * dir.x) / s.z;
+		float a = dot(d, dir) / r;
+		float c = (d.x * -dir.y + d.y * dir.x) / r;
 		float hh = (p.y - b) / hgt;
-		float ax = length(d - dir * (s.z * 0.3 * hh * hh)) / s.z;
+		float ax = length(d - dir * (r * 0.3 * hh * hh)) / r;
 		r_near = max(r_near, (1.0 - smoothstep(2.6, 3.8, ax)) * s.w);
 		float e = 0.0;
 		float k = 1.0;
 		if (hh > 0.0 && hh < 1.0 && ax < 2.4) {
-			e = wc_storm_tower(d - dir * (s.z * 0.3 * hh * hh), p.y - b, s.z, hgt, n, i);
+			e = wc_storm_tower(d - dir * (r * 0.3 * hh * hh), p.y - b, r, hgt, n, i);
 		}
 		float a_s = a / cold;
 		if (a > -2.0 && a_s < 7.5) {
@@ -1770,7 +1779,8 @@ float wc_storm_column(vec2 xz) {
 			break;
 		}
 		vec4 s = cloud_storms[i];
-		t = max(t, s.w * (1.0 - smoothstep(5.0, 5.6, length(xz - s.xy - cloud_high_dir * (3.2 * s.z)) / s.z)));
+		float r = max(s.z, 0.3 * wc_top_height(1.0) * s.w * mix(0.45, 1.0, smoothstep(-10.0, 20.0, cloud_air.x))); // as wc_storm_body()
+		t = max(t, s.w * (1.0 - smoothstep(5.0, 5.6, length(xz - s.xy - cloud_high_dir * (3.2 * r)) / r)));
 	}
 	return t;
 }
@@ -2121,7 +2131,8 @@ float wc_cells(vec3 p, float b0, vec2 ct, float p_warp, out float r_hh, out vec4
 float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_profile) {
 	r_profile = 0.0;
 	vec3 p_unsheared = p;
-	if (ct.x <= 0.001 && (cloud_effector_count == 0 || wc_effector(p) <= 0.0)) {
+	// The anvil reaches past the low cover round the core (extinction_at() on the CPU).
+	if (ct.x <= 0.001 && (cloud_effector_count == 0 || wc_effector(p) <= 0.0) && (cloud_storm_count == 0 || wc_storm_column(p.xz) <= 0.0)) {
 		return 0.0;
 	}
 	float b0 = wc_base_at(p.xz);

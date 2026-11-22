@@ -662,6 +662,9 @@ public:
 	// grass_ground_opened(xz): what the ground's ruts, digs and puddles do to plants there (mud round 5): x lays them
 	// flat, y takes them away, z the ground's drop (m). Shared with PlantGenerator's plant shader.
 	static String get_ground_opened_shader_code();
+	// The camera cut-out round the player (BaseMaterial3D.get_camera_cutout_shader_code()) put into a vegetation shader:
+	// its functions before the first function and, first in every fragment(), the discard outside the shadow pass.
+	static String add_camera_cutout(const String &p_code);
 
 	void set_trample_enabled(bool p_enabled);
 	bool is_trample_enabled() const { return trample_enabled; }
