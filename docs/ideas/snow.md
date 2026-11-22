@@ -1804,6 +1804,14 @@ bedforms by Kochanski et al. 2019 and Filhol and Sturm 2015:
 Drifts then reach Tabler's equilibrium profile on loose snow, migrate as snow dunes and barchans, and are taken back
 where the supply runs out or the wind turns. Cost: one FFT pair per cover update on the near square (64-256 cells).
 
+Reuse, not a second copy: `TerrainDuneSea` (modules/terrain_deform/terrain_dunes.h, the desert dunes) already has
+Kroy's shear, tau = 1 + A (H[h'] + B h'), as a direct-sum Hilbert transform along the wind (reach 32 cells) on a slope
+smoothed by 1-2-1 passes (the saturation length), with slides that move only the excess over the repose. Its
+begin_shear/shear_rows are members on a wrapping grid: split them into a static helper (heights in, shear out,
+wrap optional) that the dune sea and the snow cover both call, and drive the snow's transport weight with it. The
+ground's sand (GroundSurface3D) has Nishimori and Ouchi ripples and a saturation-length flux for dune grass, at
+centimetre and metre scale, not this runaway.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
