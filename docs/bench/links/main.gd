@@ -944,9 +944,11 @@ func _lee_drift_tests() -> void:
 	snow.drift_obstacles = false
 	snow.advance(6.0 * 3600.0)
 	var lee_off: float = snow.get_depth_at(Vector3(4, 0, 5)) - lee_d
+	var foot_off: float = snow.get_depth_at(Vector3(2.5, 0, 5)) - foot_d
 	var open_off: float = snow.get_depth_at(Vector3(-15, 0, 5)) - open_d
-	# The drift's wind-packed surface (a wind slab) holds against the wind, so it need not shrink; it stops growing.
-	_check("lee: drift_obstacles off, the drift is no longer fed (it grows less than the open snow)", lee_off < 0.25 * open_off and open_off > 0.05, "%.1f cm 2 H behind it, %.1f cm in the open over 6 more hours" % [lee_off * 100.0, open_off * 100.0])
+	# The wind sees the drift's own relief (SnowCover3D drift_relief): unsheltered, its crest is taken back while snow
+	# still falls in the open.
+	_check("lee: drift_obstacles off, the drift is no longer fed and the wind takes its crest back", foot_off < 0.0 and lee_off < 0.5 * open_off and open_off > 0.05, "%.1f cm at its foot, %.1f cm 2 H behind it, %.1f cm in the open over 6 more hours" % [foot_off * 100.0, lee_off * 100.0, open_off * 100.0])
 	WorldContracts.clear_overrides()
 	snow.queue_free()
 	wall.queue_free()
