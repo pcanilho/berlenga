@@ -305,6 +305,7 @@ func _ready() -> void:
 	await _orographic_tests()
 	await _cold_pool_tests()
 	await _rime_tests()
+	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -2180,6 +2181,20 @@ func _rime_tests() -> void:
 	_check("rime: off, none", w.rime_at(at) == Vector3(), "")
 	m.queue_free()
 	await get_tree().physics_frame
+
+
+# The drawn ground's relief over the heightfield (WorldGround.relief_at): nothing with no producer, a stub's answer
+# with one (Landscape3D fills it from its cliff and bank relief).
+func _relief_contract_tests() -> void:
+	WorldContracts.clear_overrides()
+	var none: Vector2 = WorldContracts.get_ground().relief_at(Vector3(10, 0, 10))
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _relief_at(p: Vector3) -> Vector2:\n\treturn Vector2(0.25, 0.8) if p.x > 0.0 else Vector2()\n"
+	stub.reload()
+	WorldContracts.set_ground(stub.new())
+	var r: Vector2 = WorldContracts.get_ground().relief_at(Vector3(10, 0, 10))
+	WorldContracts.clear_overrides()
+	_check("relief contract: (0, 0) with no producer, a stub's relief with one", none == Vector2() and r.is_equal_approx(Vector2(0.25, 0.8)), "none %s, stub %s" % [none, r])
 
 
 # Salt bloom on the terrain's sea cliffs: a rock wall (TerrainMaterial3D, steep faces are rock) under the spray's salt

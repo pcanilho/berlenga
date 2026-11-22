@@ -83,6 +83,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_stand_rect", "vec4" },
 		// Landscape3D's cliff relief for the ground patch drawn over it (metres, landscape origin).
 		{ "terrain_cliff_relief", "vec4" },
+		// The drawn ground's relief over the heightfield for GPU placers (WorldGround.relief_at): R height m, G share.
+		{ "terrain_relief_map", "sampler2D" },
+		{ "terrain_relief_rect", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {
