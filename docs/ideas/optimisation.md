@@ -320,3 +320,35 @@ Sources: [Indiana Jones PT](https://developer.nvidia.com/blog/path-tracing-optim
 [ReSTIR PT Enhanced](https://research.nvidia.com/labs/rtr/publication/lin2026restirptenhanced/),
 [SER whitepaper](https://developer.nvidia.cn/sites/default/files/akamai/gameworks/ser-whitepaper.pdf),
 [Megakernels Considered Harmful](https://research.nvidia.com/node/2737).
+
+## Path tracer warm-up across launches: the pipeline cache never settled
+
+Seen on the PC: the Vulkan pipeline cache file grew on every launch (780, 793, 808 MB), and the path tracer could still
+be waiting 30 s after loading on the second launch of a build (236 surfaces waiting), though ready by the third.
+
+Both pipeline steps already go through the cache: each material's hit-group library and the final link
+(`rendering_device_driver_vulkan.cpp`, `vkCreateRayTracingPipelinesKHR` with `pipelines_cache.vk_cache`). The SPIR-V
+is cached on disk too (`RaytracingSPIRV`). What changed between launches was the key of the link. Hit-group slots were
+numbered in the order materials registered, and that follows threaded loading, so the link's group order (and its
+cache key) differed every launch: a miss, and one more entry in the file.
+
+Fix (exact image: a slot index only picks the shader binding table record, the shading is the same):
+`scene_shader_raytracing.cpp` keeps the slot order on disk (`RaytracingSPIRV/hit_group_slots.txt`, this launch's
+materials in slot order, written once nothing is building and at exit). At start-up those slots are held for their
+materials, and a material takes its held slot when it registers. A launch into the same scenes then links the same
+groups in the same order, and the link hits the cache. Held slots that no material takes this launch are left empty and
+dropped from the next file, so the list does not grow without bound.
+
+Proof (lavapipe, a copy of rt_memory with five shader materials added in a chosen order, radiance cache off): old build
+forward and reversed order, new build with no file, with last launch's file and the materials arriving reversed, and
+reversed from cold: all byte-identical, and the file kept last launch's order when they arrived reversed. Same with
+async compilation on (old and new identical to each other). Pre-existing, cloud only: with async compilation on,
+lavapipe aborts at exit and the frame differs from the synchronous one, on the old build as well.
+
+How the fork engine's cost of a project's scripts was found, for any project: time each call in the project's main
+`_process` and in what it calls (a wrapper around each statement with `Time.get_ticks_usec()`), headless, on the scene
+that the PC's frame profile flags. A once-per-frame layout of thousands of `MultiMesh.set_instance_transform` calls,
+redone even when nothing moved, cost about 8 ms on the PC. Laid only when its inputs change, and handed over as one
+`MultiMesh.buffer` per MultiMesh, it fell to well under 1 ms with identical instance data. Engine candidate from it:
+none needed (`MultiMesh.buffer` is the bulk path); worth a line in the docs that per-instance calls in a loop are the
+slow path.
