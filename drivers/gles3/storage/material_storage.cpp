@@ -1299,6 +1299,7 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["IN_SHADOW_PASS"] = "IN_SHADOW_PASS";
 		actions.renames["PREVIOUS_FRAME"] = "false";
 		actions.renames["IN_PATH_TRACER"] = "false";
+		actions.renames["IN_ANY_HIT"] = "false";
 		actions.renames["VIEWPORT_SIZE"] = "scene_data_block.data.viewport_size";
 
 		actions.renames["FRAGCOORD"] = "gl_FragCoord";

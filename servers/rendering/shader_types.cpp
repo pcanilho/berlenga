@@ -96,6 +96,8 @@ ShaderTypes::ShaderTypes() {
 	// True while the vertex function runs a second time for last frame's position (motion vectors).
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["PREVIOUS_FRAME"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["IN_PATH_TRACER"] = constt(ShaderLanguage::TYPE_BOOL);
+	// True in the path tracer's any-hit pass, which reads only the coverage and the light let through.
+	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["IN_ANY_HIT"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["PI"] = constvt(ShaderLanguage::TYPE_FLOAT, { pi_scalar });
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["TAU"] = constvt(ShaderLanguage::TYPE_FLOAT, { tau_scalar });
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["E"] = constvt(ShaderLanguage::TYPE_FLOAT, { e_scalar });

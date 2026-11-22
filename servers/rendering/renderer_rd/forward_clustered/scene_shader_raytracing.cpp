@@ -2316,6 +2316,7 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["IN_SHADOW_PASS"] = "rt_in_shadow_pass";
 		actions.renames["PREVIOUS_FRAME"] = "false";
 		actions.renames["IN_PATH_TRACER"] = "true";
+		actions.renames["IN_ANY_HIT"] = "rt_in_any_hit"; // raytracing_custom_globals_inc.glsl
 		actions.renames["FRONT_FACING"] = "rt_front_facing";
 		actions.renames["RAY_IS_PRIMARY"] = "rt_ray_is_primary(payload.packed_bounces_flags)";
 		actions.renames["RAY_IS_SHADOW"] = "is_shadow_ray(payload.packed_bounces_flags)";

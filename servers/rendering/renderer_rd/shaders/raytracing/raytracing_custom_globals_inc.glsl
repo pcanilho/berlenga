@@ -10,6 +10,13 @@ layout(buffer_reference, std140) readonly buffer CustomMaterialUniforms{
 // texture #defines, and fragment_globals functions can all access them.
 // Assigned to real hit values in main() before use.
 CustomMaterialUniforms material = CustomMaterialUniforms(uint64_t(0));
+// IN_ANY_HIT: a constant, so the compiler drops the branch the stage never takes (a material can keep its any-hit
+// pass to the coverage and the light let through, the shading left to the closest hit).
+#ifdef RT_STAGE_ANY_HIT
+const bool rt_in_any_hit = true;
+#else
+const bool rt_in_any_hit = false;
+#endif
 MaterialData rt_mat; // Assigned in main() before rt_run_fragment_shader() is called.
 vec3 vertex = vec3(0.0);
 vec3 normal = vec3(0.0, 0.0, 1.0);
