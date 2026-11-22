@@ -716,6 +716,7 @@ public:
 
 		bool uses_projector = false;
 		bool uses_softshadow = false;
+		bool shadow_budget_kept = false; // held a shadow under the budget last frame (hysteresis)
 
 		HashSet<Instance *> geometries;
 

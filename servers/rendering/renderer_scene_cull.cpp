@@ -3861,7 +3861,9 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 					continue;
 				}
 				const float coverage = _light_screen_coverage(ins, p_camera_data);
-				const float importance = coverage * MAX(RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_ENERGY), 0.0f);
+				// A light that held its shadow last frame counts as half again as important, so two lights near the
+				// budget's edge, or a flickering one, don't trade the shadow back and forth each frame.
+				const float importance = coverage * MAX(RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_ENERGY), 0.0f) * (light->shadow_budget_kept ? 1.5f : 1.0f);
 				positional_shadow_order.push_back({ importance, coverage, i });
 			}
 			positional_shadow_order.sort_custom<PositionalShadowOrder>();
@@ -3872,7 +3874,8 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 			const float coverage = positional_shadow_order[k].coverage;
 			Instance *ins = scene_cull_result.lights[i];
 			InstanceLightData *light = static_cast<InstanceLightData *>(ins->base_data);
-			if (max_shadowed > 0 && k >= uint32_t(max_shadowed)) {
+			light->shadow_budget_kept = max_shadowed <= 0 || k < uint32_t(max_shadowed);
+			if (!light->shadow_budget_kept) {
 				RSG::light_storage->shadow_atlas_release_light(p_shadow_atlas, light->instance);
 				continue;
 			}

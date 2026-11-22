@@ -3218,6 +3218,7 @@ func _shadow_budget_tests() -> void:
 	floor_mi.material_override = white
 	root.add_child(floor_mi)
 	var spots := []
+	var lamps := []
 	for k in 2:
 		var x := -5.0 if k == 0 else 5.0
 		var post := MeshInstance3D.new()
@@ -3233,6 +3234,7 @@ func _shadow_budget_tests() -> void:
 		lamp.light_energy = 4.0 if k == 0 else 1.0
 		lamp.shadow_enabled = true
 		root.add_child(lamp)
+		lamps.append(lamp)
 		spots.append(Vector3(x, 0.0, 1.6))
 	var cam := Camera3D.new()
 	cam.position = Vector3(0, 12, 10)
@@ -3252,12 +3254,26 @@ func _shadow_budget_tests() -> void:
 			var lit := _face_luminance(img, cam, spots[k] + Vector3(2.0, 0, 0))
 			row.append(shade / maxf(lit, 1e-4))
 		res.append(row)
+	# Hysteresis: the dim lamp a little brighter than the holder doesn't take the shadow; far brighter, it does.
+	var swap := []
+	for e in [4.8, 9.0]:
+		lamps[1].light_energy = e
+		for i in 10:
+			await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var row := []
+		for k in 2:
+			row.append(_face_luminance(img, cam, spots[k]) / maxf(_face_luminance(img, cam, spots[k] + Vector3(2.0, 0, 0)), 1e-4))
+		swap.append(row)
 	ProjectSettings.set_setting("rendering/lights_and_shadows/positional_shadow/max_shadowed_lights", 0)
 	root.queue_free()
 	await get_tree().process_frame
 	_check("shadow budget: with room for one shadow the brighter lamp keeps it and the dimmer one gives it up; no budget, both shadow",
 			res[0][0] < 0.85 and res[0][1] < 0.85 and absf(res[1][0] - res[0][0]) < 0.05 and res[1][1] > res[0][1] + 0.2,
 			"shadow over lit floor: no budget bright %.2f dim %.2f; budget 1 bright %.2f dim %.2f" % [res[0][0], res[0][1], res[1][0], res[1][1]])
+	_check("shadow budget: the lamp holding the shadow keeps it until another is clearly more important",
+			swap[0][0] < res[1][1] - 0.2 and swap[0][1] > swap[0][0] + 0.2 and swap[1][1] < swap[1][0] - 0.2,
+			"1.2x: holder %.2f other %.2f; 2.25x: holder %.2f other %.2f" % [swap[0][0], swap[0][1], swap[1][0], swap[1][1]])
 
 
 func _centre_luminance(img: Image) -> float:
