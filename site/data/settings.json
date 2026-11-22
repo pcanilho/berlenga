@@ -4,7 +4,9 @@
    "name": "rendering/pathtracing/async_shader_compilation",
    "type": "bool",
    "default": "true",
-   "about": "If `true`, path tracing ray hit shaders are compiled asynchronously in the background."
+   "about": "If `true`, path tracing ray hit shaders are compiled asynchronously in the background.",
+   "page": "other",
+   "title": "Other"
   },
   {
    "name": "rendering/pathtracing/debug_heatmap_max_ticks",
@@ -5002,6 +5004,17 @@
    "what": "",
    "page": "open-worlds",
    "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Shaders compile in the background",
+   "settings": [
+    "rendering/pathtracing/async_shader_compilation"
+   ],
+   "note": "",
+   "what": "path tracing draws a surface with the default material while its own shader compiles, instead of leaving it out.",
+   "page": "other",
+   "title": "Other",
    "topic": ""
   }
  ]
