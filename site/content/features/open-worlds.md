@@ -13,6 +13,7 @@ Target: tens of thousands of objects over kilometres, mostly static.
 - **Opacity micromaps** (`rendering/pathtracing/opacity_micromaps`): cut-out foliage traced without any-hit shaders.
 - **Mesh LOD in the path tracer** (`rendering/pathtracing/mesh_lod`).
 - **Compacted ray tracing structures** (`rendering/rendering_device/acceleration_structure/compaction`): static acceleration structures shrink in video memory after they are built.
+- **Texture streaming** (`rendering/textures/streaming/enabled`): mip levels stream in by what is on screen within a memory budget, and path traced reflections and bounces keep the mips they need.
 
 Settings for a large world, in `project.godot`:
 
