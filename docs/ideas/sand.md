@@ -1061,3 +1061,23 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   the look and the PT pair go on the PC queue, where a scout takes seconds.
 - Not yet: the swirl mark left on the ripples, GroundStreamers3D taking the grains at the foot, the PT cost on the
   PC queue.
+
+## Next sand candidates, round 2 (research, 22 Nov 2026; on a card)
+
+- **Haboob dust walls** (recommended). A thunderstorm's cold outflow (the gust front) spreads along the ground and
+  lifts loose dust into a wall 1 to 3 km high and tens of km wide, moving at 10 to 25 m/s, its head a rolling,
+  lobed density current (Sutton 1925; Idso et al. 1972; Miller et al. 2008, "Haboob dust storms of the southern
+  Arabian Peninsula"; Knippertz and Todd 2012). Visibility drops under 1 km, the light turns orange to brown.
+  Built on what exists: WeatherMap3D storms already blow a downburst outflow (Oseguera and Bowles 1988); the dust
+  source is WorldGround blown_sand_at times the outflow's friction speed over threshold (GroundRipples
+  saltation_flux, Shao's vertical dust flux ~ q x clay share); the far wall as a WeatherMap3D dust layer (like
+  smoke_at: column load g/m2 riding the outflow front, washed out by the storm's rain) that the sky, haze and sun
+  visibility read; near the camera, PhysX Flow billows at the front's head (lobes and clefts, Simpson 1997). Large.
+- **Nebkhas round shrubs.** Shrubs slow the wind in their lee and trap blown sand into mounds with tails
+  downwind (shadow dunes; Hesp 1981; Tengberg 1995; Lancaster and Baas 1998). Read the vegetation's shelter
+  (WeatherMap3D shelter boxes / WorldCanopy) in the dune and ripple transport (GroundSurface3D shelter flux
+  already relaxes to the drag partition), deposit the excess as a mound under the crown and a tail of length
+  ~ 5 to 10 crown heights. Medium.
+- **Devil tracks and grains.** Finish the devils: the swirl scours a faint curved track across the ripples (the
+  lag left darker, Balme et al. 2003 for Mars, faint on Earth) through the near-field ripple map, and
+  GroundStreamers3D grains streaming in at the foot. Small.
