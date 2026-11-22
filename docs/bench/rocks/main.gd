@@ -34,6 +34,7 @@ extends Node3D
 #                         (--dist m upstream, 2.5); --no-streams turns cave_streams off
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
+#                         --downstream from below a dam, looking up at its downstream face; --low a grazing view
 #   --sea-cave-pick=first with --sea-caves: the finder's best site, not the one facing the sun most (frames only)
 #   --sea-cave-near=x,z with --sea-caves: the site nearest that point (a frame keeps its cave when the sun turns)
 #   --no-refine           with --cave-mesh and --cam: the chunks round the camera stay on the coarse grid
@@ -1286,37 +1287,62 @@ func _caves(cam: Camera3D) -> void:
 				var pc := pos
 				var best_k := -1
 				var best_c := 0
-				var best_score := -1.0
+				var order: Array = []
+				var near_n: Array = []
 				for k in pools_v.size():
 					var n_near := 0
 					for k2 in pools_v.size():
 						if (pools_v[k2]["center"] as Vector3).distance_to(pools_v[k]["center"]) < 3.0:
 							n_near += 1
+					near_n.append(n_near)
 					var rr := 0.0
 					for v in (pools_v[k]["outline"] as PackedVector2Array):
 						rr += v.length() / 32.0
-					var score: float = float(pools_v[k]["depth"]) * rr * (1.0 + 0.3 * n_near)
-					if score > best_score:
-						best_score = score
-						best_c = n_near
-						best_k = k
-				if best_k >= 0:
-					pc = pools_v[best_k]["center"]
+					order.append([float(pools_v[k]["depth"]) * rr * (1.0 + 0.3 * n_near), k])
+				order.sort_custom(func(x, y): return x[0] > y[0])
+				# Best pool first; a pool in a passage too low to stand the camera in (no air round it) is passed over, or the
+				# camera and lamp end up inside the rock and the frame is black.
 				var eye_r := pc + Vector3(0.9, 1.3, 0.6)
-				var best_air_r := -1.0
-				seed(11)
-				for ii in 400:
-					var cand := pc + Vector3(randf_range(-3, 3), randf_range(0.25, 0.45) if args.has("low") else randf_range(0.8, 1.8), randf_range(-3, 3))
-					var dd := Vector2(cand.x - pc.x, cand.z - pc.z).length()
-					if dd < float(args.get("dist", "1.6")) * 0.8 or dd > float(args.get("dist", "1.6")) * 1.3:
-						continue
-					var air := -net.get_rock_distance(cand)
-					if air > 0.25 and minf(air, 1.0) > best_air_r:
-						best_air_r = minf(air, 1.0)
-						eye_r = cand
+				var dist_r := float(args.get("dist", "1.6"))
+				for ord_k in order:
+					var k: int = ord_k[1]
+					var pk: Vector3 = pools_v[k]["center"]
+					var best_air_r := -1.0
+					var eye_k := pk + Vector3(0.9, 1.3, 0.6)
+					# --downstream: from below the pool's dam, looking back up at its downstream face (toward the nearest lower pool).
+					var down_k := Vector2.ZERO
+					if args.has("downstream"):
+						var dn_best := 1e9
+						for k3 in pools_v.size():
+							var p3: Vector3 = pools_v[k3]["center"]
+							var d3 := Vector2(p3.x - pk.x, p3.z - pk.z).length()
+							if k3 != k and p3.y < pk.y - 0.01 and d3 < 4.0 and d3 < dn_best:
+								dn_best = d3
+								down_k = Vector2(p3.x - pk.x, p3.z - pk.z).normalized()
+						if down_k == Vector2.ZERO:
+							continue
+					seed(11)
+					for ii in 400:
+						var cand := pk + Vector3(randf_range(-3, 3), randf_range(0.25, 0.45) if args.has("low") else randf_range(0.8, 1.8), randf_range(-3, 3))
+						var dd := Vector2(cand.x - pk.x, cand.z - pk.z).length()
+						if dd < dist_r * 0.8 or dd > dist_r * 1.3:
+							continue
+						if down_k != Vector2.ZERO and Vector2(cand.x - pk.x, cand.z - pk.z).dot(down_k) < 0.7 * dd:
+							continue
+						var air := -net.get_rock_distance(cand)
+						if air > 0.25 and minf(air, 1.0) > best_air_r:
+							best_air_r = minf(air, 1.0)
+							eye_k = cand
+					if best_k < 0 or best_air_r > 0.0:
+						best_k = k
+						best_c = near_n[k]
+						pc = pk
+						eye_r = eye_k
+					if best_air_r > 0.0:
+						break
 				cam.position = eye_r
 				# --low: a grazing view across the pool, so it mirrors the roof and its stalactites beyond.
-				cam.look_at(pc + (Vector3(pc.x - eye_r.x, 0, pc.z - eye_r.z).normalized() * 1.5 + Vector3(0, 0.15, 0) if args.has("low") else Vector3.ZERO))
+				cam.look_at(pc + (Vector3(pc.x - eye_r.x, 0, pc.z - eye_r.z).normalized() * 1.5 + Vector3(0, 0.15, 0) if args.has("low") and not args.has("downstream") else Vector3.ZERO))
 				cam.fov = 60.0
 				var lamp_r := OmniLight3D.new()
 				lamp_r.omni_range = 14.0
