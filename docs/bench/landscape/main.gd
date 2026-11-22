@@ -893,6 +893,8 @@ func _ready() -> void:
 			await _rooting_tyre()
 	if args.has("gully-cam"):
 		_gully_cam()
+	if args.has("dust-devil") and ClassDB.class_exists("PhysXDustDevils3D"):
+		await _dust_devil()
 	if args.has("rime-ridge"):
 		await _rime_ridge()
 	if args.has("lodging"):
@@ -7337,6 +7339,33 @@ func _gully_cam() -> void:
 	var tgt := found - down * 4.0
 	c3.look_at(Vector3(tgt.x, height_at(tgt.x, tgt.z), tgt.z))
 	_log("gully cam: gully %s (score %.2f, channel %s), cam %s" % [str(found.round()), best, str(gen.get_gully_at(found, 0.85)), str(cp.round())])
+
+
+func _dust_devil() -> void:
+	# --dust-devil[=S]: one dust devil (PhysXDustDevils3D, sand 1f249588; it stirs the shared wind, 41dbafbc) spawned
+	# --devil-ahead (30) m in front of the camera, upwind of the frame's centre so it drifts across, then S (4) s run
+	# before the frames (a --clip). --devil-radius (3) m, --devil-swirl (10) m/s.
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var dd: Node3D = ClassDB.instantiate("PhysXDustDevils3D")
+	dd.name = "DustDevils"
+	dd.set("frequency", 0.0)
+	add_child(dd)
+	dd.set("follow_target", dd.get_path_to(c3))
+	for i in 60:
+		await get_tree().physics_frame
+	var f := -c3.global_basis.z
+	f.y = 0.0
+	f = f.normalized()
+	var w := Vector3(weather.wind_direction.x, 0, weather.wind_direction.y).normalized()
+	var secs := float(args["dust-devil"]) if String(args["dust-devil"]) != "" else 4.0
+	var at := c3.global_position + f * float(args.get("devil-ahead", "30")) - w * weather.wind_speed * 0.7 * secs
+	at.y = height_at(at.x, at.z)
+	var idx: int = dd.call("spawn", at, float(args.get("devil-radius", "3")), float(args.get("devil-swirl", "10")))
+	var t := 0.0
+	while t < secs:
+		await get_tree().physics_frame
+		t += get_physics_process_delta_time()
+	_log("dust devil: spawned %d at %s, %d running after %.1f s" % [idx, str(at.round()), int(dd.call("get_devil_count")), secs])
 
 
 func _rime_ridge() -> void:
