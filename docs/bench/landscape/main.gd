@@ -889,6 +889,8 @@ func _ready() -> void:
 		_stand_trail()
 		if args.has("rooting-tyre") and prints != null:
 			await _rooting_tyre()
+	if args.has("lodging"):
+		await _lodging()
 	if args.has("lens-cam"):
 		await _lens_cam()
 	if args.has("sea-effect"):
@@ -7201,6 +7203,36 @@ func _spindrift_cam() -> void:
 	for i in int(args.get("sd-frames", "90")):
 		await get_tree().process_frame
 	_log("spindrift: %d sources, %.1f kg/s, strongest at %s (rate %.2f), cam %s %.0f m downwind, wind %s %.0f m/s, sun %.1f deg" % [srcs.size(), float(snow.call("get_spindrift_rate")), str(src.round()), float(srcs[0]["rate"]), str(cp.round()), d, str(weather.wind_direction), weather.wind_speed, rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+
+
+func _lodging() -> void:
+	# --lodging[=H]: H (1) hours of a wet summer gale (--lodge-wind 18 m/s at 10 m, --lodge-rain 15 mm/h) from behind
+	# the camera's left over every GrassField3D (GrassField3D.lodging, vegetation 2b052f8e): the tall grass laid down in
+	# swirled patches along the wind. Then the rain stops and the wind drops to --wind for the shot.
+	var hrs := float(args["lodging"]) if String(args["lodging"]) != "" else 1.0
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var f := -c3.global_basis.z
+	var wd := Vector3(f.x, 0, f.z).normalized().rotated(Vector3.UP, deg_to_rad(float(args.get("lodge-yaw", "30"))))
+	var keep := [weather.wind_speed, weather.rain_rate, weather.cloud_cover]
+	weather.wind_direction = Vector2(wd.x, wd.z)
+	weather.wind_speed = float(args.get("lodge-wind", "18"))
+	weather.rain_rate = float(args.get("lodge-rain", "15"))
+	weather.cloud_cover = 0.95
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	var n := 0
+	for g in find_children("*", "GrassField3D", true, false):
+		if g.has_method("advance_lodging"):
+			g.call("advance_lodging", hrs * 3600.0)
+			n += 1
+	weather.wind_speed = keep[0]
+	weather.rain_rate = 0.0
+	weather.cloud_cover = keep[2]
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	var probe := c3.global_position + Vector3(f.x, 0, f.z).normalized() * 8.0
+	var lv: Vector3 = grass.call("get_lodging_at", probe) if grass != null and grass.has_method("get_lodging_at") else Vector3()
+	_log("lodging: %.1f h of gale over %d grass fields, lodging at 8 m %s" % [hrs, n, str(lv)])
 
 
 func _lens_cam() -> void:
