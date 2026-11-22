@@ -714,6 +714,9 @@ void GroundSurface3D::_update_cells() {
 			}
 			const bool wet = water_coupling && (int)pore.size() == n * n && (pore[i] > 0.0f || water_speed[i] > 0.0f);
 			in.mud = in.fixed ? 0.0f : _mud_depth_at(p, wet ? MAX(in.moisture, pore[i]) : in.moisture, sand > 0.5f, dmap);
+			// A peat bog (round 24.2) is a root mat over peat, not a mud layer.
+			in.bog = peat_bogs && !in.fixed && sand < 0.5f ? _peat_bog_at(p, moisture, dmap) * (1.0f - 2.0f * sand) : 0.0f;
+			in.mud *= 1.0f - in.bog;
 			if (mud_layer && sand < 0.5f && thaw_top > 0.0f) {
 				in.mud = MAX(in.mud, thaw_top);
 			}
@@ -728,6 +731,39 @@ void GroundSurface3D::_update_cells() {
 				in.litter *= 1.0f - Math::smoothstep(0.002f, 0.01f, silt);
 			}
 			Cell c = wet ? material_cell(in.sand, in.moisture, in.litter, pore[i], water_speed[i], in.mud) : material_cell(in.sand, in.moisture, in.litter, -1.0f, 0.0f, in.mud);
+			if (in.bog > 0.0f) {
+				// Peat bog (round 24.2): a fibrous root mat of sphagnum and sedge roots over a metre of soft, saturated
+				// peat (Radforth's muskeg; MacFarlane 1969). Wong's muskeg model, p = (k_p + 4 m_m / D_h) z: the mat's
+				// term rides on Bekker's kc / b with n 1, m_m 45 kN/m2 (kc 180), k_p 300 kN/m3; it holds a light car
+				// (about 9 cm) and tears past 12 cm (bevameter breaks at 8 to 14 cm, Massah and Noorolahi 2010) under
+				// a truck of a few tonnes. The peat under it: no mat term, a fifth of the stiffness, undrained
+				// strength about 4 kPa with little friction. Little clay in it to stick to tyres.
+				const float b = CLAMP(in.bog, 0.0f, 1.0f);
+				auto lerp_log = [](float a, float bb, float t) { return Math::exp(Math::lerp(Math::log(MAX(a, 1e-3f)), Math::log(MAX(bb, 1e-3f)), t)); };
+				c.torn_kc = Math::lerp(c.wheel_kc, 0.0f, b);
+				c.torn_kphi = lerp_log(c.wheel_kphi, 60.0f, b);
+				c.torn_cohesion = Math::lerp(c.cohesion, 4.0f, b);
+				c.torn_tan_phi = Math::lerp(c.tan_phi, 0.1f, b);
+				c.n = Math::lerp(c.n, 1.0f, b);
+				c.kc = Math::lerp(c.kc, 180.0f, b);
+				c.kphi = lerp_log(c.kphi, 300.0f, b);
+				c.wheel_n = Math::lerp(c.wheel_n, 1.0f, b);
+				c.wheel_kc = Math::lerp(c.wheel_kc, 180.0f, b);
+				c.wheel_kphi = lerp_log(c.wheel_kphi, 300.0f, b);
+				c.cohesion = Math::lerp(c.cohesion, 8.0f, b);
+				c.tan_phi = Math::lerp(c.tan_phi, 0.3f, b);
+				c.shear_k = Math::lerp(c.shear_k, 0.05f, b);
+				c.unit_weight = Math::lerp(c.unit_weight, 10.5f, b);
+				c.max_dent = Math::lerp(c.max_dent, 0.8f, b);
+				c.rim_share = Math::lerp(c.rim_share, 0.85f, b);
+				c.tan_repose = Math::lerp(c.tan_repose, Math::tan(Math::deg_to_rad(50.0f)), b);
+				c.rate = lerp_log(c.rate, 1.0f / 900.0f, b);
+				c.stickiness *= 1.0f - 0.8f * b;
+				c.adhesion *= 1.0f - 0.8f * b;
+				c.darken = Math::lerp(c.darken, 0.35f, b);
+				c.bog = b;
+			}
+			// The peat's depth over the mineral base varies as any layer's does.
 			c.max_dent *= _subsoil_factor(p.x, p.z);
 			// It came to rest as a body of grains: once its pore pressure drops it holds its snout and levees at
 			// their friction angle, some 30 to 35 degrees (Iverson 1997, Major and Iverson 1999), and does not slide
@@ -764,6 +800,9 @@ void GroundSurface3D::_update_cells() {
 				c.kphi *= k;
 				c.wheel_kc *= k;
 				c.wheel_kphi *= k;
+				c.torn_kc *= k;
+				c.torn_kphi *= k;
+				c.torn_cohesion += 200.0f * in.frozen;
 				c.cohesion += 200.0f * in.frozen;
 				c.max_dent *= 1.0f - in.frozen;
 				c.rate *= 1.0f - in.frozen;
@@ -1575,6 +1614,101 @@ float GroundSurface3D::get_seal_at(Vector3 p_position) const {
 	return w ? w->seal : 0.0f;
 }
 
+// Peat bogs (round 24.2). Peat builds up where the ground stays waterlogged: flat ground where water gathers (a high
+// topographic wetness index, Beven and Kirkby 1979, as the mud layer reads it) under a slope of a few degrees. Bogs are
+// patches, not every wet hollow: one in three 24 m squares holds one, at a hashed place, 6 to 11 m across its middle
+// with a wobbled, irregular edge so no two are alike. Without a terrain data map a fixed ground moisture (the moisture
+// property, not the weather) stands in for the wetness index.
+float GroundSurface3D::_peat_bog_at(const Vector3 &p_position, float p_moisture, const Node *p_data_map) const {
+	float wet = 0.0f;
+	if (const TerrainDataMap3D *dm = Object::cast_to<TerrainDataMap3D>(p_data_map)) {
+		const float twi = dm->get_wetness_at(p_position);
+		const float slope = dm->get_slope_at(p_position);
+		wet = Math::smoothstep(11.0f, 14.0f, twi) * (1.0f - Math::smoothstep(Math::deg_to_rad(2.0f), Math::deg_to_rad(5.0f), slope));
+	} else if (p_moisture >= 0.0f) {
+		// A scene's own fixed wetness, never the weather's: a wet week does not grow a bog.
+		wet = Math::smoothstep(0.8f, 0.9f, p_moisture);
+	}
+	if (wet <= 0.0f) {
+		return 0.0f;
+	}
+	const float sq = 24.0f;
+	const int gx = int(Math::floor(p_position.x / sq));
+	const int gz = int(Math::floor(p_position.z / sq));
+	float share = 0.0f;
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			uint32_t h = hash_murmur3_one_32(uint32_t(gx + dx), 0x9e7b0b5u);
+			h = hash_fmix32(hash_murmur3_one_32(uint32_t(gz + dz), h));
+			if (h % 3u != 0u) {
+				continue;
+			}
+			const uint32_t h2 = hash_fmix32(h + 0x68e31da4u);
+			const float u1 = float(h2 & 0xffu) / 255.0f;
+			const float u2 = float((h2 >> 8) & 0xffu) / 255.0f;
+			const float u3 = float((h2 >> 16) & 0xffu) / 255.0f;
+			const float u4 = float((h2 >> 24) & 0xffu) / 255.0f;
+			const Vector2 centre((float(gx + dx) + 0.25f + 0.5f * u1) * sq, (float(gz + dz) + 0.25f + 0.5f * u2) * sq);
+			const Vector2 d = Vector2(p_position.x, p_position.z) - centre;
+			const float a = Math::atan2(d.y, d.x);
+			const float r = (6.0f + 5.0f * u3) * (1.0f + 0.18f * Math::sin(3.0f * a + 6.28f * u4) + 0.1f * Math::sin(5.0f * a + 6.28f * u1 * u3) + 0.06f * Math::sin(7.0f * a + 6.28f * u2));
+			share = MAX(share, 1.0f - Math::smoothstep(r - 2.0f, r + 1.0f, (float)d.length()));
+		}
+	}
+	return wet * share;
+}
+
+float GroundSurface3D::_mat_torn_at(const Vector3 &p_position) const {
+	const Wear *w = wear_cells.getptr(Vector2i(int(Math::floor(p_position.x / WEAR_CELL)), int(Math::floor(p_position.z / WEAR_CELL))));
+	return w ? w->torn : 0.0f;
+}
+
+Vector2 GroundSurface3D::get_peat_bog_at(Vector3 p_position) const {
+	if (!field.valid) {
+		return Vector2();
+	}
+	return Vector2(_cell_at(p_position.x, p_position.z).bog, _mat_torn_at(p_position));
+}
+
+void GroundSurface3D::set_peat_bogs(bool p_enabled) {
+	if (peat_bogs == p_enabled) {
+		return;
+	}
+	peat_bogs = p_enabled;
+	if (ground_valid) {
+		_update_cells();
+	}
+}
+
+void GroundSurface3D::tear_mat(Vector3 p_position, Vector2 p_size, float p_yaw) {
+	if (!peat_bogs || _cell_at(p_position.x, p_position.z).bog <= 0.05f) {
+		return;
+	}
+	const Vector2 half = p_size * 0.5f;
+	const float r = half.length();
+	const Vector2 ax(Math::cos(p_yaw), -Math::sin(p_yaw));
+	const Vector2 az(Math::sin(p_yaw), Math::cos(p_yaw));
+	bool fresh = false;
+	for (int z = int(Math::floor((p_position.z - r) / WEAR_CELL)); z <= int(Math::floor((p_position.z + r) / WEAR_CELL)); z++) {
+		for (int x = int(Math::floor((p_position.x - r) / WEAR_CELL)); x <= int(Math::floor((p_position.x + r) / WEAR_CELL)); x++) {
+			const Vector2 d((x + 0.5f) * WEAR_CELL - p_position.x, (z + 0.5f) * WEAR_CELL - p_position.z);
+			if (Math::abs(d.dot(ax)) > half.x + 0.5f * WEAR_CELL || Math::abs(d.dot(az)) > half.y + 0.5f * WEAR_CELL) {
+				continue;
+			}
+			Wear &w = wear_cells[Vector2i(x, z)];
+			if (w.torn < 0.5f) {
+				fresh = true;
+			}
+			w.torn = 1.0f;
+			w.last = MAX(w.last, wear_clock);
+		}
+	}
+	if (fresh) {
+		mat_tears++;
+		wear_dirty = true;
+	}
+}
+
 void GroundSurface3D::_seal_add(const Vector3 &p_position, float p_radius, float p_amount) {
 	for (int z = int(Math::floor((p_position.z - p_radius) / WEAR_CELL)); z <= int(Math::floor((p_position.z + p_radius) / WEAR_CELL)); z++) {
 		for (int x = int(Math::floor((p_position.x - p_radius) / WEAR_CELL)); x <= int(Math::floor((p_position.x + p_radius) / WEAR_CELL)); x++) {
@@ -1619,11 +1753,14 @@ void GroundSurface3D::_wear_update(double p_delta) {
 	// A puddled seal lasts the season (Sharma and De Datta 1985): it halves over 60 days of game time as drying
 	// cracks, frost and roots open the soil again.
 	const float keep_seal = Math::exp(-float(p_delta) * MAX(runoff_time_scale, 0.0f) * 0.69314718f / (60.0f * 86400.0f));
+	// A torn root mat (round 24.2) knits slowly: vehicle scars on peatland show for decades; it halves over 5 years.
+	const float keep_torn = Math::exp(-float(p_delta) * MAX(runoff_time_scale, 0.0f) * 0.69314718f / (5.0f * 365.0f * 86400.0f));
 	LocalVector<Vector2i> gone;
 	for (KeyValue<Vector2i, Wear> &kv : wear_cells) {
 		kv.value.passes *= keep;
 		kv.value.seal *= keep_seal;
-		if (kv.value.passes < 0.05f && kv.value.seal < 0.02f && wear_clock - kv.value.last > 1.0) {
+		kv.value.torn *= keep_torn;
+		if (kv.value.passes < 0.05f && kv.value.seal < 0.02f && kv.value.torn < 0.02f && wear_clock - kv.value.last > 1.0) {
 			gone.push_back(kv.key);
 		}
 	}
@@ -4984,7 +5121,79 @@ float GroundSurface3D::get_salt_crust_at(const Vector3 &p_position) const {
 
 float GroundSurface3D::get_ripple_show_at(const Vector3 &p_position) const {
 	const Cell &c = _cell_at(p_position.x, p_position.z);
-	return c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(p_position.x, p_position.z) : 0.0f;
+	return c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(p_position.x, p_position.z) * (1.0f - _scour_at(p_position.x, p_position.z)) : 0.0f;
+}
+
+void GroundSurface3D::add_scour(const Vector3 &p_position, float p_radius, float p_amount) {
+	if (p_radius <= 0.0f || p_amount <= 0.0f) {
+		return;
+	}
+	const int x0 = int(Math::floor(p_position.x - p_radius));
+	const int x1 = int(Math::floor(p_position.x + p_radius));
+	const int z0 = int(Math::floor(p_position.z - p_radius));
+	const int z1 = int(Math::floor(p_position.z + p_radius));
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const float r = Vector2(x + 0.5f - p_position.x, z + 0.5f - p_position.z).length() / p_radius;
+			const float a = MIN(p_amount, 1.0f) * (1.0f - Math::smoothstep(0.7f, 1.0f, r));
+			if (a <= 0.0f) {
+				continue;
+			}
+			float &v = scours[Vector2i(x, z)];
+			v = 1.0f - (1.0f - v) * (1.0f - a); // each pass sweeps its share of what is left
+		}
+	}
+}
+
+float GroundSurface3D::_scour_at(float p_x, float p_z) const {
+	if (scours.is_empty()) {
+		return 0.0f;
+	}
+	// Bilinear between the 1 m cells' middles.
+	const float fx = p_x - 0.5f;
+	const float fz = p_z - 0.5f;
+	const int x0 = int(Math::floor(fx));
+	const int z0 = int(Math::floor(fz));
+	const float ax = fx - x0;
+	const float az = fz - z0;
+	float v[4];
+	for (int k = 0; k < 4; k++) {
+		const float *e = scours.getptr(Vector2i(x0 + (k & 1), z0 + (k >> 1)));
+		v[k] = e ? *e : 0.0f;
+	}
+	return Math::lerp(Math::lerp(v[0], v[1], ax), Math::lerp(v[2], v[3], ax), az);
+}
+
+void GroundSurface3D::_scours_heal(float p_dt, float p_wind) {
+	if (scours.is_empty() || p_dt <= 0.0f) {
+		return;
+	}
+	// The ripples grow back as fast as saltation moves the sand: some ten minutes of a 10 m/s wind's flux. On the
+	// patch the ground's own flux (shelter, supply, crusts); past it the open flux of the wind.
+	const float q_ref = GroundRipples::saltation_flux(GroundRipples::friction_speed(10.0f));
+	const float q_open = GroundRipples::saltation_flux(GroundRipples::friction_speed(p_wind));
+	const int n = ground_n;
+	const bool lattice = ground_valid && (int)sand_flux.size() == n * n && n > 0;
+	const Vector2 center = Vector2(ground_origin.x + 0.5f * n, ground_origin.y + 0.5f * n) * ground_spacing;
+	LocalVector<Vector2i> gone;
+	for (KeyValue<Vector2i, float> &kv : scours) {
+		float q = q_open;
+		if (lattice) {
+			const int x = int(Math::round((kv.key.x + 0.5f) / ground_spacing)) - ground_origin.x;
+			const int z = int(Math::round((kv.key.y + 0.5f) / ground_spacing)) - ground_origin.y;
+			if (x >= 0 && z >= 0 && x < n && z < n) {
+				q = sand_flux[z * n + x];
+			}
+		}
+		kv.value *= Math::exp(-p_dt * q / (q_ref * 600.0f));
+		// Healed, or far past anywhere it could be seen.
+		if (kv.value < 0.01f || (lattice && Vector2(kv.key).distance_squared_to(center) > 1.0e6f)) {
+			gone.push_back(kv.key);
+		}
+	}
+	for (const Vector2i &k : gone) {
+		scours.erase(k);
+	}
 }
 
 float GroundSurface3D::_lattice_value(const LocalVector<float> &p_values, const Vector3 &p_position) const {
@@ -6100,7 +6309,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				const float z = (ripples.origin.y + bz + 0.5f * b) * ripples.cell;
 				const Cell &c = _cell_at(x, z);
 				const float m = c.deformable ? c.blown * _shelter_flux_at(x, z) * (1.0f - get_rain_crust()) : 0.0f; // a rain crust holds
-				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(x, z) : 0.0f;
+				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(x, z) * (1.0f - _scour_at(x, z)) : 0.0f;
 				for (int z2 = bz; z2 < MIN(bz + b, ripples.n); z2++) {
 					for (int x2 = bx; x2 < MIN(bx + b, ripples.n); x2++) {
 						ripples.mask[z2 * ripples.n + x2] = m;
@@ -6126,7 +6335,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				const float px = ripple_sand_rect.position.x + (x + 0.5f) * st;
 				const float pz = ripple_sand_rect.position.y + (z + 0.5f) * st;
 				const Cell &c = _cell_at(px, pz);
-				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) : 0.0f;
+				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) * (1.0f - _scour_at(px, pz)) : 0.0f;
 				ripple_sand_share[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
 				ripple_sand_blown[z * sn + x] = c.deformable ? c.blown : 0.0f;
 				ripple_sand_depth[z * sn + x] = sgen ? float(sgen->get_sand_interdune_at(Vector3(px, 0.0f, pz))) : -1.0f;
@@ -6763,6 +6972,7 @@ void GroundSurface3D::_notification(int p_what) {
 			wind_accum += delta;
 			if (wind_accum >= 0.5) {
 				_wind_update(wind_accum);
+				_scours_heal(float(wind_accum) * ripple_time_scale, _wind_10m().length());
 				wind_accum = 0.0;
 			}
 			if (swash_marks) {
@@ -6919,6 +7129,17 @@ GroundSoil GroundSurface3D::get_soil(Vector3 p_position) const {
 	soil.layered = subsoil;
 	soil.stickiness = c.stickiness;
 	soil.adhesion = c.adhesion;
+	if (c.bog > 0.05f) {
+		// A peat bog's root mat (round 24.2): it tears past 12 cm; where a load already tore it, the peat bears.
+		soil.mat_tear = 0.12f;
+		soil.torn_kc = c.torn_kc;
+		soil.torn_kphi = c.torn_kphi;
+		soil.torn_cohesion = c.torn_cohesion;
+		soil.torn_tan_phi = c.torn_tan_phi;
+		if (_mat_torn_at(p_position) > 0.5f) {
+			soil = GroundTerramechanics::torn_mat(soil);
+		}
+	}
 	return soil;
 }
 
@@ -8141,7 +8362,7 @@ void GroundSurface3D::_wear_save() {
 		return;
 	}
 	f->store_32(WEAR_MAGIC);
-	f->store_32(2);
+	f->store_32(3);
 	f->store_double(Time::get_singleton()->get_unix_time_from_system());
 	f->store_32(wear_cells.size());
 	for (const KeyValue<Vector2i, Wear> &kv : wear_cells) {
@@ -8149,6 +8370,7 @@ void GroundSurface3D::_wear_save() {
 		f->store_32(uint32_t(kv.key.y));
 		f->store_float(kv.value.passes);
 		f->store_float(kv.value.seal);
+		f->store_float(kv.value.torn);
 	}
 }
 
@@ -8398,13 +8620,14 @@ void GroundSurface3D::_wear_load() {
 		return;
 	}
 	const uint32_t version = f->get_32();
-	if (version != 1 && version != 2) {
+	if (version < 1 || version > 3) {
 		return;
 	}
 	const double when = f->get_double();
 	const double away = when > 0.0 ? MAX(Time::get_singleton()->get_unix_time_from_system() - when, 0.0) : 0.0;
 	const float keep = wear_regrowth_days > 0.0f ? float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (double(wear_regrowth_days) * 86400.0))) : 1.0f;
 	const float keep_seal = float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (60.0 * 86400.0)));
+	const float keep_torn = float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (5.0 * 365.0 * 86400.0)));
 	const uint32_t count = f->get_32();
 	for (uint32_t i = 0; i < count && !f->eof_reached(); i++) {
 		const int32_t kx = int32_t(f->get_32());
@@ -8412,12 +8635,14 @@ void GroundSurface3D::_wear_load() {
 		const Vector2i k(kx, kz);
 		const float passes = f->get_float() * keep;
 		const float seal = version >= 2 ? f->get_float() * keep_seal : 0.0f;
-		if (passes < 0.05f && seal < 0.02f) {
+		const float torn = version >= 3 ? f->get_float() * keep_torn : 0.0f;
+		if (passes < 0.05f && seal < 0.02f && torn < 0.02f) {
 			continue;
 		}
 		Wear &w = wear_cells[k];
 		w.passes = MAX(w.passes, passes);
 		w.seal = MAX(w.seal, seal);
+		w.torn = MAX(w.torn, torn);
 	}
 	wear_dirty = true;
 }
@@ -10255,6 +10480,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_lee_calm_ripples", "enabled"), &GroundSurface3D::set_lee_calm_ripples);
 	ClassDB::bind_method(D_METHOD("is_lee_calm_ripples"), &GroundSurface3D::is_lee_calm_ripples);
 	ClassDB::bind_method(D_METHOD("get_ripple_show_at", "position"), &GroundSurface3D::get_ripple_show_at);
+	ClassDB::bind_method(D_METHOD("add_scour", "position", "radius", "amount"), &GroundSurface3D::add_scour);
+	ClassDB::bind_method(D_METHOD("get_scour_at", "position"), &GroundSurface3D::get_scour_at);
+	ClassDB::bind_method(D_METHOD("clear_scours"), &GroundSurface3D::clear_scours);
 	ClassDB::bind_method(D_METHOD("is_wind_fills_prints"), &GroundSurface3D::is_wind_fills_prints);
 	ClassDB::bind_method(D_METHOD("get_sand_drift_rate"), &GroundSurface3D::get_sand_drift_rate);
 	ClassDB::bind_method(D_METHOD("set_rain_smoothing", "rate"), &GroundSurface3D::set_rain_smoothing);
@@ -10387,6 +10615,12 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wallow_count"), &GroundSurface3D::get_wallow_count);
 	ClassDB::bind_method(D_METHOD("get_seal_at", "position"), &GroundSurface3D::get_seal_at);
 	ClassDB::bind_method(D_METHOD("get_wallow_visits"), &GroundSurface3D::get_wallow_visits);
+	ClassDB::bind_method(D_METHOD("set_peat_bogs", "enabled"), &GroundSurface3D::set_peat_bogs);
+	ClassDB::bind_method(D_METHOD("is_peat_bogs"), &GroundSurface3D::is_peat_bogs);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "peat_bogs"), "set_peat_bogs", "is_peat_bogs");
+	ClassDB::bind_method(D_METHOD("get_peat_bog_at", "position"), &GroundSurface3D::get_peat_bog_at);
+	ClassDB::bind_method(D_METHOD("tear_mat", "position", "size", "yaw"), &GroundSurface3D::tear_mat);
+	ClassDB::bind_method(D_METHOD("get_mat_tear_count"), &GroundSurface3D::get_mat_tear_count);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");

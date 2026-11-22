@@ -40,6 +40,11 @@ func get_height(p: Vector3) -> float:
 			var t := clampf(-p.x, 0.0, 80.0) * tan(deg_to_rad(38.0))
 			t -= 4.0 * exp(-p.z * p.z / 400.0) * clampf(-p.x / 20.0, 0.0, 1.0)
 			return t - clampf((p.x - 2.0) * tan(deg_to_rad(25.0)), 0.0, 15.0)
+		"snowfield":
+			# A level snowfield 40 m across (the rut view), rolling ground beyond it rising into hills on the horizon.
+			var r := Vector2(p.x, p.z).length()
+			var rise := smoothstep(30.0, 260.0, r)
+			return rise * rise * 70.0 * (0.6 + 0.4 * noise.get_noise_2d(p.x * 0.7, p.z * 0.7)) + smoothstep(18.0, 60.0, r) * 2.0 * noise.get_noise_2d(p.x * 4.0, p.z * 4.0)
 		"meadow":
 			# Gentle ground with knee-high hummocks, for the trail view.
 			return 0.25 * noise.get_noise_2d(p.x * 30.0, p.z * 30.0) + 0.03 * p.x

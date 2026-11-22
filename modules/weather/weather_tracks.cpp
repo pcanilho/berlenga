@@ -155,7 +155,7 @@ void WeatherMap3D::_tracks_step(float p_real_dt) {
 						t->mud *= 1.0f - TRACK_TREAD_SHARE * (step.length() / k) / 0.15f;
 					}
 				}
-				t->load *= Math::pow(1.0f - TRACK_TREAD_SHARE, step.length() / 0.15f);
+				t->load *= Math::pow(1.0f - TRACK_TREAD_SHARE, float(step.length()) / 0.15f);
 			} else {
 				const Vector2 side(-dir.y, dir.x);
 				const Vector2 p = xz + side * (t->left ? 0.4f : -0.4f) * b.radius;

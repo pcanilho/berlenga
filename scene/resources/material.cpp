@@ -621,6 +621,14 @@ void BaseMaterial3D::init_shaders() {
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_precip_phase", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Its warm layer aloft (freezing rain): the nose's peak (C) and base (m above the ground).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_warm_nose", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// The camera cut-out round the player (get_camera_cutout_functions_code()): target and radius 0 = none.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/camera_cutout", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		{
+			Dictionary cut_floor;
+			cut_floor["type"] = "float";
+			cut_floor["value"] = 0.0;
+			GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/camera_cutout_floor", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), cut_floor);
+		}
 		// Its 10 m wind (get_surface_rain_functions_code(); the weather module declares it too).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_wind_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
@@ -1317,6 +1325,45 @@ void snow_glint_apply_specular(vec3 p_world_pos, vec3 p_geo_normal, float p_foot
 
 String BaseMaterial3D::get_wetness_shader_code() {
 	return get_wetness_functions_code(true);
+}
+
+// Camera cut-out (docs/ideas/engine-gaps-from-game.md, D): a soft hole through whatever stands between the camera and
+// the player, as top-down games cut walls and roofs away (Diablo IV, Baldur's Gate 3). The global camera_cutout holds
+// the player's chest (world) and the hole's radius (m; 0 = none), camera_cutout_floor the lowest height cut (the
+// player's feet, so the ground before them stays). A surface is cut inside the cylinder round the line from the camera
+// to the target (along the view for an orthographic camera), nearer than half a metre before the target, above the
+// floor, with soft edges drawn by an ordered dither that TAA and upscalers resolve into a smooth fade. Shadows keep the
+// cut geometry. The path tracer starts its camera rays past the same cut (scene_raytracing_raygen.glsl).
+String BaseMaterial3D::get_camera_cutout_functions_code() {
+	return R"(
+global uniform vec4 camera_cutout; // the target (world: the player's chest) and the hole's radius (m); 0 = none
+global uniform float camera_cutout_floor; // the lowest height cut (world m: the player's feet)
+
+// How far inside the cut a point is (0..1): the same lines as the path tracer's rt_cutout_weight().
+float camera_cutout_weight(vec3 p_world, vec3 p_target, vec3 p_axis, float p_radius, float p_floor) {
+	vec3 q = p_world - p_target;
+	float rel = dot(q, p_axis);
+	float d = length(q - p_axis * rel);
+	return (1.0 - smoothstep(0.7 * p_radius, p_radius, d)) * (1.0 - smoothstep(-1.5, -0.5, rel)) * smoothstep(p_floor, p_floor + 0.3, p_world.y);
+}
+
+bool camera_cutout_discard(vec3 p_world, mat4 p_inv_view, mat4 p_projection, vec2 p_frag) {
+	vec3 target = camera_cutout.xyz;
+	vec3 axis = p_projection[3][3] == 1.0 ? -p_inv_view[2].xyz : normalize(target - p_inv_view[3].xyz);
+	float w = camera_cutout_weight(p_world, target, normalize(axis), camera_cutout.w, camera_cutout_floor);
+	if (w <= 0.0) {
+		return false;
+	}
+	// A 4 x 4 Bayer threshold (Bayer 1973).
+	ivec2 b = ivec2(p_frag) & ivec2(3);
+	const float bayer[16] = float[](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+	return w > (bayer[b.y * 4 + b.x] + 0.5) / 16.0;
+}
+)";
+}
+
+String BaseMaterial3D::get_camera_cutout_shader_code() {
+	return get_camera_cutout_functions_code();
 }
 
 String BaseMaterial3D::get_surface_rain_shader_code() {
@@ -2596,9 +2643,22 @@ vec4 triplanar_texture(sampler2D p_sampler, vec3 p_weights, vec3 p_triplanar_pos
 )";
 	}
 
+	if (camera_cutout) {
+		code += get_camera_cutout_functions_code();
+	}
+
 	// Generate fragment shader.
 	code += R"(
 void fragment() {)";
+	// The camera cut-out (camera_cutout global): first, so nothing else runs where the surface is cut. The path
+	// tracer cuts the same materials: those whose code calls camera_cutout_discard().
+	if (camera_cutout) {
+		code += R"(
+	if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)) {
+		discard;
+	}
+)";
+	}
 
 	if (!flags[FLAG_UV1_USE_TRIPLANAR]) {
 		code += R"(
@@ -4913,6 +4973,18 @@ bool BaseMaterial3D::is_wetness_canopy() const {
 	return wetness_canopy;
 }
 
+void BaseMaterial3D::set_camera_cutout(bool p_enable) {
+	if (camera_cutout == p_enable) {
+		return;
+	}
+	camera_cutout = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_camera_cutout() const {
+	return camera_cutout;
+}
+
 void BaseMaterial3D::set_wetness_moving(bool p_enable) {
 	if (wetness_moving == p_enable) {
 		return;
@@ -6593,6 +6665,7 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_wetness_shader_code"), &BaseMaterial3D::get_wetness_shader_code);
 	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_snow_shader_code"), &BaseMaterial3D::get_snow_shader_code);
 	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_surface_rain_shader_code"), &BaseMaterial3D::get_surface_rain_shader_code);
+	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_camera_cutout_shader_code"), &BaseMaterial3D::get_camera_cutout_shader_code);
 	static_assert(sizeof(MaterialKey) == 16, "MaterialKey should be 16 bytes");
 
 	ClassDB::bind_method(D_METHOD("set_albedo", "albedo"), &BaseMaterial3D::set_albedo);
@@ -6725,6 +6798,8 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_wetness_from_weather"), &BaseMaterial3D::is_wetness_from_weather);
 	ClassDB::bind_method(D_METHOD("set_wetness_canopy", "enable"), &BaseMaterial3D::set_wetness_canopy);
 	ClassDB::bind_method(D_METHOD("is_wetness_canopy"), &BaseMaterial3D::is_wetness_canopy);
+	ClassDB::bind_method(D_METHOD("set_camera_cutout", "enable"), &BaseMaterial3D::set_camera_cutout);
+	ClassDB::bind_method(D_METHOD("is_camera_cutout"), &BaseMaterial3D::is_camera_cutout);
 	ClassDB::bind_method(D_METHOD("set_wetness_moving", "enable"), &BaseMaterial3D::set_wetness_moving);
 	ClassDB::bind_method(D_METHOD("is_wetness_moving"), &BaseMaterial3D::is_wetness_moving);
 	ClassDB::bind_method(D_METHOD("set_glaze", "enable"), &BaseMaterial3D::set_glaze);
@@ -7127,6 +7202,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "z_clip_scale", PROPERTY_HINT_RANGE, "0.01,1.0,0.01"), "set_z_clip_scale", "get_z_clip_scale");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "use_fov_override"), "set_flag", "get_flag", FLAG_USE_FOV_OVERRIDE);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fov_override", PROPERTY_HINT_RANGE, "1,179,0.1,degrees"), "set_fov_override", "get_fov_override");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "camera_cutout"), "set_camera_cutout", "is_camera_cutout");
 
 	ADD_GROUP("Proximity Fade", "proximity_fade_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "proximity_fade_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_proximity_fade_enabled", "is_proximity_fade_enabled");

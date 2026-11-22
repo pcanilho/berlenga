@@ -1472,6 +1472,34 @@ chains 9.7 kg, mud tyres 8.3 kg, road tyres none.
 prints and contact sit on the drawn bank (--test=relief). Float casts for 64-bit position builds (ground, vehicle,
 walker steps).
 
+#### Round 24 built (22 Nov)
+
+Picked 22 Nov: both, in order.
+
+**24.1 Sticky clay balls up on tyres.** Near its sticky limit clay sticks to clay better than to rubber or steel
+(Atterberg's sticky limit; Fountaine 1954 on soil-metal adhesion): once the tread is packed, each turn through sticky
+clay lays another skin on it, a few millimetres a turn at full slip, up to a smooth drum 6 cm thicker. The tyre rolls
+and is drawn that much larger, and its inertia grows with the cake. The cake goes when the tread turns past its own
+shedding speed, sqrt(ca r / (rho t)) for its thickness t, on firm ground and in water, and goes in chunks: what stays
+is lopsided by a random share of each loss, up to a quarter of it out of balance. That unbalance m e w^2 (rotor
+unbalance, ISO 21940) pulls the axle round with the wheel, so the truck shudders until it is spun clean.
+get_wheel_cake(), get_wheel_shudder(). Bench --test=balling: 15 s spinning in stiff clay balled 1.0 cm on; floored,
+it shed to nothing, shaking the axles at up to 5.7 kN on the way.
+
+**24.2 Peat bogs.** Muskeg (Radforth's classification; MacFarlane 1969) is a fibrous root mat over soft peat. Wong's
+model (Wong, Garber, Radforth and Dowell 1979; Wong, Radforth and Preston-Thomas 1982) gives p = (k_p + 4 m_m / D_h) z
+up to a critical sinkage, where the mat ruptures and the bearing drops to the peat's; bevameter tests put the break at
+8 to 14 cm (Massah and Noorolahi 2010). Here the mat's term rides on Bekker's kc / b (n 1, kc 180 = 4 m_m, k_p 300
+kN/m3), the break at 12 cm, the peat under it kc 0, kphi 60, 4 kPa, about 80 cm deep. A light car's wheel sits 9 cm
+down; a several-tonne truck's goes past 12 cm and tears through. The mat is a web of roots, so slipping does not dig
+it out, but a tyre spinning past a slip of 0.7 shreds it. Its fibres are viscous: a landing or a jolt passes, a load
+kept past the break for a quarter of a second tears it. Torn cells are kept with the wear (file v3), bear as peat for
+every later wheel and foot, and knit over years (half in 5). Bogs sit where water gathers on flat ground (a wetness
+index over 11 to 14 and under 2 to 5 degrees on the data map; waterlogged ground without one), one in three 24 m
+squares, 12 to 22 m across with wobbled edges. Peat is little sticky. peat_bogs, get_peat_bog_at(), tear_mat(),
+get_mat_tear_count(). Bench --test=peat: a 1.5 t car stayed on the mat at 10 cm; a 7 t truck tore it and dropped
+72 cm; a car's wheel in the torn rut sinks 57 cm against 9 cm on the mat.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

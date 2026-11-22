@@ -576,7 +576,7 @@ public:
 	void advance_years(float p_years);
 	// Changes, as WorldFire's burn changes (fire's are forwarded here too): signal stand_changed(area), a generation, and
 	// the union of the areas reported after a generation (false when the log no longer reaches back that far).
-	void stand_changed(const Rect2 &p_area);
+	void notify_stand_changed(const Rect2 &p_area);
 	uint64_t get_stand_generation() const { return generation; }
 	bool stand_changes_since(uint64_t p_since, Rect2 &r_area) const;
 	Dictionary get_stand_changes_since(uint64_t p_since) const;
@@ -763,7 +763,7 @@ public:
 	Vector2 relief_at(const Vector3 &p_position) const;
 	// A relief producer reports that the relief over an area changed (its heights streamed in at full resolution, its
 	// relief settings changed, it came or went): signal relief_changed(area), so placers lay what sits there again.
-	void relief_changed(const Rect2 &p_area);
+	void notify_relief_changed(const Rect2 &p_area);
 };
 
 // Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.

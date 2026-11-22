@@ -887,3 +887,34 @@ What changed from the design above, and why:
   depth (3 g/m2 to full), not a share of the largest column: with sand's heavier head that share eroded the wake and
   the dust over the ground near the camera away, so the ground under the wall showed through bare (sand's scout: its
   shadowed ground near black). The overlay's sun no longer counts SkyClock's dust dimming twice (atmo_sun_smoke).
+- 22 Nov, round 2: the erosion fades inward (strength times 1 - 0.7 shape): eroded as deeply inside, the top read as
+  holes punched into the dust rather than lobes standing out. The checker grain along the edges in earlier stills was
+  the bench's 24 frames (each 4x4 sky cell drawn about once); at 192 frames it converges.
+
+## Storm body: no mushroom cloud (22 Nov 2026)
+
+The haboob bench's storm (core radius 1.5 km, 12 km tall) stood as a thin stem under a round, flat cap: a mushroom
+cloud. Two causes. The body scaled with the core radius alone, so a small rain core made a narrow tower; a mature
+cumulonimbus is about as wide as it is tall (5 to 15 km; Houze 2014, ch. 8), so the body's radius is now the core
+radius or 0.3 of the height, whichever is larger (storm_body_at, wc_storm_body, and the tall column's reach,
+storm_column_type / wc_storm_column). And the extinction returned nothing where the low cover was zero, which the
+storm's cover gives only within a couple of core radii: the anvil, meant to fan out 7 radii downwind, was cut to a
+round cap over the tower. The early out now keeps the storm's column. Seen from the side the anvil now spreads
+downwind as a fan with billowed edges; raster and PT match.
+- Then the storm's cirrus shield: centred 2.5 core radii downwind with a 3-radius spread, it now lay under the wider
+  anvil as a streaked sheet, a collar round the tower. It now starts where the anvil body ends (4 to 6.5 body radii
+  downwind, centred at 7), so the anvil thins downwind into cirrus (Lilly 1988), as the shield over a real storm.
+
+## Sunset light on the mid and high layers (22 Nov 2026)
+
+- The altocumulus' sun past their neighbours: the rest of the path out of the slab toward the sun was taken at the
+  cloudlets' mean density, so a low sun's 7 km slant left every cloudlet dark. A broken layer passes light through
+  its gaps: per cloudlet spacing (700 m) 1 - c + c exp(-tau_cell), raised to the spacings crossed (binary-mixture
+  transport; Pomraning 1991, Barker and Davies 1992). Midday unchanged (within 1%).
+- Each layer's sun through the air above its own height: the sky handed every layer the low base's sun; the mid
+  (and wave) and high layers now take Bruneton's transmittance at their heights over the base's.
+- Measured at a 4 degree sun, the clouds still dim as much as the sky does. The rest is the bench, not the clouds:
+  its hand-set white sun lights the aerosol froxels (the first 1.5 km of haze, drawn over the sky in raster) at
+  full strength, a grey veil over a sunset sky; with the veil off over the sky raster matches PT (5th/50th/95th
+  percentile 21/31/49 against 22/30/47). The game drives the light from SkyClock (reddened, dimmed), as the haboob
+  view now does. PT has no froxels over the sky: it lacks that first 1.5 km of haze (small at a clear sky's 40 km).

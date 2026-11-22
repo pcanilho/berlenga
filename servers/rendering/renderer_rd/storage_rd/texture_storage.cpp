@@ -2131,15 +2131,15 @@ void TextureStorage::texture_replace_compatible(RID p_texture, RID p_by_texture)
 	// Replace RD-level textures: patches uniform sets and defers old resources.
 	if (old_rd_texture_srgb.is_valid() && old_rd_texture_srgb != new_rd_texture_srgb) {
 		if (new_rd_texture_srgb.is_valid()) {
+			BindlessBlock::texture_replaced(old_rd_texture_srgb, new_rd_texture_srgb); // First: see BindlessBlock.
 			RD::get_singleton()->texture_replace_rid(old_rd_texture_srgb, new_rd_texture_srgb);
-			BindlessBlock::texture_replaced(old_rd_texture_srgb, new_rd_texture_srgb);
 		} else {
 			RD::get_singleton()->free_rid(old_rd_texture_srgb);
 		}
 	}
 	if (old_rd_texture != new_rd_texture) {
+		BindlessBlock::texture_replaced(old_rd_texture, new_rd_texture); // The path tracer's texture table; first, see BindlessBlock.
 		RD::get_singleton()->texture_replace_rid(old_rd_texture, new_rd_texture);
-		BindlessBlock::texture_replaced(old_rd_texture, new_rd_texture); // The path tracer's texture table.
 	}
 
 	//delete last, so proxies can be updated

@@ -282,6 +282,12 @@ void GazeModifier3D::_process_modification(double p_delta) {
 	}
 }
 
+void GazeModifier3D::_skeleton_resumed() {
+	// Back after a spell unseen: start from the target, not from where the springs stopped.
+	reset();
+	SkeletonModifier3D::_skeleton_resumed();
+}
+
 void GazeModifier3D::reset() {
 	settled = false;
 	history.clear();

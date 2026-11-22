@@ -86,6 +86,7 @@ struct Settings {
 	float smoke_buoyancy = 0.0f; // per unit smoke: below 0, the smoke is heavier than air (dust)
 	float cooling_rate = 1.5f;
 	float smoke_fade = 0.65f;
+	float smoke_threshold = 0.02f; // a block holding less smoke than this is freed (Flow's summary allocation)
 	float smoke_damping = 0.3f; // share of the smoke lost per second (Flow's default), plus rain washout
 	float vorticity = 0.6f;
 	float ambient_wind[3] = { 0, 0, 0 }; // m/s: the air the gas is carried on (vorticity confinement weighs speed relative to it)

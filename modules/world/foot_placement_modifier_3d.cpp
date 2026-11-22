@@ -206,6 +206,17 @@ void FootPlacementModifier3D::_process_modification(double p_delta) {
 	const real_t dt = (real_t)MAX(p_delta, 0.0);
 	const Transform3D sk_global = skeleton->get_global_transform_interpolated();
 	const Transform3D sk_inverse = sk_global.affine_inverse();
+	// Placed somewhere else (more than a metre in one update): the feet start fresh there instead of
+	// gliding over from the old spot.
+	if (last_origin_valid && sk_global.origin.distance_to(last_origin) > (real_t)1.0) {
+		settled = false;
+		for (Leg &leg : legs) {
+			leg.locked = false;
+			leg.clip_prev_valid = false;
+		}
+	}
+	last_origin = sk_global.origin;
+	last_origin_valid = true;
 	const Vector3 up(0, 1, 0);
 	const real_t floor = sk_global.origin.y; // the clip stands on the model's origin
 	const Node3D *reference = Object::cast_to<Node3D>(get_node_or_null(reference_node));
@@ -359,8 +370,21 @@ void FootPlacementModifier3D::_notification(int p_what) {
 	}
 }
 
+void FootPlacementModifier3D::_skeleton_resumed() {
+	// Back after a spell unseen: plant afresh where the clip stands now (the ankle height learnt so far stays).
+	settled = false;
+	last_origin_valid = false;
+	for (Leg &leg : legs) {
+		leg.locked = false;
+		leg.planted = false;
+		leg.clip_prev_valid = false;
+	}
+	SkeletonModifier3D::_skeleton_resumed();
+}
+
 void FootPlacementModifier3D::reset() {
 	settled = false;
+	last_origin_valid = false;
 	for (Leg &leg : legs) {
 		leg.locked = false;
 		leg.planted = false;

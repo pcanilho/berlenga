@@ -30,7 +30,10 @@
 
 #pragma once
 
+#include "core/templates/local_vector.h"
 #include "scene/3d/visual_instance_3d.h"
+
+class Material;
 
 class Light3D : public VisualInstance3D {
 	GDCLASS(Light3D, VisualInstance3D);
@@ -67,6 +70,12 @@ public:
 		BAKE_DYNAMIC,
 	};
 
+	enum FlickerMode {
+		FLICKER_NONE,
+		FLICKER_PATTERN,
+		FLICKER_FAILING,
+	};
+
 private:
 	Color color;
 	real_t param[PARAM_MAX] = {};
@@ -87,6 +96,28 @@ private:
 	Ref<Texture2D> projector;
 	Color correlated_color = Color(1.0, 1.0, 1.0);
 	float temperature = 6500.0;
+
+	// Flicker: scales the energy sent to the server, never the stored param.
+	FlickerMode flicker_mode = FLICKER_NONE;
+	String flicker_pattern = "mmamammmmammamamaaamammma";
+	float flicker_rate = 10.0;
+	uint32_t flicker_seed = 0;
+	float flicker_failure = 0.5;
+	Ref<Material> flicker_material;
+	float flicker_material_energy = 1.0;
+	double flicker_time = 0.0;
+	float flicker_level = 1.0; // smoothed level last applied
+	// FAILING schedule: the current spell's end time and target level, from a seeded stream.
+	uint64_t flicker_rng_state = 0;
+	double flicker_spell_end = 0.0;
+	float flicker_spell_level = 1.0;
+	LocalVector<Vector2> flicker_spells; // (seconds, level) still to play
+	void _flicker_reset();
+	float _flicker_rand();
+	void _flicker_plan();
+	float _flicker_target(double p_time);
+	void _flicker_apply(float p_level, bool p_force = false);
+	void _flicker_update_processing();
 	// bind helpers
 
 	virtual void owner_changed_notify() override;
@@ -155,6 +186,21 @@ public:
 	float get_temperature() const;
 	Color get_correlated_color() const;
 
+	void set_flicker_mode(FlickerMode p_mode);
+	FlickerMode get_flicker_mode() const;
+	void set_flicker_pattern(const String &p_pattern);
+	String get_flicker_pattern() const;
+	void set_flicker_rate(float p_rate);
+	float get_flicker_rate() const;
+	void set_flicker_seed(uint32_t p_seed);
+	uint32_t get_flicker_seed() const;
+	void set_flicker_failure(float p_failure);
+	float get_flicker_failure() const;
+	void set_flicker_material(const Ref<Material> &p_material);
+	Ref<Material> get_flicker_material() const;
+	float get_flicker_level() const;
+	void advance_flicker(double p_seconds);
+
 	virtual AABB get_aabb() const override;
 	virtual PackedStringArray get_configuration_warnings() const override;
 
@@ -164,6 +210,7 @@ public:
 
 VARIANT_ENUM_CAST(Light3D::Param);
 VARIANT_ENUM_CAST(Light3D::BakeMode);
+VARIANT_ENUM_CAST(Light3D::FlickerMode);
 
 class DirectionalLight3D : public Light3D {
 	GDCLASS(DirectionalLight3D, Light3D);

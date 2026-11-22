@@ -226,6 +226,7 @@ private:
 	bool ground_detail_tiles = true; // tiles of piles: squares of settled grains drawn as reused tiles
 	uint64_t tile_stats[3] = {}; // tiles cut, placements, grains drawn by placements
 	mutable SafeNumeric<uint64_t> frost_stones; // ground detail placed by frost sorting
+	mutable SafeNumeric<uint64_t> runoff_stones[2]; // ground detail placed by storm runoff: channel lag, fan spread
 	mutable SafeNumeric<uint64_t> wear_stones[3]; // ground detail placed by worn ground: trail armour, shoulders, rooting
 	mutable SafeNumeric<uint64_t> tile_skips[5]; // squares left single: few grains or a hole, coarse stones, bent ground, no match, total
 	static bool _is_detail(int p_layer) { return p_layer >= LAYER_DETAIL_PEBBLE && p_layer <= LAYER_DETAIL_FINE; }
@@ -266,6 +267,7 @@ private:
 	bool detail_rivers = true; // ground detail on the river beds
 	bool ground_wear = true; // ground detail worn by game trails and turned by boar rooting (WorldStand)
 	bool frost_sorting = true; // frost-sorted circles and stripes of stones on cold, wet, gentle soil (WorldWeather climate)
+	bool runoff_gravel = true; // a coarse lag in the terrain's rill and gully floors, fine grains on their fans
 	Ref<ImageTexture> cover_tex[2];
 	Vector2 cover_origin[2];
 	bool cover_valid[2] = {};
@@ -853,6 +855,8 @@ public:
 	Dictionary get_react_stats() const;
 	bool is_ground_detail_rivers() const { return detail_rivers; }
 	void set_frost_sorting(bool p_enabled);
+	void set_runoff_gravel(bool p_enabled);
+	bool is_runoff_gravel() const { return runoff_gravel; }
 	bool is_frost_sorting() const { return frost_sorting; }
 	// How strongly the ground sorts at a point (0..1), and its stone share there (x: gate, y: share), for benches.
 	Vector2 get_frost_at(const Vector3 &p_position) const;

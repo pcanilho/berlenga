@@ -6,6 +6,56 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-9534e321 (2026-11-22)
+
+### Added
+- Camera cut-out: a soft dithered hole through walls, roofs and trees between the camera and the player, the same in the path tracer (global shader parameters `camera_cutout` and `camera_cutout_floor`, `BaseMaterial3D.get_camera_cutout_shader_code()`).
+- Positional shadows go to the most important lights first (energy times size on screen), so a full shadow atlas drops the least important; a budget caps how many keep shadows (project setting `rendering/lights_and_shadows/positional_shadow/max_shadowed_lights`, 0 = as many as fit).
+- Rain and snow haze near the camera falls in curtains carried by the wind and following the storm cells, lit by lamps and the sun, with the same mean haze (WeatherMap3D `rain_curtains`).
+- The water standing on a built surface, from the weather's pooled water on faces level enough to hold it, for materials and the path tracer alike (`weather_surface_puddle()`).
+- The rain a face catches, for materials and the path tracer alike: the vertical rain on faces that look up and the wind-driven rain on faces turned into the wind, with the wind's push on drops along the face (`BaseMaterial3D.get_surface_rain_shader_code()`, `weather_surface_rain()`).
+- Walls run with the rain the wind drives onto them, in streaks that lean with the wind, while lee walls stay drier; moving bodies blow their running water back (BaseMaterial3D `wetness_moving`, instance parameters `rain_slipstream` and `rain_wipe`; vehicles set it themselves).
+
+### Changed
+- Broadleaf leaves let through about as much light as they reflect, as measured leaves do: crowns seen from below glow green against the sky under path tracing instead of drawing near-black. Dead, frost-killed and turned leaves glow brown or yellow against the light.
+
+## build-ab7c0a22 (2026-11-22)
+
+### Added
+- Flow emitters' smoke joins the weather's regional smoke: a campfire's or chimney's smoke drifts past the Flow box and pools in valleys on calm nights (PhysXFlowEmitter3D `regional_smoke`).
+- Green alder (`TreeGenerator.PRESET_GREEN_ALDER`), the many-stemmed scrub of avalanche tracks, and snow-bent stems on steep slopes whose feet lie downslope before they rise (`cliff_sweep`); both take young avalanche tracks.
+- Avalanche survivors carry impact scars on the upslope face of the stem (`avalanche_scars`).
+- Foehn: a wind across a range comes down its lee warmer and drier, several K warmer after the windward side rains out, with a gap in the cloud over the lee (WeatherMap3D `foehn_winds`).
+- The rain a face catches, for materials and the path tracer alike: the vertical rain on faces that look up and the wind-driven rain on faces turned into the wind, with the wind's push on drops along the face (`BaseMaterial3D.get_surface_rain_shader_code()`, `weather_surface_rain()`).
+- Along-valley winds: valleys blow up-valley on sunny calm afternoons and down-valley on clear calm nights, a few m/s, carrying smoke and fog along them (WeatherMap3D `valley_winds`).
+- Walls run with the rain the wind drives onto them, in streaks that lean with the wind, while lee walls stay drier; moving bodies blow their running water back (BaseMaterial3D `wetness_moving`, instance parameters `rain_slipstream` and `rain_wipe`; vehicles set it themselves).
+
+### Fixed
+- A weather map or terrain generator that leaves the scene takes its shader maps with it, so ground drawn later no longer reads a freed map's wetness, spray, geology or sky.
+
+## build-47595e0b (2026-11-22)
+
+### Changed
+- Wind shear over dunes and snow drifts is computed about 3.5 times faster, with identical results.
+- Raindrop rings on water keep falling under freezing rain, raster and path traced (the GPU's rain share reads the warm layer aloft, `weather_warm_nose`).
+
+### Added
+- Flow emitters' smoke joins the weather's regional smoke: a campfire's or chimney's smoke drifts past the Flow box and pools in valleys on calm nights (PhysXFlowEmitter3D `regional_smoke`).
+- After an avalanche: in mountain stands, trees thrown down the fall line, snapped stumps, and survivors leaning downslope with their uphill limbs stripped, placed where the world records an avalanche (`TreeGenerator.SUCCESSION_AVALANCHE`, species meta `fall_downhill`).
+- Trees on cliffs: rooted in a crevice, the stem leaves the rock face and curves up to lean out, roots run over the face along its cracks, and one side of the crown dies back over a strip of dead bark (`TreeGenerator.cliff_angle`, `cliff_lean`, `cliff_dieback`).
+- Cliff yew over beech woods, Scots pine in montane conifers and hemlock in white pine-hemlock, on rock faces past 52 degrees.
+- Trees near the camera take the season where they stand: a late frost browns the new leaves in cold hollows, and high slopes leaf out later than the valley (`WorldWeather.season_at`, `TreeGenerator.near_season_band`).
+- Foehn: a wind across a range comes down its lee warmer and drier, several K warmer after the windward side rains out, with a gap in the cloud over the lee (WeatherMap3D `foehn_winds`).
+- Late frost: a spring air frost below about -2 C browns the young leaves of the species already out, first in the cold hollows, until a second flush replaces them weeks later (WeatherMap3D `late_frost`).
+- Sea and lake breezes: warm afternoons blow onshore a few m/s, reaching some 20 km inland, and cool nights blow a weaker land breeze off the shore (WeatherMap3D `sea_breezes`).
+- Smoke in cold pools: smoke let out on a clear calm night stays near the ground in the valleys, drains down the slopes, and mixes up after sunrise (WeatherMap3D `smoke_in_pools`, `WorldWeather.smoke_concentration_at`).
+- Day upslope winds: sunny calm afternoons run the air up slopes at 1 to 2 m/s, and fair-weather cumulus gathers over crests where they meet when the air is moist (WeatherMap3D `upslope_winds`).
+- Along-valley winds: valleys blow up-valley on sunny calm afternoons and down-valley on clear calm nights, a few m/s, carrying smoke and fog along them (WeatherMap3D `valley_winds`).
+
+### Fixed
+- The terrain material compiles again in projects without the far sun shadow globals defined (`terrain_sun_horizon_*` now registered with the others).
+- A weather map or terrain generator that leaves the scene takes its shader maps with it, so ground drawn later no longer reads a freed map's wetness, spray, geology or sky.
+
 ## build-ca985258 (2026-11-22)
 
 ### Changed

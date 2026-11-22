@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SodLipFall3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Breaks the sod lips along cut banks and drops them as rigid blocks.
+	</brief_description>
+	<description>
+		The turf lips a [VegetationField3D] stands along cut banks and scarps ([constant PlantGenerator.PRESET_TURF_LIP]) fail as overhanging cantilevers do: under a body standing on the overhang (a node of [member load_group]), as water at their foot cuts further under them ([method WorldWater.height_at] 0.6 m out over the drop between 0.7 m below the lip and its top; mean time [member undercut_time]), and when soaked in heavy rain ([WorldWeather] surface wetness over 0.8 and rain over 5 mm/h; mean time [member soaked_time]). Twice a second it looks at the lips within [member range] of the camera. A lip that fails is taken out of its field ([method VegetationField3D.add_plant_removal]) and falls as a [RigidBody3D] block of sod, tipping out over the drop about its edge.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="break_at">
+			<return type="bool" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Breaks the lip nearest [param position] within 1 m. Returns false if there is none.
+			</description>
+		</method>
+		<method name="check">
+			<return type="void" />
+			<param index="0" name="delta" type="float" />
+			<description>
+				One look over the lips now, [param delta] seconds since the last (the node does this every 0.5 s).
+			</description>
+		</method>
+		<method name="get_blocks" qualifiers="const">
+			<return type="Array" />
+			<description>
+				The fallen blocks still simulated, newest last.
+			</description>
+		</method>
+		<method name="get_fall_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many lips have broken.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="density" type="float" setter="set_density" getter="get_density" default="1500.0">
+			The block's density in kg/m³ (wet topsoil bound by roots; an estimate).
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			When off, no lip breaks by itself.
+		</member>
+		<member name="load_group" type="StringName" setter="set_load_group" getter="get_load_group" default="&amp;&quot;grass_trample&quot;">
+			The group of bodies whose weight on an overhang breaks it.
+		</member>
+		<member name="max_blocks" type="int" setter="set_max_blocks" getter="get_max_blocks" default="24">
+			Blocks still simulated; older ones are frozen where they lie.
+		</member>
+		<member name="range" type="float" setter="set_range" getter="get_range" default="40.0">
+			How far from the camera lips are looked at, in metres.
+		</member>
+		<member name="soaked_time" type="float" setter="set_soaked_time" getter="get_soaked_time" default="3600.0">
+			Mean seconds to fail when soaked in heavy rain (an estimate).
+		</member>
+		<member name="undercut_time" type="float" setter="set_undercut_time" getter="get_undercut_time" default="600.0">
+			Mean seconds to fail with water at the foot (an estimate).
+		</member>
+	</members>
+</class>

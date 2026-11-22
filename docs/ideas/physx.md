@@ -2514,6 +2514,51 @@ With no wind nothing changes.
 Checked in raster, same runs with and without: spindrift at vorticity 2 in its gale stays a plume (no boiling) and
 drifts a little wispier; smoke, fire and dust in an 8 m/s wind look the same. Snow keeps 0.5 for now; it can raise it.
 
+### High-albedo gas: raster refit (22 Nov)
+
+Raster matching path tracing is the standing bar, and snow's powder foot
+showed it did not hold for bright, thick gas. A dedicated test puff (one
+dense box of gas over a pale ground, real sky, raster and PT from one run)
+at albedo 0.99 and 0.9, lit from in front and from behind, scored down the
+gas column (raster minus PT, body / foot, in 8-bit levels):
+- Before: 0.99 back-lit +27 / +57; 0.99 front-lit +9 / -3; 0.9 back-lit
+  +25 / +70; 0.9 front-lit +20 / +17.
+- After: -1 / -7; +3 / -9; -8 / +6; +1 / -3.
+
+What was wrong, each light on its own:
+- The octaves (Wrenninge et al. 2013) fade at 0.5, 0.25 and 1/8 of the
+  optical depth, a slab's numbers: in a finite cloud the many-times
+  scattered light leaks out of the sides, so the far side of thick gas got
+  20 to 30 levels of light from inside that the path tracer does not see.
+  Octave 1 now fades as fast as single scattering, octave 2 at 0.6, the
+  tail at three times the diffusion transport coefficient (never under
+  1/2). SUN_MS_GAIN 0.7 to 1.0 and the tail's kept share 0.68 to 0.8 hold
+  the sunlit face where it was.
+- The sky's share of the octave light (SKY_MS_SHARE) 0.19 to 0.08: the
+  sky-only puff was 11 levels too bright.
+- The foot took the ground toward the camera as always sunlit (SKY_OPENING
+  for the ground). It now reads that ground's sun from the gas's own sun
+  map, two heights out from the point toward the camera: sunlit when the
+  sun is behind the camera, in the cloud's shadow when the sun is behind
+  the cloud (the back-lit foot was 30 to 50 levels too bright).
+
+Gate, smoke, dust and fire, each a raster/PT pair from one run, before and
+after (gas box mean, raster minus PT): grey smoke puffs +11 to +1, dust
+puffs +13 to 0, fire plume +23 to -6.
+
+Snow's avalanche powder (640x360, raster before, after, and the PT still):
+the body is bluer and darker against the snow, as under path tracing (gas
+minus ground: before -4, after -12, PT -10 levels). The dark line at the
+foot is gone on the left half; on the right it is still 15 to 20 levels
+under the ground where PT's foot is a few levels over it. That line is not
+the transport (it holds at near zero light per unit of opacity whichever
+light is on); next suspect is how the gas at the very edge reads the snow
+under it.
+
+Images: /mnt/project-files/fork/physx/flow-refit-test-puffs.png (rows:
+0.99 back, 0.99 front, 0.9 back, 0.9 front; columns PT, before, after),
+flow-refit-fire-regression.png, powder-foot-refit-before-after-pt.png.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

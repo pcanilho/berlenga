@@ -14,6 +14,8 @@ window/vsync/vsync_mode=0
 
 [rendering]
 
+anti_aliasing/quality/use_debanding=true
+
 pathtracing/async_shader_compilation=false
 
 [physics]

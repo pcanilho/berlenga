@@ -98,6 +98,8 @@ private:
 	SecondOrderSystem<real_t> pelvis_spring;
 	real_t pelvis_drop = 0.0;
 	bool settled = false;
+	Vector3 last_origin;
+	bool last_origin_valid = false;
 	ObjectID walker_id;
 
 	void _configure_springs();
@@ -108,6 +110,7 @@ private:
 	real_t _ankle_height(Skeleton3D *p_skeleton, int p_foot, real_t p_lowest) const;
 
 protected:
+	virtual void _skeleton_resumed() override;
 	static void _bind_methods();
 	void _notification(int p_what);
 	virtual void _process_modification(double p_delta) override;

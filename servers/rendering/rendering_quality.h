@@ -92,6 +92,7 @@ private:
 
 	void _register_engine_rows();
 	void _apply_group(Group p_group);
+	void _push_startup_settings(Group p_group);
 	void _on_settings_changed();
 	void _startup();
 

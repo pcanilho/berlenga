@@ -85,6 +85,7 @@ private:
 	float smoke_buoyancy = 0.0f; // Flow's buoyancyPerSmoke: below 0 the smoke itself is heavy (dust), whatever its temperature
 	float cooling_rate = 1.5f;
 	float smoke_fade = 0.65f;
+	float allocation_smoke = 0.02f;
 	// RAIN WASHOUT: rain and snow over the gas wash its smoke out (WorldWeather::washout_at, coarse when the smoke is
 	// heavy dust), on top of Flow's own loss of 0.3 of the smoke a second.
 	bool rain_washout = true;
@@ -315,6 +316,8 @@ public:
 	float get_cooling_rate() const { return cooling_rate; }
 	void set_smoke_fade(float p_v) { smoke_fade = MAX(p_v, 0.0f); }
 	float get_smoke_fade() const { return smoke_fade; }
+	void set_allocation_smoke(float p_v) { allocation_smoke = CLAMP(p_v, 1e-4f, 1.0f); }
+	float get_allocation_smoke() const { return allocation_smoke; }
 	void set_rain_washout(bool p_v) { rain_washout = p_v; }
 	bool is_rain_washout() const { return rain_washout; }
 	float get_washout_rate() const { return washout_rate; }

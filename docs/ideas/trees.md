@@ -3624,11 +3624,18 @@ et al. 2015 (dendrogeomorphic flood evidence: scars, debris caught on riparian t
 - `_flood_wrack` (wood_b): up to six bundles of twigs and grass draped over limbs that cross the line, lying along the
   flow and hanging down; grass blades plastered round the stem's upstream face at the line; a heap of sticks and straw
   against the upstream foot when the flood stood 25 cm or more. Older wrack goes (none past 4 years).
-- Floodplain willow (`wet_band` 2) variants get flood heights 0.5-1.6 m and 0.05-2.5 years; the species follows the flow
-  (`follow_flow`), so -X faces upstream in the stand.
-- Bench: `stands.gd --flood` (silt only under the line, none above 1.3 m, wrack on every willow).
-- Not done: scoured, bared roots on the cut bank; flood height from WorldWater's flood stage rather than the variant band;
-  silt on the ground and on the vegetation under the line (vegetation thread).
+- Floodplain willow (`wet_band` 2) variants get flood heights 0.5-1.6 m and 0.05-2.5 years, one variant in four
+  unmarked. A marked mesh carries meta `tree_flood` = (height, years).
+- Placement (22 Nov): where a water producer is live, VegetationField3D reads WorldWater.high_water_at at each tree.
+  Under a mark (its peak 10 cm or more over the ground) the tree takes the marked variant nearest the peak's height
+  (30 cm weighs as 1.5 years), turned with mesh +X down the peak's flow, so the higher line faces upstream; elsewhere an
+  unmarked variant. Tiles are placed again when the marks change (the wrack lines' `_follow_floods`). With no water
+  producer the variants stay as drawn, with the generator's own marks.
+- Bench: `stands.gd --flood` (silt only under the line, none above 1.3 m, wrack on every willow); `stands.gd
+  --flood-field` (a 1.2 m mark on half the plot: every willow there marked within 35 cm of it and turned down the flow,
+  none marked on the other half).
+- Not done: scoured, bared roots on the cut bank; silt on the ground and on the vegetation under the line (vegetation
+  thread).
 
 ### 5aw. Deer browse and nurse logs (20 Nov; Paulo's pick)
 
@@ -4045,8 +4052,17 @@ As built: broadleaf BACKLIGHT is (0.55, 0.85, 0.35) linear, the ratio of transmi
 the old value (thick and waxy, they pass far less). Birch crop: PT leaf pixels 0.045 to 0.121 green (linear), raster
 0.078 to 0.221; PT undersides now glow green against the sky and the frost-browned leaves read brown, matching the
 raster pair. The remaining raster/PT gap is raster's: ambient light inside crowns is not shadowed (SSAO only) and the
-cascade shadows of small leaves soften at bench distances. Open: dead and frost-killed leaves transmit a flatter,
-browner spectrum than green ones; a per-leaf back-light tint (as fire_leaf_back) would take the olive cast off them.
+cascade shadows of small leaves soften at bench distances.
+Dead leaves (same day): a leaf without its chlorophyll passes a flatter, browner spectrum. The leaf shader scales
+BACKLIGHT per leaf by its colour (leaf_dead_back: green over red and blue is living, else x (0.82, 0.47, 0.71), giving
+about (0.45, 0.40, 0.25) of the albedo), so frost-killed, browned and turned leaves glow brown or yellow against the
+light instead of olive; needles are left out (leaf_dead_tint 0). Raster and PT pair: frost leaves brown in both.
+Raster/PT parity item (raster side, for the parity list): broadleaf crowns seen from below draw at about 0.55 of
+raster's brightness under PT (birch crop, leaf pixels, linear). PT is the reference here: raster lights the inner
+leaves with unshadowed sky ambient (SSAO only reaches a few decimetres) and its cascade shadows of small leaves
+soften at 300 m max distance, so inner leaves catch sun they should not. A fix belongs in raster: crown occlusion for
+ambient (a per-instance crown AO term, or bent-normal / visibility baked per leaf from the crown's density) and
+tighter leaf shadows near the camera. Done 22 Nov, and most of the gap was a PT sky bug from the leaves' ALPHA writes: see 5bl.
 
 ## Next-round options (card 20 Nov evening)
 
@@ -4077,6 +4093,37 @@ browner spectrum than green ones; a per-leaf back-light tint (as fire_leaf_back)
    draped over the faces, crowns thin and half dead (Larson, Matthes and Kelly 2000, Cliff Ecology: the Niagara
    Escarpment's 1,000-year-old white cedars). Builds on root_stone's rock link: roots that follow a rock's cracks, and
    placement on steep, rocky ground from the terrain map.
+
+### 5bk. Camera cut-out (22 Nov; world-links 904b8caf)
+
+- The tree generator's ShaderMaterials (bark, leaves, needles, fronds) are built from BaseMaterial3D's code, so they
+  carry its cut-out discard as they stand; the loose bark pieces (BarkDetail3D) take it through
+  GrassField3D::add_camera_cutout(). Shadows keep the cut geometry; the path tracer starts camera rays past the same span.
+- Bench: env `CUTOUT="x,y,z,r[,floor]"` on main.gd shots. A hazel cut through the crown shows the same hole raster and
+  PT (/mnt/project-files/fork/trees/cutout/).
+
+### 5bl. Crown light: sky in the path tracer, crown shade in raster (22 Nov)
+
+Found while working the 5bj parity item (PT crowns at 0.55-0.6 of raster). With the sun off, PT drew every leaf black
+while bark and ground took the sky. Cause: the fire's burn-up and needle cast (88aaa04d, 18 Nov) hid leaves with
+`ALPHA = 0.0`. A shader that writes ALPHA is a transparent: raster drew all leaves in its transparent pass (no depth
+prepass or SSAO, sorted per object, brighter), and the path tracer put them in its blend class, which on this path took
+no sky light at all (a single sky-lit quad with the leaf shader: 0 in PT; the same shader without the ALPHA writes: as
+raster). Fixed with `discard`, which keeps leaves opaque and alpha-tested where they burn (every material already
+discards for the camera cut-out, so no new any-hit cost). Birch crop, day 135, leaf pixels (linear green): raster
+0.351 to 0.277, PT 0.215 to 0.268, so PT is now 0.97 of raster (was 0.61).
+
+Crown shade for raster (`crown_occlusion`, default 1): raster lights each leaf with the whole sky (SSAO reaches a few
+decimetres), so inner and lower leaves drew as bright as outer ones. Baked per vertex, as SpeedTree's vertex AO and other
+foliage pipelines do, with the crown taken as a turbid medium (Monsi and Saeki 1953): LOD 0 leaf area into a grid of
+cells about a thirtieth of the crown (at least 12 cm) as leaf area density; from each cell the sky along 13 directions
+over the upper hemisphere, cosine weighted, through exp(-k LAD s); k = G sqrt(1 - sigma), G = 0.5 for a spherical leaf
+angle distribution (Ross 1981), sigma = 0.2 the leaves' visible scattering (Goudriaan 1977). Vertices read the grid
+trilinearly. Stored as CUSTOM0.r (RGBA8, 4 bytes a leaf vertex) = (1 - visibility) x crown_occlusion; the leaf shader
+writes AO = 1 - that with AO_LIGHT_AFFECT 0 (ambient only). The path tracer traces the shade itself and shows AO only in
+debug views. Bake: under 0.1 s for a 2.5M-triangle birch. Sky-only raster leaves 0.041 to 0.026 green.
+
+Rule for all foliage shaders: hide with discard, never with ALPHA, unless the surface is really see-through.
 
 ### Research for the likely picks (21 Nov, card pending)
 

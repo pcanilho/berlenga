@@ -148,6 +148,11 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_HAZE_REACH 84 // how far rays that reach the sky carry it (the sky's own aerosol starts there)
 #define RT_PARAM_PRECIP_NOSE 85 // WeatherMap3D's warm layer aloft (weather_warm_nose): peak (C)
 #define RT_PARAM_PRECIP_NOSE_BASE 86 // and base (m above RT_PARAM_PRECIP_GROUND)
+#define RT_PARAM_CUTOUT_X 92 // the camera cut-out (camera_cutout global): target (world), radius (m, 0 none), floor (world m)
+#define RT_PARAM_CUTOUT_Y 93
+#define RT_PARAM_CUTOUT_Z 94
+#define RT_PARAM_CUTOUT_RADIUS 95
+#define RT_PARAM_CUTOUT_FLOOR 96
 #define RT_PARAM_WIND_MAP 89 // WeatherMap3D's 10 m wind (weather_wind_map, m/s in rg) over the wetness rect; 0 none
 
 // ============================================================================
@@ -175,6 +180,10 @@ struct PathPayload {
 // Set by payload_set_cone_width(), cleared by path_pack(): oct_next_dir holds the ray cone's width
 // at the ray's origin (texture level of detail), not a direction. Bit 14.
 const uint CONE_WIDTH_FLAG = (1u << 14);
+// The camera cut-out probe rides in the payload's hit_t (the flag bits are all taken): raygen sends
+// -(t_cut + CUTOUT_PROBE_BASE), a miss leaves it, and a surface that opens in the cut answers -(CUTOUT_REPORTED + t).
+const float CUTOUT_PROBE_BASE = 2.0;
+const float CUTOUT_REPORTED = 1.0e6;
 // Set by path_pack_peel(), cleared by path_pack(): oct_next_dir holds the peel ray's SCENE_DEPTH, not a direction.
 const uint PEEL_SCENE_DEPTH_FLAG = (1u << 7);
 const uint PEEL_RAY_FLAG = (1u << 28);

@@ -57,6 +57,15 @@
 				Spider webs in open grassland as [PlantSpecies]: [constant PRESET_SHEET_WEB] over the sward and [constant PRESET_ORB_WEB] a few metres apart, in their season ([method get_presence]). The silk is drawn by the plant shader and shows only where dew or hoarfrost beads it ([WeatherMap3D] surface wetness and frost); a [code]"dew"[/code] key (0 to 1) in [param season] sets the dew instead, for scenes without a weather map.
 			</description>
 		</method>
+		<method name="make_bank_roots" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="6" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				Roots on bare scarps as two [PlantSpecies]: [constant PRESET_BANK_ROOTS] on any earthen face where the drawn ground drops 0.4 m or more past a steep edge ([constant PlantSpecies.RULE_BANK_EDGE]), off rock, and [constant PRESET_BANK_ROOTS_WOODY] within 4 m of the canopy's edge ([constant PlantSpecies.RULE_FOREST_EDGE]). Each variant is grown on its own face angle, 50 to 88 degrees (mesh meta [code]bank_face_slope[/code], radians); the field measures the face below each edge and takes the variant nearest it.
+			</description>
+		</method>
 		<method name="make_bank_turf" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="variants" type="int" default="3" />
@@ -368,6 +377,9 @@
 		</member>
 		<member name="season" type="Dictionary" setter="set_season" getter="get_season" default="{}">
 			The season state as [code]WeatherMap3D.get_season()[/code] returns it; its [code]forcing[/code] (degree days above 5 C since 1 January) and [code]day_of_year[/code] set the flowering of the flowering presets. Each has a window in degree days from the British flowering records: wood anemone, violet and dandelion in early spring, wood sorrel and woodruff in spring, buttercup and sorrel in early summer, foxglove, clover, yarrow, knapweed, wild carrot, scabious and thistle through summer, heather late; daisy, clover, yarrow and herb Robert flower on and off through theirs. Before the window a plant is leaves only (tall flowers are rosettes); each stem then opens in its turn, goes to seed (dandelion clocks, thistledown, buttercup and anemone achenes, foxglove capsules filling the spike from the bottom, wild carrot nests) and, for the tall flowers, dies back to a brown stalk that stands through winter, a share of them into the next spring. Bracken and the woodland fern follow it too: croziers rise and unroll in spring, the fronds stand green through summer, yellow and die with the season's [code]senescence[/code] sum (or a hard frost), lodge under autumn storms and snow, and last year's dead fronds lie flat until the new ones have unrolled. Empty: every stem in flower or, for the tall meadow flowers, a quarter in seed; ferns full and green. A [code]browse[/code] entry (0 to 1) is deer browsing pressure: bramble keeps low spreading canes bitten back with blunt ends and short side shoots, raspberry canes are bitten at the leader and bush out below the bite, leaves are eaten whole or torn, and flowers and fruit grow scarce.
+		</member>
+		<member name="bank_face" type="float" setter="set_bank_face" getter="get_bank_face" default="1.3">
+			[constant PRESET_BANK_ROOTS] and [constant PRESET_BANK_ROOTS_WOODY]: the angle of the bank face the roots are grown on, in radians from level.
 		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Seed of the random variation: each seed gives another plant of the same kind.
@@ -737,7 +749,13 @@
 		<constant name="PRESET_TURF_LIP" value="112" enum="Preset">
 			The sod's lip over a cut bank or scarp, 0.7 to 1.5 m along the edge (+Z): a root-bound turf slab 10 to 20 cm thick standing out 12 to 35 cm over the drop (+X) from undercut soil, its cut face and underside dark topsoil, the sward's blades leaning out and hanging over the edge and roots trailing 10 to 45 cm from its underside.
 		</constant>
-		<constant name="PRESET_MAX" value="113" enum="Preset">
+		<constant name="PRESET_BANK_ROOTS" value="113" enum="Preset">
+			The sward's fine roots bared on a cut bank or scarp face below its top edge (+X over the drop, +Z along it): a fibrous mat thinning with depth as grass roots do (Jackson et al. 1996), grown by space colonization on the face, lying on it, dipping under it and hanging free at the finest ends.
+		</constant>
+		<constant name="PRESET_BANK_ROOTS_WOODY" value="114" enum="Preset">
+			A tree's or shrub's roots bared on a cut bank: a few woody laterals coming out of the face, running along and down it and branching to fine ends.
+		</constant>
+		<constant name="PRESET_MAX" value="115" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="GRAZE_CATTLE" value="0" enum="GrazeSet">

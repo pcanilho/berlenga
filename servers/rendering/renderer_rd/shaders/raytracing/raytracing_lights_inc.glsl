@@ -928,7 +928,8 @@ struct LightReservoir {
 };
 
 bool light_reuse_enabled() {
-	if (get_rt_param(RT_PARAM_LIGHT_REUSE) < 0.5) {
+	// Specialization constant first: with the setting off the whole reuse folds away.
+	if ((RT_FLAGS & RT_FLAG_LIGHT_REUSE_ENABLED) == 0u || get_rt_param(RT_PARAM_LIGHT_REUSE) < 0.5) {
 		return false;
 	}
 	uint pixels = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;

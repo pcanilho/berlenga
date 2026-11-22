@@ -21397,6 +21397,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		if (b.indices.is_empty()) {
 			continue;
 		}
+		bool crown_occ_surface = false;
 		if (s == 0 || s == 2 || s == 7 || s == 9) {
 			// The bark, moss, soil and resin builders wind their triangles counter-clockwise seen from outside;
 			// Godot's front faces wind clockwise (as PlantGenerator flips its builders). Unflipped,
@@ -21682,6 +21683,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
 		arrays[Mesh::ARRAY_COLOR] = b.colors;
 		arrays[Mesh::ARRAY_INDEX] = b.indices;
+		uint64_t surface_flags = compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0;
+		if (s == 1 && crown_occlusion > 0.0f && leaf_flutter > 0.0f && !fallen && !fallen_branch) {
+			// The crown's own shade of the sky, for raster (trees.md 5bl): CUSTOM0.r, read by the leaf shader as AO.
+			const PackedByteArray occ = _crown_occlusion(b);
+			if (occ.size() == b.verts.size() * 4) {
+				arrays[Mesh::ARRAY_CUSTOM0] = occ;
+				surface_flags |= uint64_t(Mesh::ARRAY_CUSTOM_RGBA8_UNORM) << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT;
+				crown_occ_surface = true;
+			}
+		}
 		if (b.use_tangents && b.tangents.size() == b.verts.size() * 4) {
 			arrays[Mesh::ARRAY_TANGENT] = b.tangents;
 		}
@@ -21689,7 +21700,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			arrays[Mesh::ARRAY_BONES] = b.bones;
 			arrays[Mesh::ARRAY_WEIGHTS] = b.weights;
 		}
-		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0);
+		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, surface_flags);
 		if (s == 0 && glaze_mm > 0.0f) {
 			_glaze_build(b, glaze_ice);
 		}
@@ -21886,7 +21897,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			mesh->surface_set_name(mesh->get_surface_count() - 1, needles ? "needles" : "leaves");
 		}
 		if ((s == 1 && !needles) || s == 3) {
-			mesh->surface_set_material(mesh->get_surface_count() - 1, _flutter_material(m, s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]));
+			const Ref<Material> lm = _flutter_material(m, s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]);
+			if (s == 1 && crown_occ_surface && Ref<ShaderMaterial>(lm).is_valid()) {
+				Ref<ShaderMaterial>(lm)->set_shader_parameter("crown_occlusion_on", 1.0f);
+			}
+			mesh->surface_set_material(mesh->get_surface_count() - 1, lm);
 			if (rigged) {
 				static_materials.push_back(_flutter_material(twin(m), s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]));
 			}
@@ -21899,6 +21914,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				if (sm.is_valid()) {
 					sm->set_shader_parameter("flutter_amount", 0.0f);
 					sm->set_shader_parameter("leaf_underside", 0.0f);
+					sm->set_shader_parameter("leaf_dead_tint", 0.0f);
+					sm->set_shader_parameter("crown_occlusion_on", crown_occ_surface ? 1.0f : 0.0f);
 				}
 				return fm;
 			};
@@ -22430,6 +22447,118 @@ uniform float wood_spiral = 0.0;
 	return m;
 }
 
+// The crown's shade of the sky at each leaf, for raster's ambient light (trees.md 5bl). Raster lights every leaf with
+// the whole sky (SSAO reaches a few decimetres), so a crown's inner and lower leaves drew as bright as its outer ones,
+// brighter than the path tracer, which traces the crown's shade (PT about 0.55 of raster on a birch crown from below,
+// trees.md 5bj). Baked per vertex as SpeedTree and other foliage pipelines bake their vertex AO, from the crown taken
+// as a turbid medium (Monsi and Saeki 1953): the leaf area of the LOD 0 leaves gathered into a grid of cells (leaf area
+// density, m2 of one side per m3), then from each cell the sky seen along 13 directions over the upper hemisphere,
+// each weighted by its cosine, through exp(-k LAD s). k = G x sqrt(1 - sigma): G = 0.5 for a spherical leaf angle
+// distribution (Ross 1981), and sqrt(1 - sigma) with a leaf scattering coefficient sigma of 0.2 for visible light
+// (Goudriaan 1977) lets in the light the leaves pass on by reflection and transmission. A vertex reads its cell grid
+// trilinearly. CUSTOM0.r = (1 - visibility) x crown_occlusion, so a mesh without it (0) is unshaded.
+PackedByteArray TreeGenerator::_crown_occlusion(const Builder &p_b) const {
+	PackedByteArray out;
+	const int nv = p_b.verts.size();
+	const int ni = p_b.indices.size();
+	if (nv == 0 || ni < 3) {
+		return out;
+	}
+	const Vector3 *v = p_b.verts.ptr();
+	AABB box(v[0], Vector3());
+	for (int i = 1; i < nv; i++) {
+		box.expand_to(v[i]);
+	}
+	const float ext = MAX(MAX(box.size.x, box.size.y), box.size.z);
+	if (ext < 0.2f) {
+		return out;
+	}
+	// Cells of about a thirtieth of the crown, at least 12 cm (a twig's leaf cluster); a cell's border of empty sky.
+	const float cell = MAX(ext / 30.0f, 0.12f);
+	const Vector3 org = box.position - Vector3(cell, cell, cell);
+	const int dx = int(Math::ceil(box.size.x / cell)) + 3, dy = int(Math::ceil(box.size.y / cell)) + 3, dz = int(Math::ceil(box.size.z / cell)) + 3;
+	LocalVector<float> lad;
+	lad.resize(dx * dy * dz);
+	for (float &f : lad) {
+		f = 0.0f;
+	}
+	const int32_t *ix = p_b.indices.ptr();
+	const float inv_vol = 1.0f / (cell * cell * cell);
+	for (int t = 0; t + 2 < ni; t += 3) {
+		const Vector3 &a = v[ix[t]], &bb = v[ix[t + 1]], &c = v[ix[t + 2]];
+		const float area = 0.5f * (bb - a).cross(c - a).length();
+		const Vector3 q = ((a + bb + c) / 3.0f - org) / cell;
+		const int x = CLAMP(int(q.x), 0, dx - 1), y = CLAMP(int(q.y), 0, dy - 1), z = CLAMP(int(q.z), 0, dz - 1);
+		lad[(z * dy + y) * dx + x] += area * inv_vol;
+	}
+	// 13 directions: the zenith and three rings of four (elevations 70, 45 and 20 degrees), each ring turned 45 degrees
+	// from the last; weights cos(zenith) x the ring's solid angle share.
+	Vector3 dirs[13];
+	float wts[13];
+	int nd = 0;
+	dirs[nd] = Vector3(0, 1, 0);
+	wts[nd++] = 1.0f * 0.12f;
+	const float elev[3] = { 70.0f, 45.0f, 20.0f };
+	const float ring_w[3] = { 0.26f, 0.34f, 0.28f };
+	for (int r = 0; r < 3; r++) {
+		const float e = Math::deg_to_rad(elev[r]);
+		for (int k = 0; k < 4; k++) {
+			const float az = Math::TAU * (float(k) + 0.5f * float(r & 1)) / 4.0f;
+			dirs[nd] = Vector3(Math::cos(e) * Math::cos(az), Math::sin(e), Math::cos(e) * Math::sin(az));
+			wts[nd++] = Math::sin(e) * ring_w[r] / 4.0f;
+		}
+	}
+	float wsum = 0.0f;
+	for (int d = 0; d < nd; d++) {
+		wsum += wts[d];
+	}
+	const float k_ext = 0.5f * Math::sqrt(1.0f - 0.2f);
+	LocalVector<float> vis;
+	vis.resize(lad.size());
+	for (int z = 0; z < dz; z++) {
+		for (int y = 0; y < dy; y++) {
+			for (int x = 0; x < dx; x++) {
+				float sum = 0.0f;
+				for (int d = 0; d < nd; d++) {
+					// March from the cell's centre at half-cell steps, the cell itself counted half (a leaf sits
+					// on average mid-cell), out of the grid.
+					float tau = 0.5f * lad[(z * dy + y) * dx + x] * 0.5f * cell;
+					Vector3 p(x + 0.5f, y + 0.5f, z + 0.5f);
+					for (int st = 0; st < 4 * (dx + dy + dz); st++) {
+						p += dirs[d] * 0.5f;
+						const int cx = int(Math::floor(p.x)), cy = int(Math::floor(p.y)), cz = int(Math::floor(p.z));
+						if (cx < 0 || cy < 0 || cz < 0 || cx >= dx || cy >= dy || cz >= dz) {
+							break;
+						}
+						tau += lad[(cz * dy + cy) * dx + cx] * 0.5f * cell;
+					}
+					sum += wts[d] * Math::exp(-k_ext * tau);
+				}
+				vis[(z * dy + y) * dx + x] = sum / wsum;
+			}
+		}
+	}
+	out.resize(nv * 4);
+	uint8_t *o = out.ptrw();
+	for (int i = 0; i < nv; i++) {
+		const Vector3 q = (v[i] - org) / cell - Vector3(0.5f, 0.5f, 0.5f);
+		const int x0 = CLAMP(int(Math::floor(q.x)), 0, dx - 2), y0 = CLAMP(int(Math::floor(q.y)), 0, dy - 2), z0 = CLAMP(int(Math::floor(q.z)), 0, dz - 2);
+		const float fx = CLAMP(q.x - x0, 0.0f, 1.0f), fy = CLAMP(q.y - y0, 0.0f, 1.0f), fz = CLAMP(q.z - z0, 0.0f, 1.0f);
+		auto at = [&](int x, int y, int z) { return vis[(z * dy + y) * dx + x]; };
+		const float c00 = Math::lerp(at(x0, y0, z0), at(x0 + 1, y0, z0), fx);
+		const float c10 = Math::lerp(at(x0, y0 + 1, z0), at(x0 + 1, y0 + 1, z0), fx);
+		const float c01 = Math::lerp(at(x0, y0, z0 + 1), at(x0 + 1, y0, z0 + 1), fx);
+		const float c11 = Math::lerp(at(x0, y0 + 1, z0 + 1), at(x0 + 1, y0 + 1, z0 + 1), fx);
+		const float vv = Math::lerp(Math::lerp(c00, c10, fy), Math::lerp(c01, c11, fy), fz);
+		const float occ = CLAMP((1.0f - vv) * crown_occlusion, 0.0f, 1.0f);
+		o[i * 4 + 0] = uint8_t(Math::round(occ * 255.0f));
+		o[i * 4 + 1] = 0;
+		o[i * 4 + 2] = 0;
+		o[i * 4 + 3] = 255;
+	}
+	return out;
+}
+
 Ref<Material> TreeGenerator::_flutter_material(const Ref<StandardMaterial3D> &p_base, float p_leaf_size) const {
 	if (leaf_flutter <= 0.0f || p_base.is_null() || RenderingServer::get_singleton() == nullptr) {
 		return p_base;
@@ -22474,6 +22603,8 @@ vec3 plant_wind(vec3 wp, float h) {
 	}
 	const String uniforms = "uniform float flutter_amount = 1.0;\nuniform float flutter_size = 0.1;\n";
 	const String body = R"(
+	// The crown's shade of the sky (TreeGenerator._crown_occlusion, trees.md 5bl): CUSTOM0.r.
+	crown_occ = CUSTOM0.r * crown_occlusion_on;
 	{
 		// Leaf flutter (TreeGenerator::_flutter_material).
 		vec3 fw = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -22544,8 +22675,11 @@ vec3 plant_wind(vec3 wp, float h) {
 			// Burnt up: foliage the flame passed through is consumed once the crown (or the plant) has burnt,
 			// leaf by leaf with a ragged edge, leaving the bare black branches (a crown fire takes the foliage and the
 			// finest twigs, the crown fuel of Van Wagner 1977). Killed brown foliage above the flame stays.
+			// Hidden with discard, not ALPHA = 0: a shader that writes ALPHA is drawn as a transparent (raster's
+			// transparent pass; the path tracer's blend class, which lit the leaves with no sky light at all, trees.md
+			// 5bl). discard keeps the leaves opaque and alpha-tested where they burn.
 			if (fire_burn * smoothstep(0.35, 0.8, fire_s.x) > fract(fire_n * 7.31 + 0.137)) {
-				ALPHA = 0.0;
+				discard;
 			}
 			// Needle cast: foliage the fire killed (browned up to the scorch height) is shed through the first
 			// year, leaf by leaf, most of it in the first months (Pannkuk and Robichaud 2003; Cram et al. 2015 on
@@ -22558,7 +22692,7 @@ vec3 plant_wind(vec3 wp, float h) {
 				float fire_killed = fire_s.x * (1.0 - smoothstep(0.85, 1.15, fire_h / max(fire_s.w * (0.85 + 0.3 * fire_n), 0.02)));
 				float fire_cast = 1.0 - exp(-fire_age / 0.3);
 				if (fire_killed > fract(fire_n * 3.71 + 0.41) && fire_cast > fract(fire_n * 11.37 + 0.73)) {
-					ALPHA = 0.0;
+					discard;
 				}
 				// A tree the fire killed outright (VegetationFire::tree_killed, the same rule TreeWind3D's snags
 				// follow): the foliage the scorch spared dies with it, fading to red-brown over the first months and
@@ -22571,7 +22705,7 @@ vec3 plant_wind(vec3 wp, float h) {
 					ALBEDO = mix(ALBEDO, fire_red, smoothstep(0.0, 0.25, fire_age + 0.06 * (fire_n - 0.5)));
 					float fire_drop = 1.0 - exp(-max(fire_age - 0.25, 0.0) / 0.5);
 					if (fire_drop > fract(fire_n * 5.13 + 0.29)) {
-						ALPHA = 0.0;
+						discard;
 					}
 				}
 			}
@@ -22610,6 +22744,31 @@ vec3 plant_wind(vec3 wp, float h) {
 		ALBEDO = mix(ALBEDO, vec3(leaf_lum) * vec3(0.93, 1.04, 0.9) * 1.2, leaf_underside);
 	})");
 	}
+	if (al >= 0) {
+		// The crown's own shade of the sky for raster's ambient light (trees.md 5bl): the path tracer traces it and
+		// shows AO only in its debug views.
+		code = code.insert(al + albedo_line.length(), R"(
+	AO = 1.0 - crown_occ;
+	AO_LIGHT_AFFECT = 0.0;)");
+	}
+	if (al >= 0) {
+		// Light through a dead leaf (trees.md 5bj): BACKLIGHT is a green leaf's transmittance over reflectance; a leaf
+		// without its chlorophyll (frost-killed, browned, turned) passes a flatter, browner spectrum, less of the green
+		// (Jacquemoud and Ustin 2019: senescent and dry leaves). Told by its colour, the vertex colour the season gave
+		// it: green over red and blue is a living leaf. Inserted last at the albedo line so it reads the leaf's own
+		// colour before the underside greys it. Needles are left as they are (leaf_dead_tint 0).
+		code = code.insert(al + albedo_line.length(), R"(
+	vec3 leaf_dead_back = vec3(1.0);
+	if (leaf_dead_tint > 0.0) {
+		float leaf_green = clamp(4.0 * (ALBEDO.g - max(ALBEDO.r, ALBEDO.b)) / max(ALBEDO.g, 1e-3), 0.0, 1.0);
+		leaf_dead_back = mix(vec3(1.0), mix(vec3(0.82, 0.47, 0.71), vec3(1.0), leaf_green), leaf_dead_tint);
+	})");
+		const String dead_back = "	BACKLIGHT = (backlight.rgb + backlight_tex);\n";
+		const int db = code.find(dead_back);
+		if (db >= 0) {
+			code = code.insert(db + dead_back.length(), "	BACKLIGHT *= leaf_dead_back;\n");
+		}
+	}
 	// Years since the ground under a leaf burnt (fire_age_map, R = years / 2, 0 never; over fire_char_rect), -1 never.
 	static const char *FIRE_AGE_CODE = R"(
 global uniform sampler2D fire_age_map : filter_nearest;
@@ -22626,7 +22785,7 @@ float fire_age_years(vec2 xz) {
 	return a > 0.0 ? a * 2.0 : -1.0;
 }
 )";
-	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\n" + wind + VegetationFire::SHADER_CODE + VegetationFire::MORTALITY_CODE + FIRE_AGE_CODE + "\n");
+	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\nuniform float leaf_dead_tint = 1.0;\nuniform float crown_occlusion_on = 0.0;\nvarying float crown_occ;\n" + wind + VegetationFire::SHADER_CODE + VegetationFire::MORTALITY_CODE + FIRE_AGE_CODE + "\n");
 	// The path tracer: flutter is a raster motion of millimetres; the traced leaves keep their
 	// shape and follow the bones. A static tree is traced from its rest mesh (no capture), a
 	// rigged one is captured only when its bones move (as the plain material was), never because
@@ -23945,7 +24104,10 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			limb_breakage = Math::lerp(1.4f, 2.0f, tv);
 			// The last flood's marks (trees.md 5av): a softwood floodplain floods most years, 0.5-1.6 m over the
 			// willows' feet, some weeks to a couple of years ago.
-			flood_height = Math::lerp(0.5f, 1.6f, Math::fmod(tv * 2.7f + 0.31f, 1.0f));
+			// One variant in four is left unmarked, for ground the last flood did not reach (placement picks
+			// by WorldWater.high_water_at where a water producer keeps marks).
+			const float fh = Math::fmod(float(p_variant) * 0.381966f + 0.13f, 1.0f);
+			flood_height = p_variant % 4 == 2 ? 0.0f : Math::lerp(0.5f, 1.6f, fh);
 			flood_years = Math::lerp(0.05f, 2.5f, Math::fmod(tv * 1.9f + 0.6f, 1.0f));
 		}
 	}
@@ -24632,6 +24794,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	season = p_from.season.duplicate(true);
 	climber_plant_leaves = p_from.climber_plant_leaves;
 	leaf_flutter = p_from.leaf_flutter;
+	crown_occlusion = p_from.crown_occlusion;
 	moss_cover = p_from.moss_cover;
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
@@ -27589,6 +27752,11 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		// Placement turns the mesh's +X down the prevailing wind (trees.md 5q).
 		mesh->set_meta(SNAME("tree_wind_flag"), Vector2(wind_exposure, krummholz));
 	}
+	if (flood_height > 0.0f && mesh.is_valid() && !fallen && !fallen_branch) {
+		// Placement picks the variant nearest the last flood's mark (WorldWater.high_water_at) and turns the mesh's +X
+		// down the flood's flow (the line is higher on the -X face, trees.md 5av).
+		mesh->set_meta(SNAME("tree_flood"), Vector2(flood_height, flood_years));
+	}
 	if (stilt_height > 0.0f && mesh.is_valid() && !fallen && !fallen_branch) {
 		// The ground is stilt_height under the mesh origin (the root tips): placement raises the instance by it.
 		mesh->set_meta(SNAME("tree_base_lift"), stilt_height);
@@ -27835,6 +28003,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_junction_weld", "enabled"), &TreeGenerator::set_junction_weld);
 	ClassDB::bind_method(D_METHOD("set_climber_plant_leaves", "enabled"), &TreeGenerator::set_climber_plant_leaves);
 	ClassDB::bind_method(D_METHOD("set_leaf_flutter", "amount"), &TreeGenerator::set_leaf_flutter);
+	ClassDB::bind_method(D_METHOD("set_crown_occlusion", "amount"), &TreeGenerator::set_crown_occlusion);
+	ClassDB::bind_method(D_METHOD("get_crown_occlusion"), &TreeGenerator::get_crown_occlusion);
 	ClassDB::bind_method(D_METHOD("set_veteran", "amount"), &TreeGenerator::set_veteran);
 	ClassDB::bind_method(D_METHOD("get_veteran"), &TreeGenerator::get_veteran);
 	ClassDB::bind_method(D_METHOD("set_fire_scars", "count"), &TreeGenerator::set_fire_scars);
@@ -27908,6 +28078,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "junction_weld"), "set_junction_weld", "get_junction_weld");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "climber_plant_leaves"), "set_climber_plant_leaves", "get_climber_plant_leaves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leaf_flutter", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_leaf_flutter", "get_leaf_flutter");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "crown_occlusion", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_crown_occlusion", "get_crown_occlusion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "veteran", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_veteran", "get_veteran");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "fire_scars", PROPERTY_HINT_RANGE, "0,4,1"), "set_fire_scars", "get_fire_scars");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "kelo"), "set_kelo", "get_kelo");

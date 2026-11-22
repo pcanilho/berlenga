@@ -39,6 +39,7 @@
 #include "servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.h"
 #include "servers/rendering/renderer_rd/forward_mobile/scene_shader_forward_mobile.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
+#include "servers/rendering/rendering_rt_material_state.h"
 #include "servers/rendering/storage/variant_converters.h"
 
 #include "modules/modules_enabled.gen.h"
@@ -868,7 +869,7 @@ MaterialStorage::MaterialData::~MaterialData() {
 	}
 
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-	if (material_feedback_rid.is_valid()) {
+	if (material_feedback_rid.is_valid() && TextureStreaming::get_singleton()) {
 		Vector<RID> empty_textures;
 		TextureStreaming::get_singleton()->material_set_textures(material_feedback_rid, empty_textures);
 		material_feedback_rid = RID();
@@ -1043,7 +1044,7 @@ void MaterialStorage::MaterialData::update_textures(const HashMap<StringName, Va
 	}
 
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-	if (material_feedback_rid.is_valid() || !material_feedback_textures.is_empty()) {
+	if (TextureStreaming::get_singleton() && (material_feedback_rid.is_valid() || !material_feedback_textures.is_empty())) {
 		material_feedback_rid = TextureStreaming::get_singleton()->material_set_textures(material_feedback_rid, material_feedback_textures);
 	}
 #endif
@@ -2523,6 +2524,27 @@ void MaterialStorage::_material_rt_invalidate(Material *p_material) {
 	material_rt_version++;
 }
 
+void MaterialStorage::_material_set_rt_state_bits(Material *p_material, int64_t p_bits) {
+	const uint64_t old_bits = uint64_t(p_material->rt_state_bits);
+	const uint64_t new_bits = uint64_t(p_bits);
+	if (old_bits == new_bits) {
+		return;
+	}
+	p_material->rt_state_bits = p_bits;
+	for (uint32_t i = 0; i < 64; i++) {
+		const uint64_t bit = uint64_t(1) << i;
+		if ((old_bits & bit) && !(new_bits & bit)) {
+			if (--rt_state_bit_users[i] == 0) {
+				rt_state_bits_in_use &= ~bit;
+			}
+		} else if (!(old_bits & bit) && (new_bits & bit)) {
+			if (rt_state_bit_users[i]++ == 0) {
+				rt_state_bits_in_use |= bit;
+			}
+		}
+	}
+}
+
 void MaterialStorage::_material_uniform_set_erased(void *p_material) {
 	RID rid = *(RID *)p_material;
 	MaterialStorage *material_storage = MaterialStorage::get_singleton();
@@ -2602,6 +2624,7 @@ void MaterialStorage::material_free(RID p_rid) {
 		}
 	}
 
+	_material_set_rt_state_bits(material, 0);
 	material_set_shader(p_rid, RID()); //clean up shader
 	material->dependency.deleted_notify(p_rid);
 
@@ -2714,6 +2737,10 @@ void MaterialStorage::material_set_param(RID p_material, const StringName &p_par
 
 	if (changed) {
 		_material_rt_invalidate(material);
+	}
+	static const StringName rt_state_name = RTBaseMaterialState::PARAM_NAME;
+	if (p_param == rt_state_name) {
+		_material_set_rt_state_bits(material, p_value.get_type() == Variant::INT ? int64_t(p_value) : 0);
 	}
 
 	if (material->shader && material->shader->data) { //shader is valid

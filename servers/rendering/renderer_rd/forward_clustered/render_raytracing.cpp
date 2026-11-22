@@ -3571,10 +3571,11 @@ void RenderRaytracing::_update_streaming_feedback() {
 		any = true;
 		// Alpha-tested and blended surfaces are read by any-hit (shadow and visibility rays) at the base level,
 		// with no ray cone; keep them whole while they are traced.
-		// (Alpha scissor is a surface flag in the TLAS, so ask the shader.)
+		// (Alpha scissor is a surface flag in the TLAS, so ask the shader the way _rt_uses_alpha_scissor() does. A
+		// bare discard does not make a surface any-hit: every BaseMaterial3D has one for the camera cut-out.)
 		const SceneShaderForwardClustered::ShaderData *shader_data = static_cast<const SceneShaderForwardClustered::MaterialData *>(data)->shader_data;
 		const bool any_hit = entry->ptr->is_custom_shader || (entry->ptr->data.flags & RT_MAT_FLAG_TRANSPARENT) ||
-				(shader_data && (shader_data->uses_alpha_clip || shader_data->uses_alpha_antialiasing || shader_data->uses_alpha || shader_data->uses_discard));
+				(shader_data && (shader_data->uses_alpha_clip || shader_data->uses_alpha_antialiasing));
 		if (entry->last_used_frame + 2 >= frame && any_hit) {
 			streaming->feedback_report_material(data->material_feedback_rid, 0.0f);
 		}
@@ -3936,15 +3937,17 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.wetness_amount = rt_unorm8(get_float("wetness_amount", 1.0f));
 		mat.subsurface.wetness_from_weather = rt_state.wetness_from_weather;
 		mat.subsurface_texture.wetness_canopy = rt_state.wetness_canopy;
+		mat.subsurface_texture.wetness_moving = rt_state.wetness_moving;
 	}
 	if (rt_state.snow) {
 		mat.subsurface.snow = 1;
 		mat.subsurface.snow_from_weather = rt_state.snow_from_weather;
 		mat.subsurface_texture.snow_on_body = rt_state.snow_on_body;
-		mat.subsurface_texture.wetness_moving = rt_state.wetness_moving;
 		mat.hair_crown_z.snow_amount = rt_unorm8(get_float("snow_amount", 1.0f));
 		mat.hair_crown_z.snow_max_slope = rt_unorm8(get_float("snow_max_slope", 60.0f) / 90.0f);
 	}
+	// Cut round the player as its raster shader is (BaseMaterial3D camera_cutout, or a custom camera_cutout_discard()).
+	mat.subsurface_texture.camera_cutout = material_storage->material_uses_camera_cutout(p_material_rid);
 	if (rt_state.ground_deform_patch) {
 		mat.subsurface.ground_deform = 1;
 	}
@@ -7865,6 +7868,19 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				RID wind_rd = wind_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(wind_tex) : RID();
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WIND_MAP] = (has_weather && wind_rd.is_valid()) ? float(bindless_block->add_texture(wind_rd)) : 0.0f;
 			}
+			// The camera cut-out round the player (BaseMaterial3D camera_cutout): camera rays start past it.
+			{
+				static const StringName cutout_name = "camera_cutout";
+				static const StringName cutout_floor_name = "camera_cutout_floor";
+				const Variant cut_var = ms->global_shader_parameter_get_internal(cutout_name);
+				const Vector4 cut = cut_var.get_type() == Variant::VECTOR4 ? Vector4(cut_var) : Vector4();
+				const Variant floor_var = ms->global_shader_parameter_get_internal(cutout_floor_name);
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CUTOUT_X] = cut.x;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CUTOUT_Y] = cut.y;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CUTOUT_Z] = cut.z;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CUTOUT_RADIUS] = MAX(cut.w, 0.0f);
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CUTOUT_FLOOR] = floor_var.get_type() == Variant::FLOAT ? float(floor_var) : 0.0f;
+			}
 			// Its contact wetness (wet where water has been): weather_contact_map and weather_contact_rect.
 			static const StringName contact_map_name = "weather_contact_map";
 			static const StringName contact_rect_name = "weather_contact_rect";
@@ -8311,7 +8327,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		_update_streaming_feedback();
 		RID feedback;
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-		feedback = TextureStreaming::get_singleton()->feedback_buffer_get_uniform_rid();
+		if (TextureStreaming::get_singleton()) {
+			feedback = TextureStreaming::get_singleton()->feedback_buffer_get_uniform_rid();
+		}
 #endif
 		const RID stand_in = RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer();
 		RD::Uniform u;
@@ -8525,7 +8543,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			samplers = RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default();
 		}
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-		TextureStreaming::get_singleton()->feedback_report_mipmap_bias(samplers.mipmap_bias); // Feedback reads the mip the sampler reads.
+		if (TextureStreaming::get_singleton()) {
+			TextureStreaming::get_singleton()->feedback_report_mipmap_bias(samplers.mipmap_bias);
+		} // Feedback reads the mip the sampler reads.
 #endif
 		samplers.append_uniforms(uniforms, 16);
 	}

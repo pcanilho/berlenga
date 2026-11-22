@@ -3204,6 +3204,9 @@
 		<member name="rendering/lights_and_shadows/positional_shadow/atlas_16_bits" type="bool" setter="" getter="" default="true">
 			Use 16 bits for the omni/spot shadow depth map. Enabling this results in shadows having less precision and may result in shadow acne, but can lead to performance improvements on some devices.
 		</member>
+		<member name="rendering/lights_and_shadows/positional_shadow/max_shadowed_lights" type="int" setter="" getter="" default="0">
+			The shadow budget: at most this many positional lights ([OmniLight3D], [SpotLight3D], [AreaLight3D]) keep a shadow each frame, the most important first (light energy times the light's size on screen, as Unreal's shadow priority and HDRP's maximum shadows on screen). The others shade unshadowed and give their space in the shadow atlas back. At [code]0[/code], every light that fits keeps its shadow, still placed in the atlas most important first, so when the atlas is full it is the least important lights that go without. The path tracer is unaffected: it traces every light's shadow.
+		</member>
 		<member name="rendering/lights_and_shadows/positional_shadow/atlas_quadrant_0_subdiv" type="int" setter="" getter="" default="2">
 			The subdivision amount of the first quadrant on the shadow atlas. See the [url=$DOCS_URL/tutorials/3d/lights_and_shadows.html#shadow-atlas]documentation[/url] for more information.
 		</member>
@@ -3374,6 +3377,9 @@
 		</member>
 		<member name="rendering/pathtracing/persistent_instances" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], each traced mesh instance keeps its acceleration-structure instances and geometry data from frame to frame, and only instances that changed (moved, changed material, mesh, layers or visibility) are written again. In scenes with many static objects this removes most of the path tracer's per-object CPU work each frame. A changed material rewrites only the instances that use it; changing a mesh, the shadow-caster masks of the lights or the camera's cull mask, or moving the relative origin, rewrites them all once. A MultiMesh above [member rendering/pathtracing/multimesh_merged_blas_max_triangles] keeps its per-record instances the same way, and writes them all again in a frame where any record changes. Skinned, blend-shape, vertex-captured, billboard and mesh-LOD surfaces, merged MultiMeshes and particles are written every frame as before. When disabled, every instance is written every frame, as Godot does.
+		</member>
+		<member name="rendering/pathtracing/scene_feature_elision" type="bool" setter="" getter="" default="true">
+			Compiles the path tracer's code for a [BaseMaterial3D] feature (snow, glaze, ground deform) out of its hit shaders while no material holds that feature. A branch no surface takes still reserves its registers on the GPU, so leaving it out lets more rays run at once. The image is the same: a frame never traces with a shader that leaves out a feature the scene uses, and while the matching shader builds the frame is traced with the full one when it is ready.
 		</member>
 		<member name="rendering/pathtracing/ser_coherence_hints" type="bool" setter="" getter="" default="true">
 			If [code]true[/code] and [member rendering/pathtracing/use_shader_execution_reordering] is in use, each path's hit is reordered with a hint from its material (light passing through it, hair fibres), so threads that shade alike run together. Reordering only regroups work, so the image is unchanged.

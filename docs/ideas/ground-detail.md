@@ -946,3 +946,16 @@ flow per texel, or the channel segments) through a written contract; the detail 
 floor by the flow's Shields share and adds the class's coarse end there as a lag (FAMILY_PEBBLE, rounded a
 little, imbricated across the flow as the river beds' grains), and adds a fan of finer grains where the flow
 spreads. Stones placed only where the channel exists, rebuilt on the field's change signal.
+
+Outcome (22 Nov, built as `RockField3D.runoff_gravel`, on). The channels are the terrain's own: the droplet
+erosion's rills and gullies, read through TerrainGenerator3D.get_gully_at (the slope-area rule on the droplets'
+flow, which TerrainMaterial3D already draws as a gravel lag in the floors and fresh fines on the fans), so the
+stones lie where the ground's colour says they do. The live near-field runoff (GroundSurface3D's sheet flow on sand)
+is left to the sand thread: it cuts rills in loose sand over minutes, the stones here are the channels' long-term
+sorting. Per detail corner: the floor's share (times 1 minus rock exposure, as the material), the fan's (deposit
+over 0.15 to 0.8 m on easing ground, as the material) and the fall line. A floor gets a lag of each class's coarse
+end (cover 0.35/0.25/0.06), 35% a little rounded (pebble family), imbricated across the flow (long axis across,
+dipping upstream 8 to 25 degrees, Rust 1972), while the other sources' gravel and fines thin by 40% and 80% (the
+washed-out fraction). A fan gets a spread of the fine end lying flat and half sunk (cover 0/0.04/0.12) over the
+coarser ground it buries. No tiles over a channel or fan. Bench: `--world --gully-spot --dist=8 --sun=72,150` (the spot falls back to an incised gully when the world has no open one), before frame
+`--no-runoff-gravel`.

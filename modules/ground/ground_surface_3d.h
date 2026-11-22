@@ -107,6 +107,12 @@ public:
 		// (kPa, Wong's ca).
 		float stickiness = 0.0f;
 		float adhesion = 0.0f;
+		// A peat bog (round 24.2): its share of the cell, 0..1, and the peat under its root mat once torn.
+		float bog = 0.0f;
+		float torn_kc = 0.0f;
+		float torn_kphi = 0.0f;
+		float torn_cohesion = 0.0f;
+		float torn_tan_phi = 0.0f;
 		bool deformable = true;
 	};
 	// p_saturation: pore water in the top layer, 0..1 (< 0: none known, p_moisture alone); p_water_speed: water
@@ -146,6 +152,11 @@ private:
 	bool light_budget = false; // still shots: smaller GPU fields and tile cache
 	bool subsoil = true; // round 12: a firm base under the loose layer, its depth varied across the ground
 	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans, flood silt)
+	// Dust devil tracks (docs/ideas/sand.md): the share of the ripples a devil's foot swept flat per 1 m cell, regrowing
+	// as saltation rebuilds them.
+	HashMap<Vector2i, float> scours;
+	float _scour_at(float p_x, float p_z) const;
+	void _scours_heal(float p_dt, float p_wind);
 	// Worn-in tracks (docs/ideas/mud.md, round 14.2): the wheel passes each 25 cm cell has taken, decaying as the
 	// sward regrows and the soil loosens, and when it was last pressed (a pass starts when a cell pressed is not
 	// already under a wheel).
@@ -153,6 +164,7 @@ private:
 		float passes = 0.0f;
 		double last = -1e9;
 		float seal = 0.0f; // round 23.1: puddled clay, its pores kneaded shut (0..1)
+		float torn = 0.0f; // round 24.2: a peat bog's root mat torn through (0..1)
 	};
 	static constexpr float WEAR_CELL = 0.25f;
 	static constexpr float WEAR_GAP = 0.25f; // s a cell must go unpressed before the next press is a new pass
@@ -171,6 +183,11 @@ private:
 	HashSet<Vector2i> wallow_sites;
 	int wallow_visits = 0;
 	void _trail_wallow_update(float p_delta);
+	// Peat bogs (round 24.2): hashed patches where water gathers on flat ground, a root mat over soft peat.
+	bool peat_bogs = true;
+	int mat_tears = 0;
+	float _peat_bog_at(const Vector3 &p_position, float p_moisture, const Node *p_data_map) const;
+	float _mat_torn_at(const Vector3 &p_position) const;
 	void _trail_pug_update(float p_delta);
 	bool _wear_any() const { return !wear_cells.is_empty() || trails_on; }
 	// Hidden stones and roots (docs/ideas/mud.md, round 14.3): what lies in a mud layer, per 2 m cell, made on demand
@@ -703,6 +720,7 @@ private:
 		float repel = 0.0f; // a fire's water repellency (WorldFire.water_repellency_at), 0..1
 		float compacted = 0.0f; // worn-in tracks (round 14.2): how far the passes have packed the soil, 0..1
 		float sealed = 0.0f; // puddled clay (round 23.1): its infiltration cut, 0..1
+		float bog = 0.0f; // peat bog (round 24.2), 0..1
 	};
 	LocalVector<CellInput> cell_inputs;
 	float _water_conductivity(const CellInput &p_in) const;
@@ -1030,6 +1048,13 @@ public:
 	bool is_trail_wallows() const { return trail_wallows; }
 	int get_wallow_count() const { return wallow_sites.size(); } // wallow sites rolled out since start
 	int get_wallow_visits() const { return wallow_visits; }
+	void set_peat_bogs(bool p_enabled);
+	bool is_peat_bogs() const { return peat_bogs; }
+	// (the bog's share here 0..1, how far its root mat is torn 0..1)
+	Vector2 get_peat_bog_at(Vector3 p_position) const;
+	// A load tore the root mat over this print (round 24.2): the peat under it bears from now on.
+	void tear_mat(Vector3 p_position, Vector2 p_size, float p_yaw);
+	int get_mat_tear_count() const { return mat_tears; }
 	float get_stone_scour_volume() const { return stone_scour_m3; } // m3 dug round loose stones by currents
 	float get_stone_silt_lifted() const { return stone_plume_kg; } // kg sent into the water by stones
 	bool is_tracked_mud() const { return tracked_mud; }
@@ -1121,6 +1146,14 @@ public:
 	}
 	bool is_lee_calm_ripples() const { return lee_calm_ripples; }
 	float get_ripple_show_at(const Vector3 &p_position) const;
+	// A dust devil's foot sweeps the ripples off a disc (Reiss et al. 2011): p_amount of the ripples gone at its middle,
+	// fading over its outer 30%. Saltation rebuilds them over some ten minutes of a 10 m/s wind.
+	void add_scour(const Vector3 &p_position, float p_radius, float p_amount);
+	float get_scour_at(const Vector3 &p_position) const { return _scour_at(p_position.x, p_position.z); }
+	void clear_scours() {
+		scours.clear();
+		ripple_mask_accum = 1e9;
+	}
 	bool is_wind_ripples() const { return wind_ripples; }
 	void set_far_ripples(bool p_enabled) {
 		far_ripples = p_enabled;

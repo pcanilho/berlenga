@@ -93,6 +93,12 @@
    "title": "Lighting"
   },
   {
+   "name": "rendering/pathtracing/indirect_reuse_enhanced",
+   "type": "bool",
+   "default": "false",
+   "about": "With `rendering/pathtracing/indirect_reuse` on, applies the reuse rules of ReSTIR PT Enhanced (Lin, Kettunen and Wyman, I3D 2026)."
+  },
+  {
    "name": "rendering/pathtracing/light_reuse",
    "type": "bool",
    "default": "false",
@@ -185,6 +191,12 @@
    "about": "If `true`, each traced mesh instance keeps its acceleration-structure instances and geometry data from frame to frame, and only instances that changed (moved, changed material, mesh, layers or visibility) are written again.",
    "page": "open-worlds",
    "title": "Open worlds"
+  },
+  {
+   "name": "rendering/pathtracing/scene_feature_elision",
+   "type": "bool",
+   "default": "true",
+   "about": "Compiles the path tracer's code for a BaseMaterial3D feature (snow, glaze, ground deform) out of its hit shaders while no material holds that feature."
   },
   {
    "name": "rendering/pathtracing/ser_coherence_hints",
@@ -585,6 +597,17 @@
    ],
    "note": "",
    "what": "ReSTIR GI; rooms and shade lit by bounced light are far less noisy at the same samples.",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
+   "name": "Flickering lights",
+   "settings": [
+    "Light3D.flicker_mode"
+   ],
+   "note": "",
+   "what": "a light-style pattern or a failing lamp with seeded faults, with its emissive material following.",
    "page": "lighting",
    "title": "Lighting",
    "topic": ""
@@ -1183,6 +1206,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Peat bogs",
+   "settings": [
+    "GroundSurface3D.peat_bogs"
+   ],
+   "note": "",
+   "what": "a root mat over soft peat bears light vehicles and tears under heavy ones, which drop in.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Hidden and loose stones",
    "settings": [
     "GroundSurface3D.buried_obstacles",
@@ -1202,7 +1236,7 @@
     "PhysXVehicle3D.tyre_clogging"
    ],
    "note": "",
-   "what": "sticky clay packs the tread until it grips like a slick, and spinning throws it off.",
+   "what": "sticky clay packs the tread until it grips like a slick and balls up on the tyre, shedding in chunks; a lopsided tyre shakes the vehicle until spinning throws it clean.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1454,7 +1488,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again, and passing dust devils (`PhysXDustDevils3D`) sweep a band clean that blowing sand fills in again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2657,10 +2691,12 @@
    "name": "Turf overhangs",
    "settings": [
     "PlantGenerator.make_bank_turf()",
-    "PRESET_TURF_LIP"
+    "PRESET_TURF_LIP",
+    "SodLipFall3D",
+    "make_bank_roots()"
    ],
    "note": "",
-   "what": "cut banks and scarps carry sod lips with hanging grass and roots.",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking; roots of the sward and nearby trees show on bare bank faces, grown on each face's angle.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2675,6 +2711,17 @@
    ],
    "note": "",
    "what": "rooted ground shows turned sods and loose stones that dry, slump and green over, loses its plants and takes the first weeds, healing over about two years.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Hay meadows",
+   "settings": [
+    "GrassField3D.hay_meadows"
+   ],
+   "note": "",
+   "what": "meadows are mown to stubble, the cut grass lying in swaths, then tedded, raked into windrows and carted off over the following days.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -5101,6 +5148,17 @@
    ],
    "note": "",
    "what": "feet plant on deformed ground and snow, with pelvis drop and slope tilt, and prints land where the feet land.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
+   "name": "Resting off screen",
+   "settings": [
+    "Skeleton3D.modifier_update_mode"
+   ],
+   "note": "",
+   "what": "skeleton modifiers can rest while the skeleton is hidden or off screen.",
    "page": "characters",
    "title": "Characters",
    "topic": ""

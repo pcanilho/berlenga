@@ -255,7 +255,7 @@ void SnowClumps3D::_scan(SnowSurface3D *p_surface, SnowCover3D *p_cover) {
 	}
 }
 
-void SnowClumps3D::_spawn(SnowSurface3D *p_surface, SnowCover3D *p_cover, const Vector3 &p_at, const Vector2 &p_out, float p_size) {
+bool SnowClumps3D::_spawn(SnowSurface3D *p_surface, SnowCover3D *p_cover, const Vector3 &p_at, const Vector2 &p_out, float p_size, float p_ceiling) {
 	// Thrown a little past the rim: up to a few of its own sizes and 12 cm.
 	const float throw_len = rng.randf() * MIN(0.12f, 3.0f * p_size);
 	const Vector2 side(-p_out.y, p_out.x);
@@ -264,9 +264,13 @@ void SnowClumps3D::_spawn(SnowSurface3D *p_surface, SnowCover3D *p_cover, const 
 	c.size = p_size;
 	c.shape = uint8_t(rng.rand() % SHAPES);
 	const Vector3 pos(p_at.x + d.x, 0.0f, p_at.z + d.y);
+	const float ground_y = p_surface->get_surface_height_at(pos);
+	if (ground_y > p_ceiling) {
+		return false; // it would land above where it may (debris kept in a rut: the rut's top edge)
+	}
 	c.relief = scan.relief_at(pos);
 	// Height of the shape is about 0.7 of its size: its centre a third of its size up, less what it sank.
-	c.position = Vector3(pos.x, p_surface->get_surface_height_at(pos) + p_size * (0.34f - SINK), pos.z);
+	c.position = Vector3(pos.x, ground_y + p_size * (0.34f - SINK), pos.z);
 	const Basis yaw(Vector3(0, 1, 0), rng.randf() * float(Math::TAU));
 	const Basis tilt(Vector3(rng.random(-1.0f, 1.0f), 0.0f, rng.random(-1.0f, 1.0f)).normalized(), rng.random(0.0f, 0.5f));
 	// Each clump stretched its own way, so the few shared shapes do not read as copies.
@@ -280,6 +284,7 @@ void SnowClumps3D::_spawn(SnowSurface3D *p_surface, SnowCover3D *p_cover, const 
 	}
 	spawned_total++;
 	draw_dirty = true;
+	return true;
 }
 
 void SnowClumps3D::_age(SnowSurface3D *p_surface, SnowCover3D *p_cover) {
@@ -393,7 +398,7 @@ void SnowClumps3D::_notification(int p_what) {
 	}
 }
 
-int SnowClumps3D::drop(const Vector3 &p_at, float p_radius, float p_volume, float p_wetness, float p_size_scale) {
+int SnowClumps3D::drop(const Vector3 &p_at, float p_radius, float p_volume, float p_wetness, float p_size_scale, float p_ceiling) {
 	SnowSurface3D *surface = _surface();
 	if (!enabled || !surface || p_volume <= 0.0f) {
 		return 0;
@@ -418,8 +423,9 @@ int SnowClumps3D::drop(const Vector3 &p_at, float p_radius, float p_volume, floa
 		const float a = rng.randf() * float(Math::TAU);
 		const float r = p_radius * Math::sqrt(rng.randf());
 		const Vector2 out(Math::cos(a), Math::sin(a));
-		_spawn(surface, nullptr, p_at + Vector3(out.x * r, 0.0f, out.y * r), out, size);
-		made++;
+		if (_spawn(surface, nullptr, p_at + Vector3(out.x * r, 0.0f, out.y * r), out, size, p_ceiling)) {
+			made++;
+		}
 	}
 	return made;
 }
@@ -508,7 +514,7 @@ void SnowClumps3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_material", "material"), &SnowClumps3D::set_material);
 	ClassDB::bind_method(D_METHOD("get_material"), &SnowClumps3D::get_material);
 	ClassDB::bind_method(D_METHOD("update_now"), &SnowClumps3D::update_now);
-	ClassDB::bind_method(D_METHOD("drop", "at", "radius", "volume", "wetness", "size_scale"), &SnowClumps3D::drop, DEFVAL(1.0));
+	ClassDB::bind_method(D_METHOD("drop", "at", "radius", "volume", "wetness", "size_scale", "ceiling"), &SnowClumps3D::drop, DEFVAL(1.0), DEFVAL(1e30));
 	ClassDB::bind_method(D_METHOD("clear"), &SnowClumps3D::clear);
 	ClassDB::bind_method(D_METHOD("get_clump_count"), &SnowClumps3D::get_clump_count);
 	ClassDB::bind_method(D_METHOD("get_spawned_total"), &SnowClumps3D::get_spawned_total);

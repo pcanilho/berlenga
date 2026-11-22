@@ -455,6 +455,56 @@ func _ready() -> void:
 		_log("river pick: %d reaches" % n_ok)
 		get_tree().quit(0)
 		return
+	if args.has("bank-pick"):
+		# --bank-pick: river cut banks fit for a close turf/roots shot (a 0.8-3 m rise within 2.5 m of the water's
+		# edge), each with a low oblique camera along the bank over the water; prints the steepest, then quits.
+		for _i in 30:
+			await get_tree().physics_frame
+		var best: Array = []
+		for k in rivers.size():
+			var cv: Curve3D = rivers[k].curve
+			if cv == null:
+				continue
+			for j in range(0, cv.point_count - 1, 3):
+				var p: Vector3 = rivers[k].global_transform * cv.get_point_position(j)
+				var d: float = rivers[k].sample_depth(p)
+				if d < 0.15:
+					continue
+				var t: Vector3 = (rivers[k].global_transform * cv.get_point_position(j + 1)) - p
+				t.y = 0.0
+				if t.length() < 0.01:
+					continue
+				t = t.normalized()
+				var surf := gen.get_height(p) + d
+				for sg in [-1.0, 1.0]:
+					var side: Vector3 = Vector3(-t.z, 0, t.x) * float(sg)
+					var e := Vector3.INF
+					for st in 40:
+						var q: Vector3 = p + side * (0.5 * st)
+						if gen.get_height(q) > surf:
+							e = q
+							break
+					if e == Vector3.INF:
+						continue
+					var rise := gen.get_height(e + side * 2.5) - surf
+					if rise < 0.8 or rise > 3.0:
+						continue
+					best.append([rise, e, side, t, surf])
+		best.sort_custom(func(a, b): return a[0] > b[0])
+		for i in mini(best.size(), 8):
+			var r: Array = best[i]
+			var e: Vector3 = r[1]
+			var cam: Vector3 = e - r[2] * 1.5 - r[3] * 7.0
+			cam.y = r[4] + 0.7
+			var lk: Vector3 = e + r[2] * 0.6 + r[3] * 2.0
+			lk.y = r[4] + 0.5 * r[0]
+			# y as height above the ground (negative, the --cam/--look convention), so it reads right at any altitude.
+			var ch := -maxf(cam.y - gen.get_height(cam), 0.05)
+			var lh := -maxf(lk.y - gen.get_height(lk), 0.05)
+			_log("bank pick: rise %.2f cam=%.1f,%.2f,%.1f look=%.1f,%.2f,%.1f" % [r[0], cam.x, ch, cam.z, lk.x, lh, lk.z])
+		_log("bank pick: %d banks" % best.size())
+		get_tree().quit(0)
+		return
 	if args.has("beaver-dam") and ClassDB.class_exists("WorldBeaverDam3D"):
 		# --beaver-dam[=Y]: a WorldBeaverDam3D (world-links 1f60b5c4) at --dam-at=x,z (else the --look point), pond
 		# --pond-radius (30) m; Y > 0 breaches it Y years ago, so the stand turns the pond to a beaver meadow of
@@ -3109,6 +3159,13 @@ func _build_weather() -> void:
 		sd.name = "SeedDown"
 		sd.range = float(args.get("seed-range", "40"))
 		add_child(sd)
+	# Sod lips breaking off (SodLipFall3D, vegetation 8faf7573): bank overhangs within range of the camera fail
+	# under a step (grass_trample), an undercutting river or a soaking, and fall as blocks of sod. --sod-fall=0 for none.
+	if args.get("sod-fall", "1") != "0" and ClassDB.class_exists("SodLipFall3D"):
+		var sl = ClassDB.instantiate("SodLipFall3D")
+		sl.name = "SodLipFall"
+		sl.range = float(args.get("sod-range", "40"))
+		add_child(sl)
 	snow.global_position = Vector3(0, 0, 0)
 
 
@@ -3626,6 +3683,8 @@ func _build_vegetation() -> void:
 		# No sward in the desert: the meadow rules know soil, rock and scree, not the erg's loose sand.
 		grass.ground_tint_enabled = false
 		grass.radius = 0.0
+	if args.has("hay") and "hay_meadows" in grass:
+		grass.hay_meadows = _hay_list()
 	add_child(grass)
 	grass.data_map = grass.get_path_to(data_map)
 	if args.get("plants", "1") != "0" and not desert:
@@ -3651,6 +3710,8 @@ func _build_vegetation() -> void:
 		under.tip_color = Color(0.38, 0.52, 0.16)
 		under.dryness = 0.35
 		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
+		if args.has("hay") and "hay_meadows" in under:
+			under.hay_meadows = _hay_list()
 		add_child(under)
 		under.data_map = under.get_path_to(data_map)
 		var turf := GrassField3D.new()
@@ -3668,6 +3729,8 @@ func _build_vegetation() -> void:
 		turf.tip_color = Color(0.3, 0.42, 0.12)
 		turf.dryness = 0.35
 		turf.ground_tint_enabled = false
+		if args.has("hay") and "hay_meadows" in turf:
+			turf.hay_meadows = _hay_list()
 		add_child(turf)
 		turf.data_map = turf.get_path_to(data_map)
 		sward = [grass, under, turf]
@@ -4198,6 +4261,10 @@ func _build_camera() -> void:
 			var cz := ez + 60.0
 			cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, cz) + 1.7, cz)
 			cam.look_at(Vector3(ex, height_at(ex, ez) + 4.0, ez))
+			if args.has("hay"):
+				# Over the hay fields (_hay_list): raised to --hay-eye (5) m, looking down across the rows to the edge.
+				cam.position.y += float(args.get("hay-eye", "5")) - 1.7
+				cam.look_at(Vector3(ex - 10.0, height_at(ex - 10.0, ez + 12.0) + 1.0, ez + 12.0))
 		"lakewater":
 			# Low over the water at one end of the lake, looking along it to the mountains behind: the water cell
 			# farthest from the water's centroid, pulled a little back over the water.
@@ -4754,6 +4821,15 @@ func _build_cover() -> void:
 			lead.append(bts)
 		b.species = lead + b.species
 		_log("bank turf: %d species" % bt.size())
+	if args.get("bank-roots", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_bank_roots"):
+		# Bank roots (PlantGenerator.make_bank_roots, vegetation be31837e): hanging and exposed roots on cut banks;
+		# the woody kind only near canopy. Appended to the cover biome (no river biome here). --bank-roots=0 for none.
+		var br: Array = ClassDB.class_call_static("PlantGenerator", "make_bank_roots", 6, true, season)
+		var tail: Array = []
+		for brs in br:
+			tail.append(brs)
+		b.species = b.species + tail
+		_log("bank roots: %d species" % br.size())
 	if args.has("mounds") and ClassDB.class_has_method("PlantGenerator", "make_mounds"):
 		# --mounds=meadow|wood|both: ant hills and molehills in the meadows, wood ant nests at conifer edges
 		# (PlantGenerator.make_mounds, vegetation e90904e7); called by name so older binaries still parse.
@@ -6981,7 +7057,9 @@ func _frost_sorted_cam() -> void:
 					var sp := p + up * upd
 					var sdeg := rad_to_deg(atan(_slip_grad(sp).length()))
 					var gs: Vector2 = rocks.call("get_frost_at", sp)
-					var score := lo + (1.0 if sdeg > 2.0 and sdeg < 5.0 and gs.x > 0.6 else 0.0)
+					# the pattern should run on 40-60 m ahead: the gate along the view
+					var far := minf((rocks.call("get_frost_at", p + up * 40.0) as Vector2).x, (rocks.call("get_frost_at", p + up * 55.0) as Vector2).x)
+					var score := lo + far + (0.5 if sdeg > 2.0 and sdeg < 5.0 and gs.x > 0.6 else 0.0)
 					if score > best:
 						best = score
 						bp = Vector3(p.x, height_at(p.x, p.z), p.z)
@@ -6993,10 +7071,15 @@ func _frost_sorted_cam() -> void:
 		return
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var dir := bu.rotated(Vector3.UP, deg_to_rad(float(args.get("fs-yaw", "0"))))
-	var cp := bp - dir * float(args.get("fs-back", "7"))
-	c3.global_position = Vector3(cp.x, height_at(cp.x, cp.z) + float(args.get("fs-eye", "1.7")), cp.z)
-	var tgt := bp + dir * upd
-	c3.look_at(Vector3(tgt.x, height_at(tgt.x, tgt.z), tgt.z))
+	var cp := bp - dir * float(args.get("fs-back", "4"))
+	c3.global_position = Vector3(cp.x, height_at(cp.x, cp.z) + float(args.get("fs-eye", "1.6")), cp.z)
+	if args.has("fs-pitch") or not args.has("fs-look-target"):
+		# docs framing: --fs-pitch (20) degrees down, the near circles filling the lower half
+		var pr := deg_to_rad(float(args.get("fs-pitch", "20")))
+		c3.look_at(c3.global_position + dir * cos(pr) - Vector3.UP * sin(pr))
+	else:
+		var tgt := bp + dir * upd
+		c3.look_at(Vector3(tgt.x, height_at(tgt.x, tgt.z), tgt.z))
 	weather.follow_target = weather.get_path_to(c3)
 	_log("frost sorted: flat at %s (score %.2f), upslope %s, cam %s" % [str(bp.round()), best, str(dir.snapped(Vector3.ONE * 0.01)), str(c3.global_position.round())])
 
@@ -7006,6 +7089,41 @@ func _frost_sorted_cam() -> void:
 # footfall the snow, mud and sand print (meta world_contact_feet); GazeModifier3D turns its head and eyes to `look`.
 # The rig has no walk: walk_cycle.gd builds one from published gait data (--walker-anim, walk; run plays the rig's
 # run at --walker-anim-speed, 0.5). Moved by _walk_to.
+# --hay[=x,z]: a meadow mid-harvest (GrassField3D.hay_meadows, vegetation da9145ba) on every sward layer, three
+# fields side by side across x round x,z (else the meadow view's clearing, else --look), each --hay-w (40; 22 in the
+# meadow view) m wide and --hay-l (140; 56) m deep: mown today (swaths), raked on day 3 (windrows), carted on day 5 (stubble); rows at --hay-row (0.35 rad).
+# VegetationField3D leaves the tall herbs out there on its own.
+func _hay_list() -> Array:
+	var at := String(args.get("hay", ""))
+	var w := float(args.get("hay-w", "40"))
+	var l := float(args.get("hay-l", "140"))
+	var cx := 0.0
+	var cz := 0.0
+	if at == "" and args.get("view", "wide") == "meadow" and gen != null:
+		# The meadow view's clearing: between the camera and the forest edge it looks at (as _place_camera).
+		var ex := float(args.get("treeline-x", "300"))
+		var ez := 400.0
+		while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
+			ez -= 16.0
+		w = float(args.get("hay-w", "22"))
+		l = float(args.get("hay-l", "56"))
+		cx = ex - 10.0
+		cz = ez + 4.0 + 0.5 * l
+	else:
+		if at == "":
+			at = String(args.get("look", "0,0,0"))
+		var hp := at.split(",")
+		cx = float(hp[0])
+		cz = float(hp[2] if hp.size() > 2 else (hp[1] if hp.size() > 1 else "0"))
+	var out: Array = []
+	var days := [0.0, 3.0, 5.0]
+	for i in 3:
+		var x0 := cx + (float(i) - 1.5) * w
+		var poly := PackedVector2Array([Vector2(x0, cz - 0.5 * l), Vector2(x0 + w, cz - 0.5 * l), Vector2(x0 + w, cz + 0.5 * l), Vector2(x0, cz + 0.5 * l)])
+		out.append({"polygon": poly, "row_angle": float(args.get("hay-row", "0.35")), "days": days[i]})
+	return out
+
+
 func _make_walker(look: Node3D = null) -> CharacterBody3D:
 	var src := _gltf_node("res://ext/mannequin/mannequiny-0.3.0.glb")
 	if src == null:
@@ -7020,6 +7138,7 @@ func _make_walker(look: Node3D = null) -> CharacterBody3D:
 	cs.position.y = 0.875
 	body.add_child(cs)
 	body.add_child(src)
+	body.add_to_group("grass_trample")
 	add_child(body)
 	var skel := src.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D
 	if ClassDB.class_exists("FootPlacementModifier3D"):

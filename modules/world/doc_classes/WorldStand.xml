@@ -167,6 +167,13 @@
 				The worn-path network last given to [method set_trails].
 			</description>
 		</method>
+		<method name="notify_stand_changed">
+			<return type="void" />
+			<param index="0" name="area" type="Rect2" />
+			<description>
+				Reports that [method stand_age_at] changed over [param area] (world XZ): bumps the generation, logs the area and emits [signal stand_changed]. Fire's burn changes are forwarded here.
+			</description>
+		</method>
 		<method name="remove_browse">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
@@ -216,13 +223,6 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Years since the last stand-replacing disturbance at [param position]: the youngest of a fire from [method WorldFire.burn_age_at] (unless [method WorldFire.crown_scorch_at] says only a surface fire passed, under 5 m) and the wind and beetle kills added here. -1 where none is known (old growth).
-			</description>
-		</method>
-		<method name="stand_changed">
-			<return type="void" />
-			<param index="0" name="area" type="Rect2" />
-			<description>
-				Reports that [method stand_age_at] changed over [param area] (world XZ): bumps the generation, logs the area and emits [signal stand_changed]. Fire's burn changes are forwarded here.
 			</description>
 		</method>
 		<method name="strike_age_at" qualifiers="const">

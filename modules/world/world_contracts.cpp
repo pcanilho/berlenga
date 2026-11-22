@@ -1135,7 +1135,7 @@ void WorldGround::_bind_methods() {
 	GDVIRTUAL_BIND(_albedo_at, "position");
 	ClassDB::bind_method(D_METHOD("relief_at", "position"), &WorldGround::relief_at);
 	GDVIRTUAL_BIND(_relief_at, "position");
-	ClassDB::bind_method(D_METHOD("relief_changed", "area"), &WorldGround::relief_changed);
+	ClassDB::bind_method(D_METHOD("notify_relief_changed", "area"), &WorldGround::notify_relief_changed);
 	ADD_SIGNAL(MethodInfo("relief_changed", PropertyInfo(Variant::RECT2, "area")));
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
 	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &WorldGround::track_mud);
@@ -1298,7 +1298,7 @@ void WorldContracts::unregister_relief(WorldReliefProvider *p_provider) {
 	}
 }
 
-void WorldGround::relief_changed(const Rect2 &p_area) {
+void WorldGround::notify_relief_changed(const Rect2 &p_area) {
 	emit_signal(SNAME("relief_changed"), p_area);
 }
 
@@ -1434,9 +1434,9 @@ void WorldContracts::fire_burn_changed(const Rect2 &p_area) {
 		singleton->fire_override->burn_changed(p_area);
 	}
 	// A burn changes the stand's age there too.
-	singleton->builtin_stand->stand_changed(p_area);
+	singleton->builtin_stand->notify_stand_changed(p_area);
 	if (singleton->stand_override.is_valid()) {
-		singleton->stand_override->stand_changed(p_area);
+		singleton->stand_override->notify_stand_changed(p_area);
 	}
 }
 
@@ -1539,7 +1539,7 @@ int WorldStand::disturbance_at(const Vector3 &p_position) const {
 }
 
 void WorldStand::_report(const Rect2 &p_area) {
-	stand_changed(p_area);
+	notify_stand_changed(p_area);
 }
 
 int WorldStand::add_disturbance(const Vector3 &p_center, float p_radius, int p_kind, float p_age_years) {
@@ -1959,7 +1959,7 @@ void WorldStand::advance_years(float p_years) {
 	_report(area);
 }
 
-void WorldStand::stand_changed(const Rect2 &p_area) {
+void WorldStand::notify_stand_changed(const Rect2 &p_area) {
 	generation++;
 	Change c;
 	c.generation = generation;
@@ -2020,7 +2020,7 @@ void WorldStand::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_trails", "trails"), &WorldStand::set_trails);
 	ClassDB::bind_method(D_METHOD("get_trails"), &WorldStand::get_trails);
 	ClassDB::bind_method(D_METHOD("trail_at", "position"), &WorldStand::trail_at);
-	ClassDB::bind_method(D_METHOD("stand_changed", "area"), &WorldStand::stand_changed);
+	ClassDB::bind_method(D_METHOD("notify_stand_changed", "area"), &WorldStand::notify_stand_changed);
 	ClassDB::bind_method(D_METHOD("get_stand_generation"), &WorldStand::get_stand_generation);
 	ClassDB::bind_method(D_METHOD("get_stand_changes_since", "generation"), &WorldStand::get_stand_changes_since);
 	ADD_SIGNAL(MethodInfo("stand_changed", PropertyInfo(Variant::RECT2, "area")));

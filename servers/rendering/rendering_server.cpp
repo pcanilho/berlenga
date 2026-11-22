@@ -3757,6 +3757,9 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/lights_and_shadows/positional_shadow/soft_shadow_filter_quality", PROPERTY_HINT_ENUM, "Hard (Fastest),Soft Very Low (Faster),Soft Low (Fast),Soft Medium (Average),Soft High (Slow),Soft Ultra (Slowest)"), 2);
 	GLOBAL_DEF("rendering/lights_and_shadows/positional_shadow/soft_shadow_filter_quality.mobile", 0);
 	GLOBAL_DEF("rendering/lights_and_shadows/positional_shadow/atlas_16_bits", true);
+	// The shadow budget: at most this many positional lights keep a shadow, the most important (energy times size on
+	// screen) first; 0 = as many as the atlas holds (still the most important first).
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/lights_and_shadows/positional_shadow/max_shadowed_lights", PROPERTY_HINT_RANGE, "0,256,1"), 0);
 
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/2d/shadow_atlas/size", PROPERTY_HINT_RANGE, "128,16384"), 2048);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/2d/batching/item_buffer_size", PROPERTY_HINT_RANGE, "128,1048576,1"), 16384);
@@ -3896,6 +3899,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/light_reuse", false);
 	GLOBAL_DEF("rendering/pathtracing/indirect_reuse", false);
 	GLOBAL_DEF("rendering/pathtracing/indirect_reuse_enhanced", false);
+	GLOBAL_DEF("rendering/pathtracing/scene_feature_elision", true);
 	GLOBAL_DEF("rendering/pathtracing/back_lighting", true);
 	GLOBAL_DEF("rendering/pathtracing/clearcoat", true);
 	GLOBAL_DEF("rendering/pathtracing/transmission", true);

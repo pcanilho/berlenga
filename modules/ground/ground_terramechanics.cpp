@@ -205,9 +205,40 @@ float janosi_hanamoto(float p_j_end, float p_shear_k) {
 	return 1.0f - (1.0f - Math::exp(-x)) / x;
 }
 
+GroundSoil torn_mat(const GroundSoil &p_soil) {
+	GroundSoil t = p_soil;
+	if (p_soil.mat_tear <= 0.0f) {
+		return t;
+	}
+	t.kc = p_soil.torn_kc;
+	t.kphi = p_soil.torn_kphi;
+	t.cohesion = p_soil.torn_cohesion;
+	t.tan_phi = p_soil.torn_tan_phi;
+	t.mat_tear = 0.0f;
+	return t;
+}
+
 GroundWheelSoil wheel(const GroundSoil &p_soil, float p_load, float p_radius, float p_width, float p_inflation, float p_slip, float p_slip_angle, float p_already_pressed) {
 	GroundWheelSoil r;
 	if (!p_soil.soft || p_load <= 0.0f || p_radius <= 0.0f || p_width <= 0.0f) {
+		return r;
+	}
+	if (p_soil.mat_tear > 0.0f) {
+		// Muskeg (Wong, Garber, Radforth and Dowell 1979; Wong, Radforth and Preston-Thomas 1982): the root mat
+		// bears as p = (k_p + 4 m_m / D_h) z up to a critical sinkage, where it ruptures and the bearing drops to
+		// the weak peat's under it (bevameter tests put the break at 8 to 14 cm). The mat's term rides on Bekker's
+		// kc / b (n 1, D_h about the tyre's width). Pressed past it, the load tears through. The mat is a web of
+		// roots, not loose soil: a slipping tread does not dig it out (no slip sinkage) until it spins hard enough
+		// to shred it, past a slip of about 0.7.
+		GroundSoil intact = p_soil;
+		intact.mat_tear = 0.0f;
+		r = wheel(intact, p_load, p_radius, p_width, p_inflation, p_slip, p_slip_angle, p_already_pressed);
+		if (r.static_sinkage <= p_soil.mat_tear && Math::abs(p_slip) < 0.7f) {
+			r.sinkage = r.static_sinkage;
+			return r;
+		}
+		r = wheel(torn_mat(p_soil), p_load, p_radius, p_width, p_inflation, p_slip, p_slip_angle, p_already_pressed);
+		r.torn = true;
 		return r;
 	}
 	r.soft = true;

@@ -33,10 +33,14 @@
 
 #include "ground_ripples.h"
 #include "ground_surface_3d.h"
+#include "modules/modules_enabled.gen.h" // MODULE_WEATHER_ENABLED
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
+#ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_map_3d.h"
+#endif
 #include "scene/3d/gpu_particles_3d.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/primitive_meshes.h"
@@ -48,6 +52,7 @@ static constexpr float SAND_DENSITY = 2650.0f; // kg/m3, quartz
 static const char *STREAMER_SHADER = R"(
 shader_type particles;
 render_mode disable_velocity, disable_force;
+// @WEATHER
 
 uniform vec3 box_center;
 uniform vec3 box_size = vec3(10.0, 4.0, 10.0);
@@ -66,6 +71,27 @@ uniform float mean_hop = 0.04;
 uniform float streak_time = 0.0167;
 uniform sampler2D ground_tex : filter_linear, repeat_disable;
 uniform vec4 ground_rect;
+uniform vec2 wind10 = vec2(0.0); // m/s, the 10 m wind over the patch
+uniform float flux_ref = 0.0; // the saltation flux (u*^2 (u* - u*t)) the particle budget is set for
+
+// The local 10 m wind: the patch's, plus the shared wind's vortices (dust devils: WeatherMap3D add_vortex, the same
+// Rankine field with its surface inflow), so the grains run round a devil's foot and in toward its wall.
+vec2 local_wind(vec2 xz) {
+	vec2 w = wind10;
+#ifdef WEATHER_VORTICES
+	w += weather_vortices(vec3(xz.x, 0.0, xz.y), 1.0).xz;
+#endif
+	return w;
+}
+// u* over the sand (the log law to 10 m, z0 0.1 mm) and the flux shape u*^2 (u* - u*t) (Kawamura 1951; White 1979).
+float local_flux(float u10) {
+	float us = 0.4 * u10 / log(10.0 / 1e-4);
+	return us > 0.2 ? us * us * (us - 0.2) : 0.0;
+}
+float local_coverage(float u10) {
+	float us = 0.4 * u10 / log(10.0 / 1e-4);
+	return us <= 0.2 ? 0.0 : clamp(0.15 + 0.85 * (us / 0.2 - 1.0), 0.15, 1.0);
+}
 
 uint sh(uint x) {
 	x ^= x >> 16u;
@@ -99,15 +125,15 @@ float vnoise(vec3 p) {
 }
 // Streamers (Baas and Sherman 2005): ribbons about 20 cm wide and 2 to 3 m long, carried downwind by the
 // gusts and turning over in a couple of seconds. True where a grain is inside one.
-bool in_streamer(vec2 xz) {
-	if (coverage >= 0.99) {
+bool in_streamer(vec2 xz, vec2 dir, float cov) {
+	if (cov >= 0.99) {
 		return true;
 	}
-	vec2 a = vec2(dot(xz, wind_dir), dot(xz, vec2(-wind_dir.y, wind_dir.x)));
+	vec2 a = vec2(dot(xz, dir), dot(xz, vec2(-dir.y, dir.x)));
 	a.x -= air_speed * clock;
 	float n = 0.65 * vnoise(vec3(a.x / 2.5, a.y / 0.2, clock * 0.5)) + 0.35 * vnoise(vec3(a.x / 1.0, a.y / 0.08, clock * 1.1) + 17.0);
 	// The sum's spread is about 0.5 +- 0.2: the threshold for the wanted share.
-	return n < 0.5 + 0.42 * (coverage - 0.5);
+	return n < 0.5 + 0.42 * (cov - 0.5);
 }
 
 void spawn(inout vec4 c, inout vec3 p, uint s) {
@@ -156,7 +182,12 @@ void process() {
 	// Speed at the hop's top, then the hop's length from its flight time (ballistic, drag ignored).
 	float v = hop_k * log(h / z0);
 	float hop = v * 2.0 * sqrt(2.0 * h / 9.81);
-	p.xz += wind_dir * v * DELTA;
+	// The grain runs with the wind where it is (the grain speed is set by the threshold, not the wind: Kok et al.
+	// 2012), so it curves round a vortex.
+	vec2 lw = local_wind(p.xz);
+	float lsp = length(lw);
+	vec2 dir = lsp > 1e-3 ? lw / lsp : wind_dir;
+	p.xz += dir * v * DELTA;
 	c.y += v * DELTA;
 	vec3 rel = p - box_center;
 	if (c.y >= c.z * hop || any(greaterThan(abs(rel.xz), 0.5 * box_size.xz))) {
@@ -174,12 +205,14 @@ void process() {
 	vec2 g = ground(p.xz);
 	float ph = fract(c.y / hop);
 	p.y = (g.x > -1e8 ? g.x : box_center.y) + 4.0 * h * ph * (1.0 - ph) + 0.0005;
-	vec3 vel = vec3(wind_dir.x * v, 4.0 * h * (1.0 - 2.0 * ph) * v / hop, wind_dir.y * v);
+	vec3 vel = vec3(dir.x * v, 4.0 * h * (1.0 - 2.0 * ph) * v / hop, dir.y * v);
 	VELOCITY = vel;
 	rel = p - box_center;
 	vec2 edge = 0.5 * box_size.xz - abs(rel.xz);
 	float fade = smoothstep(0.0, 1.0, min(edge.x, edge.y)) * smoothstep(0.3, 0.8, distance(p, eye));
-	float on = step(c.w, ratio) * (in_streamer(p.xz) ? 1.0 : 0.0);
+	// Flying where the local wind moves sand, in the share its flux makes of the budget's.
+	float keep = flux_ref > 0.0 ? min(local_flux(lsp) / flux_ref, 1.0) : 0.0;
+	float on = step(c.w, ratio * keep) * (in_streamer(p.xz, dir, local_coverage(lsp)) ? 1.0 : 0.0);
 	// Each particle is per_particle grains: drawn with their summed cross-section.
 	float a = on * g.y * fade;
 	TRANSFORM = streak(p, vel, grain_size * sqrt(per_particle), a);
@@ -293,7 +326,23 @@ void GroundStreamers3D::_update(double p_delta) {
 	}
 	const Vector2 wind = surface ? surface->get_wind_10m() : Vector2();
 	cur_wind10 = wind.length();
-	cur_ustar = GroundRipples::friction_speed(cur_wind10);
+	// The strongest wind over the patch: the patch's own, or more where a vortex in the shared wind (a dust devil)
+	// adds its swirl. The particle budget is set for it; each grain flies in the share its own wind's flux makes.
+	cur_peak_wind = cur_wind10;
+#ifdef MODULE_WEATHER_ENABLED
+	if (const WeatherMap3D *wm = WeatherMap3D::get_active()) {
+		if (wm->get_vortex_count() > 0) {
+			for (int j = 0; j <= 8; j++) {
+				for (int i = 0; i <= 8; i++) {
+					const Vector3 q = center + Vector3((i / 8.0f - 0.5f) * extent, 0.0f, (j / 8.0f - 0.5f) * extent);
+					const Vector3 vw = wm->get_vortex_wind_at(q, 1.0f);
+					cur_peak_wind = MAX(cur_peak_wind, (wind + Vector2(vw.x, vw.z)).length());
+				}
+			}
+		}
+	}
+#endif
+	cur_ustar = GroundRipples::friction_speed(cur_peak_wind);
 	cur_flux = GroundRipples::saltation_flux(cur_ustar) * strength;
 	cur_coverage = streamer_coverage(cur_ustar);
 	const bool on = surface && cur_flux > 0.0f;
@@ -331,6 +380,8 @@ void GroundStreamers3D::_update(double p_delta) {
 	process->set_shader_parameter("per_particle", cur_per_particle);
 	process->set_shader_parameter("coverage", cur_coverage);
 	process->set_shader_parameter("wind_dir", dir);
+	process->set_shader_parameter("wind10", wind);
+	process->set_shader_parameter("flux_ref", cur_ustar * cur_ustar * MAX(cur_ustar - GroundRipples::SAND_USTAR_T, 0.0f));
 	// The streamers ride the gusts near the ground: the log-law wind at 20 cm.
 	process->set_shader_parameter("air_speed", cur_ustar / 0.4f * Math::log(0.2f / GroundRipples::SAND_Z0));
 	process->set_shader_parameter("clock", float(clock));
@@ -404,6 +455,7 @@ void GroundStreamers3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind"), &GroundStreamers3D::get_wind);
 	ClassDB::bind_method(D_METHOD("get_flux"), &GroundStreamers3D::get_flux);
 	ClassDB::bind_method(D_METHOD("get_coverage"), &GroundStreamers3D::get_coverage);
+	ClassDB::bind_method(D_METHOD("get_peak_wind"), &GroundStreamers3D::get_peak_wind);
 	ClassDB::bind_method(D_METHOD("get_active_ratio"), &GroundStreamers3D::get_active_ratio);
 	ClassDB::bind_method(D_METHOD("get_grains_per_particle"), &GroundStreamers3D::get_grains_per_particle);
 
@@ -419,7 +471,12 @@ void GroundStreamers3D::_bind_methods() {
 
 GroundStreamers3D::GroundStreamers3D() {
 	shader.instantiate();
-	shader->set_code(STREAMER_SHADER);
+	String code = STREAMER_SHADER;
+#ifdef MODULE_WEATHER_ENABLED
+	// The shared wind's vortices (the dust devils) from the weather's own shader code: one field everywhere.
+	code = code.replace("// @WEATHER\n", "#define WEATHER_VORTICES\n" + WeatherMap3D::get_wind_shader_code());
+#endif
+	shader->set_code(code);
 	process.instantiate();
 	process->set_shader(shader);
 	// Lit, opaque mineral grains with a round edge; alpha carries how much of the pixel they cover.
