@@ -648,10 +648,11 @@
    "name": "Wet surfaces",
    "settings": [
     "wetness_enabled",
-    "wetness_porosity"
+    "wetness_porosity",
+    "wetness_moving"
    ],
    "note": "",
-   "what": "porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced; `get_wetness_shader_code()` for ShaderMaterials.",
+   "what": "porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced; walls run with wind-driven rain in streaks that lean with the wind while lee walls stay drier, and moving bodies such as vehicles blow their water back; `get_wetness_shader_code()` for ShaderMaterials.",
    "page": "materials",
    "title": "Materials",
    "topic": ""
