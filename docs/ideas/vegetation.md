@@ -1701,3 +1701,26 @@ PlantGenerator.make_dew_webs) and the plant shader's silk variant (PLANT_SILK).
 - Season: sheets from March to early December, most from late July; orbs late July to October; none under snow.
 - Check: vegetation bench --test (silk shader on every web, sheets low, orbs on stems, seasons); plants bench
   --close=109 / 110 --dew=1 for a look, --dew=0 to see them gone.
+
+## Blowing leaves (round 5, third pick)
+Built into LeafFall3D (modules/vegetation/leaf_fall_3d.cpp), which already had falling leaves (Andersen, Pesavento and
+Wang 2005 plates), gale lifts, kicks by bodies and leaves on water and snow. What was missing was the ground: lying
+leaves never moved until a gust past the lift speed threw them, and loose litter was one uniform number round the
+camera, not the litter the crowns dropped.
+- Research. Wind moves fallen leaves over the forest floor and gathers them in hollows and against obstacles
+  (Orndorff and Lang 1981, J. Ecol. 69, "Leaf litter redistribution in a West Virginia hardwood forest"); in a breeze
+  that cannot lift them they slide, flip and cartwheel along the ground, the motion everyone notices in autumn.
+- Creep. Past creep_speed (2 m/s at 10 cm, half on ice) a lying leaf slides downwind at 0.3 of the excess (to
+  3 m/s), its heading jittered, flipping over now and then and turning as it goes; with less wind it slows by
+  friction (4 m/s2) and stops. Past lift_speed it is thrown up as before.
+- Shelter. The wind on the ground is the open wind over drift^0.6 (clamped 0.35 to 1.3), drift being the round-4
+  leaf drift field of the VegetationField3D (hollows, the lee of rocks, logs and trunks): leaves slide off exposed
+  ground and stop in the drifts, so moving leaves end where the drawn drifts are.
+- Litter source. field_litter (40 loose leaves per m2 under full litter, on by default) reads
+  VegetationField3D.get_litter_at: the gusts set leaves sliding, or lift them, only where the crowns dropped litter,
+  most from exposed spots. litter_density, the old uniform source, stays for scenes without a field.
+- Not done here: whirls (small vortices that spin leaves up in the lee of buildings, a few metres across; Tratt et al.
+  2003 measured dust devils as Rankine vortices with 5 to 10 m/s swirl and 2 to 3 m/s updraft). They belong in the
+  shared wind (WeatherMap3D), so leaves, dust, smoke and grass all feel them, not in one system's private copy.
+- Check: vegetation bench --test (or --test=blowing): still in light air, all sliding downwind past the creep speed
+  and none lifted; leaves taken off a wood's litter by the wind. weather --test=leaves and links --test still pass.

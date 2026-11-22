@@ -88,6 +88,9 @@ static func height(x: float, z: float) -> float:
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a == "--test": test = true
+		elif a == "--test=blowing":
+			test = true
+			only_blowing = true
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -307,6 +310,11 @@ func _physics_process(_d: float) -> void:
 	for s in mini(3, field.biome.species.size()):
 		counts.append(field.get_placements(s).size())
 	print("VEG_POPULATE err=%d plants=%d per_species=%s ms=%.1f" % [err, field.get_plant_count(), str(counts), field.get_populate_time_msec()])
+	if test and only_blowing:
+		await _blowing_checks()
+		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if test:
 		_checks()
 		await _stream_checks()
@@ -314,6 +322,7 @@ func _physics_process(_d: float) -> void:
 		_deadwood_checks()
 		await _place_form_checks()
 		_trunk_checks()
+		await _blowing_checks()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -1270,6 +1279,104 @@ func _fairy_check() -> void:
 			if b.y > 0.5:
 				dead += 1
 	_check("fairy rings: dark and dead bands in a 200 m square; champignons only on the rings", dark > 20 and dead > 20 and on > 20 and off == 0, [dark, dead, on, off])
+
+# Blowing leaves (LeafFall3D.creep_speed): lying leaves stay put in light air, slide downwind once the wind 10 cm up
+# passes the creep speed (2.5 m/s here, from 12 m/s at 10 m over short grass), and only a few lift below the lift speed.
+var only_blowing := false # --test=blowing: the blowing-leaves check alone
+
+func _blowing_checks() -> void:
+	if not ClassDB.class_exists("LeafFall3D"):
+		return
+	var m: Node3D = ClassDB.instantiate("WeatherMap3D")
+	m.extent = 1024.0
+	m.resolution = 64
+	m.wind_direction = Vector2(1, 0)
+	m.roughness_length = 0.03
+	m.transition_time = 0.0
+	m.gust_intensity = 0.0
+	m.gust_patch_strength = 0.0
+	m.wind_speed = 2.0
+	add_child(m)
+	# On dry ground: the bench's pond would float them (LeafFall3D's water branch).
+	var lf: Node3D = null
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.08, 0.05)
+	quad.orientation = PlaneMesh.FACE_Y
+	for c in [Vector2(40, 40), Vector2(-40, 40), Vector2(40, -40), Vector2(-40, -40), Vector2(80, 0), Vector2(0, 80)]:
+		lf = ClassDB.instantiate("LeafFall3D")
+		lf.auto_crowns = false
+		lf.field_litter = 0.0
+		add_child(lf)
+		lf.add_kind(quad, 0.08, 0.003, 0.00025, 1.0)
+		await get_tree().physics_frame
+		for i in 100:
+			lf.drop_leaf(Vector3(c.x + randf_range(-3, 3), -1000.0, c.y + randf_range(-3, 3)), 0) # under the ground: set on it at once
+		for i in 120:
+			await get_tree().physics_frame
+		if lf.get_floating_count() == 0:
+			break
+		lf.queue_free()
+		lf = null
+	if lf == null:
+		_check("blowing leaves: a dry spot for the check", false, [])
+		m.queue_free()
+		return
+	var mean_x := func() -> float:
+		var sx := 0.0
+		var st: PackedVector4Array = lf.get_leaf_states()
+		for v in st:
+			sx += v.x
+		return sx / maxf(st.size(), 1)
+	var calm_slide: int = lf.get_sliding_count()
+	var x0: float = mean_x.call()
+	var lifted0: int = lf.get_lifted_count()
+	m.wind_speed = 12.0
+	m.snap_to_settings()
+	var most := 0
+	for i in 180:
+		await get_tree().physics_frame
+		most = maxi(most, lf.get_sliding_count())
+	var moved: float = mean_x.call() - x0
+	var lifted: int = lf.get_lifted_count() - lifted0
+	_check("blowing leaves: still in light air, sliding downwind past the creep speed, few lifted under the lift speed",
+			calm_slide == 0 and most > 30 and moved > 0.25 and lifted < 10, [calm_slide, most, moved, lifted, lf.get_crept_count()])
+	lf.queue_free()
+	# The field's own litter: under and round its crowns the wind sets leaves sliding off it.
+	var wood := VegetationField3D.new()
+	wood.populate_on_ready = false
+	wood.bark_detail = false
+	var tsp := PlantSpecies.new()
+	tsp.meshes = [BoxMesh.new()]
+	tsp.spacing = 6.0
+	tsp.canopy_radius = 3.0
+	tsp.canopy_opacity = 0.9
+	wood.biome = Biome.new()
+	wood.biome.species.assign([tsp])
+	add_child(wood)
+	wood.data_map = wood.get_path_to(dm)
+	wood.populate()
+	var t0: Vector3 = wood.get_placements(0)[0] if wood.get_placements(0).size() > 0 else Vector3()
+	var lit: float = wood.get_litter_at(t0)
+	var lf2: Node3D = ClassDB.instantiate("LeafFall3D")
+	lf2.auto_crowns = false
+	lf2.field_litter = 40.0
+	add_child(lf2)
+	lf2.vegetation_field = lf2.get_path_to(wood)
+	lf2.add_kind(quad, 0.08, 0.003, 0.00025, 1.0)
+	lf2.global_position = Vector3(t0.x, 0, t0.z)
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.global_position = Vector3(t0.x, t0.y + 1.7, t0.z)
+	cam.current = true
+	for i in 240:
+		await get_tree().physics_frame
+	var from_litter: int = lf2.get_crept_count() + lf2.get_lifted_count()
+	_check("blowing leaves: the wind takes leaves off the field's litter round its crowns", lit > 0.3 and from_litter > 5, [lit, lf2.get_crept_count(), lf2.get_lifted_count()])
+	lf2.queue_free()
+	cam.queue_free()
+	wood.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
 
 func _webs_check() -> void:
 	var autumn := PlantGenerator.make_dew_webs(1, false, {"day_of_year": 270})
