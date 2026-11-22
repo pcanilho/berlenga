@@ -596,6 +596,7 @@ private:
 		LocalVector<Transform3D> xforms;
 		LocalVector<Color> customs;
 		int glaze_band = 0; // The near mesh's glaze band (TreeGenerator::glaze_band of WorldWeather.glaze_at).
+		int season_band = 0; // Its local season band (TreeGenerator.near_season_band of WorldWeather.season_at).
 	};
 	HashMap<ObjectID, LazyNear> lazy_near;
 	uint64_t glaze_checked_usec = 0;

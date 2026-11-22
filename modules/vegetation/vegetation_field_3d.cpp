@@ -3094,7 +3094,9 @@ void VegetationField3D::_fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &
 void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 	// Ice storms (trees.md 5be): the glaze over each near cell (WorldWeather.glaze_at, read twice a second), in bands; a
 	// near mesh grows its band's ice as geometry, and a cell whose band changes gets a new near cell once it is built
-	// (the old one draws meanwhile).
+	// (the old one draws meanwhile). The local season likewise (trees.md 5bi): WorldWeather.season_at over the cell,
+	// banded by the source (TreeGenerator.near_season_band), so a late-frost hollow or a slope not yet in leaf grows
+	// its own leaf state in the near mesh.
 	WorldContracts *wc = WorldContracts::get_singleton();
 	const Ref<WorldWeather> weather = wc ? wc->get_weather() : Ref<WorldWeather>();
 	const uint64_t now = OS::get_singleton()->get_ticks_usec();
@@ -3102,6 +3104,9 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 	if (glaze_check) {
 		glaze_checked_usec = now;
 	}
+	auto near_code = [](int p_variant, int p_glaze, int p_season) {
+		return p_variant + TreeGenerator::NEAR_GLAZE_STRIDE * p_glaze + TreeGenerator::NEAR_SEASON_STRIDE * p_season;
+	};
 	auto make_near = [&](LazyNear &c, const Ref<Mesh> &p_mesh) {
 		Ref<MultiMesh> mm;
 		mm.instantiate();
@@ -3124,29 +3129,36 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 	for (KeyValue<ObjectID, LazyNear> &kv : lazy_near) {
 		LazyNear &c = kv.value;
 		const float d = c.centre.distance_to(p_camera);
-		int band = c.glaze_band;
+		int glaze = c.glaze_band;
+		int season = c.season_band;
 		if (weather.is_null()) {
-			band = 0;
+			glaze = 0;
+			season = 0;
 		} else if (glaze_check && d <= c.range * 1.2f) {
-			band = TreeGenerator::glaze_band(weather->glaze_at(c.centre));
+			glaze = TreeGenerator::glaze_band(weather->glaze_at(c.centre));
+			const TreeGenerator *tg = Object::cast_to<TreeGenerator>(ObjectDB::get_instance(c.source));
+			season = tg ? tg->near_season_band(weather->season_at(c.centre)) : 0;
 		}
+		const int want = near_code(c.variant, glaze, season);
 		if (c.near) {
 			if (d > c.range * 1.5f) {
 				_lazy_near_free(c);
 				continue;
 			}
-			if (band != c.glaze_band) {
+			if (want != near_code(c.variant, c.glaze_band, c.season_band)) {
 				Object *src = ObjectDB::get_instance(c.source);
-				const Ref<Mesh> mesh = src ? Ref<Mesh>(src->call(SNAME("request_near_mesh"), c.key, c.variant + TreeGenerator::NEAR_GLAZE_STRIDE * band)) : Ref<Mesh>();
+				const Ref<Mesh> mesh = src ? Ref<Mesh>(src->call(SNAME("request_near_mesh"), c.key, want)) : Ref<Mesh>();
 				if (mesh.is_valid()) {
 					_lazy_near_free(c);
-					c.glaze_band = band;
+					c.glaze_band = glaze;
+					c.season_band = season;
 					make_near(c, mesh);
 				}
 			}
 			continue;
 		}
-		c.glaze_band = band;
+		c.glaze_band = glaze;
+		c.season_band = season;
 		if (d > c.range * 1.2f) {
 			continue;
 		}
@@ -3154,7 +3166,7 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 		if (!src) {
 			continue;
 		}
-		const Ref<Mesh> mesh = src->call(SNAME("request_near_mesh"), c.key, c.variant + TreeGenerator::NEAR_GLAZE_STRIDE * c.glaze_band);
+		const Ref<Mesh> mesh = src->call(SNAME("request_near_mesh"), c.key, want);
 		if (mesh.is_null()) {
 			continue; // Still building.
 		}

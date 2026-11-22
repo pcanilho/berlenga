@@ -3994,6 +3994,31 @@ for 0-15 and 15-50 years (decay by the years), at 1.2x stand spacing, and surviv
 (a 5-year track: legacies inside only, thrown logs down the fall line). Next: green alder thickets with sabre stems
 in young tracks; upslope impact scars on the survivors.
 
+### 5bi. Leaves by local season (22 Nov; coordinator's ask, for the scene's late-frost hollow)
+
+The forest's meshes grow from one season (the generator's `season`), but leaves follow the season where the tree
+stands: leaf-out comes a few days later per 100 m climbed (Hopkins' bioclimatic law; Vitasse et al. 2009), and a
+late frost browns only the trees in the hollows where cold air pooled that night (Augspurger 2009; Vitasse, Lenz and
+Koerner 2014; the weather side is WeatherMap3D.late_frost, changelog weather-late-frost). Varying season per place
+is usually done with per-instance tints in the leaf shader or with seasonal mesh variants (SpeedTree's season
+setting). Instance tints are not traced here (PT ignores INSTANCE_CUSTOM on rigged multimeshes), so the state goes in
+the geometry.
+
+As built: near meshes are banded by local season, the same way ice storms band them by glaze (5be).
+`TreeGenerator.near_season_band(local)` turns a `WorldWeather.season_at` result into the species' leaf state in
+quarters (out, turned, fallen, frost-browned): 0 when it matches the generator's own season, else 1 + the code
+(at most 625 bands; one per state actually in view is built). VegetationField3D reads `season_at` over each lazy
+near cell twice a second beside `glaze_at` and asks for variant + NEAR_GLAZE_STRIDE x glaze + NEAR_SEASON_STRIDE
+(2^19) x season band; the near build forces that leaf state (`leaf_season_forced`) and grows it: frost-killed leaves
+dark brown and shrivelled, young leaves small and pale, turned and fallen shares as in autumn. Bench:
+`--stands --near-leaves`, a frost hollow's season bands an oak's near mesh and its leaves grow brown (mean leaf rgb
+0.16 0.11 0.04 against 0.13 0.25 0.06 green); the same season without the frost does not band.
+
+Limits: far meshes (past near_leaf_range) keep the generator's season, so a browned hollow is brown within the near
+range and green beyond it; far season bands would need per-band far variants (a memory cost per state). Only
+deciduous species band (evergreens' new shoots are not modelled). Aspen clones' own dates (5bf) are not applied on
+top of a forced band.
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:
