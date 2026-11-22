@@ -12,7 +12,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
   *Weather map: a storm's cloud, rain core, wind and the wet ground it leaves.*
 
 - **Wind**: slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.
-- **Wind over terrain** (`terrain_wind_enabled`, `drainage_winds`, `upslope_winds`): faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests.
+- **Wind over terrain** (`terrain_wind_enabled`, `drainage_winds`, `upslope_winds`, `foehn_winds`): faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests; wind across a range comes down the lee warmer and drier once the windward side has rained out, under a gap in the cloud.
 - **Wind near the ground** (`add_canopy`, `add_shelter_box`, `gust_patch_size`; RockField3D `wind_obstacles`, PhysXVehicle3D `wind_obstacle`): shelter inside plant canopies and behind buildings, boulders and vehicles; gust patches sweep across fields.
 - **Season state** (`WeatherMap3D.get_season()`): day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.
 - **Late frost** (`WeatherMap3D.late_frost`): a hard spring frost browns the young leaves of species already out, first in cold hollows, until a second flush replaces them weeks later.
