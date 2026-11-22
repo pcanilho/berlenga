@@ -388,7 +388,9 @@
    "name": "rendering/pathtracing/transparent_lighting/enabled",
    "type": "bool",
    "default": "true",
-   "about": "If `true`, transparent surfaces and particles (rain, splashes, smoke, glass) are lit by the path tracer while it is on: a camera-aligned grid of cells (the internal size over 8 across, 64 slices from `rendering/pathtracing/transparent_lighting/near` to `rendering/pathtracing/transparent_lighting/far`) is refreshed by the trace every frame, each cell taking one omni or spot light from the light grid, picked by its contribution, and every directional light, each through a shadow ray, and the sky and one bounce (see `rendering/pathtracing/transparent_lighting/bounce`), blended over the frames."
+   "about": "If `true`, transparent surfaces and particles (rain, splashes, smoke, glass) are lit by the path tracer while it is on: a camera-aligned grid of cells (the internal size over 8 across, 64 slices from `rendering/pathtracing/transparent_lighting/near` to `rendering/pathtracing/transparent_lighting/far`) is refreshed by the trace every frame, each cell taking one omni or spot light from the light grid, picked by its contribution, and every directional light, each through a shadow ray, and the sky and one bounce (see `rendering/pathtracing/transparent_lighting/bounce`), blended over the frames.",
+   "page": "open-worlds",
+   "title": "Open worlds"
   },
   {
    "name": "rendering/pathtracing/transparent_lighting/far",
@@ -648,10 +650,11 @@
    "name": "Wet surfaces",
    "settings": [
     "wetness_enabled",
-    "wetness_porosity"
+    "wetness_porosity",
+    "wetness_moving"
    ],
    "note": "",
-   "what": "porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced; `get_wetness_shader_code()` for ShaderMaterials.",
+   "what": "porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced; walls run with wind-driven rain in streaks that lean with the wind while lee walls stay drier, and moving bodies such as vehicles blow their water back; `get_wetness_shader_code()` for ShaderMaterials.",
    "page": "materials",
    "title": "Materials",
    "topic": ""
@@ -5155,6 +5158,29 @@
    "what": "static acceleration structures shrink in video memory after they are built.",
    "page": "open-worlds",
    "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Texture streaming",
+   "settings": [
+    "rendering/textures/streaming/enabled"
+   ],
+   "note": "",
+   "what": "mip levels stream in by what is on screen within a memory budget, and path traced reflections and bounces keep the mips they need.",
+   "page": "open-worlds",
+   "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Quality levels",
+   "settings": [
+    "rendering/quality/level",
+    "RenderingQuality"
+   ],
+   "note": "",
+   "what": "one Low, Medium, High and Ultra ladder, with per-group overrides for textures, geometry, shadows, path tracing and reflections.",
+   "page": "other",
+   "title": "Other",
    "topic": ""
   },
   {

@@ -32,10 +32,57 @@
 
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 
+LocalVector<BindlessBlock *> BindlessBlock::live_blocks;
+LocalVector<Pair<BindlessBlock::ReplaceListener, void *>> BindlessBlock::replace_listeners;
+
+void BindlessBlock::texture_replaced(RID p_old, RID p_new) {
+	for (BindlessBlock *block : live_blocks) {
+		block->_texture_replaced(p_old, p_new);
+	}
+	for (const Pair<ReplaceListener, void *> &listener : replace_listeners) {
+		listener.first(listener.second, p_old, p_new);
+	}
+}
+
+void BindlessBlock::add_replace_listener(ReplaceListener p_listener, void *p_userdata) {
+	replace_listeners.push_back(Pair<ReplaceListener, void *>(p_listener, p_userdata));
+}
+
+void BindlessBlock::remove_replace_listener(ReplaceListener p_listener, void *p_userdata) {
+	for (uint32_t i = 0; i < replace_listeners.size(); i++) {
+		if (replace_listeners[i].first == p_listener && replace_listeners[i].second == p_userdata) {
+			replace_listeners.remove_at(i);
+			return;
+		}
+	}
+}
+
+void BindlessBlock::_texture_replaced(RID p_old, RID p_new) {
+	if (!is_initialized() || p_old == default_texture) {
+		return;
+	}
+	HashMap<RID, uint32_t>::Iterator it = texture_to_index.find(p_old);
+	if (it == texture_to_index.end()) {
+		return;
+	}
+	const uint32_t index = it->value;
+	texture_to_index.remove(it);
+	if (texture_to_index.has(p_new)) {
+		// Already in the block elsewhere: this slot reads it too until it is reused.
+		textures[index] = p_new;
+		return;
+	}
+	textures[index] = p_new;
+	texture_to_index[p_new] = index;
+}
+
 void BindlessBlock::initialize(RenderingDevice *p_rd) {
 	ERR_FAIL_NULL(p_rd);
 
 	rd = p_rd;
+	if (live_blocks.find(this) < 0) {
+		live_blocks.push_back(this);
+	}
 
 	default_texture = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(
 			RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
@@ -170,4 +217,5 @@ void BindlessBlock::clear() {
 
 BindlessBlock::~BindlessBlock() {
 	clear();
+	live_blocks.erase(this);
 }

@@ -179,8 +179,9 @@ TEST_CASE("[SceneTree][FootPlacementModifier3D] A planted foot holds while the p
 		step(sk, 1.0 / 60.0);
 	}
 	const Vector3 planted = left->get_global_position();
-	// An idle weight shift: hips 4 cm over to one side; the feet stay where they are.
+	// An idle weight shift: hips 4 cm over to one side and dropped 4.5 degrees on the other; the feet stay put.
 	f->set_pelvis_offset(Vector3(0.04, 0, 0));
+	f->set_pelvis_rotation(Vector3(0, 0, Math::deg_to_rad((real_t)4.5)));
 	for (int i = 0; i < 60; i++) {
 		step(sk, 1.0 / 60.0);
 	}

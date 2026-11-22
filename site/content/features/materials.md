@@ -35,7 +35,7 @@ summary: "Clearcoat, back lighting, thin-glass transmission, subsurface scatteri
 
   *Subsurface scattering: thin slabs glow, thick ones stay dark.*
 
-- **Wet surfaces** (BaseMaterial3D Wetness: `wetness_enabled`, `wetness_porosity`): porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced; `get_wetness_shader_code()` for ShaderMaterials.
+- **Wet surfaces** (BaseMaterial3D Wetness: `wetness_enabled`, `wetness_porosity`, `wetness_moving`): porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced; walls run with wind-driven rain in streaks that lean with the wind while lee walls stay drier, and moving bodies such as vehicles blow their water back; `get_wetness_shader_code()` for ShaderMaterials.
 
   ![Spheres of rising porosity, dry and wet, raster and path traced](media/wet-materials.jpg)
 

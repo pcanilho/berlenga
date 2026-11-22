@@ -2287,6 +2287,7 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("texture_drawable_get_default_material"), &RenderingServer::texture_drawable_get_default_material);
 
 	ClassDB::bind_method(D_METHOD("texture_replace", "texture", "by_texture"), &RenderingServer::texture_replace);
+	ClassDB::bind_method(D_METHOD("texture_replace_compatible", "texture", "by_texture"), &RenderingServer::texture_replace_compatible);
 	ClassDB::bind_method(D_METHOD("texture_set_size_override", "texture", "width", "height"), &RenderingServer::texture_set_size_override);
 
 	ClassDB::bind_method(D_METHOD("texture_set_path", "texture", "path"), &RenderingServer::texture_set_path);
@@ -3907,6 +3908,9 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/radiance_cache", true);
 	GLOBAL_DEF("rendering/pathtracing/simulated_gas", true);
 	GLOBAL_DEF("rendering/pathtracing/mesh_lod", false);
+	// Defined here too so the renderers, created before the texture streaming module, read it (modules/texture_streaming).
+	GLOBAL_DEF_RST("rendering/textures/streaming/enabled", true);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/mesh_lod/lod_change/quality_scale", PROPERTY_HINT_RANGE, "0,16,0.01,or_greater"), 1.0);
 	GLOBAL_DEF("rendering/pathtracing/persistent_instances", false);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/opacity_micromap_scale", PROPERTY_HINT_RANGE, "0.25,64,0.01"), 2.0);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/opacity_micromap_max_level", PROPERTY_HINT_RANGE, "1,12,1"), 10);

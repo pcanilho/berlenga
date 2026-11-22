@@ -30,6 +30,8 @@
 
 #include "texture_storage.h"
 
+#include "servers/rendering/renderer_rd/bindless_block.h"
+
 #include "core/config/engine.h"
 #include "core/os/os.h"
 #include "servers/rendering/renderer_rd/effects/copy_effects.h"
@@ -2060,7 +2062,11 @@ void TextureStorage::texture_replace(RID p_texture, RID p_by_texture) {
 	Vector<RID> proxies_to_update = tex->proxies;
 	Vector<RID> proxies_to_redirect = by_tex->proxies;
 
+	RID streaming_state = tex->streaming_state;
+
 	*tex = *by_tex;
+
+	tex->streaming_state = streaming_state; // restore streaming state
 
 	tex->proxies = proxies_to_update; //restore proxies, so they can be updated
 	tex->content_version = ++content_serial;
@@ -2080,6 +2086,66 @@ void TextureStorage::texture_replace(RID p_texture, RID p_by_texture) {
 
 	decal_atlas_mark_dirty_on_texture(p_texture);
 	area_light_atlas_mark_dirty_on_texture(p_texture);
+}
+
+void TextureStorage::texture_replace_compatible(RID p_texture, RID p_by_texture) {
+	Texture *tex = texture_owner.get_or_null(p_texture);
+	ERR_FAIL_NULL(tex);
+	ERR_FAIL_COND(tex->proxy_to.is_valid()); //can't replace proxy
+	Texture *by_tex = texture_owner.get_or_null(p_by_texture);
+	ERR_FAIL_NULL(by_tex);
+	ERR_FAIL_COND(by_tex->proxy_to.is_valid()); //can't replace proxy
+
+	if (tex == by_tex) {
+		return;
+	}
+
+	RID old_rd_texture = tex->rd_texture;
+	RID old_rd_texture_srgb = tex->rd_texture_srgb;
+	RID new_rd_texture = by_tex->rd_texture;
+	RID new_rd_texture_srgb = by_tex->rd_texture_srgb;
+
+	if (tex->canvas_texture) {
+		memdelete(tex->canvas_texture);
+		tex->canvas_texture = nullptr;
+	}
+
+	Vector<RID> proxies_to_update = tex->proxies;
+	Vector<RID> proxies_to_redirect = by_tex->proxies;
+
+	*tex = *by_tex;
+
+	tex->proxies = proxies_to_update; //restore proxies, so they can be updated
+
+	if (tex->canvas_texture) {
+		tex->canvas_texture->diffuse = p_texture; //update
+	}
+
+	for (int i = 0; i < proxies_to_update.size(); i++) {
+		texture_proxy_update(proxies_to_update[i], p_texture);
+	}
+	for (int i = 0; i < proxies_to_redirect.size(); i++) {
+		texture_proxy_update(proxies_to_redirect[i], p_texture);
+	}
+
+	// Replace RD-level textures: patches uniform sets and defers old resources.
+	if (old_rd_texture_srgb.is_valid() && old_rd_texture_srgb != new_rd_texture_srgb) {
+		if (new_rd_texture_srgb.is_valid()) {
+			RD::get_singleton()->texture_replace_rid(old_rd_texture_srgb, new_rd_texture_srgb);
+			BindlessBlock::texture_replaced(old_rd_texture_srgb, new_rd_texture_srgb);
+		} else {
+			RD::get_singleton()->free_rid(old_rd_texture_srgb);
+		}
+	}
+	if (old_rd_texture != new_rd_texture) {
+		RD::get_singleton()->texture_replace_rid(old_rd_texture, new_rd_texture);
+		BindlessBlock::texture_replaced(old_rd_texture, new_rd_texture); // The path tracer's texture table.
+	}
+
+	//delete last, so proxies can be updated
+	texture_owner.free(p_by_texture);
+
+	decal_atlas_mark_dirty_on_texture(p_texture);
 }
 
 void TextureStorage::texture_set_size_override(RID p_texture, int p_width, int p_height) {
@@ -5399,4 +5465,10 @@ uint32_t TextureStorage::render_target_get_color_usage_bits(bool p_msaa) {
 		// FIXME: Storage bit should only be requested when FSR is required.
 		return RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
 	}
+}
+
+void TextureStorage::texture_2d_attach_streaming_state(RID p_texture, RID p_streaming_state) {
+	Texture *tex = texture_owner.get_or_null(p_texture);
+	ERR_FAIL_NULL_MSG(tex, "Invalid texture RID.");
+	tex->streaming_state = p_streaming_state;
 }

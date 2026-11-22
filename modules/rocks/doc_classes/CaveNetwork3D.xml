@@ -148,6 +148,13 @@
 				Triangles in all the meshed chunks.
 			</description>
 		</method>
+		<method name="get_meshed_rock_distance" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				[method get_rock_distance] with the flowstone the formations lay round their feet (mounds, the sheet the rimstone pools stand in), as the meshes draw it.
+			</description>
+		</method>
 		<method name="get_rock_distance" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
