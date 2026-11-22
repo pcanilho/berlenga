@@ -47,6 +47,14 @@
 				Adds [param swe_mm] of snow water equivalent everywhere on the map at [param density] (kg/m³), as fresh snow. For scenes that start under snow. With [param world], the world tier outside the near square takes it too (a storm over the whole terrain); false keeps it to the near square.
 			</description>
 		</method>
+		<method name="add_sastrugi">
+			<return type="void" />
+			<param index="0" name="relief" type="float" />
+			<param index="1" name="wind_direction" type="Vector2" />
+			<description>
+				Sets the sastrugi relief ([param relief] m, ridge to floor, at most 0.4 m and half the pack) carved by a wind blowing toward [param wind_direction] (x, z) wherever there is snow. For scenes and tests; the cover grows them itself (see [member sastrugi_enabled]).
+			</description>
+		</method>
 		<method name="add_suncups">
 			<return type="void" />
 			<param index="0" name="relief" type="float" />
@@ -528,6 +536,19 @@
 				The world tier's snow water equivalent at a position, in mm.
 			</description>
 		</method>
+		<method name="get_sastrugi_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the sastrugi at [param position]: their relief (m, the vector's length) times the direction (x, z) of the wind that carved them.
+			</description>
+		</method>
+		<method name="get_sastrugi_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The sastrugi map over the cover's square (RG half floats: relief times the carving wind's direction), read by [SnowSurface3D].
+			</description>
+		</method>
 		<method name="get_wind_slab_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -731,6 +752,18 @@
 				The density of snow falling in wind (kg/m3): Crocus's [code]109 + 6 T + 26 U^0.5[/code] (Vionnet et al. 2012), or [method new_snow_density] where that is higher (calm), between 50 and 350.
 			</description>
 		</method>
+		<method name="sastrugi_step" qualifiers="static">
+			<return type="Vector2" />
+			<param index="0" name="relief" type="Vector2" />
+			<param index="1" name="wind_dir" type="Vector2" />
+			<param index="2" name="eroded" type="float" />
+			<param index="3" name="filled" type="float" />
+			<param index="4" name="depth" type="float" />
+			<param index="5" name="hard" type="bool" />
+			<description>
+				One step of the sastrugi relief (follow-up 46): on a [param hard] surface the depth [param eroded] carves relief along [param wind_dir]; [param filled] (snow laid on them, melt) fills it; at most 0.4 m and half the pack's [param depth].
+			</description>
+		</method>
 		<method name="transport_flux" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="wind10" type="float" />
@@ -849,6 +882,9 @@
 		</member>
 		<member name="slide_angle" type="float" setter="set_slide_angle" getter="get_slide_angle" default="25.0">
 			Ground steeper than this, in degrees, sheds snow beyond what it holds (SnowSlide: 25 degrees).
+		</member>
+		<member name="sastrugi_enabled" type="bool" setter="set_sastrugi_enabled" getter="is_sastrugi_enabled" default="true">
+			Sastrugi (Filhol and Sturm 2015): drifting snow scouring a hard surface (wind slab on top, or snow of 250 kg/m3 and more) carves ridges along the wind, 2% of the scoured snow's depth into relief, none where the drift builds up. New snow, drift deposits and melt fill them. [SnowSurface3D] draws them as geometry.
 		</member>
 		<member name="slide_enabled" type="bool" setter="set_slide_enabled" getter="is_slide_enabled" default="true">
 			If [code]true[/code], snow slides off steep ground to lower cells (SnowSlide, Bernhardt and Schulz 2010): from the highest snow surface down, a cell holding more than [method holding_depth] passes the excess downhill, in proportion to the drop to each lower neighbour. Mass is conserved.

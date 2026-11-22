@@ -140,6 +140,24 @@ float SnowCover3D::new_snow_density(float p_celsius) {
 	return CLAMP(67.92f + 51.25f * Math::exp(MIN(p_celsius, 3.0f) / 2.59f), 50.0f, 250.0f);
 }
 
+Vector2 SnowCover3D::sastrugi_step(Vector2 p_relief, Vector2 p_wind_dir, float p_eroded, float p_filled, float p_depth, bool p_hard) {
+	// Sastrugi (Filhol and Sturm 2015, JGR Earth Surface 120): erosional bedforms of a cohesive (wind-packed or
+	// sintered) surface, ridges along the wind with steep prows facing it, 5-50 cm tall. Wind eroding a hard
+	// surface carves them by about the depth it takes (the hard patches stay as ridges); the relief turns toward
+	// the eroding wind as it grows. Snow laid on them (drift or fall) and melt fill them by their own depth. At
+	// most 0.4 m and half the pack.
+	Vector2 v = p_relief;
+	if (p_hard && p_eroded > 0.0f && p_wind_dir.length_squared() > 0.0f) {
+		v += p_eroded * p_wind_dir.normalized();
+	}
+	float a = v.length();
+	if (a <= 0.0f) {
+		return Vector2();
+	}
+	const float keep = CLAMP(MIN(a - MAX(p_filled, 0.0f), MIN(0.4f, 0.5f * MAX(p_depth, 0.0f))), 0.0f, a);
+	return v * (keep / a);
+}
+
 float SnowCover3D::wind_snow_density(float p_celsius, float p_wind10) {
 	// Crocus (Vionnet et al. 2012, GMD 5, after Pahaut 1976): rho = 109 + 6 (T - Tfus) + 26 U^0.5 kg/m3, at least
 	// 50: snow falling in wind lands broken and packed. Calm, Hedstrom and Pomeroy's density stands (the higher).
@@ -216,7 +234,7 @@ void SnowCover3D::_allocate() {
 	cell_canopy.fill(0.0f);
 	cell_canopy_load.resize(nn);
 	cell_canopy_load.fill(0.0f);
-	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_wind_slab, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
+	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_wind_slab, &cell_slab_cover, &cell_sas_x, &cell_sas_z, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
 		f->resize(nn);
 		f->fill(0.0f);
 	}
@@ -224,6 +242,8 @@ void SnowCover3D::_allocate() {
 	catch_texture.unref();
 	cups_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAH);
 	cups_texture.unref();
+	sastrugi_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGH);
+	sastrugi_texture.unref();
 	cell_height_valid.resize(nn);
 	cell_ground.fill(0.0f);
 	cell_swe.fill(0.0f);
@@ -352,7 +372,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_wind_slab, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_wind_slab, &cell_slab_cover, &cell_sas_x, &cell_sas_z, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -719,6 +739,7 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		const bool packing = wind_packing_enabled && cell_wind_slab.size() == n * n;
 		const float rho_fall = packing ? wind_snow_density(t, in.wind_speed) : new_snow_density(t);
 		float slab = packing && swe > SWE_MIN ? cell_wind_slab[i] : 0.0f;
+		float slab_cover = packing && swe > SWE_MIN ? cell_slab_cover[i] : 0.0f;
 		if (snow > 0.0f && crust > 0.0f) {
 			burial += snow / rho_fall; // new snow buries the crust
 		}
@@ -730,6 +751,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			const float depth_new = snow / rho_new;
 			if (packing && t < 0.0f && drift_index(in.wind_speed, rho_new, 1.0f) > 0.0f) {
 				slab += depth_new;
+				slab_cover = 0.0f;
+			} else if (packing) {
+				slab_cover += depth_new; // soft snow over the slab
 			}
 			cell_new_depth.write[i] = depth_new;
 			swe = (swe > SWE_MIN ? swe : 0.0f) + snow;
@@ -958,9 +982,20 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		// The snow over the crust settles with the pack.
 		cell_crust_burial.write[i] = swe > SWE_MIN ? MIN(burial * rho_before / MAX(rho, 30.0f), swe / MAX(rho, 30.0f)) : 0.0f;
 		cell_crust_wet.write[i] = crust_wet;
+		if (cell_sas_x.size() == n * n && cell_sas_z.size() == n * n) {
+			const Vector2 v = sastrugi_enabled && swe > SWE_MIN ? sastrugi_step(Vector2(cell_sas_x[i], cell_sas_z[i]), Vector2(), 0.0f, cell_new_depth[i] + surface_melt / MAX(rho, 30.0f), swe / MAX(rho, 30.0f), false) : Vector2();
+			cell_sas_x.write[i] = v.x;
+			cell_sas_z.write[i] = v.y;
+		}
 		if (packing) {
 			// The slab settles with the pack and goes with the melt from the top.
-			cell_wind_slab.write[i] = swe > SWE_MIN ? MIN(slab * rho_before / MAX(rho, 30.0f), swe / MAX(rho, 30.0f)) : 0.0f;
+			const float depth_now = swe / MAX(rho, 30.0f);
+			const float settle = rho_before / MAX(rho, 30.0f);
+			const float melt_depth = surface_melt / MAX(rho, 30.0f);
+			// Melt takes the soft cover first, then the slab.
+			const float cover_now = slab_cover * settle - melt_depth;
+			cell_wind_slab.write[i] = swe > SWE_MIN ? CLAMP(slab * settle + MIN(cover_now, 0.0f), 0.0f, depth_now) : 0.0f;
+			cell_slab_cover.write[i] = swe > SWE_MIN ? CLAMP(cover_now, 0.0f, depth_now) : 0.0f;
 		}
 		cell_swe.write[i] = swe;
 		cell_liquid.write[i] = liq;
@@ -1812,6 +1847,9 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	cell_hoar_age.ptrw();
 	cell_cups.ptrw(); // published as pub.cups
 	cell_wind_slab.ptrw();
+	cell_slab_cover.ptrw();
+	cell_sas_x.ptrw();
+	cell_sas_z.ptrw();
 	cell_slush.ptrw(); // published as pub.slush
 	cell_glaze.ptrw(); // published as pub.glaze
 	cell_packed.ptrw(); // published as pub.packed
@@ -1946,6 +1984,8 @@ void SnowCover3D::_publish_cells() {
 	pub.hoar = cell_hoar;
 	pub.cups = cell_cups;
 	pub.wind_slab = cell_wind_slab;
+	pub.sas_x = cell_sas_x;
+	pub.sas_z = cell_sas_z;
 	pub.slush = cell_slush;
 	pub.packed = cell_packed;
 	pub.glaze = cell_glaze;
@@ -2055,6 +2095,7 @@ void SnowCover3D::_build_upload() {
 	}
 	upload_snow = Image::create_from_data(n, n, false, Image::FORMAT_RGBAH, bytes);
 	upload_cups.unref();
+	upload_sastrugi.unref();
 	if (cell_cups.size() == n * n) {
 		// The surface map: suncup relief (m), traffic packing (0..1), glaze (mm).
 		const bool road = cell_packed.size() == n * n && cell_glaze.size() == n * n;
@@ -2068,6 +2109,17 @@ void SnowCover3D::_build_upload() {
 			cw[i * 4 + 3] = Math::make_half_float(0.0f);
 		}
 		upload_cups = Image::create_from_data(n, n, false, Image::FORMAT_RGBAH, cb);
+	}
+	if (cell_sas_x.size() == n * n && cell_sas_z.size() == n * n) {
+		// Sastrugi: relief (m) times the carving wind's direction, so the filtered map blends directions too.
+		Vector<uint8_t> sb;
+		sb.resize(n * n * 4);
+		uint16_t *sw = reinterpret_cast<uint16_t *>(sb.ptrw());
+		for (int i = 0; i < n * n; i++) {
+			sw[i * 2 + 0] = Math::make_half_float(cell_sas_x[i]);
+			sw[i * 2 + 1] = Math::make_half_float(cell_sas_z[i]);
+		}
+		upload_sastrugi = Image::create_from_data(n, n, false, Image::FORMAT_RGH, sb);
 	}
 	// The catch map: the height of the surface the pack lies on, the canopy's load over its capacity, the
 	// canopy closure and the surface hoar. Materials leave what lies under an overhang bare and give tree crowns their load.
@@ -2104,6 +2156,15 @@ void SnowCover3D::_apply_upload() {
 			cups_texture = ImageTexture::create_from_image(cups_image);
 		} else {
 			cups_texture->update(cups_image);
+		}
+	}
+	if (upload_sastrugi.is_valid()) {
+		sastrugi_image = upload_sastrugi;
+		upload_sastrugi.unref();
+		if (sastrugi_texture.is_null() || sastrugi_texture->get_width() != n) {
+			sastrugi_texture = ImageTexture::create_from_image(sastrugi_image);
+		} else {
+			sastrugi_texture->update(sastrugi_image);
 		}
 	}
 	if (upload_catch.is_valid() && catch_image.is_valid() && catch_image->get_width() == n) {
@@ -2388,6 +2449,8 @@ void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_reso
 static constexpr float Z0_SNOW = 0.0005f; // m, aerodynamic roughness of snow
 static constexpr float RHO_AIR = 1.3f; // kg/m3
 static constexpr float WIND_SNOW_DENSITY = 300.0f; // kg/m3, snow the wind lays down (wind-packed)
+static constexpr float SASTRUGI_HARD = 250.0f; // kg/m3: snow dense enough to erode into sastrugi (wind-packed, sintered)
+static constexpr float SASTRUGI_RATE = 0.02f; // share of the snow scoured off a hard surface that carves relief (ours: cm an hour in a gale)
 
 static float _ustar(float p_wind10) {
 	return 0.41f * MAX(p_wind10, 0.0f) / Math::log(10.0f / Z0_SNOW);
@@ -2533,6 +2596,31 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 	float *rho = cell_density.ptrw();
 	float *burial = cell_crust_burial.ptrw();
 	float *slab = wind_packing_enabled && cell_wind_slab.size() == nn ? cell_wind_slab.ptrw() : nullptr;
+	// Sastrugi relief as (x, z) pairs, written back after the substeps.
+	LocalVector<float> sas_v;
+	float *sas = nullptr;
+	if (sastrugi_enabled && cell_sas_x.size() == nn && cell_sas_z.size() == nn) {
+		sas_v.resize(nn * 2);
+		for (int i = 0; i < nn; i++) {
+			sas_v[i * 2] = cell_sas_x[i];
+			sas_v[i * 2 + 1] = cell_sas_z[i];
+		}
+		sas = sas_v.ptr();
+	}
+	// Hard surfaces at the start (wind-packed with the slab on top, or dense sintered snow) and the snow the
+	// saltation carried off each cell (its scour), whatever came in.
+	LocalVector<uint8_t> hard;
+	LocalVector<float> scour, swe_start;
+	if (sas) {
+		hard.resize(nn);
+		scour.resize(nn);
+		swe_start.resize(nn);
+		for (int i = 0; i < nn; i++) {
+			hard[i] = swe[i] > SWE_MIN && (rho[i] >= SASTRUGI_HARD || (slab && slab[i] > 0.005f && cell_slab_cover[i] < 0.005f)) ? 1 : 0;
+			scour[i] = 0.0f;
+			swe_start[i] = swe[i];
+		}
+	}
 	LocalVector<float> gain;
 	gain.resize(nn);
 	double moved = 0.0;
@@ -2548,6 +2636,9 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 				}
 				// mm of snow water (kg/m2) through the downwind faces, at most what the cell can give.
 				const float out = MIN(flux[i] * dts * faces / cs, loose[i]);
+				if (sas) {
+					scour[i] += out;
+				}
 				const float to_x = out * ax / faces;
 				const float to_z = out * az / faces;
 				gain[i] -= out;
@@ -2579,6 +2670,12 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 				const float depth_old = old > 0.0f ? old / rho[i] : 0.0f;
 				if (slab) {
 					slab[i] = (old > 0.0f ? slab[i] : 0.0f) + g / WIND_SNOW_DENSITY;
+					cell_slab_cover.write[i] = 0.0f;
+				}
+				if (sas) {
+					const Vector2 v = sastrugi_step(Vector2(sas[i * 2], sas[i * 2 + 1]), Vector2(), 0.0f, g / WIND_SNOW_DENSITY, depth_old + g / WIND_SNOW_DENSITY, false);
+					sas[i * 2] = v.x;
+					sas[i * 2 + 1] = v.y;
 				}
 				swe[i] = old + g;
 				rho[i] = swe[i] / MAX(depth_old + g / WIND_SNOW_DENSITY, 1e-6f);
@@ -2593,9 +2690,10 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 				// Taken from the top: the pack below keeps its density. A slab under softer snow loses what the
 				// wind takes past that snow.
 				if (slab && old > 0.0f) {
-					const float depth_old = old / MAX(rho[i], 30.0f);
-					const float soft = MAX(depth_old - slab[i], 0.0f);
-					slab[i] = MAX(slab[i] - MAX(-g / MAX(rho[i], 30.0f) - soft, 0.0f), 0.0f);
+					const float eroded = -g / MAX(rho[i], 30.0f);
+					const float soft = cell_slab_cover[i];
+					slab[i] = MAX(slab[i] - MAX(eroded - soft, 0.0f), 0.0f);
+					cell_slab_cover.write[i] = MAX(soft - eroded, 0.0f);
 				}
 				swe[i] = MAX(old + g, 0.0f);
 				loose[i] = MAX(loose[i] + g, 0.0f);
@@ -2611,6 +2709,25 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 		}
 	}
 	last_blown = float(moved / nn);
+	if (sas) {
+		// The saltating snow abrades a hard surface where it is undersaturated, carving it (Filhol and Sturm
+		// 2015): a share SASTRUGI_RATE of the scoured snow's depth goes into the relief. Where the drift builds
+		// up instead (a net gain) it buries them: no carving there.
+		for (int i = 0; i < nn; i++) {
+			if (hard[i] && scour[i] > 0.0f && swe[i] > SWE_MIN && swe[i] <= swe_start[i] + 0.05f) {
+				const float r = MAX(rho[i], 30.0f);
+				const Vector2 v = sastrugi_step(Vector2(sas[i * 2], sas[i * 2 + 1]), dir, SASTRUGI_RATE * scour[i] / r, 0.0f, swe[i] / r, true);
+				sas[i * 2] = v.x;
+				sas[i * 2 + 1] = v.y;
+			}
+		}
+		float *sx = cell_sas_x.ptrw();
+		float *sz = cell_sas_z.ptrw();
+		for (int i = 0; i < nn; i++) {
+			sx[i] = sas[i * 2];
+			sz[i] = sas[i * 2 + 1];
+		}
+	}
 	if (slab) {
 		_wind_pack(p_dt_h, uloc);
 	}
@@ -2648,6 +2765,7 @@ void SnowCover3D::_wind_pack(float p_dt_h, const LocalVector<float> &p_wind) {
 		const float depth_after = depth - top + top_after;
 		rho[i] = swe[i] / MAX(depth_after, 1e-6f);
 		slab[i] = MIN(MAX(slab[i], top_after), depth_after);
+		cell_slab_cover.write[i] = 0.0f; // the top is the slab now
 		if (crust_enabled && cell_crust[i] > 0.0f) {
 			cell_crust_burial.write[i] = MAX(cell_crust_burial[i] - (top - top_after), 0.0f);
 		}
@@ -3430,6 +3548,18 @@ void SnowCover3D::add_suncups(float p_relief) {
 	_upload();
 }
 
+void SnowCover3D::add_sastrugi(float p_relief, Vector2 p_wind_direction) {
+	_finish_background(true);
+	const Vector2 d = p_wind_direction.length_squared() > 0.0f ? p_wind_direction.normalized() : Vector2(1.0f, 0.0f);
+	for (int i = 0; i < cell_sas_x.size(); i++) {
+		const float a = cell_swe[i] > SWE_MIN ? CLAMP(p_relief, 0.0f, MIN(0.4f, 0.5f * cell_swe[i] / MAX(cell_density[i], 30.0f))) : 0.0f;
+		cell_sas_x.write[i] = a * d.x;
+		cell_sas_z.write[i] = a * d.y;
+	}
+	update_count++;
+	_upload();
+}
+
 float SnowCover3D::get_crust_thickness_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_crust_thickness_at(p_position);
@@ -3722,6 +3852,17 @@ float SnowCover3D::get_wetness_at(Vector3 p_position) const {
 	}
 	const float hold = liquid_capacity * (swe - liq);
 	return hold > 1e-4f ? CLAMP(liq / hold, 0.0f, 1.0f) : 0.0f;
+}
+
+Vector2 SnowCover3D::get_sastrugi_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_sastrugi_at(p_position);
+	}
+	const int nn = resolution * resolution;
+	if (pub.sas_x.size() != nn || pub.sas_z.size() != nn) {
+		return Vector2();
+	}
+	return Vector2(_sample(pub.sas_x, Vector2(p_position.x, p_position.z)), _sample(pub.sas_z, Vector2(p_position.x, p_position.z)));
 }
 
 float SnowCover3D::get_wind_slab_at(Vector3 p_position) const {
@@ -4264,6 +4405,13 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_suncups_enabled", "enabled"), &SnowCover3D::set_suncups_enabled);
 	ClassDB::bind_method(D_METHOD("is_suncups_enabled"), &SnowCover3D::is_suncups_enabled);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "suncups_enabled"), "set_suncups_enabled", "is_suncups_enabled");
+	ClassDB::bind_method(D_METHOD("set_sastrugi_enabled", "enabled"), &SnowCover3D::set_sastrugi_enabled);
+	ClassDB::bind_method(D_METHOD("is_sastrugi_enabled"), &SnowCover3D::is_sastrugi_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sastrugi_enabled"), "set_sastrugi_enabled", "is_sastrugi_enabled");
+	ClassDB::bind_method(D_METHOD("get_sastrugi_at", "position"), &SnowCover3D::get_sastrugi_at);
+	ClassDB::bind_method(D_METHOD("get_sastrugi_texture"), &SnowCover3D::get_sastrugi_texture);
+	ClassDB::bind_method(D_METHOD("add_sastrugi", "relief", "wind_direction"), &SnowCover3D::add_sastrugi);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("sastrugi_step", "relief", "wind_dir", "eroded", "filled", "depth", "hard"), &SnowCover3D::sastrugi_step);
 	ClassDB::bind_method(D_METHOD("set_wind_packing_enabled", "enabled"), &SnowCover3D::set_wind_packing_enabled);
 	ClassDB::bind_method(D_METHOD("is_wind_packing_enabled"), &SnowCover3D::is_wind_packing_enabled);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_packing_enabled"), "set_wind_packing_enabled", "is_wind_packing_enabled");
