@@ -2972,6 +2972,8 @@ func _build_view() -> void:
 			await _setup("avalanche", 256.0, 128, -8.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
+	elif view == "dunes":
+		await _setup("flat", 64.0, 64, -8.0)
 	elif view == "spindrift":
 		await _setup("cornice", 512.0, 256, -12.0)
 	elif view == "icicles" and OS.get_cmdline_user_args().has("--hero") and not OS.get_cmdline_user_args().has("--wall"):
@@ -3041,6 +3043,9 @@ func _build_view() -> void:
 		return
 	elif view == "windblown":
 		await _build_windblown(cam)
+		return
+	elif view == "dunes":
+		await _build_dunes(cam)
 		return
 	elif view == "spindrift":
 		await _build_spindrift(cam)
@@ -3436,6 +3441,57 @@ func _build_windblown(cam: Camera3D) -> void:
 	cam.look_at(Vector3(0.0, 60.0, 0.0))
 	cam.fov = 45.0
 	for i in 4:
+		await get_tree().physics_frame
+	await _save_frame("")
+	get_tree().quit()
+
+
+func _build_dunes(cam: Camera3D) -> void:
+	# Two drifts on 20 cm of loose snow in a 14 m/s wind from the left (follow-up 48): after --hours (6) the big one
+	# is a snow dune crept downwind with a slip face, the small one flattened. --relief=0: the wind does not see them.
+	snow.drift_enabled = false
+	snow.wind_packing_enabled = false
+	snow.sastrugi_enabled = false
+	snow.drift_relief = not OS.get_cmdline_user_args().has("--relief=0")
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 60.0
+	sun.rotation_degrees = Vector3(-18.0, 160.0, 0.0) # low, from behind the camera's right: the slip faces in shade
+	_add_terrain(64.0, 128, Color(0.33, 0.31, 0.27), 6.0)
+	var target := Marker3D.new()
+	target.name = "Probe"
+	add_child(target)
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	snow.add_snow(20.0, 100.0)
+	snow.add_drift(Vector3(-6.5, 0, -2.5), 5.0, 1.0, 250.0)
+	snow.add_drift(Vector3(-4.5, 0, 6.5), 2.0, 0.4, 250.0)
+	weather.temperature = -8.0
+	weather.wind_speed = 14.0
+	weather.wind_direction = Vector2(1, 0)
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var hours := snow_hours if snow_hours >= 0.0 else 6.0
+	for i in int(round(hours * 6.0)):
+		snow.advance(600.0)
+	var prof := "dune profile (x: cm):"
+	for x in range(-12, 13, 2):
+		prof += " %d: %.0f" % [x, snow.get_depth_at(Vector3(x + 0.5, 0, -2.0)) * 100.0]
+	print(prof)
+	if OS.get_cmdline_user_args().has("--map"):
+		for z in range(-10, 11):
+			var row := "%3d " % z
+			for x in range(-14, 14):
+				row += "%3d" % int(snow.get_depth_at(Vector3(x + 0.5, 0, z + 0.5)) * 100.0)
+			print(row)
+	surface = SnowSurface3D.new()
+	surface.snow_cover = NodePath("../SnowCover3D")
+	surface.follow_target = NodePath("../Probe")
+	add_child(surface)
+	cam.position = Vector3(2.0, 3.2, 15.0)
+	cam.look_at(Vector3(-2.0, 0.4, 0.0))
+	cam.fov = 50.0
+	for i in 8:
 		await get_tree().physics_frame
 	await _save_frame("")
 	get_tree().quit()
