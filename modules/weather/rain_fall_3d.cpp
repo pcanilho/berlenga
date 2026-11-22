@@ -904,7 +904,8 @@ void RainFall3D::_push_haze() {
 	const float sigma = falling_enabled ? rain_extinction(cur_rate) * density_scale : 0.0f;
 	if (Math::abs(sigma - pushed_sigma) > 0.02f * MAX(Math::abs(pushed_sigma), 1e-4f)) {
 		if (sigma > 1e-6f) {
-			w->set_precipitation_extinction(this, sigma, 0.0f, 0.99f);
+			// Falling at about 7 m/s (the shafts' slant): drawn in curtains (WeatherMap3D rain_curtains).
+			w->set_precipitation_extinction(this, sigma, 0.0f, 0.99f, Vector3(), 0.0f, 7.0f);
 		} else {
 			w->clear_precipitation_extinction(this);
 		}

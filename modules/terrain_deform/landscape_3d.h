@@ -164,11 +164,21 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	Ref<ImageTexture> relief_texture;
 	Vector2 relief_origin = Vector2(1e30, 1e30);
 	uint64_t relief_key = 0;
+	void _relief_changed(const Rect2 &p_area); // WorldGround.relief_changed over it (world space)
 	bool relief_published = false;
 	bool relief_registered = false;
 	void _update_relief_map(const Vector3 &p_camera);
 	void _clear_relief_map();
 	Vector2 _relief_at_local(const Vector3 &p_local) const;
+	// The cliff relief's share (its face weight, 0..1) over a wider square for the terrain material (no soil on a
+	// shelf between walls): terrain_cliff_map (R8) over terrain_cliff_rect, CLIFF_MAP_SIZE round the camera at
+	// CLIFF_MAP_RES texels, rebuilt with the relief map.
+	static constexpr int CLIFF_MAP_RES = 256;
+	static constexpr real_t CLIFF_MAP_SIZE = 512.0;
+	Ref<ImageTexture> cliff_map_texture;
+	bool cliff_map_published = false;
+	void _update_cliff_map(const Vector2 &p_center);
+	void _clear_cliff_map();
 	void _clear_stand_map();
 	// cliff_relief and the grid for meshes drawn over the landscape with the terrain material that carry no relief
 	// data of their own (GroundSurface3D's patch): global terrain_cliff_relief = (metres, grid spacing, grid origin),

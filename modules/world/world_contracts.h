@@ -722,6 +722,7 @@ public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
 	// The ground's surface (m); with no ground, the first static physics surface under the point, else -INF.
 	float height_at(const Vector3 &p_position) const;
+	float known_height_at(const Vector3 &p_position) const; // the producer's (or a stub's) deformed surface only; NaN without one (no collider fallback)
 	WorldGroundSoil soil_at(const Vector3 &p_position) const;
 	float standing_water_at(const Vector3 &p_position) const;
 	Vector2 ice_at(const Vector3 &p_position) const;
@@ -760,6 +761,9 @@ public:
 	// y its share (0..1). (0, 0) with no relief producer. GPU placers read terrain_relief_map (R height m, G share)
 	// over terrain_relief_rect instead.
 	Vector2 relief_at(const Vector3 &p_position) const;
+	// A relief producer reports that the relief over an area changed (its heights streamed in at full resolution, its
+	// relief settings changed, it came or went): signal relief_changed(area), so placers lay what sits there again.
+	void relief_changed(const Rect2 &p_area);
 };
 
 // Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.

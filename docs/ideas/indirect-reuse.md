@@ -90,8 +90,8 @@ One pass inside the existing trace, as light reuse: no new dispatch.
 - One visibility ray for a chosen sample that is not the pixel's own new one.
 - Off by default under environment fog, gas volumes and a camera in water (their scattering
   lies on the first bounce segment, which a reconnection would skip).
-- Memory: two frames of 10-uint reservoirs plus a 6-uint surface record: 104 bytes a pixel,
-  96 MB at 1280x720 internal, 215 MB at 1920x1080. Allocated only when on.
+- Memory: two frames of 10-uint reservoirs plus a 7-uint surface record: 108 bytes a pixel,
+  100 MB at 1280x720 internal, 224 MB at 1920x1080. Allocated only when on.
 
 ## Acceptance
 
@@ -119,6 +119,36 @@ cost goes on the PC queue. Turn it on by default only if that cost is small.
 
 Done along the way: all of a pixel's diffuse samples feed one reservoir. With only sample 0
 reusing, 4 spp gained just 1.3 dB, because the other three samples' noise dominated.
+
+## ReSTIR PT Enhanced rules (prototype, `rendering/pathtracing/indirect_reuse_enhanced`, off)
+
+From Lin, Kettunen and Wyman, "ReSTIR PT Enhanced" (I3D 2026), the parts that fit this one-pass reuse:
+- **Dual ray footprint test** (section 4, eq. 5) instead of the fixed roughness 0.4 at x2. A sample's x2 is shared
+  with nearby surfaces when the area it stands for seen from x1 (1 / (p(w1) G(x1 -> x2))) and the area x1 stands for
+  seen back from x2 (GGX peak density 1 / (4 pi alpha^2) for x2's lobe) both reach 0.0002 x the primary hit's
+  footprint (4 pi d0^2 / cos0). Far glossy surfaces are now shared; near corners no longer are. x1 always took the
+  diffuse lobe, so the paper's roughness test at x1 holds.
+- **Duplication map history cap** (section 5): the temporal reservoir's history cap is lerp(20, 1, D^0.1), D the
+  share of the 17 x 17 window last frame holding copies of the same sample (same light bits and x2), estimated
+  from 16 random pixels of the window.
+
+Not taken: paired spatial reuse (section 3) halves the cost of shifting each pixel's path to its neighbours and
+back; here reuse reads last frame's reservoirs inside the trace and a shift is a target evaluation, with one
+visibility ray only for the chosen sample, so there is little to halve. Hybrid shift with random replay, unified
+direct and indirect reservoirs, and vector-valued resampling weights need a replayable path from the first
+hit (glossy first lobes), a larger rewrite.
+
+Results (lavapipe, `--shot=room` 480x270, 16 frames, PSNR against 1024 spp without reuse; mean of full scale):
+
+| Floor | spp | No reuse | Reuse today | Reuse + Enhanced |
+|---|---|---|---|---|
+| roughness 0.7 | 4 | | 29.64 dB | 29.65 dB |
+| roughness 0.25 (`--gloss=0.25`) | 4 | 21.71 dB, 0.0455 | 25.75 dB, 0.0492 | 27.55 dB, 0.0593 |
+| roughness 0.25 | 64 | 25.76 dB, 0.0617 | 28.97 dB, 0.0607 | 29.94 dB, 0.0623 |
+
+Reference mean 0.0670 (lower spp clip bright specks at 8 bits). With the setting off the image is byte-identical
+to before. The city and plaza shots crash inside lavapipe's compiled shaders on main, with or without reuse, so
+the outdoor no-change check waits for the PC.
 
 ## Sources
 

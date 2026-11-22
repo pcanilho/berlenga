@@ -2287,6 +2287,7 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("texture_drawable_get_default_material"), &RenderingServer::texture_drawable_get_default_material);
 
 	ClassDB::bind_method(D_METHOD("texture_replace", "texture", "by_texture"), &RenderingServer::texture_replace);
+	ClassDB::bind_method(D_METHOD("texture_replace_compatible", "texture", "by_texture"), &RenderingServer::texture_replace_compatible);
 	ClassDB::bind_method(D_METHOD("texture_set_size_override", "texture", "width", "height"), &RenderingServer::texture_set_size_override);
 
 	ClassDB::bind_method(D_METHOD("texture_set_path", "texture", "path"), &RenderingServer::texture_set_path);
@@ -3889,10 +3890,12 @@ void RenderingServer::init() {
 
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/limits/cluster_builder/max_clustered_elements", PROPERTY_HINT_RANGE, "32,8192,1"), 512);
 	GLOBAL_DEF("rendering/pathtracing/use_shader_execution_reordering", true);
+	GLOBAL_DEF("rendering/pathtracing/ser_coherence_hints", true);
 	GLOBAL_DEF("rendering/pathtracing/emissive_lights", true);
 	GLOBAL_DEF("rendering/pathtracing/light_visibility_memory", true);
 	GLOBAL_DEF("rendering/pathtracing/light_reuse", false);
 	GLOBAL_DEF("rendering/pathtracing/indirect_reuse", false);
+	GLOBAL_DEF("rendering/pathtracing/indirect_reuse_enhanced", false);
 	GLOBAL_DEF("rendering/pathtracing/back_lighting", true);
 	GLOBAL_DEF("rendering/pathtracing/clearcoat", true);
 	GLOBAL_DEF("rendering/pathtracing/transmission", true);
@@ -3906,6 +3909,9 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/radiance_cache", true);
 	GLOBAL_DEF("rendering/pathtracing/simulated_gas", true);
 	GLOBAL_DEF("rendering/pathtracing/mesh_lod", false);
+	// Defined here too so the renderers, created before the texture streaming module, read it (modules/texture_streaming).
+	GLOBAL_DEF_RST("rendering/textures/streaming/enabled", true);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/mesh_lod/lod_change/quality_scale", PROPERTY_HINT_RANGE, "0,16,0.01,or_greater"), 1.0);
 	GLOBAL_DEF("rendering/pathtracing/persistent_instances", false);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/opacity_micromap_scale", PROPERTY_HINT_RANGE, "0.25,64,0.01"), 2.0);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/opacity_micromap_max_level", PROPERTY_HINT_RANGE, "1,12,1"), 10);
@@ -3944,6 +3950,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/deformed_mesh_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,3600,1"), 60);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/multimesh_blas_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,18000,1"), 3600);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/multimesh_merged_blas_max_triangles", PROPERTY_HINT_RANGE, "256,1048576,1"), 65536);
+	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/max_samples_per_dispatch", PROPERTY_HINT_RANGE, "65536,268435456,1"), 4194304);
 	// Per-frame budgets of the dynamic BLAS scheduler (particles, camera-dependent MultiMesh), shared by all viewports.
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/dynamic_blas_max_operations", PROPERTY_HINT_RANGE, "1,100000,1"), 2000);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/dynamic_blas_build_triangle_budget", PROPERTY_HINT_RANGE, "0,100000000,1"), 500000);

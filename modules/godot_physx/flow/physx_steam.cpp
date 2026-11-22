@@ -92,6 +92,7 @@ void PhysXSteam::_build(Node3D *p_owner) {
 	flow->set_global_transform(Transform3D());
 	for (int k = 0; k < MAX_EMITTERS; k++) {
 		PhysXFlowEmitter3D *em = memnew(PhysXFlowEmitter3D);
+		em->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 		em->set_name(vformat("Puff%d", k));
 		em->set_enabled(false);
 		em->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);

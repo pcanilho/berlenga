@@ -1133,6 +1133,241 @@ vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 am
 	return vec4(col, tr);
 }
 
+
+// Haboob dust walls (docs/ideas/clouds.md, "Haboob dust wall in the cloud march"): the mineral dust layer
+// WeatherMap3D publishes (weather_dust_map over weather_map_rect: R the column in g/m2, G the top above the ground
+// in m with the density current's raised nose, B the head share 0..1), marched as a participating medium from the
+// ground to its top. Its profile is the contract's, densest at the ground: c = col / (Hs (1 - e^-3)) exp(-h / Hs),
+// Hs = top / 3, none above the top. At the head (B) the top is a density current's (Simpson 1997, "Gravity
+// Currents"): lobes and clefts along the front about a head height or two apart, Kelvin-Helmholtz billows rolling
+// on its top, the nose lifted a little off the ground by friction. Mass extinction and albedo from
+// weather_dust_optics and weather_dust_albedo (0.6 m2/g; 0.93/0.92/0.85, g 0.75): the march returns grey light weights
+// for the green albedo, and dust_tint() turns them brown by the albedo's colour over the scattering orders.
+global uniform sampler2D weather_dust_map;
+global uniform vec4 weather_dust_near; // where PhysX's Flow billows draw the head near the camera: x, z, radius (0: none), height
+global uniform vec4 weather_map_rect;
+global uniform vec4 weather_dust_optics;
+global uniform vec4 weather_dust_albedo;
+global uniform float weather_ground_height;
+global uniform sampler2D weather_terrain_map;
+global uniform vec4 weather_terrain_rect;
+global uniform vec4 weather_terrain_info;
+uniform vec4 cloud_dust = vec4(0.0); // the highest top over the map (m above the ground), the largest column (g/m2); 0: none
+
+float dust_ground(vec2 xz) {
+	if (weather_terrain_info.z > 0.0 && weather_terrain_rect.z > 0.0) {
+		vec2 u = (xz - weather_terrain_rect.xy) / weather_terrain_rect.zw;
+		if (u.x >= 0.0 && u.y >= 0.0 && u.x <= 1.0 && u.y <= 1.0) {
+			return textureLod(weather_terrain_map, u, 0.0).w + weather_terrain_info.x;
+		}
+	}
+	return weather_ground_height;
+}
+
+// The map read as a cubic B-spline (four bilinear reads; Sigg and Hadwiger 2005): its cells are ~200 m, and read
+// bilinearly a wall's face and top were runs of straight facets (as the lake band's were).
+vec4 dust_map(vec2 xz) {
+	if (weather_map_rect.z <= 0.0) {
+		return vec4(0.0);
+	}
+	vec2 uv = (xz - weather_map_rect.xy) / weather_map_rect.zw;
+	if (uv.x <= 0.0 || uv.y <= 0.0 || uv.x >= 1.0 || uv.y >= 1.0) {
+		return vec4(0.0);
+	}
+	vec2 n = vec2(textureSize(weather_dust_map, 0));
+	vec2 st = uv * n - 0.5;
+	vec2 i0 = floor(st);
+	vec2 f = st - i0;
+	vec2 f2 = f * f;
+	vec2 f3 = f2 * f;
+	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+	vec2 w3 = f3 / 6.0;
+	vec2 g0 = w0 + w1;
+	vec2 g1 = w2 + w3;
+	vec2 c0 = (i0 - 1.0 + w1 / g0 + 0.5) / n;
+	vec2 c1 = (i0 + 1.0 + w3 / g1 + 0.5) / n;
+	return max(g0.y * (g0.x * textureLod(weather_dust_map, c0, 0.0) + g1.x * textureLod(weather_dust_map, vec2(c1.x, c0.y), 0.0)) + g1.y * (g0.x * textureLod(weather_dust_map, vec2(c0.x, c1.y), 0.0) + g1.x * textureLod(weather_dust_map, c1, 0.0)), vec4(0.0));
+}
+
+// g/m3 at p from a map read m (the contract's profile), with the head's shape.
+float dust_density(vec3 p, vec4 m, float p_foot) {
+	float col = m.r;
+	float top = m.g;
+	if (col <= 1e-3 || top <= 1.0) {
+		return 0.0;
+	}
+	float h = p.y - dust_ground(p.xz);
+	if (h < 0.0) {
+		return 0.0;
+	}
+	// The head share rises over a cell or two to the front; read through the B-spline it peaks under 1, so a third
+	// already counts as the head.
+	float head = smoothstep(0.0, 0.4, m.b);
+	// Lobes and clefts along the front: a head height or two apart (Simpson 1997), the top raised or cut by a quarter.
+	float lobe = wc_value_noise(p.xz / max(1.5 * top, 300.0) + vec2(41.7, 13.3));
+	float top_eff = top * (1.0 + head * 0.5 * (lobe - 0.5));
+	if (h > 1.15 * top_eff) {
+		return 0.0;
+	}
+	// Billows: the detail noise's billow octaves rolling over the head's top and face (the cauliflower in photographs of haboobs),
+	// read at the pixel's footprint so a far wall keeps its mean.
+	float lod = max(log2(p_foot / (600.0 / 128.0)), 0.0);
+	vec4 dn = textureLod(cloud_detail, vec3(p.x / 600.0, p.y / 450.0, p.z / 600.0), lod);
+	float billow = dn.b * 0.65 + dn.a * 0.35;
+	float hs = top_eff / 3.0;
+	float c = col / (hs * (1.0 - exp(-3.0))) * exp(-h / hs);
+	// The head is stirred through its depth (a density current's head is turbulent, well mixed, Simpson 1997): its
+	// dust nearer uniform to the top, the column kept, so it stands as a wall with a face and a top rather than a haze.
+	c = mix(c, col / max(top_eff, 1.0), 0.7 * head);
+	// The wall's outline eroded by the billows: the shape (how far inside the dust the point is, across the map and up
+	// to the top) less the detail noise, remapped (Schneider 2015, Nubis's cloud erosion). The dust is a few optical
+	// depths across, so billows inside it averaged away along the ray; cut into its face and top they stand out as
+	// cauliflower lobes and clefts. The inside (shape near 1) keeps its density.
+	// Across the map the shape is the column's own optical depth (a couple of g/m2 is about one): read against the
+	// largest column, a heavy head eroded the wake behind it and the dust over the ground near the camera away.
+	float shape = smoothstep(0.0, 3.0, col) * sqrt(clamp(1.0 - h / (1.1 * top_eff), 0.0, 1.0));
+	float e = (0.2 + 0.5 * head) * billow;
+	c *= clamp((shape - e) / max(1.0 - e, 1e-3), 0.0, 1.0) / max(shape, 1e-3);
+	// The nose lifted off the ground by friction: the foot trails it by a few per cent of the head's height.
+	c *= 1.0 - 0.5 * head * (1.0 - smoothstep(0.0, 0.06 * top, h));
+	// Near the camera the Flow billows (PhysXHaboobFront3D) are the head up to their height: the wall steps back there,
+	// fading over the outer fifth of their cylinder and the top fifth of their height, so the two never stack.
+	if (weather_dust_near.z > 0.0) {
+		float r = length(p.xz - weather_dust_near.xy);
+		float inside = (1.0 - smoothstep(0.8 * weather_dust_near.z, weather_dust_near.z, r)) * (1.0 - smoothstep(0.8 * weather_dust_near.w, weather_dust_near.w, h));
+		c *= 1.0 - inside;
+	}
+	return c;
+}
+
+// g/m3 at p: the map read where the wall's lobes have carried it. The face's outline is the map's, round and
+// smooth (a ring of 200 m cells); billows inside it average away along a ray grazing the face, so the outline itself
+// is warped (domain warping, Quilez 2002): bulges a few hundred metres out, a couple of kilometres apart, changing
+// with height so the face leans and bulges as a head's lobes do.
+float dust_at(vec3 p, float p_foot) {
+	vec2 q = p.xz / 2200.0 + vec2(p.y / 1600.0, -p.y / 2100.0);
+	vec2 w = vec2(wc_value_noise(q + vec2(3.1, 7.7)), wc_value_noise(q + vec2(11.4, 2.9))) - 0.5;
+	return dust_density(p, dust_map(p.xz + w * 800.0), p_foot);
+}
+
+// The dust's colour over its many scatterings: a wall is optically thick (tau 5 to 20 across), and a thick medium's
+// diffuse reflectance is R = (1 - s) / (1 + s), s = sqrt((1 - a) / (1 - a g)) (the two-stream result with the
+// similarity relations), so blue, absorbed a little more at each scattering, comes out well under red: brown, not the
+// single albedo's near-grey. Normalised to the green the march used.
+vec3 dust_tint() {
+	vec3 a = weather_dust_albedo.rgb;
+	vec3 s = sqrt(max(vec3(1.0) - a, vec3(0.0)) / (vec3(1.0) - a * weather_dust_albedo.w));
+	vec3 r = (vec3(1.0) - s) / (vec3(1.0) + s);
+	return r / max(r.g, 1e-4);
+}
+
+// Along rd from p_t_min to p_t_max: radiance (grey weights, see dust_tint()) and transmittance. The dust at the
+// camera's own point is left out (sand's haze draws that uniformly round the camera), so a camera inside the wall
+// sees only how much denser the dust ahead is.
+vec4 march_dust(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, float jitter, float p_pixel, float p_t_min, float p_t_max, out float r_t) {
+	r_t = 0.0;
+	if (cloud_dust.x <= 0.0 || weather_dust_optics.x <= 0.0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	float y_top = weather_ground_height + 1.3 * cloud_dust.x + 1500.0; // room for ground up to 1.5 km above the reference
+	float t0 = max(p_t_min, 1.0);
+	float t1 = min(p_t_max, 60000.0);
+	if (rd.y > 1e-4) {
+		if (cam.y > y_top) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t1 = min(t1, (y_top - cam.y) / rd.y);
+	} else if (cam.y > y_top) {
+		if (rd.y > -1e-4) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = max(t0, (y_top - cam.y) / rd.y);
+	}
+	if (t1 <= t0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	float c_cam = dust_at(cam, 1.0);
+	float sigma_m = weather_dust_optics.x * dot(weather_dust_optics.yzw, vec3(0.2126, 0.7152, 0.0722));
+	float alb = weather_dust_albedo.g;
+	float g = weather_dust_albedo.w;
+	float mu = dot(rd, sun_dir);
+	float ph0 = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
+	// The many scatterings in a thick wall, by the similarity relations (van de Hulst; Joseph, Wiscombe and Weinman
+	// 1976): the forward peak counted as unscattered, so the light diffuses through a reduced depth f tau, f = 1 - a g,
+	// isotropically. Its strength is set so a deep wall reflects what the two-stream model gives,
+	// R = (1 - s) / (1 + s), s = sqrt((1 - a) / (1 - a g)): single scattering of an isotropic source over a reduced
+	// depth returns k / (4 (1 + f)) of it, so k = 4 R (1 + f). Wrenninge's octaves kept the forward peak in every
+	// order: seen with the sun behind, a wall a few optical depths deep came out at a sixth of that, a dull grey face.
+	float f_ms = 1.0 - alb * g;
+	float s_ms = sqrt((1.0 - alb) / f_ms);
+	float r_ms = (1.0 - s_ms) / (1.0 + s_ms);
+	float k_ms = 4.0 * r_ms * (1.0 + f_ms);
+	// Where along the ray the map holds dust: a coarse scan of the column (log-spaced, 48 reads of the map only), then
+	// the march over that stretch alone in even steps. Spread log over the whole ray, a wall a kilometre deep 5 km out
+	// got a step or two and read as a soft haze, its lobes and billows lost between them.
+	float t_start = max(t0, 20.0);
+	float ratio = t1 / t_start;
+	float t_in = -1.0;
+	float t_out = -1.0;
+	float prev = t_start;
+	for (int k = 0; k <= 48; k++) {
+		float tk = t_start * pow(ratio, float(k) / 48.0);
+		vec3 pk = cam + rd * tk;
+		if (dust_map(pk.xz).r > 1e-3) {
+			if (t_in < 0.0) {
+				t_in = prev;
+			}
+			t_out = min(t_start * pow(ratio, float(k + 1) / 48.0), t1);
+		}
+		prev = tk;
+	}
+	if (t_in < 0.0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	// The outline is warped up to 400 m off the map's (dust_at()).
+	t_in = max(t_in - 400.0, t0);
+	t_out = min(t_out + 400.0, t1);
+	// Steps of 30 to 150 m: the wall's face is lit within its first few hundred metres (a few optical depths), and its
+	// billows are some 600 m across, so coarser steps blurred them away; a deep stretch past 14 km is cut short.
+	const int n = 96;
+	float dt = clamp((t_out - t_in) / float(n), 30.0, 150.0);
+	t_out = min(t_out, t_in + dt * float(n));
+	vec3 col = vec3(0.0);
+	float tr = 1.0;
+	float wsum = 0.0;
+	float dsum = 0.0;
+	for (int k = 0; k < n; k++) {
+		float t = t_in + (float(k) + jitter) * dt;
+		vec3 p = cam + rd * t;
+		float c = max(dust_at(p, t * p_pixel) - c_cam, 0.0);
+		if (c <= 0.0) {
+			continue;
+		}
+		float sigma = sigma_m * c;
+		// The sun through the dust toward it (two reads, to 600 m) and the sky's light from above through the dust over
+		// the point.
+		float tau_s = sigma_m * (max(dust_at(p + sun_dir * 120.0, 120.0) - c_cam, 0.0) * 200.0 + max(dust_at(p + sun_dir * 480.0, 480.0) - c_cam, 0.0) * 500.0);
+		float h = p.y - dust_ground(p.xz);
+		float top = max(dust_map(p.xz).g, 1.0);
+		float up = clamp(h / top, 0.0, 1.0);
+		float tau_up = sigma_m * c * max(top - h, 0.0) * 0.5;
+		vec3 light = sun_radiance * step(0.0, sun_dir.y) * (alb * exp(-tau_s) * ph0 + k_ms / (4.0 * PI) * exp(-f_ms * tau_s));
+		// The sky's light the same way, isotropic: the same reflectance under the sky (k / 4).
+		light += mix(ambient_bottom, ambient_top, 0.5 + 0.5 * up) * 0.25 * k_ms * (0.35 + 0.65 * exp(-0.5 * f_ms * tau_up));
+		float st = exp(-sigma * dt);
+		col += tr * light * (1.0 - st);
+		dsum += tr * (1.0 - st) * t;
+		wsum += tr * (1.0 - st);
+		tr *= st;
+		if (tr < 0.005) {
+			break;
+		}
+	}
+	r_t = wsum > 0.0 ? dsum / wsum : t0;
+	return vec4(col, tr);
+}
 )";
 
 const char *SKY_BODY_B = R"(
@@ -1204,6 +1439,16 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		if (ls.a < 0.999) {
 			float dd = r_depth;
 			o = (d_snow < dd || o.a >= 0.999) ? cloud_over(ls, d_snow, o, dd, r_depth) : cloud_over(o, dd, ls, d_snow, r_depth);
+			d = r_depth;
+		}
+	}
+	if (cloud_dust.x > 0.0) {
+		float d_dust;
+		vec4 du = march_dust(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, 0.0, 1e9, d_dust);
+		if (du.a < 0.999) {
+			du.rgb *= dust_tint();
+			float dd = r_depth;
+			o = (d_dust < dd || o.a >= 0.999) ? cloud_over(du, d_dust, o, dd, r_depth) : cloud_over(o, dd, du, d_dust, r_depth);
 			d = r_depth;
 		}
 	}
@@ -1631,6 +1876,7 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_scud", p_state.scud);
 	rs->material_set_param(m, "cloud_lake", p_state.lake_n > 0 ? p_state.lake_params : Vector4());
 	rs->material_set_param(m, "cloud_lake_dir", p_state.lake_dir);
+	rs->material_set_param(m, "cloud_dust", Vector4(p_state.dust_top, p_state.dust_column, 0.0f, 0.0f));
 	rs->material_set_param(m, "cloud_high_cover", p_state.high_cover);
 	rs->material_set_param(m, "cloud_high_height", p_state.high_height);
 	rs->material_set_param(m, "cloud_high_tau", p_state.high_tau);

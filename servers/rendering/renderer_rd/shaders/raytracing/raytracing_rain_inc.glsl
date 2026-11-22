@@ -181,3 +181,95 @@ vec4 rain_surface_beads(vec3 p_world, vec3 p_normal, float p_wet, float p_footpr
 	vec3 slope = d / radius * (1.0 / sqrt(max(1.0 - r * r, 0.02)));
 	return vec4(slope * shown, mix(mean_cover, 1.0, shown));
 }
+
+// Rain caught by a face (docs/ideas/engine-gaps-from-game.md, A; docs/ideas/rain.md, step 7). The rain falls slanted
+// by the wind, so its flux is a vector: R straight down (mm/h on level ground) and, across, the wind-driven rain of
+// ISO 15927-3 (Lacy 1965; Blocken and Carmeliet 2004), (2/9) U R^(8/9) mm/h on a face square to a wind of U m/s
+// (the airfield index: the free catch, before a building's own wall factor). A face catches the flux it turns
+// into, so a level roof catches R, a windward wall the driven rain, a leeward wall and an underside nothing, and a
+// slope leaning into the wind more than R. Canopy drip falls straight down. Pure: the caller brings the weather.
+// p_normal: the face's world normal (unit, outward). p_rain: liquid rain (mm/h). p_drip: canopy drip (mm/h).
+// p_wind: the 10 m wind (m/s, world xz, the way it blows). p_film: the weather's surface film there (0..1: how long
+// the rain has been at it). Returns x the catch (mm/h on the face), y the film, zw the wind's push on a drop along
+// the face (world xz, in units of the drop's weight).
+vec4 rain_surface_catch(vec3 p_normal, float p_rain, float p_drip, vec2 p_wind, float p_film) {
+	float rain = max(p_rain, 0.0);
+	float across = rain > 0.0 ? (2.0 / 9.0) * pow(rain, 8.0 / 9.0) : 0.0;
+	float c = max(p_normal.y * rain - across * dot(p_normal.xz, p_wind), 0.0) + max(p_drip, 0.0) * max(p_normal.y, 0.0);
+	// The push: drag on a sessile drop of about 3 mm (0.5 rho Cd A u^2 with Cd about 1, A about 7 mm2) over its
+	// weight (about 0.14 mN) is 0.03 u^2; the air at the face moves at about 0.6 of the 10 m wind (the log profile a
+	// few metres up, slowed further against the face), so 0.011 U^2 along the face's own plane.
+	vec3 w = vec3(p_wind.x, 0.0, p_wind.y);
+	w -= p_normal * dot(w, p_normal);
+	vec2 push = 0.011 * w.xz * length(w);
+	float pl = length(push);
+	push *= pl > 3.0 ? 3.0 / pl : 1.0;
+	return vec4(c, clamp(p_film, 0.0, 1.0), push);
+}
+
+// The way water runs on a face: gravity along the face plus the wind's push (rain_surface_catch().zw), in the face's
+// plane. Not normalised: its length is the drive (1 down a vertical face in still air, 0 on a level one).
+vec3 rain_surface_fall_line(vec3 p_normal, vec2 p_push) {
+	vec3 f = vec3(p_push.x, -1.0, p_push.y);
+	return f - p_normal * dot(f, p_normal);
+}
+
+// Rain running down a wall in streaks (docs/ideas/engine-gaps-from-game.md, A): a falling film gathers into
+// rivulets where the face's dirt and joints lead it (its roll waves, Kapitza 1948, are centimetres apart and not
+// drawn). Each 4.5 cm column of the face holds one streak, 1 to 4 cm wide, meandering a little as it runs (a falling
+// rivulet's meander, wavelength 0.3 to 0.9 m) along the fall line (rain_surface_fall_line(): the wind leans it), with
+// a thin sheet between. Fixed per face, as Kaneda et al. (1993) keep each runner on the bed of the glass's
+// affinity. Returns the share of the face the water covers (0.4 between streaks, 1 in one); finer than the pixel
+// (p_footprint, m; 0 = full detail, as the path tracer has) the streaks fade to their mean.
+float rain_wall_streaks(vec3 p_world, vec3 p_normal, vec2 p_push, float p_footprint) {
+	vec2 th = vec2(p_normal.z, -p_normal.x);
+	float tl = length(th);
+	if (tl < 1e-3) {
+		return 0.4;
+	}
+	vec3 t = vec3(th.x, 0.0, th.y) / tl;
+	vec3 f = rain_surface_fall_line(p_normal, p_push);
+	float lean = clamp(dot(f, t) / max(-f.y, 0.2), -2.0, 2.0);
+	float s = dot(p_world, t) + lean * p_world.y;
+	// Parallel faces apart from each other get their own streaks (the plane's offset, per half metre).
+	uint plane = uint(int(floor(dot(p_world, p_normal) * 2.0 + 0.5)) + 32768) * 2654435761u;
+	const float cw = 0.045;
+	float c = floor(s / cw);
+	float a = 0.0;
+	for (int j = -1; j <= 1; j++) {
+		float cj = c + float(j);
+		uint h = rain_ring_hash(uint(int(cj) + 1048576) ^ plane);
+		float x0 = (cj + 0.2 + 0.6 * rain_ring_rand(h)) * cw;
+		float width = mix(0.009, 0.039, rain_ring_rand(h + 1u));
+		float strength = mix(0.35, 1.0, rain_ring_rand(h + 2u));
+		float amp = mix(0.004, 0.023, rain_ring_rand(h + 3u));
+		float lam = mix(0.31, 0.94, rain_ring_rand(h + 4u));
+		float xc = x0 + amp * sin(6.2831853 * (p_world.y / lam + rain_ring_rand(h + 5u)));
+		float d = (s - xc) / width;
+		a = max(a, exp(-d * d) * strength);
+	}
+	a = mix(a, 0.55, smoothstep(0.012, 0.05, p_footprint));
+	return 0.4 + 0.6 * a;
+}
+
+// The wetness of a face from the rain it catches (rain_surface_catch(), p_rain): on walls and steep faces the
+// running water shows in streaks by the catch (wet right through from 4 mm/h, as the wall film's scale), a face
+// out of the rain keeps a third of the ground's film (splash and damp air); level faces keep the ground's film
+// (p_wet). p_running scales the running water (the material's wetness amount, less what a wiper took).
+float rain_surface_wetness(float p_wet, float p_running, vec3 p_normal, vec4 p_rain, float p_streaks) {
+	float wall = 1.0 - smoothstep(0.2, 0.7, p_normal.y);
+	if (wall <= 0.0) {
+		return p_wet;
+	}
+	float running = clamp(p_rain.x / 4.0, 0.0, 1.0) * p_running;
+	return mix(p_wet, max(running * p_streaks, 0.35 * p_wet), wall);
+}
+
+// Water standing on a built surface (docs/ideas/engine-gaps-from-game.md, B; Lagarde 2012, "Water drop 2a", accumulated
+// water): the weather's pooled water (WeatherMap3D's puddle, mm above what the surface film holds, filled by the rain
+// and emptied by drainage and evaporation) stands on faces level enough to hold it. Paving laid to a 2 % fall still
+// ponds in its hollows, so the hold eases from 20 degrees of slope to 8. Returns the water's depth over the face's
+// mean (mm); the caller's relief (heightmap, AO) decides where it lies, filling the lowest first.
+float rain_surface_puddle(vec3 p_normal, float p_puddle_mm) {
+	return max(p_puddle_mm, 0.0) * smoothstep(0.94, 0.99, p_normal.y);
+}

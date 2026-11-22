@@ -13,6 +13,7 @@ extends Node3D
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --exposure=x          the tonemapper's exposure (1): more for a dark cave seen from inside
+#   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff)
 #   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still); on by default
 #                         for raster stills, --no-taa for the single-sample frame
 #   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
@@ -752,6 +753,59 @@ func _world() -> void:
 		var bz := gen.get_height(spot + Vector3(0, 0, 2)) - gen.get_height(spot - Vector3(0, 0, 2))
 		bank_side = Vector3(-bz, 0, bx).normalized()
 		print("bank spot ", spot, " geology ", gen.get_geology_at(spot))
+	var face_out := Vector3.ZERO
+	if args.has("face-spot"):
+		# --face-spot=north|south: a rock wall of 60 degrees or more facing that way (outward within 30 degrees,
+		# north is -z) and 15 m high or more, the nearest; seen from its foot looking up with the sky over its top.
+		var want := Vector3(0, 0, -1) if args["face-spot"] == "north" else Vector3(0, 0, 1)
+		var best_w := INF
+		var found_w := spot
+		for zz in range(-900, 901, 6):
+			for xx in range(-900, 901, 6):
+				var p := Vector3(xx, 0, zz)
+				var h := gen.get_height(p)
+				if h < gen.sea_level + 6.0:
+					continue
+				var gx := gen.get_height(p + Vector3(2, 0, 0)) - gen.get_height(p - Vector3(2, 0, 0))
+				var gz := gen.get_height(p + Vector3(0, 0, 2)) - gen.get_height(p - Vector3(0, 0, 2))
+				if rad_to_deg(atan(Vector2(gx, gz).length() / 4.0)) < 60.0:
+					continue
+				var o := Vector3(-gx, 0, -gz).normalized()
+				if o.dot(want) < 0.87:
+					continue
+				if gen.get_height(p - o * 10.0) - gen.get_height(p + o * 10.0) < 25.0:
+					continue
+				# Open ground in front, lower than the wall's foot, for the camera.
+				var fd := float(args.get("dist", "60"))
+				if absf(xx) > 500 or absf(zz) > 500:
+					continue
+				# A wide wall: as steep 12 m either side along it.
+				var wide := true
+				for sd in [-12.0, 12.0]:
+					var q0: Vector3 = p + o.cross(Vector3.UP) * sd
+					var sx := gen.get_height(q0 + Vector3(2, 0, 0)) - gen.get_height(q0 - Vector3(2, 0, 0))
+					var sz := gen.get_height(q0 + Vector3(0, 0, 2)) - gen.get_height(q0 - Vector3(0, 0, 2))
+					if rad_to_deg(atan(Vector2(sx, sz).length() / 4.0)) < 52.0:
+						wide = false
+				if not wide:
+					continue
+				var open := true
+				for k in range(1, 11):
+					var q := p + (o + o.cross(Vector3.UP) * 0.25).normalized() * fd * k / 10.0
+					if gen.get_height(q) > h - 3.0 - 6.0 * k / 10.0:
+						open = false
+						break
+				if not open:
+					continue
+				var dd := Vector2(xx, zz).length()
+				if dd < best_w:
+					best_w = dd
+					found_w = p
+		spot = found_w
+		var fx := gen.get_height(spot + Vector3(2, 0, 0)) - gen.get_height(spot - Vector3(2, 0, 0))
+		var fz := gen.get_height(spot + Vector3(0, 0, 2)) - gen.get_height(spot - Vector3(0, 0, 2))
+		face_out = Vector3(-fx, 0, -fz).normalized()
+		print("face spot ", spot, " facing ", face_out)
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
@@ -778,12 +832,19 @@ func _world() -> void:
 		var bout := Vector3(gen.get_height(spot - Vector3(2, 0, 0)) - gen.get_height(spot + Vector3(2, 0, 0)), 0, gen.get_height(spot - Vector3(0, 0, 2)) - gen.get_height(spot + Vector3(0, 0, 2))).normalized()
 		cam.position = spot + bank_side * dist + bout * dist * 0.35
 		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, spot.y + 2.0)
+	if face_out != Vector3.ZERO:
+		# Out from the wall's foot, a little to one side, looking up the face.
+		var fside := face_out.cross(Vector3.UP) * float(args.get("face-side", "0.25"))
+		cam.position = spot + (face_out + fside).normalized() * dist
+		cam.position.y = maxf(gen.get_height(cam.position) + 2.0, spot.y - dist * 0.2)
 	if view == "river" or view == "shore":
 		# Low ground under steep sides: look down on the bed from higher, over the walls round it.
 		cam.position.y = maxf(cam.position.y, spot.y + dist * 0.9)
 	if args.has("top"):
 		cam.position = spot + Vector3(0, float(args["top"]) if args["top"] != "1" else 30.0, 0.5)
 	var look := spot + Vector3(0, 0.3, 0)
+	if face_out != Vector3.ZERO:
+		look = spot + Vector3(0, dist * 0.05, 0)
 	if args.has("eye"):
 		# --eye=h: standing --dist m off, h m above the ground, looking across it past the spot (where each ground
 		# detail class stops drawing shows as a line across the frame).
@@ -2173,8 +2234,12 @@ func _test() -> void:
 		var wet_ok := 0
 		for pl in pools_t:
 			var pc: Vector3 = pl["center"]
-			if net.get_rock_distance(pc + Vector3(0, 0.08, 0)) < 0.0 and net.get_rock_distance(pc - Vector3(0, float(pl["depth"]) + 0.08, 0)) > -0.05:
+			var d_up := net.get_rock_distance(pc + Vector3(0, 0.08, 0))
+			var d_dn := net.get_meshed_rock_distance(pc - Vector3(0, float(pl["depth"]) + 0.08, 0)) # the floor as drawn: flowstone included
+			if d_up < 0.0 and d_dn > -0.05:
 				wet_ok += 1
+			else:
+				print("    pool at %s depth %.3f: %.3f m from the rock 8 cm over the level, %.3f under the floor" % [pc, pl["depth"], d_up, d_dn])
 		check(wet_ok == pools_t.size(), "rimstone: %d pools near the entrance, %d standing in air over their floor" % [pools_t.size(), wet_ok])
 		# Every stalactite hangs from rock: rock 0.25 m over its base, air 0.3 m under it.
 		var hung := 0
@@ -2413,6 +2478,23 @@ func _test() -> void:
 			var again: Node = rocks.break_stone(big["position"], 100.0, 3.0 * float(big["scale"]))
 			var ms := (Time.get_ticks_usec() - pt) / 1000.0
 			check(again != null and ms < 16.0, "break_stone on a prepared shape: %.1f ms (under a 60 Hz frame)" % ms)
+		# Stones rest on the drawn ground: the heightfield plus the landscape's bank and cliff relief (WorldGround.relief_at).
+		var on_rel := 0
+		var seated := 0
+		var worst_rel := 0.0
+		for lay in [RockField3D.LAYER_ROCKFALL, RockField3D.LAYER_SCREE]:
+			for st in rocks.get_stones(lay, Rect2(-120, -120, 240, 240)): # (the whole world's stones at once runs out of memory)
+				var sp: Vector3 = st["position"]
+				var hg := gen.get_height(sp)
+				var rl: Vector2 = WorldContracts.get_ground().relief_at(Vector3(sp.x, hg, sp.z))
+				if rl.y <= 0.0 or absf(rl.x) < 0.05:
+					continue
+				on_rel += 1
+				var off := absf(float(st["ground"]) - (hg + rl.x))
+				worst_rel = maxf(worst_rel, off)
+				if off < 0.02:
+					seated += 1
+		check(seated == on_rel, "stones on relief-drawn ground: %d of %d seated on the drawn surface (worst %.3f m off)%s" % [seated, on_rel, worst_rel, " (none in the middle 240 m: counted, not required)" if on_rel == 0 else ""])
 		# Live rockfall: a cliff block comes loose, out of the wall, falls under gravity and comes to rest on the ground.
 		check(is_equal_approx(rocks.get_rockfall_trigger(), 1.0), "rockfall trigger without weather: %.2f (base rate)" % rocks.get_rockfall_trigger())
 		var cliff: Array = rocks.get_stones(RockField3D.LAYER_CLIFF, Rect2(-800, -800, 1600, 1600))
@@ -2751,6 +2833,25 @@ func _render_later() -> void:
 		print("rt: captured %d, rebakes %d, held %d, budget limited %d, pending %d" % [ri.call(Viewport.RENDER_INFO_RT_CAPTURED_MESHES), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_REBAKES), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_HELD), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED), ri.call(Viewport.RENDER_INFO_RT_PENDING_SURFACES)])
 	if rocks and rocks.ground_detail:
 		print("tiles: %s" % rocks.get_ground_detail_tile_stats())
+		# The grains on the terrain's drawn relief (Landscape3D bank and cliff relief): each one's ground against the
+		# heightfield plus WorldGround.relief_at.
+		var on_relief := 0
+		var on_it := 0
+		var worst := ""
+		var off := 0.0
+		var wg: WorldGround = WorldContracts.get_ground()
+		for st in rocks.get_stones(RockField3D.LAYER_DETAIL_PEBBLE, Rect2(spot_pos.x - 30, spot_pos.z - 30, 60, 60)):
+			var pos: Vector3 = st["position"]
+			var r: Vector2 = wg.relief_at(pos)
+			if absf(r.x) > 0.02:
+				on_relief += 1
+				var o := absf(float(st["ground"]) - (gen.get_height(pos) + r.x))
+				if o > off:
+					off = o
+					worst = "at %s: relief %.3f, stone ground %.3f, heightfield %.3f" % [pos, r.x, float(st["ground"]), gen.get_height(pos)]
+				if o < 0.05:
+					on_it += 1
+		print("relief: %d pebble grains on drawn relief (%d within 5 cm), ground off it by %.3f m at most %s" % [on_relief, on_it, off, worst])
 	if rocks and rocks.moss_cushions:
 		print("moss: %d shells, %d triangles, %d building" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), rocks.get_moss_pending()])
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():

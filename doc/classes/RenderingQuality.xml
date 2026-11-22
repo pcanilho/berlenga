@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="RenderingQuality" inherits="Object" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		One quality ladder (Low, Medium, High, Ultra) for every rendering setting, by group.
+	</brief_description>
+	<description>
+		An overall level sets every group (textures, geometry, shadows, path tracing, reflections, volumetrics, vegetation, effects, post-processing); a group may then be moved on its own. Each group level is a table of project settings: the engine registers its own, and a project or a system registers more with [method register_setting]. High keeps every setting as the project has it, Ultra goes above it (full meshes at every distance), Medium and Low trade detail for speed and memory. A game's options menu maps onto [method set_level] and [method set_group_level]. The ladder only applies when the project runs, never in the editor, and never saves project settings.
+		[codeblock]
+		RenderingQuality.set_level(RenderingQuality.LEVEL_MEDIUM)
+		RenderingQuality.set_group_level(RenderingQuality.GROUP_TEXTURES, RenderingQuality.LEVEL_ULTRA)
+		RenderingQuality.register_setting(RenderingQuality.GROUP_VEGETATION, "game/vegetation/density", [0.25, 0.5, null, null])
+		[/codeblock]
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="apply_project_settings">
+			<return type="void" />
+			<description>
+				Reads [member ProjectSettings.rendering/quality/level] and [code]rendering/quality/groups/*[/code] and applies them. Runs once at startup.
+			</description>
+		</method>
+		<method name="get_effective_group_level" qualifiers="const">
+			<return type="int" enum="RenderingQuality.Level" />
+			<param index="0" name="group" type="int" enum="RenderingQuality.Group" />
+			<description>
+				The level [param group] renders at: its own level, or the overall level when it follows it.
+			</description>
+		</method>
+		<method name="get_group_level" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="group" type="int" enum="RenderingQuality.Group" />
+			<description>
+				The level set for [param group], or [code]-1[/code] when it follows the overall level.
+			</description>
+		</method>
+		<method name="get_group_settings" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="group" type="int" enum="RenderingQuality.Group" />
+			<param index="1" name="level" type="int" enum="RenderingQuality.Level" />
+			<description>
+				Each setting of [param group] and the value it has at [param level].
+			</description>
+		</method>
+		<method name="get_level" qualifiers="const">
+			<return type="int" enum="RenderingQuality.Level" />
+			<description>
+				The overall level.
+			</description>
+		</method>
+		<method name="register_setting">
+			<return type="void" />
+			<param index="0" name="group" type="int" enum="RenderingQuality.Group" />
+			<param index="1" name="setting" type="String" />
+			<param index="2" name="values" type="Array" />
+			<description>
+				Makes the project setting [param setting] scale with [param group]: [param values] holds one value per level, Low to Ultra, and [code]null[/code] keeps the project's own value at that level. Registering a setting again replaces its row.
+			</description>
+		</method>
+		<method name="set_group_level">
+			<return type="void" />
+			<param index="0" name="group" type="int" enum="RenderingQuality.Group" />
+			<param index="1" name="level" type="int" />
+			<description>
+				Sets [param group] to [param level] alone; [code]-1[/code] makes it follow the overall level again.
+			</description>
+		</method>
+		<method name="set_level">
+			<return type="void" />
+			<param index="0" name="level" type="int" enum="RenderingQuality.Level" />
+			<description>
+				Sets the overall level and applies it to every group that follows it.
+			</description>
+		</method>
+		<method name="unregister_setting">
+			<return type="void" />
+			<param index="0" name="setting" type="String" />
+			<description>
+				Stops [param setting] scaling with its group and restores the project's value.
+			</description>
+		</method>
+	</methods>
+	<signals>
+		<signal name="group_changed">
+			<param index="0" name="group" type="int" />
+			<param index="1" name="level" type="int" />
+			<description>
+				Emitted when a group's settings were applied at [param level]. Systems that scale in their own way (not through a project setting) listen to it.
+			</description>
+		</signal>
+		<signal name="level_changed">
+			<param index="0" name="level" type="int" />
+			<description>
+				Emitted when the overall level changes.
+			</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="LEVEL_LOW" value="0" enum="Level">
+		</constant>
+		<constant name="LEVEL_MEDIUM" value="1" enum="Level">
+		</constant>
+		<constant name="LEVEL_HIGH" value="2" enum="Level">
+			Every setting as the project has it.
+		</constant>
+		<constant name="LEVEL_ULTRA" value="3" enum="Level">
+			Above the project's settings: full meshes at every distance, no texture cap.
+		</constant>
+		<constant name="LEVEL_MAX" value="4" enum="Level">
+		</constant>
+		<constant name="GROUP_TEXTURES" value="0" enum="Group">
+		</constant>
+		<constant name="GROUP_GEOMETRY" value="1" enum="Group">
+		</constant>
+		<constant name="GROUP_SHADOWS" value="2" enum="Group">
+		</constant>
+		<constant name="GROUP_PATH_TRACING" value="3" enum="Group">
+		</constant>
+		<constant name="GROUP_REFLECTIONS" value="4" enum="Group">
+		</constant>
+		<constant name="GROUP_VOLUMETRICS" value="5" enum="Group">
+		</constant>
+		<constant name="GROUP_VEGETATION" value="6" enum="Group">
+		</constant>
+		<constant name="GROUP_EFFECTS" value="7" enum="Group">
+		</constant>
+		<constant name="GROUP_POST_PROCESS" value="8" enum="Group">
+		</constant>
+		<constant name="GROUP_MAX" value="9" enum="Group">
+		</constant>
+	</constants>
+</class>

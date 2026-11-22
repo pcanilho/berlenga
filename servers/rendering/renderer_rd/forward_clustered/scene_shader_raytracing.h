@@ -116,7 +116,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 88;
+	static constexpr int RT_PARAM_COUNT = 92;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -156,6 +156,7 @@ public:
 	// Not a setting: some traced material can bound a medium (RenderRaytracing::_materials_bound_media()). Without one, the
 	// camera medium probe and the caustic photons are skipped; they could find nothing.
 	static constexpr uint32_t RT_MATERIAL_FEATURE_MEDIA = 64;
+	static constexpr uint32_t RT_MATERIAL_FEATURE_SER_HINTS = 128; // rendering/pathtracing/ser_coherence_hints: material bits for reordering.
 	// Which path vertices receive decals (rendering/pathtracing/decals). Must match RT_DECAL_MODE_* in GLSL.
 	enum RTDecalMode {
 		RT_DECAL_MODE_ALL_HITS = 0,
@@ -258,6 +259,8 @@ public:
 	// for the rain share under freezing rain.
 	static constexpr int RT_PARAM_PRECIP_NOSE = 85;
 	static constexpr int RT_PARAM_PRECIP_NOSE_BASE = 86;
+	// WeatherMap3D's 10 m wind (weather_wind_map) over the wetness rect, for the rain a face catches. 0 = none.
+	static constexpr int RT_PARAM_WIND_MAP = 89;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

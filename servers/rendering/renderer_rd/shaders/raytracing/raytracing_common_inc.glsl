@@ -5,6 +5,20 @@
 // Specialization constant (bits 0-25: flags, 26-27: sample mode, 28-31: bounces).
 layout(constant_id = 0) const uint RT_FLAGS = 0u;
 
+// Banded trace (render_forward_clustered_pt.cpp): a frame that asks for many samples is traced as bands of rows, one
+// dispatch each, so no dispatch runs long enough to trip the system's GPU watchdog (Windows TDR, 2 s by default; as
+// Unreal's path tracer splits its dispatches, r.PathTracing.DispatchSize). Every stage sees the whole frame: use
+// RT_LAUNCH_ID and RT_LAUNCH_SIZE, never gl_LaunchIDEXT and gl_LaunchSizeEXT.
+layout(push_constant, std430) uniform RTLaunchBand {
+	uint offset_y; // the band's first row
+	uint height; // the frame's rows
+	uint pad0;
+	uint pad1;
+}
+rt_launch_band;
+#define RT_LAUNCH_ID (gl_LaunchIDEXT + uvec3(0u, rt_launch_band.offset_y, 0u))
+#define RT_LAUNCH_SIZE uvec3(gl_LaunchSizeEXT.x, rt_launch_band.height, gl_LaunchSizeEXT.z)
+
 #define SHADER_IS_SRGB false
 
 #define RT_FLAG_DLSS_RR_ENABLED (1u << 1)
@@ -103,10 +117,10 @@ bool rt_cone_orthogonal() {
 	return scene_data_block.data.projection_matrix[3][3] != 0.0;
 }
 float rt_cone_spread_angle() {
-	return rt_cone_orthogonal() ? 0.0 : atan(2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * float(gl_LaunchSizeEXT.y)));
+	return rt_cone_orthogonal() ? 0.0 : atan(2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * float(RT_LAUNCH_SIZE.y)));
 }
 float rt_cone_eye_width() {
-	return rt_cone_orthogonal() ? 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * float(gl_LaunchSizeEXT.y)) : 0.0;
+	return rt_cone_orthogonal() ? 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * float(RT_LAUNCH_SIZE.y)) : 0.0;
 }
 
 float rt_ndc_depth(vec3 p_world_pos) {
@@ -132,14 +146,14 @@ float dlss_rr_specular_share(vec3 p_diffuse, vec3 p_specular) {
 }
 
 void dlss_rr_write_specular_motion_vector(vec2 p_mv) {
-	imageStore(dlss_rr_specular_motion_vectors, ivec2(gl_LaunchIDEXT.xy), vec4(p_mv, 0.0, 0.0));
+	imageStore(dlss_rr_specular_motion_vectors, ivec2(RT_LAUNCH_ID.xy), vec4(p_mv, 0.0, 0.0));
 }
 
 // DLSS-RR handles near-black albedo; unlike NRD's 0.04 floor, a metal's diffuse must stay ~0 or RR
 // filters part of its reflection as diffuse. Only both guides at zero is invalid (RTXPT floor).
 #define DLSS_RR_MIN_ALBEDO 0.0001
 void dlss_rr_write_albedo_guides(vec3 p_diffuse, vec3 p_specular) {
-	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 	vec3 diffuse = clamp(p_diffuse, vec3(0.0), vec3(1.0));
 	vec3 specular = clamp(p_specular, vec3(0.0), vec3(1.0));
 	if (dot(diffuse + specular, vec3(1.0 / 3.0)) < DLSS_RR_MIN_ALBEDO) {
@@ -171,7 +185,7 @@ mat3 dlss_rr_householder(vec3 p_n) {
 // else overwrites them.
 void dlss_rr_write_replaced_guides(vec3 p_virtual_pos, vec3 p_virtual_motion, vec3 p_chain_throughput,
 		vec3 p_hit_diffuse, vec3 p_hit_specular) {
-	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 	vec3 own_diffuse = imageLoad(dlss_rr_diffuse_albedo, pixel).rgb;
 	vec3 own_specular = imageLoad(dlss_rr_specular_albedo, pixel).rgb;
 	vec2 mv = rt_motion_vector(p_virtual_pos, p_virtual_pos + p_virtual_motion);

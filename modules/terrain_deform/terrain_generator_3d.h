@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "core/templates/hash_set.h"
 #include "climate_recipe.h"
 
 #include "core/templates/local_vector.h"
@@ -556,6 +557,9 @@ private:
 		float *out; // width * rows, NaN outside
 	};
 	static void _fill_row(void *p_job, uint32_t p_row);
+	void _retire_globals();
+	inline static ObjectID globals_owner; // the generator whose maps the terrain globals show
+	HashSet<StringName> published_rects; // its rect globals, zeroed when it leaves the tree
 	void _publish_globals();
 	void _notification(int p_what);
 	Vector3 _cell_position(int p_cell) const;

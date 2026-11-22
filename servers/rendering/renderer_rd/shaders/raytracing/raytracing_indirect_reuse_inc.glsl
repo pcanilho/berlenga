@@ -16,7 +16,8 @@
 //   (0: sky), x2's normal, radiance (half rgb), M and flags, W.
 //   Record (closest hit -> raygen): the diffuse lobe's weight before its cosine and Burley
 //   factor (half rgb) and roughness, shading normal, geometric normal, where the surface
-//   was last frame (half offset) and the diffuse model.
+//   was last frame (half offset) and the diffuse model; then the roughness of the current sample's x2
+//   (enhanced only, written by the first bounce's hit).
 
 #define RT_IR_BINDING 52
 layout(set = 0, binding = RT_IR_BINDING, std430) restrict buffer IndirectReuseBuffer {
@@ -26,13 +27,15 @@ rt_ir;
 
 #define RT_IR_HEADER 4u // must match RT_INDIRECT_REUSE_HEADER (render_raytracing.h)
 #define RT_IR_STRIDE 10u // must match RT_INDIRECT_REUSE_STRIDE
-#define RT_IR_RECORD 6u // must match RT_INDIRECT_REUSE_RECORD
+#define RT_IR_RECORD 7u // must match RT_INDIRECT_REUSE_RECORD
 #define RT_IR_M_CAP 20u // frames of history
 #define RT_IR_NEIGHBOURS 2u
 #define RT_IR_RADIUS 16.0 // pixels
 #define RT_IR_NORMAL 0.9 // cosine a neighbour's normal must reach
 #define RT_IR_PLANE 0.05 // distance off this surface's plane, over the distance to the camera
 #define RT_IR_MIN_ROUGHNESS 0.4 // an x2 shinier than this is reused only by its own surface
+// Footprint test constant (ReSTIR PT Enhanced, Lin, Kettunen and Wyman, I3D 2026, eq. 5: c / 100 with c = 0.02).
+#define RT_IR_FOOTPRINT_C 0.0002
 
 // Hit outputs on the main path (bits 22-23 are free outside peel rays).
 #define RT_IR_SURFACE_FLAG (1u << 22) // bounce 0: the surface record was written
@@ -44,18 +47,23 @@ bool rt_ir_enabled() {
 	if (get_rt_param(RT_PARAM_INDIRECT_REUSE) < 0.5) {
 		return false;
 	}
-	uint pixels = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
-	return rt_ir.data[2] == gl_LaunchSizeEXT.x && rt_ir.data[3] == gl_LaunchSizeEXT.y &&
+	uint pixels = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;
+	return rt_ir.data[2] == RT_LAUNCH_SIZE.x && rt_ir.data[3] == RT_LAUNCH_SIZE.y &&
 			uint(rt_ir.data.length()) >= RT_IR_HEADER + pixels * (2u * RT_IR_STRIDE + RT_IR_RECORD);
 }
 
 uint rt_ir_state() {
-	return uint(get_rt_param(RT_PARAM_INDIRECT_REUSE)) - 1u; // bit 0: slot written, bit 1: last frame's valid
+	return uint(get_rt_param(RT_PARAM_INDIRECT_REUSE)) - 1u; // bit 0: slot written, bit 1: last frame's valid, bit 2: enhanced
+}
+
+// rendering/pathtracing/indirect_reuse_enhanced: the ReSTIR PT Enhanced pieces (Lin, Kettunen and Wyman, I3D 2026).
+bool rt_ir_enhanced() {
+	return (rt_ir_state() & 4u) != 0u;
 }
 
 uint rt_ir_record_base(ivec2 p_pixel) {
-	uint pixels = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
-	return RT_IR_HEADER + 2u * pixels * RT_IR_STRIDE + (uint(p_pixel.y) * gl_LaunchSizeEXT.x + uint(p_pixel.x)) * RT_IR_RECORD;
+	uint pixels = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;
+	return RT_IR_HEADER + 2u * pixels * RT_IR_STRIDE + (uint(p_pixel.y) * RT_LAUNCH_SIZE.x + uint(p_pixel.x)) * RT_IR_RECORD;
 }
 
 uint rt_ir_pack_dir(vec3 v) {
@@ -98,7 +106,7 @@ vec3 rt_ir_weight = vec3(0.0); // the throughput before the diffuse weight, time
 
 // The camera ray's first hit (the same for every sample): the surface record raygen reuses with.
 void rt_ir_write_record(vec3 p_hit_pos, vec3 p_prev_pos, vec3 N, vec3 Ng, float p_roughness, bool p_burley) {
-	uint b = rt_ir_record_base(ivec2(gl_LaunchIDEXT.xy));
+	uint b = rt_ir_record_base(ivec2(RT_LAUNCH_ID.xy));
 	vec3 w = rt_ir_diffuse_taken ? rt_ir_weight : vec3(0.0);
 	vec3 d = p_prev_pos - p_hit_pos;
 	rt_ir.data[b] = packHalf2x16(w.rg);
@@ -124,8 +132,8 @@ struct IRReservoir {
 };
 
 uint rt_ir_base(uint p_slot, ivec2 p_pixel) {
-	uint pixels = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
-	return RT_IR_HEADER + (p_slot * pixels + uint(p_pixel.y) * gl_LaunchSizeEXT.x + uint(p_pixel.x)) * RT_IR_STRIDE;
+	uint pixels = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;
+	return RT_IR_HEADER + (p_slot * pixels + uint(p_pixel.y) * RT_LAUNCH_SIZE.x + uint(p_pixel.x)) * RT_IR_STRIDE;
 }
 
 IRReservoir rt_ir_load(uint p_slot, ivec2 p_pixel) {
@@ -162,11 +170,45 @@ void rt_ir_store(uint p_slot, ivec2 p_pixel, IRReservoir r) {
 
 // Last frame's reservoir at p_pixel, if its surface matches this one (seen where it was last frame).
 bool rt_ir_load_prev(ivec2 p_pixel, vec3 p_prev_pos, vec3 N, float p_eye_dist, out IRReservoir r) {
-	if (any(lessThan(p_pixel, ivec2(0))) || any(greaterThanEqual(p_pixel, ivec2(gl_LaunchSizeEXT.xy)))) {
+	if (any(lessThan(p_pixel, ivec2(0))) || any(greaterThanEqual(p_pixel, ivec2(RT_LAUNCH_SIZE.xy)))) {
 		return false;
 	}
 	r = rt_ir_load(1u - (rt_ir_state() & 1u), p_pixel);
 	return r.M > 0u && dot(r.n1, N) >= RT_IR_NORMAL && abs(dot(N, r.x1 - p_prev_pos)) <= RT_IR_PLANE * p_eye_dist;
+}
+
+// History cap for the temporal reservoir r found at p_pixel last frame, lowered where its sample has been
+// copied to many pixels around it (ReSTIR PT Enhanced, section 5: c_cap = lerp(20, 1, D^0.1), D the share
+// of the 17 x 17 pixels around holding the same sample). A copy of a bright sample spreads by spatial
+// reuse into a blotch that lingers for frames; capping its history lets fresh samples replace it. D is
+// estimated from RT_IR_DUP_TAPS random pixels of the window; a copy keeps the sample's light bits and the
+// point it reached.
+#define RT_IR_DUP_TAPS 16u
+uint rt_ir_decorrelated_cap(ivec2 p_pixel, IRReservoir r, inout uint rng) {
+	if (!(r.W > 0.0)) {
+		return RT_IR_M_CAP;
+	}
+	uint slot = 1u - (rt_ir_state() & 1u);
+	uint b0 = rt_ir_base(slot, p_pixel);
+	uint l0 = rt_ir.data[b0 + 7u];
+	uint l1 = rt_ir.data[b0 + 8u] & 0xFFFFu;
+	vec3 x2 = r.x1 + r.dir * r.dist;
+	uint same = 0u;
+	for (uint i = 0u; i < RT_IR_DUP_TAPS; i++) {
+		ivec2 q = p_pixel + ivec2(int(rand(rng) * 17.0) - 8, int(rand(rng) * 17.0) - 8);
+		if (q == p_pixel || any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, ivec2(RT_LAUNCH_SIZE.xy)))) {
+			continue;
+		}
+		uint b = rt_ir_base(slot, q);
+		if (rt_ir.data[b + 7u] != l0 || (rt_ir.data[b + 8u] & 0xFFFFu) != l1 || uintBitsToFloat(rt_ir.data[b + 9u]) <= 0.0) {
+			continue;
+		}
+		IRReservoir o = rt_ir_load(slot, q);
+		bool match = r.dist > 0.0 ? (o.dist > 0.0 && distance(o.x1 + o.dir * o.dist, x2) <= 0.01 + 1e-3 * r.dist) : (o.dist <= 0.0 && dot(o.dir, r.dir) > 0.9999);
+		same += match ? 1u : 0u;
+	}
+	float D = float(same) / float(RT_IR_DUP_TAPS);
+	return uint(round(mix(float(RT_IR_M_CAP), 1.0, pow(D, 0.1))));
 }
 
 // The target of sample r at a surface (x, n, ng), in area measure at x2 (solid angle for the sky):
@@ -189,6 +231,36 @@ float rt_ir_target(IRReservoir r, vec3 x, vec3 n, vec3 ng, out vec3 r_dir, out f
 	r_dist = sqrt(d2);
 	r_dir = d / r_dist;
 	return lum * rt_ir_cosine(n, ng, r_dir) * abs(dot(r.n2, r_dir)) / d2;
+}
+
+// Whether x2 may be reconnected to from nearby surfaces: the dual ray footprint test of ReSTIR PT Enhanced
+// (Lin, Kettunen and Wyman, I3D 2026, eq. 5) in place of a fixed roughness. The area x2 stands for when
+// sampled from x1 (1 / (p(w1) G(x1 -> x2)), the cosine lobe's density) and the area x1 stands for when
+// traced back from x2 (1 / (p(w2) G(x2 -> x1)), with x2's GGX peak density 1 / (4 pi alpha^2) as its
+// lobe) must both reach a small multiple of the primary hit's footprint (distance to the eye squared over
+// its cosine). A far glossy x2 passes, a near one or a corner does not; x1 took the diffuse lobe, so the
+// paper's roughness test at x1 always holds.
+bool rt_ir_reconnectable(vec3 x0, vec3 x1, vec3 x2, vec3 n2) {
+	uint b = rt_ir_record_base(ivec2(RT_LAUNCH_ID.xy));
+	vec3 N = rt_ir_unpack_dir(rt_ir.data[b + 2u]);
+	vec3 Ng = rt_ir_unpack_dir(rt_ir.data[b + 3u]);
+	float rough2 = uintBitsToFloat(rt_ir.data[b + 6u]);
+	vec3 d = x2 - x1;
+	float d2 = dot(d, d);
+	vec3 e = x0 - x1;
+	float e2 = dot(e, e);
+	if (!(d2 > 1e-8) || !(e2 > 1e-8)) {
+		return false;
+	}
+	vec3 w = d * inversesqrt(d2);
+	float c1 = rt_ir_cosine(N, Ng, w);
+	float c2 = abs(dot(n2, w));
+	float c0 = max(abs(dot(N, e * inversesqrt(e2))), 1e-3);
+	float rhs = RT_IR_FOOTPRINT_C * 4.0 * PI * e2 / c0;
+	float footprint = PI * d2 / max(c1 * c2, 1e-8);
+	float a = rough2 * rough2;
+	float footprint_back = 4.0 * PI * a * a * d2 / max(c1, 1e-8);
+	return min(footprint, footprint_back) >= rhs;
 }
 
 // The first bounce of each sample whose camera ray's first hit took the diffuse lobe, as
@@ -224,7 +296,7 @@ void rt_ir_fresh_add(inout IRFresh f, vec3 x1, bool p_traced, vec3 p_dir, bool p
 	if (!p_traced || luminance(p_L) <= 0.0) {
 		return;
 	}
-	uint b = rt_ir_record_base(ivec2(gl_LaunchIDEXT.xy));
+	uint b = rt_ir_record_base(ivec2(RT_LAUNCH_ID.xy));
 	vec3 N = rt_ir_unpack_dir(rt_ir.data[b + 2u]);
 	vec3 Ng = rt_ir_unpack_dir(rt_ir.data[b + 3u]);
 	IRReservoir c;
@@ -275,7 +347,7 @@ void rt_ir_fresh_add(inout IRFresh f, vec3 x1, bool p_traced, vec3 p_dir, bool p
 // this frame's, and return the diffuse lobe's light to use in place of each diffuse sample's own.
 // p_active: some sample took the diffuse lobe (else only the history is carried).
 vec3 rt_ir_resolve(bool p_active, vec3 x1, vec3 V, float p_eye_dist, IRFresh p_fresh, inout uint rng) {
-	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 	uint state = rt_ir_state();
 	uint b = rt_ir_record_base(pixel);
 	vec2 w_rg = unpackHalf2x16(rt_ir.data[b]);
@@ -288,7 +360,7 @@ vec3 rt_ir_resolve(bool p_active, vec3 x1, vec3 V, float p_eye_dist, IRFresh p_f
 	vec2 d_z_burley = unpackHalf2x16(rt_ir.data[b + 5u]);
 	vec3 prev_pos = x1 + vec3(d_xy, d_z_burley.x);
 	bool burley = d_z_burley.y > 0.5;
-	vec2 prev_px = vec2(pixel) + 0.5 + rt_motion_vector(x1, prev_pos) * vec2(gl_LaunchSizeEXT.xy);
+	vec2 prev_px = vec2(pixel) + 0.5 + rt_motion_vector(x1, prev_pos) * vec2(RT_LAUNCH_SIZE.xy);
 	bool history = (state & 2u) != 0u;
 
 	if (!p_active) {
@@ -324,7 +396,7 @@ vec3 rt_ir_resolve(bool p_active, vec3 x1, vec3 V, float p_eye_dist, IRFresh p_f
 	if (history) {
 		IRReservoir r;
 		if (rt_ir_load_prev(ivec2(floor(prev_px)), prev_pos, N, p_eye_dist, r)) {
-			r.M = min(r.M, RT_IR_M_CAP);
+			r.M = min(r.M, rt_ir_enhanced() ? rt_ir_decorrelated_cap(ivec2(floor(prev_px)), r, rng) : RT_IR_M_CAP);
 			res[count++] = r;
 		}
 		for (uint k = 0u; k < RT_IR_NEIGHBOURS; k++) {

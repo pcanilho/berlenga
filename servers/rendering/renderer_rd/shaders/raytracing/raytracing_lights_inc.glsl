@@ -250,8 +250,8 @@ void lights_vis_record(uint region, uint light, bool p_lit) {
 	// About RT_LIGHT_VIS_RECORD_PIXELS pixels record each frame, a different set every frame
 	// (at least one in RT_LIGHT_VIS_RECORD_EVERY): a hit rate is a ratio, so a subset learns it
 	// as well, and the compare-and-swap loops on a hot region stop growing with resolution.
-	uint every = max(RT_LIGHT_VIS_RECORD_EVERY, (gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y) / RT_LIGHT_VIS_RECORD_PIXELS);
-	uint pick = (gl_LaunchIDEXT.x * 0x8da6b343u) ^ (gl_LaunchIDEXT.y * 0xd8163841u) ^ (uint(get_rt_param(RT_PARAM_FRAME_INDEX)) * 0x9e3779b9u);
+	uint every = max(RT_LIGHT_VIS_RECORD_EVERY, (RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y) / RT_LIGHT_VIS_RECORD_PIXELS);
+	uint pick = (RT_LAUNCH_ID.x * 0x8da6b343u) ^ (RT_LAUNCH_ID.y * 0xd8163841u) ^ (uint(get_rt_param(RT_PARAM_FRAME_INDEX)) * 0x9e3779b9u);
 	if (lights_vis_hash(pick) % every != 0u) {
 		return;
 	}
@@ -931,8 +931,8 @@ bool light_reuse_enabled() {
 	if (get_rt_param(RT_PARAM_LIGHT_REUSE) < 0.5) {
 		return false;
 	}
-	uint pixels = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
-	return rt_light_reuse.data[2] == gl_LaunchSizeEXT.x && rt_light_reuse.data[3] == gl_LaunchSizeEXT.y &&
+	uint pixels = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;
+	return rt_light_reuse.data[2] == RT_LAUNCH_SIZE.x && rt_light_reuse.data[3] == RT_LAUNCH_SIZE.y &&
 			uint(rt_light_reuse.data.length()) >= RT_LIGHT_REUSE_HEADER + 2u * pixels * RT_LIGHT_REUSE_STRIDE;
 }
 
@@ -941,8 +941,8 @@ uint light_reuse_state() {
 }
 
 uint light_reuse_base(uint p_slot, ivec2 p_pixel) {
-	uint pixels = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
-	return RT_LIGHT_REUSE_HEADER + (p_slot * pixels + uint(p_pixel.y) * gl_LaunchSizeEXT.x + uint(p_pixel.x)) * RT_LIGHT_REUSE_STRIDE;
+	uint pixels = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;
+	return RT_LIGHT_REUSE_HEADER + (p_slot * pixels + uint(p_pixel.y) * RT_LAUNCH_SIZE.x + uint(p_pixel.x)) * RT_LIGHT_REUSE_STRIDE;
 }
 
 LightReservoir light_reuse_load(uint p_slot, ivec2 p_pixel) {
@@ -971,7 +971,7 @@ void light_reuse_store(uint p_slot, ivec2 p_pixel, LightReservoir r) {
 // Last frame's reservoir at p_pixel, if its surface matches this one (seen where it was last
 // frame), with its light renumbered for this frame.
 bool light_reuse_load_prev(ivec2 p_pixel, vec3 p_pos, vec3 N, float p_eye_dist, out LightReservoir r) {
-	if (any(lessThan(p_pixel, ivec2(0))) || any(greaterThanEqual(p_pixel, ivec2(gl_LaunchSizeEXT.xy)))) {
+	if (any(lessThan(p_pixel, ivec2(0))) || any(greaterThanEqual(p_pixel, ivec2(RT_LAUNCH_SIZE.xy)))) {
 		return false;
 	}
 	r = light_reuse_load(1u - (light_reuse_state() & 1u), p_pixel);
@@ -993,7 +993,7 @@ bool lights_select_reused(vec3 hit_pos, vec3 N, uint instance_layers, uint p_reg
 	r_idx = 0u;
 	r_W = 0.0;
 	uint state = light_reuse_state();
-	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 
 	LightReservoir res[1u + 1u + RT_LIGHT_REUSE_NEIGHBOURS];
 	uint count = 0u;
@@ -1011,7 +1011,7 @@ bool lights_select_reused(vec3 hit_pos, vec3 N, uint instance_layers, uint p_reg
 	// Last frame's: this surface's own reservoir, then neighbours'.
 	if ((state & 2u) != 0u) {
 		float eye_dist = max(distance(light_reuse_eye, hit_pos), 0.01);
-		vec2 prev_px = vec2(pixel) + 0.5 + light_reuse_motion * vec2(gl_LaunchSizeEXT.xy);
+		vec2 prev_px = vec2(pixel) + 0.5 + light_reuse_motion * vec2(RT_LAUNCH_SIZE.xy);
 		LightReservoir r;
 		if (light_reuse_load_prev(ivec2(floor(prev_px)), light_reuse_prev_pos, N, eye_dist, r)) {
 			r.M = min(r.M, RT_LIGHT_REUSE_M_CAP);
@@ -1109,14 +1109,14 @@ void lights_reuse_carry(vec3 hit_pos, vec3 N) {
 		return;
 	}
 	uint state = light_reuse_state();
-	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 	LightReservoir r;
 	r.light = ~0u;
 	r.W = 0.0;
 	r.M = 0u;
 	if ((state & 2u) != 0u) {
 		float eye_dist = max(distance(light_reuse_eye, hit_pos), 0.01);
-		vec2 prev_px = vec2(pixel) + 0.5 + light_reuse_motion * vec2(gl_LaunchSizeEXT.xy);
+		vec2 prev_px = vec2(pixel) + 0.5 + light_reuse_motion * vec2(RT_LAUNCH_SIZE.xy);
 		if (!light_reuse_load_prev(ivec2(floor(prev_px)), light_reuse_prev_pos, N, eye_dist, r)) {
 			r.light = ~0u;
 			r.W = 0.0;

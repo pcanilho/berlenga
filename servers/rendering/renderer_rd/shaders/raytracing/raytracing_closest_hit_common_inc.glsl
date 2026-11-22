@@ -116,6 +116,62 @@ void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
 	rt_cone_uv_grad = !any(isnan(grads)) && !any(isinf(grads));
 }
 
+#ifdef RT_TEXTURE_STREAMING
+// Texture streaming feedback (docs/ideas/quality-and-budgets.md). Raster fragments write the squared UV
+// derivative each streamed material is sampled at into the streamer's feedback buffer; a path tracer also
+// samples in reflections, refractions and bounces, often off screen. Each closest hit writes its ray cone's
+// footprint the same way (atomicMax of the bit-inverted float, so the sharpest request wins), so the streamer
+// keeps every mip a path reads and path tracing never shows less detail than the rays sample.
+layout(set = 0, binding = 53, std430) buffer restrict RTStreamingFeedback {
+	uint data[];
+}
+rt_streaming_feedback;
+layout(set = 0, binding = 54, std430) restrict readonly buffer RTStreamingIndex {
+	uint data[]; // Per material table entry: its index into rt_streaming_feedback, or 0xFFFFFFFF.
+}
+rt_streaming_index;
+
+// After rt_texture_cone(): the footprint in the material's UV1, as the derivatives raster sees.
+void rt_streaming_report(uint p_geometry_idx) {
+	if (rt_cone_width <= 0.0) {
+		return;
+	}
+	const uint table_index = geometries[p_geometry_idx].material_index & RT_MATERIAL_INDEX_MASK;
+	if (table_index >= uint(rt_streaming_index.data.length())) {
+		return;
+	}
+	const uint feedback_index = rt_streaming_index.data[table_index];
+	if (feedback_index >= uint(rt_streaming_feedback.data.length())) {
+		return;
+	}
+	const MaterialData mat = materials[table_index];
+	vec2 dx;
+	vec2 dy;
+	if ((mat.flags & RT_MAT_FLAG_TRIPLANAR) != 0u) {
+		// Triplanar UVs are scaled world positions: the footprint across the ray (the sharper axis).
+		dx = vec2(rt_cone_width * mat.uv1_scale.x, 0.0);
+		dy = vec2(0.0, rt_cone_width * mat.uv1_scale.y);
+	} else if (rt_cone_uv_grad) {
+		dx = rt_cone_uv_dx * mat.uv1_scale.xy;
+		dy = rt_cone_uv_dy * mat.uv1_scale.xy;
+	} else if (rt_cone_uv_lod > RT_TEXTURE_LOD_BASE) {
+		const float s = exp2(rt_cone_uv_lod);
+		dx = vec2(s * mat.uv1_scale.x, 0.0);
+		dy = vec2(0.0, s * mat.uv1_scale.y);
+	} else {
+		return;
+	}
+	// The same level the raster fragments compute: the minor axis, limited by 16x anisotropy.
+	const float px_sq = dot(dx, dx);
+	const float py_sq = dot(dy, dy);
+	const float lod_sq = max(min(px_sq, py_sq), max(px_sq, py_sq) / 256.0);
+	if (isnan(lod_sq) || isinf(lod_sq)) {
+		return;
+	}
+	atomicMax(rt_streaming_feedback.data[feedback_index], ~floatBitsToUint(lod_sq));
+}
+#endif
+
 // Fetch vertex attributes and transform to world space.
 // Requires hitAttributeEXT HitAttribs and GeometryBuffer/MaterialBuffer bindings.
 HitData compute_hit_data() {
@@ -182,6 +238,9 @@ HitData compute_hit_data() {
 #endif
 	{
 		rt_texture_cone(geom, h.geometry_normal);
+#ifdef RT_TEXTURE_STREAMING
+		rt_streaming_report(h.geometry_idx);
+#endif
 	}
 
 	return h;
@@ -202,7 +261,7 @@ vec3 apply_normal_map(HitData h, vec3 tangent_space_normal, float normal_map_dep
 // ============================================================================
 
 void rt_store_ndc_depth(vec3 hit_pos) {
-	imageStore(rt_depth_image, ivec2(gl_LaunchIDEXT.xy), vec4(rt_ndc_depth(hit_pos)));
+	imageStore(rt_depth_image, ivec2(RT_LAUNCH_ID.xy), vec4(rt_ndc_depth(hit_pos)));
 }
 
 // Write NDC depth for primary ray hits (bounce 0, sample 0 only).
@@ -289,7 +348,7 @@ vec3 rt_hit_prev_world_pos(vec3 hit_pos) {
 }
 
 void rt_store_velocity(vec3 hit_pos) {
-	imageStore(rt_velocity_image, ivec2(gl_LaunchIDEXT.xy), vec4(rt_motion_vector(hit_pos, rt_hit_prev_world_pos(hit_pos)), 0.0, 0.0));
+	imageStore(rt_velocity_image, ivec2(RT_LAUNCH_ID.xy), vec4(rt_motion_vector(hit_pos, rt_hit_prev_world_pos(hit_pos)), 0.0, 0.0));
 }
 
 // Write motion vectors for primary ray hits (bounce 0, sample 0 only).
@@ -1187,7 +1246,7 @@ bool sample_subsurface_entry(HitData h, MaterialResult m, MaterialProperties mat
 	ps.offset_normal = -h.geometry_normal;
 	ps.next_ray_dir = dir;
 	ps.bsdf_pdf = uintBitsToFloat(rt_medium_code(1.0 / radius));
-	imageStore(rt_medium_image, ivec2(gl_LaunchIDEXT.xy), uvec4(packUnorm4x8(vec4(clamp(material.baseColor, vec3(0.0), vec3(1.0)), 0.0))));
+	imageStore(rt_medium_image, ivec2(RT_LAUNCH_ID.xy), uvec4(packUnorm4x8(vec4(clamp(material.baseColor, vec3(0.0), vec3(1.0)), 0.0))));
 	return true;
 }
 
@@ -1298,7 +1357,7 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 				ps.packed_bounces_flags |= MEDIUM_CHANGE_FLAG;
 				ps.bsdf_pdf = uintBitsToFloat(h.is_front_face ? m.medium : 0u);
 				if (h.is_front_face && (m.medium & RT_MEDIUM_CODE_SCATTER) != 0u) {
-					imageStore(rt_medium_image, ivec2(gl_LaunchIDEXT.xy), uvec4(m.medium_scatter));
+					imageStore(rt_medium_image, ivec2(RT_LAUNCH_ID.xy), uvec4(m.medium_scatter));
 				}
 			}
 			return true;
@@ -1493,7 +1552,7 @@ void dlss_rr_guide_hit(HitData h, MaterialResult m, vec3 N, vec3 V, float NdotV,
 // unscaled and takes over normal and roughness by its share of the
 // specular albedo, so its guides stay continuous at any alpha.
 void dlss_rr_composite_peel_guides(HitData h, MaterialResult m, vec3 N, vec3 V, float NdotV, float p_cover, bool p_premultiplied) {
-	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 	float source_weight = p_premultiplied ? 1.0 : p_cover;
 	float behind = 1.0 - p_cover;
 
@@ -1574,7 +1633,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 				// camera's medium probe (rt_camera_medium()).
 				ps.bsdf_pdf = uintBitsToFloat(m.medium | 0x80000000u);
 				if ((m.medium & RT_MEDIUM_CODE_SCATTER) != 0u) {
-					imageStore(rt_medium_image, ivec2(gl_LaunchIDEXT.xy), uvec4(m.medium_scatter));
+					imageStore(rt_medium_image, ivec2(RT_LAUNCH_ID.xy), uvec4(m.medium_scatter));
 				}
 			}
 		}
@@ -1668,11 +1727,15 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 
 	// Indirect light reuse: the first bounce of a pixel whose first hit took the diffuse lobe
 	// reports this surface's normal (for the reconnection's cosine) and whether it is rough
-	// enough to be seen the same from nearby surfaces.
+	// enough to be seen the same from nearby surfaces (enhanced: its roughness, for the footprint test).
 	if (total_bounces == 1u && (ps.packed_bounces_flags & RT_IR_DIFFUSE_FLAG) != 0u) {
 		ps.offset_normal = h.geometry_normal;
-		if (m.roughness < RT_IR_MIN_ROUGHNESS || m.transmission > 0.0 || m.hair > 0.0) {
+		bool enhanced = rt_ir_enhanced();
+		if ((!enhanced && m.roughness < RT_IR_MIN_ROUGHNESS) || m.transmission > 0.0 || m.hair > 0.0) {
 			ps.packed_bounces_flags &= ~RT_IR_DIFFUSE_FLAG;
+		} else if (enhanced) {
+			// Raygen decides with the footprint test (rt_ir_reconnectable()).
+			rt_ir.data[rt_ir_record_base(ivec2(RT_LAUNCH_ID.xy)) + 6u] = floatBitsToUint(m.roughness);
 		}
 	}
 
@@ -1684,7 +1747,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	// on, and raygen records what this surface sent back (raytracing_radiance_cache_inc.glsl).
 	// Points under water caustics shade on, since a cell would average the lines away.
 	bool rc_eligible = total_bounces == 1u && m.roughness >= RT_RC_MIN_ROUGHNESS && rt_rc_enabled();
-	bool rc_training = rc_eligible && rt_rc_is_training_pixel(gl_LaunchIDEXT.xy);
+	bool rc_training = rc_eligible && rt_rc_is_training_pixel(RT_LAUNCH_ID.xy);
 	if (rc_eligible && !rc_training && !is_singular_path(ps.packed_bounces_flags) &&
 			gl_HitTEXT >= 0.5 * rt_rc_cell_size(h.hit_pos) && !rt_caustics_covers(h.hit_pos)) {
 		vec4 cached = rt_rc_read(h.hit_pos, h.geometry_normal);
@@ -1715,7 +1778,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	// =================================================================
 #ifdef DLSS_RR_ENABLED
 	if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags)) {
-		ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+		ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 		dlss_rr_store_albedo_guides(m, NdotV);
 		float rr_roughness = dlss_rr_roughness(m);
 		imageStore(dlss_rr_normal_roughness, pixel, vec4(N, rr_roughness));
@@ -1736,7 +1799,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 		// Singular bounce off the replaceable primary mirror: this hit's image across the mirror plane
 		// stands in for the mirror. Exact even though the bounce direction was sampled. A second
 		// mirror leaves the flag set for raygen's walk.
-		vec4 mirror_normal_roughness = imageLoad(dlss_rr_normal_roughness, ivec2(gl_LaunchIDEXT.xy));
+		vec4 mirror_normal_roughness = imageLoad(dlss_rr_normal_roughness, ivec2(RT_LAUNCH_ID.xy));
 		mat3 mirror_xform = dlss_rr_householder(mirror_normal_roughness.xyz);
 		vec3 mirror_pos = gl_WorldRayOriginEXT;
 		dlss_rr_write_replaced_guides(mirror_pos + mirror_xform * (h.hit_pos - mirror_pos),

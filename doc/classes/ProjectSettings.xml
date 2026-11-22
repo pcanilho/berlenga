@@ -3267,6 +3267,9 @@
 			Maximum time (in seconds) before the [code]TIME[/code] shader built-in variable rolls over. The [code]TIME[/code] variable increments by [code]delta[/code] each frame, and when it exceeds this value, it rolls over to [code]0.0[/code]. Since large floating-point values are less precise than small floating-point values, this should be set as low as possible to maximize the precision of the [code]TIME[/code] built-in variable in shaders. This is especially important on mobile platforms where precision in shaders is significantly reduced. However, if this is set too low, shader animations may appear to restart from the beginning while the project is running.
 			On desktop platforms, values below [code]4096[/code] are recommended, ideally below [code]2048[/code]. On mobile platforms, values below [code]64[/code] are recommended, ideally below [code]32[/code].
 		</member>
+		<member name="rendering/mesh_lod/lod_change/quality_scale" type="float" setter="" getter="" default="1.0">
+			Scales every viewport's [member Viewport.mesh_lod_threshold]. [code]0.0[/code] draws every mesh at full detail at any distance. [RenderingQuality] sets it per geometry level; the path tracer follows it when [member rendering/pathtracing/mesh_lod] is on.
+		</member>
 		<member name="rendering/mesh_lod/lod_change/threshold_pixels" type="float" setter="" getter="" default="1.0">
 			The automatic LOD bias to use for meshes rendered within the [ReflectionProbe]. Higher values will use less detailed versions of meshes that have LOD variations generated. If set to [code]0.0[/code], automatic LOD is disabled. Increase [member rendering/mesh_lod/lod_change/threshold_pixels] to improve performance at the cost of geometry detail.
 			[b]Note:[/b] Depending on the mesh's attributes (vertex colors, blend shapes, ...), a mesh may have fewer levels of LOD generated to avoid visible distortion of the mesh once it is affected by vertex colors or blend shapes. Meshes with a very low vertex count will also not have any LODs generated, which means this setting will not affect them at all. In general, this setting makes the largest impact on static meshes with a high vertex count.
@@ -3331,7 +3334,10 @@
 			If [code]true[/code], the path tracer scatters light off surfaces with [member BaseMaterial3D.hair_enabled] as hair fibres do (Chiang, Bitterli, Tappan and Burley, "A Practical and Controllable Hair and Fur Model for Production Path Tracing", 2016): a white highlight shifted towards the roots, light passing through the fibres, a coloured second highlight and all longer paths, with lights, bounce rays and emissive surfaces all sampled through it. Shells fold the light that would enter them back out; cards ([member BaseMaterial3D.hair_cards]) let it through. Shaders shade as hair by writing [code]HAIR[/code] ([code]1[/code] on), with [code]HAIR_ABSORPTION[/code] (the fibre's absorption coefficient, as in the model; left negative, it is derived from [code]ALBEDO[/code]) and [code]HAIR_ROUGHNESS[/code] (along and around the fibre), and take the strand direction from [code]BINORMAL[/code]; [code]render_mode hair_strands[/code] reads the position across the fibre from [code]UV.x[/code] (strand geometry such as [HairMesh]), [code]hair_cards[/code] traces them as cards, otherwise as shells. When disabled, hair is traced as the rest of its material.
 		</member>
 		<member name="rendering/pathtracing/indirect_reuse" type="bool" setter="" getter="" default="false">
-			Where a camera ray's first hit sends its first bounce through the diffuse lobe, that bounce is kept per pixel (ReSTIR GI: Ouyang et al. 2021): the point it reached and the light that came back from there. The next frame the pixel resamples its new bounce together with its own from the frame before and two neighbours', reconnecting its surface to the points they found, with generalized RIS weights. A bright patch one pixel found lights the pixels around it, so indirect light (rooms lit through windows, shaded streets) is much less noisy at the same samples per pixel. A sample taken from another pixel is checked with one visibility ray. Specular, coat and transmission lobes keep their own paths. Off under environment fog, gas volumes and a camera in water. Uses 104 bytes of video memory per internal-resolution pixel (215 MB at 1920x1080).
+			Where a camera ray's first hit sends its first bounce through the diffuse lobe, that bounce is kept per pixel (ReSTIR GI: Ouyang et al. 2021): the point it reached and the light that came back from there. The next frame the pixel resamples its new bounce together with its own from the frame before and two neighbours', reconnecting its surface to the points they found, with generalized RIS weights. A bright patch one pixel found lights the pixels around it, so indirect light (rooms lit through windows, shaded streets) is much less noisy at the same samples per pixel. A sample taken from another pixel is checked with one visibility ray. Specular, coat and transmission lobes keep their own paths. Off under environment fog, gas volumes and a camera in water. Uses 108 bytes of video memory per internal-resolution pixel (224 MB at 1920x1080).
+		</member>
+		<member name="rendering/pathtracing/indirect_reuse_enhanced" type="bool" setter="" getter="" default="false">
+			With [member rendering/pathtracing/indirect_reuse] on, applies the reuse rules of ReSTIR PT Enhanced (Lin, Kettunen and Wyman, I3D 2026). A point a bounce reached is shared with nearby pixels when the areas the sample stands for, seen from either end of the bounce, are large next to the pixel's own footprint, instead of only when its surface is rougher than a fixed limit: far glossy surfaces are shared, near corners are not.
 		</member>
 		<member name="rendering/pathtracing/light_reuse" type="bool" setter="" getter="" default="false">
 			Where a camera ray first hits a surface, the positional light it picks is kept per pixel (ReSTIR DI: spatiotemporal reservoir resampling, Bitterli et al. 2020) and resampled the next frame together with the pixel's own pick from the frame before and two neighbours' picks, each weighted by the balance heuristic over the surfaces' unshadowed contributions. A light one pixel found lights the pixels around it and stays found, so scenes with many lights in range are less noisy at the same samples per pixel. Shadows are not reused, so soft shadow edges keep their shape and the image stays unbiased. Uses 48 bytes of video memory per internal-resolution pixel (100 MB at 1920x1080).
@@ -3368,6 +3374,9 @@
 		</member>
 		<member name="rendering/pathtracing/persistent_instances" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], each traced mesh instance keeps its acceleration-structure instances and geometry data from frame to frame, and only instances that changed (moved, changed material, mesh, layers or visibility) are written again. In scenes with many static objects this removes most of the path tracer's per-object CPU work each frame. A changed material rewrites only the instances that use it; changing a mesh, the shadow-caster masks of the lights or the camera's cull mask, or moving the relative origin, rewrites them all once. A MultiMesh above [member rendering/pathtracing/multimesh_merged_blas_max_triangles] keeps its per-record instances the same way, and writes them all again in a frame where any record changes. Skinned, blend-shape, vertex-captured, billboard and mesh-LOD surfaces, merged MultiMeshes and particles are written every frame as before. When disabled, every instance is written every frame, as Godot does.
+		</member>
+		<member name="rendering/pathtracing/ser_coherence_hints" type="bool" setter="" getter="" default="true">
+			If [code]true[/code] and [member rendering/pathtracing/use_shader_execution_reordering] is in use, each path's hit is reordered with a hint from its material (light passing through it, hair fibres), so threads that shade alike run together. Reordering only regroups work, so the image is unchanged.
 		</member>
 		<member name="rendering/pathtracing/transmission" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], the path tracer traces light through surfaces with [member BaseMaterial3D.transmission_enabled] as thin glass: rays and shadows pass straight through, tinted by the albedo, less the light the surface reflects, and blurred by roughness. Surfaces with [member BaseMaterial3D.refraction_enabled] pass [code]1 - alpha[/code] of the light the same way, without the refraction offset. [member BaseMaterial3D.transmission_texture] scales the transmission by its red channel. Shaders write [code]TRANSMISSION[/code] for the same effect; the rasterizer ignores it, so a shader that wants it in raster reads the screen behind itself, as BaseMaterial3D's Transmission does. When disabled, these surfaces are traced opaque.
@@ -3415,6 +3424,9 @@
 		<member name="rendering/pathtracing/linear_swept_spheres" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], on a device with linear swept spheres (Vulkan [code]VK_NV_ray_tracing_linear_swept_spheres[/code], hardware hair primitives) the path tracer traces strand hair ([code]render_mode hair_strands[/code] on a mesh of two crossed strips per strand point, as PhysXHair3D draws it) as round tubes between the strand points, one primitive per segment instead of four triangles, and shades each fibre from where the ray meets it across its width. Other devices, and other surfaces, trace triangles as before. Off by default until it has been checked on such a device; off asks for no extension.
 			[b]Note:[/b] Requires a restart to take effect.
+		</member>
+		<member name="rendering/pathtracing/max_samples_per_dispatch" type="int" setter="" getter="" default="4194304">
+			The most pixel samples (pixels times [member Environment.pathtracing_samples_per_pixel]) one path tracing dispatch traces. A frame asking for more is traced as bands of rows, one dispatch each, so no dispatch runs long enough for the operating system's GPU watchdog to reset the device (Windows TDR, 2 s by default, reported as [code]VK_ERROR_DEVICE_LOST[/code]). The default keeps a real-time frame (1920x1080 at 2 samples, 3840x2160 at 1) in one dispatch and splits a 960x540 still at 64 samples into 8.
 		</member>
 		<member name="rendering/pathtracing/multimesh_merged_blas_max_triangles" type="int" setter="" getter="" default="65536">
 			Maximum total triangle count ([code]instance_count * triangles_per_surface[/code]) for a [MultiMesh] surface to use a single merged BLAS in the path tracer. When the combined triangle count exceeds this value, the path tracer falls back to one TLAS entry per instance sharing a common BLAS instead. Lower this value to reduce peak GPU memory for large MultiMeshes; raise it to prefer the merged path (which avoids per-instance TLAS overhead).
@@ -3487,6 +3499,36 @@
 		<member name="rendering/pathtracing/volumetric_fog_shadows" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], volumetric fog traces ray query shadows for shadowed lights when path tracing. If [code]false[/code], those lights scatter into the fog unoccluded, which is faster and useful to check whether geometry is blocking the fog lighting.
 			[b]Note:[/b] Only has an effect when path tracing and [member Environment.volumetric_fog_enabled] are enabled on the active [Environment].
+		</member>
+		<member name="rendering/quality/groups/effects" type="int" setter="" getter="" default="-1">
+			The effects group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/geometry" type="int" setter="" getter="" default="-1">
+			The geometry group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/path_tracing" type="int" setter="" getter="" default="-1">
+			The path tracing group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/post_process" type="int" setter="" getter="" default="-1">
+			The post process group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/reflections" type="int" setter="" getter="" default="-1">
+			The reflections group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/shadows" type="int" setter="" getter="" default="-1">
+			The shadows group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/textures" type="int" setter="" getter="" default="-1">
+			The textures group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/vegetation" type="int" setter="" getter="" default="-1">
+			The vegetation group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/volumetrics" type="int" setter="" getter="" default="-1">
+			The volumetrics group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/level" type="int" setter="" getter="" default="2">
+			The overall quality level (Low, Medium, High, Ultra) that [RenderingQuality] applies to every group when the project runs. High keeps every setting as the project has it; Ultra draws every mesh at full detail at any distance.
 		</member>
 		<member name="rendering/reflections/reflection_atlas/reflection_count" type="int" setter="" getter="" default="64">
 			Number of cubemaps to store in the reflection atlas. The number of [ReflectionProbe]s in a scene will be limited by this amount. A higher number requires more VRAM.
@@ -3761,6 +3803,35 @@
 		</member>
 		<member name="rendering/textures/lossless_compression/force_png" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], the texture importer will import lossless textures using the PNG format. Otherwise, it will default to using WebP.
+		</member>
+		<member name="rendering/textures/streaming/enabled" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], enables texture streaming. This system dynamically loads and unloads texture mipmaps based on visibility, reducing VRAM usage. Useful for projects with many large textures.
+		</member>
+		<member name="rendering/textures/streaming/inactivity_decay_rate_ms" type="int" setter="" getter="" default="5000">
+			The time (in milliseconds) per mipmap level of quality decay for textures that are no longer visible. When a streamed texture is not requested by the feedback system (e.g., it's off-screen or occluded), its resolution will gradually decrease by one mipmap level for each interval of this duration.
+			For example, with the default value of [code]5000[/code] ms, a texture that hasn't been visible for 10 seconds will have its quality reduced by 2 mipmap levels.
+			Set to [code]0[/code] to disable inactivity decay entirely, keeping textures at their last requested resolution indefinitely.
+		</member>
+		<member name="rendering/textures/streaming/keep_visible_ms" type="int" setter="" getter="" default="1000">
+			A streamed texture that any view sampled within this time keeps the mip it asked for: the memory budget only lowers textures nothing is reading, so it never blurs what is on screen or what a path traced ray sees. If the visible textures alone exceed the budget, a warning is printed. [code]0[/code] lets the budget lower visible textures too.
+		</member>
+		<member name="rendering/textures/streaming/max_lod" type="int" setter="" getter="" default="3">
+			The maximum LOD (mipmap level) that streamed textures can load. Lower values allow higher resolution textures but use more VRAM. Valid values are [code]0[/code] (full resolution) to [code]13[/code] (lowest resolution).
+		</member>
+		<member name="rendering/textures/streaming/max_resolution" type="int" setter="" getter="" default="0">
+			The largest size, in pixels, a streamed texture loads at; [code]0[/code] loads it as imported. [RenderingQuality] sets it for the Low and Medium texture levels, so one shipped texture serves every quality level.
+		</member>
+		<member name="rendering/textures/streaming/max_ops_per_second" type="int" setter="" getter="" default="200">
+			The maximum number of texture streaming operations (loading/unloading mipmaps) per second. Higher values allow faster adaptation to scene changes but may impact performance.
+		</member>
+		<member name="rendering/textures/streaming/memory_budget_enabled" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], limits the maximum VRAM allocated for streamed textures to the value specified in [member rendering/textures/streaming/memory_budget_mb]. If exceeded, the system reduces the resolution of textures to stay within budget.
+		</member>
+		<member name="rendering/textures/streaming/memory_budget_mb" type="int" setter="" getter="" default="512">
+			The maximum VRAM (in megabytes) allocated for streamed textures. If exceeded, the system reduces the resolution of less important textures to stay within budget.
+		</member>
+		<member name="rendering/textures/streaming/min_lod" type="int" setter="" getter="" default="0">
+			The minimum LOD (mipmap level) that streamed textures start at when loaded. Higher values result in lower initial resolution and faster loading. Valid values are [code]0[/code] (full resolution) to [code]13[/code] (lowest resolution).
 		</member>
 		<member name="rendering/textures/vram_compression/cache_gpu_compressor" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], the GPU texture compressor will cache the local RenderingDevice and its resources (shaders and pipelines), making subsequent imports faster at the cost of increased memory usage.

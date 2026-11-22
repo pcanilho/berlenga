@@ -358,6 +358,13 @@
 				The fire cloud a plume carrying [param heat] watts of convective heat would make in this weather: x its rise (m; through the sun-mixed layer near the ground, then by Briggs's 1975 laws in the stable air above, bent over by the wind), y the lifting condensation level (125 m per kelvin of dew point depression), z its strength (0: none; 1: a full cumulus cap; up to 2 as it grows into a pyrocumulonimbus, from about 2 km of rise past the condensation level).
 			</description>
 		</method>
+		<method name="get_foehn_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The foehn at [param position] (see [member foehn_winds]): x the lee's warming (K), y its dew point change (K, negative), z the cloud gap (0..1). [method get_air_temperature_at] and [method get_air_humidity_at] include it.
+			</description>
+		</method>
 		<method name="get_fog_drip_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -544,6 +551,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The glaze at [param position]: mm of radial clear ice on an exposed twig or wire, from freezing rain (Jones 1998), melted in a thaw at 0.3 mm/h per K above 0 C. [code]WorldWeather.glaze_at[/code] reads it; shaders read it from the rain map's alpha ([code]weather_rain_map[/code]).
+			</description>
+		</method>
+		<method name="get_valley_wind_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The along-valley wind's share of the 10 m mean wind at [param position] (m/s, x and z; see [member valley_winds]).
 			</description>
 		</method>
 		<method name="get_warm_nose_melt" qualifiers="const">
@@ -1092,9 +1106,10 @@
 			<param index="3" name="albedo" type="float" default="0.95" />
 			<param index="4" name="centre" type="Vector3" default="Vector3(0, 0, 0)" />
 			<param index="5" name="radius" type="float" default="0.0" />
+			<param index="6" name="fall_speed" type="float" default="0.0" />
 			<description>
 				Haze from falling or blowing precipitation, pushed by [param source] (a snowfall or rain node). Calling it again for the same source replaces that source's haze. [param sigma] is the extinction in 1/m; the visibility is about 3.912 / sigma. With [param height_scale] above 0, it is a layer over the ground whose density falls as exp(-(y - ground) / height_scale), as blowing snow does; otherwise it is the same at every height. [param albedo] is the share of light scattered rather than absorbed. With [param radius] above 0, it covers a circle around [param centre], and a layer's ground is [param centre]'s height (pass the ground under the camera so the layer follows the terrain); otherwise it covers the whole map over [member ground_height]. Layers turn on the environment's volumetric fog with [member Environment.volumetric_fog_ambient_inject] at 1 (sky-lit snow reads white) unless the project set its own. Sources add up.
-				With [member drive_environment_fog], the uniform part goes into the environment's exponential fog, coloured by the sky, and each layer into a lit [FogVolume] that the volumetric fog draws within 300 m of the camera. The path tracer reads both. See [code]docs/ideas/weather.md[/code], "Precipitation haze".
+				With [member drive_environment_fog], the uniform part goes into the environment's exponential fog, coloured by the sky, and each layer into a lit [FogVolume] that the volumetric fog draws within 300 m of the camera. The path tracer reads both. With [param fall_speed] above 0 (the precipitation's fall speed, m/s), no height scale and no radius, the haze falls in curtains near the camera while [member rain_curtains] is on. See [code]docs/ideas/weather.md[/code], "Precipitation haze".
 			</description>
 		</method>
 		<method name="set_surface_water_source">
@@ -1181,6 +1196,9 @@
 		<member name="dust_storms" type="bool" setter="set_dust_storms" getter="is_dust_storms" default="true">
 			Strong dry wind over loose ground raises mineral dust into its own layer: carried by the wind near the ground, settling at about 1.5 cm/s, washed out by rain, dimming the sun orange-brown and thickening the haze. A storm's downburst outflow piles it at its gust front into a haboob wall. Off clears it.
 		</member>
+		<member name="foehn_winds" type="bool" setter="set_foehn_winds" getter="is_foehn_winds_enabled" default="true">
+			Foehn in the lee of ranges: a wind across high ground comes down its lee warmer and drier (Elvidge and Renfrew 2016). Air drawn down from crest level warms about 3 K for each km of descent; where the windward rise rains the water out, the latent heat kept going up adds more, and the dew point falls to the crest's. A gap opens in the cloud over the lee. It needs a wind over about 4 m/s at 10 m and 150 m or more of descent from the highest ground up to 20 km upwind, and fades 30 km past the crest. It feeds [method get_air_temperature_at] and [method get_air_humidity_at], so snow melts and fuels dry through the weather contract.
+		</member>
 		<member name="fog_drip" type="bool" setter="set_fog_drip" getter="is_fog_drip_enabled" default="true">
 			Fog drip: where the ground stands in the cloud, plants comb the cloud water out, deposition = LWC x wind x a capture efficiency (Lovett 1984), 0.003 over short plants up to 0.018 under a closed canopy ([method get_canopy_closure_at]; deposition velocities of about 2 to 9 cm/s in a 5 m/s wind, Gallagher et al. 1988, Katata et al. 2008). It enters the canopy's water balance with the rain, so it drips once the leaves hold their storage, wets the ground under the trees and feeds the runoff. In the cloud the air is saturated and the canopy does not dry.
 		</member>
@@ -1213,6 +1231,9 @@
 		</member>
 		<member name="orographic_rain" type="bool" setter="set_orographic_rain" getter="is_orographic_rain_enabled" default="true">
 			Rain follows the terrain climate ([method WorldContracts.climate_precipitation_factor_at]): more on windward slopes, less in the lee. Rain or snow is decided by the air at each cell's own ground height, so the snow line follows the terrain.
+		</member>
+		<member name="rain_curtains" type="bool" setter="set_rain_curtains" getter="is_rain_curtains" default="true">
+			Falling rain and snow's haze near the camera falls in curtains: sheets of heavier rain some metres across, carried along by the wind, slanted downwind as the drops fall, and following the weather's storm cells, with gaps of clearer air between (rain intensity is lognormal over space; Kedem and Chiu 1987). A [FogVolume] in the volumetric fog carries three fifths of the haze in curtains with the same mean, and the exponential fog keeps the rest. The path tracer draws the same on its camera rays. Off, the haze is even.
 		</member>
 		<member name="rime" type="bool" setter="set_rime" getter="is_rime_enabled" default="true">
 			Where the ground stands in supercooled cloud (fog water below 0 C) rime grows on twigs and edges into the wind; it sheds in a thaw, in sun and in rain. Kept per cell as mm along the way into the wind; the frost map's blue and alpha carry it to plants, rocks and steep terrain ([code]weather_rime_apply[/code]).
@@ -1462,6 +1483,9 @@
 		</member>
 		<member name="upslope_winds" type="bool" setter="set_upslope_winds" getter="is_upslope_winds_enabled" default="true">
 			Day upslope (anabatic) winds: on sunny calm days the air warmed against a slope runs up its fall line (Prandtl 1942; Whiteman 2000), about 1 to 2 m/s in a layer some tens of metres deep, weaker under cloud. Where they meet over a crest standing 60 m or more above the ground round it, fair-weather cumulus gathers over it at the condensation level when the air is moist enough (Banta 1990; Demko, Geerts and others 2009), counted by [method get_ridge_cloud_count]. In [method get_drainage_wind_at] and [method get_wind_at].
+		</member>
+		<member name="valley_winds" type="bool" setter="set_valley_winds" getter="is_valley_winds_enabled" default="true">
+			Along-valley winds: a valley heats more than the plain beyond it by day and cools more at night, so a wind blows up it on sunny calm afternoons, 3 to 5 m/s, and down it on clear calm nights, about 2 to 3 m/s (Whiteman 2000; Zardi and Whiteman 2013). It turns a couple of hours after the slope winds and grows with the valley's depth. It joins the cell's mean wind, so smoke, fog and every wind reader carry it along the valley. A wind over about 8 m/s sweeps it away.
 		</member>
 		<member name="valley_fog" type="bool" setter="set_valley_fog" getter="is_valley_fog_enabled" default="true">
 			Fill saturated cold air pools with radiation fog (Whiteman 2000; Gultepe et al. 2007): it forms over about an hour on clear calm nights, sits flat at the basin's saturation level and lifts after sunrise or in a wind. Drawn as a [FogVolume] lit by the froxel fog plus its multiple scattering, so raster and path tracing match. Needs [member cold_pools].

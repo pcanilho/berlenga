@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="FootPlacementModifier3D" inherits="SkeletonModifier3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Plants a biped's feet on the real ground under the animation: foot lock, pelvis drop, slope tilt and footfalls for the world's prints.
+	</brief_description>
+	<description>
+		Feet on the ground under whatever the animation does, by the established technique (Unreal's Foot Placement node, Unity's foot IK, Johansen 2009, "Automated Semi-Procedural Animation for Character Locomotion"). Per leg it finds the ground under the animated foot, plants the foot there while the animation holds it still (so it never slides), lets it follow the animation with the ground's offset while it swings, tilts it to the slope up to [member max_foot_tilt], lowers the pelvis to reach the lower foot, and solves the leg with analytic two-joint IK (Holden 2017), keeping the animation's knee plane. The pelvis and foot targets move through second-order dynamics, so nothing pops.
+		The ground is the world's: the deformed surface the ground's producer knows ([method WorldGround.known_height_at]: prints, ruts, mud) with the snow on it ([method WorldSnow.depth_at]), else a short physics ray around the foot that skips the walker's own body. The animation is taken to stand on the skeleton's origin.
+		Each new plant is published as a footfall for the walker (the nearest [CharacterBody3D] above the skeleton, or [member walker_node]), and the walker gets the meta [code]world_contact_feet[/code], so the ground, snow, sand and mud press their prints where the animated feet really landed instead of at guessed strides.
+		[member pelvis_offset] moves the pelvis while planted feet stay put: idle weight shifts are a few lines of script driving it. Run this modifier before arm IK and look-at modifiers and before spring bones.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_foot_bone" qualifiers="const">
+			<return type="String" />
+			<param index="0" name="side" type="int" enum="FootPlacementModifier3D.Side" />
+			<description>
+				The foot bone on [param side].
+			</description>
+		</method>
+		<method name="get_foot_target" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="side" type="int" enum="FootPlacementModifier3D.Side" />
+			<description>
+				Where the ankle of the foot on [param side] was aimed on the last modification, in global space.
+			</description>
+		</method>
+		<method name="get_pelvis_drop" qualifiers="const">
+			<return type="float" />
+			<description>
+				How far the pelvis was lowered on the last modification, in metres (zero or negative).
+			</description>
+		</method>
+		<method name="get_shin_bone" qualifiers="const">
+			<return type="String" />
+			<param index="0" name="side" type="int" enum="FootPlacementModifier3D.Side" />
+			<description>
+				The shin bone on [param side].
+			</description>
+		</method>
+		<method name="get_thigh_bone" qualifiers="const">
+			<return type="String" />
+			<param index="0" name="side" type="int" enum="FootPlacementModifier3D.Side" />
+			<description>
+				The thigh bone on [param side].
+			</description>
+		</method>
+		<method name="is_foot_planted" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="side" type="int" enum="FootPlacementModifier3D.Side" />
+			<description>
+				Whether the foot on [param side] is planted (locked to the ground) now.
+			</description>
+		</method>
+		<method name="reset">
+			<return type="void" />
+			<description>
+				Forgets the plants and snaps the targets to the current pose on the next modification. Call it after a teleport or a cut.
+			</description>
+		</method>
+		<method name="set_foot_bone">
+			<return type="void" />
+			<param index="0" name="side" type="int" enum="FootPlacementModifier3D.Side" />
+			<param index="1" name="bone" type="String" />
+			<description>
+				Sets the foot bone on [param side].
+			</description>
+		</method>
+		<method name="set_shin_bone">
+			<return type="void" />
+			<param index="0" name="side" type="int" enum="FootPlacementModifier3D.Side" />
+			<param index="1" name="bone" type="String" />
+			<description>
+				Sets the shin bone on [param side].
+			</description>
+		</method>
+		<method name="set_thigh_bone">
+			<return type="void" />
+			<param index="0" name="side" type="int" enum="FootPlacementModifier3D.Side" />
+			<param index="1" name="bone" type="String" />
+			<description>
+				Sets the thigh bone on [param side].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="ankle_height" type="float" setter="set_ankle_height" getter="get_ankle_height" default="-1.0">
+			The ankle's height above the sole, in metres. Negative takes it from the rest pose (rigs that stand on their origin at rest), but never more than the lowest the animation has held the ankle over its floor, so rigs whose rest pose floats work too.
+		</member>
+		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
+			The physics layers the fallback ground ray sees.
+		</member>
+		<member name="foot_frequency" type="float" setter="set_foot_frequency" getter="get_foot_frequency" default="9.0">
+			How fast the foot targets follow, in hertz (critically damped).
+		</member>
+		<member name="hips_bone" type="String" setter="set_hips_bone" getter="get_hips_bone" default="&quot;&quot;">
+			The pelvis bone that is lowered and offset.
+		</member>
+		<member name="left_foot_bone" type="String" setter="set_left_foot_bone" getter="get_left_foot_bone" default="&quot;&quot;">
+			The left foot (ankle) bone.
+		</member>
+		<member name="left_shin_bone" type="String" setter="set_left_shin_bone" getter="get_left_shin_bone" default="&quot;&quot;">
+			The left shin bone.
+		</member>
+		<member name="left_thigh_bone" type="String" setter="set_left_thigh_bone" getter="get_left_thigh_bone" default="&quot;&quot;">
+			The left thigh bone.
+		</member>
+		<member name="max_foot_tilt" type="float" setter="set_max_foot_tilt" getter="get_max_foot_tilt" default="0.5235988">
+			The most a foot tilts to the slope.
+		</member>
+		<member name="max_pelvis_drop" type="float" setter="set_max_pelvis_drop" getter="get_max_pelvis_drop" default="0.35">
+			The most the pelvis comes down to reach a lower foot, in metres.
+		</member>
+		<member name="pelvis_frequency" type="float" setter="set_pelvis_frequency" getter="get_pelvis_frequency" default="4.0">
+			How fast the pelvis follows, in hertz (critically damped).
+		</member>
+		<member name="pelvis_offset" type="Vector3" setter="set_pelvis_offset" getter="get_pelvis_offset" default="Vector3(0, 0, 0)">
+			An extra pelvis offset in metres, in the character's frame ([member reference_node]'s, x left, y up, z forward). Planted feet stay where they are.
+		</member>
+		<member name="pelvis_rotation" type="Vector3" setter="set_pelvis_rotation" getter="get_pelvis_rotation" default="Vector3(0, 0, 0)">
+			A turn of the pelvis about its own origin, as a rotation vector (axis times angle in radians) in the character's frame: a hip dropped on the free side in an idle weight shift is a small turn about the forward axis. Planted feet stay where they are.
+		</member>
+		<member name="plant_height" type="float" setter="set_plant_height" getter="get_plant_height" default="0.06">
+			A foot whose sole the animation holds less than this above its floor, and still, is planted.
+		</member>
+		<member name="plant_speed" type="float" setter="set_plant_speed" getter="get_plant_speed" default="0.15">
+			A foot moving slower than this in the world, in metres per second, counts as still.
+		</member>
+		<member name="probe_down" type="float" setter="set_probe_down" getter="get_probe_down" default="0.6">
+			How far below the animated sole the ground is looked for.
+		</member>
+		<member name="probe_up" type="float" setter="set_probe_up" getter="get_probe_up" default="0.5">
+			How far above the animated sole the ground is looked for (steps up).
+		</member>
+		<member name="publish_footfalls" type="bool" setter="set_publish_footfalls" getter="is_publishing_footfalls" default="true">
+			If [code]true[/code], each plant is a footfall the world's ground, snow, sand and mud print, and the walker gets the meta [code]world_contact_feet[/code].
+		</member>
+		<member name="reference_node" type="NodePath" setter="set_reference_node" getter="get_reference_node" default="NodePath(&quot;&quot;)">
+			The character's node, whose frame [member pelvis_offset] and the footfalls' heading use. Empty uses the skeleton's.
+		</member>
+		<member name="release_distance" type="float" setter="set_release_distance" getter="get_release_distance" default="0.2">
+			A planted foot that the animation moves further than this, in metres, is planted again where it now is (turning on the spot).
+		</member>
+		<member name="right_foot_bone" type="String" setter="set_right_foot_bone" getter="get_right_foot_bone" default="&quot;&quot;">
+			The right foot (ankle) bone.
+		</member>
+		<member name="right_shin_bone" type="String" setter="set_right_shin_bone" getter="get_right_shin_bone" default="&quot;&quot;">
+			The right shin bone.
+		</member>
+		<member name="right_thigh_bone" type="String" setter="set_right_thigh_bone" getter="get_right_thigh_bone" default="&quot;&quot;">
+			The right thigh bone.
+		</member>
+		<member name="sole_forward" type="float" setter="set_sole_forward" getter="get_sole_forward" default="0.05">
+			How far in front of the ankle the middle of the sole is, for the footfalls, in metres.
+		</member>
+		<member name="use_world_ground" type="bool" setter="set_use_world_ground" getter="is_using_world_ground" default="true">
+			If [code]true[/code], the world's ground and snow are read first; otherwise only the physics ray.
+		</member>
+		<member name="walker_node" type="NodePath" setter="set_walker_node" getter="get_walker_node" default="NodePath(&quot;&quot;)">
+			The walker whose footfalls these are. Empty uses the nearest [CharacterBody3D] above the skeleton.
+		</member>
+	</members>
+	<constants>
+		<constant name="SIDE_LEFT" value="0" enum="Side">
+			The left leg.
+		</constant>
+		<constant name="SIDE_RIGHT" value="1" enum="Side">
+			The right leg.
+		</constant>
+	</constants>
+</class>

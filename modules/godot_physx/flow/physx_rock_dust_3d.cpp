@@ -86,6 +86,7 @@ void PhysXRockDust3D::_build() {
 	flow->set_global_transform(Transform3D());
 
 	air = memnew(PhysXFlowEmitter3D);
+	air->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 	air->set_name("Wind");
 	air->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
 	air->set_size(Vector3(30, 8, 30));
@@ -111,6 +112,7 @@ void PhysXRockDust3D::set_max_sources(int p_v) {
 	while ((int)sources.size() < max_sources) {
 		Source s;
 		s.emitter = memnew(PhysXFlowEmitter3D);
+		s.emitter->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 		s.emitter->set_name(vformat("Dust%d", (int)sources.size()));
 		s.emitter->set_enabled(false);
 		flow->add_child(s.emitter);

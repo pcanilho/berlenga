@@ -220,6 +220,13 @@
 				Ice on standing water: its thickness (m) and the share broken into plates. Default zero.
 			</description>
 		</method>
+		<method name="known_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The deformed ground surface's height under [param position] (m) as the ground's producer (or a stub) knows it, or [code]NAN[/code] where none does. Unlike [method height_at] it never falls back to a physics ray from far above, which would find roofs and upper floors; [FootPlacementModifier3D] reads it before its own short ray.
+			</description>
+		</method>
 		<method name="mud_depth_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -239,6 +246,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The drawn ground's relief over the heightfield at [param position]'s xz: x the height to add to the heightfield's (m; Landscape3D's cliff and bank relief push the surface out along the slope's horizontal normal, so about the push times the slope's tangent here), y its share (0..1). Plants, rocks and ground detail placed on the heightfield add x so they sit on the ground as drawn. GPU placers read the global [code]terrain_relief_map[/code] (R height m, G share) over [code]terrain_relief_rect[/code]. (0, 0) with no relief producer.
+			</description>
+		</method>
+		<method name="relief_changed">
+			<return type="void" />
+			<param index="0" name="area" type="Rect2" />
+			<description>
+				Called by a relief producer when the relief over [param area] (world xz) changes: its heights streamed in at full resolution, its relief settings changed, or it came or went. Emits [signal relief_changed].
 			</description>
 		</method>
 		<method name="rim_at" qualifiers="const">
@@ -309,6 +323,12 @@
 			<param index="0" name="event" type="Dictionary" />
 			<description>
 				A post-fire debris flow started on the runoff's drainage (WeatherRunoff3D), for the ground and physics to run it; [param event] as [signal WeatherRunoff3D.debris_flow] gives it.
+			</description>
+		</signal>
+		<signal name="relief_changed">
+			<param index="0" name="area" type="Rect2" />
+			<description>
+				The drawn relief over [param area] (world xz) changed: placers that set things at the heightfield plus [method relief_at] lay what sits there again (RockField3D's ground detail does).
 			</description>
 		</signal>
 	</signals>

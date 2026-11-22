@@ -32,6 +32,7 @@ extends Node3D
 #   --view=street     a street that the rain has wetted, with puddles, and a flag in the weather's wind
 #   --view=cloud_map  the clouds from straight above over 24 km (column optical depth), saved with --out
 #   --view=clouds     broken cumulus over fields from a rise, WeatherSkyMaterial sky, cloud shadows on the sun
+#   --view=haboob     a dry storm's outflow raising a ring of dust walls over loose ground (the dust layer and its wall)
 #   --view=lenticular wind across a ridge 1.5 km high, a moist mid layer: wave clouds (lenticulars) in its lee
 #   --view=lake_effect cold air (-8 C) down a 200 km lake (6 C) past the camera, 14 km aside of its band: a lake-effect snow band
 #   --view=clouds_low the same from 220 m, looking down on the cloud shadows
@@ -249,7 +250,7 @@ func _ready() -> void:
 		await _cloud_map()
 		get_tree().quit()
 		return
-	if view in ["clouds", "clouds_low", "clouds_up", "clouds_wide", "shafts", "towers", "lenticular", "lake_effect"]:
+	if view in ["clouds", "clouds_low", "clouds_up", "clouds_wide", "shafts", "towers", "lenticular", "lake_effect", "haboob"]:
 		await _build_clouds()
 		return
 	if view == "projector":
@@ -1290,6 +1291,9 @@ func _build_clouds() -> void:
 		var sd := 2668.0 # ahead
 		var yr := deg_to_rad(sun_yaw)
 		sun.look_at_from_position(Vector3(sin(yr) * sd, sd * tan(deg_to_rad(sun_up)), -cos(yr) * sd), Vector3.ZERO)
+	elif view == "haboob":
+		# A low late-afternoon sun (when haboobs come) behind the camera's left: it lights the wall's face.
+		sun.look_at_from_position(Vector3(2500.0, 2500.0 * tan(deg_to_rad(14.0)), 1400.0), Vector3.ZERO)
 	elif view == "towers":
 		var yt := deg_to_rad(75.0)
 		sun.look_at_from_position(Vector3(sin(yt) * 2668.0, 2668.0 * tan(deg_to_rad(17.0)), -cos(yt) * 2668.0), Vector3.ZERO)
@@ -1460,6 +1464,70 @@ func _build_clouds() -> void:
 			await get_tree().physics_frame
 		weather.advance(60.0)
 		print("lake effect at the shore: %.2f, snowfall %.2f mm/h, fetch %.0f km" % [weather.get_lake_effect_at(Vector3(0, 0, 0)), weather.get_snowfall_at(Vector3(0, 0, 0)), weather.get_lake_fetch_at(Vector3(0, 0, 0))])
+	if view == "haboob":
+		# A dry storm's outflow over loose ground (WeatherMap3D's dust layer, sand's bench docs/bench/haboob): a ring of
+		# dust walls round it, its head raised; seen from 9 km out on the flat, the wall coming toward the camera.
+		weather.extent = 24000.0
+		weather.resolution = 128
+		weather.wind_speed = 0.5
+		weather.wind_direction = Vector2(1, 0)
+		weather.cloud_cover = 0.0 if cover < 0.0 else cover
+		weather.mid_cloud_cover = 0.0 if mid_cover < 0.0 else mid_cover
+		weather.temperature = 35.0
+		weather.humidity = 0.15
+		weather.dust_source_share = 0.8
+		weather.dust_emission_scale = 10.0 # a strong event (Phoenix, 5 July 2011: visibility near zero in the wall)
+		weather.snap_to_settings()
+		if fov_arg <= 0.0:
+			cam.fov = 50.0
+		cam.look_at_from_position(Vector3(9000, 20, 1500), Vector3(0, 900, -1500), Vector3.UP)
+		if cam_arg.size() == 6:
+			cam.look_at_from_position(Vector3(cam_arg[0], cam_arg[1], cam_arg[2]), Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
+		# The sun and its light from SkyClock, as in the game: the light at the ground through the air (its colour and
+		# energy) and the sky's sun above the air agree, so the wall over the sky and over the ground are lit alike.
+		# Phoenix, 5 July, the sun 14 degrees up in the late afternoon; north turned so it stands behind the camera's left.
+		var clock: Node = ClassDB.instantiate("SkyClock")
+		clock.name = "SkyClock"
+		add_child(clock)
+		clock.latitude = 33.45
+		clock.longitude = -112.07
+		clock.utc_offset = -7.0
+		clock.month = 7
+		clock.day = 5
+		clock.time_scale = 0.0
+		clock.sun_light = clock.get_path_to(sun)
+		weather.sky_clock = weather.get_path_to(clock)
+		var lo := 15.0
+		var hi := 19.7
+		for i in 12:
+			clock.time_of_day = 0.5 * (lo + hi)
+			await get_tree().physics_frame
+			if clock.get_sun_altitude() > 14.0:
+				lo = clock.time_of_day
+			else:
+				hi = clock.time_of_day
+		clock.north_offset = wrapf(rad_to_deg(atan2(2500.0, -1400.0)) - clock.get_sun_azimuth(), -180.0, 180.0)
+		for i in 4:
+			await get_tree().physics_frame
+		print("haboob: sun %.2f h, altitude %.1f, azimuth %.1f, north offset %.1f, toward %s, light %s x %.2f" % [clock.time_of_day, clock.get_sun_altitude(), clock.get_sun_azimuth(), clock.north_offset, clock.get_sun_direction(), sun.light_color, sun.light_energy])
+		weather.add_storm(Vector2(0, 0), 1500.0, 0.0, 25.0, 0.0)
+		for i in 30:
+			weather.advance(60.0)
+			await get_tree().physics_frame
+		var ring := 0.0
+		var ring_at := 0.0
+		for r in range(500, 9000, 250):
+			var c: float = weather.get_dust_at(Vector3(r, 0, 0))
+			if c > ring:
+				ring = c
+				ring_at = r
+		print("haboob: dust ring %.2f g/m2 at %.0f m, top %.0f m, head %.2f" % [ring, ring_at, weather.get_dust_top_at(Vector3(ring_at, 0, 0)), weather.get_dust_head_at(Vector3(ring_at, 0, 0))])
+		var prof := "haboob: toward the camera (m: g/m2 top head):"
+		for r in range(2000, 9000, 500):
+			prof += " %d: %.2f %.0f %.2f," % [r, weather.get_dust_at(Vector3(r, 0, 0)), weather.get_dust_top_at(Vector3(r, 0, 0)), weather.get_dust_head_at(Vector3(r, 0, 0))]
+		print(prof)
+		await get_tree().physics_frame
+		print("haboob: sky cloud_dust %s" % [RenderingServer.material_get_param(sky_mat.get_rid(), "cloud_dust")])
 	if view == "clouds_wide":
 		# The landscape bench's clear weather.
 		weather.extent = 8192.0

@@ -209,6 +209,16 @@ class SnowSurface3D : public Node3D {
 	float _press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, Vector2 p_velocity = Vector2());
 	void _press_movers(double p_delta);
 	void _relax();
+	// Round 9 (follow-up 54): rut and trench walls that give way (see the .cpp).
+	bool wall_collapse = true;
+	double crumble_accum = 0.0;
+	double crumble_hold = 0.0; // s: after a GPU upload, until the read back shows it
+	uint32_t crumble_seed = 1;
+	int walls_collapsed = 0;
+	float collapsed_volume = 0.0f; // m3
+	LocalVector<uint8_t> crumble_mark;
+	LocalVector<Vector2i> crumble_pending; // world tiles seeded for the GPU field, not pulled yet
+	int _crumble(double p_delta, bool p_gpu);
 	void _update_collision();
 	void _upload_deform();
 	void _upload_ground();
@@ -316,6 +326,11 @@ public:
 	static Ref<Image> sastrugi_tile(); // the periodic sastrugi relief along +x (R) and its gradient (GB), made once
 	double get_step_time_msec() const { return step_msec; }
 	void set_crust_plates(bool p_enabled);
+	void set_wall_collapse(bool p_enabled) { wall_collapse = p_enabled; }
+	bool is_wall_collapse() const { return wall_collapse; }
+	int get_walls_collapsed() const { return walls_collapsed; }
+	float get_collapsed_volume() const { return collapsed_volume; }
+	int crumble(float p_delta); // one wall pass now (tests); returns the texels that gave way
 	bool get_crust_plates() const { return crust_plates; }
 	int get_crust_plate_count() const; // breaks drawn as plates
 	Ref<ShaderMaterial> get_surface_material() const { return material; }

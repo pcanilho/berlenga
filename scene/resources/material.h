@@ -501,6 +501,11 @@ private:
 		if (snow_on_body) {
 			mk.flags |= (1u << 31);
 		}
+		// And wetness_moving in the bit under it.
+		static_assert(FLAG_MAX < 30);
+		if (wetness_moving) {
+			mk.flags |= (1u << 30);
+		}
 		// And glaze in the features' top bit.
 		static_assert(FEATURE_MAX < 31);
 		if (glaze) {
@@ -652,6 +657,7 @@ private:
 	float wetness_amount = 1.0f;
 	bool wetness_from_weather = true;
 	bool wetness_canopy = false;
+	bool wetness_moving = false;
 	bool glaze = false;
 	float snow_amount = 1.0f;
 	float snow_max_slope = 60.0f;
@@ -752,8 +758,12 @@ public:
 	static String get_frost_sampling_code();
 	static String get_snow_functions_code(bool p_from_weather);
 	static String get_rain_functions_code(bool p_from_weather);
+	// weather_surface_rain(): the rain a face catches. Needs get_rain_functions_code(true) before it; p_state_map_declared
+	// when the shader already declares weather_state_map (get_wetness_functions_code(true)).
+	static String get_surface_rain_functions_code(bool p_state_map_declared);
 	static String get_wetness_shader_code();
 	static String get_snow_shader_code();
+	static String get_surface_rain_shader_code();
 	// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b): the functions, and the instance uniforms PhysXVehicle3D writes.
 	static String get_mud_functions_code();
 
@@ -905,6 +915,8 @@ public:
 
 	void set_wetness_canopy(bool p_enable);
 	bool is_wetness_canopy() const;
+	void set_wetness_moving(bool p_enable);
+	bool is_wetness_moving() const;
 
 	// Glaze: clear ice from freezing rain over the surface, from the weather's rain map (WorldWeather.glaze_at).
 	void set_glaze(bool p_enable);

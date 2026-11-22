@@ -4,7 +4,7 @@
 		The billowing head of a dust storm's gust front near the camera, drawn in NVIDIA Flow.
 	</brief_description>
 	<description>
-		Reads the dust layer of the active [WeatherMap3D] (its head share, see [method WeatherMap3D.get_dust_head_at]) round [member follow_target], finds where the front runs within [member near_range], and lays [member emitter_count] emitters along its crest. They push dust forward and up with the front in a [PhysXFlow3D] of its own, so the density current's head rolls into billows close up while the weather's wall draws it far away. The points are found again twice a second and travel with the front between scans. Draws nothing while no front is near.
+		Reads the dust layer of the active [WeatherMap3D] (its head share, see [method WeatherMap3D.get_dust_head_at]) round [member follow_target], finds where the front runs within [member near_range], and lays [member emitter_count] emitters along its crest. They push dust forward and up with the front in a [PhysXFlow3D] of its own, so the density current's head rolls into billows close up while the weather's wall draws it far away. The points are found again twice a second, eased toward each find so the row does not jump with the weather map's cells, and move as the front has been moving between scans. While it draws, it publishes the shader global [code]weather_dust_near[/code] (x, z, radius, height): the cylinder it covers, so the sky's dust wall steps back inside it and the two do not stack. Draws nothing while no front is near.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -43,8 +43,8 @@
 		</method>
 	</methods>
 	<members>
-		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(0.72, 0.52, 0.34, 1)">
-			The dust's colour in the billows.
+		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(1, 0.93, 0.62, 1)">
+			The dust's colour in the billows, scattering on top of [member PhysXFlow3D.scattering_albedo]. The default is the far wall's: the weather's dust albedo (0.93, 0.92, 0.85, asymmetry 0.75) carried through many scatterings by the similarity relations, as the sky's dust wall is tinted, so the billows and the wall behind them meet in one colour.
 		</member>
 		<member name="emitter_count" type="int" setter="set_emitter_count" getter="get_emitter_count" default="10">
 			How many emitters line the front, up to 16.
@@ -57,6 +57,9 @@
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node, usually the camera, round which the front is searched. Without it, the viewport's current camera.
+		</member>
+		<member name="head_height" type="float" setter="set_head_height" getter="get_head_height" default="100.0">
+			The top of the drawn head in metres. Above it the air is held still, so the dust current's shear rolls the billows over there (Kelvin-Helmholtz) and the dust rises no higher; Flow keeps its blocks to half again above it, so the head is never cut flat. The far wall carries the head above this. Also sets how far the light looks through the dust for shadow (half of it).
 		</member>
 		<member name="near_range" type="float" setter="set_near_range" getter="get_near_range" default="300.0">
 			How far from the target the front is searched and how long a stretch of it is drawn (1.6 times this), in metres.

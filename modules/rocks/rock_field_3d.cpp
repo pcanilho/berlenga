@@ -415,6 +415,9 @@ static float rf_frost_sample(int p_map, float p_u, float p_v) {
 // The stone share (0 fines .. 1 stones) of the sorted ground at a point: circles on the flat, stripes down the fall
 // line from about 3 degrees. Circles: the map in world axes with a slow warp (its 12.8 m period does not line up);
 // stripes: each 48 m block's map turned to the block's fall line, blended with the next block's only near their edge.
+// The share of the ground each detail class covers in the sorted ground's stone domains (the borders are
+// clast-supported: Washburn 1956; Hallet 2013): the detail cells and the far cover maps.
+static const float rf_frost_cover[3] = { 0.6f, 0.4f, 0.2f };
 // A caller sampling many points (the frost map) keeps the blocks' fall lines here instead of recomputing them.
 struct RFFrostFalls {
 	HashMap<int64_t, Vector2> fall;
@@ -826,8 +829,28 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 	const int v = r_stone.variant;
 	const Vector3 axes = p_lib.axes[v];
 	const float s = r_stone.scale;
-	const real_t ground = p_gen->get_height(Vector3(p_xz.x, 0, p_xz.z));
-	const Vector3 n = ground_normal(p_gen, p_xz.x, p_xz.z, MAX(real_t(0.5), real_t(axes.x * s)));
+	// The drawn ground: the heightfield plus the landscape's cliff and bank relief (WorldGround.relief_at), so a stone
+	// on a relief-drawn bank or face rests on the surface drawn there, not on the heightfield under or over it.
+	const WorldGround *wg = WorldContracts::ground();
+	auto H = [&](real_t p_x, real_t p_z) -> real_t {
+		real_t h = p_gen->get_height(Vector3(p_x, 0, p_z));
+		if (wg) {
+			const Vector2 r = wg->relief_at(Vector3(p_x, h, p_z));
+			if (r.y > 0.0f && Math::is_finite(r.x)) {
+				h += r.x;
+			}
+		}
+		return h;
+	};
+	const real_t ground = H(p_xz.x, p_xz.z);
+	Vector3 n;
+	{
+		const real_t e = MAX(real_t(0.5), real_t(axes.x * s));
+		const real_t hx = H(p_xz.x + e, p_xz.z) - H(p_xz.x - e, p_xz.z);
+		const real_t hz = H(p_xz.x, p_xz.z + e) - H(p_xz.x, p_xz.z - e);
+		n = Vector3(-hx / (2.0f * e), 1.0f, -hz / (2.0f * e));
+		n = Math::is_finite(n.x) && Math::is_finite(n.z) ? n.normalized() : Vector3(0, 1, 0);
+	}
 	const Vector3 up = Vector3(0, 1, 0).lerp(n, p_follow_ground).normalized();
 	Basis b(Vector3(0, 1, 0), p_yaw);
 	const Vector3 axis = Vector3(0, 1, 0).cross(up);
@@ -848,7 +871,7 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 		real_t ring = 0.0;
 		for (int k = 0; k < 6; k++) {
 			const real_t a = p_yaw + real_t(k) * real_t(Math::TAU) / 6.0f;
-			ring += p_gen->get_height(Vector3(p_xz.x + Math::cos(a) * reach, 0, p_xz.z + Math::sin(a) * reach));
+			ring += H(p_xz.x + Math::cos(a) * reach, p_xz.z + Math::sin(a) * reach);
 		}
 		sink += CLAMP(ground - ring / 6.0f, real_t(0.0), height / 3.0f);
 	}
@@ -887,7 +910,7 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 			if (dn[i] <= band) {
 				// The ellipsoid's centre over the mesh origin, so that its bottom is the mesh's (about 0 for most stones).
 				const real_t centre = (p_lib.bottom[v] + axes.y) * s;
-				y = MIN(y, p_gen->get_height(Vector3(p_xz.x + pts[i].x, 0, p_xz.z + pts[i].z)) - pts[i].y - centre);
+				y = MIN(y, H(p_xz.x + pts[i].x, p_xz.z + pts[i].z) - pts[i].y - centre);
 			}
 		}
 		y = MAX(y, floor_y);
@@ -2287,7 +2310,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			const bool frost_on = frost && frost->any && sd2 > sd1 * 1.01f;
 			// The share of the ground each class covers in the stone domains (the borders are clast-supported: Washburn
 			// 1956; Hallet 2013); stones of the coarse end, frost-heaved.
-			static const float frost_cover[3] = { 0.6f, 0.4f, 0.2f };
+			const float *frost_cover = rf_frost_cover;
 			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on && !frost_on) {
 				break;
 			}
@@ -2971,6 +2994,54 @@ Vector2 RockField3D::get_frost_at(const Vector3 &p_position) const {
 	return Vector2(g, g > 0.0f ? rf_frost_share(gen, float(p_position.x), float(p_position.z), slope) : 0.0f);
 }
 
+// Main thread: the relief over the rect, for the tiles (none is cut over relief: _rest seats each grain on it, a tile's
+// plane cannot follow it), probed every 2 m first (most ground has none) and then every 0.25 m.
+void RockField3D::_sample_relief(const Rect2 &p_rect, ReliefGrid &r_relief) const {
+	r_relief = ReliefGrid();
+	WorldGround *wg = WorldContracts::ground();
+	if (!wg) {
+		return;
+	}
+	auto probe = [&](real_t p_x, real_t p_z) {
+		const Vector2 r = wg->relief_at(Vector3(p_x, 0, p_z));
+		return Math::is_finite(r.x) ? float(r.x) : 0.0f;
+	};
+	bool any = false;
+	for (real_t z = p_rect.position.y; z <= p_rect.get_end().y + 0.01 && !any; z += 2.0) {
+		for (real_t x = p_rect.position.x; x <= p_rect.get_end().x + 0.01 && !any; x += 2.0) {
+			any = Math::abs(probe(x, z)) > 0.002f;
+		}
+	}
+	if (!any) {
+		return;
+	}
+	r_relief.origin = p_rect.position;
+	r_relief.nx = int(Math::ceil(p_rect.size.x / r_relief.step)) + 1;
+	r_relief.nz = int(Math::ceil(p_rect.size.y / r_relief.step)) + 1;
+	r_relief.h.resize(r_relief.nx * r_relief.nz);
+	for (int j = 0; j < r_relief.nz; j++) {
+		for (int i = 0; i < r_relief.nx; i++) {
+			r_relief.h[j * r_relief.nx + i] = probe(p_rect.position.x + i * r_relief.step, p_rect.position.y + j * r_relief.step);
+		}
+	}
+	r_relief.any = true;
+}
+
+float RockField3D::ReliefGrid::max_in(const Rect2 &p_rect) const {
+	if (!any) {
+		return 0.0f;
+	}
+	const int i0 = CLAMP(int(Math::floor((p_rect.position.x - origin.x) / step)), 0, nx - 1), i1 = CLAMP(int(Math::ceil((p_rect.get_end().x - origin.x) / step)), 0, nx - 1);
+	const int j0 = CLAMP(int(Math::floor((p_rect.position.y - origin.y) / step)), 0, nz - 1), j1 = CLAMP(int(Math::ceil((p_rect.get_end().y - origin.y) / step)), 0, nz - 1);
+	float m = 0.0f;
+	for (int j = j0; j <= j1; j++) {
+		for (int i = i0; i <= i1; i++) {
+			m = MAX(m, Math::abs(h[j * nx + i]));
+		}
+	}
+	return m;
+}
+
 void RockField3D::set_frost_sorting(bool p_enabled) {
 	if (frost_sorting == p_enabled) {
 		return;
@@ -3010,13 +3081,64 @@ void RockField3D::_watch_stand() {
 	stand_watched = st->get_instance_id();
 }
 
+void RockField3D::_watch_ground() {
+	WorldGround *wg = WorldContracts::ground();
+	if (!wg || wg->get_instance_id() == ground_watched) {
+		return;
+	}
+	const Callable cb = callable_mp(this, &RockField3D::_on_relief_changed);
+	if (Object *old = ObjectDB::get_instance(ground_watched)) {
+		if (old->is_connected(SNAME("relief_changed"), cb)) {
+			old->disconnect(SNAME("relief_changed"), cb);
+		}
+	}
+	wg->connect(SNAME("relief_changed"), cb);
+	ground_watched = wg->get_instance_id();
+}
+
 // A trail laid or moved, a rooting added or aged: the detail cells over it are built again (streaming builds the
 // freed ones again as it reaches them; a job already reading the old ground is dropped).
 void RockField3D::_on_stand_changed(const Rect2 &p_rect) {
 	if (building > 0 || !ground_wear) {
 		return;
 	}
-	const Rect2 area = p_rect.grow(1.0);
+	// Gathered and rebuilt once at the frame's end: a script adding many disturbances in one frame built the same
+	// cells again for each, and every freed copy lived until the frame's end (the memory of the field many times).
+	stand_dirty = stand_dirty.has_area() ? stand_dirty.merge(p_rect) : p_rect;
+	if (!stand_queued) {
+		stand_queued = true;
+		callable_mp(this, &RockField3D::_apply_stand_changes).call_deferred();
+	}
+}
+
+// The drawn relief over an area changed (WorldGround.relief_changed: Landscape3D's full heights streamed in, its relief
+// settings): the detail cells there are laid again on it, gathered with the stand's changes.
+void RockField3D::_on_relief_changed(const Rect2 &p_rect) {
+	if (building > 0 || !ground_detail) {
+		return;
+	}
+	relief_dirty = relief_dirty.has_area() ? relief_dirty.merge(p_rect) : p_rect;
+	if (!stand_queued) {
+		stand_queued = true;
+		callable_mp(this, &RockField3D::_apply_stand_changes).call_deferred();
+	}
+}
+
+void RockField3D::_apply_stand_changes() {
+	stand_queued = false;
+	Rect2 area;
+	if (stand_dirty.has_area() && ground_wear) {
+		area = stand_dirty;
+	}
+	if (relief_dirty.has_area() && ground_detail) {
+		area = area.has_area() ? area.merge(relief_dirty) : relief_dirty;
+	}
+	stand_dirty = Rect2();
+	relief_dirty = Rect2();
+	if (building > 0 || !area.has_area() || !is_inside_tree()) {
+		return;
+	}
+	area = area.grow(1.0);
 	for (const KeyValue<Vector3i, DetailJob *> &kv : detail_jobs) {
 		const real_t ks = _cell_size(Layer(kv.key.x));
 		if (Rect2(kv.key.y * ks, kv.key.z * ks, ks, ks).intersects(area)) {
@@ -3122,6 +3244,7 @@ void RockField3D::_detail_prepare(DetailJob &r_job) {
 	}
 	_detail_seeds(layer, rect.grow(0.5), r_job.seeds);
 	_sample_wear(rect.grow(1.0), r_job.wear);
+	_sample_relief(rect.grow(1.0), r_job.relief);
 	// The block's shared tiles: held while the job reads them, or cut by it (_detail_compute) when there are none yet.
 	r_job.block = _tile_block(r_job.key);
 	if (ground_detail_tiles) {
@@ -3543,7 +3666,7 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 		_tile_squares(gen, key.x, rect, N, r_stones, r_job.seeds, top);
 		for (int q = 0; q < N * N; q++) {
 			const Vector3 worn = r_job.wear.max_in(top[q].rect);
-			if (top[q].ok && (MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any)) {
+			if (top[q].ok && (MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any || (r_job.relief.any && r_job.relief.max_in(top[q].rect) > 0.01f))) {
 				top[q].ok = false; // worn ground (a trail, a rooting) keeps its own grains: no tile is cut from it
 				top[q].fail = 4;
 			}
@@ -4840,6 +4963,7 @@ void RockField3D::_update_far(const Vector3 &p_target, bool p_all) {
 void RockField3D::_update_streaming(bool p_all) {
 	_watch_holes();
 	_watch_stand();
+	_watch_ground();
 	TerrainGenerator3D *gen = _get_generator();
 	const Vector3 tp = _target_position();
 	if (!gen || !Math::is_finite(gen->get_height(tp))) {
@@ -6119,7 +6243,7 @@ void RockField3D::_update_react(double p_delta) {
 							Vector2 d(o.x - c2.x, o.z - c2.y);
 							const float dl = d.length();
 							// How far out in the footprint, 1 at its edge.
-							const float edge = oval ? Math::sqrt(Math::pow(d.dot(fu) / hu, 2.0f) + Math::pow(d.dot(fv) / hw, 2.0f)) : dl / MAX(foot, 1e-3f);
+							const float edge = oval ? Math::sqrt(Math::pow(float(d.dot(fu) / hu), 2.0f) + Math::pow(float(d.dot(fv) / hw), 2.0f)) : dl / MAX(foot, 1e-3f);
 							if (edge > 1.0f + r / MAX(foot_min, 1e-3f) || o.y + r < bottom - 0.02f) {
 								continue;
 							}
@@ -6545,6 +6669,7 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	_watch_holes();
 	_watch_stand();
+	_watch_ground();
 	int built = 0;
 	_update_detail_radii();
 	_prepare_rivers();
@@ -6707,7 +6832,20 @@ Array RockField3D::get_stones(int p_layer, const Rect2 &p_rect) {
 	for (int z = z0; z <= z1; z++) {
 		for (int x = x0; x <= x1; x++) {
 			LocalVector<Stone> stones;
-			_place(Layer(p_layer), Rect2(x * cs, z * cs, cs, cs), rf_hash3(p_layer, x, z, uint32_t(seed) * 2654435761u), stones);
+			const Rect2 crect(x * cs, z * cs, cs, cs);
+			// The detail classes read what their jobs read (worn ground, frost sorting), so these are the stones the
+			// cells draw.
+			StandWear wear;
+			FrostClimate frost;
+			if (_is_detail(Layer(p_layer))) {
+				_sample_wear(crect.grow(1.0), wear);
+				_frost_climate(crect, frost);
+				rf_job_wear = &wear;
+				rf_job_frost = &frost;
+			}
+			_place(Layer(p_layer), crect, rf_hash3(p_layer, x, z, uint32_t(seed) * 2654435761u), stones);
+			rf_job_wear = nullptr;
+			rf_job_frost = nullptr;
 			for (const Stone &st : stones) {
 				if (!p_rect.has_point(Vector2(st.position.x, st.position.z))) {
 					continue;
@@ -7534,6 +7672,7 @@ void RockField3D::_cover_fill(CoverJob *p_job) {
 	memset(w, 0, n * n * 4);
 	static const Vector2 probes[9] = { Vector2(0, 0), Vector2(4, 0), Vector2(-4, 0), Vector2(0, 4), Vector2(0, -4), Vector2(10, 0), Vector2(-10, 0), Vector2(0, 10), Vector2(0, -10) };
 	const float sig = 0.6f * float(Math::SQRT2);
+	RFFrostFalls frost_falls;
 	// The river beds first, each segment over the texels it reaches (the one deeper inside wins).
 	LocalVector<RiverBed> beds;
 	if (!p_job->river_segs.is_empty()) {
@@ -7607,6 +7746,28 @@ void RockField3D::_cover_fill(CoverJob *p_job) {
 						const float d1 = p_job->scree_sizes[k][0], d2 = p_job->scree_sizes[k][1];
 						if (d2 > d1 * 1.01f) {
 							cover[k] += n_min * (Math::pow(d1 / dmin, -2.5f) - Math::pow(d2 / dmin, -2.5f)) * 0.785f * d1 * d2;
+							any = true;
+						}
+					}
+				}
+			}
+			if (p_job->frost.any) {
+				// Frost-sorted ground (as the detail cells): the other sources thin out of the fine centres and the
+				// borders' stones are added, by the pattern's mean stone share over the texel.
+				Vector3 fnrm;
+				const float fg = p_job->field->_frost_gate(gen, p_job->frost, c, fnrm);
+				if (fg > 0.0f) {
+					const float sl = Math::rad_to_deg(Math::acos(CLAMP(float(fnrm.y), -1.0f, 1.0f)));
+					float share = 0.0f;
+					for (int q = 0; q < 4; q++) {
+						const float ox = ((q & 1) ? 0.25f : -0.25f) * p_job->texel, oz = ((q >> 1) ? 0.25f : -0.25f) * p_job->texel;
+						share += 0.25f * rf_frost_share(gen, float(c.x + ox), float(c.z + oz), sl, &frost_falls);
+					}
+					const float keep = 1.0f - fg * (1.0f - share);
+					for (int k = 0; k < 3; k++) {
+						cover[k] *= keep;
+						if (p_job->sizes[k][1] > p_job->sizes[k][0] * 1.01f) {
+							cover[k] += MIN(rf_frost_cover[k] * fg, 0.45f) * share;
 							any = true;
 						}
 					}
@@ -7694,6 +7855,7 @@ void RockField3D::_update_cover(bool p_wait) {
 			_detail_sizes(Layer(LAYER_DETAIL_PEBBLE + k), min_size, job->sizes[k][0], job->sizes[k][1]);
 			_detail_sizes(Layer(LAYER_DETAIL_PEBBLE + k), job->scree_dmin, job->scree_sizes[k][0], job->scree_sizes[k][1]);
 		}
+		_frost_climate(Rect2(job->origin, Vector2(span, span)), job->frost);
 		cover_job = job;
 		if (p_wait || !detail_threads) {
 			_cover_fill(job);
@@ -8109,22 +8271,6 @@ void RockField3D::_notification(int p_what) {
 				_update_contact(false);
 			}
 			_update_frost_map();
-		} break;
-		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
-			if (rockfall_dust) {
-				_update_dust(get_physics_process_delta_time());
-			}
-			_update_react(get_physics_process_delta_time());
-		} break;
-		case NOTIFICATION_VISIBILITY_CHANGED: {
-			const bool vis = is_visible_in_tree();
-			for (KeyValue<Vector3i, Cell> &kv : cells) {
-				for (TilePlacement &tp : kv.value.tiles) {
-					for (const RID &r : tp.instances) {
-						RS::get_singleton()->instance_set_visible(r, vis);
-					}
-				}
-			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			WorldContracts::unregister_cover(this);

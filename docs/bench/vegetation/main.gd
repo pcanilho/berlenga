@@ -323,6 +323,7 @@ func _physics_process(_d: float) -> void:
 		await _place_form_checks()
 		_trunk_checks()
 		await _blowing_checks()
+		await _wrack_live_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -1141,6 +1142,161 @@ func _wrack_check() -> void:
 		f.free()
 		WorldContracts.clear_overrides()
 	_check("flood wrack: main line under the crest, lower lines below, none above or without a recent flood", res[0][0] > 10 and res[0][1] > 0 and res[0][2] == 0 and res[1] == [0, 0, 0] and res[2] == [0, 0, 0], res)
+
+# Live flood wrack: a streamed field follows the flood marks. The mark rises 0.4 m (a new flood); within a few
+# seconds the tiles under it are placed again and the strand line lies along the new mark, none on the old one.
+func _wrack_live_check() -> void:
+	var vc := get_viewport().get_camera_3d()
+	var eye := vc.global_position if vc else Vector3.ZERO
+	var hs := []
+	for z in range(-30, 31, 4):
+		for x in range(-30, 31, 4):
+			hs.append(dm.get_height_at(Vector3(eye.x + x, 0, eye.z + z)))
+	hs.sort()
+	var stub := FloodMarkStub.new()
+	stub.peak = hs[hs.size() / 3]
+	WorldContracts.add_water_stub(stub)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign([PlantGenerator.make_flood_wrack(1, false)[0]])
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	get_viewport().disable_3d = true
+	f.streaming = true
+	var wait := 0
+	while wait < 1200 and (wait < 20 or not f.is_stream_idle()):
+		await get_tree().process_frame
+		wait += 1
+	var before := _wrack_offsets(f, stub.peak)
+	var old_peak := stub.peak
+	stub.peak += 0.4
+	var t0 := Time.get_ticks_msec()
+	wait = 0
+	while wait < 2400 and (Time.get_ticks_msec() - t0 < 2500 or f.get_flood_replaced_tiles() == 0 or not f.is_stream_idle()):
+		await get_tree().process_frame
+		wait += 1
+	var after := _wrack_offsets(f, stub.peak)
+	var on_old := _wrack_offsets(f, old_peak)
+	get_viewport().disable_3d = false
+	_check("live flood wrack: a new flood's mark re-places the strand line along it within seconds, none left on the old one",
+			before.y > 10 and after.y > 10 and after.x > 0.8 and on_old.x < 0.2 and f.get_flood_replaced_tiles() > 0,
+			"before: %s, after: %s (on the old line %.2f), tiles placed again %d, %.1f s" % [before, after, on_old.x, f.get_flood_replaced_tiles(), (Time.get_ticks_msec() - t0) / 1000.0])
+	f.free()
+	WorldContracts.clear_overrides()
+
+# The share of a field's drawn wrack within the main line's band (-0.12..0.03 m) of a peak, and the count.
+func _wrack_offsets(f: VegetationField3D, peak: float) -> Vector2:
+	var on := 0
+	var all := 0
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh and ch.visible:
+			for i in ch.multimesh.visible_instance_count if ch.multimesh.visible_instance_count >= 0 else ch.multimesh.instance_count:
+				var p: Vector3 = ch.global_transform * ch.multimesh.get_instance_transform(i).origin
+				var d: float = dm.get_height_at(p) - peak
+				all += 1
+				if d > -0.12 and d < 0.03:
+					on += 1
+	return Vector2(float(on) / maxf(all, 1), all)
+
+# Turf overhangs (make_bank_turf, RULE_BANK_EDGE): a stub's relief raises the ground 1.2 m west of a scarp at x = 0;
+# sod lips stand along its top edge, none on the open ground either side or without the scarp.
+func _turf_lip_check() -> void:
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _relief_at(p: Vector3) -> Vector2:\n\tvar t := clampf((p.x + 0.3) / 0.6, 0.0, 1.0)\n\treturn Vector2(1.2 * (1.0 - t * t * (3.0 - 2.0 * t)), 1.0)\n"
+	stub.reload()
+	var res := []
+	for scarp in [true, false]:
+		if scarp:
+			WorldContracts.set_ground(stub.new())
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		f.biome.species.assign(PlantGenerator.make_bank_turf(1, false))
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var on := 0
+		var off := 0
+		for q in f.get_placements(0):
+			if q.x > -0.45 and q.x < 0.0:
+				on += 1
+			else:
+				off += 1
+				if scarp and off <= 4:
+					print("VEG_TURF off at %s, ground %.2f" % [q, dm.get_height_at(q)])
+		res.append([on, off])
+		f.free()
+		WorldContracts.clear_overrides()
+	_check("turf overhangs: sod lips along a scarp's top edge, none on the open ground or without the scarp",
+			res[0][0] > 20 and res[0][1] == 0 and res[1] == [0, 0], res)
+
+# Pollen clouds (PollenCloud3D): dry wind shakes pollen from conifer crowns in flower; damp air, rain, calm or the
+# wrong season sheds none; the nearest crowns shed, each by the wind at its crown.
+class PollenWeatherStub extends WorldWeather:
+	var wind := Vector3(9, 0, 0)
+	var humidity := 0.4
+	var day := 150
+	func _wind_at(_p: Vector3, _h: float) -> Vector3:
+		return wind
+	func _air_humidity_at(_p: Vector3) -> float:
+		return humidity
+	func _surface_wetness_at(_p: Vector3) -> float:
+		return 0.0
+	func _rainfall_at(_p: Vector3) -> float:
+		return 0.0
+	func _day_of_year() -> int:
+		return day
+	func _season_at(_p: Vector3, _d: int) -> Dictionary:
+		return {}
+
+func _pollen_cloud_check() -> void:
+	var rf := [PollenCloud3D.release_factor(0.4, 0.0, 0.0, 9.0), PollenCloud3D.release_factor(0.4, 0.0, 0.0, 1.0),
+			PollenCloud3D.release_factor(0.92, 0.0, 0.0, 9.0), PollenCloud3D.release_factor(0.4, 0.8, 0.0, 9.0),
+			PollenCloud3D.release_factor(0.4, 0.0, 2.0, 9.0), PollenCloud3D.window_share(150, Vector2(130, 170)),
+			PollenCloud3D.window_share(100, Vector2(130, 170))]
+	var w := PollenWeatherStub.new()
+	WorldContracts.set_weather(w)
+	var sp: PlantSpecies = field.biome.species[0].duplicate()
+	sp.canopy_conifer = true
+	if sp.canopy_radius <= 0.0:
+		sp.canopy_radius = 2.0
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign([sp])
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var pc := PollenCloud3D.new()
+	pc.max_grass_sources = 0
+	add_child(pc)
+	var res := []
+	for case in ["windy", "humid", "calm", "winter"]:
+		w.wind = Vector3(1, 0, 0) if case == "calm" else Vector3(9, 0, 0)
+		w.humidity = 0.92 if case == "humid" else 0.4
+		w.day = 20 if case == "winter" else 150
+		pc.update_sources()
+		res.append([case, pc.get_conifer_sources(), snappedf(pc.get_release(), 0.01)])
+	var srcs: Array = pc.get_sources()
+	pc.update_sources()
+	var near_first := true
+	var eye := get_viewport().get_camera_3d().global_position if get_viewport().get_camera_3d() else Vector3.ZERO
+	var last := -1.0
+	for d in pc.get_sources():
+		var dd: float = (d.position as Vector3).distance_to(eye)
+		near_first = near_first and dd >= last - 0.01
+		last = dd
+	_check("pollen clouds: dry windy air in flower sheds from the nearest conifer crowns; damp, calm or out of season none",
+			rf[0] > 0.99 and rf[1] == 0.0 and rf[2] == 0.0 and rf[3] < 0.05 and rf[4] == 0.0 and rf[5] > 0.99 and rf[6] == 0.0
+			and res[0][1] > 0 and res[1][1] == 0 and res[2][1] == 0 and res[3][1] == 0 and near_first and srcs.is_empty(),
+			[rf, res, near_first])
+	pc.free()
+	f.free()
+	WorldContracts.clear_overrides()
 
 # Bank relief (WorldGround.relief_at, Landscape3D's bank and cliff relief): plants stand on the drawn ground, the
 # heightfield plus the relief, not on the heightfield under it. A script stub raises the ground 0.3 m east of x = 0.
@@ -2566,6 +2722,8 @@ func _checks() -> void:
 	_avalanche_check()
 	_wrack_check()
 	_relief_check()
+	_pollen_cloud_check()
+	_turf_lip_check()
 	_seed_down_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).

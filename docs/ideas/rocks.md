@@ -973,6 +973,10 @@ Bench: `--cave-view=rimstone --low --downstream` frames a dam from below. The vi
 too low for the camera (it had put the camera and lamp inside the rock, a black frame). PT check of the pair: PC queue
 (the world's PT still runs out of memory in the cloud).
 
+Test note (22 Nov): the "standing in air" check read the rock field without the flowstone, so pools on a formation's
+mound or on the rimstone sheet showed air under their floor. `get_meshed_rock_distance` is the field as meshed (with the
+flowstone), and the check reads it for the floor.
+
 Sea-cave mist, built (17 Nov): PhysXCaveMist3D (godot_physx, Flow). A CaveNetwork3D with sea caves makes one itself
 (`sea_mist`, on). Each of the 4 nearest sea-cave mouths whose floor the sea reaches gets an emitter: a low slab across
 the mouth's lower half, 2 m inside and 0.6 m over the water. The emitter pulses with the swell (the sea's
@@ -1082,6 +1086,12 @@ Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour
     good and 32,207 unthinned), fewer primitives (256 M against 259 M and 301 M) and fewer rows. Next: look at what
     the camera rays hit at a missing boulder's pixel (instance and primitive ids, a debug output in raygen), and the
     merged bakes' GPU contents rather than their CPU records.
+  - 22 Nov, evening (main 6f33ff9f): gone. The same repro (shore eye view 640x360, 4 spp, first 750 groups thinned,
+    --no-far-widen, plus --no-tiles since tile erosion now moves the shore) gives a thinned still bit-identical to the
+    unthinned one (0 pixels over 20 against 10,718 on 986d3581). Not from b06913a51d (the compiling-shader fallback):
+    with it taken out the pair still matches. Camera rays forced opaque change nothing either, so the any-hit path
+    is clear. Some change between 986d3581 and 6f33ff9f removed it (or moved the far groups off the line); stills may
+    thin again once a PC check of a thinned build_area still in PT agrees.
 - The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
   world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
   Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.
@@ -1279,3 +1289,12 @@ inside a beach patch so the patch draws over it. The patch is cut over the cave'
 cave's ground is the only surface and dropped half a metre off the walls. The cave's ground now uses its own instance of
 the material with ground_deform_enabled off (a duplicate() would share the source's shader), and tucks 4 cm into the
 rock where it overlaps the landscape and the patch (to 2 m inside the patch's edge) so the two do not z-fight.
+
+## Stones on the drawn ground (22 Nov)
+
+Landscape3D draws cliff and bank relief over the heightfield (up to about 0.8 m on 40 to 55 degree soil banks,
+57b253b5) and answers WorldGround.relief_at. RockField3D's `_rest` seats every stone on the heightfield plus that
+relief (centre, normal, footprint ring and underside), so stones on a relief-drawn bank neither float over its
+hollows nor sink into its lobes. Cliff blocks and coast forms still read the heightfield (they are the bedrock the
+relief is drawn over). Test: "stones on relief-drawn ground" (seated within 2 cm of the drawn surface).
+

@@ -228,9 +228,9 @@ static inline float _lc_noise(const Vector3 &p) {
 	f = f * f * (Vector3(3, 3, 3) - 2.0f * f);
 	const int32_t x = int32_t(i.x), y = int32_t(i.y), z = int32_t(i.z);
 	auto hh = [&](int dx, int dy, int dz) { return _lc_hash(x + dx, y + dy, z + dz + 7919); };
-	const float a = Math::lerp(Math::lerp(hh(0, 0, 0), hh(1, 0, 0), f.x), Math::lerp(hh(0, 1, 0), hh(1, 1, 0), f.x), f.y);
-	const float b = Math::lerp(Math::lerp(hh(0, 0, 1), hh(1, 0, 1), f.x), Math::lerp(hh(0, 1, 1), hh(1, 1, 1), f.x), f.y);
-	return Math::lerp(a, b, f.z);
+	const float a = Math::lerp(Math::lerp(hh(0, 0, 0), hh(1, 0, 0), float(f.x)), Math::lerp(hh(0, 1, 0), hh(1, 1, 0), float(f.x)), float(f.y));
+	const float b = Math::lerp(Math::lerp(hh(0, 0, 1), hh(1, 0, 1), float(f.x)), Math::lerp(hh(0, 1, 1), hh(1, 1, 1), float(f.x)), float(f.y));
+	return Math::lerp(a, b, float(f.z));
 }
 
 Vector3 Landscape3D::_normal_at(real_t p_x, real_t p_z) const {
@@ -280,16 +280,22 @@ float Landscape3D::_cliff_offset(const Vector3 &p) const {
 	};
 	const float o0 = proud(bed);
 	const float o1 = proud(bed_up);
-	const real_t lip = MIN(real_t(1.5), MAX(real_t(0.6), T * 0.5f));
+	// No wider than the bed itself, so a thin bed's lip starts at its own foot and the offset stays continuous there.
+	const real_t lip = MIN(T, MIN(real_t(1.5), MAX(real_t(0.6), T * 0.5f)));
 	const real_t ty = CLAMP((fy - (T - lip)) / lip, real_t(0.0), real_t(1.0));
-	float o = Math::lerp(o0, o1, float(ty * ty * (3.0f - 2.0f * ty)));
-	// Joints across the beds, 4.5 m apart and staggered bed to bed, each block a little forward or back.
-	const real_t u = p.x * 0.8f + p.z * 0.6f + _lc_hash(bed, 5, 1) * 4.5f;
-	const int32_t jb = int32_t(Math::floor(u / 4.5f));
-	const real_t fu = u - jb * 4.5f;
-	const float j0 = _lc_hash(bed, jb, 9) - 0.5f, j1 = _lc_hash(bed, jb + 1, 9) - 0.5f;
-	const real_t tu = CLAMP((fu - 3.0f) / 1.5f, real_t(0.0), real_t(1.0));
-	o += 1.2f * Math::lerp(j0, j1, float(tu * tu * (3.0f - 2.0f * tu)));
+	const float sy = float(ty * ty * (3.0f - 2.0f * ty));
+	// Joints across the beds, 4.5 m apart and staggered bed to bed, each block a little forward or back. Blended
+	// into the next bed's blocks over the same lip as the beds: switched at the bed's top, the blocks' 1.2 m steps
+	// cut a slit along every bed boundary.
+	const auto joint = [&](int32_t p_bed) {
+		const real_t u = p.x * 0.8f + p.z * 0.6f + _lc_hash(p_bed, 5, 1) * 4.5f;
+		const int32_t jb = int32_t(Math::floor(u / 4.5f));
+		const real_t fu = u - jb * 4.5f;
+		const float j0 = _lc_hash(p_bed, jb, 9) - 0.5f, j1 = _lc_hash(p_bed, jb + 1, 9) - 0.5f;
+		const real_t tu = CLAMP((fu - 3.0f) / 1.5f, real_t(0.0), real_t(1.0));
+		return 1.2f * Math::lerp(j0, j1, float(tu * tu * (3.0f - 2.0f * tu)));
+	};
+	float o = Math::lerp(o0 + joint(bed), o1 + joint(bed_up), sy);
 	// Roughness.
 	o += 0.5f * (_lc_noise(p * 0.7f) - 0.5f) + 0.2f * (_lc_noise(p * 2.1f + Vector3(3, 1, 7)) - 0.5f);
 	return o;
@@ -1275,6 +1281,11 @@ void Landscape3D::_finish_heights(bool p_wait) {
 				}
 			}
 		}
+		// The relief follows the full-resolution normals: placers on it lay that ground again.
+		if (cliff_relief > 0.0 || bank_relief > 0.0) {
+			const real_t size = chunk_quads * spacing;
+			_relief_changed(Rect2(origin.x + cx * size, origin.y + cz * size, size, size).grow(spacing));
+		}
 		if (uint32_t(job.chunk) < need.size()) {
 			need[job.chunk] = 0;
 		}
@@ -1410,6 +1421,7 @@ void Landscape3D::set_cliff_relief(real_t p_metres) {
 		chunks[i].gen++;
 	}
 	lods_dirty = true;
+	_relief_changed(Rect2());
 }
 
 void Landscape3D::set_bank_relief(real_t p_metres) {
@@ -1421,6 +1433,18 @@ void Landscape3D::set_bank_relief(real_t p_metres) {
 		chunks[i].gen++;
 	}
 	lods_dirty = true;
+	_relief_changed(Rect2());
+}
+
+// The relief over a rect (landscape space; empty: all of it) changed: WorldGround.relief_changed in world space.
+void Landscape3D::_relief_changed(const Rect2 &p_area) {
+	if (!is_inside_tree() || heights.is_empty()) {
+		return;
+	}
+	Rect2 r = p_area.has_area() ? p_area : Rect2(origin, Vector2((gw - 1) * spacing, (gh - 1) * spacing));
+	const Vector3 o = get_global_transform().origin;
+	r.position += Vector2(o.x, o.z);
+	WorldContracts::ground()->relief_changed(r);
 }
 
 void Landscape3D::set_material(const Ref<Material> &p_material) {
@@ -1778,7 +1802,7 @@ real_t Landscape3D::get_height(const Vector3 &p_position) const {
 	const int x = int(Math::floor(fx));
 	const int z = int(Math::floor(fz));
 	const real_t u = fx - x, v = fz - z;
-	return Math::lerp(Math::lerp(_h(x, z), _h(x + 1, z), u), Math::lerp(_h(x, z + 1), _h(x + 1, z + 1), u), v);
+	return Math::lerp(Math::lerp(_h(x, z), _h(x + 1, z), float(u)), Math::lerp(_h(x, z + 1), _h(x + 1, z + 1), float(u)), float(v));
 }
 
 AABB Landscape3D::get_aabb() const {
@@ -2022,6 +2046,7 @@ Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position) const {
 void Landscape3D::_update_relief_map(const Vector3 &p_camera) {
 	if (heights.is_empty() || (cliff_relief <= 0.0 && bank_relief <= 0.0)) {
 		_clear_relief_map();
+		_clear_cliff_map();
 		return;
 	}
 	// Landscape space is world space for the map (as for the stand map).
@@ -2038,6 +2063,7 @@ void Landscape3D::_update_relief_map(const Vector3 &p_camera) {
 	}
 	relief_origin = org;
 	relief_key = key;
+	_update_cliff_map(org + Vector2(RELIEF_SIZE, RELIEF_SIZE) * 0.5);
 	const int R = RELIEF_RES;
 	const real_t texel = RELIEF_SIZE / real_t(R);
 	Vector<uint8_t> data;
@@ -2073,6 +2099,55 @@ void Landscape3D::_update_relief_map(const Vector3 &p_camera) {
 	relief_published = true;
 }
 
+// The cliff relief's share (Landscape3D::_relief_weights' x, as the meshes weight it) at CLIFF_MAP_SIZE / CLIFF_MAP_RES
+// texels: only the heightfield's normal per texel, no relief offsets, so a square four times the relief map's width
+// costs about a quarter of it.
+void Landscape3D::_update_cliff_map(const Vector2 &p_center) {
+	if (cliff_relief <= 0.0) {
+		_clear_cliff_map();
+		return;
+	}
+	const int R = CLIFF_MAP_RES;
+	const real_t texel = CLIFF_MAP_SIZE / real_t(R);
+	const Vector2 org = p_center - Vector2(CLIFF_MAP_SIZE, CLIFF_MAP_SIZE) * 0.5;
+	Vector<uint8_t> data;
+	data.resize(R * R);
+	uint8_t *w = data.ptrw();
+	bool any = false;
+	for (int z = 0; z < R; z++) {
+		for (int x = 0; x < R; x++) {
+			const real_t fx = (org.x + (x + 0.5) * texel - origin.x) / spacing, fz = (org.y + (z + 0.5) * texel - origin.y) / spacing;
+			float share = 0.0f;
+			if (fx >= 0.0 && fz >= 0.0 && fx <= real_t(gw - 1) && fz <= real_t(gh - 1)) {
+				share = CLAMP(float(_relief_weights(_normal_at(fx, fz)).x), 0.0f, 1.0f);
+			}
+			any = any || share > 0.0f;
+			w[z * R + x] = uint8_t(Math::round(share * 255.0f));
+		}
+	}
+	if (!any) {
+		_clear_cliff_map();
+		return;
+	}
+	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_R8, data);
+	if (cliff_map_texture.is_valid() && cliff_map_texture->get_width() == R) {
+		cliff_map_texture->update(img);
+	} else {
+		cliff_map_texture = ImageTexture::create_from_image(img);
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->global_shader_parameter_set("terrain_cliff_map", cliff_map_texture->get_rid());
+	rs->global_shader_parameter_set("terrain_cliff_rect", Vector4(org.x, org.y, CLIFF_MAP_SIZE, CLIFF_MAP_SIZE));
+	cliff_map_published = true;
+}
+
+void Landscape3D::_clear_cliff_map() {
+	if (cliff_map_published) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_cliff_rect", Vector4());
+		cliff_map_published = false;
+	}
+}
+
 void Landscape3D::_clear_relief_map() {
 	if (relief_published) {
 		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_relief_rect", Vector4());
@@ -2103,6 +2178,7 @@ void Landscape3D::_notification(int p_what) {
 			if (!relief_registered) {
 				WorldContracts::register_relief(this);
 				relief_registered = true;
+				_relief_changed(Rect2());
 			}
 			set_process_internal(true);
 		} break;
@@ -2112,6 +2188,7 @@ void Landscape3D::_notification(int p_what) {
 			_free_all_collision();
 			_clear_stand_map();
 			_clear_relief_map();
+			_clear_cliff_map();
 			if (relief_registered) {
 				WorldContracts::unregister_relief(this);
 				relief_registered = false;

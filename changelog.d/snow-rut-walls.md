@@ -1,0 +1,1 @@
+- Snow: the walls of ruts and trenches give way when taller than their layers can hold, shedding blocks into the rut as a lumpy debris toe; a vehicle working along a rut brings its walls in sooner (`SnowSurface3D.wall_collapse`).

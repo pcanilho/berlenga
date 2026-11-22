@@ -44,6 +44,7 @@
 #include "scene/animation/animation_node_state_machine.h"
 #include "scene/animation/animation_player.h"
 #include "scene/animation/animation_tree.h"
+#include "scene/animation/second_order_dynamics.h"
 #include "scene/animation/tween.h"
 #include "scene/audio/audio_stream_player.h"
 #include "scene/debugger/scene_debugger.h"
@@ -153,6 +154,7 @@
 #include "scene/resources/shader_resource_format.h"
 #include "scene/resources/skeleton_profile.h"
 #include "scene/resources/sky.h"
+#include "scene/resources/streamed_texture.h"
 #include "scene/resources/style_box.h"
 #include "scene/resources/style_box_flat.h"
 #include "scene/resources/style_box_line.h"
@@ -249,6 +251,7 @@
 #include "scene/3d/lightmap_gi.h"
 #include "scene/3d/lightmap_probe.h"
 #include "scene/3d/limit_angular_velocity_modifier_3d.h"
+#include "scene/3d/gaze_modifier_3d.h"
 #include "scene/3d/look_at_modifier_3d.h"
 #include "scene/3d/marker_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
@@ -379,7 +382,8 @@
 static Ref<ResourceFormatSaverText> resource_saver_text;
 static Ref<ResourceFormatLoaderText> resource_loader_text;
 
-static Ref<ResourceFormatLoaderCompressedTexture2D> resource_loader_stream_texture;
+static Ref<ResourceFormatLoaderCompressedTexture2D> resource_loader_compressed_texture;
+static Ref<ResourceFormatLoaderStreamedTexture2D> resource_loader_streamed_texture;
 static Ref<ResourceFormatLoaderCompressedTextureLayered> resource_loader_texture_layered;
 static Ref<ResourceFormatLoaderCompressedTexture3D> resource_loader_texture_3d;
 
@@ -399,8 +403,13 @@ void register_scene_types() {
 	Node::init_node_hrcr();
 
 	if constexpr (GD_IS_CLASS_ENABLED(CompressedTexture2D)) {
-		resource_loader_stream_texture.instantiate();
-		ResourceLoader::add_resource_format_loader(resource_loader_stream_texture);
+		resource_loader_compressed_texture.instantiate();
+		ResourceLoader::add_resource_format_loader(resource_loader_compressed_texture);
+	}
+
+	if constexpr (GD_IS_CLASS_ENABLED(StreamedTexture2D)) {
+		resource_loader_streamed_texture.instantiate();
+		ResourceLoader::add_resource_format_loader(resource_loader_streamed_texture);
 	}
 
 	if constexpr (GD_IS_CLASS_ENABLED(TextureLayered)) {
@@ -583,6 +592,7 @@ void register_scene_types() {
 
 	/* REGISTER ANIMATION */
 	GDREGISTER_CLASS(Tween);
+	GDREGISTER_CLASS(SecondOrderDynamics);
 	GDREGISTER_ABSTRACT_CLASS(Tweener);
 	GDREGISTER_CLASS(PropertyTweener);
 	GDREGISTER_CLASS(IntervalTweener);
@@ -732,6 +742,7 @@ void register_scene_types() {
 
 	GDREGISTER_CLASS(BoneAttachment3D);
 	GDREGISTER_CLASS(LookAtModifier3D);
+	GDREGISTER_CLASS(GazeModifier3D);
 #ifndef DISABLE_DEPRECATED
 	GDREGISTER_CLASS(SkeletonIK3D);
 #endif
@@ -947,6 +958,7 @@ void register_scene_types() {
 	GDREGISTER_CLASS(World2D);
 	GDREGISTER_CLASS(Sky);
 	GDREGISTER_CLASS(CompressedTexture2D);
+	GDREGISTER_CLASS(StreamedTexture2D);
 	GDREGISTER_CLASS(PortableCompressedTexture2D);
 	GDREGISTER_CLASS(ImageTexture);
 	GDREGISTER_CLASS(AtlasTexture);
@@ -1338,8 +1350,13 @@ void unregister_scene_types() {
 	}
 
 	if constexpr (GD_IS_CLASS_ENABLED(CompressedTexture2D)) {
-		ResourceLoader::remove_resource_format_loader(resource_loader_stream_texture);
-		resource_loader_stream_texture.unref();
+		ResourceLoader::remove_resource_format_loader(resource_loader_compressed_texture);
+		resource_loader_compressed_texture.unref();
+	}
+
+	if constexpr (GD_IS_CLASS_ENABLED(StreamedTexture2D)) {
+		ResourceLoader::remove_resource_format_loader(resource_loader_streamed_texture);
+		resource_loader_streamed_texture.unref();
 	}
 
 	ResourceSaver::remove_resource_format_saver(resource_saver_text);

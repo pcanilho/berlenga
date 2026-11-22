@@ -187,6 +187,12 @@
    "title": "Open worlds"
   },
   {
+   "name": "rendering/pathtracing/ser_coherence_hints",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true` and `rendering/pathtracing/use_shader_execution_reordering` is in use, each path's hit is reordered with a hint from its material (light passing through it, hair fibres), so threads that shade alike run together."
+  },
+  {
    "name": "rendering/pathtracing/transmission",
    "type": "bool",
    "default": "true",
@@ -289,6 +295,14 @@
    "title": "Hair"
   },
   {
+   "name": "rendering/pathtracing/max_samples_per_dispatch",
+   "type": "int",
+   "default": "4194304",
+   "about": "The most pixel samples (pixels times `Environment.pathtracing_samples_per_pixel`) one path tracing dispatch traces.",
+   "page": "other",
+   "title": "Other"
+  },
+  {
    "name": "rendering/pathtracing/multimesh_merged_blas_max_triangles",
    "type": "int",
    "default": "65536",
@@ -374,7 +388,9 @@
    "name": "rendering/pathtracing/transparent_lighting/enabled",
    "type": "bool",
    "default": "true",
-   "about": "If `true`, transparent surfaces and particles (rain, splashes, smoke, glass) are lit by the path tracer while it is on: a camera-aligned grid of cells (the internal size over 8 across, 64 slices from `rendering/pathtracing/transparent_lighting/near` to `rendering/pathtracing/transparent_lighting/far`) is refreshed by the trace every frame, each cell taking one omni or spot light from the light grid, picked by its contribution, and every directional light, each through a shadow ray, and the sky and one bounce (see `rendering/pathtracing/transparent_lighting/bounce`), blended over the frames."
+   "about": "If `true`, transparent surfaces and particles (rain, splashes, smoke, glass) are lit by the path tracer while it is on: a camera-aligned grid of cells (the internal size over 8 across, 64 slices from `rendering/pathtracing/transparent_lighting/near` to `rendering/pathtracing/transparent_lighting/far`) is refreshed by the trace every frame, each cell taking one omni or spot light from the light grid, picked by its contribution, and every directional light, each through a shadow ray, and the sky and one bounce (see `rendering/pathtracing/transparent_lighting/bounce`), blended over the frames.",
+   "page": "open-worlds",
+   "title": "Open worlds"
   },
   {
    "name": "rendering/pathtracing/transparent_lighting/far",
@@ -634,10 +650,11 @@
    "name": "Wet surfaces",
    "settings": [
     "wetness_enabled",
-    "wetness_porosity"
+    "wetness_porosity",
+    "wetness_moving"
    ],
    "note": "",
-   "what": "porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced; `get_wetness_shader_code()` for ShaderMaterials.",
+   "what": "porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced; walls run with wind-driven rain in streaks that lean with the wind while lee walls stay drier, and moving bodies such as vehicles blow their water back; `get_wetness_shader_code()` for ShaderMaterials.",
    "page": "materials",
    "title": "Materials",
    "topic": ""
@@ -2637,6 +2654,18 @@
    "topic": "Plants"
   },
   {
+   "name": "Turf overhangs",
+   "settings": [
+    "PlantGenerator.make_bank_turf()",
+    "PRESET_TURF_LIP"
+   ],
+   "note": "",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Boar rooting",
    "settings": [
     "PlantGenerator.make_rooting()",
@@ -2683,7 +2712,7 @@
     "storm_day"
    ],
    "note": "",
-   "what": "rivers and lakes keep the last flood's high-water mark and the sea and lakes the last storm's wave run-up on the beach, and straw, reed and twig strand lines mark it, with the grass below combed flat and silted.",
+   "what": "rivers and lakes keep the last flood's high-water mark and the sea and lakes the last storm's wave run-up on the beach, and straw, reed and twig strand lines mark it, moving up to a new flood's mark as it peaks, with the grass below combed flat and silted.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2795,6 +2824,17 @@
    ],
    "note": "",
    "what": "fallen leaves drift past the crowns into edges and clearings, farther downwind, pile into hollows and against trunks, logs and stones, and leave ridges swept bare.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Pollen clouds",
+   "settings": [
+    "PollenCloud3D"
+   ],
+   "note": "",
+   "what": "conifers and flowering grass shed a yellow haze in dry wind.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3907,6 +3947,17 @@
    "topic": "Deep snow"
   },
   {
+   "name": "Rut walls give way",
+   "settings": [
+    "SnowSurface3D.wall_collapse"
+   ],
+   "note": "",
+   "what": "rut and trench walls taller than their layers can hold shed blocks into a lumpy debris toe, sooner where a vehicle works the rut.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Deep snow"
+  },
+  {
    "name": "Packed-snow roads",
    "settings": [
     "SnowCover3D.traffic_enabled",
@@ -4077,10 +4128,12 @@
    "settings": [
     "terrain_wind_enabled",
     "drainage_winds",
-    "upslope_winds"
+    "upslope_winds",
+    "valley_winds",
+    "foehn_winds"
    ],
    "note": "",
-   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests.",
+   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests; valleys blow up-valley on sunny calm afternoons and down-valley on clear calm nights, carrying smoke and fog along them; wind across a range comes down the lee warmer and drier once the windward side has rained out, under a gap in the cloud.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4185,7 +4238,7 @@
     "WeatherMap3D.set_precipitation_extinction()"
    ],
    "note": "",
-   "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.",
+   "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground; near the camera the haze falls in wind-carried curtains, lit by lamps (`rain_curtains`).",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4225,14 +4278,26 @@
    "topic": ""
   },
   {
+   "name": "Dust storms",
+   "settings": [
+    "WeatherMap3D.dust_storms"
+   ],
+   "note": "",
+   "what": "strong dry wind over loose ground raises mineral dust that dims the sun orange-brown, settles out and washes out in rain, and a storm's outflow piles it into a haboob: a lobed, billowing wall lit tan by the sun, in raster and path tracing.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Smoke haze",
    "settings": [
     "WeatherMap3D.smoke_haze",
     "smoke_washout",
-    "PhysXFlow3D.rain_washout"
+    "PhysXFlow3D.rain_washout",
+    "PhysXFlowEmitter3D.regional_smoke"
    ],
    "note": "",
-   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.",
+   "what": "smoke from fires, campfires and chimneys drifts on the wind past the Flow box as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4246,7 +4311,7 @@
     "humidity"
    ],
    "note": "",
-   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
+   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up, walls facing the wind catch the driven rain, roofs the falling rain and lee faces none, and pooled water stands on level built faces, raster and path traced; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -5019,6 +5084,39 @@
    "topic": "Collision"
   },
   {
+   "name": "Gaze",
+   "settings": [
+    "GazeModifier3D"
+   ],
+   "note": "",
+   "what": "eyes, head, neck and upper back share one look, eyes leading, with spring motion.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
+   "name": "Foot placement",
+   "settings": [
+    "FootPlacementModifier3D"
+   ],
+   "note": "",
+   "what": "feet plant on deformed ground and snow, with pelvis drop and slope tilt, and prints land where the feet land.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
+   "name": "Spring followers",
+   "settings": [
+    "SecondOrderDynamics"
+   ],
+   "note": "",
+   "what": "a spring-damper follower for procedural motion.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
    "name": "Camera-relative tracing",
    "settings": [
     "rendering/pathtracing/relative_origin_grid"
@@ -5086,12 +5184,46 @@
    "topic": ""
   },
   {
+   "name": "Texture streaming",
+   "settings": [
+    "rendering/textures/streaming/enabled"
+   ],
+   "note": "",
+   "what": "mip levels stream in by what is on screen within a memory budget, and path traced reflections and bounces keep the mips they need.",
+   "page": "open-worlds",
+   "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Quality levels",
+   "settings": [
+    "rendering/quality/level",
+    "RenderingQuality"
+   ],
+   "note": "",
+   "what": "one Low, Medium, High and Ultra ladder, with per-group overrides for textures, geometry, shadows, path tracing and reflections.",
+   "page": "other",
+   "title": "Other",
+   "topic": ""
+  },
+  {
    "name": "Shaders compile in the background",
    "settings": [
     "rendering/pathtracing/async_shader_compilation"
    ],
    "note": "",
    "what": "path tracing draws a surface with the default material while its own shader compiles, instead of leaving it out.",
+   "page": "other",
+   "title": "Other",
+   "topic": ""
+  },
+  {
+   "name": "Long stills in bands",
+   "settings": [
+    "rendering/pathtracing/max_samples_per_dispatch"
+   ],
+   "note": "",
+   "what": "high-sample path traced stills trace in short bands, so the GPU never times out.",
    "page": "other",
    "title": "Other",
    "topic": ""

@@ -533,6 +533,7 @@ private:
 		LocalVector<float> committed_keep; // Per species: the share of its plants (by rank) the tile's cells hold.
 		LocalVector<Vector3> committed_eye; // Per species: the stream centre its skyline trees were judged from (trees.md 9c).
 		bool stale = false; // Placed before the ground (holes) or burn ages changed: its replacement is on the way.
+		uint64_t flood_key = 0; // The flood marks over it when placed (_flood_key), for species that read them.
 	};
 	struct StreamJob {
 		VegetationField3D *field = nullptr;
@@ -615,6 +616,14 @@ private:
 	double burn_check = 0.0;
 	Rect2 burn_dirty;
 	void _follow_burns(double p_delta);
+	// Flood marks (WorldWater.high_water_at): a flood that peaks or ages moves the wrack. Checked every 2 s where a
+	// species reads the marks: each streamed tile's marks on a 3 x 3 lattice, the peak to 5 cm and the age to 30 days;
+	// a tile whose key changed is placed again like a burn's.
+	bool flood_follow = false;
+	int flood_tiles = 0; // Tiles placed again for a flood's marks (for tests).
+	double flood_check = 0.0;
+	uint64_t _flood_key(const Vector2i &p_tile, float p_ts) const;
+	void _follow_floods(double p_delta);
 	// Stand ages and disturbances (WorldStand.stand_changed): checked twice a second like burns; only tiles where a
 	// species crosses its stand range are placed again (advance_years ages every stand without replacing them all).
 	mutable uint64_t stand_seen = 0;
@@ -689,6 +698,7 @@ protected:
 	static void _bind_methods();
 
 public:
+	int get_flood_replaced_tiles() const { return flood_tiles; }
 	static String get_floor_shader_code();
 	// Game trails (vegetation_trails.cpp): a worn-path network (paths' Dictionaries) linking p_goals over the map.
 	static Array make_game_trails(Node *p_data_map, const Rect2 &p_area, const PackedVector3Array &p_goals, const Dictionary &p_options = Dictionary());

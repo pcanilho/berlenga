@@ -82,6 +82,7 @@ public:
 		RULE_FAIRY_RING, // Metres from the nearest meadow fairy ring's line (fairy_rings.h), + outside; 1000 with none or in a broken ring's gap.
 		RULE_HIGH_WATER, // Metres of the ground over the last flood's peak surface (WorldWater.high_water_at), - below it; 1000 where no flood is known.
 		RULE_FLOOD_AGE, // Years since that flood's peak (WorldWater.high_water_at); 10000 where no flood is known.
+		RULE_BANK_EDGE, // Metres the drawn ground (heightfield plus WorldGround.relief_at) drops past a steep (45 degree) edge within 1 m of the point, the steepest way; 0 with no edge near (VegetationField3D: a species using it stands on the edge, mesh +X over the drop).
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -271,6 +272,7 @@ public:
 	// The forest edge rule, or meta "edge_distance" (Vector2 m; TreeGenerator.make_edge) where it is left at its default.
 	bool uses_forest_edge() const;
 	bool uses_browse() const { return ranges[RULE_BROWSE].x > 0.0f || ranges[RULE_BROWSE].y < 1.0f; }
+	bool uses_bank_edge() const { return ranges[RULE_BANK_EDGE].x > -10000.0f || ranges[RULE_BANK_EDGE].y < 10000.0f; }
 	bool uses_high_water() const { return ranges[RULE_HIGH_WATER].x > -10000.0f || ranges[RULE_HIGH_WATER].y < 10000.0f || ranges[RULE_FLOOD_AGE].x > 0.0f || ranges[RULE_FLOOD_AGE].y < 10000.0f; }
 	bool uses_fairy_ring() const { return ranges[RULE_FAIRY_RING].x > -10000.0f || ranges[RULE_FAIRY_RING].y < 10000.0f; }
 	bool uses_litter_drift() const { return ranges[RULE_LITTER_DRIFT].x > 0.0f || ranges[RULE_LITTER_DRIFT].y < 100.0f; }

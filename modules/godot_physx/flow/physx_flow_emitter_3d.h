@@ -64,6 +64,11 @@ private:
 	float couple_rate = 2.0f;
 	bool collision = false;
 	NodePath flow_path;
+	// Its smoke for the weather's regional field (WorldFire.smoke_sources): a hot emitter's particulate leaves the
+	// Flow box and drifts, pools and hazes the sun at the map's scale. Systems that report their own smoke turn it off.
+	bool regional_smoke = true;
+	bool in_registry = false;
+	void _update_registry(bool p_leaving = false);
 
 	// For collision: the body's velocity, from this node's own motion.
 	Vector3 last_position;
@@ -76,6 +81,10 @@ protected:
 	static void _bind_methods();
 
 public:
+	static constexpr float REGIONAL_SMOKE_DENSITY = 3.0e-6f; // kg/m3 of particulate per unit of smoke at the source
+	void set_regional_smoke(bool p_enabled);
+	bool is_regional_smoke() const { return regional_smoke; }
+	float get_regional_smoke_rate() const; // kg/s
 	void set_enabled(bool p_enabled) { enabled = p_enabled; }
 	bool is_enabled() const { return enabled; }
 	void set_shape(Shape p_shape);

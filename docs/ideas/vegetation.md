@@ -1839,3 +1839,60 @@ stood inside a pushed-out bank or floated off a cut one. Now:
   smoothed under the grass; Landscape3D's own relief is built at its finest level and is close to that scale.
 - Check: vegetation --test "bank relief" (a WorldGround stub raises one half 0.3 m; plants follow it exactly).
 
+## Live flood wrack (round 7, first pick)
+A flood leaves its drift line at the peak's crest; field crews read flood peaks from these lines (high-water
+marks such as drift lines, seed lines and mud lines: Benson and Dalrymple 1967, USGS TWRI 3-A1). So the wrack
+should move when a new flood peaks over the old line, and fade as the mark ages.
+Built: VegetationField3D._follow_floods. Every 2 s, where a species reads the marks (RULE_HIGH_WATER), each
+streamed tile's WorldWater.high_water_at on a 3 x 3 lattice is hashed (peak to 5 cm, age to 30 days); a tile whose
+key changed is marked stale and placed again, the old tile showing until its replacement is in (as burns do).
+GrassField3D's flood wash already re-reads its map every 5 s. get_flood_replaced_tiles counts the re-placements.
+- Check: vegetation --test "live flood wrack" (the mark rises 0.4 m; 64 tiles placed again within 2.5 s; all
+  wrack on the new line, none on the old).
+- Cost: 9 high_water_at calls per streamed tile every 2 s, only with wrack in the biome.
+- Populated (non-streamed) fields do not follow; scenes stream.
+- While a storm's water is still rising the mark rises with it, so the tiles near the river are re-placed each
+  check; the strands under the water are hidden by it until it falls.
+
+## Pollen clouds in dry wind (round 7, second pick)
+In early summer a gust through flowering pines or spruces shakes out a visible yellow cloud, and a meadow in flower
+smokes pale in the wind. Wind-dispersed pollen settles slowly in still air: jack pine 2.53 cm/s, black spruce
+3.19 cm/s (Grana 1995, doi:10.1080/00173139509429031; grass grains 2 to 3 cm/s, see "Pollen puffs" above), so it
+rides the turbulence for minutes. Release: anthers open as they dry and close in damp air; grass pollen counts fall
+with humidity and rain, rise with warmth, and are low in 0 to 2 m/s of wind but moderate to extreme in about 4 to
+10 m/s (Waudby et al. 2022, Aerobiologia 38: 533-555, citing Taylor et al. 2002 for the anthers).
+Built: PollenCloud3D (pollen_cloud_3d.*), the landscape scale beside VegetationPollen3D's close brushing puffs.
+- Every 0.25 s: release_factor = dry air (full at 55% humidity and under, none over 85%) x dry leaves x no rain x
+  wind (3 to 8 m/s); thresholds are estimates fitted to the ranges above.
+- In flower: conifers by conifer_window (days 130 to 170, an estimate for northern temperate pines and spruces);
+  the sward by PlantGenerator.get_pollen_release for cocksfoot and timothy in the season here (grass_window when
+  the weather gives no season).
+- Sources: the nearest needle-leaved crowns of the scene's VegetationField3Ds within range (get_crowns_near now
+  reports "conifer"), each at its crown's middle with the wind there; sward points on a 6 m lattice within 30 m
+  where a GrassField3D's rules grow grass.
+- Drawn: one PhysXFlow3D of its own, 0.5 m cells, smoke density 0.35, a little heavy (-0.03), slow fade (0.05),
+  sulphur yellow, scattering albedo 0.85 (estimate), the weather's wind; sphere emitters with the wind's velocity.
+- Check: vegetation --test "pollen clouds" (10 crowns shed in dry wind, none damp, calm or in winter; nearest first).
+  Grass bench --pollen-cloud --day=165 sheds from 6 sward points with Flow running; the Flow gas is too slow on the
+  cloud's software renderer to judge the look (50 frames at 640x360 take ten minutes): look shot on the PC queue.
+
+## Turf overhangs on cut banks (round 7, third pick)
+A bank of root-bound topsoil over weaker soil fails in layers: the flow undercuts the lower layer and the rooted sod
+holds on as an overhanging cantilever until it breaks off (cantilever failures of composite banks: Thorne and Tovey
+1981, Earth Surface Processes and Landforms 6). Roots give the sod much of its strength (Pollen and Simon 2005,
+Water Resources Research 41, W07025). Slump scarps and terrace edges show the same lip with roots hanging below it.
+Built: PRESET_TURF_LIP (112, PRESET_MAX 113, plant_bank.cpp), PlantGenerator.make_bank_turf, PlantSpecies
+RULE_BANK_EDGE (37, RULE_MAX 38).
+- RULE_BANK_EDGE: from a point not itself on a face (the ground behind it under 35 degrees), along 16 directions,
+  the first 5 cm step steeper than 45 degrees within 1 m, and how far the drawn ground (heightfield plus
+  WorldGround.relief_at) falls over the 0.6 m past it; the largest fall wins. VegetationField3D moves the plant
+  onto that edge and turns mesh +X over the drop (a little scatter).
+- The mesh: a sod slab 0.7 to 1.5 m along the edge standing out 12 to 35 cm, 10 to 20 cm thick with a ragged foot,
+  its cut face and underside dark topsoil, 1300 to 1700 blades a square metre leaning out and hanging over the lip,
+  40 to 70 roots a metre trailing 10 to 45 cm (dimensions are estimates from photographs). About 6.5k triangles.
+- make_bank_turf: spacing 0.9 m, a fall of 0.35 m or more, ground under 35 degrees, on land, level on its top.
+- Checks: vegetation --test "turf overhangs" (a stub scarp: 65 lips along its top edge, none elsewhere, none without
+  it); plants --close=112 --bank (a row on a 1.2 m step, a scout only: the step is a stand-in).
+- Not yet: lips breaking off and falling as the bank erodes (a PhysX/Blast job), and roots on bare scarp faces with
+  no lip.
+

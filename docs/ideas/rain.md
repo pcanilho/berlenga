@@ -133,3 +133,37 @@ it is wet where the rain did not fall (both renderers, no new parameters).
 - Windscreens and glass: drops and runs on vertical glass (Lagarde's "Water drop 4b", streaks).
 - Wet characters and cloth (PhysX wet cloth exists; worn clothing is PhysX's open card).
 - Mud: rain fills ruts (mud reads the ground's standing water) and softens the clay.
+
+## Step 7: rain on every surface (plan, 22 Nov)
+
+Split with world-links (approved by Paulo, 22 Nov). World-links owns the inputs: the GLSL include
+`weather_surface_rain(world_pos, world_normal)` (x catch mm/h by ISO 15927-3 plus the vertical share, shelter and
+canopy drip; y wetted age; zw fall line in world xz; zero with no weather map, outer faces only), wipers and
+slipstream uniforms, wall streaks, haze curtains and the puddle level input. This thread owns the shading, raster
+and path tracer from one source (raytracing_rain_inc.glsl), in this order:
+
+1. **Rings without a WeatherMap3D.** RainFall3D with only `rainfall_rate_override` draws rain but no rings, since
+   every ring reader samples the weather map. When no map is published (`weather_rain_rect.z` 0) the readers fall
+   back to the rain RainFall3D publishes (global `weather_rain_fallback`: mm/h liquid), and the path tracer reads
+   the same value. One source still: the map wins whenever it exists.
+2. **Footstep ripples in puddles.** The ground's standing water answers `WorldWater.disturb`: each step or splash
+   becomes one capillary-gravity packet (the ring of `rain_ring_slope()`, Le Mehaute 1988) at its point, amplitude
+   from the strength, kept in a short ring buffer (16 latest, about 2 s each) published as a small texture so the
+   raster and the path tracer read the same impacts. Water bodies already answer disturb with their ripple solver.
+3. **`standing_water` on BaseMaterial3D** (Lagarde 2013, "Water drop 3b", accumulated water): a level in the
+   relief (heightmap or albedo luminance) fills from the puddle level input; under it the surface is water's
+   (F0 0.02, roughness 0.02, flat normal, darkened albedo by porosity), above it the wet film; `rain_ripples()` on
+   the filled part. Off by default per material, on for the materials that should pond (roads, pavers, roofs).
+4. **Drops and rivulets on glass** (Transmission and alpha glass): the game's look (scripts/fx/rain_on_glass.gd)
+   rebuilt procedurally so it costs no CPU simulation. Static drops: `rain_surface_beads()` on any face, density
+   from the catch, contact angle and size from the wetted age (fresh rain small beads, older merge to bigger caps).
+   Runners: Kaneda (1993) paths on the fall line, a drop sliding once it passes the critical size (Bond number
+   about 0.6 on glass, about 3 mm), in jerks between pinning sites, leaving a bead trail (Rayleigh-Plateau
+   pearling at about 4.5 widths) behind it; wind leans them along `zw`. Mist (sub-pixel droplets) is a roughness
+   term the runners wipe clear. Raster: the bead slope bends the refracted screen UV. Path tracer: a drop is a thin
+   lens, so the ray refracts twice (air to water at the bead normal, n 1.33; water to air at the flat pane
+   normal) instead of going straight through the thin Transmission; shadow rays through glass stay transmissive.
+5. **Hook up the catch** once world-links pushes the include: every surface above reads `weather_surface_rain()`
+   instead of the vertical rain alone; until then they read the vertical rain times the face's upward share.
+
+Each step lands with a raster and path-traced pair from the rain bench (docs/bench/rain) at 100% crop.

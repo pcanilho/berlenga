@@ -298,6 +298,7 @@ void PhysXSmoulder::_build(PhysXFireSpread3D *p_fire) {
 	flow->set_global_transform(Transform3D());
 	for (int k = 0; k < MAX_EMITTERS; k++) {
 		PhysXFlowEmitter3D *em = memnew(PhysXFlowEmitter3D);
+		em->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 		em->set_name(vformat("Smoulder%d", k));
 		em->set_enabled(false);
 		em->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);

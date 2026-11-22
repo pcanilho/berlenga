@@ -12,7 +12,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
   *Weather map: a storm's cloud, rain core, wind and the wet ground it leaves.*
 
 - **Wind**: slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.
-- **Wind over terrain** (`terrain_wind_enabled`, `drainage_winds`, `upslope_winds`): faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests.
+- **Wind over terrain** (`terrain_wind_enabled`, `drainage_winds`, `upslope_winds`, `valley_winds`, `foehn_winds`): faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests; valleys blow up-valley on sunny calm afternoons and down-valley on clear calm nights, carrying smoke and fog along them; wind across a range comes down the lee warmer and drier once the windward side has rained out, under a gap in the cloud.
 - **Wind near the ground** (`add_canopy`, `add_shelter_box`, `gust_patch_size`; RockField3D `wind_obstacles`, PhysXVehicle3D `wind_obstacle`): shelter inside plant canopies and behind buildings, boulders and vehicles; gust patches sweep across fields.
 - **Season state** (`WeatherMap3D.get_season()`): day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.
 - **Late frost** (`WeatherMap3D.late_frost`): a hard spring frost browns the young leaves of species already out, first in cold hollows, until a second flush replaces them weeks later.
@@ -26,7 +26,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 
   *Lightning: the channel lights the ground and casts sharp shadows from the blocks, raster and path traced.*
 
-- **Precipitation haze** (`WeatherMap3D.set_precipitation_extinction()`): snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.
+- **Precipitation haze** (`WeatherMap3D.set_precipitation_extinction()`): snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground; near the camera the haze falls in wind-carried curtains, lit by lamps (`rain_curtains`).
 
   ![A shelter in calm weather, then in a blizzard, raster and path traced](media/weather-blizzard.jpg)
 
@@ -35,9 +35,10 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 - **Haze and cloud shadow in fog** (`aerosol_haze`, `haze_visibility`): volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.
 - **Shafts across the sky** (`atmo_cloud_shadow_steps`): the air under the clouds reads a baked cloud shadow map, so light shafts reach across the whole sky, and the weather's haze carries on past the volumetric fog.
 - **Path traced haze** (`WeatherMap3D.traced_haze`): under path tracing the haze is a traced medium lit through shadows and the clouds' direct beam, so shafts stay sharp at any distance and show in reflections.
-- **Smoke haze** (`WeatherMap3D.smoke_haze`, `smoke_washout`; `PhysXFlow3D.rain_washout`): smoke from fires drifts on the wind as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.
+- **Dust storms** (`WeatherMap3D.dust_storms`): strong dry wind over loose ground raises mineral dust that dims the sun orange-brown, settles out and washes out in rain, and a storm's outflow piles it into a haboob: a lobed, billowing wall lit tan by the sun, in raster and path tracing.
+- **Smoke haze** (`WeatherMap3D.smoke_haze`, `smoke_washout`; `PhysXFlow3D.rain_washout`; `PhysXFlowEmitter3D.regional_smoke`): smoke from fires, campfires and chimneys drifts on the wind past the Flow box as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.
 
-- **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).
+- **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up, walls facing the wind catch the driven rain, roofs the falling rain and lee faces none, and pooled water stands on level built faces, raster and path traced; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).
 
   ![A beach dry and after rain: darker sand, puddles and a sheen](media/weather-wet.jpg)
 

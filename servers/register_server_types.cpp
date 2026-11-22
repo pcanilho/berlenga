@@ -115,6 +115,7 @@
 #include "servers/xr/xr_positional_tracker.h"
 #include "servers/xr/xr_server.h"
 #include "servers/xr/xr_vrs.h"
+#include "servers/rendering/rendering_quality.h"
 #endif // XR_DISABLED
 
 ShaderTypes *shader_types = nullptr;
@@ -142,6 +143,7 @@ static bool has_server_feature_callback(const String &p_feature) {
 }
 
 static MovieWriterPNGWAV *writer_pngwav = nullptr;
+static RenderingQuality *rendering_quality = nullptr;
 
 void register_server_types() {
 	OS::get_singleton()->benchmark_begin_measure("Servers", "Register Extensions");
@@ -163,6 +165,7 @@ void register_server_types() {
 	GDREGISTER_ABSTRACT_CLASS(AccessibilityServer);
 	GDREGISTER_ABSTRACT_CLASS(DisplayServer);
 	GDREGISTER_ABSTRACT_CLASS(RenderingServer);
+	GDREGISTER_ABSTRACT_CLASS(RenderingQuality);
 	GDREGISTER_CLASS(AudioServer);
 
 	GDREGISTER_CLASS(NativeMenu);
@@ -383,6 +386,10 @@ void unregister_server_types() {
 
 	ServersDebugger::deinitialize();
 	memdelete(shader_types);
+	if (rendering_quality) {
+		memdelete(rendering_quality);
+		rendering_quality = nullptr;
+	}
 	if constexpr (GD_IS_CLASS_ENABLED(MovieWriterPNGWAV)) {
 		memdelete(writer_pngwav);
 	}
@@ -399,6 +406,11 @@ void register_server_singletons() {
 	Engine::get_singleton()->add_singleton(Engine::Singleton("DisplayServer", DisplayServer::get_singleton(), "DisplayServer"));
 	Engine::get_singleton()->add_singleton(Engine::Singleton("NativeMenu", NativeMenu::get_singleton(), "NativeMenu"));
 	Engine::get_singleton()->add_singleton(Engine::Singleton("RenderingServer", RenderingServer::get_singleton(), "RenderingServer"));
+	// The quality ladder (Low to Ultra, by group) after the rendering settings it writes exist.
+	if (!rendering_quality) {
+		rendering_quality = memnew(RenderingQuality);
+	}
+	Engine::get_singleton()->add_singleton(Engine::Singleton("RenderingQuality", RenderingQuality::get_singleton(), "RenderingQuality"));
 #ifndef NAVIGATION_2D_DISABLED
 	Engine::get_singleton()->add_singleton(Engine::Singleton("NavigationServer2D", NavigationServer2D::get_singleton(), "NavigationServer2D"));
 #endif // NAVIGATION_2D_DISABLED
