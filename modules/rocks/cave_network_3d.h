@@ -240,6 +240,8 @@ private:
 	bool collision = true;
 	Ref<Material> wall_material;
 	Ref<Material> ground_material;
+	Ref<Material> cave_ground_material; // ground_material without the ground deform skirt (_cave_ground_material)
+	Ref<Material> _cave_ground_material();
 	Ref<ShaderMaterial> default_wall;
 	uint64_t last_mesh_usec = 0;
 	const TerrainGenerator3D *mesh_gen = nullptr; // resolved on the main thread for the mesh workers
@@ -380,7 +382,10 @@ public:
 	bool has_collision() const { return collision; }
 	void set_wall_material(const Ref<Material> &p_material) { wall_material = p_material; }
 	Ref<Material> get_wall_material() const { return wall_material; }
-	void set_ground_material(const Ref<Material> &p_material) { ground_material = p_material; }
+	void set_ground_material(const Ref<Material> &p_material) {
+		ground_material = p_material;
+		cave_ground_material.unref();
+	}
 	Ref<Material> get_ground_material() const { return ground_material; }
 	int get_last_sample_count() const { return last_samples; }
 

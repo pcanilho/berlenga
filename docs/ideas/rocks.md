@@ -1258,3 +1258,10 @@ It is not a crack (shadow bias, chunk seams, the fine/coarse seam and the landsc
 Changes made on the way: chunk sample and vertex positions now come from whole world cell indices (N * c is not
 exactly chunk_size in floating point), and the crest relief starts 2 m inside the patch, past where the landscape's
 ground can reach (its hole is 1.5 m in, less half a quad), with the fitted patch 5 m past the passage's air.
+
+Arch shards (22 Nov): along a sea arch's edge, shards of rock seemed to float free against the sky. The cave's ground
+is drawn with the landscape's TerrainMaterial3D, whose vertex() lowers the ground by the GroundSurface3D skirt (0.5 m)
+inside a beach patch so the patch draws over it. The patch is cut over the cave's hole like the landscape, so there the
+cave's ground is the only surface and dropped half a metre off the walls. The cave's ground now uses its own instance of
+the material with ground_deform_enabled off (a duplicate() would share the source's shader), and tucks 4 cm into the
+rock where it overlaps the landscape and the patch (to 2 m inside the patch's edge) so the two do not z-fight.

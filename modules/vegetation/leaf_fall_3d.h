@@ -96,6 +96,16 @@ private:
 	float shed_rate = 0.002f; // share of a crown's leaves a day that the season alone sheds (autumn peak)
 	float wind_shed = 1.0f; // extra shedding at 10 m/s, as a multiple of the season's (grows with the wind squared)
 	float lift_speed = 4.0f; // m/s at 10 cm over the ground that lifts loose dry leaves (litter threshold)
+	float creep_speed = 2.0f; // m/s at 10 cm over the ground that slides and flips lying leaves along it (half on ice)
+	float field_litter = 40.0f; // loose leaves per m2 under full litter (VegetationField3D.get_litter_at) the wind can take; 0: off
+	float field_accum = 0.0f;
+	float field_timer = 0.0f;
+	LocalVector<ObjectID> litter_fields; // the fields whose litter and leaf drifts the ground leaves read
+	int crept_count = 0;
+	LocalVector<class VegetationField3D *> _find_fields() const;
+	// The litter (0..1, -1 without a field) and leaf drift (1 neutral) at a point, from the fields.
+	float _field_litter_at(const Vector3 &p_p, float &r_drift);
+	HashMap<Vector2i, Vector2> field_cache; // 0.5 m cells: litter, drift (the drift samples the terrain round it)
 	float litter_density = 0.0f; // loose leaves per m2 on the ground near the camera that the wind can take
 	float lie_time = 180.0f; // s a leaf lies before it is recycled (it joins the litter)
 	float air_density = 1.2f;
@@ -130,7 +140,7 @@ private:
 
 	Vector3 _camera_position() const;
 	float _ground_at(const Vector3 &p_p) const;
-	void _spawn(const Vector3 &p_p, const Vector3 &p_v, int p_kind, bool p_lying);
+	int _spawn(const Vector3 &p_p, const Vector3 &p_v, int p_kind, bool p_lying); // the slot, -1 none
 	void _step(float p_delta);
 	void _step_leaf(Leaf &p_leaf, float p_delta, const class WorldWeather *p_weather);
 	void _rebuild_draws();
@@ -188,6 +198,12 @@ public:
 	int get_leaf_count() const { return alive_count; }
 	int get_lifted_count() const { return lifted_count; }
 	int get_kicked_count() const { return kicked_count; }
+	int get_crept_count() const { return crept_count; } // leaves that have slid along the ground
+	int get_sliding_count() const;
+	void set_creep_speed(float p_v) { creep_speed = MAX(p_v, 0.1f); }
+	float get_creep_speed() const { return creep_speed; }
+	void set_field_litter(float p_v) { field_litter = MAX(p_v, 0.0f); }
+	float get_field_litter() const { return field_litter; }
 	int get_floating_count() const;
 	int get_buried_count() const;
 	void set_leeway(float p_v) { leeway = MAX(p_v, 0.0f); }

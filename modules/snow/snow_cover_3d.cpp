@@ -41,6 +41,7 @@
 #include "snow_fall_3d.h"
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
+#include "modules/terrain_deform/terrain_dunes.h"
 #include "modules/world/world_contracts.h"
 #include "modules/terrain_deform/terrain_deformer_3d.h"
 #include "modules/weather/weather_map_3d.h"
@@ -298,6 +299,7 @@ void SnowCover3D::_allocate() {
 	cell_cornice_crack.resize(cornices_enabled ? nn : 0);
 	cell_cornice_crack.fill(0.0f);
 	cornice_failures.clear();
+	_layers_alloc();
 	sx_cache.clear();
 	snow_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAH);
 	snow_texture.unref();
@@ -417,6 +419,31 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 				const bool inside = sx >= 0 && sz >= 0 && sx < n && sz < n;
 				w[z * n + x] = old[CLAMP(sz, 0, n - 1) * n + CLAMP(sx, 0, n - 1)];
 				fresh.write[z * n + x] = inside ? 0 : 1;
+			}
+		}
+	}
+	if (layer_n.size() == n * n) {
+		// The layers move with their cells; cells coming in start with none (the next update gives them the
+		// bulk pack as one old layer).
+		const int L = PACK_LAYERS;
+		const Vector<float> os = layer_swe, orr = layer_rho, oa = layer_age;
+		const Vector<uint8_t> ok = layer_kind, on = layer_n;
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int sx = x + d.x, sz = z + d.y;
+				const int i = z * n + x;
+				if (sx < 0 || sz < 0 || sx >= n || sz >= n) {
+					layer_n.write[i] = 0;
+					continue;
+				}
+				const int j = sz * n + sx;
+				layer_n.write[i] = on[j];
+				for (int k = 0; k < L; k++) {
+					layer_swe.write[i * L + k] = os[j * L + k];
+					layer_rho.write[i * L + k] = orr[j * L + k];
+					layer_age.write[i * L + k] = oa[j * L + k];
+					layer_kind.write[i * L + k] = ok[j * L + k];
+				}
 			}
 		}
 	}
@@ -789,6 +816,7 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				slab_cover += depth_new; // soft snow over the slab
 			}
 			cell_new_depth.write[i] = depth_new;
+			_layers_push(i, snow, rho_new, packing && t < 0.0f && drift_index(in.wind_speed, rho_new, 1.0f) > 0.0f ? LAYER_WIND : LAYER_NEW);
 			swe = (swe > SWE_MIN ? swe : 0.0f) + snow;
 			rho = swe / MAX(depth_old + depth_new, 1e-6f);
 			alb += (ALBEDO_FRESH - alb) * MIN(snow / SNOW_REFRESH_MM, 1.0f);
@@ -1060,6 +1088,289 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			cell_lap_deep.write[i] = lap_deep;
 			cell_lap_cover.write[i] = lap_cover;
 		}
+	}
+	// The row's layers, matched to what the cells came to.
+	if (layers_enabled && !driven && layer_n.size() == n * n) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float t = in.temperature - lapse_rate * 0.001f * (cell_ground[i] - in.ref_height);
+			_layers_sync(i, in.dt_h, t);
+		}
+	}
+}
+
+// The pack's layers (follow-up 49). As Crocus (Vionnet et al. 2012) and SNOWPACK (Bartelt and Lehning 2002) keep
+// the pack as layers, each snowfall and each wind deposit is a layer of its own with its density and age; a fall
+// within 6 hours of the top one of its kind joins it, and past PACK_LAYERS the two thinnest adjacent layers under
+// the top merge (Crocus merges similar thin layers). Each layer settles under the weight above it by Crocus's
+// viscosity, eta = eta0 (rho / c_eta) exp(a_eta (Tfus - T) + b_eta rho) (eta0 7.62237e6 kg/m/s, a_eta 0.1 /K,
+// b_eta 0.023 m3/kg, c_eta 250 kg/m3), the temperature going from the air's at the top to 0 C at the base. The
+// bulk fields stay the pack's total: the layers' snow and depth are matched to them each update (melt, erosion,
+// slides and releases come off the top), so the layers say how the bulk is split, not a second pack.
+static constexpr float LAYER_MERGE_HOURS = 6.0f;
+static constexpr float LAYER_BOND_HOURS = 168.0f; // a week: new snow is settled and rounded (as the avalanche's recent snow)
+
+float SnowCover3D::layer_compaction(float p_density, float p_stress, float p_celsius, float p_hours) {
+	const float rho = CLAMP(p_density, 30.0f, 917.0f);
+	const float eta = 7.62237e6f * (rho / 250.0f) * Math::exp(0.1f * MAX(-p_celsius, 0.0f) + 0.023f * rho);
+	const float strain = MAX(p_stress, 0.0f) / eta * MAX(p_hours, 0.0f) * 3600.0f;
+	return MIN(rho * Math::exp(MIN(strain, 0.7f)), 917.0f);
+}
+
+void SnowCover3D::_layers_alloc() {
+	const int nn = resolution * resolution;
+	if (!layers_enabled) {
+		layer_swe.clear();
+		layer_rho.clear();
+		layer_age.clear();
+		layer_kind.clear();
+		layer_n.clear();
+		return;
+	}
+	layer_swe.resize(nn * PACK_LAYERS);
+	layer_rho.resize(nn * PACK_LAYERS);
+	layer_age.resize(nn * PACK_LAYERS);
+	layer_kind.resize(nn * PACK_LAYERS);
+	layer_n.resize(nn);
+	layer_swe.fill(0.0f);
+	layer_rho.fill(100.0f);
+	layer_age.fill(0.0f);
+	layer_kind.fill(LAYER_OLD);
+	layer_n.fill(0);
+}
+
+void SnowCover3D::_layers_push(int p_i, float p_swe, float p_rho, uint8_t p_kind) {
+	if (!layers_enabled || driven || p_swe <= 0.0f || layer_n.size() != resolution * resolution) {
+		return;
+	}
+	const int L = PACK_LAYERS;
+	const int b = p_i * L;
+	float *ls = layer_swe.ptrw() + b;
+	float *lr = layer_rho.ptrw() + b;
+	float *la = layer_age.ptrw() + b;
+	uint8_t *lk = layer_kind.ptrw() + b;
+	int k = layer_n[p_i];
+	const float rho = CLAMP(p_rho, 30.0f, 917.0f);
+	if (k > 0 && lk[k - 1] == p_kind && la[k - 1] < LAYER_MERGE_HOURS) {
+		const float s = ls[k - 1] + p_swe;
+		const float d = ls[k - 1] / lr[k - 1] + p_swe / rho;
+		la[k - 1] *= ls[k - 1] / s;
+		ls[k - 1] = s;
+		lr[k - 1] = CLAMP(s / d, 30.0f, 917.0f);
+		return;
+	}
+	if (k == L) {
+		// Merge the two thinnest adjacent layers under the top one.
+		int best = 0;
+		for (int j = 1; j + 1 < L - 1; j++) {
+			if (ls[j] + ls[j + 1] < ls[best] + ls[best + 1]) {
+				best = j;
+			}
+		}
+		const float s = ls[best] + ls[best + 1];
+		const float d = ls[best] / lr[best] + ls[best + 1] / lr[best + 1];
+		ls[best] = s;
+		lr[best] = s > 0.0f ? CLAMP(s / MAX(d, 1e-6f), 30.0f, 917.0f) : lr[best];
+		la[best] = MAX(la[best], la[best + 1]);
+		for (int j = best + 1; j + 1 < L; j++) {
+			ls[j] = ls[j + 1];
+			lr[j] = lr[j + 1];
+			la[j] = la[j + 1];
+			lk[j] = lk[j + 1];
+		}
+		k = L - 1;
+	}
+	ls[k] = p_swe;
+	lr[k] = rho;
+	la[k] = 0.0f;
+	lk[k] = p_kind;
+	layer_n.write[p_i] = uint8_t(k + 1);
+}
+
+void SnowCover3D::_layers_take(int p_i, float p_swe) {
+	if (!layers_enabled || driven || p_swe <= 0.0f || layer_n.size() != resolution * resolution) {
+		return;
+	}
+	const int b = p_i * PACK_LAYERS;
+	float *ls = layer_swe.ptrw() + b;
+	int k = layer_n[p_i];
+	float left = p_swe;
+	while (k > 0 && left > 0.0f) {
+		const float t = MIN(ls[k - 1], left);
+		ls[k - 1] -= t;
+		left -= t;
+		if (ls[k - 1] <= 1e-4f) {
+			k--;
+		}
+	}
+	layer_n.write[p_i] = uint8_t(k);
+}
+
+void SnowCover3D::_layers_sync(int p_i, float p_dt_h, float p_air) {
+	if (!layers_enabled || layer_n.size() != resolution * resolution) {
+		return;
+	}
+	const float swe = cell_swe[p_i];
+	if (swe <= SWE_MIN) {
+		layer_n.write[p_i] = 0;
+		return;
+	}
+	const int L = PACK_LAYERS;
+	const int b = p_i * L;
+	float *ls = layer_swe.ptrw() + b;
+	float *lr = layer_rho.ptrw() + b;
+	float *la = layer_age.ptrw() + b;
+	uint8_t *lk = layer_kind.ptrw() + b;
+	int k = layer_n[p_i];
+	// The mass: what the bulk lost (melt, erosion, slides, releases) comes off the top; what it gained past the
+	// layers (refrozen rain and slush) goes into the top one.
+	float total = 0.0f;
+	for (int j = 0; j < k; j++) {
+		total += ls[j];
+	}
+	if (total > swe + 1e-4f) {
+		_layers_take(p_i, total - swe);
+		k = layer_n[p_i];
+	} else if (total < swe - 1e-4f) {
+		if (k == 0) {
+			ls[0] = swe;
+			lr[0] = cell_density[p_i];
+			la[0] = LAYER_BOND_HOURS;
+			lk[0] = LAYER_OLD;
+			k = 1;
+			layer_n.write[p_i] = 1;
+		} else {
+			const float add = swe - total;
+			const float d = ls[k - 1] / lr[k - 1] + add / MAX(lr[k - 1], 30.0f);
+			ls[k - 1] += add;
+			lr[k - 1] = CLAMP(ls[k - 1] / MAX(d, 1e-6f), 30.0f, 917.0f);
+		}
+	}
+	if (k == 0) {
+		return;
+	}
+	// Age and settle, from the top down: each layer under the weight above it and half its own.
+	float above = 0.0f;
+	float depth = 0.0f;
+	for (int j = 0; j < k; j++) {
+		depth += ls[j] / lr[j];
+	}
+	float z = 0.0f; // from the top
+	for (int j = k - 1; j >= 0; j--) {
+		la[j] += p_dt_h;
+		if (lk[j] == LAYER_NEW && la[j] > LAYER_BOND_HOURS) {
+			lk[j] = LAYER_OLD;
+		}
+		const float dj = ls[j] / lr[j];
+		const float mid = depth > 1e-4f ? (z + 0.5f * dj) / depth : 0.0f;
+		const float celsius = MIN(p_air, 0.0f) * (1.0f - mid);
+		lr[j] = layer_compaction(lr[j], 9.81f * (above + 0.5f * ls[j]), celsius, p_dt_h);
+		above += ls[j];
+		z += dj;
+	}
+	// Traces (a layer of under half a millimetre of water) join the one under them, as does a layer of the same kind
+	// and age (the wind's packing splits the top off in steps).
+	int w = 0;
+	for (int j = 0; j < k; j++) {
+		if (w > 0 && (ls[j] < 0.5f || (lk[j] == lk[w - 1] && Math::abs(la[j] - la[w - 1]) < LAYER_MERGE_HOURS))) {
+			const float s = ls[w - 1] + ls[j];
+			const float dd = ls[w - 1] / lr[w - 1] + ls[j] / lr[j];
+			ls[w - 1] = s;
+			lr[w - 1] = CLAMP(s / MAX(dd, 1e-6f), 30.0f, 917.0f);
+			continue;
+		}
+		ls[w] = ls[j];
+		lr[w] = lr[j];
+		la[w] = la[j];
+		lk[w] = lk[j];
+		w++;
+	}
+	k = w;
+	layer_n.write[p_i] = uint8_t(k);
+	// The depth: the bulk's settling (CLASS, with the wind's packing and the melt) is the pack's. The difference
+	// goes to the layers by their pore space (d (1 - rho / rho_ice)): light new snow takes most of it, dense old
+	// snow and ice little.
+	float d = 0.0f, pore = 0.0f;
+	for (int j = 0; j < k; j++) {
+		const float dj = ls[j] / lr[j];
+		d += dj;
+		pore += dj * (1.0f - lr[j] / 917.0f);
+	}
+	const float target = swe / MAX(cell_density[p_i], 30.0f);
+	if (d > 1e-6f && target > 1e-6f && pore > 1e-6f) {
+		const float excess = d - target;
+		for (int j = 0; j < k; j++) {
+			const float dj = ls[j] / lr[j];
+			const float dn = MAX(dj - excess * dj * (1.0f - lr[j] / 917.0f) / pore, ls[j] / 917.0f);
+			lr[j] = CLAMP(ls[j] / MAX(dn, 1e-6f), 30.0f, 917.0f);
+		}
+	}
+}
+
+float SnowCover3D::_top_density(int p_i, float p_depth) const {
+	const int nn = resolution * resolution;
+	const float bulk = MAX(cell_density[p_i], 30.0f);
+	if (!layers_enabled || layer_n.size() != nn || layer_swe.size() != nn * PACK_LAYERS || p_depth <= 0.0f || layer_n[p_i] == 0) {
+		return bulk;
+	}
+	const int b = p_i * PACK_LAYERS;
+	float mass = 0.0f, d = 0.0f;
+	for (int j = layer_n[p_i] - 1; j >= 0 && d < p_depth; j--) {
+		const float r = MAX(layer_rho[b + j], 30.0f);
+		const float dj = MIN(layer_swe[b + j] / r, p_depth - d);
+		mass += dj * r;
+		d += dj;
+	}
+	return d > 1e-4f ? mass / d : bulk;
+}
+
+float SnowCover3D::pub_top_density(int p_i, float p_depth) const {
+	const int nn = resolution * resolution;
+	const float bulk = pub.density.size() == nn ? MAX(pub.density[p_i], 30.0f) : 100.0f;
+	if (pub.layer_n.size() != nn || pub.layer_swe.size() != nn * PACK_LAYERS || p_depth <= 0.0f) {
+		return bulk;
+	}
+	const int b = p_i * PACK_LAYERS;
+	float mass = 0.0f, d = 0.0f;
+	for (int j = pub.layer_n[p_i] - 1; j >= 0 && d < p_depth; j--) {
+		const float r = MAX(pub.layer_rho[b + j], 30.0f);
+		const float dj = MIN(pub.layer_swe[b + j] / r, p_depth - d);
+		mass += dj * r;
+		d += dj;
+	}
+	return d > 1e-4f ? mass / d : bulk;
+}
+
+Array SnowCover3D::get_layers_at(const Vector3 &p_position) const {
+	Array out;
+	const int n = resolution;
+	if (!origin_valid || pub.layer_n.size() != n * n || pub.layer_swe.size() != n * n * PACK_LAYERS) {
+		return out;
+	}
+	const float cs = _cell_size();
+	const int x = CLAMP(int(Math::floor(p_position.x / cs)) - origin_cell.x, 0, n - 1);
+	const int z = CLAMP(int(Math::floor(p_position.z / cs)) - origin_cell.y, 0, n - 1);
+	const int i = z * n + x;
+	static const char *KINDS[3] = { "new", "wind", "old" };
+	for (int j = 0; j < pub.layer_n[i]; j++) {
+		const int k = i * PACK_LAYERS + j;
+		Dictionary l;
+		l["swe"] = pub.layer_swe[k];
+		l["density"] = pub.layer_rho[k];
+		l["depth"] = pub.layer_swe[k] / MAX(pub.layer_rho[k], 30.0f);
+		l["age"] = pub.layer_age[k];
+		l["kind"] = String(KINDS[MIN(int(pub.layer_kind[k]), 2)]);
+		out.push_back(l);
+	}
+	return out;
+}
+
+void SnowCover3D::set_layers_enabled(bool p_enabled) {
+	_finish_background(true);
+	layers_enabled = p_enabled;
+	_layers_alloc();
+	if (world) {
+		world->set_layers_enabled(p_enabled);
 	}
 }
 
@@ -1898,6 +2209,14 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	cell_packed.ptrw(); // published as pub.packed
 	cell_new_depth.ptrw();
 	cell_canopy_load.ptrw();
+	if (layers_enabled && layer_n.size() != resolution * resolution) {
+		_layers_alloc();
+	}
+	layer_swe.ptrw();
+	layer_rho.ptrw();
+	layer_age.ptrw();
+	layer_kind.ptrw();
+	layer_n.ptrw();
 	cell_cornice_x.ptrw();
 	cell_cornice_z.ptrw();
 	cell_cornice_crack.ptrw();
@@ -2029,6 +2348,11 @@ void SnowCover3D::_publish_cells() {
 	pub.wind_slab = cell_wind_slab;
 	pub.sas_x = cell_sas_x;
 	pub.depth_hoar = cell_depth_hoar;
+	pub.layer_swe = layer_swe;
+	pub.layer_rho = layer_rho;
+	pub.layer_age = layer_age;
+	pub.layer_kind = layer_kind;
+	pub.layer_n = layer_n;
 	pub.sas_z = cell_sas_z;
 	pub.slush = cell_slush;
 	pub.packed = cell_packed;
@@ -2474,6 +2798,7 @@ void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_reso
 	drift_distance = owner->drift_distance;
 	drift_strength = owner->drift_strength;
 	drift_threshold_wind = owner->drift_threshold_wind;
+	drift_relief = owner->drift_relief;
 	wind_transport_enabled = owner->wind_transport_enabled;
 	wind_curvature_length = owner->wind_curvature_length;
 	cornice_failure_enabled = owner->cornice_failure_enabled;
@@ -2493,6 +2818,10 @@ void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_reso
 static constexpr float Z0_SNOW = 0.0005f; // m, aerodynamic roughness of snow
 static constexpr float RHO_AIR = 1.3f; // kg/m3
 static constexpr float WIND_SNOW_DENSITY = 300.0f; // kg/m3, snow the wind lays down (wind-packed)
+static constexpr float DRIFT_REPOSE = 38.0f; // degrees: the slip face of dry blown snow (dry snow's angle of repose, 35-45)
+static constexpr float DRIFT_SATURATION = 2.0f; // m: the saturation length of snow saltation (the flux lags the shear)
+static constexpr float DRIFT_SHEAR_A = 3.0f; // Kroy 2002's A and B, as the dune sea
+static constexpr float DRIFT_SHEAR_B = 0.5f;
 static constexpr float SASTRUGI_HARD = 250.0f; // kg/m3: snow dense enough to erode into sastrugi (wind-packed, sintered)
 static constexpr float SASTRUGI_RATE = 0.02f; // share of the snow scoured off a hard surface that carves relief (ours: cm an hour in a gale)
 
@@ -2593,6 +2922,46 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 			cmax = MAX(cmax, Math::abs(curve[i]));
 		}
 	}
+	// The wind over the snow's own relief (follow-up 48): drifts, banks and dunes change the shear on the snow as
+	// hills do on sand, from linearised flow (DuneShear, shared with the dune sea: Kroy, Sauermann and Herrmann
+	// 2002). The shear peaks upwind of a crest and drops past it, so a drift's stoss erodes, its lee fills and it
+	// creeps downwind; smoothing over the saturation length keeps drifts shorter than that from steepening. The
+	// wind speed goes as the root of the shear (u* ~ sqrt(tau)). Snow relief only: the ground has its own weights.
+	// The relief changes slowly: the shear is kept for 5 minutes of weather, until the wind turns 5 degrees or the
+	// square moves.
+	std::vector<float> &relief_shear = relief_shear_cache;
+	relief_shear_age += p_dt_h;
+	const bool relief_due = relief_shear.size() != size_t(nn) || relief_shear_age >= 5.0f / 60.0f || relief_shear_origin != origin_cell || relief_shear_dir.dot(dir) < 0.996f;
+	if (!drift_relief) {
+		relief_shear.clear();
+	} else if (relief_due) {
+		relief_shear.clear();
+		relief_shear_age = 0.0f;
+		relief_shear_origin = origin_cell;
+		relief_shear_dir = dir;
+		std::vector<float> relief(nn), relief_slope;
+		float relief_max = 0.0f;
+		for (int i = 0; i < nn; i++) {
+			relief[i] = cell_swe[i] > SWE_MIN ? cell_swe[i] / MAX(cell_density[i], 30.0f) / cs : 0.0f; // in cells
+			relief_max = MAX(relief_max, relief[i]);
+		}
+		if (relief_max > 0.0f) {
+			auto height = [&](double p_x, double p_z) {
+				const double fx = Math::floor(p_x), fz = Math::floor(p_z);
+				const int x0 = CLAMP(int(fx), 0, n - 1), z0 = CLAMP(int(fz), 0, n - 1);
+				const int x1 = MIN(x0 + 1, n - 1), z1 = MIN(z0 + 1, n - 1);
+				const double tx = CLAMP(p_x - fx, 0.0, 1.0), tz = CLAMP(p_z - fz, 0.0, 1.0);
+				const double a = relief[z0 * n + x0] * (1.0 - tx) + relief[z0 * n + x1] * tx;
+				const double b = relief[z1 * n + x0] * (1.0 - tx) + relief[z1 * n + x1] * tx;
+				return a * (1.0 - tz) + b * tz;
+			};
+			const float ls = DRIFT_SATURATION / cs;
+			const int passes = CLAMP(int(Math::round(2.0f * ls * ls)), 0, 8);
+			DuneShear::slope_along(height, n, n, dir.x, dir.y, passes, false, relief_slope);
+			relief_shear.resize(nn);
+			DuneShear::rows(relief_slope.data(), n, n, dir.x, dir.y, DRIFT_SHEAR_A, DRIFT_SHEAR_B, MIN(32, n), false, 0, n, relief_shear.data());
+		}
+	}
 	// Flux and what each cell can give (the loose snow over a crust; none under a frozen surface crust).
 	LocalVector<float> flux, loose, uloc;
 	flux.resize(nn);
@@ -2614,6 +2983,9 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 		}
 		const float t = in.temperature - lapse_rate * 0.001f * (cell_ground[i] - in.ref_height);
 		float w = 1.0f + 0.5f * (0.5f * slope[i] / smax) + 0.5f * (0.5f * curve[i] / cmax);
+		if (!relief_shear.empty()) {
+			w *= Math::sqrt(relief_shear[i]);
+		}
 		// Behind rocks, walls, buildings and vehicles the wind slows below what lifts snow and the snow carried in
 		// drops (SnowTran-3D's flux divergence, Liston and Sturm 1998): a lee drift.
 		if (obstacle_active && cell_lee.size() == nn) {
@@ -2726,6 +3098,9 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 				}
 				swe[i] = old + g;
 				rho[i] = swe[i] / MAX(depth_old + g / WIND_SNOW_DENSITY, 1e-6f);
+				if (g > 0.05f) {
+					_layers_push(i, g, WIND_SNOW_DENSITY, LAYER_WIND); // a trace is left to the next update's match
+				}
 				if (cell_crust[i] > 0.0f) {
 					burial[i] += g / WIND_SNOW_DENSITY;
 				}
@@ -2746,6 +3121,7 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 					cell_slab_cover.write[i] = MAX(soft - eroded, 0.0f);
 				}
 				swe[i] = MAX(old + g, 0.0f);
+				_layers_take(i, MIN(-g, old));
 				loose[i] = MAX(loose[i] + g, 0.0f);
 				if (cell_crust[i] > 0.0f) {
 					burial[i] = MAX(burial[i] + g / MAX(rho[i], 30.0f), 0.0f);
@@ -2759,6 +3135,9 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 		}
 	}
 	last_blown = float(moved / nn);
+	if (drift_relief) {
+		_repose(flux, 8);
+	}
 	if (sas) {
 		// The saltating snow abrades a hard surface where it is undersaturated, carving it (Filhol and Sturm
 		// 2015): a share SASTRUGI_RATE of the scoured snow's depth goes into the relief. Where the drift builds
@@ -2783,6 +3162,82 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 	}
 }
 
+// The blown snow's angle of repose (follow-up 48): where the wind has steepened the snow's own relief past
+// DRIFT_REPOSE the loose grains avalanche down it, as on a dune's slip face (the minimal dune model, Kroy,
+// Sauermann and Herrmann 2002), so a drift's lee keeps a slip face instead of a spike. The snow's own relief only
+// (snow on steep ground is SnowSlide's), and only where the wind moves snow (dry, loose, not under trees); mass is kept.
+void SnowCover3D::_repose(const LocalVector<float> &p_flux, int p_passes) {
+	const int n = resolution;
+	const int nn = n * n;
+	const float cs = _cell_size();
+	const float rise = Math::tan(Math::deg_to_rad(DRIFT_REPOSE)) * cs;
+	float *swe = cell_swe.ptrw();
+	float *rho = cell_density.ptrw();
+	LocalVector<float> depth, take, put_swe, put_depth;
+	depth.resize(nn);
+	take.resize(nn);
+	put_swe.resize(nn);
+	put_depth.resize(nn);
+	static const int DX[4] = { 1, -1, 0, 0 };
+	static const int DZ[4] = { 0, 0, 1, -1 };
+	for (int pass = 0; pass < p_passes; pass++) {
+		bool moved = false;
+		for (int i = 0; i < nn; i++) {
+			depth[i] = swe[i] > SWE_MIN ? swe[i] / MAX(rho[i], 30.0f) : 0.0f;
+			take[i] = 0.0f;
+			put_swe[i] = 0.0f;
+			put_depth[i] = 0.0f;
+		}
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				if (p_flux[i] <= 0.0f || depth[i] <= 0.0f) {
+					continue;
+				}
+				const float hi = depth[i];
+				for (int k = 0; k < 4; k++) {
+					const int xn = x + DX[k], zn = z + DZ[k];
+					if (xn < 0 || zn < 0 || xn >= n || zn >= n) {
+						continue;
+					}
+					const int j = zn * n + xn;
+					const float excess = hi - depth[j] - rise;
+					if (excess <= 0.0f) {
+						continue;
+					}
+					// A fifth of the excess each pass (four neighbours can draw at once), at most what lies above.
+					const float d = MIN(0.2f * excess, 0.25f * depth[i]);
+					take[i] += d;
+					put_swe[j] += d * rho[i];
+					put_depth[j] += d;
+					moved = true;
+				}
+			}
+		}
+		if (!moved) {
+			break;
+		}
+		for (int i = 0; i < nn; i++) {
+			if (take[i] <= 0.0f && put_swe[i] <= 0.0f) {
+				continue;
+			}
+			const float d = MAX(depth[i] - take[i], 0.0f);
+			const float w = MAX(swe[i] > SWE_MIN ? swe[i] - take[i] * rho[i] : 0.0f, 0.0f) + put_swe[i];
+			const float dd = d + put_depth[i];
+			if (w <= SWE_MIN || dd <= 0.0f) {
+				swe[i] = 0.0f;
+				rho[i] = 100.0f;
+				continue;
+			}
+			if (depth[i] <= 0.0f) {
+				cell_albedo.write[i] = ALBEDO_FRESH;
+			}
+			swe[i] = w;
+			rho[i] = w / dd;
+		}
+	}
+}
+
 // Wind packing (follow-up 45): where the surface drifts (Crocus's SI > 0 at the cell's own wind) its top 10 cm
 // settle toward 350 kg/m3 (wind_packing_step) and become wind slab. The pack is one layer, so the top takes the
 // pack's density before it packs. Not under a frozen crust's surface, wet snow or trees (as the drift).
@@ -2797,8 +3252,7 @@ void SnowCover3D::_wind_pack(float p_dt_h, const LocalVector<float> &p_wind) {
 		if (uw <= 0.0f || swe[i] <= SWE_MIN || cell_liquid[i] > 0.01f || (cell_canopy.size() == nn && cell_canopy[i] > 0.2f)) {
 			continue;
 		}
-		const float r = MAX(rho[i], 30.0f);
-		const float depth = swe[i] / r;
+		const float depth = swe[i] / MAX(rho[i], 30.0f);
 		float top = MIN(depth, 0.1f);
 		if (crust_enabled && cell_crust[i] > 0.0f) {
 			top = MIN(top, cell_crust_burial[i]);
@@ -2806,6 +3260,8 @@ void SnowCover3D::_wind_pack(float p_dt_h, const LocalVector<float> &p_wind) {
 		if (top <= 0.0f) {
 			continue;
 		}
+		// The top's own density: its layers' (new snow over an old pack is light and drifts) or the bulk's.
+		const float r = _top_density(i, top);
 		const float fresh = CLAMP((cell_albedo[i] - ALBEDO_OLD_DRY) / span, 0.0f, 1.0f);
 		const float packed = wind_packing_step(r, uw, fresh, p_dt_h);
 		if (packed <= r) {
@@ -2816,6 +3272,41 @@ void SnowCover3D::_wind_pack(float p_dt_h, const LocalVector<float> &p_wind) {
 		rho[i] = swe[i] / MAX(depth_after, 1e-6f);
 		slab[i] = MIN(MAX(slab[i], top_after), depth_after);
 		cell_slab_cover.write[i] = 0.0f; // the top is the slab now
+		if (layers_enabled && layer_n.size() == resolution * resolution && layer_n[i] > 0) {
+			// The packed top (its top metres, through as many layers as it takes) is wind slab: the layers in it
+			// turn to wind slab and pack by the same factor, and one reaching deeper is split there.
+			int k = layer_n[i];
+			const int b = i * PACK_LAYERS;
+			float left = top;
+			for (int j = k - 1; j >= 0 && left > 0.01f; j--) {
+				const float rj = MAX(layer_rho[b + j], 30.0f);
+				const float dj = layer_swe[b + j] / rj;
+				if (layer_kind[b + j] != LAYER_WIND && dj > 1.5f * left) {
+					if (k >= PACK_LAYERS) {
+						break; // no room to split: the layer stays as it is
+					}
+					// Split: the part above the packed depth goes on top of what is left of it.
+					for (int m = k; m > j + 1; m--) {
+						layer_swe.write[b + m] = layer_swe[b + m - 1];
+						layer_rho.write[b + m] = layer_rho[b + m - 1];
+						layer_age.write[b + m] = layer_age[b + m - 1];
+						layer_kind.write[b + m] = layer_kind[b + m - 1];
+					}
+					const float part = left * rj;
+					layer_swe.write[b + j] -= part;
+					layer_swe.write[b + j + 1] = part;
+					layer_rho.write[b + j + 1] = MIN(rj * packed / r, 917.0f);
+					layer_age.write[b + j + 1] = layer_age[b + j];
+					layer_kind.write[b + j + 1] = LAYER_WIND;
+					k++;
+					layer_n.write[i] = uint8_t(k);
+					break;
+				}
+				layer_kind.write[b + j] = LAYER_WIND;
+				layer_rho.write[b + j] = MIN(rj * packed / r, 917.0f); // packed as the bulk's top was
+				left -= dj;
+			}
+		}
 		if (crust_enabled && cell_crust[i] > 0.0f) {
 			cell_crust_burial.write[i] = MAX(cell_crust_burial[i] - (top - top_after), 0.0f);
 		}
@@ -2966,7 +3457,7 @@ void SnowCover3D::_feed_spindrift() {
 	if (Node3D *f = spindrift_node->get_flow()) {
 		f->set("smoke_fade", spindrift_fade(inputs.humidity));
 		f->set("smoke_density", 0.5f);
-		f->set("vorticity", 2.0f);
+		f->set("vorticity", 0.5f); // low enough that the plume keeps the wind's speed and runs long (PhysX f09677c98a)
 	}
 }
 
@@ -3382,6 +3873,7 @@ void SnowCover3D::clear() {
 	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet }) {
 		f->fill(0.0f);
 	}
+	layer_n.fill(0);
 	_upload();
 }
 
@@ -3402,6 +3894,11 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density, bool p_world) {
 		const float swe = (cell_swe[i] > SWE_MIN ? cell_swe[i] : 0.0f) + MAX(p_swe_mm, 0.0f);
 		cell_swe.write[i] = swe;
 		cell_density.write[i] = swe / MAX(depth_old + MAX(p_swe_mm, 0.0f) / rho_new, 1e-6f);
+		// Settled snow (200 kg/m3 and up) is an old layer; lighter is new snow.
+		_layers_push(i, MAX(p_swe_mm, 0.0f), rho_new, rho_new >= 200.0f ? LAYER_OLD : LAYER_NEW);
+		if (rho_new >= 200.0f && layer_n.size() == resolution * resolution && layer_n[i] > 0) {
+			layer_age.write[i * PACK_LAYERS + layer_n[i] - 1] = LAYER_BOND_HOURS;
+		}
 		cell_albedo.write[i] = ALBEDO_FRESH;
 		cell_new_depth.write[i] = MAX(p_swe_mm, 0.0f) / rho_new;
 		if (cell_cups.size() == cell_swe.size()) {
@@ -3454,6 +3951,7 @@ void SnowCover3D::add_drift(const Vector3 &p_position, float p_radius, float p_d
 			const float swe = (cell_swe[i] > SWE_MIN ? cell_swe[i] : 0.0f) + add * rho_new;
 			cell_swe.write[i] = swe;
 			cell_density.write[i] = swe / (depth_old + add);
+			_layers_push(i, add * rho_new, rho_new, LAYER_WIND);
 			if (cell_wind_slab.size() == cell_swe.size()) {
 				cell_wind_slab.write[i] = (depth_old > 0.0f ? cell_wind_slab[i] : 0.0f) + add;
 				cell_slab_cover.write[i] = 0.0f;
@@ -4339,6 +4837,13 @@ void SnowCover3D::set_drift_obstacles(bool p_enabled) {
 	drift_obstacles = p_enabled;
 }
 
+void SnowCover3D::set_drift_relief(bool p_enabled) {
+	drift_relief = p_enabled;
+	if (world) {
+		world->drift_relief = p_enabled;
+	}
+}
+
 void SnowCover3D::set_drift_enabled(bool p_enabled) {
 	drift_enabled = p_enabled;
 }
@@ -4465,6 +4970,12 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_slide_holding_decay", "per_degree"), &SnowCover3D::set_slide_holding_decay);
 	ClassDB::bind_method(D_METHOD("get_slide_holding_decay"), &SnowCover3D::get_slide_holding_decay);
 	ClassDB::bind_method(D_METHOD("set_drift_obstacles", "enabled"), &SnowCover3D::set_drift_obstacles);
+	ClassDB::bind_method(D_METHOD("set_drift_relief", "enabled"), &SnowCover3D::set_drift_relief);
+	ClassDB::bind_method(D_METHOD("get_layers_at", "position"), &SnowCover3D::get_layers_at);
+	ClassDB::bind_method(D_METHOD("set_layers_enabled", "enabled"), &SnowCover3D::set_layers_enabled);
+	ClassDB::bind_method(D_METHOD("is_layers_enabled"), &SnowCover3D::is_layers_enabled);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("layer_compaction", "density", "stress", "celsius", "hours"), &SnowCover3D::layer_compaction);
+	ClassDB::bind_method(D_METHOD("is_drift_relief_enabled"), &SnowCover3D::is_drift_relief_enabled);
 	ClassDB::bind_method(D_METHOD("is_drift_obstacles_enabled"), &SnowCover3D::is_drift_obstacles_enabled);
 	ClassDB::bind_method(D_METHOD("set_drift_enabled", "enabled"), &SnowCover3D::set_drift_enabled);
 	ClassDB::bind_method(D_METHOD("is_drift_enabled"), &SnowCover3D::is_drift_enabled);
@@ -4675,6 +5186,8 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drift_enabled"), "set_drift_enabled", "is_drift_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_distance", PROPERTY_HINT_RANGE, "1,1000,1,suffix:m"), "set_drift_distance", "get_drift_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drift_obstacles"), "set_drift_obstacles", "is_drift_obstacles_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drift_relief"), "set_drift_relief", "is_drift_relief_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "layers_enabled"), "set_layers_enabled", "is_layers_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_strength", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_drift_strength", "get_drift_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_threshold_wind", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:m/s"), "set_drift_threshold_wind", "get_drift_threshold_wind");
 	ADD_GROUP("Wind Transport", "wind_");

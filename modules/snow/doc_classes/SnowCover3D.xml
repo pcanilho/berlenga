@@ -388,6 +388,13 @@
 				Returns the [SnowLakeIce3D] this cover made to draw its ice, or [code]null[/code].
 			</description>
 		</method>
+		<method name="get_layers_at" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The pack's layers at [param position] (its cell), bottom first, as dictionaries: [code]swe[/code] (kg/m²), [code]density[/code] (kg/m³), [code]depth[/code] (m), [code]age[/code] (hours) and [code]kind[/code] ([code]"new"[/code] fallen snow under a week old, [code]"wind"[/code] wind-laid or wind-packed slab, [code]"old"[/code] settled). Empty with [member layers_enabled] off.
+			</description>
+		</method>
 		<method name="get_main_thread_msec" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -687,6 +694,16 @@
 				Returns lake ice after [param hours] at [param air_celsius] (below 0 °C) from [param ice] metres, under [param snow_depth] metres of snow of [param snow_density] kg/m³: Stefan's law with the heat path through the snow and the air (Leppäranta 1993; Ashton 1989), integrated exactly.
 			</description>
 		</method>
+		<method name="layer_compaction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="density" type="float" />
+			<param index="1" name="stress" type="float" />
+			<param index="2" name="celsius" type="float" />
+			<param index="3" name="hours" type="float" />
+			<description>
+				A layer's density (kg/m³) after [param hours] under [param stress] (Pa, the weight of the snow above) at [param celsius]: Crocus's viscous settling (Vionnet et al. 2012), eta = eta0 (rho / 250) exp(0.1 (0 - T) + 0.023 rho), eta0 7.62e6 kg/m/s.
+			</description>
+		</method>
 		<method name="new_snow_density" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="celsius" type="float" />
@@ -858,6 +875,9 @@
 		<member name="drift_obstacles" type="bool" setter="set_drift_obstacles" getter="is_drift_obstacles_enabled" default="true">
 			Rocks, walls, buildings and vehicles (WorldWeather.obstacle_height_at: the weather's [code]weather_shelter[/code] obstacles) count as terrain in the drift's Sx (Winstral and Marks 2002): the wind strips their tops and snow fills in behind them, out to about 15 heights for a wall (Tabler 1991). Blowing snow also reads their lee (WorldWeather.obstacle_lee_at at the snow's surface): the transport flux drops behind them and the snow carried in settles until the drift reaches about 1.2 times the obstacle's height. Read a sixteenth of the square each update; a change bakes Sx again.
 		</member>
+		<member name="drift_relief" type="bool" setter="set_drift_relief" getter="is_drift_relief_enabled" default="true">
+			Blowing snow sees the snow's own relief: drifts, banks and dunes change the wind's shear on the snow as hills do on sand, from linearised flow (Jackson and Hunt 1975, in Kroy, Sauermann and Herrmann's 2002 form, shared with the terrain's dune sea). The shear peaks upwind of a crest and drops past it, so a drift's windward side erodes and its lee fills: a big drift becomes a snow dune and creeps downwind, one shorter than about 20 m flattens, and on bare ground it is blown away. Dry blown snow steeper than 38 degrees slides down as a slip face. The shear is kept for 5 minutes of weather, until the wind turns or the square moves.
+		</member>
 		<member name="drift_strength" type="float" setter="set_drift_strength" getter="get_drift_strength" default="0.6">
 			How strongly drift redistributes falling snow: at full wind, a fully sheltered cell gets [code]1 + drift_strength[/code] times the snowfall and a fully exposed cell [code]1 - drift_strength[/code] times.
 		</member>
@@ -888,6 +908,9 @@
 		</member>
 		<member name="lapse_rate" type="float" setter="set_lapse_rate" getter="get_lapse_rate" default="6.5">
 			How fast the air cools with height above the weather map's ground height, in °C per km (6.5, the standard atmosphere). Sets where rain turns to snow on a mountain and where snow stays.
+		</member>
+		<member name="layers_enabled" type="bool" setter="set_layers_enabled" getter="is_layers_enabled" default="true">
+			The pack as layers (up to six a cell), as Crocus and SNOWPACK keep it: each snowfall and each wind deposit is a layer with its own density and age, settling under the weight above it ([method layer_compaction]); the wind's packing turns the top into a wind slab layer. The bulk fields stay the pack's total: each update the layers are matched to them, melt, erosion, slides and releases coming off the top and the bulk's settling going to the layers by their pore space. Avalanches weigh a slab over a weak layer by its own layers (light new snow on a dense old pack is light), and the wind packs the top by its own density. About 2.5 ms more an update on a 256 x 256 square. See [method get_layers_at].
 		</member>
 		<member name="liquid_capacity" type="float" setter="set_liquid_capacity" getter="get_liquid_capacity" default="0.05">
 			The share of its ice the snowpack holds as liquid water before meltwater and rain drain out.

@@ -1140,11 +1140,12 @@
    "name": "Soft ground",
    "settings": [
     "soft_soil",
+    "parked_settling",
     "tire_pressure",
     "ploughing"
    ],
    "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in.",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in; a vehicle left standing in wet mud keeps settling, and suction holds its tyres as it pulls away.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1253,10 +1254,11 @@
     "hull_seal",
     "hull_leak_area",
     "air_intake_height",
-    "snorkel"
+    "snorkel",
+    "wake_wash"
    ],
    "note": "",
-   "what": "rivers, fords and floods buoy a vehicle by how much of its body keeps water out and push it with the current, carrying it off when the water is deep and fast; a wading vehicle pushes a bow wave and wake that grow with speed, its cab floods through door and floor gaps until it settles and sinks, then drains on land, and the engine stalls once water reaches the air intake, which a snorkel lifts over the roof.",
+   "what": "rivers, fords and floods buoy a vehicle by how much of its body keeps water out and push it with the current, carrying it off when the water is deep and fast; a wading vehicle pushes a bow wave and wake that grow with speed and break on the banks, wetting the strip they run up and slowly wearing it away; at a steady pace the trough behind the bow keeps the water low at the air intake, but too fast the bow wave climbs over it; its cab floods through door and floor gaps until it settles and sinks, then drains on land, and the engine stalls once water reaches the air intake, which a snorkel lifts over the roof.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2601,10 +2603,22 @@
    "name": "Game trails",
    "settings": [
     "VegetationField3D.make_game_trails()",
-    "GroundSurface3D.trail_pugging"
+    "GroundSurface3D.trail_pugging",
+    "trail_wallows"
    ],
    "note": "",
-   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs; grass wears to trodden soil along them, stones stand proud on the tread, the packed ground pools rain first, and wet trails churn into hoof-pocked mud where traffic is heaviest.",
+   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs; grass wears to trodden soil along them, stones stand proud on the tread, the packed ground pools rain first, and wet trails churn into hoof-pocked mud where traffic is heaviest, and animals roll muddy wallows into wet level stretches, more in warm weather.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Avalanche tracks",
+   "settings": [
+    "PlantGenerator.make_avalanche_track()"
+   ],
+   "note": "",
+   "what": "ground an avalanche cleared shows torn turf and debris, then fireweed, ferns and tall forbs.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2748,10 +2762,12 @@
   {
    "name": "Falling leaves",
    "settings": [
-    "LeafFall3D"
+    "LeafFall3D",
+    "creep_speed",
+    "field_litter"
    ],
    "note": "",
-   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts and passing bodies lift them off the ground; on ponds and rivers they float and drift, and on snow they lie until it melts and brings them back out.",
+   "what": "leaves fall from the crowns through the wind as autumn sheds them, slide and flip along the ground in a breeze to settle in the leaf drifts, and gusts and passing bodies lift them off the ground; on ponds and rivers they float and drift, and on snow they lie until it melts and brings them back out.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3660,10 +3676,11 @@
    "name": "Wind moves lying snow",
    "settings": [
     "SnowCover3D.wind_transport_enabled",
-    "drift_obstacles"
+    "drift_obstacles",
+    "drift_relief"
    ],
    "note": "",
-   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow; snow drifts in behind rocks, walls, buildings and vehicles and blows off their tops.",
+   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow; snow drifts in behind rocks, walls, buildings and vehicles and blows off their tops; the wind shapes large drifts into dunes with steep lee slip faces and flattens small ones.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3745,6 +3762,20 @@
    ],
    "note": "",
    "what": "snow lying on a body weighs on it, slides off tilted tops as slabs and drops off in clumps.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
+   "name": "Roof snow",
+   "settings": [
+    "snow_roof",
+    "SnowBodies3D.roof_piles",
+    "snow_roof_material",
+    "snow_roof_heat"
+   ],
+   "note": "",
+   "what": "roofs hold the share of snowfall building codes give them and shed it by roofing, metal sooner than shingles and heated roofs sooner still; what slides off lands as a bank past the eave.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"

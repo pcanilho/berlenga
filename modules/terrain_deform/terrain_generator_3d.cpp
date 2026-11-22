@@ -3541,7 +3541,7 @@ float TerrainGenerator3D::_sea_sample(real_t p_x, real_t p_z) const {
 			};
 			real_t f = p_s - fl;
 			f = f * f * (3.0 - 2.0 * f);
-			return Math::lerp(hsh(i), hsh(i + 1), f);
+			return Math::lerp(real_t(hsh(i)), real_t(hsh(i + 1)), f);
 		};
 		const uint32_t k = uint32_t(seed) * 2654435761u;
 		const real_t shift = 0.6 * n1(s / 10.0, k + 1u) + 0.18 * n1(s / 3.5 + 0.37, k + 2u);
@@ -4190,7 +4190,7 @@ float TerrainGenerator3D::_nebkha_sample(real_t p_x, real_t p_z) const {
 		if (d <= 0.0) {
 			const real_t q = (d * d + c * c) / (nb.radius * nb.radius);
 			if (q < 1.0) {
-				hgt = nb.height * Math::pow(1.0 - q, real_t(1.5));
+				hgt = nb.height * Math::pow(real_t(1.0 - q), real_t(1.5));
 			}
 		} else if (d < nb.tail) {
 			// Along the tail the crest falls from the dome's top to nothing, convex near the plant (the sand drifts on
@@ -4202,8 +4202,8 @@ float TerrainGenerator3D::_nebkha_sample(real_t p_x, real_t p_z) const {
 			if (a * a < 1.0) {
 				// Near the plant the dome's round shape takes over (the tail starts at its full width).
 				const real_t q = (d * d + c * c) / (nb.radius * nb.radius);
-				const real_t dome = q < 1.0 ? nb.height * Math::pow(1.0 - q, real_t(1.5)) : 0.0;
-				hgt = MAX(dome, crest * Math::pow(1.0 - a * a, real_t(1.5)));
+				const real_t dome = q < 1.0 ? nb.height * Math::pow(real_t(1.0 - q), real_t(1.5)) : 0.0;
+				hgt = MAX(dome, crest * Math::pow(real_t(1.0 - a * a), real_t(1.5)));
 			}
 		}
 		best = MAX(best, float(hgt));
@@ -4453,7 +4453,7 @@ float TerrainGenerator3D::_oasis_height(real_t p_x, real_t p_z, float p_ground) 
 		const real_t shore = 0.92 * rad;
 		if (dist <= shore) {
 			const real_t d = dist / MAX(shore, real_t(0.1));
-			const real_t bowl = Math::pow(MAX(1.0 - d * d, 0.0), real_t(1.2));
+			const real_t bowl = Math::pow(real_t(MAX(1.0 - d * d, 0.0)), real_t(1.2));
 			const real_t depth = MIN(real_t(2.4), real_t(0.6) + real_t(0.35) * rad);
 			const real_t lumps = (neb_patch(o.seed, p_x / 1.6, p_z / 1.6) - 0.5) * 0.4 + (neb_patch(o.seed + 1u, p_x / 0.7, p_z / 0.7) - 0.5) * 0.15;
 			// Runnels: each a groove whose line wanders sideways with distance (low-frequency noise, a couple of

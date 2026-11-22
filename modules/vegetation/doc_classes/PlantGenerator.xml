@@ -237,6 +237,15 @@
 				Returns the walkers a year that halve a preset's cover on a worn path, from trampling studies (Cole 1995). Plantain 1000, grasses 300, heaths and scrub 40, ferns 30; 0 for presets that are not ground plants.
 			</description>
 		</method>
+		<method name="make_avalanche_track" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				The ground layer of avalanche tracks as [PlantSpecies], placed only where [WorldStand] marks [constant DISTURBANCE_AVALANCHE_KIND] and by the years since the avalanche ([constant PlantSpecies.RULE_STAND_AGE]): torn turf, broken twigs and shed needles in the first years, then fireweed, lady fern, raspberry, a broad-leaved tall forb and bilberry, on slopes up to 45 degrees. The bent shrubs are the trees'.
+			</description>
+		</method>
 		<method name="make_beaver" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.BeaverStand" />
@@ -853,6 +862,9 @@
 		</constant>
 		<constant name="BEAVER_MAX" value="2" enum="BeaverStand">
 			Number of beaver stands.
+		</constant>
+		<constant name="DISTURBANCE_AVALANCHE_KIND" value="6">
+			The [WorldStand] disturbance kind of an avalanche track ([constant WorldStand.DISTURBANCE_AVALANCHE]), which [method make_avalanche_track] grows on.
 		</constant>
 		<constant name="DISTURBANCE_BEAVER_KIND" value="4">
 			The [WorldStand] disturbance kind of a drained beaver pond, which [constant BEAVER_MEADOW] grows on.

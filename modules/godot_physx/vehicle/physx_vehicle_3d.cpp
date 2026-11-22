@@ -96,6 +96,12 @@ struct PhysXVehicleSoilWheel {
 	// Ruts steer the wheels (docs/ideas/mud.md, round 9): the deformation's cross slope under the tread along the
 	// tyre's lateral direction, and the rut wall's height beside each sidewall (GroundSurface3D::get_rut_guidance()).
 	Vector3 guide;
+	// Parked in mud (docs/ideas/mud.md, round 22.2): world seconds standing on this soil, the creep settlement it has
+	// brought, and the suction holding the tyre (N, the last substep's).
+	float rest = 0.0f;
+	float moved = 0.0f; // m rolled since it last stood
+	float creep = 0.0f;
+	float suction = 0.0f;
 #ifdef MODULE_GROUND_ENABLED
 	GroundSoil soil;
 #endif
@@ -230,6 +236,7 @@ public:
 	float base_sticky_speed = -1.0f;
 	float base_lat_sticky_speed = -1.0f;
 	bool clogging = true;
+	bool parked = true; // round 22.2: parked wheels settle into mud
 
 	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
 		Vehicle4W &v = *vehicle;
@@ -364,8 +371,37 @@ public:
 			// sinkage is a steady state over fresh soil (Lyasko 2010): it builds over the travel of a contact
 			// length, and a wheel spinning in place digs in over seconds rather than at once. A skidding wheel
 			// ploughs at its static sinkage.
-			const float static_z = MAX(probe.static_sinkage, rut);
-			const float target = MAX(slip > 0.0f ? probe.sinkage : probe.static_sinkage, rut);
+			// Parked in mud (round 22.2): a load left standing on soft saturated soil keeps settling after the
+			// undrained sinkage by creep, secondary compression growing with the log of time (Buisman 1936):
+			// dz = C D log10(1 + t / 1 s), C 0.02 for soft clays and organic mud (C_alpha / (1 + e0)), D the
+			// depth the load stresses (two tyre widths, within the loose layer), scaled by how sticky (saturated,
+			// clayey) the soil is. The time is the world's (WorldWeather.time_scale()). Rolling away, the
+			// wheel climbs out of its hollow over a contact length.
+			float creep = 0.0f;
+			if (parked && sw.soil.stickiness > 0.0f) {
+				const float travel = Math::abs(v_lng) * p_dt;
+				const float cl = MAX(probe.contact_length, 0.05f);
+				if (Math::abs(v_lng) < 0.05f) {
+					float scale = 1.0f;
+					if (const WorldWeather *wm = WorldContracts::weather(); wm && wm->has_provider()) {
+						scale = MAX(float(wm->time_scale()), 0.0f);
+					}
+					if (sw.moved > 3.0f * cl) {
+						sw.rest = 0.0f; // stopped somewhere new
+					}
+					sw.moved = 0.0f;
+					sw.rest += p_dt * scale;
+				} else {
+					sw.moved += travel;
+				}
+				const float d = MIN(2.0f * width, MAX(sw.soil.max_sinkage - probe.static_sinkage, 0.0f));
+				creep = 0.02f * sw.soil.stickiness * d * (Math::log(1.0f + sw.rest) / 2.302585f) * Math::exp(-sw.moved / cl);
+			} else {
+				sw.rest = 0.0f;
+			}
+			sw.creep = creep;
+			const float static_z = MAX(probe.static_sinkage + creep, rut);
+			const float target = MAX((slip > 0.0f ? probe.sinkage : probe.static_sinkage) + creep, rut);
 			if (sw.sinkage < static_z) {
 				sw.sinkage += (static_z - sw.sinkage) * MIN(p_dt / 0.1f, 1.0f);
 			}
@@ -489,6 +525,7 @@ public:
 	Vehicle4W *vehicle = nullptr;
 	PhysXVehicleSoilWheel *wheels = nullptr;
 	bool adhesion = true;
+	bool parked = true;
 
 	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
 		Vehicle4W &v = *vehicle;
@@ -532,7 +569,17 @@ public:
 			// At the wheel's actual sinkage (which builds over time), not the steady state of this slip.
 			const float width = 2.0f * wp.halfWidth;
 			// Plus sticky clay holding the tread as it leaves the rut (stage 3).
-			const float resist = GroundTerramechanics::compaction_resistance(sw.soil, width, sw.sinkage, sw.already) + GroundTerramechanics::wheel_bulldozing_resistance(sw.soil, width, wp.radius, sw.sinkage, sw.already) + (adhesion ? GroundTerramechanics::adhesion_resistance(sw.soil, width, sw.sinkage) : 0.0f);
+			// Suction (round 22.2): a footing left in saturated clay is held by the negative pore pressure under it
+			// as it is pulled away, a breakout force past its weight that grows as the soil sets up round it (Vesic
+			// 1969, breakout of objects from the sea bottom; Das and Seeley 1982 on the time to set up). Here the
+			// trailing half of the contact peels at the soil's undrained strength (its cohesion), building over
+			// about ten minutes of rest (1 - exp(-t / 600 s)), scaled by the soil's stickiness, and gone once the
+			// wheel has rolled out (the rest decays over a contact length of travel).
+			sw.suction = 0.0f;
+			if (parked && sw.rest > 0.0f && sw.soil.stickiness > 0.0f) {
+				sw.suction = 1000.0f * sw.soil.cohesion * 0.5f * ws.contact_length * width * sw.soil.stickiness * (1.0f - Math::exp(-sw.rest / 600.0f)) * Math::exp(-sw.moved / MAX(ws.contact_length, 0.05f));
+			}
+			const float resist = GroundTerramechanics::compaction_resistance(sw.soil, width, sw.sinkage, sw.already) + GroundTerramechanics::wheel_bulldozing_resistance(sw.soil, width, wp.radius, sw.sinkage, sw.already) + (adhesion ? GroundTerramechanics::adhesion_resistance(sw.soil, width, sw.sinkage) : 0.0f) + sw.suction;
 			const float r = resist * CLAMP(v_lng / 0.3f, -1.0f, 1.0f);
 			if (r != 0.0f) {
 				const PxVec3 dF = lng * -r;
@@ -783,6 +830,8 @@ bool PhysXVehicle3D::_build() {
 	impl->soil_tire.vehicle = &impl->vehicle;
 	impl->soil_tire.wheels = impl->soil_wheels;
 	impl->soil_road.clogging = tyre_clogging;
+	impl->soil_road.parked = parked_settling;
+	impl->soil_tire.parked = parked_settling;
 	impl->vehicle.soil_road_component = soft_soil ? &impl->soil_road : nullptr;
 	impl->vehicle.soil_tire_component = soft_soil ? &impl->soil_tire : nullptr;
 #endif
@@ -998,6 +1047,22 @@ void PhysXVehicle3D::set_soft_soil(bool p_enabled) {
 void PhysXVehicle3D::set_tyre_clogging(bool p_enabled) {
 	tyre_clogging = p_enabled;
 	impl->soil_road.clogging = p_enabled;
+}
+
+void PhysXVehicle3D::set_parked_settling(bool p_enabled) {
+	parked_settling = p_enabled;
+	impl->soil_road.parked = p_enabled;
+	impl->soil_tire.parked = p_enabled;
+}
+
+real_t PhysXVehicle3D::get_wheel_creep(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].creep;
+}
+
+real_t PhysXVehicle3D::get_wheel_suction(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].suction;
 }
 
 void PhysXVehicle3D::set_belly_drag(bool p_enabled) {
@@ -2352,6 +2417,11 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_tyre_clogging", "enabled"), &PhysXVehicle3D::set_tyre_clogging);
 	ClassDB::bind_method(D_METHOD("is_tyre_clogging"), &PhysXVehicle3D::is_tyre_clogging);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tyre_clogging"), "set_tyre_clogging", "is_tyre_clogging");
+	ClassDB::bind_method(D_METHOD("set_parked_settling", "enabled"), &PhysXVehicle3D::set_parked_settling);
+	ClassDB::bind_method(D_METHOD("is_parked_settling"), &PhysXVehicle3D::is_parked_settling);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "parked_settling"), "set_parked_settling", "is_parked_settling");
+	ClassDB::bind_method(D_METHOD("get_wheel_creep", "wheel"), &PhysXVehicle3D::get_wheel_creep);
+	ClassDB::bind_method(D_METHOD("get_wheel_suction", "wheel"), &PhysXVehicle3D::get_wheel_suction);
 	ClassDB::bind_method(D_METHOD("set_belly_drag", "enabled"), &PhysXVehicle3D::set_belly_drag);
 	ClassDB::bind_method(D_METHOD("is_belly_drag"), &PhysXVehicle3D::is_belly_drag);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "belly_drag"), "set_belly_drag", "is_belly_drag");

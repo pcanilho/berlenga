@@ -835,6 +835,18 @@
 				How far [param passes] wheel passes pack the soil, 0 to 1: most of it in the first few ([code]1 - exp(-passes / 4)[/code]).
 			</description>
 		</method>
+		<method name="get_wallow_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many wallow sites animals have rolled out since start (see [member trail_wallows]).
+			</description>
+		</method>
+		<method name="get_wallow_visits" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many wallowing visits there have been since start.
+			</description>
+		</method>
 		<method name="wash_wake">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -1081,6 +1093,9 @@
 		</member>
 		<member name="stream_fords" type="bool" setter="set_stream_fords" getter="is_stream_fords" default="true">
 			Wheels in running water from the water contract scour the bed: a share of the rut (rising with the current's shear past the remoulded soil's 0.5 Pa) and most of its rims leave as fines dropped into the water ([method WorldWater.add_sediment_mass]), a plume the stream carries on. A wheel on a bank over water tests the bank as an infinite-slope slab 0.5 m deep (Skempton and DeLory 1957) under its load, carried undrained by the pore water where the slab lies below the water table (the stream's level plus a 0.3 m fringe); under a factor of safety of 1 the slab slumps to the toe as fresh mud and half its fines go into the water.
+		</member>
+		<member name="trail_wallows" type="bool" setter="set_trail_wallows" getter="is_trail_wallows" default="true">
+			Animals roll wallows into wet, level, unfrozen ground on the stand contract's game trails: muddy bowls about 1.6 m across that deepen by 2 cm a visit toward 35 cm, with mud heaped on the rim, used more in warm air. Unused, the wet soil slumps back into them. See [method get_wallow_count].
 		</member>
 		<member name="wake_wash" type="bool" setter="set_wake_wash" getter="is_wake_wash" default="true">
 			A wading vehicle's waves wash the banks (see [method wash_wake]): they break on the bank, wet the strip they run up and, past the soil's critical shear, wear it into the water as fines. Needs [member stream_fords].

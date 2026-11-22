@@ -270,5 +270,8 @@
 		<constant name="DISTURBANCE_AVALANCHE" value="6" enum="Disturbance">
 			A dense avalanche broke the stand (SnowAvalanche3D [code]stand_damage[/code]): the age is the years since.
 		</constant>
+		<constant name="DISTURBANCE_ICE_STORM" value="7" enum="Disturbance">
+			Freezing rain loaded the crowns past breaking (TreeGenerator's ice storm stand): broken tops and limbs, bent birch, the canopy opened but standing. The age is the years since.
+		</constant>
 	</constants>
 </class>

@@ -34,7 +34,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Shelter: bare ground under the roof; tree crowns hold their snow.*
 
-- **Wind moves lying snow** (`SnowCover3D.wind_transport_enabled`, `drift_obstacles`): windward shoulders and crests are scoured and the lee fills with wind-packed snow; snow drifts in behind rocks, walls, buildings and vehicles and blows off their tops.
+- **Wind moves lying snow** (`SnowCover3D.wind_transport_enabled`, `drift_obstacles`, `drift_relief`): windward shoulders and crests are scoured and the lee fills with wind-packed snow; snow drifts in behind rocks, walls, buildings and vehicles and blows off their tops; the wind shapes large drifts into dunes with steep lee slip faces and flattens small ones.
 
   ![A ridge after a day of 15 m/s wind: snow transport off, then on in raster and path traced](media/snow-wind.jpg)
 
@@ -57,6 +57,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 - **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.
 
 - **Snow on bodies** (`SnowBodies3D`: `weight_enabled`, `slide_enabled`, `clumps_enabled`): snow lying on a body weighs on it, slides off tilted tops as slabs and drops off in clumps.
+- **Roof snow** (`snow_roof` group; `SnowBodies3D.roof_piles`; meta `snow_roof_material`, `snow_roof_heat`): roofs hold the share of snowfall building codes give them and shed it by roofing, metal sooner than shingles and heated roofs sooner still; what slides off lands as a bank past the eave.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.
 
   ![Thin snow over the ground and props, raster and path traced](media/snow-props.jpg)

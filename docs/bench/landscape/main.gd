@@ -861,6 +861,8 @@ func _ready() -> void:
 		await _hut()
 		if args.has("hut-icicles"):
 			await _hut_icicles()
+		if args.has("hut-roof-snow"):
+			await _hut_roof_snow()
 		if args.has("hut-rime"):
 			await _hut_rime()
 	if slip_walk.size() == 4 and prints != null:
@@ -893,6 +895,10 @@ func _ready() -> void:
 			await _rooting_tyre()
 	if args.has("gully-cam"):
 		_gully_cam()
+	if args.has("dust-devil") and ClassDB.class_exists("PhysXDustDevils3D"):
+		await _dust_devil()
+	if args.has("rime-ridge"):
+		await _rime_ridge()
 	if args.has("lodging"):
 		await _lodging()
 	if args.has("lens-cam"):
@@ -3312,6 +3318,13 @@ func _weather_settings() -> void:
 		weather.mid_cloud_cover = float(args["mid-cover"])
 		if weather.cloud_cover <= 0.0:
 			weather.cloud_variation = 0.0 # a clear sky: the regional variation would still raise clouds out of 0 cover
+	if args.has("ice-storm") and "ice_storm_glaze" in weather:
+		# --ice-storm=MM: freezing rain's glaze (WeatherMap3D.ice_storm_glaze, mm floor; trees 441bba54 grow ice shells
+		# and icicles on near trees by its band), the air below freezing (--air-temp, else -3 C).
+		weather.ice_storm_glaze = float(args["ice-storm"]) if String(args["ice-storm"]) != "" else 15.0
+		if not args.has("air-temp"):
+			weather.air_follows_climate = false
+			weather.temperature = -3.0
 	if args.has("air-temp"):
 		# --air-temp=C: the air mass set here, not the date's climate (lake-effect and wave cloud frames).
 		weather.air_follows_climate = false
@@ -3758,7 +3771,7 @@ func _generated_forest(clearing: bool) -> Biome:
 		# --host-tree=lime|silver_fir|scots_pine: a few heavily infested hosts among the stand (trees.md 5n/5ay):
 		# --mistletoe=A (3) balls, --brooms=B (silver fir broom rust, 3), --host-spacing m apart (50); --host-cam frames
 		# one crown from below against the sky (--host-dist 14 m, --host-look 12 m up the stem).
-		var hosts := {"lime": TreeGenerator.PRESET_LIME, "silver_fir": TreeGenerator.PRESET_SILVER_FIR, "scots_pine": TreeGenerator.PRESET_SCOTS_PINE, "hawthorn": TreeGenerator.PRESET_HAWTHORN, "white_willow": TreeGenerator.PRESET_WHITE_WILLOW}
+		var hosts := {"lime": TreeGenerator.PRESET_LIME, "silver_fir": TreeGenerator.PRESET_SILVER_FIR, "scots_pine": TreeGenerator.PRESET_SCOTS_PINE, "hawthorn": TreeGenerator.PRESET_HAWTHORN, "white_willow": TreeGenerator.PRESET_WHITE_WILLOW, "birch": TreeGenerator.PRESET_BIRCH, "oak": TreeGenerator.PRESET_OAK}
 		var hn := String(args["host-tree"]) if String(args["host-tree"]) != "" else "lime"
 		var keep_p = tg.preset
 		var keep_m: float = tg.mistletoe
@@ -4630,6 +4643,23 @@ func _build_cover() -> void:
 			for msp in mounds:
 				b.species.append(msp)
 			_log("mounds set %d: %d species" % [ms, mounds.size()])
+	if args.has("fairy-rings") and ClassDB.class_has_method("PlantGenerator", "make_fairy_rings"):
+		# --fairy-rings: the rings' mushrooms (PlantGenerator.make_fairy_rings, vegetation 98569e47) on the same world
+		# rings the grass draws (GrassField3D.fairy_rings, on by default).
+		var fr: Array = ClassDB.class_call_static("PlantGenerator", "make_fairy_rings", 3, true, season)
+		for fsp in fr:
+			b.species.append(fsp)
+		_log("fairy rings: %d species" % fr.size())
+	if args.has("dew-webs") and ClassDB.class_has_method("PlantGenerator", "make_dew_webs"):
+		# --dew-webs[=D]: sheet and orb webs on the open grass (PlantGenerator.make_dew_webs, vegetation 98569e47),
+		# shown by the weather's dew and frost on autumn mornings; D (0..1) forces the dew through the season's "dew".
+		var ws: Dictionary = season.duplicate()
+		if String(args["dew-webs"]) != "":
+			ws["dew"] = float(args["dew-webs"])
+		var dw: Array = ClassDB.class_call_static("PlantGenerator", "make_dew_webs", 3, true, ws)
+		for dsp in dw:
+			b.species.append(dsp)
+		_log("dew webs: %d species" % dw.size())
 	if args.has("grazing") and ClassDB.class_has_method("PlantGenerator", "make_grazing"):
 		# --grazing=cattle|horse|deer: dung and the ungrazed roughs round it over the open ground (PlantGenerator.
 		# make_grazing, vegetation fbc92404), listed after the stand's species; called by name for older binaries.
@@ -6329,6 +6359,100 @@ func _hut_rime() -> void:
 	_log("hut rime: %d targets, %d feathers after %.0f h, wind %s" % [int(rime.call("get_target_count")), int(rime.call("get_feather_count")), hrs, str(wv)])
 
 
+func _hut_roof_snow() -> void:
+	# --hut-roof-snow[=H]: H (24) hours of snowfall (--roof-rate 4 mm/h at --roof-temp -6 C) on the hut, its two roof
+	# planes tracked as roof faces (group snow_roof, SnowBodies3D, snow c0c29576) with --roof-material (shingle) and
+	# --roof-heat (20 W/m2, a lived-in hut): the load slides off and lands as a bank past the eave (roof_piles).
+	# The faces are found from the roof mesh (two planes from the level eaves up to the ridge) and carry an
+	# invisible box each for their size.
+	var root := get_node_or_null("Hut") as Node3D
+	var sb = snow.call("get_bodies") if snow.has_method("get_bodies") else null
+	if root == null or sb == null:
+		_log("hut roof snow: no hut or no snow bodies")
+		return
+	var inv := root.global_transform.affine_inverse()
+	var pts := PackedVector3Array()
+	for mi in root.find_children("*", "MeshInstance3D", true, false):
+		var m := mi as MeshInstance3D
+		if m.mesh == null or not String(m.name).begins_with("Hut"):
+			continue
+		var xf := inv * m.global_transform
+		for v in m.mesh.get_faces():
+			pts.append(xf * v)
+	if pts.is_empty():
+		_log("hut roof snow: no hut mesh")
+		return
+	var lo := pts[0]
+	var hi := pts[0]
+	for v in pts:
+		lo = lo.min(v)
+		hi = hi.max(v)
+	# The eaves run along the longer horizontal side; the ridge is the top, over the middle.
+	var axis := 0 if (hi.x - lo.x) < (hi.z - lo.z) else 2
+	var other := 2 if axis == 0 else 0
+	var eave_y := INF
+	for v in pts:
+		if absf(v[axis] - lo[axis]) < 0.08:
+			eave_y = minf(eave_y, v.y)
+	var mid: float = 0.5 * (lo[axis] + hi[axis])
+	var run: float = 0.5 * (hi[axis] - lo[axis])
+	var rise: float = hi.y - eave_y
+	var pitch := atan2(rise, run)
+	var faces := []
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(1, 1, 1, 0)
+	for sgn in [-1.0, 1.0]:
+		var f := Node3D.new()
+		f.name = "RoofFace%d" % (0 if sgn < 0 else 1)
+		f.add_to_group("snow_roof")
+		f.set_meta("snow_roof_material", String(args.get("roof-material", "shingle")))
+		f.set_meta("snow_roof_heat", float(args.get("roof-heat", "20")))
+		var box := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(sqrt(run * run + rise * rise), 0.02, hi[other] - lo[other])
+		bm.material = mat
+		box.mesh = bm
+		box.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		f.add_child(box)
+		root.add_child(f)
+		var c := Vector3()
+		c[axis] = mid + sgn * 0.5 * run
+		c[other] = 0.5 * (lo[other] + hi[other])
+		c.y = eave_y + 0.5 * rise
+		# Local x runs down the slope to the eave on this side.
+		var down := Vector3()
+		down[axis] = sgn
+		var xdir := (down * cos(pitch) - Vector3.UP * sin(pitch)).normalized()
+		var zdir := Vector3()
+		zdir[other] = 1.0
+		var ydir := zdir.cross(xdir).normalized()
+		f.transform = Transform3D(Basis(xdir, ydir, zdir), c)
+		faces.append(f)
+	for i in 2:
+		await get_tree().physics_frame
+	weather.wind_speed = 1.0
+	weather.rain_rate = float(args.get("roof-rate", "4"))
+	weather.cloud_cover = 1.0
+	weather.air_follows_climate = false
+	weather.temperature = float(args.get("roof-temp", "-6"))
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var hrs := int(float(args["hut-roof-snow"]) if String(args["hut-roof-snow"]) != "" else 24.0)
+	var most := 0.0
+	for h in hrs:
+		snow.advance(3600.0)
+		for k in 6:
+			sb.call("step", 600.0)
+		for f in faces:
+			most = maxf(most, float(sb.call("get_body_depth", f)))
+	weather.rain_rate = 0.0
+	weather.cloud_cover = float(args.get("cloud-cover", "0.3"))
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	_log("hut roof snow: pitch %.0f deg, %d h of snow, roofs held up to %.2f m, %d slides, %.0f kg landed past the eave" % [rad_to_deg(pitch), hrs, most, int(sb.call("get_roof_slides")), float(sb.call("get_roof_landed"))])
+
+
 func _hut_icicles() -> void:
 	# --hut-icicles (with --hut, winter): snow on the hut's roof (its materials take the weather's snow) and a week of
 	# icicles (SnowIcicles3D, snow 5f68879a) along its longest eave, the lip found from the roof mesh; the camera
@@ -7313,6 +7437,83 @@ func _gully_cam() -> void:
 	_log("gully cam: gully %s (score %.2f, channel %s), cam %s" % [str(found.round()), best, str(gen.get_gully_at(found, 0.85)), str(cp.round())])
 
 
+func _dust_devil() -> void:
+	# --dust-devil[=S]: one dust devil (PhysXDustDevils3D, sand 1f249588; it stirs the shared wind, 41dbafbc) spawned
+	# --devil-ahead (30) m in front of the camera, upwind of the frame's centre so it drifts across, then S (4) s run
+	# before the frames (a --clip). --devil-radius (3) m, --devil-swirl (10) m/s.
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var dd: Node3D = ClassDB.instantiate("PhysXDustDevils3D")
+	dd.name = "DustDevils"
+	dd.set("frequency", 0.0)
+	add_child(dd)
+	dd.set("follow_target", dd.get_path_to(c3))
+	for i in 60:
+		await get_tree().physics_frame
+	var f := -c3.global_basis.z
+	f.y = 0.0
+	f = f.normalized()
+	var w := Vector3(weather.wind_direction.x, 0, weather.wind_direction.y).normalized()
+	var secs := float(args["dust-devil"]) if String(args["dust-devil"]) != "" else 4.0
+	var at := c3.global_position + f * float(args.get("devil-ahead", "30")) - w * weather.wind_speed * 0.7 * secs
+	at.y = height_at(at.x, at.z)
+	var idx: int = dd.call("spawn", at, float(args.get("devil-radius", "3")), float(args.get("devil-swirl", "10")))
+	var t := 0.0
+	while t < secs:
+		await get_tree().physics_frame
+		t += get_physics_process_delta_time()
+	_log("dust devil: spawned %d at %s, %d running after %.1f s" % [idx, str(at.round()), int(dd.call("get_devil_count")), secs])
+
+
+func _rime_ridge() -> void:
+	# --rime-ridge[=H]: H (6) hours of supercooled cloud on the highest ground (WeatherMap3D.rime, world-links round 9):
+	# --rime-air (-6) C at the crest, --rime-wind-speed (10) m/s, full low cloud, then it clears for the shot. The camera
+	# stands --rime-dist (25) m upwind of the crest, --rime-eye (1.7) m up, looking at the rimed windward faces.
+	var wr: Rect2 = gen.get_world_rect()
+	var top := Vector3(0, -INF, 0)
+	var xx := wr.position.x + 64.0
+	while xx < wr.end.x:
+		var zz := wr.position.y + 64.0
+		while zz < wr.end.y:
+			var h := gen.get_height(Vector3(xx, 0, zz))
+			if is_finite(h) and h > top.y:
+				top = Vector3(xx, h, zz)
+			zz += 32.0
+		xx += 32.0
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	# The wind blows from beside the sun toward the crest: the rimed side faces the camera, lit from the side.
+	var wd := -sf.rotated(Vector3.UP, deg_to_rad(float(args.get("rime-yaw", "70"))))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var d := float(args.get("rime-dist", "25"))
+	var cp := top - wd * d
+	cp.y = height_at(cp.x, cp.z) + float(args.get("rime-eye", "1.7"))
+	c3.global_position = cp
+	c3.look_at(top + Vector3.UP * 2.0)
+	weather.follow_target = weather.get_path_to(c3)
+	weather.wind_direction = Vector2(wd.x, wd.z)
+	weather.wind_speed = float(args.get("rime-wind-speed", "10"))
+	weather.air_follows_climate = false
+	weather.temperature = 0.0
+	weather.snap_to_settings()
+	weather.temperature = float(args.get("rime-air", "-6")) - (weather.get_air_temperature_at(top) - 0.0)
+	weather.humidity = 1.0
+	var cc := weather.cloud_cover
+	weather.cloud_cover = 1.0
+	weather.cloud_type = 0.0
+	weather.snap_to_settings()
+	var hrs := float(args["rime-ridge"]) if String(args["rime-ridge"]) != "" else 6.0
+	for i in int(hrs * 6.0):
+		weather.advance(600.0)
+		await get_tree().physics_frame
+	var rv: Vector3 = weather.get_rime_at(top - wd * 2.0) if weather.has_method("get_rime_at") else Vector3()
+	weather.cloud_cover = cc
+	weather.humidity = 0.6
+	weather.wind_speed = float(args.get("wind", "4"))
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	_log("rime ridge: %.0f h of cloud at %.1f C on the crest %s (%.0f m), rime %s, cam %s" % [hrs, weather.get_air_temperature_at(top), str(top.round()), top.y, str(rv), str(cp.round())])
+
+
 func _lodging() -> void:
 	# --lodging[=H]: H (1) hours of a wet summer gale (--lodge-wind 18 m/s at 10 m, --lodge-rain 15 mm/h) from behind
 	# the camera's left over every GrassField3D (GrassField3D.lodging, vegetation 2b052f8e): the tall grass laid down in
@@ -7707,7 +7908,8 @@ func _frame_host() -> void:
 	if best == Vector3.INF:
 		_log("host cam: no mistletoe host placed")
 		return
-	var cp := best + sun_flat * float(args.get("host-dist", "14"))
+	# --host-backlit: the camera on the far side from the sun, the low sun behind the crown (ice storm frames).
+	var cp := best + sun_flat * float(args.get("host-dist", "14")) * (-1.0 if args.has("host-backlit") else 1.0)
 	cp.y = height_at(cp.x, cp.z) + 1.7
 	c3.global_position = cp
 	c3.look_at(Vector3(best.x, height_at(best.x, best.z) + float(args.get("host-look", "12")), best.z))

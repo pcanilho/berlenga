@@ -90,6 +90,17 @@
 				Adds a storm centred on [param position] (world x, z) and returns its id. Its rain core has [param radius] metres and peaks at [param rain_rate] mm/h; its downburst outflow (Oseguera and Bowles 1988) blows outward, strongest at about 1.12 times [param radius] with [param outflow] m/s. It drifts with the wind aloft, grows in and fades out over [param lifetime] seconds of weather time ([code]0[/code] or less: until removed).
 			</description>
 		</method>
+		<method name="add_vortex">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="swirl" type="float" />
+			<param index="3" name="updraft" type="float" />
+			<param index="4" name="spin" type="float" default="1.0" />
+			<description>
+				Adds a wind vortex (a dust devil, a whirl in a lee) with its foot at [param position] and returns its id. [method get_wind_at] adds a Rankine field round it (Tratt et al. 2003): [param swirl] m/s round the core of [param radius] metres, falling as 1/r outside it and gone by five radii; [param updraft] m/s up the core, fading from four to ten radii up; a weak inflow at the foot. [param spin] [code]1[/code] turns anticlockwise seen from above, [code]-1[/code] clockwise. The first four also reach the shaders' [code]weather_wind[/code]. The owner moves it with [method set_vortex] and removes it with [method remove_vortex].
+			</description>
+		</method>
 		<method name="advance">
 			<return type="void" />
 			<param index="0" name="seconds" type="float" />
@@ -503,6 +514,20 @@
 				The terrain square's area in world space (x, z, width, depth).
 			</description>
 		</method>
+		<method name="get_vortex_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Wind vortices in the map (see [method add_vortex]).
+			</description>
+		</method>
+		<method name="get_vortex_wind_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="height_above_ground" type="float" default="10.0" />
+			<description>
+				The vortices' part of [method get_wind_at] alone at [param position], [param height_above_ground] metres up.
+			</description>
+		</method>
 		<method name="get_water_temperature" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -880,6 +905,13 @@
 				Removes the storm with this [param id].
 			</description>
 		</method>
+		<method name="remove_vortex">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes the wind vortex [param id] (see [method add_vortex]).
+			</description>
+		</method>
 		<method name="rime_accretion_rate" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="cloud_water" type="float" />
@@ -938,6 +970,17 @@
 			<param index="3" name="rect" type="Rect2" />
 			<description>
 				Water that [param owner] delivers to the ground over [param rect] (world X, Z), in mm/h on a [param resolution] square of [param rates] (row-major in Z then X), in place of the precipitation the map would put there: a [SnowCover3D] passes its runoff (the rain through the pack and its melt), so snow wets surfaces when it melts, not when it falls. The values are copied; call again with new ones. Several sources add up.
+			</description>
+		</method>
+		<method name="set_vortex">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="swirl" type="float" />
+			<param index="4" name="updraft" type="float" />
+			<description>
+				Moves and resizes the wind vortex [param id] (see [method add_vortex]); its owner calls it as it goes.
 			</description>
 		</method>
 		<method name="snap_to_settings">

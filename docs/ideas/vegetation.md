@@ -1701,3 +1701,59 @@ PlantGenerator.make_dew_webs) and the plant shader's silk variant (PLANT_SILK).
 - Season: sheets from March to early December, most from late July; orbs late July to October; none under snow.
 - Check: vegetation bench --test (silk shader on every web, sheets low, orbs on stems, seasons); plants bench
   --close=109 / 110 --dew=1 for a look, --dew=0 to see them gone.
+
+## Blowing leaves (round 5, third pick)
+Built into LeafFall3D (modules/vegetation/leaf_fall_3d.cpp), which already had falling leaves (Andersen, Pesavento and
+Wang 2005 plates), gale lifts, kicks by bodies and leaves on water and snow. What was missing was the ground: lying
+leaves never moved until a gust past the lift speed threw them, and loose litter was one uniform number round the
+camera, not the litter the crowns dropped.
+- Research. Wind moves fallen leaves over the forest floor and gathers them in hollows and against obstacles
+  (Orndorff and Lang 1981, J. Ecol. 69, "Leaf litter redistribution in a West Virginia hardwood forest"); in a breeze
+  that cannot lift them they slide, flip and cartwheel along the ground, the motion everyone notices in autumn.
+- Creep. Past creep_speed (2 m/s at 10 cm, half on ice) a lying leaf slides downwind at 0.3 of the excess (to
+  3 m/s), its heading jittered, flipping over now and then and turning as it goes; with less wind it slows by
+  friction (4 m/s2) and stops. Past lift_speed it is thrown up as before.
+- Shelter. The wind on the ground is the open wind over drift^0.6 (clamped 0.35 to 1.3), drift being the round-4
+  leaf drift field of the VegetationField3D (hollows, the lee of rocks, logs and trunks): leaves slide off exposed
+  ground and stop in the drifts, so moving leaves end where the drawn drifts are.
+- Litter source. field_litter (40 loose leaves per m2 under full litter, on by default) reads
+  VegetationField3D.get_litter_at: the gusts set leaves sliding, or lift them, only where the crowns dropped litter,
+  most from exposed spots. litter_density, the old uniform source, stays for scenes without a field.
+- Not done here: whirls (small vortices that spin leaves up in the lee of buildings, a few metres across; Tratt et al.
+  2003 measured dust devils as Rankine vortices with 5 to 10 m/s swirl and 2 to 3 m/s updraft). They belong in the
+  shared wind (WeatherMap3D), so leaves, dust, smoke and grass all feel them, not in one system's private copy.
+- Check: vegetation bench --test (or --test=blowing): still in light air, all sliding downwind past the creep speed
+  and none lifted; leaves taken off a wood's litter by the wind. weather --test=leaves and links --test still pass.
+
+## Avalanche tracks (after round 5; world-links 0c249ead)
+Built in modules/vegetation/plant_avalanche.cpp: PlantGenerator.make_avalanche_track and DISTURBANCE_AVALANCHE_KIND 6.
+SnowAvalanche3D stand_damage marks the broken stand as WorldStand DISTURBANCE_AVALANCHE with the years since; this is
+the ground layer that grows there (the bent alder and willow shrubs are the trees').
+- Research. Only plants that bend under the snow or regrow fast hold in a track; where it runs most often the
+  vegetation and soil are torn away, and avalanches carry soil, boulders and broken wood into the debris (ALPECOLe,
+  "Avalanches", University of Zurich 2011). Active chutes are kept in shrubs with forbs and ferns: green alder,
+  salmonberry, willow, with false hellebore, lady fern, fireweed and valerian (NRCS ecological site F003XN926WA,
+  North Cascades; LANDFIRE BpS 10830, North Pacific Avalanche Chute Shrubland, 2020). A 2007 Journal of Vegetation
+  Science paper often cited on avalanche-track plant diversity is listed as withdrawn, so it is not used here.
+- Stages by years since the avalanche: torn turf (rooted sod at 0.3 years) to 2, broken twigs to 4 and shed needles to
+  3 from the snapped conifers; fireweed from 1 to 25, lady fern 2 to 60, raspberry (for salmonberry) 2 to 40, a
+  broad-leaved tall forb (butterbur's form, for hellebore and Adenostyles) 3 to 60, bilberry (for huckleberry) 4 to
+  60, all in patches. Slopes up to 45 degrees, out of the edge's deeper shade (0.6).
+- Check: vegetation bench --test, a 5-year kind 6 track holds the flora, none round it or on a windthrow of the same
+  age; debris species fresh, tall forbs later.
+
+## Next round options (card 22 Nov, round 6): snowmelt sward, flood wrack lines, seed down in the wind
+Research notes, nothing built yet:
+- Snowmelt sward. Where snow lay long, the grass comes out flattened and matted in one direction, straw-pale, with grey
+  and pinkish webs of snow mould (Microdochium nivale, Typhula) in patches that lay longest; it greens from the edges
+  over two or three weeks. Built as: GrassField3D reading the snow's lie time (WorldSnow) for a matted lean, pale
+  tint and mould patches that fade as the season warms.
+- Flood wrack lines. After a flood a river or lake leaves strand lines of straw, reed stems, twigs and leaves along
+  the high-water mark, caught on fences and the lower branches, the grass beneath combed flat downstream. Built as:
+  wrack meshes placed along a contour a set height over the water's level (WorldWater), the sward laid flat below it.
+- Seed down in the wind. In late summer thistle, fireweed and willowherb down and dandelion clocks loose their seeds
+  in dry, sunny wind; they drift in the air, catch in the grass and pile in corners. Built as: light particles in the
+  shared wind from the plants that are seeding (their bloom stage), few and cheap, settling into the grass.
+- Later card: lee whirls. WeatherMap3D.add_vortex(position, radius, swirl, updraft, spin) is on main (41dbafbc90) and
+  LeafFall3D feels any vortex through wind_at; what is missing is an owner that spawns whirls in the lee of buildings,
+  rocks and wood edges in gusty wind (Tratt et al. 2003 sizes). A candidate for a future card.

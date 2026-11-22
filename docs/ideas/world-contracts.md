@@ -32,6 +32,7 @@ contract returns with no provider.
 | `air_humidity_at(pos)` | 0..1 | 0.7 | Relative, at the live air temperature |
 | `dew_point_at(pos)` | C | from the two above | |
 | `wind_at(pos, height_above_ground)` | m/s, Vector3 | 0 | Mean plus gusts, sheltered by canopy and obstacles, with the terrain's speed-up, turning and updraught; height < 0 is measured from the ground under pos |
+| `wind_at` note: wind vortices | m/s | none | WeatherMap3D `add_vortex(foot, R, swirl, updraft, spin)` / `set_vortex(id, ...)` each frame by the owner / `remove_vortex(id)` (22 Nov). `wind_at` (and `get_wind_parts`' mean, and the shader `weather_wind`, first four vortices) adds a Rankine field round each (Tratt et al. 2003): tangential swirl r/R inside R, swirl R/r outside, gone by 5R; updraft x exp(-(r/R)^2), fading from 4R to 10R up; inflow 0.3 swirl in the lowest R. Owner: PhysXDustDevils3D (updraft 0.3 swirl); lee whirls can use the same call. `get_vortex_wind_at(pos, h)` returns the vortices' part alone |
 | `mean_wind_at(pos)` | m/s, Vector3 (y 0) | 0 | 10 m mean, terrain included, no gusts |
 | `wind_aloft_at(pos, altitude)` | m/s, Vector3 (y 0) | 0 | Free wind: log law and Ekman veer to `boundary_layer_height`, then `wind_shear_aloft` |
 | `terrain_lee_at(pos)` | rad | NaN | Winstral's Sx from the terrain wind (positive in a lee; NaN outside it); fire's lee-slope whirls |
@@ -77,7 +78,8 @@ contract returns with no provider.
 
 Shader globals (the GPU side of the same contract): `weather_wind_map`, `weather_state_map`, `weather_map_rect`,
 `weather_contact_map`, `weather_shelter_map`, `weather_frost_map` (R frost mm, G surface cooling K),
-`weather_precip_phase`; formats in weather.md. Wind in shaders: `weather_wind(world_pos, height)`,
+`weather_precip_phase`, `weather_vortex_0..3` (x, z, R, swirl x spin) and `weather_vortex_up` (their updrafts);
+formats in weather.md. Wind in shaders: `weather_wind(world_pos, height)`,
 `weather_height_above_ground(world_pos)`, `weather_terrain(xz)` from `WeatherMap3D.get_wind_shader_code()`; all
 globals are declared at start, so a shader compiles with no weather and has no wind.
 

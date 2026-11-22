@@ -614,7 +614,7 @@ void PhysXBurnable3D::_update_emitter() {
 		if (axis != 1) {
 			q.y = CLAMP(q.y, lo.y + r * 0.5f, hi.y - r * 0.5f);
 		}
-		faces[f] = { q + nrm * r * 0.7f, nrm, r, MIN(Math::PI * left * left, 4.0f * face_r * face_r) };
+		faces[f] = { q + nrm * r * 0.7f, nrm, r, MIN(float(Math::PI * left * left), 4.0f * face_r * face_r) };
 		total += faces[f].area;
 	}
 	const Transform3D xf = _target_xform();

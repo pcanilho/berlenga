@@ -1,0 +1,1 @@
+- Snow: the pack keeps up to six layers (new, wind slab, old), each settling under the weight above it, so a storm on old snow is a light layer and avalanches weigh a slab by its own density (`SnowCover3D.layers_enabled`, `get_layers_at`).
