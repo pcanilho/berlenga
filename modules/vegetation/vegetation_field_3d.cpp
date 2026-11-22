@@ -191,6 +191,13 @@ const VegetationField3D::Pattern &VegetationField3D::_get_pattern(float p_spacin
 // before the first plants run out. A field takes its radius back (0) when it stops.
 float VegetationField3D::near_radius_published = 0.0f;
 
+// The drawn ground's height over the heightfield at p's xz (Landscape3D's bank and cliff relief, WorldGround.relief_at):
+// 0 with no relief producer or out of its reach.
+static float _relief_y(const Vector3 &p_at) {
+	const float r = WorldContracts::ground()->relief_at(p_at).x;
+	return Math::is_finite(r) ? r : 0.0f;
+}
+
 static HashMap<ObjectID, float> &_near_radii() {
 	static HashMap<ObjectID, float> radii;
 	return radii;
@@ -2699,7 +2706,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f, ps.stem_foot * scale, ps.canopy_base * scale };
 						crown.species = s;
 						crown.scale = scale;
-						crown.y = map->get_height_at(p3);
+						crown.y = map->get_height_at(p3) + _relief_y(p3);
 						local_crowns.push_back(crown);
 						local_crown_grid[Vector2i(int(Math::floor(xz.x / CROWN_CELL)), int(Math::floor(xz.y / CROWN_CELL)))].push_back(local_crowns.size() - 1);
 						if (out) {
@@ -2715,7 +2722,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// On a log: on the moss that covers its upper side, not on the bare wood under it
 					// (the trees' moss shell stands up to 1.1 to 2.5 cm proud of the bark, section 5c of
 					// trees.md), so cushions and seedlings are not swallowed by it.
-					float y = on_log ? hit.top + DEADWOOD_MOSS_LIFT / MAX(hit.normal.y, 0.5f) : map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : 0.0f);
+					// On the drawn ground: the heightfield plus Landscape3D's bank and cliff relief (WorldGround.relief_at).
+					float y = on_log ? hit.top + DEADWOOD_MOSS_LIFT / MAX(hit.normal.y, 0.5f) : map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : _relief_y(p3));
 					if (wood_y > -1e8f) {
 						y = wood_y; // On the wood's side (above).
 					}
