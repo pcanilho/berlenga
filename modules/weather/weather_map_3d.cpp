@@ -1337,6 +1337,10 @@ void WeatherMap3D::_publish_globals() {
 	_set_global("weather_map_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("weather_wind_info", Vector4(cur_wind_direction.x, cur_wind_direction.y, gust_sigma_scale, z0), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("weather_ground_height", ground_height, RSE::GLOBAL_VAR_TYPE_FLOAT);
+	// Vortices added before this map was active (a dust devil spawned on ready) reach the shaders here.
+	if (vortices_unpublished) {
+		_publish_vortices();
+	}
 	if (shelter.texture.is_valid()) {
 		if (!shelter_global_added) {
 			_set_global("weather_shelter_map", shelter.texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
@@ -1641,11 +1645,14 @@ Vector3 WeatherMap3D::get_wind_at(Vector3 p_position, float p_height_above_groun
 // updraft a Gaussian over the core, fading over 10 R of height; a weak inflow (0.3 swirl) in the lowest R, where the
 // surface friction lets the air spiral in (the Burgers-Rott corner flow).
 Vector3 WeatherMap3D::_vortex_wind_at(const Vector3 &p_position, float p_height) const {
-	if (vortices.is_empty()) {
+	// A reference to the list as it is now: the main thread's add/set/remove copy on write, so a reader on another thread
+	// walks a whole list (iterating the member itself could see it reallocated under it).
+	const Vector<Vortex> list = vortices;
+	if (list.is_empty()) {
 		return Vector3();
 	}
 	Vector3 r_wind;
-	for (const Vortex &v : vortices) {
+	for (const Vortex &v : list) {
 		const float R = MAX(v.radius, 0.1f);
 		const Vector2 d(p_position.x - v.position.x, p_position.z - v.position.z);
 		const float r2 = d.length_squared();
@@ -1678,8 +1685,10 @@ Vector3 WeatherMap3D::get_vortex_wind_at(const Vector3 &p_position, float p_heig
 // The first four vortices to the shaders (weather_vortex_0..3, weather_vortex_up), as they change.
 void WeatherMap3D::_publish_vortices() {
 	if (!publish_shader_globals || active != this) {
+		vortices_unpublished = true;
 		return;
 	}
+	vortices_unpublished = false;
 	static const StringName names[4] = { "weather_vortex_0", "weather_vortex_1", "weather_vortex_2", "weather_vortex_3" };
 	Vector4 up;
 	for (int i = 0; i < 4; i++) {

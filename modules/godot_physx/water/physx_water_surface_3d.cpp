@@ -2585,6 +2585,11 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_catchment_inflow", "discharge"), &PhysXWaterSurface3D::set_catchment_inflow);
 	ClassDB::bind_method(D_METHOD("get_catchment_inflow"), &PhysXWaterSurface3D::get_catchment_inflow);
 	ClassDB::bind_method(D_METHOD("get_rain_inflow"), &PhysXWaterSurface3D::get_rain_inflow);
+	ClassDB::bind_method(D_METHOD("set_flood_peak_ratio", "ratio"), &PhysXWaterSurface3D::set_flood_peak_ratio);
+	ClassDB::bind_method(D_METHOD("get_flood_peak_ratio"), &PhysXWaterSurface3D::get_flood_peak_ratio);
+	ClassDB::bind_method(D_METHOD("set_flood_peak_day", "day"), &PhysXWaterSurface3D::set_flood_peak_day);
+	ClassDB::bind_method(D_METHOD("get_flood_peak_day"), &PhysXWaterSurface3D::get_flood_peak_day);
+	ClassDB::bind_method(D_METHOD("get_high_water_at", "world_position"), &PhysXWaterSurface3D::get_high_water_at);
 	ClassDB::bind_method(D_METHOD("get_outflow_discharge"), &PhysXWaterSurface3D::get_outflow_discharge);
 
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
@@ -2612,6 +2617,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_level"), "set_water_level", "get_water_level");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "level_from_flows"), "set_level_from_flows", "get_level_from_flows");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "catchment_inflow", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:m³/s"), "set_catchment_inflow", "get_catchment_inflow");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_peak_ratio", PROPERTY_HINT_RANGE, "1,50,0.1,or_greater"), "set_flood_peak_ratio", "get_flood_peak_ratio");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "flood_peak_day", PROPERTY_HINT_RANGE, "0,364,1"), "set_flood_peak_day", "get_flood_peak_day");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping"), "set_damping", "get_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_amplitude", PROPERTY_HINT_RANGE, "0,2,0.01,or_greater"), "set_ripple_amplitude", "get_ripple_amplitude");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "step_mode", PROPERTY_HINT_ENUM, "Per Tick,Per Frame"), "set_step_mode", "get_step_mode");
@@ -5275,6 +5282,11 @@ float PhysXWaterSurface3D::get_outflow_discharge() const {
 // lake's hollow, so its outlet cell gathers the catchment) less the storm flow its rivers already bring. The level
 // settles again when that moves by over a tenth of the lake's inflow.
 void PhysXWaterSurface3D::_rain_inflow_update(double p_delta) {
+	if (const WorldWeather *ww = WorldContracts::weather()) {
+		flood_clock += p_delta * ww->time_scale() / 86400.0;
+	} else {
+		flood_clock += p_delta / 86400.0;
+	}
 	if (!level_from_flows || outflows.is_empty()) {
 		return;
 	}
@@ -5309,14 +5321,8 @@ void PhysXWaterSurface3D::_rain_inflow_update(double p_delta) {
 // The level budget (docs/ideas/water.md "Lake outlets"): steady state, where the outlets pass what flows in.
 // A lake takes hours to days to settle, so it holds the settled level rather than creeping during play.
 // When the level moves (over a centimetre) the rivers leaving and entering it rebuild on the new level.
-void PhysXWaterSurface3D::_settle_level() {
-	if (!level_from_flows || outflows.is_empty() || !is_inside_tree()) {
-		return;
-	}
-	float q_in = catchment_inflow + rain_inflow;
-	for (const Inflow &f : inflows) {
-		q_in += f.discharge;
-	}
+float PhysXWaterSurface3D::_level_for_inflow(float p_q_in) const {
+	const float q_in = p_q_in;
 	float lo = Math::INF;
 	for (const Outflow &f : outflows) {
 		lo = MIN(lo, f.crest);
@@ -5340,11 +5346,62 @@ void PhysXWaterSurface3D::_settle_level() {
 			hi = mid;
 		}
 	}
-	const float level = 0.5f * (lo + hi) - get_global_position().y;
+	return 0.5f * (lo + hi);
+}
+
+// High-water marks (docs/ideas/water.md "High-water marks"): the season's is the level at which the outlets pass the
+// median annual flood (flood_peak_ratio times the base inflow: the rivers' own flow without their storm flow, and the
+// catchment's), on flood_peak_day; a storm that raises the lake higher leaves its own mark, kept a year.
+void PhysXWaterSurface3D::_flood_marks_update() {
+	if (!level_from_flows || outflows.is_empty() || !is_inside_tree()) {
+		flood_season = -Math::INF;
+		return;
+	}
+	float q_base = catchment_inflow;
+	for (const Inflow &f : inflows) {
+		float q = f.discharge;
+		Object *o = ObjectDB::get_instance(ObjectID((uint64_t)f.owner));
+		if (o != nullptr && o->has_method(SNAME("get_rain_discharge"))) {
+			q -= float(o->call(SNAME("get_rain_discharge")));
+		}
+		q_base += MAX(q, 0.0f);
+	}
+	flood_season = _level_for_inflow(MAX(q_base, 0.001f) * flood_peak_ratio);
+	const float now = get_global_position().y + water_level;
+	if (rain_inflow > 0.0f && now > flood_storm) {
+		flood_storm = now;
+		flood_storm_t = flood_clock;
+	}
+}
+
+Vector4 PhysXWaterSurface3D::get_high_water_at(const Vector3 &p_world_pos) const {
+	const Vector4 none(-Math::INF, -1.0f, 0.0f, 0.0f);
+	if (!Math::is_finite(flood_season) || !p_world_pos.is_finite() || Math::abs(p_world_pos.x - grid_center.x) > 0.5f * active_domain_size.x ||
+			Math::abs(p_world_pos.z - grid_center.y) > 0.5f * active_domain_size.y) {
+		return none;
+	}
+	const int doy = WorldContracts::weather() ? WorldContracts::weather()->day_of_year() : 135;
+	if (Math::is_finite(flood_storm) && flood_storm > flood_season && flood_clock - flood_storm_t < 365.0) {
+		return Vector4(flood_storm, float(flood_clock - flood_storm_t), 0.0f, 0.0f);
+	}
+	return Vector4(flood_season, float(Math::posmod(doy - flood_peak_day, 365)), 0.0f, 0.0f);
+}
+
+void PhysXWaterSurface3D::_settle_level() {
+	if (!level_from_flows || outflows.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	float q_in = catchment_inflow + rain_inflow;
+	for (const Inflow &f : inflows) {
+		q_in += f.discharge;
+	}
+	const float level = _level_for_inflow(q_in) - get_global_position().y;
 	if (Math::abs(level - water_level) < 0.01f) {
+		_flood_marks_update();
 		return;
 	}
 	set_water_level(level);
+	_flood_marks_update();
 	for (const Outflow &f : outflows) {
 		if (Object *o = ObjectDB::get_instance(ObjectID((uint64_t)f.owner))) {
 			o->call_deferred(SNAME("rebuild"));

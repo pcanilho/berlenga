@@ -142,6 +142,13 @@ public:
 	void set_catchment_inflow(float p_discharge);
 	float get_catchment_inflow() const { return catchment_inflow; }
 	float get_rain_inflow() const { return rain_inflow; }
+	void set_flood_peak_ratio(float p_ratio) { flood_peak_ratio = MAX(p_ratio, 1.0f); _flood_marks_update(); }
+	float get_flood_peak_ratio() const { return flood_peak_ratio; }
+	void set_flood_peak_day(int p_day) { flood_peak_day = CLAMP(p_day, 0, 364); }
+	int get_flood_peak_day() const { return flood_peak_day; }
+	// The last flood's high-water mark over a world point in a lake's domain (level_from_flows with an outlet): x the
+	// level (m, world), y the days since its peak, zw zero (still water); (-INF, -1, 0, 0) elsewhere.
+	Vector4 get_high_water_at(const Vector3 &p_world_pos) const;
 	float get_outflow_discharge() const;
 	void set_water_level(float p_level);
 	float get_water_level() const { return water_level; }
@@ -430,6 +437,7 @@ public:
 	float sample_height(Vector3 p_world_pos) const;
 	// The water contract (WorldWater): this water's surface, -INF where it has none.
 	float contract_water_height_at(const Vector3 &p_position) const override;
+	Vector4 contract_water_high_water_at(const Vector3 &p_position) const override { return get_high_water_at(p_position); }
 	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
 	void contract_water_clear(uint64_t p_owner) override;
 	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override;
@@ -847,6 +855,17 @@ private:
 	float rain_inflow = 0.0f;
 	double rain_check = 0.0;
 	void _rain_inflow_update(double p_delta);
+	// High-water marks (WorldWater.high_water_at, docs/ideas/water.md "High-water marks"): a lake whose level the
+	// outlets set keeps the level of its median annual flood (flood_peak_ratio times its base inflow, on
+	// flood_peak_day) and the highest storm level of the last year; flood_clock counts the weather's days.
+	float flood_peak_ratio = 6.0f;
+	int flood_peak_day = 110;
+	double flood_clock = 0.0;
+	float flood_season = -Math::INF; // world y
+	float flood_storm = -Math::INF; // world y
+	double flood_storm_t = 0.0;
+	float _level_for_inflow(float p_q_in) const; // world y where the outlets pass p_q_in
+	void _flood_marks_update();
 	void _settle_level();
 	PackedVector2Array plume_cells; // m/s per ripple cell, world xz
 	Ref<ImageTexture> plume_texture;

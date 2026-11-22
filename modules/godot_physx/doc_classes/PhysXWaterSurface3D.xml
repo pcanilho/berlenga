@@ -142,6 +142,13 @@
 			<description>
 			</description>
 		</method>
+		<method name="get_high_water_at" qualifiers="const">
+			<return type="Vector4" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
+				A lake's last flood high-water mark over [param world_position] in its domain ([method WorldWater.high_water_at]): x the level (m, world) at which the outlets pass the median annual flood ([member flood_peak_ratio] times the base inflow), or a higher storm level from the last year; y the days since its peak; z and w zero (still water). (-INF, -1, 0, 0) outside the domain, or when [member level_from_flows] is off or there is no outlet.
+			</description>
+		</method>
 		<method name="get_live_flow_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
@@ -432,6 +439,12 @@
 		</member>
 		<member name="fetch" type="float" setter="set_fetch" getter="get_fetch" default="0.0">
 			How far the wind has blown over open water, in meters. The ocean layer is a fetch-limited JONSWAP spectrum, so fetch sets how tall and how long the wind waves get at a given [member wind_speed]: a few meters give tiny, short ripples, kilometers give a developed sea. [code]0[/code] (auto) uses the [member surface_mesh] footprint's longest side for enclosed water, or a fully developed open sea (100 km) without one. Only wavelengths up to [member ocean_domain_size] are represented, and waves shorter than two ocean grid cells aren't, so a small fetch at a coarse [member ocean_grid_resolution] can leave the ocean layer flat.
+		</member>
+		<member name="flood_peak_day" type="int" setter="set_flood_peak_day" getter="get_flood_peak_day" default="110">
+			The day of the year (0 = 1 January) of the median annual flood behind the season's high-water mark: late April (snowmelt) by default; a winter day for rain-fed waters.
+		</member>
+		<member name="flood_peak_ratio" type="float" setter="set_flood_peak_ratio" getter="get_flood_peak_ratio" default="6.0">
+			The median annual flood (QMED, about the bankfull flow) as a multiple of the base inflow (the rivers' own flow and [member catchment_inflow]), for the season's high-water mark. Real rivers range from a few to twenty and more (small steep catchments).
 		</member>
 		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="1.0">
 		</member>

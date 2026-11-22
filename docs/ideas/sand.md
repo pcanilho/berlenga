@@ -1061,3 +1061,50 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   the look and the PT pair go on the PC queue, where a scout takes seconds.
 - Not yet: the swirl mark left on the ripples, GroundStreamers3D taking the grains at the foot, the PT cost on the
   PC queue.
+
+## Next sand candidates, round 2 (research, 22 Nov 2026; on a card)
+
+- **Haboob dust walls** (recommended). A thunderstorm's cold outflow (the gust front) spreads along the ground and
+  lifts loose dust into a wall 1 to 3 km high and tens of km wide, moving at 10 to 25 m/s, its head a rolling,
+  lobed density current (Sutton 1925; Idso et al. 1972; Miller et al. 2008, "Haboob dust storms of the southern
+  Arabian Peninsula"; Knippertz and Todd 2012). Visibility drops under 1 km, the light turns orange to brown.
+  Built on what exists: WeatherMap3D storms already blow a downburst outflow (Oseguera and Bowles 1988); the dust
+  source is WorldGround blown_sand_at times the outflow's friction speed over threshold (GroundRipples
+  saltation_flux, Shao's vertical dust flux ~ q x clay share); the far wall as a WeatherMap3D dust layer (like
+  smoke_at: column load g/m2 riding the outflow front, washed out by the storm's rain) that the sky, haze and sun
+  visibility read; near the camera, PhysX Flow billows at the front's head (lobes and clefts, Simpson 1997). Large.
+- **Nebkhas round shrubs.** Shrubs slow the wind in their lee and trap blown sand into mounds with tails
+  downwind (shadow dunes; Hesp 1981; Tengberg 1995; Lancaster and Baas 1998). Read the vegetation's shelter
+  (WeatherMap3D shelter boxes / WorldCanopy) in the dune and ripple transport (GroundSurface3D shelter flux
+  already relaxes to the drag partition), deposit the excess as a mound under the crown and a tail of length
+  ~ 5 to 10 crown heights. Medium.
+- **Devil tracks and grains.** Finish the devils: the swirl scours a faint curved track across the ripples (the
+  lag left darker, Balme et al. 2003 for Mars, faint on Earth) through the near-field ripple map, and
+  GroundStreamers3D grains streaming in at the foot. Small.
+
+## Haboob dust walls (Paulo's pick, 22 Nov 2026): design
+
+Technique: wind erosion dust emission over the weather map (Marticorena and Bergametti 1995: horizontal saltation
+flux Q from the friction speed over its threshold, Kawamura/Owen; vertical dust flux F = alpha Q with
+alpha = 10^(0.134 clay% - 6) /m), carried as a mineral dust aerosol layer beside the fires' smoke, with the
+haboob's shape from the storm outflow as a density current (Benjamin 1968: front speed ~0.7 sqrt(g' h); a raised
+nose and lobes and clefts along it, Simpson 1997).
+
+- Source: every map update, per cell, u* from the cell's 10 m wind (which already carries the storms' downburst
+  outflow) on the log law; over the dry-sand threshold (Bagnold, wetted by WorldGround moisture and the weather's
+  surface wetness) on loose ground (WorldGround blown sand share / a default desert share), F in g/m2/s into the
+  column. A general dust storm law: haboobs come from the storms' outflow, any strong dry wind raises dust.
+- Layer: g/m2 per cell, advected by the wind near the ground (not aloft: the dust rides the outflow), a 1.5 km
+  mixed depth in the outflow, gravitational settling (about 1.5 cm/s for 10 to 20 um, Stokes) and the shared
+  washout (WorldWeather washout_rate, coarse). Optics: mass extinction 0.6 m2/g at 550 nm, Angstrom about 0.2,
+  single scattering albedo 0.92 falling to the blue (iron oxides): the sun dims and turns orange to brown, the
+  light goes brown-orange, visibility under 1 km in the wall (sigma = 3.9 / V).
+- Readers: contract dust_at / dust_concentration_at (like smoke_at), the sun's transmittance (SkyClock), the haze
+  and the sky (aerosol by colour), the path tracer's medium.
+- The wall itself: a volume in the cloud march between the ground and the layer top, density from the dust layer
+  with the density current's head (a nose up to 1.5 to 2 times the layer height at the front, lobes and clefts
+  along it, billows behind), lit like the low cloud but brown-orange and forward-scattering.
+- Near the camera: PhysX Flow billows at the front's foot (rolling, lifted dust curling over the nose), seeded
+  where the front crosses the camera's field, as the near tyre dust (PhysXGroundDust3D).
+- Ownership: the dust layer and its optics live in the weather module (Valence's); the wall in the cloud march
+  (the clouds thread); the source law and Flow billows here.

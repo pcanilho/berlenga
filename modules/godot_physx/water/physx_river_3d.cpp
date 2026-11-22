@@ -891,6 +891,11 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_rain_response", "enable"), &PhysXRiver3D::set_rain_response);
 	ClassDB::bind_method(D_METHOD("get_rain_response"), &PhysXRiver3D::get_rain_response);
 	ClassDB::bind_method(D_METHOD("get_rain_discharge"), &PhysXRiver3D::get_rain_discharge);
+	ClassDB::bind_method(D_METHOD("set_flood_peak_ratio", "ratio"), &PhysXRiver3D::set_flood_peak_ratio);
+	ClassDB::bind_method(D_METHOD("get_flood_peak_ratio"), &PhysXRiver3D::get_flood_peak_ratio);
+	ClassDB::bind_method(D_METHOD("set_flood_peak_day", "day"), &PhysXRiver3D::set_flood_peak_day);
+	ClassDB::bind_method(D_METHOD("get_flood_peak_day"), &PhysXRiver3D::get_flood_peak_day);
+	ClassDB::bind_method(D_METHOD("get_high_water_at", "world_position"), &PhysXRiver3D::get_high_water_at);
 	ClassDB::bind_method(D_METHOD("set_roughness", "roughness"), &PhysXRiver3D::set_roughness);
 	ClassDB::bind_method(D_METHOD("get_roughness"), &PhysXRiver3D::get_roughness);
 	ClassDB::bind_method(D_METHOD("set_max_slope", "slope"), &PhysXRiver3D::set_max_slope);
@@ -1017,6 +1022,8 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_GROUP("Hydraulics", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "discharge", PROPERTY_HINT_RANGE, "0.01,1000,0.01,or_greater,suffix:m³/s"), "set_discharge", "get_discharge");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_response"), "set_rain_response", "get_rain_response");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_peak_ratio", PROPERTY_HINT_RANGE, "1,50,0.1,or_greater"), "set_flood_peak_ratio", "get_flood_peak_ratio");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "flood_peak_day", PROPERTY_HINT_RANGE, "0,364,1"), "set_flood_peak_day", "get_flood_peak_day");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.01,0.15,0.001"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_slope", PROPERTY_HINT_RANGE, "0.005,1,0.005,or_greater"), "set_max_slope", "get_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gradually_varied_flow"), "set_gradually_varied_flow", "get_gradually_varied_flow");
@@ -1944,6 +1951,11 @@ void PhysXRiver3D::_notification(int p_what) {
 // river is rebuilt when that moves by more than a tenth of its flow (depth and speed follow by Manning, so a
 // river in spate is deeper and faster), at most every 10 s.
 void PhysXRiver3D::_rain_response_update(double p_delta) {
+	if (const WorldWeather *ww = WorldContracts::weather()) {
+		flood_clock += p_delta * ww->time_scale() / 86400.0;
+	} else {
+		flood_clock += p_delta / 86400.0;
+	}
 	rain_check -= p_delta;
 	if (rain_check > 0.0 || Engine::get_singleton()->is_editor_hint()) {
 		return;
@@ -3240,6 +3252,7 @@ void PhysXRiver3D::_build() {
 	live_fields_dirty = true;
 	_register_mouth();
 	_register_outlet();
+	_flood_marks_update();
 	emit_signal(SNAME("rebuilt"));
 	update_configuration_warnings();
 	if (carve) {
@@ -4754,6 +4767,79 @@ PackedStringArray PhysXRiver3D::get_configuration_warnings() const {
 		warnings.push_back(RTR("Draw the river's path: it needs at least two curve points, from source to mouth."));
 	}
 	return warnings;
+}
+
+// High-water marks (docs/ideas/water.md "High-water marks"). A river's stage at another discharge follows its
+// at-a-station hydraulic geometry, depth ~ Q^0.40 (Leopold and Maddock 1953; width ~ Q^0.26, speed ~ Q^0.34), which
+// already folds in the spread over the banks that a Manning channel of fixed width (Q^0.6) leaves out. The season's
+// mark is the median annual flood's (flood_peak_ratio times the base flow, the FEH's QMED: a few to twenty times the
+// mean flow, flashier for small steep catchments) on flood_peak_day (snowmelt in spring by default); a storm that
+// lifts a section higher leaves its own mark, kept a year. Vegetation strings its wrack lines along them.
+void PhysXRiver3D::_flood_marks_update() {
+	const int count = (int)sections.size();
+	if ((int)flood_storm.size() != count) {
+		flood_storm.resize(count);
+		flood_storm_t.resize(count);
+		for (int i = 0; i < count; i++) {
+			flood_storm[i] = -Math::INF;
+			flood_storm_t[i] = 0.0;
+		}
+	}
+	flood_season.resize(count);
+	for (int i = 0; i < count; i++) {
+		const Section &sec = sections[i];
+		float d = 0.0f;
+		for (const float v : sec.depth) {
+			d = MAX(d, v);
+		}
+		const float q = MAX(sec.discharge, 0.001f);
+		const float q_base = MAX(sec.discharge - rain_discharge, 0.001f);
+		flood_season[i] = sec.surface - d + d * Math::pow(q_base * flood_peak_ratio / q, 0.40f);
+		if (rain_discharge > 0.0f && d > 0.0f && sec.surface > flood_storm[i]) {
+			flood_storm[i] = sec.surface;
+			flood_storm_t[i] = flood_clock;
+		}
+	}
+}
+
+Vector4 PhysXRiver3D::get_high_water_at(const Vector3 &p_world_pos) const {
+	const Vector4 none(-Math::INF, -1.0f, 0.0f, 0.0f);
+	const int count = (int)sections.size();
+	if (count < 2 || (int)flood_season.size() != count || (int)flood_storm.size() != count) {
+		return none;
+	}
+	int i;
+	float t;
+	float n;
+	_strip_at(p_world_pos, i, t, n);
+	if ((i == 0 && t <= 0.0f) || (i == count - 2 && t >= 1.0f) || !Math::is_finite(n)) {
+		return none;
+	}
+	const Section &a = sections[i];
+	const Section &b = sections[i + 1];
+	// The floodplain: three of the flood's half-widths (width ~ Q^0.26) either side; past it the valley side
+	// stands above any mark.
+	const float half = 0.5f * Math::lerp(a.width, b.width, t) * Math::pow(flood_peak_ratio, 0.26f);
+	if (Math::abs(n) > 3.0f * half + bank_margin) {
+		return none;
+	}
+	float local_y = Math::lerp(flood_season[i], flood_season[i + 1], t);
+	const int doy = WorldContracts::weather() ? WorldContracts::weather()->day_of_year() : 135;
+	float age = float(Math::posmod(doy - flood_peak_day, 365));
+	const float storm = Math::lerp(flood_storm[i], flood_storm[i + 1], t);
+	const double storm_t = MAX(flood_storm_t[i], flood_storm_t[i + 1]);
+	if (Math::is_finite(storm) && storm > local_y && flood_clock - storm_t < 365.0) {
+		local_y = storm;
+		age = float(flood_clock - storm_t);
+	}
+	const Transform3D xf = get_global_transform();
+	const Vector3 local = xf.affine_inverse().xform(p_world_pos);
+	const float y = xf.xform(Vector3(local.x, local_y, local.z)).y;
+	const Vector3 side = a.side.lerp(b.side, t).normalized();
+	Vector3 dir = xf.basis.xform(Vector3(-side.z, 0.0f, side.x));
+	dir.y = 0.0f;
+	dir = dir.length() > 1e-6f ? dir.normalized() : Vector3();
+	return Vector4(y, age, dir.x, dir.z);
 }
 
 float PhysXRiver3D::contract_water_height_at(const Vector3 &p_position) const {

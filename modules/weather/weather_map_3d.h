@@ -236,8 +236,8 @@ private:
 
 	Vector<Storm> storms;
 	// WIND VORTICES (docs/world-contracts.md, "Wind vortices"): dust devils and lee whirls their owners place and move;
-	// get_wind_at adds a Rankine field round each (Tratt et al. 2003). Copy-on-write, so readers on other threads
-	// see a whole list.
+	// get_wind_at adds a Rankine field round each (Tratt et al. 2003). Readers take a reference first: copy-on-write,
+	// so readers on other threads see a whole list.
 	struct Vortex {
 		int id = 0;
 		Vector3 position; // the foot, on the ground (m)
@@ -248,6 +248,7 @@ private:
 	};
 	Vector<Vortex> vortices;
 	int next_vortex_id = 1;
+	bool vortices_unpublished = false; // changed while this map was not the active one
 	Vector3 _vortex_wind_at(const Vector3 &p_position, float p_height) const;
 	void _publish_vortices();
 	int next_storm_id = 1;

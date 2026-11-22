@@ -394,14 +394,52 @@ struct DuneShear {
 
 	// The shear over rows p_z0 .. p_z1-1 from the smoothed slope, clamped to 0..3.
 	static void rows(const float *p_slope, int w, int h, double p_ux, double p_uz, double p_a, double p_b, int p_reach, bool p_wrap, int p_z0, int p_z1, float *r_shear) {
+		if (p_wrap) {
+			rows_wrapped<true>(p_slope, w, h, p_ux, p_uz, p_a, p_b, p_reach, p_z0, p_z1, r_shear);
+		} else {
+			rows_wrapped<false>(p_slope, w, h, p_ux, p_uz, p_a, p_b, p_reach, p_z0, p_z1, r_shear);
+		}
+	}
+
+	// rows() with the offsets along the wind worked out once: lround(x - p_ux * k) is x plus lround(-p_ux * k) for a
+	// whole x, except where -p_ux * k sits at a half (ties round away from zero), so those k keep the direct form.
+	// The rows' z offsets are the same for every x. Bit-identical to the direct sum.
+	template <bool W>
+	static void rows_wrapped(const float *p_slope, int w, int h, double p_ux, double p_uz, double p_a, double p_b, int p_reach, int p_z0, int p_z1, float *r_shear) {
 		const float *g = p_slope;
+		const int reach = std::max(p_reach, 0);
+		std::vector<int> dax(reach + 1), dbx(reach + 1), arow(reach + 1), brow(reach + 1);
+		std::vector<uint8_t> tie(reach + 1);
+		auto near_half = [](double p_v) {
+			const double f = p_v - std::floor(p_v);
+			return std::abs(f - 0.5) < 1.0e-6;
+		};
+		for (int k = 1; k <= reach; k++) {
+			const double fx = p_ux * k, fz = p_uz * k;
+			tie[k] = near_half(fx) || near_half(fz);
+			dax[k] = int(std::lround(-fx));
+			dbx[k] = int(std::lround(fx));
+		}
+		auto wrap = [](int p_v, int p_m) { return (unsigned)p_v < (unsigned)p_m ? p_v : index(p_v, p_m, W); };
 		for (int z = p_z0; z < p_z1; z++) {
+			for (int k = 1; k <= reach; k++) {
+				if (!tie[k]) {
+					arow[k] = wrap(z + int(std::lround(-p_uz * k)), h) * w;
+					brow[k] = wrap(z + int(std::lround(p_uz * k)), h) * w;
+				}
+			}
 			for (int x = 0; x < w; x++) {
 				double hs = 0.0;
-				for (int k = 1; k <= p_reach; k++) {
-					const int ax = index(int(std::lround(x - p_ux * k)), w, p_wrap), az = index(int(std::lround(z - p_uz * k)), h, p_wrap);
-					const int bx = index(int(std::lround(x + p_ux * k)), w, p_wrap), bz = index(int(std::lround(z + p_uz * k)), h, p_wrap);
-					hs += (g[az * w + ax] - g[bz * w + bx]) / k;
+				for (int k = 1; k <= reach; k++) {
+					int a, b;
+					if (!tie[k]) {
+						a = arow[k] + wrap(x + dax[k], w);
+						b = brow[k] + wrap(x + dbx[k], w);
+					} else {
+						a = index(int(std::lround(z - p_uz * k)), h, W) * w + index(int(std::lround(x - p_ux * k)), w, W);
+						b = index(int(std::lround(z + p_uz * k)), h, W) * w + index(int(std::lround(x + p_ux * k)), w, W);
+					}
+					hs += (g[a] - g[b]) / k;
 				}
 				const double s = g[z * w + x];
 				r_shear[z * w + x] = float(std::clamp(1.0 + p_a * (hs * (1.0 / 3.14159265358979) + p_b * s), 0.0, 3.0));

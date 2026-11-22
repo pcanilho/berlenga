@@ -467,6 +467,34 @@
 				Hoarfrost on exposed surfaces at [param position], in mm of water: deposited on clear calm nights below 0 C at the surface (see [member dew_and_frost]), melted by the morning sun or mild air. Shaders read it from the global [code]weather_frost_map[/code] (R, mm; G, the surface's temperature less the air's, K) over [code]weather_map_rect[/code].
 			</description>
 		</method>
+		<method name="get_freezing_share_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the precipitation landing liquid on frozen surfaces at [param position] (freezing rain), 0 to 1: snow melted in the warm layer aloft ([member warm_nose_temperature]) that reaches air at or below 0 C without refreezing to ice pellets (Bourgouin 2000, see [member warm_nose_base]).
+			</description>
+		</method>
+		<method name="get_glaze_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The glaze at [param position]: mm of radial clear ice on an exposed twig or wire, from freezing rain (Jones 1998), melted in a thaw at 0.3 mm/h per K above 0 C. [code]WorldWeather.glaze_at[/code] reads it; shaders read it from the rain map's alpha ([code]weather_rain_map[/code]).
+			</description>
+		</method>
+		<method name="get_warm_nose_melt" qualifiers="const">
+			<return type="float" />
+			<description>
+				The share of the falling snow the warm layer aloft melts (0 to 1): none at a peak of +1 C or less, all of it from +3 C (Stewart and King 1987).
+			</description>
+		</method>
+		<method name="glaze_accretion_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="precip_mm_h" type="float" />
+			<param index="1" name="wind_m_s" type="float" />
+			<description>
+				Jones's (1998) simple ice accretion model: the radial ice (mm/h) a horizontal cylinder gains from [param precip_mm_h] of freezing rain in a [param wind_m_s] wind, [code]sqrt((P rho_w)^2 + (3.6 V W)^2) / (rho_i pi)[/code] with [code]W = 0.067 P^0.846[/code] g/m3.
+			</description>
+		</method>
 		<method name="get_season_on_day" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="day" type="int" />
@@ -1357,6 +1385,15 @@
 		</member>
 		<member name="valley_fog_density" type="float" setter="set_valley_fog_density" getter="get_valley_fog_density" default="0.02">
 			Extinction inside the valley fog (1/m); 0.02 gives about 150 m visibility, a moderate radiation fog.
+		</member>
+		<member name="ice_storm_glaze" type="float" setter="set_ice_storm_glaze" getter="get_ice_storm_glaze" default="0.0">
+			A test knob: every cell holds at least this glaze (mm of radial ice), whatever the weather; set it back to 0 and the glaze thaws as usual.
+		</member>
+		<member name="warm_nose_base" type="float" setter="set_warm_nose_base" getter="get_warm_nose_base" default="1000.0">
+			The base of the warm layer aloft, in m above the map's ground. Under it the air cools to the ground's: a deep, cold layer refreezes the melted drops to ice pellets (Bourgouin's 2000 energies), a shallow one lets them land as freezing rain. Ground at or above it is in the warm air: rain, no glaze.
+		</member>
+		<member name="warm_nose_temperature" type="float" setter="set_warm_nose_temperature" getter="get_warm_nose_temperature" default="0.0">
+			The peak temperature (C) of a warm layer aloft, 0 for none. It melts the snow falling through it (see [method get_warm_nose_melt]); over sub-zero air at the ground the drops arrive supercooled and freeze where they land (freezing rain, [method get_glaze_at]). Every reader of the rain share sees it: [method get_rain_share_at], [code]WorldWeather.rain_share_at[/code], the snowpack, the falling snow and the raindrop rings (raster and path traced).
 		</member>
 		<member name="water_temperature" type="float" setter="set_water_temperature" getter="get_water_temperature_setting" default="-100.0">
 			Open water's surface temperature (C) when set; below -99 [method get_water_temperature] follows the climate or the air.
