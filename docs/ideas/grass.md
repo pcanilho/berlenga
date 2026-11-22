@@ -255,6 +255,36 @@ blades and a pale soil between them. What the published grass does about that:
 Cost on the CPU rasteriser (lavapipe, 1280x720, meadow with all species): 517 ms before, 610 ms after;
 almost all of it is the doubled undercoat. The shader changes alone are a few ALU ops per fragment.
 
+## Hiding the ground (stage 2.5)
+
+Paulo, 10 Nov: in KCD2 and Star Citizen's Nyx the floor is never seen through the vegetation; ours
+showed gaps. What the published work does is not more blades alone but making the ground the base
+of the grass:
+
+- Serious Sam 4 (Croteam, GDC 2019, "4 Million Acres"): blades are true geometry, "albedo colored
+  from the floor", the floor material matched to the grass, a per-blade ambient shadow on the floor,
+  and several density grids overlapped; a separate material set inside forests.
+- Ghost of Tsushima (GDC 2021): normals tilted outward keep the field full; far grass becomes
+  artist-authored textures.
+- Star Citizen Planet Tech v5: the terrain shader colours the ground from the vegetation that is not
+  loaded yet, so the ground already reads as grass before the blades appear; ground layers are
+  bedrock, soil, then surface items (leaves).
+
+What we built:
+
+- `get_ground_shader_code()` now gives `grass_turf()`: the sward's root colour (`ground_tint`),
+  tinted by the same colour patches as the blades (one shared function, so blade and floor agree
+  everywhere), streaks of matted blades along a slowly turning direction, and dark thatch from the
+  grass's `dryness` and `dry_color`. `grass_ground(world_pos, albedo)` keeps its signature and now
+  mixes the soil to that turf where grass grows. New globals: `grass_ground_dry`, `grass_ground_params`.
+- Bench: a third, very short and dense grid near the camera (`Turf`: 1600 /m², 3 to 7 cm, 5 m
+  radius), as Serious Sam 4 overlaps grids.
+
+Cost on the CPU rasteriser (1280x720 meadow): turf ground 610 to 595 ms (free, within noise); the
+near turf grid 595 to 1033 ms. The grid's real cost needs the GPU bench (about 125k extra
+one-triangle blades): on lavapipe every blade is CPU work. The ground alone removes the pale gaps;
+the grid fills the nearest metres.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

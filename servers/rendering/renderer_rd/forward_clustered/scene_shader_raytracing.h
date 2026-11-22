@@ -210,6 +210,8 @@ public:
 	static constexpr int RT_PARAM_SNOW_WORLD_RECT_Y = 52;
 	static constexpr int RT_PARAM_SNOW_WORLD_RECT_W = 53;
 	static constexpr int RT_PARAM_SNOW_WORLD_RECT_H = 54;
+	// The near square's catch map (snow_catch_map, the snow map's rect): bindless index, 0 = none.
+	static constexpr int RT_PARAM_SNOW_CATCH_MAP = 55;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

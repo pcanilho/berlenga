@@ -136,6 +136,12 @@ void SnowCover3D::_allocate() {
 	cell_sx.resize(nn);
 	cell_new_depth.resize(nn);
 	cell_new_depth.fill(0.0f);
+	cell_canopy.resize(nn);
+	cell_canopy.fill(0.0f);
+	cell_canopy_load.resize(nn);
+	cell_canopy_load.fill(0.0f);
+	catch_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAF);
+	catch_texture.unref();
 	cell_height_valid.resize(nn);
 	cell_ground.fill(0.0f);
 	cell_swe.fill(0.0f);
@@ -243,12 +249,42 @@ void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uin
 			if (p_only && !(*p_only)[i]) {
 				continue;
 			}
-			const float h = _query_ground(q, Vector3((origin_cell.x + x + 0.5f) * cs, 0.0f, (origin_cell.y + z + 0.5f) * cs));
+			const Vector3 at((origin_cell.x + x + 0.5f) * cs, 0.0f, (origin_cell.y + z + 0.5f) * cs);
+			float h = _query_ground(q, at);
+			// With a height source, roofs and other overhead colliders on shelter_collision_mask catch the snow
+			// over the ground below them (the pack lies on top; materials under them stay bare).
+			if (shelter_collision_mask && q.space && (q.deformer || q.data_map || q.getter)) {
+				PhysicsDirectSpaceState3D::RayParameters rp;
+				rp.from = Vector3(at.x, q.y0 + 10000.0f, at.z);
+				rp.to = Vector3(at.x, q.y0 - 10000.0f, at.z);
+				rp.collision_mask = shelter_collision_mask;
+				PhysicsDirectSpaceState3D::RayResult rr;
+				if (q.space->intersect_ray(rp, rr) && (!Math::is_finite(h) || rr.position.y > h + 0.3f)) {
+					h = rr.position.y;
+				}
+			}
 			cell_height_valid.write[i] = Math::is_finite(h) ? 1 : 0;
 			cell_ground.write[i] = Math::is_finite(h) ? h : q.y0;
 		}
 	}
 	steep_dirty = true;
+	_sample_canopy();
+}
+
+void SnowCover3D::_sample_canopy() {
+	const int n = resolution;
+	if (cell_canopy.size() != n * n) {
+		return;
+	}
+	const WeatherMap3D *wm = owner || !canopy_enabled ? nullptr : WeatherMap3D::get_active();
+	const float cs = _cell_size();
+	float *c = cell_canopy.ptrw();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			c[i] = wm ? CLAMP(wm->get_canopy_closure_at(Vector3((origin_cell.x + x + 0.5f) * cs, cell_ground[i], (origin_cell.y + z + 0.5f) * cs)), 0.0f, 1.0f) : 0.0f;
+		}
+	}
 }
 
 void SnowCover3D::_follow(Vector3 p_center) {
@@ -278,7 +314,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -506,11 +542,43 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		const float p = MAX(rate, 0.0f) * oro * in.dt_h;
 		const float share = snowfall_fraction(t, in.humidity);
 		float snow = p * share;
-		const float rain = p - snow;
+		float rain_extra = 0.0f;
+		const float rain_base = p - snow;
 		if (in.wind_factor > 0.0f) {
 			snow *= in.drift_norm * MAX(0.0f, 1.0f + drift_strength * in.wind_factor * CLAMP(cell_sx[i] / SX_FULL, -1.0f, 1.0f));
 		}
+		// Trees hold snow in their crowns (Hedstrom and Pomeroy 1998): a canopy of closure C and leaf area
+		// LAI (from C as the vegetation's Beer's law) takes I = (I* - I0)(1 - exp(-C P / I*)) of a fall P, up to I* = S (0.27 + 46 / rho_s) LAI with
+		// S = 5.9 kg/m2 (spruce). It unloads onto the snow below as it warms toward thaw and in the wind
+		// (Roesch et al. 2001, as in CLM5): I (T - 270.15 K) / 1.87e5 and I u / 1.56e5 per second.
+		if (cell_canopy.size() == n * n && cell_canopy[i] > 0.01f) {
+			const float closure = cell_canopy[i];
+			float load = cell_canopy_load[i];
+			if (snow > 0.0f) {
+				const float cap = canopy_capacity(closure, new_snow_density(t));
+				if (cap > load) {
+					const float take = (cap - load) * (1.0f - Math::exp(-closure * snow / cap));
+					load += take;
+					snow -= take;
+				}
+			}
+			if (load > 0.0f) {
+				const float u = last_wind.length();
+				const float rate = MAX(t + 273.15f - 270.15f, 0.0f) / 1.87e5f + u / 1.56e5f;
+				const float drop = load * (1.0f - Math::exp(-rate * in.dt_h * 3600.0f));
+				load -= drop;
+				snow += drop;
+				if (t > 0.0f) {
+					// In a thaw the rest drips off as water.
+					const float drip = MIN(load, melt_temperature_factor * t * in.dt_h);
+					load -= drip;
+					rain_extra += drip;
+				}
+			}
+			cell_canopy_load.write[i] = load;
+		}
 
+		const float rain = rain_base + rain_extra;
 		float swe = cell_swe[i];
 		float liq = cell_liquid[i];
 		float rho = cell_density[i];
@@ -733,6 +801,11 @@ void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
 	cell_albedo.ptrw();
 	cell_runoff.ptrw();
 	cell_new_depth.ptrw();
+	cell_canopy_load.ptrw();
+	// The canopy can change under the square (a forest populated later): read it again now and then.
+	if (canopy_enabled && !owner && (update_count % 16) == 0) {
+		_sample_canopy();
+	}
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &SnowCover3D::_update_row, (void *)nullptr, resolution, -1, true, String("SnowCover3D cells"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
 	// Sliding is slow next to a frame: a pass every slide_interval of weather time.
@@ -774,6 +847,27 @@ void SnowCover3D::_upload() {
 		w[i * 4 + 3] = Math::make_half_float(cell_density[i] / 1000.0f);
 	}
 	snow_image->set_data(n, n, false, Image::FORMAT_RGBAH, bytes);
+	// The catch map: the height of the surface the pack lies on, the canopy's load over its capacity, and
+	// the canopy closure. Materials leave what lies under an overhang bare and give tree crowns their load.
+	if (catch_image.is_valid() && catch_image->get_width() == n) {
+		Vector<uint8_t> cb;
+		cb.resize(n * n * 16);
+		float *cw = reinterpret_cast<float *>(cb.ptrw());
+		for (int i = 0; i < n * n; i++) {
+			const float closure = cell_canopy.size() == n * n ? cell_canopy[i] : 0.0f;
+			const float cap = closure > 0.01f ? canopy_capacity(closure, 100.0f) : 0.0f;
+			cw[i * 4 + 0] = cell_ground[i];
+			cw[i * 4 + 1] = cap > 0.0f ? CLAMP(cell_canopy_load[i] / cap, 0.0f, 1.0f) : 0.0f;
+			cw[i * 4 + 2] = closure;
+			cw[i * 4 + 3] = 1.0f;
+		}
+		catch_image->set_data(n, n, false, Image::FORMAT_RGBAF, cb);
+		if (catch_texture.is_null()) {
+			catch_texture = ImageTexture::create_from_image(catch_image);
+		} else {
+			catch_texture->update(catch_image);
+		}
+	}
 	if (snow_texture.is_null()) {
 		snow_texture = ImageTexture::create_from_image(snow_image);
 	} else {
@@ -799,6 +893,9 @@ void SnowCover3D::_publish_globals() {
 	}
 	if (!globals_added) {
 		_set_global("snow_map", snow_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		if (catch_texture.is_valid()) {
+			_set_global("snow_catch_map", catch_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		}
 		globals_added = true;
 	}
 	const Rect2 r = get_map_rect();
@@ -1085,6 +1182,21 @@ Rect2 SnowCover3D::get_world_rect() const {
 	return world ? world->get_map_rect() : Rect2();
 }
 
+float SnowCover3D::canopy_capacity(float p_closure, float p_snow_density) {
+	// Hedstrom and Pomeroy (1998). Leaf area from the closure by Beer's law with extinction 0.5, the
+	// vegetation's own canopy model (closure 1 - exp(-0.5 LAI); 0.85 is LAI 3.8).
+	const float lai = -2.0f * Math::log(1.0f - CLAMP(p_closure, 0.0f, 0.98f));
+	return 5.9f * (0.27f + 46.0f / MAX(p_snow_density, 30.0f)) * lai;
+}
+
+float SnowCover3D::get_canopy_load_at(Vector3 p_position) const {
+	return cell_canopy_load.size() == resolution * resolution ? MAX(_sample(cell_canopy_load, Vector2(p_position.x, p_position.z)), 0.0f) : 0.0f;
+}
+
+float SnowCover3D::get_canopy_capacity_at(Vector3 p_position) const {
+	return cell_canopy.size() == resolution * resolution ? canopy_capacity(_sample(cell_canopy, Vector2(p_position.x, p_position.z)), 100.0f) : 0.0f;
+}
+
 float SnowCover3D::get_world_swe_at(Vector3 p_position) const {
 	return world ? world->get_swe_at(p_position) : 0.0f;
 }
@@ -1250,6 +1362,9 @@ float SnowCover3D::get_total_water() const {
 	double sum = 0.0;
 	for (int i = 0; i < cell_swe.size(); i++) {
 		sum += cell_swe[i];
+	}
+	for (int i = 0; i < cell_canopy_load.size(); i++) {
+		sum += cell_canopy_load[i];
 	}
 	return float(sum * cs * cs);
 }
@@ -1457,6 +1572,14 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_update_rate"), &SnowCover3D::get_update_rate);
 	ClassDB::bind_method(D_METHOD("set_height_source", "path"), &SnowCover3D::set_height_source);
 	ClassDB::bind_method(D_METHOD("get_height_source"), &SnowCover3D::get_height_source);
+	ClassDB::bind_method(D_METHOD("set_shelter_collision_mask", "mask"), &SnowCover3D::set_shelter_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_shelter_collision_mask"), &SnowCover3D::get_shelter_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_canopy_enabled", "enabled"), &SnowCover3D::set_canopy_enabled);
+	ClassDB::bind_method(D_METHOD("is_canopy_enabled"), &SnowCover3D::is_canopy_enabled);
+	ClassDB::bind_method(D_METHOD("get_canopy_load_at", "position"), &SnowCover3D::get_canopy_load_at);
+	ClassDB::bind_method(D_METHOD("get_canopy_capacity_at", "position"), &SnowCover3D::get_canopy_capacity_at);
+	ClassDB::bind_method(D_METHOD("get_catch_texture"), &SnowCover3D::get_catch_texture);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("canopy_capacity", "closure", "snow_density"), &SnowCover3D::canopy_capacity);
 	ClassDB::bind_method(D_METHOD("set_ground_collision_mask", "mask"), &SnowCover3D::set_ground_collision_mask);
 	ClassDB::bind_method(D_METHOD("get_ground_collision_mask"), &SnowCover3D::get_ground_collision_mask);
 	ClassDB::bind_method(D_METHOD("set_sun_light", "path"), &SnowCover3D::set_sun_light);
@@ -1546,6 +1669,8 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "update_rate", PROPERTY_HINT_RANGE, "0.01,60,0.01,suffix:Hz"), "set_update_rate", "get_update_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "height_source"), "set_height_source", "get_height_source");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ground_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_ground_collision_mask", "get_ground_collision_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "shelter_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_shelter_collision_mask", "get_shelter_collision_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "canopy_enabled"), "set_canopy_enabled", "is_canopy_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lapse_rate", PROPERTY_HINT_RANGE, "0,15,0.1,suffix:C/km"), "set_lapse_rate", "get_lapse_rate");
 	ADD_GROUP("Without Weather", "");

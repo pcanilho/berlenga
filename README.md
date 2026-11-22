@@ -325,6 +325,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Wind near the ground** (`add_canopy`, `add_shelter_box`, `gust_patch_size`): shelter inside plant canopies and behind buildings; gust patches sweep across fields.
 - **Storms** (`add_storm`): drift with the wind, with a rain core and a downdraft.
 - **Lightning and thunder** (`WeatherLightning3D`): strikes from storm cells at a rate set by cloud-top height, lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.
+- **Precipitation haze** (`WeatherMap3D.set_precipitation_extinction()`): snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.
 - **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.
 - **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).
 
@@ -368,10 +369,11 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Falling snow** (`SnowFall3D`): falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.
 - **Snow climate** (`SnowClimate`): bakes a winter over the whole terrain, with snow lines, shaded faces that keep their snow and loaded lee slopes; the cover carries it on with the weather and draws it far away.
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
+- **Shelter** (`SnowCover3D.canopy_enabled`, `shelter_collision_mask`): ground under roofs and overhangs stays bare; tree crowns hold snow and unload it later.
 - **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced.
 
-<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle</summary>
+<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle, shelter</summary>
 
 ![Snow on a mountain, raster and path traced](docs/media/snow-mountain.jpg)
 
@@ -416,6 +418,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Snow surface close up: dry in raster, dry path traced, and wet](docs/media/snow-sparkle.jpg)
 
 *Sparkle: dry snow glints in raster and path tracing; wet snow loses it.*
+
+![A shelter and snow-laden trees, raster and path traced](docs/media/snow-shelter.jpg)
+
+*Shelter: bare ground under the roof; tree crowns hold their snow.*
 
 </details>
 

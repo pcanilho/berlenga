@@ -66,6 +66,8 @@ uniform sampler2D ground_tex : filter_linear, repeat_disable;
 uniform vec4 ground_rect;
 uniform sampler2D snow_tex : filter_linear, repeat_disable;
 uniform vec4 snow_rect;
+uniform sampler2D catch_tex : filter_linear, repeat_disable;
+uniform bool has_catch = false;
 uniform sampler2D deform_tex : filter_linear, repeat_disable;
 uniform vec4 deform_rect;
 uniform vec4 mesh_rect;
@@ -89,7 +91,15 @@ float snow_ground(vec2 p) {
 }
 vec4 snow_pack(vec2 p) {
 	vec2 uv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
-	return snow_inside(uv) ? textureLod(snow_tex, uv, 0.0) : vec4(0.0, 0.84, 0.0, 0.1);
+	if (!snow_inside(uv)) {
+		return vec4(0.0, 0.84, 0.0, 0.1);
+	}
+	vec4 v = textureLod(snow_tex, uv, 0.0);
+	// Under a roof the pack lies on the roof (the cover's catch map): none on the ground here.
+	if (has_catch && textureLod(catch_tex, uv, 0.0).r > snow_ground(p) + 0.5) {
+		v.r = 0.0;
+	}
+	return v;
 }
 vec2 snow_deform(vec2 p) {
 	if (deform_rect.z <= 0.0) {
@@ -629,7 +639,8 @@ float SnowSurface3D::_surface_at(float p_x, float p_z, const SnowCover3D *p_cove
 	const float half = extent * 0.5f;
 	const float edge = MIN(MIN(p_x - (mesh_center.x - half), mesh_center.x + half - p_x), MIN(p_z - (mesh_center.y - half), mesh_center.y + half - p_z));
 	const float fade = edge_fade > 0.0f ? Math::smoothstep(0.0f, edge_fade, edge) : (edge >= 0.0f ? 1.0f : 0.0f);
-	float d = p_cover->get_depth_at(Vector3(p_x, 0, p_z)) * fade;
+	// Under a roof the pack lies on the roof (the cover's ground there is the roof): none on the ground.
+	float d = p_cover->get_ground_height_at(Vector3(p_x, 0, p_z)) > g + 0.5f ? 0.0f : p_cover->get_depth_at(Vector3(p_x, 0, p_z)) * fade;
 	if (deform_enabled && deform_valid) {
 		d += snow_field_at(rim, deform_resolution, deform_origin, _texel(), p_x, p_z) - snow_field_at(dent, deform_resolution, deform_origin, _texel(), p_x, p_z);
 	}
@@ -1052,6 +1063,8 @@ void SnowSurface3D::_update_material() {
 		const Rect2 r = cover->get_map_rect();
 		material->set_shader_parameter("snow_tex", cover->get_snow_texture());
 		material->set_shader_parameter("snow_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y));
+		material->set_shader_parameter("catch_tex", cover->get_catch_texture());
+		material->set_shader_parameter("has_catch", cover->get_catch_texture().is_valid());
 	} else {
 		material->set_shader_parameter("snow_rect", Vector4());
 	}

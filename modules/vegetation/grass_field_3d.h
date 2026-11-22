@@ -56,6 +56,7 @@ class GrassField3D : public Node3D {
 	};
 
 	NodePath data_map;
+	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
 	Ref<PlantSpecies> rules;
 	float density = 60.0f; // Blades per square metre, near the camera.
 	Vector2 blade_height = Vector2(0.25f, 0.6f);
@@ -78,6 +79,7 @@ class GrassField3D : public Node3D {
 	Color ground_tint = Color(0.05f, 0.09f, 0.025f, 0.85f);
 	bool ground_tint_enabled = true;
 	bool ground_baked = false;
+	class VegetationField3D *_get_canopy(const PlantSpecies *p_rules) const;
 	Ref<ImageTexture> ground_texture;
 
 	// Trample field (docs/ideas/grass.md, contact): bend per texel around the camera, pressed by
@@ -120,6 +122,8 @@ protected:
 public:
 	void set_data_map(const NodePath &p_path);
 	NodePath get_data_map() const { return data_map; }
+	void set_canopy_field(const NodePath &p_path);
+	NodePath get_canopy_field() const { return canopy_field; }
 	void set_rules(const Ref<PlantSpecies> &p_rules);
 	Ref<PlantSpecies> get_rules() const { return rules; }
 	void set_density(float p_density);

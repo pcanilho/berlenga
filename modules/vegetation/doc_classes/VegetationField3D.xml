@@ -70,6 +70,9 @@
 		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="32.0">
 			Width in metres of a tile: one point pattern and one [MultiMeshInstance3D] per mesh per tile, so tiles out of view are culled.
 		</member>
+		<member name="weather_map" type="NodePath" setter="set_weather_map" getter="get_weather_map" default="NodePath(&quot;&quot;)">
+			Path to a [WeatherMap3D]. After each [method populate] the placed canopy species are written to its [member WeatherMap3D.canopy_map] over the data map's rect (about 1 m cells): crown top height in red, leaf area index over 4 in green, taking [member PlantSpecies.canopy_opacity] as [code]1 - exp(-0.5 LAI)[/code]. [method WeatherMap3D.get_canopy_closure_at] then matches [method get_shade_at], and snow, wind and light under the trees all see the same forest. This replaces any canopy map already set there.
+		</member>
 	</members>
 	<signals>
 		<signal name="populated">

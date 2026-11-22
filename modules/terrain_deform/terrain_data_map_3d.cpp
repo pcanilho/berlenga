@@ -182,10 +182,10 @@ Rect2 TerrainDataMap3D::get_map_rect() const {
 	return Rect2(Vector2(c.x, c.z) - Vector2(size, size) * 0.5f, Vector2(size, size));
 }
 
-bool TerrainDataMap3D::_sample_heights(LocalVector<float> &r_h, LocalVector<uint8_t> &r_valid) {
-	const int n = resolution;
-	const Rect2 rect = get_map_rect();
-	const float cell = size / n;
+bool TerrainDataMap3D::_sample_heights(const Rect2 &p_rect, int p_n, LocalVector<float> &r_h, LocalVector<uint8_t> &r_valid) {
+	const int n = p_n;
+	const Rect2 rect = p_rect;
+	const float cell = p_rect.size.x / n;
 	r_h.resize(n * n);
 	r_valid.resize(n * n);
 
@@ -251,10 +251,10 @@ bool TerrainDataMap3D::_sample_heights(LocalVector<float> &r_h, LocalVector<uint
 	return true;
 }
 
-void TerrainDataMap3D::_sample_water(const LocalVector<float> &p_h, LocalVector<float> &r_surface) {
-	const int n = resolution;
-	const Rect2 rect = get_map_rect();
-	const float cell = size / n;
+void TerrainDataMap3D::_sample_water(const Rect2 &p_rect, int p_n, const LocalVector<float> &p_h, LocalVector<float> &r_surface) {
+	const int n = p_n;
+	const Rect2 rect = p_rect;
+	const float cell = p_rect.size.x / n;
 	r_surface.resize(n * n);
 	for (int i = 0; i < n * n; i++) {
 		r_surface[i] = -Math::INF;
@@ -361,11 +361,11 @@ Error TerrainDataMap3D::bake() {
 
 	LocalVector<float> h;
 	LocalVector<uint8_t> valid;
-	if (!_sample_heights(h, valid)) {
+	if (!_sample_heights(rect, n, h, valid)) {
 		ERR_FAIL_V_MSG(ERR_UNCONFIGURED, "TerrainDataMap3D: no heights. Set height_source or put colliders on ground_collision_mask under the map.");
 	}
 	LocalVector<float> surface;
-	_sample_water(h, surface);
+	_sample_water(rect, n, h, surface);
 
 	for (int c = 0; c < CHANNEL_MAX; c++) {
 		channels[c].resize(nn);
@@ -622,11 +622,14 @@ void TerrainDataMap3D::_queued_bake() {
 	bake_queued = false;
 	if (is_inside_tree()) {
 		bake();
+		if (climate_recipe.is_valid()) {
+			bake_climate();
+		}
 	}
 }
 
 void TerrainDataMap3D::_publish_globals() {
-	if (!publish_shader_globals || data_texture.is_null()) {
+	if (!publish_shader_globals || (data_texture.is_null() && climate_texture.is_null())) {
 		return;
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
@@ -639,10 +642,17 @@ void TerrainDataMap3D::_publish_globals() {
 		}
 		rs->global_shader_parameter_set(p_name, p_value);
 	};
-	const Rect2 r = get_map_rect();
-	set_global("terrain_data_map", data_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
-	set_global("terrain_water_map", water_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
-	set_global("terrain_data_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
+	if (data_texture.is_valid()) {
+		const Rect2 r = get_map_rect();
+		set_global("terrain_data_map", data_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		set_global("terrain_water_map", water_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		set_global("terrain_data_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
+	if (climate_texture.is_valid()) {
+		const Rect2 r = get_climate_rect();
+		set_global("terrain_climate_map", climate_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		set_global("terrain_climate_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
 }
 
 /* Queries */
@@ -730,6 +740,218 @@ String TerrainDataMap3D::get_shader_code() {
 	c += "}\n\n";
 	c += "vec4 terrain_water(vec3 world_pos) {\n";
 	c += "	return textureLod(terrain_water_map, terrain_data_uv(world_pos), 0.0);\n";
+	c += "}\n";
+	return c;
+}
+
+/* Climate */
+
+Rect2 TerrainDataMap3D::get_climate_rect() const {
+	return Rect2(climate_origin, Vector2(climate_cell, climate_cell) * climate_resolution);
+}
+
+Error TerrainDataMap3D::bake_climate() {
+	ERR_FAIL_COND_V_MSG(climate_recipe.is_null(), ERR_UNCONFIGURED, "TerrainDataMap3D: set climate_recipe before bake_climate().");
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	const TerrainClimate::Params &cp = climate_recipe->get_params();
+	const Vector3 c = is_inside_tree() ? get_global_position() : get_position();
+	const float extent = size + 2.0f * MAX(climate_recipe->get_context_margin(), 0.0f);
+	const int n = CLAMP(int(Math::round(extent / MAX(climate_recipe->get_sun_cell(), 0.1f))), 16, 1024);
+	const float cell = extent / n;
+	const Rect2 rect(Vector2(c.x, c.z) - Vector2(extent, extent) * 0.5f, Vector2(extent, extent));
+	const int nn = n * n;
+
+	// The air sits on the ground or on water: the sea and lakes from water_sources, or from a
+	// TerrainGenerator3D's own result when it is the geology source.
+	LocalVector<float> h;
+	LocalVector<uint8_t> valid;
+	ERR_FAIL_COND_V_MSG(!_sample_heights(rect, n, h, valid), ERR_UNCONFIGURED, "TerrainDataMap3D: no heights for the climate. Set height_source or put colliders on ground_collision_mask.");
+	LocalVector<float> water;
+	_sample_water(rect, n, h, water);
+	Node *gs = geology_source.is_empty() ? nullptr : get_node_or_null(geology_source);
+	TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(gs);
+	std::vector<float> surf(nn);
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			float s = MAX(h[i], water[i]);
+			if (gen) {
+				const float level = gen->get_water_level(Vector3(rect.position.x + (x + 0.5f) * cell, h[i], rect.position.y + (z + 0.5f) * cell));
+				if (Math::is_finite(level)) {
+					s = MAX(s, level);
+				}
+			}
+			surf[i] = s;
+		}
+	}
+
+	// Precipitation on the coarse grid (box means of the fine one), upsampled bilinearly.
+	const int f = MAX(1, int(Math::round(climate_recipe->get_precipitation_cell() / cell)));
+	const int nc = (n + f - 1) / f;
+	std::vector<float> coarse(nc * nc, 0.0f);
+	for (int cz = 0; cz < nc; cz++) {
+		for (int cx = 0; cx < nc; cx++) {
+			double sum = 0.0;
+			int count = 0;
+			for (int z = cz * f; z < MIN((cz + 1) * f, n); z++) {
+				for (int x = cx * f; x < MIN((cx + 1) * f, n); x++) {
+					sum += surf[z * n + x];
+					count++;
+				}
+			}
+			coarse[cz * nc + cx] = float(sum / MAX(count, 1));
+		}
+	}
+	std::vector<float> coarse_p;
+	TerrainClimate::precipitation(cp, coarse.data(), nc, cell * f, coarse_p);
+
+	for (int k = 0; k < CLIMATE_MAX; k++) {
+		climate[k].resize(nn);
+	}
+	float *t_mean = climate[CLIMATE_TEMPERATURE_MEAN].ptr();
+	float *t_jan = climate[CLIMATE_TEMPERATURE_JANUARY].ptr();
+	float *t_jul = climate[CLIMATE_TEMPERATURE_JULY].ptr();
+	float *precip = climate[CLIMATE_PRECIPITATION].ptr();
+	float *snow = climate[CLIMATE_SNOW_FRACTION].ptr();
+	float *arid = climate[CLIMATE_ARIDITY].ptr();
+	TerrainClimate::parallel_for(n, [&](int z) {
+		const float gz = CLAMP((z + 0.5f) / f - 0.5f, 0.0f, float(nc - 1));
+		const int z0 = MIN(int(gz), nc - 1), z1 = MIN(z0 + 1, nc - 1);
+		for (int x = 0; x < n; x++) {
+			const float gx = CLAMP((x + 0.5f) / f - 0.5f, 0.0f, float(nc - 1));
+			const int x0 = MIN(int(gx), nc - 1), x1 = MIN(x0 + 1, nc - 1);
+			const float fx = gx - x0, fz = gz - z0;
+			const float p = Math::lerp(Math::lerp(coarse_p[z0 * nc + x0], coarse_p[z0 * nc + x1], fx), Math::lerp(coarse_p[z1 * nc + x0], coarse_p[z1 * nc + x1], fx), fz);
+			const int i = z * n + x;
+			precip[i] = p;
+			TerrainClimate::temperature_fields(cp, surf[i], p, &t_mean[i], &t_jan[i], &t_jul[i], &snow[i], &arid[i]);
+		}
+	});
+
+	std::vector<float> hz;
+	TerrainClimate::horizons(cp, surf.data(), n, cell, hz);
+	TerrainClimate::shortwave(cp, surf.data(), n, cell, hz, climate[CLIMATE_SHORTWAVE].ptr(), climate[CLIMATE_SHORTWAVE_WINTER].ptr(), climate[CLIMATE_SKY_VIEW].ptr());
+	std::vector<float> sx;
+	TerrainClimate::winstral_sx(cp, surf.data(), n, cell, sx);
+	climate_sx.resize(sx.size());
+	memcpy(climate_sx.ptr(), sx.data(), sx.size() * sizeof(float));
+
+	climate_resolution = n;
+	climate_origin = rect.position;
+	climate_cell = cell;
+
+	// RGBA half: mean temperature C, precipitation m a year, shortwave kW/m2, snow fraction.
+	Vector<uint8_t> d;
+	d.resize(nn * 16);
+	float *px = reinterpret_cast<float *>(d.ptrw());
+	for (int i = 0; i < nn; i++) {
+		px[i * 4 + 0] = t_mean[i];
+		px[i * 4 + 1] = precip[i] * 0.001f;
+		px[i * 4 + 2] = climate[CLIMATE_SHORTWAVE][i] * 0.001f;
+		px[i * 4 + 3] = snow[i];
+	}
+	climate_image = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, d);
+	climate_image->convert(Image::FORMAT_RGBAH);
+	if (climate_texture.is_valid() && climate_texture->get_width() == n) {
+		climate_texture->update(climate_image);
+	} else {
+		climate_texture = ImageTexture::create_from_image(climate_image);
+	}
+	climate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	_publish_globals();
+	emit_signal(SNAME("climate_baked"));
+	return OK;
+}
+
+float TerrainDataMap3D::_sample_climate(const float *p_data, int p_stride, int p_offset, const Vector3 &p_pos) const {
+	ERR_FAIL_COND_V_MSG(climate_resolution == 0, Math::NaN, "TerrainDataMap3D: no climate yet (bake_climate()).");
+	const int n = climate_resolution;
+	const float gx = (p_pos.x - climate_origin.x) / climate_cell - 0.5f;
+	const float gz = (p_pos.z - climate_origin.y) / climate_cell - 0.5f;
+	const int x0 = CLAMP(int(Math::floor(gx)), 0, n - 1);
+	const int z0 = CLAMP(int(Math::floor(gz)), 0, n - 1);
+	const int x1 = MIN(x0 + 1, n - 1);
+	const int z1 = MIN(z0 + 1, n - 1);
+	const float fx = CLAMP(gx - x0, 0.0f, 1.0f);
+	const float fz = CLAMP(gz - z0, 0.0f, 1.0f);
+	auto at = [&](int x, int z) { return p_data[(z * n + x) * p_stride + p_offset]; };
+	return Math::lerp(Math::lerp(at(x0, z0), at(x1, z0), fx), Math::lerp(at(x0, z1), at(x1, z1), fx), fz);
+}
+
+float TerrainDataMap3D::get_temperature_at(const Vector3 &p_pos, float p_day) const {
+	if (p_day < 0.0f) {
+		return _sample_climate(climate[CLIMATE_TEMPERATURE_MEAN].ptr(), 1, 0, p_pos);
+	}
+	// The seasonal harmonic through the cell's January (day 15) and July means.
+	const float jan = _sample_climate(climate[CLIMATE_TEMPERATURE_JANUARY].ptr(), 1, 0, p_pos);
+	const float jul = _sample_climate(climate[CLIMATE_TEMPERATURE_JULY].ptr(), 1, 0, p_pos);
+	return 0.5f * (jan + jul) - 0.5f * (jul - jan) * Math::cos(float(Math::TAU) * (p_day - 15.0f) / 365.0f);
+}
+float TerrainDataMap3D::get_precipitation_at(const Vector3 &p_pos) const {
+	return _sample_climate(climate[CLIMATE_PRECIPITATION].ptr(), 1, 0, p_pos);
+}
+float TerrainDataMap3D::get_snow_fraction_at(const Vector3 &p_pos) const {
+	return _sample_climate(climate[CLIMATE_SNOW_FRACTION].ptr(), 1, 0, p_pos);
+}
+float TerrainDataMap3D::get_aridity_at(const Vector3 &p_pos) const {
+	return _sample_climate(climate[CLIMATE_ARIDITY].ptr(), 1, 0, p_pos);
+}
+float TerrainDataMap3D::get_shortwave_at(const Vector3 &p_pos) const {
+	return _sample_climate(climate[CLIMATE_SHORTWAVE].ptr(), 1, 0, p_pos);
+}
+float TerrainDataMap3D::get_winter_shortwave_at(const Vector3 &p_pos) const {
+	return _sample_climate(climate[CLIMATE_SHORTWAVE_WINTER].ptr(), 1, 0, p_pos);
+}
+float TerrainDataMap3D::get_sky_view_at(const Vector3 &p_pos) const {
+	return _sample_climate(climate[CLIMATE_SKY_VIEW].ptr(), 1, 0, p_pos);
+}
+float TerrainDataMap3D::get_sx_at(const Vector3 &p_pos, float p_wind_from) const {
+	const float fd = Math::fposmod(p_wind_from, 360.0f) / TerrainClimate::DIRECTION_STEP;
+	const int d0 = int(fd) % TerrainClimate::DIRECTIONS;
+	const int d1 = (d0 + 1) % TerrainClimate::DIRECTIONS;
+	const float t = fd - Math::floor(fd);
+	const float *sx = climate_sx.ptr();
+	return Math::lerp(_sample_climate(sx, TerrainClimate::DIRECTIONS, d0, p_pos), _sample_climate(sx, TerrainClimate::DIRECTIONS, d1, p_pos), t);
+}
+
+Dictionary TerrainDataMap3D::get_climate_at(const Vector3 &p_pos) const {
+	Dictionary d;
+	ERR_FAIL_COND_V_MSG(climate_resolution == 0, d, "TerrainDataMap3D: no climate yet (bake_climate()).");
+	d["temperature"] = get_temperature_at(p_pos);
+	d["temperature_january"] = _sample_climate(climate[CLIMATE_TEMPERATURE_JANUARY].ptr(), 1, 0, p_pos);
+	d["temperature_july"] = _sample_climate(climate[CLIMATE_TEMPERATURE_JULY].ptr(), 1, 0, p_pos);
+	d["precipitation"] = get_precipitation_at(p_pos);
+	d["snow_fraction"] = get_snow_fraction_at(p_pos);
+	d["aridity"] = get_aridity_at(p_pos);
+	d["shortwave"] = get_shortwave_at(p_pos);
+	d["shortwave_winter"] = get_winter_shortwave_at(p_pos);
+	d["sky_view"] = get_sky_view_at(p_pos);
+	if (climate_recipe.is_valid()) {
+		d["sx"] = get_sx_at(p_pos, climate_recipe->get_wind_from());
+	}
+	return d;
+}
+
+Ref<Image> TerrainDataMap3D::get_climate_image(ClimateChannel p_channel) const {
+	ERR_FAIL_INDEX_V(p_channel, CLIMATE_MAX, Ref<Image>());
+	ERR_FAIL_COND_V(climate_resolution == 0, Ref<Image>());
+	const int nn = climate_resolution * climate_resolution;
+	Vector<uint8_t> d;
+	d.resize(nn * 4);
+	memcpy(d.ptrw(), climate[p_channel].ptr(), nn * 4);
+	return Image::create_from_data(climate_resolution, climate_resolution, false, Image::FORMAT_RF, d);
+}
+
+String TerrainDataMap3D::get_climate_shader_code() {
+	String c;
+	c += "// Climate from TerrainDataMap3D.bake_climate() (TerrainDataMap3D.get_climate_shader_code()).\n";
+	c += "// terrain_climate(p) = (mean temperature C, precipitation m a year, shortwave kW/m2, snow fraction)\n";
+	c += "global uniform sampler2D terrain_climate_map : filter_linear;\n";
+	c += "global uniform vec4 terrain_climate_rect;\n\n";
+	c += "vec4 terrain_climate(vec3 world_pos) {\n";
+	c += "	vec2 half_texel = 0.5 / vec2(textureSize(terrain_climate_map, 0));\n";
+	c += "	vec2 uv = clamp((world_pos.xz - terrain_climate_rect.xy) / terrain_climate_rect.zw, half_texel, 1.0 - half_texel);\n";
+	c += "	return textureLod(terrain_climate_map, uv, 0.0);\n";
 	c += "}\n";
 	return c;
 }
@@ -822,6 +1044,25 @@ void TerrainDataMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_channel_image", "channel"), &TerrainDataMap3D::get_channel_image);
 	ClassDB::bind_static_method("TerrainDataMap3D", D_METHOD("get_shader_code"), &TerrainDataMap3D::get_shader_code);
 
+	ClassDB::bind_method(D_METHOD("set_climate_recipe", "recipe"), &TerrainDataMap3D::set_climate_recipe);
+	ClassDB::bind_method(D_METHOD("get_climate_recipe"), &TerrainDataMap3D::get_climate_recipe);
+	ClassDB::bind_method(D_METHOD("bake_climate"), &TerrainDataMap3D::bake_climate);
+	ClassDB::bind_method(D_METHOD("has_climate"), &TerrainDataMap3D::has_climate);
+	ClassDB::bind_method(D_METHOD("get_climate_rect"), &TerrainDataMap3D::get_climate_rect);
+	ClassDB::bind_method(D_METHOD("get_climate_bake_time_msec"), &TerrainDataMap3D::get_climate_bake_time_msec);
+	ClassDB::bind_method(D_METHOD("get_temperature_at", "global_position", "day_of_year"), &TerrainDataMap3D::get_temperature_at, DEFVAL(-1.0f));
+	ClassDB::bind_method(D_METHOD("get_precipitation_at", "global_position"), &TerrainDataMap3D::get_precipitation_at);
+	ClassDB::bind_method(D_METHOD("get_snow_fraction_at", "global_position"), &TerrainDataMap3D::get_snow_fraction_at);
+	ClassDB::bind_method(D_METHOD("get_aridity_at", "global_position"), &TerrainDataMap3D::get_aridity_at);
+	ClassDB::bind_method(D_METHOD("get_shortwave_at", "global_position"), &TerrainDataMap3D::get_shortwave_at);
+	ClassDB::bind_method(D_METHOD("get_winter_shortwave_at", "global_position"), &TerrainDataMap3D::get_winter_shortwave_at);
+	ClassDB::bind_method(D_METHOD("get_sky_view_at", "global_position"), &TerrainDataMap3D::get_sky_view_at);
+	ClassDB::bind_method(D_METHOD("get_sx_at", "global_position", "wind_from_degrees"), &TerrainDataMap3D::get_sx_at);
+	ClassDB::bind_method(D_METHOD("get_climate_at", "global_position"), &TerrainDataMap3D::get_climate_at);
+	ClassDB::bind_method(D_METHOD("get_climate_image", "channel"), &TerrainDataMap3D::get_climate_image);
+	ClassDB::bind_method(D_METHOD("get_climate_texture"), &TerrainDataMap3D::get_climate_texture);
+	ClassDB::bind_static_method("TerrainDataMap3D", D_METHOD("get_climate_shader_code"), &TerrainDataMap3D::get_climate_shader_code);
+
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "size", PROPERTY_HINT_RANGE, "1,16384,1,or_greater,suffix:m"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "resolution", PROPERTY_HINT_RANGE, "8,4096,1"), "set_resolution", "get_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "height_source"), "set_height_source", "get_height_source");
@@ -832,7 +1073,10 @@ void TerrainDataMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bake_on_ready"), "set_bake_on_ready", "is_bake_on_ready");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "publish_shader_globals"), "set_publish_shader_globals", "is_publishing_shader_globals");
 
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "climate_recipe", PROPERTY_HINT_RESOURCE_TYPE, "ClimateRecipe"), "set_climate_recipe", "get_climate_recipe");
+
 	ADD_SIGNAL(MethodInfo("baked"));
+	ADD_SIGNAL(MethodInfo("climate_baked"));
 
 	BIND_ENUM_CONSTANT(CHANNEL_HEIGHT);
 	BIND_ENUM_CONSTANT(CHANNEL_SLOPE);
@@ -846,4 +1090,15 @@ void TerrainDataMap3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(CHANNEL_ROCK);
 	BIND_ENUM_CONSTANT(CHANNEL_TALUS);
 	BIND_ENUM_CONSTANT(CHANNEL_MAX);
+
+	BIND_ENUM_CONSTANT(CLIMATE_TEMPERATURE_MEAN);
+	BIND_ENUM_CONSTANT(CLIMATE_TEMPERATURE_JANUARY);
+	BIND_ENUM_CONSTANT(CLIMATE_TEMPERATURE_JULY);
+	BIND_ENUM_CONSTANT(CLIMATE_PRECIPITATION);
+	BIND_ENUM_CONSTANT(CLIMATE_SNOW_FRACTION);
+	BIND_ENUM_CONSTANT(CLIMATE_ARIDITY);
+	BIND_ENUM_CONSTANT(CLIMATE_SHORTWAVE);
+	BIND_ENUM_CONSTANT(CLIMATE_SHORTWAVE_WINTER);
+	BIND_ENUM_CONSTANT(CLIMATE_SKY_VIEW);
+	BIND_ENUM_CONSTANT(CLIMATE_MAX);
 }
