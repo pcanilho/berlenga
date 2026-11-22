@@ -6958,7 +6958,7 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 	ranges.sort();
 	float cell = ranges[ranges.size() / 2] * 0.75f;
 	Vector3 extent = bounds.size;
-	cell = MAX(cell, Math::pow(MAX(extent.x * extent.y * extent.z, 1e-3f) / float(RT_LIGHT_GRID_MAX_CELLS), 1.0f / 3.0f));
+	cell = MAX(cell, Math::pow(MAX(float(extent.x * extent.y * extent.z), 1e-3f) / float(RT_LIGHT_GRID_MAX_CELLS), 1.0f / 3.0f));
 	cell = MAX(cell, 0.25f);
 
 	const uint32_t list_base = RT_LIGHT_GRID_HEADER + global.size() + far.size();
@@ -7042,7 +7042,7 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 		r_grid[0] = dims[0];
 		r_grid[1] = dims[1];
 		r_grid[2] = dims[2];
-		float origin[3] = { bounds.position.x, bounds.position.y, bounds.position.z };
+		float origin[3] = { float(bounds.position.x), float(bounds.position.y), float(bounds.position.z) };
 		float inv_cell = 1.0f / cell;
 		memcpy(&r_grid[4], origin, sizeof(origin));
 		memcpy(&r_grid[7], &inv_cell, sizeof(float));
@@ -8282,7 +8282,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			Vector3 hi(-1e30f, -1e30f, -1e30f);
 			for (int i = 0; i < count; i++) {
 				const RTDenseBox &b = dense.boxes[i];
-				const float f[4] = { b.origin.x, b.origin.y, b.origin.z, b.cell };
+				const float f[4] = { float(b.origin.x), float(b.origin.y), float(b.origin.z), b.cell };
 				memcpy(&vp.level[i * 8], f, sizeof(f));
 				vp.level[i * 8 + 4] = uint32_t(b.size.x);
 				vp.level[i * 8 + 5] = uint32_t(b.size.y);
