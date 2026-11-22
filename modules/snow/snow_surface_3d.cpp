@@ -1147,6 +1147,327 @@ void SnowSurface3D::_relax() {
 	collision_dirty = true;
 }
 
+// Walls that give way (docs/ideas/snow.md, follow-up 54). The print field's walls are the faces of ruts, prints and
+// trenches; a face stands while it is lower than the cut's critical height for the layers it cuts
+// (SnowCover3D::cut_critical_height: Terzaghi's 2.67 c / rho g, cohesion by layer), less 40 % while a body works the
+// tile (the load beside the edge and the shaking: a vehicle driving along a deep rut brings its walls in). A face
+// taller than that gives way along a block of it 0.25-0.7 m long (cut walls fail in blocks, not texel by texel), at
+// a rate that grows with how far over it stands: the wedge in front of a Rankine plane (45 + phi / 2, 62 degrees for
+// snow's 35) comes off the top, down to the failing layer's bottom (a wall over depth hoar falls to the hoar's
+// bottom, undercut), and lands at the foot as a debris toe at the angle of repose (38 degrees), bulked by a quarter
+// as broken blocks are. The toe is rim, so SnowClumps3D breaks its cohesive part into lumps. On the GPU the changed
+// tiles go up through the field's tile cache (seed_tile, pull_cached), the CPU copy being the last read back.
+static constexpr float CRUMBLE_RATE = 5.0f; // Hz
+static constexpr float WALL_TAN = 2.75f; // a face steeper than 70 degrees (a 62 degree scarp left by a fall stands)
+static constexpr float RANKINE_TAN = 1.88f; // tan 62 degrees
+static constexpr float TOE_TAN = 0.78f; // tan 38 degrees
+static constexpr float DEBRIS_BULKING = 1.25f;
+static constexpr float WORKED_FACTOR = 0.6f;
+
+int SnowSurface3D::crumble(float p_delta) {
+	crumble_accum = 1.0;
+	crumble_hold = 0.0;
+	return _crumble(p_delta, _gpu_on() && field.valid && gpu_host.gpu.is_valid());
+}
+
+int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
+	SnowCover3D *cover = _cover();
+	if (!wall_collapse || !field.valid || !cover) {
+		return 0;
+	}
+	crumble_hold -= p_delta;
+	if (p_gpu && !crumble_pending.is_empty()) {
+		if (gpu_host.pull_cached(field, crumble_pending)) {
+			crumble_pending.clear();
+			crumble_hold = 0.5;
+		}
+		return 0;
+	}
+	crumble_accum += p_delta;
+	if (crumble_accum < 1.0 / CRUMBLE_RATE || crumble_hold > 0.0) {
+		return 0;
+	}
+	const float dt = float(MIN(crumble_accum, 0.5));
+	crumble_accum = 0.0;
+	const int n = field.resolution;
+	const int T = GroundDeformField::TILE;
+	const int nt = field.tiles();
+	const float t = field.texel();
+	LocalVector<float> &dent = field.dent;
+	LocalVector<float> &rim = field.rim;
+	if (int(dent.size()) != n * n || int(rim.size()) != n * n) {
+		return 0;
+	}
+	if (int(crumble_mark.size()) != n * n) {
+		crumble_mark.resize(n * n);
+	}
+	memset(crumble_mark.ptr(), 0, n * n);
+	auto h = [&](int i) { return rim[i] - dent[i]; }; // over the untouched surface (smooth at this scale)
+	auto rnd = [this]() {
+		crumble_seed = hash_murmur3_one_32(crumble_seed);
+		return float(crumble_seed & 0xffffff) / 16777215.0f;
+	};
+	// Value noise on the field's texels (world-anchored, a lattice of p_cell texels): the rough faces of broken snow.
+	auto vnoise = [this](int p_x, int p_z, int p_cell) {
+		const int wx = p_x + field.origin.x, wz = p_z + field.origin.y;
+		const int cx = (wx >= 0 ? wx : wx - p_cell + 1) / p_cell, cz = (wz >= 0 ? wz : wz - p_cell + 1) / p_cell;
+		const float fx = float(wx - cx * p_cell) / p_cell, fz = float(wz - cz * p_cell) / p_cell;
+		auto lat = [](int a, int b) { return float(hash_murmur3_one_32(uint32_t(b) * 73856093u ^ hash_murmur3_one_32(uint32_t(a))) & 0xffff) / 65535.0f; };
+		const float sx = fx * fx * (3.0f - 2.0f * fx), sz = fz * fz * (3.0f - 2.0f * fz);
+		return Math::lerp(Math::lerp(lat(cx, cz), lat(cx + 1, cz), sx), Math::lerp(lat(cx, cz + 1), lat(cx + 1, cz + 1), sx), sz);
+	};
+	static const int DX[4] = { 1, -1, 0, 0 };
+	static const int DZ[4] = { 0, 0, 1, -1 };
+	struct Cand {
+		int i;
+		uint8_t dir;
+		float height; // m
+		float over; // height over the critical height, 0..
+		float fail; // m under the top: the failing layer's bottom
+		int foot; // texels from the top to the face's foot
+	};
+	LocalVector<Cand> cands;
+	HashMap<int64_t, Vector2> strength; // per cover cell: (critical height, failing bottom)
+	const float cell = MAX(cover->get_extent() / MAX(cover->get_resolution(), 1), 0.05f);
+	const int reach = MIN(int(Math::ceil(1.5f / t)), 128); // the deepest wall looked for: 1.5 m of drop
+	for (int tz = 0; tz < nt; tz++) {
+		for (int tx = 0; tx < nt; tx++) {
+			const int ti = tz * nt + tx;
+			if (!field.tile_active[ti]) {
+				continue;
+			}
+			const bool worked = p_gpu ? (int(gpu_host.tile_stamped.size()) == nt * nt && gpu_host.time - gpu_host.tile_stamped[ti] < 1.0) : (int(field.tile_settle.size()) == nt * nt && field.tile_settle[ti] > 0.0f);
+			for (int z = tz * T; z < (tz + 1) * T; z++) {
+				for (int x = tx * T; x < (tx + 1) * T; x++) {
+					const int i = z * n + x;
+					const float hi = h(i);
+					for (int d = 0; d < 4; d++) {
+						const int x1 = x + DX[d];
+						const int z1 = z + DZ[d];
+						const int xb = x - DX[d];
+						const int zb = z - DZ[d];
+						if (x1 < 0 || z1 < 0 || x1 >= n || z1 >= n || xb < 0 || zb < 0 || xb >= n || zb >= n) {
+							continue;
+						}
+						// The top edge of a face: a steep drop ahead, none behind.
+						if (hi - h(z1 * n + x1) < WALL_TAN * t || h(zb * n + xb) - hi > WALL_TAN * t) {
+							continue;
+						}
+						// Down the face to its foot.
+						float foot = h(z1 * n + x1);
+						int xx = x1, zz = z1;
+						int foot_k = 1;
+						for (int k = 0; k < reach; k++) {
+							const int xn = xx + DX[d], zn = zz + DZ[d];
+							if (xn < 0 || zn < 0 || xn >= n || zn >= n || h(zn * n + xn) > foot - 0.3f * t) {
+								break;
+							}
+							xx = xn;
+							zz = zn;
+							foot = h(zn * n + xn);
+							foot_k++;
+						}
+						const float height = hi - foot;
+						if (height < 0.05f || rim[i] > 0.5f * height) {
+							continue; // a debris face (mostly rim) is loose snow: the field's slump settles it
+						}
+						const Vector3 at((field.origin.x + x + 0.5f) * t, 0.0f, (field.origin.y + z + 0.5f) * t);
+						const int64_t key = (int64_t(Math::floor(at.x / cell)) << 32) ^ int64_t(uint32_t(int(Math::floor(at.z / cell))));
+						Vector2 sv;
+						if (const Vector2 *c = strength.getptr(key)) {
+							sv = *c;
+						} else {
+							float bottom = 0.0f;
+							const float hc_cell = cover->cut_critical_height(at, bottom);
+							sv = Vector2(hc_cell, bottom);
+							strength.insert(key, sv);
+						}
+						const float hc = sv.x * (worked ? WORKED_FACTOR : 1.0f);
+						if (height <= hc) {
+							continue;
+						}
+						cands.push_back({ i, uint8_t(d), height, height / MAX(hc, 0.01f) - 1.0f, float(sv.y), foot_k });
+						crumble_mark[i] = uint8_t(d + 1);
+						break;
+					}
+				}
+			}
+		}
+	}
+	if (cands.is_empty()) {
+		return 0;
+	}
+	HashSet<int> touched_tiles;
+	int fell = 0;
+	auto take = [&](int i, float amount) {
+		const float from_rim = MIN(rim[i], amount);
+		rim[i] -= from_rim;
+		dent[i] += amount - from_rim;
+		touched_tiles.insert((i / n) / T * nt + (i % n) / T);
+	};
+	for (uint32_t c = 0; c < cands.size(); c++) {
+		const Cand &cd = cands[(c * 2654435761u + crumble_seed) % cands.size()];
+		if (crumble_mark[cd.i] != cd.dir + 1) {
+			continue; // gone with a block already
+		}
+		const float p = 1.0f - Math::exp(-3.0f * dt * (cd.over + 0.2f));
+		if (rnd() > p) {
+			continue;
+		}
+		// The block: along the face (across the drop), 0.25-0.7 m.
+		const int d = cd.dir;
+		const int ax = DZ[d] != 0 ? 1 : 0; // along-face step
+		const int az = DX[d] != 0 ? 1 : 0;
+		const int half = MAX(int((0.25f + 0.45f * rnd()) * 0.5f / t), 1);
+		const int x0 = cd.i % n, z0 = cd.i / n;
+		// Each block breaks its own way: its plane between 56 and 68 degrees, its crack a little above the failing
+		// layer's bottom or at it, and the fracture face rough at a few centimetres.
+		const float block_tan = RANKINE_TAN * (0.8f + 0.45f * rnd());
+		const float block_depth = MIN(cd.height, MAX(cd.fail, 0.02f)) * (0.8f + 0.2f * rnd());
+		const int rough_cell = MAX(int(0.06f / t), 2);
+		const int lump_cell = MAX(int(0.14f / t), 2);
+		float block_volume = 0.0f; // m3 off this block
+		float toe_reach = 0.0f; // m from the top edge to the toe's middle
+		for (int s = -half; s <= half; s++) {
+			const int x = x0 + ax * s, z = z0 + az * s;
+			if (x < 0 || z < 0 || x >= n || z >= n) {
+				continue;
+			}
+			const int i = z * n + x;
+			if (crumble_mark[i] != d + 1) {
+				continue;
+			}
+			crumble_mark[i] = 0;
+			// The wedge off the top, down to the failing depth: the plane rises back from the face at 62 degrees.
+			const float base = h(i) - block_depth;
+			float removed = 0.0f;
+			for (int k = 0; k < 128; k++) {
+				const int xk = x - DX[d] * k, zk = z - DZ[d] * k;
+				if (xk < 0 || zk < 0 || xk >= n || zk >= n) {
+					break;
+				}
+				const int ik = zk * n + xk;
+				const float plane = base + (k + 0.5f) * t * block_tan + (vnoise(xk, zk, rough_cell) - 0.5f) * 0.04f;
+				const float cut = h(ik) - plane;
+				if (cut <= 0.0f) {
+					break;
+				}
+				take(ik, cut);
+				removed += cut * t;
+			}
+			if (removed <= 0.0f) {
+				continue;
+			}
+			// The toe at the foot of the face: a triangle at the angle of repose, bulked, from the old floor out. It
+			// never rises above that profile (so toes never stack into new walls, nor pile onto the far wall's top);
+			// what the triangle cannot hold spreads over the toe up to its height, and what still finds no room stays
+			// on the wall.
+			const float area = removed * DEBRIS_BULKING;
+			const float h0 = MIN(Math::sqrt(2.0f * area * TOE_TAN), 0.8f * block_depth);
+			const float len = h0 > 0.0f ? area / (0.5f * h0) : 0.0f; // m: the toe's length for its area at height h0
+			const float slope = len > 0.0f ? h0 / len : TOE_TAN;
+			// The floor at the face's foot, as it was: the toe's profile stands on it, so toes never stack on toes.
+			const float floor_h = base + block_depth - cd.height;
+			float left = area;
+			int toe_end = cd.foot;
+			for (int k = cd.foot; k < cd.foot + 512 && left > 1e-6f; k++) {
+				const int xk = x + DX[d] * k, zk = z + DZ[d] * k;
+				if (xk < 0 || zk < 0 || xk >= n || zk >= n) {
+					break;
+				}
+				const int ik = zk * n + xk;
+				const float want = h0 - (k - cd.foot + 0.5f) * t * slope;
+				const float room = MIN(floor_h + want, base + h0) - h(ik);
+				if (want <= 0.0f || room <= 0.0f) {
+					break;
+				}
+				// The broken blocks lie as lumps: the toe's surface rises and falls at a block's size.
+				const float add = MIN(MIN(want * (0.45f + 1.1f * vnoise(xk, zk, lump_cell)), room), left / t);
+				rim[ik] += add;
+				left -= add * t;
+				toe_end = k + 1;
+				touched_tiles.insert((ik / n) / T * nt + (ik % n) / T);
+			}
+			if (left > 1e-6f) {
+				float room_sum = 0.0f;
+				for (int k = cd.foot; k < toe_end; k++) {
+					room_sum += MAX(floor_h + h0 - h((z + DZ[d] * k) * n + x + DX[d] * k), 0.0f) * t;
+				}
+				const float share = room_sum > 1e-6f ? MIN(left / room_sum, 1.0f) : 0.0f;
+				for (int k = cd.foot; k < toe_end && share > 0.0f; k++) {
+					const int ik = (z + DZ[d] * k) * n + x + DX[d] * k;
+					const float add = MAX(floor_h + h0 - h(ik), 0.0f) * share;
+					rim[ik] += add;
+					left -= add * t;
+				}
+			}
+			if (left > 1e-6f) {
+				// No room for all of it: put back what the toe cannot take, from the scarp's foot inward.
+				float back = left / DEBRIS_BULKING / t;
+				for (int k = 0; k < 128 && back > 1e-6f; k++) {
+					const int xk = x - DX[d] * k, zk = z - DZ[d] * k;
+					if (xk < 0 || zk < 0 || xk >= n || zk >= n) {
+						break;
+					}
+					const int ik = zk * n + xk;
+					const float give = MIN(back, MAX(dent[ik], 0.0f));
+					dent[ik] -= give;
+					back -= give;
+				}
+				removed -= left / DEBRIS_BULKING - back * t;
+			}
+			collapsed_volume += removed * t;
+			block_volume += removed * t;
+			toe_reach = MAX(toe_reach, 0.5f * (cd.foot + toe_end) * t);
+			fell++;
+		}
+		// The block breaks up as it lands: part of it lies on the toe as lumps (SnowClumps3D's debris), the larger the
+		// stronger the snow it broke from (cohesion from the cut's critical height: c = Hc rho g / 2.67).
+		if (clumps_node && block_volume > 0.0f) {
+			const Vector3 at((field.origin.x + x0 + DX[d] * toe_reach / t + 0.5f) * t, 0.0f, (field.origin.y + z0 + DZ[d] * toe_reach / t + 0.5f) * t);
+			const float hc = cd.height / (cd.over + 1.0f);
+			const float coh = hc * cover->get_density_at(at) * 9.81f / 2.67f;
+			const float scale = CLAMP(0.8f + Math::log(MAX(coh, 1.0f) / 100.0f) * 0.4343f, 0.8f, 4.0f);
+			// Cold new powder mostly falls to dust; settled, sintered snow comes down as blocks.
+			const float share = 0.04f + 0.26f * CLAMP((scale - 0.8f) / 2.0f, 0.0f, 1.0f);
+			clumps_node->drop(at, CLAMP(0.5f * (toe_reach - cd.foot * t), 0.05f, half * t), share * block_volume, cover->get_wetness_at(at), scale);
+		}
+	}
+	if (fell == 0) {
+		return 0;
+	}
+	walls_collapsed += fell;
+	field.dirty = true;
+	collision_dirty = true;
+	for (const int ti : touched_tiles) {
+		field.tile_active[ti] = 1;
+	}
+	if (p_gpu) {
+		// Up to the GPU field through its cache: each changed tile as the cache packs it (dent | rim << 16).
+		LocalVector<uint32_t> data;
+		data.resize(T * T);
+		const Vector2i t0 = field.origin / T;
+		for (const int ti : touched_tiles) {
+			const int tx = ti % nt, tz = ti / nt;
+			for (int z = 0; z < T; z++) {
+				for (int x = 0; x < T; x++) {
+					const int i = (tz * T + z) * n + tx * T + x;
+					data[z * T + x] = uint32_t(Math::make_half_float(dent[i])) | (uint32_t(Math::make_half_float(rim[i])) << 16);
+				}
+			}
+			const Vector2i w = t0 + Vector2i(tx, tz);
+			gpu_host.forget_cached(w);
+			gpu_host.seed_tile(w, data.ptr(), 1, max_cached_tiles);
+			crumble_pending.push_back(w);
+		}
+		if (gpu_host.pull_cached(field, crumble_pending)) {
+			crumble_pending.clear();
+			crumble_hold = 0.5;
+		}
+	}
+	return fell;
+}
+
 void SnowSurface3D::clear_deformation() {
 	field.clear();
 	gpu_host.clear_cache();
@@ -1482,6 +1803,7 @@ void SnowSurface3D::_notification(int p_what) {
 				field.stamp_sink = &gpu_sink;
 				_press_movers(delta);
 				field.stamp_sink = nullptr;
+				_crumble(delta, true);
 				collision_accum += delta;
 				bool collide = false;
 				if (collision_accum >= 1.0 / collision_rate) {
@@ -1510,6 +1832,7 @@ void SnowSurface3D::_notification(int p_what) {
 				};
 				field.slump(delta, ground_fn, params_fn);
 				_relax();
+				_crumble(delta, false);
 			}
 			if (!on_gpu || !field.valid) {
 				collision_accum += delta;
@@ -1953,10 +2276,11 @@ void SnowSurface3D::_gpu_submit(double p_delta, bool p_collision, bool p_sync) {
 	d.cn = cover_n;
 	d.slots = MAX(max_cached_tiles, 1);
 	d.coll_w = collision_enabled ? _gpu_collision_cells() + 1 : 0;
-	gpu_host.gpu->step(d, flags, _gpu_params(p_delta, cover_n, cover_valid), ground_bytes, cover_cells, gpu_host.stamps, gpu_host.stores, gpu_host.shift, field.origin, mesh_center);
+	gpu_host.gpu->step(d, flags, _gpu_params(p_delta, cover_n, cover_valid), ground_bytes, cover_cells, gpu_host.stamps, gpu_host.stores, gpu_host.shift, field.origin, mesh_center, gpu_host.uploads);
 	gpu_host.stamps.clear();
 	gpu_host.stores.clear();
 	gpu_host.shift.clear();
+	gpu_host.uploads.clear(); // tiles seeded into the cache (collapsed walls, follow-up 54)
 	gpu_host.reset = false;
 	if (p_sync) {
 		_gpu_take();
@@ -2167,6 +2491,11 @@ void SnowSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_refill_share"), &SnowSurface3D::get_refill_share);
 	ClassDB::bind_method(D_METHOD("set_wind_fill_rate", "rate"), &SnowSurface3D::set_wind_fill_rate);
 	ClassDB::bind_method(D_METHOD("get_wind_fill_rate"), &SnowSurface3D::get_wind_fill_rate);
+	ClassDB::bind_method(D_METHOD("set_wall_collapse", "enabled"), &SnowSurface3D::set_wall_collapse);
+	ClassDB::bind_method(D_METHOD("is_wall_collapse"), &SnowSurface3D::is_wall_collapse);
+	ClassDB::bind_method(D_METHOD("get_walls_collapsed"), &SnowSurface3D::get_walls_collapsed);
+	ClassDB::bind_method(D_METHOD("get_collapsed_volume"), &SnowSurface3D::get_collapsed_volume);
+	ClassDB::bind_method(D_METHOD("crumble", "delta"), &SnowSurface3D::crumble);
 	ClassDB::bind_method(D_METHOD("set_max_cached_tiles", "tiles"), &SnowSurface3D::set_max_cached_tiles);
 	ClassDB::bind_method(D_METHOD("get_max_cached_tiles"), &SnowSurface3D::get_max_cached_tiles);
 	ClassDB::bind_method(D_METHOD("set_collision_enabled", "enabled"), &SnowSurface3D::set_collision_enabled);
@@ -2233,6 +2562,7 @@ void SnowSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "refill_share", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_refill_share", "get_refill_share");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_fill_rate", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_wind_fill_rate", "get_wind_fill_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_cached_tiles", PROPERTY_HINT_RANGE, "0,65536,1"), "set_max_cached_tiles", "get_max_cached_tiles");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wall_collapse"), "set_wall_collapse", "is_wall_collapse");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gpu_simulation"), "set_gpu_simulation", "is_gpu_simulation");
 	ADD_GROUP("Collision", "collision_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision_enabled"), "set_collision_enabled", "is_collision_enabled");

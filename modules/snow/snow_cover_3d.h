@@ -500,6 +500,15 @@ public:
 	Vector2 get_sastrugi_at(Vector3 p_position) const; // relief (m) times the carving wind's direction
 	Ref<Texture2D> get_sastrugi_texture() const { return sastrugi_texture; }
 	Ref<Texture2D> get_strata_texture() const { return strata_texture; }
+	// Round 9 (follow-up 54): how tall a vertical cut in the pack here stands (m), and the depth of the bottom of
+	// the layer it fails through (m from the surface). See the .cpp.
+	float cut_critical_height(const Vector3 &p_position, float &r_fail_bottom) const;
+	Vector2 get_cut_critical_height(const Vector3 &p_position) const { // (critical height, failing layer's bottom), m
+		float bottom = 0.0f;
+		const float hc = cut_critical_height(p_position, bottom);
+		return Vector2(hc, bottom);
+	}
+	static float cut_cohesion(int p_kind, float p_density, float p_age_hours, float p_saturation, float p_crystal_mm);
 	static Vector<int> strata_bands(const float *p_swe, const float *p_rho, const float *p_liq, const uint8_t *p_kind, int p_count, float p_depth, float p_liquid_capacity);
 	void set_wind_packing_enabled(bool p_enabled) { wind_packing_enabled = p_enabled; }
 	bool is_wind_packing_enabled() const { return wind_packing_enabled; }

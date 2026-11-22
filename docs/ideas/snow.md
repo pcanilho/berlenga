@@ -1985,6 +1985,45 @@ Built:
 - Not yet: the walls of the cover's own cuts (avalanche crowns, cornice breaks), which are cell steps, not the print
   field; grain texture per band (sparkle of depth hoar facets).
 
+## Follow-up 54: rut and trench walls that give way (round 9, 22 Nov 2026)
+
+Research: a vertical cut in a cohesive material stands up to its critical height, Hc = 2.67 c / (rho g) with a
+tension crack behind the face (Terzaghi 1943, Theoretical Soil Mechanics; the 3.85 of the uncracked case less the
+crack), and a taller one fails along a plane near 45 + phi / 2 from the horizontal (Rankine; about 62 degrees for
+snow's 35 degree friction angle). Snow's cohesion grows with density as a power law, about 14.5 (rho / 917)^1.73 kPa
+for the shear strength of a layer (Jamieson and Johnston 2001, Annals of Glaciology 32), and with age as the bonds
+sinter (new snow gains strength several fold over a day or two at moderate cold); a little liquid water binds
+(capillary bonds, pendular regime) while more wets the bonds away (funicular regime, Colbeck 1982, Reviews of
+Geophysics 20); depth hoar and buried surface hoar have almost none (Jamieson 1995; Schweizer et al. 2003). Broken
+blocks lie at the angle of repose of debris (about 38 degrees) and take up about a quarter more volume than the wall
+did (bulking). In play, SnowRunner's deep-snow trenches cave in at their edges as a vehicle works along them.
+
+Built:
+- SnowCover3D `cut_cohesion(kind, density, age, saturation, crystal)` (static): the layer's cohesion in Pa as
+  above, sintering (0.3 + 0.7 min(age / 24 h, 1)) (1 + min(age, 480 h) / 48 h), wet x1.5 moist down to x0.1 soaked,
+  depth hoar 0.1 of its strength share, buried hoar 0.15, a crust x2. `get_cut_critical_height(pos)` walks the
+  cell's layers from the top: the first layer (counting the load of those above) whose bottom lies deeper than the
+  critical height of the snow to that depth is where the wall fails; returns (Hc, the failing depth), or 1e6 when the
+  pack stands to the ground.
+- SnowSurface3D `wall_collapse` (default on): five times a second, the print field's active tiles are scanned for
+  face tops (a drop steeper than 70 degrees ahead, none behind), each walked down to its foot. A face taller than its
+  cell's Hc (0.6 of it while a body works the tile: the load beside the edge and the shaking bring a driven rut's
+  walls in) gives way at a rate rising with how far over it stands, as a block 0.25-0.7 m along the face: the wedge
+  in front of a plane between 56 and 68 degrees (each block its own, rough at 6 cm) comes off, down to 0.8-1.0 of the
+  failing depth (a wall over depth hoar falls to the hoar's bottom, undercut). The debris lands as a toe from the old
+  floor out at the angle of repose, bulked by a quarter, lumpy at 14 cm, never higher than its profile on the old
+  floor (so toes never stack into new walls); a debris-topped face (mostly rim) is left to the field's loose-snow
+  slump. Part of each block (4 % from cold powder up to 30 % from sintered old snow) lies on the toe as lumps through
+  SnowClumps3D's `drop`, the stronger the snow the larger. On the GPU field the changed tiles go up through the tile
+  cache (`seed_tile`, `pull_cached`; the snow surface now passes the cache uploads to its step).
+- `--test=walls`: cohesion ordering; new powder's Hc 20-40 cm; a 53 cm trench in 60 cm of new powder caves in with a
+  toe holding 1.25x the volume off the walls; a trench in old settled snow stands; a wall over depth hoar falls to the
+  hoar; a 20 cm rut in new powder stands until a body works along it. `--view=walls`: a trench through 44 cm of new
+  snow on 31 cm of old: the new snow sheds blocks to the old, which stands (`--walls=0`: before; `--gpu`: the GPU
+  field, collapsing as it runs).
+- Not yet: blocks as falling rigid pieces (as the roof slabs, follow-up 52) for the largest failures; the cover's own
+  cell steps (avalanche crowns) crumbling.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
