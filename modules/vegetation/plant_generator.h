@@ -63,6 +63,9 @@ public:
 		PRESET_LEAF_LITTER,
 		PRESET_MOSS,
 		PRESET_BILBERRY,
+		PRESET_BRACKEN,
+		PRESET_BRAMBLE,
+		PRESET_FOXGLOVE,
 		PRESET_MAX,
 	};
 
@@ -172,6 +175,9 @@ private:
 	void _build_leaf_litter();
 	void _build_moss();
 	void _build_bilberry();
+	void _build_bracken();
+	void _build_bramble();
+	void _build_foxglove();
 
 	Ref<StandardMaterial3D> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
 	Ref<StandardMaterial3D> _textured_material(const TextureSet &p_set, float p_roughness) const;

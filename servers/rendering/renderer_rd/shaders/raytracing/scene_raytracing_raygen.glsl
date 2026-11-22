@@ -815,6 +815,17 @@ void main() {
 		rt_rc_resolve(pixel.y * gl_LaunchSizeEXT.x + pixel.x, gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y);
 	}
 
+	// Indirect light reuse (raytracing_indirect_reuse_inc.glsl): off where the first bounce segment
+	// can scatter, since a reconnection would skip what lies on it.
+	const bool ir_allowed = rt_ir_enabled() && !rt_volume_enabled() && camera_medium == 0u && (RT_FLAGS & RT_FLAG_FOG_ENABLED) == 0u;
+	// The samples' first bounces through the diffuse lobe are candidates for this frame's reservoir,
+	// and every one of them is shaded with the reservoir's result once the pixel's samples are done.
+	IRFresh ir_fresh = rt_ir_fresh_init();
+	bool ir_any_surface = false;
+	vec3 ir_px_x1 = vec3(0.0);
+	uint ir_diffuse_samples = 0u;
+	uint ir_rng = init_rng(pixel, frame_index, 104729u);
+
 	// TODO: when we have a spp > 0 the first raycast is always identical,
 	// we should move it out of the loop
 
@@ -859,6 +870,21 @@ void main() {
 		vec3 rc_normal[1];
 		vec3 rc_radiance[1];
 		vec3 rc_throughput[1];
+
+		// Indirect light reuse: the first hit (x1), and the first bounce's direction, the light and
+		// throughput the path had after the first hit, and the point the bounce reached.
+		const bool ir_on = ir_allowed;
+		bool ir_surface = false;
+		bool ir_active = false;
+		bool ir_traced = false;
+		bool ir_has_x2 = false;
+		bool ir_rough = false;
+		vec3 ir_x1 = vec3(0.0);
+		vec3 ir_dir = vec3(0.0, 0.0, 1.0);
+		vec3 ir_radiance = vec3(0.0);
+		vec3 ir_throughput = vec3(1.0);
+		vec3 ir_x2 = vec3(0.0);
+		vec3 ir_n2 = vec3(0.0, 0.0, 1.0);
 
 		[[dont_unroll]] for (uint bounce = 0u; bounce <= max_bounces; bounce++) {
 			vec3 throughput_entry = ps.throughput;
@@ -973,7 +999,35 @@ void main() {
 			if (ps.hit_t > 0.0) {
 				cone_width += rt_cone_spread_angle() * ps.hit_t;
 			}
+			if (ir_on && bounce == 0u) {
+				uint f = ps.packed_bounces_flags;
+				ps.packed_bounces_flags &= ~(RT_IR_SURFACE_FLAG | RT_IR_DIFFUSE_FLAG);
+				ir_surface = (f & RT_IR_SURFACE_FLAG) != 0u && ps.hit_t > 0.0;
+				if (ir_surface) {
+					ir_x1 = ray_origin + ray_dir * ps.hit_t;
+					ir_any_surface = true;
+					ir_px_x1 = ir_x1;
+				}
+				ir_active = ir_surface && (f & RT_IR_DIFFUSE_FLAG) != 0u && !is_path_terminated(f);
+				if (ir_active) {
+					ir_radiance = ps.radiance;
+					ir_throughput = ps.throughput;
+					ir_dir = ps.next_ray_dir;
+					// The first bounce's hit reports its normal and roughness under this flag.
+					ps.packed_bounces_flags |= RT_IR_DIFFUSE_FLAG;
+				}
+			} else if (ir_active && bounce == 1u) {
+				ir_traced = true;
+				ir_has_x2 = ps.hit_t > 0.0;
+				ir_rough = !ir_has_x2 || (ps.packed_bounces_flags & RT_IR_DIFFUSE_FLAG) != 0u;
+				if (ir_has_x2) {
+					ir_x2 = ray_origin + ray_dir * ps.hit_t;
+					ir_n2 = ps.offset_normal;
+				}
+				ps.packed_bounces_flags &= ~RT_IR_DIFFUSE_FLAG;
+			}
 			bool rc_recorded = false;
+			bool peel_seen = false;
 			if ((ps.packed_bounces_flags & RT_RC_ELIGIBLE_FLAG) != 0u) {
 				ps.packed_bounces_flags &= ~RT_RC_ELIGIBLE_FLAG;
 				if (rc_count < 1u && ps.hit_t > 0.0) {
@@ -1036,6 +1090,11 @@ void main() {
 				}
 				uint peel_hits = 0u;
 				vec3 throughput_after_opaque = ps.throughput;
+				if (ir_active && bounce <= 1u) {
+					// Layers in front of x1 or x2: x1's light is not the opaque surface's alone, and x2
+					// is seen through them, so the pixel keeps its own path this frame.
+					peel_seen = true;
+				}
 				vec3 radiance_after_opaque = ps.radiance;
 				PathState opaque_continuation = ps;
 				ContinuationReservoir continuation = continuation_reservoir_initial();
@@ -1084,6 +1143,14 @@ void main() {
 					}
 				}
 
+				if (peel_hits > 0u && peel_seen) {
+					if (bounce == 0u) {
+						ir_active = false;
+					} else {
+						ir_rough = false;
+					}
+				}
+				peel_seen = false;
 				if (peel_hits > 0u && rc_recorded) {
 					// Layers in front of the surface would count as its own bounce light.
 					rc_count--;
@@ -1200,8 +1267,26 @@ void main() {
 			}
 		}
 
+		if (ir_on && ir_active) {
+			// The diffuse lobe's light is added from the reservoir after the samples; this sample's
+			// own first bounce becomes a candidate for it.
+			vec3 past = ps.radiance - ir_radiance;
+			vec3 t = ir_throughput;
+			vec3 L = vec3(t.r > 1e-6 ? past.r / t.r : 0.0, t.g > 1e-6 ? past.g / t.g : 0.0, t.b > 1e-6 ? past.b / t.b : 0.0);
+			L = clamp(L, vec3(0.0), vec3(60000.0));
+			rt_ir_fresh_add(ir_fresh, ir_x1, ir_traced, ir_dir, ir_has_x2, ir_x2, ir_n2, ir_rough, L, ir_rng);
+			ps.radiance = ir_radiance;
+			ir_diffuse_samples++;
+		}
+
 		total_radiance += ps.radiance;
 		composite_passthrough = composite_passthrough || (composite_enabled && is_primary_miss(ps.packed_bounces_flags));
+	}
+
+	if (ir_any_surface) {
+		// Indirect light reuse: resample, store this frame's reservoir, shade the diffuse samples.
+		vec3 reused = rt_ir_resolve(ir_diffuse_samples > 0u, ir_px_x1, -direction.xyz, max(distance(origin.xyz, ir_px_x1), 0.01), ir_fresh, ir_rng);
+		total_radiance += float(ir_diffuse_samples) * reused;
 	}
 
 #ifdef RT_DEBUG_ENABLED

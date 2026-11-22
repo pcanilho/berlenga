@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TerrainMaterialLayer" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		One surface of a [TerrainMaterial3D]: rock, scree, soil, alluvium or sand.
+	</brief_description>
+	<description>
+		Textures, tint, tiling and porosity of one ground surface. Every texture is optional; without textures the layer is its [member color] and [member roughness]. Textures are sampled in world space, so they never stretch over the terrain's mesh.
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="albedo_texture" type="Texture2D" setter="set_albedo_texture" getter="get_albedo_texture">
+			Colour texture, multiplied by [member color].
+		</member>
+		<member name="color" type="Color" setter="set_color" getter="get_color" default="Color(1, 1, 1, 1)">
+			Tint of the layer.
+		</member>
+		<member name="height_texture" type="Texture2D" setter="set_height_texture" getter="get_height_texture">
+			Height texture (red channel) used for height blending: where two layers meet, the higher one wins, so stones poke through sand instead of fading into it.
+		</member>
+		<member name="normal_strength" type="float" setter="set_normal_strength" getter="get_normal_strength" default="1.0">
+			Strength of [member normal_texture].
+		</member>
+		<member name="normal_texture" type="Texture2D" setter="set_normal_texture" getter="get_normal_texture">
+			Tangent-space normal texture.
+		</member>
+		<member name="porosity" type="float" setter="set_porosity" getter="get_porosity" default="0.7">
+			How much the layer darkens and smooths when wet (see [member BaseMaterial3D.wetness_porosity]).
+		</member>
+		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.9">
+			Roughness, multiplied by [member roughness_texture]'s green channel.
+		</member>
+		<member name="roughness_texture" type="Texture2D" setter="set_roughness_texture" getter="get_roughness_texture">
+			Roughness texture (green channel).
+		</member>
+		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="4.0">
+			Size in metres one repeat of the textures covers.
+		</member>
+	</members>
+</class>

@@ -306,10 +306,21 @@ func _frame_forest() -> void:
 			var p := Vector3((x + 0.5) / res * SIZE - SIZE * 0.5, 0, (z + 0.5) / res * SIZE - SIZE * 0.5)
 			img.set_pixel(x, z, Color(cover.get_shade_at(p), 0, 0))
 	ground_mat.set_shader_parameter("shade_map", ImageTexture.create_from_image(img))
-	var c := Vector3(1.5, 0, 17.0)
+	# The edge tree with the most edge plants (bramble, bracken, foxglove) around it, near the view.
+	var edge: Array = []
+	for k in [1, 2, 3]:
+		edge.append_array(cover.get_placements(k))
 	var best: Vector3 = trees[0]
+	var best_score := -1.0
 	for t in trees:
-		if Vector2(t.x - c.x, t.z - c.z).length() < Vector2(best.x - c.x, best.z - c.z).length():
+		if Vector2(t.x - 1.5, t.z - 17.0).length() > 35.0:
+			continue
+		var score := 0.0
+		for e in edge:
+			if Vector2(e.x - t.x, e.z - t.z).length() < 7.0:
+				score += 1.0
+		if score > best_score:
+			best_score = score
 			best = t
 	# Darkest side: away from the other trees.
 	var away := Vector3()
@@ -449,7 +460,9 @@ func _cover_biome() -> Biome:
 		for sp in b.species:
 			(sp as PlantSpecies).set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.4))
 			(sp as PlantSpecies).set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
-		b.species = [_tree_species()] + b.species + _floor_species()
+		# Bigger plants first: the edge shrubs and bracken claim their space before the herbs.
+		var floor_sp := _floor_species()
+		b.species = [_tree_species()] + floor_sp.slice(0, 3) + b.species + floor_sp.slice(3)
 	return b
 
 # Stand-in trees (trunk and a crown blob) until stage 3b grows real ones: they only cast the shade.
@@ -539,7 +552,44 @@ func _floor_species() -> Array:
 	litter.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.3, 1.0))
 	litter.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
 	litter.visibility_range = 15.0
-	return [fern, bilberry, moss, litter]
+	# Woodland edge (fringe and mantle): bracken stands, bramble and foxglove where the light
+	# falls off under the outer crowns, between the meadow and the forest floor.
+	var bracken := PlantSpecies.new()
+	bracken.meshes = _variants(PlantGenerator.PRESET_BRACKEN, 3)
+	bracken.spacing = 0.7
+	bracken.footprint = 0.3
+	bracken.density = 0.9
+	bracken.scale_range = Vector2(0.9, 1.3)
+	bracken.patch_scale = 9.0
+	bracken.patch_cover = 0.55
+	bracken.patch_seed = 91
+	bracken.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.1, 0.8))
+	bracken.set_rule_fade(PlantSpecies.RULE_SHADE, 0.15)
+	bracken.visibility_range = 45.0
+	var bramble := PlantSpecies.new()
+	bramble.meshes = _variants(PlantGenerator.PRESET_BRAMBLE, 3)
+	bramble.spacing = 1.4
+	bramble.footprint = 0.6
+	bramble.density = 0.8
+	bramble.scale_range = Vector2(0.8, 1.2)
+	bramble.patch_scale = 7.0
+	bramble.patch_cover = 0.4
+	bramble.patch_seed = 93
+	bramble.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.05, 0.7))
+	bramble.set_rule_fade(PlantSpecies.RULE_SHADE, 0.15)
+	bramble.visibility_range = 45.0
+	var foxglove := PlantSpecies.new()
+	foxglove.meshes = _variants(PlantGenerator.PRESET_FOXGLOVE, 3)
+	foxglove.spacing = 0.8
+	foxglove.footprint = 0.2
+	foxglove.density = 0.5
+	foxglove.patch_scale = 6.0
+	foxglove.patch_cover = 0.3
+	foxglove.patch_seed = 97
+	foxglove.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.1, 0.7))
+	foxglove.set_rule_fade(PlantSpecies.RULE_SHADE, 0.1)
+	foxglove.visibility_range = 40.0
+	return [bramble, bracken, foxglove, fern, bilberry, moss, litter]
 
 func _ground_mesh() -> Mesh:
 	var st := SurfaceTool.new()
@@ -681,7 +731,7 @@ func _process(dt: float) -> void:
 			var counts := []
 			for i in cover.biome.species.size():
 				counts.append(cover.get_placements(i).size())
-			print("GRASS_COVER %s = %s ms=%.1f" % ["(tree) flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry grass (fern, bilberry, moss, litter)", str(counts), cover.get_populate_time_msec()])
+			print("GRASS_COVER %s = %s ms=%.1f" % ["(tree, bramble, bracken, foxglove) flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry grass (fern, bilberry, moss, litter)", str(counts), cover.get_populate_time_msec()])
 			if forest:
 				grass.rebuild()
 				under.rebuild()

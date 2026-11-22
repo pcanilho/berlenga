@@ -47,6 +47,11 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_ROCK] = Vector2(0.0f, 1.0f);
 	ranges[RULE_TALUS] = Vector2(0.0f, 1.0f);
 	ranges[RULE_SHADE] = Vector2(0.0f, 1.0f);
+	ranges[RULE_TEMPERATURE] = Vector2(-100.0f, 100.0f);
+	ranges[RULE_JANUARY_TEMPERATURE] = Vector2(-100.0f, 100.0f);
+	ranges[RULE_PRECIPITATION] = Vector2(0.0f, 100000.0f);
+	ranges[RULE_ARIDITY] = Vector2(0.0f, 1000.0f);
+	ranges[RULE_SUNLIGHT] = Vector2(0.0f, 2000.0f);
 }
 
 void PlantSpecies::set_meshes(const TypedArray<Mesh> &p_meshes) {
@@ -131,6 +136,15 @@ float PlantSpecies::get_suitability(const TerrainDataMap3D *p_map, const Vector3
 		w *= rule_weight(RULE_SOIL_DEPTH, p_map->get_soil_depth_at(p_pos));
 		w *= rule_weight(RULE_ROCK, p_map->get_rock_at(p_pos));
 		w *= rule_weight(RULE_TALUS, p_map->get_talus_at(p_pos));
+	}
+	if (p_map->has_climate() && w > 0.0f) {
+		// Climate from TerrainDataMap3D.bake_climate(): where a species can live at all
+		// (temperature, frost, rain, drought), and sunny against shaded slopes.
+		w *= rule_weight(RULE_TEMPERATURE, p_map->get_temperature_at(p_pos));
+		w *= rule_weight(RULE_JANUARY_TEMPERATURE, p_map->get_temperature_at(p_pos, 15.0f));
+		w *= rule_weight(RULE_PRECIPITATION, p_map->get_precipitation_at(p_pos));
+		w *= rule_weight(RULE_ARIDITY, p_map->get_aridity_at(p_pos));
+		w *= rule_weight(RULE_SUNLIGHT, p_map->get_shortwave_at(p_pos));
 	}
 	if (patch_scale > 0.0f) {
 		w *= get_patch_weight(p_pos);
@@ -257,6 +271,16 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "talus_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_TALUS);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "shade_range"), "set_rule_range", "get_rule_range", RULE_SHADE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "shade_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SHADE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "temperature_range", PROPERTY_HINT_NONE, "suffix:°C"), "set_rule_range", "get_rule_range", RULE_TEMPERATURE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "temperature_fade", PROPERTY_HINT_RANGE, "0,20,0.1,suffix:°C"), "set_rule_fade", "get_rule_fade", RULE_TEMPERATURE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "january_temperature_range", PROPERTY_HINT_NONE, "suffix:°C"), "set_rule_range", "get_rule_range", RULE_JANUARY_TEMPERATURE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "january_temperature_fade", PROPERTY_HINT_RANGE, "0,20,0.1,suffix:°C"), "set_rule_fade", "get_rule_fade", RULE_JANUARY_TEMPERATURE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "precipitation_range", PROPERTY_HINT_NONE, "suffix:mm"), "set_rule_range", "get_rule_range", RULE_PRECIPITATION);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "precipitation_fade", PROPERTY_HINT_RANGE, "0,2000,1,suffix:mm"), "set_rule_fade", "get_rule_fade", RULE_PRECIPITATION);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "aridity_range"), "set_rule_range", "get_rule_range", RULE_ARIDITY);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "aridity_fade", PROPERTY_HINT_RANGE, "0,5,0.01"), "set_rule_fade", "get_rule_fade", RULE_ARIDITY);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "sunlight_range", PROPERTY_HINT_NONE, "suffix:W/m²"), "set_rule_range", "get_rule_range", RULE_SUNLIGHT);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "sunlight_fade", PROPERTY_HINT_RANGE, "0,200,1,suffix:W/m²"), "set_rule_fade", "get_rule_fade", RULE_SUNLIGHT);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -268,6 +292,11 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_ROCK);
 	BIND_ENUM_CONSTANT(RULE_TALUS);
 	BIND_ENUM_CONSTANT(RULE_SHADE);
+	BIND_ENUM_CONSTANT(RULE_TEMPERATURE);
+	BIND_ENUM_CONSTANT(RULE_JANUARY_TEMPERATURE);
+	BIND_ENUM_CONSTANT(RULE_PRECIPITATION);
+	BIND_ENUM_CONSTANT(RULE_ARIDITY);
+	BIND_ENUM_CONSTANT(RULE_SUNLIGHT);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 }
 

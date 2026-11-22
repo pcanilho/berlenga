@@ -1,0 +1,1 @@
+- Snow: snowstorms. `SnowFall3D` hazes the air through the weather map (falling snow everywhere, blowing snow in a layer over the snow by Pomeroy and Male's suspension profile: 118 m visibility at 20 m/s), and flakes and drifting snow ride turbulent eddies (Kraichnan modes, `turbulence`); `haze_enabled`.

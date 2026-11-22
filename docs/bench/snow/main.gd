@@ -465,6 +465,38 @@ func _run_fall_tests() -> void:
 	_check("no flakes and no blowing at +6 C", fall.get_visible_flakes() == 0 and fall.get_blowing_amount() == 0.0, "%.3f mm/h of snow, %d flakes" % [fall.get_snowfall_rate(), fall.get_visible_flakes()])
 	fall.queue_free()
 
+	# Snowstorms: the suspended snow of Pomeroy and Male (1992) as extinction. The NWS blizzard is visibility
+	# under 400 m in winds of 15.6 m/s or more; just past the threshold the snow drifts below eye level.
+	print("Blowing snow visibility at 1 m (Koschmieder, 3.912 / sigma):")
+	var vis := {}
+	for u: float in [10.0, 15.0, 20.0, 25.0]:
+		var c := SnowFall3D.blowing_concentration(u, 1.0)
+		vis[u] = 3.912 / maxf(SnowFall3D.blowing_extinction(c), 1e-9)
+		print("  %2.0f m/s: %.6f kg/m3 -> %.0f m" % [u, c, vis[u]])
+	_check("blowing snow thickens with the wind to a blizzard", vis[10.0] > vis[15.0] and vis[15.0] > vis[20.0] and vis[20.0] < 400.0 and vis[10.0] > 1000.0, "%.0f m at 10 m/s (drifting below eye level), %.0f m at 20 m/s" % [vis[10.0], vis[20.0]])
+	var c02 := SnowFall3D.blowing_concentration(20.0, 0.2)
+	var c2 := SnowFall3D.blowing_concentration(20.0, 2.0)
+	_check("the drifting layer thins upward", c02 > 3.0 * c2, "%.5f kg/m3 at 0.2 m against %.5f at 2 m" % [c02, c2])
+	# The haze reaches the weather map: snowfall everywhere, blowing snow in a layer over the snow.
+	await _setup("meadow", 64.0, 64, -10.0)
+	weather.rain_rate = 2.0
+	weather.cloud_cover = 1.0
+	weather.wind_speed = 18.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(6.0 * 3600.0)
+	var storm := SnowFall3D.new()
+	storm.snow_cover = NodePath("../SnowCover3D")
+	add_child(storm)
+	for i in 4:
+		await get_tree().process_frame
+	var g := snow.get_ground_height_at(Vector3.ZERO) + snow.get_depth_at(Vector3.ZERO)
+	var at1 := weather.get_precipitation_extinction_at(Vector3(0, g + 1.0, 0))
+	var at20 := weather.get_precipitation_extinction_at(Vector3(0, g + 20.0, 0))
+	_check("a storm hazes the air through the weather map", at1 > storm.get_extinction() + 0.5 * storm.get_blowing_extinction() and storm.get_blowing_extinction() > 0.0 and absf(at20 - storm.get_extinction()) < 0.2 * at1, "%.3f /m at 1 m (snowfall %.3f, blowing %.3f), %.3f /m at 20 m" % [at1, storm.get_extinction(), storm.get_blowing_extinction(), at20])
+	storm.queue_free()
+	await get_tree().process_frame
+
 
 func _shed(pos: Vector3, size: Vector3, height: float) -> StaticBody3D:
 	# A roof on four posts: its collider catches the snow over the ground below.
@@ -1197,20 +1229,16 @@ func _build_snowfall(cam: Camera3D) -> void:
 			we = c
 	if we and not raster:
 		we.environment.pathtracing_enabled = false
-	# The snowfall past the particle box as fog, from its extinction.
+	# The snow past the particle box is haze: SnowFall3D pushes its falling and blowing extinction to the
+	# weather map, which drives the environment's fog and a blowing-snow fog volume.
 	await get_tree().process_frame
-	if we:
-		we.environment.fog_enabled = true
-		we.environment.fog_light_color = Color(0.78, 0.8, 0.84)
-		we.environment.fog_density = fall.get_extinction()
-		we.environment.fog_sky_affect = 0.3
 	var frames := steps if steps > 0 else 1
 	for s in frames:
 		for i in 150 / frames + 1:
 			await get_tree().process_frame
 		if steps > 0:
 			await _save_frame("_%03d" % s)
-	print("visibility %.0f m" % fall.get_visibility())
+	print("visibility %.0f m in the falling snow; blowing snow %.4f /m at 1 m (%.0f m), layer %.2f m deep; haze at 1 m %.4f /m" % [fall.get_visibility(), fall.get_blowing_extinction(), 3.912 / maxf(fall.get_blowing_extinction(), 1e-6), fall.get_blowing_height_scale(), weather.get_precipitation_extinction_at(Vector3(0, weather.get_ground_height() + 1.0, 0))])
 	print("snowfall %.2f mm/h, %d flakes, blowing %.0f%% at %.1f m/s (threshold %.1f)" % [fall.get_snowfall_rate(), fall.get_visible_flakes(), fall.get_blowing_amount() * 100.0, fall.get_wind_speed_10m(), fall.get_threshold_wind()])
 	if we and not raster:
 		we.environment.pathtracing_enabled = true
