@@ -109,6 +109,7 @@ void PhysXCaveMist3D::set_max_mouths(int p_v) {
 	while ((int)mouths.size() < max_mouths) {
 		Mouth m;
 		m.emitter = memnew(PhysXFlowEmitter3D);
+		m.emitter->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 		m.emitter->set_name(vformat("Mouth%d", (int)mouths.size()));
 		m.emitter->set_enabled(false);
 		flow->add_child(m.emitter);

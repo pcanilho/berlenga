@@ -103,6 +103,7 @@ void PhysXHaboobFront3D::_build() {
 	}
 	for (int i = 0; i < MAX_EMITTERS; i++) {
 		PhysXFlowEmitter3D *e = memnew(PhysXFlowEmitter3D);
+		e->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 		e->set_name(vformat("Foot%d", i));
 		e->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
 		e->set_smoke(0.0f);

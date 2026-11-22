@@ -310,6 +310,7 @@ func _ready() -> void:
 	await _late_frost_tests()
 	await _foehn_tests()
 	await _valley_wind_tests()
+	await _flow_smoke_tests()
 	await _rime_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
@@ -2535,6 +2536,67 @@ func _valley_wind_tests() -> void:
 	c.queue_free()
 	valley.queue_free()
 	await get_tree().physics_frame
+
+
+# Flow emitters' smoke to the regional field (PhysXFlowEmitter3D.regional_smoke, WorldFire.smoke_sources): a
+# campfire on a valley floor on a clear calm night fills the cold pool with its smoke; a cold emitter (dust, mist)
+# and one whose owner reports its own smoke add none.
+func _flow_smoke_tests() -> void:
+	if not ClassDB.class_exists("PhysXFlowEmitter3D"):
+		_skip("flow smoke", "needs the PhysX module with Flow")
+		return
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 200.0 * (1.0 - exp(-p.x * p.x / (2.0 * 400.0 * 400.0)))\n"
+	vs.reload()
+	var valley := Node3D.new()
+	valley.set_script(vs)
+	add_child(valley)
+	var c := _new_clock(10, 1.0)
+	var m := _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(valley)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.6
+	m.temperature = 6.0
+	m.snap_to_settings()
+	var fire: Node3D = ClassDB.instantiate("PhysXFlowEmitter3D")
+	fire.radius = 0.5
+	fire.velocity = Vector3(0, 2, 0)
+	fire.temperature = 1.0
+	fire.smoke = 1.0
+	add_child(fire)
+	fire.global_position = Vector3(0, 0.3, 0)
+	var dust: Node3D = ClassDB.instantiate("PhysXFlowEmitter3D")
+	dust.temperature = 0.0
+	dust.smoke = 2.0
+	add_child(dust)
+	dust.global_position = Vector3(30, 0.3, 0)
+	await get_tree().physics_frame
+	var srcs: PackedVector4Array = WorldContracts.get_fire().smoke_sources()
+	var rate: float = fire.get_regional_smoke_rate()
+	_check("flow smoke: a hot emitter's smoke goes on the fire contract at a campfire's rate (some mg/s), a cold one's not",
+			srcs.size() == 1 and absf(srcs[0].w - rate) < 1e-9 and rate > 2e-6 and rate < 2e-5 and dust.get_regional_smoke_rate() == 0.0,
+			"%d source(s), %.1f mg/s" % [srcs.size(), rate * 1e6])
+	m.advance(3.0 * 3600.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var low: float = w.smoke_concentration_at(Vector3(0, 3, 0))
+	var high: float = w.smoke_concentration_at(Vector3(0, 400, 0))
+	_check("flow smoke: the campfire's smoke fills the night's cold pool on the valley floor, little above it",
+			low > 1e-6 and low > 20.0 * high,
+			"%.1f ug/m3 at 3 m, %.2f ug/m3 at 400 m" % [low * 1e6, high * 1e6])
+	fire.regional_smoke = false
+	_check("flow smoke: off on the emitter, none on the contract", WorldContracts.get_fire().smoke_sources().size() == 0)
+	fire.queue_free()
+	dust.queue_free()
+	m.queue_free()
+	c.queue_free()
+	valley.queue_free()
+	await get_tree().physics_frame
+	_check("flow smoke: the emitters' provider leaves with the last of them", not WorldContracts.get_fire().has_provider())
 
 # The last flood's mark from its real producers (WorldWater.high_water_at): a river's sections and a lake fed over a
 # weir keep one, the sea its storm strandline (Stockdon 2006 run-up); the contract hands the river's on to a reader (GrassField3D's flood wash).

@@ -32,7 +32,9 @@
 
 #include "physx_flow_3d.h"
 
+#include "core/config/engine.h"
 #include "core/object/class_db.h"
+#include "modules/world/world_contracts.h"
 #include "scene/main/scene_tree.h"
 
 void PhysXFlowEmitter3D::set_shape(Shape p_shape) {
@@ -56,10 +58,78 @@ void PhysXFlowEmitter3D::set_collision(bool p_collision) {
 	notify_property_list_changed();
 }
 
+// The emitters' smoke on the fire contract (WorldFire.smoke_sources): one provider for all of them, registered while
+// any is in the tree. It reports no heat (a campfire's heat on the ground is the Flow's own).
+namespace {
+struct FlowEmitterSmoke : public WorldFireProvider {
+	LocalVector<ObjectID> emitters;
+	float contract_fire_heat_at(const Vector3 &p_position) const override { return 0.0f; }
+	void contract_fire_smoke(PackedVector4Array &r_sources) const override {
+		for (const ObjectID &id : emitters) {
+			const PhysXFlowEmitter3D *e = Object::cast_to<PhysXFlowEmitter3D>(ObjectDB::get_instance(id));
+			if (!e || !e->is_inside_tree()) {
+				continue;
+			}
+			const float kg = e->get_regional_smoke_rate();
+			if (kg > 0.0f) {
+				const Vector3 p = e->get_global_position();
+				r_sources.push_back(Vector4(p.x, p.y, p.z, kg));
+			}
+		}
+	}
+};
+FlowEmitterSmoke *flow_emitter_smoke = nullptr;
+} // namespace
+
+// Flow's smoke density at the source taken as REGIONAL_SMOKE_DENSITY a unit (a campfire's plume holds a few mg/m3 of
+// PM2.5 near the fire), carried out through the source's area at its exit speed, at least 0.5 m/s of buoyant rise:
+// a 0.5 m campfire emitter at 2 m/s, smoke 1, puts out some 5 mg/s, as 1 to 2 kg of wood an hour at about 10 g/kg
+// (Andreae 2019). Cold emitters (dust, mist, ash) carry none.
+float PhysXFlowEmitter3D::get_regional_smoke_rate() const {
+	if (!enabled || !regional_smoke || smoke <= 0.0f || temperature <= 0.05f || collision) {
+		return 0.0f;
+	}
+	const Vector3 sc = get_global_basis().get_scale();
+	const float area = shape == SHAPE_SPHERE ? float(Math::PI) * radius * radius * sc.x * sc.z : size.x * size.z * sc.x * sc.z;
+	return smoke * REGIONAL_SMOKE_DENSITY * area * MAX(velocity.length(), 0.5f);
+}
+
+// On the smoke provider's list while in the tree with regional_smoke on (not in the editor); the provider is on the
+// fire contract while its list holds any.
+void PhysXFlowEmitter3D::_update_registry(bool p_leaving) {
+	const bool want = !p_leaving && regional_smoke && is_inside_tree() && !Engine::get_singleton()->is_editor_hint();
+	if (want == in_registry) {
+		return;
+	}
+	in_registry = want;
+	if (want) {
+		if (!flow_emitter_smoke) {
+			flow_emitter_smoke = memnew(FlowEmitterSmoke);
+		}
+		if (flow_emitter_smoke->emitters.is_empty()) {
+			WorldContracts::register_fire(flow_emitter_smoke);
+		}
+		flow_emitter_smoke->emitters.push_back(get_instance_id());
+	} else if (flow_emitter_smoke) {
+		flow_emitter_smoke->emitters.erase(get_instance_id());
+		if (flow_emitter_smoke->emitters.is_empty()) {
+			WorldContracts::unregister_fire(flow_emitter_smoke);
+			memdelete(flow_emitter_smoke);
+			flow_emitter_smoke = nullptr;
+		}
+	}
+}
+
+void PhysXFlowEmitter3D::set_regional_smoke(bool p_enabled) {
+	regional_smoke = p_enabled;
+	_update_registry();
+}
+
 void PhysXFlowEmitter3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			add_to_group(GROUP);
+			_update_registry();
 			update_configuration_warnings();
 			has_last_position = false;
 			motion_velocity = Vector3();
@@ -67,6 +137,7 @@ void PhysXFlowEmitter3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			remove_from_group(GROUP);
+			_update_registry(true);
 			set_physics_process_internal(false);
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
@@ -122,6 +193,9 @@ void PhysXFlowEmitter3D::_validate_property(PropertyInfo &p_property) const {
 
 void PhysXFlowEmitter3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_enabled", "enabled"), &PhysXFlowEmitter3D::set_enabled);
+	ClassDB::bind_method(D_METHOD("set_regional_smoke", "enabled"), &PhysXFlowEmitter3D::set_regional_smoke);
+	ClassDB::bind_method(D_METHOD("is_regional_smoke"), &PhysXFlowEmitter3D::is_regional_smoke);
+	ClassDB::bind_method(D_METHOD("get_regional_smoke_rate"), &PhysXFlowEmitter3D::get_regional_smoke_rate);
 	ClassDB::bind_method(D_METHOD("is_enabled"), &PhysXFlowEmitter3D::is_enabled);
 	ClassDB::bind_method(D_METHOD("set_shape", "shape"), &PhysXFlowEmitter3D::set_shape);
 	ClassDB::bind_method(D_METHOD("get_shape"), &PhysXFlowEmitter3D::get_shape);
@@ -152,6 +226,7 @@ void PhysXFlowEmitter3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "flow", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_flow_path", "get_flow_path");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "enabled"), "set_enabled", "is_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "regional_smoke"), "set_regional_smoke", "is_regional_smoke");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shape", PROPERTY_HINT_ENUM, "Sphere,Box"), "set_shape", "get_shape");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius", PROPERTY_HINT_RANGE, "0.01,20,0.01,or_greater,suffix:m"), "set_radius", "get_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "size", PROPERTY_HINT_NONE, "suffix:m"), "set_size", "get_size");
