@@ -6321,7 +6321,7 @@ func _rooting_tyre() -> void:
 func _stand_trail() -> void:
 	# --stand-trail[=passes]: a game trail (WorldStand.set_trails, 0.8 m, 600 passes a year) from 2 m ahead of the
 	# camera away from it, bending a little, and a fresh boar rooting (--rooting-age, 0) 1.5 m across, --rooting-ahead
-	# (7) m out and 2 m to the side (terrain 3199eeb8/897cc1dd, rocks 7b898b93, clods ad9de493). Off for the before.
+	# (7) m out and 2 m to the side (terrain 3199eeb8/897cc1dd, rocks 7b898b93, clods ad9de493). Off for the before; --trail-rooting=0 skips the rooting.
 	var tc: Camera3D = get_viewport().get_camera_3d()
 	var tf := -tc.global_basis.z
 	tf.y = 0.0
@@ -6336,7 +6336,8 @@ func _stand_trail() -> void:
 	WorldContracts.get_stand().set_trails([{"points": tpts, "width": 0.8, "passes": tpass, "kind": "game_trail"}])
 	var rp := tc.global_position + tf * float(args.get("rooting-ahead", "7")) - ts * 2.0
 	rp.y = height_at(rp.x, rp.z)
-	WorldContracts.get_stand().add_disturbance(rp, 1.5, WorldStand.DISTURBANCE_ROOTING, float(args.get("rooting-age", "0")))
+	if args.get("trail-rooting", "1") != "0":
+		WorldContracts.get_stand().add_disturbance(rp, 1.5, WorldStand.DISTURBANCE_ROOTING, float(args.get("rooting-age", "0")))
 	_log("stand trail: %d points from %s, rooting at %s; trail %s at 6 m" % [tpts.size(), str(tpts[0].round()), str(rp.round()), str(WorldContracts.get_stand().trail_at(Vector3(tpts[2].x, 0, tpts[2].y)))])
 
 
