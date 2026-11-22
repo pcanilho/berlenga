@@ -210,6 +210,7 @@ void GazeModifier3D::_process_modification(double p_delta) {
 	const Vector2 eye_goal = eye_spring.update(dt, want);
 	const real_t k = CLAMP(fade_spring.update(dt, look ? (real_t)1.0 : (real_t)0.0), (real_t)0.0, (real_t)1.0);
 	look_weight = k;
+	spine_yaw_applied = 0;
 	if (k <= (real_t)1e-4) {
 		head_angles = _angles_of(character, skeleton->get_bone_global_pose(head).basis.xform(_rest_forward(skeleton, head, character)));
 		return;
@@ -246,6 +247,8 @@ void GazeModifier3D::_process_modification(double p_delta) {
 			}
 		}
 	}
+
+	spine_yaw_applied = spine_yaw;
 
 	// Neck and head carry the rest.
 	const real_t head_yaw = yaw_change - spine_yaw;
@@ -357,6 +360,9 @@ Vector2 GazeModifier3D::get_head_angles() const {
 real_t GazeModifier3D::get_look_weight() const {
 	return look_weight;
 }
+real_t GazeModifier3D::get_spine_yaw() const {
+	return spine_yaw_applied;
+}
 
 void GazeModifier3D::_bind_methods() {
 #define GAZE_BIND(m_name)                                                                              \
@@ -398,6 +404,7 @@ void GazeModifier3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_target_angles"), &GazeModifier3D::get_target_angles);
 	ClassDB::bind_method(D_METHOD("get_head_angles"), &GazeModifier3D::get_head_angles);
 	ClassDB::bind_method(D_METHOD("get_look_weight"), &GazeModifier3D::get_look_weight);
+	ClassDB::bind_method(D_METHOD("get_spine_yaw"), &GazeModifier3D::get_spine_yaw);
 	ClassDB::bind_method(D_METHOD("angles_to", "global_position"), &GazeModifier3D::angles_to);
 	ClassDB::bind_method(D_METHOD("reset"), &GazeModifier3D::reset);
 

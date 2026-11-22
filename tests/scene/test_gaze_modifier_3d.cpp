@@ -183,6 +183,7 @@ TEST_CASE("[SceneTree][GazeModifier3D] Limits, the back's share and targets behi
 		step(sk, 1.0 / 60.0);
 	}
 	CHECK_MESSAGE(Math::abs(g->get_head_angles().x - Math::deg_to_rad((real_t)85.0)) < Math::deg_to_rad((real_t)1.5), "Head and back together reach 85 degrees.");
+	CHECK_MESSAGE(Math::abs(g->get_spine_yaw() - g->get_spine_yaw_limit()) < Math::deg_to_rad((real_t)1.0), "The back takes its full 22 degrees.");
 
 	// Far down: clamped to the head's down limit.
 	g->set_target_position(Vector3(0, -5, 0.5));

@@ -108,6 +108,7 @@ private:
 	Vector2 target_angles;
 	Vector2 head_angles;
 	real_t look_weight = 0.0;
+	real_t spine_yaw_applied = 0.0;
 
 	void _configure_springs();
 	bool _target_global(Vector3 &r_target) const;
@@ -194,6 +195,7 @@ public:
 	Vector2 get_target_angles() const;
 	Vector2 get_head_angles() const;
 	real_t get_look_weight() const;
+	real_t get_spine_yaw() const;
 	Vector2 angles_to(const Vector3 &p_global_position) const;
 	void reset();
 

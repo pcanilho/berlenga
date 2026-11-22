@@ -31,6 +31,12 @@
 				How much of the look is applied, [code]0.0[/code] to [code]1.0[/code]: it fades in when a target is looked at and out when there is none or it is beyond [member ignore_angle].
 			</description>
 		</method>
+		<method name="get_spine_yaw" qualifiers="const">
+			<return type="float" />
+			<description>
+				How far the upper back was turned on the last modification, in radians (left positive), all spine bones together.
+			</description>
+		</method>
 		<method name="get_target_angles" qualifiers="const">
 			<return type="Vector2" />
 			<description>
