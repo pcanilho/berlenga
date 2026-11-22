@@ -504,8 +504,8 @@ float WeatherMap3D::_cloud_evolve() const {
 }
 
 float WeatherMap3D::_storm_weight(const Storm &p_storm) const {
-	if (p_storm.fire) {
-		return p_storm.fade; // eased by _update_fire_clouds
+	if (p_storm.fire || p_storm.ridge) {
+		return p_storm.fade; // eased by _update_fire_clouds, _update_ridge_clouds
 	}
 	if (p_storm.lifetime <= 0.0f) {
 		return Math::smoothstep(0.0f, 600.0f, p_storm.age);
@@ -867,6 +867,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	_update_valley_fog(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
 	_update_drainage(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
 	_update_breeze(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
+	_update_ridge_clouds(p_weather_dt);
 	c.pool = cold_pools && cell_pool.size() == resolution * resolution ? cell_pool.ptr() : nullptr;
 	const bool oro_ready = orographic_rain && cell_oro.size() == resolution * resolution;
 	c.oro = oro_ready ? cell_oro.ptr() : nullptr;
@@ -1167,7 +1168,9 @@ void WeatherMap3D::_advance(double p_weather_dt, double p_real_dt) {
 	cloud_time += p_weather_dt;
 	for (int i = storms.size() - 1; i >= 0; i--) {
 		Storm &s = storms.write[i];
-		s.position += steer * float(p_weather_dt);
+		if (!s.ridge) { // ridge cumulus are held by the crest that makes them (_update_ridge_clouds)
+			s.position += steer * float(p_weather_dt);
+		}
 		s.age += float(p_weather_dt);
 		if (s.lifetime > 0.0f && s.age >= s.lifetime) {
 			storms.remove_at(i);
@@ -1846,7 +1849,7 @@ float WeatherMap3D::get_canopy_closure_at(Vector3 p_position) const {
 // climate's factor then and every ten seconds of weather (a climate can be baked or replaced meanwhile).
 void WeatherMap3D::_update_orography(double p_weather_dt) {
 	const int n = resolution;
-	if ((!orographic_rain && !cold_pools && !drainage_winds) || !origin_valid || n <= 0) {
+	if ((!orographic_rain && !cold_pools && !drainage_winds && !upslope_winds) || !origin_valid || n <= 0) {
 		return;
 	}
 	oro_age += p_weather_dt;
@@ -1939,8 +1942,11 @@ void WeatherMap3D::_update_pool_depths() {
 	const int n = resolution;
 	cell_pool_depth.resize(n * n);
 	float *d = cell_pool_depth.ptrw();
-	if (!cold_pools || cell_height.size() != n * n) {
+	cell_ridge.resize(n * n);
+	float *rg = cell_ridge.ptrw();
+	if ((!cold_pools && !upslope_winds) || cell_height.size() != n * n) {
 		cell_pool_depth.fill(0.0f);
+		cell_ridge.fill(0.0f);
 		return;
 	}
 	// Summed-area tables of the known heights and their count, for the box mean.
@@ -1972,11 +1978,16 @@ void WeatherMap3D::_update_pool_depths() {
 			const int c = cnt[z1 * m + x1] - cnt[z0 * m + x1] - cnt[z1 * m + x0] + cnt[z0 * m + x0];
 			if (!Math::is_finite(v) || c < 4) {
 				d[z * n + x] = 0.0f;
+				rg[z * n + x] = 0.0f;
 				continue;
 			}
 			const double mean = (sum[z1 * m + x1] - sum[z0 * m + x1] - sum[z1 * m + x0] + sum[z0 * m + x0]) / c;
 			d[z * n + x] = CLAMP(float(mean) - v, 0.0f, 200.0f);
+			rg[z * n + x] = CLAMP(v - float(mean), 0.0f, 1000.0f);
 		}
+	}
+	if (!cold_pools) {
+		cell_pool_depth.fill(0.0f);
 	}
 }
 
@@ -2119,20 +2130,27 @@ void WeatherMap3D::set_sea_breezes(bool p_enabled) {
 // air), gamma 0.03 K/m, K 0.2 m2/s: about 1.7 m/s at 4 to 8 m up for a 5 K deficit, as measured on slopes of 5 to
 // 25 degrees (Horst and Doran 1986). It builds over half an hour as the night cools (and falls away as fast at
 // sunrise or in a wind); flat ground and slopes under about 2 degrees carry none.
+// By day the same balance runs the other way (upslope_winds; docs/ideas/world-links.md, "Upslope winds"): the sunlit
+// slope heats the air against it, which rises up the fall line, deeper (the convective layer mixes it: K 2 m2/s) and
+// a couple of m/s by midday (Whiteman 2000, ch. 13; Banta 1990). The air's own excess is a share of the surface's
+// (a quarter of the radiative surface excess, at most 5 K).
 void WeatherMap3D::_update_drainage(float p_dt_h) {
 	const int n = resolution;
-	if (!drainage_winds || cell_height.size() != n * n || cell_cooling.size() != n * n) {
+	if ((!drainage_winds && !upslope_winds) || cell_height.size() != n * n || cell_cooling.size() != n * n) {
 		cell_drain.clear();
 		drain_level = 0.0f;
+		upslope_level = 0.0f;
 		return;
 	}
 	const float night = sun_known ? 1.0f - Math::smoothstep(0.0f, 0.1f, cur_sun_sine) : 0.0f;
 	const float clear = 1.0f - Math::smoothstep(0.3f, 0.9f, cur_cloud_cover);
 	const float calm = 1.0f - Math::smoothstep(2.0f, 6.0f, cur_wind_speed);
+	const float day = sun_known ? Math::smoothstep(0.1f, 0.35f, cur_sun_sine) : 0.0f;
 	if (p_dt_h > 0.0f) {
-		drain_level += (night * clear * calm - drain_level) * (1.0f - Math::exp(-p_dt_h / 0.5f));
+		drain_level += ((drainage_winds ? night * clear * calm : 0.0f) - drain_level) * (1.0f - Math::exp(-p_dt_h / 0.5f));
+		upslope_level += ((upslope_winds ? day * (1.0f - 0.7f * Math::smoothstep(0.4f, 0.95f, cur_cloud_cover)) * calm : 0.0f) - upslope_level) * (1.0f - Math::exp(-p_dt_h / 1.0f));
 	}
-	if (drain_level < 0.01f) {
+	if (drain_level < 0.01f && upslope_level < 0.01f) {
 		cell_drain.clear();
 		return;
 	}
@@ -2159,15 +2177,17 @@ void WeatherMap3D::_update_drainage(float p_dt_h) {
 			const Vector2 grad((hx1 - hx0) / (float(MIN(x + 1, n - 1) - MAX(x - 1, 0)) * cs), (hz1 - hz0) / (float(MIN(z + 1, n - 1) - MAX(z - 1, 0)) * cs));
 			const float tn = grad.length();
 			const float sin_a = tn / Math::sqrt(1.0f + tn * tn);
-			const float dt = MAX(-cool[i], 0.0f);
-			const float peak = 0.322f * dt * c_per_k * drain_level * Math::smoothstep(0.03f, 0.08f, sin_a);
-			if (peak <= 0.0f) {
+			const float cold = MAX(-cool[i], 0.0f) * drain_level;
+			const float warm = MIN(0.25f * MAX(cool[i], 0.0f), 5.0f) * upslope_level;
+			const float peak = 0.322f * (cold - warm) * c_per_k * Math::smoothstep(0.03f, 0.08f, sin_a); // < 0: upslope
+			if (peak == 0.0f) {
 				continue;
 			}
 			const Vector2 down = -grad / tn;
 			o[0] = down.x * peak;
 			o[1] = down.y * peak;
-			o[2] = CLAMP(0.785f * Math::sqrt(2.0f * 0.2f / (nb * sin_a)), 2.0f, 40.0f);
+			const float k = peak > 0.0f ? 0.2f : 2.0f;
+			o[2] = CLAMP(0.785f * Math::sqrt(2.0f * k / (nb * sin_a)), 2.0f, 80.0f);
 		}
 	}
 }
@@ -2192,6 +2212,105 @@ Vector3 WeatherMap3D::get_drainage_wind_at(Vector3 p_position, float p_height_ab
 	float t[4];
 	terrain_wind.sample(Vector2(p_position.x, p_position.z), t);
 	return _drainage_wind_at(p_position, _height_above_ground(p_position, p_height_above_ground, t));
+}
+
+// Cumulus over the ridges (docs/ideas/world-links.md, "Upslope winds"): where the day's upslope winds from both
+// flanks meet over a crest the air goes up and, once the convective layer reaches the condensation level, the first
+// cumulus of the day forms over the peaks and ridges, an hour or two before the flat land's (Banta 1990; Whiteman
+// 2000). Up to three, on the most prominent crests in the map (their height over the mean within 600 m, 60 m and
+// more, 3 km apart), eased in over half an hour while the upslope flow runs and the air is moist enough (the
+// condensation level under about 2.5 km over the crest), as fair-weather cumulus (cover 0.6, no rain).
+void WeatherMap3D::_update_ridge_clouds(double p_dt) {
+	const int n = resolution;
+	LocalVector<Vector3> crests; // x, z, prominence
+	const float lcl = MAX(125.0f * (cur_air_temperature - get_air_dew_point()), 50.0f);
+	const float moist = 1.0f - Math::smoothstep(1500.0f, 2500.0f, lcl);
+	const float drive = upslope_winds ? upslope_level * moist : 0.0f;
+	if (drive > 0.05f && cell_ridge.size() == n * n && cell_height.size() == n * n) {
+		const float cs = _cell_size();
+		for (int k = 0; k < 3; k++) {
+			int best = -1;
+			float bv = 60.0f;
+			for (int i = 0; i < n * n; i++) {
+				if (cell_ridge[i] <= bv) {
+					continue;
+				}
+				const Vector2 p((origin_cell.x + i % n + 0.5f) * cs, (origin_cell.y + i / n + 0.5f) * cs);
+				bool near = false;
+				for (const Vector3 &c : crests) {
+					near = near || Vector2(c.x, c.y).distance_to(p) < 3000.0f;
+				}
+				if (!near) {
+					best = i;
+					bv = cell_ridge[i];
+				}
+			}
+			if (best < 0) {
+				break;
+			}
+			crests.push_back(Vector3((origin_cell.x + best % n + 0.5f) * cs, (origin_cell.y + best / n + 0.5f) * cs, cell_ridge[best]));
+		}
+	}
+	for (int i = 0; i < storms.size(); i++) {
+		if (storms[i].ridge) {
+			storms.write[i].fade_target = 0.0f;
+		}
+	}
+	for (const Vector3 &c : crests) {
+		const Vector2 at(c.x, c.y);
+		int found = -1;
+		for (int i = 0; i < storms.size(); i++) {
+			if (storms[i].ridge && storms[i].position.distance_to(at) < 1500.0f) {
+				found = i;
+				break;
+			}
+		}
+		if (found < 0) {
+			Storm s;
+			s.id = next_storm_id++;
+			s.ridge = true;
+			s.fade = 0.0f;
+			s.lifetime = 0.0f;
+			s.rain_rate = 0.0f;
+			s.outflow = 0.0f;
+			s.position = at;
+			storms.push_back(s);
+			found = storms.size() - 1;
+		}
+		Storm &s = storms.write[found];
+		s.position = at;
+		const float g = _sample(cell_height, at);
+		s.radius = CLAMP(2.0f * c.z, 400.0f, 1500.0f);
+		s.cloud_cover = 0.6f;
+		s.cloud_base = MAX(cloud_base_height, (Math::is_finite(g) ? g : ground_height) + 0.5f * lcl);
+		s.fade_target = MIN(drive * Math::smoothstep(60.0f, 200.0f, float(c.z)) * 1.5f, 1.0f);
+	}
+	for (int i = storms.size() - 1; i >= 0; i--) {
+		Storm &s = storms.write[i];
+		if (!s.ridge) {
+			continue;
+		}
+		const float tau = s.fade_target > s.fade ? 1800.0f : 1200.0f;
+		s.fade += (s.fade_target - s.fade) * (1.0f - Math::exp(-float(MAX(p_dt, 0.0)) / tau));
+		if (s.fade_target <= 0.0f && s.fade < 0.02f) {
+			storms.remove_at(i);
+		}
+	}
+}
+
+int WeatherMap3D::get_ridge_cloud_count() const {
+	int c = 0;
+	for (const Storm &s : storms) {
+		c += s.ridge && s.fade > 0.05f ? 1 : 0;
+	}
+	return c;
+}
+
+void WeatherMap3D::set_upslope_winds(bool p_enabled) {
+	upslope_winds = p_enabled;
+	if (!p_enabled) {
+		upslope_level = 0.0f;
+	}
 }
 
 void WeatherMap3D::set_drainage_winds(bool p_enabled) {
@@ -4417,6 +4536,10 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_sea_breezes_enabled"), &WeatherMap3D::is_sea_breezes_enabled);
 	ClassDB::bind_method(D_METHOD("get_sea_breeze_at", "position"), &WeatherMap3D::get_sea_breeze_at);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_breezes"), "set_sea_breezes", "is_sea_breezes_enabled");
+	ClassDB::bind_method(D_METHOD("set_upslope_winds", "enabled"), &WeatherMap3D::set_upslope_winds);
+	ClassDB::bind_method(D_METHOD("is_upslope_winds_enabled"), &WeatherMap3D::is_upslope_winds_enabled);
+	ClassDB::bind_method(D_METHOD("get_ridge_cloud_count"), &WeatherMap3D::get_ridge_cloud_count);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "upslope_winds"), "set_upslope_winds", "is_upslope_winds_enabled");
 	ClassDB::bind_method(D_METHOD("set_drainage_winds", "enabled"), &WeatherMap3D::set_drainage_winds);
 	ClassDB::bind_method(D_METHOD("is_drainage_winds_enabled"), &WeatherMap3D::is_drainage_winds_enabled);
 	ClassDB::bind_method(D_METHOD("get_drainage_wind_at", "position", "height_above_ground"), &WeatherMap3D::get_drainage_wind_at, DEFVAL(-1.0f));

@@ -284,7 +284,7 @@
 			<param index="0" name="position" type="Vector3" />
 			<param index="1" name="height_above_ground" type="float" default="-1.0" />
 			<description>
-				The night's drainage (katabatic) wind at [param position], [param height_above_ground] metres up (negative: from the position's own height over the terrain): down the fall line, peaking a few metres up. Zero by day, overcast, in a wind, on flat ground or with [member drainage_winds] off. [method get_wind_at] includes it.
+				The night's drainage (katabatic) wind at [param position], [param height_above_ground] metres up (negative: from the position's own height over the terrain): down the fall line, peaking a few metres up; by day the upslope wind ([member upslope_winds]), up it. Zero overcast, in a wind, on flat ground or with [member drainage_winds] off. [method get_wind_at] includes it.
 			</description>
 		</method>
 		<method name="get_fire_cloud_count" qualifiers="const">
@@ -382,6 +382,12 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The terrain climate's precipitation factor applied to the rain at [param position]; 1 with [member orographic_rain] off or no climate.
+			</description>
+		</method>
+		<method name="get_ridge_cloud_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many ridge cumulus are showing (see [member upslope_winds]).
 			</description>
 		</method>
 		<method name="get_rime_at" qualifiers="const">
@@ -1342,6 +1348,9 @@
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="4.0">
 			How often the cells are refreshed, per second. Gusts are evaluated every frame regardless.
+		</member>
+		<member name="upslope_winds" type="bool" setter="set_upslope_winds" getter="is_upslope_winds_enabled" default="true">
+			Day upslope (anabatic) winds: on sunny calm days the air warmed against a slope runs up its fall line (Prandtl 1942; Whiteman 2000), about 1 to 2 m/s in a layer some tens of metres deep, weaker under cloud. Where they meet over a crest standing 60 m or more above the ground round it, fair-weather cumulus gathers over it at the condensation level when the air is moist enough (Banta 1990; Demko, Geerts and others 2009), counted by [method get_ridge_cloud_count]. In [method get_drainage_wind_at] and [method get_wind_at].
 		</member>
 		<member name="valley_fog" type="bool" setter="set_valley_fog" getter="is_valley_fog_enabled" default="true">
 			Fill saturated cold air pools with radiation fog (Whiteman 2000; Gultepe et al. 2007): it forms over about an hour on clear calm nights, sits flat at the basin's saturation level and lifts after sunrise or in a wind. Drawn as a [FogVolume] lit by the froxel fog plus its multiple scattering, so raster and path tracing match. Needs [member cold_pools].

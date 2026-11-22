@@ -2156,6 +2156,7 @@ func _drainage_tests() -> void:
 	m.advance(2.0 * 3600.0)
 	var overcast: float = m.get_drainage_wind_at(slope, jet_h).length()
 	m.cloud_cover = 0.0
+	m.upslope_winds = false # its own check below
 	c.time_of_day = 13.0
 	m.snap_to_settings()
 	m.advance(2.0 * 3600.0)
@@ -2163,6 +2164,55 @@ func _drainage_tests() -> void:
 	_check("drainage winds: none under an overcast sky or by day", overcast < 0.05 and day < 0.05, "%.2f m/s overcast, %.2f m/s at 13:00" % [overcast, day])
 	m.drainage_winds = false
 	_check("drainage winds: off, none", m.get_drainage_wind_at(slope, jet_h) == Vector3(), "")
+	# By day the sunlit slope's air runs up it (upslope_winds), deeper, and fair-weather cumulus gathers over the
+	# crests where the flanks' flows meet (Whiteman 2000; Banta 1990). The valley's shoulders (200 m over the floor)
+	# are its crests here.
+	m.upslope_winds = true
+	m.humidity = 0.7
+	m.temperature = 18.0
+	m.snap_to_settings()
+	m.advance(3.0 * 3600.0)
+	var up := Vector3()
+	var up_h := 0.0
+	for hh in [2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0]:
+		var d: Vector3 = m.get_drainage_wind_at(slope, hh)
+		if d.length() > up.length():
+			up = d
+			up_h = hh
+	_check("upslope winds: a sunny calm afternoon runs the slope's air up the fall line, deeper than the night's jet", up.x > 0.5 and up.length() < 4.0 and up_h > jet_h, "%.2f m/s toward (%.2f, %.2f) at %.0f m (the night's jet at %.0f m)" % [up.length(), up.x / maxf(up.length(), 1e-4), up.z / maxf(up.length(), 1e-4), up_h, jet_h])
+	m.upslope_winds = false
+	m.queue_free()
+	await get_tree().physics_frame
+	# A 250 m hill: the flanks' upslope flows meet over its top and the day's first cumulus sits there.
+	var rs := GDScript.new()
+	rs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 250.0 * exp(-(p.x * p.x + p.z * p.z) / (2.0 * 300.0 * 300.0))\n"
+	rs.reload()
+	var ridge := Node3D.new()
+	ridge.set_script(rs)
+	add_child(ridge)
+	m = _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(ridge)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.cloud_cover = 0.0
+	m.humidity = 0.7
+	m.temperature = 18.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	var crests: int = m.get_ridge_cloud_count()
+	var over: float = m.get_cloud_cover_at(Vector3(0, 250, 0))
+	var beside: float = m.get_cloud_cover_at(Vector3(1800, 0, 0))
+	_check("ridge cumulus: fair-weather cumulus gathers over the crest where the upslope flows meet (Banta 1990), not over the plain beside it", crests == 1 and over > beside + 0.2, "%d ridge cumulus; cover %.2f over the crest, %.2f 1.8 km off" % [crests, over, beside])
+	m.humidity = 0.2
+	m.snap_to_settings()
+	m.advance(3.0 * 3600.0)
+	_check("ridge cumulus: in dry air (the condensation level far above the crest) none forms", m.get_ridge_cloud_count() == 0, "%d" % m.get_ridge_cloud_count())
+	ridge.queue_free()
 	m.queue_free()
 	c.queue_free()
 	valley.queue_free()
