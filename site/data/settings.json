@@ -3660,10 +3660,11 @@
    "name": "Wind moves lying snow",
    "settings": [
     "SnowCover3D.wind_transport_enabled",
-    "drift_obstacles"
+    "drift_obstacles",
+    "drift_relief"
    ],
    "note": "",
-   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow; snow drifts in behind rocks, walls, buildings and vehicles and blows off their tops.",
+   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow; snow drifts in behind rocks, walls, buildings and vehicles and blows off their tops; the wind shapes large drifts into dunes with steep lee slip faces and flattens small ones.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
