@@ -3624,11 +3624,18 @@ et al. 2015 (dendrogeomorphic flood evidence: scars, debris caught on riparian t
 - `_flood_wrack` (wood_b): up to six bundles of twigs and grass draped over limbs that cross the line, lying along the
   flow and hanging down; grass blades plastered round the stem's upstream face at the line; a heap of sticks and straw
   against the upstream foot when the flood stood 25 cm or more. Older wrack goes (none past 4 years).
-- Floodplain willow (`wet_band` 2) variants get flood heights 0.5-1.6 m and 0.05-2.5 years; the species follows the flow
-  (`follow_flow`), so -X faces upstream in the stand.
-- Bench: `stands.gd --flood` (silt only under the line, none above 1.3 m, wrack on every willow).
-- Not done: scoured, bared roots on the cut bank; flood height from WorldWater's flood stage rather than the variant band;
-  silt on the ground and on the vegetation under the line (vegetation thread).
+- Floodplain willow (`wet_band` 2) variants get flood heights 0.5-1.6 m and 0.05-2.5 years, one variant in four
+  unmarked. A marked mesh carries meta `tree_flood` = (height, years).
+- Placement (22 Nov): where a water producer is live, VegetationField3D reads WorldWater.high_water_at at each tree.
+  Under a mark (its peak 10 cm or more over the ground) the tree takes the marked variant nearest the peak's height
+  (30 cm weighs as 1.5 years), turned with mesh +X down the peak's flow, so the higher line faces upstream; elsewhere an
+  unmarked variant. Tiles are placed again when the marks change (the wrack lines' `_follow_floods`). With no water
+  producer the variants stay as drawn, with the generator's own marks.
+- Bench: `stands.gd --flood` (silt only under the line, none above 1.3 m, wrack on every willow); `stands.gd
+  --flood-field` (a 1.2 m mark on half the plot: every willow there marked within 35 cm of it and turned down the flow,
+  none marked on the other half).
+- Not done: scoured, bared roots on the cut bank; silt on the ground and on the vegetation under the line (vegetation
+  thread).
 
 ### 5aw. Deer browse and nurse logs (20 Nov; Paulo's pick)
 
@@ -4086,6 +4093,14 @@ tighter leaf shadows near the camera.
    draped over the faces, crowns thin and half dead (Larson, Matthes and Kelly 2000, Cliff Ecology: the Niagara
    Escarpment's 1,000-year-old white cedars). Builds on root_stone's rock link: roots that follow a rock's cracks, and
    placement on steep, rocky ground from the terrain map.
+
+### 5bk. Camera cut-out (22 Nov; world-links 904b8caf)
+
+- The tree generator's ShaderMaterials (bark, leaves, needles, fronds) are built from BaseMaterial3D's code, so they
+  carry its cut-out discard as they stand; the loose bark pieces (BarkDetail3D) take it through
+  GrassField3D::add_camera_cutout(). Shadows keep the cut geometry; the path tracer starts camera rays past the same span.
+- Bench: env `CUTOUT="x,y,z,r[,floor]"` on main.gd shots. A hazel cut through the crown shows the same hole raster and
+  PT (/mnt/project-files/fork/trees/cutout/).
 
 ### Research for the likely picks (21 Nov, card pending)
 

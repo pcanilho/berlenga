@@ -47,6 +47,8 @@
 //   by Kasten and Czeplak (1980), ground reflection.
 // - Winstral Sx (Winstral, Elder and Davis 2002) for 16 wind directions.
 
+#include "terrain_dmath.h"
+
 #include "core/math/math_funcs.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/string/string_name.h"
@@ -126,13 +128,13 @@ inline void parallel_for(int p_count, const std::function<void(int)> &p_fn) {
 
 // Month m (0 January to 11 December) on a harmonic through January and July.
 inline float month_value(float p_january, float p_july, int p_month) {
-	return 0.5f * (p_january + p_july) - 0.5f * (p_july - p_january) * Math::cos(float(Math::TAU) * p_month / 12.0f);
+	return 0.5f * (p_january + p_july) - 0.5f * (p_july - p_january) * TerrainDMath::cos(float(Math::TAU) * p_month / 12.0f);
 }
 
 // Share of the year's precipitation falling in month m: a harmonic peaking at precipitation_peak_month.
 inline float precipitation_share(const Params &p, int p_month) {
 	const float a = CLAMP(p.precipitation_seasonality, 0.0f, 1.0f);
-	return (1.0f + a * Math::cos(float(Math::TAU) * (p_month - p.precipitation_peak_month) / 12.0f)) / 12.0f;
+	return (1.0f + a * TerrainDMath::cos(float(Math::TAU) * (p_month - p.precipitation_peak_month) / 12.0f)) / 12.0f;
 }
 
 inline float temperature(const Params &p, float p_height, int p_month) {
@@ -143,13 +145,13 @@ inline float temperature(const Params &p, float p_height, int p_month) {
 
 // Solar declination, radians (Cooper 1969).
 inline double declination(double p_day) {
-	return Math::deg_to_rad(23.45) * Math::sin(Math::TAU * (284.0 + p_day) / 365.0);
+	return Math::deg_to_rad(23.45) * TerrainDMath::sin(Math::TAU * (284.0 + p_day) / 365.0);
 }
 
 // Day length in hours at a latitude (radians) and declination.
 inline double day_length(double p_lat, double p_decl) {
-	const double c = CLAMP(-Math::tan(p_lat) * Math::tan(p_decl), -1.0, 1.0);
-	return 24.0 * Math::acos(c) / Math::PI;
+	const double c = CLAMP(-TerrainDMath::tan(p_lat) * TerrainDMath::tan(p_decl), -1.0, 1.0);
+	return 24.0 * TerrainDMath::acos(c) / Math::PI;
 }
 
 /* Thornthwaite (1948) potential evapotranspiration, mm a year, from twelve monthly means; each month's into
@@ -165,7 +167,7 @@ inline float thornthwaite_pet(const float *p_t, float p_latitude, float *r_month
 	double heat = 0.0;
 	for (int m = 0; m < 12; m++) {
 		if (p_t[m] > 0.0f) {
-			heat += Math::pow(double(p_t[m]) / 5.0, 1.514);
+			heat += TerrainDMath::pow(double(p_t[m]) / 5.0, 1.514);
 		}
 	}
 	if (heat <= 0.0) {
@@ -182,7 +184,7 @@ inline float thornthwaite_pet(const float *p_t, float p_latitude, float *r_month
 		const double scale = (day_length(lat, declination(MID[m])) / 12.0) * (DAYS[m] / 30.0);
 		double e;
 		if (t < 26.5) {
-			e = 16.0 * Math::pow(10.0 * t / heat, a);
+			e = 16.0 * TerrainDMath::pow(10.0 * t / heat, a);
 		} else {
 			e = -415.85 + 32.24 * t - 0.43 * t * t; // Willmott, Rowe and Mintz 1985
 		}
@@ -208,7 +210,7 @@ inline void fft(std::complex<double> *p_a, int p_n, int p_stride, bool p_inverse
 	}
 	for (int len = 2; len <= p_n; len <<= 1) {
 		const double ang = Math::TAU / len * (p_inverse ? 1.0 : -1.0);
-		const std::complex<double> wl(Math::cos(ang), Math::sin(ang));
+		const std::complex<double> wl(TerrainDMath::cos(ang), TerrainDMath::sin(ang));
 		for (int i = 0; i < p_n; i += len) {
 			std::complex<double> w(1.0, 0.0);
 			for (int k = 0; k < len / 2; k++) {
@@ -239,7 +241,7 @@ inline void wind_rose(const Params &p, float *r_w) {
 	for (int d = 0; d < DIRECTIONS; d++) {
 		float delta = Math::fmod(d * DIRECTION_STEP - p.wind_from + 540.0f, 360.0f) - 180.0f;
 		const float s = MAX(p.wind_spread, 1.0f);
-		r_w[d] = p.wind_spread >= 360.0f ? 1.0f : Math::exp(-0.5f * delta * delta / (s * s));
+		r_w[d] = p.wind_spread >= 360.0f ? 1.0f : TerrainDMath::exp(-0.5f * delta * delta / (s * s));
 		sum += r_w[d];
 	}
 	for (int d = 0; d < DIRECTIONS; d++) {
@@ -272,7 +274,7 @@ inline void precipitation(const Params &p, const float *p_h, int p_n, float p_ce
 		return float(MIN(right, left));
 	};
 	auto taper = [&](float d) -> float {
-		return d >= half_pad ? 0.0f : 0.5f * (1.0f + Math::cos(float(Math::PI) * d / half_pad));
+		return d >= half_pad ? 0.0f : 0.5f * (1.0f + TerrainDMath::cos(float(Math::PI) * d / half_pad));
 	};
 	std::vector<std::complex<double>> hh(size_t(N) * N);
 	for (int z = 0; z < N; z++) {
@@ -290,14 +292,14 @@ inline void precipitation(const Params &p, const float *p_h, int p_n, float p_ce
 	const double t_c = 0.5 * (p.temperature_january + p.temperature_july);
 	const double t_k = t_c + 273.15;
 	const double gamma = MAX(0.5 * (p.lapse_rate_january + p.lapse_rate_july), 1.0) * 1.0e-3; // K/m
-	const double es = 611.2 * Math::exp(17.67 * t_c / (t_c + 243.5)); // Pa (Bolton 1980)
+	const double es = 611.2 * TerrainDMath::exp(17.67 * t_c / (t_c + 243.5)); // Pa (Bolton 1980)
 	const double rv = 461.5, rd = 287.04, lv = 2.5e6, cp = 1004.0, g = 9.81, eps = 0.622;
 	const double rho_s = es / (rv * t_k); // saturated vapour density at the surface, kg/m3
 	const double rs = eps * es / (101325.0 - es);
 	const double gamma_m = g * (1.0 + lv * rs / (rd * t_k)) / (cp + lv * lv * rs * eps / (rd * t_k * t_k)); // moist adiabat, K/m
 	const double cw = rho_s * gamma_m / gamma; // uplift sensitivity, kg/m3
 	const double hw = rv * t_k * t_k / (lv * gamma); // water vapour scale height, m
-	const double f = 2.0 * 7.2921e-5 * Math::sin(Math::deg_to_rad(double(p.latitude)));
+	const double f = 2.0 * 7.2921e-5 * TerrainDMath::sin(Math::deg_to_rad(double(p.latitude)));
 	const double nm2 = double(p.moist_stability) * p.moist_stability;
 	const double tau_c = p.conversion_time, tau_f = p.fallout_time;
 
@@ -318,8 +320,8 @@ inline void precipitation(const Params &p, const float *p_h, int p_n, float p_ce
 		}
 		const double from = Math::deg_to_rad(d * double(DIRECTION_STEP));
 		// Coming from bearing b it blows toward b + 180: x east, z south.
-		const double u = -Math::sin(from) * p.wind_speed;
-		const double v = Math::cos(from) * p.wind_speed;
+		const double u = -TerrainDMath::sin(from) * p.wind_speed;
+		const double v = TerrainDMath::cos(from) * p.wind_speed;
 		parallel_for(N, [&](int j) {
 			const double kz = (j < N / 2 ? j : j - N) * dk;
 			for (int i = 0; i < N; i++) {
@@ -393,8 +395,8 @@ inline void horizons(const Params &p, const float *p_h, int p_n, float p_cell, s
 	float dx[DIRECTIONS], dz[DIRECTIONS];
 	for (int d = 0; d < DIRECTIONS; d++) {
 		const float a = Math::deg_to_rad(d * DIRECTION_STEP);
-		dx[d] = Math::sin(a);
-		dz[d] = -Math::cos(a);
+		dx[d] = TerrainDMath::sin(a);
+		dz[d] = -TerrainDMath::cos(a);
 	}
 	const float max_r = p.horizon_distance / p_cell;
 	parallel_for(n, [&](int z) {
@@ -413,7 +415,7 @@ inline void horizons(const Params &p, const float *p_h, int p_n, float p_cell, s
 					const float h = Math::lerp(Math::lerp(row0[x0], row0[x0 + 1], fx), Math::lerp(row1[x0], row1[x0 + 1], fx), fz);
 					best = MAX(best, (h - h0) / (r * p_cell));
 				}
-				r_hz[(size_t(z) * n + x) * DIRECTIONS + d] = Math::atan(best);
+				r_hz[(size_t(z) * n + x) * DIRECTIONS + d] = TerrainDMath::atan(best);
 			}
 		}
 	});
@@ -435,7 +437,7 @@ inline void shortwave(const Params &p, const float *p_h, int p_n, float p_cell, 
 	const int DAYS = 24;
 	const int STEPS = 48;
 	const float cloud = CLAMP(p.cloud_cover, 0.0f, 1.0f);
-	const float cloud_factor = 1.0f - 0.75f * Math::pow(cloud, 3.4f);
+	const float cloud_factor = 1.0f - 0.75f * TerrainDMath::pow(cloud, 3.4f);
 	const float diffuse_share = 0.3f + 0.7f * cloud * cloud;
 	int winter_samples = 0;
 	for (int k = 0; k < DAYS; k++) {
@@ -443,27 +445,27 @@ inline void shortwave(const Params &p, const float *p_h, int p_n, float p_cell, 
 		const bool winter = p.latitude >= 0.0f ? (day >= 335.0 || day < 59.0) : (day >= 152.0 && day < 243.0);
 		winter_samples += winter ? STEPS : 0;
 		const double decl = declination(day);
-		const double i0 = 1361.0 * (1.0 + 0.033 * Math::cos(Math::TAU * day / 365.0));
+		const double i0 = 1361.0 * (1.0 + 0.033 * TerrainDMath::cos(Math::TAU * day / 365.0));
 		for (int s = 0; s < STEPS; s++) {
 			const double hour = (s + 0.5) * 24.0 / STEPS;
 			const double omega = Math::deg_to_rad(15.0 * (hour - 12.0));
-			const double sin_alt = Math::sin(lat) * Math::sin(decl) + Math::cos(lat) * Math::cos(decl) * Math::cos(omega);
+			const double sin_alt = TerrainDMath::sin(lat) * TerrainDMath::sin(decl) + TerrainDMath::cos(lat) * TerrainDMath::cos(decl) * TerrainDMath::cos(omega);
 			if (sin_alt <= 0.0) {
 				continue;
 			}
-			const double alt = Math::asin(sin_alt);
-			const double cos_alt = Math::cos(alt);
-			const double az = Math::atan2(-Math::cos(decl) * Math::sin(omega), Math::sin(decl) * Math::cos(lat) - Math::cos(decl) * Math::cos(omega) * Math::sin(lat));
-			const double air_mass = 1.0 / (sin_alt + 0.50572 * Math::pow(Math::rad_to_deg(alt) + 6.07995, -1.6364)); // Kasten and Young 1989
-			const double clear_beam = i0 * Math::pow(0.7, Math::pow(air_mass, 0.678)); // Meinel
+			const double alt = TerrainDMath::asin(sin_alt);
+			const double cos_alt = TerrainDMath::cos(alt);
+			const double az = TerrainDMath::atan2(-TerrainDMath::cos(decl) * TerrainDMath::sin(omega), TerrainDMath::sin(decl) * TerrainDMath::cos(lat) - TerrainDMath::cos(decl) * TerrainDMath::cos(omega) * TerrainDMath::sin(lat));
+			const double air_mass = 1.0 / (sin_alt + 0.50572 * TerrainDMath::pow(Math::rad_to_deg(alt) + 6.07995, -1.6364)); // Kasten and Young 1989
+			const double clear_beam = i0 * TerrainDMath::pow(0.7, TerrainDMath::pow(air_mass, 0.678)); // Meinel
 			// Clear-sky global: beam plus a clear-sky diffuse share; clouds by Kasten and Czeplak (1980).
 			const double clear_global = clear_beam * sin_alt + i0 * sin_alt * (0.271 - 0.294 * clear_beam / i0);
 			const double global = clear_global * cloud_factor;
 			const double diffuse = global * MAX(double(diffuse_share), (clear_global - clear_beam * sin_alt) / clear_global);
 			Sun sun;
-			sun.sx = float(Math::sin(az) * cos_alt);
+			sun.sx = float(TerrainDMath::sin(az) * cos_alt);
 			sun.sy = float(sin_alt);
-			sun.sz = float(-Math::cos(az) * cos_alt);
+			sun.sz = float(-TerrainDMath::cos(az) * cos_alt);
 			sun.az = float(az < 0.0 ? az + Math::TAU : az);
 			sun.beam = float((global - diffuse) / sin_alt);
 			sun.diffuse = float(diffuse);
@@ -486,20 +488,20 @@ inline void shortwave(const Params &p, const float *p_h, int p_n, float p_cell, 
 			const float dhdz = ((g + 2.0f * hh + k) - (a + 2.0f * b + c)) / (8.0f * p_cell);
 			const float inv = 1.0f / Math::sqrt(dhdx * dhdx + dhdz * dhdz + 1.0f);
 			const float nx = -dhdx * inv, ny = inv, nz = -dhdz * inv;
-			const float slope = Math::acos(ny);
-			const float down_az = Math::atan2(-dhdx, dhdz); // downhill, clockwise from north (-Z)
+			const float slope = TerrainDMath::acos(ny);
+			const float down_az = TerrainDMath::atan2(-dhdx, dhdz); // downhill, clockwise from north (-Z)
 			const float *hz = p_hz.data() + (size_t(z) * n + x) * DIRECTIONS;
 			// Effective horizon: the terrain or the slope's own plane, whichever is higher.
 			float eff[DIRECTIONS];
 			float view = 0.0f;
 			for (int j = 0; j < DIRECTIONS; j++) {
 				const float phi = j * dphi;
-				const float tx = Math::sin(phi), tz = -Math::cos(phi);
-				const float plane = Math::atan(-(nx * tx + nz * tz) / ny);
+				const float tx = TerrainDMath::sin(phi), tz = -TerrainDMath::cos(phi);
+				const float plane = TerrainDMath::atan(-(nx * tx + nz * tz) / ny);
 				eff[j] = MAX(hz[j], plane);
 				const float hzen = float(Math::PI) * 0.5f - eff[j]; // horizon zenith angle
-				const float sh = Math::sin(hzen), ch = Math::cos(hzen);
-				view += Math::cos(slope) * sh * sh + Math::sin(slope) * Math::cos(phi - down_az) * (hzen - sh * ch);
+				const float sh = TerrainDMath::sin(hzen), ch = TerrainDMath::cos(hzen);
+				view += TerrainDMath::cos(slope) * sh * sh + TerrainDMath::sin(slope) * TerrainDMath::cos(phi - down_az) * (hzen - sh * ch);
 			}
 			view = CLAMP(view / DIRECTIONS, 0.0f, 1.0f);
 			double year = 0.0, winter = 0.0;
@@ -512,7 +514,7 @@ inline void shortwave(const Params &p, const float *p_h, int p_n, float p_cell, 
 					const int j1 = (j0 + 1) % DIRECTIONS;
 					const float t = fj - Math::floor(fj);
 					const float horizon = Math::lerp(hz[j0], hz[j1], t);
-					if (Math::asin(s.sy) > horizon) {
+					if (TerrainDMath::asin(s.sy) > horizon) {
 						e += s.beam * cos_i;
 					}
 				}
@@ -542,8 +544,8 @@ inline void winstral_sx(const Params &p, const float *p_h, int p_n, float p_cell
 		for (int r = 0; r < RAYS; r++) {
 			// Wind from bearing b: upwind is toward b.
 			const float a = Math::deg_to_rad(d * DIRECTION_STEP + 5.0f * (r - RAYS / 2));
-			rx[d][r] = Math::sin(a);
-			rz[d][r] = -Math::cos(a);
+			rx[d][r] = TerrainDMath::sin(a);
+			rz[d][r] = -TerrainDMath::cos(a);
 		}
 	}
 	parallel_for(n, [&](int z) {
@@ -561,7 +563,7 @@ inline void winstral_sx(const Params &p, const float *p_h, int p_n, float p_cell
 							break;
 						}
 						const float dist = Math::sqrt(float((ix - x) * (ix - x) + (iz - z) * (iz - z))) * p_cell;
-						best = MAX(best, Math::atan((p_h[iz * n + ix] - h0) / dist));
+						best = MAX(best, TerrainDMath::atan((p_h[iz * n + ix] - h0) / dist));
 						any = true;
 					}
 					sum += any ? best : 0.0f;
@@ -581,7 +583,7 @@ inline void temperature_fields(const Params &p, float p_height, float p_precip, 
 		t[m] = temperature(p, p_height, m);
 		mean += t[m] / 12.0f;
 		// Share of days below the threshold, daily means normal around the month's mean.
-		snow += 0.5f * (1.0f + std::erf((p.rain_snow_threshold - t[m]) / (spread * float(Math::SQRT2)))) / 12.0f;
+		snow += 0.5f * (1.0f + TerrainDMath::erf((p.rain_snow_threshold - t[m]) / (spread * float(Math::SQRT2)))) / 12.0f;
 	}
 	*r_mean = mean;
 	*r_jan = t[0];

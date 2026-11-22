@@ -714,6 +714,9 @@ void GroundSurface3D::_update_cells() {
 			}
 			const bool wet = water_coupling && (int)pore.size() == n * n && (pore[i] > 0.0f || water_speed[i] > 0.0f);
 			in.mud = in.fixed ? 0.0f : _mud_depth_at(p, wet ? MAX(in.moisture, pore[i]) : in.moisture, sand > 0.5f, dmap);
+			// A peat bog (round 24.2) is a root mat over peat, not a mud layer.
+			in.bog = peat_bogs && !in.fixed && sand < 0.5f ? _peat_bog_at(p, moisture, dmap) * (1.0f - 2.0f * sand) : 0.0f;
+			in.mud *= 1.0f - in.bog;
 			if (mud_layer && sand < 0.5f && thaw_top > 0.0f) {
 				in.mud = MAX(in.mud, thaw_top);
 			}
@@ -728,6 +731,39 @@ void GroundSurface3D::_update_cells() {
 				in.litter *= 1.0f - Math::smoothstep(0.002f, 0.01f, silt);
 			}
 			Cell c = wet ? material_cell(in.sand, in.moisture, in.litter, pore[i], water_speed[i], in.mud) : material_cell(in.sand, in.moisture, in.litter, -1.0f, 0.0f, in.mud);
+			if (in.bog > 0.0f) {
+				// Peat bog (round 24.2): a fibrous root mat of sphagnum and sedge roots over a metre of soft, saturated
+				// peat (Radforth's muskeg; MacFarlane 1969). Wong's muskeg model, p = (k_p + 4 m_m / D_h) z: the mat's
+				// term rides on Bekker's kc / b with n 1, m_m 45 kN/m2 (kc 180), k_p 300 kN/m3; it holds a light car
+				// (about 9 cm) and tears past 12 cm (bevameter breaks at 8 to 14 cm, Massah and Noorolahi 2010) under
+				// a truck of a few tonnes. The peat under it: no mat term, a fifth of the stiffness, undrained
+				// strength about 4 kPa with little friction. Little clay in it to stick to tyres.
+				const float b = CLAMP(in.bog, 0.0f, 1.0f);
+				auto lerp_log = [](float a, float bb, float t) { return Math::exp(Math::lerp(Math::log(MAX(a, 1e-3f)), Math::log(MAX(bb, 1e-3f)), t)); };
+				c.torn_kc = Math::lerp(c.wheel_kc, 0.0f, b);
+				c.torn_kphi = lerp_log(c.wheel_kphi, 60.0f, b);
+				c.torn_cohesion = Math::lerp(c.cohesion, 4.0f, b);
+				c.torn_tan_phi = Math::lerp(c.tan_phi, 0.1f, b);
+				c.n = Math::lerp(c.n, 1.0f, b);
+				c.kc = Math::lerp(c.kc, 180.0f, b);
+				c.kphi = lerp_log(c.kphi, 300.0f, b);
+				c.wheel_n = Math::lerp(c.wheel_n, 1.0f, b);
+				c.wheel_kc = Math::lerp(c.wheel_kc, 180.0f, b);
+				c.wheel_kphi = lerp_log(c.wheel_kphi, 300.0f, b);
+				c.cohesion = Math::lerp(c.cohesion, 8.0f, b);
+				c.tan_phi = Math::lerp(c.tan_phi, 0.3f, b);
+				c.shear_k = Math::lerp(c.shear_k, 0.05f, b);
+				c.unit_weight = Math::lerp(c.unit_weight, 10.5f, b);
+				c.max_dent = Math::lerp(c.max_dent, 0.8f, b);
+				c.rim_share = Math::lerp(c.rim_share, 0.85f, b);
+				c.tan_repose = Math::lerp(c.tan_repose, Math::tan(Math::deg_to_rad(50.0f)), b);
+				c.rate = lerp_log(c.rate, 1.0f / 900.0f, b);
+				c.stickiness *= 1.0f - 0.8f * b;
+				c.adhesion *= 1.0f - 0.8f * b;
+				c.darken = Math::lerp(c.darken, 0.35f, b);
+				c.bog = b;
+			}
+			// The peat's depth over the mineral base varies as any layer's does.
 			c.max_dent *= _subsoil_factor(p.x, p.z);
 			// It came to rest as a body of grains: once its pore pressure drops it holds its snout and levees at
 			// their friction angle, some 30 to 35 degrees (Iverson 1997, Major and Iverson 1999), and does not slide
@@ -764,6 +800,9 @@ void GroundSurface3D::_update_cells() {
 				c.kphi *= k;
 				c.wheel_kc *= k;
 				c.wheel_kphi *= k;
+				c.torn_kc *= k;
+				c.torn_kphi *= k;
+				c.torn_cohesion += 200.0f * in.frozen;
 				c.cohesion += 200.0f * in.frozen;
 				c.max_dent *= 1.0f - in.frozen;
 				c.rate *= 1.0f - in.frozen;
@@ -1575,6 +1614,101 @@ float GroundSurface3D::get_seal_at(Vector3 p_position) const {
 	return w ? w->seal : 0.0f;
 }
 
+// Peat bogs (round 24.2). Peat builds up where the ground stays waterlogged: flat ground where water gathers (a high
+// topographic wetness index, Beven and Kirkby 1979, as the mud layer reads it) under a slope of a few degrees. Bogs are
+// patches, not every wet hollow: one in three 24 m squares holds one, at a hashed place, 6 to 11 m across its middle
+// with a wobbled, irregular edge so no two are alike. Without a terrain data map a fixed ground moisture (the moisture
+// property, not the weather) stands in for the wetness index.
+float GroundSurface3D::_peat_bog_at(const Vector3 &p_position, float p_moisture, const Node *p_data_map) const {
+	float wet = 0.0f;
+	if (const TerrainDataMap3D *dm = Object::cast_to<TerrainDataMap3D>(p_data_map)) {
+		const float twi = dm->get_wetness_at(p_position);
+		const float slope = dm->get_slope_at(p_position);
+		wet = Math::smoothstep(11.0f, 14.0f, twi) * (1.0f - Math::smoothstep(Math::deg_to_rad(2.0f), Math::deg_to_rad(5.0f), slope));
+	} else if (p_moisture >= 0.0f) {
+		// A scene's own fixed wetness, never the weather's: a wet week does not grow a bog.
+		wet = Math::smoothstep(0.8f, 0.9f, p_moisture);
+	}
+	if (wet <= 0.0f) {
+		return 0.0f;
+	}
+	const float sq = 24.0f;
+	const int gx = int(Math::floor(p_position.x / sq));
+	const int gz = int(Math::floor(p_position.z / sq));
+	float share = 0.0f;
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			uint32_t h = hash_murmur3_one_32(uint32_t(gx + dx), 0x9e7b0b5u);
+			h = hash_fmix32(hash_murmur3_one_32(uint32_t(gz + dz), h));
+			if (h % 3u != 0u) {
+				continue;
+			}
+			const uint32_t h2 = hash_fmix32(h + 0x68e31da4u);
+			const float u1 = float(h2 & 0xffu) / 255.0f;
+			const float u2 = float((h2 >> 8) & 0xffu) / 255.0f;
+			const float u3 = float((h2 >> 16) & 0xffu) / 255.0f;
+			const float u4 = float((h2 >> 24) & 0xffu) / 255.0f;
+			const Vector2 centre((float(gx + dx) + 0.25f + 0.5f * u1) * sq, (float(gz + dz) + 0.25f + 0.5f * u2) * sq);
+			const Vector2 d = Vector2(p_position.x, p_position.z) - centre;
+			const float a = Math::atan2(d.y, d.x);
+			const float r = (6.0f + 5.0f * u3) * (1.0f + 0.18f * Math::sin(3.0f * a + 6.28f * u4) + 0.1f * Math::sin(5.0f * a + 6.28f * u1 * u3) + 0.06f * Math::sin(7.0f * a + 6.28f * u2));
+			share = MAX(share, 1.0f - Math::smoothstep(r - 2.0f, r + 1.0f, (float)d.length()));
+		}
+	}
+	return wet * share;
+}
+
+float GroundSurface3D::_mat_torn_at(const Vector3 &p_position) const {
+	const Wear *w = wear_cells.getptr(Vector2i(int(Math::floor(p_position.x / WEAR_CELL)), int(Math::floor(p_position.z / WEAR_CELL))));
+	return w ? w->torn : 0.0f;
+}
+
+Vector2 GroundSurface3D::get_peat_bog_at(Vector3 p_position) const {
+	if (!field.valid) {
+		return Vector2();
+	}
+	return Vector2(_cell_at(p_position.x, p_position.z).bog, _mat_torn_at(p_position));
+}
+
+void GroundSurface3D::set_peat_bogs(bool p_enabled) {
+	if (peat_bogs == p_enabled) {
+		return;
+	}
+	peat_bogs = p_enabled;
+	if (ground_valid) {
+		_update_cells();
+	}
+}
+
+void GroundSurface3D::tear_mat(Vector3 p_position, Vector2 p_size, float p_yaw) {
+	if (!peat_bogs || _cell_at(p_position.x, p_position.z).bog <= 0.05f) {
+		return;
+	}
+	const Vector2 half = p_size * 0.5f;
+	const float r = half.length();
+	const Vector2 ax(Math::cos(p_yaw), -Math::sin(p_yaw));
+	const Vector2 az(Math::sin(p_yaw), Math::cos(p_yaw));
+	bool fresh = false;
+	for (int z = int(Math::floor((p_position.z - r) / WEAR_CELL)); z <= int(Math::floor((p_position.z + r) / WEAR_CELL)); z++) {
+		for (int x = int(Math::floor((p_position.x - r) / WEAR_CELL)); x <= int(Math::floor((p_position.x + r) / WEAR_CELL)); x++) {
+			const Vector2 d((x + 0.5f) * WEAR_CELL - p_position.x, (z + 0.5f) * WEAR_CELL - p_position.z);
+			if (Math::abs(d.dot(ax)) > half.x + 0.5f * WEAR_CELL || Math::abs(d.dot(az)) > half.y + 0.5f * WEAR_CELL) {
+				continue;
+			}
+			Wear &w = wear_cells[Vector2i(x, z)];
+			if (w.torn < 0.5f) {
+				fresh = true;
+			}
+			w.torn = 1.0f;
+			w.last = MAX(w.last, wear_clock);
+		}
+	}
+	if (fresh) {
+		mat_tears++;
+		wear_dirty = true;
+	}
+}
+
 void GroundSurface3D::_seal_add(const Vector3 &p_position, float p_radius, float p_amount) {
 	for (int z = int(Math::floor((p_position.z - p_radius) / WEAR_CELL)); z <= int(Math::floor((p_position.z + p_radius) / WEAR_CELL)); z++) {
 		for (int x = int(Math::floor((p_position.x - p_radius) / WEAR_CELL)); x <= int(Math::floor((p_position.x + p_radius) / WEAR_CELL)); x++) {
@@ -1619,11 +1753,14 @@ void GroundSurface3D::_wear_update(double p_delta) {
 	// A puddled seal lasts the season (Sharma and De Datta 1985): it halves over 60 days of game time as drying
 	// cracks, frost and roots open the soil again.
 	const float keep_seal = Math::exp(-float(p_delta) * MAX(runoff_time_scale, 0.0f) * 0.69314718f / (60.0f * 86400.0f));
+	// A torn root mat (round 24.2) knits slowly: vehicle scars on peatland show for decades; it halves over 5 years.
+	const float keep_torn = Math::exp(-float(p_delta) * MAX(runoff_time_scale, 0.0f) * 0.69314718f / (5.0f * 365.0f * 86400.0f));
 	LocalVector<Vector2i> gone;
 	for (KeyValue<Vector2i, Wear> &kv : wear_cells) {
 		kv.value.passes *= keep;
 		kv.value.seal *= keep_seal;
-		if (kv.value.passes < 0.05f && kv.value.seal < 0.02f && wear_clock - kv.value.last > 1.0) {
+		kv.value.torn *= keep_torn;
+		if (kv.value.passes < 0.05f && kv.value.seal < 0.02f && kv.value.torn < 0.02f && wear_clock - kv.value.last > 1.0) {
 			gone.push_back(kv.key);
 		}
 	}
@@ -6919,6 +7056,17 @@ GroundSoil GroundSurface3D::get_soil(Vector3 p_position) const {
 	soil.layered = subsoil;
 	soil.stickiness = c.stickiness;
 	soil.adhesion = c.adhesion;
+	if (c.bog > 0.05f) {
+		// A peat bog's root mat (round 24.2): it tears past 12 cm; where a load already tore it, the peat bears.
+		soil.mat_tear = 0.12f;
+		soil.torn_kc = c.torn_kc;
+		soil.torn_kphi = c.torn_kphi;
+		soil.torn_cohesion = c.torn_cohesion;
+		soil.torn_tan_phi = c.torn_tan_phi;
+		if (_mat_torn_at(p_position) > 0.5f) {
+			soil = GroundTerramechanics::torn_mat(soil);
+		}
+	}
 	return soil;
 }
 
@@ -8141,7 +8289,7 @@ void GroundSurface3D::_wear_save() {
 		return;
 	}
 	f->store_32(WEAR_MAGIC);
-	f->store_32(2);
+	f->store_32(3);
 	f->store_double(Time::get_singleton()->get_unix_time_from_system());
 	f->store_32(wear_cells.size());
 	for (const KeyValue<Vector2i, Wear> &kv : wear_cells) {
@@ -8149,6 +8297,7 @@ void GroundSurface3D::_wear_save() {
 		f->store_32(uint32_t(kv.key.y));
 		f->store_float(kv.value.passes);
 		f->store_float(kv.value.seal);
+		f->store_float(kv.value.torn);
 	}
 }
 
@@ -8398,13 +8547,14 @@ void GroundSurface3D::_wear_load() {
 		return;
 	}
 	const uint32_t version = f->get_32();
-	if (version != 1 && version != 2) {
+	if (version < 1 || version > 3) {
 		return;
 	}
 	const double when = f->get_double();
 	const double away = when > 0.0 ? MAX(Time::get_singleton()->get_unix_time_from_system() - when, 0.0) : 0.0;
 	const float keep = wear_regrowth_days > 0.0f ? float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (double(wear_regrowth_days) * 86400.0))) : 1.0f;
 	const float keep_seal = float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (60.0 * 86400.0)));
+	const float keep_torn = float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (5.0 * 365.0 * 86400.0)));
 	const uint32_t count = f->get_32();
 	for (uint32_t i = 0; i < count && !f->eof_reached(); i++) {
 		const int32_t kx = int32_t(f->get_32());
@@ -8412,12 +8562,14 @@ void GroundSurface3D::_wear_load() {
 		const Vector2i k(kx, kz);
 		const float passes = f->get_float() * keep;
 		const float seal = version >= 2 ? f->get_float() * keep_seal : 0.0f;
-		if (passes < 0.05f && seal < 0.02f) {
+		const float torn = version >= 3 ? f->get_float() * keep_torn : 0.0f;
+		if (passes < 0.05f && seal < 0.02f && torn < 0.02f) {
 			continue;
 		}
 		Wear &w = wear_cells[k];
 		w.passes = MAX(w.passes, passes);
 		w.seal = MAX(w.seal, seal);
+		w.torn = MAX(w.torn, torn);
 	}
 	wear_dirty = true;
 }
@@ -10387,6 +10539,12 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wallow_count"), &GroundSurface3D::get_wallow_count);
 	ClassDB::bind_method(D_METHOD("get_seal_at", "position"), &GroundSurface3D::get_seal_at);
 	ClassDB::bind_method(D_METHOD("get_wallow_visits"), &GroundSurface3D::get_wallow_visits);
+	ClassDB::bind_method(D_METHOD("set_peat_bogs", "enabled"), &GroundSurface3D::set_peat_bogs);
+	ClassDB::bind_method(D_METHOD("is_peat_bogs"), &GroundSurface3D::is_peat_bogs);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "peat_bogs"), "set_peat_bogs", "is_peat_bogs");
+	ClassDB::bind_method(D_METHOD("get_peat_bog_at", "position"), &GroundSurface3D::get_peat_bog_at);
+	ClassDB::bind_method(D_METHOD("tear_mat", "position", "size", "yaw"), &GroundSurface3D::tear_mat);
+	ClassDB::bind_method(D_METHOD("get_mat_tear_count"), &GroundSurface3D::get_mat_tear_count);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");

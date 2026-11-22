@@ -44,6 +44,8 @@
 // downhill (their phase varies across the slope), cos for height and sin for slope; the neighbouring cells are
 // blended with a smooth distance weight (the 5x5 cells around the point), and the blended (cos, sin) pair is renormalized when longer than 1/2.
 
+#include "terrain_dmath.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -116,8 +118,8 @@ public:
 					}
 					w = w * w * w;
 					const double phase = (dx * tx + dz * tz) * 6.283185307179586;
-					c += w * std::cos(phase);
-					s += w * std::sin(phase);
+					c += w * TerrainDMath::cos(phase);
+					s += w * TerrainDMath::sin(phase);
 					wsum += w;
 				}
 			}
@@ -138,7 +140,7 @@ public:
 
 			// Stack: this octave's result is the next fade target; its ridges and creases (slope ~ 0) mask the next.
 			fade = faded;
-			mask = (1.0 - std::pow(1.0 - _clamp(mask, 0.0, 1.0), p.detail)) * _ease_out(std::fabs(s));
+			mask = (1.0 - TerrainDMath::pow(1.0 - _clamp(mask, 0.0, 1.0), p.detail)) * _ease_out(std::fabs(s));
 			// Straight gullies: steer the next octave by the sign of this octave's slope, at constant steepness.
 			const double gs = (s >= 0.0 ? 1.0 : -1.0) * p.depth * 6.283185307179586;
 			sx += -gs * tx;
@@ -210,8 +212,8 @@ public:
 					const double gwx = 3.0 * w1 * w1 * (-2.0 * dx / 2.25);
 					const double gwz = 3.0 * w1 * w1 * (-2.0 * dz / 2.25);
 					const double phase = (dx * tx + dz * tz) * 6.283185307179586;
-					const double cp = std::cos(phase);
-					const double sp = std::sin(phase);
+					const double cp = TerrainDMath::cos(phase);
+					const double sp = TerrainDMath::sin(phase);
 					c += w * cp;
 					s += w * sp;
 					wsum += w;
@@ -265,8 +267,8 @@ public:
 			fade = faded;
 			{
 				const double m0 = _clamp(mask, 0.0, 1.0);
-				const double reach = 1.0 - std::pow(1.0 - m0, p.detail);
-				const double dreach = p.detail * std::pow(std::max(1.0 - m0, 0.0), p.detail - 1.0);
+				const double reach = 1.0 - TerrainDMath::pow(1.0 - m0, p.detail);
+				const double dreach = p.detail * TerrainDMath::pow(std::max(1.0 - m0, 0.0), p.detail - 1.0);
 				const double as = std::fabs(s);
 				const double e = _ease_out(as);
 				const double de = as < 1.0 ? 2.0 * (1.0 - as) * (s >= 0.0 ? 1.0 : -1.0) : 0.0;
@@ -285,13 +287,17 @@ public:
 	// Ridged gradient-noise fBm (Musgrave's ridged multifractal family, Ebert et al. 2003): sum of (1/2 - |n|) over
 	// octaves, so it has sharp maxima (pinnacles) and rounded minima (cols), -1/2..1/2 per octave weight. Used on
 	// crests, where the gullies fade, so a crest keeps an irregular, jagged line instead of a straight one.
+	// The fold is a soft |n| (sqrt(n^2 + k^2) - k, k 0.06): an exact fold is a crease of no width at every pinnacle's
+	// tip, finer than any grid that samples it, and a 1 m heightfield drew each as a lone spike (a sawtooth of teeth
+	// along every arete's skyline).
 	static double crest_noise(uint32_t p_seed, double x, double z, double p_wavelength, int p_octaves) {
 		double sum = 0.0;
 		double amp = 1.0;
 		double norm = 0.0;
 		double f = 1.0 / p_wavelength;
 		for (int o = 0; o < p_octaves; o++) {
-			sum += amp * (0.5 - std::fabs(_gradient_noise(p_seed + uint32_t(o) * 0x632BE5ABu, x * f, z * f)));
+			const double n = _gradient_noise(p_seed + uint32_t(o) * 0x632BE5ABu, x * f, z * f);
+			sum += amp * (0.5 - (std::sqrt(n * n + 0.0036) - 0.06));
 			norm += amp;
 			amp *= 0.5;
 			f *= 2.0;
@@ -326,7 +332,7 @@ private:
 		auto grad = [&](int cx, int cz, double dx, double dz) -> double {
 			const uint32_t h = _hash(uint32_t(cx), uint32_t(cz), p_seed);
 			const double a = (h & 0xffff) * (6.283185307179586 / 65536.0);
-			return std::cos(a) * dx + std::sin(a) * dz;
+			return TerrainDMath::cos(a) * dx + TerrainDMath::sin(a) * dz;
 		};
 		const double ux = tx * tx * tx * (tx * (tx * 6.0 - 15.0) + 10.0);
 		const double uz = tz * tz * tz * (tz * (tz * 6.0 - 15.0) + 10.0);

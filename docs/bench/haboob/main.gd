@@ -97,13 +97,13 @@ func _view() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
-	# Dry desert flat, 2 km, centred between the camera and the front.
+	# Dry desert flat, 16 km, so its edge is past the horizon haze (a 2 km flat showed its rim as a line under the wall).
 	var x0 := head_at + ahead
 	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(2000, 2000)
-	pm.subdivide_width = 16
-	pm.subdivide_depth = 16
+	pm.size = Vector2(16000, 16000)
+	pm.subdivide_width = 64
+	pm.subdivide_depth = 64
 	ground.mesh = pm
 	ground.position = Vector3(head_at, 0, 0)
 	var mat := StandardMaterial3D.new()
@@ -117,7 +117,7 @@ func _view() -> void:
 	nt.seamless = true
 	mat.normal_enabled = true
 	mat.normal_texture = nt
-	mat.uv1_scale = Vector3(300, 300, 1)
+	mat.uv1_scale = Vector3(2400, 2400, 1)
 	ground.material_override = mat
 	add_child(ground)
 	var cam := Camera3D.new()

@@ -57,7 +57,7 @@ struct Cell {
 // Positive degree days in a month of p_days days with mean p_t and daily standard deviation p_sigma.
 inline float positive_degree_days(float p_t, float p_sigma, int p_days) {
 	const float s = MAX(p_sigma, 0.01f);
-	const float pdd = s / std::sqrt(float(Math::TAU)) * std::exp(-p_t * p_t / (2.0f * s * s)) + 0.5f * p_t * std::erfc(-p_t / (float(Math::SQRT2) * s));
+	const float pdd = s / std::sqrt(float(Math::TAU)) * TerrainDMath::exp(-p_t * p_t / (2.0f * s * s)) + 0.5f * p_t * TerrainDMath::erfc(-p_t / (float(Math::SQRT2) * s));
 	return MAX(pdd, 0.0f) * p_days;
 }
 
@@ -80,11 +80,11 @@ inline void balance(const TerrainClimate::Params &p, float p_height, float p_pre
 		aet = 0.0f;
 		for (int m = 0; m < 12; m++) {
 			const float pm = p_precipitation * TerrainClimate::precipitation_share(p, m);
-			const float snow_share = 0.5f * (1.0f + std::erf((p.rain_snow_threshold - t[m]) / (sigma * float(Math::SQRT2))));
+			const float snow_share = 0.5f * (1.0f + TerrainDMath::erf((p.rain_snow_threshold - t[m]) / (sigma * float(Math::SQRT2))));
 			const float snow = pm * snow_share;
 			const float rain = pm - snow;
 			// Sun on the cell this month: a harmonic through the winter (January) and annual means.
-			const float sun = MAX(p_shortwave - (p_shortwave - p_shortwave_winter) * Math::cos(float(Math::TAU) * m / 12.0f), 0.0f);
+			const float sun = MAX(p_shortwave - (p_shortwave - p_shortwave_winter) * TerrainDMath::cos(float(Math::TAU) * m / 12.0f), 0.0f);
 			const float melt_potential = (p.melt_factor + p.radiation_melt_factor * sun) * positive_degree_days(t[m], sigma, DAYS[m]);
 			pack += snow;
 			const float melt = MIN(pack, melt_potential);
@@ -104,7 +104,7 @@ inline void balance(const TerrainClimate::Params &p, float p_height, float p_pre
 					surplus = MAX(soil - stc, 0.0f);
 					soil = MIN(soil, stc);
 				} else {
-					const float after = soil * std::exp(-(pet[m] - input) / stc);
+					const float after = soil * TerrainDMath::exp(-(pet[m] - input) / stc);
 					aet += input + (soil - after);
 					soil = after;
 				}

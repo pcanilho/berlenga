@@ -31,6 +31,8 @@
 
 #pragma once
 
+#include "terrain_dmath.h"
+
 #include "core/templates/hash_set.h"
 #include "climate_recipe.h"
 
@@ -821,7 +823,7 @@ public:
 	real_t get_sand_depth_at(const Vector3 &p_global_position) const;
 	real_t get_sand_interdune_at(const Vector3 &p_global_position) const;
 	// The dune-building wind (unit, x and z) the sand sea was grown under: granule ripples' crests run across it.
-	Vector2 get_sand_wind_direction() const { return Vector2(Math::cos(Math::deg_to_rad(sand_sea_wind_angle)), Math::sin(Math::deg_to_rad(sand_sea_wind_angle))); }
+	Vector2 get_sand_wind_direction() const { return Vector2(TerrainDMath::cos(Math::deg_to_rad(sand_sea_wind_angle)), TerrainDMath::sin(Math::deg_to_rad(sand_sea_wind_angle))); }
 	void set_sand_sea_compound(bool p_value) { sand_sea_compound = p_value; }
 	bool is_sand_sea_compound() const { return sand_sea_compound; }
 	void set_sand_sea_mask(const Ref<Image> &p_mask) { sand_sea_mask = p_mask; }

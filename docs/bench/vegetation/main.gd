@@ -1307,6 +1307,50 @@ func _bank_roots_check() -> void:
 	_check("bank roots: fine roots along a scarp's top edge on the variant nearest the face, none without the scarp, no woody roots with no canopy",
 			res[0][0] > 20 and res[0][1] == 0 and res[0][2] == 0 and res[1] == [0, 0, 0] and face_ok, res)
 
+# Hay meadows (GrassField3D.hay_meadows, GrassField3D.mown_days_at): a tall herb is cut inside a meadow mown 2 days ago,
+# not outside it; mown 40 days ago it has grown back; a low herb under the stubble is not cut.
+func _hay_check() -> void:
+	var grass := GrassField3D.new()
+	grass.radius = 0.0
+	add_child(grass)
+	var meadow := PackedVector2Array([Vector2(-20, -20), Vector2(0, -20), Vector2(0, 20), Vector2(-20, 20)])
+	var res := []
+	for days in [2.0, 40.0]:
+		grass.hay_meadows = [{"polygon": meadow, "row_angle": 0.0, "days": days}]
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		var gen := PlantGenerator.new()
+		var list := []
+		for pr in [PlantGenerator.PRESET_FOXGLOVE, PlantGenerator.PRESET_MOSS]:
+			gen.preset = pr
+			gen.apply_preset_colors()
+			var sp := PlantSpecies.new()
+			sp.meshes = [gen.generate()]
+			sp.spacing = 2.0
+			sp.set_meta("plant_preset", pr)
+			list.append(sp)
+		f.biome.species.assign(list)
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var row := []
+		for k in 2:
+			var inside := 0
+			var outside := 0
+			for q in f.get_placements(k):
+				if q.x > -20.0 and q.x < 0.0 and q.z > -20.0 and q.z < 20.0:
+					inside += 1
+				else:
+					outside += 1
+			row.append([inside, outside])
+		res.append(row)
+		f.free()
+	grass.free()
+	_check("hay meadows: the tall herb cut in a meadow mown 2 days ago, not outside, back by 40 days; the low herb kept",
+			res[0][0][0] == 0 and res[0][0][1] > 20 and res[1][0][0] > 20 and res[0][1][0] > 20, res)
+
 # Turf overhangs (make_bank_turf, RULE_BANK_EDGE): a stub's relief raises the ground 1.2 m west of a scarp at x = 0;
 # sod lips stand along its top edge, none on the open ground either side or without the scarp.
 func _turf_lip_check() -> void:
@@ -2832,6 +2876,7 @@ func _checks() -> void:
 	_pollen_cloud_check()
 	_turf_lip_check()
 	_bank_roots_check()
+	_hay_check()
 	_seed_down_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).

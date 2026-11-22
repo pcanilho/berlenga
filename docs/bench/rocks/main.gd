@@ -6,6 +6,8 @@ extends Node3D
 #                         wear flattens, then the field's six layers on a generated world; prints PASS/FAIL, quits
 #                         (sea caves: the sea surges in under the cliff, blowholes blow in a storm swell; boulders as
 #                         wind obstacles)
+#   --world --height-check  the generator's heights at fixed points and a hash of its height image against a reference
+#                         (seed 5, 2048 m world): the same on every platform; prints PASS/FAIL, quits
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
 #   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1; --stand: a fin,
 #                         hoodoo or stack stood on end, side on)
@@ -13,7 +15,11 @@ extends Node3D
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --exposure=x          the tonemapper's exposure (1): more for a dark cave seen from inside
-#   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff)
+#   --gen-prop=name:value[,...]  any TerrainGenerator3D property before it generates (A/B one stage)
+#   --hide=Node[,Node...]  hide those children of the bench (A/B which object draws something)
+#   --lod-error=px        Landscape3D.lod_error
+#   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff);
+#                         --face-side=k moves the camera along the wall (k times --dist)
 #   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still); on by default
 #                         for raster stills, --no-taa for the single-sample frame
 #   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
@@ -482,9 +488,16 @@ func _world() -> void:
 	gen.detail_octaves = 5
 	gen.glacial_enabled = true
 	gen.glacial_ela = float(args.get("ela", "450"))
+	# --gen-prop=name:value[,name:value...]: any of the generator's properties (A/B one stage).
+	for kv in str(args.get("gen-prop", "")).split(",", false):
+		var p: PackedStringArray = kv.split(":")
+		gen.set(p[0], str_to_var(p[1]))
 	add_child(gen)
 	gen.generate()
 	print("world generated in %d ms" % (Time.get_ticks_msec() - t0))
+	if args.has("height-check"):
+		_height_check()
+		return
 	if args.has("probe"):
 		var hist := [0, 0, 0, 0, 0]
 		var till := 0
@@ -510,6 +523,12 @@ func _world() -> void:
 	if args.get("ground-scans", "1") != "0" and not args.has("test"): # --ground-scans=0: plain ground layers
 		if _apply_ground_scans(tm, ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers"), args.get("ground-scans", "1")) > 0:
 			tm.update_shader()
+	if args.has("hide"):
+		get_tree().process_frame.connect(func():
+			for nm in str(args["hide"]).split(","):
+				var nd = get_node_or_null(nm)
+				if nd:
+					nd.visible = false)
 	if args.has("face-weathering"):
 		tm.set_shader_parameter("tm_face_weathering", float(args["face-weathering"]))
 	var land := Landscape3D.new()
@@ -522,6 +541,8 @@ func _world() -> void:
 	if args.has("test") or args.has("no-cliff-relief"):
 		land.cliff_relief = 0.0
 	land.name = "Landscape"
+	if args.has("lod-error"):
+		land.lod_error = float(args["lod-error"])
 	add_child(land)
 	land.material = tm
 	land.source = land.get_path_to(gen)
@@ -2979,3 +3000,35 @@ func _hide_class(n: Node, cls: String) -> void:
 		if c.is_class(cls) and c is Node3D:
 			(c as Node3D).visible = false
 		_hide_class(c, cls)
+
+
+# --world --height-check: the generator must give the same heights on every platform and thread count (it does
+# its own transcendental math, terrain_dmath.h, and breaks sort ties by index). Prints the heights at fixed
+# points and a SHA-256 of the whole height image, compares them with the reference below, prints PASS/FAIL, quits.
+# Run with the default world (seed 5, 2048 m); a deliberate change to the generator updates the reference.
+const HEIGHT_REF := {
+	"points": ["225.946442", "406.352905", "673.358887", "-1.532555", "4.541926", "203.910446", "305.330017", "-4.236583"],
+	"sha256": "01517e43cc322726efd52874413eeef0636f9f994331c46f185f94289cc230db",
+}
+
+
+func _height_check() -> void:
+	var pts := [Vector3(0, 0, 0), Vector3(-600, 0, -600), Vector3(600, 0, -600), Vector3(-600, 0, 600),
+			Vector3(600, 0, 600), Vector3(-250, 0, 120), Vector3(333, 0, -77), Vector3(10, 0, 900)]
+	var got: Array[String] = []
+	for p in pts:
+		got.append("%.6f" % gen.get_height(p))
+	var img: Image = gen.get_height_image()
+	var hc := HashingContext.new()
+	hc.start(HashingContext.HASH_SHA256)
+	hc.update(img.get_data())
+	var sha := hc.finish().hex_encode()
+	print("height check: points %s" % ", ".join(got))
+	print("height check: height image %dx%d sha256 %s" % [img.get_width(), img.get_height(), sha])
+	var ok := WORLD == 2048.0 and int(args.get("seed", "5")) == 5 and not args.has("gen-prop")
+	if not ok:
+		print("height check: not the reference world (seed 5, 2048 m, no --gen-prop); nothing compared")
+	else:
+		var same: bool = ", ".join(got) == ", ".join(HEIGHT_REF["points"]) and sha == HEIGHT_REF["sha256"]
+		print("height check: %s" % ("PASS" if same else "FAIL (reference %s, sha256 %s)" % [", ".join(HEIGHT_REF["points"]), HEIGHT_REF["sha256"]]))
+	get_tree().quit()

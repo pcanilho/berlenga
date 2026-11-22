@@ -129,7 +129,10 @@ void PhysXDustDevils3D::_build() {
 	// Dust in warm rising air: no fire, the core's heat lifts it (buoyancy), the dust a little heavy in itself,
 	// a slow fade (the fines hang for tens of seconds), strong vorticity confinement to keep the column's spin.
 	flow->set_cell_size(flow_cell_size);
-	flow->set_max_blocks(1024);
+	flow->set_max_blocks(2048);
+	// Freed blocks invisible: under 0.01 of optical depth across a 16-cell block (the faint dust round the column
+	// was cut in steps along the blocks at the default 0.02).
+	flow->set_allocation_smoke(0.01f / (0.8f * 16.0f * flow_cell_size));
 	flow->set_combustion(false);
 	flow->set_buoyancy(2.0f);
 	flow->set_cooling_rate(0.3f);
@@ -137,6 +140,7 @@ void PhysXDustDevils3D::_build() {
 	flow->set_smoke_fade(0.06f); // the fines hang for minutes: the column is as tall as the updraft carries them
 	flow->set_vorticity(3.0f);
 	flow->set_emission_strength(0.0f);
+	// 0.8: the PC's 1.6 read best only while the dust spread thin; held in the wall now, 1.6 turned the foot black.
 	flow->set_smoke_density(0.8f);
 	// A few kelvin of warm air, not a fire: no glow, no fire light or embers, and the shimmer of its few kelvin.
 	flow->set_temperature_range(1.0f);
@@ -147,7 +151,7 @@ void PhysXDustDevils3D::_build() {
 	// updraft and spin and still lean and drift with the wind (the devil itself moves with it, see _step).
 	flow->set_weather_wind_coupling(0.25f);
 	// Fine mineral dust scatters strongly and forward (a bright, tan column against the sky, Sinclair 1969's photographs).
-	flow->set_scattering_strength(2.0f);
+	flow->set_scattering_strength(1.0f); // 1 keeps raster and the path tracer alike
 	flow->set_smoke_color(dust_color);
 	flow->set_terrain_floor(true);
 	add_child(flow, false, INTERNAL_MODE_FRONT);
@@ -189,6 +193,9 @@ void PhysXDustDevils3D::_pool() {
 		if (d.core) {
 			d.core->queue_free();
 		}
+		if (d.reserve) {
+			d.reserve->queue_free();
+		}
 	}
 	LocalVector<Devil> old;
 	for (const Devil &d : devils) {
@@ -206,6 +213,12 @@ void PhysXDustDevils3D::_pool() {
 		}
 		d.core = make(vformat("Devil%dCore", i));
 		d.core->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+		d.reserve = make(vformat("Devil%dReserve", i));
+		d.reserve->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+		d.reserve->set_smoke(0.0f);
+		d.reserve->set_temperature(0.0f);
+		d.reserve->set_velocity(Vector3());
+		d.reserve->set_couple_rate(0.0f);
 	}
 }
 
@@ -336,7 +349,13 @@ void PhysXDustDevils3D::_draw(Devil &p_d) {
 	const bool on = e > 0.0f;
 	const float R = p_d.radius;
 	const float V = p_d.swirl * e;
-	const float w = 0.5f * p_d.swirl * e;
+	// The wall's updraft about as fast as the swirl at its foot (Sinclair 1973 measured 5-15 m/s in walls spinning
+	// 8-20 m/s): the dust has to outrun its own spread or the column slumps into a tent.
+	const float w = 0.8f * p_d.swirl * e;
+	// Lift in two arms that turn with the vortex at half its angular speed: dust is picked up where the inflow's
+	// streaks converge, not evenly round the ring, and the turning arms wind it into the spiral bands seen on
+	// devils' skirts and walls (Balme and Greeley 2006).
+	const float arm_phase = p_d.spin * 0.5f * (p_d.swirl / MAX(R, 0.1f)) * p_d.age;
 	const float re = MAX(0.35f * R, 2.0f * flow_cell_size);
 	const Vector3 up(0.0f, 1.0f, 0.0f);
 	for (int k = 0; k < RING; k++) {
@@ -356,23 +375,27 @@ void PhysXDustDevils3D::_draw(Devil &p_d) {
 		const float a = Math::TAU * k / RING;
 		const Vector3 radial(Math::cos(a), 0.0f, Math::sin(a));
 		const Vector3 tangent = Vector3(-radial.z, 0.0f, radial.x) * p_d.spin;
+		// The surface inflow layer (Sinclair 1973): a metre or two deep, converging on the wall at about half the
+		// swirl, so what the foot lifts is swept in to the wall and up it instead of thrown out into a wide skirt.
 		foot->set_radius(re);
-		foot->set_global_position(p_d.position + radial * R + up * (0.8f * re));
-		foot->set_velocity(tangent * V + up * (0.8f * w) - radial * (0.3f * V));
-		foot->set_smoke(0.5f * e * p_d.dust);
+		foot->set_global_position(p_d.position + radial * R + up * (0.5f * re));
+		foot->set_velocity(tangent * V + up * (0.3f * w) - radial * (0.5f * V));
+		const float arm = Math::pow(MAX(Math::cos(2.0f * (a - arm_phase)), 0.0f), 4.0f);
+		foot->set_smoke(0.5f * e * p_d.dust * (0.25f + 1.5f * arm));
 		// The superheated surface layer the vortex feeds on (Sinclair 1969): warm at the foot too, so the dust it
 		// lifts rises with it instead of pooling on the ground.
 		foot->set_temperature(0.6f * e);
 		foot->set_couple_rate(8.0f);
-		// Rings at 1.5, 3.5 and 6 radii keep the wall spinning up the column (the swirl holds the dust in the wall,
-		// the inflow below feeds it), each a little wider and slower than the last, as the funnel flares.
-		static const float level_h[LEVELS] = { 1.5f, 3.5f, 6.0f };
+		// Rings up to 15 radii keep the wall spinning and rising (the swirl holds the dust in the wall, the inflow
+		// below feeds it). The column widens upward, an inverted cone of a few degrees (Balme and Greeley 2006; heights
+		// ten to thirty diameters), each ring wider and slower than the last (angular momentum kept, V r constant).
+		static const float level_h[LEVELS] = { 1.5f, 3.5f, 6.0f, 10.0f, 15.0f };
 		for (int l = 0; l < LEVELS; l++) {
 			PhysXFlowEmitter3D *upper = p_d.upper[l][k];
 			if (!upper) {
 				continue;
 			}
-			const float flare = 1.0f + 0.12f * level_h[l];
+			const float flare = 1.0f + 0.05f * level_h[l];
 			// Rotated half a step a level, so the rings interleave.
 			const float al = a + (l & 1 ? Math::PI / RING : 0.0f);
 			const Vector3 rl(Math::cos(al), 0.0f, Math::sin(al));
@@ -386,13 +409,24 @@ void PhysXDustDevils3D::_draw(Devil &p_d) {
 	if (p_d.core) {
 		p_d.core->set_enabled(on);
 		if (on) {
-			// The rising core inside the wall, from the ground to the upper ring.
+			// The rising core inside the wall, from the ground to the top ring.
 			const float cw = MAX(1.4f * R, 2.0f * flow_cell_size);
-			p_d.core->set_size(Vector3(cw, 6.0f * R, cw));
-			p_d.core->set_global_position(p_d.position + up * (3.0f * R + 0.5f * re));
+			p_d.core->set_size(Vector3(cw, 15.0f * R, cw));
+			p_d.core->set_global_position(p_d.position + up * (7.5f * R + 0.5f * re));
 			p_d.core->set_velocity(up * (1.2f * w));
 			p_d.core->set_temperature(e);
 			p_d.core->set_couple_rate(6.0f);
+		}
+	}
+	if (p_d.reserve) {
+		// Gas in an unallocated block is lost (Flow reads it as still air) and the wall's updraft outruns Flow's own
+		// allocation, which cut the plume in steps at its top: the blocks over the whole flaring column and a third
+		// above it are kept (couple 0, it pushes nothing).
+		p_d.reserve->set_enabled(on);
+		if (on) {
+			const float rw = 2.0f * R * (1.0f + 0.05f * 20.0f) + 2.0f * re;
+			p_d.reserve->set_size(Vector3(rw, 20.0f * R, rw));
+			p_d.reserve->set_global_position(p_d.position + up * (10.0f * R));
 		}
 	}
 }

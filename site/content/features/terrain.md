@@ -143,6 +143,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
+  ![Weathered rock faces under a clear sky, lichen patches and moss along the beds, raster](media/terrain-face-weathering.jpg)
+
+  *Face weathering: pale lichen on the open face, moss along the bedding ledges in the shade.*
+
   ![The same bare rock slope at 2 m without and with scanned detail, raster](media/terrain-ground-scan.jpg)
 
   *A bare slope at 2 m, left without scans, right with scanned joints, fractures and grit.*
@@ -181,8 +185,9 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Soft ground** (PhysXVehicle3D `soft_soil`, `parked_settling`; PhysXVehicleWheel3D `tire_pressure`; GroundSurface3D `ploughing`): vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in; lugs and chains cut clods out of stiff clay and fling them, or drop them behind the wheel when slow; a vehicle left standing in wet mud keeps settling, and suction holds its tyres as it pulls away.
 - **Deep mud** (`GroundSurface3D.mud_layer`, `mud_map`, `data_map`): wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`). Liquid mud a wheel shoves aside runs on as a wave and the rut closes behind it (`mud_waves`).
+- **Peat bogs** (`GroundSurface3D.peat_bogs`): a root mat over soft peat bears light vehicles and tears under heavy ones, which drop in.
 - **Hidden and loose stones** (`GroundSurface3D.buried_obstacles`, `buried_density`, `buried_kick`, `stream_stones`): stones and roots hidden in mud lift a sinking wheel and show as ruts deepen, and liquid mud flows round them. Tyres press the mud out round a stone, knock an uncovered one loose, push a stone low in the rut into its floor or squeeze it out under the shoulder, and shove loose stones ahead with a furrow and a heap. Loose stones settle as deep as the mud bears them and become hidden again once out of sight; slurry and debris flows carry them along, and streams roll them on once the current beats their weight, dropping them in slack water, with stones sunk in mud holding harder. The current scours a hole round a stone on a stream bed and leaves a tail of sediment behind it, and stones rolled over a muddy bed stir up silt that drifts downstream.
-- **Tyre clogging** (`PhysXVehicle3D.tyre_clogging`): sticky clay packs the tread until it grips like a slick, and spinning throws it off.
+- **Tyre clogging** (`PhysXVehicle3D.tyre_clogging`): sticky clay packs the tread until it grips like a slick and balls up on the tyre, shedding in chunks; a lopsided tyre shakes the vehicle until spinning throws it clean.
 - **Treads and chains** (`PhysXVehicleWheel3D.tread`): road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay, and each prints its own pattern in the rut.
 - **Belly drag** (`PhysXVehicle3D.belly_drag`): a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.
 - **Winch** (`PhysXWinch3D`: `rated_pull`, `line_speed`, `brake_hold`): a cable winch that slows under load, stalls at its rated pull and slips its brake; the cable sags and lies on the ground.

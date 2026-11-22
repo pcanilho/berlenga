@@ -593,6 +593,8 @@ public:
 		SourceHash128 source_hash;
 		HGState state = HGState::Empty;
 		CustomShaderEntry entry;
+		// Held at start-up for a material the last launch had in this slot (_load_slot_order), not registered yet.
+		bool reserved = false;
 	};
 
 	LocalVector<HitGroupSlot> hit_group_slots;
@@ -667,6 +669,14 @@ public:
 private:
 	// Source-hash slot management.
 	uint32_t _register_slot(uint32_t p_shader_id, RID p_material, bool p_is_procedural);
+	// The slots in the order the last launch filled them, kept beside the SPIR-V cache: materials register in
+	// loading order, which changes from launch to launch, and the linked pipeline's hit groups follow the slots,
+	// so without this the link never matched the Vulkan pipeline cache and added to it every launch.
+	bool slot_order_dirty = false;
+	String _slot_order_path() const;
+	void _load_slot_order();
+	void _save_slot_order();
+	bool _has_filled_slots() const;
 	bool _preprocess_shader(RID p_material, bool p_is_procedural, CustomShaderEntry &r_entry);
 	void _strip_texture_globals(String &r_globals, const String &p_tex_name);
 	void _finalize_uniforms_with_textures(CustomShaderEntry &r_entry, const ShaderCompiler::GeneratedCode &p_gen_code, const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms, bool p_strip_intersection_globals);

@@ -67,6 +67,14 @@ struct GroundSoil {
 	// A firm subsoil under the loose layer (docs/ideas/mud.md, round 12): the layer stiffens as it thins under a
 	// load, and a tyre that reaches the base grips on it. Off: the base is only a hard stop at max_sinkage.
 	bool layered = false;
+	// A peat bog's root mat (docs/ideas/mud.md, round 24.2): Wong's muskeg model, a fibrous surface mat over soft
+	// peat that bears a load until it is pressed this deep (m; 0: no mat), then tears; past it the soil is the
+	// peat under it (torn_mat()).
+	float mat_tear = 0.0f;
+	float torn_kc = 0.0f;
+	float torn_kphi = 0.0f;
+	float torn_cohesion = 0.0f;
+	float torn_tan_phi = 0.0f;
 };
 
 struct GroundWheelSoil {
@@ -79,6 +87,7 @@ struct GroundWheelSoil {
 	float traction = 0.0f; // N, the longitudinal force the soil gives at this slip
 	float lateral = 0.0f; // N, the lateral force at this slip angle
 	bool soft = false;
+	bool torn = false; // this load tore a peat bog's root mat (round 24.2): the values are the peat's under it
 };
 
 // A pneumatic tyre's flat on the ground (docs/ideas/mud.md, round 12): its ground pressure, the flat's length and the
@@ -118,6 +127,8 @@ float bulldozing_resistance(const GroundSoil &p_soil, float p_width, float p_sin
 float wheel_bulldozing_resistance(const GroundSoil &p_soil, float p_width, float p_radius, float p_sinkage, float p_already); // N
 // The Janosi-Hanamoto share of the shear limit at shear displacement p_j over the contact (m): 0 to 1.
 float janosi_hanamoto(float p_j_end, float p_shear_k);
+// The soil under a torn root mat (round 24.2): the peat's own values, no mat; the soil itself where there is none.
+GroundSoil torn_mat(const GroundSoil &p_soil);
 GroundWheelSoil wheel(const GroundSoil &p_soil, float p_load, float p_radius, float p_width, float p_inflation, float p_slip, float p_slip_angle, float p_already_pressed);
 // Mud on wheels and bellies (docs/ideas/mud.md, stage 3). A tread full of clay grips as a slick: rubber on clay,
 // A ca + W tan delta (delta about 0.6 phi), not soil on soil through the lugs; the share of the clean shear

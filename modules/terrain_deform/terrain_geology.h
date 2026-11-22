@@ -50,6 +50,8 @@
 // upstream along the donor with the largest area (Hack's main stem); the other donors start tributaries that join
 // it, so trunk rivers come first and every tributary names the river it joins.
 
+#include "terrain_dmath.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -153,14 +155,14 @@ public:
 					const int rx = r % nx;
 					const int rz = r / nx;
 					const double d = (rx != x && rz != z) ? dx * 1.4142135623730951 : dx;
-					incision = p.erodibility * std::pow(double(area[i]), p.area_exponent) * std::max((hi - h[r]) / d, 0.0);
+					incision = p.erodibility * TerrainDMath::pow(double(area[i]), p.area_exponent) * std::max((hi - h[r]) / d, 0.0);
 				}
 				// Channels from 20 to 200 cells of drainage. Above the channel heads (Montgomery and Dietrich 1988)
 				// hillslopes are lowered by creep and shallow landslides, not by stream incision, so K A^m S only counts
 				// on channels; on the hillslope cells it would read their small own area as a stream and strip every
 				// slope above about 20 degrees.
 				const double cell_area = dx * dx;
-				const double channel = smoothstep(std::log(20.0 * cell_area), std::log(200.0 * cell_area), std::log(std::max(double(area[i]), 1.0)));
+				const double channel = smoothstep(TerrainDMath::log(20.0 * cell_area), TerrainDMath::log(200.0 * cell_area), TerrainDMath::log(std::max(double(area[i]), 1.0)));
 				// Creep by nonlinear diffusion (Roering, Kirchner and Dietrich 1999): transport grows without bound as the
 				// gradient nears the critical one, so steep sharp crests lower fast and go bare while rounded gentle
 				// hilltops keep their soil.
@@ -171,7 +173,7 @@ public:
 				const double ratio = std::min(std::sqrt(gx * gx + gz * gz) / std::max(p.critical_slope, 1e-6), 0.97);
 				const double creep = p.diffusion / (1.0 - ratio * ratio);
 				const double e = incision * channel + creep * std::max(-curv, 0.0);
-				double soil = p.soil_scale * std::log(p.soil_production / std::max(e, 1e-12));
+				double soil = p.soil_scale * TerrainDMath::log(p.soil_production / std::max(e, 1e-12));
 				soil = std::min(std::max(soil, 0.0), p.soil_max);
 				// Soil-mantled slopes hold up to near the critical gradient (Roering, Kirchner and Dietrich 1999); at it
 				// shallow landslides keep the cover thin and patchy (threshold hillslopes of fast-eroding ranges still
@@ -183,7 +185,7 @@ public:
 					const int rx = r % nx;
 					const int rz = r / nx;
 					const double d = (rx != x && rz != z) ? dx * 1.4142135623730951 : dx;
-					const double ks = std::max((hi - h[r]) / d, 0.0) * std::pow(double(area[i]), p.area_exponent);
+					const double ks = std::max((hi - h[r]) / d, 0.0) * TerrainDMath::pow(double(area[i]), p.area_exponent);
 					const double alluvium = p.soil_max * channel * (1.0 - smoothstep(0.5 * p.alluvial_steepness, p.alluvial_steepness, ks / p.steepness_ref));
 					soil = std::max(soil, alluvium);
 				}
@@ -205,14 +207,14 @@ public:
 			const int ix = i % nx;
 			const int rx = r % nx;
 			const double d = (ix != rx && i / nx != r / nx) ? dx * 1.4142135623730951 : dx;
-			carry[r] = std::max(carry[r], float(carry[i] * std::exp(-d / p.talus_reach)));
+			carry[r] = std::max(carry[r], float(carry[i] * TerrainDMath::exp(-d / p.talus_reach)));
 		}
 		// Laid where the slope eases below repose, gone on gentle ground; a 3x3 box spreads the D8 lines into fans.
 		std::vector<float> lay(n);
 		for (int i = 0; i < n; i++) {
 			const double s = slope[i];
 			// Streams carry it off: none on channels.
-			const double channel = smoothstep(std::log(5.0 * dx * dx), std::log(50.0 * dx * dx), std::log(std::max(double(area[i]), 1.0)));
+			const double channel = smoothstep(TerrainDMath::log(5.0 * dx * dx), TerrainDMath::log(50.0 * dx * dx), TerrainDMath::log(std::max(double(area[i]), 1.0)));
 			lay[i] = float(carry[i] * smoothstep(0.12, 0.3, s) * (1.0 - smoothstep(p.repose, 1.15 * p.repose, s)) * (1.0 - channel));
 		}
 		for (int z = 0; z < ny; z++) {

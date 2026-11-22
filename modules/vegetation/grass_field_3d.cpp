@@ -541,6 +541,8 @@ void GrassField3D::_build_material() {
 	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
 	// Deer lawns (graze_height): r = how far the sward is grazed down, 0 none to 1 to graze_height; rect z 0: none.
 	code += "uniform sampler2D graze_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 graze_rect;\nuniform float graze_height = 0.04;\n";
+	// Hay meadows (hay_meadows): r = the meadow (index + 1, 0 none) at each texel; mow_state a texel a meadow (r days since mown, below 0 not; g the rows' angle); rect z 0: none.
+	code += "uniform sampler2D mow_map : filter_nearest, repeat_disable, hint_default_black;\nuniform sampler2D mow_state : filter_nearest, repeat_disable, hint_default_black;\nuniform vec4 mow_rect;\n";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\nglobal uniform sampler2D weather_spray_map;\nglobal uniform vec4 weather_spray_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	// Sea salt on the blades (WeatherMap3D sea_spray, G: 1 - exp(-salt / 10 g/m2)): salt spray burns leaf tips brown
@@ -1109,6 +1111,7 @@ varying float v_t;
 varying float v_dry;
 varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
 varying float v_graze; // Grazed down to a lawn (graze_map).
+varying float v_hay; // Cut hay lying in the meadow: days since mown; below 0 none.
 varying float v_fairy_dead; // A blade browned in a fairy ring's dead band.
 varying vec3 v_melt; // After the snow: x pale and matted, y snow mould, z days since the melt.
 varying vec2 v_wash; // Under the last flood's mark: x combed flat, y silted.
@@ -1168,6 +1171,60 @@ void vertex() {
 			// Regrowth after a bite is fine young leaf: narrower blades keep the short turf from reading as teeth. The
 			// turf ground under the sward (get_ground_shader_code()) closes it between them.
 			w *= 1.0 - 0.35 * v_graze * (0.4 + fract(rnd * 9.13));
+		}
+	}
+	// Hay meadows (docs/ideas/vegetation.md, "Mowing and hay rows"): mown to a stubble of 7.5 to 10 cm (UNH Extension,
+	// "Haymaking": 3 to 4 inches for quick regrowth), which grows back over about six weeks (an estimate). Most blades
+	// are the cut grass: on the day, lying in the mower's swath (passes 3 m apart, the swath gathered to 1.6 m: FAO,
+	// Grassland Fodder Conservation); then tedded, spread flat over the stubble; on the third day raked into
+	// windrows (two swaths to a row, 6 m apart, an estimate) and baled (hay takes about three days of good weather to
+	// cure: UNH; rarely under three in the UK: FAO, Grassland Fodder Conservation); then carted. The gathering moves each
+	// blade across its row, so a windrow holds the grass of its whole strip.
+	v_hay = -1.0;
+	vec3 hay_shift = vec3(0.0);
+	float hay_lift = 0.0;
+	vec2 hay_lay = vec2(0.0);
+	if (mow_rect.z > 0.0) {
+		vec2 muv = (base_w.xz - mow_rect.xy) / mow_rect.zw;
+		if (all(greaterThanEqual(muv, vec2(0.0))) && all(lessThan(muv, vec2(1.0)))) {
+			int mi = int(textureLod(mow_map, muv, 0.0).r * 255.0 + 0.5);
+			if (mi > 0) {
+				vec4 ms = texelFetch(mow_state, ivec2(mi - 1, 0), 0);
+				float md = ms.r;
+				if (md >= 0.0) {
+					float stub = 0.075 + 0.025 * fract(rnd * 29.3);
+					float regrown = min(h, stub + max(h - stub, 0.0) * smoothstep(4.0, 42.0, md));
+					if (fract(rnd * 13.7) >= 0.6 || md >= 3.5) {
+						h = regrown;
+					} else {
+						vec2 rd = vec2(cos(ms.g), sin(ms.g));
+						vec2 rn = vec2(-rd.y, rd.x);
+						float pitch = md < 1.0 ? 3.0 : (md < 2.5 ? 0.0 : 6.0);
+						float half_w = md < 1.0 ? 0.8 : 0.6;
+						float heap = md < 1.0 ? 0.1 : (md < 2.5 ? 0.035 : 0.3);
+						float across = 0.0;
+						float la = fract(rnd * 4.3) * 6.2832; // Tedded: every way.
+						if (pitch > 0.0) {
+							float u = dot(base_w.xz, rn);
+							float row = floor(u / pitch);
+							float uc = (row + 0.5) * pitch + 0.2 * sin(dot(base_w.xz, rd) * 0.06 + row * 1.7) + 0.08 * sin(dot(base_w.xz, rd) * 0.27 + row * 0.4);
+							float rel = clamp(u - uc, -0.5 * pitch, 0.5 * pitch);
+							float nrel = rel * half_w / (0.5 * pitch);
+							hay_shift = vec3(rn.x, 0.0, rn.y) * (nrel - rel);
+							across = nrel / half_w;
+							// Along the row either way, some crossways.
+							la = atan(rd.y, rd.x) + (fract(rnd * 4.3) < 0.5 ? 0.0 : 3.1416) + (fract(rnd * 7.9) - 0.5) * 1.3;
+						}
+						// Heaped to the row's middle, each blade at its own depth in the heap.
+						hay_lift = heap * (1.0 - across * across) * fract(rnd * 3.31);
+						vec2 lw = vec2(cos(la), sin(la));
+						vec2 ll = (to_local * vec3(lw.x, 0.0, lw.y)).xz;
+						hay_lay = length(ll) > 1e-4 ? normalize(ll) : vec2(0.0, 1.0);
+						w *= pitch > 0.0 ? 1.0 : 1.4;
+						v_hay = md;
+					}
+				}
+			}
 		}
 	}
 	// Meadow fairy rings (fairy_rings.h; Shantz and Piemeisel 1917): the dark, lush front stands taller; behind it the
@@ -1329,6 +1386,9 @@ void vertex() {
 		w *= mix(1.0, 0.6, gone);
 		off *= 1.0 - 0.8 * gone;
 	}
+	if (v_hay >= 0.0) {
+		off = hay_lay * (1.42 + 0.06 * fract(rnd * 9.7)); // Cut: lying, not standing.
+	}
 	// Length-preserving bend (Jahrmann and Wimmer 2017): the tip turns by the bend angle.
 	float ang = min(length(off), 1.45);
 	vec2 dir = length(off) > 1e-4 ? normalize(off) : vec2(0.0, 1.0);
@@ -1366,6 +1426,9 @@ void vertex() {
 		p *= smoothstep(order, order + 0.15, keep_b * 1.15);
 	}
 	p -= to_local * vec3(0.0, go.z, 0.0);
+	if (v_hay >= 0.0) {
+		p += to_local * (hay_shift + vec3(0.0, hay_lift, 0.0));
+	}
 	VERTEX = p;
 	NORMAL = normalize(n + across * side * 0.9);
 
@@ -1483,6 +1546,13 @@ void fragment() {
 	if (v_wash.x + v_wash.y > 0.0) {
 		c = mix(c, mix(c, straw, 0.5), v_wash.x * 0.5);
 		c = mix(c, vec3(0.34, 0.3, 0.23) * mix(0.8, 1.0, t), v_wash.y * 0.55);
+	}
+	// Cut grass curing: it wilts duller within the day, then cures to a bright green-gold hay (well-made hay "looks
+	// bright"; bleached hay is weathered: FAO), each blade a little its own shade; the cut ends pale.
+	if (v_hay >= 0.0) {
+		vec3 wilted = mix(c, vec3(dot(c, vec3(0.3, 0.59, 0.11))) * vec3(0.92, 1.06, 0.78), 0.3);
+		vec3 hay_c = vec3(0.4, 0.42, 0.23) * (0.8 + 0.4 * fract(v_dry * 23.0));
+		c = mix(wilted, hay_c, smoothstep(0.3, 3.0, v_hay) * 0.85);
 	}
 	// Prefiltered with distance (Bruneton and Neyret 2012, non-linear pre-filtering): once blades are a pixel or
 	// two wide, each blade's own base-to-tip ramp and its dry or dead odd one out alias into grit; their mean over
@@ -1608,6 +1678,7 @@ void fragment() {
 	material->set_shader_parameter("trample_rect", Vector4());
 	_publish_burn_flush();
 	_publish_graze();
+	_publish_mow();
 	material->set_shader_parameter("view_facing", view_facing);
 	material->set_shader_parameter("fibre_shading", fibre_shading);
 	material->set_shader_parameter("fade_band", fade_band);
@@ -1757,6 +1828,154 @@ void GrassField3D::set_fields(const Array &p_fields) {
 	_crop_fields_changed_notify();
 	_queue_hedges();
 	rebuild();
+}
+
+void GrassField3D::set_hay_meadows(const Array &p_meadows) {
+	hay_meadows = p_meadows;
+	const bool had = !meadows.is_empty();
+	meadows.clear();
+	for (int i = 0; i < hay_meadows.size(); i++) {
+		const Dictionary f = hay_meadows[i];
+		HayMeadow m;
+		m.polygon = f.get("polygon", PackedVector2Array());
+		if (m.polygon.size() < 3) {
+			continue;
+		}
+		m.bounds = Rect2(m.polygon[0], Vector2());
+		for (const Vector2 &v : m.polygon) {
+			m.bounds.expand_to(v);
+		}
+		m.row_angle = f.get("row_angle", 0.0f);
+		m.mow_day = f.get("mow_day", -1);
+		m.days = f.get("days", -1.0f);
+		meadows.push_back(m);
+		if (meadows.size() >= uint32_t(MAX_HAY_MEADOWS)) {
+			WARN_PRINT(vformat("GrassField3D \"%s\": only the first %d hay meadows are mown.", get_name(), MAX_HAY_MEADOWS));
+			break;
+		}
+	}
+	_build_mow_map();
+	_update_mow_state(hay_day);
+	hay_generation++;
+	_hay_register();
+	if (had != !meadows.is_empty()) {
+		rebuild(); // The tiles' culling boxes take the rows' reach.
+	}
+}
+
+// Days since a meadow was mown on a day of the year (the year wraps), or its fixed days; -1 not mown this year.
+static float hay_days_since(int p_mow_day, float p_days, int p_day) {
+	if (p_days >= 0.0f) {
+		return p_days;
+	}
+	if (p_mow_day < 0 || p_day < 0) {
+		return -1.0f;
+	}
+	const int d = p_day - p_mow_day;
+	return d >= 0 ? float(d) : -1.0f;
+}
+
+void GrassField3D::_update_mow_state(int p_day) {
+	hay_day = p_day;
+	if (meadows.is_empty()) {
+		mow_state_texture.unref();
+		_publish_mow();
+		return;
+	}
+	Ref<Image> img = Image::create_empty(MAX_HAY_MEADOWS, 1, false, Image::FORMAT_RGBAF);
+	for (uint32_t i = 0; i < meadows.size(); i++) {
+		const float was = meadows[i].current;
+		meadows[i].current = hay_days_since(meadows[i].mow_day, meadows[i].days, p_day);
+		if (was != meadows[i].current && hay_nodes.has(this)) {
+			hay_generation++;
+		}
+		img->set_pixel(int(i), 0, Color(meadows[i].current, meadows[i].row_angle, 0.0f, 1.0f));
+	}
+	if (mow_state_texture.is_valid()) {
+		mow_state_texture->update(img);
+	} else {
+		mow_state_texture = ImageTexture::create_from_image(img);
+	}
+	_publish_mow();
+}
+
+// The meadows' index map: 0.5 m texels over their bounds (coarser past 1024 a side), the first meadow over a point wins.
+void GrassField3D::_build_mow_map() {
+	if (meadows.is_empty()) {
+		mow_texture.unref();
+		mow_rect = Rect2();
+		return;
+	}
+	Rect2 r = meadows[0].bounds;
+	for (const HayMeadow &m : meadows) {
+		r = r.merge(m.bounds);
+	}
+	r = r.grow(0.5f);
+	const float cell = MAX(0.5f, MAX(r.size.x, r.size.y) / 1024.0f);
+	const int nx = CLAMP(int(Math::ceil(r.size.x / cell)), 1, 1024);
+	const int ny = CLAMP(int(Math::ceil(r.size.y / cell)), 1, 1024);
+	Vector<uint8_t> data;
+	data.resize(nx * ny);
+	uint8_t *w = data.ptrw();
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			const Vector2 q = r.position + Vector2((x + 0.5f) * cell, (z + 0.5f) * cell);
+			uint8_t v = 0;
+			for (uint32_t i = 0; i < meadows.size(); i++) {
+				if (meadows[i].bounds.has_point(q) && Geometry2D::is_point_in_polygon(q, meadows[i].polygon)) {
+					v = uint8_t(i + 1);
+					break;
+				}
+			}
+			w[z * nx + x] = v;
+		}
+	}
+	mow_texture = ImageTexture::create_from_image(Image::create_from_data(nx, ny, false, Image::FORMAT_R8, data));
+	mow_rect = Rect2(r.position, Vector2(nx * cell, ny * cell));
+}
+
+void GrassField3D::_publish_mow() {
+	if (material.is_null()) {
+		return;
+	}
+	if (meadows.is_empty() || mow_texture.is_null() || mow_state_texture.is_null()) {
+		material->set_shader_parameter("mow_rect", Vector4());
+		return;
+	}
+	material->set_shader_parameter("mow_map", mow_texture);
+	material->set_shader_parameter("mow_state", mow_state_texture);
+	material->set_shader_parameter("mow_rect", Vector4(mow_rect.position.x, mow_rect.position.y, mow_rect.size.x, mow_rect.size.y));
+}
+
+void GrassField3D::_hay_register() {
+	const bool want = is_inside_tree() && !meadows.is_empty();
+	if (want == hay_nodes.has(this)) {
+		return;
+	}
+	if (want) {
+		hay_nodes.push_back(this);
+	} else {
+		hay_nodes.erase(this);
+	}
+	hay_generation++;
+}
+
+float GrassField3D::mown_days_at(const Vector3 &p_position) {
+	float d = -1.0f;
+	for (const GrassField3D *g : hay_nodes) {
+		d = MAX(d, g->get_mown_days_at(p_position));
+	}
+	return d;
+}
+
+float GrassField3D::get_mown_days_at(const Vector3 &p_position) const {
+	const Vector2 q(p_position.x, p_position.z);
+	for (const HayMeadow &m : meadows) {
+		if (m.bounds.has_point(q) && Geometry2D::is_point_in_polygon(q, m.polygon)) {
+			return m.current;
+		}
+	}
+	return -1.0f;
 }
 
 void GrassField3D::set_hedges(bool p_enabled) {
@@ -2184,6 +2403,8 @@ float GrassField3D::crop_canopy_height(Crop p_crop, float p_stage) {
 }
 
 LocalVector<GrassField3D *> GrassField3D::crop_nodes;
+LocalVector<GrassField3D *> GrassField3D::hay_nodes;
+uint64_t GrassField3D::hay_generation = 1;
 bool GrassField3D::crop_ground_dirty = true;
 bool GrassField3D::crop_plots_dirty = true;
 Ref<ImageTexture> GrassField3D::crop_ground_texture;
@@ -3067,7 +3288,8 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 	mm->set_instance_count(count);
 	// The records never reach the CPU before the first frame: give culling the tile's box.
 	const float top = blade_height.y * 1.5f + 0.2f;
-	const AABB world_box(Vector3(x0 - 1.0f, y_min - 0.2f, z0 - 1.0f), Vector3(tile_size + 2.0f, y_max - y_min + top + 0.2f, tile_size + 2.0f));
+	const float reach = 1.0f + _hay_reach(); // Hay is gathered across its rows in the shader.
+	const AABB world_box(Vector3(x0 - reach, y_min - 0.2f, z0 - reach), Vector3(tile_size + 2.0f * reach, y_max - y_min + top + 0.2f, tile_size + 2.0f * reach));
 	mm->set_custom_aabb(to_local.xform(world_box));
 	RenderingServer::get_singleton()->call_on_render_thread(callable_mp_static(&grass_fill_rt).bind(mm->get_rid(), in, count));
 	tile.mmi = memnew(MultiMeshInstance3D);
@@ -3621,7 +3843,7 @@ void GrassField3D::_fill_ring_tile_gpu(const Vector3i &p_key, const Rect2 &p_rec
 	mm->set_instance_count(count);
 	// The records never reach the CPU before the first frame: give culling the tile's box, grown by the widest blade.
 	const float top = MAX(blade_height.x, blade_height.y) * 1.5f + 0.2f;
-	const float grow = blade_width * Math::sqrt(RING_BASE_SHARE) * RING_WIDEN_MAX * 1.5f + top;
+	const float grow = blade_width * Math::sqrt(RING_BASE_SHARE) * RING_WIDEN_MAX * 1.5f + top + _hay_reach();
 	const AABB world_box(Vector3(p_rect.position.x - grow, y_min - 0.2f, p_rect.position.y - grow), Vector3(p_rect.size.x + 2.0f * grow, y_max - y_min + top + 0.2f, p_rect.size.y + 2.0f * grow));
 	mm->set_custom_aabb(to_local.xform(world_box));
 	RenderingServer::get_singleton()->call_on_render_thread(callable_mp_static(&grass_fill_rt).bind(mm->get_rid(), in, count));
@@ -6733,6 +6955,7 @@ void GrassField3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_ENTER_TREE: {
 			add_to_group(SNAME("grass_trample_field")); // keeps the trample field (VegetationField3D stands in without one)
+			_hay_register();
 			if (crop != CROP_NONE) {
 				if (!crop_nodes.has(this)) {
 					crop_nodes.push_back(this);
@@ -6747,6 +6970,10 @@ void GrassField3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			if (hay_nodes.has(this)) {
+				hay_nodes.erase(this);
+				hay_generation++;
+			}
 			if (plant_color_registered) {
 				WorldContracts::unregister_plant_color(this);
 				plant_color_registered = false;
@@ -6814,6 +7041,7 @@ void GrassField3D::_notification(int p_what) {
 
 GrassField3D::~GrassField3D() {
 	_drop_under();
+	hay_nodes.erase(this);
 	if (crop_nodes.has(this)) {
 		crop_nodes.erase(this);
 		crop_ground_dirty = true;
@@ -7181,6 +7409,12 @@ void GrassField3D::_season_step() {
 	}
 	const Dictionary season_now = wm->season_at(get_global_position());
 	_update_snowmelt(season_now);
+	if (!meadows.is_empty()) {
+		const int day = int(season_now.get("day_of_year", -1));
+		if (day != hay_day) {
+			_update_mow_state(day);
+		}
+	}
 	if (crop != CROP_NONE && !plots.is_empty()) {
 		// Fields with a sowing day grow through the year.
 		const int day = int(season_now.get("day_of_year", -1));
@@ -7261,6 +7495,10 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_row_spacing, get_row_spacing, "spacing")
 	GRASS_BIND(set_drill_angle, get_drill_angle, "angle")
 	GRASS_BIND(set_fields, get_fields, "fields")
+	ClassDB::bind_method(D_METHOD("set_hay_meadows", "meadows"), &GrassField3D::set_hay_meadows);
+	ClassDB::bind_method(D_METHOD("get_hay_meadows"), &GrassField3D::get_hay_meadows);
+	ClassDB::bind_method(D_METHOD("get_mown_days_at", "position"), &GrassField3D::get_mown_days_at);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("mown_days_at", "position"), &GrassField3D::mown_days_at);
 	ClassDB::bind_method(D_METHOD("get_field_stage", "index"), &GrassField3D::get_field_stage);
 	ClassDB::bind_method(D_METHOD("_on_crop_fields_changed"), &GrassField3D::_on_crop_fields_changed);
 	ClassDB::bind_static_method("GrassField3D", D_METHOD("crop_calendar_stage", "sown_day", "harvest_day", "day"), &GrassField3D::crop_calendar_stage);
@@ -7366,6 +7604,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "row_spacing", PROPERTY_HINT_RANGE, "0.03,1,0.005,suffix:m"), "set_row_spacing", "get_row_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drill_angle", PROPERTY_HINT_RANGE, "-180,180,0.1,radians_as_degrees"), "set_drill_angle", "get_drill_angle");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "fields", PROPERTY_HINT_ARRAY_TYPE, "Dictionary"), "set_fields", "get_fields");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "hay_meadows", PROPERTY_HINT_ARRAY_TYPE, "Dictionary"), "set_hay_meadows", "get_hay_meadows");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hedges"), "set_hedges", "get_hedges");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hedge_offset", PROPERTY_HINT_RANGE, "0,20,0.1,suffix:m"), "set_hedge_offset", "get_hedge_offset");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hedge_voxel_lods"), "set_hedge_voxel_lods", "get_hedge_voxel_lods");

@@ -244,6 +244,7 @@ private:
 		float far_top = 0.0f; // Trees (far_widen): the first mesh's top, for the skyline test (trees.md 9c).
 		bool far_widen = false; // Meta "far_widen" (trees, trees.md 9a): the far tail's survivors widened in their transforms per tile.
 		float clone_scale = 0.0f; // Meta "clone_scale" (m; aspen, trees.md 5bf): one variant per clone, clones as jittered cells this wide.
+		bool hay_cut = false; // A herb taller than a hay meadow's stubble (PlantGenerator species over 12 cm): cut when mown.
 		LocalVector<float> face_slopes; // Per variant, mesh meta "bank_face_slope" (radians; bank roots); empty: none.
 		LocalVector<float> bank_slopes; // Per variant, mesh meta "tree_ground_slope".x (radians); empty: no bank forms.
 		// Per variant, mesh meta "tree_fire_years" (years since the fire the tree was grown for, -1 unburnt); empty: none.
@@ -256,6 +257,9 @@ private:
 		LocalVector<float> strike_years;
 		float strike_years_max = 0.0f;
 		LocalVector<uint8_t> browsed; // Per variant: 1 for a browsed one (mesh meta tree_browse), empty when none is.
+		// Per variant, mesh meta "tree_flood" (x the last flood's height on the stem, m; y years since; 0 and -1 for the
+		// unflooded): empty when no variant carries one. A tree takes the variant nearest WorldWater.high_water_at's mark.
+		LocalVector<Vector2> flood_marks;
 		LocalVector<float> base_lifts; // Per variant, mesh meta "tree_base_lift" (m in mesh space: stilt roots, the origin that far above the ground); empty: none.
 		Vector2 open_side; // Mesh meta "tree_open_side" (xz, unit) of its first mesh carrying it: turned to face the open (forest edges); zero none.
 	};
@@ -634,6 +638,12 @@ private:
 	bool flood_follow = false;
 	int flood_tiles = 0; // Tiles placed again for a flood's marks (for tests).
 	double flood_check = 0.0;
+	// Hay meadows (GrassField3D.mown_days_at): the field's tall herbs are cut with the sward and grow back after
+	// HAY_REGROW days; streamed tiles are placed again when a meadow's days change.
+	static constexpr float HAY_REGROW = 28.0f;
+	uint64_t hay_seen = 0;
+	double hay_check = 0.0;
+	void _follow_hay(double p_delta);
 	uint64_t _flood_key(const Vector2i &p_tile, float p_ts) const;
 	void _follow_floods(double p_delta);
 	// Stand ages and disturbances (WorldStand.stand_changed): checked twice a second like burns; only tiles where a

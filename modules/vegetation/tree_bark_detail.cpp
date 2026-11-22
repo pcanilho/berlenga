@@ -407,7 +407,7 @@ Ref<Shader> BarkDetail3D::_shader() {
 		return shader;
 	}
 	shader.instantiate();
-	shader->set_code(R"(
+	shader->set_code(GrassField3D::add_camera_cutout(R"(
 shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
 
@@ -465,7 +465,7 @@ void fragment() {
 		NORMAL_MAP = mix(vec3(0.5, 0.5, 1.0), texture(bark_normal, uv).rgb, o * (1.0 - COLOR.g));
 	}
 }
-)");
+)"));
 	return shader;
 }
 

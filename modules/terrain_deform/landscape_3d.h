@@ -218,6 +218,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	Vector3 _cliff_point(const Vector3 &p_world, real_t p_weight_scale) const;
 	void _build_cliff_surface(MeshJob &r_job) const;
 	const LocalVector<int> &_indices(int p_level, int p_mask);
+	void _crease_indices(int p_cx, int p_cz, int p_level, int p_mask, LocalVector<int> &r_indices) const;
 	void _measure(const float *p_h, int p_stride, float *r_error, float &r_min, float &r_max) const;
 	void _measure_chunk(int p_cx, int p_cz);
 	uint64_t _mesh_key(int p_chunk, int p_level, int p_mask) const;
