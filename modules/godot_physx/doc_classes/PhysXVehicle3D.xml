@@ -126,6 +126,20 @@
 				How much lower the water stands at the engine's air intake than the still surface, m, at the last step: about the stagnation head v^2 / 2g at a wading pace (the bow's trough), turning negative past a depth Froude number of 0.7 as the bow wave stands up and climbs over the bonnet. The intake (see [member air_intake_height]) reads the water at this level.
 			</description>
 		</method>
+		<method name="get_wheel_cake" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				Clay balled up on the tyre past its packed tread, m thick. Sticky clay sticks to clay better than to rubber, so a packed tread slipping through it lays a further skin on each turn, up to a smooth drum a few centimetres larger: the wheel rolls and is drawn that much larger and heavier. It goes when the tread turns past the cake's own shedding speed (the thicker, the sooner), on firm ground and in standing water, and goes in chunks, leaving the rest lopsided (see [method get_wheel_shudder]). Grows with [member tyre_clogging].
+			</description>
+		</method>
+		<method name="get_wheel_shudder" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				The lopsided clay cake's out-of-balance force on the axle, N: its unbalanced mass times its radius times the wheel's spin squared, turning with the wheel, so the truck shudders until the cake is spun clean. See [method get_wheel_cake].
+			</description>
+		</method>
 		<method name="get_wheel_clods_thrown" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="wheel" type="int" />

@@ -835,6 +835,19 @@
 				How far [param passes] wheel passes pack the soil, 0 to 1: most of it in the first few ([code]1 - exp(-passes / 4)[/code]).
 			</description>
 		</method>
+		<method name="get_mat_tear_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many times a load has torn a peat bog's root mat since start (see [method tear_mat]).
+			</description>
+		</method>
+		<method name="get_peat_bog_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A peat bog at the point (see [member peat_bogs]): x its share of the ground there, 0 to 1; y how far its root mat has been torn, 0 to 1.
+			</description>
+		</method>
 		<method name="get_seal_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -863,6 +876,15 @@
 			<param index="4" name="delta" type="float" />
 			<description>
 				A hull at [param position] moving at [param velocity] through water standing at [param water_level] washes the banks on both sides for [param delta] seconds. Its waves start at v^2 / g crest to trough (at most 0.78 of the depth) and lose height away from the sailing line as y^-1/3 (Havelock); at the waterline they break, run up the bank about their own height and erode it at Partheniades' rate past its critical shear, the fines going into the water. Called by [code]PhysXVehicle3D[/code] while its bow is in the water. [method get_ford_stats] counts [code]wake_wash_kg[/code], [code]wake_water_m3[/code] and the last [code]wake_height[/code].
+			</description>
+		</method>
+		<method name="tear_mat">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="size" type="Vector2" />
+			<param index="2" name="yaw" type="float" />
+			<description>
+				Tears a peat bog's root mat under a print of [param size] (across, along) turned by [param yaw]: from then on the soft peat under it bears there, for every wheel and foot. A vehicle calls it when its wheel's load presses the mat past its tearing depth for a quarter of a second. The tear is kept with [member worn_tracks] and knits slowly, halving over 5 years of game time.
 			</description>
 		</method>
 	</methods>
@@ -1100,6 +1122,9 @@
 		</member>
 		<member name="stream_fords" type="bool" setter="set_stream_fords" getter="is_stream_fords" default="true">
 			Wheels in running water from the water contract scour the bed: a share of the rut (rising with the current's shear past the remoulded soil's 0.5 Pa) and most of its rims leave as fines dropped into the water ([method WorldWater.add_sediment_mass]), a plume the stream carries on. A wheel on a bank over water tests the bank as an infinite-slope slab 0.5 m deep (Skempton and DeLory 1957) under its load, carried undrained by the pore water where the slab lies below the water table (the stream's level plus a 0.3 m fringe); under a factor of safety of 1 the slab slumps to the toe as fresh mud and half its fines go into the water.
+		</member>
+		<member name="peat_bogs" type="bool" setter="set_peat_bogs" getter="is_peat_bogs" default="true">
+			Peat bogs where water gathers on flat ground (a high wetness index on the terrain's data map and under a few degrees of slope; without a map, waterlogged ground): hashed patches 12 to 22 m across with irregular edges. A fibrous root mat over soft peat (Wong's muskeg model): the mat bears a light vehicle at under 12 cm, but a heavy truck's wheels press it past that and tear it, or a tyre spinning hard shreds it, and the wheel drops into the peat, up to 80 cm. Torn, it stays torn for the next vehicle (see [method tear_mat]). Peat is little sticky.
 		</member>
 		<member name="trail_wallows" type="bool" setter="set_trail_wallows" getter="is_trail_wallows" default="true">
 			Animals roll wallows into wet, level, unfrozen ground on the stand contract's game trails: muddy bowls about 1.6 m across that deepen by 2 cm a visit toward 35 cm, with mud heaped on the rim, used more in warm air. Unused, the wet soil slumps back into them. See [method get_wallow_count].
