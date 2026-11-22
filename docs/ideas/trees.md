@@ -4032,6 +4032,22 @@ range and green beyond it; far season bands would need per-band far variants (a 
 deciduous species band (evergreens' new shoots are not modelled). Aspen clones' own dates (5bf) are not applied on
 top of a forced band.
 
+### 5bj. Light through leaves (22 Nov; docs: late-frost leaves near-black under PT)
+
+Found: broadleaf crowns seen from below drew much darker under path tracing than raster, frost or not (birch crop,
+day 135: leaf pixels in PT about 0.6 of raster). Not the path tracer: one backlit leaf (sun only, no sky) renders the
+same in raster and PT, light through = albedo x BACKLIGHT in both (brdf_inc backlightTransmittance, as Godot's
+raster). The leaves' BACKLIGHT was leaf_color x 0.6, an sRGB colour (about 0.004-0.013 linear), so a leaf passed one
+to two percent of its albedo, where a fresh leaf passes about as much visible light as it reflects: a little less in
+red, much less in blue (Jacquemoud and Ustin, Leaf Optical Properties, 2019, PROSPECT spectra). PT lights a crown's
+undersides only through the leaves, so they went black; raster adds unshadowed ambient and soft cascade shadows.
+As built: broadleaf BACKLIGHT is (0.55, 0.85, 0.35) linear, the ratio of transmittance to reflectance; needles keep
+the old value (thick and waxy, they pass far less). Birch crop: PT leaf pixels 0.045 to 0.121 green (linear), raster
+0.078 to 0.221; PT undersides now glow green against the sky and the frost-browned leaves read brown, matching the
+raster pair. The remaining raster/PT gap is raster's: ambient light inside crowns is not shadowed (SSAO only) and the
+cascade shadows of small leaves soften at bench distances. Open: dead and frost-killed leaves transmit a flatter,
+browner spectrum than green ones; a per-leaf back-light tint (as fire_leaf_back) would take the olive cast off them.
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:
