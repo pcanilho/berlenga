@@ -3082,7 +3082,7 @@
     "seed"
    ],
    "note": "",
-   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted and wild cherry flowers white in April; aspen grows in clones whose stems share bark, form, leaf-out and autumn colour (species meta `clone_scale`), and stands place hornbeam and wild cherry under oaks, black poplar on floodplains and aspen in taiga burns.",
+   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted, sweet chestnut bark spirals round the bole with age, and wild cherry flowers white in April; aspen grows in clones whose stems share bark, form, leaf-out and autumn colour (species meta `clone_scale`), and stands place hornbeam and wild cherry under oaks, black poplar on floodplains and aspen in taiga burns.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3236,10 +3236,13 @@
     "krummholz",
     "ground_slope",
     "bank_erosion",
-    "root_stone"
+    "root_stone",
+    "cliff_angle",
+    "cliff_lean",
+    "cliff_dieback"
    ],
    "note": "",
-   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.",
+   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem; on cliffs a tree rooted in a crevice curves out and up from the face, roots running along its cracks and one side of the crown dying back over a strip of dead bark, with yew, Scots pine and hemlock taking the rock faces in their stands.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
