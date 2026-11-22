@@ -352,3 +352,20 @@ redone even when nothing moved, cost about 8 ms on the PC. Laid only when its in
 `MultiMesh.buffer` per MultiMesh, it fell to well under 1 ms with identical instance data. Engine candidate from it:
 none needed (`MultiMesh.buffer` is the bulk path); worth a line in the docs that per-instance calls in a loop are the
 slow path.
+
+## Main-thread CPU: the render command queue woke the render thread for every command
+
+Profiled (perf, cloud, headless bench of four scenes, an unstripped build): with the render thread separate, every
+`CommandQueueMT` push called `WorkerThreadPool::notify_yield_over` on the render thread's pump task, a mutex and a futex
+syscall each. The render thread then ran one command and went back to sleep, and the next push woke it again. Skinned
+characters push one command per bone per frame, so this ran hundreds of times a frame: 4-5% of all samples were the
+wake-ups alone. Upstream Godot does the same.
+
+Fix (`core/templates/command_queue_mt.h`): the pump is woken only when the queue was empty since its last flush. A flush
+runs until the queue is empty, so commands pushed meanwhile are run by it; the wake is latched (`yield_is_over`), so a
+push just before the pump yields is not lost. Same commands, same order. Cloud headless frame p50: office 7.9 to 6.9 ms,
+roof 13.5 to 12.3, metro 14.2 to 12.8, station 15.8 to 13.8. Frames byte-identical (rt_memory, raster and PT, render
+thread separate); the gameplay test passes.
+
+Next in the same profiles: per-bone `skeleton_bone_set_transform` calls (one per bone, even for characters hidden in
+other parts of the level), the cloth solver on the main thread, and the project's own skeleton modifiers.
