@@ -45,7 +45,25 @@
 			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
 			<param index="1" name="season" type="Dictionary" />
 			<description>
-				The share of a preset's plants above ground on the day of [param season]: wood anemone, a spring plant, comes up in late winter and dies down by early summer; the mushrooms fruit from late summer to the first frost, more after rain (soil moisture) and most in autumn; every other preset is 1. [method make_floor] scales its densities by it.
+				The share of a preset's plants above ground on the day of [param season]: wood anemone, a spring plant, comes up in late winter and dies down by early summer; spider webs from spring (sheets) or late July (orbs) to late autumn, most in autumn; the mushrooms fruit from late summer to the first frost, more after rain (soil moisture) and most in autumn; every other preset is 1. [method make_floor] scales its densities by it.
+			</description>
+		</method>
+		<method name="make_dew_webs" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				Spider webs in open grassland as [PlantSpecies]: [constant PRESET_SHEET_WEB] over the sward and [constant PRESET_ORB_WEB] a few metres apart, in their season ([method get_presence]). The silk is drawn by the plant shader and shows only where dew or hoarfrost beads it ([WeatherMap3D] surface wetness and frost); a [code]"dew"[/code] key (0 to 1) in [param season] sets the dew instead, for scenes without a weather map.
+			</description>
+		</method>
+		<method name="make_fairy_rings" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				The mushrooms of meadow fairy rings as [PlantSpecies]: [constant PRESET_FAIRY_RING_MUSHROOM] along the rings' line ([constant PlantSpecies.RULE_FAIRY_RING] -0.25 to 0.1 m), on the same world rings [member GrassField3D.fairy_rings] draws in the grass, out of deep shade, in their season ([method get_presence]).
 			</description>
 		</method>
 		<method name="make_floor" qualifiers="static">
@@ -677,7 +695,16 @@
 		<constant name="PRESET_DUNG_ROUGH" value="107" enum="Preset">
 			An ungrazed rough round old dung or in a horse latrine: rank, dark green grass 20 to 45 cm tall, shorter at its edge, with flowering culms and a few dead leaves.
 		</constant>
-		<constant name="PRESET_MAX" value="108" enum="Preset">
+		<constant name="PRESET_FAIRY_RING_MUSHROOM" value="108" enum="Preset">
+			The fairy ring champignon (Marasmius oreades): clusters of 3 to 8 small buff caps 2 to 5 cm across with a broad boss on slender pale stalks, fruiting from late May to November after rain.
+		</constant>
+		<constant name="PRESET_SHEET_WEB" value="109" enum="Preset">
+			A money spider's sheet web in the sward: mostly small flat sheets 5 to 10 cm across near the ground, some hammocks or domes up to 25 cm higher in the grass, with scaffold threads up to the blade tips.
+		</constant>
+		<constant name="PRESET_ORB_WEB" value="110" enum="Preset">
+			A garden spider's orb web 15 to 30 cm across, hung between two dry stems with its frame and anchor threads; some leave one sector open.
+		</constant>
+		<constant name="PRESET_MAX" value="111" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="GRAZE_CATTLE" value="0" enum="GrazeSet">

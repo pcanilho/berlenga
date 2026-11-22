@@ -419,6 +419,7 @@ private:
 	static constexpr float LODGE_CELL = 4.0f;
 	static constexpr int LODGE_ROWS_PER_FRAME = 8;
 	bool lodging = true;
+	bool fairy_rings = true; // Meadow fairy rings (fairy_rings.h) in the blades; crops never.
 	Vector2i lodge_origin; // Cell of the grid's first corner.
 	bool lodge_placed = false;
 	LocalVector<float> lodge_amt;
@@ -708,6 +709,10 @@ public:
 	void set_burn_recovery(float p_years);
 	void set_graze_height(float p_m);
 	void set_lodging(bool p_on);
+	void set_fairy_rings(bool p_on);
+	bool is_fairy_rings() const { return fairy_rings; }
+	// The fairy ring bands at a point (fairy_rings.h): x the dark front, y the dead band, z the inner dark band.
+	static Vector3 get_fairy_ring_at(const Vector3 &p_global_position);
 	bool is_lodging() const { return lodging; }
 	// Lodged share (0..1) and the direction the blades lie, as Vector3(amount, dir.x, dir.z); zero outside the grid.
 	Vector3 get_lodging_at(const Vector3 &p_global_position) const;

@@ -31,6 +31,8 @@
 
 #include "vegetation_field_3d.h"
 
+#include "fairy_rings.h"
+
 #include "grass_field_3d.h"
 #include "vegetation_detail.h"
 #include "vegetation_light.h"
@@ -2105,6 +2107,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool conifer_rule = sp->uses_conifer();
 		const bool litter_rule = sp->uses_litter();
 		const bool drift_rule = sp->uses_litter_drift();
+		const bool fairy_rule = sp->uses_fairy_ring();
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
@@ -2396,6 +2399,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					if (drift_rule && suit > 0.0f) {
 						suit *= sp->rule_weight(PlantSpecies::RULE_LITTER_DRIFT, drift_at(xz));
+					}
+					if (fairy_rule && suit > 0.0f) {
+						// Meadow fairy rings (fairy_rings.h): the same rings the grass shows.
+						const FairyRings::Hit fh = FairyRings::at(xz);
+						suit *= sp->rule_weight(PlantSpecies::RULE_FAIRY_RING, fh.arc > 0.5f ? fh.distance : 1000.0f);
 					}
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
 						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
