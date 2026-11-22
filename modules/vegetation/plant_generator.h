@@ -656,6 +656,9 @@ public:
 	};
 	// The WorldStand disturbance kind a drained beaver pond is reported as (appended after beetle, 3).
 	static constexpr int DISTURBANCE_BEAVER_KIND = 4;
+	// Avalanche tracks: the ground layer where WorldStand marks DISTURBANCE_AVALANCHE (6), by years since the avalanche.
+	static constexpr int DISTURBANCE_AVALANCHE_KIND = 6;
+	static TypedArray<Resource> make_avalanche_track(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	static TypedArray<Resource> make_beaver(BeaverStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	// Boar rooting (docs/ideas/vegetation.md, "Boar rooting"), placed by PlantSpecies.RULE_ROOTING.
 	enum RootingStand {

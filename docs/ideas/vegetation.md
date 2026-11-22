@@ -1724,3 +1724,20 @@ camera, not the litter the crowns dropped.
   shared wind (WeatherMap3D), so leaves, dust, smoke and grass all feel them, not in one system's private copy.
 - Check: vegetation bench --test (or --test=blowing): still in light air, all sliding downwind past the creep speed
   and none lifted; leaves taken off a wood's litter by the wind. weather --test=leaves and links --test still pass.
+
+## Avalanche tracks (after round 5; world-links 0c249ead)
+Built in modules/vegetation/plant_avalanche.cpp: PlantGenerator.make_avalanche_track and DISTURBANCE_AVALANCHE_KIND 6.
+SnowAvalanche3D stand_damage marks the broken stand as WorldStand DISTURBANCE_AVALANCHE with the years since; this is
+the ground layer that grows there (the bent alder and willow shrubs are the trees').
+- Research. Only plants that bend under the snow or regrow fast hold in a track; where it runs most often the
+  vegetation and soil are torn away, and avalanches carry soil, boulders and broken wood into the debris (ALPECOLe,
+  "Avalanches", University of Zurich 2011). Active chutes are kept in shrubs with forbs and ferns: green alder,
+  salmonberry, willow, with false hellebore, lady fern, fireweed and valerian (NRCS ecological site F003XN926WA,
+  North Cascades; LANDFIRE BpS 10830, North Pacific Avalanche Chute Shrubland, 2020). A 2007 Journal of Vegetation
+  Science paper often cited on avalanche-track plant diversity is listed as withdrawn, so it is not used here.
+- Stages by years since the avalanche: torn turf (rooted sod at 0.3 years) to 2, broken twigs to 4 and shed needles to
+  3 from the snapped conifers; fireweed from 1 to 25, lady fern 2 to 60, raspberry (for salmonberry) 2 to 40, a
+  broad-leaved tall forb (butterbur's form, for hellebore and Adenostyles) 3 to 60, bilberry (for huckleberry) 4 to
+  60, all in patches. Slopes up to 45 degrees, out of the edge's deeper shade (0.6).
+- Check: vegetation bench --test, a 5-year kind 6 track holds the flora, none round it or on a windthrow of the same
+  age; debris species fresh, tall forbs later.

@@ -1051,6 +1051,47 @@ func _stand_check() -> void:
 # Beaver meadows (make_beaver): a drained pond bed reported as WorldStand kind 4, 6 years old, holds the meadow;
 # the ground round it and a windthrow of the same age hold none of it. The pond set zones by water: lilies float
 # only in deep water, rush only on the shore.
+# Avalanche tracks (make_avalanche_track): ground reported as WorldStand kind 6 holds the track's flora by its age (torn
+# turf and debris the first years, fireweed and tall forbs after), none round it or on a windthrow of the same age.
+func _avalanche_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	var c := Vector2(30, 30)
+	var track := PlantGenerator.make_avalanche_track(1, false)
+	var counts := []
+	for kind in [PlantGenerator.DISTURBANCE_AVALANCHE_KIND, WorldStand.DISTURBANCE_WIND]:
+		st.clear_disturbances()
+		st.add_disturbance(Vector3(c.x, 0, c.y), 10.0, kind, 5.0)
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		f.biome.species.assign(track)
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var on := 0
+		var off := 0
+		for ch in f.get_children(true):
+			if ch is MultiMeshInstance3D and ch.multimesh:
+				var mm: MultiMesh = ch.multimesh
+				for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+					var q: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+					var d := Vector2(q.x, q.z).distance_to(c)
+					if d < 7.0:
+						on += 1
+					elif d > 13.0 and d < 30.0:
+						off += 1
+		counts.append([on, off])
+		f.free()
+	st.clear_disturbances()
+	var fresh := 0
+	var grown := 0
+	for sp in track:
+		if sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 0.5) > 0.5: fresh += 1
+		if sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 15.0) > 0.5: grown += 1
+	_check("avalanche track: a 5-year track (kind 6) holds its flora, none round it or on a windthrow; debris first, tall forbs later",
+			counts[0][0] > 30 and counts[0][1] == 0 and counts[1][0] == 0 and counts[1][1] == 0 and fresh >= 3 and grown >= 4, [counts, fresh, grown])
+
 func _beaver_check() -> void:
 	var st: WorldStand = WorldContracts.get_stand()
 	var c := Vector2(30, 30)
@@ -2338,6 +2379,7 @@ func _checks() -> void:
 	_grazing_check()
 	_fairy_check()
 	_webs_check()
+	_avalanche_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []
