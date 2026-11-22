@@ -1463,6 +1463,16 @@ func _place_pollards() -> void:
 			{"name": "birch", "preset": 2, "years": 70},
 			{"name": "beech", "preset": 1, "years": 140, "lichen_cover": float(args.get("bole-lichen", "0.3"))},
 		]
+	if args.get("pollard-set", "") == "broadleaves":
+		# --pollard-set=broadleaves: open-grown aspen, black poplar, wild cherry, hornbeam and sweet chestnut (trees
+		# a3be1409, forest_shade 0) in a row --pollard-gap m apart; the cherry in the middle flowers in late April.
+		specs = [
+			{"name": "aspen", "preset": 50, "years": 45},
+			{"name": "black_poplar", "preset": 51, "years": 70},
+			{"name": "wild_cherry", "preset": 52, "years": 50},
+			{"name": "hornbeam", "preset": 53, "years": 80},
+			{"name": "sweet_chestnut", "preset": 54, "years": 90},
+		]
 	var aim := mid
 	for k in specs.size():
 		var sp: Dictionary = specs[k]
@@ -1484,7 +1494,7 @@ func _place_pollards() -> void:
 		var mi := MeshInstance3D.new()
 		mi.name = "Pollard_" + String(sp["name"])
 		mi.mesh = tg.generate()
-		var p := mid + across * (float(k) - 1.0) * float(args.get("pollard-gap", "5"))
+		var p := mid + across * (float(k) - 0.5 * float(specs.size() - 1)) * float(args.get("pollard-gap", "5"))
 		if args.get("pollard-set", "") == "bole":
 			# Behind the birch as seen from the close-up camera (which stands on the sun side, rotated --pollard-sun-side).
 			var cd := sf.rotated(Vector3.UP, deg_to_rad(float(args.get("pollard-sun-side", "40"))))
