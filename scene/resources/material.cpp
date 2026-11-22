@@ -3534,8 +3534,7 @@ void fragment() {)";
 				ALBEDO *= mix(1.0, 0.85, sw_c); // the water's own absorption over the soaked surface
 )";
 			if (features[FEATURE_NORMAL_MAPPING]) {
-				code += "				NORMAL_MAP_DEPTH *= 1.0 - sw_c;
-";
+				code += "\t\t\t\tNORMAL_MAP_DEPTH *= 1.0 - sw_c;\n";
 			}
 			code += R"(				vec3 sw_rr = rain_ripples(sw_wp.xz, TIME, weather_rainfall_at(sw_wp), sw_fp);
 				NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(sw_rr.x, 0.0, sw_rr.y, 0.0)).xyz * sw_c);

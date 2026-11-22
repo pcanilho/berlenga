@@ -434,21 +434,14 @@ void fragment() {
 	NORMAL = normalize(TANGENT * nq.x + BINORMAL * nq.y + NORMAL * sqrt(1.0 - s2));
 	ALPHA = alpha * shape;
 	METALLIC = 0.0;
-#if defined(RT)
-	// Water: clear, smooth, bending the light by its index.
-	ALBEDO = vec3(1.0);
-	ROUGHNESS = 0.0;
-	SPECULAR = 0.5;
-	TRANSMISSION = 1.0;
-	IOR = 1.33;
-#else
 	// A drop gathers its light from nearly half the sky (Garg and Nayar 2004): its average is close to a white
-	// surface lit by the same sky, plus the specular of its face.
+	// surface lit by the same sky, plus the specular of its face. The path tracer draws it the same way: a single
+	// camera-facing quad cannot bound a water volume (an IOR on it leaves the ray "inside water" past it, which drew
+	// the streaks dark), and the drop's own refraction is this average.
 	ALBEDO = vec3(0.9);
 	ROUGHNESS = 0.15;
 	SPECULAR = 0.5;
 	ALPHA *= 0.6;
-#endif
 	if (ALPHA < 0.002) {
 		discard;
 	}

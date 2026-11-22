@@ -45,6 +45,7 @@ var pond_temp := 12.0
 var warm_nose := 0.0
 var no_weather := false
 var glass := false
+var rain_hours := 0.5 # --hours=: rain before the frame (puddles need a few hours to gather)
 var fails := 0
 var weather: WeatherMap3D
 
@@ -65,6 +66,7 @@ func _ready() -> void:
 		elif a.begins_with("--warm-nose="): warm_nose = float(a.substr(12))
 		elif a == "--no-weather": no_weather = true
 		elif a == "--glass": glass = true
+		elif a.begins_with("--hours="): rain_hours = float(a.substr(8))
 	if test:
 		await _run_tests()
 		print("RAIN CHECKS: ", "PASS" if fails == 0 else "%d FAILED" % fails)
@@ -229,7 +231,8 @@ func _build_pond() -> void:
 	if not no_weather:
 		weather = _weather(pond_temp, rate)
 		weather.warm_nose_temperature = warm_nose
-		weather.advance(1800.0) # half an hour of rain: the canopy full, the ground wet
+		weather.advance(rain_hours * 3600.0) # half an hour of rain by default: the canopy full, the ground wet
+		print("puddle on the soil %.2f mm" % weather.get_puddle_at(Vector3(0, 0, -10)))
 	var env := Environment.new()
 	var sky := Sky.new()
 	var sm := ProceduralSkyMaterial.new()
@@ -310,7 +313,7 @@ func _build_pond() -> void:
 		gm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		gm.roughness = 0.02
 		gm.set_feature(BaseMaterial3D.FEATURE_TRANSMISSION, true)
-		gm.set("transmission", 1.0)
+		gm.transmission_amount = 1.0
 		gm.set_feature(BaseMaterial3D.FEATURE_WETNESS, true)
 		gm.wetness_porosity = 0.0
 		var pane := MeshInstance3D.new()

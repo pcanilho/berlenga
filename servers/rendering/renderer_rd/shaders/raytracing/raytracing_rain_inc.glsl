@@ -303,6 +303,8 @@ float rain_surface_wetness(float p_wet, float p_running, vec3 p_normal, vec4 p_r
 // mean (mm); the caller's relief (heightmap, AO) decides where it lies, filling the lowest first.
 float rain_surface_puddle(vec3 p_normal, float p_puddle_mm) {
 	return max(p_puddle_mm, 0.0) * smoothstep(0.94, 0.99, p_normal.y);
+}
+
 // Rain on glass (docs/ideas/rain.md, step 7.4): drops and runners on a window or a windscreen, raster and path
 // tracer alike. Glass is partly wetting: a drop sits as a spherical cap with a contact angle of about 40 to 60
 // degrees (clean float glass, weathered), held by contact-angle hysteresis until gravity along the pane beats it,
@@ -367,7 +369,7 @@ vec4 rain_glass(vec3 p_world, vec3 p_normal, vec4 p_rain, float p_time, float p_
 		const float seg = 0.5;
 		float us = q.x - lean * q.y;
 		float col = floor(us / col_w);
-		uint hc = rain_ring_hash(uint(int(col)) * 73856093u ^ 0x5bd1e995u);
+		uint hc = rain_ring_hash(uint(int(col)) * 73856093u ^ 1540483477u);
 		for (int k = 0; k < 2; k++) {
 			float sj = floor(q.y / seg) - float(k);
 			uint h = rain_ring_hash(hc ^ (uint(int(sj)) * 19349663u));
@@ -475,7 +477,7 @@ float rain_standing_noise(vec2 p_x, uint p_seed) {
 }
 
 float rain_standing_relief(vec2 p_xz) {
-	float r = 0.6 * rain_standing_noise(p_xz / 2.6, 0x68bc21ebu) + 0.3 * rain_standing_noise(p_xz / 0.8, 0x02e5be93u) + 0.1 * rain_standing_noise(p_xz / 0.25, 0x967a889bu);
+	float r = 0.6 * rain_standing_noise(p_xz / 2.6, 1757159915u) + 0.3 * rain_standing_noise(p_xz / 0.8, 48610963u) + 0.1 * rain_standing_noise(p_xz / 0.25, 2524612763u);
 	return clamp((r - 0.2) / 0.6, 0.0, 1.0);
 }
 

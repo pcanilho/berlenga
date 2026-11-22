@@ -626,6 +626,12 @@
 		<member name="wetness_porosity" type="float" setter="set_wetness_porosity" getter="get_wetness_porosity" default="0.5">
 			How porous the surface is, from 0 (glass, metal, glazed tiles, waxy leaves: only a little smoother when wet) to 1 (dry soil, bark, raw concrete, cloth: much darker when wet). Metals are treated as non-porous whatever this value.
 		</member>
+		<member name="wetness_standing_relief" type="float" setter="set_wetness_standing_relief" getter="get_wetness_standing_relief" default="8.0">
+			With [member wetness_standing_water], how deep the surface's hollows are, in millimetres from the lowest to the highest point: deeper relief holds the same water in fewer, smaller puddles. Paving and tarmac about 5 to 10, rough setts 15 or more.
+		</member>
+		<member name="wetness_standing_water" type="bool" setter="set_wetness_standing_water" getter="is_wetness_standing_water" default="true">
+			With [member wetness_from_weather], the weather's pooled water stands in the surface's hollows on faces level enough to hold it, filling the lowest first (Lagarde 2013's accumulated water): under it the surface is smooth water with the raindrop rings on it. Opaque materials only. The path tracer draws the same puddles.
+		</member>
 		<member name="z_clip_scale" type="float" setter="set_z_clip_scale" getter="get_z_clip_scale" default="1.0">
 			Scales the object being rendered towards the camera to avoid clipping into things like walls. This is intended to be used for objects that are fixed with respect to the camera like player arms, tools, etc. Lighting and shadows will continue to work correctly when this setting is adjusted, but screen-space effects like SSAO and SSR may break with lower scales. Therefore, try to keep this setting as close to [code]1.0[/code] as possible.
 		</member>

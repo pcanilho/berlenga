@@ -3870,7 +3870,13 @@ void main() {
 			rg_rain.x *= wetness.y;
 			float rg_mist;
 			vec4 rg = rain_glass(rg_wp, rg_face, rg_rain, scene_data_block.data.time, rg_wipe, 0.0, rg_mist);
-			m.roughness = mix(m.roughness, max(m.roughness, 0.35), rg_mist * (1.0 - rg.w));
+			// The mist is droplets too fine to draw, each a scatterer over part of the pane: at full detail the
+			// ray crosses one or clear glass between them (a whole rough pane would blur the scene behind away).
+			uvec3 rg_cell = uvec3(ivec3(floor(rg_wp / 0.0004)) + ivec3(1 << 20));
+			float rg_h = float(rain_ring_hash(rg_cell.x ^ rain_ring_hash(rg_cell.y ^ rain_ring_hash(rg_cell.z))) & 65535u) / 65535.0;
+			if (rg_h < 0.5 * rg_mist * (1.0 - rg.w)) {
+				m.roughness = max(m.roughness, 0.35);
+			}
 			if (rg.w > 0.0 && rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT)) {
 				// Water's F0 (0.02) is half the coat's (0.04).
 				m.clearcoat = max(m.clearcoat, 0.5 * rg.w);
