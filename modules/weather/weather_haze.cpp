@@ -179,8 +179,14 @@ void WeatherMap3D::_apply_sky_aerosol(float p_extinction, float p_from) {
 	if (sky_material.is_null()) {
 		return;
 	}
-	// The fires' smoke share of it: the sky takes the sun through the smoke by colour (SkyClock), not grey.
-	sky_material->set_aerosol(p_extinction, 0.9f, haze_height, p_from, p_extinction > 0.0f ? MIN(_smoke_sigma() / p_extinction, 1.0f) : 0.0f);
+	// The fires' smoke share of it: the sky takes the sun through the smoke by colour (SkyClock), not grey. Dust's
+	// share is nearly grey in extinction, so it goes in the albedo (0.92 at 550 nm) and the height (the dust layer's
+	// top where the map follows) instead.
+	const float dust = _dust_sigma();
+	const float smoke = MAX(_smoke_sigma() - dust, 0.0f);
+	const float dust_share = p_extinction > 0.0f ? MIN(dust / p_extinction, 1.0f) : 0.0f;
+	const float height = Math::lerp(haze_height, MAX(haze_height, get_dust_top_at(_follow_position())), dust_share);
+	sky_material->set_aerosol(p_extinction, Math::lerp(0.9f, 0.92f, dust_share), height, p_from, p_extinction > 0.0f ? MIN(smoke / p_extinction, 1.0f) : 0.0f);
 	applied_sky_aerosol = state;
 }
 

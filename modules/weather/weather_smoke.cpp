@@ -300,30 +300,41 @@ float WeatherMap3D::get_smoke_optical_depth_at(Vector3 p_position) const {
 }
 
 Vector3 WeatherMap3D::get_smoke_transmittance(Vector3 p_position, Vector3 p_to_sun) const {
-	if (!smoke_haze) {
+	if (!smoke_haze && !dust_storms) {
 		return Vector3(1, 1, 1);
 	}
 	const Vector3 d = p_to_sun.normalized();
-	// The sun's ray crosses the layer's middle (half its depth) here, no further out than the map reaches (a low sun
-	// reads the edge of the map's smoke, not empty air beyond it); the slant path through the layer is the column over
-	// sin(elevation), with a Chapman-like floor so it stays smooth to the horizon (about ten air masses there).
+	// The sun's ray crosses the layer's middle (half its depth) half the depth over tan(elevation) sunward, no further
+	// out than the map reaches (a low sun reads the edge of the map's smoke, not empty air beyond it); the slant path
+	// through the layer is the column over sin(elevation), with a Chapman-like floor so it stays smooth to the horizon
+	// (about ten air masses there).
 	const float hd = Vector2(d.x, d.z).length();
-	const float reach = hd > 1e-4f ? MIN(SMOKE_LAYER * 0.5f / MAX(d.y, 1e-3f), extent * 0.45f) : 0.0f;
-	const Vector3 at = p_position + (hd > 1e-4f ? Vector3(d.x, 0.0f, d.z) / hd * reach : Vector3());
+	const Vector3 flat = hd > 1e-4f ? Vector3(d.x, 0.0f, d.z) / hd : Vector3();
 	const float air_mass = 1.0f / Math::sqrt(d.y * MAX(d.y, 0.0f) + 0.01f);
-	const float tau = get_smoke_optical_depth_at(at) * air_mass;
-	// Mineral dust (weather_dust.cpp) in the same slant column: nearly grey (Angstrom 0.2), its own field.
-	const float td = get_dust_optical_depth_at(p_position) * air_mass;
+	float tau = 0.0f;
+	if (smoke_haze) {
+		const float reach = hd > 1e-4f ? MIN(SMOKE_LAYER * 0.5f * hd / MAX(d.y, 1e-3f), extent * 0.45f) : 0.0f;
+		tau = get_smoke_optical_depth_at(p_position + flat * reach) * air_mass;
+	}
+	// Mineral dust (weather_dust.cpp) in its own slant column, offset the same way over its own depth, so a wall
+	// coming in under a low sun dims it before it is overhead. Direct extinction is nearly grey (Angstrom 0.2); the
+	// storm's brown is in the light the dust scatters, not in the sun's disc.
+	float td = 0.0f;
+	if (dust_storms) {
+		const float reach = hd > 1e-4f ? MIN(dust_layer_depth * 0.5f * hd / MAX(d.y, 1e-3f), extent * 0.45f) : 0.0f;
+		td = get_dust_optical_depth_at(p_position + flat * reach) * air_mass;
+	}
 	return Vector3(Math::exp(-tau * SMOKE_SPECTRUM.x - td * 0.97f), Math::exp(-tau * SMOKE_SPECTRUM.y - td), Math::exp(-tau * SMOKE_SPECTRUM.z - td * 1.04f));
 }
 
+float WeatherMap3D::_dust_sigma() const {
+	return dust_storms ? 0.6f * get_dust_concentration_at(_follow_position()) : 0.0f;
+}
+
 float WeatherMap3D::_smoke_sigma() const {
-	if (!smoke_haze) {
-		return 0.0f;
-	}
-	// The haze where the camera stands: under a cold pool's lid, the smoke it holds; in a dust storm, the dust.
-	const Vector3 at = _follow_position();
-	return SMOKE_MASS_EXTINCTION * get_smoke_concentration_at(at) + 0.6f * get_dust_concentration_at(at);
+	// The haze where the camera stands: under a cold pool's lid, the smoke it holds (smoke_haze); in a dust storm, the
+	// dust (dust_storms).
+	return (smoke_haze ? SMOKE_MASS_EXTINCTION * get_smoke_concentration_at(_follow_position()) : 0.0f) + _dust_sigma();
 }
 
 void WeatherMap3D::set_smoke_haze(bool p_enabled) {
