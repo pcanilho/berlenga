@@ -218,6 +218,11 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   *Sand glints: the blurred sand surface resolves into single grains up close.*
 
 - **Rain pits** (`GroundSurface3D.rain_pits`): raindrops pit dry sand with small rimmed craters, a new pattern each shower, and the wetted skin dries into a crust that holds off the wind.
+
+  ![Dry rippled sand up close before and after a light shower, raster](media/sand-rain-pits.jpg)
+
+  *Rain pits: a light shower leaves dry sand dotted with small rimmed craters.*
+
 - **Wet sand** (`GroundSurface3D.water_coupling`; `water_sources`): water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), topped in a dry climate by a pale, patchy salt crust (`salt_crusts`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.
 
   ![A beach at the swash line with a row of footprints, before and after wet sand, raster](media/sand-wet.jpg)
