@@ -1,1 +1,0 @@
-- Snow: crusts, buried surface hoar and depth hoar are layers of their own, and melt water and rain percolate down through the layers and pond over capillary barriers and crusts, where wet slab avalanches now fail sooner (`SnowCover3D.layers_enabled`, `get_layers_at`, `layer_barrier`).
