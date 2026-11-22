@@ -1,1 +1,0 @@
-- Snow: snow sliding off a roof leaves the eave as irregular rigid pieces that break on landing and settle into the cover as a lumpy bank; heated roofs grow ice dams at the eave that hold the snow back (`SnowBodies3D.roof_slab_bodies`, `ice_dams`).

@@ -156,6 +156,7 @@ public:
 	// Not a setting: some traced material can bound a medium (RenderRaytracing::_materials_bound_media()). Without one, the
 	// camera medium probe and the caustic photons are skipped; they could find nothing.
 	static constexpr uint32_t RT_MATERIAL_FEATURE_MEDIA = 64;
+	static constexpr uint32_t RT_MATERIAL_FEATURE_SER_HINTS = 128; // rendering/pathtracing/ser_coherence_hints: material bits for reordering.
 	// Which path vertices receive decals (rendering/pathtracing/decals). Must match RT_DECAL_MODE_* in GLSL.
 	enum RTDecalMode {
 		RT_DECAL_MODE_ALL_HITS = 0,

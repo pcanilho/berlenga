@@ -858,3 +858,27 @@ shader writes POSITION (a screen-space overlay, no world geometry) stays out of 
 traced frame against the traced depth even under path-traced transparency, lit from the trace's light cache. The
 lake view's veil row now matches raster (84 grey at the horizon in both). Under Ray Reconstruction the overlay is
 drawn into the colour before the denoiser; a layer of its own is left for later if it smears.
+
+## Haboob dust wall: as built (22 Nov 2026)
+
+What changed from the design above, and why:
+
+- Profile: the contract's exponential one (c = R / (Hs (1 - e^-3)) exp(-h / Hs), Hs = G / 3, none above G), mixed toward
+  uniform to the top by 0.7 of the head share (the head is turbulent and well mixed; Simpson 1997).
+- Billows inside the dust averaged away along the ray (a wall is only a few optical depths across), and changing them
+  changed nothing on screen. They now erode the outline instead: the shape (how far inside the dust, across the map and
+  up to the top) less the billow octaves of the detail texture, remapped (Schneider 2015), the inside kept at its
+  density. The outline itself is domain-warped (Quilez): the map read up to 400 m off, a couple of kilometres apart,
+  changing with height, so the face bulges and leans instead of standing as the map's smooth ring.
+- Light: Wrenninge's octaves keep the forward peak in every order, so seen with the sun behind, the face came out at a
+  sixth of a thick medium's reflectance: a dull grey. Now single scattering with the full phase plus the many
+  scatterings by the similarity relations (van de Hulst; Joseph, Wiscombe and Weinman 1976): reduced depth f tau with
+  f = 1 - a g, isotropic, scaled so a deep wall reflects the two-stream R = (1 - s) / (1 + s),
+  s = sqrt((1 - a) / (1 - a g)). The sunlit face is now tan and bright, the shaded side sky-lit.
+- March: a coarse log scan of the map (48 reads) finds where the ray meets dust, then 96 even steps of 30 to 150 m over
+  that stretch only.
+- Over the ground: the veil overlay marches the same function from the camera to the depth; under PT it draws over the
+  traced frame, so raster and PT agree. The weather bench's haboob view now takes its sun from SkyClock (Phoenix,
+  5 July, 14 degrees up) as the game does: with a hand-set white light the sky (which reddens the sun through the air)
+  and the overlay (lit by the scene's light) disagreed. Over and above the horizon now match within a few per cent.
+- Bench: --view=haboob, with dust_emission_scale 10 (a strong event: visibility under a kilometre in the head).

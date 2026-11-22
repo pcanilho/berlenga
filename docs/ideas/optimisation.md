@@ -250,3 +250,37 @@ Plan, after the bisect fixes:
    switch must not make surfaces vanish while it compiles: the engine already traces with the default
    material while a hit group compiles (b06913a5), and a feature variant can keep the full shader until its
    own is ready.
+
+## Research round 2 (22 Nov 2026): beyond the regression
+
+What shipped path tracers and recent papers did for speed, and where the fork stands.
+
+| Technique | Source | Gain reported | Fork today | Image |
+|---|---|---|---|---|
+| Live-state cuts around trace calls (loop to branch, packed counters, fp16 radiance) | Indiana Jones PT, NVIDIA blog May 2025 | trace pass -15% (222 to 84 spilled bytes) | not measured yet (Nsight on the PC) | packing exact; fp16 needs a 100% crop check |
+| SER with coherence hints | Indiana Jones (SER -11% before live-state work), Doom: The Dark Ages ("biggest optimizations"), SER whitepaper | 11-24% | SER on where supported, but `reorderThreadEXT(hitObject)` gets no hint bits | exact |
+| Async compute: denoiser inputs and post of frame N-1 overlap tracing of frame N | RTXPT 1.9 (up to 20% with CPU and OMM memory work) | up to 20% total | serial | exact |
+| CPU cost of instance-heavy scenes | RTXPT 1.9 | large CPU frame-time cuts | persistent slots, keyed TLAS | exact |
+| Opacity micromaps | Doom: The Dark Ages, RTXPT | alpha-tested foliage | in (render_raytracing_omm.cpp) | exact |
+| BVH refit instead of rebuild for deforming meshes | Doom: The Dark Ages (refit up to 10x faster) | build time | per-surface `rt_blas_update` modes | exact traversal results, refit trees trace slower when poses drift; keep the rebuild cadence |
+| ReSTIR PT Enhanced (reciprocal neighbour selection halves spatial reuse cost, footprint reconnection, duplication maps, direct and indirect in one reservoir) | Lin, Kettunen, Wyman, I3D 2026 best paper | 2-3x faster than ReSTIR PT at lower error | ReSTIR DI (off by default) and indirect reuse | a different estimator: same converged image, different noise; a quality-and-speed feature, not a pure optimisation |
+| Wavefront instead of megakernel | Laine et al. HPG 2013; recent comparisons | scene-dependent | megakernel raygen with SER | exact, large rewrite; SER gets most of the coherence win without it |
+
+Order for the fork, after the bisect fixes (each proven identical on rt_memory and the showcase, raster and PT at
+100% crop):
+
+1. SER coherence hints: a few bits from the hit (material class: opaque diffuse, transmissive, hair, sky miss) passed to
+   `reorderThreadEXT(hitObject, hint, bits)`. Small change, exact image; measure on the PC.
+2. Live-state packing that keeps every bit: bounce counters and flags to 16 bits, ray directions octahedral-packed only
+   where the value is rebuilt exactly, medium state kept as its 32-bit code rather than seven floats. fp16 radiance only
+   if the crop check shows nothing.
+3. Async compute overlap of the denoiser inputs and post with the next trace.
+4. Then the scene-feature variants (design above), for what Nsight still shows.
+ReSTIR PT Enhanced is a separate decision: it changes the noise, so it belongs on a card with shots.
+
+Sources: [Indiana Jones PT](https://developer.nvidia.com/blog/path-tracing-optimization-in-indiana-jones-shader-execution-reordering-and-live-state-reductions/),
+[Doom: The Dark Ages](https://developer.nvidia.com/blog/how-id-software-used-neural-rendering-and-path-tracing-in-doom-the-dark-ages/),
+[RTXPT 1.9](https://www.tweaktown.com/news/114290/nvidia-updates-rtx-path-tracing-for-developers-up-to-20-more-performance-and-windows-on-arm-support/index.html),
+[ReSTIR PT Enhanced](https://research.nvidia.com/labs/rtr/publication/lin2026restirptenhanced/),
+[SER whitepaper](https://developer.nvidia.cn/sites/default/files/akamai/gameworks/ser-whitepaper.pdf),
+[Megakernels Considered Harmful](https://research.nvidia.com/node/2737).

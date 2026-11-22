@@ -323,6 +323,7 @@ func _physics_process(_d: float) -> void:
 		await _place_form_checks()
 		_trunk_checks()
 		await _blowing_checks()
+		await _wrack_live_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -1141,6 +1142,63 @@ func _wrack_check() -> void:
 		f.free()
 		WorldContracts.clear_overrides()
 	_check("flood wrack: main line under the crest, lower lines below, none above or without a recent flood", res[0][0] > 10 and res[0][1] > 0 and res[0][2] == 0 and res[1] == [0, 0, 0] and res[2] == [0, 0, 0], res)
+
+# Live flood wrack: a streamed field follows the flood marks. The mark rises 0.4 m (a new flood); within a few
+# seconds the tiles under it are placed again and the strand line lies along the new mark, none on the old one.
+func _wrack_live_check() -> void:
+	var vc := get_viewport().get_camera_3d()
+	var eye := vc.global_position if vc else Vector3.ZERO
+	var hs := []
+	for z in range(-30, 31, 4):
+		for x in range(-30, 31, 4):
+			hs.append(dm.get_height_at(Vector3(eye.x + x, 0, eye.z + z)))
+	hs.sort()
+	var stub := FloodMarkStub.new()
+	stub.peak = hs[hs.size() / 3]
+	WorldContracts.add_water_stub(stub)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign([PlantGenerator.make_flood_wrack(1, false)[0]])
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	get_viewport().disable_3d = true
+	f.streaming = true
+	var wait := 0
+	while wait < 1200 and (wait < 20 or not f.is_stream_idle()):
+		await get_tree().process_frame
+		wait += 1
+	var before := _wrack_offsets(f, stub.peak)
+	var old_peak := stub.peak
+	stub.peak += 0.4
+	var t0 := Time.get_ticks_msec()
+	wait = 0
+	while wait < 2400 and (Time.get_ticks_msec() - t0 < 2500 or f.get_flood_replaced_tiles() == 0 or not f.is_stream_idle()):
+		await get_tree().process_frame
+		wait += 1
+	var after := _wrack_offsets(f, stub.peak)
+	var on_old := _wrack_offsets(f, old_peak)
+	get_viewport().disable_3d = false
+	_check("live flood wrack: a new flood's mark re-places the strand line along it within seconds, none left on the old one",
+			before.y > 10 and after.y > 10 and after.x > 0.8 and on_old.x < 0.2 and f.get_flood_replaced_tiles() > 0,
+			"before: %s, after: %s (on the old line %.2f), tiles placed again %d, %.1f s" % [before, after, on_old.x, f.get_flood_replaced_tiles(), (Time.get_ticks_msec() - t0) / 1000.0])
+	f.free()
+	WorldContracts.clear_overrides()
+
+# The share of a field's drawn wrack within the main line's band (-0.12..0.03 m) of a peak, and the count.
+func _wrack_offsets(f: VegetationField3D, peak: float) -> Vector2:
+	var on := 0
+	var all := 0
+	for ch in f.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh and ch.visible:
+			for i in ch.multimesh.visible_instance_count if ch.multimesh.visible_instance_count >= 0 else ch.multimesh.instance_count:
+				var p: Vector3 = ch.global_transform * ch.multimesh.get_instance_transform(i).origin
+				var d: float = dm.get_height_at(p) - peak
+				all += 1
+				if d > -0.12 and d < 0.03:
+					on += 1
+	return Vector2(float(on) / maxf(all, 1), all)
 
 # Bank relief (WorldGround.relief_at, Landscape3D's bank and cliff relief): plants stand on the drawn ground, the
 # heightfield plus the relief, not on the heightfield under it. A script stub raises the ground 0.3 m east of x = 0.

@@ -83,7 +83,9 @@ Shader globals (the GPU side of the same contract): `weather_wind_map`, `weather
 `weather_precip_phase`, `weather_vortex_0..3` (x, z, R, swirl x spin) and `weather_vortex_up` (their updrafts),
 `weather_dust_map` (over `weather_map_rect`: R column g/m2, G top m above the ground, B front head share),
 `weather_dust_optics` (x mass extinction 0.6 m2/g at 550 nm, yzw relative optical depth R G B) and
-`weather_dust_albedo` (rgb single scattering albedo, w asymmetry g);
+`weather_dust_albedo` (rgb single scattering albedo, w asymmetry g), `weather_dust_near` (x, z, radius, height: the
+cylinder PhysXHaboobFront3D draws the front's billows in, zero radius when none; the sky's dust wall fades its dust
+out inside it);
 formats in weather.md. Wind in shaders: `weather_wind(world_pos, height)`,
 `weather_height_above_ground(world_pos)`, `weather_terrain(xz)` from `WeatherMap3D.get_wind_shader_code()`; all
 globals are declared at start, so a shader compiles with no weather and has no wind.
@@ -104,7 +106,7 @@ water (sea wind, mist, falls), vehicles, lightning.
 | group `world_contact` | | Every CharacterBody3D, RigidBody3D, PhysicalBone3D (project setting `physics/3d/world_contact/auto_join`) and vehicle wheel joins it; meta `world_contact_exclude` stays out |
 | `describe(node)` | Body | Centre, radius, half height, shape (round, box, wheel), mass on the ground, contact area, velocity; one reader for every consumer (metas `trample_radius`, `touch_radius`, `ground_*`, `snow_*`, `deform_wheel_*`, else the first collision shape) |
 | meta `ground_self_pressing` | | The body ruts the ground its own way (car wheels): the generic ground press skips it |
-| walkers | | Every CharacterBody3D is a walker (`describe(node).walker`; meta `world_contact_walker` true or false overrides). The ground, snow, sand and mud never press a walker's body shape: they press its soles one step at a time with `WorldWalkerSteps` (modules/world/world_walker_steps.h: step 0.41 of stature, feet 0.18 m apart, sole 0.27 x 0.10 m, the full body weight on the landing foot: single support carries it most of the stride, heel strike about 1.2 body weights), unless meta `world_contact_feet` says its feet are contact bodies of their own (then they skip the walker). Grass, plants, branches, water ripples and wet tracks still feel its shape |
+| walkers | | Every CharacterBody3D is a walker (`describe(node).walker`; meta `world_contact_walker` true or false overrides). The ground, snow, sand and mud never press a walker's body shape: they press its soles one step at a time with `WorldWalkerSteps` (modules/world/world_walker_steps.h: step 0.41 of stature, feet 0.18 m apart, sole 0.27 x 0.10 m, the full body weight on the landing foot: single support carries it most of the stride, heel strike about 1.2 body weights), unless meta `world_contact_feet` says its feet are contact bodies of their own (then they skip the walker). Grass, plants, branches, water ripples and wet tracks still feel its shape With meta `world_contact_feet` the walker's steps are the footfalls its FootPlacementModifier3D publishes to `WorldFootfalls` (modules/world/world_walker_steps.h: where the animated feet really planted, each read once per deformer); feet that are contact bodies of their own publish nothing and the walker presses nothing |
 
 Consumers: ground, snow, grass, plants, trees, pollen, water. Each reads the group once per step; a body in two
 groups counts once.
@@ -118,6 +120,7 @@ the live ground.
 | Member | Unit | Default |
 | --- | --- | --- |
 | `height_at(pos)` | m, the deformed surface | the first physics surface under the point, else -INF |
+| `known_height_at(pos)` | m, the deformed surface | NaN: only the producer (or a stub) answers, never the collider fallback (whose ray from 1000 m up finds roofs and upper floors). Reader: FootPlacementModifier3D, which probes its own short ray otherwise |
 | `soil_at(pos)` | soft, cohesion kPa, friction angle degrees, stickiness 0..1 | firm (soft false) |
 | `standing_water_at(pos)` | m | 0 |
 | `ice_at(pos)` | (thickness m, broken share) | 0 |

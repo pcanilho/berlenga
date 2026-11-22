@@ -55,7 +55,11 @@ private:
 	float near_range = 300.0f; // m
 	int emitter_count = 10;
 	float flow_cell_size = 2.0f;
-	Color dust_color = Color(0.72, 0.52, 0.34);
+	// The far wall's colour (weather_dust_albedo 0.93/0.92/0.85, g 0.75, through the similarity relations over many
+	// scatterings, as the cloud march's dust tint), red-normalised: a thick billow and the wall behind it read alike.
+	Color dust_color = Color(1.0, 0.93, 0.62);
+	float head_height = 100.0f; // m, the drawn head's top
+	Vector4 published_near;
 	float scan_interval = 0.5f; // s
 	float scan_clock = 0.0f;
 
@@ -64,14 +68,20 @@ private:
 		Vector2 forward; // the front's travel, unit
 		float speed = 0.0f; // m/s
 		float load = 0.0f; // g/m2 of dust behind it
+		Vector3 drift; // m/s, how the found front itself moves over the ground (slower than its air)
 	};
 	LocalVector<FrontPoint> front;
 	PhysXFlow3D *flow = nullptr;
 	PhysXFlowEmitter3D *emitters[MAX_EMITTERS] = {};
+	// Air only, no smoke: the still air over the current (the shear layer the billows roll up in) and the blocks the
+	// gas may reach, reserved so the head is never cut flat at a block's top.
+	PhysXFlowEmitter3D *lids[MAX_EMITTERS] = {};
+	PhysXFlowEmitter3D *reserves[MAX_EMITTERS] = {};
 
 	Node3D *_target() const;
 	void _build();
 	void _scan();
+	void _publish_near(bool p_clear = false);
 	void _draw();
 
 protected:
@@ -91,6 +101,8 @@ public:
 	int get_emitter_count() const { return emitter_count; }
 	void set_flow_cell_size(float p_v) { flow_cell_size = CLAMP(p_v, 0.25f, 8.0f); }
 	float get_flow_cell_size() const { return flow_cell_size; }
+	void set_head_height(float p_v);
+	float get_head_height() const { return head_height; }
 	void set_dust_color(const Color &p_c);
 	Color get_dust_color() const { return dust_color; }
 

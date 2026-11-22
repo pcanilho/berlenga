@@ -515,6 +515,32 @@ func _ready() -> void:
 		cv.global_position = cp
 		cv.look_at(lk)
 		_log("sand vista cam %.0f,%.0f,%.0f look %.0f,%.0f,%.0f (sand sea %s)" % [cp.x, cp.y, cp.z, lk.x, lk.y, lk.z, str(r)])
+	if args.has("haboob") and weather.has_method("get_dust_at"):
+		# --haboob[=KM]: a dry storm's outflow KM (5) km ahead of the camera raising a dust wall over the loose ground
+		# (WeatherMap3D dust layer, clouds 9078fe25): hot dry air (35 C, 15%), dust_source_share 0.8, emission x10, a
+		# 25 m/s outflow grown --haboob-grow (30) minutes so the wall runs toward the camera. Low sun from --time.
+		var hc: Camera3D = get_viewport().get_camera_3d()
+		var hf := -hc.global_basis.z
+		var hf2 := Vector2(hf.x, hf.z).normalized()
+		var hkm := float(args["haboob"]) if String(args["haboob"]) != "" else 5.0
+		var hp := Vector2(hc.global_position.x, hc.global_position.z) + hf2 * hkm * 1000.0
+		weather.air_follows_climate = false
+		weather.temperature = 35.0
+		weather.humidity = 0.15
+		weather.wind_speed = 0.5
+		weather.wind_direction = -hf2
+		weather.dust_source_share = float(args.get("haboob-share", "0.8"))
+		weather.dust_emission_scale = float(args.get("haboob-emission", "10"))
+		weather.snap_to_settings()
+		weather.add_storm(hp, 1500.0, 0.0, 25.0, 0.0)
+		for i in int(args.get("haboob-grow", "30")):
+			weather.advance(60.0)
+			await get_tree().physics_frame
+		var prof := ""
+		for k in 6:
+			var q := hc.global_position + Vector3(hf2.x, 0, hf2.y) * (1000.0 * (k + 1))
+			prof += " %d km: %.2f g/m2 top %.0f m," % [k + 1, weather.get_dust_at(q), weather.get_dust_top_at(q)]
+		_log("haboob: storm %.1f km ahead at %s;%s" % [hkm, str(hp.round()), prof])
 	if args.get("wet-follow-cam", "1") != "0" and weather != null:
 		# WeatherMap3D's local reads (smoke haze, cloud shadow, contact wetness) round the camera for the picture;
 		# the setup above ran on the world anchor. --wet-follow-cam=0 keeps the origin anchor.

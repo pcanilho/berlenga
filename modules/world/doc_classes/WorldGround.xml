@@ -220,6 +220,13 @@
 				Ice on standing water: its thickness (m) and the share broken into plates. Default zero.
 			</description>
 		</method>
+		<method name="known_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The deformed ground surface's height under [param position] (m) as the ground's producer (or a stub) knows it, or [code]NAN[/code] where none does. Unlike [method height_at] it never falls back to a physics ray from far above, which would find roofs and upper floors; [FootPlacementModifier3D] reads it before its own short ray.
+			</description>
+		</method>
 		<method name="mud_depth_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />

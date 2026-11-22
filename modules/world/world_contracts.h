@@ -722,6 +722,7 @@ public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
 	// The ground's surface (m); with no ground, the first static physics surface under the point, else -INF.
 	float height_at(const Vector3 &p_position) const;
+	float known_height_at(const Vector3 &p_position) const; // the producer's (or a stub's) deformed surface only; NaN without one (no collider fallback)
 	WorldGroundSoil soil_at(const Vector3 &p_position) const;
 	float standing_water_at(const Vector3 &p_position) const;
 	Vector2 ice_at(const Vector3 &p_position) const;
