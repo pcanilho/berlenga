@@ -1092,6 +1092,8 @@ Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour
     with it taken out the pair still matches. Camera rays forced opaque change nothing either, so the any-hit path
     is clear. Some change between 986d3581 and 6f33ff9f removed it (or moved the far groups off the line); stills may
     thin again once a PC check of a thinned build_area still in PT agrees.
+  - 22 Nov: build_area thins again (`_update_thinning` at the target), so stills show the field as play does. The
+    next PC PT still of a --world view is the confirmation.
 - The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
   world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
   Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.
