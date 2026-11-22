@@ -6840,6 +6840,61 @@ func _snow_strata() -> void:
 	_log("snow strata: %.2f m of snow at %s (%.0f m), trench %.1f m wide along the sun, cam %s" % [top - g, str(best.round()), best.y, w, str(c3.global_position.snapped(Vector3.ONE * 0.1))])
 
 
+# Tripo's lobster pots come with their netting as sparse wire strands: each of the three stacked pots gets an alpha-cut
+# net of tarred twine (4 cm diamond mesh) over its hoops and across its two ends, an elliptic half-cylinder in the raw
+# model's units (glTF: x along the pot, y up, z across), sized from the raw's cross-sections.
+func _lobster_net(n: Node3D) -> void:
+	var img := Image.create(128, 128, true, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for y in 128:
+		for x in 128:
+			# two families of diagonal strands, 3 texels thick, with a knot where they cross
+			var a := posmod(x + y, 64)
+			var b := posmod(x - y, 64)
+			if a < 3 or b < 3:
+				var shade := 0.07 + 0.03 * sin(float(x * 7 + y * 3))
+				img.set_pixel(x, y, Color(shade, shade * 0.9, shade * 0.75, 1.0))
+	img.generate_mipmaps()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = ImageTexture.create_from_image(img)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.alpha_scissor_threshold = 0.5
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.roughness = 0.85
+	mat.uv1_scale = Vector3(1.0, 1.0, 1.0)
+	# per pot: base height, arch height, half width, half length (raw units, the stack about 0.98 tall)
+	var pots := [Vector4(0.06, 0.23, 0.28, 0.41), Vector4(0.38, 0.2, 0.26, 0.4), Vector4(0.69, 0.27, 0.26, 0.36)]
+	var mesh_cm := 0.04 / 0.98 * 1.3 # one texture tile spans two meshes of 4 cm on a 1.3 m stack
+	for pot in pots:
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var seg := 24
+		var pts := []
+		for i in seg + 1:
+			var t := PI * float(i) / seg
+			pts.append(Vector2(pot.z * cos(t), pot.x + pot.y * sin(t)))
+		var arcs := [0.0]
+		for i in range(1, pts.size()):
+			arcs.append(arcs[-1] + (pts[i] as Vector2).distance_to(pts[i - 1]))
+		for i in seg:
+			for c in [[i, -1.0], [i + 1, -1.0], [i + 1, 1.0], [i, -1.0], [i + 1, 1.0], [i, 1.0]]:
+				var q: Vector2 = pts[c[0]]
+				st.set_uv(Vector2(c[1] * pot.w, arcs[c[0]]) / (mesh_cm * 2.0))
+				st.add_vertex(Vector3(c[1] * pot.w, q.y, q.x))
+		# the two ends: a fan across each half ellipse
+		for e in [-1.0, 1.0]:
+			for i in seg:
+				for q in [Vector2(0.0, pot.x), pts[i], pts[i + 1]]:
+					st.set_uv(Vector2(q.x, q.y) / (mesh_cm * 2.0))
+					st.add_vertex(Vector3(e * pot.w, q.y, q.x))
+		st.generate_normals()
+		var mi := MeshInstance3D.new()
+		mi.name = "LobsterNet"
+		mi.mesh = st.commit()
+		mi.material_override = mat
+		n.add_child(mi)
+
+
 # Sets a prop (from _tripo) on the ground at `p`, turned `yaw` radians, sunk `sink` m so no edge floats on a slope.
 func _put(n: Node3D, p: Vector3, yaw: float, sink := 0.05, parent: Node = null) -> Node3D:
 	n.rotation.y = yaw
@@ -6908,6 +6963,8 @@ func _cove_props() -> void:
 		["old_anchor", 1.9, 0, bp - f * 2.0 - sd * 5.5, 0.9], ["mooring_bollard", 0.9, 0, bp - f * 8.0 - sd * 0.5, 0.0]]
 	for g in gear:
 		var gn := _tripo(g[0], g[1], g[2])
+		if gn != null and g[0] == "lobster_pots":
+			_lobster_net(gn.get_child(0))
 		if gn != null:
 			_put(gn, g[3], atan2(f.x, f.z) + g[4], 0.06)
 			placed.append(g[0])
