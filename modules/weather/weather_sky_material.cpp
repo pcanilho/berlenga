@@ -1144,6 +1144,7 @@ vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 am
 // weather_dust_optics and weather_dust_albedo (0.6 m2/g; 0.93/0.92/0.85, g 0.75): the march returns grey light weights
 // for the green albedo, and dust_tint() turns them brown by the albedo's colour over the scattering orders.
 global uniform sampler2D weather_dust_map;
+global uniform vec4 weather_dust_near; // where PhysX's Flow billows draw the head near the camera: x, z, radius (0: none), height
 global uniform vec4 weather_map_rect;
 global uniform vec4 weather_dust_optics;
 global uniform vec4 weather_dust_albedo;
@@ -1224,11 +1225,20 @@ float dust_density(vec3 p, vec4 m, float p_foot) {
 	// to the top) less the detail noise, remapped (Schneider 2015, Nubis's cloud erosion). The dust is a few optical
 	// depths across, so billows inside it averaged away along the ray; cut into its face and top they stand out as
 	// cauliflower lobes and clefts. The inside (shape near 1) keeps its density.
-	float shape = smoothstep(0.0, 0.35 * max(cloud_dust.y, 1e-3), col) * sqrt(clamp(1.0 - h / (1.1 * top_eff), 0.0, 1.0));
+	// Across the map the shape is the column's own optical depth (a couple of g/m2 is about one): read against the
+	// largest column, a heavy head eroded the wake behind it and the dust over the ground near the camera away.
+	float shape = smoothstep(0.0, 3.0, col) * sqrt(clamp(1.0 - h / (1.1 * top_eff), 0.0, 1.0));
 	float e = (0.2 + 0.5 * head) * billow;
 	c *= clamp((shape - e) / max(1.0 - e, 1e-3), 0.0, 1.0) / max(shape, 1e-3);
 	// The nose lifted off the ground by friction: the foot trails it by a few per cent of the head's height.
 	c *= 1.0 - 0.5 * head * (1.0 - smoothstep(0.0, 0.06 * top, h));
+	// Near the camera the Flow billows (PhysXHaboobFront3D) are the head up to their height: the wall steps back there,
+	// fading over the outer fifth of their cylinder and the top fifth of their height, so the two never stack.
+	if (weather_dust_near.z > 0.0) {
+		float r = length(p.xz - weather_dust_near.xy);
+		float inside = (1.0 - smoothstep(0.8 * weather_dust_near.z, weather_dust_near.z, r)) * (1.0 - smoothstep(0.8 * weather_dust_near.w, weather_dust_near.w, h));
+		c *= 1.0 - inside;
+	}
 	return c;
 }
 
