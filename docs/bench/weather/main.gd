@@ -1448,11 +1448,12 @@ func _build_clouds() -> void:
 		wm.metallic_specular = 0.5
 		lake.material_override = wm
 		add_child(lake)
-		# From 16 km aside of the band's axis, 22 km downwind of the shore, looking up the band at a slant: one line of
+		# From 19 km aside of the band's axis, 26 km downwind of the shore, looking up the band at a slant (far enough that its
+		# snow meets the ground near the horizon): one line of
 		# cloud with its snow under it running away toward the lake, clear sky beside it.
 		if fov_arg <= 0.0:
 			cam.fov = 40.0
-		cam.look_at_from_position(Vector3(16000, 200, 22000), Vector3(0, 1400, -2000), Vector3.UP)
+		cam.look_at_from_position(Vector3(18770, 200, 26150), Vector3(0, 2600, -2000), Vector3.UP)
 		if cam_arg.size() == 6:
 			cam.look_at_from_position(Vector3(cam_arg[0], cam_arg[1], cam_arg[2]), Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
 		for i in 8:
