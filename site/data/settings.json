@@ -1200,6 +1200,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Peat bogs",
+   "settings": [
+    "GroundSurface3D.peat_bogs"
+   ],
+   "note": "",
+   "what": "a root mat over soft peat bears light vehicles and tears under heavy ones, which drop in.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Hidden and loose stones",
    "settings": [
     "GroundSurface3D.buried_obstacles",
@@ -1219,7 +1230,7 @@
     "PhysXVehicle3D.tyre_clogging"
    ],
    "note": "",
-   "what": "sticky clay packs the tread until it grips like a slick, and spinning throws it off.",
+   "what": "sticky clay packs the tread until it grips like a slick and balls up on the tyre, shedding in chunks; a lopsided tyre shakes the vehicle until spinning throws it clean.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
