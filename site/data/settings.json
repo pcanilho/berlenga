@@ -2748,10 +2748,12 @@
   {
    "name": "Falling leaves",
    "settings": [
-    "LeafFall3D"
+    "LeafFall3D",
+    "creep_speed",
+    "field_litter"
    ],
    "note": "",
-   "what": "leaves fall from the crowns through the wind as autumn sheds them, and gusts and passing bodies lift them off the ground; on ponds and rivers they float and drift, and on snow they lie until it melts and brings them back out.",
+   "what": "leaves fall from the crowns through the wind as autumn sheds them, slide and flip along the ground in a breeze to settle in the leaf drifts, and gusts and passing bodies lift them off the ground; on ponds and rivers they float and drift, and on snow they lie until it melts and brings them back out.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
