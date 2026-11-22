@@ -786,6 +786,13 @@ uint32_t SceneShaderRaytracing::compute_rt_flags(RID p_environment, bool p_fog_e
 	if (GLOBAL_GET_CACHED(int, "rendering/pathtracing/max_decals") > 0) {
 		flags |= RT_FLAG_DECALS_ENABLED;
 	}
+	// Reuse passes are settings, not scene content: compiled in only while on (a toggle recompiles once).
+	if (GLOBAL_GET_CACHED(bool, "rendering/pathtracing/indirect_reuse")) {
+		flags |= RT_FLAG_INDIRECT_REUSE_ENABLED;
+	}
+	if (GLOBAL_GET_CACHED(bool, "rendering/pathtracing/light_reuse")) {
+		flags |= RT_FLAG_LIGHT_REUSE_ENABLED;
+	}
 
 	// Only where the device has shader execution reordering: the SER pipeline does not build on one that
 	// lacks it (e.g. Mesa's CPU driver), and the frame then falls back to an untraced image.
@@ -2129,6 +2136,12 @@ void SceneShaderRaytracing::init(const String p_defines) {
 			}
 			if ((int)GLOBAL_GET("rendering/pathtracing/max_decals") > 0) {
 				predicted |= RT_FLAG_DECALS_ENABLED;
+			}
+			if (bool(GLOBAL_GET("rendering/pathtracing/indirect_reuse"))) {
+				predicted |= RT_FLAG_INDIRECT_REUSE_ENABLED;
+			}
+			if (bool(GLOBAL_GET("rendering/pathtracing/light_reuse"))) {
+				predicted |= RT_FLAG_LIGHT_REUSE_ENABLED;
 			}
 			_start_variant_task(predicted, true);
 			_start_variant_task(predicted | RT_FLAG_DLSS_RR_ENABLED, true);
