@@ -3937,6 +3937,13 @@ func _build_mist_pollen() -> void:
 			p.weather_map = p.get_path_to(weather)
 			if weather.has_method("get_season"):
 				p.season = weather.get_season()
+	if args.get("pollen-cloud", "1") != "0" and ClassDB.class_exists("PollenCloud3D"):
+		# Pollen clouds (vegetation 1a910ada): dry wind sheds pollen from conifer crowns and the flowering sward round
+		# the camera into a Flow haze of its own; it finds the fields itself. --pollen-cloud=0 for none.
+		var pc = ClassDB.instantiate("PollenCloud3D")
+		pc.name = "PollenCloud"
+		add_child(pc)
+		pc.set("terrain_path", pc.get_path_to(gen))
 
 
 func _vec2_arg(v: String) -> Vector2:
