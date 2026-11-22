@@ -261,6 +261,29 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
   4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
 
+## Rock faces weather by aspect: research (22 Nov, card posted)
+
+Today faces carry random streaks and bands (6c23dd82a0) that ignore where water and sun actually go.
+- What faces show: crustose and foliose lichen and mosses cover far more of shaded, damp aspects (north in the
+  northern hemisphere) and less of sunny, dry ones (Armstrong 1974 and 2011 on lichen growth and aspect; Pentecost
+  1980). Below ledges, joints and overhangs water seeps leave dark drip lines: cyanobacterial ink streaks on
+  limestone ("Tintenstriche", Gloeocapsa and Scytonema crusts; Viles 1995, Danin 1983) and, in arid climates, desert
+  varnish, a dark Mn-Fe coating that follows the same runoff lines (Dorn and Oberlander 1981). Ledge tops below bird
+  perches take orange nitrophilous lichen (Xanthoria) on coasts. Fresh scars from rockfall are paler and bare.
+- How others do it: the classic offline model is flow-based weathering, water particles running down the surface
+  depositing and dissolving stain (Dorsey, Pedersen and Hanrahan 1996, "Flow and changes in appearance"; Chen et al.
+  2005, gamma-ton tracing). Games bake or approximate it: world-aligned masks by normal, curvature and occlusion
+  (Horizon Zero Dawn and RDR2 cliff layering; UE's material layering with world-normal and AO-driven grime;
+  Megascans' "drip" masks) and drip streaks as fall-line-stretched noise starting under convex edges.
+- Plan: (1) aspect and wetness: shade from the sun's mean path (latitude from the weather map, the face's
+  aspect and slope) times moisture (WeatherMap3D precipitation and the sky occlusion map) drives lichen cover on
+  rock and scree (grey-green crusts and the occasional yellow-green map lichen, as the scree stones already use),
+  moss on the dampest and least steep shaded faces. (2) seep streaks from the cliff relief: the bed field
+  (tm_cl_beds, the same one the vertices use) gives each proud bed's lower lip; under it a dark streak runs down the
+  fall line, fading over 2 to 8 m, broken across the face by drip-line noise, stronger where the face is wetter and
+  on limestone (geology). (3) fresh scars: live rockfall events and the stand's disturbance age keep a pale bare
+  patch that greys over years. CPU mirror for WorldGround albedo; raster and PT frames of a north and a south face.
+
 ## Frost-sorted ground in the material (22 Nov, ground detail's follow-up)
 
 RockField3D's frost sorting placed the border stones but left the fine centres in the meadow's sward. Sorted circles'
