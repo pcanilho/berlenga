@@ -352,3 +352,29 @@ Tyre grip on snow, offered on the 20 Nov card, was already linked (71387ca8): th
 
 Sources: Smith and Barstad 2004 (J. Atmos. Sci. 61); Roe 2005 (Annu. Rev. Earth Planet. Sci.); Namikas and Sherman
 1995; Davidson-Arnott, Yang, Ollerhead, Hesp and Walker 2008; Urosevic et al. 2013; Matsukura and Tanaka 2000.
+
+## Round 9 candidates (22 Nov, card to Paulo)
+
+1. Cold air pools in hollows. Source: the weather's air temperature, wind, cloud cover and the terrain heights it
+   already reads for the snow line. Readers: dew and hoarfrost, mist (valley fog), snow melt, plant frost damage.
+   On clear calm nights the cooled air at the ground drains downslope (katabatic flow, about 1-3 m/s) and pools in
+   basins and valley floors, 5-10 C colder than the slopes above, with a warm belt part way up (Whiteman 2000;
+   Clements et al. 2003 on Peter Sinks; Lundquist et al. 2008 on cold pools in mountain basins). Model: a
+   per-cell drainage depth from a flow-accumulation pass over the weather's height grid, scaled by the night's
+   radiative cooling and gated by wind and cloud; the contract's air temperature at a point reads it. Frost and
+   fog then sit in hollows first, as they do.
+2. Avalanche paths keep the forest young. Source: SnowCover3D's avalanche runouts. Reader: `WorldStand`
+   (a new disturbance kind, 4 is taken by beaver: avalanche as 6), trees (snapped stems, flagged crowns), vegetation
+   (shrub and alder thickets in the track). Frequent avalanches hold paths in shrubs and young broadleaves while
+   the forest stands either side (Bebi, Kulakowski and Rixen 2009; Patten and Knight 1994; Johnson 1987 on
+   track frequency). A runout records a disturbance over its deposit; return period sets the stand age.
+3. Rime on windward trees and rocks. Source: `cloud_base_at`, air temperature below 0 C, wind, liquid water
+   content of the cloud (fog drip already computes it). Readers: trees (crown load, bending with their wind),
+   rocks and terrain material (white feathers growing into the wind on ridges in winter cloud).
+   Accretion rate = collision efficiency x LWC x wind speed x area (Makkonen 2000 ISO 12494 model); hard rime at
+   -5 to -15 C grows upwind as feathers. A per-cell rime load on WorldSnow (or a new WorldIce read) that sun and
+   wind above 0 C shed.
+
+Sources: Whiteman 2000 (Mountain Meteorology); Clements, Whiteman and Horel 2003 (J. Appl. Meteor.); Lundquist,
+Pepin and Rochford 2008 (JGR); Bebi, Kulakowski and Rixen 2009 (Forest Ecol. Manage.); Patten and Knight 1994;
+Makkonen 2000 (Phil. Trans. R. Soc. A); ISO 12494.
