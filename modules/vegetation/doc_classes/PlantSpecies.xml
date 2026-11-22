@@ -121,6 +121,12 @@
 		<member name="browse_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
 			Deer browsing pressure ([constant RULE_BROWSE]), 0 none to 1 heavy, from [method WorldStand.browse_at]; 0 where no browsing is known. [method PlantGenerator.make_floor] thins palatable herbs with it, swaps bramble and raspberry for bitten ones past about 0.35 and adds grazed lawns, grass and fern where it is high.
 		</member>
+		<member name="bank_edge_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member bank_edge_range], in metres.
+		</member>
+		<member name="bank_edge_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-10000, 10000)">
+			Metres the drawn ground (the heightfield plus [method WorldGround.relief_at]) drops past a steep (45 degree) edge within 1 m of the point, the steepest way round; 0 with no edge near ([constant RULE_BANK_EDGE]). [VegetationField3D] stands a species using it on that edge, mesh +X over the drop.
+		</member>
 		<member name="burn_age_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member burn_age_range], in years.
 		</member>
@@ -567,7 +573,10 @@
 		<constant name="RULE_FLOOD_AGE" value="36" enum="Rule">
 			Years since the last flood's peak (flood_age_range).
 		</constant>
-		<constant name="RULE_MAX" value="37" enum="Rule">
+		<constant name="RULE_BANK_EDGE" value="37" enum="Rule">
+			Metres the drawn ground drops past a steep edge within 1 m of the point (bank_edge_range).
+		</constant>
+		<constant name="RULE_MAX" value="38" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">

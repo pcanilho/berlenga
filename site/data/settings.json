@@ -2654,6 +2654,18 @@
    "topic": "Plants"
   },
   {
+   "name": "Turf overhangs",
+   "settings": [
+    "PlantGenerator.make_bank_turf()",
+    "PRESET_TURF_LIP"
+   ],
+   "note": "",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Boar rooting",
    "settings": [
     "PlantGenerator.make_rooting()",
@@ -3930,6 +3942,17 @@
    ],
    "note": "",
    "what": "fast bodies push the rim ahead (full at 4 m/s), leaving side berms and an end mound, mass kept; snow and ground.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Deep snow"
+  },
+  {
+   "name": "Rut walls give way",
+   "settings": [
+    "SnowSurface3D.wall_collapse"
+   ],
+   "note": "",
+   "what": "rut and trench walls taller than their layers can hold shed blocks into a lumpy debris toe, sooner where a vehicle works the rut.",
    "page": "snow",
    "title": "Snow",
    "topic": "Deep snow"

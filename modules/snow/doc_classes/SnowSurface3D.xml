@@ -127,6 +127,25 @@
 				On the GPU path, waits for the field and reads it back now, so [method get_dent_at], [method get_rim_at], [method get_moved_volume] and the collision patch show everything pressed so far. It stalls the GPU: for tests and tools, not every frame. Does nothing on the CPU path.
 			</description>
 		</method>
+		<method name="crumble">
+			<return type="int" />
+			<param index="0" name="delta" type="float" />
+			<description>
+				Runs one pass of [member wall_collapse] now over [param delta] seconds, whatever the pass rate, and returns how many texels of wall gave way. For tests and set pieces; with [member wall_collapse] on, the surface runs it itself five times a second.
+			</description>
+		</method>
+		<method name="get_collapsed_volume" qualifiers="const">
+			<return type="float" />
+			<description>
+				The volume of snow, m³, that cut walls have shed so far (see [member wall_collapse]).
+			</description>
+		</method>
+		<method name="get_walls_collapsed" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many texels of cut wall have given way so far (see [member wall_collapse]).
+			</description>
+		</method>
 		<method name="refresh_ground">
 			<return type="void" />
 			<description>
@@ -230,6 +249,9 @@
 		</member>
 		<member name="wind_fill_rate" type="float" setter="set_wind_fill_rate" getter="get_wind_fill_rate" default="0.5">
 			How fast wind fills prints and planes rims, per weather hour at full drift ([method SnowCover3D.get_drift_factor]).
+		</member>
+		<member name="wall_collapse" type="bool" setter="set_wall_collapse" getter="is_wall_collapse" default="true">
+			The walls of ruts, prints and trenches give way when taller than the snow they cut can hold: the critical height of a cut for its layers ([method SnowCover3D.get_cut_critical_height], 0.6 of it while a body works the tile). A face over it sheds a block 0.25-0.7 m long, down to the failing layer (undercut over depth hoar), that lands at its foot as a lumpy debris toe at the angle of repose, part of it as lumps ([SnowClumps3D]).
 		</member>
 	</members>
 </class>

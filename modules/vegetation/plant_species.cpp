@@ -78,6 +78,7 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_FAIRY_RING] = Vector2(-10000.0f, 10000.0f);
 	ranges[RULE_HIGH_WATER] = Vector2(-10000.0f, 10000.0f);
 	ranges[RULE_FLOOD_AGE] = Vector2(0.0f, 10000.0f);
+	ranges[RULE_BANK_EDGE] = Vector2(-10000.0f, 10000.0f);
 }
 
 bool PlantSpecies::uses_forest_edge() const {
@@ -696,6 +697,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "high_water_fade", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_HIGH_WATER);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "flood_age_range", PROPERTY_HINT_NONE, "suffix:yr"), "set_rule_range", "get_rule_range", RULE_FLOOD_AGE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "flood_age_fade", PROPERTY_HINT_RANGE, "0,5,0.01,suffix:yr"), "set_rule_fade", "get_rule_fade", RULE_FLOOD_AGE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "bank_edge_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_BANK_EDGE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "bank_edge_fade", PROPERTY_HINT_RANGE, "0,2,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_BANK_EDGE);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -734,6 +737,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_FAIRY_RING);
 	BIND_ENUM_CONSTANT(RULE_HIGH_WATER);
 	BIND_ENUM_CONSTANT(RULE_FLOOD_AGE);
+	BIND_ENUM_CONSTANT(RULE_BANK_EDGE);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);

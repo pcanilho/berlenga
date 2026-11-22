@@ -1576,6 +1576,89 @@ Array SnowCover3D::get_layers_at(const Vector3 &p_position) const {
 	return out;
 }
 
+// Cut walls (follow-up 54). A vertical cut in a cohesive material stands to Terzaghi's critical height,
+// H_c = 2.67 c / (rho g) with a tension crack behind its top (3.85 without; Terzaghi 1943). Snow's cohesion is its
+// shear strength: settled rounded snow 14.5 (rho / rho_ice)^1.73 kPa (Jamieson and Johnston 2001), less while new
+// snow has not sintered (bonds grow over the first day, Jamieson 1995), more as it sinters on; a little melt water
+// binds the grains (capillary, snowball snow), more takes the bonds away (Colbeck 1982: wet snow's strength falls
+// to a tenth). Faceted grains hold in a shear frame but run out of a free face like sugar: depth hoar and buried
+// surface hoar take a tenth of their shear strength as the cohesion of a face, so a wall that exposes them is
+// undercut and falls to their bottom. A crust is a frozen plate: twice the rule for its density.
+float SnowCover3D::cut_cohesion(int p_kind, float p_density, float p_age_hours, float p_saturation, float p_crystal_mm) {
+	const float r = CLAMP(p_density, 30.0f, 917.0f) / 917.0f;
+	const float age = MAX(p_age_hours, 0.0f);
+	float c;
+	if (p_kind == LAYER_DEPTH_HOAR) {
+		c = 0.1f * depth_hoar_strength(1.0f, p_density);
+	} else if (p_kind == LAYER_HOAR) {
+		c = 0.15f * buried_hoar_strength(MAX(p_crystal_mm, 1.0f), age);
+	} else {
+		const float sinter = (0.3f + 0.7f * MIN(age / 24.0f, 1.0f)) * (1.0f + MIN(age, 480.0f) / 48.0f);
+		c = 14.5e3f * Math::pow(r, 1.73f) * sinter;
+		if (p_kind == LAYER_CRUST) {
+			c *= 2.0f;
+		}
+	}
+	const float s = CLAMP(p_saturation, 0.0f, 1.0f);
+	const float wet = Math::lerp(1.0f, 1.5f, Math::smoothstep(0.0f, 0.3f, s)) * Math::lerp(1.0f, 0.1f, Math::smoothstep(0.4f, 1.0f, s));
+	return c * wet;
+}
+
+// The cut's critical height here: down the layers (top first), the first height at which the wall gives way.
+// Within layer j (z_top..z_bot under the surface) a cut fails once taller than max(z_top, 2.67 c_j / (rho g)), rho
+// the mean density above; a layer too strong within itself passes the question to the next. r_fail_bottom: the
+// bottom of the layer that gives, so a wall over a weak base falls down to the base's bottom.
+float SnowCover3D::cut_critical_height(const Vector3 &p_position, float &r_fail_bottom) const {
+	r_fail_bottom = 1e6f;
+	const int n = resolution;
+	if (!origin_valid || pub.swe.size() != n * n) {
+		return 1e6f;
+	}
+	const float cs = _cell_size();
+	const int x = CLAMP(int(Math::floor(p_position.x / cs)) - origin_cell.x, 0, n - 1);
+	const int z = CLAMP(int(Math::floor(p_position.z / cs)) - origin_cell.y, 0, n - 1);
+	const int i = z * n + x;
+	const float swe = pub.swe[i];
+	if (swe <= SWE_MIN || pub.density.size() != n * n) {
+		return 1e6f;
+	}
+	const float depth = swe / MAX(pub.density[i], 30.0f);
+	const bool layered = layers_enabled && pub.layer_n.size() == n * n && pub.layer_swe.size() == n * n * PACK_LAYERS && pub.layer_liq.size() == pub.layer_swe.size() && pub.layer_n[i] > 0;
+	if (!layered) {
+		const float c = cut_cohesion(LAYER_OLD, pub.density[i], 24.0f, 0.0f, 0.0f);
+		r_fail_bottom = depth;
+		return 2.67f * c / (MAX(pub.density[i], 30.0f) * 9.81f);
+	}
+	const int k0 = i * PACK_LAYERS;
+	float total = 0.0f;
+	for (int j = 0; j < pub.layer_n[i]; j++) {
+		total += pub.layer_swe[k0 + j] / MAX(pub.layer_rho[k0 + j], 30.0f);
+	}
+	const float scale = total > 0.0f ? depth / total : 1.0f;
+	float z_top = 0.0f;
+	float mass = 0.0f; // kg/m2 above
+	for (int j = pub.layer_n[i] - 1; j >= 0; j--) {
+		const int k = k0 + j;
+		const float t = pub.layer_swe[k] / MAX(pub.layer_rho[k], 30.0f) * scale;
+		if (t <= 0.0f) {
+			continue;
+		}
+		const float z_bot = z_top + t;
+		const float sat = pub.layer_swe[k] > 0.0f ? pub.layer_liq[k] / MAX(liquid_capacity * pub.layer_swe[k], 1e-4f) : 0.0f;
+		const float c = cut_cohesion(pub.layer_kind[k], pub.layer_rho[k], pub.layer_age[k], sat, pub.layer_swe[k] * HOAR_MM_PER_KG);
+		const float rho_mean = (mass + pub.layer_swe[k] * scale) / MAX(z_bot, 1e-3f);
+		const float hc = 2.67f * c / (MAX(rho_mean, 30.0f) * 9.81f);
+		const float cand = MAX(z_top, hc);
+		if (cand <= z_bot) {
+			r_fail_bottom = z_bot;
+			return cand;
+		}
+		mass += pub.layer_swe[k] * scale;
+		z_top = z_bot;
+	}
+	return 1e6f;
+}
+
 // The bands a cut wall shows (follow-up 53), from the layers of one cell (base first): neighbours of one kind and
 // wetness merge (so there are never more than PACK_LAYERS). Depths are scaled to the pack's p_depth. Each entry,
 // top band first: (kind + 1 + 8 if wet) * 256 + the band's bottom under the surface in whole centimetres (to 2.55 m).
@@ -5406,6 +5489,8 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sastrugi_at", "position"), &SnowCover3D::get_sastrugi_at);
 	ClassDB::bind_method(D_METHOD("get_sastrugi_texture"), &SnowCover3D::get_sastrugi_texture);
 	ClassDB::bind_method(D_METHOD("get_strata_texture"), &SnowCover3D::get_strata_texture);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("cut_cohesion", "kind", "density", "age_hours", "saturation", "crystal_mm"), &SnowCover3D::cut_cohesion);
+	ClassDB::bind_method(D_METHOD("get_cut_critical_height", "position"), &SnowCover3D::get_cut_critical_height);
 	ClassDB::bind_method(D_METHOD("add_sastrugi", "relief", "wind_direction"), &SnowCover3D::add_sastrugi);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("sastrugi_step", "relief", "wind_dir", "eroded", "filled", "depth", "hard"), &SnowCover3D::sastrugi_step);
 	ClassDB::bind_method(D_METHOD("set_wind_packing_enabled", "enabled"), &SnowCover3D::set_wind_packing_enabled);

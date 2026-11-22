@@ -21868,8 +21868,21 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
-			// Dead needles (a beetle's red stage) are dry and dull: little light through them (they glowed, docs 19 Nov).
-			m->set_backlight(leaf_color * (beetle_active && decay_class >= 1 ? 0.15f : 0.6f));
+			// Light through the leaf (trees.md 5bj): BACKLIGHT is a transmittance relative to the albedo, in raster
+			// and in the path tracer alike (light through = albedo x backlight; a single backlit leaf renders the
+			// same in both). A fresh leaf passes about as much visible light as it reflects, a little less in red and
+			// much less in blue, where chlorophyll and the carotenoids absorb most (Jacquemoud and Ustin, Leaf
+			// Optical Properties, 2019: PROSPECT spectra of broadleaves); so about 0.55, 0.85 and 0.35 of the albedo
+			// (linear). The old leaf_color x 0.6, an sRGB colour, passed one to two percent of the albedo: crowns
+			// seen from below against the sky drew near-black under path tracing, which lights them only through
+			// the leaves. Dead needles (a beetle's red stage) are dry and dull: little light through them (they
+			// glowed, docs 19 Nov).
+			// Needles are thick and waxy and pass far less; they keep their old value.
+			if (needles) {
+				m->set_backlight(leaf_color * (beetle_active && decay_class >= 1 ? 0.15f : 0.6f));
+			} else {
+				m->set_backlight(Color(0.55f, 0.85f, 0.35f).linear_to_srgb());
+			}
 			mesh->surface_set_name(mesh->get_surface_count() - 1, needles ? "needles" : "leaves");
 		}
 		if ((s == 1 && !needles) || s == 3) {

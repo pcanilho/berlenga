@@ -227,6 +227,8 @@ func _ready() -> void:
 			await _run_percolation_tests()
 		elif only == "roofs":
 			await _run_roof_tests()
+		elif only == "walls":
+			await _run_wall_tests()
 		elif only == "drift":
 			await _run_drift_tests()
 		elif only == "windslab":
@@ -972,6 +974,114 @@ func _roof_face(at: Vector3, pitch_deg: float, material: String, heat: float) ->
 	return r
 
 
+func _run_wall_tests() -> void:
+	print("Rut walls that give way (follow-up 54):")
+	var fresh := SnowCover3D.cut_cohesion(0, 100.0, 2.0, 0.0, 0.0)
+	var day := SnowCover3D.cut_cohesion(0, 100.0, 24.0, 0.0, 0.0)
+	var old := SnowCover3D.cut_cohesion(2, 300.0, 240.0, 0.0, 0.0)
+	var moist := SnowCover3D.cut_cohesion(2, 300.0, 240.0, 0.25, 0.0)
+	var soaked := SnowCover3D.cut_cohesion(2, 300.0, 240.0, 1.0, 0.0)
+	var dh := SnowCover3D.cut_cohesion(5, 250.0, 240.0, 0.0, 0.0)
+	_check("cut cohesion: new snow sinters, a little water binds, more takes it away, depth hoar runs out", fresh < day and day < old and moist > old and soaked < 0.2 * old and dh < 0.05 * old, "new %.0f Pa at 2 h, %.0f at a day; old %.0f, moist %.0f, soaked %.0f; depth hoar %.0f" % [fresh, day, old, moist, soaked, dh])
+	var hc_fresh := 2.67 * fresh / (100.0 * 9.81)
+	_check("a cut in new powder stands some 20-40 cm (Terzaghi with a tension crack)", hc_fresh > 0.15 and hc_fresh < 0.45, "%.2f m" % hc_fresh)
+	var results := {}
+	for case_name in ["fresh", "old", "undercut", "worked"]:
+		await _setup("flat", 32.0, 128, -8.0)
+		snow.drift_enabled = false
+		snow.wind_transport_enabled = false
+		snow.crust_enabled = false
+		var p := Vector3(0, 0, 0)
+		if case_name == "fresh" or case_name == "worked":
+			snow.add_snow(60.0, 100.0)
+		elif case_name == "old":
+			snow.add_snow(150.0, 300.0)
+			for h in 48:
+				snow.advance(3600.0)
+		else:
+			snow.add_snow(100.0, 300.0)
+			snow.add_depth_hoar(0.9)
+			snow.advance(3600.0)
+			snow.add_snow(100.0, 300.0)
+			for h in 48:
+				snow.advance(3600.0)
+		var target := Marker3D.new()
+		target.name = "Probe"
+		add_child(target)
+		var sf := SnowSurface3D.new()
+		sf.snow_cover = NodePath("../SnowCover3D")
+		sf.follow_target = NodePath("../Probe")
+		sf.deform_resolution = 512
+		sf.deform_extent = 8.0
+		sf.gpu_simulation = false
+		sf.clumps = false
+		sf.crust_plates = false
+		sf.rim_share = 0.0
+		sf.compacted_density = 900.0
+		sf.wall_collapse = false # pressed first, then let go
+		add_child(sf)
+		for i in 5:
+			await get_tree().physics_frame
+		var g := snow.get_ground_height_at(p)
+		var floor_y := g + 0.01
+		if case_name == "worked":
+			floor_y = g + snow.get_depth_at(p) - 0.2 # a 20 cm rut: under new powder's height, over its worked height
+		sf.press_box(Vector3(0.0, g, 0.0), Vector2(1.0, 3.0), 0.0, floor_y)
+		for i in 3:
+			await get_tree().physics_frame
+		var stood := -1
+		if case_name == "worked":
+			for i in 120: # the pressed tiles' second of settling runs out: left alone, the rut walls stand
+				await get_tree().physics_frame
+			sf.wall_collapse = true
+			stood = 0
+			for k in 10:
+				stood += sf.crumble(0.2)
+			sf.wall_collapse = false
+			for zi in 7: # then a body works along the rut: tiny presses on its floor wake its tiles
+				sf.press_box(Vector3(0.0, g, -1.5 + zi * 0.5), Vector2(0.04, 0.04), 0.0, floor_y)
+		var deep := sf.get_dent_at(p)
+		if OS.get_cmdline_user_args().has("--verbose"):
+			var prof := []
+			for xi in 25:
+				var q := Vector3(0.26 + xi * 0.02, 0, 0.0)
+				prof.append("%.2f" % (sf.get_rim_at(q) - sf.get_dent_at(q)))
+			print("    before: ", " ".join(prof))
+		var before: Vector2 = sf.get_moved_volume()
+		var hc: Vector2 = snow.get_cut_critical_height(p)
+		sf.wall_collapse = true
+		var fell := 0
+		for k in 30:
+			fell += sf.crumble(0.2)
+			if OS.get_cmdline_user_args().has("--verbose") and case_name == "fresh" and k < 8:
+				var pr := []
+				for xi in 25:
+					var q := Vector3(0.26 + xi * 0.02, 0, 0.0)
+					pr.append("%.2f" % (sf.get_rim_at(q) - sf.get_dent_at(q)))
+				print("    pass %d: %d gave, %.4f m3: %s" % [k, fell, sf.get_collapsed_volume(), " ".join(pr)])
+		var after: Vector2 = sf.get_moved_volume()
+		if OS.get_cmdline_user_args().has("--verbose"):
+			var prof2 := []
+			for xi in 25:
+				var q := Vector3(0.26 + xi * 0.02, 0, 0.0)
+				prof2.append("%.2f" % (sf.get_rim_at(q) - sf.get_dent_at(q)))
+			print("    after:  ", " ".join(prof2))
+		var toe := sf.get_rim_at(Vector3(0.45, 0, 0.0)) # just inside the trench by its x wall
+		results[case_name] = [deep, hc.x, hc.y, fell, sf.get_collapsed_volume(), after - before, toe, _layer_text(p), stood]
+		print("  %s: %s; trench %.2f m, critical %.2f m (fails to %.2f m); %d texels gave, %.4f m3 off the walls, dent %+.4f rim %+.4f m3, toe %.2f m" % [case_name, _layer_text(p), deep, hc.x, hc.y, fell, sf.get_collapsed_volume(), (after - before).x, (after - before).y, toe])
+		sf.queue_free()
+		target.queue_free()
+	var f: Array = results["fresh"]
+	var o: Array = results["old"]
+	var u: Array = results["undercut"]
+	var w: Array = results["worked"]
+	_check("a trench deeper than new powder holds caves in; the debris lands in it as a toe", f[3] > 0 and f[6] > 0.02, "%d texels, toe %.2f m" % [f[3], f[6]])
+	_check("the debris is the wall's snow, bulked by a quarter as broken blocks", absf(f[5].y - 1.25 * f[4]) < 0.05 * f[4] + 1e-4, "%.4f m3 of rim for %.4f m3 off the walls" % [f[5].y, f[4]])
+	_check("a trench in old settled snow stands", o[3] == 0 and o[1] > o[0], "%d texels; trench %.2f m, critical %.2f m" % [o[3], o[0], o[1]])
+	_check("a wall over depth hoar is undercut and falls to the hoar's bottom", u[3] > 0 and u[1] < o[1], "%d texels; critical %.2f m, fails to %.2f m" % [u[3], u[1], u[2]])
+	_check("a 20 cm rut in new powder stands until a body works along it, then its walls come in", w[8] == 0 and w[3] > 0 and w[0] < w[1] and w[0] > 0.6 * w[1], "rut %.2f m, critical %.2f m (%.2f worked): %d texels left alone, %d worked" % [w[0], w[1], 0.6 * w[1], w[8], w[3]])
+
+
 func _run_roof_tests() -> void:
 	print("Roofs (follow-up 50):")
 	_check("Eurocode's roof share: 0.8 to 30 degrees, half at 45, none from 60", absf(SnowBodies3D.roof_shape(deg_to_rad(20.0)) - 0.8) < 1e-4 and absf(SnowBodies3D.roof_shape(deg_to_rad(45.0)) - 0.4) < 1e-4 and SnowBodies3D.roof_shape(deg_to_rad(65.0)) == 0.0, "%.2f, %.2f, %.2f" % [SnowBodies3D.roof_shape(deg_to_rad(20.0)), SnowBodies3D.roof_shape(deg_to_rad(45.0)), SnowBodies3D.roof_shape(deg_to_rad(65.0))])
@@ -1674,7 +1784,9 @@ func _run_surface_tests() -> void:
 	var q := PhysicsRayQueryParameters3D.create(Vector3(p.x, 5, p.z), Vector3(p.x, -5, p.z))
 	var hit := space.intersect_ray(q)
 	var hy: float = hit.position.y if hit else -99.0
-	_check("collision sits in the print", absf(hy - (d0 - dent)) < 0.03, "ray hits %.3f m, surface %.3f m" % [hy, d0 - dent])
+	# The print as it is now (its walls may have given way since, follow-up 54).
+	var now_y := d0 - surface.get_dent_at(p) + surface.get_rim_at(p)
+	_check("collision sits in the print", absf(hy - now_y) < 0.03 and now_y < d0 - 0.05, "ray hits %.3f m, surface %.3f m (pressed to %.3f m)" % [hy, now_y, d0 - dent])
 
 	# A 25 kg ball (radius 0.25 m) dropped on the snow sinks by Bekker and rests in its own print.
 	var ball := RigidBody3D.new()
@@ -3440,6 +3552,9 @@ func _build_view() -> void:
 	elif view == "strata":
 		await _build_strata(cam)
 		return
+	elif view == "walls":
+		await _build_walls(cam)
+		return
 	elif view == "spindrift":
 		await _build_spindrift(cam)
 		return
@@ -4008,6 +4123,79 @@ func _build_strata(cam: Camera3D) -> void:
 	# In the trench, low, across to its far wall and along it.
 	cam.position = Vector3(0.9, top - 0.15, 1.8)
 	cam.look_at(Vector3(-1.2, top - 0.45, -0.6))
+	cam.fov = 50.0
+	await _save_frame("")
+	get_tree().quit()
+
+
+func _build_walls(cam: Camera3D) -> void:
+	# Cut walls that give way (follow-up 54): a trench dug through a fresh fall on an old settled base. The new
+	# snow cannot hold a cut its depth: its wall sheds blocks down to the old snow, which stands, and the debris lies
+	# along the trench floor as a toe. --walls=0: the same trench without collapse.
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 30.0
+	sun.rotation_degrees = Vector3(-30.0, 70.0, 0.0)
+	_add_terrain(32.0, 128, Color(0.33, 0.31, 0.27), 6.0)
+	var target := Marker3D.new()
+	target.name = "Probe"
+	add_child(target)
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	weather.temperature = -8.0
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var p := Vector3(0, 0, 0)
+	snow.add_snow(90.0, 300.0) # the old pack
+	for h in 48:
+		snow.advance(3600.0)
+	_precipitate(8.0, 5.0) # a 40 mm storm of new snow on top
+	print("walls: %s; %.0f cm" % [_layer_text(p), snow.get_depth_at(p) * 100.0])
+	surface = SnowSurface3D.new()
+	surface.snow_cover = NodePath("../SnowCover3D")
+	surface.follow_target = NodePath("../Probe")
+	surface.detail_spacing = 0.03125
+	surface.deform_resolution = 1024
+	surface.deform_extent = 16.0
+	surface.gpu_simulation = OS.get_cmdline_user_args().has("--gpu") # --gpu: the GPU field, collapsing as it runs
+	surface.crust_plates = false
+	surface.wall_collapse = false # dug first, then let go
+	add_child(surface)
+	for i in 10:
+		await get_tree().process_frame
+	var g := snow.get_ground_height_at(p)
+	surface.rim_share = 0.0
+	surface.compacted_density = 900.0
+	surface.press_box(Vector3(0.0, g, 0.0), Vector2(1.6, 7.0), 0.0, g + 0.01)
+	for i in 3:
+		await get_tree().physics_frame
+	var hc: Vector2 = snow.get_cut_critical_height(p)
+	if surface.gpu_simulation and not OS.get_cmdline_user_args().has("--walls=0"):
+		surface.wall_collapse = true
+		for i in 600:
+			await get_tree().physics_frame
+		print("walls (GPU): critical %.2f m, fails to %.2f m; %d texels gave, %.3f m3" % [hc.x, hc.y, surface.get_walls_collapsed(), surface.get_collapsed_volume()])
+		if OS.get_cmdline_user_args().has("--verbose"):
+			var pr := []
+			for xi in 25:
+				var q := Vector3(-1.2 + xi * 0.1, 0, 0.0)
+				pr.append("%.2f" % (surface.get_rim_at(q) - surface.get_dent_at(q)))
+			print("    profile: ", " ".join(pr))
+		surface.wall_collapse = false
+	elif not OS.get_cmdline_user_args().has("--walls=0"):
+		surface.wall_collapse = true
+		var fell := 0
+		for k in 40:
+			fell += surface.crumble(0.2)
+		print("walls: critical %.2f m, fails to %.2f m; %d texels gave, %.3f m3" % [hc.x, hc.y, fell, surface.get_collapsed_volume()])
+		surface.wall_collapse = false # the shot holds still
+	for i in 30:
+		await get_tree().process_frame
+	var top := g + snow.get_depth_at(p)
+	cam.position = Vector3(0.45, top - 0.05, 1.7)
+	cam.look_at(Vector3(-0.85, top - 0.5, -0.3))
 	cam.fov = 50.0
 	await _save_frame("")
 	get_tree().quit()
