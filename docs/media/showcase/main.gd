@@ -7,6 +7,7 @@ extends Node3D
 # --sky (the physx shot under a procedural sky that is also its ambient light)
 # --sun=pitch,yaw (the physx shot's sun, in degrees)
 # --freeze=N (raster until N frames before the end, then time stops and the path tracer accumulates)
+# --gloss=R (the room shot's floor roughness, default 0.7: a polished floor for glossy reuse)
 var shot := "lights"
 var spp := 16
 var out := "out.png"
@@ -19,6 +20,7 @@ var flow_props := {}
 var sky := false
 var sun_rotation := Vector3.INF # --sun=pitch,yaw (degrees): the physx shot's sun
 var freeze := 0
+var gloss := 0.7
 var n := 0
 var env := Environment.new()
 
@@ -40,6 +42,7 @@ func _ready() -> void:
 			var sv := a.substr(6).split(",")
 			sun_rotation = Vector3(float(sv[0]), float(sv[1]), 0)
 		elif a.begins_with("--freeze="): freeze = int(a.substr(9))
+		elif a.begins_with("--gloss="): gloss = float(a.substr(8))
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
 			ProjectSettings.set_setting(kv[0], float(kv[1]))
@@ -116,7 +119,7 @@ func shot_room() -> void:
 	sun.shadow_enabled = true
 	add_child(sun)
 	var wall := mat(Color(0.75, 0.72, 0.66), 0.9)
-	var floor_m := mat(Color(0.55, 0.42, 0.3), 0.7)
+	var floor_m := mat(Color(0.55, 0.42, 0.3), gloss)
 	var t := 0.3
 	# floor, ceiling, back (-z), left (-x), right (+x) walls of an 8 x 3 x 6 m room
 	box(Vector3(8 + 2 * t, t, 6 + 2 * t), Vector3(0, -t / 2, 0), floor_m)

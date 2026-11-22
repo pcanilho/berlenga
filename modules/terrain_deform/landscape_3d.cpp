@@ -1281,6 +1281,11 @@ void Landscape3D::_finish_heights(bool p_wait) {
 				}
 			}
 		}
+		// The relief follows the full-resolution normals: placers on it lay that ground again.
+		if (cliff_relief > 0.0 || bank_relief > 0.0) {
+			const real_t size = chunk_quads * spacing;
+			_relief_changed(Rect2(origin.x + cx * size, origin.y + cz * size, size, size).grow(spacing));
+		}
 		if (uint32_t(job.chunk) < need.size()) {
 			need[job.chunk] = 0;
 		}
@@ -1416,6 +1421,7 @@ void Landscape3D::set_cliff_relief(real_t p_metres) {
 		chunks[i].gen++;
 	}
 	lods_dirty = true;
+	_relief_changed(Rect2());
 }
 
 void Landscape3D::set_bank_relief(real_t p_metres) {
@@ -1427,6 +1433,18 @@ void Landscape3D::set_bank_relief(real_t p_metres) {
 		chunks[i].gen++;
 	}
 	lods_dirty = true;
+	_relief_changed(Rect2());
+}
+
+// The relief over a rect (landscape space; empty: all of it) changed: WorldGround.relief_changed in world space.
+void Landscape3D::_relief_changed(const Rect2 &p_area) {
+	if (!is_inside_tree() || heights.is_empty()) {
+		return;
+	}
+	Rect2 r = p_area.has_area() ? p_area : Rect2(origin, Vector2((gw - 1) * spacing, (gh - 1) * spacing));
+	const Vector3 o = get_global_transform().origin;
+	r.position += Vector2(o.x, o.z);
+	WorldContracts::ground()->relief_changed(r);
 }
 
 void Landscape3D::set_material(const Ref<Material> &p_material) {
@@ -2160,6 +2178,7 @@ void Landscape3D::_notification(int p_what) {
 			if (!relief_registered) {
 				WorldContracts::register_relief(this);
 				relief_registered = true;
+				_relief_changed(Rect2());
 			}
 			set_process_internal(true);
 		} break;

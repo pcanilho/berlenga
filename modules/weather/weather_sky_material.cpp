@@ -1228,7 +1228,9 @@ float dust_density(vec3 p, vec4 m, float p_foot) {
 	// Across the map the shape is the column's own optical depth (a couple of g/m2 is about one): read against the
 	// largest column, a heavy head eroded the wake behind it and the dust over the ground near the camera away.
 	float shape = smoothstep(0.0, 3.0, col) * sqrt(clamp(1.0 - h / (1.1 * top_eff), 0.0, 1.0));
-	float e = (0.2 + 0.5 * head) * billow;
+	// Strongest at the edge and fading inward: eroded as deeply inside, the top read as holes punched into the dust
+	// rather than lobes standing out of it.
+	float e = (0.2 + 0.5 * head) * billow * (1.0 - 0.7 * shape);
 	c *= clamp((shape - e) / max(1.0 - e, 1e-3), 0.0, 1.0) / max(shape, 1e-3);
 	// The nose lifted off the ground by friction: the foot trails it by a few per cent of the head's height.
 	c *= 1.0 - 0.5 * head * (1.0 - smoothstep(0.0, 0.06 * top, h));

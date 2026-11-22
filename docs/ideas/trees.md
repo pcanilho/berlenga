@@ -4045,8 +4045,17 @@ As built: broadleaf BACKLIGHT is (0.55, 0.85, 0.35) linear, the ratio of transmi
 the old value (thick and waxy, they pass far less). Birch crop: PT leaf pixels 0.045 to 0.121 green (linear), raster
 0.078 to 0.221; PT undersides now glow green against the sky and the frost-browned leaves read brown, matching the
 raster pair. The remaining raster/PT gap is raster's: ambient light inside crowns is not shadowed (SSAO only) and the
-cascade shadows of small leaves soften at bench distances. Open: dead and frost-killed leaves transmit a flatter,
-browner spectrum than green ones; a per-leaf back-light tint (as fire_leaf_back) would take the olive cast off them.
+cascade shadows of small leaves soften at bench distances.
+Dead leaves (same day): a leaf without its chlorophyll passes a flatter, browner spectrum. The leaf shader scales
+BACKLIGHT per leaf by its colour (leaf_dead_back: green over red and blue is living, else x (0.82, 0.47, 0.71), giving
+about (0.45, 0.40, 0.25) of the albedo), so frost-killed, browned and turned leaves glow brown or yellow against the
+light instead of olive; needles are left out (leaf_dead_tint 0). Raster and PT pair: frost leaves brown in both.
+Raster/PT parity item (raster side, for the parity list): broadleaf crowns seen from below draw at about 0.55 of
+raster's brightness under PT (birch crop, leaf pixels, linear). PT is the reference here: raster lights the inner
+leaves with unshadowed sky ambient (SSAO only reaches a few decimetres) and its cascade shadows of small leaves
+soften at 300 m max distance, so inner leaves catch sun they should not. A fix belongs in raster: crown occlusion for
+ambient (a per-instance crown AO term, or bent-normal / visibility baked per leaf from the crown's density) and
+tighter leaf shadows near the camera.
 
 ## Next-round options (card 20 Nov evening)
 

@@ -1135,6 +1135,8 @@ void WorldGround::_bind_methods() {
 	GDVIRTUAL_BIND(_albedo_at, "position");
 	ClassDB::bind_method(D_METHOD("relief_at", "position"), &WorldGround::relief_at);
 	GDVIRTUAL_BIND(_relief_at, "position");
+	ClassDB::bind_method(D_METHOD("relief_changed", "area"), &WorldGround::relief_changed);
+	ADD_SIGNAL(MethodInfo("relief_changed", PropertyInfo(Variant::RECT2, "area")));
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
 	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &WorldGround::track_mud);
 	ClassDB::bind_method(D_METHOD("has_runoff"), &WorldGround::has_runoff);
@@ -1294,6 +1296,10 @@ void WorldContracts::unregister_relief(WorldReliefProvider *p_provider) {
 	if (singleton) {
 		singleton->relief_providers.erase(p_provider);
 	}
+}
+
+void WorldGround::relief_changed(const Rect2 &p_area) {
+	emit_signal(SNAME("relief_changed"), p_area);
 }
 
 Vector2 WorldGround::relief_at(const Vector3 &p_position) const {
