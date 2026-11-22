@@ -2100,6 +2100,10 @@ void SceneShaderRaytracing::init(const String p_defines) {
 	if (GLOBAL_GET("rendering/pathtracing/linear_swept_spheres") && RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES)) {
 		defines += "\n#define RT_LSS\n";
 	}
+	// Texture streaming: closest hits report the mip they sample (rt_streaming_report()).
+	if (GLOBAL_GET("rendering/textures/streaming/enabled")) {
+		defines += "\n#define RT_TEXTURE_STREAMING\n";
+	}
 	raygen_shader.initialize(modes, defines);
 
 	// Slot 0: default HG (source_hash stays zero).

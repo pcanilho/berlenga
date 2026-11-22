@@ -30,6 +30,7 @@ extends Node3D
 #                    ferns (docs/ideas/vegetation-seasons.md)
 #   --drought        with --day: a dry climate (300 mm a year, falling in winter), for a summer drought
 #   --frost          with --day: a dry continental climate (January -8 C, July 18 C, little snow), for a hard frost
+#   --pollen-cloud   a meadow in flower shedding pollen in a dry 10 m/s wind (PollenCloud3D; use --day=165, --frames)
 #   --river          river scout: a PhysXRiver3D down a valley with a floodplain; its flood mark
 #                    (WorldWater.high_water_at) lays wrack lines and combs the grass. Seen from the bank.
 #   --flood=H[,D]    a flood peaked H m over the pond D days ago (default 10): wrack lines along the mark, the grass
@@ -126,6 +127,7 @@ var drought := false
 var frost := false
 var snowy := false
 var seed_down := false
+var pollen_cloud := false
 var flood := Vector2(-1, 10) # --flood: metres over the pond, days since
 var season_map: WeatherMap3D
 var bench_season := {}
@@ -358,6 +360,7 @@ func _ready() -> void:
 		elif a == "--frost": frost = true
 		elif a == "--snowy": snowy = true
 		elif a == "--seed-down": seed_down = true
+		elif a == "--pollen-cloud": pollen_cloud = true
 		elif a == "--river": river = true
 		elif a.begins_with("--flood="):
 			var fp := a.substr(8).split(",")
@@ -2478,8 +2481,6 @@ class SeedWindWeather extends WorldWeather:
 	func _season_at(_p: Vector3, _d: int) -> Dictionary:
 		return src.get_season()
 
-# --seed-down: thistledown in a dry 10 m/s wind (log profile over short grass), the camera beside the thistle in seed
-# nearest the default view, looking downwind; 20 s of release first.
 # River scout: a PhysXRiver3D along the valley's channel (5 m³/s; the median annual flood x6 on day 110).
 func _add_river() -> void:
 	var r := PhysXRiver3D.new()
@@ -2538,6 +2539,25 @@ func _river_wrack_report() -> void:
 	print("GRASS_RIVER_CAM %s" % cam.global_position)
 	grass.update_flood_map(cam.global_position)
 
+# --pollen-cloud: a meadow in flower in a dry 10 m/s wind (relative humidity 40%): PollenCloud3D sheds from the sward
+# round the camera into its Flow grid, which runs for the frames before the capture (--frames).
+class PollenWindWeather extends SeedWindWeather:
+	func _air_humidity_at(_p: Vector3) -> float:
+		return 0.4
+
+func _pollen_cloud_view() -> void:
+	var w := PollenWindWeather.new()
+	w.src = season_map
+	w.ground = height
+	WorldContracts.set_weather(w)
+	var pc := PollenCloud3D.new()
+	pc.name = "PollenCloud"
+	add_child(pc)
+	pc.update_sources()
+	print("GRASS_POLLEN release %.2f grass sources %d conifer %d flow %s" % [pc.get_release(), pc.get_grass_sources(), pc.get_conifer_sources(), str(pc.has_flow())])
+
+# --seed-down: thistledown in a dry 10 m/s wind (log profile over short grass), the camera beside the thistle in seed
+# nearest the default view, looking downwind; 20 s of release first.
 func _seed_down_view() -> void:
 	var w := SeedWindWeather.new()
 	w.src = season_map
@@ -2833,6 +2853,8 @@ func _process(dt: float) -> void:
 					print("GRASS_WRACK %d placed, ground minus peak %.2f..%.2f m" % [pl.size(), dmin, dmax])
 			if seed_down and season_map:
 				_seed_down_view()
+			if pollen_cloud and season_map:
+				_pollen_cloud_view()
 			print("GRASS_COVER %s = %s ms=%.1f" % ["(tree, bramble, bracken, foxglove) flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry grass, tall flowers, tall dry flowers (fern, bilberry, moss, litter)", str(counts), cover.get_populate_time_msec()])
 			if ug_field:
 				ug_field.populate()

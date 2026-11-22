@@ -476,7 +476,16 @@ float rt_haze_distance(float p_a, float p_k, float p_tau, float p_t_max) {
 // The medium of payload code p_code (MEDIUM_CHANGE_FLAG): 0 none, RT_MEDIUM_CODE_GEOMETRY plus the TLAS entry
 // of an RT_MAT_FLAG_VOLUME surface, or an inline extinction code (rt_medium_absorption(); with
 // RT_MEDIUM_CODE_SCATTER, the scattering the entering hit left in rt_medium_image).
-void rt_medium_set(uint p_code, out bool r_in_medium, out vec3 r_sigma_t, out vec3 r_albedo, out float r_g) {
+// The scattering word a medium of code p_code reads from rt_medium_image, taken when the path enters it:
+// a later hit (subsurface scattering) reuses the pixel's texel.
+uint rt_medium_scatter_word(uint p_code) {
+	return (p_code & (RT_MEDIUM_CODE_GEOMETRY | RT_MEDIUM_CODE_SCATTER)) == RT_MEDIUM_CODE_SCATTER ? imageLoad(rt_medium_image, ivec2(RT_LAUNCH_ID.xy)).r : 0u;
+}
+
+// Only the code and the scatter word stay live across the bounce's trace (2 words instead of 8), and the
+// medium is decoded after it: a pure function of both, so the path is the same to the bit (live state
+// across traceRay is kept on the stack; Indiana Jones RT, NVIDIA 2024).
+void rt_medium_set(uint p_code, uint p_scatter_word, out bool r_in_medium, out vec3 r_sigma_t, out vec3 r_albedo, out float r_g) {
 	r_in_medium = p_code != 0u;
 	r_albedo = vec3(0.0);
 	r_g = 0.0;
@@ -489,7 +498,7 @@ void rt_medium_set(uint p_code, out bool r_in_medium, out vec3 r_sigma_t, out ve
 	} else {
 		r_sigma_t = rt_medium_absorption(p_code);
 		if ((p_code & RT_MEDIUM_CODE_SCATTER) != 0u) {
-			vec4 scatter = rt_medium_scatter_unpack(imageLoad(rt_medium_image, ivec2(RT_LAUNCH_ID.xy)).r);
+			vec4 scatter = rt_medium_scatter_unpack(p_scatter_word);
 			r_albedo = scatter.rgb;
 			r_g = scatter.w;
 		}
@@ -981,13 +990,8 @@ void main() {
 		float cone_width = rt_cone_eye_width();
 		// The medium the ray travels in (MEDIUM_CHANGE_FLAG), starting in the camera's (rt_camera_medium()): its extinction
 		// per metre, single-scatter albedo and phase anisotropy (rt_medium_set()).
-		bool in_medium = false;
-		vec3 medium_sigma_t = vec3(0.0);
-		vec3 medium_albedo = vec3(0.0);
-		float medium_g = 0.0;
-		if (camera_medium != 0u) {
-			rt_medium_set(camera_medium, in_medium, medium_sigma_t, medium_albedo, medium_g);
-		}
+		uint medium_code = camera_medium;
+		uint medium_scatter_word = camera_medium != 0u ? rt_medium_scatter_word(camera_medium) : 0u;
 #ifdef DLSS_RR_ENABLED
 		// Primary surface replacement this sample still owes (only sample 0 starts one).
 		bool replace_pending = false;
@@ -1056,6 +1060,13 @@ void main() {
 #endif
 
 			ps = path_unpack(payload);
+			bool in_medium = false;
+			vec3 medium_sigma_t = vec3(0.0);
+			vec3 medium_albedo = vec3(0.0);
+			float medium_g = 0.0;
+			if (medium_code != 0u) {
+				rt_medium_set(medium_code, medium_scatter_word, in_medium, medium_sigma_t, medium_albedo, medium_g);
+			}
 
 			// Simulated gas on this segment (raytracing_volume_inc.glsl). Delta tracking up to the
 			// surface the segment reached: a real collision before it replaces the surface (its
@@ -1201,7 +1212,9 @@ void main() {
 			}
 			// The next segment starts in the medium the hit's continuation crossed into.
 			if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) != 0u) {
-				rt_medium_set(floatBitsToUint(ps.bsdf_pdf), in_medium, medium_sigma_t, medium_albedo, medium_g);
+				medium_code = floatBitsToUint(ps.bsdf_pdf);
+				medium_scatter_word = rt_medium_scatter_word(medium_code);
+				rt_medium_set(medium_code, medium_scatter_word, in_medium, medium_sigma_t, medium_albedo, medium_g);
 				ps.bsdf_pdf = 0.0;
 				ps.packed_bounces_flags &= ~MEDIUM_CHANGE_FLAG;
 			}
@@ -2792,6 +2805,19 @@ vec4 pt_weather_surface_rain(vec3 p_wp, vec3 p_n, vec3 p_air) {
 	return rain_surface_catch(p_n, rain, drip, wind, st.g);
 }
 
+// The water standing on a face (mm over its mean), as material.cpp weather_surface_puddle().
+float pt_weather_surface_puddle(vec3 p_wp, vec3 p_n) {
+	vec4 wrect = vec4(get_rt_param(RT_PARAM_WETNESS_RECT_X), get_rt_param(RT_PARAM_WETNESS_RECT_Y),
+			get_rt_param(RT_PARAM_WETNESS_RECT_W), get_rt_param(RT_PARAM_WETNESS_RECT_H));
+	if (wrect.z <= 0.0) {
+		return 0.0;
+	}
+	uint smap = uint(get_rt_param(RT_PARAM_WETNESS_MAP));
+	vec2 ht = 0.5 / max(vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), 0)), vec2(1.0));
+	vec2 uv = clamp((p_wp.xz - wrect.xy) / wrect.zw, ht, 1.0 - ht);
+	return rain_surface_puddle(p_n, textureLod(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), uv, 0.0).b);
+}
+
 vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
 	float cover = smoothstep(0.0003, 0.002, p_depth);
@@ -3762,6 +3788,18 @@ void main() {
 					}
 				}
 				wet *= weather_wet;
+				// Walls run with the rain they catch, in streaks at full detail (material.cpp: rain_surface_wetness()).
+				if (!rt_material_wetness_canopy(mat)) {
+					vec3 sr_air = vec3(0.0);
+					float sr_run = wetness.y;
+					uint sr_iuo = geometries[h.geometry_idx].instance_uniforms_ofs;
+					if (rt_material_wetness_moving(mat) && sr_iuo != 0xFFFFFFFFu) {
+						sr_air = -global_shader_uniforms.data[sr_iuo + 13u].xyz;
+						sr_run *= 1.0 - clamp(global_shader_uniforms.data[sr_iuo + 14u].x, 0.0, 1.0);
+					}
+					vec4 sr = pt_weather_surface_rain(wpos, h.geometry_normal, sr_air);
+					wet = rain_surface_wetness(wet, sr_run, h.geometry_normal, sr, rain_wall_streaks(wpos, h.geometry_normal, sr.zw, 0.0));
+				}
 			} else {
 				wet = 0.0;
 			}

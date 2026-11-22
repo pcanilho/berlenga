@@ -1200,6 +1200,71 @@ func _wrack_offsets(f: VegetationField3D, peak: float) -> Vector2:
 					on += 1
 	return Vector2(float(on) / maxf(all, 1), all)
 
+# Pollen clouds (PollenCloud3D): dry wind shakes pollen from conifer crowns in flower; damp air, rain, calm or the
+# wrong season sheds none; the nearest crowns shed, each by the wind at its crown.
+class PollenWeatherStub extends WorldWeather:
+	var wind := Vector3(9, 0, 0)
+	var humidity := 0.4
+	var day := 150
+	func _wind_at(_p: Vector3, _h: float) -> Vector3:
+		return wind
+	func _air_humidity_at(_p: Vector3) -> float:
+		return humidity
+	func _surface_wetness_at(_p: Vector3) -> float:
+		return 0.0
+	func _rainfall_at(_p: Vector3) -> float:
+		return 0.0
+	func _day_of_year() -> int:
+		return day
+	func _season_at(_p: Vector3, _d: int) -> Dictionary:
+		return {}
+
+func _pollen_cloud_check() -> void:
+	var rf := [PollenCloud3D.release_factor(0.4, 0.0, 0.0, 9.0), PollenCloud3D.release_factor(0.4, 0.0, 0.0, 1.0),
+			PollenCloud3D.release_factor(0.92, 0.0, 0.0, 9.0), PollenCloud3D.release_factor(0.4, 0.8, 0.0, 9.0),
+			PollenCloud3D.release_factor(0.4, 0.0, 2.0, 9.0), PollenCloud3D.window_share(150, Vector2(130, 170)),
+			PollenCloud3D.window_share(100, Vector2(130, 170))]
+	var w := PollenWeatherStub.new()
+	WorldContracts.set_weather(w)
+	var sp: PlantSpecies = field.biome.species[0].duplicate()
+	sp.canopy_conifer = true
+	if sp.canopy_radius <= 0.0:
+		sp.canopy_radius = 2.0
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign([sp])
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var pc := PollenCloud3D.new()
+	pc.max_grass_sources = 0
+	add_child(pc)
+	var res := []
+	for case in ["windy", "humid", "calm", "winter"]:
+		w.wind = Vector3(1, 0, 0) if case == "calm" else Vector3(9, 0, 0)
+		w.humidity = 0.92 if case == "humid" else 0.4
+		w.day = 20 if case == "winter" else 150
+		pc.update_sources()
+		res.append([case, pc.get_conifer_sources(), snappedf(pc.get_release(), 0.01)])
+	var srcs: Array = pc.get_sources()
+	pc.update_sources()
+	var near_first := true
+	var eye := get_viewport().get_camera_3d().global_position if get_viewport().get_camera_3d() else Vector3.ZERO
+	var last := -1.0
+	for d in pc.get_sources():
+		var dd: float = (d.position as Vector3).distance_to(eye)
+		near_first = near_first and dd >= last - 0.01
+		last = dd
+	_check("pollen clouds: dry windy air in flower sheds from the nearest conifer crowns; damp, calm or out of season none",
+			rf[0] > 0.99 and rf[1] == 0.0 and rf[2] == 0.0 and rf[3] < 0.05 and rf[4] == 0.0 and rf[5] > 0.99 and rf[6] == 0.0
+			and res[0][1] > 0 and res[1][1] == 0 and res[2][1] == 0 and res[3][1] == 0 and near_first and srcs.is_empty(),
+			[rf, res, near_first])
+	pc.free()
+	f.free()
+	WorldContracts.clear_overrides()
+
 # Bank relief (WorldGround.relief_at, Landscape3D's bank and cliff relief): plants stand on the drawn ground, the
 # heightfield plus the relief, not on the heightfield under it. A script stub raises the ground 0.3 m east of x = 0.
 func _relief_check() -> void:
@@ -2624,6 +2689,7 @@ func _checks() -> void:
 	_avalanche_check()
 	_wrack_check()
 	_relief_check()
+	_pollen_cloud_check()
 	_seed_down_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).

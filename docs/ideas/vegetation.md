@@ -1854,3 +1854,25 @@ GrassField3D's flood wash already re-reads its map every 5 s. get_flood_replaced
 - While a storm's water is still rising the mark rises with it, so the tiles near the river are re-placed each
   check; the strands under the water are hidden by it until it falls.
 
+## Pollen clouds in dry wind (round 7, second pick)
+In early summer a gust through flowering pines or spruces shakes out a visible yellow cloud, and a meadow in flower
+smokes pale in the wind. Wind-dispersed pollen settles slowly in still air: jack pine 2.53 cm/s, black spruce
+3.19 cm/s (Grana 1995, doi:10.1080/00173139509429031; grass grains 2 to 3 cm/s, see "Pollen puffs" above), so it
+rides the turbulence for minutes. Release: anthers open as they dry and close in damp air; grass pollen counts fall
+with humidity and rain, rise with warmth, and are low in 0 to 2 m/s of wind but moderate to extreme in about 4 to
+10 m/s (Waudby et al. 2022, Aerobiologia 38: 533-555, citing Taylor et al. 2002 for the anthers).
+Built: PollenCloud3D (pollen_cloud_3d.*), the landscape scale beside VegetationPollen3D's close brushing puffs.
+- Every 0.25 s: release_factor = dry air (full at 55% humidity and under, none over 85%) x dry leaves x no rain x
+  wind (3 to 8 m/s); thresholds are estimates fitted to the ranges above.
+- In flower: conifers by conifer_window (days 130 to 170, an estimate for northern temperate pines and spruces);
+  the sward by PlantGenerator.get_pollen_release for cocksfoot and timothy in the season here (grass_window when
+  the weather gives no season).
+- Sources: the nearest needle-leaved crowns of the scene's VegetationField3Ds within range (get_crowns_near now
+  reports "conifer"), each at its crown's middle with the wind there; sward points on a 6 m lattice within 30 m
+  where a GrassField3D's rules grow grass.
+- Drawn: one PhysXFlow3D of its own, 0.5 m cells, smoke density 0.35, a little heavy (-0.03), slow fade (0.05),
+  sulphur yellow, scattering albedo 0.85 (estimate), the weather's wind; sphere emitters with the wind's velocity.
+- Check: vegetation --test "pollen clouds" (10 crowns shed in dry wind, none damp, calm or in winter; nearest first).
+  Grass bench --pollen-cloud --day=165 sheds from 6 sward points with Flow running; the Flow gas is too slow on the
+  cloud's software renderer to judge the look (50 frames at 640x360 take ten minutes): look shot on the PC queue.
+

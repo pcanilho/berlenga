@@ -12,6 +12,8 @@ extends Node3D
 #   godot --path docs/bench/links -- --shimmer=out.png [--shimmer-off] [--pt] [--clear] [--frames=N]   a fire in front
 #             of a striped wall, its heat shimmer on or off (--clear: the gas drawn invisible, only the bending);
 #             --clip=dir saves every frame after the warm-up; --turbulence=x overrides heat_shimmer_turbulence
+#   godot --path docs/bench/links -- --wall-rain=out.png [--rain-off] [--pt]   a block in a wind-driven downpour, its
+#             windward wall running with streaks and its lee wall drier, or the same block dry
 #             after a clear night at -2 C (hoarfrost), or the same night with dew_and_frost off
 #
 # Links checked:
@@ -247,6 +249,10 @@ func _ready() -> void:
 			await _valley_fog_view(a.substr(13), OS.get_cmdline_user_args().has("--fog-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
 			return
+		if a.begins_with("--wall-rain="):
+			await _wall_rain_view(a.substr(12), OS.get_cmdline_user_args().has("--rain-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
 		if a.begins_with("--rime="):
 			await _rime_view(a.substr(7), OS.get_cmdline_user_args().has("--rime-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
@@ -313,6 +319,7 @@ func _ready() -> void:
 	await _flow_smoke_tests()
 	await _rime_tests()
 	await _surface_rain_tests()
+	await _wall_rain_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
@@ -2817,10 +2824,142 @@ void fragment() {
 	_check("surface rain: a roof catches the rain, a wall into the wind the driven rain (ISO 15927-3), a lee wall none; the wind pushes drops along a wall it runs along",
 			absf(roof - rain) < 0.15 * rain + 0.1 and absf(windward - driven) < 0.3 * driven + 0.1 and leeward < 0.05 and windward > 1.0 and side_push > 0.3 and vals[1].b < 0.03,
 			"rain %.2f mm/h, roof %.2f, windward %.2f (ISO %.2f at %.1f m/s), leeward %.2f; push %.2f along the side wall, %.2f square to it" % [rain, roof, windward, driven, wind.length(), leeward, side_push, vals[1].b * 3.0])
+	# A downpour pools on level faces (the weather's puddle), none on a steep one.
+	m.rain_rate = 40.0
+	m.advance(1800.0)
+	mat.shader.code = mat.shader.code.replace("ALBEDO = vec3(r.x / 20.0, r.y, length(r.zw) / 3.0);", "ALBEDO = vec3(weather_surface_puddle(wp, q == 0 ? n : normalize(vec3(-0.5, 1.0, 0.0))) / 20.0);")
+	for i in 5:
+		await RenderingServer.frame_post_draw
+	img = get_viewport().get_texture().get_image()
+	var level: float = img.get_pixel(int(img.get_width() * 0.125), img.get_height() / 2).srgb_to_linear().r * 20.0
+	var steep: float = img.get_pixel(int(img.get_width() * 0.375), img.get_height() / 2).srgb_to_linear().r * 20.0
+	var pooled: float = m.get_puddle_at(Vector3())
+	_check("surface rain: the weather's pooled water stands on a level face, not on a 27 degree one", absf(level - pooled) < 0.15 * pooled + 0.1 and pooled > 1.0 and steep < 0.1,
+			"pooled %.2f mm; level face %.2f mm, steep face %.2f mm" % [pooled, level, steep])
 	quad.queue_free()
 	cam.queue_free()
 	m.queue_free()
 	await get_tree().process_frame
+
+
+# A block in a wind-driven downpour (wind to +x): its left face is windward and runs with streaks, its right face is
+# in the lee. With rain_off the same block dry.
+func _wall_rain_scene(rain_off: bool, pt: bool) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	var m := _new_map()
+	m.reparent(root)
+	m.wind_speed = 0.0 if rain_off else 9.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = 12.0
+	m.humidity = 0.95
+	m.rain_rate = 0.0 if rain_off else 8.0
+	m.cloud_cover = 1.0
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	m.advance(1.0)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.5, 0.53, 0.57)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.55, 0.58, 0.62)
+	env.environment.ambient_light_energy = 0.9
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	root.add_child(env)
+	root.set_meta("env", env)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-50, 10, 0)
+	sun.light_energy = 0.5
+	root.add_child(sun)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.62, 0.58, 0.52)
+	var tex := NoiseTexture2D.new()
+	tex.width = 512
+	tex.height = 512
+	tex.seamless = true
+	tex.noise = FastNoiseLite.new()
+	tex.noise.frequency = 0.05
+	tex.color_ramp = Gradient.new()
+	tex.color_ramp.set_color(0, Color(0.8, 0.8, 0.8))
+	tex.color_ramp.set_color(1, Color(1, 1, 1))
+	mat.albedo_texture = tex
+	mat.uv1_triplanar = true
+	mat.uv1_scale = Vector3(0.5, 0.5, 0.5)
+	mat.roughness = 0.9
+	mat.wetness_enabled = true
+	mat.wetness_porosity = 0.7
+	var block := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(4, 4, 4)
+	block.mesh = bm
+	block.material_override = mat
+	block.rotation_degrees = Vector3(0, 45, 0)
+	block.position = Vector3(0, 2, 0)
+	root.add_child(block)
+	var floor_mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(40, 40)
+	floor_mi.mesh = pm
+	floor_mi.material_override = mat
+	root.add_child(floor_mi)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 2.6, 9.0)
+	cam.rotation_degrees = Vector3(-6, 0, 0)
+	cam.fov = 50.0
+	root.add_child(cam)
+	cam.make_current()
+	root.set_meta("cam", cam)
+	return root
+
+
+func _wall_rain_view(path: String, rain_off: bool, pt: bool) -> void:
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var root := _wall_rain_scene(rain_off, pt)
+	for i in 30:
+		await RenderingServer.frame_post_draw
+	if pt:
+		root.get_meta("env").environment.pathtracing_enabled = true
+		for i in 60:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+func _face_luminance(img: Image, cam: Camera3D, at: Vector3) -> float:
+	var c := cam.unproject_position(at)
+	var sx := float(img.get_width()) / float(get_viewport().get_visible_rect().size.x)
+	var sum := 0.0
+	var n := 0
+	for dy in range(-20, 21, 2):
+		for dx in range(-20, 21, 2):
+			sum += img.get_pixel(clampi(int(c.x * sx) + dx, 0, img.get_width() - 1), clampi(int(c.y * sx) + dy, 0, img.get_height() - 1)).get_luminance()
+			n += 1
+	return sum / n
+
+
+func _wall_rain_tests() -> void:
+	if DisplayServer.get_name() == "headless":
+		_skip("wall rain", "needs a rendering device")
+		return
+	var lum := []
+	for off in [true, false]:
+		var root := _wall_rain_scene(off, false)
+		for i in 20:
+			await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var cam: Camera3D = root.get_meta("cam")
+		lum.append([_face_luminance(img, cam, Vector3(-1.41, 2.2, 1.41)), _face_luminance(img, cam, Vector3(1.41, 2.2, 1.41))])
+		root.queue_free()
+		await get_tree().process_frame
+	var wind_drop: float = lum[1][0] / lum[0][0]
+	var lee_drop: float = lum[1][1] / lum[0][1]
+	_check("wall rain: a windward wall runs dark with the driven rain, the lee wall stays far drier (BaseMaterial3D wetness)",
+			wind_drop < 0.8 and lee_drop > wind_drop + 0.1,
+			"windward keeps %.2f of its dry luminance, lee %.2f" % [wind_drop, lee_drop])
 
 
 func _centre_luminance(img: Image) -> float:

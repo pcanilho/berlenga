@@ -231,6 +231,8 @@ private:
 
 		CanvasTexture *canvas_texture = nullptr;
 
+		RID streaming_state;
+
 		// A new value from content_serial whenever the texture's data is rewritten in place (texture_2d_update, a 3D
 		// update, texture_replace), so the path tracer recaptures vertex() output that samples it.
 		uint64_t content_version = 0;
@@ -656,6 +658,7 @@ public:
 	virtual RID texture_drawable_get_default_material() const override;
 
 	virtual void texture_replace(RID p_texture, RID p_by_texture) override;
+	virtual void texture_replace_compatible(RID p_texture, RID p_by_texture) override;
 	virtual void texture_set_size_override(RID p_texture, int p_width, int p_height) override;
 
 	virtual void texture_set_path(RID p_texture, const String &p_path) override;
@@ -975,6 +978,8 @@ public:
 
 	static RD::DataFormat render_target_get_color_format(bool p_use_hdr, bool p_srgb);
 	static uint32_t render_target_get_color_usage_bits(bool p_msaa);
+
+	virtual void texture_2d_attach_streaming_state(RID p_texture, RID p_streaming_state) override;
 };
 
 } // namespace RendererRD

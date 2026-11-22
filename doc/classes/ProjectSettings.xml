@@ -3267,6 +3267,9 @@
 			Maximum time (in seconds) before the [code]TIME[/code] shader built-in variable rolls over. The [code]TIME[/code] variable increments by [code]delta[/code] each frame, and when it exceeds this value, it rolls over to [code]0.0[/code]. Since large floating-point values are less precise than small floating-point values, this should be set as low as possible to maximize the precision of the [code]TIME[/code] built-in variable in shaders. This is especially important on mobile platforms where precision in shaders is significantly reduced. However, if this is set too low, shader animations may appear to restart from the beginning while the project is running.
 			On desktop platforms, values below [code]4096[/code] are recommended, ideally below [code]2048[/code]. On mobile platforms, values below [code]64[/code] are recommended, ideally below [code]32[/code].
 		</member>
+		<member name="rendering/mesh_lod/lod_change/quality_scale" type="float" setter="" getter="" default="1.0">
+			Scales every viewport's [member Viewport.mesh_lod_threshold]. [code]0.0[/code] draws every mesh at full detail at any distance. [RenderingQuality] sets it per geometry level; the path tracer follows it when [member rendering/pathtracing/mesh_lod] is on.
+		</member>
 		<member name="rendering/mesh_lod/lod_change/threshold_pixels" type="float" setter="" getter="" default="1.0">
 			The automatic LOD bias to use for meshes rendered within the [ReflectionProbe]. Higher values will use less detailed versions of meshes that have LOD variations generated. If set to [code]0.0[/code], automatic LOD is disabled. Increase [member rendering/mesh_lod/lod_change/threshold_pixels] to improve performance at the cost of geometry detail.
 			[b]Note:[/b] Depending on the mesh's attributes (vertex colors, blend shapes, ...), a mesh may have fewer levels of LOD generated to avoid visible distortion of the mesh once it is affected by vertex colors or blend shapes. Meshes with a very low vertex count will also not have any LODs generated, which means this setting will not affect them at all. In general, this setting makes the largest impact on static meshes with a high vertex count.
@@ -3493,6 +3496,36 @@
 		<member name="rendering/pathtracing/volumetric_fog_shadows" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], volumetric fog traces ray query shadows for shadowed lights when path tracing. If [code]false[/code], those lights scatter into the fog unoccluded, which is faster and useful to check whether geometry is blocking the fog lighting.
 			[b]Note:[/b] Only has an effect when path tracing and [member Environment.volumetric_fog_enabled] are enabled on the active [Environment].
+		</member>
+		<member name="rendering/quality/groups/effects" type="int" setter="" getter="" default="-1">
+			The effects group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/geometry" type="int" setter="" getter="" default="-1">
+			The geometry group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/path_tracing" type="int" setter="" getter="" default="-1">
+			The path tracing group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/post_process" type="int" setter="" getter="" default="-1">
+			The post process group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/reflections" type="int" setter="" getter="" default="-1">
+			The reflections group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/shadows" type="int" setter="" getter="" default="-1">
+			The shadows group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/textures" type="int" setter="" getter="" default="-1">
+			The textures group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/vegetation" type="int" setter="" getter="" default="-1">
+			The vegetation group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/groups/volumetrics" type="int" setter="" getter="" default="-1">
+			The volumetrics group's quality level, or [code]-1[/code] to follow [member rendering/quality/level]. See [RenderingQuality].
+		</member>
+		<member name="rendering/quality/level" type="int" setter="" getter="" default="2">
+			The overall quality level (Low, Medium, High, Ultra) that [RenderingQuality] applies to every group when the project runs. High keeps every setting as the project has it; Ultra draws every mesh at full detail at any distance.
 		</member>
 		<member name="rendering/reflections/reflection_atlas/reflection_count" type="int" setter="" getter="" default="64">
 			Number of cubemaps to store in the reflection atlas. The number of [ReflectionProbe]s in a scene will be limited by this amount. A higher number requires more VRAM.
@@ -3767,6 +3800,35 @@
 		</member>
 		<member name="rendering/textures/lossless_compression/force_png" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], the texture importer will import lossless textures using the PNG format. Otherwise, it will default to using WebP.
+		</member>
+		<member name="rendering/textures/streaming/enabled" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], enables texture streaming. This system dynamically loads and unloads texture mipmaps based on visibility, reducing VRAM usage. Useful for projects with many large textures.
+		</member>
+		<member name="rendering/textures/streaming/inactivity_decay_rate_ms" type="int" setter="" getter="" default="5000">
+			The time (in milliseconds) per mipmap level of quality decay for textures that are no longer visible. When a streamed texture is not requested by the feedback system (e.g., it's off-screen or occluded), its resolution will gradually decrease by one mipmap level for each interval of this duration.
+			For example, with the default value of [code]5000[/code] ms, a texture that hasn't been visible for 10 seconds will have its quality reduced by 2 mipmap levels.
+			Set to [code]0[/code] to disable inactivity decay entirely, keeping textures at their last requested resolution indefinitely.
+		</member>
+		<member name="rendering/textures/streaming/keep_visible_ms" type="int" setter="" getter="" default="1000">
+			A streamed texture that any view sampled within this time keeps the mip it asked for: the memory budget only lowers textures nothing is reading, so it never blurs what is on screen or what a path traced ray sees. If the visible textures alone exceed the budget, a warning is printed. [code]0[/code] lets the budget lower visible textures too.
+		</member>
+		<member name="rendering/textures/streaming/max_lod" type="int" setter="" getter="" default="3">
+			The maximum LOD (mipmap level) that streamed textures can load. Lower values allow higher resolution textures but use more VRAM. Valid values are [code]0[/code] (full resolution) to [code]13[/code] (lowest resolution).
+		</member>
+		<member name="rendering/textures/streaming/max_resolution" type="int" setter="" getter="" default="0">
+			The largest size, in pixels, a streamed texture loads at; [code]0[/code] loads it as imported. [RenderingQuality] sets it for the Low and Medium texture levels, so one shipped texture serves every quality level.
+		</member>
+		<member name="rendering/textures/streaming/max_ops_per_second" type="int" setter="" getter="" default="200">
+			The maximum number of texture streaming operations (loading/unloading mipmaps) per second. Higher values allow faster adaptation to scene changes but may impact performance.
+		</member>
+		<member name="rendering/textures/streaming/memory_budget_enabled" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], limits the maximum VRAM allocated for streamed textures to the value specified in [member rendering/textures/streaming/memory_budget_mb]. If exceeded, the system reduces the resolution of textures to stay within budget.
+		</member>
+		<member name="rendering/textures/streaming/memory_budget_mb" type="int" setter="" getter="" default="512">
+			The maximum VRAM (in megabytes) allocated for streamed textures. If exceeded, the system reduces the resolution of less important textures to stay within budget.
+		</member>
+		<member name="rendering/textures/streaming/min_lod" type="int" setter="" getter="" default="0">
+			The minimum LOD (mipmap level) that streamed textures start at when loaded. Higher values result in lower initial resolution and faster loading. Valid values are [code]0[/code] (full resolution) to [code]13[/code] (lowest resolution).
 		</member>
 		<member name="rendering/textures/vram_compression/cache_gpu_compressor" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], the GPU texture compressor will cache the local RenderingDevice and its resources (shaders and pipelines), making subsequent imports faster at the cost of increased memory usage.

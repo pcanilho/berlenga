@@ -501,6 +501,11 @@ private:
 		if (snow_on_body) {
 			mk.flags |= (1u << 31);
 		}
+		// And wetness_moving in the bit under it.
+		static_assert(FLAG_MAX < 30);
+		if (wetness_moving) {
+			mk.flags |= (1u << 30);
+		}
 		// And glaze in the features' top bit.
 		static_assert(FEATURE_MAX < 31);
 		if (glaze) {
@@ -652,6 +657,7 @@ private:
 	float wetness_amount = 1.0f;
 	bool wetness_from_weather = true;
 	bool wetness_canopy = false;
+	bool wetness_moving = false;
 	bool glaze = false;
 	float snow_amount = 1.0f;
 	float snow_max_slope = 60.0f;
@@ -909,6 +915,8 @@ public:
 
 	void set_wetness_canopy(bool p_enable);
 	bool is_wetness_canopy() const;
+	void set_wetness_moving(bool p_enable);
+	bool is_wetness_moving() const;
 
 	// Glaze: clear ice from freezing rain over the surface, from the weather's rain map (WorldWeather.glaze_at).
 	void set_glaze(bool p_enable);

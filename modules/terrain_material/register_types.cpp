@@ -93,6 +93,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		// The drawn ground's relief over the heightfield for GPU placers (WorldGround.relief_at): R height m, G share.
 		{ "terrain_relief_map", "sampler2D" },
 		{ "terrain_relief_rect", "vec4" },
+		// Landscape3D's cliff relief share round the camera (R), for no soil on shelves between walls.
+		{ "terrain_cliff_map", "sampler2D" },
+		{ "terrain_cliff_rect", "vec4" },
 		// Landscape3D's bank relief for the same patch (x metres).
 		{ "terrain_bank_relief", "vec4" },
 	};

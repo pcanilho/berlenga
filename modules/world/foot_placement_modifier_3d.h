@@ -69,6 +69,7 @@ private:
 		Vector3 normal = Vector3(0, 1, 0);
 		real_t ground = 0.0; // the ground height under the foot
 		bool on_ground = false;
+		real_t lowest = -1.0; // the lowest the clip has held this ankle over its floor (m; < 0: not seen yet)
 		SecondOrderSystem<Vector3> spring;
 		SecondOrderSystem<Vector3> normal_spring;
 	};
@@ -78,6 +79,7 @@ private:
 	NodePath reference_node;
 	NodePath walker_node;
 	Vector3 pelvis_offset;
+	Vector3 pelvis_rotation; // a rotation vector (axis x angle, radians) in the character's frame
 	real_t ankle_height = -1.0; // m above the sole; < 0: from the rest pose
 	real_t probe_up = 0.5;
 	real_t probe_down = 0.6;
@@ -103,7 +105,7 @@ private:
 	bool _ground_at(const Vector3 &p_point, real_t &r_height) const;
 	bool _sample_ground(const Vector3 &p_point, real_t &r_height, Vector3 &r_normal) const;
 	static void _solve_two_joint(Skeleton3D *p_skeleton, int p_upper, int p_lower, int p_end, const Vector3 &p_target, const Basis &p_end_basis);
-	real_t _ankle_height(Skeleton3D *p_skeleton, int p_foot) const;
+	real_t _ankle_height(Skeleton3D *p_skeleton, int p_foot, real_t p_lowest) const;
 
 protected:
 	static void _bind_methods();
@@ -139,6 +141,8 @@ public:
 	NodePath get_walker_node() const;
 	void set_pelvis_offset(const Vector3 &p_offset);
 	Vector3 get_pelvis_offset() const;
+	void set_pelvis_rotation(const Vector3 &p_rotation);
+	Vector3 get_pelvis_rotation() const;
 	void set_ankle_height(real_t p_height);
 	real_t get_ankle_height() const;
 	void set_probe_up(real_t p_distance);

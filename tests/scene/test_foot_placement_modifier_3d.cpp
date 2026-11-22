@@ -141,6 +141,28 @@ TEST_CASE("[SceneTree][FootPlacementModifier3D] Each foot stands on the world gr
 	memdelete(sk);
 }
 
+TEST_CASE("[SceneTree][FootPlacementModifier3D] A rig whose rest pose floats still stands on the ground") {
+	StepGround ground;
+	ground.step = 0.15f;
+	WorldContracts::register_ground(&ground);
+	SceneTree *tree = SceneTree::get_singleton();
+	Skeleton3D *sk = make_legs(tree);
+	// The rest has the shins short (the ankles 0.28 m up); the clip stands them on the floor as before.
+	for (const char *n : { "LeftFoot", "RightFoot" }) {
+		const int b = sk->find_bone(n);
+		sk->set_bone_rest(b, Transform3D(Basis(), Vector3(0, -0.20, -0.03)));
+	}
+	FootPlacementModifier3D *f = make_feet(sk);
+	BoneAttachment3D *left = attach(sk, "LeftFoot");
+	for (int i = 0; i < 120; i++) {
+		step(sk, 1.0 / 60.0);
+	}
+	CHECK_MESSAGE(Math::is_equal_approx(left->get_global_position().y, (real_t)0.23, (real_t)0.005), "The ankle height comes from the clip, not the floating rest.");
+	CHECK(f->is_foot_planted(FootPlacementModifier3D::SIDE_LEFT));
+	WorldContracts::unregister_ground(&ground);
+	memdelete(sk);
+}
+
 TEST_CASE("[SceneTree][FootPlacementModifier3D] A planted foot holds while the pelvis moves, and each plant is a footfall") {
 	StepGround ground;
 	WorldContracts::register_ground(&ground);
@@ -157,8 +179,9 @@ TEST_CASE("[SceneTree][FootPlacementModifier3D] A planted foot holds while the p
 		step(sk, 1.0 / 60.0);
 	}
 	const Vector3 planted = left->get_global_position();
-	// An idle weight shift: hips 4 cm over to one side; the feet stay where they are.
+	// An idle weight shift: hips 4 cm over to one side and dropped 4.5 degrees on the other; the feet stay put.
 	f->set_pelvis_offset(Vector3(0.04, 0, 0));
+	f->set_pelvis_rotation(Vector3(0, 0, Math::deg_to_rad((real_t)4.5)));
 	for (int i = 0; i < 60; i++) {
 		step(sk, 1.0 / 60.0);
 	}
