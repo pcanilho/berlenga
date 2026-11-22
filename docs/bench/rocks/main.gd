@@ -35,6 +35,7 @@ extends Node3D
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
 #   --sea-cave-pick=first with --sea-caves: the finder's best site, not the one facing the sun most (frames only)
+#   --sea-cave-near=x,z with --sea-caves: the site nearest that point (a frame keeps its cave when the sun turns)
 #   --no-refine           with --cave-mesh and --cam: the chunks round the camera stay on the coarse grid
 #   --no-sea-water        with --sea-caves --cave-mesh: the sea not drawn inside the caves (a before frame);
 #                         --cave-waves=m the short waves' rms coming in at the mouth (default: from the sea),
@@ -979,6 +980,17 @@ func _caves(cam: Camera3D) -> void:
 				best = lit
 				found = [e]
 		print("  sea cave picked by facing: %d sites, mouth at %s facing the sun %.2f" % [many.size(), found[0]["position"], best])
+	if sea_caves and not args.has("test") and found.size() == 1 and args.has("sea-cave-near"):
+		# --sea-cave-near=x,z: the site nearest that point, so a frame keeps its cave when the sun turns.
+		var near: PackedStringArray = str(args["sea-cave-near"]).split(",")
+		var at := Vector2(float(near[0]), float(near[1]))
+		var closest := INF
+		for e in net.find_sea_entrances(r, 12):
+			var ep: Vector3 = e["position"]
+			if Vector2(ep.x, ep.z).distance_to(at) < closest:
+				closest = Vector2(ep.x, ep.z).distance_to(at)
+				found = [e]
+		print("  sea cave picked near %s: mouth at %s" % [at, found[0]["position"]])
 	print("caves: %d entrances found in %d ms" % [found.size(), Time.get_ticks_msec() - t0])
 	var colours := [Color(1, 1, 1), Color(0.2, 0.5, 1), Color(0.1, 0.9, 0.9), Color(1, 0.8, 0.1), Color(1, 0.3, 0.1), Color(0.9, 0.2, 0.9), Color(0.2, 0.9, 0.3)]
 	var names := ["entrance", "tube", "bed", "keyhole", "canyon", "shaft", "sea"]

@@ -618,6 +618,8 @@ void BaseMaterial3D::init_shaders() {
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_precip_phase", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Its warm layer aloft (freezing rain): the nose's peak (C) and base (m above the ground).
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_warm_nose", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_frost_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Its sea spray square (R: the spray's wetness, G: salt on surfaces as 1 - exp(-g/m2 / 10)).
@@ -951,6 +953,7 @@ String BaseMaterial3D::get_rain_functions_code(bool p_from_weather) {
 global uniform sampler2D weather_rain_map; // precipitation mm/h, canopy wetness, canopy drip mm/h
 global uniform vec4 weather_rain_rect; // x, z, size; size 0 = no weather
 global uniform vec4 weather_precip_phase; // ground air temperature (C), lapse (K/m), humidity, ground height (m)
+global uniform vec4 weather_warm_nose; // warm layer aloft: peak (C, 0 none), base (m above the ground)
 
 vec4 weather_rain_sample(vec3 p_world_pos) {
 	if (weather_rain_rect.z <= 0.0) {
@@ -967,7 +970,7 @@ float weather_air_temperature_at(vec3 p_world_pos) {
 }
 float weather_rainfall_at(vec3 p_world_pos) {
 	float r = weather_rain_sample(p_world_pos).r;
-	return r > 0.0 ? r * rain_liquid_share(weather_air_temperature_at(p_world_pos), weather_precip_phase.z) : 0.0;
+	return r > 0.0 ? r * rain_liquid_share_nose(weather_air_temperature_at(p_world_pos), weather_precip_phase.z, p_world_pos.y - weather_precip_phase.w, weather_warm_nose.x, weather_warm_nose.y) : 0.0;
 }
 // Leaves' wetness from the canopy's held water (0..1), and the drip off them (mm/h): Rutter's interception.
 float weather_canopy_wetness_at(vec3 p_world_pos) {
