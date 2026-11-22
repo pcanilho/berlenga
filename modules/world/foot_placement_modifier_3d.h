@@ -69,6 +69,7 @@ private:
 		Vector3 normal = Vector3(0, 1, 0);
 		real_t ground = 0.0; // the ground height under the foot
 		bool on_ground = false;
+		real_t lowest = -1.0; // the lowest the clip has held this ankle over its floor (m; < 0: not seen yet)
 		SecondOrderSystem<Vector3> spring;
 		SecondOrderSystem<Vector3> normal_spring;
 	};
@@ -103,7 +104,7 @@ private:
 	bool _ground_at(const Vector3 &p_point, real_t &r_height) const;
 	bool _sample_ground(const Vector3 &p_point, real_t &r_height, Vector3 &r_normal) const;
 	static void _solve_two_joint(Skeleton3D *p_skeleton, int p_upper, int p_lower, int p_end, const Vector3 &p_target, const Basis &p_end_basis);
-	real_t _ankle_height(Skeleton3D *p_skeleton, int p_foot) const;
+	real_t _ankle_height(Skeleton3D *p_skeleton, int p_foot, real_t p_lowest) const;
 
 protected:
 	static void _bind_methods();

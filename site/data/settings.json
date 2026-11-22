@@ -2697,7 +2697,7 @@
     "storm_day"
    ],
    "note": "",
-   "what": "rivers and lakes keep the last flood's high-water mark and the sea and lakes the last storm's wave run-up on the beach, and straw, reed and twig strand lines mark it, with the grass below combed flat and silted.",
+   "what": "rivers and lakes keep the last flood's high-water mark and the sea and lakes the last storm's wave run-up on the beach, and straw, reed and twig strand lines mark it, moving up to a new flood's mark as it peaks, with the grass below combed flat and silted.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2809,6 +2809,17 @@
    ],
    "note": "",
    "what": "fallen leaves drift past the crowns into edges and clearings, farther downwind, pile into hollows and against trunks, logs and stones, and leave ridges swept bare.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Pollen clouds",
+   "settings": [
+    "PollenCloud3D"
+   ],
+   "note": "",
+   "what": "conifers and flowering grass shed a yellow haze in dry wind.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -4274,7 +4285,7 @@
     "humidity"
    ],
    "note": "",
-   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
+   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up, walls facing the wind catch the driven rain, roofs the falling rain and lee faces none, raster and path traced; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
    "page": "weather",
    "title": "Weather",
    "topic": ""

@@ -89,6 +89,7 @@ class SurgeSwell extends WorldWater:
 
 
 var no_till_tex: ImageTexture
+const WalkCycle = preload("res://walk_cycle.gd")
 const STEP := 4.0 # metres between ground vertices
 const X0 := -2048.0
 const Z0 := -2048.0
@@ -942,6 +943,8 @@ func _ready() -> void:
 		await _snow_strata()
 	if args.has("frost-sorted"):
 		_frost_sorted_cam()
+	if args.has("walker-snow"):
+		await _walker_snow()
 	if args.has("lodging"):
 		await _lodging()
 	if args.has("lens-cam"):
@@ -3934,6 +3937,13 @@ func _build_mist_pollen() -> void:
 			p.weather_map = p.get_path_to(weather)
 			if weather.has_method("get_season"):
 				p.season = weather.get_season()
+	if args.get("pollen-cloud", "1") != "0" and ClassDB.class_exists("PollenCloud3D"):
+		# Pollen clouds (vegetation 1a910ada): dry wind sheds pollen from conifer crowns and the flowering sward round
+		# the camera into a Flow haze of its own; it finds the fields itself. --pollen-cloud=0 for none.
+		var pc = ClassDB.instantiate("PollenCloud3D")
+		pc.name = "PollenCloud"
+		add_child(pc)
+		pc.set("terrain_path", pc.get_path_to(gen))
 
 
 func _vec2_arg(v: String) -> Vector2:
@@ -6980,6 +6990,140 @@ func _frost_sorted_cam() -> void:
 	c3.look_at(Vector3(tgt.x, height_at(tgt.x, tgt.z), tgt.z))
 	weather.follow_target = weather.get_path_to(c3)
 	_log("frost sorted: flat at %s (score %.2f), upslope %s, cam %s" % [str(bp.round()), best, str(dir.snapped(Vector3.ONE * 0.01)), str(c3.global_position.round())])
+
+
+# A rigged walker (ext/mannequin: GDQuest's mannequin, CC BY 4.0) on a CharacterBody3D, its feet planted on the
+# world's ground and snow by FootPlacementModifier3D (character motion 47595e0b), which publishes each plant as a
+# footfall the snow, mud and sand print (meta world_contact_feet); GazeModifier3D turns its head and eyes to `look`.
+# The rig has no walk: walk_cycle.gd builds one from published gait data (--walker-anim, walk; run plays the rig's
+# run at --walker-anim-speed, 0.5). Moved by _walk_to.
+func _make_walker(look: Node3D = null) -> CharacterBody3D:
+	var src := _gltf_node("res://ext/mannequin/mannequiny-0.3.0.glb")
+	if src == null:
+		return null
+	var body := CharacterBody3D.new()
+	body.name = "Walker"
+	var cs := CollisionShape3D.new()
+	var cap := CapsuleShape3D.new()
+	cap.radius = 0.22
+	cap.height = 1.75
+	cs.shape = cap
+	cs.position.y = 0.875
+	body.add_child(cs)
+	body.add_child(src)
+	add_child(body)
+	var skel := src.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D
+	if ClassDB.class_exists("FootPlacementModifier3D"):
+		var fp = ClassDB.instantiate("FootPlacementModifier3D")
+		fp.name = "Feet"
+		fp.set("hips_bone", "pelvis")
+		fp.set("left_thigh_bone", "thigh.l")
+		fp.set("left_shin_bone", "calf.l")
+		fp.set("left_foot_bone", "foot.l")
+		fp.set("right_thigh_bone", "thigh.r")
+		fp.set("right_shin_bone", "calf.r")
+		fp.set("right_foot_bone", "foot.r")
+		skel.add_child(fp)
+		fp.set("walker_node", fp.get_path_to(body))
+	if look != null and ClassDB.class_exists("GazeModifier3D"):
+		var gz = ClassDB.instantiate("GazeModifier3D")
+		gz.name = "Gaze"
+		gz.set("head_bone", "head")
+		gz.set("neck_bone", "neck_01")
+		gz.set("spine_bones", PackedStringArray(["spine_01", "spine_02"]))
+		gz.set("spine_shares", PackedFloat32Array([0.4, 0.6]))
+		skel.add_child(gz)
+		gz.set("target_node", gz.get_path_to(look))
+	var ap := src.find_children("*", "AnimationPlayer", true, false)
+	if not ap.is_empty():
+		var player := ap[0] as AnimationPlayer
+		var an := String(args.get("walker-anim", "walk"))
+		if an == "walk" and not player.has_animation("walk") and player.has_animation("idle"):
+			# no walk in the rig: one built from gait data (walk_cycle.gd) on its idle, played so the planted
+			# feet travel at the walker's speed
+			var names := {"pelvis": "pelvis", "spine_01": "spine_01", "spine_02": "spine_02"}
+			for sd in ["l", "r"]:
+				for k in ["thigh", "calf", "foot", "ball", "upperarm", "lowerarm"]:
+					names[k + "_" + sd] = k + "." + sd
+			var speed := float(args.get("walker-speed", "1.1"))
+			var walk: Animation = WalkCycle.build(skel, player.get_animation("idle"), WalkCycle.period_for(speed), names)
+			player.get_animation_library("").add_animation("walk", walk)
+			var step: float = WalkCycle.step_length(walk, skel, names)
+			player.play("walk")
+			player.speed_scale = speed * walk.length / (2.0 * step) if step > 0.0 else 1.0
+		elif player.has_animation(an):
+			player.get_animation(an).loop_mode = Animation.LOOP_LINEAR
+			player.play(an)
+			player.speed_scale = float(args.get("walker-anim-speed", "0.5"))
+	return body
+
+
+# --walker-snow: the rigged walker crossing deep snow on a slope (prints from its real foot plants). The nearest
+# 12-25 degree slope to the camera with --ws-min (0.4) m of snow; the walker crosses it along the contour at
+# --walker-speed (1.1) m/s for --ws-len (12) m, the camera --ws-dist (7) m downslope at eye height, square to its path.
+func _walker_snow() -> void:
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var o := c3.global_position
+	var best := Vector3.INF
+	var bd := INF
+	var mind := float(args.get("ws-min", "0.4"))
+	for r in range(20, 1500, 20):
+		for k in 24:
+			var p := o + Vector3(cos(TAU * k / 24.0), 0, sin(TAU * k / 24.0)) * float(r)
+			var deg := rad_to_deg(atan(_slip_grad(p).length()))
+			if deg > 12.0 and deg < 25.0 and snow.get_depth_at(p) >= mind:
+				best = p
+				break
+		if best != Vector3.INF:
+			break
+	if best == Vector3.INF:
+		_log("walker snow: no snow slope found")
+		return
+	var g := _slip_grad(best)
+	var down := Vector3(-g.x, 0, -g.y).normalized() if g.length() > 0.0 else Vector3(0, 0, 1)
+	var along := down.cross(Vector3.UP).normalized()
+	var focus := Node3D.new()
+	focus.name = "WalkFocus"
+	add_child(focus)
+	focus.global_position = Vector3(best.x, height_at(best.x, best.z), best.z)
+	snow.follow_target = snow.get_path_to(focus)
+	weather.follow_target = weather.get_path_to(focus)
+	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
+	surf.name = "SnowSurface"
+	add_child(surf)
+	surf.set("snow_cover", surf.get_path_to(snow))
+	surf.set("follow_target", surf.get_path_to(focus))
+	var cp := best + down * float(args.get("ws-dist", "7"))
+	c3.global_position = Vector3(cp.x, height_at(cp.x, cp.z) + snow.get_depth_at(cp) + 1.6, cp.z)
+	c3.look_at(focus.global_position + Vector3.UP * (snow.get_depth_at(best) + 0.6))
+	var w := _make_walker(c3)
+	if w == null:
+		_log("walker snow: ext/mannequin missing (run fetch_ext.sh)")
+		return
+	var length := float(args.get("ws-len", "12"))
+	var a := best - along * length * 0.5
+	var b := best + along * length * 0.5
+	_walk_path(w, a, b, float(args.get("walker-speed", "1.1")))
+	_log("walker snow: slope at %s, %.0f deg, %.2f m of snow, path %s to %s, cam %s" % [str(best.round()), rad_to_deg(atan(g.length())), snow.get_depth_at(best), str(a.round()), str(b.round()), str(c3.global_position.round())])
+
+
+# Moves a walker from a to b at speed (m/s), standing on the ground plus its snow, facing its way (the model's +z).
+func _walk_path(w: CharacterBody3D, a: Vector3, b: Vector3, speed: float) -> void:
+	var d := (b - a)
+	d.y = 0.0
+	var dist := d.length()
+	var dir := d / maxf(dist, 1e-3)
+	w.set_meta("walk", [a, dir, dist, speed, 0.0])
+	w.global_basis = Basis.looking_at(-dir, Vector3.UP)
+	var put := func(s: float) -> void:
+		var q := a + dir * s
+		w.global_position = Vector3(q.x, height_at(q.x, q.z) + (snow.get_depth_at(q) if snow != null else 0.0), q.z)
+	put.call(0.0)
+	var cb := func() -> void:
+		var m: Array = w.get_meta("walk")
+		m[4] = minf(float(m[4]) + speed * get_physics_process_delta_time(), dist)
+		put.call(float(m[4]))
+	get_tree().physics_frame.connect(cb)
 
 
 # Sets a prop (from _tripo) on the ground at `p`, turned `yaw` radians, sunk `sink` m so no edge floats on a slope.

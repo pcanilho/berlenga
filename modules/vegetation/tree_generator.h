@@ -110,6 +110,7 @@ public:
 		PRESET_WILD_CHERRY, // Prunus avium (trees.md 5bf): tiered crown, banded red-brown bark, white in April.
 		PRESET_HORNBEAM, // Carpinus betulus (trees.md 5bf): fluted grey stem, dense crown, shade tolerant.
 		PRESET_SWEET_CHESTNUT, // Castanea sativa (trees.md 5bf): broad, long toothed leaves, spiral-furrowed bark.
+		PRESET_GREEN_ALDER, // Alnus alnobetula (trees.md 5bh): many-stemmed shrub of avalanche tracks, stems swept downslope.
 		PRESET_MAX,
 	};
 
@@ -493,6 +494,7 @@ private:
 		WOUND_SQUIRREL,
 		WOUND_CHECK, // A drying check down a log (section 5o).
 		WOUND_CHEVRON, // A shed branch's scar and its two arms below it (section 5r); geometry only.
+		WOUND_IMPACT, // An avalanche's impact scar on the upslope face (trees.md 5bh): s0 centre, s1 half height.
 	};
 	struct Wound {
 		WoundKind kind = WOUND_LIGHTNING;
@@ -907,6 +909,11 @@ public:
 	float cliff_lean = 0.0f; // Radians from vertical, out from the face, at the top of the bend.
 	float cliff_dead_az = 0.0f; // Bearing (level mesh space, from +X toward +Z) of the dead sector.
 	float cliff_dead = 0.0f; // Its half width, radians (0: none).
+	// Sabre stems (trees.md 5bh): on a snowy slope of cliff_angle (soil, not rock) every basal stem's foot is swept
+	// this far further down the slope than square to it (radians, 0 none), then turns up to cliff_lean.
+	float cliff_sweep = 0.0f;
+	// Avalanche survivors (trees.md 5bh): impact scars on the upslope face (mesh -X), this many years old (-1 none).
+	float avalanche_scars = -1.0f;
 	void _cliff_bend();
 	void _cliff_turn(Builder &r_b) const;
 	// Stilt roots (trees.md 5at): an alder on a tussock in a carr whose peat sank round it stands on its roots, which
@@ -1127,6 +1134,7 @@ private:
 		FORM_LAID_HEDGE, // A two-metre segment of a hand-laid hedge: pleachers, stakes, binders (trees.md, "Laid hedges").
 		FORM_GROVE, // A cultivated olive in a grove: open-centre pruning, the old trunk split into twisted strands (trees.md, "Ancient olive").
 		FORM_CLIFF, // Rooted in a crevice of a rock face: variants over faces of 57 to 86 degrees (trees.md 5bg).
+		FORM_SABRE, // Snow-bent on a slope: every stem's foot swept downslope, then up (sabre stems; trees.md 5bh).
 		FORM_MAX,
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
@@ -1294,6 +1302,10 @@ public:
 	void set_cliff_lean(float p_v) { cliff_lean = CLAMP(p_v, 0.0f, 0.8f); }
 	float get_cliff_lean() const { return cliff_lean; }
 	void set_cliff_dieback(float p_v) { cliff_dead = CLAMP(p_v, 0.0f, 1.6f); }
+	void set_cliff_sweep(float p_v) { cliff_sweep = CLAMP(p_v, 0.0f, 1.2f); }
+	float get_cliff_sweep() const { return cliff_sweep; }
+	void set_avalanche_scars(float p_v) { avalanche_scars = p_v < 0.0f ? -1.0f : MIN(p_v, 200.0f); }
+	float get_avalanche_scars() const { return avalanche_scars; }
 	float get_cliff_dieback() const { return cliff_dead; }
 	void set_ground_slope(float p_v) { ground_slope = CLAMP(p_v, 0.0f, 1.2f); }
 	float get_ground_slope() const { return ground_slope; }

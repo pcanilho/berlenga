@@ -5500,6 +5500,7 @@ Array VegetationField3D::get_crowns_near(const Vector3 &p_position, float p_radi
 				d["height"] = height;
 				d["crown_base"] = base;
 				d["crown_radius"] = cr.radius;
+				d["conifer"] = cr.conifer > 0.5f;
 				out.push_back(d);
 			}
 		}

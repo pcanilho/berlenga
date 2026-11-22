@@ -202,7 +202,7 @@
 			<param index="0" name="position" type="Vector3" />
 			<param index="1" name="radius" type="float" />
 			<description>
-				The placed crowns reaching within [param radius] of [param position] (horizontal distance), one [Dictionary] each: [code]position[/code] (the stem's foot, world), [code]preset[/code] (the species' [code]preset[/code] meta, or -1), [code]height[/code], [code]crown_base[/code] and [code]crown_radius[/code] in metres, scaled by the instance. Height and crown base come from the species' first mesh's [code]crown[/code] meta (height, crown base, crown radius, unscaled) when it has one, else the crown's top and a third of it.
+				The placed crowns reaching within [param radius] of [param position] (horizontal distance), one [Dictionary] each: [code]position[/code] (the stem's foot, world), [code]preset[/code] (the species' [code]preset[/code] meta, or -1), [code]height[/code], [code]crown_base[/code] and [code]crown_radius[/code] in metres, scaled by the instance. [code]conifer[/code] is true for a needle-leaved crown. Height and crown base come from the species' first mesh's [code]crown[/code] meta (height, crown base, crown radius, unscaled) when it has one, else the crown's top and a third of it.
 			</description>
 		</method>
 		<method name="get_shade_at" qualifiers="const">
