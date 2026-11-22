@@ -430,7 +430,7 @@ void WaterWakeSolver::step(double p_delta, const Vector2 &p_center, const Vector
 		// Damping, and the grid filter: the shortest waves the grid holds lose 2/s more (k^4 below that). The exact
 		// step loses nothing on its own, where the explicit wave equation smears its waves as it goes, so it takes
 		// an eighth of the damping: at the default, the transverse waves still stand 50 m behind a boat.
-		const float ms[4] = { Math::TAU / size, dt, p_damping * 0.125f, 2.0f };
+		const float ms[4] = { float(Math::TAU / size), dt, p_damping * 0.125f, 2.0f };
 		memcpy(modes.ptrw(), mg, 16);
 		memcpy(modes.ptrw() + 16, ms, 16);
 	}

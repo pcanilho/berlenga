@@ -38,7 +38,9 @@
 #include "modules/weather/weather_map_3d.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "servers/rendering/rendering_server.h"
 
 GroundSurface3D *GroundSurface3D::active = nullptr;
