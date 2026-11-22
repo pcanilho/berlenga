@@ -53,7 +53,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 - **Rotten snow and slush** (`SnowCover3D.slush_enabled`): a wet spring pack bears less, so boots and wheels posthole deeper; melt water it cannot hold ponds at its base over frozen ground as grey-blue glossy slush, drains only downslope and refreezes in frost; prints in it fill with water.
 
 - **Surface hoar** (`SnowCover3D.hoar_enabled`): frost feathers grow on the snow on clear calm nights and, once snowed over, stay buried as a weak layer.
-- **Snow layers** (`SnowCover3D.layers_enabled`): crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail; the walls of ruts, prints and trenches show the layers, from fresh snow and wind slab to glazed crust lines, dark buried hoar seams and depth hoar at the base.
+- **Snow layers** (`SnowCover3D.layers_enabled`): crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail; the walls of ruts, prints and trenches show the layers with their own grain, from fine fresh snow and smooth wind slab to glazed crust ledges, dark buried hoar seams and coarse depth hoar at the base.
 
 - **Lake ice** (`SnowCover3D.lake_ice_enabled`): lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.
 
