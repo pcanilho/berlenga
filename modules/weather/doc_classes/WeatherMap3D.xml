@@ -553,6 +553,13 @@
 				The glaze at [param position]: mm of radial clear ice on an exposed twig or wire, from freezing rain (Jones 1998), melted in a thaw at 0.3 mm/h per K above 0 C. [code]WorldWeather.glaze_at[/code] reads it; shaders read it from the rain map's alpha ([code]weather_rain_map[/code]).
 			</description>
 		</method>
+		<method name="get_valley_wind_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The along-valley wind's share of the 10 m mean wind at [param position] (m/s, x and z; see [member valley_winds]).
+			</description>
+		</method>
 		<method name="get_warm_nose_melt" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -1472,6 +1479,9 @@
 		</member>
 		<member name="upslope_winds" type="bool" setter="set_upslope_winds" getter="is_upslope_winds_enabled" default="true">
 			Day upslope (anabatic) winds: on sunny calm days the air warmed against a slope runs up its fall line (Prandtl 1942; Whiteman 2000), about 1 to 2 m/s in a layer some tens of metres deep, weaker under cloud. Where they meet over a crest standing 60 m or more above the ground round it, fair-weather cumulus gathers over it at the condensation level when the air is moist enough (Banta 1990; Demko, Geerts and others 2009), counted by [method get_ridge_cloud_count]. In [method get_drainage_wind_at] and [method get_wind_at].
+		</member>
+		<member name="valley_winds" type="bool" setter="set_valley_winds" getter="is_valley_winds_enabled" default="true">
+			Along-valley winds: a valley heats more than the plain beyond it by day and cools more at night, so a wind blows up it on sunny calm afternoons, 3 to 5 m/s, and down it on clear calm nights, about 2 to 3 m/s (Whiteman 2000; Zardi and Whiteman 2013). It turns a couple of hours after the slope winds and grows with the valley's depth. It joins the cell's mean wind, so smoke, fog and every wind reader carry it along the valley. A wind over about 8 m/s sweeps it away.
 		</member>
 		<member name="valley_fog" type="bool" setter="set_valley_fog" getter="is_valley_fog_enabled" default="true">
 			Fill saturated cold air pools with radiation fog (Whiteman 2000; Gultepe et al. 2007): it forms over about an hour on clear calm nights, sits flat at the basin's saturation level and lifts after sunrise or in a wind. Drawn as a [FogVolume] lit by the froxel fog plus its multiple scattering, so raster and path tracing match. Needs [member cold_pools].

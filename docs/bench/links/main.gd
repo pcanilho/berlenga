@@ -309,6 +309,7 @@ func _ready() -> void:
 	await _high_water_tests()
 	await _late_frost_tests()
 	await _foehn_tests()
+	await _valley_wind_tests()
 	await _rime_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
@@ -2483,6 +2484,56 @@ func _foehn_tests() -> void:
 	m.queue_free()
 	c.queue_free()
 	ridge.queue_free()
+	await get_tree().physics_frame
+
+
+# Along-valley winds (WeatherMap3D.valley_winds): a valley 250 m deep rising toward +x; a sunny calm afternoon blows
+# up it, a clear calm night down it, the plain beside none, a wind sweeps it away.
+func _valley_wind_tests() -> void:
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 0.02 * p.x + 250.0 * (1.0 - exp(-p.z * p.z / (2.0 * 600.0 * 600.0)))\n"
+	vs.reload()
+	var valley := Node3D.new()
+	valley.set_script(vs)
+	add_child(valley)
+	var c := _new_clock(7, 13.0)
+	var m := _new_map()
+	m.extent = 8192.0
+	m.terrain_source = m.get_path_to(valley)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.5
+	m.temperature = 22.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(6.0 * 3600.0)
+	var floor_p := Vector3(0, 0, 0)
+	var plain := Vector3(0, 250, 3000)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var day: Vector3 = m.get_valley_wind_at(floor_p)
+	var day_plain: Vector3 = m.get_valley_wind_at(plain)
+	var wind10: Vector3 = w.wind_at(floor_p + Vector3(0, 10, 0)) - m.get_wind_at(floor_p + Vector3(0, 10, 0)) # the contract is the map's
+	_check("valley winds: a sunny calm afternoon blows up the valley (Whiteman 2000), a few m/s, none over the plain beside it",
+			day.x > 2.0 and absf(day.z) < 0.5 and day_plain.length() < 0.2 and wind10.length() < 0.01,
+			"%.1f m/s toward (%.2f, %.2f) on the floor; %.2f m/s on the plain" % [day.length(), day.normalized().x, day.normalized().z, day_plain.length()])
+	var wind_floor: Vector3 = m.get_wind_at(floor_p + Vector3(0, 10, 0))
+	_check("valley winds: in the map's wind (smoke, fog and every wind reader take it)", wind_floor.x > 2.0, "wind at 10 m %s" % wind_floor)
+	c.time_of_day = 2.0
+	m.advance(6.0 * 3600.0)
+	var night: Vector3 = m.get_valley_wind_at(floor_p)
+	_check("valley winds: a clear calm night turns it down the valley", night.x < -1.5, "%.1f m/s toward x %.2f" % [night.length(), signf(night.x)])
+	m.wind_speed = 12.0
+	m.snap_to_settings()
+	m.advance(4.0 * 3600.0)
+	var windy: Vector3 = m.get_valley_wind_at(floor_p)
+	m.valley_winds = false
+	_check("valley winds: a strong wind sweeps them away; off, none", windy.length() < 0.3 and m.get_valley_wind_at(floor_p).length() == 0.0, "%.2f m/s in a 12 m/s wind" % windy.length())
+	m.queue_free()
+	c.queue_free()
+	valley.queue_free()
 	await get_tree().physics_frame
 
 # The last flood's mark from its real producers (WorldWater.high_water_at): a river's sections and a lake fed over a

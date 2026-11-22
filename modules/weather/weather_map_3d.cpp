@@ -890,6 +890,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	_update_breeze(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
 	_update_ridge_clouds(p_weather_dt);
 	_update_foehn(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
+	_update_valley_winds(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
 	_update_leaf_frost();
 	c.pool = cold_pools && cell_pool.size() == resolution * resolution ? cell_pool.ptr() : nullptr;
 	c.foehn = foehn_winds && cell_foehn.size() == 3 * resolution * resolution ? cell_foehn.ptr() : nullptr;
@@ -1027,6 +1028,7 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		if (breeze_speed != 0.0f) {
 			w += _breeze_at(p) * breeze_speed;
 		}
+		w += _valley_wind_at(p);
 
 		for (const Storm &s : storms) {
 			const float env = _storm_weight(s);
@@ -1922,7 +1924,7 @@ float WeatherMap3D::get_canopy_closure_at(Vector3 p_position) const {
 // climate's factor then and every ten seconds of weather (a climate can be baked or replaced meanwhile).
 void WeatherMap3D::_update_orography(double p_weather_dt) {
 	const int n = resolution;
-	if ((!orographic_rain && !cold_pools && !drainage_winds && !upslope_winds && !foehn_winds) || !origin_valid || n <= 0) {
+	if ((!orographic_rain && !cold_pools && !drainage_winds && !upslope_winds && !foehn_winds && !valley_winds) || !origin_valid || n <= 0) {
 		return;
 	}
 	oro_age += p_weather_dt;
@@ -2017,9 +2019,10 @@ void WeatherMap3D::_update_pool_depths() {
 	float *d = cell_pool_depth.ptrw();
 	cell_ridge.resize(n * n);
 	float *rg = cell_ridge.ptrw();
-	if ((!cold_pools && !upslope_winds) || cell_height.size() != n * n) {
+	if ((!cold_pools && !upslope_winds && !valley_winds) || cell_height.size() != n * n) {
 		cell_pool_depth.fill(0.0f);
 		cell_ridge.fill(0.0f);
+		cell_valley.clear();
 		return;
 	}
 	// Summed-area tables of the known heights and their count, for the box mean.
@@ -2061,6 +2064,96 @@ void WeatherMap3D::_update_pool_depths() {
 	}
 	if (!cold_pools) {
 		cell_pool_depth.fill(0.0f);
+	}
+	// The valleys (valley_winds): the depth below the mean over VALLEY_RADIUS, and the up-valley direction from the
+	// mean's own gradient (the valley's sides cancel in it, its floor's rise toward the head stays).
+	if (!valley_winds) {
+		cell_valley.clear();
+		return;
+	}
+	const int rv = MAX(2, int(Math::ceil(2000.0f / _cell_size())));
+	LocalVector<float> mean2;
+	mean2.resize(n * n);
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int x0 = MAX(x - rv, 0), x1 = MIN(x + rv + 1, n), z0 = MAX(z - rv, 0), z1 = MIN(z + rv + 1, n);
+			const int c = cnt[z1 * m + x1] - cnt[z0 * m + x1] - cnt[z1 * m + x0] + cnt[z0 * m + x0];
+			mean2[z * n + x] = c < 4 ? NAN : float((sum[z1 * m + x1] - sum[z0 * m + x1] - sum[z1 * m + x0] + sum[z0 * m + x0]) / c);
+		}
+	}
+	cell_valley.resize(3 * n * n);
+	float *vl = cell_valley.ptrw();
+	const float cs = _cell_size();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			float *o = vl + 3 * i;
+			o[0] = o[1] = o[2] = 0.0f;
+			const int xa = MAX(x - 1, 0), xb = MIN(x + 1, n - 1), za = MAX(z - 1, 0), zb = MIN(z + 1, n - 1);
+			const float gx = (mean2[z * n + xb] - mean2[z * n + xa]) / (float(xb - xa) * cs);
+			const float gz = (mean2[zb * n + x] - mean2[za * n + x]) / (float(zb - za) * cs);
+			const float v = h[i];
+			if (!Math::is_finite(gx + gz + v + mean2[i])) {
+				continue;
+			}
+			const float g = Math::sqrt(gx * gx + gz * gz);
+			const float depth = mean2[i] - v;
+			if (depth <= 0.0f || g < 1e-5f) {
+				continue;
+			}
+			o[0] = gx / g;
+			o[1] = gz / g;
+			o[2] = depth * Math::smoothstep(0.002f, 0.01f, g);
+		}
+	}
+}
+
+// Along-valley winds (docs/ideas/world-links.md, "Along-valley winds"; Whiteman 2000, ch. 10; Zardi and Whiteman
+// 2013): a valley holds less air per area of sunlit or cooling ground than the plain beyond it (the topographic
+// amplification factor), so it heats more by day and cools more at night, and the pressure difference along it
+// drives a wind up the valley by day and down it at night, deeper (the valley's depth) and steadier than the slope
+// flows, 3 to 5 m/s by afternoon. Its reversals lag the slope winds by a couple of hours. Here the forcing is the
+// slope winds' own (sun, cloud, calm), relaxed over two hours, the night's two thirds of the day's; the speed grows
+// with the valley's depth below the 2 km mean (30 to 180 m, some 50 to 300 m of true depth). It joins the cell's mean wind, so smoke, fog, rain and
+// every wind reader carry it along the valley.
+void WeatherMap3D::_update_valley_winds(float p_dt_h) {
+	if (!valley_winds) {
+		valley_level = 0.0f;
+		return;
+	}
+	const float night = sun_known ? 1.0f - Math::smoothstep(0.0f, 0.1f, cur_sun_sine) : 0.0f;
+	const float day = sun_known ? Math::smoothstep(0.1f, 0.35f, cur_sun_sine) : 0.0f;
+	const float clear = 1.0f - Math::smoothstep(0.3f, 0.9f, cur_cloud_cover);
+	const float calm = 1.0f - Math::smoothstep(3.0f, 8.0f, cur_wind_speed);
+	const float target = (day * (1.0f - 0.7f * Math::smoothstep(0.4f, 0.95f, cur_cloud_cover)) - 0.67f * night * clear) * calm;
+	if (p_dt_h > 0.0f) {
+		// A strong wind aloft mixes the valley's own circulation out within half an hour.
+		valley_level += (target - valley_level) * (1.0f - Math::exp(-p_dt_h / (2.0f - 1.5f * (1.0f - calm))));
+	}
+}
+
+Vector2 WeatherMap3D::_valley_wind_at(const Vector2 &p_xz) const {
+	const int n = resolution;
+	if (!valley_winds || Math::abs(valley_level) < 0.01f || cell_valley.size() != 3 * n * n) {
+		return Vector2();
+	}
+	const Vector2 dir(_sample(cell_valley, p_xz, 3, 0), _sample(cell_valley, p_xz, 3, 1));
+	const float depth = _sample(cell_valley, p_xz, 3, 2);
+	return dir * (4.5f * valley_level * Math::smoothstep(30.0f, 180.0f, depth)); // depth below the 2 km mean: about 0.6 of the valley's own
+}
+
+Vector3 WeatherMap3D::get_valley_wind_at(const Vector3 &p_position) const {
+	const Vector2 w = _valley_wind_at(Vector2(p_position.x, p_position.z));
+	return Vector3(w.x, 0.0f, w.y);
+}
+
+void WeatherMap3D::set_valley_winds(bool p_enabled) {
+	valley_winds = p_enabled;
+	if (!p_enabled) {
+		valley_level = 0.0f;
+		cell_valley.clear();
+	} else {
+		oro_origin = Vector2i(INT32_MAX, INT32_MAX);
 	}
 }
 
@@ -4837,9 +4930,13 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_foehn_winds", "enabled"), &WeatherMap3D::set_foehn_winds);
 	ClassDB::bind_method(D_METHOD("is_foehn_winds_enabled"), &WeatherMap3D::is_foehn_winds_enabled);
 	ClassDB::bind_method(D_METHOD("get_foehn_at", "position"), &WeatherMap3D::get_foehn_at);
+	ClassDB::bind_method(D_METHOD("set_valley_winds", "enabled"), &WeatherMap3D::set_valley_winds);
+	ClassDB::bind_method(D_METHOD("is_valley_winds_enabled"), &WeatherMap3D::is_valley_winds_enabled);
+	ClassDB::bind_method(D_METHOD("get_valley_wind_at", "position"), &WeatherMap3D::get_valley_wind_at);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "upslope_winds"), "set_upslope_winds", "is_upslope_winds_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "late_frost"), "set_late_frost", "is_late_frost_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "foehn_winds"), "set_foehn_winds", "is_foehn_winds_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "valley_winds"), "set_valley_winds", "is_valley_winds_enabled");
 	ClassDB::bind_method(D_METHOD("set_drainage_winds", "enabled"), &WeatherMap3D::set_drainage_winds);
 	ClassDB::bind_method(D_METHOD("is_drainage_winds_enabled"), &WeatherMap3D::is_drainage_winds_enabled);
 	ClassDB::bind_method(D_METHOD("get_drainage_wind_at", "position", "height_above_ground"), &WeatherMap3D::get_drainage_wind_at, DEFVAL(-1.0f));

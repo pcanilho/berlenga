@@ -652,6 +652,13 @@ private:
 	// Foehn in the lee of ranges (foehn_winds): per cell x the lee's warming (K), y its dew point change (K), z the
 	// cloud gap (0..1), relaxed over an hour.
 	bool foehn_winds = true;
+	// Along-valley winds (valley_winds): per cell the up-valley direction (x, z) and the valley's depth (m); the
+	// day's up-valley (+) or night's down-valley (-) forcing relaxed over two hours.
+	bool valley_winds = true;
+	float valley_level = 0.0f;
+	Vector<float> cell_valley;
+	void _update_valley_winds(float p_dt_h);
+	Vector2 _valley_wind_at(const Vector2 &p_xz) const;
 	Vector<float> cell_foehn;
 	void _update_foehn(float p_dt_h);
 	Vector3 _foehn_at(const Vector2 &p_xz) const;
@@ -1338,6 +1345,9 @@ public:
 	void set_foehn_winds(bool p_enabled);
 	bool is_foehn_winds_enabled() const { return foehn_winds; }
 	Vector3 get_foehn_at(const Vector3 &p_position) const;
+	void set_valley_winds(bool p_enabled);
+	bool is_valley_winds_enabled() const { return valley_winds; }
+	Vector3 get_valley_wind_at(const Vector3 &p_position) const;
 	void set_drainage_winds(bool p_enabled);
 	bool is_drainage_winds_enabled() const { return drainage_winds; }
 	Vector3 get_drainage_wind_at(Vector3 p_position, float p_height_above_ground) const;
