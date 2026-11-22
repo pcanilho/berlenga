@@ -222,6 +222,8 @@ bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
 	const float lo = Math::deg_to_rad(min_slope), hi = Math::deg_to_rad(max_slope);
 	const bool crusts = p_cover->pub.crust.size() == n * n && p_cover->pub.crust_burial.size() == n * n;
 	const bool hoars = p_cover->pub.hoar_layer.size() == n * n && p_cover->pub.hoar_burial.size() == n * n && p_cover->pub.hoar_age.size() == n * n;
+	const int LL = SnowCover3D::PACK_LAYERS;
+	const bool layered = p_cover->pub.layer_n.size() == n * n && p_cover->pub.layer_liq.size() == n * n * LL && p_cover->pub.layer_kind.size() == n * n * LL;
 	// The slab and its stability per cell (the weakest of the new snow, a buried crust's facets and buried surface
 	// hoar).
 	Vector<float> stab, slab;
@@ -246,21 +248,60 @@ bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
 				best = stability_index(recent[i], p_cover->pub_top_density(i, recent[i]), WEAK_DENSITY, recent_age[i], slope);
 				best_slab = recent[i];
 			}
-			if (crusts && p_cover->pub.crust[i] > 0.0f && p_cover->pub.crust_burial[i] >= min_slab) {
-				const float s = stability_index(p_cover->pub.crust_burial[i], p_cover->pub_top_density(i, p_cover->pub.crust_burial[i]), BURIED_WEAK_DENSITY, 0.0f, slope);
-				if (s < best) {
-					best = s;
-					best_slab = p_cover->pub.crust_burial[i];
+			const int nl = layered ? p_cover->pub.layer_n[i] : 0;
+			if (nl > 0) {
+				// The layers (follow-up 51): every buried crust and buried hoar layer, not only the newest, and the
+				// interface water ponds on.
+				const int lb = i * SnowCover3D::PACK_LAYERS;
+				const float cap = MAX(p_cover->liquid_capacity, 0.005f);
+				float b = 0.0f; // depth above layer j
+				for (int j = nl - 1; j >= 0; j--) {
+					const uint8_t kind = p_cover->pub.layer_kind[lb + j];
+					const float lswe = p_cover->pub.layer_swe[lb + j];
+					const float dj = lswe / MAX(p_cover->pub.layer_rho[lb + j], 30.0f);
+					if (b >= min_slab && kind == SnowCover3D::LAYER_CRUST) {
+						const float s = stability_index(b, p_cover->pub_top_density(i, b), BURIED_WEAK_DENSITY, 0.0f, slope);
+						if (s < best) {
+							best = s;
+							best_slab = b;
+						}
+					} else if (b >= min_slab && kind == SnowCover3D::LAYER_HOAR) {
+						const float load = p_cover->pub_top_density(i, b) * GRAVITY * b * Math::sin(slope) * Math::cos(slope);
+						const float s = load > 1.0e-3f ? SnowCover3D::buried_hoar_strength(lswe * SnowCover3D::HOAR_MM_PER_KG_LAYER, p_cover->pub.layer_age[lb + j]) / load : 1.0e6f;
+						if (s < best) {
+							best = s;
+							best_slab = b;
+						}
+					}
+					// Water ponded in this layer over the one under it: the interface at its bottom fails wet.
+					const float ice = lswe - p_cover->pub.layer_liq[lb + j];
+					if (j > 0 && b + dj >= min_slab && ice > 0.5f && p_cover->pub.layer_liq[lb + j] > cap * ice &&
+							SnowCover3D::layer_barrier(kind, p_cover->pub.layer_kind[lb + j - 1]) > 0.0f) {
+						const float s = stability_index(b + dj, p_cover->pub_top_density(i, b + dj), BURIED_WEAK_DENSITY, 0.0f, slope);
+						if (s < best) {
+							best = s;
+							best_slab = b + dj;
+						}
+					}
+					b += dj;
 				}
-			}
-			if (hoars && p_cover->pub.hoar_layer[i] > 0.0f && p_cover->pub.hoar_burial[i] >= min_slab) {
-				// Buried surface hoar (round 5): the persistent weak layer clear calm nights leave, weak for weeks.
-				const float b = p_cover->pub.hoar_burial[i];
-				const float load = p_cover->pub_top_density(i, b) * GRAVITY * b * Math::sin(slope) * Math::cos(slope);
-				const float s = load > 1.0e-3f ? SnowCover3D::buried_hoar_strength(p_cover->pub.hoar_layer[i], p_cover->pub.hoar_age[i]) / load : 1.0e6f;
-				if (s < best) {
-					best = s;
-					best_slab = b;
+			} else {
+				if (crusts && p_cover->pub.crust[i] > 0.0f && p_cover->pub.crust_burial[i] >= min_slab) {
+					const float s = stability_index(p_cover->pub.crust_burial[i], p_cover->pub_top_density(i, p_cover->pub.crust_burial[i]), BURIED_WEAK_DENSITY, 0.0f, slope);
+					if (s < best) {
+						best = s;
+						best_slab = p_cover->pub.crust_burial[i];
+					}
+				}
+				if (hoars && p_cover->pub.hoar_layer[i] > 0.0f && p_cover->pub.hoar_burial[i] >= min_slab) {
+					// Buried surface hoar (round 5): the persistent weak layer clear calm nights leave, weak for weeks.
+					const float b = p_cover->pub.hoar_burial[i];
+					const float load = p_cover->pub_top_density(i, b) * GRAVITY * b * Math::sin(slope) * Math::cos(slope);
+					const float s = load > 1.0e-3f ? SnowCover3D::buried_hoar_strength(p_cover->pub.hoar_layer[i], p_cover->pub.hoar_age[i]) / load : 1.0e6f;
+					if (s < best) {
+						best = s;
+						best_slab = b;
+					}
 				}
 			}
 			if (p_cover->pub.depth_hoar.size() == n * n && p_cover->pub.depth_hoar[i] > 0.05f) {
@@ -1760,7 +1801,11 @@ float SnowAvalanche3D::_wet_factor(const SnowCover3D *p_cover, int p_ci) const {
 	if (!wet_enabled || p_ci < 0 || p_cover->cell_liquid.size() != nn || p_cover->cell_swe[p_ci] <= 1.0f) {
 		return 1.0f;
 	}
-	const float index = CLAMP(p_cover->cell_liquid[p_ci] / p_cover->cell_swe[p_ci] / MAX(p_cover->liquid_capacity, 0.005f), 0.0f, 1.0f);
+	float index = CLAMP(p_cover->cell_liquid[p_ci] / p_cover->cell_swe[p_ci] / MAX(p_cover->liquid_capacity, 0.005f), 0.0f, 1.0f);
+	// With layers (follow-up 51) the index is the wettest layer's: water ponding over a barrier wets the interface
+	// a slab fails on long before the pack's mean says so.
+	float depth = 0.0f;
+	index = MAX(index, CLAMP(p_cover->pub_wettest_layer(p_ci, depth), 0.0f, 1.0f));
 	return Math::pow(wet_weakening, index);
 }
 

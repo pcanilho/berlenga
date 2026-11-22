@@ -223,6 +223,8 @@ func _ready() -> void:
 			await _run_road_tests()
 		elif only == "layers":
 			await _run_layer_tests()
+		elif only == "percolation":
+			await _run_percolation_tests()
 		elif only == "roofs":
 			await _run_roof_tests()
 		elif only == "drift":
@@ -737,7 +739,7 @@ func _wind_case(wind: float, hours: int, fall: float) -> Array:
 func _layer_text(p: Vector3) -> String:
 	var t := ""
 	for l: Dictionary in snow.get_layers_at(p):
-		t += "[%s %.0f cm %.0f kg/m3 %.0f h] " % [l["kind"], float(l["depth"]) * 100.0, l["density"], l["age"]]
+		t += "[%s %.0f cm %.0f kg/m3 %.0f h%s] " % [l["kind"], float(l["depth"]) * 100.0, l["density"], l["age"], (" %.1f mm wet" % float(l["liquid"])) if float(l.get("liquid", 0.0)) > 0.05 else ""]
 	return t.strip_edges()
 
 
@@ -832,6 +834,101 @@ func _run_layer_tests() -> void:
 				lo_s = minf(lo_s, av.get_trigger_index_at(Vector3(x, 0, z), 0.0))
 		lowest.append(lo_s)
 	_check("a storm slab on a dense old pack weighs its own density (layers)", float(lowest[0]) > 1.2 * float(lowest[1]) and float(lowest[0]) > 1.0, "lowest S %.2f with layers, %.2f with the bulk density" % [lowest[0], lowest[1]])
+
+
+# Water in the layers (follow-up 51): crusts, buried hoar and depth hoar are layers; melt water percolates down and
+# ponds over capillary barriers and crusts, where wet slabs fail.
+func _wet_index(l: Dictionary) -> float:
+	var ice := float(l["swe"]) - float(l["liquid"])
+	return float(l["liquid"]) / maxf(snow.liquid_capacity * ice, 1e-4) if ice > 0.5 else 0.0
+
+
+func _run_percolation_tests() -> void:
+	print("Water in the layers (follow-up 51):")
+	_check("barriers: new snow over old ponds, old over old passes, an ice crust ponds most", SnowCover3D.layer_barrier(0, 2) > 0.0 and SnowCover3D.layer_barrier(2, 2) == 0.0 and SnowCover3D.layer_barrier(2, 3) > SnowCover3D.layer_barrier(0, 2), "%.2f, %.2f, %.2f" % [SnowCover3D.layer_barrier(0, 2), SnowCover3D.layer_barrier(2, 2), SnowCover3D.layer_barrier(2, 3)])
+	await _setup("flat", 64.0, 16, -8.0)
+	snow.hoar_enabled = false
+	snow.depth_hoar_enabled = false
+	var p := Vector3(0, 0, 0)
+	snow.add_snow(150.0, 300.0)
+	for h in 24:
+		snow.advance(3600.0)
+	# Rain on it, then frost: a crust on top.
+	weather.wind_speed = 1.0
+	await _thaw(1.0, 3.0, 2.0)
+	await _thaw(-8.0, 12.0)
+	var crusted: Array = snow.get_layers_at(p)
+	print("  rain then frost: %s; crust %.1f cm" % [_layer_text(p), snow.get_crust_thickness_at(p) * 100.0])
+	_check("rain on snow that freezes is a crust layer on top", crusted.size() >= 2 and crusted[-1]["kind"] == "crust", _layer_text(p))
+	for h in 10:
+		_precipitate(1.0, 4.0)
+		if OS.get_cmdline_user_args().has("--verbose"):
+			print("    storm h%d: crust %.3f under %.3f: %s" % [h, snow.get_crust_thickness_at(p), snow.get_crust_depth_at(p), _layer_text(p)])
+	await _thaw(-8.0, 6.0)
+	print("  a storm on it: %s" % _layer_text(p))
+	var buried: Array = snow.get_layers_at(p)
+	var crust_at := -1
+	for j in buried.size():
+		if buried[j]["kind"] == "crust":
+			crust_at = j
+	_check("the storm buries the crust: it stays a layer", crust_at >= 1 and crust_at < buried.size() - 1, _layer_text(p))
+	# Rain on it: the water runs down through the new snow and ponds on the crust.
+	var peak := 0.0
+	var peak_text := ""
+	for h in 8:
+		await _thaw(1.0, 1.0, 1.5)
+		var ls: Array = snow.get_layers_at(p)
+		for j in ls.size():
+			if j > 0 and ls[j - 1]["kind"] == "crust" and _wet_index(ls[j]) > peak:
+				peak = _wet_index(ls[j])
+				peak_text = _layer_text(p)
+	var sums := _layer_sum(p)
+	print("  wettest over the crust: %s (index %.2f)" % [peak_text, peak])
+	_check("melt water ponds over the buried crust: the layer on it holds more than its share", peak > 1.2, "index %.2f over the crust" % peak)
+	_check("the layers still add up to the bulk pack", absf(sums[1] - snow.get_swe_at(p)) < 0.5, "%.1f mm against %.1f mm" % [sums[1], snow.get_swe_at(p)])
+	# Two hoar nights, each snowed on: the layers keep both buried hoar layers (the single field keeps one).
+	await _setup("flat", 64.0, 16, -10.0)
+	snow.depth_hoar_enabled = false
+	snow.add_snow(80.0, 200.0)
+	weather.cloud_cover = 0.0
+	weather.humidity = 0.9
+	weather.wind_speed = 1.5
+	await _weather_to(-10.0, 24.0)
+	var first := snow.get_hoar_at(p)
+	snow.add_snow(20.0, 100.0)
+	await _weather_to(-10.0, 24.0)
+	var second := snow.get_hoar_at(p)
+	snow.add_snow(20.0, 100.0)
+	await _weather_to(-10.0, 2.0)
+	var hoars := []
+	for l: Dictionary in snow.get_layers_at(p):
+		if l["kind"] == "hoar":
+			hoars.append(float(l["crystal_mm"]))
+	print("  two hoar nights snowed on: %s" % _layer_text(p))
+	_check("two snowed-on hoar nights are two buried hoar layers", hoars.size() == 2 and absf(hoars[0] - first) < 0.2 and absf(hoars[1] - second) < 0.2, "%s mm (grew %.1f and %.1f mm); the field keeps %.1f mm" % [str(hoars), first, second, snow.get_buried_hoar_at(p)])
+	# A wet slab: 40 cm of new snow on a bonded old pack on the 38 degree face, in a thaw. The water ponds where the
+	# new snow meets the old, so the slab lets go sooner than the pack's mean wetness says.
+	var hours := []
+	var depths := []
+	for layered: bool in [true, false]:
+		var av := await _trigger_setup()
+		snow.hoar_enabled = false
+		snow.depth_hoar_enabled = false
+		snow.crust_enabled = false
+		snow.layers_enabled = layered
+		snow.add_snow(150.0, 300.0)
+		snow.advance(8.0 * 24.0 * 3600.0)
+		snow.add_snow(30.0, 100.0)
+		snow.advance(2.0 * 24.0 * 3600.0) # two cold days: holds alone
+		await get_tree().physics_frame
+		av.natural_release = true
+		var h := 0
+		while h < 24 and av.get_release_count() == 0:
+			await _thaw(2.0, 1.0)
+			h += 1
+		hours.append(h)
+		depths.append(av.get_released_volume())
+	_check("a wet slab over the new snow's barrier releases sooner with layers", int(hours[0]) < 24 and int(hours[0]) < int(hours[1]), "released after %d h with layers (%.0f m3), %d h by the pack's mean wetness (%.0f m3; 24 = none)" % [hours[0], depths[0], hours[1], depths[1]])
 
 
 # Snow sliding off roofs (follow-up 50): a roof face (snow_roof group) keeps Eurocode's share of the snowfall, slides

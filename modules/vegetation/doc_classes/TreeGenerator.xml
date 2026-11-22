@@ -632,8 +632,26 @@
 		<constant name="PRESET_SALTBUSH" value="48" enum="Preset">
 			Mediterranean saltbush (Atriplex halimus): a dense, rounded shrub 1-2.5 m of silty, saline flats and coasts, with small silvery-grey ovate leaves held most of the year and pale stems.
 		</constant>
-		<constant name="PRESET_MAX" value="49" enum="Preset">
-			Number of presets.
+		<constant name="PRESET_DATE_PALM" value="49" enum="Preset">
+			Phoenix dactylifera: a tall single trunk clad in cut leaf bases, a crown of feather fronds.
+		</constant>
+		<constant name="PRESET_ASPEN" value="50" enum="Preset">
+			Populus tremula: a slender pioneer of root-sucker clones, round leaves trembling on flattened stalks, grey-green lenticelled bark.
+		</constant>
+		<constant name="PRESET_BLACK_POPLAR" value="51" enum="Preset">
+			Populus nigra: a massive floodplain tree with arching limbs and near-black furrowed bark; mistletoe's heaviest host.
+		</constant>
+		<constant name="PRESET_WILD_CHERRY" value="52" enum="Preset">
+			Prunus avium: a straight stem with its limbs in tiers, banded red-brown bark, white blossom in April, crimson in autumn.
+		</constant>
+		<constant name="PRESET_HORNBEAM" value="53" enum="Preset">
+			Carpinus betulus: a fluted grey stem under a dense crown; very shade tolerant.
+		</constant>
+		<constant name="PRESET_SWEET_CHESTNUT" value="54" enum="Preset">
+			Castanea sativa: a broad dome on a massive bole, long toothed leaves.
+		</constant>
+		<constant name="PRESET_MAX" value="55" enum="Preset">
+			Size of the [enum Preset] enum.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">
 			Beech forest with sycamore and ash; sparse shrubs.

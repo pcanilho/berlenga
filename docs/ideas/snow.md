@@ -1879,6 +1879,37 @@ Built (SnowBodies3D): a node in group `snow_roof` is a roof face.
 - Not yet: the slab as a falling body (PhysX) and its powder puff; ice dams and icicles at the eave from the same
   heat (follow-up 13 has icicles from a heated roof already); snow guards; gutters.
 
+## Follow-up 51: water in the layers (round 8, 22 Nov 2026)
+
+Research: SNOWPACK moves water by a bucket scheme or the Richards equation (Wever et al. 2014); Crocus by buckets
+with a holding capacity of about 5% of pore volume. Lab and field work show water stops at fine-over-coarse
+interfaces until the fine layer's suction is overcome (capillary barrier) and ponds in the few centimetres above
+(Waldner, Schneebeli et al. 2004; Avanzi et al. 2016: 5-15% by volume); ice layers pond more and pass water by flow
+fingers. Wet slab avalanches fail where it ponds (Mitterer et al. 2011, the LWC index; Wever et al. 2016).
+
+Built (SnowCover3D, layers on by default):
+- Layer kinds crust, hoar (buried surface hoar, its crystal size from its mass) and depth hoar join new, wind and
+  old; PACK_LAYERS 8. The top crust is the top's crust-thick part at 450 kg/m3 and stays a layer when buried (the
+  bulk keeps only the top crust); snowed-on surface hoar is split off the surface as a hoar layer; the base is depth
+  hoar while the bulk's share is over 0.5. Crusts and hoar are never merged away as traces; when full, the two
+  thinnest other adjacent layers merge. Wet new or wind snow turns old (wet rounding); wet or six-week-old buried
+  hoar is gone.
+- Each layer holds its share of the bulk's liquid (`liquid` in `get_layers_at`): water comes in at the top, drains
+  from the bottom in the warm and refreezes from the top in the cold, and percolates down within the update. Each
+  layer holds liquid_capacity of its ice, plus `layer_barrier` (8% by volume over a capillary barrier, 15% over a
+  crust) in its lowest 3 cm. The bulk's water balance is unchanged: the layers say where its water is.
+- Avalanches: with layers, `_check_release` weighs every buried crust and buried hoar layer (not only the newest)
+  and adds the interface a ponding layer sits on as a wet weak layer; the wet factor reads the wettest layer's index.
+- Fix on the way: a trace of rain (the phase's tail, micrograms in deep frost) resets the bulk's buried crust; the
+  layers keep it now, so avalanches see it. The bulk field is left as it was (world-tier cornice and nesting
+  benches depend on it).
+- `--test=percolation`: rain then frost makes a crust layer on top; a 40 mm storm buries it and it stays; 12 mm of
+  rain at +1 C ponds on it (index 1.87, 4.4 mm in the layer over it); the layers add up to the bulk; two snowed-on
+  hoar nights are two hoar layers (12.3 mm each) where the field keeps one; 30 cm of new snow on a bonded pack on
+  38 degrees releases after 13 h at +2 C with layers and not within a day by the pack's mean wetness.
+- Not yet: ponding that holds back the pack's drainage (it would change the weather's runoff contract); preferential
+  flow fingers; a crust's own strength as a bridge.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

@@ -105,6 +105,11 @@ public:
 		PRESET_WHITE_BROOM, // Retama raetam (trees.md 5ae).
 		PRESET_SALTBUSH, // Atriplex halimus (trees.md 5ae).
 		PRESET_DATE_PALM, // Phoenix dactylifera (trees.md 5ai).
+		PRESET_ASPEN, // Populus tremula (trees.md 5bf): slender pioneer of root-sucker clones, trembling leaves.
+		PRESET_BLACK_POPLAR, // Populus nigra (trees.md 5bf): massive floodplain tree, burred and leaning.
+		PRESET_WILD_CHERRY, // Prunus avium (trees.md 5bf): tiered crown, banded red-brown bark, white in April.
+		PRESET_HORNBEAM, // Carpinus betulus (trees.md 5bf): fluted grey stem, dense crown, shade tolerant.
+		PRESET_SWEET_CHESTNUT, // Castanea sativa (trees.md 5bf): broad, long toothed leaves, spiral-furrowed bark.
 		PRESET_MAX,
 	};
 

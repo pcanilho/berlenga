@@ -392,7 +392,7 @@
 			<return type="Array" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				The pack's layers at [param position] (its cell), bottom first, as dictionaries: [code]swe[/code] (kg/m²), [code]density[/code] (kg/m³), [code]depth[/code] (m), [code]age[/code] (hours) and [code]kind[/code] ([code]"new"[/code] fallen snow under a week old, [code]"wind"[/code] wind-laid or wind-packed slab, [code]"old"[/code] settled). Empty with [member layers_enabled] off.
+				The pack's layers at [param position] (its cell), bottom first, as dictionaries: [code]swe[/code] (kg/m²), [code]density[/code] (kg/m³), [code]depth[/code] (m), [code]age[/code] (hours) and [code]kind[/code] ([code]"new"[/code] fallen snow under a week old, [code]"wind"[/code] wind-laid or wind-packed slab, [code]"old"[/code] settled, [code]"crust"[/code] a melt-freeze or rain crust, [code]"hoar"[/code] buried surface hoar, with its [code]crystal_mm[/code], [code]"depth_hoar"[/code] the base turned to depth hoar) and [code]liquid[/code] (kg/m², its share of the pack's liquid water). Empty with [member layers_enabled] off.
 			</description>
 		</method>
 		<method name="get_main_thread_msec" qualifiers="const">
@@ -694,6 +694,14 @@
 				Returns lake ice after [param hours] at [param air_celsius] (below 0 °C) from [param ice] metres, under [param snow_depth] metres of snow of [param snow_density] kg/m³: Stefan's law with the heat path through the snow and the air (Leppäranta 1993; Ashton 1989), integrated exactly.
 			</description>
 		</method>
+		<method name="layer_barrier" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="kind_above" type="int" />
+			<param index="1" name="kind_below" type="int" />
+			<description>
+				The liquid water (share by volume, over the 3 cm above the interface) a layer of [param kind_above] ponds over one of [param kind_below] (kinds as numbered: 0 new, 1 wind, 2 old, 3 crust, 4 hoar, 5 depth hoar): 0.08 where fine grains lie over coarse ones (a capillary barrier; Waldner et al. 2004, Avanzi et al. 2016), 0.15 over a crust, 0 where water passes on. Water percolates down through the layers each update; what a barrier ponds is where wet slabs fail.
+			</description>
+		</method>
 		<method name="layer_compaction" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="density" type="float" />
@@ -910,7 +918,7 @@
 			How fast the air cools with height above the weather map's ground height, in °C per km (6.5, the standard atmosphere). Sets where rain turns to snow on a mountain and where snow stays.
 		</member>
 		<member name="layers_enabled" type="bool" setter="set_layers_enabled" getter="is_layers_enabled" default="true">
-			The pack as layers (up to six a cell), as Crocus and SNOWPACK keep it: each snowfall and each wind deposit is a layer with its own density and age, settling under the weight above it ([method layer_compaction]); the wind's packing turns the top into a wind slab layer. The bulk fields stay the pack's total: each update the layers are matched to them, melt, erosion, slides and releases coming off the top and the bulk's settling going to the layers by their pore space. Avalanches weigh a slab over a weak layer by its own layers (light new snow on a dense old pack is light), and the wind packs the top by its own density. About 2.5 ms more an update on a 256 x 256 square. See [method get_layers_at].
+			The pack as layers (up to eight a cell), as Crocus and SNOWPACK keep it: each snowfall and each wind deposit is a layer with its own density and age, settling under the weight above it ([method layer_compaction]); the wind's packing turns the top into a wind slab layer. The bulk fields stay the pack's total: each update the layers are matched to them, melt, erosion, slides and releases coming off the top and the bulk's settling going to the layers by their pore space. Avalanches weigh a slab over a weak layer by its own layers (light new snow on a dense old pack is light), and the wind packs the top by its own density. About 2.5 ms more an update on a 256 x 256 square. Melt-freeze and rain crusts, buried surface hoar and depth hoar are layers of their own, so older buried weak layers stay known to avalanches; the pack's liquid water is split among the layers, percolating down and ponding over capillary barriers and crusts ([method layer_barrier]), and avalanches read the wettest layer and the interface the water ponds on. See [method get_layers_at].
 		</member>
 		<member name="liquid_capacity" type="float" setter="set_liquid_capacity" getter="get_liquid_capacity" default="0.05">
 			The share of its ice the snowpack holds as liquid water before meltwater and rain drain out.
