@@ -2007,3 +2007,7 @@ array, for the path tracer's material slot), so the days pass without a rebuild.
 - Check: vegetation --test=sod ("sod landing").
 - Hay fixes from the site-shot scout: herbs of hand-built species (plant shader, no plant_preset meta) are cut too,
   ground features (mounds, dung, wrack, bank sod, webs, bales) never; bales are not dropped in water.
+- Dark stubble check (22 Nov): in the raster bench the mown sward is brighter than the uncut one (mean of the lower
+  half 41/52/28 against 32/40/21), so the dark read is the bench's light, not the stubble's material. One fault fixed:
+  the blades' ambient darkening (Monsi and Saeki leaf area, in AO) took the whole sward's leaf area over the stubble;
+  it now takes the stubble's (about the height left). Paler cut tips are a round 10 option, not built.
