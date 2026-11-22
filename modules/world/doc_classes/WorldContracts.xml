@@ -22,6 +22,13 @@
 				Removes every stub set or added by a test: the producers are current again.
 			</description>
 		</method>
+		<method name="climate_precipitation_factor_at" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The terrain climate's precipitation at [param position] over its region's mean (TerrainDataMap3D's baked orographic pattern); 1 where no climate covers the point.
+			</description>
+		</method>
 		<method name="describe_body" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="node" type="Node" />

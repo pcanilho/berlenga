@@ -188,7 +188,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Winch** (`PhysXWinch3D`: `rated_pull`, `line_speed`, `brake_hold`): a cable winch that slows under load, stalls at its rated pull and slips its brake; the cable sags and lies on the ground.
 - **Worn tracks** (`GroundSurface3D.worn_tracks`, `wear_regrowth_days`): repeated wheel passes pack the soil firmer so it sheds rain, flatten the grass and then wear it bare, and it all regrows over weeks.
 - **Stream fords** (`GroundSurface3D.stream_fords`): wheels crossing a stream scour its bed and its soft banks give way under them.
-- **Vehicles in water** (`PhysXVehicle3D.river_forces`, `hull_seal`): rivers, fords and floods buoy a vehicle by how much of its body keeps water out and push it with the current, carrying it off when the water is deep and fast.
+- **Vehicles in water** (`PhysXVehicle3D.river_forces`, `hull_seal`, `hull_leak_area`, `air_intake_height`, `snorkel`): rivers, fords and floods buoy a vehicle by how much of its body keeps water out and push it with the current, carrying it off when the water is deep and fast; a wading vehicle pushes a bow wave and wake that grow with speed, its cab floods through door and floor gaps until it settles and sinks, then drains on land, and the engine stalls once water reaches the air intake, which a snorkel lifts over the roof.
 - **Mud on vehicles** (`PhysXVehicle3D.body_mud`; GroundSurface3D `mud_color`, `mud_color_map`): tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates and shakes off on bumps.
 - **Mud spray** (`PhysXGroundGrains3D.mud_spray`): spinning wheels fling clods of wet clay that land back in the ground.
 - **Mud splats** (`PhysXVehicle3D.add_mud_splat()`): clods that hit a vehicle stick as domed splats that drip, dry and wash off in water.
@@ -216,6 +216,12 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   ![Dry sand 40 cm from the camera at full resolution, without and with sand glints, raster](media/sand-glints.jpg)
 
   *Sand glints: the blurred sand surface resolves into single grains up close.*
+
+- **Rain pits** (`GroundSurface3D.rain_pits`): raindrops pit dry sand with small rimmed craters, a new pattern each shower, and the wetted skin dries into a crust that holds off the wind.
+
+  ![Dry rippled sand up close before and after a light shower, raster](media/sand-rain-pits.jpg)
+
+  *Rain pits: a light shower leaves dry sand dotted with small rimmed craters.*
 
 - **Wet sand** (`GroundSurface3D.water_coupling`; `water_sources`): water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), topped in a dry climate by a pale, patchy salt crust (`salt_crusts`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.
 

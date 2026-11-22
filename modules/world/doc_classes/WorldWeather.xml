@@ -178,6 +178,13 @@
 				Override in a stub to replace [method obstacle_lee_at].
 			</description>
 		</method>
+		<method name="_orographic_factor_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override for [method orographic_factor_at].
+			</description>
+		</method>
 		<method name="_precipitation_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -478,6 +485,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The near-ground wind at [param position] behind upwind obstacles over the open wind: about 0.15 in the cavity to 2 heights downwind, recovering over 6 heights, 1 past 25 heights or in the open. [param position]'s height over the ground counts as a surface raised in the lee (a snow drift): the lee fades out as it reaches 1.2 times the obstacle's height, a drift at equilibrium (Tabler 1991); pass the ground's height for the bare ground. Blowing snow and sand slow and drop there. Default 1.
+			</description>
+		</method>
+		<method name="orographic_factor_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The orographic factor [method precipitation_at] already carries at [param position] (the terrain climate's precipitation pattern, applied by [WeatherMap3D] [member WeatherMap3D.orographic_rain]); 1 where none is applied. A reader with its own climate read divides this out.
 			</description>
 		</method>
 		<method name="precipitation_at" qualifiers="const">

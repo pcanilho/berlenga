@@ -163,12 +163,13 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Lightning → cloud lights list | linked (20 Nov) | WeatherLightning3D flashes | Listed in `WeatherMap3D.get_cloud_lights()` for readers; the sky keeps its own full-resolution flash glow |
 | Cloud base → lightning strike height | linked (20 Nov) | `cloud_base_at` | WeatherLightning3D starts the leader at the local base |
 | Cloud base → hill fog | linked (20 Nov) | `cloud_base_at`, WorldGround `height_at` | VegetationMist3D: ground within 40 m under the base (cover over 0.3) stands in cloud; wind, overcast and sun do not clear it. The base never drops under ground + 30 m from the day's air alone; an authored base below a ridge stays (fog drip) |
-| Cloud base → snow line, orographic rain | later | `cloud_base_at` | |
+| Terrain climate → upslope rain, rain shadow; air at height → snow line | linked (22 Nov) | `WorldContracts.climate_precipitation_factor_at` (TerrainDataMap3D, a `WorldClimateProvider`: its baked precipitation over the recipe's, Smith and Barstad 2004); `WorldWeather.orographic_factor_at` | WeatherMap3D `orographic_rain` (on): each cell's rain times the climate's factor (refreshed every 10 s and as the square moves; heights read once per cell), and rain or snow by the air at the cell's own ground height (Jennings 2018 with the lapse rate), so the summit snows while the foot rains. SnowCover3D, which reads the climate itself, divides out the weather's factor so it is not counted twice. Links check: a 600 m ridge, 1.05 windward and 1.34 in the lee (spillover over a 1 km ridge), rain share 0.80 at the foot and 0.08 on top |
 | Any system → cloud density | linked (20 Nov) | `add_cloud_effector` callers | `WorldWeather.cloud_effector_at`; shadow bake and sky both see it |
 | Terrain, wind aloft, temperature, humidity, mid/high layers → wave clouds (lenticulars) | linked (20 Nov) | terrain source, `get_wind_aloft`, air, `mid/high_cloud_cover` | `WeatherMap3D.get_wave_cloud_density_at` / `WorldWeather.wave_cloud_density_at`; shadow bake (docs/ideas/clouds.md round 5) |
 | Time of day, wind, humidity, rain → low cloud type (stratus, stratocumulus, cumulus) | linked (20 Nov) | clock, `cur_*` air | `WeatherMap3D.cloud_regime_from_weather`, `get_convective_heating` (docs/ideas/clouds.md round 6) |
 | Wind shear aloft, air temperature → cirrocumulus; high cover (humidity, coming rain) → cirrostratus veil | linked (20 Nov) | `get_wind_aloft`, air | `WeatherMap3D.get_cirrocumulus_share` (docs/ideas/clouds.md round 7) |
 | Storm rain, outflow, steering wind → rain shafts and shelf cloud | linked (20 Nov) | `add_storm` storms | sky rain shafts; `get_cloud_base_at` / `WorldWeather.cloud_base_at` lowered by the shelf (docs/ideas/clouds.md round 8) |
+| Clear calm nights → cold air pools in hollows (frost, valley fog) | linked (22 Nov) | `WorldWeather.air_temperature_at` / `air_humidity_at` (WeatherMap3D `cold_pools`, `get_cold_pool_at`) | Night x clear x calm forcing builds a deficit up to `cold_pool_strength` (8 C) over about 2 h where the cell lies below the mean height within 600 m (topographic position, Lundquist et al. 2008; Whiteman 2000), faded to nothing at the pool's top; breaks up after sunrise or in a wind. Dew, hoarfrost and evaporation take the pooled air per cell; mist, snow and every air reader see it through the contract. Links check: a 200 m valley, 6.9 C pool, -0.9 C on the floor under 5.3 C up the slope, humidity 1.00 vs 0.85, frost only on the floor |
 | Air temperature, dew point → cloud base | linked (20 Nov) | `get_air_dew_point` | `WorldWeather.cloud_base_at`; readers mist, lightning, snow line, orographic rain |
 | Mountain waves → wind aloft | linked (20 Nov) | WeatherMountainWaves | `get_wind_at` vertical part above the boundary layer; `WorldWeather.mountain_wave_velocity_at` alone; ground wind unchanged |
 | Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |
@@ -331,19 +332,19 @@ mm a day; Bruijnzeel et al. 2005).
 
 Tyre grip on snow, offered on the 20 Nov card, was already linked (71387ca8): that card is withdrawn.
 
-1. Salt bloom on sea rocks. Source: `WorldWeather.salt_at` (sea spray salt, g/m2), rain wash-off, the sun's
+1. Salt bloom on sea rocks (built 22 Nov). Source: `WorldWeather.salt_at` (sea spray salt, g/m2), rain wash-off, the sun's
    drying. Reader: rocks (the stone material) and cliff faces. Spray-zone rock dries to a white crust of halite where
    the salt load is high and the surface has dried; rain dissolves it within minutes. Salt weathering in the spray
    zone (haloclasty, tafoni and honeycomb hollows) concentrates where wetting and drying alternate most (Mustoe
    1982; Matsukura and Tanaka 2000; Urosevic et al. 2013 on salt crystallisation in porous stone). Shading: a
    crust share = smoothstep of salt load times dryness, raising albedo and roughness in hollows first.
-2. Spray-wet sand holds sharper prints. Source: the weather's spray wetness and the swash's pore water (ground
+2. Spray-wet sand holds sharper prints (checked 22 Nov). Source: the weather's spray wetness and the swash's pore water (ground
    wet map). Reader: sand's print deformation. Surface moisture above about 4-6 % by mass gives sand apparent
    cohesion from capillary bridges, so prints keep steep walls and fine edges and wind lifts less of it (Namikas and
    Sherman 1995; Namikas et al. 2010; Davidson-Arnott et al. 2008 on beach surface moisture); dry sand slumps
    to its angle of repose. Sand already has moisture-driven cohesion from ground water: the link adds the spray's
    wetting above the swash.
-3. Snow line and upslope rain from the cloud base. Source: `WorldWeather.cloud_base_at`, air temperature at
+3. Snow line and upslope rain from the cloud base (built 22 Nov, see the matrix). Source: `WorldWeather.cloud_base_at`, air temperature at
    height, wind, terrain slope. Readers: rain, snow, vegetation. Linear theory of orographic precipitation (Smith
    and Barstad 2004): uplift w = U . grad h condenses water at a rate set by the moist lapse rate, carried
    downwind over a fall time of 1000-2000 s, so windward slopes get more and lee slopes a rain shadow; the snow
@@ -352,3 +353,29 @@ Tyre grip on snow, offered on the 20 Nov card, was already linked (71387ca8): th
 
 Sources: Smith and Barstad 2004 (J. Atmos. Sci. 61); Roe 2005 (Annu. Rev. Earth Planet. Sci.); Namikas and Sherman
 1995; Davidson-Arnott, Yang, Ollerhead, Hesp and Walker 2008; Urosevic et al. 2013; Matsukura and Tanaka 2000.
+
+## Round 9 candidates (22 Nov, card to Paulo)
+
+1. Cold air pools in hollows (built 22 Nov). Source: the weather's air temperature, wind, cloud cover and the terrain heights it
+   already reads for the snow line. Readers: dew and hoarfrost, mist (valley fog), snow melt, plant frost damage.
+   On clear calm nights the cooled air at the ground drains downslope (katabatic flow, about 1-3 m/s) and pools in
+   basins and valley floors, 5-10 C colder than the slopes above, with a warm belt part way up (Whiteman 2000;
+   Clements et al. 2003 on Peter Sinks; Lundquist et al. 2008 on cold pools in mountain basins). Model: a
+   per-cell drainage depth from a flow-accumulation pass over the weather's height grid, scaled by the night's
+   radiative cooling and gated by wind and cloud; the contract's air temperature at a point reads it. Frost and
+   fog then sit in hollows first, as they do.
+2. Avalanche paths keep the forest young. Source: SnowCover3D's avalanche runouts. Reader: `WorldStand`
+   (a new disturbance kind, 4 is taken by beaver: avalanche as 6), trees (snapped stems, flagged crowns), vegetation
+   (shrub and alder thickets in the track). Frequent avalanches hold paths in shrubs and young broadleaves while
+   the forest stands either side (Bebi, Kulakowski and Rixen 2009; Patten and Knight 1994; Johnson 1987 on
+   track frequency). A runout records a disturbance over its deposit; return period sets the stand age.
+3. Rime on windward trees and rocks. Source: `cloud_base_at`, air temperature below 0 C, wind, liquid water
+   content of the cloud (fog drip already computes it). Readers: trees (crown load, bending with their wind),
+   rocks and terrain material (white feathers growing into the wind on ridges in winter cloud).
+   Accretion rate = collision efficiency x LWC x wind speed x area (Makkonen 2000 ISO 12494 model); hard rime at
+   -5 to -15 C grows upwind as feathers. A per-cell rime load on WorldSnow (or a new WorldIce read) that sun and
+   wind above 0 C shed.
+
+Sources: Whiteman 2000 (Mountain Meteorology); Clements, Whiteman and Horel 2003 (J. Appl. Meteor.); Lundquist,
+Pepin and Rochford 2008 (JGR); Bebi, Kulakowski and Rixen 2009 (Forest Ecol. Manage.); Patten and Knight 1994;
+Makkonen 2000 (Phil. Trans. R. Soc. A); ISO 12494.

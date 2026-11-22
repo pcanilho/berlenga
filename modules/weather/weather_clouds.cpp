@@ -941,7 +941,10 @@ float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
 	if (eta <= 0.0f) {
 		return 0.0f;
 	}
-	const float x = eta - 125.0f * wave_dew_depression_at(p_state, p_pos);
+	// wave_dew_depression_at() adds the plates' sheets; their dry gaps close where the lift is large (wc_plate_x()).
+	const float pd = wave_plate_depression(p_state, p_pos);
+	const float x0 = eta - 125.0f * (wave_dew_depression_at(p_state, p_pos) - pd);
+	const float x = x0 - 125.0f * (pd > 0.0f ? pd * (1.0f - smoothstep(120.0f, 400.0f, x0)) : pd);
 	if (x <= 0.0f) {
 		return 0.0f;
 	}
@@ -1951,6 +1954,14 @@ float wc_plate_dep(vec3 p) {
 	return stack * exp(-d * d) * mix(-0.8, 3.0, smoothstep(0.35, 0.65, sheets));
 }
 
+// The lift left after the plates: the dry sheets' gaps close where the lift is large (inside the lens the plates merge,
+// as wave_plate_x() on the CPU), so the plates show at the lens's edges and no level cut rings its middle.
+float wc_plate_x(float x0, vec3 p) {
+	float pd = wc_plate_dep(p);
+	pd = pd > 0.0 ? pd * (1.0 - smoothstep(120.0, 400.0, x0)) : pd;
+	return x0 - 125.0 * pd;
+}
+
 // p_dep >= 0: the dew point depression already read nearby (the sun samples reuse the step's; the moist layers
 // vary over kilometres, so 40 to 160 m toward the sun changes it little).
 float wc_wave_extinction_d(vec3 p, float p_jitter, float p_dep, out float r_lift, out float r_dep) {
@@ -1968,7 +1979,7 @@ float wc_wave_extinction_d(vec3 p, float p_jitter, float p_dep, out float r_lift
 	if (r_dep < 0.0) {
 		r_dep = wc_wave_depression(p);
 	}
-	float x = eta - 125.0 * (r_dep + wc_plate_dep(p)) + p_jitter;
+	float x = wc_plate_x(eta - 125.0 * r_dep, p) + p_jitter;
 	if (x <= 0.0) {
 		return 0.0;
 	}

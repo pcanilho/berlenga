@@ -1250,10 +1250,13 @@
    "name": "Vehicles in water",
    "settings": [
     "PhysXVehicle3D.river_forces",
-    "hull_seal"
+    "hull_seal",
+    "hull_leak_area",
+    "air_intake_height",
+    "snorkel"
    ],
    "note": "",
-   "what": "rivers, fords and floods buoy a vehicle by how much of its body keeps water out and push it with the current, carrying it off when the water is deep and fast.",
+   "what": "rivers, fords and floods buoy a vehicle by how much of its body keeps water out and push it with the current, carrying it off when the water is deep and fast; a wading vehicle pushes a bow wave and wake that grow with speed, its cab floods through door and floor gaps until it settles and sinks, then drains on land, and the engine stalls once water reaches the air intake, which a snorkel lifts over the roof.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1466,6 +1469,17 @@
    ],
    "note": "",
    "what": "up close, dry sand shows the colours of its grains and the odd grain flashing in the sun; in low sun, sun-aligned grain facets glitter across dry sand.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Rain pits",
+   "settings": [
+    "GroundSurface3D.rain_pits"
+   ],
+   "note": "",
+   "what": "raindrops pit dry sand with small rimmed craters, a new pattern each shower, and the wetted skin dries into a crust that holds off the wind.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2575,10 +2589,11 @@
   {
    "name": "Game trails",
    "settings": [
-    "VegetationField3D.make_game_trails()"
+    "VegetationField3D.make_game_trails()",
+    "GroundSurface3D.trail_pugging"
    ],
    "note": "",
-   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs; grass wears to trodden soil along them, stones stand proud on the tread and the packed ground pools rain first.",
+   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs; grass wears to trodden soil along them, stones stand proud on the tread, the packed ground pools rain first, and wet trails churn into hoof-pocked mud where traffic is heaviest.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

@@ -600,6 +600,11 @@ struct PhysXVehicle3D::Impl {
 	float belly_support = 0.0f;
 	float belly_deepest = 0.0f; // m under the undisturbed surface, the last step
 	float water_buoyancy = 0.0f; // N (round 20.1)
+	float cab_water = 0.0f; // m3 inside the cab (round 21.1)
+	bool engine_drowned = false;
+	bool bow_on = false; // its disturbances are in the water (round 21.3)
+	float bow_strength = 0.0f;
+	float intake_dry = 0.0f; // s the intake has been clear since it drowned
 	Vector3 water_drag; // N
 	// Mud on the body (stage 3b): per wheel the spray level and the shed kg already counted; the belly's mud line,
 	// the mud's wetness; the meshes painted (their materials copied with Mud on).
@@ -868,6 +873,9 @@ void PhysXVehicle3D::_notification(int p_what) {
 			v.commandState.steer = (PxReal)steer;
 			v.transmissionCommandState.gear = reverse ? PxVehicleDirectDriveTransmissionCommandState::eREVERSE : PxVehicleDirectDriveTransmissionCommandState::eFORWARD;
 			_engine_controls();
+			if (impl->engine_drowned) {
+				v.commandState.throttle = 0.0f; // stalled: water in the intake
+			}
 			for (uint32_t i = 0; i < 4; i++) {
 				impl->soil_wheels[i].inflation = (float)wheels[impl->wheel_order[i]]->get_tire_pressure();
 				impl->soil_wheels[i].tread = (int)wheels[impl->wheel_order[i]]->get_tread();
@@ -1028,6 +1036,30 @@ Vector3 PhysXVehicle3D::get_water_drag() const {
 	return impl->water_drag;
 }
 
+void PhysXVehicle3D::set_hull_leak_area(real_t p_area) {
+	hull_leak_area = MAX(p_area, 0.0f);
+}
+
+void PhysXVehicle3D::set_air_intake_height(real_t p_height) {
+	air_intake_height = p_height;
+}
+
+void PhysXVehicle3D::set_snorkel(bool p_enabled) {
+	snorkel = p_enabled;
+}
+
+bool PhysXVehicle3D::is_engine_drowned() const {
+	return impl->engine_drowned;
+}
+
+real_t PhysXVehicle3D::get_cab_water() const {
+	return impl->cab_water;
+}
+
+real_t PhysXVehicle3D::get_bow_wave_strength() const {
+	return impl->bow_strength;
+}
+
 // A vehicle in water (docs/ideas/mud.md, round 20.1). Flood studies of vehicles (Shu et al. 2011; Xia et al. 2014;
 // Martinez-Gomariz et al. 2017, full-size cars at UNSW's Water Research Laboratory, 2017) take it as a body on its tyres:
 // buoyancy from the water it keeps out lightens it, the current's drag 0.5 rho Cd A |u - v| (u - v) (Cd about 1.1 on the
@@ -1041,6 +1073,14 @@ void PhysXVehicle3D::_water_step(float p_delta) {
 	PxRigidDynamic *dyn = impl->vehicle.physxActor.rigidBody ? impl->vehicle.physxActor.rigidBody->is<PxRigidDynamic>() : nullptr;
 	WorldWater *ww = WorldContracts::water();
 	if (!river_forces || !dyn || !ww || !ww->has_provider() || impl->chassis_half == Vector3()) {
+		impl->engine_drowned = false;
+		impl->cab_water = 0.0f;
+		if (impl->bow_on && ww) {
+			for (int k = 0; k < 3; k++) {
+				ww->clear((uint64_t(get_instance_id()) << 2) + k);
+			}
+		}
+		impl->bow_on = false;
 		return;
 	}
 	for (int i = 0; i < get_child_count(); i++) {
@@ -1126,6 +1166,79 @@ void PhysXVehicle3D::_water_step(float p_delta) {
 			f += rel * (0.5f * rho * cd * wet / (2.0f * r) * across * s);
 		}
 		push(at, f);
+	}
+	// The bow wave and wake (round 21.3): the hull pushes the water at three points along its keel, moving
+	// disturbances the water's own wave solver turns into a bow wave and a wake (a moving pressure source makes the
+	// Kelvin wake; in shallow water its depth Froude number Fr = v / sqrt(g h) sets it: near 1 the bow wave stands
+	// up and breaks; wading drill keeps to a walking pace, about 2 m/s, so the bow keeps the water down at the
+	// engine bay). The strength is the share of the full push: a resting hull's 0.15, rising to 1 at Fr 0.8,
+	// times how much of the hull is wet.
+	{
+		const uint64_t owner = uint64_t(get_instance_id()) << 2;
+		const Vector3 v_h(lin.x, 0.0f, lin.z);
+		float ground_y = box.origin.y - h.y;
+		for (const PhysXVehicleWheel3D *w : wheels) {
+			if (w && w->is_inside_tree()) {
+				ground_y = MIN(ground_y, float(w->get_global_position().y - w->get_radius()));
+			}
+		}
+		bool any = false;
+		float strongest = 0.0f;
+		for (int k = 0; k < 3; k++) {
+			const Vector3 keel = box.xform(Vector3(0.0f, -h.y, (float(k) - 1.0f) * 0.66f * h.z));
+			const float ws = ww->height_at(keel + Vector3(0.0f, tall, 0.0f));
+			const float wet = Math::is_finite(ws) ? ws - keel.y : 0.0f;
+			if (!(wet > 0.02f)) {
+				ww->clear(owner + k);
+				continue;
+			}
+			const float depth = MAX(ws - ground_y, 0.05f);
+			const float fr = v_h.length() / Math::sqrt(9.81f * depth);
+			const float s = CLAMP(0.15f + 0.85f * fr / 0.8f, 0.15f, 1.0f) * MIN(wet / 0.3f, 1.0f);
+			ww->disturb(owner + k, Vector3(keel.x, ws, keel.z), MAX(h.x, 0.33f * h.z), s);
+			strongest = MAX(strongest, s);
+			any = true;
+		}
+		impl->bow_on = any;
+		impl->bow_strength = strongest;
+	}
+	// The engine's air intake (round 21.1): hydrolock past it. Wading depths are rated from it (makers' figures,
+	// 0.5 to 0.9 m for off-roaders); a snorkel lifts it over the roof. Water drawn in stalls the engine; it starts
+	// again once the intake has been clear for 5 s (no lasting damage kept).
+	{
+		const float bottom_to_top = 2.0f * h.y;
+		const float hi = snorkel ? bottom_to_top + 0.25f : (air_intake_height >= 0.0f ? float(air_intake_height) : 0.75f * bottom_to_top);
+		const Vector3 intake = box.xform(Vector3(0.0f, -h.y + hi, -0.7f * h.z));
+		const bool under = ww->height_at(intake) > intake.y;
+		if (under) {
+			impl->engine_drowned = true;
+			impl->intake_dry = 0.0f;
+		} else if (impl->engine_drowned) {
+			impl->intake_dry += p_delta;
+			if (impl->intake_dry > 5.0f) {
+				impl->engine_drowned = false;
+			}
+		}
+	}
+	// The cab floods through its gaps (doors, floor, vents) at an orifice's rate Q = Cd A sqrt(2 g dh), Cd 0.6, the
+	// head between the water outside at the box's middle and the level inside; out again the same way on land.
+	// What is in it is held in the sealed share of the box and adds its weight at the box's middle.
+	{
+		const float sealed = float(hull_seal) * 8.0f * h.x * h.y * h.z;
+		const float floor_area = MAX(float(hull_seal) * 4.0f * h.x * h.z, 1e-3f);
+		const Vector3 mid = box.xform(Vector3(0.0f, -h.y, 0.0f));
+		const float outside = ww->height_at(mid + Vector3(0.0f, tall, 0.0f));
+		const float level_in = mid.y + impl->cab_water / floor_area;
+		const float out_level = Math::is_finite(outside) ? MAX(outside, mid.y) : mid.y;
+		const float dh = out_level - level_in;
+		if (sealed > 0.0f && hull_leak_area > 0.0f && Math::abs(dh) > 1e-4f) {
+			const float q = 0.6f * float(hull_leak_area) * Math::sqrt(2.0f * 9.81f * Math::abs(dh));
+			impl->cab_water = CLAMP(impl->cab_water + SIGN(dh) * q * p_delta, 0.0f, sealed);
+		}
+		if (impl->cab_water > 0.0f) {
+			const Vector3 at = mid + Vector3(0.0f, 0.5f * impl->cab_water / floor_area, 0.0f);
+			push(at, Vector3(0.0f, -1000.0f * 9.81f * impl->cab_water, 0.0f));
+		}
 	}
 	if (force == Vector3()) {
 		return;
@@ -2214,6 +2327,18 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_hull_seal"), &PhysXVehicle3D::get_hull_seal);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hull_seal", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hull_seal", "get_hull_seal");
 	ClassDB::bind_method(D_METHOD("get_water_buoyancy"), &PhysXVehicle3D::get_water_buoyancy);
+	ClassDB::bind_method(D_METHOD("set_hull_leak_area", "area"), &PhysXVehicle3D::set_hull_leak_area);
+	ClassDB::bind_method(D_METHOD("get_hull_leak_area"), &PhysXVehicle3D::get_hull_leak_area);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hull_leak_area", PROPERTY_HINT_RANGE, "0,0.2,0.001,or_greater,suffix:m\u00B2"), "set_hull_leak_area", "get_hull_leak_area");
+	ClassDB::bind_method(D_METHOD("set_air_intake_height", "height"), &PhysXVehicle3D::set_air_intake_height);
+	ClassDB::bind_method(D_METHOD("get_air_intake_height"), &PhysXVehicle3D::get_air_intake_height);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "air_intake_height", PROPERTY_HINT_RANGE, "-1,3,0.01,suffix:m"), "set_air_intake_height", "get_air_intake_height");
+	ClassDB::bind_method(D_METHOD("set_snorkel", "enabled"), &PhysXVehicle3D::set_snorkel);
+	ClassDB::bind_method(D_METHOD("has_snorkel"), &PhysXVehicle3D::has_snorkel);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snorkel"), "set_snorkel", "has_snorkel");
+	ClassDB::bind_method(D_METHOD("is_engine_drowned"), &PhysXVehicle3D::is_engine_drowned);
+	ClassDB::bind_method(D_METHOD("get_cab_water"), &PhysXVehicle3D::get_cab_water);
+	ClassDB::bind_method(D_METHOD("get_bow_wave_strength"), &PhysXVehicle3D::get_bow_wave_strength);
 	ClassDB::bind_method(D_METHOD("get_water_drag"), &PhysXVehicle3D::get_water_drag);
 	ClassDB::bind_method(D_METHOD("get_wheel_mud", "wheel"), &PhysXVehicle3D::get_wheel_mud);
 	ClassDB::bind_method(D_METHOD("get_wheel_mud_shed", "wheel"), &PhysXVehicle3D::get_wheel_mud_shed);

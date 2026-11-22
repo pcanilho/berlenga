@@ -310,11 +310,13 @@ void WeatherMap3D::set_terrain_wind_enabled(bool p_enabled) {
 void WeatherMap3D::set_terrain_source(const NodePath &p_path) {
 	terrain_source = p_path;
 	terrain_wind.dirty = true;
+	oro_origin = Vector2i(INT32_MAX, INT32_MAX); // the snow line's heights are read again
 }
 
 void WeatherMap3D::set_terrain_collision_mask(uint32_t p_mask) {
 	terrain_collision_mask = p_mask;
 	terrain_wind.dirty = true;
+	oro_origin = Vector2i(INT32_MAX, INT32_MAX);
 }
 
 void WeatherMap3D::set_terrain_wind_extent(float p_extent) {
@@ -694,12 +696,12 @@ float WeatherMap3D::_net_radiation(const CellPass &p_pass, Vector3 p_position, f
 }
 
 float WeatherMap3D::get_air_temperature_at(Vector3 p_position) const {
-	return cur_air_temperature - 0.0065f * (p_position.y - ground_height);
+	return cur_air_temperature - 0.0065f * (p_position.y - ground_height) - _cold_pool_at(p_position);
 }
 
 float WeatherMap3D::get_air_humidity_at(Vector3 p_position) const {
 	const float dz = p_position.y - ground_height;
-	if (Math::abs(dz) < 0.5f) {
+	if (Math::abs(dz) < 0.5f && _cold_pool_at(p_position) <= 0.0f) {
 		return cur_air_humidity;
 	}
 	const float td = get_air_dew_point() - 0.0018f * dz;
@@ -860,6 +862,12 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	c.inflow = cell_inflow.ptr();
 	c.fog_drip = fog_drip && cell_fog_drip.size() == resolution * resolution ? cell_fog_drip.ptr() : nullptr;
 	c.spray = sea_spray && cell_spray.size() == resolution * resolution ? cell_spray.ptr() : nullptr;
+	_update_orography(p_weather_dt);
+	_update_cold_pools(p_weather_dt);
+	c.pool = cold_pools && cell_pool.size() == resolution * resolution ? cell_pool.ptr() : nullptr;
+	const bool oro_ready = orographic_rain && cell_oro.size() == resolution * resolution;
+	c.oro = oro_ready ? cell_oro.ptr() : nullptr;
+	c.height = oro_ready && cell_height.size() == resolution * resolution ? cell_height.ptr() : nullptr;
 	c.cover_noise = WeatherClouds::cover_noise_frame(cloud_drift, cloud_scale, _cloud_evolve());
 	// Rows in parallel: each cell depends only on the weather and its own history.
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_update_row, &cell_pass, resolution, -1, true, String("WeatherMap3D cells"));
@@ -1013,6 +1021,17 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 			r += 4.0f * lake;
 		}
 
+		// More falls on windward slopes and heights, less in their lee (the terrain climate's orographic field).
+		if (c.oro) {
+			r *= c.oro[i];
+		}
+		// Rain or snow by the air at the cell's own terrain height: the snow line follows the ground.
+		float rain_share = c.rain_fraction;
+		if (c.height && Math::is_finite(c.height[i])) {
+			const Vector3 at(p.x, c.height[i], p.y);
+			rain_share = rain_fraction(get_air_temperature_at(at), get_air_humidity_at(at));
+		}
+
 		c.wind[i * 2 + 0] = w.x;
 		c.wind[i * 2 + 1] = w.y;
 		c.cover[i] = cover;
@@ -1023,11 +1042,15 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		// drain, then evaporation takes the puddles and then the film (Penman; near-saturated air while
 		// it rains).
 		if (c.dt_h > 0.0f) {
-			const float rh = r > 0.1f ? MAX(c.air_humidity, 0.97f) : c.air_humidity;
+			// A cold air pool over the cell: the same vapour in colder air (the pool fills with the night's cooled air).
+			const float pool = c.pool ? c.pool[i] : 0.0f;
+			const float ta = c.air_temperature - pool;
+			const float ha = pool > 0.0f ? MIN(c.air_humidity * saturation_vapour_pressure(c.air_temperature) / saturation_vapour_pressure(ta), 1.0f) : c.air_humidity;
+			const float rh = r > 0.1f ? MAX(ha, 0.97f) : ha;
 			const float u2 = w.length() * c.to_2m;
 			const bool radiation = c.sun || c.dew;
 			const float rn = radiation ? _net_radiation(c, Vector3(p.x, ground_height, p.y), cover) : 0.0f;
-			float evap = (c.sun ? penman_evaporation(rn, u2, c.air_temperature, rh) : evaporation_rate(u2, c.air_temperature, rh)) * c.dt_h;
+			float evap = (c.sun ? penman_evaporation(rn, u2, ta, rh) : evaporation_rate(u2, ta, rh)) * c.dt_h;
 			// A fire over the cell boils the surface water off: a share of its heat release (a tenth here)
 			// reaches the ground, 681 W/m2 a millimetre an hour.
 			if (c.fire && c.dt_h > 0.0f) {
@@ -1042,15 +1065,15 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 			float f = c.film[i];
 			c.cooling[i] = 0.0f;
 			if (radiation) {
-				const float tk = c.air_temperature + 273.16f;
+				const float tk = ta + 273.16f;
 				const float exchange = 4.0f * 5.670e-8f * tk * tk * tk + 5.0f + 4.0f * u2;
-				const float ts = c.air_temperature + rn / exchange;
-				c.cooling[i] = ts - c.air_temperature;
+				const float ts = ta + rn / exchange;
+				c.cooling[i] = ts - ta;
 				if (c.dew && rn < 0.0f && r <= 0.01f) {
-					const float es = saturation_vapour_pressure(c.air_temperature) * 0.1f;
-					const float delta = 4098.0f * es / ((c.air_temperature + 237.3f) * (c.air_temperature + 237.3f));
+					const float es = saturation_vapour_pressure(ta) * 0.1f;
+					const float delta = 4098.0f * es / ((ta + 237.3f) * (ta + 237.3f));
 					const float gamma = 0.0665f;
-					const float net = (delta * rn / 681.0f + gamma * evaporation_rate(u2, c.air_temperature, rh)) / (delta + gamma); // mm/h, < 0 condenses
+					const float net = (delta * rn / 681.0f + gamma * evaporation_rate(u2, ta, rh)) / (delta + gamma); // mm/h, < 0 condenses
 					if (net < 0.0f) {
 						const float cond = -net * c.dt_h;
 						if (ts < 0.0f) {
@@ -1069,12 +1092,12 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 					fr -= melt;
 					f += melt;
 				}
-			} else if (fr > 0.0f && c.air_temperature > 0.0f) {
-				const float melt = MIN(fr, (5.0f + 4.0f * u2) * c.air_temperature / 92.8f * c.dt_h);
+			} else if (fr > 0.0f && ta > 0.0f) {
+				const float melt = MIN(fr, (5.0f + 4.0f * u2) * ta / 92.8f * c.dt_h);
 				fr -= melt;
 				f += melt;
 			}
-			if (fr > 0.0f && c.air_temperature + c.cooling[i] < 0.0f) {
+			if (fr > 0.0f && ta + c.cooling[i] < 0.0f) {
 				// Below freezing the drying takes the frost (sublimation) before any film.
 				const float sub = MIN(fr, evap);
 				fr -= sub;
@@ -1082,7 +1105,7 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 			}
 			c.frost[i] = fr;
 			// Where a snowpack lies, what reaches the surface is its runoff (rain through it and melt).
-			const float in = (c.inflow[i] >= 0.0f ? c.inflow[i] : r * c.rain_fraction) + (c.fog_drip ? c.fog_drip[i] : 0.0f) + (c.spray ? c.spray[i] : 0.0f);
+			const float in = (c.inflow[i] >= 0.0f ? c.inflow[i] : r * rain_share) + (c.fog_drip ? c.fog_drip[i] : 0.0f) + (c.spray ? c.spray[i] : 0.0f);
 			f += in * c.dt_h;
 			float pd = c.puddle[i];
 			if (f > surface_storage) {
@@ -1703,6 +1726,205 @@ float WeatherMap3D::get_canopy_closure_at(Vector3 p_position) const {
 		return 0.0f;
 	}
 	return CLAMP(1.0f - Math::exp(-0.5f * MAX(cell[1], 0.0f)), 0.0f, 1.0f);
+}
+
+// The cells' terrain heights when the map moves (they come from the terrain source, as the terrain wind's), the
+// climate's factor then and every ten seconds of weather (a climate can be baked or replaced meanwhile).
+void WeatherMap3D::_update_orography(double p_weather_dt) {
+	const int n = resolution;
+	if ((!orographic_rain && !cold_pools) || !origin_valid || n <= 0) {
+		return;
+	}
+	oro_age += p_weather_dt;
+	const bool moved = oro_origin != origin_cell || cell_height.size() != n * n;
+	if (!moved && oro_age < 10.0) {
+		return;
+	}
+	oro_age = 0.0;
+	const float cs = _cell_size();
+	if (moved) {
+		// Cells the old square already had keep their height; only the new edge is read (raycasts without a source).
+		_find_terrain_source();
+		const bool keep = cell_height.size() == n * n && oro_origin.x != INT32_MAX;
+		const bool keep_pool = keep && cell_pool.size() == n * n;
+		Vector<float> old = cell_height;
+		Vector<float> old_pool = cell_pool;
+		cell_height.resize(n * n);
+		cell_pool.resize(n * n);
+		float *h = cell_height.ptrw();
+		float *pl = cell_pool.ptrw();
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int ox = origin_cell.x + x - oro_origin.x;
+				const int oz = origin_cell.y + z - oro_origin.y;
+				const bool inside = ox >= 0 && oz >= 0 && ox < n && oz < n;
+				if (keep && inside) {
+					h[z * n + x] = old[oz * n + ox];
+				} else {
+					h[z * n + x] = _terrain_height(Vector2((origin_cell.x + x + 0.5f) * cs, (origin_cell.y + z + 0.5f) * cs));
+				}
+				pl[z * n + x] = keep_pool && inside ? old_pool[oz * n + ox] : 0.0f;
+			}
+		}
+		oro_origin = origin_cell;
+		_update_pool_depths();
+	} else {
+		// Cells without a height (the terrain not loaded yet, or not found then) are read again.
+		bool found = false;
+		float *h = cell_height.ptrw();
+		for (int i = 0; i < n * n; i++) {
+			if (!Math::is_finite(h[i])) {
+				if (!found) {
+					_find_terrain_source();
+					found = true;
+				}
+				h[i] = _terrain_height(Vector2((origin_cell.x + i % n + 0.5f) * cs, (origin_cell.y + i / n + 0.5f) * cs));
+			}
+		}
+		if (found) {
+			_update_pool_depths();
+		}
+	}
+	if (!orographic_rain) {
+		cell_oro.clear();
+		return;
+	}
+	cell_oro.resize(n * n);
+	float *o = cell_oro.ptrw();
+	const float *h = cell_height.ptr();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float y = Math::is_finite(h[i]) ? h[i] : ground_height;
+			o[i] = WorldContracts::climate_precipitation_factor_at(Vector3((origin_cell.x + x + 0.5f) * cs, y, (origin_cell.y + z + 0.5f) * cs));
+		}
+	}
+}
+
+void WeatherMap3D::set_orographic_rain(bool p_enabled) {
+	orographic_rain = p_enabled;
+	oro_origin = Vector2i(INT32_MAX, INT32_MAX);
+	if (!p_enabled) {
+		cell_oro.clear();
+		if (!cold_pools) {
+			cell_height.clear();
+		}
+	}
+}
+
+// Cold air pools (Whiteman 2000; Lundquist, Pepin and Rochford 2008): on clear calm nights the air cooled at the
+// ground drains downslope and collects in basins and valley floors, several degrees colder than the slopes above.
+// Where it collects follows the topographic position index, the cell's height below the mean height round it
+// (Lundquist et al. 2008 found TPI over a few hundred metres the best predictor of pooling): the pool's depth here.
+void WeatherMap3D::_update_pool_depths() {
+	const int n = resolution;
+	cell_pool_depth.resize(n * n);
+	float *d = cell_pool_depth.ptrw();
+	if (!cold_pools || cell_height.size() != n * n) {
+		cell_pool_depth.fill(0.0f);
+		return;
+	}
+	// Summed-area tables of the known heights and their count, for the box mean.
+	const float *h = cell_height.ptr();
+	const int m = n + 1;
+	LocalVector<double> sum;
+	LocalVector<int> cnt;
+	sum.resize(m * m);
+	cnt.resize(m * m);
+	for (int i = 0; i < m; i++) {
+		sum[i] = 0.0;
+		cnt[i] = 0;
+		sum[i * m] = 0.0;
+		cnt[i * m] = 0;
+	}
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const float v = h[z * n + x];
+			const bool ok = Math::is_finite(v);
+			sum[(z + 1) * m + x + 1] = (ok ? v : 0.0) + sum[z * m + x + 1] + sum[(z + 1) * m + x] - sum[z * m + x];
+			cnt[(z + 1) * m + x + 1] = (ok ? 1 : 0) + cnt[z * m + x + 1] + cnt[(z + 1) * m + x] - cnt[z * m + x];
+		}
+	}
+	const int r = MAX(1, int(Math::ceil(COLD_POOL_RADIUS / _cell_size())));
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const float v = h[z * n + x];
+			const int x0 = MAX(x - r, 0), x1 = MIN(x + r + 1, n), z0 = MAX(z - r, 0), z1 = MIN(z + r + 1, n);
+			const int c = cnt[z1 * m + x1] - cnt[z0 * m + x1] - cnt[z1 * m + x0] + cnt[z0 * m + x0];
+			if (!Math::is_finite(v) || c < 4) {
+				d[z * n + x] = 0.0f;
+				continue;
+			}
+			const double mean = (sum[z1 * m + x1] - sum[z0 * m + x1] - sum[z1 * m + x0] + sum[z0 * m + x0]) / c;
+			d[z * n + x] = CLAMP(float(mean) - v, 0.0f, 200.0f);
+		}
+	}
+}
+
+// The pools' temperature deficit, per cell: it builds toward its night's depth over a couple of hours and breaks up
+// after sunrise, or as the wind or cloud mixes it out (Whiteman 2000: breakup 3-4 hours after sunrise in deep
+// valleys, sooner in a wind). Clear calm nights cool a deep basin by up to cold_pool_strength below the free air.
+void WeatherMap3D::_update_cold_pools(double p_weather_dt) {
+	const int n = resolution;
+	if (!cold_pools || cell_pool.size() != n * n || cell_pool_depth.size() != n * n) {
+		return;
+	}
+	const float dt_h = float(MAX(p_weather_dt, 0.0)) / 3600.0f;
+	if (dt_h <= 0.0f) {
+		return;
+	}
+	const float night = sun_known ? 1.0f - Math::smoothstep(0.0f, 0.1f, cur_sun_sine) : 0.0f;
+	const float clear = 1.0f - Math::smoothstep(0.3f, 0.9f, cur_cloud_cover);
+	const float calm = 1.0f - Math::smoothstep(1.5f, 5.0f, cur_wind_speed);
+	const float forcing = night * clear * calm;
+	const float form = 1.0f - Math::exp(-dt_h / 2.0f);
+	const float breakup = 1.0f - Math::exp(-dt_h * (1.0f + cur_wind_speed / 3.0f) / 1.5f);
+	float *pl = cell_pool.ptrw();
+	const float *d = cell_pool_depth.ptr();
+	for (int i = 0; i < n * n; i++) {
+		const float target = cold_pool_strength * forcing * Math::smoothstep(5.0f, 60.0f, d[i]);
+		pl[i] += (target - pl[i]) * (target > pl[i] ? form : breakup);
+	}
+}
+
+// The pool's deficit at a point: full at the floor, gone at the pool's top (the basin fills to about its depth).
+float WeatherMap3D::_cold_pool_at(const Vector3 &p_position) const {
+	const int n = resolution;
+	if (!cold_pools || cell_pool.size() != n * n || cell_pool_depth.size() != n * n || cell_height.size() != n * n) {
+		return 0.0f;
+	}
+	const Vector2 xz(p_position.x, p_position.z);
+	const float deficit = _sample(cell_pool, xz);
+	if (deficit <= 1e-4f) {
+		return 0.0f;
+	}
+	const float g = _sample(cell_height, xz);
+	const float depth = MAX(_sample(cell_pool_depth, xz), 10.0f);
+	const float above = Math::is_finite(g) ? p_position.y - g : 0.0f;
+	return deficit * (1.0f - Math::smoothstep(0.0f, depth, above));
+}
+
+void WeatherMap3D::set_cold_pools(bool p_enabled) {
+	cold_pools = p_enabled;
+	oro_origin = Vector2i(INT32_MAX, INT32_MAX);
+	if (!p_enabled) {
+		cell_pool.clear();
+		cell_pool_depth.clear();
+		if (!orographic_rain) {
+			cell_height.clear();
+		}
+	}
+}
+
+float WeatherMap3D::get_cold_pool_at(Vector3 p_position) const {
+	return _cold_pool_at(p_position);
+}
+
+float WeatherMap3D::get_orographic_factor_at(Vector3 p_position) const {
+	if (!orographic_rain || cell_oro.size() != resolution * resolution) {
+		return 1.0f;
+	}
+	return MAX(_sample(cell_oro, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
 float WeatherMap3D::get_rain_at(Vector3 p_position) const {
@@ -3813,6 +4035,17 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_terrain_ground_at", "position"), &WeatherMap3D::get_terrain_ground_at);
 	ClassDB::bind_method(D_METHOD("get_terrain_lee_at", "position"), &WeatherMap3D::get_terrain_lee_at);
 	ClassDB::bind_method(D_METHOD("get_rain_at", "position"), &WeatherMap3D::get_rain_at);
+	ClassDB::bind_method(D_METHOD("set_orographic_rain", "enabled"), &WeatherMap3D::set_orographic_rain);
+	ClassDB::bind_method(D_METHOD("is_orographic_rain_enabled"), &WeatherMap3D::is_orographic_rain_enabled);
+	ClassDB::bind_method(D_METHOD("get_orographic_factor_at", "position"), &WeatherMap3D::get_orographic_factor_at);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "orographic_rain"), "set_orographic_rain", "is_orographic_rain_enabled");
+	ClassDB::bind_method(D_METHOD("set_cold_pools", "enabled"), &WeatherMap3D::set_cold_pools);
+	ClassDB::bind_method(D_METHOD("is_cold_pools_enabled"), &WeatherMap3D::is_cold_pools_enabled);
+	ClassDB::bind_method(D_METHOD("set_cold_pool_strength", "celsius"), &WeatherMap3D::set_cold_pool_strength);
+	ClassDB::bind_method(D_METHOD("get_cold_pool_strength"), &WeatherMap3D::get_cold_pool_strength);
+	ClassDB::bind_method(D_METHOD("get_cold_pool_at", "position"), &WeatherMap3D::get_cold_pool_at);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cold_pools"), "set_cold_pools", "is_cold_pools_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cold_pool_strength", PROPERTY_HINT_RANGE, "0,15,0.1,suffix:C"), "set_cold_pool_strength", "get_cold_pool_strength");
 	ClassDB::bind_method(D_METHOD("get_cloud_cover_at", "position"), &WeatherMap3D::get_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("get_high_cloud_cover_at", "position"), &WeatherMap3D::get_high_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("get_mid_cloud_cover_at", "position"), &WeatherMap3D::get_mid_cloud_cover_at);
