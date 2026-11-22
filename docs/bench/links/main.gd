@@ -2824,6 +2824,18 @@ void fragment() {
 	_check("surface rain: a roof catches the rain, a wall into the wind the driven rain (ISO 15927-3), a lee wall none; the wind pushes drops along a wall it runs along",
 			absf(roof - rain) < 0.15 * rain + 0.1 and absf(windward - driven) < 0.3 * driven + 0.1 and leeward < 0.05 and windward > 1.0 and side_push > 0.3 and vals[1].b < 0.03,
 			"rain %.2f mm/h, roof %.2f, windward %.2f (ISO %.2f at %.1f m/s), leeward %.2f; push %.2f along the side wall, %.2f square to it" % [rain, roof, windward, driven, wind.length(), leeward, side_push, vals[1].b * 3.0])
+	# A downpour pools on level faces (the weather's puddle), none on a steep one.
+	m.rain_rate = 40.0
+	m.advance(1800.0)
+	mat.shader.code = mat.shader.code.replace("ALBEDO = vec3(r.x / 20.0, r.y, length(r.zw) / 3.0);", "ALBEDO = vec3(weather_surface_puddle(wp, q == 0 ? n : normalize(vec3(-0.5, 1.0, 0.0))) / 20.0);")
+	for i in 5:
+		await RenderingServer.frame_post_draw
+	img = get_viewport().get_texture().get_image()
+	var level: float = img.get_pixel(int(img.get_width() * 0.125), img.get_height() / 2).srgb_to_linear().r * 20.0
+	var steep: float = img.get_pixel(int(img.get_width() * 0.375), img.get_height() / 2).srgb_to_linear().r * 20.0
+	var pooled: float = m.get_puddle_at(Vector3())
+	_check("surface rain: the weather's pooled water stands on a level face, not on a 27 degree one", absf(level - pooled) < 0.15 * pooled + 0.1 and pooled > 1.0 and steep < 0.1,
+			"pooled %.2f mm; level face %.2f mm, steep face %.2f mm" % [pooled, level, steep])
 	quad.queue_free()
 	cam.queue_free()
 	m.queue_free()

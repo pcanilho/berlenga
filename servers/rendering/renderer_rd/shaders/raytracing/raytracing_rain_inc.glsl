@@ -264,3 +264,12 @@ float rain_surface_wetness(float p_wet, float p_running, vec3 p_normal, vec4 p_r
 	float running = clamp(p_rain.x / 4.0, 0.0, 1.0) * p_running;
 	return mix(p_wet, max(running * p_streaks, 0.35 * p_wet), wall);
 }
+
+// Water standing on a built surface (docs/ideas/engine-gaps-from-game.md, B; Lagarde 2012, "Water drop 2a", accumulated
+// water): the weather's pooled water (WeatherMap3D's puddle, mm above what the surface film holds, filled by the rain
+// and emptied by drainage and evaporation) stands on faces level enough to hold it. Paving laid to a 2 % fall still
+// ponds in its hollows, so the hold eases from 20 degrees of slope to 8. Returns the water's depth over the face's
+// mean (mm); the caller's relief (heightmap, AO) decides where it lies, filling the lowest first.
+float rain_surface_puddle(vec3 p_normal, float p_puddle_mm) {
+	return max(p_puddle_mm, 0.0) * smoothstep(0.94, 0.99, p_normal.y);
+}

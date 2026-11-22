@@ -1012,6 +1012,15 @@ vec4 weather_surface_rain(vec3 p_world_pos, vec3 p_world_normal, vec3 p_air) {
 vec4 weather_surface_rain(vec3 p_world_pos, vec3 p_world_normal) {
 	return weather_surface_rain(p_world_pos, p_world_normal, vec3(0.0));
 }
+// The water standing on a face (mm over its mean): rain_surface_puddle() from the weather's pooled water.
+float weather_surface_puddle(vec3 p_world_pos, vec3 p_world_normal) {
+	if (weather_rain_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
+	vec2 uv = clamp((p_world_pos.xz - weather_rain_rect.xy) / weather_rain_rect.zw, half_texel, 1.0 - half_texel);
+	return rain_surface_puddle(p_world_normal, textureLod(weather_state_map, uv, 0.0).b);
+}
 )";
 	return code;
 }
