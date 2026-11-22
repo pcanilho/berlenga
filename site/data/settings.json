@@ -596,6 +596,17 @@
    "topic": ""
   },
   {
+   "name": "Flickering lights",
+   "settings": [
+    "Light3D.flicker_mode"
+   ],
+   "note": "",
+   "what": "a light-style pattern or a failing lamp with seeded faults, with its emissive material following.",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
    "name": "Back lighting",
    "settings": [
     "rendering/pathtracing/back_lighting"
@@ -2664,10 +2675,11 @@
    "settings": [
     "PlantGenerator.make_bank_turf()",
     "PRESET_TURF_LIP",
-    "SodLipFall3D"
+    "SodLipFall3D",
+    "make_bank_roots()"
    ],
    "note": "",
-   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking.",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking; roots of the sward and nearby trees show on bare bank faces, grown on each face's angle.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

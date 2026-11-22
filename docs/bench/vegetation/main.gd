@@ -1265,6 +1265,48 @@ func _sod_fall_check() -> void:
 	f.free()
 	WorldContracts.clear_overrides()
 
+# Roots on bare scarps (make_bank_roots): the sward's fine roots along the scarp's top edge, each on the variant grown
+# nearest the face's angle (the stub's face falls 1.2 m over about 0.6 m, near 63 degrees); none without the scarp;
+# the woody roots none with no canopy near.
+func _bank_roots_check() -> void:
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _relief_at(p: Vector3) -> Vector2:\n\tvar t := clampf((p.x + 0.3) / 0.6, 0.0, 1.0)\n\treturn Vector2(1.2 * (1.0 - t * t * (3.0 - 2.0 * t)), 1.0)\n"
+	stub.reload()
+	var res := []
+	var faces := []
+	for scarp in [true, false]:
+		if scarp:
+			WorldContracts.set_ground(stub.new())
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		f.biome.species.assign(PlantGenerator.make_bank_roots(6, false))
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var on := 0
+		var off := 0
+		for q in f.get_placements(0):
+			if q.x > -0.45 and q.x < 0.0:
+				on += 1
+			else:
+				off += 1
+		if scarp:
+			for d in f.get_instances_near(0, Vector3.ZERO, 200.0):
+				var m: Mesh = d.mesh
+				if m and m.has_meta("bank_face_slope"):
+					faces.append(roundi(rad_to_deg(float(m.get_meta("bank_face_slope")))))
+		res.append([on, off, f.get_placements(1).size()])
+		f.free()
+		WorldContracts.clear_overrides()
+	var face_ok := faces.size() > 0
+	for a in faces:
+		face_ok = face_ok and a >= 55 and a <= 73
+	print("VEG_BANK_ROOTS faces ", faces.slice(0, 12))
+	_check("bank roots: fine roots along a scarp's top edge on the variant nearest the face, none without the scarp, no woody roots with no canopy",
+			res[0][0] > 20 and res[0][1] == 0 and res[0][2] == 0 and res[1] == [0, 0, 0] and face_ok, res)
+
 # Turf overhangs (make_bank_turf, RULE_BANK_EDGE): a stub's relief raises the ground 1.2 m west of a scarp at x = 0;
 # sod lips stand along its top edge, none on the open ground either side or without the scarp.
 func _turf_lip_check() -> void:
@@ -2789,6 +2831,7 @@ func _checks() -> void:
 	_relief_check()
 	_pollen_cloud_check()
 	_turf_lip_check()
+	_bank_roots_check()
 	_seed_down_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).

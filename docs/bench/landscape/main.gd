@@ -4761,6 +4761,15 @@ func _build_cover() -> void:
 			lead.append(bts)
 		b.species = lead + b.species
 		_log("bank turf: %d species" % bt.size())
+	if args.get("bank-roots", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_bank_roots"):
+		# Bank roots (PlantGenerator.make_bank_roots, vegetation be31837e): hanging and exposed roots on cut banks;
+		# the woody kind only near canopy. Appended to the cover biome (no river biome here). --bank-roots=0 for none.
+		var br: Array = ClassDB.class_call_static("PlantGenerator", "make_bank_roots", 6, true, season)
+		var tail: Array = []
+		for brs in br:
+			tail.append(brs)
+		b.species = b.species + tail
+		_log("bank roots: %d species" % br.size())
 	if args.has("mounds") and ClassDB.class_has_method("PlantGenerator", "make_mounds"):
 		# --mounds=meadow|wood|both: ant hills and molehills in the meadows, wood ant nests at conifer edges
 		# (PlantGenerator.make_mounds, vegetation e90904e7); called by name so older binaries still parse.

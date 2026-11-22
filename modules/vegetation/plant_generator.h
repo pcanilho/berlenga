@@ -187,6 +187,8 @@ public:
 		PRESET_ORB_WEB, // A garden spider's orb web between two dry stems with its frame and anchor threads: seen only with dew or hoarfrost on it.
 		PRESET_FLOOD_WRACK, // A flood's strand line along the high-water mark: silted straw, reed pieces, twigs and leaves; dries grey and breaks up by the season's "flood_age".
 		PRESET_TURF_LIP, // The sod's lip over a cut bank or scarp: a root-bound turf slab overhanging the undercut soil, grass hanging over its edge, roots trailing from its underside.
+		PRESET_BANK_ROOTS, // Fine roots of the sward and herbs bared on a cut bank or scarp face: a fibrous mat close under the top, thinning with depth, strands hanging off the undercut.
+		PRESET_BANK_ROOTS_WOODY, // A tree's or shrub's roots bared on a cut bank near its crown: a few woody laterals out of the face, along and down it, branching to fine ends.
 		PRESET_MAX,
 	};
 
@@ -278,6 +280,7 @@ private:
 	Builder builders[SURFACE_MAX];
 	RandomPCG rng;
 	float plant_height = 0.0f;
+	float bank_face = 1.3f; // PRESET_BANK_ROOTS*: the bank face's angle the roots are grown on (radians from level).
 	// Basal organs (a frond, a cane, a tiller, a rosette leaf): everything added after an organ that
 	// starts on the ground belongs to it, until the next one. The shader bends each organ about its
 	// own base (bracken fronds and bramble canes rise from a rhizome or crown, not the plant's origin).
@@ -336,6 +339,8 @@ private:
 	float _flood_age() const; // Years since the flood's peak, from the season's "flood_age"; about ten days without.
 	void _build_flood_wrack();
 	void _build_turf_lip();
+	void _build_bank_roots(bool p_woody);
+	void _add_root_path(const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, const LocalVector<float> &p_wind);
 	void _build_horse_dung();
 	void _build_deer_pellets();
 	void _build_dung_rough();
@@ -541,6 +546,8 @@ public:
 	void set_preset(Preset p_preset) { preset = p_preset; }
 	Preset get_preset() const { return preset; }
 	void set_seed(int p_seed) { seed = p_seed; }
+	void set_bank_face(float p_angle) { bank_face = p_angle; }
+	float get_bank_face() const { return bank_face; }
 	int get_seed() const { return seed; }
 	void set_size(float p_size) { size = MAX(p_size, 0.01f); }
 	float get_size() const { return size; }
@@ -700,6 +707,7 @@ public:
 	// Turf overhangs (docs/ideas/vegetation.md, "Turf overhangs on cut banks"): the sod's lip over the top edge of a
 	// cut bank or scarp (PlantSpecies.RULE_BANK_EDGE), overhanging the drop (the field turns mesh +X over it).
 	static TypedArray<Resource> make_bank_turf(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	static TypedArray<Resource> make_bank_roots(int p_variants = 6, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	static TypedArray<Resource> make_grazing(GrazeSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
