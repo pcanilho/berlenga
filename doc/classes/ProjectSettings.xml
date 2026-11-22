@@ -3536,6 +3536,9 @@
 		<member name="rendering/renderer/rendering_method.web" type="String" setter="" getter="" default="&quot;gl_compatibility&quot;">
 			Override for [member rendering/renderer/rendering_method] on web.
 		</member>
+		<member name="rendering/rendering_device/acceleration_structure/compaction" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], static bottom-level acceleration structures (built without [code]ALLOW_UPDATE[/code] or [code]PREFER_FAST_BUILD[/code]) are compacted after their build: the driver reports their compacted size, they are copied into storage of that size, and the larger storage is freed once no top-level structure refers to it. Traces the same tree, so path traced frames are unchanged; saves acceleration structure memory on drivers that report a smaller compacted size. A rebuild of a compacted structure takes its full storage back first. With [code]--verbose[/code], the engine logs each round ([code]BLAS compaction: ...[/code]).
+		</member>
 		<member name="rendering/rendering_device/acceleration_structure/max_scratch_buffer_size_mb" type="int" setter="" getter="" default="256">
 			The maximum size in megabytes of the scratch buffer shared by acceleration structures built together in one batch, as the path tracer does. Builds take consecutive ranges of it. The buffer starts small and doubles whenever the rest is too small, until it reaches this size; after that, the next build waits for the previous ones and starts over at the beginning. Larger values let more builds run concurrently. A single build that needs more than this grows the buffer to fit and prints a warning.
 		</member>

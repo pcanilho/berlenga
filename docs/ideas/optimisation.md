@@ -165,13 +165,25 @@ copy with mode `COMPACT`, free the original once the GPU is done with it).
 - **Proof.** A PT frame before and after must be byte-identical (same tree, same traversal). Memory is
   read from the RD buffer counters. Lavapipe may report little saving since its BVH layout differs from
   NVIDIA's; the real saving is measured on the PC.
+- **Switches.** `rendering/rendering_device/acceleration_structure/compaction` (on by default). Env
+  `RD_BLAS_COMPACTION_MOVE_ALL=1` moves every static BLAS even when the driver reports no saving, so the copy
+  path runs on lavapipe. `--verbose` logs each step (`BLAS compaction: ...`).
 
 ## PC GPU bench list (when the PC is back)
 
 - GPU frame time raster and PT on the landscape showcase, before/after each merged change.
-- BLAS compaction: AS memory and trace time (compacted BLASes can be slightly faster to trace).
+- BLAS compaction: AS memory and trace time (compacted BLASes can be slightly faster to trace). Run
+  `docs/bench/rt_memory` and the landscape showcase with `--verbose` and compare "MB to MB" in the log and
+  the video memory line with the setting on and off.
 - Any GPU culling or format change: per-pass GPU timestamps.
 
 ## Results
 
-None yet.
+### BLAS compaction (cloud, lavapipe)
+
+- New bench `docs/bench/rt_memory`: 24 static meshes (sphere, torus, subdivided box, fine relief) on a
+  plane, path traced at 640x360, 4 spp. Lavapipe reports compacted size equal to the build size (12.69 MB
+  of 12.69 MB), so it saves nothing here; with `RD_BLAS_COMPACTION_MOVE_ALL=1` all 6 BLASes moved through
+  the compacting copy and the frame is **byte-identical** to the previous build (max difference 0), with
+  persistent instances off and on (keyed TLAS rewrite path).
+- Memory saving on real GPUs: PC bench list.
