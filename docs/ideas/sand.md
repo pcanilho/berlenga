@@ -1092,7 +1092,13 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   past it the open flux), on ripple_time_scale; cells under 0.01 or a kilometre off are dropped. PhysXDustDevils3D
   scours 1.3 R round its foot at strength x dt per second. Ground --test=shelter checks it sweeps, refills under
   12 m/s, holds in 3 m/s.
-- Not yet: the track's tone (a darker coarse lag where the fines went), the PT cost on the PC queue.
+- Track tone (22 Nov): the foot lifts the bright fine grains off the surface skin and leaves the coarser, darker sand
+  under it (Reiss et al. 2011; Balme and Greeley 2006), so the band reads a little darker and warmer: albedo x
+  (0.9, 0.87, 0.82) at full scour, the interdune lag's hue much weaker (only the skin goes). The share swept goes to
+  the ripple map's tile rows, G, over the sand block's rect (rows n+S..n+S+S-1; meta texel 5 w on when any), read
+  by material.cpp ground_sand_scour_at() / ground_scour_tone() and the same lines in raygen. Inside the dune tone's
+  sand block (dune_tone on, the default). Raster scout: the band about 4% darker, its ripples gone.
+- Not yet: the PT cost on the PC queue.
 
 ## Next sand candidates, round 2 (research, 22 Nov 2026; on a card)
 

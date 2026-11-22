@@ -6,6 +6,23 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-961f7961 (2026-11-22)
+
+### Added
+- Camera cut-out: a soft dithered hole through walls, roofs and trees between the camera and the player, the same in the path tracer (global shader parameters `camera_cutout` and `camera_cutout_floor`, `BaseMaterial3D.get_camera_cutout_shader_code()`); characters and anything else can stay in view (`BaseMaterial3D.camera_cutout`).
+- Lights can flicker, by a light-style pattern or as a failing lamp with seeded faults, with an emissive material following them (`Light3D.flicker_mode`).
+- Positional shadows go to the most important lights first (energy times size on screen, a light keeping its shadow until another is clearly more important), so a full shadow atlas drops the least important; a budget caps how many keep shadows (project setting `rendering/lights_and_shadows/positional_shadow/max_shadowed_lights`, 0 = as many as fit).
+- Rain and snow haze near the camera falls in curtains carried by the wind and following the storm cells, lit by lamps and the sun, with the same mean haze (WeatherMap3D `rain_curtains`).
+- The water standing on a built surface, from the weather's pooled water on faces level enough to hold it, for materials and the path tracer alike (`weather_surface_puddle()`).
+
+### Fixed
+- Flow gas drawn without path tracing matches the path tracer more closely: the shaded side of thick gas is no longer lit from inside (snow powder lit from behind was up to 30 levels too bright), and the foot of a cloud takes the ground toward the camera as sunlit or shaded as it really is. Smoke, dust and fire move toward their path-traced look as well.
+
+### Changed
+- Floodplain trees show the last flood's silt line where the water system recorded one, at its height and facing its flow; trees the flood did not reach stay clean.
+- Broadleaf leaves let through about as much light as they reflect, as measured leaves do: crowns seen from below glow green against the sky under path tracing instead of drawing near-black. Dead, frost-killed and turned leaves glow brown or yellow against the light.
+- The methods that raise `WorldGround.relief_changed` and `WorldStand.stand_changed` are now `notify_relief_changed()` and `notify_stand_changed()`, so the signals and methods no longer share names.
+
 ## build-9534e321 (2026-11-22)
 
 ### Added
