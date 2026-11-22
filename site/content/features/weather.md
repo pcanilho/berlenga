@@ -12,7 +12,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
   *Weather map: a storm's cloud, rain core, wind and the wet ground it leaves.*
 
 - **Wind**: slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.
-- **Wind over terrain** (`terrain_wind_enabled`): faster over crests, calm in lees, turned along valleys and rising up slopes.
+- **Wind over terrain** (`terrain_wind_enabled`, `drainage_winds`): faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground.
 - **Wind near the ground** (`add_canopy`, `add_shelter_box`, `gust_patch_size`; RockField3D `wind_obstacles`, PhysXVehicle3D `wind_obstacle`): shelter inside plant canopies and behind buildings, boulders and vehicles; gust patches sweep across fields.
 - **Season state** (`WeatherMap3D.get_season()`): day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.
 - **Storms** (`add_storm`): drift with the wind, with a rain core and a downdraft.
