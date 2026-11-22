@@ -186,6 +186,7 @@ public:
 		PRESET_SHEET_WEB, // A money spider's (Linyphiidae) sheet web in the sward with its scaffold threads: seen only with dew or hoarfrost on it.
 		PRESET_ORB_WEB, // A garden spider's orb web between two dry stems with its frame and anchor threads: seen only with dew or hoarfrost on it.
 		PRESET_FLOOD_WRACK, // A flood's strand line along the high-water mark: silted straw, reed pieces, twigs and leaves; dries grey and breaks up by the season's "flood_age".
+		PRESET_TURF_LIP, // The sod's lip over a cut bank or scarp: a root-bound turf slab overhanging the undercut soil, grass hanging over its edge, roots trailing from its underside.
 		PRESET_MAX,
 	};
 
@@ -334,6 +335,7 @@ private:
 	void _build_cow_pat();
 	float _flood_age() const; // Years since the flood's peak, from the season's "flood_age"; about ten days without.
 	void _build_flood_wrack();
+	void _build_turf_lip();
 	void _build_horse_dung();
 	void _build_deer_pellets();
 	void _build_dung_rough();
@@ -695,6 +697,9 @@ public:
 	// Flood wrack lines (docs/ideas/vegetation.md, "Flood wrack lines"): the strand line a flood leaves along its
 	// high-water mark (PlantSpecies.RULE_HIGH_WATER), laid along the contour (follow_flow: +X downhill).
 	static TypedArray<Resource> make_flood_wrack(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Turf overhangs (docs/ideas/vegetation.md, "Turf overhangs on cut banks"): the sod's lip over the top edge of a
+	// cut bank or scarp (PlantSpecies.RULE_BANK_EDGE), overhanging the drop (the field turns mesh +X over it).
+	static TypedArray<Resource> make_bank_turf(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	static TypedArray<Resource> make_grazing(GrazeSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").

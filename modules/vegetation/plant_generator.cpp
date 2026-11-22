@@ -629,7 +629,7 @@ PlantGenerator::Wither::~Wither() {
 			continue; // Thistledown: dry pappus, white.
 		}
 		const Preset pr = generator->preset;
-		if (i == SURFACE_CENTRE && (pr == PRESET_ANTHILL || pr == PRESET_WOOD_ANT_NEST || pr == PRESET_MOLEHILL || pr == PRESET_ROOTED_SOD || pr == PRESET_LEAF_BANK || pr == PRESET_FLOOD_WRACK || pr == PRESET_COW_PAT || pr == PRESET_HORSE_DUNG || pr == PRESET_DEER_PELLETS)) {
+		if (i == SURFACE_CENTRE && (pr == PRESET_ANTHILL || pr == PRESET_WOOD_ANT_NEST || pr == PRESET_MOLEHILL || pr == PRESET_ROOTED_SOD || pr == PRESET_LEAF_BANK || pr == PRESET_FLOOD_WRACK || pr == PRESET_TURF_LIP || pr == PRESET_COW_PAT || pr == PRESET_HORSE_DUNG || pr == PRESET_DEER_PELLETS)) {
 			continue; // Soil and thatch: nothing to wither.
 		}
 		PackedColorArray &c = generator->builders[i].colors;
@@ -795,6 +795,8 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 			return 20.0f; // Loose leaves kicked about and trodden flat.
 		case PRESET_FLOOD_WRACK:
 			return 20.0f; // Loose straw and sticks kicked about.
+		case PRESET_TURF_LIP:
+			return 30.0f; // An overhanging sod lip breaks off under a foot at the edge.
 		case PRESET_COW_PAT:
 		case PRESET_HORSE_DUNG:
 		case PRESET_DEER_PELLETS:
@@ -917,6 +919,7 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_SHEET_WEB:
 		case PRESET_ORB_WEB:
 		case PRESET_FLOOD_WRACK:
+		case PRESET_TURF_LIP:
 		case PRESET_MAX:
 			return 0.0f;
 		case PRESET_SEDGE:
@@ -4799,6 +4802,7 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 		case PRESET_COCKSFOOT:
 		case PRESET_TIMOTHY:
 		case PRESET_GRAZED_LAWN:
+		case PRESET_TURF_LIP:
 		case PRESET_DUNG_ROUGH:
 		case PRESET_COW_PAT:
 		case PRESET_HORSE_DUNG:
@@ -6620,6 +6624,11 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.3f, 0.23f, 0.15f); // Fallen leaves, silted brown.
 			centre_color = Color(0.34f, 0.3f, 0.23f); // The matted fines and silt under it.
 			break;
+		case PRESET_TURF_LIP:
+			leaf_color = Color(0.3f, 0.42f, 0.16f); // The sward's blades, hanging over the edge.
+			stem_color = Color(0.5f, 0.42f, 0.32f); // Roots trailing from the sod, pale brown.
+			centre_color = Color(0.22f, 0.16f, 0.11f); // The sod's cut face and underside: dark topsoil bound by roots.
+			break;
 		case PRESET_LEAF_LITTER:
 			leaf_color = Color(0.33f, 0.22f, 0.11f);
 			stem_color = Color(0.22f, 0.16f, 0.1f);
@@ -7188,6 +7197,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_FLOOD_WRACK:
 			_build_flood_wrack();
+			break;
+		case PRESET_TURF_LIP:
+			_build_turf_lip();
 			break;
 		case PRESET_LEAF_LITTER:
 			_build_leaf_litter();
@@ -8756,6 +8768,7 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_SHEET_WEB);
 	BIND_ENUM_CONSTANT(PRESET_ORB_WEB);
 	BIND_ENUM_CONSTANT(PRESET_FLOOD_WRACK);
+	BIND_ENUM_CONSTANT(PRESET_TURF_LIP);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -8768,6 +8781,7 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_mounds", "set", "variants", "textures", "season"), &PlantGenerator::make_mounds, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_fairy_rings", "variants", "textures", "season"), &PlantGenerator::make_fairy_rings, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_flood_wrack", "variants", "textures", "season"), &PlantGenerator::make_flood_wrack, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bank_turf", "variants", "textures", "season"), &PlantGenerator::make_bank_turf, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dew_webs", "variants", "textures", "season"), &PlantGenerator::make_dew_webs, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_grazing", "set", "variants", "textures", "season"), &PlantGenerator::make_grazing, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));

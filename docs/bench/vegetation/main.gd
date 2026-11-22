@@ -1200,6 +1200,39 @@ func _wrack_offsets(f: VegetationField3D, peak: float) -> Vector2:
 					on += 1
 	return Vector2(float(on) / maxf(all, 1), all)
 
+# Turf overhangs (make_bank_turf, RULE_BANK_EDGE): a stub's relief raises the ground 1.2 m west of a scarp at x = 0;
+# sod lips stand along its top edge, none on the open ground either side or without the scarp.
+func _turf_lip_check() -> void:
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _relief_at(p: Vector3) -> Vector2:\n\tvar t := clampf((p.x + 0.3) / 0.6, 0.0, 1.0)\n\treturn Vector2(1.2 * (1.0 - t * t * (3.0 - 2.0 * t)), 1.0)\n"
+	stub.reload()
+	var res := []
+	for scarp in [true, false]:
+		if scarp:
+			WorldContracts.set_ground(stub.new())
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		f.biome.species.assign(PlantGenerator.make_bank_turf(1, false))
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var on := 0
+		var off := 0
+		for q in f.get_placements(0):
+			if q.x > -0.45 and q.x < 0.0:
+				on += 1
+			else:
+				off += 1
+				if scarp and off <= 4:
+					print("VEG_TURF off at %s, ground %.2f" % [q, dm.get_height_at(q)])
+		res.append([on, off])
+		f.free()
+		WorldContracts.clear_overrides()
+	_check("turf overhangs: sod lips along a scarp's top edge, none on the open ground or without the scarp",
+			res[0][0] > 20 and res[0][1] == 0 and res[1] == [0, 0], res)
+
 # Pollen clouds (PollenCloud3D): dry wind shakes pollen from conifer crowns in flower; damp air, rain, calm or the
 # wrong season sheds none; the nearest crowns shed, each by the wind at its crown.
 class PollenWeatherStub extends WorldWeather:
@@ -2690,6 +2723,7 @@ func _checks() -> void:
 	_wrack_check()
 	_relief_check()
 	_pollen_cloud_check()
+	_turf_lip_check()
 	_seed_down_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
