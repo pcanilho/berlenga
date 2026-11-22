@@ -3754,6 +3754,18 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Snow layers",
+   "settings": [
+    "SnowCover3D.layers_enabled",
+    "layer_barrier"
+   ],
+   "note": "",
+   "what": "crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Lake ice",
    "settings": [
     "SnowCover3D.lake_ice_enabled"
