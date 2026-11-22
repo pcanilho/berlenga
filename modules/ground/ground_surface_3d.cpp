@@ -1347,6 +1347,80 @@ void GroundSurface3D::_on_stand_changed(const Rect2 &p_area) {
 	_update_cells();
 }
 
+// Pugged trails (docs/ideas/mud.md, round 21.2). Hooves on soil wetter than its plastic limit punch in and leave a
+// pocked, puddling tread (treading damage, "pugging": Climo and Richardson 1984; Drewry 2006 on its slow recovery).
+// Over the trails near the followed point (WorldStand.trail_at(), sampled every 0.5 m), a trail walked P times a
+// year gets P / 365 passes a day of game time, each about 11 hoof prints a square metre of tread (a deer's stride of
+// about 0.6 m, two prints a stride over a 0.3 m wide line), drawn at random; each print a 6 x 8 cm hoof at 150 kPa
+// (a red deer's; Bekker's plate sinkage in the soil there), only where the soil is wet past 0.55 of saturation or
+// muddy. At most 64 prints a step; the pocks then slump, fill with rain and grow over as any print.
+void GroundSurface3D::_trail_pug_update(float p_delta) {
+	if (!trail_pugging || !trails_on || !field.valid || !ground_valid || (int)cell_inputs.size() != ground_n * ground_n) {
+		return;
+	}
+	const float rate = 11.0f / (365.0f * 86400.0f) * MAX(runoff_time_scale, 0.0f) * p_delta; // prints per m2 per pass a year
+	if (rate <= 0.0f) {
+		return;
+	}
+	WorldStand *st = WorldContracts::stand();
+	const Vector3 c = _follow_position();
+	const float range = 15.0f;
+	const float step = 0.5f;
+	const int n = ground_n;
+	int printed = 0;
+	for (float z = Math::floor((c.z - range) / step) * step; z < c.z + range && printed < 64; z += step) {
+		for (float x = Math::floor((c.x - range) / step) * step; x < c.x + range && printed < 64; x += step) {
+			const Vector2 tr = st->trail_at(Vector3(x, 0.0f, z));
+			if (tr.x <= 0.0f || tr.y <= 0.0f) {
+				continue;
+			}
+			const int ix = CLAMP(int(Math::round(x / ground_spacing)) - ground_origin.x, 0, n - 1);
+			const int iz = CLAMP(int(Math::round(z / ground_spacing)) - ground_origin.y, 0, n - 1);
+			const CellInput &in = cell_inputs[iz * n + ix];
+			const Cell &cl = _cell_at(x, z);
+			if (in.fixed || !cl.deformable || (in.moisture < 0.55f && cl.mud < 0.02f)) {
+				continue;
+			}
+			// Expected prints in this 0.5 m square, drawn by its own hash and the clock.
+			const float expect = rate * tr.x * tr.y * step * step;
+			uint32_t h = hash_murmur3_one_float(x);
+			h = hash_murmur3_one_float(z, h);
+			h = hash_murmur3_one_32(pug_ticks, h);
+			int k = 0;
+			float u = float(h & 0xffffu) / 65536.0f;
+			// Poisson draws by inversion, a handful at most.
+			float pk = Math::exp(-expect);
+			float cum = pk;
+			while (u > cum && k < 4) {
+				k++;
+				pk *= expect / float(k);
+				cum += pk;
+			}
+			for (int j = 0; j < k && printed < 64; j++) {
+				h = hash_fmix32(h + 0x9e3779b9u);
+				const float ox = (float(h & 0xffu) / 255.0f - 0.5f) * step;
+				const float oz = (float((h >> 8) & 0xffu) / 255.0f - 0.5f) * step;
+				const float yaw = float((h >> 16) & 0xffu) / 255.0f * (float)Math::TAU;
+				const Vector3 p(x + ox, 0.0f, z + oz);
+				const GroundSoil soil = get_soil(p);
+				if (!soil.soft) {
+					continue;
+				}
+				const float kk = soil.kc / 0.06f + soil.kphi; // kN/m^(n+2), a 6 cm plate
+				const float sink = MIN(Math::pow(150.0f / MAX(kk, 1.0f), 1.0f / MAX(soil.n, 0.3f)), MIN(soil.max_sinkage, 0.15f));
+				if (sink < 0.003f) {
+					continue;
+				}
+				const float g = get_surface_height_at(p);
+				press_box(Vector3(p.x, g, p.z), Vector2(0.06f, 0.08f), yaw, g - 0.5f, sink);
+				trail_pocks++;
+				printed++;
+			}
+		}
+	}
+	pug_ticks++;
+}
+
 float GroundSurface3D::_trail_passes(const Vector3 &p_position) const {
 	if (!trails_on || wear_regrowth_days <= 0.0f) {
 		return 0.0f;
@@ -6461,6 +6535,7 @@ void GroundSurface3D::_notification(int p_what) {
 			cells_accum += delta;
 			if (cells_accum >= 2.0) {
 				_wear_update(cells_accum);
+				_trail_pug_update(float(cells_accum));
 				cells_accum = 0.0;
 				_update_cells();
 			}
@@ -9755,6 +9830,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_stream_stones"), &GroundSurface3D::is_stream_stones);
 	ClassDB::bind_method(D_METHOD("get_stone_scour_volume"), &GroundSurface3D::get_stone_scour_volume);
 	ClassDB::bind_method(D_METHOD("get_stone_silt_lifted"), &GroundSurface3D::get_stone_silt_lifted);
+	ClassDB::bind_method(D_METHOD("set_trail_pugging", "enabled"), &GroundSurface3D::set_trail_pugging);
+	ClassDB::bind_method(D_METHOD("is_trail_pugging"), &GroundSurface3D::is_trail_pugging);
+	ClassDB::bind_method(D_METHOD("get_trail_pock_count"), &GroundSurface3D::get_trail_pock_count);
 	ClassDB::bind_method(D_METHOD("set_keep_ruts", "enabled"), &GroundSurface3D::set_keep_ruts);
 	ClassDB::bind_method(D_METHOD("is_keeping_ruts"), &GroundSurface3D::is_keeping_ruts);
 	ClassDB::bind_method(D_METHOD("set_ruts_path", "path"), &GroundSurface3D::set_ruts_path);
@@ -9977,6 +10055,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "muddy_water"), "set_muddy_water", "is_muddy_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tracked_mud"), "set_tracked_mud", "is_tracked_mud");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_stones"), "set_stream_stones", "is_stream_stones");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "trail_pugging"), "set_trail_pugging", "is_trail_pugging");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");
