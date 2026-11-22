@@ -2798,6 +2798,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Seed down",
+   "settings": [
+    "SeedDown3D"
+   ],
+   "note": "",
+   "what": "dry wind looses dandelion, thistle and willowherb seeds that drift on the air and catch in the grass.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Falling leaves",
    "settings": [
     "LeafFall3D",
@@ -4060,10 +4071,11 @@
    "name": "Wind over terrain",
    "settings": [
     "terrain_wind_enabled",
-    "drainage_winds"
+    "drainage_winds",
+    "upslope_winds"
    ],
    "note": "",
-   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground.",
+   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

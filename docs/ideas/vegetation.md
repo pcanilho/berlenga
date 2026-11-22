@@ -1800,3 +1800,22 @@ producers fill it).
   combed flat along the peak's flow direction and yellowed, fading over 7 to 35 days, with a grey-brown silt film
   fading over 20 to 120 days.
 - Not yet: live re-placement of wrack when a new flood peaks (the field places at populate and on stand changes).
+
+## Seed down in the wind (round 6, third pick)
+Built: SeedDown3D (seed_down_3d.cpp). Heads of the scene's dandelion, thistle and fireweed species (meta
+plant_preset) within 40 m of the camera loose plumed seeds in their season's share of heads in seed
+(PlantGenerator.get_bloom_shares); the wind at the head from 2 to 10 m/s ramps the release, a wet surface halves it,
+rain stops it. Each seed rides WorldWeather.wind_at at its height, falls at its falling speed, and rides a vertical
+gust (Langevin, sigma_w about 1.25 u*, u* about a tenth of the local wind, T_L about 0.5 z / sigma_w). It lands caught
+in the grass, on bare ground or floating on water (carried by WorldWater.flow_at), lifts again in gusts over 3 m/s
+10 cm up, and is recycled after 90 s. Real geometry (seed, beak, 20-32 bristle strips, backlit) in one MultiMesh a
+kind, so the path tracer sees them. still_shot holds them for stills.
+- Sources: Cummins et al. 2018, Nature 562 (dandelion: falls at 0.391 m/s, 0.633 mg, 13.8 mm pappus of about 100
+  bristles, porosity 0.92; most seeds land within 2 m, some travel over 1 km on updrafts). Seale et al. 2022, eLife
+  11:e81962 (the pappus closes when damp, 60-90 degrees, and then falls two to three times faster; at 9.8 m/s 24% of
+  dry and 50% of wet seeds stayed on the head, so release favours dry wind). Thistle and willowherb falling speeds
+  (0.3 and 0.25 m/s) and the release rate are estimates: no measured values found.
+- Not yet: the drift correction for turbulence changing with height (Thomson 1987); seeds held up by updrafts over
+  sun-warmed ground (the shared wind has no thermals); scenes add the node (it is not made by the fields).
+- Bench: vegetation --test checks the fall speed, the damp fall, drift and loft in wind, and release only in wind;
+  grass --day=245 --seed-down looks along a thistle's plume (sparse: a head looses a seed or two a second).

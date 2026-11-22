@@ -32,6 +32,8 @@ extends Node3D
 #   --frost          with --day: a dry continental climate (January -8 C, July 18 C, little snow), for a hard frost
 #   --flood=H[,D]    a flood peaked H m over the pond D days ago (default 10): wrack lines along the mark, the grass
 #                    under it combed flat and silted (WorldWater.high_water_at through a script stub)
+#   --seed-down      with --day (late summer, e.g. 245): thistledown loosed by a 10 m/s dry wind (SeedDown3D),
+#                    seen from beside a thistle in seed
 #   --snowy          with --day: a snowy winter (January -6 C, July 18 C, 1100 mm): a long lie, then the sward after
 #                    the melt (GrassField3D.snowmelt); prints GRASS_MELT (days lain, days since the melt, matting)
 #   --out=path.png   save the last frame
@@ -121,6 +123,7 @@ var season_day := 0
 var drought := false
 var frost := false
 var snowy := false
+var seed_down := false
 var flood := Vector2(-1, 10) # --flood: metres over the pond, days since
 var season_map: WeatherMap3D
 var bench_season := {}
@@ -342,6 +345,7 @@ func _ready() -> void:
 		elif a == "--drought": drought = true
 		elif a == "--frost": frost = true
 		elif a == "--snowy": snowy = true
+		elif a == "--seed-down": seed_down = true
 		elif a.begins_with("--flood="):
 			var fp := a.substr(8).split(",")
 			flood = Vector2(float(fp[0]), float(fp[1]) if fp.size() > 1 else 10.0)
@@ -1393,6 +1397,7 @@ func _cover_biome() -> Biome:
 	dock.visibility_range = 20.0
 	var thistle := PlantSpecies.new()
 	thistle.meshes = _variants(PlantGenerator.PRESET_THISTLE, 3)
+	thistle.set_meta("plant_preset", PlantGenerator.PRESET_THISTLE) # SeedDown3D finds the heads by it
 	thistle.spacing = 1.6
 	thistle.footprint = 0.25
 	thistle.density = 0.35
@@ -2440,6 +2445,63 @@ func _flood_wash_check() -> void:
 	var gone: Vector4 = grass.get_material().get_shader_parameter("flood_rect")
 	_check("flood wash: combed and silted under the mark, not above; the map follows the flood", under.x > 0.8 and under.y > 0.9 and above.z < 0.0 and rect.z > 0.0 and gone.z == 0.0, [under, above, rect, gone])
 
+class SeedWindWeather extends WorldWeather:
+	var src: WeatherMap3D
+	var ground: Callable
+	var gust := 1.0
+	func _wind_at(_p: Vector3, h: float) -> Vector3:
+		return gust * Vector3(10, 0, 2.5) * clampf(log(maxf(h, 0.05) / 0.03) / log(10.0 / 0.03), 0.2, 1.0)
+	func _surface_wetness_at(_p: Vector3) -> float:
+		return 0.0
+	func _rainfall_at(_p: Vector3) -> float:
+		return 0.0
+	func _ground_height_at(p: Vector3) -> float:
+		return ground.call(p.x, p.z)
+	func _season_at(_p: Vector3, _d: int) -> Dictionary:
+		return src.get_season()
+
+# --seed-down: thistledown in a dry 10 m/s wind (log profile over short grass), the camera beside the thistle in seed
+# nearest the default view, looking downwind; 20 s of release first.
+func _seed_down_view() -> void:
+	var w := SeedWindWeather.new()
+	w.src = season_map
+	w.ground = height
+	WorldContracts.set_weather(w)
+	var ti := -1
+	for i in cover.biome.species.size():
+		if cover.biome.species[i].get_meta("plant_preset", -1) == PlantGenerator.PRESET_THISTLE:
+			ti = i
+	var best := Vector3(0, 0, 0)
+	var bd := 1e9
+	for q in cover.get_placements(ti):
+		var d := q.distance_to(cam.global_position)
+		if d > 3.0 and d < bd:
+			bd = d
+			best = q
+	var sd := SeedDown3D.new()
+	sd.name = "SeedDown"
+	add_child(sd)
+	# Across the wind, a little behind the head, so the down streams off it across the frame.
+	# Downwind of the head and a little to the side, looking back up the plume towards it.
+	var top := best + Vector3(0, 0.9, 0)
+	cam.global_position = top + Vector3(2.2, 0.1, 1.2)
+	cam.look_at(top + Vector3(0.0, -0.1, 0.0))
+	cam.fov = 55.0
+	sd.release_rate = 4.0 # A gusty peak afternoon: ripe heads emptying fast.
+	print("GRASS_SEED_SHARE thistle in seed %.2f" % PlantGenerator.get_bloom_shares(PlantGenerator.PRESET_THISTLE, season_map.get_season()).z)
+	sd.refresh_sources()
+	sd.advance(6.0, true)
+	sd.still_shot = true # The still holds this moment.
+	var near := 0
+	for q in sd.get_seed_states():
+		if Vector3(q.x, q.y, q.z).distance_to(cam.global_position) < 4.0 and q.w < 0.0:
+			near += 1
+	if OS.get_environment("GRASS_SEED_BURST") == "1":
+		(WorldContracts.get_weather() as SeedWindWeather).gust = 0.0
+		sd.release_at(cam.global_position + (-cam.global_transform.basis.z) * 1.2, SeedDown3D.KIND_THISTLE, 30)
+	print("GRASS_SEED_NEAR aloft within 4 m: %d" % near)
+	print("GRASS_SEED_DOWN heads=%d released=%d aloft=%d lying=%d" % [sd.get_source_count(), sd.get_released_count(), sd.get_aloft_count(), sd.get_lying_count()])
+
 func _snowmelt_check() -> void:
 	# GrassField3D.snowmelt: a snowy winter (January -6 C, 1100 mm) lies to about day 120 at the meadow; the sward is
 	# matted just after the melt and has stood up again by late summer. Read through WorldContracts.weather().
@@ -2692,6 +2754,8 @@ func _process(dt: float) -> void:
 						dmin = minf(dmin, d)
 						dmax = maxf(dmax, d)
 					print("GRASS_WRACK %d placed, ground minus peak %.2f..%.2f m" % [pl.size(), dmin, dmax])
+			if seed_down and season_map:
+				_seed_down_view()
 			print("GRASS_COVER %s = %s ms=%.1f" % ["(tree, bramble, bracken, foxglove) flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry grass, tall flowers, tall dry flowers (fern, bilberry, moss, litter)", str(counts), cover.get_populate_time_msec()])
 			if ug_field:
 				ug_field.populate()
