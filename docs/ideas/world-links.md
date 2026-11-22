@@ -433,3 +433,25 @@ Chem. Phys.); Fromm et al. 2010 (BAMS).
 
 Sources: Prandtl 1942; Mahrt 1982 (J. Atmos. Sci.); Whiteman 2000 (Mountain Meteorology); Gultepe et al. 2007;
 Lavdas 1996 (USDA Forest Service GTR SRS-6); Achtemeier 2005 (Int. J. Wildland Fire).
+
+## Round 12 candidates (22 Nov, card to Paulo)
+
+1. Sea and lake breezes. Source: the land's surface temperature (the weather's radiative heating by day) against
+   the water's (`WorldWater` and `get_water_temperature`), the coast from the water contract. Reader:
+   `WorldWeather.wind_at` near the coast, so waves on lakes, spray, sand, smoke, grass and trees see it. By day the
+   land warms past the water and a shallow onshore wind of 3 to 6 m/s sets in a few hours after sunrise, reaching
+   10 to 40 km inland with a line of cumulus along its front; at night a weaker land breeze blows off the shore
+   (Simpson 1994, "Sea Breeze and Local Winds"; Miller et al. 2003 review). Per cell: onshore component from the
+   land-water temperature difference, faded by distance from the shore and by the ambient wind.
+2. Day upslope (anabatic) winds and ridge cumulus. Source: the sun on slopes (the weather's shortwave and slope
+   per cell), the drainage wind's counterpart. Reader: `wind_at` (1 to 3 m/s upslope by midday), the clouds
+   (cumulus forming first over ridges and peaks where the upslope flows meet; Whiteman 2000, ch. 13; Banta 1990).
+   Per cell: Prandtl's flow with the sign of the surface's heating; the clouds' cover raised over ridgelines.
+3. Late frost in the hollows browns new leaves. Source: the air temperature at the canopy (now with the cold pools)
+   against the trees' and plants' leaf-out stage (season forcing). Reader: TreeGenerator leaf colour and the
+   vegetation's leaf season, a frost-damage share that lasts weeks until a second flush (Augspurger 2009 on false
+   springs; Vitasse et al. 2014 on frost in valleys). Below about -2 C after budburst the young leaves die; the
+   hollows' oaks and beeches show it while the slopes above stay green.
+
+Sources: Simpson 1994; Miller et al. 2003 (Rev. Geophys.); Whiteman 2000; Banta 1990 (Atmospheric Processes over
+Complex Terrain); Augspurger 2009 (Funct. Ecol.); Vitasse et al. 2014 (Agric. For. Meteorol.).
