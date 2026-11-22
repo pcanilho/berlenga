@@ -6156,6 +6156,26 @@ func _run_ford_tests() -> void:
 	await get_tree().physics_frame
 	st = surface.get_ford_stats()
 	_check("higher up, above the water table, the bank holds under the same wheel", st["bank_failures"] == b1, "%d failures" % (st["bank_failures"] - b1))
+	# Wakes wash the bank (round 22.1): a hull 1.8 m wide driven along the stream 3.6 m off the waterline. At a
+	# walking pace its waves barely reach the bank; at 2 m/s they break on it (Havelock's y^-1/3 decay from v^2 / g),
+	# wet the strip they run up and, over a day of steady traffic past one stretch (sped up), wear it into the stream.
+	var wash := {}
+	for speed in [0.5, 2.0]:
+		st = surface.get_ford_stats()
+		var kg_w0: float = st["wake_wash_kg"]
+		var m3_w0: float = st["wake_water_m3"]
+		var kg_s0 := stream.kg
+		var hb := 0.0
+		for i in 60:
+			surface.wash_wake(Vector3(-4.0, -0.6, -6.0), Vector3(0, 0, speed), 0.9, -0.25, 1440.0)
+			hb = maxf(hb, surface.get_ford_stats()["wake_height"])
+			if i % 6 == 0:
+				await get_tree().physics_frame
+		st = surface.get_ford_stats()
+		wash[speed] = [hb, st["wake_wash_kg"] - kg_w0, st["wake_water_m3"] - m3_w0, stream.kg - kg_s0]
+		print("  wake at %.1f m/s: %.2f m at the bank, washed %.2f kg into the stream (it took %.2f kg), swash %.3f m3" % [speed, hb, wash[speed][1], wash[speed][3], wash[speed][2]])
+	_check("a wading hull's waves break on the bank, higher the faster it goes", wash[2.0][0] > 0.1 and wash[2.0][0] > 4.0 * wash[0.5][0], "%.2f m at 2 m/s, %.3f m at 0.5 m/s" % [wash[2.0][0], wash[0.5][0]])
+	_check("and at speed wash the bank into the stream and wet it; a walking pace does not", wash[2.0][1] > 0.1 and wash[2.0][3] > 0.0 and wash[2.0][2] > wash[0.5][2] and wash[0.5][1] == 0.0, "%.2f kg at 2 m/s, %.2f kg at 0.5 m/s" % [wash[2.0][1], wash[0.5][1]])
 	WorldContracts.clear_overrides()
 
 
@@ -7237,9 +7257,13 @@ func _run_ford_car_tests() -> void:
 	var pushes0 := stub.pushes
 	wader.throttle = 1.0
 	var moving := 0.0
+	var trough_hi := 0.0
+	var trough_lo := 0.0
 	for i in 180:
 		await get_tree().physics_frame
 		moving = maxf(moving, wader.get_bow_wave_strength())
+		trough_hi = maxf(trough_hi, wader.get_intake_trough())
+		trough_lo = minf(trough_lo, wader.get_intake_trough())
 	wader.throttle = 0.0
 	var pushed := stub.pushes - pushes0
 	var clears0 := stub.clears
@@ -7249,6 +7273,9 @@ func _run_ford_car_tests() -> void:
 	var cleared := stub.clears - clears0
 	print("  bow wave: strength %.2f at rest, %.2f driving (%.1f m/s); %d pushes, %d clears once out" % [at_rest, moving, absf(wader.get_forward_speed()), pushed, cleared])
 	_check("a wading car pushes a bow wave, stronger as it goes faster, and lets the water go once out", pushed > 0 and moving > at_rest + 0.05 and cleared > 0 and wader.get_bow_wave_strength() == 0.0, "%.2f at rest, %.2f driving, %d clears" % [at_rest, moving, cleared])
+	# Its trough at the intake (round 22.1): lower water there at a wading pace, the bow wave over it once racing.
+	print("  intake: the water %.2f m lower at a wading pace, %.2f m higher racing" % [trough_hi, -trough_lo])
+	_check("at a wading pace the bow's trough keeps the water lower at the intake; racing, the bow wave climbs over it", trough_hi > 0.03 and trough_lo < -0.03, "%.2f m lower, %.2f m higher" % [trough_hi, -trough_lo])
 	wader.queue_free()
 	WorldContracts.clear_overrides()
 	floor_body.queue_free()

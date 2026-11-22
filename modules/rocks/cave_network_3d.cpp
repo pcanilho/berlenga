@@ -1696,7 +1696,9 @@ real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *
 		// on a thin headland beside the arch the crest ran dead straight for fifteen metres against the sky, a dark
 		// blade down the mouth. There rock ground (from 25 degrees; a beach's sand, gentler, stays smooth) takes a
 		// broken crest (noise of 2.5 m amplitude over 4 m, 1.25 m over 1.6 m, and the wall's own finer octaves; at
-		// 0.4 of that the crease stayed straight), fading to nothing where the cave's ground stops, 0.5 m outside the landscape's hole, so the seam still meets.
+		// 0.4 of that the crease stayed straight). It starts 2 m inside the patch's edge, past the farthest the
+		// landscape's ground reaches into the patch (its hole is 1.5 m in, less half a quad), so the two never
+		// interleave in the overlap, and is full 3.5 m in.
 		const real_t rocky = Math::smoothstep(real_t(1.0 / Math::cos(Math::deg_to_rad(20.0))), real_t(1.0 / Math::cos(Math::deg_to_rad(32.0))), sl);
 		if (rocky > 0.0 && roughness > 0.0 && Math::abs(g) < 4.0) {
 			real_t w = 0.0;
@@ -1706,7 +1708,7 @@ real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *
 				const real_t along = d.x * o.x + d.z * o.z;
 				const real_t lat = Math::abs(-d.x * o.z + d.z * o.x);
 				const real_t e = MIN(MIN(along - p_src.patch_lo[pi], p_src.patch_hi[pi] - along), p_src.patch_r[pi] - lat);
-				w = MAX(w, Math::smoothstep(real_t(1.0), real_t(2.5), e));
+				w = MAX(w, Math::smoothstep(real_t(2.0), real_t(3.5), e));
 			}
 			if (w > 0.0) {
 				const uint32_t ns = uint32_t(seed) * 2654435761u + 3u;
@@ -1847,8 +1849,12 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 	}
 	const int S = N + 2 * P + 1; // samples from -P to N + P
 	auto sidx = [S, P](int x, int y, int z) { return ((z + P) * S + (y + P)) * S + (x + P); };
+	// Sample and vertex positions from whole cell indices across the world (the key times N plus the local index), not
+	// from the chunk's corner plus the local offset: N * c is not exactly chunk_size in floating point, so two
+	// neighbours could sample their shared border a hair apart and their border vertices not quite meet.
+	const Vector3i K = p_key * N;
 	auto sample = [&](int x, int y, int z, bool *r_gr) {
-		const Vector3 q = O + Vector3(x, y, z) * c;
+		const Vector3 q = Vector3(K + Vector3i(x, y, z)) * c;
 		float v = float(gen ? _rock(src, gen, q, r_gr, c) : _air(src, q, c));
 		if (!drips.is_empty()) {
 			v = float(_flowstone(drips, q, v));
@@ -1991,7 +1997,7 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 					n++;
 				}
 				cell_vertex[cidx(x, y, z)] = int(verts.size());
-				verts.push_back(O + (Vector3(x, y, z) + sum / real_t(n)) * c);
+				verts.push_back((Vector3(K + Vector3i(x, y, z)) + sum / real_t(n)) * c);
 				vert_ground.push_back(gr >= 4 ? 1 : 0);
 			}
 		}
@@ -2045,9 +2051,11 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 					bool is_ground = gq >= 2; // a mixed quad on the seam goes to the ground, so the seam has no wall-coloured teeth
 					if (is_ground) {
 						// The patch is a rectangle along the entrance's facing, the landscape's hole the same rectangle 1.5 m
-						// smaller. The cave's ground stops 0.5 m outside the hole, so the two overlap by that much and the
-						// band beyond is drawn once, by the landscape.
-						const real_t band = 1.0;
+						// smaller, so the two overlap all round. The landscape drops each quad whose centre is in the hole,
+						// so its open edge can stand half a quad (more on its coarser levels) outside the hole, past where
+						// the cave's ground stopped when it was cut back to 0.5 m outside the hole: the cave's ground
+						// covers the whole patch.
+						const real_t band = 0.0;
 						bool inside = false;
 						for (uint32_t pi = 0; pi < src.patches.size() && !inside; pi++) {
 							const Vector3 d = verts[vi[0]] - src.patches[pi];
@@ -4267,13 +4275,13 @@ void CaveNetwork3D::_fit_patch(Cave &r_cave) const {
 		}
 	}
 	if (hits > 0) {
-		// 4 m beyond the last such point: the hole is 1.5 m inside the patch, a metre more covers the 0.5 m grid and
-		// the worn lip the smooth union rounds there, and 1.5 m more lets the ground's crest relief (_rock), which
-		// fades in from 1 to 2.5 m inside the patch, reach full strength where the cave's side meets the ground. At
+		// 5 m beyond the last such point: the hole is 1.5 m inside the patch, a metre more covers the 0.5 m grid and
+		// the worn lip the smooth union rounds there, and the rest lets the ground's crest relief (_rock), which
+		// fades in from 2 to 3.5 m inside the patch, reach full strength where the cave's side meets the ground. At
 		// 2.5 m the lower end of that crease stayed straight, a pale streak down to the water.
-		r_cave.fit_lat = lat + 4.0;
-		r_cave.fit_lo = lo - 4.0;
-		r_cave.fit_hi = hi + 4.0;
+		r_cave.fit_lat = lat + 5.0;
+		r_cave.fit_lo = lo - 5.0;
+		r_cave.fit_hi = hi + 5.0;
 	}
 	if (OS::get_singleton()->has_environment("CAVE_PATCH_DEBUG")) {
 		print_line(vformat("cave patch fit at %s out %s: %d ground points in the passage's air, half width %.1f, along %.1f..%.1f (square half %.1f)", r_cave.entrance, o, hits, r_cave.fit_lat, r_cave.fit_lo, r_cave.fit_hi, _patch_half(r_cave)));

@@ -278,6 +278,12 @@ private:
 	float ford_plume_kg = 0.0f; // sent into the water by wheels and banks
 	float ford_scour_m3 = 0.0f;
 	int bank_failures = 0;
+	// Wakes wash the banks (round 22.1): a wading vehicle's waves on the bank, owed erosion per 0.5 m cell (m).
+	bool wake_wash = true;
+	HashMap<Vector2i, float> wake_owed;
+	float wake_wash_kg = 0.0f;
+	float wake_water_m3 = 0.0f;
+	float wake_height_last = 0.0f;
 	void _ford(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_sinkage, const Vector2 &p_velocity);
 	float silt_total = 0.0f; // kg/m2 laid since start, summed over the 1 m points
 	float silt_pending = 0.0f;
@@ -1182,6 +1188,9 @@ public:
 	void set_stream_fords(bool p_enabled) { stream_fords = p_enabled; }
 	bool is_stream_fords() const { return stream_fords; }
 	Dictionary get_ford_stats() const;
+	void wash_wake(const Vector3 &p_position, const Vector3 &p_velocity, float p_half_width, float p_water_level, float p_dt);
+	void set_wake_wash(bool p_enabled) { wake_wash = p_enabled; }
+	bool is_wake_wash() const { return wake_wash; }
 	bool is_flood_silt() const { return flood_silt; }
 	float get_flood_silt_total() const { return silt_total; }
 	Vector2 get_silt_at(Vector3 p_position) const;

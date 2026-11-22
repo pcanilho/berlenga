@@ -543,6 +543,7 @@ public:
 	void advance(float p_seconds);
 	void clear();
 	void add_snow(float p_swe_mm, float p_density = 100.0f, bool p_world = true);
+	void add_drift(const Vector3 &p_position, float p_radius, float p_depth, float p_density = 300.0f);
 	void refresh_heights();
 
 	Rect2 get_map_rect() const;

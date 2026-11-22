@@ -3683,6 +3683,9 @@ WeatherMap3D::Snapshot WeatherMap3D::get_snapshot() const {
 	r.shadow_size = shadow_size;
 	r.shadow_res = shadow_res;
 	r.shadow_values = shadow_values;
+	r.ground_height = ground_height;
+	r.warm_nose_temperature = warm_nose_temperature;
+	r.warm_nose_base = warm_nose_base;
 	return r;
 }
 

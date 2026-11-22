@@ -6981,11 +6981,113 @@ void GroundSurface3D::_ford(const Vector3 &p_position, const Vector2 &p_half, fl
 	add_mud_deposit(toe + Vector3(down.x, 0.0f, down.y) * 0.8f, 0.7f, lay / 2.0f, true);
 }
 
+// Wakes wash the banks (docs/ideas/mud.md, round 22.1). A body pushed through shallow water at speed v raises a bow
+// wave about its stagnation head v^2 / 2g over the surface and draws a trough as deep behind it: crest to trough
+// H0 = v^2 / g near the hull (capped by breaking, 0.78 of the depth). Its diverging waves lose height away from the
+// sailing line as y^-1/3 (Havelock 1908; the decay boat-wake predictors keep, Kriebel and Seelig 2005), so at the
+// bank y from the hull H = H0 (y / b)^-1/3, b the half width. There they break and run up the bank about their own
+// height (Hunt 1959, surf similarity near 1). Erosion is taken from the wave's energy at the bank (Bauer, Lorang and
+// Sherman 2002; Glamore 2008): the breaking wave's orbital speed u = 0.5 sqrt(0.78 g H) shears the bank at
+// 0.5 rho f_w u^2 (f_w 0.03, a rough bed), eroding cohesive soil at Partheniades' rate, as the stones' scour. The
+// swash wets a strip up to the run-up (most runs back). Called by PhysXVehicle3D while its bow is in the water.
+void GroundSurface3D::wash_wake(const Vector3 &p_position, const Vector3 &p_velocity, float p_half_width, float p_water_level, float p_dt) {
+	if (!wake_wash || !stream_fords || !ground_valid || p_dt <= 0.0f || !Math::is_finite(p_water_level)) {
+		return;
+	}
+	const Vector2 v(p_velocity.x, p_velocity.z);
+	const float speed = v.length();
+	if (speed < 0.3f) {
+		return;
+	}
+	const float b = MAX(p_half_width, 0.3f);
+	const float depth0 = p_water_level - _ground_at(p_position.x, p_position.z);
+	if (depth0 < 0.05f) {
+		return;
+	}
+	const float h0 = MIN(speed * speed / 9.81f, 0.78f * depth0);
+	const Vector2 dir = v / speed;
+	const Vector2 side(-dir.y, dir.x);
+	WorldWater *ww = WorldContracts::water();
+	const float tex = is_near_active() ? near_fld.texel() : field.texel();
+	wake_height_last = 0.0f;
+	for (int sgn = -1; sgn <= 1; sgn += 2) {
+		// March out across the sailing line to the waterline (first ground at the surface), within 20 m.
+		Vector2 at;
+		float y = 0.0f;
+		bool found = false;
+		for (int k = 0; k <= 80 && !found; k++) {
+			y = b + 0.25f * k;
+			at = Vector2(p_position.x, p_position.z) + side * (float(sgn) * y);
+			if (_ground_at(at.x, at.y) >= p_water_level - 0.02f) {
+				found = true;
+			}
+		}
+		if (!found) {
+			continue;
+		}
+		const Cell &c = _cell_at(at.x, at.y);
+		if (!c.deformable) {
+			continue;
+		}
+		const float hb = h0 * Math::pow(MAX(y / b, 1.0f), -1.0f / 3.0f);
+		if (hb < 0.01f) {
+			continue;
+		}
+		wake_height_last = MAX(wake_height_last, hb);
+		// The bank's slope up from the waterline, for the run-up's reach.
+		const Vector2 out = side * float(sgn);
+		const float rise = _ground_at(at.x + out.x * 0.5f, at.y + out.y * 0.5f) - _ground_at(at.x, at.y);
+		const float tb = CLAMP(rise / 0.5f, 0.05f, 2.0f);
+		const float runup = hb;
+		const float reach = runup / tb;
+		// Erosion at the break: Partheniades with the scour's critical shear.
+		const float u = 0.5f * Math::sqrt(0.78f * 9.81f * hb);
+		const float tau = 0.5f * 1000.0f * 0.03f * u * u;
+		const float tau_c = CLAMP(0.5f + 0.5f * c.cohesion, 0.5f, 5.0f);
+		const float fines = CLAMP(1.0f - c.sand, 0.0f, 1.0f);
+		const float dry_density = 1500.0f;
+		// The wave train reaches about the hull's length of bank at once.
+		const float len = 2.0f * b;
+		if (tau > tau_c) {
+			const float e = 2e-4f * (tau / tau_c - 1.0f); // kg/m2/s
+			const float dz = e * p_dt / dry_density; // m over the swash strip
+			const Vector2i key(int(Math::floor(at.x * 2.0f)), int(Math::floor(at.y * 2.0f)));
+			float &owed = wake_owed[key];
+			owed += dz;
+			// Digs below a millimetre are lost in the field's precision: owed until one is due.
+			if (owed >= 0.001f) {
+				const float r = MAX(0.5f * MAX(reach, 0.25f), tex);
+				const Vector2 mid = at + out * (0.25f * reach);
+				const float vol = dig(Vector3(mid.x, p_water_level, mid.y), r, owed);
+				const float kg = (vol > 0.0f ? vol : float(Math::PI) * r * r * owed) * dry_density;
+				if (ww && ww->has_provider()) {
+					ww->add_sediment_mass(Vector3(at.x, p_water_level - 0.05f, at.y), kg * fines, 0.0f);
+				}
+				wake_wash_kg += kg;
+				owed = 0.0f;
+			}
+		}
+		// The swash wets the strip it runs up: most runs back down, a fiftieth of the run-up's wedge soaks in, at
+		// the waves' rate (the diverging waves' period 2 pi v cos 35 deg / g).
+		const float period = MAX((float)Math::TAU * speed * 0.82f / 9.81f, 0.3f);
+		const float wedge = 0.5f * runup * reach * len;
+		const float vol_w = 0.02f * wedge * p_dt / period;
+		if (vol_w > 0.0f) {
+			const Vector2 mid = at + out * (0.5f * reach);
+			add_water(Vector3(mid.x, p_water_level + 0.5f * runup, mid.y), MAX(0.5f * MAX(reach, len * 0.5f), tex), vol_w);
+			wake_water_m3 += vol_w;
+		}
+	}
+}
+
 Dictionary GroundSurface3D::get_ford_stats() const {
 	Dictionary d;
 	d["plume_kg"] = ford_plume_kg;
 	d["scour_m3"] = ford_scour_m3;
 	d["bank_failures"] = bank_failures;
+	d["wake_wash_kg"] = wake_wash_kg;
+	d["wake_water_m3"] = wake_water_m3;
+	d["wake_height"] = wake_height_last;
 	return d;
 }
 
@@ -9787,6 +9889,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mud_deposit_at", "position"), &GroundSurface3D::get_mud_deposit_at);
 	ClassDB::bind_method(D_METHOD("set_stream_fords", "enabled"), &GroundSurface3D::set_stream_fords);
 	ClassDB::bind_method(D_METHOD("is_stream_fords"), &GroundSurface3D::is_stream_fords);
+	ClassDB::bind_method(D_METHOD("set_wake_wash", "enabled"), &GroundSurface3D::set_wake_wash);
+	ClassDB::bind_method(D_METHOD("is_wake_wash"), &GroundSurface3D::is_wake_wash);
+	ClassDB::bind_method(D_METHOD("wash_wake", "position", "velocity", "half_width", "water_level", "delta"), &GroundSurface3D::wash_wake);
 	ClassDB::bind_method(D_METHOD("get_ford_stats"), &GroundSurface3D::get_ford_stats);
 	ClassDB::bind_method(D_METHOD("set_flood_silt", "enabled"), &GroundSurface3D::set_flood_silt);
 	ClassDB::bind_method(D_METHOD("get_silt_at", "position"), &GroundSurface3D::get_silt_at);
@@ -10030,6 +10135,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_layer"), "set_mud_layer", "is_mud_layer");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flood_silt"), "set_flood_silt", "is_flood_silt");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_fords"), "set_stream_fords", "is_stream_fords");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wake_wash"), "set_wake_wash", "is_wake_wash");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_slides"), "set_mud_slides", "is_mud_slides");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_waves"), "set_mud_waves", "is_mud_waves");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "worn_tracks"), "set_worn_tracks", "is_worn_tracks");

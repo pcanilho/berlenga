@@ -1087,7 +1087,7 @@ float PhysXFlow3D::_terrain_height_at(const Vector2i &p_node, float p_spacing, f
 // The AMBIENT WIND: the weather's wind (the world contract's wind_at) laid over the region as air-only boxes in
 // layers, so smoke from every emitter leans and drifts with the same air as the grass and trees. They reserve
 // no blocks: they only couple the velocity where the gas already is.
-void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) const {
+void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, const AABB &p_source, LocalVector<FlowBackend::Emitter> &r_emitters) const {
 	if (!weather_wind || weather_wind_coupling <= 0.0f || !p_region.has_volume()) {
 		return;
 	}
@@ -1097,35 +1097,59 @@ void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, LocalVector<FlowBac
 	if ((wm == nullptr || !wm->has_provider()) && !fires) {
 		return;
 	}
-	// Layers of at most 4 m, up to 8: the wind grows with height (log law), so a tall plume bends more aloft.
-	const AABB r = p_region.grow(2.0f);
-	const int layers = CLAMP(int(Math::ceil(r.size.y / 4.0f)), 1, 8);
-	const float lh = r.size.y / layers;
-	for (int i = 0; i < layers; i++) {
-		const Vector3 c(r.position.x + r.size.x * 0.5f, r.position.y + lh * (i + 0.5f), r.position.z + r.size.z * 0.5f);
-		Vector3 w = wm && wm->has_provider() ? wm->wind_at(c) : Vector3();
+	auto wind_at = [&](const Vector3 &p_at, float p_floor) {
+		Vector3 w = wm && wm->has_provider() ? wm->wind_at(p_at) : Vector3();
 		if (fires) {
 			// Another fire's indraft draws smoke and dust beside it in (near the ground, fading over a few metres);
 			// over a fire's own Flow it converges on the box's middle and nets out.
-			w += fire->wind_at(c) * (1.0f - Math::smoothstep(2.0f, 6.0f, c.y - r.position.y));
+			w += fire->wind_at(p_at) * (1.0f - Math::smoothstep(2.0f, 6.0f, p_at.y - p_floor));
 		}
-		FlowBackend::Emitter e;
-		e.shape = FlowBackend::Emitter::SHAPE_BOX;
-		e.origin[0] = c.x;
-		e.origin[1] = c.y;
-		e.origin[2] = c.z;
-		e.half_size[0] = r.size.x * 0.5f;
-		e.half_size[1] = lh * 0.5f;
-		e.half_size[2] = r.size.z * 0.5f;
-		e.velocity[0] = w.x;
-		e.velocity[1] = w.y;
-		e.velocity[2] = w.z;
-		e.temperature = 0.0f;
-		e.smoke = 0.0f;
-		e.couple_rate = weather_wind_coupling;
-		e.allocate = false;
-		r_emitters.push_back(e);
+		return w;
+	};
+	// Layers of at most 4 m, up to 8: the wind grows with height (log law), so a tall plume bends more aloft.
+	auto add_layers = [&](const AABB &p_box, float p_couple, bool p_allocate) {
+		const int layers = CLAMP(int(Math::ceil(p_box.size.y / 4.0f)), 1, 8);
+		const float lh = p_box.size.y / layers;
+		for (int i = 0; i < layers; i++) {
+			const Vector3 c(p_box.position.x + p_box.size.x * 0.5f, p_box.position.y + lh * (i + 0.5f), p_box.position.z + p_box.size.z * 0.5f);
+			const Vector3 w = wind_at(c, p_box.position.y);
+			FlowBackend::Emitter e;
+			e.shape = FlowBackend::Emitter::SHAPE_BOX;
+			e.origin[0] = c.x;
+			e.origin[1] = c.y;
+			e.origin[2] = c.z;
+			e.half_size[0] = p_box.size.x * 0.5f;
+			e.half_size[1] = lh * 0.5f;
+			e.half_size[2] = p_box.size.z * 0.5f;
+			e.velocity[0] = w.x;
+			e.velocity[1] = w.y;
+			e.velocity[2] = w.z;
+			e.temperature = 0.0f;
+			e.smoke = 0.0f;
+			e.couple_rate = p_couple;
+			e.allocate = p_allocate;
+			r_emitters.push_back(e);
+		}
+	};
+	AABB r = p_region.grow(2.0f);
+	// The DOWNWIND CORRIDOR. Gas lives only in allocated blocks, and Flow reads an unallocated neighbour as still
+	// air, so the wind carries gas only as far as blocks reach. Blocks kept for the wind alone filled max_blocks in
+	// seconds (1b263d2974 stopped that), and without them the plume stayed on its sources: Flow's own allocation
+	// does not run ahead of the smoke. So the wind reserves the blocks along the plume's path: the sources' region
+	// swept downwind for as long as the smoke lasts (down to 5% at smoke_fade, at most WIND_LEAD_MAX). It is swept
+	// from the sources, never from the gas, so it cannot run away downwind.
+	if (p_source.has_volume()) {
+		const float WIND_LEAD_MAX = 12.0f; // s
+		const float lead = smoke_fade > 0.0f ? MIN(3.0f / smoke_fade, WIND_LEAD_MAX) : WIND_LEAD_MAX;
+		const Vector3 sweep = wind_at(p_source.get_center(), p_source.position.y) * lead;
+		if (sweep.length() > cell_size) {
+			const AABB corridor = p_source.merge(AABB(p_source.position + sweep, p_source.size));
+			r = r.merge(corridor.grow(2.0f));
+			// Reserves the blocks only: the wind itself comes from the layers over the whole box below.
+			add_layers(corridor, 1e-4f, true);
+		}
 	}
+	add_layers(r, weather_wind_coupling, false);
 }
 
 // The ground under the gas from WorldGround.albedo_at: the light the ground sends up into the gas takes its colour
@@ -1271,6 +1295,7 @@ void PhysXFlow3D::_step(double p_delta) {
 	// Solids near where the gas comes from -- and where it has spread to,
 	// when it's read back.
 	AABB region = emitters.is_empty() ? AABB() : emitter_bounds.grow(collision_range);
+	const AABB source_region = region; // the sources alone, before the gas they made
 	AABB gas;
 	bool full = false;
 	{
@@ -1287,7 +1312,7 @@ void PhysXFlow3D::_step(double p_delta) {
 	}
 	transient_solids.clear();
 	_gather_terrain_floor(region, emitters);
-	_gather_weather_wind(region, emitters);
+	_gather_weather_wind(region, source_region, emitters);
 	_update_world_ground(region, p_delta);
 	_gather_scatter_lights();
 	if (floor_enabled) {

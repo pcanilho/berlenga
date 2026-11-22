@@ -36,7 +36,7 @@ contract returns with no provider.
 | `wind_aloft_at(pos, altitude)` | m/s, Vector3 (y 0) | 0 | Free wind: log law and Ekman veer to `boundary_layer_height`, then `wind_shear_aloft` |
 | `terrain_lee_at(pos)` | rad | NaN | Winstral's Sx from the terrain wind (positive in a lee; NaN outside it); fire's lee-slope whirls |
 | `precipitation_at(pos)` | mm/h | 0 | Water equivalent falling |
-| `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
+| `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there; under a warm nose aloft its melted share too (freezing rain), less what a deep cold layer refreezes to pellets (weather.md "Freezing rain and glaze") |
 | `air_temperature_at(pos)` note | C | | Includes WeatherMap3D's cold air pools (22 Nov): colder in hollows on clear calm nights, fading to the free air at the pool's top; `air_humidity_at` follows with the same vapour |
 | `rainfall_at(pos)`, `snowfall_at(pos)` | mm/h of water | 0 | The precipitation split by `rain_share_at` |
 | `rime_at(pos)` | Vector3: length mm of rime on an exposed twig, direction into the wind it grew from | (0, 0, 0) | WeatherMap3D `rime`: supercooled cloud below 0 C (Makkonen 2000) |
@@ -57,7 +57,7 @@ contract returns with no provider.
 | `canopy_closure_at(pos)`, `shelter_at(pos, h)` | 0..1 | 0, 1 | |
 | `season()` | dictionary (weather_season.h State) | 15 May, no snow | |
 | `frost_at(pos)` | mm | 0 | Hoarfrost on exposed surfaces (`dew_and_frost`) |
-| `glaze_at(pos)` | mm | 0 | Radial clear ice from freezing rain on exposed twigs and wires (ice storms); provider to come (weather), readers trees (trees.md 5be) |
+| `glaze_at(pos)` | mm | 0 | Radial clear ice from freezing rain on exposed twigs and wires (ice storms); provider WeatherMap3D (`warm_nose_temperature`, `warm_nose_base`, test knob `ice_storm_glaze`), readers trees (trees.md 5be) |
 | Events: `ground_strikes_after(serial)` | list | empty | Lightning, from `WeatherLightning3D` |
 | `day_of_year()` | 1..365 | 135 | The clock's date, else the map's season day |
 | `season_at(pos, day = -1)` | dictionary (season State) | the default climate at pos.y | At the point's height, the live departure included; day < 1 is today |

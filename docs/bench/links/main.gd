@@ -23,6 +23,9 @@ extends Node3D
 #             the sun dries puddles faster than the shade of a canopy and than the night
 #   dew       a clear calm night wets open ground with dew, and frosts it below freezing; clouds and a canopy keep it
 #             dry; the morning sun melts the frost
+#   glaze     a warm nose aloft over -3 C air: the snow melts aloft and lands as freezing rain (rain_share_at
+#             through the contract too), glazing twigs as Jones's (1998) model says; a deep cold layer refreezes it
+#             to pellets (Bourgouin 2000); a thaw takes the ice off; the ice-storm knob holds a glaze
 #   lightning a tall mast takes the strike meant for the ground beside it; striking distance on IEC 62305
 #   fire      a long continuing current lights dry fuel, not wet (PhysX)
 #   contact   a body in world_contact flattens grass without being in grass_trample, and herbs where there is no grass
@@ -271,6 +274,7 @@ func _ready() -> void:
 	await _air_tests()
 	await _water_tests()
 	await _dew_tests()
+	await _glaze_tests()
 	await _lightning_tests()
 	_fire_tests()
 	await _contact_tests()
@@ -1468,6 +1472,62 @@ func _contract_tests() -> void:
 	var wx: WorldWeather = WorldContracts.get_weather()
 	if not wx.has_provider():
 		_check("contracts: weather defaults with no producer", wx.air_temperature_at(Vector3.ZERO) == 15.0 and wx.wind_at(Vector3.ZERO) == Vector3.ZERO and wx.rain_share_at(Vector3.ZERO) == 1.0, "")
+
+
+func _glaze_tests() -> void:
+	var m := _new_map()
+	m.air_daily_cycle = false
+	m.ground_height = 0.0
+	m.temperature = -3.0
+	m.humidity = 0.95
+	m.wind_speed = 5.0
+	m.rain_rate = 3.0
+	m.cloud_cover = 1.0
+	var p := Vector3(10, 0, 10)
+	# No warm layer: at -3 C nearly all of it is snow, no glaze.
+	m.warm_nose_temperature = 0.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	var cold_glaze: float = m.get_glaze_at(p)
+	var cold_share: float = m.get_rain_share_at(p)
+	# A warm nose peaking at +4 C, its base 1 km up: the snow melts aloft, the drops reach the -3 C ground liquid.
+	m.warm_nose_temperature = 4.0
+	m.warm_nose_base = 1000.0
+	m.snap_to_settings()
+	var share: float = m.get_rain_share_at(p)
+	var freezing: float = m.get_freezing_share_at(p)
+	var wx: WorldWeather = WorldContracts.get_weather()
+	_check("glaze: a warm layer aloft turns -3 C snow into freezing rain, through the contract too", cold_share < 0.1 and share > 0.95 and freezing > 0.95 and m.get_snowfall_at(p) < 0.1 * m.get_rain_at(p) and wx.rain_share_at(p) > 0.95, "share %.2f without, %.2f with (freezing %.2f, contract %.2f), snow %.2f mm/h" % [cold_share, share, freezing, wx.rain_share_at(p), m.get_snowfall_at(p)])
+	var rate: float = m.get_rain_at(p) * freezing
+	m.advance(6.0 * 3600.0)
+	var glaze: float = m.get_glaze_at(p)
+	var expect: float = WeatherMap3D.glaze_accretion_rate(rate, m.get_wind_at(p, 10.0).length()) * 6.0
+	_check("glaze: six hours of freezing rain glaze twigs as Jones (1998), little without the warm layer", absf(glaze - expect) < 0.15 * expect and cold_glaze < 0.1 * glaze, "%.2f mm (model %.2f at %.2f mm/h), %.2f mm without the warm layer" % [glaze, expect, rate, cold_glaze])
+	_check("glaze: WorldWeather.glaze_at reads the weather's glaze", wx.has_provider() and is_equal_approx(wx.glaze_at(p), glaze), "%.2f mm" % wx.glaze_at(p))
+	# A deep, cold layer under the warm nose refreezes the drops to ice pellets: no glaze from them.
+	m.warm_nose_base = 1500.0
+	m.temperature = -10.0
+	m.snap_to_settings()
+	var pellets_freezing: float = m.get_freezing_share_at(p)
+	_check("glaze: a deep cold layer refreezes the drops to pellets", pellets_freezing < 0.05, "freezing share %.3f" % pellets_freezing)
+	# The thaw: +4 C and a fresh wind take it off.
+	m.temperature = 4.0
+	m.rain_rate = 0.0
+	m.cloud_cover = 0.0
+	m.wind_speed = 8.0
+	m.snap_to_settings()
+	m.advance(3.0 * 3600.0)
+	var thawed: float = m.get_glaze_at(p)
+	m.advance(6.0 * 3600.0)
+	var gone: float = m.get_glaze_at(p)
+	_check("glaze: a thaw takes the ice off (0.3 mm/h per K, Hock 2003)", absf(glaze - thawed - 3.6) < 0.4 and gone == 0.0, "%.2f mm left of %.2f after 3 h at 4 C, %.2f after 9 h" % [thawed, glaze, gone])
+	# The ice-storm knob holds a glaze for tests and set pieces.
+	m.ice_storm_glaze = 12.0
+	_check("glaze: the ice-storm knob holds its glaze", m.get_glaze_at(p) >= 12.0 and wx.glaze_at(p) >= 12.0, "%.2f mm" % m.get_glaze_at(p))
+	m.ice_storm_glaze = 0.0
+	m.queue_free()
+	await get_tree().physics_frame
 
 
 func _dew_tests() -> void:

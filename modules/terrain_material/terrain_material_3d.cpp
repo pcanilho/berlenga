@@ -1478,6 +1478,7 @@ void fragment() {
 	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08 * tm_sb, tm_rock_cos + 0.04 * tm_sb, tm_ny);
 	float beach_sand = -1.0;
 	float tm_till = 0.0;
+	float tm_gully = 0.0;
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
 		vec4 g = terrain_geology(wp);
 		beach_sand = clamp(-g.x, 0.0, 1.0);
@@ -1516,6 +1517,15 @@ void fragment() {
 		scree += rest * bare_near;
 		rest *= 1.0 - bare_near;
 		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, tm_cn.y);
+		// Rills and gullies (the droplet erosion's channels): the flow strips a channel's floor of its fines and soil
+		// to a gravel lag (Poesen et al. 2003), the scree layer's stones and grit; below the slope break its load
+		// settles as a fan of fresh fines (the alluvium layer). Rock floors stay rock.
+		vec2 tm_gl = terrain_gully(wp, tm_cn.y);
+		tm_gully = tm_gl.x * (1.0 - rock) * (0.8 + 0.4 * tm_vn(wp * 0.7 + 31.0));
+		tm_gully = clamp(tm_gully, 0.0, 1.0);
+		scree += rest * tm_gully;
+		rest *= 1.0 - tm_gully;
+		alluvium = max(alluvium, smoothstep(0.15, 0.8, tm_gl.y) * smoothstep(0.85, 0.93, tm_cn.y));
 		w[0] = rock;
 		w[1] = scree;
 		w[2] = rest * (1.0 - alluvium);
@@ -1906,6 +1916,13 @@ void fragment() {
 	}
 )";
 	}
+	// Rill and gully floors carry no sward (the flow scours it) and stay damp after rain: wet soil and gravel darken by
+	// a fifth to a third (Lobell and Asner 2002), and read a little smoother.
+	c += R"(	if (tm_gully > 0.0) {
+		albedo = mix(albedo, tm_stand_bare * 0.78, tm_gully);
+		rough = mix(rough, rough * 0.85, tm_gully);
+	}
+)";
 	// The stand's worn trails and boar rooting (WorldStand through Landscape3D's stand map; docs/ideas/terrain-material.md).
 	// A trail walked bare: the cover gone, the soil packed (Cole 1995; Liddle 1997: trampled soil is denser, its litter
 	// and fine relief worn off), darker and browner, smoother, its clods pressed flat; the tread's edge broken by noise. Rooting: boar turn the topsoil over in patches (Bueno 2013; Welander 2000),
@@ -2492,7 +2509,13 @@ Color TerrainMaterial3D::contract_ground_albedo_at(const Vector3 &p_position) co
 		const float bare_near = steep * MAX(Math::smoothstep(0.02f, 0.2f, CLAMP(g.g, 0.0f, 1.0f)), Math::smoothstep(0.02f, 0.2f, sg));
 		scree += rest * bare_near;
 		rest *= 1.0f - bare_near;
-		const float alluvium = Math::smoothstep(alluvium_area, alluvium_area + 1.0f, g.a) * Math::smoothstep(0.88f, 0.95f, ny);
+		float alluvium = Math::smoothstep(alluvium_area, alluvium_area + 1.0f, g.a) * Math::smoothstep(0.88f, 0.95f, ny);
+		// Rill and gully floors (as the shader, without its noise): gravel lag, fans of fines below.
+		const Vector2 gl = gen->get_gully_at(p_position, ny);
+		const float gully = gl.x * (1.0f - rock);
+		scree += rest * gully;
+		rest *= 1.0f - gully;
+		alluvium = MAX(alluvium, float(Math::smoothstep(0.15f, 0.8f, float(gl.y)) * Math::smoothstep(0.85f, 0.93f, ny)));
 		w[LAYER_ROCK] = rock;
 		w[LAYER_SCREE] = scree;
 		w[LAYER_SOIL] = rest * (1.0f - alluvium);

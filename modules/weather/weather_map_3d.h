@@ -595,6 +595,11 @@ private:
 	// snow falling through it; under sub-zero air at the ground the drops arrive supercooled and freeze where they land,
 	// glaze. 0: no warm layer, the phase is rain_fraction()'s.
 	float warm_nose_temperature = 0.0f;
+	// The warm layer's base, m above the map's ground: the cold layer under it refreezes the drops to ice pellets
+	// when it is deep and cold enough (Bourgouin 2000). Ground at or above it is in the warm air: plain rain.
+	float warm_nose_base = 1000.0f;
+	float ice_storm_glaze = 0.0f; // mm, test knob: every cell holds at least this glaze
+	void _glaze_update(float p_dt_h);
 	Vector<float> cell_glaze; // mm of radial clear ice on an exposed twig (Jones 1998)
 	// Rime on an exposed twig (Makkonen 2000), mm times the unit vector into the wind it grew from (x, z).
 	Vector<float> cell_rime_x;
@@ -1040,8 +1045,15 @@ public:
 		float shadow_size = 0.0f;
 		int shadow_res = 0;
 		Vector<float> shadow_values;
+		float ground_height = 0.0f;
+		float warm_nose_temperature = 0.0f;
+		float warm_nose_base = 1000.0f;
 
 		float rain_at(Vector3 p_position) const;
+		// The rain share (liquid_share()) at a world height for the air there.
+		float liquid_share_at(float p_celsius, float p_humidity, float p_world_height) const {
+			return liquid_share(p_celsius, p_humidity, p_world_height - ground_height, warm_nose_temperature, warm_nose_base);
+		}
 		float cloud_cover_at(Vector3 p_position) const;
 		float sun_visibility_at(Vector3 p_position) const;
 	};
@@ -1052,7 +1064,7 @@ public:
 	float contract_air_humidity_at(const Vector3 &p_position) const override { return get_air_humidity_at(p_position); }
 	Vector3 contract_wind_at(const Vector3 &p_position, float p_height_above_ground) const override { return get_wind_at(p_position, p_height_above_ground); }
 	float contract_precipitation_at(const Vector3 &p_position) const override { return get_rain_at(p_position); }
-	float contract_rain_share_at(const Vector3 &p_position) const override { return rain_fraction(get_air_temperature_at(p_position), get_air_humidity_at(p_position)); }
+	float contract_rain_share_at(const Vector3 &p_position) const override { return get_rain_share_at(p_position); }
 	float contract_surface_wetness_at(const Vector3 &p_position) const override { return get_wetness_at(p_position); }
 	float contract_puddle_at(const Vector3 &p_position) const override { return get_puddle_at(p_position); }
 	float contract_contact_wetness_at(const Vector3 &p_position) const override { return get_contact_wetness_at(p_position); }
@@ -1170,6 +1182,17 @@ public:
 	bool is_rime_enabled() const { return rime; }
 	Vector3 get_rime_at(Vector3 p_position) const;
 	static float rime_accretion_rate(float p_cloud_water, float p_wind_m_s, float p_celsius);
+	void set_warm_nose_base(float p_height) { warm_nose_base = MAX(p_height, 0.0f); }
+	float get_warm_nose_base() const { return warm_nose_base; }
+	void set_ice_storm_glaze(float p_mm);
+	float get_ice_storm_glaze() const { return ice_storm_glaze; }
+	// The precipitation's phase under the warm layer, at p_height m above the map's ground with p_celsius air there:
+	// the share reaching it liquid (the Jennings split as the floor), and in r_freezing the share landing liquid on
+	// frozen surfaces. Snow melted aloft (get_warm_nose_melt()'s curve, the layer taken 1 km deep) refreezes to ice
+	// pellets in a deep cold layer by Bourgouin's (2000) energies. One split for every reader.
+	static float liquid_share(float p_celsius, float p_humidity, float p_height, float p_nose_celsius, float p_nose_base, float *r_freezing = nullptr);
+	static float warm_nose_melt(float p_nose_celsius);
+	float get_freezing_share_at(Vector3 p_position) const; // 0..1 of the precipitation
 	// Cloud water at the ground (g/m3: 6.7 times the clouds' extinction per metre, droplets of 10 um effective radius)
 	// where the terrain stands in the cloud, and the fog water the canopy drips onto the ground (mm/h).
 	float get_fog_water_at(Vector3 p_position) const;
