@@ -657,7 +657,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				? MAX(cell_climate_precip[i] / in.climate_background, 0.0f)
 				: MAX(1.0f + precipitation_gradient * (h - in.ref_height) * 0.01f, 0.0f);
 		const float p = MAX(rate, 0.0f) * oro * in.dt_h;
-		const float share = MIN(snowfall_fraction(t, in.humidity), 1.0f - in.warm_nose_melt);
+		// The weather's split when it runs (a warm layer aloft melts snow to rain, a deep cold layer refreezes it to
+		// pellets: WeatherMap3D.liquid_share()), else the plain one.
+		const float share = in.wx.valid ? 1.0f - in.wx.liquid_share_at(t, in.humidity, h) : MIN(snowfall_fraction(t, in.humidity), 1.0f - in.warm_nose_melt);
 		float snow = p * share;
 		float rain_extra = 0.0f;
 		const float rain_base = p - snow;
@@ -3971,9 +3973,9 @@ float SnowCover3D::get_snowfall_rate_at(Vector3 p_position) const {
 	const float rate = live ? w->precipitation_at(p_position) : precipitation_rate;
 	const float rh = live ? w->air_humidity_at(Vector3(p_position.x, ref, p_position.z)) : humidity;
 	const float applied = live ? MAX(w->orographic_factor_at(p_position), 0.05f) : 1.0f; // already in precipitation_at
-	const WeatherMap3D *wm = WeatherMap3D::get_active();
-	const float nose = wm ? wm->get_warm_nose_melt() : 0.0f; // a warm layer aloft melts that share to rain
-	return MAX(rate, 0.0f) * get_orographic_factor_at(p_position, ref) / applied * MIN(snowfall_fraction(get_air_temperature_at(p_position), rh), 1.0f - nose);
+	// The weather's split (a warm layer aloft melts that share to rain), else the plain one.
+	const float share = live ? 1.0f - w->rain_share_at(p_position) : snowfall_fraction(get_air_temperature_at(p_position), rh);
+	return MAX(rate, 0.0f) * get_orographic_factor_at(p_position, ref) / applied * CLAMP(share, 0.0f, 1.0f);
 }
 
 float SnowCover3D::get_new_snow_at(Vector3 p_position) const {

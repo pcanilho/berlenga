@@ -595,6 +595,29 @@ One state of the year for every system that follows it: trees (budburst, colour,
 - Site values at `ground_height`; `get_season_at_height()` for another height. Ground snow at a place stays
   SnowCover3D's.
 
+## Freezing rain and glaze (22 Nov 2026)
+
+Trees built the provider (f0ae0c62a3: `warm_nose_temperature`, its melt curve after Stewart and King 1987, Jones's
+1998 accretion, a 0.3 mm/h per K thaw after Hock 2003, the rain map's alpha, BaseMaterial3D `glaze`). Weather's
+review added:
+
+- **One split for every reader.** `liquid_share(T, RH, height above ground, nose, base)` is the phase; the contract's
+  `rain_share_at` (it still read the plain Jennings split, so cloth and hair saw snow), the snowpack's cells (through
+  the snapshot's `liquid_share_at`; they took snow and the twigs glaze from the same fall), its
+  `get_snowfall_rate_at`, SnowFall3D's melted share (the sleet look) and the canopy (less the freezing share) all read
+  it now.
+- **Ice pellets: Bourgouin's (2000) energy method**, as NCEP runs it (`CALWXT_BOURG`). A layer's area is
+  g dz ln(T / 273.15) J/kg. Drops stay liquid where the cold layer's area is under 46 + 0.66 PA, freeze to pellets
+  over 66 + 0.66 PA, the expected share between (NCEP draws at random). PA from the nose's peak, linear over a 1 km
+  layer; NA from 0 C at `warm_nose_base` (m above the map's ground, default 1000) down to the point's air. Ground at
+  or above the base is in the warm air: rain, no glaze. -3 C under a 1 km base glazes; -10 C under 1.5 km pellets.
+- The glaze runs in its own pass, so it accretes and thaws with `canopy_water_enabled` off too.
+- `ice_storm_glaze` (mm): every cell holds at least that much, for tests and set pieces.
+- Checks: links bench `--test`, six `glaze:` checks.
+- Follow-ups: the GPU's rain share (raster `weather_rainfall_at`, PT rt_params 75 to 78) still uses the plain split, so
+  raindrop rings on water stop under freezing rain (needs the nose as two more params); the thaw could shed faster in
+  wind (observed shedding is sudden); a ground glaze (black ice) from the film freezing.
+
 ## Sources
 
 - Schneider, The Real-time Volumetric Cloudscapes of Horizon Zero Dawn,
@@ -608,6 +631,10 @@ One state of the year for every system that follows it: trees (budburst, colour,
   https://advances.realtimerendering.com/s2021/
 - Naughty Dog, The Technical Art of The Last of Us Part II, SIGGRAPH Advances
   2020: https://advances.realtimerendering.com/s2020/
+- Bourgouin, A method to determine precipitation types, Weather and Forecasting 15, 2000; NCEP's
+  implementation: https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/sref.v7.1.8/sorc/sref_post.fd/CALWXT_BOURG.f
+- Jones, A simple model for freezing rain ice loads, Atmospheric Research 46, 1998; CRREL's summary:
+  https://coldregionsresearch.tpub.com/IceStorm98/IceStorm980016.htm
 - Studio Gobo, Sparkly but not too Sparkly, SIGGRAPH Advances 2015:
   https://advances.realtimerendering.com/s2015/
 - Ubisoft, Simulating Tropical Weather in Far Cry 6 (article), and Weick and
