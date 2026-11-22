@@ -3991,8 +3991,21 @@ SUCCESSION_AVALANCHE 6, the lead thrown (windthrow band 1 logs, half with root p
 for 0-15 and 15-50 years (decay by the years), at 1.2x stand spacing, and survivors 0-50 years: open-grown, flagged
 (upslope limbs killed, the rest swept downslope) and leaning 5-20 degrees downslope (band 3). All carry species meta
 `fall_downhill`: VegetationField3D turns mesh +X down the fall line (+-fall_scatter). Bench: `--stands --avalanche`
-(a 5-year track: legacies inside only, thrown logs down the fall line). Next: green alder thickets with sabre stems
-in young tracks; upslope impact scars on the survivors.
+(a 5-year track: legacies inside only, thrown logs down the fall line).
+As built (22 Nov, second half): PRESET_GREEN_ALDER (Alnus alnobetula; Anthelme et al. 2001, Caudullo
+et al. 2016): a dozen elastic stems from one base, 1-3 m, wider than tall, smooth grey-brown lenticelled bark, ovate
+double-toothed leaves, alder catkins; subalpine habitat (-2 to 7 C annual mean, slopes to 50 degrees). FORM_SABRE
+(" (snow-bent)"): the cliff machinery (5bg) on soil at 26-45 degrees (variants 34, 26, 45, 39; placed as bank trees,
++Z down the fall line) with `cliff_sweep`: every basal stem is a spine of its own, its foot turned a further
+0.45-0.85 rad down the slope over the first 15-25 cm, held there for 0.3-1 m, then bent up to cliff_lean (sabre
+stems, Saebelwuchs: snow creep and glide; Mayer 1976, Gebirgswaldbau; Mattheck 1991, Trees: The Mechanical Design); a stem already splayed
+downslope is held about 20 degrees above the soil; roots spread as on soil, not along rock joints. make_succession
+adds green alder (2 y to e2) and the lead's young stems (e1/2 to e2), both snow-bent, on slopes of 18-52 degrees.
+Survivors now come in two stages with impact scars (`avalanche_scars`, years): one to three WOUND_IMPACT lenses on
+the upslope face (mesh -X, azimuth pi +- 0.45), 0.5-3 m up, 12-45 cm half height, a third to most of the stem's
+radius wide, edges torn, woundwood rolling in with age (Stoffel and Bollschweiler 2008); mesh meta
+`tree_impact_scars`. Bench: `--stands --avalanche` (8 legacy species; survivors scarred; snow-bent variants per
+slope); `--preset=55 --set=cliff_angle:0.6 --set=cliff_sweep:0.75` shows one snow-bent alder on a tilted ground.
 
 ### 5bi. Leaves by local season (22 Nov; coordinator's ask, for the scene's late-frost hollow)
 

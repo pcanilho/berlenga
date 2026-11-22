@@ -241,6 +241,9 @@
 		<member name="apical_dominance_old" type="float" setter="set_param" getter="get_param" default="0.49">
 			Borchert-Honda lambda once the tree reaches [member maturity]; decurrent broadleaves drop it to spread their crowns.
 		</member>
+		<member name="avalanche_scars" type="float" setter="set_avalanche_scars" getter="get_avalanche_scars" default="-1.0">
+			Avalanche survivors: years since the impact scars were torn into the bark of the upslope face (mesh -X), 0.5 to 3 m up; [code]-1[/code] none. One to three lens-shaped scars, woundwood rolling in with age. Mesh meta [code]tree_impact_scars[/code] counts them.
+		</member>
 		<member name="bank_erosion" type="float" setter="set_bank_erosion" getter="get_bank_erosion" default="0.0">
 		</member>
 		<member name="bark_chevrons" type="float" setter="set_bark_chevrons" getter="get_bark_chevrons" default="1.0">
@@ -278,6 +281,9 @@
 		</member>
 		<member name="cliff_lean" type="float" setter="set_cliff_lean" getter="get_cliff_lean" default="0.0">
 			How far a cliff tree's stem leans out from the face at the top of its bend, radians from vertical.
+		</member>
+		<member name="cliff_sweep" type="float" setter="set_cliff_sweep" getter="get_cliff_sweep" default="0.0">
+			Sabre stems: with [member cliff_angle] as the slope of snowy soil, every basal stem's foot is swept this much further down the slope than square to it (radians, 0 none) before it turns up to [member cliff_lean], as snow creep and glide leave young stems on steep slopes. The roots spread as on soil, not along rock joints.
 		</member>
 		<member name="climber" type="int" setter="set_climber" getter="get_climber" enum="TreeGenerator.Climber" default="0">
 		</member>
@@ -667,7 +673,10 @@
 		<constant name="PRESET_SWEET_CHESTNUT" value="54" enum="Preset">
 			Castanea sativa: a broad dome on a massive bole, long toothed leaves.
 		</constant>
-		<constant name="PRESET_MAX" value="55" enum="Preset">
+		<constant name="PRESET_GREEN_ALDER" value="55" enum="Preset">
+			Alnus alnobetula: the many-stemmed green alder scrub of subalpine avalanche tracks; elastic stems that lie under the snow and rise again.
+		</constant>
+		<constant name="PRESET_MAX" value="56" enum="Preset">
 			Size of the [enum Preset] enum.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">
