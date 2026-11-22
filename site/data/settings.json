@@ -1485,6 +1485,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Adhesion warts",
+   "settings": [
+    "GroundSurface3D.adhesion_warts"
+   ],
+   "note": "",
+   "what": "blown dry sand sticks to damp sand at water edges and builds small rough lumps with pale dry tops; rain flattens them.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Wet sand",
    "settings": [
     "GroundSurface3D.water_coupling",

@@ -223,6 +223,12 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Rain pits: a light shower leaves dry sand dotted with small rimmed craters.*
 
+- **Adhesion warts** (`GroundSurface3D.adhesion_warts`): blown dry sand sticks to damp sand at water edges and builds small rough lumps with pale dry tops; rain flattens them.
+
+  ![Damp sand at a pool margin up close, before and after blown sand builds adhesion warts, raster](media/sand-adhesion-warts.jpg)
+
+  *Adhesion warts: blown sand builds pale-topped lumps on the damp margin.*
+
 - **Wet sand** (`GroundSurface3D.water_coupling`; `water_sources`): water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), topped in a dry climate by a pale, patchy salt crust (`salt_crusts`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.
 
   ![A beach at the swash line with a row of footprints, before and after wet sand, raster](media/sand-wet.jpg)
