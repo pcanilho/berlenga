@@ -4745,6 +4745,15 @@ func _build_cover() -> void:
 	if args.get("floor", "") == "oak" and floor_sp.size() > 1:
 		floor_sp[1].set_meta("bench_bracken", true) # FLOOR_OAK_MIXED: bramble, bracken, ... (the --bracken view's plant)
 	b.species = floor_sp.slice(0, 3) + _wetland_species() + meadow_sp + floor_sp.slice(3)
+	if args.get("bank-turf", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_bank_turf"):
+		# Turf overhangs (PlantGenerator.make_bank_turf, vegetation f785a81d): sod lips on the river banks and scarps
+		# where the ground drops past a steep edge (RULE_BANK_EDGE). First, since earlier species win footprints.
+		var bt: Array = ClassDB.class_call_static("PlantGenerator", "make_bank_turf", 3, true, season)
+		var lead: Array = []
+		for bts in bt:
+			lead.append(bts)
+		b.species = lead + b.species
+		_log("bank turf: %d species" % bt.size())
 	if args.has("mounds") and ClassDB.class_has_method("PlantGenerator", "make_mounds"):
 		# --mounds=meadow|wood|both: ant hills and molehills in the meadows, wood ant nests at conifer edges
 		# (PlantGenerator.make_mounds, vegetation e90904e7); called by name so older binaries still parse.
