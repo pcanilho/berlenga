@@ -17,15 +17,6 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="make_floor" qualifiers="static">
-			<return type="Resource[]" />
-			<param index="0" name="stand" type="int" enum="PlantGenerator.FloorStand" />
-			<param index="1" name="variants" type="int" default="3" />
-			<param index="2" name="textures" type="bool" default="true" />
-			<description>
-				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code].
-			</description>
-		</method>
 		<method name="apply_preset_colors">
 			<return type="void" />
 			<description>
@@ -52,9 +43,6 @@
 		</member>
 		<member name="leaf_color" type="Color" setter="set_leaf_color" getter="get_leaf_color" default="Color(0.12, 0.3, 0.07, 1)">
 			Colour of the leaves.
-		</member>
-		<member name="leaf_wear" type="float" setter="set_leaf_wear" getter="get_leaf_wear" default="0.5">
-			How worn the leaves are, from [code]0.0[/code] (every leaf whole and green) to [code]1.0[/code]: uneven halves, round insect bites out of the margin with dried rims, dead tips on grass-like blades, and older, lower leaves yellowing and browning. Each leaf draws its wear from its own hash, so changing it does not change the plant's shape. The browning travels in the vertex colour's alpha.
 		</member>
 		<member name="lods" type="bool" setter="set_lods" getter="get_lods" default="true">
 			If [code]true[/code], distance LODs are generated (meshoptimizer), so plants far from the camera draw a fraction of their triangles.
@@ -133,89 +121,8 @@
 		<constant name="PRESET_BILBERRY" value="16" enum="Preset">
 			Bilberry: a dwarf shrub of branched green stems with small oval leaves and a few dark berries.
 		</constant>
-		<constant name="PRESET_BRACKEN" value="17" enum="Preset">
-			Bracken: a few tall fronds whose triangular, finely divided blades turn nearly flat, for woodland edges and clearings.
-		</constant>
-		<constant name="PRESET_BRAMBLE" value="18" enum="Preset">
-			Bramble: arching red canes with leaves of three or five toothed leaflets and clusters of dark berries.
-		</constant>
-		<constant name="PRESET_FOXGLOVE" value="19" enum="Preset">
-			Foxglove: a rosette of soft toothed leaves and a tall spike of purple bells hanging to one side.
-		</constant>
-		<constant name="PRESET_REED" value="20" enum="Preset">
-			Common reed: a stand of tall culms with two ranks of drooping grey-green leaves and nodding purplish plumes, for shallow water and wet ground.
-		</constant>
-		<constant name="PRESET_CATTAIL" value="21" enum="Preset">
-			Bulrush or cattail: fans of long, twisting strap leaves and stiff stems carrying the dark brown cigar of female flowers with the male spike above, for shallow water.
-		</constant>
-		<constant name="PRESET_RUSH" value="22" enum="Preset">
-			Soft rush: a dense tussock of glossy leafless stems with pale brown flower clusters bursting from their sides, for wet pasture and marsh.
-		</constant>
-		<constant name="PRESET_WATER_LILY" value="23" enum="Preset">
-			White water lily: round floating pads with a cleft to the stalk and a few white flowers on the surface. Its origin is the water surface (see [member PlantSpecies.floating]).
-		</constant>
-		<constant name="PRESET_NEEDLE_LITTER" value="24" enum="Preset">
-			Needle litter: loose fallen needles lying across each other and a few cones, the relief over the needle carpet that [method VegetationField3D.get_floor_shader_code] draws on the ground under conifers.
-		</constant>
-		<constant name="PRESET_TWIGS" value="25" enum="Preset">
-			Fallen twigs and small branches lying on the forest floor.
-		</constant>
-		<constant name="PRESET_WOOD_SORREL" value="26" enum="Preset">
-			Wood sorrel: carpets of three folded heart-shaped leaflets on slender stalks, with a few white flowers; for shady woods.
-		</constant>
-		<constant name="PRESET_SEEDLING" value="27" enum="Preset">
-			Tree seedling: a thin zigzag woody stem with two-ranked oval, wavy-edged leaves, 8 to 75 cm tall; the youngest keep their broad seed leaves, older ones grow flat side sprays from the upper nodes (shade form).
-		</constant>
-		<constant name="PRESET_FEATHER_MOSS" value="28" enum="Preset">
-			Feather moss: wide, flat, yellow-green carpets as under spruce and pine.
-		</constant>
-		<constant name="PRESET_WOODRUFF" value="29" enum="Preset">
-			Woodruff: a clonal patch of upright unbranched stems, 12 to 28 cm, with whorls of six to nine narrow leaves held level and small white four-petalled flowers at the top; beech woods.
-		</constant>
-		<constant name="PRESET_WOOD_ANEMONE" value="30" enum="Preset">
-			Wood anemone: single stems with a whorl of three deeply three-lobed leaves two thirds up and one nodding white flower of six or seven tepals; the spring carpet of broadleaf woods.
-		</constant>
-		<constant name="PRESET_IVY" value="31" enum="Preset">
-			Ivy as ground cover: creeping runners along the floor with glossy, dark, lobed leaves on stalks turned up to the light, overlapping into a low carpet; oak and ash woods.
-		</constant>
-		<constant name="PRESET_HEATHER" value="32" enum="Preset">
-			Heather: a dwarf shrub of wiry branched woody stems clothed in short leafy shoots, some with spikes of pink-mauve bells; pine heath and acid open ground.
-		</constant>
-		<constant name="PRESET_MAX" value="33" enum="Preset">
+		<constant name="PRESET_MAX" value="17" enum="Preset">
 			Number of presets.
-		</constant>
-		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
-			Beech wood: deep leaf litter, beech seedlings, woodruff, wood sorrel, wood anemone, few ferns.
-		</constant>
-		<constant name="FLOOR_OAK_MIXED" value="1" enum="FloorStand">
-			Oak, lime and ash: a rich herb layer, bramble under the crowns, ivy carpets, wood anemone, ferns, bracken in gaps.
-		</constant>
-		<constant name="FLOOR_MONTANE_CONIFER" value="2" enum="FloorStand">
-			Montane spruce, fir and beech: wood sorrel, ferns and bilberry on mixed leaf and needle litter.
-		</constant>
-		<constant name="FLOOR_SUBALPINE" value="3" enum="FloorStand">
-			Subalpine larch and spruce: bilberry carpets, heather in the light, few herbs.
-		</constant>
-		<constant name="FLOOR_PINE_HEATH" value="4" enum="FloorStand">
-			Pine heath: bilberry, heather and hair-grass under open crowns, bracken in gaps.
-		</constant>
-		<constant name="FLOOR_RIPARIAN" value="5" enum="FloorStand">
-			Riparian alder and willow: nettle, sedge and rush near water, ferns.
-		</constant>
-		<constant name="FLOOR_HEDGEROW" value="6" enum="FloorStand">
-			Hedgerow bottom: bramble, nettle, ivy, foxglove, fern.
-		</constant>
-		<constant name="FLOOR_NORTHERN_HARDWOOD" value="7" enum="FloorStand">
-			Northern hardwoods (sugar maple, beech, birch): deep leaf litter, spring ephemerals, ferns, wood sorrel, many seedlings.
-		</constant>
-		<constant name="FLOOR_EASTERN_OAK" value="8" enum="FloorStand">
-			Eastern oak and hickory: oak litter with blueberry and huckleberry carpets, bracken in gaps, few herbs.
-		</constant>
-		<constant name="FLOOR_PINE_HEMLOCK" value="9" enum="FloorStand">
-			White pine and hemlock: deep needle duff, nearly bare; a little moss, wood sorrel and seedlings.
-		</constant>
-		<constant name="FLOOR_MAX" value="10" enum="FloorStand">
-			Number of floor stand types.
 		</constant>
 	</constants>
 </class>

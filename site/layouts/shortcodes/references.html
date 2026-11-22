@@ -1,3 +1,0 @@
-{{- $md := (resources.Get "references.md").Content -}}
-{{- $md = replaceRE `(?s)\A.*?\n(\| Area)` "$1" $md -}}
-{{ $md | markdownify }}

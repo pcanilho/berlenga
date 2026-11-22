@@ -1,4 +1,0 @@
-{{- $src := .Destination -}}
-{{- if not (strings.HasPrefix $src "http") -}}{{- $src = relURL $src -}}{{- end -}}
-<img src="{{ $src }}" alt="{{ .Text }}" loading="lazy" decoding="async">
-{{- /**/ -}}

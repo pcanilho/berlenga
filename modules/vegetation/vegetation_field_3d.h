@@ -62,31 +62,12 @@ class VegetationField3D : public Node3D {
 		Vector2 xz;
 		float radius = 0.0f;
 		float opacity = 0.0f;
-		float top = 0.0f; // Crown top above the ground, metres.
-		float conifer = 0.0f; // 1 for a needle-leaved crown.
 	};
-	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
-	// Painted or generated density over a world rect: each species reads one channel (PlantSpecies.mask_channel).
-	Ref<Texture2D> density_mask;
-	Rect2 density_mask_rect;
-	void _publish_canopy(const Rect2 &p_rect);
-	// Canopy closure and conifer share for the ground's litter (forest_floor_* globals).
-	bool forest_floor_enabled = true;
-	Ref<Texture2D> floor_texture;
-	void _publish_floor(const Rect2 &p_rect);
-	// Placed plants as ground colour beyond their range (vegetation_far_* globals).
-	struct FarCell {
-		float r = 0.0f, g = 0.0f, b = 0.0f, cover = 0.0f, range = 0.0f;
-	};
-	LocalVector<FarCell> far_cells;
-	Vector2i far_size;
-	Ref<Texture2D> far_texture;
-	void _publish_far(const Rect2 &p_rect);
 	static constexpr float CROWN_CELL = 8.0f;
 	LocalVector<Crown> crowns;
 	HashMap<Vector2i, LocalVector<int>> crown_grid;
 	float max_crown_radius = 0.0f;
-	float _shade_at(const Vector2 &p_xz, float *r_conifer = nullptr) const;
+	float _shade_at(const Vector2 &p_xz) const;
 
 	Ref<Biome> biome;
 	NodePath data_map;
@@ -111,19 +92,10 @@ protected:
 	static void _bind_methods();
 
 public:
-	static String get_floor_shader_code();
-	void set_forest_floor_enabled(bool p_enabled);
-	bool is_forest_floor_enabled() const { return forest_floor_enabled; }
 	void set_biome(const Ref<Biome> &p_biome);
 	Ref<Biome> get_biome() const { return biome; }
 	void set_data_map(const NodePath &p_path);
 	NodePath get_data_map() const { return data_map; }
-	void set_density_mask(const Ref<Texture2D> &p_mask) { density_mask = p_mask; }
-	Ref<Texture2D> get_density_mask() const { return density_mask; }
-	void set_density_mask_rect(const Rect2 &p_rect) { density_mask_rect = p_rect; }
-	Rect2 get_density_mask_rect() const { return density_mask_rect; }
-	void set_weather_map(const NodePath &p_path) { weather_map = p_path; }
-	NodePath get_weather_map() const { return weather_map; }
 	void set_tile_size(float p_size);
 	float get_tile_size() const { return tile_size; }
 	void set_seed(int p_seed);
@@ -139,5 +111,4 @@ public:
 	PackedVector3Array get_placements(int p_species) const;
 	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
 	float get_shade_at(const Vector3 &p_global_position) const;
-	float get_conifer_at(const Vector3 &p_global_position) const;
 };

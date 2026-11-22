@@ -47,12 +47,6 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_ROCK] = Vector2(0.0f, 1.0f);
 	ranges[RULE_TALUS] = Vector2(0.0f, 1.0f);
 	ranges[RULE_SHADE] = Vector2(0.0f, 1.0f);
-	ranges[RULE_TEMPERATURE] = Vector2(-100.0f, 100.0f);
-	ranges[RULE_JANUARY_TEMPERATURE] = Vector2(-100.0f, 100.0f);
-	ranges[RULE_PRECIPITATION] = Vector2(0.0f, 100000.0f);
-	ranges[RULE_ARIDITY] = Vector2(0.0f, 1000.0f);
-	ranges[RULE_SUNLIGHT] = Vector2(0.0f, 2000.0f);
-	ranges[RULE_CONIFER] = Vector2(0.0f, 1.0f);
 }
 
 void PlantSpecies::set_meshes(const TypedArray<Mesh> &p_meshes) {
@@ -87,16 +81,6 @@ void PlantSpecies::set_align_to_ground(float p_align) {
 
 void PlantSpecies::set_random_yaw(bool p_enable) {
 	random_yaw = p_enable;
-	emit_changed();
-}
-
-void PlantSpecies::set_canopy_conifer(bool p_conifer) {
-	canopy_conifer = p_conifer;
-	emit_changed();
-}
-
-void PlantSpecies::set_floating(bool p_floating) {
-	floating = p_floating;
 	emit_changed();
 }
 
@@ -147,15 +131,6 @@ float PlantSpecies::get_suitability(const TerrainDataMap3D *p_map, const Vector3
 		w *= rule_weight(RULE_SOIL_DEPTH, p_map->get_soil_depth_at(p_pos));
 		w *= rule_weight(RULE_ROCK, p_map->get_rock_at(p_pos));
 		w *= rule_weight(RULE_TALUS, p_map->get_talus_at(p_pos));
-	}
-	if (p_map->has_climate() && w > 0.0f) {
-		// Climate from TerrainDataMap3D.bake_climate(): where a species can live at all
-		// (temperature, frost, rain, drought), and sunny against shaded slopes.
-		w *= rule_weight(RULE_TEMPERATURE, p_map->get_temperature_at(p_pos));
-		w *= rule_weight(RULE_JANUARY_TEMPERATURE, p_map->get_temperature_at(p_pos, 15.0f));
-		w *= rule_weight(RULE_PRECIPITATION, p_map->get_precipitation_at(p_pos));
-		w *= rule_weight(RULE_ARIDITY, p_map->get_aridity_at(p_pos));
-		w *= rule_weight(RULE_SUNLIGHT, p_map->get_shortwave_at(p_pos));
 	}
 	if (patch_scale > 0.0f) {
 		w *= get_patch_weight(p_pos);
@@ -222,8 +197,6 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_align_to_ground"), &PlantSpecies::get_align_to_ground);
 	ClassDB::bind_method(D_METHOD("set_random_yaw", "enable"), &PlantSpecies::set_random_yaw);
 	ClassDB::bind_method(D_METHOD("is_random_yaw"), &PlantSpecies::is_random_yaw);
-	ClassDB::bind_method(D_METHOD("set_floating", "floating"), &PlantSpecies::set_floating);
-	ClassDB::bind_method(D_METHOD("is_floating"), &PlantSpecies::is_floating);
 	ClassDB::bind_method(D_METHOD("set_rule_range", "rule", "range"), &PlantSpecies::set_rule_range);
 	ClassDB::bind_method(D_METHOD("get_rule_range", "rule"), &PlantSpecies::get_rule_range);
 	ClassDB::bind_method(D_METHOD("set_rule_fade", "rule", "fade"), &PlantSpecies::set_rule_fade);
@@ -235,27 +208,15 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_patch_cover"), &PlantSpecies::get_patch_cover);
 	ClassDB::bind_method(D_METHOD("set_patch_seed", "seed"), &PlantSpecies::set_patch_seed);
 	ClassDB::bind_method(D_METHOD("get_patch_seed"), &PlantSpecies::get_patch_seed);
-	ClassDB::bind_method(D_METHOD("set_mask_channel", "channel"), &PlantSpecies::set_mask_channel);
-	ClassDB::bind_method(D_METHOD("get_mask_channel"), &PlantSpecies::get_mask_channel);
-	ClassDB::bind_method(D_METHOD("set_mask_invert", "invert"), &PlantSpecies::set_mask_invert);
-	ClassDB::bind_method(D_METHOD("is_mask_invert"), &PlantSpecies::is_mask_invert);
 	ClassDB::bind_method(D_METHOD("set_patch_invert", "invert"), &PlantSpecies::set_patch_invert);
 	ClassDB::bind_method(D_METHOD("is_patch_invert"), &PlantSpecies::is_patch_invert);
 	ClassDB::bind_method(D_METHOD("get_patch_weight", "global_position"), &PlantSpecies::get_patch_weight);
-	ClassDB::bind_method(D_METHOD("set_near_meshes", "meshes"), &PlantSpecies::set_near_meshes);
-	ClassDB::bind_method(D_METHOD("get_near_meshes"), &PlantSpecies::get_near_meshes);
-	ClassDB::bind_method(D_METHOD("set_near_range", "range"), &PlantSpecies::set_near_range);
-	ClassDB::bind_method(D_METHOD("get_near_range"), &PlantSpecies::get_near_range);
 	ClassDB::bind_method(D_METHOD("set_visibility_range", "range"), &PlantSpecies::set_visibility_range);
 	ClassDB::bind_method(D_METHOD("get_visibility_range"), &PlantSpecies::get_visibility_range);
-	ClassDB::bind_method(D_METHOD("set_far_color", "color"), &PlantSpecies::set_far_color);
-	ClassDB::bind_method(D_METHOD("get_far_color"), &PlantSpecies::get_far_color);
 	ClassDB::bind_method(D_METHOD("set_canopy_radius", "radius"), &PlantSpecies::set_canopy_radius);
 	ClassDB::bind_method(D_METHOD("get_canopy_radius"), &PlantSpecies::get_canopy_radius);
 	ClassDB::bind_method(D_METHOD("set_canopy_opacity", "opacity"), &PlantSpecies::set_canopy_opacity);
 	ClassDB::bind_method(D_METHOD("get_canopy_opacity"), &PlantSpecies::get_canopy_opacity);
-	ClassDB::bind_method(D_METHOD("set_canopy_conifer", "conifer"), &PlantSpecies::set_canopy_conifer);
-	ClassDB::bind_method(D_METHOD("is_canopy_conifer"), &PlantSpecies::is_canopy_conifer);
 	ClassDB::bind_method(D_METHOD("get_suitability_at", "data_map", "global_position"), &PlantSpecies::get_suitability_at);
 
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "meshes", PROPERTY_HINT_ARRAY_TYPE, MAKE_RESOURCE_TYPE_HINT("Mesh")), "set_meshes", "get_meshes");
@@ -265,23 +226,15 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "scale_range"), "set_scale_range", "get_scale_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "align_to_ground", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_align_to_ground", "get_align_to_ground");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "random_yaw"), "set_random_yaw", "is_random_yaw");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "floating"), "set_floating", "is_floating");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "visibility_range", PROPERTY_HINT_RANGE, "0,1000,0.5,or_greater,suffix:m"), "set_visibility_range", "get_visibility_range");
-	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "far_color"), "set_far_color", "get_far_color");
-	ADD_GROUP("Near", "near_");
-	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "near_meshes", PROPERTY_HINT_ARRAY_TYPE, MAKE_RESOURCE_TYPE_HINT("Mesh")), "set_near_meshes", "get_near_meshes");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_range", PROPERTY_HINT_RANGE, "0,500,0.5,or_greater,suffix:m"), "set_near_range", "get_near_range");
 	ADD_GROUP("Canopy", "canopy_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_radius", PROPERTY_HINT_RANGE, "0,30,0.1,or_greater,suffix:m"), "set_canopy_radius", "get_canopy_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_opacity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_canopy_opacity", "get_canopy_opacity");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "canopy_conifer"), "set_canopy_conifer", "is_canopy_conifer");
 	ADD_GROUP("Patches", "patch_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_scale", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_patch_scale", "get_patch_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_patch_cover", "get_patch_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "patch_seed"), "set_patch_seed", "get_patch_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "patch_invert"), "set_patch_invert", "is_patch_invert");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "mask_channel", PROPERTY_HINT_ENUM, "None:-1,Red:0,Green:1,Blue:2,Alpha:3"), "set_mask_channel", "get_mask_channel");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mask_invert"), "set_mask_invert", "is_mask_invert");
 
 	ADD_GROUP("Rules", "");
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "slope_range", PROPERTY_HINT_NONE, "suffix:°"), "set_rule_range", "get_rule_range", RULE_SLOPE);
@@ -304,18 +257,6 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "talus_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_TALUS);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "shade_range"), "set_rule_range", "get_rule_range", RULE_SHADE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "shade_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SHADE);
-	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "temperature_range", PROPERTY_HINT_NONE, "suffix:°C"), "set_rule_range", "get_rule_range", RULE_TEMPERATURE);
-	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "temperature_fade", PROPERTY_HINT_RANGE, "0,20,0.1,suffix:°C"), "set_rule_fade", "get_rule_fade", RULE_TEMPERATURE);
-	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "january_temperature_range", PROPERTY_HINT_NONE, "suffix:°C"), "set_rule_range", "get_rule_range", RULE_JANUARY_TEMPERATURE);
-	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "january_temperature_fade", PROPERTY_HINT_RANGE, "0,20,0.1,suffix:°C"), "set_rule_fade", "get_rule_fade", RULE_JANUARY_TEMPERATURE);
-	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "precipitation_range", PROPERTY_HINT_NONE, "suffix:mm"), "set_rule_range", "get_rule_range", RULE_PRECIPITATION);
-	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "precipitation_fade", PROPERTY_HINT_RANGE, "0,2000,1,suffix:mm"), "set_rule_fade", "get_rule_fade", RULE_PRECIPITATION);
-	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "aridity_range"), "set_rule_range", "get_rule_range", RULE_ARIDITY);
-	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "aridity_fade", PROPERTY_HINT_RANGE, "0,5,0.01"), "set_rule_fade", "get_rule_fade", RULE_ARIDITY);
-	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "sunlight_range", PROPERTY_HINT_NONE, "suffix:W/m²"), "set_rule_range", "get_rule_range", RULE_SUNLIGHT);
-	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "sunlight_fade", PROPERTY_HINT_RANGE, "0,200,1,suffix:W/m²"), "set_rule_fade", "get_rule_fade", RULE_SUNLIGHT);
-	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "conifer_range"), "set_rule_range", "get_rule_range", RULE_CONIFER);
-	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "conifer_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_CONIFER);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -327,12 +268,6 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_ROCK);
 	BIND_ENUM_CONSTANT(RULE_TALUS);
 	BIND_ENUM_CONSTANT(RULE_SHADE);
-	BIND_ENUM_CONSTANT(RULE_TEMPERATURE);
-	BIND_ENUM_CONSTANT(RULE_JANUARY_TEMPERATURE);
-	BIND_ENUM_CONSTANT(RULE_PRECIPITATION);
-	BIND_ENUM_CONSTANT(RULE_ARIDITY);
-	BIND_ENUM_CONSTANT(RULE_SUNLIGHT);
-	BIND_ENUM_CONSTANT(RULE_CONIFER);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 }
 
