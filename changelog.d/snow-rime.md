@@ -1,1 +1,0 @@
-- Snow: `SnowRime3D` grows rime on props and twigs in freezing fog (Makkonen accretion, Finstad collision efficiency, Macklin density), drawn as a crust with feathers pointing into the wind; `--view=rime` and `--test=rime` in the snow bench.

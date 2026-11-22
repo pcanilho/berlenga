@@ -1,1 +1,0 @@
-- Weather: clouds darken on their shaded sides instead of reading as flat cut-outs, and a low sun is shadowed by the clouds kilometres along its path. Rocks bench `--clouds[=C]`: stills march three times the steps.

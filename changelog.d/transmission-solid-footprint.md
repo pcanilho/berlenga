@@ -1,1 +1,0 @@
-- Rendering: raster Transmission on solids (a thickness set) filters what it reads by the refracted footprint, so thin curved ice and drops no longer speckle or dash what lies behind; panes and open water are unchanged.

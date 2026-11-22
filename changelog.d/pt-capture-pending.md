@@ -1,1 +1,0 @@
-- Path tracing: a mesh whose vertex() is captured now counts as pending until its first capture is in, so stills wait for it instead of tracing the bare mesh (terrain under a ground patch showed through it in triangle-shaped pieces).

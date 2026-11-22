@@ -1,1 +1,0 @@
-- Water: sea foam keeps its detail by the camera on a world's sea (it was measured from the world's centre); breakers spill in sections and their bores open into lace; thin whitecaps stay translucent instead of paper-white chips.

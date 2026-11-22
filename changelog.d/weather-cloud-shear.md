@@ -1,1 +1,0 @@
-- Weather: clouds lean with the wind shear. Their tops are carried downwind and veer with height, so towers lean and stream out instead of standing upright (WeatherMap3D `cloud_shear`, on).

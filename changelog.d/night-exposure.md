@@ -1,2 +1,0 @@
-- Weather: the sky clock sets the camera's exposure like an adapting eye from the light on the ground, so twilight, moonlit and starlit scenes are readable and stay inside the frame buffers' range (`drive_exposure`, on; `adaptation`).
-- Rendering: a sky shader that composites its half and quarter resolution passes no longer takes the camera's exposure multiplier once per pass.

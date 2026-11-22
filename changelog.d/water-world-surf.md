@@ -1,1 +1,0 @@
-- Water: a generated world's sea breaks into surf on every coast: with `open_sea_beyond` the swell comes in from all sides, and `terrain_source` (set by TerrainGenerator3D) gives the bed wherever no collision is loaded.

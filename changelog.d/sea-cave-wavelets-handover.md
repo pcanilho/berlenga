@@ -1,1 +1,0 @@
-- Sea caves: the wavelets grow in across the hand-over from the sea's surface, and the water's vertices across the passage are close enough for their shortest waves, so the cave's mouth no longer shows hard-edged bright facets.

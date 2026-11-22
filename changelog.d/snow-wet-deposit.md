@@ -1,1 +1,0 @@
-- Snow: wet avalanche debris forms lobed snouts with its granules where it piles up, and the path-traced deep-snow surface now follows changes to the snow map (it stayed as first drawn).

@@ -1,1 +1,0 @@
-- Snow: avalanche releases leave a crown wall along an irregular fracture line, and debris rubble covers the whole deposit, densest at its snout and edges (`SnowAvalanche3D.crowns_enabled`, on by default).

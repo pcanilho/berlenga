@@ -1,1 +1,0 @@
-- Path tracing: shaders that read the CUSTOM0-CUSTOM3 vertex attributes in vertex() now get them (interpolated at the hit) instead of zero, so meshes that blend materials or shape by custom attributes look the same as in raster.
