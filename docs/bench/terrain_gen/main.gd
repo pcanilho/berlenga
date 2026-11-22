@@ -8,6 +8,8 @@
 #       [--coast [--focus=lake|coast] [--dist=520]]   an island with lakes, its sea, lakes and rivers built
 #   godot --headless --path docs/bench/terrain_gen -- --coast --geology=map.png  island map, lakes and rivers listed
 #   godot --headless --path docs/bench/terrain_gen -- --map=map.png      shaded relief with rivers
+#   godot --headless --path docs/bench/terrain_gen -- [--coast] --climate=map.png  climate maps (temperature,
+#       precipitation, winter sun, snow share) of the generated world [--wind=270] [--view: taller range]
 extends Node3D
 
 const WORLD := 4096.0
@@ -63,6 +65,13 @@ func _ready() -> void:
 			var fd := FileAccess.open(args["dump"], FileAccess.WRITE)
 			fd.store_buffer(gen.get_height_image().get_data())
 			fd.close()
+		get_tree().quit()
+	elif args.has("climate"):
+		if args.has("view"):
+			gen.uplift = 6.0
+			gen.range_width = 1300.0
+		gen.generate()
+		await _save_climate(args["climate"])
 		get_tree().quit()
 	elif args.has("map"):
 		gen.generate()
@@ -486,6 +495,7 @@ func _run_checks() -> void:
 	gen.generate()
 
 	await _coast_checks()
+	await _climate_checks()
 
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
 	var plot := TerrainBrush3D.new()
@@ -936,3 +946,144 @@ func _build_view() -> void:
 		cam.position = Vector3(1900, 1100, 2900)
 		add_child(cam)
 		cam.look_at(Vector3(-400, 250, -300))
+
+
+func _hill_source(height: float, sigma: float) -> Node3D:
+	# A round Gaussian hill as a plain height source (any node with get_height(Vector3)).
+	var sc := GDScript.new()
+	sc.source_code = "extends Node3D\nvar height := 0.0\nvar sigma := 1.0\nfunc get_height(p: Vector3) -> float:\n\treturn height * exp(-(p.x * p.x + p.z * p.z) / (2.0 * sigma * sigma))\n"
+	sc.reload()
+	var n := Node3D.new()
+	n.set_script(sc)
+	n.set("height", height)
+	n.set("sigma", sigma)
+	return n
+
+
+func _climate_checks() -> void:
+	# Climate maps on a 24 km square around a 1500 m Gaussian hill (sigma 3 km), westerly wet winds.
+	var hill := _hill_source(1500.0, 3000.0)
+	hill.name = "Hill"
+	add_child(hill)
+	var dm := TerrainDataMap3D.new()
+	dm.bake_on_ready = false
+	dm.size = 24000.0
+	dm.resolution = 64
+	add_child(dm)
+	dm.height_source = dm.get_path_to(hill)
+	var r := ClimateRecipe.new()
+	r.sun_cell = 64.0
+	r.precipitation_cell = 256.0
+	dm.climate_recipe = r
+	check(dm.bake_climate() == OK and dm.has_climate(), "bake_climate() runs on a plain height source (%.0f ms at %d cells)" % [dm.get_climate_bake_time_msec(), int(24000.0 / 64.0)])
+	var top := Vector3(0, 0, 0)
+	var t_jan := dm.get_temperature_at(top, 15.0)
+	var t_jul := dm.get_climate_at(top)["temperature_july"] as float
+	check(absf(t_jan - (3.0 - 4.5 * 1.5)) < 0.3 and absf(t_jul - (22.0 - 6.5 * 1.5)) < 0.3, "temperature at the top by the seasonal lapse rate (January %.2f C, July %.2f C)" % [t_jan, t_jul])
+	var south := dm.get_winter_shortwave_at(Vector3(0, 0, 3000))
+	var north := dm.get_winter_shortwave_at(Vector3(0, 0, -3000))
+	var flat := dm.get_shortwave_at(Vector3(-11000, 0, -11000))
+	print("     shortwave W/m2: flat year %.0f, winter south face %.0f, north face %.0f" % [flat, south, north])
+	check(south > 1.5 * north, "south face gets more winter sun than the north face")
+	check(flat > 100.0 and flat < 200.0, "annual mean shortwave on flat ground at 46 N with half cloud (%.0f W/m2)" % flat)
+	check(dm.get_sky_view_at(Vector3(-11000, 0, -11000)) > 0.97, "open sky on flat ground (%.3f)" % dm.get_sky_view_at(Vector3(-11000, 0, -11000)))
+	var sx_lee := dm.get_sx_at(Vector3(3000, 0, 0), 270.0)
+	var sx_wind := dm.get_sx_at(Vector3(-3000, 0, 0), 270.0)
+	check(sx_lee > 0.0 and sx_wind < 0.0, "Sx sheltered in the lee, exposed windward (%.1f, %.1f degrees)" % [sx_lee, sx_wind])
+	check(dm.get_snow_fraction_at(top) > dm.get_snow_fraction_at(Vector3(-11000, 0, 0)) + 0.1, "more of the year's precipitation falls as snow on top (%.2f against %.2f)" % [dm.get_snow_fraction_at(top), dm.get_snow_fraction_at(Vector3(-11000, 0, 0))])
+	var before := dm.get_precipitation_at(wind_probe())
+	dm.bake()
+	check(dm.has_climate() and dm.get_precipitation_at(wind_probe()) == before, "bake() keeps the climate")
+
+	# Precipitation needs a range at its own scale: 2000 m, sigma 15 km, on 150 km (linear theory wants
+	# N h / U near 1 or below; a 3 km hill only shifts its rain over the crest).
+	hill.set("height", 2000.0)
+	hill.set("sigma", 15000.0)
+	dm.size = 150000.0
+	r.sun_cell = 500.0
+	r.precipitation_cell = 1000.0
+	r.horizon_distance = 0.0
+	dm.bake_climate()
+	var far := dm.get_precipitation_at(Vector3(-60000, 0, 0))
+	var foot := dm.get_precipitation_at(Vector3(-40000, 0, 0))
+	var wind := dm.get_precipitation_at(Vector3(-15000, 0, 0))
+	var lee := dm.get_precipitation_at(Vector3(15000, 0, 0))
+	print("     range: precipitation mm/yr far upwind %.0f, foot %.0f, windward %.0f, top %.0f, lee %.0f" % [far, foot, wind, dm.get_precipitation_at(top), lee])
+	check(wind > 2.0 * foot and lee < 0.6 * far, "windward slope wetter, rain shadow in the lee")
+	check(absf(far - 900.0) < 0.35 * 900.0, "near the background far upwind (%.0f mm)" % far)
+	check(lee >= 0.4 * 900.0 - 1.0, "rain shadow keeps the floor share of the background (%.0f mm)" % lee)
+	var best_x := 0.0
+	var best := -INF
+	for i in 41:
+		var x := -40000.0 + i * 2000.0
+		var p := dm.get_precipitation_at(Vector3(x, 0, 0))
+		if p > best:
+			best = p
+			best_x = x
+	check(best_x < 0.0, "wettest point upwind of the crest (x %.0f m)" % best_x)
+	check(dm.get_aridity_at(Vector3(15000, 0, 0)) < dm.get_aridity_at(Vector3(-15000, 0, 0)), "drier in the rain shadow (aridity index %.2f against %.2f)" % [dm.get_aridity_at(Vector3(15000, 0, 0)), dm.get_aridity_at(Vector3(-15000, 0, 0))])
+
+	# The generated world (4 km at 16 m), its own sea and lakes as the air's floor.
+	var dm2 := TerrainDataMap3D.new()
+	dm2.bake_on_ready = false
+	dm2.size = WORLD
+	dm2.resolution = 64
+	add_child(dm2)
+	dm2.height_source = dm2.get_path_to(gen)
+	dm2.geology_source = dm2.get_path_to(gen)
+	dm2.climate_recipe = ClimateRecipe.new()
+	check(dm2.bake_climate() == OK, "bake_climate() on the generated world: %.0f ms at 256 x 256 cells" % dm2.get_climate_bake_time_msec())
+	dm.queue_free()
+	dm2.queue_free()
+	hill.queue_free()
+	await get_tree().process_frame
+
+
+func wind_probe() -> Vector3:
+	return Vector3(-3000, 0, 0)
+
+
+
+func _save_climate(path: String) -> void:
+	var dm := TerrainDataMap3D.new()
+	dm.bake_on_ready = false
+	dm.size = WORLD
+	add_child(dm)
+	dm.height_source = dm.get_path_to(gen)
+	dm.geology_source = dm.get_path_to(gen)
+	var r := ClimateRecipe.new()
+	r.wind_from = float(args.get("wind", "270"))
+	dm.climate_recipe = r
+	dm.bake_climate()
+	print("climate %.0f ms" % dm.get_climate_bake_time_msec())
+	var res := 384
+	var img := Image.create(res * 2 + 8, res * 2 + 8, false, Image.FORMAT_RGB8)
+	img.fill(Color.WHITE)
+	var rect := dm.get_climate_rect()
+	var ranges := [[INF, -INF], [INF, -INF], [INF, -INF], [INF, -INF]]
+	var vals := []
+	for z in res:
+		for x in res:
+			var p := Vector3(rect.position.x + (x + 0.5) * rect.size.x / res, 0, rect.position.y + (z + 0.5) * rect.size.y / res)
+			var v := [dm.get_temperature_at(p), dm.get_precipitation_at(p), dm.get_winter_shortwave_at(p), dm.get_snow_fraction_at(p)]
+			vals.append(v)
+			for k in 4:
+				ranges[k][0] = minf(ranges[k][0], v[k])
+				ranges[k][1] = maxf(ranges[k][1], v[k])
+	var lo := [Color(0.1, 0.2, 0.7), Color(0.75, 0.6, 0.35), Color(0.05, 0.05, 0.15), Color(0.25, 0.3, 0.2)]
+	var hi := [Color(0.9, 0.25, 0.1), Color(0.1, 0.3, 0.85), Color(1.0, 0.85, 0.3), Color(1, 1, 1)]
+	for z in res:
+		for x in res:
+			var v: Array = vals[z * res + x]
+			var wet := gen.get_water_depth(Vector3(rect.position.x + (x + 0.5) * rect.size.x / res, 0, rect.position.y + (z + 0.5) * rect.size.y / res)) > 0.0
+			for k in 4:
+				var t: float = (v[k] - ranges[k][0]) / maxf(ranges[k][1] - ranges[k][0], 1e-6)
+				var c: Color = (lo[k] as Color).lerp(hi[k], t)
+				if wet:
+					c = c.lerp(Color(0.15, 0.2, 0.3), 0.6)
+				img.set_pixel((k % 2) * (res + 8) + x, (k / 2) * (res + 8) + z, c)
+	img.save_png(path)
+	var names := ["temperature C", "precipitation mm/yr", "winter shortwave W/m2", "snow fraction"]
+	for k in 4:
+		print("%s: %.2f to %.2f" % [names[k], ranges[k][0], ranges[k][1]])
+	print("saved ", path)

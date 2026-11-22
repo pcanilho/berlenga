@@ -22,6 +22,19 @@
 				Samples heights and water and computes every map. Returns [constant ERR_UNCONFIGURED] when no height could be found. Emits [signal baked].
 			</description>
 		</method>
+		<method name="bake_climate">
+			<return type="int" enum="Error" />
+			<description>
+				Bakes the climate maps with [member climate_recipe] over the map's square plus the recipe's [code]context_margin[/code], on their own grid ([code]sun_cell[/code]): temperature, precipitation, snow fraction, aridity, shortwave, sky view and Winstral Sx. Reads the same [member height_source] (or colliders) as [method bake], and puts the air on the water where [member water_sources] or a [TerrainGenerator3D] [member geology_source] has sea or lakes. Independent of [method bake], which never clears it. Called after the deferred bake when [member bake_on_ready] is on and a recipe is set. See docs/ideas/terrain-generation.md, "Climate maps".
+			</description>
+		</method>
+		<method name="get_aridity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Aridity index: the year's precipitation over Thornthwaite (1948) potential evapotranspiration, capped at 10. Under 0.2 arid, 0.5 semi-arid, 0.65 dry sub-humid, above that humid (UNEP 1997).
+			</description>
+		</method>
 		<method name="get_aspect_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -40,6 +53,44 @@
 			<param index="0" name="channel" type="int" enum="TerrainDataMap3D.Channel" />
 			<description>
 				Returns one map as a single-channel float [Image] ([constant Image.FORMAT_RF]), row 0 at the map's lowest Z.
+			</description>
+		</method>
+		<method name="get_climate_at" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				All climate values at a point: [code]temperature[/code], [code]temperature_january[/code], [code]temperature_july[/code], [code]precipitation[/code], [code]snow_fraction[/code], [code]aridity[/code], [code]shortwave[/code], [code]shortwave_winter[/code], [code]sky_view[/code] and [code]sx[/code] (for the recipe's prevailing wind).
+			</description>
+		</method>
+		<method name="get_climate_bake_time_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Duration of the last [method bake_climate] in milliseconds.
+			</description>
+		</method>
+		<method name="get_climate_image" qualifiers="const">
+			<return type="Image" />
+			<param index="0" name="channel" type="int" enum="TerrainDataMap3D.ClimateChannel" />
+			<description>
+				One climate channel as an [constant Image.FORMAT_RF] image over [method get_climate_rect].
+			</description>
+		</method>
+		<method name="get_climate_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				World XZ rectangle the climate maps cover.
+			</description>
+		</method>
+		<method name="get_climate_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Shader code declaring the [code]terrain_climate_map[/code] and [code]terrain_climate_rect[/code] globals and [code]vec4 terrain_climate(vec3 world_pos)[/code]: mean temperature C, precipitation m a year, annual shortwave kW/m², snow fraction. Only valid after a [method bake_climate] with [member publish_shader_globals] on.
+			</description>
+		</method>
+		<method name="get_climate_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The climate texture published as [code]terrain_climate_map[/code] (RGBA half floats, see [method get_climate_shader_code]).
 			</description>
 		</method>
 		<method name="get_curvature_at" qualifiers="const">
@@ -75,6 +126,13 @@
 				The baked area in world XZ (position is the corner at the lowest X and Z).
 			</description>
 		</method>
+		<method name="get_precipitation_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Precipitation in mm a year: the linear theory of orographic precipitation (Smith and Barstad 2004) over the recipe's wet-day wind rose, so windward slopes are wetter and lee sides lie in a rain shadow (on ranges tens of km across; on small maps the rain drifts past the crests).
+			</description>
+		</method>
 		<method name="get_rock_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -88,11 +146,32 @@
 				Shader code that declares the global uniforms [code]terrain_data_map[/code], [code]terrain_water_map[/code] and [code]terrain_data_rect[/code] and the functions [code]terrain_data(world_pos)[/code] (height, slope, aspect, curvature) and [code]terrain_water(world_pos)[/code] (flow, wetness, water depth, signed distance to water). Paste it into a spatial or compute shader. The uniforms are set when [member publish_shader_globals] is on.
 			</description>
 		</method>
+		<method name="get_shortwave_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Mean shortwave on the ground in W/m² over the year (day and night): sun path at the recipe's latitude, terrain horizons in 16 directions, the slope's angle to the sun, diffuse light by the sky view factor, ground reflection and mean cloud cover.
+			</description>
+		</method>
+		<method name="get_sky_view_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Share of the sky the ground sees, 0 to 1 (Dozier and Frew 1990).
+			</description>
+		</method>
 		<method name="get_slope_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
 				Slope in radians (0 is flat).
+			</description>
+		</method>
+		<method name="get_snow_fraction_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Share of the year's precipitation that falls as snow, 0 to 1, from the monthly temperatures and the recipe's rain-snow threshold.
 			</description>
 		</method>
 		<method name="get_soil_depth_at" qualifiers="const">
@@ -102,11 +181,27 @@
 				Soil depth over bedrock in metres at [param global_position], from [member geology_source] (0 without one).
 			</description>
 		</method>
+		<method name="get_sx_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<param index="1" name="wind_from_degrees" type="float" />
+			<description>
+				Winstral Sx in degrees for a wind blowing from [param wind_from_degrees] (clockwise from north, -Z): the mean largest upward angle to the terrain within the recipe's [code]sx_distance[/code] upwind. Positive sheltered (snow drifts in), negative exposed (wind strips it). Interpolated between 16 baked directions.
+			</description>
+		</method>
 		<method name="get_talus_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
 				Scree (talus) cover at [param global_position], 0 to 1, from [member geology_source] (0 without one).
+			</description>
+		</method>
+		<method name="get_temperature_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<param index="1" name="day_of_year" type="float" default="-1.0" />
+			<description>
+				Air temperature at the surface in C: the year's mean, or on [param day_of_year] (1 to 365) from the seasonal harmonic through the cell's January and July means. From the recipe's temperatures and seasonal lapse rates.
 			</description>
 		</method>
 		<method name="get_water_depth_at" qualifiers="const">
@@ -136,6 +231,19 @@
 				Topographic wetness index [code]ln(a / tan(slope))[/code], a = upslope area per metre of contour. Higher is wetter: about 4 to 7 on hillsides, 10 and above on flat ground where water collects (meadows, swamps).
 			</description>
 		</method>
+		<method name="get_winter_shortwave_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Mean shortwave on the ground in W/m² over the three winter months (December to February, or June to August south of the equator), when low sun leaves shaded valleys and north faces dark.
+			</description>
+		</method>
+		<method name="has_climate" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] after a [method bake_climate].
+			</description>
+		</method>
 		<method name="has_geology" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -158,6 +266,9 @@
 	<members>
 		<member name="bake_on_ready" type="bool" setter="set_bake_on_ready" getter="is_bake_on_ready" default="true">
 			Bake one frame after the node is ready (not in the editor), once terrain deformers and colliders are in place.
+		</member>
+		<member name="climate_recipe" type="ClimateRecipe" setter="set_climate_recipe" getter="get_climate_recipe">
+			Settings for [method bake_climate].
 		</member>
 		<member name="flow_exponent" type="float" setter="set_flow_exponent" getter="get_flow_exponent" default="1.1">
 			Exponent of the slope weight in multiple flow direction routing (Holmgren 1994). Around 1.1 spreads flow over hillsides like real overland flow; higher values concentrate it into channels.
@@ -188,6 +299,11 @@
 		<signal name="baked">
 			<description>
 				Emitted after each successful [method bake].
+			</description>
+		</signal>
+		<signal name="climate_baked">
+			<description>
+				Emitted after [method bake_climate] finishes.
 			</description>
 		</signal>
 	</signals>
@@ -227,6 +343,36 @@
 		</constant>
 		<constant name="CHANNEL_MAX" value="11" enum="Channel">
 			Number of channels.
+		</constant>
+		<constant name="CLIMATE_TEMPERATURE_MEAN" value="0" enum="ClimateChannel">
+			Mean air temperature at the surface, C.
+		</constant>
+		<constant name="CLIMATE_TEMPERATURE_JANUARY" value="1" enum="ClimateChannel">
+			January mean temperature, C.
+		</constant>
+		<constant name="CLIMATE_TEMPERATURE_JULY" value="2" enum="ClimateChannel">
+			July mean temperature, C.
+		</constant>
+		<constant name="CLIMATE_PRECIPITATION" value="3" enum="ClimateChannel">
+			Precipitation, mm a year.
+		</constant>
+		<constant name="CLIMATE_SNOW_FRACTION" value="4" enum="ClimateChannel">
+			Share of the year's precipitation falling as snow.
+		</constant>
+		<constant name="CLIMATE_ARIDITY" value="5" enum="ClimateChannel">
+			Aridity index, precipitation over potential evapotranspiration.
+		</constant>
+		<constant name="CLIMATE_SHORTWAVE" value="6" enum="ClimateChannel">
+			Mean shortwave over the year, W/m².
+		</constant>
+		<constant name="CLIMATE_SHORTWAVE_WINTER" value="7" enum="ClimateChannel">
+			Mean shortwave over the winter months, W/m².
+		</constant>
+		<constant name="CLIMATE_SKY_VIEW" value="8" enum="ClimateChannel">
+			Sky view factor, 0 to 1.
+		</constant>
+		<constant name="CLIMATE_MAX" value="9" enum="ClimateChannel">
+			Number of climate channels.
 		</constant>
 	</constants>
 </class>

@@ -264,6 +264,25 @@ func _checks() -> void:
 	_check("shade: core of a crown", under_t >= 0.89, under_t)
 	_check("shade: bushes only under crowns", sunny == 0 and field.get_placements(1).size() > 20 and field.get_placements(1).size() < bushes_open, [sunny, field.get_placements(1).size(), bushes_open])
 	_check("shade: trees unchanged", field.get_placements(0) == first, field.get_placements(0).size())
+	# The same canopy reaches WeatherMap3D (canopy_map), so snow and wind see the same forest.
+	var wm := WeatherMap3D.new()
+	wm.name = "Weather"
+	add_child(wm)
+	field.weather_map = field.get_path_to(wm)
+	var follow := Node3D.new()
+	add_child(follow)
+	follow.global_position = t0
+	wm.follow_target = wm.get_path_to(follow)
+	wm.shelter_extent = 128.0 # 0.5 m cells: the comparison is then limited by the 1 m canopy map.
+	field.populate()
+	wm.rebake_shelter()
+	var worst := 0.0
+	for q in [t0, t0 + Vector3(2, 0, 0), t0 + Vector3(0, 0, -3), t0 + Vector3(-4, 0, 4)]:
+		worst = max(worst, abs(wm.get_canopy_closure_at(q) - field.get_shade_at(q)))
+	_check("canopy map: weather closure matches shade (1 m cells)", wm.get_canopy_map() != null and worst < 0.12, [worst, wm.get_canopy_closure_at(t0), field.get_shade_at(t0), wm.get_canopy_height_at(t0)])
+	field.weather_map = NodePath()
+	wm.queue_free()
+	follow.queue_free()
 	tree_sp.canopy_radius = 0.0
 	bush_sp.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 1.0))
 	field.populate()

@@ -29,7 +29,7 @@
 			<return type="float" />
 			<param index="0" name="cloud_top" type="float" />
 			<description>
-				Flashes per minute of one storm cell whose cloud top is [param cloud_top] metres above the ground, from Price and Rind (1992), before [member rate_scale]. [member marine] selects the fit over sea.
+				Flashes per minute of one storm cell whose cloud top is [param cloud_top] metres above the ground, from Price and Rind (1992), before [member rate_scale]. [member marine] selects the fit over sea. Storms use the top that [method WeatherMap3D.get_cloud_top_at] gives over their centre, not [member WeatherMap3D.cloud_base_height] plus [member WeatherMap3D.cloud_thickness]: a storm's core towers to the base plus three times the thickness. With a 1500 m base and a 2500 m thickness, a full-grown storm tops out at 9000 m, which gives about 1.6 flashes a minute.
 			</description>
 		</method>
 		<method name="get_ground_strike_count" qualifiers="const">
@@ -41,7 +41,7 @@
 		<method name="get_last_channel" qualifiers="const">
 			<return type="PackedVector3Array" />
 			<description>
-				The newest flash's main channel, from the cloud to the ground, in world space. Empty for cloud flashes.
+				The newest ground flash's main channel, from the cloud to the ground, in world space. It is kept after the flash has faded, and cloud flashes leave it as it is. Empty before the first ground flash.
 			</description>
 		</method>
 		<method name="get_last_thunder_build_time" qualifiers="const">

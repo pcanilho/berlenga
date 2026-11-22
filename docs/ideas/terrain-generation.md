@@ -477,9 +477,112 @@ orographic precipitation by the linear model of Smith and Barstad 2004, giving h
 query over our maps (`find_sites()` with required and preferred ranges); rock and debris placement from talus and
 cliffs; a far-field colour map baked from geology and vegetation.
 
+## Climate maps (Paulo picked 10 Nov 19:14)
+
+One bake on `TerrainDataMap3D`: `bake_climate()` with a `ClimateRecipe` resource. It reads any height source the map
+reads (TerrainGenerator3D, TerrainDeformer3D, Terrain3D by name, colliders), and water from `water_sources` or the
+generator's sea and lakes, so it works on hand-made ground too. It has its own arrays and rectangle (the map's square
+plus `context_margin`); `bake()` never touches them and `has_climate()` says whether they exist.
+
+Methods, one per field:
+
+- **Temperature.** A seasonal harmonic between January and July sea-level means, minus a lapse rate that itself moves
+  between a winter and a summer value: surface lapse rates in the Alps run about 4 to 5 K/km in winter and 6 to 7 in
+  summer (Rolland 2003), not the 6.5 standard atmosphere all year. Air over water uses the water surface. Mean,
+  January and July are stored; any day comes from the harmonic.
+- **Precipitation, linear theory of orographic precipitation (Smith and Barstad 2004).** Terrain in Fourier space
+  times the transfer function `Cw i sigma h / ((1 - i m Hw)(1 + i sigma tau_c)(1 + i sigma tau_f))`, sigma = U k + V l,
+  m the vertical wavenumber with Coriolis (real, signed by sigma, below the moist buoyancy frequency; decaying
+  above it), Hw and Cw from the reference temperature (Clausius-Clapeyron vapour density, moist adiabat), tau_c =
+  tau_f = 1000 s, N_m 0.005 /s. Background rate added, negatives truncated, as in the paper. Climatology: summed over
+  a wind rose of wet-day winds (16 directions, Gaussian around the prevailing direction) times the wet hours a
+  year, so a range gets a wet windward side, a rain shadow, and more on its crests. Solved on a coarse grid
+  (`precipitation_cell`, 64 m) with tapered padding so the map edge is not a cliff, then upsampled.
+- **Snow fraction.** The share of each month's precipitation falling as snow: daily temperatures spread around the
+  month's mean (normal, 3 K), snow below the 1.0 C rain-snow threshold Jennings et al. (2018) found on average.
+- **Aridity index (UNEP 1997).** Precipitation over potential evapotranspiration, PET by Thornthwaite (1948) from
+  the twelve monthly temperatures and day length at the latitude (above 26.5 C, Willmott et al. 1985). Under 0.2
+  arid, 0.5 semi-arid, 0.65 dry sub-humid, above humid. This stands in for "humidity" on the vegetation side.
+- **Shortwave, annual and winter.** Sun path per latitude (Cooper 1969 declination, hour angle) on 24 days and half
+  hours; horizon angles in 16 directions marched out to `horizon_distance` (Dozier and Frew 1990), so valleys lose
+  the low sun; beam on the slope by the incidence angle, clear sky by Meinel with Kasten and Young (1989) air mass,
+  diffuse by Liu and Jordan (1960) times the sky view factor (Dozier and Frew 1990), ground reflection, clouds by
+  Kasten and Czeplak (1980). Stored as mean W/m2 over the year and over the three winter months.
+- **Sky view factor.** From the same horizons; also useful for ambient occlusion of far terrain and cold pools.
+- **Wind exposure, Winstral Sx (Winstral, Elder and Davis 2002).** For 16 wind directions: the largest upward angle
+  to the terrain within `sx_distance` (100 m) upwind, averaged over a 30 degree window. The same measure SnowCover3D
+  computes per wind; snow can read these instead of recomputing.
+- **Aspect** is the existing `CHANNEL_ASPECT`; it is not repeated.
+
+Channel layout (`TerrainDataMap3D.ClimateChannel`, its own enum, not `Channel` 0 to 10), one grid at `sun_cell`
+(16 m default):
+
+| channel | unit |
+| --- | --- |
+| CLIMATE_TEMPERATURE_MEAN, _JANUARY, _JULY | C at the surface |
+| CLIMATE_PRECIPITATION | mm a year |
+| CLIMATE_SNOW_FRACTION | 0 to 1 of the year's precipitation |
+| CLIMATE_ARIDITY | P / PET |
+| CLIMATE_SHORTWAVE, CLIMATE_SHORTWAVE_WINTER | W/m2, mean over the year / winter |
+| CLIMATE_SKY_VIEW | 0 to 1 |
+| Sx, 16 directions (separate) | degrees, wind from 0, 22.5, ... clockwise from north |
+
+Queries: `get_temperature_at(pos, day_of_year = -1)`, `get_precipitation_at`, `get_snow_fraction_at`,
+`get_aridity_at`, `get_shortwave_at`, `get_winter_shortwave_at`, `get_sky_view_at`, `get_sx_at(pos, wind_from)`,
+`get_climate_at(pos)` (a Dictionary of all), `get_climate_image(channel)`. Shader globals `terrain_climate_map`
+(RGBA half: mean temperature C, precipitation m a year, shortwave kW/m2, snow fraction) and `terrain_climate_rect`.
+
+Snow keeps its own WGEN weather and snow state. Not modelled: cold-air pooling and inversions, continentality
+within a map (maps are far smaller than the hundreds of km it acts over), seasonality of precipitation, fog.
+
+### Climate maps: what was built (10 Nov)
+
+As planned above: `ClimateRecipe`, `TerrainDataMap3D.bake_climate()` and its queries, `terrain_climate.h` (plain
+C++, threaded rows, a small radix-2 FFT). Differences from the plan:
+
+- **Rain shadow floor.** On an Alps-sized range (2000 m, sigma 15 km) the linear model gives 3 times the foot's
+  precipitation on the windward slope (Saentis against Zurich is about 2.5) but leaves the lee at 10 to 20% of the
+  background, drier than inner Alpine valleys (Sion about 60%): it knows only flow over the terrain, not showers
+  or fronts. `precipitation_floor` (0.4) keeps that share of the background on every wet hour, as the
+  `precip_min` of fastscape's implementation does.
+- **Scale.** Rain drifts about wind speed times (tau_c + tau_f), 20 km by default, so on maps under about 20 km it
+  falls past the crests (the model's spillover) and no rain shadow shows; precipitation then follows the range as
+  one broad patch. Temperature, snow share, sun and Sx carry the detail on small maps. Linear theory also wants
+  N h / U at or below 1; much taller, slower cases come out too dry over the crest.
+- **Clouds.** The clear-sky global is Meinel beam plus the Liu and Jordan diffuse share; clouds scale it by Kasten
+  and Czeplak and raise the diffuse share to 0.3 + 0.7 n^2. One mean cover all year.
+
+Cost (cloud CPU, threaded): the 4 km bench world at 16 m (256 x 256, precipitation at 64 m) 0.43 to 0.49 s; a
+24 km square at 64 m (375 x 375) 0.47 s. Horizons dominate; `horizon_distance` 0 drops them. Memory: 25 floats a
+cell (9 maps, 16 Sx). Nothing renders differently: the `terrain_climate_map` globals only exist once baked, and no
+material reads them yet.
+
+Checks (`--test`, 15 of 68): lapse-rate temperatures at the top of a hill (January -3.75 C, July 12.25 C); south
+face gets twice the north face's winter sun; flat ground 188 W/m2 a year (46 N, half cloud); open sky on flat
+ground; Sx +17 degrees in the lee, -16 windward; snow share 0.35 on top against 0.05 below; on the range, windward
+6000 mm against 1900 at the foot, lee 540, wettest point 12 km upwind of the crest, aridity lower in the lee;
+`bake()` keeps the climate; the generated world bakes. Maps: `--climate=map.png [--view] [--wind=270]`
+(temperature, precipitation, winter sun, snow share). Media fork/terrain/climate/.
+
 ## Sources
 
-- Smith, Barstad, A linear theory of orographic precipitation, Journal of the Atmospheric Sciences 2004.
+- Smith, Barstad, A linear theory of orographic precipitation, Journal of the Atmospheric Sciences 61, 2004.
+- Rolland, Spatial and seasonal variations of air temperature lapse rates in Alpine regions, Journal of Climate 16, 2003.
+- Jennings, Winchell, Livneh, Molotch, Spatial variation of the rain-snow temperature threshold across the Northern
+  Hemisphere, Nature Communications 9, 2018.
+- Thornthwaite, An approach toward a rational classification of climate, Geographical Review 38, 1948.
+- Willmott, Rowe, Mintz, Climatology of the terrestrial seasonal water cycle, Journal of Climatology 5, 1985.
+- UNEP, World Atlas of Desertification, 2nd ed., 1997 (aridity index).
+- Dozier, Frew, Rapid calculation of terrain parameters for radiation modeling from digital elevation data, IEEE
+  TGRS 28, 1990.
+- Cooper, The absorption of radiation in solar stills, Solar Energy 12, 1969.
+- Kasten, Young, Revised optical air mass tables and approximation formula, Applied Optics 28, 1989.
+- Liu, Jordan, The interrelationship and characteristic distribution of direct, diffuse and total solar radiation,
+  Solar Energy 4, 1960.
+- Kasten, Czeplak, Solar and terrestrial radiation dependent on the amount and type of cloud, Solar Energy 24, 1980.
+- Winstral, Elder, Davis, Spatial snow modeling of wind-redistributed snow using terrain-based parameters, Journal of
+  Hydrometeorology 3, 2002.
+- fastscape-lem/orographic-precipitation (MIT), read for the transfer function's sign conventions; not copied.
 - Star Citizen wiki, Planet Tech v5: https://starcitizen.tools/Planet_Tech_v5
 - Borgefors, Distance transformations in digital images, Computer Vision, Graphics and Image Processing 1986.
 - Costa, Schuster, The formation and failure of natural dams, GSA Bulletin 1988.

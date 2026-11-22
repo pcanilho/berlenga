@@ -90,6 +90,9 @@
 		<member name="blade_width" type="float" setter="set_blade_width" getter="get_blade_width" default="0.04">
 			Blade width at the root, in metres.
 		</member>
+		<member name="canopy_field" type="NodePath" setter="set_canopy_field" getter="get_canopy_field" default="NodePath(&quot;&quot;)">
+			Path to a [VegetationField3D] whose canopy species shade the ground (see [method VegetationField3D.get_shade_at]). When [member rules] narrows [member PlantSpecies.shade_range], blades and the ground tint follow that shade: for example [code]Vector2(0, 0.4)[/code] keeps a meadow sward out from under the trees. Call [method rebuild] after the field is populated again.
+		</member>
 		<member name="clump_size" type="float" setter="set_clump_size" getter="get_clump_size" default="1.2">
 			Size of a clump, in metres. Blades in a clump share height, facing, lean and dryness.
 		</member>

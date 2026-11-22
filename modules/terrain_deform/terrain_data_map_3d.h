@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include "climate_recipe.h"
+
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
@@ -58,6 +60,20 @@ public:
 		CHANNEL_MAX,
 	};
 
+	// Climate (bake_climate()): its own arrays and grid, never touched by bake().
+	enum ClimateChannel {
+		CLIMATE_TEMPERATURE_MEAN, // C at the surface
+		CLIMATE_TEMPERATURE_JANUARY,
+		CLIMATE_TEMPERATURE_JULY,
+		CLIMATE_PRECIPITATION, // mm a year
+		CLIMATE_SNOW_FRACTION, // share of the year's precipitation falling as snow
+		CLIMATE_ARIDITY, // precipitation over potential evapotranspiration
+		CLIMATE_SHORTWAVE, // W/m2, mean over the year
+		CLIMATE_SHORTWAVE_WINTER, // W/m2, mean over the three winter months
+		CLIMATE_SKY_VIEW, // 0 to 1
+		CLIMATE_MAX,
+	};
+
 private:
 	float size = 256.0f;
 	int resolution = 256;
@@ -81,8 +97,19 @@ private:
 	double bake_msec = 0.0;
 	bool bake_queued = false;
 
-	bool _sample_heights(LocalVector<float> &r_h, LocalVector<uint8_t> &r_valid);
-	void _sample_water(const LocalVector<float> &p_h, LocalVector<float> &r_surface);
+	Ref<ClimateRecipe> climate_recipe;
+	int climate_resolution = 0;
+	Vector2 climate_origin;
+	float climate_cell = 1.0f;
+	LocalVector<float> climate[CLIMATE_MAX];
+	LocalVector<float> climate_sx; // 16 per cell, wind from 0, 22.5, ... degrees clockwise from north
+	Ref<Image> climate_image;
+	Ref<ImageTexture> climate_texture;
+	double climate_msec = 0.0;
+
+	bool _sample_heights(const Rect2 &p_rect, int p_n, LocalVector<float> &r_h, LocalVector<uint8_t> &r_valid);
+	void _sample_water(const Rect2 &p_rect, int p_n, const LocalVector<float> &p_h, LocalVector<float> &r_surface);
+	float _sample_climate(const float *p_data, int p_stride, int p_offset, const Vector3 &p_global_position) const;
 	void _publish_globals();
 	float _sample(Channel p_channel, const Vector3 &p_global_position) const;
 	void _queued_bake();
@@ -134,7 +161,27 @@ public:
 	Ref<Texture2D> get_water_texture() const { return water_texture; }
 	Ref<Image> get_channel_image(Channel p_channel) const;
 
+	void set_climate_recipe(const Ref<ClimateRecipe> &p_recipe) { climate_recipe = p_recipe; }
+	Ref<ClimateRecipe> get_climate_recipe() const { return climate_recipe; }
+	Error bake_climate();
+	bool has_climate() const { return climate_resolution > 0; }
+	Rect2 get_climate_rect() const;
+	double get_climate_bake_time_msec() const { return climate_msec; }
+	float get_temperature_at(const Vector3 &p_global_position, float p_day_of_year = -1.0f) const;
+	float get_precipitation_at(const Vector3 &p_global_position) const;
+	float get_snow_fraction_at(const Vector3 &p_global_position) const;
+	float get_aridity_at(const Vector3 &p_global_position) const;
+	float get_shortwave_at(const Vector3 &p_global_position) const;
+	float get_winter_shortwave_at(const Vector3 &p_global_position) const;
+	float get_sky_view_at(const Vector3 &p_global_position) const;
+	float get_sx_at(const Vector3 &p_global_position, float p_wind_from_degrees) const;
+	Dictionary get_climate_at(const Vector3 &p_global_position) const;
+	Ref<Image> get_climate_image(ClimateChannel p_channel) const;
+	Ref<Texture2D> get_climate_texture() const { return climate_texture; }
+
 	static String get_shader_code();
+	static String get_climate_shader_code();
 };
 
 VARIANT_ENUM_CAST(TerrainDataMap3D::Channel);
+VARIANT_ENUM_CAST(TerrainDataMap3D::ClimateChannel);

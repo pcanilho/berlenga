@@ -7320,6 +7320,22 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_RECT_Y] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_RECT_W] = has_snow ? rect.z : 0.0f;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_RECT_H] = has_snow ? rect.w : 0.0f;
+			// Its catch map (shelter under overhangs, snow held in tree crowns).
+			{
+				static const StringName snow_catch_name = "snow_catch_map";
+				RID catch_tex;
+				const Variant cv = ms->global_shader_parameter_get_internal(snow_catch_name);
+				if (cv.get_type() == Variant::RID) {
+					catch_tex = cv;
+				} else if (cv.get_type() == Variant::OBJECT) {
+					Object *t = cv;
+					if (t) {
+						catch_tex = t->call(SNAME("get_rid"));
+					}
+				}
+				RID catch_rd = has_snow && catch_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(catch_tex) : RID();
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_CATCH_MAP] = catch_rd.is_valid() ? float(bindless_block->add_texture(catch_rd)) : 0.0f;
+			}
 			// The world tier, the same way.
 			static const StringName snow_world_map_name = "snow_world_map";
 			static const StringName snow_world_rect_name = "snow_world_rect";

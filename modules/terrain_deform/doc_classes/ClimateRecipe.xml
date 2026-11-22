@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ClimateRecipe" inherits="Resource" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Settings for [method TerrainDataMap3D.bake_climate].
+	</brief_description>
+	<description>
+		Climate of a terrain: temperatures and seasonal lapse rates, the linear theory of orographic precipitation (Smith and Barstad 2004) over a wet-day wind rose, the rain-snow threshold, mean cloud cover for the sun, and the grid the maps are baked on. See docs/ideas/terrain-generation.md, "Climate maps".
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="cloud_cover" type="float" setter="set_cloud_cover" getter="get_cloud_cover" default="0.5">
+			Mean cloud cover, 0 to 1, for the shortwave (Kasten and Czeplak 1980).
+		</member>
+		<member name="context_margin" type="float" setter="set_context_margin" getter="get_context_margin" default="0.0">
+			Extra ground around the data map's square to include, m, so horizons and the precipitation see mountains just outside it.
+		</member>
+		<member name="conversion_time" type="float" setter="set_conversion_time" getter="get_conversion_time" default="1000.0">
+			Time for cloud water to form precipitation, s.
+		</member>
+		<member name="daily_temperature_spread" type="float" setter="set_daily_temperature_spread" getter="get_daily_temperature_spread" default="3.0">
+			Standard deviation of daily mean temperatures around the month's mean, K, for the snow fraction.
+		</member>
+		<member name="fallout_time" type="float" setter="set_fallout_time" getter="get_fallout_time" default="1000.0">
+			Time for precipitation to fall out, s. With [member conversion_time] it sets how far rain drifts downwind (about wind speed times their sum).
+		</member>
+		<member name="ground_albedo" type="float" setter="set_ground_albedo" getter="get_ground_albedo" default="0.2">
+			Ground reflectance for light reflected from surrounding terrain.
+		</member>
+		<member name="horizon_distance" type="float" setter="set_horizon_distance" getter="get_horizon_distance" default="5000.0">
+			How far horizons are traced for shading, m. 0 leaves terrain shadows out (the slope still faces the sun or not).
+		</member>
+		<member name="lapse_rate_january" type="float" setter="set_lapse_rate_january" getter="get_lapse_rate_january" default="4.5">
+			Temperature drop with height in January, K/km. Surface lapse rates are lower in winter (about 4 to 5 in the Alps) than in summer (Rolland 2003).
+		</member>
+		<member name="lapse_rate_july" type="float" setter="set_lapse_rate_july" getter="get_lapse_rate_july" default="6.5">
+			Temperature drop with height in July, K/km.
+		</member>
+		<member name="latitude" type="float" setter="set_latitude" getter="get_latitude" default="46.0">
+			Latitude in degrees: sun path, day lengths and the Coriolis term of the precipitation model. Negative south of the equator.
+		</member>
+		<member name="moist_stability" type="float" setter="set_moist_stability" getter="get_moist_stability" default="0.005">
+			Moist buoyancy frequency of the air, 1/s (0.005 in Smith and Barstad 2004).
+		</member>
+		<member name="precipitation" type="float" setter="set_precipitation" getter="get_precipitation" default="900.0">
+			Precipitation on flat ground away from terrain, mm a year.
+		</member>
+		<member name="precipitation_cell" type="float" setter="set_precipitation_cell" getter="get_precipitation_cell" default="64.0">
+			Cell size the precipitation model is solved at, m; upsampled to [member sun_cell].
+		</member>
+		<member name="precipitation_floor" type="float" setter="set_precipitation_floor" getter="get_precipitation_floor" default="0.4">
+			Share of the background precipitation the deepest rain shadow keeps: showers and fronts the linear model leaves out still reach the lee.
+		</member>
+		<member name="rain_snow_threshold" type="float" setter="set_rain_snow_threshold" getter="get_rain_snow_threshold" default="1.0">
+			Air temperature where half the precipitation falls as snow, C (1.0 on average, Jennings et al. 2018).
+		</member>
+		<member name="reference_height" type="float" setter="set_reference_height" getter="get_reference_height" default="0.0">
+			World height where [member temperature_january] and [member temperature_july] hold.
+		</member>
+		<member name="sun_cell" type="float" setter="set_sun_cell" getter="get_sun_cell" default="16.0">
+			Cell size of the climate grid, m (every map except precipitation is computed at it).
+		</member>
+		<member name="sx_distance" type="float" setter="set_sx_distance" getter="get_sx_distance" default="100.0">
+			Upwind distance for Winstral Sx, m (100 in Winstral et al. 2002).
+		</member>
+		<member name="temperature_january" type="float" setter="set_temperature_january" getter="get_temperature_january" default="3.0">
+			January mean air temperature at [member reference_height], C.
+		</member>
+		<member name="temperature_july" type="float" setter="set_temperature_july" getter="get_temperature_july" default="22.0">
+			July mean air temperature at [member reference_height], C.
+		</member>
+		<member name="wet_fraction" type="float" setter="set_wet_fraction" getter="get_wet_fraction" default="0.12">
+			Share of the year's hours with precipitation; the hours the terrain lifts moist air.
+		</member>
+		<member name="wind_from" type="float" setter="set_wind_from" getter="get_wind_from" default="270.0">
+			Prevailing direction the wet-day wind blows from, degrees clockwise from north (270: westerly).
+		</member>
+		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="10.0">
+			Wind speed on wet hours, m/s.
+		</member>
+		<member name="wind_spread" type="float" setter="set_wind_spread" getter="get_wind_spread" default="45.0">
+			Standard deviation of wet-day wind directions around [member wind_from], degrees; 360 or more for no prevailing direction.
+		</member>
+	</members>
+</class>

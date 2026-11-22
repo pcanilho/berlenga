@@ -215,7 +215,7 @@ cloud, Solar Energy 24, 1980. Yu et al., Wind conditions for snow cornice format
 tunnel, The Cryosphere 17, 2023. Hancock et al., Quantifying seasonal cornice dynamics using a
 terrestrial laser scanner in Svalbard, Norway, NHESS 20, 2020. Naito and Kobayashi, Experimental
 study on the occurrence of cornice, Low Temperature Science 44, 1986. Zirr and Kaplanyan, Real-time
-Rendering of Procedural Multiscale Materials, I3D 2016. Taylor and Lee, Simple guidelines for
+Rendering of Procedural Multiscale Materials, I3D 2016. Hedstrom and Pomeroy, Measurements and modelling of snow interception in the boreal forest, Hydrological Processes 12, 1998 (cited above for density). Roesch, Wild, Gilgen and Ohmura, A new snow cover fraction parametrization for the ECHAM4 GCM, Climate Dynamics 17, 2001. Taylor and Lee, Simple guidelines for
 estimating wind speed variations due to small-scale topographic features, Climatological Bulletin
 18, 1984. Warren, Optical properties of snow, Reviews of Geophysics 20, 1982.
 
@@ -513,3 +513,32 @@ lobe on those pixels; GPU time on the PC queue.
 **Known limits.** One facet per cell, not a binomial count per direction, so at a distance the
 glints thin out rather than turn into a smooth sheen (the rough lobe carries that). Bounce rays in
 the path tracer see plain snow. A material's own clearcoat is replaced on glinting pixels.
+
+## Follow-up 1: snow under roofs and trees (built 10 Nov 2026)
+
+- **Overhangs.** The pack lies on whatever its downward cast meets first, so a roof in the cast already
+  carries the roof's snow. Until now materials under it still read that cell and showed snow on the
+  ground beneath. `SnowCover3D` now publishes a catch map (`snow_catch_map`, the snow map's rect, RGBA
+  float): the height the pack lies at, the canopy's load over its capacity, the canopy closure. A
+  surface 0.4 to 0.8 m or more under that height is under cover and stays bare. The same
+  rule runs in BaseMaterial3D, the path tracer (`rt_params` 55) and SnowSurface3D (no deep snow under a
+  roof, in the mesh and its collision). With a height source (terrain), roofs join the cast through
+  `shelter_collision_mask` (off by default, as before).
+- **Tree crowns, Hedstrom and Pomeroy (1998).** Over WeatherMap3D's canopy (the vegetation writes it;
+  `get_canopy_closure_at`), a canopy of closure C holds I = (I* - I0)(1 - exp(-C P / I*)) of a fall
+  P, up to I* = 5.9 (0.27 + 46 / rho_s) LAI kg/m2, LAI from C by the vegetation's own Beer's law
+  (1 - exp(-0.5 LAI)). It unloads onto the snow below toward thaw and in wind (Roesch et al. 2001, the
+  CLM5 rates: I (T - 270.15) / 1.87e5 and I u / 1.56e5 per second) and drips off in a thaw. Surfaces
+  1.5 to 3 m or more above the pack under a canopy (the crowns, no colliders) show the canopy's load
+  instead of the ground's pack. `canopy_enabled` (on), `get_canopy_load_at`, `get_canopy_capacity_at`.
+
+**Checks (`--test=shelter`, in `--test`).** A roof 3 m up catches the snow (catch 3.1 m under it, 0 in
+the open, 12 mm on it); with a height source the roof is found only with `shelter_collision_mask`.
+A stand of closure 0.86 holds 8.9 mm of a 20 mm fall (capacity 17.2 mm), 11.1 mm reaches the ground
+(field interception of 30 to 60% of a storm in dense conifers); the water is kept to the kilogram; a
+day at -1 C in 6 m/s wind unloads all but 0.1 mm onto the snow below. `--view=shelter` renders a shed
+and spruces, raster and path traced alike.
+
+**Cost.** One more RGBA float texture read where a material has snow; the canopy is read again every
+sixteenth update (one lookup per cell). **Limits.** No sublimation of held snow (Pomeroy et al. 1998:
+up to a third in sunny cold climates); one canopy layer; drip-line build-up off roofs not modelled.

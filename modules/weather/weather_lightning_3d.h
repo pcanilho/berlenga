@@ -139,6 +139,7 @@ private:
 	uint64_t next_id = 1;
 	LocalVector<Flash> flashes;
 	LocalVector<PendingThunder> thunders;
+	PackedVector3Array last_channel; // the newest ground flash's, kept after its light fades
 	int strike_count = 0;
 	int ground_count = 0;
 	float last_thunder_delay = 0.0f;
@@ -209,7 +210,8 @@ public:
 	int get_active_flash_count() const { return flashes.size(); }
 	int get_strike_count() const { return strike_count; }
 	int get_ground_strike_count() const { return ground_count; }
-	// The last flash's main channel, cloud to ground, and its brightness this frame (0..).
+	// The newest ground flash's main channel, cloud to ground (kept after it fades), and the
+	// brightest flash's brightness this frame (0..).
 	PackedVector3Array get_last_channel() const;
 	float get_flash_brightness() const;
 	// The last thunder: seconds from its flash to the first sound, its length, and how long it took to make.

@@ -92,6 +92,7 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_SNOW_WORLD_RECT_Y 52
 #define RT_PARAM_SNOW_WORLD_RECT_W 53
 #define RT_PARAM_SNOW_WORLD_RECT_H 54
+#define RT_PARAM_SNOW_CATCH_MAP 55
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)
