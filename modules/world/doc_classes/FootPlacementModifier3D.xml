@@ -8,6 +8,7 @@
 		The ground is the world's: the deformed surface the ground's producer knows ([method WorldGround.known_height_at]: prints, ruts, mud) with the snow on it ([method WorldSnow.depth_at]), else a short physics ray around the foot that skips the walker's own body. The animation is taken to stand on the skeleton's origin.
 		Each new plant is published as a footfall for the walker (the nearest [CharacterBody3D] above the skeleton, or [member walker_node]), and the walker gets the meta [code]world_contact_feet[/code], so the ground, snow, sand and mud press their prints where the animated feet really landed instead of at guessed strides.
 		[member pelvis_offset] moves the pelvis while planted feet stay put: idle weight shifts are a few lines of script driving it. Run this modifier before arm IK and look-at modifiers and before spring bones.
+		A skeleton that jumps more than a metre in one update was placed, not walked: the feet start fresh where it now stands.
 	</description>
 	<tutorials>
 	</tutorials>

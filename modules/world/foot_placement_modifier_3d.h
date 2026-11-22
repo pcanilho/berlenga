@@ -98,6 +98,8 @@ private:
 	SecondOrderSystem<real_t> pelvis_spring;
 	real_t pelvis_drop = 0.0;
 	bool settled = false;
+	Vector3 last_origin;
+	bool last_origin_valid = false;
 	ObjectID walker_id;
 
 	void _configure_springs();
