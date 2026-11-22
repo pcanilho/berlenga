@@ -3830,11 +3830,13 @@
    "settings": [
     "snow_roof",
     "SnowBodies3D.roof_piles",
+    "roof_slab_bodies",
+    "ice_dams",
     "snow_roof_material",
     "snow_roof_heat"
    ],
    "note": "",
-   "what": "roofs hold the share of snowfall building codes give them and shed it by roofing, metal sooner than shingles and heated roofs sooner still; what slides off lands as a bank past the eave.",
+   "what": "roofs hold the share of snowfall building codes give them and shed it by roofing, metal sooner than shingles and heated roofs sooner still; what slides off leaves the eave as rigid pieces that break on landing and settle into a lumpy bank, and heated roofs grow ice dams that hold the snow back.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
