@@ -201,6 +201,10 @@ public:
 	// is held up by it (high-centring), dragged and ploughs a trough. N for the belly's forces.
 	void set_tyre_clogging(bool p_enabled);
 	bool is_tyre_clogging() const { return tyre_clogging; }
+	void set_parked_settling(bool p_enabled);
+	bool is_parked_settling() const { return parked_settling; }
+	real_t get_wheel_creep(int p_wheel) const;
+	real_t get_wheel_suction(int p_wheel) const;
 	void set_belly_drag(bool p_enabled);
 	bool is_belly_drag() const { return belly_drag; }
 	real_t get_wheel_mud(int p_wheel) const;
@@ -286,6 +290,7 @@ private:
 	real_t tire_force_point = 0.0f;
 	bool soft_soil = true;
 	bool tyre_clogging = true;
+	bool parked_settling = true; // round 22.2
 	bool belly_drag = true;
 	bool river_forces = true; // mud round 20.1: the water contract's buoyancy and current on the chassis and tyres
 	real_t hull_seal = 0.5f; // share of the chassis box that keeps water out

@@ -1421,6 +1421,119 @@ void GroundSurface3D::_trail_pug_update(float p_delta) {
 	pug_ticks++;
 }
 
+// Wallows (docs/ideas/mud.md, round 22.3). Wild boar and deer roll in mud: boar to cool (they cannot sweat) and to coat
+// themselves against parasites and sun, most in warm weather (Bracke 2011, a review of wallowing in pigs); red deer
+// stags in the autumn rut (Clutton-Brock, Guinness and Albon 1982). Wallows sit on the animals' paths where the ground
+// is wet and level, and are kept open by use: bowls about 1.5 to 3 m across and a few tens of centimetres deep, with
+// churned rims, that hold rain as puddles. Here: one site in about four 8 m squares along a trail (hashed, so the
+// same every run), used where the soil there is wet (moisture 0.7, or mud) and the ground within 6 degrees of level;
+// one passing animal in ten stops (an assumption), more in the warmth, none on frozen ground (a quarter of that below 10 C, all of it past
+// 25 C). Each visit deepens the bowl by 2 cm toward 35 cm, a quarter of what it moves heaped on the rim as fresh mud,
+// the rest carried off on the coat or trodden flat. Rain fills it through the water field like any hollow.
+void GroundSurface3D::_trail_wallow_update(float p_delta) {
+	if (!trail_wallows || !trails_on || !field.valid || !ground_valid || (int)cell_inputs.size() != ground_n * ground_n) {
+		return;
+	}
+	const float years = MAX(runoff_time_scale, 0.0f) * p_delta / (365.0f * 86400.0f);
+	if (years <= 0.0f) {
+		return;
+	}
+	WorldStand *st = WorldContracts::stand();
+	const WorldWeather *wm = WorldContracts::weather();
+	const Vector3 c = _follow_position();
+	const float range = 16.0f;
+	const float cell = 8.0f;
+	const int n = ground_n;
+	for (int gz = int(Math::floor((c.z - range) / cell)); gz <= int(Math::floor((c.z + range) / cell)); gz++) {
+		for (int gx = int(Math::floor((c.x - range) / cell)); gx <= int(Math::floor((c.x + range) / cell)); gx++) {
+			uint32_t h = hash_murmur3_one_32(uint32_t(gx) * 73856093u ^ uint32_t(gz) * 19349663u, 0x77a110u);
+			h = hash_fmix32(h);
+			if ((h & 0xffu) >= 64u) {
+				continue; // no wallow in this square
+			}
+			// The site: the trail point nearest a hashed spot in the square (searched on a 1 m lattice).
+			const Vector2 spot((gx + 0.15f + 0.7f * float((h >> 8) & 0xffu) / 255.0f) * cell, (gz + 0.15f + 0.7f * float((h >> 16) & 0xffu) / 255.0f) * cell);
+			Vector2 site;
+			Vector2 tr;
+			float best = 1e30f;
+			for (int dz = -3; dz <= 3; dz++) {
+				for (int dx = -3; dx <= 3; dx++) {
+					const Vector2 q = spot + Vector2(dx, dz);
+					const Vector2 t = st->trail_at(Vector3(q.x, 0.0f, q.y));
+					const float d2 = float(dx * dx + dz * dz);
+					if (t.x > 0.0f && t.y > 0.0f && d2 < best) {
+						best = d2;
+						site = q;
+						tr = t;
+					}
+				}
+			}
+			// Only within the deformation field (its edge holds no digs).
+			if (best > 1e29f || MAX(Math::abs(site.x - c.x), Math::abs(site.y - c.z)) > 0.5f * field.extent - 1.5f) {
+				continue;
+			}
+			const int ix = int(Math::round(site.x / ground_spacing)) - ground_origin.x;
+			const int iz = int(Math::round(site.y / ground_spacing)) - ground_origin.y;
+			if (ix < 0 || iz < 0 || ix >= n || iz >= n) {
+				continue;
+			}
+			const CellInput &in = cell_inputs[iz * n + ix];
+			const Cell &cl = _cell_at(site.x, site.y);
+			if (in.fixed || !cl.deformable || in.frozen > 0.5f || (in.moisture < 0.7f && cl.mud < 0.02f)) {
+				continue;
+			}
+			const float e = 1.0f;
+			const float sx = (_ground_at(site.x + e, site.y) - _ground_at(site.x - e, site.y)) / (2.0f * e);
+			const float sz = (_ground_at(site.x, site.y + e) - _ground_at(site.x, site.y - e)) / (2.0f * e);
+			if (Math::sqrt(sx * sx + sz * sz) > Math::tan(Math::deg_to_rad(6.0f))) {
+				continue;
+			}
+			const Vector3 p(site.x, 0.0f, site.y);
+			const float temp = wm && wm->has_provider() ? wm->air_temperature_at(p) : 15.0f;
+			const float warm = 0.25f + 0.75f * Math::smoothstep(10.0f, 25.0f, temp);
+			const float expect = 0.1f * tr.x * warm * years;
+			uint32_t hv = hash_murmur3_one_32(pug_ticks, h);
+			hv = hash_fmix32(hv);
+			const float u = float(hv & 0xffffu) / 65536.0f;
+			int k = 0;
+			float pk = Math::exp(-expect);
+			float cum = pk;
+			while (u > cum && k < 8) {
+				k++;
+				pk *= expect / float(k);
+				cum += pk;
+			}
+			if (k == 0) {
+				continue;
+			}
+			const float r = 0.8f;
+			const float g = _ground_at(site.x, site.y);
+			const float now = MAX(get_dent_at(Vector3(site.x, g, site.y)) - get_rim_at(Vector3(site.x, g, site.y)), 0.0f);
+			float dz = 0.0f;
+			float deep = now;
+			for (int j = 0; j < k; j++) {
+				const float add = 0.02f * MAX(1.0f - deep / 0.35f, 0.0f);
+				dz += add;
+				deep += add;
+			}
+			if (dz <= 0.0f) {
+				continue;
+			}
+			const float vol = dig(Vector3(site.x, g, site.y), r, dz);
+			const float moved = vol > 0.0f ? vol : float(Math::PI) * r * r * dz;
+			// A quarter on the rim, as fresh mud in four lumps round it (each its own hashed angle).
+			for (int q = 0; q < 4; q++) {
+				const float a = (float(q) + 0.5f * float((hv >> (16 + 4 * q)) & 0xfu) / 15.0f) * 0.25f * (float)Math::TAU;
+				const Vector3 at(site.x + Math::cos(a) * 1.15f * r, g, site.y + Math::sin(a) * 1.15f * r);
+				const float lr = 0.45f;
+				add_mud_deposit(at, lr, 0.25f * moved / 4.0f / (float(Math::PI) * lr * lr), q == 3);
+			}
+			wallow_sites.insert(Vector2i(gx, gz));
+			wallow_visits += k;
+		}
+	}
+}
+
 float GroundSurface3D::_trail_passes(const Vector3 &p_position) const {
 	if (!trails_on || wear_regrowth_days <= 0.0f) {
 		return 0.0f;
@@ -6571,6 +6684,7 @@ void GroundSurface3D::_notification(int p_what) {
 			if (cells_accum >= 2.0) {
 				_wear_update(cells_accum);
 				_trail_pug_update(float(cells_accum));
+				_trail_wallow_update(float(cells_accum));
 				cells_accum = 0.0;
 				_update_cells();
 			}
@@ -10201,6 +10315,11 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tracked_mud"), "set_tracked_mud", "is_tracked_mud");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_stones"), "set_stream_stones", "is_stream_stones");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "trail_pugging"), "set_trail_pugging", "is_trail_pugging");
+	ClassDB::bind_method(D_METHOD("set_trail_wallows", "enabled"), &GroundSurface3D::set_trail_wallows);
+	ClassDB::bind_method(D_METHOD("is_trail_wallows"), &GroundSurface3D::is_trail_wallows);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "trail_wallows"), "set_trail_wallows", "is_trail_wallows");
+	ClassDB::bind_method(D_METHOD("get_wallow_count"), &GroundSurface3D::get_wallow_count);
+	ClassDB::bind_method(D_METHOD("get_wallow_visits"), &GroundSurface3D::get_wallow_visits);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");

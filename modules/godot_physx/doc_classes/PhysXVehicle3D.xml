@@ -126,6 +126,20 @@
 				How much lower the water stands at the engine's air intake than the still surface, m, at the last step: about the stagnation head v^2 / 2g at a wading pace (the bow's trough), turning negative past a depth Froude number of 0.7 as the bow wave stands up and climbs over the bonnet. The intake (see [member air_intake_height]) reads the water at this level.
 			</description>
 		</method>
+		<method name="get_wheel_creep" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				How far the wheel has settled past its load's sinkage by standing in wet mud, m (see [member parked_settling]).
+			</description>
+		</method>
+		<method name="get_wheel_suction" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				The suction holding the wheel in its hollow as it pulls away, N, at the last substep (see [member parked_settling]).
+			</description>
+		</method>
 		<method name="get_cab_water" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -494,6 +508,9 @@
 		</member>
 		<member name="river_forces" type="bool" setter="set_river_forces" getter="is_river_forces" default="true">
 			In any water of the water contract (a river, a ford, a flood, a lake) the chassis box and the tyres are buoyed by the water they keep out ([member hull_seal]) and dragged by the current past them (drag coefficient 1.1 on the wet face), so a fording vehicle is lightened, its tyres grip less and the current carries it off past the depth and speed vehicle flood tests find. Its hull also pushes a bow wave and a wake into the water (see [method get_bow_wave_strength]), whose waves wash the banks of the active [GroundSurface3D] (see [member GroundSurface3D.wake_wash]). Skipped when the vehicle has a [code]PhysXBuoyancy3D[/code] child.
+		</member>
+		<member name="parked_settling" type="bool" setter="set_parked_settling" getter="is_parked_settling" default="true">
+			Wheels left standing in wet, sticky mud keep settling by creep, with the log of the world's time (Buisman's secondary compression, about 2% of two tyre widths per tenfold time), and the soil sets up round them so suction holds the tyre as it pulls away (half the contact at the soil's cohesion, building over about ten minutes). Both let go as the wheel rolls out of its hollow, over about a contact length. The time runs at [method WorldWeather.time_scale].
 		</member>
 		<member name="snorkel" type="bool" setter="set_snorkel" getter="has_snorkel" default="false">
 			A snorkel: the engine's air intake raised to 0.25 m over the chassis box's roof, so it wades as deep as the body allows.

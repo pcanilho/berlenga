@@ -168,6 +168,7 @@ var carry_test := false
 var trackdust_test := false
 var stream_test := false
 var fordcar_test := false
+var parked_test := false
 var trails_test := false
 var setup_mud := Vector2.ZERO # mud depth and moisture _setup lays before the node enters the tree
 var offpatch_test := false
@@ -254,6 +255,7 @@ func _ready() -> void:
 		elif a == "--test=trackdust": trackdust_test = true
 		elif a == "--test=stream": stream_test = true
 		elif a == "--test=fordcar": fordcar_test = true
+		elif a == "--test=parked": parked_test = true
 		elif a == "--test=trails": trails_test = true
 		elif a == "--test=offpatch": offpatch_test = true
 		elif a == "--test=puddles": puddle_test = true
@@ -331,7 +333,7 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test or stream_test or fordcar_test or trails_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test or stream_test or fordcar_test or trails_test or parked_test:
 		if clog_test:
 			await _run_clog_tests()
 		if treads_test:
@@ -372,6 +374,8 @@ func _ready() -> void:
 			await _run_trackdust_tests()
 		if stream_test:
 			await _run_stream_stone_tests()
+		if parked_test:
+			await _run_parked_tests()
 		if fordcar_test:
 			await _run_ford_car_tests()
 		if trails_test:
@@ -7027,6 +7031,21 @@ func _trail_share() -> Vector2:
 	return Vector2(sum / n, 0.0)
 
 # A game trail along z = 0 for |x| < 6, 1 m wide, walked 365 times a year.
+# Two daily trails crossing at the origin, 2 m wide.
+class WallowStandStub extends WorldStand:
+	func _trail_at(p: Vector3) -> Vector2:
+		if absf(p.z) < 1.0 or absf(p.x) < 1.0:
+			return Vector2(365.0, 1.0)
+		return Vector2.ZERO
+
+
+class WallowAirStub extends WorldWeather:
+	var temp := 20.0
+
+	func _air_temperature_at(_p: Vector3) -> float:
+		return temp
+
+
 class TrailStandStub extends WorldStand:
 	func _trail_at(p: Vector3) -> Vector2:
 		if absf(p.x) > 6.0 or absf(p.z) > 0.5:
@@ -7102,6 +7121,51 @@ func _run_trail_wear_tests() -> void:
 		pocks[wet] = [surface.get_trail_pock_count() - n0, deepest]
 		print("  moisture %.1f: %d hoof prints in ten days, deepest along the line %.1f cm" % [wet, pocks[wet][0], deepest * 100.0])
 	_check("hooves pock a wet trail and leave a dry one smooth", pocks[0.2][0] == 0 and pocks[0.8][0] > 20 and pocks[0.8][1] > 0.005, "%d prints dry, %d wet (%.1f cm deep)" % [pocks[0.2][0], pocks[0.8][0], pocks[0.8][1] * 100.0])
+	# Wallows (round 22.3): two trails crossing, walked daily, over a hundred days (sped up): in wet ground animals
+	# roll out muddy bowls at the hashed sites along them, more in the warmth; none in dry ground.
+	surface.trail_pugging = false
+	var wal := {}
+	for leg in [[0.2, 20.0], [0.8, 20.0], [0.8, 2.0]]:
+		await _setup("flat", GroundSurface3D.GROUND_SOIL, leg[0], 0.0)
+		surface.worn_tracks = true
+		surface.trail_pugging = false
+		WorldContracts.clear_overrides()
+		WorldContracts.set_stand(WallowStandStub.new())
+		var air := WallowAirStub.new()
+		air.temp = leg[1]
+		WorldContracts.set_weather(air)
+		surface.refresh_ground()
+		for i in 5:
+			await get_tree().physics_frame
+		var grid := {}
+		for gx in 97:
+			for gz in 97:
+				var q := Vector3(-24.0 + 0.5 * gx, 0, -24.0 + 0.5 * gz)
+				if absf(q.x) < 4.5 or absf(q.z) < 4.5:
+					grid[q] = surface.get_surface_height_at(q)
+		var v0: int = surface.get_wallow_visits()
+		surface.runoff_time_scale = 10.0 * 86400.0
+		for i in 600:
+			await get_tree().physics_frame
+		surface.runoff_time_scale = 1.0
+		surface.sync_deformation()
+		# Against the ground's mean change (frost heave, settling under the weather lift or drop it all).
+		var drops := {}
+		var mean := 0.0
+		for q in grid:
+			drops[q] = grid[q] - surface.get_surface_height_at(q)
+			mean += drops[q] / grid.size()
+		var deepest := 0.0
+		for q in grid:
+			deepest = maxf(deepest, drops[q] - mean)
+		print("    mean change %.1f cm" % (-mean * 100.0))
+		wal[leg] = [surface.get_wallow_count(), surface.get_wallow_visits() - v0, deepest]
+		print("  moisture %.1f, %.0f C: %d wallows, %d visits in 100 days, deepest %.1f cm" % [leg[0], leg[1], wal[leg][0], wal[leg][1], deepest * 100.0])
+	var dry = wal[[0.2, 20.0]]
+	var warm = wal[[0.8, 20.0]]
+	var cold = wal[[0.8, 2.0]]
+	_check("animals roll wallows into wet trails and none into dry ones", dry[0] == 0 and warm[0] >= 1 and warm[2] > 0.05, "%d dry, %d wet, %.1f cm deep" % [dry[0], warm[0], warm[2] * 100.0])
+	_check("they wallow more in the warmth", warm[1] > cold[1], "%d visits at 20 C, %d at 2 C" % [warm[1], cold[1]])
 	WorldContracts.clear_overrides()
 	near_on = true
 
@@ -7604,3 +7668,66 @@ func _run_offpatch_tests() -> void:
 	var on := absf(surface.get_surface_height_at(near_p) - float(h.get_height(near_p)))
 	_check("off its lattice the ground answers its height source, on it the lattice", worst < 0.01 and on < 0.05, "worst %.3f m off, %.3f m on" % [worst, on])
 	near_on = true
+
+
+# Ten minutes of world time a second, for the parked trucks.
+class ParkedClockStub extends WorldWeather:
+	func _time_scale() -> float:
+		return 600.0
+
+
+# Parked trucks sink in (mud round 22.2): two cars stand in the same stiff mud for 30 s, five hours of world time, one
+# settling (creep, suction) and one with it off; then both pull away at the same part throttle. The settled one has
+# sunk further (Buisman's log-time creep), is held by suction at first and so pulls away later; once it has rolled
+# out the suction is gone.
+func _run_parked_tests() -> void:
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	_apply("soil")
+	surface.near_field = false
+	_add_terrain(80.0, 160, _ground_material("soil"))
+	await _paint_mud(0.4, STIFF_MUD)
+	WorldContracts.clear_overrides()
+	WorldContracts.set_weather(ParkedClockStub.new())
+	var cars := []
+	for k in 2:
+		var at := Vector3(-5.0 + 10.0 * k, 0, 0)
+		var car := _make_car(1500.0, 700.0, Vector3(at.x, height.get_height(at) + 0.9, at.z))
+		car.parked_settling = k == 0
+		cars.append(car)
+	for i in 1800:
+		await get_tree().physics_frame
+	var res := []
+	for car in cars:
+		var sink := 0.0
+		var creep := 0.0
+		var suction := 0.0
+		for w in 4:
+			sink += car.get_wheel_sinkage(w) / 4.0
+			creep += car.get_wheel_creep(w) / 4.0
+		res.append([sink, creep])
+	for car in cars:
+		car.throttle = 0.5
+	var peak := [0.0, 0.0]
+	var starts := [cars[0].global_position, cars[1].global_position]
+	var moved_1s := [0.0, 0.0]
+	for i in 240:
+		await get_tree().physics_frame
+		for k in 2:
+			var s := 0.0
+			for w in 4:
+				s += cars[k].get_wheel_suction(w)
+			peak[k] = maxf(peak[k], s)
+			if i == 59:
+				moved_1s[k] = (cars[k].global_position - starts[k]).length()
+	var moved := [(cars[0].global_position - starts[0]).length(), (cars[1].global_position - starts[1]).length()]
+	var left := 0.0
+	for w in 4:
+		left += cars[0].get_wheel_suction(w)
+	for k in 2:
+		print("  %s: sank %.3f m (creep %.3f m) in 5 h; suction %.2f kN at the pull; %.2f m in 1 s, %.2f m in 4 s" % ["settling" if k == 0 else "settling off", res[k][0], res[k][1], peak[k] / 1000.0, moved_1s[k], moved[k]])
+	_check("a car left five hours in wet mud settles deeper by creep", res[0][1] > 0.01 and res[0][0] > res[1][0] + 0.01, "%.3f m against %.3f m" % [res[0][0], res[1][0]])
+	_check("suction holds it as it pulls away, so it gets going later", peak[0] > 200.0 and moved_1s[0] < moved_1s[1], "%.2f kN; %.2f m against %.2f m in the first second" % [peak[0] / 1000.0, moved_1s[0], moved_1s[1]])
+	_check("as it rolls out of its hollow the suction lets go", moved[0] > 0.5 and left < 0.3 * peak[0], "%.2f m, %.2f kN left" % [moved[0], left / 1000.0])
+	for car in cars:
+		car.queue_free()
+	WorldContracts.clear_overrides()
