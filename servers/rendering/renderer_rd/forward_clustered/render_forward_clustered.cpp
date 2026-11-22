@@ -439,7 +439,8 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		RID material_uniform_set;
 		void *mesh_surface;
 
-		if ((shadow_pass || p_pass_mode == PASS_MODE_DEPTH) && !peel_front_pass) { //regular depth pass can use these too
+		// A camera cut-out material shares the shadow material but discards in the camera's own depth prepass.
+		if ((shadow_pass || (p_pass_mode == PASS_MODE_DEPTH && !surf->shader->discard_only_camera_cutout)) && !peel_front_pass) { //regular depth pass can use these too
 			material_uniform_set = surf->material_uniform_set_shadow;
 			shader = surf->shader_shadow;
 			mesh_surface = surf->surface_shadow;
@@ -5263,6 +5264,12 @@ void RenderForwardClustered::_mesh_compile_pipelines_for_surface(const SurfacePi
 	pipeline_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_DEPTH_PASS;
 	pipeline_key.framebuffer_format_id = _get_depth_framebuffer_format_for_pipeline(buffers_can_be_storage, RD::TextureSamples(p_global.texture_samples), false, false);
 	_mesh_compile_pipeline_for_surface(p_surface.shader_shadow, p_surface.mesh_surface_shadow, true, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+	if (p_surface.shader->discard_only_camera_cutout && p_surface.shader_shadow != p_surface.shader) {
+		// The camera's depth prepass draws a cut-out material with its own shader.
+		pipeline_key.primitive_type = mesh_storage->mesh_surface_get_primitive(p_surface.mesh_surface);
+		_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, true, p_surface.instanced, p_source, pipeline_key, r_pipeline_pairs);
+		pipeline_key.primitive_type = mesh_storage->mesh_surface_get_primitive(p_surface.mesh_surface_shadow);
+	}
 
 	if (p_global.use_shadow_dual_paraboloid) {
 		pipeline_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_DEPTH_PASS_DP;
