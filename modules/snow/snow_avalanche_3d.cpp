@@ -1656,7 +1656,11 @@ void SnowAvalanche3D::_powder_step(SnowCover3D *p_cover, float p_dt) {
 		}
 	}
 	if (cloud) {
-		cloud->feed(running ? sources : LocalVector<SnowPowderCloud3D::Source>());
+		if (running) {
+			cloud->feed(sources);
+		} else {
+			cloud->feed(LocalVector<SnowPowderCloud3D::Source>());
+		}
 	}
 	if (!running) {
 		sources.clear();

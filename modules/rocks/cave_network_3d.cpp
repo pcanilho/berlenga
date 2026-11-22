@@ -1444,7 +1444,7 @@ real_t cave_profile(CaveNetwork3D::PassageType p_type, real_t u, real_t v, real_
 			const real_t bed = (t - bed_lo(j)) / (bed_lo(j + 1) - bed_lo(j));
 			const real_t amp = 0.18 * r * (0.3 + 1.4 * real_t(cave_hash(j, 1, 0, 0x5eabedu)));
 			const real_t lip = 0.45 + 0.25 * real_t(cave_hash(j, 2, 0, 0x5eabedu)); // where the bed's soft lower part starts
-			const real_t step = amp * (Math::smoothstep(real_t(0.0), real_t(0.12), bed) - Math::smoothstep(lip, lip + 0.12, bed));
+			const real_t step = amp * (Math::smoothstep(real_t(0.0), real_t(0.12), bed) - Math::smoothstep(lip, real_t(lip + 0.12), bed));
 			const real_t uu = u - 0.12 * v; // the joint's dip
 			const real_t hw = 0.62 * r + step;
 			const real_t sides = Math::abs(uu) - hw;
@@ -1526,7 +1526,7 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t 
 			// The banks beside the channel never dip under the fill's level (a dip there let the water stand above
 			// its banks as a slab with straight sides); the ripples and mud banks only rise.
 			floor_v = Math::lerp(MAX(floor_v, fill), floor_v, Math::smoothstep(real_t(1.3), real_t(2.5), Math::abs(x)));
-			floor_v = Math::lerp(floor_v, fill - cave_stream_cut(r) + 0.03 * (cave_fbm(p_p / 0.4f, uint32_t(seed) + 107u, 2) - 0.5f), w);
+			floor_v = Math::lerp(floor_v, real_t(fill - cave_stream_cut(r) + 0.03 * (cave_fbm(p_p / 0.4f, uint32_t(seed) + 107u, 2) - 0.5f)), w);
 		}
 		// Along a stream the fill meets the walls in a bank, not a crease: sediment and spalled chips heap against
 		// the wall's foot (a smooth maximum, about a third of the radius wide), so the washed floor never ends in a
@@ -3567,7 +3567,7 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 		}
 		// The sky's share falls off over the first tens of metres in (as the walls' COLOR.a does): the probe's
 		// ambient goes from a dim daylight bounce at the mouth to the dark of the deep cave.
-		const real_t sky = 1.0 - Math::smoothstep(real_t(6.0), real_t(40.0), MAX(near_sky - 0.5 * chunk_size, real_t(0.0)));
+		const real_t sky = 1.0 - Math::smoothstep(real_t(6.0), real_t(40.0), real_t(MAX(near_sky - 0.5 * chunk_size, real_t(0.0))));
 		if (near_sky > 0.6 * chunk_size) {
 			ReflectionProbe *probe = memnew(ReflectionProbe);
 			probe->set_name("Cave ambient");

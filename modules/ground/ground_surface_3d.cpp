@@ -222,7 +222,7 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 		// moving (volume kept), towards a near-flat bed.
 		const float q = bed_load(p_water_speed);
 		if (q > 0.0f) {
-			const float k = 1.5f * q / 0.6f * Math::pow(2.0f * Math::PI / 0.3f, 2.0f) * s;
+			const float k = 1.5f * q / 0.6f * Math::pow(float(2.0 * Math::PI / 0.3), 2.0f) * s;
 			c.rate = MAX(c.rate, k);
 			c.tan_repose = Math::lerp(c.tan_repose, 0.05f, s);
 		}
@@ -2524,7 +2524,7 @@ void GroundSurface3D::_loose_update(float p_delta) {
 		const float sp2 = vh.length();
 		if (sp2 > 1e-4f) {
 			const float h = MIN(ls.z, 2.0f * rc);
-			const float kp = Math::pow(Math::tan(Math::PI * 0.25f + 0.5f * Math::atan(c.tan_phi)), 2.0f);
+			const float kp = Math::pow(float(Math::tan(Math::PI * 0.25 + 0.5 * Math::atan(c.tan_phi))), 2.0f);
 			const float plough = 2.0f * rc * (0.5f * kp * c.unit_weight * 1000.0f * h * h + 2.0f * MIN(tau, c.cohesion * 1000.0f) * h * Math::sqrt(kp));
 			const float roll = load * 9.81f * Math::sqrt(MAX(h, 0.002f) / (2.0f * rc));
 			const float dv = MIN((plough + roll) * dt / rb->get_mass(), sp2);

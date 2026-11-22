@@ -4083,7 +4083,7 @@ void RockField3D::_update_thinning(const Vector3 &p_target) {
 			const real_t r = layer_radius[layer];
 			const real_t d = Vector2((kv.key.y + 0.5f) * cs, (kv.key.z + 0.5f) * cs).distance_to(Vector2(p_target.x, p_target.z));
 			if (d > 0.5 * r) {
-				keep = (0.5 * r / d) * (0.5 * r / d) * (1.0 - Math::smoothstep(0.8 * r, r + cs, d));
+				keep = (0.5 * r / d) * (0.5 * r / d) * (1.0 - Math::smoothstep(real_t(0.8 * r), real_t(r + cs), real_t(d)));
 				keep = Math::ceil(keep * 8.0) / 8.0;
 			}
 		}
@@ -6999,7 +6999,7 @@ void RockField3D::_contact_job(void *p_job) {
 				const real_t damp = s * s * (3.0 - 2.0 * s);
 				// Fines: a thin skirt all round, a bank on the uphill side.
 				const real_t u = dl > 1e-4 ? CLAMP((d.x * up.x + d.y * up.y) / dl, real_t(0.0), real_t(1.0)) : 0.0;
-				const real_t span = Math::lerp(ring * 0.6, bank, u * uphill_w);
+				const real_t span = Math::lerp(real_t(ring * 0.6), real_t(bank), real_t(u * uphill_w));
 				const real_t sf = CLAMP(1.0 - out / span, 0.0, 1.0);
 				const real_t fines = sf * sf * (3.0 - 2.0 * sf) * Math::lerp(real_t(0.45), real_t(1.0), u * uphill_w);
 				uint8_t *px = w + (z * R + x) * 2;
