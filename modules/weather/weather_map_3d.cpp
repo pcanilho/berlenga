@@ -310,11 +310,13 @@ void WeatherMap3D::set_terrain_wind_enabled(bool p_enabled) {
 void WeatherMap3D::set_terrain_source(const NodePath &p_path) {
 	terrain_source = p_path;
 	terrain_wind.dirty = true;
+	oro_origin = Vector2i(INT32_MAX, INT32_MAX); // the snow line's heights are read again
 }
 
 void WeatherMap3D::set_terrain_collision_mask(uint32_t p_mask) {
 	terrain_collision_mask = p_mask;
 	terrain_wind.dirty = true;
+	oro_origin = Vector2i(INT32_MAX, INT32_MAX);
 }
 
 void WeatherMap3D::set_terrain_wind_extent(float p_extent) {
@@ -860,6 +862,10 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	c.inflow = cell_inflow.ptr();
 	c.fog_drip = fog_drip && cell_fog_drip.size() == resolution * resolution ? cell_fog_drip.ptr() : nullptr;
 	c.spray = sea_spray && cell_spray.size() == resolution * resolution ? cell_spray.ptr() : nullptr;
+	_update_orography(p_weather_dt);
+	const bool oro_ready = orographic_rain && cell_oro.size() == resolution * resolution;
+	c.oro = oro_ready ? cell_oro.ptr() : nullptr;
+	c.height = oro_ready && cell_height.size() == resolution * resolution ? cell_height.ptr() : nullptr;
 	c.cover_noise = WeatherClouds::cover_noise_frame(cloud_drift, cloud_scale, _cloud_evolve());
 	// Rows in parallel: each cell depends only on the weather and its own history.
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_update_row, &cell_pass, resolution, -1, true, String("WeatherMap3D cells"));
@@ -1013,6 +1019,17 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 			r += 4.0f * lake;
 		}
 
+		// More falls on windward slopes and heights, less in their lee (the terrain climate's orographic field).
+		if (c.oro) {
+			r *= c.oro[i];
+		}
+		// Rain or snow by the air at the cell's own terrain height: the snow line follows the ground.
+		float rain_share = c.rain_fraction;
+		if (c.height && Math::is_finite(c.height[i])) {
+			const Vector3 at(p.x, c.height[i], p.y);
+			rain_share = rain_fraction(get_air_temperature_at(at), get_air_humidity_at(at));
+		}
+
 		c.wind[i * 2 + 0] = w.x;
 		c.wind[i * 2 + 1] = w.y;
 		c.cover[i] = cover;
@@ -1082,7 +1099,7 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 			}
 			c.frost[i] = fr;
 			// Where a snowpack lies, what reaches the surface is its runoff (rain through it and melt).
-			const float in = (c.inflow[i] >= 0.0f ? c.inflow[i] : r * c.rain_fraction) + (c.fog_drip ? c.fog_drip[i] : 0.0f) + (c.spray ? c.spray[i] : 0.0f);
+			const float in = (c.inflow[i] >= 0.0f ? c.inflow[i] : r * rain_share) + (c.fog_drip ? c.fog_drip[i] : 0.0f) + (c.spray ? c.spray[i] : 0.0f);
 			f += in * c.dt_h;
 			float pd = c.puddle[i];
 			if (f > surface_storage) {
@@ -1703,6 +1720,81 @@ float WeatherMap3D::get_canopy_closure_at(Vector3 p_position) const {
 		return 0.0f;
 	}
 	return CLAMP(1.0f - Math::exp(-0.5f * MAX(cell[1], 0.0f)), 0.0f, 1.0f);
+}
+
+// The cells' terrain heights when the map moves (they come from the terrain source, as the terrain wind's), the
+// climate's factor then and every ten seconds of weather (a climate can be baked or replaced meanwhile).
+void WeatherMap3D::_update_orography(double p_weather_dt) {
+	const int n = resolution;
+	if (!orographic_rain || !origin_valid || n <= 0) {
+		return;
+	}
+	oro_age += p_weather_dt;
+	const bool moved = oro_origin != origin_cell || cell_height.size() != n * n;
+	if (!moved && oro_age < 10.0) {
+		return;
+	}
+	oro_age = 0.0;
+	const float cs = _cell_size();
+	if (moved) {
+		// Cells the old square already had keep their height; only the new edge is read (raycasts without a source).
+		_find_terrain_source();
+		const bool keep = cell_height.size() == n * n && oro_origin.x != INT32_MAX;
+		Vector<float> old = cell_height;
+		cell_height.resize(n * n);
+		float *h = cell_height.ptrw();
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int ox = origin_cell.x + x - oro_origin.x;
+				const int oz = origin_cell.y + z - oro_origin.y;
+				if (keep && ox >= 0 && oz >= 0 && ox < n && oz < n) {
+					h[z * n + x] = old[oz * n + ox];
+				} else {
+					h[z * n + x] = _terrain_height(Vector2((origin_cell.x + x + 0.5f) * cs, (origin_cell.y + z + 0.5f) * cs));
+				}
+			}
+		}
+		oro_origin = origin_cell;
+	} else {
+		// Cells without a height (the terrain not loaded yet, or not found then) are read again.
+		bool found = false;
+		float *h = cell_height.ptrw();
+		for (int i = 0; i < n * n; i++) {
+			if (!Math::is_finite(h[i])) {
+				if (!found) {
+					_find_terrain_source();
+					found = true;
+				}
+				h[i] = _terrain_height(Vector2((origin_cell.x + i % n + 0.5f) * cs, (origin_cell.y + i / n + 0.5f) * cs));
+			}
+		}
+	}
+	cell_oro.resize(n * n);
+	float *o = cell_oro.ptrw();
+	const float *h = cell_height.ptr();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float y = Math::is_finite(h[i]) ? h[i] : ground_height;
+			o[i] = WorldContracts::climate_precipitation_factor_at(Vector3((origin_cell.x + x + 0.5f) * cs, y, (origin_cell.y + z + 0.5f) * cs));
+		}
+	}
+}
+
+void WeatherMap3D::set_orographic_rain(bool p_enabled) {
+	orographic_rain = p_enabled;
+	oro_origin = Vector2i(INT32_MAX, INT32_MAX);
+	if (!p_enabled) {
+		cell_oro.clear();
+		cell_height.clear();
+	}
+}
+
+float WeatherMap3D::get_orographic_factor_at(Vector3 p_position) const {
+	if (!orographic_rain || cell_oro.size() != resolution * resolution) {
+		return 1.0f;
+	}
+	return MAX(_sample(cell_oro, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
 float WeatherMap3D::get_rain_at(Vector3 p_position) const {
@@ -3813,6 +3905,10 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_terrain_ground_at", "position"), &WeatherMap3D::get_terrain_ground_at);
 	ClassDB::bind_method(D_METHOD("get_terrain_lee_at", "position"), &WeatherMap3D::get_terrain_lee_at);
 	ClassDB::bind_method(D_METHOD("get_rain_at", "position"), &WeatherMap3D::get_rain_at);
+	ClassDB::bind_method(D_METHOD("set_orographic_rain", "enabled"), &WeatherMap3D::set_orographic_rain);
+	ClassDB::bind_method(D_METHOD("is_orographic_rain_enabled"), &WeatherMap3D::is_orographic_rain_enabled);
+	ClassDB::bind_method(D_METHOD("get_orographic_factor_at", "position"), &WeatherMap3D::get_orographic_factor_at);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "orographic_rain"), "set_orographic_rain", "is_orographic_rain_enabled");
 	ClassDB::bind_method(D_METHOD("get_cloud_cover_at", "position"), &WeatherMap3D::get_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("get_high_cloud_cover_at", "position"), &WeatherMap3D::get_high_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("get_mid_cloud_cover_at", "position"), &WeatherMap3D::get_mid_cloud_cover_at);

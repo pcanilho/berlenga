@@ -351,6 +351,13 @@
 				The lee factor of upwind shelter obstacles near the ground at [param position], 0.15 to 1 (1 in the open); a [param position] raised over the ground (a drift's surface) has less, none at 1.2 times the obstacle's height. The contract's [code]obstacle_lee_at[/code].
 			</description>
 		</method>
+		<method name="get_orographic_factor_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The terrain climate's precipitation factor applied to the rain at [param position]; 1 with [member orographic_rain] off or no climate.
+			</description>
+		</method>
 		<method name="get_salt_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -975,6 +982,9 @@
 		</member>
 		<member name="mid_cloud_thickness" type="float" setter="set_mid_cloud_thickness" getter="get_mid_cloud_thickness" default="400.0">
 			Depth of the mid cloud layer's slab (m).
+		</member>
+		<member name="orographic_rain" type="bool" setter="set_orographic_rain" getter="is_orographic_rain_enabled" default="true">
+			Rain follows the terrain climate ([method WorldContracts.climate_precipitation_factor_at]): more on windward slopes, less in the lee. Rain or snow is decided by the air at each cell's own ground height, so the snow line follows the terrain.
 		</member>
 		<member name="sea_spray" type="bool" setter="set_sea_spray" getter="is_sea_spray_enabled" default="true">
 			Sea spray on the shore: breaking waves ([method WorldWater.breaking_at]) make spray in proportion to the breaker height and the square of the wind past 2 m/s; the wind carries it inland over a square round the follow point. Coarse drops settle within tens of metres ([code]u (1 + H) / 1 m/s[/code]) and wet surfaces and the soil; rising ground catches them, so a cliff face takes the spray and its top stays drier. Fine salt aerosol reaches hundreds of metres ([code]50 s x u[/code]). The salt stays on surfaces until rain washes it off (all but a third by 5 mm) and is published with the spray's wetness as the [code]weather_spray_map[/code] global (R wetness, G [code]1 - exp(-salt / 10 g/m2)[/code]); grass browns at the tips from salt burn.

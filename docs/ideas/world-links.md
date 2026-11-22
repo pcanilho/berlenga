@@ -163,7 +163,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Lightning → cloud lights list | linked (20 Nov) | WeatherLightning3D flashes | Listed in `WeatherMap3D.get_cloud_lights()` for readers; the sky keeps its own full-resolution flash glow |
 | Cloud base → lightning strike height | linked (20 Nov) | `cloud_base_at` | WeatherLightning3D starts the leader at the local base |
 | Cloud base → hill fog | linked (20 Nov) | `cloud_base_at`, WorldGround `height_at` | VegetationMist3D: ground within 40 m under the base (cover over 0.3) stands in cloud; wind, overcast and sun do not clear it. The base never drops under ground + 30 m from the day's air alone; an authored base below a ridge stays (fog drip) |
-| Cloud base → snow line, orographic rain | later | `cloud_base_at` | |
+| Terrain climate → upslope rain, rain shadow; air at height → snow line | linked (22 Nov) | `WorldContracts.climate_precipitation_factor_at` (TerrainDataMap3D, a `WorldClimateProvider`: its baked precipitation over the recipe's, Smith and Barstad 2004); `WorldWeather.orographic_factor_at` | WeatherMap3D `orographic_rain` (on): each cell's rain times the climate's factor (refreshed every 10 s and as the square moves; heights read once per cell), and rain or snow by the air at the cell's own ground height (Jennings 2018 with the lapse rate), so the summit snows while the foot rains. SnowCover3D, which reads the climate itself, divides out the weather's factor so it is not counted twice. Links check: a 600 m ridge, 1.05 windward and 1.34 in the lee (spillover over a 1 km ridge), rain share 0.80 at the foot and 0.08 on top |
 | Any system → cloud density | linked (20 Nov) | `add_cloud_effector` callers | `WorldWeather.cloud_effector_at`; shadow bake and sky both see it |
 | Terrain, wind aloft, temperature, humidity, mid/high layers → wave clouds (lenticulars) | linked (20 Nov) | terrain source, `get_wind_aloft`, air, `mid/high_cloud_cover` | `WeatherMap3D.get_wave_cloud_density_at` / `WorldWeather.wave_cloud_density_at`; shadow bake (docs/ideas/clouds.md round 5) |
 | Time of day, wind, humidity, rain → low cloud type (stratus, stratocumulus, cumulus) | linked (20 Nov) | clock, `cur_*` air | `WeatherMap3D.cloud_regime_from_weather`, `get_convective_heating` (docs/ideas/clouds.md round 6) |
@@ -331,19 +331,19 @@ mm a day; Bruijnzeel et al. 2005).
 
 Tyre grip on snow, offered on the 20 Nov card, was already linked (71387ca8): that card is withdrawn.
 
-1. Salt bloom on sea rocks. Source: `WorldWeather.salt_at` (sea spray salt, g/m2), rain wash-off, the sun's
+1. Salt bloom on sea rocks (built 22 Nov). Source: `WorldWeather.salt_at` (sea spray salt, g/m2), rain wash-off, the sun's
    drying. Reader: rocks (the stone material) and cliff faces. Spray-zone rock dries to a white crust of halite where
    the salt load is high and the surface has dried; rain dissolves it within minutes. Salt weathering in the spray
    zone (haloclasty, tafoni and honeycomb hollows) concentrates where wetting and drying alternate most (Mustoe
    1982; Matsukura and Tanaka 2000; Urosevic et al. 2013 on salt crystallisation in porous stone). Shading: a
    crust share = smoothstep of salt load times dryness, raising albedo and roughness in hollows first.
-2. Spray-wet sand holds sharper prints. Source: the weather's spray wetness and the swash's pore water (ground
+2. Spray-wet sand holds sharper prints (checked 22 Nov). Source: the weather's spray wetness and the swash's pore water (ground
    wet map). Reader: sand's print deformation. Surface moisture above about 4-6 % by mass gives sand apparent
    cohesion from capillary bridges, so prints keep steep walls and fine edges and wind lifts less of it (Namikas and
    Sherman 1995; Namikas et al. 2010; Davidson-Arnott et al. 2008 on beach surface moisture); dry sand slumps
    to its angle of repose. Sand already has moisture-driven cohesion from ground water: the link adds the spray's
    wetting above the swash.
-3. Snow line and upslope rain from the cloud base. Source: `WorldWeather.cloud_base_at`, air temperature at
+3. Snow line and upslope rain from the cloud base (built 22 Nov, see the matrix). Source: `WorldWeather.cloud_base_at`, air temperature at
    height, wind, terrain slope. Readers: rain, snow, vegetation. Linear theory of orographic precipitation (Smith
    and Barstad 2004): uplift w = U . grad h condenses water at a rate set by the moist lapse rate, carried
    downwind over a fall time of 1000-2000 s, so windward slopes get more and lee slopes a rain shadow; the snow

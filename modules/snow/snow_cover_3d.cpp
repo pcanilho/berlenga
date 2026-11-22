@@ -1342,7 +1342,9 @@ void SnowCover3D::_refresh_cell_inputs(int p_from_row, int p_to_row, const Vecto
 				c[i] = wm ? CLAMP(wm->canopy_closure_at(pos), 0.0f, 1.0f) : 0.0f;
 			}
 			if (cp) {
-				cp[i] = cm->get_precipitation_at(pos);
+				// The weather's precipitation already carries its own orographic factor where it applies one
+				// (WorldWeather.orographic_factor_at): divided out here, so the climate field is not counted twice.
+				cp[i] = cm->get_precipitation_at(pos) / MAX(WorldContracts::weather()->orographic_factor_at(pos), 0.05f);
 			}
 			if (wl) {
 				const float depth = tm ? tm->get_water_depth_at(pos) : 0.0f;
@@ -3763,7 +3765,8 @@ float SnowCover3D::get_snowfall_rate_at(Vector3 p_position) const {
 	const float ref = live ? w->ground_height_at(p_position) : (is_inside_tree() ? get_global_position().y : 0.0f);
 	const float rate = live ? w->precipitation_at(p_position) : precipitation_rate;
 	const float rh = live ? w->air_humidity_at(Vector3(p_position.x, ref, p_position.z)) : humidity;
-	return MAX(rate, 0.0f) * get_orographic_factor_at(p_position, ref) * snowfall_fraction(get_air_temperature_at(p_position), rh);
+	const float applied = live ? MAX(w->orographic_factor_at(p_position), 0.05f) : 1.0f; // already in precipitation_at
+	return MAX(rate, 0.0f) * get_orographic_factor_at(p_position, ref) / applied * snowfall_fraction(get_air_temperature_at(p_position), rh);
 }
 
 float SnowCover3D::get_new_snow_at(Vector3 p_position) const {

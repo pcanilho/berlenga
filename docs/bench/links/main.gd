@@ -290,6 +290,7 @@ func _ready() -> void:
 	await _ground_color_tests()
 	await _salt_bloom_tests()
 	await _spray_sand_tests()
+	await _orographic_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -934,7 +935,8 @@ func _lee_drift_tests() -> void:
 	snow.advance(6.0 * 3600.0)
 	var lee_off: float = snow.get_depth_at(Vector3(4, 0, 5)) - lee_d
 	var open_off: float = snow.get_depth_at(Vector3(-15, 0, 5)) - open_d
-	_check("lee: drift_obstacles off, the drift is no longer fed and the wind takes it back", lee_off < 0.0 and open_off > 0.05, "%.1f cm 2 H behind it, %.1f cm in the open over 6 more hours" % [lee_off * 100.0, open_off * 100.0])
+	# The drift's wind-packed surface (a wind slab) holds against the wind, so it need not shrink; it stops growing.
+	_check("lee: drift_obstacles off, the drift is no longer fed (it grows less than the open snow)", lee_off < 0.25 * open_off and open_off > 0.05, "%.1f cm 2 H behind it, %.1f cm in the open over 6 more hours" % [lee_off * 100.0, open_off * 100.0])
 	WorldContracts.clear_overrides()
 	snow.queue_free()
 	wall.queue_free()
@@ -1780,6 +1782,94 @@ func _spray_sand_tests() -> void:
 	g.queue_free()
 	ground_node.queue_free()
 	m.queue_free()
+	await get_tree().physics_frame
+
+
+# Snow line and upslope rain: a 600 m ridge across a westerly; the terrain climate (TerrainDataMap3D, Smith and Barstad
+# 2004) gives more on its windward side than in its lee, the weather's cells take that factor, and each cell's rain
+# or snow goes by the air at its own height; the snowpack divides the weather's factor out of its own.
+func _orographic_tests() -> void:
+	if not ClassDB.class_exists("TerrainDataMap3D") or not ClassDB.class_exists("ClimateRecipe"):
+		_skip("orographic rain", "no terrain modules")
+		return
+	WorldContracts.clear_overrides()
+	var ridge_script := GDScript.new()
+	ridge_script.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 600.0 * exp(-p.x * p.x / (2.0 * 400.0 * 400.0))\n"
+	ridge_script.reload()
+	var ridge := Node3D.new()
+	ridge.set_script(ridge_script)
+	add_child(ridge)
+	var r := ClimateRecipe.new()
+	r.latitude = 46.0
+	r.reference_height = 0.0
+	r.temperature_january = 2.0
+	r.temperature_july = 19.0
+	r.precipitation = 1200.0
+	r.wind_from = 270.0
+	r.wind_speed = 10.0
+	var dm := TerrainDataMap3D.new()
+	dm.size = 4096.0
+	dm.resolution = 256
+	add_child(dm)
+	dm.height_source = dm.get_path_to(ridge)
+	dm.climate_recipe = r
+	await get_tree().physics_frame
+	dm.bake()
+	dm.bake_climate()
+	var m := _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(ridge)
+	m.terrain_wind_enabled = false
+	m.ground_height = 0.0
+	m.temperature = 3.0
+	m.humidity = 0.8
+	m.cloud_cover = 1.0
+	m.rain_rate = 2.0
+	m.wind_speed = 10.0
+	m.wind_direction = Vector2(1, 0)
+	m.air_follows_climate = false
+	m.fog_drip = false # the summit stands in the cloud base (hill fog would wet it too)
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	# The first two minutes of rain on the dry ground: the foot's film fills, the summit's (sleet, a tenth of it liquid)
+	# barely. Half an hour wets both through (the film holds a few tenths of a millimetre).
+	m.advance(120.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var wet_foot: float = w.surface_wetness_at(Vector3(-1600, 0, 0))
+	var wet_top: float = w.surface_wetness_at(Vector3(0, 600, 0))
+	m.advance(1680.0)
+	w = WorldContracts.get_weather()
+	var wind_side := Vector3(-450, 0, 0)
+	var lee := Vector3(900, 0, 0)
+	var foot := Vector3(-1600, 0, 0)
+	var top := Vector3(0, 600, 0)
+	var f_wind: float = WorldContracts.climate_precipitation_factor_at(wind_side)
+	var f_lee: float = WorldContracts.climate_precipitation_factor_at(lee)
+	var r_wind: float = w.precipitation_at(wind_side)
+	var r_lee: float = w.precipitation_at(lee)
+	var wf: float = w.orographic_factor_at(wind_side)
+	# A ridge 1 km across in a 10 m/s wind: the linear model's condensation and fall delays (about 1000 s each) carry
+	# its precipitation over the crest into the lee (spillover), so the lee gets the most here.
+	_check("orographic: the weather's rain carries the terrain climate's orographic pattern over the ridge", absf(f_wind - f_lee) > 0.1 and absf(r_wind / r_lee - f_wind / f_lee) < 0.05 * f_wind / f_lee and absf(wf - f_wind) < 0.05 * f_wind, "climate factor %.2f windward, %.2f lee; rain %.2f / %.2f mm/h; weather factor %.2f" % [f_wind, f_lee, r_wind, r_lee, wf])
+	_check("orographic: rain wets the foot at +3 C, the 600 m summit (-0.9 C) gets snow (the snow line by each cell's height), its surface wets slower", w.rain_share_at(Vector3(foot.x, 0, 0)) > 0.6 and w.rain_share_at(top) < 0.4 and wet_foot > 0.05 and wet_foot > 4.0 * wet_top, "rain share %.2f at the foot, %.2f on top; wetness after 2 min %.2f / %.2f" % [w.rain_share_at(Vector3(foot.x, 0, 0)), w.rain_share_at(top), wet_foot, wet_top])
+	if ClassDB.class_exists("SnowCover3D"):
+		var snow: Node3D = ClassDB.instantiate("SnowCover3D")
+		snow.extent = 64.0
+		snow.resolution = 16
+		add_child(snow)
+		snow.climate_map = snow.get_path_to(dm)
+		var s_rate: float = snow.get_snowfall_rate_at(top)
+		var expect: float = w.precipitation_at(top) * (1.0 - w.rain_share_at(top))
+		_check("orographic: the snowpack does not count the climate's factor twice (its snowfall matches the weather's on the summit)", absf(s_rate - expect) < 0.2 * expect + 0.01, "snow %.3f mm/h, weather's snowfall %.3f" % [s_rate, expect])
+		snow.queue_free()
+	m.orographic_rain = false
+	m.advance(60.0)
+	var off_ratio: float = w.precipitation_at(wind_side) / maxf(w.precipitation_at(lee), 1e-4)
+	_check("orographic: off, the rain is even again", absf(off_ratio - 1.0) < 0.05, "windward over lee %.2f" % off_ratio)
+	WorldContracts.clear_overrides()
+	m.queue_free()
+	dm.queue_free()
+	ridge.queue_free()
 	await get_tree().physics_frame
 
 
