@@ -298,6 +298,7 @@ func _ready() -> void:
 		await _run_frost_tests()
 		await _run_rut_guidance_tests()
 		await _run_needle_tests()
+		await _run_needle_radiation_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -1706,6 +1707,50 @@ func _run_needle_tests() -> void:
 	WorldContracts.clear_overrides()
 	_check("the ground contract answers from the ground, and a stub replaces only what it overrides", same and mixed and WorldContracts.get_ground().standing_water_at(p) == surface.get_standing_water_at(p), "live %s, stubbed %s" % [same, mixed])
 	wm.queue_free()
+
+# Needle ice from a radiation frost (world-links): a clear calm November night with the air at +1.5 C cools the bare
+# surface some degrees below freezing (the weather's surface temperature), and the needles grow; under an overcast
+# sky the surface stays with the air and none do.
+func _run_needle_radiation_tests() -> void:
+	near_on = false
+	var grown := []
+	for overcast in [false, true]:
+		await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+		surface.mud_layer = false
+		surface.frozen_ground = true
+		surface.needle_ice = true
+		var clock: Node = ClassDB.instantiate("SkyClock")
+		clock.latitude = 46.0
+		clock.month = 11
+		clock.day = 15
+		clock.time_of_day = 1.0
+		clock.time_scale = 0.0
+		add_child(clock)
+		var wm := WeatherMap3D.new()
+		wm.cloud_cover = 1.0 if overcast else 0.0
+		wm.rain_rate = 0.0
+		wm.humidity = 0.75
+		wm.temperature = 1.5
+		wm.wind_speed = 1.0
+		wm.air_daily_cycle = false
+		wm.air_follows_climate = false
+		add_child(wm)
+		wm.sky_clock = wm.get_path_to(clock)
+		wm.snap_to_settings()
+		for i in 150:
+			await get_tree().physics_frame
+		var q := Vector3(0, 0, -2)
+		var ts: float = WorldContracts.get_weather().surface_temperature_at(q)
+		surface.runoff_time_scale = 5000.0
+		for i in 430: # about 10 h
+			await get_tree().physics_frame
+		surface.runoff_time_scale = 1.0
+		grown.append([surface.get_needle_ice_at(q).x, ts])
+		wm.queue_free()
+		clock.queue_free()
+		await get_tree().physics_frame
+	print("  radiation frost: %.1f cm of needles under a clear sky (surface %.1f C), %.1f cm overcast (surface %.1f C), the air +1.5 C" % [grown[0][0] * 100.0, grown[0][1], grown[1][0] * 100.0, grown[1][1]])
+	_check("a clear calm night with the air above freezing grows needle ice from the surface's radiative cooling; an overcast one does not", grown[0][0] > 0.005 and grown[1][0] == 0.0, "%.1f cm clear, %.1f cm overcast" % [grown[0][0] * 100.0, grown[1][0] * 100.0])
 
 # Frozen ground (mud round 8): a night at -8 C freezes the top some 10 cm, a boot no longer marks it and an old rut stays
 # as it is; a thaw leaves a soaked layer on the frost that a boot sinks deeper into than before the frost.

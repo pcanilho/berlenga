@@ -3039,7 +3039,9 @@ void GroundSurface3D::_ice_update(double p_delta) {
 		return;
 	}
 	const WorldWeather *wm = _weather();
-	const float t = wm ? wm->air_temperature_at(_weather_point()) : 10.0f;
+	// The water's surface, not the air: a clear calm night skims a puddle over with the air above freezing (the
+	// weather's radiative cooling, about 4 to 6 K under a clear sky; docs/ideas/world-links.md, "Surface temperature").
+	const float t = wm ? wm->surface_temperature_at(_weather_point()) : 10.0f;
 	if ((int)ice_state.size() != n * n * ICE_FLOATS) {
 		if (t >= 0.0f) {
 			return; // nothing frozen, nothing to freeze
@@ -3161,7 +3163,10 @@ void GroundSurface3D::_frost_update(double p_delta) {
 	}
 	_frost_seed(0);
 	const WorldWeather *wm = _weather();
-	const float t = wm ? wm->air_temperature_at(_weather_point()) : 10.0f;
+	// The ground's surface, not the air: needle ice is a radiation frost's (clear calm nights with the air a degree or
+	// two above freezing and the bare surface some degrees below; Outcalt 1971), and Stefan's front runs from the
+	// surface (docs/ideas/world-links.md, "Surface temperature").
+	const float t = wm ? wm->surface_temperature_at(_weather_point()) : 10.0f;
 	const float dt = float(p_delta) * runoff_time_scale;
 	for (int i = 0; i < n * n; i++) {
 		const CellInput &in = cell_inputs[i];
