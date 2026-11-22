@@ -3015,7 +3015,22 @@ void RockField3D::_on_stand_changed(const Rect2 &p_rect) {
 	if (building > 0 || !ground_wear) {
 		return;
 	}
-	const Rect2 area = p_rect.grow(1.0);
+	// Gathered and rebuilt once at the frame's end: a script adding many disturbances in one frame built the same
+	// cells again for each, and every freed copy lived until the frame's end (the memory of the field many times).
+	stand_dirty = stand_dirty.has_area() ? stand_dirty.merge(p_rect) : p_rect;
+	if (!stand_queued) {
+		stand_queued = true;
+		callable_mp(this, &RockField3D::_apply_stand_changes).call_deferred();
+	}
+}
+
+void RockField3D::_apply_stand_changes() {
+	stand_queued = false;
+	const Rect2 area = stand_dirty.grow(1.0);
+	stand_dirty = Rect2();
+	if (building > 0 || !ground_wear || !is_inside_tree()) {
+		return;
+	}
 	for (const KeyValue<Vector3i, DetailJob *> &kv : detail_jobs) {
 		const real_t ks = _cell_size(Layer(kv.key.x));
 		if (Rect2(kv.key.y * ks, kv.key.z * ks, ks, ks).intersects(area)) {

@@ -467,6 +467,9 @@ private:
 	ObjectID stand_watched; // the WorldStand whose stand_changed rebuilds the detail cells (trails, rooting)
 	void _watch_stand();
 	void _on_stand_changed(const Rect2 &p_rect);
+	Rect2 stand_dirty; // changes gathered over a frame, rebuilt once (_apply_stand_changes)
+	bool stand_queued = false;
+	void _apply_stand_changes();
 	Vector3 last_target;
 	bool have_target = false;
 	double last_build_msec = 0.0;

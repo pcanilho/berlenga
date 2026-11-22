@@ -571,6 +571,7 @@ private:
 	void _snap();
 	void _fill_gust_image();
 	void _upload();
+	HashSet<StringName> published_rects; // its rect globals, zeroed when it leaves the tree
 	void _publish_globals();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	Vector3 _follow_position() const;

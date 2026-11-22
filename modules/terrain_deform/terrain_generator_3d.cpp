@@ -5679,18 +5679,23 @@ void TerrainGenerator3D::_publish_globals() {
 		}
 		rs->global_shader_parameter_set(p_name, p_value);
 	};
+	auto set_rect = [&](const StringName &p_name, const Vector4 &p_value) {
+		set_global(p_name, p_value, RSE::GLOBAL_VAR_TYPE_VEC4);
+		published_rects.insert(p_name);
+	};
+	globals_owner = get_instance_id();
 	// The texels are grid nodes: the rectangle runs from the first node centre to the last.
 	const Rect2 &r = result_rect;
 	set_global("terrain_geology_map", geology_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
-	set_global("terrain_geology_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+	set_rect("terrain_geology_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell));
 	// Loose sand depth on the dune fields (the materials' dune-scale tone); a zero rect switches it off.
 	if (sand_interdune_texture.is_valid()) {
 		set_global("terrain_sand_interdune_map", sand_interdune_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
-		set_global("terrain_sand_interdune_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_sand_interdune_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell));
 		const Vector2 sw = get_sand_wind_direction();
 		set_global("terrain_sand_wind", Vector4(sw.x, sw.y, 0.0, 0.0), RSE::GLOBAL_VAR_TYPE_VEC4);
 	} else {
-		set_global("terrain_sand_interdune_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_sand_interdune_rect", Vector4());
 	}
 	if (detail_keep_texture.is_valid()) {
 		set_global("terrain_detail_keep_map", detail_keep_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
@@ -5698,38 +5703,38 @@ void TerrainGenerator3D::_publish_globals() {
 	// The droplet erosion's flow and deposits (rills and gullies in the material); a zero rect switches it off.
 	if (tile_flow_texture.is_valid()) {
 		set_global("terrain_tile_flow_map", tile_flow_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
-		set_global("terrain_tile_flow_rect", Vector4(r.position.x, r.position.y, (tile_nx - 1) * tile_cell, (tile_nz - 1) * tile_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_tile_flow_rect", Vector4(r.position.x, r.position.y, (tile_nx - 1) * tile_cell, (tile_nz - 1) * tile_cell));
 	} else {
-		set_global("terrain_tile_flow_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_tile_flow_rect", Vector4());
 	}
 	// Ice-worn rock for the detail normal; a zero rect switches it off.
 	if (ice_flow_texture.is_valid()) {
 		set_global("terrain_ice_flow", ice_flow_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
-		set_global("terrain_ice_flow_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_ice_flow_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell));
 	} else {
-		set_global("terrain_ice_flow_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_ice_flow_rect", Vector4());
 	}
 	if (spray_texture.is_valid()) {
 		set_global("terrain_spray_potential", spray_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
-		set_global("terrain_spray_rect", Vector4(r.position.x, r.position.y, (spray_nx - 1) * spray_cell, (spray_ny - 1) * spray_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_spray_rect", Vector4(r.position.x, r.position.y, (spray_nx - 1) * spray_cell, (spray_ny - 1) * spray_cell));
 	}
 	// Sky occlusion for the ground's ambient light; a zero rect switches it off.
 	if (sky_texture.is_valid()) {
 		set_global("terrain_sky_map", sky_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAY);
-		set_global("terrain_sky_rect", Vector4(r.position.x, r.position.y, (sky_nx - 1) * sky_cell, (sky_ny - 1) * sky_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_sky_rect", Vector4(r.position.x, r.position.y, (sky_nx - 1) * sky_cell, (sky_ny - 1) * sky_cell));
 		set_global("terrain_sky_full", Vector4(sky_full[0], sky_full[1], sky_full[2], sky_full[3]), RSE::GLOBAL_VAR_TYPE_VEC4);
 		set_global("terrain_sky_full2", Vector4(sky_full[4], sky_full[5], sky_full[6], sky_full[7]), RSE::GLOBAL_VAR_TYPE_VEC4);
 		set_global("terrain_sky_full3", sky_full[8], RSE::GLOBAL_VAR_TYPE_FLOAT);
 	} else {
-		set_global("terrain_sky_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_sky_rect", Vector4());
 	}
 	// Far sun shadows; a zero size switches them off.
 	if (sun_horizon_texture.is_valid() && sun_shadows) {
 		set_global("terrain_sun_horizon_map", sun_horizon_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 		set_global("terrain_sun_horizon_frame", sun_horizon_frame, RSE::GLOBAL_VAR_TYPE_VEC4);
-		set_global("terrain_sun_horizon_size", sun_horizon_size, RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_sun_horizon_size", sun_horizon_size);
 	} else {
-		set_global("terrain_sun_horizon_size", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_rect("terrain_sun_horizon_size", Vector4());
 	}
 }
 
@@ -6247,8 +6252,23 @@ void TerrainGenerator3D::_sun_poll(double p_delta) {
 	update_sun_horizon(light->get_global_transform().basis.get_column(2).normalized());
 }
 
+// A generator leaving the tree takes its maps off the world: zero rects switch each one off in the material, so
+// ground drawn later (another generator's, or none) does not read a freed terrain's geology, sky or flow.
+void TerrainGenerator3D::_retire_globals() {
+	if (globals_owner != get_instance_id()) {
+		return;
+	}
+	globals_owner = ObjectID();
+	for (const StringName &name : published_rects) {
+		RenderingServer::get_singleton()->global_shader_parameter_set(name, Vector4());
+	}
+}
+
 void TerrainGenerator3D::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_EXIT_TREE: {
+			_retire_globals();
+		} break;
 		case NOTIFICATION_READY:
 		case NOTIFICATION_ENTER_TREE: {
 			set_process_internal(!sky_light_source.is_empty() || sun_shadows);

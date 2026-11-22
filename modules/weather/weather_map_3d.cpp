@@ -1325,6 +1325,9 @@ void WeatherMap3D::_set_global(const StringName &p_name, const Variant &p_value,
 	RenderingServer *rs = RenderingServer::get_singleton();
 	// Declared in the project settings (so the editor knows them), or added here once, at run time.
 	static HashSet<StringName> added;
+	if (p_type == RSE::GLOBAL_VAR_TYPE_VEC4 && String(p_name).ends_with("_rect")) {
+		published_rects.insert(p_name);
+	}
 	if (!added.has(p_name) && !ProjectSettings::get_singleton()->has_setting("shader_globals/" + String(p_name))) {
 		added.insert(p_name);
 		rs->global_shader_parameter_add(p_name, RSE::GlobalShaderParameterType(p_type), p_value);
@@ -1513,6 +1516,12 @@ void WeatherMap3D::_notification(int p_what) {
 		case NOTIFICATION_EXIT_TREE: {
 			if (active == this) {
 				active = nullptr;
+				// Its maps leave with it: zero rects switch each off in the shaders, so ground drawn later does not
+				// read a freed map's wetness, spray or rain.
+				for (const StringName &name : published_rects) {
+					RenderingServer::get_singleton()->global_shader_parameter_set(name, Vector4());
+				}
+				published_rects.clear();
 			}
 			WorldContracts::unregister_weather(this);
 			set_physics_process_internal(false);
