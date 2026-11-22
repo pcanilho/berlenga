@@ -1341,6 +1341,15 @@ void PhysXFlow3D::_step(double p_delta) {
 		settings.smoke_damping = 1.0f - (1.0f - 0.3f) * Math::exp(-washout_rate);
 	}
 	settings.vorticity = vorticity;
+	{
+		// The wind the gas is carried on, at its sources (or its middle): vorticity confinement takes the speed
+		// relative to it.
+		const WorldWeather *wwm = WorldContracts::weather();
+		const Vector3 amb = (weather_wind && weather_wind_coupling > 0.0f && wwm != nullptr && wwm->has_provider()) ? wwm->wind_at(draw_center) : Vector3();
+		settings.ambient_wind[0] = amb.x;
+		settings.ambient_wind[1] = amb.y;
+		settings.ambient_wind[2] = amb.z;
+	}
 	settings.ignition_temperature = ignition_temperature;
 	settings.combustion = combustion;
 	// A full field each time; often enough for queries, and it stalls

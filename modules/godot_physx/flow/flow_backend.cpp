@@ -388,6 +388,11 @@ bool grid_step(Grid *p_grid, double p_time, float p_delta, const Settings &p_set
 	sim.advection.smoke.damping = p_settings.smoke_damping;
 	sim.advection.ignitionTemp = p_settings.ignition_temperature;
 	sim.vorticity.forceScale = p_settings.vorticity;
+	// Confinement weighs its push by the log of the speed: the speed relative to the wind the gas is carried on
+	// (misc/physx_patches 0012), or a strong wind alone fed it until the gas boiled.
+#ifdef NV_FLOW_VORTICITY_AMBIENT_VELOCITY
+	sim.vorticity.ambientVelocity = { p_settings.ambient_wind[0] * s, p_settings.ambient_wind[1] * s, p_settings.ambient_wind[2] * s };
+#endif
 	// Blocks stay allocated where the gas holds smoke, or moves fast and holds some smoke (the leading edge of a
 	// fast plume, ahead of its smoke). Flow's default asks no smoke at all of a fast block, so wind (weather_wind
 	// drives the whole grid) kept every block it blew through allocated, empty, and filled max_blocks in seconds.

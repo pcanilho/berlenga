@@ -88,6 +88,7 @@ struct Settings {
 	float smoke_fade = 0.65f;
 	float smoke_damping = 0.3f; // share of the smoke lost per second (Flow's default), plus rain washout
 	float vorticity = 0.6f;
+	float ambient_wind[3] = { 0, 0, 0 }; // m/s: the air the gas is carried on (vorticity confinement weighs speed relative to it)
 	float ignition_temperature = 0.05f;
 	bool combustion = true;
 	// Copy temperature and smoke back to the CPU this step.
