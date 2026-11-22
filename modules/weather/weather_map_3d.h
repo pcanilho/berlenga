@@ -246,6 +246,7 @@ private:
 		const float *spray = nullptr; // mm/h of sea spray settling, from the last spray step
 		const float *oro = nullptr; // the climate's precipitation factor per cell (orographic_rain)
 		const float *height = nullptr; // m, the terrain per cell, for the phase at its height
+		const float *pool = nullptr; // C, the cold air pool's deficit per cell (cold_pools)
 		float rain_fraction = 1.0f;
 		float *puddle = nullptr;
 		float *frost = nullptr;
@@ -579,6 +580,15 @@ private:
 	Vector2i oro_origin = Vector2i(INT32_MAX, INT32_MAX);
 	double oro_age = 1e9;
 	void _update_orography(double p_weather_dt);
+	// Cold air pools in hollows on clear calm nights (cold_pools).
+	static constexpr float COLD_POOL_RADIUS = 600.0f; // m, the topographic position index's box
+	bool cold_pools = true;
+	float cold_pool_strength = 8.0f; // C below the free air at a deep basin's floor
+	Vector<float> cell_pool; // C, deficit per cell
+	Vector<float> cell_pool_depth; // m, the cell below the mean height round it
+	void _update_pool_depths();
+	void _update_cold_pools(double p_weather_dt);
+	float _cold_pool_at(const Vector3 &p_position) const;
 	Vector<float> cell_fog; // g/m3 of cloud water at the canopy
 	Vector<float> cell_fog_drip; // mm/h, the fog's share of the drainage
 	// Sea spray (weather_spray.cpp, docs/ideas/world-links.md "Sea spray"): drops torn from breaking waves
@@ -1143,6 +1153,11 @@ public:
 	void set_orographic_rain(bool p_enabled);
 	bool is_orographic_rain_enabled() const { return orographic_rain; }
 	float get_orographic_factor_at(Vector3 p_position) const;
+	void set_cold_pools(bool p_enabled);
+	bool is_cold_pools_enabled() const { return cold_pools; }
+	void set_cold_pool_strength(float p_celsius) { cold_pool_strength = MAX(p_celsius, 0.0f); }
+	float get_cold_pool_strength() const { return cold_pool_strength; }
+	float get_cold_pool_at(Vector3 p_position) const;
 	void set_fog_drip(bool p_enabled) { fog_drip = p_enabled; }
 	bool is_fog_drip_enabled() const { return fog_drip; }
 	// Sea spray settling (mm/h of sea water), the spray's own wet film over the surface storage (0..1), and the

@@ -37,6 +37,7 @@ contract returns with no provider.
 | `terrain_lee_at(pos)` | rad | NaN | Winstral's Sx from the terrain wind (positive in a lee; NaN outside it); fire's lee-slope whirls |
 | `precipitation_at(pos)` | mm/h | 0 | Water equivalent falling |
 | `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
+| `air_temperature_at(pos)` note | C | | Includes WeatherMap3D's cold air pools (22 Nov): colder in hollows on clear calm nights, fading to the free air at the pool's top; `air_humidity_at` follows with the same vapour |
 | `rainfall_at(pos)`, `snowfall_at(pos)` | mm/h of water | 0 | The precipitation split by `rain_share_at` |
 | `orographic_factor_at(pos)` | ratio | 1 | The terrain climate's factor `precipitation_at` already carries (WeatherMap3D `orographic_rain`); a reader with its own climate read divides it out |
 | `WorldContracts.climate_precipitation_factor_at(pos)` (static) | ratio of the region mean | 1 | The terrain climate slot (`WorldClimateProvider`, TerrainDataMap3D's baked precipitation); the first provider that covers the point answers |

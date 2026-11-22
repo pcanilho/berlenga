@@ -169,6 +169,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Time of day, wind, humidity, rain → low cloud type (stratus, stratocumulus, cumulus) | linked (20 Nov) | clock, `cur_*` air | `WeatherMap3D.cloud_regime_from_weather`, `get_convective_heating` (docs/ideas/clouds.md round 6) |
 | Wind shear aloft, air temperature → cirrocumulus; high cover (humidity, coming rain) → cirrostratus veil | linked (20 Nov) | `get_wind_aloft`, air | `WeatherMap3D.get_cirrocumulus_share` (docs/ideas/clouds.md round 7) |
 | Storm rain, outflow, steering wind → rain shafts and shelf cloud | linked (20 Nov) | `add_storm` storms | sky rain shafts; `get_cloud_base_at` / `WorldWeather.cloud_base_at` lowered by the shelf (docs/ideas/clouds.md round 8) |
+| Clear calm nights → cold air pools in hollows (frost, valley fog) | linked (22 Nov) | `WorldWeather.air_temperature_at` / `air_humidity_at` (WeatherMap3D `cold_pools`, `get_cold_pool_at`) | Night x clear x calm forcing builds a deficit up to `cold_pool_strength` (8 C) over about 2 h where the cell lies below the mean height within 600 m (topographic position, Lundquist et al. 2008; Whiteman 2000), faded to nothing at the pool's top; breaks up after sunrise or in a wind. Dew, hoarfrost and evaporation take the pooled air per cell; mist, snow and every air reader see it through the contract. Links check: a 200 m valley, 6.9 C pool, -0.9 C on the floor under 5.3 C up the slope, humidity 1.00 vs 0.85, frost only on the floor |
 | Air temperature, dew point → cloud base | linked (20 Nov) | `get_air_dew_point` | `WorldWeather.cloud_base_at`; readers mist, lightning, snow line, orographic rain |
 | Mountain waves → wind aloft | linked (20 Nov) | WeatherMountainWaves | `get_wind_at` vertical part above the boundary layer; `WorldWeather.mountain_wave_velocity_at` alone; ground wind unchanged |
 | Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |
@@ -355,7 +356,7 @@ Sources: Smith and Barstad 2004 (J. Atmos. Sci. 61); Roe 2005 (Annu. Rev. Earth 
 
 ## Round 9 candidates (22 Nov, card to Paulo)
 
-1. Cold air pools in hollows. Source: the weather's air temperature, wind, cloud cover and the terrain heights it
+1. Cold air pools in hollows (built 22 Nov). Source: the weather's air temperature, wind, cloud cover and the terrain heights it
    already reads for the snow line. Readers: dew and hoarfrost, mist (valley fog), snow melt, plant frost damage.
    On clear calm nights the cooled air at the ground drains downslope (katabatic flow, about 1-3 m/s) and pools in
    basins and valley floors, 5-10 C colder than the slopes above, with a warm belt part way up (Whiteman 2000;

@@ -291,6 +291,7 @@ func _ready() -> void:
 	await _salt_bloom_tests()
 	await _spray_sand_tests()
 	await _orographic_tests()
+	await _cold_pool_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -1870,6 +1871,58 @@ func _orographic_tests() -> void:
 	m.queue_free()
 	dm.queue_free()
 	ridge.queue_free()
+	await get_tree().physics_frame
+
+
+# Cold air pools: a valley 200 m deep on a clear calm night fills with cold air; the shoulders above stay milder.
+func _cold_pool_tests() -> void:
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 200.0 * (1.0 - exp(-p.x * p.x / (2.0 * 400.0 * 400.0)))\n"
+	vs.reload()
+	var valley := Node3D.new()
+	valley.set_script(vs)
+	add_child(valley)
+	var c := _new_clock(10, 1.0)
+	var m := _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(valley)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.8
+	m.temperature = 6.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(4.0 * 3600.0)
+	var floor_p := Vector3(0, 0, 0)
+	var slope_p := Vector3(500, 108, 0)
+	var shoulder := Vector3(1500, 200, 0)
+	var t_floor: float = m.get_air_temperature_at(floor_p)
+	var t_slope: float = m.get_air_temperature_at(slope_p)
+	var t_shoulder: float = m.get_air_temperature_at(shoulder)
+	var pool: float = m.get_cold_pool_at(floor_p)
+	_check("cold pool: a clear calm night pools cold air on the valley floor, warmer up the slope (an inversion)", pool > 4.0 and t_floor < t_slope - 2.0 and m.get_cold_pool_at(shoulder) < 0.2, "pool %.1f C; air %.1f C on the floor, %.1f C 108 m up the slope, %.1f C on the shoulder" % [pool, t_floor, t_slope, t_shoulder])
+	var w: WorldWeather = WorldContracts.get_weather()
+	var rh_floor: float = w.air_humidity_at(floor_p)
+	var rh_shoulder: float = w.air_humidity_at(shoulder)
+	var fr_floor: float = m.get_frost_at(floor_p)
+	var fr_shoulder: float = m.get_frost_at(shoulder)
+	_check("cold pool: the floor's air saturates (valley fog) and frosts first, the contract reads it", rh_floor > 0.98 and rh_shoulder < 0.92 and fr_floor > fr_shoulder + 0.02 and absf(w.air_temperature_at(floor_p) - t_floor) < 0.01, "humidity %.2f on the floor, %.2f on the shoulder; frost %.3f / %.3f mm" % [rh_floor, rh_shoulder, fr_floor, fr_shoulder])
+	m.wind_speed = 8.0
+	m.snap_to_settings()
+	m.advance(2.0 * 3600.0)
+	var windy: float = m.get_cold_pool_at(floor_p)
+	_check("cold pool: a wind mixes the pool out", windy < 0.5, "pool %.2f C after 2 hours at 8 m/s" % windy)
+	m.wind_speed = 1.0
+	m.cold_pools = false
+	m.snap_to_settings()
+	m.advance(600.0)
+	_check("cold pool: off, the floor has the free air's temperature", m.get_cold_pool_at(floor_p) == 0.0 and absf(m.get_air_temperature_at(floor_p) - 6.0) < 0.05, "%.2f C" % m.get_air_temperature_at(floor_p))
+	m.queue_free()
+	c.queue_free()
+	valley.queue_free()
 	await get_tree().physics_frame
 
 
