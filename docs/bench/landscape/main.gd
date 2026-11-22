@@ -3683,6 +3683,8 @@ func _build_vegetation() -> void:
 		# No sward in the desert: the meadow rules know soil, rock and scree, not the erg's loose sand.
 		grass.ground_tint_enabled = false
 		grass.radius = 0.0
+	if args.has("hay") and "hay_meadows" in grass:
+		grass.hay_meadows = _hay_list()
 	add_child(grass)
 	grass.data_map = grass.get_path_to(data_map)
 	if args.get("plants", "1") != "0" and not desert:
@@ -3708,6 +3710,8 @@ func _build_vegetation() -> void:
 		under.tip_color = Color(0.38, 0.52, 0.16)
 		under.dryness = 0.35
 		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
+		if args.has("hay") and "hay_meadows" in under:
+			under.hay_meadows = _hay_list()
 		add_child(under)
 		under.data_map = under.get_path_to(data_map)
 		var turf := GrassField3D.new()
@@ -3725,6 +3729,8 @@ func _build_vegetation() -> void:
 		turf.tip_color = Color(0.3, 0.42, 0.12)
 		turf.dryness = 0.35
 		turf.ground_tint_enabled = false
+		if args.has("hay") and "hay_meadows" in turf:
+			turf.hay_meadows = _hay_list()
 		add_child(turf)
 		turf.data_map = turf.get_path_to(data_map)
 		sward = [grass, under, turf]
@@ -4255,6 +4261,10 @@ func _build_camera() -> void:
 			var cz := ez + 60.0
 			cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, cz) + 1.7, cz)
 			cam.look_at(Vector3(ex, height_at(ex, ez) + 4.0, ez))
+			if args.has("hay"):
+				# Over the hay fields (_hay_list): raised to --hay-eye (5) m, looking down across the rows to the edge.
+				cam.position.y += float(args.get("hay-eye", "5")) - 1.7
+				cam.look_at(Vector3(ex - 10.0, height_at(ex - 10.0, ez + 12.0) + 1.0, ez + 12.0))
 		"lakewater":
 			# Low over the water at one end of the lake, looking along it to the mountains behind: the water cell
 			# farthest from the water's centroid, pulled a little back over the water.
@@ -7079,6 +7089,41 @@ func _frost_sorted_cam() -> void:
 # footfall the snow, mud and sand print (meta world_contact_feet); GazeModifier3D turns its head and eyes to `look`.
 # The rig has no walk: walk_cycle.gd builds one from published gait data (--walker-anim, walk; run plays the rig's
 # run at --walker-anim-speed, 0.5). Moved by _walk_to.
+# --hay[=x,z]: a meadow mid-harvest (GrassField3D.hay_meadows, vegetation da9145ba) on every sward layer, three
+# fields side by side across x round x,z (else the meadow view's clearing, else --look), each --hay-w (40; 22 in the
+# meadow view) m wide and --hay-l (140; 56) m deep: mown today (swaths), raked on day 3 (windrows), carted on day 5 (stubble); rows at --hay-row (0.35 rad).
+# VegetationField3D leaves the tall herbs out there on its own.
+func _hay_list() -> Array:
+	var at := String(args.get("hay", ""))
+	var w := float(args.get("hay-w", "40"))
+	var l := float(args.get("hay-l", "140"))
+	var cx := 0.0
+	var cz := 0.0
+	if at == "" and args.get("view", "wide") == "meadow" and gen != null:
+		# The meadow view's clearing: between the camera and the forest edge it looks at (as _place_camera).
+		var ex := float(args.get("treeline-x", "300"))
+		var ez := 400.0
+		while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
+			ez -= 16.0
+		w = float(args.get("hay-w", "22"))
+		l = float(args.get("hay-l", "56"))
+		cx = ex - 10.0
+		cz = ez + 4.0 + 0.5 * l
+	else:
+		if at == "":
+			at = String(args.get("look", "0,0,0"))
+		var hp := at.split(",")
+		cx = float(hp[0])
+		cz = float(hp[2] if hp.size() > 2 else (hp[1] if hp.size() > 1 else "0"))
+	var out: Array = []
+	var days := [0.0, 3.0, 5.0]
+	for i in 3:
+		var x0 := cx + (float(i) - 1.5) * w
+		var poly := PackedVector2Array([Vector2(x0, cz - 0.5 * l), Vector2(x0 + w, cz - 0.5 * l), Vector2(x0 + w, cz + 0.5 * l), Vector2(x0, cz + 0.5 * l)])
+		out.append({"polygon": poly, "row_angle": float(args.get("hay-row", "0.35")), "days": days[i]})
+	return out
+
+
 func _make_walker(look: Node3D = null) -> CharacterBody3D:
 	var src := _gltf_node("res://ext/mannequin/mannequiny-0.3.0.glb")
 	if src == null:
