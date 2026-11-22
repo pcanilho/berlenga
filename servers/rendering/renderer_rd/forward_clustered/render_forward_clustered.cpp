@@ -1091,7 +1091,7 @@ void RenderForwardClustered::_fill_instance_data(RenderListType p_render_list, i
 
 		uint32_t material_feedback_index = UINT32_MAX;
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-		if (surface->material->material_feedback_rid.is_valid()) {
+		if (surface->material->material_feedback_rid.is_valid() && TextureStreaming::get_singleton()) {
 			material_feedback_index = TextureStreaming::get_singleton()->feedback_buffer_material_index(surface->material->material_feedback_rid);
 		}
 #endif
@@ -2334,7 +2334,9 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		color_only_framebuffer = rb_data->get_color_only_fb();
 		samplers = rb->get_samplers();
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-		TextureStreaming::get_singleton()->feedback_report_mipmap_bias(samplers.mipmap_bias); // Feedback reads the mip the sampler reads.
+		if (TextureStreaming::get_singleton()) {
+			TextureStreaming::get_singleton()->feedback_report_mipmap_bias(samplers.mipmap_bias);
+		} // Feedback reads the mip the sampler reads.
 #endif
 	}
 
@@ -4212,7 +4214,7 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		RD::Uniform u;
 		u.binding = 42;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-		RID feedback_buffer = TextureStreaming::get_singleton()->feedback_buffer_get_uniform_rid();
+		RID feedback_buffer = TextureStreaming::get_singleton() ? TextureStreaming::get_singleton()->feedback_buffer_get_uniform_rid() : RID();
 		if (feedback_buffer.is_null()) {
 			feedback_buffer = scene_shader.default_material_feedback_buffer;
 		}

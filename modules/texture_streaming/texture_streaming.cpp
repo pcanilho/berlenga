@@ -300,6 +300,7 @@ void TextureStreaming::_start_streaming() {
 	texture_reload_thread.start(_texture_reload_thread_func, this);
 
 	// Use frame_post_draw for continuous per-frame feedback submission.
+	ERR_FAIL_NULL(RenderingServer::get_singleton());
 	Error err = RenderingServer::get_singleton()->connect("frame_post_draw", callable_mp(this, &TextureStreaming::_feedback_frame_done_callback));
 	if (err != OK) {
 		ERR_PRINT("Failed to connect frame post draw signal.");
@@ -357,6 +358,9 @@ void TextureStreaming::_stop_streaming() {
 
 void TextureStreaming::_render_thread_specific_initialization() {
 	ERR_NOT_ON_RENDER_THREAD;
+	if (!RD::get_singleton()) {
+		return; // No rendering device (Compatibility fallback or dummy renderer): feedback stays off.
+	}
 
 	// Initialize buffer pool
 	{

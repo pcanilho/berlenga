@@ -93,6 +93,12 @@
    "title": "Lighting"
   },
   {
+   "name": "rendering/pathtracing/indirect_reuse_enhanced",
+   "type": "bool",
+   "default": "false",
+   "about": "With `rendering/pathtracing/indirect_reuse` on, applies the reuse rules of ReSTIR PT Enhanced (Lin, Kettunen and Wyman, I3D 2026)."
+  },
+  {
    "name": "rendering/pathtracing/light_reuse",
    "type": "bool",
    "default": "false",
@@ -585,6 +591,17 @@
    ],
    "note": "",
    "what": "ReSTIR GI; rooms and shade lit by bounced light are far less noisy at the same samples.",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
+   "name": "Flickering lights",
+   "settings": [
+    "Light3D.flicker_mode"
+   ],
+   "note": "",
+   "what": "a light-style pattern or a failing lamp with seeded faults, with its emissive material following.",
    "page": "lighting",
    "title": "Lighting",
    "topic": ""
@@ -2657,10 +2674,11 @@
    "name": "Turf overhangs",
    "settings": [
     "PlantGenerator.make_bank_turf()",
-    "PRESET_TURF_LIP"
+    "PRESET_TURF_LIP",
+    "SodLipFall3D"
    ],
    "note": "",
-   "what": "cut banks and scarps carry sod lips with hanging grass and roots.",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

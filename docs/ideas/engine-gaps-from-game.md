@@ -126,3 +126,13 @@ emissive partner, the same in both renderers (the path tracer reads light energy
 4. G whenever it is cheap.
 
 F gets its own thread.
+
+## Status (22 Nov)
+
+- A: surface rain include, wall streaks with `rain_wipe` and `rain_slipstream`; glass shading with Valence.
+- B: `weather_surface_puddle` on up-facing built faces from WeatherMap3D's puddle state. Gutters not yet.
+- C: `WeatherMap3D.rain_curtains`.
+- D: `camera_cutout` globals in BaseMaterial3D and the raygen. Module shaders still to adopt it.
+- E: positional shadows by importance, `max_shadowed_lights` budget.
+- G: `Light3D.flicker_mode` (pattern or failing, seeded), with `flicker_material` following.
+- F: with the quality presets thread.

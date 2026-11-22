@@ -3109,6 +3109,13 @@ func _build_weather() -> void:
 		sd.name = "SeedDown"
 		sd.range = float(args.get("seed-range", "40"))
 		add_child(sd)
+	# Sod lips breaking off (SodLipFall3D, vegetation 8faf7573): bank overhangs within range of the camera fail
+	# under a step (grass_trample), an undercutting river or a soaking, and fall as blocks of sod. --sod-fall=0 for none.
+	if args.get("sod-fall", "1") != "0" and ClassDB.class_exists("SodLipFall3D"):
+		var sl = ClassDB.instantiate("SodLipFall3D")
+		sl.name = "SodLipFall"
+		sl.range = float(args.get("sod-range", "40"))
+		add_child(sl)
 	snow.global_position = Vector3(0, 0, 0)
 
 
@@ -7027,6 +7034,7 @@ func _make_walker(look: Node3D = null) -> CharacterBody3D:
 	cs.position.y = 0.875
 	body.add_child(cs)
 	body.add_child(src)
+	body.add_to_group("grass_trample")
 	add_child(body)
 	var skel := src.find_children("*", "Skeleton3D", true, false)[0] as Skeleton3D
 	if ClassDB.class_exists("FootPlacementModifier3D"):

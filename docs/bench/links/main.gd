@@ -335,6 +335,7 @@ func _ready() -> void:
 	await _curtain_tests()
 	await _cutout_tests()
 	await _shadow_budget_tests()
+	await _flicker_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
@@ -3580,3 +3581,114 @@ func _ground_color_meadow_tests() -> void:
 	root.queue_free()
 	await get_tree().process_frame
 	_check("ground colour: gas over a meadow takes the sward's green (its far colour), over a worn path through it little of it", meadow.a > 0.8 and meadow.g > meadow.r and absf(meadow.g - far.g) < 0.02 and path.a < 0.5 * meadow.a, "meadow %s (far %s), path %s" % [meadow, far, path])
+
+
+func _flicker_run(light: Light3D, seconds: float, step: float = 0.05) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	var t := 0.0
+	while t < seconds:
+		light.advance_flicker(step)
+		out.append(light.get_flicker_level())
+		t += step
+	return out
+
+
+func _flicker_tests() -> void:
+	# Light styles: 'a' dark, 'm' normal, 'z' about double, stepped at flicker_rate.
+	var lamp := OmniLight3D.new()
+	lamp.light_energy = 3.0
+	lamp.flicker_pattern = "amz"
+	lamp.flicker_rate = 2.0
+	lamp.flicker_mode = Light3D.FLICKER_PATTERN
+	var lv := _flicker_run(lamp, 1.5, 0.01)
+	# Levels at the end of each half-second letter (snapped by then).
+	var a := lv[48]
+	var m := lv[98]
+	var z := lv[148]
+	_check("flicker: a light style steps dark, normal, double; the stored energy stays",
+			a < 0.02 and absf(m - 1.0) < 0.02 and absf(z - 25.0 / 12.0) < 0.03 and is_equal_approx(lamp.light_energy, 3.0),
+			"a %.3f m %.3f z %.3f energy %.2f" % [a, m, z, lamp.light_energy])
+	# Failing lamp: seeded, so the same seed fails the same way; mostly on, with real faults.
+	var runs := []
+	for seed in [7, 7, 8]:
+		var f := OmniLight3D.new()
+		f.flicker_seed = seed
+		f.flicker_failure = 0.5
+		f.flicker_mode = Light3D.FLICKER_FAILING
+		runs.append(_flicker_run(f, 120.0, 1.0 / 60.0))
+		f.free()
+	var same: bool = runs[0] == runs[1]
+	var differ: bool = runs[0] != runs[2]
+	var total := 0.0
+	var low := 0
+	for v: float in runs[0]:
+		total += v
+		if v < 0.3:
+			low += 1
+	var mean: float = total / (runs[0] as PackedFloat32Array).size()
+	_check("flicker: a failing lamp is the same every run for its seed, mostly on, with drop-outs",
+			same and differ and mean > 0.75 and mean < 0.99 and low > 10,
+			"same %s differ %s mean %.2f dark frames %d" % [same, differ, mean, low])
+	# A healthy lamp (failure 0) only hums; its emissive partner follows; off restores.
+	var g := OmniLight3D.new()
+	var mat := StandardMaterial3D.new()
+	mat.emission_enabled = true
+	mat.emission_energy_multiplier = 9.0
+	g.flicker_material = mat
+	g.flicker_failure = 0.0
+	g.flicker_mode = Light3D.FLICKER_FAILING
+	var hv := _flicker_run(g, 10.0, 1.0 / 60.0)
+	var lo := 9.0
+	var hi := 0.0
+	for v in hv:
+		lo = minf(lo, v)
+		hi = maxf(hi, v)
+	var follows := absf(mat.emission_energy_multiplier - 9.0 * g.get_flicker_level()) < 1e-3
+	g.flicker_mode = Light3D.FLICKER_NONE
+	_check("flicker: a healthy lamp only hums, its glow follows, and switching flicker off restores both",
+			lo > 0.96 and hi < 1.04 and follows and is_equal_approx(g.get_flicker_level(), 1.0) and is_equal_approx(mat.emission_energy_multiplier, 9.0),
+			"hum %.3f..%.3f follows %s after %.3f / %.2f" % [lo, hi, follows, g.get_flicker_level(), mat.emission_energy_multiplier])
+	g.free()
+	lamp.free()
+	if DisplayServer.get_name() == "headless":
+		_skip("flicker render", "needs a rendering device")
+		return
+	# The renderer sees the flicker: a lamp held on 'a' leaves the floor dark, on 'm' lit.
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0, 0, 0)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_DISABLED
+	root.add_child(env)
+	var floor_mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(20, 20)
+	floor_mi.mesh = pm
+	floor_mi.material_override = StandardMaterial3D.new()
+	root.add_child(floor_mi)
+	var o := OmniLight3D.new()
+	o.position = Vector3(0, 3, 0)
+	o.omni_range = 10.0
+	o.light_energy = 2.0
+	root.add_child(o)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 8, 6)
+	cam.rotation_degrees = Vector3(-55, 0, 0)
+	root.add_child(cam)
+	cam.make_current()
+	var lum := []
+	for pat in ["m", "a"]:
+		o.flicker_pattern = pat
+		o.flicker_mode = Light3D.FLICKER_PATTERN
+		o.advance_flicker(1.0)
+		for i in 6:
+			await RenderingServer.frame_post_draw
+		lum.append(_face_luminance(get_viewport().get_texture().get_image(), cam, Vector3(0, 0, 0)))
+		o.flicker_mode = Light3D.FLICKER_NONE
+	root.queue_free()
+	await get_tree().process_frame
+	_check("flicker: the renderer draws the flickered energy",
+			lum[0] > 0.05 and lum[1] < lum[0] * 0.05,
+			"floor under the lamp: normal %.3f dark %.3f" % [lum[0], lum[1]])
