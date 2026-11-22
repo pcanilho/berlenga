@@ -177,15 +177,19 @@ What others do:
   does, per modifier.
 
 The fork's version (`Skeleton3D.modifier_update_mode`, like Unity's `CullUpdateTransforms`):
-- `ALWAYS` (default, upstream behaviour) or `WHEN_VISIBLE`: the skeleton keeps a rendering-server
-  visibility notifier over its bones' bounds grown by `modifier_visibility_margin`; while no camera sees
-  that box, the modifiers are skipped (the clip still plays) and no time accumulates.
+- `ALWAYS` (default, upstream behaviour).
+- `WHEN_SHOWN`: skipped while the skeleton is hidden (`is_visible_in_tree()` false). Hidden nodes are
+  neither drawn nor traced, so it is lossless by construction; it fits areas or streamed cells hidden
+  while the player is elsewhere (the first project hides every scene but the player's).
+- `WHEN_ON_SCREEN`: also skipped while no camera sees the bones' bounds grown by
+  `modifier_visibility_margin` (a rendering-server visibility notifier). The clip still plays and no
+  time accumulates.
 - No pop on return: the margin brings them back before the skeleton is in view, and each modifier gets
   `_skeleton_resumed()` first, so smoothing starts from the current target instead of where it was
   when it stopped (`GazeModifier3D` and `FootPlacementModifier3D` reset their springs and locks).
 - Path tracing: an off-screen character can still show in a shadow or a reflection, and there it would
-  show the clip's pose. So `WHEN_VISIBLE` is opt-in, for characters that cannot be seen indirectly
-  either: the first project sets it for people outside the player's current area.
+  show the clip's pose. So `WHEN_ON_SCREEN` is only for characters that cannot be seen
+  indirectly either (far crowds, interiors); `WHEN_SHOWN` has no such catch.
 
 ## Order on a skeleton
 

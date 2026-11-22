@@ -85,7 +85,8 @@ public:
 	// Berlenga: modifiers can rest while nothing sees the skeleton (like Unity's CullUpdateTransforms).
 	enum ModifierUpdateMode {
 		MODIFIER_UPDATE_MODE_ALWAYS,
-		MODIFIER_UPDATE_MODE_WHEN_VISIBLE,
+		MODIFIER_UPDATE_MODE_WHEN_SHOWN,
+		MODIFIER_UPDATE_MODE_WHEN_ON_SCREEN,
 	};
 
 private:
