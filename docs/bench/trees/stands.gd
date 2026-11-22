@@ -7,6 +7,7 @@ extends Node3D
 #   --strikes --stream  a strike after a streamed field is in grows the deferred struck variants (trees.md 5bc)
 #   --lightning --strikes  struck trees in a placed beech stand: a WorldStand strike swaps that tree only (trees.md 5ax)
 #   --beaver-meadow   a drained beaver pond (WorldStand kind 4): meadow snags, fallen snags and willow come in (trees.md 5bb)
+#   --avalanche       an avalanche track 5 years old (WorldStand kind 6): thrown logs down the fall line, snapped stumps, stripped survivors (trees.md 5bh)
 #   --colonnade       taiga stilted spruce placed in rows along vanished logs (trees.md 5az)
 #   --browse          browsed trees in a placed beech stand: a WorldStand browse disc swaps the trees under it (trees.md 5az)
 #   --lightning       a fresh strike's debris round a spruce, none unstruck or three years on (trees.md 5ax)
@@ -124,6 +125,10 @@ func run(args: Dictionary) -> void:
 	_check(err == OK, "valley data map bakes")
 	if args.has("beaver-meadow"):
 		await _beaver_meadow_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("avalanche"):
+		await _avalanche_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if args.has("colonnade"):
@@ -337,6 +342,74 @@ func _beaver_meadow_check() -> void:
 		if f.get_placements(s).size() > 0:
 			kinds += 1
 	_check(inside > 10 and outside == 0 and kinds >= 4, "drained 12 years (r %.0f m): %d meadow trees inside, %d outside, %d of %d meadow species placed" % [r, inside, outside, kinds, meadow.size()])
+	ws.clear_disturbances()
+
+
+func _avalanche_check() -> void:
+	# Avalanche legacies (trees.md 5bh): the beech stand's succession carries thrown logs, snapped stumps and stripped
+	# survivors for WorldStand DISTURBANCE_AVALANCHE (6), none placed without one; a track 5 years old puts them inside
+	# it and none outside, and the thrown logs lie down the fall line (mesh +X downhill).
+	var ws = WorldContracts.get_stand()
+	if ws == null:
+		_check(false, "avalanche: no WorldStand")
+		return
+	ws.clear_disturbances()
+	var all := gen.make_succession(TreeGenerator.STAND_BEECH, variants)
+	var keep: Array[PlantSpecies] = []
+	for sp in all.species:
+		if int(sp.get_meta("succession_kind", -1)) == TreeGenerator.SUCCESSION_AVALANCHE:
+			keep.append(sp)
+	all.species = keep
+	_check(keep.size() == 5, "beech succession: %d avalanche legacy species" % keep.size())
+	var f := _field(all)
+	for k in 3:
+		await get_tree().process_frame
+	var mid := Vector3(SIZE * 0.5, 0, SIZE * 0.5)
+	var placed := func() -> int:
+		var n := 0
+		for s in keep.size():
+			n += f.get_placements(s).size()
+		return n
+	_check(placed.call() == 0, "no avalanche: %d legacy plants" % placed.call())
+	var r := SIZE * 0.3
+	ws.add_disturbance(mid, r, WorldStand.DISTURBANCE_AVALANCHE, 5.0)
+	f.populate()
+	for k in 3:
+		await get_tree().process_frame
+	var inside := 0
+	var outside := 0
+	var by := {}
+	for s in keep.size():
+		for p in f.get_placements(s):
+			var d := Vector2(p.x - mid.x, p.z - mid.z).length()
+			if d <= r * 0.9:
+				inside += 1
+				by[keep[s].resource_name] = by.get(keep[s].resource_name, 0) + 1
+			elif d >= r * 1.1:
+				outside += 1
+	_check(inside > 10 and outside == 0 and by.size() >= 3, "avalanche 5 years ago (r %.0f m): %d legacy plants inside, %d outside: %s" % [r, inside, outside, str(by)])
+	# Thrown logs down the fall line: mesh +X against the ground's downhill direction, where the ground slopes.
+	var down := 0
+	var checked := 0
+	for s in keep.size():
+		if not String(keep[s].resource_name).contains("avalanche thrown"):
+			continue
+		for mmi in f.find_children("*", "MultiMeshInstance3D", true, false):
+			var mm: MultiMesh = mmi.multimesh
+			if mm == null or not keep[s].meshes.has(mm.mesh):
+				continue
+			for k in mm.instance_count:
+				var t: Transform3D = mmi.global_transform * mm.get_instance_transform(k)
+				var o := t.origin
+				var e := 2.0
+				var g := Vector2(dm.get_height_at(o + Vector3(e, 0, 0)) - dm.get_height_at(o - Vector3(e, 0, 0)), dm.get_height_at(o + Vector3(0, 0, e)) - dm.get_height_at(o - Vector3(0, 0, e)))
+				if g.length() < 0.2:
+					continue
+				checked += 1
+				var x := Vector2(t.basis.x.x, t.basis.x.z).normalized()
+				if x.dot(-g.normalized()) > cos(0.6):
+					down += 1
+	_check(checked > 0 and down > checked * 0.85, "avalanche: %d of %d thrown logs on slopes lie down the fall line" % [down, checked])
 	ws.clear_disturbances()
 
 

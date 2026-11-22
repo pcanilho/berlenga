@@ -159,6 +159,7 @@ public:
 		SUCCESSION_WIND = 2,
 		SUCCESSION_BEETLE = 3,
 		SUCCESSION_BEAVER = 4, // A beaver pond drained (the dam failed): the beaver meadow (trees.md 5bb).
+		SUCCESSION_AVALANCHE = 6, // A dense avalanche broke the stand (WorldStand DISTURBANCE_AVALANCHE; trees.md 5bh).
 	};
 	enum BeaverCut {
 		BEAVER_NONE = 0,

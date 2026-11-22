@@ -3966,6 +3966,34 @@ occidentalis on the Niagara Escarpment), Matthes, Larson and Kelly 2002 (sectore
 - Open: the valley bench has no faces steep enough, so nothing is placed there; the landscape scene's cliffs are the
   real test. Cliff variants of more species (juniper-like shrubs, holm oak) and thicker, ribbon-like roots in cracks.
 
+### 5bh. Avalanche legacies (22 Nov; coordinator's queue, WorldStand DISTURBANCE_AVALANCHE 6)
+
+Research. What a dense avalanche leaves in a mountain forest (Bebi, Kulakowski and Rixen 2009, Snow avalanche
+disturbances in forest ecosystems; Butler and Malanson 1985 and Butler 1979 on avalanche path vegetation, Glacier
+National Park; Reardon, Pederson, Caruso and Fagre 2008, Arctic Antarctic and Alpine Research 40: dendroecological
+indicators; Stoffel and Bollschweiler 2008, tree-ring analysis in natural hazards):
+- Stems snapped or uprooted and carried downslope: the trunks lie along the fall line, tops down, the debris piled
+  in the runout; broken stumps stand where the flow was too weak to uproot.
+- Survivors at the track's edge and inside it where the flow thinned: crowns stripped on the upslope side
+  (flagged downslope), tops broken (decapitated), impact scars on the upslope face of the stem 0.5-3 m up, stems
+  tilted downslope (reaction wood); these are the indicators dendrochronologists date avalanches by.
+- Tracks run every few years or decades never regrow forest: flexible shrubs that bend under the snow and stand up
+  again take them, green alder (Alnus alnobetula, the Grünerlen scrub of the Alps) and willows, their stems swept
+  downslope at the base (sabre or pistol-butt stems from snow creep and glide) and rising at the ends.
+Plan (trees side; the field places by RULE_STAND_AGE and RULE_DISTURBANCE 6 as for the other legacies):
+- make_succession of the mountain stands (subalpine, montane conifer, beech): avalanche legacies tagged
+  SUCCESSION_AVALANCHE 6: lead logs and snapped stumps (0-15 y), survivors flagged downslope with upslope impact
+  scars (0-60 y), and green alder thickets with sabre stems in the young track (0-30 y).
+- Placement: species meta `fall_downhill` (the field turns mesh +X down the fall line), new in VegetationField3D.
+- Sabre stems: the cliff machinery (5bg) at small angles: the soil plane turned to the slope, the stem bent up.
+As built (22 Nov, first half): make_succession of the subalpine, montane conifer and beech stands adds, tagged
+SUCCESSION_AVALANCHE 6, the lead thrown (windthrow band 1 logs, half with root plates) and snapped (band 2 stumps)
+for 0-15 and 15-50 years (decay by the years), at 1.2x stand spacing, and survivors 0-50 years: open-grown, flagged
+(upslope limbs killed, the rest swept downslope) and leaning 5-20 degrees downslope (band 3). All carry species meta
+`fall_downhill`: VegetationField3D turns mesh +X down the fall line (+-fall_scatter). Bench: `--stands --avalanche`
+(a 5-year track: legacies inside only, thrown logs down the fall line). Next: green alder thickets with sabre stems
+in young tracks; upslope impact scars on the survivors.
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:

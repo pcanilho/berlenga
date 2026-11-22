@@ -1412,6 +1412,7 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 	{
 		const Vector2 fd = ps.sp->get_meta(SNAME("fall_dir"), Vector2());
 		ps.fall_dir = fd.length_squared() > 1e-8f ? fd.normalized() : Vector2();
+		ps.fall_downhill = bool(ps.sp->get_meta(SNAME("fall_downhill"), false));
 		ps.fall_scatter = float(ps.sp->get_meta(SNAME("fall_scatter"), 0.0f));
 		ps.fall_water = float(ps.sp->get_meta(SNAME("fall_to_water"), 0.0f));
 	}
@@ -2767,6 +2768,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					} else if (bank_variant >= 0 && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
 						// Its ground falls towards mesh +Z: turn +Z downhill.
 						yaw = Math::atan2(downhill.x, downhill.y);
+					} else if (ps.fall_downhill && slope > 1e-3f) {
+						// Carried down by an avalanche (the trees module, trees.md 5bh): mesh +X down the fall line.
+						yaw = Math::atan2(-downhill.y, downhill.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 2.0f * ps.fall_scatter;
 					} else if (ps.fall_dir != Vector2()) {
 						// Thrown by one storm (the trees module, trees.md 5am): mesh +X along the storm's track, each
 						// tree turned by the gusts and its neighbours within fall_scatter.

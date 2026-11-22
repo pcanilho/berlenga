@@ -26442,6 +26442,47 @@ Ref<Biome> TreeGenerator::make_succession(Stand p_stand, int p_variants) {
 			tag(grey, from, to, SUCCESSION_BEETLE);
 		}
 	}
+	// Avalanche legacies (trees.md 5bh; Bebi et al. 2009; Butler and Malanson 1985; Reardon et al. 2008) in the
+	// mountain stands: the stems a dense avalanche threw lie down the fall line, tops down, the rest snapped to stumps;
+	// survivors where the flow thinned lean downslope, their upslope limbs stripped (the flagged crowns of a track's
+	// edge). The thrown and snapped wood is the windthrow kit's (5am), carried down the slope instead of a storm's
+	// track: species meta fall_downhill turns mesh +X down the fall line.
+	if (p_stand == STAND_SUBALPINE || p_stand == STAND_MONTANE_CONIFER || p_stand == STAND_BEECH || p_stand == STAND_OLD_GROWTH_BEECH) {
+		const float saved_storm = windthrow_storm;
+		for (int stage = 0; stage < 2; stage++) {
+			const float from = stage == 0 ? 0.0f : e1, to = stage == 0 ? e1 : e2;
+			windthrow_storm = stage == 0 ? 4.0f : 0.5f * (e1 + e2);
+			windthrow_band = 1;
+			Ref<PlantSpecies> thrown = _stand_species(lead, true, p_variants, FORM_LOG);
+			windthrow_band = 2;
+			Ref<PlantSpecies> snapped = _stand_species(lead, true, p_variants, FORM_SNAG);
+			windthrow_band = 0;
+			thrown->set_name(vformat("%s (avalanche thrown, %d-%d y)", preset_names[lead], int(from), int(to)));
+			snapped->set_name(vformat("%s (avalanche snapped, %d-%d y)", preset_names[lead], int(from), int(to)));
+			for (const Ref<PlantSpecies> &sp : { thrown, snapped }) {
+				sp->set_meta("fall_dir", Vector2());
+				sp->set_meta("fall_downhill", true);
+				sp->set_meta("fall_scatter", 0.3f);
+				sp->set_density(stage == 0 ? 0.9f : 0.5f);
+				// The track's stand lies where it stood, the logs about as close as the trees were (as windthrow, 5am).
+				sp->set_spacing(HABITATS[lead].stand_spacing * 1.2f);
+				tag(sp, from, to, SUCCESSION_AVALANCHE);
+			}
+			snapped->set_canopy_opacity(0.0f);
+		}
+		windthrow_storm = 6.0f;
+		windthrow_band = 3;
+		Ref<PlantSpecies> survivor = _stand_species(lead, false, p_variants, FORM_FLAGGED);
+		windthrow_band = 0;
+		survivor->set_name(vformat("%s (avalanche survivor)", preset_names[lead]));
+		survivor->set_meta("fall_dir", Vector2());
+		survivor->set_meta("fall_downhill", true);
+		survivor->set_meta("fall_scatter", 0.25f);
+		survivor->set_density(0.6f);
+		survivor->set_spacing(HABITATS[lead].stand_spacing * 2.0f);
+		tag(survivor, 0.0f, e2, SUCCESSION_AVALANCHE);
+		windthrow_storm = saved_storm;
+	}
 	// Stand initiation: pioneers and the lead's seedlings.
 	{
 		succession_band = 3;
@@ -27859,6 +27900,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(SUCCESSION_WIND);
 	BIND_ENUM_CONSTANT(SUCCESSION_BEETLE);
 	BIND_ENUM_CONSTANT(SUCCESSION_BEAVER);
+	BIND_ENUM_CONSTANT(SUCCESSION_AVALANCHE);
 	BIND_ENUM_CONSTANT(VARIANT_FIRE);
 	BIND_ENUM_CONSTANT(VARIANT_STRIKE);
 	BIND_ENUM_CONSTANT(VARIANT_BROWSE);
