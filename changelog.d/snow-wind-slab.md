@@ -1,0 +1,1 @@
+- Snow: wind slab. Snow falling in wind lands denser, drifting wind packs the surface toward 350 kg/m3, and `SnowCover3D.get_wind_slab_at` gives the wind-packed thickness (`wind_packing_enabled`).
