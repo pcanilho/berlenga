@@ -891,8 +891,12 @@ float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos) {
 	float dep = wave_env_depression(p_state.air_t0, p_state.air_rh0, dz);
 	const Vector2 xz(p_pos.x, p_pos.z);
 	if (p_state.mid_cover > 0.001f) {
-		const float n = cover_noise(xz + mid_warp(xz - p_state.mid_drift) + Vector2(4721.0f, 8363.0f), p_state.mid_drift, p_state.mid_scale, p_state.evolve);
-		const float rh = wave_layer_rh(n, p_state.mid_cover, mid_cover_at(p_state, xz));
+		// The layer's moisture for lenses at three times the altocumulus patches' scale, without their saturated cores:
+		// read at the patches' own scale the lift condensed only inside patches, and each lens's outline was a patch's
+		// (an irregular blob seen from below). Broad and smooth, the moisture leaves the outline to the wave's crest:
+		// long, smooth lenses along it, as observed.
+		const float n = cover_noise(xz + Vector2(4721.0f, 8363.0f), p_state.mid_drift, 3.0f * p_state.mid_scale, p_state.evolve);
+		const float rh = wave_layer_rh(n, p_state.mid_cover, 0.0f);
 		// A flat-topped profile (exp(-d^4)): moist through some 800 m with sharp edges, as a sounding's moist layer under
 		// an inversion; a Gaussian's long tails let a strong wave condense a lens 1.5 km deep (a blob, not a lens).
 		const float d = (p_pos.y - p_state.mid_height) / (0.75f * p_state.mid_thickness + 150.0f);
@@ -1912,8 +1916,8 @@ float wc_wave_depression(vec3 p) {
 	float rh = clamp(cloud_air.y * (exp(-max(dz, 0.0) / 8000.0) - 0.02) / 0.98, 0.01, 1.0);
 	float dep = -log(rh) * tk * tk / 5423.0;
 	if (cloud_mid_cover > 0.001) {
-		float n = wc_cover_noise_at(p.xz + wc_mid_warp(p.xz - cloud_mid_drift) + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), cloud_mid_scale);
-		float rh = wc_wave_layer_rh(n, cloud_mid_cover, wc_layer_cover_n(n, cloud_mid_cover, p.xz, false));
+		float n = wc_cover_noise_at(p.xz + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), 3.0 * cloud_mid_scale); // wave_dew_depression_at(): broad moisture
+		float rh = wc_wave_layer_rh(n, cloud_mid_cover, 0.0);
 		float d = (p.y - cloud_mid_height) / (0.75 * cloud_mid_thickness + 150.0);
 		float w = exp(-d * d * d * d) * min(1.0, 4.0 * cloud_mid_cover); // wave_dew_depression_at(): flat-topped
 		dep = mix(dep, min(dep, -log(rh) * tk * tk / 5423.0), w);
