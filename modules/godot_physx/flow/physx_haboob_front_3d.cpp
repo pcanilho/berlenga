@@ -91,7 +91,7 @@ void PhysXHaboobFront3D::_build() {
 	flow->set_buoyancy(0.0f);
 	flow->set_smoke_buoyancy(0.0f);
 	flow->set_smoke_fade(0.02f);
-	flow->set_vorticity(2.0f);
+	flow->set_vorticity(4.0f);
 	flow->set_emission_strength(0.0f);
 	flow->set_temperature_range(1.0f);
 	flow->set_fire_light(false);
@@ -100,10 +100,12 @@ void PhysXHaboobFront3D::_build() {
 	// Optics of the near field. Inside a haboob's wall visibility is tens to a hundred metres (extinction about
 	// 0.03-0.05 per m), so the billows are graded and see-through at their edges, not a hard puff: a hard edge
 	// shows the grid. The head mixes the foot's dust up through about ten times its volume (smoke about 0.1 there
-	// for 1 at the foot), so 0.25 per unit gives that inside the head and a dense foot. Mineral dust scatters with albedo about 0.92 and a strong forward lobe (asymmetry about 0.7 at
+	// for 1 at the foot), so 0.3 per unit gives that inside the head and a dense foot (0.3 read best on the PC, 0.08
+	// too faint). Mineral dust scatters with albedo about 0.92 and a strong forward lobe (asymmetry about 0.7 at
 	// 550 nm; Dubovik et al. 2002), and the light dims through tens of metres of it, so the shadow reach spans the
 	// head (a few metres lit every billow alike, flat and pale). Strength 1 keeps raster and the path tracer alike.
-	flow->set_smoke_density(0.25f);
+	// Vorticity confinement 4 keeps the rolls' edges (2 and 1 blurred them into streaks on the PC).
+	flow->set_smoke_density(0.3f);
 	flow->set_scattering_strength(1.0f);
 	flow->set_scattering_albedo(0.92f);
 	flow->set_scattering_anisotropy(0.6f);
