@@ -451,6 +451,33 @@ private:
 	void _lodge_step_cell(int p_i, const Vector3 &p_pos, float p_dt, const WorldWeather *p_weather, float p_ucrit, bool p_crop);
 	void _lodge_rows(int p_rows, const Vector3 &p_center);
 	void _lodge_upload();
+	// Hay meadows (hay_meadows; docs/ideas/vegetation.md, "Mowing and hay rows"): polygons mown on a day of the year
+	// (or a fixed number of days ago). In the shader: stubble regrowing, the cut grass lying in swaths, tedded, raked
+	// into windrows and carted, from a map of which meadow each 0.5 m texel is in (mow_map) and a texel a meadow of its
+	// state (mow_state: days since mown, row angle), so the days pass without a rebuild.
+	struct HayMeadow {
+		PackedVector2Array polygon;
+		Rect2 bounds;
+		float row_angle = 0.0f; // Radians: the mower's passes and the rows along world (cos, sin) in xz.
+		int mow_day = -1; // Day of the year mown; with a season_source the days since follow the calendar.
+		float days = -1.0f; // Fixed days since mown (>= 0); below 0 the calendar.
+		float current = -1.0f; // Days since mown now; below 0 not mown (or long grown back).
+	};
+	static constexpr int MAX_HAY_MEADOWS = 64;
+	static constexpr float HAY_REACH = 3.2f; // m a cut blade can be gathered sideways into its row (half the widest pitch).
+	Array hay_meadows;
+	LocalVector<HayMeadow> meadows;
+	int hay_day = -1;
+	Ref<ImageTexture> mow_texture;
+	Ref<ImageTexture> mow_state_texture;
+	Rect2 mow_rect;
+	void _build_mow_map();
+	void _update_mow_state(int p_day);
+	void _publish_mow();
+	float _hay_reach() const { return meadows.is_empty() ? 0.0f : HAY_REACH; }
+	static LocalVector<GrassField3D *> hay_nodes; // In the tree with hay meadows (mown_days_at).
+	static uint64_t hay_generation;
+	void _hay_register();
 	bool graze_any = false;
 	bool graze_published = false; // The ground field handed grass_graze_map to the ground shader.
 	void _read_graze(TerrainDataMap3D *p_map);
@@ -691,6 +718,14 @@ public:
 	float get_row_spacing() const { return row_spacing; }
 	static constexpr int MAX_PLOTS = 63;
 	void set_fields(const Array &p_fields);
+	void set_hay_meadows(const Array &p_meadows);
+	Array get_hay_meadows() const { return hay_meadows; }
+	float get_mown_days_at(const Vector3 &p_position) const;
+	// Days since the ground was mown, over every GrassField3D in the tree with hay meadows (-1: not in a mown meadow);
+	// the generation changes whenever a meadow, or its days, does (VegetationField3D follows it).
+	static float mown_days_at(const Vector3 &p_position);
+	static uint64_t get_hay_generation() { return hay_generation; }
+	static bool has_hay_meadows() { return !hay_nodes.is_empty(); }
 	void set_hedges(bool p_enabled);
 	bool get_hedges() const { return hedges; }
 	void set_hedge_offset(float p_offset);

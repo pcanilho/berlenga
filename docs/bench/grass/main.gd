@@ -39,6 +39,8 @@ extends Node3D
 #                    seen from beside a thistle in seed
 #   --snowy          with --day: a snowy winter (January -6 C, July 18 C, 1100 mm): a long lie, then the sward after
 #                    the melt (GrassField3D.snowmelt); prints GRASS_MELT (days lain, days since the melt, matting)
+#   --hay=D          the meadow round the camera mown D days ago (GrassField3D.hay_meadows): 0 swaths, 1-2 tedded,
+#                    3 windrows, 4 and on stubble growing back
 #   --out=path.png   save the last frame
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
@@ -128,6 +130,7 @@ var frost := false
 var snowy := false
 var seed_down := false
 var pollen_cloud := false
+var hay_days := -1.0
 var flood := Vector2(-1, 10) # --flood: metres over the pond, days since
 var season_map: WeatherMap3D
 var bench_season := {}
@@ -361,6 +364,7 @@ func _ready() -> void:
 		elif a == "--snowy": snowy = true
 		elif a == "--seed-down": seed_down = true
 		elif a == "--pollen-cloud": pollen_cloud = true
+		elif a.begins_with("--hay="): hay_days = float(a.get_slice("=", 1))
 		elif a == "--river": river = true
 		elif a.begins_with("--flood="):
 			var fp := a.substr(8).split(",")
@@ -435,6 +439,8 @@ func _ready() -> void:
 	if OS.get_environment("GRASS_STILL") == "1":
 		grass.still_shot = true
 	grass.name = "Grass"
+	if hay_days >= 0.0:
+		grass.hay_meadows = [{"polygon": PackedVector2Array([Vector2(-90, -90), Vector2(90, -90), Vector2(90, 90), Vector2(-90, 90)]), "row_angle": 0.35, "days": hay_days}]
 	grass.fallback_wind = wind
 	grass.far_match_view = OS.get_environment("GRASS_VIEW_MATCH") != "0" # 0: without the live-view far match.
 	if OS.get_environment("GRASS_RADIUS") != "":
@@ -513,6 +519,7 @@ func _ready() -> void:
 		# the blades' root colour, streaks and thatch, so a gap shows more grass, not soil.
 		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
 		grass.ground_tint_enabled = false # The undercoat grows everywhere, so it owns the tint.
+		under.hay_meadows = grass.hay_meadows # Every layer of the sward is mown.
 		add_child(under)
 		if season_map:
 			under.season_source = under.get_path_to(season_map)
@@ -534,6 +541,7 @@ func _ready() -> void:
 		turf.tip_color = Color(0.3, 0.42, 0.12)
 		turf.dryness = 0.35
 		turf.ground_tint_enabled = false
+		turf.hay_meadows = grass.hay_meadows
 		add_child(turf)
 		if season_map:
 			turf.season_source = turf.get_path_to(season_map)
@@ -1893,6 +1901,19 @@ func _check(label: String, ok: bool, value) -> void:
 	if not ok:
 		fails += 1
 
+# Hay meadows (GrassField3D.hay_meadows): days since mown inside a meadow, fixed or by the calendar (the season's day
+# of the year, none before the mowing day); -1 outside.
+func _hay_checks() -> void:
+	var g := GrassField3D.new()
+	var sq := PackedVector2Array([Vector2(0, 0), Vector2(20, 0), Vector2(20, 20), Vector2(0, 20)])
+	g.hay_meadows = [{"polygon": sq, "row_angle": 0.3, "days": 2.0}, {"polygon": Transform2D(0.0, Vector2(40, 0)) * sq, "mow_day": 170}]
+	var a := g.get_mown_days_at(Vector3(5, 0, 5))
+	var b := g.get_mown_days_at(Vector3(50, 0, 5))
+	var c := g.get_mown_days_at(Vector3(30, 0, 5))
+	_check("hay meadows: days since mown inside a meadow (fixed 2; calendar without a season: not mown), -1 outside",
+			a == 2.0 and b == -1.0 and c == -1.0 and g.hay_meadows.size() == 2, [a, b, c])
+	g.free()
+
 # The sward through the year (docs/ideas/vegetation-seasons.md, step 1): greenness from the
 # season state's soil moisture and temperature, into the blades' and ground's dryness.
 func _season_checks() -> void:
@@ -2226,6 +2247,7 @@ func _run_checks() -> void:
 
 func _checks() -> void:
 	_season_checks()
+	_hay_checks()
 	var count := grass.get_blade_count()
 	_check("blades placed", count > 10000, count)
 	print("GRASS_STATS blades=%d tiles=%d last_build_ms=%.1f" % [count, grass.get_tile_count(), grass.get_build_time_msec()])

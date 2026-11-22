@@ -1937,3 +1937,24 @@ Built: PlantGenerator.make_bank_roots (plant_bank.cpp), two species.
   variant nearest it, so the roots sit on slumped and near-vertical faces alike.
 - Check: vegetation --test "bank roots"; plants bench --close=113 --bank.
 - Not yet: roots shown in the sod blocks' undersides when a lip falls; roots on rock clefts (trees' cliff roots).
+
+## Mowing and hay rows (round 8, third pick)
+Haymaking in a temperate climate: mow, ted (spread to dry), rake into windrows once nearly dry, bale; "about three
+days of good weather to cure hay" (UNH Extension, "Haymaking"); in the UK "rarely made in under three days" (FAO,
+Grassland Fodder Conservation, ch. II). Stubble of 3 to 4 inches (7.5 to 10 cm) for quick regrowth (UNH; Ontario
+OMAFRA, "Cutting, conditioning and raking for faster hay drying"). With a 2 to 3 m cut "the swath should be gathered
+to 1.6 m" (FAO). Well-made hay feels crisp and looks bright; bleached hay is weathered (FAO).
+Built: GrassField3D.hay_meadows (polygon, row_angle, mow_day or fixed days), all in the blade shader from a 0.5 m
+index map (mow_map) and a texel a meadow of state (mow_state: days since mown, row angle; a texture, not a uniform
+array, for the path tracer's material slot), so the days pass without a rebuild.
+- Every blade is cut to a 7.5 to 10 cm stubble that grows back over about six weeks (an estimate).
+- 60% of the blades are the cut grass (an estimate): day 0 lying in swaths, passes 3 m apart, 1.6 m wide, heaped
+  10 cm; days 1 and 2 tedded flat over the stubble every way; day 3 raked into windrows 6 m apart (two swaths to a
+  row, an estimate), 1.2 m wide, heaped 30 cm; from day 4 baled and carted. Gathered by moving each blade across its
+  row in the shader (tiles' culling boxes grow by 3.2 m with meadows), so a windrow holds its whole strip's grass.
+- Colour: wilts duller on the day, cures to green-gold over three days.
+- VegetationField3D: the generator's herbs over 12 cm in a mown meadow are not placed until 28 days on (an estimate);
+  GrassField3D.mown_days_at over every meadow node; streamed tiles are placed again when a meadow's days change.
+- Check: grass --test "hay meadows", vegetation --test "hay meadows"; grass --hay=D (0, 1, 3, 5).
+- Not yet: bales lying in the field on day 3 (a Tripo or generated prop), cut herb stalks in the stubble, the far
+  ground showing the rows past the blades' reach.
