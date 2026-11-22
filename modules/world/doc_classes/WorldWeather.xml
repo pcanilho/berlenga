@@ -569,7 +569,7 @@
 			<param index="0" name="position" type="Vector3" />
 			<param index="1" name="day" type="int" default="-1" />
 			<description>
-				The season's state at the point's height on a day of the year (below 1: today), with the live departure from the climate: phenology, snowpack, soil frost (the keys of WeatherMap3D.get_season). Default: the default climate.
+				The season's state at the point's height on a day of the year (below 1: today), with the live departure from the climate: phenology, snowpack, soil frost (the keys of WeatherMap3D.get_season), and for today the place's latest late frost ([code]leaf_frost[/code], [code]leaf_frost_forcing[/code], [code]leaf_frost_days[/code]; WeatherMap3D.late_frost). Default: the default climate.
 			</description>
 		</method>
 		<method name="smoke_at" qualifiers="const">

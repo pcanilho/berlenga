@@ -26,6 +26,7 @@ extends Node3D
 #                     side by side in winter grass (trees.md 5l), seen from 1.7 m, 10 m back
 #   --sun-energy=E    sun energy (default 1.4; 0 for sky light only)
 #   env GLAZE_HOURS=H  an ice storm H hours long before the shot: clear ice on every tree (trees.md 5be)
+#   env LATE_FROST=D  a hard late frost D days before the --day shot: the young leaves out then brown
 #   env FIRE_AGE=Y [SCORCH=H]  a past fire Y years ago, crowns killed up to H m (default 30): needle cast
 #   --colonnade       a colonnade (trees.md 5az): five forest spruce on stilts in a row over one vanished log
 #   --beaver          beaver work (trees.md 5au): a gnawed birch, fresh and old stumps (one resprouting), a felled stem
@@ -200,7 +201,14 @@ static func weather_season(d: int) -> Dictionary:
 	w.season_day = d
 	var s := w.get_season()
 	w.free()
-	return s if not s.is_empty() else season_for(d, 46.0)
+	s = s if not s.is_empty() else season_for(d, 46.0)
+	# env LATE_FROST=DAYS: a hard late frost DAYS days before the shot (WeatherMap3D.late_frost), the forcing
+	# that night 50 K days short of today's.
+	if OS.has_environment("LATE_FROST"):
+		s["leaf_frost"] = 1.0
+		s["leaf_frost_days"] = float(OS.get_environment("LATE_FROST"))
+		s["leaf_frost_forcing"] = float(s.get("forcing", 0.0)) - 50.0
+	return s
 
 # A stand-in for WeatherMap3D.get_season() (docs/ideas/trees.md 2c): a temperate climate at
 # 50 N, daily mean 0 C mid-January to 18 C mid-July, integrated from 1 Jan (forcing, degree days

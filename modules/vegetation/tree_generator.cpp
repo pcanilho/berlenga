@@ -4583,6 +4583,17 @@ TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dic
 		ls.out = 0.0f;
 		ls.fallen = 1.0f;
 	}
+	// A late frost (WeatherMap3D.late_frost, through the season at the tree's place): the leaves that were unfolding
+	// that night die and brown, while buds still closed survive (Augspurger 2009; Vitasse, Lenz and Koerner 2014).
+	// Fully grown leaves have hardened somewhat. Dormant buds put out a second flush over three to six weeks, so
+	// early species in the hollows stand brown while late ones (oak, ash) leaf out unharmed after it.
+	const float frost = p_season.get("leaf_frost", 0.0f);
+	if (frost > 0.0f && ls.out > 0.0f) {
+		const float out_then = CLAMP((float(p_season.get("leaf_frost_forcing", 0.0f)) - need) / 150.0f, 0.0f, 1.0f);
+		const float days = p_season.get("leaf_frost_days", 0.0f);
+		const float tender = out_then <= 0.0f ? 0.0f : Math::lerp(1.0f, 0.4f, Math::smoothstep(0.7f, 1.0f, out_then));
+		ls.frost = CLAMP(frost * tender * (1.0f - Math::smoothstep(21.0f, 42.0f, days)), 0.0f, 1.0f);
+	}
 	return ls;
 }
 
@@ -4593,6 +4604,7 @@ Dictionary TreeGenerator::get_leaf_season(Preset p_preset, const Dictionary &p_s
 	d["autumn"] = ls.autumn;
 	d["fallen_fraction"] = ls.fallen;
 	d["autumn_color"] = ls.color;
+	d["frost_browned"] = ls.frost;
 	// Heath shrubs (trees.md 5u): the open share of their flowers, and its colour.
 	if (p_preset == PRESET_GORSE || p_preset == PRESET_BROOM || p_preset == PRESET_GUM_ROCKROSE || p_preset == PRESET_WHITE_BROOM) {
 		d["flowering"] = get_bloom(p_preset, p_season.get("day_of_year", 182.0f));
@@ -20427,6 +20439,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 							if (vls.autumn > er.randf()) {
 								c = c.lerp(vls.color, 0.8f);
 							}
+							if (vls.frost > 0.0f && vls.frost > er.randf()) {
+								c = c.lerp(Color(0.16f, 0.09f, 0.045f), 0.9f); // late frost (draws only then: the stream is unchanged without)
+							}
 							const Vector3 lup = (Vector3(0, 1, 0) + bo * 0.4f).normalized();
 							if (!browse_kept(_browse_keep(at), at)) {
 								continue;
@@ -20592,6 +20607,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float young = 1.0f - leaf_season.out;
 			r_size *= Math::lerp(1.0f, 0.3f, young);
 			r_color = r_color.lerp(Color(r_color.r * 1.6f, r_color.g * 1.45f, r_color.b * 0.9f), young * 0.7f);
+		}
+		if (leaf_season.frost > 0.0f) {
+			// Frost-killed: limp, dark brown and shrivelled (a key of its own, so it is not the autumn order).
+			const float hf = float(hash_murmur3_one_32(p_key ^ 0x5bd1e995u, season_seed) & 0xffffff) / float(0x1000000);
+			if (hf < leaf_season.frost) {
+				r_color = r_color.lerp(Color(0.16f, 0.09f, 0.045f), 0.9f);
+				r_size *= 0.8f;
+				return true;
+			}
 		}
 		const float turn = CLAMP((leaf_season.autumn - h) * 6.0f, 0.0f, 1.0f);
 		if (turn > 0.0f) {
@@ -22490,6 +22514,9 @@ void TreeGenerator::_grow_fire_regrowth(Builder &r_bark, Builder &r_leaves) {
 			Color c(young.r * j, young.g * j, young.b);
 			if (vls.autumn > fr.randf()) {
 				c = c.lerp(vls.color, 0.8f);
+			}
+			if (vls.frost > 0.0f && vls.frost > fr.randf()) {
+				c = c.lerp(Color(0.16f, 0.09f, 0.045f), 0.9f); // late frost (draws only then: the stream is unchanged without)
 			}
 			if (needles) {
 				for (int k = 0; k < 6; k++) {

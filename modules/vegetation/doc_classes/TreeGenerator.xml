@@ -140,6 +140,7 @@
 			<param index="0" name="preset" type="int" enum="TreeGenerator.Preset" />
 			<param index="1" name="season" type="Dictionary" />
 			<description>
+				The species' leaves for a season state ([method WorldWeather.season_at]): [code]leaf_out[/code], [code]autumn[/code], [code]fallen_fraction[/code], [code]autumn_color[/code], and [code]frost_browned[/code], the share killed by a late frost (the season's [code]leaf_frost[/code] keys) and not yet replaced by the second flush.
 			</description>
 		</method>
 		<method name="get_near_mesh_count" qualifiers="const">

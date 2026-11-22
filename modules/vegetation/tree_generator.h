@@ -704,6 +704,7 @@ private:
 		float autumn = 0.0f; // Share of leaves turned.
 		float fallen = 0.0f; // Share of the latest leaf crop on the ground.
 		Color color; // Turned leaf colour.
+		float frost = 0.0f; // Share of the leaves killed by a late frost and not yet replaced by the second flush.
 		// The turned share of the leaves still on the tree.
 		float season_blend() const { return fallen >= 1.0f ? 0.0f : CLAMP((autumn - fallen) / (1.0f - fallen), 0.0f, 1.0f); }
 	};

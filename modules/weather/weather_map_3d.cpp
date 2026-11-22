@@ -798,6 +798,20 @@ void WeatherMap3D::_shift(Vector2i p_new_origin) {
 			cell_frost.write[z * n + x] = inside ? frost[sz * n + sx] : frost_mean;
 		}
 	}
+	if (cell_leaf_frost.size() == 3 * n * n) {
+		const Vector<float> lf = cell_leaf_frost;
+		float *o = cell_leaf_frost.ptrw();
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int sx = x + d.x;
+				const int sz = z + d.y;
+				const bool inside = sx >= 0 && sz >= 0 && sx < n && sz < n;
+				for (int k = 0; k < 3; k++) {
+					o[3 * (z * n + x) + k] = inside ? lf[3 * (sz * n + sx) + k] : 0.0f;
+				}
+			}
+		}
+	}
 	_rain_shift(d);
 	_smoke_shift(d);
 	origin_cell = p_new_origin;
@@ -868,6 +882,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	_update_drainage(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
 	_update_breeze(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
 	_update_ridge_clouds(p_weather_dt);
+	_update_leaf_frost();
 	c.pool = cold_pools && cell_pool.size() == resolution * resolution ? cell_pool.ptr() : nullptr;
 	const bool oro_ready = orographic_rain && cell_oro.size() == resolution * resolution;
 	c.oro = oro_ready ? cell_oro.ptr() : nullptr;
@@ -1427,10 +1442,22 @@ Dictionary WeatherMap3D::get_season_at_height(float p_height) const {
 // The weather contract's season: the cached one at the map's ground for today, else computed at the point's height.
 Dictionary WeatherMap3D::contract_season_at(const Vector3 &p_position, int p_day) const {
 	const int day = p_day >= 1 ? MIN(p_day, 365) : get_day_of_year();
+	Dictionary d;
 	if (day == get_day_of_year() && Math::abs(p_position.y - ground_height) < 25.0f) {
-		return const_cast<WeatherMap3D *>(this)->get_season();
+		d = const_cast<WeatherMap3D *>(this)->get_season();
+	} else {
+		d = WeatherSeason::to_dictionary(WeatherSeason::compute(_season_climate(), p_position.y, day, season_anomaly));
 	}
-	return WeatherSeason::to_dictionary(WeatherSeason::compute(_season_climate(), p_position.y, day, season_anomaly));
+	// The place's worst recent late frost (late_frost), for the leaves out that night.
+	if (day == get_day_of_year()) {
+		const Vector3 lf = get_leaf_frost_at(p_position);
+		if (lf.z >= 0.0f) {
+			d["leaf_frost"] = lf.x;
+			d["leaf_frost_forcing"] = lf.y;
+			d["leaf_frost_days"] = lf.z;
+		}
+	}
+	return d;
 }
 
 Dictionary WeatherMap3D::get_season_on_day(int p_day) const {
@@ -2313,6 +2340,89 @@ int WeatherMap3D::get_ridge_cloud_count() const {
 		c += s.ridge && s.fade > 0.05f ? 1 : 0;
 	}
 	return c;
+}
+
+// Late frost on new leaves (Augspurger 2009; Vitasse, Lenz and Koerner 2014): after budburst the unfolding leaves
+// lose the buds' hardiness and are killed by air frosts of about -2 to -4 C, which a clear night brings first to the
+// cold pools in hollows. Each cell keeps its worst recent spring frost: how hard it was, and how far the season's
+// forcing (the budburst clock, K days above 5 C at the cell's height) had run that night, so a reader can tell
+// which species were in young leaf then (TreeGenerator: the early ones browned, the late ones still in bud).
+void WeatherMap3D::_update_leaf_frost() {
+	const int n = resolution;
+	if (!late_frost) {
+		cell_leaf_frost.clear();
+		return;
+	}
+	if (cell_leaf_frost.size() != 3 * n * n) {
+		cell_leaf_frost.resize(3 * n * n);
+		cell_leaf_frost.fill(0.0f);
+	}
+	const int day = get_day_of_year();
+	const float t0 = cur_air_temperature;
+	if (day < 32 || day > 200 || t0 > 6.0f) { // spring only; no cell can reach -1.5 C from a 6 C night
+		return;
+	}
+	const float now_day = float(weather_time / 86400.0);
+	const bool heights = cell_height.size() == n * n;
+	const bool pools = cold_pools && cell_pool.size() == n * n;
+	const WeatherSeason::Climate cl = _season_climate();
+	// The forcing by height, in 25 m bands, worked out only for the bands a frost reaches.
+	HashMap<int, float> forcing_at;
+	float *lf = cell_leaf_frost.ptrw();
+	for (int i = 0; i < n * n; i++) {
+		const float g = heights && Math::is_finite(cell_height[i]) ? cell_height[i] : ground_height;
+		const float t = t0 - 0.0065f * (g - ground_height) - (pools ? cell_pool[i] : 0.0f);
+		const float sev = Math::smoothstep(-1.5f, -4.5f, t);
+		if (sev <= 0.0f) {
+			continue;
+		}
+		float *e = lf + 3 * i;
+		const float age = now_day - e[2];
+		const float held = e[0] * (1.0f - Math::smoothstep(21.0f, 42.0f, age));
+		if (sev <= held && !(age < 0.5f && sev > e[0])) {
+			continue;
+		}
+		const int band = int(Math::floor(g / 25.0f));
+		float *f = forcing_at.getptr(band);
+		if (f == nullptr) {
+			f = &forcing_at.insert(band, WeatherSeason::compute(cl, (band + 0.5f) * 25.0f, day, season_anomaly).forcing)->value;
+		}
+		if (age < 0.5f && e[0] > 0.0f) {
+			e[0] = MAX(e[0], sev); // the same night, colder
+		} else {
+			e[0] = sev;
+			e[2] = now_day;
+		}
+		e[1] = *f;
+	}
+}
+
+Vector3 WeatherMap3D::get_leaf_frost_at(const Vector3 &p_position) const {
+	const int n = resolution;
+	if (!late_frost || cell_leaf_frost.size() != 3 * n * n) {
+		return Vector3(0.0f, 0.0f, -1.0f);
+	}
+	const Vector2 xz(p_position.x, p_position.z);
+	const float sev = _sample(cell_leaf_frost, xz, 3, 0);
+	if (sev <= 0.01f) {
+		return Vector3(0.0f, 0.0f, -1.0f);
+	}
+	// The nearest cell's event: forcing and date do not blend between nights.
+	const float cs = _cell_size();
+	const int x = CLAMP(int(Math::floor(p_position.x / cs)) - origin_cell.x, 0, n - 1);
+	const int z = CLAMP(int(Math::floor(p_position.z / cs)) - origin_cell.y, 0, n - 1);
+	const float *e = cell_leaf_frost.ptr() + 3 * (z * n + x);
+	if (e[0] <= 0.0f) {
+		return Vector3(0.0f, 0.0f, -1.0f);
+	}
+	return Vector3(sev, e[1], MAX(float(weather_time / 86400.0) - e[2], 0.0f));
+}
+
+void WeatherMap3D::set_late_frost(bool p_enabled) {
+	late_frost = p_enabled;
+	if (!p_enabled) {
+		cell_leaf_frost.clear();
+	}
 }
 
 void WeatherMap3D::set_upslope_winds(bool p_enabled) {
@@ -4548,7 +4658,11 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_upslope_winds", "enabled"), &WeatherMap3D::set_upslope_winds);
 	ClassDB::bind_method(D_METHOD("is_upslope_winds_enabled"), &WeatherMap3D::is_upslope_winds_enabled);
 	ClassDB::bind_method(D_METHOD("get_ridge_cloud_count"), &WeatherMap3D::get_ridge_cloud_count);
+	ClassDB::bind_method(D_METHOD("set_late_frost", "enabled"), &WeatherMap3D::set_late_frost);
+	ClassDB::bind_method(D_METHOD("is_late_frost_enabled"), &WeatherMap3D::is_late_frost_enabled);
+	ClassDB::bind_method(D_METHOD("get_leaf_frost_at", "position"), &WeatherMap3D::get_leaf_frost_at);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "upslope_winds"), "set_upslope_winds", "is_upslope_winds_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "late_frost"), "set_late_frost", "is_late_frost_enabled");
 	ClassDB::bind_method(D_METHOD("set_drainage_winds", "enabled"), &WeatherMap3D::set_drainage_winds);
 	ClassDB::bind_method(D_METHOD("is_drainage_winds_enabled"), &WeatherMap3D::is_drainage_winds_enabled);
 	ClassDB::bind_method(D_METHOD("get_drainage_wind_at", "position", "height_above_ground"), &WeatherMap3D::get_drainage_wind_at, DEFVAL(-1.0f));

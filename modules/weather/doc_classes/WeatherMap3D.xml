@@ -335,6 +335,13 @@
 				The open water crossed upwind of [param position] (km), each kilometre weighted by exp(-s / 60 km) for its distance s back from the point, from the lake-effect square (128 km round the camera at 2 km, water a metre deep or more from [WorldWater]; water beyond its edge continues as the edge holds). 0 before the square is sampled.
 			</description>
 		</method>
+		<method name="get_leaf_frost_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The worst recent late frost at [param position] (see [member late_frost]): x its severity (0 at -1.5 C, 1 at -4.5 C air), y the season's forcing there that night (K days, to tell which species were in young leaf), z the days since; [code](0, 0, -1)[/code] for none. [method WorldWeather.season_at] carries it as [code]leaf_frost[/code], [code]leaf_frost_forcing[/code] and [code]leaf_frost_days[/code].
+			</description>
+		</method>
 		<method name="get_mid_cloud_cover_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -1115,6 +1122,9 @@
 		</member>
 		<member name="lake_effect_snow" type="bool" setter="set_lake_effect_snow" getter="is_lake_effect_snow" default="true">
 			Lake-effect snow: bands of convective cloud and snow downwind of open water when cold air crosses it (see [method get_lake_effect_at]).
+		</member>
+		<member name="late_frost" type="bool" setter="set_late_frost" getter="is_late_frost_enabled" default="true">
+			Late frost on new leaves: each cell keeps its worst spring air frost (February to mid July) with the season's forcing that night, so leaves that were unfolding then brown ([method TreeGenerator.get_leaf_season]) while buds still closed survive (Augspurger 2009; Vitasse, Lenz and Koerner 2014). Cold pools bring it to hollows first. It fades as the second flush grows, three to six weeks on.
 		</member>
 		<member name="mid_cloud_cover" type="float" setter="set_mid_cloud_cover" getter="get_mid_cloud_cover" default="0.15">
 			The base cover of the mid cloud layer (altocumulus; a full cover is an altostratus sheet) at [member mid_cloud_height]. The weather drives what is drawn: dry air thins it to 0.2 of this, rain set in [member rain_rate] thickens it into a sheet, easing twice as fast as the rain (after the cirrus, before the rain). It follows the rain and never makes it: precipitation stays the main layer's. It stays out of [member cloud_cover] and [method get_cloud_cover_at]. It drifts with [method get_wind_aloft] at its height. See docs/ideas/clouds.md.
