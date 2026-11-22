@@ -588,6 +588,7 @@ public:
 	void clear();
 	void add_snow(float p_swe_mm, float p_density = 100.0f, bool p_world = true);
 	void add_drift(const Vector3 &p_position, float p_radius, float p_depth, float p_density = 300.0f);
+	void add_mound(const Vector3 &p_position, float p_radius, float p_volume, float p_density = 300.0f, float p_ceiling = float(Math::INF), float p_taper = 0.8f);
 	Array get_layers_at(const Vector3 &p_position) const;
 	void set_layers_enabled(bool p_enabled);
 	bool is_layers_enabled() const { return layers_enabled; }
