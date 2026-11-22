@@ -900,6 +900,14 @@ sunk a third, the rest lying, cover 0.6/0.3/0.1 by class); tiles are skipped the
 returns (gate, stone share) for other systems (terrain and vegetation could shade the fine centres). Bench:
 `--world --uplift=0.3 --frost --frost-spot[=stripes] --top=9`; raster and PT match.
 
+Look pass (22 Nov, the docs' review: centres read as flat olive blotches, the stones as pale paper flakes). Frost
+heave domes the fine centres 5 to 30 cm over their borders (Hallet and Prestrud 1986), and the landscape's 1 m
+mesh cannot draw a 1.5 m dome, so the dome is shading: the terrain's frost map (terrain_frost_map, which the
+terrain thread added for its bare silt centres) gains a b channel, the fines' share times its own 2.75 m tent blur,
+square-rooted, so wide domains stand highest. The terrain material bends the normal by an 18 cm dome and pales the silt on the crown, darker at the wet margin. Border stones are now the rockfall family's joint blocks (the
+talus chips are platy), coarser, mostly lying and sunk only 4 to 12% (a pile, not a pavement), a quarter heaved
+to 35 to 65 degrees; border cover 0.6/0.4/0.2 by class. Libraries for the blocks only where a cell sorts.
+
 **C. Feet and tyres crush the new detail.** The trail armour and the rooting clods do not react to prints yet. The
 reacting-stones path (ground detail "Stones that react") already presses grains into a print and spills them at
 its rim; extend it to the rooting clods (GroundClods3D's crushed test on the print field, as its own clods) and
