@@ -852,6 +852,26 @@ float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, 
 	return cover;
 }
 
+// Salt bloom (efflorescence) on stone (docs/ideas/world-links.md, "Salt bloom"): the spray's salt crystallises where
+// the film dries, a white halite crust in the sheltered stone that keeps it (p_keep 0..1: hollows and steep faces
+// high, rain-washed tops low), patchy (p_patch 0..1, noise) and grainy (p_grain), gone under any film of water (p_wet), back as it dries
+// (Mustoe 1982; Goudie and Viles 1997; Huinink et al. 2004). The rocks' own shader keeps a like rule. Returns the
+// crust's share.
+float weather_salt_bloom_apply(float p_salt, float p_wet, float p_keep, float p_patch, float p_grain, inout vec3 r_albedo, inout float r_roughness) {
+	if (p_salt <= 0.0) {
+		return 0.0;
+	}
+	// The load sets how much of the stone the crust takes (at most 0.4 of it: a bloom is patchy, never a coat of
+	// paint); the patches fill from their highest values down with soft, thin edges, so a light load shows as
+	// scattered faint patches.
+	float share = 0.4 * smoothstep(0.12, 0.65, p_salt * p_keep);
+	float crust = smoothstep(1.0 - share - 0.07, 1.0 - share + 0.07, p_patch) * smoothstep(0.0, 0.05, share) * (1.0 - smoothstep(0.08, 0.35, p_wet));
+	// The crust is a mat of crystals, thicker and thinner grain to grain (p_grain 0..1, fine noise; 0.5 unresolved).
+	r_albedo = mix(r_albedo, vec3(0.82, 0.81, 0.78), crust * (0.55 + 0.45 * p_grain));
+	r_roughness = mix(r_roughness, 0.92, crust);
+	return crust;
+}
+
 // Salt spray burn on leaves (Boyce 1954; foliar chloride necrosis): from about 2 g/m2 of sea salt (p_salt 0.15) the
 // leaves brown one by one (p_hash, 0..1 steady per leaf), each from the tip and edges in, until by about 20 g/m2
 // (0.85) most are dead brown. Returns the share browned, for the light through the leaf.

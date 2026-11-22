@@ -1641,6 +1641,7 @@ void fragment() {
 	float porosity = 0.0;
 	float por[5] = float[5](tm_rock_porosity, tm_scree_porosity, tm_soil_porosity, tm_alluvium_porosity, tm_sand_porosity);
 	float tm_sand_b = 0.0; // the sand's share of the blend, for its glitter
+	float tm_stone_b = 0.0; // rock and scree's share, for the salt bloom
 	float tm_sand_dry = 1.0;
 	// The height blend's band widens with the pixel's footprint (about 0.1 m at 70 m to 1 m at 700 m at 1080p): a
 	// pixel far off spans many of the stones and patches whose heights decide the blend, so it takes their mix. A
@@ -1656,9 +1657,11 @@ void fragment() {
 		dn += dns[i] * b;
 		porosity += por[i] * b;
 		tm_sand_b = i == 4 ? b : tm_sand_b;
+		tm_stone_b += i < 2 ? b : 0.0;
 	}
 	total = max(total, 1e-5);
 	tm_sand_b /= total;
+	tm_stone_b /= total;
 	albedo /= total;
 	rough /= total;
 	dn /= total;
@@ -2073,6 +2076,12 @@ void fragment() {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
 		// On printed ground a wet track's water lies in its prints (ground_contact_shape()).
 		c += ground_deform_enabled ? "\tfloat tm_wwet = weather_wetness_at(wp, ground_contact_shape(wp.xz));\n" : "\tfloat tm_wwet = weather_wetness_at(wp);\n";
+		if (salt_bloom) {
+			// Salt bloom on the sea cliffs' rock and scree (weather_salt_bloom_apply, as the rocks' shader): kept on steep
+			// and overhanging faces, washed off the tops, patchy over 2.5 m, 0.9 m and 0.35 m (octaves turned against each other so the value noise's grid does not
+			// show; the finest fades as the pixel nears it); a 4 cm crystal grain.
+			c += "\tweather_salt_bloom_apply(weather_salt_at(wp) * tm_stone_b, max(tm_wetness * tm_wwet, tm_gwet), (1.0 - 0.75 * smoothstep(0.25, 0.8, wn.y)), 0.5 * tm_vn(wp / 2.5 + 37.0) + 0.3 * tm_vn(wp.zyx / 0.9 + 53.0) + 0.2 * mix(0.5, tm_vn(wp.yxz / 0.35 + 71.0), 1.0 - smoothstep(0.08, 0.3, tm_fp0)), mix(0.5, tm_vn(wp / 0.04 + 89.0), 1.0 - smoothstep(0.01, 0.04, tm_fp0)), albedo, rough);\n";
+		}
 		c += "\tweather_wetness_apply(max(tm_wetness * tm_wwet, tm_gwet), wn.y, metallic, porosity, albedo, rough);\n";
 		// A film of rain water drowns the grains' facets.
 		c += "\ttm_sand_dry *= 1.0 - smoothstep(0.05, 0.3, tm_wetness * tm_wwet);\n";
@@ -2382,6 +2391,7 @@ MAT_SETTER_CODE(bool, rock_detail_enabled)
 MAT_SETTER(float, rock_detail_scale, CLAMP(p_value, 0.1f, 10.0f))
 MAT_SETTER(float, scree_blocks_distance, MAX(p_value, 0.0f))
 MAT_SETTER_CODE(bool, wetness_enabled)
+MAT_SETTER_CODE(bool, salt_bloom)
 MAT_SETTER_CODE(bool, snow_enabled)
 MAT_SETTER_CODE(bool, ground_deform_enabled)
 MAT_SETTER(float, far_start, MAX(p_value, 0.0f))
@@ -2527,6 +2537,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::FLOAT, rock_detail_scale, get_rock_detail_scale, PROPERTY_HINT_RANGE, "0.1,10,0.01")
 	BIND_PROP(Variant::FLOAT, scree_blocks_distance, get_scree_blocks_distance, PROPERTY_HINT_RANGE, "0,500,0.1,or_greater,suffix:m")
 	BIND_PROP(Variant::BOOL, wetness_enabled, is_wetness_enabled, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::BOOL, salt_bloom, is_salt_bloom, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, snow_enabled, is_snow_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, snow_max_slope, get_snow_max_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")
 	BIND_PROP(Variant::BOOL, ground_deform_enabled, is_ground_deform_enabled, PROPERTY_HINT_NONE, "")

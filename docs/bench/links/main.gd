@@ -236,6 +236,10 @@ func _skip(name: String, why: String) -> void:
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--salt="):
+			await _salt_view(a.substr(7), not OS.get_cmdline_user_args().has("--salt-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
 		if a.begins_with("--frost="):
 			await _frost_view(a.substr(8), OS.get_cmdline_user_args().has("--frost-off"))
 			get_tree().quit()
@@ -284,6 +288,7 @@ func _ready() -> void:
 	await _contract_tests()
 	await _shimmer_tests()
 	await _ground_color_tests()
+	await _salt_bloom_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -1723,6 +1728,88 @@ func _shimmer_view(path: String) -> void:
 			get_viewport().get_texture().get_image().save_png("%s/%03d.png" % [clip, i])
 	get_viewport().get_texture().get_image().save_png(path)
 	print("saved ", path)
+
+
+# Salt bloom on the terrain's sea cliffs: a rock wall (TerrainMaterial3D, steep faces are rock) under the spray's salt
+# (weather_spray_map G) and without it.
+func _salt_scene(p_pt: bool) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.5, 0.6, 0.75)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.6, 0.65)
+	env.environment.ambient_light_energy = 0.5
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if p_pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	root.add_child(env)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-35, 30, 0)
+	root.add_child(sun)
+	var wall := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(8, 4, 0.5)
+	wall.mesh = bm
+	wall.position = Vector3(0, 2, -3)
+	wall.material_override = TerrainMaterial3D.new()
+	root.add_child(wall)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 2, 2)
+	root.add_child(cam)
+	cam.make_current()
+	var img := Image.create(4, 4, false, Image.FORMAT_RG8)
+	img.fill(Color(0, 0.6, 0)) # about 9 g/m2 of salt
+	RenderingServer.global_shader_parameter_set("weather_spray_map", ImageTexture.create_from_image(img))
+	RenderingServer.global_shader_parameter_set("weather_spray_rect", Vector4(-50, -50, 100, 100))
+	return root
+
+
+func _salt_view(path: String, salt: bool, pt: bool) -> void:
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var root := _salt_scene(pt)
+	if not salt:
+		RenderingServer.global_shader_parameter_set("weather_spray_rect", Vector4(0, 0, 0, 0))
+	for i in 20:
+		await RenderingServer.frame_post_draw
+	if pt:
+		(root.get_child(0) as WorldEnvironment).environment.pathtracing_enabled = true
+		for i in 40:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+func _salt_bloom_tests() -> void:
+	if not ClassDB.class_exists("TerrainMaterial3D") or DisplayServer.get_name() == "headless":
+		_skip("salt bloom", "needs a rendering device")
+		return
+	var root := _salt_scene(false)
+	for i in 20:
+		await RenderingServer.frame_post_draw
+	var salted := _centre_luminance(get_viewport().get_texture().get_image())
+	RenderingServer.global_shader_parameter_set("weather_spray_rect", Vector4(0, 0, 0, 0))
+	for i in 5:
+		await RenderingServer.frame_post_draw
+	var bare := _centre_luminance(get_viewport().get_texture().get_image())
+	root.queue_free()
+	await get_tree().process_frame
+	_check("salt bloom: the spray's salt crusts the sea cliff's dry rock white (terrain material), none without salt", salted > 1.2 * bare, "centre luminance %.3f salted, %.3f bare" % [salted, bare])
+
+
+func _centre_luminance(img: Image) -> float:
+	var w := img.get_width()
+	var h := img.get_height()
+	var sum := 0.0
+	var n := 0
+	for y in range(int(h * 0.3), int(h * 0.7), 4):
+		for x in range(int(w * 0.3), int(w * 0.7), 4):
+			sum += img.get_pixel(x, y).get_luminance()
+			n += 1
+	return sum / maxf(n, 1)
 
 
 # The bending alone (the gas drawn invisible): with heat_shimmer on the frame moves above the fire and nowhere
