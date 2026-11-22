@@ -289,6 +289,14 @@
    "title": "Hair"
   },
   {
+   "name": "rendering/pathtracing/max_samples_per_dispatch",
+   "type": "int",
+   "default": "4194304",
+   "about": "The most pixel samples (pixels times `Environment.pathtracing_samples_per_pixel`) one path tracing dispatch traces.",
+   "page": "other",
+   "title": "Other"
+  },
+  {
    "name": "rendering/pathtracing/multimesh_merged_blas_max_triangles",
    "type": "int",
    "default": "65536",
@@ -4078,10 +4086,11 @@
     "terrain_wind_enabled",
     "drainage_winds",
     "upslope_winds",
+    "valley_winds",
     "foehn_winds"
    ],
    "note": "",
-   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests; wind across a range comes down the lee warmer and drier once the windward side has rained out, under a gap in the cloud.",
+   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests; valleys blow up-valley on sunny calm afternoons and down-valley on clear calm nights, carrying smoke and fog along them; wind across a range comes down the lee warmer and drier once the windward side has rained out, under a gap in the cloud.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4230,10 +4239,11 @@
    "settings": [
     "WeatherMap3D.smoke_haze",
     "smoke_washout",
-    "PhysXFlow3D.rain_washout"
+    "PhysXFlow3D.rain_washout",
+    "PhysXFlowEmitter3D.regional_smoke"
    ],
    "note": "",
-   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.",
+   "what": "smoke from fires, campfires and chimneys drifts on the wind past the Flow box as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -5093,6 +5103,17 @@
    ],
    "note": "",
    "what": "path tracing draws a surface with the default material while its own shader compiles, instead of leaving it out.",
+   "page": "other",
+   "title": "Other",
+   "topic": ""
+  },
+  {
+   "name": "Long stills in bands",
+   "settings": [
+    "rendering/pathtracing/max_samples_per_dispatch"
+   ],
+   "note": "",
+   "what": "high-sample path traced stills trace in short bands, so the GPU never times out.",
    "page": "other",
    "title": "Other",
    "topic": ""
