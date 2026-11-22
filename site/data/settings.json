@@ -5047,6 +5047,39 @@
    "topic": "Collision"
   },
   {
+   "name": "Gaze",
+   "settings": [
+    "GazeModifier3D"
+   ],
+   "note": "",
+   "what": "eyes, head, neck and upper back share one look, eyes leading, with spring motion.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
+   "name": "Foot placement",
+   "settings": [
+    "FootPlacementModifier3D"
+   ],
+   "note": "",
+   "what": "feet plant on deformed ground and snow, with pelvis drop and slope tilt, and prints land where the feet land.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
+   "name": "Spring followers",
+   "settings": [
+    "SecondOrderDynamics"
+   ],
+   "note": "",
+   "what": "a spring-damper follower for procedural motion.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
    "name": "Camera-relative tracing",
    "settings": [
     "rendering/pathtracing/relative_origin_grid"
