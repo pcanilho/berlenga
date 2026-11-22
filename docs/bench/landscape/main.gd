@@ -910,6 +910,10 @@ func _ready() -> void:
 		await _rime_ridge()
 	if args.has("fog-sea"):
 		await _fog_sea()
+	if args.has("late-frost"):
+		await _fog_sea("late-frost")
+	if args.has("snow-strata"):
+		await _snow_strata()
 	if args.has("lodging"):
 		await _lodging()
 	if args.has("lens-cam"):
@@ -6757,6 +6761,85 @@ func _mem_log(tag: String) -> void:
 			OS.get_static_memory_usage() >> 20])
 
 
+func _snow_strata() -> void:
+	# --snow-strata: a dug trench in a real pack (snow strata walls, a3d61431): the highest gentle snow at least
+	# --strata-min (0.8) m deep, its season's pack topped by a week's history (a crust on a storm's snow, buried
+	# surface hoar, a gale's wind slab and a fresh fall), then a trench --strata-w (1.2) m wide pressed to the ground,
+	# running along the sun's bearing so the low light rakes the far wall. The camera stands --strata-dist (1.5) m from
+	# that wall at --strata-eye (1.7) m over the snow, looking down into it.
+	var wr: Rect2 = gen.get_world_rect()
+	var best := Vector3.INF
+	var mind := float(args.get("strata-min", "0.8"))
+	var xx := wr.position.x + 200.0
+	while xx < wr.end.x - 200.0:
+		var zz := wr.position.y + 200.0
+		while zz < wr.end.y - 200.0:
+			var p := Vector3(xx, 0, zz)
+			var h := gen.get_height(p)
+			if snow.get_depth_at(p) >= mind and rad_to_deg(atan(_slip_grad(p).length())) < 8.0 and (best == Vector3.INF or h > best.y):
+				best = Vector3(xx, h, zz)
+			zz += 32.0
+		xx += 32.0
+	if best == Vector3.INF:
+		_log("snow strata: no gentle snow %.1f m deep" % mind)
+		return
+	var focus := Node3D.new()
+	focus.name = "StrataFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	weather.follow_target = weather.get_path_to(focus)
+	for i in 30:
+		await get_tree().physics_frame
+	weather.air_follows_climate = false
+	weather.temperature = 0.0
+	weather.snap_to_settings()
+	weather.temperature = -8.0 - (weather.get_air_temperature_at(best) - 0.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.call("add_depth_hoar", 0.6)
+	snow.advance(3600.0)
+	snow.call("add_snow", 20.0, 120.0) # a storm's snow
+	snow.call("add_crust", 0.02, 3.0) # its top melts and refreezes
+	snow.advance(3600.0)
+	snow.call("add_hoar", 8.0) # a clear night's surface hoar
+	snow.call("add_snow", 16.0, 110.0) # buried by the next storm
+	weather.wind_speed = 14.0 # a gale packs the top
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.advance(3.0 * 3600.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.call("add_snow", 10.0, 80.0) # a last fresh fall
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	var nrm := Vector3(sf.z, 0, -sf.x)
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
+	surf.name = "SnowSurface"
+	add_child(surf)
+	surf.set("snow_cover", surf.get_path_to(snow))
+	surf.set("follow_target", surf.get_path_to(focus))
+	surf.set("detail_spacing", 0.03125)
+	for i in 10:
+		await get_tree().physics_frame
+	var g: float = snow.get_ground_height_at(best) if snow.has_method("get_ground_height_at") else best.y
+	var w := float(args.get("strata-w", "1.2"))
+	surf.set("rim_share", 0.1)
+	surf.set("compacted_density", 900.0)
+	surf.call("press_box", Vector3(best.x, g, best.z), Vector2(w, 8.0), atan2(sf.x, sf.z), g + 0.01)
+	for i in 30:
+		await get_tree().physics_frame
+	var top := g + snow.get_depth_at(best + nrm * 3.0)
+	var wall := best - nrm * (w * 0.5)
+	var cp := wall + nrm * float(args.get("strata-dist", "1.5"))
+	c3.global_position = Vector3(cp.x, top + float(args.get("strata-eye", "1.7")), cp.z)
+	c3.look_at(Vector3(wall.x, g + 0.5 * (top - g), wall.z) + sf * 0.8)
+	_log("snow strata: %.2f m of snow at %s (%.0f m), trench %.1f m wide along the sun, cam %s" % [top - g, str(best.round()), best.y, w, str(c3.global_position.snapped(Vector3.ONE * 0.1))])
+
+
 # Sets a prop (from _tripo) on the ground at `p`, turned `yaw` radians, sunk `sink` m so no edge floats on a slope.
 func _put(n: Node3D, p: Vector3, yaw: float, sink := 0.05, parent: Node = null) -> Node3D:
 	n.rotation.y = yaw
@@ -7831,15 +7914,18 @@ func _rime_ridge() -> void:
 	_log("rime ridge: %.0f h of cloud at %.1f C on the crest %s (%.0f m), rime %s, cam %s" % [hrs, weather.get_air_temperature_at(top), str(top.round()), top.y, str(rv), str(cp.round())])
 
 
-func _fog_sea() -> void:
+func _fog_sea(key := "fog-sea") -> void:
 	# --fog-sea[=H]: a clear calm night of H (6) hours before the shot (WeatherMap3D.valley_fog, 2648f0f3): the cold
 	# pools fill with radiation fog, then the clock returns to --time for the dawn view over the fog top. --fog-wind
 	# (0.5) m/s, --fog-humidity (0.95), --fog-air (6) C. Logs the fog top along the camera's view.
-	var hrs := float(args["fog-sea"]) if String(args["fog-sea"]) != "" else 6.0
+	# --late-frost[=H]: the same night in spring, drier (0.6) and colder (--fog-air 2 C): the hollows pool below -2 C
+	# and the young leaves out there brown (WeatherMap3D.late_frost; trees band near meshes by local season, 52d3db3f).
+	var frost := key == "late-frost"
+	var hrs := float(args[key]) if String(args[key]) != "" else (8.0 if frost else 6.0)
 	var t_shot := clock.time_of_day
 	weather.air_follows_climate = false
-	weather.temperature = float(args.get("fog-air", "6"))
-	weather.humidity = float(args.get("fog-humidity", "0.95"))
+	weather.temperature = float(args.get("fog-air", "2" if frost else "6"))
+	weather.humidity = float(args.get("fog-humidity", "0.6" if frost else "0.95"))
 	weather.wind_speed = float(args.get("fog-wind", "0.5"))
 	weather.cloud_cover = 0.0
 	weather.valley_fog = true
@@ -7858,6 +7944,9 @@ func _fog_sea() -> void:
 		p.y = height_at(p.x, p.z)
 		tops.append("%.0f m: ground %.0f top %.0f" % [150.0 + 250.0 * k, p.y, weather.get_valley_fog_top_at(p)])
 	_log("fog sea: %.0f h calm night, cam at %.0f m; %s" % [hrs, c3.global_position.y, ", ".join(tops)])
+	if frost and weather.has_method("get_leaf_frost_at"):
+		var lp := c3.global_position + Vector3(f.x, 0, f.z).normalized() * 20.0
+		_log("late frost: at the camera %s, 20 m on %s (severity, forcing, days)" % [str(weather.get_leaf_frost_at(c3.global_position)), str(weather.get_leaf_frost_at(lp))])
 
 
 func _lodging() -> void:
