@@ -230,6 +230,7 @@ public:
 	// The hull's push on the water (round 21.3), the strongest of its three keel points, 0..1: the water's wave solver
 	// makes the bow wave and wake from it.
 	real_t get_bow_wave_strength() const;
+	real_t get_intake_trough() const;
 	// Mud on the body (docs/ideas/mud.md, stage 3b): BaseMaterial3D's Mud layer, turned on in copies of the materials of
 	// the meshes under this node and fed from the wheels' clogging and spray and the belly's mud line.
 	void set_body_mud(bool p_enabled);

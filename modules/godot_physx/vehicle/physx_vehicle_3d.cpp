@@ -604,6 +604,8 @@ struct PhysXVehicle3D::Impl {
 	bool engine_drowned = false;
 	bool bow_on = false; // its disturbances are in the water (round 21.3)
 	float bow_strength = 0.0f;
+	float wake_timer = 0.0f; // since its waves last washed the banks (round 22.1)
+	float intake_trough = 0.0f; // the bow's trough at the intake, m (negative: the bow wave over it)
 	float intake_dry = 0.0f; // s the intake has been clear since it drowned
 	Vector3 water_drag; // N
 	// Mud on the body (stage 3b): per wheel the spray level and the shed kg already counted; the belly's mud line,
@@ -1060,6 +1062,10 @@ real_t PhysXVehicle3D::get_bow_wave_strength() const {
 	return impl->bow_strength;
 }
 
+real_t PhysXVehicle3D::get_intake_trough() const {
+	return impl->intake_trough;
+}
+
 // A vehicle in water (docs/ideas/mud.md, round 20.1). Flood studies of vehicles (Shu et al. 2011; Xia et al. 2014;
 // Martinez-Gomariz et al. 2017, full-size cars at UNSW's Water Research Laboratory, 2017) take it as a body on its tyres:
 // buoyancy from the water it keeps out lightens it, the current's drag 0.5 rho Cd A |u - v| (u - v) (Cd about 1.1 on the
@@ -1201,6 +1207,20 @@ void PhysXVehicle3D::_water_step(float p_delta) {
 		}
 		impl->bow_on = any;
 		impl->bow_strength = strongest;
+		// Its waves wash the banks (round 22.1): the ground takes them from the hull's speed and width, ten times a
+		// second.
+		impl->wake_timer += p_delta;
+		if (any && impl->wake_timer >= 0.1f) {
+			GroundSurface3D *ground = GroundSurface3D::get_active();
+			const Vector3 mid = box.xform(Vector3(0.0f, -h.y, 0.0f));
+			const float level = ww->height_at(mid + Vector3(0.0f, tall, 0.0f));
+			if (ground && Math::is_finite(level)) {
+				ground->wash_wake(mid, v_h, h.x, level, impl->wake_timer);
+			}
+			impl->wake_timer = 0.0f;
+		} else if (!any) {
+			impl->wake_timer = 0.0f;
+		}
 	}
 	// The engine's air intake (round 21.1): hydrolock past it. Wading depths are rated from it (makers' figures,
 	// 0.5 to 0.9 m for off-roaders); a snorkel lifts it over the roof. Water drawn in stalls the engine; it starts
@@ -1209,7 +1229,22 @@ void PhysXVehicle3D::_water_step(float p_delta) {
 		const float bottom_to_top = 2.0f * h.y;
 		const float hi = snorkel ? bottom_to_top + 0.25f : (air_intake_height >= 0.0f ? float(air_intake_height) : 0.75f * bottom_to_top);
 		const Vector3 intake = box.xform(Vector3(0.0f, -h.y + hi, -0.7f * h.z));
-		const bool under = ww->height_at(intake) > intake.y;
+		// The bow's trough (round 22.1): driven forward at a steady wading pace the water drawn round the bow stands
+		// lower at the engine bay by about the stagnation head v^2 / 2g (Bernoulli along the sides, the flow sped up
+		// round the bluff front); past depth Froude 0.7 the bow wave stands up and by 1 it climbs over the bonnet,
+		// as high again. The wading drill: steady, about walking pace.
+		float level = ww->height_at(intake);
+		if (Math::is_finite(level) && impl->bow_on) {
+			const float vf = Vector3(lin.x, 0.0f, lin.z).length(); // forward or backing: the leading end's bow
+			const float ground_y = box.origin.y - h.y - 0.5f;
+			const float fr = vf / Math::sqrt(9.81f * MAX(level - ground_y, 0.05f));
+			const float head = MIN(vf * vf / (2.0f * 9.81f), 0.4f);
+			impl->intake_trough = head * (1.0f - 2.0f * Math::smoothstep(0.7f, 1.0f, fr));
+			level -= impl->intake_trough;
+		} else {
+			impl->intake_trough = 0.0f;
+		}
+		const bool under = level > intake.y;
 		if (under) {
 			impl->engine_drowned = true;
 			impl->intake_dry = 0.0f;
@@ -2339,6 +2374,7 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_engine_drowned"), &PhysXVehicle3D::is_engine_drowned);
 	ClassDB::bind_method(D_METHOD("get_cab_water"), &PhysXVehicle3D::get_cab_water);
 	ClassDB::bind_method(D_METHOD("get_bow_wave_strength"), &PhysXVehicle3D::get_bow_wave_strength);
+	ClassDB::bind_method(D_METHOD("get_intake_trough"), &PhysXVehicle3D::get_intake_trough);
 	ClassDB::bind_method(D_METHOD("get_water_drag"), &PhysXVehicle3D::get_water_drag);
 	ClassDB::bind_method(D_METHOD("get_wheel_mud", "wheel"), &PhysXVehicle3D::get_wheel_mud);
 	ClassDB::bind_method(D_METHOD("get_wheel_mud_shed", "wheel"), &PhysXVehicle3D::get_wheel_mud_shed);
