@@ -6,6 +6,19 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-9534e321 (2026-11-22)
+
+### Added
+- Camera cut-out: a soft dithered hole through walls, roofs and trees between the camera and the player, the same in the path tracer (global shader parameters `camera_cutout` and `camera_cutout_floor`, `BaseMaterial3D.get_camera_cutout_shader_code()`).
+- Positional shadows go to the most important lights first (energy times size on screen), so a full shadow atlas drops the least important; a budget caps how many keep shadows (project setting `rendering/lights_and_shadows/positional_shadow/max_shadowed_lights`, 0 = as many as fit).
+- Rain and snow haze near the camera falls in curtains carried by the wind and following the storm cells, lit by lamps and the sun, with the same mean haze (WeatherMap3D `rain_curtains`).
+- The water standing on a built surface, from the weather's pooled water on faces level enough to hold it, for materials and the path tracer alike (`weather_surface_puddle()`).
+- The rain a face catches, for materials and the path tracer alike: the vertical rain on faces that look up and the wind-driven rain on faces turned into the wind, with the wind's push on drops along the face (`BaseMaterial3D.get_surface_rain_shader_code()`, `weather_surface_rain()`).
+- Walls run with the rain the wind drives onto them, in streaks that lean with the wind, while lee walls stay drier; moving bodies blow their running water back (BaseMaterial3D `wetness_moving`, instance parameters `rain_slipstream` and `rain_wipe`; vehicles set it themselves).
+
+### Changed
+- Broadleaf leaves let through about as much light as they reflect, as measured leaves do: crowns seen from below glow green against the sky under path tracing instead of drawing near-black. Dead, frost-killed and turned leaves glow brown or yellow against the light.
+
 ## build-ab7c0a22 (2026-11-22)
 
 ### Added
