@@ -5042,6 +5042,17 @@
    "topic": ""
   },
   {
+   "name": "Compacted ray tracing structures",
+   "settings": [
+    "rendering/rendering_device/acceleration_structure/compaction"
+   ],
+   "note": "",
+   "what": "static acceleration structures shrink in video memory after they are built.",
+   "page": "open-worlds",
+   "title": "Open worlds",
+   "topic": ""
+  },
+  {
    "name": "Shaders compile in the background",
    "settings": [
     "rendering/pathtracing/async_shader_compilation"
