@@ -53,6 +53,7 @@ contract returns with no provider.
 | `canopy_closure_at(pos)`, `shelter_at(pos, h)` | 0..1 | 0, 1 | |
 | `season()` | dictionary (weather_season.h State) | 15 May, no snow | |
 | `frost_at(pos)` | mm | 0 | Hoarfrost on exposed surfaces (`dew_and_frost`) |
+| `glaze_at(pos)` | mm | 0 | Radial clear ice from freezing rain on exposed twigs and wires (ice storms); provider to come (weather), readers trees (trees.md 5be) |
 | Events: `ground_strikes_after(serial)` | list | empty | Lightning, from `WeatherLightning3D` |
 | `day_of_year()` | 1..365 | 135 | The clock's date, else the map's season day |
 | `season_at(pos, day = -1)` | dictionary (season State) | the default climate at pos.y | At the point's height, the live departure included; day < 1 is today |

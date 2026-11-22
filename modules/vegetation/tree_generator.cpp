@@ -21121,6 +21121,27 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 		// Vogel's exponent: drag grows as U^(2 + B) as foliage streamlines (Vogel 1989).
 		mesh->set_meta(SNAME("tree_vogel"), params[PARAM_NEEDLES] > 0.5f ? -0.5f : -0.7f);
+		{
+			// The wood a glaze coats (trees.md 5be): (sum of shoot lengths m, sum of length x radius m2), living and dead
+			// wood standing in the air. Radial ice R on a twig of radius r weighs rho_ice pi R (2r + R) a metre, so a
+			// tree's glaze is rho_ice pi (2 R x sum(L r) + R^2 x sum(L)): fine twigs, the most length, carry most of it
+			// (Jones 1998, the simple ice accretion model, on cylinders). A needled shoot catches the rain like a brush
+			// about 3 cm across, a leafy broadleaf shoot like one 6 cm across.
+			const bool needles = params[PARAM_NEEDLES] > 0.5f;
+			const LeafSeason gls = _leaf_season(preset, season);
+			const float in_leaf = needles ? 1.0f : CLAMP(gls.out * (1.0f - gls.fallen), 0.0f, 1.0f);
+			const float shoot_r = needles ? 0.015f : 0.03f * in_leaf;
+			double sl = 0.0, slr = 0.0;
+			for (const Node &n : nodes) {
+				if (n.removed || n.length <= 0.0f) {
+					continue;
+				}
+				const float r = n.leafy && !n.dead ? MAX(n.radius, shoot_r) : n.radius;
+				sl += n.length;
+				slr += double(n.length) * r;
+			}
+			mesh->set_meta(SNAME("tree_glaze_surface"), Vector2(float(sl), float(slr)));
+		}
 	}
 	return mesh;
 }

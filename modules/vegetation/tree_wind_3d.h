@@ -75,6 +75,7 @@ public:
 		float leaf_area = 0.0f; // Carried area of the stems at the root: shares the crown's snow by bone.
 		float crown_radius = 0.5f; // Horizontal reach of the crown (m, tree space).
 		float snow_catch = 1.0f; // Share of the canopy's snow this crown holds: bare broadleaves catch on twigs only.
+		Vector2 glaze_surface; // (sum of shoot lengths m, sum of length x radius m2) at scale 1 (mesh meta tree_glaze_surface).
 		Ref<Mesh> snow_caps[3]; // Light, full and heavy cap pads (mesh meta tree_snow_caps), skinned to this rig.
 		PackedFloat32Array cap_sites; // bone, x, y, z per cap (mesh meta tree_snow_cap_sites).
 		PackedFloat32Array colliders; // TreeGenerator.get_collision_capsules().
@@ -146,6 +147,8 @@ private:
 		LocalVector<float> snow_creep; // Per instance: the crept part of that (kg; the wood's slow bend under a held load).
 		LocalVector<uint8_t> cap_level; // Per instance: snow caps drawn, 0 none, 1-3 light to heavy.
 		LocalVector<float> snow_seen; // Per instance: the load (kg, no creep) clumps were last dropped against.
+		LocalVector<float> glaze_kg; // Per instance: clear ice on the crown (kg, WorldWeather.glaze_at), as the wood feels it.
+		LocalVector<float> glaze_shed; // Per instance: the share of the glaze a break shook off (until the glaze melts).
 		bool caps_dirty = false; // cap_level changed since the caps' last upload.
 		ObjectID cap_nodes[3]; // MultiMeshInstance3D children drawing the caps of each level.
 		Vector<float> cap_buffer;
@@ -211,6 +214,10 @@ private:
 	int snow_breaks = 0;
 	float snow_shaken_kg = 0.0f;
 	void _snow_check(float p_dt);
+	// Ice storms (trees.md 5be): the glaze WorldWeather.glaze_at reports on the crown's wood, loading it as the snow does.
+	bool glaze_load_enabled = true;
+	int glaze_breaks = 0;
+	void _glaze_check();
 	float snow_cap_range = 150.0f; // m: past it the crown whitening alone shows the snow.
 	Vector3 last_eye;
 	int caps_drawn = 0;
@@ -461,6 +468,12 @@ public:
 	void set_snow_creep_hours(float p_hours) { snow_creep_hours = MAX(p_hours, 0.0f); }
 	float get_snow_creep_hours() const { return snow_creep_hours; }
 	int get_snow_break_count() const { return snow_breaks; }
+	void set_glaze_load_enabled(bool p_enabled) { glaze_load_enabled = p_enabled; }
+	bool is_glaze_load_enabled() const { return glaze_load_enabled; }
+	int get_glaze_break_count() const { return glaze_breaks; }
+	float get_instance_glaze_kg(Node *p_target, int p_instance) const;
+	// Clear ice (kg) a tree's wood carries under a radial glaze of p_glaze_mm, for its glaze surface at scale p_scale.
+	static float glaze_kg(const Vector2 &p_surface, float p_glaze_mm, float p_scale);
 	float get_snow_shaken_kg() const { return snow_shaken_kg; }
 	float get_instance_snow_kg(Node *p_target, int p_instance) const;
 	int get_instance_cap_level(Node *p_target, int p_instance) const;
