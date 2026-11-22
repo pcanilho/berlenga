@@ -1799,6 +1799,12 @@ producers fill it).
 - Grass: a 64 x 6 m grid of the mark round the camera (read every 5 s); blades under the crest (with 6 cm of noise)
   combed flat along the peak's flow direction and yellowed, fading over 7 to 35 days, with a grey-brown silt film
   fading over 20 to 120 days.
+- River scout (grass bench --river; GRASS_RIVER_TOP=1 looks straight down): a PhysXRiver3D (5 m3/s, flood x6)
+  gives a mark 0.68 m over its surface, 7.5 m from the centre line; 132 strands lie on it (ground 0.10 m under to
+  0.02 m over), 20 on the lower lines, and the grass below is combed and silted. The wrack must come ahead of the
+  ground cover in the biome's list: appended after it, the sward's footprints left 16 strands on the same line.
+- Sea and fixed-level lakes now give a mark too (still level plus storm run-up, Valence b7a8c6b63a): strand lines
+  follow it with no change here.
 - Not yet: live re-placement of wrack when a new flood peaks (the field places at populate and on stand changes).
 
 ## Seed down in the wind (round 6, third pick)

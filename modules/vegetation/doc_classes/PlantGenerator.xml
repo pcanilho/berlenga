@@ -63,7 +63,7 @@
 			<param index="1" name="textures" type="bool" default="true" />
 			<param index="2" name="season" type="Dictionary" default="{}" />
 			<description>
-				A flood's leavings as [PlantSpecies] of [constant PRESET_FLOOD_WRACK]: the main strand line within 8 cm under the last flood's crest and thinner, sparser lines 0.35 to 0.9 m lower where the falling water left them ([constant PlantSpecies.RULE_HIGH_WATER] from [method WorldWater.high_water_at]), laid along the contour ([member PlantSpecies.follow_flow]), for a year after the flood ([constant PlantSpecies.RULE_FLOOD_AGE]). A [code]"flood_age"[/code] key (years) in [param season] ages the meshes.
+				A flood's leavings as [PlantSpecies] of [constant PRESET_FLOOD_WRACK]: the main strand line within 8 cm under the last flood's crest and thinner, sparser lines 0.35 to 0.9 m lower where the falling water left them ([constant PlantSpecies.RULE_HIGH_WATER] from [method WorldWater.high_water_at]), laid along the contour ([member PlantSpecies.follow_flow]), for a year after the flood ([constant PlantSpecies.RULE_FLOOD_AGE]). A [code]"flood_age"[/code] key (years) in [param season] ages the meshes. Put them ahead of the ground cover in [member Biome.species]: later species keep clear of earlier ones' footprints, and wrack lies over the sward.
 			</description>
 		</method>
 		<method name="make_fairy_rings" qualifiers="static">
