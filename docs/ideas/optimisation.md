@@ -187,3 +187,21 @@ copy with mode `COMPACT`, free the original once the GPU is done with it).
   the compacting copy and the frame is **byte-identical** to the previous build (max difference 0), with
   persistent instances off and on (keyed TLAS rewrite path).
 - Memory saving on real GPUs: PC bench list.
+
+### Media skip for caustics and the camera probe
+
+- Caustic photons ran every frame whenever caustics and refraction were on, one photon per pixel over three
+  cascades, even in a scene with no water at all. Only a surface that bounds a medium can bend a photon
+  (`RT_MAT_FLAG_VOLUME`: Transmission that is not thin-walled, or a shader writing TRANSMISSION and IOR), so the
+  renderer now scans the material cache for one (again only when a material changes or a cache entry is rebuilt)
+  and skips the photons and the per-pixel camera medium probe without one (`RT_MATERIAL_FEATURE_MEDIA`).
+- Side effect found on the way: every dry point inside the caustics square read as "covered" by the map, which
+  switched the radiance cache off there, so in a scene without water the cache was off around the camera.
+  Without media the cache is back, as it was before caustics existed.
+- Proof (rt_memory bench, PT 640x360 4 spp): with the water slab (`--medium`) the frame is byte-identical to the
+  previous build. Without media, byte-identical to the previous build with caustics off when the radiance cache
+  is off too (`--no-radiance-cache`; the cache is not bit-repeatable between runs, two runs of one build differ by
+  up to 6/255). With the cache on, the frame equals "caustics off" within that run-to-run noise.
+- On the PC, in an indoor scene with no water, caustics off saved 2.8 ms of 27.2 ms per
+  frame; this change gives that back with caustics left on.
+- Next: a dry point beside water (bent and straight photons equal, ratio exactly 1) still turns the cache off.
