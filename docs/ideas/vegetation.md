@@ -1741,3 +1741,16 @@ the ground layer that grows there (the bent alder and willow shrubs are the tree
   60, all in patches. Slopes up to 45 degrees, out of the edge's deeper shade (0.6).
 - Check: vegetation bench --test, a 5-year kind 6 track holds the flora, none round it or on a windthrow of the same
   age; debris species fresh, tall forbs later.
+
+## Next round options (card 22 Nov, round 6): snowmelt sward, flood wrack lines, seed down in the wind
+Research notes, nothing built yet:
+- Snowmelt sward. Where snow lay long, the grass comes out flattened and matted in one direction, straw-pale, with grey
+  and pinkish webs of snow mould (Microdochium nivale, Typhula) in patches that lay longest; it greens from the edges
+  over two or three weeks. Built as: GrassField3D reading the snow's lie time (WorldSnow) for a matted lean, pale
+  tint and mould patches that fade as the season warms.
+- Flood wrack lines. After a flood a river or lake leaves strand lines of straw, reed stems, twigs and leaves along
+  the high-water mark, caught on fences and the lower branches, the grass beneath combed flat downstream. Built as:
+  wrack meshes placed along a contour a set height over the water's level (WorldWater), the sward laid flat below it.
+- Seed down in the wind. In late summer thistle, fireweed and willowherb down and dandelion clocks loose their seeds
+  in dry, sunny wind; they drift in the air, catch in the grass and pile in corners. Built as: light particles in the
+  shared wind from the plants that are seeding (their bloom stage), few and cheap, settling into the grass.
