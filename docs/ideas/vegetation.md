@@ -1598,3 +1598,64 @@ Built in GrassField3D (`lodging`, on by default; `get_lodging_at`, `advance_lodg
 - Check: grass bench --test, a wet 12 m/s gale for an hour lays the 0.5 m meadow down in patches along +x; ten calm
   dry days later it stands again.
 
+## Leaf drifts (round 4, second pick)
+Built in VegetationField3D (`get_litter_drift_at`, PlantSpecies.RULE_LITTER_DRIFT 33) and PlantGenerator
+(PRESET_LEAF_BANK 103, in make_floor's broadleaf floors).
+- Research. Fallen leaves move with the wind until something stops them, so the litter is redistributed after the
+  fall: hollows, furrows and the feet of obstacles gather it, ridges and knolls are swept to the soil (Orndorff and
+  Lang 1981, Am. Midl. Nat. 106, leaf litter redistribution in a West Virginia hardwood forest; Boerner and Kooser 1989,
+  Am. Midl. Nat. 121, litter several times deeper in hollows than on ridges and sideslopes). Behind trunks, logs and
+  stones the lee eddy drops what the flow carried (the snowdrift mechanism at a smaller scale), and a bank also forms along the windward foot. Games paint this with decals or
+  leave the litter even; here the litter species follow it and leaf banks are real geometry.
+- How. drift = 1 + 3.5 x (the ground's depth under its ring at 2.5 m and at 6 m, 0.6 and 0.4, clamped -0.24 to
+  0.3 m), times 1 - 0.6 smoothstep(25 to 45 degrees of slope), plus 1.3 x the strongest obstacle foot: rocks
+  (obstacles), logs (thicker than 5 cm) and trunks (the crowns' stem foot), exp(-gap / 0.5 m) within 1.6 m, times
+  0.55 + 0.45 cos(angle from the downwind direction), clamped 0.15 to 2.5. The wind is litter_wind or the weather
+  map's. The placement caches it on 0.5 m cells. RULE_LITTER now reads litter x drift (capped at 1): litter thins
+  on crests and fills hollows. RULE_LITTER_DRIFT places by the drift itself.
+- Leaf bank. The stand's own leaves (stand_litter_leaves) heaped over an ellipse 0.9 to 1.6 m long, 8 to 18 cm
+  high, crest towards one end, lumpy, 2.2 layers of coarser leaves, over a dark matted under-layer (centre colour 0.2, 0.13, 0.07)
+  so no ground shows between leaves; leaves follow the heap's face. make_floor appends it last to broadleaf floors
+  (seeds of the rest unchanged): drift 1.35 up (fade 0.25), litter 0.45 up, crown shade 0.06 up, density with the
+  year's leaf cover. sward_mound 0.55 keeps the grass out from under it.
+- Check: vegetation bench --test, drift in the deepest hollow over the highest crest, a stone's downwind foot over
+  its windward foot and open ground; banks last in broadleaf floors, 8 to 25 cm high, none under conifers.
+
+## Grazing roughs and dung (round 4, third pick)
+Built in PlantGenerator (make_grazing, GrazeSet GRAZE_CATTLE / GRAZE_HORSE / GRAZE_DEER; presets PRESET_COW_PAT 104,
+PRESET_HORSE_DUNG 105, PRESET_DEER_PELLETS 106, PRESET_DUNG_ROUGH 107; PRESET_MAX 108; season key "dung_age").
+- Research. Cattle reject the herbage round their own dung for months, so a grazed pasture carries rank, dark green
+  tufts round older pats, several times the pat's area, that flower while the lawn cannot (MacDiarmid and Watkin
+  1972, J. Br. Grassl. Soc. 27, "The cattle dung patch"). Pats are 20 to 30 cm across, glossy olive for a day or
+  two, crusted in weeks, broken and grassed through over months. Horses dung in latrines they never graze, so a
+  paddock becomes a mosaic of short lawns and tall roughs with piles of droppings, nettles and thistles (Odberg and
+  Francis-Smith 1976, Equine Vet. J.). Deer leave pellet groups of 30 to 100 pellets with no rough round them.
+  Games rarely show any of this; pastures read as an even mown lawn.
+- How. Cattle: roughs (sward_mound 0.4 m, spacing 4.5 m), pats at 0.005, 0.06 and 0.4 years, docks and nettles in
+  sparse patches. Horse: one shared patch layout (seed 11100, cover 0.25, 18 m) for latrine roughs, dung piles,
+  nettles and thistles, so they gather in the same clumps. Deer: pellet groups at RULE_BROWSE 0.3 up (fade 0.15),
+  also in the wood (shade to 0.9). All in the light (shade under 0.4), slopes under 30 degrees, 2 m from water.
+  Roughs and pats keep GrassField3D blades out through sward_mound, as the mounds do; the lawn round them is the
+  sward's own (graze_height and the lawn mosaic).
+- Meshes. Pat: a ring-grid dome with a wobbly outline and coil ridges, crust paling from the top and rim, broken
+  into plates with grass through it when old; roughness 0.5 fresh to 0.88 crusted. Horse dung: 6 to 14 domed balls
+  with straw fibres. Deer pellets: 2 x 6 domes each, 2 to 4k triangles a group. Rough: 500 to 750 blades 20 to
+  45 cm, shorter at the edge, 12% dead, 5 to 10 nodding flowering culms.
+- Check: vegetation bench --test, cattle pats of three ages 2 to 6 cm high, a rough over 25 cm that keeps the sward
+  out, one latrine layout for the horse set, deer pellets only on the browsed lawn.
+
+## Next round options (card 22 Nov, round 5): meadow fairy rings, dewy webs, blowing leaves
+Research notes, nothing built yet:
+- Meadow fairy rings. Marasmius oreades and other grassland fungi grow out from a point as a ring of mycelium,
+  0.1 to 0.5 m a year, rings of several metres to tens of metres: an outer band of dark, lush grass (nitrogen the
+  fungus frees), inside it a zone where the grass is browned or dead (the mycelium makes the soil water-repellent),
+  then normal sward again in the middle, and the fruit bodies in a ring after rain (Shantz and Piemeisel 1917,
+  J. Agric. Res. 11, the zones). Built as: ring discs the GrassField3D reads for
+  blade colour and height (dark band, dead band), a meadow mushroom set on the ring's edge with the season's fruiting.
+- Dewy webs. On autumn mornings sheet webs of money spiders (Linyphiidae) and orb webs on tall stems show up by the
+  thousand once dew beads on them; gossamer drifts over the sward on calm days. Built as: thin web meshes (sheets
+  between blades, orbs on tall herbs and thistles) shown where WorldWeather dew or fog is high, sparkling in the sun.
+- Blowing leaves. In autumn gales fallen leaves lift, tumble and skitter over the ground and pile up where the leaf
+  drifts are (round 4), and swirl in eddies behind obstacles. Built as: a GPU particle layer of the stand's own leaves
+  near the camera, driven by WorldWeather gusts, landing into the drift field; few and cheap.
+

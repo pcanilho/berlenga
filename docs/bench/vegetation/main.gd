@@ -1134,6 +1134,111 @@ func _trails_check() -> void:
 # back and the sods gone; the patch's arrival after the tiles stand is followed.
 # Anthills and molehills (PlantGenerator.make_mounds): every species tells the grass its radius, ant hills keep their
 # east crest, molehills slump with age, wood ant nests stand in the wood near its edge only.
+# Leaf drifts (docs/ideas/vegetation.md, "Leaf drifts"): the wind gathers fallen leaves in hollows and at the feet of
+# obstacles, deepest downwind, and sweeps crests; broadleaf floors end with leaf banks placed by that drift.
+func _drift_check() -> void:
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	var sp := PlantSpecies.new()
+	sp.meshes = [BoxMesh.new()]
+	sp.spacing = 4.0
+	f.biome = Biome.new()
+	f.biome.species.assign([sp])
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.litter_wind = Vector2(0.5, 0.0)
+	var ring := func(p: Vector3) -> float:
+		return 0.6 * ((dm.get_height_at(p + Vector3(2.5, 0, 0)) + dm.get_height_at(p - Vector3(2.5, 0, 0)) + dm.get_height_at(p + Vector3(0, 0, 2.5)) + dm.get_height_at(p - Vector3(0, 0, 2.5))) * 0.25 - dm.get_height_at(p))
+	var hollow := Vector3.ZERO
+	var crest := Vector3.ZERO
+	var flat := Vector3.ZERO
+	var hi := -1e9
+	var lo := 1e9
+	var fl := 1e9
+	for z in range(-60, 61, 5):
+		for x in range(-60, 61, 5):
+			var p := Vector3(x, 0, z)
+			var r: float = ring.call(p)
+			if r > hi:
+				hi = r
+				hollow = p
+			if r < lo:
+				lo = r
+				crest = p
+			if absf(r) < fl and dm.get_slope_at(p) < 0.15:
+				fl = absf(r)
+				flat = p
+	f.obstacles = PackedVector4Array([Vector4(flat.x, dm.get_height_at(flat), flat.z, 0.8)])
+	f.populate()
+	var d_hollow := f.get_litter_drift_at(hollow)
+	var d_crest := f.get_litter_drift_at(crest)
+	var lee := f.get_litter_drift_at(flat + Vector3(1.0, 0, 0))
+	var windward := f.get_litter_drift_at(flat - Vector3(1.0, 0, 0))
+	var away := f.get_litter_drift_at(flat + Vector3(4.0, 0, 0))
+	f.free()
+	_check("leaf drift: more in the deepest hollow than on the highest crest, most at a stone's downwind foot, more there than at its windward foot or 3 m off",
+			d_hollow > d_crest + 0.1 and lee > away + 0.5 and lee > windward and windward > away, "hollow %.2f (%.2f m) crest %.2f (%.2f m); stone lee %.2f windward %.2f away %.2f" % [d_hollow, hi / 0.6, d_crest, lo / 0.6, lee, windward, away])
+	var floor_set := PlantGenerator.make_floor(PlantGenerator.FLOOR_BEECH, 1, false)
+	var last: PlantSpecies = floor_set[floor_set.size() - 1]
+	var bank_ok: bool = last.get_meta("plant_preset", -1) == PlantGenerator.PRESET_LEAF_BANK and last.get_rule_range(PlantSpecies.RULE_LITTER_DRIFT).x >= 1.3 and last.rule_weight(PlantSpecies.RULE_LITTER_DRIFT, 1.0) == 0.0
+	var bh: float = (last.meshes[0] as Mesh).get_aabb().end.y if bank_ok else 0.0
+	# Only where broadleaf crowns dropped litter (needle crowns add none to get_litter_at).
+	var on_litter: bool = bank_ok and last.rule_weight(PlantSpecies.RULE_LITTER, 0.2) == 0.0
+	_check("leaf drift: broadleaf floors end with leaf banks 8 to 25 cm high where the drift passes 1.35, only on broadleaf litter", bank_ok and on_litter and bh > 0.08 and bh < 0.25, [bank_ok, on_litter, bh])
+
+# Grazing roughs and dung (docs/ideas/vegetation.md, "Grazing roughs and dung"): the sets' make-up, and deer pellets
+# only on the heavily browsed lawn.
+func _grazing_check() -> void:
+	var cattle := PlantGenerator.make_grazing(PlantGenerator.GRAZE_CATTLE, 1, false)
+	var horse := PlantGenerator.make_grazing(PlantGenerator.GRAZE_HORSE, 1, false)
+	var deer := PlantGenerator.make_grazing(PlantGenerator.GRAZE_DEER, 1, false)
+	var pat_h := {}
+	var rough_h := 0.0
+	var rough_tag := false
+	for sp in cattle:
+		var pre: int = sp.get_meta("plant_preset", -1)
+		var top: float = (sp.meshes[0] as Mesh).get_aabb().end.y
+		if pre == PlantGenerator.PRESET_COW_PAT:
+			pat_h[float(sp.get_meta("dung_age"))] = top
+		elif pre == PlantGenerator.PRESET_DUNG_ROUGH:
+			rough_h = top
+			rough_tag = sp.has_meta("sward_mound")
+	var ages := pat_h.keys()
+	ages.sort()
+	var pats_age: bool = ages.size() == 3 and pat_h[ages[0]] < 0.06 and pat_h[ages[0]] > 0.015
+	var seeds := {}
+	for sp in horse:
+		if sp.get_patch_scale() > 0.0:
+			seeds[sp.get_patch_seed()] = true
+	_check("grazing: cattle pats of three ages 2-6 cm high, a rough 25 cm+ that keeps the sward out; horse latrines share one patch layout",
+			pats_age and rough_h > 0.25 and rough_tag and seeds.size() == 1, [pat_h, rough_h, rough_tag, seeds.keys()])
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	st.clear_browse()
+	var c := Vector2(-40, -40)
+	st.add_browse(Vector3(c.x, 0, c.y), 10.0, 0.9, 1.5)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign(deer)
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := 0
+	var off := 0
+	for s in deer.size():
+		for q in f.get_placements(s):
+			var d := Vector2(q.x, q.z).distance_to(c)
+			if d < 8.0:
+				on += 1
+			elif d > 14.0:
+				off += 1
+	f.free()
+	st.clear_browse()
+	_check("grazing: deer pellet groups on the browsed lawn only", on > 3 and off == 0, [on, off])
+
 func _mounds_check() -> void:
 	var meadow := PlantGenerator.make_mounds(PlantGenerator.MOUNDS_MEADOW, 1, false)
 	var wood := PlantGenerator.make_mounds(PlantGenerator.MOUNDS_WOOD, 1, false)
@@ -2061,6 +2166,8 @@ func _checks() -> void:
 	_trails_check()
 	_rooting_check()
 	_mounds_check()
+	_drift_check()
+	_grazing_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []

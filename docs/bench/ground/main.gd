@@ -48,7 +48,8 @@ extends Node3D
 #   --test=burnscar    rain on a burn scar: water-repellent burnt soil (WorldFire) sheds most of the rain as runoff
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
-#   --test=rain         rain pits on dry sand: a shower pits it, still air keeps them, saltation wipes them
+#   --test=rain         rain pits on dry sand: a shower pits it, still air keeps them, saltation wipes them;
+#                         saltation grows adhesion warts and rain flattens them
 #   --test=avalanche    footsteps on a dune's slip face set off grain avalanches down it; not on the stoss slope
 #   --test=infill       wind fills a print from its upwind side; nothing under the threshold
 #   --view=fringe       a still pool's shore in a desert: the wet margin and the salt crust
@@ -62,6 +63,7 @@ extends Node3D
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --mud=depth,moisture paint a mud layer for --view=ruts (stage 1; the car starts in the frame and drives 12 s)
+#   --adhesion  --view=fringe: wind over the damp margin until adhesion warts grow (--wind=m/s)
 #   --no-nmap  the bench material without its stand-in noise normal map; --taa: TAA on; --sun-alt=deg (ripples view, 9)
 #   --rain-pits=mm  --view=ripples: then a still shower of that much rain (120 mm/h), pitting the sand
 #   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
@@ -139,6 +141,7 @@ var fringe_test := false
 var rain_test := false
 var rain_pits_mm := 0.0
 var no_nmap := false
+var adhesion := false
 var taa := false
 var sun_alt := 9.0
 var steps_test := false
@@ -224,6 +227,7 @@ func _ready() -> void:
 		elif a == "--test=rain": rain_test = true
 		elif a.begins_with("--rain-pits="): rain_pits_mm = float(a.substr(12))
 		elif a == "--no-nmap": no_nmap = true
+		elif a == "--adhesion": adhesion = true
 		elif a == "--taa": taa = true
 		elif a.begins_with("--sun-alt="): sun_alt = float(a.substr(10))
 		elif a == "--test=steps": steps_test = true
@@ -3692,6 +3696,21 @@ func _run_rain_tests() -> void:
 	for i in 600:
 		await get_tree().physics_frame
 	_check("saltation wipes the uncrusted pits", surface.get_rain_pit_cover() < 0.05, "%.3f after 10 s at 12 m/s (x100)" % surface.get_rain_pit_cover())
+	# The same saltation over damp sand built adhesion warts; rain flattens them.
+	var ag := surface.get_adhesion_growth()
+	_check("saltation grows adhesion warts", ag > 0.3, "growth %.2f" % ag)
+	surface.wind_override = Vector2(0.0, 0.0)
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 120.0
+	wm.snap_to_settings()
+	for i in 60:
+		await get_tree().physics_frame
+	wm.rain_rate = 0.0
+	wm.cloud_cover = 0.0
+	wm.snap_to_settings()
+	_check("rain flattens them", surface.get_adhesion_growth() < ag * 0.99, "%.3f after 0.033 mm, was %.3f" % [surface.get_adhesion_growth(), ag])
+	surface.adhesion_warts = false
+	_check("adhesion_warts off reads nothing", surface.get_adhesion_growth() == 0.0, "off")
 	surface.rain_pits = false
 	_check("rain_pits off reads nothing", surface.get_rain_pit_cover() == 0.0 and surface.get_rain_crust() == 0.0, "off")
 	wm.queue_free()
@@ -5616,6 +5635,23 @@ func _build_fringe() -> void:
 	for i in 240:
 		await get_tree().physics_frame
 	Engine.time_scale = 1.0
+	get_viewport().use_taa = taa
+	if adhesion:
+		# --adhesion: wind over the damp margin (sped up) until the adhesion warts have grown, then still air.
+		surface.wind_ripples = true
+		var t0 := Time.get_ticks_msec()
+		while not surface.is_ripples_ready() and Time.get_ticks_msec() - t0 < 60000:
+			await get_tree().physics_frame
+		surface.wind_override = Vector2(wind_arg, 0.0)
+		surface.ripple_time_scale = 600.0
+		for i in 600:
+			await get_tree().physics_frame
+			if surface.get_adhesion_growth() >= 1.0:
+				break
+		surface.wind_override = Vector2(0.5, 0.0)
+		for i in 20:
+			await get_tree().physics_frame
+		print("adhesion warts: growth %.2f" % surface.get_adhesion_growth())
 	var cam := Camera3D.new()
 	add_child(cam)
 	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([3.5, 1.4, 6.5, -0.5, 0.0, 2.4])

@@ -4621,6 +4621,15 @@ func _build_cover() -> void:
 			for msp in mounds:
 				b.species.append(msp)
 			_log("mounds set %d: %d species" % [ms, mounds.size()])
+	if args.has("grazing") and ClassDB.class_has_method("PlantGenerator", "make_grazing"):
+		# --grazing=cattle|horse|deer: dung and the ungrazed roughs round it over the open ground (PlantGenerator.
+		# make_grazing, vegetation fbc92404), listed after the stand's species; called by name for older binaries.
+		var gk := String(args["grazing"]) if String(args["grazing"]) != "" else "cattle"
+		var gset := {"cattle": 0, "horse": 1, "deer": 2}.get(gk, 0) as int
+		var graze: Array = ClassDB.class_call_static("PlantGenerator", "make_grazing", gset, 3, true, season)
+		for gsp in graze:
+			b.species.append(gsp)
+		_log("grazing %s: %d species" % [gk, graze.size()])
 	if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
 		# The dunes' own plants (marram, lyme grass, sea holly), placed by distance to the water on the sand.
 		for st in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:

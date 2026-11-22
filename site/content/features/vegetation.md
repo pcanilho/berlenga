@@ -66,7 +66,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Layered meadow: finer, denser grass with turf between the blades instead of bare ground.*
 
-- **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream.
+- **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream. Wet gales lodge tall grass flat in swirled patches that stand again over days (`GrassField3D.lodging`).
 
   ![A body walking through grass that lies down and springs back, raster](media/grass-trample.gif)
 
@@ -101,6 +101,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Deer browsing** (`WorldStand.add_browse()`, `PlantSpecies.RULE_BROWSE`, `PRESET_GRAZED_LAWN`; `GrassField3D.graze_height`): where deer feed, bramble and raspberry are bitten low, palatable herbs thin, the floor turns grassy, the grass is grazed short and clearings become close-cropped deer lawns.
 - **Game trails** (`VegetationField3D.make_game_trails()`; `GroundSurface3D.trail_pugging`): animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs; grass wears to trodden soil along them, stones stand proud on the tread, the packed ground pools rain first, and wet trails churn into hoof-pocked mud where traffic is heaviest.
 - **Boar rooting** (`PlantGenerator.make_rooting()`, `ROOTING_WOOD`, `ROOTING_MEADOW`; `WorldStand.DISTURBANCE_ROOTING`): rooted ground shows turned sods and loose stones that dry, slump and green over, loses its plants and takes the first weeds, healing over about two years.
+- **Grazing roughs and dung** (`PlantGenerator.make_grazing()`): cattle pats ringed by ungrazed rank tufts, horse latrines and deer pellets on pastures and lawns.
 - **Anthills and molehills** (`PlantGenerator.make_mounds()`, `MOUNDS_MEADOW`, `MOUNDS_WOOD`): anthills in sunny meadow groups, wood ant nests at sunny gaps and edges of conifer stands, molehills in lines and arcs; grass keeps out from under them.
 - **Stand margins** (`PlantSpecies.margin_width`, `margin_scale`, `margin_lean`): bracken and bramble stands grow shorter and lean outward toward their edges.
 - **Rock foot** (`PlantSpecies.rock_foot`): ferns, mosses, wood sorrel and seedlings gather within about half a metre of a rock's foot.
@@ -116,7 +117,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 - **Plants on deadwood** (`PlantSpecies.deadwood_rule`): ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.
 - **Woodland mushrooms** (`PlantGenerator`, `PlantSpecies.patch_ring`, `PlantSpecies.deadwood_from_wood`): fly agaric, cep, chanterelle, brittlegill, clouded agaric and honey fungus, with stalks, caps, gills or tubes, rings and warts, come up under their host trees from late summer to the first frost; honey fungus grows in clumps out of the side of deadwood, clouded agaric in fairy-ring arcs.
-- **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`): fallen leaves drift past the crowns into edges and clearings, farther downwind.
+- **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`; `RULE_LITTER_DRIFT`, `PRESET_LEAF_BANK`): fallen leaves drift past the crowns into edges and clearings, farther downwind, pile into hollows and against trunks, logs and stones, and leave ridges swept bare.
 - **Falling leaves** (`LeafFall3D`): leaves fall from the crowns through the wind as autumn sheds them, and gusts and passing bodies lift them off the ground; on ponds and rivers they float and drift, and on snow they lie until it melts and brings them back out.
 - **Wetland plants** (`PlantSpecies.floating`, `water_depth_range`): reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.
 

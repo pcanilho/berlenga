@@ -2054,6 +2054,19 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 	LocalVector<Deadwood> local_deadwood; // Logs placed so far (and the canopy field's, through _deadwood_at()).
 	HashMap<Vector2i, LocalVector<int>> local_deadwood_grid;
 	const float crown_reach = p_setup.crown_max * 1.4f;
+	// Leaf drift (_litter_drift), cached on DRIFT_CELL cells as the litter species ask for it (they come after the trees
+	// and logs, so those are placed by then).
+	HashMap<Vector2i, float> drift_cache;
+	auto drift_at = [&](const Vector2 &p_xz) -> float {
+		const Vector2i k(int(Math::floor(p_xz.x / DRIFT_CELL)), int(Math::floor(p_xz.y / DRIFT_CELL)));
+		if (const float *c = drift_cache.getptr(k)) {
+			return *c;
+		}
+		const Vector2 at((k.x + 0.5f) * DRIFT_CELL, (k.y + 0.5f) * DRIFT_CELL);
+		const float d = _litter_drift(map, p_setup.obstacles, local_crown_grid, local_crowns, local_deadwood_grid, local_deadwood, p_setup.other, at, p_setup.wind_dir);
+		drift_cache.insert(k, d);
+		return d;
+	};
 	const Image *mask = p_setup.mask_img.ptr();
 	auto mask_at = [&](const Vector2 &p_xz, int p_channel) -> float {
 		if (!mask || mask->is_empty() || !p_setup.mask_rect.has_point(p_xz)) {
@@ -2091,6 +2104,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool shade_rule = sp->uses_shade();
 		const bool conifer_rule = sp->uses_conifer();
 		const bool litter_rule = sp->uses_litter();
+		const bool drift_rule = sp->uses_litter_drift();
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
@@ -2374,7 +2388,14 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (p_setup.other) {
 							litter = 1.0f - (1.0f - litter) * (1.0f - p_setup.other->get_litter_at(Vector3(xz.x, 0.0f, xz.y)));
 						}
+						// Leaf drifts: the wind piles what fell into hollows and against obstacles and sweeps crests.
+						if (litter > 0.0f) {
+							litter = MIN(litter * drift_at(xz), 1.0f);
+						}
 						suit *= sp->rule_weight(PlantSpecies::RULE_LITTER, litter);
+					}
+					if (drift_rule && suit > 0.0f) {
+						suit *= sp->rule_weight(PlantSpecies::RULE_LITTER_DRIFT, drift_at(xz));
 					}
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
 						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
@@ -5439,6 +5460,86 @@ Color VegetationField3D::contract_plant_albedo_at(const Vector3 &p_position) con
 	return Color(c.r / c.a, c.g / c.a, c.b / c.a, MIN(c.a, 1.0f));
 }
 
+// Leaf drifts (docs/ideas/vegetation.md, "Leaf drifts"). Wind moves fallen leaves along the ground until they lodge:
+// in hollows and furrows, and against anything that breaks the flow, trunks, logs and stones, deepest in their lee and
+// along their windward foot; ridges, knolls and steep slopes are swept to the soil (Orndorff and Lang 1981, Am. Midl.
+// Nat.; Boerner and Kooser 1989, Am. Midl. Nat., litter up to several times deeper in hollows than on ridges; the lee
+// of obstacles as for snowdrifts). The terrain term is the ground's depth under its ring at 2.5 and 6 m (a
+// relative relief, so it reads the same at any map resolution); the obstacles' term decays over half a metre from
+// their side, stronger downwind of them.
+float VegetationField3D::_litter_drift(const TerrainDataMap3D *p_map, const VegetationObstacles &p_rocks, const HashMap<Vector2i, LocalVector<int>> &p_crown_grid, const LocalVector<Crown> &p_crowns, const HashMap<Vector2i, LocalVector<int>> &p_log_grid, const LocalVector<Deadwood> &p_logs, const VegetationField3D *p_other, const Vector2 &p_xz, const Vector2 &p_wind) const {
+	float d = 1.0f;
+	if (p_map) {
+		auto hgt = [&](float p_dx, float p_dz) { return p_map->get_height_at(Vector3(p_xz.x + p_dx, 0.0f, p_xz.y + p_dz)); };
+		const float h0 = hgt(0.0f, 0.0f);
+		const float ring1 = 0.25f * (hgt(2.5f, 0.0f) + hgt(-2.5f, 0.0f) + hgt(0.0f, 2.5f) + hgt(0.0f, -2.5f));
+		const float ring2 = 0.25f * (hgt(4.2f, 4.2f) + hgt(-4.2f, 4.2f) + hgt(4.2f, -4.2f) + hgt(-4.2f, -4.2f));
+		const float hollow = 0.6f * (ring1 - h0) + 0.4f * (ring2 - h0); // m, positive in a hollow.
+		d += 3.5f * CLAMP(hollow, -0.24f, 0.3f);
+		// Steep slopes shed their leaves downhill.
+		const float slope = p_map->get_slope_at(Vector3(p_xz.x, 0.0f, p_xz.y)); // Radians.
+		d *= 1.0f - 0.6f * Math::smoothstep(0.45f, 0.8f, slope);
+	}
+	// The feet of obstacles: a side factor from the direction away from them (downwind: the lee eddy, deepest).
+	float lee = 0.0f;
+	auto foot = [&](float p_gap, const Vector2 &p_away, float p_scale) {
+		if (p_gap > 1.6f) {
+			return;
+		}
+		const float side = p_wind == Vector2() ? 0.75f : 0.55f + 0.45f * p_away.dot(p_wind);
+		lee = MAX(lee, p_scale * side * Math::exp(-MAX(p_gap, 0.0f) / 0.5f));
+	};
+	if (!p_rocks.is_empty()) {
+		Vector2 away;
+		const float gap = p_rocks.clearance(p_xz, 1.6f, &away);
+		foot(gap, away, 1.0f);
+	}
+	DeadwoodHit hit;
+	bool found = deadwood_nearest(p_log_grid, p_logs, p_xz, 1.6f, DEADWOOD_CELL, hit, 0.05f);
+	if (p_other) {
+		found = p_other->_deadwood_at(p_xz, 1.6f, hit, 0.05f) || found;
+	}
+	if (found && hit.side >= 0.0f) {
+		foot(hit.side, hit.across, MIN(1.0f, hit.radius / 0.15f));
+	}
+	if (!p_crowns.is_empty()) {
+		const Vector2i gc(int(Math::floor(p_xz.x / CROWN_CELL)), int(Math::floor(p_xz.y / CROWN_CELL)));
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				const LocalVector<int> *bucket = p_crown_grid.getptr(gc + Vector2i(dx, dz));
+				if (!bucket) {
+					continue;
+				}
+				for (int idx : *bucket) {
+					const Crown &cr = p_crowns[idx];
+					if (cr.stem <= 0.0f) {
+						continue;
+					}
+					const Vector2 to = p_xz - cr.xz;
+					const float len = to.length();
+					if (len < cr.stem + 1.6f && len > 1e-4f) {
+						foot(len - cr.stem, to / len, MIN(1.0f, cr.stem / 0.25f));
+					}
+				}
+			}
+		}
+	}
+	d += 1.3f * lee;
+	return CLAMP(d, 0.15f, 2.5f);
+}
+
+float VegetationField3D::get_litter_drift_at(const Vector3 &p_global_position) const {
+	RWLockRead guard(crown_lock);
+	const Vector2 xz(p_global_position.x, p_global_position.z);
+	const VegetationField3D *other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+	if (other == this) {
+		other = nullptr;
+	}
+	const TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	const Vector2 wind = litter_skew.length_squared() > 1e-8f ? litter_skew.normalized() : Vector2();
+	return _litter_drift(map, obstacle_grid, crown_grid, crowns, deadwood_grid, deadwood, other, xz, wind);
+}
+
 float VegetationField3D::get_litter_at(const Vector3 &p_global_position) const {
 	RWLockRead guard(crown_lock);
 	return crown_litter(crown_grid, crowns, max_crown_radius + 3.0f * LITTER_SPREAD * (1.0f + litter_skew.length()), CROWN_CELL, Vector2(p_global_position.x, p_global_position.z), litter_skew);
@@ -6500,6 +6601,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("get_conifer_at", "global_position"), &VegetationField3D::get_conifer_at);
 	ClassDB::bind_method(D_METHOD("get_litter_at", "global_position"), &VegetationField3D::get_litter_at);
+	ClassDB::bind_method(D_METHOD("get_litter_drift_at", "global_position"), &VegetationField3D::get_litter_drift_at);
 	ClassDB::bind_method(D_METHOD("get_spring_wetness_at", "global_position"), &VegetationField3D::get_spring_wetness_at);
 	ClassDB::bind_method(D_METHOD("get_springs"), &VegetationField3D::get_springs);
 	ClassDB::bind_method(D_METHOD("add_canopy_loss", "xz", "radius", "keep"), &VegetationField3D::add_canopy_loss, DEFVAL(0.0f));

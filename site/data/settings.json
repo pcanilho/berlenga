@@ -2506,7 +2506,7 @@
     "GrassField3D.trample_recovery"
    ],
    "note": "",
-   "what": "bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream.",
+   "what": "bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream. Wet gales lodge tall grass flat in swirled patches that stand again over days (`GrassField3D.lodging`).",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -2613,6 +2613,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Grazing roughs and dung",
+   "settings": [
+    "PlantGenerator.make_grazing()"
+   ],
+   "note": "",
+   "what": "cattle pats ringed by ungrazed rank tufts, horse latrines and deer pellets on pastures and lawns.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Anthills and molehills",
    "settings": [
     "PlantGenerator.make_mounds()",
@@ -2690,10 +2701,12 @@
    "name": "Leaf drift",
    "settings": [
     "PlantSpecies.litter_range",
-    "VegetationField3D.litter_wind"
+    "VegetationField3D.litter_wind",
+    "RULE_LITTER_DRIFT",
+    "PRESET_LEAF_BANK"
    ],
    "note": "",
-   "what": "fallen leaves drift past the crowns into edges and clearings, farther downwind.",
+   "what": "fallen leaves drift past the crowns into edges and clearings, farther downwind, pile into hollows and against trunks, logs and stones, and leave ridges swept bare.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

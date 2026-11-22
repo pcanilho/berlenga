@@ -1389,6 +1389,29 @@ number 0.8, times how much of the keel is wet; cleared once out of the water. ge
 --test=fordcar: 0.07 at rest, 0.52 at 6.6 m/s in 0.75 m of water, cleared on leaving. Not built yet: the wake washing
 the banks (through the ford bank path) and the bow's trough lowering the water at the intake.
 
+### Round 22: proposed (22 Nov, card posted), research notes
+
+**22.1 Wakes wash banks; the bow trough at the intake.** Boat-wake bank erosion is taken from the wave's energy at
+the bank against the soil's critical shear (Bauer, Lorang and Sherman 2002; Glamore 2008, wake wave energy as the
+erosion measure): the wave's height decays with distance from the sailing line and scour goes with H^2 over the
+threshold. Plan: the water contract's wave height at the ford's banks (_ford()) feeds the scour path round 20 built
+(Partheniades, bank cohesion), the washed soil to the water as silt. The intake reads the water lowered by the bow's
+trough (a moving body draws the water down behind its bow; Fr near 0.5 to 0.7 for wading drill), so a steady pace
+keeps an engine running a little deeper than parked.
+
+**22.2 Parked trucks sink in.** Soft soil under a standing load keeps settling by consolidation and creep
+(Terzaghi one-dimensional consolidation; secondary compression for organic soils), and an object lying in mud needs
+more than its weight to lift free: the breakout suction (Vesic 1969, breakout of objects from the ocean bottom;
+the breakout force rises with embedment time). Plan: a wheel or body resting on mud keeps pressing by the
+consolidation rate of the soil, and a held contact adds a suction share to the rolling resistance that falls once
+it moves; saved with the deposits.
+
+**22.3 Wallows.** Deer and wild boar keep wallows: wet hollows rolled out and refilled through the warm season, with
+churned rims and puddled floors (red deer wallows in the rut, Clutton-Brock et al. 1982;
+boar wallowing to cool and shed parasites; sources to check before building).
+Plan: WorldStand hollows on trails in wet soil get a wallow (press and berm, mud tint), revisited at the trail's passes,
+and fill as puddles.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

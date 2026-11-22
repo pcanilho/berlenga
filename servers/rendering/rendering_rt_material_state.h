@@ -73,7 +73,8 @@ struct RTBaseMaterialState {
 	uint32_t mud : 1; // BaseMaterial3D Mud: a vehicle's body mud from its instance uniforms (docs/ideas/mud.md, stage 3b).
 	uint32_t wetness_canopy : 1; // BaseMaterial3D wetness_canopy: a leaf's intercepted water and beads (docs/ideas/rain.md).
 	uint32_t snow_on_body : 1; // BaseMaterial3D snow_on_body: a moving body's own snow from instance uniform slot 12.
-	uint32_t unused : 24;
+	uint32_t glaze : 1; // BaseMaterial3D glaze: clear ice from freezing rain, the rain map's alpha (docs/ideas/trees.md 5be).
+	uint32_t unused : 23;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 

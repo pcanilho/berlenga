@@ -298,6 +298,12 @@
 		<member name="rooting_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 10000)">
 			Years since wild boar last rooted the ground ([constant RULE_ROOTING]), from [code]WorldStand.rooting_age_at()[/code]; -1 where it never was, which only ranges starting at -1 or reaching 10000 take. A species with [code](0.8, 10000)[/code] is gone from fresh rooting and back after about a year; one with [code](0, 1.5)[/code] grows only on rooted ground (the ruderals that come first).
 		</member>
+		<member name="litter_drift_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member litter_drift_range].
+		</member>
+		<member name="litter_drift_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 100)">
+			How the wind has gathered fallen leaves at the point ([constant RULE_LITTER_DRIFT], from [VegetationField3D]): 1 where they lie as they fell, up to 2.5 in hollows and on the lee and windward feet of trunks, logs and rocks, down to 0.15 on crests and steep slopes. Leaf banks take [code](1.35, 100)[/code]. The same drift scales [constant RULE_LITTER] (capped at 1), so litter thins on ridges and fills hollows.
+		</member>
 		<member name="rock_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member rock_range].
 		</member>
@@ -531,7 +537,10 @@
 		<constant name="RULE_ROOTING" value="32" enum="Rule">
 			Years since boar rooted the ground, -1 never (rooting_range).
 		</constant>
-		<constant name="RULE_MAX" value="33" enum="Rule">
+		<constant name="RULE_LITTER_DRIFT" value="33" enum="Rule">
+			How the wind gathers fallen leaves, 1 as fallen (litter_drift_range).
+		</constant>
+		<constant name="RULE_MAX" value="34" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">

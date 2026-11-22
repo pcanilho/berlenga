@@ -70,6 +70,8 @@ void WeatherMap3D::_rain_allocate() {
 	cell_fog.fill(0.0f);
 	cell_fog_drip.resize(n * n);
 	cell_fog_drip.fill(0.0f);
+	cell_glaze.resize(n * n);
+	cell_glaze.fill(0.0f);
 	rain_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
 	rain_texture.unref();
 	rain_global_added = false;
@@ -81,20 +83,49 @@ void WeatherMap3D::_rain_shift(Vector2i p_delta) {
 	if (cell_canopy.size() != n * n) {
 		return;
 	}
-	double sum = 0.0;
-	for (int i = 0; i < n * n; i++) {
-		sum += cell_canopy[i];
-	}
-	const float mean = float(sum / (n * n));
-	const Vector<float> old = cell_canopy;
-	for (int z = 0; z < n; z++) {
-		for (int x = 0; x < n; x++) {
-			const int sx = x + p_delta.x;
-			const int sz = z + p_delta.y;
-			const bool inside = sx >= 0 && sz >= 0 && sx < n && sz < n;
-			cell_canopy.write[z * n + x] = inside ? old[sz * n + sx] : mean;
+	for (Vector<float> *v : { &cell_canopy, &cell_glaze }) {
+		if (v->size() != n * n) {
+			continue;
+		}
+		double sum = 0.0;
+		for (int i = 0; i < n * n; i++) {
+			sum += (*v)[i];
+		}
+		const float mean = float(sum / (n * n));
+		const Vector<float> old = *v;
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int sx = x + p_delta.x;
+				const int sz = z + p_delta.y;
+				const bool inside = sx >= 0 && sz >= 0 && sx < n && sz < n;
+				v->write[z * n + x] = inside ? old[sz * n + sx] : mean;
+			}
 		}
 	}
+}
+
+// Freezing rain. Snow falling through a warm layer aloft melts: wholly once the layer peaks above about +3 C at the
+// usual depths, hardly below +1 C (Stewart and King 1987; Zerr 1997). Under sub-zero air at the ground the melted drops
+// arrive supercooled and freeze on what they hit.
+float WeatherMap3D::get_warm_nose_melt() const {
+	const float t = warm_nose_temperature;
+	if (t <= 1.0f) {
+		return 0.0f;
+	}
+	const float x = MIN((t - 1.0f) / 2.0f, 1.0f);
+	return x * x * (3.0f - 2.0f * x);
+}
+
+// Jones (1998), the simple ice accretion model (CRREL Report 98-1; ASCE 7's ice load): the radial ice a horizontal
+// cylinder gains, mm/h, from freezing rain P (mm/h) in wind V (m/s), with the rain's liquid water content
+// W = 0.067 P^0.846 g/m3 (Best 1949):  dR/dt = sqrt((P rho_w)^2 + (3.6 V W)^2) / (rho_i pi), rho_i 0.9 g/cm3.
+float WeatherMap3D::glaze_accretion_rate(float p_precip_mm_h, float p_wind_m_s) {
+	if (p_precip_mm_h <= 0.0f) {
+		return 0.0f;
+	}
+	const float w = 0.067f * Math::pow(p_precip_mm_h, 0.846f);
+	const float v = 3.6f * MAX(p_wind_m_s, 0.0f) * w;
+	return Math::sqrt(p_precip_mm_h * p_precip_mm_h + v * v) / (0.9f * Math::PI);
 }
 
 void WeatherMap3D::_rain_update(double p_weather_dt) {
@@ -106,6 +137,8 @@ void WeatherMap3D::_rain_update(double p_weather_dt) {
 	float *d = cell_drip.ptrw();
 	float *fg = cell_fog.ptrw();
 	float *fd = cell_fog_drip.ptrw();
+	float *g = cell_glaze.size() == n * n ? cell_glaze.ptrw() : nullptr;
+	const float melt_aloft = get_warm_nose_melt();
 	if (!canopy_water_enabled) {
 		for (int i = 0; i < n * n; i++) {
 			c[i] = 0.0f;
@@ -175,6 +208,16 @@ void WeatherMap3D::_rain_update(double p_weather_dt) {
 		}
 		c[i] = held;
 		d[i] = steps > 0 ? canopy_drainage(held, s) : drain;
+		// Glaze: freezing rain accretes (Jones 1998); above freezing it melts at a degree-hour rate of 0.3 mm/h per K, the
+		// low end of clean ice's (Hock 2003: 6.6 to 20 mm/day/K); below, it stays (sublimation is a few hundredths of a mm a day).
+		if (g != nullptr) {
+			if (cur_air_temperature <= 0.0f) {
+				g[i] += glaze_accretion_rate(MAX(cell_rain[i], 0.0f) * melt_aloft, w.length()) * dt_h;
+			} else {
+				g[i] = MAX(g[i] - 0.3f * cur_air_temperature * dt_h, 0.0f);
+			}
+			g[i] = MIN(g[i], 60.0f);
+		}
 		// The fog's share of what drips (the inputs mix on the leaves).
 		const float in = (1.0f - p) * rain + fog;
 		fd[i] = in > 1e-6f ? d[i] * fog / in : (fog > 0.0f ? d[i] : 0.0f);
@@ -208,7 +251,7 @@ void WeatherMap3D::_rain_upload() {
 		w[i * 4 + 0] = Math::make_half_float(MAX(cell_rain[i], 0.0f));
 		w[i * 4 + 1] = Math::make_half_float(MIN(cell_canopy[i] / s, 1.0f));
 		w[i * 4 + 2] = Math::make_half_float(cell_drip[i]);
-		w[i * 4 + 3] = Math::make_half_float(0.0f);
+		w[i * 4 + 3] = Math::make_half_float(cell_glaze.size() == n * n ? cell_glaze[i] : 0.0f); // glaze, mm
 	}
 	rain_image->set_data(n, n, false, Image::FORMAT_RGBAH, bytes);
 	if (rain_texture.is_null()) {
@@ -229,7 +272,12 @@ void WeatherMap3D::_rain_upload() {
 }
 
 float WeatherMap3D::get_rain_share_at(Vector3 p_position) const {
-	return rain_fraction(get_air_temperature_at(p_position), get_air_humidity_at(p_position));
+	// Under a warm layer aloft its melted share reaches the ground liquid, supercooled where the air is below freezing.
+	return MAX(rain_fraction(get_air_temperature_at(p_position), get_air_humidity_at(p_position)), get_warm_nose_melt());
+}
+
+float WeatherMap3D::get_glaze_at(Vector3 p_position) const {
+	return cell_glaze.size() == resolution * resolution ? MAX(_sample(cell_glaze, Vector2(p_position.x, p_position.z)), 0.0f) : 0.0f;
 }
 
 float WeatherMap3D::get_rainfall_at(Vector3 p_position) const {
@@ -292,6 +340,11 @@ void WeatherMap3D::_bind_rain_methods() {
 	ClassDB::bind_method(D_METHOD("get_ground_water_input_at", "position"), &WeatherMap3D::get_ground_water_input_at);
 	ClassDB::bind_method(D_METHOD("get_fog_water_at", "position"), &WeatherMap3D::get_fog_water_at);
 	ClassDB::bind_method(D_METHOD("get_fog_drip_at", "position"), &WeatherMap3D::get_fog_drip_at);
+	ClassDB::bind_method(D_METHOD("set_warm_nose_temperature", "celsius"), &WeatherMap3D::set_warm_nose_temperature);
+	ClassDB::bind_method(D_METHOD("get_warm_nose_temperature"), &WeatherMap3D::get_warm_nose_temperature);
+	ClassDB::bind_method(D_METHOD("get_warm_nose_melt"), &WeatherMap3D::get_warm_nose_melt);
+	ClassDB::bind_method(D_METHOD("get_glaze_at", "position"), &WeatherMap3D::get_glaze_at);
+	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("glaze_accretion_rate", "precip_mm_h", "wind_m_s"), &WeatherMap3D::glaze_accretion_rate);
 	ClassDB::bind_method(D_METHOD("set_fog_drip", "enabled"), &WeatherMap3D::set_fog_drip);
 	ClassDB::bind_method(D_METHOD("is_fog_drip_enabled"), &WeatherMap3D::is_fog_drip_enabled);
 
@@ -300,4 +353,5 @@ void WeatherMap3D::_bind_rain_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_storage", PROPERTY_HINT_RANGE, "0.05,10,0.01,suffix:mm"), "set_canopy_storage", "get_canopy_storage");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fog_drip"), "set_fog_drip", "is_fog_drip_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_free_throughfall", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_canopy_free_throughfall", "get_canopy_free_throughfall");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "warm_nose_temperature", PROPERTY_HINT_RANGE, "0,15,0.1,suffix:C"), "set_warm_nose_temperature", "get_warm_nose_temperature");
 }

@@ -5828,7 +5828,7 @@ void GroundSurface3D::_rain_marks(float p_dt, float p_ustar) {
 		rain_crust *= Math::exp(-x / (6.0f * 3600.0f));
 		rain_pit_cover *= Math::exp(-x * (1.0f - rain_crust) / 300.0f);
 	}
-	if (rain_pit_cover < 0.005f && rain_crust < 0.005f) {
+	if (rain <= 0.0f && rain_pit_cover < 0.005f && rain_crust < 0.005f) { // (light rain builds from less)
 		rain_pit_cover = 0.0f;
 		rain_crust = 0.0f;
 		rain_total = 0.0f;
@@ -5836,6 +5836,36 @@ void GroundSurface3D::_rain_marks(float p_dt, float p_ustar) {
 	const float pc = get_rain_pit_cover();
 	const float kc = get_rain_crust();
 	if (Math::abs(pc - rain_published[0]) > 0.01f || Math::abs(kc - rain_published[1]) > 0.01f || ((pc > 0.0f) != (rain_published[0] > 0.0f))) {
+		ripple_dirty = true;
+	}
+}
+
+// Adhesion warts (docs/ideas/sand.md, "Adhesion warts"): saltating grains that land on damp sand stick (the pore
+// water's meniscus holds them) and build up into irregular warts that grow into the wind (Hunter 1973; Kocurek and
+// Fielder 1982), about an hour of strong saltation to full growth here; where the sand is damp is the wet map's to say
+// (the shaders read it per pixel). Rain flattens them (a millimetre or so); dry, they blow away with the rest of the
+// loose sand, as the shaders' damp gate does. The patch-wide state: how far they have grown and the wind that built them.
+void GroundSurface3D::_adhesion(float p_dt, float p_ustar, Vector2 p_dir) {
+	if (!adhesion_warts || p_dt <= 0.0f) {
+		return;
+	}
+	if (p_ustar > GroundRipples::SAND_USTAR_T) {
+		const float x = (p_ustar / GroundRipples::SAND_USTAR_T - 1.0f) * p_dt * ripple_time_scale;
+		if (adhesion_grow < 0.02f) {
+			adhesion_wind = p_dir; // a new set builds to this wind
+		}
+		adhesion_grow = MIN(adhesion_grow + x / 3600.0f, 1.0f);
+	}
+	const WorldWeather *wm = _weather();
+	if (wm) {
+		const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
+		const float rain = wm->rainfall_at(at) * (1.0f - 0.8f * wm->canopy_closure_at(at));
+		adhesion_grow *= Math::exp(-rain * p_dt / 3600.0f / 1.0f);
+	}
+	if (adhesion_grow < 0.005f && p_ustar <= GroundRipples::SAND_USTAR_T) {
+		adhesion_grow = 0.0f; // flattened out (not while it is still building)
+	}
+	if (Math::abs(get_adhesion_growth() - adhesion_published) > 0.01f || ((get_adhesion_growth() > 0.0f) != (adhesion_published > 0.0f))) {
 		ripple_dirty = true;
 	}
 }
@@ -5859,6 +5889,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 	const float speed = wind.length();
 	const Vector2 dir = speed > 0.1f ? wind / speed : Vector2(1.0f, 0.0f);
 	_rain_marks(float(p_delta), GroundRipples::friction_speed(speed));
+	_adhesion(float(p_delta), GroundRipples::friction_speed(speed), dir);
 	// A grown field for the cells that come in, in the background; again when the wind turns past 35 degrees.
 	if (ripple_task != WorkerThreadPool::INVALID_TASK_ID) {
 		if (WorkerThreadPool::get_singleton()->is_task_completed(ripple_task)) {
@@ -6105,6 +6136,10 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[26] = rain_pit_seed;
 		rain_published[0] = meta[24];
 		rain_published[1] = meta[25];
+		meta[28] = adhesion_wind.x; // the adhesion warts (_adhesion())
+		meta[29] = adhesion_wind.y;
+		meta[30] = get_adhesion_growth();
+		adhesion_published = meta[30];
 		meta[12] = ripples.tmpl_k.x; // the template's wave vector, for the shaders' dislocations
 		meta[13] = ripples.tmpl_k.y;
 		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
@@ -9874,6 +9909,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_rain_pits"), &GroundSurface3D::is_rain_pits);
 	ClassDB::bind_method(D_METHOD("get_rain_pit_cover"), &GroundSurface3D::get_rain_pit_cover);
 	ClassDB::bind_method(D_METHOD("get_rain_crust"), &GroundSurface3D::get_rain_crust);
+	ClassDB::bind_method(D_METHOD("set_adhesion_warts", "enabled"), &GroundSurface3D::set_adhesion_warts);
+	ClassDB::bind_method(D_METHOD("is_adhesion_warts"), &GroundSurface3D::is_adhesion_warts);
+	ClassDB::bind_method(D_METHOD("get_adhesion_growth"), &GroundSurface3D::get_adhesion_growth);
 	ClassDB::bind_method(D_METHOD("is_dune_tone"), &GroundSurface3D::is_dune_tone);
 	ClassDB::bind_method(D_METHOD("is_ripple_sorting"), &GroundSurface3D::is_ripple_sorting);
 	ClassDB::bind_method(D_METHOD("is_far_ripples"), &GroundSurface3D::is_far_ripples);
@@ -10035,6 +10073,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dune_tone"), "set_dune_tone", "is_dune_tone");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "granule_ripples"), "set_granule_ripples", "is_granule_ripples");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_pits"), "set_rain_pits", "is_rain_pits");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "adhesion_warts"), "set_adhesion_warts", "is_adhesion_warts");
 	ClassDB::bind_method(D_METHOD("set_slip_avalanches", "enabled"), &GroundSurface3D::set_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("is_slip_avalanches"), &GroundSurface3D::is_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("get_avalanche_count"), &GroundSurface3D::get_avalanche_count);
