@@ -44,6 +44,8 @@
 // downhill (their phase varies across the slope), cos for height and sin for slope; the neighbouring cells are
 // blended with a smooth distance weight (the 5x5 cells around the point), and the blended (cos, sin) pair is renormalized when longer than 1/2.
 
+#include "terrain_dmath.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -116,8 +118,8 @@ public:
 					}
 					w = w * w * w;
 					const double phase = (dx * tx + dz * tz) * 6.283185307179586;
-					c += w * std::cos(phase);
-					s += w * std::sin(phase);
+					c += w * TerrainDMath::cos(phase);
+					s += w * TerrainDMath::sin(phase);
 					wsum += w;
 				}
 			}
@@ -138,7 +140,7 @@ public:
 
 			// Stack: this octave's result is the next fade target; its ridges and creases (slope ~ 0) mask the next.
 			fade = faded;
-			mask = (1.0 - std::pow(1.0 - _clamp(mask, 0.0, 1.0), p.detail)) * _ease_out(std::fabs(s));
+			mask = (1.0 - TerrainDMath::pow(1.0 - _clamp(mask, 0.0, 1.0), p.detail)) * _ease_out(std::fabs(s));
 			// Straight gullies: steer the next octave by the sign of this octave's slope, at constant steepness.
 			const double gs = (s >= 0.0 ? 1.0 : -1.0) * p.depth * 6.283185307179586;
 			sx += -gs * tx;
@@ -210,8 +212,8 @@ public:
 					const double gwx = 3.0 * w1 * w1 * (-2.0 * dx / 2.25);
 					const double gwz = 3.0 * w1 * w1 * (-2.0 * dz / 2.25);
 					const double phase = (dx * tx + dz * tz) * 6.283185307179586;
-					const double cp = std::cos(phase);
-					const double sp = std::sin(phase);
+					const double cp = TerrainDMath::cos(phase);
+					const double sp = TerrainDMath::sin(phase);
 					c += w * cp;
 					s += w * sp;
 					wsum += w;
@@ -265,8 +267,8 @@ public:
 			fade = faded;
 			{
 				const double m0 = _clamp(mask, 0.0, 1.0);
-				const double reach = 1.0 - std::pow(1.0 - m0, p.detail);
-				const double dreach = p.detail * std::pow(std::max(1.0 - m0, 0.0), p.detail - 1.0);
+				const double reach = 1.0 - TerrainDMath::pow(1.0 - m0, p.detail);
+				const double dreach = p.detail * TerrainDMath::pow(std::max(1.0 - m0, 0.0), p.detail - 1.0);
 				const double as = std::fabs(s);
 				const double e = _ease_out(as);
 				const double de = as < 1.0 ? 2.0 * (1.0 - as) * (s >= 0.0 ? 1.0 : -1.0) : 0.0;
@@ -330,7 +332,7 @@ private:
 		auto grad = [&](int cx, int cz, double dx, double dz) -> double {
 			const uint32_t h = _hash(uint32_t(cx), uint32_t(cz), p_seed);
 			const double a = (h & 0xffff) * (6.283185307179586 / 65536.0);
-			return std::cos(a) * dx + std::sin(a) * dz;
+			return TerrainDMath::cos(a) * dx + TerrainDMath::sin(a) * dz;
 		};
 		const double ux = tx * tx * tx * (tx * (tx * 6.0 - 15.0) + 10.0);
 		const double uz = tz * tz * tz * (tz * (tz * 6.0 - 15.0) + 10.0);
