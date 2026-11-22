@@ -173,6 +173,26 @@ PlantGenerator::MushroomForm PlantGenerator::_mushroom_form(float p_age) {
 			m.cap_centre = Color(0.8f, 0.8f, 0.85f);
 			m.cap_margin = Color(1.1f, 1.15f, 1.1f);
 			break;
+		case PRESET_FAIRY_RING_MUSHROOM:
+			// Marasmius oreades (Phillips 2006): cap 2 to 5 cm, bell-shaped then flat with a broad boss, buff to tan,
+			// paler as it dries; distant, cream gills; stalk 4 to 8 cm, slender, tough and pale. In rings or arcs,
+			// several together.
+			m.cap_r = _rand(0.011f, 0.024f) * Math::lerp(0.6f, 1.0f, open);
+			m.cap_h = m.cap_r * Math::lerp(0.7f, 0.25f, open);
+			m.cap_thick = m.cap_r * 0.18f;
+			m.dome = Math::lerp(0.75f, 0.4f, open);
+			m.umbo = Math::lerp(0.1f, 0.35f, open);
+			m.curl = m.cap_r * Math::lerp(0.12f, 0.02f, open);
+			m.wave = Math::lerp(0.005f, 0.03f, open);
+			m.gills = 22;
+			m.gill_depth = m.cap_r * 0.16f;
+			m.stalk_h = _rand(0.035f, 0.07f) * Math::lerp(0.6f, 1.0f, open);
+			m.stalk_r = m.cap_r * 0.13f;
+			m.stalk_base = 1.1f;
+			m.cap_centre = Color(0.85f, 0.82f, 0.8f); // Darker tan over the boss.
+			m.cap_margin = Color(1.12f, 1.12f, 1.1f);
+			m.cap_fade = 0.4f;
+			break;
 		case PRESET_CLOUDED_AGARIC:
 			// Cap 6 to 15 cm, grey to grey-brown with a bloom, convex then flat, the margin long
 			// in-rolled; crowded cream gills running a little down the stalk; a stout stalk.
@@ -541,6 +561,10 @@ void PlantGenerator::_build_mushrooms() {
 		case PRESET_CLOUDED_AGARIC:
 			count = int(_rand(2.0f, 4.99f));
 			spread = 0.3f;
+			break;
+		case PRESET_FAIRY_RING_MUSHROOM:
+			count = int(_rand(3.0f, 8.99f));
+			spread = 0.12f;
 			break;
 		case PRESET_HONEY_FUNGUS:
 			count = int(_rand(8.0f, 18.99f));

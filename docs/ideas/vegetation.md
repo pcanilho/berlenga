@@ -1659,3 +1659,45 @@ Research notes, nothing built yet:
   drifts are (round 4), and swirl in eddies behind obstacles. Built as: a GPU particle layer of the stand's own leaves
   near the camera, driven by WorldWeather gusts, landing into the drift field; few and cheap.
 
+
+## Meadow fairy rings (round 5, first pick)
+Built in modules/vegetation/fairy_rings.h (FairyRings::at, FairyRings::bands, and the same code as GLSL for the
+grass shader), GrassField3D.fairy_rings (on by default, off for crops), PlantSpecies RULE_FAIRY_RING 34 and
+PlantGenerator PRESET_FAIRY_RING_MUSHROOM 108 with make_fairy_rings (PRESET_MAX 109).
+- Layout. One shared ring layout for the whole world, so grass and mushrooms agree without any data passing: 40 m
+  cells, 30% hold a ring, radius 2 to 14 m (more small than large), centre kept inside its cell so a point only
+  reads its own cell. Rings past 40% "broken" open into arcs, as old rings do where they meet each other or a path.
+- Grass. Three bands across the ring edge (Shantz and Piemeisel 1917): a dark, taller outer band (front, 0.55 m),
+  a dead band just inside (0.5 m: blades browned to straw, shorter, some missing), and a weaker inner dark band.
+  Blade height and colour only; no extra geometry, no textures.
+- Mushrooms. A Marasmius-like champignon: buff cap 1.1 to 2.4 cm with a central umbo, 22 widely spaced gills, a
+  tough pale stalk 3.5 to 7 cm, in clusters of 3 to 8. Placed only on the ring's dead band (RULE_FAIRY_RING
+  -0.25 to 0.1 m, the signed distance to the ring front), fruiting from late May to mid November, in the open.
+- Check: vegetation bench --test (mushrooms only on the rings, none off them); grass bench --fairy for a look shot.
+
+## Dewy webs (round 5, second pick)
+Built in modules/vegetation/plant_webs.cpp (PRESET_SHEET_WEB 109, PRESET_ORB_WEB 110, PRESET_MAX 111,
+PlantGenerator.make_dew_webs) and the plant shader's silk variant (PLANT_SILK).
+- Research. Money spiders (Linyphiidae) make horizontal, non-sticky sheet webs and reach very high numbers in
+  grassland and crops (Sunderland, Fraser and Dixon 1986, Pedobiologia 29: up to 160 per m2 in cereal fields;
+  Bristowe 1958, The World of Spiders: over a million an acre from August to December). Silk is 1 to 4 microns
+  thick, so a web is unseen until dew or hoarfrost beads it; on a still autumn morning a whole field turns grey-white
+  with sheets and the orbs of garden spiders hang between tall dead stems, and both vanish as the sun dries them.
+- Technique. The threads are not geometry: each web is a few triangles (a sheet's disc, an orb's disc, crossed strips
+  for single threads) and the fragment shader draws the threads from the UVs, each widened to at least a pixel and
+  faded by its true width over the pixel (Persson's phone-wire anti-aliasing); past a family's spacing its mean cover
+  takes over, so far webs keep their true brightness and never shimmer. Dew drops are modelled as beads along each
+  thread (0.16 to 0.56 mm across, one per 0.5 mm), resolved up close and averaged far off. The surface is blended (a
+  hash only made a fixed sparkle in raster); the path tracer takes the same cover in its any-hit stage. Raster and
+  path traced orbs match at full size (spiral, hub, free zone, open sector, frame and anchors).
+- Sheets: four families of jittered, broken threads 0.7 to 1.2 mm apart, densest in patches a few centimetres across
+  and thinning to nothing at the edge; small flat sheets 5 to 10 cm near the ground and hammocks or domes up to 22 cm
+  higher in the grass, with scaffold threads up to the blade tips. Orbs: 25 to 35 radials out to a five-sided frame,
+  a tight hub spiral, a free zone, the capture spiral 3 to 5 mm apart (wetter, as its glue gathers water), a quarter
+  with one sector open (Zygiella-like), hung between two dry stems with dead heads, frame threads tied to the stems
+  and the ground.
+- Dew. The silk reads WeatherMap3D's surface wetness (where dew lands) and hoarfrost (white, matt beads); a "dew" key
+  in the season sets it instead for scenes without a weather map. Dry, only the hub's denser silk faintly shows.
+- Season: sheets from March to early December, most from late July; orbs late July to October; none under snow.
+- Check: vegetation bench --test (silk shader on every web, sheets low, orbs on stems, seasons); plants bench
+  --close=109 / 110 --dew=1 for a look, --dew=0 to see them gone.

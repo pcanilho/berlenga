@@ -875,7 +875,11 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_BRITTLEGILL:
 		case PRESET_CLOUDED_AGARIC:
 		case PRESET_HONEY_FUNGUS:
+		case PRESET_FAIRY_RING_MUSHROOM:
 			return 30.0f;
+		case PRESET_SHEET_WEB:
+		case PRESET_ORB_WEB:
+			return 2.0f; // Torn by anything passing.
 		case PRESET_SEEDLING:
 		case PRESET_SUNDEW:
 			return 20.0f;
@@ -908,6 +912,8 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_COW_PAT:
 		case PRESET_HORSE_DUNG:
 		case PRESET_DEER_PELLETS:
+		case PRESET_SHEET_WEB:
+		case PRESET_ORB_WEB:
 		case PRESET_MAX:
 			return 0.0f;
 		case PRESET_SEDGE:
@@ -1088,6 +1094,20 @@ float PlantGenerator::get_presence(Preset p_preset, const Dictionary &p_season) 
 
 		return _mushroom_presence(p_preset, p_season);
 	}
+	if (is_silk(p_preset)) {
+		// Webs: money spiders' sheets from spring, most in autumn when the young have grown (Bristowe 1958: over a
+		// million an acre August to December); garden spiders' orbs late July to October. Snow ends them.
+		if (!p_season.has("day_of_year")) {
+			return 1.0f;
+		}
+		const float day = p_season["day_of_year"];
+		float w = p_preset == PRESET_ORB_WEB ? smoothstep_f(195.0f, 225.0f, day) * (1.0f - smoothstep_f(290.0f, 310.0f, day))
+											 : smoothstep_f(60.0f, 100.0f, day) * (1.0f - smoothstep_f(330.0f, 350.0f, day)) * Math::lerp(0.3f, 1.0f, smoothstep_f(200.0f, 240.0f, day));
+		if (float(p_season.get("snow_depth", 0.0f)) > 0.02f) {
+			w = 0.0f;
+		}
+		return w;
+	}
 	if (!p_season.has("forcing") || p_preset != PRESET_WOOD_ANEMONE) {
 		return 1.0f;
 	}
@@ -1108,6 +1128,10 @@ float PlantGenerator::_mushroom_presence(Preset p_preset, const Dictionary &p_se
 	switch (p_preset) {
 		case PRESET_CHANTERELLE:
 			from = 170.0f;
+			to = 320.0f;
+			break;
+		case PRESET_FAIRY_RING_MUSHROOM:
+			from = 140.0f; // Late May to November, a flush after each good rain (Phillips 2006).
 			to = 320.0f;
 			break;
 		case PRESET_BRITTLEGILL:
@@ -5290,6 +5314,9 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 		case PRESET_BRITTLEGILL:
 		case PRESET_CLOUDED_AGARIC:
 		case PRESET_HONEY_FUNGUS:
+		case PRESET_FAIRY_RING_MUSHROOM:
+		case PRESET_SHEET_WEB:
+		case PRESET_ORB_WEB:
 		case PRESET_MAX:
 			break;
 	}
@@ -5922,16 +5949,19 @@ vec3 plant_wind(vec3 wp, float h) {
 	return code;
 }
 
-Ref<Shader> PlantGenerator::shaders[2];
+Ref<Shader> PlantGenerator::shaders[3];
 
-Ref<Shader> PlantGenerator::_plant_shader(bool p_textured) {
-	Ref<Shader> &sh = shaders[p_textured ? 1 : 0];
+Ref<Shader> PlantGenerator::_plant_shader(bool p_textured, bool p_silk) {
+	Ref<Shader> &sh = shaders[p_silk ? 2 : (p_textured ? 1 : 0)];
 	if (sh.is_valid()) {
 		return sh;
 	}
 	String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
 	if (p_textured) {
 		code += "#define PLANT_TEXTURED\n";
+	}
+	if (p_silk) {
+		code += "#define PLANT_SILK\n";
 	}
 	code += shader_common_code();
 	code += GrassField3D::get_ground_opened_shader_code();
@@ -5956,6 +5986,104 @@ varying vec3 v_geo_n;
 varying float v_light;
 varying vec3 v_tone; // The plant's own tone (no two plants of a species alike).
 uniform float light_response = 1.0;
+
+#ifdef PLANT_SILK
+// Silk (docs/ideas/vegetation.md, "Dewy webs"): threads 1 to 4 microns thick, drawn here, not modelled. Each is a line in
+// the web's own plane (UV, in metres) widened to at least a pixel and faded by its true width over the pixel (Persson's
+// phone-wire anti-aliasing), so a far web keeps its true mean cover; past the spacing of a family of threads the
+// family's mean cover takes over. Dew and hoarfrost bead the threads (drops 0.1 to 0.4 mm), which is when webs are
+// seen. Blended, not hashed or clipped: a web is mostly a thin veil of sub-pixel cover, which a hash only turns into a
+// fixed sparkle; webs seldom overlap, so sorting by instance is enough, and they cast no shadow map (the drops are
+// clear). COLOR.b picks the pattern: 0 a sheet (four families of broken, jittered threads), 0.5 one thread along UV.x
+// (UV.y across), 1 an orb round its hub; COLOR.r thins a sheet towards its edge.
+uniform vec4 silk_orb = vec4(0.12, 0.004, 28.0, 0.0); // radius, capture spiral spacing (m), radials, open sector (turns)
+uniform float silk_dew = -1.0; // >= 0: this much dew, in place of the weather's (scenes without a WeatherMap3D)
+
+float silk_h(float x) {
+	return fract(sin(x * 91.3458) * 47453.5453);
+}
+
+// The cover of a thread of half width w (m) at distance d, over a pixel fp wide.
+float silk_line(float d, float w, float fp) {
+	float wp = max(2.0 * w, fp);
+	return (1.0 - smoothstep(0.5 * wp - 0.5 * fp, 0.5 * wp + 0.5 * fp, d)) * 2.0 * w / wp;
+}
+
+// Half width along a thread at t (m): the dry silk, or the dew's beads, one in each 0.5 mm, their profile when a pixel
+// resolves them and their mean width when it does not.
+float silk_width(float t, float seed, float dew, float fp) {
+	const float cell = 0.0005;
+	float i = floor(t / cell);
+	float r = dew * mix(0.08e-3, 0.28e-3, silk_h(i + seed));
+	float c = (i + 0.2 + 0.6 * silk_h(i * 3.1 + seed)) * cell;
+	float x = t - c;
+	float profile = sqrt(max(r * r - x * x, 0.0));
+	float mean = 1.5708 * r * r / cell;
+	return max(1.5e-6, mix(profile, mean, smoothstep(0.5 * cell, 2.0 * cell, fp)));
+}
+
+// A family of parallel threads about s apart: cover at p.
+float silk_family(vec2 p, float a, float s, float seed, float dew, float fp, float broken) {
+	vec2 n = vec2(cos(a), sin(a));
+	float u = dot(p, n) / s;
+	float i = floor(u);
+	float d = abs(u - i - 0.5 - 0.35 * (silk_h(i + seed) - 0.5)) * s;
+	float t = dot(p, vec2(-n.y, n.x));
+	float w = silk_width(t, i * 0.37 + seed, dew, fp);
+	// Broken: a share of each thread's 2 cm lengths missing, so the sheet reads tangled, not woven.
+	float on = step(broken, silk_h(floor(t / 0.02 + silk_h(i * 1.3 + seed) * 7.0) * 1.37 + i * 0.11 + seed));
+	float far_k = smoothstep(0.4 * s, 1.5 * s, fp);
+	return mix(silk_line(d, w, fp) * on, min(2.0 * w / s, 1.0) * (1.0 - broken), far_k);
+}
+
+float silk_cover(vec2 p, float kind, float dew, float fp) {
+	if (kind < 0.25) {
+		float keep = 1.0;
+		for (int k = 0; k < 4; k++) {
+			float a = float(k) * 0.785 + 0.4 * silk_h(float(k) + 7.0);
+			keep *= 1.0 - silk_family(p, a, 0.0007 * (1.0 + 0.25 * float(k)), float(k) * 13.0, dew * 0.65, fp, 0.25);
+		}
+		// Denser and thinner parts a few centimetres across, as the spider laid it.
+		vec2 q = p * 45.0;
+		float patchy = 0.5 + 0.25 * sin(q.x + 1.7 * sin(q.y * 0.8)) + 0.25 * sin(q.y * 1.3 + 1.3 * sin(q.x * 0.7 + 2.0));
+		return (1.0 - keep) * mix(0.35, 1.0, patchy);
+	}
+	if (kind < 0.75) {
+		return silk_line(abs(p.y), silk_width(p.x, 3.0, dew, fp), fp);
+	}
+	// The orb: radials out to the frame (a pentagon, as _build_orb_web() ties it), the hub's tight spiral, a free zone,
+	// then the capture spiral (Archimedean) out to a wavy rim; one sector open in some.
+	float R = silk_orb.x;
+	float r = length(p);
+	float th = atan(p.y, p.x);
+	float tu = th / 6.2831853 + 0.5;
+	const float m = 5.0;
+	float fa = mod(th - 0.3, 6.2831853 / m) - 3.14159265 / m;
+	float frame = R * 1.4 * cos(3.14159265 / m) / cos(fa);
+	if (r > frame) {
+		return 0.0;
+	}
+	float N = silk_orb.z;
+	float rs = 6.2831853 * max(r, 1e-4) / N;
+	float k = floor(tu * N + 0.5);
+	float dr = abs(tu * N + 0.5 - k - 0.5) * rs;
+	float wr = silk_width(r, k * 1.3, dew * 0.8, fp);
+	float cr = mix(silk_line(dr, wr, fp), min(2.0 * wr / rs, 1.0), smoothstep(0.4 * rs, 1.5 * rs, fp));
+	float r_hub = 0.1 * R, r_free = 0.25 * R;
+	float rim = R * (1.0 + 0.06 * sin(th * 3.0 + R * 40.0) + 0.04 * sin(th * 5.0 + 1.3));
+	bool in_hub = r < r_hub;
+	float sp = in_hub ? 0.0012 : silk_orb.y;
+	float u = (r - (in_hub ? 0.0 : r_free)) / sp - tu;
+	float ds = abs(fract(u) - 0.5) * sp;
+	float on = in_hub ? 1.0 : step(r_free, r) * step(r, rim);
+	if (silk_orb.w > 0.0) {
+		on *= in_hub ? 1.0 : step(silk_orb.w, fract(tu + 0.25 + 0.5 * silk_orb.w));
+	}
+	float ws = silk_width(th * r, floor(u) * 2.1, dew * 1.4, fp); // The capture spiral's glue gathers the most water.
+	float cs = mix(silk_line(ds, ws, fp), min(2.0 * ws / sp, 1.0), smoothstep(0.4 * sp, 1.5 * sp, fp));
+	return 1.0 - (1.0 - cr) * (1.0 - cs * on);
+}
+#endif
 
 
 vec3 rotate_about(vec3 v, vec3 axis, float a) {
@@ -6179,6 +6307,27 @@ void fragment() {
 	vec4 snow_s = snow_cover_at(v_world);
 	float snow = snow_cover_weight(snow_s.x, 60.0, n_world, n_world);
 	snow_cover_apply(snow, snow_s.y, snow_s.z, albedo, rough, metallic, specular);
+#ifdef PLANT_SILK
+	{
+		// Dew (the weather's surface water) and hoarfrost bead the silk; dry, it is all but unseen.
+		float frost_k = smoothstep(0.0, 0.05, weather_frost_at(v_world));
+		float dew = silk_dew >= 0.0 ? silk_dew : smoothstep(0.03, 0.4, weather_wetness_at(v_world));
+		dew = max(dew, frost_k);
+#if defined(RT)
+		float fp = length(v_world - CAMERA_POSITION_WORLD) * 0.0011 / max(abs(dot(n_world, normalize(CAMERA_POSITION_WORLD - v_world))), 0.2);
+#else
+		float fp = max(length(fwidth(UV)) * 0.7, 1e-5);
+#endif
+		float cover = silk_cover(UV, COLOR.b, dew, fp) * mix(1.0, COLOR.r, step(COLOR.b, 0.25));
+		// Water beads: clear lenses that throw back glints and pass the light through; hoarfrost: white and matt.
+		albedo = mix(vec3(0.82, 0.84, 0.86), vec3(0.92), frost_k);
+		rough = mix(0.12, 0.55, frost_k);
+		specular = 0.5;
+		metallic = 0.0;
+		back = vec3(0.6) * (1.0 - frost_k);
+		ALPHA = cover;
+	}
+#endif
 	ALBEDO = albedo;
 	ROUGHNESS = rough;
 	METALLIC = metallic;
@@ -6194,6 +6343,7 @@ void fragment() {
 void PlantGenerator::free_shaders() {
 	shaders[0].unref();
 	shaders[1].unref();
+	shaders[2].unref();
 	impostor_shader.unref();
 }
 
@@ -6359,6 +6509,20 @@ Ref<ShaderMaterial> PlantGenerator::_textured_material(const TextureSet &p_set, 
 	m->set_shader_parameter("normal_tex", p_set.normal);
 	m->set_shader_parameter("backlight_tex", p_set.backlight);
 	m->set_shader_parameter("roughness", p_roughness);
+	return m;
+}
+
+Ref<ShaderMaterial> PlantGenerator::_silk_material() const {
+	Ref<ShaderMaterial> m;
+	m.instantiate();
+	m->set_shader(_plant_shader(false, true));
+	m->set_shader_parameter("roughness", 0.12f);
+	if (preset == PRESET_ORB_WEB) {
+		m->set_shader_parameter("silk_orb", Vector4(silk_orb[0], silk_orb[1], silk_orb[2], silk_orb[3]));
+	}
+	if (season.has("dew")) {
+		m->set_shader_parameter("silk_dew", float(season["dew"]));
+	}
 	return m;
 }
 
@@ -6672,6 +6836,16 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.75f, 0.08f, 0.1f);
 			centre_color = Color(0.94f, 0.93f, 0.88f);
 			stem_color = Color(0.93f, 0.92f, 0.88f);
+			break;
+		case PRESET_SHEET_WEB:
+		case PRESET_ORB_WEB:
+			stem_color = Color(0.62f, 0.55f, 0.42f); // The orb's dry stems, bleached straw.
+			centre_color = Color(0.85f, 0.86f, 0.88f); // The silk's beads (the silk shader's own colour).
+			break;
+		case PRESET_FAIRY_RING_MUSHROOM:
+			petal_color = Color(0.7f, 0.55f, 0.38f); // Buff to tan, drying paler (hygrophanous).
+			centre_color = Color(0.9f, 0.84f, 0.7f); // Distant, cream gills.
+			stem_color = Color(0.82f, 0.74f, 0.6f);
 			break;
 		case PRESET_CLOUDED_AGARIC:
 			petal_color = Color(0.5f, 0.48f, 0.44f);
@@ -7050,6 +7224,12 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_DUNG_ROUGH:
 			_build_dung_rough();
 			break;
+		case PRESET_SHEET_WEB:
+			_build_sheet_web();
+			break;
+		case PRESET_ORB_WEB:
+			_build_orb_web();
+			break;
 		case PRESET_FOXGLOVE:
 			_build_foxglove();
 			break;
@@ -7113,6 +7293,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_BRITTLEGILL:
 		case PRESET_CLOUDED_AGARIC:
 		case PRESET_HONEY_FUNGUS:
+		case PRESET_FAIRY_RING_MUSHROOM:
 			_build_mushrooms();
 			break;
 		case PRESET_SORREL:
@@ -7435,6 +7616,8 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 				ts = texture_cache.getptr(key);
 			}
 			mat = _textured_material(*ts, 0.9f);
+		} else if (is_silk(preset) && s == SURFACE_CENTRE) {
+			mat = _silk_material();
 		} else if (is_mushroom(preset)) {
 			// Thick flesh: no light through. Caps with a slight sheen (moist skin), matt stalks and gills.
 			// Honey fungus caps are dry and finely fibrillose: matt (at 0.5 they read as glossy bread rolls, docs 16 Nov).
@@ -8556,6 +8739,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_HORSE_DUNG);
 	BIND_ENUM_CONSTANT(PRESET_DEER_PELLETS);
 	BIND_ENUM_CONSTANT(PRESET_DUNG_ROUGH);
+	BIND_ENUM_CONSTANT(PRESET_FAIRY_RING_MUSHROOM);
+	BIND_ENUM_CONSTANT(PRESET_SHEET_WEB);
+	BIND_ENUM_CONSTANT(PRESET_ORB_WEB);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -8565,6 +8751,8 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_beaver", "stand", "variants", "textures", "season"), &PlantGenerator::make_beaver, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_rooting", "stand", "variants", "textures", "season"), &PlantGenerator::make_rooting, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_mounds", "set", "variants", "textures", "season"), &PlantGenerator::make_mounds, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_fairy_rings", "variants", "textures", "season"), &PlantGenerator::make_fairy_rings, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dew_webs", "variants", "textures", "season"), &PlantGenerator::make_dew_webs, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_grazing", "set", "variants", "textures", "season"), &PlantGenerator::make_grazing, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));

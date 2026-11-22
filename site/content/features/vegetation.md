@@ -102,6 +102,8 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Game trails** (`VegetationField3D.make_game_trails()`; `GroundSurface3D.trail_pugging`): animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs; grass wears to trodden soil along them, stones stand proud on the tread, the packed ground pools rain first, and wet trails churn into hoof-pocked mud where traffic is heaviest.
 - **Boar rooting** (`PlantGenerator.make_rooting()`, `ROOTING_WOOD`, `ROOTING_MEADOW`; `WorldStand.DISTURBANCE_ROOTING`): rooted ground shows turned sods and loose stones that dry, slump and green over, loses its plants and takes the first weeds, healing over about two years.
 - **Grazing roughs and dung** (`PlantGenerator.make_grazing()`): cattle pats ringed by ungrazed rank tufts, horse latrines and deer pellets on pastures and lawns.
+- **Fairy rings** (`GrassField3D.fairy_rings`, `PlantGenerator.make_fairy_rings()`): meadows carry rings of dark and dead grass with champignons along them.
+- **Dewy webs** (`PlantGenerator.make_dew_webs()`): sheet and orb spider webs show when dew or hoarfrost beads them.
 - **Anthills and molehills** (`PlantGenerator.make_mounds()`, `MOUNDS_MEADOW`, `MOUNDS_WOOD`): anthills in sunny meadow groups, wood ant nests at sunny gaps and edges of conifer stands, molehills in lines and arcs; grass keeps out from under them.
 - **Stand margins** (`PlantSpecies.margin_width`, `margin_scale`, `margin_lean`): bracken and bramble stands grow shorter and lean outward toward their edges.
 - **Rock foot** (`PlantSpecies.rock_foot`): ferns, mosses, wood sorrel and seedlings gather within about half a metre of a rock's foot.
