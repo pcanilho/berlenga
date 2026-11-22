@@ -17,7 +17,7 @@ bool rt_fog_use_legacy_blending() {
 vec4 rt_volumetric_fog_lookup(vec3 p_fog_pos) {
 	uint mode = uint(get_rt_param(RT_PARAM_VOLUMETRIC_FOG_SAMPLING));
 	uint frame = uint(get_rt_param(RT_PARAM_FRAME_INDEX));
-	return volumetric_fog_sample(rt_volumetric_fog_texture, rt_volumetric_fog_noise, SAMPLER_LINEAR_CLAMP, p_fog_pos, mode, gl_LaunchIDEXT.xy, frame);
+	return volumetric_fog_sample(rt_volumetric_fog_texture, rt_volumetric_fog_noise, SAMPLER_LINEAR_CLAMP, p_fog_pos, mode, RT_LAUNCH_ID.xy, frame);
 }
 
 vec4 rt_volumetric_fog_sample(vec2 screen_uv, float z) {

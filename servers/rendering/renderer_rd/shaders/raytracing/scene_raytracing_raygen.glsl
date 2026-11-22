@@ -126,7 +126,7 @@ bool russian_roulette_survives(uint p_next_bounce, inout PathState ps) {
 // Follows the mirror chain and writes the motion and albedo guides of the surface seen through it.
 // The primary mirror isn't retraced; its normal is read back from the guides.
 void dlss_rr_replace_primary_surface(vec3 p_origin, vec3 p_dir, float p_hit_t) {
-	vec3 own_normal = imageLoad(dlss_rr_normal_roughness, ivec2(gl_LaunchIDEXT.xy)).xyz;
+	vec3 own_normal = imageLoad(dlss_rr_normal_roughness, ivec2(RT_LAUNCH_ID.xy)).xyz;
 	mat3 image_xform = dlss_rr_householder(own_normal); // World to mirror-image space, linear part.
 	float scene_length = p_hit_t;
 	vec3 mirror_throughput = vec3(1.0); // Specular albedos of the mirrors after the primary one.
@@ -240,7 +240,7 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 	uint write = state & 1u;
 	bool history = (state & 2u) != 0u;
 	uint tile = uint(get_rt_param(RT_PARAM_PLIGHT_TILE));
-	uvec2 grid_xy = max(uvec2(gl_LaunchSizeEXT.xy) / tile, uvec2(1u));
+	uvec2 grid_xy = max(uvec2(RT_LAUNCH_SIZE.xy) / tile, uvec2(1u));
 	uvec2 in_tile = p_pixel % tile;
 	// the tile's first 8x8 pixels refresh its 64 slices; any others idle
 	if (any(greaterThanEqual(in_tile, uvec2(8u)))) {
@@ -489,7 +489,7 @@ void rt_medium_set(uint p_code, out bool r_in_medium, out vec3 r_sigma_t, out ve
 	} else {
 		r_sigma_t = rt_medium_absorption(p_code);
 		if ((p_code & RT_MEDIUM_CODE_SCATTER) != 0u) {
-			vec4 scatter = rt_medium_scatter_unpack(imageLoad(rt_medium_image, ivec2(gl_LaunchIDEXT.xy)).r);
+			vec4 scatter = rt_medium_scatter_unpack(imageLoad(rt_medium_image, ivec2(RT_LAUNCH_ID.xy)).r);
 			r_albedo = scatter.rgb;
 			r_g = scatter.w;
 		}
@@ -752,7 +752,7 @@ void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uve
 	}
 	vec2 j = rand2(rng);
 	j.x = (float(p_sub) + j.x) / float(p_count);
-	vec2 uv = (vec2((p_pixel / p_block) * p_block) + j * float(p_block)) / vec2(gl_LaunchSizeEXT.xy);
+	vec2 uv = (vec2((p_pixel / p_block) * p_block) + j * float(p_block)) / vec2(RT_LAUNCH_SIZE.xy);
 	vec2 q = f.origin + uv * f.size;
 	// Each photon from a point on the sun's disc (at least the real sun's, 0.27 degrees across the
 	// radius, when the light is set sharper): the disc blurs the lines by its angle times the depth,
@@ -802,8 +802,8 @@ void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uve
 void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_forward) {
 	uint write = rt_caustics_write_slot();
 	uint clear = (write + 1u) % 3u;
-	uint threads = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
-	uint tid = p_pixel.y * gl_LaunchSizeEXT.x + p_pixel.x;
+	uint threads = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;
+	uint tid = p_pixel.y * RT_LAUNCH_SIZE.x + p_pixel.x;
 	uint cascades = rt_caustics_cascades();
 	for (uint c = 0u; c < cascades; c++) {
 		uint slot_uints = c == 0u ? RT_CAUSTICS_SLOT_UINTS : RT_CAUSTICS_SLOT_UINTS_OUTER;
@@ -822,7 +822,7 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 	float look = rt_caustics_history() ? uintBitsToFloat(rt_caustics.data[RT_CAUSTICS_HEADER + last * 4u]) : 0.0;
 	vec3 center = p_cam_pos + p_cam_forward * clamp(look, half_size, 5000.0);
 	uint h = RT_CAUSTICS_HEADER + write * 4u;
-	if (p_pixel == gl_LaunchSizeEXT.xy / 2u) {
+	if (p_pixel == RT_LAUNCH_SIZE.xy / 2u) {
 		PathState look_ps;
 		rt_caustics_trace(p_cam_pos, p_cam_forward, 0.0, 0u, look_ps);
 		rt_caustics.data[h] = floatBitsToUint(look_ps.hit_t);
@@ -856,9 +856,9 @@ void main() {
 #ifdef RT_TIMING_ENABLED
 	uvec2 start_clock = clockRealtime2x32EXT();
 #endif
-	uvec2 pixel = gl_LaunchIDEXT.xy;
+	uvec2 pixel = RT_LAUNCH_ID.xy;
 	const vec2 pixel_center = vec2(pixel) + vec2(0.5);
-	const vec2 in_uv = pixel_center / vec2(gl_LaunchSizeEXT.xy);
+	const vec2 in_uv = pixel_center / vec2(RT_LAUNCH_SIZE.xy);
 	vec2 d = in_uv * 2.0 - 1.0;
 
 	mat4 inv_view = transpose(mat4(scene_data_block.data.inv_view_matrix[0],
@@ -927,7 +927,7 @@ void main() {
 
 	const uint max_bounces = RT_GET_MAX_BOUNCES();
 	if (rt_rc_enabled()) {
-		rt_rc_resolve(pixel.y * gl_LaunchSizeEXT.x + pixel.x, gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y);
+		rt_rc_resolve(pixel.y * RT_LAUNCH_SIZE.x + pixel.x, RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y);
 	}
 
 	// Indirect light reuse (raytracing_indirect_reuse_inc.glsl): off where the first bounce segment
@@ -965,7 +965,7 @@ void main() {
 		// Roberts 2018, rotated per frame). The first stays at the centre for the guide buffers.
 		if (sample_idx > 0u && (RT_FLAGS & RT_FLAG_DLSS_RR_ENABLED) == 0u) {
 			vec2 jitter = fract(vec2(0.7548777, 0.5698403) * float(sample_idx) + vec2(0.7548777, 0.5698403) * float(frame_index % 4096u)) - 0.5;
-			vec2 dj = (pixel_center + jitter) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
+			vec2 dj = (pixel_center + jitter) / vec2(RT_LAUNCH_SIZE.xy) * 2.0 - 1.0;
 			vec4 target_j = scene_data_block.data.inv_projection_matrix * vec4(dj.x, dj.y, 1.0, 1.0);
 			vec3 view_origin_j = orthogonal ? vec3(target_j.xy / target_j.w, 0.0) : vec3(0.0);
 			vec3 view_direction_j = orthogonal ? vec3(0.0, 0.0, -1.0) : normalize(target_j.xyz);
@@ -1629,7 +1629,7 @@ void main() {
 	{
 		uint total_bounces = get_total_bounces(ps.packed_bounces_flags);
 		if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags) && !composite_passthrough) {
-			ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+			ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 
 			imageStore(rt_depth_image, pixel, vec4(0.0));
 
@@ -1653,7 +1653,7 @@ void main() {
 	// luminance, so it takes neither the IBL normalization nor the fog mix below.
 	vec3 sky_color;
 	if (get_rt_param(RT_PARAM_SKY_SCREEN_ENABLED) > 0.5 && get_total_bounces(ps.packed_bounces_flags) == 0u) {
-		sky_color = texelFetch(sampler2D(sky_screen_texture, radiance_sampler), ivec2(gl_LaunchIDEXT.xy), 0).rgb;
+		sky_color = texelFetch(sampler2D(sky_screen_texture, radiance_sampler), ivec2(RT_LAUNCH_ID.xy), 0).rgb;
 	} else {
 		vec2 sky_uv = rt_sky_oct_uv(gl_WorldRayDirectionEXT);
 
@@ -1696,7 +1696,7 @@ void main() {
 	{
 		uint total_bounces = get_total_bounces(ps.packed_bounces_flags);
 		if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags) && !composite_passthrough) {
-			ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+			ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 			imageStore(dlss_rr_diffuse_albedo, pixel, vec4(vec3(DLSSRR_SKY_DIFFUSE_ALBEDO), 1.0));
 			imageStore(dlss_rr_specular_albedo, pixel, vec4(0.0));
 			imageStore(dlss_rr_normal_roughness, pixel, vec4(0.0));
