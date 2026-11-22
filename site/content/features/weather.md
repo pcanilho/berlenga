@@ -17,7 +17,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 - **Season state** (`WeatherMap3D.get_season()`): day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.
 - **Storms** (`add_storm`): drift with the wind, with a rain core and a downdraft.
 - **Falling rain** (`RainFall3D`): drops sized and falling like real rain, slanting in the wind, with splashes, haze, and drips from leaves and eaves after it stops.
-- **Rain or snow by height** (`WeatherMap3D.get_rain_share_at()`): rain turns to sleet and then snow as the air cools with height.
+- **Rain or snow by height** (`WeatherMap3D.get_rain_share_at()`, `warm_nose_temperature`, `warm_nose_base`): rain turns to sleet and then snow as the air cools with height; under a warm layer aloft it falls as freezing rain, or as ice pellets when the cold layer below is deep, and every system reads the same split.
 - **Lake-effect snow** (`WeatherMap3D.lake_effect_snow`): cold air crossing open water builds snow bands downwind, reaching some 60 km inland.
 - **Lightning and thunder** (`WeatherLightning3D`): strikes from storm cells at a rate set by cloud-top height, hitting tall things first and starting fires in dry fuel (`PhysXFireSpread3D.lightning_ignition`), lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.
 

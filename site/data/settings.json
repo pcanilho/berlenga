@@ -4000,10 +4000,12 @@
   {
    "name": "Rain or snow by height",
    "settings": [
-    "WeatherMap3D.get_rain_share_at()"
+    "WeatherMap3D.get_rain_share_at()",
+    "warm_nose_temperature",
+    "warm_nose_base"
    ],
    "note": "",
-   "what": "rain turns to sleet and then snow as the air cools with height.",
+   "what": "rain turns to sleet and then snow as the air cools with height; under a warm layer aloft it falls as freezing rain, or as ice pellets when the cold layer below is deep, and every system reads the same split.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
