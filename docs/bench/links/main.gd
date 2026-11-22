@@ -306,6 +306,7 @@ func _ready() -> void:
 	await _cold_pool_tests()
 	await _drainage_tests()
 	await _breeze_tests()
+	await _high_water_tests()
 	await _rime_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
@@ -2368,6 +2369,66 @@ func _rime_tests() -> void:
 
 # The drawn ground's relief over the heightfield (WorldGround.relief_at): nothing with no producer, a stub's answer
 # with one (Landscape3D fills it from its cliff and bank relief).
+
+# The last flood's mark from its real producers (WorldWater.high_water_at): a river's sections and a lake fed over a
+# weir keep one, the sea none; the contract hands the river's on to a reader (GrassField3D's flood wash).
+func _high_water_tests() -> void:
+	if not ClassDB.class_exists("PhysXRiver3D") or not ClassDB.class_exists("GrassField3D"):
+		_skip("high-water marks", "needs the PhysX module and the vegetation")
+		return
+	var ground := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(600, 2, 400)
+	shape.shape = box
+	shape.position = Vector3(0, -1, 0)
+	ground.add_child(shape)
+	add_child(ground)
+	var r := PhysXRiver3D.new()
+	var c := Curve3D.new()
+	for k in 7:
+		c.add_point(Vector3(0, 0.0 - 0.1 * k, -60.0 + 20.0 * k))
+	r.curve = c
+	r.discharge = 5.0
+	r.step_length = 2.0
+	r.rain_response = false
+	add_child(r)
+	var lake := PhysXWaterSurface3D.new()
+	lake.domain_size = Vector2(40, 40)
+	lake.position = Vector3(150.0, 0.0, 0.0)
+	add_child(lake)
+	lake.set_outflow(1234, Vector3(170.0, 0.0, 0.0), Vector3(1, 0, 0), 4.0, 0.0, 1.0)
+	lake.catchment_inflow = 2.0
+	lake.level_from_flows = true
+	var sea := PhysXWaterSurface3D.new()
+	sea.domain_size = Vector2(60, 60)
+	sea.position = Vector3(-200.0, 0.0, 0.0)
+	add_child(sea)
+	for i in 5:
+		await get_tree().physics_frame
+	r.rebuild()
+	await get_tree().physics_frame
+	var water := WorldContracts.get_water()
+	var head := r.to_global(c.sample_baked(30.0))
+	var at_lake := Vector3(150.0, 0.0, 5.0)
+	var at_sea := Vector3(-200.0, 0.0, 5.0)
+	var hr: Vector4 = water.high_water_at(head)
+	var hl: Vector4 = water.high_water_at(at_lake)
+	var hs: Vector4 = water.high_water_at(at_sea)
+	_check("high-water marks: the river's sections and the lake keep the last flood's mark through WorldWater, the sea none",
+			hr.is_equal_approx(r.get_high_water_at(head)) and hr.x > r.sample_height(head) and hl.is_equal_approx(lake.get_high_water_at(at_lake)) and hl.x > lake.global_position.y + lake.water_level and is_inf(hs.x),
+			"river %.2f m over its surface, lake %.3f m over its level, sea %s" % [hr.x - r.sample_height(head), hl.x - lake.global_position.y - lake.water_level, hs])
+	var grass := GrassField3D.new()
+	var bank := Vector3(head.x + 3.0, hr.x - 0.05, head.z)
+	var wash: Vector3 = grass.get_flood_wash_at(bank)
+	var above: Vector3 = grass.get_flood_wash_at(Vector3(bank.x, hr.x + 0.5, bank.z))
+	_check("high-water marks: grass on the bank under the river's mark lies washed, none above it", wash.z >= 0.0 and above.z < 0.0,
+			"under: %s, above: %s" % [wash, above])
+	grass.free()
+	for n in [r, lake, sea, ground]:
+		n.queue_free()
+	await get_tree().physics_frame
+
 func _relief_contract_tests() -> void:
 	WorldContracts.clear_overrides()
 	var none: Vector2 = WorldContracts.get_ground().relief_at(Vector3(10, 0, 10))
