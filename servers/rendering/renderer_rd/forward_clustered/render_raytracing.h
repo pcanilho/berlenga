@@ -273,7 +273,8 @@ struct alignas(16) RT_MaterialData {
 		uint32_t wetness_canopy : 1; // BaseMaterial3D wetness_canopy: the canopy's water (RT_PARAM_RAIN_MAP) and beads.
 		uint32_t snow_on_body : 1; // BaseMaterial3D snow_on_body: the body's snow from instance uniform slot 12.
 		uint32_t glaze : 1; // BaseMaterial3D glaze: clear ice from freezing rain (RT_PARAM_RAIN_MAP alpha).
-		uint32_t unused : 5;
+		uint32_t wetness_moving : 1; // BaseMaterial3D wetness_moving: slipstream and wiper from instance uniform slots 13, 14.
+		uint32_t unused : 4;
 	} subsurface_texture;
 	// BaseMaterial3D Hair (RT_MAT_FLAG_HAIR), see rt_material_set_hair() and GLSL rt_material_hair().
 	struct {

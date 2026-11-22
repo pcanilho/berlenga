@@ -271,6 +271,11 @@ bool rt_material_mud(MaterialData p_mat) {
 	return (p_mat.subsurface >> 31u) != 0u;
 }
 
+// BaseMaterial3D wetness_moving: a moving surface's slipstream and wiper, instance uniform slots 13 and 14.
+bool rt_material_wetness_moving(MaterialData p_mat) {
+	return ((p_mat.subsurface_texture >> 27u) & 1u) != 0u;
+}
+
 // BaseMaterial3D snow_on_body: the body's own snow from instance uniform slot 12 (SnowBodies).
 bool rt_material_snow_on_body(MaterialData p_mat) {
 	return ((p_mat.subsurface_texture >> 25u) & 1u) != 0u;

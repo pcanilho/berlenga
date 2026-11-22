@@ -3762,6 +3762,18 @@ void main() {
 					}
 				}
 				wet *= weather_wet;
+				// Walls run with the rain they catch, in streaks at full detail (material.cpp: rain_surface_wetness()).
+				if (!rt_material_wetness_canopy(mat)) {
+					vec3 sr_air = vec3(0.0);
+					float sr_run = wetness.y;
+					uint sr_iuo = geometries[h.geometry_idx].instance_uniforms_ofs;
+					if (rt_material_wetness_moving(mat) && sr_iuo != 0xFFFFFFFFu) {
+						sr_air = -global_shader_uniforms.data[sr_iuo + 13u].xyz;
+						sr_run *= 1.0 - clamp(global_shader_uniforms.data[sr_iuo + 14u].x, 0.0, 1.0);
+					}
+					vec4 sr = pt_weather_surface_rain(wpos, h.geometry_normal, sr_air);
+					wet = rain_surface_wetness(wet, sr_run, h.geometry_normal, sr, rain_wall_streaks(wpos, h.geometry_normal, sr.zw, 0.0));
+				}
 			} else {
 				wet = 0.0;
 			}

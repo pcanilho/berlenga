@@ -676,6 +676,9 @@ struct PhysXVehicle3D::Impl {
 	bool mud_written = false;
 	bool mud_meshes_ready = false;
 	LocalVector<ObjectID> mud_meshes;
+	// The body's meshes whose wetness runs with the rain (BaseMaterial3D wetness_moving), and the velocity last sent.
+	LocalVector<ObjectID> rain_meshes;
+	Vector3 rain_velocity = Vector3(1e9f, 0.0f, 0.0f);
 	// Clods stuck to the body (stage 4b): a ring of splats (where and how big in this node's frame; flight direction
 	// and amount), published as this vehicle's row of the shared splat texture.
 	int mud_row = -1;
@@ -1636,6 +1639,18 @@ static void _mud_splats_upload(int p_row, const Vector4 *p_a, const Vector4 *p_b
 
 void PhysXVehicle3D::_body_mud_meshes() {
 	impl->mud_meshes.clear();
+	impl->rain_meshes.clear();
+	impl->rain_velocity = Vector3(1e9f, 0.0f, 0.0f);
+	// The body's own mud, and the rain running on it blown back by its speed (wetness_moving where it gets wet).
+	auto needs = [](const Ref<BaseMaterial3D> &p_m) {
+		return !p_m->get_feature(BaseMaterial3D::FEATURE_MUD) || (p_m->get_feature(BaseMaterial3D::FEATURE_WETNESS) && p_m->is_wetness_from_weather() && !p_m->is_wetness_moving());
+	};
+	auto prepare = [](const Ref<BaseMaterial3D> &p_m) {
+		p_m->set_feature(BaseMaterial3D::FEATURE_MUD, true);
+		if (p_m->get_feature(BaseMaterial3D::FEATURE_WETNESS) && p_m->is_wetness_from_weather()) {
+			p_m->set_wetness_moving(true);
+		}
+	};
 	List<Node *> stack;
 	stack.push_back(this);
 	while (!stack.is_empty()) {
@@ -1649,30 +1664,36 @@ void PhysXVehicle3D::_body_mud_meshes() {
 			continue;
 		}
 		bool any = false;
+		bool rain = false;
 		Ref<BaseMaterial3D> over = mi->get_material_override();
 		if (over.is_valid()) {
-			if (!over->get_feature(BaseMaterial3D::FEATURE_MUD)) {
+			if (needs(over)) {
 				over = over->duplicate();
-				over->set_feature(BaseMaterial3D::FEATURE_MUD, true);
+				prepare(over);
 				mi->set_material_override(over);
 			}
 			any = true;
+			rain = over->is_wetness_moving();
 		} else if (mi->get_material_override().is_null()) {
 			for (int s = 0; s < mi->get_surface_override_material_count(); s++) {
 				Ref<BaseMaterial3D> m = mi->get_active_material(s);
 				if (m.is_null()) {
 					continue;
 				}
-				if (!m->get_feature(BaseMaterial3D::FEATURE_MUD)) {
+				if (needs(m)) {
 					m = m->duplicate();
-					m->set_feature(BaseMaterial3D::FEATURE_MUD, true);
+					prepare(m);
 					mi->set_surface_override_material(s, m);
 				}
 				any = true;
+				rain = rain || m->is_wetness_moving();
 			}
 		}
 		if (any) {
 			impl->mud_meshes.push_back(mi->get_instance_id());
+		}
+		if (rain) {
+			impl->rain_meshes.push_back(mi->get_instance_id());
 		}
 	}
 	impl->mud_meshes_ready = true;
@@ -1764,6 +1785,18 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 	}
 	if (!impl->mud_meshes_ready) {
 		_body_mud_meshes();
+	}
+	// The rain running on the body and glass blows back with the speed (rain_slipstream; sent when it changes).
+	{
+		const Vector3 vel = get_linear_velocity();
+		if (vel.distance_squared_to(impl->rain_velocity) > 0.04f) {
+			impl->rain_velocity = vel;
+			for (const ObjectID &id : impl->rain_meshes) {
+				if (GeometryInstance3D *gi = ObjectDB::get_instance<GeometryInstance3D>(id)) {
+					gi->set_instance_shader_parameter(SNAME("rain_slipstream"), vel);
+				}
+			}
+		}
 	}
 	bool fresh = false;
 	float water_body = 0.0f;

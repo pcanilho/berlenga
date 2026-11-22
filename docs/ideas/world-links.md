@@ -122,7 +122,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | --- | --- | --- | --- |
 | Wind → waves | linked (18 Nov) | wind | `follow_weather` on (wind work) |
 | Rain → ripples | linked | weather contract | live water's rain rings (`rain_from_weather`) |
-| Rain, wind → rain on faces (glass, walls, roofs) | one-way (22 Nov) | rain, state and wind maps (raster globals; PT rt_params 39–43, 79, 89) | `weather_surface_rain()` (material.cpp) and `pt_weather_surface_rain()` (raygen) from one include, `rain_surface_catch()`: ISO 15927-3 driven rain plus the vertical share and drip, the film, the wind's push along the face. Readers to come: glass drops and runners, wall streaks, built puddles. The shelter map's lee (rt_params 90–91) next |
+| Rain, wind → rain on faces (glass, walls, roofs) | one-way (22 Nov) | rain, state and wind maps (raster globals; PT rt_params 39–43, 79, 89) | `weather_surface_rain()` (material.cpp) and `pt_weather_surface_rain()` (raygen) from one include, `rain_surface_catch()`: ISO 15927-3 driven rain plus the vertical share and drip, the film, the wind's push along the face. Readers: BaseMaterial3D wetness (walls run in streaks by the catch, lee walls drier; vehicles' `rain_slipstream`). To come: glass drops and runners, built puddles. The shelter map's lee (rt_params 90–91) next |
 | Cloud shadow → water | linked | cloud shadow | |
 | Water → wet shore | linked | contact wetness | |
 | Falls → mist → wet rock | linked | mist | |

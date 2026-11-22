@@ -3844,6 +3844,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.snow = 1;
 		mat.subsurface.snow_from_weather = rt_state.snow_from_weather;
 		mat.subsurface_texture.snow_on_body = rt_state.snow_on_body;
+		mat.subsurface_texture.wetness_moving = rt_state.wetness_moving;
 		mat.hair_crown_z.snow_amount = rt_unorm8(get_float("snow_amount", 1.0f));
 		mat.hair_crown_z.snow_max_slope = rt_unorm8(get_float("snow_max_slope", 60.0f) / 90.0f);
 	}
