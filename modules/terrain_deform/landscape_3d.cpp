@@ -295,6 +295,38 @@ float Landscape3D::_cliff_offset(const Vector3 &p) const {
 	return o;
 }
 
+// Bank relief (bank_relief). Soil banks of 40 to 55 degrees do not keep beds and joints: they slump. Shallow slumps
+// and translational slides leave a head scarp (a hollow under a step) and a toe lobe (a bulge) below it, bodies 5 to
+// 20 m wide (Varnes 1978; Cruden and Varnes 1996; Highland and Bobrowsky 2008), with hummocks over them. Slump units 6 m
+// tall run along the contour (height warped so no line stays level), each present over a stretch and broken off
+// along the bank; the profile is zero at each unit's ends, so the field is continuous. Metres out of the bank.
+float Landscape3D::_bank_offset(const Vector3 &p) const {
+	const real_t U = 6.0;
+	const real_t yb = p.y + (_lc_noise(p * 0.07f + Vector3(11, 3, 5)) - 0.5f) * 6.0f;
+	const int32_t unit = int32_t(Math::floor(yb / U));
+	const float t = float(yb / U - unit);
+	const float strength = 0.4f + 0.6f * _lc_hash(unit, 31, 7);
+	const float run = _lc_noise(Vector3(p.x * 0.09f, float(unit) * 1.71f, p.z * 0.09f));
+	const float amp = strength * Math::smoothstep(0.35f, 0.65f, run);
+	const float tl = (t - 0.25f) / 0.17f, ts = (t - 0.78f) / 0.12f;
+	const float lobe = Math::exp(-tl * tl);
+	const float scarp = Math::exp(-ts * ts);
+	const float ends = Math::smoothstep(0.0f, 0.1f, t) * (1.0f - Math::smoothstep(0.9f, 1.0f, t));
+	float o = amp * (0.9f * lobe - scarp) * ends;
+	// Hummocks.
+	o += 0.35f * (_lc_noise(p * 0.35f + Vector3(2, 9, 4)) - 0.5f) + 0.15f * (_lc_noise(p * 1.1f + Vector3(7, 2, 8)) - 0.5f);
+	return o;
+}
+
+Vector2 Landscape3D::_relief_weights(const Vector3 &n) {
+	// Cliffs past about 50 degrees, full past about 62; banks from about 40 (full by 50), handing over to the cliff.
+	const real_t wc = 1.0f - CLAMP((n.y - 0.47f) / (0.64f - 0.47f), real_t(0.0), real_t(1.0));
+	const real_t wb = 1.0f - CLAMP((n.y - 0.643f) / (0.766f - 0.643f), real_t(0.0), real_t(1.0));
+	const real_t cs = wc * wc * (3.0f - 2.0f * wc);
+	const real_t bs = wb * wb * (3.0f - 2.0f * wb);
+	return Vector2(cs, bs * (1.0f - cs));
+}
+
 // The displaced point for a point on the heightfield surface (landscape space).
 Vector3 Landscape3D::_cliff_point(const Vector3 &p, real_t p_weight_scale) const {
 	const Vector3 n = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
@@ -303,20 +335,21 @@ Vector3 Landscape3D::_cliff_point(const Vector3 &p, real_t p_weight_scale) const
 	if (ml < 1e-4f || p_weight_scale <= 0.0) {
 		return p;
 	}
-	// Faces past about 50 degrees, full past about 62.
-	const real_t w = (1.0f - CLAMP((n.y - 0.47f) / (0.64f - 0.47f), real_t(0.0), real_t(1.0)));
-	if (w <= 0.0) {
-		return p;
+	const Vector2 w = _relief_weights(n) * p_weight_scale;
+	real_t d = 0.0;
+	if (w.x > 0.0 && cliff_relief > 0.0) {
+		d += cliff_relief * w.x * _cliff_offset(p);
 	}
-	const real_t ws = w * w * (3.0f - 2.0f * w) * p_weight_scale;
-	const real_t d = cliff_relief * _cliff_offset(p) * ws;
+	if (w.y > 0.0 && bank_relief > 0.0) {
+		d += bank_relief * w.y * _bank_offset(p);
+	}
 	return p + Vector3(m.x / ml, 0.0, m.y / ml) * d;
 }
 
 Vector3 Landscape3D::get_cliff_point(const Vector3 &p_global_position) const {
 	// Where the drawn surface is over a point of the heightfield surface (global space): the point itself unless
 	// cliff_relief pushes it out of or into a steep face. For water laid on a face (falls, sheets).
-	if (cliff_relief <= 0.0 || heights.is_empty()) {
+	if ((cliff_relief <= 0.0 && bank_relief <= 0.0) || heights.is_empty()) {
 		return p_global_position;
 	}
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
@@ -479,18 +512,18 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 		vp[i] = _cliff_point(p, keep[i]) - corner;
 		const Vector3 nb = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
 		{
-			const real_t w = (1.0f - CLAMP((nb.y - 0.47f) / (0.64f - 0.47f), real_t(0.0), real_t(1.0)));
+			const Vector2 w = _relief_weights(nb);
 			const real_t ml = Vector2(nb.x, nb.z).length();
 			c0[i * 4 + 0] = p.x;
 			c0[i * 4 + 1] = p.y;
 			c0[i * 4 + 2] = p.z;
-			c0[i * 4 + 3] = ml < 1e-4f ? 0.0f : float(cliff_relief * w * w * (3.0f - 2.0f * w) * keep[i]);
+			c0[i * 4 + 3] = ml < 1e-4f ? 0.0f : float(cliff_relief * w.x * keep[i]);
 			c1[i * 4 + 0] = nb.x;
 			c1[i * 4 + 1] = nb.y;
 			c1[i * 4 + 2] = nb.z;
-			c1[i * 4 + 3] = 0.0f;
+			c1[i * 4 + 3] = ml < 1e-4f ? 0.0f : float(bank_relief * w.y * keep[i]);
 		}
-		if (nb.y > 0.64f || keep[i] <= 0.0) {
+		if (nb.y > 0.766f || keep[i] <= 0.0) {
 			nw[i] = nb;
 			continue;
 		}
@@ -990,7 +1023,7 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 	LocalVector<uint8_t> rel;
 	rel.resize(n);
 	for (int i = 0; i < n; i++) {
-		rel[i] = cliff_relief * scale_of[i] >= lod_error * 0.5 ? 1 : 0;
+		rel[i] = MAX(cliff_relief, bank_relief) * scale_of[i] >= lod_error * 0.5 ? 1 : 0;
 	}
 	bool ready = true;
 	for (int z = 0; z < ch; z++) {
@@ -1011,7 +1044,7 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 			}
 			// Cliff relief on the finest chunks where it spans half the pixel error or more; sides next to a chunk
 			// without it keep their edges (bits 5 to 8), like sides next to a coarser one.
-			if (cliff_relief > 0.0 && l == 0 && rel[z * cw + x]) {
+			if ((cliff_relief > 0.0 || bank_relief > 0.0) && l == 0 && rel[z * cw + x]) {
 				mask |= 16;
 				const int nbi[4] = { z > 0 ? (z - 1) * cw + x : -1, x < cw - 1 ? z * cw + x + 1 : -1, z < ch - 1 ? (z + 1) * cw + x : -1, x > 0 ? z * cw + x - 1 : -1 };
 				for (int sd = 0; sd < 4; sd++) {
@@ -1373,6 +1406,17 @@ void Landscape3D::set_cliff_relief(real_t p_metres) {
 	}
 	cliff_relief = MAX(p_metres, real_t(0.0));
 	// New meshes for every chunk (the cache keys carry the height generation).
+	for (uint32_t i = 0; i < chunks.size(); i++) {
+		chunks[i].gen++;
+	}
+	lods_dirty = true;
+}
+
+void Landscape3D::set_bank_relief(real_t p_metres) {
+	if (Math::is_equal_approx(bank_relief, MAX(p_metres, real_t(0.0)))) {
+		return;
+	}
+	bank_relief = MAX(p_metres, real_t(0.0));
 	for (uint32_t i = 0; i < chunks.size(); i++) {
 		chunks[i].gen++;
 	}
@@ -1935,8 +1979,116 @@ void Landscape3D::_clear_stand_map() {
 	stand_id = ObjectID();
 }
 
+// The drawn ground over the heightfield at a point's xz (landscape space): x metres up, y the relief's share. Cliff and
+// bank relief push a surface point out along the slope's horizontal normal m by d, so at a fixed xz the surface stands
+// d tan(slope) higher (outward is downhill). The full field: the stitch weight on sides next to coarser chunks and the
+// finest-chunk-only drawing are left out (both are under a pixel by design).
+Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
+	if (heights.is_empty() || (cliff_relief <= 0.0 && bank_relief <= 0.0)) {
+		return Vector2(0.0, 0.0);
+	}
+	const real_t fx = (p.x - origin.x) / spacing, fz = (p.z - origin.y) / spacing;
+	if (fx < 0.0 || fz < 0.0 || fx > real_t(gw - 1) || fz > real_t(gh - 1)) {
+		return Vector2(NAN, 0.0);
+	}
+	const Vector3 n = _normal_at(fx, fz);
+	const real_t ml = Vector2(n.x, n.z).length();
+	if (ml < 1e-4f || n.y < 1e-3f) {
+		return Vector2(0.0, 0.0);
+	}
+	const Vector2 w = _relief_weights(n);
+	if (w.x <= 0.0 && w.y <= 0.0) {
+		return Vector2(0.0, 0.0);
+	}
+	const int ix = int(Math::floor(fx)), iz = int(Math::floor(fz));
+	const real_t u = fx - ix, v = fz - iz;
+	const real_t h = Math::lerp(Math::lerp(real_t(_h(ix, iz)), real_t(_h(ix + 1, iz)), u), Math::lerp(real_t(_h(ix, iz + 1)), real_t(_h(ix + 1, iz + 1)), u), v);
+	const Vector3 q(p.x, h, p.z);
+	real_t d = 0.0;
+	if (w.x > 0.0 && cliff_relief > 0.0) {
+		d += cliff_relief * w.x * _cliff_offset(q);
+	}
+	if (w.y > 0.0 && bank_relief > 0.0) {
+		d += bank_relief * w.y * _bank_offset(q);
+	}
+	return Vector2(d * ml / n.y, MIN(w.x + w.y, real_t(1.0)));
+}
+
+Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position) const {
+	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
+	return _relief_at_local(xf.affine_inverse().xform(p_position));
+}
+
+void Landscape3D::_update_relief_map(const Vector3 &p_camera) {
+	if (heights.is_empty() || (cliff_relief <= 0.0 && bank_relief <= 0.0)) {
+		_clear_relief_map();
+		return;
+	}
+	// Landscape space is world space for the map (as for the stand map).
+	const real_t step = 16.0;
+	const Vector2 org = Vector2(Math::round(p_camera.x / step) * step, Math::round(p_camera.z / step) * step) - Vector2(RELIEF_SIZE, RELIEF_SIZE) * 0.5;
+	// Rebuilt when the camera moves a step, the relief settings change or any chunk's heights change (their gen).
+	uint64_t gens = 0;
+	for (uint32_t i = 0; i < chunks.size(); i++) {
+		gens += uint64_t(chunks[i].gen) * (i + 1);
+	}
+	const uint64_t key = hash_murmur3_one_64(uint64_t(gw) * 73856093u ^ uint64_t(gh), hash_murmur3_one_double(cliff_relief, hash_murmur3_one_double(bank_relief, hash_murmur3_one_64(gens))));
+	if (org == relief_origin && key == relief_key) {
+		return;
+	}
+	relief_origin = org;
+	relief_key = key;
+	const int R = RELIEF_RES;
+	const real_t texel = RELIEF_SIZE / real_t(R);
+	Vector<uint8_t> data;
+	data.resize(R * R * 4);
+	uint16_t *w = reinterpret_cast<uint16_t *>(data.ptrw());
+	bool any = false;
+	for (int z = 0; z < R; z++) {
+		for (int x = 0; x < R; x++) {
+			Vector2 r = _relief_at_local(Vector3(org.x + (x + 0.5) * texel, 0.0, org.y + (z + 0.5) * texel));
+			if (Math::is_nan(r.x)) {
+				r = Vector2(0.0, 0.0);
+			}
+			any = any || r.y > 0.0;
+			w[(z * R + x) * 2] = Math::make_half_float(float(r.x));
+			w[(z * R + x) * 2 + 1] = Math::make_half_float(float(r.y));
+		}
+	}
+	if (!any) {
+		_clear_relief_map();
+		relief_origin = org;
+		relief_key = key;
+		return;
+	}
+	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RGH, data);
+	if (relief_texture.is_valid() && relief_texture->get_width() == R) {
+		relief_texture->update(img);
+	} else {
+		relief_texture = ImageTexture::create_from_image(img);
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->global_shader_parameter_set("terrain_relief_map", relief_texture->get_rid());
+	rs->global_shader_parameter_set("terrain_relief_rect", Vector4(org.x, org.y, RELIEF_SIZE, RELIEF_SIZE));
+	relief_published = true;
+}
+
+void Landscape3D::_clear_relief_map() {
+	if (relief_published) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_relief_rect", Vector4());
+		relief_published = false;
+	}
+	relief_origin = Vector2(1e30, 1e30);
+	relief_key = 0;
+}
+
 void Landscape3D::_publish_cliff_relief(bool p_clear) {
 	const Vector4 v = p_clear || heights.is_empty() ? Vector4() : Vector4(cliff_relief, spacing, origin.x, origin.y);
+	const real_t b = p_clear || heights.is_empty() ? 0.0 : bank_relief;
+	if (b != bank_published) {
+		bank_published = b;
+		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_bank_relief", Vector4(b, 0, 0, 0));
+	}
 	if (v == cliff_published) {
 		return;
 	}
@@ -1948,6 +2100,10 @@ void Landscape3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
 			_create_instances();
+			if (!relief_registered) {
+				WorldContracts::register_relief(this);
+				relief_registered = true;
+			}
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
@@ -1955,6 +2111,11 @@ void Landscape3D::_notification(int p_what) {
 			_free_instances();
 			_free_all_collision();
 			_clear_stand_map();
+			_clear_relief_map();
+			if (relief_registered) {
+				WorldContracts::unregister_relief(this);
+				relief_registered = false;
+			}
 			_publish_cliff_relief(true);
 			set_process_internal(false);
 		} break;
@@ -2004,6 +2165,7 @@ void Landscape3D::_notification(int p_what) {
 			}
 			if (cam) {
 				_update_stand_map(cam->get_global_transform().origin);
+				_update_relief_map(cam->get_global_transform().origin);
 			}
 			_publish_cliff_relief();
 			_update_collision();
@@ -2042,6 +2204,8 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_material"), &Landscape3D::get_material);
 	ClassDB::bind_method(D_METHOD("set_cliff_relief", "metres"), &Landscape3D::set_cliff_relief);
 	ClassDB::bind_method(D_METHOD("get_cliff_relief"), &Landscape3D::get_cliff_relief);
+	ClassDB::bind_method(D_METHOD("set_bank_relief", "metres"), &Landscape3D::set_bank_relief);
+	ClassDB::bind_method(D_METHOD("get_bank_relief"), &Landscape3D::get_bank_relief);
 	ClassDB::bind_method(D_METHOD("get_cliff_point", "global_position"), &Landscape3D::get_cliff_point);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enable"), &Landscape3D::set_cast_shadows);
 	ClassDB::bind_method(D_METHOD("is_casting_shadows"), &Landscape3D::is_casting_shadows);
@@ -2094,6 +2258,7 @@ void Landscape3D::_bind_methods() {
 	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_relief", PROPERTY_HINT_RANGE, "0,2,0.05,or_greater,suffix:m"), "set_cliff_relief", "get_cliff_relief");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_relief", PROPERTY_HINT_RANGE, "0,2,0.05,or_greater,suffix:m"), "set_bank_relief", "get_bank_relief");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_shadows"), "set_cast_shadows", "is_casting_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_heights"), "set_stream_heights", "is_streaming_heights");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "camera", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Camera3D"), "set_camera", "get_camera");

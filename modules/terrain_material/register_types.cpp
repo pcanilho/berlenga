@@ -86,6 +86,8 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		// The drawn ground's relief over the heightfield for GPU placers (WorldGround.relief_at): R height m, G share.
 		{ "terrain_relief_map", "sampler2D" },
 		{ "terrain_relief_rect", "vec4" },
+		// Landscape3D's bank relief for the same patch (x metres).
+		{ "terrain_bank_relief", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {

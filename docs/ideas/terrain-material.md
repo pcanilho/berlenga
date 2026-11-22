@@ -261,7 +261,14 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
   4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
 
-## Relief on moderate slopes: research and plan (22 Nov, card posted, recommended)
+## Relief on moderate slopes (22 Nov, Paulo's pick)
+
+Built: Landscape3D.bank_relief (0.8 m; 0.4 read too faint at 25 m) with _bank_offset and _relief_weights (C++) and
+tm_bk_offset / tm_cl_disp in the material (pixel normal, ground patch, ledge shadow march; CUSTOM1.w carries the bank
+scale). Landscape3D now answers WorldGround.relief_at (WorldReliefProvider, d tan(slope) at a fixed xz, full field)
+and publishes terrain_relief_map (RG16F, 128 m at 0.5 m round the camera, rebuilt per 16 m step or height change).
+Rocks bench: --bank-relief=x, --bank-spot (a 42-52 degree soil bank, raking view along it). Images in
+/mnt/project-files/fork/terrain/banks/ (raster and PT pairs agree). Plan as researched:
 
 Banks and cave mouths at 35 to 50 degrees draw as plain 4 m heightfield triangles with long straight silhouettes:
 cliff relief (Landscape3D::_cliff_offset) only starts at 50 degrees. Soil banks do not keep beds and joints; they slump.
