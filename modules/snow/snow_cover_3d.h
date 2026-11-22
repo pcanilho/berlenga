@@ -502,7 +502,7 @@ public:
 	Ref<Texture2D> get_strata_texture() const { return strata_texture; }
 	// Round 9 (follow-up 54): how tall a vertical cut in the pack here stands (m), and the depth of the bottom of
 	// the layer it fails through (m from the surface). See the .cpp.
-	float cut_critical_height(const Vector3 &p_position, float &r_fail_bottom) const;
+	float cut_critical_height(const Vector3 &p_position, float &r_fail_bottom, float *r_block_cohesion = nullptr) const; // r_block_cohesion: Pa, the mean of the layers that come off as the block
 	Vector2 get_cut_critical_height(const Vector3 &p_position) const { // (critical height, failing layer's bottom), m
 		float bottom = 0.0f;
 		const float hc = cut_critical_height(p_position, bottom);
