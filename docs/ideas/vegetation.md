@@ -1754,3 +1754,6 @@ Research notes, nothing built yet:
 - Seed down in the wind. In late summer thistle, fireweed and willowherb down and dandelion clocks loose their seeds
   in dry, sunny wind; they drift in the air, catch in the grass and pile in corners. Built as: light particles in the
   shared wind from the plants that are seeding (their bloom stage), few and cheap, settling into the grass.
+- Later card: lee whirls. WeatherMap3D.add_vortex(position, radius, swirl, updraft, spin) is on main (41dbafbc90) and
+  LeafFall3D feels any vortex through wind_at; what is missing is an owner that spawns whirls in the lee of buildings,
+  rocks and wood edges in gusty wind (Tratt et al. 2003 sizes). A candidate for a future card.
