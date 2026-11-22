@@ -2678,10 +2678,12 @@
     "PlantGenerator.make_flood_wrack()",
     "GrassField3D.flood_wash",
     "flood_peak_ratio",
-    "flood_peak_day"
+    "flood_peak_day",
+    "storm_wave_ratio",
+    "storm_day"
    ],
    "note": "",
-   "what": "rivers and lakes keep the last flood's high-water mark, and straw, reed and twig strand lines mark it, with the grass below combed flat and silted.",
+   "what": "rivers and lakes keep the last flood's high-water mark and the sea and lakes the last storm's wave run-up on the beach, and straw, reed and twig strand lines mark it, with the grass below combed flat and silted.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
