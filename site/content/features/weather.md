@@ -35,9 +35,10 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 - **Haze and cloud shadow in fog** (`aerosol_haze`, `haze_visibility`): volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.
 - **Shafts across the sky** (`atmo_cloud_shadow_steps`): the air under the clouds reads a baked cloud shadow map, so light shafts reach across the whole sky, and the weather's haze carries on past the volumetric fog.
 - **Path traced haze** (`WeatherMap3D.traced_haze`): under path tracing the haze is a traced medium lit through shadows and the clouds' direct beam, so shafts stay sharp at any distance and show in reflections.
+- **Dust storms** (`WeatherMap3D.dust_storms`): strong dry wind over loose ground raises mineral dust that dims the sun orange-brown, settles out and washes out in rain, and a storm's outflow piles it into a haboob: a lobed, billowing wall lit tan by the sun, in raster and path tracing.
 - **Smoke haze** (`WeatherMap3D.smoke_haze`, `smoke_washout`; `PhysXFlow3D.rain_washout`; `PhysXFlowEmitter3D.regional_smoke`): smoke from fires, campfires and chimneys drifts on the wind past the Flow box as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.
 
-- **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).
+- **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up, walls facing the wind catch the driven rain, roofs the falling rain and lee faces none, raster and path traced; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).
 
   ![A beach dry and after rain: darker sand, puddles and a sheen](media/weather-wet.jpg)
 

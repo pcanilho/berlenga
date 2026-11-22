@@ -122,6 +122,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | --- | --- | --- | --- |
 | Wind → waves | linked (18 Nov) | wind | `follow_weather` on (wind work) |
 | Rain → ripples | linked | weather contract | live water's rain rings (`rain_from_weather`) |
+| Rain, wind → rain on faces (glass, walls, roofs) | one-way (22 Nov) | rain, state and wind maps (raster globals; PT rt_params 39–43, 79, 89) | `weather_surface_rain()` (material.cpp) and `pt_weather_surface_rain()` (raygen) from one include, `rain_surface_catch()`: ISO 15927-3 driven rain plus the vertical share and drip, the film, the wind's push along the face. Readers to come: glass drops and runners, wall streaks, built puddles. The shelter map's lee (rt_params 90–91) next |
 | Cloud shadow → water | linked | cloud shadow | |
 | Water → wet shore | linked | contact wetness | |
 | Falls → mist → wet rock | linked | mist | |
@@ -208,7 +209,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Flow gas → cloth | linked | Flow velocity | |
 | Bodies → ground prints | linked | `ground_deform` group | |
 | Mud → legs | linked | GroundLegMud3D | |
-| Ground, snow, mud surface → rigged feet; feet → prints | missing | `WorldGround` surface height, SnowCover3D and mud sinkage; meta `world_contact_feet` | Rigged characters' feet are not placed on the deformed surface, and their prints come from `WorldWalkerSteps`' guessed stride, not the foot bones. Planned `FootPlacementModifier3D` (character-motion.md, gap 3) |
+| Ground, snow, mud surface → rigged feet; feet → prints | linked (22 Nov) | `WorldGround.known_height_at` (the deformed surface), `WorldSnow.depth_at`, a short physics ray otherwise; `WorldFootfalls` | FootPlacementModifier3D stands each foot on the deformed ground plus the snow on it, tilts it to the slope and lowers the pelvis to the lower foot; each plant is published as a footfall, and with meta `world_contact_feet` the deformers' WorldWalkerSteps use those instead of guessed strides, so prints land where the animated feet did |
 
 ### Vehicles
 

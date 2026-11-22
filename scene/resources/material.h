@@ -752,8 +752,12 @@ public:
 	static String get_frost_sampling_code();
 	static String get_snow_functions_code(bool p_from_weather);
 	static String get_rain_functions_code(bool p_from_weather);
+	// weather_surface_rain(): the rain a face catches. Needs get_rain_functions_code(true) before it; p_state_map_declared
+	// when the shader already declares weather_state_map (get_wetness_functions_code(true)).
+	static String get_surface_rain_functions_code(bool p_state_map_declared);
 	static String get_wetness_shader_code();
 	static String get_snow_shader_code();
+	static String get_surface_rain_shader_code();
 	// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b): the functions, and the instance uniforms PhysXVehicle3D writes.
 	static String get_mud_functions_code();
 

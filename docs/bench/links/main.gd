@@ -312,6 +312,7 @@ func _ready() -> void:
 	await _valley_wind_tests()
 	await _flow_smoke_tests()
 	await _rime_tests()
+	await _surface_rain_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
@@ -2758,6 +2759,68 @@ func _salt_bloom_tests() -> void:
 	root.queue_free()
 	await get_tree().process_frame
 	_check("salt bloom: the spray's salt crusts the sea cliff's dry rock white (terrain material), none without salt", salted > 1.2 * bare, "centre luminance %.3f salted, %.3f bare" % [salted, bare])
+
+
+# The rain a face catches (BaseMaterial3D.get_surface_rain_shader_code()): one quad split in four, each quarter read
+# with a fixed normal: a level roof, a wall facing into the wind, a wall facing away, a wall the wind runs along.
+func _surface_rain_tests() -> void:
+	if DisplayServer.get_name() == "headless":
+		_skip("surface rain", "needs a rendering device")
+		return
+	var m := _new_map()
+	m.wind_speed = 8.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = 15.0
+	m.humidity = 0.9
+	m.rain_rate = 5.0
+	m.cloud_cover = 1.0
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	m.advance(1.0)
+	var sh := Shader.new()
+	sh.code = "shader_type spatial;\nrender_mode unshaded;\n" + BaseMaterial3D.get_surface_rain_shader_code() + """
+void fragment() {
+	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	int q = int(SCREEN_UV.x * 4.0);
+	vec3 n = q == 0 ? vec3(0.0, 1.0, 0.0) : q == 1 ? vec3(-1.0, 0.0, 0.0) : q == 2 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+	vec4 r = weather_surface_rain(wp, n);
+	ALBEDO = vec3(r.x / 20.0, r.y, length(r.zw) / 3.0);
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	var quad := MeshInstance3D.new()
+	var qm := QuadMesh.new()
+	qm.size = Vector2(400, 400)
+	quad.mesh = qm
+	quad.material_override = mat
+	add_child(quad)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 0, 10)
+	cam.fov = 120.0
+	add_child(cam)
+	cam.make_current()
+	for i in 10:
+		await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	var vals: Array = []
+	for k in 4:
+		vals.append(img.get_pixel(int(img.get_width() * (k + 0.5) / 4.0), img.get_height() / 2).srgb_to_linear())
+	var w: WorldWeather = WorldContracts.get_weather()
+	var rain: float = w.rainfall_at(Vector3())
+	var wind: Vector3 = m.get_wind_at(Vector3(), 10.0)
+	var driven: float = 2.0 / 9.0 * wind.length() * pow(rain, 8.0 / 9.0)
+	var roof: float = vals[0].r * 20.0
+	var windward: float = vals[1].r * 20.0
+	var leeward: float = vals[2].r * 20.0
+	var side_push: float = vals[3].b * 3.0
+	_check("surface rain: a roof catches the rain, a wall into the wind the driven rain (ISO 15927-3), a lee wall none; the wind pushes drops along a wall it runs along",
+			absf(roof - rain) < 0.15 * rain + 0.1 and absf(windward - driven) < 0.3 * driven + 0.1 and leeward < 0.05 and windward > 1.0 and side_push > 0.3 and vals[1].b < 0.03,
+			"rain %.2f mm/h, roof %.2f, windward %.2f (ISO %.2f at %.1f m/s), leeward %.2f; push %.2f along the side wall, %.2f square to it" % [rain, roof, windward, driven, wind.length(), leeward, side_push, vals[1].b * 3.0])
+	quad.queue_free()
+	cam.queue_free()
+	m.queue_free()
+	await get_tree().process_frame
 
 
 func _centre_luminance(img: Image) -> float:

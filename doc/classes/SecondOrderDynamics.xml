@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SecondOrderDynamics" inherits="RefCounted" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		A value that follows a target like a spring and damper, for procedural motion that moves like a body.
+	</brief_description>
+	<description>
+		Second-order dynamics: the output follows a target like a mass on a spring and damper, so procedural motion starts, overshoots slightly and settles instead of moving on a straight line or a fixed-length tween. It solves [code]y + k1 y' + k2 y'' = x + k3 x'[/code] with [code]k1 = damping / (PI frequency)[/code], [code]k2 = 1 / (TAU frequency)^2[/code] and [code]k3 = response damping / (TAU frequency)[/code] (t3ssel8r, "Giving Personality to Procedural Animations using Math", 2022), stepped semi-implicitly with [code]k2[/code] raised to its stability bound, so any frame time stays stable. A step of zero time changes nothing, so paused frames hold exactly.
+		The value can be a [float], [Vector2], [Vector3] or [Vector4]; the first value of another type restarts the system there.
+		[codeblock]
+		var follow = SecondOrderDynamics.new()
+		follow.frequency = 2.0
+		follow.damping = 0.7
+		follow.reset(position)
+		
+		func _process(delta):
+		    position = follow.update(delta, target.position)
+		[/codeblock]
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_value" qualifiers="const">
+			<return type="Variant" />
+			<description>
+				The current output.
+			</description>
+		</method>
+		<method name="get_velocity" qualifiers="const">
+			<return type="Variant" />
+			<description>
+				The current output's rate of change, per second.
+			</description>
+		</method>
+		<method name="reset">
+			<return type="void" />
+			<param index="0" name="value" type="Variant" />
+			<description>
+				Puts the output at [param value], at rest, and makes [param value]'s type the system's.
+			</description>
+		</method>
+		<method name="update">
+			<return type="Variant" />
+			<param index="0" name="delta" type="float" />
+			<param index="1" name="target" type="Variant" />
+			<description>
+				Steps the system [param delta] seconds toward [param target] and returns the new output. A [param delta] of zero returns the output unchanged.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="1.0">
+			The damping ratio: below [code]1.0[/code] the output overshoots and comes back, [code]1.0[/code] is critically damped (no overshoot, fastest settle), above [code]1.0[/code] it creeps in.
+		</member>
+		<member name="frequency" type="float" setter="set_frequency" getter="get_frequency" default="1.0">
+			The natural frequency in hertz: how fast the output responds to a change of target.
+		</member>
+		<member name="response" type="float" setter="set_response" getter="get_response" default="0.0">
+			The initial response: [code]0.0[/code] eases in, above [code]1.0[/code] overshoots at the start, below [code]0.0[/code] first moves the other way (anticipation).
+		</member>
+	</members>
+</class>

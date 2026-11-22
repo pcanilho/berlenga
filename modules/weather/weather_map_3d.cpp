@@ -3892,6 +3892,15 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		st.lake_params = lake_params_now;
 		st.lake_dir = lake_effect.wind_dir;
 	}
+	if (cell_dust.size() == resolution * resolution) {
+		for (int i = 0; i < cell_dust.size(); i++) {
+			if (cell_dust[i] > 0.01f) {
+				const float h = cell_dust_head.size() == cell_dust.size() ? cell_dust_head[i] : 0.0f;
+				st.dust_top = MAX(st.dust_top, dust_layer_depth * (1.0f + 0.75f * h));
+				st.dust_column = MAX(st.dust_column, cell_dust[i]);
+			}
+		}
+	}
 	st.air_t0 = cur_air_temperature;
 	st.air_rh0 = CLAMP(cur_air_humidity, 0.01f, 1.0f);
 	st.scud = WeatherClouds::scud_share(st.air_rh0, cur_rain_rate);

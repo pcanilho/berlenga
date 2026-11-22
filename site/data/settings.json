@@ -187,6 +187,12 @@
    "title": "Open worlds"
   },
   {
+   "name": "rendering/pathtracing/ser_coherence_hints",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true` and `rendering/pathtracing/use_shader_execution_reordering` is in use, each path's hit is reordered with a hint from its material (light passing through it, hair fibres), so threads that shade alike run together."
+  },
+  {
    "name": "rendering/pathtracing/transmission",
    "type": "bool",
    "default": "true",
@@ -4235,6 +4241,17 @@
    "topic": ""
   },
   {
+   "name": "Dust storms",
+   "settings": [
+    "WeatherMap3D.dust_storms"
+   ],
+   "note": "",
+   "what": "strong dry wind over loose ground raises mineral dust that dims the sun orange-brown, settles out and washes out in rain, and a storm's outflow piles it into a haboob: a lobed, billowing wall lit tan by the sun, in raster and path tracing.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Smoke haze",
    "settings": [
     "WeatherMap3D.smoke_haze",
@@ -4257,7 +4274,7 @@
     "humidity"
    ],
    "note": "",
-   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
+   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up, walls facing the wind catch the driven rain, roofs the falling rain and lee faces none, raster and path traced; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -5028,6 +5045,39 @@
    "page": "hair",
    "title": "Hair",
    "topic": "Collision"
+  },
+  {
+   "name": "Gaze",
+   "settings": [
+    "GazeModifier3D"
+   ],
+   "note": "",
+   "what": "eyes, head, neck and upper back share one look, eyes leading, with spring motion.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
+   "name": "Foot placement",
+   "settings": [
+    "FootPlacementModifier3D"
+   ],
+   "note": "",
+   "what": "feet plant on deformed ground and snow, with pelvis drop and slope tilt, and prints land where the feet land.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
+   "name": "Spring followers",
+   "settings": [
+    "SecondOrderDynamics"
+   ],
+   "note": "",
+   "what": "a spring-damper follower for procedural motion.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
   },
   {
    "name": "Camera-relative tracing",

@@ -36,8 +36,9 @@
 // over the opaque scene: the depth-limited ray march Nubis and Red Dead Redemption 2 composite their volumetrics
 // with (Schneider 2015; Bauer 2019). The march returns its light as two weights (the sky's light under the base,
 // the sun's through the drops' phase); the material's own lighting supplies the two: the sky's irradiance seen
-// sideways (half sky, half ground, as the sky's ambient_bottom) and the sun's colour in light(). Hidden while the
-// environment path traces (the tracer has its own media) and while there is nothing to draw.
+// sideways (half sky, half ground, as the sky's ambient_bottom) and the sun's colour in light(). Under path tracing
+// it is drawn over the traced frame against the traced depth. Hidden while there is nothing to draw. It also draws
+// the haboob dust walls (march_dust()) over the scene, from the camera on.
 
 #include "weather_map_3d.h"
 #include "weather_sky_material.h"
@@ -60,7 +61,7 @@ uniform float shafts_air_sigma = 0.0; // 1/m, the environment's exponential fog 
 )";
 
 static const char *SHAFTS_BODY = R"(
-varying float v_sun;
+varying vec3 v_sun;
 
 void vertex() {
 	POSITION = vec4(VERTEX.xy, 0.5, 1.0);
@@ -77,7 +78,7 @@ void fragment() {
 	vec3 cam = INV_VIEW_MATRIX[3].xyz;
 	vec3 d = wp - cam;
 	float t_max = length(d);
-	if (t_max <= shafts_t_min) {
+	if (t_max <= shafts_t_min && cloud_dust.x <= 0.0) {
 		discard;
 	}
 	vec3 rd = d / t_max;
@@ -92,18 +93,38 @@ void fragment() {
 	// fog, so a veil keeps the air's transmittance to it, exp(-sigma t), and the fogged ground shows through the rest.
 	// Without it a far veil over the ground stood out lighter than the same veil above the horizon (seen in the sky
 	// through that air).
-	if (cloud_storm_count > 0) {
+	if (cloud_storm_count > 0 && t_max > shafts_t_min) {
 		o = march_rain_shafts(cam, rd, shafts_sun_dir, vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), jitter, shafts_t_min, t_max, dr);
 		float ta = exp(-shafts_air_sigma * dr);
 		o = vec4(o.rgb * ta, 1.0 - (1.0 - o.a) * ta);
 	}
-	if (cloud_lake.x > 0.0) {
+	if (cloud_lake.x > 0.0 && t_max > shafts_t_min) {
 		vec4 l = march_lake_snow(cam, rd, shafts_sun_dir, vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), jitter, shafts_t_min, t_max, dr);
 		float ta = exp(-shafts_air_sigma * dr);
 		l = vec4(l.rgb * ta, 1.0 - (1.0 - l.a) * ta);
 		o = vec4(o.rgb + o.a * l.rgb, o.a * l.a);
 	}
-	if (o.a >= 0.999) {
+	// The light as two weights per channel: the sky's (ambient) and the sun's. The veils are grey; the dust is
+	// tinted by its albedo over the scattering orders (dust_tint()).
+	vec3 amb = vec3(o.r);
+	vec3 sunw = vec3(o.g);
+	float a = o.a;
+	if (cloud_dust.x > 0.0) {
+		// From the camera (the dust has no near limit: a wall a few hundred metres off stands over the ground too), in
+		// front of or behind the veils by depth.
+		float dd;
+		vec4 du = march_dust(cam, rd, shafts_sun_dir, vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), 0.5, 0.0005, 0.0, t_max, dd);
+		float ta = exp(-shafts_air_sigma * dd);
+		du = vec4(du.rgb * ta, 1.0 - (1.0 - du.a) * ta);
+		vec3 tint = dust_tint();
+		vec3 d_amb = du.r * tint;
+		vec3 d_sun = du.g * tint;
+		// The veils start 1.5 km out and the wall is mostly nearer: the dust in front.
+		amb = d_amb + du.a * amb;
+		sunw = d_sun + du.a * sunw;
+		a *= du.a;
+	}
+	if (a >= 0.999) {
 		discard;
 	}
 	// Seen sideways, the sky's irradiance is half sky and half ground, as ambient_bottom under the base.
@@ -113,12 +134,12 @@ void fragment() {
 	// The irradiance on that normal takes in the bright horizon in full, more than ambient_bottom under the base;
 	// scaled (0.38, measured on the same lake-effect veil just above and just below the horizon) so a veil crossing
 	// the horizon keeps one brightness.
-	ALBEDO = vec3(o.r * 0.38);
+	ALBEDO = amb * 0.38;
 	ROUGHNESS = 1.0;
 	METALLIC = 0.0;
 	SPECULAR = 0.0;
-	v_sun = o.g;
-	ALPHA = 1.0 - o.a;
+	v_sun = sunw;
+	ALPHA = 1.0 - a;
 }
 
 void light() {
@@ -155,7 +176,8 @@ void WeatherMap3D::_update_shafts() {
 	if (show) {
 		const int storms = rs->material_get_param(sky_rid, "cloud_storm_count");
 		const Vector4 lake = rs->material_get_param(sky_rid, "cloud_lake");
-		show = storms > 0 || lake.x > 0.0f;
+		const Vector4 dust = rs->material_get_param(sky_rid, "cloud_dust");
+		show = storms > 0 || lake.x > 0.0f || dust.x > 0.0f;
 	}
 	if (!show) {
 		if (shafts_mesh) {

@@ -73,6 +73,7 @@ vec2 rt_lss_barycentrics(float p_u) {
 #define RT_MATERIAL_FEATURE_SUBSURFACE 16u // rendering/pathtracing/subsurface_scattering
 #define RT_MATERIAL_FEATURE_HAIR 32u // rendering/pathtracing/hair
 #define RT_MATERIAL_FEATURE_MEDIA 64u // some traced material can bound a medium (not a setting)
+#define RT_MATERIAL_FEATURE_SER_HINTS 128u // rendering/pathtracing/ser_coherence_hints
 
 // RT_PARAM_VIS_MODE values. Must match Environment::PathtracingDebugMode.
 #define RT_VIS_TRANSPARENCY_LAYERS 23
@@ -147,6 +148,7 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_HAZE_REACH 84 // how far rays that reach the sky carry it (the sky's own aerosol starts there)
 #define RT_PARAM_PRECIP_NOSE 85 // WeatherMap3D's warm layer aloft (weather_warm_nose): peak (C)
 #define RT_PARAM_PRECIP_NOSE_BASE 86 // and base (m above RT_PARAM_PRECIP_GROUND)
+#define RT_PARAM_WIND_MAP 89 // WeatherMap3D's 10 m wind (weather_wind_map, m/s in rg) over the wetness rect; 0 none
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

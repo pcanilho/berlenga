@@ -161,8 +161,8 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 					const int v1 = MIN(v0 + 1, ih - 1);
 					const real_t fu = u - u0;
 					const real_t fv = v - v0;
-					const real_t a = Math::lerp(img->get_pixel(u0, v0).r, img->get_pixel(u1, v0).r, fu);
-					const real_t b = Math::lerp(img->get_pixel(u0, v1).r, img->get_pixel(u1, v1).r, fu);
+					const real_t a = Math::lerp(img->get_pixel(u0, v0).r, img->get_pixel(u1, v0).r, float(fu));
+					const real_t b = Math::lerp(img->get_pixel(u0, v1).r, img->get_pixel(u1, v1).r, float(fu));
 					field[z * nx + x] = MAX(field[z * nx + x], float(CLAMP(Math::lerp(a, b, fv), real_t(0.0), real_t(1.0))));
 				}
 			}
@@ -7251,7 +7251,7 @@ void TerrainGenerator3D::_bake_lips() {
 					}
 					if (step >= want) {
 						lip_at = lip_at + (p2 - lip_at) * (want / MAX(step, real_t(1e-3)));
-						h_top = Math::lerp(h_top, heights[c], want / MAX(step, real_t(1e-3)));
+						h_top = Math::lerp(h_top, real_t(heights[c]), want / MAX(step, real_t(1e-3)));
 						len += want;
 						want = 0.0;
 						g.points.push_back(lip_at);
