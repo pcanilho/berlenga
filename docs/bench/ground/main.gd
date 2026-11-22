@@ -62,6 +62,7 @@ extends Node3D
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --mud=depth,moisture paint a mud layer for --view=ruts (stage 1; the car starts in the frame and drives 12 s)
+#   --no-nmap  the bench material without its stand-in noise normal map; --taa: TAA on; --sun-alt=deg (ripples view, 9)
 #   --rain-pits=mm  --view=ripples: then a still shower of that much rain (120 mm/h), pitting the sand
 #   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
 #   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b);
@@ -137,6 +138,9 @@ var infill_test := false
 var fringe_test := false
 var rain_test := false
 var rain_pits_mm := 0.0
+var no_nmap := false
+var taa := false
+var sun_alt := 9.0
 var steps_test := false
 var near_test := false
 var mud_test := false
@@ -219,6 +223,9 @@ func _ready() -> void:
 		elif a == "--test=fringe": fringe_test = true
 		elif a == "--test=rain": rain_test = true
 		elif a.begins_with("--rain-pits="): rain_pits_mm = float(a.substr(12))
+		elif a == "--no-nmap": no_nmap = true
+		elif a == "--taa": taa = true
+		elif a.begins_with("--sun-alt="): sun_alt = float(a.substr(10))
 		elif a == "--test=steps": steps_test = true
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
@@ -4230,7 +4237,8 @@ func _ground_material(kind_name: String) -> StandardMaterial3D:
 	nz.frequency = 0.03 if kind_name != "litter" else 0.08
 	nz.fractal_octaves = 5
 	nt.noise = nz
-	m.normal_enabled = true
+	# --no-nmap: no stand-in noise normal map (its bumps shade as dark blotches under a low sun).
+	m.normal_enabled = not no_nmap
 	m.normal_texture = nt
 	# World-mapped, as a terrain material is: the patch and the terrain line up.
 	m.uv1_triplanar = true
@@ -5209,7 +5217,8 @@ func _build_ripples() -> void:
 	for c in get_children():
 		if c is DirectionalLight3D:
 			sun = c
-	sun.rotation_degrees = Vector3(-9.0, 120.0, 0.0)
+	sun.rotation_degrees = Vector3(-sun_alt, 120.0, 0.0)
+	get_viewport().use_taa = taa
 	surface.wind_override = Vector2(wind_arg, 0.0)
 	surface.ripple_extent = 8.0
 	surface.wind_ripples = true
