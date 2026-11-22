@@ -92,6 +92,7 @@ class SnowBodies3D : public Node3D {
 		float wait = 0.0f; // s
 		Transform3D xform;
 		Vector3 velocity;
+		Vector3 spin; // rad/s
 		Vector3 size;
 		float mass = 0.0f;
 		float density = 300.0f;
@@ -102,6 +103,15 @@ class SnowBodies3D : public Node3D {
 		float rate = 0.0f; // kg/s
 		float age = 0.0f;
 	};
+	struct Resting { // a block whose snow is already in the cover, sinking out of sight
+		ObjectID id;
+		float left = 0.0f; // m still to sink
+		float rate = 0.0f; // m/s
+	};
+	static constexpr float BLOCK_SINK_TIME = 90.0f; // s
+	static constexpr uint32_t CHUNK_COLLISION_LAYER = 1u << 19; // layer 20
+	static constexpr uint32_t MAX_RESTING_BLOCKS = 128;
+	LocalVector<Resting> resting;
 	LocalVector<Chunk> chunks;
 	LocalVector<PendingChunk> pending_chunks;
 	LocalVector<Puff> puffs;

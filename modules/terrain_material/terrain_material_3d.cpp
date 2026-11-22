@@ -303,6 +303,8 @@ global uniform vec4 terrain_cover_rect;
 global uniform sampler2D rock_contact_map : hint_default_black, filter_linear; // RockField3D: r damp ring, g banked fines
 global uniform sampler2D rock_far_cover_map : hint_default_black, filter_linear; // RockField3D far tier: rgb stone colour, a cover
 global uniform sampler2D rock_far_reach_map : hint_default_black, filter_linear; // RockField3D: rg the fade's start and end, 8 m a step (2040 m at 1)
+global uniform sampler2D terrain_frost_map : hint_default_black, filter_linear; // RockField3D frost_sorting: r gate, g stone share
+global uniform vec4 terrain_frost_rect; // its origin (x, z) and size (m); size 0 = none
 global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
 global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting
@@ -2021,6 +2023,35 @@ void fragment() {
 					rough = mix(rough, mix(0.97, 0.8, fresh * smoothstep(1.0, 0.5, c0)), rt);
 					sn = normalize(sn - vec3(cg.x, 0.0, cg.y) * rt * mix(0.4, 1.0, fresh));
 				}
+			}
+		}
+	}
+)";
+	// Frost-sorted ground (RockField3D frost_sorting, the same gate and stone share its stones are placed by): the fine
+	// centres of sorted circles and stripes are frost boils, bare silt and clay heaved up each winter so no sward
+	// holds, wet through the thaw (Washburn 1956; Walker et al. 2004, frost-boil ecosystems; Kessler and Werner 2003):
+	// a pale grey-brown silt, darker and smoother wet. The stone borders take a gravel lag between the stones.
+	c += R"(	if (terrain_frost_rect.z > 0.0) {
+		vec2 fuv = (wp.xz - terrain_frost_rect.xy) / terrain_frost_rect.zw;
+		if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
+			vec2 fr = textureLod(terrain_frost_map, fuv, 0.0).rg;
+			vec2 fe = min(fuv, 1.0 - fuv);
+			float fg = fr.r * smoothstep(0.0, 0.04, min(fe.x, fe.y)) * smoothstep(0.65, 0.85, wn.y);
+			if (fg > 0.0) {
+				float fn = tm_vn(wp * 2.3 + 61.0);
+				float fm = tm_vn(wp * 0.9 + 23.0);
+				// Wide transitions: the fines thin out into the border over the share's whole range, as the sorting does.
+				float centre = (1.0 - smoothstep(0.05, 0.65, fr.g + 0.2 * (fn - 0.5))) * fg;
+				float border = smoothstep(0.35, 0.95, fr.g) * fg;
+				float grain = tm_vn(wp * 19.0 + 7.0);
+				// Silt and clay (a grey-brown, dry about 0.15 in this material's linear albedo; wet about 0.6 of that, darker than the stones round it as
+				// in field photographs of sorted circles), drying out first in patches; a little of the ground's own colour stays (algal crusts, the last of the sward).
+				vec3 silt = vec3(0.15, 0.13, 0.105) * (0.88 + 0.24 * grain) * mix(0.6, 1.0, smoothstep(0.6, 0.85, fm));
+				albedo = mix(albedo, silt, 0.85 * centre);
+				rough = mix(rough, mix(0.78, 0.92, smoothstep(0.6, 0.85, fm)), centre); // damp, not puddled: matte
+				vec3 lag = vec3(0.15, 0.145, 0.135) * (0.75 + 0.5 * grain);
+				albedo = mix(albedo, lag, 0.2 * border);
+				rough = mix(rough, max(rough, 0.9), border);
 			}
 		}
 	}

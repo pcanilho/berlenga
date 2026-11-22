@@ -54,6 +54,9 @@ struct GroundHeightQuery {
 	PhysicsDirectSpaceState3D *space = nullptr;
 	uint32_t mask = 1;
 	float y0 = 0.0f;
+	// Add the drawn ground's relief over the heightfield (WorldGround.relief_at: Landscape3D's cliff and bank relief),
+	// so what stands on the ground stands on the surface drawn, not the heightfield under it.
+	bool relief = false;
 
 	bool has_source() const { return deformer || data_map || generator || getter; }
 	// The ground height, NaN where nothing answers.

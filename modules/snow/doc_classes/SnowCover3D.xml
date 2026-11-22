@@ -57,6 +57,18 @@
 				Lays a cone of wind-packed snow on the near square: [param depth] metres at [param position], fading to none at [param radius] metres, at [param density] kg/m³ (counted as wind slab). For drifts, ploughed banks and piles in scenes and tests.
 			</description>
 		</method>
+		<method name="add_mound">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="volume" type="float" />
+			<param index="3" name="density" type="float" default="300.0" />
+			<param index="4" name="ceiling" type="float" default="inf" />
+			<param index="5" name="taper" type="float" default="0.8" />
+			<description>
+				Lays a rounded heap of [param volume] m³ of snow at [param density] kg/m³ around [param position]: a smooth dome [param radius] metres across (at least 2.5 cells), for debris that came to rest. Cells under anything higher than [param ceiling] (a roof, a wall top) get none, and the heap tapers toward them over [param taper] metres (at least two cells); the whole volume lands on the cells that take it.
+			</description>
+		</method>
 		<method name="add_depth_hoar">
 			<return type="void" />
 			<param index="0" name="share" type="float" />

@@ -521,6 +521,13 @@ func _ready() -> void:
 		weather.follow_target = weather.get_path_to(cam)
 	if clock != null:
 		_log("sun altitude %.1f deg, azimuth %.1f deg" % [clock.get_sun_altitude(), clock.get_sun_azimuth()])
+	if args.has("seed-warm") and get_node_or_null("SeedDown") != null:
+		# --seed-warm=S: S seconds of the dry wind loosing seeds before the shot, so the air already carries them.
+		var sdn = get_node("SeedDown")
+		sdn.refresh_sources()
+		for i in int(float(args["seed-warm"]) * 10.0):
+			sdn.advance(0.1, true)
+		_log("seed down: %d sources, %d released, %d aloft, %d lying" % [sdn.get_source_count(), sdn.get_released_count(), sdn.get_aloft_count(), sdn.get_lying_count()])
 	if args.has("worn-path"):
 		_build_worn_path()
 	if args.has("farm-track") and prints != null and prints.has_method("add_wear"):
@@ -3060,6 +3067,13 @@ func _build_weather() -> void:
 		add_child(leaf_fall)
 		leaf_fall.weather_map = leaf_fall.get_path_to(weather)
 		leaf_fall.litter_density = float(args.get("leaf-litter", "0.5"))
+	# Plumed seeds (SeedDown3D, vegetation 19a84b7e): dandelion, thistle and willowherb heads in seed near the camera
+	# loose them in a dry wind, the shared wind carries them into the grass. --seeds=0 for none.
+	if args.get("seeds", "1") != "0" and ClassDB.class_exists("SeedDown3D"):
+		var sd = ClassDB.instantiate("SeedDown3D")
+		sd.name = "SeedDown"
+		sd.range = float(args.get("seed-range", "40"))
+		add_child(sd)
 	snow.global_position = Vector3(0, 0, 0)
 
 
@@ -4585,6 +4599,50 @@ func _build_camera() -> void:
 			cam.position = top + off
 			cam.position.y = height_at(cam.position.x, cam.position.z) + 3.0
 			cam.look_at(top + Vector3(0, -40, 0))
+		"cliff":
+			# A real rock face for the cliff trees (TreeGenerator cliff_angle, trees 37524fb2): the cell on a 16 m grid
+			# with the most 58-85 degree ground round it, under --cliff-max-h (1200) m and over the sea, with gentler
+			# ground --cliff-dist (35) m out from its foot for the camera. --cliff-cam=front|side (side: the camera
+			# turned --cliff-side-deg, 70, round the face), eye 1.7 m, looking at the face --cliff-look-h (12) m up.
+			var wr: Rect2 = gen.get_world_rect()
+			var e := 4.0
+			var best := -1.0
+			var bp := Vector3.ZERO
+			var bn := Vector3.ZERO
+			var maxh := float(args.get("cliff-max-h", "1200"))
+			var dist := float(args.get("cliff-dist", "35"))
+			var steep := func(x: float, z: float) -> Vector3:
+				var gx := (height_at(x + e, z) - height_at(x - e, z)) / (2.0 * e)
+				var gz := (height_at(x, z + e) - height_at(x, z - e)) / (2.0 * e)
+				return Vector3(gx, rad_to_deg(atan(sqrt(gx * gx + gz * gz))), gz)
+			var x := wr.position.x + 64.0
+			while x < wr.end.x - 64.0:
+				var z := wr.position.y + 64.0
+				while z < wr.end.y - 64.0:
+					var g: Vector3 = steep.call(x, z)
+					var h := height_at(x, z)
+					if g.y > 58.0 and g.y < 85.0 and h < maxh and h > float(gen.sea_level) + 8.0:
+						var n := 0.0
+						for dx in [-16.0, 0.0, 16.0]:
+							for dz in [-16.0, 0.0, 16.0]:
+								var g2: Vector3 = steep.call(x + dx, z + dz)
+								n += 1.0 if g2.y > 52.0 else 0.0
+						var down := -Vector3(g.x, 0, g.z).normalized()
+						var foot := Vector3(x, 0, z) + down * dist
+						var fg: Vector3 = steep.call(foot.x, foot.z)
+						if fg.y < 30.0 and height_at(foot.x, foot.z) > float(gen.sea_level) + 0.5 and n > best:
+							best = n
+							bp = Vector3(x, h, z)
+							bn = down
+					z += 16.0
+				x += 16.0
+			var side: bool = args.get("cliff-cam", "front") == "side"
+			var cd := bn.rotated(Vector3.UP, deg_to_rad(float(args.get("cliff-side-deg", "70")))) if side else bn
+			var cpos := bp + cd * dist
+			cam.fov = 60.0
+			cam.position = Vector3(cpos.x, height_at(cpos.x, cpos.z) + 1.7, cpos.z)
+			cam.look_at(Vector3(bp.x, bp.y + float(args.get("cliff-look-h", "12")), bp.z))
+			_log("cliff face at %s (score %.0f), out %s, cam %s" % [str(bp.round()), best, str(bn.snapped(Vector3.ONE * 0.01)), str(cam.position.round())])
 		_:
 			cam.position = Vector3(300, 520, coast_z + 900.0)
 			cam.look_at(Vector3(-100, 250, -700))

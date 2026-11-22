@@ -50,8 +50,9 @@ void initialize_rocks_module(ModuleInitializationLevel p_level) {
 	// The contact map the terrain material reads (ground_contact), likewise.
 	// And the far cover map (RockField3D far tier: the stones' plan cover and colour to 4 km).
 	// And where each texel's far tone takes over from the drawn stones (rock_far_reach_map).
-	const char *globals[7][2] = { { "terrain_geology_map", "sampler2D" }, { "terrain_geology_rect", "vec4" }, { "rock_contact_map", "sampler2D" }, { "rock_contact_rect", "vec4" }, { "rock_far_cover_map", "sampler2D" }, { "rock_far_cover_rect", "vec4" }, { "rock_far_reach_map", "sampler2D" } };
-	for (int i = 0; i < 7; i++) {
+	// And the frost-sorted ground (terrain_frost_map: gate, stone share) for the terrain material.
+	const char *globals[9][2] = { { "terrain_geology_map", "sampler2D" }, { "terrain_geology_rect", "vec4" }, { "rock_contact_map", "sampler2D" }, { "rock_contact_rect", "vec4" }, { "rock_far_cover_map", "sampler2D" }, { "rock_far_cover_rect", "vec4" }, { "rock_far_reach_map", "sampler2D" }, { "terrain_frost_map", "sampler2D" }, { "terrain_frost_rect", "vec4" } };
+	for (int i = 0; i < 9; i++) {
 		const String setting = String("shader_globals/") + globals[i][0];
 		if (ProjectSettings::get_singleton()->has_setting(setting)) {
 			continue;

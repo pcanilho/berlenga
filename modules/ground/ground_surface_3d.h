@@ -919,6 +919,7 @@ private:
 	void _publish();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	float _ground_at(float p_x, float p_z) const;
+	struct GroundHeightQuery _height_query() const;
 	bool _on_lattice(float p_x, float p_z) const;
 	float _off_lattice_height(const Vector3 &p_position) const;
 	// Where the field reads the air (its centre on the ground): the weather contract's air is per point.

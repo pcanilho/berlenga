@@ -310,16 +310,20 @@ Vector3 WeatherMap3D::get_smoke_transmittance(Vector3 p_position, Vector3 p_to_s
 	const float hd = Vector2(d.x, d.z).length();
 	const float reach = hd > 1e-4f ? MIN(SMOKE_LAYER * 0.5f / MAX(d.y, 1e-3f), extent * 0.45f) : 0.0f;
 	const Vector3 at = p_position + (hd > 1e-4f ? Vector3(d.x, 0.0f, d.z) / hd * reach : Vector3());
-	const float tau = get_smoke_optical_depth_at(at) / Math::sqrt(d.y * MAX(d.y, 0.0f) + 0.01f);
-	return Vector3(Math::exp(-tau * SMOKE_SPECTRUM.x), Math::exp(-tau * SMOKE_SPECTRUM.y), Math::exp(-tau * SMOKE_SPECTRUM.z));
+	const float air_mass = 1.0f / Math::sqrt(d.y * MAX(d.y, 0.0f) + 0.01f);
+	const float tau = get_smoke_optical_depth_at(at) * air_mass;
+	// Mineral dust (weather_dust.cpp) in the same slant column: nearly grey (Angstrom 0.2), its own field.
+	const float td = get_dust_optical_depth_at(p_position) * air_mass;
+	return Vector3(Math::exp(-tau * SMOKE_SPECTRUM.x - td * 0.97f), Math::exp(-tau * SMOKE_SPECTRUM.y - td), Math::exp(-tau * SMOKE_SPECTRUM.z - td * 1.04f));
 }
 
 float WeatherMap3D::_smoke_sigma() const {
 	if (!smoke_haze) {
 		return 0.0f;
 	}
-	// The haze where the camera stands: under a cold pool's lid, the smoke it holds.
-	return SMOKE_MASS_EXTINCTION * get_smoke_concentration_at(_follow_position());
+	// The haze where the camera stands: under a cold pool's lid, the smoke it holds; in a dust storm, the dust.
+	const Vector3 at = _follow_position();
+	return SMOKE_MASS_EXTINCTION * get_smoke_concentration_at(at) + 0.6f * get_dust_concentration_at(at);
 }
 
 void WeatherMap3D::set_smoke_haze(bool p_enabled) {

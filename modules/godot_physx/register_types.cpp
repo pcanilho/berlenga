@@ -53,6 +53,7 @@
 #include "flow/physx_flow_render_effect.h"
 #include "flow/physx_ground_dust_3d.h"
 #include "flow/physx_dust_devils_3d.h"
+#include "flow/physx_haboob_front_3d.h"
 #include "flow/physx_rock_dust_3d.h"
 #endif
 #include "nodes/physx_chunk_emitter_3d.h"
@@ -195,6 +196,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXFlowRenderEffect);
 		GDREGISTER_CLASS(PhysXFlowTracedEffect);
 		GDREGISTER_CLASS(PhysXDustDevils3D);
+		GDREGISTER_CLASS(PhysXHaboobFront3D);
 #ifdef MODULE_GROUND_ENABLED
 		GDREGISTER_CLASS(PhysXGroundDust3D);
 #endif

@@ -269,11 +269,29 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 	const bool pt_transparency = rb_data.is_valid() && raytracing && raytracing->get_shader() &&
 			(int)GLOBAL_GET("rendering/pathtracing/max_transparency_layers") > 0;
 
+	// Screen-space overlays (a shader that writes POSITION: a full-screen quad that marches a medium to the scene's
+	// depth, as the weather's distant veils) are no world geometry to trace: they stay out of the TLAS
+	// (rt_base_pass) and are drawn over the traced frame against the traced depth, under path-traced transparency too.
+	bool pt_overlays = false;
 	if (pt_transparency) {
-		// _fill_render_list is skipped, but the TLAS build still needs fresh
-		// surface caches.
-		_update_dirty_geometry_instances();
-		render_list[RENDER_LIST_ALPHA].clear();
+		_fill_render_list(RENDER_LIST_OPAQUE, p_render_data, PASS_MODE_COLOR, false, false, false, false, true);
+		LocalVector<GeometryInstanceSurfaceDataCache *> &alpha = render_list[RENDER_LIST_ALPHA].elements;
+		uint32_t kept = 0;
+		for (uint32_t i = 0; i < alpha.size(); i++) {
+			if (alpha[i]->shader && alpha[i]->shader->uses_position) {
+				alpha[kept++] = alpha[i];
+			}
+		}
+		if (kept == 0) {
+			render_list[RENDER_LIST_ALPHA].clear();
+		} else {
+			alpha.resize(kept);
+			render_list[RENDER_LIST_ALPHA].element_info.resize(kept);
+			render_list[RENDER_LIST_ALPHA].sort_by_reverse_depth_and_priority();
+			int *render_info = p_render_data->render_info ? p_render_data->render_info->info[RSE::VIEWPORT_RENDER_INFO_TYPE_VISIBLE] : (int *)nullptr;
+			_fill_instance_data(RENDER_LIST_ALPHA, render_info);
+			pt_overlays = true;
+		}
 	} else {
 		// TLAS is built from rt_instances and the path tracer writes velocity itself,
 		// so this collapses to populating the ALPHA (transparent) list only.
@@ -676,12 +694,12 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 	// The transparents read their light from the trace's light cache (#72): the lights
 	// through shadow rays, the sky and a bounce, in place of the raster lights and ambient.
 	pt_light_cache = PTLightCache();
-	if (!pt_transparency && raytracing && rb.is_valid()) {
+	if ((!pt_transparency || pt_overlays) && raytracing && rb.is_valid()) {
 		pt_light_cache.enabled = raytracing->rt_get_light_cache(p_render_data, pt_light_cache.irradiance, pt_light_cache.direction, pt_light_cache.z_near, pt_light_cache.z_far);
 		pt_light_cache.particle_anisotropy = CLAMP((float)GLOBAL_GET_CACHED(float, "rendering/pathtracing/transparent_lighting/particle_anisotropy"), -0.95f, 0.95f);
 	}
 
-	if (!pt_transparency) {
+	if (!pt_transparency || pt_overlays) {
 		RENDER_TIMESTAMP("Render 3D Transparent Pass");
 
 		RD::get_singleton()->draw_command_begin_label("Render 3D Transparent Pass");

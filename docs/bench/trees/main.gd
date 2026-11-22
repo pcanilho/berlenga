@@ -26,7 +26,10 @@ extends Node3D
 #                     side by side in winter grass (trees.md 5l), seen from 1.7 m, 10 m back
 #   --sun-energy=E    sun energy (default 1.4; 0 for sky light only)
 #   env GLAZE_HOURS=H  an ice storm H hours long before the shot: clear ice on every tree (trees.md 5be)
+#   env LATE_FROST=D  a hard late frost D days before the --day shot: the young leaves out then brown
 #   env FIRE_AGE=Y [SCORCH=H]  a past fire Y years ago, crowns killed up to H m (default 30): needle cast
+#   --cliff=STAND     a stand's cliff trees (trees.md 5bg): its (cliff) species' variants side by side, each on a grey
+#                     face at its own angle (a stand-in for the rock: bench only), seen from the side and in front
 #   --colonnade       a colonnade (trees.md 5az): five forest spruce on stilts in a row over one vanished log
 #   --beaver          beaver work (trees.md 5au): a gnawed birch, fresh and old stumps (one resprouting), a felled stem
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
@@ -63,6 +66,7 @@ var stand := "both"
 var seed := 1
 var view := "side"
 var overrides := {}
+var cliff_stand := -1
 var decays := false
 var beaver := false
 var colonnade := false
@@ -141,6 +145,8 @@ func _ready() -> void:
 			beaver = true
 		elif a == "--colonnade":
 			colonnade = true
+		elif a.begins_with("--cliff="):
+			cliff_stand = int(a.substr(8))
 		elif a == "--pollards":
 			pollards = true
 		elif a == "--litter":
@@ -200,7 +206,14 @@ static func weather_season(d: int) -> Dictionary:
 	w.season_day = d
 	var s := w.get_season()
 	w.free()
-	return s if not s.is_empty() else season_for(d, 46.0)
+	s = s if not s.is_empty() else season_for(d, 46.0)
+	# env LATE_FROST=DAYS: a hard late frost DAYS days before the shot (WeatherMap3D.late_frost), the forcing
+	# that night 50 K days short of today's.
+	if OS.has_environment("LATE_FROST"):
+		s["leaf_frost"] = 1.0
+		s["leaf_frost_days"] = float(OS.get_environment("LATE_FROST"))
+		s["leaf_frost_forcing"] = float(s.get("forcing", 0.0)) - 50.0
+	return s
 
 # A stand-in for WeatherMap3D.get_season() (docs/ideas/trees.md 2c): a temperate climate at
 # 50 N, daily mean 0 C mid-January to 18 C mid-July, integrated from 1 Jan (forcing, degree days
@@ -342,6 +355,36 @@ func _build_scene() -> void:
 	var xs: Array[float] = []
 	if decays:
 		rows = [0, 1, 2, 3, 4, 5, 6]
+	if cliff_stand >= 0:
+		presets = []
+		var sb: Biome = TreeGenerator.new().make_stand(cliff_stand, 4)
+		var rock := StandardMaterial3D.new()
+		rock.albedo_color = Color(0.42, 0.41, 0.38)
+		rock.roughness = 0.9
+		for sp in sb.species:
+			if not String(sp.resource_name).ends_with("(cliff)"):
+				continue
+			var cx0 := 0.0
+			for m in sp.meshes:
+				var gs: Vector2 = m.get_meta("tree_ground_slope", Vector2())
+				var a: AABB = m.get_aabb()
+				cx0 += maxf(-a.position.x, 1.0) + 0.5
+				_place(m, Vector3(cx0, 6.0, 0))
+				var face := MeshInstance3D.new()
+				var bm := BoxMesh.new()
+				bm.size = Vector3(a.size.x + 1.0, 2.0, 24.0)
+				face.mesh = bm
+				face.material_override = rock
+				# The level soil turned to the variant's angle (as the tree was): a slab whose top is the face through the foot.
+				face.basis = Basis(Vector3(1, 0, 0), gs.x)
+				face.position = Vector3(cx0 + 0.5 * (a.position.x + a.end.x), 6.0, 0) + face.basis * Vector3(0, -1.0, 0)
+				add_child(face)
+				xs.append(cx0)
+				print("%s face %.0f deg: %.1f m tall, %.1f m wide" % [sp.resource_name, rad_to_deg(gs.x), a.size.y, a.size.x])
+				cx0 += maxf(a.end.x, 1.0) + 0.5
+				x = cx0
+				tallest = maxf(tallest, a.size.y + 6.0)
+			break
 	if colonnade:
 		presets = []
 		# Five spruce that came up on one log 1.5 m apart (the field's slot jitter), all on its 0.8 m girth; the log's
@@ -425,6 +468,9 @@ func _build_scene() -> void:
 	# built (trees.md 5q).
 	if overrides.has("ground_slope"):
 		ground.rotation.x = float(overrides["ground_slope"])
+	# --set=cliff_angle:R: the ground is the face a cliff tree grows from (trees.md 5bg), falling toward +Z.
+	if overrides.has("cliff_angle"):
+		ground.rotation.x = float(overrides["cliff_angle"])
 	add_child(ground)
 	if litter and xs.size() > 0:
 		_add_litter(Vector3(xs[0], 0, 0))

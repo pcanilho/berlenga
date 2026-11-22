@@ -204,6 +204,7 @@ public:
 	void set_parked_settling(bool p_enabled);
 	bool is_parked_settling() const { return parked_settling; }
 	real_t get_wheel_creep(int p_wheel) const;
+	real_t get_wheel_clods_thrown(int p_wheel) const; // kg of soil its tread has cut and flung (round 23.3)
 	real_t get_wheel_suction(int p_wheel) const;
 	void set_belly_drag(bool p_enabled);
 	bool is_belly_drag() const { return belly_drag; }

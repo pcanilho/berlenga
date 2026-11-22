@@ -4719,7 +4719,9 @@ void RenderForwardClustered::_geometry_instance_add_surface_with_material_chain(
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 
 	_geometry_instance_add_surface_with_material(ginstance, p_surface, material, p_mat_src.get_local_index(), material_storage->material_get_shader_id(p_mat_src), p_mesh);
-	ginstance->surface_caches->rt_base_pass = p_rt_base_pass;
+	// A screen-space overlay (its shader writes POSITION) is no world geometry: the path tracer leaves it out of the
+	// TLAS and draws it over the traced frame (render_forward_clustered_pt.cpp).
+	ginstance->surface_caches->rt_base_pass = p_rt_base_pass && !(material->shader_data && material->shader_data->uses_position);
 	ginstance->surface_caches->rt_material = p_mat_src;
 
 	while (material->next_pass.is_valid()) {
