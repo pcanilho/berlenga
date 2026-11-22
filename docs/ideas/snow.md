@@ -1852,6 +1852,33 @@ Built: `SnowCover3D.layers_enabled` (on), `get_layers_at`, static `layer_compact
 - Not yet: a melt-freeze crust, buried hoar and depth hoar as layers of their own (their fields still carry them);
   liquid water per layer; a cut-through view.
 
+## Follow-up 50: snow sliding off roofs (round 7, 22 Nov 2026)
+
+Research: Eurocode 1 (EN 1991-1-3) and ISO 4355 give the load a pitched roof keeps as a share mu1 of the ground's,
+0.8 up to 30 degrees, falling linearly to none at 60. Taylor (1985) and O'Rourke's roof surveys find slippery roofs
+(metal, glass) shed at lower pitches than rough ones, so the bed friction goes with the roofing. Heat lost through a
+roof melts the bed once it beats the snow's insulation, q > k (-T) / d (Tobiasson 1988, ice dams), which is why warm
+roofs shed and cold ones hold. A sliding slab leaves the eave at v = sqrt(2 g L (sin a - tan phi cos a)) and falls
+ballistically, so the debris lands 1-3 m out, further off steep or slippery roofs.
+
+Built (SnowBodies3D): a node in group `snow_roof` is a roof face.
+- It keeps `roof_shape(pitch) / 0.8` of the snowfall and of the ground's first-sight seeding, none past 60 degrees,
+  and holds up to `roof_max_depth` (1.5 m).
+- It slides by `slab_slides` with the roofing's friction, `roof_friction`: metal and glass 10 degrees, tile and
+  slate 20, otherwise 25 (meta `snow_roof_material`); wetness takes 10 off.
+- Meta `snow_roof_heat` (W/m2): when it beats the pack's insulation the bed melts and wets (wet at least 0.6), which
+  breaks the bond and lowers the friction.
+- `roof_piles` (on): the slab is thrown from the eave at the slide speed and lands as a bank of wind-packed cones
+  (add_drift, 1.5 m radius, spaced 0.75 m) along the eave, each cone's share and throw varied a little, mass kept.
+  `get_roof_slides`, `get_roof_landed`.
+- `--test=roofs`: Eurocode share; 80 cm slides off 35 degree metal and holds on shingles; after a storm metal 0.58 m,
+  shingles 1.09 m, warm shingles 0.26 m, 65 degrees none; 5 slides, 6589 kg landed, conserved; bank 2.03 m against
+  0.84 m of level snow.
+- `--view=roofs`: a shed with metal on one side and shingles on the other, shot the moment after the metal side lets
+  go (14th hour of a 4 mm/h snowfall at -6 C): metal bare, shingles 0.59 m, a 1.5 t bank past the metal eave.
+- Not yet: the slab as a falling body (PhysX) and its powder puff; ice dams and icicles at the eave from the same
+  heat (follow-up 13 has icicles from a heated roof already); snow guards; gutters.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

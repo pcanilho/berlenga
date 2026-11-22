@@ -223,6 +223,8 @@ func _ready() -> void:
 			await _run_road_tests()
 		elif only == "layers":
 			await _run_layer_tests()
+		elif only == "roofs":
+			await _run_roof_tests()
 		elif only == "drift":
 			await _run_drift_tests()
 		elif only == "windslab":
@@ -455,6 +457,7 @@ func _run_tests() -> void:
 	await _run_spindrift_tests()
 	await _run_road_tests()
 	await _run_layer_tests()
+	await _run_roof_tests()
 	await _run_drift_tests()
 	await _run_wind_slab_tests()
 	await _run_sastrugi_tests()
@@ -829,6 +832,76 @@ func _run_layer_tests() -> void:
 				lo_s = minf(lo_s, av.get_trigger_index_at(Vector3(x, 0, z), 0.0))
 		lowest.append(lo_s)
 	_check("a storm slab on a dense old pack weighs its own density (layers)", float(lowest[0]) > 1.2 * float(lowest[1]) and float(lowest[0]) > 1.0, "lowest S %.2f with layers, %.2f with the bulk density" % [lowest[0], lowest[1]])
+
+
+# Snow sliding off roofs (follow-up 50): a roof face (snow_roof group) keeps Eurocode's share of the snowfall, slides
+# when the load beats its bed's bond and friction (slippery metal sheds, rough shingles hold, a warm roof's wet bed
+# lets go), and the slab lands as a bank in the cover past the eave.
+func _roof_face(at: Vector3, pitch_deg: float, material: String, heat: float) -> Node3D:
+	var r := Node3D.new()
+	r.add_to_group("snow_roof")
+	r.set_meta("snow_roof_material", material)
+	r.set_meta("snow_roof_heat", heat)
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(5, 0.1, 6) # 5 m run down the slope (x), 6 m along the eave
+	bm.material = StandardMaterial3D.new()
+	mi.mesh = bm
+	r.add_child(mi)
+	add_child(r)
+	r.global_position = at
+	r.rotation_degrees = Vector3(0, 0, -pitch_deg) # falls toward +x
+	return r
+
+
+func _run_roof_tests() -> void:
+	print("Roofs (follow-up 50):")
+	_check("Eurocode's roof share: 0.8 to 30 degrees, half at 45, none from 60", absf(SnowBodies3D.roof_shape(deg_to_rad(20.0)) - 0.8) < 1e-4 and absf(SnowBodies3D.roof_shape(deg_to_rad(45.0)) - 0.4) < 1e-4 and SnowBodies3D.roof_shape(deg_to_rad(65.0)) == 0.0, "%.2f, %.2f, %.2f" % [SnowBodies3D.roof_shape(deg_to_rad(20.0)), SnowBodies3D.roof_shape(deg_to_rad(45.0)), SnowBodies3D.roof_shape(deg_to_rad(65.0))])
+	var slope := deg_to_rad(35.0)
+	_check("80 cm of snow slides off a 35 degree metal roof, not off shingles", SnowBodies3D.slab_slides(0.8, 100.0, 0.0, slope, 250.0, SnowBodies3D.roof_friction("metal")) and not SnowBodies3D.slab_slides(0.8, 100.0, 0.0, slope, 250.0, SnowBodies3D.roof_friction("shingle")), "friction %.0f and %.0f degrees" % [SnowBodies3D.roof_friction("metal"), SnowBodies3D.roof_friction("shingle")])
+	await _setup("flat", 64.0, 64, -6.0)
+	snow.drift_enabled = false
+	snow.wind_transport_enabled = false
+	var sb: SnowBodies3D = snow.get_bodies()
+	var metal := _roof_face(Vector3(-14, 5, -12), 35.0, "metal", 0.0)
+	var shingle := _roof_face(Vector3(-14, 5, 12), 35.0, "shingle", 0.0)
+	var warm := _roof_face(Vector3(10, 5, 12), 35.0, "shingle", 25.0)
+	var steep := _roof_face(Vector3(10, 5, -12), 65.0, "shingle", 0.0)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_check("roof faces are tracked", sb.is_tracked(metal) and sb.is_tracked(shingle) and sb.is_tracked(warm) and sb.is_tracked(steep), "%d tracked" % sb.get_tracked_count())
+	weather.wind_speed = 1.0
+	weather.rain_rate = 4.0
+	weather.cloud_cover = 1.0
+	weather.temperature = -6.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var land := Vector3(-14 + 2.5 + 1.0, 0, -12) # past the metal roof's eave
+	var open := Vector3(0, 0, 0)
+	var max_metal := 0.0
+	var max_shingle := 0.0
+	var max_warm := 0.0
+	var max_steep := 0.0
+	for h in 24:
+		snow.advance(3600.0)
+		for k in 6:
+			sb.step(600.0)
+		if OS.get_cmdline_user_args().has("--verbose"):
+			print("    h%d metal %.2f shingle %.2f warm %.2f steep %.2f slides %d" % [h, sb.get_body_depth(metal), sb.get_body_depth(shingle), sb.get_body_depth(warm), sb.get_body_depth(steep), sb.get_roof_slides()])
+		max_metal = maxf(max_metal, sb.get_body_depth(metal))
+		max_shingle = maxf(max_shingle, sb.get_body_depth(shingle))
+		max_warm = maxf(max_warm, sb.get_body_depth(warm))
+		max_steep = maxf(max_steep, sb.get_body_depth(steep))
+	var pile := 0.0
+	for x in range(0, 9):
+		pile = maxf(pile, snow.get_depth_at(land + Vector3(x, 0, 0)))
+	print("  a day of 4 mm/h at -6 C, the most each roof held: metal %.2f m, shingles %.2f m, warm shingles %.2f m, 65 degrees %.2f m; %d slides, %.0f kg landed; bank %.2f m against %.2f m in the open" % [max_metal, max_shingle, max_warm, max_steep, sb.get_roof_slides(), sb.get_roof_landed(), pile, snow.get_depth_at(open)])
+	_check("a metal roof sheds its load sooner than a shingled one", max_metal < 0.7 * max_shingle and max_shingle > 0.8, "metal up to %.2f m, shingles up to %.2f m" % [max_metal, max_shingle])
+	_check("a warm roof's wet bed lets go sooner still; a 65 degree roof holds none", max_warm < 0.5 * max_shingle and max_steep < 0.005, "warm up to %.2f m, 65 degrees %.3f m" % [max_warm, max_steep])
+	_check("what slid lands as a bank past the eave", sb.get_roof_landed() > 100.0 and pile > snow.get_depth_at(open) + 0.1, "%.0f kg; bank %.2f m against %.2f m" % [sb.get_roof_landed(), pile, snow.get_depth_at(open)])
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
 
 
 # Drift take-back (follow-up 48): a lone drift in a gale. The wind arrives carrying a full load off the open snow
@@ -3079,6 +3152,8 @@ func _build_view() -> void:
 		await _setup("ridge", 512.0, 256, -8.0)
 	elif view == "dunes":
 		await _setup("flat", 64.0, 64, -8.0)
+	elif view == "roofs":
+		await _setup("flat", 64.0, 128, -6.0)
 	elif view == "spindrift":
 		await _setup("cornice", 512.0, 256, -12.0)
 	elif view == "icicles" and OS.get_cmdline_user_args().has("--hero") and not OS.get_cmdline_user_args().has("--wall"):
@@ -3151,6 +3226,9 @@ func _build_view() -> void:
 		return
 	elif view == "dunes":
 		await _build_dunes(cam)
+		return
+	elif view == "roofs":
+		await _build_roofs(cam)
 		return
 	elif view == "spindrift":
 		await _build_spindrift(cam)
@@ -3546,6 +3624,91 @@ func _build_windblown(cam: Camera3D) -> void:
 	cam.look_at(Vector3(0.0, 60.0, 0.0))
 	cam.fov = 45.0
 	for i in 4:
+		await get_tree().physics_frame
+	await _save_frame("")
+	get_tree().quit()
+
+
+func _build_roofs(cam: Camera3D) -> void:
+	# A shed with a metal roof on one side and shingles on the other after a day of snow (follow-up 50): the metal
+	# side has shed its load into a bank past the eave, the shingled side still holds it.
+	snow.drift_enabled = false
+	snow.wind_transport_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 60.0
+	sun.rotation_degrees = Vector3(-24.0, 200.0, 0.0)
+	_add_terrain(64.0, 128, Color(0.33, 0.31, 0.27), 6.0)
+	var wall_mat := StandardMaterial3D.new()
+	wall_mat.albedo_color = Color(0.42, 0.3, 0.22)
+	var walls := MeshInstance3D.new()
+	var wb := BoxMesh.new()
+	wb.size = Vector3(6, 3, 7)
+	wb.material = wall_mat
+	walls.mesh = wb
+	walls.position = Vector3(0, 1.5, 0)
+	add_child(walls)
+	var pitch := 35.0
+	var half := 3.0 / cos(deg_to_rad(pitch)) # the run of each face, eave to ridge
+	var roofs: Array[Node3D] = []
+	for side in [1, -1]:
+		var r := Node3D.new()
+		r.add_to_group("snow_roof")
+		r.set_meta("snow_roof_material", "metal" if side > 0 else "shingle")
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(half + 0.4, 0.08, 7.6)
+		var m := StandardMaterial3D.new()
+		m.albedo_color = Color(0.35, 0.38, 0.4) if side > 0 else Color(0.22, 0.2, 0.19)
+		m.metallic = 0.8 if side > 0 else 0.0
+		m.roughness = 0.4 if side > 0 else 0.9
+		bm.material = m
+		mi.mesh = bm
+		r.add_child(mi)
+		add_child(r)
+		# The face's middle sits half way down from the ridge, moved 0.2 m outward along the slope so the extra 0.4 m
+		# is all eave overhang and the two faces meet at the ridge.
+		var down := Vector3(side * cos(deg_to_rad(pitch)), -sin(deg_to_rad(pitch)), 0.0)
+		r.position = Vector3(0, 3.0 + 3.0 * tan(deg_to_rad(pitch)), 0) + down * (half * 0.5 + 0.2)
+		r.rotation_degrees = Vector3(0, 0, -side * pitch)
+		roofs.append(r)
+	var target := Marker3D.new()
+	target.name = "Probe"
+	add_child(target)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	var sb: SnowBodies3D = snow.get_bodies()
+	weather.wind_speed = 1.0
+	weather.rain_rate = 4.0
+	weather.cloud_cover = 1.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var hours := snow_hours if snow_hours >= 0.0 else 14.0 # the metal side let go in the 14th hour
+	# The shot is the moment after the first slide (or --snow hours): the metal side bare, the shingles still loaded.
+	var slid := false
+	for h in int(hours):
+		snow.advance(3600.0)
+		for k in 6:
+			sb.step(600.0)
+			slid = snow_hours < 0.0 and sb.get_roof_slides() > 0
+			if slid:
+				break
+		if slid:
+			break
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.2
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	print("roofs: %d slides, %.0f kg landed; metal %.2f m, shingles %.2f m" % [sb.get_roof_slides(), sb.get_roof_landed(), sb.get_body_depth(roofs[0]), sb.get_body_depth(roofs[1])])
+	surface = SnowSurface3D.new()
+	surface.snow_cover = NodePath("../SnowCover3D")
+	surface.follow_target = NodePath("../Probe")
+	add_child(surface)
+	cam.position = Vector3(1.5, 11.0, 15.0) # high off the gable end: both faces and both eaves in view
+	cam.look_at(Vector3(1.0, 2.0, 0.0))
+	cam.fov = 50.0
+	for i in 8:
 		await get_tree().physics_frame
 	await _save_frame("")
 	get_tree().quit()
