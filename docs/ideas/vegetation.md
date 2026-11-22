@@ -1575,3 +1575,26 @@ Research notes, nothing built yet:
   grazed lawn (MacDiarmid and Watkin 1972; Bokdam and Gleichman 2000 for horse latrines), and nettles and docks come
   up on nutrient-rich spots; rabbits keep latrines on mounds. Inputs: WorldStand browse (grazed where) and a dung
   scatter. Output: tall rough patches and dung pats in the deer and cattle lawns, breaking the even crop.
+
+## Storm lodging (round 4, first pick)
+Built in GrassField3D (`lodging`, on by default; `get_lodging_at`, `advance_lodging`).
+- Research. Lodging is the permanent displacement of stems from upright, by stem buckling or by the root plate
+  turning in wet soil (Baker et al. 1998, J. Theor. Biol. 194; Berry et al. 2004, Adv. Agron. 84). The model is a
+  moment balance: the wind's base bending moment grows with the gust speed squared and the shoot's height, rain held
+  on the leaves adds weight and wet soil lowers the anchorage, so the same gale lodges a soaked meadow and spares a
+  dry one. Lodged patches lie along the gust that laid them, with swirls where it turned, and are patchy because the
+  stand's strength varies with fertility and density. Young grass culms lift again at the nodes (gravitropism) over
+  days; ripe cereals hardly recover. Games mostly fake it with a static flattened texture; here it follows the weather.
+- How. A grid of 96 x 96 cells of 4 m round the camera (moves with it, keeps the overlap), stepped eight rows a frame
+  in weather seconds (WorldWeather.time_scale). Each cell reads wind_at(p, 2 m), surface_wetness_at and rainfall_at:
+  risk = (U / Ucrit)^2 x (1 + 0.6 wet) x (1 + min(rain / 40, 0.5)) / (1 - 0.35 wet) x weakness, with
+  Ucrit = 10 m/s x sqrt(0.6 / h) for the sward height h and weakness 0.3 to 1.7 from world-space noise (41 m and
+  13 m). Above risk 1 the lodged share rises toward smoothstep over risk 1 to 4 within about 90 s, along the wind
+  turned by a swirl of up to 40 degrees; otherwise it decays with tau = 2.5 days (crops 40) x (1 + 2 wet).
+  Calm with nothing lodged skips the sweep after one probe.
+- Shader. lodge_map (RGBA8: direction, share) over lodge_rect. Up to the share x 1.05 of the blades lie down along
+  the direction (+-17 degrees each), kinked at the base and 7% shorter; up to x 1.6 lean after them at the patch
+  edges. Grazed lawns do not lodge. No rebuild: tiles, rings and the path tracer read the same map.
+- Check: grass bench --test, a wet 12 m/s gale for an hour lays the 0.5 m meadow down in patches along +x; ten calm
+  dry days later it stands again.
+

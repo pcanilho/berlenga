@@ -114,6 +114,18 @@
 				How wet the body's mud is, [code]1[/code] fresh to [code]0[/code] dried to a crust (over about five minutes). See [member body_mud].
 			</description>
 		</method>
+		<method name="get_bow_wave_strength" qualifiers="const">
+			<return type="float" />
+			<description>
+				How hard the hull pushes the water at the last step, 0 to 1 (the strongest of three points along its keel, given to the water contract as moving disturbances that the water's wave solver turns into a bow wave and a wake): 0.15 at rest, rising to 1 at a depth Froude number of 0.8, times how much of the hull is wet. See [member river_forces].
+			</description>
+		</method>
+		<method name="get_cab_water" qualifiers="const">
+			<return type="float" />
+			<description>
+				Cubic metres of water inside the cab: it floods through [member hull_leak_area] at an orifice's rate under the water's head outside, weighs the vehicle down, and drains on land. See [member river_forces].
+			</description>
+		</method>
 		<method name="get_collision_exceptions" qualifiers="const">
 			<return type="Node[]" />
 			<description>
@@ -271,6 +283,12 @@
 				The chassis box as a world [AABB] when it overlaps [param rect] (empty before the vehicle is built or while [member wind_obstacle] is off). WeatherMap3D reads it for its shelter: snow and blown sand drift in a parked vehicle's lee.
 			</description>
 		</method>
+		<method name="is_engine_drowned" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] while the engine is stalled by water drawn into its air intake ([member air_intake_height], [member snorkel]); it starts again 5 s after the intake is clear. The throttle does nothing meanwhile.
+			</description>
+		</method>
 		<method name="is_sleeping" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -317,6 +335,9 @@
 	<members>
 		<member name="ackermann_strength" type="float" setter="set_ackermann_strength" getter="get_ackermann_strength" default="1.0">
 			How much Ackermann steering correction to apply to the front (steering) axle, from [code]0[/code] (both front wheels always turn by the same angle, like [VehicleWheel3D]) to [code]1[/code] (full correction: the inside wheel of a turn steers more sharply than the outside wheel, matching how a real front axle is geometrically linked).
+		</member>
+		<member name="air_intake_height" type="float" setter="set_air_intake_height" getter="get_air_intake_height" default="-1.0">
+			The engine's air intake over the chassis box's bottom, in metres, near the box's front: water over it stalls the engine (see [method is_engine_drowned]). Negative: three quarters of the box's height. See [member snorkel].
 		</member>
 		<member name="autobox_down_ratio" type="float" setter="set_autobox_down_ratio" getter="get_autobox_down_ratio" default="0.5">
 			The automatic gearbox shifts down when the engine falls below this fraction of [member engine_max_rpm]. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
@@ -411,6 +432,9 @@
 		<member name="handbrake" type="float" setter="set_handbrake" getter="get_handbrake" default="0.0">
 			Brake input for the rear wheels only, from [code]0[/code] to [code]1[/code], on top of [member brake] (up to [member max_brake_torque]): a parking brake, or to lock the rear wheels into a slide.
 		</member>
+		<member name="hull_leak_area" type="float" setter="set_hull_leak_area" getter="get_hull_leak_area" default="0.01">
+			The gaps the cab floods through, in square metres (Cd 0.6): with the default a floating car fills and settles over a few minutes. 0 keeps it dry. See [method get_cab_water].
+		</member>
 		<member name="hull_seal" type="float" setter="set_hull_seal" getter="get_hull_seal" default="0.5">
 			The share of the chassis box that keeps water out, for its buoyancy: a car's body keeps out about half its box and floats near 0.5 to 0.6 m of still water. See [member river_forces].
 		</member>
@@ -463,7 +487,10 @@
 			The reverse gear's ratio, as a positive number. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
 		</member>
 		<member name="river_forces" type="bool" setter="set_river_forces" getter="is_river_forces" default="true">
-			In any water of the water contract (a river, a ford, a flood, a lake) the chassis box and the tyres are buoyed by the water they keep out ([member hull_seal]) and dragged by the current past them (drag coefficient 1.1 on the wet face), so a fording vehicle is lightened, its tyres grip less and the current carries it off past the depth and speed vehicle flood tests find. Skipped when the vehicle has a [code]PhysXBuoyancy3D[/code] child.
+			In any water of the water contract (a river, a ford, a flood, a lake) the chassis box and the tyres are buoyed by the water they keep out ([member hull_seal]) and dragged by the current past them (drag coefficient 1.1 on the wet face), so a fording vehicle is lightened, its tyres grip less and the current carries it off past the depth and speed vehicle flood tests find. Its hull also pushes a bow wave and a wake into the water (see [method get_bow_wave_strength]). Skipped when the vehicle has a [code]PhysXBuoyancy3D[/code] child.
+		</member>
+		<member name="snorkel" type="bool" setter="set_snorkel" getter="has_snorkel" default="false">
+			A snorkel: the engine's air intake raised to 0.25 m over the chassis box's roof, so it wades as deep as the body allows.
 		</member>
 		<member name="soft_soil" type="bool" setter="set_soft_soil" getter="is_soft_soil" default="true">
 			On a [GroundSurface3D]'s soft material (sand, soil, mud) the wheels sink by their load and tyre pressure, print ruts, get their grip from the soil's shear strength and feel its motion resistance (Bekker and Wong terramechanics). A spinning wheel digs itself in. Off firm ground nothing changes. See [member PhysXVehicleWheel3D.tire_pressure].

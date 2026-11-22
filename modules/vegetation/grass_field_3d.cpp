@@ -499,6 +499,8 @@ void GrassField3D::_build_material() {
 	// (TerrainDataMap3D.get_data_texture(), r: height) over ground_data_rect (z 0: none, the blades ease to up).
 	code += "uniform sampler2D ground_data_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 ground_data_rect;\n";
 	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
+	// Storm lodging (lodging): r, g the direction the blades lie (* 0.5 + 0.5), b the lodged share; rect z 0: none.
+	code += "uniform sampler2D lodge_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 lodge_rect;\n";
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
 	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
@@ -1195,6 +1197,28 @@ void vertex() {
 		off = off * 0.4 + vec2(cos(la), sin(la)) * (0.9 + 0.4 * fract(rnd * 17.3));
 		h *= 0.8;
 	}
+	// Storm lodging (docs/ideas/vegetation.md, "Storm lodging"): where a storm's gusts on wet sward passed the stems'
+	// base strength, a share of the blades lie down along the storm's wind, kinked at the base (Baker et al. 1998), the
+	// rest lean after them; the swirls are in the map's direction. A grazed lawn is too short to lodge.
+	if (lodge_rect.z > 0.0) {
+		vec2 luv = (base_w.xz - lodge_rect.xy) / lodge_rect.zw;
+		if (all(greaterThan(luv, vec2(0.0))) && all(lessThan(luv, vec2(1.0)))) {
+			vec3 lg = textureLod(lodge_map, luv, 0.0).rgb;
+			float la = lg.b * (1.0 - v_graze);
+			float lr = fract(rnd * 61.7);
+			if (la > 0.004 && lr < la * 1.6) {
+				vec2 ld = lg.rg * 2.0 - 1.0;
+				float lj = (fract(rnd * 13.9) - 0.5) * 0.6;
+				ld = mat2(vec2(cos(lj), sin(lj)), vec2(-sin(lj), cos(lj))) * ld;
+				vec2 ldl = (to_local * vec3(ld.x, 0.0, ld.y)).xz;
+				ldl = length(ldl) > 1e-4 ? normalize(ldl) : vec2(0.0, 1.0);
+				// Down (the lodged share), else leaning on its neighbours at the patch's edge.
+				float down = lr < la * 1.05 ? 1.0 : 0.45;
+				off = mix(off, ldl * (1.15 + 0.3 * fract(rnd * 7.3)) * down, mix(0.7, 0.95, down));
+				h *= mix(1.0, 0.93, down);
+			}
+		}
+	}
 	// Fire (vegetation_fire.h): the front burns a blade from the top down as its fuel goes, to
 	// stubble 3-6 cm tall, thinner and upright (a grass fire's burnt ground).
 	vec4 fire_s = fire_state_at(base_w.xz);
@@ -1451,6 +1475,7 @@ void fragment() {
 	const Ref<Shader> shader = blade_shader;
 	material.instantiate();
 	material->set_shader(shader);
+	lodge_dirty = true; // A new material: the lodging map goes to it at the next sweep.
 	material->set_shader_parameter("base_color", base_color);
 	material->set_shader_parameter("tip_color", tip_color);
 	material->set_shader_parameter("dry_color", dry_color);
@@ -3911,6 +3936,216 @@ void GrassField3D::set_graze_height(float p_m) {
 	_publish_graze();
 }
 
+// Storm lodging (docs/ideas/vegetation.md, "Storm lodging"). A smooth value noise in world space, so a cell keeps its
+// strength and swirl when the grid moves with the camera.
+static float _lodge_noise(float p_x, float p_z, uint32_t p_seed) {
+	const float fx = Math::floor(p_x);
+	const float fz = Math::floor(p_z);
+	const int ix = int(fx);
+	const int iz = int(fz);
+	auto corner = [&](int p_dx, int p_dz) {
+		uint32_t h = hash_murmur3_one_32(uint32_t(ix + p_dx), p_seed);
+		h = hash_fmix32(hash_murmur3_one_32(uint32_t(iz + p_dz), h));
+		return float(h & 0xffffff) / float(0xffffff);
+	};
+	float tx = p_x - fx;
+	float tz = p_z - fz;
+	tx = tx * tx * (3.0f - 2.0f * tx);
+	tz = tz * tz * (3.0f - 2.0f * tz);
+	return Math::lerp(Math::lerp(corner(0, 0), corner(1, 0), tx), Math::lerp(corner(0, 1), corner(1, 1), tx), tz);
+}
+
+float GrassField3D::_lodge_height() const {
+	return crop != CROP_NONE ? _crop_shape(crop).height : MAX(blade_height.x, blade_height.y);
+}
+
+// The grid follows the camera: once it is a quarter of the grid from the centre, the cells move under it and the
+// overlap keeps its state.
+void GrassField3D::_lodge_place(const Vector3 &p_center) {
+	const Vector2i want(int(Math::floor(p_center.x / LODGE_CELL)) - LODGE_N / 2, int(Math::floor(p_center.z / LODGE_CELL)) - LODGE_N / 2);
+	if (lodge_placed && Math::abs(want.x - lodge_origin.x) < LODGE_N / 4 && Math::abs(want.y - lodge_origin.y) < LODGE_N / 4) {
+		return;
+	}
+	LocalVector<float> amt;
+	LocalVector<Vector2> dir;
+	amt.resize(LODGE_N * LODGE_N);
+	dir.resize(LODGE_N * LODGE_N);
+	for (int i = 0; i < LODGE_N * LODGE_N; i++) {
+		amt[i] = 0.0f;
+		dir[i] = Vector2(1.0f, 0.0f);
+	}
+	if (lodge_placed) {
+		for (int y = 0; y < LODGE_N; y++) {
+			const int oy = y + want.y - lodge_origin.y;
+			if (oy < 0 || oy >= LODGE_N) {
+				continue;
+			}
+			for (int x = 0; x < LODGE_N; x++) {
+				const int ox = x + want.x - lodge_origin.x;
+				if (ox >= 0 && ox < LODGE_N) {
+					amt[y * LODGE_N + x] = lodge_amt[oy * LODGE_N + ox];
+					dir[y * LODGE_N + x] = lodge_dir[oy * LODGE_N + ox];
+				}
+			}
+		}
+	} else {
+		lodge_row_time.resize(LODGE_N);
+		for (int r = 0; r < LODGE_N; r++) {
+			lodge_row_time[r] = lodge_clock;
+		}
+	}
+	lodge_amt = amt;
+	lodge_dir = dir;
+	lodge_origin = want;
+	lodge_placed = true;
+	lodge_dirty = true;
+}
+
+// One cell over p_dt weather seconds. The lodging risk follows the cereal lodging model's moment balance (Baker et al.
+// 1998; Berry et al. 2004): the wind's moment on the stem goes with the gust speed squared and the shoot's height, the
+// rain held on the leaves adds weight, and wet soil gives the base less anchorage. The critical 2 m gust is 10 m/s for
+// a 0.6 m sward (a wet summer gale lays meadows down; a dry one needs a storm), higher for shorter grass. Patches come
+// from the stems' strength varying over tens of metres; the swirl from gusts turning in the lee of the patch.
+void GrassField3D::_lodge_step_cell(int p_i, const Vector3 &p_pos, float p_dt, const WorldWeather *p_weather, float p_ucrit, bool p_crop) {
+	float &a = lodge_amt[p_i];
+	const Vector3 w = p_weather->wind_at(p_pos, 2.0f);
+	const Vector2 u(w.x, w.z);
+	const float speed = u.length();
+	const float wet = CLAMP(p_weather->surface_wetness_at(p_pos), 0.0f, 1.0f);
+	float target = 0.0f;
+	if (speed > p_ucrit * 0.45f) {
+		const float rain = MAX(p_weather->rainfall_at(p_pos), 0.0f);
+		// Sturdy (0.3) to weak (1.7) stands over tens of metres (fertility, density): the patches.
+		const float n = 0.65f * _lodge_noise(p_pos.x / 41.0f, p_pos.z / 41.0f, 0x10d9e5u) + 0.35f * _lodge_noise(p_pos.x / 13.0f, p_pos.z / 13.0f, 0x51a7u);
+		const float ns = CLAMP((n - 0.2f) / 0.6f, 0.0f, 1.0f);
+		const float weakness = 0.3f + 1.4f * ns * ns * (3.0f - 2.0f * ns);
+		const float risk = (speed / p_ucrit) * (speed / p_ucrit) * (1.0f + 0.6f * wet) * (1.0f + MIN(rain / 40.0f, 0.5f)) / (1.0f - 0.35f * wet) * weakness;
+		const float t = CLAMP((risk - 1.0f) / 3.0f, 0.0f, 1.0f);
+		target = t * t * (3.0f - 2.0f * t);
+	}
+	if (target > a) {
+		// Down within a couple of minutes of strong gusts, along the wind turned by the patch's swirl.
+		const float k = MIN(1.0f, p_dt / 90.0f);
+		const float swirl = (_lodge_noise(p_pos.x / 23.0f, p_pos.z / 23.0f, 0x5717u) - 0.5f) * 1.4f;
+		const Vector2 to = (u / speed).rotated(swirl);
+		lodge_dir[p_i] = a < 0.02f ? to : lodge_dir[p_i].lerp(to, k * (target - a) / MAX(target, 1e-3f)).normalized();
+		a += (target - a) * k;
+	} else if (a > 0.0f) {
+		// Stems lift again at the nodes (gravitropism) over days as they dry; ripe cereals hardly do.
+		const float tau = (p_crop ? 40.0f : 2.5f) * 86400.0f * (1.0f + 2.0f * wet);
+		a *= Math::exp(-p_dt / tau);
+		if (a < 0.03f) { // Under one blade in twenty leaning: standing.
+			a = 0.0f;
+		}
+	}
+	if (a > 0.0f) {
+		lodge_counting++;
+	}
+}
+
+void GrassField3D::_lodge_rows(int p_rows, const Vector3 &p_center) {
+	const WorldWeather *wm = WorldContracts::weather();
+	const float h = _lodge_height();
+	const float ucrit = 10.0f * Math::sqrt(0.6f / MAX(h, 0.15f));
+	const bool crop_field = crop != CROP_NONE;
+	for (int r = 0; r < p_rows; r++) {
+		const int row = lodge_row;
+		const float dt = float(lodge_clock - lodge_row_time[row]);
+		lodge_row_time[row] = lodge_clock;
+		if (row == 0) {
+			// Nothing lodged and the wind far from lodging (or the sward too short): skip the sweep.
+			const Vector3 w = wm->wind_at(p_center, 2.0f);
+			lodge_calm = lodge_any == 0 && (h < 0.15f || Vector2(w.x, w.z).length() < ucrit * 0.4f);
+			lodge_counting = 0;
+		}
+		if (!lodge_calm && dt > 0.0f) {
+			for (int x = 0; x < LODGE_N; x++) {
+				const int i = row * LODGE_N + x;
+				const float before = lodge_amt[i];
+				const Vector3 pos((lodge_origin.x + x + 0.5f) * LODGE_CELL, p_center.y, (lodge_origin.y + row + 0.5f) * LODGE_CELL);
+				_lodge_step_cell(i, pos, dt, wm, ucrit, crop_field);
+				if (lodge_amt[i] != before) {
+					lodge_dirty = true;
+				}
+			}
+		}
+		lodge_row = (row + 1) % LODGE_N;
+		if (lodge_row == 0) {
+			lodge_any = lodge_calm ? 0 : lodge_counting;
+			if (lodge_dirty) {
+				_lodge_upload();
+			}
+		}
+	}
+}
+
+void GrassField3D::_lodge_upload() {
+	lodge_dirty = false;
+	if (material.is_null()) {
+		return;
+	}
+	if (!lodging || !lodge_placed || lodge_any == 0) {
+		material->set_shader_parameter("lodge_rect", Vector4());
+		return;
+	}
+	Ref<Image> img = Image::create_empty(LODGE_N, LODGE_N, false, Image::FORMAT_RGBA8);
+	for (int y = 0; y < LODGE_N; y++) {
+		for (int x = 0; x < LODGE_N; x++) {
+			const int i = y * LODGE_N + x;
+			const Vector2 d = lodge_dir[i];
+			img->set_pixel(x, y, Color(d.x * 0.5f + 0.5f, d.y * 0.5f + 0.5f, lodge_amt[i], 1.0f));
+		}
+	}
+	if (lodge_texture.is_valid()) {
+		lodge_texture->update(img);
+	} else {
+		lodge_texture = ImageTexture::create_from_image(img);
+	}
+	material->set_shader_parameter("lodge_map", lodge_texture);
+	material->set_shader_parameter("lodge_rect", Vector4(lodge_origin.x * LODGE_CELL, lodge_origin.y * LODGE_CELL, LODGE_N * LODGE_CELL, LODGE_N * LODGE_CELL));
+}
+
+void GrassField3D::set_lodging(bool p_on) {
+	lodging = p_on;
+	if (!p_on) {
+		lodge_placed = false;
+		lodge_any = 0;
+		lodge_amt.clear();
+		lodge_dir.clear();
+	}
+	_lodge_upload();
+}
+
+Vector3 GrassField3D::get_lodging_at(const Vector3 &p_global_position) const {
+	if (!lodge_placed) {
+		return Vector3();
+	}
+	const int x = int(Math::floor(p_global_position.x / LODGE_CELL)) - lodge_origin.x;
+	const int y = int(Math::floor(p_global_position.z / LODGE_CELL)) - lodge_origin.y;
+	if (x < 0 || y < 0 || x >= LODGE_N || y >= LODGE_N) {
+		return Vector3();
+	}
+	const int i = y * LODGE_N + x;
+	return Vector3(lodge_amt[i], lodge_dir[i].x, lodge_dir[i].y);
+}
+
+void GrassField3D::advance_lodging(double p_weather_seconds) {
+	if (!lodging || p_weather_seconds <= 0.0) {
+		return;
+	}
+	Vector3 center = get_global_position();
+	if (is_inside_tree() && get_viewport() && get_viewport()->get_camera_3d()) {
+		center = get_viewport()->get_camera_3d()->get_global_position();
+	}
+	_lodge_place(center);
+	lodge_clock += p_weather_seconds;
+	// One whole sweep from row 0, each row stepped over its full time since it was last stepped.
+	const int left = (LODGE_N - lodge_row) % LODGE_N;
+	_lodge_rows(left, center);
+	_lodge_rows(LODGE_N, center);
+	_lodge_upload();
+}
+
 // The regrowth flush (shader's burn_flush_map) from the burn grid: 1 - smoothstep(0, 1.5 yr, age), 0 unburnt.
 void GrassField3D::_publish_burn_flush() {
 	if (material.is_null()) {
@@ -6224,6 +6459,14 @@ void GrassField3D::_notification(int p_what) {
 			if (trample_enabled && !trample.is_empty() && !still_frozen) {
 				_trample_step(get_process_delta_time());
 			}
+			if (lodging && cam) {
+				const WorldWeather *wm = WorldContracts::weather();
+				if (wm->has_provider()) {
+					lodge_clock += get_process_delta_time() * wm->time_scale();
+					_lodge_place(cam->get_global_position());
+					_lodge_rows(LODGE_ROWS_PER_FRAME, cam->get_global_position());
+				}
+			}
 			_season_step();
 			if (far_bake_vp) {
 				_far_bake_step();
@@ -6751,6 +6994,10 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_burn_recovery", "years"), &GrassField3D::set_burn_recovery);
 	ClassDB::bind_method(D_METHOD("set_graze_height", "height"), &GrassField3D::set_graze_height);
 	ClassDB::bind_method(D_METHOD("get_graze_height"), &GrassField3D::get_graze_height);
+	ClassDB::bind_method(D_METHOD("set_lodging", "enabled"), &GrassField3D::set_lodging);
+	ClassDB::bind_method(D_METHOD("is_lodging"), &GrassField3D::is_lodging);
+	ClassDB::bind_method(D_METHOD("get_lodging_at", "global_position"), &GrassField3D::get_lodging_at);
+	ClassDB::bind_method(D_METHOD("advance_lodging", "weather_seconds"), &GrassField3D::advance_lodging);
 	ClassDB::bind_method(D_METHOD("get_burn_recovery"), &GrassField3D::get_burn_recovery);
 	ClassDB::bind_method(D_METHOD("get_burn_cover_at", "global_position"), &GrassField3D::get_burn_cover_at);
 	ClassDB::bind_method(D_METHOD("get_shell_column_count"), &GrassField3D::get_shell_column_count);
@@ -6808,6 +7055,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_shell_range", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_far_shell_range", "get_far_shell_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burn_recovery", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:yr"), "set_burn_recovery", "get_burn_recovery");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "graze_height", PROPERTY_HINT_RANGE, "0,0.2,0.005,suffix:m"), "set_graze_height", "get_graze_height");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lodging"), "set_lodging", "is_lodging");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_GROUP("Wind", "");

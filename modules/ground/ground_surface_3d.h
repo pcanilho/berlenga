@@ -162,6 +162,10 @@ private:
 	void _trails_refresh();
 	void _on_stand_changed(const Rect2 &p_area);
 	float _trail_passes(const Vector3 &p_position) const;
+	bool trail_pugging = true; // round 21.2: hooves pock wet trails
+	uint32_t pug_ticks = 0;
+	int trail_pocks = 0;
+	void _trail_pug_update(float p_delta);
 	bool _wear_any() const { return !wear_cells.is_empty() || trails_on; }
 	// Hidden stones and roots (docs/ideas/mud.md, round 14.3): what lies in a mud layer, per 2 m cell, made on demand
 	// from the cell's hash; a stone a sphere (a == b), a root a capsule from a to b; y's are absolute.
@@ -999,6 +1003,9 @@ public:
 	void set_tracked_mud(bool p_enabled) { tracked_mud = p_enabled; }
 	void set_stream_stones(bool p_enabled) { stream_stones = p_enabled; }
 	bool is_stream_stones() const { return stream_stones; }
+	void set_trail_pugging(bool p_enabled) { trail_pugging = p_enabled; }
+	bool is_trail_pugging() const { return trail_pugging; }
+	int get_trail_pock_count() const { return trail_pocks; } // hoof prints pressed into wet trails since start
 	float get_stone_scour_volume() const { return stone_scour_m3; } // m3 dug round loose stones by currents
 	float get_stone_silt_lifted() const { return stone_plume_kg; } // kg sent into the water by stones
 	bool is_tracked_mud() const { return tracked_mud; }

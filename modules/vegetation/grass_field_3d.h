@@ -411,6 +411,31 @@ private:
 	uint64_t mounds_follow_usec = 0;
 	bool _follow_mounds();
 	void _stale_tiles_over(const PackedVector4Array &p_discs);
+	// Storm lodging (docs/ideas/vegetation.md, "Storm lodging"): where gusts on wet, tall sward pass the stems' base
+	// strength the blades go down in swirled patches along the wind and stand again over days. A grid of cells round
+	// the camera (lodge_cell m, LODGE_N cells a side) reads WorldWeather wind, rain and wetness a few rows a frame;
+	// the shader reads it as lodge_map (r, g: direction * 0.5 + 0.5, b: amount).
+	static constexpr int LODGE_N = 96;
+	static constexpr float LODGE_CELL = 4.0f;
+	static constexpr int LODGE_ROWS_PER_FRAME = 8;
+	bool lodging = true;
+	Vector2i lodge_origin; // Cell of the grid's first corner.
+	bool lodge_placed = false;
+	LocalVector<float> lodge_amt;
+	LocalVector<Vector2> lodge_dir;
+	LocalVector<double> lodge_row_time; // lodge_clock the row was last stepped at.
+	double lodge_clock = 0.0; // Weather seconds since the grid was placed.
+	int lodge_row = 0;
+	int lodge_any = 0; // Cells lodged at the last sweep.
+	int lodge_counting = 0; // Cells lodged so far in this sweep.
+	bool lodge_calm = false; // The last sweep's probe found no wind near lodging.
+	bool lodge_dirty = false;
+	Ref<ImageTexture> lodge_texture;
+	float _lodge_height() const;
+	void _lodge_place(const Vector3 &p_center);
+	void _lodge_step_cell(int p_i, const Vector3 &p_pos, float p_dt, const WorldWeather *p_weather, float p_ucrit, bool p_crop);
+	void _lodge_rows(int p_rows, const Vector3 &p_center);
+	void _lodge_upload();
 	bool graze_any = false;
 	bool graze_published = false; // The ground field handed grass_graze_map to the ground shader.
 	void _read_graze(TerrainDataMap3D *p_map);
@@ -682,6 +707,12 @@ public:
 	float get_far_shell_range() const { return far_shell_range; }
 	void set_burn_recovery(float p_years);
 	void set_graze_height(float p_m);
+	void set_lodging(bool p_on);
+	bool is_lodging() const { return lodging; }
+	// Lodged share (0..1) and the direction the blades lie, as Vector3(amount, dir.x, dir.z); zero outside the grid.
+	Vector3 get_lodging_at(const Vector3 &p_global_position) const;
+	// Steps the whole grid by this many weather seconds at once (time skips, tests), reading the weather now.
+	void advance_lodging(double p_weather_seconds);
 	float get_graze_height() const { return graze_height; }
 	float get_burn_recovery() const { return burn_recovery; }
 	float get_burn_cover_at(const Vector3 &p_global_position) const;
