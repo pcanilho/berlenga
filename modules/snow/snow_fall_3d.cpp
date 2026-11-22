@@ -645,7 +645,8 @@ void SnowFall3D::_push_haze(WeatherMap3D *p_weather) {
 	auto changed = [](float a, float b) { return Math::abs(a - b) > 0.02f * MAX(Math::abs(b), 1e-4f); };
 	if (changed(fall_sigma, pushed_fall)) {
 		if (fall_sigma > 1e-5f) {
-			p_weather->set_precipitation_extinction(this, fall_sigma, 0.0f, 0.97f);
+			// Flakes fall at about 1 m/s: softer veils, slanted further downwind (WeatherMap3D rain_curtains).
+			p_weather->set_precipitation_extinction(this, fall_sigma, 0.0f, 0.97f, Vector3(), 0.0f, 1.0f);
 		} else {
 			p_weather->clear_precipitation_extinction(this);
 		}

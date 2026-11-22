@@ -513,6 +513,7 @@ private:
 		float albedo = 0.95f;
 		Vector3 centre;
 		float radius = 0.0f; // m; <= 0: everywhere
+		float fall_speed = 0.0f; // m/s of the falling precipitation; > 0 (with no height scale): drawn in curtains
 		FogVolume *volume = nullptr;
 		Ref<FogMaterial> material;
 	};
@@ -682,6 +683,12 @@ private:
 	Ref<ImageTexture> valley_fog_texture;
 	FogVolume *valley_fog_volume = nullptr;
 	Ref<ShaderMaterial> valley_fog_material;
+	// Falling rain and snow's haze in curtains near the camera (weather_haze.cpp).
+	bool rain_curtains = true;
+	FogVolume *curtain_volume = nullptr;
+	Ref<ShaderMaterial> curtain_material;
+	Vector3 curtain_drift;
+	void _apply_curtains(float p_sigma, float p_albedo, float p_fall, float p_rain_ref, const Vector3 &p_at, float p_reach, float p_dt);
 	void _update_valley_fog(float p_dt_h);
 	void _apply_valley_fog(bool p_active);
 	float _cold_pool_at(const Vector3 &p_position) const;
@@ -1067,7 +1074,9 @@ public:
 	// Sources add up. With drive_environment_fog, the uniform part goes into the environment's
 	// exponential fog, lit by the sky (aerial perspective), and each layer into a lit FogVolume over
 	// the ground; the path tracer reads both.
-	void set_precipitation_extinction(Object *p_source, float p_sigma, float p_height_scale, float p_albedo = 0.95f, Vector3 p_centre = Vector3(), float p_radius = 0.0f);
+	void set_precipitation_extinction(Object *p_source, float p_sigma, float p_height_scale, float p_albedo = 0.95f, Vector3 p_centre = Vector3(), float p_radius = 0.0f, float p_fall_speed = 0.0f);
+	void set_rain_curtains(bool p_enabled);
+	bool is_rain_curtains() const { return rain_curtains; }
 	void clear_precipitation_extinction(Object *p_source);
 	float get_precipitation_extinction_at(Vector3 p_position) const;
 	void set_drive_environment_fog(bool p_enabled);

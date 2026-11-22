@@ -1106,9 +1106,10 @@
 			<param index="3" name="albedo" type="float" default="0.95" />
 			<param index="4" name="centre" type="Vector3" default="Vector3(0, 0, 0)" />
 			<param index="5" name="radius" type="float" default="0.0" />
+			<param index="6" name="fall_speed" type="float" default="0.0" />
 			<description>
 				Haze from falling or blowing precipitation, pushed by [param source] (a snowfall or rain node). Calling it again for the same source replaces that source's haze. [param sigma] is the extinction in 1/m; the visibility is about 3.912 / sigma. With [param height_scale] above 0, it is a layer over the ground whose density falls as exp(-(y - ground) / height_scale), as blowing snow does; otherwise it is the same at every height. [param albedo] is the share of light scattered rather than absorbed. With [param radius] above 0, it covers a circle around [param centre], and a layer's ground is [param centre]'s height (pass the ground under the camera so the layer follows the terrain); otherwise it covers the whole map over [member ground_height]. Layers turn on the environment's volumetric fog with [member Environment.volumetric_fog_ambient_inject] at 1 (sky-lit snow reads white) unless the project set its own. Sources add up.
-				With [member drive_environment_fog], the uniform part goes into the environment's exponential fog, coloured by the sky, and each layer into a lit [FogVolume] that the volumetric fog draws within 300 m of the camera. The path tracer reads both. See [code]docs/ideas/weather.md[/code], "Precipitation haze".
+				With [member drive_environment_fog], the uniform part goes into the environment's exponential fog, coloured by the sky, and each layer into a lit [FogVolume] that the volumetric fog draws within 300 m of the camera. The path tracer reads both. With [param fall_speed] above 0 (the precipitation's fall speed, m/s), no height scale and no radius, the haze falls in curtains near the camera while [member rain_curtains] is on. See [code]docs/ideas/weather.md[/code], "Precipitation haze".
 			</description>
 		</method>
 		<method name="set_surface_water_source">
@@ -1230,6 +1231,9 @@
 		</member>
 		<member name="orographic_rain" type="bool" setter="set_orographic_rain" getter="is_orographic_rain_enabled" default="true">
 			Rain follows the terrain climate ([method WorldContracts.climate_precipitation_factor_at]): more on windward slopes, less in the lee. Rain or snow is decided by the air at each cell's own ground height, so the snow line follows the terrain.
+		</member>
+		<member name="rain_curtains" type="bool" setter="set_rain_curtains" getter="is_rain_curtains" default="true">
+			Falling rain and snow's haze near the camera falls in curtains: sheets of heavier rain some metres across, carried along by the wind, slanted downwind as the drops fall, and following the weather's storm cells, with gaps of clearer air between (rain intensity is lognormal over space; Kedem and Chiu 1987). A [FogVolume] in the volumetric fog carries three fifths of the haze in curtains with the same mean, and the exponential fog keeps the rest. The path tracer draws the same on its camera rays. Off, the haze is even.
 		</member>
 		<member name="rime" type="bool" setter="set_rime" getter="is_rime_enabled" default="true">
 			Where the ground stands in supercooled cloud (fog water below 0 C) rime grows on twigs and edges into the wind; it sheds in a thaw, in sun and in rain. Kept per cell as mm along the way into the wind; the frost map's blue and alpha carry it to plants, rocks and steep terrain ([code]weather_rime_apply[/code]).
