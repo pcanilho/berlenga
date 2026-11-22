@@ -886,6 +886,20 @@ about -1 to -2 °C (WeatherMap3D / WorldWeather temperature with the lapse rate)
 3 to 10° stripes, soil moisture high. Seasons: active-layer thaw shows the fresh sort in summer; snow hides it in
 winter (snow cover already reads WeatherMap3D).
 
+Outcome (22 Nov, Paulo picked "Both, frost first"): built as `RockField3D.frost_sorting` (on). The pattern is a
+Cahn-Hilliard phase separation, the continuum form of Kessler-Werner's sorting (stones move toward stone-rich
+ground, fines toward fines), run once on a 64 x 64 periodic grid of 0.2 m cells (kappa 1.27, 4000 steps, built
+at the first use): one map at a stone share of 0.25 (isolated fine domains in a stony net: circles) and one at 0.5 with mobility cut along one axis (stripes). Circles are domain
+warped per position; stripes turn to each 48 m block's fall line and blend across block edges, so neither
+repeats. The gate reads the WorldWeather climate of the active WeatherMap3D: mean annual air (lapse with height)
+fades in from 1 to -2 C, precipitation from 250 to 500 mm, slope (normal over 4 m) under 10 to 15 degrees, soil
+depth 0.1 to 0.4 m, rock exposure under 0.4 to 0.7; never in water, sand, talus, or within 2.5 m of the sea.
+Circles below 2 degrees, blending into stripes by 5. On sorting ground the shore and scree draw thin out in the fine
+centres and a frost family is added on the borders (coarse end of the class, 40% on edge 55 to 85 degrees and
+sunk a third, the rest lying, cover 0.6/0.3/0.1 by class); tiles are skipped there. `get_frost_at(position)`
+returns (gate, stone share) for other systems (terrain and vegetation could shade the fine centres). Bench:
+`--world --uplift=0.3 --frost --frost-spot[=stripes] --top=9`; raster and PT match.
+
 **C. Feet and tyres crush the new detail.** The trail armour and the rooting clods do not react to prints yet. The
 reacting-stones path (ground detail "Stones that react") already presses grains into a print and spills them at
 its rim; extend it to the rooting clods (GroundClods3D's crushed test on the print field, as its own clods) and

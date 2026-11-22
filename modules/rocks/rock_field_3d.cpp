@@ -347,6 +347,104 @@ static thread_local TerrainGenerator3D *rf_job_generator = nullptr;
 // The coarse cell a worker is placing: shape libraries are looked up under library_lock, missing ones noted.
 static thread_local void *rf_coarse_job = nullptr;
 static thread_local const void *rf_job_wear = nullptr; // the detail job's StandWear while _place runs for it
+static thread_local const void *rf_job_frost = nullptr; // and its FrostClimate
+
+// Frost-sorted patterned ground (docs/ideas/ground-detail.md, "Frost-sorted patterned ground"). Freeze-thaw sorting
+// is a self-organising phase separation of stones from fines (Kessler and Werner 2003: stones move toward stone-rich
+// ground, stone domains are squeezed along their length); a Cahn-Hilliard field shows the same selection: a stone
+// share near 0.6 gives fine-centred circles in a stone net, a mobility that is larger across the slope than along it
+// gives stripes down it. Two periodic maps, computed once (64 x 64 cells of 0.2 m, a 2 m wavelength): 0 circles,
+// 1 stripes along z. Values about -1 (fines) to 1 (stones).
+static const int RF_FROST_N = 64;
+static constexpr float RF_FROST_CELL = 0.2f;
+static LocalVector<float> rf_frost_map[2];
+static BinaryMutex rf_frost_mutex;
+static bool rf_frost_ready = false;
+
+static void rf_frost_build() {
+	MutexLock lock(rf_frost_mutex);
+	if (rf_frost_ready) {
+		return;
+	}
+	const int N = RF_FROST_N;
+	// The fastest-growing wavelength is 2 pi sqrt(2 kappa) cells: 10 cells (2 m) at kappa 1.27.
+	const float kappa = 1.27f, dt = 0.01f;
+	for (int m = 0; m < 2; m++) {
+		const float c0 = m == 0 ? 0.25f : 0.0f; // circles: stones a little over half; stripes: even
+		const float mx = 1.0f, mz = m == 0 ? 1.0f : 0.2f;
+		LocalVector<float> c, mu;
+		c.resize(N * N);
+		mu.resize(N * N);
+		RandomPCG r(0x5f3a91u + m);
+		for (float &v : c) {
+			v = c0 + r.random(-0.05f, 0.05f);
+		}
+		auto at = [&](const LocalVector<float> &f, int x, int z) { return f[((z + N) % N) * N + (x + N) % N]; };
+		for (int step = 0; step < 4000; step++) {
+			for (int z = 0; z < N; z++) {
+				for (int x = 0; x < N; x++) {
+					const float v = c[z * N + x];
+					const float lap = at(c, x + 1, z) + at(c, x - 1, z) + at(c, x, z + 1) + at(c, x, z - 1) - 4.0f * v;
+					mu[z * N + x] = v * v * v - v - kappa * lap;
+				}
+			}
+			for (int z = 0; z < N; z++) {
+				for (int x = 0; x < N; x++) {
+					const float u = mu[z * N + x];
+					const float lx = at(mu, x + 1, z) + at(mu, x - 1, z) - 2.0f * u;
+					const float lz = at(mu, x, z + 1) + at(mu, x, z - 1) - 2.0f * u;
+					c[z * N + x] += dt * (mx * lx + mz * lz);
+				}
+			}
+		}
+		rf_frost_map[m] = c;
+	}
+	rf_frost_ready = true;
+}
+
+// The map's value at a point of its plane (m), bilinear and periodic.
+static float rf_frost_sample(int p_map, float p_u, float p_v) {
+	const int N = RF_FROST_N;
+	const float fu = p_u / RF_FROST_CELL, fv = p_v / RF_FROST_CELL;
+	const int x = int(Math::floor(fu)), z = int(Math::floor(fv));
+	const float tu = fu - x, tv = fv - z;
+	auto at = [&](int a, int b) { return rf_frost_map[p_map][((b % N + N) % N) * N + (a % N + N) % N]; };
+	return Math::lerp(Math::lerp(at(x, z), at(x + 1, z), tu), Math::lerp(at(x, z + 1), at(x + 1, z + 1), tu), tv);
+}
+
+// The stone share (0 fines .. 1 stones) of the sorted ground at a point: circles on the flat, stripes down the fall
+// line from about 3 degrees. Circles: the map in world axes with a slow warp (its 12.8 m period does not line up);
+// stripes: each 48 m block's map turned to the block's fall line, blended with the next block's only near their edge.
+static float rf_frost_share(const TerrainGenerator3D *p_gen, float p_x, float p_z, float p_slope_deg) {
+	const float wx = 0.7f * Math::sin(p_x * 0.21f + 1.3f * Math::sin(p_z * 0.17f)), wz = 0.7f * Math::cos(p_z * 0.19f + 1.1f * Math::sin(p_x * 0.13f));
+	const float circ = rf_frost_sample(0, p_x + wx, p_z + wz);
+	const float t = Math::smoothstep(2.0f, 5.0f, p_slope_deg);
+	float c = circ;
+	if (t > 0.0f) {
+		const float B = 48.0f;
+		const float bx = p_x / B - 0.5f, bz = p_z / B - 0.5f;
+		const int i0 = int(Math::floor(bx)), j0 = int(Math::floor(bz));
+		const float sx = Math::smoothstep(0.4f, 0.6f, bx - i0), sz = Math::smoothstep(0.4f, 0.6f, bz - j0);
+		float stripe = 0.0f;
+		for (int q = 0; q < 4; q++) {
+			const int bi = i0 + (q & 1), bj = j0 + (q >> 1);
+			const float w = ((q & 1) ? sx : 1.0f - sx) * ((q >> 1) ? sz : 1.0f - sz);
+			if (w <= 0.0f) {
+				continue;
+			}
+			const float cx = (bi + 0.5f) * B, cz = (bj + 0.5f) * B;
+			const Vector3 n = ground_normal(p_gen, cx, cz, 12.0);
+			Vector2 fall(n.x, n.z);
+			fall = fall.length() > 1e-4f ? fall.normalized() : Vector2(0, 1);
+			// Map z along the fall line, x across it (the stripes run along map z).
+			const Vector2 d(p_x - cx, p_z - cz);
+			const float u = d.x * fall.y - d.y * fall.x, v = d.dot(fall);
+			stripe += w * rf_frost_sample(1, u + 0.3f * wx, v);
+		}
+		c = Math::lerp(circ, stripe, t);
+	}
+	return Math::smoothstep(-0.25f, 0.35f, c);
+}
 static thread_local bool rf_far = false; // _far_place: only the stones the far tier keeps need placing
 
 TerrainGenerator3D *RockField3D::_get_generator() const {
@@ -2171,7 +2269,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			static const float kick_cover[3] = { 0.01f, 0.08f, 0.12f };
 			static const float root_cover[3] = { 0.06f, 0.05f, 0.06f };
 			const float per_cover = 1.0f / (0.785f * sd1 * sd2);
-			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on) {
+			// Frost-sorted ground: stones gathered into the borders of circles and stripes on cold, wet, gentle soil.
+			const FrostClimate *frost = static_cast<const FrostClimate *>(rf_job_frost);
+			const bool frost_on = frost && frost->any && sd2 > sd1 * 1.01f;
+			// The share of the ground each class covers in the stone domains (the borders are clast-supported: Washburn
+			// 1956; Hallet 2013); stones of the coarse end, frost-heaved.
+			static const float frost_cover[3] = { 0.6f, 0.3f, 0.1f };
+			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on && !frost_on) {
 				break;
 			}
 			// Each class's cover (count x mean footprint) is held under about half the ground: past that the
@@ -2270,6 +2374,15 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					// The worn ground's own stones per m2 at its most over the sub-cell (it is sampled finer than the
 					// corners: a trail's tread is narrower than a sub-cell), times the soil's stoniness (more where the
 					// bedrock is near). Each stone reads it where it falls.
+					// The frost gate over the sub-cell (climate, slope, soil), at its middle.
+					float fgate = 0.0f, fslope = 0.0f;
+					if (frost_on) {
+						Vector3 fn;
+						fgate = _frost_gate(gen, *frost, Vector3(p_rect.position.x + (i + 0.5f) * sub, 0, p_rect.position.y + (j + 0.5f) * sub), fn);
+						// Circles or stripes by the hillside's slope over a few metres (hummocks do not turn circles into stripes).
+						fslope = Math::rad_to_deg(Math::acos(CLAMP(float(fn.y), -1.0f, 1.0f)));
+						rate_max += MIN(frost_cover[cls] * per_cover * fgate, cap_shore);
+					}
 					Vector3 wmax;
 					float stony = 0.0f;
 					if (wear_on) {
@@ -2322,8 +2435,17 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							kick = MIN(kick_cover[cls] * stony * float(wv.y), cap_shore);
 							root = MIN(root_cover[cls] * stony * float(wv.z), cap_shore);
 						}
+						float sorted = 0.0f;
+						if (fgate > 0.0f) {
+							// The fines' centres hold none of the other sources' stones either.
+							const float share = rf_frost_share(gen, float(x + fx * sub), float(z + fz * sub), fslope);
+							sorted = MIN(frost_cover[cls] * per_cover * fgate, cap_shore) * share;
+							const float keep = 1.0f - fgate * (1.0f - share);
+							shore *= keep;
+							scree *= keep;
+						}
 						const float base = shore + scree + river;
-						const float total = base + worn + kick + root;
+						const float total = base + worn + kick + root + sorted;
 						if (total <= 0.0f || rng.randf() * rate_max > total) {
 							continue;
 						}
@@ -2332,7 +2454,23 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						pd.xz = Vector3(x + fx * sub, 0, z + fz * sub);
 						pd.yaw = rng.randf() * Math::TAU;
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
-						if (pick >= base) {
+						if (pick >= base + worn + kick + root) {
+							// Frost-sorted: angular frost-shattered stones, many heaved on edge with the long axis up (Washburn
+							// 1956; Hallet 2013), set into the border.
+							pd.key = _library_key(type, RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
+							pd.film = 0.0f;
+							pd.size = sd1 * Math::pow(sd2 / sd1, Math::sqrt(rng.randf()));
+							frost_stones.increment();
+							if (rng.randf() < 0.4f) {
+								pd.tilt = Math::deg_to_rad(55.0f + 30.0f * rng.randf());
+								pd.sink = 0.3f + 0.1f * rng.randf();
+								pd.follow = 0.5f;
+							} else {
+								pd.tilt = Math::deg_to_rad(25.0f) * rng.randf();
+								pd.sink = 0.15f + 0.1f * rng.randf();
+								pd.follow = 0.8f;
+							}
+						} else if (pick >= base) {
 							const float q = pick - base;
 							pd.key = _library_key(type, RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
 							pd.film = 0.0f;
@@ -2747,6 +2885,96 @@ void RockField3D::_sample_wear(const Rect2 &p_rect, StandWear &r_wear) const {
 	}
 }
 
+// Main thread: the climate for the detail job (WorldWeather's season climate), and whether its cell can sort at all.
+void RockField3D::_frost_climate(const Rect2 &p_rect, FrostClimate &r_frost) const {
+	r_frost = FrostClimate();
+	const TerrainGenerator3D *gen = _get_generator();
+	WeatherSeason::Climate cl;
+	if (!frost_sorting || !gen || !WorldContracts::weather()->season_climate(cl)) {
+		return;
+	}
+	r_frost.on = true;
+	r_frost.maat = 0.5f * (cl.temperature_january + cl.temperature_july);
+	r_frost.lapse = 0.5f * (cl.lapse_rate_january + cl.lapse_rate_july);
+	r_frost.reference = cl.reference_height;
+	// Sorting needs water in the active layer: wet, poorly drained ground (300 mm a year and up).
+	r_frost.wet = Math::smoothstep(250.0f, 500.0f, cl.precipitation);
+	if (r_frost.wet <= 0.0f) {
+		return;
+	}
+	rf_frost_build();
+	for (int k = 0; k < 9 && !r_frost.any; k++) {
+		const Vector3 p(p_rect.position.x + (k % 3) * 0.5f * p_rect.size.x, 0, p_rect.position.y + (k / 3) * 0.5f * p_rect.size.y);
+		Vector3 n;
+		r_frost.any = _frost_gate(gen, r_frost, p, n) > 0.0f;
+	}
+}
+
+// Any thread: how strongly the ground sorts at a point, 0..1. Active sorting where the mean annual air is below
+// about -1 C (permafrost or deep seasonal frost; Washburn 1979, Ballantyne 2018), on soil (not bare rock, talus,
+// water or the beach), flat to about 10 degrees (stripes on 3 to 10, none past 15).
+float RockField3D::_frost_gate(const TerrainGenerator3D *p_gen, const FrostClimate &p_frost, const Vector3 &p_at, Vector3 &r_normal) const {
+	r_normal = Vector3(0, 1, 0);
+	if (!p_frost.on || p_frost.wet <= 0.0f) {
+		return 0.0f;
+	}
+	const float h = float(p_gen->get_height(p_at));
+	const float maat = p_frost.maat - p_frost.lapse * (h - p_frost.reference) / 1000.0f;
+	const float cold = Math::smoothstep(1.0f, -2.0f, maat);
+	if (cold <= 0.0f) {
+		return 0.0f;
+	}
+	const Vector3 at(p_at.x, h, p_at.z);
+	// Frost-susceptible soil only: no water, talus, dune or beach sand (sand drains and does not heave), and a
+	// soil cover deep enough to sort (an active layer of some tens of centimetres).
+	if (p_gen->get_water_depth(at) > 0.03 || p_gen->get_talus(at) > 0.25 || p_gen->get_sand_depth_at(at) > 0.05) {
+		return 0.0f;
+	}
+	if (p_gen->has_sea_result() && h < float(p_gen->get_sea_level()) + 2.5f) {
+		return 0.0f;
+	}
+	const float deep = Math::smoothstep(0.1f, 0.4f, float(p_gen->get_soil_depth(at)));
+	if (deep <= 0.0f) {
+		return 0.0f;
+	}
+	r_normal = ground_normal(p_gen, p_at.x, p_at.z, 4.0); // the hillside's slope, not the hummocks'
+	const float slope = Math::rad_to_deg(Math::acos(CLAMP(float(r_normal.y), -1.0f, 1.0f)));
+	const float flat = 1.0f - Math::smoothstep(10.0f, 15.0f, slope);
+	const float soil = 1.0f - Math::smoothstep(0.4f, 0.7f, float(p_gen->get_rock_exposure(at)));
+	return cold * p_frost.wet * flat * soil * deep;
+}
+
+Vector2 RockField3D::get_frost_at(const Vector3 &p_position) const {
+	const TerrainGenerator3D *gen = _get_generator();
+	FrostClimate fc;
+	_frost_climate(Rect2(p_position.x, p_position.z, 0, 0), fc);
+	if (!gen || !fc.on) {
+		return Vector2();
+	}
+	Vector3 n;
+	const float g = _frost_gate(gen, fc, p_position, n);
+	const float slope = Math::rad_to_deg(Math::acos(CLAMP(float(n.y), -1.0f, 1.0f)));
+	return Vector2(g, g > 0.0f ? rf_frost_share(gen, float(p_position.x), float(p_position.z), slope) : 0.0f);
+}
+
+void RockField3D::set_frost_sorting(bool p_enabled) {
+	if (frost_sorting == p_enabled) {
+		return;
+	}
+	frost_sorting = p_enabled;
+	_detail_cancel();
+	LocalVector<Vector3i> drop;
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		if (_is_detail(kv.key.x)) {
+			_free_cell(kv.value);
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		cells.erase(k);
+	}
+}
+
 void RockField3D::_watch_stand() {
 	WorldStand *st = WorldContracts::stand();
 	if (!st || st->get_instance_id() == stand_watched) {
@@ -2872,6 +3100,7 @@ void RockField3D::_detail_prepare(DetailJob &r_job) {
 	}
 	_detail_seeds(layer, rect.grow(0.5), r_job.seeds);
 	_sample_wear(rect.grow(1.0), r_job.wear);
+	_frost_climate(rect, r_job.frost);
 	// The block's shared tiles: held while the job reads them, or cut by it (_detail_compute) when there are none yet.
 	r_job.block = _tile_block(r_job.key);
 	if (ground_detail_tiles) {
@@ -2951,8 +3180,10 @@ void RockField3D::_detail_compute(DetailJob &r_job) {
 	LocalVector<Stone> stones;
 	rf_job_generator = r_job.gen;
 	rf_job_wear = &r_job.wear;
+	rf_job_frost = &r_job.frost;
 	_place(layer, rect, rf_hash3(key.x, key.y, key.z, uint32_t(seed) * 2654435761u), stones, &r_job.libs, &r_job.seeds);
 	rf_job_wear = nullptr; // (the shared tiles below are cut from unworn ground: they stand for the block's ground)
+	rf_job_frost = nullptr;
 	rf_job_generator = nullptr;
 	if (gen->has_holes_in(rect.grow(8.0))) {
 		for (int i = int(stones.size()) - 1; i >= 0; i--) {
@@ -3291,7 +3522,7 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 		_tile_squares(gen, key.x, rect, N, r_stones, r_job.seeds, top);
 		for (int q = 0; q < N * N; q++) {
 			const Vector3 worn = r_job.wear.max_in(top[q].rect);
-			if (top[q].ok && MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f) {
+			if (top[q].ok && (MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any)) {
 				top[q].ok = false; // worn ground (a trail, a rooting) keeps its own grains: no tile is cut from it
 				top[q].fail = 4;
 			}
@@ -7543,6 +7774,7 @@ Dictionary RockField3D::get_ground_detail_tile_stats() const {
 	d["skip_coarse"] = int64_t(tile_skips[1].get());
 	d["skip_bent"] = int64_t(tile_skips[2].get());
 	d["skip_unmatched"] = int64_t(tile_skips[3].get());
+	d["frost_sorted"] = int64_t(frost_stones.get());
 	d["wear_armour"] = int64_t(wear_stones[0].get());
 	d["wear_shoulder"] = int64_t(wear_stones[1].get());
 	d["wear_rooting"] = int64_t(wear_stones[2].get());
@@ -7859,6 +8091,9 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_react_stats"), &RockField3D::get_react_stats);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_rivers"), &RockField3D::is_ground_detail_rivers);
 	ClassDB::bind_method(D_METHOD("set_ground_wear", "enabled"), &RockField3D::set_ground_wear);
+	ClassDB::bind_method(D_METHOD("set_frost_sorting", "enabled"), &RockField3D::set_frost_sorting);
+	ClassDB::bind_method(D_METHOD("is_frost_sorting"), &RockField3D::is_frost_sorting);
+	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &RockField3D::get_frost_at);
 	ClassDB::bind_method(D_METHOD("is_ground_wear"), &RockField3D::is_ground_wear);
 	ClassDB::bind_method(D_METHOD("set_ground_detail_tiles", "enabled"), &RockField3D::set_ground_detail_tiles);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_tiles"), &RockField3D::is_ground_detail_tiles);
@@ -7935,6 +8170,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_cover"), "set_ground_detail_cover", "is_ground_detail_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_rivers"), "set_ground_detail_rivers", "is_ground_detail_rivers");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_wear"), "set_ground_wear", "is_ground_wear");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "frost_sorting"), "set_frost_sorting", "is_frost_sorting");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_tiles"), "set_ground_detail_tiles", "is_ground_detail_tiles");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stones_react"), "set_stones_react", "is_stones_react");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "react_max_bodies", PROPERTY_HINT_RANGE, "0,256,1"), "set_react_max_bodies", "get_react_max_bodies");

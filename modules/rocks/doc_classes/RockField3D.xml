@@ -69,6 +69,13 @@
 				The far cover map the terrain reads as [code]rock_far_cover_map[/code]: 256 x 256 texels of 32 m centred on the target, rgb the stones' weathered colour, alpha their plan cover (rockfall blocks, glacial boulders on till and coarse river beds). Null while [member far_radius] is 0.
 			</description>
 		</method>
+		<method name="get_frost_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The frost sorting at a world position: x is how strongly the ground there sorts (0 to 1, from the climate, wetness, slope, soil and water gates of [member frost_sorting]), y the stone share of the pattern there (1 on a stony border or stripe, 0 in a fine centre). (0, 0) with [member frost_sorting] off or no [WeatherMap3D].
+			</description>
+		</method>
 		<method name="get_ground_detail_count" qualifiers="const">
 			<return type="int" />
 			<param index="0" name="layer" type="int" default="-1" />
@@ -446,6 +453,9 @@
 		</member>
 		<member name="ground_wear" type="bool" setter="set_ground_wear" getter="is_ground_wear" default="true">
 			The ground detail follows the game trails and the boar rooting [WorldStand] publishes: a trail's tread keeps an armour of angular stones standing proud while its gravel and fines thin out and gather on its shoulders, and a fresh rooting leaves stones turned up loose on the soil, settling over two years. [signal WorldStand.stand_changed] builds the detail cells over the change again.
+		</member>
+		<member name="frost_sorting" type="bool" setter="set_frost_sorting" getter="is_frost_sorting" default="true">
+			Frost-sorted patterned ground in the ground detail: where the mean annual air from the active [WeatherMap3D] climate (cooled by its lapse rate with height) is below about -1 C, the year's precipitation is over about 300 mm, the ground slopes under 10 degrees and has soil over bare rock, away from water, sand and talus, freeze and thaw sort the stones from the fines. Flat ground shows circles 1 to 3 m across, stony borders round bare fine centres; from 2 to 5 degrees the borders draw out into stripes down the fall line. The pattern comes from a phase separation run once per kind (Cahn-Hilliard, after Kessler and Werner 2003), tiled with warp and rotation per block so it does not repeat. The border stones are coarse, many stand on edge. Tiles of piles are not used where the pattern is. See [method get_frost_at].
 		</member>
 		<member name="ground_detail_tiles" type="bool" setter="set_ground_detail_tiles" getter="is_ground_detail_tiles" default="true">
 			Tiles of piles: each ground detail cell is cut into 4 x 4 squares, and squares on near-flat ground, clear of coarse stones, are drawn as placements of tiles. The tiles are shared by every cell of a block of 16 x 16 cells: sampled squares spread over the block, placed on their own, so a block's tiles are the same whatever order its cells stream in. A square takes a tile only where it matches its grain count, size, rock shares and wetness within what a square varies by chance, chosen by its hash from its first two matches, never a neighbour's, turned a random quarter turn. A square with no shared match takes one of up to four tiles cut from its own cell's grains. A shared tile is built from its third placement on: the first two draw as their single grains, since a tile used once or twice costs more ray tracing memory than the grains it replaces. Each shape of a tile is one [MultiMesh] whose merged ray tracing BLAS every placement shares, so one placement costs a few ray tracing instances instead of one per grain. Grains resting on coarser grains stay single. A contact splits the placement under it back into single grains so they react. The ground blend of a tile's grains uses the placement's plane (the rock shader's [code]rock_tile_plane[/code]).
