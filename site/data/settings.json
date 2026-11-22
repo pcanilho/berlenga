@@ -1471,6 +1471,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Rain pits",
+   "settings": [
+    "GroundSurface3D.rain_pits"
+   ],
+   "note": "",
+   "what": "raindrops pit dry sand with small rimmed craters, a new pattern each shower, and the wetted skin dries into a crust that holds off the wind.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Wet sand",
    "settings": [
     "GroundSurface3D.water_coupling",
