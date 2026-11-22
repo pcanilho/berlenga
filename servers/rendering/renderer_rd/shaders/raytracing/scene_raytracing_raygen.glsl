@@ -3821,6 +3821,63 @@ void main() {
 				m.albedo *= 1.0 - 0.5 * bead.w;
 			}
 		}
+		vec2 sw_on = rt_material_standing_water(mat);
+		if (wetness.w > 0.5 && sw_on.x > 0.5 && m.transmission <= 0.0 && m.alpha >= 1.0 && get_rt_param(RT_PARAM_WETNESS_RECT_W) > 0.0) {
+			// Standing water in the relief, at full detail (material.cpp: rain_standing_cover()).
+			vec3 sw_wp = h.hit_pos + rt_origin.xyz;
+			float sw_mm = pt_weather_surface_puddle(sw_wp, h.geometry_normal) * wetness.y;
+			if (sw_mm > 0.0) {
+				float sw_c = rain_standing_cover(sw_mm, rain_standing_relief(sw_wp.xz), sw_on.y, 0.0);
+				if (sw_c > 0.0) {
+					m.roughness = mix(m.roughness, 0.02, sw_c);
+					m.specular = mix(m.specular, 0.25, sw_c);
+					m.albedo *= mix(1.0, 0.85, sw_c);
+					m.normal = normalize(mix(m.normal, h.geometry_normal, sw_c));
+					float sw_air = get_rt_param(RT_PARAM_PRECIP_TEMPERATURE) - get_rt_param(RT_PARAM_PRECIP_LAPSE) * (sw_wp.y - get_rt_param(RT_PARAM_PRECIP_GROUND));
+					uint sw_map = uint(get_rt_param(RT_PARAM_WETNESS_MAP));
+					vec2 sw_ws = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(sw_map)], SAMPLER_LINEAR_CLAMP), 0));
+					vec4 sw_rect = vec4(get_rt_param(RT_PARAM_WETNESS_RECT_X), get_rt_param(RT_PARAM_WETNESS_RECT_Y), get_rt_param(RT_PARAM_WETNESS_RECT_W), get_rt_param(RT_PARAM_WETNESS_RECT_H));
+					vec2 sw_uv = clamp((sw_wp.xz - sw_rect.xy) / sw_rect.zw, 0.5 / max(sw_ws, vec2(1.0)), 1.0 - 0.5 / max(sw_ws, vec2(1.0)));
+					float sw_rate = max(textureLod(sampler2D(bindless_textures[nonuniformEXT(sw_map)], SAMPLER_LINEAR_CLAMP), sw_uv, 0.0).r, 0.0) *
+							rain_liquid_share_nose(sw_air, get_rt_param(RT_PARAM_PRECIP_HUMIDITY), sw_wp.y - get_rt_param(RT_PARAM_PRECIP_GROUND), get_rt_param(RT_PARAM_PRECIP_NOSE), get_rt_param(RT_PARAM_PRECIP_NOSE_BASE));
+					vec3 sw_rr = rain_ripples(sw_wp.xz, scene_data_block.data.time, sw_rate, 0.0);
+					m.normal = normalize(m.normal - vec3(sw_rr.x, 0.0, sw_rr.y) * sw_c);
+					m.roughness = mix(m.roughness, rain_ripple_roughness(m.roughness, sw_rr.z), sw_c);
+				}
+			}
+		}
+		if (wetness.w > 0.5 && !rt_material_wetness_canopy(mat) && (m.transmission > 0.0 || m.alpha < 1.0)) {
+			// Rain on glass, at full detail (material.cpp: rain_glass()). Each drop is a water coat with its own
+			// surface: it reflects through the coat lobe and the thin transmission lobe refracts through it
+			// (rain_drop_refract(), raytracing_closest_hit_common_inc.glsl).
+			vec3 rg_wp = h.hit_pos + rt_origin.xyz;
+			vec3 rg_n = h.geometry_normal;
+			vec3 rg_air = vec3(0.0);
+			float rg_wipe = 0.0;
+			uint rg_iuo = geometries[h.geometry_idx].instance_uniforms_ofs;
+			if (rt_material_wetness_moving(mat) && rg_iuo != 0xFFFFFFFFu) {
+				rg_air = -global_shader_uniforms.data[rg_iuo + 13u].xyz;
+				rg_wipe = clamp(global_shader_uniforms.data[rg_iuo + 14u].x, 0.0, 1.0);
+			}
+			bool rg_map = get_rt_param(RT_PARAM_WETNESS_RECT_W) > 0.0;
+			vec4 rg_rain = rg_map ? pt_weather_surface_rain(rg_wp, rg_n, rg_air) : rain_surface_catch(rg_n, get_rt_param(RT_PARAM_RAIN_FALLBACK), 0.0, -rg_air.xz, 0.0);
+			vec4 rg_back = rg_map ? pt_weather_surface_rain(rg_wp, -rg_n, rg_air) : rain_surface_catch(-rg_n, get_rt_param(RT_PARAM_RAIN_FALLBACK), 0.0, -rg_air.xz, 0.0);
+			vec3 rg_face = rg_n;
+			if (rg_back.x > rg_rain.x) {
+				rg_rain = rg_back;
+				rg_face = -rg_n;
+			}
+			rg_rain.x *= wetness.y;
+			float rg_mist;
+			vec4 rg = rain_glass(rg_wp, rg_face, rg_rain, scene_data_block.data.time, rg_wipe, 0.0, rg_mist);
+			m.roughness = mix(m.roughness, max(m.roughness, 0.35), rg_mist * (1.0 - rg.w));
+			if (rg.w > 0.0 && rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT)) {
+				// Water's F0 (0.02) is half the coat's (0.04).
+				m.clearcoat = max(m.clearcoat, 0.5 * rg.w);
+				m.clearcoat_roughness = 0.0;
+				m.coat_normal = normalize(m.normal - rg.xyz * sign(dot(rg_face, m.normal)));
+			}
+		}
 	} else if (g_wet > 0.0) {
 		// A ground material without wetness: sand's porosity (0.6).
 		float wet_factor = mix(1.0, 0.2, (1.0 - m.metalness) * 0.6);

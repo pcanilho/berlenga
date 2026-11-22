@@ -3936,12 +3936,14 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.wetness_amount = rt_unorm8(get_float("wetness_amount", 1.0f));
 		mat.subsurface.wetness_from_weather = rt_state.wetness_from_weather;
 		mat.subsurface_texture.wetness_canopy = rt_state.wetness_canopy;
+		mat.subsurface_texture.wetness_moving = rt_state.wetness_moving;
+		mat.subsurface_texture.standing_water = rt_state.wetness_standing_water;
+		mat.subsurface_texture.standing_relief = uint32_t(CLAMP(int(Math::round(get_float("wetness_standing_relief", 8.0f) / 4.0f)) - 1, 0, 7));
 	}
 	if (rt_state.snow) {
 		mat.subsurface.snow = 1;
 		mat.subsurface.snow_from_weather = rt_state.snow_from_weather;
 		mat.subsurface_texture.snow_on_body = rt_state.snow_on_body;
-		mat.subsurface_texture.wetness_moving = rt_state.wetness_moving;
 		mat.hair_crown_z.snow_amount = rt_unorm8(get_float("snow_amount", 1.0f));
 		mat.hair_crown_z.snow_max_slope = rt_unorm8(get_float("snow_max_slope", 60.0f) / 90.0f);
 	}

@@ -960,6 +960,21 @@ float transmission_lobe_probability(MaterialProperties material, vec3 N, vec3 V)
 	return lum > 0.0 ? clamp(trans_lum / lum, 0.01, 0.99) : 0.0;
 }
 
+// Light through a drop on a thin pane (rain on glass, raytracing_rain_inc.glsl rain_glass()): in through the drop's curved surface (air to water, n 1.33), out through the
+// flat pane (water to glass to air: a thin parallel pane leaves only water to air). p_dir: the ray's direction;
+// p_drop: the drop's outward normal; p_flat: the pane's normal on the drop's side. Total internal reflection at the
+// pane sends the light back out (the dark rim a drop shows); then the result points to the drop's side.
+vec3 rain_drop_refract(vec3 p_dir, vec3 p_drop, vec3 p_flat) {
+	vec3 nd = dot(p_dir, p_drop) < 0.0 ? p_drop : -p_drop;
+	vec3 t1 = refract(p_dir, nd, 1.0 / 1.33);
+	if (dot(t1, t1) <= 0.0) {
+		return reflect(p_dir, nd);
+	}
+	vec3 nf = dot(t1, p_flat) < 0.0 ? p_flat : -p_flat;
+	vec3 t2 = refract(t1, nf, 1.33);
+	return dot(t2, t2) > 0.0 ? normalize(t2) : normalize(reflect(t1, nf));
+}
+
 // The reflection and back light lobes' density. The thin transmission lobe adds none: no light
 // sample draws its directions (a ray through it weighs what it finds in full).
 float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
@@ -1337,6 +1352,12 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 				}
 			} else if (!sampleThinTransmission(rand2(ps.rng_state), N, h.geometry_normal, V, material, trans_dir, trans_weight)) {
 				return false;
+			}
+			if (!volume && m.clearcoat > 0.0 && dot(m.coat_normal, m.coat_normal) > 0.5) {
+				// A raindrop (or glaze) on a thin pane bends the light twice (rain_drop_refract()); through total
+				// internal reflection it goes back out on the viewer's side.
+				trans_dir = rain_drop_refract(-V, m.coat_normal, h.geometry_normal);
+				refracted = dot(trans_dir, h.geometry_normal) < 0.0;
 			}
 			ps.throughput *= trans_weight / p_trans;
 			// Transmission after the path's first bounce is free (Cycles keeps transmission bounces apart the

@@ -76,7 +76,8 @@ struct RTBaseMaterialState {
 	uint32_t glaze : 1; // BaseMaterial3D glaze: clear ice from freezing rain, the rain map's alpha (docs/ideas/trees.md 5be).
 	uint32_t normal_map : 1; // BaseMaterial3D normal_enabled: its texture_normal stays set when it is off.
 	uint32_t wetness_moving : 1; // BaseMaterial3D wetness_moving: the slipstream and wiper from instance uniform slots 13 and 14.
-	uint32_t unused : 21;
+	uint32_t wetness_standing_water : 1; // BaseMaterial3D wetness_standing_water: puddles in the relief (docs/ideas/rain.md).
+	uint32_t unused : 20;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 

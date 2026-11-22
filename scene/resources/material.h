@@ -506,6 +506,11 @@ private:
 		if (wetness_moving) {
 			mk.flags |= (1u << 30);
 		}
+		// And wetness_standing_water under that.
+		static_assert(FLAG_MAX < 29);
+		if (wetness_standing_water) {
+			mk.flags |= (1u << 29);
+		}
 		// And glaze in the features' top bit.
 		static_assert(FEATURE_MAX < 31);
 		if (glaze) {
@@ -552,6 +557,7 @@ private:
 		StringName hair_crown;
 		StringName hair_mask_texture_channel;
 		StringName wetness_porosity;
+		StringName wetness_standing_relief;
 		StringName wetness_amount;
 		StringName snow_amount;
 		StringName snow_max_slope;
@@ -658,6 +664,8 @@ private:
 	bool wetness_from_weather = true;
 	bool wetness_canopy = false;
 	bool wetness_moving = false;
+	bool wetness_standing_water = true; // puddles in the face's relief from the weather's pooled water
+	float wetness_standing_relief = 8.0f; // mm, lowest to highest point of the relief the water fills
 	bool glaze = false;
 	float snow_amount = 1.0f;
 	float snow_max_slope = 60.0f;
@@ -917,6 +925,10 @@ public:
 	bool is_wetness_canopy() const;
 	void set_wetness_moving(bool p_enable);
 	bool is_wetness_moving() const;
+	void set_wetness_standing_water(bool p_enable);
+	bool is_wetness_standing_water() const;
+	void set_wetness_standing_relief(float p_mm);
+	float get_wetness_standing_relief() const;
 
 	// Glaze: clear ice from freezing rain over the surface, from the weather's rain map (WorldWeather.glaze_at).
 	void set_glaze(bool p_enable);

@@ -276,6 +276,11 @@ bool rt_material_wetness_moving(MaterialData p_mat) {
 	return ((p_mat.subsurface_texture >> 27u) & 1u) != 0u;
 }
 
+// BaseMaterial3D wetness_standing_water: puddles in the relief; x on, y the relief (mm).
+vec2 rt_material_standing_water(MaterialData p_mat) {
+	return vec2(float((p_mat.subsurface_texture >> 28u) & 1u), float((p_mat.subsurface_texture >> 29u) + 1u) * 4.0);
+}
+
 // BaseMaterial3D snow_on_body: the body's own snow from instance uniform slot 12 (SnowBodies).
 bool rt_material_snow_on_body(MaterialData p_mat) {
 	return ((p_mat.subsurface_texture >> 25u) & 1u) != 0u;
