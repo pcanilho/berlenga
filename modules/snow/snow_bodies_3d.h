@@ -33,6 +33,7 @@
 #include "core/templates/hash_map.h"
 #include "core/variant/typed_array.h"
 #include "scene/3d/node_3d.h"
+#include "scene/resources/material.h"
 
 class GeometryInstance3D;
 class SnowCover3D;
@@ -70,7 +71,52 @@ class SnowBodies3D : public Node3D {
 		bool roof = false;
 		float roof_phi = 25.0f; // degrees
 		float roof_heat = 0.0f; // W/m2
+		// Round 8 (follow-up 52): the ice dam at its eave (kg of ice per metre of eave) and the mesh that shows it.
+		float dam = 0.0f;
+		float dam_drawn = 0.0f; // m, the height the mesh was built for
+		ObjectID dam_mesh;
 	};
+	// A piece of a roof slab falling as a rigid body (follow-up 52), until it comes to rest in the cover.
+	struct Chunk {
+		ObjectID id;
+		float mass = 0.0f; // kg
+		float density = 300.0f;
+		float size = 1.0f; // m, its edge along the eave
+		float age = 0.0f; // s
+		float rest = 0.0f; // s it has been still
+		Vector3 last_velocity;
+		bool broken = false;
+		bool dry = true;
+	};
+	struct PendingChunk { // a row of the slab still on the roof, leaving the eave at its time
+		float wait = 0.0f; // s
+		Transform3D xform;
+		Vector3 velocity;
+		Vector3 size;
+		float mass = 0.0f;
+		float density = 300.0f;
+		bool dry = true;
+	};
+	struct Puff {
+		Vector3 position;
+		float rate = 0.0f; // kg/s
+		float age = 0.0f;
+	};
+	LocalVector<Chunk> chunks;
+	LocalVector<PendingChunk> pending_chunks;
+	LocalVector<Puff> puffs;
+	Node3D *puff_cloud = nullptr; // a SnowPowderCloud3D made on the first dry impact
+	Ref<StandardMaterial3D> chunk_material;
+	Ref<StandardMaterial3D> dam_material;
+	bool roof_slab_bodies = true;
+	float slab_chunk_size = 1.2f; // m, a falling piece's edge
+	bool ice_dams = true;
+	int chunks_spawned = 0;
+	bool _roof_extent(const Body &r_body, const Vector3 &p_down, float p_slope, Vector3 &r_eave, Vector3 &r_across, float &r_half_len, float &r_run) const;
+	void _spawn_chunk(const PendingChunk &p_chunk, float p_size_along);
+	void _chunks_step(float p_dt);
+	void _deposit_chunk(const Chunk &p_chunk, const Vector3 &p_at);
+	void _update_dam_mesh(Body &r_body, const Vector3 &p_down, float p_slope);
 
 	HashMap<ObjectID, Body> bodies;
 	float update_rate = 10.0f; // Hz
@@ -134,6 +180,14 @@ public:
 	static bool slab_slides(float p_depth, float p_density, float p_wetness, float p_slope, float p_cohesion, float p_friction_deg = 25.0f);
 	static float roof_shape(float p_slope); // Eurocode 1 (EN 1991-1-3) mu1: the share of the ground load a roof holds
 	static float roof_friction(const String &p_material); // degrees, dry
+	static float ice_dam_height(float p_kg_per_m); // m, a ridge twice as wide as high
+	float get_ice_dam_height(Node *p_node) const;
+	int get_falling_chunks() const { return int(chunks.size() + pending_chunks.size()); }
+	int get_chunks_spawned() const { return chunks_spawned; }
+	void set_roof_slab_bodies(bool p_enable) { roof_slab_bodies = p_enable; }
+	bool is_roof_slab_bodies_enabled() const { return roof_slab_bodies; }
+	void set_ice_dams(bool p_enable) { ice_dams = p_enable; }
+	bool is_ice_dams_enabled() const { return ice_dams; }
 
 	void set_update_rate(float p_rate);
 	float get_update_rate() const { return update_rate; }
