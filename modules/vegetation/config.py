@@ -16,6 +16,7 @@ def get_doc_classes():
         "PlantSpecies",
         "SeedDown3D",
         "PollenCloud3D",
+        "SodLipFall3D",
         "TreeGenerator",
         "TreeWind3D",
         "VegetationField3D",

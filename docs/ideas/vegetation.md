@@ -1896,3 +1896,23 @@ RULE_BANK_EDGE (37, RULE_MAX 38).
 - Not yet: lips breaking off and falling as the bank erodes (a PhysX/Blast job), and roots on bare scarp faces with
   no lip.
 
+## Sod lips breaking off (round 8, first pick)
+The overhanging sod of a composite bank fails as a cantilever (Thorne and Tovey 1981: shear, beam and tensile
+failures of the overhang) once the flow has cut far enough under it, or under a load; the failed blocks lie at the
+bank's foot until the next flows carry them off.
+Built: SodLipFall3D (sod_lip_fall_3d.*) and VegetationField3D plant removals.
+- VegetationField3D.add_plant_removal(position, radius, species): plants taken away for good; streamed tiles there are
+  placed again without them (a populated field populates again); get_instances_near(species, position, radius)
+  reads the drawn instances' transforms and meshes from the field's MultiMeshes. Mowing will use the removals too.
+- SodLipFall3D, twice a second over the lips within range of the camera: a body of the load group (grass_trample)
+  standing on an overhang breaks it at once; water at the foot (WorldWater.height_at 0.6 m out over the drop, between
+  0.7 m under the lip and its top) is a hazard of 1/undercut_time (600 s); a soaked bank in heavy rain (wetness over
+  0.8, rain over 5 mm/h) 1/soaked_time (3600 s). Both times are estimates on the game's time scale, with a
+  deterministic draw per lip and look.
+- A failed lip: removed (0.6 m), and its mesh falls as a RigidBody3D box of sod (the slab's 20 cm, 1500 kg/m3 wet
+  topsoil, an estimate), turning about the edge and pushed out over the drop. Past max_blocks (24) the oldest freeze
+  where they lie.
+- Check: vegetation --test "sod lips" (dry bank: none; a step: that lip alone, not placed again; the river 0.3 m
+  under the lips: exactly the 14 lips in that band break).
+- Not yet: breaking the block on landing (Blast), and the river carrying blocks off.
+

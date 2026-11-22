@@ -324,6 +324,7 @@ func _physics_process(_d: float) -> void:
 		_trunk_checks()
 		await _blowing_checks()
 		await _wrack_live_check()
+		await _sod_fall_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -1199,6 +1200,70 @@ func _wrack_offsets(f: VegetationField3D, peak: float) -> Vector2:
 				if d > -0.12 and d < 0.03:
 					on += 1
 	return Vector2(float(on) / maxf(all, 1), all)
+
+# Sod lips breaking (SodLipFall3D): a body stepping onto an overhang breaks that lip alone, which falls as a block and
+# is not placed again; water at the scarp's foot undercuts the rest within the hazard's time; a dry bank keeps them.
+class SodWaterStub extends WorldWater:
+	var level := -INF
+	func _height_at(_p: Vector3) -> float:
+		return level
+
+func _sod_fall_check() -> void:
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _relief_at(p: Vector3) -> Vector2:\n\tvar t := clampf((p.x + 0.3) / 0.6, 0.0, 1.0)\n\treturn Vector2(1.2 * (1.0 - t * t * (3.0 - 2.0 * t)), 1.0)\n"
+	stub.reload()
+	WorldContracts.set_ground(stub.new())
+	var ws := SodWaterStub.new()
+	WorldContracts.add_water_stub(ws)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign(PlantGenerator.make_bank_turf(1, false))
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var sod := SodLipFall3D.new()
+	sod.range = 200.0
+	sod.process_mode = Node.PROCESS_MODE_DISABLED # Driven by check() here.
+	add_child(sod)
+	var lips: Array = f.get_instances_near(0, Vector3.ZERO, 200.0)
+	var n0 := lips.size()
+	sod.check(0.5)
+	var dry := sod.get_fall_count()
+	# A walker on the first lip's overhang, 15 cm out over the drop.
+	var xf: Transform3D = lips[0].transform if n0 > 0 else Transform3D()
+	var walker := Node3D.new()
+	walker.add_to_group("grass_trample")
+	add_child(walker)
+	walker.global_position = xf.origin + xf.basis.x.normalized() * 0.15 + Vector3(0, 0.9, 0)
+	sod.check(0.5)
+	var stepped := sod.get_fall_count()
+	walker.queue_free()
+	for i in 3:
+		await get_tree().process_frame
+	var after: Array = f.get_instances_near(0, Vector3.ZERO, 200.0)
+	var regrown := 0
+	for d in after:
+		if (d.transform as Transform3D).origin.distance_to(xf.origin) < 0.5:
+			regrown += 1
+	# The river rises to 0.3 m under the lips: undercut, all fail within a long while.
+	ws.level = xf.origin.y - 0.3
+	var in_band := 0
+	for d in after:
+		var y: float = (d.transform as Transform3D).origin.y
+		if ws.level > y - 0.7 and ws.level < y + 0.05:
+			in_band += 1
+	sod.check(20000.0)
+	var undercut := sod.get_fall_count() - stepped
+	var blocks: Array = sod.get_blocks()
+	var falling := blocks.size() > 0 and (blocks[0] as RigidBody3D).mass > 5.0
+	_check("sod lips: a step on the overhang breaks that lip into a falling block, not placed again; the river's undercut breaks the rest; a dry bank keeps them",
+			n0 > 20 and dry == 0 and stepped == 1 and after.size() == n0 - 1 and regrown == 0 and in_band > 0 and undercut == in_band and falling,
+			[n0, dry, stepped, after.size(), regrown, undercut, in_band, blocks.size()])
+	sod.free()
+	f.free()
+	WorldContracts.clear_overrides()
 
 # Turf overhangs (make_bank_turf, RULE_BANK_EDGE): a stub's relief raises the ground 1.2 m west of a scarp at x = 0;
 # sod lips stand along its top edge, none on the open ground either side or without the scarp.
