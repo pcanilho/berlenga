@@ -218,6 +218,8 @@ func _ready() -> void:
 			await _run_spindrift_tests()
 		elif only == "road":
 			await _run_road_tests()
+		elif only == "windslab":
+			await _run_wind_slab_tests()
 		elif only == "rime":
 			await _run_rime_tests()
 		elif only == "transport":
@@ -440,6 +442,7 @@ func _run_tests() -> void:
 	await _run_slush_tests()
 	await _run_spindrift_tests()
 	await _run_road_tests()
+	await _run_wind_slab_tests()
 	await _run_hoar_tests()
 	_run_suncup_tests()
 	await _run_rime_tests()
@@ -684,6 +687,60 @@ func _run_spindrift_tests() -> void:
 	_check("drier air thins it sooner (sublimation)", SnowCover3D.spindrift_fade(0.4) > 2.0 * SnowCover3D.spindrift_fade(0.95), "%.3f /s at 40%%, %.3f at 95%%" % [SnowCover3D.spindrift_fade(0.4), SnowCover3D.spindrift_fade(0.95)])
 	var wet: Array = await _spindrift_at(26.0, 2.0)
 	_check("no plume from wet snow", wet[0] == 0.0, "%.2f kg/s at +2 C" % wet[0])
+
+
+# Wind slab (follow-up 45): snow falling in wind lands denser (Crocus, Vionnet et al. 2012), and where the surface
+# drifts (Crocus's driftability SI > 0) its top packs toward 350 kg/m3 as wind slab (Sommer et al. 2018).
+func _wind_case(wind: float, hours: int, fall: float) -> Array:
+	await _setup("flat", 128.0, 32, -8.0)
+	snow.add_snow(30.0, 100.0)
+	weather.temperature = -8.0
+	weather.wind_speed = wind
+	weather.wind_direction = Vector2(1, 0)
+	weather.rain_rate = fall
+	weather.cloud_cover = 1.0 if fall > 0.0 else 0.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var p := Vector3(0, 0, 0)
+	var swe0 := snow.get_swe_at(p)
+	var d0 := snow.get_depth_at(p)
+	for h in hours:
+		weather.advance(60.0)
+		snow.advance(3600.0)
+	var added := snow.get_swe_at(p) - swe0
+	var added_depth := snow.get_depth_at(p) - d0
+	return [snow.get_density_at(p), snow.get_wind_slab_at(p), added, added_depth]
+
+
+func _run_wind_slab_tests() -> void:
+	print("Wind slab (follow-up 45):")
+	var calm_rho := SnowCover3D.wind_snow_density(-8.0, 0.0)
+	var wind_rho := SnowCover3D.wind_snow_density(-8.0, 12.0)
+	_check("snow falling in wind lands denser (Crocus)", absf(calm_rho - SnowCover3D.new_snow_density(-8.0)) < 1.0 and absf(wind_rho - (109.0 - 48.0 + 26.0 * sqrt(12.0))) < 1.0, "%.0f kg/m3 calm, %.0f at 12 m/s" % [calm_rho, wind_rho])
+	_check("fresh light snow drifts in a breeze, old dense snow only in a gale (SI)", SnowCover3D.drift_index(5.0, 100.0, 1.0) > 0.0 and SnowCover3D.drift_index(2.0, 100.0, 1.0) < 0.0 and SnowCover3D.drift_index(8.0, 300.0, 0.0) < 0.0 and SnowCover3D.drift_index(15.0, 300.0, 0.0) > 0.0, "SI %.2f at 5 m/s and %.2f at 2 (fresh, 100 kg/m3); %.2f at 8 and %.2f at 15 (old, 300)" % [SnowCover3D.drift_index(5.0, 100.0, 1.0), SnowCover3D.drift_index(2.0, 100.0, 1.0), SnowCover3D.drift_index(8.0, 300.0, 0.0), SnowCover3D.drift_index(15.0, 300.0, 0.0)])
+	var p24 := SnowCover3D.wind_packing_step(100.0, 10.0, 1.0, 24.0)
+	var p96 := SnowCover3D.wind_packing_step(100.0, 10.0, 1.0, 96.0)
+	_check("wind packing toward 350 kg/m3 over days (48 h / SI)", p24 > 140.0 and p24 < p96 and p96 < 350.0 and SnowCover3D.wind_packing_step(100.0, 2.0, 1.0, 24.0) == 100.0, "%.0f kg/m3 after a day at 10 m/s, %.0f after four; none at 2 m/s" % [p24, p96])
+	var calm: Array = await _wind_case(2.0, 12, 0.0)
+	var gale: Array = await _wind_case(14.0, 12, 0.0)
+	print("  12 h on 30 cm of new snow: calm %.0f kg/m3, slab %.3f m; 14 m/s %.0f kg/m3, slab %.3f m" % [calm[0], calm[1], gale[0], gale[1]])
+	_check("a gale packs the surface into wind slab; calm does not", calm[1] == 0.0 and gale[1] > 0.05 and gale[0] > calm[0] + 10.0, "slab %.3f m and %.0f kg/m3 at 14 m/s, %.3f m and %.0f kg/m3 calm" % [gale[1], gale[0], calm[1], calm[0]])
+	var fall_calm: Array = await _wind_case(1.0, 3, 2.0)
+	var fall_wind: Array = await _wind_case(12.0, 3, 2.0)
+	var rc: float = fall_calm[2] / maxf(fall_calm[3], 1e-6)
+	var rw: float = fall_wind[2] / maxf(fall_wind[3], 1e-6)
+	_check("a windy snowfall lays down a denser, thinner layer, and it counts as slab", rw > rc * 1.3 and fall_wind[1] > fall_calm[1], "new snow %.0f kg/m3 in 12 m/s, %.0f calm; slab %.3f m and %.3f m" % [rw, rc, fall_wind[1], fall_calm[1]])
+	await _setup("flat", 128.0, 32, -8.0)
+	snow.wind_packing_enabled = false
+	snow.add_snow(30.0, 100.0)
+	weather.wind_speed = 14.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	for h in 12:
+		snow.advance(3600.0)
+	_check("off: no slab", snow.get_wind_slab_at(Vector3.ZERO) == 0.0, "%.3f m" % snow.get_wind_slab_at(Vector3.ZERO))
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
 
 
 func _road_wheel(spin: float, roll: float) -> RigidBody3D:

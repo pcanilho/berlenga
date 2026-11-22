@@ -1720,6 +1720,22 @@ photographs, e.g. Fikke et al. 2007, COST 727).
 - Not here: rivers (PhysXRiver3D) take their discharge from the terrain climate, not from this field; a
   seasonal melt pulse in them would be the rivers' change.
 
+## Follow-up 45: wind slab (round 6, 22 Nov 2026)
+
+- Drift deposits were already laid down at 300 kg/m3; what was missing: snow falling in wind, the packing of
+  snow the wind works over in place, and a record of the slab for the avalanche stability.
+- Snowfall in wind: Crocus's new-snow density 109 + 6 T + 26 U^0.5 kg/m3 (Vionnet et al. 2012, GMD 5, after
+  Pahaut 1976), or Hedstrom and Pomeroy's where higher (calm). 151 kg/m3 at -8 C and 12 m/s against 70 calm.
+- Wind packing: Crocus's driftability SI = -2.868 exp(-0.085 U) + 1 + Mo (Guyomarc'h and Merindol 1998) with
+  mobility from density and freshness (albedo stands for dendricity); where SI > 0 at the cell's own wind
+  (MicroMet weights and lee) the top 10 cm settle toward 350 kg/m3 with time constant 48 h / (0.632 SI). Sommer
+  et al. 2018 (The Cryosphere 12): packing only with drift. The pack is one layer, so the top starts from the
+  pack's density.
+- `cell_wind_slab` (m): deposits, snowfall while SI > 0, the packed top; settles with the pack, melts from the
+  top, erosion takes it once the softer snow over it is gone. `get_wind_slab_at`, `wind_packing_enabled`.
+- Checks (`--test=windslab`): SI's thresholds (fresh 100 kg/m3 drifts from about 4 m/s, old 300 kg/m3 from
+  about 11); 12 h at 14 m/s packs 0.1 m of slab, calm none; a windy snowfall is twice as dense and is slab.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
