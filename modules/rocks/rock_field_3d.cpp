@@ -826,8 +826,28 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 	const int v = r_stone.variant;
 	const Vector3 axes = p_lib.axes[v];
 	const float s = r_stone.scale;
-	const real_t ground = p_gen->get_height(Vector3(p_xz.x, 0, p_xz.z));
-	const Vector3 n = ground_normal(p_gen, p_xz.x, p_xz.z, MAX(real_t(0.5), real_t(axes.x * s)));
+	// The drawn ground: the heightfield plus the landscape's cliff and bank relief (WorldGround.relief_at), so a stone
+	// on a relief-drawn bank or face rests on the surface drawn there, not on the heightfield under or over it.
+	const WorldGround *wg = WorldContracts::ground();
+	auto H = [&](real_t p_x, real_t p_z) -> real_t {
+		real_t h = p_gen->get_height(Vector3(p_x, 0, p_z));
+		if (wg) {
+			const Vector2 r = wg->relief_at(Vector3(p_x, h, p_z));
+			if (r.y > 0.0f && Math::is_finite(r.x)) {
+				h += r.x;
+			}
+		}
+		return h;
+	};
+	const real_t ground = H(p_xz.x, p_xz.z);
+	Vector3 n;
+	{
+		const real_t e = MAX(real_t(0.5), real_t(axes.x * s));
+		const real_t hx = H(p_xz.x + e, p_xz.z) - H(p_xz.x - e, p_xz.z);
+		const real_t hz = H(p_xz.x, p_xz.z + e) - H(p_xz.x, p_xz.z - e);
+		n = Vector3(-hx / (2.0f * e), 1.0f, -hz / (2.0f * e));
+		n = Math::is_finite(n.x) && Math::is_finite(n.z) ? n.normalized() : Vector3(0, 1, 0);
+	}
 	const Vector3 up = Vector3(0, 1, 0).lerp(n, p_follow_ground).normalized();
 	Basis b(Vector3(0, 1, 0), p_yaw);
 	const Vector3 axis = Vector3(0, 1, 0).cross(up);
@@ -848,7 +868,7 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 		real_t ring = 0.0;
 		for (int k = 0; k < 6; k++) {
 			const real_t a = p_yaw + real_t(k) * real_t(Math::TAU) / 6.0f;
-			ring += p_gen->get_height(Vector3(p_xz.x + Math::cos(a) * reach, 0, p_xz.z + Math::sin(a) * reach));
+			ring += H(p_xz.x + Math::cos(a) * reach, p_xz.z + Math::sin(a) * reach);
 		}
 		sink += CLAMP(ground - ring / 6.0f, real_t(0.0), height / 3.0f);
 	}
@@ -887,7 +907,7 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 			if (dn[i] <= band) {
 				// The ellipsoid's centre over the mesh origin, so that its bottom is the mesh's (about 0 for most stones).
 				const real_t centre = (p_lib.bottom[v] + axes.y) * s;
-				y = MIN(y, p_gen->get_height(Vector3(p_xz.x + pts[i].x, 0, p_xz.z + pts[i].z)) - pts[i].y - centre);
+				y = MIN(y, H(p_xz.x + pts[i].x, p_xz.z + pts[i].z) - pts[i].y - centre);
 			}
 		}
 		y = MAX(y, floor_y);

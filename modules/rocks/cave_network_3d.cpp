@@ -1774,6 +1774,21 @@ real_t CaveNetwork3D::get_rock_distance(const Vector3 &p_position) const {
 	return gen ? _rock(src, gen, p_position) : _air(src, p_position);
 }
 
+// The field as meshed: the rock with the flowstone the formations lay round their feet (mounds, the rimstone sheet).
+real_t CaveNetwork3D::get_meshed_rock_distance(const Vector3 &p_position) const {
+	FieldSource src;
+	const AABB box(p_position - Vector3(6, 6, 6), Vector3(12, 12, 12));
+	_gather(box, src);
+	const TerrainGenerator3D *gen = _get_generator();
+	const real_t r = gen ? _rock(src, gen, p_position) : _air(src, p_position);
+	if (!gen) {
+		return r;
+	}
+	LocalVector<Drip> drips;
+	_drips(src, gen, box, drips);
+	return drips.is_empty() ? r : _flowstone(drips, p_position, r);
+}
+
 void CaveNetwork3D::_gather(const AABB &p_box, FieldSource &r_src) const {
 	for (const Cave &c : caves) {
 		if (!c.bounds.grow(16.0).intersects(p_box)) {
@@ -4796,6 +4811,7 @@ void CaveNetwork3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mesh_triangle_count"), &CaveNetwork3D::get_mesh_triangle_count);
 	ClassDB::bind_method(D_METHOD("get_last_mesh_msec"), &CaveNetwork3D::get_last_mesh_msec);
 	ClassDB::bind_method(D_METHOD("get_rock_distance", "position"), &CaveNetwork3D::get_rock_distance);
+	ClassDB::bind_method(D_METHOD("get_meshed_rock_distance", "position"), &CaveNetwork3D::get_meshed_rock_distance);
 	ClassDB::bind_method(D_METHOD("set_mesh_cell", "metres"), &CaveNetwork3D::set_mesh_cell);
 	ClassDB::bind_method(D_METHOD("get_mesh_cell"), &CaveNetwork3D::get_mesh_cell);
 	ClassDB::bind_method(D_METHOD("set_near_mesh_cell", "metres"), &CaveNetwork3D::set_near_mesh_cell);

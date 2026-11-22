@@ -2173,8 +2173,12 @@ func _test() -> void:
 		var wet_ok := 0
 		for pl in pools_t:
 			var pc: Vector3 = pl["center"]
-			if net.get_rock_distance(pc + Vector3(0, 0.08, 0)) < 0.0 and net.get_rock_distance(pc - Vector3(0, float(pl["depth"]) + 0.08, 0)) > -0.05:
+			var d_up := net.get_rock_distance(pc + Vector3(0, 0.08, 0))
+			var d_dn := net.get_meshed_rock_distance(pc - Vector3(0, float(pl["depth"]) + 0.08, 0)) # the floor as drawn: flowstone included
+			if d_up < 0.0 and d_dn > -0.05:
 				wet_ok += 1
+			else:
+				print("    pool at %s depth %.3f: %.3f m from the rock 8 cm over the level, %.3f under the floor" % [pc, pl["depth"], d_up, d_dn])
 		check(wet_ok == pools_t.size(), "rimstone: %d pools near the entrance, %d standing in air over their floor" % [pools_t.size(), wet_ok])
 		# Every stalactite hangs from rock: rock 0.25 m over its base, air 0.3 m under it.
 		var hung := 0
@@ -2413,6 +2417,23 @@ func _test() -> void:
 			var again: Node = rocks.break_stone(big["position"], 100.0, 3.0 * float(big["scale"]))
 			var ms := (Time.get_ticks_usec() - pt) / 1000.0
 			check(again != null and ms < 16.0, "break_stone on a prepared shape: %.1f ms (under a 60 Hz frame)" % ms)
+		# Stones rest on the drawn ground: the heightfield plus the landscape's bank and cliff relief (WorldGround.relief_at).
+		var on_rel := 0
+		var seated := 0
+		var worst_rel := 0.0
+		for lay in [RockField3D.LAYER_ROCKFALL, RockField3D.LAYER_SCREE]:
+			for st in rocks.get_stones(lay, Rect2(-120, -120, 240, 240)): # (the whole world's stones at once runs out of memory)
+				var sp: Vector3 = st["position"]
+				var hg := gen.get_height(sp)
+				var rl: Vector2 = WorldContracts.get_ground().relief_at(Vector3(sp.x, hg, sp.z))
+				if rl.y <= 0.0 or absf(rl.x) < 0.05:
+					continue
+				on_rel += 1
+				var off := absf(float(st["ground"]) - (hg + rl.x))
+				worst_rel = maxf(worst_rel, off)
+				if off < 0.02:
+					seated += 1
+		check(seated == on_rel, "stones on relief-drawn ground: %d of %d seated on the drawn surface (worst %.3f m off)%s" % [seated, on_rel, worst_rel, " (none in the middle 240 m: counted, not required)" if on_rel == 0 else ""])
 		# Live rockfall: a cliff block comes loose, out of the wall, falls under gravity and comes to rest on the ground.
 		check(is_equal_approx(rocks.get_rockfall_trigger(), 1.0), "rockfall trigger without weather: %.2f (base rate)" % rocks.get_rockfall_trigger())
 		var cliff: Array = rocks.get_stones(RockField3D.LAYER_CLIFF, Rect2(-800, -800, 1600, 1600))
