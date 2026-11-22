@@ -78,6 +78,19 @@ def load(slug):
     lo, hi = vs.min(0), vs.max(0)
     off = Vector((-(lo[0] + hi[0]) * 0.5, -(lo[1] + hi[1]) * 0.5, -lo[2]))
     ob.data.transform(__import__("mathutils").Matrix.Translation(off))
+    if slug == "old_anchor":
+        # Tripo set the stock in the plane of the arms; a real stock crosses it. With the stock lying flat, the
+        # crown and arms (raw x > 0.135, the shank round there) turn 90 degrees about the shank, so the lower fluke
+        # goes into the ground under the origin, the way an anchor lies on a beach.
+        ob.data.vertices.foreach_get("co", vs)
+        sel = vs[:, 0] > 0.135
+        yz = vs[sel][:, 1:] - np.array([0.0, 0.085], np.float32)
+        vs[sel, 1] = -yz[:, 1]
+        vs[sel, 2] = yz[:, 0] + 0.085
+        ob.data.vertices.foreach_set("co", vs.ravel())
+        # the imported custom normals don't turn with the vertices: smooth shading from the new geometry
+        bpy.context.view_layer.objects.active = ob
+        bpy.ops.mesh.customdata_custom_splitnormals_clear()
     ob.data.update()
     ob.name = slug
     return ob

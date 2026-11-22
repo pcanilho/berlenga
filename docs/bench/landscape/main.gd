@@ -6708,9 +6708,12 @@ func _cove_props() -> void:
 			_put(lh, best, atan2(f.x, f.z) + PI, 0.4)
 			placed.append("lighthouse %s" % str(best.round()))
 		var kh := _tripo("lighthouse_keepers_house", 11.0, 0)
-		if kh != null:
-			var kp := best - f * 14.0 + sd * 6.0
-			_put(kh, kp, atan2(f.x, f.z) + PI, 0.4)
+		if kh != null and lh != null:
+			# Tripo gave the tower a second door on its -x side: the keeper's house is built against that side, so it
+			# reads as the passage from the house into the tower.
+			var tx: Vector3 = lh.basis * Vector3(-1, 0, 0)
+			var kp := best + tx * float(args.get("keeper-off", "7.4"))
+			_put(kh, kp, atan2(tx.x, tx.z) + PI, 0.4)
 	# The beach: boats and gear a few metres above the waterline, beside the view.
 	var bp := wl - f * 3.0 + sd * 7.0
 	var gear := [["fishing_boat", 4.6, 2, bp, 0.3], ["fishing_boat_overturned", 4.4, 0, bp - f * 6.0 + sd * 3.0, 1.2],
