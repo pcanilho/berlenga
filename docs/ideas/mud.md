@@ -1401,13 +1401,14 @@ keeps an engine running a little deeper than parked.
 
 **22.2 Parked trucks sink in.** Soft soil under a standing load keeps settling by consolidation and creep
 (Terzaghi one-dimensional consolidation; secondary compression for organic soils), and an object lying in mud needs
-more than its weight to lift free: the breakout suction (Vesic 1969; Das 1990s, breakout of objects from soft
-seabeds; breakout force rises with embedment time). Plan: a wheel or body resting on mud keeps pressing by the
+more than its weight to lift free: the breakout suction (Vesic 1969, breakout of objects from the ocean bottom;
+the breakout force rises with embedment time). Plan: a wheel or body resting on mud keeps pressing by the
 consolidation rate of the soil, and a held contact adds a suction share to the rolling resistance that falls once
 it moves; saved with the deposits.
 
 **22.3 Wallows.** Deer and wild boar keep wallows: wet hollows rolled out and refilled through the warm season, with
-churned rims and puddled floors (Fischer et al. 2016 on boar wallowing; red deer wallows in rut, Clutton-Brock 1982).
+churned rims and puddled floors (red deer wallows in the rut, Clutton-Brock et al. 1982;
+boar wallowing to cool and shed parasites; sources to check before building).
 Plan: WorldStand hollows on trails in wet soil get a wallow (press and berm, mud tint), revisited at the trail's passes,
 and fill as puddles.
 
