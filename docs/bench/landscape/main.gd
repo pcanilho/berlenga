@@ -89,6 +89,7 @@ class SurgeSwell extends WorldWater:
 
 
 var no_till_tex: ImageTexture
+const WalkCycle = preload("res://walk_cycle.gd")
 const STEP := 4.0 # metres between ground vertices
 const X0 := -2048.0
 const Z0 := -2048.0
@@ -6987,7 +6988,8 @@ func _frost_sorted_cam() -> void:
 # A rigged walker (ext/mannequin: GDQuest's mannequin, CC BY 4.0) on a CharacterBody3D, its feet planted on the
 # world's ground and snow by FootPlacementModifier3D (character motion 47595e0b), which publishes each plant as a
 # footfall the snow, mud and sand print (meta world_contact_feet); GazeModifier3D turns its head and eyes to `look`.
-# The clip has no walk: its run is played slowed (--walker-anim, run; --walker-anim-speed, 0.5). Moved by _walk_to.
+# The rig has no walk: walk_cycle.gd builds one from published gait data (--walker-anim, walk; run plays the rig's
+# run at --walker-anim-speed, 0.5). Moved by _walk_to.
 func _make_walker(look: Node3D = null) -> CharacterBody3D:
 	var src := _gltf_node("res://ext/mannequin/mannequiny-0.3.0.glb")
 	if src == null:
@@ -7028,8 +7030,21 @@ func _make_walker(look: Node3D = null) -> CharacterBody3D:
 	var ap := src.find_children("*", "AnimationPlayer", true, false)
 	if not ap.is_empty():
 		var player := ap[0] as AnimationPlayer
-		var an := String(args.get("walker-anim", "run"))
-		if player.has_animation(an):
+		var an := String(args.get("walker-anim", "walk"))
+		if an == "walk" and not player.has_animation("walk") and player.has_animation("idle"):
+			# no walk in the rig: one built from gait data (walk_cycle.gd) on its idle, played so the planted
+			# feet travel at the walker's speed
+			var names := {"pelvis": "pelvis", "spine_01": "spine_01", "spine_02": "spine_02"}
+			for sd in ["l", "r"]:
+				for k in ["thigh", "calf", "foot", "ball", "upperarm", "lowerarm"]:
+					names[k + "_" + sd] = k + "." + sd
+			var speed := float(args.get("walker-speed", "1.1"))
+			var walk: Animation = WalkCycle.build(skel, player.get_animation("idle"), WalkCycle.period_for(speed), names)
+			player.get_animation_library("").add_animation("walk", walk)
+			var step: float = WalkCycle.step_length(walk, skel, names)
+			player.play("walk")
+			player.speed_scale = speed * walk.length / (2.0 * step) if step > 0.0 else 1.0
+		elif player.has_animation(an):
 			player.get_animation(an).loop_mode = Animation.LOOP_LINEAR
 			player.play(an)
 			player.speed_scale = float(args.get("walker-anim-speed", "0.5"))

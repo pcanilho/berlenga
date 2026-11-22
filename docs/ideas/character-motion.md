@@ -10,7 +10,10 @@ note lists what it does, what Godot already ships, what the established techniqu
 Status, 22 Nov: Paulo picked all three gaps, in dependency order. Built: `SecondOrderDynamics` (scene/animation,
 with the C++ `SecondOrderSystem<T>` the nodes share), `GazeModifier3D` (scene/3d) and `FootPlacementModifier3D`
 (modules/world, since it reads the world contracts), each with unit tests. Contract additions:
-`WorldGround.known_height_at` and `WorldFootfalls` (world-contracts.md). Next: the first project moves onto them.
+`WorldGround.known_height_at` and `WorldFootfalls` (world-contracts.md). The landscape bench's mannequin walks on a
+cycle built from published gait data (docs/bench/landscape/walk_cycle.gd: Winter 2009 sagittal joint angles,
+Perry and Burnfield 2010 pelvis and centre-of-mass motion), played so its planted feet keep up with the body.
+Next: the first project moves onto the nodes.
 
 ## What the first project does in script
 
