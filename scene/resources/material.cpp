@@ -3516,7 +3516,7 @@ void fragment() {)";
 	if (glaze) {
 		// Glaze from freezing rain, under any snow that falls on it (weather_glaze_apply()).
 		code += "\t// Glaze: Enabled\n\t{\n";
-		code += String("\t\tfloat glaze_fill = weather_glaze_apply(weather_rain_sample((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz).a, ") + (features[FEATURE_WETNESS] ? "wetness_porosity" : "0.5") + ", METALLIC, ALBEDO, ROUGHNESS, SPECULAR);\n";
+		code += String("\t\tfloat glaze_fill = weather_glaze_apply(weather_rain_sample((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz).a, ") + (features[FEATURE_WETNESS] ? "wetness_porosity" : "0.3") + ", METALLIC, ALBEDO, ROUGHNESS, SPECULAR);\n";
 		if (features[FEATURE_NORMAL_MAPPING]) {
 			code += "\t\tNORMAL_MAP_DEPTH *= 1.0 - glaze_fill;\n";
 		}

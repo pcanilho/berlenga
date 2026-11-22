@@ -3938,7 +3938,7 @@ void main() {
 			float gzcover = smoothstep(0.0, 1.0, gzmm);
 			if (gzcover > 0.0) {
 				vec4 gzwet = rt_material_wetness(mat);
-				float gzpor = gzwet.z > 0.5 ? gzwet.x : 0.5;
+				float gzpor = gzwet.z > 0.5 ? gzwet.x : 0.3; // Without Wetness: bark, a middling porosity (birch bark barely soaks).
 				m.albedo *= mix(1.0, mix(1.0, 0.2, (1.0 - m.metalness) * gzpor), gzcover);
 				m.roughness = mix(m.roughness, 0.06, gzcover);
 				m.specular = mix(m.specular, 0.225, gzcover);
