@@ -4249,10 +4249,11 @@
    "settings": [
     "dew_and_frost",
     "cold_pools",
-    "valley_fog"
+    "valley_fog",
+    "smoke_in_pools"
    ],
    "note": "",
-   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost forms there first, and saturated pools fill with a flat fog sea that lifts after sunrise or in a wind.",
+   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost forms there first, and saturated pools fill with a flat fog sea that lifts after sunrise or in a wind, wetting the trees standing in it and riming them below freezing; smoke stays low in the pools and drains down the slopes until the sun mixes it up.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
