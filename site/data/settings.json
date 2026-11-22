@@ -1485,6 +1485,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Adhesion warts",
+   "settings": [
+    "GroundSurface3D.adhesion_warts"
+   ],
+   "note": "",
+   "what": "blown dry sand sticks to damp sand at water edges and builds small rough lumps with pale dry tops; rain flattens them.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Wet sand",
    "settings": [
     "GroundSurface3D.water_coupling",
@@ -2608,6 +2619,17 @@
    ],
    "note": "",
    "what": "rooted ground shows turned sods and loose stones that dry, slump and green over, loses its plants and takes the first weeds, healing over about two years.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Grazing roughs and dung",
+   "settings": [
+    "PlantGenerator.make_grazing()"
+   ],
+   "note": "",
+   "what": "cattle pats ringed by ungrazed rank tufts, horse latrines and deer pellets on pastures and lawns.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3978,10 +4000,12 @@
   {
    "name": "Rain or snow by height",
    "settings": [
-    "WeatherMap3D.get_rain_share_at()"
+    "WeatherMap3D.get_rain_share_at()",
+    "warm_nose_temperature",
+    "warm_nose_base"
    ],
    "note": "",
-   "what": "rain turns to sleet and then snow as the air cools with height.",
+   "what": "rain turns to sleet and then snow as the air cools with height; under a warm layer aloft it falls as freezing rain, or as ice pellets when the cold layer below is deep, and every system reads the same split.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

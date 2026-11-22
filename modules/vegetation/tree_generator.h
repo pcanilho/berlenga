@@ -793,6 +793,11 @@ public:
 	// piled on the upstream face of the stem. The flow runs toward +X (placement turns +X downstream).
 	float flood_height = 0.0f;
 	float flood_years = 0.3f;
+	// Glaze (trees.md 5be): mm of radial clear ice from freezing rain on the standing wood, built as geometry (a shell
+	// round the bark and icicles under it) so the path tracer sees it as the raster does; 0 none.
+	float glaze_mm = 0.0f;
+	void _glaze_build(const Builder &p_bark, Builder &r_ice) const;
+	void _glaze_surface(const Ref<ArrayMesh> &p_mesh, const Builder &p_ice, const Ref<ArrayMesh> &p_material_source, Array &r_static_materials);
 	float _silt_at(const Vector3 &p_pos, const Vector3 &p_normal) const;
 	void _flood_wrack();
 	// Deer browse (trees.md 5aw): browse 0..1 is the browsing pressure, browse_height the reach (red deer about 1.8 m,
@@ -1225,6 +1230,8 @@ public:
 	float get_ground_slope() const { return ground_slope; }
 	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }
 	void set_stilt_height(float p_v) { stilt_height = CLAMP(p_v, 0.0f, 1.5f); }
+	void set_glaze_mm(float p_v) { glaze_mm = CLAMP(p_v, 0.0f, 60.0f); }
+	float get_glaze_mm() const { return glaze_mm; }
 	void set_flood_height(float p_v) { flood_height = CLAMP(p_v, 0.0f, 6.0f); }
 	float get_flood_height() const { return flood_height; }
 	void set_flood_years(float p_v) { flood_years = CLAMP(p_v, 0.0f, 30.0f); }

@@ -23,6 +23,9 @@ extends Node3D
 #             the sun dries puddles faster than the shade of a canopy and than the night
 #   dew       a clear calm night wets open ground with dew, and frosts it below freezing; clouds and a canopy keep it
 #             dry; the morning sun melts the frost
+#   glaze     a warm nose aloft over -3 C air: the snow melts aloft and lands as freezing rain (rain_share_at
+#             through the contract too), glazing twigs as Jones's (1998) model says; a deep cold layer refreezes it
+#             to pellets (Bourgouin 2000); a thaw takes the ice off; the ice-storm knob holds a glaze
 #   lightning a tall mast takes the strike meant for the ground beside it; striking distance on IEC 62305
 #   fire      a long continuing current lights dry fuel, not wet (PhysX)
 #   contact   a body in world_contact flattens grass without being in grass_trample, and herbs where there is no grass
@@ -240,6 +243,10 @@ func _ready() -> void:
 			await _salt_view(a.substr(7), not OS.get_cmdline_user_args().has("--salt-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
 			return
+		if a.begins_with("--rime="):
+			await _rime_view(a.substr(7), OS.get_cmdline_user_args().has("--rime-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
 		if a.begins_with("--frost="):
 			await _frost_view(a.substr(8), OS.get_cmdline_user_args().has("--frost-off"))
 			get_tree().quit()
@@ -267,6 +274,7 @@ func _ready() -> void:
 	await _air_tests()
 	await _water_tests()
 	await _dew_tests()
+	await _glaze_tests()
 	await _lightning_tests()
 	_fire_tests()
 	await _contact_tests()
@@ -292,6 +300,7 @@ func _ready() -> void:
 	await _spray_sand_tests()
 	await _orographic_tests()
 	await _cold_pool_tests()
+	await _rime_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -1465,6 +1474,62 @@ func _contract_tests() -> void:
 		_check("contracts: weather defaults with no producer", wx.air_temperature_at(Vector3.ZERO) == 15.0 and wx.wind_at(Vector3.ZERO) == Vector3.ZERO and wx.rain_share_at(Vector3.ZERO) == 1.0, "")
 
 
+func _glaze_tests() -> void:
+	var m := _new_map()
+	m.air_daily_cycle = false
+	m.ground_height = 0.0
+	m.temperature = -3.0
+	m.humidity = 0.95
+	m.wind_speed = 5.0
+	m.rain_rate = 3.0
+	m.cloud_cover = 1.0
+	var p := Vector3(10, 0, 10)
+	# No warm layer: at -3 C nearly all of it is snow, no glaze.
+	m.warm_nose_temperature = 0.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	var cold_glaze: float = m.get_glaze_at(p)
+	var cold_share: float = m.get_rain_share_at(p)
+	# A warm nose peaking at +4 C, its base 1 km up: the snow melts aloft, the drops reach the -3 C ground liquid.
+	m.warm_nose_temperature = 4.0
+	m.warm_nose_base = 1000.0
+	m.snap_to_settings()
+	var share: float = m.get_rain_share_at(p)
+	var freezing: float = m.get_freezing_share_at(p)
+	var wx: WorldWeather = WorldContracts.get_weather()
+	_check("glaze: a warm layer aloft turns -3 C snow into freezing rain, through the contract too", cold_share < 0.1 and share > 0.95 and freezing > 0.95 and m.get_snowfall_at(p) < 0.1 * m.get_rain_at(p) and wx.rain_share_at(p) > 0.95, "share %.2f without, %.2f with (freezing %.2f, contract %.2f), snow %.2f mm/h" % [cold_share, share, freezing, wx.rain_share_at(p), m.get_snowfall_at(p)])
+	var rate: float = m.get_rain_at(p) * freezing
+	m.advance(6.0 * 3600.0)
+	var glaze: float = m.get_glaze_at(p)
+	var expect: float = WeatherMap3D.glaze_accretion_rate(rate, m.get_wind_at(p, 10.0).length()) * 6.0
+	_check("glaze: six hours of freezing rain glaze twigs as Jones (1998), little without the warm layer", absf(glaze - expect) < 0.15 * expect and cold_glaze < 0.1 * glaze, "%.2f mm (model %.2f at %.2f mm/h), %.2f mm without the warm layer" % [glaze, expect, rate, cold_glaze])
+	_check("glaze: WorldWeather.glaze_at reads the weather's glaze", wx.has_provider() and is_equal_approx(wx.glaze_at(p), glaze), "%.2f mm" % wx.glaze_at(p))
+	# A deep, cold layer under the warm nose refreezes the drops to ice pellets: no glaze from them.
+	m.warm_nose_base = 1500.0
+	m.temperature = -10.0
+	m.snap_to_settings()
+	var pellets_freezing: float = m.get_freezing_share_at(p)
+	_check("glaze: a deep cold layer refreezes the drops to pellets", pellets_freezing < 0.05, "freezing share %.3f" % pellets_freezing)
+	# The thaw: +4 C and a fresh wind take it off.
+	m.temperature = 4.0
+	m.rain_rate = 0.0
+	m.cloud_cover = 0.0
+	m.wind_speed = 8.0
+	m.snap_to_settings()
+	m.advance(3.0 * 3600.0)
+	var thawed: float = m.get_glaze_at(p)
+	m.advance(6.0 * 3600.0)
+	var gone: float = m.get_glaze_at(p)
+	_check("glaze: a thaw takes the ice off (0.3 mm/h per K, Hock 2003)", absf(glaze - thawed - 3.6) < 0.4 and gone == 0.0, "%.2f mm left of %.2f after 3 h at 4 C, %.2f after 9 h" % [thawed, glaze, gone])
+	# The ice-storm knob holds a glaze for tests and set pieces.
+	m.ice_storm_glaze = 12.0
+	_check("glaze: the ice-storm knob holds its glaze", m.get_glaze_at(p) >= 12.0 and wx.glaze_at(p) >= 12.0, "%.2f mm" % m.get_glaze_at(p))
+	m.ice_storm_glaze = 0.0
+	m.queue_free()
+	await get_tree().physics_frame
+
+
 func _dew_tests() -> void:
 	var m := _new_map()
 	var c := _new_clock(10, 0.0)
@@ -1557,6 +1622,75 @@ func _dew_tests() -> void:
 	c.queue_free()
 	await get_tree().physics_frame
 
+
+
+func _rime_view(path: String, off: bool, pt: bool) -> void:
+	# A ridge in supercooled cloud, the wind from the left (-x): rime on the faces turned that way.
+	var m := _new_map()
+	m.ground_height = 0.0
+	m.cloud_base_height = -200.0
+	m.cloud_cover = 1.0
+	m.wind_speed = 10.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = -6.0
+	m.humidity = 0.98
+	m.air_follows_climate = false
+	m.rime = not off
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	print("rime %.1f mm" % m.get_rime_at(Vector3.ZERO).length())
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-30, -30, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.62, 0.66, 0.72)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.64, 0.7)
+	env.environment.ambient_light_energy = 0.6
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	add_child(env)
+	var wall := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(1.5, 3, 1.5)
+	wall.mesh = bm
+	wall.rotation_degrees = Vector3(0, 35, 0)
+	wall.position = Vector3(2.2, 1.5, -1.5)
+	wall.material_override = TerrainMaterial3D.new()
+	add_child(wall)
+	var gen := PlantGenerator.new()
+	gen.preset = 0
+	gen.apply_preset_colors()
+	var fern := MeshInstance3D.new()
+	fern.mesh = gen.generate()
+	fern.position = Vector3(0.3, 0, 1.0)
+	add_child(fern)
+	var rg := RockGenerator.new()
+	rg.seed = 3
+	var rock := MeshInstance3D.new()
+	rock.mesh = rg.generate()
+	rock.position = Vector3(-1.6, 0, 0.5)
+	add_child(rock)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 1.4, 5.5)
+	cam.rotation_degrees = Vector3(-10, 0, 0)
+	add_child(cam)
+	cam.make_current()
+	for i in 30:
+		await RenderingServer.frame_post_draw
+	if pt:
+		env.environment.pathtracing_enabled = true
+		for i in 40:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
 
 
 func _frost_view(path: String, off: bool) -> void:
@@ -1923,6 +2057,40 @@ func _cold_pool_tests() -> void:
 	m.queue_free()
 	c.queue_free()
 	valley.queue_free()
+	await get_tree().physics_frame
+
+
+# Rime: a summit in supercooled cloud and a westerly wind; the deposit grows into the wind and goes in a thaw.
+func _rime_tests() -> void:
+	WorldContracts.clear_overrides()
+	var m := _new_map()
+	m.ground_height = 1200.0
+	m.cloud_base_height = 1000.0
+	m.cloud_cover = 1.0
+	m.wind_speed = 10.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = -6.0
+	m.humidity = 0.98
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(6.0 * 3600.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var at := Vector3(0, 1200, 0)
+	var lwc: float = w.fog_water_at(at)
+	var r: Vector3 = w.rime_at(at)
+	var rate: float = WeatherMap3D.rime_accretion_rate(lwc, 10.0, -6.0)
+	_check("rime: a summit in supercooled cloud grows rime into the wind (Makkonen 2000), about the rate's worth", r.length() > 5.0 and r.x < -0.95 * r.length() and absf(r.length() - 6.0 * rate) < 0.2 * 6.0 * rate + 1.0, "%.1f mm toward (%.2f, %.2f) in 6 h of %.2f g/m3 cloud at 10 m/s (%.1f mm/h)" % [r.length(), r.x / maxf(r.length(), 1e-4), r.z / maxf(r.length(), 1e-4), lwc, rate])
+	var warm: float = WeatherMap3D.rime_accretion_rate(lwc, 10.0, 0.5)
+	m.cloud_base_height = 2500.0
+	m.temperature = 4.0
+	m.snap_to_settings()
+	m.advance(6.0 * 3600.0)
+	var left: float = w.rime_at(at).length()
+	_check("rime: none grows above freezing (wet growth is glaze), and a thaw out of the cloud sheds it", warm == 0.0 and left < 0.5, "%.2f mm/h at +0.5 C; %.2f mm left after 6 h at +4 C" % [warm, left])
+	m.rime = false
+	_check("rime: off, none", w.rime_at(at) == Vector3(), "")
+	m.queue_free()
 	await get_tree().physics_frame
 
 

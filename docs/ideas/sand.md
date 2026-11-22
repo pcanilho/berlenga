@@ -995,3 +995,28 @@ get_blown_at() (so GroundStreamers3D) all take (1 - crust).
   agree at 100% crop.
 - Not yet: the crust's own look (sealed skin, fewer grain glints) and crust plates breaking under feet; drops
   under trees as larger drip craters.
+
+## Adhesion warts (GroundSurface3D `adhesion_warts`, on; built 22 Nov 2026)
+
+The card's next option, built while the card stays open. Saltating grains that land on a damp surface stick there,
+held by the pore water's menisci, and build up into adhesion structures: irregular warts on a damp flat, adhesion
+ripples where the wind is steady, growing upwind as dry sand keeps landing (Hunter 1973, "Pseudo-cross-lamination
+formed by climbing adhesion ripples"; Kocurek and Fielder 1982, "Adhesion structures"). Typical of wet interdunes,
+sabkhas, beaches above the swash and oasis margins.
+
+- State: patch-wide growth 0..1 that saltation builds (u*/u*t - 1, an hour at twice the threshold to full, sped by
+  ripple_time_scale) and rain flattens (e-folding over 1 mm); the wind that built them. In _adhesion() next to the
+  rain marks, published in the ripple map's meta texel 7 (wind x, z, growth).
+- Where: per pixel, where the wet map's pore water is over 0.15 to 0.3 (ground_wet.x; the pool's own water hides
+  them where it stands), on the sand share. They go as the sand dries (dry warts blow away with the loose sand).
+- Drawing: ground_adhesion_warts() (material.cpp, raygen copy; TerrainMaterial3D calls the shared one): the tops
+  of two octaves of warped value noise, turned against each other, over a threshold that falls with growth, longer
+  across the wind, patchy over decimetres; 2 to 5 mm high; slope by differences; the lumps' tops count as dry (pore
+  water x 0.2), so they read pale on the dark damp sand. Unresolved (finer than about three pixels) they fade to the
+  mean dry share.
+- First scout: hashed ellipses read as scattered dots, and a gate on the wet map's film channel left a hard line
+  along the saturated strip; replaced by the noise field and the pore-water gate only.
+- Checks: ground --test=rain (saltation grows them, rain flattens them, off reads nothing); --view=fringe --adhesion
+  --no-nmap --taa --cam=0,0.6,2.3,0,0,1.5 --sun=-14,90 (with --prop=adhesion_warts:false for the before).
+- Not yet: true upwind-climbing adhesion ripples under a steady wind; warts on rain-damp sand (the weather's surface
+  wetness rather than the ground's own pore water).

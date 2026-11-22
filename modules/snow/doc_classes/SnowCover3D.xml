@@ -47,6 +47,16 @@
 				Adds [param swe_mm] of snow water equivalent everywhere on the map at [param density] (kg/m³), as fresh snow. For scenes that start under snow. With [param world], the world tier outside the near square takes it too (a storm over the whole terrain); false keeps it to the near square.
 			</description>
 		</method>
+		<method name="add_drift">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="depth" type="float" />
+			<param index="3" name="density" type="float" default="300.0" />
+			<description>
+				Lays a cone of wind-packed snow on the near square: [param depth] metres at [param position], fading to none at [param radius] metres, at [param density] kg/m³ (counted as wind slab). For drifts, ploughed banks and piles in scenes and tests.
+			</description>
+		</method>
 		<method name="add_depth_hoar">
 			<return type="void" />
 			<param index="0" name="share" type="float" />

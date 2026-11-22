@@ -365,6 +365,13 @@
 				The terrain climate's precipitation factor applied to the rain at [param position]; 1 with [member orographic_rain] off or no climate.
 			</description>
 		</method>
+		<method name="get_rime_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The rime at [param position] (see [method WorldWeather.rime_at]).
+			</description>
+		</method>
 		<method name="get_salt_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -873,6 +880,15 @@
 				Removes the storm with this [param id].
 			</description>
 		</method>
+		<method name="rime_accretion_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="cloud_water" type="float" />
+			<param index="1" name="wind_m_s" type="float" />
+			<param index="2" name="celsius" type="float" />
+			<description>
+				Rime growth on a twig in mm/h: collision efficiency 0.3 x cloud water (g/m3) x wind, at 300 kg/m3 (Makkonen 2000; ISO 12494); none at or above 0 C, fading in above -1 C.
+			</description>
+		</method>
 		<method name="set_cloud_effector">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
@@ -998,6 +1014,9 @@
 		</member>
 		<member name="orographic_rain" type="bool" setter="set_orographic_rain" getter="is_orographic_rain_enabled" default="true">
 			Rain follows the terrain climate ([method WorldContracts.climate_precipitation_factor_at]): more on windward slopes, less in the lee. Rain or snow is decided by the air at each cell's own ground height, so the snow line follows the terrain.
+		</member>
+		<member name="rime" type="bool" setter="set_rime" getter="is_rime_enabled" default="true">
+			Where the ground stands in supercooled cloud (fog water below 0 C) rime grows on twigs and edges into the wind; it sheds in a thaw, in sun and in rain. Kept per cell as mm along the way into the wind; the frost map's blue and alpha carry it to plants, rocks and steep terrain ([code]weather_rime_apply[/code]).
 		</member>
 		<member name="sea_spray" type="bool" setter="set_sea_spray" getter="is_sea_spray_enabled" default="true">
 			Sea spray on the shore: breaking waves ([method WorldWater.breaking_at]) make spray in proportion to the breaker height and the square of the wind past 2 m/s; the wind carries it inland over a square round the follow point. Coarse drops settle within tens of metres ([code]u (1 + H) / 1 m/s[/code]) and wet surfaces and the soil; rising ground catches them, so a cliff face takes the spray and its top stays drier. Fine salt aerosol reaches hundreds of metres ([code]50 s x u[/code]). The salt stays on surfaces until rain washes it off (all but a third by 5 mm) and is published with the spray's wetness as the [code]weather_spray_map[/code] global (R wetness, G [code]1 - exp(-salt / 10 g/m2)[/code]); grass browns at the tips from salt burn.

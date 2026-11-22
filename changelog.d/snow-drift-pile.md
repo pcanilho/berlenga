@@ -1,0 +1,1 @@
+- Snow: `SnowCover3D.add_drift` lays a cone of wind-packed snow (drifts, ploughed banks, piles) for scenes and tests.

@@ -211,6 +211,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		float direct_normal = 0.0f; // W/m2 at the ground, clear sky
 		float wind_factor = 0.0f; // drift weight, 0..1
 		float wind_speed = 0.0f; // m/s, the flat-ground wind at 10 m
+		float warm_nose_melt = 0.0f; // share melted in a warm layer aloft (WeatherMap3D), falling as rain
 		float drift_norm = 1.0f;
 		float base_precip = 0.0f;
 		double weather_dt = 0.0; // s of weather time this update steps
@@ -542,6 +543,7 @@ public:
 	void advance(float p_seconds);
 	void clear();
 	void add_snow(float p_swe_mm, float p_density = 100.0f, bool p_world = true);
+	void add_drift(const Vector3 &p_position, float p_radius, float p_depth, float p_density = 300.0f);
 	void refresh_heights();
 
 	Rect2 get_map_rect() const;

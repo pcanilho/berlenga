@@ -2522,6 +2522,45 @@ float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_interdune) {
 	float thin = p_interdune;
 	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
 }
+// Adhesion warts (GroundSurface3D adhesion_warts; docs/ideas/sand.md, "Adhesion warts"): dry grains the wind drives
+// onto damp sand stick where they land and build irregular lumps, longer across the wind, about 1 to 2 cm across and
+// a few millimetres high, their tops of dry, paler grains (Hunter 1973; Kocurek and Fielder 1982). p_grow: how far
+// they have grown (0..1) times the damp share; p_wind: the wind that built them (unit, x and z); p_fp: the pixel's
+// footprint (m), lumps finer than about three pixels fade to their mean. Returns the slope (dh/dx, dh/dz); p_cap: the
+// share of dry grains on top (it dries the pixel's pore water).
+vec2 ground_adhesion_warts(vec2 p_xz, float p_grow, vec2 p_wind, float p_fp, out float p_cap) {
+	p_cap = 0.0;
+	if (p_grow <= 0.0 || dot(p_wind, p_wind) < 0.5) {
+		return vec2(0.0);
+	}
+	float res = 1.0 - smoothstep(0.002, 0.006, p_fp);
+	if (res <= 0.0) {
+		p_cap = 0.5 * p_grow;
+		return vec2(0.0);
+	}
+	// Lumps a centimetre or two across, longer across the wind, that merge into a rough skin as they grow: the
+	// tops of two octaves of value noise over a threshold that falls with the growth, warped and turned against
+	// each other so no lattice shows.
+	vec2 k = p_wind;
+	vec2 t = vec2(-k.y, k.x);
+	// Patchy over decimetres, as the supply of blown grains and the dampness are.
+	float gl = p_grow * mix(0.45, 1.0, ground_ripple_vn(p_xz / 0.7, 79u));
+	float th = 0.72 - 0.3 * gl;
+	float H = 0.002 + 0.003 * gl;
+	float e = 0.0015;
+	vec3 h3;
+	for (int i = 0; i < 3; i++) {
+		vec2 q = p_xz + (i == 1 ? vec2(e, 0.0) : (i == 2 ? vec2(0.0, e) : vec2(0.0)));
+		vec2 ab = vec2(dot(q, k), dot(q, t));
+		ab += 0.005 * vec2(ground_ripple_vn(ab / 0.011, 77u), ground_ripple_vn(ab / 0.011 + 17.3, 78u));
+		vec2 ab2 = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * ab;
+		float n = 0.65 * ground_ripple_vn(ab / vec2(0.008, 0.013), 75u) + 0.35 * ground_ripple_vn(ab2 / vec2(0.0035, 0.005), 76u);
+		h3[i] = smoothstep(th, th + 0.22, n);
+	}
+	// The mean dry-topped share where the lumps are finer than the pixel.
+	p_cap = mix(0.5 * p_grow, h3.x, res);
+	return res * H * vec2(h3.y - h3.x, h3.z - h3.x) / e;
+}
 // Rain pits (GroundSurface3D rain_pits; docs/ideas/sand.md, "Rain pits and rain crust"): each drop digs a crater
 // about 2.5 times its own size, some 0.12 of its width deep, ringed by a low rim of the sand it throws out
 // (Katsuragi 2010; Zhao, van der Meer and Lohse 2015), 3 to 7 mm across here, with two chances in each 1 cm cell,
@@ -3544,6 +3583,17 @@ void main() {
 							m.normal = normalize(m.normal - vec3(gps.x, 0.0, gps.y));
 						}
 					}
+					// Adhesion warts (material.cpp, the same lines).
+					vec4 m7 = ts.x >= 8 ? texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(7, ts.y - 1), 0) : vec4(0.0);
+					if (m7.z > 0.0) {
+						float gdamp = smoothstep(0.15, 0.3, g_wet);
+						float gcap;
+						vec2 gas = ground_adhesion_warts(p, m7.z * gdamp * gsa.y, m7.xy, rt_cone_width, gcap);
+						if (gas != vec2(0.0)) {
+							m.normal = normalize(m.normal - vec3(gas.x, 0.0, gas.y));
+						}
+						g_wet *= 1.0 - 0.8 * gcap;
+					}
 				}
 			}
 			if (m2.x > 0.5 && rn > 0) {
@@ -3888,7 +3938,7 @@ void main() {
 			float gzcover = smoothstep(0.0, 1.0, gzmm);
 			if (gzcover > 0.0) {
 				vec4 gzwet = rt_material_wetness(mat);
-				float gzpor = gzwet.z > 0.5 ? gzwet.x : 0.5;
+				float gzpor = gzwet.z > 0.5 ? gzwet.x : 0.3; // Without Wetness: bark, a middling porosity (birch bark barely soaks).
 				m.albedo *= mix(1.0, mix(1.0, 0.2, (1.0 - m.metalness) * gzpor), gzcover);
 				m.roughness = mix(m.roughness, 0.06, gzcover);
 				m.specular = mix(m.specular, 0.225, gzcover);

@@ -484,7 +484,7 @@ void WeatherMap3D::_allocate() {
 	cell_smoke.fill(0.0f);
 	wind_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
 	state_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
-	frost_image = Image::create_empty(n, n, false, Image::FORMAT_RGH);
+	frost_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
 	frost_texture.unref();
 	gust_image = Image::create_empty(GUST_COUNT, 1, false, Image::FORMAT_RGBAF);
 	wind_texture.unref();
@@ -1236,8 +1236,12 @@ void WeatherMap3D::_upload_row(uint32_t p_row, UploadPass *p_pass) {
 		s[i * 4 + 1] = Math::make_half_float(wet);
 		s[i * 4 + 2] = Math::make_half_float(cell_puddle[i]);
 		s[i * 4 + 3] = Math::make_half_float(cell_film[i]);
-		fp[i * 2 + 0] = Math::make_half_float(cell_frost[i]);
-		fp[i * 2 + 1] = Math::make_half_float(cell_cooling[i]);
+		fp[i * 4 + 0] = Math::make_half_float(cell_frost[i]);
+		fp[i * 4 + 1] = Math::make_half_float(cell_cooling[i]);
+		// Rime, mm into the wind (x, z).
+		const bool rimed = rime && cell_rime_x.size() == n * n && cell_rime_z.size() == n * n;
+		fp[i * 4 + 2] = Math::make_half_float(rimed ? cell_rime_x[i] : 0.0f);
+		fp[i * 4 + 3] = Math::make_half_float(rimed ? cell_rime_z[i] : 0.0f);
 	}
 }
 
@@ -1252,7 +1256,7 @@ void WeatherMap3D::_upload() {
 		Vector<uint8_t> sd;
 		sd.resize(n * n * 8);
 		Vector<uint8_t> fd;
-		fd.resize(n * n * 4);
+		fd.resize(n * n * 8);
 		UploadPass up;
 		up.wind = reinterpret_cast<uint16_t *>(wd.ptrw());
 		up.state = reinterpret_cast<uint16_t *>(sd.ptrw());
@@ -1263,7 +1267,7 @@ void WeatherMap3D::_upload() {
 		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
 		wind_image->set_data(n, n, false, Image::FORMAT_RGBAH, wd);
 		state_image->set_data(n, n, false, Image::FORMAT_RGBAH, sd);
-		frost_image->set_data(n, n, false, Image::FORMAT_RGH, fd);
+		frost_image->set_data(n, n, false, Image::FORMAT_RGBAH, fd);
 	}
 	_fill_gust_image();
 	if (wind_texture.is_null()) {
@@ -3679,6 +3683,9 @@ WeatherMap3D::Snapshot WeatherMap3D::get_snapshot() const {
 	r.shadow_size = shadow_size;
 	r.shadow_res = shadow_res;
 	r.shadow_values = shadow_values;
+	r.ground_height = ground_height;
+	r.warm_nose_temperature = warm_nose_temperature;
+	r.warm_nose_base = warm_nose_base;
 	return r;
 }
 

@@ -1059,6 +1059,15 @@ Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour
     spots left where boulders were match the ground's contact darkening, so the boulders are likely gone from the
     TLAS altogether rather than hidden from camera rays. Next suspect: the per-mesh BLAS that expanded copies share
     (cache key = mesh RID index and surface), lost when far copies of the same mesh turn merged.
+  - 22 Nov (main 986d3581, still broken; parked for the weather work). Ruled out: the near merged entries (every
+    merged MultiMesh within 30 m has the same count, primitives, divisor, flags, scheduler action and record
+    positions thinned and unthinned); the BLAS batch's scratch rollover (scratch raised to 4 GB: same frame); a
+    first-frame race (every merged BLAS forced to rebuild 15 frames later, a few per frame: same frame). No single
+    group does it: thinning groups 600-675 alone changes 855 pixels, 675-750 alone none, 0-750 together 10,700, so a
+    total crosses a line. It is not an overflow: the broken frame has fewer TLAS instances (28,255 against 28,703
+    good and 32,207 unthinned), fewer primitives (256 M against 259 M and 301 M) and fewer rows. Next: look at what
+    the camera rays hit at a missing boulder's pixel (instance and primitive ids, a debug output in raygen), and the
+    merged bakes' GPU contents rather than their CPU records.
 - The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
   world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
   Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.
@@ -1228,8 +1237,11 @@ cave's ground from the band changed nothing on screen.
 
 On rock slopes (20 to 32 degrees and up) inside a patch, the ground now gets relief: noise of 2.5 m amplitude over 4 m,
 1.25 m over 1.6 m, and the wall's finer octaves. It fades to nothing 1 m inside the patch edge, so it meets the
-landscape. At 0.4 of that amplitude the crease stayed straight. The cave's ground also stops 0.5 m outside the
-landscape's hole, so the band beyond is drawn once, by the landscape. `CAVE_PATCH_DEBUG=1` prints each patch's fit.
+landscape. At 0.4 of that amplitude the crease stayed straight. `CAVE_PATCH_DEBUG=1` prints each patch's fit.
+
+(For a day the cave's ground also stopped 0.5 m outside the landscape's hole. That was undone on 22 Nov: the landscape
+drops each quad whose centre is in the hole, so its edge can stand half a quad outside it, and hairline cracks along
+that edge showed the bright sea through as a dotted pale streak. The cave's ground again covers the whole patch.)
 
 Follow-up (21 Nov): the lower end of the crease still showed as a thin pale streak down to the water, where the relief
 was still fading in near the patch edge. The fitted patch now reaches 4 m past the passage's air (was 2.5 m).
@@ -1238,3 +1250,11 @@ The same shots logged about 15,000 "Vector3 cannot be normalized" warnings. The 
 NaN heights, and Godot Physics' height map still built triangles over them: the sea's contact-foam rays and Flow's
 floor probe got NaN planes. Height-map triangles with a NaN corner now count as hole (ray test and shape cull), and
 the per-chunk height bounds skip NaN. Found by linking an unstripped binary and breaking on `_err_print_error` in gdb.
+
+Follow-up (22 Nov): a faint dotted hairline stayed down the mouth in the lit sea cave shot. Pixel checks put every dot
+on the outermost pixels of the cave's ground along its silhouette, and the dots vanish when that ground is drawn
+without specular: the low sun ahead (12 degrees up) glints off the wet ground seen exactly edge on, under a pixel wide.
+It is not a crack (shadow bias, chunk seams, the fine/coarse seam and the landscape overlap were each ruled out).
+Changes made on the way: chunk sample and vertex positions now come from whole world cell indices (N * c is not
+exactly chunk_size in floating point), and the crest relief starts 2 m inside the patch, past where the landscape's
+ground can reach (its hole is 1.5 m in, less half a quad), with the fitted patch 5 m past the passage's air.

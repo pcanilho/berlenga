@@ -213,6 +213,13 @@
 				Override in a stub to replace [method rainfall_at].
 			</description>
 		</method>
+		<method name="_rime_at" qualifiers="virtual const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override for [method rime_at].
+			</description>
+		</method>
 		<method name="_salt_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -520,6 +527,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Rain at [param position] (mm/h of liquid). Default 0.
+			</description>
+		</method>
+		<method name="rime_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Rime on exposed twigs and edges at [param position]: the length is the deposit in mm, the direction horizontal and into the wind it grew from (the feathers point that way). Supercooled cloud freezing on contact (Makkonen 2000); zero with no producer.
 			</description>
 		</method>
 		<method name="salt_at" qualifiers="const">

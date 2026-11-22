@@ -120,6 +120,12 @@
 				How hard the hull pushes the water at the last step, 0 to 1 (the strongest of three points along its keel, given to the water contract as moving disturbances that the water's wave solver turns into a bow wave and a wake): 0.15 at rest, rising to 1 at a depth Froude number of 0.8, times how much of the hull is wet. See [member river_forces].
 			</description>
 		</method>
+		<method name="get_intake_trough" qualifiers="const">
+			<return type="float" />
+			<description>
+				How much lower the water stands at the engine's air intake than the still surface, m, at the last step: about the stagnation head v^2 / 2g at a wading pace (the bow's trough), turning negative past a depth Froude number of 0.7 as the bow wave stands up and climbs over the bonnet. The intake (see [member air_intake_height]) reads the water at this level.
+			</description>
+		</method>
 		<method name="get_cab_water" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -487,7 +493,7 @@
 			The reverse gear's ratio, as a positive number. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
 		</member>
 		<member name="river_forces" type="bool" setter="set_river_forces" getter="is_river_forces" default="true">
-			In any water of the water contract (a river, a ford, a flood, a lake) the chassis box and the tyres are buoyed by the water they keep out ([member hull_seal]) and dragged by the current past them (drag coefficient 1.1 on the wet face), so a fording vehicle is lightened, its tyres grip less and the current carries it off past the depth and speed vehicle flood tests find. Its hull also pushes a bow wave and a wake into the water (see [method get_bow_wave_strength]). Skipped when the vehicle has a [code]PhysXBuoyancy3D[/code] child.
+			In any water of the water contract (a river, a ford, a flood, a lake) the chassis box and the tyres are buoyed by the water they keep out ([member hull_seal]) and dragged by the current past them (drag coefficient 1.1 on the wet face), so a fording vehicle is lightened, its tyres grip less and the current carries it off past the depth and speed vehicle flood tests find. Its hull also pushes a bow wave and a wake into the water (see [method get_bow_wave_strength]), whose waves wash the banks of the active [GroundSurface3D] (see [member GroundSurface3D.wake_wash]). Skipped when the vehicle has a [code]PhysXBuoyancy3D[/code] child.
 		</member>
 		<member name="snorkel" type="bool" setter="set_snorkel" getter="has_snorkel" default="false">
 			A snorkel: the engine's air intake raised to 0.25 m over the chassis box's roof, so it wades as deep as the body allows.

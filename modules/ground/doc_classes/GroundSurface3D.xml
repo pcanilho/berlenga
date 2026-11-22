@@ -123,6 +123,12 @@
 				Takes [param depth] m of sand out of a disc of [param radius] at [param position], any rim there first. Returns the volume, m3 ([code]0[/code] off soft ground). For grains leaving the ground ([PhysXGroundGrains3D]).
 			</description>
 		</method>
+		<method name="get_adhesion_growth" qualifiers="const">
+			<return type="float" />
+			<description>
+				How far the adhesion warts have grown on the damp sand, 0 to 1 (0 with [member adhesion_warts] off).
+			</description>
+		</method>
 		<method name="get_blown_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="x" type="float" />
@@ -829,8 +835,22 @@
 				How far [param passes] wheel passes pack the soil, 0 to 1: most of it in the first few ([code]1 - exp(-passes / 4)[/code]).
 			</description>
 		</method>
+		<method name="wash_wake">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="velocity" type="Vector3" />
+			<param index="2" name="half_width" type="float" />
+			<param index="3" name="water_level" type="float" />
+			<param index="4" name="delta" type="float" />
+			<description>
+				A hull at [param position] moving at [param velocity] through water standing at [param water_level] washes the banks on both sides for [param delta] seconds. Its waves start at v^2 / g crest to trough (at most 0.78 of the depth) and lose height away from the sailing line as y^-1/3 (Havelock); at the waterline they break, run up the bank about their own height and erode it at Partheniades' rate past its critical shear, the fines going into the water. Called by [code]PhysXVehicle3D[/code] while its bow is in the water. [method get_ford_stats] counts [code]wake_wash_kg[/code], [code]wake_water_m3[/code] and the last [code]wake_height[/code].
+			</description>
+		</method>
 	</methods>
 	<members>
+		<member name="adhesion_warts" type="bool" setter="set_adhesion_warts" getter="is_adhesion_warts" default="true">
+			If [code]true[/code], blown dry sand sticks where it lands on damp sand (the wet map's pore water, short of standing water) and builds small irregular warts that grow into the wind, with pale dry tops. They grow with the saltation (about an hour of strong wind to full size, faster with [member ripple_time_scale]), rain flattens them, and they go as the sand dries. Drawn in raster and path tracing; needs [member wind_ripples] and [member dune_tone]. See [method get_adhesion_growth].
+		</member>
 		<member name="character_contact_area" type="float" setter="set_character_contact_area" getter="get_character_contact_area" default="0.035">
 			The contact area of a [CharacterBody3D] in [member deform_groups] without a [code]ground_contact_area[/code] meta, in m² (one boot by default).
 		</member>
@@ -1061,6 +1081,9 @@
 		</member>
 		<member name="stream_fords" type="bool" setter="set_stream_fords" getter="is_stream_fords" default="true">
 			Wheels in running water from the water contract scour the bed: a share of the rut (rising with the current's shear past the remoulded soil's 0.5 Pa) and most of its rims leave as fines dropped into the water ([method WorldWater.add_sediment_mass]), a plume the stream carries on. A wheel on a bank over water tests the bank as an infinite-slope slab 0.5 m deep (Skempton and DeLory 1957) under its load, carried undrained by the pore water where the slab lies below the water table (the stream's level plus a 0.3 m fringe); under a factor of safety of 1 the slab slumps to the toe as fresh mud and half its fines go into the water.
+		</member>
+		<member name="wake_wash" type="bool" setter="set_wake_wash" getter="is_wake_wash" default="true">
+			A wading vehicle's waves wash the banks (see [method wash_wake]): they break on the bank, wet the strip they run up and, past the soil's critical shear, wear it into the water as fines. Needs [member stream_fords].
 		</member>
 		<member name="subsoil" type="bool" setter="set_subsoil" getter="is_subsoil" default="true">
 			A firm base under the loose layer of soil or mud. The layer's depth over it varies across the ground (0.7 to 1.3 times the material's depth, over a few metres; [method get_subsoil_depth_at]). As a wheel or foot presses the layer thinner than its own width, the soil stiffens against the base (finite-depth pressure-sinkage), and a tyre that reaches the base grips on it (friction 0.5) instead of on the mud above. Off: the base is only a hard stop.

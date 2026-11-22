@@ -553,6 +553,8 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 		in.humidity = humidity;
 	}
 	in.base_precip = precipitation_rate;
+	// Under a warm layer aloft its melted share falls as rain, freezing where it lands on the cold pack.
+	in.warm_nose_melt = in.weather ? in.weather->get_warm_nose_melt() : 0.0f;
 	// The weather the cells read, as it is now: the update may run on a worker while the map moves on.
 	in.wx = in.weather ? in.weather->get_snapshot() : WeatherMap3D::Snapshot();
 	_gather_seal();
@@ -655,7 +657,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				? MAX(cell_climate_precip[i] / in.climate_background, 0.0f)
 				: MAX(1.0f + precipitation_gradient * (h - in.ref_height) * 0.01f, 0.0f);
 		const float p = MAX(rate, 0.0f) * oro * in.dt_h;
-		const float share = snowfall_fraction(t, in.humidity);
+		// The weather's split when it runs (a warm layer aloft melts snow to rain, a deep cold layer refreezes it to
+		// pellets: WeatherMap3D.liquid_share()), else the plain one.
+		const float share = in.wx.valid ? 1.0f - in.wx.liquid_share_at(t, in.humidity, h) : MIN(snowfall_fraction(t, in.humidity), 1.0f - in.warm_nose_melt);
 		float snow = p * share;
 		float rain_extra = 0.0f;
 		const float rain_base = p - snow;
@@ -1433,7 +1437,9 @@ const TerrainDataMap3D *SnowCover3D::_terrain_map() const {
 	if (o->climate_map.is_empty() || !o->is_inside_tree()) {
 		return nullptr;
 	}
-	return Object::cast_to<TerrainDataMap3D>(o->get_node_or_null(o->climate_map));
+	// Its water and heights only once they are baked (a map may carry the climate alone).
+	const TerrainDataMap3D *m = Object::cast_to<TerrainDataMap3D>(o->get_node_or_null(o->climate_map));
+	return m && m->is_baked() ? m : nullptr;
 }
 
 // Main thread: the inputs (weather, sun, wind, Sx) for one update.
@@ -3426,6 +3432,42 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density, bool p_world) {
 	_upload();
 }
 
+// A cone of wind-packed snow (a drift, a plough's bank, a pile), depth at its centre fading to none at the radius,
+// on the near square.
+void SnowCover3D::add_drift(const Vector3 &p_position, float p_radius, float p_depth, float p_density) {
+	_finish_background(true);
+	if (cell_swe.size() != resolution * resolution) {
+		_allocate();
+		_follow(_follow_position());
+	}
+	const float rho_new = CLAMP(p_density, 30.0f, 917.0f);
+	const float r = MAX(p_radius, 0.01f);
+	for (int z = 0; z < resolution; z++) {
+		for (int x = 0; x < resolution; x++) {
+			const Vector3 c = _cell_center(x, z);
+			const float add = MAX(p_depth, 0.0f) * (1.0f - Vector2(c.x - p_position.x, c.z - p_position.z).length() / r);
+			if (add <= 0.0f) {
+				continue;
+			}
+			const int i = z * resolution + x;
+			const float depth_old = cell_swe[i] > SWE_MIN ? cell_swe[i] / cell_density[i] : 0.0f;
+			const float swe = (cell_swe[i] > SWE_MIN ? cell_swe[i] : 0.0f) + add * rho_new;
+			cell_swe.write[i] = swe;
+			cell_density.write[i] = swe / (depth_old + add);
+			if (cell_wind_slab.size() == cell_swe.size()) {
+				cell_wind_slab.write[i] = (depth_old > 0.0f ? cell_wind_slab[i] : 0.0f) + add;
+				cell_slab_cover.write[i] = 0.0f;
+			}
+			if (cell_crust.size() == cell_swe.size() && cell_crust[i] > 0.0f) {
+				cell_crust_burial.write[i] += add;
+			}
+		}
+	}
+	last_step_hours = 0.0f;
+	update_count++;
+	_upload();
+}
+
 void SnowCover3D::refresh_heights() {
 	_finish_background(true);
 	if (cell_ground.size() == resolution * resolution && origin_valid) {
@@ -3967,7 +4009,9 @@ float SnowCover3D::get_snowfall_rate_at(Vector3 p_position) const {
 	const float rate = live ? w->precipitation_at(p_position) : precipitation_rate;
 	const float rh = live ? w->air_humidity_at(Vector3(p_position.x, ref, p_position.z)) : humidity;
 	const float applied = live ? MAX(w->orographic_factor_at(p_position), 0.05f) : 1.0f; // already in precipitation_at
-	return MAX(rate, 0.0f) * get_orographic_factor_at(p_position, ref) / applied * snowfall_fraction(get_air_temperature_at(p_position), rh);
+	// The weather's split (a warm layer aloft melts that share to rain), else the plain one.
+	const float share = live ? 1.0f - w->rain_share_at(p_position) : snowfall_fraction(get_air_temperature_at(p_position), rh);
+	return MAX(rate, 0.0f) * get_orographic_factor_at(p_position, ref) / applied * CLAMP(share, 0.0f, 1.0f);
 }
 
 float SnowCover3D::get_new_snow_at(Vector3 p_position) const {
@@ -4444,6 +4488,7 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("advance", "seconds"), &SnowCover3D::advance);
 	ClassDB::bind_method(D_METHOD("clear"), &SnowCover3D::clear);
 	ClassDB::bind_method(D_METHOD("add_snow", "swe_mm", "density", "world"), &SnowCover3D::add_snow, DEFVAL(100.0f), DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("add_drift", "position", "radius", "depth", "density"), &SnowCover3D::add_drift, DEFVAL(300.0f));
 	ClassDB::bind_method(D_METHOD("refresh_heights"), &SnowCover3D::refresh_heights);
 	ClassDB::bind_method(D_METHOD("get_map_rect"), &SnowCover3D::get_map_rect);
 	ClassDB::bind_method(D_METHOD("get_depth_at", "position"), &SnowCover3D::get_depth_at);

@@ -3872,7 +3872,22 @@ Research: "Research for the likely picks" below. Built so far:
 - Storm bench `--glaze-test`: 6 mm puts 0.6 t on a young birch and 5.8-6.3 t on broad beech, oak and spruce crowns
   (the beech's long laterals bow hard), a thaw lets them stand up again, 25 mm breaks 10 limbs and tops, the spruce
   fewest with the oak and beech.
-- Next: the ice shell and icicles on near trees; bent birch and broken tops as stand variants after a storm.
+- Ice as geometry (22 Nov): TreeGenerator `glaze_mm` builds an "ice" surface (`_glaze_build`, mesh meta
+  `tree_glaze_mm`). Stems and limbs of 4 cm and more: the bark's own vertices pushed out along their normals (relief
+  under the ice, the bark's skin and LOD parts). Thinner wood: a round 6 or 8 sided tube per internode, overlapping at
+  the joints, capped at the tips (the bark's 3 and 4 sided twigs pushed out read as square sticks). The centre rides up
+  a quarter of the glaze (eccentric accretion, deepest on top: Szilder and Lozowski 1994, Makkonen 2000). Icicles
+  under the wood from 2 mm up that slopes less than 45 degrees, about one per 4 cm where a hash lets one grow, 3 to 10
+  glaze depths long (pendant icicles of ice storms; growth, Makkonen 1988), LOD 0 only. Clear ice as SnowIcicles3D's
+  (n 1.31, specular 0.335) but thin walled: as a medium round the wood the path tracer's light paths into the bark
+  crossed it twice more and the white birch drew near black; a few millimetres of ice hardly displace what is under
+  it. The bark's glaze darkening without Wetness takes porosity 0.3 (it was 0.5; birch bark barely soaks).
+  Bench: --set=glaze_mm:7 with GLAZE_HOURS=4; env CROP_HR pins the crop framing.
+- Next: the field picks glazed variants by WorldWeather.glaze_at bands; bent birch and broken tops as stand variants
+  after a storm.
+- Queued after this round (coordinator, 22 Nov): avalanche legacies keyed to WorldStand disturbance 6 (world-links
+  0c249ead): snapped stems lying downslope, flagged crowns at the track edge, green alder and willow thickets in
+  frequent tracks (Bebi et al. 2009).
 
 ## Next-round options (card 20 Nov evening)
 

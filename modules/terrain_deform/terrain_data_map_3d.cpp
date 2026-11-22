@@ -989,6 +989,9 @@ void TerrainDataMap3D::set_publish_shader_globals(bool p_enable) {
 }
 
 float TerrainDataMap3D::contract_water_height_at(const Vector3 &p_position) const {
+	if (!is_baked()) {
+		return -Math::INF; // registered on entering the tree, baked later: no water yet
+	}
 	const float depth = get_water_depth_at(p_position);
 	return depth > 0.005f ? get_height_at(p_position) + depth : -Math::INF;
 }

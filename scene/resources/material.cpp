@@ -759,6 +759,17 @@ float weather_frost_at(vec3 p_world_pos) {
 	return max(textureLod(weather_frost_map, uv, 0.0).r, 0.0);
 }
 
+// Rime on twigs and edges (WeatherMap3D rime): mm along the horizontal way into the wind it grew from (x, z); zero
+// with no weather map.
+vec2 weather_rime_at(vec3 p_world_pos) {
+	if (weather_map_rect.z <= 0.0) {
+		return vec2(0.0);
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(weather_frost_map, 0));
+	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
+	return textureLod(weather_frost_map, uv, 0.0).ba;
+}
+
 global uniform sampler2D weather_spray_map;
 global uniform vec4 weather_spray_rect;
 
@@ -849,6 +860,46 @@ float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, 
 	float cover = smoothstep(0.0, 0.3, p_frost) * smoothstep(0.0, 0.8, p_normal_y);
 	r_albedo = mix(r_albedo, vec3(0.78, 0.8, 0.84), 0.65 * cover);
 	r_roughness = mix(r_roughness, 0.8, cover);
+	return cover;
+}
+
+// Smooth value noise for the rime's grain (trilinear over hashed lattice values, quintic fade).
+float weather_rime_vn(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = p - i;
+	f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+	vec4 h = vec4(0.0, 57.0, 113.0, 170.0) + dot(i, vec3(1.0, 57.0, 113.0));
+	vec4 a = fract(sin(h) * 43758.5453);
+	vec4 b = fract(sin(h + 1.0) * 43758.5453);
+	vec4 x = mix(a, b, f.x);
+	vec2 y = mix(x.xz, x.yw, f.y);
+	return mix(y.x, y.y, f.z);
+}
+
+// Rime (docs/ideas/world-links.md, "Rime"): supercooled cloud frozen on what stands in the wind, on the faces turned
+// into it first; a thick deposit wraps round to the sides (rime ice on summit trees, "snow ghosts"). White and matte,
+// soft rime's albedo about 0.8 (Warren 1982). p_rime from weather_rime_at(), p_normal the world normal, p_pos the
+// world position (the feathers' grain: cells drawn out along the wind, as feathers grow, and finer crust between).
+// Returns the cover.
+float weather_rime_apply(vec2 p_rime, vec3 p_normal, vec3 p_pos, inout vec3 r_albedo, inout float r_roughness) {
+	float mm = length(p_rime);
+	if (mm <= 0.05) {
+		return 0.0;
+	}
+	vec3 into = vec3(p_rime.x, 0.0, p_rime.y) / mm;
+	// The grain in a frame with one axis along the wind: feathers some centimetres long, a few millimetres across.
+	vec3 side = normalize(cross(into, vec3(0.0, 1.0, 0.0)));
+	vec3 q = vec3(dot(p_pos, into) * 18.0, p_pos.y * 70.0, dot(p_pos, side) * 70.0);
+	float grain = 0.6 * weather_rime_vn(q) + 0.4 * weather_rime_vn(q * 2.7 + 19.0);
+	float patch = weather_rime_vn(p_pos * 2.5 + 7.0);
+	float wrap = 0.5 * smoothstep(30.0, 150.0, mm);
+	float face = smoothstep(0.05 - wrap, 0.55 - wrap, dot(p_normal, into) + 0.3 * (patch - 0.5));
+	float cover = smoothstep(0.3, 4.0, mm) * face * smoothstep(-0.9, -0.4, p_normal.y);
+	// Thin rime is separate feathers with the surface between them; thick rime is a crust.
+	float fill = smoothstep(1.0 - smoothstep(0.5, 25.0, mm) - 0.15, 1.0 - smoothstep(0.5, 25.0, mm) + 0.15, grain + 0.2 * patch);
+	cover *= mix(0.35, 1.0, fill);
+	r_albedo = mix(r_albedo, vec3(0.84, 0.86, 0.9) * (0.9 + 0.1 * grain), 0.9 * cover);
+	r_roughness = mix(r_roughness, 0.85, cover);
 	return cover;
 }
 
@@ -1652,6 +1703,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
 		rt.ground_deform_terrain = features[FEATURE_GROUND_DEFORM] && !ground_deform_patch;
 		rt.mud = features[FEATURE_MUD];
+		rt.normal_map = features[FEATURE_NORMAL_MAPPING];
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -3232,6 +3284,21 @@ void fragment() {)";
 		}
 		ALBEDO *= gr_far.z * gr_sort;
 		ground_wet = ground_wet_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		// Adhesion warts (GroundSurface3D adhesion_warts) where blown dry sand sticks to damp sand (the pool's own
+		// water covers them where it stands).
+		{
+			vec4 gm7 = ground_sand_meta7();
+			if (gm7.z > 0.0) {
+				vec2 gax = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
+				float gdamp = smoothstep(0.15, 0.3, ground_wet.x);
+				float gcap;
+				vec2 gas = ground_adhesion_warts(gax, gm7.z * gdamp * ground_sand_at(gax).y, gm7.xy, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), gcap);
+				if (gas != vec2(0.0)) {
+					NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gas.x, 0.0, gas.y, 0.0)).xyz);
+				}
+				ground_wet.x *= 1.0 - 0.8 * gcap;
+			}
+		}
 		// Loose sand shows its grains' colours (sand_glints).
 		if (ground_wet.z > 0.0) {
 			ALBEDO *= mix(1.0, ground_grain_speckle((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, ground_fp), ground_wet.z);
@@ -3245,6 +3312,22 @@ void fragment() {)";
 	ground_wet.z = 0.0;
 	// The dune field's wind ripples past the patch (GroundSurface3D far_ripples), as on the patch past its window.
 	{
+		// Adhesion warts (GroundSurface3D adhesion_warts) where blown dry sand sticks to damp sand (the pool's own
+		// water covers them where it stands).
+		{
+			vec4 gm7 = ground_sand_meta7();
+			if (gm7.z > 0.0) {
+				vec2 gax = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
+				float gdamp = smoothstep(0.15, 0.3, ground_wet.x);
+				float gcap;
+				vec2 gas = ground_adhesion_warts(gax, gm7.z * gdamp * ground_sand_at(gax).y, gm7.xy, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), gcap);
+				if (gas != vec2(0.0)) {
+					NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gas.x, 0.0, gas.y, 0.0)).xyz);
+				}
+				ground_wet.x *= 1.0 - 0.8 * gcap;
+			}
+		}
+
 		vec3 gr_sort;
 		// The dune field's colour at this scale (GroundSurface3D dune_tone), on the sand.
 		{
@@ -3484,7 +3567,7 @@ void fragment() {)";
 	if (glaze) {
 		// Glaze from freezing rain, under any snow that falls on it (weather_glaze_apply()).
 		code += "\t// Glaze: Enabled\n\t{\n";
-		code += String("\t\tfloat glaze_fill = weather_glaze_apply(weather_rain_sample((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz).a, ") + (features[FEATURE_WETNESS] ? "wetness_porosity" : "0.5") + ", METALLIC, ALBEDO, ROUGHNESS, SPECULAR);\n";
+		code += String("\t\tfloat glaze_fill = weather_glaze_apply(weather_rain_sample((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz).a, ") + (features[FEATURE_WETNESS] ? "wetness_porosity" : "0.3") + ", METALLIC, ALBEDO, ROUGHNESS, SPECULAR);\n";
 		if (features[FEATURE_NORMAL_MAPPING]) {
 			code += "\t\tNORMAL_MAP_DEPTH *= 1.0 - glaze_fill;\n";
 		}
@@ -5108,6 +5191,50 @@ vec2 ground_rain_pits(vec2 p_xz, float p_cover, float p_seed, float p_fp, out fl
 vec4 ground_sand_meta6() {
 	ivec2 ts = textureSize(ground_ripple_map, 0);
 	return ground_ripple_rect.z > 0.0 && ts.x >= 7 ? texelFetch(ground_ripple_map, ivec2(6, ts.y - 1), 0) : vec4(0.0);
+}
+// Adhesion warts (GroundSurface3D adhesion_warts; docs/ideas/sand.md, "Adhesion warts"): dry grains the wind drives
+// onto damp sand stick where they land and build irregular lumps, longer across the wind, about 1 to 2 cm across and
+// a few millimetres high, their tops of dry, paler grains (Hunter 1973; Kocurek and Fielder 1982). p_grow: how far
+// they have grown (0..1) times the damp share; p_wind: the wind that built them (unit, x and z); p_fp: the pixel's
+// footprint (m), lumps finer than about three pixels fade to their mean. Returns the slope (dh/dx, dh/dz); p_cap: the
+// share of dry grains on top (it dries the pixel's pore water).
+vec2 ground_adhesion_warts(vec2 p_xz, float p_grow, vec2 p_wind, float p_fp, out float p_cap) {
+	p_cap = 0.0;
+	if (p_grow <= 0.0 || dot(p_wind, p_wind) < 0.5) {
+		return vec2(0.0);
+	}
+	float res = 1.0 - smoothstep(0.002, 0.006, p_fp);
+	if (res <= 0.0) {
+		p_cap = 0.5 * p_grow;
+		return vec2(0.0);
+	}
+	// Lumps a centimetre or two across, longer across the wind, that merge into a rough skin as they grow: the
+	// tops of two octaves of value noise over a threshold that falls with the growth, warped and turned against
+	// each other so no lattice shows.
+	vec2 k = p_wind;
+	vec2 t = vec2(-k.y, k.x);
+	// Patchy over decimetres, as the supply of blown grains and the dampness are.
+	float gl = p_grow * mix(0.45, 1.0, ground_ripple_vn(p_xz / 0.7, 79u));
+	float th = 0.72 - 0.3 * gl;
+	float H = 0.002 + 0.003 * gl;
+	float e = 0.0015;
+	vec3 h3;
+	for (int i = 0; i < 3; i++) {
+		vec2 q = p_xz + (i == 1 ? vec2(e, 0.0) : (i == 2 ? vec2(0.0, e) : vec2(0.0)));
+		vec2 ab = vec2(dot(q, k), dot(q, t));
+		ab += 0.005 * vec2(ground_ripple_vn(ab / 0.011, 77u), ground_ripple_vn(ab / 0.011 + 17.3, 78u));
+		vec2 ab2 = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * ab;
+		float n = 0.65 * ground_ripple_vn(ab / vec2(0.008, 0.013), 75u) + 0.35 * ground_ripple_vn(ab2 / vec2(0.0035, 0.005), 76u);
+		h3[i] = smoothstep(th, th + 0.22, n);
+	}
+	// The mean dry-topped share where the lumps are finer than the pixel.
+	p_cap = mix(0.5 * p_grow, h3.x, res);
+	return res * H * vec2(h3.y - h3.x, h3.z - h3.x) / e;
+}
+// The adhesion warts' state (GroundSurface3D adhesion_warts): xy the wind that built them, z how far they grew.
+vec4 ground_sand_meta7() {
+	ivec2 ts = textureSize(ground_ripple_map, 0);
+	return ground_ripple_rect.z > 0.0 && ts.x >= 8 ? texelFetch(ground_ripple_map, ivec2(7, ts.y - 1), 0) : vec4(0.0);
 }
 vec4 ground_sand_meta5() {
 	ivec2 ts = textureSize(ground_ripple_map, 0);

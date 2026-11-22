@@ -65,6 +65,7 @@ public:
 	virtual float contract_canopy_closure_at(const Vector3 &p_position) const = 0; // 0..1
 	virtual float contract_frost_at(const Vector3 &p_position) const { return 0.0f; } // mm
 	virtual float contract_glaze_at(const Vector3 &p_position) const { return 0.0f; } // mm of radial clear ice on exposed twigs
+	virtual Vector3 contract_rime_at(const Vector3 &p_position) const { return Vector3(); } // mm of rime on exposed twigs, along the way it grew (into the wind)
 	virtual Vector3 contract_mean_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s at 10 m, no gusts
 	virtual Vector3 contract_wind_aloft_at(const Vector3 &p_position, float p_altitude) const { return Vector3(); } // m/s, free air
 	virtual float contract_terrain_lee_at(const Vector3 &p_position) const { return NAN; } // rad, Winstral's Sx; NaN: no terrain wind there
@@ -125,6 +126,7 @@ protected:
 	GDVIRTUAL1RC(float, _canopy_closure_at, Vector3)
 	GDVIRTUAL1RC(float, _frost_at, Vector3)
 	GDVIRTUAL1RC(float, _glaze_at, Vector3)
+	GDVIRTUAL1RC(Vector3, _rime_at, Vector3)
 	GDVIRTUAL1RC(Vector3, _mean_wind_at, Vector3)
 	GDVIRTUAL2RC(Vector3, _wind_aloft_at, Vector3, float)
 	GDVIRTUAL1RC(float, _terrain_lee_at, Vector3)
@@ -180,6 +182,9 @@ public:
 	// storm leaves it and until it melts or sheds. An ice storm is 6 mm and more; 12-25 mm breaks limbs. 0 with no
 	// weather system or none. Readers: trees (load, droop, breaks), wires, surfaces.
 	float glaze_at(const Vector3 &p_position) const;
+	// Rime on exposed twigs and edges (supercooled cloud freezing on contact, Makkonen 2000): its length is the
+	// deposit in mm, its direction horizontal and into the wind it grew from (the feathers point that way).
+	Vector3 rime_at(const Vector3 &p_position) const;
 	Vector3 mean_wind_at(const Vector3 &p_position) const;
 	Vector3 wind_aloft_at(const Vector3 &p_position, float p_altitude) const;
 	float terrain_lee_at(const Vector3 &p_position) const;
@@ -414,6 +419,7 @@ public:
 		DISTURBANCE_BEETLE = 3,
 		DISTURBANCE_BEAVER = 4, // a beaver pond drained (age: years since)
 		DISTURBANCE_ROOTING = 5, // boar rooting turned the soil (age: fractional years since); ground layer only, see rooting_age_at; new kinds are appended only
+		DISTURBANCE_AVALANCHE = 6, // a dense avalanche broke the stand (SnowAvalanche3D stand_damage; age: years since)
 	};
 	// A surface fire that scorched crowns only this low (m) leaves the stand standing.
 	static constexpr float SURFACE_FIRE_SCORCH = 5.0f;
@@ -500,6 +506,10 @@ public:
 	// A stand-replacing disturbance over a disc (xz) that happened p_age_years ago (windthrow, a beetle outbreak; fire
 	// comes from WorldFire). Returns its id. Each change reports its area.
 	int add_disturbance(const Vector3 &p_center, float p_radius, int p_kind, float p_age_years);
+	// Many discs of one kind at once (an avalanche track, a windthrow): one grid rebuild and one stand_changed report.
+	// Earlier events of the same kind that a new disc covers are replaced, so a path struck again and again keeps
+	// one event per disc. Returns the number added.
+	int add_disturbances(const PackedVector3Array &p_centers, float p_radius, int p_kind, float p_age_years);
 	void set_disturbance_age(int p_id, float p_age_years);
 	void remove_disturbance(int p_id);
 	void clear_disturbances();

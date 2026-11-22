@@ -221,6 +221,8 @@ func _ready() -> void:
 			await _run_spindrift_tests()
 		elif only == "road":
 			await _run_road_tests()
+		elif only == "drift":
+			await _run_drift_tests()
 		elif only == "windslab":
 			await _run_wind_slab_tests()
 		elif only == "sastrugi":
@@ -244,6 +246,7 @@ func _ready() -> void:
 			await _run_fire_tests()
 		elif only == "sleet":
 			_run_sleet_tests()
+			await _run_warm_nose_tests()
 		elif only == "avalanche":
 			await _run_avalanche_tests()
 		elif only == "triggers":
@@ -449,9 +452,11 @@ func _run_tests() -> void:
 	await _run_slush_tests()
 	await _run_spindrift_tests()
 	await _run_road_tests()
+	await _run_drift_tests()
 	await _run_wind_slab_tests()
 	await _run_sastrugi_tests()
 	await _run_depth_hoar_tests()
+	await _run_warm_nose_tests()
 	await _run_hoar_tests()
 	_run_suncup_tests()
 	await _run_rime_tests()
@@ -721,6 +726,47 @@ func _wind_case(wind: float, hours: int, fall: float) -> Array:
 	return [snow.get_density_at(p), snow.get_wind_slab_at(p), added, added_depth]
 
 
+# Drift take-back (follow-up 48, open): a lone drift in a gale. The wind arrives carrying a full load off the open
+# snow upwind, so the drift loses snow only where the wind speeds up over it; the wind sees the ground, not the
+# snow's relief, so a drift on loose snow keeps its crest. On bare ground nothing comes in and it is blown away.
+func _drift_case(cover: float, hours: int) -> Array:
+	await _setup("flat", 64.0, 64, -8.0)
+	snow.wind_packing_enabled = false
+	snow.sastrugi_enabled = false
+	if cover > 0.0:
+		snow.add_snow(cover, 100.0)
+	snow.add_drift(Vector3(0.5, 0, 0.5), 5.0, 1.0, 250.0)
+	weather.temperature = -8.0
+	weather.wind_speed = 14.0
+	weather.wind_direction = Vector2(1, 0)
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var line := func() -> Array:
+		var a := []
+		for x in [-6, -3, 0, 3, 6, 9]:
+			a.append(snow.get_depth_at(Vector3(x + 0.5, 0, 0.5)))
+		return a
+	var before: Array = line.call()
+	for h in hours * 6:
+		snow.advance(600.0)
+	return [before, line.call()]
+
+
+func _run_drift_tests() -> void:
+	print("Lone drifts (follow-up 48):")
+	var fmt := func(a: Array) -> String:
+		var s := ""
+		for d in a:
+			s += "%.0f " % (d * 100.0)
+		return s.strip_edges()
+	var loose: Array = await _drift_case(20.0, 6)
+	print("  cm at -6..9 m on 20 cm of loose snow: start %s, 6 h at 14 m/s %s" % [fmt.call(loose[0]), fmt.call(loose[1])])
+	_check("add_drift lays a cone of snow", absf(loose[0][2] - 1.2) < 0.05 and absf(loose[0][0] - 0.2) < 0.02, "%.0f cm at its centre on 20 cm" % (loose[0][2] * 100.0))
+	_check("a drift on loose snow in a gale keeps its crest (the wind arrives full; open: it does not see the drift)", loose[1][2] > 0.9 * loose[0][2], "%.0f cm of %.0f" % [loose[1][2] * 100.0, loose[0][2] * 100.0])
+	var bare: Array = await _drift_case(0.0, 6)
+	print("  on bare ground: start %s, 6 h %s" % [fmt.call(bare[0]), fmt.call(bare[1])])
+	_check("a drift on bare ground is blown away (nothing comes in)", bare[1][2] < 0.5 * bare[0][2], "%.0f cm of %.0f at its centre" % [bare[1][2] * 100.0, bare[0][2] * 100.0])
+
 func _run_wind_slab_tests() -> void:
 	print("Wind slab (follow-up 45):")
 	var calm_rho := SnowCover3D.wind_snow_density(-8.0, 0.0)
@@ -855,6 +901,34 @@ func _run_depth_hoar_tests() -> void:
 		while av.is_running():
 			av.step(0.5)
 	_check("the old pack holds alone; 30 cm of new snow holds over rounded snow and releases the whole pack on depth hoar", int(counts[0][0]) == 0 and int(counts[1][0]) == 0 and int(counts[0][1]) == 0 and int(counts[1][1]) >= 1, "%d / %d releases before the storm, %d without depth hoar, %d on it" % [counts[0][0], counts[1][0], counts[0][1], counts[1][1]])
+
+
+# Freezing rain (weather's warm_nose_temperature): under a warm layer aloft the cover and the falling snow take the
+# weather's rain share, so a -4 C storm lands as rain on the pack instead of snow.
+func _run_warm_nose_tests() -> void:
+	print("Freezing rain under a warm layer aloft:")
+	var got := []
+	for nose: float in [0.0, 4.0]:
+		await _setup("flat", 64.0, 16, -4.0)
+		snow.add_snow(40.0, 150.0)
+		weather.temperature = -4.0
+		weather.rain_rate = 2.0
+		weather.cloud_cover = 1.0
+		weather.wind_speed = 1.0
+		weather.warm_nose_temperature = nose
+		weather.snap_to_settings()
+		weather.advance(60.0)
+		var rate := snow.get_snowfall_rate_at(Vector3.ZERO)
+		var d0 := snow.get_depth_at(Vector3.ZERO)
+		for h in 3:
+			weather.advance(60.0)
+			snow.advance(3600.0)
+		got.append([rate, snow.get_depth_at(Vector3.ZERO) - d0, snow.get_swe_at(Vector3.ZERO)])
+	weather.warm_nose_temperature = 0.0
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
+	_check("a warm layer aloft turns the snowfall to rain on the pack (it no longer deepens it)", float(got[0][0]) > 1.0 and float(got[1][0]) < 0.1 and float(got[1][1]) < 0.25 * float(got[0][1]) and float(got[1][2]) > 40.0, "snowfall %.2f mm/h without, %.2f with; the pack %.1f cm deeper without, %.1f cm with (%.0f mm water held)" % [got[0][0], got[1][0], got[0][1] * 100.0, got[1][1] * 100.0, got[1][2]])
 
 
 func _road_wheel(spin: float, roll: float) -> RigidBody3D:
@@ -2112,6 +2186,18 @@ func _run_forest_tests() -> void:
 	var open_run := _debris_reach()
 	var toe_p := av.get_peak_pressure_at(Vector3(10.0, 0, 0))
 	var contract_p := (WorldContracts.get_snow() as WorldSnow).avalanche_peak_pressure_at(Vector3(10.0, 0, 0))
+	# The track's stand starts again where the flow broke trunks (WorldStand DISTURBANCE_AVALANCHE), not beside it.
+	var stand: WorldStand = WorldContracts.get_stand()
+	var broke := 0
+	var broke_p := 0.0
+	for x in range(-60, 12, 4):
+		var at := Vector3(x, 0, 6)
+		if stand.disturbance_at(at) == WorldStand.DISTURBANCE_AVALANCHE and stand.stand_age_at(at) == 0.0:
+			broke += 1
+			broke_p = maxf(broke_p, av.get_peak_pressure_at(at))
+	# Past the run-out (debris to about 60 m) the stand stands.
+	var past := stand.disturbance_at(Vector3(110, 0, 6))
+	_check("the dense flow resets the stand on its track (avalanche paths stay young), not past its run-out", broke >= 3 and past != WorldStand.DISTURBANCE_AVALANCHE, "%d of 18 points on the track reset (peak %.0f kPa), kind %d past the run-out (%.1f kPa there)" % [broke, broke_p / 1000.0, past, av.get_peak_pressure_at(Vector3(110, 0, 6)) / 1000.0])
 	av = await _trigger_setup()
 	av.natural_release = true
 	for z in range(-128, 129, 8):

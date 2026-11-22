@@ -278,6 +278,12 @@ private:
 	float ford_plume_kg = 0.0f; // sent into the water by wheels and banks
 	float ford_scour_m3 = 0.0f;
 	int bank_failures = 0;
+	// Wakes wash the banks (round 22.1): a wading vehicle's waves on the bank, owed erosion per 0.5 m cell (m).
+	bool wake_wash = true;
+	HashMap<Vector2i, float> wake_owed;
+	float wake_wash_kg = 0.0f;
+	float wake_water_m3 = 0.0f;
+	float wake_height_last = 0.0f;
 	void _ford(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_sinkage, const Vector2 &p_velocity);
 	float silt_total = 0.0f; // kg/m2 laid since start, summed over the 1 m points
 	float silt_pending = 0.0f;
@@ -515,6 +521,12 @@ private:
 	float rain_pit_seed = 0.0f;
 	float rain_published[2] = { 0.0f, 0.0f };
 	void _rain_marks(float p_dt, float p_wind);
+	// Adhesion warts (_adhesion()): how far they have grown on the damp sand (0..1) and the wind that built them.
+	bool adhesion_warts = true;
+	float adhesion_grow = 0.0f;
+	Vector2 adhesion_wind = Vector2(1.0f, 0.0f);
+	float adhesion_published = 0.0f;
+	void _adhesion(float p_dt, float p_ustar, Vector2 p_dir);
 	bool dune_tone = true; // the dune field's colour: rubefaction, coarse interdune flats, pale slip faces
 	// Wind fills prints from their upwind side (_drift_prints()).
 	bool wind_fills_prints = true;
@@ -1125,6 +1137,12 @@ public:
 	bool is_rain_pits() const { return rain_pits; }
 	float get_rain_pit_cover() const { return rain_pits ? rain_pit_cover : 0.0f; }
 	float get_rain_crust() const { return rain_pits ? rain_crust : 0.0f; }
+	void set_adhesion_warts(bool p_enabled) {
+		adhesion_warts = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_adhesion_warts() const { return adhesion_warts; }
+	float get_adhesion_growth() const { return adhesion_warts ? adhesion_grow : 0.0f; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);
@@ -1170,6 +1188,9 @@ public:
 	void set_stream_fords(bool p_enabled) { stream_fords = p_enabled; }
 	bool is_stream_fords() const { return stream_fords; }
 	Dictionary get_ford_stats() const;
+	void wash_wake(const Vector3 &p_position, const Vector3 &p_velocity, float p_half_width, float p_water_level, float p_dt);
+	void set_wake_wash(bool p_enabled) { wake_wash = p_enabled; }
+	bool is_wake_wash() const { return wake_wash; }
 	bool is_flood_silt() const { return flood_silt; }
 	float get_flood_silt_total() const { return silt_total; }
 	Vector2 get_silt_at(Vector3 p_position) const;

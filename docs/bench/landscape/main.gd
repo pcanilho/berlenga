@@ -871,6 +871,8 @@ func _ready() -> void:
 		await _suncups()
 	if args.has("slush-prints") and snow != null:
 		await _slush_prints()
+	if args.has("sastrugi") and snow != null:
+		await _sastrugi()
 	if args.has("spindrift-cam") and snow != null:
 		await _spindrift_cam()
 	if (args.has("face-sun") or args.has("face-away")) and sun != null:
@@ -889,6 +891,10 @@ func _ready() -> void:
 		_stand_trail()
 		if args.has("rooting-tyre") and prints != null:
 			await _rooting_tyre()
+	if args.has("gully-cam"):
+		_gully_cam()
+	if args.has("lodging"):
+		await _lodging()
 	if args.has("lens-cam"):
 		await _lens_cam()
 	if args.has("sea-effect"):
@@ -1860,7 +1866,10 @@ func _generate() -> void:
 	gen.strata_enabled = not args.has("no-strata") # hard rock bands: waterfalls where rivers cross them
 	# Erosion detail down to 4 m gullies on the 1 m Landscape3D ground (16 m on the 4 m grid, which would alias finer).
 	gen.detail_octaves = int(args.get("gdetail", "6" if args.get("mesh", "landscape") == "landscape" else "4"))
-	gen.tile_erosion_enabled = args.has("tiles")
+	# Droplet erosion's rills and gullies (terrain 01c51a76), on by default; --tiles=0 off (a before frame, fast scouts).
+	gen.tile_erosion_enabled = args.get("tiles", "1") != "0"
+	if "gully_incision" in gen:
+		gen.gully_incision = float(args.get("gully-incision", "1"))
 	gen.deposition = float(args.get("deposition", "0.5" if layout == "desert" else "0"))
 	# Rock beds stepped into cliff faces (ledges), --ledges=0 for smooth faces.
 	gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
@@ -4621,6 +4630,15 @@ func _build_cover() -> void:
 			for msp in mounds:
 				b.species.append(msp)
 			_log("mounds set %d: %d species" % [ms, mounds.size()])
+	if args.has("grazing") and ClassDB.class_has_method("PlantGenerator", "make_grazing"):
+		# --grazing=cattle|horse|deer: dung and the ungrazed roughs round it over the open ground (PlantGenerator.
+		# make_grazing, vegetation fbc92404), listed after the stand's species; called by name for older binaries.
+		var gk := String(args["grazing"]) if String(args["grazing"]) != "" else "cattle"
+		var gset := {"cattle": 0, "horse": 1, "deer": 2}.get(gk, 0) as int
+		var graze: Array = ClassDB.class_call_static("PlantGenerator", "make_grazing", gset, 3, true, season)
+		for gsp in graze:
+			b.species.append(gsp)
+		_log("grazing %s: %d species" % [gk, graze.size()])
 	if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
 		# The dunes' own plants (marram, lyme grass, sea holly), placed by distance to the water on the sand.
 		for st in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:
@@ -7140,6 +7158,64 @@ func _slush_prints() -> void:
 	_log("slush prints: %.0f mm rain on %s at %s (%.1f deg), frost %s; after: depth %.3f m, swe %.0f mm, slush %.3f m, wetness %.2f; %d prints; cam %s" % [mm, before, str(best.round()), best_s, str(frost), snow.get_depth_at(probe), snow.get_swe_at(probe), float(snow.call("get_slush_at", probe)), float(snow.call("get_wetness_at", probe)), n + 1, str(c3.global_position.round())])
 
 
+func _sastrugi() -> void:
+	# --sastrugi[=H]: H (12) hours of a gale (--wind, 20 m/s) over the highest gentle (under --sas-max-deg, 20) snow
+	# at least 0.4 m deep (SnowCover3D sastrugi, snow 2e127292; wind slab 7325de7b): the cover carves its own ridges
+	# along the wind. The wind blows square to the sun (--sas-yaw, 90) so the low light rakes the ridges; the camera
+	# --sas-eye (1.7) m up looks downwind along them, a SnowSurface3D round it draws them.
+	var wr: Rect2 = gen.get_world_rect()
+	var best := Vector3.INF
+	var xx := wr.position.x + 200.0
+	while xx < wr.end.x - 200.0:
+		var zz := wr.position.y + 200.0
+		while zz < wr.end.y - 200.0:
+			var p := Vector3(xx, 0, zz)
+			var h := gen.get_height(p)
+			if snow.get_depth_at(p) >= 0.4 and rad_to_deg(atan(_slip_grad(p).length())) < float(args.get("sas-max-deg", "20")) and (best == Vector3.INF or h > best.y):
+				best = Vector3(xx, h, zz)
+			zz += 32.0
+		xx += 32.0
+	if best == Vector3.INF:
+		_log("sastrugi: no gentle deep snow")
+		return
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	var wd := sf.rotated(Vector3.UP, deg_to_rad(float(args.get("sas-yaw", "90"))))
+	var focus := Node3D.new()
+	focus.name = "SastrugiFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	weather.follow_target = weather.get_path_to(focus)
+	for i in 30:
+		await get_tree().physics_frame
+	var keep := weather.wind_speed
+	weather.wind_direction = Vector2(wd.x, wd.z)
+	weather.wind_speed = float(args.get("wind", "20"))
+	weather.air_follows_climate = false
+	weather.temperature = float(args.get("sas-temp", "-8"))
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	var hrs := float(args["sastrugi"]) if String(args["sastrugi"]) != "" else 12.0
+	snow.advance(hrs * 3600.0)
+	weather.wind_speed = float(args.get("sas-after-wind", "6"))
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = best - wd * 3.0 + Vector3.UP * (float(args.get("sas-eye", "1.7")) + snow.get_depth_at(best))
+	var tgt := best + wd * 6.0
+	c3.look_at(Vector3(tgt.x, gen.get_height(tgt) + snow.get_depth_at(tgt), tgt.z))
+	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
+	surf.name = "SnowSurface"
+	add_child(surf)
+	surf.set("snow_cover", surf.get_path_to(snow))
+	surf.set("follow_target", surf.get_path_to(c3))
+	for i in 10:
+		await get_tree().physics_frame
+	var sv = snow.call("get_sastrugi_at", best + wd * 5.0) if snow.has_method("get_sastrugi_at") else Vector2()
+	_log("sastrugi: %.0f h of %.0f m/s over %.2f m of snow at %s (%.0f m), relief %.3f m (%s), cam %s" % [hrs, float(args.get("wind", "20")), snow.get_depth_at(best), str(best.round()), best.y, sv.length(), str(sv), str(c3.global_position.round())])
+
+
 func _spindrift_cam() -> void:
 	# --spindrift-cam[=D]: a gale (--wind, 20 m/s) blowing away from the sun over --sd-snow (30) mm of new snow at
 	# --sd-density (100) kg/m3 on the highest ground: spindrift plumes off the lee crests (snow 09b10f00, PhysX Flow).
@@ -7192,6 +7268,79 @@ func _spindrift_cam() -> void:
 	for i in int(args.get("sd-frames", "90")):
 		await get_tree().process_frame
 	_log("spindrift: %d sources, %.1f kg/s, strongest at %s (rate %.2f), cam %s %.0f m downwind, wind %s %.0f m/s, sun %.1f deg" % [srcs.size(), float(snow.call("get_spindrift_rate")), str(src.round()), float(srcs[0]["rate"]), str(cp.round()), d, str(weather.wind_direction), weather.wind_speed, rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+
+
+func _gully_cam() -> void:
+	# --gully-cam[=D]: the strongest gully on an open soil slope (TerrainGenerator3D.get_gully_at, terrain 01c51a76; the
+	# rocks bench's --gully-spot rule: no rock, 15 to 35 degrees over 16 m, banks under 4 m), the camera D (14) m below
+	# it down the fall line, --gully-eye (1.7) m up, looking up the channel.
+	var wr: Rect2 = gen.get_world_rect()
+	var best := -INF
+	var found := Vector3.INF
+	var down := Vector3.ZERO
+	var zz := wr.position.y + 100.0
+	while zz < wr.end.y - 100.0:
+		var xx := wr.position.x + 100.0
+		while xx < wr.end.x - 100.0:
+			var p := Vector3(xx, 0, zz)
+			var h := gen.get_height(p)
+			if gen.get_geology_at(p).g <= 0.05 and h > gen.sea_level + 10.0:
+				var gx := gen.get_height(p + Vector3(8, 0, 0)) - gen.get_height(p - Vector3(8, 0, 0))
+				var gz := gen.get_height(p + Vector3(0, 0, 8)) - gen.get_height(p - Vector3(0, 0, 8))
+				var ny := Vector3(-gx, 16.0, -gz).normalized().y
+				if ny >= cos(deg_to_rad(35.0)) and ny <= cos(deg_to_rad(15.0)):
+					var gl: Vector2 = gen.get_gully_at(p, ny)
+					if gl.x >= 0.5 and gl.y <= 0.3:
+						var t := Vector3(-gz, 0, gx).normalized() * 10.0
+						var bank := maxf(gen.get_height(p + t), gen.get_height(p - t)) - h
+						var score := gl.x - bank * 0.1 - absf(h - gen.sea_level - 80.0) / 400.0
+						if bank <= 4.0 and score > best:
+							best = score
+							found = Vector3(xx, h, zz)
+							down = Vector3(-gx, 0, -gz).normalized()
+			xx += 6.0
+		zz += 6.0
+	if found == Vector3.INF:
+		_log("gully cam: no gully on open soil")
+		return
+	var d := float(args["gully-cam"]) if String(args["gully-cam"]) != "" else 14.0
+	var cp := found + down * d
+	cp.y = height_at(cp.x, cp.z) + float(args.get("gully-eye", "1.7"))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = cp
+	var tgt := found - down * 4.0
+	c3.look_at(Vector3(tgt.x, height_at(tgt.x, tgt.z), tgt.z))
+	_log("gully cam: gully %s (score %.2f, channel %s), cam %s" % [str(found.round()), best, str(gen.get_gully_at(found, 0.85)), str(cp.round())])
+
+
+func _lodging() -> void:
+	# --lodging[=H]: H (1) hours of a wet summer gale (--lodge-wind 18 m/s at 10 m, --lodge-rain 15 mm/h) from behind
+	# the camera's left over every GrassField3D (GrassField3D.lodging, vegetation 2b052f8e): the tall grass laid down in
+	# swirled patches along the wind. Then the rain stops and the wind drops to --wind for the shot.
+	var hrs := float(args["lodging"]) if String(args["lodging"]) != "" else 1.0
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var f := -c3.global_basis.z
+	var wd := Vector3(f.x, 0, f.z).normalized().rotated(Vector3.UP, deg_to_rad(float(args.get("lodge-yaw", "30"))))
+	var keep := [weather.wind_speed, weather.rain_rate, weather.cloud_cover]
+	weather.wind_direction = Vector2(wd.x, wd.z)
+	weather.wind_speed = float(args.get("lodge-wind", "18"))
+	weather.rain_rate = float(args.get("lodge-rain", "15"))
+	weather.cloud_cover = 0.95
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	var n := 0
+	for g in find_children("*", "GrassField3D", true, false):
+		if g.has_method("advance_lodging"):
+			g.call("advance_lodging", hrs * 3600.0)
+			n += 1
+	weather.wind_speed = keep[0]
+	weather.rain_rate = 0.0
+	weather.cloud_cover = keep[2]
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	var probe := c3.global_position + Vector3(f.x, 0, f.z).normalized() * 8.0
+	var lv: Vector3 = grass.call("get_lodging_at", probe) if grass != null and grass.has_method("get_lodging_at") else Vector3()
+	_log("lodging: %.1f h of gale over %d grass fields, lodging at 8 m %s" % [hrs, n, str(lv)])
 
 
 func _lens_cam() -> void:
