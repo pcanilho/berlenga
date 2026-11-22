@@ -719,9 +719,11 @@ func _run_tests() -> void:
 	var damp_before := _max_slope(o, 0.3)
 	surface.settle(3.0)
 	var damp_wall := _max_slope(o, 0.3)
-	# Against its own walls before settling: the CPU field (headless) presses on a coarser texel, so its walls start
-	# near 52 degrees rather than the GPU's 70.
-	_check("damp sand keeps steep walls", damp_wall > 45.0 and damp_wall > damp_before - 3.0, "steepest wall %.0f before, %.0f degrees after 3 s" % [damp_before, damp_wall])
+	# Against its own walls before settling, or its repose where they start steeper: the CPU field (headless) presses
+	# on a coarser texel, so its walls start near 52 degrees; the GPU's start near 70 and settle to the damp repose
+	# (GroundSurface3D::material_cell: 33 to 65 degrees with the cohesion, about 62 at moisture 0.4).
+	var damp_repose := lerpf(33.0, 65.0, smoothstep(0.0, 0.5, 0.4))
+	_check("damp sand keeps steep walls", damp_wall > 45.0 and damp_wall > minf(damp_before, damp_repose) - 3.0, "steepest wall %.0f before, %.0f degrees after 3 s (repose %.0f)" % [damp_before, damp_wall, damp_repose])
 	# Mud creeps back slowly.
 	surface.clear_deformation()
 	surface.ground_type = GroundSurface3D.GROUND_SOIL
