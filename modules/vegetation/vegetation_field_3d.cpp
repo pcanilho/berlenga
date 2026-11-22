@@ -200,8 +200,9 @@ static float _relief_y(const Vector3 &p_at) {
 
 // The top edge of a steep drop in the drawn ground (heightfield plus relief) within 1 m of p_xz (RULE_BANK_EDGE):
 // along each of 16 directions from a point not on a face itself, the first 5 cm step steeper than 45 degrees, and how
-// far the ground falls over the 0.6 m past it. Returns the largest fall (m, 0 with no edge near); r_dir the way it falls, r_ahead the edge's distance.
-static float _bank_edge(const TerrainDataMap3D *p_map, const Vector2 &p_xz, Vector2 &r_dir, float &r_ahead) {
+// far the ground falls over the 0.6 m past it. Returns the largest fall (m, 0 with no edge near); r_dir the way it falls, r_ahead the edge's distance;
+// r_face (if given) the face's angle that way (radians from level: its fall over its run while steeper than 35 degrees, up to 1.5 m).
+static float _bank_edge(const TerrainDataMap3D *p_map, const Vector2 &p_xz, Vector2 &r_dir, float &r_ahead, float *r_face = nullptr) {
 	auto h = [&](const Vector2 &q) {
 		const Vector3 p(q.x, 0.0f, q.y);
 		return p_map->get_height_at(p) + _relief_y(p);
@@ -231,6 +232,29 @@ static float _bank_edge(const TerrainDataMap3D *p_map, const Vector2 &p_xz, Vect
 				break;
 			}
 			prev = hq;
+		}
+	}
+	if (r_face && best > 0.0f) {
+		// The 16 directions are 22.5 degrees apart: the steepest of the found one and its two neighbours, so a face
+		// met at an angle does not read as a gentler one.
+		const Vector2 top = p_xz + r_dir * r_ahead;
+		const float h0 = h(top);
+		*r_face = float(Math::PI * 0.25);
+		for (int k = -1; k <= 1; k++) {
+			const Vector2 d = r_dir.rotated(float(k) * float(Math::TAU / 16.0));
+			float hp = h0;
+			int n = 0;
+			for (int i = 1; i <= 30; i++) {
+				const float hq = h(top + d * (step * i));
+				if (hp - hq < step * 0.7f) {
+					break;
+				}
+				hp = hq;
+				n = i;
+			}
+			if (n > 0) {
+				*r_face = MAX(*r_face, float(Math::atan2(h0 - hp, step * n)));
+			}
 		}
 	}
 	return best;
@@ -1564,6 +1588,18 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 		}
 	}
 	{
+		// Bank roots (PlantGenerator.make_bank_roots): per variant, the face angle it was grown on.
+		bool any_face = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			any_face = any_face || (m.is_valid() && m->has_meta(SNAME("bank_face_slope")));
+		}
+		if (any_face) {
+			for (const Ref<Mesh> &m : ps.meshes) {
+				ps.face_slopes.push_back(m.is_valid() ? float(m->get_meta(SNAME("bank_face_slope"), 0.0f)) : 0.0f);
+			}
+		}
+	}
+	{
 		// Stilt-rooted trees (trees' wet forests): the mesh origin is the stem's foot on its tussock, the ground at
 		// the root tips lies tree_base_lift below it.
 		bool any_lift = false;
@@ -2400,6 +2436,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					Vector3 p3(xz.x, 0.0f, xz.y);
 					float suit = sp->get_suitability(map, p3, false);
 					Vector2 bank_dir; // RULE_BANK_EDGE: over the drop, and how far ahead the edge is.
+					float bank_face = 0.0f; // RULE_BANK_EDGE: the face's angle below the edge (radians).
 					float bank_ahead = 0.0f;
 					// Patches (clonal stands), except that a rock's foot is a patch of its own
 					// for species that gather there: the patch weight is lifted towards 1 there.
@@ -2543,7 +2580,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					if (bank_edge_rule && suit > 0.0f) {
 						// The top edge of a cut bank or scarp in the drawn ground: stood on it, facing the drop.
-						const float drop = _bank_edge(map, xz, bank_dir, bank_ahead);
+						const float drop = _bank_edge(map, xz, bank_dir, bank_ahead, ps.face_slopes.is_empty() ? nullptr : &bank_face);
 						suit *= sp->rule_weight(PlantSpecies::RULE_BANK_EDGE, drop);
 						if (suit > 0.0f && bank_dir != Vector2()) {
 							xz += bank_dir * bank_ahead;
@@ -2898,12 +2935,26 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 						}
 					}
+					if (bank_dir != Vector2() && !ps.face_slopes.is_empty() && bank_face > 0.0f) {
+						// Bank roots: the variant grown on the face angle nearest this face's, ties broken by the plant's random number.
+						float best = 1e9f;
+						const int nv = ps.face_slopes.size();
+						const int start = MIN(int(r * nv), nv - 1);
+						for (int k = 0; k < nv; k++) {
+							const int vi = (start + k) % nv;
+							const float d = Math::abs(ps.face_slopes[vi] - bank_face);
+							if (d < best - 1e-4f) {
+								best = d;
+								bank_variant = vi;
+							}
+						}
+					}
 					if (bank_dir != Vector2()) {
 						// A sod lip (RULE_BANK_EDGE): mesh +X out over the drop, a little scatter along the edge.
 						yaw = Math::atan2(-bank_dir.y, bank_dir.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.2f;
 					} else if (wood_out != Vector2()) {
 						yaw = Math::atan2(-wood_out.y, wood_out.x);
-					} else if (bank_variant >= 0 && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
+					} else if (bank_variant >= 0 && !ps.bank_slopes.is_empty() && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
 						// Its ground falls towards mesh +Z: turn +Z downhill.
 						yaw = Math::atan2(downhill.x, downhill.y);
 					} else if (ps.fall_downhill && slope > 1e-3f) {

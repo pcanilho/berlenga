@@ -1916,3 +1916,24 @@ Built: SodLipFall3D (sod_lip_fall_3d.*) and VegetationField3D plant removals.
   under the lips: exactly the 14 lips in that band break).
 - Not yet: breaking the block on landing (Blast), and the river carrying blocks off.
 
+
+## Roots on bare scarps (round 8, second pick)
+A cut bank or slump scarp shows the roots of what grows on top. Their depth follows the global profiles of Jackson et
+al. 1996 (Oecologia 108: 389-411; share of roots above depth d cm = 1 - beta^d, beta 0.952 for grasses, 0.970 for
+trees): the sward's fine roots a dense mat in the top 15 cm or so, thinning to 50 cm; trees' woody laterals deeper
+and wider. The roots are grown by space colonization (Runions, Lane and Prusinkiewicz 2007, "Modeling trees with a
+space colonization algorithm", Eurographics Workshop on Natural Phenomena), here in the face's plane: attraction
+points scattered by that depth profile, tips stepping toward the points near them with a downward pull, radii by the
+pipe model (exponent 2.5).
+Built: PlantGenerator.make_bank_roots (plant_bank.cpp), two species.
+- PRESET_BANK_ROOTS: the sward's fibrous roots, on any earthen face of 0.4 m or more past an edge (RULE_BANK_EDGE),
+  off rock (RULE_ROCK under 0.4).
+- PRESET_BANK_ROOTS_WOODY: a few woody laterals (to about 4.5 cm across) coming out of the face, branching to fine
+  ends; within 4 m of the canopy's edge (RULE_FOREST_EDGE from -4 m; the laterals' reach past the crown is an estimate).
+- The roots lie on the face, a little proud of it and now and then dipping under it; about a third of the finest ends
+  hang free off it.
+- Each variant is grown on its own face angle (50 to 88 degrees, mesh meta "bank_face_slope"); VegetationField3D
+  measures the face below the edge (its fall over its run while steeper than 35 degrees, up to 1.5 m) and takes the
+  variant nearest it, so the roots sit on slumped and near-vertical faces alike.
+- Check: vegetation --test "bank roots"; plants bench --close=113 --bank.
+- Not yet: roots shown in the sod blocks' undersides when a lip falls; roots on rock clefts (trees' cliff roots).
