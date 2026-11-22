@@ -1819,3 +1819,33 @@ Research notes for Paulo's pick; nothing below is built yet.
   little grey, glaze dark and mirror-smooth. Tests: 10 s of a stuck wheel spinning at 10 m/s polishes 0.12 mm
   and drops grip from 0.26 to 0.20. Open: world-links' tyre slip reading it needs a `contract_snow_grip_at`
   in world_contracts.h (asked via the coordinator); slush spray from tyres.
+
+## Next round (proposed 22 Nov 2026, round 6): melt water downhill, wind-shaped snow, weak layers
+
+Research notes for Paulo's pick; nothing below is built yet.
+
+**Melt water into the runoff and rivers.**
+- The cover already tracks melt and rain draining out of the pack (`cell_runoff`), but nothing downhill
+  reads it: WeatherRunoff3D fills puddles and streams from rain alone. Spring melt is the main flood source in
+  mountains (rain-on-snow events, Marks et al. 1998, Hydrological Processes 12; McCabe, Clark and Hay 2007).
+- Build: a published melt runoff field (mm/h, the snow contract) that the runoff and rivers add to rain.
+  The reader side is the weather code, so the request goes to its owner. Checks: a warm spell raises the
+  stream at the valley mouth hours later; frozen ground (the slush seal) sends it overland.
+
+**Wind-shaped snow: wind slab, wind crust, sastrugi.**
+- Wind packs the snow it moves into dense, fine-grained slab (200-400 kg/m3; Li and Pomeroy 1997; Sommer et al.
+  2018, The Cryosphere 12, wind packing in the lab). On exposed ground the surface erodes into sastrugi: sharp
+  ridges 5-50 cm tall along the wind (Filhol and Sturm 2015, JGR Earth Surface 120, snow bedforms; Kochanski,
+  Anderson and Tucker 2019 for barchans and ripples).
+- Build: the drift deposit takes a denser density by wind speed (wind slab, also a slab source for the
+  avalanche stability); a sastrugi height field in the deep-snow surface on scoured cells, ridges aligned
+  with the last strong wind and sized by its speed (real geometry, as the suncups).
+
+**Weak layers and natural avalanches.**
+- Buried surface hoar is kept (follow-up 39). Depth hoar is missing: a shallow pack over a strong temperature
+  gradient (over 10 C/m) turns to large weak cups at the base (Colbeck 1983; Akitaya 1974; SNOWPACK's
+  gradient metamorphism, Lehning et al. 2002). Together with the wind slab above it gives the classic
+  persistent slab problem.
+- Build: a basal depth-hoar share grown by gradient hours; the stability index reads the weakest buried
+  layer (hoar or depth hoar) under a slab; natural releases on slopes where it falls below 1 after loading
+  (Schweizer, Jamieson and Schneebeli 2003, Reviews of Geophysics 41).
