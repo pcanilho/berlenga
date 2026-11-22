@@ -4359,19 +4359,22 @@ void main() {
 	rt_lss_resolve();
 #endif
 	uint geometry_idx = RT_HIT_GEOMETRY_IDX;
-	GeometryData geom = geometries[geometry_idx];
-	MaterialData mat = rt_entry_material(geometry_idx);
-	bool transparent = (mat.flags & RT_MAT_FLAG_TRANSPARENT) != 0u;
-	bool alpha_scissor = (mat.flags & RT_MAT_FLAG_ALPHA_SCISSOR) != 0u;
+	// Shadow rays run this for every candidate (gl_RayFlagsNoOpaqueEXT), and most are opaque: decide from the flags
+	// word alone, before the geometry record and the whole material are read.
+	uint entry_flags = rt_entry_material_flags(geometry_idx);
+	bool transparent = (entry_flags & RT_MAT_FLAG_TRANSPARENT) != 0u;
+	bool alpha_scissor = (entry_flags & RT_MAT_FLAG_ALPHA_SCISSOR) != 0u;
 	// Thin glass lets shadow rays through; other rays hit it as an opaque surface.
 	bool shadow_transmission = rt_material_feature(RT_MATERIAL_FEATURE_TRANSMISSION);
 	bool shadow_back_lighting = rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING);
 	bool transmissive_shadow = !transparent && !alpha_scissor && is_shadow_ray(payload.packed_bounces_flags) &&
-			(((mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u && shadow_transmission) || ((mat.flags & RT_MAT_FLAG_BACKLIT) != 0u && shadow_back_lighting) ||
-					((mat.flags & RT_MAT_FLAG_CUSTOM_TRANSMITTANCE) != 0u && (shadow_transmission || shadow_back_lighting)));
+			(((entry_flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u && shadow_transmission) || ((entry_flags & RT_MAT_FLAG_BACKLIT) != 0u && shadow_back_lighting) ||
+					((entry_flags & RT_MAT_FLAG_CUSTOM_TRANSMITTANCE) != 0u && (shadow_transmission || shadow_back_lighting)));
 	if (!transparent && !alpha_scissor && !transmissive_shadow) {
 		return; // Ordinary opaque shadow candidate: accept immediately.
 	}
+	GeometryData geom = geometries[geometry_idx];
+	MaterialData mat = rt_entry_material(geometry_idx);
 	// A custom shader that bounds a medium (TRANSMISSION and IOR) and cuts its outline with ALPHA_SCISSOR (water's
 	// shoreline): decided once its fragment has run (below), where it passes the light through its medium as an
 	// unscissored one does. Taken as an opaque scissored caster, the sun reached a bed under water only past the
