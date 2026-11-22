@@ -114,6 +114,7 @@ private:
 	real_t tile_erosion_apron = 128.0; // m
 	real_t tile_erosion_droplets = 1.0; // per cell
 	real_t tile_erosion_max_depth = 15.0; // m
+	real_t gully_incision = 1.0; // scale of the gullies' extra cut along the droplets' channels (0: none)
 	real_t tile_erosion_rock_hardness = 0.25;
 
 	// Geology and rivers (stage 5).
@@ -445,6 +446,12 @@ private:
 	LocalVector<float> tile_delta; // eroded minus input ground
 	LocalVector<float> tile_flow;
 	LocalVector<float> tile_deposit;
+	// The droplets' flow (cells upslope, roughly) and deposit depth (m) on the tile grid, R16F + G16F, for the
+	// material's rills and gullies (global terrain_tile_flow_map; terrain_tile_flow_rect, a zero rect when off).
+	Ref<ImageTexture> tile_flow_texture;
+	void _bake_tile_flow_texture();
+	real_t _gully_channel(real_t p_x, real_t p_z, real_t p_normal_y) const;
+	float _gully_cut(real_t p_x, real_t p_z) const;
 	double last_tile_erosion_msec = 0.0;
 	double last_water_msec = 0.0;
 	struct TileJob {
@@ -661,6 +668,8 @@ public:
 	void set_tile_erosion_droplets(real_t p_value) { tile_erosion_droplets = MAX(p_value, real_t(0.0)); }
 	real_t get_tile_erosion_droplets() const { return tile_erosion_droplets; }
 	void set_tile_erosion_max_depth(real_t p_value) { tile_erosion_max_depth = MAX(p_value, real_t(0.1)); }
+	void set_gully_incision(real_t p_value) { gully_incision = MAX(p_value, real_t(0.0)); }
+	real_t get_gully_incision() const { return gully_incision; }
 	real_t get_tile_erosion_max_depth() const { return tile_erosion_max_depth; }
 	void set_tile_erosion_rock_hardness(real_t p_value) { tile_erosion_rock_hardness = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
 	real_t get_tile_erosion_rock_hardness() const { return tile_erosion_rock_hardness; }
@@ -915,6 +924,8 @@ public:
 
 	// Tile erosion.
 	real_t get_tile_flow(const Vector3 &p_global_position) const;
+	// (channel floor 0..1, deposit m) as the shaders' terrain_gully(): the slope-area rule on the droplets' flow.
+	Vector2 get_gully_at(const Vector3 &p_global_position, real_t p_normal_y) const;
 	real_t get_tile_deposit(const Vector3 &p_global_position) const;
 	double get_last_tile_erosion_msec() const { return last_tile_erosion_msec; }
 

@@ -77,6 +77,9 @@ extends Node3D
 #   --tracks              with --world: a walker and a two-wheeled cart cross the spot on bends before the still
 #   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
+#   --no-tiles            with --world: TerrainGenerator3D.tile_erosion_enabled off (no droplet rills and gullies);
+#                         --gully-incision=x the gullies' extra cut (1; 0 for none, a before frame); --gully-spot
+#                         puts the view's spot on the nearest strong gully on soil
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -436,7 +439,8 @@ func _world() -> void:
 	# Heavy generator options are on by default; this bench keeps its own fast choices.
 	gen.glacial_enabled = false
 	gen.glacial_converged = false
-	gen.tile_erosion_enabled = false
+	gen.tile_erosion_enabled = not args.has("no-tiles") # droplet erosion's rills and gullies (--no-tiles: a before frame)
+	gen.gully_incision = float(args.get("gully-incision", "1")) # --gully-incision=0: the droplets' channels without the gullies' extra cut
 	gen.strata_enabled = false
 	gen.guide_preview = false
 	gen.dunes_enabled = false
@@ -617,6 +621,36 @@ func _world() -> void:
 					found = p
 		spot = found
 		print("bare spot ", spot, " geology ", gen.get_geology_at(spot))
+	if args.has("gully-spot"):
+		# --gully-spot: a strong gully on an open slope (TerrainGenerator3D.get_gully_at; no rock exposure or fill,
+		# 15 to 35 degrees over 16 m, banks under 4 m high 10 m either side so not a ravine), for close frames.
+		var best := -INF
+		var found := spot
+		for zz in range(-1000, 1001, 6):
+			for xx in range(-1000, 1001, 6):
+				var p := Vector3(xx, 0, zz)
+				var g := gen.get_geology_at(p)
+				var h := gen.get_height(p)
+				if g.g > 0.05 or h < gen.sea_level + 10.0:
+					continue
+				var gx := gen.get_height(p + Vector3(8, 0, 0)) - gen.get_height(p - Vector3(8, 0, 0))
+				var gz := gen.get_height(p + Vector3(0, 0, 8)) - gen.get_height(p - Vector3(0, 0, 8))
+				var ny := Vector3(-gx, 16.0, -gz).normalized().y
+				if ny < cos(deg_to_rad(35.0)) or ny > cos(deg_to_rad(15.0)):
+					continue
+				var gl := gen.get_gully_at(p, ny)
+				if gl.x < 0.5 or gl.y > 0.3:
+					continue
+				var t := Vector3(-gz, 0, gx).normalized() * 10.0
+				var bank := maxf(gen.get_height(p + t), gen.get_height(p - t)) - h
+				if bank > 4.0:
+					continue
+				var score := gl.x - bank * 0.1 - absf(h - gen.sea_level - 80.0) / 400.0
+				if score > best:
+					best = score
+					found = p
+		spot = found
+		print("gully spot ", spot, " channel ", gen.get_gully_at(spot, 0.85))
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot

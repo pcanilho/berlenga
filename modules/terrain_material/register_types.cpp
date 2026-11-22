@@ -51,6 +51,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_geology_map", "sampler2D" },
 		{ "terrain_geology_rect", "vec4" },
 		{ "terrain_detail_keep_map", "sampler2D" },
+		// The droplet erosion's flow and deposits (TerrainGenerator3D.tile_erosion_enabled): rills and gullies.
+		{ "terrain_tile_flow_map", "sampler2D" },
+		{ "terrain_tile_flow_rect", "vec4" },
 		// Loose sand depth on the dune fields (the sand's dune-scale tone).
 		{ "terrain_sand_interdune_map", "sampler2D" },
 		{ "terrain_sand_interdune_rect", "vec4" },
