@@ -6,6 +6,20 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-ab7c0a22 (2026-11-22)
+
+### Added
+- Flow emitters' smoke joins the weather's regional smoke: a campfire's or chimney's smoke drifts past the Flow box and pools in valleys on calm nights (PhysXFlowEmitter3D `regional_smoke`).
+- Green alder (`TreeGenerator.PRESET_GREEN_ALDER`), the many-stemmed scrub of avalanche tracks, and snow-bent stems on steep slopes whose feet lie downslope before they rise (`cliff_sweep`); both take young avalanche tracks.
+- Avalanche survivors carry impact scars on the upslope face of the stem (`avalanche_scars`).
+- Foehn: a wind across a range comes down its lee warmer and drier, several K warmer after the windward side rains out, with a gap in the cloud over the lee (WeatherMap3D `foehn_winds`).
+- The rain a face catches, for materials and the path tracer alike: the vertical rain on faces that look up and the wind-driven rain on faces turned into the wind, with the wind's push on drops along the face (`BaseMaterial3D.get_surface_rain_shader_code()`, `weather_surface_rain()`).
+- Along-valley winds: valleys blow up-valley on sunny calm afternoons and down-valley on clear calm nights, a few m/s, carrying smoke and fog along them (WeatherMap3D `valley_winds`).
+- Walls run with the rain the wind drives onto them, in streaks that lean with the wind, while lee walls stay drier; moving bodies blow their running water back (BaseMaterial3D `wetness_moving`, instance parameters `rain_slipstream` and `rain_wipe`; vehicles set it themselves).
+
+### Fixed
+- A weather map or terrain generator that leaves the scene takes its shader maps with it, so ground drawn later no longer reads a freed map's wetness, spray, geology or sky.
+
 ## build-47595e0b (2026-11-22)
 
 ### Changed

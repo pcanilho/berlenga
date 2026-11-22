@@ -320,3 +320,84 @@ Sources: [Indiana Jones PT](https://developer.nvidia.com/blog/path-tracing-optim
 [ReSTIR PT Enhanced](https://research.nvidia.com/labs/rtr/publication/lin2026restirptenhanced/),
 [SER whitepaper](https://developer.nvidia.cn/sites/default/files/akamai/gameworks/ser-whitepaper.pdf),
 [Megakernels Considered Harmful](https://research.nvidia.com/node/2737).
+
+## Path tracer warm-up across launches: the pipeline cache never settled
+
+Seen on the PC: the Vulkan pipeline cache file grew on every launch (780, 793, 808 MB), and the path tracer could still
+be waiting 30 s after loading on the second launch of a build (236 surfaces waiting), though ready by the third.
+
+Both pipeline steps already go through the cache: each material's hit-group library and the final link
+(`rendering_device_driver_vulkan.cpp`, `vkCreateRayTracingPipelinesKHR` with `pipelines_cache.vk_cache`). The SPIR-V
+is cached on disk too (`RaytracingSPIRV`). What changed between launches was the key of the link. Hit-group slots were
+numbered in the order materials registered, and that follows threaded loading, so the link's group order (and its
+cache key) differed every launch: a miss, and one more entry in the file.
+
+Fix (exact image: a slot index only picks the shader binding table record, the shading is the same):
+`scene_shader_raytracing.cpp` keeps the slot order on disk (`RaytracingSPIRV/hit_group_slots.txt`, this launch's
+materials in slot order, written once nothing is building and at exit). At start-up those slots are held for their
+materials, and a material takes its held slot when it registers. A launch into the same scenes then links the same
+groups in the same order, and the link hits the cache. Held slots that no material takes this launch are left empty and
+dropped from the next file, so the list does not grow without bound.
+
+Proof (lavapipe, a copy of rt_memory with five shader materials added in a chosen order, radiance cache off): old build
+forward and reversed order, new build with no file, with last launch's file and the materials arriving reversed, and
+reversed from cold: all byte-identical, and the file kept last launch's order when they arrived reversed. Same with
+async compilation on (old and new identical to each other). Pre-existing, cloud only: with async compilation on,
+lavapipe aborts at exit and the frame differs from the synchronous one, on the old build as well.
+
+How the fork engine's cost of a project's scripts was found, for any project: time each call in the project's main
+`_process` and in what it calls (a wrapper around each statement with `Time.get_ticks_usec()`), headless, on the scene
+that the PC's frame profile flags. A once-per-frame layout of thousands of `MultiMesh.set_instance_transform` calls,
+redone even when nothing moved, cost about 8 ms on the PC. Laid only when its inputs change, and handed over as one
+`MultiMesh.buffer` per MultiMesh, it fell to well under 1 ms with identical instance data. Engine candidate from it:
+none needed (`MultiMesh.buffer` is the bulk path); worth a line in the docs that per-instance calls in a loop are the
+slow path.
+
+## Main-thread CPU: the render command queue woke the render thread for every command
+
+Profiled (perf, cloud, headless bench of four scenes, an unstripped build): with the render thread separate, every
+`CommandQueueMT` push called `WorkerThreadPool::notify_yield_over` on the render thread's pump task, a mutex and a futex
+syscall each. The render thread then ran one command and went back to sleep, and the next push woke it again. Skinned
+characters push one command per bone per frame, so this ran hundreds of times a frame: 4-5% of all samples were the
+wake-ups alone. Upstream Godot does the same.
+
+Fix (`core/templates/command_queue_mt.h`): the pump is woken only when the queue was empty since its last flush. A flush
+runs until the queue is empty, so commands pushed meanwhile are run by it; the wake is latched (`yield_is_over`), so a
+push just before the pump yields is not lost. Same commands, same order. Cloud headless frame p50: office 7.9 to 6.9 ms,
+roof 13.5 to 12.3, metro 14.2 to 12.8, station 15.8 to 13.8. Frames byte-identical (rt_memory, raster and PT, render
+thread separate); the gameplay test passes.
+
+Next in the same profiles: per-bone `skeleton_bone_set_transform` calls (one per bone, even for characters hidden in
+other parts of the level), the cloth solver on the main thread, and the project's own skeleton modifiers.
+
+## Scene-feature elision: snow, glaze and ground code out of the hit shaders
+
+The split builds put most of the indoor scene's path tracer growth between eb40e5d1 and 03f1cfaa, and 1.2 ms more
+between bb187ac2 and 8db26ca5. Both ranges add BaseMaterial3D features to the shared closest-hit (snow and its
+sparkle, glaze, ground deform with its sand grain glints, exact snow sparkle). Every BaseMaterial3D surface uses
+that one hit shader, and it reads a material's switches from its record at run time, so a scene with no snowy
+material still pays the registers of the snow block on every hit (Laine, Karras and Aila 2013, above). This is
+step 3 of "path tracer cost that no setting removes", for the three blocks the bisect points at.
+
+- Three `RT_FLAGS` bits (`RT_FLAG_SCENE_NO_SNOW`, `_NO_GLAZE`, `_NO_GROUND`, bits 11 to 13). The accessors in
+  `raytracing_data_inc.glsl` return "off" while their bit is set, so the driver folds the specialization
+  constant and drops the block. The SPIR-V does not change (the compile-context key leaves these bits out), only
+  the pipeline.
+- The material storage counts, for each bit of `RTBaseMaterialState`, how many materials hold it (set in
+  `material_set_param`, cleared in `material_free`). A material created this frame is counted before the frame
+  picks its variant, whether or not it is drawn yet, so the count never lags the records.
+- The frame never traces a variant that leaves out a feature the scene holds. While the wanted variant builds,
+  it traces with the variant that leaves nothing out when that one is ready, else with the last variant when its
+  left-out set is within the wanted one's, else raster (as any variant switch). Once the elided variant is in
+  use, the full one is kept built, so a snowy area streamed in later is traced at once.
+- `rendering/pathtracing/scene_feature_elision` (default on) turns it off, for A/B timing on the same build.
+
+Not elided: wetness (rain is on in most scenes), hair, subsurface, clear coat and the base specular's own
+normal (`SPECULAR_NORMAL`, which custom shaders can write). Each is a candidate once the PC trace shows its cost.
+
+Proof on the cloud's software GPU, against the build before it: the memory scene (radiance cache off) traces the
+variant that leaves all three out and saves the same frame byte for byte, with the setting on and off. A copy of
+it with snow from the start (only glaze and ground left out), with all three features on (nothing left out), and
+with snow switched on mid-run (six frames saved across the switch, traced at once with the full variant) all
+match byte for byte. The snow bench's own frame is not repeatable between two runs of one build, so it is not a
+check; its `--test` passes.

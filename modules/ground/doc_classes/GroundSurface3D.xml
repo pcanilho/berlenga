@@ -48,6 +48,15 @@
 				Lays fresh saturated slurry [param depth] metres deep over 1 m cells within [param radius] of [param position], such as the fan a debris flow leaves. It reads as soft mud whatever the weather (the deeper of this and the [member mud_layer] depth wins), raises the ground and buries the relief under it. With [param update] false the cells refresh later ([method refresh_deposits]), which suits many small deposits in one step. A [param color] (linear, alpha its cover) shows the deposit in that colour on the ground in raster and path tracing, as a debris flow's ash; alpha 0 leaves the soil's own.
 			</description>
 		</method>
+		<method name="add_scour">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="amount" type="float" />
+			<description>
+				Sweeps the ripples off a disc of [param radius] round [param position], as a dust devil's foot does as it passes: [param amount] (0 to 1) of what is left goes at the middle, fading over the disc's outer 30%. Kept per 1 m cell; the wind's saltation rebuilds the ripples (some ten minutes of a 10 m/s wind), a calm keeps the track. [PhysXDustDevils3D] calls it.
+			</description>
+		</method>
 		<method name="add_wader">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
@@ -103,6 +112,12 @@
 			<return type="void" />
 			<description>
 				Deletes every kept rut tile in [member ruts_path] (see [member keep_ruts]), for a new game or a reset world.
+			</description>
+		</method>
+		<method name="clear_scours">
+			<return type="void" />
+			<description>
+				Removes every dust devil track (see [method add_scour]).
 			</description>
 		</method>
 		<method name="deposit">
@@ -257,6 +272,13 @@
 			<return type="void" />
 			<description>
 				Forgets every deposit: debris fans, flood and river silt, and how much of each river's record the ground has taken. For a new game; the kept file stays until [method clear_saved_ruts].
+			</description>
+		</method>
+		<method name="get_scour_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the ripples swept off at [param position] by dust devils (see [method add_scour]), 0 to 1.
 			</description>
 		</method>
 		<method name="get_silt_at" qualifiers="const">
@@ -447,7 +469,7 @@
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				The share of the ripples shown at [param position], 0 to 1: the sand share under any litter, faded out in a calm lee (see [member lee_calm_ripples]).
+				The share of the ripples shown at [param position], 0 to 1: the sand share under any litter, faded out in a calm lee (see [member lee_calm_ripples]) and on a dust devil's track (see [method add_scour]).
 			</description>
 		</method>
 		<method name="get_ripple_cell" qualifiers="const">

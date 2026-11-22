@@ -3137,6 +3137,20 @@ func _cutout_scene(off: bool, pt: bool) -> Node3D:
 	figure.material_override = red
 	figure.position = Vector3(0, 0.9, 0)
 	root.add_child(figure)
+	# Two blue blocks in the hole, in front of everything: one keeps out of the cut (camera_cutout off, as a
+	# character would), the other is cut like the walls.
+	for k in 2:
+		var blk := MeshInstance3D.new()
+		var bmesh := BoxMesh.new()
+		bmesh.size = Vector3(0.6, 0.6, 0.6)
+		blk.mesh = bmesh
+		var blue := StandardMaterial3D.new()
+		blue.albedo_color = Color(0.05, 0.1, 0.9)
+		blue.camera_cutout = k == 1
+		blk.material_override = blue
+		blk.position = Vector3(0.7 if k == 0 else -0.7, 3.8, 3.0)
+		root.add_child(blk)
+		root.set_meta("block%d" % k, blk.position)
 	var cam := Camera3D.new()
 	cam.position = Vector3(0, 9, 9)
 	cam.rotation_degrees = Vector3(-40, 0, 0)
@@ -3176,6 +3190,20 @@ func _red_share(img: Image, cam: Camera3D, at: Vector3) -> float:
 	return float(red) / n
 
 
+func _blue_share(img: Image, cam: Camera3D, at: Vector3) -> float:
+	var c := cam.unproject_position(at)
+	var sx := float(img.get_width()) / float(get_viewport().get_visible_rect().size.x)
+	var blue := 0
+	var n := 0
+	for dy in range(-8, 9, 2):
+		for dx in range(-8, 9, 2):
+			var px := img.get_pixel(clampi(int(c.x * sx) + dx, 0, img.get_width() - 1), clampi(int(c.y * sx) + dy, 0, img.get_height() - 1))
+			if px.b > 2.0 * px.g and px.b > 0.2:
+				blue += 1
+			n += 1
+	return float(blue) / n
+
+
 func _cutout_tests() -> void:
 	if DisplayServer.get_name() == "headless":
 		_skip("camera cut-out", "needs a rendering device")
@@ -3187,13 +3215,16 @@ func _cutout_tests() -> void:
 			await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
 		var cam: Camera3D = root.get_meta("cam")
-		shares.append([_red_share(img, cam, Vector3(0, 1.0, 0)), _centre_luminance(img)])
+		shares.append([_red_share(img, cam, Vector3(0, 1.0, 0)), _centre_luminance(img), _blue_share(img, cam, root.get_meta("block0")), _blue_share(img, cam, root.get_meta("block1"))])
 		root.queue_free()
 		await get_tree().process_frame
 	RenderingServer.global_shader_parameter_set("camera_cutout", Vector4())
 	_check("camera cut-out: a figure hidden behind a wall and a roof shows through the hole (camera_cutout globals)",
 			shares[0][0] < 0.1 and shares[1][0] > 0.4,
 			"figure's share of its spot: %.2f without, %.2f with the cut-out" % [shares[0][0], shares[1][0]])
+	_check("camera cut-out: a surface with camera_cutout off stays in view in the hole, one with it on opens",
+			shares[0][2] > 0.8 and shares[0][3] > 0.8 and shares[1][2] > 0.8 and shares[1][3] < 0.2,
+			"kept block %.2f, cut block %.2f without the cut-out; %.2f, %.2f with it" % [shares[0][2], shares[0][3], shares[1][2], shares[1][3]])
 
 
 # The shadow budget (rendering/lights_and_shadows/positional_shadow/max_shadowed_lights): two lamps over two posts,

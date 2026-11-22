@@ -90,6 +90,12 @@ public:
 		// Off-by-default reuse passes: compiled out while off, so their per-pixel state is not kept live across traces.
 		RT_FLAG_INDIRECT_REUSE_ENABLED = (1 << 9), // rendering/pathtracing/indirect_reuse.
 		RT_FLAG_LIGHT_REUSE_ENABLED = (1 << 10), // rendering/pathtracing/light_reuse.
+		// Scene-feature elision (rendering/pathtracing/scene_feature_elision): set while no material holds the
+		// BaseMaterial3D feature, so its code folds out of the hit shaders. compute_scene_elision_flags().
+		RT_FLAG_SCENE_NO_SNOW = (1 << 11), // Snow (and snow_on_body).
+		RT_FLAG_SCENE_NO_GLAZE = (1 << 12), // Glaze.
+		RT_FLAG_SCENE_NO_GROUND = (1 << 13), // Ground Deform (patch and terrain), with its sand grain glints.
+		RT_FLAG_SCENE_ELISION_MASK = RT_FLAG_SCENE_NO_SNOW | RT_FLAG_SCENE_NO_GLAZE | RT_FLAG_SCENE_NO_GROUND,
 	};
 
 	// Sample count encoding (must match shader RT_SAMPLE_MODE_* defines).
@@ -111,7 +117,7 @@ public:
 
 	static_assert(RT_SAMPLE_MODE_SHIFT + 2 == RT_MAX_BOUNCES_SHIFT && RT_MAX_BOUNCES_SHIFT + 4 == 32, "Sample mode and bounces occupy the top 6 bits.");
 	static_assert(RT_MAX_BOUNCES_LIMIT <= RT_MAX_BOUNCES_MASK, "Bounce limit must fit the bounce field.");
-	static_assert(uint32_t(RT_FLAG_LIGHT_REUSE_ENABLED) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
+	static_assert(uint32_t(RT_FLAG_SCENE_NO_GROUND) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
 
 	// RT pipeline limits (must match GLSL payload/hit attribute struct sizes).
 	// 1: primary/bounce from raygen
@@ -281,6 +287,8 @@ public:
 	// Build the full packed rt_flags from pathtracing environment settings.
 	// `p_environment` may be invalid (RT active with no pathtracing environment).
 	static uint32_t compute_rt_flags(RID p_environment, bool p_fog_enabled, bool p_volumetric_fog_enabled);
+	// RT_FLAG_SCENE_NO_* for the BaseMaterial3D features no material holds; 0 with scene_feature_elision off.
+	static uint32_t compute_scene_elision_flags();
 
 	static bool is_debug_vis_mode(int p_debug_mode) { return p_debug_mode != 0 && p_debug_mode != RT_DEBUG_TIMING_HEATMAP; }
 	static RSE::PathtracingDenoiser get_effective_denoiser(RID p_environment);
@@ -593,6 +601,8 @@ public:
 		SourceHash128 source_hash;
 		HGState state = HGState::Empty;
 		CustomShaderEntry entry;
+		// Held at start-up for a material the last launch had in this slot (_load_slot_order), not registered yet.
+		bool reserved = false;
 	};
 
 	LocalVector<HitGroupSlot> hit_group_slots;
@@ -667,6 +677,14 @@ public:
 private:
 	// Source-hash slot management.
 	uint32_t _register_slot(uint32_t p_shader_id, RID p_material, bool p_is_procedural);
+	// The slots in the order the last launch filled them, kept beside the SPIR-V cache: materials register in
+	// loading order, which changes from launch to launch, and the linked pipeline's hit groups follow the slots,
+	// so without this the link never matched the Vulkan pipeline cache and added to it every launch.
+	bool slot_order_dirty = false;
+	String _slot_order_path() const;
+	void _load_slot_order();
+	void _save_slot_order();
+	bool _has_filled_slots() const;
 	bool _preprocess_shader(RID p_material, bool p_is_procedural, CustomShaderEntry &r_entry);
 	void _strip_texture_globals(String &r_globals, const String &p_tex_name);
 	void _finalize_uniforms_with_textures(CustomShaderEntry &r_entry, const ShaderCompiler::GeneratedCode &p_gen_code, const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms, bool p_strip_intersection_globals);

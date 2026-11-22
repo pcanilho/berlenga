@@ -211,13 +211,15 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	float _h(int p_x, int p_z) const;
 	Vector3 _normal(int p_x, int p_z) const;
 	Vector3 _normal_at(real_t p_x, real_t p_z) const; // bilinear, in grid units
-	float _cliff_offset(const Vector3 &p_world) const;
+	float _cliff_offset(const Vector3 &p_world, real_t p_steep, real_t p_relief) const; // p_steep: relief scale times the face's tan(slope)
 	float _bank_offset(const Vector3 &p_world) const;
 	// The face weights for a heightfield normal: x the cliff's (cliff_relief), y the bank's (bank_relief), each 0..1.
 	static Vector2 _relief_weights(const Vector3 &p_normal);
+	real_t _relief_fold_scale(real_t p_x, real_t p_z) const; // grid units
 	Vector3 _cliff_point(const Vector3 &p_world, real_t p_weight_scale) const;
 	void _build_cliff_surface(MeshJob &r_job) const;
 	const LocalVector<int> &_indices(int p_level, int p_mask);
+	void _crease_indices(int p_cx, int p_cz, int p_level, int p_mask, LocalVector<int> &r_indices) const;
 	void _measure(const float *p_h, int p_stride, float *r_error, float &r_min, float &r_max) const;
 	void _measure_chunk(int p_cx, int p_cz);
 	uint64_t _mesh_key(int p_chunk, int p_level, int p_mask) const;

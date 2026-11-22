@@ -67,6 +67,22 @@ void BindlessBlock::_texture_replaced(RID p_old, RID p_new) {
 	}
 	const uint32_t index = it->value;
 	texture_to_index.remove(it);
+	// Release the sets that list the old texture rather than have RenderingDevice rebuild every one of them per
+	// swap: streaming swaps many textures a frame and each set lists the whole table. Indices do not change, so
+	// the version stays and materials keep their packing; the sets are rebuilt once, at the next finalize (and
+	// by consumers, who see theirs invalid).
+	if (uniform_set.is_valid() && rd->uniform_set_is_valid(uniform_set)) {
+		rd->free_rid(uniform_set);
+		uniform_set = RID();
+		needs_refinalize = true;
+		released_for_swap = true;
+	}
+	for (const RID &set : consumer_sets) {
+		if (rd->uniform_set_is_valid(set)) {
+			rd->free_rid(set);
+		}
+	}
+	consumer_sets.clear();
 	if (texture_to_index.has(p_new)) {
 		// Already in the block elsewhere: this slot reads it too until it is reused.
 		textures[index] = p_new;
@@ -96,8 +112,8 @@ void BindlessBlock::begin_frame() {
 	}
 
 	bool set_valid = uniform_set.is_valid() && rd->uniform_set_is_valid(uniform_set);
-	if (set_valid) {
-		return;
+	if (set_valid || released_for_swap) {
+		return; // A swap released the set on purpose: every slot is live, finalize rebuilds it.
 	}
 
 	// Uniform set was externally invalidated (a texture was destroyed/recreated).
@@ -182,7 +198,17 @@ RID BindlessBlock::create_uniform_set(RID p_shader, uint32_t p_set_index) const 
 	}
 	uniforms.push_back(u);
 
-	return rd->uniform_set_create(uniforms, p_shader, p_set_index);
+	RID set = rd->uniform_set_create(uniforms, p_shader, p_set_index);
+	if (set.is_valid()) {
+		// Forget sets their consumers have freed meanwhile.
+		for (int64_t i = int64_t(consumer_sets.size()) - 1; i >= 0; i--) {
+			if (!rd->uniform_set_is_valid(consumer_sets[i])) {
+				consumer_sets.remove_at_unordered(i);
+			}
+		}
+		consumer_sets.push_back(set);
+	}
+	return set;
 }
 
 void BindlessBlock::finalize(RID p_shader, uint32_t p_set_index) {
@@ -201,6 +227,7 @@ void BindlessBlock::finalize(RID p_shader, uint32_t p_set_index) {
 	rd->set_resource_name(uniform_set, "Bindless Texture Set");
 
 	needs_refinalize = false;
+	released_for_swap = false;
 }
 
 void BindlessBlock::clear() {
@@ -208,6 +235,8 @@ void BindlessBlock::clear() {
 		rd->free_rid(uniform_set);
 	}
 	uniform_set = RID();
+	consumer_sets.clear(); // Owned and freed by their consumers.
+	released_for_swap = false;
 	textures.clear();
 	texture_to_index.clear();
 	free_indices.clear();

@@ -901,3 +901,20 @@ storm_column_type / wc_storm_column). And the extinction returned nothing where 
 storm's cover gives only within a couple of core radii: the anvil, meant to fan out 7 radii downwind, was cut to a
 round cap over the tower. The early out now keeps the storm's column. Seen from the side the anvil now spreads
 downwind as a fan with billowed edges; raster and PT match.
+- Then the storm's cirrus shield: centred 2.5 core radii downwind with a 3-radius spread, it now lay under the wider
+  anvil as a streaked sheet, a collar round the tower. It now starts where the anvil body ends (4 to 6.5 body radii
+  downwind, centred at 7), so the anvil thins downwind into cirrus (Lilly 1988), as the shield over a real storm.
+
+## Sunset light on the mid and high layers (22 Nov 2026)
+
+- The altocumulus' sun past their neighbours: the rest of the path out of the slab toward the sun was taken at the
+  cloudlets' mean density, so a low sun's 7 km slant left every cloudlet dark. A broken layer passes light through
+  its gaps: per cloudlet spacing (700 m) 1 - c + c exp(-tau_cell), raised to the spacings crossed (binary-mixture
+  transport; Pomraning 1991, Barker and Davies 1992). Midday unchanged (within 1%).
+- Each layer's sun through the air above its own height: the sky handed every layer the low base's sun; the mid
+  (and wave) and high layers now take Bruneton's transmittance at their heights over the base's.
+- Measured at a 4 degree sun, the clouds still dim as much as the sky does. The rest is the bench, not the clouds:
+  its hand-set white sun lights the aerosol froxels (the first 1.5 km of haze, drawn over the sky in raster) at
+  full strength, a grey veil over a sunset sky; with the veil off over the sky raster matches PT (5th/50th/95th
+  percentile 21/31/49 against 22/30/47). The game drives the light from SkyClock (reddened, dimmed), as the haboob
+  view now does. PT has no froxels over the sky: it lacks that first 1.5 km of haze (small at a clear sky's 40 km).

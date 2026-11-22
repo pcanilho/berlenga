@@ -140,6 +140,77 @@ const LocalVector<int> &Landscape3D::_indices(int p_level, int p_mask) {
 	return r;
 }
 
+// The drawn chunk's indices: _indices()' blocks, but where a block's sides all meet neighbours of its own level, its
+// four quads are each cut along the diagonal whose ends differ least in height (the shorter diagonal in height,
+// as a TIN follows breaklines; Garland and Heckbert 1995): a sharp crest or gully running across the grid followed
+// the fan's fixed diagonals half the time and drew a sawtooth of 1 m teeth along every arete's skyline. Interior
+// diagonals never cross a block's sides, so the edges shared with neighbours, and the cliff refinement's splits of
+// them, are unchanged.
+void Landscape3D::_crease_indices(int p_cx, int p_cz, int p_level, int p_mask, LocalVector<int> &r) const {
+	const int n = chunk_quads >> p_level;
+	const int s = 1 << p_level;
+	const int row = n + 1;
+	const int nb = n / 2;
+	const int gx = p_cx * chunk_quads, gz = p_cz * chunk_quads;
+	r.clear();
+	r.reserve(n * n * 6);
+	auto hv = [&](int x, int z) { return _h(gx + x * s, gz + z * s); };
+	for (int b = 0; b < nb; b++) {
+		for (int a = 0; a < nb; a++) {
+			const int x = 2 * a;
+			const int z = 2 * b;
+			const bool edge = (b == 0 && (p_mask & 1)) || (a == nb - 1 && (p_mask & 2)) || (b == nb - 1 && (p_mask & 4)) || (a == 0 && (p_mask & 8));
+			if (!edge) {
+				for (int qz = z; qz < z + 2; qz++) {
+					for (int qx = x; qx < x + 2; qx++) {
+						const int v00 = qz * row + qx, v10 = v00 + 1, v01 = v00 + row, v11 = v01 + 1;
+						if (Math::abs(hv(qx, qz) - hv(qx + 1, qz + 1)) <= Math::abs(hv(qx + 1, qz) - hv(qx, qz + 1))) {
+							r.push_back(v00);
+							r.push_back(v10);
+							r.push_back(v11);
+							r.push_back(v01);
+							r.push_back(v00);
+							r.push_back(v11);
+						} else {
+							r.push_back(v00);
+							r.push_back(v10);
+							r.push_back(v01);
+							r.push_back(v10);
+							r.push_back(v11);
+							r.push_back(v01);
+						}
+					}
+				}
+				continue;
+			}
+			const int c = (z + 1) * row + x + 1;
+			int ring[8];
+			int k = 0;
+			ring[k++] = z * row + x;
+			if (!(b == 0 && (p_mask & 1))) {
+				ring[k++] = z * row + x + 1;
+			}
+			ring[k++] = z * row + x + 2;
+			if (!(a == nb - 1 && (p_mask & 2))) {
+				ring[k++] = (z + 1) * row + x + 2;
+			}
+			ring[k++] = (z + 2) * row + x + 2;
+			if (!(b == nb - 1 && (p_mask & 4))) {
+				ring[k++] = (z + 2) * row + x + 1;
+			}
+			ring[k++] = (z + 2) * row + x;
+			if (!(a == 0 && (p_mask & 8))) {
+				ring[k++] = (z + 1) * row + x;
+			}
+			for (int i = 0; i < k; i++) {
+				r.push_back(ring[i]);
+				r.push_back(ring[(i + 1) % k]);
+				r.push_back(c);
+			}
+		}
+	}
+}
+
 // Height range and, per level, the largest gap between that level's triangles and the level 0 heights under them,
 // for the (chunk_quads + 1)^2 heights at p_h, rows p_stride apart. Safe on worker threads.
 void Landscape3D::_measure(const float *p_h, int p_stride, float *r_error, float &r_min, float &r_max) const {
@@ -240,7 +311,7 @@ Vector3 Landscape3D::_normal_at(real_t p_x, real_t p_z) const {
 }
 
 // Metres out of the face (negative: back into it) at a point of the landscape's own space, before cliff_relief.
-float Landscape3D::_cliff_offset(const Vector3 &p) const {
+float Landscape3D::_cliff_offset(const Vector3 &p, real_t p_steep, real_t p_relief) const {
 	// Beds as a real sequence draws them (bed thickness in stratified rock is near log-normal; resistant beds stand out
 	// as ledges, weak ones weather back: differential erosion). Each 12 m unit holds 1 to 5 beds of uneven
 	// thickness; most beds sit near flush, about one in four is a hard one standing proud, and each bed's ledge fades
@@ -270,6 +341,21 @@ float Landscape3D::_cliff_offset(const Vector3 &p) const {
 	}
 	const int32_t bed = unit * 8 + bi;
 	const int32_t bed_up = bi + 1 < nb ? bed + 1 : (unit + 1) * 8;
+	// The bed under this one and its thickness (the last bed of the unit below for the first).
+	int32_t bed_dn = bed - 1;
+	real_t T_dn = 0.0;
+	if (bi > 0) {
+		T_dn = U * wb[bi - 1] / wsum;
+	} else {
+		const int nb_dn = 1 + int(_lc_hash(unit - 1, 21, 4) * 4.999f);
+		float ws_dn = 0.0f, wl = 0.0f;
+		for (int i = 0; i < nb_dn; i++) {
+			wl = Math::exp(1.1f * (_lc_hash(unit - 1, i, 17) + _lc_hash(unit - 1, i, 19) - 1.0f) * 1.7f);
+			ws_dn += wl;
+		}
+		bed_dn = (unit - 1) * 8 + nb_dn - 1;
+		T_dn = U * wl / ws_dn;
+	}
 	const real_t fy = fu0 - lo;
 	const auto proud = [&](int32_t p_bed) {
 		const float hard = _lc_hash(p_bed, 11, 3);
@@ -278,12 +364,6 @@ float Landscape3D::_cliff_offset(const Vector3 &p) const {
 		const float run = _lc_noise(Vector3(p.x * 0.06f, float(p_bed) * 1.37f, p.z * 0.06f));
 		return base * Math::smoothstep(0.4f, 0.7f, run) * (0.6f + 0.8f * run);
 	};
-	const float o0 = proud(bed);
-	const float o1 = proud(bed_up);
-	// No wider than the bed itself, so a thin bed's lip starts at its own foot and the offset stays continuous there.
-	const real_t lip = MIN(T, MIN(real_t(1.5), MAX(real_t(0.6), T * 0.5f)));
-	const real_t ty = CLAMP((fy - (T - lip)) / lip, real_t(0.0), real_t(1.0));
-	const float sy = float(ty * ty * (3.0f - 2.0f * ty));
 	// Joints across the beds, 4.5 m apart and staggered bed to bed, each block a little forward or back. Blended
 	// into the next bed's blocks over the same lip as the beds: switched at the bed's top, the blocks' 1.2 m steps
 	// cut a slit along every bed boundary.
@@ -295,7 +375,41 @@ float Landscape3D::_cliff_offset(const Vector3 &p) const {
 		const real_t tu = CLAMP((fu - 3.0f) / 1.5f, real_t(0.0), real_t(1.0));
 		return 1.2f * Math::lerp(j0, j1, float(tu * tu * (3.0f - 2.0f * tu)));
 	};
-	float o = Math::lerp(o0 + joint(bed), o1 + joint(bed_up), sy);
+	const float a_dn = proud(bed_dn) + joint(bed_dn), a0 = proud(bed) + joint(bed), a1 = proud(bed_up) + joint(bed_up);
+	// The step between two beds is rounded over a lip at least 1.2 times as tall as the step (in offset units), and
+	// on a face of slope tan t with the relief scaled by k (p_steep = k tan t) tall enough that the step's steepest
+	// part leans out no further than the face leans back (1.5 k d tan t / lip <= 1.1, the smoothstep's peak slope
+	// 1.5 times its mean): steeper, the bed above overhangs the one below and its underside, facing the ground, is a
+	// black slit under every ledge in raster (and the grid's columns fold through it). The lip sits in the top of the
+	// lower bed; where that bed is too thin for it, the rest of the step carries on into the bottom of the bed above
+	// (at most half of it), so the step keeps its slope instead of steepening into an overhang.
+	const real_t steep = MIN(p_steep, real_t(6.0) * MAX(p_relief, real_t(0.0)));
+	const auto lip_of = [&](real_t p_t, float p_d, real_t &r_low, real_t &r_up) {
+		const real_t req = MAX(MIN(real_t(1.5), MAX(real_t(0.6), p_t * 0.5f)), MAX(real_t(1.2f * Math::abs(p_d)), real_t(1.36f) * steep * Math::abs(p_d)));
+		r_low = MIN(p_t, req);
+		r_up = req - r_low;
+		return req;
+	};
+	float o = a0;
+	{
+		// From the bed below: the part of its step that did not fit in its top.
+		real_t lo_dn, up_dn;
+		const real_t req = lip_of(T_dn, a0 - a_dn, lo_dn, up_dn);
+		if (up_dn > 0.0) {
+			const float carry = a_dn + (a0 - a_dn) * float(lo_dn / req);
+			const real_t lip_up = MIN(up_dn, T * 0.5f);
+			const real_t tb = CLAMP(fy / lip_up, real_t(0.0), real_t(1.0));
+			o = Math::lerp(carry, a0, float(tb * tb * (3.0f - 2.0f * tb)));
+		}
+	}
+	{
+		// Toward the bed above, over the top of this one.
+		real_t lip, up;
+		const real_t req = lip_of(T, a1 - a0, lip, up);
+		const float target = up > 0.0 ? a0 + (a1 - a0) * float(lip / req) : a1;
+		const real_t ty = CLAMP((fy - (T - lip)) / lip, real_t(0.0), real_t(1.0));
+		o = Math::lerp(o, target, float(ty * ty * (3.0f - 2.0f * ty)));
+	}
 	// Roughness.
 	o += 0.5f * (_lc_noise(p * 0.7f) - 0.5f) + 0.2f * (_lc_noise(p * 2.1f + Vector3(3, 1, 7)) - 0.5f);
 	return o;
@@ -333,18 +447,41 @@ Vector2 Landscape3D::_relief_weights(const Vector3 &n) {
 	return Vector2(cs, bs * (1.0f - cs));
 }
 
+// The relief's scale where the slope's horizontal normal converges or spreads in plan (a gully's inside, a spur's
+// nose). Pushed out along that normal by d, a contour's length scales by 1 + d k, k the plan divergence of the unit
+// horizontal normal (1 / the contour's radius); past -1 the surface folds through itself and shows its back faces as
+// black slits and pockets in a tight gully or behind a spur. Relief here reaches about 3.5 times cliff_relief either
+// way, so it is scaled to keep 1 + d k above 0.3 (displacement mapping's self-intersection bound; the same limit an
+// offset curve keeps to stay simple: d under the radius of curvature).
+real_t Landscape3D::_relief_fold_scale(real_t p_x, real_t p_z) const {
+	const real_t reach = 3.5f * MAX(cliff_relief, bank_relief);
+	if (reach <= 0.0) {
+		return 1.0;
+	}
+	const auto unit_m = [&](real_t x, real_t z) {
+		const Vector3 n = _normal_at(x, z);
+		const Vector2 m(n.x, n.z);
+		const real_t l = m.length();
+		return l < 1e-4f ? Vector2() : m / l;
+	};
+	const real_t k = (unit_m(p_x + 1.0f, p_z).x - unit_m(p_x - 1.0f, p_z).x + unit_m(p_x, p_z + 1.0f).y - unit_m(p_x, p_z - 1.0f).y) / (2.0f * spacing);
+	return MIN(real_t(1.0), real_t(0.7f) / (reach * Math::abs(k) + real_t(1e-6f)));
+}
+
 // The displaced point for a point on the heightfield surface (landscape space).
 Vector3 Landscape3D::_cliff_point(const Vector3 &p, real_t p_weight_scale) const {
-	const Vector3 n = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
+	const real_t fx = (p.x - origin.x) / spacing, fz = (p.z - origin.y) / spacing;
+	const Vector3 n = _normal_at(fx, fz);
 	const Vector2 m(n.x, n.z);
 	const real_t ml = m.length();
 	if (ml < 1e-4f || p_weight_scale <= 0.0) {
 		return p;
 	}
-	const Vector2 w = _relief_weights(n) * p_weight_scale;
+	const Vector2 w = _relief_weights(n) * (p_weight_scale * _relief_fold_scale(fx, fz));
 	real_t d = 0.0;
 	if (w.x > 0.0 && cliff_relief > 0.0) {
-		d += cliff_relief * w.x * _cliff_offset(p);
+		const real_t k = cliff_relief * w.x;
+		d += k * _cliff_offset(p, k * ml / MAX(n.y, real_t(1e-3)), k);
 	}
 	if (w.y > 0.0 && bank_relief > 0.0) {
 		d += bank_relief * w.y * _bank_offset(p);
@@ -442,7 +579,8 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 		int a, b, c, depth;
 	};
 	LocalVector<T> stack;
-	const LocalVector<int> &idx = indices[0][r_job.mask & 15];
+	LocalVector<int> idx;
+	_crease_indices(cx, cz, 0, r_job.mask & 15, idx);
 	const LocalVector<uint8_t> *hl = chunk_holes.getptr(r_job.chunk);
 	for (uint32_t t = 0; t < idx.size(); t += 3) {
 		if (hl && _hole_tri(hl, 0, idx[t], idx[t + 1], idx[t + 2])) {
@@ -518,7 +656,7 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 		vp[i] = _cliff_point(p, keep[i]) - corner;
 		const Vector3 nb = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
 		{
-			const Vector2 w = _relief_weights(nb);
+			const Vector2 w = _relief_weights(nb) * _relief_fold_scale((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
 			const real_t ml = Vector2(nb.x, nb.z).length();
 			c0[i * 4 + 0] = p.x;
 			c0[i * 4 + 1] = p.y;
@@ -582,7 +720,8 @@ void Landscape3D::_build_surface(MeshJob &r_job) const {
 			nw[j * (n + 1) + i] = _normal(x, z);
 		}
 	}
-	const LocalVector<int> &idx = indices[r_job.level][r_job.mask & 15];
+	LocalVector<int> idx;
+	_crease_indices(cx, cz, r_job.level, r_job.mask & 15, idx);
 	PackedInt32Array ia;
 	const LocalVector<uint8_t> *hl = chunk_holes.getptr(r_job.chunk);
 	if (hl) {
@@ -2024,16 +2163,18 @@ Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
 	if (w.x <= 0.0 && w.y <= 0.0) {
 		return Vector2(0.0, 0.0);
 	}
+	const real_t fold = _relief_fold_scale(fx, fz);
 	const int ix = int(Math::floor(fx)), iz = int(Math::floor(fz));
 	const real_t u = fx - ix, v = fz - iz;
 	const real_t h = Math::lerp(Math::lerp(real_t(_h(ix, iz)), real_t(_h(ix + 1, iz)), u), Math::lerp(real_t(_h(ix, iz + 1)), real_t(_h(ix + 1, iz + 1)), u), v);
 	const Vector3 q(p.x, h, p.z);
 	real_t d = 0.0;
 	if (w.x > 0.0 && cliff_relief > 0.0) {
-		d += cliff_relief * w.x * _cliff_offset(q);
+		const real_t k = cliff_relief * w.x * fold;
+		d += k * _cliff_offset(q, k * ml / MAX(n.y, real_t(1e-3)), k);
 	}
 	if (w.y > 0.0 && bank_relief > 0.0) {
-		d += bank_relief * w.y * _bank_offset(q);
+		d += bank_relief * w.y * fold * _bank_offset(q);
 	}
 	return Vector2(d * ml / n.y, MIN(w.x + w.y, real_t(1.0)));
 }

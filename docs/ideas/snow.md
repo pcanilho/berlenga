@@ -2009,7 +2009,7 @@ Built:
   face tops (a drop steeper than 70 degrees ahead, none behind), each walked down to its foot. A face taller than its
   cell's Hc (0.6 of it while a body works the tile: the load beside the edge and the shaking bring a driven rut's
   walls in) gives way at a rate rising with how far over it stands, as a block 0.25-0.7 m along the face: the wedge
-  in front of a plane between 56 and 68 degrees (each block its own, rough at 6 cm) comes off, down to 0.8-1.0 of the
+  in front of a plane between 52 and 64 degrees (each block its own, rough at 6 cm) comes off, down to 0.8-1.0 of the
   failing depth (a wall over depth hoar falls to the hoar's bottom, undercut). The debris lands as a toe from the old
   floor out at the angle of repose, bulked by a quarter, lumpy at 14 cm, never higher than its profile on the old
   floor (so toes never stack into new walls); a debris-topped face (mostly rim) is left to the field's loose-snow
@@ -2021,6 +2021,13 @@ Built:
   hoar; a 20 cm rut in new powder stands until a body works along it. `--view=walls`: a trench through 44 cm of new
   snow on 31 cm of old: the new snow sheds blocks to the old, which stands (`--walls=0`: before; `--gpu`: the GPU
   field, collapsing as it runs).
+- Docs review (22 Nov): the view moved to two deep tyre ruts across a level snowfield with hills on the horizon,
+  the sun along them. Fixes it found: a wall whose top lay just over a tile seam was never scanned (tiles beside an
+  active one now count); in a rut too narrow for two toes the second wall's debris now piles on the first toe up to
+  its scarp's base (it stood before); a toe that cannot hold a block scales the whole wedge back (it left a column at
+  the face); a sliver with a drop on both sides falls at any height (spikes); a face counts as a wall only when its
+  mean steepness is over 65.5 degrees, so a fallen scarp (now 52-64 degrees) does not keep failing back into the
+  field; lumps never land above the rut's top edge (SnowClumps3D.drop's ceiling).
 - Not yet: blocks as falling rigid pieces (as the roof slabs, follow-up 52) for the largest failures; the cover's own
   cell steps (avalanche crowns) crumbling.
 

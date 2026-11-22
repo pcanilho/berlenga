@@ -193,6 +193,12 @@
    "title": "Open worlds"
   },
   {
+   "name": "rendering/pathtracing/scene_feature_elision",
+   "type": "bool",
+   "default": "true",
+   "about": "Compiles the path tracer's code for a BaseMaterial3D feature (snow, glaze, ground deform) out of its hit shaders while no material holds that feature."
+  },
+  {
    "name": "rendering/pathtracing/ser_coherence_hints",
    "type": "bool",
    "default": "true",
@@ -1482,7 +1488,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again, and passing dust devils (`PhysXDustDevils3D`) sweep a band clean that blowing sand fills in again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2705,6 +2711,17 @@
    ],
    "note": "",
    "what": "rooted ground shows turned sods and loose stones that dry, slump and green over, loses its plants and takes the first weeds, healing over about two years.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Hay meadows",
+   "settings": [
+    "GrassField3D.hay_meadows"
+   ],
+   "note": "",
+   "what": "meadows are mown to stubble, the cut grass lying in swaths, then tedded, raked into windrows and carted off over the following days.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -5131,6 +5148,17 @@
    ],
    "note": "",
    "what": "feet plant on deformed ground and snow, with pelvis drop and slope tilt, and prints land where the feet land.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
+   "name": "Resting off screen",
+   "settings": [
+    "Skeleton3D.modifier_update_mode"
+   ],
+   "note": "",
+   "what": "skeleton modifiers can rest while the skeleton is hidden or off screen.",
    "page": "characters",
    "title": "Characters",
    "topic": ""

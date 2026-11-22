@@ -3571,10 +3571,11 @@ void RenderRaytracing::_update_streaming_feedback() {
 		any = true;
 		// Alpha-tested and blended surfaces are read by any-hit (shadow and visibility rays) at the base level,
 		// with no ray cone; keep them whole while they are traced.
-		// (Alpha scissor is a surface flag in the TLAS, so ask the shader.)
+		// (Alpha scissor is a surface flag in the TLAS, so ask the shader the way _rt_uses_alpha_scissor() does. A
+		// bare discard does not make a surface any-hit: every BaseMaterial3D has one for the camera cut-out.)
 		const SceneShaderForwardClustered::ShaderData *shader_data = static_cast<const SceneShaderForwardClustered::MaterialData *>(data)->shader_data;
 		const bool any_hit = entry->ptr->is_custom_shader || (entry->ptr->data.flags & RT_MAT_FLAG_TRANSPARENT) ||
-				(shader_data && (shader_data->uses_alpha_clip || shader_data->uses_alpha_antialiasing || shader_data->uses_alpha || shader_data->uses_discard));
+				(shader_data && (shader_data->uses_alpha_clip || shader_data->uses_alpha_antialiasing));
 		if (entry->last_used_frame + 2 >= frame && any_hit) {
 			streaming->feedback_report_material(data->material_feedback_rid, 0.0f);
 		}
@@ -3936,15 +3937,17 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.wetness_amount = rt_unorm8(get_float("wetness_amount", 1.0f));
 		mat.subsurface.wetness_from_weather = rt_state.wetness_from_weather;
 		mat.subsurface_texture.wetness_canopy = rt_state.wetness_canopy;
+		mat.subsurface_texture.wetness_moving = rt_state.wetness_moving;
 	}
 	if (rt_state.snow) {
 		mat.subsurface.snow = 1;
 		mat.subsurface.snow_from_weather = rt_state.snow_from_weather;
 		mat.subsurface_texture.snow_on_body = rt_state.snow_on_body;
-		mat.subsurface_texture.wetness_moving = rt_state.wetness_moving;
 		mat.hair_crown_z.snow_amount = rt_unorm8(get_float("snow_amount", 1.0f));
 		mat.hair_crown_z.snow_max_slope = rt_unorm8(get_float("snow_max_slope", 60.0f) / 90.0f);
 	}
+	// Cut round the player as its raster shader is (BaseMaterial3D camera_cutout, or a custom camera_cutout_discard()).
+	mat.subsurface_texture.camera_cutout = material_storage->material_uses_camera_cutout(p_material_rid);
 	if (rt_state.ground_deform_patch) {
 		mat.subsurface.ground_deform = 1;
 	}

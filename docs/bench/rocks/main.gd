@@ -6,6 +6,8 @@ extends Node3D
 #                         wear flattens, then the field's six layers on a generated world; prints PASS/FAIL, quits
 #                         (sea caves: the sea surges in under the cliff, blowholes blow in a storm swell; boulders as
 #                         wind obstacles)
+#   --world --height-check  the generator's heights at fixed points and a hash of its height image against a reference
+#                         (seed 5, 2048 m world): the same on every platform; prints PASS/FAIL, quits
 #   --gallery             every family (columns) of every rock type (rows), each scaled to a 1 m b axis
 #   --rock=type,family    one rock close up (--seed=N, --distance=m transport, --weathering=0..1; --stand: a fin,
 #                         hoodoo or stack stood on end, side on)
@@ -13,7 +15,11 @@ extends Node3D
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --exposure=x          the tonemapper's exposure (1): more for a dark cave seen from inside
-#   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff)
+#   --gen-prop=name:value[,...]  any TerrainGenerator3D property before it generates (A/B one stage)
+#   --hide=Node[,Node...]  hide those children of the bench (A/B which object draws something)
+#   --lod-error=px        Landscape3D.lod_error
+#   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff);
+#                         --face-side=k moves the camera along the wall (k times --dist)
 #   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still); on by default
 #                         for raster stills, --no-taa for the single-sample frame
 #   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
@@ -71,6 +77,7 @@ extends Node3D
 #                         keeps the stones but not the material's silt centres and gravel lag (a before frame)
 #   --trail[=passes]      with --world: a game trail across the spot, 1.5 m before it (WorldStand.set_trails, 0.8 m wide,
 #                         400 passes a year); --rooting[=years] a boar rooting 2 m behind it, that old; --no-wear ignores both
+#   --repetition          with --world: per layer, how often a stone stands next to the same shape, and next to a twin
 #   --streaming           with --world: RockField3D streams after the build, so far thinning runs as in play
 #   --focus=camera        with --world: RockField3D follows the camera instead of the spot (far thinning as a player sees it)
 #   --no-far-widen        with --world: thinned cells draw their survivors at their own size (RockField3D.far_widen off)
@@ -482,9 +489,16 @@ func _world() -> void:
 	gen.detail_octaves = 5
 	gen.glacial_enabled = true
 	gen.glacial_ela = float(args.get("ela", "450"))
+	# --gen-prop=name:value[,name:value...]: any of the generator's properties (A/B one stage).
+	for kv in str(args.get("gen-prop", "")).split(",", false):
+		var p: PackedStringArray = kv.split(":")
+		gen.set(p[0], str_to_var(p[1]))
 	add_child(gen)
 	gen.generate()
 	print("world generated in %d ms" % (Time.get_ticks_msec() - t0))
+	if args.has("height-check"):
+		_height_check()
+		return
 	if args.has("probe"):
 		var hist := [0, 0, 0, 0, 0]
 		var till := 0
@@ -510,6 +524,12 @@ func _world() -> void:
 	if args.get("ground-scans", "1") != "0" and not args.has("test"): # --ground-scans=0: plain ground layers
 		if _apply_ground_scans(tm, ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers"), args.get("ground-scans", "1")) > 0:
 			tm.update_shader()
+	if args.has("hide"):
+		get_tree().process_frame.connect(func():
+			for nm in str(args["hide"]).split(","):
+				var nd = get_node_or_null(nm)
+				if nd:
+					nd.visible = false)
 	if args.has("face-weathering"):
 		tm.set_shader_parameter("tm_face_weathering", float(args["face-weathering"]))
 	var land := Landscape3D.new()
@@ -522,6 +542,8 @@ func _world() -> void:
 	if args.has("test") or args.has("no-cliff-relief"):
 		land.cliff_relief = 0.0
 	land.name = "Landscape"
+	if args.has("lod-error"):
+		land.lod_error = float(args["lod-error"])
 	add_child(land)
 	land.material = tm
 	land.source = land.get_path_to(gen)
@@ -970,6 +992,8 @@ func _world() -> void:
 		if args.has("streaming"):
 			rocks.streaming = true # --streaming: the field streams and thins every frame as in play (stills draw every cell whole)
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		if args.has("repetition"):
+			_repetition_audit(Rect2(spot.x - 120, spot.z - 120, 240, 240))
 		if rocks.far_radius > 0.0:
 			# The far tier: big stones and landmarks past each layer's radius, to far_radius (streaming is off here).
 			var tfar := Time.get_ticks_msec()
@@ -1749,7 +1773,7 @@ func _live_falls(spot: Vector3, land: Landscape3D) -> void:
 
 
 # One fall: loose a block within p_radius of p_at, run p_ticks physics ticks, and report where its pieces went.
-func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool) -> Dictionary:
+func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool, p_dust_ticks: int = 0) -> Dictionary:
 	var fired := []
 	var cb := func(pos: Vector3, mass: float) -> void: fired.append([pos, mass])
 	rocks.rockfall.connect(cb)
@@ -1786,13 +1810,16 @@ func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool) ->
 				print("  broke at tick %d, %.1f m below the start, into %d pieces" % [i, top - c.y, node.get_piece_count()])
 		if p_log and i % 60 == 59:
 			print("  tick %d: %d pieces, centre %s, %.1f m below the start, ground there %.1f" % [i + 1, node.get_piece_count(), c, top - c.y, gen.get_height(c)])
-	RenderingServer.render_loop_enabled = true
-	get_window().size = full_size
 	var below := 0
 	for i in node.get_piece_count():
 		var o: Vector3 = node.get_piece_transform(i).origin
 		if o.y < gen.get_height(o) - 1.0:
 			below += 1
+	# p_dust_ticks more ticks for the dust alone (a block that slides down the face lands after the fall is measured).
+	for i in p_dust_ticks:
+		await get_tree().physics_frame
+	RenderingServer.render_loop_enabled = true
+	get_window().size = full_size
 	var r := {"node": node, "start": start, "end": last, "drop": top - last.y, "travel": Vector2(last.x - start.x, last.z - start.z).length(), "pieces": node.get_piece_count(), "fractured": node.is_fractured(), "fired": fired.size(), "ms": ms, "max_speed": max_speed, "below": below}
 	r["dust"] = rocks.get_rockfall_dust_total() - dust0
 	r["hits"] = rocks.get_rockfall_dust_impacts() - hits0
@@ -2318,8 +2345,18 @@ func _test() -> void:
 			WorldContracts.add_water_stub(swell)
 			var water: WorldWater = WorldContracts.get_water()
 			net.step_sea_surge(0.05)
-			var pts0: PackedVector3Array = net.get_sea_cave_water(sid)["points"]
-			var inside: Vector3 = pts0[mini(3, pts0.size() - 1)]
+			var sw0: Dictionary = net.get_sea_cave_water(sid)
+			var pts0: PackedVector3Array = sw0["points"]
+			# A point a few along, where the still water is over a metre deep if there is one. Over a beach-level
+			# floor the water cannot fall below the floor in the trough: there the surge need only fill half the
+			# swell's reach above the floor (the 2 m swell's crest at sea + 1).
+			var dps0: Array = Array(sw0.get("depths", []))
+			var ins_k := mini(3, pts0.size() - 1)
+			for k in range(3, mini(pts0.size(), dps0.size())):
+				if float(dps0[k]) > 1.2 and gen.get_height(pts0[k]) > sea_y + 2.0:
+					ins_k = k
+					break
+			var inside: Vector3 = pts0[ins_k]
 			var lo := INF
 			var hi := -INF
 			var flow_in := 0.0
@@ -2334,7 +2371,7 @@ func _test() -> void:
 						hi = maxf(hi, hgt)
 					flow_in = maxf(flow_in, water.flow_at(Vector3(inside.x, sea_y - 0.5, inside.z)).length())
 					spout = maxf(spout, float(net.get_blowhole_spout(sid).get("speed", 0.0)))
-			check(is_finite(lo) and hi - lo > 1.0 and absf((hi + lo) * 0.5 - sea_y) < 0.6 and flow_in > 0.3 and gen.get_height(inside) > hi, "sea caves: the sea surges into the passage under the cliff: %.1f to %.1f m (still sea %.1f m), currents to %.1f m/s; the blowhole's air up to %.0f m/s" % [lo, hi, sea_y, flow_in, spout])
+			check(is_finite(lo) and hi - lo > minf(1.0, 0.5 * (sea_y + 1.0 - maxf(lo, sea_y - 1.0))) and absf((hi + lo) * 0.5 - sea_y) < 0.6 and flow_in > 0.3 and gen.get_height(inside) > hi, "sea caves: the sea surges into the passage under the cliff: %.1f to %.1f m (still sea %.1f m, point %d along), currents to %.1f m/s; the blowhole's air up to %.0f m/s" % [lo, hi, sea_y, ins_k, flow_in, spout])
 			# A storm swell (4 m) seals the passage and drives the air in the back chamber up its blowhole.
 			var bh := -1
 			for se in sea_ents:
@@ -2514,11 +2551,12 @@ func _test() -> void:
 			rocks.rebuild()
 			rocks.build_area(Rect2(bp.x - 60, bp.z - 60, 120, 120))
 			var before := rocks.get_broken_count()
-			var r := await _rockfall_run(bp, 1.0, 120, true)
+			var r := await _rockfall_run(bp, 1.0, 120, true, 180)
 			check(not r.is_empty() and r["fired"] == 1 and rocks.get_broken_count() == before + 1, "trigger_rockfall: a block loosed (signal %d, broken %d), %.1f ms" % [r.get("fired", 0), rocks.get_broken_count() - before, r.get("ms", 0.0)])
 			if not r.is_empty():
 				check(r["drop"] > 0.5 and r["below"] == 0, "the fall: %.1f m down, %.1f m out, top speed %.1f m/s, %d pieces, none under the ground" % [r["drop"], r["travel"], r["max_speed"], r["pieces"]])
-				check(r["hits"] > 0 and r["dust"] > 0.1, "rockfall dust: %.1f kg of fines from %d impacts" % [r["dust"], r["hits"]])
+				# The dust over 5 s: a block that slides down the face first lands after the 2 s the fall is checked over.
+				check(r["hits"] > 0 and r["dust"] > 0.1, "rockfall dust: %.1f kg of fines from %d impacts in 5 s" % [r["dust"], r["hits"]])
 			# Live: with the rate turned right up, blocks come loose by themselves (fracture on a worker first).
 			var live := [0]
 			var cb := func(_p: Vector3, _m: float) -> void: live[0] += 1
@@ -2979,3 +3017,86 @@ func _hide_class(n: Node, cls: String) -> void:
 		if c.is_class(cls) and c is Node3D:
 			(c as Node3D).visible = false
 		_hide_class(c, cls)
+
+
+# --world --height-check: the generator must give the same heights on every platform and thread count (it does
+# its own transcendental math, terrain_dmath.h, and breaks sort ties by index). Prints the heights at fixed
+# points and a SHA-256 of the whole height image, compares them with the reference below, prints PASS/FAIL, quits.
+# Run with the default world (seed 5, 2048 m); a deliberate change to the generator updates the reference.
+const HEIGHT_REF := {
+	"points": ["225.946442", "406.352905", "673.358887", "-1.532555", "4.541926", "203.910446", "305.330017", "-4.236583"],
+	"sha256": "01517e43cc322726efd52874413eeef0636f9f994331c46f185f94289cc230db",
+}
+
+
+func _height_check() -> void:
+	var pts := [Vector3(0, 0, 0), Vector3(-600, 0, -600), Vector3(600, 0, -600), Vector3(-600, 0, 600),
+			Vector3(600, 0, 600), Vector3(-250, 0, 120), Vector3(333, 0, -77), Vector3(10, 0, 900)]
+	var got: Array[String] = []
+	for p in pts:
+		got.append("%.6f" % gen.get_height(p))
+	var img: Image = gen.get_height_image()
+	var hc := HashingContext.new()
+	hc.start(HashingContext.HASH_SHA256)
+	hc.update(img.get_data())
+	var sha := hc.finish().hex_encode()
+	print("height check: points %s" % ", ".join(got))
+	print("height check: height image %dx%d sha256 %s" % [img.get_width(), img.get_height(), sha])
+	var ok := WORLD == 2048.0 and int(args.get("seed", "5")) == 5 and not args.has("gen-prop")
+	if not ok:
+		print("height check: not the reference world (seed 5, 2048 m, no --gen-prop); nothing compared")
+	else:
+		var same: bool = ", ".join(got) == ", ".join(HEIGHT_REF["points"]) and sha == HEIGHT_REF["sha256"]
+		print("height check: %s" % ("PASS" if same else "FAIL (reference %s, sha256 %s)" % [", ".join(HEIGHT_REF["points"]), HEIGHT_REF["sha256"]]))
+	get_tree().quit()
+
+
+# --repetition: how often a stone stands next to its twin (NO VISIBLE REPETITION, 18 Nov). For each layer in the rect:
+# the share of stones whose nearest neighbour (within 4 footprints) is the same shape (library and variant), and the
+# share whose neighbour is also within 15 % of its size and 25 degrees of its yaw and tilt (a twin the eye catches).
+func _repetition_audit(p_rect: Rect2) -> void:
+	for lay in RockField3D.LAYER_MAX:
+		var sts: Array = rocks.get_stones(lay, p_rect)
+		if sts.size() < 2:
+			continue
+		var grid := {}
+		for i in sts.size():
+			var p: Vector3 = sts[i]["position"]
+			var key := Vector2i(floori(p.x / 4.0), floori(p.z / 4.0))
+			if not grid.has(key):
+				grid[key] = []
+			grid[key].append(i)
+		var same := 0
+		var twins := 0
+		var with_nb := 0
+		for i in sts.size():
+			var a: Dictionary = sts[i]
+			var pa: Vector3 = a["position"]
+			var reach := 4.0 * maxf(float(a["footprint"]), 0.05)
+			var best := -1
+			var best_d := INF
+			var ka := Vector2i(floori(pa.x / 4.0), floori(pa.z / 4.0))
+			var rc := int(ceil(reach / 4.0))
+			for dz in range(-rc, rc + 1):
+				for dx in range(-rc, rc + 1):
+					for j in grid.get(ka + Vector2i(dx, dz), []):
+						if j == i:
+							continue
+						var dd := pa.distance_to(sts[j]["position"])
+						if dd < reach and dd < best_d:
+							best_d = dd
+							best = j
+			if best < 0:
+				continue
+			with_nb += 1
+			var b: Dictionary = sts[best]
+			if a["rock_type"] != b["rock_type"] or a["family"] != b["family"] or a["bin"] != b["bin"] or a["variant"] != b["variant"]:
+				continue
+			same += 1
+			var ba: Basis = (a["basis"] as Basis).orthonormalized()
+			var bb: Basis = (b["basis"] as Basis).orthonormalized()
+			var rel := ba.inverse() * bb
+			var ang := rad_to_deg(rel.get_rotation_quaternion().get_angle())
+			if absf(float(a["scale"]) / float(b["scale"]) - 1.0) < 0.15 and ang < 25.0:
+				twins += 1
+		print("repetition: layer %d, %d stones, %d with a neighbour; same shape %.1f %%, twins %.1f %%" % [lay, sts.size(), with_nb, 100.0 * same / maxf(with_nb, 1), 100.0 * twins / maxf(with_nb, 1)])

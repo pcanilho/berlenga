@@ -302,6 +302,9 @@
 		<member name="crown_cone" type="float" setter="set_param" getter="get_param" default="0.0">
 			Excurrent crown shape: a branch reaches out at most this many times its depth below the top of the tree, so spruce, fir, larch and pine keep a cone (Kantola and Makela 2004). Shoots that would leave the cone wait until the leader has grown. 0 turns it off.
 		</member>
+		<member name="crown_occlusion" type="float" setter="set_crown_occlusion" getter="get_crown_occlusion" default="1.0">
+			How much a crown shades its own inner and lower leaves from the sky in raster, baked per leaf from the crown's leaf density (the path tracer traces this itself). 0 turns it off.
+		</member>
 		<member name="cut_cycle" type="int" setter="set_cut_cycle" getter="get_cut_cycle" default="12">
 			Years between cuts when [member cut_height] is above 0.
 		</member>

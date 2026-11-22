@@ -170,6 +170,9 @@
 			The material's blend mode.
 			[b]Note:[/b] Values other than [code]Mix[/code] force the object into the transparent pipeline.
 		</member>
+		<member name="camera_cutout" type="bool" setter="set_camera_cutout" getter="is_camera_cutout" default="true">
+			If [code]true[/code], the surface opens in the camera cut-out round the player (the [code]camera_cutout[/code] global shader parameter), in raster and under path tracing alike. Turn it off for what should stay in view there, such as characters. A [ShaderMaterial] takes part by calling [code]camera_cutout_discard()[/code] from [method get_camera_cutout_shader_code].
+		</member>
 		<member name="clearcoat" type="float" setter="set_clearcoat" getter="get_clearcoat" default="1.0">
 			Sets the strength of the clearcoat effect. Setting to [code]0[/code] looks the same as disabling the clearcoat effect.
 		</member>

@@ -1937,3 +1937,36 @@ Built: PlantGenerator.make_bank_roots (plant_bank.cpp), two species.
   variant nearest it, so the roots sit on slumped and near-vertical faces alike.
 - Check: vegetation --test "bank roots"; plants bench --close=113 --bank.
 - Not yet: roots shown in the sod blocks' undersides when a lip falls; roots on rock clefts (trees' cliff roots).
+
+## Mowing and hay rows (round 8, third pick)
+Haymaking in a temperate climate: mow, ted (spread to dry), rake into windrows once nearly dry, bale; "about three
+days of good weather to cure hay" (UNH Extension, "Haymaking"); in the UK "rarely made in under three days" (FAO,
+Grassland Fodder Conservation, ch. II). Stubble of 3 to 4 inches (7.5 to 10 cm) for quick regrowth (UNH; Ontario
+OMAFRA, "Cutting, conditioning and raking for faster hay drying"). With a 2 to 3 m cut "the swath should be gathered
+to 1.6 m" (FAO). Well-made hay feels crisp and looks bright; bleached hay is weathered (FAO).
+Built: GrassField3D.hay_meadows (polygon, row_angle, mow_day or fixed days), all in the blade shader from a 0.5 m
+index map (mow_map) and a texel a meadow of state (mow_state: days since mown, row angle; a texture, not a uniform
+array, for the path tracer's material slot), so the days pass without a rebuild.
+- Every blade is cut to a 7.5 to 10 cm stubble that grows back over about six weeks (an estimate).
+- 60% of the blades are the cut grass (an estimate): day 0 lying in swaths, passes 3 m apart, 1.6 m wide, heaped
+  10 cm; days 1 and 2 tedded flat over the stubble every way; day 3 raked into windrows 6 m apart (two swaths to a
+  row, an estimate), 1.2 m wide, heaped 30 cm; from day 4 baled and carted. Gathered by moving each blade across its
+  row in the shader (tiles' culling boxes grow by 3.2 m with meadows), so a windrow holds its whole strip's grass.
+- Colour: wilts duller on the day, cures to green-gold over three days.
+- VegetationField3D: the generator's herbs over 12 cm in a mown meadow are not placed until 28 days on (an estimate);
+  GrassField3D.mown_days_at over every meadow node; streamed tiles are placed again when a meadow's days change.
+- Check: grass --test "hay meadows", vegetation --test "hay meadows"; grass --hay=D (0, 1, 3, 5).
+- Not yet: bales lying in the field on day 3 (a Tripo or generated prop), cut herb stalks in the stubble, the far
+  ground showing the rows past the blades' reach.
+
+## Round 9 candidates (research, not built; waiting on a pick)
+- Hay bales: a large round bale of 5 x 5 ft (1.5 m) is the usual reference, about 1,000 lb (450 kg) at
+  10.17 lb/ft3; a 4 x 4 ft bale is about half of it, a 5 x 6 ft about 44% more (UF/IFAS EDIS AN326, "Implications
+  of Round Bale Dimensions on Hay Use"). Bales would be dropped along the windrows on day 3 and carted by day 4 or 5.
+  Small and large square bale sizes are not yet sourced. Possible mesh: generated (wrapped twine bands, loose outer
+  layer, flattened bottom) rather than Tripo, so each bale's hay matches the windrow colour.
+- Cut stalks: instead of hiding herbs over 12 cm in a mown meadow, draw them cut off at the stubble height (the
+  plant shader clipping above the cut while mown) and regrowing over the 28 days.
+- Far rows: the swaths and windrows on the far ground past the blades' reach, as the crop fields' straw swaths
+  already do (paler stripes in crop_ground()).
+- Sod blocks breaking on landing (Blast) and carried off by the river (WorldWater flow at the foot).

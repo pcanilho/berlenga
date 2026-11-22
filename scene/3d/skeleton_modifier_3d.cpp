@@ -77,6 +77,14 @@ void SkeletonModifier3D::_skeleton_changed(Skeleton3D *p_old, Skeleton3D *p_new)
 	GDVIRTUAL_CALL(_skeleton_changed, p_old, p_new);
 }
 
+void SkeletonModifier3D::_skeleton_resumed() {
+	GDVIRTUAL_CALL(_skeleton_resumed);
+}
+
+void SkeletonModifier3D::notify_skeleton_resumed() {
+	_skeleton_resumed();
+}
+
 void SkeletonModifier3D::_validate_bone_names() {
 	GDVIRTUAL_CALL(_validate_bone_names);
 }
@@ -175,6 +183,7 @@ void SkeletonModifier3D::_bind_methods() {
 
 	GDVIRTUAL_BIND(_skeleton_changed, "old_skeleton", "new_skeleton");
 	GDVIRTUAL_BIND(_validate_bone_names);
+	GDVIRTUAL_BIND(_skeleton_resumed);
 
 	BIND_ENUM_CONSTANT(BONE_AXIS_PLUS_X);
 	BIND_ENUM_CONSTANT(BONE_AXIS_MINUS_X);

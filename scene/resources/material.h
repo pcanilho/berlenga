@@ -506,6 +506,11 @@ private:
 		if (wetness_moving) {
 			mk.flags |= (1u << 30);
 		}
+		// And camera_cutout off in the bit under that (on, the default, leaves the key as it was).
+		static_assert(FLAG_MAX < 29);
+		if (!camera_cutout) {
+			mk.flags |= (1u << 29);
+		}
 		// And glaze in the features' top bit.
 		static_assert(FEATURE_MAX < 31);
 		if (glaze) {
@@ -658,6 +663,7 @@ private:
 	bool wetness_from_weather = true;
 	bool wetness_canopy = false;
 	bool wetness_moving = false;
+	bool camera_cutout = true;
 	bool glaze = false;
 	float snow_amount = 1.0f;
 	float snow_max_slope = 60.0f;
@@ -919,6 +925,9 @@ public:
 	bool is_wetness_canopy() const;
 	void set_wetness_moving(bool p_enable);
 	bool is_wetness_moving() const;
+
+	void set_camera_cutout(bool p_enable);
+	bool is_camera_cutout() const;
 
 	// Glaze: clear ice from freezing rain over the surface, from the weather's rain map (WorldWeather.glaze_at).
 	void set_glaze(bool p_enable);

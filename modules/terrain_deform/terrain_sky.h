@@ -31,6 +31,8 @@
 
 #pragma once
 
+#include "terrain_dmath.h"
+
 #include "core/math/math_funcs.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/string/string_name.h"
@@ -90,16 +92,16 @@ struct Job {
 					const float hs = Math::lerp(Math::lerp(row0[x0], row0[x0 + 1], fx), Math::lerp(row1[x0], row1[x0 + 1], fx), fz);
 					best = MAX(best, (hs - h0) / (r * cell));
 				}
-				const float hz = Math::atan(best);
+				const float hz = TerrainDMath::atan(best);
 				horizon[size_t(z * nx + x) * DIRECTIONS + j] = uint8_t(CLAMP(int(Math::ceil(hz * (255.0f / (float(Math::PI) * 0.5f)))), 0, 255));
 				// The view factor: cosine-weighted sky over this direction's wedge, above the terrain's horizon or
 				// the slope's own plane, whichever is higher.
-				const float eff = MAX(hz, Math::atan(-(nxv * tx + nzv * tz) / nyv));
+				const float eff = MAX(hz, TerrainDMath::atan(-(nxv * tx + nzv * tz) / nyv));
 				const float de = (float(Math::PI) * 0.5f - eff) / ELEVATIONS;
 				for (int e = 0; e < ELEVATIONS; e++) {
 					const float el = eff + (e + 0.5f) * de;
-					const float ce = Math::cos(el);
-					view += MAX(0.0f, tx * ce * nxv + Math::sin(el) * nyv + tz * ce * nzv) * ce * de;
+					const float ce = TerrainDMath::cos(el);
+					view += MAX(0.0f, tx * ce * nxv + TerrainDMath::sin(el) * nyv + tz * ce * nzv) * ce * de;
 				}
 			}
 			vis[z * nx + x] = CLAMP(view * (float(Math::TAU) / DIRECTIONS) / float(Math::PI), 0.0f, 1.0f);
@@ -123,8 +125,8 @@ inline void compute(const float *p_h, int p_nx, int p_ny, float p_cell, float p_
 	job.horizon = r_horizon;
 	for (int d = 0; d < DIRECTIONS; d++) {
 		const float a = float(Math::TAU) * d / DIRECTIONS;
-		job.dx[d] = Math::sin(a);
-		job.dz[d] = -Math::cos(a);
+		job.dx[d] = TerrainDMath::sin(a);
+		job.dz[d] = -TerrainDMath::cos(a);
 	}
 	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&Job::run, &job, p_ny, -1, true, SNAME("TerrainSky"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
@@ -168,10 +170,10 @@ inline void even_sky(SkyBins &r_bins) {
 		for (int j = 0; j < DIRECTIONS; j++) {
 			const float az = float(Math::TAU) * j / DIRECTIONS;
 			const int b = j * ELEVATION_BINS + e;
-			r_bins.light[b] = (Math::sin(r_bins.el1[e]) - Math::sin(r_bins.el0[e])) * (float(Math::TAU) / DIRECTIONS);
-			r_bins.dir[b * 3 + 0] = Math::sin(az) * Math::cos(em);
-			r_bins.dir[b * 3 + 1] = Math::sin(em);
-			r_bins.dir[b * 3 + 2] = -Math::cos(az) * Math::cos(em);
+			r_bins.light[b] = (TerrainDMath::sin(r_bins.el1[e]) - TerrainDMath::sin(r_bins.el0[e])) * (float(Math::TAU) / DIRECTIONS);
+			r_bins.dir[b * 3 + 0] = TerrainDMath::sin(az) * TerrainDMath::cos(em);
+			r_bins.dir[b * 3 + 1] = TerrainDMath::sin(em);
+			r_bins.dir[b * 3 + 2] = -TerrainDMath::cos(az) * TerrainDMath::cos(em);
 		}
 	}
 	for (int b = 0; b < BINS; b++) {
@@ -197,13 +199,13 @@ inline void gather_sky(const float *p_rgb, int p_w, int p_h, SkyBins &r_bins) {
 	}
 	for (int y = 0; y < p_h; y++) {
 		const float theta = (y + 0.5f) / p_h * pi;
-		const float st = Math::sin(theta), ct = Math::cos(theta);
+		const float st = TerrainDMath::sin(theta), ct = TerrainDMath::cos(theta);
 		const float dw = st * (pi / p_h) * (2.0f * pi / p_w);
 		const int e = CLAMP(int((pi - theta) / pi * ELEVATION_BINS), 0, ELEVATION_BINS - 1); // elevation + 90 degrees
 		for (int x = 0; x < p_w; x++) {
 			const float phi = (x + 0.5f) / p_w * 2.0f * pi;
-			const float dx = -Math::sin(phi) * st, dy = ct, dz = -Math::cos(phi) * st;
-			float az = Math::atan2(dx, -dz);
+			const float dx = -TerrainDMath::sin(phi) * st, dy = ct, dz = -TerrainDMath::cos(phi) * st;
+			float az = TerrainDMath::atan2(dx, -dz);
 			if (az < 0.0f) {
 				az += 2.0f * pi;
 			}

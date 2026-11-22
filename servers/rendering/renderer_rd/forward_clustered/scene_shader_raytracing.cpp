@@ -42,6 +42,7 @@
 #include "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h"
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
+#include "servers/rendering/rendering_rt_material_state.h"
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/shader_types.h"
 #include "servers/rendering/storage/environment_storage.h"
@@ -360,6 +361,9 @@ SceneShaderRaytracing::SceneShaderRaytracing() {
 }
 
 SceneShaderRaytracing::~SceneShaderRaytracing() {
+	if (slot_order_dirty) {
+		_save_slot_order();
+	}
 	// Variant builds in flight compiled against the state being dropped.
 	_poll_variant_tasks(true);
 	failed_async_variants.clear();
@@ -531,8 +535,13 @@ uint32_t SceneShaderRaytracing::_register_slot(uint32_t /*p_shader_id*/, RID p_m
 	}
 
 	HashMap<SourceHash128, uint32_t, SourceHash128Hasher>::Iterator it = source_hash_to_slot.find(hash);
+	// A slot held for this material since start-up takes it now, at the index it had last launch.
+	uint32_t reserved_index = UINT32_MAX;
 	if (it != source_hash_to_slot.end()) {
-		return it->value;
+		if (!hit_group_slots[it->value].reserved) {
+			return it->value;
+		}
+		reserved_index = it->value;
 	}
 
 	// New slot: preprocess here; heavy compile is on worker.
@@ -543,9 +552,15 @@ uint32_t SceneShaderRaytracing::_register_slot(uint32_t /*p_shader_id*/, RID p_m
 		HitGroupSlot failed_slot;
 		failed_slot.source_hash = hash;
 		failed_slot.state = HGState::Failed;
-		uint32_t failed_index = (uint32_t)hit_group_slots.size();
-		hit_group_slots.push_back(failed_slot);
-		source_hash_to_slot.insert(hash, failed_index);
+		uint32_t failed_index = reserved_index;
+		if (failed_index == UINT32_MAX) {
+			failed_index = (uint32_t)hit_group_slots.size();
+			hit_group_slots.push_back(failed_slot);
+			source_hash_to_slot.insert(hash, failed_index);
+		} else {
+			hit_group_slots[failed_index] = failed_slot;
+		}
+		slot_order_dirty = true;
 		ready_version++;
 		for (KeyValue<uint32_t, PipelineBundle> &kv : pipeline_bundles) {
 			_bundle_resize_for_slots(kv.value);
@@ -565,9 +580,15 @@ uint32_t SceneShaderRaytracing::_register_slot(uint32_t /*p_shader_id*/, RID p_m
 	slot.source_hash = hash;
 	slot.state = HGState::Ready;
 	slot.entry = entry;
-	uint32_t slot_index = (uint32_t)hit_group_slots.size();
-	hit_group_slots.push_back(slot);
-	source_hash_to_slot.insert(hash, slot_index);
+	uint32_t slot_index = reserved_index;
+	if (slot_index == UINT32_MAX) {
+		slot_index = (uint32_t)hit_group_slots.size();
+		hit_group_slots.push_back(slot);
+		source_hash_to_slot.insert(hash, slot_index);
+	} else {
+		hit_group_slots[slot_index] = slot;
+	}
+	slot_order_dirty = true;
 	ready_version++;
 
 	for (KeyValue<uint32_t, PipelineBundle> &kv : pipeline_bundles) {
@@ -577,6 +598,76 @@ uint32_t SceneShaderRaytracing::_register_slot(uint32_t /*p_shader_id*/, RID p_m
 	}
 
 	return slot_index;
+}
+
+bool SceneShaderRaytracing::_has_filled_slots() const {
+	for (uint32_t i = 1; i < hit_group_slots.size(); i++) {
+		if (!hit_group_slots[i].reserved) {
+			return true;
+		}
+	}
+	return false;
+}
+
+String SceneShaderRaytracing::_slot_order_path() const {
+	const String &cache_dir = ShaderRD::get_shader_cache_user_dir();
+	return cache_dir.is_empty() ? String() : cache_dir.path_join("RaytracingSPIRV").path_join("hit_group_slots.txt");
+}
+
+void SceneShaderRaytracing::_load_slot_order() {
+	const String path = _slot_order_path();
+	if (path.is_empty() || !FileAccess::exists(path)) {
+		return;
+	}
+	Ref<FileAccess> f = FileAccess::open(path, FileAccess::READ);
+	if (f.is_null() || f->get_line() != "berlenga-rt-hit-group-slots 1") {
+		return;
+	}
+	while (!f->eof_reached() && hit_group_slots.size() < 4096) {
+		const PackedStringArray parts = f->get_line().split(" ", false);
+		if (parts.size() != 2 || parts[0].length() != 16 || parts[1].length() != 16 || !parts[0].is_valid_hex_number(false) || !parts[1].is_valid_hex_number(false)) {
+			continue;
+		}
+		HitGroupSlot slot;
+		// (in 32-bit halves: hex_to_int() stops at the signed 64-bit range)
+		slot.source_hash.a = ((uint64_t)parts[0].substr(0, 8).hex_to_int() << 32) | (uint64_t)parts[0].substr(8).hex_to_int();
+		slot.source_hash.b = ((uint64_t)parts[1].substr(0, 8).hex_to_int() << 32) | (uint64_t)parts[1].substr(8).hex_to_int();
+		if (slot.source_hash.is_zero() || source_hash_to_slot.has(slot.source_hash)) {
+			continue;
+		}
+		slot.reserved = true;
+		source_hash_to_slot.insert(slot.source_hash, hit_group_slots.size());
+		hit_group_slots.push_back(slot);
+	}
+}
+
+void SceneShaderRaytracing::_save_slot_order() {
+	slot_order_dirty = false;
+	const String path = _slot_order_path();
+	if (path.is_empty()) {
+		return;
+	}
+	// This launch's materials in their slots' order (held slots none took are dropped): the next launch holds
+	// them in this order from the start.
+	String text = "berlenga-rt-hit-group-slots 1\n";
+	for (uint32_t i = 1; i < hit_group_slots.size(); i++) {
+		const HitGroupSlot &slot = hit_group_slots[i];
+		if (!slot.reserved) {
+			text += String::num_uint64(slot.source_hash.a, 16).lpad(16, "0") + " " + String::num_uint64(slot.source_hash.b, 16).lpad(16, "0") + "\n";
+		}
+	}
+	DirAccess::make_dir_recursive_absolute(path.get_base_dir());
+	const String tmp_path = path + ".tmp";
+	Ref<FileAccess> f = FileAccess::open(tmp_path, FileAccess::WRITE);
+	if (f.is_null()) {
+		return;
+	}
+	f->store_string(text);
+	f.unref();
+	Ref<DirAccess> da = DirAccess::create_for_path(path);
+	if (da.is_null() || da->rename(tmp_path, path) != OK) {
+		DirAccess::remove_absolute(tmp_path);
+	}
 }
 
 bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedural, CustomShaderEntry &r_entry) {
@@ -801,6 +892,29 @@ uint32_t SceneShaderRaytracing::compute_rt_flags(RID p_environment, bool p_fog_e
 	}
 
 	return rt_flags_pack(flags, sample_count, max_bounces);
+}
+
+// Scene-feature elision (docs/ideas/optimisation.md, "Scene-feature elision"): a branch the scene never takes still
+// reserves its registers in every hit shader, so a BaseMaterial3D feature no material holds is compiled out through
+// the RT_FLAGS specialization constant. The material storage counts its materials' feature bits, so a material
+// loaded this frame is counted before the frame picks its variant; the variant switch keeps the image (see
+// render_forward_clustered_pt.cpp).
+uint32_t SceneShaderRaytracing::compute_scene_elision_flags() {
+	if (!GLOBAL_GET_CACHED(bool, "rendering/pathtracing/scene_feature_elision")) {
+		return 0;
+	}
+	const RTBaseMaterialState used = RTBaseMaterialState::decode(RendererRD::MaterialStorage::get_singleton()->material_get_rt_state_bits_in_use());
+	uint32_t flags = 0;
+	if (!used.snow) {
+		flags |= RT_FLAG_SCENE_NO_SNOW;
+	}
+	if (!used.glaze) {
+		flags |= RT_FLAG_SCENE_NO_GLAZE;
+	}
+	if (!used.ground_deform_patch && !used.ground_deform_terrain) {
+		flags |= RT_FLAG_SCENE_NO_GROUND;
+	}
+	return flags;
 }
 
 namespace {
@@ -1336,7 +1450,7 @@ void SceneShaderRaytracing::_poll_variant_tasks(bool p_wait) {
 				}
 				used = true;
 				if (_finish_initial_bundle(task->rt_flags, bundle, task->pipeline)) {
-					if (hit_group_slots.size() > 1) {
+					if (_has_filled_slots()) {
 						bundle.dirty = true;
 					}
 					bundle.initial_pipeline_built = true;
@@ -1426,11 +1540,12 @@ const SceneShaderRaytracing::PipelineBundle &SceneShaderRaytracing::ensure_pipel
 	if (!_build_initial_bundle(p_rt_flags, bundle)) {
 		return EMPTY_BUNDLE;
 	}
-	if (hit_group_slots.size() > 1) {
+	if (_has_filled_slots()) {
 		bundle.dirty = true;
 	}
 	bundle.initial_pipeline_built = true;
 	_mark_bundle_used(bundle);
+	print_verbose(vformat("Path tracing: built pipeline variant 0x%x on the render thread.", p_rt_flags));
 	return bundle;
 }
 
@@ -2046,6 +2161,17 @@ void SceneShaderRaytracing::drain_completed_compiles() {
 		// Immediately pick up whatever's dirty now, rather than waiting for next frame's poll.
 		_start_next_build_if_idle();
 	}
+	// The slot order goes to disk once the materials have settled (nothing building), not on every arrival.
+	if (slot_order_dirty) {
+		bool idle;
+		{
+			MutexLock lock(compile_lane.mutex);
+			idle = compile_lane.to_be_built == nullptr;
+		}
+		if (idle) {
+			_save_slot_order();
+		}
+	}
 }
 
 void SceneShaderRaytracing::_drain_lane_inline_main_thread() {
@@ -2119,6 +2245,7 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		default_slot.state = HGState::Ready;
 		hit_group_slots.push_back(default_slot);
 	}
+	_load_slot_order();
 
 	// Now create a version to access the embedded raytracing shader
 	raygen_shader_version = raygen_shader.version_create();

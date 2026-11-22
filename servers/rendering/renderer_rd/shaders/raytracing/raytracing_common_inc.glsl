@@ -27,6 +27,12 @@ rt_launch_band;
 #define RT_FLAG_VOLUMETRIC_FOG_ENABLED (1u << 7)
 #define RT_FLAG_INDIRECT_REUSE_ENABLED (1u << 9)
 #define RT_FLAG_LIGHT_REUSE_ENABLED (1u << 10)
+// Scene-feature elision (SceneShaderRaytracing::compute_scene_elision_flags()): set while no material holds the
+// BaseMaterial3D feature, so its accessor in raytracing_data_inc.glsl folds to off and its code leaves the hit shaders.
+#define RT_FLAG_SCENE_NO_SNOW (1u << 11)
+#define RT_FLAG_SCENE_NO_GLAZE (1u << 12)
+#define RT_FLAG_SCENE_NO_GROUND (1u << 13)
+#define RT_SCENE_ELIDES(m_flag) ((RT_FLAGS & (m_flag)) != 0u)
 
 // Unified TLAS masks: bit 0 = opaque camera lane, bit 1 = transparent camera
 // lane, bits 2-7 = shadow-caster groups.

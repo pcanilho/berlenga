@@ -143,6 +143,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
+  ![Weathered rock faces under a clear sky, lichen patches and moss along the beds, raster](media/terrain-face-weathering.jpg)
+
+  *Face weathering: pale lichen on the open face, moss along the bedding ledges in the shade.*
+
   ![The same bare rock slope at 2 m without and with scanned detail, raster](media/terrain-ground-scan.jpg)
 
   *A bare slope at 2 m, left without scans, right with scanned joints, fractures and grit.*
@@ -204,7 +208,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 - **Frozen ground** (`GroundSurface3D.frozen_ground`, `needle_ice`): soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep; needle ice and puddle ice follow the ground's own surface temperature, so clear calm nights just above freezing still grow them.
 - **Desiccation cracks** (`GroundSurface3D.desiccation_cracks`): soaked clay dries to a pale matte crust that cracks into plates; rain closes the cracks, and each wet-dry cycle makes the pattern more regular.
 - **Thrown sand** (`PhysXGroundGrains3D`: `tread_depth`, `kick()`): spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept; a drifting car throws sand out of the turn, heaps a berm on the outside and scuffs a wide track, and the sand pushes back on the sliding tyre.
-- **Wind ripples** (`GroundSurface3D.wind_ripples`; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).
+- **Wind ripples** (`GroundSurface3D.wind_ripples`; `ripple_extent`): the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again, and passing dust devils (`PhysXDustDevils3D`) sweep a band clean that blowing sand fills in again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).
 
   ![Long low granule ripples across dry sand between dune crests, raster](media/sand-granule-ripples.jpg)
 

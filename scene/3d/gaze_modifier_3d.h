@@ -119,6 +119,7 @@ private:
 	Vector2 _delayed_target() const;
 
 protected:
+	virtual void _skeleton_resumed() override;
 	static void _bind_methods();
 	virtual void _process_modification(double p_delta) override;
 

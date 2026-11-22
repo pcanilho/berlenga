@@ -1076,30 +1076,49 @@ void main() {
 				// Heat shimmer: the camera ray bends through the gas's hot air (raytracing_volume_inc.glsl).
 				rt_volume_bend(ray_origin, ray_dir, camera_t_far, ps.rng_state);
 			}
-			ps.hit_t = -1.0; // A miss must not retain the previous segment's hit distance.
-			path_pack(payload, ps);
-			payload_set_cone_width(payload, cone_width);
 			float t_far = (bounce == 0u) ? camera_t_far : 10000.0;
-			// The camera cut-out round the player: a camera ray starts past what it cuts (rt_cutout_tmin()).
-			float t_min = (bounce == 0u) ? rt_cutout_tmin(ray_origin, ray_dir, ps.rng_state) : 0.001;
+			// The camera cut-out round the player (rt_cutout_tmin()): a camera ray passes the surfaces that open in
+			// the cut short of where it ends, as raster discards them, and stops at the first that keeps out of it (a
+			// character: BaseMaterial3D camera_cutout off). The closest hit reports such a surface unshaded
+			// (payload hit_t below CUTOUT_REPORTED) and the ray goes on past it, a few layers at most.
+			float t_min = 0.001;
+			float t_cut = (bounce == 0u) ? rt_cutout_tmin(ray_origin, ray_dir, ps.rng_state) : 0.001;
+			bool cut_probe = t_cut > 0.0011;
+			PathState ps_in = ps;
+			for (uint cut_layer = 0u;; cut_layer++) {
+				ps = ps_in;
+				// A miss must not retain the previous segment's hit distance; the probe passes how far the cut reaches.
+				ps.hit_t = cut_probe ? -(t_cut + CUTOUT_PROBE_BASE) : -1.0;
+				path_pack(payload, ps);
+				payload_set_cone_width(payload, cone_width);
 
 #ifdef USE_SER
-			hitObjectEXT hitObject;
-			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, t_min, ray_dir, t_far, 0);
-			// Coherence hint (NVIDIA SER whitepaper): reordering already groups threads by hit group, but most
-			// surfaces share the default material's, whose shading then branches on the material. Two bits for
-			// the costliest branches, light through the surface and hair fibres, sort those threads together.
-			// Reordering moves work between threads, never changes it, so the image is the same.
-			uint ser_hint = 0u;
-			if (rt_material_feature(RT_MATERIAL_FEATURE_SER_HINTS) && hitObjectIsHitEXT(hitObject)) {
-				uint hint_flags = rt_entry_material_flags(hitObjectGetInstanceCustomIndexEXT(hitObject) + hitObjectGetGeometryIndexEXT(hitObject));
-				ser_hint = ((hint_flags & (RT_MAT_FLAG_TRANSMISSIVE | RT_MAT_FLAG_VOLUME)) != 0u ? 1u : 0u) | ((hint_flags & RT_MAT_FLAG_HAIR) != 0u ? 2u : 0u);
-			}
-			reorderThreadEXT(hitObject, ser_hint, 2u);
-			hitObjectExecuteShaderEXT(hitObject, 0);
+				hitObjectEXT hitObject;
+				hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, t_min, ray_dir, t_far, 0);
+				// Coherence hint (NVIDIA SER whitepaper): reordering already groups threads by hit group, but most
+				// surfaces share the default material's, whose shading then branches on the material. Two bits for
+				// the costliest branches, light through the surface and hair fibres, sort those threads together.
+				// Reordering moves work between threads, never changes it, so the image is the same.
+				uint ser_hint = 0u;
+				if (rt_material_feature(RT_MATERIAL_FEATURE_SER_HINTS) && hitObjectIsHitEXT(hitObject)) {
+					uint hint_flags = rt_entry_material_flags(hitObjectGetInstanceCustomIndexEXT(hitObject) + hitObjectGetGeometryIndexEXT(hitObject));
+					ser_hint = ((hint_flags & (RT_MAT_FLAG_TRANSMISSIVE | RT_MAT_FLAG_VOLUME)) != 0u ? 1u : 0u) | ((hint_flags & RT_MAT_FLAG_HAIR) != 0u ? 2u : 0u);
+				}
+				reorderThreadEXT(hitObject, ser_hint, 2u);
+				hitObjectExecuteShaderEXT(hitObject, 0);
 #else
-			traceRayEXT(tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, t_min, ray_dir, t_far, 0);
+				traceRayEXT(tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, t_min, ray_dir, t_far, 0);
 #endif
+				if (!cut_probe || payload.hit_t > -CUTOUT_REPORTED) {
+					break;
+				}
+				// Past the surface that opened; after a few, past the whole cut as before.
+				t_min = (-payload.hit_t - CUTOUT_REPORTED) + 0.002;
+				if (cut_layer >= 3u) {
+					t_min = max(t_min, t_cut);
+					cut_probe = false;
+				}
+			}
 
 			ps = path_unpack(payload);
 			bool in_medium = false;
@@ -3209,6 +3228,13 @@ void main() {
 #endif
 	if ((payload.packed_bounces_flags & SSS_PROBE_FLAG) != 0u) {
 		rt_sss_probe_hit();
+		return;
+	}
+	// The camera cut-out (raygen): a camera ray's surface that opens in the cut, short of where the cut ends, reports
+	// its distance unshaded so the ray goes on past it, as raster discards it.
+	if (payload.hit_t <= -CUTOUT_PROBE_BASE && payload.hit_t > -CUTOUT_REPORTED && gl_HitTEXT < -payload.hit_t - CUTOUT_PROBE_BASE &&
+			rt_material_camera_cutout(rt_entry_material(RT_HIT_GEOMETRY_IDX))) {
+		payload.hit_t = -(CUTOUT_REPORTED + gl_HitTEXT);
 		return;
 	}
 	HitData h = compute_hit_data();

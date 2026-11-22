@@ -51,6 +51,8 @@
 // Plain C++ on caller-owned buffers, single-threaded and in a fixed order, so a seed gives the same terrain on
 // every machine.
 
+#include "terrain_dmath.h"
+
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -252,7 +254,7 @@ public:
 				continue;
 			}
 			const double d = b.receiver_dist[i];
-			const double am = half_m ? std::sqrt(b.area[i]) : std::pow(b.area[i], p.area_exponent);
+			const double am = half_m ? std::sqrt(b.area[i]) : TerrainDMath::pow(b.area[i], p.area_exponent);
 			double kk = _erodibility_at(i);
 			double top = h[i];
 			// With deposition the undercut is decided once per step, here on the incision-only solve: the deposition
@@ -364,7 +366,7 @@ public:
 				continue;
 			}
 			const double d = b.receiver_dist[i];
-			const double am = half_m ? std::sqrt(b.area[i]) : std::pow(b.area[i], p.area_exponent);
+			const double am = half_m ? std::sqrt(b.area[i]) : TerrainDMath::pow(b.area[i], p.area_exponent);
 			double kk = _erodibility_at(i);
 			double top = dep_start[i];
 			if (b.hard_depth && b.hard_depth[i] > 0.0 && dep_undercut[i]) {
@@ -738,7 +740,7 @@ private:
 				const double s = (h[i] - h[j]) / (k < 4 ? p.dx : diag);
 				if (s > 0.0) {
 					// Neighbour weight also scales with the contour length it faces (Freeman 1991: 1 vs 1/sqrt 2).
-					w[k] = (unit_flow ? s : std::pow(s, p.flow_exponent)) * (k < 4 ? 1.0 : 0.70710678118654752);
+					w[k] = (unit_flow ? s : TerrainDMath::pow(s, p.flow_exponent)) * (k < 4 ? 1.0 : 0.70710678118654752);
 					sum += w[k];
 				}
 			}

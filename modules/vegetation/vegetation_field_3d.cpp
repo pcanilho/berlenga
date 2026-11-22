@@ -1588,6 +1588,17 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 		}
 	}
 	{
+		// Cut when a hay meadow is mown: the plant generator's herbs that stand over the stubble (not trees or shrubs
+		// with a canopy, not the ground features on banks).
+		float top = 0.0f;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			if (m.is_valid()) {
+				top = MAX(top, m->get_aabb().get_end().y);
+			}
+		}
+		ps.hay_cut = p_sp->has_meta(SNAME("plant_preset")) && p_sp->get_canopy_radius() <= 0.0f && !p_sp->uses_bank_edge() && top > 0.12f;
+	}
+	{
 		// Bank roots (PlantGenerator.make_bank_roots): per variant, the face angle it was grown on.
 		bool any_face = false;
 		for (const Ref<Mesh> &m : ps.meshes) {
@@ -2596,6 +2607,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (suit > 0.0f && bank_dir != Vector2()) {
 							xz += bank_dir * bank_ahead;
 							p3 = Vector3(xz.x, 0.0f, xz.y);
+						}
+					}
+					if (ps.hay_cut && suit > 0.0f && GrassField3D::has_hay_meadows()) {
+						// Mown with the hay meadow: gone until it grows back.
+						const float md = GrassField3D::mown_days_at(Vector3(xz.x, 0.0f, xz.y));
+						if (md >= 0.0f && md < HAY_REGROW) {
+							continue;
 						}
 					}
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
@@ -6671,6 +6689,38 @@ void VegetationField3D::_follow_floods(double p_delta) {
 	flood_follow = true;
 }
 
+// A hay meadow mown, or its days moved on (GrassField3D.get_hay_generation): streamed tiles with a herb that is cut
+// are placed again; a populated field populates again.
+void VegetationField3D::_follow_hay(double p_delta) {
+	hay_check -= p_delta;
+	if (hay_check > 0.0) {
+		return;
+	}
+	hay_check = 1.0;
+	const uint64_t g = GrassField3D::get_hay_generation();
+	if (g == hay_seen) {
+		return;
+	}
+	const bool first = hay_seen == 0;
+	hay_seen = g;
+	if (first) {
+		return; // Placed with the meadows as they were.
+	}
+	if (streaming && stream_setup_valid) {
+		bool wanted = false;
+		for (const PlaceSpecies &ps : stream_setup.species) {
+			wanted = wanted || ps.hay_cut;
+		}
+		if (wanted) {
+			for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+				kv.value->stale = true; // Placed again; the old one shows until the new one is in.
+			}
+		}
+	} else if (!streaming && plant_count > 0) {
+		queue_populate();
+	}
+}
+
 // Stand ages or disturbances changed (WorldStand.stand_changed: a disturbance added, aged or removed, years passing,
 // fire's burns): streamed tiles are placed again where a species crossed its stand range (_stream_update); a
 // populated field populates again.
@@ -6763,6 +6813,7 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			_follow_burns(get_process_delta_time());
 			_follow_floods(get_process_delta_time());
+			_follow_hay(get_process_delta_time());
 			_follow_stand(get_process_delta_time());
 			_follow_trails(get_process_delta_time());
 			if (variants_waiting && streaming && stream_setup_valid && stream_jobs.is_empty()) {
