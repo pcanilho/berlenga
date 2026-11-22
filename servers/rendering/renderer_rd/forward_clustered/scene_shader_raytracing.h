@@ -87,6 +87,9 @@ public:
 		RT_FLAG_TIMING_ENABLED = (1 << 6),
 		RT_FLAG_VOLUMETRIC_FOG_ENABLED = (1 << 7),
 		RT_FLAG_DECALS_ENABLED = (1 << 8), // rendering/pathtracing/max_decals > 0.
+		// Off-by-default reuse passes: compiled out while off, so their per-pixel state is not kept live across traces.
+		RT_FLAG_INDIRECT_REUSE_ENABLED = (1 << 9), // rendering/pathtracing/indirect_reuse.
+		RT_FLAG_LIGHT_REUSE_ENABLED = (1 << 10), // rendering/pathtracing/light_reuse.
 	};
 
 	// Sample count encoding (must match shader RT_SAMPLE_MODE_* defines).
@@ -108,7 +111,7 @@ public:
 
 	static_assert(RT_SAMPLE_MODE_SHIFT + 2 == RT_MAX_BOUNCES_SHIFT && RT_MAX_BOUNCES_SHIFT + 4 == 32, "Sample mode and bounces occupy the top 6 bits.");
 	static_assert(RT_MAX_BOUNCES_LIMIT <= RT_MAX_BOUNCES_MASK, "Bounce limit must fit the bounce field.");
-	static_assert(uint32_t(RT_FLAG_DECALS_ENABLED) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
+	static_assert(uint32_t(RT_FLAG_LIGHT_REUSE_ENABLED) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
 
 	// RT pipeline limits (must match GLSL payload/hit attribute struct sizes).
 	// 1: primary/bounce from raygen

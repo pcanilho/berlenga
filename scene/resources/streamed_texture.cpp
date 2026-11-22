@@ -378,7 +378,7 @@ Error StreamedTexture2D::_load_internal(const String &p_path, bool p_load_settin
 			max_lod_override = load_data.streaming_max;
 		}
 
-		if (streaming_state.is_null()) {
+		if (streaming_state.is_null() && TextureStreaming::get_singleton()) {
 			streaming_state = TextureStreaming::get_singleton()->texture_configure_streaming(
 					texture,
 					format,
@@ -387,7 +387,7 @@ Error StreamedTexture2D::_load_internal(const String &p_path, bool p_load_settin
 					min_lod_override,
 					max_lod_override,
 					callable_mp(this, &StreamedTexture2D::texture_reload));
-		} else {
+		} else if (streaming_state.is_valid() && TextureStreaming::get_singleton()) {
 			TextureStreaming::get_singleton()->texture_update(streaming_state, w, h, min_lod_override, max_lod_override);
 		}
 	}
@@ -427,7 +427,7 @@ Error StreamedTexture2D::load(const String &p_path) {
 void StreamedTexture2D::update_texture() {
 	_load_internal(path_to_file, false);
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-	if (streaming_state.is_valid()) {
+	if (streaming_state.is_valid() && TextureStreaming::get_singleton()) {
 		TextureStreaming::get_singleton()->texture_update(streaming_state, w, h, min_lod_override, max_lod_override);
 	}
 #endif
@@ -596,7 +596,7 @@ StreamedTexture2D::StreamedTexture2D() {
 
 StreamedTexture2D::~StreamedTexture2D() {
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-	if (streaming_state.is_valid()) {
+	if (streaming_state.is_valid() && TextureStreaming::get_singleton()) {
 		TextureStreaming::get_singleton()->texture_remove(streaming_state);
 		streaming_state = RID();
 	}

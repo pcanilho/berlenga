@@ -25,6 +25,8 @@ rt_launch_band;
 #define RT_FLAG_FOG_ENABLED (1u << 2)
 #define RT_FLAG_DEPTH_COMPOSITE_ENABLED (1u << 5)
 #define RT_FLAG_VOLUMETRIC_FOG_ENABLED (1u << 7)
+#define RT_FLAG_INDIRECT_REUSE_ENABLED (1u << 9)
+#define RT_FLAG_LIGHT_REUSE_ENABLED (1u << 10)
 
 // Unified TLAS masks: bit 0 = opaque camera lane, bit 1 = transparent camera
 // lane, bits 2-7 = shadow-caster groups.

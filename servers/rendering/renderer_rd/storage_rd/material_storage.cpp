@@ -868,7 +868,7 @@ MaterialStorage::MaterialData::~MaterialData() {
 	}
 
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-	if (material_feedback_rid.is_valid()) {
+	if (material_feedback_rid.is_valid() && TextureStreaming::get_singleton()) {
 		Vector<RID> empty_textures;
 		TextureStreaming::get_singleton()->material_set_textures(material_feedback_rid, empty_textures);
 		material_feedback_rid = RID();
@@ -1043,7 +1043,7 @@ void MaterialStorage::MaterialData::update_textures(const HashMap<StringName, Va
 	}
 
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-	if (material_feedback_rid.is_valid() || !material_feedback_textures.is_empty()) {
+	if (TextureStreaming::get_singleton() && (material_feedback_rid.is_valid() || !material_feedback_textures.is_empty())) {
 		material_feedback_rid = TextureStreaming::get_singleton()->material_set_textures(material_feedback_rid, material_feedback_textures);
 	}
 #endif

@@ -6344,7 +6344,7 @@ void fragment() {
 }
 )";
 	sh.instantiate();
-	sh->set_code(code);
+	sh->set_code(GrassField3D::add_camera_cutout(code));
 	return sh;
 }
 

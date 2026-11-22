@@ -890,3 +890,14 @@ What changed from the design above, and why:
 - 22 Nov, round 2: the erosion fades inward (strength times 1 - 0.7 shape): eroded as deeply inside, the top read as
   holes punched into the dust rather than lobes standing out. The checker grain along the edges in earlier stills was
   the bench's 24 frames (each 4x4 sky cell drawn about once); at 192 frames it converges.
+
+## Storm body: no mushroom cloud (22 Nov 2026)
+
+The haboob bench's storm (core radius 1.5 km, 12 km tall) stood as a thin stem under a round, flat cap: a mushroom
+cloud. Two causes. The body scaled with the core radius alone, so a small rain core made a narrow tower; a mature
+cumulonimbus is about as wide as it is tall (5 to 15 km; Houze 2014, ch. 8), so the body's radius is now the core
+radius or 0.3 of the height, whichever is larger (storm_body_at, wc_storm_body, and the tall column's reach,
+storm_column_type / wc_storm_column). And the extinction returned nothing where the low cover was zero, which the
+storm's cover gives only within a couple of core radii: the anvil, meant to fan out 7 radii downwind, was cut to a
+round cap over the tower. The early out now keeps the storm's column. Seen from the side the anvil now spreads
+downwind as a fan with billowed edges; raster and PT match.

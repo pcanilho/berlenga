@@ -93,6 +93,12 @@
    "title": "Lighting"
   },
   {
+   "name": "rendering/pathtracing/indirect_reuse_enhanced",
+   "type": "bool",
+   "default": "false",
+   "about": "With `rendering/pathtracing/indirect_reuse` on, applies the reuse rules of ReSTIR PT Enhanced (Lin, Kettunen and Wyman, I3D 2026)."
+  },
+  {
    "name": "rendering/pathtracing/light_reuse",
    "type": "bool",
    "default": "false",
@@ -2657,10 +2663,11 @@
    "name": "Turf overhangs",
    "settings": [
     "PlantGenerator.make_bank_turf()",
-    "PRESET_TURF_LIP"
+    "PRESET_TURF_LIP",
+    "SodLipFall3D"
    ],
    "note": "",
-   "what": "cut banks and scarps carry sod lips with hanging grass and roots.",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
