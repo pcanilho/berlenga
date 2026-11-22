@@ -521,6 +521,13 @@ func _ready() -> void:
 		weather.follow_target = weather.get_path_to(cam)
 	if clock != null:
 		_log("sun altitude %.1f deg, azimuth %.1f deg" % [clock.get_sun_altitude(), clock.get_sun_azimuth()])
+	if args.has("seed-warm") and get_node_or_null("SeedDown") != null:
+		# --seed-warm=S: S seconds of the dry wind loosing seeds before the shot, so the air already carries them.
+		var sdn = get_node("SeedDown")
+		sdn.refresh_sources()
+		for i in int(float(args["seed-warm"]) * 10.0):
+			sdn.advance(0.1, true)
+		_log("seed down: %d sources, %d released, %d aloft, %d lying" % [sdn.get_source_count(), sdn.get_released_count(), sdn.get_aloft_count(), sdn.get_lying_count()])
 	if args.has("worn-path"):
 		_build_worn_path()
 	if args.has("farm-track") and prints != null and prints.has_method("add_wear"):
@@ -3060,6 +3067,13 @@ func _build_weather() -> void:
 		add_child(leaf_fall)
 		leaf_fall.weather_map = leaf_fall.get_path_to(weather)
 		leaf_fall.litter_density = float(args.get("leaf-litter", "0.5"))
+	# Plumed seeds (SeedDown3D, vegetation 19a84b7e): dandelion, thistle and willowherb heads in seed near the camera
+	# loose them in a dry wind, the shared wind carries them into the grass. --seeds=0 for none.
+	if args.get("seeds", "1") != "0" and ClassDB.class_exists("SeedDown3D"):
+		var sd = ClassDB.instantiate("SeedDown3D")
+		sd.name = "SeedDown"
+		sd.range = float(args.get("seed-range", "40"))
+		add_child(sd)
 	snow.global_position = Vector3(0, 0, 0)
 
 
