@@ -1621,3 +1621,26 @@ Built in VegetationField3D (`get_litter_drift_at`, PlantSpecies.RULE_LITTER_DRIF
 - Check: vegetation bench --test, drift in the deepest hollow over the highest crest, a stone's downwind foot over
   its windward foot and open ground; banks last in broadleaf floors, 8 to 25 cm high, none under conifers.
 
+## Grazing roughs and dung (round 4, third pick)
+Built in PlantGenerator (make_grazing, GrazeSet GRAZE_CATTLE / GRAZE_HORSE / GRAZE_DEER; presets PRESET_COW_PAT 104,
+PRESET_HORSE_DUNG 105, PRESET_DEER_PELLETS 106, PRESET_DUNG_ROUGH 107; PRESET_MAX 108; season key "dung_age").
+- Research. Cattle reject the herbage round their own dung for months, so a grazed pasture carries rank, dark green
+  tufts round older pats, several times the pat's area, that flower while the lawn cannot (MacDiarmid and Watkin
+  1972, J. Br. Grassl. Soc. 27, "The cattle dung patch"). Pats are 20 to 30 cm across, glossy olive for a day or
+  two, crusted in weeks, broken and grassed through over months. Horses dung in latrines they never graze, so a
+  paddock becomes a mosaic of short lawns and tall roughs with piles of droppings, nettles and thistles (Odberg and
+  Francis-Smith 1976, Equine Vet. J.). Deer leave pellet groups of 30 to 100 pellets with no rough round them.
+  Games rarely show any of this; pastures read as an even mown lawn.
+- How. Cattle: roughs (sward_mound 0.4 m, spacing 4.5 m), pats at 0.005, 0.06 and 0.4 years, docks and nettles in
+  sparse patches. Horse: one shared patch layout (seed 11100, cover 0.25, 18 m) for latrine roughs, dung piles,
+  nettles and thistles, so they gather in the same clumps. Deer: pellet groups at RULE_BROWSE 0.3 up (fade 0.15),
+  also in the wood (shade to 0.9). All in the light (shade under 0.4), slopes under 30 degrees, 2 m from water.
+  Roughs and pats keep GrassField3D blades out through sward_mound, as the mounds do; the lawn round them is the
+  sward's own (graze_height and the lawn mosaic).
+- Meshes. Pat: a ring-grid dome with a wobbly outline and coil ridges, crust paling from the top and rim, broken
+  into plates with grass through it when old; roughness 0.5 fresh to 0.88 crusted. Horse dung: 6 to 14 domed balls
+  with straw fibres. Deer pellets: 2 x 6 domes each, 2 to 4k triangles a group. Rough: 500 to 750 blades 20 to
+  45 cm, shorter at the edge, 12% dead, 5 to 10 nodding flowering culms.
+- Check: vegetation bench --test, cattle pats of three ages 2 to 6 cm high, a rough over 25 cm that keeps the sward
+  out, one latrine layout for the horse set, deer pellets only on the browsed lawn.
+

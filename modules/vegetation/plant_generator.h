@@ -178,6 +178,10 @@ public:
 		PRESET_WOOD_ANT_NEST, // Formica rufa group: a thatch dome of needles and twig bits on an earth bank, at sunny gaps in conifer woods.
 		PRESET_MOLEHILL, // Talpa europaea: a heap of loose crumbly soil pushed up from a run; crusting, slumping and greening by the season's "mound_age".
 		PRESET_LEAF_BANK, // A drift of fallen leaves the wind piled in a hollow or against a trunk, log or stone: the stand's litter heaped up to 20 cm.
+		PRESET_COW_PAT, // A cattle dung pat: fresh and glossy, crusting, then broken and grassed through by the season's "dung_age".
+		PRESET_HORSE_DUNG, // A pile of horse droppings (balls of coarse fibre): olive when fresh, paling and crumbling by "dung_age".
+		PRESET_DEER_PELLETS, // A group of deer pellets: dark, glossy when fresh, dull and crumbling by "dung_age".
+		PRESET_DUNG_ROUGH, // An ungrazed rough round old dung: rank, dark green grass two to four times the lawn's height, flowering.
 		PRESET_MAX,
 	};
 
@@ -322,6 +326,11 @@ private:
 	void _build_wood_ant_nest();
 	void _build_molehill();
 	void _build_leaf_bank();
+	float _dung_age() const; // Years since the dung was dropped, from the season's "dung_age"; three days without.
+	void _build_cow_pat();
+	void _build_horse_dung();
+	void _build_deer_pellets();
+	void _build_dung_rough();
 	// A fallen leaf's spot on a litter card: on its disc (0.13 m), or over the leaf bank's heap (litter_heap) with the
 	// heap's normal in r_up. The same random draws either way, so flat cards keep their seeds.
 	Vector3 _litter_spot(float p_lift, Vector3 &r_up);
@@ -654,6 +663,14 @@ public:
 		MOUNDS_MAX,
 	};
 	static TypedArray<Resource> make_mounds(MoundSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Grazing roughs and dung (docs/ideas/vegetation.md, "Grazing roughs and dung").
+	enum GrazeSet {
+		GRAZE_CATTLE, // Cattle pasture: pats fresh to old, an ungrazed rough round each older one, docks and nettles on rich spots.
+		GRAZE_HORSE, // Horse pasture: latrines (patches the horses dung in and never graze: roughs, piles, nettles and thistles).
+		GRAZE_DEER, // Deer lawns (PlantSpecies.RULE_BROWSE): pellet groups where the browsing is heavy.
+		GRAZE_MAX,
+	};
+	static TypedArray<Resource> make_grazing(GrazeSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
 	enum AlpineStand {
@@ -720,6 +737,7 @@ VARIANT_ENUM_CAST(PlantGenerator::BurnStand);
 VARIANT_ENUM_CAST(PlantGenerator::BeaverStand);
 VARIANT_ENUM_CAST(PlantGenerator::RootingStand);
 VARIANT_ENUM_CAST(PlantGenerator::MoundSet);
+VARIANT_ENUM_CAST(PlantGenerator::GrazeSet);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
 VARIANT_ENUM_CAST(PlantGenerator::MarginStand);
