@@ -261,6 +261,26 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
   4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
 
+## Wet ground glints seen edge on (22 Nov, specular antialiasing tried)
+
+Rocks found single bright pixels down the lit sea cave's mouth (the cave's ground, drawn with this material, wet,
+seen edge on against a low sun ahead), which TAA turns into a pale hairline. Asked for specular antialiasing.
+- Tried: geometric specular AA (Kaplanyan et al. 2016; Tokuyoshi and Kaplanyan 2019 and 2021; HDRP's
+  GeometricNormalFiltering, UE's r.NormalCurvatureToRoughness): alpha^2 += min(variance / (2 pi), 0.18) from the
+  shading normal's screen derivatives, on this material and the cave walls. No change on the dots, even with the
+  kernel at its clamp (roughness 0.3 to about 0.66). Then Smith masking on the geometric normal (Schuessler et al.
+  2017) for bent shading normals: no change either.
+- Debug render of those pixels: both the geometric and the shading normal face the eye by under 0.1, wetness puts
+  roughness under 0.4, and the sun 12 degrees up ahead sits near the mirror direction. Turning specular off clears
+  46 of 52 dots. So the normal does not vary inside the pixel; it is the true grazing glint of a wet surface (GGX
+  with Fresnel near 1 at grazing), on a strip under a pixel wide. That is geometric (coverage) aliasing, not
+  specular aliasing: no NDF filter sees it, and TAA's faint line is the coverage-weighted answer.
+- Godot's own limiter (scene_forward_clustered.glsl) adds its kernel to alpha instead of alpha^2, under-filtering
+  glossy surfaces; left as is (changing it shifts every material, ocean glitter among them).
+- Nothing kept in code (no shown gain). Open: a PT frame of the view to confirm the line is real (60 min cloud
+  timeout at 960x540, 64 spp, so PC queue); if PT shows it, it stays. If it should not be lit at all, the question
+  is the strip's shadowing or wetness at the mouth (rocks).
+
 ## Rills and gullies (22 Nov, Paulo's pick)
 
 The generator already cuts rills and gullies: tile erosion (droplets on a 2 m grid, terrain-generation.md stage 4) is
