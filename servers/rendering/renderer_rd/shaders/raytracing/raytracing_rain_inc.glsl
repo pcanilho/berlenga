@@ -213,3 +213,63 @@ vec3 rain_surface_fall_line(vec3 p_normal, vec2 p_push) {
 	vec3 f = vec3(p_push.x, -1.0, p_push.y);
 	return f - p_normal * dot(f, p_normal);
 }
+
+// Rain running down a wall in streaks (docs/ideas/engine-gaps-from-game.md, A): a falling film gathers into
+// rivulets where the face's dirt and joints lead it (its roll waves, Kapitza 1948, are centimetres apart and not
+// drawn). Each 4.5 cm column of the face holds one streak, 1 to 4 cm wide, meandering a little as it runs (a falling
+// rivulet's meander, wavelength 0.3 to 0.9 m) along the fall line (rain_surface_fall_line(): the wind leans it), with
+// a thin sheet between. Fixed per face, as Kaneda et al. (1993) keep each runner on the bed of the glass's
+// affinity. Returns the share of the face the water covers (0.4 between streaks, 1 in one); finer than the pixel
+// (p_footprint, m; 0 = full detail, as the path tracer has) the streaks fade to their mean.
+float rain_wall_streaks(vec3 p_world, vec3 p_normal, vec2 p_push, float p_footprint) {
+	vec2 th = vec2(p_normal.z, -p_normal.x);
+	float tl = length(th);
+	if (tl < 1e-3) {
+		return 0.4;
+	}
+	vec3 t = vec3(th.x, 0.0, th.y) / tl;
+	vec3 f = rain_surface_fall_line(p_normal, p_push);
+	float lean = clamp(dot(f, t) / max(-f.y, 0.2), -2.0, 2.0);
+	float s = dot(p_world, t) + lean * p_world.y;
+	// Parallel faces apart from each other get their own streaks (the plane's offset, per half metre).
+	uint plane = uint(int(floor(dot(p_world, p_normal) * 2.0 + 0.5)) + 32768) * 2654435761u;
+	const float cw = 0.045;
+	float c = floor(s / cw);
+	float a = 0.0;
+	for (int j = -1; j <= 1; j++) {
+		float cj = c + float(j);
+		uint h = rain_ring_hash(uint(int(cj) + 1048576) ^ plane);
+		float x0 = (cj + 0.2 + 0.6 * rain_ring_rand(h)) * cw;
+		float width = mix(0.009, 0.039, rain_ring_rand(h + 1u));
+		float strength = mix(0.35, 1.0, rain_ring_rand(h + 2u));
+		float amp = mix(0.004, 0.023, rain_ring_rand(h + 3u));
+		float lam = mix(0.31, 0.94, rain_ring_rand(h + 4u));
+		float xc = x0 + amp * sin(6.2831853 * (p_world.y / lam + rain_ring_rand(h + 5u)));
+		float d = (s - xc) / width;
+		a = max(a, exp(-d * d) * strength);
+	}
+	a = mix(a, 0.55, smoothstep(0.012, 0.05, p_footprint));
+	return 0.4 + 0.6 * a;
+}
+
+// The wetness of a face from the rain it catches (rain_surface_catch(), p_rain): on walls and steep faces the
+// running water shows in streaks by the catch (wet right through from 4 mm/h, as the wall film's scale), a face
+// out of the rain keeps a third of the ground's film (splash and damp air); level faces keep the ground's film
+// (p_wet). p_running scales the running water (the material's wetness amount, less what a wiper took).
+float rain_surface_wetness(float p_wet, float p_running, vec3 p_normal, vec4 p_rain, float p_streaks) {
+	float wall = 1.0 - smoothstep(0.2, 0.7, p_normal.y);
+	if (wall <= 0.0) {
+		return p_wet;
+	}
+	float running = clamp(p_rain.x / 4.0, 0.0, 1.0) * p_running;
+	return mix(p_wet, max(running * p_streaks, 0.35 * p_wet), wall);
+}
+
+// Water standing on a built surface (docs/ideas/engine-gaps-from-game.md, B; Lagarde 2012, "Water drop 2a", accumulated
+// water): the weather's pooled water (WeatherMap3D's puddle, mm above what the surface film holds, filled by the rain
+// and emptied by drainage and evaporation) stands on faces level enough to hold it. Paving laid to a 2 % fall still
+// ponds in its hollows, so the hold eases from 20 degrees of slope to 8. Returns the water's depth over the face's
+// mean (mm); the caller's relief (heightmap, AO) decides where it lies, filling the lowest first.
+float rain_surface_puddle(vec3 p_normal, float p_puddle_mm) {
+	return max(p_puddle_mm, 0.0) * smoothstep(0.94, 0.99, p_normal.y);
+}

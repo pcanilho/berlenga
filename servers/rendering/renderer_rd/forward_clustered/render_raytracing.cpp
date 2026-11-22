@@ -52,6 +52,11 @@
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/storage/environment_storage.h"
 
+#include "modules/modules_enabled.gen.h"
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+#include "modules/texture_streaming/texture_streaming.h"
+#endif
+
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
 #include <xmmintrin.h>
 #endif
@@ -530,6 +535,7 @@ void RenderRaytracing::initialize(RenderForwardClustered *p_owner) {
 	// Initialized eagerly: vertex captures resolve materials before build_tlas() runs prepare_frame().
 	bindless_block = memnew(BindlessBlock);
 	bindless_block->initialize(RD::get_singleton());
+	BindlessBlock::add_replace_listener(&RenderRaytracing::_texture_replaced_listener, this);
 #ifdef RT_VALIDATION_ENABLED
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "rendering/pathtracing/debug/strict_validation"), false);
 #endif
@@ -580,6 +586,7 @@ RenderRaytracing::~RenderRaytracing() {
 	}
 
 	if (bindless_block) {
+		BindlessBlock::remove_replace_listener(&RenderRaytracing::_texture_replaced_listener, this);
 		memdelete(bindless_block);
 		bindless_block = nullptr;
 	}
@@ -3502,6 +3509,96 @@ bool RenderRaytracing::_materials_bound_media() {
 	return media_scan_found;
 }
 
+// A material texture swapped in place (texture streaming changes its mips): the cached RenderingDevice RIDs
+// follow it, so the opacity micromap of an alpha-tested surface rebakes from the new texture (its key holds
+// the texture) instead of reading a freed one. The bindless slots already follow (BindlessBlock).
+void RenderRaytracing::_texture_replaced_listener(void *p_self, RID p_old, RID p_new) {
+	RenderRaytracing *self = static_cast<RenderRaytracing *>(p_self);
+	const uint32_t slot_count = uint32_t(self->material_chunks.size()) * RT_CACHE_CHUNK_SIZE;
+	for (uint32_t slot = 0; slot < slot_count; slot++) {
+		const RTMaterialCacheEntry *entry = self->_find_material_cache_entry(slot);
+		if (!entry || !entry->ptr) {
+			continue;
+		}
+		RTMaterialData *mat = entry->ptr;
+		RID *rids[4] = { &mat->albedo_texture_rd, &mat->normal_texture_rd, &mat->orm_texture_rd, &mat->emission_texture_rd };
+		for (RID *rid : rids) {
+			if (*rid == p_old) {
+				*rid = p_new;
+			}
+		}
+	}
+}
+
+// Texture streaming under path tracing (docs/ideas/quality-and-budgets.md). Raster fragments report the mip
+// each material samples; a path tracer also samples in reflections, refractions and bounces, often off screen.
+// Each frame: give every traced material that streams textures its feedback index (rt_streaming_report() writes
+// the ray cone's footprint there), and ask full resolution for alpha-tested ones, whose any-hit shaders and
+// opacity micromaps read the base level.
+void RenderRaytracing::_update_streaming_feedback() {
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+	const uint32_t frame = RSG::rasterizer->get_frame_number();
+	if (streaming_index_frame == frame) {
+		return;
+	}
+	streaming_index_frame = frame;
+	TextureStreaming *streaming = TextureStreaming::get_singleton();
+	if (!streaming || !GLOBAL_GET_CACHED(bool, "rendering/textures/streaming/enabled")) {
+		return;
+	}
+	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
+	const uint32_t slot_count = uint32_t(material_chunks.size()) * RT_CACHE_CHUNK_SIZE;
+	streaming_index.resize(slot_count + 1);
+	for (uint32_t &index : streaming_index) {
+		index = UINT32_MAX;
+	}
+	bool any = false;
+	for (uint32_t slot = 0; slot < slot_count; slot++) {
+		const RTMaterialCacheEntry *entry = _find_material_cache_entry(slot);
+		if (!entry || !entry->ptr || entry->ptr->table_index >= streaming_index.size()) {
+			continue;
+		}
+
+		const RID material = RID::from_uint64((uint64_t(entry->cached_rid_version) << 32) | slot);
+		if (!material_storage->owns_material(material)) {
+			continue;
+		}
+		const RendererRD::MaterialStorage::MaterialData *data = material_storage->material_get_data(material, RendererRD::MaterialStorage::SHADER_TYPE_3D);
+		if (!data || data->material_feedback_rid.is_null()) {
+			continue;
+		}
+		streaming_index[entry->ptr->table_index] = streaming->feedback_buffer_material_index(data->material_feedback_rid);
+		any = true;
+		// Alpha-tested and blended surfaces are read by any-hit (shadow and visibility rays) at the base level,
+		// with no ray cone; keep them whole while they are traced.
+		// (Alpha scissor is a surface flag in the TLAS, so ask the shader.)
+		const SceneShaderForwardClustered::ShaderData *shader_data = static_cast<const SceneShaderForwardClustered::MaterialData *>(data)->shader_data;
+		const bool any_hit = entry->ptr->is_custom_shader || (entry->ptr->data.flags & RT_MAT_FLAG_TRANSPARENT) ||
+				(shader_data && (shader_data->uses_alpha_clip || shader_data->uses_alpha_antialiasing || shader_data->uses_alpha || shader_data->uses_discard));
+		if (entry->last_used_frame + 2 >= frame && any_hit) {
+			streaming->feedback_report_material(data->material_feedback_rid, 0.0f);
+		}
+	}
+	if (!any) {
+		return;
+	}
+	RD *rd = RD::get_singleton();
+	const uint32_t count = streaming_index.size();
+	if (streaming_index_buffer.is_null() || streaming_index_capacity < count) {
+		if (streaming_index_buffer.is_valid()) {
+			rd->free_rid(streaming_index_buffer);
+		}
+		streaming_index_capacity = MAX(count, 256u);
+		streaming_index_buffer = rd->storage_buffer_create(streaming_index_capacity * sizeof(uint32_t));
+		Vector<uint8_t> fill;
+		fill.resize(streaming_index_capacity * sizeof(uint32_t));
+		memset(fill.ptrw(), 0xFF, fill.size());
+		rd->buffer_update(streaming_index_buffer, 0, fill.size(), fill.ptr());
+	}
+	rd->buffer_update(streaming_index_buffer, 0, count * sizeof(uint32_t), streaming_index.ptr());
+#endif
+}
+
 RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t p_material_invalidation_counter) {
 	if (!p_material_rid.is_valid()) {
 		return &_rt_default_material();
@@ -3844,6 +3941,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.snow = 1;
 		mat.subsurface.snow_from_weather = rt_state.snow_from_weather;
 		mat.subsurface_texture.snow_on_body = rt_state.snow_on_body;
+		mat.subsurface_texture.wetness_moving = rt_state.wetness_moving;
 		mat.hair_crown_z.snow_amount = rt_unorm8(get_float("snow_amount", 1.0f));
 		mat.hair_crown_z.snow_max_slope = rt_unorm8(get_float("snow_max_slope", 60.0f) / 90.0f);
 	}
@@ -8206,6 +8304,28 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		uniforms.push_back(u);
 	}
 
+	// Bindings 53-54: texture streaming feedback (raytracing_entry_material_inc.glsl, rt_streaming_report()):
+	// the streamer's feedback buffer, which raster fragments write too, and each material table entry's index
+	// into it. Small stand-ins while streaming is off; the shaders only read them with RT_TEXTURE_STREAMING.
+	{
+		_update_streaming_feedback();
+		RID feedback;
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+		feedback = TextureStreaming::get_singleton()->feedback_buffer_get_uniform_rid();
+#endif
+		const RID stand_in = RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer();
+		RD::Uniform u;
+		u.binding = 53;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(feedback.is_valid() ? feedback : stand_in);
+		uniforms.push_back(u);
+		u = RD::Uniform();
+		u.binding = 54;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(streaming_index_buffer.is_valid() ? streaming_index_buffer : stand_in);
+		uniforms.push_back(u);
+	}
+
 	// Binding 46: the water caustics map (SSBO; raytracing_caustics_inc.glsl). A small stand-in
 	// until caustics are first enabled.
 	{
@@ -8404,6 +8524,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		if (samplers.is_null()) {
 			samplers = RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default();
 		}
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+		TextureStreaming::get_singleton()->feedback_report_mipmap_bias(samplers.mipmap_bias); // Feedback reads the mip the sampler reads.
+#endif
 		samplers.append_uniforms(uniforms, 16);
 	}
 

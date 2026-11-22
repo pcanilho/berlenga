@@ -273,7 +273,8 @@ struct alignas(16) RT_MaterialData {
 		uint32_t wetness_canopy : 1; // BaseMaterial3D wetness_canopy: the canopy's water (RT_PARAM_RAIN_MAP) and beads.
 		uint32_t snow_on_body : 1; // BaseMaterial3D snow_on_body: the body's snow from instance uniform slot 12.
 		uint32_t glaze : 1; // BaseMaterial3D glaze: clear ice from freezing rain (RT_PARAM_RAIN_MAP alpha).
-		uint32_t unused : 5;
+		uint32_t wetness_moving : 1; // BaseMaterial3D wetness_moving: slipstream and wiper from instance uniform slots 13, 14.
+		uint32_t unused : 4;
 	} subsurface_texture;
 	// BaseMaterial3D Hair (RT_MAT_FLAG_HAIR), see rt_material_set_hair() and GLSL rt_material_hair().
 	struct {
@@ -1517,6 +1518,15 @@ class RenderRaytracing {
 	// Coarser levels of static surfaces, keyed (surface cache key << 8) | level; see process_surface_lod.
 	HashMap<uint64_t, RTCacheEntry> surface_lod_cache;
 	Vector<RTMaterialCacheEntry *> material_chunks;
+
+	// Texture streaming (TextureStreaming): the feedback index of each material table entry (UINT32_MAX: none),
+	// read by rt_streaming_report() so path traced hits report the mips they sample, as raster fragments do.
+	RID streaming_index_buffer;
+	uint32_t streaming_index_capacity = 0; // Entries; grow-only.
+	LocalVector<uint32_t> streaming_index;
+	uint32_t streaming_index_frame = UINT32_MAX;
+	void _update_streaming_feedback();
+	static void _texture_replaced_listener(void *p_self, RID p_old, RID p_new);
 
 	// Merged MultiMesh BLAS cache and compute shader.
 	struct MergeShader {

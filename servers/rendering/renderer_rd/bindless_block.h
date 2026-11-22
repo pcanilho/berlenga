@@ -32,6 +32,7 @@
 
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
+#include "core/templates/pair.h"
 #include "servers/rendering/rendering_device.h"
 
 class BindlessBlock {
@@ -59,6 +60,15 @@ public:
 	void clear();
 	~BindlessBlock();
 
+	// A texture swapped in place (TextureStorage::texture_replace_compatible, RenderingDevice::texture_replace_rid:
+	// texture streaming changes a texture's mips this way). RenderingDevice patches the uniform set; every block
+	// moves its slot to the new texture, so materials keep their indices and the next refinalize stays valid.
+	static void texture_replaced(RID p_old, RID p_new);
+	// Others that keep RenderingDevice texture RIDs of materials (the path tracer's material cache) follow too.
+	typedef void (*ReplaceListener)(void *p_userdata, RID p_old, RID p_new);
+	static void add_replace_listener(ReplaceListener p_listener, void *p_userdata);
+	static void remove_replace_listener(ReplaceListener p_listener, void *p_userdata);
+
 private:
 	RenderingDevice *rd = nullptr;
 	LocalVector<RID> textures;
@@ -69,4 +79,8 @@ private:
 	RID uniform_set;
 	bool needs_refinalize = false;
 	uint64_t version = 0;
+
+	void _texture_replaced(RID p_old, RID p_new);
+	static LocalVector<BindlessBlock *> live_blocks;
+	static LocalVector<Pair<ReplaceListener, void *>> replace_listeners;
 };

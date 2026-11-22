@@ -325,6 +325,7 @@ public:
 	int get_mesh_triangle_count() const;
 	real_t get_last_mesh_msec() const { return real_t(last_mesh_usec) / 1000.0; }
 	real_t get_rock_distance(const Vector3 &p_position) const;
+	real_t get_meshed_rock_distance(const Vector3 &p_position) const; // with the flowstone round the formations (as the mesh draws it)
 	void set_mesh_cell(real_t p_value) { mesh_cell = CLAMP(p_value, real_t(0.05), real_t(4.0)); }
 	real_t get_mesh_cell() const { return mesh_cell; }
 	void set_near_mesh_cell(real_t p_value) { near_mesh_cell = CLAMP(p_value, real_t(0.0), real_t(4.0)); }

@@ -168,13 +168,18 @@ void FootPlacementModifier3D::_solve_two_joint(Skeleton3D *p_skeleton, int p_upp
 	p_skeleton->set_bone_global_pose(p_end, Transform3D(p_end_basis, nb + rl.xform(c - b)));
 }
 
-// The ankle's height above the sole: set, or the rest pose's (rigs stand on their origin at rest).
-real_t FootPlacementModifier3D::_ankle_height(Skeleton3D *p_skeleton, int p_foot) const {
+// The ankle's height above the sole: set, or the rest pose's (rigs that stand on their origin at rest), but never
+// more than the lowest the clip has held the ankle over its floor (rigs whose rest pose floats or crouches).
+real_t FootPlacementModifier3D::_ankle_height(Skeleton3D *p_skeleton, int p_foot, real_t p_lowest) const {
 	if (ankle_height >= 0) {
 		return ankle_height;
 	}
 	const Transform3D g = p_skeleton->get_global_transform_interpolated();
-	return MAX((g.xform(p_skeleton->get_bone_global_rest(p_foot).origin) - g.origin).y, (real_t)0.0);
+	real_t h = MAX((g.xform(p_skeleton->get_bone_global_rest(p_foot).origin) - g.origin).y, (real_t)0.0);
+	if (p_lowest >= 0) {
+		h = MIN(h, p_lowest);
+	}
+	return h;
 }
 
 void FootPlacementModifier3D::_process_modification(double p_delta) {
@@ -221,7 +226,11 @@ void FootPlacementModifier3D::_process_modification(double p_delta) {
 		const Transform3D pose = skeleton->get_bone_global_pose(bones[s][2]);
 		clip[s] = sk_global.xform(pose.origin);
 		clip_basis[s] = pose.basis;
-		ankle[s] = _ankle_height(skeleton, bones[s][2]);
+		const real_t over = clip[s].y - floor;
+		if (over >= 0 && (leg.lowest < 0 || over < leg.lowest)) {
+			leg.lowest = over;
+		}
+		ankle[s] = _ankle_height(skeleton, bones[s][2], leg.lowest);
 		const real_t lift = clip[s].y - floor - ankle[s];
 		const real_t speed = (leg.clip_prev_valid && dt > 0) ? clip[s].distance_to(leg.clip_prev) / dt : 0;
 		const bool still = dt > 0 ? speed < plant_speed : (!settled || leg.planted);
@@ -281,6 +290,36 @@ void FootPlacementModifier3D::_process_modification(double p_delta) {
 	if (hips >= 0) {
 		Transform3D hp = skeleton->get_bone_global_pose(hips);
 		hp.origin += sk_inverse.basis.xform(up * pelvis_drop + frame.xform(pelvis_offset));
+		const real_t angle = pelvis_rotation.length();
+		if (angle > (real_t)1e-6) {
+			// turned about its own origin, the axis given in the character's frame
+			const Vector3 axis_sk = sk_inverse.basis.xform(frame.xform(pelvis_rotation / angle)).normalized();
+			hp.basis = Basis(axis_sk, angle) * hp.basis;
+		}
+		// Never past full reach: a leg that cannot get to its foot (the hip raised by a roll or the offset)
+		// takes the pelvis down with it, as a person sinks a little into the hip instead of locking the knee.
+		const Transform3D hp_old = skeleton->get_bone_global_pose(hips);
+		const Transform3D move = hp * hp_old.affine_inverse();
+		real_t deficit = 0;
+		for (int s = 0; s < 2; s++) {
+			const Vector3 a = move.xform(skeleton->get_bone_global_pose(bones[s][0]).origin);
+			const real_t reach = skeleton->get_bone_global_pose(bones[s][0]).origin.distance_to(skeleton->get_bone_global_pose(bones[s][1]).origin) +
+					skeleton->get_bone_global_pose(bones[s][1]).origin.distance_to(skeleton->get_bone_global_pose(bones[s][2]).origin);
+			const Vector3 t = sk_inverse.xform(legs[s].target);
+			const Vector3 up_k = sk_inverse.basis.xform(up).normalized();
+			const Vector3 d = a - t;
+			// how far down along up the hip must go to be within 99.5% of the leg's length
+			const real_t r = reach * (real_t)0.995;
+			const real_t along = d.dot(up_k);
+			const real_t across2 = d.length_squared() - along * along;
+			if (d.length() > r && across2 < r * r) {
+				deficit = MAX(deficit, along - Math::sqrt(r * r - across2));
+			}
+		}
+		if (deficit > 0) {
+			const real_t scale = sk_inverse.basis.xform(up).length(); // skeleton units per metre
+			hp.origin -= sk_inverse.basis.xform(up).normalized() * MIN(deficit, max_pelvis_drop * scale);
+		}
 		skeleton->set_bone_global_pose(hips, hp);
 	}
 
@@ -320,6 +359,7 @@ void FootPlacementModifier3D::reset() {
 		leg.locked = false;
 		leg.planted = false;
 		leg.clip_prev_valid = false;
+		leg.lowest = -1.0;
 	}
 }
 
@@ -365,6 +405,7 @@ String FootPlacementModifier3D::get_foot_bone(Side p_side) const {
 FOOT_ACCESSORS(const NodePath &, NodePath, reference_node, get_reference_node, reference_node = p_value)
 FOOT_ACCESSORS(const NodePath &, NodePath, walker_node, get_walker_node, walker_node = p_value)
 FOOT_ACCESSORS(const Vector3 &, Vector3, pelvis_offset, get_pelvis_offset, pelvis_offset = p_value)
+FOOT_ACCESSORS(const Vector3 &, Vector3, pelvis_rotation, get_pelvis_rotation, pelvis_rotation = p_value)
 FOOT_ACCESSORS(real_t, real_t, ankle_height, get_ankle_height, ankle_height = p_value)
 FOOT_ACCESSORS(real_t, real_t, probe_up, get_probe_up, probe_up = MAX(p_value, (real_t)0.0))
 FOOT_ACCESSORS(real_t, real_t, probe_down, get_probe_down, probe_down = MAX(p_value, (real_t)0.0))
@@ -415,6 +456,7 @@ void FootPlacementModifier3D::_bind_methods() {
 	FOOT_BIND(reference_node, get_reference_node)
 	FOOT_BIND(walker_node, get_walker_node)
 	FOOT_BIND(pelvis_offset, get_pelvis_offset)
+	FOOT_BIND(pelvis_rotation, get_pelvis_rotation)
 	FOOT_BIND(ankle_height, get_ankle_height)
 	FOOT_BIND(probe_up, get_probe_up)
 	FOOT_BIND(probe_down, get_probe_down)
@@ -449,6 +491,7 @@ void FootPlacementModifier3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "reference_node", PROPERTY_HINT_NODE_TYPE, "Node3D"), "set_reference_node", "get_reference_node");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "walker_node", PROPERTY_HINT_NODE_TYPE, "Node3D"), "set_walker_node", "get_walker_node");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "pelvis_offset", PROPERTY_HINT_NONE, "suffix:m"), "set_pelvis_offset", "get_pelvis_offset");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "pelvis_rotation"), "set_pelvis_rotation", "get_pelvis_rotation");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_pelvis_drop", PROPERTY_HINT_RANGE, "0,1,0.001,suffix:m"), "set_max_pelvis_drop", "get_max_pelvis_drop");
 
 	ADD_GROUP("Ground", "");

@@ -2805,6 +2805,19 @@ vec4 pt_weather_surface_rain(vec3 p_wp, vec3 p_n, vec3 p_air) {
 	return rain_surface_catch(p_n, rain, drip, wind, st.g);
 }
 
+// The water standing on a face (mm over its mean), as material.cpp weather_surface_puddle().
+float pt_weather_surface_puddle(vec3 p_wp, vec3 p_n) {
+	vec4 wrect = vec4(get_rt_param(RT_PARAM_WETNESS_RECT_X), get_rt_param(RT_PARAM_WETNESS_RECT_Y),
+			get_rt_param(RT_PARAM_WETNESS_RECT_W), get_rt_param(RT_PARAM_WETNESS_RECT_H));
+	if (wrect.z <= 0.0) {
+		return 0.0;
+	}
+	uint smap = uint(get_rt_param(RT_PARAM_WETNESS_MAP));
+	vec2 ht = 0.5 / max(vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), 0)), vec2(1.0));
+	vec2 uv = clamp((p_wp.xz - wrect.xy) / wrect.zw, ht, 1.0 - ht);
+	return rain_surface_puddle(p_n, textureLod(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), uv, 0.0).b);
+}
+
 vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
 	float cover = smoothstep(0.0003, 0.002, p_depth);
@@ -3775,6 +3788,18 @@ void main() {
 					}
 				}
 				wet *= weather_wet;
+				// Walls run with the rain they catch, in streaks at full detail (material.cpp: rain_surface_wetness()).
+				if (!rt_material_wetness_canopy(mat)) {
+					vec3 sr_air = vec3(0.0);
+					float sr_run = wetness.y;
+					uint sr_iuo = geometries[h.geometry_idx].instance_uniforms_ofs;
+					if (rt_material_wetness_moving(mat) && sr_iuo != 0xFFFFFFFFu) {
+						sr_air = -global_shader_uniforms.data[sr_iuo + 13u].xyz;
+						sr_run *= 1.0 - clamp(global_shader_uniforms.data[sr_iuo + 14u].x, 0.0, 1.0);
+					}
+					vec4 sr = pt_weather_surface_rain(wpos, h.geometry_normal, sr_air);
+					wet = rain_surface_wetness(wet, sr_run, h.geometry_normal, sr, rain_wall_streaks(wpos, h.geometry_normal, sr.zw, 0.0));
+				}
 			} else {
 				wet = 0.0;
 			}
