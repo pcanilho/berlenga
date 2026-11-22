@@ -1776,6 +1776,34 @@ photographs, e.g. Fikke et al. 2007, COST 727).
   overstates the new snow's weight (a 50 cm storm reads S 0.79 over old snow where its own 100 kg/m3 gives 1.1).
   Needs the recent snow's own mass tracked; noted for a later round.
 
+## Follow-up 48: a drift the wind takes back (open, 22 Nov 2026)
+
+Bench: `--test=drift` with `SnowCover3D.add_drift(position, radius, depth, density)` (a cone of wind-packed snow; also
+for ploughed banks and piles in scenes). A 1 m drift on 20 cm of loose snow in a 14 m/s gale at -8 C keeps its crest
+(120 to 118 cm in 6 h); the same drift on bare ground is gone from its centre in 6 h and creeps downwind.
+
+Why it holds: the transport is saturated. The wind arrives carrying a full load off the open snow upwind, so each cell
+passes on what it gets and a cell loses snow only where the wind speeds up (dS/dt = -div Q). The wind's weights see the
+ground, not the snow, so over a drift nothing changes and the drift stays. On bare ground nothing comes in, so it goes.
+
+What was tried (diff /mnt/project-files/fork/snow/drift-relief-wip-3.diff, not pushed):
+- MicroMet's slope and curvature weights on the snow's own relief (as SnowTran-3D does with the snow surface, Liston
+  et al. 2007). The drift does move, but flux rising up the windward face and falling in the lee is anti-diffusive at
+  drift scale: the windward face feeds the lee, which traps the incoming load, so the drift steepens into a spike and
+  grows (1 m to 1.5-1.9 m). This is the dune instability.
+- A slip face (dry blown snow avalanching past 38 degrees, each substep) caps the slope, but the drift still grows
+  (1.2 m to 1.8 m on loose snow).
+
+What it needs: the minimal dune model (Kroy, Sauermann and Herrmann 2002; Andreotti et al. 2002), used for snow
+bedforms by Kochanski et al. 2019 and Filhol and Sturm 2015:
+- Wind shear over the relief from Jackson and Hunt's linear theory, non-local (an FFT of the snow surface on the
+  cover grid): the shear peaks upwind of the crest, not on the face.
+- A saturation length (about 1-5 m for snow saltation): the flux lags the shear, so the windward face erodes up to the
+  crest and the lee fills, and drifts smaller than about 10-20 saturation lengths are flattened, not steepened.
+- Slip faces at the angle of repose, and flow separation behind a crest (the lee eddy the obstacle code already has).
+Drifts then reach Tabler's equilibrium profile on loose snow, migrate as snow dunes and barchans, and are taken back
+where the supply runs out or the wind turns. Cost: one FFT pair per cover update on the near square (64-256 cells).
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
@@ -1920,3 +1948,15 @@ Research notes for Paulo's pick; nothing below is built yet.
 - Build: a basal depth-hoar share grown by gradient hours; the stability index reads the weakest buried
   layer (hoar or depth hoar) under a slab; natural releases on slopes where it falls below 1 after loading
   (Schweizer, Jamieson and Schneebeli 2003, Reviews of Geophysics 41).
+
+## Next round (proposed 22 Nov 2026, round 7): drifts that move, layered snowpack, snow off roofs
+
+1. Snow dunes and drift take-back: the minimal dune model on the cover grid (follow-up 48): Jackson-Hunt shear by
+   FFT, a saturation length, slip faces and lee separation. Drifts migrate, form snow dunes and barchans on open
+   flats, and the wind takes them back when the supply stops or the wind turns.
+2. A layered snowpack: a few layers per cell (as Crocus and SNOWPACK keep), each with density, grain type and age, in
+   place of one bulk layer. Fixes the recent-snow load using the pack's bulk density, and lets crusts, wind slabs,
+   buried hoar and depth hoar stack in the right order for avalanches and the cut-through view.
+3. Snow sliding off roofs: snow on buildings and props (SnowBodies3D) slides off sloped roofs in a thaw or when
+   loaded past the roof's friction (roof snow loads, Taylor 1985; ISO 4355), landing in a pile below (add_drift).
+

@@ -3432,6 +3432,42 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density, bool p_world) {
 	_upload();
 }
 
+// A cone of wind-packed snow (a drift, a plough's bank, a pile), depth at its centre fading to none at the radius,
+// on the near square.
+void SnowCover3D::add_drift(const Vector3 &p_position, float p_radius, float p_depth, float p_density) {
+	_finish_background(true);
+	if (cell_swe.size() != resolution * resolution) {
+		_allocate();
+		_follow(_follow_position());
+	}
+	const float rho_new = CLAMP(p_density, 30.0f, 917.0f);
+	const float r = MAX(p_radius, 0.01f);
+	for (int z = 0; z < resolution; z++) {
+		for (int x = 0; x < resolution; x++) {
+			const Vector3 c = _cell_center(x, z);
+			const float add = MAX(p_depth, 0.0f) * (1.0f - Vector2(c.x - p_position.x, c.z - p_position.z).length() / r);
+			if (add <= 0.0f) {
+				continue;
+			}
+			const int i = z * resolution + x;
+			const float depth_old = cell_swe[i] > SWE_MIN ? cell_swe[i] / cell_density[i] : 0.0f;
+			const float swe = (cell_swe[i] > SWE_MIN ? cell_swe[i] : 0.0f) + add * rho_new;
+			cell_swe.write[i] = swe;
+			cell_density.write[i] = swe / (depth_old + add);
+			if (cell_wind_slab.size() == cell_swe.size()) {
+				cell_wind_slab.write[i] = (depth_old > 0.0f ? cell_wind_slab[i] : 0.0f) + add;
+				cell_slab_cover.write[i] = 0.0f;
+			}
+			if (cell_crust.size() == cell_swe.size() && cell_crust[i] > 0.0f) {
+				cell_crust_burial.write[i] += add;
+			}
+		}
+	}
+	last_step_hours = 0.0f;
+	update_count++;
+	_upload();
+}
+
 void SnowCover3D::refresh_heights() {
 	_finish_background(true);
 	if (cell_ground.size() == resolution * resolution && origin_valid) {
@@ -4452,6 +4488,7 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("advance", "seconds"), &SnowCover3D::advance);
 	ClassDB::bind_method(D_METHOD("clear"), &SnowCover3D::clear);
 	ClassDB::bind_method(D_METHOD("add_snow", "swe_mm", "density", "world"), &SnowCover3D::add_snow, DEFVAL(100.0f), DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("add_drift", "position", "radius", "depth", "density"), &SnowCover3D::add_drift, DEFVAL(300.0f));
 	ClassDB::bind_method(D_METHOD("refresh_heights"), &SnowCover3D::refresh_heights);
 	ClassDB::bind_method(D_METHOD("get_map_rect"), &SnowCover3D::get_map_rect);
 	ClassDB::bind_method(D_METHOD("get_depth_at", "position"), &SnowCover3D::get_depth_at);

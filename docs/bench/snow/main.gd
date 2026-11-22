@@ -221,6 +221,8 @@ func _ready() -> void:
 			await _run_spindrift_tests()
 		elif only == "road":
 			await _run_road_tests()
+		elif only == "drift":
+			await _run_drift_tests()
 		elif only == "windslab":
 			await _run_wind_slab_tests()
 		elif only == "sastrugi":
@@ -450,6 +452,7 @@ func _run_tests() -> void:
 	await _run_slush_tests()
 	await _run_spindrift_tests()
 	await _run_road_tests()
+	await _run_drift_tests()
 	await _run_wind_slab_tests()
 	await _run_sastrugi_tests()
 	await _run_depth_hoar_tests()
@@ -722,6 +725,47 @@ func _wind_case(wind: float, hours: int, fall: float) -> Array:
 	var added_depth := snow.get_depth_at(p) - d0
 	return [snow.get_density_at(p), snow.get_wind_slab_at(p), added, added_depth]
 
+
+# Drift take-back (follow-up 48, open): a lone drift in a gale. The wind arrives carrying a full load off the open
+# snow upwind, so the drift loses snow only where the wind speeds up over it; the wind sees the ground, not the
+# snow's relief, so a drift on loose snow keeps its crest. On bare ground nothing comes in and it is blown away.
+func _drift_case(cover: float, hours: int) -> Array:
+	await _setup("flat", 64.0, 64, -8.0)
+	snow.wind_packing_enabled = false
+	snow.sastrugi_enabled = false
+	if cover > 0.0:
+		snow.add_snow(cover, 100.0)
+	snow.add_drift(Vector3(0.5, 0, 0.5), 5.0, 1.0, 250.0)
+	weather.temperature = -8.0
+	weather.wind_speed = 14.0
+	weather.wind_direction = Vector2(1, 0)
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var line := func() -> Array:
+		var a := []
+		for x in [-6, -3, 0, 3, 6, 9]:
+			a.append(snow.get_depth_at(Vector3(x + 0.5, 0, 0.5)))
+		return a
+	var before: Array = line.call()
+	for h in hours * 6:
+		snow.advance(600.0)
+	return [before, line.call()]
+
+
+func _run_drift_tests() -> void:
+	print("Lone drifts (follow-up 48):")
+	var fmt := func(a: Array) -> String:
+		var s := ""
+		for d in a:
+			s += "%.0f " % (d * 100.0)
+		return s.strip_edges()
+	var loose: Array = await _drift_case(20.0, 6)
+	print("  cm at -6..9 m on 20 cm of loose snow: start %s, 6 h at 14 m/s %s" % [fmt.call(loose[0]), fmt.call(loose[1])])
+	_check("add_drift lays a cone of snow", absf(loose[0][2] - 1.2) < 0.05 and absf(loose[0][0] - 0.2) < 0.02, "%.0f cm at its centre on 20 cm" % (loose[0][2] * 100.0))
+	_check("a drift on loose snow in a gale keeps its crest (the wind arrives full; open: it does not see the drift)", loose[1][2] > 0.9 * loose[0][2], "%.0f cm of %.0f" % [loose[1][2] * 100.0, loose[0][2] * 100.0])
+	var bare: Array = await _drift_case(0.0, 6)
+	print("  on bare ground: start %s, 6 h %s" % [fmt.call(bare[0]), fmt.call(bare[1])])
+	_check("a drift on bare ground is blown away (nothing comes in)", bare[1][2] < 0.5 * bare[0][2], "%.0f cm of %.0f at its centre" % [bare[1][2] * 100.0, bare[0][2] * 100.0])
 
 func _run_wind_slab_tests() -> void:
 	print("Wind slab (follow-up 45):")
