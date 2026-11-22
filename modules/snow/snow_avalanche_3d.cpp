@@ -242,11 +242,12 @@ bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
 			float best = 1.0e6f;
 			float best_slab = 0.0f;
 			if (recent[i] >= min_slab) {
-				best = stability_index(recent[i], rho, WEAK_DENSITY, recent_age[i], slope);
+				// The slab's own density from the pack's layers (new snow over a dense old pack is light).
+				best = stability_index(recent[i], p_cover->pub_top_density(i, recent[i]), WEAK_DENSITY, recent_age[i], slope);
 				best_slab = recent[i];
 			}
 			if (crusts && p_cover->pub.crust[i] > 0.0f && p_cover->pub.crust_burial[i] >= min_slab) {
-				const float s = stability_index(p_cover->pub.crust_burial[i], rho, BURIED_WEAK_DENSITY, 0.0f, slope);
+				const float s = stability_index(p_cover->pub.crust_burial[i], p_cover->pub_top_density(i, p_cover->pub.crust_burial[i]), BURIED_WEAK_DENSITY, 0.0f, slope);
 				if (s < best) {
 					best = s;
 					best_slab = p_cover->pub.crust_burial[i];
@@ -255,7 +256,7 @@ bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
 			if (hoars && p_cover->pub.hoar_layer[i] > 0.0f && p_cover->pub.hoar_burial[i] >= min_slab) {
 				// Buried surface hoar (round 5): the persistent weak layer clear calm nights leave, weak for weeks.
 				const float b = p_cover->pub.hoar_burial[i];
-				const float load = rho * GRAVITY * b * Math::sin(slope) * Math::cos(slope);
+				const float load = p_cover->pub_top_density(i, b) * GRAVITY * b * Math::sin(slope) * Math::cos(slope);
 				const float s = load > 1.0e-3f ? SnowCover3D::buried_hoar_strength(p_cover->pub.hoar_layer[i], p_cover->pub.hoar_age[i]) / load : 1.0e6f;
 				if (s < best) {
 					best = s;
@@ -1280,13 +1281,13 @@ float SnowAvalanche3D::_trigger_index(const SnowCover3D *p_cover, int p_x, int p
 		return 1.0e6f;
 	}
 	const float slope = _slope_at(p_cover, p_x, p_z);
-	const float rho = MAX(p_cover->pub.density[i], 30.0f);
 	const float sc = Math::sin(slope) * Math::cos(slope);
 	float best = 1.0e6f;
 	const float anchor = _hold(p_cover, i);
 	auto test = [&](float p_slab, float p_strength, bool p_is_crust) {
 		const float d = MAX(p_slab - p_sink, 0.02f) * Math::cos(slope);
-		const float tau = rho * GRAVITY * p_slab * sc + added_shear(p_line_load, d, slope);
+		// The slab's own density from the pack's layers.
+		const float tau = p_cover->pub_top_density(i, p_slab) * GRAVITY * p_slab * sc + added_shear(p_line_load, d, slope);
 		const float sk = tau > 1.0e-3f ? p_strength * anchor / tau : 1.0e6f;
 		if (sk < best) {
 			best = sk;
@@ -1376,12 +1377,11 @@ int SnowAvalanche3D::_load(SnowCover3D *p_cover, const Vector3 &p_at, float p_li
 		visited++;
 		const int x = i % n, z = i / n;
 		const float slope = _slope_at(p_cover, x, z);
-		const float rho = MAX(p_cover->pub.density[i], 30.0f);
 		const bool steep = slope >= lo && slope <= hi;
 		if (crust) {
 			collapsed.write[i] = 1;
 			const float b = p_cover->pub.crust_burial[i];
-			if (steep && (i == seed || stability_index(b, rho, BURIED_WEAK_DENSITY, 0.0f, slope) * _hold(p_cover, i) < propagation_index)) {
+			if (steep && (i == seed || stability_index(b, p_cover->pub_top_density(i, b), BURIED_WEAK_DENSITY, 0.0f, slope) * _hold(p_cover, i) < propagation_index)) {
 				cells.push_back(i);
 				amounts.push_back(b);
 			}

@@ -388,6 +388,13 @@
 				Returns the [SnowLakeIce3D] this cover made to draw its ice, or [code]null[/code].
 			</description>
 		</method>
+		<method name="get_layers_at" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The pack's layers at [param position] (its cell), bottom first, as dictionaries: [code]swe[/code] (kg/m²), [code]density[/code] (kg/m³), [code]depth[/code] (m), [code]age[/code] (hours) and [code]kind[/code] ([code]"new"[/code] fallen snow under a week old, [code]"wind"[/code] wind-laid or wind-packed slab, [code]"old"[/code] settled). Empty with [member layers_enabled] off.
+			</description>
+		</method>
 		<method name="get_main_thread_msec" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -687,6 +694,16 @@
 				Returns lake ice after [param hours] at [param air_celsius] (below 0 °C) from [param ice] metres, under [param snow_depth] metres of snow of [param snow_density] kg/m³: Stefan's law with the heat path through the snow and the air (Leppäranta 1993; Ashton 1989), integrated exactly.
 			</description>
 		</method>
+		<method name="layer_compaction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="density" type="float" />
+			<param index="1" name="stress" type="float" />
+			<param index="2" name="celsius" type="float" />
+			<param index="3" name="hours" type="float" />
+			<description>
+				A layer's density (kg/m³) after [param hours] under [param stress] (Pa, the weight of the snow above) at [param celsius]: Crocus's viscous settling (Vionnet et al. 2012), eta = eta0 (rho / 250) exp(0.1 (0 - T) + 0.023 rho), eta0 7.62e6 kg/m/s.
+			</description>
+		</method>
 		<method name="new_snow_density" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="celsius" type="float" />
@@ -891,6 +908,9 @@
 		</member>
 		<member name="lapse_rate" type="float" setter="set_lapse_rate" getter="get_lapse_rate" default="6.5">
 			How fast the air cools with height above the weather map's ground height, in °C per km (6.5, the standard atmosphere). Sets where rain turns to snow on a mountain and where snow stays.
+		</member>
+		<member name="layers_enabled" type="bool" setter="set_layers_enabled" getter="is_layers_enabled" default="true">
+			The pack as layers (up to six a cell), as Crocus and SNOWPACK keep it: each snowfall and each wind deposit is a layer with its own density and age, settling under the weight above it ([method layer_compaction]); the wind's packing turns the top into a wind slab layer. The bulk fields stay the pack's total: each update the layers are matched to them, melt, erosion, slides and releases coming off the top and the bulk's settling going to the layers by their pore space. Avalanches weigh a slab over a weak layer by its own layers (light new snow on a dense old pack is light), and the wind packs the top by its own density. About 2.5 ms more an update on a 256 x 256 square. See [method get_layers_at].
 		</member>
 		<member name="liquid_capacity" type="float" setter="set_liquid_capacity" getter="get_liquid_capacity" default="0.05">
 			The share of its ice the snowpack holds as liquid water before meltwater and rain drain out.

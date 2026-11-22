@@ -221,6 +221,8 @@ func _ready() -> void:
 			await _run_spindrift_tests()
 		elif only == "road":
 			await _run_road_tests()
+		elif only == "layers":
+			await _run_layer_tests()
 		elif only == "drift":
 			await _run_drift_tests()
 		elif only == "windslab":
@@ -452,6 +454,7 @@ func _run_tests() -> void:
 	await _run_slush_tests()
 	await _run_spindrift_tests()
 	await _run_road_tests()
+	await _run_layer_tests()
 	await _run_drift_tests()
 	await _run_wind_slab_tests()
 	await _run_sastrugi_tests()
@@ -724,6 +727,108 @@ func _wind_case(wind: float, hours: int, fall: float) -> Array:
 	var added := snow.get_swe_at(p) - swe0
 	var added_depth := snow.get_depth_at(p) - d0
 	return [snow.get_density_at(p), snow.get_wind_slab_at(p), added, added_depth]
+
+
+# The pack's layers (follow-up 49): each fall and each wind deposit a layer with its own density and age, settling
+# under the weight above it (Crocus's viscosity); the bulk stays the total, melt and erosion take the top.
+func _layer_text(p: Vector3) -> String:
+	var t := ""
+	for l: Dictionary in snow.get_layers_at(p):
+		t += "[%s %.0f cm %.0f kg/m3 %.0f h] " % [l["kind"], float(l["depth"]) * 100.0, l["density"], l["age"]]
+	return t.strip_edges()
+
+
+func _layer_sum(p: Vector3) -> Array:
+	var d := 0.0
+	var w := 0.0
+	for l: Dictionary in snow.get_layers_at(p):
+		d += float(l["depth"])
+		w += float(l["swe"])
+	return [d, w]
+
+
+func _run_layer_tests() -> void:
+	print("Layers (follow-up 49):")
+	var fresh := SnowCover3D.layer_compaction(100.0, 2000.0, -5.0, 24.0)
+	var cold := SnowCover3D.layer_compaction(100.0, 2000.0, -25.0, 24.0)
+	var dense := SnowCover3D.layer_compaction(350.0, 2000.0, -5.0, 24.0)
+	_check("a layer settles under the weight above it, slower cold and dense (Crocus viscosity)", fresh > 115.0 and cold < fresh and cold > 100.0 and dense - 350.0 < fresh - 100.0 and SnowCover3D.layer_compaction(100.0, 0.0, -5.0, 24.0) == 100.0, "100 kg/m3 under 2 kPa for a day: %.0f at -5 C, %.0f at -25 C; 350 goes to %.0f" % [fresh, cold, dense])
+	await _setup("flat", 64.0, 16, -8.0)
+	snow.crust_enabled = false # no sun crust under the new snow (it would hold the top from packing)
+	var p := Vector3(0, 0, 0)
+	snow.add_snow(150.0, 300.0) # an old settled pack
+	for h in 48:
+		snow.advance(3600.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	_precipitate(10.0, 4.0) # a 40 mm storm, calm
+	var after_storm := _layer_text(p)
+	var ls: Array = snow.get_layers_at(p)
+	var sums := _layer_sum(p)
+	print("  after a calm storm on an old pack: %s; bulk %.0f cm %.0f mm" % [after_storm, snow.get_depth_at(p) * 100.0, snow.get_swe_at(p)])
+	_check("a storm on an old pack is a light new layer over a dense old one", ls.size() >= 2 and ls[0]["kind"] == "old" and ls[-1]["kind"] == "new" and float(ls[-1]["density"]) < 0.7 * float(ls[0]["density"]), after_storm)
+	_check("the layers add up to the bulk pack", absf(sums[0] - snow.get_depth_at(p)) < 0.01 and absf(sums[1] - snow.get_swe_at(p)) < 0.5, "%.3f m and %.1f mm against %.3f m and %.1f mm" % [sums[0], sums[1], snow.get_depth_at(p), snow.get_swe_at(p)])
+	# A gale over it: the new snow is blown and laid down again as wind slab where it drifts.
+	weather.wind_speed = 14.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	for h in 6:
+		snow.advance(3600.0)
+		if OS.get_cmdline_user_args().has("--verbose"):
+			print("    gale h%d: %s slab %.3f crust %.3f@%.3f rho %.0f blown %.4f" % [h, _layer_text(p), snow.get_wind_slab_at(p), snow.get_crust_thickness_at(p), snow.get_crust_depth_at(p), snow.get_density_at(p), snow.get_blown_flux_max()])
+	var kinds := []
+	for x in range(-28, 29, 4):
+		for l: Dictionary in snow.get_layers_at(Vector3(x, 0, 0)):
+			if not kinds.has(l["kind"]):
+				kinds.append(l["kind"])
+	print("  after a gale: %s" % _layer_text(p))
+	var top: Array = snow.get_layers_at(p)
+	_check("a gale packs the top into a wind slab layer", top.size() >= 2 and top[-1]["kind"] == "wind" and kinds.has("wind"), _layer_text(p))
+	var base_swe: float = float(top[0]["swe"])
+	var all_swe := snow.get_swe_at(p)
+	# Warm hours: the melt takes the top layers first.
+	weather.wind_speed = 1.0
+	weather.temperature = 8.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	for h in 72:
+		snow.advance(3600.0)
+	var warm: Array = snow.get_layers_at(p)
+	sums = _layer_sum(p)
+	print("  after 3 days at +8 C: %s" % _layer_text(p))
+	_check("melt takes the top: the old layer under it keeps its snow", warm.size() >= 1 and warm[0]["kind"] == "old" and absf(float(warm[0]["swe"]) - base_swe) < 1.0 and snow.get_swe_at(p) < all_swe - 1.0 and absf(sums[1] - snow.get_swe_at(p)) < 0.5, "%s; base %.1f of %.1f mm, pack %.1f of %.1f mm" % [_layer_text(p), float(warm[0]["swe"]), base_swe, snow.get_swe_at(p), all_swe])
+	snow.layers_enabled = false
+	snow.advance(3600.0)
+	_check("off: no layers", snow.get_layers_at(p).is_empty(), "%d" % snow.get_layers_at(p).size())
+	snow.layers_enabled = true
+	weather.temperature = -8.0
+	weather.snap_to_settings()
+	# The storm slab's own weight (the round 6 quirk): 50 cm of new snow on a dense old pack on the 38 degree face.
+	# With layers the slab weighs its own 100 kg/m3; without, the pack's bulk density overstated it.
+	var lowest := []
+	for layered: bool in [true, false]:
+		await _setup("avalanche", 256.0, 128, -8.0)
+		snow.drift_enabled = false
+		snow.slide_enabled = false
+		snow.hoar_enabled = false
+		snow.crust_enabled = false # the new snow alone: no sun crust or depth hoar under it
+		snow.depth_hoar_enabled = false
+		snow.layers_enabled = layered
+		var av: SnowAvalanche3D = snow.get_avalanches()
+		av.natural_release = false
+		snow.add_snow(150.0, 300.0)
+		weather.temperature = -8.0
+		weather.snap_to_settings()
+		for d in 8:
+			snow.advance(86400.0) # past a week: bonded, no longer the new snow
+		snow.add_snow(50.0, 100.0)
+		await get_tree().physics_frame
+		var lo_s := 1e9
+		for x in range(-120, 0, 10):
+			for z in range(-60, 61, 20):
+				lo_s = minf(lo_s, av.get_trigger_index_at(Vector3(x, 0, z), 0.0))
+		lowest.append(lo_s)
+	_check("a storm slab on a dense old pack weighs its own density (layers)", float(lowest[0]) > 1.2 * float(lowest[1]) and float(lowest[0]) > 1.0, "lowest S %.2f with layers, %.2f with the bulk density" % [lowest[0], lowest[1]])
 
 
 # Drift take-back (follow-up 48): a lone drift in a gale. The wind arrives carrying a full load off the open snow

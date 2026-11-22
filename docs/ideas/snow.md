@@ -1825,6 +1825,33 @@ SnowSlide's) after each blow. The shear is kept 5 minutes of weather, until the 
 - A per-substep slip face changed nothing (the smoothed shear is stable), so it runs once a blow.
 - Not yet: flow separation past a brink (the shear only falls to its clamp of 0); flux lag beyond the smoothing.
 
+## Follow-up 49: a layered snowpack (round 7, 22 Nov 2026)
+
+Research: Crocus (Vionnet et al. 2012, GMD) keeps up to 50 layers, a new one per snowfall, merges thin similar ones, and
+settles each by a viscosity eta = f1 f2 eta0 (rho / c_eta) exp(a_eta (Tfus - T) + b_eta rho) (eta0 7.62237e6 kg/m/s,
+a_eta 0.1 /K, b_eta 0.023 m3/kg, c_eta 250 kg/m3); SNOWPACK (Bartelt and Lehning 2002) keeps finite elements with
+grain type. On a 256 x 256 square a game can afford a handful a cell.
+
+Built: `SnowCover3D.layers_enabled` (on), `get_layers_at`, static `layer_compaction`.
+- Up to 6 layers a cell, bottom first: snow water, density, age, kind (new, wind, old). A snowfall is a layer (wind
+  when it drifts as it lands); a fall within 6 h of the top one of its kind joins it; past 6 the two thinnest adjacent
+  layers under the top merge. Wind deposits are wind layers; the wind's packing turns the packed top (split off the
+  layer under it) to wind slab at the packed density. New turns old after a week (the avalanche's bonding time).
+  add_snow at 200 kg/m3 or more is old snow; add_drift is wind slab.
+- Each update each row's layers settle under the weight above (Crocus, temperature from the air at the top to 0 C at
+  the base), then are matched to the bulk: what the bulk lost comes off the top (melt, erosion, slides, releases),
+  what it gained past them goes into the top, and the bulk's depth change goes to the layers by their pore space, so
+  fresh snow takes it and dense old snow little. The bulk (CLASS settling and all the processes) stays authoritative.
+- Uses: the avalanche weighs each slab (new snow, over a crust, over buried hoar, the trigger index) by the layers'
+  density over its depth, which fixes the round 6 quirk; the wind packs the top by its own density, so new snow on a
+  dense old pack drifts and packs.
+- `--test=layers`: a calm 40 mm storm on an old pack is [old 51 cm 296] [new 44 cm 91]; the layers add up to the bulk;
+  a gale packs the top 10 cm into a wind layer; three days at +8 C take the top and leave the old layer's 150 mm; 50 cm
+  of new snow on a dense old pack on 38 degrees reads S 1.31 by its own weight against 0.66 by the bulk density.
+- Cost: 16.3 against 13.8 ms an update on a 256 x 256 square (worker thread).
+- Not yet: a melt-freeze crust, buried hoar and depth hoar as layers of their own (their fields still carry them);
+  liquid water per layer; a cut-through view.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
