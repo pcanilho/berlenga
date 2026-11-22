@@ -525,6 +525,8 @@ func _ready() -> void:
 		_build_worn_path()
 	if args.has("farm-track") and prints != null and prints.has_method("add_wear"):
 		_build_farm_track()
+	if args.get("view", "wide") == "beach" and args.get("cove-props", "1") != "0":
+		_cove_props()
 	if args.get("plants", "1") != "0":
 		_build_cover()
 	_build_mist_pollen()
@@ -5601,18 +5603,25 @@ func _campfire() -> void:
 		var fp := at + right * float(args.get("flag-at", "2.5"))
 		fp.y = height_at(fp.x, fp.z)
 		var pole_h := float(args.get("flag-h", "2.2"))
-		var pole := MeshInstance3D.new()
-		var cm := CylinderMesh.new()
-		cm.top_radius = 0.02
-		cm.bottom_radius = 0.025
-		cm.height = pole_h
-		var wood := StandardMaterial3D.new()
-		wood.albedo_color = Color(0.32, 0.24, 0.16)
-		wood.roughness = 0.8
-		cm.material = wood
-		pole.mesh = cm
-		pole.position = fp + Vector3(0, pole_h * 0.5, 0)
-		site.add_child(pole)
+		# The Tripo flagpole (a whitewashed pole in a stone cairn) when the art is there, a plain pole otherwise.
+		var tpole := _tripo("flagpole", pole_h, 1)
+		if tpole != null:
+			tpole.position = fp
+			tpole.rotation.y = atan2(right.x, right.z)
+			site.add_child(tpole)
+		else:
+			var pole := MeshInstance3D.new()
+			var cm := CylinderMesh.new()
+			cm.top_radius = 0.02
+			cm.bottom_radius = 0.025
+			cm.height = pole_h
+			var wood := StandardMaterial3D.new()
+			wood.albedo_color = Color(0.32, 0.24, 0.16)
+			wood.roughness = 0.8
+			cm.material = wood
+			pole.mesh = cm
+			pole.position = fp + Vector3(0, pole_h * 0.5, 0)
+			site.add_child(pole)
 		var cloth = ClassDB.instantiate("PhysXCloth3D")
 		cloth.name = "Flag"
 		cloth.grid_size = Vector2(0.9, 0.6)
@@ -5861,8 +5870,16 @@ func _campfire() -> void:
 		var wood := StandardMaterial3D.new()
 		wood.albedo_color = Color(0.30, 0.22, 0.15)
 		wood.roughness = 0.85
+		# Tripo timber posts and rail (the rail stretched along its length: Tripo's is stubby) or code shapes.
+		var cyaw := atan2(right.x, right.z) - PI * 0.5
 		for sd in [-1.0, 1.0]:
 			var pp: Vector3 = at + right * (span * 0.5 * sd)
+			var tpost := _tripo("timber_post", rail_h + 0.3, 1)
+			if tpost != null:
+				tpost.position = Vector3(pp.x, height_at(pp.x, pp.z) - 0.3, pp.z)
+				tpost.rotation.y = cyaw + 1.3 * sd
+				site.add_child(tpost)
+				continue
 			var post := MeshInstance3D.new()
 			var pm := CylinderMesh.new()
 			pm.top_radius = 0.045
@@ -5872,13 +5889,23 @@ func _campfire() -> void:
 			post.mesh = pm
 			post.position = Vector3(pp.x, height_at(pp.x, pp.z) - 0.3 + pm.height * 0.5, pp.z)
 			site.add_child(post)
-		var rail := MeshInstance3D.new()
-		var rm := BoxMesh.new()
-		rm.size = Vector3(span + 0.25, 0.08, 0.07)
-		rm.material = wood
-		rail.mesh = rm
-		rail.transform = Transform3D(Basis(right, Vector3.UP, right.cross(Vector3.UP)), at + Vector3(0, rail_h + 0.04, 0))
-		site.add_child(rail)
+		var trail := _tripo("timber_rail", 0.08, 1)
+		if trail != null:
+			var tl: Node3D = trail.get_child(0)
+			var box := AABB()
+			for mi in tl.find_children("*", "MeshInstance3D", true, false):
+				box = box.merge((mi as MeshInstance3D).transform * (mi as MeshInstance3D).get_aabb())
+			tl.scale.x *= (span + 0.25) / maxf(box.size.x * tl.scale.x, 1e-4)
+			trail.transform = Transform3D(Basis(right, Vector3.UP, right.cross(Vector3.UP)), at + Vector3(0, rail_h, 0))
+			site.add_child(trail)
+		else:
+			var rail := MeshInstance3D.new()
+			var rm := BoxMesh.new()
+			rm.size = Vector3(span + 0.25, 0.08, 0.07)
+			rm.material = wood
+			rail.mesh = rm
+			rail.transform = Transform3D(Basis(right, Vector3.UP, right.cross(Vector3.UP)), at + Vector3(0, rail_h + 0.04, 0))
+			site.add_child(rail)
 		curtain = ClassDB.instantiate("PhysXCloth3D")
 		curtain.name = "Curtain"
 		var csz := Vector2(1.9, 1.6)
@@ -5924,6 +5951,12 @@ func _campfire() -> void:
 		wood.roughness = 0.85
 		for sd in [-1.0, 1.0]:
 			var pp: Vector3 = at + right * (span * 0.5 * sd)
+			var tpost := _tripo("timber_post", line_h + 0.4, 1)
+			if tpost != null:
+				tpost.position = Vector3(pp.x, height_at(pp.x, pp.z) - 0.35, pp.z)
+				tpost.rotation = Vector3(0, 0.7 + 1.9 * sd, 0.04 * sd)
+				site.add_child(tpost)
+				continue
 			var post := MeshInstance3D.new()
 			var pm := CylinderMesh.new()
 			pm.top_radius = 0.04
@@ -6220,6 +6253,16 @@ func _hut() -> void:
 			low = minf(low, height_at(w.x, w.z))
 	root.global_position = Vector3(at.x, low - hut_box.position.y - 0.05, at.z) - root.basis * Vector3(hut_box.get_center().x, 0, hut_box.get_center().z)
 	_log("hut: box %s, door %s, at %s" % [str(hut_box), str(door_box), str(root.global_position.round())])
+	if args.get("hut-props", "1") != "0":
+		# Firewood stacked along the two side walls (Tripo props), 0.3 m off the logs.
+		for sd in [-1.0, 1.0]:
+			var wp := _tripo("firewood_pile" if sd < 0.0 else "firewood_pile_b", 2.0 if sd < 0.0 else 2.4, 2)
+			if wp == null:
+				break
+			var lx: float = (hut_box.position.x - 0.55) if sd < 0.0 else (hut_box.end.x + 0.65)
+			var lz: float = hut_box.get_center().z + 0.25 * hut_box.size.z * sd
+			var wpos: Vector3 = root.global_transform * Vector3(lx, 0, lz)
+			_put(wp, wpos, root.rotation.y)
 	# Its walls as one collider, for firebrands.
 	var body := StaticBody3D.new()
 	var cs := CollisionShape3D.new()
@@ -6608,6 +6651,156 @@ func _mem_log(tag: String) -> void:
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) >> 20,
 			OS.get_static_memory_usage() >> 20])
+
+
+# Sets a prop (from _tripo) on the ground at `p`, turned `yaw` radians, sunk `sink` m so no edge floats on a slope.
+func _put(n: Node3D, p: Vector3, yaw: float, sink := 0.05, parent: Node = null) -> Node3D:
+	n.rotation.y = yaw
+	n.position = Vector3(p.x, height_at(p.x, p.z) - sink, p.z)
+	(parent if parent != null else self).add_child(n)
+	return n
+
+
+# --view=beach: the cove dressed with the Tripo props (--cove-props=0: bare). A sea fort on its rock out in the water,
+# --fort-off (240) m out along the view and --fort-size (36) m across; its causeway running out from the shore; the
+# lighthouse (--lighthouse-h 17 m) and the keeper's house on the highest ground within 120 m of the beach; a fishing
+# boat drawn up at the waterline with an overturned one, fish crates, lobster pots, an anchor and a bollard above it.
+func _cove_props() -> void:
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var f := -c3.global_basis.z
+	f.y = 0.0
+	f = f.normalized()
+	var sd := Vector3(f.z, 0, -f.x)
+	var sea := float(gen.sea_level)
+	# The waterline along the view: the first point out from the camera under the sea.
+	var wl := c3.global_position
+	for k in 400:
+		wl = c3.global_position + f * (k * 1.0)
+		if height_at(wl.x, wl.z) < sea + 0.15:
+			break
+	var placed := []
+	var fp := wl + f * float(args.get("fort-off", "240")) - sd * 60.0
+	var fort := _tripo("sea_fort", float(args.get("fort-size", "36")), 0)
+	if fort != null:
+		# Its rock plinth reaches into the seabed; the walls stand clear of the water.
+		fort.rotation.y = atan2(f.x, f.z) + 0.6
+		fort.position = Vector3(fp.x, minf(height_at(fp.x, fp.z), sea - 6.0), fp.z)
+		add_child(fort)
+		placed.append("fort %s" % str(fort.position.round()))
+		var cw := _tripo("sea_fort_causeway", 48.0, 0)
+		if cw != null:
+			var cs := wl + (fp - wl) * 0.25
+			cw.rotation.y = atan2(-(fp - wl).z, (fp - wl).x)
+			cw.position = Vector3(cs.x, minf(height_at(cs.x, cs.z), sea - 7.0), cs.z)
+			add_child(cw)
+			placed.append("causeway %s" % str(cw.position.round()))
+	# The highest ground within 120 m of the waterline, to the side of the view.
+	var best := Vector3(0, -INF, 0)
+	for i in 24:
+		for j in 12:
+			var q := wl + sd * (-120.0 + i * 10.0) - f * (j * 10.0)
+			var h := height_at(q.x, q.z)
+			if h > best.y and rad_to_deg(data_map.get_slope_at(q)) < 20.0 and absf((q - c3.global_position).dot(sd)) > 25.0:
+				best = Vector3(q.x, h, q.z)
+	if is_finite(best.y):
+		var lh := _tripo("lighthouse", float(args.get("lighthouse-h", "17")), 1)
+		if lh != null:
+			_put(lh, best, atan2(f.x, f.z) + PI, 0.4)
+			placed.append("lighthouse %s" % str(best.round()))
+		var kh := _tripo("lighthouse_keepers_house", 11.0, 0)
+		if kh != null:
+			var kp := best - f * 14.0 + sd * 6.0
+			_put(kh, kp, atan2(f.x, f.z) + PI, 0.4)
+	# The beach: boats and gear a few metres above the waterline, beside the view.
+	var bp := wl - f * 3.0 + sd * 7.0
+	var gear := [["fishing_boat", 4.6, 2, bp, 0.3], ["fishing_boat_overturned", 4.4, 0, bp - f * 6.0 + sd * 3.0, 1.2],
+		["fish_crates_stack", 1.2, 1, bp - f * 4.0 - sd * 2.5, 0.4], ["lobster_pots", 1.3, 1, bp - f * 5.0 - sd * 4.2, 2.0],
+		["old_anchor", 1.9, 0, bp - f * 2.0 - sd * 5.5, 0.9], ["mooring_bollard", 0.9, 0, bp - f * 8.0 - sd * 0.5, 0.0]]
+	for g in gear:
+		var gn := _tripo(g[0], g[1], g[2])
+		if gn != null:
+			_put(gn, g[3], atan2(f.x, f.z) + g[4], 0.06)
+			placed.append(g[0])
+	_log("cove props: waterline %s; %s" % [str(wl.round()), ", ".join(placed)])
+
+
+# The farm track dressed (--farm-props=0: bare): split-rail fence along its right side --fence-off (3.2) m out with a
+# gate 30 m on, round hay bales and a small stack out in the field, a signpost at the start and a high seat at the
+# field edge 70 m on (Tripo props).
+func _farm_props(start: Vector3, fwd: Vector3, bend: float, n: int, seg: float) -> void:
+	var pts := []
+	var p := start + Vector3(fwd.z, 0, -fwd.x) * 0.8
+	var dir := fwd
+	for k in n:
+		pts.append([p, dir])
+		p += dir * seg
+		dir = dir.rotated(Vector3.UP, bend / n)
+	var off := float(args.get("fence-off", "3.2"))
+	var count := 0
+	var along := 6.0
+	while along < seg * n - 3.0:
+		var i := int(along / seg)
+		var q: Vector3 = pts[i][0] + pts[i][1] * fmod(along, seg)
+		var d: Vector3 = pts[i][1]
+		var r := Vector3(-d.z, 0, d.x) # right of the track
+		var kind := "split_rail_fence_gate" if absf(along - 30.0) < 1.5 else ("split_rail_fence" if count % 2 == 0 else "split_rail_fence_b")
+		# split_rail_fence runs along its z, the others along x.
+		var fence := _tripo(kind, 3.0, 2 if kind == "split_rail_fence" else 0)
+		if fence == null:
+			return
+		var yaw := atan2(d.x, d.z) + (0.0 if kind == "split_rail_fence" else PI * 0.5)
+		_put(fence, q + d * 1.5 + r * off, yaw, 0.12)
+		along += 3.0
+		count += 1
+	var mid: Array = pts[mini(int(45.0 / seg), pts.size() - 1)]
+	var rr := Vector3(-mid[1].z, 0, mid[1].x)
+	for k in 3:
+		var hb := _tripo("hay_bale", 1.45, 1)
+		if hb != null:
+			_put(hb, mid[0] + rr * (off + 9.0 + 3.5 * k) + mid[1] * (2.0 * k - 3.0 * (k % 2)), 0.9 * k, 0.08)
+	var st := _tripo("hay_bales_small_stack", 2.0, 2)
+	if st != null:
+		var gp: Array = pts[mini(int(30.0 / seg), pts.size() - 1)]
+		_put(st, gp[0] + Vector3(-gp[1].z, 0, gp[1].x) * (off + 3.0) + gp[1] * 4.0, 0.4, 0.06)
+	var sg := _tripo("trail_signpost", 2.3, 1)
+	if sg != null:
+		var s0: Array = pts[mini(4, pts.size() - 1)]
+		_put(sg, s0[0] - Vector3(-s0[1].z, 0, s0[1].x) * 2.3, atan2(s0[1].x, s0[1].z) + PI * 0.5, 0.25)
+	var hs := _tripo("hunting_high_seat", 4.5, 1)
+	if hs != null:
+		var h0: Array = pts[mini(int(70.0 / seg), pts.size() - 1)]
+		_put(hs, h0[0] + Vector3(-h0[1].z, 0, h0[1].x) * (off + 14.0), atan2(h0[1].x, h0[1].z) + PI, 0.1)
+	_log("farm props: %d fence pieces" % count)
+
+
+# Showcase Tripo props (art-src props/showcase/<slug>/<tier>/<slug>.glb, tier bakes of the raws by tools/tripo_tiers.py;
+# --prop-tier high|medium|low, high by default). Each is loaded once and copied; its origin is the centre of its
+# footprint on the ground. Scaled uniformly so its extent along `axis` (0 x, 1 y, 2 z) is `length` m, then by
+# `stretch` (a rail made longer). null when the art is missing (run fetch_art.sh): callers keep their code shape.
+var _tripo_cache := {}
+func _tripo(slug: String, length: float, axis: int = 1, stretch := Vector3.ONE) -> Node3D:
+	var path := "res://art/showcase/%s/%s/%s.glb" % [slug, args.get("prop-tier", "high"), slug]
+	if not _tripo_cache.has(path):
+		_tripo_cache[path] = _gltf_node(path) if FileAccess.file_exists(path) else null
+		if _tripo_cache[path] == null:
+			_log("prop %s missing (run fetch_art.sh), code shape kept" % slug)
+	var src: Node3D = _tripo_cache[path]
+	if src == null:
+		return null
+	var n := src.duplicate() as Node3D
+	var box := AABB()
+	var first := true
+	for mi in n.find_children("*", "MeshInstance3D", true, false):
+		var m := mi as MeshInstance3D
+		var b: AABB = m.transform * m.get_aabb()
+		box = b if first else box.merge(b)
+		first = false
+	var k := length / maxf(box.size[axis], 1e-4)
+	var root := Node3D.new()
+	root.name = slug
+	n.scale = Vector3.ONE * k * stretch
+	root.add_child(n)
+	return root
 
 
 func _gltf_node(path: String) -> Node3D:
@@ -7070,6 +7263,8 @@ func _build_farm_track() -> void:
 		var days := float(args["track-age"])
 		prints.call("settle", days * 86400.0, 3600.0 * 6.0)
 		_log("farm track: aged %.0f days" % days)
+	if args.get("farm-props", "1") != "0":
+		_farm_props(start, fwd, bend, n, seg)
 	_log("farm track: %d segments, %.0f passes, wear under the camera %.0f, 30 m on %.0f" % [n, passes, float(prints.call("get_wear_at", start + side * 0.8 * 0 )), float(prints.call("get_wear_at", start + fwd * 30.0))])
 
 
