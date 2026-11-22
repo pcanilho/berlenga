@@ -334,6 +334,7 @@ func _ready() -> void:
 	await _wall_rain_tests()
 	await _curtain_tests()
 	await _cutout_tests()
+	await _shadow_budget_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
@@ -3192,6 +3193,70 @@ func _cutout_tests() -> void:
 	_check("camera cut-out: a figure hidden behind a wall and a roof shows through the hole (camera_cutout globals)",
 			shares[0][0] < 0.1 and shares[1][0] > 0.4,
 			"figure's share of its spot: %.2f without, %.2f with the cut-out" % [shares[0][0], shares[1][0]])
+
+
+# The shadow budget (rendering/lights_and_shadows/positional_shadow/max_shadowed_lights): two lamps over two posts,
+# a bright one and a dim one; with a budget of one, the bright lamp keeps its shadow and the dim one gives its up.
+func _shadow_budget_tests() -> void:
+	if DisplayServer.get_name() == "headless":
+		_skip("shadow budget", "needs a rendering device")
+		return
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0, 0, 0)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_DISABLED
+	root.add_child(env)
+	var white := StandardMaterial3D.new()
+	var floor_mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(40, 40)
+	floor_mi.mesh = pm
+	floor_mi.material_override = white
+	root.add_child(floor_mi)
+	var spots := []
+	for k in 2:
+		var x := -5.0 if k == 0 else 5.0
+		var post := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.6, 2.0, 0.6)
+		post.mesh = bm
+		post.material_override = white
+		post.position = Vector3(x, 1.0, 0)
+		root.add_child(post)
+		var lamp := OmniLight3D.new()
+		lamp.position = Vector3(x, 4.0, -2.0)
+		lamp.omni_range = 12.0
+		lamp.light_energy = 4.0 if k == 0 else 1.0
+		lamp.shadow_enabled = true
+		root.add_child(lamp)
+		spots.append(Vector3(x, 0.0, 1.6))
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 12, 10)
+	cam.rotation_degrees = Vector3(-50, 0, 0)
+	root.add_child(cam)
+	cam.make_current()
+	var res := []
+	for budget in [0, 1]:
+		ProjectSettings.set_setting("rendering/lights_and_shadows/positional_shadow/max_shadowed_lights", budget)
+		for i in 15:
+			await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var row := []
+		for k in 2:
+			# Shadowed spot behind the post over the lit floor beside it.
+			var shade := _face_luminance(img, cam, spots[k])
+			var lit := _face_luminance(img, cam, spots[k] + Vector3(2.0, 0, 0))
+			row.append(shade / maxf(lit, 1e-4))
+		res.append(row)
+	ProjectSettings.set_setting("rendering/lights_and_shadows/positional_shadow/max_shadowed_lights", 0)
+	root.queue_free()
+	await get_tree().process_frame
+	_check("shadow budget: with room for one shadow the brighter lamp keeps it and the dimmer one gives it up; no budget, both shadow",
+			res[0][0] < 0.85 and res[0][1] < 0.85 and absf(res[1][0] - res[0][0]) < 0.05 and res[1][1] > res[0][1] + 0.2,
+			"shadow over lit floor: no budget bright %.2f dim %.2f; budget 1 bright %.2f dim %.2f" % [res[0][0], res[0][1], res[1][0], res[1][1]])
 
 
 func _centre_luminance(img: Image) -> float:

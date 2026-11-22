@@ -1247,6 +1247,14 @@ public:
 	bool _render_reflection_probe_step(Instance *p_instance, int p_step, int p_face_from = 0, int p_face_count = 6);
 	uint64_t probe_pass = 0;
 
+	// The shadow budget's order (_render_scene): positional lights by importance, most first.
+	struct PositionalShadowOrder {
+		float importance = 0.0f;
+		float coverage = 0.0f;
+		uint32_t index = 0;
+		bool operator()(const PositionalShadowOrder &p_a, const PositionalShadowOrder &p_b) const { return p_a.importance > p_b.importance; }
+	};
+	static float _light_screen_coverage(Instance *ins, const RendererSceneRender::CameraData *p_camera_data);
 	void _render_scene(const RendererSceneRender::CameraData *p_camera_data, const Ref<RenderSceneBuffers> &p_render_buffers, RID p_environment, RID p_force_camera_attributes, RID p_compositor, uint32_t p_visible_layers, RID p_scenario, RID p_viewport, RID p_shadow_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, float p_window_output_max_value, bool p_using_shadows = true, RenderingServerTypes::RenderInfo *r_render_info = nullptr);
 	void render_empty_scene(const Ref<RenderSceneBuffers> &p_render_buffers, RID p_scenario, RID p_shadow_atlas, float p_window_output_max_value);
 

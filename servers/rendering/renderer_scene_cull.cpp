@@ -3535,6 +3535,102 @@ void RendererSceneCull::_scene_particles_set_view_axis(RID p_particles, const Ve
 	RSG::particles_storage->particles_set_view_axis(p_particles, p_axis, p_up_axis);
 }
 
+// A positional light's size on screen (its range's diameter over the viewport's): what the shadow atlas sizes its
+// shadow by, and part of its importance for the shadow budget.
+float RendererSceneCull::_light_screen_coverage(Instance *ins, const RendererSceneRender::CameraData *p_camera_data) {
+	float coverage = 0.f;
+
+	Transform3D cam_xf = p_camera_data->main_transform;
+	float zn = p_camera_data->main_projection.get_z_near();
+	Plane p(-cam_xf.basis.get_column(2), cam_xf.origin + cam_xf.basis.get_column(2) * -zn); //camera near plane
+
+	// near plane half width and height
+	Vector2 vp_half_extents = p_camera_data->main_projection.get_viewport_half_extents();
+
+	switch (RSG::light_storage->light_get_type(ins->base)) {
+		case RSE::LIGHT_OMNI: {
+			float radius = RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_RANGE);
+
+			//get two points parallel to near plane
+			Vector3 points[2] = {
+				ins->transform.origin,
+				ins->transform.origin + cam_xf.basis.get_column(0) * radius
+			};
+
+			if (!p_camera_data->is_orthogonal) {
+				//if using perspetive, map them to near plane
+				for (int j = 0; j < 2; j++) {
+					if (p.distance_to(points[j]) < 0) {
+						points[j].z = -zn; //small hack to keep size constant when hitting the screen
+					}
+
+					p.intersects_segment(cam_xf.origin, points[j], &points[j]); //map to plane
+				}
+			}
+
+			float screen_diameter = points[0].distance_to(points[1]) * 2;
+			coverage = screen_diameter / (vp_half_extents.x + vp_half_extents.y);
+		} break;
+		case RSE::LIGHT_SPOT: {
+			float radius = RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_RANGE);
+			float angle = RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_SPOT_ANGLE);
+
+			float w = radius * Math::sin(Math::deg_to_rad(angle));
+			float d = radius * Math::cos(Math::deg_to_rad(angle));
+
+			Vector3 base = ins->transform.origin - ins->transform.basis.get_column(2).normalized() * d;
+
+			Vector3 points[2] = {
+				base,
+				base + cam_xf.basis.get_column(0) * w
+			};
+
+			if (!p_camera_data->is_orthogonal) {
+				//if using perspetive, map them to near plane
+				for (int j = 0; j < 2; j++) {
+					if (p.distance_to(points[j]) < 0) {
+						points[j].z = -zn; //small hack to keep size constant when hitting the screen
+					}
+
+					p.intersects_segment(cam_xf.origin, points[j], &points[j]); //map to plane
+				}
+			}
+
+			float screen_diameter = points[0].distance_to(points[1]) * 2;
+			coverage = screen_diameter / (vp_half_extents.x + vp_half_extents.y);
+
+		} break;
+		case RSE::LIGHT_AREA: {
+			float diagonal = RSG::light_storage->light_area_get_size(ins->base).length();
+			float radius = RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_RANGE) + diagonal;
+
+			//get two points parallel to near plane
+			Vector3 points[2] = {
+				ins->transform.origin,
+				ins->transform.origin + cam_xf.basis.get_column(0) * radius
+			};
+
+			if (!p_camera_data->is_orthogonal) {
+				//if using perspetive, map them to near plane
+				for (int j = 0; j < 2; j++) {
+					if (p.distance_to(points[j]) < 0) {
+						points[j].z = -zn; //small hack to keep size constant when hitting the screen
+					}
+
+					p.intersects_segment(cam_xf.origin, points[j], &points[j]); //map to plane
+				}
+			}
+
+			float screen_diameter = points[0].distance_to(points[1]) * 2;
+			coverage = screen_diameter / (vp_half_extents.x + vp_half_extents.y);
+		} break;
+		default: {
+			ERR_PRINT("Invalid Light Type");
+		}
+	}
+	return coverage;
+}
+
 void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_camera_data, const Ref<RenderSceneBuffers> &p_render_buffers, RID p_environment, RID p_force_camera_attributes, RID p_compositor, uint32_t p_visible_layers, RID p_scenario, RID p_viewport, RID p_shadow_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, float p_window_output_max_value, bool p_using_shadows, RenderingServerTypes::RenderInfo *r_render_info) {
 	Instance *render_reflection_probe = instance_owner.get_or_null(p_reflection_probe); //if null, not rendering to it
 
@@ -3750,113 +3846,35 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 			}
 		}
 
-		// Positional Shadows
-		for (uint32_t i = 0; i < (uint32_t)scene_cull_result.lights.size(); i++) {
-			Instance *ins = scene_cull_result.lights[i];
-
-			// Path tracing never draws the atlas, so don't let it record shadows as up to date.
-			if (!p_shadow_atlas.is_valid() || cull.rt_enabled) {
-				continue;
-			}
-
-			InstanceLightData *light = static_cast<InstanceLightData *>(ins->base_data);
-
-			if (!RSG::light_storage->light_instance_is_shadow_visible_at_position(light->instance, camera_position)) {
-				continue;
-			}
-
-			float coverage = 0.f;
-
-			{ //compute coverage
-
-				Transform3D cam_xf = p_camera_data->main_transform;
-				float zn = p_camera_data->main_projection.get_z_near();
-				Plane p(-cam_xf.basis.get_column(2), cam_xf.origin + cam_xf.basis.get_column(2) * -zn); //camera near plane
-
-				// near plane half width and height
-				Vector2 vp_half_extents = p_camera_data->main_projection.get_viewport_half_extents();
-
-				switch (RSG::light_storage->light_get_type(ins->base)) {
-					case RSE::LIGHT_OMNI: {
-						float radius = RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_RANGE);
-
-						//get two points parallel to near plane
-						Vector3 points[2] = {
-							ins->transform.origin,
-							ins->transform.origin + cam_xf.basis.get_column(0) * radius
-						};
-
-						if (!p_camera_data->is_orthogonal) {
-							//if using perspetive, map them to near plane
-							for (int j = 0; j < 2; j++) {
-								if (p.distance_to(points[j]) < 0) {
-									points[j].z = -zn; //small hack to keep size constant when hitting the screen
-								}
-
-								p.intersects_segment(cam_xf.origin, points[j], &points[j]); //map to plane
-							}
-						}
-
-						float screen_diameter = points[0].distance_to(points[1]) * 2;
-						coverage = screen_diameter / (vp_half_extents.x + vp_half_extents.y);
-					} break;
-					case RSE::LIGHT_SPOT: {
-						float radius = RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_RANGE);
-						float angle = RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_SPOT_ANGLE);
-
-						float w = radius * Math::sin(Math::deg_to_rad(angle));
-						float d = radius * Math::cos(Math::deg_to_rad(angle));
-
-						Vector3 base = ins->transform.origin - ins->transform.basis.get_column(2).normalized() * d;
-
-						Vector3 points[2] = {
-							base,
-							base + cam_xf.basis.get_column(0) * w
-						};
-
-						if (!p_camera_data->is_orthogonal) {
-							//if using perspetive, map them to near plane
-							for (int j = 0; j < 2; j++) {
-								if (p.distance_to(points[j]) < 0) {
-									points[j].z = -zn; //small hack to keep size constant when hitting the screen
-								}
-
-								p.intersects_segment(cam_xf.origin, points[j], &points[j]); //map to plane
-							}
-						}
-
-						float screen_diameter = points[0].distance_to(points[1]) * 2;
-						coverage = screen_diameter / (vp_half_extents.x + vp_half_extents.y);
-
-					} break;
-					case RSE::LIGHT_AREA: {
-						float diagonal = RSG::light_storage->light_area_get_size(ins->base).length();
-						float radius = RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_RANGE) + diagonal;
-
-						//get two points parallel to near plane
-						Vector3 points[2] = {
-							ins->transform.origin,
-							ins->transform.origin + cam_xf.basis.get_column(0) * radius
-						};
-
-						if (!p_camera_data->is_orthogonal) {
-							//if using perspetive, map them to near plane
-							for (int j = 0; j < 2; j++) {
-								if (p.distance_to(points[j]) < 0) {
-									points[j].z = -zn; //small hack to keep size constant when hitting the screen
-								}
-
-								p.intersects_segment(cam_xf.origin, points[j], &points[j]); //map to plane
-							}
-						}
-
-						float screen_diameter = points[0].distance_to(points[1]) * 2;
-						coverage = screen_diameter / (vp_half_extents.x + vp_half_extents.y);
-					} break;
-					default: {
-						ERR_PRINT("Invalid Light Type");
-					}
+		// Positional Shadows, by importance (docs/ideas/engine-gaps-from-game.md, E): as Unreal's per-light shadow
+		// priority and HDRP's "max shadows on screen", the lights are taken brightest-and-largest first (energy times
+		// their size on screen), so when the atlas fills it is the least important that go without, not whichever
+		// came last; and with rendering/lights_and_shadows/positional_shadow/max_shadowed_lights above 0 only that many
+		// keep a shadow (the rest give their atlas space back). Far lamps already redraw moving casters less often.
+		// Path tracing never draws the atlas, so don't let it record shadows as up to date.
+		LocalVector<PositionalShadowOrder> positional_shadow_order;
+		if (p_shadow_atlas.is_valid() && !cull.rt_enabled) {
+			for (uint32_t i = 0; i < (uint32_t)scene_cull_result.lights.size(); i++) {
+				Instance *ins = scene_cull_result.lights[i];
+				InstanceLightData *light = static_cast<InstanceLightData *>(ins->base_data);
+				if (!RSG::light_storage->light_instance_is_shadow_visible_at_position(light->instance, camera_position)) {
+					continue;
 				}
+				const float coverage = _light_screen_coverage(ins, p_camera_data);
+				const float importance = coverage * MAX(RSG::light_storage->light_get_param(ins->base, RSE::LIGHT_PARAM_ENERGY), 0.0f);
+				positional_shadow_order.push_back({ importance, coverage, i });
+			}
+			positional_shadow_order.sort_custom<PositionalShadowOrder>();
+		}
+		const int max_shadowed = GLOBAL_GET_CACHED(int, "rendering/lights_and_shadows/positional_shadow/max_shadowed_lights");
+		for (uint32_t k = 0; k < positional_shadow_order.size(); k++) {
+			const uint32_t i = positional_shadow_order[k].index;
+			const float coverage = positional_shadow_order[k].coverage;
+			Instance *ins = scene_cull_result.lights[i];
+			InstanceLightData *light = static_cast<InstanceLightData *>(ins->base_data);
+			if (max_shadowed > 0 && k >= uint32_t(max_shadowed)) {
+				RSG::light_storage->shadow_atlas_release_light(p_shadow_atlas, light->instance);
+				continue;
 			}
 
 			// We can detect whether multiple cameras are hitting this light, whether or not the shadow is dirty,
