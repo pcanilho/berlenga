@@ -876,7 +876,9 @@ void main() {
 
 	// Depth composite against a co-tenant viewport (reverse-Z clear is 0.0): primary rays
 	// stop at its depth, and on a primary miss its color/velocity/guides win the pixel.
-	float composite_t_max = 10000.0;
+	// Out to the camera's far plane, as raster draws: a fixed 10 km left distant ground (a plain, the far side of
+	// a lake) to the sky, and the media drawn over it (rain and snow veils) had no ground to stand on.
+	float composite_t_max = max(10000.0, scene_data_block.data.z_far);
 	float composite_prepass_depth = 0.0;
 	// The co-tenant renders the whole shared target before us, so on a primary miss
 	// its color is the correct background whatever its depth. Testing the depth here
