@@ -304,6 +304,18 @@
 		<member name="fairy_ring_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-10000, 10000)">
 			Metres from the line of the nearest meadow fairy ring ([constant RULE_FAIRY_RING]; the same world layout as [member GrassField3D.fairy_rings]), positive outside the ring; 1000 where there is none or in the gap of a broken ring. The ring's mushrooms take about [code](-0.3, 0.15)[/code].
 		</member>
+		<member name="high_water_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member high_water_range].
+		</member>
+		<member name="high_water_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-10000, 10000)">
+			Metres of the ground over the last flood's peak surface ([constant RULE_HIGH_WATER], from [method WorldWater.high_water_at]), negative below it; 1000 where no flood is known. A flood's strand line takes about [code](-0.08, 0)[/code].
+		</member>
+		<member name="flood_age_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member flood_age_range], in years.
+		</member>
+		<member name="flood_age_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 10000)">
+			Years since the last flood's peak ([constant RULE_FLOOD_AGE], from [method WorldWater.high_water_at]); 10000 where no flood is known.
+		</member>
 		<member name="litter_drift_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member litter_drift_range].
 		</member>
@@ -549,7 +561,13 @@
 		<constant name="RULE_FAIRY_RING" value="34" enum="Rule">
 			Metres from the nearest meadow fairy ring's line, + outside (fairy_ring_range).
 		</constant>
-		<constant name="RULE_MAX" value="35" enum="Rule">
+		<constant name="RULE_HIGH_WATER" value="35" enum="Rule">
+			Metres of the ground over the last flood's peak surface, - below (high_water_range).
+		</constant>
+		<constant name="RULE_FLOOD_AGE" value="36" enum="Rule">
+			Years since the last flood's peak (flood_age_range).
+		</constant>
+		<constant name="RULE_MAX" value="37" enum="Rule">
 			Number of rules.
 		</constant>
 		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">

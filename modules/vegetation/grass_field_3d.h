@@ -420,6 +420,20 @@ private:
 	static constexpr int LODGE_ROWS_PER_FRAME = 8;
 	bool lodging = true;
 	bool fairy_rings = true; // Meadow fairy rings (fairy_rings.h) in the blades; crops never.
+	bool snowmelt = true; // The sward after a long snow lie: matted, pale, snow mould patches (the season's snowpack by height).
+	int melt_day = -2; // The day the band table was made for.
+	float melt_h0 = 0.0f; // m, the first band's height
+	void _update_snowmelt(const Dictionary &p_season);
+	// Under the last flood's mark (WorldWater.high_water_at): blades combed flat downstream and silted, sharp at the
+	// crest. A FLOOD_N grid of FLOOD_CELL m round the camera, as flood_map (r peak m, g days since, b flow angle, a known).
+	static constexpr int FLOOD_N = 64;
+	static constexpr float FLOOD_CELL = 6.0f;
+	bool flood_wash = true;
+	bool flood_any = false;
+	Vector2i flood_origin;
+	uint64_t flood_usec = 0;
+	Ref<ImageTexture> flood_texture;
+	void _flood_step(const Vector3 &p_center, bool p_force);
 	Vector2i lodge_origin; // Cell of the grid's first corner.
 	bool lodge_placed = false;
 	LocalVector<float> lodge_amt;
@@ -709,6 +723,19 @@ public:
 	void set_burn_recovery(float p_years);
 	void set_graze_height(float p_m);
 	void set_lodging(bool p_on);
+	void set_snowmelt(bool p_on);
+	bool is_snowmelt() const { return snowmelt; }
+	// The last lasting snow lie at a height on a day (the season's degree-day snowpack, WeatherSeason): x the days it
+	// lay, y the days since it melted out (-1 snow still lies, or none lasted this season). Needs the weather's climate.
+	static Vector2 snow_lie(const WeatherSeason::Climate &p_climate, float p_height, int p_day);
+	// At a point: x days the snow lay, y days since it melted, z the sward's matting (0..1) there, as the blades show it
+	// before their own patchiness; p_day -1: today.
+	Vector3 get_snowmelt_at(const Vector3 &p_position, int p_day = -1) const;
+	void set_flood_wash(bool p_on);
+	bool is_flood_wash() const { return flood_wash; }
+	// Under the last flood's mark at the point: x combed flat (0-1), y silted (0-1), z days since the peak (-1 none).
+	Vector3 get_flood_wash_at(const Vector3 &p_position) const;
+	void update_flood_map(const Vector3 &p_center) { _flood_step(p_center, true); } // Read the mark again now.
 	void set_fairy_rings(bool p_on);
 	bool is_fairy_rings() const { return fairy_rings; }
 	// The fairy ring bands at a point (fairy_rings.h): x the dark front, y the dead band, z the inner dark band.

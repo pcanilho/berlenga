@@ -4,7 +4,9 @@
    "name": "rendering/pathtracing/async_shader_compilation",
    "type": "bool",
    "default": "true",
-   "about": "If `true`, path tracing ray hit shaders are compiled asynchronously in the background."
+   "about": "If `true`, path tracing ray hit shaders are compiled asynchronously in the background.",
+   "page": "other",
+   "title": "Other"
   },
   {
    "name": "rendering/pathtracing/debug_heatmap_max_ticks",
@@ -1660,6 +1662,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Frost-sorted ground",
+   "settings": [
+    "RockField3D.frost_sorting"
+   ],
+   "note": "",
+   "what": "on cold, wet, gentle soil, frost sorts the stones into circles round fine-soil centres, drawn out into stripes on slopes.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Breakable stones",
    "settings": [
     "RockField3D.break_stone"
@@ -2644,6 +2657,29 @@
    ],
    "note": "",
    "what": "cattle pats ringed by ungrazed rank tufts, horse latrines and deer pellets on pastures and lawns.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Snowmelt sward",
+   "settings": [
+    "GrassField3D.snowmelt"
+   ],
+   "note": "",
+   "what": "where snow lay long the grass comes out matted and pale, with grey snow mould patches that green over weeks.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Flood wrack",
+   "settings": [
+    "PlantGenerator.make_flood_wrack()",
+    "GrassField3D.flood_wash"
+   ],
+   "note": "",
+   "what": "straw, reed and twig strand lines mark the last flood's high water, with the grass below combed flat and silted.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -5002,6 +5038,17 @@
    "what": "",
    "page": "open-worlds",
    "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Shaders compile in the background",
+   "settings": [
+    "rendering/pathtracing/async_shader_compilation"
+   ],
+   "note": "",
+   "what": "path tracing draws a surface with the default material while its own shader compiles, instead of leaving it out.",
+   "page": "other",
+   "title": "Other",
    "topic": ""
   }
  ]
