@@ -4110,6 +4110,17 @@
    "topic": ""
   },
   {
+   "name": "Late frost",
+   "settings": [
+    "WeatherMap3D.late_frost"
+   ],
+   "note": "",
+   "what": "a hard spring frost browns the young leaves of species already out, first in cold hollows, until a second flush replaces them weeks later.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Storms",
    "settings": [
     "add_storm"
