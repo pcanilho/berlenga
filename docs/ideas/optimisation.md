@@ -278,6 +278,12 @@ Order for the fork, after the bisect fixes (each proven identical on rt_memory a
 4. Then the scene-feature variants (design above), for what Nsight still shows.
 ReSTIR PT Enhanced is a separate decision: it changes the noise, so it belongs on a card with shots.
 
+Progress: (1) shipped, setting `rendering/pathtracing/ser_coherence_hints`, two hint bits (light through the surface or
+a medium boundary, hair). (2) started with the medium: only its code and the scatter word read on entry stay live across
+the bounce's trace, and the extinction, albedo and phase are decoded after it (8 words down to 2). The scatter word
+must be kept, not reread: a later subsurface hit reuses the pixel's `rt_medium_image` texel. Both proven
+byte-identical on rt_memory (dry and `--medium`); the timing needs the PC.
+
 Sources: [Indiana Jones PT](https://developer.nvidia.com/blog/path-tracing-optimization-in-indiana-jones-shader-execution-reordering-and-live-state-reductions/),
 [Doom: The Dark Ages](https://developer.nvidia.com/blog/how-id-software-used-neural-rendering-and-path-tracing-in-doom-the-dark-ages/),
 [RTXPT 1.9](https://www.tweaktown.com/news/114290/nvidia-updates-rtx-path-tracing-for-developers-up-to-20-more-performance-and-windows-on-arm-support/index.html),
