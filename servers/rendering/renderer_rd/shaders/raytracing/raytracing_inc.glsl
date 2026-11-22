@@ -180,6 +180,10 @@ struct PathPayload {
 // Set by payload_set_cone_width(), cleared by path_pack(): oct_next_dir holds the ray cone's width
 // at the ray's origin (texture level of detail), not a direction. Bit 14.
 const uint CONE_WIDTH_FLAG = (1u << 14);
+// The camera cut-out probe rides in the payload's hit_t (the flag bits are all taken): raygen sends
+// -(t_cut + CUTOUT_PROBE_BASE), a miss leaves it, and a surface that opens in the cut answers -(CUTOUT_REPORTED + t).
+const float CUTOUT_PROBE_BASE = 2.0;
+const float CUTOUT_REPORTED = 1.0e6;
 // Set by path_pack_peel(), cleared by path_pack(): oct_next_dir holds the peel ray's SCENE_DEPTH, not a direction.
 const uint PEEL_SCENE_DEPTH_FLAG = (1u << 7);
 const uint PEEL_RAY_FLAG = (1u << 28);

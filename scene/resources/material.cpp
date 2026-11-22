@@ -2643,17 +2643,22 @@ vec4 triplanar_texture(sampler2D p_sampler, vec3 p_weights, vec3 p_triplanar_pos
 )";
 	}
 
-	code += get_camera_cutout_functions_code();
+	if (camera_cutout) {
+		code += get_camera_cutout_functions_code();
+	}
 
 	// Generate fragment shader.
 	code += R"(
 void fragment() {)";
-	// The camera cut-out (camera_cutout global): first, so nothing else runs where the surface is cut.
-	code += R"(
+	// The camera cut-out (camera_cutout global): first, so nothing else runs where the surface is cut. The path
+	// tracer cuts the same materials: those whose code calls camera_cutout_discard().
+	if (camera_cutout) {
+		code += R"(
 	if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)) {
 		discard;
 	}
 )";
+	}
 
 	if (!flags[FLAG_UV1_USE_TRIPLANAR]) {
 		code += R"(
@@ -4968,6 +4973,18 @@ bool BaseMaterial3D::is_wetness_canopy() const {
 	return wetness_canopy;
 }
 
+void BaseMaterial3D::set_camera_cutout(bool p_enable) {
+	if (camera_cutout == p_enable) {
+		return;
+	}
+	camera_cutout = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_camera_cutout() const {
+	return camera_cutout;
+}
+
 void BaseMaterial3D::set_wetness_moving(bool p_enable) {
 	if (wetness_moving == p_enable) {
 		return;
@@ -6781,6 +6798,8 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_wetness_from_weather"), &BaseMaterial3D::is_wetness_from_weather);
 	ClassDB::bind_method(D_METHOD("set_wetness_canopy", "enable"), &BaseMaterial3D::set_wetness_canopy);
 	ClassDB::bind_method(D_METHOD("is_wetness_canopy"), &BaseMaterial3D::is_wetness_canopy);
+	ClassDB::bind_method(D_METHOD("set_camera_cutout", "enable"), &BaseMaterial3D::set_camera_cutout);
+	ClassDB::bind_method(D_METHOD("is_camera_cutout"), &BaseMaterial3D::is_camera_cutout);
 	ClassDB::bind_method(D_METHOD("set_wetness_moving", "enable"), &BaseMaterial3D::set_wetness_moving);
 	ClassDB::bind_method(D_METHOD("is_wetness_moving"), &BaseMaterial3D::is_wetness_moving);
 	ClassDB::bind_method(D_METHOD("set_glaze", "enable"), &BaseMaterial3D::set_glaze);
@@ -7183,6 +7202,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "z_clip_scale", PROPERTY_HINT_RANGE, "0.01,1.0,0.01"), "set_z_clip_scale", "get_z_clip_scale");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "use_fov_override"), "set_flag", "get_flag", FLAG_USE_FOV_OVERRIDE);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fov_override", PROPERTY_HINT_RANGE, "1,179,0.1,degrees"), "set_fov_override", "get_fov_override");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "camera_cutout"), "set_camera_cutout", "is_camera_cutout");
 
 	ADD_GROUP("Proximity Fade", "proximity_fade_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "proximity_fade_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_proximity_fade_enabled", "is_proximity_fade_enabled");
