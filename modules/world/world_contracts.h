@@ -761,6 +761,9 @@ public:
 	// y its share (0..1). (0, 0) with no relief producer. GPU placers read terrain_relief_map (R height m, G share)
 	// over terrain_relief_rect instead.
 	Vector2 relief_at(const Vector3 &p_position) const;
+	// A relief producer reports that the relief over an area changed (its heights streamed in at full resolution, its
+	// relief settings changed, it came or went): signal relief_changed(area), so placers lay what sits there again.
+	void relief_changed(const Rect2 &p_area);
 };
 
 // Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.

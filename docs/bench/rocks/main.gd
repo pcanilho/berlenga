@@ -2833,6 +2833,25 @@ func _render_later() -> void:
 		print("rt: captured %d, rebakes %d, held %d, budget limited %d, pending %d" % [ri.call(Viewport.RENDER_INFO_RT_CAPTURED_MESHES), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_REBAKES), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_HELD), ri.call(Viewport.RENDER_INFO_RT_DYNAMIC_BUDGET_LIMITED), ri.call(Viewport.RENDER_INFO_RT_PENDING_SURFACES)])
 	if rocks and rocks.ground_detail:
 		print("tiles: %s" % rocks.get_ground_detail_tile_stats())
+		# The grains on the terrain's drawn relief (Landscape3D bank and cliff relief): each one's ground against the
+		# heightfield plus WorldGround.relief_at.
+		var on_relief := 0
+		var on_it := 0
+		var worst := ""
+		var off := 0.0
+		var wg: WorldGround = WorldContracts.get_ground()
+		for st in rocks.get_stones(RockField3D.LAYER_DETAIL_PEBBLE, Rect2(spot_pos.x - 30, spot_pos.z - 30, 60, 60)):
+			var pos: Vector3 = st["position"]
+			var r: Vector2 = wg.relief_at(pos)
+			if absf(r.x) > 0.02:
+				on_relief += 1
+				var o := absf(float(st["ground"]) - (gen.get_height(pos) + r.x))
+				if o > off:
+					off = o
+					worst = "at %s: relief %.3f, stone ground %.3f, heightfield %.3f" % [pos, r.x, float(st["ground"]), gen.get_height(pos)]
+				if o < 0.05:
+					on_it += 1
+		print("relief: %d pebble grains on drawn relief (%d within 5 cm), ground off it by %.3f m at most %s" % [on_relief, on_it, off, worst])
 	if rocks and rocks.moss_cushions:
 		print("moss: %d shells, %d triangles, %d building" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), rocks.get_moss_pending()])
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():
