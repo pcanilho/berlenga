@@ -261,6 +261,20 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
   4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
 
+## Frost-sorted ground in the material (22 Nov, ground detail's follow-up)
+
+RockField3D's frost sorting placed the border stones but left the fine centres in the meadow's sward. Sorted circles'
+centres are frost boils: silt and clay heaved every winter, so no sward holds, wet through the thaw, darker than the
+stones (Washburn 1956; Walker et al. 2004, frost-boil ecosystems; Kessler and Werner 2003).
+- RockField3D publishes terrain_frost_map (RG8: gate, stone share, the same functions its stones are placed by) over
+  terrain_frost_rect, 64 m round the target at 0.125 m, on a worker job per 8 m step (gate on a 2 m grid, share per
+  texel where open; the stripe blocks' fall lines cached).
+- TerrainMaterial3D: centres (share under about 0.65) take a grey-brown silt, about 0.15 dry in this material's linear
+  albedo and 0.6 of that wet, drying in patches, matte (damp, not puddled); borders a faint gravel lag. Transitions
+  span the share's range, so a mossy rim stays where the fines meet the stones. In the cold bench climate the weather's
+  hoarfrost lies over the wet silt (pale centres at dawn).
+- Rocks bench: --no-frost-ground for the before frame (stones kept). Images /mnt/project-files/fork/terrain/frost/.
+
 ## Relief on moderate slopes (22 Nov, Paulo's pick)
 
 Built: Landscape3D.bank_relief (0.8 m; 0.4 read too faint at 25 m) with _bank_offset and _relief_weights (C++) and

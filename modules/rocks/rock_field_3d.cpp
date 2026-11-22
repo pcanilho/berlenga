@@ -415,7 +415,11 @@ static float rf_frost_sample(int p_map, float p_u, float p_v) {
 // The stone share (0 fines .. 1 stones) of the sorted ground at a point: circles on the flat, stripes down the fall
 // line from about 3 degrees. Circles: the map in world axes with a slow warp (its 12.8 m period does not line up);
 // stripes: each 48 m block's map turned to the block's fall line, blended with the next block's only near their edge.
-static float rf_frost_share(const TerrainGenerator3D *p_gen, float p_x, float p_z, float p_slope_deg) {
+// A caller sampling many points (the frost map) keeps the blocks' fall lines here instead of recomputing them.
+struct RFFrostFalls {
+	HashMap<int64_t, Vector2> fall;
+};
+static float rf_frost_share(const TerrainGenerator3D *p_gen, float p_x, float p_z, float p_slope_deg, RFFrostFalls *r_cache = nullptr) {
 	const float wx = 0.7f * Math::sin(p_x * 0.21f + 1.3f * Math::sin(p_z * 0.17f)), wz = 0.7f * Math::cos(p_z * 0.19f + 1.1f * Math::sin(p_x * 0.13f));
 	const float circ = rf_frost_sample(0, p_x + wx, p_z + wz);
 	const float t = Math::smoothstep(2.0f, 5.0f, p_slope_deg);
@@ -433,9 +437,18 @@ static float rf_frost_share(const TerrainGenerator3D *p_gen, float p_x, float p_
 				continue;
 			}
 			const float cx = (bi + 0.5f) * B, cz = (bj + 0.5f) * B;
-			const Vector3 n = ground_normal(p_gen, cx, cz, 12.0);
-			Vector2 fall(n.x, n.z);
-			fall = fall.length() > 1e-4f ? fall.normalized() : Vector2(0, 1);
+			const int64_t key = (int64_t(bi) << 32) ^ int64_t(uint32_t(bj));
+			Vector2 fall;
+			if (r_cache && r_cache->fall.has(key)) {
+				fall = r_cache->fall[key];
+			} else {
+				const Vector3 n = ground_normal(p_gen, cx, cz, 12.0);
+				fall = Vector2(n.x, n.z);
+				fall = fall.length() > 1e-4f ? fall.normalized() : Vector2(0, 1);
+				if (r_cache) {
+					r_cache->fall[key] = fall;
+				}
+			}
 			// Map z along the fall line, x across it (the stripes run along map z).
 			const Vector2 d(p_x - cx, p_z - cz);
 			const float u = d.x * fall.y - d.y * fall.x, v = d.dot(fall);
@@ -2972,6 +2985,12 @@ void RockField3D::set_frost_sorting(bool p_enabled) {
 	}
 	for (const Vector3i &k : drop) {
 		cells.erase(k);
+	}
+	if (!frost_sorting) {
+		_clear_frost_map();
+	}
+	if (is_inside_tree()) {
+		_update_process();
 	}
 }
 
@@ -5899,7 +5918,7 @@ void RockField3D::set_live_rockfall(bool p_enabled) {
 }
 
 void RockField3D::_update_process() {
-	set_process_internal(!Engine::get_singleton()->is_editor_hint() && (streaming || live_rockfall || ground_contact));
+	set_process_internal(!Engine::get_singleton()->is_editor_hint() && (streaming || live_rockfall || ground_contact || frost_sorting));
 	set_physics_process_internal(!Engine::get_singleton()->is_editor_hint() && (rockfall_dust || stones_react));
 }
 
@@ -7270,6 +7289,128 @@ void RockField3D::_finish_contact(bool p_wait) {
 	memdelete(job);
 }
 
+// The frost-sorted ground for the terrain material (terrain_frost_map, RG8: r the gate, g the stone share; over
+// terrain_frost_rect, FROST_MAP_SIZE round the target): the same gate and share the frost stones are placed by, so
+// the material can shade the fine centres (bare, wet silt) between the stone borders. The gate on a 2 m grid (it
+// follows climate, soil and slope), the share per texel where the gate is open.
+void RockField3D::_frost_map_job(void *p_job) {
+	FrostMapJob *job = static_cast<FrostMapJob *>(p_job);
+	const int R = FROST_MAP_RES;
+	const real_t texel = FROST_MAP_SIZE / real_t(R);
+	const int G = int(FROST_MAP_SIZE / 2.0) + 1;
+	LocalVector<float> gate, slope;
+	gate.resize(G * G);
+	slope.resize(G * G);
+	bool open = false;
+	for (int z = 0; z < G; z++) {
+		for (int x = 0; x < G; x++) {
+			Vector3 n;
+			const float g = job->field->_frost_gate(job->gen, job->fc, Vector3(job->origin.x + x * 2.0, 0.0, job->origin.y + z * 2.0), n);
+			gate[z * G + x] = g;
+			slope[z * G + x] = Math::rad_to_deg(Math::acos(CLAMP(float(n.y), -1.0f, 1.0f)));
+			open = open || g > 0.0f;
+		}
+	}
+	job->data.resize(R * R * 2);
+	uint8_t *w = job->data.ptrw();
+	memset(w, 0, job->data.size());
+	if (!open) {
+		return;
+	}
+	RFFrostFalls falls;
+	for (int z = 0; z < R; z++) {
+		const real_t gz = ((z + 0.5) * texel) / 2.0;
+		const int iz = MIN(int(gz), G - 2);
+		const float fz = float(gz - iz);
+		for (int x = 0; x < R; x++) {
+			const real_t gx = ((x + 0.5) * texel) / 2.0;
+			const int ix = MIN(int(gx), G - 2);
+			const float fx = float(gx - ix);
+			const float g = Math::lerp(Math::lerp(gate[iz * G + ix], gate[iz * G + ix + 1], fx), Math::lerp(gate[(iz + 1) * G + ix], gate[(iz + 1) * G + ix + 1], fx), fz);
+			if (g <= 0.004f) {
+				continue;
+			}
+			const float sl = Math::lerp(Math::lerp(slope[iz * G + ix], slope[iz * G + ix + 1], fx), Math::lerp(slope[(iz + 1) * G + ix], slope[(iz + 1) * G + ix + 1], fx), fz);
+			const float share = rf_frost_share(job->gen, float(job->origin.x + (x + 0.5) * texel), float(job->origin.y + (z + 0.5) * texel), sl, &falls);
+			w[(z * R + x) * 2] = uint8_t(CLAMP(g * 255.0f, 0.0f, 255.0f));
+			w[(z * R + x) * 2 + 1] = uint8_t(CLAMP(share * 255.0f, 0.0f, 255.0f));
+			job->any = true;
+		}
+	}
+}
+
+void RockField3D::_update_frost_map() {
+	_finish_frost_map(false);
+	if (frost_map_job || !is_inside_tree()) {
+		return;
+	}
+	const TerrainGenerator3D *gen = _get_generator();
+	if (!frost_sorting || !gen) {
+		_clear_frost_map();
+		return;
+	}
+	const Vector3 t = _target_position();
+	const real_t step = FROST_MAP_SIZE / 8.0;
+	const Vector2 origin = Vector2(Math::round(t.x / step) * step, Math::round(t.z / step) * step) - Vector2(FROST_MAP_SIZE, FROST_MAP_SIZE) * 0.5;
+	if (origin == frost_map_origin) {
+		return;
+	}
+	FrostClimate fc;
+	_frost_climate(Rect2(origin, Vector2(FROST_MAP_SIZE, FROST_MAP_SIZE)), fc);
+	frost_map_origin = origin;
+	if (!fc.on) {
+		_clear_frost_map();
+		frost_map_origin = origin;
+		return;
+	}
+	FrostMapJob *job = memnew(FrostMapJob);
+	job->field = this;
+	job->gen = gen;
+	job->fc = fc;
+	job->origin = origin;
+	frost_map_job = job;
+	frost_map_task = WorkerThreadPool::get_singleton()->add_native_task(&RockField3D::_frost_map_job, job, false, "RockField3D frost map");
+}
+
+void RockField3D::_finish_frost_map(bool p_wait) {
+	if (!frost_map_job) {
+		return;
+	}
+	if (!p_wait && !WorkerThreadPool::get_singleton()->is_task_completed(frost_map_task)) {
+		return;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_task_completion(frost_map_task);
+	FrostMapJob *job = frost_map_job;
+	frost_map_job = nullptr;
+	frost_map_task = WorkerThreadPool::INVALID_TASK_ID;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (is_inside_tree() && frost_sorting && job->any) {
+		const int R = FROST_MAP_RES;
+		Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RG8, job->data);
+		if (frost_map_texture.is_valid() && frost_map_texture->get_width() == R) {
+			frost_map_texture->update(img);
+		} else {
+			frost_map_texture = ImageTexture::create_from_image(img);
+		}
+		rs->global_shader_parameter_set("terrain_frost_map", frost_map_texture->get_rid());
+		rs->global_shader_parameter_set("terrain_frost_rect", Vector4(job->origin.x, job->origin.y, FROST_MAP_SIZE, FROST_MAP_SIZE));
+		frost_map_published = true;
+	} else if (frost_map_published) {
+		rs->global_shader_parameter_set("terrain_frost_rect", Vector4());
+		frost_map_published = false;
+	}
+	memdelete(job);
+}
+
+void RockField3D::_clear_frost_map() {
+	_finish_frost_map(true);
+	if (frost_map_published) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_frost_rect", Vector4());
+		frost_map_published = false;
+	}
+	frost_map_origin = Vector2(1e30, 1e30);
+}
+
 void RockField3D::_clear_contact() {
 	_finish_contact(true);
 	if (contact_texture.is_valid()) {
@@ -7923,6 +8064,7 @@ void RockField3D::_notification(int p_what) {
 			if (ground_contact) {
 				_update_contact(false);
 			}
+			_update_frost_map();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			if (rockfall_dust) {
@@ -7946,6 +8088,7 @@ void RockField3D::_notification(int p_what) {
 			_clear_cover();
 			clear();
 			_clear_contact();
+			_clear_frost_map();
 			dust_tracks.clear();
 			dust_events.clear();
 		} break;

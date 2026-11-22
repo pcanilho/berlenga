@@ -69,6 +69,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "rock_far_cover_rect", "vec4" },
 		{ "rock_far_reach_map", "sampler2D" },
 		{ "rock_contact_rect", "vec4" },
+		// The frost-sorted ground (RockField3D frost_sorting publishes it): r gate, g stone share.
+		{ "terrain_frost_map", "sampler2D" },
+		{ "terrain_frost_rect", "vec4" },
 		// The last glaciers' flow and wear, for ice-worn rock in the detail normal (TerrainGenerator3D.ice_worn_detail).
 		{ "terrain_ice_flow", "sampler2D" },
 		{ "terrain_ice_flow_rect", "vec4" },

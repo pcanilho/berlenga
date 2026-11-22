@@ -65,7 +65,8 @@ extends Node3D
 #   --save-far-cover=p    with --world: save the far cover map (32 m texels to 4 km) and count its stony texels
 #   --frost[=C]           with --world: a cold, wet climate (mean annual air C, -4) so the ground sorts into stone
 #                         circles and stripes (RockField3D.frost_sorting); --no-frost for the before frame;
-#                         --frost-spot (flat soil: circles) or --frost-spot=stripes (4 to 9 degrees)
+#                         --frost-spot (flat soil: circles) or --frost-spot=stripes (4 to 9 degrees); --no-frost-ground
+#                         keeps the stones but not the material's silt centres and gravel lag (a before frame)
 #   --trail[=passes]      with --world: a game trail across the spot, 1.5 m before it (WorldStand.set_trails, 0.8 m wide,
 #                         400 passes a year); --rooting[=years] a boar rooting 2 m behind it, that old; --no-wear ignores both
 #   --streaming           with --world: RockField3D streams after the build, so far thinning runs as in play
@@ -527,6 +528,9 @@ func _world() -> void:
 		_beach_surface(tm)
 		if args.has("no-patch-relief"):
 			get_tree().process_frame.connect(func(): RenderingServer.global_shader_parameter_set("terrain_cliff_relief", Vector4()))
+	if args.has("no-frost-ground"):
+		# --no-frost-ground: the frost stones without the terrain material's silt centres and gravel lag (a before frame).
+		get_tree().process_frame.connect(func(): RenderingServer.global_shader_parameter_set("terrain_frost_rect", Vector4()))
 	if args.has("water"):
 		var waters: Array = gen.build_water(self)
 		if args.has("sea-set"):
