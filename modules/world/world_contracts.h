@@ -73,6 +73,7 @@ public:
 	virtual float contract_rainfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of liquid
 	virtual float contract_snowfall_at(const Vector3 &p_position) const { return 0.0f; } // mm/h of water falling as snow
 	virtual float contract_smoke_at(const Vector3 &p_position) const { return 0.0f; } // g/m2 of smoke particulate in the column
+	virtual float contract_smoke_concentration_at(const Vector3 &p_position) const { return contract_smoke_at(p_position) / 2000.0f; } // g/m3 at the point (mixed through a 2 km layer unless the producer knows better)
 	virtual float contract_obstacle_height_at(const Vector3 &p_position) const { return 0.0f; } // m, wind-blocking obstacles over the ground
 	virtual float contract_obstacle_lee_at(const Vector3 &p_position) const { return 1.0f; } // 0..1, near-ground wind behind obstacles over the open
 	virtual float contract_fog_water_at(const Vector3 &p_position) const { return 0.0f; } // g/m3 of cloud water at the ground
@@ -135,6 +136,7 @@ protected:
 	GDVIRTUAL1RC(float, _rainfall_at, Vector3)
 	GDVIRTUAL1RC(float, _snowfall_at, Vector3)
 	GDVIRTUAL1RC(float, _smoke_at, Vector3)
+	GDVIRTUAL1RC(float, _smoke_concentration_at, Vector3)
 	GDVIRTUAL1RC(float, _obstacle_height_at, Vector3)
 	GDVIRTUAL1RC(float, _obstacle_lee_at, Vector3)
 	GDVIRTUAL1RC(float, _fog_water_at, Vector3)
@@ -196,6 +198,7 @@ public:
 	float rainfall_at(const Vector3 &p_position) const;
 	float snowfall_at(const Vector3 &p_position) const;
 	float smoke_at(const Vector3 &p_position) const; // g/m2 of smoke particulate over the point (the haze layer)
+	float smoke_concentration_at(const Vector3 &p_position) const; // g/m3 at the point: the column over its mixing depth (a night's cold pool holds smoke near the ground)
 	// Rocks, walls, buildings and vehicles in the wind: their height over the ground at the point (m, 0 in the
 	// open), and the lee of those upwind near the ground (the wind there over the open wind, 0.15 in the
 	// cavity behind one, back to 1 about 25 heights downwind; a point raised over the ground, such as a drift's

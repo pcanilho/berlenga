@@ -2088,7 +2088,9 @@ Vector3 WeatherMap3D::get_drainage_wind_at(Vector3 p_position, float p_height_ab
 
 void WeatherMap3D::set_drainage_winds(bool p_enabled) {
 	drainage_winds = p_enabled;
-	oro_origin = Vector2i(INT32_MAX, INT32_MAX);
+	if (p_enabled && cell_height.size() != resolution * resolution) {
+		oro_origin = Vector2i(INT32_MAX, INT32_MAX); // read the heights (a re-read would also reset the cold pools)
+	}
 	if (!p_enabled) {
 		cell_drain.clear();
 		drain_level = 0.0f;
@@ -4198,6 +4200,10 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_smoke_washout", "enabled"), &WeatherMap3D::set_smoke_washout);
 	ClassDB::bind_method(D_METHOD("is_smoke_washout"), &WeatherMap3D::is_smoke_washout);
 	ClassDB::bind_method(D_METHOD("get_smoke_at", "position"), &WeatherMap3D::get_smoke_at);
+	ClassDB::bind_method(D_METHOD("get_smoke_concentration_at", "position"), &WeatherMap3D::get_smoke_concentration_at);
+	ClassDB::bind_method(D_METHOD("set_smoke_in_pools", "enabled"), &WeatherMap3D::set_smoke_in_pools);
+	ClassDB::bind_method(D_METHOD("is_smoke_in_pools_enabled"), &WeatherMap3D::is_smoke_in_pools_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "smoke_in_pools"), "set_smoke_in_pools", "is_smoke_in_pools_enabled");
 	ClassDB::bind_method(D_METHOD("get_smoke_optical_depth_at", "position"), &WeatherMap3D::get_smoke_optical_depth_at);
 	ClassDB::bind_method(D_METHOD("get_smoke_transmittance", "position", "to_sun"), &WeatherMap3D::get_smoke_transmittance);
 	ClassDB::bind_method(D_METHOD("add_smoke", "position", "kg"), &WeatherMap3D::add_smoke);

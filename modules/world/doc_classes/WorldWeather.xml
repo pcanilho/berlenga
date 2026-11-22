@@ -249,6 +249,13 @@
 				Override in a stub to replace [method smoke_at].
 			</description>
 		</method>
+		<method name="_smoke_concentration_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override for [method smoke_concentration_at].
+			</description>
+		</method>
 		<method name="_snowfall_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -570,6 +577,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Fires' smoke in the air over [param position], g/m2 of particulate in the column (the weather's smoke haze layer, about 2 km deep). Default 0.
+			</description>
+		</method>
+		<method name="smoke_concentration_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Smoke particulate at [param position] (g/m3): the column ([method smoke_at]) over its mixing depth, the 2 km day layer, or a night's cold pool where it holds the smoke let out under it near the ground. A stub that overrides only [method smoke_at] gets the 2 km mix.
 			</description>
 		</method>
 		<method name="snowfall_at" qualifiers="const">

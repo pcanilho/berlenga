@@ -425,6 +425,13 @@
 				Smoke particulate in the column over [param position], g/m² (0 off the map).
 			</description>
 		</method>
+		<method name="get_smoke_concentration_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Smoke at [param position] (g/m3): the layer's column mixed through 2 km, plus what a cold pool holds through the pool's depth under its top ([member smoke_in_pools]). Answers [method WorldWeather.smoke_concentration_at]; the haze where the camera stands reads it.
+			</description>
+		</method>
 		<method name="get_smoke_optical_depth_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -1094,6 +1101,9 @@
 		</member>
 		<member name="sea_spray_resolution" type="int" setter="set_sea_spray_resolution" getter="get_sea_spray_resolution" default="128">
 			Cells along each side of the sea spray square.
+		</member>
+		<member name="smoke_in_pools" type="bool" setter="set_smoke_in_pools" getter="is_smoke_in_pools_enabled" default="true">
+			Smoke let out under a night's cold pool stays under its lid (Lavdas 1996; Achtemeier 2005): tens of times denser near the ground than the 2 km day layer's mix, carried down the slopes into the valleys by the drainage wind, and mixed up into the layer as the morning's mixing layer breaks the pool. Needs [member cold_pools].
 		</member>
 		<member name="sun_drying" type="bool" setter="set_sun_drying" getter="get_sun_drying" default="true">
 			The sun dries wet surfaces: evaporation is Penman's combination of the net radiation (the sun's shortwave under the cloud shadow and the canopy, less the longwave loss; FAO-56) and the air's drying power, so puddles in sun go well before those in shade.

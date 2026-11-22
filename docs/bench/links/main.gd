@@ -2135,6 +2135,21 @@ func _drainage_tests() -> void:
 	m.advance(60.0)
 	_check("drainage winds: a clear calm night runs the slope's air down the fall line in a jet a few metres up (Prandtl 1942; Horst and Doran 1986), none far above it or on the flat floor", jet.x < -0.8 and jet.length() < 3.5 and absf(jet.z) < 0.1 * jet.length() and jet_h >= 2.0 and jet_h <= 16.0 and high < 0.1 * jet.length() and floor_w < 0.1, "%.2f m/s toward (%.2f, %.2f) at %.0f m; %.2f m/s at 80 m; %.2f m/s on the floor" % [jet.length(), jet.x / maxf(jet.length(), 1e-4), jet.z / maxf(jet.length(), 1e-4), jet_h, high, floor_w])
 	_check("drainage winds: WorldWeather.wind_at carries it", seen.distance_to(jet) < 0.05 * jet.length() + 1e-3, "%.2f m/s of %.2f" % [seen.length(), jet.length()])
+	# Smoke let out on the valley floor under the night's pool stays under its lid (Lavdas 1996), and mixes up into the
+	# layer once the sun breaks the pool.
+	m.add_smoke(Vector3(0, 0, 0), 2000.0)
+	m.advance(600.0)
+	var col: float = w.smoke_at(Vector3(0, 0, 0))
+	var c_low: float = w.smoke_concentration_at(Vector3(0, 3, 0))
+	var c_high: float = w.smoke_concentration_at(Vector3(0, 400, 0))
+	_check("smoke in cold pools: smoke let out under the night's pool stays near the ground, tens of times the day layer's mix, clean above the lid", c_low > 10.0 * col / 2000.0 and c_high < 0.5 * col / 2000.0, "%.2f mg/m3 at 3 m, %.3f at 400 m; the 2 km mix would be %.3f" % [c_low * 1000.0, c_high * 1000.0, col / 2000.0 * 1000.0])
+	c.time_of_day = 11.0
+	m.snap_to_settings()
+	m.advance(3.0 * 3600.0)
+	var c_day: float = w.smoke_concentration_at(Vector3(0, 3, 0))
+	_check("smoke in cold pools: the morning's mixing layer takes it up through the layer (and the wind aloft away)", c_day < 0.01 * c_low, "%.3f mg/m3 at 3 m by 14:00 (%.1f at night)" % [c_day * 1000.0, c_low * 1000.0])
+	m.clear_smoke()
+	c.time_of_day = 1.0
 	m.cloud_cover = 1.0
 	m.snap_to_settings()
 	m.advance(2.0 * 3600.0)

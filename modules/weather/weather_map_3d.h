@@ -122,6 +122,10 @@ private:
 	float smoke_lifetime = 3.0f * 86400.0f; // s of weather time, dilution out of the layer in dry weather
 	bool smoke_washout = true; // rain and snow wash it out (WorldWeather::washout_rate)
 	Vector<float> cell_smoke;
+	Vector<float> cell_smoke_low; // g/m2 of the column held under a cold pool's lid (smoke_in_pools), part of cell_smoke
+	bool smoke_in_pools = true;
+	float _pool_share(int p_cell) const;
+	void _smoke_pool_step(float p_dt);
 	void _smoke_step(double p_weather_dt);
 	void _smoke_shift(Vector2i p_delta);
 	float _smoke_sigma() const; // extinction (1/m) of the smoke near the ground where the map follows
@@ -964,6 +968,9 @@ public:
 	void set_smoke_washout(bool p_v) { smoke_washout = p_v; }
 	bool is_smoke_washout() const { return smoke_washout; }
 	float get_smoke_at(Vector3 p_position) const; // g/m2 of particulate in the column
+	float get_smoke_concentration_at(Vector3 p_position) const; // g/m3 at the point
+	void set_smoke_in_pools(bool p_enabled);
+	bool is_smoke_in_pools_enabled() const { return smoke_in_pools; }
 	float get_smoke_optical_depth_at(Vector3 p_position) const; // at 550 nm
 	// The direct sun's transmittance through the smoke layer (RGB) at a point, for a sun along p_to_sun.
 	Vector3 get_smoke_transmittance(Vector3 p_position, Vector3 p_to_sun) const;
@@ -1116,6 +1123,7 @@ public:
 	float contract_orographic_factor_at(const Vector3 &p_position) const override { return get_orographic_factor_at(p_position); }
 	float contract_snowfall_at(const Vector3 &p_position) const override { return get_snowfall_at(p_position); }
 	float contract_smoke_at(const Vector3 &p_position) const override { return get_smoke_at(p_position); }
+	float contract_smoke_concentration_at(const Vector3 &p_position) const override { return get_smoke_concentration_at(p_position); }
 	float contract_obstacle_height_at(const Vector3 &p_position) const override { return get_obstacle_height_at(p_position); }
 	float contract_obstacle_lee_at(const Vector3 &p_position) const override { return get_obstacle_lee_at(p_position); }
 	float contract_fog_water_at(const Vector3 &p_position) const override { return get_fog_water_at(p_position); }
