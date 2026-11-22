@@ -1040,7 +1040,16 @@ void main() {
 #ifdef USE_SER
 			hitObjectEXT hitObject;
 			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, t_far, 0);
-			reorderThreadEXT(hitObject);
+			// Coherence hint (NVIDIA SER whitepaper): reordering already groups threads by hit group, but most
+			// surfaces share the default material's, whose shading then branches on the material. Two bits for
+			// the costliest branches, light through the surface and hair fibres, sort those threads together.
+			// Reordering moves work between threads, never changes it, so the image is the same.
+			uint ser_hint = 0u;
+			if (rt_material_feature(RT_MATERIAL_FEATURE_SER_HINTS) && hitObjectIsHitEXT(hitObject)) {
+				uint hint_flags = rt_entry_material_flags(hitObjectGetInstanceCustomIndexEXT(hitObject) + hitObjectGetGeometryIndexEXT(hitObject));
+				ser_hint = ((hint_flags & (RT_MAT_FLAG_TRANSMISSIVE | RT_MAT_FLAG_VOLUME)) != 0u ? 1u : 0u) | ((hint_flags & RT_MAT_FLAG_HAIR) != 0u ? 2u : 0u);
+			}
+			reorderThreadEXT(hitObject, ser_hint, 2u);
 			hitObjectExecuteShaderEXT(hitObject, 0);
 #else
 			traceRayEXT(tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, t_far, 0);
