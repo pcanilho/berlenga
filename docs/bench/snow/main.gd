@@ -3968,6 +3968,10 @@ func _build_strata(cam: Camera3D) -> void:
 	snow.advance(3600.0)
 	snow.add_hoar(8.0) # a clear night's surface hoar
 	_precipitate(4.0, 4.0) # buried by the next storm
+	snow.add_crust(0.015, 2.0) # a second, thinner sun crust
+	snow.advance(3600.0)
+	_precipitate(2.0, 4.0)
+	snow.add_hoar(5.0) # and a second night's hoar, buried by the last falls
 	weather.wind_speed = 14.0 # a gale packs the top
 	weather.snap_to_settings()
 	weather.advance(1.0)

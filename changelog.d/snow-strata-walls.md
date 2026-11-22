@@ -1,1 +1,2 @@
 - Snow: the walls of ruts, prints and trenches show the pack's layers: new snow, wind slab, old snow, a glazed crust line, a dark buried hoar seam, depth hoar at the base, wet bands darker (`SnowCover3D.get_strata_texture`).
+- Snow: cut walls show each layer's grain (fine new snow, smooth wind slab, coarse depth hoar), crusts as glazed ledges, hoar seams as dark recesses, and tool marks.

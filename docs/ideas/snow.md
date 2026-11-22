@@ -1965,6 +1965,12 @@ Built:
   (0.76, 0.83, 0.92)/0.2, hoar a dark seam (0.55)/0.9, depth hoar warm grey (0.72, 0.71, 0.68)/0.95, wet bands
   x(0.75, 0.8, 0.86) and glossy 0.3. A crust or hoar seam is drawn at least 1.5 cm thick. Raster and path traced
   alike (the same shader).
+- Docs review (22 Nov): only one line and one band read, and the wall looked like plaster. Now each band also has
+  its grain (value noise at the band's grain size, two octaves, bumping the normal: wind slab 2.5 mm and smooth, new
+  4 mm, old 6 mm, depth hoar 12 mm and deep, a crust glazed nearly flat), faded as grains shrink under a pixel; a
+  crust stands out as a ledge (lit top, shadow line under it), a hoar seam is a recess (0.55, shadowed at its top);
+  stronger tints (old (0.8, 0.84, 0.9), hoar 0.4, depth hoar (0.66, 0.65, 0.62), crust (0.68, 0.79, 0.93) at
+  roughness 0.1); the cut's tool marks as streaks down the wall. The view's pack has two crusts.
 - `--test=layers` checks the map: new over buried hoar over old, down to the pack's depth. `--view=strata`: a
   2.4 m trench pressed nearly to the ground (compacted_density 900) and two ruts in an 80 cm pack (depth hoar, new,
   crust, buried hoar, new), seen from inside the trench.
