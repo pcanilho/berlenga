@@ -68,6 +68,7 @@ extends Node3D
 #   --adhesion  --view=fringe: wind over the damp margin until adhesion warts grow (--wind=m/s)
 #   --no-nmap  the bench material without its stand-in noise normal map; --taa: TAA on; --sun-alt=deg (ripples view, 9)
 #   --rain-pits=mm  --view=ripples: then a still shower of that much rain (120 mm/h), pitting the sand
+#   --scour=x,z,r   --view=ripples: then a dust devil's track (GroundSurface3D.add_scour) of radius r at (x, z)
 #   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
 #   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b);
 #                  --dry=frames for part of it (600 is all), --dry=0 until the deepest pool starts to crust
@@ -142,6 +143,7 @@ var infill_test := false
 var fringe_test := false
 var rain_test := false
 var rain_pits_mm := 0.0
+var scour_arg := PackedFloat32Array()
 var no_nmap := false
 var adhesion := false
 var taa := false
@@ -232,6 +234,7 @@ func _ready() -> void:
 		elif a == "--test=fringe": fringe_test = true
 		elif a == "--test=rain": rain_test = true
 		elif a.begins_with("--rain-pits="): rain_pits_mm = float(a.substr(12))
+		elif a.begins_with("--scour="): scour_arg = PackedFloat32Array(Array(a.substr(8).split(",")).map(func(v): return float(v)))
 		elif a == "--no-nmap": no_nmap = true
 		elif a == "--adhesion": adhesion = true
 		elif a == "--taa": taa = true
@@ -5476,6 +5479,14 @@ func _build_ripples() -> void:
 		for i in 30:
 			await get_tree().physics_frame
 		print("rain pits: cover %.2f, crust %.2f" % [surface.get_rain_pit_cover(), surface.get_rain_crust()])
+	if scour_arg.size() == 3:
+		# --scour=x,z,r: a devil's track across the grown ripples (a line of its foot's discs).
+		for k in 9:
+			surface.add_scour(Vector3(scour_arg[0] + (k - 4) * 0.5 * scour_arg[2], 0.0, scour_arg[1]), scour_arg[2], 1.0)
+		for i in 150:
+			await get_tree().physics_frame
+		var sp := Vector3(scour_arg[0], 0.0, scour_arg[1])
+		print("scour: %.2f at the track's middle; ripple share %.2f there, %.2f %.1f m off; dune tone %s" % [surface.get_scour_at(sp), surface.get_ripple_show_at(sp), surface.get_ripple_show_at(sp + Vector3(0, 0, 2.0 * scour_arg[2])), 2.0 * scour_arg[2], surface.dune_tone])
 	print("ripples: %d steps, streamers %.1f g/m/s, coverage %.2f" % [surface.get_ripple_steps(), st.get_flux() * 1000.0, st.get_coverage()])
 	env.pathtracing_enabled = not raster
 	await _save_frame()

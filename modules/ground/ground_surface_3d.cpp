@@ -6328,6 +6328,8 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		ripple_sand_depth.resize(sn * sn);
 		ripple_sand_share.resize(sn * sn);
 		ripple_sand_blown.resize(sn * sn);
+		ripple_sand_scour.resize(sn * sn);
+		ripple_sand_scoured = false;
 		const TerrainGenerator3D *sgen = is_inside_tree() ? _height_query().generator : nullptr;
 		ripple_sand_wind = sgen ? sgen->get_sand_wind_direction() : Vector2();
 		for (int z = 0; z < sn; z++) {
@@ -6338,6 +6340,8 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) * (1.0f - _scour_at(px, pz)) : 0.0f;
 				ripple_sand_share[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
 				ripple_sand_blown[z * sn + x] = c.deformable ? c.blown : 0.0f;
+				ripple_sand_scour[z * sn + x] = c.deformable ? _scour_at(px, pz) : 0.0f;
+				ripple_sand_scoured = ripple_sand_scoured || ripple_sand_scour[z * sn + x] > 0.0f;
 				ripple_sand_depth[z * sn + x] = sgen ? float(sgen->get_sand_interdune_at(Vector3(px, 0.0f, pz))) : -1.0f;
 			}
 		}
@@ -6477,6 +6481,15 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				}
 			}
 		}
+		// Rows n+S..n+S+S-1 (G, over the sand block's rect, as its rows): the share dust devils swept, for their
+		// tracks' tone (the tile rows leave G free; the window is wider than the sand block).
+		if (sand && ripple_sand_scoured && n >= sn && (int)ripple_sand_scour.size() == sn * sn) {
+			for (int z = 0; z < sn; z++) {
+				for (int x = 0; x < sn; x++) {
+					d[((n + sn + z) * w + x) * 4 + 1] = ripple_sand_scour[z * sn + x];
+				}
+			}
+		}
 		// Rows n+S+n..n+S+n+D-1: the generator's interdune floors round the patch (R), for the dune tone past it.
 		if ((int)ripple_far_depth.size() == dn * dn) {
 			for (int z = 0; z < dn; z++) {
@@ -6511,6 +6524,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[20] = ripple_sand_wind.x; // the dune-building wind, for the granule ripples
 		meta[21] = ripple_sand_wind.y;
 		meta[22] = granule_ripples ? 1.0f : 0.0f;
+		meta[23] = sand && ripple_sand_scoured && n >= sn ? 1.0f : 0.0f; // dust devil tracks in the sand block's G rows
 		meta[24] = get_rain_pit_cover(); // the rain's marks (_rain_marks())
 		meta[25] = get_rain_crust();
 		meta[26] = rain_pit_seed;
