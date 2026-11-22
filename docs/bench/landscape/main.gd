@@ -914,6 +914,8 @@ func _ready() -> void:
 		await _fog_sea("late-frost")
 	if args.has("snow-strata"):
 		await _snow_strata()
+	if args.has("frost-sorted"):
+		_frost_sorted_cam()
 	if args.has("lodging"):
 		await _lodging()
 	if args.has("lens-cam"):
@@ -6893,6 +6895,65 @@ func _lobster_net(n: Node3D) -> void:
 		mi.mesh = st.commit()
 		mi.material_override = mat
 		n.add_child(mi)
+
+
+func _frost_sorted_cam() -> void:
+	# --frost-sorted: frost-sorted patterned ground (RockField3D frost_sorting, 94c5a825/1a8aff72). On a 16 m grid, the
+	# flat (under 2 degrees) ground whose sorting gate is strong all round it (eight points 15 m out over 0.6), with
+	# 2-5 degree ground --fs-up (25) m upslope where the borders draw out into stripes. The camera stands --fs-back
+	# (7) m downslope of it at --fs-eye (1.7) m, looking up over the circles to the stripes; --fs-yaw turns it.
+	if rocks == null or not rocks.has_method("get_frost_at"):
+		_log("frost sorted: no RockField3D frost map")
+		return
+	var wr: Rect2 = gen.get_world_rect()
+	var best := -1.0
+	var bp := Vector3.ZERO
+	var bu := Vector3.ZERO
+	var upd := float(args.get("fs-up", "25"))
+	var xx := wr.position.x + 100.0
+	while xx < wr.end.x - 100.0:
+		var zz := wr.position.y + 100.0
+		while zz < wr.end.y - 100.0:
+			var p := Vector3(xx, 0, zz)
+			var g0: Vector2 = rocks.call("get_frost_at", p)
+			if g0.x > 0.6 and rad_to_deg(atan(_slip_grad(p).length())) < 2.0:
+				var ok := true
+				var lo := 1.0
+				for k in 8:
+					var q := p + Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0)) * 15.0
+					var gq: Vector2 = rocks.call("get_frost_at", q)
+					lo = minf(lo, gq.x)
+				if lo > 0.6:
+					# upslope: the steepest rise within 40 m
+					var up := Vector3.ZERO
+					var rise := -INF
+					for k in 16:
+						var d := Vector3(cos(TAU * k / 16.0), 0, sin(TAU * k / 16.0))
+						var r := height_at(p.x + d.x * 40.0, p.z + d.z * 40.0) - height_at(p.x, p.z)
+						if r > rise:
+							rise = r
+							up = d
+					var sp := p + up * upd
+					var sdeg := rad_to_deg(atan(_slip_grad(sp).length()))
+					var gs: Vector2 = rocks.call("get_frost_at", sp)
+					var score := lo + (1.0 if sdeg > 2.0 and sdeg < 5.0 and gs.x > 0.6 else 0.0)
+					if score > best:
+						best = score
+						bp = Vector3(p.x, height_at(p.x, p.z), p.z)
+						bu = up
+			zz += 16.0
+		xx += 16.0
+	if best < 0.0:
+		_log("frost sorted: no sorted ground found")
+		return
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var dir := bu.rotated(Vector3.UP, deg_to_rad(float(args.get("fs-yaw", "0"))))
+	var cp := bp - dir * float(args.get("fs-back", "7"))
+	c3.global_position = Vector3(cp.x, height_at(cp.x, cp.z) + float(args.get("fs-eye", "1.7")), cp.z)
+	var tgt := bp + dir * upd
+	c3.look_at(Vector3(tgt.x, height_at(tgt.x, tgt.z), tgt.z))
+	weather.follow_target = weather.get_path_to(c3)
+	_log("frost sorted: flat at %s (score %.2f), upslope %s, cam %s" % [str(bp.round()), best, str(dir.snapped(Vector3.ONE * 0.01)), str(c3.global_position.round())])
 
 
 # Sets a prop (from _tripo) on the ground at `p`, turned `yaw` radians, sunk `sink` m so no edge floats on a slope.
