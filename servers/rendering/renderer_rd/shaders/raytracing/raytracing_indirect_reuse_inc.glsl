@@ -44,7 +44,8 @@ rt_ir;
 #define RT_IR_ROUGH_BIT (1u << 24) // reservoir flags word
 
 bool rt_ir_enabled() {
-	if (get_rt_param(RT_PARAM_INDIRECT_REUSE) < 0.5) {
+	// Specialization constant first: with the setting off the whole reuse folds away (no live state across traces).
+	if ((RT_FLAGS & RT_FLAG_INDIRECT_REUSE_ENABLED) == 0u || get_rt_param(RT_PARAM_INDIRECT_REUSE) < 0.5) {
 		return false;
 	}
 	uint pixels = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;

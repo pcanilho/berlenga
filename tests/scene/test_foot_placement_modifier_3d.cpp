@@ -223,6 +223,33 @@ TEST_CASE("[SceneTree][FootPlacementModifier3D] A planted foot holds while the p
 	memdelete(walker);
 }
 
+TEST_CASE("[SceneTree][FootPlacementModifier3D] A skeleton placed somewhere else stands there at once") {
+	StepGround ground;
+	WorldContracts::register_ground(&ground);
+	SceneTree *tree = SceneTree::get_singleton();
+	Skeleton3D *sk = make_legs(tree);
+	FootPlacementModifier3D *f = make_feet(sk);
+	f->set_publish_footfalls(false);
+	BoneAttachment3D *left = attach(sk, "LeftFoot");
+	for (int i = 0; i < 30; i++) {
+		step(sk, 1.0 / 60.0);
+	}
+	// Placed 3 m along (by a level, a cut, a respawn): no glide over from the old spot.
+	const Vector3 moved(-3.0, 0, -2.0);
+	sk->set_global_position(sk->get_global_position() + moved);
+	step(sk, 1.0 / 60.0);
+	const Vector3 placed = left->get_global_position();
+	const Vector3 clip = sk->get_global_position() + Vector3(0.15, 0, 0); // the clip's left foot
+	CHECK_MESSAGE(Vector2(placed.x - clip.x, placed.z - clip.z).length() < 0.01, "The foot is under the clip's foot right away.");
+	for (int i = 0; i < 30; i++) {
+		step(sk, 1.0 / 60.0);
+	}
+	CHECK_MESSAGE(left->get_global_position().distance_to(placed) < 0.01, "And stays planted there.");
+
+	WorldContracts::unregister_ground(&ground);
+	memdelete(sk);
+}
+
 } // namespace TestFootPlacementModifier3D
 
 #endif
