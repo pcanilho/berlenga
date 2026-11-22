@@ -146,6 +146,13 @@ public:
 	float get_flood_peak_ratio() const { return flood_peak_ratio; }
 	void set_flood_peak_day(int p_day) { flood_peak_day = CLAMP(p_day, 0, 364); }
 	int get_flood_peak_day() const { return flood_peak_day; }
+	void set_storm_wave_ratio(float p_ratio) { storm_wave_ratio = MAX(p_ratio, 1.0f); }
+	float get_storm_wave_ratio() const { return storm_wave_ratio; }
+	void set_storm_day(int p_day) { storm_day = CLAMP(p_day, 0, 364); }
+	int get_storm_day() const { return storm_day; }
+	// The 2% exceedance run-up (m above the still level) of waves p_height (m, offshore) and p_period (s) on a beach of
+	// slope p_slope (rise over run): Stockdon, Holman, Howd and Sallenger (2006).
+	static float wave_runup(float p_height, float p_period, float p_slope);
 	// The last flood's high-water mark over a world point in a lake's domain (level_from_flows with an outlet): x the
 	// level (m, world), y the days since its peak, zw zero (still water); (-INF, -1, 0, 0) elsewhere.
 	Vector4 get_high_water_at(const Vector3 &p_world_pos) const;
@@ -864,6 +871,14 @@ private:
 	float flood_season = -Math::INF; // world y
 	float flood_storm = -Math::INF; // world y
 	double flood_storm_t = 0.0;
+	// The sea's strandline (no outlets, shore_waves on): the 2% wave run-up (Stockdon et al. 2006) of the year's storm
+	// waves (storm_wave_ratio times shore_wave_height, on storm_day) or of higher waves seen in the last year.
+	float storm_wave_ratio = 4.0f;
+	int storm_day = 15;
+	float sea_storm_h = 0.0f; // m, the highest offshore wave height seen
+	float sea_wave_h = -1.0f; // m, the offshore wave height now (wind and fetch capped), read every 10 s
+	double sea_storm_t = 0.0;
+	double sea_check = 0.0;
 	float _level_for_inflow(float p_q_in) const; // world y where the outlets pass p_q_in
 	void _flood_marks_update();
 	void _settle_level();

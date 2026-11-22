@@ -4181,6 +4181,90 @@ void SnowCover3D::add_drift(const Vector3 &p_position, float p_radius, float p_d
 	_upload();
 }
 
+// A rounded heap of p_volume m3 of snow (debris that came to rest): a smooth (1 - (d/r)^2)^2 dome rather than
+// add_drift's cone, kept off cells that lie under something higher than p_ceiling (a roof, a wall top) and tapered
+// toward them over p_taper m, so a bank against a building meets the eave's bare strip without a cliff. The whole
+// volume lands on the cells that take it.
+void SnowCover3D::add_mound(const Vector3 &p_position, float p_radius, float p_volume, float p_density, float p_ceiling, float p_taper) {
+	_finish_background(true);
+	if (cell_swe.size() != resolution * resolution) {
+		_allocate();
+		_follow(_follow_position());
+	}
+	if (p_volume <= 0.0f) {
+		return;
+	}
+	const int n = resolution;
+	const float cs = _cell_size();
+	// A heap only a cell or two across draws as a spike (the surface interpolates the cells): at least 2.5 cells
+	// in radius, and the taper toward the bare strip at least two cells long.
+	const float r = MAX(p_radius, 2.5f * cs);
+	const float taper = MAX(p_taper, 2.0f * cs);
+	const float rho_new = CLAMP(p_density, 30.0f, 917.0f);
+	const bool masked = Math::is_finite(p_ceiling) && cell_ground.size() == n * n;
+	const int cx = int(Math::floor(p_position.x / cs)) - origin_cell.x;
+	const int cz = int(Math::floor(p_position.z / cs)) - origin_cell.y;
+	const int reach = int(Math::ceil(r / cs)) + 1;
+	const int treach = masked ? int(Math::ceil(taper / cs)) : 0;
+	auto blocked = [&](int x, int z) {
+		return masked && x >= 0 && z >= 0 && x < n && z < n && cell_ground[z * n + x] > p_ceiling;
+	};
+	LocalVector<int> idx;
+	LocalVector<float> wt;
+	double sum = 0.0;
+	for (int z = MAX(cz - reach, 0); z <= MIN(cz + reach, n - 1); z++) {
+		for (int x = MAX(cx - reach, 0); x <= MIN(cx + reach, n - 1); x++) {
+			const Vector3 c = _cell_center(x, z);
+			const float d2 = (Vector2(c.x - p_position.x, c.z - p_position.z) / r).length_squared();
+			if (d2 >= 1.0f || blocked(x, z)) {
+				continue;
+			}
+			float w = (1.0f - d2) * (1.0f - d2);
+			if (treach > 0) {
+				float near = 1e9f;
+				for (int zz = z - treach; zz <= z + treach; zz++) {
+					for (int xx = x - treach; xx <= x + treach; xx++) {
+						if (blocked(xx, zz)) {
+							near = MIN(near, Vector2(float(xx - x), float(zz - z)).length() * cs);
+						}
+					}
+				}
+				if (near < 1e8f) {
+					const float t = CLAMP((near - 0.5f * cs) / taper, 0.0f, 1.0f);
+					w *= t * t * (3.0f - 2.0f * t);
+				}
+			}
+			if (w <= 0.0f) {
+				continue;
+			}
+			idx.push_back(z * n + x);
+			wt.push_back(w);
+			sum += w;
+		}
+	}
+	if (sum <= 0.0) {
+		// Nowhere open within reach (or off the grid): fall back to a heap on the spot.
+		add_drift(p_position, r, 3.0f * p_volume / (float(Math::PI) * r * r), p_density);
+		return;
+	}
+	const float scale = float(p_volume / (sum * cs * cs));
+	for (uint32_t k = 0; k < idx.size(); k++) {
+		const int i = idx[k];
+		const float add = wt[k] * scale;
+		const float depth_old = cell_swe[i] > SWE_MIN ? cell_swe[i] / cell_density[i] : 0.0f;
+		const float swe = (cell_swe[i] > SWE_MIN ? cell_swe[i] : 0.0f) + add * rho_new;
+		cell_swe.write[i] = swe;
+		cell_density.write[i] = swe / (depth_old + add);
+		_layers_push(i, add * rho_new, rho_new, LAYER_WIND);
+		if (cell_crust.size() == cell_swe.size() && cell_crust[i] > 0.0f) {
+			cell_crust_burial.write[i] += add;
+		}
+	}
+	last_step_hours = 0.0f;
+	update_count++;
+	_upload();
+}
+
 void SnowCover3D::refresh_heights() {
 	_finish_background(true);
 	if (cell_ground.size() == resolution * resolution && origin_valid) {
@@ -5216,6 +5300,7 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &SnowCover3D::clear);
 	ClassDB::bind_method(D_METHOD("add_snow", "swe_mm", "density", "world"), &SnowCover3D::add_snow, DEFVAL(100.0f), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("add_drift", "position", "radius", "depth", "density"), &SnowCover3D::add_drift, DEFVAL(300.0f));
+	ClassDB::bind_method(D_METHOD("add_mound", "position", "radius", "volume", "density", "ceiling", "taper"), &SnowCover3D::add_mound, DEFVAL(300.0f), DEFVAL(float(Math::INF)), DEFVAL(0.8f));
 	ClassDB::bind_method(D_METHOD("refresh_heights"), &SnowCover3D::refresh_heights);
 	ClassDB::bind_method(D_METHOD("get_map_rect"), &SnowCover3D::get_map_rect);
 	ClassDB::bind_method(D_METHOD("get_depth_at", "position"), &SnowCover3D::get_depth_at);

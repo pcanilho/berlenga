@@ -150,7 +150,8 @@ void WeatherMap3D::_update_shafts() {
 	Ref<Environment> env = WeatherSkyMaterial::find_environment(this);
 	const RID sky_rid = sky.is_valid() ? sky->get_rid() : RID();
 	RenderingServer *rs = RS::get_singleton();
-	bool show = sky.is_valid() && !(env.is_valid() && env->is_pathtracing_enabled());
+	// Under path tracing too: the path tracer draws screen-space overlays over the traced frame against its depth.
+	bool show = sky.is_valid();
 	if (show) {
 		const int storms = rs->material_get_param(sky_rid, "cloud_storm_count");
 		const Vector4 lake = rs->material_get_param(sky_rid, "cloud_lake");

@@ -202,7 +202,7 @@
 			If [code]true[/code], snow that slides off a roof face lands in the ground cover as a bank past the eave, its mass kept.
 		</member>
 		<member name="roof_slab_bodies" type="bool" setter="set_roof_slab_bodies" getter="is_roof_slab_bodies_enabled" default="true">
-			If [code]true[/code], a sliding roof slab leaves the eave row by row as irregular rigid pieces (about 1.2 m) that break in four on a hard landing and turn into snow in the cover where they come to rest, their mass kept. If [code]false[/code], it lands at once as a bank ([member roof_piles]).
+			If [code]true[/code], a sliding roof slab leaves the eave row by row as irregular rigid pieces (about 1.2 m) that break in four on a hard landing and turn into snow in the cover where they come to rest, their mass kept, as a rounded heap ([method SnowCover3D.add_mound]) with the block sinking out of sight into it over 90 seconds. The pieces sit on collision layer 20 (with layer 1 in their mask), so ground height rays pass through them, and they carry the [code]world_contact_exclude[/code] meta, so they press no prints. If [code]false[/code], it lands at once as a bank ([member roof_piles]).
 		</member>
 		<member name="shake_shed_rate" type="float" setter="set_shake_shed_rate" getter="get_shake_shed_rate" default="3.0">
 			How fast jolts throw the snow off: the share lost per second per g over [member shake_threshold].

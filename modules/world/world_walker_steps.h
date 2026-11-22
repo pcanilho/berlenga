@@ -105,7 +105,7 @@ public:
 			const Vector2 p = Vector2(s->last.x, s->last.z) + s->dir * t;
 			const Vector2 side_v = Vector2(-s->dir.y, s->dir.x) * (s->side == 0 ? 0.5f : -0.5f) * FOOT_SPACING;
 			WorldWalkerStep w;
-			w.position = Vector3(p.x + side_v.x, Math::lerp(s->last.y, under.y, t / len), p.y + side_v.y);
+			w.position = Vector3(p.x + side_v.x, Math::lerp(s->last.y, under.y, (real_t)(t / len)), p.y + side_v.y);
 			w.yaw = Math::atan2(-s->dir.y, s->dir.x);
 			w.side = s->side;
 			r_steps.push_back(w);

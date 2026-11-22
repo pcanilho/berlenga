@@ -1147,7 +1147,7 @@
     "ploughing"
    ],
    "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in; a vehicle left standing in wet mud keeps settling, and suction holds its tyres as it pulls away.",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in; lugs and chains cut clods out of stiff clay and fling them, or drop them behind the wheel when slow; a vehicle left standing in wet mud keeps settling, and suction holds its tyres as it pulls away.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1233,7 +1233,7 @@
     "wear_regrowth_days"
    ],
    "note": "",
-   "what": "repeated wheel passes pack the soil firmer so it sheds rain, flatten the grass and then wear it bare, and it all regrows over weeks.",
+   "what": "repeated wheel passes pack the soil firmer so it sheds rain, flatten the grass and then wear it bare, and it all regrows over weeks; wheels and wallowing animals knead wet clay into a seal, so rain stands in ruts and wallows for days.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1273,7 +1273,7 @@
     "mud_color_map"
    ],
    "note": "",
-   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates and shakes off on bumps.",
+   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates, shakes off on rough tracks and blows off at speed.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -2678,10 +2678,12 @@
     "PlantGenerator.make_flood_wrack()",
     "GrassField3D.flood_wash",
     "flood_peak_ratio",
-    "flood_peak_day"
+    "flood_peak_day",
+    "storm_wave_ratio",
+    "storm_day"
    ],
    "note": "",
-   "what": "rivers and lakes keep the last flood's high-water mark, and straw, reed and twig strand lines mark it, with the grass below combed flat and silted.",
+   "what": "rivers and lakes keep the last flood's high-water mark and the sea and lakes the last storm's wave run-up on the beach, and straw, reed and twig strand lines mark it, with the grass below combed flat and silted.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3082,7 +3084,7 @@
     "seed"
    ],
    "note": "",
-   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted and wild cherry flowers white in April; aspen grows in clones whose stems share bark, form, leaf-out and autumn colour (species meta `clone_scale`), and stands place hornbeam and wild cherry under oaks, black poplar on floodplains and aspen in taiga burns.",
+   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted, sweet chestnut bark spirals round the bole with age, and wild cherry flowers white in April; aspen grows in clones whose stems share bark, form, leaf-out and autumn colour (species meta `clone_scale`), and stands place hornbeam and wild cherry under oaks, black poplar on floodplains and aspen in taiga burns.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3236,10 +3238,13 @@
     "krummholz",
     "ground_slope",
     "bank_erosion",
-    "root_stone"
+    "root_stone",
+    "cliff_angle",
+    "cliff_lean",
+    "cliff_dieback"
    ],
    "note": "",
-   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.",
+   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem; on cliffs a tree rooted in a crevice curves out and up from the face, roots running along its cracks and one side of the crown dying back over a strip of dead bark, with yew, Scots pine and hemlock taking the rock faces in their stands.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3849,7 +3854,7 @@
     "snow_roof_heat"
    ],
    "note": "",
-   "what": "roofs hold the share of snowfall building codes give them and shed it by roofing, metal sooner than shingles and heated roofs sooner still; what slides off leaves the eave as rigid pieces that break on landing and settle into a lumpy bank, and heated roofs grow ice dams that hold the snow back.",
+   "what": "roofs hold the share of snowfall building codes give them and shed it by roofing, metal sooner than shingles and heated roofs sooner still; what slides off leaves the eave as separate rigid blocks that break on landing and settle as rounded debris on a soft bank, and heated roofs grow ice dams that hold the snow back.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -4102,6 +4107,17 @@
    ],
    "note": "",
    "what": "day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Late frost",
+   "settings": [
+    "WeatherMap3D.late_frost"
+   ],
+   "note": "",
+   "what": "a hard spring frost browns the young leaves of species already out, first in cold hollows, until a second flush replaces them weeks later.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

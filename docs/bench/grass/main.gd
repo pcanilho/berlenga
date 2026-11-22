@@ -30,6 +30,8 @@ extends Node3D
 #                    ferns (docs/ideas/vegetation-seasons.md)
 #   --drought        with --day: a dry climate (300 mm a year, falling in winter), for a summer drought
 #   --frost          with --day: a dry continental climate (January -8 C, July 18 C, little snow), for a hard frost
+#   --river          river scout: a PhysXRiver3D down a valley with a floodplain; its flood mark
+#                    (WorldWater.high_water_at) lays wrack lines and combs the grass. Seen from the bank.
 #   --flood=H[,D]    a flood peaked H m over the pond D days ago (default 10): wrack lines along the mark, the grass
 #                    under it combed flat and silted (WorldWater.high_water_at through a script stub)
 #   --seed-down      with --day (late summer, e.g. 245): thistledown loosed by a 10 m/s dry wind (SeedDown3D),
@@ -229,11 +231,21 @@ class Pond extends Node3D:
 		return -0.6
 
 static var farmland := false # --fields: gently rolling farmland, no pond.
+static var river := false # --river: a valley with a meandering channel, no pond.
+var river_node: Node3D
+
+static func river_x(z: float) -> float:
+	return 2.5 * sin(z * 0.035)
 
 static func height(x: float, z: float) -> float:
 	if farmland:
 		# Rolling farmland: swells several metres high, slopes up to about 10%.
 		return 3.5 * sin(x * 0.028 + 0.6) * cos(z * 0.024) + 2.0 * sin((x - z) * 0.012) + 0.4 * sin(x * 0.06 + z * 0.05) + 6.0
+	if river:
+		# A channel 1.1 m deep and ~5 m wide, a floodplain rising 5% to the valley sides, falling 0.6% downstream (+z).
+		var d := absf(x - river_x(z))
+		var bed := -0.006 * z - 1.1
+		return bed + 1.1 * smoothstep(1.5, 4.5, d) + 0.05 * maxf(d - 4.5, 0.0) + 0.25 * sin(x * 0.08) * cos(z * 0.06) * smoothstep(4.0, 10.0, d)
 	return 0.6 * sin(x * 0.08) * cos(z * 0.06) + 0.4 * sin((x + z) * 0.05) + 0.02 * (x * x + (z + 12.0) * (z + 12.0)) / 40.0 - 0.6
 
 func _ready() -> void:
@@ -346,6 +358,7 @@ func _ready() -> void:
 		elif a == "--frost": frost = true
 		elif a == "--snowy": snowy = true
 		elif a == "--seed-down": seed_down = true
+		elif a == "--river": river = true
 		elif a.begins_with("--flood="):
 			var fp := a.substr(8).split(",")
 			flood = Vector2(float(fp[0]), float(fp[1]) if fp.size() > 1 else 10.0)
@@ -400,7 +413,10 @@ func _ready() -> void:
 	add_child(body)
 	var pond := Pond.new()
 	pond.name = "Pond"
-	add_child(pond)
+	if not river:
+		add_child(pond)
+	else:
+		_add_river()
 	if flood.x >= 0.0:
 		var fs := FloodMarkStub.new()
 		fs.peak = pond.get_water_level() + flood.x
@@ -410,7 +426,7 @@ func _ready() -> void:
 	dm.name = "Map"
 	dm.size = SIZE
 	dm.resolution = 192
-	dm.water_sources = [NodePath("../Pond")]
+	dm.water_sources = [] if river else [NodePath("../Pond")]
 	add_child(dm)
 	grass = GrassField3D.new()
 	if OS.get_environment("GRASS_STILL") == "1":
@@ -526,11 +542,13 @@ func _ready() -> void:
 		cover.populate_on_ready = false
 		cover.tile_size = 4.0
 		cover.biome = _cover_biome()
-		if flood.x >= 0.0:
+		if flood.x >= 0.0 or river:
 			var fsp: Array[PlantSpecies] = []
-			fsp.assign(cover.biome.species)
-			fsp.append_array(PlantGenerator.make_flood_wrack(3, true, {"flood_age": flood.y / 365.25}))
-			print("GRASS_FLOOD peak %.2f" % (-0.6 + flood.x))
+			# Ahead of the ground cover: wrack lies over the sward, which keeps clear of it, not the reverse.
+			fsp.assign(PlantGenerator.make_flood_wrack(3, true, {"flood_age": (flood.y if not river else 40.0) / 365.25}))
+			fsp.append_array(cover.biome.species)
+			if not river:
+				print("GRASS_FLOOD peak %.2f" % (-0.6 + flood.x))
 			cover.biome.species = fsp
 		if OS.get_environment("GRASS_STILL") == "1":
 			cover.still_shot = true # Still shots: stop streaming once settled.
@@ -2462,6 +2480,64 @@ class SeedWindWeather extends WorldWeather:
 
 # --seed-down: thistledown in a dry 10 m/s wind (log profile over short grass), the camera beside the thistle in seed
 # nearest the default view, looking downwind; 20 s of release first.
+# River scout: a PhysXRiver3D along the valley's channel (5 m³/s; the median annual flood x6 on day 110).
+func _add_river() -> void:
+	var r := PhysXRiver3D.new()
+	r.name = "River"
+	var c := Curve3D.new()
+	var z := -SIZE * 0.5 + 2.0
+	while z <= SIZE * 0.5 - 2.0:
+		c.add_point(Vector3(river_x(z), height(river_x(z), z) + 0.5, z))
+		z += 6.0
+	r.curve = c
+	r.discharge = 5.0
+	r.step_length = 2.0
+	r.rain_response = false
+	add_child(r)
+	river_node = r
+	_river_settle.call_deferred()
+
+func _river_settle() -> void:
+	for i in 4:
+		await get_tree().physics_frame
+	river_node.rebuild()
+
+# Where the mark lies across the floodplain at the view's section, the wrack placed against it, and the eye on the
+# bank above it looking back over the strand line to the river.
+func _river_wrack_report() -> void:
+	var water := WorldContracts.get_water()
+	var z0 := 6.0
+	var surf: float = river_node.sample_height(Vector3(river_x(z0), 0.0, z0))
+	var hw: Vector4 = water.high_water_at(Vector3(river_x(z0), 0.0, z0))
+	var mark_x := river_x(z0)
+	for i in 400:
+		var x := river_x(z0) + i * 0.05
+		if height(x, z0) > hw.x:
+			mark_x = x
+			break
+	print("GRASS_RIVER surface %.2f mark %.2f (%.2f m over, %.0f days, flow %.2f,%.2f) mark %.1f m from the centre line" % [surf, hw.x, hw.x - surf, hw.y, hw.z, hw.w, mark_x - river_x(z0)])
+	for k in [0, 1]:
+		var pl: PackedVector3Array = cover.get_placements(k)
+		var dmin := 99.0
+		var dmax := -99.0
+		for q in pl:
+			var m: Vector4 = water.high_water_at(q)
+			var d := height(q.x, q.z) - m.x
+			dmin = minf(dmin, d)
+			dmax = maxf(dmax, d)
+		var zs := Vector2(99, -99)
+		for q in pl:
+			zs = Vector2(minf(zs.x, q.z), maxf(zs.y, q.z))
+		print("GRASS_WRACK %d placed, ground minus peak %.2f..%.2f m, z %.1f..%.1f" % [pl.size(), dmin, dmax, zs.x, zs.y])
+	var back := Vector2(mark_x + 2.2, z0 + 2.0)
+	cam.position = Vector3(back.x, height(back.x, back.y) + 1.6, back.y)
+	cam.look_at(Vector3(mark_x - 0.6, hw.x - 0.1, z0 - 1.5))
+	if OS.get_environment("GRASS_RIVER_TOP") == "1": # Debug: straight down on the mark from 4 m.
+		cam.position = Vector3(mark_x, hw.x + 4.0, z0)
+		cam.look_at(Vector3(mark_x, hw.x, z0 - 0.01))
+	print("GRASS_RIVER_CAM %s" % cam.global_position)
+	grass.update_flood_map(cam.global_position)
+
 func _seed_down_view() -> void:
 	var w := SeedWindWeather.new()
 	w.src = season_map
@@ -2743,9 +2819,10 @@ func _process(dt: float) -> void:
 			var counts := []
 			for i in cover.biome.species.size():
 				counts.append(cover.get_placements(i).size())
-			if flood.x >= 0.0:
-				var n := cover.biome.species.size()
-				for k in [n - 2, n - 1]:
+			if river:
+				_river_wrack_report()
+			elif flood.x >= 0.0:
+				for k in [0, 1]:
 					var pl: PackedVector3Array = cover.get_placements(k)
 					var dmin := 99.0
 					var dmax := -99.0

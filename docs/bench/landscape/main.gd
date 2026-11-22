@@ -4599,6 +4599,50 @@ func _build_camera() -> void:
 			cam.position = top + off
 			cam.position.y = height_at(cam.position.x, cam.position.z) + 3.0
 			cam.look_at(top + Vector3(0, -40, 0))
+		"cliff":
+			# A real rock face for the cliff trees (TreeGenerator cliff_angle, trees 37524fb2): the cell on a 16 m grid
+			# with the most 58-85 degree ground round it, under --cliff-max-h (1200) m and over the sea, with gentler
+			# ground --cliff-dist (35) m out from its foot for the camera. --cliff-cam=front|side (side: the camera
+			# turned --cliff-side-deg, 70, round the face), eye 1.7 m, looking at the face --cliff-look-h (12) m up.
+			var wr: Rect2 = gen.get_world_rect()
+			var e := 4.0
+			var best := -1.0
+			var bp := Vector3.ZERO
+			var bn := Vector3.ZERO
+			var maxh := float(args.get("cliff-max-h", "1200"))
+			var dist := float(args.get("cliff-dist", "35"))
+			var steep := func(x: float, z: float) -> Vector3:
+				var gx := (height_at(x + e, z) - height_at(x - e, z)) / (2.0 * e)
+				var gz := (height_at(x, z + e) - height_at(x, z - e)) / (2.0 * e)
+				return Vector3(gx, rad_to_deg(atan(sqrt(gx * gx + gz * gz))), gz)
+			var x := wr.position.x + 64.0
+			while x < wr.end.x - 64.0:
+				var z := wr.position.y + 64.0
+				while z < wr.end.y - 64.0:
+					var g: Vector3 = steep.call(x, z)
+					var h := height_at(x, z)
+					if g.y > 58.0 and g.y < 85.0 and h < maxh and h > float(gen.sea_level) + 8.0:
+						var n := 0.0
+						for dx in [-16.0, 0.0, 16.0]:
+							for dz in [-16.0, 0.0, 16.0]:
+								var g2: Vector3 = steep.call(x + dx, z + dz)
+								n += 1.0 if g2.y > 52.0 else 0.0
+						var down := -Vector3(g.x, 0, g.z).normalized()
+						var foot := Vector3(x, 0, z) + down * dist
+						var fg: Vector3 = steep.call(foot.x, foot.z)
+						if fg.y < 30.0 and height_at(foot.x, foot.z) > float(gen.sea_level) + 0.5 and n > best:
+							best = n
+							bp = Vector3(x, h, z)
+							bn = down
+					z += 16.0
+				x += 16.0
+			var side: bool = args.get("cliff-cam", "front") == "side"
+			var cd := bn.rotated(Vector3.UP, deg_to_rad(float(args.get("cliff-side-deg", "70")))) if side else bn
+			var cpos := bp + cd * dist
+			cam.fov = 60.0
+			cam.position = Vector3(cpos.x, height_at(cpos.x, cpos.z) + 1.7, cpos.z)
+			cam.look_at(Vector3(bp.x, bp.y + float(args.get("cliff-look-h", "12")), bp.z))
+			_log("cliff face at %s (score %.0f), out %s, cam %s" % [str(bp.round()), best, str(bn.snapped(Vector3.ONE * 0.01)), str(cam.position.round())])
 		_:
 			cam.position = Vector3(300, 520, coast_z + 900.0)
 			cam.look_at(Vector3(-100, 250, -700))
@@ -6511,6 +6555,9 @@ func _hut_roof_snow() -> void:
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	var hrs := int(float(args["hut-roof-snow"]) if String(args["hut-roof-snow"]) != "" else 24.0)
+	var slide_shot := String(args.get("roof-slide", ""))
+	if slide_shot != "":
+		sb.set("slide_enabled", false) # the load builds first; it is let go for the shot
 	var most := 0.0
 	for h in hrs:
 		snow.advance(3600.0)
@@ -6523,6 +6570,49 @@ func _hut_roof_snow() -> void:
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	_log("hut roof snow: pitch %.0f deg, %d h of snow, roofs held up to %.2f m, %d slides, %.0f kg landed past the eave" % [rad_to_deg(pitch), hrs, most, int(sb.call("get_roof_slides")), float(sb.call("get_roof_landed"))])
+	if slide_shot != "":
+		await _roof_slide_shot(sb, root, axis, other, lo, hi, mid, run, eave_y, slide_shot)
+
+
+# --roof-slide=mid|settled (with --hut-roof-snow): one camera at eye height off the gable end, --slide-out (4) m out
+# from the +side eave and --slide-back (9) m past the end, looking along the eave. The load is held while it builds,
+# then the air warms to --slide-air (2) C and the roof sheds (SnowBodies3D roof_slab_bodies, snow c820c61e). mid: the
+# picture is frozen --slide-frames (14) physics frames after the first slab leaves; settled: --slide-wait (120) s on.
+func _roof_slide_shot(sb: Object, root: Node3D, axis: int, other: int, lo: Vector3, hi: Vector3, mid: float, run: float, eave_y: float, kind: String) -> void:
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var e := Vector3()
+	e[axis] = mid + run + 0.6
+	e[other] = 0.5 * (lo[other] + hi[other])
+	e.y = eave_y - 0.8
+	var cl := Vector3()
+	cl[axis] = mid + run + float(args.get("slide-out", "4"))
+	cl[other] = hi[other] + float(args.get("slide-back", "9"))
+	var cw: Vector3 = root.global_transform * cl
+	var ew: Vector3 = root.global_transform * e
+	c3.global_position = Vector3(cw.x, height_at(cw.x, cw.z) + 1.7, cw.z)
+	c3.look_at(ew)
+	weather.air_follows_climate = false
+	weather.temperature = float(args.get("slide-air", "2"))
+	weather.snap_to_settings()
+	sb.set("slide_enabled", true)
+	var n0 := int(sb.call("get_slabs_slid"))
+	var t := 0
+	while int(sb.call("get_slabs_slid")) == n0 and t < 2000:
+		sb.call("step", 30.0)
+		await get_tree().physics_frame
+		t += 1
+	_log("roof slide: first slab after %d steps of 30 s, %d slid" % [t, int(sb.call("get_slabs_slid"))])
+	if kind == "settled":
+		get_viewport().disable_3d = true
+		for i in int(float(args.get("slide-wait", "120")) * Engine.physics_ticks_per_second):
+			await get_tree().physics_frame
+		get_viewport().disable_3d = false
+		_log("roof slide: settled after %s s, %.0f kg landed" % [args.get("slide-wait", "120"), float(sb.call("get_roof_landed"))])
+	else:
+		for i in int(args.get("slide-frames", "14")):
+			await get_tree().physics_frame
+		Engine.time_scale = 0.0
+		_log("roof slide: frozen mid-slide")
 
 
 func _hut_icicles() -> void:

@@ -1442,6 +1442,36 @@ slumps back into a bowl left unused for weeks, so only well-used wallows stay op
 get_wallow_visits(). Bench --test=trails: in 100 warm days 3 wallows, 35 visits, 8.8 cm deep; none in dry soil;
 10 visits at 2 C.
 
+#### Round 23 built (22 Nov)
+
+Picked 22 Nov: all three, in order.
+
+**23.1 Puddled clay holds rain.** Wheels and wallowing animals knead wet clay until its structure is gone; puddling
+cuts saturated conductivity by one to three orders of magnitude (Sharma and De Datta 1985, puddled rice soils; the
+same seal lines clay ponds and canals). Each wheel pass over clay wetter than about 0.55 (its plastic range) takes the
+25 cm wear cell a tenth of the way to a full seal; each wallow visit a third. A full seal cuts infiltration to a
+hundredth; it halves over 60 game days (drying cracks, frost, roots), is kept with the wear (file v2) and does not form
+in sand. get_seal_at(). Bench --test=puddles: two equal hollows, one kneaded by ten passes (seal 0.65): of 15 l poured
+in, 9.5 l stood after 33 h against 2.8 l.
+
+**23.2 Body mud dries on the world clock and blows off.** The body's mud dries and rain soaks it on
+WorldWeather.time_scale (a truck parked overnight dries overnight). A dried crust cracks into curling plates (Kindle
+1926; Allain and Limat 1995): besides a hard jolt, road vibration under 0.8 g wears them off by fatigue (Basquin,
+exponent 4), and the air past the body lifts them once 0.5 rho v^2 passes about three times a 4 mm plate's weight per
+area (about 200 Pa, some 18 m/s). Bench --test=flakes: 2 s at a world clock of 60 took wetness to 0.60 against 0.99;
+dried and driven 10 s on smooth ground, 11 of 12 clods blew off at speed against 1 at a crawl.
+
+**23.3 Treads cut clods.** A grousered wheel slipping in cohesive soil shears it in blocks between its grousers (Wong
+2008, sec. 2.6); chains' cross links act as tall, sharp grousers. A quarter of width x grouser depth x |slip| x tread
+speed is cut from behind the contact, scaled by the tread's bite (road none, mud tyres 0.6, chains 1) and the soil's
+stickiness; past the shedding speed the tread flings it with its clay, slower it drops just behind the wheel as clods
+(GroundClods3D stands the big ones up). get_wheel_clods_thrown(). Bench --test=clog: 4 s spinning in stiff clay,
+chains 9.7 kg, mud tyres 8.3 kg, road tyres none.
+
+**Also:** the ground's height query adds the terrain's drawn relief (WorldGround.relief_at, terrain 57b253b5), so
+prints and contact sit on the drawn bank (--test=relief). Float casts for 64-bit position builds (ground, vehicle,
+walker steps).
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

@@ -344,13 +344,17 @@ void SnowBodies3D::_land_pile(const Body &r_body, Node3D *p_node, float p_depth_
 		for (int r = 0; r < rows; r++) {
 			for (int c = 0; c < cols; c++) {
 				PendingChunk pc;
-				pc.wait = (r * row_l) / MAX(v, 0.5f) + 0.05f * rnd();
+				// The slab parts along its cracks as it tips over the eave: each piece leaves a little apart from
+				// its neighbours (smaller than its cell, shifted, turned), with its own speed and spin.
+				pc.wait = (r * row_l) / MAX(v, 0.5f) + 0.25f * rnd() + 0.12f * (c & 1);
 				const float f = (c + 0.5f) / cols * 2.0f - 1.0f;
 				Basis basis(across, up, -slope_dir);
 				basis = basis.orthonormalized();
-				pc.xform = Transform3D(basis, eave + across * (f * (half_len - 0.5f * col_w)) + up * (0.5f * p_depth_lost + 0.03f) - slope_dir * (0.5f * row_l));
-				pc.velocity = vel * (0.9f + 0.2f * rnd());
-				pc.size = Vector3(col_w * (0.85f + 0.1f * rnd()), MAX(p_depth_lost, 0.05f), row_l * (0.85f + 0.1f * rnd()));
+				basis = basis * Basis(Vector3(0.0f, 1.0f, 0.0f), (rnd() - 0.5f) * 0.6f) * Basis(Vector3(0.0f, 0.0f, 1.0f), (rnd() - 0.5f) * 0.3f);
+				pc.xform = Transform3D(basis, eave + across * (f * (half_len - 0.5f * col_w) + (rnd() - 0.5f) * 0.15f * col_w) + up * (0.5f * p_depth_lost + 0.03f) - slope_dir * (0.5f * row_l));
+				pc.velocity = vel * (0.8f + 0.4f * rnd()) + across * ((rnd() - 0.5f) * 0.8f + 0.25f * f);
+				pc.spin = across * ((rnd() - 0.2f) * 2.5f) + up * ((rnd() - 0.5f) * 1.5f);
+				pc.size = Vector3(col_w * (0.6f + 0.15f * rnd()), MAX(p_depth_lost, 0.05f) * (0.85f + 0.15f * rnd()), row_l * (0.6f + 0.15f * rnd()));
 				pc.mass = each;
 				pc.density = MAX(r_body.density, 100.0f);
 				pc.dry = r_body.wet < 0.3f && r_body.density < 250.0f;
@@ -679,6 +683,13 @@ void SnowBodies3D::_spawn_chunk(const PendingChunk &p_chunk, float p_size_along)
 	}
 	RigidBody3D *rb = memnew(RigidBody3D);
 	rb->add_to_group(SNAME("snow_ignore"));
+	// Not a presser: the piece's snow joins the cover as a heap where it stops, so it does not also stamp a print
+	// with a pushed-up rim under itself (those read as sharp spikes in the bank).
+	rb->set_meta(SNAME("world_contact_exclude"), true);
+	// Its own collision layer (20): it still lands on the ground and on the other pieces, but the downward rays that
+	// sample the ground under the snow (collision layer 1) pass through it, so no piece is taken for the ground.
+	rb->set_collision_layer(CHUNK_COLLISION_LAYER);
+	rb->set_collision_mask(rb->get_collision_mask() | CHUNK_COLLISION_LAYER);
 	rb->set_mass(MAX(p_chunk.mass, 0.5f));
 	rb->set_linear_damp(0.3f);
 	rb->set_angular_damp(1.0f);
@@ -710,7 +721,9 @@ void SnowBodies3D::_spawn_chunk(const PendingChunk &p_chunk, float p_size_along)
 		const uint32_t h = hash_murmur3_one_32(uint32_t(int(Math::round(q.x * 100.0f)) * 73856093) ^ uint32_t(int(Math::round(q.y * 100.0f)) * 19349663) ^ uint32_t(int(Math::round(q.z * 100.0f)) * 83492791), piece);
 		const float r = float(h & 0xffff) / 65535.0f * 2.0f - 1.0f;
 		const Vector3 out = Vector3(q.x / MAX(p_chunk.size.x, 0.01f), q.y / MAX(p_chunk.size.y, 0.01f), q.z / MAX(p_chunk.size.z, 0.01f));
-		verts.set(v, q + out.normalized() * amp * r);
+		// Corners and edges knocked off: the further out along two or three axes, the more a point is pulled in.
+		const float corner = 4.0f * Math::abs(out.x * out.z) * (0.5f + Math::abs(out.y));
+		verts.set(v, q * (1.0f - 0.22f * corner) + out.normalized() * amp * r);
 	}
 	arrays[Mesh::ARRAY_VERTEX] = verts;
 	arrays[Mesh::ARRAY_NORMAL] = Variant();
@@ -727,6 +740,7 @@ void SnowBodies3D::_spawn_chunk(const PendingChunk &p_chunk, float p_size_along)
 	parent->add_child(rb);
 	rb->set_global_transform(p_chunk.xform);
 	rb->set_linear_velocity(p_chunk.velocity);
+	rb->set_angular_velocity(p_chunk.spin);
 	Chunk c;
 	c.id = rb->get_instance_id();
 	c.mass = p_chunk.mass;
@@ -741,9 +755,11 @@ void SnowBodies3D::_spawn_chunk(const PendingChunk &p_chunk, float p_size_along)
 void SnowBodies3D::_deposit_chunk(const Chunk &p_chunk, const Vector3 &p_at) {
 	SnowCover3D *cover = SnowCover3D::get_active();
 	if (cover) {
-		const float r = MAX(0.9f * p_chunk.size, 0.5f);
+		// Broken blocks settle into a rounded heap a little wider than the piece, kept off the bare strip under
+		// the eave (anything over a metre above the piece) and tapered toward it.
+		const float r = MAX(1.4f * p_chunk.size, 0.8f);
 		const float vol = p_chunk.mass / MAX(p_chunk.density, 100.0f);
-		cover->add_drift(p_at, r, 3.0f * vol / (float(Math::PI) * r * r), MAX(p_chunk.density, 100.0f));
+		cover->add_mound(p_at, r, vol, MAX(p_chunk.density, 100.0f), p_at.y + 1.0f, 0.8f);
 	}
 	roof_landed += p_chunk.mass;
 }
@@ -785,6 +801,7 @@ void SnowBodies3D::_chunks_step(float p_dt) {
 				pc.xform = Transform3D(xf.basis, at + off * 0.6f + Vector3(0.0f, 0.05f, 0.0f));
 				const Vector3 spread = Vector3(off.x, 0.0f, off.z).normalized() * 1.0f;
 				pc.velocity = c.last_velocity * 0.3f + spread;
+				pc.spin = Vector3(spread.z, 0.0f, -spread.x) * 2.0f;
 				pc.size = Vector3(sz.x, MAX(sz.y * 0.8f, 0.05f), sz.z);
 				pc.mass = 0.25f * c.mass;
 				pc.density = c.density;
@@ -806,8 +823,39 @@ void SnowBodies3D::_chunks_step(float p_dt) {
 		c.last_velocity = v;
 		if (c.rest > 0.4f || c.age > 8.0f || at.y < -1000.0f) {
 			_deposit_chunk(c, at);
-			rb->queue_free();
+			// Its snow is in the cover now, as a heap under it; the block itself stays in sight a while, still and
+			// no longer solid, sinking into that heap as broken debris settles (BLOCK_SINK_TIME), then goes.
+			const CollisionShape3D *cs = rb->get_child_count() > 0 ? Object::cast_to<CollisionShape3D>(rb->get_child(0)) : nullptr;
+			Ref<BoxShape3D> box = cs ? Ref<BoxShape3D>(cs->get_shape()) : Ref<BoxShape3D>();
+			const float h = box.is_valid() ? MAX(box->get_size().y, 0.05f) : 0.3f;
+			if (at.y > -1000.0f && resting.size() < MAX_RESTING_BLOCKS) {
+				rb->set_freeze_mode(RigidBody3D::FREEZE_MODE_STATIC);
+				rb->set_freeze_enabled(true);
+				rb->set_collision_layer(0);
+				rb->set_collision_mask(0);
+				Resting rs;
+				rs.id = rb->get_instance_id();
+				rs.left = h * 1.2f;
+				rs.rate = rs.left / BLOCK_SINK_TIME;
+				resting.push_back(rs);
+			} else {
+				rb->queue_free();
+			}
 			chunks.remove_at_unordered(k);
+		}
+	}
+	for (int k = int(resting.size()) - 1; k >= 0; k--) {
+		RigidBody3D *rb = ObjectDB::get_instance<RigidBody3D>(resting[k].id);
+		if (!rb || !rb->is_inside_tree()) {
+			resting.remove_at_unordered(k);
+			continue;
+		}
+		const float d = MIN(resting[k].rate * p_dt, resting[k].left);
+		resting[k].left -= d;
+		rb->global_translate(Vector3(0.0f, -d, 0.0f));
+		if (resting[k].left <= 0.0f) {
+			rb->queue_free();
+			resting.remove_at_unordered(k);
 		}
 	}
 	// Puffs: fed to a powder cloud of the bodies' own while they last.

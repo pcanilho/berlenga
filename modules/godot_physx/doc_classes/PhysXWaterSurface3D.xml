@@ -146,7 +146,7 @@
 			<return type="Vector4" />
 			<param index="0" name="world_position" type="Vector3" />
 			<description>
-				A lake's last flood high-water mark over [param world_position] in its domain ([method WorldWater.high_water_at]): x the level (m, world) at which the outlets pass the median annual flood ([member flood_peak_ratio] times the base inflow), or a higher storm level from the last year; y the days since its peak; z and w zero (still water). (-INF, -1, 0, 0) outside the domain, or when [member level_from_flows] is off or there is no outlet.
+				The last flood's high-water mark over [param world_position] ([method WorldWater.high_water_at]). A lake whose outlets set its level ([member level_from_flows]): x the level (m, world) at which the outlets pass the median annual flood ([member flood_peak_ratio] times the base inflow), or a higher storm level from the last year; y the days since its peak; z and w zero (still water); (-INF, -1, 0, 0) outside its domain. The sea and lakes at a fixed level with [member shore_waves]: the strandline, the still level plus the 2% run-up ([method wave_runup]) of the year's storm waves ([member storm_wave_ratio], [member storm_day]) or of higher waves seen in the last year, on the ground's slope there; z and w point up the beach.
 			</description>
 		</method>
 		<method name="get_live_flow_texture" qualifiers="const">
@@ -361,6 +361,15 @@
 				A persistent body proxy that pushes the ripple layer's surface down near [param world_pos]'s XZ, proportional to [param radius] and [param strength]. Call once per physics tick while a body is in the water (e.g. from its own [code]_physics_process[/code]), keyed by any id stable for that body's lifetime -- [code]get_instance_id()[/code] works well. Call [method clear_sphere] with the same id when the body leaves.
 			</description>
 		</method>
+		<method name="wave_runup" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="height" type="float" />
+			<param index="1" name="period" type="float" />
+			<param index="2" name="slope" type="float" />
+			<description>
+				The 2% exceedance wave run-up (m above the still level) of offshore waves [param height] (m) and [param period] (s) on a beach of [param slope] (rise over run): Stockdon et al. (2006); on dissipative beaches (Iribarren number under 0.3), 0.043 sqrt(H0 L0).
+			</description>
+		</method>
 		<method name="weir_discharge" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="coefficient" type="float" />
@@ -555,6 +564,12 @@
 		</member>
 		<member name="step_mode" type="int" setter="set_step_mode" getter="get_step_mode" enum="PhysXWaterSurface3D.StepMode" default="0">
 			When the surface advances. [constant STEP_MODE_PER_TICK] runs the whole GPU step every physics tick. [constant STEP_MODE_PER_FRAME] records each physics tick (its delta and the spheres / impulses submitted so far) and runs them in ONE step per rendered frame: the ripple layer still takes one sub-step per tick with that tick's bodies (the same ripples), while the FFT ocean (evaluated at the summed time -- the same waves), foam, swash, the texture blits and the height readbacks run once. When the game runs several physics ticks per frame (a high tick rate, or a physics catch-up), this keeps the surface's cost at one step per frame.
+		</member>
+		<member name="storm_day" type="int" setter="set_storm_day" getter="get_storm_day" default="15">
+			The day of the year (0 = 1 January) of the year's storm behind the strandline of the sea or a fixed-level lake: mid-January by default.
+		</member>
+		<member name="storm_wave_ratio" type="float" setter="set_storm_wave_ratio" getter="get_storm_wave_ratio" default="4.0">
+			The year's storm waves as a multiple of the waves the shore gets now ([member shore_wave_height], capped by the wind sea), for the strandline: about 4 on exposed ocean coasts. Their period grows as the square root of the height.
 		</member>
 		<member name="surface_mesh" type="Mesh" setter="set_surface_mesh" getter="get_surface_mesh">
 			Optional water outline: any flat [Mesh] (node-local) whose up-facing triangles' X/Z footprint is the water -- e.g. a disc baked from a [CSGCylinder3D], or a shape modeled elsewhere. Its own vertices are not displaced directly; the footprint is resampled into an even grid clipped to the outline, so a coarse or fan-triangulated mesh still gets vertices to animate everywhere.

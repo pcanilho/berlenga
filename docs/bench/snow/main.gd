@@ -1016,6 +1016,13 @@ func _run_roof_body_tests() -> void:
 	floor_body.add_child(floor_shape)
 	add_child(floor_body)
 	var sb: SnowBodies3D = snow.get_bodies()
+	# Debris heaps: the whole volume lands, as a dome at least 2.5 cells wide (1 m cells here), not a spike.
+	var w0 := snow.get_total_water()
+	snow.add_mound(Vector3(20.5, 0, 20.5), 0.5, 1.0, 300.0)
+	var heap_kg := snow.get_total_water() - w0
+	var mid := snow.get_depth_at(Vector3(20.5, 0, 20.5))
+	var side := snow.get_depth_at(Vector3(22.5, 0, 20.5))
+	_check("a debris heap keeps its mass and is wider than the grid", absf(heap_kg - 300.0) < 3.0 and side > 0.0 and mid > side and mid < 0.5, "%.1f of 300 kg, %.2f m at the middle, %.2f m 2 m out" % [heap_kg, mid, side])
 	var metal := _roof_face(Vector3(0, 5, 0), 35.0, "metal", 0.0)
 	await get_tree().physics_frame
 	await get_tree().physics_frame
@@ -3902,6 +3909,7 @@ func _build_roofs(cam: Camera3D) -> void:
 	cam.look_at(Vector3(1.0, 2.0, 0.0))
 	cam.fov = 50.0
 	PhysicsServer3D.set_active(false) # the pieces hold still while the frame converges (raster and path traced alike)
+	sb.process_mode = Node.PROCESS_MODE_DISABLED # and the landed blocks stop sinking
 	await _save_frame("")
 	get_tree().quit()
 

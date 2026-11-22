@@ -1934,6 +1934,16 @@ Built (SnowBodies3D):
   0.77 m, 0.15 m without dams. `--view=roofs --fall=S` (0.45 in the air, 10 landed), physics paused for the frame.
 - Not yet: Blast fracture of the pieces; a dam view; the dam's water feeding SnowIcicles3D directly (it already
   grows from the roof's heat_loss).
+- Review fixes (22 Nov, docs review of the frames): the pieces read as one slab (cut at 0.6-0.75 of their cell,
+  shifted, turned, each with its own speed and spin, rows staggered by up to 0.25 s; corners knocked off); the bank
+  showed sharp spikes, from two causes: each piece pressed a print with a pushed-up rim as it lay (pieces now carry
+  the `world_contact_exclude` meta), and the cone heaps were only a cell or two across on the 0.5 m grid. Heaps now
+  go through `SnowCover3D.add_mound`: a smooth (1 - (d/r)^2)^2 dome at least 2.5 cells in radius, kept off cells
+  under anything more than a metre above the piece (the bare strip under the eave) and tapered toward them over two
+  cells, so the bank no longer cuts across the wall's corner; the whole volume lands. The block stays in sight on its
+  heap, still and no longer solid, sinking out over 90 s (at most 128). Pieces sit on collision layer 20 so the
+  ground's downward rays (layer 1) never take one for the ground. `--test=roofs` checks a heap keeps its mass and is
+  wider than the grid.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
