@@ -4055,10 +4055,11 @@
   {
    "name": "Wind over terrain",
    "settings": [
-    "terrain_wind_enabled"
+    "terrain_wind_enabled",
+    "drainage_winds"
    ],
    "note": "",
-   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes.",
+   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
