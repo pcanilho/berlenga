@@ -6981,7 +6981,9 @@ func _frost_sorted_cam() -> void:
 					var sp := p + up * upd
 					var sdeg := rad_to_deg(atan(_slip_grad(sp).length()))
 					var gs: Vector2 = rocks.call("get_frost_at", sp)
-					var score := lo + (1.0 if sdeg > 2.0 and sdeg < 5.0 and gs.x > 0.6 else 0.0)
+					# the pattern should run on 40-60 m ahead: the gate along the view
+					var far := minf((rocks.call("get_frost_at", p + up * 40.0) as Vector2).x, (rocks.call("get_frost_at", p + up * 55.0) as Vector2).x)
+					var score := lo + far + (0.5 if sdeg > 2.0 and sdeg < 5.0 and gs.x > 0.6 else 0.0)
 					if score > best:
 						best = score
 						bp = Vector3(p.x, height_at(p.x, p.z), p.z)
@@ -6993,10 +6995,15 @@ func _frost_sorted_cam() -> void:
 		return
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var dir := bu.rotated(Vector3.UP, deg_to_rad(float(args.get("fs-yaw", "0"))))
-	var cp := bp - dir * float(args.get("fs-back", "7"))
-	c3.global_position = Vector3(cp.x, height_at(cp.x, cp.z) + float(args.get("fs-eye", "1.7")), cp.z)
-	var tgt := bp + dir * upd
-	c3.look_at(Vector3(tgt.x, height_at(tgt.x, tgt.z), tgt.z))
+	var cp := bp - dir * float(args.get("fs-back", "4"))
+	c3.global_position = Vector3(cp.x, height_at(cp.x, cp.z) + float(args.get("fs-eye", "1.6")), cp.z)
+	if args.has("fs-pitch") or not args.has("fs-look-target"):
+		# docs framing: --fs-pitch (20) degrees down, the near circles filling the lower half
+		var pr := deg_to_rad(float(args.get("fs-pitch", "20")))
+		c3.look_at(c3.global_position + dir * cos(pr) - Vector3.UP * sin(pr))
+	else:
+		var tgt := bp + dir * upd
+		c3.look_at(Vector3(tgt.x, height_at(tgt.x, tgt.z), tgt.z))
 	weather.follow_target = weather.get_path_to(c3)
 	_log("frost sorted: flat at %s (score %.2f), upslope %s, cam %s" % [str(bp.round()), best, str(dir.snapped(Vector3.ONE * 0.01)), str(c3.global_position.round())])
 
