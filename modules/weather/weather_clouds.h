@@ -217,6 +217,8 @@ float layered_share(float p_type);
 // Wave clouds: the dew point depression (K) of the air at a point (the model's profile, moistened by the mid and
 // high layers' cover), the lift (m) that saturates it, and the wave cloud's extinction (1/m) there.
 float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos);
+// The pile of plates' extra dew point depression (K) in the drier sheets of a stratified moist layer.
+float wave_plate_depression(const State &p_state, const Vector3 &p_pos);
 float wave_extinction_at(const State &p_state, const Vector3 &p_pos);
 // The two slabs (m: x..y round the mid layer's height, z..w above) where wave cloud can form now, from the field's
 // largest lift at each level (empty: y <= x).

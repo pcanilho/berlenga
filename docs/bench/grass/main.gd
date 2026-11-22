@@ -2152,6 +2152,10 @@ func _checks() -> void:
 	for i in 20:
 		grass.update_at(cam.global_position)
 	await _mound_check(c)
+	# The sward's colour reaches WorldGround.albedo_at (WorldPlantColorProvider): gas over the meadow picks up green.
+	var ga: Color = WorldContracts.get_ground().albedo_at(Vector3(c.x, 0, c.y))
+	var gfar: Color = grass.get_far_color()
+	_check("ground colour: the meadow's sward answers WorldGround.albedo_at in its far colour", ga.a > 0.5 and ga.g > ga.r and absf(ga.g - gfar.g) < 0.02, "%s (far %s)" % [ga, gfar])
 	# GPU tile fill (grass.md, stage 3a) against the CPU loop: the same blades but at rule edges.
 	if grass.gpu_fill and GrassField3D.is_gpu_fill_available():
 		_fill_compare(grass, "tall grass")

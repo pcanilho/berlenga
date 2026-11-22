@@ -1935,6 +1935,15 @@ void Landscape3D::_clear_stand_map() {
 	stand_id = ObjectID();
 }
 
+void Landscape3D::_publish_cliff_relief(bool p_clear) {
+	const Vector4 v = p_clear || heights.is_empty() ? Vector4() : Vector4(cliff_relief, spacing, origin.x, origin.y);
+	if (v == cliff_published) {
+		return;
+	}
+	cliff_published = v;
+	RenderingServer::get_singleton()->global_shader_parameter_set("terrain_cliff_relief", v);
+}
+
 void Landscape3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
@@ -1946,6 +1955,7 @@ void Landscape3D::_notification(int p_what) {
 			_free_instances();
 			_free_all_collision();
 			_clear_stand_map();
+			_publish_cliff_relief(true);
 			set_process_internal(false);
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
@@ -1995,6 +2005,7 @@ void Landscape3D::_notification(int p_what) {
 			if (cam) {
 				_update_stand_map(cam->get_global_transform().origin);
 			}
+			_publish_cliff_relief();
 			_update_collision();
 			_launch_heights();
 			if (frame % 60 == 0) {

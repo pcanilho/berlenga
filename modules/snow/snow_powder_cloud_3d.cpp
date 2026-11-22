@@ -48,8 +48,8 @@ void SnowPowderCloud3D::_build() {
 	// Coarse cells: the cloud is tens of metres across. Heavy (it hugs and runs down the slope), no fire, slow to
 	// fade (it hangs for half a minute), bright and scattering like the snow it is.
 	flow->set_name("PowderFlow");
-	flow->set("cell_size", 0.75f);
-	flow->set("max_blocks", 2048);
+	flow->set("cell_size", cell_size);
+	flow->set("max_blocks", max_blocks);
 	flow->set("combustion", false);
 	flow->set("buoyancy", 0.0f);
 	flow->set("smoke_buoyancy", -heaviness);
@@ -141,7 +141,7 @@ void SnowPowderCloud3D::feed(const LocalVector<Source> &p_sources) {
 		e->set("radius", CLAMP(s.radius, 0.5f, 6.0f));
 		e->set_global_position(s.position);
 		e->set("velocity", v);
-		e->set("divergence", 3.0f);
+		e->set("divergence", divergence);
 		e->set("smoke", MIN(MAX(s.rate, strongest / 3.0f) * smoke_per_kg, 20.0f));
 		e->set("temperature", 0.0f);
 		e->set("couple_rate", 4.0f);

@@ -1307,8 +1307,8 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					const real_t e = 1.0;
 					const Vector2 grad((gen->get_height(c + Vector3(e, 0, 0)) - gen->get_height(c - Vector3(e, 0, 0))) / (2.0 * e), (gen->get_height(c + Vector3(0, 0, e)) - gen->get_height(c - Vector3(0, 0, e))) / (2.0 * e));
 					const float gl = grad.length();
-					if (gl < min_tan || gl > max_tan) {
-						continue;
+					if (!(gl >= min_tan && gl <= max_tan) || !Math::is_finite(hc)) {
+						continue; // also off the generated world, where the heights are NaN
 					}
 					const Vector2 up_dir = grad / gl; // uphill, in plan
 					// Only where the terrain mesh really has this face: across one terrain cell up and down the fall
@@ -1318,7 +1318,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					{
 						const Vector3 u(up_dir.x * gen_cell, 0, up_dir.y * gen_cell);
 						const real_t bend = gen->get_height(c + u) + gen->get_height(c - u) - 2.0 * hc;
-						if (Math::abs(bend) > course * 0.5f) {
+						if (!(Math::abs(bend) <= course * 0.5f)) {
 							continue;
 						}
 					}

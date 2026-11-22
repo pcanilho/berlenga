@@ -52,6 +52,9 @@
 #include "core/os/os.h"
 #include "core/templates/sort_array.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/physics/character_body_3d.h"
+#include "scene/3d/physics/rigid_body_3d.h"
+#include "scene/3d/physics/vehicle_body_3d.h"
 #include "scene/3d/light_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
@@ -73,6 +76,10 @@ constexpr float SNOW_REFRESH_MM = 10.0f;
 constexpr float SETTLE_RATE = 0.01f; // per hour
 // Below this the cell is bare.
 constexpr float SWE_MIN = 0.01f; // mm
+
+struct SpindriftStronger {
+	bool operator()(const SnowPowderCloud3D::Source &p_a, const SnowPowderCloud3D::Source &p_b) const { return p_a.rate > p_b.rate; }
+};
 constexpr float ICE_DENSITY = 917.0f; // kg/m3
 constexpr float SALT_DEPRESSION = 0.0593f; // K per g of NaCl in a kg of water (dilute; 2 ions, Kf 1.86)
 constexpr float SALT_EUTECTIC = 21.1f; // K: no brine stays liquid below -21.1 C
@@ -181,13 +188,13 @@ void SnowCover3D::_allocate() {
 	cell_canopy.fill(0.0f);
 	cell_canopy_load.resize(nn);
 	cell_canopy_load.fill(0.0f);
-	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
+	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
 		f->resize(nn);
 		f->fill(0.0f);
 	}
 	catch_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAF);
 	catch_texture.unref();
-	cups_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RH);
+	cups_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAH);
 	cups_texture.unref();
 	cell_height_valid.resize(nn);
 	cell_ground.fill(0.0f);
@@ -317,7 +324,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -733,6 +740,14 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			cell_crust_cycles.write[i] = 0.0f;
 			cell_crust_burial.write[i] = 0.0f;
 			cell_crust_wet.write[i] = 0.0f;
+			if (cell_slush.size() == n * n && cell_slush[i] > 0.0f) {
+				cell_runoff.write[i] += in.dt_h > 0.0f ? cell_slush[i] / in.dt_h : 0.0f;
+				cell_slush.write[i] = 0.0f;
+			}
+			if (cell_packed.size() == n * n) {
+				cell_packed.write[i] = 0.0f;
+				cell_glaze.write[i] = 0.0f;
+			}
 			_clear_hoar(i);
 			continue;
 		}
@@ -796,29 +811,60 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		swe = MAX(swe, liq);
 
 		// The pack holds liquid_capacity of its ice as liquid; the rest drains out. Over frozen ground it cannot
-		// soak away: it ponds in the base as a saturated slush layer and leaves only sideways, by Darcy flow down
-		// the slope (slushflows; Onesti 1985, Hestnes 1998), up to the pores the snow has (the rest runs off over it).
+		// soak away: it ponds in the base as a saturated slush layer (cell_slush, mm: pore water, so it fills the
+		// snow without adding to its depth or its SWE) and leaves only sideways, by Darcy flow down the slope
+		// (slushflows; Onesti 1985, Hestnes 1998), up to the pores the snow has (the rest runs off over it). In
+		// the cold it freezes into the pack's base (superimposed ice: denser, not deeper).
+		float slush = cell_slush.size() == n * n ? cell_slush[i] : 0.0f;
+		const float seal = slush_enabled && cell_seal.size() == n * n ? cell_seal[i] : 0.0f;
 		const float hold = liquid_capacity * (swe - liq);
 		if (liq > hold) {
-			float out = liq - hold;
-			const float seal = slush_enabled && cell_seal.size() == n * n ? cell_seal[i] : 0.0f;
-			if (seal > 0.0f && swe > SWE_MIN) {
+			const float out = liq - hold;
+			salt_pack *= hold / MAX(liq, 1e-6f); // the draining brine takes its salt
+			swe -= out;
+			liq = hold;
+			const float ponded = slush_enabled ? out * seal : 0.0f;
+			slush += ponded;
+			runoff += out - ponded;
+		}
+		if (slush > 0.0f) {
+			if (!slush_enabled || seal <= 0.0f || swe <= SWE_MIN) {
+				runoff += slush; // thawed ground (or none left above it): it soaks away
+				slush = 0.0f;
+			} else {
 				const int xl = MAX(x - 1, 0), xr = MIN(x + 1, n - 1);
 				const int zd = MAX(z - 1, 0), zu = MIN(z + 1, n - 1);
 				const float gx = (cell_ground[z * n + xr] - cell_ground[z * n + xl]) / ((xr - xl) * cs);
 				const float gz = (cell_ground[zu * n + x] - cell_ground[zd * n + x]) / ((zu - zd) * cs);
 				const float g2 = gx * gx + gz * gz;
-				const float kept = out * seal * Math::exp(-slush_drain_rate(rho, Math::sqrt(g2 / (1.0f + g2)), MAX(cs, SLUSH_SLOPE_LENGTH)) * in.dt_h);
-				// Pore room (mm of water): the pack's depth less its ice.
-				const float room = MAX(swe / MAX(rho, 30.0f) * 1000.0f - (swe - liq) / 0.917f - hold, 0.0f);
-				out -= MIN(kept, room);
+				const float kept = slush * Math::exp(-slush_drain_rate(rho, Math::sqrt(g2 / (1.0f + g2)), MAX(cs, SLUSH_SLOPE_LENGTH)) * in.dt_h);
+				runoff += slush - kept;
+				slush = kept;
+				// Pore room (mm of water): the pack's depth less its ice and the water it holds.
+				const float room = MAX(swe / MAX(rho, 30.0f) * 1000.0f - (swe - liq) / 0.917f - liq, 0.0f);
+				if (slush > room) {
+					runoff += slush - room;
+					slush = room;
+				}
+				if (!melting && ts < 0.0f) {
+					const float frozen = MIN(slush, melt_temperature_factor * -ts * in.dt_h);
+					const float depth = swe / MAX(rho, 30.0f);
+					slush -= frozen;
+					swe += frozen;
+					rho = MIN(swe / MAX(depth, 1e-4f), 917.0f);
+				}
 			}
-			if (out > 0.0f) {
-				salt_pack *= (liq - out) / MAX(liq, 1e-6f); // the draining brine takes its salt
-				runoff += out;
-				swe -= out;
-				liq -= out;
-			}
+		}
+		if (cell_slush.size() == n * n) {
+			cell_slush.write[i] = slush;
+		}
+		// A traffic glaze melts as ice does in the warm (about 0.3 mm an hour per degree, a degree-day factor of
+		// 7 mm a day for ice; Hock 2003) and under rain; packing and glaze go with the snow.
+		if (cell_glaze.size() == n * n && cell_glaze[i] > 0.0f) {
+			cell_glaze.write[i] = swe > SWE_MIN ? MAX(cell_glaze[i] - 0.3f * MAX(ts, 0.0f) * in.dt_h - 0.1f * rain, 0.0f) : 0.0f;
+		}
+		if (cell_packed.size() == n * n && swe <= SWE_MIN) {
+			cell_packed.write[i] = 0.0f;
 		}
 
 		// Settling (CLASS): toward a maximum density that grows with depth, higher in wet snow.
@@ -1293,6 +1339,10 @@ void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 		_cut_ice(cell_ice, cell_white_ice);
 		ice_breaks.clear(); // the cells carry the holes now (and grow ice in them again by Stefan's law)
 	}
+	if (!traffic_marks.is_empty()) {
+		_apply_traffic(cell_packed, cell_glaze, traffic_marks, 0);
+		traffic_marks.clear();
+	}
 }
 
 // Floating ice's bearing capacity: Gold's (1971) P = A h^2, P in kg and h in cm, from his survey of loads on lake and
@@ -1719,6 +1769,9 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	cell_hoar_burial.ptrw();
 	cell_hoar_age.ptrw();
 	cell_cups.ptrw(); // published as pub.cups
+	cell_slush.ptrw(); // published as pub.slush
+	cell_glaze.ptrw(); // published as pub.glaze
+	cell_packed.ptrw(); // published as pub.packed
 	cell_new_depth.ptrw();
 	cell_canopy_load.ptrw();
 	cell_cornice_x.ptrw();
@@ -1750,22 +1803,70 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	if (cornices_enabled) {
 		_grow_cornices(inputs.dt_h, last_wind);
 	}
+	_find_spindrift(last_wind);
 	update_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+}
+
+// What reaches the ground under the pack (rain through it and melt) wets surfaces and feeds WeatherRunoff3D's
+// streams in place of the precipitation the weather map would put there. With a world tier, the source is the
+// world's cells with the near square's averaged into those it covers, so melt on the whole mountain runs off
+// (spring melt is the main flood water in mountains: Marks et al. 1998) and nothing is counted twice.
+void SnowCover3D::_send_runoff() {
+	WeatherMap3D *weather = owner ? nullptr : WeatherMap3D::get_active();
+	if (!weather) {
+		return;
+	}
+	const int n = resolution;
+	const int m = world ? world->resolution : 0;
+	if (!world || world->cell_runoff.size() != m * m || cell_runoff.size() != n * n || !world->origin_valid || !origin_valid) {
+		weather->set_surface_water_source_cells(get_instance_id(), cell_runoff, n, get_map_rect());
+		return;
+	}
+	const Rect2 wr = world->get_map_rect();
+	const float wcs = wr.size.x / m;
+	runoff_out = world->cell_runoff;
+	LocalVector<float> sum, cnt;
+	sum.resize(m * m);
+	cnt.resize(m * m);
+	for (int i = 0; i < m * m; i++) {
+		sum[i] = 0.0f;
+		cnt[i] = 0.0f;
+	}
+	const float cs = _cell_size();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const Vector2 c((origin_cell.x + x + 0.5f) * cs, (origin_cell.y + z + 0.5f) * cs);
+			const int wx = int(Math::floor((c.x - wr.position.x) / wcs));
+			const int wz = int(Math::floor((c.y - wr.position.y) / wcs));
+			if (wx < 0 || wz < 0 || wx >= m || wz >= m) {
+				continue;
+			}
+			sum[wz * m + wx] += MAX(cell_runoff[z * n + x], 0.0f);
+			cnt[wz * m + wx] += 1.0f;
+		}
+	}
+	// A world cell part covered by the square takes the square's average over its covered share.
+	const float full = (wcs / cs) * (wcs / cs);
+	float *o = runoff_out.ptrw();
+	for (int i = 0; i < m * m; i++) {
+		if (cnt[i] > 0.0f) {
+			const float f = MIN(cnt[i] / full, 1.0f);
+			o[i] = Math::lerp(MAX(o[i], 0.0f), sum[i] / cnt[i], f);
+		}
+	}
+	weather->set_surface_water_source_cells(get_instance_id(), runoff_out, m, wr);
 }
 
 // Main thread, after the cells.
 void SnowCover3D::_update_end() {
-	// What reaches the ground under the pack (rain through it and melt) wets surfaces in place of the
-	// precipitation the weather map would put there. (Not the world tier's: the near square stands for it.)
-	if (WeatherMap3D *weather = owner ? nullptr : WeatherMap3D::get_active()) {
-		weather->set_surface_water_source_cells(get_instance_id(), cell_runoff, resolution, get_map_rect());
-	}
+	_send_runoff();
 	last_step_hours = inputs.dt_h;
 	last_drift = inputs.wind_factor;
 	update_count++;
 	if (avalanche_node) {
 		avalanche_node->_track_recent(this); // every update's new snow and hours (follow-up 20)
 	}
+	_feed_spindrift();
 }
 
 void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
@@ -1801,6 +1902,12 @@ void SnowCover3D::_publish_cells() {
 	pub.crust_wet = cell_crust_wet;
 	pub.hoar = cell_hoar;
 	pub.cups = cell_cups;
+	pub.slush = cell_slush;
+	pub.packed = cell_packed;
+	pub.glaze = cell_glaze;
+	if (!traffic_marks.is_empty()) {
+		_apply_traffic(pub.packed, pub.glaze, traffic_marks, 0); // since this update started: the cells take them at the next one
+	}
 	pub.hoar_layer = cell_hoar_layer;
 	pub.hoar_burial = cell_hoar_burial;
 	pub.hoar_age = cell_hoar_age;
@@ -1892,10 +1999,10 @@ void SnowCover3D::_build_upload() {
 		const float depth = swe > SWE_MIN ? swe / cell_density[i] : 0.0f;
 		const float hold = liquid_capacity * (swe - cell_liquid[i]);
 		float wet = hold > 1e-4f ? CLAMP(cell_liquid[i] / hold, 0.0f, 1.0f) : 0.0f;
-		if (depth > 0.0f && cell_liquid[i] > hold) {
+		const float sl = cell_slush.size() == n * n ? cell_slush[i] : 0.0f;
+		if (depth > 0.0f && sl > 0.5f) {
 			// Over 1: the share of the pack's depth that is slush (saturated from the base up).
-			const float pores = MAX(1.0f - (swe - cell_liquid[i]) / 917.0f / depth, 0.05f);
-			wet = 1.0f + CLAMP((cell_liquid[i] - hold) / 1000.0f / pores / depth, 0.0f, 1.0f);
+			wet = 1.0f + CLAMP(slush_height(swe, cell_liquid[i], cell_density[i], sl) / depth, 0.0f, 1.0f);
 		}
 		w[i * 4 + 0] = Math::make_half_float(depth);
 		w[i * 4 + 1] = Math::make_half_float(pub.albedo.size() == n * n ? pub.albedo[i] : cell_albedo[i]);
@@ -1905,13 +2012,18 @@ void SnowCover3D::_build_upload() {
 	upload_snow = Image::create_from_data(n, n, false, Image::FORMAT_RGBAH, bytes);
 	upload_cups.unref();
 	if (cell_cups.size() == n * n) {
+		// The surface map: suncup relief (m), traffic packing (0..1), glaze (mm).
+		const bool road = cell_packed.size() == n * n && cell_glaze.size() == n * n;
 		Vector<uint8_t> cb;
-		cb.resize(n * n * 2);
+		cb.resize(n * n * 8);
 		uint16_t *cw = reinterpret_cast<uint16_t *>(cb.ptrw());
 		for (int i = 0; i < n * n; i++) {
-			cw[i] = Math::make_half_float(cell_cups[i]);
+			cw[i * 4 + 0] = Math::make_half_float(cell_cups[i]);
+			cw[i * 4 + 1] = Math::make_half_float(road ? cell_packed[i] : 0.0f);
+			cw[i * 4 + 2] = Math::make_half_float(road ? cell_glaze[i] : 0.0f);
+			cw[i * 4 + 3] = Math::make_half_float(0.0f);
 		}
-		upload_cups = Image::create_from_data(n, n, false, Image::FORMAT_RH, cb);
+		upload_cups = Image::create_from_data(n, n, false, Image::FORMAT_RGBAH, cb);
 	}
 	// The catch map: the height of the surface the pack lies on, the canopy's load over its capacity, the
 	// canopy closure and the surface hoar. Materials leave what lies under an overhang bare and give tree crowns their load.
@@ -2442,6 +2554,174 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 		}
 	}
 	last_blown = float(moved / nn);
+}
+
+// Spindrift (follow-up 42): snow blown over a sharp lee crest leaves the ground where the flow separates and
+// streams out in a plume, the suspended part of the drift carried on by the wind while its grains settle (about
+// 0.3-0.5 m/s; Schmidt 1982) and sublimate (Schmidt 1972; Thorpe and Mason 1966). The source per crest cell is the
+// drift flux (Pomeroy and Male's saltation and suspension, transport_flux) at the crest's sped-up wind (Taylor and
+// Lee 1984, as the cornices) times the cell's width; as SnowDrift3D (Schneiderbauer and Prokop 2011) the plume is
+// then a scalar carried by the wind with a settling speed, here NVIDIA Flow's gas with a slight negative buoyancy.
+// Loose dry snow only: none from wet snow, a bare crust or under the threshold wind.
+void SnowCover3D::_find_spindrift(Vector2 p_wind) {
+	spindrift_next.clear();
+	spindrift_rate = 0.0f;
+	const int n = resolution;
+	const float u = p_wind.length();
+	if (!spindrift_enabled || owner || driven || u < 1.0f || cell_swe.size() != n * n) {
+		return;
+	}
+	const float cs = _cell_size();
+	const Vector2 dir = p_wind / u;
+	const float tan_lee = Math::tan(Math::deg_to_rad(30.0f));
+	auto cell = [&](int p_x, int p_z) { return CLAMP(p_z, 0, n - 1) * n + CLAMP(p_x, 0, n - 1); };
+	const int sx = int(Math::round(dir.x)), sz = int(Math::round(dir.y));
+	const float step = cs * Vector2(sx, sz).length();
+	if (step <= 0.0f) {
+		return;
+	}
+	// Crest cells with their flux first, then binned (8 m, doubled until the plumes fit max_spindrift), so the
+	// emitters spread along the whole ridge instead of crowding its strongest stretch.
+	struct Lip {
+		int x, z;
+		Vector3 at;
+		float q;
+		float speedup;
+	};
+	LocalVector<Lip> lips;
+	const int ring = MAX(4, int(Math::ceil(64.0f / cs)));
+	for (int z = 1; z < n - 1; z++) {
+		for (int x = 1; x < n - 1; x++) {
+			const int i = z * n + x;
+			const float swe = cell_swe[i];
+			if (swe <= SWE_MIN || cell_liquid[i] > 0.01f || (cell_canopy.size() == n * n && cell_canopy[i] > 0.2f)) {
+				continue;
+			}
+			if (crust_enabled && cell_crust[i] > 0.0f && cell_crust_burial[i] < 0.01f) {
+				continue; // a bare crust: nothing loose to lift
+			}
+			const float h = cell_ground[i];
+			const int iu = cell(x - sx, z - sz);
+			const int id1 = cell(x + sx, z + sz);
+			const int id2 = cell(x + 2 * sx, z + 2 * sz);
+			if (!(cell_ground[iu] <= h + 0.25f * step && cell_ground[id1] <= h && (h - cell_ground[id2]) >= tan_lee * 2.0f * step)) {
+				continue;
+			}
+			float around = 0.0f;
+			for (int k = 0; k < 8; k++) {
+				static const int RX[8] = { 1, 1, 0, -1, -1, -1, 0, 1 };
+				static const int RZ[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+				around += cell_ground[cell(x + RX[k] * ring, z + RZ[k] * ring)] / 8.0f;
+			}
+			const float speedup = 1.0f + CLAMP(1.6f * (h - around) / (ring * cs), 0.0f, 0.6f);
+			const float t = inputs.temperature - lapse_rate * 0.001f * (h - inputs.ref_height);
+			const float q = transport_flux(u * speedup, t, cell_density[i]) * cs; // kg/s over the cell's width
+			if (q <= 0.0f) {
+				continue;
+			}
+			spindrift_rate += q;
+			const Vector3 c = _cell_center(x, z);
+			const float top = h + swe / MAX(cell_density[i], 30.0f);
+			// Where the plume leaves: half a cell past the lip and a metre up.
+			lips.push_back({ x, z, Vector3(c.x + 0.5f * cs * dir.x, top + 1.0f, c.z + 0.5f * cs * dir.y), q, speedup });
+		}
+	}
+	if (lips.is_empty()) {
+		return;
+	}
+	int bin = MAX(1, int(Math::round(8.0f / cs)));
+	while (true) {
+		const int bn = (n + bin - 1) / bin;
+		LocalVector<SnowPowderCloud3D::Source> bins;
+		bins.resize(bn * bn);
+		LocalVector<float> sp;
+		sp.resize(bn * bn);
+		for (const Lip &l : lips) {
+			const int b = (l.z / bin) * bn + l.x / bin;
+			SnowPowderCloud3D::Source &s = bins[b];
+			s.position = (s.position * s.rate + l.at * l.q) / (s.rate + l.q);
+			sp[b] = (sp[b] * s.rate + l.speedup * l.q) / (s.rate + l.q);
+			s.rate += l.q;
+		}
+		spindrift_next.clear();
+		for (uint32_t b = 0; b < bins.size(); b++) {
+			SnowPowderCloud3D::Source s = bins[b];
+			if (s.rate <= 0.0f) {
+				continue;
+			}
+			// Near the surface the wind is some 60% of the 10 m wind (log profile at 1-2 m); the separating flow
+			// lifts the drift off the lip (the plume rises over the lee eddy).
+			s.velocity = Vector3(dir.x, 0.0f, dir.y) * (0.6f * u * sp[b]) + Vector3(0.0f, 0.1f * u, 0.0f);
+			s.radius = CLAMP(0.5f * bin * cs, 1.0f, 6.0f);
+			spindrift_next.push_back(s);
+		}
+		if ((int)spindrift_next.size() <= max_spindrift || bin >= n) {
+			break;
+		}
+		bin *= 2;
+	}
+	spindrift_next.sort_custom<SpindriftStronger>();
+	if ((int)spindrift_next.size() > max_spindrift) {
+		spindrift_next.resize(max_spindrift);
+	}
+}
+
+// Sublimation of the suspended grains: a 100 um grain in air at 70% humidity lasts about a minute (Schmidt
+// 1972), faster in drier air, so the plume thins over tens of seconds to a few minutes.
+float SnowCover3D::spindrift_fade(float p_humidity) {
+	return 0.01f + 0.08f * CLAMP(1.0f - p_humidity, 0.0f, 1.0f);
+}
+
+void SnowCover3D::_feed_spindrift() {
+	if (owner || driven) {
+		return;
+	}
+	spindrift_sources = spindrift_next;
+	if (!spindrift_enabled) {
+		spindrift_sources.clear();
+	}
+	if (!spindrift_node && spindrift_sources.is_empty()) {
+		return;
+	}
+	if (!spindrift_node) {
+		spindrift_node = memnew(SnowPowderCloud3D);
+		spindrift_node->set_name("Spindrift");
+		// Thin and light: a few tens of grams of snow per cubic metre against the powder cloud's kilograms, settling
+		// slowly, so the gas barely sinks and drifts far on the wind.
+		spindrift_node->set_heaviness(0.05f);
+		spindrift_node->set_updraft(0.0f);
+		spindrift_node->set_smoke_per_kg(0.1f);
+		spindrift_node->set_max_sources(max_spindrift);
+		spindrift_node->set_divergence(0.0f);
+		spindrift_node->set_grid(2.0f, 4096); // plumes hundreds of metres long: coarser than the powder cloud's 0.75 m
+		add_child(spindrift_node, false, INTERNAL_MODE_FRONT);
+	}
+	spindrift_node->feed(spindrift_sources);
+	if (Node3D *f = spindrift_node->get_flow()) {
+		f->set("smoke_fade", spindrift_fade(inputs.humidity));
+		f->set("smoke_density", 0.5f);
+		f->set("vorticity", 2.0f);
+	}
+}
+
+void SnowCover3D::set_spindrift_enabled(bool p_enabled) {
+	spindrift_enabled = p_enabled;
+	if (!p_enabled && spindrift_node) {
+		spindrift_sources.clear();
+		spindrift_node->feed(spindrift_sources);
+	}
+}
+
+Array SnowCover3D::get_spindrift_sources() const {
+	Array out;
+	for (const SnowPowderCloud3D::Source &s : spindrift_sources) {
+		Dictionary d;
+		d["position"] = s.position;
+		d["velocity"] = s.velocity;
+		d["rate"] = s.rate;
+		out.push_back(d);
+	}
+	return out;
 }
 
 void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
@@ -3131,7 +3411,7 @@ void SnowCover3D::_gather_seal() {
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const int i = z * n + x;
-			if (cell_liquid[i] <= 0.0f || cell_swe[i] <= SWE_MIN) {
+			if ((cell_liquid[i] <= 0.0f && (cell_slush.size() != n * n || cell_slush[i] <= 0.0f)) || cell_swe[i] <= SWE_MIN) {
 				continue;
 			}
 			const Vector3 c = _cell_center(x, z);
@@ -3144,18 +3424,192 @@ float SnowCover3D::get_slush_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_slush_at(p_position);
 	}
-	const Vector2 p(p_position.x, p_position.z);
-	const float swe = _sample(pub.swe, p);
-	const float liq = _sample(pub.liquid, p);
-	const float rho = MAX(_sample(pub.density, p), 30.0f);
-	const float hold = liquid_capacity * (swe - liq);
-	if (swe <= SWE_MIN || liq <= hold) {
+	if (pub.slush.is_empty()) {
 		return 0.0f;
 	}
-	// The excess fills the pores (porosity 1 - ice share) from the base up.
-	const float depth = swe / rho;
-	const float pores = MAX(1.0f - (swe - liq) / 917.0f / MAX(depth, 1e-4f), 0.05f);
-	return MIN((liq - hold) / 1000.0f / pores, depth);
+	const Vector2 p(p_position.x, p_position.z);
+	return slush_height(_sample(pub.swe, p), _sample(pub.liquid, p), _sample(pub.density, p), _sample(pub.slush, p));
+}
+
+// The slush water (mm) fills the pores (porosity 1 - ice share, less the water the grains hold) from the base up.
+float SnowCover3D::slush_height(float p_swe, float p_liquid, float p_density, float p_slush) {
+	if (p_swe <= SWE_MIN || p_slush <= 0.0f) {
+		return 0.0f;
+	}
+	const float depth = p_swe / MAX(p_density, 30.0f);
+	const float pores = MAX(1.0f - (p_swe - p_liquid) / 917.0f / MAX(depth, 1e-4f) - p_liquid / 1000.0f / MAX(depth, 1e-4f), 0.05f);
+	return MIN(p_slush / 1000.0f / pores, depth);
+}
+
+// Traffic (follow-up 43). Wheels and feet pack the snow they pass over hard (a packed-snow road, 400-600 kg/m3), and a
+// wheel that slips (spinning or braking) melts the surface by its friction, mu W v_slip, which refreezes in the cold as
+// a polished glaze. Grip on each (Wallman and Astrom 2001, VTI): loose snow about 0.3, packed snow 0.2-0.3, ice
+// 0.05-0.15 and wet ice lower.
+void SnowCover3D::_traffic_step(double p_delta) {
+	const int n = resolution;
+	if (driven || owner || !traffic_enabled || !is_inside_tree() || !origin_valid || pub.swe.size() != n * n || p_delta <= 0.0) {
+		return;
+	}
+	if (pub.packed.size() != n * n || pub.glaze.size() != n * n) {
+		return;
+	}
+	const float dt = float(p_delta);
+	const float cs = _cell_size();
+	const float air = WorldContracts::weather()->has_provider() ? WorldContracts::weather()->air_temperature_at(_follow_position()) : inputs.temperature;
+	const uint32_t from = traffic_marks.size();
+	for (Node *nd : get_tree()->get_nodes_in_group(SNAME("world_contact"))) {
+		const Node3D *n3 = Object::cast_to<Node3D>(nd);
+		if (!n3 || !n3->is_visible_in_tree()) {
+			continue;
+		}
+		const WorldContactBody b = WorldContracts::describe_body(n3);
+		if (b.mass <= 0.0f) {
+			continue;
+		}
+		const float depth = get_depth_at(b.center);
+		if (depth < 0.01f) {
+			continue;
+		}
+		const float top = get_ground_height_at(b.center) + depth;
+		if (b.center.y - b.half_height - top > 0.15f) {
+			continue; // not on the snow
+		}
+		Vector3 lin, ang;
+		float slip = 0.0f;
+		if (const RigidBody3D *rb = Object::cast_to<RigidBody3D>(n3)) {
+			lin = rb->get_linear_velocity();
+			ang = rb->get_angular_velocity();
+			if (b.wheel) {
+				// The contact point's own velocity: the body's plus its spin about its centre, r below it.
+				const Vector3 vc = lin + ang.cross(Vector3(0.0f, -b.half_height, 0.0f));
+				slip = Vector2(vc.x, vc.z).length();
+			}
+		} else if (const VehicleWheel3D *vw = Object::cast_to<VehicleWheel3D>(n3)) {
+			if (const RigidBody3D *car = Object::cast_to<RigidBody3D>(vw->get_parent())) {
+				lin = car->get_linear_velocity();
+			}
+			const float roll = Math::abs(vw->get_rpm()) * Math::TAU / 60.0f * vw->get_radius();
+			slip = (1.0f - CLAMP(vw->get_skidinfo(), 0.0f, 1.0f)) * MAX(Vector2(lin.x, lin.z).length(), roll);
+		} else if (const CharacterBody3D *cb = Object::cast_to<CharacterBody3D>(n3)) {
+			lin = cb->get_velocity();
+		} else {
+			continue;
+		}
+		const float speed = Vector2(lin.x, lin.z).length();
+		const float width = b.width > 0.0f ? b.width : 2.0f * b.radius;
+		const float weight = b.mass * 9.81f;
+		// How hard it presses: weight over a contact patch about 0.2 m long; a car tyre (75 kPa) packs fully in a
+		// pass, a boot (15 kPa) about half as well.
+		const float kpa = weight / MAX(width * 0.2f, 0.01f) / 1000.0f;
+		TrafficMark m;
+		m.center = Vector2(b.center.x, b.center.z);
+		m.radius = 0.5f * width;
+		m.pack = CLAMP(kpa / 75.0f, 0.2f, 1.0f) * MIN(width * speed * dt / (cs * cs), 1.0f);
+		if (slip > 0.05f && air < 0.0f) {
+			// Friction power mu W v_slip; about half goes into the snow, and that melt refreezes (917 kg/m3 of
+			// ice, 334 kJ/kg) over the cell.
+			const float joules = 0.25f * weight * slip * dt * 0.5f;
+			m.glaze = joules / (917.0f * 334000.0f) * 1000.0f / (cs * cs);
+		}
+		if (m.pack > 0.0f || m.glaze > 0.0f) {
+			traffic_marks.push_back(m);
+		}
+	}
+	if (traffic_marks.size() > from) {
+		_apply_traffic(pub.packed, pub.glaze, traffic_marks, from);
+	}
+	if (traffic_marks.size() > 65536) {
+		traffic_marks.clear(); // not updating: the published copy keeps them
+	}
+}
+
+void SnowCover3D::_apply_traffic(Vector<float> &r_packed, Vector<float> &r_glaze, const LocalVector<TrafficMark> &p_marks, uint32_t p_from) const {
+	const int n = resolution;
+	if (r_packed.size() != n * n || r_glaze.size() != n * n || !origin_valid) {
+		return;
+	}
+	const float cs = _cell_size();
+	float *pk = r_packed.ptrw();
+	float *gl = r_glaze.ptrw();
+	for (uint32_t k = p_from; k < p_marks.size(); k++) {
+		const TrafficMark &m = p_marks[k];
+		const int x = int(Math::floor(m.center.x / cs)) - origin_cell.x;
+		const int z = int(Math::floor(m.center.y / cs)) - origin_cell.y;
+		if (x < 0 || z < 0 || x >= n || z >= n) {
+			continue;
+		}
+		const int i = z * n + x;
+		pk[i] = pk[i] + (1.0f - pk[i]) * CLAMP(m.pack, 0.0f, 1.0f);
+		gl[i] = MIN(gl[i] + m.glaze, 20.0f);
+	}
+}
+
+void SnowCover3D::add_traffic(Vector3 p_position, float p_radius, float p_pack, float p_glaze_mm) {
+	TrafficMark m;
+	m.center = Vector2(p_position.x, p_position.z);
+	m.radius = MAX(p_radius, 0.0f);
+	m.pack = CLAMP(p_pack, 0.0f, 1.0f);
+	m.glaze = MAX(p_glaze_mm, 0.0f);
+	const int n = resolution;
+	if (pub.packed.size() != n * n) {
+		pub.packed.resize(n * n);
+		pub.packed.fill(0.0f);
+	}
+	if (pub.glaze.size() != n * n) {
+		pub.glaze.resize(n * n);
+		pub.glaze.fill(0.0f);
+	}
+	traffic_marks.push_back(m);
+	_apply_traffic(pub.packed, pub.glaze, traffic_marks, traffic_marks.size() - 1);
+}
+
+float SnowCover3D::get_packed_at(Vector3 p_position) const {
+	if (_in_world_only(p_position) || pub.packed.is_empty()) {
+		return 0.0f;
+	}
+	// The cell it lies in (not blended with its neighbours: a track packs the cell it runs through).
+	const int n = resolution;
+	const float cs = _cell_size();
+	const int x = int(Math::floor(p_position.x / cs)) - origin_cell.x;
+	const int z = int(Math::floor(p_position.z / cs)) - origin_cell.y;
+	if (pub.packed.size() != n * n || x < 0 || z < 0 || x >= n || z >= n) {
+		return 0.0f;
+	}
+	return CLAMP(pub.packed[z * n + x], 0.0f, 1.0f);
+}
+
+float SnowCover3D::get_glaze_at(Vector3 p_position) const {
+	if (_in_world_only(p_position) || pub.glaze.is_empty()) {
+		return 0.0f;
+	}
+	const int n = resolution;
+	const float cs = _cell_size();
+	const int x = int(Math::floor(p_position.x / cs)) - origin_cell.x;
+	const int z = int(Math::floor(p_position.z / cs)) - origin_cell.y;
+	if (pub.glaze.size() != n * n || x < 0 || z < 0 || x >= n || z >= n) {
+		return 0.0f;
+	}
+	return MAX(pub.glaze[z * n + x], 0.0f);
+}
+
+// Ice is slipperiest near its melting point, where friction melts a water film (Hayhoe and Shapley 1989; Wallman and
+// Astrom 2001: 0.05 on wet ice), and grips better as it gets colder (about 0.15 by -15 C).
+float SnowCover3D::ice_grip(float p_celsius, float p_wetness) {
+	const float cold = Math::smoothstep(-1.0f, -15.0f, p_celsius);
+	return Math::lerp(0.05f + 0.1f * cold, 0.05f, Math::smoothstep(0.1f, 0.5f, p_wetness));
+}
+
+float SnowCover3D::get_grip_at(Vector3 p_position) const {
+	if (get_depth_at(p_position) < 0.005f) {
+		return -1.0f; // bare: the ground's own
+	}
+	const float air = WorldContracts::weather()->has_provider() ? WorldContracts::weather()->air_temperature_at(p_position) : inputs.temperature;
+	const float wet = get_wetness_at(p_position);
+	const float polish = 1.0f - Math::exp(-get_glaze_at(p_position) / 0.3f);
+	float mu = Math::lerp(0.3f, 0.25f, get_packed_at(p_position));
+	mu = Math::lerp(mu, ice_grip(air, wet), polish);
+	// New snow over it: the tyre runs in that (loose snow) until it is packed in turn.
+	return Math::lerp(mu, 0.3f, Math::smoothstep(0.0f, 0.03f, get_new_snow_at(p_position)));
 }
 
 float SnowCover3D::get_wetness_at(Vector3 p_position) const {
@@ -3165,11 +3619,17 @@ float SnowCover3D::get_wetness_at(Vector3 p_position) const {
 	const Vector2 p(p_position.x, p_position.z);
 	const float swe = _sample(pub.swe, p);
 	const float liq = _sample(pub.liquid, p);
+	if (!pub.slush.is_empty() && swe > SWE_MIN && _sample(pub.slush, p) > 0.5f) {
+		return 1.0f; // saturated from the base
+	}
 	const float hold = liquid_capacity * (swe - liq);
 	return hold > 1e-4f ? CLAMP(liq / hold, 0.0f, 1.0f) : 0.0f;
 }
 
 float SnowCover3D::get_runoff_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_runoff_at(p_position);
+	}
 	return MAX(_sample(pub.runoff, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
@@ -3361,6 +3821,7 @@ void SnowCover3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			_ice_load_step();
+			_traffic_step(get_physics_process_delta_time());
 			const WeatherMap3D *weather = WeatherMap3D::get_active();
 			const double scale = weather ? weather->get_time_scale() : time_scale;
 			update_accum += get_physics_process_delta_time();
@@ -3688,8 +4149,28 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_slush_enabled", "enabled"), &SnowCover3D::set_slush_enabled);
 	ClassDB::bind_method(D_METHOD("is_slush_enabled"), &SnowCover3D::is_slush_enabled);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "slush_enabled"), "set_slush_enabled", "is_slush_enabled");
+	ClassDB::bind_method(D_METHOD("set_spindrift_enabled", "enabled"), &SnowCover3D::set_spindrift_enabled);
+	ClassDB::bind_method(D_METHOD("is_spindrift_enabled"), &SnowCover3D::is_spindrift_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "spindrift_enabled"), "set_spindrift_enabled", "is_spindrift_enabled");
+	ClassDB::bind_method(D_METHOD("set_traffic_enabled", "enabled"), &SnowCover3D::set_traffic_enabled);
+	ClassDB::bind_method(D_METHOD("is_traffic_enabled"), &SnowCover3D::is_traffic_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traffic_enabled"), "set_traffic_enabled", "is_traffic_enabled");
+	ClassDB::bind_method(D_METHOD("get_packed_at", "position"), &SnowCover3D::get_packed_at);
+	ClassDB::bind_method(D_METHOD("get_glaze_at", "position"), &SnowCover3D::get_glaze_at);
+	ClassDB::bind_method(D_METHOD("get_grip_at", "position"), &SnowCover3D::get_grip_at);
+	ClassDB::bind_method(D_METHOD("add_traffic", "position", "radius", "pack", "glaze_mm"), &SnowCover3D::add_traffic);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("ice_grip", "celsius", "wetness"), &SnowCover3D::ice_grip);
+	ClassDB::bind_method(D_METHOD("set_max_spindrift", "count"), &SnowCover3D::set_max_spindrift);
+	ClassDB::bind_method(D_METHOD("get_max_spindrift"), &SnowCover3D::get_max_spindrift);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_spindrift", PROPERTY_HINT_RANGE, "1,32,1"), "set_max_spindrift", "get_max_spindrift");
+	ClassDB::bind_method(D_METHOD("get_spindrift_rate"), &SnowCover3D::get_spindrift_rate);
+	ClassDB::bind_method(D_METHOD("get_spindrift_source_count"), &SnowCover3D::get_spindrift_source_count);
+	ClassDB::bind_method(D_METHOD("get_spindrift_sources"), &SnowCover3D::get_spindrift_sources);
+	ClassDB::bind_method(D_METHOD("get_spindrift"), &SnowCover3D::get_spindrift);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("spindrift_fade", "humidity"), &SnowCover3D::spindrift_fade);
 	ClassDB::bind_method(D_METHOD("get_slush_at", "position"), &SnowCover3D::get_slush_at);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("ground_seal", "frost"), &SnowCover3D::ground_seal);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("slush_height", "swe", "liquid", "density", "slush"), &SnowCover3D::slush_height);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("slush_drain_rate", "density", "slope_sine", "length"), &SnowCover3D::slush_drain_rate);
 	ClassDB::bind_method(D_METHOD("get_buried_hoar_at", "position"), &SnowCover3D::get_buried_hoar_at);
 	ClassDB::bind_method(D_METHOD("get_buried_hoar_depth_at", "position"), &SnowCover3D::get_buried_hoar_depth_at);

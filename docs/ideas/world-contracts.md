@@ -53,6 +53,7 @@ contract returns with no provider.
 | `canopy_closure_at(pos)`, `shelter_at(pos, h)` | 0..1 | 0, 1 | |
 | `season()` | dictionary (weather_season.h State) | 15 May, no snow | |
 | `frost_at(pos)` | mm | 0 | Hoarfrost on exposed surfaces (`dew_and_frost`) |
+| `glaze_at(pos)` | mm | 0 | Radial clear ice from freezing rain on exposed twigs and wires (ice storms); provider to come (weather), readers trees (trees.md 5be) |
 | Events: `ground_strikes_after(serial)` | list | empty | Lightning, from `WeatherLightning3D` |
 | `day_of_year()` | 1..365 | 135 | The clock's date, else the map's season day |
 | `season_at(pos, day = -1)` | dictionary (season State) | the default climate at pos.y | At the point's height, the live departure included; day < 1 is today |
@@ -121,7 +122,7 @@ the live ground.
 | `blown_sand_at(pos)` | share of the sand the wind moves there now (dry, out of shelter), 0..1 | 0 |
 | `track_mud(pos, radius, depth, wet, print)` | m of film in; returns m3 laid | 0 laid with no provider | Clay a body carries pressed onto the ground; print x 1 tyre, 2 sole (0 a thrown lump), y yaw, z w length and width. Callers: WeatherMap3D wet tracks (round 7) |
 | `coarse_cover_at(pos)` | share of the ground 0..1: (pebbles, gravel, fine grains) | 0 | The stone fields' cover maps (RockField3D, a separate `WorldCoverProvider` slot, any number of fields, the largest answers). Reader: GroundSurface3D sand (a gravel lag armours the sand: blown share and ripples x 1 - smoothstep(0.1, 0.35, pebble + gravel); Bagnold 1941, Sharp 1963) |
-| `albedo_at(pos)` | linear rgb; a: share known (1 a ground colour answers, the snow's cover alone past it, 0 nothing) | (0, 0, 0, 0) | The ground as drawn, a few metres' mean: TerrainMaterial3D's layer colours weighed as its shader weighs them (generator geology and slope, no texture detail; a separate `WorldGroundColorProvider` slot, registered by `use_generator`), wet by the weather's surface wetness (x mix(1, 0.2, porosity), Lagarde 2013), under the snow (WorldSnow.albedo_at by the materials' level-ground cover). Reader: PhysXFlow3D `ground_from_world` (the light the ground sends up into gas). Not yet: grass and plant cover (vegetation's colour over the soil) |
+| `albedo_at(pos)` | linear rgb; a: share known (1 a ground colour answers, the snow's cover alone past it, 0 nothing) | (0, 0, 0, 0) | The ground as drawn, a few metres' mean: TerrainMaterial3D's layer colours weighed as its shader weighs them (generator geology and slope, no texture detail; a separate `WorldGroundColorProvider` slot, registered by `use_generator`), wet by the weather's surface wetness (x mix(1, 0.2, porosity), Lagarde 2013), under the snow (WorldSnow.albedo_at by the materials' level-ground cover). Reader: PhysXFlow3D `ground_from_world` (the light the ground sends up into gas). Plant cover (21 Nov): a `WorldPlantColorProvider` slot (`contract_plant_albedo_at`: rgb the plants' far colour, a the share of ground they hide, < 0 past the producer); GrassField3D (the ground field: its far colour over the ground map's sward cover) and VegetationField3D (its far map, colour and cover) register, each laid over the ground colour in turn, leaves not darkened by rain |
 | pressing | | through the `world_contact` group |
 
 The ground also publishes a shader global, `ground_wet_map` (GroundSurface3D; drawn by `material.cpp`, the path
@@ -151,6 +152,7 @@ terramechanics and pressing calls, which stay on the producer for now).
 | `avalanche_pressure_at(pos)`, `avalanche_peak_pressure_at(pos)` | Pa (dense flow, else powder cloud; peak so far) | 0 |
 | `add_impurity(pos, radius, mg_per_m2)`, `impurity_at(pos)` | mg/m2 black carbon equivalent (dust 0.013 of its mass) | no-op, 0 |
 | `albedo_at(pos)` | broadband albedo of the surface (aged, less impurities) | 0.8 where the producer does not say; 0 with no snow system |
+| `grip_at(pos)` | tyre-road friction: loose 0.3, packed 0.25, polished to ice 0.05-0.15 (SnowCover3D.get_grip_at: traffic packing and glaze, ice by air and wetness) | -1 bare or not known (PhysXVehicle3D then estimates from density, wetness and crust) |
 | shader globals `snow_cover`, `snow_rect`, `snow_depth` | | |
 
 Consumers: ground, plants (burial), trees (load), vehicles (grip, ruts), cloth and hair, weather (runoff into the

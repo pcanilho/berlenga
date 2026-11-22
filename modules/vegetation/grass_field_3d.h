@@ -38,6 +38,8 @@
 #include "vegetation_paths.h"
 #include "water_current_bend.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "core/io/image.h"
 #include "core/math/geometry_2d.h"
 #include "core/templates/hash_map.h"
@@ -55,10 +57,13 @@ class TerrainDataMap3D;
 // lean and colour, a quadratic Bezier blade bent by the wind in the vertex shader, density
 // thinned by rank with distance and blades widened to keep coverage. Tiles around the camera
 // are built on the CPU when they come into range, one MultiMesh each.
-class GrassField3D : public Node3D {
+class GrassField3D : public Node3D, public WorldPlantColorProvider {
 	GDCLASS(GrassField3D, Node3D);
 
 public:
+	// WorldPlantColorProvider: the sward over the ground, its far colour by the ground map's cover.
+	Color contract_plant_albedo_at(const Vector3 &p_position) const override;
+
 	// A cereal grown instead of grass (vegetation.md, farmland stage 1): each record a tiller in drill
 	// rows, its look set by the growth stage.
 	enum Crop {
@@ -184,6 +189,10 @@ private:
 	float season_baked_dryness = -1.0f; // The effective dryness of the last far colour bake.
 	int season_wait = 0;
 	bool ground_published = false; // This field's _bake_ground() set the grass_ground_* globals.
+	// The ground map as published (R: the sward's cover) and its rect, for WorldGround.albedo_at (the cover's colour).
+	Ref<Image> ground_image;
+	Vector4 ground_image_rect;
+	bool plant_color_registered = false;
 	float _dryness() const { return CLAMP(dryness + (1.0f - dryness) * (1.0f - season_green) * season_response, 0.0f, 1.0f); }
 	// Summer dormancy and winter kill take whole blades down to the crown (Volaire and Norton 2006),
 	// not only their tips: the share of blades dead from the root.

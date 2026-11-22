@@ -74,6 +74,13 @@
 				Override in a test stub to answer [method depth_at].
 			</description>
 		</method>
+		<method name="_grip_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method grip_at].
+			</description>
+		</method>
 		<method name="_impurity_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -174,6 +181,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the snow on the ground at [param position] in metres, 0 with no snow system.
+			</description>
+		</method>
+		<method name="grip_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Tyre-road friction coefficient on the snow at [param position]: about 0.3 in loose snow, 0.25 packed by traffic, down to 0.05-0.15 where tyres polished it to ice. -1 on bare ground or where the snow system does not say; vehicles then estimate it from density, wetness and crust.
 			</description>
 		</method>
 		<method name="has_provider" qualifiers="const">

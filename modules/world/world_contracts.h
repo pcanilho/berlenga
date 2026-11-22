@@ -64,6 +64,7 @@ public:
 	virtual float contract_sun_visibility_at(const Vector3 &p_position) const = 0; // 0..1
 	virtual float contract_canopy_closure_at(const Vector3 &p_position) const = 0; // 0..1
 	virtual float contract_frost_at(const Vector3 &p_position) const { return 0.0f; } // mm
+	virtual float contract_glaze_at(const Vector3 &p_position) const { return 0.0f; } // mm of radial clear ice on exposed twigs
 	virtual Vector3 contract_mean_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s at 10 m, no gusts
 	virtual Vector3 contract_wind_aloft_at(const Vector3 &p_position, float p_altitude) const { return Vector3(); } // m/s, free air
 	virtual float contract_terrain_lee_at(const Vector3 &p_position) const { return NAN; } // rad, Winstral's Sx; NaN: no terrain wind there
@@ -121,6 +122,7 @@ protected:
 	GDVIRTUAL1RC(float, _sun_visibility_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_closure_at, Vector3)
 	GDVIRTUAL1RC(float, _frost_at, Vector3)
+	GDVIRTUAL1RC(float, _glaze_at, Vector3)
 	GDVIRTUAL1RC(Vector3, _mean_wind_at, Vector3)
 	GDVIRTUAL2RC(Vector3, _wind_aloft_at, Vector3, float)
 	GDVIRTUAL1RC(float, _terrain_lee_at, Vector3)
@@ -171,6 +173,10 @@ public:
 	float sun_visibility_at(const Vector3 &p_position) const;
 	float canopy_closure_at(const Vector3 &p_position) const;
 	float frost_at(const Vector3 &p_position) const;
+	// Glaze (freezing rain): the radial thickness of clear ice on exposed twigs and wires at the point (mm), as an ice
+	// storm leaves it and until it melts or sheds. An ice storm is 6 mm and more; 12-25 mm breaks limbs. 0 with no
+	// weather system or none. Readers: trees (load, droop, breaks), wires, surfaces.
+	float glaze_at(const Vector3 &p_position) const;
 	Vector3 mean_wind_at(const Vector3 &p_position) const;
 	Vector3 wind_aloft_at(const Vector3 &p_position, float p_altitude) const;
 	float terrain_lee_at(const Vector3 &p_position) const;
@@ -600,6 +606,18 @@ public:
 	virtual ~WorldGroundColorProvider() {}
 };
 
+// The plant cover over the ground (GrassField3D's sward, VegetationField3D's placed plants): a separate slot on the
+// ground contract, since every field is its own producer. Several may register; each lays its cover over the ground
+// colour in turn.
+class WorldPlantColorProvider {
+public:
+	// The plants' mean diffuse albedo at the point as seen from above (linear rgb, a few metres' mean, as the far
+	// ground draws them); a: the share of the ground they hide (0..1), 0 where the producer has none, < 0 where it
+	// does not reach.
+	virtual Color contract_plant_albedo_at(const Vector3 &p_position) const = 0;
+	virtual ~WorldPlantColorProvider() {}
+};
+
 class WorldGround : public RefCounted {
 	GDCLASS(WorldGround, RefCounted);
 
@@ -664,7 +682,8 @@ public:
 	// coarse_cover_at at many points (world xz) in one call (a script stub answers point by point).
 	void coarse_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const;
 	// The ground's albedo as drawn (linear rgb, a few metres' mean): the terrain material's colour, darkened by the
-	// weather's surface wetness by its porosity, under the snowpack's cover and albedo. a: how much of that is known
+	// weather's surface wetness by its porosity, the plant cover over it (grass and plants, by the share they hide),
+	// under the snowpack's cover and albedo. a: how much of that is known
 	// (1 where a ground colour answers; the snow's cover alone over ground no colour knows; 0 nothing). Readers blend
 	// their own setting toward rgb by a. For the light the ground sends up: gas and haze over it.
 	Color albedo_at(const Vector3 &p_position) const;
@@ -684,6 +703,8 @@ public:
 	virtual float contract_snow_impurity_at(const Vector3 &p_position) const { return 0.0f; }
 	// The snow surface's broadband albedo (aged, less the particles on it); < 0 not known.
 	virtual float contract_snow_albedo_at(const Vector3 &p_position) const { return -1.0f; }
+	// Tyre-road friction on the snow (loose 0.3, packed 0.25, polished to ice 0.05-0.15); < 0 bare or not known.
+	virtual float contract_snow_grip_at(const Vector3 &p_position) const { return -1.0f; }
 	// Avalanches: the impact pressure at the point now (Pa; the dense flow where it runs, else the powder cloud) and the
 	// highest any avalanche has put there.
 	virtual float contract_snow_avalanche_pressure_at(const Vector3 &p_position) const { return 0.0f; }
@@ -714,6 +735,7 @@ protected:
 	GDVIRTUAL3(_add_impurity, Vector3, float, float)
 	GDVIRTUAL1RC(float, _impurity_at, Vector3)
 	GDVIRTUAL1RC(float, _albedo_at, Vector3)
+	GDVIRTUAL1RC(float, _grip_at, Vector3)
 	GDVIRTUAL1RC(float, _avalanche_pressure_at, Vector3)
 	GDVIRTUAL1RC(float, _avalanche_peak_pressure_at, Vector3)
 	GDVIRTUAL1RC(float, _canopy_load_at, Vector3)
@@ -742,6 +764,10 @@ public:
 	// The snow surface's broadband albedo: fresh about 0.85, old dry toward 0.7, melting toward 0.5, less soot and
 	// dust. 0.8 where the snow system does not say (and 0 with no snow system).
 	float albedo_at(const Vector3 &p_position) const;
+	// Tyre-road friction coefficient on the snow at the point: about 0.3 in loose snow, 0.25 packed by traffic, down to
+	// 0.05-0.15 where tyres polished it to ice (by the air and its wetness). -1 bare, or where the snow system does not
+	// say (readers then estimate from density, wetness and crust).
+	float grip_at(const Vector3 &p_position) const;
 	// Avalanche impact pressure at the point (Pa): now (the dense flow where it runs, else the powder cloud; 0 with
 	// none), and the highest any avalanche has put there (trees break, buildings fail by it).
 	float avalanche_pressure_at(const Vector3 &p_position) const;
@@ -785,6 +811,7 @@ class WorldContracts : public Object {
 	WorldRunoffProvider *runoff_provider = nullptr;
 	LocalVector<WorldCoverProvider *> cover_providers;
 	LocalVector<WorldGroundColorProvider *> ground_color_providers;
+	LocalVector<WorldPlantColorProvider *> plant_color_providers;
 	Ref<WorldWater> builtin_water;
 	Ref<WorldWater> water_override;
 	Ref<WorldFire> builtin_fire;
@@ -826,6 +853,9 @@ public:
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);
 	static const LocalVector<WorldGroundColorProvider *> *ground_color_providers_list() { return singleton ? &singleton->ground_color_providers : nullptr; }
+	static void register_plant_color(WorldPlantColorProvider *p_provider); // any number: each lays its cover over the ground in turn
+	static void unregister_plant_color(WorldPlantColorProvider *p_provider);
+	static const LocalVector<WorldPlantColorProvider *> *plant_color_providers_list() { return singleton ? &singleton->plant_color_providers : nullptr; }
 	static void register_water(WorldWaterProvider *p_provider);
 	static void unregister_water(WorldWaterProvider *p_provider);
 	static void register_fire(WorldFireProvider *p_provider);

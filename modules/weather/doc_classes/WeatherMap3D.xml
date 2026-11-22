@@ -1072,6 +1072,9 @@
 		<member name="contact_wetness_size" type="float" setter="set_contact_wetness_size" getter="get_contact_wetness_size" default="64.0">
 			Side of the contact square in metres. It follows the camera (or [member follow_target]) and keeps what overlaps when it moves.
 		</member>
+		<member name="distant_shafts" type="bool" setter="set_distant_shafts" getter="is_distant_shafts" default="true">
+			Draws the storms' rain and snow shafts and the lake-effect snow veils over the scene as well as against the sky: a screen pass marches them from 1.5 km out to the depth buffer, so a shaft stands in front of a far ridge. Raster only (hidden while the environment path traces). See docs/ideas/clouds.md.
+		</member>
 		<member name="drive_environment_fog" type="bool" setter="set_drive_environment_fog" getter="get_drive_environment_fog" default="true">
 			The haze from [method set_precipitation_extinction] drives the environment's fog and volumetric fog, while the game runs. Off, the sources only answer [method get_precipitation_extinction_at].
 		</member>

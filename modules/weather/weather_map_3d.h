@@ -46,6 +46,7 @@
 #include "core/templates/pair.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
+#include "scene/resources/material.h"
 
 // One weather state for a region of the world, after Guerrilla's Nubis weather map
 // (Schneider 2015): a square of cells that follows the camera and holds, per cell, the
@@ -488,6 +489,13 @@ private:
 	float applied_haze = -1.0f;
 	void _apply_haze();
 	void _restore_fog();
+	// Far rain and snow shafts drawn over the scene (weather_shafts.cpp): a screen quad marching the sky's shaft
+	// functions up to the depth buffer, so a shaft stands in front of a far ridge as well as against the sky.
+	bool distant_shafts = true;
+	class MeshInstance3D *shafts_mesh = nullptr;
+	Ref<ShaderMaterial> shafts_material;
+	void _update_shafts();
+	void _free_shafts();
 	float _haze_weight(const HazeSource &p_source, const Vector3 &p_position) const;
 	float _haze_base(const HazeSource &p_source) const;
 
@@ -966,6 +974,8 @@ public:
 	bool is_wave_clouds() const { return wave_clouds; }
 	void set_lake_effect_snow(bool p_enabled);
 	bool is_lake_effect_snow() const { return lake_effect_snow; }
+	void set_distant_shafts(bool p_enabled);
+	bool is_distant_shafts() const { return distant_shafts; }
 	// Lake-effect cloud at the point (0..1), as the sky draws it.
 	float get_lake_effect_at(Vector3 p_position) const;
 	// The open water crossed upwind of the point (km, fading inland), from the lake-effect field.

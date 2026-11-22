@@ -58,6 +58,7 @@ extends Node3D
 #   --wind-dir=x,z    clouds views: wind_direction (default 0.6,-0.8; 0,1 blows toward the camera)
 #   --shear-aloft=S   clouds views: wind_shear_aloft (m/s per km); 5 and up gives cirrocumulus (get_cirrocumulus_share)
 #   --no-wave-clouds  lenticular view: WeatherMap3D.wave_clouds off (cost A/B)
+#   --no-distant-shafts  clouds views: WeatherMap3D.distant_shafts off (shafts only where the sky shows; A/B)
 #   --sun-energy=E    clouds views: the sun's light_energy (0: night, for cloud lights)
 #   --high-cover=C    clouds views: the cirrus layer's base cover (WeatherMap3D.high_cloud_cover); with the shafts
 #                     view and --cover=0.05, the 22 and 46 degree ice halos round the sun
@@ -105,6 +106,7 @@ var cam_arg := PackedFloat64Array()
 var humidity_arg := -1.0
 var shear_arg := -1.0
 var wave_clouds_off := false
+var distant_shafts_off := false
 var half_usec := 0
 var out := ""
 var map_out := ""
@@ -186,6 +188,7 @@ func _ready() -> void:
 		elif a.begins_with("--cloud-effector="): cloud_effectors_arg.append(a.substr(17).split_floats(","))
 		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a == "--no-wave-clouds": wave_clouds_off = true
+		elif a == "--no-distant-shafts": distant_shafts_off = true
 		elif a.begins_with("--type="): type_arg = float(a.substr(7))
 		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
 		elif a.begins_with("--temp="): temp_arg = float(a.substr(7))
@@ -1220,6 +1223,11 @@ func _wave_report() -> void:
 			row += "#" if tau > 3.0 else ("+" if tau > 0.3 else ("|" if absf(q.x + 6000.0) < 1000.0 else " "))
 		print(row)
 	print("  thickest wave cloud over 12 km from the camera: %s, optical depth %.1f" % [str(best), best_tau])
+	# Up that column: the lens's plates (pile of plates: clear sheets between, get_wave_cloud_density_at in 1/m * 1000).
+	var pl := "  up that column, every 50 m from 3500 m:"
+	for k in 40:
+		pl += " %.1f" % (1000.0 * weather.get_wave_cloud_density_at(Vector3(best.x, 3500.0 + k * 50.0, best.z)))
+	print(pl)
 	# Connected: the vertical wind of the waves aloft, none near the ground; dry air or no wind, no wave cloud.
 	var wl := "  wave vertical wind at 4 km, x -12 to +8 km (m/s):"
 	var gl := "  get_wind_at().y there, at 4 km / at 50 m above ground:"
@@ -1382,6 +1390,7 @@ func _build_clouds() -> void:
 	add_child(weather)
 	weather.sun_light = weather.get_path_to(sun)
 	weather.cloud_evolution = not frozen
+	weather.distant_shafts = not distant_shafts_off
 	if cloud_time >= 0.0:
 		weather.set_cloud_time(cloud_time)
 	if view == "lenticular":
@@ -1416,10 +1425,16 @@ func _build_clouds() -> void:
 		weather.temperature = -8.0 if temp_arg <= -999.0 else temp_arg
 		weather.humidity = 0.8
 		weather.water_temperature = 6.0
-		weather.cloud_cover = 0.1 if cover < 0.0 else cover
+		# Clear arctic air off the band (a cold outbreak's sky is clear but for the lake's own cloud).
+		weather.cloud_cover = 0.02 if cover < 0.0 else cover
+		weather.mid_cloud_cover = 0.0 if mid_cover < 0.0 else mid_cover
 		weather.cloud_type = 0.4
 		weather.snap_to_settings()
+		weather.cloud_shadow_extent = 60000.0 # the band's shadow across the whole view (8 km ended in a straight edge)
+		weather.cloud_shadow_resolution = 512
+		# The water itself is the contract (LakeStub); a dark plane drawn for it stood as a straight band on the horizon.
 		var lake := MeshInstance3D.new()
+		lake.visible = false
 		var lm := PlaneMesh.new()
 		lm.size = Vector2(30000, 60000)
 		lake.mesh = lm
@@ -1430,7 +1445,11 @@ func _build_clouds() -> void:
 		wm.metallic_specular = 0.5
 		lake.material_override = wm
 		add_child(lake)
-		cam.look_at_from_position(Vector3(14000, 150, 22000), Vector3(0, 1100, 6000), Vector3.UP)
+		# From 16 km aside of the band's axis, 22 km downwind of the shore, looking up the band at a slant: one line of
+		# cloud with its snow under it running away toward the lake, clear sky beside it.
+		if fov_arg <= 0.0:
+			cam.fov = 40.0
+		cam.look_at_from_position(Vector3(16000, 200, 22000), Vector3(0, 1400, -2000), Vector3.UP)
 		if cam_arg.size() == 6:
 			cam.look_at_from_position(Vector3(cam_arg[0], cam_arg[1], cam_arg[2]), Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
 		for i in 8:

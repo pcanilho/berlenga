@@ -757,6 +757,21 @@ func _snow_fire_tests() -> void:
 	var beside: float = snow.get_depth_at(Vector3(-10, 0, 0))
 	_check("snow: a fire melts the pack under it, not beside it, at -4 C", before > 0.05 and burning < 0.6 * beside and beside > 0.9 * before, "%.3f m before, %.3f m under the fire, %.3f m beside it" % [before, burning, beside])
 	WorldContracts.clear_overrides()
+	# Tyre grip from the snow's own friction (WorldSnow.grip_at): loose snow, a packed road, the road polished to ice.
+	if ClassDB.class_exists("PhysXVehicle3D"):
+		var p_loose := Vector3(-24, 0, -20)
+		var p_packed := Vector3(-24, 0, 0)
+		var p_polished := Vector3(-24, 0, 20)
+		snow.add_traffic(p_packed, 3.0, 1.0, 0.0)
+		snow.add_traffic(p_polished, 3.0, 1.0, 2.0)
+		var g_loose: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", p_loose, 10.0, 0)
+		var g_packed: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", p_packed, 10.0, 0)
+		var g_polished: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", p_polished, 10.0, 0)
+		var g_chains: float = ClassDB.class_call_static("PhysXVehicle3D", "get_firm_grip_at", p_polished, 10.0, 3)
+		var c_polished: float = WorldContracts.get_snow().grip_at(p_polished)
+		_check("tyres: grip from the snow's own friction, loose over packed, dropping on snow polished to ice; chains bite the ice", is_equal_approx(c_polished, snow.get_grip_at(p_polished)) and g_loose > g_packed and g_polished < 0.6 * g_packed and g_polished <= 0.15 and g_chains > 2.5 * g_polished, "loose %.3f, packed %.3f, polished %.3f (contract %.3f), polished with chains %.3f" % [g_loose, g_packed, g_polished, c_polished, g_chains])
+	else:
+		_skip("tyres: snow's own grip", "no PhysX in this build")
 	snow.queue_free()
 	ground_node.queue_free()
 	m.queue_free()
@@ -1975,3 +1990,47 @@ func _ground_color_tests() -> void:
 	_check("ground colour: rain darkens it by porosity (0.6 of dry soaked at porosity 0.5), snow covers it with its albedo, snow beyond the terrain answers alone", is_equal_approx(a_wet.r, a_flat.r * 0.6) and is_equal_approx(a_snow.r, 0.7) and is_equal_approx(a_snow.b, 0.7) and a_snow.a == 1.0 and is_equal_approx(a_snow_far.r, 0.7) and a_snow_far.a == 1.0 and a_bare.a == 1.0 and a_bare.r < 0.6, "wet %s (dry %s), snow %s, snow past the terrain %s, bare %s" % [a_wet, a_flat, a_snow, a_snow_far, a_bare])
 	tm = null
 	gen.queue_free()
+	await _ground_color_meadow_tests()
+
+
+# The plants' colour over the ground (WorldPlantColorProvider, GrassField3D's sward cover): gas over a meadow takes its
+# green, gas over a worn path through it the bare tread.
+func _ground_color_meadow_tests() -> void:
+	if not ClassDB.class_exists("GrassField3D"):
+		_skip("ground colour meadow", "needs the vegetation module")
+		return
+	var root := Node3D.new()
+	add_child(root)
+	var w := 65
+	var data := PackedFloat32Array()
+	data.resize(w * w)
+	var shape := HeightMapShape3D.new()
+	shape.map_width = w
+	shape.map_depth = w
+	shape.map_data = data
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	body.add_child(cs)
+	root.add_child(body)
+	var dm := TerrainDataMap3D.new()
+	dm.size = 64.0
+	dm.resolution = 64
+	root.add_child(dm)
+	await get_tree().physics_frame
+	dm.bake()
+	var grass := GrassField3D.new()
+	grass.radius = 8.0
+	# A worn path along x = 0 (1500 walkers a year, bare soil in its tread).
+	grass.paths = [{"points": PackedVector3Array([Vector3(0, 0, -30), Vector3(0, 0, 30)]), "width": 1.5, "passes": 1500.0}]
+	root.add_child(grass)
+	grass.data_map = grass.get_path_to(dm)
+	for i in 10:
+		grass.update_at(Vector3(10, 0, 0))
+		await get_tree().process_frame
+	var meadow: Color = WorldContracts.get_ground().albedo_at(Vector3(12, 0, 5))
+	var path: Color = WorldContracts.get_ground().albedo_at(Vector3(0, 0, 5))
+	var far: Color = grass.get_far_color()
+	root.queue_free()
+	await get_tree().process_frame
+	_check("ground colour: gas over a meadow takes the sward's green (its far colour), over a worn path through it little of it", meadow.a > 0.8 and meadow.g > meadow.r and absf(meadow.g - far.g) < 0.02 and path.a < 0.5 * meadow.a, "meadow %s (far %s), path %s" % [meadow, far, path])

@@ -89,6 +89,8 @@ class BodySnowStub extends WorldSnow:
 #                     into snow ice under a heavy load and melts in a thaw
 #   --test=crust      melt-freeze crusts: formed by a thaw and a frost, harder each cycle, a boot breaks a
 #                     first-cycle crust and stands on a second-cycle one, new snow over it
+#   --view=spindrift  the cornice ridge in a 20 m/s westerly after new snow: plumes off the crest (PhysX Flow),
+#                     --at=S seconds of plume (default 12), --wind=M m/s; traced, it also saves _raster from the same run
 #   --view=windblown  a ridge after new snow and a day of 15 m/s wind (--snow=H hours of wind, default 24;
 #                     --transport=0 without the wind moving lying snow)
 #   --test=transport  the wind moving lying snow (SnowTran-3D): the flux against Tabler (1991), a ridge
@@ -128,6 +130,7 @@ class BodySnowStub extends WorldSnow:
 #   --taa             raster with TAA (stills set against path traced ones: no per-pixel shadow or dither dots)
 #   --out=path.png    save the last frame and quit
 #   --suncups=M       trail view: suncups of M m relief over the field (the deep-snow surface draws them)
+#   --slush=MM        trail view: 15 cm of old snow over frozen ground, then MM mm of rain at +8 C: slush in its base
 #   --ice-drop=M      icicles view: the edge M m under the roof (the roots must still join it)
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 
@@ -162,6 +165,7 @@ var crust_cycles := 0.0
 var transport := true
 var hoar_mm := 0.0 # --hoar=MM: the sparkle view's surface hoar
 var suncups_m := 0.0 # --suncups=M: the sparkle view's suncup relief
+var slush_mm := 0.0 # --slush=MM: rain on a thin pack over frozen ground (trail view)
 var air := INF # --air=C: the snowfall view's air temperature (sleet near and above 0 C)
 
 
@@ -187,6 +191,7 @@ func _ready() -> void:
 		elif a.begins_with("--snow="): snow_hours = float(a.substr(7))
 		elif a.begins_with("--hoar="): hoar_mm = float(a.substr(7))
 		elif a.begins_with("--suncups="): suncups_m = float(a.substr(10))
+		elif a.begins_with("--slush="): slush_mm = float(a.substr(8))
 		elif a.begins_with("--sun="): sun_hours = float(a.substr(6))
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
@@ -209,6 +214,10 @@ func _ready() -> void:
 			await _run_hoar_tests()
 		elif only == "suncups":
 			_run_suncup_tests()
+		elif only == "spindrift":
+			await _run_spindrift_tests()
+		elif only == "road":
+			await _run_road_tests()
 		elif only == "rime":
 			await _run_rime_tests()
 		elif only == "transport":
@@ -276,6 +285,8 @@ func _setup(kind: String, extent: float, resolution: int, temperature: float) ->
 	weather.cloud_variation = 0.0
 	weather.wind_speed = 3.0
 	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
 	weather.set_physics_process_internal(false)
 	add_child(weather)
 	weather.snap_to_settings()
@@ -301,6 +312,8 @@ func _precipitate(hours: float, rate: float) -> void:
 	weather.advance(1.0)
 	snow.advance(hours * 3600.0)
 	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
 	weather.cloud_cover = 0.0
 	weather.snap_to_settings()
 	weather.advance(1.0)
@@ -425,6 +438,8 @@ func _run_tests() -> void:
 	await _run_crust_tests()
 	await _run_rotten_tests()
 	await _run_slush_tests()
+	await _run_spindrift_tests()
+	await _run_road_tests()
 	await _run_hoar_tests()
 	_run_suncup_tests()
 	await _run_rime_tests()
@@ -613,7 +628,7 @@ func _run_slush_tests() -> void:
 	await _surface_setup(160.0, 400.0)
 	await _weather_to(10.0, 48.0)
 	var open_slush := snow.get_slush_at(q)
-	var open_swe := snow.get_swe_at(q)
+	var open_depth := snow.get_depth_at(q)
 	var stub := GDScript.new()
 	stub.source_code = "extends WorldGround\nfunc _frost_at(_p: Vector3) -> Vector3:\n\treturn Vector3(0.0, 0.3, 0.0)\n"
 	stub.reload()
@@ -623,9 +638,117 @@ func _run_slush_tests() -> void:
 	var slush := snow.get_slush_at(q)
 	var swe := snow.get_swe_at(q)
 	var wet := snow.get_wetness_at(q)
+	var depth_frozen := snow.get_depth_at(q)
+	# Then a hard frost: the slush freezes into the pack's base (denser, not deeper).
+	await _weather_to(-8.0, 24.0)
+	var frozen_slush := snow.get_slush_at(q)
+	var swe_frozen := snow.get_swe_at(q)
+	var depth_after := snow.get_depth_at(q)
 	WorldContracts.clear_overrides()
-	_check("melt water ponds as slush over frozen ground, drains away over thawed", open_slush == 0.0 and slush > 0.02 and swe > open_swe and wet == 1.0, "%.3f m of slush (%.0f mm SWE kept against %.0f), none over thawed ground" % [slush, swe, open_swe])
-	_check("the slush stays inside the pack", slush <= snow.get_depth_at(q) + 1e-4, "%.3f of %.3f m" % [slush, snow.get_depth_at(q)])
+	_check("melt water ponds as slush over frozen ground, drains away over thawed", open_slush == 0.0 and slush > 0.02 and wet == 1.0, "%.3f m of slush, none over thawed ground" % slush)
+	_check("the slush is pore water: inside the pack, no deeper than the drained pack", slush <= depth_frozen + 1e-4 and absf(depth_frozen - open_depth) < 0.02, "%.3f of %.3f m (%.3f m over thawed ground)" % [slush, depth_frozen, open_depth])
+	_check("a hard frost freezes it into the base: denser, not deeper", frozen_slush < 0.5 * slush and swe_frozen > swe + 5.0 and depth_after <= depth_frozen + 1e-3, "%.3f m left, %.0f to %.0f mm SWE, %.3f to %.3f m" % [frozen_slush, swe, swe_frozen, depth_frozen, depth_after])
+
+
+func _spindrift_at(wind: float, temp: float) -> Array:
+	weather.temperature = temp
+	weather.wind_speed = wind
+	weather.wind_direction = Vector2(1, 0)
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(600.0)
+	await get_tree().physics_frame
+	return [snow.get_spindrift_rate(), snow.get_spindrift_sources()]
+
+
+func _run_spindrift_tests() -> void:
+	print("Spindrift off ridges (follow-up 42):")
+	# The cornice ridge (crest along z at x = 0, a 50 degree lee face to the east), 0.4 m of new snow, westerlies.
+	await _setup("cornice", 256.0, 64, -10.0)
+	snow.add_snow(40.0, 100.0)
+	var calm: Array = await _spindrift_at(4.0, -10.0)
+	var gale: Array = await _spindrift_at(18.0, -10.0)
+	var storm: Array = await _spindrift_at(26.0, -10.0)
+	var srcs: Array = gale[1]
+	var on_crest := srcs.size() > 0
+	for s: Dictionary in srcs:
+		var p: Vector3 = s["position"]
+		var v: Vector3 = s["velocity"]
+		if absf(p.x) > 8.0 or v.x <= 0.0:
+			on_crest = false
+	_check("no plume under the threshold wind (Li and Pomeroy 1997)", calm[0] == 0.0 and (calm[1] as Array).is_empty(), "%.2f kg/s at 4 m/s (6.4 m/s at most over the crest)" % calm[0])
+	_check("a gale streams snow off the lee crest, downwind", gale[0] > 0.0 and on_crest, "%.1f kg/s from %d sources at 18 m/s, all on the crest blowing east" % [gale[0], srcs.size()])
+	_check("stronger wind, far more snow (flux about u^4)", storm[0] > 2.5 * gale[0], "%.1f kg/s at 26 m/s against %.1f at 18" % [storm[0], gale[0]])
+	var cloud: SnowPowderCloud3D = snow.get_spindrift()
+	_check("the plume is a Flow gas fed from the crest", cloud != null and (not ClassDB.class_exists("PhysXFlow3D") or (cloud.has_flow() and cloud.get_active_sources() == (storm[1] as Array).size())), "%s, %d emitters" % ["flow" if cloud and cloud.has_flow() else "no flow", cloud.get_active_sources() if cloud else 0])
+	_check("drier air thins it sooner (sublimation)", SnowCover3D.spindrift_fade(0.4) > 2.0 * SnowCover3D.spindrift_fade(0.95), "%.3f /s at 40%%, %.3f at 95%%" % [SnowCover3D.spindrift_fade(0.4), SnowCover3D.spindrift_fade(0.95)])
+	var wet: Array = await _spindrift_at(26.0, 2.0)
+	_check("no plume from wet snow", wet[0] == 0.0, "%.2f kg/s at +2 C" % wet[0])
+
+
+func _road_wheel(spin: float, roll: float) -> RigidBody3D:
+	# A 0.66 m car tyre, 0.2 m tread, 300 kg on it (3 kN), held in place resting on the snow at x = 0, z = 1.
+	var w := RigidBody3D.new()
+	w.mass = 300.0
+	w.freeze = true
+	w.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
+	var cs := CollisionShape3D.new()
+	var cy := CylinderShape3D.new()
+	cy.radius = 0.33
+	cy.height = 0.2
+	cs.shape = cy
+	cs.rotation_degrees = Vector3(90, 0, 0) # its axle along z: it rolls along x
+	w.add_child(cs)
+	add_child(w)
+	w.add_to_group("world_contact")
+	w.global_position = Vector3(0.3, snow.get_ground_height_at(Vector3(0.3, 0, 1)) + snow.get_depth_at(Vector3(0.3, 0, 1)) + 0.3, 1.0)
+	w.linear_velocity = Vector3(roll, 0, 0)
+	w.angular_velocity = Vector3(0, 0, -(roll + spin) / 0.33)
+	return w
+
+
+func _run_road_tests() -> void:
+	print("Packed-snow roads (follow-up 43):")
+	var g0 := SnowCover3D.ice_grip(-0.5, 0.0)
+	var g20 := SnowCover3D.ice_grip(-20.0, 0.0)
+	var gw := SnowCover3D.ice_grip(-5.0, 1.0)
+	_check("ice grips least near melting and when wet, better in the cold (Wallman and Astrom 2001)", g0 < 0.07 and g20 > 0.13 and g20 < 0.16 and gw < 0.06, "%.2f at -0.5 C, %.2f at -20 C, %.2f wet" % [g0, g20, gw])
+	await _surface_setup(60.0, 250.0)
+	weather.temperature = -6.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var q := Vector3(0.3, 0, 1.0)
+	snow.advance(3600.0) # past the new-snow layer: an hour on, nothing fresh on top
+	await get_tree().physics_frame
+	var loose := snow.get_grip_at(q)
+	# A wheel rolling without slipping: it packs the snow, it does not polish it.
+	var w := _road_wheel(0.0, 5.0)
+	for i in 60:
+		await get_tree().physics_frame
+	var packed := snow.get_packed_at(q)
+	var rolled_glaze := snow.get_glaze_at(q)
+	var packed_grip := snow.get_grip_at(q)
+	w.queue_free()
+	# Spinning in place (stuck at a junction): its friction melts the surface and the melt freezes as a glaze.
+	w = _road_wheel(10.0, 0.0)
+	for i in 600:
+		await get_tree().physics_frame
+	w.queue_free()
+	var glaze := snow.get_glaze_at(q)
+	var polished := snow.get_grip_at(q)
+	_check("a rolling wheel packs the snow and leaves no glaze", packed > 0.5 and rolled_glaze < 0.005 and packed_grip < loose and packed_grip > 0.2, "packed %.2f, glaze %.3f mm; grip %.2f loose, %.2f packed" % [packed, rolled_glaze, loose, packed_grip])
+	_check("a spinning wheel polishes a glaze: the grip falls toward ice", glaze > 0.05 and polished < packed_grip - 0.03, "%.2f mm of glaze after 10 s at 10 m/s slip; grip %.2f" % [glaze, polished])
+	# Settled: the cells carry it through an update, then a warm spell melts the glaze and new snow covers it.
+	snow.advance(60.0)
+	await get_tree().physics_frame
+	var kept := snow.get_glaze_at(q)
+	await _weather_to(4.0, 3.0)
+	var melted := snow.get_glaze_at(q)
+	weather.temperature = -6.0
+	weather.snap_to_settings()
+	snow.add_snow(5.0, 100.0)
+	_check("the glaze lasts through updates, melts in a thaw", kept > 0.8 * glaze and melted < 0.5 * kept, "%.2f mm after an update, %.2f after 3 h at +4 C" % [kept, melted])
+	_check("new snow on a packed road: the tyre runs in loose snow again", absf(snow.get_grip_at(q) - 0.3) < 0.02, "grip %.2f" % snow.get_grip_at(q))
 
 
 func _run_crust_tests() -> void:
@@ -2238,6 +2361,7 @@ func _run_climate_tests() -> void:
 	var storm_before := snow.get_world_swe_at(far_q)
 	snow.add_snow(20.0, 100.0)
 	_check("add_snow falls on the world tier outside the square", absf(snow.get_world_swe_at(far_q) - storm_before - 20.0) < 1.0, "%.0f to %.0f mm at 760 m" % [storm_before, snow.get_world_swe_at(far_q)])
+	await _run_melt_runoff_tests()
 
 	await _run_recipe_tests()
 
@@ -2307,6 +2431,52 @@ func _run_climate_tests() -> void:
 			hits += 1
 	_check("cornice mesh: overhangs with collision", cor.get_segment_count() > 10 and tries > 0 and hits >= tries * 0.8, "%d segments; a ray down halfway out stops on the cornice above the lee face in %d of %d places" % [cor.get_segment_count(), hits, tries])
 	cor.queue_free()
+
+
+# Melt water downhill (round 6, docs/ideas/snow.md): a warm clear spell melts the world tier's snow outside the
+# square, and that melt is the weather's ground water there (what WeatherRunoff3D routes into streams); inside
+# the square the square's own runoff stands for it, counted once.
+func _run_melt_runoff_tests() -> void:
+	weather.temperature = 14.0
+	weather.snap_to_settings()
+	for h in 4:
+		snow.advance(3600.0)
+		snow.advance_world(3600.0)
+	weather.advance(60.0)
+	var cs := weather.extent / weather.resolution
+	var best := Vector3.ZERO
+	var melt := 0.0
+	for i in range(-7, 7):
+		for j in range(-7, 7):
+			var q := Vector3((i + 0.5) * cs, 0, (j + 0.5) * cs)
+			if absf(q.x - snow.global_position.x) < snow.extent and absf(q.z - snow.global_position.z) < snow.extent:
+				continue
+			var r := snow.get_runoff_at(q)
+			if r > melt:
+				melt = r
+				best = q
+	var got := weather.get_ground_water_input_at(best)
+	print("  melt: %.2f mm/h leaves the world tier's pack at %s; the weather's ground water there %.2f mm/h (rain %.2f)" % [melt, str(best), got, weather.get_rainfall_at(best)])
+	_check("melt outside the square reaches the weather's ground water", melt > 0.1 and absf(got - melt) < 0.05 * melt + 0.01, "%.2f mm/h melt, %.2f mm/h ground water at %s" % [melt, got, str(best)])
+	# Inside the square: the weather cell's centre reads the square's runoff (averaged to the world's 16 m
+	# cells), not the square's and the world's added. Rain on the square cleared bare, the world's pack under it.
+	snow.clear()
+	weather.rain_rate = 4.0
+	weather.cloud_cover = 1.0
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.advance(3600.0)
+	weather.advance(60.0)
+	var c := snow.global_position + Vector3(0.5 * cs - fposmod(snow.global_position.x, cs), 0, 0.5 * cs - fposmod(snow.global_position.z, cs))
+	var near_avg := 0.0
+	for k in 64:
+		near_avg += snow.get_runoff_at(c + Vector3((k % 8) * 4.0 - 14.0, 0, (k / 8) * 4.0 - 14.0)) / 64.0
+	var got_in := weather.get_ground_water_input_at(c)
+	print("  square: %.1f mm snow, rain %.2f mm/h at %s" % [snow.get_swe_at(c), weather.get_rainfall_at(c), str(c)])
+	_check("the square's runoff is counted once", near_avg > 1.0 and absf(got_in - near_avg) < 0.25 * near_avg + 0.02, "%.2f mm/h ground water at %s, the square's %.2f mm/h (bare), the world tier's pack %.0f mm" % [got_in, str(c), near_avg, snow.get_world_swe_at(c)])
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
 
 
 func _longest_cornice() -> Vector3:
@@ -2525,6 +2695,8 @@ func _build_view() -> void:
 			await _setup("avalanche", 256.0, 128, -8.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
+	elif view == "spindrift":
+		await _setup("cornice", 512.0, 256, -12.0)
 	elif view == "icicles" and OS.get_cmdline_user_args().has("--hero") and not OS.get_cmdline_user_args().has("--wall"):
 		# --hero looks out from under the roof: snow out to 64 m, past where the view meets the horizon haze.
 		await _setup("flat", 128.0, 256, -6.0)
@@ -2592,6 +2764,9 @@ func _build_view() -> void:
 		return
 	elif view == "windblown":
 		await _build_windblown(cam)
+		return
+	elif view == "spindrift":
+		await _build_spindrift(cam)
 		return
 	elif view == "shelter":
 		await _build_shelter(cam)
@@ -2691,6 +2866,19 @@ func _build_trail(cam: Camera3D) -> void:
 		_precipitate(hours, 2.0)
 	elif OS.get_cmdline_user_args().has("--settled"):
 		snow.add_snow(120.0, 300.0) # 0.4 m of settled snow: cohesive, prints break lumps out of it
+	elif slush_mm > 0.0:
+		# --slush=MM: 15 cm of old spring snow on concrete frost (a stand-in ground answering frost_at), then rain
+		# at +8 C for ten hours: what the pack cannot hold stays in its base.
+		var frozen := GDScript.new()
+		frozen.source_code = "extends WorldGround\nfunc _frost_at(_p: Vector3) -> Vector3:\n\treturn Vector3(0.0, 0.3, 0.0)\n"
+		frozen.reload()
+		WorldContracts.set_ground(frozen.new())
+		snow.add_snow(50.0, 330.0)
+		print("slush: before the rain %.3f m, %.0f mm" % [snow.get_depth_at(Vector3(0, 0, 1)), snow.get_swe_at(Vector3(0, 0, 1))])
+		weather.temperature = 8.0
+		_precipitate(10.0, slush_mm / 10.0)
+		var sp := Vector3(0.0, 0, 1.0)
+		print("slush: %.3f m of %.3f m, wetness %.2f, %.0f mm SWE" % [snow.get_slush_at(sp), snow.get_depth_at(sp), snow.get_wetness_at(sp), snow.get_swe_at(sp)])
 	else:
 		snow.add_snow(45.0, 110.0) # 0.41 m of fresh snow
 	if crust_cycles > 0.0:
@@ -2968,6 +3156,63 @@ func _build_windblown(cam: Camera3D) -> void:
 	cam.fov = 45.0
 	for i in 4:
 		await get_tree().physics_frame
+	await _save_frame("")
+	get_tree().quit()
+
+
+func _build_spindrift(cam: Camera3D) -> void:
+	# The cornice ridge (crest along z, 150 m up, a 50 degree lee face to the east) after 0.3 m of new snow, in a
+	# westerly gale: snow streams off the crest and out over the lee in plumes (follow-up 42).
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 800.0
+	sun.rotation_degrees = Vector3(-22.0, 150.0, 0.0) # low, from the south-east: the plumes lit from the side
+	_add_terrain(512.0, 256, Color(0.33, 0.31, 0.27), 32.0)
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	snow.add_snow(30.0, 100.0)
+	var wind := 20.0
+	var at_s := 12.0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--wind="):
+			wind = float(a.substr(7))
+		if a.begins_with("--at="):
+			at_s = float(a.substr(5))
+	weather.wind_speed = wind
+	weather.wind_direction = Vector2(1, 0)
+	weather.humidity = 0.7
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(600.0)
+	print("spindrift: %.0f kg/s off the crest from %d sources at %.0f m/s" % [snow.get_spindrift_rate(), snow.get_spindrift_source_count(), wind])
+	print("  world wind at the crest %s" % str(WorldContracts.get_weather().wind_at(Vector3(0, 160, 0))))
+	for sd: Dictionary in snow.get_spindrift_sources().slice(0, 3):
+		print("  source at %s, %s m/s, %.0f kg/s" % [str(sd["position"]), str(sd["velocity"]), sd["rate"]])
+	# From the south along the ridge, a little above the crest: the ridge in profile, the wind blowing left to right
+	# and the plumes streaming off the crest over the lee against the sky.
+	cam.position = Vector3(70.0, 185.0, 470.0)
+	cam.far = 3000.0
+	cam.look_at(Vector3(70.0, 150.0, 0.0))
+	cam.fov = 50.0
+	var wenv: Environment = null
+	for c in get_children():
+		if c is WorldEnvironment:
+			wenv = c.environment
+	var traced := wenv != null and wenv.pathtracing_enabled
+	if traced:
+		wenv.pathtracing_enabled = false
+	# One physics tick a frame so Flow steps with the frames (as the powder view).
+	Engine.max_physics_steps_per_frame = 1
+	for i in int(at_s * Engine.physics_ticks_per_second):
+		await get_tree().physics_frame
+	var cloud: SnowPowderCloud3D = snow.get_spindrift()
+	print("spindrift: flow %s, %d emitters" % ["yes" if cloud and cloud.has_flow() else "no", cloud.get_active_sources() if cloud else 0])
+	if traced:
+		await _save_frame("_raster")
+		process_mode = Node.PROCESS_MODE_ALWAYS
+		get_tree().paused = true
+		wenv.pathtracing_enabled = true
 	await _save_frame("")
 	get_tree().quit()
 
@@ -3311,6 +3556,12 @@ func _build_avalanche(cam: Camera3D) -> void:
 		var pflow: Node = av.get_powder_cloud().get_flow()
 		if pflow:
 			pflow.set("scattering_resolution", 0) # full: quarter averages away the billows at still sizes
+			for a in OS.get_cmdline_user_args():
+				if a.begins_with("--flow-set="):
+					# --flow-set=prop=value[;prop=value]: try PhysXFlow3D settings on the powder cloud.
+					for kv in a.substr(11).split(";"):
+						var pv := kv.split("=")
+						pflow.set(pv[0], str_to_var(pv[1]))
 		av.trigger(Vector3(-40.0, 0, 0), 60.0)
 		surface.extent = 320.0 # the deep-snow geometry over the whole face the camera sees, out to the camera
 		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).

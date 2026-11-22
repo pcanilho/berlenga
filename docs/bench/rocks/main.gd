@@ -78,6 +78,8 @@ extends Node3D
 #   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
+#   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
+#                         frame; the landscape keeps it)
 #   --detail-octaves=N    with --world: the material's erosion detail octaves (4; 0 for none, a before frame);
 #                         --sun-shadow=0 drops the raster sun shadow map (A/B)
 #   --stand-test          with --world: a game trail (600 passes a year, 1.2 m) across the spot and a boar rooting disc
@@ -508,6 +510,8 @@ func _world() -> void:
 	land.load_all_heights()
 	if gen.has_sea_result() and not args.has("no-ground-surface"):
 		_beach_surface(tm)
+		if args.has("no-patch-relief"):
+			get_tree().process_frame.connect(func(): RenderingServer.global_shader_parameter_set("terrain_cliff_relief", Vector4()))
 	if args.has("water"):
 		var waters: Array = gen.build_water(self)
 		if args.has("sea-set"):

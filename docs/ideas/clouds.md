@@ -691,3 +691,70 @@ below it (Schultz et al. 2006, Mon. Wea. Rev. 134).
   8 km into the slab, so a lens running on beyond that ended on the sphere where the cap met it (and lenses
   further along a ray were never drawn). It now runs up to 16 km in a fixed 32 coarse steps (a count that varied
   between pixels stepped the plates' gaps), each step tested on the largest lift at its middle and both ends.
+
+## Review 11 (21 Nov 2026; docs: plates gone, rainbow fringe, boxy cloudlet, lake band a flat wall)
+
+- **Plates from humidity sheets.** The pile of plates is now moist and dry sheets 220 m apart in the dew depression
+  (wave_plate_depression(), wc_plate_dep()), stacked where a 9 km noise says so and fading 1.5 thicknesses from the
+  layer's middle: a lens condenses as one plate where the air is uniform and as a pile where it is layered, as
+  observed ("pile d'assiettes"; Ludlam 1980, Clouds and Storms). The old cut-out gaps went: they left a puffy blob
+  once the march reached 16 km. The wave march is fixed at 32 steps over at most 16 km (a step count that varied with
+  the range stepped the plates).
+- **Smooth crests.** mountain_wave_eta() reads the displacement grid with a cubic B-spline (16 taps on the CPU, 4
+  bilinear taps in GLSL; Sigg and Hadwiger 2005): linear reads put kinks at the grid lines into the lens outlines.
+- **Iridescence** is a softer tint (1 + 1.6 (tint - 1), clamped), only on the thin edge (profile 0 to 0.08 and
+  out by 0.9), with the droplet radius wandering 2.5 um over 700 m so the bands are not drawn by a ruler.
+- **Mid-layer cloudlets.** A thin cover thinned the cloudlets by raising the billows' threshold until only their
+  peaks were left, the fine octaves' cells of a few texels, drawn as blocks (one read as letters). The threshold now
+  stops at a 0.3 cover and a thinner cover fades the cloudlets instead; the cover is read through a 300 m warp and
+  near texels are smoothed (Quilez's improved texture interpolation). The mid cover itself and the stratocumulus
+  cells are domain-warped (Quilez) so no edge runs straight for kilometres.
+- **Lake band.** Snow curtains in three octaves (2.5 km, 800 m, 250 m stretched across the view) wander 1.5 km,
+  fade in over the 100 to 700 m under the base, and the cover share is 0.8 so the band breaks into cells; the bench's
+  shadow grid spans 60 km so the band's shadow has no straight edge.
+
+## Distant shafts in front of terrain (21 Nov 2026; Paulo's pick)
+
+The storms' rain and snow shafts and the lake-effect veils are marched in the sky shader, so they show only where
+the sky shows: a shaft standing between the camera and a far ridge vanishes in front of the ridge and reappears above
+it. Engines that draw far precipitation composite it against the depth buffer: Nubis and Red Dead Redemption 2's
+volumetrics (Schneider 2015, 2017; Bauer 2019) march the view ray only up to the scene depth and blend the result
+over the opaque scene; Hillaire's aerial perspective (2020) does the same for the air.
+
+- **Technique.** A depth-limited ray march over the scene: one screen-covering quad in the transparent pass reads
+  the depth texture, marches the same shaft functions as the sky (shared GLSL) from 1.5 km to the scene's depth, and
+  blends premultiplied over the terrain. Where there is no geometry the sky already draws the shaft, so the pass
+  skips sky pixels.
+- **Light.** The same terms as the sky: the sky's light under the base (ambient_bottom) and the sun through the cover
+  with the drops' Henyey-Greenstein phase. The march runs with unit lights (ambient (1, 0, 0), sun (0, 1, 0)), so one
+  march returns both weights; the material's own lighting supplies the lights: the sky's irradiance on a sideways
+  normal (half sky, half ground, as ambient_bottom) through ALBEDO, the sun's colour through light(). The cloud
+  uniforms are copied from the sky material each tick (WeatherMap3D distant_shafts, weather_shafts.cpp).
+- **Bench.** --no-distant-shafts for the A/B; a storm before the lenticular view's ridge:
+  `--view=lenticular --storm=3000,16000,2500,20,8 --cam=14000,700,24000,11100,600,12360 --fov=35`.
+- **Wave clouds, same day.** Scene's scout on a 1636 m crest got lenses of optical depth 0.09 with an 838 m wave:
+  the moist layer's clear air fell to RH 0.5 to 0.68 away from its altocumulus patches, so a lee wave over a gap
+  needed 600 m and more of lift. The layer's clear air now keeps RH 0.8 once its cover is 0.3 (wave_layer_rh()):
+  350 m of lift condenses a lens anywhere along a moist layer, as on wave days.
+- **Path tracing.** Hidden while the environment path traces: the tracer has its own media, and a screen quad would be
+  hit by camera rays.
+- **Cost.** Early-outs per storm on the ray's chord through the shaft's column and per pixel on sky depth; 24 steps
+  a storm, 16 for lake snow, as in the sky.
+
+## Review 12 (22 Nov 2026; docs: stair-stepped edges everywhere, melted-clay lens, no iridescence, no band)
+
+- **The common cause of the stair steps and the smooth cotton balls.** With the reprojection the cloud pass draws one
+  pixel of each 4x4 block a frame, so dFdx(EYEDIR) there spans four screen pixels: the noise was read at four
+  pixels' footprint (detail gone), and every revisit sent its ray through the same pixel centre, so a cloud's hard
+  edge (a lens, a turret) came out as a staircase. The derivative is now quartered, and each revisit moves the ray
+  inside its pixel on an R2 sequence (Roberts 2018): the resolve's running mean becomes the pixel's coverage, the
+  sub-pixel jitter TAA and Nubis use for edges.
+- **Lens as a stack.** The moist layer is flat-topped (exp(-d^4), about 800 m deep with sharp edges, as under an
+  inversion) where a Gaussian's tails let a strong wave condense a 1.5 km blob; the dry sheets between plates are
+  3 K drier (375 m more lift), so they stay clear as gaps instead of embossing grooves.
+- **Iridescence** 2.2 times the Airy tint's difference from white, over the edge's first 15 % of depth and out to
+  40 degrees from the sun.
+- **Lake band.** The bench view is clear apart from the band (a cold outbreak's sky), seen from 16 km aside looking up
+  it; the dark plane drawn for the lake (the water is the LakeStub contract) is hidden. The veils march to 60 km.
+- **Distant shafts' light.** The irradiance on a sideways normal is about twice ambient_bottom (the bright horizon and
+  sunlit ground in full): halved, so a veil keeps one brightness across the horizon.

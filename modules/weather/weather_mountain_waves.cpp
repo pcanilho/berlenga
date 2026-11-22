@@ -275,7 +275,30 @@ float mountain_wave_eta(const Vector<float> &p_eta, int p_n, const Vector2 &p_co
 		const float *c = e + (z * p_n + x) * WeatherMountainWaves::LEVELS;
 		return Math::lerp(c[l0], c[l0 + 1], fl);
 	};
-	return Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), fx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), fx), fz);
+	// Cubic B-spline across the cells (the sky's wc_wave_eta reads the same with four bilinear taps): a lens's edge is
+	// a contour of this field, and bilinear made it a polygon of straight runs.
+	auto bspline = [](float t, float *w) {
+		const float t2 = t * t;
+		const float t3 = t2 * t;
+		w[0] = (1.0f - 3.0f * t + 3.0f * t2 - t3) / 6.0f;
+		w[1] = (4.0f - 6.0f * t2 + 3.0f * t3) / 6.0f;
+		w[2] = (1.0f + 3.0f * t + 3.0f * t2 - 3.0f * t3) / 6.0f;
+		w[3] = t3 / 6.0f;
+	};
+	float wx[4];
+	float wz[4];
+	bspline(fx, wx);
+	bspline(fz, wz);
+	float sum = 0.0f;
+	for (int j = 0; j < 4; j++) {
+		const int zi = CLAMP(z0 - 1 + j, 0, p_n - 1);
+		float row = 0.0f;
+		for (int i = 0; i < 4; i++) {
+			row += wx[i] * at(CLAMP(x0 - 1 + i, 0, p_n - 1), zi);
+		}
+		sum += wz[j] * row;
+	}
+	return sum;
 }
 
 float WeatherMountainWaves::eta_at(const Vector3 &p_position) const {

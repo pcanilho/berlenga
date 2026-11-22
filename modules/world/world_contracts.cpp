@@ -71,6 +71,7 @@ float WorldWeather::contact_wetness_at(const Vector3 &p_position) const WW_CALL(
 float WorldWeather::sun_visibility_at(const Vector3 &p_position) const WW_CALL(_sun_visibility_at, contract_sun_visibility_at(p_position), 1.0f, p_position)
 float WorldWeather::canopy_closure_at(const Vector3 &p_position) const WW_CALL(_canopy_closure_at, contract_canopy_closure_at(p_position), 0.0f, p_position)
 float WorldWeather::frost_at(const Vector3 &p_position) const WW_CALL(_frost_at, contract_frost_at(p_position), 0.0f, p_position)
+float WorldWeather::glaze_at(const Vector3 &p_position) const WW_CALL(_glaze_at, contract_glaze_at(p_position), 0.0f, p_position)
 float WorldWeather::rainfall_at(const Vector3 &p_position) const WW_CALL(_rainfall_at, contract_rainfall_at(p_position), 0.0f, p_position)
 float WorldWeather::snowfall_at(const Vector3 &p_position) const WW_CALL(_snowfall_at, contract_snowfall_at(p_position), 0.0f, p_position)
 float WorldWeather::smoke_at(const Vector3 &p_position) const WW_CALL(_smoke_at, contract_smoke_at(p_position), 0.0f, p_position)
@@ -189,6 +190,7 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sun_visibility_at", "position"), &WorldWeather::sun_visibility_at);
 	ClassDB::bind_method(D_METHOD("canopy_closure_at", "position"), &WorldWeather::canopy_closure_at);
 	ClassDB::bind_method(D_METHOD("frost_at", "position"), &WorldWeather::frost_at);
+	ClassDB::bind_method(D_METHOD("glaze_at", "position"), &WorldWeather::glaze_at);
 	ClassDB::bind_method(D_METHOD("mean_wind_at", "position"), &WorldWeather::mean_wind_at);
 	ClassDB::bind_method(D_METHOD("wind_aloft_at", "position", "altitude"), &WorldWeather::wind_aloft_at);
 	ClassDB::bind_method(D_METHOD("terrain_lee_at", "position"), &WorldWeather::terrain_lee_at);
@@ -234,6 +236,7 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_sun_visibility_at, "position");
 	GDVIRTUAL_BIND(_canopy_closure_at, "position");
 	GDVIRTUAL_BIND(_frost_at, "position");
+	GDVIRTUAL_BIND(_glaze_at, "position");
 	GDVIRTUAL_BIND(_mean_wind_at, "position");
 	GDVIRTUAL_BIND(_wind_aloft_at, "position", "altitude");
 	GDVIRTUAL_BIND(_terrain_lee_at, "position");
@@ -574,6 +577,14 @@ float WorldSnow::albedo_at(const Vector3 &p_position) const {
 	return a >= 0.0f ? a : 0.8f;
 }
 
+float WorldSnow::grip_at(const Vector3 &p_position) const {
+	float r = -1.0f;
+	if (GDVIRTUAL_CALL(_grip_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_snow_grip_at(p_position) : -1.0f;
+}
+
 float WorldSnow::avalanche_pressure_at(const Vector3 &p_position) const {
 	float r = 0.0f;
 	if (GDVIRTUAL_CALL(_avalanche_pressure_at, p_position, r)) {
@@ -625,6 +636,7 @@ void WorldSnow::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_impurity", "position", "radius", "mg_per_m2"), &WorldSnow::add_impurity);
 	ClassDB::bind_method(D_METHOD("impurity_at", "position"), &WorldSnow::impurity_at);
 	ClassDB::bind_method(D_METHOD("albedo_at", "position"), &WorldSnow::albedo_at);
+	ClassDB::bind_method(D_METHOD("grip_at", "position"), &WorldSnow::grip_at);
 	ClassDB::bind_method(D_METHOD("avalanche_pressure_at", "position"), &WorldSnow::avalanche_pressure_at);
 	ClassDB::bind_method(D_METHOD("avalanche_peak_pressure_at", "position"), &WorldSnow::avalanche_peak_pressure_at);
 	ClassDB::bind_method(D_METHOD("canopy_load_at", "position"), &WorldSnow::canopy_load_at);
@@ -639,6 +651,7 @@ void WorldSnow::_bind_methods() {
 	GDVIRTUAL_BIND(_add_impurity, "position", "radius", "mg_per_m2");
 	GDVIRTUAL_BIND(_impurity_at, "position");
 	GDVIRTUAL_BIND(_albedo_at, "position");
+	GDVIRTUAL_BIND(_grip_at, "position");
 	GDVIRTUAL_BIND(_avalanche_pressure_at, "position");
 	GDVIRTUAL_BIND(_avalanche_peak_pressure_at, "position");
 	GDVIRTUAL_BIND(_canopy_load_at, "position");
@@ -1019,6 +1032,23 @@ Color WorldGround::albedo_at(const Vector3 &p_position) const {
 			}
 		}
 	}
+	// The plant cover over it (WorldPlantColorProvider): the sward and the placed plants hide the ground by the share
+	// they cover. Leaves are not darkened by rain the way soil is (a film on a leaf adds sheen, not much darkening).
+	const LocalVector<WorldPlantColorProvider *> *plants = WorldContracts::plant_color_providers_list();
+	if (plants) {
+		for (const WorldPlantColorProvider *pp : *plants) {
+			const Color v = pp->contract_plant_albedo_at(p_position);
+			const float k = CLAMP(v.a, 0.0f, 1.0f);
+			if (k <= 0.0f) {
+				continue;
+			}
+			if (c.a > 0.0f) {
+				c = Color(Math::lerp(c.r, v.r, k), Math::lerp(c.g, v.g, k), Math::lerp(c.b, v.b, k), c.a);
+			} else {
+				c = Color(v.r, v.g, v.b, k); // No ground colour known: the plants alone, as far as they cover.
+			}
+		}
+	}
 	// The snowpack over it, by the materials' cover on level ground (snow_cover_weight: the facets fill from about
 	// 1 cm, all buried by about 17 cm).
 	const WorldSnow *snow = WorldContracts::snow();
@@ -1167,6 +1197,18 @@ void WorldContracts::register_ground_color(WorldGroundColorProvider *p_provider)
 void WorldContracts::unregister_ground_color(WorldGroundColorProvider *p_provider) {
 	if (singleton) {
 		singleton->ground_color_providers.erase(p_provider);
+	}
+}
+
+void WorldContracts::register_plant_color(WorldPlantColorProvider *p_provider) {
+	if (singleton && p_provider && singleton->plant_color_providers.find(p_provider) < 0) {
+		singleton->plant_color_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_plant_color(WorldPlantColorProvider *p_provider) {
+	if (singleton) {
+		singleton->plant_color_providers.erase(p_provider);
 	}
 }
 
