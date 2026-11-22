@@ -308,6 +308,7 @@ func _ready() -> void:
 	await _breeze_tests()
 	await _high_water_tests()
 	await _late_frost_tests()
+	await _foehn_tests()
 	await _rime_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
@@ -2425,6 +2426,63 @@ func _late_frost_tests() -> void:
 	m.queue_free()
 	c.queue_free()
 	valley.queue_free()
+	await get_tree().physics_frame
+
+
+# Foehn (WeatherMap3D.foehn_winds): a moist wind across a 1500 m range rains out on the windward side and comes
+# down the lee several K warmer and far drier under a gap in the cloud; a dry wind warms the lee by drawdown alone;
+# a light wind none.
+func _foehn_tests() -> void:
+	var rs := GDScript.new()
+	rs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 1500.0 * exp(-p.x * p.x / (2.0 * 3000.0 * 3000.0))\n"
+	rs.reload()
+	var ridge := Node3D.new()
+	ridge.set_script(rs)
+	add_child(ridge)
+	var c := _new_clock(3, 12.0)
+	var m := _new_map()
+	m.extent = 32768.0
+	m.terrain_source = m.get_path_to(ridge)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_direction = Vector2(1, 0)
+	m.wind_speed = 10.0
+	m.humidity = 0.95
+	m.temperature = 10.0
+	m.cloud_cover = 0.8
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	var lee := Vector3(8000, 0, 0)
+	var wind := Vector3(-8000, 0, 0)
+	lee.y = 1500.0 * exp(-lee.x * lee.x / (2.0 * 3000.0 * 3000.0))
+	wind.y = lee.y
+	var w: WorldWeather = WorldContracts.get_weather()
+	var t_lee: float = w.air_temperature_at(lee)
+	var t_wind: float = w.air_temperature_at(wind)
+	var rh_lee: float = w.air_humidity_at(lee)
+	var rh_wind: float = w.air_humidity_at(wind)
+	var cc_lee: float = m.get_cloud_cover_at(lee)
+	var cc_wind: float = m.get_cloud_cover_at(wind)
+	_check("foehn: a moist wind across the range comes down the lee warm and dry (Elvidge and Renfrew 2016), the contract carries it",
+			t_lee > t_wind + 5.0 and rh_lee < rh_wind - 0.35,
+			"lee %.1f C at %.0f%%, windward %.1f C at %.0f%% (same height %.0f m)" % [t_lee, rh_lee * 100.0, t_wind, rh_wind * 100.0, lee.y])
+	_check("foehn: a gap opens in the cloud over the lee", cc_lee < cc_wind - 0.3, "cover %.2f lee, %.2f windward" % [cc_lee, cc_wind])
+	m.humidity = 0.4
+	m.snap_to_settings()
+	m.advance(4.0 * 3600.0)
+	var dry: float = w.air_temperature_at(lee) - w.air_temperature_at(wind)
+	_check("foehn: dry air warms the lee by drawdown alone, about 3 K a km of descent", dry > 3.0 and dry < 6.0, "%.1f K over %.0f m of descent" % [dry, 1500.0 - lee.y])
+	m.wind_speed = 3.0
+	m.snap_to_settings()
+	m.advance(4.0 * 3600.0)
+	var calm: float = w.air_temperature_at(lee) - w.air_temperature_at(wind)
+	_check("foehn: a light wind brings none down", absf(calm) < 0.3, "%.2f K" % calm)
+	m.queue_free()
+	c.queue_free()
+	ridge.queue_free()
 	await get_tree().physics_frame
 
 # The last flood's mark from its real producers (WorldWater.high_water_at): a river's sections and a lake fed over a

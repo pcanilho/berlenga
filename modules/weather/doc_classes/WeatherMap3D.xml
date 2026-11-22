@@ -358,6 +358,13 @@
 				The fire cloud a plume carrying [param heat] watts of convective heat would make in this weather: x its rise (m; through the sun-mixed layer near the ground, then by Briggs's 1975 laws in the stable air above, bent over by the wind), y the lifting condensation level (125 m per kelvin of dew point depression), z its strength (0: none; 1: a full cumulus cap; up to 2 as it grows into a pyrocumulonimbus, from about 2 km of rise past the condensation level).
 			</description>
 		</method>
+		<method name="get_foehn_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The foehn at [param position] (see [member foehn_winds]): x the lee's warming (K), y its dew point change (K, negative), z the cloud gap (0..1). [method get_air_temperature_at] and [method get_air_humidity_at] include it.
+			</description>
+		</method>
 		<method name="get_fog_drip_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -1180,6 +1187,9 @@
 		</member>
 		<member name="dust_storms" type="bool" setter="set_dust_storms" getter="is_dust_storms" default="true">
 			Strong dry wind over loose ground raises mineral dust into its own layer: carried by the wind near the ground, settling at about 1.5 cm/s, washed out by rain, dimming the sun orange-brown and thickening the haze. A storm's downburst outflow piles it at its gust front into a haboob wall. Off clears it.
+		</member>
+		<member name="foehn_winds" type="bool" setter="set_foehn_winds" getter="is_foehn_winds_enabled" default="true">
+			Foehn in the lee of ranges: a wind across high ground comes down its lee warmer and drier (Elvidge and Renfrew 2016). Air drawn down from crest level warms about 3 K for each km of descent; where the windward rise rains the water out, the latent heat kept going up adds more, and the dew point falls to the crest's. A gap opens in the cloud over the lee. It needs a wind over about 4 m/s at 10 m and 150 m or more of descent from the highest ground up to 20 km upwind, and fades 30 km past the crest. It feeds [method get_air_temperature_at] and [method get_air_humidity_at], so snow melts and fuels dry through the weather contract.
 		</member>
 		<member name="fog_drip" type="bool" setter="set_fog_drip" getter="is_fog_drip_enabled" default="true">
 			Fog drip: where the ground stands in the cloud, plants comb the cloud water out, deposition = LWC x wind x a capture efficiency (Lovett 1984), 0.003 over short plants up to 0.018 under a closed canopy ([method get_canopy_closure_at]; deposition velocities of about 2 to 9 cm/s in a 5 m/s wind, Gallagher et al. 1988, Katata et al. 2008). It enters the canopy's water balance with the rain, so it drips once the leaves hold their storage, wets the ground under the trees and feeds the runoff. In the cloud the air is saturated and the canopy does not dry.
