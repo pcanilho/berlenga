@@ -2610,6 +2610,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Avalanche tracks",
+   "settings": [
+    "PlantGenerator.make_avalanche_track()"
+   ],
+   "note": "",
+   "what": "ground an avalanche cleared shows torn turf and debris, then fireweed, ferns and tall forbs.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Boar rooting",
    "settings": [
     "PlantGenerator.make_rooting()",
