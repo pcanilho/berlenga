@@ -6134,7 +6134,7 @@ void RockField3D::_update_react(double p_delta) {
 							Vector2 d(o.x - c2.x, o.z - c2.y);
 							const float dl = d.length();
 							// How far out in the footprint, 1 at its edge.
-							const float edge = oval ? Math::sqrt(Math::pow(d.dot(fu) / hu, 2.0f) + Math::pow(d.dot(fv) / hw, 2.0f)) : dl / MAX(foot, 1e-3f);
+							const float edge = oval ? Math::sqrt(Math::pow(float(d.dot(fu) / hu), 2.0f) + Math::pow(float(d.dot(fv) / hw), 2.0f)) : dl / MAX(foot, 1e-3f);
 							if (edge > 1.0f + r / MAX(foot_min, 1e-3f) || o.y + r < bottom - 0.02f) {
 								continue;
 							}
