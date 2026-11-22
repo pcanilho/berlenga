@@ -13128,6 +13128,25 @@ void TreeGenerator::_plan_wounds() {
 		}
 		len += n.length;
 	}
+	if (cliff_angle > 0.0f && cliff_dead > 0.0f && len >= 1.0f) {
+		// A cliff tree's strip-bark stem (trees.md 5bg; Matthes, Larson and Kelly 2002): the bark died over the
+		// sector fed by a lost root, from the foot to the dead limbs above it, long ago, and woundwood rolled in
+		// thick along both edges (Shigo 1989) but never closed. Drawn as an old bark strip (the lightning strip's
+		// shape, wide and healed at the edges); its bearing is the dead sector's (_cliff_bend). stem_at's azimuth runs
+		// from +X toward -Z on an upright stem, the sector's from +X toward +Z.
+		RandomPCG cr;
+		cr.seed(uint64_t(seed) * 2654435761u + 0x73747269u);
+		Wound w;
+		w.kind = WOUND_LIGHTNING;
+		w.s0 = 0.0f;
+		w.s1 = len * Math::lerp(0.7f, 0.95f, cr.randf());
+		w.az0 = -cliff_dead_az;
+		w.twist = (cr.randf() < 0.5f ? -1.0f : 1.0f) * float(Math::TAU) / Math::lerp(6.0f, 14.0f, cr.randf());
+		w.half_w = MIN(cliff_dead * 0.6f, 1.2f) * MAX(nodes[ms].radius, 0.03f);
+		w.age = Math::lerp(30.0f, 120.0f, cr.randf());
+		w.salt = cr.rand();
+		wounds.push_back(w);
+	}
 	if (len < 2.5f || r13 <= 0.0f) {
 		return;
 	}
@@ -17081,6 +17100,190 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 	}
 }
 
+// Trees on cliffs (trees.md 5bg). A tree rooted in a crevice of a steep rock face leaves the face roughly square to it,
+// then turns up (negative gravitropism, set in reaction wood) and leans out toward the open sky: the J or sabre form of
+// cliff cedars, yews and pines (Larson, Matthes and Kelly 2000, Cliff Ecology; Kelly and Larson 1997 on Thuja
+// occidentalis of the Niagara Escarpment). Built in two steps so neither the collar code (which assumes an upright
+// stem on level soil) nor gravity's work on the crown is redone. First the grown skeleton is bent back over the face,
+// toward -Z, by the face's angle less the final lean, along the stem from a little above the collar: a skeletal
+// bend, each limb carried rigidly with the stem node it leaves (Pirk et al. 2012, Plastic Trees: a grown skeleton
+// adapted after the fact), so limbs low in the bend never fold as a space bend would fold them. Then the finished
+// mesh is turned about the foot by the face's angle (_cliff_turn): the level soil becomes the face, the collar and
+// roots lie on it, and the crown ends up turned by the lean alone, so its droop, leaf angles and moss stay true.
+void TreeGenerator::_cliff_bend() {
+	if (cliff_angle <= 0.0f || fallen || fallen_branch || nodes.size() < 2) {
+		return;
+	}
+	// The spine: the root node, then the main stem (a child of the root, as _main_stem finds it) up its leader.
+	LocalVector<int> spine;
+	spine.push_back(0);
+	for (int k = nodes[0].main >= 0 ? nodes[0].main : _main_stem(); k > 0 && k < int(nodes.size()) && !nodes[k].removed; k = nodes[k].main) {
+		spine.push_back(k);
+	}
+	if (spine.size() < 2) {
+		return;
+	}
+	const float r0 = nodes[spine[1]].radius;
+	const float delta = cliff_angle - cliff_lean;
+	// The bend starts over the collar (whose root sweep reaches about 1.2 stem radii up) and runs over a metre or two,
+	// tighter on small trees; curvature stays under 1 / (2 r) so the stem's inner side never folds.
+	float total = 0.0f;
+	for (const int k : spine) {
+		total += nodes[k].length;
+	}
+	const float s0 = MAX(0.15f, 2.5f * r0);
+	const float ls = MAX(MIN(Math::lerp(0.6f, 1.6f, float((uint32_t(seed) * 2654435761u >> 9) & 255u) / 255.0f), 0.45f * total), 3.0f * delta * r0);
+	auto bend_at = [&](float p_s) {
+		return -delta * Math::smoothstep(s0, s0 + ls, p_s);
+	};
+	// Each spine node's old start and its turn; the new start chains from the previous new end.
+	const int count = int(nodes.size());
+	LocalVector<int> attach; // Per node: the spine node its limb leaves (-1: on the spine).
+	attach.resize(count);
+	for (int i = 0; i < count; i++) {
+		attach[i] = -1;
+	}
+	LocalVector<int> limb_root; // Per limb node: the first node of its limb (a spine node's lateral).
+	limb_root.resize(count);
+	LocalVector<uint8_t> on_spine;
+	on_spine.resize(count);
+	for (int i = 0; i < count; i++) {
+		on_spine[i] = 0;
+	}
+	for (const int k : spine) {
+		on_spine[k] = 1;
+	}
+	// Limbs: everything reached from a spine node's laterals (walk down main and laterals).
+	// Sectored dieback (Larson, Matthes and Kelly 2000; Matthes, Larson and Kelly 2002, Sectored architecture): a
+	// cliff tree's stem carries water in strips from each root to the limbs above it, so when a root dies in a crevice
+	// that dries or breaks, the bark over its strip dies to the top (a strip-bark stem, _plan_wounds) and the limbs on
+	// that side die with it, kept as grey dead wood without their finest twigs.
+	RandomPCG dr;
+	dr.seed(uint64_t(seed) * 0x9e3779b9u + 0x636c6966u);
+	const float foot_y = nodes[0].start.y;
+	LocalVector<int> stack;
+	for (const int k : spine) {
+		for (int l = nodes[k].first_lateral; l >= 0; l = nodes[l].next_sibling) {
+			bool dead_limb = false;
+			if (cliff_dead > 0.0f && !nodes[l].removed) {
+				const Vector2 h(nodes[l].dir.x, nodes[l].dir.z);
+				if (h.length_squared() > 1e-6f) {
+					const float off = Math::abs(Math::angle_difference(cliff_dead_az, float(Math::atan2(h.y, h.x))));
+					const float above = Math::smoothstep(0.3f, 1.0f, float(nodes[l].start.y - foot_y));
+					dead_limb = dr.randf() < 0.9f * above * (1.0f - Math::smoothstep(cliff_dead * 0.8f, cliff_dead * 1.4f, off));
+				}
+			}
+			stack.push_back(l);
+			while (!stack.is_empty()) {
+				const int n = stack[stack.size() - 1];
+				stack.resize(stack.size() - 1);
+				if (n < 0 || n >= count || on_spine[n] || attach[n] >= 0) {
+					continue;
+				}
+				attach[n] = k;
+				limb_root[n] = l;
+				if (dead_limb && !nodes[n].removed) {
+					if (nodes[n].radius < 0.006f && n != l) {
+						nodes[n].removed = true;
+					} else {
+						nodes[n].dead = true;
+						nodes[n].leafy = false;
+					}
+				}
+				if (nodes[n].main >= 0) {
+					stack.push_back(nodes[n].main);
+				}
+				for (int c = nodes[n].first_lateral; c >= 0; c = nodes[c].next_sibling) {
+					stack.push_back(c);
+				}
+			}
+		}
+	}
+	LocalVector<Vector3> old_start;
+	LocalVector<Basis> turn;
+	old_start.resize(count);
+	turn.resize(count);
+	for (int i = 0; i < count; i++) {
+		old_start[i] = nodes[i].start;
+	}
+	// Each spine node starts where its parent's turned frame carries its old start (the main stem's first node need
+	// not start at the root node's end), and turns by the bend at its middle.
+	float s = 0.0f;
+	for (uint32_t q = 0; q < spine.size(); q++) {
+		const int k = spine[q];
+		Node &n = nodes[k];
+		const Basis b(Vector3(1, 0, 0), bend_at(s + 0.5f * n.length));
+		turn[k] = b;
+		if (q > 0) {
+			const int pk = spine[q - 1];
+			n.start = nodes[pk].start + turn[pk].xform(old_start[k] - old_start[pk]);
+		}
+		n.dir = b.xform(n.dir).normalized();
+		s += n.length;
+	}
+	// Limbs leave the stem where its turned frame carries their base, and keep the crown's orientation: a limb low on
+	// the stem's level run grew up from it toward the light over the years as one in the crown did, so every limb takes
+	// the full bend about its own base (net turn: the lean alone) instead of being swung down with the stem.
+	const Basis limb_turn(Vector3(1, 0, 0), -delta);
+	for (int i = 0; i < count; i++) {
+		const int k = attach[i];
+		if (k < 0) {
+			continue;
+		}
+		const int L = limb_root[i];
+		const Vector3 base = nodes[k].start + turn[k].xform(old_start[L] - old_start[k]);
+		Node &n = nodes[i];
+		n.start = base + limb_turn.xform(old_start[i] - old_start[L]);
+		n.dir = limb_turn.xform(n.dir).normalized();
+	}
+	// The rock: wood that would run behind the face (level space: under the soil plane) is not there; it never grew
+	// past the stone (Plastic Trees' obstacle pruning). Parents come before their children in the node list.
+	for (int i = 1; i < count; i++) {
+		Node &n = nodes[i];
+		if (n.removed || on_spine[i]) {
+			continue;
+		}
+		if ((n.parent >= 0 && nodes[n.parent].removed && !on_spine[n.parent]) || n.end().y < foot_y + 0.5f * MAX(n.radius, 0.01f)) {
+			n.removed = true;
+		}
+	}
+	for (Bud &b : buds) {
+		if (b.node >= 0 && b.node < count && (nodes[b.node].removed || nodes[b.node].dead)) {
+			b.alive = false;
+		}
+	}
+}
+
+// The finished mesh turned about the stem's foot by the face's angle, so the level soil becomes the face falling
+// toward +Z (_cliff_bend above). A rigid turn: normals and tangents turn with it.
+void TreeGenerator::_cliff_turn(Builder &r_b) const {
+	if (cliff_angle <= 0.0f || fallen || fallen_branch || nodes.is_empty() || r_b.verts.is_empty()) {
+		return;
+	}
+	const Basis b(Vector3(1, 0, 0), cliff_angle);
+	const Vector3 o = nodes[0].start;
+	const int nv = r_b.verts.size();
+	Vector3 *vw = r_b.verts.ptrw();
+	for (int v = 0; v < nv; v++) {
+		vw[v] = o + b.xform(vw[v] - o);
+	}
+	if (r_b.normals.size() == nv) {
+		Vector3 *nw = r_b.normals.ptrw();
+		for (int v = 0; v < nv; v++) {
+			nw[v] = b.xform(nw[v]);
+		}
+	}
+	if (r_b.use_tangents && r_b.tangents.size() >= nv * 4) {
+		float *tw = r_b.tangents.ptrw();
+		for (int v = 0; v < nv; v++) {
+			const Vector3 t = b.xform(Vector3(tw[v * 4], tw[v * 4 + 1], tw[v * 4 + 2]));
+			tw[v * 4] = t.x;
+			tw[v * 4 + 1] = t.y;
+			tw[v * 4 + 2] = t.z;
+		}
+	}
+}
+
 Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	struct SpiralGuard {
 		~SpiralGuard() { tube_spiral = 0.0f; }
@@ -18032,6 +18235,27 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			root_bend[k] *= 0.4f;
 		}
 	}
+	if (cliff_angle > 0.0f && roots_on && !fallen && !fallen_branch) {
+		// On a cliff (trees.md 5bg) the roots leave the crevice down and across the face along its joints, where water
+		// and fines collect, and run far for a small tree before they find a crack to follow in (Larson, Matthes and
+		// Kelly 2000: cliff roots in fractures); none climbs the face. In level space down the face is +Z (_cliff_turn).
+		for (uint32_t k = 0; k < root_az.size(); k++) {
+			static const float JOINTS[5] = { 0.0f, float(Math::PI) * 0.25f, float(Math::PI) * 0.5f, float(Math::PI) * 0.75f, float(Math::PI) };
+			float best = 0.0f, best_d = 1e9f;
+			for (const float j : JOINTS) {
+				const float d = Math::abs(Math::angle_difference(root_az[k], j));
+				if (d < best_d) {
+					best_d = d;
+					best = j;
+				}
+			}
+			root_az[k] = best + 0.2f * Math::angle_difference(best, root_az[k]);
+			if (root_len[k] > 0.0f) {
+				root_len[k] *= Math::lerp(1.4f, 2.2f, root_rng.randf()) * (0.75f + 0.25f * Math::sin(root_az[k]));
+			}
+			root_bend[k] *= 0.3f;
+		}
+	}
 	foot_roots.az = root_az;
 	foot_roots.len = root_len;
 	foot_roots.bend = root_bend;
@@ -18106,7 +18330,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					const float a_w = rr * 1.15f, b_h = rr * 0.85f * (1.0f - 0.55f * Math::smoothstep(0.25f, 0.6f, t));
 					const float d_c = r_t + root_push(root_top, root_az[best]) * (1.0f - t) + root_len[best] * Math::pow(t, 1.1f) + rr * Math::smoothstep(0.0f, 0.3f, t);
 					const float s1 = Math::smoothstep(0.0f, 0.35f, t);
-					const float yc = (root_top - b_h) * (1.0f - s1) * (1.0f - s1) - rr * (0.1f + 2.0f * Math::smoothstep(0.35f, 0.85f, t)) * s1;
+					// On a cliff (trees.md 5bg) a root runs plastered over the bare rock for most of its length, half
+					// sunk where it has wedged into its crack, and only goes in at its end.
+					const float yc = cliff_angle > 0.0f ? (root_top - b_h) * (1.0f - s1) * (1.0f - s1) - rr * (0.25f + 1.6f * Math::smoothstep(0.7f, 1.0f, t)) * s1
+													 : (root_top - b_h) * (1.0f - s1) * (1.0f - s1) - rr * (0.1f + 2.0f * Math::smoothstep(0.35f, 0.85f, t)) * s1;
 					const float lat = Math::abs(sda) * d_c;
 					const float qe = lat / a_w;
 					// The oval's top, then straight down past its widest point.
@@ -21003,6 +21230,33 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// The stone itself is not draped over itself; it is sheared with the ground.
 		_bank_shear(*builders[s], s != 7);
 	}
+	if (cliff_angle > 0.0f && !fallen && !fallen_branch && !nodes.is_empty()) {
+		// On a cliff (trees.md 5bg): everything turned about the foot onto the face, and with it the skeleton (for the
+		// colliders, snow and the rest read from it below) and the wind rig. A rigid turn keeps each bone's inertia
+		// about its pivot: m2 is rebuilt from it round the moved pivot.
+		for (int s = 0; s < 10; s++) {
+			_cliff_turn(*builders[s]);
+		}
+		const Basis cb(Vector3(1, 0, 0), cliff_angle);
+		const Vector3 o = nodes[0].start;
+		for (Node &n : nodes) {
+			n.start = o + cb.xform(n.start - o);
+			n.dir = cb.xform(n.dir).normalized();
+		}
+		for (RigBone &rb : rig) {
+			const double j = rb.m2 - 2.0 * double(rb.pivot.dot(rb.m1)) + double(rb.pivot.length_squared()) * rb.m0;
+			rb.pivot = o + cb.xform(rb.pivot - o);
+			rb.dir = cb.xform(rb.dir).normalized();
+			if (rb.a0 > 1e-12) {
+				rb.a1 = (o + cb.xform(rb.a1 / float(rb.a0) - o)) * float(rb.a0);
+			}
+			if (rb.m0 > 1e-12) {
+				rb.m1 = (o + cb.xform(rb.m1 / float(rb.m0) - o)) * float(rb.m0);
+			}
+			// j about the pivot is unchanged; the centroid's own spread too: m2 = j + 2 p.m1 - |p|^2 m0.
+			rb.m2 = j + 2.0 * double(rb.pivot.dot(rb.m1)) - double(rb.pivot.length_squared()) * rb.m0;
+		}
+	}
 	// Rigged trees skin from MultiMesh instance bones; a part broken off by a storm or a body
 	// (TreeWind3D) is drawn unskinned, with a twin of each surface's material (section 5t).
 	Array static_materials;
@@ -23149,6 +23403,25 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		ground_slope = slopes[p_variant % 4];
 		bank_erosion = ground_slope > 0.0f ? Math::lerp(0.3f, 0.9f, t) * Math::lerp(0.6f, 1.0f, ground_slope / 0.85f) : 0.0f;
 		root_stone = p_variant % 8 == 2 ? Math::lerp(0.35f, 0.6f, float((h >> 16) & 255u) / 255.0f) : 0.0f;
+	} else if (p_form == FORM_CLIFF) {
+		// Cliff trees (trees.md 5bg): the variants step through faces of 69, 57, 86 and 77 degrees (the first for a
+		// single-variant stand) so placement picks the nearest, as for banks. Stunted: roots confined in crevices set
+		// the pace (Larson et al. 2000: watering and fertilising cliff cedars barely changed their growth), so shoots
+		// are under half as long and the tree a third of its open-grown height or less. Two in three carry a dead
+		// sector over a strip-bark stem.
+		static const float faces[4] = { 1.2f, 1.0f, 1.5f, 1.35f };
+		const uint32_t h = uint32_t(seed) * 2654435761u;
+		const float t = float((h >> 8) & 255u) / 255.0f;
+		cliff_angle = faces[p_variant % 4];
+		cliff_lean = Math::lerp(0.1f, 0.45f, t);
+		cliff_dead = (h >> 16) % 3u != 0u ? Math::lerp(0.5f, 1.1f, float((h >> 18) & 255u) / 255.0f) : 0.0f;
+		cliff_dead_az = float((h >> 4) & 1023u) / 1023.0f * float(Math::TAU);
+		// From the preset's own values: this runs once per variant on the same generator.
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		params[PARAM_INTERNODE_LENGTH] = look.params[PARAM_INTERNODE_LENGTH] * 0.42f;
+		params[PARAM_LEADER_GROWTH] = look.params[PARAM_LEADER_GROWTH] * 0.4f;
+		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.65f, 0.95f, float((h >> 24) & 255u) / 255.0f));
 	} else if (p_preset == PRESET_DATE_PALM && (p_form == FORM_GROVE || p_form == FORM_OPEN || p_form == FORM_STAND)) {
 		// Date palms (trees.md 5ai): a grove palm tended (skirt and offshoots cut), 15-60 years old; a wild one
 		// any age from a young clump to an old palm, a third of them clumps of two or three trunks.
@@ -24243,6 +24516,10 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	bark_chevrons = p_from.bark_chevrons;
 	wind_exposure = p_from.wind_exposure;
 	ground_slope = p_from.ground_slope;
+	cliff_angle = p_from.cliff_angle;
+	cliff_lean = p_from.cliff_lean;
+	cliff_dead = p_from.cliff_dead;
+	cliff_dead_az = p_from.cliff_dead_az;
 	root_stone = p_from.root_stone;
 	bank_erosion = p_from.bank_erosion;
 	stilt_height = p_from.stilt_height;
@@ -24409,7 +24686,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	}
 	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
 	// grew 22 m whips with a crown at the top).
-	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD && p_form != FORM_HEDGE && p_form != FORM_LAID_HEDGE && p_form != FORM_GROVE &&
+	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD && p_form != FORM_HEDGE && p_form != FORM_LAID_HEDGE && p_form != FORM_GROVE && p_form != FORM_CLIFF &&
 			!(p_form == FORM_SAPLING && scrub_shrub(p_preset)) && !((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0);
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
@@ -24495,6 +24772,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float saved_exposure = wind_exposure;
 		const float saved_krummholz = krummholz;
 		const float saved_slope = ground_slope;
+		const float saved_cliff = cliff_angle;
+		const float saved_cliff_lean = cliff_lean;
+		const float saved_cliff_dead = cliff_dead;
+		const float saved_cliff_az = cliff_dead_az;
 		const float saved_erosion = bank_erosion;
 		const float saved_stilt = stilt_height;
 		const int saved_beaver_cut = beaver_cut;
@@ -24529,7 +24810,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// Gorse's spines are needles but thin stochastically as leaves (trees.md 5x.2): it splits too.
 		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && (params[PARAM_NEEDLES] <= 0.5f || scrub_shrub(Preset(p_preset))) &&
 				(far_lod1 || leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
-				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_HEDGE || p_form == FORM_LAID_HEDGE || p_form == FORM_GROVE);
+				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_HEDGE || p_form == FORM_LAID_HEDGE || p_form == FORM_GROVE || p_form == FORM_CLIFF);
 		if (near_split) {
 			Ref<TreeGenerator> src;
 			src.instantiate();
@@ -24646,6 +24927,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		grove_strands = saved_strands;
 		grove_top = saved_gtop;
 		ground_slope = saved_slope;
+		cliff_angle = saved_cliff;
+		cliff_lean = saved_cliff_lean;
+		cliff_dead = saved_cliff_dead;
+		cliff_dead_az = saved_cliff_az;
 		bank_erosion = saved_erosion;
 		stilt_height = saved_stilt;
 		beaver_cut = saved_beaver_cut;
@@ -24665,7 +24950,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// One full-needle variant for the near range (the field repeats it over the variants):
 		// about 30M vertices for a spruce, so one only, and no LOD copies since it is only drawn
 		// close. GPU memory and path tracing cost of it are not yet measured.
-		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_THICKET || p_form == FORM_OLD)) {
+		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_CLIFF)) {
 			needle_sprays = false;
 			skip_lods = true;
 			seed = saved_seed * 31;
@@ -24710,7 +24995,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		sp->set_meta("fall_dir", windthrow_direction);
 		sp->set_meta("fall_scatter", windthrow_band == 1 ? 0.45f : 0.3f);
 	}
-	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)", " (hedge)", " (laid hedge)", " (grove)" };
+	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)", " (hedge)", " (laid hedge)", " (grove)", " (cliff)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -25042,6 +25327,23 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		list.push_back(sp);
 		return sp;
 	};
+	// Cliff trees (trees.md 5bg): stunted, old trees in the crevices of rock faces past about 52 degrees, where the
+	// canopy's own trees cannot stand; bare rock rather than soil (with a geology source). Variants step through the
+	// faces' slopes as bank trees do (placement picks the nearest).
+	auto cliff = [&](Preset p, float p_density) {
+		Ref<PlantSpecies> sp = _stand_species(p, false, _bank_variants(p_variants), FORM_CLIFF);
+		sp->set_density(p_density);
+		sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(52.0f, 90.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
+		sp->set_rule_range(PlantSpecies::RULE_SOIL_DEPTH, Vector2(0.0f, 100000.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_SOIL_DEPTH, 0.0f);
+		sp->set_rule_range(PlantSpecies::RULE_ROCK, Vector2(0.25f, 1.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_ROCK, 0.1f);
+		sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.5f));
+		sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+		list.push_back(sp);
+		return sp;
+	};
 	auto clip = [](const Ref<PlantSpecies> &p_sp, PlantSpecies::Rule p_rule, const Vector2 &p_range, float p_fade) {
 		// Narrow a species' range to the stand's belt (never widen past its habitat).
 		const Vector2 r = p_sp->get_rule_range(p_rule);
@@ -25069,6 +25371,9 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			ravine->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
 			ravine->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
 			list.push_back(ravine);
+			// Yew on the limestone cliffs over the beech woods, centuries old in the crevices (Taxus on cliffs: Larson
+			// et al. 2000; the cliff yews of the Wye gorge and the Great Orme).
+			cliff(PRESET_YEW, 0.35f);
 			// Holly and yew are what does grow under beech (Taxo-Fagetum, Ilici-Fagetum).
 			shrub(PRESET_HOLLY, 0.5f);
 			Ref<PlantSpecies> yew = shrub(PRESET_YEW, 0.25f);
@@ -25113,6 +25418,9 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			clip(open(PRESET_NORWAY_SPRUCE, 0.3f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 			clip(shrub(PRESET_ROWAN, 0.3f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 			clip(shrub(PRESET_ELDER, 0.1f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			// Scots pine on the rock faces and ledges above the closed forest (the relict rock pine woods of the Alps,
+			// Erico-Pinion; Ellenberg 1988).
+			clip(cliff(PRESET_SCOTS_PINE, 0.35f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 		} break;
 		case STAND_SUBALPINE: {
 			lead = PRESET_NORWAY_SPRUCE;
@@ -25232,6 +25540,8 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			open(PRESET_WHITE_PINE, 0.35f);
 			open(PRESET_PAPER_BIRCH, 0.4f);
 			shrub(PRESET_WITCH_HAZEL, 0.3f);
+			// Hemlock on the cliffs and ledges of the gorges (with the white cedar of the escarpments; Larson et al. 2000).
+			cliff(PRESET_HEMLOCK, 0.35f);
 		} break;
 		case STAND_COPPICE_STANDARDS: {
 			lead = PRESET_OAK;
@@ -26936,6 +27246,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		_break_limbs();
 		_ice_storm_damage();
 	}
+	_cliff_bend();
 	beaver_axis.clear();
 	if (beaver_now == BEAVER_GNAWED && !nodes.is_empty()) {
 		// The stem's axis and girth at the waist, for _beaver_waist_at: the main stem from the root, up past the waist.
@@ -27045,6 +27356,10 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	if (ground_slope > 0.0f && mesh.is_valid() && !fallen && !fallen_branch) {
 		// Placement turns the mesh's +Z downhill and picks the variant nearest the ground's slope.
 		mesh->set_meta(SNAME("tree_ground_slope"), Vector2(ground_slope, bank_erosion));
+	}
+	if (cliff_angle > 0.0f && mesh.is_valid() && !fallen && !fallen_branch) {
+		// A cliff tree (trees.md 5bg) is placed as a bank tree: +Z down the face, the variant nearest the face's slope.
+		mesh->set_meta(SNAME("tree_ground_slope"), Vector2(cliff_angle, 0.0f));
 	}
 	if (stone.on && mesh.is_valid()) {
 		// The stone's centre and half extents (mesh space, before any bank shear), for rocks and
@@ -27196,6 +27511,12 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
 	ClassDB::bind_method(D_METHOD("set_root_stone", "radius"), &TreeGenerator::set_root_stone);
 	ClassDB::bind_method(D_METHOD("get_root_stone"), &TreeGenerator::get_root_stone);
+	ClassDB::bind_method(D_METHOD("set_cliff_angle", "angle"), &TreeGenerator::set_cliff_angle);
+	ClassDB::bind_method(D_METHOD("get_cliff_angle"), &TreeGenerator::get_cliff_angle);
+	ClassDB::bind_method(D_METHOD("set_cliff_lean", "lean"), &TreeGenerator::set_cliff_lean);
+	ClassDB::bind_method(D_METHOD("get_cliff_lean"), &TreeGenerator::get_cliff_lean);
+	ClassDB::bind_method(D_METHOD("set_cliff_dieback", "half_width"), &TreeGenerator::set_cliff_dieback);
+	ClassDB::bind_method(D_METHOD("get_cliff_dieback"), &TreeGenerator::get_cliff_dieback);
 	ClassDB::bind_method(D_METHOD("set_ground_slope", "slope"), &TreeGenerator::set_ground_slope);
 	ClassDB::bind_method(D_METHOD("get_ground_slope"), &TreeGenerator::get_ground_slope);
 	ClassDB::bind_method(D_METHOD("set_stilt_height", "height"), &TreeGenerator::set_stilt_height);
@@ -27379,6 +27700,9 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_exposure", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wind_exposure", "get_wind_exposure");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "krummholz", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_krummholz", "get_krummholz");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_slope", PROPERTY_HINT_RANGE, "0,1.2,0.01,radians_as_degrees"), "set_ground_slope", "get_ground_slope");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_angle", PROPERTY_HINT_RANGE, "0,1.55,0.01,radians_as_degrees"), "set_cliff_angle", "get_cliff_angle");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_lean", PROPERTY_HINT_RANGE, "0,0.8,0.01,radians_as_degrees"), "set_cliff_lean", "get_cliff_lean");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_dieback", PROPERTY_HINT_RANGE, "0,1.6,0.01,radians_as_degrees"), "set_cliff_dieback", "get_cliff_dieback");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_erosion", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bank_erosion", "get_bank_erosion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stilt_height", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_stilt_height", "get_stilt_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_height", PROPERTY_HINT_RANGE, "0,6,0.01,suffix:m"), "set_flood_height", "get_flood_height");

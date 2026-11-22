@@ -887,6 +887,17 @@ public:
 	// face. Placement turns +Z downhill (meta tree_ground_slope).
 	float ground_slope = 0.0f;
 	float bank_erosion = 0.0f;
+	// A tree on a cliff (trees.md 5bg): rooted in a crevice of a rock face that falls toward mesh +Z at this angle from
+	// level (radians, 0 none). Grown upright and stunted, its stem is bent back over the face from a little above the
+	// collar (_cliff_bend, on the skeleton), and the finished mesh is turned about its foot by the angle (_cliff_turn),
+	// so collar and roots lie on the face, the stem leaves it square and curves up to lean out at cliff_lean. Limbs
+	// on one side die back over a strip of dead bark (sectored dieback). Mesh meta tree_ground_slope as for banks.
+	float cliff_angle = 0.0f;
+	float cliff_lean = 0.0f; // Radians from vertical, out from the face, at the top of the bend.
+	float cliff_dead_az = 0.0f; // Bearing (level mesh space, from +X toward +Z) of the dead sector.
+	float cliff_dead = 0.0f; // Its half width, radians (0: none).
+	void _cliff_bend();
+	void _cliff_turn(Builder &r_b) const;
 	// Stilt roots (trees.md 5at): an alder on a tussock in a carr whose peat sank round it stands on its roots, which
 	// arch down this far (m) from the foot to the ground. The mesh's ground is at -stilt_height under the root tips;
 	// placement raises the instance by it (mesh meta tree_base_lift).
@@ -1104,6 +1115,7 @@ private:
 		FORM_HEDGE, // A two-metre segment of a cut field hedge, A-shaped or boxed by variant (5ad).
 		FORM_LAID_HEDGE, // A two-metre segment of a hand-laid hedge: pleachers, stakes, binders (trees.md, "Laid hedges").
 		FORM_GROVE, // A cultivated olive in a grove: open-centre pruning, the old trunk split into twisted strands (trees.md, "Ancient olive").
+		FORM_CLIFF, // Rooted in a crevice of a rock face: variants over faces of 57 to 86 degrees (trees.md 5bg).
 		FORM_MAX,
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
@@ -1266,6 +1278,12 @@ public:
 	float get_cork_stripped_years() const { return cork_stripped_years; }
 	void set_root_stone(float p_v) { root_stone = CLAMP(p_v, 0.0f, 2.0f); }
 	float get_root_stone() const { return root_stone; }
+	void set_cliff_angle(float p_v) { cliff_angle = CLAMP(p_v, 0.0f, 1.55f); }
+	float get_cliff_angle() const { return cliff_angle; }
+	void set_cliff_lean(float p_v) { cliff_lean = CLAMP(p_v, 0.0f, 0.8f); }
+	float get_cliff_lean() const { return cliff_lean; }
+	void set_cliff_dieback(float p_v) { cliff_dead = CLAMP(p_v, 0.0f, 1.6f); }
+	float get_cliff_dieback() const { return cliff_dead; }
 	void set_ground_slope(float p_v) { ground_slope = CLAMP(p_v, 0.0f, 1.2f); }
 	float get_ground_slope() const { return ground_slope; }
 	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }

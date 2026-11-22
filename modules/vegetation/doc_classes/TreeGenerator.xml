@@ -263,6 +263,15 @@
 		<member name="bud_light_min" type="float" setter="set_param" getter="get_param" default="0.0">
 			Light below which a bud dies.
 		</member>
+		<member name="cliff_angle" type="float" setter="set_cliff_angle" getter="get_cliff_angle" default="0.0">
+			A tree rooted in a crevice of a rock face that falls toward mesh +Z at this angle from level (radians, 0 none). Collar and roots lie on the face, and the stem leaves it square and curves up to lean out. Cliff variants of a stand also stunt the tree and kill one side of its crown over a strip of dead bark. The mesh carries meta [code]tree_ground_slope[/code] ([code]Vector2(angle, 0)[/code]) so placement turns +Z down the face and picks the variant nearest the ground's slope.
+		</member>
+		<member name="cliff_dieback" type="float" setter="set_cliff_dieback" getter="get_cliff_dieback" default="0.0">
+			A cliff tree's dead sector: its half width round the stem (radians, 0 none). Limbs on that side are dead grey wood and the stem below them carries a strip of dead bark with rolled edges (sectored dieback). The bearing is drawn from the seed by cliff variants.
+		</member>
+		<member name="cliff_lean" type="float" setter="set_cliff_lean" getter="get_cliff_lean" default="0.0">
+			How far a cliff tree's stem leans out from the face at the top of its bend, radians from vertical.
+		</member>
 		<member name="climber" type="int" setter="set_climber" getter="get_climber" enum="TreeGenerator.Climber" default="0">
 		</member>
 		<member name="climber_cover" type="float" setter="set_climber_cover" getter="get_climber_cover" default="0.6">
