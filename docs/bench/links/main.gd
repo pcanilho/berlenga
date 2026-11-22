@@ -243,6 +243,10 @@ func _ready() -> void:
 			await _salt_view(a.substr(7), not OS.get_cmdline_user_args().has("--salt-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
 			return
+		if a.begins_with("--valley-fog="):
+			await _valley_fog_view(a.substr(13), OS.get_cmdline_user_args().has("--fog-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
 		if a.begins_with("--rime="):
 			await _rime_view(a.substr(7), OS.get_cmdline_user_args().has("--rime-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
@@ -1626,6 +1630,81 @@ func _dew_tests() -> void:
 
 
 
+func _valley_fog_view(path: String, off: bool, pt: bool) -> void:
+	# A valley 200 m deep after a clear calm night, seen from above its shoulder at sunrise.
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 200.0 * (1.0 - exp(-p.x * p.x / (2.0 * 400.0 * 400.0))) + 30.0 * sin(p.z * 0.0021) * cos(p.x * 0.0013)\n"
+	vs.reload()
+	var valley := Node3D.new()
+	valley.set_script(vs)
+	add_child(valley)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var step := 20.0
+	var half := 1600.0
+	var cells := int(2.0 * half / step)
+	for zi in cells:
+		for xi in cells:
+			var quad := [Vector2(xi, zi), Vector2(xi + 1, zi), Vector2(xi + 1, zi + 1), Vector2(xi, zi), Vector2(xi + 1, zi + 1), Vector2(xi, zi + 1)]
+			for q in quad:
+				var px: float = -half + q.x * step
+				var pz: float = -half + q.y * step
+				st.add_vertex(Vector3(px, valley.get_height(Vector3(px, 0, pz)), pz))
+	st.generate_normals()
+	var ground := MeshInstance3D.new()
+	ground.mesh = st.commit()
+	ground.material_override = TerrainMaterial3D.new()
+	add_child(ground)
+	var c := _new_clock(10, 1.0)
+	var m := _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(valley)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.95
+	m.temperature = 6.0
+	m.valley_fog = not off
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(5.0 * 3600.0)
+	print("valley fog %.0f m deep, top %.0f m" % [m.get_valley_fog_depth_at(Vector3.ZERO), m.get_valley_fog_top_at(Vector3.ZERO)])
+	c.time_of_day = 8.0 # just after sunrise: the fog lasts an hour or two into the morning
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-18, 45, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.62, 0.7, 0.82)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.66, 0.75)
+	env.environment.ambient_light_energy = 0.5
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	add_child(env)
+	var cam := Camera3D.new()
+	cam.position = Vector3(260, 110, 260)
+	cam.far = 6000.0
+	add_child(cam)
+	cam.look_at(Vector3(-60, 15, -150))
+	cam.make_current()
+	for i in 40:
+		await RenderingServer.frame_post_draw
+	if pt:
+		env.environment.pathtracing_enabled = true
+		for i in 40:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
 func _rime_view(path: String, off: bool, pt: bool) -> void:
 	# A ridge in supercooled cloud, the wind from the left (-x): rime on the faces turned that way.
 	var m := _new_map()
@@ -2046,9 +2125,16 @@ func _cold_pool_tests() -> void:
 	var fr_floor: float = m.get_frost_at(floor_p)
 	var fr_shoulder: float = m.get_frost_at(shoulder)
 	_check("cold pool: the floor's air saturates (valley fog) and frosts first, the contract reads it", rh_floor > 0.98 and rh_shoulder < 0.92 and fr_floor > fr_shoulder + 0.02 and absf(w.air_temperature_at(floor_p) - t_floor) < 0.01, "humidity %.2f on the floor, %.2f on the shoulder; frost %.3f / %.3f mm" % [rh_floor, rh_shoulder, fr_floor, fr_shoulder])
+	# The saturated pool fills with radiation fog, flat-topped below the shoulders (a sea of fog seen from above).
+	var fog_top: float = w.valley_fog_top_at(floor_p)
+	var fog_depth: float = m.get_valley_fog_depth_at(floor_p)
+	var fog_side: float = w.valley_fog_top_at(Vector3(150, 0, 0))
+	var fog_up: float = w.valley_fog_top_at(Vector3(300, 0, 0))
+	_check("valley fog: the saturated pool fills with fog, its top level across the valley; the slopes above it and the shoulders clear", fog_depth > 20.0 and fog_top < 200.0 and absf(fog_side - fog_top) < 3.0 and fog_up == -INF and w.valley_fog_top_at(shoulder) == -INF, "%.0f m deep on the floor, top at %.0f m there and %.0f m 150 m across (ground 14 m); clear at 300 m (ground 49 m) and on the shoulder" % [fog_depth, fog_top, fog_side])
 	m.wind_speed = 8.0
 	m.snap_to_settings()
 	m.advance(2.0 * 3600.0)
+	_check("valley fog: a wind lifts it with the pool", m.get_valley_fog_depth_at(floor_p) < 1.0, "%.1f m left" % m.get_valley_fog_depth_at(floor_p))
 	var windy: float = m.get_cold_pool_at(floor_p)
 	_check("cold pool: a wind mixes the pool out", windy < 0.5, "pool %.2f C after 2 hours at 8 m/s" % windy)
 	m.wind_speed = 1.0

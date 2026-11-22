@@ -290,6 +290,13 @@
 				Override in a stub: [method time_scale].
 			</description>
 		</method>
+		<method name="_valley_fog_top_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override for [method valley_fog_top_at].
+			</description>
+		</method>
 		<method name="_water_temperature" qualifiers="virtual const">
 			<return type="float" />
 			<description>
@@ -604,6 +611,13 @@
 			<return type="float" />
 			<description>
 				The weather's time per real second. Default 1.
+			</description>
+		</method>
+		<method name="valley_fog_top_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Height (m) of the top of the valley fog over [param position]: a radiation fog filling a cold air pool to the level where its air is saturated, flat across the basin. [code]-INF[/code] where there is none or with no producer.
 			</description>
 		</method>
 		<method name="washout_at" qualifiers="const">
