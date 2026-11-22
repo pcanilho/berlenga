@@ -204,4 +204,7 @@ copy with mode `COMPACT`, free the original once the GPU is done with it).
   up to 6/255). With the cache on, the frame equals "caustics off" within that run-to-run noise.
 - On the PC, in an indoor scene with no water, caustics off saved 2.8 ms of 27.2 ms per
   frame; this change gives that back with caustics left on.
-- Next: a dry point beside water (bent and straight photons equal, ratio exactly 1) still turns the cache off.
+- With water present, dry ground inside the square also lost the cache (every point the map held counted). Now
+  only points where the map's ratio differs from exactly 1 (bent and straight photons unequal: real lines) keep
+  the cache off. Proof: `--medium` frame byte-identical to the previous build with the cache off; with it on,
+  same mean brightness (137.63 vs 137.62 of 255), differences are the cache's run-to-run noise.
