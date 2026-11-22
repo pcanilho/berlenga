@@ -78,6 +78,9 @@ float WorldWeather::valley_fog_top_at(const Vector3 &p_position) const WW_CALL(_
 float WorldWeather::rainfall_at(const Vector3 &p_position) const WW_CALL(_rainfall_at, contract_rainfall_at(p_position), 0.0f, p_position)
 float WorldWeather::snowfall_at(const Vector3 &p_position) const WW_CALL(_snowfall_at, contract_snowfall_at(p_position), 0.0f, p_position)
 float WorldWeather::smoke_at(const Vector3 &p_position) const WW_CALL(_smoke_at, contract_smoke_at(p_position), 0.0f, p_position)
+float WorldWeather::dust_at(const Vector3 &p_position) const WW_CALL(_dust_at, contract_dust_at(p_position), 0.0f, p_position)
+float WorldWeather::dust_top_at(const Vector3 &p_position) const WW_CALL(_dust_top_at, contract_dust_top_at(p_position), 0.0f, p_position)
+float WorldWeather::dust_concentration_at(const Vector3 &p_position) const WW_CALL(_dust_concentration_at, contract_dust_concentration_at(p_position), 0.0f, p_position)
 // A stub that only says the column gets it mixed through 2 km.
 float WorldWeather::smoke_concentration_at(const Vector3 &p_position) const {
 	float r = 0.0f;
@@ -217,6 +220,9 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("washout_at", "position", "coarse"), &WorldWeather::washout_at);
 	ClassDB::bind_method(D_METHOD("smoke_at", "position"), &WorldWeather::smoke_at);
 	ClassDB::bind_method(D_METHOD("smoke_concentration_at", "position"), &WorldWeather::smoke_concentration_at);
+	ClassDB::bind_method(D_METHOD("dust_at", "position"), &WorldWeather::dust_at);
+	ClassDB::bind_method(D_METHOD("dust_top_at", "position"), &WorldWeather::dust_top_at);
+	ClassDB::bind_method(D_METHOD("dust_concentration_at", "position"), &WorldWeather::dust_concentration_at);
 	ClassDB::bind_method(D_METHOD("obstacle_height_at", "position"), &WorldWeather::obstacle_height_at);
 	ClassDB::bind_method(D_METHOD("obstacle_lee_at", "position"), &WorldWeather::obstacle_lee_at);
 	ClassDB::bind_method(D_METHOD("fog_water_at", "position"), &WorldWeather::fog_water_at);
@@ -265,6 +271,9 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_snowfall_at, "position");
 	GDVIRTUAL_BIND(_smoke_at, "position");
 	GDVIRTUAL_BIND(_smoke_concentration_at, "position");
+	GDVIRTUAL_BIND(_dust_at, "position");
+	GDVIRTUAL_BIND(_dust_top_at, "position");
+	GDVIRTUAL_BIND(_dust_concentration_at, "position");
 	GDVIRTUAL_BIND(_obstacle_height_at, "position");
 	GDVIRTUAL_BIND(_obstacle_lee_at, "position");
 	GDVIRTUAL_BIND(_fog_water_at, "position");

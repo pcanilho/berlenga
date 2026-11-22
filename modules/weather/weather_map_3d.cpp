@@ -814,6 +814,7 @@ void WeatherMap3D::_shift(Vector2i p_new_origin) {
 	}
 	_rain_shift(d);
 	_smoke_shift(d);
+	_dust_shift(d);
 	origin_cell = p_new_origin;
 }
 
@@ -838,6 +839,7 @@ Rect2 WeatherMap3D::get_map_rect() const {
 void WeatherMap3D::_update_cells(double p_weather_dt) {
 	CellPass &c = cell_pass;
 	_smoke_step(p_weather_dt);
+	_dust_step(p_weather_dt);
 	c.dt_h = float(p_weather_dt) / 3600.0f;
 	const float z0 = MAX(roughness_length, 1e-5f);
 	// Wind at 2 m for Penman, from 10 m on the log law.
@@ -1316,6 +1318,7 @@ void WeatherMap3D::_upload() {
 	}
 	_publish_globals();
 	_rain_upload();
+	_dust_upload();
 }
 
 void WeatherMap3D::_set_global(const StringName &p_name, const Variant &p_value, int p_type) {
@@ -1717,11 +1720,25 @@ void WeatherMap3D::_publish_vortices() {
 	}
 	vortices_unpublished = false;
 	static const StringName names[4] = { "weather_vortex_0", "weather_vortex_1", "weather_vortex_2", "weather_vortex_3" };
+	// The four nearest the point the map follows (the camera): the ones the shaded grass, leaves and dust there see.
+	int pick[4] = { -1, -1, -1, -1 };
+	float best[4] = { 1e30f, 1e30f, 1e30f, 1e30f };
+	const Vector3 at = _follow_position();
+	for (int i = 0; i < vortices.size(); i++) {
+		float d = Vector2(vortices[i].position.x - at.x, vortices[i].position.z - at.z).length_squared();
+		int k = i;
+		for (int j = 0; j < 4; j++) {
+			if (d < best[j]) {
+				SWAP(d, best[j]);
+				SWAP(k, pick[j]);
+			}
+		}
+	}
 	Vector4 up;
 	for (int i = 0; i < 4; i++) {
 		Vector4 v;
-		if (i < vortices.size()) {
-			const Vortex &x = vortices[i];
+		if (pick[i] >= 0) {
+			const Vortex &x = vortices[pick[i]];
 			v = Vector4(x.position.x, x.position.z, x.radius, x.swirl * x.spin);
 			up[i] = x.updraft;
 		}
@@ -4291,7 +4308,7 @@ String WeatherMap3D::get_wind_shader_code() {
 	c += "global uniform vec4 weather_shelter_rect;\n";
 	c += "global uniform vec4 weather_patch_info;\n";
 	c += "global uniform float weather_ground_height;\n";
-	c += "global uniform vec4 weather_vortex_0;\n"; // wind vortices (add_vortex): x, z, core radius, swirl x spin
+	c += "global uniform vec4 weather_vortex_0;\n"; // wind vortices (add_vortex), the four nearest the camera: x, z, core radius, swirl x spin
 	c += "global uniform vec4 weather_vortex_1;\n";
 	c += "global uniform vec4 weather_vortex_2;\n";
 	c += "global uniform vec4 weather_vortex_3;\n";
@@ -4554,6 +4571,24 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_smoke_washout", "enabled"), &WeatherMap3D::set_smoke_washout);
 	ClassDB::bind_method(D_METHOD("is_smoke_washout"), &WeatherMap3D::is_smoke_washout);
 	ClassDB::bind_method(D_METHOD("get_smoke_at", "position"), &WeatherMap3D::get_smoke_at);
+	ClassDB::bind_method(D_METHOD("set_dust_storms", "enabled"), &WeatherMap3D::set_dust_storms);
+	ClassDB::bind_method(D_METHOD("is_dust_storms"), &WeatherMap3D::is_dust_storms);
+	ClassDB::bind_method(D_METHOD("set_dust_source_share", "share"), &WeatherMap3D::set_dust_source_share);
+	ClassDB::bind_method(D_METHOD("get_dust_source_share"), &WeatherMap3D::get_dust_source_share);
+	ClassDB::bind_method(D_METHOD("set_dust_clay", "percent"), &WeatherMap3D::set_dust_clay);
+	ClassDB::bind_method(D_METHOD("get_dust_clay"), &WeatherMap3D::get_dust_clay);
+	ClassDB::bind_method(D_METHOD("set_dust_layer_depth", "depth"), &WeatherMap3D::set_dust_layer_depth);
+	ClassDB::bind_method(D_METHOD("get_dust_layer_depth"), &WeatherMap3D::get_dust_layer_depth);
+	ClassDB::bind_method(D_METHOD("set_dust_emission_scale", "scale"), &WeatherMap3D::set_dust_emission_scale);
+	ClassDB::bind_method(D_METHOD("get_dust_emission_scale"), &WeatherMap3D::get_dust_emission_scale);
+	ClassDB::bind_method(D_METHOD("get_dust_at", "position"), &WeatherMap3D::get_dust_at);
+	ClassDB::bind_method(D_METHOD("get_dust_top_at", "position"), &WeatherMap3D::get_dust_top_at);
+	ClassDB::bind_method(D_METHOD("get_dust_head_at", "position"), &WeatherMap3D::get_dust_head_at);
+	ClassDB::bind_method(D_METHOD("get_dust_concentration_at", "position"), &WeatherMap3D::get_dust_concentration_at);
+	ClassDB::bind_method(D_METHOD("get_dust_optical_depth_at", "position"), &WeatherMap3D::get_dust_optical_depth_at);
+	ClassDB::bind_method(D_METHOD("get_dust_flux_for", "wind10", "loose", "wetness"), &WeatherMap3D::get_dust_flux_for);
+	ClassDB::bind_method(D_METHOD("add_dust", "position", "kg"), &WeatherMap3D::add_dust);
+	ClassDB::bind_method(D_METHOD("clear_dust"), &WeatherMap3D::clear_dust);
 	ClassDB::bind_method(D_METHOD("get_smoke_concentration_at", "position"), &WeatherMap3D::get_smoke_concentration_at);
 	ClassDB::bind_method(D_METHOD("set_smoke_in_pools", "enabled"), &WeatherMap3D::set_smoke_in_pools);
 	ClassDB::bind_method(D_METHOD("is_smoke_in_pools_enabled"), &WeatherMap3D::is_smoke_in_pools_enabled);
@@ -4862,6 +4897,11 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_drying"), "set_sun_drying", "get_sun_drying");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_clouds"), "set_fire_clouds", "is_fire_clouds");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "smoke_haze"), "set_smoke_haze", "is_smoke_haze");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dust_storms"), "set_dust_storms", "is_dust_storms");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dust_source_share", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_dust_source_share", "get_dust_source_share");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dust_clay", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:%"), "set_dust_clay", "get_dust_clay");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dust_layer_depth", PROPERTY_HINT_RANGE, "50,5000,10,suffix:m"), "set_dust_layer_depth", "get_dust_layer_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dust_emission_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_dust_emission_scale", "get_dust_emission_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "smoke_lifetime", PROPERTY_HINT_RANGE, "60,1000000,60,or_greater,suffix:s"), "set_smoke_lifetime", "get_smoke_lifetime");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "smoke_washout"), "set_smoke_washout", "is_smoke_washout");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dew_and_frost"), "set_dew_and_frost", "get_dew_and_frost");

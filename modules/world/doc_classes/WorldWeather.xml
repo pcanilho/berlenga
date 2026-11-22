@@ -411,6 +411,27 @@
 				The dew point (C) of the air at [param position], from the two above.
 			</description>
 		</method>
+		<method name="dust_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Mineral dust in the column over [param position], g/m² (dust storms, haboobs).
+			</description>
+		</method>
+		<method name="dust_concentration_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Mineral dust at [param position], g/m³.
+			</description>
+		</method>
+		<method name="dust_top_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The dust layer's top over [param position], metres above the ground (a haboob's nose included).
+			</description>
+		</method>
 		<method name="fog_drip_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />

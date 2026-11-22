@@ -72,6 +72,14 @@
 				Wets from a grid of [param width] by [param height] values (0 to 1, row-major in z then x) laid over [param rect] in world XZ, e.g. the wet cells of a live water area. Kept where more than what is there.
 			</description>
 		</method>
+		<method name="add_dust">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="kg" type="float" />
+			<description>
+				Adds [param kg] of mineral dust to the column over [param position] (see [member dust_storms]).
+			</description>
+		</method>
 		<method name="add_shelter_box">
 			<return type="int" />
 			<param index="0" name="box" type="AABB" />
@@ -122,6 +130,12 @@
 			<param index="1" name="storage_mm" type="float" />
 			<description>
 				Rutter et al. (1975) drainage from a canopy holding [param held_mm] of water against its capacity [param storage_mm], in mm/h.
+			</description>
+		</method>
+		<method name="clear_dust">
+			<return type="void" />
+			<description>
+				Clears the dust layer.
 			</description>
 		</method>
 		<method name="clear_precipitation_extinction">
@@ -285,6 +299,50 @@
 			<param index="1" name="height_above_ground" type="float" default="-1.0" />
 			<description>
 				The night's drainage (katabatic) wind at [param position], [param height_above_ground] metres up (negative: from the position's own height over the terrain): down the fall line, peaking a few metres up; by day the upslope wind ([member upslope_winds]), up it. Zero overcast, in a wind, on flat ground or with [member drainage_winds] off. [method get_wind_at] includes it.
+			</description>
+		</method>
+		<method name="get_dust_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Mineral dust in the column over [param position], g/m². Strong dry wind over loose ground raises it (Marticorena and Bergametti 1995); a storm's outflow piles it at its gust front, the haboob.
+			</description>
+		</method>
+		<method name="get_dust_concentration_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Dust at [param position], g/m³: densest at the ground, falling off on a scale of a third of [method get_dust_top_at], none above it.
+			</description>
+		</method>
+		<method name="get_dust_flux_for" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wind10" type="float" />
+			<param index="1" name="loose" type="float" />
+			<param index="2" name="wetness" type="float" />
+			<description>
+				The source law: g/m² of dust raised a second by a [param wind10] m/s wind at 10 m over ground with [param loose] of its top loose and dry and [param wetness] of its surface wet. None under about 8.5 m/s or past half wet.
+			</description>
+		</method>
+		<method name="get_dust_head_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				0 to 1: how much [param position] lies on a dust front's leading edge, where the density current's nose stands high (the haboob's wall).
+			</description>
+		</method>
+		<method name="get_dust_optical_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The dust column's optical depth at 550 nm over [param position] (0.6 m²/g).
+			</description>
+		</method>
+		<method name="get_dust_top_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The dust layer's top over [param position], metres above the ground: [member dust_layer_depth], up to 1.75 times it on a front's leading edge; 0 with no dust.
 			</description>
 		</method>
 		<method name="get_fire_cloud_count" qualifiers="const">
@@ -1107,6 +1165,21 @@
 		</member>
 		<member name="drainage_winds" type="bool" setter="set_drainage_winds" getter="is_drainage_winds_enabled" default="true">
 			Night drainage winds: on clear calm nights the air cooled against a slope runs down its fall line in a shallow jet (Prandtl 1942; Whiteman 2000), about 1 to 3 m/s a few metres up, from each cell's radiative cooling and slope. Builds over half an hour, gone by day, overcast or in a wind over about 4 m/s. In [method get_wind_at] (so [method WorldWeather.wind_at]) and the shaders' wind map.
+		</member>
+		<member name="dust_clay" type="float" setter="set_dust_clay" getter="get_dust_clay" default="8.0">
+			Percent of clay in the soil: more clay, more dust knocked loose per saltating grain (Marticorena and Bergametti 1995).
+		</member>
+		<member name="dust_emission_scale" type="float" setter="set_dust_emission_scale" getter="get_dust_emission_scale" default="1.0">
+			Scales the dust raised (art direction; 1 is the source law).
+		</member>
+		<member name="dust_layer_depth" type="float" setter="set_dust_layer_depth" getter="get_dust_layer_depth" default="1500.0">
+			The dust layer's depth in metres, raised up to 1.75 times at a front's nose.
+		</member>
+		<member name="dust_source_share" type="float" setter="set_dust_source_share" getter="get_dust_source_share" default="0.0">
+			Share of the ground that is loose, dry and open (desert, dry fields) where no ground producer answers (WorldGround blown sand). 0: no dust raised there.
+		</member>
+		<member name="dust_storms" type="bool" setter="set_dust_storms" getter="is_dust_storms" default="true">
+			Strong dry wind over loose ground raises mineral dust into its own layer: carried by the wind near the ground, settling at about 1.5 cm/s, washed out by rain, dimming the sun orange-brown and thickening the haze. A storm's downburst outflow piles it at its gust front into a haboob wall. Off clears it.
 		</member>
 		<member name="fog_drip" type="bool" setter="set_fog_drip" getter="is_fog_drip_enabled" default="true">
 			Fog drip: where the ground stands in the cloud, plants comb the cloud water out, deposition = LWC x wind x a capture efficiency (Lovett 1984), 0.003 over short plants up to 0.018 under a closed canopy ([method get_canopy_closure_at]; deposition velocities of about 2 to 9 cm/s in a 5 m/s wind, Gallagher et al. 1988, Katata et al. 2008). It enters the canopy's water balance with the rain, so it drips once the leaves hold their storage, wets the ground under the trees and feeds the runoff. In the cloud the air is saturated and the canopy does not dry.

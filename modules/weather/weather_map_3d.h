@@ -126,6 +126,23 @@ private:
 	bool smoke_washout = true; // rain and snow wash it out (WorldWeather::washout_rate)
 	Vector<float> cell_smoke;
 	Vector<float> cell_smoke_low; // g/m2 of the column held under a cold pool's lid (smoke_in_pools), part of cell_smoke
+	// MINERAL DUST (weather_dust.cpp; docs/ideas/sand.md, "Haboob dust walls"): raised by strong dry wind over loose
+	// ground (the storms' outflow makes haboobs), its own field beside the smoke: it rides the wind near the ground,
+	// settles out and washes out as a coarse aerosol.
+	bool dust_storms = true;
+	float dust_source_share = 0.0f; // loose, dry, open ground's share where no ground producer answers
+	float dust_clay = 8.0f; // % clay in the soil (sets the dust's share of the saltation flux)
+	float dust_layer_depth = 1500.0f; // m, the dust's mixed depth
+	float dust_emission_scale = 1.0f;
+	Vector<float> cell_dust; // g/m2 in the column
+	Vector<float> cell_dust_head; // 0..1, the front's leading edge (the density current's raised nose)
+	Ref<Image> dust_image;
+	Ref<ImageTexture> dust_texture;
+	bool dust_global_added = false;
+	void _dust_step(double p_weather_dt);
+	void _dust_shift(Vector2i p_delta);
+	void _dust_upload();
+	float _dust_loose_at(const Vector3 &p_position) const;
 	bool smoke_in_pools = true;
 	float _pool_share(int p_cell) const;
 	void _smoke_pool_step(float p_dt);
@@ -992,6 +1009,25 @@ public:
 	void set_smoke_washout(bool p_v) { smoke_washout = p_v; }
 	bool is_smoke_washout() const { return smoke_washout; }
 	float get_smoke_at(Vector3 p_position) const; // g/m2 of particulate in the column
+	void set_dust_storms(bool p_v);
+	bool is_dust_storms() const { return dust_storms; }
+	void set_dust_source_share(float p_v) { dust_source_share = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_dust_source_share() const { return dust_source_share; }
+	void set_dust_clay(float p_v) { dust_clay = CLAMP(p_v, 0.0f, 40.0f); }
+	float get_dust_clay() const { return dust_clay; }
+	void set_dust_layer_depth(float p_v) { dust_layer_depth = CLAMP(p_v, 50.0f, 5000.0f); }
+	float get_dust_layer_depth() const { return dust_layer_depth; }
+	void set_dust_emission_scale(float p_v) { dust_emission_scale = MAX(p_v, 0.0f); }
+	float get_dust_emission_scale() const { return dust_emission_scale; }
+	float get_dust_at(Vector3 p_position) const; // g/m2 in the column
+	float get_dust_top_at(Vector3 p_position) const; // m above the ground, the layer's top (the front's nose included)
+	float get_dust_head_at(Vector3 p_position) const; // 0..1, the front's leading edge
+	float get_dust_concentration_at(Vector3 p_position) const; // g/m3 at the point
+	float get_dust_optical_depth_at(Vector3 p_position) const; // at 550 nm, the column
+	float get_dust_flux_for(float p_wind10, float p_loose, float p_wetness) const; // g/m2/s raised (the source law)
+	void add_dust(Vector3 p_position, float p_kg);
+	void clear_dust();
+	static float dust_flux(float p_ustar, float p_ustar_threshold, float p_clay_percent); // kg/m2/s
 	float get_smoke_concentration_at(Vector3 p_position) const; // g/m3 at the point
 	void set_smoke_in_pools(bool p_enabled);
 	bool is_smoke_in_pools_enabled() const { return smoke_in_pools; }
@@ -1148,6 +1184,9 @@ public:
 	float contract_snowfall_at(const Vector3 &p_position) const override { return get_snowfall_at(p_position); }
 	float contract_smoke_at(const Vector3 &p_position) const override { return get_smoke_at(p_position); }
 	float contract_smoke_concentration_at(const Vector3 &p_position) const override { return get_smoke_concentration_at(p_position); }
+	float contract_dust_at(const Vector3 &p_position) const override { return get_dust_at(p_position); }
+	float contract_dust_top_at(const Vector3 &p_position) const override { return get_dust_top_at(p_position); }
+	float contract_dust_concentration_at(const Vector3 &p_position) const override { return get_dust_concentration_at(p_position); }
 	float contract_obstacle_height_at(const Vector3 &p_position) const override { return get_obstacle_height_at(p_position); }
 	float contract_obstacle_lee_at(const Vector3 &p_position) const override { return get_obstacle_lee_at(p_position); }
 	float contract_fog_water_at(const Vector3 &p_position) const override { return get_fog_water_at(p_position); }
