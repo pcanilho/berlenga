@@ -2651,6 +2651,29 @@
    "topic": "Plants"
   },
   {
+   "name": "Snowmelt sward",
+   "settings": [
+    "GrassField3D.snowmelt"
+   ],
+   "note": "",
+   "what": "where snow lay long the grass comes out matted and pale, with grey snow mould patches that green over weeks.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Flood wrack",
+   "settings": [
+    "PlantGenerator.make_flood_wrack()",
+    "GrassField3D.flood_wash"
+   ],
+   "note": "",
+   "what": "straw, reed and twig strand lines mark the last flood's high water, with the grass below combed flat and silted.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Fairy rings",
    "settings": [
     "GrassField3D.fairy_rings",
