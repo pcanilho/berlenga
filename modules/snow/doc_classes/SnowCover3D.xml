@@ -394,7 +394,7 @@
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				Returns the water leaving the snowpack at [param position] during the last update, in mm/h: meltwater and rain beyond what the pack holds, or the rain itself on bare ground.
+				Returns the water leaving the snowpack at [param position] during the last update, in mm/h: meltwater and rain beyond what the pack holds, or the rain itself on bare ground. Outside the near square it is the world tier's. The same field is the [WeatherMap3D]'s ground water source (what [WeatherRunoff3D] routes into streams): with a world tier, the world's cells with the near square averaged into those it covers, so melt anywhere on the terrain runs off.
 			</description>
 		</method>
 		<method name="get_salt_depression_at" qualifiers="const">

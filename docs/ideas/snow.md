@@ -1705,6 +1705,21 @@ photographs, e.g. Fikke et al. 2007, COST 727).
   deeper when rain ponds in it; it freezes into the base in the cold (denser, not deeper); a print pressed
   below the water table fills with a dark, smooth pool. Raster and PT agree (`--view=trail --slush=150`).
 
+## Follow-up 44: melt water from the whole terrain (round 6, 22 Nov 2026)
+
+- The cover already handed its runoff (rain through the pack and melt, mm/h) to the weather map as the ground
+  water WeatherRunoff3D routes, but only the near square's: outside it the weather fell back to rain, so a warm
+  spell melting the mountain sent nothing downhill. Spring melt and rain on snow are the main flood water in
+  mountains (Marks et al. 1998, Hydrological Processes 12).
+- With a world tier the source is now the world's cells (4 km at 16 m) with the near square averaged into the
+  cells it covers (by covered share at the square's edge), one source so nothing counts twice.
+  `get_runoff_at` outside the square reads the world tier.
+- Checks (`--test=climate`): a warm clear spell's melt outside the square is the weather's ground water there
+  (0.74 mm/h both); rain on a square cleared bare over the world's 527 mm pack gives 4.00 mm/h, the square's,
+  not the two added.
+- Not here: rivers (PhysXRiver3D) take their discharge from the terrain climate, not from this field; a
+  seasonal melt pulse in them would be the rivers' change.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
