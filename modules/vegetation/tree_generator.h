@@ -784,6 +784,10 @@ public:
 	// STAND_ICE_STORM: years since the storm.
 	float ice_storm = 1.0f;
 	int ice_band = 0; // While an ice storm stand grows its species: 1 bent, 2 broken top, 3 limbs stripped.
+	// A clone's leaf-out and autumn (trees.md 5bf; aspen): x later out (+) or earlier (-), y later turning, -1..1. Stand
+	// variants of aspen draw it per clone; the field gives every stem of a clone one variant (species meta clone_scale).
+	Vector2 phenology_shift;
+	LeafSeason _tree_leaf_season() const;
 	int ice_damage = 0; // Set by _ice_storm_damage for the mesh meta: 0 none, 1 bent, 2 top broken, 3 limbs broken.
 	int succession_band = 0; // While make_succession grows a stage: 1 the pole stage, 2 old growth's veterans, 3 stand initiation (trees.md 5aq).
 	Preset last_stand_lead = PRESET_MAX; // The lead of the last make_stand().
