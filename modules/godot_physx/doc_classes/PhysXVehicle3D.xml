@@ -126,6 +126,13 @@
 				How much lower the water stands at the engine's air intake than the still surface, m, at the last step: about the stagnation head v^2 / 2g at a wading pace (the bow's trough), turning negative past a depth Froude number of 0.7 as the bow wave stands up and climbs over the bonnet. The intake (see [member air_intake_height]) reads the water at this level.
 			</description>
 		</method>
+		<method name="get_wheel_clods_thrown" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				Soil the wheel's tread has cut out of cohesive ground and flung or dropped as clods, kg since start. Lugs and above all chains shear the clay between them as the wheel slips (Wong's grouser action): a quarter of the width by the tread's depth by the slip, scaled by the tread's bite (none on road tyres) and the soil's stickiness. Past the speed at which clay lets go of rubber it is thrown with the tread's clay; slower it drops just behind the wheel.
+			</description>
+		</method>
 		<method name="get_wheel_creep" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="wheel" type="int" />
@@ -375,7 +382,7 @@
 			When the chassis box's underside meets soft ground deeper than the ruts, the soil holds it up by its bearing pressure (Bekker) and drags it by its shear and adhesion, bulldozing at the front, and the body presses its own trough. A car sunk to its axles high-centres and has to be dug or winched out. See [method get_belly_drag] and [method get_belly_support].
 		</member>
 		<member name="body_mud" type="bool" setter="set_body_mud" getter="is_body_mud" default="true">
-			Mud cakes the meshes under this node: the tyres as their treads pack (see [member tyre_clogging]), the arches and sides as the wheels throw it, the underside up to the deepest the belly sat in mud. It lands wet and dark and dries over minutes to a pale crust; standing water washes the spray off. The node turns [member BaseMaterial3D.mud_enabled] on in copies of its meshes' [BaseMaterial3D] materials and feeds them each physics tick; [ShaderMaterial]s are left alone.
+			Mud cakes the meshes under this node: the tyres as their treads pack (see [member tyre_clogging]), the arches and sides as the wheels throw it, the underside up to the deepest the belly sat in mud. It lands wet and dark and dries over minutes to a pale crust; standing water washes the spray off. It dries on the weather's clock ([method WorldWeather.time_scale]), and the dried crust is shed by hard jolts, by road vibration over minutes, and by the air past the body at speed (past about 18 m/s). The node turns [member BaseMaterial3D.mud_enabled] on in copies of its meshes' [BaseMaterial3D] materials and feeds them each physics tick; [ShaderMaterial]s are left alone.
 		</member>
 		<member name="brake" type="float" setter="set_brake" getter="get_brake" default="0.0">
 			Brake pedal input, [code]0[/code] to [code]1[/code]. Scales up to [member max_brake_torque] of braking torque at each wheel. Set every physics tick from script; does not persist on its own the way a real pedal would.
