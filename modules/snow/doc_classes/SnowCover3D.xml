@@ -54,6 +54,16 @@
 				Sets the suncup relief (m, ridge to hollow) wherever there is snow, at most half its depth. For scenes and tests; the cover grows them itself in sunny melt.
 			</description>
 		</method>
+		<method name="add_traffic">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="pack" type="float" />
+			<param index="3" name="glaze_mm" type="float" />
+			<description>
+				Marks traffic on the cell at [param position] by hand: [param pack] of its area packed (0 to 1) and [param glaze_mm] of polished ice added. Bodies in the [code]world_contact[/code] group do this themselves as they roll and slip on the snow.
+			</description>
+		</method>
 		<method name="advance">
 			<return type="void" />
 			<param index="0" name="seconds" type="float" />
@@ -292,6 +302,20 @@
 				Returns how far the wind of the last update was above the blowing-snow threshold, from 0 (calm) to 1. [SnowSurface3D] fills trails with it.
 			</description>
 		</method>
+		<method name="get_glaze_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The ice glaze (mm) slipping wheels have polished on the cell at [param position]: their friction, mu W v_slip, melts the surface and the melt refreezes in the cold. It melts in thaws and rain.
+			</description>
+		</method>
+		<method name="get_grip_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The tyre friction coefficient on the snow at [param position] (Wallman and Astrom 2001): loose snow 0.3, packed 0.25, polished ice down to [method ice_grip], new snow over it loose again. [code]-1[/code] where there is no snow.
+			</description>
+		</method>
 		<method name="get_ground_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -359,11 +383,18 @@
 				The share of the background precipitation that falls at [param position]: the [member climate_map]'s precipitation over its recipe's [member ClimateRecipe.precipitation] when it has a baked climate, else [member precipitation_gradient] per 100 m above [param reference_height].
 			</description>
 		</method>
+		<method name="get_packed_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share (0 to 1) of the cell at [param position] that wheels and feet have packed hard: each pass packs its swept area, a car tyre fully, a boot about half as well.
+			</description>
+		</method>
 		<method name="get_runoff_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				Returns the water leaving the snowpack at [param position] during the last update, in mm/h: meltwater and rain beyond what the pack holds, or the rain itself on bare ground.
+				Returns the water leaving the snowpack at [param position] during the last update, in mm/h: meltwater and rain beyond what the pack holds, or the rain itself on bare ground. Outside the near square it is the world tier's. The same field is the [WeatherMap3D]'s ground water source (what [WeatherRunoff3D] routes into streams): with a world tier, the world's cells with the near square averaged into those it covers, so melt anywhere on the terrain runs off.
 			</description>
 		</method>
 		<method name="get_salt_depression_at" qualifiers="const">
@@ -383,7 +414,7 @@
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				The saturated slush layer at the pack's base at [param position], m. Melt water and rain the pack cannot hold pond over frozen ground ([method WorldGround.frost_at]) instead of soaking away, and leave by Darcy flow down the slope; flat ground keeps a slush pond.
+				The saturated slush layer at the pack's base at [param position], m. Melt water and rain the pack cannot hold pond in its pores over frozen ground ([method WorldGround.frost_at]) instead of soaking away (pore water: the snow gets no deeper and its SWE does not count it), leave by Darcy flow down the slope (flat ground keeps a slush pond) and freeze into the base in the cold.
 			</description>
 		</method>
 		<method name="get_snowfall_rate_at" qualifiers="const">
@@ -391,6 +422,30 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the precipitation falling as snow at [param position], in millimetres of water an hour (the snow share of Jennings et al. 2018 at that height). [SnowFall3D] reads it.
+			</description>
+		</method>
+		<method name="get_spindrift" qualifiers="const">
+			<return type="SnowPowderCloud3D" />
+			<description>
+				The plume gas (an internal [SnowPowderCloud3D]) once a crest has blown, else [code]null[/code].
+			</description>
+		</method>
+		<method name="get_spindrift_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				Snow blown off the lee crests in the square at the last update, kg/s: the drift flux (saltation and suspension, Pomeroy and Male 1992) at each crest's sped-up wind times its width.
+			</description>
+		</method>
+		<method name="get_spindrift_source_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many plume sources feed the gas (at most [member max_spindrift]).
+			</description>
+		</method>
+		<method name="get_spindrift_sources" qualifiers="const">
+			<return type="Array" />
+			<description>
+				The plume sources, strongest first: dictionaries of [code]position[/code] (past the crest lip), [code]velocity[/code] (the near-surface wind over the crest) and [code]rate[/code] (kg/s).
 			</description>
 		</method>
 		<method name="get_suncup_relief_at" qualifiers="const">
@@ -512,6 +567,14 @@
 				How far frozen ground stops melt water draining from the pack, 0 to 1, from [method WorldGround.frost_at] (thawed top m, frost depth m, weakening): concrete frost a few centimetres deep with no thawed layer over it seals.
 			</description>
 		</method>
+		<method name="ice_grip" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<param index="1" name="wetness" type="float" />
+			<description>
+				Tyre friction on polished ice: 0.05 near melting or wet, rising to about 0.15 by -15 C.
+			</description>
+		</method>
 		<method name="is_updating" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -583,6 +646,16 @@
 				The rate (1/h) a slush layer drains off a slope [param length] m long of sine [param slope_sine]: Darcy flow with the wet-snow permeability of Shimizu (1970) at [param density] kg/m3. The cover uses 50 m: hours on a steep slope, days on the flat.
 			</description>
 		</method>
+		<method name="slush_height" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="swe" type="float" />
+			<param index="1" name="liquid" type="float" />
+			<param index="2" name="density" type="float" />
+			<param index="3" name="slush" type="float" />
+			<description>
+				The height (m) a slush layer of [param slush] mm of water reaches in a pack of [param swe] mm, [param liquid] mm of it held water, at [param density] kg/m3: the water fills the pores from the base up.
+			</description>
+		</method>
 		<method name="snow_conductivity" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="density" type="float" />
@@ -596,6 +669,13 @@
 			<param index="1" name="humidity" type="float" />
 			<description>
 				Returns the share of precipitation that falls as snow at air temperature [param celsius] and relative humidity [param humidity] (0 to 1), from the logistic model of Jennings et al. (2018): 1 / (1 + exp(-10.04 + 1.41 T + 0.09 RH)), RH in percent. Half falls as snow at 3.9 °C in dry air (50%) and at 1.4 °C in humid air (90%).
+			</description>
+		</method>
+		<method name="spindrift_fade" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="humidity" type="float" />
+			<description>
+				The rate (1/s) the plume thins by sublimation at relative [param humidity]: faster in dry air (Schmidt 1972). Set as the gas's smoke fade.
 			</description>
 		</method>
 		<method name="suncup_step" qualifiers="static">
@@ -703,6 +783,9 @@
 		<member name="liquid_capacity" type="float" setter="set_liquid_capacity" getter="get_liquid_capacity" default="0.05">
 			The share of its ice the snowpack holds as liquid water before meltwater and rain drain out.
 		</member>
+		<member name="max_spindrift" type="int" setter="set_max_spindrift" getter="get_max_spindrift" default="16">
+			Most plume sources: crest cells are gathered in 8 m bins, doubled until they fit, so the emitters spread along the ridge.
+		</member>
 		<member name="melt_shortwave_factor" type="float" setter="set_melt_shortwave_factor" getter="get_melt_shortwave_factor" default="0.0094">
 			Melt per watt of absorbed sunlight (mm m² h⁻¹ W⁻¹), the SRF of Pellicciotti et al. (2005). The sunlight is the clear-sky beam from [member sun_light] (Meinel and Meinel 1976) on each cell's slope, through the cloud shadow or cover of the weather map, times one minus the snow's albedo.
 		</member>
@@ -748,6 +831,9 @@
 		<member name="slush_enabled" type="bool" setter="set_slush_enabled" getter="is_slush_enabled" default="true">
 			Slush: melt water ponds in the pack's base over frozen ground and leaves only down the slope.
 		</member>
+		<member name="spindrift_enabled" type="bool" setter="set_spindrift_enabled" getter="is_spindrift_enabled" default="true">
+			Spindrift: in wind over the blowing threshold, loose dry snow streams off sharp lee crests (the ground falling 30 degrees or more downwind) as plumes of PhysX Flow gas that drift on the weather's wind, settle slowly and sublimate. Needs the PhysX module with Flow to show.
+		</member>
 		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
 			Updates per real second.
 		</member>
@@ -757,6 +843,9 @@
 		<member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="-2.0">
 		</member>
 		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
+		</member>
+		<member name="traffic_enabled" type="bool" setter="set_traffic_enabled" getter="is_traffic_enabled" default="true">
+			Packed-snow roads: bodies rolling over the snow pack it, slipping wheels polish an ice glaze, and [method get_grip_at] gives the friction. [SnowSurface3D] draws packed snow smoother and greyer, and glaze as dark clear ice.
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="2.0">
 		</member>

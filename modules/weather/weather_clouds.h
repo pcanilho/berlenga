@@ -142,6 +142,16 @@ struct State {
 	float air_t0 = 15.0f;
 	float air_rh0 = 0.6f;
 	float scud = 0.0f; // share of the sky with fractus under its bases (WeatherMap3D: humid air, rain falling)
+	// Lake-effect snow (WeatherLakeEffect): the fetch field (km of open water upwind, band axis 0..1) over a square
+	// fixed to the ground, and lake_params: how unstable the air over the water is (0..1, from the water against the
+	// air at 850 hPa), the share of wind-parallel rolls against a single band (by U / L), the rolls' spacing (m),
+	// the convection's top over the base (m). lake_dir: the boundary layer's wind (unit).
+	Vector<float> lake_field;
+	int lake_n = 0;
+	Vector2 lake_corner;
+	float lake_size = 0.0f;
+	Vector4 lake_params;
+	Vector2 lake_dir = Vector2(1, 0);
 	float air_y0 = 0.0f;
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
 	float base_min = 1500.0f; // lowest base any column has now (m), set by update_top_max()
@@ -176,6 +186,10 @@ float cover_noise(const CoverNoiseFrame &p_frame, Vector2 p_xz);
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz);
 // How high a storm's column reaches over p_xz, as a cloud type: under its anvil, the storm's own height.
 float storm_column_type(const State &p_state, Vector2 p_xz);
+// Lake-effect cloud at x, z (0..1): the fetch's growth times the air's instability, in a single band along the longest
+// fetch or in rolls along the wind (WeatherLakeEffect; wc_lake_effect in the sky).
+float lake_effect_at(const float *p_field, int p_n, Vector2 p_corner, float p_size, const Vector4 &p_params, Vector2 p_dir, Vector2 p_xz);
+float lake_effect_at(const State &p_state, Vector2 p_xz);
 // How much of the sky has cumulus fractus under its bases (0 to 1): humid air at the ground, or rain falling through it.
 float scud_share(float p_rh, float p_rain);
 // The cloud base (m) over world x, z: base_height, blended to each storm's own base over its cloud shield.
@@ -203,6 +217,8 @@ float layered_share(float p_type);
 // Wave clouds: the dew point depression (K) of the air at a point (the model's profile, moistened by the mid and
 // high layers' cover), the lift (m) that saturates it, and the wave cloud's extinction (1/m) there.
 float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos);
+// The pile of plates' extra dew point depression (K) in the drier sheets of a stratified moist layer.
+float wave_plate_depression(const State &p_state, const Vector3 &p_pos);
 float wave_extinction_at(const State &p_state, const Vector3 &p_pos);
 // The two slabs (m: x..y round the mid layer's height, z..w above) where wave cloud can form now, from the field's
 // largest lift at each level (empty: y <= x).

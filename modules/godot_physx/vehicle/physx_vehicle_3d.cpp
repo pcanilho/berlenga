@@ -173,7 +173,8 @@ static constexpr float TYRE_PRESSURE_KPA = 220.0f;
 // The tread scales the result by what covers the surface (PhysXVehicleWheel3D::tread_firm_grip: chains bite ice,
 // lugs bite snow). Snow from the snow contract (WorldSnow): a tyre on snow holds about 0.2 on new powder to 0.35 on
 // packed snow, less as it turns to slush (Shoop et al., CRREL tyre traction on snow; winter-tyre tests put packed
-// snow at 0.2-0.4); a hard melt-freeze crust is near ice, about 0.15. Bare lake ice counts as ice.
+// snow at 0.2-0.4); a hard melt-freeze crust is near ice, about 0.15. Bare lake ice counts as ice. Where the snow
+// system keeps its own friction (WorldSnow.grip_at: packed roads, snow polished to ice) that is used instead.
 static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_water, const Vector2 &p_ice, int p_tread, float p_inflation = TYRE_PRESSURE_KPA) {
 	float film = 0.0f;
 	float depth = MAX(p_standing_water, 0.0f); // m
@@ -194,19 +195,29 @@ static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_wat
 	float ice = MAX(glaze, sheet);
 	float snow = 0.0f;
 	float snow_grip = 1.0f;
+	float glazed = 0.0f;
 	if (const WorldSnow *ws = WorldContracts::snow(); ws && ws->has_provider()) {
 		const Vector2 lake = ws->lake_ice_at(p_at);
 		ice = MAX(ice, Math::smoothstep(0.005f, 0.02f, lake.x) * (1.0f - CLAMP(lake.y, 0.0f, 1.0f)));
 		const float d = ws->depth_at(p_at);
 		snow = Math::smoothstep(0.003f, 0.02f, d) * (1.0f - ice);
 		if (snow > 0.0f) {
-			const float rho = ws->density_at(p_at);
-			snow_grip = Math::lerp(0.2f, 0.35f, Math::smoothstep(100.0f, 450.0f, rho)) * (1.0f - 0.3f * CLAMP(ws->wetness_at(p_at), 0.0f, 1.0f));
-			snow_grip = Math::lerp(snow_grip, 0.15f, Math::smoothstep(50.0f, 300.0f, ws->crust_at(p_at)));
+			// The snow system's own tyre friction where it keeps one (SnowCover3D: traffic packs the snow and polishes
+			// it toward ice); else estimated from the pack's density, wetness and crust.
+			const float g = ws->grip_at(p_at);
+			if (g >= 0.0f) {
+				snow_grip = g;
+				// Snow polished to ice (under about 0.15) bites chains and studs as ice does.
+				glazed = snow * Math::smoothstep(0.2f, 0.1f, g);
+			} else {
+				const float rho = ws->density_at(p_at);
+				snow_grip = Math::lerp(0.2f, 0.35f, Math::smoothstep(100.0f, 450.0f, rho)) * (1.0f - 0.3f * CLAMP(ws->wetness_at(p_at), 0.0f, 1.0f));
+				snow_grip = Math::lerp(snow_grip, 0.15f, Math::smoothstep(50.0f, 300.0f, ws->crust_at(p_at)));
+			}
 		}
 	}
 	grip = Math::lerp(grip, MIN(snow_grip, grip), snow);
-	return Math::lerp(grip, MIN(ice_grip, grip), ice) * PhysXVehicleWheel3D::tread_firm_grip((PhysXVehicleWheel3D::Tread)p_tread, ice, snow);
+	return Math::lerp(grip, MIN(ice_grip, grip), ice) * PhysXVehicleWheel3D::tread_firm_grip((PhysXVehicleWheel3D::Tread)p_tread, MAX(ice, glazed), snow - glazed);
 }
 
 class PhysXVehicleSoilRoad : public PxVehicleComponent {

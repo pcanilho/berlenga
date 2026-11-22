@@ -9,6 +9,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_ground_albedo_at" qualifiers="const">
+			<return type="Color" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The ground's mean albedo at [param position] (linear rgb) as this material lays its layers there, without texture detail; alpha: the layers' porosity, or below 0 where the generator given to [method use_generator] does not reach. After [method use_generator] the material answers [method WorldGround.albedo_at] with it.
+			</description>
+		</method>
 		<method name="get_layer" qualifiers="const">
 			<return type="TerrainMaterialLayer" />
 			<param index="0" name="layer" type="int" enum="TerrainMaterial3D.Layer" />

@@ -586,6 +586,9 @@ float WeatherMap3D::_target_temperature() const {
 }
 
 float WeatherMap3D::get_water_temperature() const {
+	if (water_temperature_set > -99.0f) {
+		return water_temperature_set;
+	}
 	if (climate.is_valid()) {
 		const float day = Math::fposmod(float(get_day_of_year()) - 30.0f, 365.0f);
 		return MAX(WeatherSeason::day_temperature(_season_climate(), ground_height, day), 0.0f);
@@ -1000,6 +1003,14 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 				const float vr = s.outflow * (s.radius / rr) * (1.0f - Math::exp(-x2)) / DOWNBURST_PEAK;
 				w += d / rr * vr * env;
 			}
+		}
+
+		// Lake-effect snow under its bands: 2 to 8 cm of snow an hour (Niziol et al. 1995), about 4 mm/h of water.
+		if (lake_params_now.x > 0.0f && lake_effect.derived) {
+			const float lake = WeatherClouds::lake_effect_at(lake_effect.field.ptr(), lake_effect.resolution, lake_effect.rect().position, lake_effect.extent, lake_params_now, lake_effect.wind_dir, p);
+			cover = 1.0f - (1.0f - cover) * (1.0f - 0.8f * lake);
+			t = MAX(t, 0.75f * lake);
+			r += 4.0f * lake;
 		}
 
 		c.wind[i * 2 + 0] = w.x;
@@ -1427,6 +1438,7 @@ void WeatherMap3D::_notification(int p_what) {
 			}
 			WorldContracts::unregister_weather(this);
 			set_physics_process_internal(false);
+			_free_shafts();
 			_finish_shadow_bake(true);
 			_finish_sky_shadow_bake(true);
 			_finish_light_grid_bake(true);
@@ -1459,6 +1471,7 @@ void WeatherMap3D::_notification(int p_what) {
 			}
 			_update_terrain_wind();
 			_update_mountain_waves(float(dt));
+			_update_lake_effect(float(dt));
 			// Cloud shadows bake in the background; between bakes they slide with the clouds.
 			shadow_timer += dt;
 			if (shadow_task != WorkerThreadPool::INVALID_TASK_ID && WorkerThreadPool::get_singleton()->is_group_task_completed(shadow_task)) {
@@ -1482,6 +1495,7 @@ void WeatherMap3D::_notification(int p_what) {
 			}
 			_apply_light_grid();
 			_apply_haze();
+			_update_shafts();
 			_update_contact(wdt);
 			_tracks_step(float(dt));
 			if (update_accum >= period) {
@@ -1891,6 +1905,124 @@ void WeatherMap3D::_apply_wave_field() {
 	if (sky_material.is_valid()) {
 		sky_material->set_cloud_wave_field(wave_texture, mw.rect().position, mw.extent, n);
 	}
+}
+
+// Lake-effect snow (WeatherLakeEffect). Open water: a metre or more of it over the terrain (puddles and wet ground
+// do not count). The air over it: the water against the air at 850 hPa (about 1.5 km up, the model's 6.5 K/km), at
+// least 13 K warmer for lake-effect snow (Niziol et al. 1995), ice-free water, and a wind to carry it (lake-effect
+// bands need some 5 m/s; calmer air gives the shore-hugging vortices, left out). Its form by U / L, the wind over the
+// longest fetch: a single band up to 0.06 m/s per km, rolls past 0.11 (Laird, Kristovich and Walsh 2003). The
+// convection reaches the inversion, higher the more unstable (1.5 to 3.5 km), its rolls 2.75 times that apart
+// (Kristovich 1993).
+void WeatherMap3D::_update_lake_effect(float p_dt) {
+	if (!lake_effect_snow) {
+		if (lake_params_now != Vector4()) {
+			lake_params_now = Vector4();
+			_push_sky();
+		}
+		return;
+	}
+	const Vector3 c = _follow_position();
+	const Vector2 center(c.x, c.z);
+	WeatherLakeEffect &le = lake_effect;
+	if (le.needs_water(center)) {
+		_find_terrain_source();
+		le.begin_water(center);
+	}
+	if (le.is_sampling()) {
+		const WorldWater *water = WorldContracts::water();
+		const int n = le.resolution;
+		const int rows = MAX(1, 2048 / n);
+		float *wv = le.pending.ptrw();
+		const int end = MIN(n, le.pending_row + rows);
+		for (int z = le.pending_row; z < end; z++) {
+			for (int x = 0; x < n; x++) {
+				const Vector2 q = le.pending_cell_center(x, z);
+				float h = _terrain_height(q);
+				if (!Math::is_finite(h)) {
+					h = ground_height;
+				}
+				const float ws = water ? water->height_at(Vector3(q.x, h + 1.0f, q.y)) : -Math::INF;
+				wv[z * n + x] = (Math::is_finite(ws) && ws - h >= 1.0f) ? 1.0f : 0.0f;
+			}
+		}
+		le.pending_row = end;
+		if (end >= n) {
+			le.finish_water();
+		}
+	}
+	const Vector2 dir = cur_wind_direction.length_squared() > 1e-8f ? cur_wind_direction.normalized() : Vector2(1, 0);
+	if (le.needs_derive(dir)) {
+		le.derive(dir);
+		_apply_lake_field();
+		lake_timer = 1.0e9f;
+	}
+	lake_timer += p_dt;
+	if (lake_timer < 0.5f) {
+		return;
+	}
+	lake_timer = 0.0f;
+	Vector4 prm;
+	if (le.derived && le.any_water) {
+		const float tw = get_water_temperature();
+		const float dt850 = tw - (cur_air_temperature - 0.0065f * 1500.0f);
+		const float instab = Math::smoothstep(10.0f, 16.0f, dt850) * Math::smoothstep(0.5f, 2.0f, tw) * Math::smoothstep(2.0f, 6.0f, cur_wind_speed);
+		if (instab > 0.0f) {
+			const float u = 1.4f * cur_wind_speed; // above the surface layer's drag
+			const float rolls = Math::smoothstep(0.06f, 0.11f, u / MAX(le.fetch_max, 1.0f));
+			const float depth = Math::lerp(1500.0f, 3500.0f, Math::smoothstep(13.0f, 25.0f, dt850));
+			prm = Vector4(instab, rolls, 2.75f * depth, depth);
+		}
+	}
+	if (!prm.is_equal_approx(lake_params_now)) {
+		lake_params_now = prm;
+		_push_sky();
+	}
+}
+
+void WeatherMap3D::_apply_lake_field() {
+	const WeatherLakeEffect &le = lake_effect;
+	const int n = le.resolution;
+	if (!le.derived || le.field.size() < n * n * 2) {
+		return;
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(n * n * 2 * sizeof(float));
+	memcpy(bytes.ptrw(), le.field.ptr(), bytes.size());
+	Ref<Image> img = Image::create_from_data(n, n, false, Image::FORMAT_RGF, bytes);
+	if (lake_texture.is_valid() && lake_texture->get_width() == n) {
+		lake_texture->update(img);
+	} else {
+		lake_texture = ImageTexture::create_from_image(img);
+	}
+	_push_sky();
+}
+
+void WeatherMap3D::set_lake_effect_snow(bool p_enabled) {
+	lake_effect_snow = p_enabled;
+	if (!p_enabled) {
+		lake_params_now = Vector4();
+		_push_sky();
+	}
+}
+
+float WeatherMap3D::get_lake_effect_at(Vector3 p_position) const {
+	if (!lake_effect.derived || lake_params_now.x <= 0.0f) {
+		return 0.0f;
+	}
+	return WeatherClouds::lake_effect_at(lake_effect.field.ptr(), lake_effect.resolution, lake_effect.rect().position, lake_effect.extent, lake_params_now, lake_effect.wind_dir, Vector2(p_position.x, p_position.z));
+}
+
+float WeatherMap3D::get_lake_fetch_at(Vector3 p_position) const {
+	const WeatherLakeEffect &le = lake_effect;
+	if (!le.derived) {
+		return 0.0f;
+	}
+	const int n = le.resolution;
+	const Vector2 uv = (Vector2(p_position.x, p_position.z) - le.rect().position) / le.extent;
+	const int x = CLAMP(int(uv.x * n), 0, n - 1);
+	const int z = CLAMP(int(uv.y * n), 0, n - 1);
+	return le.field[(z * n + x) * 2];
 }
 
 void WeatherMap3D::set_wave_clouds(bool p_enabled) {
@@ -2718,6 +2850,14 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		st.wave_y2 = wave_slab_now.z;
 		st.wave_y3 = wave_slab_now.w;
 	}
+	if (lake_effect_snow && lake_effect.derived && lake_params_now.x > 0.0f) {
+		st.lake_field = lake_effect.field;
+		st.lake_n = lake_effect.resolution;
+		st.lake_corner = lake_effect.rect().position;
+		st.lake_size = lake_effect.extent;
+		st.lake_params = lake_params_now;
+		st.lake_dir = lake_effect.wind_dir;
+	}
 	st.air_t0 = cur_air_temperature;
 	st.air_rh0 = CLAMP(cur_air_humidity, 0.01f, 1.0f);
 	st.scud = WeatherClouds::scud_share(st.air_rh0, cur_rain_rate);
@@ -3343,6 +3483,9 @@ void WeatherMap3D::_push_sky() {
 		if (wave_texture.is_valid()) {
 			sky_material->set_cloud_wave_field(wave_texture, mountain_waves.rect().position, mountain_waves.extent, mountain_waves.resolution);
 		}
+		if (lake_texture.is_valid()) {
+			sky_material->set_cloud_lake_field(lake_texture, lake_effect.rect().position, lake_effect.extent, lake_effect.resolution);
+		}
 	}
 }
 
@@ -3537,6 +3680,8 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_surface_water_source", "owner", "rates", "resolution", "rect"), &WeatherMap3D::set_surface_water_source);
 	ClassDB::bind_method(D_METHOD("clear_surface_water_source", "owner"), &WeatherMap3D::clear_surface_water_source);
 	ClassDB::bind_method(D_METHOD("set_humidity", "humidity"), &WeatherMap3D::set_humidity);
+	ClassDB::bind_method(D_METHOD("set_distant_shafts", "enabled"), &WeatherMap3D::set_distant_shafts);
+	ClassDB::bind_method(D_METHOD("is_distant_shafts"), &WeatherMap3D::is_distant_shafts);
 	ClassDB::bind_method(D_METHOD("set_traced_haze", "enabled"), &WeatherMap3D::set_traced_haze);
 	ClassDB::bind_method(D_METHOD("get_traced_haze"), &WeatherMap3D::get_traced_haze);
 	ClassDB::bind_method(D_METHOD("set_aerosol_haze", "enabled"), &WeatherMap3D::set_aerosol_haze);
@@ -3683,6 +3828,13 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cloud_effector_count"), &WeatherMap3D::get_cloud_effector_count);
 	ClassDB::bind_method(D_METHOD("get_cloud_effector_at", "position"), &WeatherMap3D::get_cloud_effector_at);
 	ClassDB::bind_method(D_METHOD("set_wave_clouds", "enabled"), &WeatherMap3D::set_wave_clouds);
+	ClassDB::bind_method(D_METHOD("set_lake_effect_snow", "enabled"), &WeatherMap3D::set_lake_effect_snow);
+	ClassDB::bind_method(D_METHOD("is_lake_effect_snow"), &WeatherMap3D::is_lake_effect_snow);
+	ClassDB::bind_method(D_METHOD("get_lake_effect_at", "position"), &WeatherMap3D::get_lake_effect_at);
+	ClassDB::bind_method(D_METHOD("get_lake_fetch_at", "position"), &WeatherMap3D::get_lake_fetch_at);
+	ClassDB::bind_method(D_METHOD("is_lake_effect_ready"), &WeatherMap3D::is_lake_effect_ready);
+	ClassDB::bind_method(D_METHOD("set_water_temperature", "celsius"), &WeatherMap3D::set_water_temperature);
+	ClassDB::bind_method(D_METHOD("get_water_temperature_setting"), &WeatherMap3D::get_water_temperature_setting);
 	ClassDB::bind_method(D_METHOD("is_wave_clouds"), &WeatherMap3D::is_wave_clouds);
 	ClassDB::bind_method(D_METHOD("get_mountain_wave_at", "position"), &WeatherMap3D::get_mountain_wave_at);
 	ClassDB::bind_method(D_METHOD("get_mountain_wave_velocity_at", "position"), &WeatherMap3D::get_mountain_wave_velocity_at);
@@ -3832,6 +3984,8 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mid_cloud_thickness", PROPERTY_HINT_RANGE, "50,3000,10,suffix:m"), "set_mid_cloud_thickness", "get_mid_cloud_thickness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mid_cloud_optical_depth", PROPERTY_HINT_RANGE, "0,30,0.1"), "set_mid_cloud_optical_depth", "get_mid_cloud_optical_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wave_clouds"), "set_wave_clouds", "is_wave_clouds");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lake_effect_snow"), "set_lake_effect_snow", "is_lake_effect_snow");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_temperature", PROPERTY_HINT_RANGE, "-100,35,0.1,suffix:C"), "set_water_temperature", "get_water_temperature_setting");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shadow_extent", PROPERTY_HINT_RANGE, "16,100000,1,or_greater,suffix:m"), "set_cloud_shadow_extent", "get_cloud_shadow_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cloud_shadow_resolution", PROPERTY_HINT_RANGE, "16,2048,1"), "set_cloud_shadow_resolution", "get_cloud_shadow_resolution");
@@ -3850,6 +4004,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dew_and_frost"), "set_dew_and_frost", "get_dew_and_frost");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "aerosol_haze"), "set_aerosol_haze", "get_aerosol_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traced_haze"), "set_traced_haze", "get_traced_haze");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "distant_shafts"), "set_distant_shafts", "is_distant_shafts");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_visibility", PROPERTY_HINT_RANGE, "0.05,200,0.05,or_greater,suffix:km"), "set_haze_visibility", "get_haze_visibility");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_height", PROPERTY_HINT_RANGE, "10,5000,10,suffix:m"), "set_haze_height", "get_haze_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "surface_storage", PROPERTY_HINT_RANGE, "0.01,10,0.01,suffix:mm"), "set_surface_storage", "get_surface_storage");

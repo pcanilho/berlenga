@@ -65,6 +65,7 @@ layout(set = 0, binding = 5, std140) uniform Params {
 	vec4 sun_map; // xyz: world direction toward the light it is built from; w: 1 = present
 	vec4 sky_map_xform[3]; // rows: world meters -> the sky's volumetric shadow map (built looking down)
 	vec4 sky_map; // x: single-scattering albedo; y: ground albedo; z: weight of the scattering orders past the octaves; w: 1 = present
+	vec4 ground; // rgb: the ground's colour (linear), which the ground albedo scales
 } p;
 
 // The world distance (meters) to what a frame pixel shows (reverse Z: 0 is the far plane), at most
@@ -537,7 +538,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			// the sky's lower half.
 			// With a ground albedo the ground is lit by the sky above (its own lower half is a stand-in ground,
 			// often a dull brown, where a real snowfield under a blue sky is blue-white).
-			vec3 ground_light = p.sky_map.y > 0.0 ? ambient * p.sky_map.y : ambient_down;
+			vec3 ground_light = p.sky_map.y > 0.0 ? ambient * (p.sky_map.y * p.ground.rgb) : ambient_down;
 			// The gas above and below the point, from the sky's map (-1: not known).
 			float od_above = -1.0;
 			float od_below = -1.0;
@@ -645,7 +646,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 							ground_sun_t = best >= 0.0 ? best : 1.0;
 						}
 						// Part of the ground the point sees lies toward the camera, out of the gas's shadow (SKY_OPENING).
-						ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * mix(ground_sun_t, 1.0, SKY_OPENING * transmittance) * p.sky_map.y);
+						ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * mix(ground_sun_t, 1.0, SKY_OPENING * transmittance) * p.sky_map.y) * p.ground.rgb;
 					}
 #endif
 					float atten = sun_shadow(uint(i), vpos);
@@ -1024,7 +1025,7 @@ void main() {
 // sizeof(LightStorage::DirectionalLightData) (private there): the std140 struct in the shader above.
 constexpr uint32_t DIRECTIONAL_LIGHT_DATA_SIZE = 560;
 
-constexpr uint32_t PARAMS_WORDS = 16 + 4 + 40 + 4 * 8 + 4 * 5 + 16 * 2 + 4 + 16 + 16 + 16;
+constexpr uint32_t PARAMS_WORDS = 16 + 4 + 40 + 4 * 8 + 4 * 5 + 16 * 2 + 4 + 16 + 16 + 16 + 4;
 
 RID compile(RenderingDevice *p_rd, const char *p_source, const char *p_name, bool p_sky_array = false, bool p_shadow_pass = false) {
 	Ref<RDShaderFile> file;
@@ -1277,6 +1278,10 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 		f[w++] = 0.68f;
 	}
 	f[w++] = sky_map ? 1.0f : 0.0f;
+	f[w++] = p_params.ground_color.r;
+	f[w++] = p_params.ground_color.g;
+	f[w++] = p_params.ground_color.b;
+	f[w++] = 0.0f;
 	ERR_FAIL_COND(w != PARAMS_WORDS);
 	p_rd->buffer_update(params_buffer, 0, sizeof(words), words);
 	if (count > 0) {

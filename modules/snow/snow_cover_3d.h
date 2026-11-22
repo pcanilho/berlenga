@@ -33,6 +33,7 @@
 #pragma once
 
 #include "snow_climate.h"
+#include "snow_powder_cloud_3d.h"
 
 #include "core/io/image.h"
 #include "core/object/worker_thread_pool.h"
@@ -153,6 +154,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	Vector<float> cell_density; // kg/m3
 	Vector<float> cell_albedo;
 	Vector<float> cell_runoff; // mm/h leaving the pack, last update
+	Vector<float> runoff_out; // the weather's water source with a world tier: its cells, the square's averaged in (mm/h)
 	Vector<float> cell_sx; // degrees, Winstral's maximum upwind slope
 	Vector<float> cell_canopy; // canopy closure over the cell, 0..1 (WeatherMap3D's canopy)
 	Vector<float> cell_canopy_load; // mm of snow water held in the canopy
@@ -169,6 +171,9 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// of them: its crystals (mm), the snow over it (m) and the hours since it was buried.
 	Vector<float> cell_hoar;
 	Vector<float> cell_cups; // m, suncup relief (ridge to hollow)
+	Vector<float> cell_packed; // 0..1, the share of the cell traffic has packed hard (follow-up 43)
+	Vector<float> cell_glaze; // mm of ice glaze polished on it by slipping wheels
+	Vector<float> cell_slush; // mm of water ponded in the pack's pores over frozen ground (not in cell_swe)
 	Vector<float> cell_seal; // 0..1, how far frozen ground under the pack stops melt water draining (WorldGround.frost_at)
 	Ref<Image> cups_image;
 	Ref<ImageTexture> cups_texture;
@@ -264,6 +269,8 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
 		Vector<float> hoar, hoar_layer, hoar_burial, hoar_age;
 		Vector<float> cups;
+		Vector<float> slush; // mm
+		Vector<float> packed, glaze;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
 		Vector<float> ice, white_ice;
 		Vector<float> lap; // mg/m2 BC equivalent showing at the surface
@@ -323,6 +330,15 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	SnowBodies3D *bodies_node = nullptr; // snow carried by moving things, an internal child
 	bool avalanches_enabled = true;
 	SnowAvalanche3D *avalanche_node = nullptr; // slab release and run-out, an internal child
+	// Spindrift plumes (follow-up 42): snow blown off lee crests, as a light Flow gas (SnowPowderCloud3D).
+	bool spindrift_enabled = true;
+	int max_spindrift = 16;
+	SnowPowderCloud3D *spindrift_node = nullptr;
+	LocalVector<SnowPowderCloud3D::Source> spindrift_next; // worker: this update's sources
+	LocalVector<SnowPowderCloud3D::Source> spindrift_sources; // main thread: what feeds the plume
+	float spindrift_rate = 0.0f; // kg/s off all crests
+	void _find_spindrift(Vector2 p_wind); // worker, after the cells
+	void _feed_spindrift(); // main thread
 	const TerrainDataMap3D *_terrain_map() const;
 	uint64_t main_usec = 0; // main-thread time of the last update (gather, start, swap in)
 	// The textures' images, built off the main thread.
@@ -339,6 +355,17 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	int ice_break_count = 0;
 	void _cut_ice(Vector<float> &r_ice, Vector<float> &r_white) const;
 	void _ice_load_step();
+	// Traffic (follow-up 43): what bodies rolling and slipping on the snow did since the last update.
+	struct TrafficMark {
+		Vector2 center;
+		float radius = 0.0f;
+		float pack = 0.0f; // share of a cell's area passed over
+		float glaze = 0.0f; // mm of glaze over a cell's area
+	};
+	LocalVector<TrafficMark> traffic_marks;
+	bool traffic_enabled = true;
+	void _traffic_step(double p_delta);
+	void _apply_traffic(Vector<float> &r_packed, Vector<float> &r_glaze, const LocalVector<TrafficMark> &p_marks, uint32_t p_from) const;
 	void _refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only);
 	void _refresh_fire();
 	void _refresh_obstacles();
@@ -346,6 +373,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	void _gather_seal(); // main thread: WorldGround.frost_at under the wet cells
 	void _update_cells(bool p_parallel);
 	void _update_end();
+	void _send_runoff();
 	void _build_upload();
 	void _apply_upload();
 	void _start_background(double p_weather_dt, bool p_world);
@@ -408,6 +436,14 @@ public:
 	void set_slush_enabled(bool p_enabled) { slush_enabled = p_enabled; }
 	bool is_slush_enabled() const { return slush_enabled; }
 	float get_slush_at(Vector3 p_position) const; // m, the saturated layer at the pack's base
+	float get_packed_at(Vector3 p_position) const; // 0..1, traffic-packed share
+	float get_glaze_at(Vector3 p_position) const; // mm of polished ice glaze
+	float get_grip_at(Vector3 p_position) const; // tyre-road friction coefficient on the snow, -1 bare
+	void add_traffic(Vector3 p_position, float p_radius, float p_pack, float p_glaze_mm);
+	static float ice_grip(float p_celsius, float p_wetness); // friction on polished ice
+	void set_traffic_enabled(bool p_enabled) { traffic_enabled = p_enabled; }
+	bool is_traffic_enabled() const { return traffic_enabled; }
+	static float slush_height(float p_swe, float p_liquid, float p_density, float p_slush); // m
 	static float ground_seal(Vector3 p_frost); // 0..1 from WorldGround.frost_at (thawed top m, frost depth m, weakening)
 	static float slush_drain_rate(float p_density, float p_slope_sine, float p_length); // 1/h, Darcy flow off a slope of that length
 	static constexpr float SLUSH_SLOPE_LENGTH = 50.0f; // m, the slope a slush layer drains along
@@ -503,6 +539,15 @@ public:
 	SnowLakeIce3D *get_lake_ice() const { return lake_ice; }
 	SnowBodies3D *get_bodies() const { return bodies_node; }
 	SnowAvalanche3D *get_avalanches() const { return avalanche_node; }
+	void set_spindrift_enabled(bool p_enabled);
+	bool is_spindrift_enabled() const { return spindrift_enabled; }
+	void set_max_spindrift(int p_count) { max_spindrift = CLAMP(p_count, 1, 32); }
+	int get_max_spindrift() const { return max_spindrift; }
+	float get_spindrift_rate() const { return spindrift_rate; } // kg/s blown off the crests in the square
+	int get_spindrift_source_count() const { return (int)spindrift_sources.size(); }
+	Array get_spindrift_sources() const; // [{position, velocity, rate}] strongest first
+	SnowPowderCloud3D *get_spindrift() const { return spindrift_node; }
+	static float spindrift_fade(float p_humidity); // 1/s, Flow smoke_fade: the plume sublimating
 	void set_avalanches_enabled(bool p_enabled);
 	bool is_avalanches_enabled() const { return avalanches_enabled; }
 	void set_bodies_enabled(bool p_enabled);
@@ -517,6 +562,11 @@ public:
 	Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const override;
 	void contract_snow_add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2) override { add_impurity(p_position, p_radius, p_mg_per_m2); }
 	float contract_snow_impurity_at(const Vector3 &p_position) const override { return get_impurity_at(p_position); }
+	float contract_snow_albedo_at(const Vector3 &p_position) const override {
+		const float a = get_albedo_at(p_position);
+		return a > 0.0f ? a : -1.0f;
+	}
+	float contract_snow_grip_at(const Vector3 &p_position) const override { return get_grip_at(p_position); }
 	float contract_snow_avalanche_pressure_at(const Vector3 &p_position) const override;
 	float contract_snow_avalanche_peak_pressure_at(const Vector3 &p_position) const override;
 	float contract_snow_canopy_load_at(const Vector3 &p_position) const override { return get_canopy_load_at(p_position); }

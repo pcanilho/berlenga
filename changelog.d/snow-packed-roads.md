@@ -1,0 +1,1 @@
+- Packed-snow roads: wheels and feet pack the snow they pass, slipping wheels polish an ice glaze, and `SnowCover3D.get_grip_at` gives tyre friction (loose 0.3, packed 0.25, polished ice 0.05-0.15) (`traffic_enabled`).

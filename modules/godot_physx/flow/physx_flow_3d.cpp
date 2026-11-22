@@ -465,7 +465,29 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 		params.strength = scattering_strength;
 		params.anisotropy = scattering_anisotropy;
 		params.scattering_albedo = scattering_albedo;
-		params.ground_albedo = ground_albedo;
+		{
+			// The ground under the gas from the world's ground contract (terrain colour, wet, under snow), blended
+			// over the authored albedo and colour by how much of it the world knows.
+			Color own = ground_color.srgb_to_linear() * ground_albedo;
+			own.a = 1.0f;
+			Color wg;
+			{
+				MutexLock lock(scatter_mutex);
+				wg = world_ground;
+			}
+			if (wg.a > 0.0f) {
+				const float a = MIN(wg.a, 1.0f);
+				// With no authored albedo (0: the sky's lower half lights the gas) the world's ground replaces it.
+				const Color base = ground_albedo > 0.0f ? own : Color(wg.r, wg.g, wg.b);
+				own = Color(Math::lerp(base.r, wg.r, a), Math::lerp(base.g, wg.g, a), Math::lerp(base.b, wg.b, a));
+				const float m = MAX(MAX(own.r, own.g), MAX(own.b, 1e-4f));
+				params.ground_albedo = MIN(m, 1.0f);
+				params.ground_color = Color(own.r / m, own.g / m, own.b / m);
+			} else {
+				params.ground_albedo = ground_albedo;
+				params.ground_color = ground_color.srgb_to_linear();
+			}
+		}
 		params.shadow_steps = scattering_shadow_steps;
 		params.shadow_reach = scattering_shadow_reach;
 		params.shadows = receive != 0;
@@ -1106,6 +1128,54 @@ void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, LocalVector<FlowBac
 	}
 }
 
+// The ground under the gas from WorldGround.albedo_at: the light the ground sends up into the gas takes its colour
+// (a puff over snow lit blue-white from below, over red sandstone warm). The mean of five points over the gas's
+// footprint (centre and four inset corners), read again every half second or when the gas moves 4 m.
+void PhysXFlow3D::_update_world_ground(const AABB &p_region, double p_delta) {
+	Color g(0, 0, 0, 0);
+	if (ground_from_world && p_region.has_volume()) {
+		world_ground_age += p_delta;
+		const Vector3 c = p_region.get_center();
+		if (world_ground_age < 0.5 && c.distance_to(world_ground_at) < 4.0f) {
+			return;
+		}
+		world_ground_age = 0.0;
+		world_ground_at = c;
+		const WorldGround *ground = WorldContracts::ground();
+		const Vector3 h = p_region.size * 0.35f;
+		const Vector3 pts[5] = { c, c + Vector3(-h.x, 0, -h.z), c + Vector3(h.x, 0, -h.z), c + Vector3(-h.x, 0, h.z), c + Vector3(h.x, 0, h.z) };
+		float known = 0.0f;
+		for (const Vector3 &p : pts) {
+			const Color a = ground->albedo_at(p);
+			if (a.a > 0.0f) {
+				g.r += a.r * a.a;
+				g.g += a.g * a.a;
+				g.b += a.b * a.a;
+				known += a.a;
+			}
+		}
+		if (known > 0.0f) {
+			g = Color(g.r / known, g.g / known, g.b / known, known / 5.0f);
+		} else {
+			g = Color(0, 0, 0, 0);
+		}
+	} else {
+		world_ground_at = Vector3(Math::INF, 0, 0);
+	}
+	MutexLock lock(scatter_mutex);
+	world_ground = g;
+}
+
+void PhysXFlow3D::set_ground_from_world(bool p_v) {
+	ground_from_world = p_v;
+	world_ground_age = 1e9;
+}
+
+Color PhysXFlow3D::get_world_ground_albedo() const {
+	MutexLock lock(scatter_mutex);
+	return world_ground;
+}
+
 // The TERRAIN FLOOR: one solid box per grid cell of the ground under the region, its top laid on the plane
 // through the cell's four corner heights (tilted to the slope, so the gas meets a smooth ground, not steps),
 // a little wider than the cell so neighbours overlap and nothing leaks between them. Solids reserve no blocks.
@@ -1218,6 +1288,7 @@ void PhysXFlow3D::_step(double p_delta) {
 	transient_solids.clear();
 	_gather_terrain_floor(region, emitters);
 	_gather_weather_wind(region, emitters);
+	_update_world_ground(region, p_delta);
 	_gather_scatter_lights();
 	if (floor_enabled) {
 		// The FLOOR: one wide solid box whose top is floor_height, under everything this grid can reach. A solid
@@ -1753,6 +1824,11 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_scattering_albedo"), &PhysXFlow3D::get_scattering_albedo);
 	ClassDB::bind_method(D_METHOD("set_ground_albedo", "albedo"), &PhysXFlow3D::set_ground_albedo);
 	ClassDB::bind_method(D_METHOD("get_ground_albedo"), &PhysXFlow3D::get_ground_albedo);
+	ClassDB::bind_method(D_METHOD("set_ground_color", "color"), &PhysXFlow3D::set_ground_color);
+	ClassDB::bind_method(D_METHOD("get_ground_color"), &PhysXFlow3D::get_ground_color);
+	ClassDB::bind_method(D_METHOD("set_ground_from_world", "enabled"), &PhysXFlow3D::set_ground_from_world);
+	ClassDB::bind_method(D_METHOD("is_ground_from_world"), &PhysXFlow3D::is_ground_from_world);
+	ClassDB::bind_method(D_METHOD("get_world_ground_albedo"), &PhysXFlow3D::get_world_ground_albedo);
 	ClassDB::bind_method(D_METHOD("set_scattering_shadow_steps", "steps"), &PhysXFlow3D::set_scattering_shadow_steps);
 	ClassDB::bind_method(D_METHOD("get_scattering_shadow_steps"), &PhysXFlow3D::get_scattering_shadow_steps);
 	ClassDB::bind_method(D_METHOD("set_scattering_resolution", "resolution"), &PhysXFlow3D::set_scattering_resolution);
@@ -1826,6 +1902,8 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_anisotropy", PROPERTY_HINT_RANGE, "-0.95,0.95,0.01"), "set_scattering_anisotropy", "get_scattering_anisotropy");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_albedo", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_scattering_albedo", "get_scattering_albedo");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_albedo", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_ground_albedo", "get_ground_albedo");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "ground_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_ground_color", "get_ground_color");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_from_world"), "set_ground_from_world", "is_ground_from_world");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_shadow_steps", PROPERTY_HINT_RANGE, "0,64,1"), "set_scattering_shadow_steps", "get_scattering_shadow_steps");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_receive_shadows", PROPERTY_HINT_FLAGS, "Omni:1,Spot:2"), "set_scattering_receive_shadows", "get_scattering_receive_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_resolution", PROPERTY_HINT_ENUM, "Full,Half,Quarter"), "set_scattering_resolution", "get_scattering_resolution");

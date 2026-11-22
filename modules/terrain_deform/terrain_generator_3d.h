@@ -971,6 +971,9 @@ public:
 	void set_sky_light_interval(real_t p_seconds) { sky_light_interval = MAX(p_seconds, real_t(0.0)); }
 	real_t get_sky_light_interval() const { return sky_light_interval; }
 	Color get_geology_at(const Vector3 &p_global_position) const;
+	// get_geology_image()'s channels at a point (sand as a negative soil depth, till as a negative talus), the map
+	// the materials lay their layers by; NaN in r outside the result.
+	Color get_material_geology_at(const Vector3 &p_global_position) const;
 	Ref<Image> get_geology_image() const;
 	Ref<Texture2D> get_geology_texture() const { return geology_texture; }
 	static String get_geology_shader_code();

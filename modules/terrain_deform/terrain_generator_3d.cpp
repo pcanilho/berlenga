@@ -5448,6 +5448,24 @@ Color TerrainGenerator3D::get_geology_at(const Vector3 &p_global_position) const
 	return Color(get_soil_depth(p_global_position), get_rock_exposure(p_global_position), get_talus(p_global_position), std::log10(double(MAX(a, real_t(1.0)))));
 }
 
+Color TerrainGenerator3D::get_material_geology_at(const Vector3 &p_global_position) const {
+	const real_t x = p_global_position.x;
+	const real_t z = p_global_position.z;
+	const float s = _sample(soil, x, z);
+	if (Math::is_nan(s)) {
+		return Color(Math::NaN, 0, 0, 0);
+	}
+	auto opt = [&](const LocalVector<float> &p_grid) -> float {
+		const float v = p_grid.size() == uint32_t(nx * ny) ? _sample(p_grid, x, z) : 0.0f;
+		return Math::is_nan(v) ? 0.0f : v;
+	};
+	// As get_geology_image(), sampled at the point.
+	const float sand = MAX(MAX(opt(beach), opt(dune_cover)), opt(sea_cover));
+	const float till = CLAMP(opt(till_cover) / 2.0f, 0.0f, 1.0f);
+	const float t = opt(talus);
+	return Color(sand > 0.0f ? -sand : s, opt(rock), till > t ? -till : t, float(std::log10(MAX(double(opt(drainage)), 1.0))));
+}
+
 // RGBA float: soil depth (m), rock exposure, talus (or -1..0 moraine till), log10 drainage area (m^2).
 Ref<Image> TerrainGenerator3D::get_geology_image() const {
 	const int n = nx * ny;
@@ -9097,6 +9115,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_talus", "global_position"), &TerrainGenerator3D::get_talus);
 	ClassDB::bind_method(D_METHOD("get_scree_sorting", "global_position"), &TerrainGenerator3D::get_scree_sorting);
 	ClassDB::bind_method(D_METHOD("get_geology_at", "global_position"), &TerrainGenerator3D::get_geology_at);
+	ClassDB::bind_method(D_METHOD("get_material_geology_at", "global_position"), &TerrainGenerator3D::get_material_geology_at);
 	ClassDB::bind_method(D_METHOD("set_cliff_ledge_spacing", "value"), &TerrainGenerator3D::set_cliff_ledge_spacing);
 	ClassDB::bind_method(D_METHOD("get_cliff_ledge_spacing"), &TerrainGenerator3D::get_cliff_ledge_spacing);
 	ClassDB::bind_method(D_METHOD("set_cliff_ledge_strength", "value"), &TerrainGenerator3D::set_cliff_ledge_strength);

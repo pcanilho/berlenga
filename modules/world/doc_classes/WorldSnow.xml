@@ -18,6 +18,13 @@
 				Override in a stub to replace [method add_impurity].
 			</description>
 		</method>
+		<method name="_albedo_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method albedo_at].
+			</description>
+		</method>
 		<method name="_avalanche_peak_pressure_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -67,6 +74,13 @@
 				Override in a test stub to answer [method depth_at].
 			</description>
 		</method>
+		<method name="_grip_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				A stub's [method grip_at].
+			</description>
+		</method>
 		<method name="_impurity_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -111,6 +125,13 @@
 			<param index="2" name="mg_per_m2" type="float" />
 			<description>
 				Light-absorbing particles (soot, ash, dust) settling on the snow within [param radius] of [param position], as mg/m2 of black carbon equivalent; mineral dust counts about 0.013 of its mass. The snow darkens and melts sooner.
+			</description>
+		</method>
+		<method name="albedo_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The snow surface's broadband albedo: about 0.85 fresh, toward 0.7 old and dry, toward 0.5 melting, less soot and dust on it. 0.8 where the snow system does not say; 0 with no snow system.
 			</description>
 		</method>
 		<method name="avalanche_peak_pressure_at" qualifiers="const">
@@ -160,6 +181,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the snow on the ground at [param position] in metres, 0 with no snow system.
+			</description>
+		</method>
+		<method name="grip_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Tyre-road friction coefficient on the snow at [param position]: about 0.3 in loose snow, 0.25 packed by traffic, down to 0.05-0.15 where tyres polished it to ice. -1 on bare ground or where the snow system does not say; vehicles then estimate it from density, wetness and crust.
 			</description>
 		</method>
 		<method name="has_provider" qualifiers="const">

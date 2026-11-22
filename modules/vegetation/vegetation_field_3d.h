@@ -59,7 +59,7 @@ class TerrainDataMap3D;
 // per tile, species in priority order, a tiled Poisson-disk pattern (Bridson 2007) dithered
 // by rank against density x rules, each plant keeping later species out of its footprint.
 // One MultiMeshInstance3D per species mesh per tile. Deterministic for a seed.
-class VegetationField3D : public Node3D {
+class VegetationField3D : public Node3D, public WorldPlantColorProvider {
 	GDCLASS(VegetationField3D, Node3D);
 
 	// Plants bend under bodies where no GrassField3D keeps the trample field (docs/ideas/world-links.md).
@@ -68,6 +68,9 @@ class VegetationField3D : public Node3D {
 	void _contact_trample_step(double p_delta);
 
 public:
+	// WorldPlantColorProvider: the placed plants over the ground, from the far map (their colour and cover).
+	Color contract_plant_albedo_at(const Vector3 &p_position) const override;
+
 	Vector2 get_contact_trample_at(const Vector3 &p_position) const { return contact_trample.get_at(p_position); }
 
 private:
@@ -631,6 +634,7 @@ private:
 	bool far_match_view = true;
 	float far_shade = 1.0f;
 	Ref<Image> far_image; // The far map as published (sqrt of premultiplied colour, cover).
+	bool plant_color_registered = false;
 	Rect2 far_image_rect;
 	float far_image_range = 0.0f;
 	int far_view_state = 0; // 0 idle, 1 waiting, 2 readback in flight.

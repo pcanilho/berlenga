@@ -2393,6 +2393,67 @@ white puff side-lit +2.4% -> -0.5%, front-lit +5.8% -> +4.5%, sky-only
 164/157/149 (was 170/166/159). Raster stays a little less blue than PT
 (B/R 1.18 against 1.22 on the puffs); open.
 
+### Raster gas blue deficit: the ground's colour (21 Nov)
+
+The raster puffs on the test bench were less blue than the path tracer's (interior B/R 1.18 against 1.23, AgX).
+Split on same-run pairs with a linear tonemap (sun part = sun and sky minus sky only), the sky's share matched
+(about -4%) and the sun's share was the culprit: red 15 to 23% too bright, B/R 1.29 against 1.46.
+
+Ruled out first: the weight of the high scattering orders. Raising the tail's per-order kept share (0.68 to 0.99)
+with a lower gain does turn the grey puff blue enough, but only by giving the tail more energy than the light it
+started with: white gas (albedo 0.99) went 15 to 30 levels too bright. Making the tail energy-conserving
+(recollision probability, the "p-theory" of canopy radiative transfer: each order escapes with 1 - p) keeps white
+gas right but barely changes the colour, and so does taking the tail's colour from deeper orders at the same
+energy. The orders were not the cause.
+
+The cause was the ground. Most of the light inside a puff floating over sunlit ground comes up from that ground
+(lighting the gas with no ground at all cut the puff's sun share to about 0.3). The raster's ground was a grey
+scalar albedo; the bench's ground, which the path tracer bounces off, is blue-grey (sRGB 0.85, 0.87, 0.90: linear
+B/R 1.13). Tinting the ground's light moved the sun part to B/R 1.42 against 1.46, with no change to the orders.
+
+So PhysXFlow3D gains `ground_color` (white by default, so nothing changes unless set): the ground's colour,
+which `ground_albedo` scales, applied to both the sky's and the sun's light off the ground. On the bench (ground
+albedo 1, colour set to the plane's), against the same-run path-traced references:
+
+| puff | B/R raster before | after | path tracer | mean before | after |
+| --- | --- | --- | --- | --- | --- |
+| side-lit, albedo 0.9 | 1.180 | 1.222 | 1.229 | +2.3% | -1.0% |
+| side-lit, albedo 0.99 | 1.189 | 1.228 | 1.222 | -0.5% | -3.3% |
+| front-lit, albedo 0.99 | 1.161 | 1.190 | 1.220 | +4.5% | +2.1% |
+| sky only, albedo 0.9 | | | | -2.3% | -4.0% |
+| white block, sun | 1.142 | 1.165 | 1.159 | | |
+
+The bench used to set `ground_albedo` 0.85, brighter than the plane's linear luminance (about 0.72), which had hidden
+a few percent of brightness; with the real ground the puffs sit 1 to 4% darker, within the fit's spread. No gain was
+refitted. A follow-up for the world-links work: feed `ground_color` from the terrain or snow under the gas.
+
+### Wind filled the Flow grid (21 Nov)
+
+Snow's spindrift in strong wind filled max_blocks within seconds and cut the plume off. Flow's block allocation
+(NvFlowSummaryAllocateParams) keeps a block where its smoke is above smokeThreshold (0.02) or its speed above
+speedThreshold, with speedThresholdMinSmoke the smoke a fast block needs, 0 by default, and neighbour allocation on.
+weather_wind couples the wind's velocity into the whole grid, so every block the wind touched was fast, stayed, and
+allocated its neighbours. The backend now asks a fast block for half the smoke threshold: the leading edge of a fast
+plume still gets its blocks ahead of the smoke, and empty windy air is freed.
+
+### The ground under bright gas (21 Nov)
+
+Snow's powder cloud drew a dark fringe along its lower edge in raster where the path tracer's ground stays bright:
+the gas's own shadow on the snow, seen past the cloud's thin base. The volume shadow the opaque pass reads passed
+the direct beam only (Beer's law with the delta-Eddington forward peak taken out), so the ground under a white
+cloud was as dark as under black smoke of the same depth. Under path tracing, a bright medium also passes the light
+it scatters many times. The shadow now takes the larger of the direct beam and the two-stream total transmittance
+of a slab (direct and diffuse; Meador and Weaver 1980 with the similarity relations, the same form as the gas's
+diffuse transmission): exp(-sqrt(3 tau_a' (tau_a' + tau_s'))) / (1 + 3/4 tau_s'), tau_s' = (1 - g) w tau,
+tau_a' = (1 - w) tau. Dark smoke keeps Beer's law.
+
+White block test against its same-run path-traced frame, rows through its shadow: before 120, 108, 111, 117, 125;
+after 123, 117, 122, 128, 137; path tracer 135, 127, 127, 128, 133. The other test puffs moved closer too (sky only
+-4.0% to -3.0%, albedo 0.99 -3.3% to -1.9%), from the brighter ground under them. On snow's powder bench the
+fringe went from 176 to 178 at its darkest row and 181 to 187 below it (path tracer 191, 196): a thin line remains
+at the very edge, and the path tracer's ground beside the cloud is lit a few levels brighter still by the cloud's
+own scattered light, which raster does not bounce onto the scene.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

@@ -82,6 +82,7 @@ uniform sampler2D deform_tex : filter_linear, repeat_disable;
 uniform vec4 deform_rect;
 uniform sampler2D cups_tex : filter_linear, repeat_disable;
 uniform bool has_cups = false;
+uniform bool has_road = false; // cups_tex .g traffic packing, .b glaze mm (SnowCover3D)
 uniform sampler2D cup_tile : filter_linear_mipmap, repeat_enable;
 uniform float cup_tile_size = 3.2;
 uniform vec4 mesh_rect;
@@ -195,6 +196,13 @@ uint snow_cup_hash(ivec2 v) {
 	u.y += u.x * 1664525u;
 	u ^= u >> 16u;
 	return u.x + u.y * 1664525u;
+}
+vec2 snow_road(vec2 p) {
+	if (!has_road) {
+		return vec2(0.0);
+	}
+	vec2 uv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
+	return snow_inside(uv) ? textureLod(cups_tex, uv, 0.0).gb : vec2(0.0);
 }
 vec3 snow_cups(vec2 p, float e) {
 	if (!has_cups) {
@@ -419,9 +427,21 @@ void fragment() {
 	float wet = min(pack.b, 1.0);
 	// Slush whose water table nears the surface: water fills the pores between the grains, so light goes deep
 	// and is absorbed (saturated snow's albedo some 0.4-0.6; Warren 1982), faintly blue, under a glossy water film.
-	float slush = smoothstep(0.6, 1.0, pack.b - 1.0);
-	ALBEDO = tint * pack.g * (1.0 - 0.08 * compact) * mix(vec3(1.0), vec3(0.5, 0.56, 0.62), slush);
-	ROUGHNESS = mix(clamp(mix(0.7, 0.35, wet) - 0.15 * compact, 0.05, 1.0), 0.08, slush);
+	float share = clamp(pack.b - 1.0, 0.0, 1.0);
+	float slush = smoothstep(0.6, 1.0, share);
+	// A print pressed below the water table fills with water (the slush layer's top, share x depth over the
+	// ground): a dark, mirror-smooth pool in the hole.
+	float pool = share > 0.0 ? smoothstep(0.0, 0.015, dr.x - pack.r * (1.0 - share)) : 0.0;
+	// Traffic: packed snow is smoothed and dulled by the tyres and the grit they bring (a packed-snow road reads a
+	// little grey); a polished glaze is clear ice over it, darker and mirror-smooth where wheels spun.
+	vec2 road = snow_road(p);
+	float packed = clamp(road.x, 0.0, 1.0);
+	float polish = 1.0 - exp(-max(road.y, 0.0) / 0.3);
+	ALBEDO = tint * pack.g * (1.0 - 0.08 * compact) * mix(vec3(1.0), vec3(0.5, 0.56, 0.62), slush) * mix(1.0, 0.35, pool);
+	ALBEDO *= mix(vec3(1.0), vec3(0.86, 0.85, 0.83), packed) * mix(vec3(1.0), vec3(0.55, 0.6, 0.66), polish);
+	ROUGHNESS = mix(mix(clamp(mix(0.7, 0.35, wet) - 0.15 * compact, 0.05, 1.0), 0.08, slush), 0.02, pool);
+	ROUGHNESS = mix(mix(ROUGHNESS, 0.45, packed), 0.04, polish);
+	compact = max(compact, 0.7 * packed + 0.3 * polish); // fewer whole grains to sparkle
 	SPECULAR = 0.335; // ice, F0 0.018
 	METALLIC = 0.0;
 	NORMAL_MAP = tn * 0.5 + 0.5;
@@ -1076,6 +1096,7 @@ void SnowSurface3D::_update_material() {
 		material->set_shader_parameter("has_catch", cover->get_catch_texture().is_valid());
 		material->set_shader_parameter("cups_tex", cover->get_cups_texture());
 		material->set_shader_parameter("has_cups", cover->get_cups_texture().is_valid() && cover->is_suncups_enabled());
+		material->set_shader_parameter("has_road", cover->get_cups_texture().is_valid() && cover->is_traffic_enabled());
 		if (cup_tile_texture.is_null()) {
 			cup_tile_texture = ImageTexture::create_from_image(suncup_tile());
 		}
@@ -1524,6 +1545,9 @@ PackedByteArray SnowSurface3D::_gpu_cover_cells(int &r_n, bool &r_valid) const {
 		if (wet_ok) {
 			const float hold = cover->liquid_capacity * (cover->pub.swe[i] - cover->pub.liquid[i]);
 			wet = hold > 1e-4f ? CLAMP(cover->pub.liquid[i] / hold, 0.0f, 1.0f) : 0.0f;
+		}
+		if (cover->pub.slush.size() == cells && cover->pub.slush[i] > 0.5f && cover->pub.swe[i] > 0.01f) {
+			wet = 1.0f; // saturated from the base (slush over frozen ground)
 		}
 		w[i * 8 + 6] = wet;
 		w[i * 8 + 7] = 0.0f;

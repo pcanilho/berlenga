@@ -78,6 +78,7 @@ public:
 		float color[3] = { 0.8f, 0.8f, 0.8f }; // the smoke's albedo
 		float strength = 1.0f;
 		float ground_albedo = 0.25f; // the ground under the gas, whose sunlit glow lights the gas from below
+		Color ground_color = Color(1, 1, 1); // its colour (linear), which ground_albedo scales
 		float scattering_albedo = 0.9f; // single-scattering albedo (the path tracer's): weighs the multiple-scattering octaves
 		float anisotropy = 0.4f; // Henyey-Greenstein g
 		float step_scale = 1.0f; // view step, in cells

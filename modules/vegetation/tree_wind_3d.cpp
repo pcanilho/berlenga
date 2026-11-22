@@ -241,6 +241,9 @@ const TreeWind3D::Rig *TreeWind3D::_rig_for(const Ref<Mesh> &p_mesh) {
 			// (the October snows that break broadleaf crowns).
 			rig.snow_catch = Math::lerp(0.15f, 1.0f, CLAMP(float(p_mesh->get_meta(SNAME("tree_foliage"))), 0.0f, 1.0f));
 		}
+		if (p_mesh->has_meta(SNAME("tree_glaze_surface"))) {
+			rig.glaze_surface = p_mesh->get_meta(SNAME("tree_glaze_surface"));
+		}
 		if (p_mesh->has_meta(SNAME("tree_crown_radius"))) {
 			rig.crown_radius = MAX(float(p_mesh->get_meta(SNAME("tree_crown_radius"))), 0.3f);
 		}
@@ -698,7 +701,11 @@ void TreeWind3D::_scan_node(Node *p_node) {
 				t.snow_creep.resize(n);
 				t.cap_level.resize(n);
 				t.snow_seen.resize(n);
+				t.glaze_kg.resize(n);
+				t.glaze_shed.resize(n);
 				for (int c = 0; c < n; c++) {
+					t.glaze_kg[c] = 0.0f;
+					t.glaze_shed[c] = 0.0f;
 					t.cap_level[c] = 0;
 					t.snow_seen[c] = 0.0f;
 					t.snow_kg[c] = 0.0f;
@@ -837,6 +844,7 @@ void TreeWind3D::update(double p_delta) {
 		}
 		_avalanche_check();
 		_snow_check(1.0f);
+		_glaze_check();
 		_cut_canopy();
 		_report_windthrow();
 	} else {
@@ -899,7 +907,7 @@ void TreeWind3D::update(double p_delta) {
 				job.instance = int(i);
 				job.world = world;
 				job.min_length = min_length;
-				job.snow_kg = i < t.snow_kg.size() ? t.snow_kg[i] : 0.0f;
+				job.snow_kg = (i < t.snow_kg.size() ? t.snow_kg[i] : 0.0f) + (i < t.glaze_kg.size() ? t.glaze_kg[i] : 0.0f);
 				job.storm = (storm_frame || (snow_frame && job.snow_kg > 1.0f)) && t.rig->storm;
 				if (i < t.base_char.size()) {
 					job.load.base_char = t.base_char[i];
@@ -1900,7 +1908,16 @@ void TreeWind3D::_storm_fail(Target &r_target, int p_instance, const Transform3D
 	} else {
 		storm_breaks++;
 	}
-	snow_breaks += p_load.snow ? 1 : 0;
+	const bool iced = p_instance < int(r_target.glaze_kg.size()) && r_target.glaze_kg[p_instance] > 0.0f;
+	const bool by_glaze = p_load.snow && iced && r_target.glaze_kg[p_instance] >= (p_instance < int(r_target.snow_kg.size()) ? r_target.snow_kg[p_instance] : 0.0f);
+	snow_breaks += p_load.snow && !by_glaze ? 1 : 0;
+	glaze_breaks += by_glaze ? 1 : 0;
+	if (iced) {
+		// The jolt shatters the ice off what broke (all of it off a thrown tree): it stays off until the glaze melts.
+		const float part = thrown ? 1.0f : (rig.leaf_area > 1e-6f ? CLAMP(rig.bones[b].area / rig.leaf_area, 0.1f, 1.0f) : 0.5f);
+		r_target.glaze_shed[p_instance] = MIN(1.0f, r_target.glaze_shed[p_instance] + part * (1.0f - r_target.glaze_shed[p_instance]));
+		r_target.glaze_kg[p_instance] *= 1.0f - part;
+	}
 	// The jolt throws the crown's snow onto the pack (WorldSnow.shake_canopy): all of it from a felled tree,
 	// what the broken part held from a snapped limb or top (section 5al).
 	if (snow_load_enabled && p_instance < int(r_target.snow_kg.size()) && r_target.snow_kg[p_instance] > 0.0f) {
@@ -2248,6 +2265,61 @@ int TreeWind3D::get_instance_cap_level(Node *p_target, int p_instance) const {
 		}
 	}
 	return 0;
+}
+
+float TreeWind3D::glaze_kg(const Vector2 &p_surface, float p_glaze_mm, float p_scale) {
+	// Radial ice R on a cylinder of radius r: rho_ice pi R (2r + R) a metre (Jones 1998); shoot lengths scale with the
+	// tree, radii too, the ice does not.
+	const float R = MAX(p_glaze_mm, 0.0f) * 0.001f;
+	return 900.0f * float(Math::PI) * (2.0f * R * p_surface.y * p_scale * p_scale + R * R * p_surface.x * p_scale);
+}
+
+void TreeWind3D::_glaze_check() {
+	const WorldWeather *weather = WorldContracts::weather();
+	const bool on = glaze_load_enabled && is_inside_tree() && weather && weather->has_provider();
+	for (Target &t : targets) {
+		MultiMeshInstance3D *mmi = ObjectDB::get_instance<MultiMeshInstance3D>(t.node);
+		if (!on || !mmi || !mmi->is_inside_tree() || !t.rig || t.glaze_kg.size() != t.placements.size()) {
+			for (uint32_t i = 0; i < t.glaze_kg.size(); i++) {
+				t.glaze_kg[i] = 0.0f;
+				t.glaze_shed[i] = 0.0f;
+			}
+			continue;
+		}
+		const Transform3D cw = mmi->get_global_transform();
+		for (uint32_t i = 0; i < t.placements.size(); i++) {
+			const Transform3D tree = cw * t.placements[i];
+			const float mm = t.rig->glaze_surface.x > 0.0f ? weather->glaze_at(tree.origin) : 0.0f;
+			if (mm <= 0.0f) {
+				t.glaze_kg[i] = 0.0f;
+				t.glaze_shed[i] = 0.0f; // Melted: the next storm glazes it whole again.
+				continue;
+			}
+			const Touch *tc = t.touch.getptr(int(i));
+			if (tc && tc->uprooted) {
+				t.glaze_kg[i] = 0.0f;
+				continue;
+			}
+			const float scale = MAX(Math::pow(float(Math::abs(tree.basis.determinant())), 1.0f / 3.0f), 1e-3f);
+			// No more ice than the rain the crown intercepts: radial ice R on thin twigs takes about pi rho_ice / rho_w R
+			// = 2.83 R of freezing rain (Jones 1998, calm), caught over the crown's plan area, half again for wind-driven
+			// rain on its sides. The upper twigs shelter the lower: a broad crown fills to its twigs' share, a narrow
+			// conifer's cone sheds the rest (conical conifers resist ice storms; Hauer et al. 2006).
+			const float cr = t.rig->crown_radius * scale;
+			const float caught = 1000.0f * 2.83f * mm * 0.001f * float(Math::PI) * cr * cr * 1.5f;
+			t.glaze_kg[i] = MIN(glaze_kg(t.rig->glaze_surface, mm, scale), caught) * (1.0f - t.glaze_shed[i]);
+			snow_frame = snow_frame || t.glaze_kg[i] > 1.0f; // The static load's storm check, as the snow's.
+		}
+	}
+}
+
+float TreeWind3D::get_instance_glaze_kg(Node *p_target, int p_instance) const {
+	for (const Target &t : targets) {
+		if (p_target && t.node == p_target->get_instance_id() && p_instance >= 0 && p_instance < int(t.glaze_kg.size())) {
+			return t.glaze_kg[p_instance];
+		}
+	}
+	return 0.0f;
 }
 
 float TreeWind3D::get_instance_snow_kg(Node *p_target, int p_instance) const {
@@ -3622,6 +3694,11 @@ void TreeWind3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_snow_break_count"), &TreeWind3D::get_snow_break_count);
 	ClassDB::bind_method(D_METHOD("get_snow_shaken_kg"), &TreeWind3D::get_snow_shaken_kg);
 	ClassDB::bind_method(D_METHOD("get_instance_snow_kg", "target", "instance"), &TreeWind3D::get_instance_snow_kg);
+	ClassDB::bind_method(D_METHOD("set_glaze_load_enabled", "enabled"), &TreeWind3D::set_glaze_load_enabled);
+	ClassDB::bind_method(D_METHOD("is_glaze_load_enabled"), &TreeWind3D::is_glaze_load_enabled);
+	ClassDB::bind_method(D_METHOD("get_glaze_break_count"), &TreeWind3D::get_glaze_break_count);
+	ClassDB::bind_method(D_METHOD("get_instance_glaze_kg", "target", "instance"), &TreeWind3D::get_instance_glaze_kg);
+	ClassDB::bind_static_method("TreeWind3D", D_METHOD("glaze_kg", "surface", "glaze_mm", "scale"), &TreeWind3D::glaze_kg);
 	ClassDB::bind_method(D_METHOD("get_instance_cap_level", "target", "instance"), &TreeWind3D::get_instance_cap_level);
 	ClassDB::bind_method(D_METHOD("set_snow_cap_range", "range"), &TreeWind3D::set_snow_cap_range);
 	ClassDB::bind_method(D_METHOD("get_snow_cap_range"), &TreeWind3D::get_snow_cap_range);
@@ -3689,6 +3766,7 @@ void TreeWind3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "avalanche_enabled"), "set_avalanche_enabled", "is_avalanche_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "report_windthrow"), "set_report_windthrow", "is_report_windthrow");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_load_enabled"), "set_snow_load_enabled", "is_snow_load_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glaze_load_enabled"), "set_glaze_load_enabled", "is_glaze_load_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_clumps_enabled"), "set_snow_clumps_enabled", "is_snow_clumps_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_cap_range", PROPERTY_HINT_RANGE, "0,1000,1,suffix:m"), "set_snow_cap_range", "get_snow_cap_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_creep_hours", PROPERTY_HINT_RANGE, "0,48,0.1,suffix:h"), "set_snow_creep_hours", "get_snow_creep_hours");

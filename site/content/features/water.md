@@ -108,7 +108,12 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
 - **Impulse waves** (`WorldWater.wave()`): avalanches, slides and calving ice send waves across lakes that shoal and reflect off the shores.
 - **Oasis springs** (`OasisSprings3D`): still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents, in clear spring water, and only where the ground is hollowed.
-- **Sea caves** (`PhysXSeaCaveWater3D`): the sea's own water runs inside sea caves, handed over softly at the arch, with waves reflecting off the walls.
+- **Sea caves** (`PhysXSeaCaveWater3D`, `wavelets`): the sea's own water runs inside sea caves, handed over softly at the arch, with waves reflecting off the walls and small wavelets rippling the water inside.
+
+  ![Water inside a sea cave looking out to the sea, wavelets off and on, raster](media/water-sea-cave-wavelets.jpg)
+
+  *Sea cave wavelets: off, the cave water is glassy; on, small wavelets break up the glitter and ripple the water inside.*
+
 - **Cave pools** (`seabed_probe_height`): pool water under a cave roof measures the real floor beneath it, so a shallow pool thins out to its rim.
 - **Underground reflections** (`screen_reflections`): with `raster_reflections` off, still water and streams mirror the cave around them in raster; rivers keep clear water.
 - **Raster reflections** (`raster_reflections` on PhysXWaterSurface3D and PhysXRiver3D): raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer, and omni and spot lights glint on all raster water; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk, and the bed is lit through the surface's Fresnel transmission, as under path tracing.

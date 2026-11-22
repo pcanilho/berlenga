@@ -124,6 +124,14 @@ private:
 	bool weather_wind = true;
 	float weather_wind_coupling = 1.0f;
 	void _gather_weather_wind(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) const;
+	// The GROUND COLOUR from the world (WorldGround.albedo_at under the gas): its linear albedo and how much of it is
+	// known (a), re-read every half second or when the gas moves 4 m; render_rd blends ground_albedo x ground_color
+	// toward it (under scatter_mutex).
+	bool ground_from_world = true;
+	Color world_ground = Color(0, 0, 0, 0);
+	Vector3 world_ground_at = Vector3(Math::INF, 0, 0);
+	double world_ground_age = 1e9;
+	void _update_world_ground(const AABB &p_region, double p_delta);
 	float terrain_floor_spacing = 0.5f;
 	HashMap<Vector2i, float> terrain_heights; // ground height at grid nodes (NaN: none, or already a collider)
 	float terrain_heights_spacing = 0.0f;
@@ -224,6 +232,7 @@ private:
 	float scattering_anisotropy = 0.4f;
 	float scattering_albedo = 0.9f;
 	float ground_albedo = 0.25f;
+	Color ground_color = Color(1, 1, 1);
 	int scattering_shadow_steps = 4;
 	float scattering_shadow_reach = 4.0f;
 
@@ -402,6 +411,12 @@ public:
 	float get_scattering_albedo() const { return scattering_albedo; }
 	void set_ground_albedo(float p_v) { ground_albedo = CLAMP(p_v, 0.0f, 1.0f); }
 	float get_ground_albedo() const { return ground_albedo; }
+	void set_ground_color(const Color &p_c) { ground_color = p_c; }
+	Color get_ground_color() const { return ground_color; }
+	void set_ground_from_world(bool p_v);
+	bool is_ground_from_world() const { return ground_from_world; }
+	// What the world's ground contract last gave (linear rgb; a: the share known, 0 none).
+	Color get_world_ground_albedo() const;
 	void set_scattering_shadow_steps(int p_v) { scattering_shadow_steps = CLAMP(p_v, 0, 64); }
 	int get_scattering_shadow_steps() const { return scattering_shadow_steps; }
 	void set_scattering_shadow_reach(float p_v) { scattering_shadow_reach = MAX(p_v, 0.05f); }

@@ -34,6 +34,8 @@
 #include "scene/resources/material.h"
 #include "scene/resources/texture.h"
 
+#include "modules/world/world_contracts.h"
+
 class TerrainGenerator3D;
 
 // One surface of a TerrainMaterial3D (rock, scree, soil, alluvium, sand): textures, tint and how it tiles.
@@ -88,7 +90,7 @@ public:
 // A ground material that writes its own shader: layers chosen by the TerrainGenerator3D's geology (or by slope and
 // height without one), height-blended, biplanar on cliffs, the generator's erosion detail in the normal, the grass
 // fields' ground tint, then the weather's wetness and the snowpack's snow (docs/ideas/terrain-material.md).
-class TerrainMaterial3D : public ShaderMaterial {
+class TerrainMaterial3D : public ShaderMaterial, public WorldGroundColorProvider {
 	GDCLASS(TerrainMaterial3D, ShaderMaterial);
 
 public:
@@ -137,6 +139,8 @@ private:
 
 	Ref<Shader> shader;
 	bool dirty = false;
+	ObjectID generator_id; // use_generator()'s: the ground colour contract reads its geology
+	bool ground_color_registered = false;
 
 	void _queue_update();
 	void _layer_changed();
@@ -209,7 +213,13 @@ public:
 	void set_ground_deform_enabled(bool p_enabled);
 	bool is_ground_deform_enabled() const { return ground_deform_enabled; }
 
+	// WorldGround.albedo_at's ground colour (docs/ideas/world-contracts.md, Ground): the layers' mean colours weighed
+	// as the shader weighs them from the generator's geology and slope, without the texture detail; a: the porosity.
+	Color contract_ground_albedo_at(const Vector3 &p_position) const override;
+	Color get_ground_albedo_at(const Vector3 &p_position) const { return contract_ground_albedo_at(p_position); }
+
 	TerrainMaterial3D();
+	~TerrainMaterial3D();
 };
 
 VARIANT_ENUM_CAST(TerrainMaterial3D::Layer);

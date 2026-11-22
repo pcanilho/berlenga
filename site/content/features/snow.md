@@ -40,6 +40,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Wind transport: after a day of 15 m/s wind the windward side is scoured bare and the lee is loaded.*
 
+- **Spindrift** (`SnowCover3D.spindrift_enabled`): in strong wind, dry snow streams off sharp lee crests as plumes that drift downwind and thin as they sublimate.
+
 - **Melt-freeze crusts** (`SnowCover3D.crust_enabled`; `SnowSurface3D.crust_plates`): a thawed surface refreezes into a crust that hardens each cycle; boots stand on hard ones and break thin ones into flat, sharp-edged plates tipped into the hole, with steps between them.
 
   ![Footprints in snow, soft prints without plates and crust broken into plates](media/snow-crust.jpg)
@@ -48,7 +50,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
 - **Suncups** (`SnowCover3D.suncups_enabled`): sunny spring melt digs cups into deep snow; warm cloud, rain or new snow smooths them out.
 
-- **Rotten snow and slush** (`SnowCover3D.slush_enabled`): a wet spring pack bears less, so boots and wheels posthole deeper; melt water it cannot hold ponds at its base over frozen ground as grey-blue glossy slush and drains only downslope.
+- **Rotten snow and slush** (`SnowCover3D.slush_enabled`): a wet spring pack bears less, so boots and wheels posthole deeper; melt water it cannot hold ponds at its base over frozen ground as grey-blue glossy slush, drains only downslope and refreezes in frost; prints in it fill with water.
 
 - **Surface hoar** (`SnowCover3D.hoar_enabled`): frost feathers grow on the snow on clear calm nights and, once snowed over, stay buried as a weak layer.
 
@@ -88,6 +90,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
   ![A sled's track in snow with berms and a mound at its end, raster](media/snow-bow-wave.jpg)
 
   *Bow wave: a sled's track with raised berms along its sides and a mound where it stopped.*
+
+- **Packed-snow roads** (`SnowCover3D.traffic_enabled`, `get_grip_at()`): wheels and feet pack the snow they pass, spinning wheels polish it to an ice glaze, and tyre grip falls with it.
 
 ## Falling snow
 

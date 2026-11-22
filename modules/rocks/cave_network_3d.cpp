@@ -1689,7 +1689,30 @@ real_t CaveNetwork3D::_rock(const FieldSource &p_src, const TerrainGenerator3D *
 		const real_t eps = 0.5;
 		const real_t hx = p_gen->get_height(p_p + Vector3(eps, 0, 0)) - p_gen->get_height(p_p - Vector3(eps, 0, 0));
 		const real_t hz = p_gen->get_height(p_p + Vector3(0, 0, eps)) - p_gen->get_height(p_p - Vector3(0, 0, eps));
-		g /= Math::sqrt(1.0 + (hx * hx + hz * hz) / (4.0 * eps * eps));
+		const real_t sl = Math::sqrt(1.0 + (hx * hx + hz * hz) / (4.0 * eps * eps));
+		g /= sl;
+		// Inside an entrance patch the ground is the heightfield's own surface, flat within each of the generator's
+		// cells (5 m on a 1280 m world), and a sea cave's side is cut along a joint, near a plane: where the two met
+		// on a thin headland beside the arch the crest ran dead straight for fifteen metres against the sky, a dark
+		// blade down the mouth. There rock ground (from 25 degrees; a beach's sand, gentler, stays smooth) takes a
+		// broken crest (noise of 2.5 m amplitude over 4 m, 1.25 m over 1.6 m, and the wall's own finer octaves; at
+		// 0.4 of that the crease stayed straight), fading to nothing where the cave's ground stops, 0.5 m outside the landscape's hole, so the seam still meets.
+		const real_t rocky = Math::smoothstep(real_t(1.0 / Math::cos(Math::deg_to_rad(20.0))), real_t(1.0 / Math::cos(Math::deg_to_rad(32.0))), sl);
+		if (rocky > 0.0 && roughness > 0.0 && Math::abs(g) < 4.0) {
+			real_t w = 0.0;
+			for (uint32_t pi = 0; pi < p_src.patches.size(); pi++) {
+				const Vector3 d = p_p - p_src.patches[pi];
+				const Vector3 o = Vector3(p_src.patch_out[pi].x, 0, p_src.patch_out[pi].z).normalized();
+				const real_t along = d.x * o.x + d.z * o.z;
+				const real_t lat = Math::abs(-d.x * o.z + d.z * o.x);
+				const real_t e = MIN(MIN(along - p_src.patch_lo[pi], p_src.patch_hi[pi] - along), p_src.patch_r[pi] - lat);
+				w = MAX(w, Math::smoothstep(real_t(1.0), real_t(2.5), e));
+			}
+			if (w > 0.0) {
+				const uint32_t ns = uint32_t(seed) * 2654435761u + 3u;
+				g += rocky * w * roughness * (2.5 * (cave_fbm(p_p / 4.0f, ns + 31u, 2) - 0.5f) + 1.25 * (cave_fbm(p_p / 1.6f, ns + 37u, 2) - 0.5f) + 0.9 * (cave_fbm(p_p / 2.2f, ns, 3) - 0.5f) + 0.3 * (cave_fbm(p_p / 0.7f, ns + 7u, 2) - 0.5f));
+			}
+		}
 	}
 	real_t f = cave;
 	if (g < cave) {
@@ -2022,13 +2045,15 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 					bool is_ground = gq >= 2; // a mixed quad on the seam goes to the ground, so the seam has no wall-coloured teeth
 					if (is_ground) {
 						// The patch is a rectangle along the entrance's facing, the landscape's hole the same rectangle 1.5 m
-						// smaller, so the two overlap all round.
+						// smaller. The cave's ground stops 0.5 m outside the hole, so the two overlap by that much and the
+						// band beyond is drawn once, by the landscape.
+						const real_t band = 1.0;
 						bool inside = false;
 						for (uint32_t pi = 0; pi < src.patches.size() && !inside; pi++) {
 							const Vector3 d = verts[vi[0]] - src.patches[pi];
 							const Vector3 o = Vector3(src.patch_out[pi].x, 0, src.patch_out[pi].z).normalized();
 							const real_t along = d.x * o.x + d.z * o.z;
-							inside = along > src.patch_lo[pi] && along < src.patch_hi[pi] && Math::abs(-d.x * o.z + d.z * o.x) < src.patch_r[pi];
+							inside = along > src.patch_lo[pi] + band && along < src.patch_hi[pi] - band && Math::abs(-d.x * o.z + d.z * o.x) < src.patch_r[pi] - band;
 						}
 						if (!inside) {
 							continue;
@@ -4242,11 +4267,16 @@ void CaveNetwork3D::_fit_patch(Cave &r_cave) const {
 		}
 	}
 	if (hits > 0) {
-		// 2.5 m beyond the last such point: the hole is 1.5 m inside the patch, and a metre more covers the 0.5 m grid
-		// and the worn lip the smooth union rounds there.
-		r_cave.fit_lat = lat + 2.5;
-		r_cave.fit_lo = lo - 2.5;
-		r_cave.fit_hi = hi + 2.5;
+		// 4 m beyond the last such point: the hole is 1.5 m inside the patch, a metre more covers the 0.5 m grid and
+		// the worn lip the smooth union rounds there, and 1.5 m more lets the ground's crest relief (_rock), which
+		// fades in from 1 to 2.5 m inside the patch, reach full strength where the cave's side meets the ground. At
+		// 2.5 m the lower end of that crease stayed straight, a pale streak down to the water.
+		r_cave.fit_lat = lat + 4.0;
+		r_cave.fit_lo = lo - 4.0;
+		r_cave.fit_hi = hi + 4.0;
+	}
+	if (OS::get_singleton()->has_environment("CAVE_PATCH_DEBUG")) {
+		print_line(vformat("cave patch fit at %s out %s: %d ground points in the passage's air, half width %.1f, along %.1f..%.1f (square half %.1f)", r_cave.entrance, o, hits, r_cave.fit_lat, r_cave.fit_lo, r_cave.fit_hi, _patch_half(r_cave)));
 	}
 }
 

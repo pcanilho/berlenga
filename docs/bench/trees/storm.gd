@@ -15,6 +15,8 @@ extends Node3D
 #   --avalanche-test   avalanche checks (WorldSnow and WorldGround stubs): pressure breaks crowns, then stems,
 #                      downslope, and the felled crowns leave the weather map's canopy
 #   --snow=L           every crown holds L kg/m2 of snow from the start (WorldSnow stub), in a calm
+#   --glaze-test       ice storm checks (WorldWeather stub's glaze_at): the ice's weight on each crown, limbs bowing
+#                      under 6 mm, breaking under 25 mm (the spruce's cone sheds it best), the ice gone with the melt
 #   --snow-test        snow-laden crown checks: the branches bow with the load and creep, heavy wet snow
 #                      breaks them and the break shakes the snow off, and they spring back when it goes
 #   --spp=N with --pt  path traced; default raster
@@ -37,6 +39,7 @@ func _process(_delta: float) -> void:
 func _release_stubs() -> void:
 	var wc = Engine.get_singleton("WorldContracts")
 	wc.set_snow(null)
+	wc.set_weather(null)
 	wc.set_ground(null)
 	wc.set_fire(null)
 
@@ -136,6 +139,11 @@ func _setup(args: Dictionary) -> Array:
 	return trees
 
 func run(args: Dictionary) -> void:
+	if args.has("glaze-test"):
+		await _glaze_test()
+		_release_stubs()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if args.has("snow-test"):
 		await _snow_test()
 		_release_stubs()
@@ -312,6 +320,73 @@ func _lateral_bow(k: int) -> Vector2:
 		bow += rad_to_deg(asin(clampf((rest.y - posed.y) / length, -1.0, 1.0)))
 		n += 1
 	return Vector2(drop / maxf(n, 1), bow / maxf(n, 1))
+
+# Ice storms (trees.md 5be; Hauer, Dawson and Werner 2006, Trees and Ice Storms; Jones 1998): glaze from freezing rain
+# weighs on every twig. 6-12 mm breaks small branches and weak limbs, 12-25 mm and more larger ones; birch, beech and
+# other spreading broadleaves fail first, conical conifers shed it best.
+func _glaze_test() -> void:
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	cs.shape = WorldBoundaryShape3D.new()
+	body.add_child(cs)
+	add_child(body)
+	ramp = 0.0
+	winter = true
+	var glaze: WorldWeather = load("res://glaze_stub.gd").new()
+	Engine.get_singleton("WorldContracts").set_weather(glaze)
+	# Birch, beech, Norway spruce, oak, all bare but the spruce.
+	var trees := _setup({"speed": "0.3", "turbulence": "0.05", "presets": "2,1,4,0"})
+	wind.snow_creep_hours = 0.0
+	for f in 45:
+		await get_tree().physics_frame
+	var mm_nodes := []
+	for c in get_children():
+		if c is MultiMeshInstance3D:
+			mm_nodes.append(c)
+	var base := []
+	for k in trees.size():
+		base.append(_lateral_bow(k))
+	var kg := func() -> Array:
+		var out := []
+		for m in mm_nodes:
+			out.append(snappedf(wind.get_instance_glaze_kg(m, 0), 1.0))
+		return out
+	_check(kg.call().max() == 0.0, "no glaze: no ice on the crowns %s" % str(kg.call()))
+	glaze.glaze_mm = 6.0
+	for f in 60:
+		await get_tree().physics_frame
+	var kg6: Array = kg.call()
+	var bows := []
+	for k in trees.size():
+		bows.append(snappedf((_lateral_bow(k) - base[k]).y, 0.1))
+	print("6 mm: ice kg %s, laterals bow %s deg, %d breaks" % [str(kg6), str(bows), wind.get_glaze_break_count()])
+	# A tree's twigs run to kilometres: ice on them is tonnes on a broad crown, capped by the rain its plan catches (glaze
+	# multiplies a branch's weight 10-100 times; Hauer et al. 2008; Jones 1998).
+	_check(kg6.min() > 30.0 and kg6.max() < 15000.0, "6 mm: tens of kilograms on a young birch, tonnes on a broad crown (no more than the rain it catches) %s" % str(kg6))
+	_check(bows[0] > 1.0 and bows[1] > 1.0, "6 mm: the broadleaves' laterals bow under it (%s deg)" % str(bows))
+	var b6: int = wind.get_glaze_break_count()
+	# A thaw after a light glaze: the ice goes and the laterals stand up again.
+	glaze.glaze_mm = 0.0
+	for f in 45:
+		await get_tree().physics_frame
+	var back := []
+	for k in trees.size():
+		back.append(snappedf((_lateral_bow(k) - base[k]).y, 0.1))
+	_check(kg.call().max() == 0.0 and absf(back[2]) < 2.0, "the melt: the ice goes and the spruce's laterals stand up again (%s deg)" % str(back))
+	glaze.glaze_mm = 25.0
+	for f in 150:
+		await get_tree().physics_frame
+	var kg25: Array = kg.call()
+	print("25 mm: ice kg %s, %d glaze breaks" % [str(kg25), wind.get_glaze_break_count()])
+	_check(wind.get_glaze_break_count() > b6, "25 mm: limbs and tops break under the ice (%d breaks, %d at 6 mm)" % [wind.get_glaze_break_count(), b6])
+	var per := [0, 0, 0, 0]
+	for e in events:
+		var best := 0
+		for k in trees.size():
+			if absf(e.pos.x - trees[k].x) < absf(e.pos.x - trees[best].x):
+				best = k
+		per[best] += 1
+	_check(per[2] <= mini(per[0], per[1]) and per[2] <= per[3], "the spruce's cone sheds the ice best: breaks birch %d, beech %d, spruce %d, oak %d" % per)
 
 func _snow_test() -> void:
 	var body := StaticBody3D.new()
