@@ -815,17 +815,6 @@ void main() {
 		rt_rc_resolve(pixel.y * gl_LaunchSizeEXT.x + pixel.x, gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y);
 	}
 
-	// Indirect light reuse (raytracing_indirect_reuse_inc.glsl): off where the first bounce segment
-	// can scatter, since a reconnection would skip what lies on it.
-	const bool ir_allowed = rt_ir_enabled() && !rt_volume_enabled() && camera_medium == 0u && (RT_FLAGS & RT_FLAG_FOG_ENABLED) == 0u;
-	// The samples' first bounces through the diffuse lobe are candidates for this frame's reservoir,
-	// and every one of them is shaded with the reservoir's result once the pixel's samples are done.
-	IRFresh ir_fresh = rt_ir_fresh_init();
-	bool ir_any_surface = false;
-	vec3 ir_px_x1 = vec3(0.0);
-	uint ir_diffuse_samples = 0u;
-	uint ir_rng = init_rng(pixel, frame_index, 104729u);
-
 	// TODO: when we have a spp > 0 the first raycast is always identical,
 	// we should move it out of the loop
 
@@ -844,22 +833,6 @@ void main() {
 
 		vec3 ray_origin = camera_ray_origin;
 		vec3 ray_dir = direction.xyz;
-		// Without Ray Reconstruction nothing antialiases the image (its jittered camera does that
-		// over frames), so geometry finer than a pixel, such as hair strands, would alias to
-		// sparkle: the samples after the first spread over the pixel (box filter, R2 sequence,
-		// Roberts 2018, rotated per frame). The first stays at the centre for the guide buffers.
-		if (sample_idx > 0u && (RT_FLAGS & RT_FLAG_DLSS_RR_ENABLED) == 0u) {
-			vec2 jitter = fract(vec2(0.7548777, 0.5698403) * float(sample_idx) + vec2(0.7548777, 0.5698403) * float(frame_index % 4096u)) - 0.5;
-			vec2 dj = (pixel_center + jitter) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
-			vec4 target_j = scene_data_block.data.inv_projection_matrix * vec4(dj.x, dj.y, 1.0, 1.0);
-			vec3 view_origin_j = orthogonal ? vec3(target_j.xy / target_j.w, 0.0) : vec3(0.0);
-			vec3 view_direction_j = orthogonal ? vec3(0.0, 0.0, -1.0) : normalize(target_j.xyz);
-			ray_dir = (inv_view * vec4(view_direction_j, 0.0)).xyz;
-			ray_origin = (inv_view * vec4(view_origin_j, 1.0)).xyz;
-			if (rt_material_feature(RT_MATERIAL_FEATURE_REFRACTION) && !orthogonal) {
-				ray_origin += ray_dir * length(target_j.xyz / target_j.w);
-			}
-		}
 		// The ray cone's width at the segment's origin (texture level of detail, rt_texture_cone):
 		// 0 at a perspective eye, one pixel's footprint for an orthogonal camera, then grown by
 		// the pixel's spread angle over each segment traced.
@@ -887,25 +860,7 @@ void main() {
 		vec3 rc_radiance[1];
 		vec3 rc_throughput[1];
 
-		// Indirect light reuse: the first hit (x1), and the first bounce's direction, the light and
-		// throughput the path had after the first hit, and the point the bounce reached.
-		const bool ir_on = ir_allowed;
-		bool ir_surface = false;
-		bool ir_active = false;
-		bool ir_traced = false;
-		bool ir_has_x2 = false;
-		bool ir_rough = false;
-		vec3 ir_x1 = vec3(0.0);
-		vec3 ir_dir = vec3(0.0, 0.0, 1.0);
-		vec3 ir_radiance = vec3(0.0);
-		vec3 ir_throughput = vec3(1.0);
-		vec3 ir_x2 = vec3(0.0);
-		vec3 ir_n2 = vec3(0.0, 0.0, 1.0);
-
-		// Transmission past the first bounce does not count toward max_bounces (see the transmission lobe in
-		// sample_surface_continuation()); the extra segments it may take are capped here.
-		const uint segment_limit = max_bounces + uint(get_rt_param(RT_PARAM_TRANSMISSION_BOUNCES));
-		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit; bounce++) {
+		[[dont_unroll]] for (uint bounce = 0u; bounce <= max_bounces; bounce++) {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
 			uint flags_entry = ps.packed_bounces_flags;
@@ -1018,35 +973,7 @@ void main() {
 			if (ps.hit_t > 0.0) {
 				cone_width += rt_cone_spread_angle() * ps.hit_t;
 			}
-			if (ir_on && bounce == 0u) {
-				uint f = ps.packed_bounces_flags;
-				ps.packed_bounces_flags &= ~(RT_IR_SURFACE_FLAG | RT_IR_DIFFUSE_FLAG);
-				ir_surface = (f & RT_IR_SURFACE_FLAG) != 0u && ps.hit_t > 0.0;
-				if (ir_surface) {
-					ir_x1 = ray_origin + ray_dir * ps.hit_t;
-					ir_any_surface = true;
-					ir_px_x1 = ir_x1;
-				}
-				ir_active = ir_surface && (f & RT_IR_DIFFUSE_FLAG) != 0u && !is_path_terminated(f);
-				if (ir_active) {
-					ir_radiance = ps.radiance;
-					ir_throughput = ps.throughput;
-					ir_dir = ps.next_ray_dir;
-					// The first bounce's hit reports its normal and roughness under this flag.
-					ps.packed_bounces_flags |= RT_IR_DIFFUSE_FLAG;
-				}
-			} else if (ir_active && bounce == 1u) {
-				ir_traced = true;
-				ir_has_x2 = ps.hit_t > 0.0;
-				ir_rough = !ir_has_x2 || (ps.packed_bounces_flags & RT_IR_DIFFUSE_FLAG) != 0u;
-				if (ir_has_x2) {
-					ir_x2 = ray_origin + ray_dir * ps.hit_t;
-					ir_n2 = ps.offset_normal;
-				}
-				ps.packed_bounces_flags &= ~RT_IR_DIFFUSE_FLAG;
-			}
 			bool rc_recorded = false;
-			bool peel_seen = false;
 			if ((ps.packed_bounces_flags & RT_RC_ELIGIBLE_FLAG) != 0u) {
 				ps.packed_bounces_flags &= ~RT_RC_ELIGIBLE_FLAG;
 				if (rc_count < 1u && ps.hit_t > 0.0) {
@@ -1109,11 +1036,6 @@ void main() {
 				}
 				uint peel_hits = 0u;
 				vec3 throughput_after_opaque = ps.throughput;
-				if (ir_active && bounce <= 1u) {
-					// Layers in front of x1 or x2: x1's light is not the opaque surface's alone, and x2
-					// is seen through them, so the pixel keeps its own path this frame.
-					peel_seen = true;
-				}
 				vec3 radiance_after_opaque = ps.radiance;
 				PathState opaque_continuation = ps;
 				ContinuationReservoir continuation = continuation_reservoir_initial();
@@ -1162,14 +1084,6 @@ void main() {
 					}
 				}
 
-				if (peel_hits > 0u && peel_seen) {
-					if (bounce == 0u) {
-						ir_active = false;
-					} else {
-						ir_rough = false;
-					}
-				}
-				peel_seen = false;
 				if (peel_hits > 0u && rc_recorded) {
 					// Layers in front of the surface would count as its own bounce light.
 					rc_count--;
@@ -1286,26 +1200,8 @@ void main() {
 			}
 		}
 
-		if (ir_on && ir_active) {
-			// The diffuse lobe's light is added from the reservoir after the samples; this sample's
-			// own first bounce becomes a candidate for it.
-			vec3 past = ps.radiance - ir_radiance;
-			vec3 t = ir_throughput;
-			vec3 L = vec3(t.r > 1e-6 ? past.r / t.r : 0.0, t.g > 1e-6 ? past.g / t.g : 0.0, t.b > 1e-6 ? past.b / t.b : 0.0);
-			L = clamp(L, vec3(0.0), vec3(60000.0));
-			rt_ir_fresh_add(ir_fresh, ir_x1, ir_traced, ir_dir, ir_has_x2, ir_x2, ir_n2, ir_rough, L, ir_rng);
-			ps.radiance = ir_radiance;
-			ir_diffuse_samples++;
-		}
-
 		total_radiance += ps.radiance;
 		composite_passthrough = composite_passthrough || (composite_enabled && is_primary_miss(ps.packed_bounces_flags));
-	}
-
-	if (ir_any_surface) {
-		// Indirect light reuse: resample, store this frame's reservoir, shade the diffuse samples.
-		vec3 reused = rt_ir_resolve(ir_diffuse_samples > 0u, ir_px_x1, -direction.xyz, max(distance(origin.xyz, ir_px_x1), 0.01), ir_fresh, ir_rng);
-		total_radiance += float(ir_diffuse_samples) * reused;
 	}
 
 #ifdef RT_DEBUG_ENABLED
@@ -1645,30 +1541,6 @@ vec2 rt_prefiltered_dfg(float p_roughness, float p_NdotV) {
 // ============================================================================
 // MAIN
 // ============================================================================
-// Exact sparkle (docs/ideas/snow.md, follow-up 5): the facet of the grain a ray hits. Every 2 mm grain is
-// an ice facet, its normal GGX-distributed (alpha 0.4) about the snow's; a pixel's samples land on
-// different grains, so the path tracer integrates the discrete facets of the footprint itself
-// (the reference of Jakob et al. 2014 and Yan et al. 2014), at any distance and on any bounce.
-vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
-	const float grain = 0.002;
-	ivec3 q = ivec3(floor(p_pos / grain));
-	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u);
-	h ^= h >> 16u;
-	h *= 0x7feb352du;
-	h ^= h >> 15u;
-	h *= 0x846ca68bu;
-	h ^= h >> 16u;
-	float r1 = float(h & 0xffffu) / 65536.0;
-	float r2 = float(h >> 16u) / 65536.0;
-	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
-	float ct = inversesqrt(1.0 + tan2);
-	float st = sqrt(max(1.0 - ct * ct, 0.0));
-	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-	vec3 b = cross(p_n, t);
-	float phi = 6.2831853 * r2;
-	return normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
-}
-
 // Snow sparkle (docs/ideas/snow.md, stage 5): the same function as BaseMaterial3D's raster shader, there
 // with its comments. Returns a facet normal and its weight (0: none) for a footprint in metres.
 vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
@@ -1762,8 +1634,6 @@ void main() {
 	m.normal = normalize(view_to_world * normal);
 	// The coat lies on NORMAL before the normal map, as raster's geo_normal (snow's glints write it).
 	m.coat_normal = m.normal;
-	// SPECULAR_NORMAL tilts the base specular alone (snow grain facets); diffuse keeps NORMAL.
-	m.specular_normal = dot(specular_normal, specular_normal) > 0.25 ? normalize(view_to_world * specular_normal) : vec3(0.0);
 
 	// The vertex stage may have rewritten TANGENT/BINORMAL (triplanar mapping
 	// does), so the shading frame comes from the shader, not the mesh TBN.
@@ -1939,20 +1809,6 @@ void main() {
 		m.hair_tangent = dot(t, t) > 1e-12 ? normalize(t) : vec3(1.0, 0.0, 0.0);
 	}
 
-	// Turned ground on GroundSurface3D's patch (docs/ideas/ground-deform.md): the raster shader's factors.
-	if (rt_material_ground_deform(mat)) {
-		uint gmap = uint(get_rt_param(RT_PARAM_GROUND_DEFORM_MAP));
-		if (gmap != 0u) {
-			vec3 gpos = h.hit_pos + rt_origin.xyz;
-			vec2 guv = (gpos.xz - vec2(get_rt_param(RT_PARAM_GROUND_DEFORM_X), get_rt_param(RT_PARAM_GROUND_DEFORM_Z))) / max(get_rt_param(RT_PARAM_GROUND_DEFORM_SIZE), 1e-3);
-			if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
-				vec4 g = textureLod(sampler2D(bindless_textures[nonuniformEXT(gmap)], SAMPLER_LINEAR_CLAMP), guv, 0.0);
-				m.albedo *= g.b;
-				m.roughness = clamp(m.roughness * g.a, 0.0, 1.0);
-			}
-		}
-	}
-
 	// Wetness (BaseMaterial3D): Lagarde 2013, the same lines and inputs as the raster shader.
 	vec4 wetness = rt_material_wetness(mat);
 	if (wetness.z > 0.5) {
@@ -1991,9 +1847,6 @@ void main() {
 			vec3 spos = h.hit_pos + rt_origin.xyz;
 			vec4 s = vec4(0.0);
 			bool have = false;
-			float snow_under = 0.0;
-			float snow_crown = 0.0;
-			float snow_crown_load = 0.0;
 			// The world tier, then the near square faded in over its outer tenth (as the raster shader).
 			if (wrect.z > 0.0) {
 				vec2 wuv = (spos.xz - wrect.xy) / wrect.zw;
@@ -2008,32 +1861,18 @@ void main() {
 			if (srect.z > 0.0) {
 				vec2 nuv = (spos.xz - srect.xy) / srect.zw;
 				vec2 ne = min(nuv, 1.0 - nuv);
-				// With no world tier, no data outside the square (as the raster shader).
-				float nw = wrect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
+				float nw = wrect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : 1.0;
 				if (nw > 0.0) {
 					uint smap = uint(get_rt_param(RT_PARAM_SNOW_MAP));
 					vec2 ssize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), 0));
 					vec2 half_texel = 0.5 / max(ssize, vec2(1.0));
 					s = mix(s, textureLod(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
 					have = true;
-					// Shelter and tree crowns from the catch map, as the raster shader.
-					uint cmap = uint(get_rt_param(RT_PARAM_SNOW_CATCH_MAP));
-					if (cmap != 0u) {
-						vec4 c = textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), clamp(nuv, half_texel, 1.0 - half_texel), 0.0);
-						if (c.a > 0.5) {
-							float dy = spos.y - c.r;
-							snow_under = (1.0 - smoothstep(-0.8, -0.4, dy)) * nw;
-							snow_crown = smoothstep(1.5, 3.0, dy) * step(0.05, c.b) * nw;
-							snow_crown_load = c.g;
-						}
-					}
 				}
 			}
 			if (have) {
 				// Niu and Yang (2007) snow-covered fraction.
-				float snow_amt = snow_cover;
-				snow_cover *= tanh(max(s.r, 0.0) / (0.025 * max(s.a * 10.0, 0.5))) * (1.0 - snow_under);
-				snow_cover = mix(snow_cover, snow_amt * min(snow_crown_load * 2.0, 1.0), snow_crown);
+				snow_cover *= tanh(max(s.r, 0.0) / (0.025 * max(s.a * 10.0, 0.5)));
 				snow_albedo = s.g;
 				snow_wet = clamp(s.b, 0.0, 1.0);
 			} else {
@@ -2050,28 +1889,13 @@ void main() {
 		m.metalness = mix(m.metalness, 0.0, snow);
 		m.specular = mix(m.specular, 0.335, snow);
 		m.normal = normalize(mix(m.normal, h.geometry_normal, snow));
-		// Sparkle on dry snow. Camera rays size the grid by the pixel's angle times the distance, as raster
-		// does; reflected and bounced rays by their ray cone (Akenine-Moller et al. 2019, carried from the
-		// camera through each bounce), so snow seen in water or a window, and the light it bounces, keeps
-		// its glints at the grain size that footprint resolves.
-		float glint_dry = 1.0 - smoothstep(0.05, 0.3, snow_wet);
-		if (get_rt_param(RT_PARAM_SNOW_EXACT_GLINTS) > 0.5 && snow >= 0.5 && glint_dry > 0.0) {
-			// Exact: the snow's ice specular (F0 0.018) lies on the facet of the grain hit, near-smooth
-			// (roughness 0.22, alpha 0.05), the diffuse staying on the snow's normal. Over a pixel's
-			// samples the facets sum to the rough lobe (alpha 0.4) they stand for, with the glints of the
-			// grains that mirror a light. Melt water films the grains over: the rough lobe comes back.
-			m.specular_normal = snow_grain_facet(h.hit_pos + rt_origin.xyz, h.geometry_normal);
-			m.roughness = mix(m.roughness, 0.22, glint_dry);
-		} else if (snow >= 0.5 && (get_total_bounces(payload.packed_bounces_flags) == 0u || rt_cone_footprint_log2 > RT_TEXTURE_LOD_BASE)) {
-			float fp;
-			if (get_total_bounces(payload.packed_bounces_flags) == 0u) {
-				vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w,
-						scene_data_block.data.inv_view_matrix[2].w);
-				float pix = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * scene_data_block.data.viewport_size.y);
-				fp = scene_data_block.data.projection_matrix[3][3] != 0.0 ? pix : distance(h.hit_pos, cam) * pix;
-			} else {
-				fp = exp2(rt_cone_footprint_log2);
-			}
+		// Sparkle on dry snow, seen by camera rays only: their footprint is the pixel's angle times the
+		// distance (shaders here have no derivatives). Bounces see the plain rough snow.
+		if (get_total_bounces(payload.packed_bounces_flags) == 0u && snow >= 0.5) {
+			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w,
+					scene_data_block.data.inv_view_matrix[2].w);
+			float pix = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * scene_data_block.data.viewport_size.y);
+			float fp = scene_data_block.data.projection_matrix[3][3] != 0.0 ? pix : distance(h.hit_pos, cam) * pix;
 			vec4 g = snow_glint(h.hit_pos + rt_origin.xyz, h.geometry_normal, fp);
 			float gw = g.w * (1.0 - smoothstep(0.05, 0.3, snow_wet));
 			if (gw > 0.0 && rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT)) {

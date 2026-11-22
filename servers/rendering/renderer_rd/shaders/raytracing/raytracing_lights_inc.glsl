@@ -1316,4 +1316,3 @@ vec3 lights_evaluate_direct_lighting_per_group(
 }
 
 #include "raytracing_radiance_cache_inc.glsl"
-#include "raytracing_indirect_reuse_inc.glsl"

@@ -58,10 +58,6 @@
 // and fragment() (a finer normal from the deformation texels, plus a few millimetres of wind
 // ripple), so trails keep their edges at any mesh density. Snow optics as BaseMaterial3D's snow
 // (ice F0 0.018, roughness 0.7 dry to 0.35 wet), compacted snow a little darker and smoother.
-// Loose, disturbed snow's angle of repose: about 45 degrees for dry snow pushed aside (Abe 2004 measured
-// heaps of disaggregated snow layers; debris and plough berms stand at 35 to 50 degrees).
-static constexpr float LOOSE_SNOW_TAN_REPOSE = 1.0f;
-
 static const char *SNOW_SURFACE_SHADER = R"(
 shader_type spatial;
 render_mode cull_back, depth_draw_opaque;
@@ -70,19 +66,15 @@ uniform sampler2D ground_tex : filter_linear, repeat_disable;
 uniform vec4 ground_rect;
 uniform sampler2D snow_tex : filter_linear, repeat_disable;
 uniform vec4 snow_rect;
-uniform sampler2D catch_tex : filter_linear, repeat_disable;
-uniform bool has_catch = false;
 uniform sampler2D deform_tex : filter_linear, repeat_disable;
 uniform vec4 deform_rect;
 uniform vec4 mesh_rect;
 uniform float min_depth = 0.03;
 uniform float edge_fade = 8.0;
 uniform float detail_step = 0.0625;
-uniform float vertex_step = 0.0625;
 uniform float coarse_step = 0.5;
 uniform float micro_relief = 1.0;
 uniform vec3 tint = vec3(1.0);
-global uniform bool snow_exact_glints;
 
 varying vec3 w_pos;
 varying vec3 w_n;
@@ -97,15 +89,7 @@ float snow_ground(vec2 p) {
 }
 vec4 snow_pack(vec2 p) {
 	vec2 uv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
-	if (!snow_inside(uv)) {
-		return vec4(0.0, 0.84, 0.0, 0.1);
-	}
-	vec4 v = textureLod(snow_tex, uv, 0.0);
-	// Under a roof the pack lies on the roof (the cover's catch map): none on the ground here.
-	if (has_catch && textureLod(catch_tex, uv, 0.0).r > snow_ground(p) + 0.5) {
-		v.r = 0.0;
-	}
-	return v;
+	return snow_inside(uv) ? textureLod(snow_tex, uv, 0.0) : vec4(0.0, 0.84, 0.0, 0.1);
 }
 vec2 snow_deform(vec2 p) {
 	if (deform_rect.z <= 0.0) {
@@ -118,28 +102,12 @@ float snow_fade(vec2 p) {
 	vec2 d = min(p - mesh_rect.xy, mesh_rect.xy + mesh_rect.zw - p);
 	return smoothstep(0.0, edge_fade, min(d.x, d.y));
 }
-// The deformation averaged over a vertex's spacing where the triangles are coarser than the texels (a
-// displacement prefiltered to the mesh's sampling rate, as geometry clipmaps filter each level): without
-// it, vertices land on and off a print's wall and a turned edge zigzags. The fragment's normal keeps the
-// texels' own detail.
-vec2 snow_deform_vertex(vec2 p) {
-	float r = 0.5 * max(vertex_step - detail_step, 0.0);
-	if (r <= 0.0) {
-		return snow_deform(p);
-	}
-	return 0.25 * (snow_deform(p + vec2(-r, -r)) + snow_deform(p + vec2(r, -r)) + snow_deform(p + vec2(-r, r)) + snow_deform(p + vec2(r, r)));
-}
-float snow_height_with(vec2 p, vec2 dr) {
+float snow_height(vec2 p) {
+	vec2 dr = snow_deform(p);
 	float d = snow_pack(p).r * snow_fade(p) - dr.x + dr.y;
 	// Under min_depth the snow is the ground material's; the surface tucks 5 cm under the ground.
 	float lift = d >= min_depth ? d : mix(-0.05, min_depth, max(d, 0.0) / min_depth);
 	return snow_ground(p) + lift;
-}
-float snow_height(vec2 p) {
-	return snow_height_with(p, snow_deform(p));
-}
-float snow_height_vertex(vec2 p) {
-	return snow_height_with(p, snow_deform_vertex(p));
 }
 float snow_hash(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -185,28 +153,6 @@ vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
 	return vec4(f, share / chance / sqrt(max(share * grains, 1.0)));
 }
 
-// Exact sparkle under the path tracer (docs/ideas/snow.md, follow-up 5): the facet of the grain at a point,
-// the same function as BaseMaterial3D's snow pass and the path tracer's, there with its comments.
-vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
-	const float grain = 0.002;
-	ivec3 q = ivec3(floor(p_pos / grain));
-	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u);
-	h ^= h >> 16u;
-	h *= 0x7feb352du;
-	h ^= h >> 15u;
-	h *= 0x846ca68bu;
-	h ^= h >> 16u;
-	float r1 = float(h & 0xffffu) / 65536.0;
-	float r2 = float(h >> 16u) / 65536.0;
-	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
-	float ct = inversesqrt(1.0 + tan2);
-	float st = sqrt(max(1.0 - ct * ct, 0.0));
-	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-	vec3 b = cross(p_n, t);
-	float phi = 6.2831853 * r2;
-	return normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
-}
-
 float snow_ripple(vec2 p) {
 	// Wind ripples and grain clumps: 4 mm at 35 cm, 1.5 mm at 9 cm.
 	return micro_relief * (0.004 * snow_noise(p / 0.35) + 0.0015 * snow_noise(p / 0.09 + 17.0));
@@ -215,10 +161,10 @@ float snow_ripple(vec2 p) {
 void vertex() {
 	vec2 p = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
 	vec2 duv = (p - deform_rect.xy) / max(deform_rect.zw, vec2(1e-4));
-	float e = (deform_rect.z > 0.0 && snow_inside(duv)) ? max(detail_step * 2.0, vertex_step) : coarse_step;
-	float h = snow_height_vertex(p);
-	float hx = snow_height_vertex(p + vec2(e, 0.0)) - snow_height_vertex(p - vec2(e, 0.0));
-	float hz = snow_height_vertex(p + vec2(0.0, e)) - snow_height_vertex(p - vec2(0.0, e));
+	float e = (deform_rect.z > 0.0 && snow_inside(duv)) ? detail_step * 2.0 : coarse_step;
+	float h = snow_height(p);
+	float hx = snow_height(p + vec2(e, 0.0)) - snow_height(p - vec2(e, 0.0));
+	float hz = snow_height(p + vec2(0.0, e)) - snow_height(p - vec2(0.0, e));
 	vec3 n = normalize(vec3(-hx, 2.0 * e, -hz));
 	vec3 t = normalize(vec3(2.0 * e, hx, 0.0));
 	vec3 b = normalize(cross(n, t));
@@ -256,22 +202,14 @@ void fragment() {
 	// them away.
 	float pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float fp = PROJECTION_MATRIX[3][3] != 0.0 ? pix : distance(w_pos, INV_VIEW_MATRIX[3].xyz) * pix;
-	if (IN_PATH_TRACER && snow_exact_glints) {
-		// Under the path tracer: the ice specular lies on the facet of the grain hit, for every grain (the
-		// samples of a pixel integrate them), at the facet's own roughness; the diffuse keeps the snow's
-		// normal. Trodden snow keeps fewer whole grains, the rest stays rough.
-		float ew = (1.0 - smoothstep(0.05, 0.3, pack.b)) * (1.0 - 0.7 * compact);
-		if (ew > 0.0) {
-			SPECULAR_NORMAL = normalize((VIEW_MATRIX * vec4(snow_grain_facet(w_pos, nf), 0.0)).xyz);
-			ROUGHNESS = mix(ROUGHNESS, 0.22, ew);
-		}
-	} else {
-		vec4 g = snow_glint(w_pos, nf, fp);
-		float gw = g.w * (1.0 - smoothstep(0.05, 0.3, pack.b)) * (1.0 - 0.7 * compact);
+	vec4 g = snow_glint(w_pos, nf, fp);
+	float gw = g.w * (1.0 - smoothstep(0.05, 0.3, pack.b)) * (1.0 - 0.7 * compact);
+	if (gw > 0.0) {
+		vec3 base = normalize((VIEW_MATRIX * vec4(nf, 0.0)).xyz);
 		vec3 f = normalize((VIEW_MATRIX * vec4(g.xyz, 0.0)).xyz);
 		mat3 tbf = mat3(TANGENT, BINORMAL, f);
-		if (gw > 0.0 && abs(determinant(tbf)) > 1e-3) {
-			vec3 k = inverse(tbf) * normalize((VIEW_MATRIX * vec4(nf, 0.0)).xyz);
+		if (abs(determinant(tbf)) > 1e-3) {
+			vec3 k = inverse(tbf) * base;
 			if (k.z > 0.0) {
 				k /= length(k);
 				NORMAL = f;
@@ -288,7 +226,11 @@ void fragment() {
 // Relations
 
 float SnowSurface3D::bekker_sinkage(float p_pressure_kpa, float p_width, float p_n, float p_kc, float p_kphi) {
-	return GroundDeformField::bekker_sinkage(p_pressure_kpa, p_width, p_n, p_kc, p_kphi);
+	if (p_pressure_kpa <= 0.0f) {
+		return 0.0f;
+	}
+	const float k = p_kc / MAX(p_width, 0.02f) + p_kphi;
+	return Math::pow(p_pressure_kpa / k, 1.0f / MAX(p_n, 0.1f));
 }
 
 float SnowSurface3D::_dent_max(float p_depth, float p_density) const {
@@ -437,18 +379,17 @@ void SnowSurface3D::_ensure_children() {
 // Following
 
 void SnowSurface3D::_follow(Vector3 p_center) {
-	field.extent = deform_extent;
-	field.resolution = deform_resolution;
-	// On the GPU path the tile cache is the GPU's; the CPU copy keeps none.
-	field.max_cached_tiles = _gpu_on() ? 0 : max_cached_tiles;
-	const Vector2i want_deform = field.origin_for(Vector2(p_center.x, p_center.z));
+	const float tile = _tile_size();
+	const Vector2i ct(int(Math::floor(p_center.x / tile)), int(Math::floor(p_center.z / tile)));
+	const int tiles = deform_resolution / TILE;
+	const Vector2i want_deform = (ct - Vector2i(tiles / 2, tiles / 2)) * TILE;
 	const int gh = int(Math::round(extent * 0.5f / ground_spacing));
-	const Vector2 center = field.center_for(Vector2(p_center.x, p_center.z));
+	const Vector2 center = Vector2(ct) * tile;
 	const Vector2i want_ground(int(Math::round(center.x / ground_spacing)) - gh, int(Math::round(center.y / ground_spacing)) - gh);
 	if (!ground_valid || want_ground != ground_origin || ground_n != 2 * gh + 1) {
 		_shift_ground(want_ground);
 	}
-	if (deform_enabled && (!field.valid || want_deform != field.origin)) {
+	if (deform_enabled && (!deform_valid || want_deform != deform_origin)) {
 		_shift_deform(want_deform);
 	}
 	if (center != mesh_center || !mesh_instance->is_inside_tree() || mesh_instance->get_global_position() != Vector3(center.x, 0, center.y)) {
@@ -525,11 +466,120 @@ void SnowSurface3D::_shift_ground(Vector2i p_origin) {
 	_upload_ground();
 }
 
-void SnowSurface3D::_shift_deform(Vector2i p_origin) {
-	if (_gpu_on()) {
-		_gpu_shift(p_origin);
+void SnowSurface3D::_store_tile(Vector2i p_tile_world, int p_tx, int p_tz) {
+	const int n = deform_resolution;
+	CachedTile t;
+	t.data.resize(TILE * TILE * 2);
+	uint16_t *w = t.data.ptrw();
+	for (int z = 0; z < TILE; z++) {
+		for (int x = 0; x < TILE; x++) {
+			const int i = (p_tz * TILE + z) * n + p_tx * TILE + x;
+			w[(z * TILE + x) * 2 + 0] = Math::make_half_float(dent[i]);
+			w[(z * TILE + x) * 2 + 1] = Math::make_half_float(rim[i]);
+		}
 	}
-	field.shift(p_origin);
+	t.used = ++cache_clock;
+	tile_cache.insert(p_tile_world, t);
+}
+
+bool SnowSurface3D::_load_tile(Vector2i p_tile_world, int p_tx, int p_tz) {
+	const int n = deform_resolution;
+	CachedTile *t = tile_cache.getptr(p_tile_world);
+	for (int z = 0; z < TILE; z++) {
+		for (int x = 0; x < TILE; x++) {
+			const int i = (p_tz * TILE + z) * n + p_tx * TILE + x;
+			dent[i] = t ? Math::half_to_float(t->data[(z * TILE + x) * 2 + 0]) : 0.0f;
+			rim[i] = t ? Math::half_to_float(t->data[(z * TILE + x) * 2 + 1]) : 0.0f;
+		}
+	}
+	if (t) {
+		tile_cache.erase(p_tile_world);
+		return true;
+	}
+	return false;
+}
+
+void SnowSurface3D::_trim_cache() {
+	while (int(tile_cache.size()) > max_cached_tiles) {
+		Vector2i oldest;
+		uint64_t best = UINT64_MAX;
+		for (const KeyValue<Vector2i, CachedTile> &kv : tile_cache) {
+			if (kv.value.used < best) {
+				best = kv.value.used;
+				oldest = kv.key;
+			}
+		}
+		tile_cache.erase(oldest);
+	}
+}
+
+void SnowSurface3D::_shift_deform(Vector2i p_origin) {
+	const int n = deform_resolution;
+	const int tiles = n / TILE;
+	const bool keep = deform_valid && int(dent.size()) == n * n;
+	if (!keep) {
+		dent.resize(n * n);
+		rim.resize(n * n);
+		tile_active.resize(tiles * tiles);
+		for (int i = 0; i < n * n; i++) {
+			dent[i] = 0.0f;
+			rim[i] = 0.0f;
+		}
+		for (uint8_t &a : tile_active) {
+			a = 0;
+		}
+	}
+	const Vector2i old_tile0 = deform_origin / TILE;
+	const Vector2i new_tile0 = p_origin / TILE;
+	if (keep) {
+		// Tiles leaving the field go to the cache.
+		for (int tz = 0; tz < tiles; tz++) {
+			for (int tx = 0; tx < tiles; tx++) {
+				const Vector2i w = old_tile0 + Vector2i(tx, tz);
+				const Vector2i l = w - new_tile0;
+				const bool stays = l.x >= 0 && l.y >= 0 && l.x < tiles && l.y < tiles;
+				if (!stays && tile_active[tz * tiles + tx]) {
+					_store_tile(w, tx, tz);
+				}
+			}
+		}
+		LocalVector<float> old_dent;
+		LocalVector<float> old_rim;
+		LocalVector<uint8_t> old_active;
+		old_dent.resize(dent.size());
+		old_rim.resize(rim.size());
+		old_active.resize(tile_active.size());
+		memcpy(old_dent.ptr(), dent.ptr(), dent.size() * sizeof(float));
+		memcpy(old_rim.ptr(), rim.ptr(), rim.size() * sizeof(float));
+		memcpy(old_active.ptr(), tile_active.ptr(), tile_active.size());
+		for (int tz = 0; tz < tiles; tz++) {
+			for (int tx = 0; tx < tiles; tx++) {
+				const Vector2i w = new_tile0 + Vector2i(tx, tz);
+				const Vector2i o = w - old_tile0;
+				if (o.x >= 0 && o.y >= 0 && o.x < tiles && o.y < tiles) {
+					for (int z = 0; z < TILE; z++) {
+						const int src = (o.y * TILE + z) * n + o.x * TILE;
+						const int dst = (tz * TILE + z) * n + tx * TILE;
+						memcpy(&dent[dst], &old_dent[src], TILE * sizeof(float));
+						memcpy(&rim[dst], &old_rim[src], TILE * sizeof(float));
+					}
+					tile_active[tz * tiles + tx] = old_active[o.y * tiles + o.x];
+				} else {
+					tile_active[tz * tiles + tx] = _load_tile(w, tx, tz) ? 1 : 0;
+				}
+			}
+		}
+	} else {
+		for (int tz = 0; tz < tiles; tz++) {
+			for (int tx = 0; tx < tiles; tx++) {
+				tile_active[tz * tiles + tx] = _load_tile(new_tile0 + Vector2i(tx, tz), tx, tz) ? 1 : 0;
+			}
+		}
+	}
+	_trim_cache();
+	deform_origin = p_origin;
+	deform_valid = true;
+	deform_dirty = true;
 	collision_dirty = true;
 	_update_material();
 }
@@ -552,6 +602,25 @@ float SnowSurface3D::_ground_at(float p_x, float p_z) const {
 	return Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), tx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
 }
 
+static float snow_field_at(const LocalVector<float> &p_field, int p_n, Vector2i p_origin, float p_texel, float p_x, float p_z) {
+	if (int(p_field.size()) != p_n * p_n) {
+		return 0.0f;
+	}
+	const float fx = p_x / p_texel - p_origin.x - 0.5f;
+	const float fz = p_z / p_texel - p_origin.y - 0.5f;
+	if (fx < -0.5f || fz < -0.5f || fx > p_n - 0.5f || fz > p_n - 0.5f) {
+		return 0.0f;
+	}
+	const float cx = CLAMP(fx, 0.0f, float(p_n - 1));
+	const float cz = CLAMP(fz, 0.0f, float(p_n - 1));
+	const int x0 = MIN(int(cx), p_n - 2);
+	const int z0 = MIN(int(cz), p_n - 2);
+	const float tx = cx - x0;
+	const float tz = cz - z0;
+	auto at = [&](int x, int z) { return p_field[z * p_n + x]; };
+	return Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), tx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
+}
+
 float SnowSurface3D::_surface_at(float p_x, float p_z, const SnowCover3D *p_cover) const {
 	const float g = _ground_at(p_x, p_z);
 	if (!p_cover) {
@@ -560,10 +629,9 @@ float SnowSurface3D::_surface_at(float p_x, float p_z, const SnowCover3D *p_cove
 	const float half = extent * 0.5f;
 	const float edge = MIN(MIN(p_x - (mesh_center.x - half), mesh_center.x + half - p_x), MIN(p_z - (mesh_center.y - half), mesh_center.y + half - p_z));
 	const float fade = edge_fade > 0.0f ? Math::smoothstep(0.0f, edge_fade, edge) : (edge >= 0.0f ? 1.0f : 0.0f);
-	// Under a roof the pack lies on the roof (the cover's ground there is the roof): none on the ground.
-	float d = p_cover->get_ground_height_at(Vector3(p_x, 0, p_z)) > g + 0.5f ? 0.0f : p_cover->get_depth_at(Vector3(p_x, 0, p_z)) * fade;
-	if (deform_enabled && field.valid) {
-		d += field.rim_at(p_x, p_z) - field.dent_at(p_x, p_z);
+	float d = p_cover->get_depth_at(Vector3(p_x, 0, p_z)) * fade;
+	if (deform_enabled && deform_valid) {
+		d += snow_field_at(rim, deform_resolution, deform_origin, _texel(), p_x, p_z) - snow_field_at(dent, deform_resolution, deform_origin, _texel(), p_x, p_z);
 	}
 	return d >= min_depth ? g + d : g;
 }
@@ -571,120 +639,306 @@ float SnowSurface3D::_surface_at(float p_x, float p_z, const SnowCover3D *p_cove
 // ---------------------------------------------------------------------------------------------------------
 // Deformation
 
-float SnowSurface3D::press(Vector3 p_position, float p_radius, float p_bottom, float p_sink, bool p_round, Vector3 p_velocity) {
-	return _press(p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round, Vector2(p_velocity.x, p_velocity.z));
+float SnowSurface3D::press(Vector3 p_position, float p_radius, float p_bottom, float p_sink, bool p_round) {
+	return _press(p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round);
 }
 
-float SnowSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink, Vector3 p_velocity) {
-	return _press(p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, Vector2(p_velocity.x, p_velocity.z));
+float SnowSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink) {
+	return _press(p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false);
 }
 
-GroundDeformField::Column SnowSurface3D::SnowColumns::column(float p_x, float p_z) const {
-	GroundDeformField::Column c;
-	const Vector3 wp(p_x, 0, p_z);
-	const float depth = cover->get_depth_at(wp);
-	if (depth < surface->min_depth) {
-		return c;
+float SnowSurface3D::_press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round) {
+	SnowCover3D *cover = _cover();
+	if (!deform_enabled || !deform_valid || !cover || p_radius <= 0.0f || (p_box && (p_half.x <= 0.0f || p_half.y <= 0.0f))) {
+		return 0.0f;
 	}
-	c.deformable = true;
-	c.surface = surface->_ground_at(p_x, p_z) + depth;
-	const float density = cover->get_density_at(wp);
-	c.max_dent = surface->_dent_max(depth, density);
-	c.rim_share = surface->rim_share;
-	if (held || broke) {
-		const float thickness = cover->get_crust_thickness_at(wp);
-		const float over = cover->get_crust_depth_at(wp);
-		if (thickness > 0.0f && over < depth) {
-			if (held) {
-				// Standing on the crust: only the snow over it compacts.
-				c.max_dent = MIN(c.max_dent, surface->_dent_max(over, density));
-			} else if (over < 0.05f) {
-				c.crust = thickness;
+	const int n = deform_resolution;
+	const float t = _texel();
+	const float area = t * t;
+	// The rim ring: half the footprint's equivalent radius wide.
+	const float ring = 0.5f * (p_box ? Math::sqrt(p_half.x * p_half.y) : p_radius);
+	const float span = (p_box ? p_half.length() : p_radius) + ring;
+	const int x0 = MAX(int(Math::floor((p_position.x - span) / t)) - deform_origin.x, 0);
+	const int x1 = MIN(int(Math::ceil((p_position.x + span) / t)) - deform_origin.x, n - 1);
+	const int z0 = MAX(int(Math::floor((p_position.z - span) / t)) - deform_origin.y, 0);
+	const int z1 = MIN(int(Math::ceil((p_position.z + span) / t)) - deform_origin.y, n - 1);
+	if (x0 > x1 || z0 > z1) {
+		return 0.0f;
+	}
+	const float r2 = p_radius * p_radius;
+	const float cy = Math::cos(p_yaw);
+	const float sy = Math::sin(p_yaw);
+	// Footprint test: returns the distance outside the footprint (0 inside) and, inside, the squared
+	// distance from the centre for round undersides.
+	auto outside = [&](float wx, float wz, float &r_d2) {
+		const float dx = wx - p_position.x;
+		const float dz = wz - p_position.z;
+		r_d2 = dx * dx + dz * dz;
+		if (p_box) {
+			// Node yaw turns local x toward -z: local = R(-yaw) applied to the offset.
+			const float lx = cy * dx - sy * dz;
+			const float lz = sy * dx + cy * dz;
+			const float ox = MAX(Math::abs(lx) - p_half.x, 0.0f);
+			const float oz = MAX(Math::abs(lz) - p_half.y, 0.0f);
+			return Math::sqrt(ox * ox + oz * oz);
+		}
+		return MAX(Math::sqrt(r_d2) - p_radius, 0.0f);
+	};
+	auto inside = [&](float wx, float wz, float &r_d2) {
+		const float o = outside(wx, wz, r_d2);
+		return o <= 0.0f && (p_box || r_d2 <= r2);
+	};
+	auto profile = [&](float d2) {
+		return p_round ? p_bottom + p_radius - Math::sqrt(MAX(r2 - d2, 0.0f)) : p_bottom;
+	};
+	// Contact: the underside reaches the current surface somewhere in the footprint.
+	bool touching = false;
+	for (int z = z0; z <= z1 && !touching; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const float wx = (deform_origin.x + x + 0.5f) * t;
+			const float wz = (deform_origin.y + z + 0.5f) * t;
+			float d2;
+			if (!inside(wx, wz, d2)) {
+				continue;
+			}
+			const int i = z * n + x;
+			const float depth = cover->get_depth_at(Vector3(wx, 0, wz));
+			if (depth < min_depth) {
+				continue;
+			}
+			const float s = _ground_at(wx, wz) + depth - dent[i] + rim[i];
+			if (profile(d2) <= s + contact_tolerance) {
+				touching = true;
+				break;
 			}
 		}
 	}
-	return c;
-}
-
-float SnowSurface3D::SnowColumns::sinkage(const GroundDeformField::Body &p_body) const {
-	held = false;
-	broke = false;
-	const float z = GroundDeformField::body_sinkage(p_body, surface->bekker_n, surface->bekker_kc, surface->bekker_kphi);
-	const Vector3 wp(p_body.center.x, 0, p_body.center.z);
-	const float strength = cover->get_crust_strength_at(wp);
-	if (strength <= 0.0f) {
-		return z;
-	}
-	if (p_body.mass <= 0.0f) {
-		broke = true; // driven through at a set depth: it breaks whatever is there
-		return z;
-	}
-	const float over = cover->get_crust_depth_at(wp);
-	const float depth = cover->get_depth_at(wp);
-	if (over >= depth) {
-		return z;
-	}
-	// Already broken here (the hole goes past the crust): it goes on breaking at the hole's edge.
-	const float above = surface->_dent_max(over, cover->get_density_at(wp));
-	if (surface->field.dent_at(wp.x, wp.z) > above + 0.5f * cover->get_crust_thickness_at(wp) + 0.005f) {
-		broke = true;
-		return z;
-	}
-	if (GroundDeformField::body_pressure(p_body, MIN(z, MAX(above, 0.005f))) < strength) {
-		held = true;
-		return MIN(z, above);
-	}
-	broke = true;
-	return z;
-}
-
-float SnowSurface3D::_press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, Vector2 p_velocity) {
-	SnowCover3D *cover = _cover();
-	if (!deform_enabled || !cover) {
+	if (!touching) {
 		return 0.0f;
 	}
-	SnowColumns cols;
-	cols.surface = this;
-	cols.cover = cover;
-	// On the GPU path the CPU copy takes the press too, so the volume returned and queries made before the
-	// next read back see it; the GPU field takes it as a stamp.
-	const float moved = field.press(cols, p_position, p_radius, p_half, p_yaw, p_box, p_bottom, p_sink, p_round, contact_tolerance, p_velocity);
-	if (_gpu_on() && field.valid) {
-		gpu_sink.stamp(cols, p_position, p_radius, p_half, p_yaw, p_box, p_bottom, p_sink, p_round, contact_tolerance, p_velocity);
+	const int tiles = n / TILE;
+	float moved = 0.0f;
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const float wx = (deform_origin.x + x + 0.5f) * t;
+			const float wz = (deform_origin.y + z + 0.5f) * t;
+			float d2;
+			if (!inside(wx, wz, d2)) {
+				continue;
+			}
+			const int i = z * n + x;
+			const Vector3 wp(wx, 0, wz);
+			const float depth = cover->get_depth_at(wp);
+			if (depth < min_depth) {
+				continue;
+			}
+			const float undisturbed = _ground_at(wx, wz) + depth;
+			const float s = undisturbed - dent[i] + rim[i];
+			float target = profile(d2);
+			if (p_sink > 0.0f) {
+				const float w = p_round ? Math::sqrt(MAX(1.0f - d2 / r2, 0.0f)) : 1.0f;
+				target = MIN(target, undisturbed - p_sink * w);
+			}
+			target = MAX(target, undisturbed - _dent_max(depth, cover->get_density_at(wp)));
+			if (target >= s) {
+				continue;
+			}
+			const float delta = s - target;
+			const float take = MIN(rim[i], delta);
+			rim[i] -= take;
+			dent[i] += delta - take;
+			moved += delta * area;
+			tile_active[(z / TILE) * tiles + x / TILE] = 1;
+		}
 	}
-	if (moved > 0.0f) {
-		collision_dirty = true;
+	if (moved <= 0.0f) {
+		return 0.0f;
 	}
+	// The rim: rim_share of the moved snow, spread over the ring, thickest at the edge.
+	const float pushed = moved * rim_share;
+	float wsum = 0.0f;
+	for (int pass = 0; pass < 2; pass++) {
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const float wx = (deform_origin.x + x + 0.5f) * t;
+				const float wz = (deform_origin.y + z + 0.5f) * t;
+				float d2;
+				const float o = outside(wx, wz, d2);
+				if (o <= 0.0f || o >= ring) {
+					continue;
+				}
+				if (cover->get_depth_at(Vector3(wx, 0, wz)) < min_depth) {
+					continue;
+				}
+				const float w = 1.0f - o / ring;
+				if (pass == 0) {
+					wsum += w;
+				} else {
+					rim[z * n + x] += pushed * w / (wsum * area);
+					tile_active[(z / TILE) * tiles + x / TILE] = 1;
+				}
+			}
+		}
+		if (wsum <= 0.0f) {
+			break; // Nowhere to push: it all compacts in place.
+		}
+	}
+	deform_dirty = true;
+	collision_dirty = true;
 	return moved;
 }
 
 void SnowSurface3D::_press_movers(double p_delta) {
-	SnowCover3D *cover = _cover();
-	if (!is_inside_tree() || !cover) {
+	frame++;
+	if (!is_inside_tree()) {
 		return;
 	}
-	SnowColumns cols;
-	cols.surface = this;
-	cols.cover = cover;
-	field.press_bodies(get_tree(), deform_groups, cols, character_mass, character_contact_area, contact_tolerance, p_delta);
-	if (field.shape_dirty) {
-		collision_dirty = true;
+	HashSet<ObjectID> done;
+	for (const String &group : deform_groups) {
+		const Vector<Node *> nodes = get_tree()->get_nodes_in_group(StringName(group));
+		for (Node *node : nodes) {
+			Node3D *n3 = Object::cast_to<Node3D>(node);
+			if (!n3 || !n3->is_visible_in_tree() || done.has(n3->get_instance_id())) {
+				continue;
+			}
+			done.insert(n3->get_instance_id());
+			// Shape: the first enabled CollisionShape3D child, as the grass trample reads it.
+			Vector3 center = n3->get_global_position();
+			float radius = 0.3f;
+			float half_height = 0.3f;
+			bool round = true;
+			float width = 0.0f; // contact patch width for Bekker, 0 = from the shape
+			float flat_area = 0.0f;
+			bool wheel = false;
+			bool box = false;
+			Vector2 box_half;
+			float yaw = 0.0f;
+			for (int c = 0; c < n3->get_child_count(); c++) {
+				CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(n3->get_child(c));
+				if (!cs || cs->is_disabled() || cs->get_shape().is_null()) {
+					continue;
+				}
+				const Ref<Shape3D> shape = cs->get_shape();
+				const Basis basis = cs->get_global_basis();
+				const float sc = basis.get_scale().x;
+				center = cs->get_global_position();
+				if (const SphereShape3D *sp = Object::cast_to<SphereShape3D>(shape.ptr())) {
+					radius = half_height = sp->get_radius() * sc;
+				} else if (const CapsuleShape3D *cp = Object::cast_to<CapsuleShape3D>(shape.ptr())) {
+					radius = cp->get_radius() * sc;
+					half_height = cp->get_height() * 0.5f * sc;
+				} else if (const CylinderShape3D *cy = Object::cast_to<CylinderShape3D>(shape.ptr())) {
+					const float up = Math::abs(basis.get_column(1).normalized().y);
+					if (up > 0.7f) {
+						radius = cy->get_radius() * sc;
+						half_height = cy->get_height() * 0.5f * sc;
+						round = false;
+						flat_area = Math::PI * radius * radius;
+					} else {
+						// A wheel: a track as wide as the tyre, flat across.
+						wheel = true;
+						half_height = cy->get_radius() * sc;
+						width = cy->get_height() * sc;
+						radius = width * 0.5f;
+						round = false;
+					}
+				} else if (const BoxShape3D *bx = Object::cast_to<BoxShape3D>(shape.ptr())) {
+					const Vector3 s = bx->get_size() * 0.5f * sc;
+					radius = MAX(s.x, s.z);
+					half_height = s.y;
+					round = false;
+					flat_area = 4.0f * s.x * s.z;
+					width = 2.0f * MIN(s.x, s.z);
+					// A boot or a crate: an oriented print, turned with the shape's heading.
+					box = true;
+					box_half = Vector2(s.x, s.z);
+					const Vector3 fx = basis.get_column(0);
+					yaw = Math::atan2(-fx.z, fx.x);
+				}
+				break;
+			}
+			if (n3->has_meta("snow_radius")) {
+				radius = n3->get_meta("snow_radius");
+			}
+			// Load: rigid bodies by mass, characters by snow_mass or character_mass, the rest only push
+			// to their own underside.
+			float mass = 0.0f;
+			float area = 0.0f;
+			if (const RigidBody3D *rb = Object::cast_to<RigidBody3D>(n3)) {
+				mass = rb->get_mass();
+			} else if (Object::cast_to<CharacterBody3D>(n3)) {
+				mass = character_mass;
+				area = character_contact_area;
+				width = Math::sqrt(character_contact_area / 3.0f); // a boot about three times as long as wide
+			}
+			if (n3->has_meta("snow_mass")) {
+				mass = n3->get_meta("snow_mass");
+			}
+			if (n3->has_meta("snow_contact_area")) {
+				area = n3->get_meta("snow_contact_area");
+			}
+			float sink = 0.0f;
+			if (mass > 0.0f) {
+				const float load = mass * 9.81f / 1000.0f; // kN
+				if (area > 0.0f) {
+					sink = bekker_sinkage(load / area, width > 0.0f ? width : Math::sqrt(area), bekker_n, bekker_kc, bekker_kphi);
+				} else if (flat_area > 0.0f) {
+					sink = bekker_sinkage(load / flat_area, width > 0.0f ? width : Math::sqrt(flat_area), bekker_n, bekker_kc, bekker_kphi);
+				} else {
+					// Round bodies and wheels: the patch grows with sinkage; a few fixed-point steps.
+					const float rr = wheel ? half_height : radius;
+					float z = 0.05f;
+					for (int it = 0; it < 8; it++) {
+						const float l = 2.0f * Math::sqrt(MAX(2.0f * rr * z - z * z, 1e-4f));
+						const float patch = wheel ? l * width : Math::PI * 0.25f * l * l;
+						const float b = wheel ? MIN(l, width) : l;
+						z = 0.5f * z + 0.5f * bekker_sinkage(load / patch, b, bekker_n, bekker_kc, bekker_kphi);
+					}
+					sink = z;
+				}
+			}
+			const float bottom = center.y - half_height;
+			Mover *m = movers.getptr(n3->get_instance_id());
+			Vector3 from = m ? m->last : center;
+			if ((center - from).length() > 30.0f * MAX(float(p_delta), 0.001f) + 5.0f) {
+				from = center; // teleported
+			}
+			const float dist = Vector2(center.x - from.x, center.z - from.z).length();
+			const int steps = CLAMP(int(Math::ceil(dist / MAX(radius * 0.5f, 0.01f))), 1, 16);
+			for (int k = 1; k <= steps; k++) {
+				const float a = float(k) / steps;
+				const Vector3 p = from.lerp(center, a);
+				if (box) {
+					_press(p, radius, box_half, yaw, true, p.y - half_height, sink, false);
+				} else {
+					press(p, radius, p.y - half_height, sink, round);
+				}
+			}
+			(void)bottom;
+			movers[n3->get_instance_id()] = Mover{ center, frame };
+		}
+	}
+	// Forget movers that left.
+	LocalVector<ObjectID> gone;
+	for (const KeyValue<ObjectID, Mover> &kv : movers) {
+		if (kv.value.frame != frame) {
+			gone.push_back(kv.key);
+		}
+	}
+	for (const ObjectID &id : gone) {
+		movers.erase(id);
 	}
 }
 
 void SnowSurface3D::_relax() {
 	SnowCover3D *cover = _cover();
-	if (!cover || !field.valid || cover->get_update_count() == seen_cover_update) {
+	if (!cover || !deform_valid || cover->get_update_count() == seen_cover_update) {
 		return;
 	}
 	seen_cover_update = cover->get_update_count();
-	const int n = field.resolution;
+	const int n = deform_resolution;
 	const int tiles = n / TILE;
-	const float t = field.texel();
-	LocalVector<float> &dent = field.dent;
-	LocalVector<float> &rim = field.rim;
-	LocalVector<uint8_t> &tile_active = field.tile_active;
-	const Vector2i deform_origin = field.origin;
+	const float t = _texel();
 	const float keep = Math::exp(-wind_fill_rate * cover->get_drift_factor() * cover->get_last_step_hours());
 	for (int tz = 0; tz < tiles; tz++) {
 		for (int tx = 0; tx < tiles; tx++) {
@@ -716,16 +970,22 @@ void SnowSurface3D::_relax() {
 			tile_active[tz * tiles + tx] = any ? 1 : 0;
 		}
 	}
-	field.dirty = true;
+	deform_dirty = true;
 	collision_dirty = true;
 }
 
 void SnowSurface3D::clear_deformation() {
-	field.clear();
-	gpu_cache.clear();
-	gpu_free_slots.clear();
-	gpu_slots = 0;
-	gpu_reset = true;
+	for (float &d : dent) {
+		d = 0.0f;
+	}
+	for (float &r : rim) {
+		r = 0.0f;
+	}
+	for (uint8_t &a : tile_active) {
+		a = 0;
+	}
+	tile_cache.clear();
+	deform_dirty = true;
 	collision_dirty = true;
 }
 
@@ -755,16 +1015,30 @@ void SnowSurface3D::_upload_ground() {
 		const float half = extent * 0.5f;
 		mesh_instance->set_custom_aabb(AABB(Vector3(-half, ground_min - 1.0f, -half), Vector3(extent, ground_max - ground_min + 12.0f, extent)));
 	}
-	gpu_ground_dirty = true;
 	_update_material();
 }
 
 void SnowSurface3D::_upload_deform() {
-	const RID before = deform_texture.is_valid() ? deform_texture->get_rid() : RID();
-	field.upload(deform_image, deform_texture);
-	if (deform_texture.is_valid() && deform_texture->get_rid() != before) {
-		_update_material();
+	const int n = deform_resolution;
+	if (!deform_valid || int(dent.size()) != n * n) {
+		return;
 	}
+	Vector<uint8_t> bytes;
+	bytes.resize(n * n * 4);
+	uint16_t *w = reinterpret_cast<uint16_t *>(bytes.ptrw());
+	for (int i = 0; i < n * n; i++) {
+		w[i * 2 + 0] = Math::make_half_float(dent[i]);
+		w[i * 2 + 1] = Math::make_half_float(rim[i]);
+	}
+	if (deform_image.is_null() || deform_image->get_width() != n) {
+		deform_image = Image::create_from_data(n, n, false, Image::FORMAT_RGH, bytes);
+		deform_texture = ImageTexture::create_from_image(deform_image);
+		_update_material();
+	} else {
+		deform_image->set_data(n, n, false, Image::FORMAT_RGH, bytes);
+		deform_texture->update(deform_image);
+	}
+	deform_dirty = false;
 }
 
 void SnowSurface3D::_update_material() {
@@ -778,20 +1052,13 @@ void SnowSurface3D::_update_material() {
 		const Rect2 r = cover->get_map_rect();
 		material->set_shader_parameter("snow_tex", cover->get_snow_texture());
 		material->set_shader_parameter("snow_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y));
-		material->set_shader_parameter("catch_tex", cover->get_catch_texture());
-		material->set_shader_parameter("has_catch", cover->get_catch_texture().is_valid());
 	} else {
 		material->set_shader_parameter("snow_rect", Vector4());
 	}
-	const bool gpu_tex = _gpu_on() && gpu_texture.is_valid() && gpu_texture->get_texture_rd_rid().is_valid();
-	if (deform_enabled && field.valid && (gpu_tex || deform_texture.is_valid())) {
-		const Rect2 r = field.rect();
-		if (gpu_tex) {
-			material->set_shader_parameter("deform_tex", gpu_texture);
-		} else {
-			material->set_shader_parameter("deform_tex", deform_texture);
-		}
-		material->set_shader_parameter("deform_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y));
+	if (deform_enabled && deform_valid && deform_texture.is_valid()) {
+		const float t = _texel();
+		material->set_shader_parameter("deform_tex", deform_texture);
+		material->set_shader_parameter("deform_rect", Vector4(deform_origin.x * t, deform_origin.y * t, deform_extent, deform_extent));
 	} else {
 		material->set_shader_parameter("deform_rect", Vector4());
 	}
@@ -800,7 +1067,6 @@ void SnowSurface3D::_update_material() {
 	material->set_shader_parameter("min_depth", min_depth);
 	material->set_shader_parameter("edge_fade", edge_fade);
 	material->set_shader_parameter("detail_step", _texel());
-	material->set_shader_parameter("vertex_step", detail_spacing);
 	material->set_shader_parameter("coarse_step", MAX(ground_spacing, max_spacing * 0.5f));
 	material->set_shader_parameter("micro_relief", micro_relief);
 	material->set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b));
@@ -848,61 +1114,22 @@ void SnowSurface3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			set_physics_process_internal(false);
-			_gpu_release();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 			const double delta = get_physics_process_delta_time();
 			_follow(_follow_position());
-			const bool on_gpu = _gpu_on();
-			if (!on_gpu && gpu.is_valid()) {
-				_gpu_release();
-			}
-			if (on_gpu && field.valid) {
-				_gpu_take();
-				// The bodies press as stamps for the GPU field (the same maths, docs/ideas/snow.md follow-up 13).
-				field.press_settle = 1.0f;
-				field.stamp_sink = &gpu_sink;
+			if (deform_enabled && deform_valid) {
 				_press_movers(delta);
-				field.stamp_sink = nullptr;
-				collision_accum += delta;
-				bool collide = false;
-				if (collision_accum >= 1.0 / collision_rate) {
-					collision_accum = 0.0;
-					collide = true;
-				}
-				_gpu_submit(delta, collide, false);
-			} else if (deform_enabled && field.valid) {
-				// Pressed tiles owe a second of slumping: the snow a body pushes aside is loose and slides off
-				// where it lies steeper than its repose (Sumner's erosion step, as the granular ground): into
-				// the print, or off a thin wall left between two overlapping steps. Only that rim moves: the
-				// compacted walls stand.
-				field.press_settle = 1.0f;
-				_press_movers(delta);
-				auto ground_fn = [this](float x, float z) { return _ground_at(x, z); };
-				const SnowCover3D *slump_cover = _cover();
-				auto params_fn = [slump_cover](float x, float z, float &r_tan, float &r_rate, float &r_max) {
-					// Plates of a broken crust are slabs, not loose snow: they stay as heaped.
-					if (!slump_cover || slump_cover->get_crust_thickness_at(Vector3(x, 0, z)) > 0.0f) {
-						return false;
-					}
-					r_tan = LOOSE_SNOW_TAN_REPOSE;
-					r_rate = 1e3f;
-					r_max = 0.0f;
-					return true;
-				};
-				field.slump(delta, ground_fn, params_fn);
 				_relax();
 			}
-			if (!on_gpu || !field.valid) {
-				collision_accum += delta;
-				if (collision_accum >= 1.0 / collision_rate) {
-					collision_accum = 0.0;
-					_update_collision();
-				}
-				if (field.dirty) {
-					_upload_deform();
-				}
+			collision_accum += delta;
+			if (collision_accum >= 1.0 / collision_rate) {
+				collision_accum = 0.0;
+				_update_collision();
+			}
+			if (deform_dirty) {
+				_upload_deform();
 			}
 			// The cover's texture and rect move on its own schedule.
 			const SnowCover3D *cover = _cover();
@@ -924,445 +1151,6 @@ void SnowSurface3D::_notification(int p_what) {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// The print field on the GPU (docs/ideas/snow.md, follow-up 13)
-
-bool SnowSurface3D::_gpu_on() const {
-	return gpu_simulation && deform_enabled && SnowDeformGPU::is_available();
-}
-
-void SnowSurface3D::set_gpu_simulation(bool p_enabled) {
-	if (gpu_simulation == p_enabled) {
-		return;
-	}
-	gpu_simulation = p_enabled;
-	// Each path keeps its own field: start the new one empty.
-	field.invalidate();
-	field.clear();
-	gpu_cache.clear();
-	gpu_free_slots.clear();
-	gpu_slots = 0;
-	gpu_reset = true;
-	if (is_inside_tree()) {
-		_follow(_follow_position());
-	}
-	_update_material();
-	collision_dirty = true;
-}
-
-void SnowSurface3D::_gpu_release() {
-	if (gpu.is_valid()) {
-		gpu->shutdown();
-		gpu.unref();
-	}
-	if (gpu_texture.is_valid()) {
-		gpu_texture->set_texture_rd_rid(RID());
-	}
-	gpu_texture_serial = 0;
-	gpu_n = 0;
-	gpu_reset = true;
-	gpu_ground_dirty = true;
-	gpu_cover_dirty = true;
-	gpu_cache.clear();
-	gpu_free_slots.clear();
-	gpu_slots = 0;
-	gpu_stamps.clear();
-	gpu_stores.clear();
-	gpu_shift.clear();
-}
-
-void SnowSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) {
-	GroundDeformField &f = surface->field;
-	if (!f.valid || p_radius <= 0.0f || (p_box && (p_half.x <= 0.0f || p_half.y <= 0.0f))) {
-		return;
-	}
-	// The footprint's reach, as GroundDeformField::press works it out.
-	const int n = f.resolution;
-	const float t = f.texel();
-	const float ring = 0.5f * (p_box ? Math::sqrt(p_half.x * p_half.y) : p_radius);
-	const float crust = p_columns.column(p_position.x, p_position.z).crust;
-	const float crack = crust > 0.0f ? GroundDeformField::CRACK_LENGTH * Math::pow(crust / 0.02f, 0.75f) : 0.0f;
-	const float bow = CLAMP(p_velocity.length() / GroundDeformField::BOW_SPEED, 0.0f, 1.0f);
-	const float span = (p_box ? p_half.length() : p_radius) + MAX(ring * (1.0f + bow * GroundDeformField::BOW_REACH), 1.6f * crack);
-	const int x0 = MAX(int(Math::floor((p_position.x - span) / t)) - f.origin.x, 0);
-	const int x1 = MIN(int(Math::ceil((p_position.x + span) / t)) - f.origin.x, n - 1);
-	const int z0 = MAX(int(Math::floor((p_position.z - span) / t)) - f.origin.y, 0);
-	const int z1 = MIN(int(Math::ceil((p_position.z + span) / t)) - f.origin.y, n - 1);
-	if (x0 > x1 || z0 > z1) {
-		return;
-	}
-	const SnowColumns *sc = static_cast<const SnowColumns *>(&p_columns);
-	uint32_t flags = (p_box ? 1u : 0u) | (p_round ? 2u : 0u) | (sc->held ? 4u : 0u) | (sc->broke ? 8u : 0u);
-	const uint32_t seed = hash_murmur3_one_32(uint32_t(int(Math::floor(p_position.x / 0.25f))) * 73856093u ^ uint32_t(int(Math::floor(p_position.z / 0.25f))) * 19349663u);
-	float seed_f;
-	memcpy(&seed_f, &seed, 4);
-	const float v[16] = {
-		p_position.x, p_position.y, p_position.z, p_radius,
-		p_half.x, p_half.y, p_yaw, p_bottom,
-		p_sink, p_contact_tolerance, p_velocity.x, p_velocity.y,
-		crack, float(flags), seed_f, 0.0f
-	};
-	const int32_t e[4] = { x0, x1, z0, z1 };
-	const int at = surface->gpu_stamps.size();
-	surface->gpu_stamps.resize(at + SnowDeformGPU::STAMP_BYTES);
-	uint8_t *w = surface->gpu_stamps.ptrw() + at;
-	memcpy(w, v, 64);
-	memcpy(w + 64, e, 16);
-	// The tiles it touches are live (they go to the cache when the field moves off them).
-	const int nt = f.tiles();
-	if (int(surface->gpu_tile_stamped.size()) != nt * nt) {
-		surface->gpu_tile_stamped.resize(nt * nt);
-		for (float &s : surface->gpu_tile_stamped) {
-			s = -1e9f;
-		}
-	}
-	for (int tz = z0 / TILE; tz <= z1 / TILE; tz++) {
-		for (int tx = x0 / TILE; tx <= x1 / TILE; tx++) {
-			surface->gpu_tile_stamped[tz * nt + tx] = surface->gpu_time;
-			f.tile_active[tz * nt + tx] = 1;
-		}
-	}
-}
-
-void SnowSurface3D::_gpu_shift(Vector2i p_origin) {
-	const int n = deform_resolution;
-	const int nt = n / TILE;
-	const bool keep = field.valid && gpu_n == n && !gpu_reset;
-	const Vector2i old0 = field.origin / TILE;
-	const Vector2i new0 = p_origin / TILE;
-	const int slots = MAX(max_cached_tiles, 1);
-	if (gpu_slots != slots) {
-		gpu_slots = slots;
-		gpu_cache.clear();
-		gpu_free_slots.clear();
-		for (int i = slots - 1; i >= 0; i--) {
-			gpu_free_slots.push_back(i);
-		}
-	}
-	gpu_stores.clear();
-	gpu_shift.clear();
-	gpu_shift.resize(nt * nt * 16);
-	int32_t *sh = reinterpret_cast<int32_t *>(gpu_shift.ptrw());
-	// Tiles coming in: from the old field where it overlaps, else from the cache.
-	LocalVector<int> loaded;
-	for (int tz = 0; tz < nt; tz++) {
-		for (int tx = 0; tx < nt; tx++) {
-			const Vector2i w = new0 + Vector2i(tx, tz);
-			const Vector2i o = w - old0;
-			int32_t *op = sh + (tz * nt + tx) * 4;
-			op[0] = 0;
-			op[1] = 0;
-			op[2] = 0;
-			op[3] = 0;
-			if (keep && o.x >= 0 && o.y >= 0 && o.x < nt && o.y < nt) {
-				op[0] = 1;
-				op[1] = o.y * nt + o.x;
-			} else if (GPUSlot *c = gpu_cache.getptr(w)) {
-				op[0] = 2;
-				op[1] = c->slot;
-				loaded.push_back(c->slot);
-				gpu_cache.erase(w);
-			}
-		}
-	}
-	// Tiles leaving with prints in them go to the cache (the least recently used make way), never into a
-	// slot being read in this same move.
-	if (keep && max_cached_tiles > 0) {
-		HashSet<int> busy;
-		for (int sl : loaded) {
-			busy.insert(sl);
-		}
-		for (int tz = 0; tz < nt; tz++) {
-			for (int tx = 0; tx < nt; tx++) {
-				const Vector2i w = old0 + Vector2i(tx, tz);
-				const Vector2i l = w - new0;
-				if (l.x >= 0 && l.y >= 0 && l.x < nt && l.y < nt) {
-					continue;
-				}
-				const int ti = tz * nt + tx;
-				const bool stamped = int(gpu_tile_stamped.size()) == nt * nt && gpu_time - gpu_tile_stamped[ti] < 1.5;
-				if (!(int(field.tile_active.size()) == nt * nt && field.tile_active[ti]) && !stamped) {
-					continue;
-				}
-				int slot = -1;
-				for (int k = int(gpu_free_slots.size()) - 1; k >= 0; k--) {
-					if (!busy.has(gpu_free_slots[k])) {
-						slot = gpu_free_slots[k];
-						gpu_free_slots.remove_at(k);
-						break;
-					}
-				}
-				if (slot < 0) {
-					// Evict the least recently used.
-					Vector2i oldest;
-					uint64_t best = UINT64_MAX;
-					for (const KeyValue<Vector2i, GPUSlot> &kv : gpu_cache) {
-						if (kv.value.used < best && !busy.has(kv.value.slot)) {
-							best = kv.value.used;
-							oldest = kv.key;
-						}
-					}
-					if (best == UINT64_MAX) {
-						continue;
-					}
-					slot = gpu_cache[oldest].slot;
-					gpu_cache.erase(oldest);
-				}
-				busy.insert(slot);
-				gpu_cache.insert(w, GPUSlot{ slot, ++gpu_cache_clock });
-				const int32_t st[4] = { tx, tz, slot, 0 };
-				const int at = gpu_stores.size();
-				gpu_stores.resize(at + 16);
-				memcpy(gpu_stores.ptrw() + at, st, 16);
-			}
-		}
-	}
-	for (int sl : loaded) {
-		gpu_free_slots.push_back(sl);
-	}
-	// Stamps still waiting were placed in the old field's texels: they go first (the order in the step is
-	// stores, shift, stamps), so move them to the new one.
-	if (keep && gpu_stamps.size() > 0) {
-		const Vector2i d = (old0 - new0) * TILE;
-		const int count = gpu_stamps.size() / SnowDeformGPU::STAMP_BYTES;
-		for (int i = 0; i < count; i++) {
-			int32_t *e = reinterpret_cast<int32_t *>(gpu_stamps.ptrw() + i * SnowDeformGPU::STAMP_BYTES + 64);
-			e[0] = MAX(e[0] + d.x, 0);
-			e[1] = MIN(e[1] + d.x, n - 1);
-			e[2] = MAX(e[2] + d.y, 0);
-			e[3] = MIN(e[3] + d.y, n - 1);
-		}
-	} else {
-		gpu_stamps.clear();
-	}
-	if (!keep) {
-		gpu_reset = true;
-		gpu_stores.clear();
-	}
-	if (int(gpu_tile_stamped.size()) == nt * nt && keep) {
-		LocalVector<float> next;
-		next.resize(nt * nt);
-		for (int tz = 0; tz < nt; tz++) {
-			for (int tx = 0; tx < nt; tx++) {
-				const Vector2i o = new0 + Vector2i(tx, tz) - old0;
-				next[tz * nt + tx] = (o.x >= 0 && o.y >= 0 && o.x < nt && o.y < nt) ? gpu_tile_stamped[o.y * nt + o.x] : -1e9f;
-			}
-		}
-		gpu_tile_stamped = next;
-	}
-	gpu_n = n;
-	gpu_changed = true;
-}
-
-int SnowSurface3D::_gpu_collision_cells() const {
-	const float sp = _texel() * 2.0f;
-	return MAX(int(Math::round(collision_extent / sp)), 2);
-}
-
-PackedByteArray SnowSurface3D::_gpu_cover_cells(int &r_n, bool &r_valid) const {
-	PackedByteArray out;
-	const SnowCover3D *cover = _cover();
-	r_n = 0;
-	r_valid = false;
-	if (!cover || !cover->origin_valid || cover->pub.swe.size() != cover->resolution * cover->resolution) {
-		return out;
-	}
-	const int cn = cover->resolution;
-	const int cells = cn * cn;
-	out.resize(cells * 32);
-	float *w = reinterpret_cast<float *>(out.ptrw());
-	const bool crust = cover->pub.crust.size() == cells;
-	const bool fresh = cover->pub.new_depth.size() == cells;
-	const bool ground_ok = cover->cell_ground.size() == cells;
-	for (int i = 0; i < cells; i++) {
-		w[i * 8 + 0] = cover->pub.swe[i];
-		w[i * 8 + 1] = cover->pub.density[i];
-		w[i * 8 + 2] = crust ? cover->pub.crust[i] : 0.0f;
-		w[i * 8 + 3] = crust ? cover->pub.crust_burial[i] : 0.0f;
-		w[i * 8 + 4] = fresh ? cover->pub.new_depth[i] : 0.0f;
-		w[i * 8 + 5] = ground_ok ? cover->cell_ground[i] : 0.0f;
-		w[i * 8 + 6] = 0.0f;
-		w[i * 8 + 7] = 0.0f;
-	}
-	r_n = cn;
-	r_valid = true;
-	return out;
-}
-
-PackedByteArray SnowSurface3D::_gpu_params(double p_delta, int p_cover_n, bool p_cover_valid) const {
-	PackedByteArray b;
-	b.resize(SnowDeformGPU::PARAMS_BYTES);
-	uint8_t *w = b.ptrw();
-	memset(w, 0, SnowDeformGPU::PARAMS_BYTES);
-	const SnowCover3D *cover = _cover();
-	const int n = deform_resolution;
-	const int32_t res[4] = { n, n / TILE, ground_n, p_cover_n };
-	memcpy(w, res, 16);
-	float *f = reinterpret_cast<float *>(w + 16);
-	auto put = [&](int p_vec, float a, float bb, float c, float d) {
-		f[p_vec * 4 + 0] = a;
-		f[p_vec * 4 + 1] = bb;
-		f[p_vec * 4 + 2] = c;
-		f[p_vec * 4 + 3] = d;
-	};
-	put(0, float(field.origin.x), float(field.origin.y), _texel(), float(p_delta));
-	put(1, float(ground_origin.x), float(ground_origin.y), ground_spacing, p_cover_valid ? 1.0f : 0.0f);
-	if (cover && p_cover_valid) {
-		put(2, float(cover->origin_cell.x), float(cover->origin_cell.y), cover->_cell_size(), 0.0f);
-		const Rect2 r = cover->get_map_rect();
-		put(3, r.position.x, r.position.y, r.size.x, r.size.y);
-	}
-	put(4, compacted_density, rim_share, min_depth, edge_fade);
-	const float half = extent * 0.5f;
-	put(5, mesh_center.x - half, mesh_center.y - half, extent, extent);
-	put(6, gpu_relax_keep, refill_share, 1.0f, LOOSE_SNOW_TAN_REPOSE);
-	put(7, mesh_center.x, mesh_center.y, _texel() * 2.0f, float(_gpu_collision_cells()));
-	put(8, GroundDeformField::BOW_SPEED, GroundDeformField::BOW_GAIN, GroundDeformField::BOW_REACH, 0.0f);
-	put(9, GroundDeformField::CRACK_LENGTH, GroundDeformField::PLATE, float(GroundDeformField::CRACK_SECTORS), 0.0f);
-	return b;
-}
-
-void SnowSurface3D::_gpu_submit(double p_delta, bool p_collision, bool p_sync) {
-	if (gpu.is_null()) {
-		gpu.instantiate();
-		gpu_reset = true;
-		gpu_ground_dirty = true;
-		gpu_cover_dirty = true;
-	}
-	if (gpu_texture.is_null()) {
-		gpu_texture.instantiate();
-	}
-	gpu_time += p_delta;
-	SnowCover3D *cover = _cover();
-	int flags = 0;
-	// The cover moved on: refill, drift and settling (SnowSurface3D::_relax), with its new cells.
-	if (cover && cover->get_update_count() != seen_cover_update) {
-		seen_cover_update = cover->get_update_count();
-		gpu_relax_keep = Math::exp(-wind_fill_rate * cover->get_drift_factor() * cover->get_last_step_hours());
-		gpu_cover_dirty = true;
-		flags |= SnowDeformGPU::STEP_RELAX;
-	}
-	int cover_n = 0;
-	bool cover_valid = false;
-	PackedByteArray cover_cells;
-	if (gpu_cover_dirty) {
-		cover_cells = _gpu_cover_cells(cover_n, cover_valid);
-		flags |= SnowDeformGPU::STEP_COVER;
-		gpu_cover_dirty = false;
-		gpu_cover_n = cover_n;
-		gpu_cover_valid = cover_valid;
-	} else {
-		cover_n = gpu_cover_n;
-		cover_valid = gpu_cover_valid;
-	}
-	PackedByteArray ground_bytes;
-	if (gpu_ground_dirty && ground_valid) {
-		ground_bytes.resize(ground_n * ground_n * 4);
-		memcpy(ground_bytes.ptrw(), ground.ptr(), ground_n * ground_n * 4);
-		flags |= SnowDeformGPU::STEP_GROUND;
-		gpu_ground_dirty = false;
-	}
-	if (gpu_reset) {
-		flags |= SnowDeformGPU::STEP_RESET;
-	}
-	if (gpu_shift.size() > 0 || gpu_stores.size() > 0) {
-		flags |= SnowDeformGPU::STEP_SHIFT;
-	}
-	if (gpu_stamps.size() > 0) {
-		flags |= SnowDeformGPU::STEP_STAMPS;
-		gpu_slump_until = gpu_time + 1.0 + 0.1;
-	}
-	if (gpu_time <= gpu_slump_until && p_delta > 0.0) {
-		flags |= SnowDeformGPU::STEP_SLUMP;
-	}
-	if (flags & (SnowDeformGPU::STEP_RESET | SnowDeformGPU::STEP_SHIFT | SnowDeformGPU::STEP_STAMPS | SnowDeformGPU::STEP_SLUMP | SnowDeformGPU::STEP_RELAX)) {
-		flags |= SnowDeformGPU::STEP_BLIT;
-		gpu_changed = true;
-	}
-	if (p_collision || p_sync) {
-		flags |= SnowDeformGPU::STEP_COLLISION;
-		if (gpu_changed || p_sync) {
-			flags |= SnowDeformGPU::STEP_READBACK;
-			gpu_changed = false;
-		}
-	}
-	if (p_sync) {
-		flags |= SnowDeformGPU::STEP_SYNC;
-	}
-	SnowDeformGPU::Dims d;
-	d.n = deform_resolution;
-	d.gn = ground_n;
-	d.cn = cover_n;
-	d.slots = MAX(max_cached_tiles, 1);
-	d.coll_w = collision_enabled ? _gpu_collision_cells() + 1 : 0;
-	gpu->step(d, flags, _gpu_params(p_delta, cover_n, cover_valid), ground_bytes, cover_cells, gpu_stamps, gpu_stores, gpu_shift, field.origin, mesh_center);
-	gpu_stamps.clear();
-	gpu_stores.clear();
-	gpu_shift.clear();
-	gpu_reset = false;
-	if (p_sync) {
-		_gpu_take();
-	}
-}
-
-void SnowSurface3D::_gpu_take() {
-	if (gpu.is_null()) {
-		return;
-	}
-	if (gpu->get_texture_serial() != gpu_texture_serial) {
-		gpu_texture_serial = gpu->get_texture_serial();
-		gpu_texture->set_texture_rd_rid(gpu->get_texture());
-		_update_material();
-	}
-	PackedFloat32Array heights;
-	Vector2 center;
-	if (gpu->take_collision(heights, center) && body && collision_shape.is_valid()) {
-		const int cells = _gpu_collision_cells();
-		const int w = cells + 1;
-		if (heights.size() == w * w && center == mesh_center) {
-			const float sp = _texel() * 2.0f;
-			collision_node->set_scale(Vector3(sp, sp, sp));
-			if (collision_shape->get_map_width() != w || collision_shape->get_map_depth() != w) {
-				collision_shape->set_map_width(w);
-				collision_shape->set_map_depth(w);
-			}
-			collision_shape->set_map_data(heights);
-			collision_dirty = false;
-		}
-	}
-	PackedByteArray packed;
-	Vector2i origin;
-	if (gpu->take_field(packed, origin) && origin == field.origin && field.valid) {
-		const int n = field.resolution;
-		if (packed.size() == n * n * 4 && int(field.dent.size()) == n * n) {
-			const uint16_t *h = reinterpret_cast<const uint16_t *>(packed.ptr());
-			const int nt = field.tiles();
-			for (int i = 0; i < nt * nt; i++) {
-				field.tile_active[i] = 0;
-			}
-			for (int z = 0; z < n; z++) {
-				for (int x = 0; x < n; x++) {
-					const int i = z * n + x;
-					const float dn = Math::half_to_float(h[i * 2 + 0]);
-					const float rm = Math::half_to_float(h[i * 2 + 1]);
-					field.dent[i] = dn;
-					field.rim[i] = rm;
-					if (dn > 0.0f || rm > 0.0f) {
-						field.tile_active[(z / TILE) * nt + x / TILE] = 1;
-					}
-				}
-			}
-		}
-	}
-}
-
-void SnowSurface3D::sync_deformation() {
-	if (!_gpu_on() || !field.valid || !is_inside_tree()) {
-		return;
-	}
-	_gpu_submit(0.0, true, true);
-}
-
-// ---------------------------------------------------------------------------------------------------------
 // Queries
 
 float SnowSurface3D::get_surface_height_at(Vector3 p_position) const {
@@ -1370,19 +1158,27 @@ float SnowSurface3D::get_surface_height_at(Vector3 p_position) const {
 }
 
 float SnowSurface3D::get_dent_at(Vector3 p_position) const {
-	return field.dent_at(p_position.x, p_position.z);
+	return deform_valid ? snow_field_at(dent, deform_resolution, deform_origin, _texel(), p_position.x, p_position.z) : 0.0f;
 }
 
 float SnowSurface3D::get_rim_at(Vector3 p_position) const {
-	return field.rim_at(p_position.x, p_position.z);
+	return deform_valid ? snow_field_at(rim, deform_resolution, deform_origin, _texel(), p_position.x, p_position.z) : 0.0f;
 }
 
 Vector2 SnowSurface3D::get_moved_volume() const {
-	return field.moved_volume();
+	const float area = _texel() * _texel();
+	double d = 0.0;
+	double r = 0.0;
+	for (uint32_t i = 0; i < dent.size(); i++) {
+		d += dent[i];
+		r += rim[i];
+	}
+	return Vector2(d * area, r * area);
 }
 
 Rect2 SnowSurface3D::get_deform_rect() const {
-	return field.valid ? field.rect() : Rect2(0, 0, deform_extent, deform_extent);
+	const float t = _texel();
+	return Rect2(deform_origin.x * t, deform_origin.y * t, deform_extent, deform_extent);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -1438,7 +1234,7 @@ void SnowSurface3D::set_tint(const Color &p_tint) {
 }
 void SnowSurface3D::set_deform_enabled(bool p_enabled) {
 	deform_enabled = p_enabled;
-	field.invalidate();
+	deform_valid = false;
 	if (is_inside_tree()) {
 		_follow(_follow_position());
 	}
@@ -1448,20 +1244,14 @@ void SnowSurface3D::set_deform_enabled(bool p_enabled) {
 void SnowSurface3D::set_deform_extent(float p_extent) {
 	deform_extent = CLAMP(p_extent, 4.0f, 512.0f);
 	extent = MAX(extent, deform_extent);
-	field.invalidate();
-	field.clear();
-	gpu_cache.clear();
-	gpu_free_slots.clear();
-	gpu_slots = 0;
+	deform_valid = false;
+	tile_cache.clear();
 	SNOW_SURFACE_REBUILD
 }
 void SnowSurface3D::set_deform_resolution(int p_resolution) {
 	deform_resolution = CLAMP((p_resolution + TILE - 1) / TILE * TILE, TILE * 2, 4096);
-	field.invalidate();
-	field.clear();
-	gpu_cache.clear();
-	gpu_free_slots.clear();
-	gpu_slots = 0;
+	deform_valid = false;
+	tile_cache.clear();
 	SNOW_SURFACE_REBUILD
 }
 void SnowSurface3D::set_collision_enabled(bool p_enabled) {
@@ -1550,16 +1340,12 @@ void SnowSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_collision_rate", "rate"), &SnowSurface3D::set_collision_rate);
 	ClassDB::bind_method(D_METHOD("get_collision_rate"), &SnowSurface3D::get_collision_rate);
 
-	ClassDB::bind_method(D_METHOD("press", "position", "radius", "bottom", "sink", "round", "velocity"), &SnowSurface3D::press, DEFVAL(0.0f), DEFVAL(true), DEFVAL(Vector3()));
-	ClassDB::bind_method(D_METHOD("press_box", "position", "size", "yaw", "bottom", "sink", "velocity"), &SnowSurface3D::press_box, DEFVAL(0.0f), DEFVAL(Vector3()));
+	ClassDB::bind_method(D_METHOD("press", "position", "radius", "bottom", "sink", "round"), &SnowSurface3D::press, DEFVAL(0.0f), DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("press_box", "position", "size", "yaw", "bottom", "sink"), &SnowSurface3D::press_box, DEFVAL(0.0f));
 	ClassDB::bind_static_method("SnowSurface3D", D_METHOD("bekker_sinkage", "pressure_kpa", "width", "n", "kc", "kphi"), &SnowSurface3D::bekker_sinkage);
 	ClassDB::bind_method(D_METHOD("clear_deformation"), &SnowSurface3D::clear_deformation);
 	ClassDB::bind_method(D_METHOD("refresh_ground"), &SnowSurface3D::refresh_ground);
 	ClassDB::bind_method(D_METHOD("get_surface_height_at", "position"), &SnowSurface3D::get_surface_height_at);
-	ClassDB::bind_method(D_METHOD("set_gpu_simulation", "enabled"), &SnowSurface3D::set_gpu_simulation);
-	ClassDB::bind_method(D_METHOD("is_gpu_simulation"), &SnowSurface3D::is_gpu_simulation);
-	ClassDB::bind_method(D_METHOD("is_gpu_active"), &SnowSurface3D::is_gpu_active);
-	ClassDB::bind_method(D_METHOD("sync_deformation"), &SnowSurface3D::sync_deformation);
 	ClassDB::bind_method(D_METHOD("get_dent_at", "position"), &SnowSurface3D::get_dent_at);
 	ClassDB::bind_method(D_METHOD("get_rim_at", "position"), &SnowSurface3D::get_rim_at);
 	ClassDB::bind_method(D_METHOD("get_moved_volume"), &SnowSurface3D::get_moved_volume);
@@ -1594,7 +1380,6 @@ void SnowSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "refill_share", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_refill_share", "get_refill_share");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_fill_rate", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_wind_fill_rate", "get_wind_fill_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_cached_tiles", PROPERTY_HINT_RANGE, "0,65536,1"), "set_max_cached_tiles", "get_max_cached_tiles");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gpu_simulation"), "set_gpu_simulation", "is_gpu_simulation");
 	ADD_GROUP("Collision", "collision_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision_enabled"), "set_collision_enabled", "is_collision_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_extent", PROPERTY_HINT_RANGE, "1,512,0.5,suffix:m"), "set_collision_extent", "get_collision_extent");
@@ -1604,7 +1389,6 @@ void SnowSurface3D::_bind_methods() {
 }
 
 SnowSurface3D::SnowSurface3D() {
-	gpu_sink.surface = this;
 	deform_groups.push_back("snow_deform");
 	deform_groups.push_back("grass_trample");
 	shader.instantiate();
@@ -1614,5 +1398,4 @@ SnowSurface3D::SnowSurface3D() {
 }
 
 SnowSurface3D::~SnowSurface3D() {
-	_gpu_release();
 }

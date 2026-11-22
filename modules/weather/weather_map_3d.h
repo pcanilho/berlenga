@@ -34,7 +34,6 @@
 #include "weather_shelter.h"
 
 #include "core/io/image.h"
-#include "core/object/object_id.h"
 #include "core/object/worker_thread_pool.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
@@ -44,10 +43,6 @@
 // mean wind at 10 m, cloud cover and type, rain rate, and the water that rain has left
 // on surfaces (a film, then puddles). Everything that reacts to weather reads it: shaders
 // through global uniforms, scripts and nodes through get_*_at(). See docs/ideas/weather.md.
-class Environment;
-class FogMaterial;
-class FogVolume;
-
 class WeatherMap3D : public Node3D {
 	GDCLASS(WeatherMap3D, Node3D);
 
@@ -227,36 +222,6 @@ private:
 
 	static WeatherMap3D *active;
 
-	// Haze from falling and blowing precipitation (docs/ideas/weather.md, "Precipitation haze").
-	struct HazeSource {
-		ObjectID source;
-		float sigma = 0.0f; // extinction, 1/m
-		float height_scale = 0.0f; // m; <= 0: the same at every height
-		float albedo = 0.95f;
-		Vector3 centre;
-		float radius = 0.0f; // m; <= 0: everywhere
-		FogVolume *volume = nullptr;
-		Ref<FogMaterial> material;
-	};
-	LocalVector<HazeSource> haze_sources;
-	bool drive_environment_fog = true;
-	struct FogBase {
-		bool saved = false;
-		bool fog_enabled = false;
-		float fog_density = 0.0f;
-		float aerial_perspective = 0.0f;
-		bool volumetric_enabled = false;
-		float volumetric_density = 0.0f;
-		float volumetric_length = 64.0f;
-		float volumetric_ambient_inject = 0.0f;
-	} fog_base;
-	Ref<Environment> fog_environment;
-	float applied_haze = -1.0f;
-	void _apply_haze();
-	void _restore_fog();
-	float _haze_weight(const HazeSource &p_source, const Vector3 &p_position) const;
-	float _haze_base(const HazeSource &p_source) const;
-
 	void _allocate();
 	void _build_gusts();
 	void _advance(double p_weather_dt, double p_real_dt);
@@ -276,10 +241,6 @@ private:
 
 	float _cell_size() const { return extent / resolution; }
 	float _sample(const Vector<float> &p_field, Vector2 p_xz, int p_stride = 1, int p_offset = 0) const;
-	// The arithmetic behind _sample() and get_sun_visibility_at(), shared with Snapshot so both answer alike.
-	static float _sample_grid(const Vector<float> &p_field, int p_n, float p_cell_size, Vector2i p_origin_cell, bool p_origin_valid, Vector2 p_xz, int p_stride, int p_offset);
-	static float _sample_shadow(const Vector<float> &p_values, int p_res, float p_size, Vector3 p_axis_u, Vector3 p_axis_v, Vector2 p_corner, Vector3 p_position);
-	Vector2 _shadow_corner_now() const;
 	float _cloud_noise(Vector2 p_xz) const;
 	float _storm_weight(const Storm &p_storm) const;
 	WeatherClouds::State _cloud_state() const;
@@ -422,22 +383,8 @@ public:
 	// The storm cells, and how far each has grown (0..1, its rise and decay over its lifetime).
 	const Vector<Storm> &get_storms() const { return storms; }
 	float get_storm_strength(const Storm &p_storm) const { return _storm_weight(p_storm); }
-	// Haze from precipitation: each source (a SnowFall3D, rain) pushes its extinction (1/m), a height
-	// scale for a layer near the ground (<= 0: uniform), its albedo, and optionally a centre and radius.
-	// Sources add up. With drive_environment_fog, the uniform part goes into the environment's
-	// exponential fog, lit by the sky (aerial perspective), and each layer into a lit FogVolume over
-	// the ground; the path tracer reads both.
-	void set_precipitation_extinction(Object *p_source, float p_sigma, float p_height_scale, float p_albedo = 0.95f, Vector3 p_centre = Vector3(), float p_radius = 0.0f);
-	void clear_precipitation_extinction(Object *p_source);
-	float get_precipitation_extinction_at(Vector3 p_position) const;
-	void set_drive_environment_fog(bool p_enabled);
-	bool get_drive_environment_fog() const { return drive_environment_fog; }
-
 	// The cloud layer as the sky draws it now.
 	WeatherClouds::State get_cloud_state() const { return _cloud_state(); }
-	// The top of the cloud the sky draws over a point (world y, m): the base plus the column's
-	// height for its cloud type, up to three times cloud_thickness in a storm's core.
-	float get_cloud_top_at(Vector3 p_position) const;
 
 	// Air velocity at a world position (m/s), mean wind on the log law plus gusts.
 	// p_height_above_ground < 0 takes it from ground_height.
@@ -451,32 +398,6 @@ public:
 	float get_puddle_at(Vector3 p_position) const; // mm
 	float get_cloud_density_at(Vector3 p_position) const; // extinction, 1/m
 	float get_sun_visibility_at(Vector3 p_position) const; // 0..1, from the last cloud shadow bake
-
-	// A read-only copy of the rain, cloud cover and cloud shadow with the parameters to sample them, for readers on
-	// worker threads. Take it on the main thread. The arrays share the map's buffers (copy on write), so while a
-	// snapshot is held each weather update copies them once. Its *_at() answer as get_rain_at(),
-	// get_cloud_cover_at() and get_sun_visibility_at() did when it was taken.
-	struct Snapshot {
-		bool valid = false;
-		bool origin_valid = false;
-		int resolution = 0;
-		float cell_size = 1.0f;
-		Vector2i origin_cell;
-		Vector<float> rain;
-		Vector<float> cover;
-		bool has_sun = false; // a sun light is set: the shadow bake, not the cover, dims the sun
-		Vector3 shadow_axis_u;
-		Vector3 shadow_axis_v;
-		Vector2 shadow_corner; // with the cloud drift since the bake applied
-		float shadow_size = 0.0f;
-		int shadow_res = 0;
-		Vector<float> shadow_values;
-
-		float rain_at(Vector3 p_position) const;
-		float cloud_cover_at(Vector3 p_position) const;
-		float sun_visibility_at(Vector3 p_position) const;
-	};
-	Snapshot get_snapshot() const;
 	// Bakes the cloud shadow now and waits for it (normally it runs in the background).
 	void update_cloud_shadow();
 	double get_weather_time() const { return weather_time; }

@@ -780,9 +780,7 @@ uint32_t SceneShaderRaytracing::compute_rt_flags(RID p_environment, bool p_fog_e
 		flags |= RT_FLAG_DECALS_ENABLED;
 	}
 
-	// Only where the device has shader execution reordering: the SER pipeline does not build on one that
-	// lacks it (e.g. Mesa's CPU driver), and the frame then falls back to an untraced image.
-	if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering") && RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_INVOCATION_REORDER)) {
+	if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering")) {
 		flags |= RT_FLAG_SER_ENABLED;
 	}
 
@@ -2043,7 +2041,7 @@ void SceneShaderRaytracing::init(const String p_defines) {
 			// SER and shadow settings, with and without Ray Reconstruction) on worker
 			// threads, so the first traced frame only has to create its pipeline.
 			uint32_t predicted = RT_FLAG_NONE;
-			if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering") && RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_INVOCATION_REORDER)) {
+			if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering")) {
 				predicted |= RT_FLAG_SER_ENABLED;
 			}
 			if (GLOBAL_GET("rendering/pathtracing/use_simple_shadows")) {
@@ -2124,7 +2122,6 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["RAY_BOUNCES"] = "int(get_total_bounces(payload.packed_bounces_flags))";
 		actions.renames["RAY_DIFFUSE_BOUNCES"] = "int(get_diffuse_bounces(payload.packed_bounces_flags))";
 		actions.renames["NORMAL_MAP"] = "normal_map";
-		actions.renames["BENT_NORMAL_MAP"] = "bent_normal_map"; // raster ambient only; the path tracer traces the real light
 		actions.renames["NORMAL_MAP_DEPTH"] = "normal_map_depth";
 		actions.renames["ALBEDO"] = "albedo";
 		actions.renames["ALPHA"] = "alpha";
@@ -2136,7 +2133,6 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["RIM_TINT"] = "rim_tint";
 		actions.renames["CLEARCOAT"] = "clearcoat";
 		actions.renames["CLEARCOAT_ROUGHNESS"] = "clearcoat_roughness";
-		actions.renames["SPECULAR_NORMAL"] = "specular_normal";
 		actions.renames["ANISOTROPY"] = "anisotropy";
 		actions.renames["ANISOTROPY_FLOW"] = "anisotropy_flow";
 		actions.renames["SSS_STRENGTH"] = "sss_strength";
@@ -2170,7 +2166,6 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["CUSTOM2"] = "custom2_attrib";
 		actions.renames["CUSTOM3"] = "custom3_attrib";
 		actions.renames["LIGHT_VERTEX"] = "light_vertex";
-		actions.renames["DIRECTIONAL_SHADOW_OFFSET"] = "directional_shadow_offset";
 
 		actions.renames["NODE_POSITION_WORLD"] = "read_model_matrix[3].xyz";
 		actions.renames["CAMERA_POSITION_WORLD"] = "inv_view_matrix[3].xyz";

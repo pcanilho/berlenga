@@ -10,12 +10,6 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="get_far_color" qualifiers="const">
-			<return type="Color" />
-			<description>
-				The field seen from a distance, linear: the colour the ground under the grass takes where the blades have thinned away ([code]grass_ground_far[/code]), and the grass layer of [member VegetationField3D.cover_grass].
-			</description>
-		</method>
 		<method name="add_trample">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -48,7 +42,6 @@
 			<return type="String" />
 			<description>
 				Returns shader code for a terrain material: [code]grass_ground(world_pos, albedo)[/code] mixes [param albedo] towards [member ground_tint] where this field's rules let grass grow, and [code]grass_ground_cover(world_pos)[/code] returns that coverage (0 to 1). Paste it into the terrain's shader; it reads the [code]grass_ground_*[/code] global uniforms this node publishes.
-			Also [code]grass_ground_specular(world_pos, specular)[/code]: the ground's specular under the sward (the blades hide the soil's sheen), for the ground shader's [code]SPECULAR[/code].
 			</description>
 		</method>
 		<method name="get_material" qualifiers="const">
@@ -96,9 +89,6 @@
 		</member>
 		<member name="blade_width" type="float" setter="set_blade_width" getter="get_blade_width" default="0.04">
 			Blade width at the root, in metres.
-		</member>
-		<member name="canopy_field" type="NodePath" setter="set_canopy_field" getter="get_canopy_field" default="NodePath(&quot;&quot;)">
-			Path to a [VegetationField3D] whose canopy species shade the ground (see [method VegetationField3D.get_shade_at]). When [member rules] narrows [member PlantSpecies.shade_range], blades and the ground tint follow that shade: for example [code]Vector2(0, 0.4)[/code] keeps a meadow sward out from under the trees. Call [method rebuild] after the field is populated again.
 		</member>
 		<member name="clump_size" type="float" setter="set_clump_size" getter="get_clump_size" default="1.2">
 			Size of a clump, in metres. Blades in a clump share height, facing, lean and dryness.

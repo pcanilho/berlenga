@@ -45,10 +45,6 @@ class PlantGenerator : public Resource {
 	GDCLASS(PlantGenerator, Resource);
 
 public:
-	static void free_shaders();
-	static String shader_common_code(); // Wind, wetness and snow lines shared with the impostor shader.
-	static Ref<ArrayMesh> make_impostor(const Ref<Mesh> &p_mesh, int p_frames = 8, int p_frame_size = 64);
-	static void add_impostors(const Ref<Resource> &p_species, float p_range, int p_frames = 8, int p_frame_size = 64);
 	enum Preset {
 		PRESET_DANDELION,
 		PRESET_PLANTAIN,
@@ -67,22 +63,6 @@ public:
 		PRESET_LEAF_LITTER,
 		PRESET_MOSS,
 		PRESET_BILBERRY,
-		PRESET_BRACKEN,
-		PRESET_BRAMBLE,
-		PRESET_FOXGLOVE,
-		PRESET_REED,
-		PRESET_CATTAIL,
-		PRESET_RUSH,
-		PRESET_WATER_LILY,
-		PRESET_NEEDLE_LITTER,
-		PRESET_TWIGS,
-		PRESET_WOOD_SORREL,
-		PRESET_SEEDLING,
-		PRESET_FEATHER_MOSS,
-		PRESET_WOODRUFF,
-		PRESET_WOOD_ANEMONE,
-		PRESET_IVY,
-		PRESET_HEATHER,
 		PRESET_MAX,
 	};
 
@@ -138,21 +118,11 @@ private:
 		PackedVector3Array verts;
 		PackedVector3Array normals;
 		PackedVector2Array uvs;
-		PackedVector2Array uv2s; // x: wind weight (0 at the root, 1 at the tips), y: the organ's base, packed (generate()).
-		PackedInt32Array organs; // Per vertex: the basal organ it belongs to (0: the plant as a whole).
+		PackedVector2Array uv2s; // x: wind weight (0 at the root, 1 at the tips), y: unused.
 		PackedColorArray colors; // Ambient occlusion guess, multiplies the albedo.
 		PackedInt32Array indices;
 	};
-	struct CardSurface {
-		int surface = -1; // Index in the ImporterMesh.
-		Array arrays;
-		PackedFloat32Array custom; // Per vertex: card pivot xyz; w: length in mm + rank.
-		Dictionary lods; // Error (mesh units) to the kept triangles.
-		float last_card_error = 0.0f; // The last level that drops cards, and its index count.
-		int last_card_indices = 0;
-	};
-	bool _card_lods(const Builder &p_builder, CardSurface &r_cards) const;
-		enum Surface {
+	enum Surface {
 		SURFACE_LEAF,
 		SURFACE_STEM,
 		SURFACE_PETAL,
@@ -172,13 +142,6 @@ private:
 	Builder builders[SURFACE_MAX];
 	RandomPCG rng;
 	float plant_height = 0.0f;
-	// Basal organs (a frond, a cane, a tiller, a rosette leaf): everything added after an organ that
-	// starts on the ground belongs to it, until the next one. The shader bends each organ about its
-	// own base (bracken fronds and bramble canes rise from a rhizome or crown, not the plant's origin).
-	int organ = 0;
-	LocalVector<Vector3> organ_bases;
-	void _begin_organ(const Vector3 &p_origin);
-	void _tag_organ(Builder &p_builder) const;
 
 	float _rand(float p_from, float p_to) { return Math::lerp(p_from, p_to, rng.randf()); }
 	static float _leaf_width(const Leaf &p_leaf, float p_t);
@@ -209,33 +172,11 @@ private:
 	void _build_leaf_litter();
 	void _build_moss();
 	void _build_bilberry();
-	void _build_bracken();
-	void _build_bramble();
-	void _build_foxglove();
-	void _build_reed();
-	void _build_cattail();
-	void _build_rush();
-	void _build_water_lily();
-	void _build_needle_litter();
-	void _build_twigs();
-	void _build_wood_sorrel();
-	void _build_seedling();
-	void _build_woodruff();
-	void _build_wood_anemone();
-	void _build_ivy();
-	void _build_heather();
-	void _add_pad(const Vector3 &p_centre, float p_radius, float p_heading);
 
-	static Ref<Shader> shaders[2]; // Plain and textured, shared by every generated plant.
-	static Ref<Shader> impostor_shader; // plant_impostor.cpp.
-	static Ref<Shader> _impostor_shader();
-	static Ref<Shader> _plant_shader(bool p_textured);
-	Ref<ShaderMaterial> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
-	Ref<ShaderMaterial> _textured_material(const TextureSet &p_set, float p_roughness) const;
+	Ref<StandardMaterial3D> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
+	Ref<StandardMaterial3D> _textured_material(const TextureSet &p_set, float p_roughness) const;
 	bool textures = true;
 	int texture_size = 256;
-	float leaf_wear = 0.5f;
-	uint32_t leaf_serial = 0; // Counts the leaves of a plant: their wear draws from it, not from rng.
 	HashMap<uint64_t, TextureSet> texture_cache;
 	LeafTexture _leaf_texture_spec(bool p_petal) const;
 	TextureSet _bake_leaf_texture(const LeafTexture &p_spec, uint32_t p_seed) const;
@@ -265,29 +206,10 @@ public:
 	void set_textures(bool p_textures) { textures = p_textures; }
 	bool get_textures() const { return textures; }
 	void set_texture_size(int p_size) { texture_size = CLAMP(p_size, 32, 2048); }
-	void set_leaf_wear(float p_wear) { leaf_wear = CLAMP(p_wear, 0.0f, 1.0f); }
-	float get_leaf_wear() const { return leaf_wear; }
 	int get_texture_size() const { return texture_size; }
 	Ref<ArrayMesh> generate();
 	TypedArray<ArrayMesh> generate_variants(int p_count);
 	void apply_preset_colors();
-
-	// Forest floor sets, matching TreeGenerator's stand types (docs/ideas/forest-floor.md).
-	enum FloorStand {
-		FLOOR_BEECH,
-		FLOOR_OAK_MIXED,
-		FLOOR_MONTANE_CONIFER,
-		FLOOR_SUBALPINE,
-		FLOOR_PINE_HEATH,
-		FLOOR_RIPARIAN,
-		FLOOR_HEDGEROW,
-		FLOOR_NORTHERN_HARDWOOD,
-		FLOOR_EASTERN_OAK,
-		FLOOR_PINE_HEMLOCK,
-		FLOOR_MAX,
-	};
-	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true, float p_impostor_range = 15.0f);
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
-VARIANT_ENUM_CAST(PlantGenerator::FloorStand);

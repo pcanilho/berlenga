@@ -35,9 +35,6 @@
 #pragma once
 
 #include "core/templates/hash_map.h"
-#include "modules/ground/ground_deform_field.h"
-#include "snow_deform_gpu.h"
-#include "scene/resources/texture_rd.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/3d/height_map_shape_3d.h"
@@ -69,7 +66,7 @@ class StaticBody3D;
 class SnowSurface3D : public Node3D {
 	GDCLASS(SnowSurface3D, Node3D);
 
-	static constexpr int TILE = GroundDeformField::TILE; // deformation texels per cached tile side
+	static constexpr int TILE = 64; // deformation texels per cached tile side
 
 	NodePath snow_cover;
 	NodePath follow_target;
@@ -114,63 +111,28 @@ class SnowSurface3D : public Node3D {
 	float ground_min = 0.0f;
 	float ground_max = 0.0f;
 
-	// Deformation field (shared with GroundSurface3D, modules/ground). On the GPU path it is the CPU copy read
-	// back from the GPU field (for collision fallbacks, queries and scripted presses).
-	GroundDeformField field;
-
-	// The print field on the GPU (docs/ideas/snow.md, follow-up 13).
-	bool gpu_simulation = true;
-	struct GPUSink : public GroundDeformField::StampSink {
-		SnowSurface3D *surface = nullptr;
-		void stamp(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) override;
-	};
-	struct GPUSlot {
-		int slot = 0;
-		uint64_t used = 0;
-	};
-	Ref<SnowDeformGPU> gpu;
-	GPUSink gpu_sink;
-	Ref<Texture2DRD> gpu_texture;
-	uint64_t gpu_texture_serial = 0;
-	PackedByteArray gpu_stamps;
-	PackedByteArray gpu_stores;
-	PackedByteArray gpu_shift;
-	HashMap<Vector2i, GPUSlot> gpu_cache; // world tile -> cache slot
-	LocalVector<int> gpu_free_slots;
-	int gpu_slots = 0;
-	uint64_t gpu_cache_clock = 0;
-	LocalVector<float> gpu_tile_stamped; // per field tile: time of the last stamp
-	double gpu_time = 0.0;
-	double gpu_slump_until = -1.0;
-	int gpu_n = 0;
-	bool gpu_reset = true;
-	bool gpu_ground_dirty = true;
-	bool gpu_cover_dirty = true;
-	bool gpu_changed = true; // since the last read back
-	int gpu_cover_n = 0;
-	bool gpu_cover_valid = false;
-	float gpu_relax_keep = 1.0f;
-	bool _gpu_on() const;
-	void _gpu_shift(Vector2i p_origin);
-	void _gpu_submit(double p_delta, bool p_collision, bool p_sync);
-	void _gpu_take();
-	void _gpu_release();
-	PackedByteArray _gpu_params(double p_delta, int p_cover_n, bool p_cover_valid) const;
-	PackedByteArray _gpu_cover_cells(int &r_n, bool &r_valid) const;
-	int _gpu_collision_cells() const;
-	struct SnowColumns : public GroundDeformField::Columns {
-		const SnowSurface3D *surface = nullptr;
-		const SnowCover3D *cover = nullptr;
-		// Set by sinkage() for the body about to press: held by the crust (only the snow over it
-		// compacts), or through it (the rim heaps in plates).
-		mutable bool held = false;
-		mutable bool broke = false;
-		GroundDeformField::Column column(float p_x, float p_z) const override;
-		float sinkage(const GroundDeformField::Body &p_body) const override;
-	};
+	// Deformation field.
+	Vector2i deform_origin; // texel index of the first texel
+	bool deform_valid = false;
+	LocalVector<float> dent; // m below the undisturbed surface
+	LocalVector<float> rim; // m of pushed snow on top
+	LocalVector<uint8_t> tile_active;
+	bool deform_dirty = false;
 	bool collision_dirty = true;
 	Ref<Image> deform_image;
 	Ref<ImageTexture> deform_texture;
+	struct CachedTile {
+		Vector<uint16_t> data; // dent, rim pairs, half floats
+		uint64_t used = 0;
+	};
+	HashMap<Vector2i, CachedTile> tile_cache;
+	uint64_t cache_clock = 0;
+	struct Mover {
+		Vector3 last;
+		uint64_t frame = 0;
+	};
+	HashMap<ObjectID, Mover> movers;
+	uint64_t frame = 0;
 	uint64_t seen_cover_update = 0;
 	double collision_accum = 0.0;
 
@@ -187,15 +149,19 @@ class SnowSurface3D : public Node3D {
 
 	SnowCover3D *_cover() const;
 	Vector3 _follow_position() const;
+	float _tile_size() const { return deform_extent / deform_resolution * TILE; }
 	float _texel() const { return deform_extent / deform_resolution; }
 	void _build_mesh();
 	void _ensure_children();
 	void _follow(Vector3 p_center);
 	void _shift_ground(Vector2i p_origin);
 	void _shift_deform(Vector2i p_origin);
+	void _store_tile(Vector2i p_tile_world, int p_tx, int p_tz);
+	bool _load_tile(Vector2i p_tile_world, int p_tx, int p_tz);
+	void _trim_cache();
 	float _ground_at(float p_x, float p_z) const;
 	float _dent_max(float p_depth, float p_density) const;
-	float _press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, Vector2 p_velocity = Vector2());
+	float _press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round);
 	void _press_movers(double p_delta);
 	void _relax();
 	void _update_collision();
@@ -275,26 +241,19 @@ public:
 	// Presses the snow down to p_bottom (world height of the body's underside) within p_radius of
 	// p_position (a bowl for round bodies, flat for boxes), plus p_sink of Bekker sinkage below the
 	// undisturbed surface. Returns the snow volume moved, m3.
-	float press(Vector3 p_position, float p_radius, float p_bottom, float p_sink = 0.0f, bool p_round = true, Vector3 p_velocity = Vector3());
+	float press(Vector3 p_position, float p_radius, float p_bottom, float p_sink = 0.0f, bool p_round = true);
 	// The same with a flat rectangular print p_size wide (x) and long (z), turned by p_yaw about up:
 	// a boot, a sled runner, a crate.
-	float press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink = 0.0f, Vector3 p_velocity = Vector3());
+	float press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink = 0.0f);
 	static float bekker_sinkage(float p_pressure_kpa, float p_width, float p_n, float p_kc, float p_kphi); // m
 	void clear_deformation();
-	// The print field runs in compute shaders where there is a RenderingDevice (Forward+ and Mobile), with
-	// a copy read back for collision and queries; otherwise, or with this off, on the CPU.
-	void set_gpu_simulation(bool p_enabled);
-	bool is_gpu_simulation() const { return gpu_simulation; }
-	bool is_gpu_active() const { return _gpu_on(); }
-	// Waits for the GPU field and reads it back now (tests and tools; it stalls the GPU).
-	void sync_deformation();
 	void refresh_ground();
 
 	float get_surface_height_at(Vector3 p_position) const;
 	float get_dent_at(Vector3 p_position) const;
 	float get_rim_at(Vector3 p_position) const;
 	Vector2 get_moved_volume() const; // m3: (dent, rim) over the live field
-	int get_cached_tile_count() const { return _gpu_on() ? gpu_cache.size() : field.cached_tile_count(); }
+	int get_cached_tile_count() const { return tile_cache.size(); }
 	Rect2 get_deform_rect() const;
 	double get_step_time_msec() const { return step_msec; }
 	Ref<ShaderMaterial> get_surface_material() const { return material; }

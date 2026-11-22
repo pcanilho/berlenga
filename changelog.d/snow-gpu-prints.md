@@ -1,1 +1,0 @@
-- Snow: `SnowSurface3D`'s print field (pressing, slumping, refilling, the tile cache, collision heights) runs in compute shaders where there is a RenderingDevice (`gpu_simulation`, on by default; `sync_deformation()` for tests). The physics step's main-thread time drops from 1.5 ms to 0.04 ms with the same prints; the CPU path stays for Compatibility and headless.

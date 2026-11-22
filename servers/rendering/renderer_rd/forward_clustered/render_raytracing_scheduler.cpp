@@ -123,10 +123,7 @@ bool RTDynamicScheduler::_try_refit(const RTSchedulerItem &p_item) {
 	if (stats.get_updated() >= budgets.max_operations) {
 		return false;
 	}
-	// The first refit of the frame ignores the triangle budget, as the first build does: an item larger than the
-	// whole budget (a simulated groom of a few million triangles) would otherwise never be refit and its BLAS would
-	// stay where it was first built.
-	if (stats.refit_triangles > 0 && stats.refit_triangles + p_item.triangle_count > budgets.update_triangles) {
+	if (stats.refit_triangles + p_item.triangle_count > budgets.update_triangles) {
 		return false;
 	}
 	stats.refits++;

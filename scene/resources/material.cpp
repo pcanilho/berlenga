@@ -582,7 +582,6 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->transmission_ior = "transmission_ior";
 	shader_names->transmission_attenuation_color = "transmission_attenuation_color";
 	shader_names->transmission_attenuation_distance = "transmission_attenuation_distance";
-	shader_names->transmission_thickness = "transmission_thickness";
 	shader_names->transmission_scatter_strength = "transmission_scatter_strength";
 	shader_names->transmission_scatter_color = "transmission_scatter_color";
 	shader_names->transmission_scatter_anisotropy = "transmission_scatter_anisotropy";
@@ -613,23 +612,9 @@ void BaseMaterial3D::init_shaders() {
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		// Its catch map (same rect): the height the pack lies at, the canopy's load share and closure.
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_catch_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// And its world tier, the coarse pack over the whole terrain drawn outside the near square.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		// Under the path tracer every ice grain a facet, per ray (docs/ideas/snow.md, follow-up 5). Off by
-		// default: it needs many samples or the denoiser; off, the path tracer uses the raster's footprint grid.
-		Dictionary exact;
-		exact["type"] = "bool";
-		exact["value"] = false;
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_exact_glints", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), exact);
-		// Ground deformation reads GroundSurface3D's (rect width 0 = none: nothing lowered, nothing moved).
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_height", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_height_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_skirt", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -712,243 +697,6 @@ void BaseMaterial3D::finish_shaders() {
 	shader_names = nullptr;
 }
 
-// Weather lines as shader code (docs/ideas/terrain-material.md). BaseMaterial3D writes these into its own
-// shader, and get_wetness_shader_code() / get_snow_shader_code() hand the same text to any other shader
-// (terrain shaders above all), so there is one source and the two never drift apart. The path tracer applies
-// the same lines for BaseMaterial3D in scene_raytracing_raygen.glsl; a ShaderMaterial runs this code in its own
-// hit shader.
-String BaseMaterial3D::get_wetness_functions_code(bool p_from_weather) {
-	String code;
-	if (p_from_weather) {
-		code += R"(global uniform sampler2D weather_state_map;
-global uniform vec4 weather_map_rect;
-
-// Ground wetness from the weather map (0 dry, 1 soaked); 0 where no weather map is set.
-float weather_wetness_at(vec3 p_world_pos) {
-	if (weather_map_rect.z <= 0.0) {
-		return 0.0;
-	}
-	vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
-	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
-	return textureLod(weather_state_map, uv, 0.0).g;
-}
-)";
-	}
-	code += R"(
-// Wet surfaces, Lagarde 2013 ("Water drop 3b"): water in the pores darkens porous surfaces and smooths them.
-// p_normal_y is the world normal's up component (undersides catch less rain).
-void weather_wetness_apply(float p_wet, float p_normal_y, float p_metallic, float p_porosity, inout vec3 r_albedo, inout float r_roughness) {
-	float wet = clamp(p_wet, 0.0, 1.0) * smoothstep(-0.6, 0.2, p_normal_y);
-	float wet_factor = mix(1.0, 0.2, (1.0 - p_metallic) * p_porosity);
-	r_albedo *= mix(1.0, wet_factor, wet);
-	r_roughness *= mix(1.0, wet_factor, 0.5 * wet);
-}
-)";
-	return code;
-}
-
-String BaseMaterial3D::get_snow_functions_code(bool p_from_weather) {
-	String code;
-	// Read by snow_glint_apply_specular() under the path tracer, with or without a snowpack.
-	code += "global uniform bool snow_exact_glints;\n";
-	if (p_from_weather) {
-		code += R"(global uniform sampler2D snow_map;
-global uniform sampler2D snow_catch_map;
-global uniform vec4 snow_map_rect;
-global uniform sampler2D snow_world_map;
-global uniform vec4 snow_world_rect;
-
-// The snowpack at a world position: (covered share, albedo, melt water, 1 where a pack answers). The world tier
-// (the coarse pack over the whole terrain), then the near square over it, faded in across its outer tenth.
-vec4 snow_cover_at(vec3 p_world_pos) {
-	vec4 s = vec4(0.0);
-	bool have = false;
-	float under = 0.0;
-	float crown = 0.0;
-	float crown_load = 0.0;
-	if (snow_world_rect.z > 0.0) {
-		vec2 wuv = (p_world_pos.xz - snow_world_rect.xy) / snow_world_rect.zw;
-		if (all(greaterThanEqual(wuv, vec2(0.0))) && all(lessThanEqual(wuv, vec2(1.0)))) {
-			vec2 wh = 0.5 / vec2(textureSize(snow_world_map, 0));
-			s = textureLod(snow_world_map, clamp(wuv, wh, 1.0 - wh), 0.0);
-			have = true;
-		}
-	}
-	if (snow_map_rect.z > 0.0) {
-		vec2 nuv = (p_world_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
-		vec2 ne = min(nuv, 1.0 - nuv);
-		// With no world tier there is nothing outside the square: no data there, not its edge stretched out.
-		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
-		if (nw > 0.0) {
-			vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
-			s = mix(s, textureLod(snow_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
-			have = true;
-			// Shelter: well under the surface the pack lies on (a roof, an overhang) stays bare; well above it,
-			// in a tree crown, the snow is what the canopy holds (docs/ideas/snow.md, follow-ups).
-			vec4 c = textureLod(snow_catch_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0);
-			if (c.a > 0.5) {
-				float dy = p_world_pos.y - c.r;
-				under = (1.0 - smoothstep(-0.8, -0.4, dy)) * nw;
-				crown = smoothstep(1.5, 3.0, dy) * step(0.05, c.b) * nw;
-				crown_load = c.g;
-			}
-		}
-	}
-	if (!have) {
-		return vec4(0.0, 0.85, 0.0, 0.0);
-	}
-	// Snow-covered fraction from depth and density, Niu and Yang (2007):
-	// tanh(depth / (2.5 z0 (rho / rho_new)^m)), z0 0.01 m, rho_new 100 kg/m3, m 1.
-	float cover = tanh(max(s.r, 0.0) / (0.025 * max(s.a * 10.0, 0.5))) * (1.0 - under);
-	// A crown shows its load: half its capacity whitens the upward needles.
-	cover = mix(cover, min(crown_load * 2.0, 1.0), crown);
-	return vec4(cover, s.g, clamp(s.b, 0.0, 1.0), 1.0);
-}
-)";
-	}
-	code += R"(
-// Snow weight on a surface from the covered share. Snow slides off past p_max_slope (its angle of repose) and
-// holds fully 20 degrees below (p_geo_normal, world). Thin snow settles first on the flattest facets of the
-// detail normal (p_normal, world) and leaves the steeper ones bare (the local stability test of Fearing 2000,
-// per facet): the covered share goes to the facets that face up the most, so the surface's detail shows
-// through in patches; near full cover it buries them.
-float snow_cover_weight(float p_cover, float p_max_slope, vec3 p_geo_normal, vec3 p_normal) {
-	float cos_max = min(cos(radians(p_max_slope)), 0.999);
-	float hold = smoothstep(cos_max, cos(radians(max(p_max_slope - 20.0, 0.0))), p_geo_normal.y);
-	float cover = clamp(p_cover, 0.0, 1.0);
-	float flat_share = clamp(1.0 - (1.0 - p_normal.y) / 0.3, 0.0, 1.0);
-	return hold * max(smoothstep(1.0 - 1.2 * cover, 1.2 - 1.2 * cover, flat_share), smoothstep(0.9, 1.0, cover));
-}
-
-// Snow over a surface: albedo from the pack's age, ice F0 0.018 (specular 0.335, as F0 = 0.16 specular squared),
-// rough when dry and smoother wet.
-void snow_cover_apply(float p_snow, float p_albedo, float p_wet, inout vec3 r_albedo, inout float r_roughness, inout float r_metallic, inout float r_specular) {
-	r_albedo = mix(r_albedo, vec3(p_albedo), p_snow);
-	r_roughness = mix(r_roughness, mix(0.7, 0.35, p_wet), p_snow);
-	r_metallic = mix(r_metallic, 0.0, p_snow);
-	r_specular = mix(r_specular, 0.335, p_snow);
-}
-
-// Snow sparkle (docs/ideas/snow.md, stage 5; the same function is in scene_raytracing_raygen.glsl and
-// SnowSurface3D's shader). A share of the ice grains are smooth facets tilted at random (GGX, alpha 0.4)
-// that flash where they mirror a light. Counted per cell of the pixel's footprint (Zirr and Kaplanyan 2016;
-// Deliot and Belcour 2023, reduced to one facet per cell): a cell holding n grains has a facet with chance
-// min(share n, 1) covering share / chance of it, fading as more facets share the cell. Returns the facet's
-// normal and its weight (0: none).
-vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
-	const float grain = 0.002;
-	const float share = 0.25;
-	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
-	if (level > 5.0) {
-		return vec4(p_n, 0.0);
-	}
-	float cell = grain * exp2(level);
-	ivec3 q = ivec3(floor(p_pos / cell));
-	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u) ^ (uint(level) * 2654435761u);
-	h ^= h >> 16u;
-	h *= 0x7feb352du;
-	h ^= h >> 15u;
-	h *= 0x846ca68bu;
-	h ^= h >> 16u;
-	float r0 = float(h & 0x3ffu) / 1023.0;
-	float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
-	float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
-	float grains = exp2(2.0 * level);
-	float chance = min(share * grains, 1.0);
-	if (r0 >= chance) {
-		return vec4(p_n, 0.0);
-	}
-	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
-	float ct = inversesqrt(1.0 + tan2);
-	float st = sqrt(max(1.0 - ct * ct, 0.0));
-	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-	vec3 b = cross(p_n, t);
-	float phi = 6.2831853 * r2;
-	vec3 f = normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
-	return vec4(f, share / chance / sqrt(max(share * grains, 1.0)));
-}
-
-// Sparkle on dry snow: the facet is a second, near-mirror lobe (the coat's, which takes NORMAL before
-// NORMAL_MAP as its normal) weighted by the share of the pixel it covers, so the snow's own shading keeps its
-// normal: NORMAL becomes the facet and NORMAL_MAP is solved to land back on the snow's normal. Ice F0 0.018 is
-// 0.45 of the coat's 0.04. A film of melt water smooths the grains away. Call last, with the fragment's
-// NORMAL, NORMAL_MAP, NORMAL_MAP_DEPTH, CLEARCOAT and CLEARCOAT_ROUGHNESS; p_footprint is the pixel's size in
-// metres at the surface.
-void snow_glint_apply(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, float p_snow, float p_wet, mat4 p_view, vec3 p_tangent, vec3 p_binormal, inout vec3 r_normal, inout vec3 r_normal_map, inout float r_normal_map_depth, inout float r_clearcoat, inout float r_clearcoat_roughness) {
-	vec4 g = snow_glint(p_world_pos, p_geo_normal, p_footprint);
-	float gw = g.w * step(0.5, p_snow) * (1.0 - smoothstep(0.05, 0.3, p_wet));
-	if (gw <= 0.0) {
-		return;
-	}
-	vec2 nm = r_normal_map.xy * 2.0 - 1.0;
-	vec3 base = normalize(mix(r_normal, p_tangent * nm.x + p_binormal * nm.y + r_normal * sqrt(max(0.0, 1.0 - dot(nm, nm))), r_normal_map_depth));
-	vec3 f = normalize((p_view * vec4(g.xyz, 0.0)).xyz);
-	mat3 tbf = mat3(p_tangent, p_binormal, f);
-	if (abs(determinant(tbf)) > 1e-3) {
-		vec3 k = inverse(tbf) * base;
-		if (k.z > 0.0) {
-			k /= length(k);
-			r_normal = f;
-			r_normal_map = vec3(k.xy * 0.5 + 0.5, 1.0);
-			r_normal_map_depth = 1.0;
-			r_clearcoat = 0.45 * gw;
-			r_clearcoat_roughness = 0.5;
-		}
-	}
-}
-
-// Exact sparkle under the path tracer (docs/ideas/snow.md, follow-up 5; the same function is in
-// scene_raytracing_raygen.glsl and SnowSurface3D's shader): the facet of the 2 mm grain at a point. Every grain
-// is an ice facet, its normal GGX-tilted (alpha 0.4); a pixel's samples land on different grains, so the path
-// tracer integrates the footprint's own facets (the reference Jakob et al. 2014 and Yan et al. 2014 measure
-// their counting models against), at any distance and on any bounce.
-vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
-	const float grain = 0.002;
-	ivec3 q = ivec3(floor(p_pos / grain));
-	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u);
-	h ^= h >> 16u;
-	h *= 0x7feb352du;
-	h ^= h >> 15u;
-	h *= 0x846ca68bu;
-	h ^= h >> 16u;
-	float r1 = float(h & 0xffffu) / 65536.0;
-	float r2 = float(h >> 16u) / 65536.0;
-	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
-	float ct = inversesqrt(1.0 + tan2);
-	float st = sqrt(max(1.0 - ct * ct, 0.0));
-	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-	vec3 b = cross(p_n, t);
-	float phi = 6.2831853 * r2;
-	return normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
-}
-
-// snow_glint_apply that also owns the snow's specular (call it in place of snow_glint_apply): under the path
-// tracer (with snow_exact_glints) the base specular lies on the facet of the grain hit (SPECULAR_NORMAL, view
-// space; the diffuse keeps NORMAL) at the facet's own roughness; elsewhere as above.
-void snow_glint_apply_specular(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, float p_snow, float p_wet, mat4 p_view, vec3 p_tangent, vec3 p_binormal, inout vec3 r_normal, inout vec3 r_normal_map, inout float r_normal_map_depth, inout float r_clearcoat, inout float r_clearcoat_roughness, inout float r_roughness, inout vec3 r_specular_normal) {
-	if (!(IN_PATH_TRACER && snow_exact_glints)) {
-		snow_glint_apply(p_world_pos, p_geo_normal, p_footprint, p_snow, p_wet, p_view, p_tangent, p_binormal, r_normal, r_normal_map, r_normal_map_depth, r_clearcoat, r_clearcoat_roughness);
-		return;
-	}
-	float gw = step(0.5, p_snow) * (1.0 - smoothstep(0.05, 0.3, p_wet));
-	if (gw <= 0.0) {
-		return;
-	}
-	r_specular_normal = normalize((p_view * vec4(snow_grain_facet(p_world_pos, p_geo_normal), 0.0)).xyz);
-	r_roughness = mix(r_roughness, 0.22, gw);
-}
-)";
-	return code;
-}
-
-String BaseMaterial3D::get_wetness_shader_code() {
-	return get_wetness_functions_code(true);
-}
-
-String BaseMaterial3D::get_snow_shader_code() {
-	return get_snow_functions_code(true);
-}
-
 void BaseMaterial3D::_update_shader() {
 	if (!_is_initialized()) {
 		_mark_ready();
@@ -991,7 +739,6 @@ void BaseMaterial3D::_update_shader() {
 		rt.wetness_from_weather = wetness_from_weather;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
-		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -1418,7 +1165,6 @@ uniform sampler2D texture_transmission : hint_default_white, %s;
 uniform float transmission_ior : hint_range(1.0, 3.0, 0.01);
 uniform vec4 transmission_attenuation_color : source_color;
 uniform float transmission_attenuation_distance : hint_range(0.0, 1000.0, 0.01);
-uniform float transmission_thickness : hint_range(0.0, 100.0, 0.001);
 uniform float transmission_scatter_strength : hint_range(0.0, 1.0, 0.01);
 uniform vec4 transmission_scatter_color : source_color;
 uniform float transmission_scatter_anisotropy : hint_range(-0.99, 0.99, 0.01);
@@ -1446,7 +1192,11 @@ varying vec2 hair_flow;
 uniform float wetness_porosity : hint_range(0.0, 1.0, 0.01);
 uniform float wetness_amount : hint_range(0.0, 1.0, 0.01);
 )";
-		code += get_wetness_functions_code(wetness_from_weather);
+		if (wetness_from_weather) {
+			code += R"(global uniform sampler2D weather_state_map;
+global uniform vec4 weather_map_rect;
+)";
+		}
 	}
 
 	if (features[FEATURE_SNOW]) {
@@ -1454,7 +1204,53 @@ uniform float wetness_amount : hint_range(0.0, 1.0, 0.01);
 uniform float snow_amount : hint_range(0.0, 1.0, 0.01);
 uniform float snow_max_slope : hint_range(0.0, 90.0, 0.1);
 )";
-		code += get_snow_functions_code(snow_from_weather);
+		if (snow_from_weather) {
+			code += R"(global uniform sampler2D snow_map;
+global uniform vec4 snow_map_rect;
+global uniform sampler2D snow_world_map;
+global uniform vec4 snow_world_rect;
+)";
+		}
+		code += R"(
+// Snow sparkle (docs/ideas/snow.md, stage 5; the same function is in scene_raytracing_raygen.glsl and
+// SnowSurface3D's shader). A share of the ice grains are smooth facets tilted at random (GGX, alpha 0.4)
+// that flash where they mirror a light. Counted per cell of the pixel's footprint (Zirr and Kaplanyan 2016;
+// Deliot and Belcour 2023, reduced to one facet per cell): a cell holding n grains has a facet with chance
+// min(share n, 1) covering share / chance of it, fading as more facets share the cell. Returns the facet's
+// normal and its weight (0: none).
+vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
+	const float grain = 0.002;
+	const float share = 0.25;
+	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
+	if (level > 5.0) {
+		return vec4(p_n, 0.0);
+	}
+	float cell = grain * exp2(level);
+	ivec3 q = ivec3(floor(p_pos / cell));
+	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u) ^ (uint(level) * 2654435761u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	float r0 = float(h & 0x3ffu) / 1023.0;
+	float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
+	float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
+	float grains = exp2(2.0 * level);
+	float chance = min(share * grains, 1.0);
+	if (r0 >= chance) {
+		return vec4(p_n, 0.0);
+	}
+	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * r2;
+	vec3 f = normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
+	return vec4(f, share / chance / sqrt(max(share * grains, 1.0)));
+}
+)";
 	}
 
 	if (features[FEATURE_REFRACTION] || features[FEATURE_TRANSMISSION]) {
@@ -1585,10 +1381,6 @@ uniform vec3 uv2_offset;
 		code += "uniform float z_clip_scale : hint_range(0.01, 1.0, 0.01);\n";
 	}
 
-	if (features[FEATURE_GROUND_DEFORM]) {
-		code += _ground_deform_code(false, ground_deform_patch);
-	}
-
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
 		code += "uniform float fov_override : hint_range(1.0, 179.0, 0.1);\n";
 	}
@@ -1596,11 +1388,6 @@ uniform vec3 uv2_offset;
 	// Generate vertex shader.
 	code += R"(
 void vertex() {)";
-
-	if (features[FEATURE_GROUND_DEFORM]) {
-		// First, so everything below (triplanar positions, world normals) sees the moved vertex.
-		code += "\n	ground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n";
-	}
 
 	if (flags[FLAG_SRGB_VERTEX_COLOR]) {
 		code += R"(
@@ -2160,21 +1947,7 @@ void fragment() {)";
 	// The view ray (VIEW points at the eye even in orthogonal projection).
 	vec3 transmission_incident = PROJECTION_MATRIX[3][3] == 1.0 ? vec3(0.0, 0.0, -1.0) : normalize(VERTEX);
 	vec3 transmission_ray = refract(transmission_incident, NORMAL, 1.0 / max(transmission_ior, 1.0));
-	vec3 transmission_start = VERTEX;
-	float transmission_inside = -1.0; // path inside the medium; below 0: up to what lies behind
-	if (transmission_thickness > 0.0) {
-		// A solid of this thickness (glTF KHR_materials_volume thicknessFactor): the ray leaves it through a
-		// second surface and bends back there. Filament's solid refraction model: the object as a sphere,
-		// the exit point thickness * -dot(N, ray) along the refracted ray, the exit normal from the sphere.
-		float transmission_nor = dot(NORMAL, transmission_ray);
-		transmission_inside = transmission_thickness * max(-transmission_nor, 0.0);
-		transmission_start = VERTEX + transmission_ray * transmission_inside;
-		vec3 transmission_exit_n = normalize(transmission_nor * transmission_ray - NORMAL * 0.5);
-		vec3 transmission_out = refract(transmission_ray, transmission_exit_n, max(transmission_ior, 1.0));
-		// Total internal reflection keeps the ray inside: carry on along it.
-		transmission_ray = dot(transmission_out, transmission_out) > 0.0 ? transmission_out : transmission_ray;
-	}
-	vec4 transmission_clip = PROJECTION_MATRIX * vec4(transmission_start + transmission_ray * min(max(distance(transmission_back.xyz, VERTEX) - max(transmission_inside, 0.0), 0.0), 1.0e4), 1.0);
+	vec4 transmission_clip = PROJECTION_MATRIX * vec4(VERTEX + transmission_ray * min(distance(transmission_back.xyz, VERTEX), 1.0e4), 1.0);
 	vec2 transmission_uv = clamp(transmission_clip.xy / transmission_clip.w * 0.5 + 0.5, vec2(0.0), vec2(1.0));
 	transmission_depth_tex = textureLod(depth_texture, transmission_uv, 0.0).r;
 	transmission_ndc = OUTPUT_IS_SRGB ? vec4(vec3(transmission_uv, transmission_depth_tex) * 2.0 - 1.0, 1.0) : vec4(transmission_uv * 2.0 - 1.0, transmission_depth_tex, 1.0);
@@ -2186,7 +1959,7 @@ void fragment() {)";
 		transmission_found = transmission_back;
 	}
 	if (transmission_attenuation_distance > 0.0) {
-		float transmission_path = transmission_inside >= 0.0 ? transmission_inside : min(distance(transmission_found.xyz, VERTEX), 1.0e4);
+		float transmission_path = min(distance(transmission_found.xyz, VERTEX), 1.0e4);
 		transmission_absorption = pow(max(transmission_attenuation_color.rgb, vec3(1.0e-4)), vec3(transmission_path / transmission_attenuation_distance));
 	}
 	// What the medium scatters back looks, after many bounces, like a diffuse surface of its multi-scatter
@@ -2465,17 +2238,6 @@ void fragment() {)";
 )";
 	}
 
-	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
-		// Turned ground (docs/ideas/ground-deform.md): darker and, wet, smoother where freshly dug; the path
-		// tracer applies the same factors (scene_raytracing_raygen.glsl).
-		code += R"(	{
-		vec2 gd_tint = ground_deform_tint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
-		ALBEDO *= gd_tint.x;
-		ROUGHNESS = clamp(ROUGHNESS * gd_tint.y, 0.0, 1.0);
-	}
-)";
-	}
-
 	if (features[FEATURE_WETNESS]) {
 		// Wet surfaces, Lagarde 2013 ("Water drop 3b"): water in the pores darkens porous
 		// surfaces and smooths them. The path tracer applies the same lines
@@ -2485,9 +2247,21 @@ void fragment() {)";
 	float wet = wetness_amount;
 )";
 		if (wetness_from_weather) {
-			code += "\twet *= weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);\n";
+			code += R"(	if (weather_map_rect.z > 0.0) {
+		vec3 wet_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec2 wet_half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
+		vec2 wet_uv = clamp((wet_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, wet_half_texel, 1.0 - wet_half_texel);
+		wet *= textureLod(weather_state_map, wet_uv, 0.0).g;
+	} else {
+		wet = 0.0;
+	}
+)";
 		}
-		code += R"(	weather_wetness_apply(wet, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, METALLIC, wetness_porosity, ALBEDO, ROUGHNESS);
+		code += R"(	// Undersides catch less rain.
+	wet = clamp(wet, 0.0, 1.0) * smoothstep(-0.6, 0.2, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);
+	float wet_factor = mix(1.0, 0.2, (1.0 - METALLIC) * wetness_porosity);
+	ALBEDO *= mix(1.0, wet_factor, wet);
+	ROUGHNESS *= mix(1.0, wet_factor, 0.5 * wet);
 )";
 	}
 
@@ -2506,26 +2280,93 @@ void fragment() {)";
 		snow_n = normalize((INV_VIEW_MATRIX * vec4(normalize(mix(NORMAL, TANGENT * snow_nm.x + BINORMAL * snow_nm.y + NORMAL * snow_nm.z, NORMAL_MAP_DEPTH)), 0.0)).xyz);
 )";
 		}
-		code += R"(		// (cover share, albedo, melt water, 1 where a pack answers)
-		vec4 snow_s = vec4(snow_amount, 0.85, 0.0, 1.0);
+		code += R"(		float snow_cover = snow_amount;
+		float snow_albedo = 0.85;
+		float snow_wet = 0.0;
 )";
 		if (snow_from_weather) {
-			code += R"(		snow_s = snow_cover_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
-		snow_s.x *= snow_amount;
+			code += R"(		vec3 snow_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec4 snow_s = vec4(0.0);
+		bool snow_have = false;
+		// The world tier (the coarse pack over the whole terrain), then the near square over it, faded in
+		// across its outer tenth.
+		if (snow_world_rect.z > 0.0) {
+			vec2 snow_wuv = (snow_pos.xz - snow_world_rect.xy) / snow_world_rect.zw;
+			if (all(greaterThanEqual(snow_wuv, vec2(0.0))) && all(lessThanEqual(snow_wuv, vec2(1.0)))) {
+				vec2 snow_wh = 0.5 / vec2(textureSize(snow_world_map, 0));
+				snow_s = textureLod(snow_world_map, clamp(snow_wuv, snow_wh, 1.0 - snow_wh), 0.0);
+				snow_have = true;
+			}
+		}
+		if (snow_map_rect.z > 0.0) {
+			vec2 snow_nuv = (snow_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
+			vec2 snow_ne = min(snow_nuv, 1.0 - snow_nuv);
+			float snow_nw = snow_world_rect.z > 0.0 ? clamp(min(snow_ne.x, snow_ne.y) * 10.0, 0.0, 1.0) : 1.0;
+			if (snow_nw > 0.0) {
+				vec2 snow_half_texel = 0.5 / vec2(textureSize(snow_map, 0));
+				snow_s = mix(snow_s, textureLod(snow_map, clamp(snow_nuv, snow_half_texel, 1.0 - snow_half_texel), 0.0), snow_nw);
+				snow_have = true;
+			}
+		}
+		if (snow_have) {
+			// Snow-covered fraction from depth and density, Niu and Yang (2007):
+			// tanh(depth / (2.5 z0 (rho / rho_new)^m)), z0 0.01 m, rho_new 100 kg/m3, m 1.
+			snow_cover *= tanh(max(snow_s.r, 0.0) / (0.025 * max(snow_s.a * 10.0, 0.5)));
+			snow_albedo = snow_s.g;
+			snow_wet = clamp(snow_s.b, 0.0, 1.0);
+		} else {
+			snow_cover = 0.0;
+		}
 )";
 		}
-		code += R"(		float snow = snow_cover_weight(snow_s.x, snow_max_slope, snow_n_geo, snow_n);
-		float snow_wet = snow_s.z;
-		float snow_specular = SPECULAR;
-		snow_cover_apply(snow, snow_s.y, snow_wet, ALBEDO, ROUGHNESS, METALLIC, snow_specular);
-		SPECULAR = snow_specular;
+		code += R"(		// Snow slides off past snow_max_slope (its angle of repose) and holds fully 20 degrees below.
+		float snow_cos_max = min(cos(radians(snow_max_slope)), 0.999);
+		float snow_hold = smoothstep(snow_cos_max, cos(radians(max(snow_max_slope - 20.0, 0.0))), snow_n_geo.y);
+		// Thin snow settles first on the flattest facets of the normal map and leaves the steeper ones bare (the
+		// local stability test of Fearing 2000, per facet): the covered share snow_cover goes to the facets that
+		// face up the most, so the surface's detail shows through in patches; near full cover it buries them.
+		snow_cover = clamp(snow_cover, 0.0, 1.0);
+		float snow_flat = clamp(1.0 - (1.0 - snow_n.y) / 0.3, 0.0, 1.0);
+		float snow = snow_hold * max(smoothstep(1.0 - 1.2 * snow_cover, 1.2 - 1.2 * snow_cover, snow_flat), smoothstep(0.9, 1.0, snow_cover));
+		// Snow: albedo from the pack's age, ice F0 0.018 (specular 0.335, as F0 = 0.16 specular squared),
+		// rough when dry and smoother wet, its own smooth top over the surface's bumps.
+		ALBEDO = mix(ALBEDO, vec3(snow_albedo), snow);
+		ROUGHNESS = mix(ROUGHNESS, mix(0.7, 0.35, snow_wet), snow);
+		METALLIC = mix(METALLIC, 0.0, snow);
+		SPECULAR = mix(SPECULAR, 0.335, snow);
 )";
 		if (features[FEATURE_NORMAL_MAPPING]) {
 			code += "\t\tNORMAL_MAP = mix(NORMAL_MAP, vec3(0.5, 0.5, 1.0), snow);\n";
 		}
-		code += R"(		float snow_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-		float snow_fp = PROJECTION_MATRIX[3][3] != 0.0 ? snow_pix : length(VERTEX) * snow_pix;
-		snow_glint_apply((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, snow_n_geo, snow_fp, snow, snow_wet, VIEW_MATRIX, TANGENT, BINORMAL, NORMAL, NORMAL_MAP, NORMAL_MAP_DEPTH, CLEARCOAT, CLEARCOAT_ROUGHNESS);
+		code += R"(		// Sparkle on dry snow: the facet is a second, near-mirror lobe (the coat's, which takes NORMAL before
+		// NORMAL_MAP as its normal) weighted by the share of the pixel it covers, so the snow's own shading
+		// keeps its normal: NORMAL becomes the facet and NORMAL_MAP is solved to land back on the snow's
+		// normal. Ice F0 0.018 is 0.45 of the coat's 0.04. A film of melt water smooths the grains away.
+		{
+			vec3 snow_wpos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+			float snow_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+			float snow_fp = PROJECTION_MATRIX[3][3] != 0.0 ? snow_pix : length(VERTEX) * snow_pix;
+			vec4 snow_g = snow_glint(snow_wpos, snow_n_geo, snow_fp);
+			float snow_gw = snow_g.w * step(0.5, snow) * (1.0 - smoothstep(0.05, 0.3, snow_wet));
+			if (snow_gw > 0.0) {
+				vec2 snow_nm = NORMAL_MAP.xy * 2.0 - 1.0;
+				vec3 snow_base = normalize(mix(NORMAL, TANGENT * snow_nm.x + BINORMAL * snow_nm.y + NORMAL * sqrt(max(0.0, 1.0 - dot(snow_nm, snow_nm))), NORMAL_MAP_DEPTH));
+				vec3 snow_f = normalize((VIEW_MATRIX * vec4(snow_g.xyz, 0.0)).xyz);
+				mat3 snow_tbf = mat3(TANGENT, BINORMAL, snow_f);
+				float snow_det = determinant(snow_tbf);
+				if (abs(snow_det) > 1e-3) {
+					vec3 snow_k = inverse(snow_tbf) * snow_base;
+					if (snow_k.z > 0.0) {
+						snow_k /= length(snow_k);
+						NORMAL = snow_f;
+						NORMAL_MAP = vec3(snow_k.xy * 0.5 + 0.5, 1.0);
+						NORMAL_MAP_DEPTH = 1.0;
+						CLEARCOAT = 0.45 * snow_gw;
+						CLEARCOAT_ROUGHNESS = 0.5;
+					}
+				}
+			}
+		}
 	}
 )";
 	}
@@ -2863,15 +2704,6 @@ void BaseMaterial3D::set_transmission_attenuation_distance(float p_distance) {
 
 float BaseMaterial3D::get_transmission_attenuation_distance() const {
 	return transmission_attenuation_distance;
-}
-
-void BaseMaterial3D::set_transmission_thickness(float p_thickness) {
-	transmission_thickness = MAX(p_thickness, 0.0f);
-	_material_set_param(shader_names->transmission_thickness, transmission_thickness);
-}
-
-float BaseMaterial3D::get_transmission_thickness() const {
-	return transmission_thickness;
 }
 
 void BaseMaterial3D::set_transmission_scatter_strength(float p_strength) {
@@ -3238,7 +3070,7 @@ void BaseMaterial3D::_validate_property(PropertyInfo &p_property) const {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 
-		if ((p_property.name == "transmission_ior" || p_property.name == "transmission_attenuation_color" || p_property.name == "transmission_attenuation_distance" || p_property.name == "transmission_thickness" ||
+		if ((p_property.name == "transmission_ior" || p_property.name == "transmission_attenuation_color" || p_property.name == "transmission_attenuation_distance" ||
 					p_property.name == "transmission_scatter_strength" || p_property.name == "transmission_scatter_color" || p_property.name == "transmission_scatter_anisotropy") &&
 				transmission_thin_walled) {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
@@ -3721,88 +3553,6 @@ bool BaseMaterial3D::is_snow_from_weather() const {
 	return snow_from_weather;
 }
 
-void BaseMaterial3D::set_ground_deform_patch(bool p_enable) {
-	if (ground_deform_patch == p_enable) {
-		return;
-	}
-	ground_deform_patch = p_enable;
-	_queue_shader_change();
-}
-
-bool BaseMaterial3D::is_ground_deform_patch() const {
-	return ground_deform_patch;
-}
-
-String BaseMaterial3D::_ground_deform_code(bool p_patch_uniform, bool p_patch) {
-	String code = R"(
-// Ground deformation (docs/ideas/ground-deform.md): GroundSurface3D's field of dents and rims over its
-// ground lattice. On the patch (GroundSurface3D's copy of this material) a vertex moves to the deformed
-// surface; on the terrain it is lowered under the patch, so prints below the ground show in both renderers.
-global uniform sampler2D ground_deform_map; // dent, rim (m), albedo and roughness factors
-global uniform vec4 ground_deform_rect; // x, z, size, texel (m); size 0 = none
-global uniform sampler2D ground_deform_height; // the ground, m
-global uniform vec4 ground_deform_height_rect;
-global uniform vec4 ground_deform_skirt; // depth, margin, fade (m)
-)";
-	if (p_patch_uniform) {
-		code += "uniform bool ground_deform_patch = false;\n";
-	} else {
-		code += vformat("const bool ground_deform_patch = %s;\n", p_patch ? "true" : "false");
-	}
-	code += R"(
-vec4 ground_deform_sample(vec2 p_xz) {
-	vec2 uv = (p_xz - ground_deform_rect.xy) / ground_deform_rect.z;
-	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-		return vec4(0.0, 0.0, 1.0, 1.0);
-	}
-	return textureLod(ground_deform_map, uv, 0.0);
-}
-float ground_deform_surface(vec2 p_xz) {
-	vec4 d = ground_deform_sample(p_xz);
-	return textureLod(ground_deform_height, (p_xz - ground_deform_height_rect.xy) / ground_deform_height_rect.zw, 0.0).r + d.g - d.r;
-}
-// The share of the skirt the terrain is lowered by at p_xz: none at the field's edge, all past margin + fade.
-float ground_deform_lowered(vec2 p_xz) {
-	vec2 e = min(p_xz - ground_deform_rect.xy, ground_deform_rect.xy + ground_deform_rect.z - p_xz);
-	return smoothstep(ground_deform_skirt.y, ground_deform_skirt.y + ground_deform_skirt.z, min(e.x, e.y));
-}
-void ground_deform_vertex(mat4 p_model, inout vec3 r_vertex, inout vec3 r_normal, inout vec3 r_tangent, inout vec3 r_binormal) {
-	if (ground_deform_rect.z <= 0.0) {
-		return;
-	}
-	vec3 w = (p_model * vec4(r_vertex, 1.0)).xyz;
-	mat4 to_model = inverse(p_model);
-	if (ground_deform_patch) {
-		// The deformed surface, its normal and tangents by central differences over one field texel. Where
-		// the terrain is not lowered (the field's outer margin) the patch tucks 5 cm under it.
-		float e = max(ground_deform_rect.w, 1e-3);
-		float hx = ground_deform_surface(w.xz + vec2(e, 0.0)) - ground_deform_surface(w.xz - vec2(e, 0.0));
-		float hz = ground_deform_surface(w.xz + vec2(0.0, e)) - ground_deform_surface(w.xz - vec2(0.0, e));
-		w.y = ground_deform_surface(w.xz) - 0.05 * (1.0 - ground_deform_lowered(w.xz));
-		mat3 n_to_model = transpose(mat3(p_model));
-		r_normal = normalize(n_to_model * normalize(vec3(-hx, 2.0 * e, -hz)));
-		r_tangent = normalize(n_to_model * normalize(vec3(2.0 * e, hx, 0.0)));
-		r_binormal = normalize(n_to_model * normalize(vec3(0.0, hz, 2.0 * e)));
-	} else {
-		w.y -= ground_deform_skirt.x * ground_deform_lowered(w.xz);
-	}
-	r_vertex = (to_model * vec4(w, 1.0)).xyz;
-}
-// Albedo and roughness factors of turned ground at a world position (1, 1 off the patch).
-vec2 ground_deform_tint(vec3 p_world) {
-	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
-		return vec2(1.0);
-	}
-	return ground_deform_sample(p_world.xz).ba;
-}
-)";
-	return code;
-}
-
-String BaseMaterial3D::get_ground_deform_shader_code() {
-	return _ground_deform_code(true, false);
-}
-
 void BaseMaterial3D::set_refraction_texture_channel(TextureChannel p_channel) {
 	ERR_FAIL_INDEX(p_channel, 5);
 	refraction_texture_channel = p_channel;
@@ -4164,8 +3914,6 @@ Shader::Mode BaseMaterial3D::get_shader_mode() const {
 }
 
 void BaseMaterial3D::_bind_methods() {
-	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_wetness_shader_code"), &BaseMaterial3D::get_wetness_shader_code);
-	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_snow_shader_code"), &BaseMaterial3D::get_snow_shader_code);
 	static_assert(sizeof(MaterialKey) == 16, "MaterialKey should be 16 bytes");
 
 	ClassDB::bind_method(D_METHOD("set_albedo", "albedo"), &BaseMaterial3D::set_albedo);
@@ -4257,8 +4005,6 @@ void BaseMaterial3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_transmission_attenuation_distance", "distance"), &BaseMaterial3D::set_transmission_attenuation_distance);
 	ClassDB::bind_method(D_METHOD("get_transmission_attenuation_distance"), &BaseMaterial3D::get_transmission_attenuation_distance);
-	ClassDB::bind_method(D_METHOD("set_transmission_thickness", "thickness"), &BaseMaterial3D::set_transmission_thickness);
-	ClassDB::bind_method(D_METHOD("get_transmission_thickness"), &BaseMaterial3D::get_transmission_thickness);
 
 	ClassDB::bind_method(D_METHOD("set_transmission_scatter_strength", "strength"), &BaseMaterial3D::set_transmission_scatter_strength);
 	ClassDB::bind_method(D_METHOD("get_transmission_scatter_strength"), &BaseMaterial3D::get_transmission_scatter_strength);
@@ -4301,9 +4047,6 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_snow_max_slope", "degrees"), &BaseMaterial3D::set_snow_max_slope);
 	ClassDB::bind_method(D_METHOD("get_snow_max_slope"), &BaseMaterial3D::get_snow_max_slope);
 	ClassDB::bind_method(D_METHOD("set_snow_from_weather", "enable"), &BaseMaterial3D::set_snow_from_weather);
-	ClassDB::bind_method(D_METHOD("set_ground_deform_patch", "enable"), &BaseMaterial3D::set_ground_deform_patch);
-	ClassDB::bind_method(D_METHOD("is_ground_deform_patch"), &BaseMaterial3D::is_ground_deform_patch);
-	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_ground_deform_shader_code"), &BaseMaterial3D::get_ground_deform_shader_code);
 	ClassDB::bind_method(D_METHOD("is_snow_from_weather"), &BaseMaterial3D::is_snow_from_weather);
 
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
@@ -4596,7 +4339,6 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_ior", PROPERTY_HINT_RANGE, "1,3,0.01"), "set_transmission_ior", "get_transmission_ior");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "transmission_attenuation_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_transmission_attenuation_color", "get_transmission_attenuation_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_attenuation_distance", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater,suffix:m"), "set_transmission_attenuation_distance", "get_transmission_attenuation_distance");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_thickness", PROPERTY_HINT_RANGE, "0,10,0.001,or_greater,suffix:m"), "set_transmission_thickness", "get_transmission_thickness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_scatter_strength", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_transmission_scatter_strength", "get_transmission_scatter_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "transmission_scatter_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_transmission_scatter_color", "get_transmission_scatter_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_scatter_anisotropy", PROPERTY_HINT_RANGE, "-0.99,0.99,0.01"), "set_transmission_scatter_anisotropy", "get_transmission_scatter_anisotropy");
@@ -4626,10 +4368,6 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_snow_amount", "get_snow_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_max_slope", PROPERTY_HINT_RANGE, "0,90,0.1,degrees"), "set_snow_max_slope", "get_snow_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_from_weather"), "set_snow_from_weather", "is_snow_from_weather");
-
-	ADD_GROUP("Ground Deform", "ground_deform_");
-	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "ground_deform_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_GROUND_DEFORM);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_deform_patch"), "set_ground_deform_patch", "is_ground_deform_patch");
 
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
@@ -4769,7 +4507,6 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FEATURE_HAIR);
 	BIND_ENUM_CONSTANT(FEATURE_WETNESS);
 	BIND_ENUM_CONSTANT(FEATURE_SNOW);
-	BIND_ENUM_CONSTANT(FEATURE_GROUND_DEFORM);
 	BIND_ENUM_CONSTANT(FEATURE_MAX);
 
 	BIND_ENUM_CONSTANT(BLEND_MODE_MIX);
@@ -4905,7 +4642,6 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_transmission_ior(1.5);
 	set_transmission_attenuation_color(Color(1, 1, 1));
 	set_transmission_attenuation_distance(0.0);
-	set_transmission_thickness(0.0);
 	set_transmission_scatter_strength(0.0);
 	set_transmission_scatter_color(Color(1, 1, 1));
 	set_transmission_scatter_anisotropy(0.0);

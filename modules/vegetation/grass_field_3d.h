@@ -56,7 +56,6 @@ class GrassField3D : public Node3D {
 	};
 
 	NodePath data_map;
-	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
 	Ref<PlantSpecies> rules;
 	float density = 60.0f; // Blades per square metre, near the camera.
 	Vector2 blade_height = Vector2(0.25f, 0.6f);
@@ -67,7 +66,6 @@ class GrassField3D : public Node3D {
 	Color tip_color = Color(0.45f, 0.6f, 0.22f);
 	Color dry_color = Color(0.55f, 0.48f, 0.28f);
 	float dryness = 0.2f;
-	float sun_mean = 0.0f; // VegetationLight::sun_mean() of the data map.
 	float color_variation = 0.5f;
 	float radius = 40.0f;
 	float tile_size = 8.0f;
@@ -79,10 +77,7 @@ class GrassField3D : public Node3D {
 	// Ground under the grass takes its colour (alpha: strength), through the grass_ground_* globals.
 	Color ground_tint = Color(0.05f, 0.09f, 0.025f, 0.85f);
 	bool ground_tint_enabled = true;
-	Vector4 fade_band; // Last centre and band sent to the shaders.
-	static GrassField3D *fade_owner; // The field whose band the ground shader reads.
 	bool ground_baked = false;
-	class VegetationField3D *_get_canopy(const PlantSpecies *p_rules) const;
 	Ref<ImageTexture> ground_texture;
 
 	// Trample field (docs/ideas/grass.md, contact): bend per texel around the camera, pressed by
@@ -111,7 +106,6 @@ class GrassField3D : public Node3D {
 	int _lod_for(float p_distance) const;
 	void _build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map);
 	void _free_tile(Tile &p_tile);
-	void _update_fade(const Vector2 &p_center);
 	void _update_tiles(const Vector3 &p_center);
 	void _bake_ground(TerrainDataMap3D *p_map);
 	void _trample_recenter(const Vector3 &p_center);
@@ -126,8 +120,6 @@ protected:
 public:
 	void set_data_map(const NodePath &p_path);
 	NodePath get_data_map() const { return data_map; }
-	void set_canopy_field(const NodePath &p_path);
-	NodePath get_canopy_field() const { return canopy_field; }
 	void set_rules(const Ref<PlantSpecies> &p_rules);
 	Ref<PlantSpecies> get_rules() const { return rules; }
 	void set_density(float p_density);
@@ -140,7 +132,6 @@ public:
 	float get_clump_size() const { return clump_size; }
 	void set_lean(float p_lean);
 	float get_lean() const { return lean; }
-	Color get_far_color() const;
 	void set_base_color(const Color &p_color);
 	Color get_base_color() const { return base_color; }
 	void set_tip_color(const Color &p_color);
