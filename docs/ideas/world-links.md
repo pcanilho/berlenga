@@ -381,3 +381,27 @@ Sources: Smith and Barstad 2004 (J. Atmos. Sci. 61); Roe 2005 (Annu. Rev. Earth 
 Sources: Whiteman 2000 (Mountain Meteorology); Clements, Whiteman and Horel 2003 (J. Appl. Meteor.); Lundquist,
 Pepin and Rochford 2008 (JGR); Bebi, Kulakowski and Rixen 2009 (Forest Ecol. Manage.); Patten and Knight 1994;
 Makkonen 2000 (Phil. Trans. R. Soc. A); ISO 12494.
+
+## Round 10 candidates (22 Nov, card to Paulo)
+
+1. Valley fog seas from the cold pools. Source: WeatherMap3D's cold pool deficit and depth (`get_cold_pool_at`),
+   the air's dew point. Reader: the clouds (a stratus layer whose top is the pool's top, seen from ridges as a sea
+   of cloud), mist (near field already reads the humidity). Radiation fog fills a basin when the pooled air cools to
+   its dew point and thickens upward to the inversion's base; it lifts and burns off from the edges after sunrise
+   (Whiteman 2000; Gultepe et al. 2007 review of fog; Price 2011 on valley fog in the UK). Per cell: fog top =
+   ground + pool depth where the floor air is saturated; the sky's volumetric clouds draw it as a flat-topped layer.
+2. Needle ice and frost heave on bare wet ground. Source: the weather's surface temperature (cooling term), soil
+   water (ground wetness, rain), night length. Readers: GroundSurface3D (a lifted, crumbly surface that keeps
+   prints sharp until it collapses, pebbles lifted), vegetation (seedlings heaved out on bare soil). Needle ice grows
+   where the surface sits a few degrees below 0 C over moist, fine soil, columns a few centimetres a night (Outcalt
+   1971; Lawler 1988; Grab 2001 on needle ice in mountains). Shading: grey-white columns on wet silt and mud, gone
+   by mid morning.
+3. Fire builds its own cloud (pyrocumulus). Source: `WorldFire.heat_at` integrated over a burning area, the air's
+   temperature and humidity at height. Reader: the clouds (a convective tower over the plume when the fire's heat
+   flux lifts the plume past the lifting condensation level; Briggs plume rise, Luderer et al. 2006; Fromm et al.
+   2010 on pyroCb), lightning (a pyroCb can strike ahead of the fire), rain (rarely). Flow already carries the
+   smoke near the fire; this adds the cloud seen from far.
+
+Sources: Whiteman 2000; Gultepe et al. 2007 (Pure Appl. Geophys.); Price 2011 (Boundary-Layer Meteorol.); Outcalt
+1971 (Water Resour. Res.); Lawler 1988 (Prog. Phys. Geogr.); Grab 2001; Briggs 1975; Luderer et al. 2006 (Atmos.
+Chem. Phys.); Fromm et al. 2010 (BAMS).
