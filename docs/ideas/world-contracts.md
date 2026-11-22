@@ -83,7 +83,9 @@ Shader globals (the GPU side of the same contract): `weather_wind_map`, `weather
 `weather_precip_phase`, `weather_vortex_0..3` (x, z, R, swirl x spin) and `weather_vortex_up` (their updrafts),
 `weather_dust_map` (over `weather_map_rect`: R column g/m2, G top m above the ground, B front head share),
 `weather_dust_optics` (x mass extinction 0.6 m2/g at 550 nm, yzw relative optical depth R G B) and
-`weather_dust_albedo` (rgb single scattering albedo, w asymmetry g);
+`weather_dust_albedo` (rgb single scattering albedo, w asymmetry g), `weather_dust_near` (x, z, radius, height: the
+cylinder PhysXHaboobFront3D draws the front's billows in, zero radius when none; the sky's dust wall fades its dust
+out inside it);
 formats in weather.md. Wind in shaders: `weather_wind(world_pos, height)`,
 `weather_height_above_ground(world_pos)`, `weather_terrain(xz)` from `WeatherMap3D.get_wind_shader_code()`; all
 globals are declared at start, so a shader compiles with no weather and has no wind.
