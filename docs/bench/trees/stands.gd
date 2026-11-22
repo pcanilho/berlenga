@@ -929,6 +929,31 @@ func _stand_checks(only := -1) -> void:
 			for k in cut:
 				if String(sps[s].resource_name).ends_with("(%s)" % k):
 					cut[k] += f.get_placements(s).size()
+		# Aspen clones (trees.md 5bf): with several variants each clone is one variant, so near neighbours mostly share it.
+		if variants > 1:
+			for s in sps.size():
+				if not String(sps[s].resource_name).begins_with("Aspen"):
+					continue
+				var pts := []
+				for mmi in f.find_children("*", "MultiMeshInstance3D", true, false):
+					var mm: MultiMesh = mmi.multimesh
+					if mm == null:
+						continue
+					var vi: int = sps[s].meshes.find(mm.mesh)
+					if vi < 0:
+						continue
+					for k in mm.instance_count:
+						var o3: Vector3 = (mmi.global_transform * mm.get_instance_transform(k)).origin
+						pts.append([Vector2(o3.x, o3.z), vi])
+				var same := 0
+				var pairs := 0
+				for a in pts.size():
+					for b in range(a + 1, pts.size()):
+						if pts[a][0].distance_to(pts[b][0]) < 4.0:
+							pairs += 1
+							same += 1 if pts[a][1] == pts[b][1] else 0
+				_check(pairs > 0 and same > pairs * 0.6, "%s: %s, %d of %d neighbour pairs within 4 m share a clone" % [STAND_NAMES[i], sps[s].resource_name, same, pairs])
+
 		if i == TreeGenerator.STAND_HEDGEROW:
 			_check(f.get_plant_count() > 0 and open_count == f.get_plant_count(), "hedgerow: shrubs and open-grown standards only (%d)" % open_count)
 		elif i == TreeGenerator.STAND_WOOD_PASTURE:

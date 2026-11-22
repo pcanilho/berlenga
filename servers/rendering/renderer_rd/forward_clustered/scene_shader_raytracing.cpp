@@ -644,6 +644,7 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	r_entry.uses_alpha_clip = detected_alpha_clip;
 	r_entry.casts_transmitted_shadow = !p_is_procedural && (uses_transmission || uses_backlight);
 	r_entry.bounds_medium = !p_is_procedural && uses_transmission && uses_ior;
+	r_entry.may_refract = uses_transmission && uses_ior;
 	r_entry.needs_full_any_hit = detected_alpha || blend_modei != RendererRD::MaterialStorage::ShaderData::BLEND_MODE_MIX || r_entry.casts_transmitted_shadow;
 	r_entry.uses_scene_depth = uses_scene_depth;
 	r_entry.uses_instance_custom = uses_instance_custom;

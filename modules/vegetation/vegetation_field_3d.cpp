@@ -1427,6 +1427,7 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 	}
 	ps.far_widen = bool(ps.sp->get_meta(SNAME("far_widen"), false));
 	ps.far_hull_range = float(ps.sp->get_meta(SNAME("far_hull_range"), 0.0f));
+	ps.clone_scale = float(ps.sp->get_meta(SNAME("clone_scale"), 0.0f));
 	if (ps.far_widen && bool(ps.sp->get_meta(SNAME("far_skyline"), true)) && !ps.meshes.is_empty() && ps.meshes[0].is_valid()) {
 		// Meta far_skyline = false: thinned on the skyline too.
 		ps.far_top = ps.meshes[0]->get_aabb().get_end().y;
@@ -2930,7 +2931,29 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 						}
 					}
-					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1));
+					int clone_variant = -1;
+					if (ps.clone_scale > 0.0f && variants > 1) {
+						// A clone (aspen, trees.md 5bf; Mitton and Grant 1996): every stem from one root system shares its
+						// genotype, so its form, bark and leaf-out and autumn dates. The clones are jittered cells (a
+						// Worley partition, so no straight edges show in autumn), each one variant.
+						const Vector2 cq = xz / ps.clone_scale;
+						const int cx = int(Math::floor(cq.x)), cz = int(Math::floor(cq.y));
+						float best = 1e9f;
+						uint32_t best_h = 0;
+						for (int dz = -1; dz <= 1; dz++) {
+							for (int dx = -1; dx <= 1; dx++) {
+								const uint32_t h = hash_murmur3_one_32(uint32_t(cx + dx) * 73856093u ^ uint32_t(cz + dz) * 19349663u, uint32_t(ps.clone_scale * 16.0f) + 0x636c6eu);
+								const Vector2 site(float(cx + dx) + 0.15f + 0.7f * float(h & 0xffff) / 65535.0f, float(cz + dz) + 0.15f + 0.7f * float(h >> 16) / 65535.0f);
+								const float d2 = site.distance_squared_to(cq);
+								if (d2 < best) {
+									best = d2;
+									best_h = h;
+								}
+							}
+						}
+						clone_variant = int(hash_murmur3_one_32(best_h, 0x766172u) % uint32_t(variants));
+					}
+					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : (clone_variant >= 0 ? clone_variant : MIN(int(r * variants), variants - 1)));
 					// Stilt roots: raised by the variant's lift along its own up (scaled and tilted with it).
 					const Vector3 lift = variant < int(ps.base_lifts.size()) ? b.xform(Vector3(0.0f, ps.base_lifts[variant], 0.0f)) : Vector3();
 					const Transform3D world(b, Vector3(xz.x, y, xz.y) + lift);
@@ -4929,7 +4952,7 @@ PackedFloat32Array VegetationField3D::get_crowns_in(const Rect2 &p_rect) const {
 		if (c.xz.x + c.radius < p_rect.position.x || c.xz.y + c.radius < p_rect.position.y || c.xz.x - c.radius > p_rect.get_end().x || c.xz.y - c.radius > p_rect.get_end().y) {
 			continue;
 		}
-		const float rec[7] = { c.xz.x, c.xz.y, c.radius, c.top, c.base, c.conifer, c.opacity };
+		const float rec[7] = { float(c.xz.x), float(c.xz.y), float(c.radius), float(c.top), float(c.base), float(c.conifer), float(c.opacity) };
 		for (float f : rec) {
 			res.push_back(f);
 		}

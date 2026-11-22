@@ -142,6 +142,8 @@ class RenderingDeviceDriverVulkan : public RenderingDeviceDriver {
 		PFN_vkDestroyAccelerationStructureKHR DestroyAccelerationStructureKHR = nullptr;
 		PFN_vkGetAccelerationStructureBuildSizesKHR GetAccelerationStructureBuildSizesKHR = nullptr;
 		PFN_vkCmdBuildAccelerationStructuresKHR CmdBuildAccelerationStructuresKHR = nullptr;
+		PFN_vkCmdCopyAccelerationStructureKHR CmdCopyAccelerationStructureKHR = nullptr;
+		PFN_vkCmdWriteAccelerationStructuresPropertiesKHR CmdWriteAccelerationStructuresPropertiesKHR = nullptr;
 		PFN_vkCreateRayTracingPipelinesKHR CreateRaytracingPipelinesKHR = nullptr;
 		PFN_vkGetRayTracingShaderGroupHandlesKHR GetRayTracingShaderGroupHandlesKHR = nullptr;
 		PFN_vkCmdTraceRaysKHR CmdTraceRaysKHR = nullptr;
@@ -728,6 +730,9 @@ public:
 		// Buffer used for the structure
 		RDD::BufferID buffer;
 		VkDeviceAddress cached_device_address = 0;
+		// Bytes of storage: the build size, or the compacted size once compacted.
+		VkDeviceSize storage_size = 0;
+		VkDeviceSize full_storage_size = 0;
 
 		// Alignment of the scratch buffer for building the structure
 		uint32_t scratch_alignment;
@@ -758,6 +763,14 @@ public:
 	virtual uint32_t acceleration_structure_get_scratch_size_bytes(AccelerationStructureID p_acceleration_structure) override final;
 	virtual void acceleration_structure_debug_record_build(AccelerationStructureID p_acceleration_structure, bool p_update, uint64_t p_frame) override final;
 
+	virtual bool acceleration_structure_compaction_is_supported() override final;
+	virtual QueryPoolID acceleration_structure_size_query_pool_create(uint32_t p_query_count) override final;
+	virtual void acceleration_structure_size_query_pool_free(QueryPoolID p_pool_id) override final;
+	virtual void acceleration_structure_size_query_pool_get_results(QueryPoolID p_pool_id, uint32_t p_query_count, uint64_t *r_results) override final;
+	virtual uint64_t acceleration_structure_get_size_bytes(AccelerationStructureID p_acceleration_structure) override final;
+	virtual AccelerationStructureID blas_compact_relocate(AccelerationStructureID p_acceleration_structure, uint64_t p_size) override final;
+	virtual AccelerationStructureID blas_restore_full_storage(AccelerationStructureID p_acceleration_structure) override final;
+
 	// ----- OPACITY MICROMAP -----
 	virtual const OpacityMicromapCapabilities &get_opacity_micromap_capabilities() override final;
 	virtual void micromap_get_build_sizes(VectorView<MicromapUsage> p_usages, uint64_t &r_size, uint64_t &r_scratch_size) override final;
@@ -766,6 +779,8 @@ public:
 
 private:
 	void _acceleration_structure_create(VkAccelerationStructureTypeKHR p_type, VkAccelerationStructureBuildSizesInfoKHR p_size_info, AccelerationStructureInfo *r_accel_info);
+	bool _acceleration_structure_create_storage(VkAccelerationStructureTypeKHR p_type, VkDeviceSize p_size, AccelerationStructureInfo *r_accel_info);
+	AccelerationStructureID _blas_move_storage(AccelerationStructureInfo *p_accel_info, VkDeviceSize p_size);
 
 private:
 	VkStridedDeviceAddressRegionKHR _sbt_to_vk_strided_device_address_region(const ShaderBindingTable &p_sbt);
@@ -775,6 +790,9 @@ public:
 	virtual void command_build_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset) override final;
 	virtual void command_update_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset) override final;
 	virtual void command_build_tlas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset, BufferID p_instance_buffer, uint32_t p_instance_offset, uint32_t p_instance_count) override final;
+	virtual void command_acceleration_structure_size_query_reset(CommandBufferID p_cmd_buffer, QueryPoolID p_pool_id, uint32_t p_first_query, uint32_t p_query_count) override final;
+	virtual void command_acceleration_structure_write_compacted_size(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, QueryPoolID p_pool_id, uint32_t p_query) override final;
+	virtual void command_copy_acceleration_structure_compact(CommandBufferID p_cmd_buffer, AccelerationStructureID p_src, AccelerationStructureID p_dst) override final;
 	virtual void command_build_micromap(CommandBufferID p_cmd_buffer, const MicromapBuild &p_build) override final;
 	virtual void command_bind_raytracing_pipeline(CommandBufferID p_cmd_buffer, RaytracingPipelineID p_pipeline) override final;
 	virtual void command_bind_raytracing_uniform_set(CommandBufferID p_cmd_buffer, UniformSetID p_uniform_set, ShaderID p_shader, uint32_t p_set_index) override final;

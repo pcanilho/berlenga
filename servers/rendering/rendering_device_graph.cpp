@@ -830,6 +830,15 @@ void RenderingDeviceGraph::_run_acceleration_structure_build_batch(RDD::CommandB
 			case RecordedAccelerationStructureBuild::TYPE_TLAS_BUILD: {
 				driver->command_build_tlas(p_command_buffer, build.acceleration_structure, build.scratch_buffer, build.scratch_offset, build.instance_buffer, build.instance_offset, build.instance_count);
 			} break;
+			case RecordedAccelerationStructureBuild::TYPE_BLAS_COMPACT_COPY: {
+				driver->command_copy_acceleration_structure_compact(p_command_buffer, build.source, build.acceleration_structure);
+			} break;
+			case RecordedAccelerationStructureBuild::TYPE_SIZE_QUERY_RESET: {
+				driver->command_acceleration_structure_size_query_reset(p_command_buffer, build.query_pool, build.query_index, build.instance_count);
+			} break;
+			case RecordedAccelerationStructureBuild::TYPE_COMPACTED_SIZE_QUERY: {
+				driver->command_acceleration_structure_write_compacted_size(p_command_buffer, build.acceleration_structure, build.query_pool, build.query_index);
+			} break;
 		}
 	}
 }
