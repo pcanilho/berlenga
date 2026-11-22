@@ -1078,8 +1078,12 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   Cloud scouts: a taller column widening upward; at 320-400 px lavapipe draws a pale haze cut in steps round it
   that the PC's 1080p frames never showed (it stays with heat shimmer, light and ambient scattering all off). PC
   runs judge the look.
-- Not yet: the swirl mark left on the ripples, GroundStreamers3D taking the grains at the foot, the PT cost on the
-  PC queue.
+- GroundStreamers3D takes the grains at the foot (22 Nov): its particle shader adds the shared wind's vortices
+  (WeatherMap3D's own shader field, weather_vortices) to the patch's wind, so each grain runs with its local wind
+  (round the devil, in toward its wall) and flies only where that wind's u* passes the threshold, in the share of the
+  budget its flux makes; the budget is set for the strongest wind over the patch (a 9 x 9 read of
+  get_vortex_wind_at). Ground --test=wind: a 12 m/s devil in a 0 m/s wind lifts sand (peak 11.1 m/s, 8.8 g/m/s).
+- Not yet: the swirl mark left on the ripples, the PT cost on the PC queue.
 
 ## Next sand candidates, round 2 (research, 22 Nov 2026; on a card)
 
