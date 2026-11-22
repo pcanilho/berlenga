@@ -3255,6 +3255,8 @@ func _bake_snow_winter() -> void:
 		return
 	var winter := SnowClimate.new()
 	winter.recipe = climate
+	if args.has("winter-days"):
+		winter.days = int(args["winter-days"]) # --winter-days=N: the bake's length (120: ends late January, lower snow line)
 	snow.climate_map = snow.get_path_to(data_map)
 	snow.climate = winter
 	var t := Time.get_ticks_msec()
