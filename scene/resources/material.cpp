@@ -930,6 +930,27 @@ float weather_canopy_drip_at(vec3 p_world_pos) {
 	return code;
 }
 
+// Glaze (docs/ideas/trees.md 5be): the clear ice freezing rain leaves over everything it wets, p_mm of radial ice
+// (WeatherMap3D's rain map, alpha). Lagarde 2013's accumulated water ("Water drop 3b"), frozen: a film forms within
+// the first millimetre; the surface is ice's (n 1.31, F0 0.018: specular 0.225), smooth but for frozen ripples; the
+// surface under it is seen soaked (its pores hold the frozen water, as wet); a few millimetres fill its relief.
+// Returns how far the relief is filled (0..1), for the normal. The path tracer has the same lines
+// (scene_raytracing_raygen.glsl).
+String BaseMaterial3D::get_glaze_functions_code() {
+	return R"(
+float weather_glaze_apply(float p_mm, float p_porosity, float p_metallic, inout vec3 r_albedo, inout float r_roughness, inout float r_specular) {
+	float cover = smoothstep(0.0, 1.0, p_mm);
+	if (cover <= 0.0) {
+		return 0.0;
+	}
+	r_albedo *= mix(1.0, mix(1.0, 0.2, (1.0 - p_metallic) * p_porosity), cover);
+	r_roughness = mix(r_roughness, 0.06, cover);
+	r_specular = mix(r_specular, 0.225, cover);
+	return cover * smoothstep(0.5, 6.0, p_mm);
+}
+)";
+}
+
 String BaseMaterial3D::get_snow_functions_code(bool p_from_weather) {
 	String code;
 	// Read by snow_glint_apply_specular() under the path tracer, with or without a snowpack.
@@ -1624,6 +1645,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.wetness = features[FEATURE_WETNESS];
 		rt.wetness_from_weather = wetness_from_weather;
 		rt.wetness_canopy = features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy;
+		rt.glaze = glaze;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
 		rt.snow_on_body = features[FEATURE_SNOW] && snow_on_body;
@@ -2236,8 +2258,11 @@ uniform vec3 uv2_offset;
 		code += _ground_deform_code(false, ground_deform_patch);
 	}
 	// The rain's functions (raindrop rings on the patch's standing water, beads on a wet canopy), once.
-	if ((features[FEATURE_GROUND_DEFORM] && ground_deform_patch) || (features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy)) {
+	if ((features[FEATURE_GROUND_DEFORM] && ground_deform_patch) || (features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy) || glaze) {
 		code += get_rain_functions_code(true);
+	}
+	if (glaze) {
+		code += get_glaze_functions_code();
 	}
 
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
@@ -3454,6 +3479,16 @@ void fragment() {)";
 		}
 	}
 )";
+	}
+
+	if (glaze) {
+		// Glaze from freezing rain, under any snow that falls on it (weather_glaze_apply()).
+		code += "\t// Glaze: Enabled\n\t{\n";
+		code += String("\t\tfloat glaze_fill = weather_glaze_apply(weather_rain_sample((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz).a, ") + (features[FEATURE_WETNESS] ? "wetness_porosity" : "0.5") + ", METALLIC, ALBEDO, ROUGHNESS, SPECULAR);\n";
+		if (features[FEATURE_NORMAL_MAPPING]) {
+			code += "\t\tNORMAL_MAP_DEPTH *= 1.0 - glaze_fill;\n";
+		}
+		code += "\t}\n";
 	}
 
 	if (features[FEATURE_SNOW]) {
@@ -4700,6 +4735,18 @@ void BaseMaterial3D::set_wetness_canopy(bool p_enable) {
 
 bool BaseMaterial3D::is_wetness_canopy() const {
 	return wetness_canopy;
+}
+
+void BaseMaterial3D::set_glaze(bool p_enable) {
+	if (glaze == p_enable) {
+		return;
+	}
+	glaze = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_glaze() const {
+	return glaze;
 }
 
 void BaseMaterial3D::set_snow_amount(float p_amount) {
@@ -6445,6 +6492,8 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_wetness_from_weather"), &BaseMaterial3D::is_wetness_from_weather);
 	ClassDB::bind_method(D_METHOD("set_wetness_canopy", "enable"), &BaseMaterial3D::set_wetness_canopy);
 	ClassDB::bind_method(D_METHOD("is_wetness_canopy"), &BaseMaterial3D::is_wetness_canopy);
+	ClassDB::bind_method(D_METHOD("set_glaze", "enable"), &BaseMaterial3D::set_glaze);
+	ClassDB::bind_method(D_METHOD("is_glaze"), &BaseMaterial3D::is_glaze);
 	ClassDB::bind_method(D_METHOD("set_snow_amount", "amount"), &BaseMaterial3D::set_snow_amount);
 	ClassDB::bind_method(D_METHOD("get_snow_amount"), &BaseMaterial3D::get_snow_amount);
 	ClassDB::bind_method(D_METHOD("set_snow_max_slope", "degrees"), &BaseMaterial3D::set_snow_max_slope);
@@ -6772,6 +6821,9 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_amount", "get_wetness_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_from_weather"), "set_wetness_from_weather", "is_wetness_from_weather");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_canopy"), "set_wetness_canopy", "is_wetness_canopy");
+
+	ADD_GROUP("Glaze", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glaze"), "set_glaze", "is_glaze");
 
 	ADD_GROUP("Snow", "snow_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "snow_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_SNOW);

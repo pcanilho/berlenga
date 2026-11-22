@@ -4309,6 +4309,7 @@ Ref<ArrayMesh> TreeGenerator::make_leaf_mesh(Preset p_preset, const Dictionary &
 	m->set_feature(BaseMaterial3D::FEATURE_WETNESS, true);
 	m->set_wetness_porosity(0.15f); // A waxy cuticle barely soaks, as the ground plants' leaves.
 	m->set_wetness_canopy(true);
+	m->set_glaze(true); // Clear ice from freezing rain (trees.md 5be).
 	if (!needles) {
 		m->set_specular(0.3f); // As the canopy's (leaf sheen, 18 Nov).
 		if (LEAF_FORMS[p_preset].kind == LEAF_PINNATE) {
@@ -20860,6 +20861,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		m->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
 		m->set_feature(BaseMaterial3D::FEATURE_SNOW, true);
 		m->set_snow_from_weather(true);
+		// Freezing rain coats every exposed surface in clear ice, bark, twigs, needles and leaves (trees.md 5be).
+		m->set_glaze(true);
 		if (rigged) {
 			// Skinned from MultiMesh instance bones (TreeWind3D writes them).
 			m->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, true);
@@ -23383,6 +23386,11 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 		hull_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
 		hull_material->set_roughness(0.55f);
 		hull_material->set_specular(0.5f); // Sheen of many leaves and needles facing the sky: the trees' highlights carry its blue (docs, 20 Nov: hull tips read yellow-green).
+		// Wet and glazed as the near crowns' leaves are, so a storm's crowns read the same past the hull range.
+		hull_material->set_feature(BaseMaterial3D::FEATURE_WETNESS, true);
+		hull_material->set_wetness_porosity(0.15f);
+		hull_material->set_wetness_canopy(true);
+		hull_material->set_glaze(true);
 	}
 	mesh->surface_set_material(0, hull_material);
 	mesh->set_meta(SNAME("hull_cover"), cover);

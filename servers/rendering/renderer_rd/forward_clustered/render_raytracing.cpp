@@ -3819,6 +3819,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	if (rt_state.mud) {
 		mat.subsurface.mud = 1;
 	}
+	mat.subsurface_texture.glaze = rt_state.glaze;
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
 	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
 	if (rt_state.transmission) {
