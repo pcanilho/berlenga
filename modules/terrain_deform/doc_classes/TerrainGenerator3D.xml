@@ -170,6 +170,14 @@
 				Grid nodes along X and Z of the last [method generate].
 			</description>
 		</method>
+		<method name="get_gully_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="global_position" type="Vector3" />
+			<param index="1" name="normal_y" type="float" />
+			<description>
+				Rills and gullies at a world position, as the shaders' [code]terrain_gully()[/code] gives them: x the channel floor share 0..1 (the slope-area index A S^2, Montgomery and Dietrich 1988, on the droplets' flow, where the flow is concentrated), y the deposit depth in metres. [param normal_y] is the ground normal's y. Zero when [member tile_erosion_enabled] is off.
+			</description>
+		</method>
 		<method name="get_height" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -755,6 +763,9 @@
 		</member>
 		<member name="ground_mesh" type="NodePath" setter="set_ground_mesh" getter="get_ground_mesh" default="NodePath(&quot;&quot;)">
 			A [MeshInstance3D] regenerated from a [HeightMapShape3D] ground after the write. The [member deformer]'s ground mesh is used when empty.
+		</member>
+		<member name="gully_incision" type="float" setter="set_gully_incision" getter="get_gully_incision" default="1.0">
+			Scale of the gullies cut along the tile erosion's concentrated flow lines, narrower and deeper than the 2 m droplet grid can: depth 0.05 sqrt(A) m up to 2 m (half in rock), shaped across the line by the channel share of [method get_gully_at]. 0 for none. Needs [member tile_erosion_enabled].
 		</member>
 		<member name="guide_preview" type="bool" setter="set_guide_preview" getter="is_guide_preview" default="true">
 			When a [TerrainGuide3D] under this generator moves or changes, run a coarse [method preview] a moment later, so the guide's effect shows while drawing.

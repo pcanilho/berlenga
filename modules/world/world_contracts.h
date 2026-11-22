@@ -414,6 +414,7 @@ public:
 		DISTURBANCE_BEETLE = 3,
 		DISTURBANCE_BEAVER = 4, // a beaver pond drained (age: years since)
 		DISTURBANCE_ROOTING = 5, // boar rooting turned the soil (age: fractional years since); ground layer only, see rooting_age_at; new kinds are appended only
+		DISTURBANCE_AVALANCHE = 6, // a dense avalanche broke the stand (SnowAvalanche3D stand_damage; age: years since)
 	};
 	// A surface fire that scorched crowns only this low (m) leaves the stand standing.
 	static constexpr float SURFACE_FIRE_SCORCH = 5.0f;
@@ -500,6 +501,10 @@ public:
 	// A stand-replacing disturbance over a disc (xz) that happened p_age_years ago (windthrow, a beetle outbreak; fire
 	// comes from WorldFire). Returns its id. Each change reports its area.
 	int add_disturbance(const Vector3 &p_center, float p_radius, int p_kind, float p_age_years);
+	// Many discs of one kind at once (an avalanche track, a windthrow): one grid rebuild and one stand_changed report.
+	// Earlier events of the same kind that a new disc covers are replaced, so a path struck again and again keeps
+	// one event per disc. Returns the number added.
+	int add_disturbances(const PackedVector3Array &p_centers, float p_radius, int p_kind, float p_age_years);
 	void set_disturbance_age(int p_id, float p_age_years);
 	void remove_disturbance(int p_id);
 	void clear_disturbances();

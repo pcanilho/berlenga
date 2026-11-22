@@ -77,6 +77,10 @@ class SnowAvalanche3D : public Node3D {
 	float forest_detrainment = 100.0f; // Pa: snow the stems take out of the flow, K / u kg/m2/s under closed canopy
 	float detrained_volume = 0.0f; // m3 stopped among trees
 	Vector<float> pressure; // Pa, the highest dynamic pressure the flow put on each cell
+	// The stand the dense flow broke (WorldStand DISTURBANCE_AVALANCHE), recorded when it stops.
+	bool stand_damage = true;
+	float stand_damage_pressure = 20000.0f; // Pa
+	void _record_stand_damage();
 	float _anchoring(const SnowCover3D *p_cover, int p_ci) const;
 	// Wet snow (follow-up 25).
 	bool wet_enabled = true;
@@ -345,6 +349,10 @@ public:
 	void set_propagation_index(float p_index) { propagation_index = MAX(p_index, 0.0f); }
 	float get_propagation_index() const { return propagation_index; }
 	void set_collapse_range(float p_m) { collapse_range = MAX(p_m, 0.0f); }
+	void set_stand_damage(bool p_enabled) { stand_damage = p_enabled; }
+	bool is_stand_damage_enabled() const { return stand_damage; }
+	void set_stand_damage_pressure(float p_pa) { stand_damage_pressure = MAX(p_pa, 0.0f); }
+	float get_stand_damage_pressure() const { return stand_damage_pressure; }
 	float get_collapse_range() const { return collapse_range; }
 
 	SnowAvalanche3D();

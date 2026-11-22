@@ -681,7 +681,13 @@ func _build_scene() -> void:
 		cam.fov = 40.0
 	elif view == "crop" or view == "leaf":
 		var h: float = first_info.height
-		cam.position = Vector3(xs[0] + first_info.crown_radius * 0.9, h * 0.62, 4.0)
+		var cr: float = first_info.crown_radius
+		if OS.has_environment("CROP_HR"): # "height,crown radius": the same framing for a pair whose trees differ a little.
+			var hr := OS.get_environment("CROP_HR").split_floats(",")
+			h = hr[0]
+			cr = hr[1]
+		print("crop framing CROP_HR=%f,%f" % [h, cr])
+		cam.position = Vector3(xs[0] + cr * 0.9, h * 0.62, 4.0)
 		cam.look_at(Vector3(xs[0], h * 0.62, 0))
 		cam.fov = 30.0 if view == "crop" else 7.0
 	else:

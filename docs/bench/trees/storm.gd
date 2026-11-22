@@ -346,6 +346,23 @@ func _glaze_test() -> void:
 		gwm.advance(3600.0)
 	_check(gwm.get_glaze_at(Vector3()) < g4 - 2.0, "4 h at +3 C melt it to %.1f mm" % gwm.get_glaze_at(Vector3()))
 	gwm.queue_free()
+	# The ice as geometry (TreeGenerator glaze_mm): an "ice" surface round the wood, skinned on a rigged tree.
+	var ig := TreeGenerator.new()
+	ig.preset = 2
+	ig.rigged = true
+	ig.glaze_mm = 7.0
+	var im: ArrayMesh = ig.generate()
+	var ice := -1
+	for si in im.get_surface_count():
+		if im.surface_get_name(si) == "ice":
+			ice = si
+	var iv := 0
+	var skinned := false
+	if ice >= 0:
+		var ia := im.surface_get_arrays(ice)
+		iv = (ia[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+		skinned = ia[Mesh.ARRAY_BONES] != null and (ia[Mesh.ARRAY_BONES] as PackedInt32Array).size() == iv * 4
+	_check(ice >= 0 and iv > 1000 and skinned and im.get_meta("tree_glaze_mm", 0.0) == 7.0, "glaze_mm 7: a skinned ice surface round the birch's wood (%d vertices)" % iv)
 	var body := StaticBody3D.new()
 	var cs := CollisionShape3D.new()
 	cs.shape = WorldBoundaryShape3D.new()

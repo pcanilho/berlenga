@@ -123,7 +123,7 @@ private:
 	// from a chimney or a campfire leans and drifts with the weather. weather_wind_coupling: per second.
 	bool weather_wind = true;
 	float weather_wind_coupling = 1.0f;
-	void _gather_weather_wind(const AABB &p_region, LocalVector<FlowBackend::Emitter> &r_emitters) const;
+	void _gather_weather_wind(const AABB &p_region, const AABB &p_source, LocalVector<FlowBackend::Emitter> &r_emitters) const;
 	// The GROUND COLOUR from the world (WorldGround.albedo_at under the gas): its linear albedo and how much of it is
 	// known (a), re-read every half second or when the gas moves 4 m; render_rd blends ground_albedo x ground_color
 	// toward it (under scatter_mutex).

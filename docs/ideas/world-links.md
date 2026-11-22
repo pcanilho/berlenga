@@ -109,6 +109,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Nebkhas → shrubs | linked (19 Nov) | TerrainGenerator3D `get_nebkhas(rect)` (x, top y, z, height m), `get_nebkha_height(pos)` (mound sand alone); `sand_sea_mask` (Image, red 0..1) shapes the ergs | VegetationField3D places a shrub on each mound top; the mounds are sand for the sand thread, no deformation hook needed (terrain-gen cf579682) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Lightning → struck tree variant | linked (20 Nov) | `WorldStand.strike_age_at` | WeatherLightning3D records canopy strikes; VegetationField3D swaps a tree within 3 m of a strike under 8 years old to its `tree_lightning_years` variant, from `get_strikes_in` copies (trees d898414194) |
+| Avalanches → young stands on their paths | linked (22 Nov) | `WorldStand` `DISTURBANCE_AVALANCHE` (6) via `add_disturbances` (one batch; repeats replace their discs) | SnowAvalanche3D `stand_damage` (on): when the dense flow stops, every 16 m block whose peak dynamic pressure passed `stand_damage_pressure` (20 kPa; Bartelt and Stockli 2001, Feistl et al. 2015) restarts the stand (Johnson 1987; Bebi, Kulakowski and Rixen 2009). Readers through stand age: vegetation and tree succession (pioneers in the track); avalanche legacies (snapped stems, alder thickets tagged kind 6) are for the trees and vegetation threads. Snow bench check: 18 of 18 track points reset at 32 kPa, none past the run-out |
 | Beaver dam fails → beaver meadow | linked (20 Nov) | `WorldStand` `DISTURBANCE_BEAVER` (4), age since the pond drained | WorldBeaverDam3D (world module): `breach()` or `state` Breached adds the disc over `pond_radius`, `years_drained` old; trees' STAND_BEAVER_POND follows it; PlantGenerator.make_beaver meadow reads it by RULE_DISTURBANCE (4,4) |
 | Deer browsing → understorey, saplings | linked (20 Nov) | `WorldStand.browse_at`, `browse_reach_at` | browse discs (pressure, reach); vegetation RULE_BROWSE 31, trees' browsed variants (trees.md 5aw) |
 | Game trails → ground detail, mud, snow, grass | linked (20 Nov) | `WorldStand.set_trails` (VegetationField3D.make_game_trails), `trail_at` | one network; readers wear their own surface by passes per year and tread share |
@@ -364,7 +365,7 @@ Sources: Smith and Barstad 2004 (J. Atmos. Sci. 61); Roe 2005 (Annu. Rev. Earth 
    per-cell drainage depth from a flow-accumulation pass over the weather's height grid, scaled by the night's
    radiative cooling and gated by wind and cloud; the contract's air temperature at a point reads it. Frost and
    fog then sit in hollows first, as they do.
-2. Avalanche paths keep the forest young. Source: SnowCover3D's avalanche runouts. Reader: `WorldStand`
+2. Avalanche paths keep the forest young (built 22 Nov). Source: SnowCover3D's avalanche runouts. Reader: `WorldStand`
    (a new disturbance kind, 4 is taken by beaver: avalanche as 6), trees (snapped stems, flagged crowns), vegetation
    (shrub and alder thickets in the track). Frequent avalanches hold paths in shrubs and young broadleaves while
    the forest stands either side (Bebi, Kulakowski and Rixen 2009; Patten and Knight 1994; Johnson 1987 on

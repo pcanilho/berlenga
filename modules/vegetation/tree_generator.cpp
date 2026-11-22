@@ -20530,6 +20530,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	// The bark surface's arrays as built, for BarkDetail3D's profile (read back later, they stall the render thread).
 	PackedVector3Array bark_profile_verts;
 	PackedColorArray bark_profile_colors;
+	Builder glaze_ice; // The glaze's ice (glaze_mm > 0), built from the finished bark.
 	for (int s = 0; s < 10; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
@@ -20828,6 +20829,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			arrays[Mesh::ARRAY_WEIGHTS] = b.weights;
 		}
 		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0);
+		if (s == 0 && glaze_mm > 0.0f) {
+			_glaze_build(b, glaze_ice);
+		}
 		if (s == 0) {
 			bark_profile_verts = b.verts;
 			bark_profile_colors = b.colors;
@@ -21034,6 +21038,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				static_materials.push_back(twin(m));
 			}
 		}
+	}
+	if (!glaze_ice.indices.is_empty()) {
+		_glaze_surface(mesh, glaze_ice, material_source, static_materials);
 	}
 	if (rigged && static_materials.size() == mesh->get_surface_count()) {
 		mesh->set_meta(SNAME("tree_static_materials"), static_materials);
@@ -23397,6 +23404,234 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 	return mesh;
 }
 
+// Glaze as geometry (trees.md 5be). Freezing rain coats the standing wood in clear ice, radially about glaze_mm deep
+// (Jones 1998's equivalent radial ice), thicker on the upper side where the drops strike and run before they freeze
+// (accretions on twigs are eccentric, deepest on top and windward: Szilder and Lozowski 1994, Makkonen 2000). The bark
+// is seen through it (Transmission, n 1.31, as SnowIcicles3D's clear ice).
+// - Stems and limbs (4 cm and more): the bark's own vertices pushed out along their normals, its relief included, so the
+//   plates stay under the ice and the skinning and LOD parts carry over.
+// - Thinner wood: a round tube per internode, 6 or 8 sided, a little longer than the internode so the joints close,
+//   capped at the shoot tips (the bark's 3 and 4 sided twigs, pushed out, read as square sticks).
+// Water that runs round to the underside before freezing hangs there as icicles, a few to ten times the glaze deep, on
+// the lower faces of the limbs and twigs (pendant icicles in ice storms: Hauer et al. 2006, figures 2-4; their growth,
+// Makkonen 1988).
+void TreeGenerator::_glaze_build(const Builder &p_bark, Builder &r_ice) const {
+	const float R = glaze_mm * 0.001f;
+	const float thick = 0.04f;
+	const bool skin = rigged && p_bark.bones.size() == p_bark.verts.size() * 4;
+	auto push_bone = [&](int p_bone) {
+		if (rigged) {
+			r_ice.bones.push_back(p_bone);
+			r_ice.bones.push_back(0);
+			r_ice.bones.push_back(0);
+			r_ice.bones.push_back(0);
+			r_ice.weights.push_back(1.0f);
+			r_ice.weights.push_back(0.0f);
+			r_ice.weights.push_back(0.0f);
+			r_ice.weights.push_back(0.0f);
+		}
+	};
+	// The thick bark, pushed out.
+	for (uint32_t pi = 0; pi < p_bark.parts.size(); pi++) {
+		const Vector4i pt = p_bark.parts[pi];
+		const uint8_t role = pi < p_bark.part_role.size() ? p_bark.part_role[pi] : uint8_t(Builder::ROLE_ALL);
+		if (p_bark.part_size[pi] < thick || pt.x + pt.y > p_bark.indices.size() || pt.z + pt.w > p_bark.verts.size()) {
+			continue;
+		}
+		Vector4i part;
+		r_ice.begin(part);
+		const int base = r_ice.verts.size();
+		for (int v = pt.z; v < pt.z + pt.w; v++) {
+			const Vector3 nn = v < p_bark.normals.size() ? p_bark.normals[v] : Vector3(0, 1, 0);
+			r_ice.verts.push_back(p_bark.verts[v] + nn * (R * (0.75f + 0.5f * MAX(nn.y, 0.0f))));
+			r_ice.normals.push_back(nn);
+			if (rigged) {
+				for (int k = 0; k < 4; k++) {
+					r_ice.bones.push_back(skin ? p_bark.bones[v * 4 + k] : 0);
+					r_ice.weights.push_back(skin ? p_bark.weights[v * 4 + k] : (k == 0 ? 1.0f : 0.0f));
+				}
+			}
+		}
+		bool ok = true;
+		for (int i = pt.x; i < pt.x + pt.y; i++) {
+			const int vi = p_bark.indices[i];
+			if (vi < pt.z || vi >= pt.z + pt.w) {
+				ok = false; // A part that indexes outside its own vertices: left out.
+				break;
+			}
+		}
+		if (!ok) {
+			r_ice.verts.resize(base);
+			r_ice.normals.resize(base);
+			if (rigged) {
+				r_ice.bones.resize(base * 4);
+				r_ice.weights.resize(base * 4);
+			}
+			continue;
+		}
+		for (int i = pt.x; i < pt.x + pt.y; i++) {
+			r_ice.indices.push_back(base + p_bark.indices[i] - pt.z);
+		}
+		r_ice.role = role;
+		r_ice.end(part, p_bark.part_size[pi]);
+	}
+	r_ice.role = Builder::ROLE_ALL;
+	// Thinner wood: a tube per internode, and the icicles under it.
+	const Vector3 up(0, 1, 0);
+	for (uint32_t ni = 0; ni < nodes.size(); ni++) {
+		const Node &n = nodes[ni];
+		if (n.removed || n.length <= 1e-4f) {
+			continue;
+		}
+		const int bone = ni < node_bone.size() ? node_bone[ni] : 0;
+		const bool tip = n.main < 0 || nodes[n.main].removed;
+		const float r0 = n.radius;
+		const float r1 = tip ? n.radius * 0.6f : nodes[n.main].radius;
+		if (r0 < thick) {
+			const int S = r0 + R < 0.006f ? 6 : 8;
+			Vector3 sx = n.dir.cross(up);
+			sx = sx.length_squared() > 1e-6f ? sx.normalized() : Vector3(1, 0, 0);
+			const Vector3 sz = sx.cross(n.dir).normalized();
+			Vector4i part;
+			r_ice.begin(part);
+			const int base = r_ice.verts.size();
+			// The upper side takes more (the centre rides up a quarter of the glaze).
+			const Vector3 lift = up * (0.25f * R);
+			for (int ring = 0; ring < 2; ring++) {
+				const Vector3 c = (ring == 0 ? n.start - n.dir * (0.5f * R) : n.end() + n.dir * (tip ? 0.0f : 0.5f * R)) + lift;
+				const float rr = (ring == 0 ? r0 : r1) + R;
+				for (int k = 0; k < S; k++) {
+					const float a = float(Math::TAU) * k / S;
+					const Vector3 d = sx * Math::cos(a) + sz * Math::sin(a);
+					r_ice.verts.push_back(c + d * rr);
+					r_ice.normals.push_back(d);
+					push_bone(bone);
+				}
+			}
+			for (int k = 0; k < S; k++) {
+				const int a0 = base + k, a1 = base + (k + 1) % S, b0 = a0 + S, b1 = a1 + S;
+				// Clockwise seen from outside (Godot's front faces), as the bark after its flip.
+				r_ice.indices.push_back(a0);
+				r_ice.indices.push_back(b1);
+				r_ice.indices.push_back(b0);
+				r_ice.indices.push_back(a0);
+				r_ice.indices.push_back(a1);
+				r_ice.indices.push_back(b1);
+			}
+			if (tip) {
+				// A rounded drop of ice over the shoot's tip.
+				const int c = r_ice.verts.size();
+				r_ice.verts.push_back(n.end() + lift + n.dir * (r1 + R));
+				r_ice.normals.push_back(n.dir);
+				push_bone(bone);
+				for (int k = 0; k < S; k++) {
+					r_ice.indices.push_back(base + S + k);
+					r_ice.indices.push_back(base + S + (k + 1) % S);
+					r_ice.indices.push_back(c);
+				}
+			}
+			r_ice.end(part, r0);
+		}
+		// Icicles under the less steep wood from 2 mm up, every 4 cm or so, not all of them grown.
+		if (r0 >= 0.002f && Math::abs(n.dir.y) < 0.7f && n.start.y > 0.5f) {
+			const int count = MAX(int(n.length / 0.04f), 1);
+			Vector4i part;
+			r_ice.begin(part);
+			for (int q = 0; q < count; q++) {
+				const uint32_t h = hash_murmur3_one_32(ni * 97u + uint32_t(q), uint32_t(seed) * 2654435761u + 77u);
+				const float u0 = float(h & 0xFFFF) / 65535.0f;
+				const float u1 = float(h >> 16) / 65535.0f;
+				if (u0 < 0.45f) {
+					continue;
+				}
+				const float t = (q + 0.5f) / count;
+				const float rad = Math::lerp(r0, r1, t);
+				// Its root inside the shell's underside.
+				const Vector3 root = n.start + n.dir * (n.length * t) - up * (rad + 0.5f * R);
+				const float len = R * (3.0f + 7.0f * u1 * u1) + rad * 0.5f;
+				const float rr = R * (0.6f + 0.4f * u0);
+				const int S = 6;
+				const int base = r_ice.verts.size();
+				for (int k = 0; k < S; k++) {
+					const float a = float(Math::TAU) * k / S + u1;
+					const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+					r_ice.verts.push_back(root + d * rr);
+					r_ice.normals.push_back((d + up * (rr / MAX(len, 1e-4f))).normalized());
+					push_bone(bone);
+				}
+				r_ice.verts.push_back(root - up * len);
+				r_ice.normals.push_back(-up);
+				push_bone(bone);
+				for (int k = 0; k < S; k++) {
+					r_ice.indices.push_back(base + k);
+					r_ice.indices.push_back(base + (k + 1) % S);
+					r_ice.indices.push_back(base + S);
+				}
+			}
+			// Near detail: the icicles go with the finest twigs' LOD.
+			r_ice.end(part, 0.0f);
+		}
+	}
+}
+
+void TreeGenerator::_glaze_surface(const Ref<ArrayMesh> &p_mesh, const Builder &p_ice, const Ref<ArrayMesh> &p_material_source, Array &r_static_materials) {
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = p_ice.verts;
+	arrays[Mesh::ARRAY_NORMAL] = p_ice.normals;
+	arrays[Mesh::ARRAY_INDEX] = p_ice.indices;
+	const bool skin = rigged && p_ice.bones.size() == p_ice.verts.size() * 4;
+	if (skin) {
+		arrays[Mesh::ARRAY_BONES] = p_ice.bones;
+		arrays[Mesh::ARRAY_WEIGHTS] = p_ice.weights;
+	}
+	Dictionary lods;
+	if (!skip_lods) {
+		const Dictionary all = _bark_lods(p_ice);
+		for (const KeyValue<Variant, Variant> &kv : all) {
+			if (PackedInt32Array(kv.value).size() < p_ice.indices.size()) {
+				lods[kv.key] = kv.value;
+			}
+		}
+	}
+	p_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0);
+	const int at = p_mesh->get_surface_count() - 1;
+	p_mesh->surface_set_name(at, "ice");
+	Ref<Material> mat;
+	if (p_material_source.is_valid()) {
+		for (int i = 0; i < p_material_source->get_surface_count(); i++) {
+			if (p_material_source->surface_get_name(i) == "ice") {
+				mat = p_material_source->surface_get_material(i);
+			}
+		}
+	}
+	Ref<StandardMaterial3D> m = mat;
+	if (m.is_null()) {
+		// Clear ice, as SnowIcicles3D's: light passes through and bends (n 1.31), reflecting 1.8% head-on.
+		m.instantiate();
+		m->set_albedo(Color(0.97f, 0.99f, 1.0f));
+		m->set_roughness(0.06f);
+		m->set_specular(0.335f);
+		m->set_feature(BaseMaterial3D::FEATURE_TRANSMISSION, true);
+		m->set_transmission(1.0f);
+		// Thin walled: a glaze shell is millimetres of ice over the wood, which it hardly displaces. As a medium round
+		// the wood, the path tracer's rays to the lights from bark inside it crossed the ice twice more and the white
+		// birch came out near black.
+		m->set_transmission_thin_walled(true);
+		m->set_transmission_ior(1.31f);
+		if (skin) {
+			m->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, true);
+		}
+	}
+	p_mesh->surface_set_material(at, m);
+	if (rigged) {
+		Ref<StandardMaterial3D> t = m->duplicate();
+		t->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, false);
+		r_static_materials.push_back(t);
+	}
+	p_mesh->set_meta(SNAME("tree_glaze_mm"), glaze_mm);
+}
+
 // Decay class of a tree the storm threw or broke, by the years since (trees.md 5am): a thrown spruce keeps its needles
 // for a year or two (green, then red), loses its twigs over the next years, its bark and limbs by twenty, and is a soft
 // log on the ground after that (Ulanova 2000, Picea abies log decay: needles gone by 11-20 years on the ground).
@@ -23454,6 +23689,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	windthrow_direction = p_from.windthrow_direction;
 	windthrow_band = p_from.windthrow_band;
 	flood_height = p_from.flood_height;
+	glaze_mm = p_from.glaze_mm;
 	flood_years = p_from.flood_years;
 	browse = p_from.browse;
 	browse_height = p_from.browse_height;
@@ -26343,6 +26579,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_ground_slope", "slope"), &TreeGenerator::set_ground_slope);
 	ClassDB::bind_method(D_METHOD("get_ground_slope"), &TreeGenerator::get_ground_slope);
 	ClassDB::bind_method(D_METHOD("set_stilt_height", "height"), &TreeGenerator::set_stilt_height);
+	ClassDB::bind_method(D_METHOD("set_glaze_mm", "mm"), &TreeGenerator::set_glaze_mm);
+	ClassDB::bind_method(D_METHOD("get_glaze_mm"), &TreeGenerator::get_glaze_mm);
 	ClassDB::bind_method(D_METHOD("set_flood_height", "height"), &TreeGenerator::set_flood_height);
 	ClassDB::bind_method(D_METHOD("get_flood_height"), &TreeGenerator::get_flood_height);
 	ClassDB::bind_method(D_METHOD("set_flood_years", "years"), &TreeGenerator::set_flood_years);
@@ -26521,6 +26759,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_erosion", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bank_erosion", "get_bank_erosion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stilt_height", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_stilt_height", "get_stilt_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_height", PROPERTY_HINT_RANGE, "0,6,0.01,suffix:m"), "set_flood_height", "get_flood_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glaze_mm", PROPERTY_HINT_RANGE, "0,60,0.1,suffix:mm"), "set_glaze_mm", "get_glaze_mm");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_years", PROPERTY_HINT_RANGE, "0,30,0.05,suffix:yr"), "set_flood_years", "get_flood_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "browse", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_browse", "get_browse");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "browse_height", PROPERTY_HINT_RANGE, "0.3,3,0.01,suffix:m"), "set_browse_height", "get_browse_height");

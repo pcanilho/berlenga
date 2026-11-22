@@ -761,13 +761,15 @@ over the opaque scene; Hillaire's aerial perspective (2020) does the same for th
 
 ## Review 12 leftovers (22 Nov 2026; Paulo: fix the three visible flaws)
 
-- **Oval in the lens.** A dome of lift cut by level dry sheets drew each plate's edge as a ring seen from below. The dry
-  sheets' gaps now close where the lift is large (wave_plate_x(): gone by 400 m of lift over saturation), so plates
+- **Plates inside the lens.** The dry sheets' gaps now close where the lift is large (wave_plate_x(): gone by 400 m of lift over saturation), so plates
   show at a lens's edges and merge inside it, as the Atlas describes the pile of plates.
 - **Seam at the horizon.** The far veils drawn over the ground lacked the air in front of them: each veil now keeps
   the environment fog's transmittance to its depth (the ground behind carries its own fog), its ambient normal tilts
   45 degrees up (the ground's half was warmer than ambient_bottom) and its ambient is scaled 0.38, measured on one
   lake-effect veil just above and just below the horizon (80 vs 83 grey).
-- **Lens outline.** Tried a moist floor of 0.88: it flooded the cirrus wave slab with streaks and drew the lens as a
-  fibrous sheet, so it stays 0.8. The outline from below still follows the moist patches; next is shaping it from the
-  wave's own crest (a lens condenses on the crest's contour, smooth and elongated along it).
+- **Lens outline and the oval.** The lenses read the mid layer's moisture at the altocumulus patches' scale, with their
+  saturated cores, so lift condensed only inside patches: each lens's outline was a patch's, and one small patch over a
+  bump of lift made a perfectly elliptical saucer (the "ghost oval"). The lenses now read the layer's moisture at three
+  times that scale and without the cores: broad and smooth, so the outline follows the wave's crest, a long lens
+  tapering at its ends, as observed. (A moist floor of 0.88 was tried first: it flooded the cirrus wave slab with
+  streaks; the floor stays 0.8.)

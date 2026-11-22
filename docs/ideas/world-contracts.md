@@ -36,7 +36,7 @@ contract returns with no provider.
 | `wind_aloft_at(pos, altitude)` | m/s, Vector3 (y 0) | 0 | Free wind: log law and Ekman veer to `boundary_layer_height`, then `wind_shear_aloft` |
 | `terrain_lee_at(pos)` | rad | NaN | Winstral's Sx from the terrain wind (positive in a lee; NaN outside it); fire's lee-slope whirls |
 | `precipitation_at(pos)` | mm/h | 0 | Water equivalent falling |
-| `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
+| `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there; under a warm nose aloft its melted share too (freezing rain), less what a deep cold layer refreezes to pellets (weather.md "Freezing rain and glaze") |
 | `air_temperature_at(pos)` note | C | | Includes WeatherMap3D's cold air pools (22 Nov): colder in hollows on clear calm nights, fading to the free air at the pool's top; `air_humidity_at` follows with the same vapour |
 | `rainfall_at(pos)`, `snowfall_at(pos)` | mm/h of water | 0 | The precipitation split by `rain_share_at` |
 | `orographic_factor_at(pos)` | ratio | 1 | The terrain climate's factor `precipitation_at` already carries (WeatherMap3D `orographic_rain`); a reader with its own climate read divides it out |
@@ -56,7 +56,7 @@ contract returns with no provider.
 | `canopy_closure_at(pos)`, `shelter_at(pos, h)` | 0..1 | 0, 1 | |
 | `season()` | dictionary (weather_season.h State) | 15 May, no snow | |
 | `frost_at(pos)` | mm | 0 | Hoarfrost on exposed surfaces (`dew_and_frost`) |
-| `glaze_at(pos)` | mm | 0 | Radial clear ice from freezing rain on exposed twigs and wires (ice storms); provider to come (weather), readers trees (trees.md 5be) |
+| `glaze_at(pos)` | mm | 0 | Radial clear ice from freezing rain on exposed twigs and wires (ice storms); provider WeatherMap3D (`warm_nose_temperature`, `warm_nose_base`, test knob `ice_storm_glaze`), readers trees (trees.md 5be) |
 | Events: `ground_strikes_after(serial)` | list | empty | Lightning, from `WeatherLightning3D` |
 | `day_of_year()` | 1..365 | 135 | The clock's date, else the map's season day |
 | `season_at(pos, day = -1)` | dictionary (season State) | the default climate at pos.y | At the point's height, the live departure included; day < 1 is today |
@@ -232,10 +232,11 @@ scripts; `set_stand(stub)` for a test.
 | Member | Unit | Default |
 | --- | --- | --- |
 | `stand_age_at(pos)` | years since the last stand-replacing disturbance (world xz) | -1 (old growth) |
-| `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle, 4 beaver (pond drained; years since), 5 rooting (boar; field layer only, left out here: `rooting_age_at`) (new kinds appended only) | 0 |
+| `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle, 4 beaver (pond drained; years since), 5 rooting (boar; field layer only, left out here: `rooting_age_at`), 6 avalanche (SnowAvalanche3D `stand_damage`; years since) (new kinds appended only) | 0 |
 | `add_disturbance(center, radius, kind, age_years)`, `set_disturbance_age(id, years)`, `remove_disturbance(id)`, `clear_disturbances()` | a disc, years ago; returns an id | |
 | `strike_age_at(pos)` | years since the youngest lightning strike within 3 m of a trunk at pos (xz) | -1 (none) |
 | `add_strike(pos, age_years)`, `clear_strikes()`, `get_strike_count()`, `get_strikes_in(rect, out)` (C++: (x, z, age) copies touching rect, taken on the main thread for worker placement; stubs' `_strike_age_at` has no list) | the crown attachment point, years ago; up to 4096, oldest dropped | |
+| `add_disturbances(centers, radius, kind, age)` | write: many discs of one kind in one batch, earlier discs of that kind they cover replaced | |
 | `rooting_age_at(pos)` | fractional years since the youngest boar rooting disc (DISTURBANCE_ROOTING) | -1 (none) |
 | `set_trails(Array)`, `get_trails()` | the worn-path network: Dictionaries with points (world xz), width m, passes per year, kind | empty |
 | `trail_at(pos)` | Vector2 (passes per year of the busiest trail, tread share 0..1) | (0, 0) |

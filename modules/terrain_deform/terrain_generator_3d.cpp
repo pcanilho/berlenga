@@ -2599,6 +2599,7 @@ bool TerrainGenerator3D::generate() {
 	_bake_spray();
 	_publish_globals();
 	_erode_tiles();
+	_bake_tile_flow_texture();
 	_build_dunes();
 	_build_sand_sea();
 	_place_springs();
@@ -2672,6 +2673,7 @@ void TerrainGenerator3D::clear_result() {
 	tile_delta.clear();
 	tile_flow.clear();
 	tile_deposit.clear();
+	tile_flow_texture.unref();
 	heights_generated.clear();
 	receivers_generated.clear();
 	water_body_generated.clear();
@@ -2958,7 +2960,7 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 	if (tile_erosion_enabled && !tile_delta.is_empty()) {
 		// The tile erosion's gullies belong to the ground before the touch-ups: they fade where a brush moved it.
 		const float keep = touch_mask.is_empty() ? 1.0f : 1.0f - CLAMP(_sample(touch_mask, p_x, p_z), 0.0f, 1.0f);
-		g += _tile_sample(tile_delta, p_x, p_z) * _water_fade(p_x, p_z) * keep;
+		g += (_tile_sample(tile_delta, p_x, p_z) - _gully_cut(p_x, p_z)) * _water_fade(p_x, p_z) * keep;
 		if (has_sea) {
 			g = MAX(g, MIN(_sample(heights, p_x, p_z), result_min + 0.15f));
 		}
@@ -4633,6 +4635,47 @@ real_t TerrainGenerator3D::get_tile_flow(const Vector3 &p_global_position) const
 	return _tile_sample(tile_flow, p_global_position.x, p_global_position.z);
 }
 
+// The channel share of the slope-area rule on the droplets' flow (as the shaders' terrain_gully(), which documents it).
+real_t TerrainGenerator3D::_gully_channel(real_t p_x, real_t p_z, real_t p_normal_y) const {
+	const real_t f = _tile_sample(tile_flow, p_x, p_z);
+	const real_t ny = CLAMP(p_normal_y, real_t(0.0), real_t(1.0));
+	const real_t s = Math::sqrt(MAX(1.0f - ny * ny, real_t(0.0))) / MAX(ny, real_t(0.05));
+	const real_t idx = f * tile_cell * tile_cell * s * s;
+	const real_t o = 3.0f * tile_cell;
+	const real_t m = 0.25f * (_tile_sample(tile_flow, p_x + o, p_z) + _tile_sample(tile_flow, p_x - o, p_z) + _tile_sample(tile_flow, p_x, p_z + o) + _tile_sample(tile_flow, p_x, p_z - o));
+	const real_t conc = f / MAX(m, real_t(0.01));
+	return Math::smoothstep(real_t(300.0), real_t(1200.0), idx) * Math::smoothstep(real_t(1.5), real_t(3.0), conc) * (1.0f - Math::smoothstep(real_t(0.97), real_t(0.995), ny));
+}
+
+Vector2 TerrainGenerator3D::get_gully_at(const Vector3 &p_global_position, real_t p_normal_y) const {
+	if (tile_flow.is_empty() || tile_flow_texture.is_null()) {
+		return Vector2();
+	}
+	return Vector2(_gully_channel(p_global_position.x, p_global_position.z, p_normal_y), _tile_sample(tile_deposit, p_global_position.x, p_global_position.z));
+}
+
+// Gullies cut deeper and narrower than the droplets on the 2 m grid can: an incised channel with steep banks along
+// each concentrated flow line (a gully's cross-section is a V or box a few metres wide, its depth growing with the
+// stream power, roughly A^0.5 S: Poesen et al. 2003, Kirkby and Bracken 2009). Depth 0.05 sqrt(A) m up to 2 m, half
+// that in rock; the channel share (smooth across the line) shapes the banks.
+float TerrainGenerator3D::_gully_cut(real_t p_x, real_t p_z) const {
+	if (gully_incision <= 0.0 || tile_flow.is_empty() || nx < 2) {
+		return 0.0f;
+	}
+	const real_t e = result_cell;
+	const real_t hx = _sample(heights, p_x + e, p_z) - _sample(heights, p_x - e, p_z);
+	const real_t hz = _sample(heights, p_x, p_z + e) - _sample(heights, p_x, p_z - e);
+	const real_t ny = 2.0f * e / Math::sqrt(hx * hx + hz * hz + 4.0f * e * e);
+	const real_t ch = _gully_channel(p_x, p_z, ny);
+	if (ch <= 0.0) {
+		return 0.0f;
+	}
+	const real_t area = _tile_sample(tile_flow, p_x, p_z) * tile_cell * tile_cell;
+	const real_t rk = rock.is_empty() ? 0.0f : CLAMP(_sample(rock, p_x, p_z), 0.0f, 1.0f);
+	const real_t d = MIN(0.05f * Math::sqrt(MAX(area, real_t(0.0))), real_t(2.0)) * (1.0f - 0.5f * rk);
+	return float(gully_incision * d * ch);
+}
+
 real_t TerrainGenerator3D::get_tile_deposit(const Vector3 &p_global_position) const {
 	return _tile_sample(tile_deposit, p_global_position.x, p_global_position.z);
 }
@@ -5598,6 +5641,27 @@ real_t TerrainGenerator3D::get_sand_interdune_at(const Vector3 &p_global_positio
 	return MAX(_sample(sand_interdune, p_global_position.x, p_global_position.z), 0.0f);
 }
 
+void TerrainGenerator3D::_bake_tile_flow_texture() {
+	const int n = tile_nx * tile_nz;
+	if (tile_flow.size() != uint32_t(n) || n <= 0 || tile_nx > 16384 || tile_nz > 16384) {
+		tile_flow_texture.unref();
+		return;
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(n * 2 * sizeof(uint16_t));
+	uint16_t *w = reinterpret_cast<uint16_t *>(bytes.ptrw());
+	for (int i = 0; i < n; i++) {
+		w[i * 2 + 0] = Math::make_half_float(MIN(tile_flow[i], 60000.0f));
+		w[i * 2 + 1] = Math::make_half_float(CLAMP(tile_deposit[i], 0.0f, 1000.0f));
+	}
+	const Ref<Image> img = Image::create_from_data(tile_nx, tile_nz, false, Image::FORMAT_RGH, bytes);
+	if (tile_flow_texture.is_valid() && tile_flow_texture->get_width() == tile_nx && tile_flow_texture->get_height() == tile_nz) {
+		tile_flow_texture->update(img);
+	} else {
+		tile_flow_texture = ImageTexture::create_from_image(img);
+	}
+}
+
 void TerrainGenerator3D::_publish_globals() {
 	if (!publish_shader_globals || geology_texture.is_null() || !is_inside_tree()) {
 		return;
@@ -5630,6 +5694,13 @@ void TerrainGenerator3D::_publish_globals() {
 	}
 	if (detail_keep_texture.is_valid()) {
 		set_global("terrain_detail_keep_map", detail_keep_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+	}
+	// The droplet erosion's flow and deposits (rills and gullies in the material); a zero rect switches it off.
+	if (tile_flow_texture.is_valid()) {
+		set_global("terrain_tile_flow_map", tile_flow_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		set_global("terrain_tile_flow_rect", Vector4(r.position.x, r.position.y, (tile_nx - 1) * tile_cell, (tile_nz - 1) * tile_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+	} else {
+		set_global("terrain_tile_flow_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
 	}
 	// Ice-worn rock for the detail normal; a zero rect switches it off.
 	if (ice_flow_texture.is_valid()) {
@@ -6333,6 +6404,36 @@ String TerrainGenerator3D::get_geology_shader_code() {
 	c += "	vec2 g = clamp((world_pos.xz - terrain_geology_rect.xy) / terrain_geology_rect.zw, 0.0, 1.0);\n";
 	c += "	return textureLod(terrain_geology_map, (g * (size - 1.0) + 0.5) / size, 0.0);\n";
 	c += "}\n";
+	// Rills and gullies from the tile erosion's droplet flow (docs/ideas/terrain-material.md, "Rills and gullies").
+	c += R"(
+// terrain_gully(p, ny) = (channel floor 0..1, deposit m) from TerrainGenerator3D's droplet erosion; ny the heightfield
+// normal's y. A channel holds where the slope-area index A S^2 passes a threshold (Montgomery and Dietrich 1988, 1992)
+// and the flow is concentrated: A from the droplets' flow (cells upslope, roughly) times the cell's area, S the slope's
+// tangent. The threshold is set above the papers' 25 to 250 m2 because the droplets' flow overstates the area on
+// steep ground (at 250 m2 nearly every mountain flank read as one channel). Off on gentle ground: valley floors are
+// the rivers' own.
+global uniform sampler2D terrain_tile_flow_map : filter_linear, repeat_disable;
+global uniform vec4 terrain_tile_flow_rect;
+vec2 terrain_gully(vec3 world_pos, float ny) {
+	if (terrain_tile_flow_rect.z <= 0.0) {
+		return vec2(0.0);
+	}
+	vec2 size = vec2(textureSize(terrain_tile_flow_map, 0));
+	vec2 g = clamp((world_pos.xz - terrain_tile_flow_rect.xy) / terrain_tile_flow_rect.zw, 0.0, 1.0);
+	vec2 uv = (g * (size - 1.0) + 0.5) / size;
+	vec2 f = textureLod(terrain_tile_flow_map, uv, 0.0).rg;
+	float cell = terrain_tile_flow_rect.z / max(size.x - 1.0, 1.0);
+	float s = sqrt(max(1.0 - ny * ny, 0.0)) / max(ny, 0.05);
+	float idx = f.r * cell * cell * s * s;
+	// Concentration: the flow against its mean three cells out. Hillslope flow is near the mean (sheet wash between
+	// the channels); a channel carries several times its banks'.
+	vec2 o = 3.0 / size;
+	float m = 0.25 * (textureLod(terrain_tile_flow_map, uv + vec2(o.x, 0.0), 0.0).r + textureLod(terrain_tile_flow_map, uv - vec2(o.x, 0.0), 0.0).r
+			+ textureLod(terrain_tile_flow_map, uv + vec2(0.0, o.y), 0.0).r + textureLod(terrain_tile_flow_map, uv - vec2(0.0, o.y), 0.0).r);
+	float conc = f.r / max(m, 0.01);
+	return vec2(smoothstep(300.0, 1200.0, idx) * smoothstep(1.5, 3.0, conc) * (1.0 - smoothstep(0.97, 0.995, ny)), f.g);
+}
+)";
 	return c;
 }
 
@@ -9095,6 +9196,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sample_heights", "origin", "spacing", "size"), &TerrainGenerator3D::sample_heights);
 	ClassDB::bind_method(D_METHOD("get_tile_flow", "global_position"), &TerrainGenerator3D::get_tile_flow);
 	ClassDB::bind_method(D_METHOD("get_tile_deposit", "global_position"), &TerrainGenerator3D::get_tile_deposit);
+	ClassDB::bind_method(D_METHOD("get_gully_at", "global_position", "normal_y"), &TerrainGenerator3D::get_gully_at);
 	ClassDB::bind_method(D_METHOD("get_last_tile_erosion_msec"), &TerrainGenerator3D::get_last_tile_erosion_msec);
 	ClassDB::bind_method(D_METHOD("set_tile_erosion_enabled", "enable"), &TerrainGenerator3D::set_tile_erosion_enabled);
 	ClassDB::bind_method(D_METHOD("is_tile_erosion_enabled"), &TerrainGenerator3D::is_tile_erosion_enabled);
@@ -9107,6 +9209,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_tile_erosion_droplets", "droplets"), &TerrainGenerator3D::set_tile_erosion_droplets);
 	ClassDB::bind_method(D_METHOD("get_tile_erosion_droplets"), &TerrainGenerator3D::get_tile_erosion_droplets);
 	ClassDB::bind_method(D_METHOD("set_tile_erosion_max_depth", "depth"), &TerrainGenerator3D::set_tile_erosion_max_depth);
+	ClassDB::bind_method(D_METHOD("set_gully_incision", "scale"), &TerrainGenerator3D::set_gully_incision);
+	ClassDB::bind_method(D_METHOD("get_gully_incision"), &TerrainGenerator3D::get_gully_incision);
 	ClassDB::bind_method(D_METHOD("get_tile_erosion_max_depth"), &TerrainGenerator3D::get_tile_erosion_max_depth);
 	ClassDB::bind_method(D_METHOD("set_tile_erosion_rock_hardness", "hardness"), &TerrainGenerator3D::set_tile_erosion_rock_hardness);
 	ClassDB::bind_method(D_METHOD("get_tile_erosion_rock_hardness"), &TerrainGenerator3D::get_tile_erosion_rock_hardness);
@@ -9441,6 +9545,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_erosion_apron", PROPERTY_HINT_RANGE, "0,1024,1,or_greater,suffix:m"), "set_tile_erosion_apron", "get_tile_erosion_apron");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_erosion_droplets", PROPERTY_HINT_RANGE, "0,8,0.05,or_greater"), "set_tile_erosion_droplets", "get_tile_erosion_droplets");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_erosion_max_depth", PROPERTY_HINT_RANGE, "0.1,100,0.1,or_greater,suffix:m"), "set_tile_erosion_max_depth", "get_tile_erosion_max_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gully_incision", PROPERTY_HINT_RANGE, "0,4,0.05,or_greater"), "set_gully_incision", "get_gully_incision");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_erosion_rock_hardness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_tile_erosion_rock_hardness", "get_tile_erosion_rock_hardness");
 
 	ADD_GROUP("Geology", "");

@@ -629,7 +629,7 @@ PlantGenerator::Wither::~Wither() {
 			continue; // Thistledown: dry pappus, white.
 		}
 		const Preset pr = generator->preset;
-		if (i == SURFACE_CENTRE && (pr == PRESET_ANTHILL || pr == PRESET_WOOD_ANT_NEST || pr == PRESET_MOLEHILL || pr == PRESET_ROOTED_SOD || pr == PRESET_LEAF_BANK)) {
+		if (i == SURFACE_CENTRE && (pr == PRESET_ANTHILL || pr == PRESET_WOOD_ANT_NEST || pr == PRESET_MOLEHILL || pr == PRESET_ROOTED_SOD || pr == PRESET_LEAF_BANK || pr == PRESET_COW_PAT || pr == PRESET_HORSE_DUNG || pr == PRESET_DEER_PELLETS)) {
 			continue; // Soil and thatch: nothing to wither.
 		}
 		PackedColorArray &c = generator->builders[i].colors;
@@ -793,6 +793,12 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 			return 25.0f; // Loose soil spreads underfoot and is trodden flat.
 		case PRESET_LEAF_BANK:
 			return 20.0f; // Loose leaves kicked about and trodden flat.
+		case PRESET_COW_PAT:
+		case PRESET_HORSE_DUNG:
+		case PRESET_DEER_PELLETS:
+			return 15.0f; // Squashed and spread underfoot.
+		case PRESET_DUNG_ROUGH:
+			return 300.0f; // A tussocky grass sward.
 		case PRESET_ANTHILL:
 			return 120.0f; // Firm and grassed; worn down only on busy paths (King 1977: none on tracks).
 		case PRESET_WOOD_ANT_NEST:
@@ -899,9 +905,13 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_ANTHILL:
 		case PRESET_WOOD_ANT_NEST:
 		case PRESET_MOLEHILL:
+		case PRESET_COW_PAT:
+		case PRESET_HORSE_DUNG:
+		case PRESET_DEER_PELLETS:
 		case PRESET_MAX:
 			return 0.0f;
 		case PRESET_SEDGE:
+		case PRESET_DUNG_ROUGH:
 		case PRESET_COCKSFOOT:
 		case PRESET_GRAZED_LAWN:
 		case PRESET_TIMOTHY:
@@ -4762,6 +4772,10 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 		case PRESET_COCKSFOOT:
 		case PRESET_TIMOTHY:
 		case PRESET_GRAZED_LAWN:
+		case PRESET_DUNG_ROUGH:
+		case PRESET_COW_PAT:
+		case PRESET_HORSE_DUNG:
+		case PRESET_DEER_PELLETS:
 			l.shape = LEAF_LINEAR;
 			t.aspect = 0.03f;
 			t.venation = VENATION_PARALLEL;
@@ -6435,6 +6449,26 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.33f, 0.22f, 0.11f);
 			stem_color = Color(0.22f, 0.16f, 0.1f);
 			break;
+		case PRESET_COW_PAT:
+			centre_color = Color(0.17f, 0.125f, 0.04f); // Olive-brown dung; the crust pales by age (vertex colours).
+			leaf_color = Color(0.13f, 0.27f, 0.07f); // Grass coming through an old pat.
+			stem_color = Color(0.3f, 0.28f, 0.18f);
+			break;
+		case PRESET_HORSE_DUNG:
+			centre_color = Color(0.25f, 0.22f, 0.1f); // Olive-khaki balls of coarse fibre.
+			leaf_color = Color(0.13f, 0.27f, 0.07f);
+			stem_color = Color(0.45f, 0.4f, 0.25f); // Undigested straw in it.
+			break;
+		case PRESET_DEER_PELLETS:
+			centre_color = Color(0.06f, 0.045f, 0.03f); // Near black, brown as they dry.
+			leaf_color = Color(0.13f, 0.27f, 0.07f);
+			stem_color = Color(0.3f, 0.28f, 0.18f);
+			break;
+		case PRESET_DUNG_ROUGH:
+			leaf_color = Color(0.09f, 0.23f, 0.05f); // Rank and dark: the dung's nitrogen (MacDiarmid and Watkin 1972).
+			stem_color = Color(0.28f, 0.33f, 0.14f);
+			centre_color = Color(0.42f, 0.4f, 0.24f); // Flowering spikelets, straw-green.
+			break;
 		case PRESET_LEAF_BANK:
 			leaf_color = Color(0.33f, 0.22f, 0.11f); // As the litter's, so the stand's leaf colours tint alike.
 			stem_color = Color(0.22f, 0.16f, 0.1f);
@@ -7003,6 +7037,18 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_LEAF_BANK:
 			_build_leaf_bank();
 			break;
+		case PRESET_COW_PAT:
+			_build_cow_pat();
+			break;
+		case PRESET_HORSE_DUNG:
+			_build_horse_dung();
+			break;
+		case PRESET_DEER_PELLETS:
+			_build_deer_pellets();
+			break;
+		case PRESET_DUNG_ROUGH:
+			_build_dung_rough();
+			break;
 		case PRESET_FOXGLOVE:
 			_build_foxglove();
 			break;
@@ -7316,7 +7362,10 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		default:
 			break;
 	}
-	const float roughness[SURFACE_MAX] = { leaf_rough, 0.75f, (preset == PRESET_BUTTERCUP || preset == PRESET_MARSH_MARIGOLD) ? 0.22f : 0.5f, preset == PRESET_LIVERWORT ? 0.6f : (preset == PRESET_SUNDEW ? 0.08f : 0.8f) }; // Sundew: the glistening dew.
+	// Fresh dung is wet and glossy for a day or two, then dulls as the crust forms.
+	const bool dung = preset == PRESET_COW_PAT || preset == PRESET_HORSE_DUNG || preset == PRESET_DEER_PELLETS;
+	const float centre_rough = dung ? Math::lerp(0.5f, 0.88f, Math::smoothstep(0.0f, 0.03f, _dung_age())) : (preset == PRESET_LIVERWORT ? 0.6f : (preset == PRESET_SUNDEW ? 0.08f : 0.8f));
+	const float roughness[SURFACE_MAX] = { leaf_rough, 0.75f, (preset == PRESET_BUTTERCUP || preset == PRESET_MARSH_MARIGOLD) ? 0.22f : 0.5f, centre_rough }; // Sundew: the glistening dew.
 	for (int s = 0; s < SURFACE_MAX; s++) {
 		Builder &b = builders[s];
 		if (b.indices.is_empty()) {
@@ -8502,6 +8551,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_WOOD_ANT_NEST);
 	BIND_ENUM_CONSTANT(PRESET_MOLEHILL);
 	BIND_ENUM_CONSTANT(PRESET_LEAF_BANK);
+	BIND_ENUM_CONSTANT(PRESET_COW_PAT);
+	BIND_ENUM_CONSTANT(PRESET_HORSE_DUNG);
+	BIND_ENUM_CONSTANT(PRESET_DEER_PELLETS);
+	BIND_ENUM_CONSTANT(PRESET_DUNG_ROUGH);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -8511,6 +8564,7 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_beaver", "stand", "variants", "textures", "season"), &PlantGenerator::make_beaver, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_rooting", "stand", "variants", "textures", "season"), &PlantGenerator::make_rooting, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_mounds", "set", "variants", "textures", "season"), &PlantGenerator::make_mounds, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_grazing", "set", "variants", "textures", "season"), &PlantGenerator::make_grazing, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_margin", "stand", "variants", "textures", "season"), &PlantGenerator::make_margin, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -8571,6 +8625,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(MOUNDS_MEADOW);
 	BIND_ENUM_CONSTANT(MOUNDS_WOOD);
 	BIND_ENUM_CONSTANT(MOUNDS_MAX);
+	BIND_ENUM_CONSTANT(GRAZE_CATTLE);
+	BIND_ENUM_CONSTANT(GRAZE_HORSE);
+	BIND_ENUM_CONSTANT(GRAZE_DEER);
+	BIND_ENUM_CONSTANT(GRAZE_MAX);
 	BIND_ENUM_CONSTANT(BEAVER_POND);
 	BIND_ENUM_CONSTANT(BEAVER_MEADOW);
 	BIND_ENUM_CONSTANT(BEAVER_MAX);

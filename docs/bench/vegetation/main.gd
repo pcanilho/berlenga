@@ -1187,6 +1187,58 @@ func _drift_check() -> void:
 	var on_litter: bool = bank_ok and last.rule_weight(PlantSpecies.RULE_LITTER, 0.2) == 0.0
 	_check("leaf drift: broadleaf floors end with leaf banks 8 to 25 cm high where the drift passes 1.35, only on broadleaf litter", bank_ok and on_litter and bh > 0.08 and bh < 0.25, [bank_ok, on_litter, bh])
 
+# Grazing roughs and dung (docs/ideas/vegetation.md, "Grazing roughs and dung"): the sets' make-up, and deer pellets
+# only on the heavily browsed lawn.
+func _grazing_check() -> void:
+	var cattle := PlantGenerator.make_grazing(PlantGenerator.GRAZE_CATTLE, 1, false)
+	var horse := PlantGenerator.make_grazing(PlantGenerator.GRAZE_HORSE, 1, false)
+	var deer := PlantGenerator.make_grazing(PlantGenerator.GRAZE_DEER, 1, false)
+	var pat_h := {}
+	var rough_h := 0.0
+	var rough_tag := false
+	for sp in cattle:
+		var pre: int = sp.get_meta("plant_preset", -1)
+		var top: float = (sp.meshes[0] as Mesh).get_aabb().end.y
+		if pre == PlantGenerator.PRESET_COW_PAT:
+			pat_h[float(sp.get_meta("dung_age"))] = top
+		elif pre == PlantGenerator.PRESET_DUNG_ROUGH:
+			rough_h = top
+			rough_tag = sp.has_meta("sward_mound")
+	var ages := pat_h.keys()
+	ages.sort()
+	var pats_age: bool = ages.size() == 3 and pat_h[ages[0]] < 0.06 and pat_h[ages[0]] > 0.015
+	var seeds := {}
+	for sp in horse:
+		if sp.get_patch_scale() > 0.0:
+			seeds[sp.get_patch_seed()] = true
+	_check("grazing: cattle pats of three ages 2-6 cm high, a rough 25 cm+ that keeps the sward out; horse latrines share one patch layout",
+			pats_age and rough_h > 0.25 and rough_tag and seeds.size() == 1, [pat_h, rough_h, rough_tag, seeds.keys()])
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	st.clear_browse()
+	var c := Vector2(-40, -40)
+	st.add_browse(Vector3(c.x, 0, c.y), 10.0, 0.9, 1.5)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign(deer)
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := 0
+	var off := 0
+	for s in deer.size():
+		for q in f.get_placements(s):
+			var d := Vector2(q.x, q.z).distance_to(c)
+			if d < 8.0:
+				on += 1
+			elif d > 14.0:
+				off += 1
+	f.free()
+	st.clear_browse()
+	_check("grazing: deer pellet groups on the browsed lawn only", on > 3 and off == 0, [on, off])
+
 func _mounds_check() -> void:
 	var meadow := PlantGenerator.make_mounds(PlantGenerator.MOUNDS_MEADOW, 1, false)
 	var wood := PlantGenerator.make_mounds(PlantGenerator.MOUNDS_WOOD, 1, false)
@@ -2115,6 +2167,7 @@ func _checks() -> void:
 	_rooting_check()
 	_mounds_check()
 	_drift_check()
+	_grazing_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []

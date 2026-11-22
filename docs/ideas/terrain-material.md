@@ -261,6 +261,27 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
   4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
 
+## Rills and gullies (22 Nov, Paulo's pick)
+
+The generator already cuts rills and gullies: tile erosion (droplets on a 2 m grid, terrain-generation.md stage 4) is
+on by default, but both benches switched it off for speed, so no frame showed it. The rocks bench now runs it by
+default (--no-tiles for a before frame). Built on top:
+- Channels. The droplets' flow is published as terrain_tile_flow_map (R16F flow, G16F deposit m) with
+  terrain_tile_flow_rect; terrain_gully(p, ny) in the generator's shader code and TerrainGenerator3D.get_gully_at
+  give the channel floor share. Rule: the slope-area index A S^2 (Montgomery and Dietrich 1988, 1992) from 300 to
+  1200 m2, times the flow's concentration against its mean 6 m out (1.5 to 3 times). The papers' 25 to 250 m2 marked
+  nearly every mountain flank: the droplets' flow overstates the contributing area on steep ground. The
+  concentration term keeps only the thalwegs (on the rocks world, 2 to 5 m wide lines down each gully).
+- Geometry. gully_incision (1) cuts each channel deeper and narrower than the 2 m droplets can: depth 0.05 sqrt(A)
+  m up to 2 m (half in rock; gully depth grows with stream power, about A^0.5 S: Poesen et al. 2003, Kirkby and
+  Bracken 2009), shaped across the line by the channel share. In get_height(), so collision, the landscape, the ground
+  patch, rocks and plants all see it. Rocks bench: --gully-incision=0 for a before frame, --gully-spot to look at one.
+- Material. Channel floors in soil become a gravel lag (scree layer: the flow strips the fines, Poesen et al. 2003),
+  lose the sward tint and read damp (albedo 0.78, Lobell and Asner 2002); deposits over 0.15 m on gentle ground
+  read as fresh fines (alluvium layer). TerrainMaterial3D's CPU ground contract mirrors both.
+- Open: on the rocks world tile erosion's 15 m max depth makes canyons of most soil gullies; sub-2 m rills still only
+  in the erosion detail normal.
+
 ## Cliff relief on the ground patch (21 Nov)
 
 GroundSurface3D's patch (prints, the beach's sand) is drawn with a copy of the terrain material over a mesh with no
