@@ -73,6 +73,7 @@ float WorldWeather::sun_visibility_at(const Vector3 &p_position) const WW_CALL(_
 float WorldWeather::canopy_closure_at(const Vector3 &p_position) const WW_CALL(_canopy_closure_at, contract_canopy_closure_at(p_position), 0.0f, p_position)
 float WorldWeather::frost_at(const Vector3 &p_position) const WW_CALL(_frost_at, contract_frost_at(p_position), 0.0f, p_position)
 float WorldWeather::glaze_at(const Vector3 &p_position) const WW_CALL(_glaze_at, contract_glaze_at(p_position), 0.0f, p_position)
+Vector3 WorldWeather::rime_at(const Vector3 &p_position) const WW_CALL(_rime_at, contract_rime_at(p_position), Vector3(), p_position)
 float WorldWeather::rainfall_at(const Vector3 &p_position) const WW_CALL(_rainfall_at, contract_rainfall_at(p_position), 0.0f, p_position)
 float WorldWeather::snowfall_at(const Vector3 &p_position) const WW_CALL(_snowfall_at, contract_snowfall_at(p_position), 0.0f, p_position)
 float WorldWeather::smoke_at(const Vector3 &p_position) const WW_CALL(_smoke_at, contract_smoke_at(p_position), 0.0f, p_position)
@@ -193,6 +194,7 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("canopy_closure_at", "position"), &WorldWeather::canopy_closure_at);
 	ClassDB::bind_method(D_METHOD("frost_at", "position"), &WorldWeather::frost_at);
 	ClassDB::bind_method(D_METHOD("glaze_at", "position"), &WorldWeather::glaze_at);
+	ClassDB::bind_method(D_METHOD("rime_at", "position"), &WorldWeather::rime_at);
 	ClassDB::bind_method(D_METHOD("mean_wind_at", "position"), &WorldWeather::mean_wind_at);
 	ClassDB::bind_method(D_METHOD("wind_aloft_at", "position", "altitude"), &WorldWeather::wind_aloft_at);
 	ClassDB::bind_method(D_METHOD("terrain_lee_at", "position"), &WorldWeather::terrain_lee_at);
@@ -240,6 +242,7 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_canopy_closure_at, "position");
 	GDVIRTUAL_BIND(_frost_at, "position");
 	GDVIRTUAL_BIND(_glaze_at, "position");
+	GDVIRTUAL_BIND(_rime_at, "position");
 	GDVIRTUAL_BIND(_mean_wind_at, "position");
 	GDVIRTUAL_BIND(_wind_aloft_at, "position", "altitude");
 	GDVIRTUAL_BIND(_terrain_lee_at, "position");

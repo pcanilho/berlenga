@@ -759,6 +759,17 @@ float weather_frost_at(vec3 p_world_pos) {
 	return max(textureLod(weather_frost_map, uv, 0.0).r, 0.0);
 }
 
+// Rime on twigs and edges (WeatherMap3D rime): mm along the horizontal way into the wind it grew from (x, z); zero
+// with no weather map.
+vec2 weather_rime_at(vec3 p_world_pos) {
+	if (weather_map_rect.z <= 0.0) {
+		return vec2(0.0);
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(weather_frost_map, 0));
+	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
+	return textureLod(weather_frost_map, uv, 0.0).ba;
+}
+
 global uniform sampler2D weather_spray_map;
 global uniform vec4 weather_spray_rect;
 
@@ -849,6 +860,46 @@ float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, 
 	float cover = smoothstep(0.0, 0.3, p_frost) * smoothstep(0.0, 0.8, p_normal_y);
 	r_albedo = mix(r_albedo, vec3(0.78, 0.8, 0.84), 0.65 * cover);
 	r_roughness = mix(r_roughness, 0.8, cover);
+	return cover;
+}
+
+// Smooth value noise for the rime's grain (trilinear over hashed lattice values, quintic fade).
+float weather_rime_vn(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = p - i;
+	f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+	vec4 h = vec4(0.0, 57.0, 113.0, 170.0) + dot(i, vec3(1.0, 57.0, 113.0));
+	vec4 a = fract(sin(h) * 43758.5453);
+	vec4 b = fract(sin(h + 1.0) * 43758.5453);
+	vec4 x = mix(a, b, f.x);
+	vec2 y = mix(x.xz, x.yw, f.y);
+	return mix(y.x, y.y, f.z);
+}
+
+// Rime (docs/ideas/world-links.md, "Rime"): supercooled cloud frozen on what stands in the wind, on the faces turned
+// into it first; a thick deposit wraps round to the sides (rime ice on summit trees, "snow ghosts"). White and matte,
+// soft rime's albedo about 0.8 (Warren 1982). p_rime from weather_rime_at(), p_normal the world normal, p_pos the
+// world position (the feathers' grain: cells drawn out along the wind, as feathers grow, and finer crust between).
+// Returns the cover.
+float weather_rime_apply(vec2 p_rime, vec3 p_normal, vec3 p_pos, inout vec3 r_albedo, inout float r_roughness) {
+	float mm = length(p_rime);
+	if (mm <= 0.05) {
+		return 0.0;
+	}
+	vec3 into = vec3(p_rime.x, 0.0, p_rime.y) / mm;
+	// The grain in a frame with one axis along the wind: feathers some centimetres long, a few millimetres across.
+	vec3 side = normalize(cross(into, vec3(0.0, 1.0, 0.0)));
+	vec3 q = vec3(dot(p_pos, into) * 18.0, p_pos.y * 70.0, dot(p_pos, side) * 70.0);
+	float grain = 0.6 * weather_rime_vn(q) + 0.4 * weather_rime_vn(q * 2.7 + 19.0);
+	float patch = weather_rime_vn(p_pos * 2.5 + 7.0);
+	float wrap = 0.5 * smoothstep(30.0, 150.0, mm);
+	float face = smoothstep(0.05 - wrap, 0.55 - wrap, dot(p_normal, into) + 0.3 * (patch - 0.5));
+	float cover = smoothstep(0.3, 4.0, mm) * face * smoothstep(-0.9, -0.4, p_normal.y);
+	// Thin rime is separate feathers with the surface between them; thick rime is a crust.
+	float fill = smoothstep(1.0 - smoothstep(0.5, 25.0, mm) - 0.15, 1.0 - smoothstep(0.5, 25.0, mm) + 0.15, grain + 0.2 * patch);
+	cover *= mix(0.35, 1.0, fill);
+	r_albedo = mix(r_albedo, vec3(0.84, 0.86, 0.9) * (0.9 + 0.1 * grain), 0.9 * cover);
+	r_roughness = mix(r_roughness, 0.85, cover);
 	return cover;
 }
 

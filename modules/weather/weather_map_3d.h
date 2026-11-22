@@ -596,6 +596,10 @@ private:
 	// glaze. 0: no warm layer, the phase is rain_fraction()'s.
 	float warm_nose_temperature = 0.0f;
 	Vector<float> cell_glaze; // mm of radial clear ice on an exposed twig (Jones 1998)
+	// Rime on an exposed twig (Makkonen 2000), mm times the unit vector into the wind it grew from (x, z).
+	Vector<float> cell_rime_x;
+	Vector<float> cell_rime_z;
+	bool rime = true;
 	// Sea spray (weather_spray.cpp, docs/ideas/world-links.md "Sea spray"): drops torn from breaking waves
 	// (WorldWater.breaking_at) carried downwind over a fine square round the follow point, settling on the shore:
 	// coarse drops within tens of metres (they wet), fine salt aerosol over hundreds. Salt stays on surfaces until
@@ -1068,6 +1072,7 @@ public:
 	float contract_salt_at(const Vector3 &p_position) const override { return get_salt_at(p_position); }
 	float contract_canopy_water_at(const Vector3 &p_position) const override { return get_canopy_water_at(p_position); }
 	float contract_glaze_at(const Vector3 &p_position) const override { return get_glaze_at(p_position); }
+	Vector3 contract_rime_at(const Vector3 &p_position) const override { return get_rime_at(p_position); }
 	float contract_canopy_wetness_at(const Vector3 &p_position) const override { return get_canopy_wetness_at(p_position); }
 	float contract_canopy_drip_at(const Vector3 &p_position) const override { return get_canopy_drip_at(p_position); }
 	float contract_ground_water_input_at(const Vector3 &p_position) const override { return get_ground_water_input_at(p_position); }
@@ -1159,6 +1164,12 @@ public:
 	float get_warm_nose_melt() const;
 	float get_glaze_at(Vector3 p_position) const;
 	static float glaze_accretion_rate(float p_precip_mm_h, float p_wind_m_s);
+	// Rime: supercooled cloud water freezing on what stands in the wind (rime on; WorldWeather.rime_at, the frost map's
+	// blue and alpha).
+	void set_rime(bool p_enabled);
+	bool is_rime_enabled() const { return rime; }
+	Vector3 get_rime_at(Vector3 p_position) const;
+	static float rime_accretion_rate(float p_cloud_water, float p_wind_m_s, float p_celsius);
 	// Cloud water at the ground (g/m3: 6.7 times the clouds' extinction per metre, droplets of 10 um effective radius)
 	// where the terrain stands in the cloud, and the fog water the canopy drips onto the ground (mm/h).
 	float get_fog_water_at(Vector3 p_position) const;

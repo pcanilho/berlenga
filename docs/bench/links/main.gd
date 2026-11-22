@@ -240,6 +240,10 @@ func _ready() -> void:
 			await _salt_view(a.substr(7), not OS.get_cmdline_user_args().has("--salt-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
 			return
+		if a.begins_with("--rime="):
+			await _rime_view(a.substr(7), OS.get_cmdline_user_args().has("--rime-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
 		if a.begins_with("--frost="):
 			await _frost_view(a.substr(8), OS.get_cmdline_user_args().has("--frost-off"))
 			get_tree().quit()
@@ -292,6 +296,7 @@ func _ready() -> void:
 	await _spray_sand_tests()
 	await _orographic_tests()
 	await _cold_pool_tests()
+	await _rime_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -1559,6 +1564,75 @@ func _dew_tests() -> void:
 
 
 
+func _rime_view(path: String, off: bool, pt: bool) -> void:
+	# A ridge in supercooled cloud, the wind from the left (-x): rime on the faces turned that way.
+	var m := _new_map()
+	m.ground_height = 0.0
+	m.cloud_base_height = -200.0
+	m.cloud_cover = 1.0
+	m.wind_speed = 10.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = -6.0
+	m.humidity = 0.98
+	m.air_follows_climate = false
+	m.rime = not off
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	print("rime %.1f mm" % m.get_rime_at(Vector3.ZERO).length())
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-30, -30, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.62, 0.66, 0.72)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.64, 0.7)
+	env.environment.ambient_light_energy = 0.6
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	add_child(env)
+	var wall := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(1.5, 3, 1.5)
+	wall.mesh = bm
+	wall.rotation_degrees = Vector3(0, 35, 0)
+	wall.position = Vector3(2.2, 1.5, -1.5)
+	wall.material_override = TerrainMaterial3D.new()
+	add_child(wall)
+	var gen := PlantGenerator.new()
+	gen.preset = 0
+	gen.apply_preset_colors()
+	var fern := MeshInstance3D.new()
+	fern.mesh = gen.generate()
+	fern.position = Vector3(0.3, 0, 1.0)
+	add_child(fern)
+	var rg := RockGenerator.new()
+	rg.seed = 3
+	var rock := MeshInstance3D.new()
+	rock.mesh = rg.generate()
+	rock.position = Vector3(-1.6, 0, 0.5)
+	add_child(rock)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 1.4, 5.5)
+	cam.rotation_degrees = Vector3(-10, 0, 0)
+	add_child(cam)
+	cam.make_current()
+	for i in 30:
+		await RenderingServer.frame_post_draw
+	if pt:
+		env.environment.pathtracing_enabled = true
+		for i in 40:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
 func _frost_view(path: String, off: bool) -> void:
 	var m := _new_map()
 	var c := _new_clock(1, 2.0)
@@ -1923,6 +1997,40 @@ func _cold_pool_tests() -> void:
 	m.queue_free()
 	c.queue_free()
 	valley.queue_free()
+	await get_tree().physics_frame
+
+
+# Rime: a summit in supercooled cloud and a westerly wind; the deposit grows into the wind and goes in a thaw.
+func _rime_tests() -> void:
+	WorldContracts.clear_overrides()
+	var m := _new_map()
+	m.ground_height = 1200.0
+	m.cloud_base_height = 1000.0
+	m.cloud_cover = 1.0
+	m.wind_speed = 10.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = -6.0
+	m.humidity = 0.98
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(6.0 * 3600.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var at := Vector3(0, 1200, 0)
+	var lwc: float = w.fog_water_at(at)
+	var r: Vector3 = w.rime_at(at)
+	var rate: float = WeatherMap3D.rime_accretion_rate(lwc, 10.0, -6.0)
+	_check("rime: a summit in supercooled cloud grows rime into the wind (Makkonen 2000), about the rate's worth", r.length() > 5.0 and r.x < -0.95 * r.length() and absf(r.length() - 6.0 * rate) < 0.2 * 6.0 * rate + 1.0, "%.1f mm toward (%.2f, %.2f) in 6 h of %.2f g/m3 cloud at 10 m/s (%.1f mm/h)" % [r.length(), r.x / maxf(r.length(), 1e-4), r.z / maxf(r.length(), 1e-4), lwc, rate])
+	var warm: float = WeatherMap3D.rime_accretion_rate(lwc, 10.0, 0.5)
+	m.cloud_base_height = 2500.0
+	m.temperature = 4.0
+	m.snap_to_settings()
+	m.advance(6.0 * 3600.0)
+	var left: float = w.rime_at(at).length()
+	_check("rime: none grows above freezing (wet growth is glaze), and a thaw out of the cloud sheds it", warm == 0.0 and left < 0.5, "%.2f mm/h at +0.5 C; %.2f mm left after 6 h at +4 C" % [warm, left])
+	m.rime = false
+	_check("rime: off, none", w.rime_at(at) == Vector3(), "")
+	m.queue_free()
 	await get_tree().physics_frame
 
 
