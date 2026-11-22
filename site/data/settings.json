@@ -596,6 +596,17 @@
    "topic": ""
   },
   {
+   "name": "Flickering lights",
+   "settings": [
+    "Light3D.flicker_mode"
+   ],
+   "note": "",
+   "what": "a light-style pattern or a failing lamp with seeded faults, with its emissive material following.",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
    "name": "Back lighting",
    "settings": [
     "rendering/pathtracing/back_lighting"

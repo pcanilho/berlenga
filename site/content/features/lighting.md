@@ -17,5 +17,6 @@ summary: "4096 path-traced lights (upstream 64); emissive surfaces count as ligh
 
   *Indirect light reuse: the same 4 samples per pixel, off then on; both brightened 3x to show the noise.*
 
+- **Flickering lights** (`Light3D.flicker_mode`): a light-style pattern or a failing lamp with seeded faults, with its emissive material following.
 - Shadow-only casters bounce light.
 - Lit raster transparents and rain (`rendering/pathtracing/max_transparency_layers` 0), still traced in reflections.
