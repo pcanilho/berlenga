@@ -66,6 +66,7 @@ public:
 	virtual float contract_frost_at(const Vector3 &p_position) const { return 0.0f; } // mm
 	virtual float contract_glaze_at(const Vector3 &p_position) const { return 0.0f; } // mm of radial clear ice on exposed twigs
 	virtual Vector3 contract_rime_at(const Vector3 &p_position) const { return Vector3(); } // mm of rime on exposed twigs, along the way it grew (into the wind)
+	virtual float contract_valley_fog_top_at(const Vector3 &p_position) const { return -Math::INF; } // m, the top of valley (radiation) fog over the point
 	virtual Vector3 contract_mean_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s at 10 m, no gusts
 	virtual Vector3 contract_wind_aloft_at(const Vector3 &p_position, float p_altitude) const { return Vector3(); } // m/s, free air
 	virtual float contract_terrain_lee_at(const Vector3 &p_position) const { return NAN; } // rad, Winstral's Sx; NaN: no terrain wind there
@@ -127,6 +128,7 @@ protected:
 	GDVIRTUAL1RC(float, _frost_at, Vector3)
 	GDVIRTUAL1RC(float, _glaze_at, Vector3)
 	GDVIRTUAL1RC(Vector3, _rime_at, Vector3)
+	GDVIRTUAL1RC(float, _valley_fog_top_at, Vector3)
 	GDVIRTUAL1RC(Vector3, _mean_wind_at, Vector3)
 	GDVIRTUAL2RC(Vector3, _wind_aloft_at, Vector3, float)
 	GDVIRTUAL1RC(float, _terrain_lee_at, Vector3)
@@ -185,6 +187,9 @@ public:
 	// Rime on exposed twigs and edges (supercooled cloud freezing on contact, Makkonen 2000): its length is the
 	// deposit in mm, its direction horizontal and into the wind it grew from (the feathers point that way).
 	Vector3 rime_at(const Vector3 &p_position) const;
+	// Valley fog: the absolute height of the radiation fog's top over the point (it fills the cold pools of clear calm
+	// nights where their air reaches its dew point), -INF where there is none.
+	float valley_fog_top_at(const Vector3 &p_position) const;
 	Vector3 mean_wind_at(const Vector3 &p_position) const;
 	Vector3 wind_aloft_at(const Vector3 &p_position, float p_altitude) const;
 	float terrain_lee_at(const Vector3 &p_position) const;
@@ -264,6 +269,10 @@ public:
 	// Height of the waves breaking at the point (m): the broken waves in the surf zone, whitecaps (cover times wave
 	// height) over open water; 0 where none break.
 	virtual float contract_water_breaking_at(const Vector3 &p_position) const { return 0.0f; }
+	// The last flood's high-water mark over the point: x the highest surface it reached (m, world), y the days since
+	// that peak, z and w the flow's direction at the peak (unit, x and z; zero if not known); (-INF, -1, 0, 0) where
+	// this producer kept none. Readers: wrack lines, silt lines, flood-scoured plants.
+	virtual Vector4 contract_water_high_water_at(const Vector3 &p_position) const { return Vector4(-Math::INF, -1.0f, 0.0f, 0.0f); }
 	// A load entering this water at the point (kg/s of each), from runoff, banks or a landslide; it carries it on.
 	virtual void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {}
 	// A load dropped into this water at once (kg of each): a debris flow's or a landslide's fines, a bank's collapse.
@@ -292,6 +301,7 @@ protected:
 	GDVIRTUAL1RC(Vector2, _sediment_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _sediment_deposit_at, Vector3)
 	GDVIRTUAL1RC(float, _breaking_at, Vector3)
+	GDVIRTUAL1RC(Vector4, _high_water_at, Vector3)
 	GDVIRTUAL3(_add_sediment, Vector3, float, float)
 	GDVIRTUAL3(_add_sediment_mass, Vector3, float, float)
 
@@ -317,6 +327,10 @@ public:
 	Vector2 sediment_deposit_at(const Vector3 &p_position) const;
 	// Height of the waves breaking at the point (m), the largest any producer reports; 0 where none break.
 	float breaking_at(const Vector3 &p_position) const;
+	// The last flood's high-water mark: x the highest surface reached there (m, world), y days since that peak, z and
+	// w the peak flow's direction (unit x, z; zero if not known); (-INF, -1, 0, 0) where no producer kept one. The
+	// highest mark of all producers answers.
+	Vector4 high_water_at(const Vector3 &p_position) const;
 	// A load entering the water that answers at the point (kg/s of mineral and of ash); none there: it is lost.
 	void add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s);
 	// A load dropped into that water at once (kg of mineral and of ash): mixed into the water around the point.

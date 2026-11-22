@@ -870,9 +870,9 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 			vec2 aw = vec2(dot(p.xz, wdir), dot(p.xz, vec2(-wdir.y, wdir.x)));
 			float foot = max(t * p_pixel, 0.03125 * ds);
 			float lod = max(log2(foot / (2400.0 / 128.0)), 0.0);
-			float st = textureLod(cloud_detail, vec3(aw.x / 16000.0, aw.y / 2400.0, p.y / 1200.0), lod).b;
+			float st = textureLod(cloud_detail, vec3(aw.x / 6000.0, aw.y / 2400.0, p.y / 1200.0), lod).b; // stretched 7:1 along the wind it drew the thin end as brush strokes
 			float eta = wc_wave_eta(p);
-			float x = wc_plate_x(eta - 125.0 * dep, p) + 40.0 * (st - 0.5);
+			float x = wc_plate_x(eta - 125.0 * dep, p) + 25.0 * (st - 0.5);
 			if (x <= 0.0) {
 				continue;
 			}

@@ -514,6 +514,20 @@
 				The terrain square's area in world space (x, z, width, depth).
 			</description>
 		</method>
+		<method name="get_valley_fog_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Depth (m) of the valley fog over [param position], from the ground to its top; 0 where the cell has none.
+			</description>
+		</method>
+		<method name="get_valley_fog_top_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Height (m) of the valley fog's top over [param position], [code]-INF[/code] where the cell has none. Answers [method WorldWeather.valley_fog_top_at].
+			</description>
+		</method>
 		<method name="get_vortex_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -1297,6 +1311,12 @@
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="4.0">
 			How often the cells are refreshed, per second. Gusts are evaluated every frame regardless.
+		</member>
+		<member name="valley_fog" type="bool" setter="set_valley_fog" getter="is_valley_fog_enabled" default="true">
+			Fill saturated cold air pools with radiation fog (Whiteman 2000; Gultepe et al. 2007): it forms over about an hour on clear calm nights, sits flat at the basin's saturation level and lifts after sunrise or in a wind. Drawn as a [FogVolume] lit by the froxel fog plus its multiple scattering, so raster and path tracing match. Needs [member cold_pools].
+		</member>
+		<member name="valley_fog_density" type="float" setter="set_valley_fog_density" getter="get_valley_fog_density" default="0.02">
+			Extinction inside the valley fog (1/m); 0.02 gives about 150 m visibility, a moderate radiation fog.
 		</member>
 		<member name="water_temperature" type="float" setter="set_water_temperature" getter="get_water_temperature_setting" default="-100.0">
 			Open water's surface temperature (C) when set; below -99 [method get_water_temperature] follows the climate or the air.

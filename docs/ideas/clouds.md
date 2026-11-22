@@ -773,3 +773,22 @@ over the opaque scene; Hillaire's aerial perspective (2020) does the same for th
   times that scale and without the cores: broad and smooth, so the outline follows the wave's crest, a long lens
   tapering at its ends, as observed. (A moist floor of 0.88 was tried first: it flooded the cirrus wave slab with
   streaks; the floor stays 0.8.)
+
+## Review 13 (22 Nov 2026; docs: stepped cumulus, streaky plate edge, lens as a contrail, lake wall)
+
+- **One root cause for the steps and streaks.** The reprojection's history clamp (Karis 2014 min/max box over the
+  drawn pixels) took its 3x3 box round the nearest drawn pixel, which changes every 4 pixels. Wherever one sample's
+  noise pulled the box in, the converged history was cut along that 4-pixel grid: edges came out stair-stepped (the
+  same at --no-reprojection, since that flag's frames differed by 0.1 grey) and plate edges as short vertical streaks.
+  Measured on an 8x zoom of a cumulus edge: column-to-column jumps every 4th column of 1.9 against 0.3 to 0.7; now
+  0.7 to 0.95, flat. The box is now bilinear in the pixel's position (the four drawn pixels about it, each with its own
+  3x3 box; 16 fetches instead of 9), so it moves smoothly and the clamp still follows motion. Quilez's smoothing of the
+  shape texels was tried first, changed nothing, and was dropped (its cost bought nothing).
+- **Iridescent plate tip.** The plates' streak noise was stretched 7:1 along the wind, which drew the thin tip as
+  brush strokes; now about 2.5:1, with a 25 m wander instead of 40.
+- **Lake band wall.** Still open: the far veil drawn over the ground reads as a flat grey strip with a toothed foot.
+- **Lenses that end.** The test ridge was 80 km of near-uniform crest, so its lee wave was the same along it and every
+  lens one bar the ridge's length, seen along it as a contrail. Moisture stretched along the wind (streamlines) was
+  tried and changed nothing, since the layer is near saturation everywhere and the lift alone sets the outline. The
+  ridge now has summits some 16 km apart with saddles under half their height, as a range has; the lenses form over
+  the summits, a few km long, and the bench view looks up the wind from downwind.

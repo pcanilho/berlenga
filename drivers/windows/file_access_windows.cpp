@@ -558,12 +558,15 @@ bool FileAccessWindows::store_buffer(const uint8_t *p_src, uint64_t p_length) {
 	ERR_FAIL_NULL_V(f, false);
 	ERR_FAIL_COND_V(!p_src && p_length > 0, false);
 
+	// Any filled read cache means the CRT cursor sits past the caller's
+	// logical position (seek() inside the cached range only moves the logical
+	// cursor and resets prev_op), so realign before writing regardless of
+	// prev_op. Otherwise read-header / seek / store sequences such as the
+	// Windows export template modifier write to the end of the cached chunk.
+	if (read_cache_filled > 0) {
+		_sync_for_write();
+	}
 	if (flags == READ_WRITE || flags == WRITE_READ) {
-		if (prev_op == READ) {
-			// Rewind the CRT cursor to the caller's logical position so the
-			// write lands where they expect, not past any buffered read-ahead.
-			_sync_for_write();
-		}
 		prev_op = WRITE;
 	}
 

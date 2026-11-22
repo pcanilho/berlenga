@@ -172,6 +172,8 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Storm rain, outflow, steering wind → rain shafts and shelf cloud | linked (20 Nov) | `add_storm` storms | sky rain shafts; `get_cloud_base_at` / `WorldWeather.cloud_base_at` lowered by the shelf (docs/ideas/clouds.md round 8) |
 | Clear calm nights → cold air pools in hollows (frost, valley fog) | linked (22 Nov) | `WorldWeather.air_temperature_at` / `air_humidity_at` (WeatherMap3D `cold_pools`, `get_cold_pool_at`) | Night x clear x calm forcing builds a deficit up to `cold_pool_strength` (8 C) over about 2 h where the cell lies below the mean height within 600 m (topographic position, Lundquist et al. 2008; Whiteman 2000), faded to nothing at the pool's top; breaks up after sunrise or in a wind. Dew, hoarfrost and evaporation take the pooled air per cell; mist, snow and every air reader see it through the contract. Links check: a 200 m valley, 6.9 C pool, -0.9 C on the floor under 5.3 C up the slope, humidity 1.00 vs 0.85, frost only on the floor |
 | Supercooled cloud, wind → rime on windward twigs, rocks and cliffs | linked (22 Nov) | `WorldWeather.rime_at` (Vector3: mm, into the wind); `weather_frost_map` B, A (mm along x, z) | WeatherMap3D `rime` (on): per cell, the fog water at canopy height below 0 C grows 0.3 x LWC x wind at 300 kg/m3 (Makkonen 2000, ISO 12494) into the wind; sheds in a thaw (0.7/h per K to 3 K), sun and rain. `weather_rime_apply` (material.cpp): the faces turned into the wind first, wrapping round as it thickens past 3 cm, feathers drawn out along the wind, thin rime as separate feathers; plants, plant impostors, rocks and steep terrain. SnowRime3D still grows the near-field feather geometry. Links check: 66 mm in 6 h of 0.38 g/m3 at 10 m/s and -6 C, gone after a 6 h thaw. Raster and PT match (project files fork/world-links/rime-raster-pt.png) |
+| Clear night surface cooling → needle ice, frozen ground, puddle ice | linked (22 Nov) | `WorldWeather.surface_temperature_at` (air + WeatherMap3D's radiative cooling) | GroundSurface3D's frost (needle ice, Stefan front) and puddle ice read the surface temperature, not the air: needle ice is a radiation frost, clear calm nights with the air a degree or two above 0 C and the bare surface some degrees below (Outcalt 1971; Lawler 1988). With no sky clock or dew_and_frost off the cooling is 0 and the surface is the air. Ground check (--test=frost): air +1.5 C, 2.4 cm of needles under a clear sky (surface -4.6 C), none overcast (surface 1.6 C) |
+| Saturated cold pool → valley fog sea | linked (22 Nov) | `WorldWeather.valley_fog_top_at` (WeatherMap3D `valley_fog`, `get_valley_fog_top_at`, `get_valley_fog_depth_at`) | Per cell, the fog top is the highest level in the cold pool where air temperature is at or below the dew point; the basin's level is taken from its lowest fogged cell within 600 m, so the top lies flat across the valley and thins out on the slopes (Whiteman 2000; Gultepe et al. 2007). Forms over about 1 h, lifts in 0.5 h / (1 + wind/3) after sunrise. Drawn as one box FogVolume over the map, density `valley_fog_density` (0.02/m) under the top, white droplets plus a multiple-scattering emission so the sea reads white, not grey; PT reads the same froxels, raster and PT match (project files fork/world-links/valley-fog-raster-pt.png). Links check: 28 m deep in a 200 m valley, top 29 m, 30 m 150 m up the valley, clear at 300 m; a 6 m/s wind lifts it with the pool |
 | Air temperature, dew point → cloud base | linked (20 Nov) | `get_air_dew_point` | `WorldWeather.cloud_base_at`; readers mist, lightning, snow line, orographic rain |
 | Mountain waves → wind aloft | linked (20 Nov) | WeatherMountainWaves | `get_wind_at` vertical part above the boundary layer; `WorldWeather.mountain_wave_velocity_at` alone; ground wind unchanged |
 | Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |
@@ -390,13 +392,13 @@ Makkonen 2000 (Phil. Trans. R. Soc. A); ISO 12494.
    its dew point and thickens upward to the inversion's base; it lifts and burns off from the edges after sunrise
    (Whiteman 2000; Gultepe et al. 2007 review of fog; Price 2011 on valley fog in the UK). Per cell: fog top =
    ground + pool depth where the floor air is saturated; the sky's volumetric clouds draw it as a flat-topped layer.
-2. Needle ice and frost heave on bare wet ground. Source: the weather's surface temperature (cooling term), soil
+2. Needle ice and frost heave on bare wet ground (22 Nov: GroundSurface3D already grew it, mud round 9; the link built is its surface temperature). Source: the weather's surface temperature (cooling term), soil
    water (ground wetness, rain), night length. Readers: GroundSurface3D (a lifted, crumbly surface that keeps
    prints sharp until it collapses, pebbles lifted), vegetation (seedlings heaved out on bare soil). Needle ice grows
    where the surface sits a few degrees below 0 C over moist, fine soil, columns a few centimetres a night (Outcalt
    1971; Lawler 1988; Grab 2001 on needle ice in mountains). Shading: grey-white columns on wet silt and mud, gone
    by mid morning.
-3. Fire builds its own cloud (pyrocumulus). Source: `WorldFire.heat_at` integrated over a burning area, the air's
+3. Fire builds its own cloud (pyrocumulus) (22 Nov: already built in ebdad64b and linked end to end: the cap at the plume's own condensation level, pyroCb lightning and rain through the storm list, its downdraft in the wind the fire spread reads, fire light on the cloud; nothing added). Source: `WorldFire.heat_at` integrated over a burning area, the air's
    temperature and humidity at height. Reader: the clouds (a convective tower over the plume when the fire's heat
    flux lifts the plume past the lifting condensation level; Briggs plume rise, Luderer et al. 2006; Fromm et al.
    2010 on pyroCb), lightning (a pyroCb can strike ahead of the fire), rain (rarely). Flow already carries the
@@ -405,3 +407,26 @@ Makkonen 2000 (Phil. Trans. R. Soc. A); ISO 12494.
 Sources: Whiteman 2000; Gultepe et al. 2007 (Pure Appl. Geophys.); Price 2011 (Boundary-Layer Meteorol.); Outcalt
 1971 (Water Resour. Res.); Lawler 1988 (Prog. Phys. Geogr.); Grab 2001; Briggs 1975; Luderer et al. 2006 (Atmos.
 Chem. Phys.); Fromm et al. 2010 (BAMS).
+
+## Round 11 candidates (22 Nov, card to Paulo)
+
+1. Night drainage winds (katabatic flow). Source: the cold pools' forcing (night, clear, calm) and the terrain slope
+   WeatherMap3D already reads. Reader: `WorldWeather.wind_at` near the ground, so smoke, mist, snow drift, grass and
+   tree wind and the fire spread (night fires back down slopes) all see it. Air cooled on a slope runs down it at 1 to
+   3 m/s in a layer some 10 to 50 m deep, strongest a few metres up, and gathers into a down-valley wind
+   (Prandtl 1942 slope flow; Mahrt 1982; Whiteman 2000, ch. 13). Per cell: speed from the radiative cooling and
+   the slope sine (Prandtl's balance), along the fall line, faded by the ambient wind; zero by day (the upslope
+   anabatic flow is weaker and later).
+2. Valley fog wets and rimes what stands in it. Source: the valley fog's depth (built this round). Reader: the
+   fog water at the canopy (`fog_water_at`), so fog drip wets the ground under trees in a fog sea and, below 0 C,
+   rime grows on the trees in it (the hoarfrost forests of inversion valleys). Radiation fog holds 0.05 to 0.3 g/m3
+   of liquid water (Gultepe et al. 2007); today `fog_water_at` reads only the sky's clouds.
+3. Cold pools trap smoke near the ground. Source: the cold pool depth and the smoke layer's column (WeatherMap3D
+   smoke). Reader: the near-ground haze and the smoke a camera sees in a valley at dawn. A night inversion caps the
+   mixing: smoke from a fire or chimneys stays within the pool's depth instead of the 2 km day layer, tens of times
+   denser near the ground, and clears as the pool breaks up mid-morning (Lavdas 1996, smoke in the southern US
+   valleys at night; Achtemeier 2005, PB-Piedmont). Per cell: the mixing depth becomes the pool depth while a pool
+   lies there.
+
+Sources: Prandtl 1942; Mahrt 1982 (J. Atmos. Sci.); Whiteman 2000 (Mountain Meteorology); Gultepe et al. 2007;
+Lavdas 1996 (USDA Forest Service GTR SRS-6); Achtemeier 2005 (Int. J. Wildland Fire).

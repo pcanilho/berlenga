@@ -693,6 +693,7 @@ void GroundSurface3D::_update_cells() {
 				in.repel = CLAMP(fire->water_repellency_at(p), 0.0f, 1.0f);
 			}
 			in.compacted = worn_tracks && _wear_any() ? wear_compaction(get_wear_at(p)) * (1.0f - 0.5f * sand) : 0.0f;
+			in.sealed = worn_tracks && !wear_cells.is_empty() ? get_seal_at(p) * CLAMP(1.0f - 2.0f * sand, 0.0f, 1.0f) : 0.0f;
 			// Under more than a few centimetres of snow the snow surface takes the print.
 			in.fixed = rock || (snow && float(snow->call("get_depth_at", p)) > 0.03f);
 			// Frozen ground (round 8): a crust holds; a thaw's wet layer over the frost, or a fresh thaw not yet
@@ -1267,6 +1268,16 @@ void GroundSurface3D::set_mud_layer(bool p_enabled) {
 
 void GroundSurface3D::_wear_press(const Vector3 &p_position, const Vector2 &p_half, float p_yaw) {
 	const float r = p_half.length();
+	float knead = 0.0f;
+	if (ground_valid && (int)cell_inputs.size() == ground_n * ground_n) {
+		const int n = ground_n;
+		const int ix = CLAMP(int(Math::round(p_position.x / ground_spacing)) - ground_origin.x, 0, n - 1);
+		const int iz = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
+		const CellInput &in = cell_inputs[iz * n + ix];
+		if (!in.fixed && in.frozen < 0.5f) {
+			knead = Math::smoothstep(0.55f, 0.75f, MAX(in.moisture, in.mud > 0.02f ? 1.0f : 0.0f)) * CLAMP(1.0f - 2.0f * in.sand, 0.0f, 1.0f);
+		}
+	}
 	const Vector2 ax(Math::cos(p_yaw), -Math::sin(p_yaw));
 	const Vector2 az(Math::sin(p_yaw), Math::cos(p_yaw));
 	const int x0 = int(Math::floor((p_position.x - r) / WEAR_CELL));
@@ -1284,6 +1295,11 @@ void GroundSurface3D::_wear_press(const Vector3 &p_position, const Vector2 &p_ha
 			if (wear_clock - w.last > WEAR_GAP) {
 				w.passes += 1.0f;
 				wear_dirty = true;
+				// Wet clay kneaded by the pass (round 23.1): a tenth of the way to a full seal each pass (puddling
+				// needs working, not one press), only past its plastic wetness.
+				if (knead > 0.0f) {
+					w.seal += 0.1f * knead * (1.0f - w.seal);
+				}
 			}
 			w.last = wear_clock;
 		}
@@ -1528,6 +1544,8 @@ void GroundSurface3D::_trail_wallow_update(float p_delta) {
 				const float lr = 0.45f;
 				add_mud_deposit(at, lr, 0.25f * moved / 4.0f / (float(Math::PI) * lr * lr), q == 3);
 			}
+			// The rolling kneads the wet floor into a seal (round 23.1), a third of the way a visit.
+			_seal_add(Vector3(site.x, g, site.y), r, 1.0f - Math::pow(1.0f - 0.33f, float(k)));
 			wallow_sites.insert(Vector2i(gx, gz));
 			wallow_visits += k;
 		}
@@ -1543,6 +1561,25 @@ float GroundSurface3D::_trail_passes(const Vector3 &p_position) const {
 		return 0.0f;
 	}
 	return tr.x * tr.y * wear_regrowth_days / (365.0f * 0.69314718f);
+}
+
+float GroundSurface3D::get_seal_at(Vector3 p_position) const {
+	const Wear *w = wear_cells.getptr(Vector2i(int(Math::floor(p_position.x / WEAR_CELL)), int(Math::floor(p_position.z / WEAR_CELL))));
+	return w ? w->seal : 0.0f;
+}
+
+void GroundSurface3D::_seal_add(const Vector3 &p_position, float p_radius, float p_amount) {
+	for (int z = int(Math::floor((p_position.z - p_radius) / WEAR_CELL)); z <= int(Math::floor((p_position.z + p_radius) / WEAR_CELL)); z++) {
+		for (int x = int(Math::floor((p_position.x - p_radius) / WEAR_CELL)); x <= int(Math::floor((p_position.x + p_radius) / WEAR_CELL)); x++) {
+			const Vector2 d((x + 0.5f) * WEAR_CELL - p_position.x, (z + 0.5f) * WEAR_CELL - p_position.z);
+			if (d.length() > p_radius) {
+				continue;
+			}
+			Wear &w = wear_cells[Vector2i(x, z)];
+			w.seal += CLAMP(p_amount, 0.0f, 1.0f) * (1.0f - w.seal);
+		}
+	}
+	wear_dirty = true;
 }
 
 float GroundSurface3D::get_wear_at(Vector3 p_position) const {
@@ -1572,10 +1609,14 @@ void GroundSurface3D::_wear_update(double p_delta) {
 	if (keep >= 1.0f) {
 		return;
 	}
+	// A puddled seal lasts the season (Sharma and De Datta 1985): it halves over 60 days of game time as drying
+	// cracks, frost and roots open the soil again.
+	const float keep_seal = Math::exp(-float(p_delta) * MAX(runoff_time_scale, 0.0f) * 0.69314718f / (60.0f * 86400.0f));
 	LocalVector<Vector2i> gone;
 	for (KeyValue<Vector2i, Wear> &kv : wear_cells) {
 		kv.value.passes *= keep;
-		if (kv.value.passes < 0.05f && wear_clock - kv.value.last > 1.0) {
+		kv.value.seal *= keep_seal;
+		if (kv.value.passes < 0.05f && kv.value.seal < 0.02f && wear_clock - kv.value.last > 1.0) {
 			gone.push_back(kv.key);
 		}
 	}
@@ -2841,6 +2882,11 @@ float GroundSurface3D::_water_conductivity(const CellInput &p_in) const {
 	// A packed wheel track takes in a fraction of the water the loose soil beside it does (Ankeny et al. 1990), so
 	// rain stands in worn tracks.
 	k *= 1.0f - 0.8f * p_in.compacted;
+	// Puddled clay (round 23.1): wheels and wallowing animals knead wet clay until its structure is gone and its
+	// pores shut; puddling cuts its saturated conductivity by one to three orders of magnitude (Sharma and De Datta
+	// 1985, puddled rice soils; the same seal lines clay ponds and canals), so rain stands in sealed ruts and
+	// wallows for days. Here a full seal takes it to a hundredth.
+	k *= 1.0f - 0.99f * p_in.sealed;
 	return k;
 }
 
@@ -2993,7 +3039,9 @@ void GroundSurface3D::_ice_update(double p_delta) {
 		return;
 	}
 	const WorldWeather *wm = _weather();
-	const float t = wm ? wm->air_temperature_at(_weather_point()) : 10.0f;
+	// The water's surface, not the air: a clear calm night skims a puddle over with the air above freezing (the
+	// weather's radiative cooling, about 4 to 6 K under a clear sky; docs/ideas/world-links.md, "Surface temperature").
+	const float t = wm ? wm->surface_temperature_at(_weather_point()) : 10.0f;
 	if ((int)ice_state.size() != n * n * ICE_FLOATS) {
 		if (t >= 0.0f) {
 			return; // nothing frozen, nothing to freeze
@@ -3115,7 +3163,10 @@ void GroundSurface3D::_frost_update(double p_delta) {
 	}
 	_frost_seed(0);
 	const WorldWeather *wm = _weather();
-	const float t = wm ? wm->air_temperature_at(_weather_point()) : 10.0f;
+	// The ground's surface, not the air: needle ice is a radiation frost's (clear calm nights with the air a degree or
+	// two above freezing and the bare surface some degrees below; Outcalt 1971), and Stefan's front runs from the
+	// surface (docs/ideas/world-links.md, "Surface temperature").
+	const float t = wm ? wm->surface_temperature_at(_weather_point()) : 10.0f;
 	const float dt = float(p_delta) * runoff_time_scale;
 	for (int i = 0; i < n * n; i++) {
 		const CellInput &in = cell_inputs[i];
@@ -8083,13 +8134,14 @@ void GroundSurface3D::_wear_save() {
 		return;
 	}
 	f->store_32(WEAR_MAGIC);
-	f->store_32(1);
+	f->store_32(2);
 	f->store_double(Time::get_singleton()->get_unix_time_from_system());
 	f->store_32(wear_cells.size());
 	for (const KeyValue<Vector2i, Wear> &kv : wear_cells) {
 		f->store_32(uint32_t(kv.key.x));
 		f->store_32(uint32_t(kv.key.y));
 		f->store_float(kv.value.passes);
+		f->store_float(kv.value.seal);
 	}
 }
 
@@ -8335,23 +8387,30 @@ void GroundSurface3D::_wear_load() {
 		return;
 	}
 	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::READ, FileAccess::COMPRESSION_ZSTD);
-	if (f.is_null() || f->get_32() != WEAR_MAGIC || f->get_32() != 1) {
+	if (f.is_null() || f->get_32() != WEAR_MAGIC) {
+		return;
+	}
+	const uint32_t version = f->get_32();
+	if (version != 1 && version != 2) {
 		return;
 	}
 	const double when = f->get_double();
 	const double away = when > 0.0 ? MAX(Time::get_singleton()->get_unix_time_from_system() - when, 0.0) : 0.0;
 	const float keep = wear_regrowth_days > 0.0f ? float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (double(wear_regrowth_days) * 86400.0))) : 1.0f;
+	const float keep_seal = float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (60.0 * 86400.0)));
 	const uint32_t count = f->get_32();
 	for (uint32_t i = 0; i < count && !f->eof_reached(); i++) {
 		const int32_t kx = int32_t(f->get_32());
 		const int32_t kz = int32_t(f->get_32());
 		const Vector2i k(kx, kz);
 		const float passes = f->get_float() * keep;
-		if (passes < 0.05f) {
+		const float seal = version >= 2 ? f->get_float() * keep_seal : 0.0f;
+		if (passes < 0.05f && seal < 0.02f) {
 			continue;
 		}
 		Wear &w = wear_cells[k];
 		w.passes = MAX(w.passes, passes);
+		w.seal = MAX(w.seal, seal);
 	}
 	wear_dirty = true;
 }
@@ -10319,6 +10378,7 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_trail_wallows"), &GroundSurface3D::is_trail_wallows);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "trail_wallows"), "set_trail_wallows", "is_trail_wallows");
 	ClassDB::bind_method(D_METHOD("get_wallow_count"), &GroundSurface3D::get_wallow_count);
+	ClassDB::bind_method(D_METHOD("get_seal_at", "position"), &GroundSurface3D::get_seal_at);
 	ClassDB::bind_method(D_METHOD("get_wallow_visits"), &GroundSurface3D::get_wallow_visits);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");

@@ -152,6 +152,7 @@ private:
 	struct Wear {
 		float passes = 0.0f;
 		double last = -1e9;
+		float seal = 0.0f; // round 23.1: puddled clay, its pores kneaded shut (0..1)
 	};
 	static constexpr float WEAR_CELL = 0.25f;
 	static constexpr float WEAR_GAP = 0.25f; // s a cell must go unpressed before the next press is a new pass
@@ -701,6 +702,7 @@ private:
 		float frozen = 0.0f; // frozen soil at the surface (round 8): 0..1, how far it holds as a crust
 		float repel = 0.0f; // a fire's water repellency (WorldFire.water_repellency_at), 0..1
 		float compacted = 0.0f; // worn-in tracks (round 14.2): how far the passes have packed the soil, 0..1
+		float sealed = 0.0f; // puddled clay (round 23.1): its infiltration cut, 0..1
 	};
 	LocalVector<CellInput> cell_inputs;
 	float _water_conductivity(const CellInput &p_in) const;
@@ -1175,6 +1177,8 @@ public:
 	void set_wear_regrowth_days(float p_days);
 	float get_wear_regrowth_days() const { return wear_regrowth_days; }
 	float get_wear_at(Vector3 p_position) const;
+	float get_seal_at(Vector3 p_position) const; // round 23.1: puddled clay seal, 0..1
+	void _seal_add(const Vector3 &p_position, float p_radius, float p_amount);
 	void add_wear(Vector3 p_position, Vector2 p_size, float p_yaw, float p_passes);
 	void clear_wear();
 	static float wear_compaction(float p_passes);

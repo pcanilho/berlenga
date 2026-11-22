@@ -1399,7 +1399,7 @@
     "needle_ice"
    ],
    "note": "",
-   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep.",
+   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep; needle ice and puddle ice follow the ground's own surface temperature, so clear calm nights just above freezing still grow them.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -4198,10 +4198,11 @@
    "name": "Dew and frost",
    "settings": [
     "dew_and_frost",
-    "cold_pools"
+    "cold_pools",
+    "valley_fog"
    ],
    "note": "",
-   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost and fog form there first.",
+   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost forms there first, and saturated pools fill with a flat fog sea that lifts after sunrise or in a wind.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

@@ -298,6 +298,7 @@ func _ready() -> void:
 		await _run_frost_tests()
 		await _run_rut_guidance_tests()
 		await _run_needle_tests()
+		await _run_needle_radiation_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -397,6 +398,7 @@ func _ready() -> void:
 		return
 	if puddle_test:
 		await _run_puddle_tests()
+		await _run_seal_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -1706,6 +1708,50 @@ func _run_needle_tests() -> void:
 	_check("the ground contract answers from the ground, and a stub replaces only what it overrides", same and mixed and WorldContracts.get_ground().standing_water_at(p) == surface.get_standing_water_at(p), "live %s, stubbed %s" % [same, mixed])
 	wm.queue_free()
 
+# Needle ice from a radiation frost (world-links): a clear calm November night with the air at +1.5 C cools the bare
+# surface some degrees below freezing (the weather's surface temperature), and the needles grow; under an overcast
+# sky the surface stays with the air and none do.
+func _run_needle_radiation_tests() -> void:
+	near_on = false
+	var grown := []
+	for overcast in [false, true]:
+		await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+		surface.mud_layer = false
+		surface.frozen_ground = true
+		surface.needle_ice = true
+		var clock: Node = ClassDB.instantiate("SkyClock")
+		clock.latitude = 46.0
+		clock.month = 11
+		clock.day = 15
+		clock.time_of_day = 1.0
+		clock.time_scale = 0.0
+		add_child(clock)
+		var wm := WeatherMap3D.new()
+		wm.cloud_cover = 1.0 if overcast else 0.0
+		wm.rain_rate = 0.0
+		wm.humidity = 0.75
+		wm.temperature = 1.5
+		wm.wind_speed = 1.0
+		wm.air_daily_cycle = false
+		wm.air_follows_climate = false
+		add_child(wm)
+		wm.sky_clock = wm.get_path_to(clock)
+		wm.snap_to_settings()
+		for i in 150:
+			await get_tree().physics_frame
+		var q := Vector3(0, 0, -2)
+		var ts: float = WorldContracts.get_weather().surface_temperature_at(q)
+		surface.runoff_time_scale = 5000.0
+		for i in 430: # about 10 h
+			await get_tree().physics_frame
+		surface.runoff_time_scale = 1.0
+		grown.append([surface.get_needle_ice_at(q).x, ts])
+		wm.queue_free()
+		clock.queue_free()
+		await get_tree().physics_frame
+	print("  radiation frost: %.1f cm of needles under a clear sky (surface %.1f C), %.1f cm overcast (surface %.1f C), the air +1.5 C" % [grown[0][0] * 100.0, grown[0][1], grown[1][0] * 100.0, grown[1][1]])
+	_check("a clear calm night with the air above freezing grows needle ice from the surface's radiative cooling; an overcast one does not", grown[0][0] > 0.005 and grown[1][0] == 0.0, "%.1f cm clear, %.1f cm overcast" % [grown[0][0] * 100.0, grown[1][0] * 100.0])
+
 # Frozen ground (mud round 8): a night at -8 C freezes the top some 10 cm, a boot no longer marks it and an old rut stays
 # as it is; a thaw leaves a soaked layer on the frost that a boot sinks deeper into than before the frost.
 func _run_frost_tests() -> void:
@@ -2739,6 +2785,41 @@ func _run_flake_tests() -> void:
 		print("  %s: %d clods stuck before the bars, %d after, %d shed; at z %.1f" % [k, before, car.get_mud_splat_count(), car.get_mud_flakes_shed(), car.global_position.z])
 	_check("dried clods shake off over bumps", res["dry"][2] >= 3 and res["dry"][3] > 9.5, "%d of %d shed" % [res["dry"][2], res["dry"][0]])
 	_check("wet ones hold", res["wet"][2] == 0, "%d shed" % res["wet"][2])
+	# Round 23.2: drying runs on the world's clock (a truck parked overnight dries overnight), and the next drive
+	# sheds the dried crust without bumps: fast on smooth ground the air past the body lifts its curled plates.
+	var clocks := {}
+	for scale in [1.0, 60.0]:
+		r = await _flake_car([20.0, 0.5, 2.0, 0.0])
+		car = r[0]
+		wm = r[1]
+		wm.time_scale = scale
+		for i in 120:
+			await get_tree().physics_frame
+		clocks[scale] = car.get_body_mud_wetness()
+	print("  wetness after 2 s at a world clock of 1 and 60: %.3f, %.3f" % [clocks[1.0], clocks[60.0]])
+	_check("parked mud dries on the world's clock", clocks[60.0] < 0.1 and clocks[1.0] > 0.9, "%.3f at 60x, %.3f at 1x" % [clocks[60.0], clocks[1.0]])
+	var runs := {}
+	for k in ["crawl", "fast"]:
+		r = await _flake_car([35.0, 0.05, 10.0, 0.0])
+		car = r[0]
+		car.max_engine_torque = 3000.0 if k == "fast" else 700.0
+		t = 0
+		while car.get_body_mud_wetness() > 0.02 and t < 3600:
+			await get_tree().physics_frame
+			t += 1
+		surface.follow_target = NodePath()
+		surface.queue_free()
+		await get_tree().physics_frame
+		var before := car.get_mud_splat_count()
+		car.throttle = 1.0 if k == "fast" else 0.15
+		var top := 0.0
+		for i in 600:
+			await get_tree().physics_frame
+			top = maxf(top, car.get_linear_velocity().length())
+		runs[k] = [before, car.get_mud_flakes_shed(), top]
+		print("  dried, %s on smooth ground for 10 s (top %.1f m/s): %d of %d clods shed" % [k, top, runs[k][1], before])
+		car.queue_free()
+	_check("driven fast, the air strips dried crust a crawl leaves", runs["fast"][1] >= 4 and runs["fast"][1] > runs["crawl"][1] + 3, "%d at speed, %d crawling" % [runs["fast"][1], runs["crawl"][1]])
 
 
 # Tyre pressure (mud round 12): the same car at road pressure and aired down, on firm ground and in mud.
@@ -7731,3 +7812,41 @@ func _run_parked_tests() -> void:
 	for car in cars:
 		car.queue_free()
 	WorldContracts.clear_overrides()
+
+
+# Puddled clay (mud round 23.1): two equal hollows in wet clay soil, one kneaded by ten wheel passes; the same water
+# poured into each (rain on a wallow or a rut). The kneaded one's floor is sealed: its water stands days longer.
+func _run_seal_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.75, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.worn_tracks = true
+	var a := Vector3(-1.2, 0, 0.2)
+	var b := Vector3(1.2, 0, 0.2)
+	for p in [a, b]:
+		surface.press_box(p, Vector2(0.6, 0.6), 0.0, 0.0, 0.1)
+	for i in 10:
+		surface.press_wheel(a + Vector3(0, -0.1, 0), Vector2(0.25, 0.3), 0.0, 0.005, Vector2(0, 1))
+		for f in 20:
+			await get_tree().physics_frame
+	var seal_a := surface.get_seal_at(a)
+	var seal_b := surface.get_seal_at(b)
+	surface.refresh_ground()
+	for f in 5:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	surface.runoff_time_scale = 100.0
+	for p in [a, b]:
+		surface.add_water(p, 0.25, 0.015)
+	surface.settle(0.05, 0.05)
+	var a0 := _water_volume(a, 0.6).x
+	var b0 := _water_volume(b, 0.6).x
+	surface.settle(1200.0, 1.0)
+	var a1 := _water_volume(a, 0.6).x
+	var b1 := _water_volume(b, 0.6).x
+	surface.runoff_time_scale = 1.0
+	print("  seal %.2f kneaded, %.2f not; water %.1f -> %.1f l kneaded, %.1f -> %.1f l not, after 33 h" % [seal_a, seal_b, a0 * 1000.0, a1 * 1000.0, b0 * 1000.0, b1 * 1000.0])
+	_check("wheels knead wet clay into a seal", seal_a > 0.5 and seal_b == 0.0, "%.2f against %.2f" % [seal_a, seal_b])
+	_check("a sealed hollow holds its rain far longer", a0 > 0.005 and b0 > 0.005 and a1 > 0.5 * a0 and a1 > 2.0 * b1, "%.1f l against %.1f l left" % [a1 * 1000.0, b1 * 1000.0])
+	near_on = true

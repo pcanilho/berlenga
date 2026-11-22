@@ -603,6 +603,20 @@ private:
 	Vector<float> cell_pool_depth; // m, the cell below the mean height round it
 	void _update_pool_depths();
 	void _update_cold_pools(double p_weather_dt);
+	// Valley fog (radiation fog filling the cold pools to where their air is saturated): its depth per cell, drawn
+	// as one FogVolume over the map whose fog shader reads the tops from a texture.
+	bool valley_fog = true;
+	float valley_fog_density = 0.02f; // 1/m: about 200 m visibility inside (Koschmieder 3.9 / V)
+	float valley_fog_multiple_scatter = 1.0f; // scale of the multiple-scattering light added inside
+	Vector<float> cell_valley_fog; // m of fog over the cell's ground
+	float valley_fog_max = 0.0f; // m, the deepest this update (0: none)
+	Vector2 valley_fog_span; // the fog's lowest ground and highest top, m
+	Ref<Image> valley_fog_image;
+	Ref<ImageTexture> valley_fog_texture;
+	FogVolume *valley_fog_volume = nullptr;
+	Ref<ShaderMaterial> valley_fog_material;
+	void _update_valley_fog(float p_dt_h);
+	void _apply_valley_fog(bool p_active);
 	float _cold_pool_at(const Vector3 &p_position) const;
 	Vector<float> cell_fog; // g/m3 of cloud water at the canopy
 	Vector<float> cell_fog_drip; // mm/h, the fog's share of the drainage
@@ -1105,6 +1119,7 @@ public:
 	float contract_canopy_water_at(const Vector3 &p_position) const override { return get_canopy_water_at(p_position); }
 	float contract_glaze_at(const Vector3 &p_position) const override { return get_glaze_at(p_position); }
 	Vector3 contract_rime_at(const Vector3 &p_position) const override { return get_rime_at(p_position); }
+	float contract_valley_fog_top_at(const Vector3 &p_position) const override { return get_valley_fog_top_at(p_position); }
 	float contract_canopy_wetness_at(const Vector3 &p_position) const override { return get_canopy_wetness_at(p_position); }
 	float contract_canopy_drip_at(const Vector3 &p_position) const override { return get_canopy_drip_at(p_position); }
 	float contract_ground_water_input_at(const Vector3 &p_position) const override { return get_ground_water_input_at(p_position); }
@@ -1225,6 +1240,12 @@ public:
 	void set_cold_pool_strength(float p_celsius) { cold_pool_strength = MAX(p_celsius, 0.0f); }
 	float get_cold_pool_strength() const { return cold_pool_strength; }
 	float get_cold_pool_at(Vector3 p_position) const;
+	void set_valley_fog(bool p_enabled);
+	bool is_valley_fog_enabled() const { return valley_fog; }
+	void set_valley_fog_density(float p_sigma) { valley_fog_density = MAX(p_sigma, 0.0f); }
+	float get_valley_fog_density() const { return valley_fog_density; }
+	float get_valley_fog_top_at(Vector3 p_position) const; // absolute height of the fog's top, -INF where none
+	float get_valley_fog_depth_at(Vector3 p_position) const; // m over the ground
 	void set_fog_drip(bool p_enabled) { fog_drip = p_enabled; }
 	bool is_fog_drip_enabled() const { return fog_drip; }
 	// Sea spray settling (mm/h of sea water), the spray's own wet film over the surface storage (0..1), and the
