@@ -141,6 +141,12 @@
 				How many logs the last placement put down (with their axes).
 			</description>
 		</method>
+		<method name="get_flood_replaced_tiles" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many streamed tiles were placed again because the flood marks over them changed ([method WorldWater.high_water_at]: a flood peaked, fell or aged), for species that read them ([constant PlantSpecies.RULE_HIGH_WATER]).
+			</description>
+		</method>
 		<method name="get_placements" qualifiers="const">
 			<return type="PackedVector3Array" />
 			<param index="0" name="species" type="int" />

@@ -1839,3 +1839,18 @@ stood inside a pushed-out bank or floated off a cut one. Now:
   smoothed under the grass; Landscape3D's own relief is built at its finest level and is close to that scale.
 - Check: vegetation --test "bank relief" (a WorldGround stub raises one half 0.3 m; plants follow it exactly).
 
+## Live flood wrack (round 7, first pick)
+A flood leaves its drift line at the peak's crest; field crews read flood peaks from these lines (high-water
+marks such as drift lines, seed lines and mud lines: Benson and Dalrymple 1967, USGS TWRI 3-A1). So the wrack
+should move when a new flood peaks over the old line, and fade as the mark ages.
+Built: VegetationField3D._follow_floods. Every 2 s, where a species reads the marks (RULE_HIGH_WATER), each
+streamed tile's WorldWater.high_water_at on a 3 x 3 lattice is hashed (peak to 5 cm, age to 30 days); a tile whose
+key changed is marked stale and placed again, the old tile showing until its replacement is in (as burns do).
+GrassField3D's flood wash already re-reads its map every 5 s. get_flood_replaced_tiles counts the re-placements.
+- Check: vegetation --test "live flood wrack" (the mark rises 0.4 m; 64 tiles placed again within 2.5 s; all
+  wrack on the new line, none on the old).
+- Cost: 9 high_water_at calls per streamed tile every 2 s, only with wrack in the biome.
+- Populated (non-streamed) fields do not follow; scenes stream.
+- While a storm's water is still rising the mark rises with it, so the tiles near the river are re-placed each
+  check; the strands under the water are hidden by it until it falls.
+

@@ -5948,6 +5948,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 			} else {
 				stream_tiles.insert(job->tile, t);
 			}
+			t->flood_key = flood_follow ? _flood_key(job->tile, ts) : 0;
 			plant_count += t->out.count;
 			stream_maps_dirty = true;
 			shelter_dirty = true;
@@ -6373,6 +6374,58 @@ void VegetationField3D::_follow_burns(double p_delta) {
 	}
 }
 
+// The flood marks over a tile: high_water_at on a 3 x 3 lattice (corners, edge middles, centre), each peak to 5 cm
+// and age to 30 days (RULE_FLOOD_AGE fades over months), hashed; no mark hashes apart from any mark.
+uint64_t VegetationField3D::_flood_key(const Vector2i &p_tile, float p_ts) const {
+	const WorldWater *water = WorldContracts::water();
+	uint64_t h = 0x9E3779B97F4A7C15ull;
+	for (int j = 0; j < 3; j++) {
+		for (int i = 0; i < 3; i++) {
+			const Vector3 at((p_tile.x + 0.5f * i) * p_ts, 0.0f, (p_tile.y + 0.5f * j) * p_ts);
+			const Vector4 hw = water ? water->high_water_at(at) : Vector4(-Math::INF, -1.0f, 0.0f, 0.0f);
+			const bool known = hw.x > -1e20f && hw.y >= 0.0f;
+			const int64_t peak = known ? int64_t(Math::floor(hw.x * 20.0f)) : INT64_MIN;
+			const int64_t age = known ? int64_t(Math::floor(hw.y / 30.0f)) : -1;
+			h = hash_murmur3_one_64(uint64_t(peak), hash_murmur3_one_64(uint64_t(age), h));
+		}
+	}
+	return h == 0 ? 1 : h;
+}
+
+// A flood peaked, fell or aged (WorldWater.high_water_at: a river's storm, a lake's flood, the sea's storm run-up):
+// streamed tiles whose marks changed are placed again, each swapped in when its replacement is ready (the wrack moves
+// to the new line; the old one goes). Twice the burn check's interval: marks move over hours, not seconds.
+void VegetationField3D::_follow_floods(double p_delta) {
+	flood_check -= p_delta;
+	if (flood_check > 0.0 || !streaming || !stream_setup_valid) {
+		return;
+	}
+	flood_check = 2.0;
+	bool wanted = false;
+	for (const PlaceSpecies &ps : stream_setup.species) {
+		wanted = wanted || (ps.sp.is_valid() && ps.sp->uses_high_water());
+	}
+	if (!wanted) {
+		flood_follow = false;
+		return;
+	}
+	const float ts = stream_setup.tile_size;
+	for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+		StreamTile *t = kv.value;
+		const uint64_t key = _flood_key(kv.key, ts);
+		if (!flood_follow || t->flood_key == 0) {
+			t->flood_key = key; // First look (or the species came in): the tile was placed with these marks.
+			continue;
+		}
+		if (key != t->flood_key && !t->stale) {
+			t->stale = true; // Placed again; the old one shows until the new one is in.
+			t->flood_key = key;
+			flood_tiles++;
+		}
+	}
+	flood_follow = true;
+}
+
 // Stand ages or disturbances changed (WorldStand.stand_changed: a disturbance added, aged or removed, years passing,
 // fire's burns): streamed tiles are placed again where a species crossed its stand range (_stream_update); a
 // populated field populates again.
@@ -6464,6 +6517,7 @@ void VegetationField3D::_notification(int p_what) {
 				}
 			}
 			_follow_burns(get_process_delta_time());
+			_follow_floods(get_process_delta_time());
 			_follow_stand(get_process_delta_time());
 			_follow_trails(get_process_delta_time());
 			if (variants_waiting && streaming && stream_setup_valid && stream_jobs.is_empty()) {
@@ -6681,6 +6735,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_plant_count"), &VegetationField3D::get_plant_count);
 	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
+	ClassDB::bind_method(D_METHOD("get_flood_replaced_tiles"), &VegetationField3D::get_flood_replaced_tiles);
 	ClassDB::bind_method(D_METHOD("get_trunks_near", "center", "radius", "height"), &VegetationField3D::get_trunks_near, DEFVAL(4.0f));
 	ClassDB::bind_method(D_METHOD("get_deadwood_count"), &VegetationField3D::get_deadwood_count);
 	ClassDB::bind_method(D_METHOD("get_crowns_in", "rect"), &VegetationField3D::get_crowns_in);
