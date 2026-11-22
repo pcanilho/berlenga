@@ -47,6 +47,13 @@
 				Adds [param swe_mm] of snow water equivalent everywhere on the map at [param density] (kg/m³), as fresh snow. For scenes that start under snow. With [param world], the world tier outside the near square takes it too (a storm over the whole terrain); false keeps it to the near square.
 			</description>
 		</method>
+		<method name="add_depth_hoar">
+			<return type="void" />
+			<param index="0" name="share" type="float" />
+			<description>
+				Sets the base's depth hoar share (0 to 1) wherever there is snow. For scenes and tests; the cover grows it itself (see [member depth_hoar_enabled]).
+			</description>
+		</method>
 		<method name="add_sastrugi">
 			<return type="void" />
 			<param index="0" name="relief" type="float" />
@@ -331,6 +338,13 @@
 				Returns the ground height the snowpack uses at [param position].
 			</description>
 		</method>
+		<method name="get_depth_hoar_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the depth hoar share (0 to 1) at the pack's base at [param position].
+			</description>
+		</method>
 		<method name="get_hoar_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -577,6 +591,24 @@
 			<param index="4" name="shortwave" type="float" />
 			<description>
 				The rate surface hoar deposits on the snow in kg/m² per hour for the air temperature, relative humidity (0 to 1), wind at 10 m (m/s), cloud cover (0 to 1) and absorbed shortwave (W/m²); negative where it sublimates. Grows on clear calm nights.
+			</description>
+		</method>
+		<method name="depth_hoar_step" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="share" type="float" />
+			<param index="1" name="gradient" type="float" />
+			<param index="2" name="hours" type="float" />
+			<param index="3" name="wet_share" type="float" />
+			<description>
+				The base's depth hoar share after [param hours] under a temperature [param gradient] (C/m): it grows at [code](G - 10) / 10[/code] per two weeks over 10 C/m (Akitaya 1974; Marbouty 1980; SNOWPACK's kinetic growth), stays under weaker gradients, and goes within about a day once the pack holds liquid water ([param wet_share] over 3%).
+			</description>
+		</method>
+		<method name="depth_hoar_strength" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="share" type="float" />
+			<param index="1" name="density" type="float" />
+			<description>
+				The base's shear strength (Pa) between sintered rounded snow ([code]4 x 14.5 (rho / rho_ice)^1.73[/code] kPa) and faceted depth hoar ([code]18.5 (rho / rho_ice)^2.11[/code] kPa, Jamieson and Johnston 2001) by [param share]. [SnowAvalanche3D] tests the whole pack over it as a slab.
 			</description>
 		</method>
 		<method name="drift_index" qualifiers="static">
@@ -882,6 +914,9 @@
 		</member>
 		<member name="slide_angle" type="float" setter="set_slide_angle" getter="get_slide_angle" default="25.0">
 			Ground steeper than this, in degrees, sheds snow beyond what it holds (SnowSlide: 25 degrees).
+		</member>
+		<member name="depth_hoar_enabled" type="bool" setter="set_depth_hoar_enabled" getter="is_depth_hoar_enabled" default="true">
+			Depth hoar: a shallow pack under cold air (a gradient over 10 C/m from a base near 0 C to the air) grows weak basal facets over one to three weeks ([method depth_hoar_step]); [SnowAvalanche3D] releases the whole pack on them once loading outweighs [method depth_hoar_strength]. Drift deposits now also load buried surface hoar.
 		</member>
 		<member name="sastrugi_enabled" type="bool" setter="set_sastrugi_enabled" getter="is_sastrugi_enabled" default="true">
 			Sastrugi (Filhol and Sturm 2015): drifting snow scouring a hard surface (wind slab on top, or snow of 250 kg/m3 and more) carves ridges along the wind, 2% of the scoured snow's depth into relief, none where the drift builds up. New snow, drift deposits and melt fill them. [SnowSurface3D] draws them as geometry.

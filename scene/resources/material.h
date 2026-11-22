@@ -501,6 +501,11 @@ private:
 		if (snow_on_body) {
 			mk.flags |= (1u << 31);
 		}
+		// And glaze in the features' top bit.
+		static_assert(FEATURE_MAX < 31);
+		if (glaze) {
+			mk.feature_mask |= (1u << 31);
+		}
 
 		return mk;
 	}
@@ -647,6 +652,7 @@ private:
 	float wetness_amount = 1.0f;
 	bool wetness_from_weather = true;
 	bool wetness_canopy = false;
+	bool glaze = false;
 	float snow_amount = 1.0f;
 	float snow_max_slope = 60.0f;
 	bool snow_from_weather = true;
@@ -899,6 +905,11 @@ public:
 
 	void set_wetness_canopy(bool p_enable);
 	bool is_wetness_canopy() const;
+
+	// Glaze: clear ice from freezing rain over the surface, from the weather's rain map (WorldWeather.glaze_at).
+	void set_glaze(bool p_enable);
+	bool is_glaze() const;
+	static String get_glaze_functions_code();
 
 	void set_snow_amount(float p_amount);
 	float get_snow_amount() const;

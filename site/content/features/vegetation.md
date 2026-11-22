@@ -66,7 +66,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Layered meadow: finer, denser grass with turf between the blades instead of bare ground.*
 
-- **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream.
+- **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream. Wet gales lodge tall grass flat in swirled patches that stand again over days (`GrassField3D.lodging`).
 
   ![A body walking through grass that lies down and springs back, raster](media/grass-trample.gif)
 
@@ -116,7 +116,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 - **Plants on deadwood** (`PlantSpecies.deadwood_rule`): ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.
 - **Woodland mushrooms** (`PlantGenerator`, `PlantSpecies.patch_ring`, `PlantSpecies.deadwood_from_wood`): fly agaric, cep, chanterelle, brittlegill, clouded agaric and honey fungus, with stalks, caps, gills or tubes, rings and warts, come up under their host trees from late summer to the first frost; honey fungus grows in clumps out of the side of deadwood, clouded agaric in fairy-ring arcs.
-- **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`): fallen leaves drift past the crowns into edges and clearings, farther downwind.
+- **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`; `RULE_LITTER_DRIFT`, `PRESET_LEAF_BANK`): fallen leaves drift past the crowns into edges and clearings, farther downwind, pile into hollows and against trunks, logs and stones, and leave ridges swept bare.
 - **Falling leaves** (`LeafFall3D`): leaves fall from the crowns through the wind as autumn sheds them, and gusts and passing bodies lift them off the ground; on ponds and rivers they float and drift, and on snow they lie until it melts and brings them back out.
 - **Wetland plants** (`PlantSpecies.floating`, `water_depth_range`): reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.
 

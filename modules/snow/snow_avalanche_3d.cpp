@@ -56,6 +56,7 @@ const float BED_ALBEDO = 0.66f; // the old surface a slab leaves bare
 const float ENTRAIN_SPEED = 5.0f; // m/s
 const float WEAK_DENSITY = 100.0f; // kg/m3, the new snow's base or facets: the weak layer
 const float BURIED_WEAK_DENSITY = 150.0f; // kg/m3, facets on a buried crust
+const float DEPTH_HOAR_DENSITY = 200.0f; // kg/m3, a basal depth hoar layer (Akitaya 1974: 150-300)
 const float RECENT_BONDED_HOURS = 168.0f; // a week: the new snow has bonded
 const int MAX_RELEASE_CELLS = 4000;
 const double FLUSH_INTERVAL = 0.2; // s between writes of the moving snow into the cover
@@ -259,6 +260,18 @@ bool SnowAvalanche3D::_check_release(SnowCover3D *p_cover) {
 				if (s < best) {
 					best = s;
 					best_slab = b;
+				}
+			}
+			if (p_cover->pub.depth_hoar.size() == n * n && p_cover->pub.depth_hoar[i] > 0.05f) {
+				// Depth hoar at the base (round 6): the whole pack is the slab over it.
+				const float d = p_cover->pub.swe[i] > 0.0f ? p_cover->pub.swe[i] / rho : 0.0f;
+				if (d >= min_slab) {
+					const float load = rho * GRAVITY * d * Math::sin(slope) * Math::cos(slope);
+					const float s = load > 1.0e-3f ? SnowCover3D::depth_hoar_strength(p_cover->pub.depth_hoar[i], DEPTH_HOAR_DENSITY) / load : 1.0e6f;
+					if (s < best) {
+						best = s;
+						best_slab = d;
+					}
 				}
 			}
 			best *= _hold(p_cover, i);
@@ -1255,6 +1268,13 @@ float SnowAvalanche3D::_trigger_index(const SnowCover3D *p_cover, int p_x, int p
 	}
 	if (p_cover->pub.hoar_layer.size() == n * n && p_cover->pub.hoar_layer[i] > 0.0f && p_cover->pub.hoar_burial[i] >= min_slab) {
 		test(p_cover->pub.hoar_burial[i], SnowCover3D::buried_hoar_strength(p_cover->pub.hoar_layer[i], p_cover->pub.hoar_age[i]), false);
+	}
+	if (p_cover->pub.depth_hoar.size() == n * n && p_cover->pub.depth_hoar[i] > 0.05f && p_cover->pub.swe[i] > 0.0f) {
+		const float rho_i = MAX(p_cover->pub.density[i], 30.0f);
+		const float d = p_cover->pub.swe[i] / rho_i;
+		if (d >= min_slab) {
+			test(d, SnowCover3D::depth_hoar_strength(p_cover->pub.depth_hoar[i], DEPTH_HOAR_DENSITY), false);
+		}
 	}
 	return best;
 }

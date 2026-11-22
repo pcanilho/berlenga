@@ -3874,6 +3874,29 @@ void main() {
 		}
 	}
 
+	// Glaze (BaseMaterial3D glaze): clear ice from freezing rain, the rain map's alpha (mm), as material.cpp's
+	// weather_glaze_apply(), under any snow on it.
+	if (rt_material_glaze(mat)) {
+		uint gzmap = uint(get_rt_param(RT_PARAM_RAIN_MAP));
+		vec4 gzrect = vec4(get_rt_param(RT_PARAM_WETNESS_RECT_X), get_rt_param(RT_PARAM_WETNESS_RECT_Y),
+				get_rt_param(RT_PARAM_WETNESS_RECT_W), get_rt_param(RT_PARAM_WETNESS_RECT_H));
+		if (gzmap != 0u && gzrect.z > 0.0) {
+			vec2 gzsize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(gzmap)], SAMPLER_LINEAR_CLAMP), 0));
+			vec2 gzhalf = 0.5 / max(gzsize, vec2(1.0));
+			vec2 gzuv = clamp(((h.hit_pos + rt_origin.xyz).xz - gzrect.xy) / gzrect.zw, gzhalf, 1.0 - gzhalf);
+			float gzmm = textureLod(sampler2D(bindless_textures[nonuniformEXT(gzmap)], SAMPLER_LINEAR_CLAMP), gzuv, 0.0).a;
+			float gzcover = smoothstep(0.0, 1.0, gzmm);
+			if (gzcover > 0.0) {
+				vec4 gzwet = rt_material_wetness(mat);
+				float gzpor = gzwet.z > 0.5 ? gzwet.x : 0.5;
+				m.albedo *= mix(1.0, mix(1.0, 0.2, (1.0 - m.metalness) * gzpor), gzcover);
+				m.roughness = mix(m.roughness, 0.06, gzcover);
+				m.specular = mix(m.specular, 0.225, gzcover);
+				m.normal = normalize(mix(m.normal, h.geometry_normal, gzcover * smoothstep(0.5, 6.0, gzmm)));
+			}
+		}
+	}
+
 	// Snow (BaseMaterial3D, docs/ideas/snow.md): the same lines and inputs as the raster shader.
 	vec4 snow_p = rt_material_snow(mat);
 	if (snow_p.z > 0.5) {

@@ -225,6 +225,8 @@ func _ready() -> void:
 			await _run_wind_slab_tests()
 		elif only == "sastrugi":
 			await _run_sastrugi_tests()
+		elif only == "depthhoar":
+			await _run_depth_hoar_tests()
 		elif only == "rime":
 			await _run_rime_tests()
 		elif only == "transport":
@@ -449,6 +451,7 @@ func _run_tests() -> void:
 	await _run_road_tests()
 	await _run_wind_slab_tests()
 	await _run_sastrugi_tests()
+	await _run_depth_hoar_tests()
 	await _run_hoar_tests()
 	_run_suncup_tests()
 	await _run_rime_tests()
@@ -794,6 +797,64 @@ func _run_sastrugi_tests() -> void:
 	var soft_best: Vector2 = res[1][0]
 	_check("a gale packs and carves the windward snow into sastrugi along the wind", hard_best.length() > 0.02 and hard_best.normalized().x > 0.95, "%.3f m toward %s" % [hard_best.length(), str(hard_best.normalized())])
 	_check("none in the fresh lee deposit, none in soft unpacked snow", float(res[0][1]) < 0.005 and soft_best.length() < 0.005, "lee %.3f m; soft %.3f m" % [res[0][1], soft_best.length()])
+
+
+# Depth hoar (follow-up 47): a shallow pack under cold air grows weak basal facets (over 10 C/m, Akitaya 1974;
+# Marbouty 1980), and a storm's load later releases the whole pack on them.
+func _run_depth_hoar_tests() -> void:
+	print("Depth hoar (follow-up 47):")
+	var strong := SnowCover3D.depth_hoar_step(0.0, 20.0, 336.0, 0.0)
+	var weak := SnowCover3D.depth_hoar_step(0.0, 8.0, 336.0, 0.0)
+	var wet := SnowCover3D.depth_hoar_step(1.0, 30.0, 24.0, 0.1)
+	_check("grows over 10 C/m in about two weeks, not under it; melt water at the base ends it", absf(strong - 1.0) < 0.01 and weak == 0.0 and wet < 0.4, "%.2f after two weeks at 20 C/m, %.2f at 8 C/m; %.2f a day after it got wet" % [strong, weak, wet])
+	var dh := SnowCover3D.depth_hoar_strength(1.0, 200.0)
+	var rounded := SnowCover3D.depth_hoar_strength(0.0, 200.0)
+	_check("depth hoar holds a fraction of settled snow's strength (Jamieson and Johnston 2001)", dh < 0.25 * rounded and dh > 300.0, "%.0f Pa against %.0f Pa" % [dh, rounded])
+	# A shallow and a deep pack under -15 C air for ten days.
+	var shares := []
+	for swe: float in [60.0, 600.0]:
+		await _setup("flat", 64.0, 16, -15.0)
+		snow.add_snow(swe, 200.0)
+		weather.temperature = -15.0
+		weather.wind_speed = 1.0
+		weather.snap_to_settings()
+		weather.advance(1.0)
+		for d in 10:
+			snow.advance(86400.0)
+		shares.append([snow.get_depth_hoar_at(Vector3.ZERO), snow.get_depth_at(Vector3.ZERO)])
+	_check("a shallow pack in a cold spell turns to depth hoar, a deep one does not", float(shares[0][0]) > 0.5 and float(shares[1][0]) < 0.1, "%.2f in %.2f m, %.2f in %.2f m after ten days at -15 C" % [shares[0][0], shares[0][1], shares[1][0], shares[1][1]])
+	# On the 38 degree face: 1.25 m of old snow, sintered; then 30 cm of new snow, with and without depth hoar under it.
+	var counts := []
+	for share: float in [0.0, 1.0]:
+		await _setup("avalanche", 256.0, 128, -8.0)
+		snow.drift_enabled = false
+		snow.slide_enabled = false
+		var av: SnowAvalanche3D = snow.get_avalanches()
+		av.natural_release = false
+		snow.add_snow(150.0, 120.0)
+		weather.temperature = -8.0
+		weather.snap_to_settings()
+		snow.depth_hoar_enabled = false # the share is set below
+		snow.hoar_enabled = false # no surface hoar on the clear nights: one weak layer at a time
+		for d in 10:
+			snow.advance(86400.0)
+		snow.add_depth_hoar(share)
+		av.natural_release = true
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+		var before := av.get_release_count()
+		snow.add_snow(30.0, 100.0)
+		var lo_s := 1e9
+		for x in range(-120, 0, 10):
+			for z in range(-60, 61, 20):
+				lo_s = minf(lo_s, av.get_trigger_index_at(Vector3(x, 0, z), 0.0))
+		print("  depth hoar %.0f: lowest stability on the face after the storm %.2f" % [share, lo_s])
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+		counts.append([before, av.get_release_count() - before])
+		while av.is_running():
+			av.step(0.5)
+	_check("the old pack holds alone; 30 cm of new snow holds over rounded snow and releases the whole pack on depth hoar", int(counts[0][0]) == 0 and int(counts[1][0]) == 0 and int(counts[0][1]) == 0 and int(counts[1][1]) >= 1, "%d / %d releases before the storm, %d without depth hoar, %d on it" % [counts[0][0], counts[1][0], counts[0][1], counts[1][1]])
 
 
 func _road_wheel(spin: float, roll: float) -> RigidBody3D:

@@ -1756,6 +1756,26 @@ photographs, e.g. Fikke et al. 2007, COST 727).
   and none without wind packing (soft snow). Bench `--view=trail --sastrugi=M[,deg]`, `add_sastrugi`.
 - Media: /mnt/project-files/fork/snow/sastrugi/ (before/after raster, after PT).
 
+## Follow-up 47: depth hoar and wind loading on weak layers (round 6, 22 Nov 2026)
+
+- Depth hoar: over a temperature gradient above about 10 C/m (Akitaya 1974; Marbouty 1980; Colbeck 1983;
+  SNOWPACK's kinetic growth, Lehning et al. 2002) the base turns to large facets over one to three weeks. The
+  pack is one layer, so the cover keeps the base's share (`cell_depth_hoar`, 0..1): the gradient is the air (at
+  most 0 C) over a base near 0 C across the depth; the share grows at (G - 10) / 10 per two weeks, stays under
+  weaker gradients, goes in about a day once the pack holds liquid water (over 3%).
+- Strength: between sintered rounded snow (4 x 14.5 (rho / rho_ice)^1.73 kPa) and facets (18.5 (rho /
+  rho_ice)^2.11 kPa, Jamieson and Johnston 2001) by share, at a layer density of 200 kg/m3 (744 Pa at share 1).
+  `SnowAvalanche3D` tests the whole pack as the slab over it in natural release and in the trigger index: full-
+  depth releases on a loaded shallow-season pack.
+- Wind loading: drift deposits now add to buried surface hoar's burial (and erosion takes it), so wind slab
+  over buried hoar loads it as new snow does.
+- Checks (`--test=depthhoar`): two weeks at 20 C/m make a full share, 8 C/m none, wetting ends it; ten days at
+  -15 C turn 0.29 m to depth hoar, 1.79 m not; on the 38 degree face 1.25 m of old snow plus 30 cm of storm holds
+  over rounded snow (S 1.11) and releases on depth hoar (S 0.86).
+- Seen on the way, not changed: the new-snow slab's load uses the pack's bulk density, so on a dense old pack it
+  overstates the new snow's weight (a 50 cm storm reads S 0.79 over old snow where its own 100 kg/m3 gives 1.1).
+  Needs the recent snow's own mass tracked; noted for a later round.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
