@@ -3756,8 +3756,7 @@
   {
    "name": "Snow layers",
    "settings": [
-    "SnowCover3D.layers_enabled",
-    "layer_barrier"
+    "SnowCover3D.layers_enabled"
    ],
    "note": "",
    "what": "crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail.",
