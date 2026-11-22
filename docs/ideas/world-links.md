@@ -461,5 +461,25 @@ Lavdas 1996 (USDA Forest Service GTR SRS-6); Achtemeier 2005 (Int. J. Wildland F
 Later: Flow's local plumes (campfires, building fires) feed the regional smoke field (PhysX's note, 22 Nov), so a
 campfire's smoke pools in a valley at night.
 
+## Round 13 candidates (22 Nov, card to Paulo)
+
+1. Foehn winds in the lee of ranges. Source: the orographic rain already taken from the air on the windward side
+   (`cell_oro`), the wind across the ridge and the mountain waves' stability. Reader: `air_temperature_at` and
+   `air_humidity_at` in the lee (several K warmer, humidity under 30 %), so snow melts and sublimates fast, the
+   ground and fuels dry (fire), and a cloud gap opens over the lee with a cloud wall on the crest. Isentropic
+   drawdown and the latent heat left behind upwind (Elvidge and Renfrew 2016, BAMS; Wuersch and Sprenger 2015;
+   Seibert 1990). Per cell: dT = the dry/moist lapse difference over the height descended, scaled by the share of
+   the moisture rained out.
+2. Along-valley winds (valley and mountain-plain winds). Source: the valley's air heated and cooled more than the
+   plain's over the same height (the topographic amplification factor, the valley's volume per area). Reader:
+   `wind_at` along valley axes: up-valley by day, 3 to 6 m/s, down-valley at night, deeper and longer-lived than
+   the slope flows; smoke and fog carried along the valley (Whiteman 2000 ch. 10; Zardi and Whiteman 2013).
+   Per cell: the valley axis from the smoothed height field, the pressure gradient from the heating difference.
+3. Flow sources feed the regional smoke (PhysX's note). Source: Flow emitters (campfires, PhysXBuildingFire3D)
+   and their heat release. Reader: WeatherMap3D smoke cells through `add_smoke`, so a campfire's smoke pools in
+   a valley at night, drifts with the drainage and valley winds, and dims the sun (Briggs plume rise for the
+   injection height; the local plume stays Flow's within its domain, the regional field takes what leaves it).
+
+
 Sources: Simpson 1994; Miller et al. 2003 (Rev. Geophys.); Whiteman 2000; Banta 1990 (Atmospheric Processes over
 Complex Terrain); Augspurger 2009 (Funct. Ecol.); Vitasse et al. 2014 (Agric. For. Meteorol.).
