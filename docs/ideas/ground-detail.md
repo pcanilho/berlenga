@@ -896,3 +896,13 @@ tiled, so every one is a single grain the contacts reach). The rooting clods now
 test against the print field (pressed in or heaped over: gone), keyed by cell and number so a crushed clod stays
 gone when the patch is laid again. A tyre across a fresh patch: 193 clods to 169, the rut clean; raster and PT
 match.
+
+**D. Gravel sorted by storm runoff (candidate, 22 Nov).** Overland flow and rills winnow the fines and leave a lag
+of gravel in the rill floors, and drop the load in small fans where the slope eases (Horton 1945; Poesen et al.
+2003 on rock fragment cover and runoff; a stony lag armours a rill bed once the flow can no longer move its
+coarse fraction, as the river beds' Shields threshold). GroundSurface3D already cuts runoff channels (rills, the
+gullies test). Technique, placement-time like the trails: GroundSurface3D publishes its rill field (depth and
+flow per texel, or the channel segments) through a written contract; the detail placement thins fines in a rill
+floor by the flow's Shields share and adds the class's coarse end there as a lag (FAMILY_PEBBLE, rounded a
+little, imbricated across the flow as the river beds' grains), and adds a fan of finer grains where the flow
+spreads. Stones placed only where the channel exists, rebuilt on the field's change signal.
