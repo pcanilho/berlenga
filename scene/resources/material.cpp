@@ -623,8 +623,6 @@ void BaseMaterial3D::init_shaders() {
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_warm_nose", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Its 10 m wind (get_surface_rain_functions_code(); the weather module declares it too).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_wind_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-}
-
 		// Footsteps and splashes in the ground's standing water (GroundSurface3D): a row of impacts (x, z, age,
 		// amplitude) and their count in x of the info.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/water_impacts", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
