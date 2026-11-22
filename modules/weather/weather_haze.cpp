@@ -53,7 +53,7 @@ float WeatherMap3D::_haze_weight(const HazeSource &p_source, const Vector3 &p_po
 	return 1.0f - Math::smoothstep(0.7f * p_source.radius, p_source.radius, d);
 }
 
-void WeatherMap3D::set_precipitation_extinction(Object *p_source, float p_sigma, float p_height_scale, float p_albedo, Vector3 p_centre, float p_radius) {
+void WeatherMap3D::set_precipitation_extinction(Object *p_source, float p_sigma, float p_height_scale, float p_albedo, Vector3 p_centre, float p_radius, float p_fall_speed) {
 	ERR_FAIL_NULL(p_source);
 	const ObjectID id = p_source->get_instance_id();
 	HazeSource *s = nullptr;
@@ -72,6 +72,7 @@ void WeatherMap3D::set_precipitation_extinction(Object *p_source, float p_sigma,
 	s->albedo = CLAMP(p_albedo, 0.0f, 1.0f);
 	s->centre = p_centre;
 	s->radius = p_radius;
+	s->fall_speed = MAX(p_fall_speed, 0.0f);
 	applied_haze = -1.0f;
 	if (is_inside_tree()) {
 		_apply_haze();
@@ -232,16 +233,32 @@ void WeatherMap3D::_apply_haze() {
 		fog_base.saved = true;
 	}
 
-	// The uniform part at the camera, for the distance.
+	// The uniform part at the camera, for the distance. Falling rain and snow keep CURTAIN_KEEP of theirs there; the
+	// rest is drawn in curtains near the camera (_apply_curtains()), its mean the same.
 	const Vector3 at = _follow_position();
 	float uniform = 0.0f;
 	bool layers = valley_active;
+	float curtain_sigma = 0.0f;
+	float curtain_albedo = 0.0f;
+	float curtain_fall = 0.0f;
+	constexpr float CURTAIN_KEEP = 0.4f;
 	for (const HazeSource &h : haze_sources) {
 		if (h.height_scale > 0.0f) {
 			layers = layers || h.sigma > 0.0f;
+		} else if (rain_curtains && h.fall_speed > 0.0f && h.radius <= 0.0f) {
+			const float s = h.sigma * (1.0f - CURTAIN_KEEP);
+			uniform += h.sigma * CURTAIN_KEEP;
+			curtain_sigma += s;
+			curtain_albedo += s * h.albedo;
+			curtain_fall += s * h.fall_speed;
 		} else {
 			uniform += h.sigma * _haze_weight(h, at);
 		}
+	}
+	if (curtain_sigma > 0.0f) {
+		curtain_albedo /= curtain_sigma;
+		curtain_fall /= curtain_sigma;
+		layers = true;
 	}
 	if (Math::abs(uniform - applied_haze) > 1e-6f) {
 		// The environment's own density only counts when its fog was on (Environment's default
@@ -323,6 +340,114 @@ void WeatherMap3D::_apply_haze() {
 	}
 	_apply_traced_haze(traced_medium, traced_medium.x > 0.0f && env->is_volumetric_fog_enabled() ? env->get_volumetric_fog_length() : 0.0f);
 	_apply_valley_fog(valley_active);
+	_apply_curtains(curtain_sigma, curtain_albedo, curtain_fall, get_rainfall_at(at) + get_snowfall_at(at), at, env->get_volumetric_fog_length(), float(get_physics_process_delta_time()));
+}
+
+// Rain and snow fall in curtains (docs/ideas/engine-gaps-from-game.md, C): under a storm the heavier rain falls in
+// sheets some metres to tens of metres across that the wind carries along as a frozen pattern (Taylor's hypothesis),
+// slanted downwind as the drops fall, and rain intensity is lognormal over space (Kedem and Chiu 1987). Drawn into the
+// froxel fog (Wronski 2014; Hillaire 2015) as a FogVolume round the camera: the precipitation's own extinction
+// (CURTAIN_KEEP of it stays even, in the exponential fog) times the weather's rain field (its storm cells) over the
+// rain at the camera, times a lognormal of two octaves of value noise drawn out upright into shafts, its mean 1 (the
+// constant fitted over the noise's own spread), so the haze moves, not grows. The path tracer reads the froxels on
+// its camera rays. Off (rain_curtains) or with no falling precipitation, the haze is even as before.
+void WeatherMap3D::_apply_curtains(float p_sigma, float p_albedo, float p_fall, float p_rain_ref, const Vector3 &p_at, float p_reach, float p_dt) {
+	if (p_sigma <= 0.0f) {
+		if (curtain_volume) {
+			curtain_volume->queue_free();
+			curtain_volume = nullptr;
+		}
+		return;
+	}
+	if (!curtain_volume) {
+		if (curtain_material.is_null()) {
+			Ref<Shader> sh;
+			sh.instantiate();
+			sh->set_code(R"(shader_type fog;
+global uniform sampler2D weather_rain_map;
+global uniform vec4 weather_rain_rect;
+uniform float density;
+uniform float albedo;
+uniform float rain_ref;
+uniform vec3 drift;
+uniform vec2 slant;
+uniform float base;
+
+float curtain_hash(ivec3 c) {
+	uint h = (uint(c.x) * 73856093u) ^ (uint(c.y) * 19349663u) ^ (uint(c.z) * 83492791u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h & 0xffffffu) / 16777216.0;
+}
+float curtain_noise(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = p - i;
+	f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+	ivec3 c = ivec3(i);
+	float x00 = mix(curtain_hash(c), curtain_hash(c + ivec3(1, 0, 0)), f.x);
+	float x10 = mix(curtain_hash(c + ivec3(0, 1, 0)), curtain_hash(c + ivec3(1, 1, 0)), f.x);
+	float x01 = mix(curtain_hash(c + ivec3(0, 0, 1)), curtain_hash(c + ivec3(1, 0, 1)), f.x);
+	float x11 = mix(curtain_hash(c + ivec3(0, 1, 1)), curtain_hash(c + ivec3(1, 1, 1)), f.x);
+	return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
+}
+
+void fog() {
+	vec3 p = WORLD_POSITION;
+	// The column the drops at p land in: upwind by the slant times their height.
+	vec2 q = p.xz + slant * (p.y - base);
+	float cell = 1.0;
+	if (rain_ref > 0.0 && weather_rain_rect.z > 0.0) {
+		vec2 uv = clamp((q - weather_rain_rect.xy) / weather_rain_rect.zw, vec2(0.0), vec2(1.0));
+		cell = clamp(textureLod(weather_rain_map, uv, 0.0).r / rain_ref, 0.0, 4.0);
+	}
+	// Curtains 4 to 6 m across in 16 m, three times as tall; a lognormal with sigma 1.3 over the noise's spread
+	// (z's variance 0.79), scaled to mean 1.
+	vec3 c = (vec3(q.x, p.y, q.y) - drift) / vec3(16.0, 53.0, 16.0);
+	float n = curtain_noise(c) * 0.65 + curtain_noise(c * 2.7 + vec3(0.37, 0.11, 0.73)) * 0.35;
+	float z = (n - 0.5) * 6.0;
+	float l = exp(1.3 * z - 0.637);
+	float e = pow(clamp(-2.0 * SDF / min(min(SIZE.x, SIZE.y), SIZE.z), 0.0, 1.0), 0.1);
+	DENSITY = density * cell * l * e;
+	ALBEDO = vec3(albedo);
+}
+)");
+			curtain_material.instantiate();
+			curtain_material->set_shader(sh);
+		}
+		curtain_volume = memnew(FogVolume);
+		curtain_volume->set_shape(RSE::FOG_VOLUME_SHAPE_BOX);
+		curtain_volume->set_material(curtain_material);
+		curtain_volume->set_as_top_level(true);
+		add_child(curtain_volume, false, INTERNAL_MODE_BACK);
+	}
+	// The pattern rides the wind and sinks slowly with the falling precipitation (the curtains' own drift, about an
+	// eighth of the drops' fall); it leans downwind by the wind over the fall speed.
+	const Vector2 wind = cur_wind_direction * cur_wind_speed;
+	const float fall = MAX(p_fall, 0.3f);
+	curtain_drift += Vector3(wind.x, -0.12f * fall, wind.y) * MAX(p_dt, 0.0f);
+	curtain_material->set_shader_parameter("density", p_sigma);
+	curtain_material->set_shader_parameter("albedo", p_albedo);
+	curtain_material->set_shader_parameter("rain_ref", p_rain_ref);
+	curtain_material->set_shader_parameter("drift", curtain_drift);
+	curtain_material->set_shader_parameter("slant", wind / fall);
+	curtain_material->set_shader_parameter("base", ground_height);
+	const float width = MIN(extent, 2.0f * MAX(p_reach, 64.0f));
+	curtain_volume->set_size(Vector3(width, 600.0f, width));
+	curtain_volume->set_global_position(Vector3(p_at.x, ground_height + 250.0f, p_at.z));
+}
+
+void WeatherMap3D::set_rain_curtains(bool p_enabled) {
+	if (rain_curtains == p_enabled) {
+		return;
+	}
+	rain_curtains = p_enabled;
+	applied_haze = -1.0f;
+	if (is_inside_tree()) {
+		_apply_haze();
+	}
 }
 
 // Valley fog (docs/ideas/world-links.md, "Valley fog"): radiation fog fills a cold pool once its air cools to the dew

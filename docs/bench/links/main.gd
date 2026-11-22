@@ -14,6 +14,8 @@ extends Node3D
 #             --clip=dir saves every frame after the warm-up; --turbulence=x overrides heat_shimmer_turbulence
 #   godot --path docs/bench/links -- --wall-rain=out.png [--rain-off] [--pt]   a block in a wind-driven downpour, its
 #             windward wall running with streaks and its lee wall drier, or the same block dry
+#   godot --path docs/bench/links -- --curtains=out.png [--curtains-off] [--pt]   a downpour's haze across a row of dark
+#             blocks, in curtains carried by the wind, or even (rain_curtains off)
 #             after a clear night at -2 C (hoarfrost), or the same night with dew_and_frost off
 #
 # Links checked:
@@ -249,6 +251,10 @@ func _ready() -> void:
 			await _valley_fog_view(a.substr(13), OS.get_cmdline_user_args().has("--fog-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
 			return
+		if a.begins_with("--curtains="):
+			await _curtain_view(a.substr(11), OS.get_cmdline_user_args().has("--curtains-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
 		if a.begins_with("--wall-rain="):
 			await _wall_rain_view(a.substr(12), OS.get_cmdline_user_args().has("--rain-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
@@ -320,6 +326,7 @@ func _ready() -> void:
 	await _rime_tests()
 	await _surface_rain_tests()
 	await _wall_rain_tests()
+	await _curtain_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
@@ -2960,6 +2967,112 @@ func _wall_rain_tests() -> void:
 	_check("wall rain: a windward wall runs dark with the driven rain, the lee wall stays far drier (BaseMaterial3D wetness)",
 			wind_drop < 0.8 and lee_drop > wind_drop + 0.1,
 			"windward keeps %.2f of its dry luminance, lee %.2f" % [wind_drop, lee_drop])
+
+
+# A heavy downpour's haze (visibility about 200 m) seen across a row of dark blocks 20 to 90 m away.
+func _curtain_scene(off: bool, pt: bool) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	# An overcast sky: the even haze takes its colour (aerial perspective).
+	env.environment.background_mode = Environment.BG_SKY
+	env.environment.sky = Sky.new()
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.42, 0.45, 0.5)
+	sky_mat.sky_horizon_color = Color(0.55, 0.57, 0.6)
+	sky_mat.ground_horizon_color = Color(0.55, 0.57, 0.6)
+	sky_mat.ground_bottom_color = Color(0.2, 0.2, 0.2)
+	env.environment.sky.sky_material = sky_mat
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	root.add_child(env)
+	root.set_meta("env", env)
+	var m := _new_map()
+	m.reparent(root)
+	m.wind_speed = 8.0
+	m.wind_direction = Vector2(1, 0)
+	m.rain_curtains = not off
+	m.snap_to_settings()
+	m.set_precipitation_extinction(root, 0.02, 0.0, 0.99, Vector3(), 0.0, 7.0)
+	# Lit by the overcast sky alone, as a downpour is; a lamp in the haze shows the curtains drifting through its light.
+	var lamp := OmniLight3D.new()
+	lamp.position = Vector3(6, 4, -8)
+	lamp.omni_range = 25.0
+	lamp.light_energy = 6.0
+	lamp.light_color = Color(1.0, 0.8, 0.55)
+	lamp.light_volumetric_fog_energy = 3.0
+	root.add_child(lamp)
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = Color(0.05, 0.05, 0.05)
+	var floor_mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(400, 400)
+	floor_mi.mesh = pm
+	floor_mi.material_override = dark
+	root.add_child(floor_mi)
+	for i in 8:
+		var b := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(14, 30, 2)
+		b.mesh = bm
+		b.material_override = dark
+		b.position = Vector3(-56 + 16 * i, 15, -20 - 10 * i)
+		root.add_child(b)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 3, 10)
+	cam.fov = 70.0
+	root.add_child(cam)
+	cam.make_current()
+	return root
+
+
+func _curtain_view(path: String, off: bool, pt: bool) -> void:
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var root := _curtain_scene(off, pt)
+	for i in 40:
+		await RenderingServer.frame_post_draw
+	if pt:
+		root.get_meta("env").environment.pathtracing_enabled = true
+		for i in 60:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+func _curtain_tests() -> void:
+	if DisplayServer.get_name() == "headless":
+		_skip("rain curtains", "needs a rendering device")
+		return
+	# The curtains ride the wind: two frames 3 s apart differ where the haze is in curtains, not where it is even;
+	# and the mean haze is the same.
+	var stats := []
+	for off in [true, false]:
+		var root := _curtain_scene(off, false)
+		for i in 30:
+			await RenderingServer.frame_post_draw
+		var a := get_viewport().get_texture().get_image()
+		await get_tree().create_timer(3.0).timeout
+		for i in 3:
+			await RenderingServer.frame_post_draw
+		var b := get_viewport().get_texture().get_image()
+		var mean := 0.0
+		var moved := 0.0
+		var n := 0
+		for y in range(int(a.get_height() * 0.2), int(a.get_height() * 0.8), 6):
+			for x in range(0, a.get_width(), 6):
+				var la := a.get_pixel(x, y).get_luminance()
+				mean += la
+				moved += absf(la - b.get_pixel(x, y).get_luminance())
+				n += 1
+		stats.append([mean / n, moved / n])
+		root.queue_free()
+		await get_tree().process_frame
+	_check("rain curtains: the downpour's haze moves through the view in curtains on the wind (rain_curtains), its mean that of the even haze",
+			stats[1][1] > 4.0 * stats[0][1] + 0.001 and absf(stats[1][0] / stats[0][0] - 1.0) < 0.1,
+			"change over 3 s %.4f even, %.4f in curtains; mean %.3f in curtains over the even" % [stats[0][1], stats[1][1], stats[1][0] / stats[0][0]])
 
 
 func _centre_luminance(img: Image) -> float:

@@ -306,8 +306,9 @@ void TextureStreaming::_start_streaming() {
 	}
 
 	// RD initialization must happen on the render thread.
-	const String display_server_name = DisplayServer::get_singleton()->get_name();
-	if (display_server_name != "headless") {
+	// The test runner builds the scene layer before any display server exists.
+	DisplayServer *display_server = DisplayServer::get_singleton();
+	if (display_server && display_server->get_name() != "headless") {
 		RenderingServer::get_singleton()->call_on_render_thread(callable_mp(this, &TextureStreaming::_render_thread_specific_initialization));
 	}
 }

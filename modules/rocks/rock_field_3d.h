@@ -237,6 +237,14 @@ private:
 	// two maps round the camera (1 m and 8 m texels), handed to the ground material (TerrainMaterial3D
 	// set_ground_cover), which draws the grains' aggregate look past where each class's real stones stop.
 	static constexpr int COVER_N = 256;
+	struct FrostClimate {
+		bool on = false;
+		float maat = 99.0f; // mean annual air at the reference height, C
+		float lapse = 5.5f; // K/km, the year's mean
+		float reference = 0.0f; // m
+		float wet = 0.0f; // 0..1 from the year's precipitation
+		bool any = false; // the gate is open somewhere over the job's cell (its squares are not tiled)
+	};
 	struct CoverJob {
 		const RockField3D *field = nullptr;
 		const TerrainGenerator3D *gen = nullptr;
@@ -250,6 +258,7 @@ private:
 		bool scree = true;
 		bool river = true;
 		LocalVector<RiverSeg> river_segs; // the river beds under the map
+		FrostClimate frost; // frost-sorted ground's borders
 		PackedByteArray data; // RGBA8: pebble, gravel and fine cover (0..0.5 as 0..255), rock type (x 32)
 		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
 	};
@@ -365,20 +374,24 @@ private:
 	void _sample_wear(const Rect2 &p_rect, StandWear &r_wear) const;
 	// Frost-sorted patterned ground (docs/ideas/ground-detail.md, "Frost-sorted patterned ground"): the climate a
 	// detail job reads, from WorldWeather's season climate on the main thread.
-	struct FrostClimate {
-		bool on = false;
-		float maat = 99.0f; // mean annual air at the reference height, C
-		float lapse = 5.5f; // K/km, the year's mean
-		float reference = 0.0f; // m
-		float wet = 0.0f; // 0..1 from the year's precipitation
-		bool any = false; // the gate is open somewhere over the job's cell (its squares are not tiled)
-	};
 	void _frost_climate(const Rect2 &p_rect, FrostClimate &r_frost) const;
+	// The drawn ground's relief over the heightfield (WorldGround.relief_at: Landscape3D's cliff and bank relief), sampled
+	// on the main thread for a detail job: no tile is cut over it.
+	struct ReliefGrid {
+		Vector2 origin;
+		real_t step = 0.25;
+		int nx = 0, nz = 0;
+		LocalVector<float> h;
+		bool any = false;
+		float max_in(const Rect2 &p_rect) const; // the largest |height| over the rect
+	};
+	void _sample_relief(const Rect2 &p_rect, ReliefGrid &r_relief) const;
 	float _frost_gate(const TerrainGenerator3D *p_gen, const FrostClimate &p_frost, const Vector3 &p_at, Vector3 &r_normal) const;
 	struct DetailJob {
 		RockField3D *field = nullptr;
 		StandWear wear;
 		FrostClimate frost;
+		ReliefGrid relief;
 		Vector3i key;
 		TerrainGenerator3D *gen = nullptr;
 		HashMap<uint32_t, Library *> libs;
@@ -465,11 +478,15 @@ private:
 	void _watch_holes();
 	void _on_holes_changed(const Rect2 &p_rect);
 	ObjectID stand_watched; // the WorldStand whose stand_changed rebuilds the detail cells (trails, rooting)
+	ObjectID ground_watched; // the WorldGround whose relief_changed rebuilds the detail cells (bank and cliff relief)
 	void _watch_stand();
 	void _on_stand_changed(const Rect2 &p_rect);
 	Rect2 stand_dirty; // changes gathered over a frame, rebuilt once (_apply_stand_changes)
 	bool stand_queued = false;
 	void _apply_stand_changes();
+	Rect2 relief_dirty; // WorldGround.relief_changed areas gathered over a frame (rebuilt with the stand's)
+	void _watch_ground();
+	void _on_relief_changed(const Rect2 &p_rect);
 	Vector3 last_target;
 	bool have_target = false;
 	double last_build_msec = 0.0;

@@ -908,6 +908,24 @@ square-rooted, so wide domains stand highest. The terrain material bends the nor
 talus chips are platy), coarser, mostly lying and sunk only 4 to 12% (a pile, not a pavement), a quarter heaved
 to 35 to 65 degrees; border cover 0.6/0.4/0.2 by class. Libraries for the blocks only where a cell sorts.
 
+Look pass 2 (22 Nov, docs: centres still flat, a hard straight edge where the field ends). The dome bends the normal
+by 30 cm now (the top of the measured range, so it reads at eye level), its slope taken three texels either side; the
+crown pales to 1.25 and the wet margin darkens to 0.6 of the silt. The edge was the stones' reach (32 m for the
+pebble class) meeting plain sward: the far cover maps (the seamless far edge's aggregate) now carry the frost
+borders' stones by the pattern's mean share per texel (and thin the other sources in the centres, as the cells
+do), so past the drawn stones the ground keeps a stony tone; the terrain frost map's last 10 m fade (was 2.5 m).
+
+Bank relief (22 Nov, terrain 57b253b5): the grains rest on the drawn ground, the heightfield plus
+WorldGround.relief_at (Landscape3D's cliff and bank relief, up to about 0.8 m on 40 to 55 degree banks). RockField3D's
+_rest seats every stone on it (the rocks thread, 167d222c); the ground detail adds what the cells need around that:
+no tile is cut over relief (a tile's plane cannot follow it; each detail job samples the relief on the main thread,
+2 m probes then a 0.25 m grid), and the relief can change after the cells are laid (Landscape3D streams its full
+heights in per chunk), so the ground contract gains WorldGround.relief_changed(area), emitted by Landscape3D when a
+chunk's full heights arrive, its relief settings change or it registers; the detail cells over the area are laid
+again, gathered once a frame with the stand's changes. get_stones() reads the same wear and frost as the cells.
+Bench --world --bank-spot: 29 of 29 pebble grains on relief within 5 cm of the drawn ground (were up to 0.59 m
+off).
+
 **C. Feet and tyres crush the new detail.** The trail armour and the rooting clods do not react to prints yet. The
 reacting-stones path (ground detail "Stones that react") already presses grains into a print and spills them at
 its rim; extend it to the rooting clods (GroundClods3D's crushed test on the print field, as its own clods) and

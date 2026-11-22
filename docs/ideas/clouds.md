@@ -882,3 +882,8 @@ What changed from the design above, and why:
   5 July, 14 degrees up) as the game does: with a hand-set white light the sky (which reddens the sun through the air)
   and the overlay (lit by the scene's light) disagreed. Over and above the horizon now match within a few per cent.
 - Bench: --view=haboob, with dust_emission_scale 10 (a strong event: visibility under a kilometre in the head).
+- 22 Nov, later: the wall steps back inside weather_dust_near (PhysXHaboobFront3D's billows), fading over the outer
+  fifth of the cylinder and the top fifth of its height. The erosion's shape across the map is now the column's own
+  depth (3 g/m2 to full), not a share of the largest column: with sand's heavier head that share eroded the wake and
+  the dust over the ground near the camera away, so the ground under the wall showed through bare (sand's scout: its
+  shadowed ground near black). The overlay's sun no longer counts SkyClock's dust dimming twice (atmo_sun_smoke).

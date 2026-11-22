@@ -598,7 +598,7 @@ enum {
 	// reservoirs and one surface record. Must match raytracing_indirect_reuse_inc.glsl.
 	RT_INDIRECT_REUSE_HEADER = 4,
 	RT_INDIRECT_REUSE_STRIDE = 10,
-	RT_INDIRECT_REUSE_RECORD = 6,
+	RT_INDIRECT_REUSE_RECORD = 7,
 	// The light grid (binding 42): cells at most, and list entries at most (the cell
 	// size grows until the lists fit).
 	RT_LIGHT_GRID_MAX_CELLS = 32768,

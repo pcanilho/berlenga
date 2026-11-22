@@ -119,12 +119,18 @@ bool FootPlacementModifier3D::_sample_ground(const Vector3 &p_point, real_t &r_h
 		return false;
 	}
 	const real_t r = 0.12;
-	real_t hx0 = r_height, hx1 = r_height, hz0 = r_height, hz1 = r_height;
-	_ground_at(p_point + Vector3(-r, 0, 0), hx0);
-	_ground_at(p_point + Vector3(r, 0, 0), hx1);
-	_ground_at(p_point + Vector3(0, 0, -r), hz0);
-	_ground_at(p_point + Vector3(0, 0, r), hz1);
-	r_normal = Vector3(hx0 - hx1, 2 * r, hz0 - hz1).normalized();
+	// a side sample more than a step off the centre's height is an edge or something beside the foot (a kerb,
+	// a box), not the slope under the sole: it counts as level with the centre
+	const real_t edge = 0.06;
+	real_t h[4] = { r_height, r_height, r_height, r_height };
+	const Vector3 off[4] = { Vector3(-r, 0, 0), Vector3(r, 0, 0), Vector3(0, 0, -r), Vector3(0, 0, r) };
+	for (int i = 0; i < 4; i++) {
+		real_t hi = r_height;
+		if (_ground_at(p_point + off[i], hi) && Math::abs(hi - r_height) <= edge) {
+			h[i] = hi;
+		}
+	}
+	r_normal = Vector3(h[0] - h[1], 2 * r, h[2] - h[3]).normalized();
 	return true;
 }
 

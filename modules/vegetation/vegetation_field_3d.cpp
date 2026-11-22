@@ -198,6 +198,44 @@ static float _relief_y(const Vector3 &p_at) {
 	return Math::is_finite(r) ? r : 0.0f;
 }
 
+// The top edge of a steep drop in the drawn ground (heightfield plus relief) within 1 m of p_xz (RULE_BANK_EDGE):
+// along each of 16 directions from a point not on a face itself, the first 5 cm step steeper than 45 degrees, and how
+// far the ground falls over the 0.6 m past it. Returns the largest fall (m, 0 with no edge near); r_dir the way it falls, r_ahead the edge's distance.
+static float _bank_edge(const TerrainDataMap3D *p_map, const Vector2 &p_xz, Vector2 &r_dir, float &r_ahead) {
+	auto h = [&](const Vector2 &q) {
+		const Vector3 p(q.x, 0.0f, q.y);
+		return p_map->get_height_at(p) + _relief_y(p);
+	};
+	const float step = 0.05f;
+	float best = 0.0f;
+	r_dir = Vector2();
+	r_ahead = 0.0f;
+	for (int k = 0; k < 16; k++) {
+		const float a = Math::TAU * k / 16.0f;
+		const Vector2 d(Math::cos(a), Math::sin(a));
+		float prev = h(p_xz);
+		if (h(p_xz - d * step) - prev > step * 0.7f) {
+			continue; // On the face already (steeper than 35 degrees behind): not the top.
+		}
+		for (int i = 1; i <= 20; i++) {
+			const Vector2 q = p_xz + d * (step * i);
+			const float hq = h(q);
+			if (prev - hq > step) { // Past 45 degrees: the edge.
+				const float e = step * (i - 1);
+				const float drop = h(p_xz + d * e) - h(p_xz + d * (e + 0.6f));
+				if (drop > best) {
+					best = drop;
+					r_dir = d;
+					r_ahead = e;
+				}
+				break;
+			}
+			prev = hq;
+		}
+	}
+	return best;
+}
+
 static HashMap<ObjectID, float> &_near_radii() {
 	static HashMap<ObjectID, float> radii;
 	return radii;
@@ -2121,6 +2159,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool drift_rule = sp->uses_litter_drift();
 		const bool fairy_rule = sp->uses_fairy_ring();
 		const bool high_water_rule = sp->uses_high_water();
+		const bool bank_edge_rule = sp->uses_bank_edge();
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
@@ -2286,6 +2325,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					Vector3 p3(xz.x, 0.0f, xz.y);
 					float suit = sp->get_suitability(map, p3, false);
+					Vector2 bank_dir; // RULE_BANK_EDGE: over the drop, and how far ahead the edge is.
+					float bank_ahead = 0.0f;
 					// Patches (clonal stands), except that a rock's foot is a patch of its own
 					// for species that gather there: the patch weight is lifted towards 1 there.
 					float rock_boost = 1.0f;
@@ -2425,6 +2466,15 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const bool known = hw.x > -1e20f && hw.y >= 0.0f;
 						suit *= sp->rule_weight(PlantSpecies::RULE_HIGH_WATER, known ? ground - hw.x : 1000.0f);
 						suit *= sp->rule_weight(PlantSpecies::RULE_FLOOD_AGE, known ? hw.y / 365.25f : 10000.0f);
+					}
+					if (bank_edge_rule && suit > 0.0f) {
+						// The top edge of a cut bank or scarp in the drawn ground: stood on it, facing the drop.
+						const float drop = _bank_edge(map, xz, bank_dir, bank_ahead);
+						suit *= sp->rule_weight(PlantSpecies::RULE_BANK_EDGE, drop);
+						if (suit > 0.0f && bank_dir != Vector2()) {
+							xz += bank_dir * bank_ahead;
+							p3 = Vector3(xz.x, 0.0f, xz.y);
+						}
 					}
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
 						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
@@ -2771,7 +2821,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 						}
 					}
-					if (wood_out != Vector2()) {
+					if (bank_dir != Vector2()) {
+						// A sod lip (RULE_BANK_EDGE): mesh +X out over the drop, a little scatter along the edge.
+						yaw = Math::atan2(-bank_dir.y, bank_dir.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.2f;
+					} else if (wood_out != Vector2()) {
 						yaw = Math::atan2(-wood_out.y, wood_out.x);
 					} else if (bank_variant >= 0 && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
 						// Its ground falls towards mesh +Z: turn +Z downhill.

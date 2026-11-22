@@ -57,6 +57,15 @@
 				Spider webs in open grassland as [PlantSpecies]: [constant PRESET_SHEET_WEB] over the sward and [constant PRESET_ORB_WEB] a few metres apart, in their season ([method get_presence]). The silk is drawn by the plant shader and shows only where dew or hoarfrost beads it ([WeatherMap3D] surface wetness and frost); a [code]"dew"[/code] key (0 to 1) in [param season] sets the dew instead, for scenes without a weather map.
 			</description>
 		</method>
+		<method name="make_bank_turf" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				Turf overhangs as one [PlantSpecies] of [constant PRESET_TURF_LIP]: sod lips along the top edge of cut banks and scarps where the drawn ground drops 0.35 m or more past a steep edge ([constant PlantSpecies.RULE_BANK_EDGE]; the field stands each on the edge, mesh +X over the drop), on grassy ground under 35 degrees.
+			</description>
+		</method>
 		<method name="make_flood_wrack" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="variants" type="int" default="3" />
@@ -725,7 +734,10 @@
 		<constant name="PRESET_FLOOD_WRACK" value="111" enum="Preset">
 			A flood's strand line 1.2 to 2.6 m long along the high-water mark: silted straw, reed stem pieces, twigs and leaves over a matted mat, its landward edge sharp at the crest and its foot frayed; wet and dark at first, grey and dry within weeks, broken up over a year by the season's [code]"flood_age"[/code] (years).
 		</constant>
-		<constant name="PRESET_MAX" value="112" enum="Preset">
+		<constant name="PRESET_TURF_LIP" value="112" enum="Preset">
+			The sod's lip over a cut bank or scarp, 0.7 to 1.5 m along the edge (+Z): a root-bound turf slab 10 to 20 cm thick standing out 12 to 35 cm over the drop (+X) from undercut soil, its cut face and underside dark topsoil, the sward's blades leaning out and hanging over the edge and roots trailing 10 to 45 cm from its underside.
+		</constant>
+		<constant name="PRESET_MAX" value="113" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="GRAZE_CATTLE" value="0" enum="GrazeSet">

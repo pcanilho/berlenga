@@ -58,6 +58,7 @@ uniform sampler2D shafts_depth : hint_depth_texture, filter_nearest;
 uniform vec3 shafts_sun_dir = vec3(0.0, 1.0, 0.0);
 uniform float shafts_t_min = 1500.0;
 uniform float shafts_air_sigma = 0.0; // 1/m, the environment's exponential fog (the air and its aerosol)
+uniform vec3 atmo_sun_smoke = vec3(1.0); // the sky's: how much smoke and dust SkyClock took off the scene's sun
 )";
 
 static const char *SHAFTS_BODY = R"(
@@ -118,7 +119,10 @@ void fragment() {
 		du = vec4(du.rgb * ta, 1.0 - (1.0 - du.a) * ta);
 		vec3 tint = dust_tint();
 		vec3 d_amb = du.r * tint;
-		vec3 d_sun = du.g * tint;
+		// The scene's sun is already dimmed by the dust over the map's centre (SkyClock, atmo_sun_smoke), and the march
+		// dims it through the wall itself: counted twice, the wall over the ground went near black. Undone here, as the
+		// sky's march does not get it either.
+		vec3 d_sun = du.g * tint / max(atmo_sun_smoke, vec3(0.02));
 		// The veils start 1.5 km out and the wall is mostly nearer: the dust in front.
 		amb = d_amb + du.a * amb;
 		sunw = d_sun + du.a * sunw;

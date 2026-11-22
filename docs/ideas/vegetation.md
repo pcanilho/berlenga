@@ -1876,3 +1876,23 @@ Built: PollenCloud3D (pollen_cloud_3d.*), the landscape scale beside VegetationP
   Grass bench --pollen-cloud --day=165 sheds from 6 sward points with Flow running; the Flow gas is too slow on the
   cloud's software renderer to judge the look (50 frames at 640x360 take ten minutes): look shot on the PC queue.
 
+## Turf overhangs on cut banks (round 7, third pick)
+A bank of root-bound topsoil over weaker soil fails in layers: the flow undercuts the lower layer and the rooted sod
+holds on as an overhanging cantilever until it breaks off (cantilever failures of composite banks: Thorne and Tovey
+1981, Earth Surface Processes and Landforms 6). Roots give the sod much of its strength (Pollen and Simon 2005,
+Water Resources Research 41, W07025). Slump scarps and terrace edges show the same lip with roots hanging below it.
+Built: PRESET_TURF_LIP (112, PRESET_MAX 113, plant_bank.cpp), PlantGenerator.make_bank_turf, PlantSpecies
+RULE_BANK_EDGE (37, RULE_MAX 38).
+- RULE_BANK_EDGE: from a point not itself on a face (the ground behind it under 35 degrees), along 16 directions,
+  the first 5 cm step steeper than 45 degrees within 1 m, and how far the drawn ground (heightfield plus
+  WorldGround.relief_at) falls over the 0.6 m past it; the largest fall wins. VegetationField3D moves the plant
+  onto that edge and turns mesh +X over the drop (a little scatter).
+- The mesh: a sod slab 0.7 to 1.5 m along the edge standing out 12 to 35 cm, 10 to 20 cm thick with a ragged foot,
+  its cut face and underside dark topsoil, 1300 to 1700 blades a square metre leaning out and hanging over the lip,
+  40 to 70 roots a metre trailing 10 to 45 cm (dimensions are estimates from photographs). About 6.5k triangles.
+- make_bank_turf: spacing 0.9 m, a fall of 0.35 m or more, ground under 35 degrees, on land, level on its top.
+- Checks: vegetation --test "turf overhangs" (a stub scarp: 65 lips along its top edge, none elsewhere, none without
+  it); plants --close=112 --bank (a row on a 1.2 m step, a scout only: the step is a stand-in).
+- Not yet: lips breaking off and falling as the bank erodes (a PhysX/Blast job), and roots on bare scarp faces with
+  no lip.
+

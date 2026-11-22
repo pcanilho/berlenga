@@ -7,6 +7,8 @@ extends Node3D
 #   --spp=N          path tracing samples (default 16)
 #   --close=P        close view of preset P (index in NAMES)
 #   --macro          with --close, one plant from a hand span away
+#   --bank           with --close: a row of the preset along the top edge of a 1.2 m undercut step (turf lips), seen
+#                    from below the step
 #   --low            with --macro: from 2.5 cm above the ground (a mushroom's gills)
 #   --notex          without the generated leaf textures
 #   --push           with --close: a body stands on the middle plant (bent through the trample field)
@@ -31,7 +33,7 @@ extends Node3D
 #   --dew=D          dew 0..1 on the spider webs (season dew), in place of a WeatherMap3D's
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn", "rooted_sod", "anthill", "wood_ant_nest", "molehill", "leaf_bank", "cow_pat", "horse_dung", "deer_pellets", "dung_rough", "fairy_ring_mushroom", "sheet_web", "orb_web", "flood_wrack"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn", "rooted_sod", "anthill", "wood_ant_nest", "molehill", "leaf_bank", "cow_pat", "horse_dung", "deer_pellets", "dung_rough", "fairy_ring_mushroom", "sheet_web", "orb_web", "flood_wrack", "turf_lip"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -43,6 +45,7 @@ var turf := false
 var stand := -1
 var out := ""
 var macro := false
+var bank := false
 var low := false
 var notex := false
 var dump := ""
@@ -72,6 +75,7 @@ func _ready() -> void:
 		elif a.begins_with("--close="): close = int(a.substr(8))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a == "--macro": macro = true
+		elif a == "--bank": bank = true
 		elif a == "--low": low = true
 		elif a == "--notex": notex = true
 		elif a.begins_with("--dump="): dump = a.substr(7)
@@ -150,6 +154,8 @@ func _ready() -> void:
 				mi.free()
 				continue
 			mi.position = Vector3((p % 9) * STEP, 0, (s + (p / 9) * 3.4) * STEP) if close < 0 else Vector3((s - 1) * 0.36, 0, 0)
+			if close >= 0 and bank:
+				mi.position = Vector3(0, 0, (s - 1) * 1.1) # Along the edge (+Z), +X out over the drop.
 			add_child(mi)
 	if close >= 0 and turf:
 		# A turf: the preset close-set as a sward, every cell a different seed and turn.
@@ -221,6 +227,24 @@ func _ready() -> void:
 	ground.mesh = pm
 	ground.position = Vector3(0, 0, -15) if patch else Vector3(2.2, 0, 1.9)
 	add_child(ground)
+	if bank:
+		# The step: the top behind x = 0, the foot 1.2 m down in front, the face cut back 8 to 20 cm under the lip.
+		pm.size = Vector2(7, 12)
+		ground.position = Vector3(-3.5, 0, 0)
+		var low_g := MeshInstance3D.new()
+		var lp := PlaneMesh.new()
+		lp.size = Vector2(7, 12)
+		lp.material = gm
+		low_g.mesh = lp
+		low_g.position = Vector3(3.5, -1.2, 0)
+		add_child(low_g)
+		var face := MeshInstance3D.new()
+		var fb := BoxMesh.new()
+		fb.size = Vector3(1.0, 1.2, 12)
+		fb.material = gm
+		face.mesh = fb
+		face.position = Vector3(-0.58, -0.6, 0)
+		add_child(face)
 	var env := Environment.new()
 	var sky := Sky.new()
 	sky.sky_material = ProceduralSkyMaterial.new()
@@ -274,7 +298,11 @@ func _ready() -> void:
 	var cam := Camera3D.new()
 	cam.fov = 40
 	add_child(cam)
-	if close >= 0 and macro:
+	if close >= 0 and bank:
+		cam.fov = 45
+		cam.position = Vector3(2.4, -0.55, 1.9)
+		cam.look_at(Vector3(0.0, -0.3, 0.2))
+	elif close >= 0 and macro:
 		var bb: AABB = (get_child(0) as MeshInstance3D).get_aabb()
 		var c: Vector3 = (get_child(0) as Node3D).position + bb.get_center()
 		cam.fov = 30
@@ -393,7 +421,8 @@ func _checks() -> void:
 		print("PLANT %s tris=%d height=%.2f width=%.2f ms=%.2f surfaces=%d" % [NAMES[p], _tris(m), aabb.end.y, max(aabb.size.x, aabb.size.z), ms, m.get_surface_count()])
 		_check(NAMES[p] + " has geometry", _tris(m) > 50, _tris(m))
 		_check(NAMES[p] + " plausible size", aabb.end.y > 0.005 and aabb.end.y < 3.0 and aabb.size.x < 3.0, aabb)
-		_check(NAMES[p] + " grows from the ground", aabb.position.y > -0.08, aabb.position.y)
+		# A sod lip hangs over a drop: its cut face and roots go down past the edge it stands on.
+		_check(NAMES[p] + " grows from the ground", aabb.position.y > (-0.75 if NAMES[p] == "turf_lip" else -0.08), aabb.position.y)
 		_check(NAMES[p] + " same seed, same plant", _tris(again) == _tris(m) and again.get_aabb() == aabb, _tris(again))
 		_check(NAMES[p] + " other seed, other plant", other.get_aabb() != aabb, other.get_aabb())
 	# Forest floor sets per stand type: species with meshes, placed by shade or by water.

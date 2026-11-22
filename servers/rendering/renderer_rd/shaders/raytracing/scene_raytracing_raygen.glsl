@@ -1246,6 +1246,9 @@ void main() {
 				if (ir_has_x2) {
 					ir_x2 = ray_origin + ray_dir * ps.hit_t;
 					ir_n2 = ps.offset_normal;
+					if (ir_rough && rt_ir_enhanced()) {
+						ir_rough = rt_ir_reconnectable(origin.xyz, ir_x1, ir_x2, ir_n2);
+					}
 				}
 				ps.packed_bounces_flags &= ~RT_IR_DIFFUSE_FLAG;
 			}

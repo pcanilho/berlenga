@@ -4843,7 +4843,9 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_fire_cloud_for", "heat"), &WeatherMap3D::get_fire_cloud_for);
 	ClassDB::bind_method(D_METHOD("get_storm_count"), &WeatherMap3D::get_storm_count);
 	ClassDB::bind_method(D_METHOD("get_cloud_top_at", "position"), &WeatherMap3D::get_cloud_top_at);
-	ClassDB::bind_method(D_METHOD("set_precipitation_extinction", "source", "sigma", "height_scale", "albedo", "centre", "radius"), &WeatherMap3D::set_precipitation_extinction, DEFVAL(0.95f), DEFVAL(Vector3()), DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("set_precipitation_extinction", "source", "sigma", "height_scale", "albedo", "centre", "radius", "fall_speed"), &WeatherMap3D::set_precipitation_extinction, DEFVAL(0.95f), DEFVAL(Vector3()), DEFVAL(0.0f), DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("set_rain_curtains", "enabled"), &WeatherMap3D::set_rain_curtains);
+	ClassDB::bind_method(D_METHOD("is_rain_curtains"), &WeatherMap3D::is_rain_curtains);
 	ClassDB::bind_method(D_METHOD("clear_precipitation_extinction", "source"), &WeatherMap3D::clear_precipitation_extinction);
 	ClassDB::bind_method(D_METHOD("get_precipitation_extinction_at", "position"), &WeatherMap3D::get_precipitation_extinction_at);
 	ClassDB::bind_method(D_METHOD("set_drive_environment_fog", "enabled"), &WeatherMap3D::set_drive_environment_fog);
@@ -5155,6 +5157,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dew_and_frost"), "set_dew_and_frost", "get_dew_and_frost");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "aerosol_haze"), "set_aerosol_haze", "get_aerosol_haze");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "traced_haze"), "set_traced_haze", "get_traced_haze");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_curtains"), "set_rain_curtains", "is_rain_curtains");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "distant_shafts"), "set_distant_shafts", "is_distant_shafts");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_visibility", PROPERTY_HINT_RANGE, "0.05,200,0.05,or_greater,suffix:km"), "set_haze_visibility", "get_haze_visibility");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_height", PROPERTY_HINT_RANGE, "10,5000,10,suffix:m"), "set_haze_height", "get_haze_height");

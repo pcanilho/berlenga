@@ -319,6 +319,13 @@
 				The suncup relief per cell (m, red channel), which [SnowSurface3D] draws as hollows.
 			</description>
 		</method>
+		<method name="get_cut_critical_height" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How tall a vertical cut in the snow at [param position] stands, m (x), and how deep under the surface it fails when taller (y): Terzaghi's [code]2.67 c / (rho g)[/code] with a tension crack, layer by layer from the top with [method cut_cohesion]. A weak layer (depth hoar, buried hoar, soaked snow) under a strong one fails the wall to its bottom. 1e6 for both when the pack stands to the ground. [SnowSurface3D] reads it for [member SnowSurface3D.wall_collapse].
+			</description>
+		</method>
 		<method name="get_density_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -626,6 +633,17 @@
 			<param index="4" name="shortwave" type="float" />
 			<description>
 				The rate surface hoar deposits on the snow in kg/m² per hour for the air temperature, relative humidity (0 to 1), wind at 10 m (m/s), cloud cover (0 to 1) and absorbed shortwave (W/m²); negative where it sublimates. Grows on clear calm nights.
+			</description>
+		</method>
+		<method name="cut_cohesion" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="kind" type="int" />
+			<param index="1" name="density" type="float" />
+			<param index="2" name="age_hours" type="float" />
+			<param index="3" name="saturation" type="float" />
+			<param index="4" name="crystal_mm" type="float" />
+			<description>
+				The cohesion, Pa, of a layer of kind [param kind] (0 new, 1 wind slab, 2 old, 3 crust, 4 surface hoar, 5 depth hoar) at [param density] kg/m³, [param age_hours] old, with [param saturation] of the liquid it can hold: [code]14.5 (rho / 917)^1.73[/code] kPa (Jamieson and Johnston 2001), less while young and more as it sinters, more when moist and far less when soaked (Colbeck 1982), very little in hoar.
 			</description>
 		</method>
 		<method name="depth_hoar_step" qualifiers="static">

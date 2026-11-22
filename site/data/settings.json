@@ -2654,6 +2654,18 @@
    "topic": "Plants"
   },
   {
+   "name": "Turf overhangs",
+   "settings": [
+    "PlantGenerator.make_bank_turf()",
+    "PRESET_TURF_LIP"
+   ],
+   "note": "",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Boar rooting",
    "settings": [
     "PlantGenerator.make_rooting()",
@@ -3935,6 +3947,17 @@
    "topic": "Deep snow"
   },
   {
+   "name": "Rut walls give way",
+   "settings": [
+    "SnowSurface3D.wall_collapse"
+   ],
+   "note": "",
+   "what": "rut and trench walls taller than their layers can hold shed blocks into a lumpy debris toe, sooner where a vehicle works the rut.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Deep snow"
+  },
+  {
    "name": "Packed-snow roads",
    "settings": [
     "SnowCover3D.traffic_enabled",
@@ -4215,7 +4238,7 @@
     "WeatherMap3D.set_precipitation_extinction()"
    ],
    "note": "",
-   "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.",
+   "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground; near the camera the haze falls in wind-carried curtains, lit by lamps (`rain_curtains`).",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4288,7 +4311,7 @@
     "humidity"
    ],
    "note": "",
-   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up, walls facing the wind catch the driven rain, roofs the falling rain and lee faces none, raster and path traced; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
+   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up, walls facing the wind catch the driven rain, roofs the falling rain and lee faces none, and pooled water stands on level built faces, raster and path traced; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
    "page": "weather",
    "title": "Weather",
    "topic": ""

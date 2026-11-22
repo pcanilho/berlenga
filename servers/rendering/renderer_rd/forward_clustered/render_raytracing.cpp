@@ -7786,7 +7786,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			p_state->indirect_reuse_slot ^= 1u;
 			const uint32_t header[4] = { 0u, 0u, uint32_t(size.width), uint32_t(size.height) };
 			RD::get_singleton()->buffer_update(p_state->indirect_reuse_buffer, 0, sizeof(header), header);
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_INDIRECT_REUSE] = float(1u + p_state->indirect_reuse_slot + (p_state->indirect_reuse_history ? 2u : 0u));
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_INDIRECT_REUSE] = float(1u + p_state->indirect_reuse_slot + (p_state->indirect_reuse_history ? 2u : 0u) + (GLOBAL_GET_CACHED(bool, "rendering/pathtracing/indirect_reuse_enhanced") ? 4u : 0u));
 			p_state->indirect_reuse_history = true;
 		} else if (p_state) {
 			p_state->indirect_reuse_history = false;
