@@ -180,6 +180,7 @@ below the sea's level reads its own water, and a body above the water reads the 
 | `sediment_at(pos)` | kg/m3 (x mineral, y ash and char) | (0, 0) | Suspended load of the water that answers; river and lake shading cloud and darken by it |
 | `breaking_at(pos)` | m | 0 | Height of the waves breaking: the broken waves in a surf zone (about 0.78 of the depth), whitecap cover times wave height on open water; the largest any producer reports |
 | `add_sediment(pos, mineral_kg_s, ash_kg_s)` | kg/s | dropped with no water | A load entering the water that answers there (runoff off burnt or bare ground, banks, slides); it carries it downstream |
+| `high_water_at(pos)` | Vector4: x the last flood's highest surface (m, world), y days since that peak, z w the peak flow's direction (unit x, z; 0 unknown) | (-INF, -1, 0, 0) | Producers keep their peak stage (Valence: rivers by section, lakes); the highest mark answers. Reader: vegetation wrack lines |
 
 Tests: `WorldContracts.set_water(stub)` replaces the whole contract; `WorldContracts.add_water_stub(stub)` adds a
 script producer beside the real ones (a pool or a sea for a buoyancy bench without one).

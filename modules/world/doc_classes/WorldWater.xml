@@ -65,6 +65,13 @@
 				Override in a stub to replace [method height_at].
 			</description>
 		</method>
+		<method name="_high_water_at" qualifiers="virtual const">
+			<return type="Vector4" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override for [method high_water_at].
+			</description>
+		</method>
 		<method name="_impulse" qualifiers="virtual">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -173,6 +180,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The water surface for [param position] (world height in metres): of the producers with water there, the one nearest above it, else the nearest below; [code]-INF[/code] where there is none.
+			</description>
+		</method>
+		<method name="high_water_at" qualifiers="const">
+			<return type="Vector4" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The last flood's high-water mark over [param position]: x the highest surface it reached (m, world), y the days since that peak, z and w the peak flow's direction (unit x, z; zero if not known); [code](-INF, -1, 0, 0)[/code] where no producer kept one. The highest mark of all producers answers. Readers: wrack lines, silt lines, flood-scoured plants.
 			</description>
 		</method>
 		<method name="impulse">
