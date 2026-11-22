@@ -208,3 +208,12 @@ copy with mode `COMPACT`, free the original once the GPU is done with it).
   only points where the map's ratio differs from exactly 1 (bent and straight photons unequal: real lines) keep
   the cache off. Proof: `--medium` frame byte-identical to the previous build with the cache off; with it on,
   same mean brightness (137.63 vs 137.62 of 255), differences are the cache's run-to-run noise.
+
+### Dune and drift wind shear (CPU)
+
+- `DuneShear::rows()` (dune sea and snow drifts) rounded and wrapped four indices per cell per reach step
+  (32 by default: 128 `lround` and modulo pairs per cell). The offsets along the wind do not depend on the cell, so
+  they are worked out once per call (and the row offsets once per row), templated on wrap; reach steps where the
+  offset sits at a rounding tie keep the direct form. A standalone harness over 4 grid sizes, 6 wind directions
+  (ties included) and both edge modes gives bit-identical output, 3.5 times faster (818 ms to 235 ms). Snow and
+  ground `--test` pass as before.
