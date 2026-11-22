@@ -546,9 +546,22 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			RD::get_singleton()->raytracing_list_bind_uniform_set(raytracing_list, bindless_set, 1);
 		}
 
-		// Raytracing dispatches at internal (pre-upscale) size
+		// Raytracing dispatches at internal (pre-upscale) size, in bands of rows when the frame asks for many samples
+		// (raytracing_common_inc.glsl, RTLaunchBand): each dispatch holds at most
+		// rendering/pathtracing/max_samples_per_dispatch pixel samples, so a still at 64 spp is several short
+		// dispatches the GPU can be preempted between, not one long enough for the system's watchdog to reset the device
+		// (Windows TDR after 2 s: VK_ERROR_DEVICE_LOST). A real-time frame (1080p at 2 spp, 4K at 1) stays one dispatch.
 		Size2i rt_size = rb->get_internal_size();
-		RD::get_singleton()->raytracing_list_trace_rays(raytracing_list, 0, raytracing->get_shader()->get_hit_sbt(rt_flags), rt_size.width, rt_size.height, 1);
+		static const uint64_t max_samples = MAX((uint64_t)(int64_t)GLOBAL_GET("rendering/pathtracing/max_samples_per_dispatch"), (uint64_t)65536);
+		const uint64_t spp = (uint64_t)MAX(p_render_data->environment.is_valid() ? RendererEnvironmentStorage::get_singleton()->environment_get_pathtracing_samples_per_pixel(p_render_data->environment) : 1, 1);
+		const uint64_t row_samples = MAX((uint64_t)rt_size.width, (uint64_t)1) * spp;
+		const uint32_t band_rows = (uint32_t)CLAMP(max_samples / row_samples, (uint64_t)1, (uint64_t)MAX(rt_size.height, 1));
+		const RID hit_sbt = raytracing->get_shader()->get_hit_sbt(rt_flags);
+		for (uint32_t y = 0; y < (uint32_t)rt_size.height; y += band_rows) {
+			const uint32_t band[4] = { y, (uint32_t)rt_size.height, 0, 0 };
+			RD::get_singleton()->raytracing_list_set_push_constant(raytracing_list, band, sizeof(band));
+			RD::get_singleton()->raytracing_list_trace_rays(raytracing_list, 0, hit_sbt, rt_size.width, MIN(band_rows, (uint32_t)rt_size.height - y), 1);
+		}
 		RD::get_singleton()->raytracing_list_end();
 
 		RD::get_singleton()->draw_command_end_label();

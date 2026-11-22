@@ -3416,6 +3416,9 @@
 			If [code]true[/code], on a device with linear swept spheres (Vulkan [code]VK_NV_ray_tracing_linear_swept_spheres[/code], hardware hair primitives) the path tracer traces strand hair ([code]render_mode hair_strands[/code] on a mesh of two crossed strips per strand point, as PhysXHair3D draws it) as round tubes between the strand points, one primitive per segment instead of four triangles, and shades each fibre from where the ray meets it across its width. Other devices, and other surfaces, trace triangles as before. Off by default until it has been checked on such a device; off asks for no extension.
 			[b]Note:[/b] Requires a restart to take effect.
 		</member>
+		<member name="rendering/pathtracing/max_samples_per_dispatch" type="int" setter="" getter="" default="4194304">
+			The most pixel samples (pixels times [member Environment.pathtracing_samples_per_pixel]) one path tracing dispatch traces. A frame asking for more is traced as bands of rows, one dispatch each, so no dispatch runs long enough for the operating system's GPU watchdog to reset the device (Windows TDR, 2 s by default, reported as [code]VK_ERROR_DEVICE_LOST[/code]). The default keeps a real-time frame (1920x1080 at 2 samples, 3840x2160 at 1) in one dispatch and splits a 960x540 still at 64 samples into 8.
+		</member>
 		<member name="rendering/pathtracing/multimesh_merged_blas_max_triangles" type="int" setter="" getter="" default="65536">
 			Maximum total triangle count ([code]instance_count * triangles_per_surface[/code]) for a [MultiMesh] surface to use a single merged BLAS in the path tracer. When the combined triangle count exceeds this value, the path tracer falls back to one TLAS entry per instance sharing a common BLAS instead. Lower this value to reduce peak GPU memory for large MultiMeshes; raise it to prefer the merged path (which avoids per-instance TLAS overhead).
 			[b]Note:[/b] Requires a restart to take effect.
