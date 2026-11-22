@@ -2710,6 +2710,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Hay meadows",
+   "settings": [
+    "GrassField3D.hay_meadows"
+   ],
+   "note": "",
+   "what": "meadows are mown to stubble, the cut grass lying in swaths, then tedded, raked into windrows and carted off over the following days.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Grazing roughs and dung",
    "settings": [
     "PlantGenerator.make_grazing()"
