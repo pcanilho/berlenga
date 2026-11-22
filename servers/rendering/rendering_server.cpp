@@ -3944,6 +3944,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/deformed_mesh_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,3600,1"), 60);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/multimesh_blas_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,18000,1"), 3600);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/multimesh_merged_blas_max_triangles", PROPERTY_HINT_RANGE, "256,1048576,1"), 65536);
+	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/max_samples_per_dispatch", PROPERTY_HINT_RANGE, "65536,268435456,1"), 4194304);
 	// Per-frame budgets of the dynamic BLAS scheduler (particles, camera-dependent MultiMesh), shared by all viewports.
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/dynamic_blas_max_operations", PROPERTY_HINT_RANGE, "1,100000,1"), 2000);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/dynamic_blas_build_triangle_budget", PROPERTY_HINT_RANGE, "0,100000000,1"), 500000);

@@ -44,8 +44,8 @@ bool rt_ir_enabled() {
 	if (get_rt_param(RT_PARAM_INDIRECT_REUSE) < 0.5) {
 		return false;
 	}
-	uint pixels = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
-	return rt_ir.data[2] == gl_LaunchSizeEXT.x && rt_ir.data[3] == gl_LaunchSizeEXT.y &&
+	uint pixels = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;
+	return rt_ir.data[2] == RT_LAUNCH_SIZE.x && rt_ir.data[3] == RT_LAUNCH_SIZE.y &&
 			uint(rt_ir.data.length()) >= RT_IR_HEADER + pixels * (2u * RT_IR_STRIDE + RT_IR_RECORD);
 }
 
@@ -54,8 +54,8 @@ uint rt_ir_state() {
 }
 
 uint rt_ir_record_base(ivec2 p_pixel) {
-	uint pixels = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
-	return RT_IR_HEADER + 2u * pixels * RT_IR_STRIDE + (uint(p_pixel.y) * gl_LaunchSizeEXT.x + uint(p_pixel.x)) * RT_IR_RECORD;
+	uint pixels = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;
+	return RT_IR_HEADER + 2u * pixels * RT_IR_STRIDE + (uint(p_pixel.y) * RT_LAUNCH_SIZE.x + uint(p_pixel.x)) * RT_IR_RECORD;
 }
 
 uint rt_ir_pack_dir(vec3 v) {
@@ -98,7 +98,7 @@ vec3 rt_ir_weight = vec3(0.0); // the throughput before the diffuse weight, time
 
 // The camera ray's first hit (the same for every sample): the surface record raygen reuses with.
 void rt_ir_write_record(vec3 p_hit_pos, vec3 p_prev_pos, vec3 N, vec3 Ng, float p_roughness, bool p_burley) {
-	uint b = rt_ir_record_base(ivec2(gl_LaunchIDEXT.xy));
+	uint b = rt_ir_record_base(ivec2(RT_LAUNCH_ID.xy));
 	vec3 w = rt_ir_diffuse_taken ? rt_ir_weight : vec3(0.0);
 	vec3 d = p_prev_pos - p_hit_pos;
 	rt_ir.data[b] = packHalf2x16(w.rg);
@@ -124,8 +124,8 @@ struct IRReservoir {
 };
 
 uint rt_ir_base(uint p_slot, ivec2 p_pixel) {
-	uint pixels = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
-	return RT_IR_HEADER + (p_slot * pixels + uint(p_pixel.y) * gl_LaunchSizeEXT.x + uint(p_pixel.x)) * RT_IR_STRIDE;
+	uint pixels = RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y;
+	return RT_IR_HEADER + (p_slot * pixels + uint(p_pixel.y) * RT_LAUNCH_SIZE.x + uint(p_pixel.x)) * RT_IR_STRIDE;
 }
 
 IRReservoir rt_ir_load(uint p_slot, ivec2 p_pixel) {
@@ -162,7 +162,7 @@ void rt_ir_store(uint p_slot, ivec2 p_pixel, IRReservoir r) {
 
 // Last frame's reservoir at p_pixel, if its surface matches this one (seen where it was last frame).
 bool rt_ir_load_prev(ivec2 p_pixel, vec3 p_prev_pos, vec3 N, float p_eye_dist, out IRReservoir r) {
-	if (any(lessThan(p_pixel, ivec2(0))) || any(greaterThanEqual(p_pixel, ivec2(gl_LaunchSizeEXT.xy)))) {
+	if (any(lessThan(p_pixel, ivec2(0))) || any(greaterThanEqual(p_pixel, ivec2(RT_LAUNCH_SIZE.xy)))) {
 		return false;
 	}
 	r = rt_ir_load(1u - (rt_ir_state() & 1u), p_pixel);
@@ -224,7 +224,7 @@ void rt_ir_fresh_add(inout IRFresh f, vec3 x1, bool p_traced, vec3 p_dir, bool p
 	if (!p_traced || luminance(p_L) <= 0.0) {
 		return;
 	}
-	uint b = rt_ir_record_base(ivec2(gl_LaunchIDEXT.xy));
+	uint b = rt_ir_record_base(ivec2(RT_LAUNCH_ID.xy));
 	vec3 N = rt_ir_unpack_dir(rt_ir.data[b + 2u]);
 	vec3 Ng = rt_ir_unpack_dir(rt_ir.data[b + 3u]);
 	IRReservoir c;
@@ -275,7 +275,7 @@ void rt_ir_fresh_add(inout IRFresh f, vec3 x1, bool p_traced, vec3 p_dir, bool p
 // this frame's, and return the diffuse lobe's light to use in place of each diffuse sample's own.
 // p_active: some sample took the diffuse lobe (else only the history is carried).
 vec3 rt_ir_resolve(bool p_active, vec3 x1, vec3 V, float p_eye_dist, IRFresh p_fresh, inout uint rng) {
-	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 	uint state = rt_ir_state();
 	uint b = rt_ir_record_base(pixel);
 	vec2 w_rg = unpackHalf2x16(rt_ir.data[b]);
@@ -288,7 +288,7 @@ vec3 rt_ir_resolve(bool p_active, vec3 x1, vec3 V, float p_eye_dist, IRFresh p_f
 	vec2 d_z_burley = unpackHalf2x16(rt_ir.data[b + 5u]);
 	vec3 prev_pos = x1 + vec3(d_xy, d_z_burley.x);
 	bool burley = d_z_burley.y > 0.5;
-	vec2 prev_px = vec2(pixel) + 0.5 + rt_motion_vector(x1, prev_pos) * vec2(gl_LaunchSizeEXT.xy);
+	vec2 prev_px = vec2(pixel) + 0.5 + rt_motion_vector(x1, prev_pos) * vec2(RT_LAUNCH_SIZE.xy);
 	bool history = (state & 2u) != 0u;
 
 	if (!p_active) {

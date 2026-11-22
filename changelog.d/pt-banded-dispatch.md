@@ -1,0 +1,1 @@
+- Path tracing: frames that ask for many samples are traced as bands of rows, one short dispatch each (`rendering/pathtracing/max_samples_per_dispatch`, 4,194,304 pixel samples), so a 64 spp still no longer trips the Windows GPU watchdog (VK_ERROR_DEVICE_LOST). Real-time frames stay one dispatch.

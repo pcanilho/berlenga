@@ -202,7 +202,7 @@ vec3 apply_normal_map(HitData h, vec3 tangent_space_normal, float normal_map_dep
 // ============================================================================
 
 void rt_store_ndc_depth(vec3 hit_pos) {
-	imageStore(rt_depth_image, ivec2(gl_LaunchIDEXT.xy), vec4(rt_ndc_depth(hit_pos)));
+	imageStore(rt_depth_image, ivec2(RT_LAUNCH_ID.xy), vec4(rt_ndc_depth(hit_pos)));
 }
 
 // Write NDC depth for primary ray hits (bounce 0, sample 0 only).
@@ -289,7 +289,7 @@ vec3 rt_hit_prev_world_pos(vec3 hit_pos) {
 }
 
 void rt_store_velocity(vec3 hit_pos) {
-	imageStore(rt_velocity_image, ivec2(gl_LaunchIDEXT.xy), vec4(rt_motion_vector(hit_pos, rt_hit_prev_world_pos(hit_pos)), 0.0, 0.0));
+	imageStore(rt_velocity_image, ivec2(RT_LAUNCH_ID.xy), vec4(rt_motion_vector(hit_pos, rt_hit_prev_world_pos(hit_pos)), 0.0, 0.0));
 }
 
 // Write motion vectors for primary ray hits (bounce 0, sample 0 only).
@@ -1187,7 +1187,7 @@ bool sample_subsurface_entry(HitData h, MaterialResult m, MaterialProperties mat
 	ps.offset_normal = -h.geometry_normal;
 	ps.next_ray_dir = dir;
 	ps.bsdf_pdf = uintBitsToFloat(rt_medium_code(1.0 / radius));
-	imageStore(rt_medium_image, ivec2(gl_LaunchIDEXT.xy), uvec4(packUnorm4x8(vec4(clamp(material.baseColor, vec3(0.0), vec3(1.0)), 0.0))));
+	imageStore(rt_medium_image, ivec2(RT_LAUNCH_ID.xy), uvec4(packUnorm4x8(vec4(clamp(material.baseColor, vec3(0.0), vec3(1.0)), 0.0))));
 	return true;
 }
 
@@ -1298,7 +1298,7 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 				ps.packed_bounces_flags |= MEDIUM_CHANGE_FLAG;
 				ps.bsdf_pdf = uintBitsToFloat(h.is_front_face ? m.medium : 0u);
 				if (h.is_front_face && (m.medium & RT_MEDIUM_CODE_SCATTER) != 0u) {
-					imageStore(rt_medium_image, ivec2(gl_LaunchIDEXT.xy), uvec4(m.medium_scatter));
+					imageStore(rt_medium_image, ivec2(RT_LAUNCH_ID.xy), uvec4(m.medium_scatter));
 				}
 			}
 			return true;
@@ -1493,7 +1493,7 @@ void dlss_rr_guide_hit(HitData h, MaterialResult m, vec3 N, vec3 V, float NdotV,
 // unscaled and takes over normal and roughness by its share of the
 // specular albedo, so its guides stay continuous at any alpha.
 void dlss_rr_composite_peel_guides(HitData h, MaterialResult m, vec3 N, vec3 V, float NdotV, float p_cover, bool p_premultiplied) {
-	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 	float source_weight = p_premultiplied ? 1.0 : p_cover;
 	float behind = 1.0 - p_cover;
 
@@ -1574,7 +1574,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 				// camera's medium probe (rt_camera_medium()).
 				ps.bsdf_pdf = uintBitsToFloat(m.medium | 0x80000000u);
 				if ((m.medium & RT_MEDIUM_CODE_SCATTER) != 0u) {
-					imageStore(rt_medium_image, ivec2(gl_LaunchIDEXT.xy), uvec4(m.medium_scatter));
+					imageStore(rt_medium_image, ivec2(RT_LAUNCH_ID.xy), uvec4(m.medium_scatter));
 				}
 			}
 		}
@@ -1684,7 +1684,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	// on, and raygen records what this surface sent back (raytracing_radiance_cache_inc.glsl).
 	// Points under water caustics shade on, since a cell would average the lines away.
 	bool rc_eligible = total_bounces == 1u && m.roughness >= RT_RC_MIN_ROUGHNESS && rt_rc_enabled();
-	bool rc_training = rc_eligible && rt_rc_is_training_pixel(gl_LaunchIDEXT.xy);
+	bool rc_training = rc_eligible && rt_rc_is_training_pixel(RT_LAUNCH_ID.xy);
 	if (rc_eligible && !rc_training && !is_singular_path(ps.packed_bounces_flags) &&
 			gl_HitTEXT >= 0.5 * rt_rc_cell_size(h.hit_pos) && !rt_caustics_covers(h.hit_pos)) {
 		vec4 cached = rt_rc_read(h.hit_pos, h.geometry_normal);
@@ -1715,7 +1715,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	// =================================================================
 #ifdef DLSS_RR_ENABLED
 	if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags)) {
-		ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+		ivec2 pixel = ivec2(RT_LAUNCH_ID.xy);
 		dlss_rr_store_albedo_guides(m, NdotV);
 		float rr_roughness = dlss_rr_roughness(m);
 		imageStore(dlss_rr_normal_roughness, pixel, vec4(N, rr_roughness));
@@ -1736,7 +1736,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 		// Singular bounce off the replaceable primary mirror: this hit's image across the mirror plane
 		// stands in for the mirror. Exact even though the bounce direction was sampled. A second
 		// mirror leaves the flag set for raygen's walk.
-		vec4 mirror_normal_roughness = imageLoad(dlss_rr_normal_roughness, ivec2(gl_LaunchIDEXT.xy));
+		vec4 mirror_normal_roughness = imageLoad(dlss_rr_normal_roughness, ivec2(RT_LAUNCH_ID.xy));
 		mat3 mirror_xform = dlss_rr_householder(mirror_normal_roughness.xyz);
 		vec3 mirror_pos = gl_WorldRayOriginEXT;
 		dlss_rr_write_replaced_guides(mirror_pos + mirror_xform * (h.hit_pos - mirror_pos),
