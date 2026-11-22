@@ -726,16 +726,19 @@ func _wind_case(wind: float, hours: int, fall: float) -> Array:
 	return [snow.get_density_at(p), snow.get_wind_slab_at(p), added, added_depth]
 
 
-# Drift take-back (follow-up 48, open): a lone drift in a gale. The wind arrives carrying a full load off the open
-# snow upwind, so the drift loses snow only where the wind speeds up over it; the wind sees the ground, not the
-# snow's relief, so a drift on loose snow keeps its crest. On bare ground nothing comes in and it is blown away.
-func _drift_case(cover: float, hours: int) -> Array:
+# Drift take-back (follow-up 48): a lone drift in a gale. The wind arrives carrying a full load off the open snow
+# upwind, so the drift loses snow only where the wind speeds up over it: with drift_relief the wind sees the snow's own
+# relief (DuneShear, Kroy et al. 2002), so the drift's stoss erodes and its lee fills: a big drift becomes a snow dune
+# and creeps downwind, holding its height, and a drift shorter than the smallest dune (some 10-20 saturation lengths)
+# flattens. Without relief a drift on loose snow keeps its place and crest. On bare ground it is blown away.
+func _drift_case(relief: bool, cover: float, hours: int, radius := 5.0, depth := 1.0) -> Array:
 	await _setup("flat", 64.0, 64, -8.0)
 	snow.wind_packing_enabled = false
 	snow.sastrugi_enabled = false
+	snow.drift_relief = relief
 	if cover > 0.0:
 		snow.add_snow(cover, 100.0)
-	snow.add_drift(Vector3(0.5, 0, 0.5), 5.0, 1.0, 250.0)
+	snow.add_drift(Vector3(0.5, 0, 0.5), radius, depth, 250.0)
 	weather.temperature = -8.0
 	weather.wind_speed = 14.0
 	weather.wind_direction = Vector2(1, 0)
@@ -747,9 +750,19 @@ func _drift_case(cover: float, hours: int) -> Array:
 			a.append(snow.get_depth_at(Vector3(x + 0.5, 0, 0.5)))
 		return a
 	var before: Array = line.call()
+	var t0 := Time.get_ticks_msec()
 	for h in hours * 6:
 		snow.advance(600.0)
-	return [before, line.call()]
+	var ms := Time.get_ticks_msec() - t0
+	var peak := 0.0
+	var peak_x := 0.0
+	for z in range(-10, 11, 2):
+		for x in range(-12, 28):
+			var d := snow.get_depth_at(Vector3(x + 0.5, 0, z + 0.5))
+			if d > peak:
+				peak = d
+				peak_x = x
+	return [before, line.call(), peak, peak_x, ms]
 
 
 func _run_drift_tests() -> void:
@@ -759,13 +772,20 @@ func _run_drift_tests() -> void:
 		for d in a:
 			s += "%.0f " % (d * 100.0)
 		return s.strip_edges()
-	var loose: Array = await _drift_case(20.0, 6)
-	print("  cm at -6..9 m on 20 cm of loose snow: start %s, 6 h at 14 m/s %s" % [fmt.call(loose[0]), fmt.call(loose[1])])
-	_check("add_drift lays a cone of snow", absf(loose[0][2] - 1.2) < 0.05 and absf(loose[0][0] - 0.2) < 0.02, "%.0f cm at its centre on 20 cm" % (loose[0][2] * 100.0))
-	_check("a drift on loose snow in a gale keeps its crest (the wind arrives full; open: it does not see the drift)", loose[1][2] > 0.9 * loose[0][2], "%.0f cm of %.0f" % [loose[1][2] * 100.0, loose[0][2] * 100.0])
-	var bare: Array = await _drift_case(0.0, 6)
-	print("  on bare ground: start %s, 6 h %s" % [fmt.call(bare[0]), fmt.call(bare[1])])
-	_check("a drift on bare ground is blown away (nothing comes in)", bare[1][2] < 0.5 * bare[0][2], "%.0f cm of %.0f at its centre" % [bare[1][2] * 100.0, bare[0][2] * 100.0])
+	var on: Array = await _drift_case(true, 20.0, 6)
+	var off: Array = await _drift_case(false, 20.0, 6)
+	print("  cm at -6..9 m on 20 cm of loose snow: start %s; 6 h at 14 m/s with relief %s (peak %.0f cm at %.0f m, %d ms), without %s (peak %.0f cm, %d ms)" % [fmt.call(on[0]), fmt.call(on[1]), on[2] * 100.0, on[3], on[4], fmt.call(off[1]), off[2] * 100.0, off[4]])
+	_check("add_drift lays a cone of snow", absf(on[0][2] - 1.2) < 0.05 and absf(on[0][0] - 0.2) < 0.02, "%.0f cm at its centre on 20 cm" % (on[0][2] * 100.0))
+	_check("a 10 m drift on loose snow in a gale becomes a snow dune: it creeps downwind and holds its height (no spike)", on[3] >= 2.0 and on[2] < 1.25 * on[0][2] and on[2] > 0.6 * on[0][2] and on[1][2] < 0.5 * on[0][2], "crest %.0f cm (from %.0f) at %.0f m; %.0f cm left where it stood" % [on[2] * 100.0, on[0][2] * 100.0, on[3], on[1][2] * 100.0])
+	var small: Array = await _drift_case(true, 20.0, 6, 2.0, 0.4)
+	var small_off: Array = await _drift_case(false, 20.0, 6, 2.0, 0.4)
+	print("  a 4 m drift: start %s; 6 h with relief %s (peak %.0f cm), without %s" % [fmt.call(small[0]), fmt.call(small[1]), small[2] * 100.0, fmt.call(small_off[1])])
+	_check("a drift shorter than the smallest dune flattens", small[2] < 0.75 * small[0][2] and small_off[1][2] > 0.9 * small_off[0][2], "crest %.0f cm of %.0f; %.0f without relief" % [small[2] * 100.0, small[0][2] * 100.0, small_off[1][2] * 100.0])
+	_check("drift_relief off: the drift keeps its crest (the wind does not see it)", off[1][2] > 0.9 * off[0][2], "%.0f cm of %.0f" % [off[1][2] * 100.0, off[0][2] * 100.0])
+	var bare: Array = await _drift_case(true, 0.0, 6)
+	print("  on bare ground: start %s, 6 h %s (peak %.0f cm at %.0f m)" % [fmt.call(bare[0]), fmt.call(bare[1]), bare[2] * 100.0, bare[3]])
+	_check("a drift on bare ground is blown away (nothing comes in), with no spike", bare[1][2] < 0.5 * bare[0][2] and bare[2] < bare[0][2], "%.0f cm of %.0f at its centre, peak %.0f cm" % [bare[1][2] * 100.0, bare[0][2] * 100.0, bare[2] * 100.0])
+	snow.drift_relief = true
 
 func _run_wind_slab_tests() -> void:
 	print("Wind slab (follow-up 45):")
