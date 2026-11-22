@@ -901,3 +901,6 @@ storm_column_type / wc_storm_column). And the extinction returned nothing where 
 storm's cover gives only within a couple of core radii: the anvil, meant to fan out 7 radii downwind, was cut to a
 round cap over the tower. The early out now keeps the storm's column. Seen from the side the anvil now spreads
 downwind as a fan with billowed edges; raster and PT match.
+- Then the storm's cirrus shield: centred 2.5 core radii downwind with a 3-radius spread, it now lay under the wider
+  anvil as a streaked sheet, a collar round the tower. It now starts where the anvil body ends (4 to 6.5 body radii
+  downwind, centred at 7), so the anvil thins downwind into cirrus (Lilly 1988), as the shield over a real storm.
