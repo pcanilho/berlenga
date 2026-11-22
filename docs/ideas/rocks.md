@@ -1059,6 +1059,15 @@ Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour
     spots left where boulders were match the ground's contact darkening, so the boulders are likely gone from the
     TLAS altogether rather than hidden from camera rays. Next suspect: the per-mesh BLAS that expanded copies share
     (cache key = mesh RID index and surface), lost when far copies of the same mesh turn merged.
+  - 22 Nov (main 986d3581, still broken; parked for the weather work). Ruled out: the near merged entries (every
+    merged MultiMesh within 30 m has the same count, primitives, divisor, flags, scheduler action and record
+    positions thinned and unthinned); the BLAS batch's scratch rollover (scratch raised to 4 GB: same frame); a
+    first-frame race (every merged BLAS forced to rebuild 15 frames later, a few per frame: same frame). No single
+    group does it: thinning groups 600-675 alone changes 855 pixels, 675-750 alone none, 0-750 together 10,700, so a
+    total crosses a line. It is not an overflow: the broken frame has fewer TLAS instances (28,255 against 28,703
+    good and 32,207 unthinned), fewer primitives (256 M against 259 M and 301 M) and fewer rows. Next: look at what
+    the camera rays hit at a missing boulder's pixel (instance and primitive ids, a debug output in raygen), and the
+    merged bakes' GPU contents rather than their CPU records.
 - The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
   world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
   Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.
