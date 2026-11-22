@@ -37,6 +37,7 @@
 
 #include "plant_generator.h"
 #include "plant_species.h"
+#include "grass_field_3d.h"
 
 #include "modules/weather/weather_map_3d.h"
 
@@ -732,6 +733,6 @@ void fragment() {
 }
 )";
 	impostor_shader.instantiate();
-	impostor_shader->set_code(code);
+	impostor_shader->set_code(GrassField3D::add_camera_cutout(code));
 	return impostor_shader;
 }
