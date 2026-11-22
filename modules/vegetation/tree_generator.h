@@ -796,6 +796,19 @@ public:
 	// Glaze (trees.md 5be): mm of radial clear ice from freezing rain on the standing wood, built as geometry (a shell
 	// round the bark and icicles under it) so the path tracer sees it as the raster does; 0 none.
 	float glaze_mm = 0.0f;
+
+public:
+	// Near meshes in an ice storm: VegetationField3D asks for variant + NEAR_GLAZE_STRIDE x band, the band of
+	// WorldWeather.glaze_at over the cell (glaze_band(): 0 under 2 mm, then 2-6, 6-12, 12-25 and 25 mm up), and the
+	// near build grows that band's glaze_band_mm() as geometry.
+	static constexpr int NEAR_GLAZE_STRIDE = 1 << 16;
+	static int glaze_band(float p_mm) { return p_mm < 2.0f ? 0 : (p_mm < 6.0f ? 1 : (p_mm < 12.0f ? 2 : (p_mm < 25.0f ? 3 : 4))); }
+	static float glaze_band_mm(int p_band) {
+		static const float mm[5] = { 0.0f, 4.0f, 9.0f, 18.0f, 30.0f };
+		return mm[CLAMP(p_band, 0, 4)];
+	}
+
+public:
 	void _glaze_build(const Builder &p_bark, Builder &r_ice) const;
 	void _glaze_surface(const Ref<ArrayMesh> &p_mesh, const Builder &p_ice, const Ref<ArrayMesh> &p_material_source, Array &r_static_materials);
 	float _silt_at(const Vector3 &p_pos, const Vector3 &p_normal) const;

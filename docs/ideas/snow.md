@@ -1776,7 +1776,7 @@ photographs, e.g. Fikke et al. 2007, COST 727).
   overstates the new snow's weight (a 50 cm storm reads S 0.79 over old snow where its own 100 kg/m3 gives 1.1).
   Needs the recent snow's own mass tracked; noted for a later round.
 
-## Follow-up 48: a drift the wind takes back (open, 22 Nov 2026)
+## Follow-up 48: a drift the wind takes back (round 7, 22 Nov 2026)
 
 Bench: `--test=drift` with `SnowCover3D.add_drift(position, radius, depth, density)` (a cone of wind-packed snow; also
 for ploughed banks and piles in scenes). A 1 m drift on 20 cm of loose snow in a 14 m/s gale at -8 C keeps its crest
@@ -1811,6 +1811,19 @@ begin_shear/shear_rows are members on a wrapping grid: split them into a static 
 wrap optional) that the dune sea and the snow cover both call, and drive the snow's transport weight with it. The
 ground's sand (GroundSurface3D) has Nishimori and Ouchi ripples and a saturation-length flux for dune grass, at
 centimetre and metre scale, not this runaway.
+
+Built (round 7): `SnowCover3D.drift_relief` (on). `DuneShear` (terrain_dunes.h) is now a static helper with heights in,
+shear out and wrapping optional; `TerrainDuneSea` calls it (bit-identical: a standalone run of the old and new header
+hashes the same, and the terrain_gen checks print the same). The snow takes its relief (depth in cells) along the
+wind, 1-2-1 smoothing passes = 2 (l_sat / cell)^2 with a 2 m saturation length (Pomeroy and Gray 1990 put snow
+saltation's development length at metres), A 3 and B 0.5 as the dune sea, reach 32 cells, clamped edges; the wind
+over the cell goes as sqrt(tau). A slip face at 38 degrees on the snow's own relief (snow on steep ground stays
+SnowSlide's) after each blow. The shear is kept 5 minutes of weather, until the wind turns 5 degrees or the square moves.
+- `--test=drift`: a 10 m, 1 m high drift on 20 cm of loose snow in 14 m/s becomes a snow dune: in 6 h its crest is
+  130 cm 4 m downwind and its old place is scoured; without relief it stays at 118 cm. A 4 m drift flattens (60 to
+  43 cm). On bare ground the drift blows away. The links wall case still passes.
+- A per-substep slip face changed nothing (the smoothed shear is stable), so it runs once a blow.
+- Not yet: flow separation past a brink (the shear only falls to its clamp of 0); flux lag beyond the smoothing.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 

@@ -35,6 +35,8 @@
 #include "snow_climate.h"
 #include "snow_powder_cloud_3d.h"
 
+#include <vector>
+
 #include "core/io/image.h"
 #include "core/object/worker_thread_pool.h"
 #include "modules/ground/ground_height_query.h"
@@ -311,6 +313,11 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	bool obstacle_sweep_changed = false, obstacle_sweep_any = false;
 	bool obstacle_active = false; // the last full sweep found obstacles or lee
 	bool drift_obstacles = true;
+	bool drift_relief = true; // the wind sees the snow's own relief (follow-up 48)
+	std::vector<float> relief_shear_cache; // the wind's shear over the snow's relief (DuneShear), and when and how it was taken
+	float relief_shear_age = 0.0f; // hours
+	Vector2i relief_shear_origin;
+	Vector2 relief_shear_dir;
 	// Light-absorbing particles (docs/ideas/world-links.md, dirty snow), mg/m2 of black carbon equivalent: on the
 	// surface, under the snow fallen since (deep) with that snow's depth (m) over it, and the deposition from the
 	// smoke haze and burnt forest (mg/m2 per hour, read on the main thread every few seconds).
@@ -387,6 +394,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	void _update_cells(bool p_parallel);
 	void _update_end();
 	void _send_runoff();
+	void _repose(const LocalVector<float> &p_flux, int p_passes);
 	void _wind_pack(float p_dt_h, const LocalVector<float> &p_wind);
 	void _build_upload();
 	void _apply_upload();
@@ -490,6 +498,8 @@ public:
 	float get_slide_holding_decay() const { return slide_holding_decay; }
 	void set_drift_obstacles(bool p_enabled);
 	bool is_drift_obstacles_enabled() const { return drift_obstacles; }
+	void set_drift_relief(bool p_enabled);
+	bool is_drift_relief_enabled() const { return drift_relief; }
 	void set_drift_enabled(bool p_enabled);
 	bool is_drift_enabled() const { return drift_enabled; }
 	void set_drift_distance(float p_m);

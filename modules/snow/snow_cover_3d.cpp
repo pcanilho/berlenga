@@ -41,6 +41,7 @@
 #include "snow_fall_3d.h"
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
+#include "modules/terrain_deform/terrain_dunes.h"
 #include "modules/world/world_contracts.h"
 #include "modules/terrain_deform/terrain_deformer_3d.h"
 #include "modules/weather/weather_map_3d.h"
@@ -2474,6 +2475,7 @@ void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_reso
 	drift_distance = owner->drift_distance;
 	drift_strength = owner->drift_strength;
 	drift_threshold_wind = owner->drift_threshold_wind;
+	drift_relief = owner->drift_relief;
 	wind_transport_enabled = owner->wind_transport_enabled;
 	wind_curvature_length = owner->wind_curvature_length;
 	cornice_failure_enabled = owner->cornice_failure_enabled;
@@ -2493,6 +2495,10 @@ void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_reso
 static constexpr float Z0_SNOW = 0.0005f; // m, aerodynamic roughness of snow
 static constexpr float RHO_AIR = 1.3f; // kg/m3
 static constexpr float WIND_SNOW_DENSITY = 300.0f; // kg/m3, snow the wind lays down (wind-packed)
+static constexpr float DRIFT_REPOSE = 38.0f; // degrees: the slip face of dry blown snow (dry snow's angle of repose, 35-45)
+static constexpr float DRIFT_SATURATION = 2.0f; // m: the saturation length of snow saltation (the flux lags the shear)
+static constexpr float DRIFT_SHEAR_A = 3.0f; // Kroy 2002's A and B, as the dune sea
+static constexpr float DRIFT_SHEAR_B = 0.5f;
 static constexpr float SASTRUGI_HARD = 250.0f; // kg/m3: snow dense enough to erode into sastrugi (wind-packed, sintered)
 static constexpr float SASTRUGI_RATE = 0.02f; // share of the snow scoured off a hard surface that carves relief (ours: cm an hour in a gale)
 
@@ -2593,6 +2599,46 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 			cmax = MAX(cmax, Math::abs(curve[i]));
 		}
 	}
+	// The wind over the snow's own relief (follow-up 48): drifts, banks and dunes change the shear on the snow as
+	// hills do on sand, from linearised flow (DuneShear, shared with the dune sea: Kroy, Sauermann and Herrmann
+	// 2002). The shear peaks upwind of a crest and drops past it, so a drift's stoss erodes, its lee fills and it
+	// creeps downwind; smoothing over the saturation length keeps drifts shorter than that from steepening. The
+	// wind speed goes as the root of the shear (u* ~ sqrt(tau)). Snow relief only: the ground has its own weights.
+	// The relief changes slowly: the shear is kept for 5 minutes of weather, until the wind turns 5 degrees or the
+	// square moves.
+	std::vector<float> &relief_shear = relief_shear_cache;
+	relief_shear_age += p_dt_h;
+	const bool relief_due = relief_shear.size() != size_t(nn) || relief_shear_age >= 5.0f / 60.0f || relief_shear_origin != origin_cell || relief_shear_dir.dot(dir) < 0.996f;
+	if (!drift_relief) {
+		relief_shear.clear();
+	} else if (relief_due) {
+		relief_shear.clear();
+		relief_shear_age = 0.0f;
+		relief_shear_origin = origin_cell;
+		relief_shear_dir = dir;
+		std::vector<float> relief(nn), relief_slope;
+		float relief_max = 0.0f;
+		for (int i = 0; i < nn; i++) {
+			relief[i] = cell_swe[i] > SWE_MIN ? cell_swe[i] / MAX(cell_density[i], 30.0f) / cs : 0.0f; // in cells
+			relief_max = MAX(relief_max, relief[i]);
+		}
+		if (relief_max > 0.0f) {
+			auto height = [&](double p_x, double p_z) {
+				const double fx = Math::floor(p_x), fz = Math::floor(p_z);
+				const int x0 = CLAMP(int(fx), 0, n - 1), z0 = CLAMP(int(fz), 0, n - 1);
+				const int x1 = MIN(x0 + 1, n - 1), z1 = MIN(z0 + 1, n - 1);
+				const double tx = CLAMP(p_x - fx, 0.0, 1.0), tz = CLAMP(p_z - fz, 0.0, 1.0);
+				const double a = relief[z0 * n + x0] * (1.0 - tx) + relief[z0 * n + x1] * tx;
+				const double b = relief[z1 * n + x0] * (1.0 - tx) + relief[z1 * n + x1] * tx;
+				return a * (1.0 - tz) + b * tz;
+			};
+			const float ls = DRIFT_SATURATION / cs;
+			const int passes = CLAMP(int(Math::round(2.0f * ls * ls)), 0, 8);
+			DuneShear::slope_along(height, n, n, dir.x, dir.y, passes, false, relief_slope);
+			relief_shear.resize(nn);
+			DuneShear::rows(relief_slope.data(), n, n, dir.x, dir.y, DRIFT_SHEAR_A, DRIFT_SHEAR_B, MIN(32, n), false, 0, n, relief_shear.data());
+		}
+	}
 	// Flux and what each cell can give (the loose snow over a crust; none under a frozen surface crust).
 	LocalVector<float> flux, loose, uloc;
 	flux.resize(nn);
@@ -2614,6 +2660,9 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 		}
 		const float t = in.temperature - lapse_rate * 0.001f * (cell_ground[i] - in.ref_height);
 		float w = 1.0f + 0.5f * (0.5f * slope[i] / smax) + 0.5f * (0.5f * curve[i] / cmax);
+		if (!relief_shear.empty()) {
+			w *= Math::sqrt(relief_shear[i]);
+		}
 		// Behind rocks, walls, buildings and vehicles the wind slows below what lifts snow and the snow carried in
 		// drops (SnowTran-3D's flux divergence, Liston and Sturm 1998): a lee drift.
 		if (obstacle_active && cell_lee.size() == nn) {
@@ -2759,6 +2808,9 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 		}
 	}
 	last_blown = float(moved / nn);
+	if (drift_relief) {
+		_repose(flux, 8);
+	}
 	if (sas) {
 		// The saltating snow abrades a hard surface where it is undersaturated, carving it (Filhol and Sturm
 		// 2015): a share SASTRUGI_RATE of the scoured snow's depth goes into the relief. Where the drift builds
@@ -2780,6 +2832,82 @@ void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
 	}
 	if (slab) {
 		_wind_pack(p_dt_h, uloc);
+	}
+}
+
+// The blown snow's angle of repose (follow-up 48): where the wind has steepened the snow's own relief past
+// DRIFT_REPOSE the loose grains avalanche down it, as on a dune's slip face (the minimal dune model, Kroy,
+// Sauermann and Herrmann 2002), so a drift's lee keeps a slip face instead of a spike. The snow's own relief only
+// (snow on steep ground is SnowSlide's), and only where the wind moves snow (dry, loose, not under trees); mass is kept.
+void SnowCover3D::_repose(const LocalVector<float> &p_flux, int p_passes) {
+	const int n = resolution;
+	const int nn = n * n;
+	const float cs = _cell_size();
+	const float rise = Math::tan(Math::deg_to_rad(DRIFT_REPOSE)) * cs;
+	float *swe = cell_swe.ptrw();
+	float *rho = cell_density.ptrw();
+	LocalVector<float> depth, take, put_swe, put_depth;
+	depth.resize(nn);
+	take.resize(nn);
+	put_swe.resize(nn);
+	put_depth.resize(nn);
+	static const int DX[4] = { 1, -1, 0, 0 };
+	static const int DZ[4] = { 0, 0, 1, -1 };
+	for (int pass = 0; pass < p_passes; pass++) {
+		bool moved = false;
+		for (int i = 0; i < nn; i++) {
+			depth[i] = swe[i] > SWE_MIN ? swe[i] / MAX(rho[i], 30.0f) : 0.0f;
+			take[i] = 0.0f;
+			put_swe[i] = 0.0f;
+			put_depth[i] = 0.0f;
+		}
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				if (p_flux[i] <= 0.0f || depth[i] <= 0.0f) {
+					continue;
+				}
+				const float hi = depth[i];
+				for (int k = 0; k < 4; k++) {
+					const int xn = x + DX[k], zn = z + DZ[k];
+					if (xn < 0 || zn < 0 || xn >= n || zn >= n) {
+						continue;
+					}
+					const int j = zn * n + xn;
+					const float excess = hi - depth[j] - rise;
+					if (excess <= 0.0f) {
+						continue;
+					}
+					// A fifth of the excess each pass (four neighbours can draw at once), at most what lies above.
+					const float d = MIN(0.2f * excess, 0.25f * depth[i]);
+					take[i] += d;
+					put_swe[j] += d * rho[i];
+					put_depth[j] += d;
+					moved = true;
+				}
+			}
+		}
+		if (!moved) {
+			break;
+		}
+		for (int i = 0; i < nn; i++) {
+			if (take[i] <= 0.0f && put_swe[i] <= 0.0f) {
+				continue;
+			}
+			const float d = MAX(depth[i] - take[i], 0.0f);
+			const float w = MAX(swe[i] > SWE_MIN ? swe[i] - take[i] * rho[i] : 0.0f, 0.0f) + put_swe[i];
+			const float dd = d + put_depth[i];
+			if (w <= SWE_MIN || dd <= 0.0f) {
+				swe[i] = 0.0f;
+				rho[i] = 100.0f;
+				continue;
+			}
+			if (depth[i] <= 0.0f) {
+				cell_albedo.write[i] = ALBEDO_FRESH;
+			}
+			swe[i] = w;
+			rho[i] = w / dd;
+		}
 	}
 }
 
@@ -2966,7 +3094,7 @@ void SnowCover3D::_feed_spindrift() {
 	if (Node3D *f = spindrift_node->get_flow()) {
 		f->set("smoke_fade", spindrift_fade(inputs.humidity));
 		f->set("smoke_density", 0.5f);
-		f->set("vorticity", 2.0f);
+		f->set("vorticity", 0.5f); // low enough that the plume keeps the wind's speed and runs long (PhysX f09677c98a)
 	}
 }
 
@@ -4339,6 +4467,13 @@ void SnowCover3D::set_drift_obstacles(bool p_enabled) {
 	drift_obstacles = p_enabled;
 }
 
+void SnowCover3D::set_drift_relief(bool p_enabled) {
+	drift_relief = p_enabled;
+	if (world) {
+		world->drift_relief = p_enabled;
+	}
+}
+
 void SnowCover3D::set_drift_enabled(bool p_enabled) {
 	drift_enabled = p_enabled;
 }
@@ -4465,6 +4600,8 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_slide_holding_decay", "per_degree"), &SnowCover3D::set_slide_holding_decay);
 	ClassDB::bind_method(D_METHOD("get_slide_holding_decay"), &SnowCover3D::get_slide_holding_decay);
 	ClassDB::bind_method(D_METHOD("set_drift_obstacles", "enabled"), &SnowCover3D::set_drift_obstacles);
+	ClassDB::bind_method(D_METHOD("set_drift_relief", "enabled"), &SnowCover3D::set_drift_relief);
+	ClassDB::bind_method(D_METHOD("is_drift_relief_enabled"), &SnowCover3D::is_drift_relief_enabled);
 	ClassDB::bind_method(D_METHOD("is_drift_obstacles_enabled"), &SnowCover3D::is_drift_obstacles_enabled);
 	ClassDB::bind_method(D_METHOD("set_drift_enabled", "enabled"), &SnowCover3D::set_drift_enabled);
 	ClassDB::bind_method(D_METHOD("is_drift_enabled"), &SnowCover3D::is_drift_enabled);
@@ -4675,6 +4812,7 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drift_enabled"), "set_drift_enabled", "is_drift_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_distance", PROPERTY_HINT_RANGE, "1,1000,1,suffix:m"), "set_drift_distance", "get_drift_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drift_obstacles"), "set_drift_obstacles", "is_drift_obstacles_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drift_relief"), "set_drift_relief", "is_drift_relief_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_strength", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_drift_strength", "get_drift_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_threshold_wind", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:m/s"), "set_drift_threshold_wind", "get_drift_threshold_wind");
 	ADD_GROUP("Wind Transport", "wind_");

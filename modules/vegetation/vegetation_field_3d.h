@@ -593,8 +593,10 @@ private:
 		Vector3 centre; // Global, where the visibility range measures from.
 		LocalVector<Transform3D> xforms;
 		LocalVector<Color> customs;
+		int glaze_band = 0; // The near mesh's glaze band (TreeGenerator::glaze_band of WorldWeather.glaze_at).
 	};
 	HashMap<ObjectID, LazyNear> lazy_near;
+	uint64_t glaze_checked_usec = 0;
 	bool has_near_swap = false; // Some cells swap to near meshes (their margins follow path tracing).
 	void _set_swap_margins(bool p_traced);
 	void _lazy_near_update(const Vector3 &p_camera);

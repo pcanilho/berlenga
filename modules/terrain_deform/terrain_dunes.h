@@ -360,6 +360,56 @@ private:
 	}
 };
 
+// The wind's shear over a relief, from linearised flow (Jackson and Hunt 1975, in the form of Kroy, Sauermann and
+// Herrmann 2002): tau = 1 + A (H[h'] + B h'), h' the slope along the wind smoothed by 1-2-1 passes (the saturation
+// length: the flux lags the shear), H the Hilbert transform along the wind summed directly over a reach of cells.
+// Shared by the dune sea and the snow cover's drifts (docs/ideas/snow.md, follow-up 48). Lengths in cells; the
+// edges wrap (a sand sea) or clamp (a square of snow).
+struct DuneShear {
+	static int index(int p_v, int p_m, bool p_wrap) { return p_wrap ? ((p_v % p_m) + p_m) % p_m : std::clamp(p_v, 0, p_m - 1); }
+
+	// The slope along the unit wind (p_ux, p_uz), from p_height(x, z) at fractional cells, smoothed p_smooth times.
+	template <typename F>
+	static void slope_along(const F &p_height, int w, int h, double p_ux, double p_uz, int p_smooth, bool p_wrap, std::vector<float> &r_slope) {
+		const int n = w * h;
+		r_slope.resize(n);
+		for (int z = 0; z < h; z++) {
+			for (int x = 0; x < w; x++) {
+				r_slope[z * w + x] = float(0.5 * (p_height(x + p_ux, z + p_uz) - p_height(x - p_ux, z - p_uz)));
+			}
+		}
+		std::vector<float> tmp(n);
+		for (int pass = 0; pass < p_smooth; pass++) {
+			for (int z = 0; z < h; z++) {
+				const int zm = index(z - 1, h, p_wrap) * w, z0 = z * w, zp = index(z + 1, h, p_wrap) * w;
+				for (int x = 0; x < w; x++) {
+					const int xm = index(x - 1, w, p_wrap), xp = index(x + 1, w, p_wrap);
+					const float *g = r_slope.data();
+					tmp[z0 + x] = (g[zm + xm] + 2.0f * g[zm + x] + g[zm + xp] + 2.0f * (g[z0 + xm] + 2.0f * g[z0 + x] + g[z0 + xp]) + g[zp + xm] + 2.0f * g[zp + x] + g[zp + xp]) * (1.0f / 16.0f);
+				}
+			}
+			r_slope.swap(tmp);
+		}
+	}
+
+	// The shear over rows p_z0 .. p_z1-1 from the smoothed slope, clamped to 0..3.
+	static void rows(const float *p_slope, int w, int h, double p_ux, double p_uz, double p_a, double p_b, int p_reach, bool p_wrap, int p_z0, int p_z1, float *r_shear) {
+		const float *g = p_slope;
+		for (int z = p_z0; z < p_z1; z++) {
+			for (int x = 0; x < w; x++) {
+				double hs = 0.0;
+				for (int k = 1; k <= p_reach; k++) {
+					const int ax = index(int(std::lround(x - p_ux * k)), w, p_wrap), az = index(int(std::lround(z - p_uz * k)), h, p_wrap);
+					const int bx = index(int(std::lround(x + p_ux * k)), w, p_wrap), bz = index(int(std::lround(z + p_uz * k)), h, p_wrap);
+					hs += (g[az * w + ax] - g[bz * w + bx]) / k;
+				}
+				const double s = g[z * w + x];
+				r_shear[z * w + x] = float(std::clamp(1.0 + p_a * (hs * (1.0 / 3.14159265358979) + p_b * s), 0.0, 3.0));
+			}
+		}
+	}
+};
+
 // Desert dune fields: Paris, Galin, Peytavie, Guérin and Gain's (CGF 2019) desertscape simulation, which grows
 // transverse dunes from a thick sand cover, barchans from a thin one, and linear and star dunes from bimodal and wider
 // wind regimes. A random cell lifts a slab (a quarter of a cell; unless the wind's shadow behind a crest, 5 to 15 degrees, holds it);
@@ -468,41 +518,12 @@ public:
 		shear_ux = wd.x / wl;
 		shear_uz = wd.z / wl;
 		// The slope along the wind, smoothed.
-		slope_along.resize(n);
-		for (int z = 0; z < h; z++) {
-			for (int x = 0; x < w; x++) {
-				slope_along[z * w + x] = float(0.5 * (_height_at(x + shear_ux, z + shear_uz) - _height_at(x - shear_ux, z - shear_uz)));
-			}
-		}
-		std::vector<float> tmp(n);
-		for (int pass = 0; pass < p.shear_smooth; pass++) {
-			for (int z = 0; z < h; z++) {
-				const int zm = _wrap(z - 1, h) * w, z0 = z * w, zp = _wrap(z + 1, h) * w;
-				for (int x = 0; x < w; x++) {
-					const int xm = _wrap(x - 1, w), xp = _wrap(x + 1, w);
-					const float *g = slope_along.data();
-					tmp[z0 + x] = (g[zm + xm] + 2.0f * g[zm + x] + g[zm + xp] + 2.0f * (g[z0 + xm] + 2.0f * g[z0 + x] + g[z0 + xp]) + g[zp + xm] + 2.0f * g[zp + x] + g[zp + xp]) * (1.0f / 16.0f);
-				}
-			}
-			slope_along.swap(tmp);
-		}
+		DuneShear::slope_along([this](double p_x, double p_z) { return _height_at(p_x, p_z); }, w, h, shear_ux, shear_uz, p.shear_smooth, true, slope_along);
 		return true;
 	}
 
 	void shear_rows(int p_z0, int p_z1) {
-		const float *g = slope_along.data();
-		for (int z = p_z0; z < p_z1; z++) {
-			for (int x = 0; x < w; x++) {
-				double hs = 0.0;
-				for (int k = 1; k <= p.shear_reach; k++) {
-					const int ax = _wrap(int(std::lround(x - shear_ux * k)), w), az = _wrap(int(std::lround(z - shear_uz * k)), h);
-					const int bx = _wrap(int(std::lround(x + shear_ux * k)), w), bz = _wrap(int(std::lround(z + shear_uz * k)), h);
-					hs += (g[az * w + ax] - g[bz * w + bx]) / k;
-				}
-				const double s = g[z * w + x];
-				shear[z * w + x] = float(std::clamp(1.0 + p.shear_a * (hs * (1.0 / 3.14159265358979) + p.shear_b * s), 0.0, 3.0));
-			}
-		}
+		DuneShear::rows(slope_along.data(), w, h, shear_ux, shear_uz, p.shear_a, p.shear_b, p.shear_reach, true, p_z0, p_z1, shear.data());
 	}
 
 	// Serial: p_steps steps.

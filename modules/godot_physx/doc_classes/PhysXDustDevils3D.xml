@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXDustDevils3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Dust devils over hot, dry ground, drawn in NVIDIA Flow.
+	</brief_description>
+	<description>
+		Spawns convective vortices round [member follow_target] at a rate set by the weather: the surface's heating over the air, light wind, sunshine, dry ground and no rain (read from the world's weather through [WorldContracts]), where the ground's dust is loose (WorldGround blown sand). Each one drifts with the wind for a few minutes and is drawn in a [PhysXFlow3D] of its own: rings of air-only emitters spin the column and draw air in at the foot, a warm core lifts it, and the foot ring lifts the dust, which Flow carries up the wall and fans out on top.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_devil" qualifiers="const">
+			<return type="Vector4" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Devil [param index] among the living ones: its ground position (x, z), its swirl ring radius in metres, and its swirl speed now in m/s (zero while it spins up or dies away). Zero past [method get_devil_count].
+			</description>
+		</method>
+		<method name="get_devil_age" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Seconds since devil [param index] formed.
+			</description>
+		</method>
+		<method name="get_devil_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Devils alive now.
+			</description>
+		</method>
+		<method name="get_favour" qualifiers="const">
+			<return type="float" />
+			<description>
+				How favourable the weather is round [member follow_target], 0 to 1, from the last physics frame.
+			</description>
+		</method>
+		<method name="get_favour_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How favourable the weather is at [param position], 0 to 1: the surface's heating over the air past [member min_heating], times a light wind, dry ground and sun. 0 in rain or without a weather provider.
+			</description>
+		</method>
+		<method name="get_flow" qualifiers="const">
+			<return type="PhysXFlow3D" />
+			<description>
+				The [PhysXFlow3D] this node made, to tune its look (cell size, density, scattering).
+			</description>
+		</method>
+		<method name="get_spawned" qualifiers="const">
+			<return type="int" />
+			<description>
+				Devils formed since the node entered the tree, by the weather or by [method spawn].
+			</description>
+		</method>
+		<method name="spawn">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" default="-1.0" />
+			<param index="2" name="swirl" type="float" default="-1.0" />
+			<description>
+				Forms a devil at [param position] (on the ground there), with a swirl ring of [param radius] metres and [param swirl] m/s on it; below 0, drawn at random as the weather's own. Returns its index for [method get_devil], or -1 when [member max_devils] are alive.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(0.8, 0.7, 0.55, 1)">
+			Colour of the dust.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			Off: no new devils, and the living ones die away within 25 seconds.
+		</member>
+		<member name="flow_cell_size" type="float" setter="set_flow_cell_size" getter="get_flow_cell_size" default="0.25">
+			The Flow grid's cell size in metres. Smaller cells show finer swirls at more GPU cost.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			Centre of the area where devils form. Empty: the viewport's camera.
+		</member>
+		<member name="frequency" type="float" setter="set_frequency" getter="get_frequency" default="10.0">
+			Devils formed per square kilometre per hour at full favour.
+		</member>
+		<member name="max_devils" type="int" setter="set_max_devils" getter="get_max_devils" default="2">
+			Devils alive at once (each costs Flow time while it lives).
+		</member>
+		<member name="min_heating" type="float" setter="set_min_heating" getter="get_min_heating" default="8.0">
+			Kelvin of the surface over the air below which none form; the favour is full 12 K above it.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="1">
+			Seed of the spawning and the devils' sizes and wander.
+		</member>
+		<member name="spawn_range" type="float" setter="set_spawn_range" getter="get_spawn_range" default="250.0">
+			Radius round [member follow_target] where devils form; one drifting past twice this is dropped.
+		</member>
+		<member name="terrain_path" type="NodePath" setter="set_terrain_path" getter="get_terrain_path" default="NodePath(&quot;&quot;)">
+			The terrain the dust rests on (the Flow floor, [member PhysXFlow3D.terrain_path]).
+		</member>
+	</members>
+</class>
