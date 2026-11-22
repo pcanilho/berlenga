@@ -1616,7 +1616,102 @@ Vector3 WeatherMap3D::get_wind_at(Vector3 p_position, float p_height_above_groun
 	if (wave_clouds && mountain_waves.derived && h > boundary_layer_height) {
 		mean.y += get_mountain_wave_velocity_at(p_position) * Math::smoothstep(boundary_layer_height, boundary_layer_height + 300.0f, h);
 	}
-	return mean + gust;
+	return mean + gust + _vortex_wind_at(p_position, h);
+}
+
+// Wind vortices: a Rankine vortex round each (Tratt, Hecht, Catling et al. 2003, "In situ measurement of dust devil
+// dynamics"): tangential speed swirl r / R inside the core radius, swirl R / r outside it, faded out by 5 R; the
+// updraft a Gaussian over the core, fading over 10 R of height; a weak inflow (0.3 swirl) in the lowest R, where the
+// surface friction lets the air spiral in (the Burgers-Rott corner flow).
+Vector3 WeatherMap3D::_vortex_wind_at(const Vector3 &p_position, float p_height) const {
+	if (vortices.is_empty()) {
+		return Vector3();
+	}
+	Vector3 r_wind;
+	for (const Vortex &v : vortices) {
+		const float R = MAX(v.radius, 0.1f);
+		const Vector2 d(p_position.x - v.position.x, p_position.z - v.position.z);
+		const float r2 = d.length_squared();
+		if (r2 > 25.0f * R * R || p_height > 10.0f * R) {
+			continue;
+		}
+		const float r = Math::sqrt(r2);
+		const float q = r / R;
+		const float vt = v.swirl * (q < 1.0f ? q : 1.0f / q) * (1.0f - Math::smoothstep(3.0f, 5.0f, q));
+		const float vh = 1.0f - Math::smoothstep(4.0f * R, 10.0f * R, p_height);
+		Vector3 w;
+		if (r > 1e-4f) {
+			const Vector2 radial = d / r;
+			const Vector2 tangent = Vector2(-radial.y, radial.x) * v.spin;
+			const float inflow = 0.3f * v.swirl * MIN(q, 1.0f) * (1.0f - Math::smoothstep(0.5f * R, R, p_height)) * (1.0f - Math::smoothstep(2.0f, 4.0f, q));
+			const Vector2 hz = tangent * vt - radial * inflow;
+			w.x = hz.x;
+			w.z = hz.y;
+		}
+		w.y = v.updraft * Math::exp(-q * q);
+		r_wind += w * vh;
+	}
+	return r_wind;
+}
+
+Vector3 WeatherMap3D::get_vortex_wind_at(const Vector3 &p_position, float p_height_above_ground) const {
+	return _vortex_wind_at(p_position, p_height_above_ground);
+}
+
+// The first four vortices to the shaders (weather_vortex_0..3, weather_vortex_up), as they change.
+void WeatherMap3D::_publish_vortices() {
+	if (!publish_shader_globals || active != this) {
+		return;
+	}
+	static const StringName names[4] = { "weather_vortex_0", "weather_vortex_1", "weather_vortex_2", "weather_vortex_3" };
+	Vector4 up;
+	for (int i = 0; i < 4; i++) {
+		Vector4 v;
+		if (i < vortices.size()) {
+			const Vortex &x = vortices[i];
+			v = Vector4(x.position.x, x.position.z, x.radius, x.swirl * x.spin);
+			up[i] = x.updraft;
+		}
+		_set_global(names[i], v, RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
+	_set_global("weather_vortex_up", up, RSE::GLOBAL_VAR_TYPE_VEC4);
+}
+
+int WeatherMap3D::add_vortex(const Vector3 &p_position, float p_radius, float p_swirl, float p_updraft, float p_spin) {
+	Vortex v;
+	v.id = next_vortex_id++;
+	v.position = p_position;
+	v.radius = MAX(p_radius, 0.1f);
+	v.swirl = p_swirl;
+	v.updraft = p_updraft;
+	v.spin = p_spin < 0.0f ? -1.0f : 1.0f;
+	vortices.push_back(v);
+	_publish_vortices();
+	return v.id;
+}
+
+void WeatherMap3D::set_vortex(int p_id, const Vector3 &p_position, float p_radius, float p_swirl, float p_updraft) {
+	for (int i = 0; i < vortices.size(); i++) {
+		if (vortices[i].id == p_id) {
+			Vortex &v = vortices.write[i];
+			v.position = p_position;
+			v.radius = MAX(p_radius, 0.1f);
+			v.swirl = p_swirl;
+			v.updraft = p_updraft;
+			_publish_vortices();
+			return;
+		}
+	}
+}
+
+void WeatherMap3D::remove_vortex(int p_id) {
+	for (int i = 0; i < vortices.size(); i++) {
+		if (vortices[i].id == p_id) {
+			vortices.remove_at(i);
+			_publish_vortices();
+			return;
+		}
+	}
 }
 
 void WeatherMap3D::get_wind_parts(Vector3 p_position, float p_height_above_ground, Vector3 &r_mean, Vector2 &r_along, float &r_sigma) const {
@@ -1644,6 +1739,7 @@ void WeatherMap3D::get_wind_parts(Vector3 p_position, float p_height_above_groun
 	if (wave_clouds && mountain_waves.derived && h > boundary_layer_height) {
 		r_mean.y += get_mountain_wave_velocity_at(p_position) * Math::smoothstep(boundary_layer_height, boundary_layer_height + 300.0f, h);
 	}
+	r_mean += _vortex_wind_at(p_position, h);
 	const float speed = m10.length();
 	r_along = speed > 1e-3f ? m10 / speed : cur_wind_direction;
 	r_sigma = speed < 1e-3f ? 0.0f : MAX(gust_intensity, 0.0f) * SIGMA_U_PER_USTAR * KARMAN / Math::log(10.0f / z0) * speed * Math::sqrt(f) * gust_scale;
@@ -3731,6 +3827,11 @@ String WeatherMap3D::get_wind_shader_code() {
 	c += "global uniform vec4 weather_shelter_rect;\n";
 	c += "global uniform vec4 weather_patch_info;\n";
 	c += "global uniform float weather_ground_height;\n";
+	c += "global uniform vec4 weather_vortex_0;\n"; // wind vortices (add_vortex): x, z, core radius, swirl x spin
+	c += "global uniform vec4 weather_vortex_1;\n";
+	c += "global uniform vec4 weather_vortex_2;\n";
+	c += "global uniform vec4 weather_vortex_3;\n";
+	c += "global uniform vec4 weather_vortex_up;\n"; // their updrafts
 	c += "\n";
 	c += WeatherTerrainWind::get_shader_code();
 	c += "float weather_open_profile(float z, float z0) {\n";
@@ -3813,6 +3914,31 @@ String WeatherMap3D::get_wind_shader_code() {
 	c += "	return vec3(hz.x, g.z * sigma, hz.y);\n";
 	c += "}\n\n";
 	c += "// Air velocity (m/s) at a world position and a height above the ground.\n";
+	c += "// One wind vortex (WeatherMap3D._vortex_wind_at, the same Rankine field): v = (x, z, R, swirl x spin).\n";
+	c += "vec3 weather_vortex(vec3 wp, float h, vec4 v, float up) {\n";
+	c += "	float R = v.z;\n";
+	c += "	vec2 d = wp.xz - v.xy;\n";
+	c += "	float r = length(d);\n";
+	c += "	if (R <= 0.0 || r > 5.0 * R || h > 10.0 * R) {\n";
+	c += "		return vec3(0.0);\n";
+	c += "	}\n";
+	c += "	float q = r / R;\n";
+	c += "	float sw = abs(v.w);\n";
+	c += "	float vt = sw * (q < 1.0 ? q : 1.0 / q) * (1.0 - smoothstep(3.0, 5.0, q));\n";
+	c += "	float vh = 1.0 - smoothstep(4.0 * R, 10.0 * R, h);\n";
+	c += "	vec3 w = vec3(0.0, up * exp(-q * q), 0.0);\n";
+	c += "	if (r > 1e-4) {\n";
+	c += "		vec2 rad = d / r;\n";
+	c += "		vec2 tg = vec2(-rad.y, rad.x) * sign(v.w);\n";
+	c += "		float inflow = 0.3 * sw * min(q, 1.0) * (1.0 - smoothstep(0.5 * R, R, h)) * (1.0 - smoothstep(2.0, 4.0, q));\n";
+	c += "		w.xz = tg * vt - rad * inflow;\n";
+	c += "	}\n";
+	c += "	return w * vh;\n";
+	c += "}\n\n";
+	c += "vec3 weather_vortices(vec3 wp, float h) {\n";
+	c += "	return weather_vortex(wp, h, weather_vortex_0, weather_vortex_up.x) + weather_vortex(wp, h, weather_vortex_1, weather_vortex_up.y)\n";
+	c += "			+ weather_vortex(wp, h, weather_vortex_2, weather_vortex_up.z) + weather_vortex(wp, h, weather_vortex_3, weather_vortex_up.w);\n";
+	c += "}\n\n";
 	c += "vec3 weather_wind(vec3 wp, float height) {\n";
 	c += "	if (weather_map_rect.z <= 0.0 || weather_map_rect.w <= 0.0) {\n";
 	c += "		return vec3(0.0); // no WeatherMap3D: no wind\n";
@@ -3836,7 +3962,7 @@ String WeatherMap3D::get_wind_shader_code() {
 	c += "		mean = weather_terrain_wind(t, m, z);\n";
 	c += "		gs = length(m) > 1e-4 ? length(mean.xz) / length(m) : 1.0;\n";
 	c += "	}\n";
-	c += "	return mean + weather_gust(wp, m10) * (sqrt(f) * gs);\n";
+	c += "	return mean + weather_gust(wp, m10) * (sqrt(f) * gs) + weather_vortices(wp, z);\n";
 	c += "}\n\n";
 	c += "// Height above the ground under a world point: the terrain the wind sampled, else weather_ground_height.\n";
 	c += "float weather_height_above_ground(vec3 wp) {\n";
@@ -3951,6 +4077,11 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("advance", "seconds"), &WeatherMap3D::advance);
 	ClassDB::bind_method(D_METHOD("add_storm", "position", "radius", "rain_rate", "outflow", "lifetime"), &WeatherMap3D::add_storm, DEFVAL(1500.0f), DEFVAL(30.0f), DEFVAL(10.0f), DEFVAL(3600.0f));
 	ClassDB::bind_method(D_METHOD("remove_storm", "id"), &WeatherMap3D::remove_storm);
+	ClassDB::bind_method(D_METHOD("add_vortex", "position", "radius", "swirl", "updraft", "spin"), &WeatherMap3D::add_vortex, DEFVAL(1.0f));
+	ClassDB::bind_method(D_METHOD("set_vortex", "id", "position", "radius", "swirl", "updraft"), &WeatherMap3D::set_vortex);
+	ClassDB::bind_method(D_METHOD("remove_vortex", "id"), &WeatherMap3D::remove_vortex);
+	ClassDB::bind_method(D_METHOD("get_vortex_count"), &WeatherMap3D::get_vortex_count);
+	ClassDB::bind_method(D_METHOD("get_vortex_wind_at", "position", "height_above_ground"), &WeatherMap3D::get_vortex_wind_at, DEFVAL(10.0f));
 	ClassDB::bind_method(D_METHOD("clear_storms"), &WeatherMap3D::clear_storms);
 	ClassDB::bind_method(D_METHOD("set_smoke_haze", "enabled"), &WeatherMap3D::set_smoke_haze);
 	ClassDB::bind_method(D_METHOD("is_smoke_haze"), &WeatherMap3D::is_smoke_haze);
