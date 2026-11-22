@@ -2035,3 +2035,16 @@ Research notes for Paulo's pick; nothing below is built yet.
 3. Snow sliding off roofs: snow on buildings and props (SnowBodies3D) slides off sloped roofs in a thaw or when
    loaded past the roof's friction (roof snow loads, Taylor 1985; ISO 4355), landing in a pile below (add_drift).
 
+
+## Next round (proposed 22 Nov 2026, round 8): water in the layers, roof slabs that fall, layers you can see
+
+1. Crusts, buried surface hoar and depth hoar as layers of their own, with liquid water per layer: water percolates
+   down (Colbeck 1972 gravity flow; Wever et al. 2014 Richards equation in SNOWPACK, simplified to a bucket per layer)
+   and ponds above fine-over-coarse boundaries (capillary barrier, Waldner et al. 2004), which is where wet slab
+   avalanches fail. The avalanche then reads the weak layer by its kind and wetness instead of the separate fields.
+2. Roof slabs that fall as bodies: the sliding slab becomes a PhysX rigid body (or Blast chunks) that breaks on the
+   eave and lands, with a Flow powder puff, so the bank forms where the pieces land; ice dams at the eave from the
+   same heat (Tobiasson 1988), feeding the icicles (follow-up 13).
+3. Layers you can see: ruts, shovel cuts and avalanche crowns show the stack on their walls, new snow bright and
+   fine, wind slab chalky, old snow coarse and grey, crusts as thin glazed lines (the crown face of a slab avalanche,
+   SnowRunner's trench walls), from the layer stack per cell through the surface's displacement.
