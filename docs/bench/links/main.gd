@@ -289,6 +289,7 @@ func _ready() -> void:
 	await _shimmer_tests()
 	await _ground_color_tests()
 	await _salt_bloom_tests()
+	await _spray_sand_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -1728,6 +1729,58 @@ func _shimmer_view(path: String) -> void:
 			get_viewport().get_texture().get_image().save_png("%s/%03d.png" % [clip, i])
 	get_viewport().get_texture().get_image().save_png(path)
 	print("saved ", path)
+
+
+# Spray-wet sand holds sharper prints: the spray's film counts in the weather's surface wetness, which GroundSurface3D
+# takes as its sand's moisture, so beach sand under an onshore gale gains capillary cohesion (steeper print walls)
+# where the same sand beyond the spray stays loose.
+func _spray_sand_tests() -> void:
+	if not ClassDB.class_exists("GroundSurface3D"):
+		_skip("ground: spray-wet sand", "no GroundSurface3D")
+		return
+	WorldContracts.clear_overrides()
+	WorldContracts.add_water_stub(SurfStub.new())
+	var m := _new_map()
+	m.ground_height = 0.0
+	m.wind_speed = 12.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = 12.0
+	m.humidity = 0.8
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	# The shore: a 5 m deep seabed, then a beach rising 2 in 100 (ShoreGround's), as the ground's height source.
+	var shore := GDScript.new()
+	shore.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn -5.0 if p.x < 0.0 else p.x * 0.02\n"
+	shore.reload()
+	var ground_node := Node3D.new()
+	ground_node.set_script(shore)
+	add_child(ground_node)
+	var g: Node3D = ClassDB.instantiate("GroundSurface3D")
+	g.ground_type = 0 # sand
+	g.gpu_simulation = false
+	g.near_field = false
+	g.runoff_channels = false
+	g.standing_water = false
+	g.wind_ripples = false
+	g.world_puddles = false
+	add_child(g)
+	g.height_source = g.get_path_to(ground_node)
+	g.follow_target = g.get_path_to(ground_node)
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	for i in 120:
+		await get_tree().physics_frame
+	var w: WorldWeather = WorldContracts.get_weather()
+	var near := Vector3(4, 0.08, 0)
+	var far := Vector3(220, 4.4, 0)
+	var c_near: float = WorldContracts.get_ground().soil_at(near)["cohesion"]
+	var c_far: float = WorldContracts.get_ground().soil_at(far)["cohesion"]
+	_check("ground: spray-wet beach sand gains capillary cohesion (sharper prints), sand beyond the spray stays loose", w.surface_wetness_at(near) > 0.3 and c_near > c_far + 0.1, "wetness %.2f / %.2f, cohesion %.2f / %.2f kPa at the waterline / inland" % [w.surface_wetness_at(near), w.surface_wetness_at(far), c_near, c_far])
+	WorldContracts.clear_overrides()
+	g.queue_free()
+	ground_node.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
 
 
 # Salt bloom on the terrain's sea cliffs: a rock wall (TerrainMaterial3D, steep faces are rock) under the spray's salt
