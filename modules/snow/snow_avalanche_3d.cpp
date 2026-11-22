@@ -1091,7 +1091,42 @@ void SnowAvalanche3D::_finish(SnowCover3D *p_cover) {
 		_emit_wave(p_cover);
 	}
 	running = false;
+	_record_stand_damage();
 	emit_signal(SNAME("avalanche_stopped"), release_center, deposited_volume, run_out);
+}
+
+// Avalanche paths keep the forest young (Johnson 1987; Patten and Knight 1994; Bebi, Kulakowski and Rixen 2009):
+// where the dense flow's dynamic pressure passed what breaks mature stems (some tens of kPa; Bartelt and Stockli
+// 2001; Feistl et al. 2015), the stand starts again. The track goes to WorldStand as 16 m discs, one per block the
+// flow broke, in one batch; a path struck again replaces its discs, so the stand there stays as young as the last
+// avalanche.
+void SnowAvalanche3D::_record_stand_damage() {
+	if (!stand_damage || res <= 0 || pressure.size() != res * res || cell <= 0.0f) {
+		return;
+	}
+	WorldStand *stand = WorldContracts::stand();
+	if (stand == nullptr) {
+		return;
+	}
+	const int b = MAX(1, int(Math::round(16.0f / cell)));
+	PackedVector3Array centers;
+	for (int z0 = 0; z0 < res; z0 += b) {
+		for (int x0 = 0; x0 < res; x0 += b) {
+			float peak = 0.0f;
+			for (int z = z0; z < MIN(z0 + b, res); z++) {
+				for (int x = x0; x < MIN(x0 + b, res); x++) {
+					peak = MAX(peak, pressure[z * res + x]);
+				}
+			}
+			if (peak >= stand_damage_pressure) {
+				centers.push_back(Vector3((flow_origin.x + x0 + 0.5f * b) * cell, 0.0f, (flow_origin.y + z0 + 0.5f * b) * cell));
+			}
+		}
+	}
+	if (!centers.is_empty()) {
+		// Discs round the block's corners (radius half its diagonal), so the track has no gaps.
+		stand->add_disturbances(centers, 0.7072f * b * cell, WorldStand::DISTURBANCE_AVALANCHE, 0.0f);
+	}
 }
 
 void SnowAvalanche3D::step(double p_delta) {
@@ -2472,6 +2507,10 @@ void SnowAvalanche3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_propagation_index", "index"), &SnowAvalanche3D::set_propagation_index);
 	ClassDB::bind_method(D_METHOD("get_propagation_index"), &SnowAvalanche3D::get_propagation_index);
 	ClassDB::bind_method(D_METHOD("set_collapse_range", "range"), &SnowAvalanche3D::set_collapse_range);
+	ClassDB::bind_method(D_METHOD("set_stand_damage", "enabled"), &SnowAvalanche3D::set_stand_damage);
+	ClassDB::bind_method(D_METHOD("is_stand_damage_enabled"), &SnowAvalanche3D::is_stand_damage_enabled);
+	ClassDB::bind_method(D_METHOD("set_stand_damage_pressure", "pa"), &SnowAvalanche3D::set_stand_damage_pressure);
+	ClassDB::bind_method(D_METHOD("get_stand_damage_pressure"), &SnowAvalanche3D::get_stand_damage_pressure);
 	ClassDB::bind_method(D_METHOD("get_collapse_range"), &SnowAvalanche3D::get_collapse_range);
 	ClassDB::bind_method(D_METHOD("trigger", "at", "radius"), &SnowAvalanche3D::trigger);
 	ClassDB::bind_method(D_METHOD("step", "delta"), &SnowAvalanche3D::step);
@@ -2539,6 +2578,8 @@ void SnowAvalanche3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "character_mass", PROPERTY_HINT_RANGE, "0,500,0.5,suffix:kg"), "set_character_mass", "get_character_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "propagation_index", PROPERTY_HINT_RANGE, "0,5,0.01"), "set_propagation_index", "get_propagation_index");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collapse_range", PROPERTY_HINT_RANGE, "0,500,0.1,suffix:m"), "set_collapse_range", "get_collapse_range");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stand_damage"), "set_stand_damage", "is_stand_damage_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stand_damage_pressure", PROPERTY_HINT_RANGE, "1000,100000,100,suffix:Pa"), "set_stand_damage_pressure", "get_stand_damage_pressure");
 
 	ADD_SIGNAL(MethodInfo("avalanche_triggered", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::OBJECT, "body", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT, "Node")));
 	ADD_SIGNAL(MethodInfo("snow_collapsed", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "area")));

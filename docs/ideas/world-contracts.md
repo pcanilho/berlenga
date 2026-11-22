@@ -232,10 +232,11 @@ scripts; `set_stand(stub)` for a test.
 | Member | Unit | Default |
 | --- | --- | --- |
 | `stand_age_at(pos)` | years since the last stand-replacing disturbance (world xz) | -1 (old growth) |
-| `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle, 4 beaver (pond drained; years since), 5 rooting (boar; field layer only, left out here: `rooting_age_at`) (new kinds appended only) | 0 |
+| `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle, 4 beaver (pond drained; years since), 5 rooting (boar; field layer only, left out here: `rooting_age_at`), 6 avalanche (SnowAvalanche3D `stand_damage`; years since) (new kinds appended only) | 0 |
 | `add_disturbance(center, radius, kind, age_years)`, `set_disturbance_age(id, years)`, `remove_disturbance(id)`, `clear_disturbances()` | a disc, years ago; returns an id | |
 | `strike_age_at(pos)` | years since the youngest lightning strike within 3 m of a trunk at pos (xz) | -1 (none) |
 | `add_strike(pos, age_years)`, `clear_strikes()`, `get_strike_count()`, `get_strikes_in(rect, out)` (C++: (x, z, age) copies touching rect, taken on the main thread for worker placement; stubs' `_strike_age_at` has no list) | the crown attachment point, years ago; up to 4096, oldest dropped | |
+| `add_disturbances(centers, radius, kind, age)` | write: many discs of one kind in one batch, earlier discs of that kind they cover replaced | |
 | `rooting_age_at(pos)` | fractional years since the youngest boar rooting disc (DISTURBANCE_ROOTING) | -1 (none) |
 | `set_trails(Array)`, `get_trails()` | the worn-path network: Dictionaries with points (world xz), width m, passes per year, kind | empty |
 | `trail_at(pos)` | Vector2 (passes per year of the busiest trail, tread share 0..1) | (0, 0) |

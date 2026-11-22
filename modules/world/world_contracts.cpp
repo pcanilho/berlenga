@@ -32,6 +32,7 @@
 #include "world_contracts.h"
 
 #include "core/math/geometry_2d.h"
+#include "core/templates/hash_set.h"
 
 #include "core/object/class_db.h"
 
@@ -1464,6 +1465,53 @@ int WorldStand::add_disturbance(const Vector3 &p_center, float p_radius, int p_k
 	return e.id;
 }
 
+int WorldStand::add_disturbances(const PackedVector3Array &p_centers, float p_radius, int p_kind, float p_age_years) {
+	ERR_FAIL_COND_V_MSG(p_kind <= DISTURBANCE_NONE, 0, "A disturbance needs a kind.");
+	if (p_centers.is_empty()) {
+		return 0;
+	}
+	const float r = MAX(p_radius, 0.0f);
+	Rect2 area;
+	bool first = true;
+	HashSet<Vector2i> covered; // the new discs by GRID_CELL, to find the events they replace
+	for (const Vector3 &c : p_centers) {
+		const Rect2 d(Vector2(c.x - r, c.z - r), Vector2(2.0f * r, 2.0f * r));
+		area = first ? d : area.merge(d);
+		first = false;
+		covered.insert(Vector2i(int(Math::floor(c.x / GRID_CELL)), int(Math::floor(c.z / GRID_CELL))));
+	}
+	// Replace the same kind's events lying inside a new disc (their whole disc within it).
+	for (uint32_t i = 0; i < events.size();) {
+		const Event &e = events[i];
+		bool gone = false;
+		if (e.kind == p_kind && e.radius <= r * 1.01f && covered.has(Vector2i(int(Math::floor(e.center.x / GRID_CELL)), int(Math::floor(e.center.y / GRID_CELL))))) {
+			for (const Vector3 &c : p_centers) {
+				if (Vector2(c.x, c.z).distance_to(e.center) + e.radius <= r * 1.01f) {
+					gone = true;
+					break;
+				}
+			}
+		}
+		if (gone) {
+			events.remove_at_unordered(i);
+		} else {
+			i++;
+		}
+	}
+	for (const Vector3 &c : p_centers) {
+		Event e;
+		e.id = next_id++;
+		e.center = Vector2(c.x, c.z);
+		e.radius = r;
+		e.kind = p_kind;
+		e.age = MAX(p_age_years, 0.0f);
+		events.push_back(e);
+	}
+	_rebuild_grid();
+	_report(area);
+	return p_centers.size();
+}
+
 void WorldStand::set_disturbance_age(int p_id, float p_age_years) {
 	for (Event &e : events) {
 		if (e.id == p_id) {
@@ -1862,6 +1910,7 @@ void WorldStand::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("stand_age_at", "position"), &WorldStand::stand_age_at);
 	ClassDB::bind_method(D_METHOD("disturbance_at", "position"), &WorldStand::disturbance_at);
 	ClassDB::bind_method(D_METHOD("add_disturbance", "center", "radius", "kind", "age_years"), &WorldStand::add_disturbance);
+	ClassDB::bind_method(D_METHOD("add_disturbances", "centers", "radius", "kind", "age_years"), &WorldStand::add_disturbances);
 	ClassDB::bind_method(D_METHOD("set_disturbance_age", "id", "age_years"), &WorldStand::set_disturbance_age);
 	ClassDB::bind_method(D_METHOD("remove_disturbance", "id"), &WorldStand::remove_disturbance);
 	ClassDB::bind_method(D_METHOD("clear_disturbances"), &WorldStand::clear_disturbances);
@@ -1897,6 +1946,7 @@ void WorldStand::_bind_methods() {
 	BIND_ENUM_CONSTANT(DISTURBANCE_BEETLE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_BEAVER);
 	BIND_ENUM_CONSTANT(DISTURBANCE_ROOTING);
+	BIND_ENUM_CONSTANT(DISTURBANCE_AVALANCHE);
 }
 
 void WorldContracts::set_fire(const Ref<WorldFire> &p_stub) {

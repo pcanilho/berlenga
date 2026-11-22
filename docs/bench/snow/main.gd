@@ -2051,6 +2051,18 @@ func _run_forest_tests() -> void:
 	var open_run := _debris_reach()
 	var toe_p := av.get_peak_pressure_at(Vector3(10.0, 0, 0))
 	var contract_p := (WorldContracts.get_snow() as WorldSnow).avalanche_peak_pressure_at(Vector3(10.0, 0, 0))
+	# The track's stand starts again where the flow broke trunks (WorldStand DISTURBANCE_AVALANCHE), not beside it.
+	var stand: WorldStand = WorldContracts.get_stand()
+	var broke := 0
+	var broke_p := 0.0
+	for x in range(-60, 12, 4):
+		var at := Vector3(x, 0, 6)
+		if stand.disturbance_at(at) == WorldStand.DISTURBANCE_AVALANCHE and stand.stand_age_at(at) == 0.0:
+			broke += 1
+			broke_p = maxf(broke_p, av.get_peak_pressure_at(at))
+	# Past the run-out (debris to about 60 m) the stand stands.
+	var past := stand.disturbance_at(Vector3(110, 0, 6))
+	_check("the dense flow resets the stand on its track (avalanche paths stay young), not past its run-out", broke >= 3 and past != WorldStand.DISTURBANCE_AVALANCHE, "%d of 18 points on the track reset (peak %.0f kPa), kind %d past the run-out (%.1f kPa there)" % [broke, broke_p / 1000.0, past, av.get_peak_pressure_at(Vector3(110, 0, 6)) / 1000.0])
 	av = await _trigger_setup()
 	av.natural_release = true
 	for z in range(-128, 129, 8):
