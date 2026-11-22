@@ -889,6 +889,8 @@ func _ready() -> void:
 		_stand_trail()
 		if args.has("rooting-tyre") and prints != null:
 			await _rooting_tyre()
+	if args.has("gully-cam"):
+		_gully_cam()
 	if args.has("lodging"):
 		await _lodging()
 	if args.has("lens-cam"):
@@ -1862,7 +1864,10 @@ func _generate() -> void:
 	gen.strata_enabled = not args.has("no-strata") # hard rock bands: waterfalls where rivers cross them
 	# Erosion detail down to 4 m gullies on the 1 m Landscape3D ground (16 m on the 4 m grid, which would alias finer).
 	gen.detail_octaves = int(args.get("gdetail", "6" if args.get("mesh", "landscape") == "landscape" else "4"))
-	gen.tile_erosion_enabled = args.has("tiles")
+	# Droplet erosion's rills and gullies (terrain 01c51a76), on by default; --tiles=0 off (a before frame, fast scouts).
+	gen.tile_erosion_enabled = args.get("tiles", "1") != "0"
+	if "gully_incision" in gen:
+		gen.gully_incision = float(args.get("gully-incision", "1"))
 	gen.deposition = float(args.get("deposition", "0.5" if layout == "desert" else "0"))
 	# Rock beds stepped into cliff faces (ledges), --ledges=0 for smooth faces.
 	gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
@@ -7203,6 +7208,49 @@ func _spindrift_cam() -> void:
 	for i in int(args.get("sd-frames", "90")):
 		await get_tree().process_frame
 	_log("spindrift: %d sources, %.1f kg/s, strongest at %s (rate %.2f), cam %s %.0f m downwind, wind %s %.0f m/s, sun %.1f deg" % [srcs.size(), float(snow.call("get_spindrift_rate")), str(src.round()), float(srcs[0]["rate"]), str(cp.round()), d, str(weather.wind_direction), weather.wind_speed, rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
+
+
+func _gully_cam() -> void:
+	# --gully-cam[=D]: the strongest gully on an open soil slope (TerrainGenerator3D.get_gully_at, terrain 01c51a76; the
+	# rocks bench's --gully-spot rule: no rock, 15 to 35 degrees over 16 m, banks under 4 m), the camera D (14) m below
+	# it down the fall line, --gully-eye (1.7) m up, looking up the channel.
+	var wr: Rect2 = gen.get_world_rect()
+	var best := -INF
+	var found := Vector3.INF
+	var down := Vector3.ZERO
+	var zz := wr.position.y + 100.0
+	while zz < wr.end.y - 100.0:
+		var xx := wr.position.x + 100.0
+		while xx < wr.end.x - 100.0:
+			var p := Vector3(xx, 0, zz)
+			var h := gen.get_height(p)
+			if gen.get_geology_at(p).g <= 0.05 and h > gen.sea_level + 10.0:
+				var gx := gen.get_height(p + Vector3(8, 0, 0)) - gen.get_height(p - Vector3(8, 0, 0))
+				var gz := gen.get_height(p + Vector3(0, 0, 8)) - gen.get_height(p - Vector3(0, 0, 8))
+				var ny := Vector3(-gx, 16.0, -gz).normalized().y
+				if ny >= cos(deg_to_rad(35.0)) and ny <= cos(deg_to_rad(15.0)):
+					var gl: Vector2 = gen.get_gully_at(p, ny)
+					if gl.x >= 0.5 and gl.y <= 0.3:
+						var t := Vector3(-gz, 0, gx).normalized() * 10.0
+						var bank := maxf(gen.get_height(p + t), gen.get_height(p - t)) - h
+						var score := gl.x - bank * 0.1 - absf(h - gen.sea_level - 80.0) / 400.0
+						if bank <= 4.0 and score > best:
+							best = score
+							found = Vector3(xx, h, zz)
+							down = Vector3(-gx, 0, -gz).normalized()
+			xx += 6.0
+		zz += 6.0
+	if found == Vector3.INF:
+		_log("gully cam: no gully on open soil")
+		return
+	var d := float(args["gully-cam"]) if String(args["gully-cam"]) != "" else 14.0
+	var cp := found + down * d
+	cp.y = height_at(cp.x, cp.z) + float(args.get("gully-eye", "1.7"))
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = cp
+	var tgt := found - down * 4.0
+	c3.look_at(Vector3(tgt.x, height_at(tgt.x, tgt.z), tgt.z))
+	_log("gully cam: gully %s (score %.2f, channel %s), cam %s" % [str(found.round()), best, str(gen.get_gully_at(found, 0.85)), str(cp.round())])
 
 
 func _lodging() -> void:
