@@ -23964,7 +23964,10 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			limb_breakage = Math::lerp(1.4f, 2.0f, tv);
 			// The last flood's marks (trees.md 5av): a softwood floodplain floods most years, 0.5-1.6 m over the
 			// willows' feet, some weeks to a couple of years ago.
-			flood_height = Math::lerp(0.5f, 1.6f, Math::fmod(tv * 2.7f + 0.31f, 1.0f));
+			// One variant in four is left unmarked, for ground the last flood did not reach (placement picks
+			// by WorldWater.high_water_at where a water producer keeps marks).
+			const float fh = Math::fmod(float(p_variant) * 0.381966f + 0.13f, 1.0f);
+			flood_height = p_variant % 4 == 2 ? 0.0f : Math::lerp(0.5f, 1.6f, fh);
 			flood_years = Math::lerp(0.05f, 2.5f, Math::fmod(tv * 1.9f + 0.6f, 1.0f));
 		}
 	}
@@ -27607,6 +27610,11 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	if (wind_exposure > 0.0f && mesh.is_valid()) {
 		// Placement turns the mesh's +X down the prevailing wind (trees.md 5q).
 		mesh->set_meta(SNAME("tree_wind_flag"), Vector2(wind_exposure, krummholz));
+	}
+	if (flood_height > 0.0f && mesh.is_valid() && !fallen && !fallen_branch) {
+		// Placement picks the variant nearest the last flood's mark (WorldWater.high_water_at) and turns the mesh's +X
+		// down the flood's flow (the line is higher on the -X face, trees.md 5av).
+		mesh->set_meta(SNAME("tree_flood"), Vector2(flood_height, flood_years));
 	}
 	if (stilt_height > 0.0f && mesh.is_valid() && !fallen && !fallen_branch) {
 		// The ground is stilt_height under the mesh origin (the root tips): placement raises the instance by it.

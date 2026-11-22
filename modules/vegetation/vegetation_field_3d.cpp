@@ -1647,6 +1647,17 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 				ps.strike_years_max = MAX(ps.strike_years_max, sy);
 			}
 		}
+		// Flood-marked variants (trees.md 5av): their silt line's height and age, unflooded ones (0, -1).
+		ps.flood_marks.clear();
+		bool any_flood = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			any_flood = any_flood || (m.is_valid() && m->has_meta(SNAME("tree_flood")));
+		}
+		if (any_flood) {
+			for (const Ref<Mesh> &m : ps.meshes) {
+				ps.flood_marks.push_back((m.is_valid() && m->has_meta(SNAME("tree_flood"))) ? Vector2(m->get_meta(SNAME("tree_flood"))) : Vector2(0.0f, -1.0f));
+			}
+		}
 		// Browsed variants (trees.md 5az): marked by mesh meta tree_browse.
 		ps.browsed.clear();
 		bool any_browse = false;
@@ -2949,11 +2960,48 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 						}
 					}
+					int flood_variant = -1;
+					Vector2 flood_flow;
+					if (!ps.flood_marks.is_empty() && WorldContracts::water() && WorldContracts::water()->has_provider()) {
+						// Flood-marked trees (TreeGenerator.flood_height, trees.md 5av): the variant whose silt line is
+						// nearest the last flood's mark over this ground (WorldWater.high_water_at: its peak above the
+						// ground, then its age), turned with mesh +X down the peak's flow so the line rides higher on the
+						// upstream face; with no mark here (or one under 10 cm) an unflooded variant. With no water
+						// producer at all the variants stay as drawn (their marks are then the generator's own).
+						const float ground = map ? map->get_height_at(Vector3(xz.x, 0.0f, xz.y)) : y;
+						const Vector4 hw = WorldContracts::water()->high_water_at(Vector3(xz.x, ground, xz.y));
+						const bool known = hw.x > -1e20f && hw.y >= 0.0f && hw.x - ground > 0.1f;
+						const float want_h = known ? hw.x - ground : 0.0f;
+						const float want_y = known ? hw.y / 365.25f : -1.0f;
+						const int nv = ps.flood_marks.size();
+						const int start = MIN(int(Math::fmod(r * 2903.0f, 1.0f) * nv), nv - 1);
+						float best = 1e9f;
+						for (int k = 0; k < nv; k++) {
+							const int vi = (start + k) % nv;
+							const Vector2 fm = ps.flood_marks[vi];
+							if ((fm.x > 0.0f) != known) {
+								continue;
+							}
+							// 30 cm of line weighs as much as 1.5 years of fading.
+							const float d = known ? Math::abs(fm.x - want_h) / 0.3f + Math::abs(fm.y - want_y) / 1.5f : 0.0f;
+							if (d < best - 1e-4f) {
+								best = d;
+								flood_variant = vi;
+							}
+						}
+						if (flood_variant >= 0 && known) {
+							flood_flow = Vector2(hw.z, hw.w);
+						}
+					}
 					if (bank_dir != Vector2()) {
 						// A sod lip (RULE_BANK_EDGE): mesh +X out over the drop, a little scatter along the edge.
 						yaw = Math::atan2(-bank_dir.y, bank_dir.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.2f;
 					} else if (wood_out != Vector2()) {
 						yaw = Math::atan2(-wood_out.y, wood_out.x);
+					} else if (flood_flow.length_squared() > 1e-6f) {
+						// Its silt line is higher on mesh -X (the upstream face, where the flood piled against it).
+						const Vector2 fd = flood_flow.normalized();
+						yaw = Math::atan2(-fd.y, fd.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 0.3f;
 					} else if (bank_variant >= 0 && !ps.bank_slopes.is_empty() && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
 						// Its ground falls towards mesh +Z: turn +Z downhill.
 						yaw = Math::atan2(downhill.x, downhill.y);
@@ -3080,6 +3128,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (pick >= 0 && (struck || fire_variant < 0 || ps.strike_years[fire_variant] >= 0.0f)) {
 							fire_variant = pick;
 						}
+					}
+					if (flood_variant >= 0 && fire_variant < 0) {
+						fire_variant = flood_variant;
 					}
 					if (!ps.browsed.is_empty()) {
 						// Browsed trees (TreeGenerator.browse, trees.md 5az): where deer press (WorldStand.browse_at, the
@@ -6597,7 +6648,7 @@ void VegetationField3D::_follow_floods(double p_delta) {
 	flood_check = 2.0;
 	bool wanted = false;
 	for (const PlaceSpecies &ps : stream_setup.species) {
-		wanted = wanted || (ps.sp.is_valid() && ps.sp->uses_high_water());
+		wanted = wanted || (ps.sp.is_valid() && ps.sp->uses_high_water()) || !ps.flood_marks.is_empty();
 	}
 	if (!wanted) {
 		flood_follow = false;

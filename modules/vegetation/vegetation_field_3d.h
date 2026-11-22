@@ -256,6 +256,9 @@ private:
 		LocalVector<float> strike_years;
 		float strike_years_max = 0.0f;
 		LocalVector<uint8_t> browsed; // Per variant: 1 for a browsed one (mesh meta tree_browse), empty when none is.
+		// Per variant, mesh meta "tree_flood" (x the last flood's height on the stem, m; y years since; 0 and -1 for the
+		// unflooded): empty when no variant carries one. A tree takes the variant nearest WorldWater.high_water_at's mark.
+		LocalVector<Vector2> flood_marks;
 		LocalVector<float> base_lifts; // Per variant, mesh meta "tree_base_lift" (m in mesh space: stilt roots, the origin that far above the ground); empty: none.
 		Vector2 open_side; // Mesh meta "tree_open_side" (xz, unit) of its first mesh carrying it: turned to face the open (forest edges); zero none.
 	};

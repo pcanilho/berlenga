@@ -7,6 +7,7 @@ extends Node3D
 #   --strikes --stream  a strike after a streamed field is in grows the deferred struck variants (trees.md 5bc)
 #   --lightning --strikes  struck trees in a placed beech stand: a WorldStand strike swaps that tree only (trees.md 5ax)
 #   --beaver-meadow   a drained beaver pond (WorldStand kind 4): meadow snags, fallen snags and willow come in (trees.md 5bb)
+#   --flood-field     floodplain willows pick their silt line by WorldWater.high_water_at and turn down its flow (trees.md 5av)
 #   --avalanche       an avalanche track 5 years old (WorldStand kind 6): thrown logs down the fall line, snapped stumps, stripped survivors (trees.md 5bh)
 #   --colonnade       taiga stilted spruce placed in rows along vanished logs (trees.md 5az)
 #   --browse          browsed trees in a placed beech stand: a WorldStand browse disc swaps the trees under it (trees.md 5az)
@@ -48,6 +49,18 @@ class Valley extends Node3D:
 			# RIDGE=1: the ground rises to a crest 25 m up at the plot's -z edge (skyline trees, trees.md 9c).
 			h += 25.0 * pow(clampf((-p.z + 10.0) / 90.0, 0.0, 1.0), 1.5)
 		return h
+
+# A flood mark 1.2 m over the ground on the plot's -x half (60 days old, flowing +z), none on the +x half.
+class FloodStub extends WorldWater:
+	var valley: Node3D
+
+	func _height_at(p: Vector3) -> float:
+		return -INF
+
+	func _high_water_at(p: Vector3) -> Vector4:
+		if p.x >= 0.0:
+			return Vector4(-INF, -1.0, 0.0, 0.0)
+		return Vector4(valley.get_height(p) + 1.2, 60.0, 0.0, 1.0)
 
 class Stream extends Node3D:
 	func get_water_level() -> float:
@@ -125,6 +138,10 @@ func run(args: Dictionary) -> void:
 	_check(err == OK, "valley data map bakes")
 	if args.has("beaver-meadow"):
 		await _beaver_meadow_check()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if args.has("flood-field"):
+		await _flood_field_check()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if args.has("avalanche"):
@@ -295,6 +312,72 @@ func _flood_check() -> void:
 		_check(under > 0.8 * under_n and over == 0, "willow seed %d: silt on %d of %d bark vertices under 0.9 m, %d over 1.3 m" % [sd, under, under_n, over])
 	_check(found_wrack >= 2, "flood wrack on %d of 4 willows" % found_wrack)
 	g.flood_height = 0.0
+
+# Flood marks in the world (trees.md 5av): the floodplain willows take the variant whose silt line is nearest
+# WorldWater.high_water_at's mark (here 1.2 m, 60 days), turned with mesh +X down the flood's flow; unmarked ground
+# takes unflooded variants.
+func _flood_field_check() -> void:
+	var stub := FloodStub.new()
+	stub.valley = get_node("Valley")
+	WorldContracts.add_water_stub(stub)
+	gen.near_leaf_range = 0.0
+	var biome := gen.make_stand(TreeGenerator.STAND_FLOODPLAIN_WILLOW, maxi(variants, 6))
+	var marked := 0
+	for sp in biome.species:
+		var n := 0
+		var dry := 0
+		for m in sp.meshes:
+			if m != null and m.has_meta("tree_flood"):
+				n += 1
+			elif m != null:
+				dry += 1
+		if n > 0:
+			marked += 1
+			print("  %s: %d flood-marked variants, %d unmarked" % [sp.resource_name, n, dry])
+	_check(marked > 0, "floodplain willow stand: %d species carry flood-marked variants" % marked)
+	var f := _field(biome)
+	for k in 3:
+		await get_tree().process_frame
+	var wet_n := 0
+	var wet_marked := 0
+	var wet_near := 0
+	var wet_down := 0
+	var dry_n := 0
+	var dry_marked := 0
+	for c in f.find_children("*", "MultiMeshInstance3D", true, false):
+		if not (c is MultiMeshInstance3D) or c.multimesh == null or c.multimesh.mesh == null:
+			continue
+		var mm: MultiMesh = c.multimesh
+		var sp_marked := false
+		for sp in biome.species:
+			if sp.meshes.has(mm.mesh):
+				for m in sp.meshes:
+					sp_marked = sp_marked or (m != null and m.has_meta("tree_flood"))
+		if not sp_marked:
+			continue
+		var fm: Vector2 = mm.mesh.get_meta("tree_flood", Vector2(0.0, -1.0))
+		for k in mm.instance_count:
+			var t: Transform3D = c.global_transform * mm.get_instance_transform(k)
+			var o := t.origin
+			if absf(o.x) < 4.0:
+				continue
+			if o.x < 0.0:
+				wet_n += 1
+				if fm.x > 0.0:
+					wet_marked += 1
+					if absf(fm.x - 1.2) < 0.35:
+						wet_near += 1
+					var xa := Vector2(t.basis.x.x, t.basis.x.z).normalized()
+					if xa.dot(Vector2(0.0, 1.0)) > 0.8:
+						wet_down += 1
+			else:
+				dry_n += 1
+				if fm.x > 0.0:
+					dry_marked += 1
+	_check(wet_n > 0 and wet_marked == wet_n and wet_near >= wet_n * 0.8, "under a 1.2 m mark: %d of %d willows flood-marked, %d with their line within 35 cm of it" % [wet_marked, wet_n, wet_near])
+	_check(wet_marked > 0 and wet_down >= wet_marked * 0.9, "flood-marked willows: %d of %d turned with +X down the flood's flow" % [wet_down, wet_marked])
+	_check(dry_n > 0 and dry_marked == 0, "no mark: %d willows, %d flood-marked" % [dry_n, dry_marked])
+	WorldContracts.clear_overrides()
 
 func _beaver_meadow_check() -> void:
 	# The beaver meadow (trees.md 5bb): the pond stand carries species for a drained bed (WorldStand
