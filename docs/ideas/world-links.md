@@ -398,7 +398,7 @@ Makkonen 2000 (Phil. Trans. R. Soc. A); ISO 12494.
    where the surface sits a few degrees below 0 C over moist, fine soil, columns a few centimetres a night (Outcalt
    1971; Lawler 1988; Grab 2001 on needle ice in mountains). Shading: grey-white columns on wet silt and mud, gone
    by mid morning.
-3. Fire builds its own cloud (pyrocumulus). Source: `WorldFire.heat_at` integrated over a burning area, the air's
+3. Fire builds its own cloud (pyrocumulus) (22 Nov: already built in ebdad64b and linked end to end: the cap at the plume's own condensation level, pyroCb lightning and rain through the storm list, its downdraft in the wind the fire spread reads, fire light on the cloud; nothing added). Source: `WorldFire.heat_at` integrated over a burning area, the air's
    temperature and humidity at height. Reader: the clouds (a convective tower over the plume when the fire's heat
    flux lifts the plume past the lifting condensation level; Briggs plume rise, Luderer et al. 2006; Fromm et al.
    2010 on pyroCb), lightning (a pyroCb can strike ahead of the fire), rain (rarely). Flow already carries the
