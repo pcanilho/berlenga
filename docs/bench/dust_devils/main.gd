@@ -12,7 +12,7 @@ extends Node3D
 #   --sun=alt,yaw     degrees (default 55, 150)
 #   --wind=W          the 10 m wind (m/s, along +x; default 3)
 #   --flow=prop:value  a property of the devils' PhysXFlow3D (tuning), repeatable
-#   --cell=C          Flow cell size (m; default 0.25)
+#   --cell=C          Flow cell size (m; default 0.35)
 # Render: VK_ICD_FILENAMES=.../lvp_icd.json xvfb-run -a godot --path . --rendering-driver vulkan --resolution 960x540 -- ...
 
 var out := ""
@@ -24,7 +24,7 @@ var swirl := 12.0
 var cam_arg: Array = [0.0, 3.0, -32.0, 0.0, 9.0, 0.0]
 var sun_arg: Array = [55.0, 150.0]
 var wind := 3.0
-var cell := 0.25
+var cell := 0.35
 var fails := 0
 
 

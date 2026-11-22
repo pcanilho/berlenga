@@ -86,7 +86,9 @@ void PhysXHaboobFront3D::_build() {
 	// the head), the dust riding the air, hanging for minutes, coarse cells over hundreds of metres, strong vorticity
 	// confinement for the billows, the weather's wind carrying what is left behind.
 	flow->set_cell_size(flow_cell_size);
-	flow->set_max_blocks(512);
+	flow->set_max_blocks(1024);
+	// Freed blocks invisible: under 0.01 of optical depth across a 16-cell block.
+	flow->set_allocation_smoke(0.01f / (0.3f * 16.0f * flow_cell_size));
 	flow->set_combustion(false);
 	flow->set_buoyancy(0.0f);
 	flow->set_smoke_buoyancy(0.0f);

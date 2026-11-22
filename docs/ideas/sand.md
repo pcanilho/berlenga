@@ -1059,6 +1059,25 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   stopping new ones and killing the old); the view renders one devil (--raster, --pair, --flow=prop:value).
 - Look: cloud scouts (lavapipe, ~25 min for 20 s of devil) still showed a squat column with a dark, dense foot;
   the look and the PT pair go on the PC queue, where a scout takes seconds.
+- Round 2 (22 Nov), from the PC runs (build ca985258): raster and PT matched and the foot was light tan, but every
+  variant was a tent, widest at the ground and tapering to a spike, and read as spray. Rebuilt on the measured
+  structure (Sinclair 1973; Kaimal and Businger 1970; Balme and Greeley 2006):
+  - the surface inflow layer: foot emitters at half their radius above the ground, converging at half the swirl, so
+    the dust is swept into the wall and up it instead of thrown out into a wide skirt;
+  - the wall's updraft near the swirl (0.8 of it; Sinclair measured 5-15 m/s in 8-20 m/s walls) so the dust
+    outruns its spread;
+  - rings to 15 radii (1.5, 3.5, 6, 10, 15), flaring 5 % a radius: an inverted cone of a few degrees, heights ten to
+    thirty diameters; V r kept up the flare;
+  - lift in two arms turning at half the vortex's angular speed (smoke 0.25 to 1.75 of the mean round the ring), wound
+    into spiral bands;
+  - Flow's block budget: at 0.25 m cells the column and its trail asked for over 1,800 blocks in 8 s and the 1,024
+    cap cut the column. Now 0.35 m cells and 2,048 blocks (about 900 used at 16 s), an air-only reserve box over
+    the whole column (Flow loses gas that reaches unallocated blocks), and PhysXFlow3D `allocation_smoke` (new) so a
+    freed block holds no visible dust;
+  - smoke density 0.8 (1.6 blackened the foot once the dust stayed in the wall), scattering strength 1 (PT parity).
+  Cloud scouts: a taller column widening upward; at 320-400 px lavapipe draws a pale haze cut in steps round it
+  that the PC's 1080p frames never showed (it stays with heat shimmer, light and ambient scattering all off). PC
+  runs judge the look.
 - Not yet: the swirl mark left on the ripples, GroundStreamers3D taking the grains at the foot, the PT cost on the
   PC queue.
 
