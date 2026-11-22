@@ -251,6 +251,8 @@ public:
 		bool uses_alpha_antialiasing = false;
 		bool uses_depth_prepass_alpha = false;
 		bool uses_discard = false;
+		// The only discards are BaseMaterial3D's camera cut-out, which never applies in shadow passes.
+		bool discard_only_camera_cutout = false;
 		bool uses_roughness = false;
 		bool uses_normal = false;
 		bool uses_tangent = false;
@@ -301,7 +303,7 @@ public:
 
 		_FORCE_INLINE_ bool uses_shared_shadow_material() const {
 			bool backface_culling = cull_mode == RSE::CULL_MODE_BACK;
-			return !uses_particle_trails && !writes_modelview_or_projection && !uses_vertex && !uses_discard && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && !uses_point_size && !uses_world_coordinates && !uses_billboard_transform && !wireframe && !stencil_enabled && backface_culling;
+			return !uses_particle_trails && !writes_modelview_or_projection && !uses_vertex && (!uses_discard || discard_only_camera_cutout) && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && !uses_point_size && !uses_world_coordinates && !uses_billboard_transform && !wireframe && !stencil_enabled && backface_culling;
 		}
 
 		virtual void set_code(const String &p_Code);

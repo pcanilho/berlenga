@@ -96,7 +96,7 @@ extends Node3D
 #                         puts the view's spot on the nearest strong gully on soil
 #   --face-weathering=x   with --world: the ground material's rock-face lichen, moss and seep streaks (1; 0 before)
 #   --bank-relief=x       with --world: Landscape3D.bank_relief (0.8 m; 0 for a before frame); --bank-spot puts the
-#                         spot on a 42 to 52 degree soil bank
+#                         spot on a 42 to 52 degree soil bank; --spot=x,z puts the spot at a world point
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -701,6 +701,11 @@ func _world() -> void:
 			found = ravine
 		spot = found
 		print("gully spot ", spot, " channel ", gen.get_gully_at(spot, 0.85))
+	if args.has("spot"):
+		# --spot=x,z: the view's spot at that world point (the ground streams and detail builds round it), for a
+		# fixed --cam/--look shot of a place another search found.
+		var sp: PackedStringArray = args["spot"].split(",")
+		spot = Vector3(float(sp[0]), 0, float(sp[1]))
 	# --frost[=C]: a cold, wet climate (mean annual air C at sea level, -4 by default; 700 mm a year) on a
 	# WeatherMap3D, so the ground sorts into stone circles and stripes (RockField3D.frost_sorting; --no-frost off).
 	if args.has("frost"):
