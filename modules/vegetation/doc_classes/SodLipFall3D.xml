@@ -5,6 +5,7 @@
 	</brief_description>
 	<description>
 		The turf lips a [VegetationField3D] stands along cut banks and scarps ([constant PlantGenerator.PRESET_TURF_LIP]) fail as overhanging cantilevers do: under a body standing on the overhang (a node of [member load_group]), as water at their foot cuts further under them ([method WorldWater.height_at] 0.6 m out over the drop between 0.7 m below the lip and its top; mean time [member undercut_time]), and when soaked in heavy rain ([WorldWeather] surface wetness over 0.8 and rain over 5 mm/h; mean time [member soaked_time]). Twice a second it looks at the lips within [member range] of the camera. A lip that fails is taken out of its field ([method VegetationField3D.add_plant_removal]) and falls as a [RigidBody3D] block of sod, tipping out over the drop about its edge.
+		A block that lands hard (stopped faster than [member break_speed] in a step) breaks: it becomes a [PhysXDestructible3D] of the lip cut across its length at a few askew cracks, the torn soil showing on the breaks, and the landing breaks the cracks near its middle, more of them the harder. Blocks and pieces in water are buoyed and dragged by the flow ([method WorldWater.flow_at], drag coefficient [member drag_coefficient]), so a fast flood flow rolls the small pieces off downstream while still water leaves them at the bank's foot. Pieces carried out past 1.5 times [member range] from the camera are freed.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -26,7 +27,13 @@
 		<method name="get_blocks" qualifiers="const">
 			<return type="Array" />
 			<description>
-				The fallen blocks still simulated, newest last.
+				The fallen blocks still simulated, newest last: [RigidBody3D]s, and [PhysXDestructible3D]s for those that broke on landing.
+			</description>
+		</method>
+		<method name="get_break_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Blocks that broke on landing so far.
 			</description>
 		</method>
 		<method name="get_fall_count" qualifiers="const">
@@ -37,8 +44,14 @@
 		</method>
 	</methods>
 	<members>
+		<member name="break_speed" type="float" setter="set_break_speed" getter="get_break_speed" default="2.5">
+			How fast a landing must stop a block, in m/s, to break it (an estimate, about a 0.3 m drop).
+		</member>
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1500.0">
 			The block's density in kg/m³ (wet topsoil bound by roots; an estimate).
+		</member>
+		<member name="drag_coefficient" type="float" setter="set_drag_coefficient" getter="get_drag_coefficient" default="1.05">
+			The flow's drag on blocks and pieces in water, as on a cube broadside to the flow.
 		</member>
 		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
 			When off, no lip breaks by itself.

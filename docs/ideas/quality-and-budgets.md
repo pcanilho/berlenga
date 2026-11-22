@@ -197,9 +197,14 @@ Bench `docs/bench/texture_budget` (software Vulkan): streamed frames match fully
 byte for byte, raster and path traced; a poster seen only in a mirror stays sharper under PT than
 raster, so PT feedback is what keeps it. Streaming on vs off on plain textures: identical frames.
 
+Since (22 Nov evening): texture swaps rebuild the path tracer's texture table once a frame, not once per
+swap; volumetrics (froxel grid, traced fog shadows at Low), effects (SSAO, SSIL, subsurface quality) and
+post-processing (glow upscale) rows. Settings the renderer reads only at startup are handed over through
+the server's setters when the ladder changes them. Vegetation has no engine rows: scattering systems
+register theirs or follow `group_changed`.
+
 Next:
 - Path tracer mesh LOD still off by default; needs the 100% crop check before turning it on.
-- Each swap recreates the bindless set; batch swaps per frame.
 - D3D12 path untested.
 - Game side: switch textures to the streamed import, map the options menu onto
   `RenderingQuality`, register an 8K-at-Ultra row for character textures, drop the per-level 2K/1K

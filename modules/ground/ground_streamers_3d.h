@@ -75,6 +75,7 @@ class GroundStreamers3D : public Node3D {
 	double clock = 0.0;
 
 	float cur_wind10 = 0.0f;
+	float cur_peak_wind = 0.0f; // m/s at 10 m, with the shared wind's vortices
 	float cur_ustar = 0.0f;
 	float cur_flux = 0.0f;
 	float cur_coverage = 0.0f;
@@ -119,6 +120,7 @@ public:
 
 	float get_wind() const { return cur_wind10; }
 	float get_flux() const { return cur_flux; }
+	float get_peak_wind() const { return cur_peak_wind; }
 	float get_coverage() const { return cur_coverage; }
 	float get_active_ratio() const { return cur_ratio; }
 	float get_grains_per_particle() const { return cur_per_particle; }

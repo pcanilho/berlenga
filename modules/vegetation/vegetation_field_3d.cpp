@@ -34,6 +34,7 @@
 #include "fairy_rings.h"
 
 #include "grass_field_3d.h"
+#include "plant_generator.h"
 #include "vegetation_detail.h"
 #include "vegetation_light.h"
 
@@ -196,6 +197,127 @@ float VegetationField3D::near_radius_published = 0.0f;
 static float _relief_y(const Vector3 &p_at) {
 	const float r = WorldContracts::ground()->relief_at(p_at).x;
 	return Math::is_finite(r) ? r : 0.0f;
+}
+
+// A plant's mesh cut off at p_height (a mown meadow's stubble): every triangle clipped to the part below the plane
+// (Sutherland-Hodgman against y = p_height), the attributes interpolated along the cut edges; the cut stalks keep
+// their materials. LODs and the card ranks (CUSTOM0) are dropped: a few stalks need neither.
+static Ref<ArrayMesh> _cut_mesh(const Ref<Mesh> &p_mesh, float p_height) {
+	Ref<ArrayMesh> out;
+	out.instantiate();
+	if (p_mesh.is_null()) {
+		return out;
+	}
+	for (int si = 0; si < p_mesh->get_surface_count(); si++) {
+		const Array a = p_mesh->surface_get_arrays(si);
+		const PackedVector3Array vin = a[Mesh::ARRAY_VERTEX];
+		if (vin.is_empty()) {
+			continue;
+		}
+		const PackedVector3Array nin = a[Mesh::ARRAY_NORMAL];
+		const PackedFloat32Array tin = a[Mesh::ARRAY_TANGENT];
+		const PackedColorArray cin = a[Mesh::ARRAY_COLOR];
+		const PackedVector2Array uin = a[Mesh::ARRAY_TEX_UV];
+		const PackedVector2Array u2in = a[Mesh::ARRAY_TEX_UV2];
+		PackedInt32Array idx = a[Mesh::ARRAY_INDEX];
+		if (idx.is_empty()) {
+			idx.resize(vin.size());
+			for (int i = 0; i < vin.size(); i++) {
+				idx.set(i, i);
+			}
+		}
+		struct V {
+			Vector3 p, n;
+			float t[4] = { 1, 0, 0, 1 };
+			Color c;
+			Vector2 uv, uv2;
+		};
+		auto get = [&](int i) {
+			V v;
+			v.p = vin[i];
+			v.n = i < nin.size() ? nin[i] : Vector3(0, 1, 0);
+			if (tin.size() >= (i + 1) * 4) {
+				for (int k = 0; k < 4; k++) {
+					v.t[k] = tin[i * 4 + k];
+				}
+			}
+			v.c = i < cin.size() ? cin[i] : Color(1, 1, 1);
+			v.uv = i < uin.size() ? uin[i] : Vector2();
+			v.uv2 = i < u2in.size() ? u2in[i] : Vector2();
+			return v;
+		};
+		auto mix = [](const V &p_a, const V &p_b, float p_t) {
+			V v;
+			v.p = p_a.p.lerp(p_b.p, p_t);
+			v.n = p_a.n.lerp(p_b.n, p_t).normalized();
+			for (int k = 0; k < 4; k++) {
+				v.t[k] = Math::lerp(p_a.t[k], p_b.t[k], p_t);
+			}
+			v.c = p_a.c.lerp(p_b.c, p_t);
+			v.uv = p_a.uv.lerp(p_b.uv, p_t);
+			v.uv2 = p_a.uv2.lerp(p_b.uv2, p_t);
+			return v;
+		};
+		LocalVector<V> verts;
+		for (int i = 0; i + 2 < idx.size(); i += 3) {
+			const V tri[3] = { get(idx[i]), get(idx[i + 1]), get(idx[i + 2]) };
+			V poly[4];
+			int n = 0;
+			for (int k = 0; k < 3; k++) {
+				const V &cur = tri[k];
+				const V &nxt = tri[(k + 1) % 3];
+				const bool in_c = cur.p.y <= p_height;
+				const bool in_n = nxt.p.y <= p_height;
+				if (in_c) {
+					poly[n++] = cur;
+				}
+				if (in_c != in_n) {
+					poly[n++] = mix(cur, nxt, (p_height - cur.p.y) / (nxt.p.y - cur.p.y));
+				}
+			}
+			for (int k = 1; k + 1 < n; k++) {
+				verts.push_back(poly[0]);
+				verts.push_back(poly[k]);
+				verts.push_back(poly[k + 1]);
+			}
+		}
+		if (verts.is_empty()) {
+			continue;
+		}
+		PackedVector3Array vo, no;
+		PackedFloat32Array to;
+		PackedColorArray co;
+		PackedVector2Array uo, u2o;
+		for (const V &v : verts) {
+			vo.push_back(v.p);
+			no.push_back(v.n);
+			for (int k = 0; k < 4; k++) {
+				to.push_back(v.t[k]);
+			}
+			co.push_back(v.c);
+			uo.push_back(v.uv);
+			u2o.push_back(v.uv2);
+		}
+		Array arr;
+		arr.resize(Mesh::ARRAY_MAX);
+		arr[Mesh::ARRAY_VERTEX] = vo;
+		arr[Mesh::ARRAY_NORMAL] = no;
+		if (!tin.is_empty()) {
+			arr[Mesh::ARRAY_TANGENT] = to;
+		}
+		if (!cin.is_empty()) {
+			arr[Mesh::ARRAY_COLOR] = co;
+		}
+		if (!uin.is_empty()) {
+			arr[Mesh::ARRAY_TEX_UV] = uo;
+		}
+		if (!u2in.is_empty()) {
+			arr[Mesh::ARRAY_TEX_UV2] = u2o;
+		}
+		out->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arr);
+		out->surface_set_material(out->get_surface_count() - 1, p_mesh->surface_get_material(si));
+	}
+	return out;
 }
 
 // The top edge of a steep drop in the drawn ground (heightfield plus relief) within 1 m of p_xz (RULE_BANK_EDGE):
@@ -627,7 +749,8 @@ Array VegetationField3D::get_instances_near(int p_species, const Vector3 &p_posi
 		}
 		const Ref<MultiMesh> mm = mmi->get_multimesh();
 		const Ref<Mesh> mesh = mm->get_mesh();
-		if (mesh.is_null() || !meshes.has(mesh)) {
+		// A hay meadow's cut stalks (meta hay_cut_of: the mesh they were cut from) count as the species' too.
+		if (mesh.is_null() || !(meshes.has(mesh) || (mesh->has_meta(SNAME("hay_cut_of")) && meshes.has(mesh->get_meta(SNAME("hay_cut_of")))))) {
 			continue;
 		}
 		const Transform3D xf = mmi->get_global_transform();
@@ -1588,15 +1711,31 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 		}
 	}
 	{
-		// Cut when a hay meadow is mown: the plant generator's herbs that stand over the stubble (not trees or shrubs
-		// with a canopy, not the ground features on banks).
+		// Cut when a hay meadow is mown: the plant generator's herbs that stand over the stubble (by preset, or by the
+		// plant shader on a hand-made species' meshes; not trees or shrubs with a canopy, mounds, dung, wrack or bank sod).
 		float top = 0.0f;
 		for (const Ref<Mesh> &m : ps.meshes) {
 			if (m.is_valid()) {
 				top = MAX(top, m->get_aabb().get_end().y);
 			}
 		}
-		ps.hay_cut = p_sp->has_meta(SNAME("plant_preset")) && p_sp->get_canopy_radius() <= 0.0f && !p_sp->uses_bank_edge() && top > 0.12f;
+		const int preset = int(p_sp->get_meta(SNAME("plant_preset"), -1));
+		const bool herb = preset >= 0 ? !PlantGenerator::is_ground_feature(preset) : (!ps.meshes.is_empty() && PlantGenerator::is_plant_mesh(ps.meshes[0]));
+		bool mound = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			mound = mound || (m.is_valid() && m->has_meta(SNAME("sward_mound")));
+		}
+		ps.hay_cut = herb && !mound && p_sp->get_canopy_radius() <= 0.0f && !p_sp->uses_bank_edge() && top > 0.12f;
+		ps.base_variants = int(ps.meshes.size());
+		if (ps.hay_cut) {
+			// Always, so a meadow mown later needs no new setup. The same plants cut at the stubble (7.5 to 10 cm; GrassField3D.hay_meadows): their stalks stand in the
+			// mown meadow until they grow back.
+			for (int i = 0; i < ps.base_variants; i++) {
+				Ref<ArrayMesh> cut = _cut_mesh(ps.meshes[i], 0.085f);
+				cut->set_meta(SNAME("hay_cut_of"), ps.meshes[i]);
+				ps.meshes.push_back(cut);
+			}
+		}
 	}
 	{
 		// Bank roots (PlantGenerator.make_bank_roots): per variant, the face angle it was grown on.
@@ -1739,6 +1878,7 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 }
 
 bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
+	hay_seen = GrassField3D::get_hay_generation(); // Placed with the meadows as they are now.
 	_update_bark_detail(); // The species are final by now.
 	r_setup = PlaceSetup();
 	ERR_FAIL_COND_V_MSG(biome.is_null(), false, "VegetationField3D: no biome.");
@@ -2279,7 +2419,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		if (sp.is_null()) {
 			continue;
 		}
-		const int variants = MAX(1, int(ps.meshes.size()));
+		const int variants = MAX(1, ps.base_variants > 0 ? ps.base_variants : int(ps.meshes.size()));
 		const Pattern &pat = ps.pattern;
 		const float fp = ps.footprint;
 		const Vector2 scale_range = sp->get_scale_range();
@@ -2366,8 +2506,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 				const bool in_core = p_tiles.has_point(tile);
 				TileOut *out = in_core ? &r_tiles[(tz - p_tiles.position.y) * p_tiles.size.x + (tx - p_tiles.position.x)] : nullptr;
 				if (out) {
-					out->species[s].xforms.resize(variants);
-					out->species[s].customs.resize(variants);
+					out->species[s].xforms.resize(MAX(variants, int(ps.meshes.size())));
+					out->species[s].customs.resize(MAX(variants, int(ps.meshes.size())));
 				}
 				const float shift = float(tile_hash(tx, tz, p_setup.seed, s) & 0xFFFFFF) / float(0x1000000);
 				if (nebkha_sp) {
@@ -2609,11 +2749,15 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							p3 = Vector3(xz.x, 0.0f, xz.y);
 						}
 					}
+					bool hay_stalk = false;
 					if (ps.hay_cut && suit > 0.0f && GrassField3D::has_hay_meadows()) {
-						// Mown with the hay meadow: gone until it grows back.
+						// Mown with the hay meadow: its cut stalks until it grows back (or gone, with no cut meshes).
 						const float md = GrassField3D::mown_days_at(Vector3(xz.x, 0.0f, xz.y));
 						if (md >= 0.0f && md < HAY_REGROW) {
-							continue;
+							if (int(ps.meshes.size()) < 2 * ps.base_variants) {
+								continue;
+							}
+							hay_stalk = true;
 						}
 					}
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
@@ -3215,7 +3359,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 						clone_variant = int(hash_murmur3_one_32(best_h, 0x766172u) % uint32_t(variants));
 					}
-					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : (clone_variant >= 0 ? clone_variant : MIN(int(r * variants), variants - 1)));
+					int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : (clone_variant >= 0 ? clone_variant : MIN(int(r * variants), variants - 1)));
+					if (hay_stalk) {
+						variant += ps.base_variants;
+					}
 					// Stilt roots: raised by the variant's lift along its own up (scaled and tilted with it).
 					const Vector3 lift = variant < int(ps.base_lifts.size()) ? b.xform(Vector3(0.0f, ps.base_lifts[variant], 0.0f)) : Vector3();
 					const Transform3D world(b, Vector3(xz.x, y, xz.y) + lift);
@@ -6701,11 +6848,11 @@ void VegetationField3D::_follow_hay(double p_delta) {
 	if (g == hay_seen) {
 		return;
 	}
-	const bool first = hay_seen == 0;
-	hay_seen = g;
-	if (first) {
-		return; // Placed with the meadows as they were.
+	if (hay_seen == 0) {
+		hay_seen = g; // Nothing placed yet.
+		return;
 	}
+	hay_seen = g;
 	if (streaming && stream_setup_valid) {
 		bool wanted = false;
 		for (const PlaceSpecies &ps : stream_setup.species) {

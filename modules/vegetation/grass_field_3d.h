@@ -474,10 +474,22 @@ private:
 	void _build_mow_map();
 	void _update_mow_state(int p_day);
 	void _publish_mow();
+	bool mow_published = false; // The ground field handed grass_mow_map to the ground shader.
 	float _hay_reach() const { return meadows.is_empty() ? 0.0f : HAY_REACH; }
 	static LocalVector<GrassField3D *> hay_nodes; // In the tree with hay meadows (mown_days_at).
 	static uint64_t hay_generation;
 	void _hay_register();
+	// Round bales (PlantGenerator.make_hay_bale) along the windrows once baled (days 3.5 to 5), one MultiMesh a variant;
+	// a meadow set on several layers of a sward gets its bales from the first of them.
+	static constexpr float HAY_YIELD = 0.5f; // kg of hay a square metre (an estimate for a meadow's first cut).
+	static constexpr float HAY_ROW_PITCH = 6.0f; // m between windrows (the shader's).
+	LocalVector<MultiMeshInstance3D *> bale_nodes;
+	static inline LocalVector<Ref<ArrayMesh>> bale_meshes;
+	bool bales_queued = false;
+	int bale_count = 0;
+	void _queue_bales();
+	void _build_bales();
+	void _free_bales();
 	bool graze_any = false;
 	bool graze_published = false; // The ground field handed grass_graze_map to the ground shader.
 	void _read_graze(TerrainDataMap3D *p_map);
@@ -726,6 +738,7 @@ public:
 	static float mown_days_at(const Vector3 &p_position);
 	static uint64_t get_hay_generation() { return hay_generation; }
 	static bool has_hay_meadows() { return !hay_nodes.is_empty(); }
+	int get_hay_bale_count() const { return bale_count; }
 	void set_hedges(bool p_enabled);
 	bool get_hedges() const { return hedges; }
 	void set_hedge_offset(float p_offset);

@@ -44,6 +44,7 @@ extends Node3D
 #                     towers' shadows on the clouds behind them (the sun shadow grid, docs/ideas/clouds.md)
 #   --sun-up=D        shafts view: the sun D degrees up (default 20)
 #   --sun-yaw=D       shafts view: the sun D degrees right of the view (default -13)
+#   --sky-clock       shafts view: the sun from SkyClock (always under 10 degrees up)
 #   --mid-cover=C     clouds views: the mid (altocumulus) layer's base cover (WeatherMap3D.mid_cloud_cover)
 #   --cloud-light=x,y,z,E,R[,r,g,b]  clouds views: a point light in the clouds (WeatherMap3D.add_cloud_light;
 #                     orange by default, a fire's); repeatable
@@ -128,6 +129,7 @@ var no_sky_shadow := false
 var froxel_haze := false
 var sun_up := 20.0
 var sun_yaw := -13.0
+var sky_clock_arg := false
 var cover := -1.0
 var haze_km := -1.0
 var strike_frames := 1
@@ -178,6 +180,7 @@ func _ready() -> void:
 		elif a == "--froxel-haze": froxel_haze = true
 		elif a.begins_with("--sun-up="): sun_up = float(a.substr(9))
 		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
+		elif a == "--sky-clock": sky_clock_arg = true
 		elif a.begins_with("--cover="): cover = float(a.substr(8))
 		elif a.begins_with("--mid-cover="): mid_cover = float(a.substr(12))
 		elif a.begins_with("--high-cover="): high_cover = float(a.substr(13))
@@ -1464,6 +1467,12 @@ func _build_clouds() -> void:
 			await get_tree().physics_frame
 		weather.advance(60.0)
 		print("lake effect at the shore: %.2f, snowfall %.2f mm/h, fetch %.0f km" % [weather.get_lake_effect_at(Vector3(0, 0, 0)), weather.get_snowfall_at(Vector3(0, 0, 0)), weather.get_lake_fetch_at(Vector3(0, 0, 0))])
+	if view == "shafts" and (sky_clock_arg or sun_up < 10.0):
+		# A low sun from SkyClock (45 N, mid June), as the game drives it: its light at the ground reddened and dimmed
+		# by the air. The hand-set white light lit the near haze (the aerosol froxels, drawn over the sky) at full
+		# strength, a grey veil over every sunset sky.
+		var sc: Node = await _clock_sun(sun, 45.0, 0.0, 0.0, 6, 15, sun_up, sun_yaw)
+		print("shafts: sun from SkyClock %.2f h, altitude %.1f, light %s x %.2f" % [sc.time_of_day, sc.get_sun_altitude(), sun.light_color, sun.light_energy])
 	if view == "haboob":
 		# A dry storm's outflow over loose ground (WeatherMap3D's dust layer, sand's bench docs/bench/haboob): a ring of
 		# dust walls round it, its head raised; seen from 9 km out on the flat, the wall coming toward the camera.
@@ -1486,29 +1495,7 @@ func _build_clouds() -> void:
 		# The sun and its light from SkyClock, as in the game: the light at the ground through the air (its colour and
 		# energy) and the sky's sun above the air agree, so the wall over the sky and over the ground are lit alike.
 		# Phoenix, 5 July, the sun 14 degrees up in the late afternoon; north turned so it stands behind the camera's left.
-		var clock: Node = ClassDB.instantiate("SkyClock")
-		clock.name = "SkyClock"
-		add_child(clock)
-		clock.latitude = 33.45
-		clock.longitude = -112.07
-		clock.utc_offset = -7.0
-		clock.month = 7
-		clock.day = 5
-		clock.time_scale = 0.0
-		clock.sun_light = clock.get_path_to(sun)
-		weather.sky_clock = weather.get_path_to(clock)
-		var lo := 15.0
-		var hi := 19.7
-		for i in 12:
-			clock.time_of_day = 0.5 * (lo + hi)
-			await get_tree().physics_frame
-			if clock.get_sun_altitude() > 14.0:
-				lo = clock.time_of_day
-			else:
-				hi = clock.time_of_day
-		clock.north_offset = wrapf(rad_to_deg(atan2(2500.0, -1400.0)) - clock.get_sun_azimuth(), -180.0, 180.0)
-		for i in 4:
-			await get_tree().physics_frame
+		var clock: Node = await _clock_sun(sun, 33.45, -112.07, -7.0, 7, 5, 14.0, rad_to_deg(atan2(2500.0, -1400.0)))
 		print("haboob: sun %.2f h, altitude %.1f, azimuth %.1f, north offset %.1f, toward %s, light %s x %.2f" % [clock.time_of_day, clock.get_sun_altitude(), clock.get_sun_azimuth(), clock.north_offset, clock.get_sun_direction(), sun.light_color, sun.light_energy])
 		weather.add_storm(Vector2(0, 0), 1500.0, 0.0, 25.0, 0.0)
 		for i in 30:
@@ -1993,3 +1980,33 @@ func _leaf_tests() -> void:
 	lf.queue_free()
 	m.queue_free()
 	await get_tree().physics_frame
+
+
+# The sun from SkyClock at a place and date, the time found for the altitude wanted (late afternoon, by bisection) and
+# north turned so it stands at yaw degrees right of -Z (the views' convention: toward (sin yaw, -cos yaw)). The clock
+# drives the light's colour and energy through the air, as in the game.
+func _clock_sun(p_sun: DirectionalLight3D, p_lat: float, p_lon: float, p_utc: float, p_month: int, p_day: int, p_alt: float, p_yaw: float) -> Node:
+	var clock: Node = ClassDB.instantiate("SkyClock")
+	clock.name = "SkyClock"
+	add_child(clock)
+	clock.latitude = p_lat
+	clock.longitude = p_lon
+	clock.utc_offset = p_utc
+	clock.month = p_month
+	clock.day = p_day
+	clock.time_scale = 0.0
+	clock.sun_light = clock.get_path_to(p_sun)
+	weather.sky_clock = weather.get_path_to(clock)
+	var lo := 12.5
+	var hi := 21.5
+	for i in 14:
+		clock.time_of_day = 0.5 * (lo + hi)
+		await get_tree().physics_frame
+		if clock.get_sun_altitude() > p_alt:
+			lo = clock.time_of_day
+		else:
+			hi = clock.time_of_day
+	clock.north_offset = wrapf(p_yaw - clock.get_sun_azimuth(), -180.0, 180.0)
+	for i in 4:
+		await get_tree().physics_frame
+	return clock

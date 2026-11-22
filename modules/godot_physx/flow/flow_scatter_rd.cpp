@@ -370,8 +370,8 @@ float hg_phase(float c, float g) {
 // which clamps the smoke it tracks to it, and Flow's own opacity march (patched, misc/physx_patches 0010).
 const float SMOKE_MAX = 2.0;
 const int SHADOW_SLICES_MAX = 128; // _fit_shadow's cap
-const float SUN_MS_GAIN = 0.7;
-const float SKY_MS_SHARE = 0.19;
+const float SUN_MS_GAIN = 1.0;
+const float SKY_MS_SHARE = 0.08;
 const float AMBIENT_ORDER_KEEP = 0.68;
 // The single-scattering albedo the ambient terms were fitted at (test puffs, 0.75 to 0.92 by channel).
 const float AMBIENT_FIT_ALBEDO = 0.85;
@@ -405,12 +405,21 @@ vec3 octave_tail(vec3 alb, float k) {
 // The orders past the third fade with depth no slower than diffusion theory allows: exp(-kappa tau), kappa =
 // sqrt(3 (1 - w)(1 - w g)), the transport coefficient (as the sky's light below), where a fixed 1/8 left the far
 // side of a dense cloud lit from behind it bright white against the path tracer's shaded blue-grey.
+// Fitted against the path tracer on dense test puffs lit from in front and from behind, at albedo 0.9 and 0.99
+// (docs/ideas/physx.md, "High-albedo gas: raster refit"): the octaves' slower fade (0.5, 0.25, 1/8 of the optical
+// depth, Wrenninge et al.'s slab model) lit the shaded side of thick gas from inside, 20 to 30 levels brighter
+// than the path tracer, which loses that light out of the gas's sides. Octave 1 fades as fast as the single
+// scattering, octave 2 at 0.6 of it, and the tail at three times the transport coefficient, never under 1/2.
+const float MS_OCTAVE1_FADE = 1.0;
+const float MS_OCTAVE2_FADE = 0.6;
+const float MS_TAIL_KAPPA = 3.0;
+const float MS_TAIL_FADE_MIN = 0.5;
 vec3 ms_light(float tau, float tau_around, float c, float g) {
 	vec3 alb = ss_albedo();
 	vec3 a = alb * (1.0 / 0.9);
 	float thick = 1.0 - exp(-2.0 * tau_around);
 	float e = MS_ECCENTRICITY;
-	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-0.5 * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-0.25 * tau) + hg_phase(c, g * e * e * e) * octave_tail(alb, p.sky_map.z) * exp(-max(sqrt(3.0 * (1.0 - alb) * (1.0 - alb * p.misc.y)), vec3(0.125)) * tau))) * (alb * SUN_MS_GAIN);
+	return (hg_phase(c, g) * exp(-tau) + thick * (hg_phase(c, g * e) * 0.5 * a * exp(-MS_OCTAVE1_FADE * tau) + hg_phase(c, g * e * e) * 0.25 * a * a * exp(-MS_OCTAVE2_FADE * tau) + hg_phase(c, g * e * e * e) * octave_tail(alb, p.sky_map.z) * exp(-max(MS_TAIL_KAPPA * sqrt(3.0 * (1.0 - alb) * (1.0 - alb * p.misc.y)), vec3(MS_TAIL_FADE_MIN)) * tau))) * (alb * SUN_MS_GAIN);
 }
 
 // The light from all around (sky above, ground below) through optical depth tau.
@@ -630,6 +639,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 						// under gas floating above flat ground) and the gas's bottom (right for gas lying on a slope), the
 						// better lit.
 						float ground_sun_t = 1.0;
+						float front_sun_t = 1.0;
 						if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
 							// A sample off the sun's map (it is fitted to the gas, not to the box) tells nothing: it is
 							// skipped; with both off it, the ground is out of the gas's shadow. (Taking an off-map sample as
@@ -644,9 +654,23 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 								}
 							}
 							ground_sun_t = best >= 0.0 ? best : 1.0;
+							// The ground the point sees toward the camera, past its foot (two heights out): sunlit when the sun
+							// is behind the camera, in the gas's own shadow when the sun is behind the gas. Taking it as always
+							// lit gave the shaded foot of a back-lit cloud the sunlit snow's glow, 30 to 50 levels over the
+							// path tracer.
+							float gy = max(gas_floor_y, p.world_min.y / upm);
+							vec2 hz = -dir.xz;
+							hz = dot(hz, hz) > 1e-8 ? normalize(hz) : vec2(0.0);
+							vec2 gxz = pos_m.xz + hz * (max(pos_m.y - gy, 1.0) * 2.0);
+							vec4 fm = vec4(gxz.x, gy, gxz.y, 1.0);
+							vec3 f_uvw = vec3(dot(p.sun_map_xform[0], fm), dot(p.sun_map_xform[1], fm), dot(p.sun_map_xform[2], fm));
+							if (all(greaterThanEqual(f_uvw.xy, vec2(0.0))) && all(lessThanEqual(f_uvw.xy, vec2(1.0)))) {
+								front_sun_t = exp(-textureLod(sun_map_tex, vec3(f_uvw.xy, clamp(f_uvw.z, 0.0, 1.0)), 0.0).r);
+							}
 						}
-						// Part of the ground the point sees lies toward the camera, out of the gas's shadow (SKY_OPENING).
-						ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * mix(ground_sun_t, 1.0, SKY_OPENING * transmittance) * p.sky_map.y) * p.ground.rgb;
+						// Of the ground the point sees, the part toward the camera (as far as the gas between them lets it see)
+						// is that ground, the rest the ground below it.
+						ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * mix(ground_sun_t, front_sun_t, transmittance) * p.sky_map.y) * p.ground.rgb;
 					}
 #endif
 					float atten = sun_shadow(uint(i), vpos);
@@ -1275,7 +1299,7 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	{
 		// c in the scattering orders past the three octaves, a geometric series: the sum over n >= 3 of (c albedo)^n, c
 		// the share of light a scatter keeps inside the gas (fitted with SUN_MS_GAIN to the path tracer on test puffs).
-		f[w++] = 0.68f;
+		f[w++] = 0.8f;
 	}
 	f[w++] = sky_map ? 1.0f : 0.0f;
 	f[w++] = p_params.ground_color.r;

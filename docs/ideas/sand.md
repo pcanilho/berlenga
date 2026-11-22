@@ -1078,8 +1078,27 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   Cloud scouts: a taller column widening upward; at 320-400 px lavapipe draws a pale haze cut in steps round it
   that the PC's 1080p frames never showed (it stays with heat shimmer, light and ambient scattering all off). PC
   runs judge the look.
-- Not yet: the swirl mark left on the ripples, GroundStreamers3D taking the grains at the foot, the PT cost on the
-  PC queue.
+- GroundStreamers3D takes the grains at the foot (22 Nov): its particle shader adds the shared wind's vortices
+  (WeatherMap3D's own shader field, weather_vortices) to the patch's wind, so each grain runs with its local wind
+  (round the devil, in toward its wall) and flies only where that wind's u* passes the threshold, in the share of the
+  budget its flux makes; the budget is set for the strongest wind over the patch (a 9 x 9 read of
+  get_vortex_wind_at). Ground --test=wind: a 12 m/s devil in a 0 m/s wind lifts sand (peak 11.1 m/s, 8.8 g/m/s).
+- Devil tracks (22 Nov). Research: dust devils leave tracks where the foot strips the fines and flattens the ripples
+  in a band about the devil's width (Reiss et al. 2011, Turpan; Balme and Greeley 2006); on Earth saltation fills
+  them within tens of minutes, in a calm they stay. GroundSurface3D `add_scour(position, radius, amount)` keeps the
+  share swept per 1 m world cell (each pass sweeps its share of what is left, fading over the disc's outer 30%), read
+  bilinearly; the ripples' show share (near ripples and the 32 m sand patch, so the far ripples too) is multiplied by
+  what is left. It heals only under saltation: rate = local flux / flux at 10 m/s / 600 s (the patch's own flux,
+  past it the open flux), on ripple_time_scale; cells under 0.01 or a kilometre off are dropped. PhysXDustDevils3D
+  scours 1.3 R round its foot at strength x dt per second. Ground --test=shelter checks it sweeps, refills under
+  12 m/s, holds in 3 m/s.
+- Track tone (22 Nov): the foot lifts the bright fine grains off the surface skin and leaves the coarser, darker sand
+  under it (Reiss et al. 2011; Balme and Greeley 2006), so the band reads a little darker and warmer: albedo x
+  (0.9, 0.87, 0.82) at full scour, the interdune lag's hue much weaker (only the skin goes). The share swept goes to
+  the ripple map's tile rows, G, over the sand block's rect (rows n+S..n+S+S-1; meta texel 5 w on when any), read
+  by material.cpp ground_sand_scour_at() / ground_scour_tone() and the same lines in raygen. Inside the dune tone's
+  sand block (dune_tone on, the default). Raster scout: the band about 4% darker, its ripples gone.
+- Not yet: the PT cost on the PC queue.
 
 ## Next sand candidates, round 2 (research, 22 Nov 2026; on a card)
 

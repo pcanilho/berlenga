@@ -68,6 +68,7 @@ extends Node3D
 #   --adhesion  --view=fringe: wind over the damp margin until adhesion warts grow (--wind=m/s)
 #   --no-nmap  the bench material without its stand-in noise normal map; --taa: TAA on; --sun-alt=deg (ripples view, 9)
 #   --rain-pits=mm  --view=ripples: then a still shower of that much rain (120 mm/h), pitting the sand
+#   --scour=x,z,r   --view=ripples: then a dust devil's track (GroundSurface3D.add_scour) of radius r at (x, z)
 #   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
 #   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b);
 #                  --dry=frames for part of it (600 is all), --dry=0 until the deepest pool starts to crust
@@ -142,6 +143,7 @@ var infill_test := false
 var fringe_test := false
 var rain_test := false
 var rain_pits_mm := 0.0
+var scour_arg := PackedFloat32Array()
 var no_nmap := false
 var adhesion := false
 var taa := false
@@ -232,6 +234,7 @@ func _ready() -> void:
 		elif a == "--test=fringe": fringe_test = true
 		elif a == "--test=rain": rain_test = true
 		elif a.begins_with("--rain-pits="): rain_pits_mm = float(a.substr(12))
+		elif a.begins_with("--scour="): scour_arg = PackedFloat32Array(Array(a.substr(8).split(",")).map(func(v): return float(v)))
 		elif a == "--no-nmap": no_nmap = true
 		elif a == "--adhesion": adhesion = true
 		elif a == "--taa": taa = true
@@ -4024,6 +4027,31 @@ func _run_shelter_tests() -> void:
 	var s_lag := surface.get_ripple_show_at(lag)
 	_check("a pebble lag armours the sand: no blowing, no ripples (Bagnold 1941)", q_lag < 0.05 * q_open and s_lag < 0.05 and surface.get_ripple_show_at(up) > 0.9, "%.4f kg/m/s among the pebbles against %.4f open; ripple share %.2f" % [q_lag, q_open, s_lag])
 	WorldContracts.clear_overrides()
+	for i in 70:
+		await get_tree().physics_frame
+	# A dust devil's track (PhysXDustDevils3D calls add_scour as its foot passes): the ripples swept off a band, back
+	# as the wind's saltation rebuilds them, kept in a calm (Reiss et al. 2011).
+	var trk := Vector3(-4.0, 0, -3.0)
+	var off := Vector3(-4.0, 0, 3.0)
+	surface.clear_scours()
+	surface.add_scour(trk, 2.0, 1.0)
+	_check("a devil's foot sweeps the ripples off its track", surface.get_ripple_show_at(trk) < 0.05 and surface.get_ripple_show_at(off) > 0.9 and surface.get_scour_at(trk + Vector3(1.0, 0, 0)) > 0.8 and surface.get_scour_at(trk + Vector3(2.5, 0, 0)) == 0.0, "ripple share %.2f on it, %.2f 6 m off; swept %.2f 1 m from its middle, %.2f at 2.5 m" % [surface.get_ripple_show_at(trk), surface.get_ripple_show_at(off), surface.get_scour_at(trk + Vector3(1.0, 0, 0)), surface.get_scour_at(trk + Vector3(2.5, 0, 0))])
+	surface.ripple_time_scale = 60.0
+	for i in 120:
+		await get_tree().physics_frame
+	surface.ripple_time_scale = 1.0
+	var healed := surface.get_scour_at(trk)
+	_check("the track fills in under a 12 m/s wind (some ten minutes of saltation)", healed > 0.4 and healed < 0.85, "%.2f still swept after about two minutes" % healed)
+	surface.wind_override = Vector2(3.0, 0.0)
+	for i in 70:
+		await get_tree().physics_frame
+	var calm0 := surface.get_scour_at(trk)
+	surface.ripple_time_scale = 60.0
+	for i in 120:
+		await get_tree().physics_frame
+	surface.ripple_time_scale = 1.0
+	_check("and stays in a light wind below the threshold", absf(surface.get_scour_at(trk) - calm0) < 0.01, "%.3f to %.3f" % [calm0, surface.get_scour_at(trk)])
+	surface.clear_scours()
 	surface.wind_override = Vector2.ZERO
 
 
@@ -4258,6 +4286,35 @@ func _run_streamer_tests() -> void:
 	await RenderingServer.frame_post_draw
 	var calm := get_viewport().get_texture().get_image()
 	_check("no grains under the threshold", st.get_flux() == 0.0, "flux %.4f kg/m/s at 4 m/s" % st.get_flux())
+	# A dust devil in the shared wind (WeatherMap3D add_vortex) in front of the camera: its swirl lifts the sand at its
+	# foot though the wind round it is under the threshold, and the grains run round it.
+	if ClassDB.class_exists("WeatherMap3D"):
+		var wm: Node3D = ClassDB.instantiate("WeatherMap3D")
+		wm.extent = 512.0
+		wm.resolution = 32
+		wm.wind_speed = 0.0
+		wm.cloud_cover = 0.0
+		wm.transition_time = 0.0
+		add_child(wm)
+		var vid: int = wm.add_vortex(Vector3(0.0, 0.0, -3.0), 1.5, 12.0, 3.0)
+		for i in 90:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var swirl := get_viewport().get_texture().get_image()
+		var vdiff := 0.0
+		var vn := 0
+		for y in range(int(swirl.get_height() * 0.4), int(swirl.get_height() * 0.6), 2):
+			for x in range(0, swirl.get_width(), 2):
+				vdiff += absf(swirl.get_pixel(x, y).get_luminance() - calm.get_pixel(x, y).get_luminance())
+				vn += 1
+		vdiff /= maxf(vn, 1)
+		if OS.has_environment("STREAMER_DUMP"):
+			swirl.save_png(OS.get_environment("STREAMER_DUMP") + "_devil.png")
+		_check("a dust devil's swirl lifts the sand in a light wind", st.get_peak_wind() > 10.0 and st.get_flux() > 0.0 and vdiff > 0.001, "peak wind %.1f m/s, flux %.4f kg/m/s, mean change %.4f round the horizon" % [st.get_peak_wind(), st.get_flux(), vdiff])
+		wm.remove_vortex(vid)
+		wm.queue_free()
+		for i in 5:
+			await get_tree().process_frame
 	surface.wind_override = Vector2(12.0, 0.0)
 	for i in 180:
 		await get_tree().process_frame
@@ -5422,6 +5479,14 @@ func _build_ripples() -> void:
 		for i in 30:
 			await get_tree().physics_frame
 		print("rain pits: cover %.2f, crust %.2f" % [surface.get_rain_pit_cover(), surface.get_rain_crust()])
+	if scour_arg.size() == 3:
+		# --scour=x,z,r: a devil's track across the grown ripples (a line of its foot's discs).
+		for k in 9:
+			surface.add_scour(Vector3(scour_arg[0] + (k - 4) * 0.5 * scour_arg[2], 0.0, scour_arg[1]), scour_arg[2], 1.0)
+		for i in 150:
+			await get_tree().physics_frame
+		var sp := Vector3(scour_arg[0], 0.0, scour_arg[1])
+		print("scour: %.2f at the track's middle; ripple share %.2f there, %.2f %.1f m off; dune tone %s" % [surface.get_scour_at(sp), surface.get_ripple_show_at(sp), surface.get_ripple_show_at(sp + Vector3(0, 0, 2.0 * scour_arg[2])), 2.0 * scour_arg[2], surface.dune_tone])
 	print("ripples: %d steps, streamers %.1f g/m/s, coverage %.2f" % [surface.get_ripple_steps(), st.get_flux() * 1000.0, st.get_coverage()])
 	env.pathtracing_enabled = not raster
 	await _save_frame()

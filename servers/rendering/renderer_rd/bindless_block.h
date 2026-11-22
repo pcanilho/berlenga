@@ -62,7 +62,9 @@ public:
 
 	// A texture swapped in place (TextureStorage::texture_replace_compatible, RenderingDevice::texture_replace_rid:
 	// texture streaming changes a texture's mips this way). RenderingDevice patches the uniform set; every block
-	// moves its slot to the new texture, so materials keep their indices and the next refinalize stays valid.
+	// moves its slot to the new texture, so materials keep their indices. Call it before
+	// RenderingDevice::texture_replace_rid: the block releases its sets instead of letting RenderingDevice rebuild
+	// the whole table once per swapped texture, and builds them once at the next finalize.
 	static void texture_replaced(RID p_old, RID p_new);
 	// Others that keep RenderingDevice texture RIDs of materials (the path tracer's material cache) follow too.
 	typedef void (*ReplaceListener)(void *p_userdata, RID p_old, RID p_new);
@@ -78,7 +80,9 @@ private:
 	RID default_texture;
 	RID uniform_set;
 	bool needs_refinalize = false;
+	bool released_for_swap = false; // Sets released by texture_replaced(), not by a texture going away.
 	uint64_t version = 0;
+	mutable LocalVector<RID> consumer_sets; // Made by create_uniform_set(); released on a swap too.
 
 	void _texture_replaced(RID p_old, RID p_new);
 	static LocalVector<BindlessBlock *> live_blocks;

@@ -95,6 +95,10 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
 - **Rut walls give way** (`SnowSurface3D.wall_collapse`): rut and trench walls taller than their layers can hold shed blocks into a lumpy debris toe, sooner where a vehicle works the rut.
 
+  ![A deep rut in a snowfield whose walls have shed blocks onto its floor, raster](media/snow-rut-walls.jpg)
+
+  *Rut walls give way: an undercut rut wall with a scalloped top and a toe of fallen blocks along its foot.*
+
 - **Packed-snow roads** (`SnowCover3D.traffic_enabled`, `get_grip_at()`): wheels and feet pack the snow they pass, spinning wheels polish it to an ice glaze, and tyre grip falls with it.
 
 ## Falling snow

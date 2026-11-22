@@ -1956,5 +1956,54 @@ array, for the path tracer's material slot), so the days pass without a rebuild.
 - VegetationField3D: the generator's herbs over 12 cm in a mown meadow are not placed until 28 days on (an estimate);
   GrassField3D.mown_days_at over every meadow node; streamed tiles are placed again when a meadow's days change.
 - Check: grass --test "hay meadows", vegetation --test "hay meadows"; grass --hay=D (0, 1, 3, 5).
-- Not yet: bales lying in the field on day 3 (a Tripo or generated prop), cut herb stalks in the stubble, the far
-  ground showing the rows past the blades' reach.
+- Not yet: the far ground showing the rows past the blades' reach (round 9).
+
+## Round 9 candidates (research, not built; waiting on a pick)
+- Hay bales: a large round bale of 5 x 5 ft (1.5 m) is the usual reference, about 1,000 lb (450 kg) at
+  10.17 lb/ft3; a 4 x 4 ft bale is about half of it, a 5 x 6 ft about 44% more (UF/IFAS EDIS AN326, "Implications
+  of Round Bale Dimensions on Hay Use"). Bales would be dropped along the windrows on day 3 and carted by day 4 or 5.
+  Small and large square bale sizes are not yet sourced. Possible mesh: generated (wrapped twine bands, loose outer
+  layer, flattened bottom) rather than Tripo, so each bale's hay matches the windrow colour.
+- Cut stalks: instead of hiding herbs over 12 cm in a mown meadow, draw them cut off at the stubble height (the
+  plant shader clipping above the cut while mown) and regrowing over the 28 days.
+- Far rows: the swaths and windrows on the far ground past the blades' reach, as the crop fields' straw swaths
+  already do (paler stripes in crop_ground()).
+- Sod blocks breaking on landing (Blast) and carried off by the river (WorldWater flow at the foot).
+
+## Hay bales and cut stalks (round 9, first pick)
+- PlantGenerator.make_hay_bale / PRESET_HAY_BALE (plant_hay.cpp): round bales of 4 x 4, 4 x 5 and 5 x 5 ft (5 x 5 ft
+  about 450 kg, 4 x 4 half of it: UF/IFAS EDIS AN326); a lathe body with rounded edges and domed ends whose vertex
+  colour draws the wound layers' spiral (pitch 2.5 to 4 cm, an estimate), hay strands wound round it (loose ends
+  lifting), twine bands. About 80k triangles with the generator's LODs.
+- GrassField3D drops them along the windrows' centre lines (the shader's wander included) on day 4 (the windrows
+  gone), a bale's hay apart: its mass over HAY_YIELD (0.5 kg/m2, an estimate for a first cut) times the 6 m pitch; ends
+  to the sides of the row, settled on the slope; carted on day 5. A meadow set on several sward layers gets its bales
+  from the first node holding it. Hay stages now: 0 swaths, 1-2 tedded, 3 windrows, 4 bales, 5 on stubble.
+- Cut stalks: VegetationField3D builds a cut copy of every herb mesh over 12 cm (clipped at 8.5 cm, Sutherland-Hodgman
+  per triangle, attributes interpolated; mesh meta hay_cut_of) and places it in place of the herb in a mown meadow for
+  28 days; streamed tiles are placed again when a meadow's days change.
+- Check: vegetation --test "hay meadows" and "hay bales"; plants --close=115; grass --hay=4.
+- Far rows: the ground shader draws the same swaths, tedded hay and windrows (same stripe formula as the blades, so
+  they meet where the blades end) and paler stubble, from the globals grass_mow_map / grass_mow_state /
+  grass_mow_rect that the first GrassField3D with meadows publishes, as the crop fields' straw swaths do in
+  crop_ground(). Check: grass --far --hay=3 --raster.
+- Plant impostors cut their cover by discard, not ALPHA with a scissor (the project-wide rule for opaque surfaces);
+  dew web silk keeps ALPHA as it is see-through.
+
+## Sod blocks breaking on landing, carried by the river (round 9, third pick)
+- Failed cantilever blocks reach the bank's foot, where "some of these blocks are immediately entrained by the flow,
+  or break up on impact, others will remain there", acting as toe protection until high flows remove them (Henshaw,
+  SERC "Composite river bank erosion in mid-Wales, UK", https://serc.carleton.edu/48228).
+- SodLipFall3D: a falling block that stops faster than break_speed (2.5 m/s, an estimate) in a step becomes a
+  PhysXDestructible3D (Blast) of the lip mesh cut across its length at 2 to 5 cracks about 30 cm apart, each up to 8
+  degrees askew (estimates). The soil surface is clipped exactly (Sutherland-Hodgman), blades and roots go whole with
+  their piece; each piece's shell (its cross-section's convex hull 4 mm inside, run crack to crack) gives collision
+  and draws the torn soil. The landing damages the cracks round the slab's middle, more the harder. Assets are built
+  once per lip variant on a worker when a lip first falls; mass from the shells' volume at 1500 kg/m3.
+- In water: buoyancy and the flow's drag (0.5 rho Cd A |u - v| (u - v), Cd 1.05, the usual textbook value for a cube face-on,
+  not re-checked here; A the side of a cube of the same volume) as impulses, the bed's friction left to the engine. So
+  there is a threshold: in the bench a 1.5 m/s flow barely shifts the pieces, 2 m/s rolls them about 1 m in 3 s.
+- PhysXDestructible3D.get_piece_body(index) added, so effects can push debris.
+- Check: vegetation --test=sod ("sod landing").
+- Hay fixes from the site-shot scout: herbs of hand-built species (plant shader, no plant_preset meta) are cut too,
+  ground features (mounds, dung, wrack, bank sod, webs, bales) never; bales are not dropped in water.

@@ -153,6 +153,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_piece_linear_velocity", "index"), &PhysXDestructible3D::get_piece_linear_velocity);
 	ClassDB::bind_method(D_METHOD("get_piece_center", "index"), &PhysXDestructible3D::get_piece_center);
 	ClassDB::bind_method(D_METHOD("get_piece_mass", "index"), &PhysXDestructible3D::get_piece_mass);
+	ClassDB::bind_method(D_METHOD("get_piece_body", "index"), &PhysXDestructible3D::get_piece_body);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "chunks_path", PROPERTY_HINT_FILE, "*.chunks"), "set_chunks_path", "get_chunks_path");
@@ -1691,6 +1692,13 @@ Vector3 PhysXDestructible3D::get_piece_linear_velocity(int p_index) const {
 		return Vector3();
 	}
 	return PhysicsServer3D::get_singleton()->body_get_state(pieces[p_index].body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY);
+}
+
+RID PhysXDestructible3D::get_piece_body(int p_index) const {
+	if (p_index < 0 || p_index >= (int)pieces.size()) {
+		return RID();
+	}
+	return pieces[p_index].body;
 }
 
 Vector3 PhysXDestructible3D::get_piece_center(int p_index) const {
