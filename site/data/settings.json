@@ -2654,6 +2654,18 @@
    "topic": "Plants"
   },
   {
+   "name": "Turf overhangs",
+   "settings": [
+    "PlantGenerator.make_bank_turf()",
+    "PRESET_TURF_LIP"
+   ],
+   "note": "",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Boar rooting",
    "settings": [
     "PlantGenerator.make_rooting()",
