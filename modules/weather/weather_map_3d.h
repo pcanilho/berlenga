@@ -600,6 +600,12 @@ private:
 	bool cold_pools = true;
 	float cold_pool_strength = 8.0f; // C below the free air at a deep basin's floor
 	Vector<float> cell_pool; // C, deficit per cell
+	// Night drainage (katabatic) winds: per cell the slope flow's jet (x, z m/s at its peak) and the jet's height (m).
+	bool drainage_winds = true;
+	float drain_level = 0.0f; // 0..1, the night's forcing relaxed over half an hour
+	Vector<float> cell_drain;
+	void _update_drainage(float p_dt_h);
+	Vector3 _drainage_wind_at(const Vector3 &p_position, float p_height) const;
 	Vector<float> cell_pool_depth; // m, the cell below the mean height round it
 	void _update_pool_depths();
 	void _update_cold_pools(double p_weather_dt);
@@ -1240,6 +1246,9 @@ public:
 	void set_cold_pool_strength(float p_celsius) { cold_pool_strength = MAX(p_celsius, 0.0f); }
 	float get_cold_pool_strength() const { return cold_pool_strength; }
 	float get_cold_pool_at(Vector3 p_position) const;
+	void set_drainage_winds(bool p_enabled);
+	bool is_drainage_winds_enabled() const { return drainage_winds; }
+	Vector3 get_drainage_wind_at(Vector3 p_position, float p_height_above_ground) const;
 	void set_valley_fog(bool p_enabled);
 	bool is_valley_fog_enabled() const { return valley_fog; }
 	void set_valley_fog_density(float p_sigma) { valley_fog_density = MAX(p_sigma, 0.0f); }
