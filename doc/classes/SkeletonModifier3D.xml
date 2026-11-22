@@ -37,6 +37,12 @@
 				Called when the skeleton is changed.
 			</description>
 		</method>
+		<method name="_skeleton_resumed" qualifiers="virtual">
+			<return type="void" />
+			<description>
+				Called before the modification runs again after the skeleton rested its modifiers (see [member Skeleton3D.modifier_update_mode]). Snap any smoothing to the current target here, so nothing glides over from where it stopped.
+			</description>
+		</method>
 		<method name="_validate_bone_names" qualifiers="virtual">
 			<return type="void" />
 			<description>

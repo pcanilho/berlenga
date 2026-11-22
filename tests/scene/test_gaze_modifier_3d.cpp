@@ -218,6 +218,40 @@ TEST_CASE("[SceneTree][GazeModifier3D] A stopped clock holds the pose exactly") 
 	memdelete(sk);
 }
 
+TEST_CASE("[SceneTree][GazeModifier3D] An unseen skeleton rests its modifiers and resumes without a glide") {
+	SceneTree *tree = SceneTree::get_singleton();
+	Skeleton3D *sk = make_rig(tree);
+	GazeModifier3D *g = make_gaze(sk);
+	sk->set_modifier_update_mode(Skeleton3D::MODIFIER_UPDATE_MODE_WHEN_VISIBLE);
+	g->set_target_position(sk->get_global_position() + Vector3(-2, 1.6, 3));
+	for (int i = 0; i < 240; i++) {
+		step(sk, 1.0 / 60.0);
+	}
+	CHECK_MESSAGE(sk->are_modifiers_running(), "Shown, with no renderer to cull it: the modifiers run.");
+	const Vector2 settled = g->get_head_angles();
+
+	// Hidden: nothing runs, so the head keeps the angles it had while the target swings to the other side.
+	sk->hide();
+	CHECK_FALSE(sk->are_modifiers_running());
+	g->set_target_position(sk->get_global_position() + Vector3(2, 1.6, 3));
+	for (int i = 0; i < 60; i++) {
+		step(sk, 1.0 / 60.0);
+	}
+	CHECK_MESSAGE(g->get_head_angles().is_equal_approx(settled), "Resting modifiers do not run.");
+
+	// Shown again: the first frame already faces the new target, with no turn across from the old one.
+	sk->show();
+	CHECK(sk->are_modifiers_running());
+	step(sk, 1.0 / 60.0);
+	CHECK_MESSAGE(Math::abs(g->get_head_angles().x - g->get_target_angles().x) < Math::deg_to_rad((real_t)1.0), "Resumed at the target.");
+
+	// The upstream default never rests.
+	sk->set_modifier_update_mode(Skeleton3D::MODIFIER_UPDATE_MODE_ALWAYS);
+	sk->hide();
+	CHECK(sk->are_modifiers_running());
+	memdelete(sk);
+}
+
 } // namespace TestGazeModifier3D
 
 #endif // _3D_DISABLED

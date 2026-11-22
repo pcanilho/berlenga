@@ -370,6 +370,18 @@ void FootPlacementModifier3D::_notification(int p_what) {
 	}
 }
 
+void FootPlacementModifier3D::_skeleton_resumed() {
+	// Back after a spell unseen: plant afresh where the clip stands now (the ankle height learnt so far stays).
+	settled = false;
+	last_origin_valid = false;
+	for (Leg &leg : legs) {
+		leg.locked = false;
+		leg.planted = false;
+		leg.clip_prev_valid = false;
+	}
+	SkeletonModifier3D::_skeleton_resumed();
+}
+
 void FootPlacementModifier3D::reset() {
 	settled = false;
 	last_origin_valid = false;

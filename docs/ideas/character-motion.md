@@ -160,6 +160,33 @@ Script modifiers run every frame per character; the native versions remove that 
 needed for crowds in an open world. Each node reports a before/after CPU time per character from the
 profiler, measured, not assumed.
 
+## Unseen skeletons (22 Nov)
+
+The first project's profile: script modifiers cost about 1.5 ms a frame, mostly for characters in parts
+of the level the player is not in, because every scene stays live. An open world has the same problem at
+a larger scale.
+
+What others do:
+- Unity `Animator.cullingMode`: `AlwaysAnimate`, `CullUpdateTransforms` (keeps time, skips retargeting,
+  IK and transform writes while no renderer is visible), `CullCompletely`.
+- Unreal `VisibilityBasedAnimTickOption`: `AlwaysTickPoseAndRefreshBones`, `AlwaysTickPose`,
+  `OnlyTickMontagesWhenNotRendered`, `OnlyTickPoseWhenRendered`; plus Update Rate Optimisations and
+  the Animation Budget Allocator for distance-based rates.
+- Godot ships `VisibleOnScreenEnabler3D`, which pauses a node's processing, but skeleton modifiers are
+  called by the skeleton, not by node processing, so it does not stop them; `SkeletonModifier3D.active`
+  does, per modifier.
+
+The fork's version (`Skeleton3D.modifier_update_mode`, like Unity's `CullUpdateTransforms`):
+- `ALWAYS` (default, upstream behaviour) or `WHEN_VISIBLE`: the skeleton keeps a rendering-server
+  visibility notifier over its bones' bounds grown by `modifier_visibility_margin`; while no camera sees
+  that box, the modifiers are skipped (the clip still plays) and no time accumulates.
+- No pop on return: the margin brings them back before the skeleton is in view, and each modifier gets
+  `_skeleton_resumed()` first, so smoothing starts from the current target instead of where it was
+  when it stopped (`GazeModifier3D` and `FootPlacementModifier3D` reset their springs and locks).
+- Path tracing: an off-screen character can still show in a shadow or a reflection, and there it would
+  show the clip's pose. So `WHEN_VISIBLE` is opt-in, for characters that cannot be seen indirectly
+  either: the first project sets it for people outside the player's current area.
+
 ## Order on a skeleton
 
 Clip, then `FootPlacementModifier3D` (pelvis and feet), arm IK and stances (`TwoBoneIK3D`), then

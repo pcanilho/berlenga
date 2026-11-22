@@ -82,6 +82,12 @@ public:
 		MODIFIER_CALLBACK_MODE_PROCESS_MANUAL,
 	};
 
+	// Berlenga: modifiers can rest while nothing sees the skeleton (like Unity's CullUpdateTransforms).
+	enum ModifierUpdateMode {
+		MODIFIER_UPDATE_MODE_ALWAYS,
+		MODIFIER_UPDATE_MODE_WHEN_VISIBLE,
+	};
+
 private:
 	friend class SkinReference;
 
@@ -197,6 +203,24 @@ private:
 	void _make_modifiers_dirty();
 	bool modifier_updating = false; // Is modifier updating now?
 
+	// Berlenga: visibility-driven modifier updates.
+	ModifierUpdateMode modifier_update_mode = MODIFIER_UPDATE_MODE_ALWAYS;
+	real_t modifier_visibility_margin = 2.0;
+	RID visibility_notifier;
+	RID visibility_instance;
+	AABB visibility_aabb;
+	bool modifiers_seen = true; // A camera sees the (grown) bounds.
+	bool modifiers_resuming = false; // Next run follows a spell unseen.
+	uint64_t visibility_since_frame = 0; // Frame the notifier started; unseen if it never fires.
+	bool visibility_heard = false;
+	bool visibility_shown = false;
+	bool _modifiers_culled() const;
+	void _update_visibility_instance();
+	void _free_visibility_instance();
+	void _update_visibility_aabb();
+	void _visibility_enter();
+	void _visibility_exit();
+
 	// Global bone pose calculation.
 	mutable LocalVector<int> nested_set_offset_to_bone_index; // Map from Bone::nested_set_offset to bone index.
 	mutable LocalVector<bool> bone_global_pose_dirty; // Indexable with Bone::nested_set_offset.
@@ -302,6 +326,12 @@ public:
 	void set_modifier_callback_mode_process(ModifierCallbackModeProcess p_mode);
 	ModifierCallbackModeProcess get_modifier_callback_mode_process() const;
 
+	void set_modifier_update_mode(ModifierUpdateMode p_mode);
+	ModifierUpdateMode get_modifier_update_mode() const;
+	void set_modifier_visibility_margin(real_t p_margin);
+	real_t get_modifier_visibility_margin() const;
+	bool are_modifiers_running() const;
+
 	void advance(double p_delta);
 
 #ifndef DISABLE_DEPRECATED
@@ -327,3 +357,4 @@ public:
 };
 
 VARIANT_ENUM_CAST(Skeleton3D::ModifierCallbackModeProcess);
+VARIANT_ENUM_CAST(Skeleton3D::ModifierUpdateMode);
