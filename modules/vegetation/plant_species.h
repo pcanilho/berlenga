@@ -78,6 +78,7 @@ public:
 		RULE_FOREST_EDGE, // Metres from the edge of the field's forest canopy, positive inside, negative in the open; -1000 with no canopy (VegetationField3D).
 		RULE_BROWSE, // Deer browsing pressure, 0 none to 1 heavy (WorldStand.browse_at); 0 where no browsing is known.
 		RULE_ROOTING, // Years since boar last rooted the ground (WorldStand.rooting_age_at); -1 never, which only ranges reaching -1 or 10000 years take.
+		RULE_LITTER_DRIFT, // How the wind gathers fallen leaves (VegetationField3D): 1 as they fell, up to 2.5 in hollows and against trunks, logs and rocks, down to 0.15 on crests.
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -267,6 +268,7 @@ public:
 	// The forest edge rule, or meta "edge_distance" (Vector2 m; TreeGenerator.make_edge) where it is left at its default.
 	bool uses_forest_edge() const;
 	bool uses_browse() const { return ranges[RULE_BROWSE].x > 0.0f || ranges[RULE_BROWSE].y < 1.0f; }
+	bool uses_litter_drift() const { return ranges[RULE_LITTER_DRIFT].x > 0.0f || ranges[RULE_LITTER_DRIFT].y < 100.0f; }
 	bool uses_rooting() const { return ranges[RULE_ROOTING].x > -1.0f || ranges[RULE_ROOTING].y < 10000.0f; }
 	// Weight of a rooting age (years, -1 never rooted) under a rooting rule (range x, y; fade z).
 	static float rooting_weight(const Vector3 &p_rule, float p_years) {

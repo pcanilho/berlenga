@@ -482,3 +482,85 @@ TypedArray<Resource> PlantGenerator::make_mounds(MoundSet p_set, int p_variants,
 	}
 	return out;
 }
+
+// Leaf drifts (docs/ideas/vegetation.md, "Leaf drifts"): where the wind piles fallen leaves, in hollows and against
+// trunks, logs and stones (VegetationField3D's drift, PlantSpecies.RULE_LITTER_DRIFT), they lie in loose banks a hand
+// to two hands deep, the stand's own leaves on top and a dark, matted, half-rotted layer under them (the Oi over the
+// Oe; Orndorff and Lang 1981). The heap: an ellipse a by b, h high, its crest nearer one end (the side the wind piled
+// against), lumpy.
+namespace {
+float leaf_heap_height(float p_x, float p_z, const Vector3 &p_heap) {
+	const float u = p_x / p_heap.x;
+	const float v = p_z / p_heap.z;
+	const float r2 = u * u + v * v;
+	if (r2 >= 1.0f || p_heap.y <= 0.0f) {
+		return 0.0f;
+	}
+	const float lean = 1.0f - 0.25f * u; // Higher towards -x, the side it was piled against.
+	const float lumps = 1.0f + 0.12f * Math::sin(p_x * 23.0f + 1.3f) * Math::sin(p_z * 19.0f - 0.7f);
+	return p_heap.y * Math::pow(1.0f - r2, 1.3f) * lean * lumps;
+}
+
+Vector3 leaf_heap_normal(float p_x, float p_z, const Vector3 &p_heap) {
+	const float e = 0.01f;
+	const float dx = leaf_heap_height(p_x + e, p_z, p_heap) - leaf_heap_height(p_x - e, p_z, p_heap);
+	const float dz = leaf_heap_height(p_x, p_z + e, p_heap) - leaf_heap_height(p_x, p_z - e, p_heap);
+	return Vector3(-dx, 2.0f * e, -dz).normalized();
+}
+} // namespace
+
+Vector3 PlantGenerator::_litter_spot(float p_lift, Vector3 &r_up) {
+	r_up = Vector3(0, 1, 0);
+	const float u = rng.randf();
+	const float ang = _rand(0.0f, Math::TAU);
+	const float lift = p_lift + 0.002f + 0.004f * rng.randf();
+	if (litter_heap.y <= 0.0f) {
+		const float r = 0.13f * Math::sqrt(u);
+		return Vector3(Math::cos(ang) * r, lift, Math::sin(ang) * r);
+	}
+	// Over the heap and a little past its foot, where the last leaves slid off.
+	const float r = Math::sqrt(u) * 1.05f;
+	const float x = Math::cos(ang) * litter_heap.x * r;
+	const float z = Math::sin(ang) * litter_heap.z * r;
+	r_up = leaf_heap_normal(x, z, litter_heap);
+	return Vector3(x, leaf_heap_height(x, z, litter_heap) + lift, z);
+}
+
+void PlantGenerator::_build_leaf_bank() {
+	const int still_from = builders[SURFACE_CENTRE].uv2s.size();
+	const float a = _rand(0.45f, 0.8f);
+	const Vector3 heap(a, _rand(0.08f, 0.18f), a * _rand(0.45f, 0.7f));
+	// The matted, darker layer under the loose leaves, so no gap between them shows the ground: a ring grid under the
+	// heap's surface (centre_color).
+	Builder &cb = builders[SURFACE_CENTRE];
+	const int rings = 8;
+	const int sectors = 20;
+	const int first = cb.verts.size();
+	for (int r = 0; r <= rings; r++) {
+		const float t = float(r) / rings;
+		for (int sct = 0; sct < sectors; sct++) {
+			const float ang = sct * Math::TAU / sectors;
+			const float x = Math::cos(ang) * heap.x * t;
+			const float z = Math::sin(ang) * heap.z * t;
+			cb.verts.push_back(Vector3(x, MAX(leaf_heap_height(x, z, heap) - 0.006f, 0.0f), z));
+			cb.uvs.push_back(Vector2(float(sct) / sectors, t));
+			cb.uv2s.push_back(Vector2(0.0f, 0.0f));
+			const float n = 0.85f + 0.3f * Math::sin(x * 31.0f + z * 17.0f) * Math::sin(z * 29.0f - x * 11.0f);
+			cb.colors.push_back(Color(n, n, n));
+		}
+	}
+	for (int r = 0; r < rings; r++) {
+		for (int sct = 0; sct < sectors; sct++) {
+			const int i0 = first + r * sectors + sct;
+			const int i1 = first + r * sectors + (sct + 1) % sectors;
+			cb.indices.append_array(PackedInt32Array({ i0, i1, i0 + sectors, i1, i1 + sectors, i0 + sectors }));
+		}
+	}
+	_tag_organ(cb);
+	// The stand's leaves over it, layer on layer (or generic leaves with none given).
+	litter_heap = heap;
+	_build_leaf_litter();
+	litter_heap = Vector3();
+	plant_height = MAX(plant_height, heap.y);
+	mound_still(builders[SURFACE_CENTRE].uv2s, still_from, &builders[SURFACE_CENTRE].colors);
+}

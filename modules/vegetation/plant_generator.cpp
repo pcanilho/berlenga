@@ -629,7 +629,7 @@ PlantGenerator::Wither::~Wither() {
 			continue; // Thistledown: dry pappus, white.
 		}
 		const Preset pr = generator->preset;
-		if (i == SURFACE_CENTRE && (pr == PRESET_ANTHILL || pr == PRESET_WOOD_ANT_NEST || pr == PRESET_MOLEHILL || pr == PRESET_ROOTED_SOD)) {
+		if (i == SURFACE_CENTRE && (pr == PRESET_ANTHILL || pr == PRESET_WOOD_ANT_NEST || pr == PRESET_MOLEHILL || pr == PRESET_ROOTED_SOD || pr == PRESET_LEAF_BANK)) {
 			continue; // Soil and thatch: nothing to wither.
 		}
 		PackedColorArray &c = generator->builders[i].colors;
@@ -791,6 +791,8 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 			return 40.0f; // Loose clods break up underfoot.
 		case PRESET_MOLEHILL:
 			return 25.0f; // Loose soil spreads underfoot and is trodden flat.
+		case PRESET_LEAF_BANK:
+			return 20.0f; // Loose leaves kicked about and trodden flat.
 		case PRESET_ANTHILL:
 			return 120.0f; // Firm and grassed; worn down only on busy paths (King 1977: none on tracks).
 		case PRESET_WOOD_ANT_NEST:
@@ -944,6 +946,7 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_LIVERWORT:
 			return 10.0f;
 		case PRESET_LEAF_LITTER:
+		case PRESET_LEAF_BANK:
 		case PRESET_NEEDLE_LITTER:
 		case PRESET_TWIGS:
 			return 3.0f;
@@ -1968,24 +1971,29 @@ void PlantGenerator::_build_leaf_litter() {
 			l.bend = _rand(-0.6f, 0.6f);
 			l.twist = _rand(-0.5f, 0.5f);
 			l.segments = 6;
-			const float r = 0.13f * Math::sqrt(rng.randf());
-			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 at(Math::cos(a) * r, p_lift + 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
+			Vector3 n;
+			const Vector3 at = _litter_spot(p_lift, n);
 			const float k = _rand(0.6f, 1.25f);
 			const float hue = rng.randf();
 			const Color tint = hue < 0.15f ? Color(1.5f, 1.3f, 0.5f) : (hue < 0.35f ? Color(1.3f, 0.8f, 0.5f) : Color(k, k * 0.95f, k * 0.9f));
 			// Lying nearly flat, tilted a little; upper or under side up.
-			const Vector3 fwd = polar_dir(_rand(0.0f, Math::TAU), _rand(-0.12f, 0.12f));
-			const Vector3 up = rng.randf() < 0.7f ? Vector3(0, 1, 0) : Vector3(0, -1, 0);
+			Vector3 fwd = polar_dir(_rand(0.0f, Math::TAU), _rand(-0.12f, 0.12f));
+			if (litter_heap.y > 0.0f) {
+				fwd = (fwd - n * fwd.dot(n)).normalized() + n * fwd.y;
+			}
+			const Vector3 up = rng.randf() < 0.7f ? n : -n;
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, up), at), l, 0.15f, 0.85f, tint);
 		}
 	};
+	// A leaf bank's heap (litter_heap) holds as many leaves over its ellipse as a card over its disc, and no twigs.
+	const float heap_k = litter_heap.y > 0.0f ? litter_heap.x * litter_heap.z / (0.13f * 0.13f) : 1.0f;
 	if (!litter_leaves.is_empty()) {
-		_build_stand_litter();
+		_build_stand_litter(litter_heap.y > 0.0f ? 2.2f : 1.3f);
 	} else {
-		generic(int(_rand(14.0f, 26.0f)), 0.0f);
+		generic(int(_rand(14.0f, 26.0f) * heap_k * (litter_heap.y > 0.0f ? 1.7f : 1.0f)), 0.0f);
 	}
-	const int twigs = int(_rand(0.0f, 4.0f));
+	const int twig_draw = int(_rand(0.0f, 4.0f));
+	const int twigs = litter_heap.y > 0.0f ? 0 : twig_draw;
 	for (int t = 0; t < twigs; t++) {
 		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.05f, 0.05f)), Vector3(0, 1, 0)), Vector3(_rand(-0.1f, 0.1f), 0.003f, _rand(-0.1f, 0.1f)));
 		const Transform3D e = _add_stem(b, _rand(0.06f, 0.18f), 0.0025f, 0.0012f, _rand(-0.3f, 0.3f), 3, 0.05f);
@@ -2039,8 +2047,10 @@ void PlantGenerator::_build_stand_litter(float p_layers, float p_lift) {
 		return;
 	}
 	const float disc = 0.13f;
-	float area_left = p_layers * Math::PI * disc * disc;
-	const int guard_max = int(60.0f * MAX(p_layers, 1.3f) / 1.3f);
+	// A leaf bank's heap holds as many leaves over its ellipse as a card over its disc.
+	const float area_k = litter_heap.y > 0.0f ? litter_heap.x * litter_heap.z / (disc * disc) : 1.0f;
+	float area_left = p_layers * Math::PI * disc * disc * area_k;
+	const int guard_max = int(60.0f * MAX(p_layers, 1.3f) / 1.3f * area_k);
 	int guard = 0;
 	while (area_left > 0.0f && guard++ < guard_max) {
 		float pick = rng.randf() * total;
@@ -2065,17 +2075,18 @@ void PlantGenerator::_build_stand_litter(float p_layers, float p_lift) {
 		Color c = is_fresh ? fallen : fallen.lerp(Color(0.36f, 0.25f, 0.15f), _rand(0.4f, 0.8f)); // Bleached tan-brown.
 		c = c * k;
 		Color tint(c.r / MAX(leaf_color.r, 0.01f), c.g / MAX(leaf_color.g, 0.01f), c.b / MAX(leaf_color.b, 0.01f));
-		const float r = disc * Math::sqrt(rng.randf());
-		const float a = _rand(0.0f, Math::TAU);
-		const Vector3 at(Math::cos(a) * r, p_lift + 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
-		const Vector3 fwd = polar_dir(_rand(0.0f, Math::TAU), _rand(-0.12f, 0.12f));
+		Vector3 up;
+		const Vector3 at = _litter_spot(p_lift, up);
+		Vector3 fwd = polar_dir(_rand(0.0f, Math::TAU), _rand(-0.12f, 0.12f));
+		if (litter_heap.y > 0.0f) {
+			fwd = (fwd - up * fwd.dot(up)).normalized() + up * fwd.y; // Lying along the heap's face.
+		}
 		// About a third lie underside up: paler and duller (the lower epidermis, hairier and without
 		// the upper's wax). Shown by colour, the face still up, so a lying leaf is never drawn from
 		// its back face (whose flipped normal map read black or flat in close-ups).
 		if (rng.randf() >= 0.7f) {
 			tint = tint.lerp(tint * 1.25f, 0.8f) * Color(1.0f, 1.0f, 1.08f);
 		}
-		const Vector3 up(0, 1, 0);
 		const Basis frame = organ_frame(fwd, up);
 		const float curl = is_fresh ? 0.6f : 1.0f; // Older leaves dry and curl more.
 		Leaf l;
@@ -2086,7 +2097,7 @@ void PlantGenerator::_build_stand_litter(float p_layers, float p_lift) {
 		l.fold = _rand(-0.4f, 0.5f) * curl;
 		l.bend = _rand(-0.6f, 0.6f) * curl;
 		l.twist = _rand(-0.5f, 0.5f) * curl;
-		l.segments = 6;
+		l.segments = litter_heap.y > 0.0f ? 4 : 6; // A leaf bank's many leaves: coarser, mostly seen from metres off.
 		float area = 0.6f * l.length * l.width;
 		switch (kind) {
 			case 1: // Lobed (oaks, hawthorn): rounded lobes along the sides.
@@ -4767,6 +4778,7 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.spots = 0.6f;
 			break;
 		case PRESET_LEAF_LITTER:
+		case PRESET_LEAF_BANK:
 			l.shape = LEAF_OVATE;
 			t.aspect = 0.6f;
 			t.vein = leaf_color.lerp(Color(0.6f, 0.45f, 0.25f), 0.5f);
@@ -6423,6 +6435,11 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.33f, 0.22f, 0.11f);
 			stem_color = Color(0.22f, 0.16f, 0.1f);
 			break;
+		case PRESET_LEAF_BANK:
+			leaf_color = Color(0.33f, 0.22f, 0.11f); // As the litter's, so the stand's leaf colours tint alike.
+			stem_color = Color(0.22f, 0.16f, 0.1f);
+			centre_color = Color(0.2f, 0.13f, 0.07f); // Matted, half-rotted leaves under the loose ones, darker and damp.
+			break;
 		case PRESET_MOSS:
 			leaf_color = Color(0.17f, 0.3f, 0.05f);
 			centre_color = Color(0.12f, 0.21f, 0.045f); // The packed shoots below the tips.
@@ -6982,6 +6999,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_MOLEHILL:
 			_build_molehill();
+			break;
+		case PRESET_LEAF_BANK:
+			_build_leaf_bank();
 			break;
 		case PRESET_FOXGLOVE:
 			_build_foxglove();
@@ -7985,11 +8005,24 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		browsed(broad ? P::PRESET_COCKSFOOT : P::PRESET_DRY_GRASS, 0.35f, 0.08f, 0.55f, 0.6f, 0.9f, 9.0f, 0.55f, 0.8f, 40.0f, 0.4f, 0.3f);
 		browsed(P::PRESET_FERN, 1.1f, 0.35f, 0.35f, 1.1f, 1.7f, 10.0f, 0.4f, 0.95f, 35.0f, 0.5f, 0.3f);
 	}
+	// Leaf drifts (docs/ideas/vegetation.md, "Leaf drifts"), last so the rest keep their seeds: banks of the stand's
+	// leaves where the wind piles them (PlantSpecies.RULE_LITTER_DRIFT over 1.35: hollows, the feet of trunks, logs
+	// and stones), under broadleaf litter. Deepest after the leaf fall, settling and rotting down through the year.
+	bool leafy = false;
+	for (const FloorSpec &f : set) {
+		leafy = leafy || (f.preset == P::PRESET_LEAF_LITTER && f.deadwood == PlantSpecies::DEADWOOD_AVOID);
+	}
+	if (leafy) {
+		set.push_back({ P::PRESET_LEAF_BANK, 1.6f, 0.55f, 0.85f, 0.7f, 1.3f, 0.0f, 0.0f, 0.06f, 1.0f, 0.05f, 0.0f, 0.6f, 25.0f }); // About 18k triangles each: to 25 m.
+	}
 	TypedArray<Resource> out;
 	int seed_base = 1000 + int(p_stand) * 100;
 	for (FloorSpec f : set) {
 		if (f.preset == P::PRESET_LEAF_LITTER && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
 			f.density = CLAMP(0.9f * leaf_cover, 0.1f, 0.9f);
+		}
+		if (f.preset == P::PRESET_LEAF_BANK) {
+			f.density *= CLAMP(0.35f + 0.65f * leaf_cover, 0.0f, 1.0f); // Fewer and lower once the year's fall has rotted.
 		}
 		f.density *= get_presence(f.preset, p_season); // Spring plants gone by summer.
 		Ref<PlantGenerator> gen;
@@ -8005,7 +8038,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		} else {
 			gen->set_season(p_season);
 		}
-		if (f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_SEEDLING) {
+		if (f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_SEEDLING || f.preset == P::PRESET_LEAF_BANK) {
 			gen->set_litter_leaves(stand_litter_leaves(p_stand, p_season));
 		}
 		if (f.preset == P::PRESET_TWIGS) {
@@ -8115,6 +8148,15 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			// crowns near (litter 0) still gets leaves.
 			sp->set_rule_range(PlantSpecies::RULE_LITTER, Vector2(f.preset == P::PRESET_TWIGS ? 0.4f : 0.3f, 1.0f));
 			sp->set_rule_fade(PlantSpecies::RULE_LITTER, 0.25f);
+		}
+		if (f.preset == P::PRESET_LEAF_BANK) {
+			// Where litter lies (as the leaf litter's rules) and the wind has gathered it well past what fell.
+			sp->set_rule_range(PlantSpecies::RULE_LITTER, Vector2(0.45f, 1.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_LITTER, 0.2f);
+			sp->set_rule_range(PlantSpecies::RULE_LITTER_DRIFT, Vector2(1.35f, 100.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_LITTER_DRIFT, 0.25f);
+			sp->set_align_to_ground(1.0f);
+			sp->set_meta("sward_mound", 0.55f); // Grass keeps out from under the heap.
 		}
 		if (f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS) {
 			sp->set_rule_range(PlantSpecies::RULE_SPRAY, Vector2(0.0f, 1.0f)); // Mosses take a fall's spray zone.
@@ -8459,6 +8501,7 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_ANTHILL);
 	BIND_ENUM_CONSTANT(PRESET_WOOD_ANT_NEST);
 	BIND_ENUM_CONSTANT(PRESET_MOLEHILL);
+	BIND_ENUM_CONSTANT(PRESET_LEAF_BANK);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));

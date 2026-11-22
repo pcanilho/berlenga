@@ -1598,3 +1598,26 @@ Built in GrassField3D (`lodging`, on by default; `get_lodging_at`, `advance_lodg
 - Check: grass bench --test, a wet 12 m/s gale for an hour lays the 0.5 m meadow down in patches along +x; ten calm
   dry days later it stands again.
 
+## Leaf drifts (round 4, second pick)
+Built in VegetationField3D (`get_litter_drift_at`, PlantSpecies.RULE_LITTER_DRIFT 33) and PlantGenerator
+(PRESET_LEAF_BANK 103, in make_floor's broadleaf floors).
+- Research. Fallen leaves move with the wind until something stops them, so the litter is redistributed after the
+  fall: hollows, furrows and the feet of obstacles gather it, ridges and knolls are swept to the soil (Orndorff and
+  Lang 1981, Am. Midl. Nat. 106, leaf litter redistribution in a West Virginia hardwood forest; Boerner and Kooser 1989,
+  Am. Midl. Nat. 121, litter several times deeper in hollows than on ridges and sideslopes). Behind trunks, logs and
+  stones the lee eddy drops what the flow carried (the snowdrift mechanism at a smaller scale), and a bank also forms along the windward foot. Games paint this with decals or
+  leave the litter even; here the litter species follow it and leaf banks are real geometry.
+- How. drift = 1 + 3.5 x (the ground's depth under its ring at 2.5 m and at 6 m, 0.6 and 0.4, clamped -0.24 to
+  0.3 m), times 1 - 0.6 smoothstep(25 to 45 degrees of slope), plus 1.3 x the strongest obstacle foot: rocks
+  (obstacles), logs (thicker than 5 cm) and trunks (the crowns' stem foot), exp(-gap / 0.5 m) within 1.6 m, times
+  0.55 + 0.45 cos(angle from the downwind direction), clamped 0.15 to 2.5. The wind is litter_wind or the weather
+  map's. The placement caches it on 0.5 m cells. RULE_LITTER now reads litter x drift (capped at 1): litter thins
+  on crests and fills hollows. RULE_LITTER_DRIFT places by the drift itself.
+- Leaf bank. The stand's own leaves (stand_litter_leaves) heaped over an ellipse 0.9 to 1.6 m long, 8 to 18 cm
+  high, crest towards one end, lumpy, 2.2 layers of coarser leaves, over a dark matted under-layer (centre colour 0.2, 0.13, 0.07)
+  so no ground shows between leaves; leaves follow the heap's face. make_floor appends it last to broadleaf floors
+  (seeds of the rest unchanged): drift 1.35 up (fade 0.25), litter 0.45 up, crown shade 0.06 up, density with the
+  year's leaf cover. sward_mound 0.55 keeps the grass out from under it.
+- Check: vegetation bench --test, drift in the deepest hollow over the highest crest, a stone's downwind foot over
+  its windward foot and open ground; banks last in broadleaf floors, 8 to 25 cm high, none under conifers.
+

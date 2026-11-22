@@ -177,6 +177,7 @@ public:
 		PRESET_ANTHILL, // Lasius flavus: a grassed dome of fine soil in old pasture, crest to the east, fine turf and thyme, fresh workings.
 		PRESET_WOOD_ANT_NEST, // Formica rufa group: a thatch dome of needles and twig bits on an earth bank, at sunny gaps in conifer woods.
 		PRESET_MOLEHILL, // Talpa europaea: a heap of loose crumbly soil pushed up from a run; crusting, slumping and greening by the season's "mound_age".
+		PRESET_LEAF_BANK, // A drift of fallen leaves the wind piled in a hollow or against a trunk, log or stone: the stand's litter heaped up to 20 cm.
 		PRESET_MAX,
 	};
 
@@ -320,6 +321,10 @@ private:
 	void _build_anthill();
 	void _build_wood_ant_nest();
 	void _build_molehill();
+	void _build_leaf_bank();
+	// A fallen leaf's spot on a litter card: on its disc (0.13 m), or over the leaf bank's heap (litter_heap) with the
+	// heap's normal in r_up. The same random draws either way, so flat cards keep their seeds.
+	Vector3 _litter_spot(float p_lift, Vector3 &r_up);
 	void _tint_since(Surface p_surface, int p_from, const Color &p_tint);
 	void _build_fireweed();
 	void _build_fire_moss();
@@ -459,6 +464,7 @@ private:
 	int texture_size = 256;
 	float leaf_wear = 0.5f;
 	Array litter_leaves; // Leaf litter: the stand's fallen leaves (forms with share and colour); empty: generic.
+	Vector3 litter_heap; // A leaf bank's heap: half length (x), half width (z), height (y); zero: a flat card.
 	float litter_deposit = 1.0f; // Litter: layers of leaves or needles over the card's own (> 1: the near-camera card, leaf on leaf).
 	uint32_t leaf_serial = 0; // Counts the leaves of a plant: their wear draws from it, not from rng.
 	// Flowering through the year (docs/ideas/vegetation-seasons.md, step 2): the season's degree days

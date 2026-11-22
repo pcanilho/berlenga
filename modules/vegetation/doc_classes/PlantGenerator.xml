@@ -56,7 +56,7 @@
 			<param index="3" name="impostor_range" type="float" default="15.0" />
 			<param index="4" name="season" type="Dictionary" default="{}" />
 			<description>
-				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance. The leaf litter is the stand's own fallen leaves ([method stand_litter_leaves]); [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for the fallen colours, the share of fresh leaves and the flowering ([member season]).
+				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance. The leaf litter is the stand's own fallen leaves ([method stand_litter_leaves]); [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for the fallen colours, the share of fresh leaves and the flowering ([member season]). Broadleaf floors end with [constant PRESET_LEAF_BANK], leaf drifts where the wind gathers the litter ([constant PlantSpecies.RULE_LITTER_DRIFT]); the leaf litter itself thins on crests and fills hollows by the same drift.
 			</description>
 		</method>
 		<method name="make_banks" qualifiers="static">
@@ -652,7 +652,10 @@
 		<constant name="PRESET_MOLEHILL" value="102" enum="Preset">
 			A molehill: a lumpy heap of loose soil about 0.4 m across with crumbs spilt round it; by the season's [code]mound_age[/code] (years) it crusts paler, slumps and grasses over.
 		</constant>
-		<constant name="PRESET_MAX" value="103" enum="Preset">
+		<constant name="PRESET_LEAF_BANK" value="103" enum="Preset">
+			A leaf drift: the stand's fallen leaves ([member litter_leaves]) heaped 8 to 18 cm deep over an ellipse 0.9 to 1.6 m long, over a dark, matted layer of half-rotted leaves. [method make_floor] places it under broadleaf litter where [constant PlantSpecies.RULE_LITTER_DRIFT] passes 1.35: hollows and the feet of trunks, logs and stones.
+		</constant>
+		<constant name="PRESET_MAX" value="104" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
