@@ -37,8 +37,8 @@
 // Soil: the exponential soil production function (Heimsath, Dietrich, Nishiizumi and Finkel 1997): bare rock weathers
 // into soil at P0, slowing as e^(-h/h0) under a soil of depth h. Where the ground lowers at a rate E, soil settles where
 // production meets it: h = h0 ln(P0 / E). E is the local erosion rate of the same laws the run used: channel incision
-// K A^m S plus hillslope creep D * (-curvature) on convex ground. Slopes near the critical slope shed their soil
-// (landslides). Basin fill (sediment) adds to it. Channels gentle for their drainage area are alluvial: their channel
+// K A^m S on channels plus hillslope creep D * (-curvature) on convex ground. Slopes near the critical slope shed
+// their soil (landslides). Basin fill (sediment) adds to it. Channels gentle for their drainage area are alluvial: their channel
 // steepness index k_s = S A^m (Wobus et al. 2006) falls well below the k_s = U / K of the fastest-uplifting ground, so
 // they carry more sediment than they can move and floor their valleys with it (bedrock against alluvial channels,
 // Montgomery et al. 1996); they get a full loose cover.
@@ -92,6 +92,36 @@ public:
 		const double dx = p.dx;
 		std::vector<float> slope(n);
 		std::vector<float> src(n);
+		// Curvature over a 3x3 window: the 5-point Laplacian of a threshold slope flips sign cell to cell (the
+		// critical-slope limit leaves a one-cell zigzag), which would checker the soil.
+		std::vector<float> lap5(n);
+		std::vector<float> lap(n);
+		auto hat = [&](int xx, int zz) -> double {
+			xx = std::min(std::max(xx, 0), nx - 1);
+			zz = std::min(std::max(zz, 0), ny - 1);
+			return h[zz * nx + xx];
+		};
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				lap5[z * nx + x] = float((hat(x - 1, z) + hat(x + 1, z) + hat(x, z - 1) + hat(x, z + 1) - 4.0 * hat(x, z)) / (dx * dx));
+			}
+		}
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				double sum = 0.0;
+				int cnt = 0;
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int ddx = -1; ddx <= 1; ddx++) {
+						const int xx = x + ddx, zz = z + dz;
+						if (xx >= 0 && zz >= 0 && xx < nx && zz < ny) {
+							sum += lap5[zz * nx + xx];
+							cnt++;
+						}
+					}
+				}
+				lap[z * nx + x] = float(sum / cnt);
+			}
+		}
 		for (int z = 0; z < ny; z++) {
 			for (int x = 0; x < nx; x++) {
 				const int i = z * nx + x;
@@ -115,7 +145,7 @@ public:
 					zz = std::min(std::max(zz, 0), ny - 1);
 					return h[zz * nx + xx];
 				};
-				const double lap = (at(x - 1, z) + at(x + 1, z) + at(x, z - 1) + at(x, z + 1) - 4.0 * hi) / (dx * dx);
+				const double curv = lap[i];
 				double incision = 0.0;
 				const int r = rec[i];
 				if (r != i) {
@@ -124,13 +154,30 @@ public:
 					const double d = (rx != x && rz != z) ? dx * 1.4142135623730951 : dx;
 					incision = p.erodibility * std::pow(double(area[i]), p.area_exponent) * std::max((hi - h[r]) / d, 0.0);
 				}
-				const double e = incision + p.diffusion * std::max(-lap, 0.0);
-				double soil = p.soil_scale * std::log(p.soil_production / std::max(e, 1e-12));
-				soil = std::min(std::max(soil, 0.0), p.soil_max);
-				soil *= 1.0 - smoothstep(0.6 * p.critical_slope, 0.95 * p.critical_slope, s);
-				// Alluvial valley floors: gentle channels for their area, fading in over one decade of area.
+				// Channels from 20 to 200 cells of drainage. Above the channel heads (Montgomery and Dietrich 1988)
+				// hillslopes are lowered by creep and shallow landslides, not by stream incision, so K A^m S only counts
+				// on channels; on the hillslope cells it would read their small own area as a stream and strip every
+				// slope above about 20 degrees.
 				const double cell_area = dx * dx;
 				const double channel = smoothstep(std::log(20.0 * cell_area), std::log(200.0 * cell_area), std::log(std::max(double(area[i]), 1.0)));
+				// Creep by nonlinear diffusion (Roering, Kirchner and Dietrich 1999): transport grows without bound as the
+				// gradient nears the critical one, so steep sharp crests lower fast and go bare while rounded gentle
+				// hilltops keep their soil.
+				// The gradient from central differences (smooth across the grid, unlike the steepest of eight
+				// neighbours, which stripes slopes near the limit).
+				const double gx = (at(x + 1, z) - at(x - 1, z)) / (2.0 * dx);
+				const double gz = (at(x, z + 1) - at(x, z - 1)) / (2.0 * dx);
+				const double ratio = std::min(std::sqrt(gx * gx + gz * gz) / std::max(p.critical_slope, 1e-6), 0.97);
+				const double creep = p.diffusion / (1.0 - ratio * ratio);
+				const double e = incision * channel + creep * std::max(-curv, 0.0);
+				double soil = p.soil_scale * std::log(p.soil_production / std::max(e, 1e-12));
+				soil = std::min(std::max(soil, 0.0), p.soil_max);
+				// Soil-mantled slopes hold up to near the critical gradient (Roering, Kirchner and Dietrich 1999); at it
+				// shallow landslides keep the cover thin and patchy (threshold hillslopes of fast-eroding ranges still
+				// carry forest on 0.2 to 1 m, Heimsath et al. 2012; Larsen et al. 2014), and only ground steeper than it
+				// (cliffs, crests cut by detail) is bare: thinning from 85% of it, a third left at it, gone at 110%.
+				soil *= 1.0 - smoothstep(0.85 * p.critical_slope, 1.1 * p.critical_slope, s);
+				// Alluvial valley floors: gentle channels for their area, fading in over one decade of area.
 				if (channel > 0.0 && r != i) {
 					const int rx = r % nx;
 					const int rz = r / nx;

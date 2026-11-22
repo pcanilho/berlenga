@@ -2,7 +2,7 @@
 #version 450
 
 // One-time (per configure()) generation of the base Tessendorf ocean
-// spectrum h0 from a fetch-limited JONSWAP wind-sea spectrum, packed per texel as (xy = h0(k), zw = conj(h0(-k))) --
+// spectrum h0 from a fetch-limited JONSWAP wind-sea spectrum with directional spreading, packed per texel as (xy = h0(k), zw = conj(h0(-k))) --
 // both evaluated directly in this single pass via two independently-hashed
 // Gaussian pairs (one seeded by (mx,mz), one by (-mx,-mz)), so there's no
 // need to read a neighboring texel's already-written data and no ordering
@@ -19,8 +19,8 @@ layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 domain_wind; // xy domain size (world, full extent), z wind_speed, w wind_dir_x
-	vec4 misc; // x wind_dir_z, y gravity, z amplitude (squared multiplier), w unused
-	ivec4 res; // x N, yzw unused
+	vec4 misc; // x wind_dir_z, y gravity, z amplitude (squared multiplier), w swell (0..1)
+	ivec4 res; // x N, y spreading (0 = cos^2, 1 = Donelan-Banner, 2 = Hasselmann; 1 and 2 with Horvath's swell), zw unused
 	vec4 extra; // x fetch (m), y depth (m), z k_min, w k_max (rad/m, 0 = unbounded: one cascade's band)
 };
 
@@ -49,13 +49,63 @@ vec2 gaussian_pair(ivec2 m) {
 	return vec2(r * cos(6.28318530718 * u2), r * sin(6.28318530718 * u2));
 }
 
+// ln Gamma(x) for x >= 0.5: Stirling's series after shifting x up by 3 (error under 1e-6).
+float ln_gamma(float x) {
+	float z = x + 3.0;
+	float iz = 1.0 / z;
+	float st = (z - 0.5) * log(z) - z + 0.918938533 + iz / 12.0 - iz * iz * iz / 360.0;
+	return st - log(x * (x + 1.0) * (x + 2.0));
+}
+
+// Directional spreading D(w, theta), each integrating to 1 over the circle, as compared by Horvath
+// (2015, "Empirical directional wave spectra for computer graphics", DigiPro, section 6):
+// - Donelan-Banner (Donelan, Hamilton and Hui 1985; Banner 1990), his default: sech^2(b theta),
+//   narrowest at the peak, wider above and below it (the first branch is used below 0.95 wp too).
+// - Hasselmann et al. (1980): cos^2s(theta / 2) with the measured s(w), wider still for short waves.
+// Horvath's swell (section 6.1) multiplies either by cos^2s(theta / 2) with s = 16 tanh(wp / w) swell^2
+// and normalises the product again: long waves from a distant storm, nearly parallel crests.
+float donelan_banner(float r, float theta) {
+	float b = r < 0.95 ? 2.61 * pow(r, 1.3) : (r < 1.6 ? 2.28 * pow(r, -1.3) : pow(10.0, -0.4 + 0.8393 * exp(-0.567 * log(r * r))));
+	float ch = cosh(b * theta);
+	return b / (2.0 * tanh(b * 3.14159265) * ch * ch);
+}
+
+float hasselmann_s(float r, float wind_speed, float wp, float gravity) {
+	return r <= 1.0 ? 6.97 * pow(r, 4.06) : 9.77 * pow(r, -2.33 - 1.45 * (wind_speed * wp / gravity - 1.17));
+}
+
+float spreading_horvath(int p_model, float w, float wp, float wind_speed, float gravity, float cos_theta, float swell) {
+	float r = w / wp;
+	float s_swell = 16.0 * tanh(1.0 / r) * swell * swell;
+	if (p_model == 2) {
+		// cos^2s(theta / 2) times cos^2s_swell(theta / 2) is the same form with the exponents added;
+		// Q(s) = Gamma(s + 1) / (2 sqrt(pi) Gamma(s + 1/2)).
+		float s = clamp(hasselmann_s(r, wind_speed, wp, gravity) + s_swell, 0.01, 2000.0);
+		float q = exp(ln_gamma(s + 1.0) - ln_gamma(s + 0.5)) / 3.5449077;
+		return q * pow(max(0.5 * (1.0 + cos_theta), 0.0), s);
+	}
+	float theta = acos(clamp(cos_theta, -1.0, 1.0));
+	float d = donelan_banner(r, theta);
+	if (s_swell < 1e-4) {
+		return d;
+	}
+	// The product's normalisation by quadrature over [0, pi] (symmetric): 64 midpoints.
+	float sum = 0.0;
+	for (int i = 0; i < 64; i++) {
+		float t = (float(i) + 0.5) * (3.14159265 / 64.0);
+		sum += donelan_banner(r, t) * pow(0.5 * (1.0 + cos(t)), s_swell);
+	}
+	float norm = 2.0 * sum * (3.14159265 / 64.0);
+	return d * pow(max(0.5 * (1.0 + cos_theta), 0.0), s_swell) / max(norm, 1e-12);
+}
+
 // TMA (JONSWAP in finite depth) wind-sea spectrum turned into a 2D wavenumber spectrum E(k)
 // (m^4, integrating to the height variance). Fetch -- how far the wind has
 // blown over open water -- sets both the energy (alpha) and the peak
 // frequency, so a pool's meters of fetch give short, tiny ripples and an
 // open sea's kilometers give long, tall waves at the same wind speed.
 // Finite-depth dispersion w = sqrt(g k tanh(k d)) converts S(w) to S(k).
-float jonswap(vec2 k, vec2 wind_dir, float wind_speed, float gravity, float fetch, float depth) {
+float jonswap(vec2 k, vec2 wind_dir, float wind_speed, float gravity, float fetch, float depth, int spreading, float swell) {
 	float kl = length(k);
 	if (kl < 1e-6) {
 		return 0.0;
@@ -74,10 +124,15 @@ float jonswap(vec2 k, vec2 wind_dir, float wind_speed, float gravity, float fetc
 	float wh = w * sqrt(depth / gravity);
 	float phi = wh <= 1.0 ? 0.5 * wh * wh : (wh < 2.0 ? 1.0 - 0.5 * (2.0 - wh) * (2.0 - wh) : 1.0);
 	s_w *= phi;
-	// cos^2 spreading about the wind (normalized over the forward half), and
-	// a weak back lobe so waves running against the wind aren't absent.
 	float c = dot(k / kl, wind_dir);
-	float spread = 0.63662 * c * c * (c >= 0.0 ? 1.0 : 0.04);
+	float spread;
+	if (spreading >= 1) {
+		spread = spreading_horvath(spreading, w, wp, wind_speed, gravity, c, swell);
+	} else {
+		// cos^2 spreading about the wind (normalized over the forward half), and
+		// a weak back lobe so waves running against the wind aren't absent.
+		spread = 0.63662 * c * c * (c >= 0.0 ? 1.0 : 0.04);
+	}
 	return s_w * dw_dk / kl * spread;
 }
 
@@ -118,8 +173,8 @@ void main() {
 		return;
 	}
 	float dk2 = (6.28318530718 / domain.x) * (6.28318530718 / domain.y);
-	float p1 = jonswap(k, wind_dir, wind_speed, gravity, fetch, depth) * dk2 * 0.5 * amplitude;
-	float p2 = jonswap(-k, wind_dir, wind_speed, gravity, fetch, depth) * dk2 * 0.5 * amplitude;
+	float p1 = jonswap(k, wind_dir, wind_speed, gravity, fetch, depth, res.y, misc.w) * dk2 * 0.5 * amplitude;
+	float p2 = jonswap(-k, wind_dir, wind_speed, gravity, fetch, depth, res.y, misc.w) * dk2 * 0.5 * amplitude;
 	vec2 a = g1 * sqrt(p1 * 0.5);
 	vec2 b_pre = g2 * sqrt(p2 * 0.5);
 	vec2 b = vec2(b_pre.x, -b_pre.y); // conj(h0(-k))

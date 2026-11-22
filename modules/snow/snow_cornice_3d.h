@@ -62,9 +62,20 @@ class SnowCornice3D : public Node3D {
 	uint64_t built_update = 0;
 	double check_accum = 0.0;
 	int segment_count = 0;
+	// Falling blocks of a failed cornice (follow-up 6).
+	bool debris_enabled = true;
+	float debris_lifetime = 30.0f;
+	struct Debris {
+		ObjectID node;
+		double age = 0.0;
+	};
+	Vector<Debris> debris;
+	ObjectID connected_cover;
 
 	Vector3 _follow_position() const;
 	void _ensure_children();
+	void _connect_cover();
+	void _on_cornice_failed(Vector3 p_position, Vector3 p_direction, float p_length, float p_mass);
 
 protected:
 	void _notification(int p_what);
@@ -73,6 +84,11 @@ protected:
 public:
 	void rebuild();
 	int get_segment_count() const { return segment_count; }
+	int get_debris_count() const { return debris.size(); }
+	void set_debris_enabled(bool p_enabled);
+	bool is_debris_enabled() const { return debris_enabled; }
+	void set_debris_lifetime(float p_seconds);
+	float get_debris_lifetime() const { return debris_lifetime; }
 
 	void set_radius(float p_radius);
 	float get_radius() const { return radius; }

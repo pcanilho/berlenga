@@ -46,7 +46,8 @@ extends Node3D
 #                     the head, "plain" for Godot's standard lighting instead of hair_shading, "far" for the
 #                     camera 8 m away, "nolod" to draw every strand at any distance, "novolume" for
 #                     strands that pass through each other (volume_enabled off), "taa" for temporal
-#                     antialiasing, "mvview" to see the motion vectors; "box" for broad
+#                     antialiasing, "mvview" to see the motion vectors, "nodeep" for the shadow map
+#                     alone (deep_shadows off); "box" for broad
 #                     rounded shoulders (spheres only on the skull), "body" to make the shoulders (with
 #                     or without "box") the collision body, held still and seen from the side,
 #                     "skinned" to skin them to a tilted bone (the head stays still), "hidebox" to see the drape;
@@ -688,6 +689,7 @@ func _strands_sim() -> void:
 	h.hair_shading = not hair.contains("plain")
 	h.lod_enabled = not hair.contains("nolod")
 	h.volume_enabled = not hair.contains("novolume")
+	h.deep_shadows = not hair.contains("nodeep")
 	if hair.contains("taa"):
 		# Temporal antialiasing, which follows the strands by their motion vectors.
 		get_viewport().use_taa = true

@@ -154,6 +154,41 @@ public:
 		emit_changed();
 	}
 	float get_sx_distance() const { return params.sx_distance; }
+	void set_precipitation_seasonality(float p_value) {
+		params.precipitation_seasonality = p_value;
+		emit_changed();
+	}
+	float get_precipitation_seasonality() const { return params.precipitation_seasonality; }
+	void set_precipitation_peak_month(float p_value) {
+		params.precipitation_peak_month = p_value;
+		emit_changed();
+	}
+	float get_precipitation_peak_month() const { return params.precipitation_peak_month; }
+	void set_melt_factor(float p_value) {
+		params.melt_factor = p_value;
+		emit_changed();
+	}
+	float get_melt_factor() const { return params.melt_factor; }
+	void set_radiation_melt_factor(float p_value) {
+		params.radiation_melt_factor = p_value;
+		emit_changed();
+	}
+	float get_radiation_melt_factor() const { return params.radiation_melt_factor; }
+	void set_soil_capacity(float p_value) {
+		params.soil_capacity = p_value;
+		emit_changed();
+	}
+	float get_soil_capacity() const { return params.soil_capacity; }
+	void set_direct_runoff(float p_value) {
+		params.direct_runoff = p_value;
+		emit_changed();
+	}
+	float get_direct_runoff() const { return params.direct_runoff; }
+	void set_groundwater_release(float p_value) {
+		params.groundwater_release = p_value;
+		emit_changed();
+	}
+	float get_groundwater_release() const { return params.groundwater_release; }
 	void set_sun_cell(float p_value) {
 		sun_cell = p_value;
 		emit_changed();

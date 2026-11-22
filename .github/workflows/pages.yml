@@ -1,0 +1,54 @@
+name: Docs site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "docs/media/**"
+      - "docs/REFERENCES.md"
+      - "doc/classes/ProjectSettings.xml"
+      - "doc/classes/Environment.xml"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Hugo
+        run: pip install hugo==0.169.0 "pagefind[bin]==1.6.0"
+      - id: pages
+        uses: actions/configure-pages@v5
+      - name: Settings table
+        run: python site/tools/settings.py
+      - name: Build
+        run: hugo --source site --minify --baseURL "${{ steps.pages.outputs.base_url }}/" --destination "${{ github.workspace }}/public"
+      - name: Search index
+        run: python -m pagefind --site public
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

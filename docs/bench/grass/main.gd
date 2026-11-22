@@ -17,7 +17,18 @@ extends Node3D
 #   --forest         a wood of stand-in trees: forest floor (litter, moss, bilberry, fern) in
 #                    their shade, meadow in the open (PlantSpecies.shade_range)
 #   --forest=in      the same, standing inside the wood
+#   --stand=S        the wood's trees and their floor set (PlantGenerator.make_floor): beech, oak,
+#                    spruce (montane), pine (heath), larch (subalpine) or mixed (beech and spruce);
+#                    the ground's litter follows the crowns. Use with --forest=in.
+#   --swamp          wetland zonation round the pond: water lilies afloat, bulrush and reed in the
+#                    shallows, soft rush on the wet shore (docs/ideas/plant-generator.md)
+#   --swamp=close    the same, looking down on a water lily
 #   --turf=0         without the near turf layer
+#   --floor=0        without the litter on the ground under the crowns (cost comparison)
+#   --far=0          without the plants' colour on the ground beyond their range (before/after)
+#   --far            a high view over the land, to see plants thin out and the ground take over
+#   --dolly          from that corner, walk in 0.3 m a frame (with --clip and --frames)
+#   --terrain-material  the ground drawn with TerrainMaterial3D (its grass tint calls grass_ground())
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
 const SIZE := 96.0
@@ -39,9 +50,18 @@ var layers := true
 var close := false
 var forest := false
 var forest_in := false
+var stand := "beech"
+var stand_set := false
+var no_floor := false
+var no_far := false
+var far_view := false
+var dolly := false
+var swamp := false
+var swamp_close := false
 var ground_mat: ShaderMaterial
 var turf: GrassField3D
 var no_turf := false
+var terrain_mat := false
 var notex := false
 var t_frames := 0
 var under: GrassField3D
@@ -74,11 +94,26 @@ func _ready() -> void:
 		elif a == "--layers=0": layers = false
 		elif a == "--close": close = true
 		elif a == "--forest": forest = true
+		elif a == "--swamp": swamp = true
+		elif a == "--swamp=close":
+			swamp = true
+			swamp_close = true
 		elif a == "--turf=0": no_turf = true
+		elif a == "--floor=0": no_floor = true
+		elif a == "--far=0": no_far = true
+		elif a == "--far": far_view = true
+		elif a == "--dolly":
+			far_view = true
+			dolly = true
+		elif a == "--terrain-material": terrain_mat = true
 		elif a == "--forest=in":
 			forest = true
 			forest_in = true
 		elif a == "--notex": notex = true
+		elif a.begins_with("--stand="):
+			stand = a.substr(8)
+			stand_set = true
+			forest = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -167,6 +202,7 @@ func _ready() -> void:
 		cover.populate_on_ready = false
 		cover.tile_size = 4.0
 		cover.biome = _cover_biome()
+		cover.forest_floor_enabled = not no_floor
 		add_child(cover)
 		cover.data_map = cover.get_path_to(dm)
 		if forest:
@@ -191,23 +227,11 @@ func _ready() -> void:
 	var gs := Shader.new()
 	gs.code = "shader_type spatial;\n" + GrassField3D.get_ground_shader_code() + """
 varying vec3 wp;
-// Forest floor: canopy shade (VegetationField3D.get_shade_at, baked) turns the soil to humus
-// under a mottled leaf layer, so the litter reads beyond the near 3D leaves.
-uniform sampler2D shade_map : filter_linear, hint_default_black;
-uniform float map_size = 96.0;
-float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float vn(vec2 p) {
-	vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
-	return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
-}
+// Under the crowns grass_ground() lays the forest floor's litter (VegetationField3D's
+// forest_floor_* globals): leaves, needles and moss by the stand above.
 void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 void fragment() {
-	vec3 soil = grass_ground(wp, vec3(0.11, 0.12, 0.06));
-	float shade = texture(shade_map, wp.xz / map_size + 0.5).r;
-	float leaves = vn(wp.xz * 9.0) * 0.6 + vn(wp.xz * 31.0) * 0.4;
-	vec3 humus = mix(vec3(0.035, 0.025, 0.015), vec3(0.13, 0.08, 0.04), smoothstep(0.35, 0.75, leaves));
-	humus *= 0.8 + 0.4 * vn(wp.xz * 0.7);
-	ALBEDO = mix(soil, humus, smoothstep(0.25, 0.6, shade));
+	ALBEDO = vegetation_far(wp, grass_ground(wp, vec3(0.11, 0.12, 0.06)), CAMERA_POSITION_WORLD);
 	ROUGHNESS = 0.95;
 }
 """
@@ -216,6 +240,8 @@ void fragment() {
 	var ground := MeshInstance3D.new()
 	ground.mesh = _ground_mesh()
 	ground.material_override = gm
+	if terrain_mat:
+		ground.material_override = TerrainMaterial3D.new()
 	add_child(ground)
 	var water := MeshInstance3D.new()
 	var wp := PlaneMesh.new()
@@ -293,19 +319,30 @@ void fragment() {
 		# Closer, looking down on the trails.
 		cam.position = Vector3(1.5, height(1.5, 17.0) + 1.6, 17.0)
 		cam.look_at(Vector3(0.5, height(0.5, 10.0), 10.0))
+	if far_view and not test:
+		# From a corner, a little up, across the whole map: near plants, thinning, ground beyond.
+		cam.position = Vector3(42, height(42, 42) + (2.0 if dolly else 7.0), 42)
+		cam.look_at(Vector3(-20, height(-20, -20) - 2.0, -20))
+	if swamp and not test:
+		# Walk from the usual view towards the deepest water until the shore, stand back from it.
+		var from := Vector2(6, 20)
+		var to := Vector2(-17, -6)
+		var shore := to
+		for k in 200:
+			var q := from.lerp(to, k / 200.0)
+			if height(q.x, q.y) < -0.6:
+				shore = q
+				break
+		var dir := (to - from).normalized()
+		var eye := shore - dir * 9.0 + Vector2(dir.y, -dir.x) * 1.5
+		cam.position = Vector3(eye.x, height(eye.x, eye.y) + 2.6, eye.y)
+		cam.look_at(Vector3(shore.x + dir.x * 6.0, -0.6, shore.y + dir.y * 6.0))
 
 # Stand at a wood's edge: the tree nearest the usual view, seen from the open side.
 func _frame_forest() -> void:
 	var trees := cover.get_placements(0)
 	if trees.is_empty():
 		return
-	var res := 192
-	var img := Image.create(res, res, false, Image.FORMAT_L8)
-	for z in res:
-		for x in res:
-			var p := Vector3((x + 0.5) / res * SIZE - SIZE * 0.5, 0, (z + 0.5) / res * SIZE - SIZE * 0.5)
-			img.set_pixel(x, z, Color(cover.get_shade_at(p), 0, 0))
-	ground_mat.set_shader_parameter("shade_map", ImageTexture.create_from_image(img))
 	# The edge tree with the most edge plants (bramble, bracken, foxglove) around it, near the view.
 	var edge: Array = []
 	for k in [1, 2, 3]:
@@ -344,7 +381,11 @@ func _frame_forest() -> void:
 				far_d = near_d
 				eye = cand
 		at = eye - away * 6.0
-	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 1.5, eye.z)
+	if far_view:
+		# Back out into the open: the edge's bracken and bramble 30 to 60 m off.
+		eye = best + away * 38.0
+		at = best
+	cam.position = Vector3(eye.x, height(eye.x, eye.z) + (2.5 if far_view else 1.5), eye.z)
 	cam.look_at(Vector3(at.x, height(at.x, at.z) + (-0.4 if forest_in else 0.3), at.z))
 	print("GRASS_FOREST tree=%s eye=%s shade_under=%.2f" % [str(best), str(cam.position), cover.get_shade_at(best)])
 
@@ -356,7 +397,30 @@ func _variants(preset: int, count: int, size := 1.0) -> Array:
 	gen.preset = preset
 	gen.size = size
 	gen.apply_preset_colors()
-	return gen.generate_variants(count)
+	var meshes := gen.generate_variants(count)
+	for m in meshes:
+		m.set_meta("preset", preset)
+	return meshes
+
+# Far away the ground takes each plant's colour (PlantSpecies.far_color, as make_floor() sets it):
+# its leaves a little darker, hiding more ground the taller it is. Litter and twigs are the
+# ground's own already.
+func _set_far_colors(b: Biome) -> void:
+	for sp in b.species:
+		var spc := sp as PlantSpecies
+		if spc.meshes.is_empty() or spc.visibility_range <= 0.0 or spc.far_color.a > 0.0:
+			continue
+		var m: Mesh = spc.meshes[0]
+		if not m.has_meta("preset"):
+			continue
+		var preset: int = m.get_meta("preset")
+		if preset in [PlantGenerator.PRESET_LEAF_LITTER, PlantGenerator.PRESET_NEEDLE_LITTER, PlantGenerator.PRESET_TWIGS]:
+			continue
+		var gen := PlantGenerator.new()
+		gen.preset = preset
+		gen.apply_preset_colors()
+		var lc: Color = gen.leaf_color * 0.8
+		spc.far_color = Color(lc.r, lc.g, lc.b, clampf(m.get_aabb().end.y / 0.6, 0.2, 0.9))
 
 func _cover_biome() -> Biome:
 	var flowers := PlantSpecies.new()
@@ -461,9 +525,72 @@ func _cover_biome() -> Biome:
 			(sp as PlantSpecies).set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.4))
 			(sp as PlantSpecies).set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
 		# Bigger plants first: the edge shrubs and bracken claim their space before the herbs.
-		var floor_sp := _floor_species()
-		b.species = [_tree_species()] + floor_sp.slice(0, 3) + b.species + floor_sp.slice(3)
+		var floor_sp := _stand_floor()
+		b.species = _stand_trees() + floor_sp.slice(0, 3) + b.species + floor_sp.slice(3)
+	if swamp:
+		b.species = _wetland_species() + b.species
+	if no_far:
+		for sp in b.species:
+			(sp as PlantSpecies).far_color = Color(0, 0, 0, 0)
+	else:
+		_set_far_colors(b)
 	return b
+
+# Hydrosere zonation (Spence 1982; Keddy 2010): floating-leaved plants in deeper water,
+# bulrush and reed in the shallows and a few metres onto wet land, soft rush on the
+# wet shore. Water depth and distance come from the TerrainDataMap3D.
+# Standing at the shore of the bench pond, as a person would, from a rise behind it.
+func _wetland_species() -> Array:
+	var lily := PlantSpecies.new()
+	lily.meshes = _variants(PlantGenerator.PRESET_WATER_LILY, 3)
+	lily.floating = true
+	lily.spacing = 1.1
+	lily.footprint = 0.5
+	lily.density = 0.9
+	lily.patch_scale = 6.0
+	lily.patch_cover = 0.7
+	lily.patch_seed = 81
+	lily.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.35, 2.5))
+	lily.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.2)
+	lily.visibility_range = 50.0
+	var cattail := PlantSpecies.new()
+	cattail.meshes = _variants(PlantGenerator.PRESET_CATTAIL, 3)
+	cattail.spacing = 0.7
+	cattail.footprint = 0.35
+	cattail.density = 0.9
+	cattail.patch_scale = 5.0
+	cattail.patch_cover = 0.5
+	cattail.patch_seed = 83
+	cattail.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.1, 0.5))
+	cattail.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.05)
+	cattail.visibility_range = 60.0
+	var reed := PlantSpecies.new()
+	reed.meshes = _variants(PlantGenerator.PRESET_REED, 3)
+	reed.spacing = 0.6
+	reed.footprint = 0.3
+	reed.density = 0.95
+	reed.patch_scale = 8.0
+	reed.patch_cover = 0.6
+	reed.patch_seed = 85
+	# The bench pond is only 0.75 m deep: the bands are squeezed (reed to 0.45 m, not 1 to 2 m)
+	# so every zone shows; the note lists the real depths.
+	reed.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.0, 0.45))
+	reed.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.15)
+	reed.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(-100.0, 3.0))
+	reed.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 1.5)
+	reed.visibility_range = 60.0
+	var rush := PlantSpecies.new()
+	rush.meshes = _variants(PlantGenerator.PRESET_RUSH, 3)
+	rush.spacing = 0.8
+	rush.footprint = 0.3
+	rush.density = 0.8
+	rush.patch_scale = 4.0
+	rush.patch_cover = 0.5
+	rush.patch_seed = 87
+	rush.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(0.3, 9.0))
+	rush.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 2.0)
+	rush.visibility_range = 40.0
+	return [lily, cattail, reed, rush]
 
 # Stand-in trees (trunk and a crown blob) until stage 3b grows real ones: they only cast the shade.
 func _tree_species() -> PlantSpecies:
@@ -504,7 +631,78 @@ func _tree_species() -> PlantSpecies:
 	tree.canopy_opacity = 0.9
 	return tree
 
-# Forest floor (docs/ideas/vegetation-placement.md, "Canopy shade rule"): litter everywhere in
+# The floor for --stand from PlantGenerator.make_floor(); the bench's own set without one.
+func _stand_floor() -> Array:
+	var sets := {"beech": PlantGenerator.FLOOR_BEECH, "oak": PlantGenerator.FLOOR_OAK_MIXED,
+			"spruce": PlantGenerator.FLOOR_MONTANE_CONIFER, "mixed": PlantGenerator.FLOOR_MONTANE_CONIFER,
+			"pine": PlantGenerator.FLOOR_PINE_HEATH, "larch": PlantGenerator.FLOOR_SUBALPINE}
+	if not stand_set or not sets.has(stand):
+		return _floor_species()
+	return Array(PlantGenerator.make_floor(sets[stand], 3, not notex))
+
+# The wood's stand-in trees by --stand. Conifers set canopy_conifer, which the floor reads.
+func _stand_trees() -> Array:
+	match stand:
+		"spruce", "larch": return [_conifer_species(false)]
+		"pine": return [_conifer_species(true)]
+		"mixed":
+			var b := _tree_species()
+			b.patch_seed = 5
+			var c := _conifer_species(false)
+			c.patch_seed = 3
+			return [b, c]
+	return [_tree_species()]
+
+# Spruce: a dark narrow cone to the ground's shade, dense; pine: a high, flat, open crown on a
+# long bare trunk, letting 10 to 30% of the light through.
+func _conifer_species(pine: bool) -> PlantSpecies:
+	var st := SurfaceTool.new()
+	var am := ArrayMesh.new()
+	var trunk := CylinderMesh.new()
+	trunk.top_radius = 0.12 if pine else 0.1
+	trunk.bottom_radius = 0.28
+	trunk.height = 14.0 if pine else 12.0
+	var bark := StandardMaterial3D.new()
+	bark.albedo_color = Color(0.3, 0.17, 0.09) if pine else Color(0.16, 0.12, 0.1)
+	bark.roughness = 0.9
+	st.append_from(trunk, 0, Transform3D(Basis(), Vector3(0, trunk.height * 0.5, 0)))
+	st.commit(am)
+	am.surface_set_material(0, bark)
+	var leaves := StandardMaterial3D.new()
+	leaves.albedo_color = Color(0.07, 0.12, 0.05) if pine else Color(0.04, 0.08, 0.04)
+	leaves.roughness = 0.8
+	st = SurfaceTool.new()
+	if pine:
+		var crown := SphereMesh.new()
+		crown.radius = 3.4
+		crown.height = 3.0
+		st.append_from(crown, 0, Transform3D(Basis(), Vector3(0, 14.5, 0)))
+	else:
+		var crown := CylinderMesh.new()
+		crown.top_radius = 0.0
+		crown.bottom_radius = 2.8
+		crown.height = 10.0
+		# Lower branches die off in a closed stand: the live crown starts a few metres up.
+		st.append_from(crown, 0, Transform3D(Basis(), Vector3(0, 9.0, 0)))
+	st.commit(am)
+	am.surface_set_material(1, leaves)
+	var tree := PlantSpecies.new()
+	tree.meshes = [am]
+	tree.spacing = 6.5 if pine else 5.0
+	tree.footprint = 1.0
+	tree.density = 0.9
+	tree.scale_range = Vector2(0.85, 1.15)
+	tree.patch_scale = 30.0
+	tree.patch_cover = 0.45
+	tree.patch_seed = 3
+	tree.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(6.0, 1000000.0))
+	tree.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 3.0)
+	tree.canopy_radius = 3.4 if pine else 2.8
+	tree.canopy_opacity = 0.55 if pine else 0.95
+	tree.canopy_conifer = true
+	return tree
+
+# Forest floor (docs/ideas/forest-floor.md; vegetation-placement.md, "Canopy shade rule"): litter everywhere in
 # shade, bilberry and fern in drifts, moss in the deepest shade.
 func _floor_species() -> Array:
 	var fern := PlantSpecies.new()
@@ -528,8 +726,11 @@ func _floor_species() -> Array:
 	bilberry.patch_cover = 0.6
 	bilberry.scale_range = Vector2(1.0, 1.4)
 	bilberry.patch_seed = 71
-	bilberry.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.45, 1.0))
+	bilberry.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.3, 1.0))
 	bilberry.set_rule_fade(PlantSpecies.RULE_SHADE, 0.15)
+	# Acid needle litter: bilberry carpets under pine and spruce, scarce under beech.
+	bilberry.set_rule_range(PlantSpecies.RULE_CONIFER, Vector2(0.4, 1.0))
+	bilberry.set_rule_fade(PlantSpecies.RULE_CONIFER, 0.3)
 	bilberry.visibility_range = 25.0
 	var moss := PlantSpecies.new()
 	moss.meshes = _variants(PlantGenerator.PRESET_MOSS, 3)
@@ -547,11 +748,72 @@ func _floor_species() -> Array:
 	litter.meshes = _variants(PlantGenerator.PRESET_LEAF_LITTER, 3)
 	litter.spacing = 0.2
 	litter.footprint = 0.0
-	litter.density = 1.0
+	litter.density = 0.6 # The ground's shader carries the leaf carpet; these give it relief.
 	litter.scale_range = Vector2(1.2, 1.8)
 	litter.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.3, 1.0))
 	litter.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
+	litter.set_rule_range(PlantSpecies.RULE_CONIFER, Vector2(0.0, 0.5))
+	litter.set_rule_fade(PlantSpecies.RULE_CONIFER, 0.15)
 	litter.visibility_range = 15.0
+	# Needles and cones over the duff under conifers. The feather moss carpet itself is the
+	# ground's (its drifts in forest_floor()); a 3D carpet with an outline read as dark holes.
+	var needles := PlantSpecies.new()
+	needles.meshes = _variants(PlantGenerator.PRESET_NEEDLE_LITTER, 3)
+	needles.spacing = 0.35
+	needles.footprint = 0.0
+	needles.density = 0.8
+	needles.scale_range = Vector2(0.8, 1.3)
+	needles.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.3, 1.0))
+	needles.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
+	needles.set_rule_range(PlantSpecies.RULE_CONIFER, Vector2(0.5, 1.0))
+	needles.set_rule_fade(PlantSpecies.RULE_CONIFER, 0.15)
+	needles.visibility_range = 15.0
+	var carpet := PlantSpecies.new()
+	carpet.meshes = _variants(PlantGenerator.PRESET_FEATHER_MOSS, 3)
+	carpet.spacing = 0.55
+	carpet.footprint = 0.0
+	carpet.density = 0.5
+	carpet.scale_range = Vector2(0.9, 1.5)
+	carpet.patch_scale = 5.0
+	carpet.patch_cover = 0.5
+	carpet.patch_seed = 83
+	carpet.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.5, 1.0))
+	carpet.set_rule_fade(PlantSpecies.RULE_SHADE, 0.15)
+	carpet.set_rule_range(PlantSpecies.RULE_CONIFER, Vector2(0.5, 1.0))
+	carpet.set_rule_fade(PlantSpecies.RULE_CONIFER, 0.2)
+	carpet.visibility_range = 20.0
+	# Fallen twigs in every stand.
+	var twigs := PlantSpecies.new()
+	twigs.meshes = _variants(PlantGenerator.PRESET_TWIGS, 3)
+	twigs.spacing = 0.9
+	twigs.footprint = 0.0
+	twigs.density = 0.5
+	twigs.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.3, 1.0))
+	twigs.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
+	twigs.visibility_range = 18.0
+	# Shade herbs: wood sorrel in patches, beech and spruce seedlings waiting for a gap.
+	var sorrel := PlantSpecies.new()
+	sorrel.meshes = _variants(PlantGenerator.PRESET_WOOD_SORREL, 3)
+	sorrel.spacing = 0.25
+	sorrel.footprint = 0.1
+	sorrel.density = 0.9
+	sorrel.patch_scale = 3.0
+	sorrel.patch_cover = 0.35
+	sorrel.patch_seed = 87
+	sorrel.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.55, 1.0))
+	sorrel.set_rule_fade(PlantSpecies.RULE_SHADE, 0.15)
+	sorrel.visibility_range = 18.0
+	var seedling := PlantSpecies.new()
+	seedling.meshes = _variants(PlantGenerator.PRESET_SEEDLING, 4)
+	seedling.spacing = 0.8
+	seedling.footprint = 0.15
+	seedling.density = 0.5
+	seedling.patch_scale = 5.0
+	seedling.patch_cover = 0.3
+	seedling.patch_seed = 89
+	seedling.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.4, 0.97))
+	seedling.set_rule_fade(PlantSpecies.RULE_SHADE, 0.1)
+	seedling.visibility_range = 30.0
 	# Woodland edge (fringe and mantle): bracken stands, bramble and foxglove where the light
 	# falls off under the outer crowns, between the meadow and the forest floor.
 	var bracken := PlantSpecies.new()
@@ -589,7 +851,7 @@ func _floor_species() -> Array:
 	foxglove.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.1, 0.7))
 	foxglove.set_rule_fade(PlantSpecies.RULE_SHADE, 0.1)
 	foxglove.visibility_range = 40.0
-	return [bramble, bracken, foxglove, fern, bilberry, moss, litter]
+	return [bramble, bracken, foxglove, fern, seedling, bilberry, sorrel, moss, twigs, litter, needles]
 
 func _ground_mesh() -> Mesh:
 	var st := SurfaceTool.new()
@@ -683,6 +945,22 @@ func _checks() -> void:
 	grass.update_at(cam.global_position + Vector3(30, 0, 0))
 	print("GRASS_MOVE tiles=%d build_ms=%.1f" % [grass.get_tile_count(), grass.get_build_time_msec()])
 	grass.update_at(cam.global_position)
+	if cover:
+		# Far distance: every ranged plant carries its rank (0..1) and its species' range for the
+		# shader's thinning, and the tile is cut just past that range.
+		var ranged := 0
+		var bad := 0
+		for ch in cover.get_children(true):
+			if ch is MultiMeshInstance3D:
+				var mm: MultiMesh = ch.multimesh
+				for i in mm.instance_count:
+					var cd := mm.get_instance_custom_data(i)
+					var sp: PlantSpecies = cover.biome.species[int(cd.a)]
+					if sp.visibility_range > 0.0:
+						ranged += 1
+						if cd.r < 0.0 or cd.r > 1.0 or absf(cd.g - sp.visibility_range) > 1e-3 or absf(ch.visibility_range_end - sp.visibility_range * 1.05) > 1e-3:
+							bad += 1
+		_check("plants carry rank and range for thinning", ranged > 1000 and bad == 0, "%d ranged, %d bad" % [ranged, bad])
 
 func _place(node: Node3D, x: float, z: float, lift: float) -> void:
 	node.global_position = Vector3(x, height(x, z) + lift, z)
@@ -737,6 +1015,16 @@ func _process(dt: float) -> void:
 				under.rebuild()
 				turf.rebuild()
 				_frame_forest()
+			if swamp:
+				var lilies := cover.get_placements(0)
+				var floating := 0
+				for q in lilies:
+					if absf(q.y + 0.6) < 0.02: floating += 1
+				print("GRASS_SWAMP lilies=%d on_the_surface=%d" % [lilies.size(), floating])
+				if lilies.size() > 0 and swamp_close:
+					var l: Vector3 = lilies[0]
+					cam.position = l + Vector3(2.5, 1.6, 2.5)
+					cam.look_at(l)
 	if trample and n > 2:
 		_move(dt)
 	if n == frames - 30 and not test:
@@ -750,6 +1038,12 @@ func _process(dt: float) -> void:
 		return
 	if test:
 		return
+	if dolly and n >= 20:
+		# Walk into the land: plants grow in one by one as they come into range.
+		var fwd := -cam.global_transform.basis.z
+		fwd.y = 0.0
+		var p := cam.position + fwd.normalized() * 0.3
+		cam.position = Vector3(p.x, height(p.x, p.z) + 2.0, p.z)
 	if not clip.is_empty() and n >= 20:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(clip.path_join("f%03d.png" % (n - 20)))

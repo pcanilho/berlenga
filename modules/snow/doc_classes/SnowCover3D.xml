@@ -7,19 +7,19 @@
 		A square map of snowpack cells, [member extent] metres wide, that follows the camera (or [member follow_target]). Each cell holds its snow water equivalent, density, liquid water and albedo, and advances them from the active [code]WeatherMap3D[/code] (its precipitation, temperature, humidity, wind, cloud and sun) or, without one, from this node's own weather settings.
 		- Rain or snow: the logistic model of air temperature and humidity of Jennings et al. (2018), the air cooling with height by [member lapse_rate], so mountains get a snow line.
 		- New snow density by temperature (Hedstrom and Pomeroy 1998); settling toward a maximum density that grows with depth, and albedo ageing (CLASS, Verseghy 1991).
-		- Melt by temperature and by the sunlight each slope absorbs (Pellicciotti et al. 2005); rain and meltwater held up to [member liquid_capacity], the rest running off; refreezing in the cold.
-		- Snow sliding off slopes steeper than [member slide_angle] (SnowSlide, Bernhardt and Schulz 2010) and wind drifting it into sheltered ground (Winstral, Elder and Davis 2002).
+		- Melt by temperature and by the sunlight each slope absorbs (Pellicciotti et al. 2005); rain and meltwater held up to [member liquid_capacity], the rest running off; refreezing in the cold, into crusts that harden with each melt-freeze cycle ([member crust_enabled]).
+		- Snow sliding off slopes steeper than [member slide_angle] (SnowSlide, Bernhardt and Schulz 2010) and wind drifting it into sheltered ground (Winstral, Elder and Davis 2002), and moving the snow already lying ([member wind_transport_enabled]).
 		Materials read it through the [code]snow_map[/code] and [code]snow_map_rect[/code] global shader parameters ([member BaseMaterial3D.snow_enabled]), in raster and under path tracing; scripts through the [code]get_*_at[/code] methods. Cells entering the map as it moves take the state of the nearest cell that was inside it. The last [SnowCover3D] to enter the tree publishes the map.
 	</description>
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="canopy_capacity" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="closure" type="float" />
-			<param index="1" name="snow_density" type="float" />
+		<method name="add_crust">
+			<return type="void" />
+			<param index="0" name="thickness" type="float" />
+			<param index="1" name="cycles" type="float" />
 			<description>
-				The most snow water a canopy of [param closure] holds, in mm (kg/m²), for new snow of [param snow_density] kg/m³ (Hedstrom and Pomeroy 1998).
+				Lays a frozen crust [param thickness] m thick (at most 0.05) on top of the snow everywhere on the map, as if it had been through [param cycles] melt-freeze cycles. For scenes that start on crusted snow. See [method crust_strength].
 			</description>
 		</method>
 		<method name="add_snow">
@@ -52,10 +52,28 @@
 				Runs [member climate]'s season over the square [param rect] at [param resolution] cells a side, on this cover's ground and settings, and stores the snowpack it leaves in the climate. The world tier then starts from it and the near square is seeded from it. Blocking: a 182-day winter on 256 x 256 cells takes a few seconds.
 			</description>
 		</method>
+		<method name="canopy_capacity" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="closure" type="float" />
+			<param index="1" name="snow_density" type="float" />
+			<description>
+				The most snow water a canopy of [param closure] holds, in mm (kg/m²), for new snow of [param snow_density] kg/m³ (Hedstrom and Pomeroy 1998).
+			</description>
+		</method>
 		<method name="clear">
 			<return type="void" />
 			<description>
 				Removes all snow from the map.
+			</description>
+		</method>
+		<method name="cornice_crack_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="length" type="float" />
+			<param index="1" name="crack" type="float" />
+			<param index="2" name="celsius" type="float" />
+			<param index="3" name="liquid" type="float" />
+			<description>
+				How fast the tension crack behind a cornice opens, in m/day: the slab tilts about its root by viscous creep, at the snow viscosity of Crocus (Vionnet et al. 2012) for its temperature [param celsius] and water. A 4 m cornice opens about 0.9 cm a day at -5 °C, 1.4 at 0 °C and 4.9 wet, as at Gruvefjellet (0.4 to 2.8 cm a day, up to 8.6 before a failure; Vogel et al. 2012), faster as the crack opens.
 			</description>
 		</method>
 		<method name="cornice_growth_share" qualifiers="static">
@@ -63,6 +81,30 @@
 			<param index="0" name="wind_ratio" type="float" />
 			<description>
 				How fast a cornice grows at a wind of [param wind_ratio] times the threshold for moving snow, as a share of the fastest: 0 below 1 and from 2, 1 at 1.4 (Yu et al. 2023).
+			</description>
+		</method>
+		<method name="cornice_root_stress" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="length" type="float" />
+			<param index="1" name="crack" type="float" />
+			<param index="2" name="liquid" type="float" />
+			<description>
+				The tensile stress at the root of a cornice [param length] m long whose tension crack is [param crack] m open, in kPa, with [param liquid] the pack's liquid water over its water. The overhang is a cantilever thinning from a root as thick as it is long to its lip, so the root carries [code]ρ g L[/code] in bending (450 kg/m³ wind-packed snow, heavier with its water); the crack cuts into the section, taking 60% of it when open to a tenth of the length.
+			</description>
+		</method>
+		<method name="cornice_strength" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="liquid" type="float" />
+			<description>
+				The tensile strength of a cornice's root, in kPa: a tenth of the most snow of 450 kg/m³ holds in tension (Sommerfeld 1971), since a slab metres across fails at its weakest flaw (McClung 1979), weakened by melt water in its bonds. A cold, uncracked cornice falls at about 10 m.
+			</description>
+		</method>
+		<method name="crust_strength" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="cycles" type="float" />
+			<param index="1" name="thickness" type="float" />
+			<description>
+				The pressure, in kPa, a frozen crust of [param thickness] m bears after [param cycles] melt-freeze cycles before it breaks. From the hand hardness of Fierz et al. (2009): a first-cycle crust is one-finger hard (about 19 kPa, so an adult's boot at about 21 kPa breaks it), each further cycle half a step harder (48 kPa after two, pencil hard, 120 kPa, after three). A crust thinner than 2 cm bears in proportion to its thickness.
 			</description>
 		</method>
 		<method name="get_air_temperature_at" qualifiers="const">
@@ -79,18 +121,16 @@
 				Returns the albedo of the snow at [param position]: 0.84 when fresh, ageing toward 0.70 when dry and 0.50 when melting.
 			</description>
 		</method>
-		<method name="get_cornice_at" qualifiers="const">
-			<return type="Vector2" />
-			<param index="0" name="position" type="Vector3" />
+		<method name="get_blown_flux_max" qualifiers="const">
+			<return type="float" />
 			<description>
-				The world tier's cornice at a position: its overhang in metres along the wind that built it, as an XZ vector.
+				The largest snow transport flux on the map in the last update, kg per metre of width per second ([member wind_transport_enabled]).
 			</description>
 		</method>
-		<method name="get_density_at" qualifiers="const">
+		<method name="get_blown_mean" qualifiers="const">
 			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
 			<description>
-				Returns the density of the snowpack at [param position], in kg/m³.
+				The snow water the wind moved in the last update, mm per cell on average.
 			</description>
 		</method>
 		<method name="get_canopy_capacity_at" qualifiers="const">
@@ -111,6 +151,61 @@
 			<return type="Texture2D" />
 			<description>
 				The catch map over the near square (the [code]snow_catch_map[/code] shader global): the height the pack lies at, the canopy's load over its capacity, the canopy closure, and 1 in alpha. Surfaces well under that height (under a roof) stay bare; surfaces well above it under a canopy (tree crowns) show the canopy's load.
+			</description>
+		</method>
+		<method name="get_cornice_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The world tier's cornice at a position: its overhang in metres along the wind that built it, as an XZ vector.
+			</description>
+		</method>
+		<method name="get_cornice_crack_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The opening of the tension crack behind the world tier's cornice at a position, in metres. It opens by creep (see [method cornice_crack_rate]) and fills as the wind builds the cornice on.
+			</description>
+		</method>
+		<method name="get_cornice_failure_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many cornices have fallen since the world tier was made.
+			</description>
+		</method>
+		<method name="get_crust_cycles_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The melt-freeze cycles of the top crust at [param position] (0: no crust).
+			</description>
+		</method>
+		<method name="get_crust_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The snow over the top crust at [param position], in metres. New snow and snow sliding down bury it, melt uncovers it.
+			</description>
+		</method>
+		<method name="get_crust_strength_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The pressure the top crust at [param position] bears before it breaks, in kPa (see [method crust_strength]); 0 where there is no crust or it is wet. [SnowSurface3D] holds a body whose pressure is lower on the crust, so only the snow over it compacts.
+			</description>
+		</method>
+		<method name="get_crust_thickness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The thickness of the top crust at [param position], in metres.
+			</description>
+		</method>
+		<method name="get_density_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the density of the snowpack at [param position], in kg/m³.
 			</description>
 		</method>
 		<method name="get_depth_at" qualifiers="const">
@@ -144,6 +239,14 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the depth of new snow, in metres, the last update (or [method add_snow]) laid at [param position].
+			</description>
+		</method>
+		<method name="get_orographic_factor_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="reference_height" type="float" />
+			<description>
+				The share of the background precipitation that falls at [param position]: the [member climate_map]'s precipitation over its recipe's [member ClimateRecipe.precipitation] when it has a baked climate, else [member precipitation_gradient] per 100 m above [param reference_height].
 			</description>
 		</method>
 		<method name="get_runoff_at" qualifiers="const">
@@ -267,6 +370,23 @@
 				Returns the share of precipitation that falls as snow at air temperature [param celsius] and relative humidity [param humidity] (0 to 1), from the logistic model of Jennings et al. (2018): 1 / (1 + exp(-10.04 + 1.41 T + 0.09 RH)), RH in percent. Half falls as snow at 3.9 °C in dry air (50%) and at 1.4 °C in humid air (90%).
 			</description>
 		</method>
+		<method name="transport_flux" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="wind10" type="float" />
+			<param index="1" name="celsius" type="float" />
+			<param index="2" name="density" type="float" />
+			<description>
+				The snow the wind carries over lying snow, kg per metre of width per second, at a 10 m wind of [param wind10] m/s over snow of [param density] kg/m³ at [param celsius]: saltation (Pomeroy and Gray 1990) plus suspension, the PBSM concentration profile (Pomeroy and Male 1992) times the log wind profile up to 5 m. 0 at or below [method transport_threshold] and in snow at or above 0 °C.
+			</description>
+		</method>
+		<method name="transport_threshold" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<param index="1" name="density" type="float" />
+			<description>
+				The 10 m wind, m/s, that starts snow of [param density] kg/m³ at [param celsius] moving: the higher of Li and Pomeroy (1997) by temperature and Liston et al. (2007) by density, u*t = 0.10 exp(0.003 ρ).
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="canopy_enabled" type="bool" setter="set_canopy_enabled" getter="is_canopy_enabled" default="true">
@@ -274,6 +394,15 @@
 		</member>
 		<member name="climate" type="SnowClimate" setter="set_climate" getter="get_climate">
 			A baked [SnowClimate]: the cover keeps a coarse world tier of snow over its square, carries it on with the weather at a lower rate, seeds cells entering the near square from it (then sheds what their finer slopes cannot hold) and publishes it as [code]snow_world_map[/code] and [code]snow_world_rect[/code], which [BaseMaterial3D] snow and the path tracer read beyond the near square.
+		</member>
+		<member name="climate_map" type="NodePath" setter="set_climate_map" getter="get_climate_map" default="NodePath(&quot;&quot;)">
+			A [TerrainDataMap3D] with a baked climate and a [member TerrainDataMap3D.climate_recipe]. Its precipitation field (the linear theory of orographic precipitation, Smith and Barstad 2004: more on windward slopes and summits, less in their rain shadow) over the recipe's flat-ground precipitation scales what falls on every cell, in place of [member precipitation_gradient], in the near square, the world tier and [method bake_climate]. Set [member SnowClimate.recipe] to the same recipe for one climate across snow, rivers and plants.
+		</member>
+		<member name="cornice_failure_enabled" type="bool" setter="set_cornice_failure_enabled" getter="is_cornice_failure_enabled" default="true">
+			If [code]true[/code], the world tier's cornices open a tension crack behind them by creep and fall once the root cannot hold them (see [method cornice_root_stress] and [method cornice_strength]). The fallen slab lands as dense debris at the foot of the face below, in the world tier and the near square, and [signal cornice_failed] is emitted. Cold cornices hold for weeks; thaws and rain bring them down within days, so most fall in spring.
+		</member>
+		<member name="crust_enabled" type="bool" setter="set_crust_enabled" getter="is_crust_enabled" default="true">
+			When on, a surface that was wet (meltwater or rain) and freezes again turns into a crust: "at most a few centimetres thick", harder with each melt-freeze cycle (melt-freeze crust, MFcr, in Fierz et al. 2009). The refrozen water makes it thicker, new snow buries it, melt uncovers it, and a crust wet again bears nothing until it freezes. Only the top crust is kept: when the snow over a buried crust gets wet, a new one starts there.
 		</member>
 		<member name="drift_distance" type="float" setter="set_drift_distance" getter="get_drift_distance" default="100.0">
 			How far upwind the terrain is searched for shelter (Winstral's dmax), in metres.
@@ -327,6 +456,9 @@
 		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="256">
 			The number of cells along each side of the map.
 		</member>
+		<member name="shelter_collision_mask" type="int" setter="set_shelter_collision_mask" getter="get_shelter_collision_mask" default="0">
+			With a [member height_source], colliders on these layers (roofs, overhangs) found above the terrain catch the snow, and the ground under them stays bare. Without a height source the cast on [member ground_collision_mask] finds them already.
+		</member>
 		<member name="slide_angle" type="float" setter="set_slide_angle" getter="get_slide_angle" default="25.0">
 			Ground steeper than this, in degrees, sheds snow beyond what it holds (SnowSlide: 25 degrees).
 		</member>
@@ -351,11 +483,25 @@
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="2.0">
 		</member>
+		<member name="wind_curvature_length" type="float" setter="set_wind_curvature_length" getter="get_wind_curvature_length" default="20.0">
+			The distance, in metres, over which [member wind_transport_enabled] measures the ground's curvature (MicroMet's length scale; at least two cells).
+		</member>
+		<member name="wind_transport_enabled" type="bool" setter="set_wind_transport_enabled" getter="is_wind_transport_enabled" default="true">
+			When on, wind above the transport threshold moves the snow already lying (SnowTran-3D, Liston and Sturm 1998): each cell sends its flux ([method transport_flux]) downwind, so snow leaves where the wind speeds up (windward shoulders, crests) and settles where it slows (below crests, in hollows), laid down wind-packed at 300 kg/m³. The wind over the ground is weighted by its slope along the wind and its curvature (MicroMet, Liston and Elder 2006). Snow under a frozen crust, wet snow and snow under trees stay. Snow comes in at the upwind edge of the map as from a cell like the edge one and leaves at the downwind edge. [member drift_enabled] is separate: it places falling snow.
+		</member>
 		<member name="world_update_every" type="int" setter="set_world_update_every" getter="get_world_update_every" default="8">
 			How many updates of the near square pass between updates of the world tier.
 		</member>
-			<member name="shelter_collision_mask" type="int" setter="set_shelter_collision_mask" getter="get_shelter_collision_mask" default="0">
-			With a [member height_source], colliders on these layers (roofs, overhangs) found above the terrain catch the snow, and the ground under them stays bare. Without a height source the cast on [member ground_collision_mask] finds them already.
-		</member>
-</members>
+	</members>
+	<signals>
+		<signal name="cornice_failed">
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="direction" type="Vector3" />
+			<param index="2" name="length" type="float" />
+			<param index="3" name="mass" type="float" />
+			<description>
+				Emitted when a cornice falls: [param position] the crest top it broke from, [param direction] out over the lee, [param length] its overhang in metres and [param mass] the snow that fell, in kg. [SnowCornice3D] turns it into falling blocks near the camera.
+			</description>
+		</signal>
+	</signals>
 </class>

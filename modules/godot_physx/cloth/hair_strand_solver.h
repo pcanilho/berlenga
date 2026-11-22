@@ -47,6 +47,7 @@ class HairStrandSolverGPU : public RefCounted {
 public:
 	static constexpr int MAX_SPHERES = 32;
 	static constexpr int MAX_SDF_CELLS = 64 * 64 * 64;
+	static constexpr int DOM_CELLS = 256; // deep opacity map, a side
 
 	RenderingDevice *rd = nullptr;
 	bool local = false;
@@ -56,6 +57,7 @@ public:
 	bool owns_shader = false;
 	RID buf_params, buf_rest, buf_strands, buf_pos, buf_prev, buf_follow, buf_order, tex_out;
 	RID tex_out_prev, buf_last; // last frame's output (motion vectors) and where each point was
+	RID buf_dom_depth, buf_dom_accum, tex_dom; // the deep opacity map
 	bool history = false; // buf_last holds last frame's output
 	RID buf_tris, buf_sdf; // the collision body's triangles and its distance field
 	RID buf_vol, buf_vol_rest; // the hair volume grid (density, momentum) and the groom's own density
@@ -122,6 +124,12 @@ public:
 		bool volume_enabled = true; // hair-hair interaction through a density grid (Petrovic 2005)
 		float volume_friction = 0.2f; // pull toward the neighbours' mean velocity, per 1/60 s
 		float volume_stiffness = 1.0f; // push out of hair packed denser than the groom
+		// Deep opacity map (Yuksel and Keyser 2008) toward one directional light; radius 0: off.
+		Vector3 dom_center; // world
+		float dom_radius = 0.0f;
+		Vector3 dom_light; // world, toward the light
+		float root_width = 0.0004f; // m, the strands' width, for their coverage
+		float tip_width = 0.0001f;
 	};
 
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }
@@ -142,6 +150,12 @@ public:
 
 	RID get_position_texture_rd_rid() const;
 	RID get_previous_position_texture_rd_rid() const;
+	// The deep opacity map: DOM_CELLS x DOM_CELLS cells (first hair's depth, coverage summed to the
+	// end of each of three layers), then as many more (the first opaque depth).
+	RID get_deep_shadow_texture_rd_rid() const;
+	// The map's axes for a light direction (world, toward the light), as step() builds them.
+	static void deep_shadow_axes(const Vector3 &p_light, Vector3 &r_u, Vector3 &r_v);
+	static Vector3 deep_shadow_layers() { return Vector3(0.01f, 0.04f, 0.15f); }
 	int get_texture_width() const;
 
 	HairStrandSolver();

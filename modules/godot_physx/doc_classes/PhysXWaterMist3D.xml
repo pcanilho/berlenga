@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXWaterMist3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Mist from falling or breaking water, drawn in raster and under path tracing.
+	</brief_description>
+	<description>
+		The finest drops a waterfall, a rapid or a fountain throws (about [member drop_radius] 20 um): they settle at a few cm/s (Stokes) and evaporate in seconds to minutes depending on the humidity, so they ride the air. A small grid of liquid water content (g/m³) over a box aligned with the world axes, stepped on the CPU at [member update_rate]: semi-Lagrangian advection (Stam 1999), turbulent [member diffusion], settling and evaporation. Mist is added at the source box and carried by the source's own air, a wall jet leaving the source along [member jet_direction] at [member jet_speed] and spreading round it (the spray wind a fall drags down), plus the wind of the active [code]WeatherMap3D[/code] (or [member wind]).
+		Raster: a [FogVolume] over the box with the grid as its [member FogMaterial.density_texture]; while a mist is live and the [Environment]'s volumetric fog is off, the mist turns it on with no fog of its own ([member Environment.volumetric_fog_density] 0), lit by the sky ([member Environment.volumetric_fog_ambient_inject] 1) and reaching 200 m, and puts it back when the last mist goes. Path tracing: a dense medium traced with delta tracking like simulated gas, extinction 3 LWC / (2 rho_w r), single scattering albedo 0.999 and a Henyey-Greenstein lobe of g 0.85 (drops this size scatter forward). Up to five mists are traced at once; a frame where a [code]PhysXFlow3D[/code] traces its gas shows that instead.
+		[PhysXRiver3D] makes one at the foot of each waterfall ([member PhysXRiver3D.fall_mist]).
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<description>
+				Steps the grid [param seconds] ahead now, as if that much time had passed.
+			</description>
+		</method>
+		<method name="get_max_density" qualifiers="const">
+			<return type="float" />
+			<description>
+				The densest cell's liquid water content, g/m³.
+			</description>
+		</method>
+		<method name="sample_density" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
+				Liquid water content (g/m³) at a world position, 0 outside the box.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="0.5">
+			Grid cell size, m; grown so no side holds more than 64 cells.
+		</member>
+		<member name="diffusion" type="float" setter="set_diffusion" getter="get_diffusion" default="0.5">
+			Turbulent diffusivity of the air, m²/s.
+		</member>
+		<member name="drop_radius" type="float" setter="set_drop_radius" getter="get_drop_radius" default="20.0">
+			Drop radius, micrometres: sets how fast the mist settles, how long it lasts and how much light it stops per gram.
+		</member>
+		<member name="emitting" type="bool" setter="set_emitting" getter="is_emitting" default="true">
+			Off, no more mist is added; what is there drifts off and evaporates.
+		</member>
+		<member name="follow_weather" type="bool" setter="set_follow_weather" getter="get_follow_weather" default="true">
+			Take the wind and the humidity from the active [code]WeatherMap3D[/code], when there is one.
+		</member>
+		<member name="humidity" type="float" setter="set_humidity" getter="get_humidity" default="0.85">
+			Relative humidity without a [code]WeatherMap3D[/code]: drops of 20 um last about 13 s at 0.85, a minute at 0.97.
+		</member>
+		<member name="jet_direction" type="Vector3" setter="set_jet_direction" getter="get_jet_direction" default="Vector3(0, 0, -1)">
+			Local, horizontal: the way the source's air leaves it. It spreads round this direction but never goes back against it.
+		</member>
+		<member name="jet_speed" type="float" setter="set_jet_speed" getter="get_jet_speed" default="3.0">
+			Speed of the source's air as it leaves the source, m/s, falling off as it spreads.
+		</member>
+		<member name="size" type="Vector3" setter="set_size" getter="get_size" default="Vector3(16, 10, 16)">
+			The box, m: centred on the node in x and z, from the node up, along the world axes.
+		</member>
+		<member name="source_extents" type="Vector3" setter="set_source_extents" getter="get_source_extents" default="Vector3(3, 0.5, 1)">
+			Half extents of the source box, in the node's axes.
+		</member>
+		<member name="source_position" type="Vector3" setter="set_source_position" getter="get_source_position" default="Vector3(0, 0, 0)">
+			Centre of the source box, local.
+		</member>
+		<member name="source_rate" type="float" setter="set_source_rate" getter="get_source_rate" default="200.0">
+			Grams of mist added a second.
+		</member>
+		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="15.0">
+			Grid steps a second.
+		</member>
+		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
+			Wind without a [code]WeatherMap3D[/code], m/s.
+		</member>
+	</members>
+</class>

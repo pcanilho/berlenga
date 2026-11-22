@@ -26,18 +26,6 @@
 				Extinction per metre of blowing snow of [param concentration] kg/m³ (geometric optics, 40 µm grains).
 			</description>
 		</method>
-		<method name="get_blowing_extinction" qualifiers="const">
-			<return type="float" />
-			<description>
-				The blowing snow's extinction at 1 m over the snow under the camera, per metre (0 when none blows).
-			</description>
-		</method>
-		<method name="get_blowing_height_scale" qualifiers="const">
-			<return type="float" />
-			<description>
-				The e-folding height of the blowing-snow haze, in metres.
-			</description>
-		</method>
 		<method name="blowing_threshold" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="celsius" type="float" />
@@ -71,6 +59,18 @@
 			<return type="float" />
 			<description>
 				Returns the share of [member max_blowing] shown, from the saltation flux.
+			</description>
+		</method>
+		<method name="get_blowing_extinction" qualifiers="const">
+			<return type="float" />
+			<description>
+				The blowing snow's extinction at 1 m over the snow under the camera, per metre (0 when none blows).
+			</description>
+		</method>
+		<method name="get_blowing_height_scale" qualifiers="const">
+			<return type="float" />
+			<description>
+				The e-folding height of the blowing-snow haze, in metres.
 			</description>
 		</method>
 		<method name="get_extinction" qualifiers="const">
@@ -150,6 +150,9 @@
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node the boxes follow. Empty: the current camera.
 		</member>
+		<member name="haze_enabled" type="bool" setter="set_haze_enabled" getter="is_haze_enabled" default="true">
+			Push the snow's extinction to the active [WeatherMap3D] ([method WeatherMap3D.set_precipitation_extinction]): the falling snow as haze everywhere, the blowing snow as a layer over the snow around the camera. Both renderers draw it.
+		</member>
 		<member name="max_blowing" type="int" setter="set_max_blowing" getter="get_max_blowing" default="30000">
 			The number of blowing snow particles at full strength.
 		</member>
@@ -177,11 +180,8 @@
 		<member name="threshold_wind_override" type="float" setter="set_threshold_wind_override" getter="get_threshold_wind_override" default="-1.0">
 			The threshold wind for blowing snow in m/s at 10 m; negative uses Li and Pomeroy's relation to the air temperature.
 		</member>
-			<member name="haze_enabled" type="bool" setter="set_haze_enabled" getter="is_haze_enabled" default="true">
-			Push the snow's extinction to the active [WeatherMap3D] ([method WeatherMap3D.set_precipitation_extinction]): the falling snow as haze everywhere, the blowing snow as a layer over the snow around the camera. Both renderers draw it.
-		</member>
 		<member name="turbulence" type="float" setter="set_turbulence" getter="get_turbulence" default="1.0">
 			Scale of the turbulent eddies flakes and drifting snow ride on top of the weather wind (Kraichnan's random Fourier modes, σ = 2.5 u*).
 		</member>
-</members>
+	</members>
 </class>

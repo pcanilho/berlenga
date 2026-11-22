@@ -582,6 +582,7 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->transmission_ior = "transmission_ior";
 	shader_names->transmission_attenuation_color = "transmission_attenuation_color";
 	shader_names->transmission_attenuation_distance = "transmission_attenuation_distance";
+	shader_names->transmission_thickness = "transmission_thickness";
 	shader_names->transmission_scatter_strength = "transmission_scatter_strength";
 	shader_names->transmission_scatter_color = "transmission_scatter_color";
 	shader_names->transmission_scatter_anisotropy = "transmission_scatter_anisotropy";
@@ -617,6 +618,18 @@ void BaseMaterial3D::init_shaders() {
 		// And its world tier, the coarse pack over the whole terrain drawn outside the near square.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Under the path tracer every ice grain a facet, per ray (docs/ideas/snow.md, follow-up 5). Off by
+		// default: it needs many samples or the denoiser; off, the path tracer uses the raster's footprint grid.
+		Dictionary exact;
+		exact["type"] = "bool";
+		exact["value"] = false;
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_exact_glints", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), exact);
+		// Ground deformation reads GroundSurface3D's (rect width 0 = none: nothing lowered, nothing moved).
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_height", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_height_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_skirt", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -736,6 +749,8 @@ void weather_wetness_apply(float p_wet, float p_normal_y, float p_metallic, floa
 
 String BaseMaterial3D::get_snow_functions_code(bool p_from_weather) {
 	String code;
+	// Read by snow_glint_apply_specular() under the path tracer, with or without a snowpack.
+	code += "global uniform bool snow_exact_glints;\n";
 	if (p_from_weather) {
 		code += R"(global uniform sampler2D snow_map;
 global uniform sampler2D snow_catch_map;
@@ -762,7 +777,8 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 	if (snow_map_rect.z > 0.0) {
 		vec2 nuv = (p_world_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
 		vec2 ne = min(nuv, 1.0 - nuv);
-		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : 1.0;
+		// With no world tier there is nothing outside the square: no data there, not its edge stretched out.
+		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
 		if (nw > 0.0) {
 			vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
 			s = mix(s, textureLod(snow_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
@@ -880,6 +896,47 @@ void snow_glint_apply(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, fl
 		}
 	}
 }
+
+// Exact sparkle under the path tracer (docs/ideas/snow.md, follow-up 5; the same function is in
+// scene_raytracing_raygen.glsl and SnowSurface3D's shader): the facet of the 2 mm grain at a point. Every grain
+// is an ice facet, its normal GGX-tilted (alpha 0.4); a pixel's samples land on different grains, so the path
+// tracer integrates the footprint's own facets (the reference Jakob et al. 2014 and Yan et al. 2014 measure
+// their counting models against), at any distance and on any bounce.
+vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
+	const float grain = 0.002;
+	ivec3 q = ivec3(floor(p_pos / grain));
+	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	float r1 = float(h & 0xffffu) / 65536.0;
+	float r2 = float(h >> 16u) / 65536.0;
+	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * r2;
+	return normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
+}
+
+// snow_glint_apply that also owns the snow's specular (call it in place of snow_glint_apply): under the path
+// tracer (with snow_exact_glints) the base specular lies on the facet of the grain hit (SPECULAR_NORMAL, view
+// space; the diffuse keeps NORMAL) at the facet's own roughness; elsewhere as above.
+void snow_glint_apply_specular(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, float p_snow, float p_wet, mat4 p_view, vec3 p_tangent, vec3 p_binormal, inout vec3 r_normal, inout vec3 r_normal_map, inout float r_normal_map_depth, inout float r_clearcoat, inout float r_clearcoat_roughness, inout float r_roughness, inout vec3 r_specular_normal) {
+	if (!(IN_PATH_TRACER && snow_exact_glints)) {
+		snow_glint_apply(p_world_pos, p_geo_normal, p_footprint, p_snow, p_wet, p_view, p_tangent, p_binormal, r_normal, r_normal_map, r_normal_map_depth, r_clearcoat, r_clearcoat_roughness);
+		return;
+	}
+	float gw = step(0.5, p_snow) * (1.0 - smoothstep(0.05, 0.3, p_wet));
+	if (gw <= 0.0) {
+		return;
+	}
+	r_specular_normal = normalize((p_view * vec4(snow_grain_facet(p_world_pos, p_geo_normal), 0.0)).xyz);
+	r_roughness = mix(r_roughness, 0.22, gw);
+}
 )";
 	return code;
 }
@@ -934,6 +991,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.wetness_from_weather = wetness_from_weather;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
+		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -1360,6 +1418,7 @@ uniform sampler2D texture_transmission : hint_default_white, %s;
 uniform float transmission_ior : hint_range(1.0, 3.0, 0.01);
 uniform vec4 transmission_attenuation_color : source_color;
 uniform float transmission_attenuation_distance : hint_range(0.0, 1000.0, 0.01);
+uniform float transmission_thickness : hint_range(0.0, 100.0, 0.001);
 uniform float transmission_scatter_strength : hint_range(0.0, 1.0, 0.01);
 uniform vec4 transmission_scatter_color : source_color;
 uniform float transmission_scatter_anisotropy : hint_range(-0.99, 0.99, 0.01);
@@ -1526,6 +1585,10 @@ uniform vec3 uv2_offset;
 		code += "uniform float z_clip_scale : hint_range(0.01, 1.0, 0.01);\n";
 	}
 
+	if (features[FEATURE_GROUND_DEFORM]) {
+		code += _ground_deform_code(false, ground_deform_patch);
+	}
+
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
 		code += "uniform float fov_override : hint_range(1.0, 179.0, 0.1);\n";
 	}
@@ -1533,6 +1596,11 @@ uniform vec3 uv2_offset;
 	// Generate vertex shader.
 	code += R"(
 void vertex() {)";
+
+	if (features[FEATURE_GROUND_DEFORM]) {
+		// First, so everything below (triplanar positions, world normals) sees the moved vertex.
+		code += "\n	ground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n";
+	}
 
 	if (flags[FLAG_SRGB_VERTEX_COLOR]) {
 		code += R"(
@@ -2092,7 +2160,21 @@ void fragment() {)";
 	// The view ray (VIEW points at the eye even in orthogonal projection).
 	vec3 transmission_incident = PROJECTION_MATRIX[3][3] == 1.0 ? vec3(0.0, 0.0, -1.0) : normalize(VERTEX);
 	vec3 transmission_ray = refract(transmission_incident, NORMAL, 1.0 / max(transmission_ior, 1.0));
-	vec4 transmission_clip = PROJECTION_MATRIX * vec4(VERTEX + transmission_ray * min(distance(transmission_back.xyz, VERTEX), 1.0e4), 1.0);
+	vec3 transmission_start = VERTEX;
+	float transmission_inside = -1.0; // path inside the medium; below 0: up to what lies behind
+	if (transmission_thickness > 0.0) {
+		// A solid of this thickness (glTF KHR_materials_volume thicknessFactor): the ray leaves it through a
+		// second surface and bends back there. Filament's solid refraction model: the object as a sphere,
+		// the exit point thickness * -dot(N, ray) along the refracted ray, the exit normal from the sphere.
+		float transmission_nor = dot(NORMAL, transmission_ray);
+		transmission_inside = transmission_thickness * max(-transmission_nor, 0.0);
+		transmission_start = VERTEX + transmission_ray * transmission_inside;
+		vec3 transmission_exit_n = normalize(transmission_nor * transmission_ray - NORMAL * 0.5);
+		vec3 transmission_out = refract(transmission_ray, transmission_exit_n, max(transmission_ior, 1.0));
+		// Total internal reflection keeps the ray inside: carry on along it.
+		transmission_ray = dot(transmission_out, transmission_out) > 0.0 ? transmission_out : transmission_ray;
+	}
+	vec4 transmission_clip = PROJECTION_MATRIX * vec4(transmission_start + transmission_ray * min(max(distance(transmission_back.xyz, VERTEX) - max(transmission_inside, 0.0), 0.0), 1.0e4), 1.0);
 	vec2 transmission_uv = clamp(transmission_clip.xy / transmission_clip.w * 0.5 + 0.5, vec2(0.0), vec2(1.0));
 	transmission_depth_tex = textureLod(depth_texture, transmission_uv, 0.0).r;
 	transmission_ndc = OUTPUT_IS_SRGB ? vec4(vec3(transmission_uv, transmission_depth_tex) * 2.0 - 1.0, 1.0) : vec4(transmission_uv * 2.0 - 1.0, transmission_depth_tex, 1.0);
@@ -2104,7 +2186,7 @@ void fragment() {)";
 		transmission_found = transmission_back;
 	}
 	if (transmission_attenuation_distance > 0.0) {
-		float transmission_path = min(distance(transmission_found.xyz, VERTEX), 1.0e4);
+		float transmission_path = transmission_inside >= 0.0 ? transmission_inside : min(distance(transmission_found.xyz, VERTEX), 1.0e4);
 		transmission_absorption = pow(max(transmission_attenuation_color.rgb, vec3(1.0e-4)), vec3(transmission_path / transmission_attenuation_distance));
 	}
 	// What the medium scatters back looks, after many bounces, like a diffuse surface of its multi-scatter
@@ -2380,6 +2462,17 @@ void fragment() {)";
 		code += R"(	vec3 detail_norm = mix(NORMAL_MAP, detail_norm_tex.rgb, detail_tex.a);
 	NORMAL_MAP = mix(NORMAL_MAP, detail_norm, detail_mask_tex.r);
 	ALBEDO.rgb = mix(ALBEDO.rgb, detail, detail_mask_tex.r);
+)";
+	}
+
+	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
+		// Turned ground (docs/ideas/ground-deform.md): darker and, wet, smoother where freshly dug; the path
+		// tracer applies the same factors (scene_raytracing_raygen.glsl).
+		code += R"(	{
+		vec2 gd_tint = ground_deform_tint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
+		ALBEDO *= gd_tint.x;
+		ROUGHNESS = clamp(ROUGHNESS * gd_tint.y, 0.0, 1.0);
+	}
 )";
 	}
 
@@ -2772,6 +2865,15 @@ float BaseMaterial3D::get_transmission_attenuation_distance() const {
 	return transmission_attenuation_distance;
 }
 
+void BaseMaterial3D::set_transmission_thickness(float p_thickness) {
+	transmission_thickness = MAX(p_thickness, 0.0f);
+	_material_set_param(shader_names->transmission_thickness, transmission_thickness);
+}
+
+float BaseMaterial3D::get_transmission_thickness() const {
+	return transmission_thickness;
+}
+
 void BaseMaterial3D::set_transmission_scatter_strength(float p_strength) {
 	transmission_scatter_strength = CLAMP(p_strength, 0.0f, 1.0f);
 	_material_set_param(shader_names->transmission_scatter_strength, transmission_scatter_strength);
@@ -3136,7 +3238,7 @@ void BaseMaterial3D::_validate_property(PropertyInfo &p_property) const {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 
-		if ((p_property.name == "transmission_ior" || p_property.name == "transmission_attenuation_color" || p_property.name == "transmission_attenuation_distance" ||
+		if ((p_property.name == "transmission_ior" || p_property.name == "transmission_attenuation_color" || p_property.name == "transmission_attenuation_distance" || p_property.name == "transmission_thickness" ||
 					p_property.name == "transmission_scatter_strength" || p_property.name == "transmission_scatter_color" || p_property.name == "transmission_scatter_anisotropy") &&
 				transmission_thin_walled) {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
@@ -3619,6 +3721,88 @@ bool BaseMaterial3D::is_snow_from_weather() const {
 	return snow_from_weather;
 }
 
+void BaseMaterial3D::set_ground_deform_patch(bool p_enable) {
+	if (ground_deform_patch == p_enable) {
+		return;
+	}
+	ground_deform_patch = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_ground_deform_patch() const {
+	return ground_deform_patch;
+}
+
+String BaseMaterial3D::_ground_deform_code(bool p_patch_uniform, bool p_patch) {
+	String code = R"(
+// Ground deformation (docs/ideas/ground-deform.md): GroundSurface3D's field of dents and rims over its
+// ground lattice. On the patch (GroundSurface3D's copy of this material) a vertex moves to the deformed
+// surface; on the terrain it is lowered under the patch, so prints below the ground show in both renderers.
+global uniform sampler2D ground_deform_map; // dent, rim (m), albedo and roughness factors
+global uniform vec4 ground_deform_rect; // x, z, size, texel (m); size 0 = none
+global uniform sampler2D ground_deform_height; // the ground, m
+global uniform vec4 ground_deform_height_rect;
+global uniform vec4 ground_deform_skirt; // depth, margin, fade (m)
+)";
+	if (p_patch_uniform) {
+		code += "uniform bool ground_deform_patch = false;\n";
+	} else {
+		code += vformat("const bool ground_deform_patch = %s;\n", p_patch ? "true" : "false");
+	}
+	code += R"(
+vec4 ground_deform_sample(vec2 p_xz) {
+	vec2 uv = (p_xz - ground_deform_rect.xy) / ground_deform_rect.z;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec4(0.0, 0.0, 1.0, 1.0);
+	}
+	return textureLod(ground_deform_map, uv, 0.0);
+}
+float ground_deform_surface(vec2 p_xz) {
+	vec4 d = ground_deform_sample(p_xz);
+	return textureLod(ground_deform_height, (p_xz - ground_deform_height_rect.xy) / ground_deform_height_rect.zw, 0.0).r + d.g - d.r;
+}
+// The share of the skirt the terrain is lowered by at p_xz: none at the field's edge, all past margin + fade.
+float ground_deform_lowered(vec2 p_xz) {
+	vec2 e = min(p_xz - ground_deform_rect.xy, ground_deform_rect.xy + ground_deform_rect.z - p_xz);
+	return smoothstep(ground_deform_skirt.y, ground_deform_skirt.y + ground_deform_skirt.z, min(e.x, e.y));
+}
+void ground_deform_vertex(mat4 p_model, inout vec3 r_vertex, inout vec3 r_normal, inout vec3 r_tangent, inout vec3 r_binormal) {
+	if (ground_deform_rect.z <= 0.0) {
+		return;
+	}
+	vec3 w = (p_model * vec4(r_vertex, 1.0)).xyz;
+	mat4 to_model = inverse(p_model);
+	if (ground_deform_patch) {
+		// The deformed surface, its normal and tangents by central differences over one field texel. Where
+		// the terrain is not lowered (the field's outer margin) the patch tucks 5 cm under it.
+		float e = max(ground_deform_rect.w, 1e-3);
+		float hx = ground_deform_surface(w.xz + vec2(e, 0.0)) - ground_deform_surface(w.xz - vec2(e, 0.0));
+		float hz = ground_deform_surface(w.xz + vec2(0.0, e)) - ground_deform_surface(w.xz - vec2(0.0, e));
+		w.y = ground_deform_surface(w.xz) - 0.05 * (1.0 - ground_deform_lowered(w.xz));
+		mat3 n_to_model = transpose(mat3(p_model));
+		r_normal = normalize(n_to_model * normalize(vec3(-hx, 2.0 * e, -hz)));
+		r_tangent = normalize(n_to_model * normalize(vec3(2.0 * e, hx, 0.0)));
+		r_binormal = normalize(n_to_model * normalize(vec3(0.0, hz, 2.0 * e)));
+	} else {
+		w.y -= ground_deform_skirt.x * ground_deform_lowered(w.xz);
+	}
+	r_vertex = (to_model * vec4(w, 1.0)).xyz;
+}
+// Albedo and roughness factors of turned ground at a world position (1, 1 off the patch).
+vec2 ground_deform_tint(vec3 p_world) {
+	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
+		return vec2(1.0);
+	}
+	return ground_deform_sample(p_world.xz).ba;
+}
+)";
+	return code;
+}
+
+String BaseMaterial3D::get_ground_deform_shader_code() {
+	return _ground_deform_code(true, false);
+}
+
 void BaseMaterial3D::set_refraction_texture_channel(TextureChannel p_channel) {
 	ERR_FAIL_INDEX(p_channel, 5);
 	refraction_texture_channel = p_channel;
@@ -4073,6 +4257,8 @@ void BaseMaterial3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_transmission_attenuation_distance", "distance"), &BaseMaterial3D::set_transmission_attenuation_distance);
 	ClassDB::bind_method(D_METHOD("get_transmission_attenuation_distance"), &BaseMaterial3D::get_transmission_attenuation_distance);
+	ClassDB::bind_method(D_METHOD("set_transmission_thickness", "thickness"), &BaseMaterial3D::set_transmission_thickness);
+	ClassDB::bind_method(D_METHOD("get_transmission_thickness"), &BaseMaterial3D::get_transmission_thickness);
 
 	ClassDB::bind_method(D_METHOD("set_transmission_scatter_strength", "strength"), &BaseMaterial3D::set_transmission_scatter_strength);
 	ClassDB::bind_method(D_METHOD("get_transmission_scatter_strength"), &BaseMaterial3D::get_transmission_scatter_strength);
@@ -4115,6 +4301,9 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_snow_max_slope", "degrees"), &BaseMaterial3D::set_snow_max_slope);
 	ClassDB::bind_method(D_METHOD("get_snow_max_slope"), &BaseMaterial3D::get_snow_max_slope);
 	ClassDB::bind_method(D_METHOD("set_snow_from_weather", "enable"), &BaseMaterial3D::set_snow_from_weather);
+	ClassDB::bind_method(D_METHOD("set_ground_deform_patch", "enable"), &BaseMaterial3D::set_ground_deform_patch);
+	ClassDB::bind_method(D_METHOD("is_ground_deform_patch"), &BaseMaterial3D::is_ground_deform_patch);
+	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_ground_deform_shader_code"), &BaseMaterial3D::get_ground_deform_shader_code);
 	ClassDB::bind_method(D_METHOD("is_snow_from_weather"), &BaseMaterial3D::is_snow_from_weather);
 
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
@@ -4407,6 +4596,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_ior", PROPERTY_HINT_RANGE, "1,3,0.01"), "set_transmission_ior", "get_transmission_ior");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "transmission_attenuation_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_transmission_attenuation_color", "get_transmission_attenuation_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_attenuation_distance", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater,suffix:m"), "set_transmission_attenuation_distance", "get_transmission_attenuation_distance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_thickness", PROPERTY_HINT_RANGE, "0,10,0.001,or_greater,suffix:m"), "set_transmission_thickness", "get_transmission_thickness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_scatter_strength", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_transmission_scatter_strength", "get_transmission_scatter_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "transmission_scatter_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_transmission_scatter_color", "get_transmission_scatter_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_scatter_anisotropy", PROPERTY_HINT_RANGE, "-0.99,0.99,0.01"), "set_transmission_scatter_anisotropy", "get_transmission_scatter_anisotropy");
@@ -4436,6 +4626,10 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_snow_amount", "get_snow_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_max_slope", PROPERTY_HINT_RANGE, "0,90,0.1,degrees"), "set_snow_max_slope", "get_snow_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_from_weather"), "set_snow_from_weather", "is_snow_from_weather");
+
+	ADD_GROUP("Ground Deform", "ground_deform_");
+	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "ground_deform_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_GROUND_DEFORM);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_deform_patch"), "set_ground_deform_patch", "is_ground_deform_patch");
 
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
@@ -4575,6 +4769,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FEATURE_HAIR);
 	BIND_ENUM_CONSTANT(FEATURE_WETNESS);
 	BIND_ENUM_CONSTANT(FEATURE_SNOW);
+	BIND_ENUM_CONSTANT(FEATURE_GROUND_DEFORM);
 	BIND_ENUM_CONSTANT(FEATURE_MAX);
 
 	BIND_ENUM_CONSTANT(BLEND_MODE_MIX);
@@ -4710,6 +4905,7 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_transmission_ior(1.5);
 	set_transmission_attenuation_color(Color(1, 1, 1));
 	set_transmission_attenuation_distance(0.0);
+	set_transmission_thickness(0.0);
 	set_transmission_scatter_strength(0.0);
 	set_transmission_scatter_color(Color(1, 1, 1));
 	set_transmission_scatter_anisotropy(0.0);

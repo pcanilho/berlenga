@@ -297,6 +297,7 @@ struct MaterialProperties {
 	float clearcoat; // Coat strength, 0 = no coat (CLEARCOAT).
 	float clearcoatAlpha; // The coat's GGX alpha, see clearcoatAlphaFromRoughness().
 	float3 coatNormal; // The coat's normal: the interpolated vertex normal, which normal maps do not reach.
+	float3 specularNormal; // The base specular's own normal; zero: the shading normal (snow's exact glints set it).
 	float subsurface; // 1: the diffuse lobe is subsurface scattering, whose light arrives through the random walk, not here.
 
 	float hair; // Share of the surface that is hair fibres (raytracing_hair_inc.glsl), 0 = none.
@@ -1395,7 +1396,16 @@ void evalCombinedBRDFSeparate(float3 N, float3 L, float3 V, MaterialProperties m
 	float baseScale = 1.0f - coatFresnel;
 	float diffuseScale = baseScale * (1.0f - material.subsurface);
 	outDiffuse = data.diffuseReflectance * (float3(diffuseNdotL, diffuseNdotL, diffuseNdotL) * diffuseScale + backlit);
-	outSpecular = godotSpecularNdotL(data, material.specularMode, material.energyCompensation) * baseScale + float3(coat, coat, coat);
+	float3 baseSpecular;
+	if (dot(material.specularNormal, material.specularNormal) > 0.5f) {
+		// A specular on its own normal (a snow grain's facet): its microfacet lobe on that normal, the
+		// diffuse staying on N.
+		const BrdfData specularData = prepareBRDFData(material.specularNormal, L, V, material);
+		baseSpecular = godotSpecularNdotL(specularData, material.specularMode, material.energyCompensation);
+	} else {
+		baseSpecular = godotSpecularNdotL(data, material.specularMode, material.energyCompensation);
+	}
+	outSpecular = baseSpecular * baseScale + float3(coat, coat, coat);
 	if (material.hair > 0.0f) {
 		// Hair takes its share of the surface; its fibres scatter into both lobes' place.
 		outDiffuse = outDiffuse * (1.0f - material.hair) + material.hair * hairEval(material, L, V);
@@ -1410,7 +1420,9 @@ bool evalIndirectCombinedBRDF(float2 u, float3 shadingNormal, float3 geometryNor
 
 	// Transform view direction into local space of our sampling routines
 	// (local space is oriented so that its positive Z axis points along the shading normal)
-	float4 qRotationToZ = getRotationToZAxis(shadingNormal);
+	// The specular lobe samples about its own normal where it has one.
+	const float3 frameNormal = (brdfType == SPECULAR_TYPE && dot(material.specularNormal, material.specularNormal) > 0.5f) ? material.specularNormal : shadingNormal;
+	float4 qRotationToZ = getRotationToZAxis(frameNormal);
 	float3 Vlocal = rotatePoint(qRotationToZ, V);
 	const float3 Nlocal = float3(0.0f, 0.0f, 1.0f);
 

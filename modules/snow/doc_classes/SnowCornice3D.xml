@@ -4,11 +4,17 @@
 		Draws the cornices a [SnowCover3D]'s world tier grew on lee crests, with collision.
 	</brief_description>
 	<description>
-		The overhanging slabs the wind builds on lee crests. [SnowCover3D]'s world tier grows one per crest cell while the wind blows between the threshold for moving snow and twice it, fastest about 40% above it (Yu et al. 2023), from loose dry snow upwind, at field rates of about 1.6 cm an hour (Hancock et al. 2020); they waste back in thaws and in gales. This node draws those within [member radius] of the camera as a swept profile along each run of crest cells: a slab out from the crest top, as thick as it is long at its root and thinning to a sagging lip, its roots reaching down to the ground through the crest's snow. It rebuilds as the camera moves and as the world tier updates. Under path tracing it is ordinary geometry.
+		The overhanging slabs the wind builds on lee crests. [SnowCover3D]'s world tier grows one per crest cell while the wind blows between the threshold for moving snow and twice it, fastest about 40% above it (Yu et al. 2023), from loose dry snow upwind, at field rates of about 1.6 cm an hour (Hancock et al. 2020); they waste back in thaws and in gales. This node draws those within [member radius] of the camera as a swept profile along each run of crest cells: a slab out from the crest top, as thick as it is long at its root and thinning to a sagging lip, its roots reaching down to the ground through the crest's snow. The tension crack behind each cornice shows as a crack in its roof with the slab tilting out about its root (Vogel et al. 2012), and a cornice that falls breaks into tumbling blocks (see [member SnowCover3D.cornice_failure_enabled]). It rebuilds as the camera moves and as the world tier updates. Under path tracing it is ordinary geometry.
 	</description>
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_debris_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many falling blocks of failed cornices there are.
+			</description>
+		</method>
 		<method name="get_segment_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -25,6 +31,12 @@
 	<members>
 		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
 			If [code]true[/code], a static body with the cornices' faces is built with them, so bodies stand on the overhang.
+		</member>
+		<member name="debris_enabled" type="bool" setter="set_debris_enabled" getter="is_debris_enabled" default="true">
+			If [code]true[/code], a cornice that falls within [member radius] of the camera breaks into blocks that tumble down the face, as rigid bodies of snow.
+		</member>
+		<member name="debris_lifetime" type="float" setter="set_debris_lifetime" getter="get_debris_lifetime" default="30.0">
+			How long the falling blocks of a failed cornice remain, in seconds.
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node the cornices are built around; empty uses the current camera.

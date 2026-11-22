@@ -57,6 +57,7 @@ class PhysXWaterWake3D : public Node3D {
 	NodePath water_surface_path; // empty = the sibling PhysXBuoyancy3D's
 	float size = 48.0f;
 	int cells = 192;
+	bool dispersive = true; // deep-water dispersion (eWave): Kelvin wakes; off = the wave equation at wave_speed
 	float wave_speed = 2.2f;
 	float damping = 0.25f;
 	float border_damping = 8.0f;
@@ -76,6 +77,7 @@ class PhysXWaterWake3D : public Node3D {
 	float foam_persistence = 4.0f;
 	float foam_slope = 0.08f;
 	float foam_slope_gain = 4.0f;
+	float breaking_slope = 0.3f; // dispersive: the wake waves' slope past which they break into foam
 	float foam_spread = 1.0f; // m/s foam is pushed out from the hull's line
 
 	WaterWakeSolver *solver = nullptr;
@@ -105,6 +107,8 @@ public:
 	float get_size() const { return size; }
 	void set_cells(int p_cells);
 	int get_cells() const { return cells; }
+	void set_dispersive(bool p_dispersive);
+	bool is_dispersive() const { return dispersive; }
 	void set_wave_speed(float p_speed) { wave_speed = MAX(p_speed, 0.1f); }
 	float get_wave_speed() const { return wave_speed; }
 	void set_damping(float p_damping) { damping = MAX(p_damping, 0.0f); }
@@ -141,6 +145,8 @@ public:
 	float get_foam_persistence() const { return foam_persistence; }
 	void set_foam_slope(float p_slope) { foam_slope = MAX(p_slope, 0.0f); }
 	float get_foam_slope() const { return foam_slope; }
+	void set_breaking_slope(float p_slope) { breaking_slope = MAX(p_slope, 0.0f); }
+	float get_breaking_slope() const { return breaking_slope; }
 	void set_foam_slope_gain(float p_gain) { foam_slope_gain = MAX(p_gain, 0.0f); }
 	float get_foam_slope_gain() const { return foam_slope_gain; }
 	void set_foam_spread(float p_speed) { foam_spread = MAX(p_speed, 0.0f); }

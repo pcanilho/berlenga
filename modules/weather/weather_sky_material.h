@@ -33,6 +33,7 @@
 #include "weather_clouds.h"
 
 #include "scene/resources/environment.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
 
 // Godot's physical sky with the weather map's clouds raymarched through it (Nubis, Frostbite; see
@@ -43,11 +44,22 @@
 class WeatherSkyMaterial : public ShaderMaterial {
 	GDCLASS(WeatherSkyMaterial, ShaderMaterial);
 
-	static Ref<Shader> shared_shader;
-	static Ref<Shader> shared_shader_plain; // without half_res_reprojection
+public:
+	enum AtmosphereModel {
+		ATMOSPHERE_PHYSICAL_SKY, // PhysicalSkyMaterial's (Preetham-style), daylight only
+		ATMOSPHERE_SCATTERING, // Hillaire 2020: any sun angle, twilight, two lights (atmosphere.h)
+	};
+
+private:
+	// Reprojection on/off x atmosphere model.
+	static Ref<Shader> shared_shaders[4];
+	static Ref<ImageTexture> atmo_transmittance_tex;
+	static Ref<ImageTexture> atmo_multiscatter_tex;
 
 	bool cloud_reprojection = true;
+	AtmosphereModel atmosphere_model = ATMOSPHERE_SCATTERING;
 	void _update_shader();
+	void _update_atmosphere_textures();
 
 protected:
 	void _validate_property(PropertyInfo &p_property) const;
@@ -62,6 +74,12 @@ public:
 	void set_cloud_reprojection(bool p_enabled);
 	bool is_cloud_reprojection_enabled() const;
 
+	void set_atmosphere_model(AtmosphereModel p_model);
+	AtmosphereModel get_atmosphere_model() const;
+	// The sun and the moon above the air (directions toward them, irradiance in light energy units), from
+	// SkyClock; until set, the first directional light stands for the sun above the air.
+	void set_atmosphere_lights(const Vector3 &p_sun_direction, const Vector3 &p_sun_irradiance, const Vector3 &p_moon_direction, const Vector3 &p_moon_irradiance);
+
 	// Lightning glowing in the clouds: up to four flashes, each a world position and its energy now.
 	void set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color);
 
@@ -73,3 +91,5 @@ public:
 
 	WeatherSkyMaterial();
 };
+
+VARIANT_ENUM_CAST(WeatherSkyMaterial::AtmosphereModel);

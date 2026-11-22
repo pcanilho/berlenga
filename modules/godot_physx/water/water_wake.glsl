@@ -13,6 +13,16 @@
 // Foam rides along in the same state: churned in by the sources (a bow
 // wave, a propeller) and by steep wake waves, fading over its persistence.
 // It stays where it was made on the water, like the waves.
+//
+// Dispersive mode (PhysXWaterWake3D.dispersive, eWave): the waves are not
+// stepped here but in Fourier space (water_wake_modes.glsl), where each
+// wavelength travels at its own deep-water speed. This shader then runs
+// twice a step: pass 1 slides the state, churns the foam, finds the hull's
+// dip and packs (h - dip, v) for the FFT; pass 2 unpacks the stepped field,
+// damps the border band and does the breaking and slope foam. The hull is a
+// pressure patch: the surface oscillates about its dip instead of being
+// pulled into it, which is what leaves the Kelvin pattern behind a moving
+// hull. State then holds (h, v, foam, propeller foam): v the height's rate.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -50,6 +60,14 @@ layout(set = 0, binding = 3, std430) restrict readonly buffer Sources {
 	vec4 sources[];
 };
 layout(set = 0, binding = 4, rgba16f) uniform restrict writeonly image2D height_tex; // r height (m), g hull foam, b propeller foam (0..1)
+// Dispersive mode: the field for the FFT, (h - dip, v); pass 2 reads it back transformed twice (N^2 conj).
+layout(set = 0, binding = 5, std430) restrict buffer Spec {
+	vec2 spec[];
+};
+
+layout(push_constant, std430) uniform Pc {
+	ivec4 pass; // x 0 wave equation, 1 dispersive before the FFT, 2 dispersive after it
+};
 
 int n() {
 	return grid.x;
@@ -74,9 +92,51 @@ float read_foam(vec2 p) {
 	return mix(a, b, t.y);
 }
 
+// Dispersive pass 2: the stepped field back from the FFT; the border band,
+// breaking and slope foam, then the state and the height texture.
+float post_h(ivec2 c) {
+	c = clamp(c, ivec2(0), ivec2(n() - 1));
+	vec2 z = spec[c.y * n() + c.x];
+	return z.x / float(n() * n()) + state_in[c.y * n() + c.x].y;
+}
+
+void post_pass(ivec2 c) {
+	vec4 mid = state_in[c.y * n() + c.x]; // (dip depth, rest height, foam, propeller foam)
+	vec2 z = spec[c.y * n() + c.x] / float(n() * n());
+	float hn = z.x + mid.y;
+	float v = -z.y; // (conjugated by the mode pass)
+	int edge = min(min(c.x, c.y), min(n() - 1 - c.x, n() - 1 - c.y));
+	float b = clamp(1.0 - float(edge) / max(wave.w, 1.0), 0.0, 1.0);
+	float keep = 1.0 - min(wave.z * b * b, 0.9);
+	hn *= keep;
+	v *= keep;
+	float f = mid.z;
+	float crest_limit = max(mid.x * 4.0, 0.3);
+	float over = abs(hn) - crest_limit;
+	if (over > 0.0) {
+		f += over;
+		hn = sign(hn) * (crest_limit + over * 0.25);
+		v *= 0.25;
+	}
+	float hr = post_h(c + ivec2(1, 0));
+	float hl = post_h(c - ivec2(1, 0));
+	float hu = post_h(c + ivec2(0, 1));
+	float hd = post_h(c - ivec2(0, 1));
+	float slope = length(vec2(hr - hl, hu - hd)) / (2.0 * cell.x);
+	f += max(slope - foam.z, 0.0) * foam.w * foam.y;
+	f = clamp(f, 0.0, 1.0) * (1.0 - b);
+	float pf = clamp(mid.w, 0.0, 1.0) * (1.0 - b);
+	state_out[c.y * n() + c.x] = vec4(hn, v, f, pf);
+	imageStore(height_tex, c, vec4(hn, f, pf, 0.0));
+}
+
 void main() {
 	ivec2 c = ivec2(gl_GlobalInvocationID.xy);
 	if (c.x >= n() || c.y >= n()) {
+		return;
+	}
+	if (pass.x == 2) {
+		post_pass(c);
 		return;
 	}
 	vec4 st = read_state(c);
@@ -153,6 +213,14 @@ void main() {
 				}
 			}
 		}
+	}
+	if (pass.x == 1) {
+		// The hull's dip is where the surface rests (a pressure head): the
+		// FFT steps h about it. Foam is done here; the slope foam after.
+		f = clamp(f, 0.0, 1.0);
+		state_out[c.y * n() + c.x] = vec4(dip, target, f, pf);
+		spec[c.y * n() + c.x] = vec2(h - target, hp);
+		return;
 	}
 	hn += (target - hn) * weight * cell.y;
 

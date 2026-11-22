@@ -104,6 +104,7 @@ private:
 	bool wetness_enabled = true;
 	bool snow_enabled = true;
 	float snow_max_slope = 60.0f;
+	bool ground_deform_enabled = true;
 
 	Ref<Shader> shader;
 	bool dirty = false;
@@ -149,6 +150,8 @@ public:
 	bool is_snow_enabled() const { return snow_enabled; }
 	void set_snow_max_slope(float p_degrees);
 	float get_snow_max_slope() const { return snow_max_slope; }
+	void set_ground_deform_enabled(bool p_enabled);
+	bool is_ground_deform_enabled() const { return ground_deform_enabled; }
 
 	TerrainMaterial3D();
 };

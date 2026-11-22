@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		A mesh around the camera lifted to the ground plus the depth of the [SnowCover3D] pack, so snow has real volume: it casts shadows, buries small things and is traced as geometry under path tracing. Snow thinner than [member min_depth] stays a material effect.
-		Nodes in [member deform_groups] press it. A pressed column compacts toward [member compacted_density] and pushes [member rim_share] of the snow it loses into a rim, so mass is kept. Loaded bodies sink by Bekker's pressure-sinkage relation (Bekker 1969). A heightfield collision patch follows the deformed surface, so bodies rest in their own tracks. New snow and wind fill prints; as the pack around them settles their depth shrinks; when the pack melts they go with it. Tiles of prints the field leaves are kept and come back.
+		Nodes in [member deform_groups] press it. A pressed column compacts toward [member compacted_density] and pushes [member rim_share] of the snow it loses into a rim, so mass is kept. Loaded bodies sink by Bekker's pressure-sinkage relation (Bekker 1969). On a frozen crust ([member SnowCover3D.crust_enabled]) a body whose pressure is under what the crust bears ([method SnowCover3D.get_crust_strength_at]) stands on it, and only the snow over it compacts; a heavier one, or one driven through, breaks it: the crust cracks around the hole out to about its plate length (0.13 m for 2 cm, growing as thickness^(3/4)), the pieces tip in, and the rim heaps in plates. A heightfield collision patch follows the deformed surface, so bodies rest in their own tracks. New snow and wind fill prints; as the pack around them settles their depth shrinks; when the pack melts they go with it. Tiles of prints the field leaves are kept and come back.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -85,8 +85,9 @@
 			<param index="2" name="bottom" type="float" />
 			<param index="3" name="sink" type="float" default="0.0" />
 			<param index="4" name="round" type="bool" default="true" />
+			<param index="5" name="velocity" type="Vector3" default="Vector3(0, 0, 0)" />
 			<description>
-				Presses the snow down to [param bottom] (the world height of a body's underside) within [param radius] of [param position]: a bowl when [param round], flat otherwise. [param sink] presses that much further below the undisturbed surface (Bekker sinkage). Snow never goes below what [member compacted_density] allows; [member rim_share] of what moves goes into a rim around the print. Returns the volume moved, in cubic metres. Nothing happens unless the underside touches the snow.
+				Presses the snow down to [param bottom] (the world height of a body's underside) within [param radius] of [param position]: a bowl when [param round], flat otherwise. [param sink] presses that much further below the undisturbed surface (Bekker sinkage). Snow never goes below what [member compacted_density] allows; [member rim_share] of what moves goes into a rim around the print. A [param velocity] (m/s; bodies in the deform groups get theirs from their motion) leans the rim forward: a fast body shoves snow ahead of it in a bow wave that rides in front and spills to the sides, full at 4 m/s. Returns the volume moved, in cubic metres. Nothing happens unless the underside touches the snow.
 			</description>
 		</method>
 		<method name="press_box">
@@ -96,6 +97,7 @@
 			<param index="2" name="yaw" type="float" />
 			<param index="3" name="bottom" type="float" />
 			<param index="4" name="sink" type="float" default="0.0" />
+			<param index="5" name="velocity" type="Vector3" default="Vector3(0, 0, 0)" />
 			<description>
 				Like [method press], with a flat rectangular print [param size] wide (x) and long (y), turned by [param yaw] radians about up: a boot, a runner, a crate.
 			</description>

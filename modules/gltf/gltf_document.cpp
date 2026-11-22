@@ -2984,7 +2984,8 @@ Error GLTFDocument::_serialize_materials(Ref<GLTFState> p_state) {
 			if (!base_material->is_transmission_thin_walled()) {
 				// A medium behind the surface: its absorption and index of refraction.
 				Dictionary mat_volume;
-				mat_volume["thicknessFactor"] = 1.0f;
+				// The solid's thickness when it has one; 1 (any non-zero marks a volume) for a medium up to what is behind.
+				mat_volume["thicknessFactor"] = base_material->get_transmission_thickness() > 0.0f ? base_material->get_transmission_thickness() : 1.0f;
 				const float attenuation_distance = base_material->get_transmission_attenuation_distance();
 				if (attenuation_distance > 0.0f) {
 					const Color c = base_material->get_transmission_attenuation_color().srgb_to_linear();
@@ -3093,6 +3094,8 @@ Error GLTFDocument::_parse_materials(Ref<GLTFState> p_state) {
 					Dictionary volume = material_extensions["KHR_materials_volume"];
 					if (float(volume.get("thicknessFactor", 0.0f)) > 0.0f) {
 						material->set_transmission_thin_walled(false);
+						// The thickness, in the mesh's units: raster refraction leaves the solid through a second surface.
+						material->set_transmission_thickness(volume.get("thicknessFactor", 0.0f));
 						const float attenuation_distance = volume.get("attenuationDistance", 0.0f);
 						const Array attenuation_color = volume.get("attenuationColor", Array());
 						if (attenuation_distance > 0.0f && attenuation_color.size() == 3) {

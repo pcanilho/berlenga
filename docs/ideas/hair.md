@@ -488,6 +488,63 @@ the previous ones (no stale motion). Raster only; the path tracer's own motion i
 
 Bench: `--scene=strands_sim --raster --hair=wavy_taa`.
 
+## Stage 2j: deep opacity shadows
+
+The raster strands shadowed themselves through Godot's shadow maps: each strand kept a share of
+the texels it covered (its coverage against interleaved gradient noise). Two faults: every strand
+at a texel compared against the same noise, so a texel behind several strands kept the largest
+coverage rather than 1 - (1 - c1)(1 - c2)...; and a depth map holds one depth, so the hair's
+self-shadow was grain that PCF only partly smoothed.
+
+What engines do:
+
+- Lokovic and Veach 2000, deep shadow maps: per texel, a transmittance function of depth (film).
+- Kim and Neumann 2001, opacity shadow maps: opacity in slices at fixed depths.
+- Yuksel and Keyser 2008, deep opacity maps: the slices start at each texel's first hair, so a
+  few layers cover the hair closely; one depth pass and one accumulation pass.
+- Unreal's hair: deep opacity maps (first depth plus four layers) for hair receivers, per light.
+- TressFX 4.1: the distance past the first hair in the shadow map times a fibre density.
+- Enderton et al. 2010, stochastic transparency: each layer draws its own random threshold, so a
+  depth shadow map's coverage averages to the product of the layers' transmittance.
+
+Ours (PhysXHair3D `deep_shadows`, on, with `hair_shading`; `deep_shadow_light`, or the brightest
+shadowed DirectionalLight3D): Yuksel's map from the solver's final strand positions, 256 x 256
+cells across the hair's bounding sphere, in compute: MODE_DOM_FRONT keeps each cell's first hair
+(atomicMin), MODE_DOM_ACCUM adds every strand sample's coverage (width times length over the
+cell's area, bilinear) to one of three layers ending 1, 4 and 15 cm past it, and the collision
+spheres and collision body give the first opaque depth (the head shadows the hair behind it).
+The hair shader sums the coverage up to its own depth (linear within the layers) over 4 cells and
+takes `exp(-a * coverage)`, with `a` the fibre's share of light it stops (as the shadow-map pass,
+light through blonde hair). So the hair is not shadowed twice, it moves its directional shadow
+lookup to just in front of the first hair with a new shader output, `DIRECTIONAL_SHADOW_OFFSET`
+(metres toward the light, an extra shadow bias for that fragment), which keeps everything beyond
+the groom. The hair still casts into the shadow maps for every other surface, now with each
+strand's own noise threshold (stochastic transparency), so the shadow behind several strands is
+their product. Limits: one light; opaque things inside the hair count only through the collision
+spheres and body; other directional lights lose the hair's self-shadow (their lookup moves too).
+
+The map is read per strand point in the vertex function (4 cells, bilinear) and interpolated: a
+strand is far thinner than a cell and its segments are about one cell long, so per fragment it
+cost twice as much for the same picture. The fibre density in the exponent, `dom_density` 0.3,
+is calibrated against a path traced frame of the same groom: mean brightness over five regions
+(lit side, centre, far side, crown, lower left) is off by 130 levels in total without the map
+and 43 with it; the hard terminator the head drew across the hair is gone. The far side stays
+darker than the path tracer (light scattered several times inside the hair is not carried).
+
+Cost (cloud, software Vulkan, 30k strands, 60 frames): 139 s without, 158 s with (+14%), most
+of it the four compute passes; the GPU cost is on the PC queue.
+
+Bench: `--scene=strands_sim --raster --hair=wavy` against `--hair=wavy_nodeep`.
+
+Tried and not kept: Zinke's dual scattering (as Unreal) driven by the map's hair count, with
+the forward transmittance af^n, the lobes spread by n fibre widths and the back-scattering A_b
+in place of the wrapped multiple-scattering term. Against the same path traced frame the error
+rose from 43 to 60-82 (best fibre density): for brown hair a fibre passes little light forward,
+so A_b is small and the lit side lost the light the wrapped term gave it. The far side's
+remaining gap does not move with any of it: there the head blocks the sun, and the path tracer
+lights it with the sky and the light the floor bounces, which raster gets only from global
+illumination (SDFGI, VoxelGI), not from the hair shading.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.

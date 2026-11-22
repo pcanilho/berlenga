@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "water_raster_reflections.h"
 #include "water_solver.h"
 
 #include "core/math/random_pcg.h"
@@ -44,6 +45,7 @@ class Texture2DRD;
 class Texture2D;
 class Image;
 class ImageTexture;
+class DirectionalLight3D;
 class ArrayMesh;
 class GPUParticles3D;
 class ParticleProcessMaterial;
@@ -89,6 +91,14 @@ public:
 		// Finite differences of the displaced mesh, per vertex: shading
 		// follows the mesh (faceted / stylized, and cheaper).
 		NORMAL_MODE_PER_VERTEX,
+	};
+	enum WaveSpreading {
+		// cos^2 about the wind with a weak back lobe (the first ocean).
+		WAVE_SPREADING_COS2,
+		// Donelan-Banner's measured sech^2 spreading (Horvath 2015's default), with his swell term.
+		WAVE_SPREADING_DONELAN_BANNER,
+		// Hasselmann et al. (1980)'s cos-2s(theta / 2) spreading, with the swell term.
+		WAVE_SPREADING_HASSELMANN,
 	};
 
 	// When the surface advances: every physics tick (each tick posts the whole GPU step -- ripple solve, FFT, blits,
@@ -178,6 +188,10 @@ public:
 	// how tall and long the wind waves get. 0 = auto: the surface_mesh
 	// footprint's longest side for enclosed water, a fully developed open sea
 	// otherwise.
+	void set_wave_spreading(WaveSpreading p_spreading);
+	WaveSpreading get_wave_spreading() const { return wave_spreading; }
+	void set_swell(float p_swell);
+	float get_swell() const { return swell; }
 	void set_fetch(float p_fetch);
 	float get_fetch() const { return fetch; }
 	// The fetch actually in use (resolves the 0 = auto case).
@@ -201,6 +215,22 @@ public:
 	bool get_foam_enabled() const { return foam_enabled; }
 	void set_foam_threshold(float p_threshold);
 	float get_foam_threshold() const { return foam_threshold; }
+	// Whitecap cover from the wind (on by default): the threshold is steered
+	// each step so the share of sea under foam follows the measured law of
+	// Monahan and O'Muircheartaigh (1980), W = 3.84e-6 U^3.41 (about 1% at
+	// 10 m/s, 3% at 14 m/s, none below ~3 m/s), times whitecap_cover_scale.
+	// foam_threshold is then only the starting point. Off = the fixed
+	// foam_threshold, as before.
+	void set_whitecap_auto(bool p_auto);
+	bool get_whitecap_auto() const { return whitecap_auto; }
+	void set_whitecap_cover_scale(float p_scale);
+	float get_whitecap_cover_scale() const { return whitecap_cover_scale; }
+	// The cover the wind asks for (0..1) and the cover measured on the
+	// foam grids at the last readback (-1 before the first one).
+	float get_whitecap_target_cover() const;
+	float get_whitecap_cover() const { return whitecap_measured; }
+	// The threshold in use (foam_threshold, or the steered one).
+	float get_effective_foam_threshold() const { return _live_foam_threshold(); }
 	void set_foam_persistence(float p_seconds);
 	float get_foam_persistence() const { return foam_persistence; }
 	// Shore foam: waves arriving over water shallower than this (meters,
@@ -277,6 +307,10 @@ public:
 	// The camera under water (raster): a full screen fog pass under the surface, the image split at the
 	// water line, and the surface drawn from below (Snell's window, total internal reflection). Only
 	// while the camera is near the water. The path tracer needs nothing: it finds the camera's medium.
+	// Raster only: the surface mirrors the sky and the sun's glitter by the Fresnel term, as the path tracer
+	// sees it. Off = the old unlit tint.
+	void set_raster_reflections(bool p_enabled);
+	bool get_raster_reflections() const { return raster_reflections; }
 	void set_underwater_enabled(bool p_enabled);
 	bool get_underwater_enabled() const { return underwater_enabled; }
 	void set_underwater_meniscus(float p_strength);
@@ -393,6 +427,7 @@ private:
 
 	int ocean_grid_resolution = 64;
 	Vector2 ocean_domain_size = Vector2(40, 40);
+	int _resolved_ocean_grid_resolution() const;
 	float wind_speed = 8.0f;
 	Vector2 wind_direction = Vector2(1, 0);
 	float wave_amplitude = 1.0f;
@@ -479,6 +514,8 @@ private:
 	float _cascade_split(int p_index) const;
 	float cull_margin = 0.0f;
 	float fetch = 0.0f;
+	WaveSpreading wave_spreading = WAVE_SPREADING_DONELAN_BANNER;
+	float swell = 0.0f;
 	float render_extent = 0.0f;
 	int mesh_detail = 1;
 	bool follow_weather = false;
@@ -494,6 +531,15 @@ private:
 	NormalMode normal_mode = NORMAL_MODE_PER_PIXEL;
 	bool foam_enabled = true;
 	float foam_threshold = 0.7f;
+	bool whitecap_auto = true;
+	float whitecap_cover_scale = 1.0f;
+	float whitecap_threshold = 0.7f; // steered threshold
+	float whitecap_pushed = -100.0f; // last one sent to the solvers and material
+	float whitecap_measured = -1.0f;
+	double whitecap_clock = -1.0;
+	float _live_foam_threshold() const { return whitecap_auto ? whitecap_threshold : foam_threshold; }
+	void _steer_whitecaps();
+	void _push_foam_settings();
 	float foam_persistence = 2.5f;
 	float shore_foam_band = 0.5f;
 	// Open water past the simulated square (render_extent > domain, no surface_mesh): true = it is open, deep sea
@@ -601,13 +647,15 @@ private:
 	Ref<ShaderMaterial> underwater_fog_material;
 	Ref<ShaderMaterial> underwater_surface_material;
 	LocalVector<StringName> underwater_shared_params; // uniforms the passes copy from water_material
-	ObjectID underwater_sun;
-	int underwater_sun_search = 0;
 	RID underwater_sky_baked;
 	int underwater_sky_rebake = 0;
 	Color underwater_sky_radiance;
 	void _update_underwater();
 	void _set_underwater_shown(bool p_shown);
+	// Raster reflections from above (sky panorama + sun glitter), see water_raster_reflections.h.
+	bool raster_reflections = true;
+	WaterRasterReflections raster_reflection_state;
+	void _update_raster_reflections();
 	bool caustics_enabled = false; // off by default: a draw pass every frame, only worth it over a visible floor
 	Vector3 caustics_sun_direction = Vector3(-0.35f, -1.0f, -0.25f);
 	float caustics_reference_depth = 2.5f;
@@ -647,6 +695,7 @@ private:
 	Vector<Vector2> _collect_footprint() const;
 	void _configure_solver();
 	void _reinit_spectrum();
+	void _set_spreading();
 	// Casts the seabed rays; fills cell_depth.
 	void _sample_seabed();
 	static PackedByteArray _rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n);
@@ -669,4 +718,5 @@ private:
 };
 
 VARIANT_ENUM_CAST(PhysXWaterSurface3D::NormalMode);
+VARIANT_ENUM_CAST(PhysXWaterSurface3D::WaveSpreading);
 VARIANT_ENUM_CAST(PhysXWaterSurface3D::StepMode);

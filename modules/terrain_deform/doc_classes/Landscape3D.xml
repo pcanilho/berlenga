@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="Landscape3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A heightfield ground drawn as static chunk meshes with an LOD chain, made for path tracing.
+	</brief_description>
+	<description>
+		Draws a height grid (from a [TerrainGenerator3D] or an [Image]) as square chunks of [member chunk_quads] quads. Each chunk has a chain of levels, every one half as dense as the one before, and the level is picked per chunk by projected error: the largest height gap between that level and full detail, in pixels at the chunk's distance, must stay under [member lod_error]. Neighbours are kept at most one level apart, and edges next to a coarser neighbour skip their odd vertices, so the ground has no cracks and needs no skirts.
+		Vertices never move in the shader: a level change swaps the chunk's mesh. Under path tracing each mesh (chunk, level, edge variant) gets one acceleration structure, built when first drawn and kept, so a moving camera costs no rebuilds or refits; only level changes build. Levels depend on distance, not on view direction, so chunks behind the camera keep theirs and off-screen shadows and reflections see the same ground. Meshes no chunk uses are freed after about 600 frames.
+		With a [TerrainGenerator3D] as [member source] and [member stream_heights] on, [method rebuild] first reads every 4th point only (a 4 m grid at 1 m spacing) and fills the rest by interpolation; the chunks the camera needs finer are read in full before the first frame where the 4 m grid would be clearly off, and all others on worker threads over the next frames, the ones the view needs first, nearest first. Until a chunk is read its errors are estimates calibrated on a sparse set of read chunks, it is drawn no finer than the 4 m grid, and its neighbours at most one level finer. Meshes for new levels are built on worker threads too, and a new set of levels is shown only once all its meshes are ready, so a frame never mixes levels that do not fit and moving costs the main thread well under a millisecond.
+		Computing 1 m heights from the generator is the slow part (about 370 ns a point on four cores). A world that is loaded rather than generated should bake them once ([code]sample_heights(...).save_exr(path, true)[/code]) and set [member height_image] from the file: 4 km at 1 m then loads and shows its first frame in under a second.
+		The node does not move the ground with its transform in sampling: with a [member source], keep the node at the world origin. The level-0 grid is held in memory; disk streaming and collision come later (docs/ideas/terrain.md).
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Frees the chunks, meshes and heights.
+			</description>
+		</method>
+		<method name="get_aabb" qualifiers="const">
+			<return type="AABB" />
+			<description>
+				The bounds of the ground in the node's space.
+			</description>
+		</method>
+		<method name="get_chunk_edge_mask" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="chunk" type="Vector2i" />
+			<description>
+				The sides of [param chunk] stitched to a coarser neighbour: bit 0 toward -Z, 1 toward +X, 2 toward +Z, 3 toward -X.
+			</description>
+		</method>
+		<method name="get_chunk_grid" qualifiers="const">
+			<return type="Vector2i" />
+			<description>
+				Chunks along X and Z.
+			</description>
+		</method>
+		<method name="get_chunk_lod" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="chunk" type="Vector2i" />
+			<description>
+				The level [param chunk] draws now (0 is full detail).
+			</description>
+		</method>
+		<method name="get_chunk_lod_error" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="chunk" type="Vector2i" />
+			<param index="1" name="level" type="int" />
+			<description>
+				The largest height gap, in metres, between [param level] and full detail in [param chunk].
+			</description>
+		</method>
+		<method name="get_chunk_triangles" qualifiers="const">
+			<return type="PackedVector3Array" />
+			<param index="0" name="chunk" type="Vector2i" />
+			<description>
+				The triangles [param chunk] draws now, in global space, three points each. For tests.
+			</description>
+		</method>
+		<method name="get_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The full-detail ground under [param global_position], bilinear between grid points.
+			</description>
+		</method>
+		<method name="get_lod_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Levels in use: [member lod_levels], fewer if [member chunk_quads] is small.
+			</description>
+		</method>
+		<method name="get_stats" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				[code]chunks[/code], [code]triangles[/code] drawn, [code]chunks_per_level[/code], [code]meshes[/code] kept, total [code]mesh_builds[/code] and [code]lod_switches[/code], [code]build_msec[/code] of the last [method rebuild] (of it [code]source_msec[/code] reading heights and [code]measure_msec[/code] measuring errors), [code]update_usec[/code] of the last level pick (with any synchronous reads), [code]apply_usec[/code] to hand the last built meshes to the renderer, [code]unread_chunks[/code] and [code]chunks_streamed[/code] while streaming, the [code]detail_estimate[/code] added to unread chunks' errors (metres), and [code]busy[/code] while worker threads are reading or building.
+			</description>
+		</method>
+		<method name="is_chunk_loaded" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="chunk" type="Vector2i" />
+			<description>
+				Whether the chunk's heights are read in full (always [code]true[/code] without streaming).
+			</description>
+		</method>
+		<method name="is_fully_loaded" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether every chunk is read in full.
+			</description>
+		</method>
+		<method name="load_all_heights">
+			<return type="void" />
+			<description>
+				Reads every chunk not read yet now, in parallel, and waits; for bakes, tests and captures that need the exact ground everywhere.
+			</description>
+		</method>
+		<method name="rebuild">
+			<return type="bool" />
+			<description>
+				Reads the heights from [member source] or [member height_image], measures every chunk's level errors (in parallel) and creates the chunks. Returns [code]false[/code] when there are no heights.
+			</description>
+		</method>
+		<method name="update_lods">
+			<return type="void" />
+			<param index="0" name="camera_transform" type="Transform3D" />
+			<param index="1" name="projection" type="Projection" />
+			<param index="2" name="viewport_height" type="float" />
+			<description>
+				Picks every chunk's level for a camera at [param camera_transform] with [param projection], on a viewport [param viewport_height] pixels tall, reads the chunks that view needs in full and builds the missing meshes, and waits, so the result is exact on return. Each frame the node does the same for the current camera without waiting (see [member stream_heights]); call this directly for tests, captures or other views.
+			</description>
+		</method>
+		<method name="update_lods_from_camera">
+			<return type="void" />
+			<description>
+				[method update_lods] for [member camera], or the viewport's current camera (the editor's in the editor).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="camera" type="NodePath" setter="set_camera" getter="get_camera" default="NodePath(&quot;&quot;)">
+			The camera that picks the levels. Empty: the viewport's current camera.
+		</member>
+		<member name="cast_shadows" type="bool" setter="set_cast_shadows" getter="is_casting_shadows" default="true">
+			Whether the ground casts shadows.
+		</member>
+		<member name="chunk_quads" type="int" setter="set_chunk_quads" getter="get_chunk_quads" default="64">
+			Quads along a chunk's side at full detail (a power of two, 8 to 256).
+		</member>
+		<member name="height_image" type="Image" setter="set_height_image" getter="get_height_image">
+			Heights as an image, one pixel per grid point from [member origin], used when [member source] is empty.
+		</member>
+		<member name="lod_error" type="float" setter="set_lod_error" getter="get_lod_error" default="1.0">
+			The largest height error a level may show, in pixels. 1 keeps the ground within a pixel of full detail.
+		</member>
+		<member name="lod_levels" type="int" setter="set_lod_levels" getter="get_lod_levels" default="5">
+			Levels in each chunk's chain, full detail included.
+		</member>
+		<member name="material" type="Material" setter="set_material" getter="get_material">
+			The ground's material, for example a [TerrainMaterial3D].
+		</member>
+		<member name="origin" type="Vector2" setter="set_origin" getter="get_origin" default="Vector2(0, 0)">
+			World X and Z of the first grid point. Set from the source's rectangle when [member source] is used.
+		</member>
+		<member name="source" type="NodePath" setter="set_source" getter="get_source" default="NodePath(&quot;&quot;)">
+			A node with [code]sample_heights(origin, spacing, size)[/code] and [code]get_world_rect()[/code], such as a [TerrainGenerator3D] after [method TerrainGenerator3D.generate].
+		</member>
+		<member name="spacing" type="float" setter="set_spacing" getter="get_spacing" default="1.0">
+			Metres between grid points at full detail.
+		</member>
+		<member name="stream_heights" type="bool" setter="set_stream_heights" getter="is_streaming_heights" default="true">
+			With a [TerrainGenerator3D] as [member source] (and [member lod_levels] above 3), read a 4 m grid first and the rest per chunk as the camera needs it, on worker threads. Off: [method rebuild] reads everything first. Reading stops (keeping what was read) when the generator starts a new [method TerrainGenerator3D.generate].
+		</member>
+	</members>
+</class>

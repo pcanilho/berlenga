@@ -95,6 +95,13 @@ struct Params {
 	float ground_albedo = 0.2f;
 	float horizon_distance = 5000.0f; // m
 	float sx_distance = 100.0f; // m
+	float precipitation_seasonality = 0.0f; // 0 even through the year; 1 none at the driest month
+	float precipitation_peak_month = 0.0f; // month of the most precipitation, 0 January .. 11 December
+	float melt_factor = 1.8f; // mm/day/K, snowmelt per positive degree day without sun (Hock 1999)
+	float radiation_melt_factor = 0.015f; // mm/day/K per W/m2 of shortwave (Hock 1999)
+	float soil_capacity = 150.0f; // mm of plant-available water (McCabe and Markstrom 2007)
+	float direct_runoff = 0.05f; // share of rain running off at once
+	float groundwater_release = 0.5f; // share of stored surplus leaving each month (linear reservoir)
 };
 
 inline void parallel_for(int p_count, const std::function<void(int)> &p_fn) {
@@ -121,6 +128,12 @@ inline float month_value(float p_january, float p_july, int p_month) {
 	return 0.5f * (p_january + p_july) - 0.5f * (p_july - p_january) * Math::cos(float(Math::TAU) * p_month / 12.0f);
 }
 
+// Share of the year's precipitation falling in month m: a harmonic peaking at precipitation_peak_month.
+inline float precipitation_share(const Params &p, int p_month) {
+	const float a = CLAMP(p.precipitation_seasonality, 0.0f, 1.0f);
+	return (1.0f + a * Math::cos(float(Math::TAU) * (p_month - p.precipitation_peak_month) / 12.0f)) / 12.0f;
+}
+
 inline float temperature(const Params &p, float p_height, int p_month) {
 	const float t = month_value(p.temperature_january, p.temperature_july, p_month);
 	const float lapse = month_value(p.lapse_rate_january, p.lapse_rate_july, p_month);
@@ -138,10 +151,16 @@ inline double day_length(double p_lat, double p_decl) {
 	return 24.0 * Math::acos(c) / Math::PI;
 }
 
-/* Thornthwaite (1948) potential evapotranspiration, mm a year, from twelve monthly means. */
-inline float thornthwaite_pet(const float *p_t, float p_latitude) {
+/* Thornthwaite (1948) potential evapotranspiration, mm a year, from twelve monthly means; each month's into
+r_monthly when given. */
+inline float thornthwaite_pet(const float *p_t, float p_latitude, float *r_monthly = nullptr) {
 	static const int DAYS[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 	static const int MID[12] = { 15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349 };
+	if (r_monthly) {
+		for (int m = 0; m < 12; m++) {
+			r_monthly[m] = 0.0f;
+		}
+	}
 	double heat = 0.0;
 	for (int m = 0; m < 12; m++) {
 		if (p_t[m] > 0.0f) {
@@ -167,6 +186,9 @@ inline float thornthwaite_pet(const float *p_t, float p_latitude) {
 			e = -415.85 + 32.24 * t - 0.43 * t * t; // Willmott, Rowe and Mintz 1985
 		}
 		pet += MAX(e, 0.0) * scale;
+		if (r_monthly) {
+			r_monthly[m] = float(MAX(e, 0.0) * scale);
+		}
 	}
 	return float(pet);
 }
@@ -327,6 +349,39 @@ inline void precipitation(const Params &p, const float *p_h, int p_n, float p_ce
 			}
 		}
 	}
+}
+
+/* Precipitation on an n x n grid of surface heights with cell p_cell: solved on a coarser grid of about
+   p_precipitation_cell (box means), then bilinear back to the fine one, into r_p (n * n). */
+inline void precipitation_on(const Params &p, const float *p_surf, int n, float cell, float p_precipitation_cell, float *r_p) {
+	const int f = MAX(1, int(Math::round(p_precipitation_cell / cell)));
+	const int nc = (n + f - 1) / f;
+	std::vector<float> coarse(nc * nc, 0.0f);
+	for (int cz = 0; cz < nc; cz++) {
+		for (int cx = 0; cx < nc; cx++) {
+			double sum = 0.0;
+			int count = 0;
+			for (int z = cz * f; z < MIN((cz + 1) * f, n); z++) {
+				for (int x = cx * f; x < MIN((cx + 1) * f, n); x++) {
+					sum += p_surf[z * n + x];
+					count++;
+				}
+			}
+			coarse[cz * nc + cx] = float(sum / MAX(count, 1));
+		}
+	}
+	std::vector<float> coarse_p;
+	precipitation(p, coarse.data(), nc, cell * f, coarse_p);
+	parallel_for(n, [&](int z) {
+		const float gz = CLAMP((z + 0.5f) / f - 0.5f, 0.0f, float(nc - 1));
+		const int z0 = MIN(int(gz), nc - 1), z1 = MIN(z0 + 1, nc - 1);
+		for (int x = 0; x < n; x++) {
+			const float gx = CLAMP((x + 0.5f) / f - 0.5f, 0.0f, float(nc - 1));
+			const int x0 = MIN(int(gx), nc - 1), x1 = MIN(x0 + 1, nc - 1);
+			const float fx = gx - x0, fz = gz - z0;
+			r_p[z * n + x] = Math::lerp(Math::lerp(coarse_p[z0 * nc + x0], coarse_p[z0 * nc + x1], fx), Math::lerp(coarse_p[z1 * nc + x0], coarse_p[z1 * nc + x1], fx), fz);
+		}
+	});
 }
 
 /* Horizons: elevation angle (radians) of the terrain horizon in each of 16 directions, marched out to

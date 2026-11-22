@@ -33,12 +33,15 @@
 #include "core/io/resource.h"
 #include "core/math/random_pcg.h"
 
+#include "modules/terrain_deform/climate_recipe.h"
+
 // A place's snow climate (docs/ideas/snow.md, stage 4): the recipe of a winter's weather and, once
 // SnowCover3D.bake_climate() has run that winter over the terrain, the snowpack it left. The weather is a
 // daily stochastic generator in the manner of WGEN (Richardson 1981): wet and dry days from a two-state
 // Markov chain, wet-day amounts exponential, the day's mean temperature a seasonal harmonic plus a
 // persistent residual, a daily cycle on top, the day's wind Weibull around a prevailing direction, stormier
-// on wet days. The sun follows the latitude and the date.
+// on wet days. The sun follows the latitude and the date. With a recipe (the terrain's ClimateRecipe), the
+// winter is the same climate the terrain's rivers, plants and climate maps use (see recipe below).
 class SnowClimate : public Resource {
 	GDCLASS(SnowClimate, Resource);
 
@@ -74,6 +77,11 @@ private:
 	int days = 182; // to about 1 April
 	int step_hours = 3;
 	int seed = 1;
+	// The terrain's climate. When set, start_weather() takes from it the latitude, reference height, January
+	// and July means, the day-to-day spread, the wet-day wind (speed, direction, spread) and the year's
+	// precipitation with its seasonality, which sets each month's wet-day amount; the daily Markov chain and
+	// the diurnal range stay this resource's. SnowCover3D also takes the recipe's winter and summer lapse rates.
+	Ref<ClimateRecipe> recipe;
 
 	// The result.
 	Rect2 rect;
@@ -106,6 +114,13 @@ public:
 	Hour weather_at(int p_day, float p_hour);
 	// Seasonal mean temperature at base_height on a day of the year.
 	float seasonal_temperature(float p_day_of_year) const;
+	// Lapse rate (C/km) on a day of the year from the recipe's winter and summer values; p_default without one.
+	float seasonal_lapse_rate(float p_day_of_year, float p_default) const;
+	// Mean water on a wet day (mm) on a day of the year: the recipe's month share of the year over the
+	// chain's share of wet days, or wet_day_precipitation without a recipe.
+	float wet_day_amount(float p_day_of_year) const;
+	void set_recipe(const Ref<ClimateRecipe> &p_recipe);
+	Ref<ClimateRecipe> get_recipe() const { return recipe; }
 	// The sun's direction (x east, y up, z south) and elevation for the latitude.
 	Vector3 sun_direction(float p_day_of_year, float p_hour) const;
 	// Daily weather of a whole bake for checks: per day mean temperature, water, wind speed, wet (0/1).

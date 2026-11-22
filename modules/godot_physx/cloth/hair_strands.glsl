@@ -24,6 +24,10 @@
 //                distance, jump flooding (Rong and Tan 2006) carries the nearest triangle to every
 //                cell of the grid, each cell takes its signed distance to it, and every point past
 //                the two pinned ones inside the margin is pushed out along the field's gradient.
+//   MODE_DOM_*   (deep shadows on): the deep opacity map of Yuksel and Keyser 2008 (as Unreal's hair):
+//                from the light, each cell keeps the first hair's depth, the strands' coverage in
+//                three layers past it, and the first opaque depth (the collision spheres and body);
+//                the hair shader reads how much hair (and whether the head) lies toward the light.
 //   MODE_RESET   (first frame / teleport) every point placed on the groomed pose.
 //   MODE_OUTPUT  positions written, in the render copy's space, to an RGBA32F image the hair
 //                material reads (no CPU readback), and last frame's positions of the same points to
@@ -45,6 +49,12 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 #define MODE_SDF_FINAL 11
 #define MODE_VOL_CLEAR 12
 #define MODE_VOL_SPLAT 13
+#define MODE_DOM_CLEAR 14
+#define MODE_DOM_FRONT 15
+#define MODE_DOM_OPAQUE 16
+#define MODE_DOM_OPAQUE_TRIS 17
+#define MODE_DOM_ACCUM 18
+#define MODE_DOM_RESOLVE 19
 
 #define MAX_SPHERES 32
 
@@ -66,6 +76,11 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 sdf_misc; // x unused, y collision margin (m)
 	vec4 vol_origin; // xyz the volume grid's corner (groom space), w its cell (m)
 	vec4 vol_misc; // x friction (per substep), y pressure stiffness (m^2/s^2), z mean groom density, w cells a side (0: off)
+	vec4 dom_center; // deep opacity map: xyz the hair's centre (world), w the radius it covers (0: off)
+	vec4 dom_u; // xyz the map's first axis (world), w cells a side
+	vec4 dom_v; // xyz the second axis, w the strands' root width (m)
+	vec4 dom_l; // xyz toward the light, w the tip width (m)
+	vec4 dom_layers; // xyz where the three layers end, metres past the first hair
 };
 
 layout(push_constant, std430) uniform Pass {
@@ -95,6 +110,16 @@ layout(set = 0, binding = 4, std430) restrict buffer Prev {
 layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2D out_image;
 
 layout(set = 0, binding = 12, rgba32f) uniform restrict writeonly image2D prev_image;
+
+layout(set = 0, binding = 14, std430) restrict buffer DomDepth {
+	uint dom_depth[]; // cells: the first hair's depth (float bits, atomicMin); then cells more: the first opaque one's
+};
+
+layout(set = 0, binding = 15, std430) restrict buffer DomAccum {
+	int dom_accum[]; // per cell, three layers: the strands' coverage in it (fixed point, DOM_SCALE)
+};
+
+layout(set = 0, binding = 16, rgba32f) uniform restrict writeonly image2D dom_image;
 
 layout(set = 0, binding = 13, std430) restrict buffer Last {
 	vec4 last[]; // per point: where MODE_OUTPUT put it last frame (render copy's space)
@@ -284,10 +309,140 @@ float vol_excess(vec3 q) {
 	return max(cur - max(rest, 0.5 * vol_misc.z), 0.0) / max(vol_misc.z, 1e-3);
 }
 
+
+// Deep opacity map (Yuksel and Keyser 2008), from the light: cells across, depth along the light
+// from the plane `radius` toward it from the centre.
+const float DOM_SCALE = 65536.0;
+const uint DOM_FAR = 0x7f000000u;
+
+vec3 dom_map(vec3 p) {
+	int n = int(dom_u.w);
+	vec3 d = p - dom_center.xyz;
+	float size = 2.0 * dom_center.w;
+	return vec3((dot(d, dom_u.xyz) / size + 0.5) * float(n) - 0.5, (dot(d, dom_v.xyz) / size + 0.5) * float(n) - 0.5, max(dom_center.w - dot(d, dom_l.xyz), 0.0));
+}
+
+// The strands' segments, sampled about twice per cell across the map: MODE_DOM_FRONT takes each
+// cell's nearest hair, MODE_DOM_ACCUM adds each sample's coverage (its width times its length
+// over the cell's area, TressFX's strand coverage) to the layer it falls in.
+void dom_strand(int s, bool accumulate) {
+	int n = int(dom_u.w);
+	float cell = 2.0 * dom_center.w / float(n);
+	int first = strands[s].x;
+	int count = strands[s].y;
+	for (int i = 0; i + 1 < count; i++) {
+		vec3 a = pos[first + i].xyz;
+		vec3 b = pos[first + i + 1].xyz;
+		vec3 ab = b - a;
+		float across = length(ab - dom_l.xyz * dot(ab, dom_l.xyz));
+		int samples = clamp(int(ceil(2.0 * across / cell)), 1, 64);
+		float along = (float(i) + 0.5) / float(max(count - 1, 1));
+		float width = mix(dom_v.w, dom_l.w, along);
+		float coverage = width * (across / float(samples)) / (cell * cell);
+		for (int k = 0; k < samples; k++) {
+			vec3 m = dom_map(mix(a, b, (float(k) + 0.5) / float(samples)));
+			ivec2 c = ivec2(floor(m.xy));
+			vec2 f = m.xy - vec2(c);
+			for (int j = 0; j < 4; j++) {
+				ivec2 o = ivec2(j & 1, j >> 1);
+				ivec2 cc = c + o;
+				if (any(lessThan(cc, ivec2(0))) || any(greaterThanEqual(cc, ivec2(n)))) {
+					continue;
+				}
+				int ci = cc.y * n + cc.x;
+				if (!accumulate) {
+					atomicMin(dom_depth[ci], floatBitsToUint(m.z));
+					continue;
+				}
+				vec2 wv = mix(1.0 - f, f, vec2(o));
+				float rel = m.z - uintBitsToFloat(dom_depth[ci]);
+				int layer = rel < dom_layers.x ? 0 : (rel < dom_layers.y ? 1 : 2);
+				atomicAdd(dom_accum[ci * 3 + layer], int(wv.x * wv.y * coverage * DOM_SCALE + 0.5));
+			}
+		}
+	}
+}
+
 void main() {
 	int id = int(gl_GlobalInvocationID.x);
 
 	int slot_points = int(inertia.z + 0.5);
+	if (pass.mode >= MODE_DOM_CLEAR) {
+		int n = int(dom_u.w);
+		int cells = n * n;
+		if (pass.mode == MODE_DOM_CLEAR) {
+			if (id < cells) {
+				dom_depth[id] = DOM_FAR;
+				dom_depth[cells + id] = DOM_FAR;
+				dom_accum[id * 3] = 0;
+				dom_accum[id * 3 + 1] = 0;
+				dom_accum[id * 3 + 2] = 0;
+			}
+		} else if (pass.mode == MODE_DOM_FRONT || pass.mode == MODE_DOM_ACCUM) {
+			if (id < counts.x) {
+				dom_strand(id, pass.mode == MODE_DOM_ACCUM);
+			}
+		} else if (pass.mode == MODE_DOM_OPAQUE) {
+			// The collision spheres (skull, neck, shoulders) are opaque: rays from each cell along the
+			// light, nearest hit kept, so the head shadows the hair behind it.
+			if (id < cells) {
+				float size = 2.0 * dom_center.w;
+				vec2 uv = (vec2(id % n, id / n) + 0.5) / float(n) - 0.5;
+				vec3 o = dom_center.xyz + (dom_u.xyz * uv.x + dom_v.xyz * uv.y) * size + dom_l.xyz * dom_center.w;
+				float nearest = uintBitsToFloat(DOM_FAR);
+				for (int k = 0; k < counts.w; k++) {
+					vec3 oc = o - spheres[k].xyz;
+					float b = -dot(oc, dom_l.xyz);
+					float disc = b * b - (dot(oc, oc) - spheres[k].w * spheres[k].w);
+					if (disc > 0.0) {
+						float t = -b - sqrt(disc);
+						if (t > 0.0) {
+							nearest = min(nearest, t);
+						}
+					}
+				}
+				dom_depth[cells + id] = floatBitsToUint(nearest);
+			}
+		} else if (pass.mode == MODE_DOM_OPAQUE_TRIS) {
+			// The collision body's triangles, rasterized into the map (nearest depth).
+			if (id < sdf_dims.w) {
+				vec3 a = dom_map(tris[id * 3].xyz);
+				vec3 b = dom_map(tris[id * 3 + 1].xyz);
+				vec3 c = dom_map(tris[id * 3 + 2].xyz);
+				ivec2 lo = max(ivec2(ceil(min(a.xy, min(b.xy, c.xy)))), ivec2(0));
+				ivec2 hi = min(ivec2(floor(max(a.xy, max(b.xy, c.xy)))), ivec2(n - 1));
+				hi = min(hi, lo + ivec2(63)); // a huge triangle stays bounded
+				float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+				if (abs(area) > 1e-8) {
+					for (int y = lo.y; y <= hi.y; y++) {
+						for (int x = lo.x; x <= hi.x; x++) {
+							vec2 q = vec2(x, y);
+							float w0 = ((b.x - q.x) * (c.y - q.y) - (b.y - q.y) * (c.x - q.x)) / area;
+							float w1 = ((c.x - q.x) * (a.y - q.y) - (c.y - q.y) * (a.x - q.x)) / area;
+							float w2 = 1.0 - w0 - w1;
+							if (w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0) {
+								atomicMin(dom_depth[cells + y * n + x], floatBitsToUint(w0 * a.z + w1 * b.z + w2 * c.z));
+							}
+						}
+					}
+				}
+			}
+		} else if (pass.mode == MODE_DOM_RESOLVE) {
+			// x the first hair's depth, yzw the coverage summed to each layer's end; and beside it
+			// the first opaque depth.
+			if (id < cells) {
+				ivec2 c = ivec2(id % n, id / n);
+				float c1 = float(dom_accum[id * 3]) / DOM_SCALE;
+				float c2 = c1 + float(dom_accum[id * 3 + 1]) / DOM_SCALE;
+				float c3 = c2 + float(dom_accum[id * 3 + 2]) / DOM_SCALE;
+				uint front = dom_depth[id];
+				imageStore(dom_image, c, vec4(front == DOM_FAR ? 1e9 : uintBitsToFloat(front), c1, c2, c3));
+				uint opaque = dom_depth[cells + id];
+				imageStore(dom_image, c + ivec2(n, 0), vec4(opaque == DOM_FAR ? 1e9 : uintBitsToFloat(opaque), 0.0, 0.0, 0.0));
+			}
+		}
+		return;
+	}
 	if (pass.mode == MODE_VOL_CLEAR) {
 		int g = int(vol_misc.w);
 		if (id < g * g * g * 4) {

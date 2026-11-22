@@ -1,5 +1,5 @@
 def can_build(env, platform):
-    env.module_add_dependencies("snow", ["terrain_deform", "weather"])
+    env.module_add_dependencies("snow", ["ground", "terrain_deform", "weather"])
     return True
 
 
@@ -13,6 +13,7 @@ def get_doc_classes():
         "SnowCornice3D",
         "SnowCover3D",
         "SnowFall3D",
+        "SnowIcicles3D",
         "SnowSurface3D",
     ]
 

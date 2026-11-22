@@ -304,6 +304,77 @@ func _checks() -> void:
 	tree_sp.set_rule_range(PlantSpecies.RULE_TEMPERATURE, Vector2(-100.0, 100.0))
 	field.populate()
 	_check("shade: no canopy, no shade", field.get_placements(1).size() == bushes_open and field.get_shade_at(t0) == 0.0, field.get_placements(1).size())
+	# Density mask: a clearing painted into the red channel keeps the trees out of it; the bushes,
+	# reading the inverted channel, grow only there.
+	var all_trees := field.get_placements(0).size()
+	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	img.fill(Color(1, 1, 1, 1))
+	var rect: Rect2 = dm.get_map_rect()
+	var centre := rect.get_center()
+	var radius := rect.size.x * 0.25
+	for y in 64:
+		for x in 64:
+			var w := rect.position + Vector2((x + 0.5) / 64.0 * rect.size.x, (y + 0.5) / 64.0 * rect.size.y)
+			if w.distance_to(centre) < radius:
+				img.set_pixel(x, y, Color(0, 1, 1, 1))
+	field.density_mask = ImageTexture.create_from_image(img)
+	field.density_mask_rect = rect
+	tree_sp.mask_channel = 0
+	var mask_bush: PlantSpecies = field.biome.species[1]
+	mask_bush.mask_channel = 0
+	mask_bush.mask_invert = true
+	field.populate()
+	var in_clearing := 0
+	for t in field.get_placements(0):
+		if Vector2(t.x, t.z).distance_to(centre) < radius - rect.size.x / 64.0:
+			in_clearing += 1
+	var bush_out := 0
+	for b in field.get_placements(1):
+		if Vector2(b.x, b.z).distance_to(centre) > radius + rect.size.x / 64.0:
+			bush_out += 1
+	_check("density mask: no tree in the clearing, bushes only inside it", in_clearing == 0 and bush_out == 0 and field.get_placements(0).size() < all_trees and field.get_placements(1).size() > 0, [in_clearing, bush_out, field.get_placements(0).size(), all_trees])
+	tree_sp.mask_channel = -1
+	mask_bush.mask_channel = -1
+	field.density_mask = null
+	# Near swap: a heavier mesh within near_range, the same plants in the same places.
+	var near_box := BoxMesh.new()
+	tree_sp.near_meshes = [near_box]
+	tree_sp.near_range = 30.0
+	field.populate()
+	var near_n := 0
+	var far_n := 0
+	var bad_range := 0
+	var near_pos := {}
+	var far_pos := {}
+	for ch in field.get_children(true):
+		if not ch is MultiMeshInstance3D or ch.multimesh.mesh == null:
+			continue
+		var mm: MultiMesh = ch.multimesh
+		var is_near: bool = mm.mesh == near_box
+		var is_tree: bool = is_near or tree_sp.meshes.has(mm.mesh)
+		if not is_tree:
+			continue
+		if is_near:
+			near_n += mm.instance_count
+			if not is_equal_approx(ch.visibility_range_end, 30.0) or ch.visibility_range_begin != 0.0:
+				bad_range += 1
+		else:
+			far_n += mm.instance_count
+			if not is_equal_approx(ch.visibility_range_begin, 30.0):
+				bad_range += 1
+		for i in mm.instance_count:
+			var key := str(mm.get_instance_transform(i).origin.snapped(Vector3.ONE * 0.01))
+			if is_near:
+				near_pos[key] = true
+			else:
+				far_pos[key] = true
+	var unmatched := 0
+	for k in near_pos:
+		if not far_pos.has(k):
+			unmatched += 1
+	_check("near swap: every tree drawn near and far, split by range", near_n == far_n and near_n == field.get_placements(0).size() and unmatched == 0 and bad_range == 0 and field.get_placements(0) == first, [near_n, far_n, field.get_placements(0).size(), unmatched, bad_range])
+	tree_sp.near_meshes = []
+	tree_sp.near_range = 0.0
 	print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
 func _build_view() -> void:

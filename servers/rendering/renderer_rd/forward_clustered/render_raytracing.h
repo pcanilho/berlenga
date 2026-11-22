@@ -258,7 +258,9 @@ struct alignas(16) RT_MaterialData {
 		// BaseMaterial3D Snow (GLSL rt_material_snow()), see docs/ideas/snow.md; amount and slope in hair_crown_z.
 		uint32_t snow : 1; // The feature is on.
 		uint32_t snow_from_weather : 1; // Cover = amount times the snow map's (RT_PARAM_SNOW_*).
-		uint32_t unused : 3;
+		// GroundSurface3D's patch (docs/ideas/ground-deform.md): turned-ground tint from RT_PARAM_GROUND_DEFORM_*.
+		uint32_t ground_deform : 1;
+		uint32_t unused : 2;
 	} subsurface;
 	struct { // texture_subsurface_scattering: red scales the strength.
 		uint32_t index : TEXTURE_INDEX_BITS;

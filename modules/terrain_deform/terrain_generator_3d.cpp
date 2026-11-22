@@ -35,6 +35,7 @@
 #include "terrain_erosion_filter.h"
 #include "terrain_geology.h"
 #include "terrain_hydraulic.h"
+#include "terrain_runoff.h"
 #include "terrain_stream_power.h"
 
 #include "core/config/engine.h"
@@ -196,6 +197,8 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 }
 
 bool TerrainGenerator3D::generate() {
+	// Readers on other threads (Landscape3D streaming heights) finish before any grid is replaced.
+	emit_signal(SNAME("changing"));
 	if (size.x <= 0.0 || size.y <= 0.0) {
 		clear_result();
 		return false;
@@ -215,11 +218,15 @@ bool TerrainGenerator3D::generate() {
 	LocalVector<uint8_t> flags;
 	h.resize(n);
 	area.resize(n);
+	memset(area.ptr(), 0, sizeof(double) * n); // the layered rock reads the last step's area before the first
 	sed.resize(n);
 	rd.resize(n);
 	scratch.resize(n);
 	temp.resize(n);
 	rec.resize(n);
+	for (int i = 0; i < n; i++) {
+		rec[i] = i;
+	}
 	stack.resize(n);
 	donor_count.resize(n);
 	donor_offset.resize(n + 1);
@@ -243,6 +250,8 @@ bool TerrainGenerator3D::generate() {
 	sp.p.erodibility = erodibility;
 	sp.p.area_exponent = area_exponent;
 	sp.p.diffusion = hillslope_diffusion;
+	sp.p.deposition = deposition;
+	result_deposition = deposition > 0.0;
 	sp.p.talus = critical_slope > 0.0 ? Math::tan(Math::deg_to_rad(double(critical_slope))) : 0.0;
 	sp.p.base_level = sea_level;
 	sp.p.outlet_edges = outlet_edges;
@@ -288,12 +297,239 @@ bool TerrainGenerator3D::generate() {
 		sp.b.outlet = outlet_mask.ptr();
 	}
 
+	// Layered rock (Forte, Yanites and Whipple 2016; Haviv et al. 2010): bands of hard rock in a sequence that rises
+	// with the uplift. A node's rock is the layer at its stratigraphic height: the ground height minus the uplift
+	// since the start (the rock under it has risen that far), plus the dip along its direction and a slow wobble.
+	// Hard rock erodes strata_hardness times slower and stands at strata_cliff_angle, so where a river cuts down
+	// through a hard band it steps down over a cliff: a knickpoint, a waterfall where the band is thick enough.
+	LocalVector<double> strata_k, strata_talus, strata_offset, strata_depth, strata_creep;
+	double strata_time = 0.0;
+	const double soft_talus = critical_slope > 0.0 ? Math::tan(Math::deg_to_rad(double(critical_slope))) : 0.0;
+	const double hard_talus = Math::tan(Math::deg_to_rad(double(strata_cliff_angle)));
+	auto strata_weight = [&](double q) -> double {
+		const double period = double(strata_spacing);
+		const double phase = Math::fposmod(q, period) / period;
+		const double f = double(strata_hard_fraction);
+		const double inside = phase < f ? MIN(phase, f - phase) : -MIN(phase - f, 1.0 - phase);
+		const double edge = MIN(2.0, 0.1 * period) / period; // a soft contact a couple of metres thick
+		const double t = CLAMP((inside + edge) / (2.0 * edge), 0.0, 1.0);
+		return t * t * (3.0 - 2.0 * t);
+	};
+	auto strata_prepare = [&](int p_nx, int p_ny, double p_dx) {
+		if (!strata_enabled) {
+			return;
+		}
+		const int nn = p_nx * p_ny;
+		strata_k.resize(nn);
+		strata_talus.resize(nn);
+		strata_offset.resize(nn);
+		strata_depth.resize(nn);
+		strata_creep.resize(nn);
+		const double dip = Math::tan(Math::deg_to_rad(double(strata_dip)));
+		const double dir = Math::deg_to_rad(double(strata_dip_direction));
+		const double ddx = Math::sin(dir), ddz = -Math::cos(dir);
+		for (int z = 0; z < p_ny; z++) {
+			for (int x = 0; x < p_nx; x++) {
+				const double px = result_rect.position.x + x * p_dx;
+				const double pz = result_rect.position.y + z * p_dx;
+				strata_offset[z * p_nx + x] = dip * (px * ddx + pz * ddz) + double(strata_wobble) * TerrainErosionFilter::fbm(uint32_t(seed) * 2654435761u + 17u, px, pz, 700.0, 3);
+			}
+		}
+		sp.b.erodibility_scale = strata_k.ptr();
+		sp.b.talus_cell = strata_talus.ptr();
+		sp.b.hard_depth = strata_depth.ptr();
+		sp.b.diffusion_scale = strata_creep.ptr();
+	};
+	auto strata_update = [&](int p_n, const double *p_h, const double *p_up) {
+		if (!strata_enabled) {
+			return;
+		}
+		// Hard rock erodes slowly everywhere, but only channels stand as cliffs and stop creeping: the river's bed holds
+		// the step, while hillslopes in hard rock still fail along joints at the soft rock's critical slope (cliffs on
+		// every hard hillslope cell would leave pinnacles on the grid).
+		const double ac = double(strata_channel_area);
+		for (int i = 0; i < p_n; i++) {
+			const double q = p_h[i] - p_up[i] * strata_time + strata_offset[i];
+			const double a = sp.b.area[i];
+			const double g = ac <= 0.0 ? 1.0 : CLAMP((a - 0.5 * ac) / ac, 0.0, 1.0);
+			const double wr = strata_weight(q);
+			const double w = wr * g * g * (3.0 - 2.0 * g);
+			const double depth = Math::fposmod(q, double(strata_spacing));
+			strata_depth[i] = w > 0.5 && depth < double(strata_hard_fraction) * double(strata_spacing) ? depth : 0.0;
+			strata_k[i] = 1.0 + (1.0 / double(strata_hardness) - 1.0) * wr;
+			strata_talus[i] = soft_talus + (hard_talus - soft_talus) * w;
+			strata_creep[i] = 1.0 - w;
+		}
+		// The soft rock right under a hard lip is the lower part of its face, worn back by the plunge pool and kept
+		// as steep as the hard rock above it stands (Scheingross and Lamb 2017).
+		for (int i = 0; i < p_n; i++) {
+			const int r = sp.b.receiver[i];
+			if (r != i && r >= 0 && r < p_n && strata_depth[i] > 0.0) {
+				strata_talus[r] = MAX(strata_talus[r], strata_talus[i]);
+			}
+		}
+	};
+	auto strata_step = [&](int p_n, const double *p_h, const double *p_up) -> double {
+		strata_update(p_n, p_h, p_up);
+		const double c = sp.step();
+		strata_time += double(time_step);
+		return c;
+	};
+
+	// Coarse to fine (the V-cycle of Tzathas et al. 2024, with our time-stepping solver at every level): the
+	// steps run on grids halved 2x2 at a time, where the large-scale relief and drainage form for a sixteenth of
+	// the cost per halving, then each finer level starts from the bilinear upsample of the one below (plus the
+	// initial roughness, so flats break the same way) and runs refine_steps to grow its own small valleys,
+	// hillslopes and talus. Uplift is restricted by full weighting, outlets and the sea by injection.
+	int levels = 0;
+	{
+		int cx = nx, cz = ny;
+		const int max_levels = coarse_levels < 0 ? 8 : coarse_levels;
+		while (levels < max_levels && (cx - 1) % 2 == 0 && (cz - 1) % 2 == 0 && (cx - 1) / 2 + 1 >= (coarse_levels < 0 ? 129 : 9) && (cz - 1) / 2 + 1 >= (coarse_levels < 0 ? 129 : 9)) {
+			cx = (cx - 1) / 2 + 1;
+			cz = (cz - 1) / 2 + 1;
+			levels++;
+		}
+	}
 	double change = 0.0;
-	for (int s = 0; s < steps; s++) {
-		change = sp.step();
+	if (levels == 0) {
+		strata_prepare(nx, ny, cell_size);
+		for (int s = 0; s < steps; s++) {
+			change = strata_step(n, h.ptr(), up.ptr());
+		}
+	} else {
+		struct Level {
+			int nx = 0, ny = 0;
+			LocalVector<double> up, h, sed;
+			LocalVector<uint8_t> outlet;
+		};
+		LocalVector<Level> lv;
+		lv.resize(levels + 1);
+		lv[0].nx = nx;
+		lv[0].ny = ny;
+		for (int l = 1; l <= levels; l++) {
+			const Level &f = lv[l - 1];
+			Level &c = lv[l];
+			c.nx = (f.nx - 1) / 2 + 1;
+			c.ny = (f.ny - 1) / 2 + 1;
+			const double *fu = l == 1 ? up.ptr() : f.up.ptr();
+			const uint8_t *fo = l == 1 ? sp.b.outlet : (f.outlet.is_empty() ? nullptr : f.outlet.ptr());
+			c.up.resize(c.nx * c.ny);
+			if (fo) {
+				c.outlet.resize(c.nx * c.ny);
+			}
+			for (int z = 0; z < c.ny; z++) {
+				for (int x = 0; x < c.nx; x++) {
+					double sum = 0.0, wsum = 0.0;
+					for (int dz = -1; dz <= 1; dz++) {
+						for (int dx = -1; dx <= 1; dx++) {
+							const int fx = 2 * x + dx, fz = 2 * z + dz;
+							if (fx < 0 || fz < 0 || fx >= f.nx || fz >= f.ny) {
+								continue;
+							}
+							const double w = (dx == 0 ? 2.0 : 1.0) * (dz == 0 ? 2.0 : 1.0);
+							sum += w * fu[fz * f.nx + fx];
+							wsum += w;
+						}
+					}
+					c.up[z * c.nx + x] = sum / wsum;
+					if (fo) {
+						c.outlet[z * c.nx + x] = fo[(2 * z) * f.nx + 2 * x];
+					}
+				}
+			}
+		}
+		const uint8_t *fine_outlet = sp.b.outlet;
+		auto run = [&](int l, double *p_h, double *p_sed, int p_steps) {
+			Level &L = lv[l];
+			sp.p.nx = L.nx;
+			sp.p.ny = L.ny;
+			sp.p.dx = double(cell_size) * double(1 << l);
+			sp.b.height = p_h;
+			sp.b.sediment = p_sed;
+			sp.b.uplift = l == 0 ? up.ptr() : L.up.ptr();
+			sp.b.outlet = l == 0 ? fine_outlet : (L.outlet.is_empty() ? nullptr : L.outlet.ptr());
+			sp.invalidate_outlets();
+			strata_prepare(L.nx, L.ny, sp.p.dx);
+			for (int s = 0; s < p_steps; s++) {
+				change = strata_step(L.nx * L.ny, p_h, sp.b.uplift);
+			}
+		};
+		// Coarsest level: the full run from the initial roughness.
+		{
+			Level &L = lv[levels];
+			L.h.resize(L.nx * L.ny);
+			L.sed.resize(L.nx * L.ny);
+			for (int i = 0; i < L.nx * L.ny; i++) {
+				const bool o = !L.outlet.is_empty() && L.outlet[i];
+				L.h[i] = o ? double(sea_level) : double(sea_level) + double(initial_roughness) * _gen_hash01(uint32_t(seed), uint32_t(i));
+				L.sed[i] = 0.0;
+			}
+			run(levels, L.h.ptr(), L.sed.ptr(), steps);
+		}
+		for (int l = levels - 1; l >= 0; l--) {
+			Level &c = lv[l + 1];
+			Level &f = lv[l];
+			double *fh = h.ptr();
+			double *fs = sed.ptr();
+			if (l > 0) {
+				f.h.resize(f.nx * f.ny);
+				f.sed.resize(f.nx * f.ny);
+				fh = f.h.ptr();
+				fs = f.sed.ptr();
+			}
+			const uint8_t *fo = l == 0 ? fine_outlet : (f.outlet.is_empty() ? nullptr : f.outlet.ptr());
+			for (int z = 0; z < f.ny; z++) {
+				const int z0 = MIN(z / 2, c.ny - 1), z1 = MIN(z0 + 1, c.ny - 1);
+				const double tz = (z & 1) ? 0.5 : 0.0;
+				for (int x = 0; x < f.nx; x++) {
+					const int x0 = MIN(x / 2, c.nx - 1), x1 = MIN(x0 + 1, c.nx - 1);
+					const double tx = (x & 1) ? 0.5 : 0.0;
+					auto bil = [&](const LocalVector<double> &a) {
+						const double a0 = a[z0 * c.nx + x0] * (1.0 - tx) + a[z0 * c.nx + x1] * tx;
+						const double a1 = a[z1 * c.nx + x0] * (1.0 - tx) + a[z1 * c.nx + x1] * tx;
+						return a0 * (1.0 - tz) + a1 * tz;
+					};
+					const int i = z * f.nx + x;
+					if (fo && fo[i]) {
+						fh[i] = double(sea_level);
+					} else {
+						fh[i] = bil(c.h) + double(initial_roughness) * _gen_hash01(uint32_t(seed) + 7919u * uint32_t(l + 1), uint32_t(i));
+					}
+					fs[i] = bil(c.sed);
+				}
+			}
+			run(l, fh, fs, refine_steps);
+			c.h.clear();
+			c.sed.clear();
+		}
+		sp.p.nx = nx;
+		sp.p.ny = ny;
+		sp.p.dx = cell_size;
+		sp.b.height = h.ptr();
+		sp.b.sediment = sed.ptr();
+		sp.b.uplift = up.ptr();
+		sp.b.outlet = fine_outlet;
+		sp.invalidate_outlets();
+	}
+	hardness.clear();
+	if (strata_enabled) {
+		if (levels > 0) {
+			strata_prepare(nx, ny, cell_size);
+		}
+		// The rock at the surface everywhere (the bands as they crop out, on hillslopes too).
+		hardness.resize(n);
+		for (int i = 0; i < n; i++) {
+			hardness[i] = float(strata_weight(h[i] - up[i] * strata_time + strata_offset[i]));
+		}
 	}
 	sp.route();
-	last_steps = steps;
+	sp.b.erodibility_scale = nullptr;
+	sp.b.talus_cell = nullptr;
+	sp.b.hard_depth = nullptr;
+	sp.b.diffusion_scale = nullptr;
+	last_steps = levels > 0 ? steps + levels * refine_steps : steps;
+	last_coarse_levels = levels;
 	last_change = real_t(change);
 
 	double hmax = sea_level;
@@ -314,6 +550,7 @@ bool TerrainGenerator3D::generate() {
 		sediment[i] = float(sed[i] * scale);
 		uplift_field[i] = float(up[i] * 1.0e3);
 	}
+	_alluvium_reach();
 
 	// Seabed and beaches below and along the coast.
 	const uint64_t tw = OS::get_singleton()->get_ticks_usec();
@@ -330,6 +567,8 @@ bool TerrainGenerator3D::generate() {
 	memcpy(receivers.ptr(), rec.ptr(), sizeof(int32_t) * n);
 	channel_area.resize(n);
 	TerrainGeology::d8_area(n, receivers.ptr(), stack.ptr(), double(cell_size) * cell_size, channel_area.ptr());
+	// Rain and snowmelt from the climate (before the lakes, whose balance takes the mean runoff).
+	_bake_runoff(sea_mask);
 	// Lakes behind natural dams (they change the ground, so before the geology).
 	_make_lakes(sea_mask);
 	uint64_t water_usec = OS::get_singleton()->get_ticks_usec() - tw;
@@ -365,6 +604,7 @@ bool TerrainGenerator3D::generate() {
 	_route_rivers();
 	water_usec += OS::get_singleton()->get_ticks_usec() - tr;
 	last_water_msec = double(water_usec) / 1000.0;
+	_bake_detail_keep();
 	_publish_globals();
 	_erode_tiles();
 	last_generate_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
@@ -373,23 +613,31 @@ bool TerrainGenerator3D::generate() {
 }
 
 void TerrainGenerator3D::clear_result() {
+	emit_signal(SNAME("changing"));
 	nx = 0;
 	ny = 0;
 	heights.clear();
 	drainage.clear();
 	sediment.clear();
+	alluvium_reach.clear();
 	uplift_field.clear();
 	soil.clear();
 	rock.clear();
 	talus.clear();
+	beach.clear();
 	receivers.clear();
 	channel_area.clear();
 	water_body.clear();
 	water_depth.clear();
 	lake_rim.clear();
+	lake_rim_weight.clear();
 	river_receivers.clear();
 	river_area.clear();
 	lake_info.clear();
+	runoff_fields.clear();
+	runoff_n = 0;
+	flow_index.clear();
+	flows.clear();
 	has_sea = false;
 	tile_delta.clear();
 	tile_flow.clear();
@@ -425,6 +673,90 @@ float TerrainGenerator3D::_sample(const LocalVector<float> &p_grid, real_t p_x, 
 		rows[k] = cr(at(ix - 1, z), at(ix, z), at(ix + 1, z), at(ix + 2, z), fx);
 	}
 	return float(cr(rows[0], rows[1], rows[2], rows[3], fz));
+}
+
+// Alluvium depth (capped at the ALLUVIUM_FADE metres over which the detail fades) carried out past the deposit,
+// losing all of it over 3/8 of the detail's longest wavelength: the toe of a fan, where the deposit thins to a few
+// decimetres over a wide convex slope, would otherwise get the bedrock gullies at nearly full depth, all running
+// down the same slope side by side. A two-pass
+// chamfer distance (Borgefors 1986), so it costs two sweeps of the grid.
+static constexpr float ALLUVIUM_FADE = 0.5f;
+
+void TerrainGenerator3D::_alluvium_reach() {
+	alluvium_reach.clear();
+	if (!result_deposition || sediment.size() != uint32_t(nx * ny) || nx < 2 || ny < 2) {
+		return;
+	}
+	const int n = nx * ny;
+	alluvium_reach.resize(n);
+	for (int i = 0; i < n; i++) {
+		alluvium_reach[i] = MIN(MAX(sediment[i], 0.0f), ALLUVIUM_FADE);
+	}
+	// River channels across the floor keep little alluvium themselves (they are where it moves): a plateau of two
+	// cells first, so a channel and its banks inside a deposit count as the deposit, then the fall-off.
+	{
+		const int rad = MAX(1, int(Math::round(32.0 / double(cell_size))));
+		LocalVector<float> row_max;
+		row_max.resize(n);
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				float v = 0.0f;
+				for (int k = MAX(0, x - rad); k <= MIN(nx - 1, x + rad); k++) {
+					v = MAX(v, alluvium_reach[z * nx + k]);
+				}
+				row_max[z * nx + x] = v;
+			}
+		}
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				float v = 0.0f;
+				for (int k = MAX(0, z - rad); k <= MIN(ny - 1, z + rad); k++) {
+					v = MAX(v, row_max[k * nx + x]);
+				}
+				alluvium_reach[z * nx + x] = v;
+			}
+		}
+	}
+	const float per_m = ALLUVIUM_FADE / float(MAX(double(detail_wavelength) * 0.375, double(cell_size)));
+	const float a = per_m * float(cell_size);
+	const float d = a * float(Math::SQRT2);
+	float *r = alluvium_reach.ptr();
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			float v = r[z * nx + x];
+			if (x > 0) {
+				v = MAX(v, r[z * nx + x - 1] - a);
+			}
+			if (z > 0) {
+				v = MAX(v, r[(z - 1) * nx + x] - a);
+				if (x > 0) {
+					v = MAX(v, r[(z - 1) * nx + x - 1] - d);
+				}
+				if (x < nx - 1) {
+					v = MAX(v, r[(z - 1) * nx + x + 1] - d);
+				}
+			}
+			r[z * nx + x] = v;
+		}
+	}
+	for (int z = ny - 1; z >= 0; z--) {
+		for (int x = nx - 1; x >= 0; x--) {
+			float v = r[z * nx + x];
+			if (x < nx - 1) {
+				v = MAX(v, r[z * nx + x + 1] - a);
+			}
+			if (z < ny - 1) {
+				v = MAX(v, r[(z + 1) * nx + x] - a);
+				if (x < nx - 1) {
+					v = MAX(v, r[(z + 1) * nx + x + 1] - d);
+				}
+				if (x > 0) {
+					v = MAX(v, r[(z + 1) * nx + x - 1] - d);
+				}
+			}
+			r[z * nx + x] = v;
+		}
+	}
 }
 
 float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
@@ -489,6 +821,14 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	// Not under water (the seabed and lake beds stay smooth), and never down to the outlets: land the filter cuts
 	// stays above the sea (by 0.15 m), so the coast keeps its shape and no hollow floods.
 	off *= _water_fade(p_x, p_z);
+	if (result_deposition && alluvium_reach.size() == heights.size()) {
+		// Alluvium the rivers laid down is smooth (an aggrading surface buries gullies): bedrock gullies and crests
+		// fade out over its first half metre, so a fan front or a terrace riser stays a soft bank instead of growing
+		// rocky knobs. The fade reaches past the thin
+		// edge of a deposit (see _alluvium_reach), so a fan toe does not grow a comb of gullies either.
+		const double sd = CLAMP(double(_sample(alluvium_reach, p_x, p_z)) / ALLUVIUM_FADE, 0.0, 1.0);
+		off *= 1.0 - sd * sd * (3.0 - 2.0 * sd);
+	}
 	if (has_sea) {
 		// Beaches and the coastal strip stay smooth: the detail grows in over the first metres above the sea.
 		const double t = CLAMP((double(base) - double(result_min) - 0.5) / 5.5, 0.0, 1.0);
@@ -524,8 +864,13 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 		const int z = CLAMP(int(Math::round((p_z - result_rect.position.y) / result_cell)), 0, ny - 1);
 		const float level = lake_rim[z * nx + x];
 		if (!Math::is_nan(level)) {
-			const float base = _sample(heights, p_x, p_z);
-			g = MAX(g, MIN(base, level + 0.05f));
+			// Full within a cell of the water, fading out over the next two (a hard edge at the ring left terraces with
+			// stepped walls along the cell lines).
+			const float w = CLAMP(_sample(lake_rim_weight, p_x, p_z), 0.0f, 1.0f);
+			const float hold = MIN(_sample(heights, p_x, p_z), level + 0.05f);
+			if (g < hold) {
+				g = Math::lerp(g, hold, w);
+			}
 		}
 	}
 	return g;
@@ -762,6 +1107,358 @@ real_t TerrainGenerator3D::get_talus(const Vector3 &p_global_position) const {
 	return CLAMP(_sample(talus, p_global_position.x, p_global_position.z), 0.0f, 1.0f);
 }
 
+real_t TerrainGenerator3D::get_rock_hardness(const Vector3 &p_global_position) const {
+	if (hardness.size() != uint32_t(nx * ny) || nx <= 0) {
+		return 0.0;
+	}
+	return CLAMP(_sample(hardness, p_global_position.x, p_global_position.z), 0.0f, 1.0f);
+}
+
+// Places along the rivers for lakes and falls: every river point carrying at least p_min_discharge (m3/s, in
+// river_month), with how far the river drops over the next p_run metres downstream. Each is a Dictionary: position
+// (on the ground), discharge, area (drainage, m2), drop (m over p_run), run (m actually measured, shorter at a mouth),
+// river and index (as in get_rivers(p_min_area)). Ordered by river, then downstream.
+Array TerrainGenerator3D::get_river_sites(real_t p_min_area, real_t p_min_discharge, real_t p_run) const {
+	Array out;
+	if (heights.size() != uint32_t(nx * ny)) {
+		return out;
+	}
+	const Array rivers = _rivers(p_min_area, true);
+	const real_t run = MAX(p_run, real_t(0.0));
+	for (int r = 0; r < rivers.size(); r++) {
+		const Dictionary d = rivers[r];
+		const PackedInt32Array cells = d["cells"];
+		const PackedVector3Array pts = d["points"];
+		const PackedFloat32Array areas = d["areas"];
+		// Distance along the river from its first point, to find the point p_run further down.
+		LocalVector<real_t> along;
+		along.resize(pts.size());
+		real_t acc = 0.0;
+		for (int k = 0; k < pts.size(); k++) {
+			acc += k > 0 ? Vector2(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z).length() : 0.0;
+			along[k] = acc;
+		}
+		int e = 0;
+		for (int k = 0; k < cells.size() && k < pts.size(); k++) {
+			const float q = _flow(cells[k], river_month);
+			if (q < p_min_discharge) {
+				continue;
+			}
+			e = MAX(e, k);
+			while (e + 1 < pts.size() && along[e] - along[k] < run) {
+				e++;
+			}
+			const Vector3 top(pts[k].x, _ground(pts[k].x, pts[k].z), pts[k].z);
+			const real_t below = _ground(pts[e].x, pts[e].z);
+			Dictionary w;
+			w["position"] = top;
+			w["discharge"] = q;
+			w["area"] = k < areas.size() ? real_t(areas[k]) : real_t(0.0);
+			w["drop"] = top.y - below;
+			w["run"] = along[e] - along[k];
+			w["river"] = r;
+			w["index"] = k;
+			out.push_back(w);
+		}
+	}
+	return out;
+}
+
+// Waterfalls along the rivers: runs of the channel steeper than 45 degrees in the eroded heights (soft rock stands at
+// critical_slope at most, so only hard rock makes them) that drop at least p_min_height. Each is a Dictionary: top
+// and bottom (the lip and the foot, on the ground), height, width and discharge (of the river at the lip), river
+// (index in get_rivers(p_min_area)), index (of the lip in that river's points) and hardness (of the rock at the lip).
+Array TerrainGenerator3D::get_waterfalls(real_t p_min_area, real_t p_min_height) const {
+	Array out;
+	if (heights.size() != uint32_t(nx * ny)) {
+		return out;
+	}
+	const Array rivers = _rivers(p_min_area, true);
+	for (int r = 0; r < rivers.size(); r++) {
+		const Dictionary d = rivers[r];
+		const PackedInt32Array cells = d["cells"];
+		const PackedVector3Array pts = d["points"];
+		const PackedFloat32Array widths = d["widths"];
+		const PackedFloat32Array areas = d["areas"];
+		auto steep = [&](int a) {
+			const int u = cells[a], v = cells[a + 1];
+			const real_t run = result_cell * Math::sqrt(real_t((u % nx - v % nx) * (u % nx - v % nx) + (u / nx - v / nx) * (u / nx - v / nx)));
+			return heights[u] - heights[v] > run;
+		};
+		int k = 0;
+		while (k + 1 < cells.size()) {
+			if (!steep(k)) {
+				k++;
+				continue;
+			}
+			int e = k;
+			while (e + 1 < cells.size() && steep(e)) {
+				e++;
+			}
+			const Vector3 top = Vector3(_cell_position(cells[k]).x, _ground(_cell_position(cells[k]).x, _cell_position(cells[k]).z), _cell_position(cells[k]).z);
+			const Vector3 bottom = Vector3(_cell_position(cells[e]).x, _ground(_cell_position(cells[e]).x, _cell_position(cells[e]).z), _cell_position(cells[e]).z);
+			const real_t drop = heights[cells[k]] - heights[cells[e]];
+			if (drop >= p_min_height) {
+				Dictionary w;
+				w["top"] = top;
+				w["bottom"] = bottom;
+				w["height"] = top.y - bottom.y;
+				w["width"] = widths[k];
+				w["discharge"] = _flow(cells[k], river_month);
+				w["river"] = r;
+				w["index"] = k;
+				w["hardness"] = get_rock_hardness(top);
+				out.push_back(w);
+			}
+			k = e;
+		}
+	}
+	return out;
+}
+
+/* Rain and snowmelt (terrain_runoff.h; docs/ideas/terrain-generation.md "Rain and snowmelt feed the rivers") */
+
+namespace {
+constexpr int RUNOFF_STRIDE = 28; // 12 runoff, 12 snow, precipitation, shortwave, winter shortwave, surface
+constexpr int RUNOFF_MIN_CELLS = 8;
+} // namespace
+
+// The climate on a coarse grid of the result (about the recipe's sun_cell), the sea as water, then each cell's
+// monthly water balance.
+void TerrainGenerator3D::_bake_runoff(const LocalVector<uint8_t> &p_sea) {
+	runoff_fields.clear();
+	runoff_n = 0;
+	runoff_mean = 0.0;
+	runoff_msec = 0.0;
+	flow_index.clear();
+	flows.clear();
+	if (climate_recipe.is_null() || nx < 2 || ny < 2) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	const TerrainClimate::Params &cp = climate_recipe->get_params();
+	const int f = MAX(1, int(Math::round(climate_recipe->get_sun_cell() / cell_size)));
+	const int N = MAX((nx + f - 1) / f, (ny + f - 1) / f);
+	const float cell = float(cell_size) * f;
+	std::vector<float> surf(N * N);
+	std::vector<uint8_t> sea(N * N);
+	for (int cz = 0; cz < N; cz++) {
+		for (int cx = 0; cx < N; cx++) {
+			double sum = 0.0;
+			int count = 0, wet = 0;
+			for (int z = cz * f; z < (cz + 1) * f; z++) {
+				for (int x = cx * f; x < (cx + 1) * f; x++) {
+					const int i = MIN(z, ny - 1) * nx + MIN(x, nx - 1);
+					const bool s = p_sea.size() == uint32_t(nx * ny) && p_sea[i];
+					sum += s ? MAX(heights[i], result_min) : heights[i];
+					wet += s ? 1 : 0;
+					count++;
+				}
+			}
+			surf[cz * N + cx] = float(sum / count);
+			sea[cz * N + cx] = 2 * wet > count;
+		}
+	}
+	std::vector<float> precip(N * N), sw(N * N), sww(N * N), sky(N * N), hz;
+	TerrainClimate::precipitation_on(cp, surf.data(), N, cell, climate_recipe->get_precipitation_cell(), precip.data());
+	TerrainClimate::horizons(cp, surf.data(), N, cell, hz);
+	TerrainClimate::shortwave(cp, surf.data(), N, cell, hz, sw.data(), sww.data(), sky.data());
+	runoff_fields.resize(N * N * RUNOFF_STRIDE);
+	float *rf = runoff_fields.ptr();
+	TerrainClimate::parallel_for(N, [&](int z) {
+		for (int x = 0; x < N; x++) {
+			const int c = z * N + x;
+			float *o = rf + c * RUNOFF_STRIDE;
+			TerrainRunoff::Cell b;
+			if (sea[c]) {
+				for (int m = 0; m < 12; m++) {
+					b.runoff[m] = 0.0f;
+					b.snow[m] = 0.0f;
+				}
+			} else {
+				TerrainRunoff::balance(cp, surf[c], precip[c], sw[c], sww[c], -1.0f, b);
+			}
+			for (int m = 0; m < 12; m++) {
+				o[m] = b.runoff[m];
+				o[12 + m] = b.snow[m];
+			}
+			o[24] = precip[c];
+			o[25] = sw[c];
+			o[26] = sww[c];
+			o[27] = surf[c];
+		}
+	});
+	double sum = 0.0;
+	int land = 0;
+	for (int c = 0; c < N * N; c++) {
+		if (!sea[c]) {
+			for (int m = 0; m < 12; m++) {
+				sum += rf[c * RUNOFF_STRIDE + m];
+			}
+			land++;
+		}
+	}
+	runoff_mean = land > 0 ? sum / land : 0.0;
+	runoff_n = N;
+	runoff_f = f;
+	runoff_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+}
+
+// Bilinear between coarse cell centres (field 0..RUNOFF_STRIDE-1).
+float TerrainGenerator3D::_runoff_sample(int p_field, real_t p_x, real_t p_z) const {
+	if (runoff_n <= 0) {
+		return 0.0f;
+	}
+	const int N = runoff_n;
+	const real_t half = 0.5 * (runoff_f - 1);
+	const real_t gx = CLAMP(((p_x - result_rect.position.x) / result_cell - half) / runoff_f, real_t(0.0), real_t(N - 1));
+	const real_t gz = CLAMP(((p_z - result_rect.position.y) / result_cell - half) / runoff_f, real_t(0.0), real_t(N - 1));
+	const int x0 = MIN(int(gx), N - 1), z0 = MIN(int(gz), N - 1);
+	const int x1 = MIN(x0 + 1, N - 1), z1 = MIN(z0 + 1, N - 1);
+	const float fx = float(gx - x0), fz = float(gz - z0);
+	auto at = [&](int x, int z) { return runoff_fields[(z * N + x) * RUNOFF_STRIDE + p_field]; };
+	return Math::lerp(Math::lerp(at(x0, z0), at(x1, z0), fx), Math::lerp(at(x0, z1), at(x1, z1), fx), fz);
+}
+
+// Each month's runoff accumulated down the rivers' routing (lake cells drain to their outlets and lose their open
+// water evaporation; the sea takes everything). Channel cells keep their twelve monthly discharges.
+void TerrainGenerator3D::_route_runoff(const LocalVector<int32_t> &p_receivers, const LocalVector<int32_t> &p_order) {
+	flow_index.clear();
+	flows.clear();
+	if (runoff_n <= 0) {
+		return;
+	}
+	const int n = nx * ny;
+	const double ca = double(cell_size) * cell_size;
+	flow_index.resize(n);
+	int kept = 0;
+	for (int i = 0; i < n; i++) {
+		flow_index[i] = river_area[i] >= RUNOFF_MIN_CELLS * ca ? kept++ : -1;
+	}
+	flows.resize(kept * 12);
+	// Lake cells: open water (rain and melt less the lake's evaporation), at the lake's level.
+	const TerrainClimate::Params &cp = climate_recipe->get_params();
+	LocalVector<int32_t> lake_cells;
+	for (int i = 0; i < n; i++) {
+		if (water_body.size() == uint32_t(n) && water_body[i] >= 2) {
+			lake_cells.push_back(i);
+		}
+	}
+	LocalVector<float> lake_runoff;
+	lake_runoff.resize(lake_cells.size() * 12);
+	TerrainClimate::parallel_for(int(lake_cells.size()), [&](int k) {
+		const int i = lake_cells[k];
+		const Vector3 p = _cell_position(i);
+		TerrainRunoff::Cell b;
+		TerrainRunoff::balance(cp, lake_info[water_body[i] - 2].level, _runoff_sample(24, p.x, p.z), _runoff_sample(25, p.x, p.z), _runoff_sample(26, p.x, p.z), float(lake_evaporation), b);
+		for (int m = 0; m < 12; m++) {
+			lake_runoff[k * 12 + m] = b.runoff[m];
+		}
+	});
+	LocalVector<int32_t> lake_slot;
+	lake_slot.resize(n);
+	for (int i = 0; i < n; i++) {
+		lake_slot[i] = -1;
+	}
+	for (uint32_t k = 0; k < lake_cells.size(); k++) {
+		lake_slot[lake_cells[k]] = int32_t(k);
+	}
+	LocalVector<double> acc;
+	acc.resize(n);
+	for (int m = 0; m < 12; m++) {
+		const double to_flow = 1.0e-3 * ca / (TerrainRunoff::DAYS[m] * 86400.0);
+		TerrainClimate::parallel_for(ny, [&](int z) {
+			for (int x = 0; x < nx; x++) {
+				const int i = z * nx + x;
+				const int32_t b = water_body.size() == uint32_t(n) ? water_body[i] : 0;
+				double mm;
+				if (b == 1) {
+					mm = 0.0;
+				} else if (b >= 2) {
+					mm = lake_runoff[lake_slot[i] * 12 + m];
+				} else {
+					const Vector3 p = _cell_position(i);
+					mm = _runoff_sample(m, p.x, p.z);
+				}
+				acc[i] = mm * to_flow;
+			}
+		});
+		for (uint32_t q = 0; q < p_order.size(); q++) {
+			const int32_t i = p_order[q];
+			const int32_t r = p_receivers[i];
+			if (r != i) {
+				acc[r] += acc[i];
+			}
+		}
+		for (int i = 0; i < n; i++) {
+			if (flow_index[i] >= 0) {
+				flows[flow_index[i] * 12 + m] = float(MAX(acc[i], 0.0));
+			}
+		}
+	}
+}
+
+// Discharge (m^3/s) of a cell in a month (-1: the annual mean). Without a climate, river_runoff times the area.
+float TerrainGenerator3D::_flow(int p_cell, int p_month) const {
+	if (p_cell < 0 || p_cell >= int(river_area.size())) {
+		return 0.0f;
+	}
+	if (flow_index.is_empty()) {
+		return float(get_discharge(river_area[p_cell]));
+	}
+	const int k = flow_index[p_cell];
+	if (k < 0) {
+		// A small headwater: its own area at the local runoff.
+		const Vector3 p = _cell_position(p_cell);
+		if (p_month >= 0) {
+			return float(MAX(_runoff_sample(p_month, p.x, p.z), 0.0f) * 1.0e-3 * river_area[p_cell] / (TerrainRunoff::DAYS[p_month] * 86400.0));
+		}
+		float year = 0.0f;
+		for (int m = 0; m < 12; m++) {
+			year += _runoff_sample(m, p.x, p.z);
+		}
+		return float(MAX(year, 0.0f) * 1.0e-3 * river_area[p_cell] / 31536000.0);
+	}
+	if (p_month >= 0) {
+		return flows[k * 12 + p_month];
+	}
+	double sum = 0.0;
+	for (int m = 0; m < 12; m++) {
+		sum += double(flows[k * 12 + m]) * TerrainRunoff::DAYS[m];
+	}
+	return float(sum / 365.0);
+}
+
+real_t TerrainGenerator3D::get_runoff_at(const Vector3 &p_global_position, int p_month) const {
+	if (runoff_n <= 0) {
+		return p_month < 0 ? river_runoff : river_runoff * TerrainRunoff::DAYS[CLAMP(p_month, 0, 11)] / 365.0;
+	}
+	if (p_month >= 0) {
+		return _runoff_sample(CLAMP(p_month, 0, 11), p_global_position.x, p_global_position.z);
+	}
+	real_t year = 0.0;
+	for (int m = 0; m < 12; m++) {
+		year += _runoff_sample(m, p_global_position.x, p_global_position.z);
+	}
+	return year;
+}
+
+real_t TerrainGenerator3D::get_snow_water_at(const Vector3 &p_global_position, int p_month) const {
+	if (runoff_n <= 0) {
+		return 0.0;
+	}
+	return MAX(_runoff_sample(12 + CLAMP(p_month, 0, 11), p_global_position.x, p_global_position.z), 0.0f);
+}
+
+real_t TerrainGenerator3D::get_discharge_at(const Vector3 &p_global_position, int p_month) const {
+	if (nx < 2 || river_area.size() != uint32_t(nx * ny)) {
+		return 0.0;
+	}
+	const int x = CLAMP(int(Math::round((p_global_position.x - result_rect.position.x) / result_cell)), 0, nx - 1);
+	const int z = CLAMP(int(Math::round((p_global_position.z - result_rect.position.y) / result_cell)), 0, ny - 1);
+	return _flow(z * nx + x, CLAMP(p_month, -1, 11));
+}
+
 Color TerrainGenerator3D::get_geology_at(const Vector3 &p_global_position) const {
 	const real_t a = _sample(drainage, p_global_position.x, p_global_position.z);
 	return Color(get_soil_depth(p_global_position), get_rock_exposure(p_global_position), get_talus(p_global_position), std::log10(double(MAX(a, real_t(1.0)))));
@@ -777,7 +1474,9 @@ Ref<Image> TerrainGenerator3D::get_geology_image() const {
 	bytes.resize(n * 4 * sizeof(float));
 	float *w = reinterpret_cast<float *>(bytes.ptrw());
 	for (int i = 0; i < n; i++) {
-		w[i * 4 + 0] = soil[i];
+		// Sand where the coast made a beach, as a negative soil depth (-1 on the beach face, fading to 0 behind it),
+		// so materials put sand on beaches and not on every low coastal plain.
+		w[i * 4 + 0] = (beach.size() == uint32_t(n) && beach[i] > 0.0f) ? -beach[i] : soil[i];
 		w[i * 4 + 1] = rock[i];
 		w[i * 4 + 2] = talus[i];
 		w[i * 4 + 3] = float(std::log10(MAX(double(drainage[i]), 1.0)));
@@ -803,12 +1502,48 @@ void TerrainGenerator3D::_publish_globals() {
 	const Rect2 &r = result_rect;
 	set_global("terrain_geology_map", geology_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	set_global("terrain_geology_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+	if (detail_keep_texture.is_valid()) {
+		set_global("terrain_detail_keep_map", detail_keep_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+	}
+}
+
+// How much of the geometric erosion detail each grid node keeps (_ground_detail's fades for water, alluvium and the
+// coastal strip), so the detail normal in materials fades in the same places (an unset global reads white: full
+// detail).
+void TerrainGenerator3D::_bake_detail_keep() {
+	const int n = nx * ny;
+	if (n <= 0 || heights.size() != uint32_t(n)) {
+		detail_keep_texture.unref();
+		return;
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(n * sizeof(float));
+	float *w = reinterpret_cast<float *>(bytes.ptrw());
+	for (int i = 0; i < n; i++) {
+		const Vector3 p = _cell_position(i);
+		double keep = _water_fade(p.x, p.z);
+		if (result_deposition && alluvium_reach.size() == uint32_t(n)) {
+			const double sd = CLAMP(double(alluvium_reach[i]) / ALLUVIUM_FADE, 0.0, 1.0);
+			keep *= 1.0 - sd * sd * (3.0 - 2.0 * sd);
+		}
+		if (has_sea) {
+			const double t = CLAMP((double(heights[i]) - double(result_min) - 0.5) / 5.5, 0.0, 1.0);
+			keep *= t * t * (3.0 - 2.0 * t);
+		}
+		w[i] = float(keep);
+	}
+	const Ref<Image> img = Image::create_from_data(nx, ny, false, Image::FORMAT_RF, bytes);
+	if (detail_keep_texture.is_valid() && detail_keep_texture->get_width() == nx && detail_keep_texture->get_height() == ny) {
+		detail_keep_texture->update(img);
+	} else {
+		detail_keep_texture = ImageTexture::create_from_image(img);
+	}
 }
 
 String TerrainGenerator3D::get_geology_shader_code() {
 	String c;
 	c += "// Geology from TerrainGenerator3D (TerrainGenerator3D.get_geology_shader_code()).\n";
-	c += "// terrain_geology(p) = (soil depth m, rock exposure 0..1, talus 0..1, log10 drainage area m2)\n";
+	c += "// terrain_geology(p) = (soil depth m, or -1..0 on beach sand; rock exposure 0..1, talus 0..1, log10 drainage area m2)\n";
 	c += "global uniform sampler2D terrain_geology_map;\n";
 	c += "global uniform vec4 terrain_geology_rect;\n\n";
 	c += "vec4 terrain_geology(vec3 world_pos) {\n";
@@ -840,6 +1575,10 @@ String TerrainGenerator3D::get_detail_shader_code() const {
 	c += vformat("const float TD_ASSUMED = %.6f;\n", double(detail_assumed_slope));
 	c += vformat("const float TD_VALLEY = %.3f;\n", double(result_min));
 	c += vformat("const float TD_PEAK = %.3f;\n", double(MAX(result_max, result_min + 1.0f)));
+	// The grid rectangle (first to last node) of the map of where the geometric detail fades (alluvium, water,
+	// coast), published as terrain_detail_keep_map (1 = full detail).
+	c += vformat("const vec4 TD_RECT = vec4(%.3f, %.3f, %.3f, %.3f);\n", double(result_rect.position.x), double(result_rect.position.y), double(MAX(nx - 1, 1) * result_cell), double(MAX(ny - 1, 1) * result_cell));
+	c += "global uniform sampler2D terrain_detail_keep_map;\n";
 	c += R"GLSL(
 uint td_hash(uint x, uint z, uint s) {
 	uint h = (x * 0x8DA6B343u) ^ (z * 0xD8163841u) ^ (s * 0xCB1AB31Fu);
@@ -949,7 +1688,13 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 
 vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float footprint) {
 	vec2 g = -world_normal.xz / max(world_normal.y, 1e-3);
-	vec2 d = terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
+	vec2 size = vec2(textureSize(terrain_detail_keep_map, 0));
+	vec2 u = clamp((world_pos.xz - TD_RECT.xy) / TD_RECT.zw, 0.0, 1.0);
+	float keep = clamp(textureLod(terrain_detail_keep_map, (u * (size - 1.0) + 0.5) / size, 0.0).r, 0.0, 1.0);
+	if (keep <= 0.0) {
+		return world_normal;
+	}
+	vec2 d = keep * terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
 	return normalize(vec3(-(g.x + d.x), 1.0, -(g.y + d.y)));
 }
 )GLSL";
@@ -1039,6 +1784,8 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 	const double water = result_min;
 	const double half = 0.5 * cell_size;
 	const double surf = 300.0;
+	beach.resize(n);
+	memset(beach.ptr(), 0, sizeof(float) * n);
 	const uint32_t s = uint32_t(seed) * 0x9E3779B1u + 0x7F4A7C15u;
 	for (int i = 0; i < n; i++) {
 		const double px = result_rect.position.x + (i % nx) * cell_size;
@@ -1066,11 +1813,25 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			if (w > 0.0 && x < w + back) {
 				const double t = CLAMP((x - w) / back, 0.0, 1.0);
 				const double blend = t * t * (3.0 - 2.0 * t);
-				const double beach = water + MAX(beach_slope * x, 0.15);
-				heights[i] = float(MIN(double(heights[i]), Math::lerp(beach, double(heights[i]), blend)));
+				const double beach_h = water + MAX(beach_slope * x, 0.15);
+				heights[i] = float(MIN(double(heights[i]), Math::lerp(beach_h, double(heights[i]), blend)));
+				beach[i] = float(1.0 - blend);
 			}
 		}
 	}
+}
+
+// A marker's downstream dam face: "face_slope" metadata (rise over run), or "rock_lip" for a bedrock sill (a steep
+// face of 3, about 72 degrees) that holds a lake right above a waterfall without burying the fall under a debris
+// apron, as the default landslide-dam face (0.35) does on a steep reach. -1: the default.
+double TerrainGenerator3D::_marker_face_slope(const Node3D *p_marker) {
+	if (p_marker->has_meta("face_slope")) {
+		return MAX(double(p_marker->get_meta("face_slope")), 0.05);
+	}
+	if (p_marker->has_meta("rock_lip") && bool(p_marker->get_meta("rock_lip"))) {
+		return 3.0;
+	}
+	return -1.0;
 }
 
 // Lakes: the dams on lake markers first, then automatic ones on valley floors with at least lake_catchment above
@@ -1095,17 +1856,19 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 	lp.ny = ny;
 	lp.dx = cell_size;
 	lp.min_area = lake_min_area;
-	lp.runoff = river_runoff * 1.0e-3;
+	lp.runoff = (runoff_n > 0 ? runoff_mean : double(river_runoff)) * 1.0e-3;
 	lp.evaporation = lake_evaporation * 1.0e-3;
 	lp.max_cells = MAX(n / 4, 16);
 	std::vector<float> before(n);
 	LocalVector<Vector2i> sites;
-	auto try_site = [&](int32_t p_site, real_t p_depth) -> bool {
+	const double default_face = lp.face_slope;
+	auto try_site = [&](int32_t p_site, real_t p_depth, const char **r_why = nullptr, double p_face = -1.0) -> bool {
 		lp.dam_height = p_depth;
+		lp.face_slope = p_face > 0.0 ? p_face : default_face;
 		lp.dam_half_width = MAX(10.0 * p_depth, 3.0 * cell_size);
 		memcpy(before.data(), heights.ptr(), sizeof(float) * n);
 		TerrainCoast::Lake lake;
-		if (!TerrainCoast::make_lake(lp, p_site, receivers.ptr(), channel_area.ptr(), taken.data(), heights.ptr(), lake)) {
+		if (!TerrainCoast::make_lake(lp, p_site, receivers.ptr(), channel_area.ptr(), taken.data(), heights.ptr(), lake, r_why)) {
 			return false;
 		}
 		const int k = int(lake_info.size());
@@ -1143,6 +1906,7 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 	for (int m = 0; m < lakes.size(); m++) {
 		Node3D *marker = Object::cast_to<Node3D>(get_node_or_null(lakes[m]));
 		if (!marker) {
+			WARN_PRINT(vformat("TerrainGenerator3D: lake marker %s is not a Node3D in the tree; no lake made.", String(lakes[m])));
 			continue;
 		}
 		const Vector3 p = marker->get_global_position();
@@ -1166,8 +1930,17 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 				}
 			}
 		}
-		if (best >= 0) {
-			try_site(best, marker->has_meta("depth") ? real_t(marker->get_meta("depth")) : lake_depth);
+		const real_t depth = marker->has_meta("depth") ? real_t(marker->get_meta("depth")) : lake_depth;
+		const char *why = nullptr;
+		if (cx < 0 || cz < 0 || cx >= nx || cz >= ny) {
+			why = "it stands outside the generated area";
+		} else if (best < 0) {
+			why = "no free valley floor within three cells (it is in the sea, in another lake, or on a ridge)";
+		} else if (!try_site(best, depth, &why, _marker_face_slope(marker)) && !why) {
+			why = "no lake formed";
+		}
+		if (why) {
+			WARN_PRINT(vformat("TerrainGenerator3D: lake marker %s at (%.0f, %.0f) made no lake: %s.", marker->get_name(), p.x, p.z, why));
 		}
 	}
 	if (lake_count <= 0) {
@@ -1272,6 +2045,7 @@ void TerrainGenerator3D::_route_rivers() {
 			}
 		}
 	}
+	_route_runoff(rec2, queue);
 	river_receivers = rec2;
 	water_depth.resize(n);
 	for (int i = 0; i < n; i++) {
@@ -1284,10 +2058,13 @@ void TerrainGenerator3D::_route_rivers() {
 	}
 	// The ring of three cells around each lake (and the lake itself) carries its level, for _ground().
 	lake_rim.clear();
+	lake_rim_weight.clear();
 	if (!lake_info.is_empty()) {
 		lake_rim.resize(n);
+		lake_rim_weight.resize(n);
 		for (int i = 0; i < n; i++) {
 			lake_rim[i] = Math::NaN;
+			lake_rim_weight[i] = 0.0f;
 		}
 		for (int i = 0; i < n; i++) {
 			const int32_t b = water_body[i];
@@ -1301,6 +2078,8 @@ void TerrainGenerator3D::_route_rivers() {
 				for (int xx = MAX(x - 3, 0); xx <= MIN(x + 3, nx - 1); xx++) {
 					float &r = lake_rim[zz * nx + xx];
 					r = Math::is_nan(r) ? level : MAX(r, level);
+					const int d = MAX(Math::abs(zz - z), Math::abs(xx - x));
+					lake_rim_weight[zz * nx + xx] = MAX(lake_rim_weight[zz * nx + xx], CLAMP((3.0f - d) / 2.0f, 0.0f, 1.0f));
 				}
 			}
 		}
@@ -1531,7 +2310,6 @@ Array TerrainGenerator3D::build_water(Node *p_parent) {
 			lake->set("seabed_from_floor", true);
 			lake->set("render_extent", 0.0);
 			lake->set("wind_speed", 4.0);
-			lake->set("wave_amplitude", 0.2);
 			lake->set("follow_weather", true);
 		}
 		lake->set_meta("level", l.level);
@@ -1550,6 +2328,10 @@ real_t TerrainGenerator3D::get_discharge(real_t p_area) const {
 // on the ground), widths (m, hydraulic geometry w = a Q^0.5, Leopold and Maddock 1953), areas, discharge (m^3/s at
 // the mouth), own_discharge (that minus its tributaries'), joins (index of the river it joins, -1 at an outlet).
 Array TerrainGenerator3D::get_rivers(real_t p_min_area) const {
+	return _rivers(p_min_area, false);
+}
+
+Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells) const {
 	Array out;
 	const int n = nx * ny;
 	if (nx <= 0 || river_receivers.size() != uint32_t(n) || river_area.size() != uint32_t(n)) {
@@ -1615,13 +2397,13 @@ Array TerrainGenerator3D::get_rivers(real_t p_min_area) const {
 		const TerrainGeology::River &rv = rivers[r];
 		// A tributary's mouth is the cell before the junction.
 		const int mouth = rv.joins >= 0 && rv.cells.size() > 1 ? rv.cells[rv.cells.size() - 2] : rv.cells.back();
-		own[r] = get_discharge(river_area[mouth]);
+		own[r] = _flow(mouth, river_month);
 	}
 	for (uint32_t r = 0; r < rivers.size(); r++) {
 		if (rivers[r].joins >= 0) {
 			const TerrainGeology::River &rv = rivers[r];
 			const int mouth = rv.cells.size() > 1 ? rv.cells[rv.cells.size() - 2] : rv.cells.back();
-			own[rivers[r].joins] -= get_discharge(river_area[mouth]);
+			own[rivers[r].joins] -= _flow(mouth, river_month);
 		}
 	}
 	for (uint32_t r = 0; r < rivers.size(); r++) {
@@ -1649,23 +2431,29 @@ Array TerrainGenerator3D::get_rivers(real_t p_min_area) const {
 			const real_t a = river_area[rv.cells[k]];
 			Vector3 p = pts[k];
 			p.y = _ground(p.x, p.z);
-			// At a mouth in the sea or a lake, on the water rather than its bed.
+			// At a mouth in the sea or a lake, on the water rather than its bed. The last point sits on the water even
+			// where the shore's erosion detail (full strength in the shallowest margin) lifts the ground above it.
 			const int32_t b = water_body.size() == uint32_t(n) ? water_body[rv.cells[k]] : 0;
-			if (b == 1) {
-				p.y = MAX(p.y, real_t(result_min));
-			} else if (b >= 2) {
-				p.y = MAX(p.y, lake_info[b - 2].level);
+			if (b >= 1) {
+				const real_t level = b == 1 ? real_t(result_min) : lake_info[b - 2].level;
+				p.y = k == m - 1 ? level : MAX(p.y, level);
 			}
 			points.set(k, p);
 			areas.set(k, a);
-			widths.set(k, river_width_coefficient * Math::sqrt(get_discharge(a)));
+			widths.set(k, river_width_coefficient * Math::sqrt(_flow(rv.cells[k], river_month)));
 		}
 		const int mouth = rv.joins >= 0 && m > 1 ? rv.cells[m - 2] : rv.cells[m - 1];
 		Dictionary d;
 		d["points"] = points;
 		d["widths"] = widths;
 		d["areas"] = areas;
-		d["discharge"] = get_discharge(river_area[mouth]);
+		d["discharge"] = _flow(mouth, river_month);
+		PackedFloat32Array monthly;
+		monthly.resize(12);
+		for (int m = 0; m < 12; m++) {
+			monthly.set(m, _flow(mouth, m));
+		}
+		d["monthly_discharge"] = monthly;
 		d["own_discharge"] = MAX(own[r], 0.0);
 		d["joins"] = rv.joins;
 		// Where it ends and starts: "sea", "lake" (index in "lake"), "river" (a tributary) or "edge"; "from_lake" is
@@ -1680,6 +2468,14 @@ Array TerrainGenerator3D::get_rivers(real_t p_min_area) const {
 			}
 		}
 		d["from_lake"] = from_lake;
+		if (p_cells) {
+			PackedInt32Array cells;
+			cells.resize(m);
+			for (int k = 0; k < m; k++) {
+				cells.set(k, rv.cells[k]);
+			}
+			d["cells"] = cells;
+		}
 		out.push_back(d);
 	}
 	return out;
@@ -1899,6 +2695,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_area_exponent"), &TerrainGenerator3D::get_area_exponent);
 	ClassDB::bind_method(D_METHOD("set_hillslope_diffusion", "diffusion"), &TerrainGenerator3D::set_hillslope_diffusion);
 	ClassDB::bind_method(D_METHOD("get_hillslope_diffusion"), &TerrainGenerator3D::get_hillslope_diffusion);
+	ClassDB::bind_method(D_METHOD("set_deposition", "deposition"), &TerrainGenerator3D::set_deposition);
+	ClassDB::bind_method(D_METHOD("get_deposition"), &TerrainGenerator3D::get_deposition);
 	ClassDB::bind_method(D_METHOD("set_critical_slope", "degrees"), &TerrainGenerator3D::set_critical_slope);
 	ClassDB::bind_method(D_METHOD("get_critical_slope"), &TerrainGenerator3D::get_critical_slope);
 	ClassDB::bind_method(D_METHOD("set_flow_exponent", "exponent"), &TerrainGenerator3D::set_flow_exponent);
@@ -1907,6 +2705,11 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_time_step"), &TerrainGenerator3D::get_time_step);
 	ClassDB::bind_method(D_METHOD("set_steps", "steps"), &TerrainGenerator3D::set_steps);
 	ClassDB::bind_method(D_METHOD("get_steps"), &TerrainGenerator3D::get_steps);
+	ClassDB::bind_method(D_METHOD("set_coarse_levels", "levels"), &TerrainGenerator3D::set_coarse_levels);
+	ClassDB::bind_method(D_METHOD("get_coarse_levels"), &TerrainGenerator3D::get_coarse_levels);
+	ClassDB::bind_method(D_METHOD("set_refine_steps", "steps"), &TerrainGenerator3D::set_refine_steps);
+	ClassDB::bind_method(D_METHOD("get_refine_steps"), &TerrainGenerator3D::get_refine_steps);
+	ClassDB::bind_method(D_METHOD("get_last_coarse_levels"), &TerrainGenerator3D::get_last_coarse_levels);
 	ClassDB::bind_method(D_METHOD("set_initial_roughness", "metres"), &TerrainGenerator3D::set_initial_roughness);
 	ClassDB::bind_method(D_METHOD("get_initial_roughness"), &TerrainGenerator3D::get_initial_roughness);
 	ClassDB::bind_method(D_METHOD("set_outlet_edges", "edges"), &TerrainGenerator3D::set_outlet_edges);
@@ -1973,11 +2776,42 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rock_exposure", "global_position"), &TerrainGenerator3D::get_rock_exposure);
 	ClassDB::bind_method(D_METHOD("get_talus", "global_position"), &TerrainGenerator3D::get_talus);
 	ClassDB::bind_method(D_METHOD("get_geology_at", "global_position"), &TerrainGenerator3D::get_geology_at);
+	ClassDB::bind_method(D_METHOD("set_strata_enabled", "value"), &TerrainGenerator3D::set_strata_enabled);
+	ClassDB::bind_method(D_METHOD("is_strata_enabled"), &TerrainGenerator3D::is_strata_enabled);
+	ClassDB::bind_method(D_METHOD("set_strata_spacing", "value"), &TerrainGenerator3D::set_strata_spacing);
+	ClassDB::bind_method(D_METHOD("get_strata_spacing"), &TerrainGenerator3D::get_strata_spacing);
+	ClassDB::bind_method(D_METHOD("set_strata_hard_fraction", "value"), &TerrainGenerator3D::set_strata_hard_fraction);
+	ClassDB::bind_method(D_METHOD("get_strata_hard_fraction"), &TerrainGenerator3D::get_strata_hard_fraction);
+	ClassDB::bind_method(D_METHOD("set_strata_hardness", "value"), &TerrainGenerator3D::set_strata_hardness);
+	ClassDB::bind_method(D_METHOD("get_strata_hardness"), &TerrainGenerator3D::get_strata_hardness);
+	ClassDB::bind_method(D_METHOD("set_strata_cliff_angle", "value"), &TerrainGenerator3D::set_strata_cliff_angle);
+	ClassDB::bind_method(D_METHOD("get_strata_cliff_angle"), &TerrainGenerator3D::get_strata_cliff_angle);
+	ClassDB::bind_method(D_METHOD("set_strata_dip", "value"), &TerrainGenerator3D::set_strata_dip);
+	ClassDB::bind_method(D_METHOD("get_strata_dip"), &TerrainGenerator3D::get_strata_dip);
+	ClassDB::bind_method(D_METHOD("set_strata_dip_direction", "value"), &TerrainGenerator3D::set_strata_dip_direction);
+	ClassDB::bind_method(D_METHOD("get_strata_dip_direction"), &TerrainGenerator3D::get_strata_dip_direction);
+	ClassDB::bind_method(D_METHOD("set_strata_wobble", "value"), &TerrainGenerator3D::set_strata_wobble);
+	ClassDB::bind_method(D_METHOD("get_strata_wobble"), &TerrainGenerator3D::get_strata_wobble);
+	ClassDB::bind_method(D_METHOD("set_strata_channel_area", "area"), &TerrainGenerator3D::set_strata_channel_area);
+	ClassDB::bind_method(D_METHOD("get_strata_channel_area"), &TerrainGenerator3D::get_strata_channel_area);
+	ClassDB::bind_method(D_METHOD("get_rock_hardness", "global_position"), &TerrainGenerator3D::get_rock_hardness);
+	ClassDB::bind_method(D_METHOD("get_waterfalls", "min_area", "min_height"), &TerrainGenerator3D::get_waterfalls, DEFVAL(1.0e5), DEFVAL(5.0));
+	ClassDB::bind_method(D_METHOD("get_river_sites", "min_area", "min_discharge", "run"), &TerrainGenerator3D::get_river_sites, DEFVAL(1.0e5), DEFVAL(0.0), DEFVAL(200.0));
 	ClassDB::bind_method(D_METHOD("get_geology_image"), &TerrainGenerator3D::get_geology_image);
 	ClassDB::bind_method(D_METHOD("get_geology_texture"), &TerrainGenerator3D::get_geology_texture);
 	ClassDB::bind_static_method("TerrainGenerator3D", D_METHOD("get_geology_shader_code"), &TerrainGenerator3D::get_geology_shader_code);
 	ClassDB::bind_method(D_METHOD("get_detail_shader_code"), &TerrainGenerator3D::get_detail_shader_code);
 	ClassDB::bind_method(D_METHOD("get_discharge", "area"), &TerrainGenerator3D::get_discharge);
+	ClassDB::bind_method(D_METHOD("set_climate_recipe", "recipe"), &TerrainGenerator3D::set_climate_recipe);
+	ClassDB::bind_method(D_METHOD("get_climate_recipe"), &TerrainGenerator3D::get_climate_recipe);
+	ClassDB::bind_method(D_METHOD("set_river_month", "month"), &TerrainGenerator3D::set_river_month);
+	ClassDB::bind_method(D_METHOD("get_river_month"), &TerrainGenerator3D::get_river_month);
+	ClassDB::bind_method(D_METHOD("has_runoff"), &TerrainGenerator3D::has_runoff);
+	ClassDB::bind_method(D_METHOD("get_last_runoff_msec"), &TerrainGenerator3D::get_last_runoff_msec);
+	ClassDB::bind_method(D_METHOD("get_mean_runoff"), &TerrainGenerator3D::get_mean_runoff);
+	ClassDB::bind_method(D_METHOD("get_runoff_at", "global_position", "month"), &TerrainGenerator3D::get_runoff_at, DEFVAL(-1));
+	ClassDB::bind_method(D_METHOD("get_snow_water_at", "global_position", "month"), &TerrainGenerator3D::get_snow_water_at);
+	ClassDB::bind_method(D_METHOD("get_discharge_at", "global_position", "month"), &TerrainGenerator3D::get_discharge_at, DEFVAL(-1));
 	ClassDB::bind_method(D_METHOD("set_ocean_edges", "edges"), &TerrainGenerator3D::set_ocean_edges);
 	ClassDB::bind_method(D_METHOD("get_ocean_edges"), &TerrainGenerator3D::get_ocean_edges);
 	ClassDB::bind_method(D_METHOD("set_coast_distance", "distance"), &TerrainGenerator3D::set_coast_distance);
@@ -2068,10 +2902,13 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "erodibility", PROPERTY_HINT_RANGE, "0,0.001,0.0000001,or_greater,exp"), "set_erodibility", "get_erodibility");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "area_exponent", PROPERTY_HINT_RANGE, "0.1,1,0.01"), "set_area_exponent", "get_area_exponent");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hillslope_diffusion", PROPERTY_HINT_RANGE, "0,1,0.001,or_greater,suffix:m²/yr"), "set_hillslope_diffusion", "get_hillslope_diffusion");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deposition", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_deposition", "get_deposition");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "critical_slope", PROPERTY_HINT_RANGE, "0,80,0.1,degrees"), "set_critical_slope", "get_critical_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_exponent", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_flow_exponent", "get_flow_exponent");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "time_step", PROPERTY_HINT_RANGE, "1,1000000,1,or_greater,suffix:yr"), "set_time_step", "get_time_step");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "steps", PROPERTY_HINT_RANGE, "0,5000,1,or_greater"), "set_steps", "get_steps");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "coarse_levels", PROPERTY_HINT_RANGE, "-1,8,1"), "set_coarse_levels", "get_coarse_levels");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "refine_steps", PROPERTY_HINT_RANGE, "0,1000,1,or_greater"), "set_refine_steps", "get_refine_steps");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "initial_roughness", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m"), "set_initial_roughness", "get_initial_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "outlet_edges", PROPERTY_HINT_FLAGS, "-X,+X,-Z,+Z"), "set_outlet_edges", "get_outlet_edges");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sea_level", PROPERTY_HINT_NONE, "suffix:m"), "set_sea_level", "get_sea_level");
@@ -2103,9 +2940,22 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_soil_depth", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_max_soil_depth", "get_max_soil_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "talus_angle", PROPERTY_HINT_RANGE, "5,80,0.5,degrees"), "set_talus_angle", "get_talus_angle");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "talus_reach", PROPERTY_HINT_RANGE, "1,1000,1,or_greater,suffix:m"), "set_talus_reach", "get_talus_reach");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "climate_recipe", PROPERTY_HINT_RESOURCE_TYPE, "ClimateRecipe"), "set_climate_recipe", "get_climate_recipe");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "river_month", PROPERTY_HINT_ENUM, "Annual mean:-1,January:0,February:1,March:2,April:3,May:4,June:5,July:6,August:7,September:8,October:9,November:10,December:11"), "set_river_month", "get_river_month");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_runoff", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:mm/yr"), "set_river_runoff", "get_river_runoff");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_width_coefficient", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater"), "set_river_width_coefficient", "get_river_width_coefficient");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "publish_shader_globals"), "set_publish_shader_globals", "is_publishing_shader_globals");
+
+	ADD_GROUP("Strata", "strata_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "strata_enabled"), "set_strata_enabled", "is_strata_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_spacing", PROPERTY_HINT_RANGE, "1,1000,0.1,or_greater,suffix:m"), "set_strata_spacing", "get_strata_spacing");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_hard_fraction", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_strata_hard_fraction", "get_strata_hard_fraction");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_hardness", PROPERTY_HINT_RANGE, "1,1000,0.1,or_greater,exp"), "set_strata_hardness", "get_strata_hardness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_cliff_angle", PROPERTY_HINT_RANGE, "10,85,0.1,degrees"), "set_strata_cliff_angle", "get_strata_cliff_angle");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_dip", PROPERTY_HINT_RANGE, "0,80,0.1,degrees"), "set_strata_dip", "get_strata_dip");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_dip_direction", PROPERTY_HINT_RANGE, "0,360,0.1,degrees"), "set_strata_dip_direction", "get_strata_dip_direction");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_channel_area", PROPERTY_HINT_RANGE, "0,1000000,1,or_greater,exp,suffix:m²"), "set_strata_channel_area", "get_strata_channel_area");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_wobble", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m"), "set_strata_wobble", "get_strata_wobble");
 
 	ADD_GROUP("Coast", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_edges", PROPERTY_HINT_FLAGS, "-X,+X,-Z,+Z"), "set_ocean_edges", "get_ocean_edges");
@@ -2132,6 +2982,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "deformer", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDeformer3D"), "set_deformer", "get_deformer");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "ground_mesh", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_ground_mesh", "get_ground_mesh");
 
+	ADD_SIGNAL(MethodInfo("changing"));
 	ADD_SIGNAL(MethodInfo("generated"));
 	ADD_SIGNAL(MethodInfo("written", PropertyInfo(Variant::INT, "vertices")));
 
