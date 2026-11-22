@@ -92,6 +92,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	bool crust_enabled = true;
 	bool hoar_enabled = true; // surface hoar on clear calm nights, buried as a weak layer (round 5)
 	bool suncups_enabled = true; // ablation hollows in sunny melt (follow-up 41)
+	bool depth_hoar_enabled = true; // basal facets grown under a strong temperature gradient (follow-up 47)
 	bool sastrugi_enabled = true; // wind-carved ridges on hard eroding snow (follow-up 46)
 	bool wind_packing_enabled = true; // wind-affected snowfall and wind packing of the surface: wind slab (follow-up 45)
 	bool slush_enabled = true; // melt water ponds in the pack's base over frozen ground (follow-up 41)
@@ -174,6 +175,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	Vector<float> cell_hoar;
 	Vector<float> cell_cups; // m, suncup relief (ridge to hollow)
 	Vector<float> cell_wind_slab; // m of wind-packed snow in the pack (follow-up 45)
+	Vector<float> cell_depth_hoar; // 0..1, the base's depth hoar share (follow-up 47)
 	Vector<float> cell_slab_cover; // m of soft snow over the wind slab (0: the slab is the surface)
 	Vector<float> cell_sas_x, cell_sas_z; // m: sastrugi relief times the direction of the wind that carved them (follow-up 46)
 	Vector<float> cell_packed; // 0..1, the share of the cell traffic has packed hard (follow-up 43)
@@ -278,6 +280,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector<float> hoar, hoar_layer, hoar_burial, hoar_age;
 		Vector<float> cups;
 		Vector<float> sas_x, sas_z;
+		Vector<float> depth_hoar;
 		Vector<float> slush; // mm
 		Vector<float> packed, glaze;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
@@ -443,6 +446,10 @@ public:
 	void set_hoar_enabled(bool p_enabled);
 	void set_suncups_enabled(bool p_enabled) { suncups_enabled = p_enabled; }
 	bool is_suncups_enabled() const { return suncups_enabled; }
+	void set_depth_hoar_enabled(bool p_enabled) { depth_hoar_enabled = p_enabled; }
+	bool is_depth_hoar_enabled() const { return depth_hoar_enabled; }
+	float get_depth_hoar_at(Vector3 p_position) const; // 0..1, the base's depth hoar share
+	void add_depth_hoar(float p_share); // sets it wherever there is snow (scenes, tests)
 	void set_sastrugi_enabled(bool p_enabled) { sastrugi_enabled = p_enabled; }
 	bool is_sastrugi_enabled() const { return sastrugi_enabled; }
 	Vector2 get_sastrugi_at(Vector3 p_position) const; // relief (m) times the carving wind's direction
@@ -657,6 +664,8 @@ public:
 	// The published relations, for scripts and checks.
 	static float snowfall_fraction(float p_celsius, float p_humidity); // Jennings et al. 2018
 	static float new_snow_density(float p_celsius); // Hedstrom and Pomeroy 1998, kg/m3
+	static float depth_hoar_step(float p_share, float p_gradient, float p_hours, float p_wet_share); // follow-up 47
+	static float depth_hoar_strength(float p_share, float p_density); // Pa, the base's shear strength
 	static Vector2 sastrugi_step(Vector2 p_relief, Vector2 p_wind_dir, float p_eroded, float p_filled, float p_depth, bool p_hard); // follow-up 46
 	static float wind_snow_density(float p_celsius, float p_wind10); // snowfall in wind (Crocus, Vionnet et al. 2012), kg/m3
 	static float drift_index(float p_wind10, float p_density, float p_fresh); // Crocus's driftability index SI
