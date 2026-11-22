@@ -2798,6 +2798,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Seed down",
+   "settings": [
+    "SeedDown3D"
+   ],
+   "note": "",
+   "what": "dry wind looses dandelion, thistle and willowherb seeds that drift on the air and catch in the grass.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Falling leaves",
    "settings": [
     "LeafFall3D",
