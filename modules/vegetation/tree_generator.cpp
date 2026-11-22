@@ -4550,6 +4550,9 @@ static const LeafSeasonSpec LEAF_SEASONS[TreeGenerator::PRESET_MAX] = {
 };
 
 TreeGenerator::LeafSeason TreeGenerator::_tree_leaf_season() const {
+	if (leaf_season_forced) {
+		return leaf_season_force;
+	}
 	if (phenology_shift == Vector2() || season.is_empty()) {
 		return _leaf_season(preset, season);
 	}
@@ -4595,6 +4598,25 @@ TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dic
 		ls.frost = CLAMP(frost * tender * (1.0f - Math::smoothstep(21.0f, 42.0f, days)), 0.0f, 1.0f);
 	}
 	return ls;
+}
+
+// The leaf state in quarters, 0..624: out + 5 turned + 25 fallen + 125 frost-browned.
+int TreeGenerator::_leaf_season_code(const LeafSeason &p_ls) {
+	const auto q = [](float p_v) { return CLAMP(int(Math::round(p_v * 4.0f)), 0, 4); };
+	return q(p_ls.out) + 5 * q(p_ls.autumn) + 25 * q(p_ls.fallen) + 125 * q(p_ls.frost);
+}
+
+// Per-tree local season for near meshes (trees.md 5bi). The forest's meshes grow from one season, the generator's;
+// the leaves at a place follow the season there (WorldWeather.season_at: forcing and senescence at its height, the
+// late-frost mark of its hollow). The near mesh of a cell whose local leaf state differs is grown in that state, so
+// raster and path tracing both see it in the geometry's vertex colours and leaf counts (instance data is not traced
+// on rigged multimeshes). Quarters keep the number of near meshes small: one per state a species shows in view.
+int TreeGenerator::near_season_band(const Dictionary &p_local) const {
+	if (p_local.is_empty() || int(preset) < 0 || int(preset) >= int(PRESET_MAX) || !LEAF_SEASONS[preset].deciduous) {
+		return 0;
+	}
+	const int here = _leaf_season_code(_leaf_season(preset, p_local));
+	return here == _leaf_season_code(_leaf_season(preset, season)) ? 0 : 1 + here;
 }
 
 Dictionary TreeGenerator::get_leaf_season(Preset p_preset, const Dictionary &p_season) {
@@ -20813,7 +20835,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		summer_fold = sday <= 175.0f || sday >= 300.0f ? 0.0f : (sday < 205.0f ? (sday - 175.0f) / 30.0f : (sday <= 260.0f ? 1.0f : (300.0f - sday) / 40.0f));
 	}
 	auto season_leaf = [&](uint32_t p_key, Color &r_color, float &r_size) -> bool {
-		if (season.is_empty()) {
+		if (season.is_empty() && !leaf_season_forced) {
 			return true;
 		}
 		if (leaf_season.out <= 0.0f || leaf_season.fallen >= 1.0f) {
@@ -24559,10 +24581,23 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 void TreeGenerator::_near_task(void *p_self) {
 	TreeGenerator *self = static_cast<TreeGenerator *>(p_self);
 	// The glaze band rides in the variant (NEAR_GLAZE_STRIDE): grown as ice geometry on this near mesh only.
+	// The local season band above it (NEAR_SEASON_STRIDE, trees.md 5bi): the leaf state this near mesh grows.
 	const int code = self->near_task_variant;
 	self->near_task_variant = code % NEAR_GLAZE_STRIDE;
 	const float saved_glaze = self->glaze_mm;
-	self->glaze_mm = glaze_band_mm(code / NEAR_GLAZE_STRIDE);
+	self->glaze_mm = glaze_band_mm((code % NEAR_SEASON_STRIDE) / NEAR_GLAZE_STRIDE);
+	const int season_band = code / NEAR_SEASON_STRIDE;
+	if (season_band > 0) {
+		const int sc = season_band - 1;
+		LeafSeason ls;
+		ls.color = LEAF_SEASONS[self->preset].autumn;
+		ls.out = float(sc % 5) * 0.25f;
+		ls.autumn = float((sc / 5) % 5) * 0.25f;
+		ls.fallen = float((sc / 25) % 5) * 0.25f;
+		ls.frost = float((sc / 125) % 5) * 0.25f;
+		self->leaf_season_force = ls;
+		self->leaf_season_forced = true;
+	}
 	int fb = self->near_living > 0 && self->near_task_variant >= self->near_living ? self->near_task_variant - self->near_living : -1;
 	self->lightning_years = -1.0f;
 	if (fb >= self->near_fire_count + self->near_strike_count) {
@@ -24596,6 +24631,7 @@ void TreeGenerator::_near_task(void *p_self) {
 	self->near_build = false;
 	self->material_source.unref();
 	self->glaze_mm = saved_glaze;
+	self->leaf_season_forced = false;
 	self->near_task_variant = code;
 	// Keep the copy small between requests: the growth state is only needed while growing.
 	self->nodes.reset();
@@ -26442,6 +26478,47 @@ Ref<Biome> TreeGenerator::make_succession(Stand p_stand, int p_variants) {
 			tag(grey, from, to, SUCCESSION_BEETLE);
 		}
 	}
+	// Avalanche legacies (trees.md 5bh; Bebi et al. 2009; Butler and Malanson 1985; Reardon et al. 2008) in the
+	// mountain stands: the stems a dense avalanche threw lie down the fall line, tops down, the rest snapped to stumps;
+	// survivors where the flow thinned lean downslope, their upslope limbs stripped (the flagged crowns of a track's
+	// edge). The thrown and snapped wood is the windthrow kit's (5am), carried down the slope instead of a storm's
+	// track: species meta fall_downhill turns mesh +X down the fall line.
+	if (p_stand == STAND_SUBALPINE || p_stand == STAND_MONTANE_CONIFER || p_stand == STAND_BEECH || p_stand == STAND_OLD_GROWTH_BEECH) {
+		const float saved_storm = windthrow_storm;
+		for (int stage = 0; stage < 2; stage++) {
+			const float from = stage == 0 ? 0.0f : e1, to = stage == 0 ? e1 : e2;
+			windthrow_storm = stage == 0 ? 4.0f : 0.5f * (e1 + e2);
+			windthrow_band = 1;
+			Ref<PlantSpecies> thrown = _stand_species(lead, true, p_variants, FORM_LOG);
+			windthrow_band = 2;
+			Ref<PlantSpecies> snapped = _stand_species(lead, true, p_variants, FORM_SNAG);
+			windthrow_band = 0;
+			thrown->set_name(vformat("%s (avalanche thrown, %d-%d y)", preset_names[lead], int(from), int(to)));
+			snapped->set_name(vformat("%s (avalanche snapped, %d-%d y)", preset_names[lead], int(from), int(to)));
+			for (const Ref<PlantSpecies> &sp : { thrown, snapped }) {
+				sp->set_meta("fall_dir", Vector2());
+				sp->set_meta("fall_downhill", true);
+				sp->set_meta("fall_scatter", 0.3f);
+				sp->set_density(stage == 0 ? 0.9f : 0.5f);
+				// The track's stand lies where it stood, the logs about as close as the trees were (as windthrow, 5am).
+				sp->set_spacing(HABITATS[lead].stand_spacing * 1.2f);
+				tag(sp, from, to, SUCCESSION_AVALANCHE);
+			}
+			snapped->set_canopy_opacity(0.0f);
+		}
+		windthrow_storm = 6.0f;
+		windthrow_band = 3;
+		Ref<PlantSpecies> survivor = _stand_species(lead, false, p_variants, FORM_FLAGGED);
+		windthrow_band = 0;
+		survivor->set_name(vformat("%s (avalanche survivor)", preset_names[lead]));
+		survivor->set_meta("fall_dir", Vector2());
+		survivor->set_meta("fall_downhill", true);
+		survivor->set_meta("fall_scatter", 0.25f);
+		survivor->set_density(0.6f);
+		survivor->set_spacing(HABITATS[lead].stand_spacing * 2.0f);
+		tag(survivor, 0.0f, e2, SUCCESSION_AVALANCHE);
+		windthrow_storm = saved_storm;
+	}
 	// Stand initiation: pioneers and the lead's seedlings.
 	{
 		succession_band = 3;
@@ -27623,6 +27700,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_far_lod1", "enabled"), &TreeGenerator::set_far_lod1);
 	ClassDB::bind_method(D_METHOD("get_far_lod1"), &TreeGenerator::get_far_lod1);
 	ClassDB::bind_method(D_METHOD("request_near_mesh", "key", "variant"), &TreeGenerator::request_near_mesh);
+	ClassDB::bind_method(D_METHOD("near_season_band", "local_season"), &TreeGenerator::near_season_band);
 	ClassDB::bind_method(D_METHOD("request_variants", "species", "kinds", "wait"), &TreeGenerator::request_variants, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("set_defer_variants", "enabled"), &TreeGenerator::set_defer_variants);
 	ClassDB::bind_method(D_METHOD("get_defer_variants"), &TreeGenerator::get_defer_variants);
@@ -27859,6 +27937,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(SUCCESSION_WIND);
 	BIND_ENUM_CONSTANT(SUCCESSION_BEETLE);
 	BIND_ENUM_CONSTANT(SUCCESSION_BEAVER);
+	BIND_ENUM_CONSTANT(SUCCESSION_AVALANCHE);
 	BIND_ENUM_CONSTANT(VARIANT_FIRE);
 	BIND_ENUM_CONSTANT(VARIANT_STRIKE);
 	BIND_ENUM_CONSTANT(VARIANT_BROWSE);

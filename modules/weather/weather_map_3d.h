@@ -148,7 +148,8 @@ private:
 	void _smoke_pool_step(float p_dt);
 	void _smoke_step(double p_weather_dt);
 	void _smoke_shift(Vector2i p_delta);
-	float _smoke_sigma() const; // extinction (1/m) of the smoke near the ground where the map follows
+	float _smoke_sigma() const; // extinction (1/m) of the smoke and dust near the ground where the map follows
+	float _dust_sigma() const; // the dust's share of it (dust_storms)
 	bool dew_and_frost = true; // clear calm nights: dew, and hoarfrost below freezing (Monteith 1957)
 	// Season (weather_season.h): the date from a SkyClock, or season_day; the climate from a ClimateRecipe.
 	NodePath sky_clock;

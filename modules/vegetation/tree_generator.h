@@ -159,6 +159,7 @@ public:
 		SUCCESSION_WIND = 2,
 		SUCCESSION_BEETLE = 3,
 		SUCCESSION_BEAVER = 4, // A beaver pond drained (the dam failed): the beaver meadow (trees.md 5bb).
+		SUCCESSION_AVALANCHE = 6, // A dense avalanche broke the stand (WorldStand DISTURBANCE_AVALANCHE; trees.md 5bh).
 	};
 	enum BeaverCut {
 		BEAVER_NONE = 0,
@@ -789,6 +790,10 @@ public:
 	// variants of aspen draw it per clone; the field gives every stem of a clone one variant (species meta clone_scale).
 	Vector2 phenology_shift;
 	LeafSeason _tree_leaf_season() const;
+	// Set by a near build for a season band (near_season_band()): the leaf state it grows, in place of the season's.
+	bool leaf_season_forced = false;
+	LeafSeason leaf_season_force;
+	static int _leaf_season_code(const LeafSeason &p_ls);
 	int ice_damage = 0; // Set by _ice_storm_damage for the mesh meta: 0 none, 1 bent, 2 top broken, 3 limbs broken.
 	int succession_band = 0; // While make_succession grows a stage: 1 the pole stage, 2 old growth's veterans, 3 stand initiation (trees.md 5aq).
 	Preset last_stand_lead = PRESET_MAX; // The lead of the last make_stand().
@@ -827,6 +832,12 @@ public:
 		static const float mm[5] = { 0.0f, 4.0f, 9.0f, 18.0f, 30.0f };
 		return mm[CLAMP(p_band, 0, 4)];
 	}
+	// Near meshes by the local season (trees.md 5bi): the field asks for variant + NEAR_SEASON_STRIDE x
+	// near_season_band(WorldWeather.season_at over the cell), 0 when the leaves there stand as in this generator's own
+	// season, else 1 + the local leaf state in quarters (out, turned, fallen, frost-browned); the near build grows that
+	// state. A late-frost hollow or a high slope not yet in leaf builds its own near meshes beside the green valley.
+	static constexpr int NEAR_SEASON_STRIDE = NEAR_GLAZE_STRIDE * 8;
+	int near_season_band(const Dictionary &p_local) const;
 
 public:
 	void _glaze_build(const Builder &p_bark, Builder &r_ice) const;

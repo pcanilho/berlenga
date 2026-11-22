@@ -40,7 +40,7 @@
 // marks (the head share): there the density current's nose stands higher than the layer behind it (Simpson 1997;
 // Benjamin 1968), so the wall's top is raised up to 1.75 times. Optics for the readers: mass extinction 0.6 m2/g at
 // 550 nm, Angstrom exponent about 0.2, single scattering albedo 0.92 falling to 0.85 in the blue (iron oxides), so
-// the sun dims orange-brown (Dubovik et al. 2002; Miller et al. 2008).
+// the sun's disc dims nearly grey while the light the dust scatters is brown (Dubovik et al. 2002; Miller et al. 2008).
 
 #include "weather_map_3d.h"
 
@@ -216,6 +216,8 @@ void WeatherMap3D::_dust_step(double p_weather_dt) {
 			}
 		}
 		const float alpha = DUST_DIFFUSION * dt / (cs * cs);
+		// Explicit diffusion, stable to 0.2 a step; capped at 32 steps, so one very long advance (an hour at a time)
+		// diffuses less than it should. Play steps stay well under the cap.
 		const int iters = MIN(int(Math::ceil(alpha / 0.2f)), 32);
 		const float a = MIN(alpha / MAX(iters, 1), 0.2f);
 		for (int it = 0; it < iters; it++) {
@@ -336,6 +338,7 @@ void WeatherMap3D::set_dust_storms(bool p_v) {
 	if (!p_v) {
 		clear_dust();
 	}
+	applied_aerosol = aerosol_haze ? 0.0f : applied_aerosol;
 }
 
 float WeatherMap3D::get_dust_at(Vector3 p_position) const {

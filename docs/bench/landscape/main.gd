@@ -6555,6 +6555,9 @@ func _hut_roof_snow() -> void:
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	var hrs := int(float(args["hut-roof-snow"]) if String(args["hut-roof-snow"]) != "" else 24.0)
+	var slide_shot := String(args.get("roof-slide", ""))
+	if slide_shot != "":
+		sb.set("slide_enabled", false) # the load builds first; it is let go for the shot
 	var most := 0.0
 	for h in hrs:
 		snow.advance(3600.0)
@@ -6567,6 +6570,49 @@ func _hut_roof_snow() -> void:
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	_log("hut roof snow: pitch %.0f deg, %d h of snow, roofs held up to %.2f m, %d slides, %.0f kg landed past the eave" % [rad_to_deg(pitch), hrs, most, int(sb.call("get_roof_slides")), float(sb.call("get_roof_landed"))])
+	if slide_shot != "":
+		await _roof_slide_shot(sb, root, axis, other, lo, hi, mid, run, eave_y, slide_shot)
+
+
+# --roof-slide=mid|settled (with --hut-roof-snow): one camera at eye height off the gable end, --slide-out (4) m out
+# from the +side eave and --slide-back (9) m past the end, looking along the eave. The load is held while it builds,
+# then the air warms to --slide-air (2) C and the roof sheds (SnowBodies3D roof_slab_bodies, snow c820c61e). mid: the
+# picture is frozen --slide-frames (14) physics frames after the first slab leaves; settled: --slide-wait (120) s on.
+func _roof_slide_shot(sb: Object, root: Node3D, axis: int, other: int, lo: Vector3, hi: Vector3, mid: float, run: float, eave_y: float, kind: String) -> void:
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var e := Vector3()
+	e[axis] = mid + run + 0.6
+	e[other] = 0.5 * (lo[other] + hi[other])
+	e.y = eave_y - 0.8
+	var cl := Vector3()
+	cl[axis] = mid + run + float(args.get("slide-out", "4"))
+	cl[other] = hi[other] + float(args.get("slide-back", "9"))
+	var cw: Vector3 = root.global_transform * cl
+	var ew: Vector3 = root.global_transform * e
+	c3.global_position = Vector3(cw.x, height_at(cw.x, cw.z) + 1.7, cw.z)
+	c3.look_at(ew)
+	weather.air_follows_climate = false
+	weather.temperature = float(args.get("slide-air", "2"))
+	weather.snap_to_settings()
+	sb.set("slide_enabled", true)
+	var n0 := int(sb.call("get_slabs_slid"))
+	var t := 0
+	while int(sb.call("get_slabs_slid")) == n0 and t < 2000:
+		sb.call("step", 30.0)
+		await get_tree().physics_frame
+		t += 1
+	_log("roof slide: first slab after %d steps of 30 s, %d slid" % [t, int(sb.call("get_slabs_slid"))])
+	if kind == "settled":
+		get_viewport().disable_3d = true
+		for i in int(float(args.get("slide-wait", "120")) * Engine.physics_ticks_per_second):
+			await get_tree().physics_frame
+		get_viewport().disable_3d = false
+		_log("roof slide: settled after %s s, %.0f kg landed" % [args.get("slide-wait", "120"), float(sb.call("get_roof_landed"))])
+	else:
+		for i in int(args.get("slide-frames", "14")):
+			await get_tree().physics_frame
+		Engine.time_scale = 0.0
+		_log("roof slide: frozen mid-slide")
 
 
 func _hut_icicles() -> void:
