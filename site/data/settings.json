@@ -4,7 +4,9 @@
    "name": "rendering/pathtracing/async_shader_compilation",
    "type": "bool",
    "default": "true",
-   "about": "If `true`, path tracing ray hit shaders are compiled asynchronously in the background."
+   "about": "If `true`, path tracing ray hit shaders are compiled asynchronously in the background.",
+   "page": "other",
+   "title": "Other"
   },
   {
    "name": "rendering/pathtracing/debug_heatmap_max_ticks",
@@ -1399,7 +1401,7 @@
     "needle_ice"
    ],
    "note": "",
-   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep.",
+   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep; needle ice and puddle ice follow the ground's own surface temperature, so clear calm nights just above freezing still grow them.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3033,7 +3035,7 @@
     "seed"
    ],
    "note": "",
-   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 31 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`).",
+   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted and wild cherry flowers white in April.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3754,6 +3756,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Snow layers",
+   "settings": [
+    "SnowCover3D.layers_enabled"
+   ],
+   "note": "",
+   "what": "crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Lake ice",
    "settings": [
     "SnowCover3D.lake_ice_enabled"
@@ -4198,10 +4211,11 @@
    "name": "Dew and frost",
    "settings": [
     "dew_and_frost",
-    "cold_pools"
+    "cold_pools",
+    "valley_fog"
    ],
    "note": "",
-   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost and fog form there first.",
+   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost forms there first, and saturated pools fill with a flat fog sea that lifts after sunrise or in a wind.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4990,6 +5004,17 @@
    "what": "",
    "page": "open-worlds",
    "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Shaders compile in the background",
+   "settings": [
+    "rendering/pathtracing/async_shader_compilation"
+   ],
+   "note": "",
+   "what": "path tracing draws a surface with the default material while its own shader compiles, instead of leaving it out.",
+   "page": "other",
+   "title": "Other",
    "topic": ""
   }
  ]

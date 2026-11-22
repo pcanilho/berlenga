@@ -864,6 +864,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	c.spray = sea_spray && cell_spray.size() == resolution * resolution ? cell_spray.ptr() : nullptr;
 	_update_orography(p_weather_dt);
 	_update_cold_pools(p_weather_dt);
+	_update_valley_fog(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
 	c.pool = cold_pools && cell_pool.size() == resolution * resolution ? cell_pool.ptr() : nullptr;
 	const bool oro_ready = orographic_rain && cell_oro.size() == resolution * resolution;
 	c.oro = oro_ready ? cell_oro.ptr() : nullptr;
@@ -1174,7 +1175,7 @@ void WeatherMap3D::_advance(double p_weather_dt, double p_real_dt) {
 		const float uc = 1.8f * WeatherShelter::open_profile(1.0f, roughness_length) * cur_wind_speed;
 		patch_drift += cur_wind_direction * uc * float(p_real_dt);
 		const float period = WeatherPatches::PERIOD * gust_patch_size;
-		patch_drift = Vector2(Math::fposmod(patch_drift.x, period), Math::fposmod(patch_drift.y, period));
+		patch_drift = Vector2(Math::fposmod(float(patch_drift.x), period), Math::fposmod(float(patch_drift.y), period));
 	}
 
 	// Gust phases advance in real time: turbulence is not sped up with the weather. The pattern moves with
@@ -1847,8 +1848,12 @@ void WeatherMap3D::_update_orography(double p_weather_dt) {
 		_find_terrain_source();
 		const bool keep = cell_height.size() == n * n && oro_origin.x != INT32_MAX;
 		const bool keep_pool = keep && cell_pool.size() == n * n;
+		const bool keep_fog = keep && cell_valley_fog.size() == n * n;
 		Vector<float> old = cell_height;
 		Vector<float> old_pool = cell_pool;
+		Vector<float> old_fog = cell_valley_fog;
+		cell_valley_fog.resize(n * n);
+		float *vf = cell_valley_fog.ptrw();
 		cell_height.resize(n * n);
 		cell_pool.resize(n * n);
 		float *h = cell_height.ptrw();
@@ -1864,6 +1869,7 @@ void WeatherMap3D::_update_orography(double p_weather_dt) {
 					h[z * n + x] = _terrain_height(Vector2((origin_cell.x + x + 0.5f) * cs, (origin_cell.y + z + 0.5f) * cs));
 				}
 				pl[z * n + x] = keep_pool && inside ? old_pool[oz * n + ox] : 0.0f;
+				vf[z * n + x] = keep_fog && inside ? old_fog[oz * n + ox] : 0.0f;
 			}
 		}
 		oro_origin = origin_cell;
@@ -2508,7 +2514,7 @@ void WeatherMap3D::_update_fire_clouds(double p_weather_dt) {
 		// (about (F / z)^1/3).
 		const float radius = MAX(0.5f * cloud.x, 150.0f);
 		const float f = 9.81f * p.w / (Math::PI * 1005.0f * 1.2f * (cur_air_temperature + 273.15f));
-		const float w = MAX(Math::pow(f / MAX(cloud.y, 10.0f), 1.0f / 3.0f), 1.0f);
+		const float w = MAX(Math::pow(f / MAX(float(cloud.y), 10.0f), 1.0f / 3.0f), 1.0f);
 		Vector2 at = Vector2(p.x, p.z) + steer * MIN(cloud.y / w, 2.0f * cloud.y / MAX(steer.length(), 1e-3f));
 		int found = -1;
 		float best = 1e30f;
@@ -2537,7 +2543,7 @@ void WeatherMap3D::_update_fire_clouds(double p_weather_dt) {
 		// Cumulus (the cloud type follows its cover: about 0.55-0.7) until it goes deep; a pyrocumulonimbus
 		// towers (type 0.9), with a downdraft's outflow and a little rain.
 		const float deep = CLAMP(cloud.z - 1.0f, 0.0f, 1.0f);
-		s.cloud_cover = Math::lerp(0.6f + 0.17f * MIN(cloud.z, 1.0f), 1.0f, deep);
+		s.cloud_cover = Math::lerp(0.6f + 0.17f * MIN(float(cloud.z), 1.0f), 1.0f, deep);
 		// Its base at the plume's own condensation level over the fire (Lareau and Clements 2016 measure it a few
 		// hundred metres over the ambient LCL, the plume's heat and the fire's water vapour about cancelling), not
 		// the map's cloud_base_height: on a dry afternoon the cap sits kilometres over a humid morning's deck.
@@ -4183,6 +4189,14 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cold_pool_strength"), &WeatherMap3D::get_cold_pool_strength);
 	ClassDB::bind_method(D_METHOD("get_cold_pool_at", "position"), &WeatherMap3D::get_cold_pool_at);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cold_pools"), "set_cold_pools", "is_cold_pools_enabled");
+	ClassDB::bind_method(D_METHOD("set_valley_fog", "enabled"), &WeatherMap3D::set_valley_fog);
+	ClassDB::bind_method(D_METHOD("is_valley_fog_enabled"), &WeatherMap3D::is_valley_fog_enabled);
+	ClassDB::bind_method(D_METHOD("set_valley_fog_density", "sigma"), &WeatherMap3D::set_valley_fog_density);
+	ClassDB::bind_method(D_METHOD("get_valley_fog_density"), &WeatherMap3D::get_valley_fog_density);
+	ClassDB::bind_method(D_METHOD("get_valley_fog_top_at", "position"), &WeatherMap3D::get_valley_fog_top_at);
+	ClassDB::bind_method(D_METHOD("get_valley_fog_depth_at", "position"), &WeatherMap3D::get_valley_fog_depth_at);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "valley_fog"), "set_valley_fog", "is_valley_fog_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "valley_fog_density", PROPERTY_HINT_RANGE, "0,0.2,0.001,suffix:1/m"), "set_valley_fog_density", "get_valley_fog_density");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cold_pool_strength", PROPERTY_HINT_RANGE, "0,15,0.1,suffix:C"), "set_cold_pool_strength", "get_cold_pool_strength");
 	ClassDB::bind_method(D_METHOD("get_cloud_cover_at", "position"), &WeatherMap3D::get_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("get_high_cloud_cover_at", "position"), &WeatherMap3D::get_high_cloud_cover_at);

@@ -81,6 +81,13 @@
 				A stub's [method needle_ice_at].
 			</description>
 		</method>
+		<method name="_relief_at" qualifiers="virtual const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override in a stub to replace [method relief_at].
+			</description>
+		</method>
 		<method name="_rim_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -225,6 +232,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Needle ice: its height (m) and the loose crumbs its thaw left (0 to 1). Default zero.
+			</description>
+		</method>
+		<method name="relief_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The drawn ground's relief over the heightfield at [param position]'s xz: x the height to add to the heightfield's (m; Landscape3D's cliff and bank relief push the surface out along the slope's horizontal normal, so about the push times the slope's tangent here), y its share (0..1). Plants, rocks and ground detail placed on the heightfield add x so they sit on the ground as drawn. GPU placers read the global [code]terrain_relief_map[/code] (R height m, G share) over [code]terrain_relief_rect[/code]. (0, 0) with no relief producer.
 			</description>
 		</method>
 		<method name="rim_at" qualifiers="const">

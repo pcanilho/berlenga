@@ -3905,6 +3905,29 @@ Research: "Research for the likely picks" below. Built so far:
   0c249ead): snapped stems lying downslope, flagged crowns at the track edge, green alder and willow thickets in
   frequent tracks (Bebi et al. 2009).
 
+### 5bf. Missing broadleaves (22 Nov; second of three)
+
+Five presets appended after the date palm (PRESET_ASPEN 50 to PRESET_SWEET_CHESTNUT 54), each with its row in every
+per-preset table (leaf form, phenology, moss, lichens, habitat, storm wood) and the bench's NAMES / spacing / heights.
+Sources: San-Miguel-Ayanz et al. 2016 (European Atlas of Forest Tree Species), EUFORGEN guidelines (black poplar:
+Cottrell 2004; wild cherry: Russell 2003), Rackham 2006, Wood Handbook (green MOR).
+- Aspen (Populus tremula): slender, strong leader, short open crown of ascending limbs (lateral_extension 0.58),
+  round leaves; root suckers (basal_sprouts 0.25); grey-green lenticelled bark; flutter x2.5 (flattened petioles:
+  leaves tremble in the lightest air, Niklas 1991); gold in autumn, early.
+- Black poplar (Populus nigra): fastest-growing native, big arching limbs (gravity_bending 0.25), near-black furrowed
+  bark; floodplains (water_max 60 m); mistletoe's heaviest host (0.6); flutter x2.5.
+- Wild cherry (Prunus avium): monopodial to the top, limbs in tiers (whorled, 4 buds), drooping leaves, red-brown
+  lenticel-banded bark, crimson autumn.
+- Hornbeam (Carpinus betulus): two-ranked fine twigs, dense dome, very shade tolerant (shade_max 0.75, opacity 0.85),
+  smooth grey bark; leaves held late (long fall lag).
+- Sweet chestnut (Castanea sativa): broad dome on a massive bole, long lanceolate leaves (18 cm), late leaf-out.
+- Next (this pick): aspen clones (one bark tint, form and autumn date for a whole sucker patch: a clone id from
+  hashed cells in VegetationField3D, Mitton and Grant 1996), hornbeam's fluted stem (the pollard pole flutes),
+  chestnut's spiral-twisted furrows, cherry blossom before the leaves, and the new species in stands (oak-hornbeam,
+  chestnut coppice, aspen in the taiga and woodland, black poplar on floodplains).
+- Later: WorldWater.high_water_at (1276b430: peak height, days since, flow xz) can drive flood_height and
+  flood_years (5av) instead of hand values.
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:

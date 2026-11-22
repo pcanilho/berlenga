@@ -835,6 +835,13 @@
 				How far [param passes] wheel passes pack the soil, 0 to 1: most of it in the first few ([code]1 - exp(-passes / 4)[/code]).
 			</description>
 		</method>
+		<method name="get_seal_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far wet clay at the point has been puddled, 0 to 1: kneaded by wheel passes (a tenth of the way a pass, past the plastic wetness) and by wallowing until its pores shut. A full seal takes infiltration down to a hundredth, so rain stands in sealed ruts and wallows for days; it halves over 60 days of game time and is kept with [member worn_tracks]. Sandy soil does not puddle.
+			</description>
+		</method>
 		<method name="get_wallow_count" qualifiers="const">
 			<return type="int" />
 			<description>

@@ -1411,8 +1411,11 @@ func _build_clouds() -> void:
 		ridge.build_mesh(rm)
 		weather.terrain_source = weather.get_path_to(ridge)
 		weather.wave_clouds = not wave_clouds_off
-		cam.position = Vector3(14000, 300, 24000)
-		cam.look_at_from_position(cam.position, Vector3(2000, 3800, 12000), Vector3.UP)
+		# From downwind, looking up the wind at the lenses over the range's summits.
+		if fov_arg <= 0.0:
+			cam.fov = 45
+		cam.position = Vector3(15000, 300, 11570)
+		cam.look_at_from_position(cam.position, Vector3(3150, 4300, 11570), Vector3.UP)
 		if cam_arg.size() == 6:
 			cam.look_at_from_position(Vector3(cam_arg[0], cam_arg[1], cam_arg[2]), Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
 		weather.rebake_terrain_wind()

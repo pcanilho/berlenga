@@ -899,6 +899,8 @@ func _ready() -> void:
 		await _dust_devil()
 	if args.has("rime-ridge"):
 		await _rime_ridge()
+	if args.has("fog-sea"):
+		await _fog_sea()
 	if args.has("lodging"):
 		await _lodging()
 	if args.has("lens-cam"):
@@ -6319,7 +6321,7 @@ func _rooting_tyre() -> void:
 func _stand_trail() -> void:
 	# --stand-trail[=passes]: a game trail (WorldStand.set_trails, 0.8 m, 600 passes a year) from 2 m ahead of the
 	# camera away from it, bending a little, and a fresh boar rooting (--rooting-age, 0) 1.5 m across, --rooting-ahead
-	# (7) m out and 2 m to the side (terrain 3199eeb8/897cc1dd, rocks 7b898b93, clods ad9de493). Off for the before.
+	# (7) m out and 2 m to the side (terrain 3199eeb8/897cc1dd, rocks 7b898b93, clods ad9de493). Off for the before; --trail-rooting=0 skips the rooting.
 	var tc: Camera3D = get_viewport().get_camera_3d()
 	var tf := -tc.global_basis.z
 	tf.y = 0.0
@@ -6334,7 +6336,8 @@ func _stand_trail() -> void:
 	WorldContracts.get_stand().set_trails([{"points": tpts, "width": 0.8, "passes": tpass, "kind": "game_trail"}])
 	var rp := tc.global_position + tf * float(args.get("rooting-ahead", "7")) - ts * 2.0
 	rp.y = height_at(rp.x, rp.z)
-	WorldContracts.get_stand().add_disturbance(rp, 1.5, WorldStand.DISTURBANCE_ROOTING, float(args.get("rooting-age", "0")))
+	if args.get("trail-rooting", "1") != "0":
+		WorldContracts.get_stand().add_disturbance(rp, 1.5, WorldStand.DISTURBANCE_ROOTING, float(args.get("rooting-age", "0")))
 	_log("stand trail: %d points from %s, rooting at %s; trail %s at 6 m" % [tpts.size(), str(tpts[0].round()), str(rp.round()), str(WorldContracts.get_stand().trail_at(Vector3(tpts[2].x, 0, tpts[2].y)))])
 
 
@@ -7514,6 +7517,35 @@ func _rime_ridge() -> void:
 	weather.snap_to_settings()
 	weather.advance(60.0)
 	_log("rime ridge: %.0f h of cloud at %.1f C on the crest %s (%.0f m), rime %s, cam %s" % [hrs, weather.get_air_temperature_at(top), str(top.round()), top.y, str(rv), str(cp.round())])
+
+
+func _fog_sea() -> void:
+	# --fog-sea[=H]: a clear calm night of H (6) hours before the shot (WeatherMap3D.valley_fog, 2648f0f3): the cold
+	# pools fill with radiation fog, then the clock returns to --time for the dawn view over the fog top. --fog-wind
+	# (0.5) m/s, --fog-humidity (0.95), --fog-air (6) C. Logs the fog top along the camera's view.
+	var hrs := float(args["fog-sea"]) if String(args["fog-sea"]) != "" else 6.0
+	var t_shot := clock.time_of_day
+	weather.air_follows_climate = false
+	weather.temperature = float(args.get("fog-air", "6"))
+	weather.humidity = float(args.get("fog-humidity", "0.95"))
+	weather.wind_speed = float(args.get("fog-wind", "0.5"))
+	weather.cloud_cover = 0.0
+	weather.valley_fog = true
+	weather.snap_to_settings()
+	for i in int(hrs * 6.0):
+		clock.time_of_day = fposmod(t_shot - hrs + i / 6.0, 24.0)
+		weather.advance(600.0)
+		await get_tree().physics_frame
+	clock.time_of_day = t_shot
+	weather.advance(60.0)
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var f := -c3.global_basis.z
+	var tops := []
+	for k in 6:
+		var p := c3.global_position + Vector3(f.x, 0, f.z).normalized() * (150.0 + 250.0 * k)
+		p.y = height_at(p.x, p.z)
+		tops.append("%.0f m: ground %.0f top %.0f" % [150.0 + 250.0 * k, p.y, weather.get_valley_fog_top_at(p)])
+	_log("fog sea: %.0f h calm night, cam at %.0f m; %s" % [hrs, c3.global_position.y, ", ".join(tops)])
 
 
 func _lodging() -> void:

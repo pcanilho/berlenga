@@ -54,7 +54,8 @@ static const char *preset_names[TreeGenerator::PRESET_MAX] = {
 	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom", "Gum Rockrose", "Kermes Oak", "Lentisk", "Dwarf Fan Palm",
 	"Stone Pine", "Cork Oak", "Holm Oak", "Wild Olive", "Maritime Pine", "Carob",
 	"Blackthorn", "Field Maple", "Dog Rose",
-	"Calligonum", "White Broom", "Mediterranean Saltbush", "Date Palm"
+	"Calligonum", "White Broom", "Mediterranean Saltbush", "Date Palm",
+	"Aspen", "Black Poplar", "Wild Cherry", "Hornbeam", "Sweet Chestnut"
 };
 
 // The woody shrubs vegetation places through make_shrub_species (trees.md 5u, 5v): Atlantic heath
@@ -1074,6 +1075,111 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 4;
 			bark_color = Color(0.36f, 0.29f, 0.21f); // Fibre and old leaf bases, grey-brown.
 			leaf_color = Color(0.085f, 0.125f, 0.08f); // Glaucous grey-green.
+			break;
+		// Broadleaves of the European lowlands (trees.md 5bf; San-Miguel-Ayanz et al. 2016, European Atlas of Forest
+		// Tree Species; Rackham, Woodlands, 2006).
+		case PRESET_ASPEN: // Populus tremula: a slender pioneer with a short, narrow, open crown of ascending limbs, the
+			// leader strong to the top; round, crenate leaves on flattened stalks that tremble in the lightest air; smooth
+			// grey-green bark pocked with dark diamond lenticels, black and fissured at the foot; clones from root suckers.
+			p[PARAM_LEADER_GROWTH] = 0.9f;
+			p[PARAM_YEARS] = 30;
+			p[PARAM_APICAL_DOMINANCE] = 0.65f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.57f;
+			p[PARAM_BRANCH_ANGLE] = 36;
+			p[PARAM_DIRECTION_NOISE] = 9;
+			p[PARAM_TWIG_DROOP] = 0.4f; // Leafy short shoots hang a little on the thin twigs.
+			p[PARAM_GRAVITROPISM] = 0.1f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.8f;
+			p[PARAM_SHED_RATIO] = 0.045f; // Light demanding: the lower limbs go early.
+			p[PARAM_LATERAL_EXTENSION] = 0.58f;
+			p[PARAM_BASAL_SPROUTS] = 0.25f; // Root suckers round the foot.
+			p[PARAM_LEAF_SIZE] = 0.065f; // Blade 3-8 cm, nearly round.
+			p[PARAM_LEAF_WIDTH] = 0.5f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 46;
+			p[PARAM_ROOT_FLARE] = 0.3f;
+			bark_color = Color(0.46f, 0.47f, 0.41f); // Grey with a green tinge.
+			leaf_color = Color(0.16f, 0.29f, 0.09f);
+			break;
+		case PRESET_BLACK_POPLAR: // Populus nigra: a massive, often leaning tree of river floodplains, with a broad,
+			// irregular crown of heavy, arching limbs, burrs on the bole and deeply furrowed, near-black bark; deltoid leaves
+			// on flattened stalks (Cottrell, Forestry 77, 2004; EUFORGEN technical guidelines).
+			p[PARAM_LEADER_GROWTH] = 0.85f;
+			p[PARAM_YEARS] = 50;
+			p[PARAM_INTERNODE_LENGTH] = 0.55f; // The fastest-growing native tree.
+			p[PARAM_APICAL_DOMINANCE] = 0.6f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_LATERAL_EXTENSION] = 0.8f;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_DIRECTION_NOISE] = 13;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.45f;
+			p[PARAM_GRAVITY_BENDING] = 0.25f; // The big limbs arch out and down.
+			p[PARAM_SHED_RATIO] = 0.05f;
+			p[PARAM_BASAL_SPROUTS] = 0.15f;
+			p[PARAM_ROOT_FLARE] = 0.6f;
+			p[PARAM_LEAF_SIZE] = 0.075f;
+			p[PARAM_LEAF_WIDTH] = 0.45f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 24;
+			bark_color = Color(0.24f, 0.22f, 0.2f);
+			leaf_color = Color(0.13f, 0.27f, 0.07f);
+			break;
+		case PRESET_WILD_CHERRY: // Prunus avium: a monopodial stem to the top with the limbs in tiers (buds crowded at
+			// the shoot tips), a narrow-domed crown; drooping, toothed leaves; shiny red-brown bark ringed by bands of
+			// lenticels, peeling in horizontal strips; white blossom before the leaves, red in autumn (Russell, EUFORGEN
+			// Prunus avium guidelines, 2003).
+			p[PARAM_LEADER_GROWTH] = 0.95f;
+			p[PARAM_YEARS] = 34;
+			phyllotaxis = PHYLLOTAXIS_WHORLED;
+			p[PARAM_WHORL_BUDS] = 4;
+			p[PARAM_APICAL_DOMINANCE] = 0.72f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.58f;
+			p[PARAM_APICAL_CONTROL] = 0.8f;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_DIRECTION_NOISE] = 8;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
+			p[PARAM_SHED_RATIO] = 0.06f;
+			p[PARAM_TWIG_DROOP] = 0.5f;
+			p[PARAM_LATERAL_EXTENSION] = 0.75f;
+			p[PARAM_LEAF_SIZE] = 0.1f;
+			p[PARAM_LEAF_WIDTH] = 0.4f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 22;
+			bark_color = Color(0.31f, 0.2f, 0.17f); // Red-brown, a grey cast where weathered.
+			leaf_color = Color(0.14f, 0.27f, 0.07f);
+			break;
+		case PRESET_HORNBEAM: // Carpinus betulus: a short, fluted, muscled grey stem under a dense, rounded crown of
+			// fine twigs in two ranks; pleated, doubly toothed leaves held brown through winter on young and cut trees;
+			// very shade tolerant, the classic coppice and hedge tree (Sikkema et al. 2016, Atlas; Rackham 2006).
+			p[PARAM_YEARS] = 45;
+			p[PARAM_APICAL_DOMINANCE] = 0.56f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_DIVERGENCE] = 180;
+			p[PARAM_BRANCH_ANGLE] = 45;
+			p[PARAM_DIRECTION_NOISE] = 12;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.55f;
+			p[PARAM_SHED_RATIO] = 0.025f;
+			p[PARAM_LEAF_SIZE] = 0.08f;
+			p[PARAM_LEAF_WIDTH] = 0.4f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 28;
+			bark_color = Color(0.46f, 0.46f, 0.43f); // Smooth, silver-grey, streaked darker.
+			leaf_color = Color(0.13f, 0.27f, 0.07f);
+			break;
+		case PRESET_SWEET_CHESTNUT: // Castanea sativa: a broad, domed crown on a massive bole whose ridged bark twists
+			// in a spiral with age; long, lanceolate leaves with bristle teeth; spiny burrs; coppiced for poles for
+			// centuries, its old stools and veterans hollow (Conedera et al. 2016, Atlas).
+			p[PARAM_LEADER_GROWTH] = 0.7f;
+			p[PARAM_YEARS] = 60;
+			p[PARAM_INTERNODE_LENGTH] = 0.45f;
+			p[PARAM_APICAL_DOMINANCE] = 0.58f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_DIRECTION_NOISE] = 11;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
+			p[PARAM_SHED_RATIO] = 0.035f;
+			p[PARAM_ROOT_FLARE] = 0.6f;
+			p[PARAM_LEAF_SIZE] = 0.18f; // 15-25 cm.
+			p[PARAM_LEAF_WIDTH] = 0.22f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 14;
+			bark_color = Color(0.33f, 0.29f, 0.24f);
+			leaf_color = Color(0.12f, 0.25f, 0.06f);
 			break;
 		case PRESET_MAX:
 			break;
@@ -4212,6 +4318,11 @@ static const LeafFormSpec LEAF_FORMS[TreeGenerator::PRESET_MAX] = {
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // White broom: a few tiny linear leaves.
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Saltbush: ovate to rhombic, entire.
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Date palm: its fronds are built by _palm_geometry.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Aspen: round, crenate.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Black poplar: deltoid.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Wild cherry: obovate, toothed.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Hornbeam: ovate, doubly toothed, pleated.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Sweet chestnut: long lanceolate, bristle-toothed.
 };
 
 Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
@@ -4424,6 +4535,11 @@ static const LeafSeasonSpec LEAF_SEASONS[TreeGenerator::PRESET_MAX] = {
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // White broom: green stems.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Saltbush: semi-evergreen.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Date palm.
+	{ true, 140.0f, 200.0f, 200.0f, 90.0f, Color(0.55f, 0.38f, 0.03f) }, // Aspen: early; gold, a clone at a time.
+	{ true, 170.0f, 240.0f, 220.0f, 100.0f, Color(0.5f, 0.38f, 0.05f) }, // Black poplar: yellow.
+	{ true, 150.0f, 200.0f, 230.0f, 100.0f, Color(0.55f, 0.13f, 0.04f) }, // Wild cherry: early; crimson and orange.
+	{ true, 230.0f, 280.0f, 220.0f, 160.0f, Color(0.45f, 0.33f, 0.06f) }, // Hornbeam: yellow, then held brown.
+	{ true, 280.0f, 300.0f, 220.0f, 120.0f, Color(0.45f, 0.32f, 0.05f) }, // Sweet chestnut: late; yellow-brown.
 };
 
 TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dictionary &p_season) {
@@ -5144,7 +5260,10 @@ TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 		case PRESET_ROWAN:
 			// Rowan too: smooth, grey to purplish, with pale lenticels drawn out across the stem
 			// (Raspe et al. 2000); a plain smooth bark read as bare grey tubes up close.
+		case PRESET_WILD_CHERRY: // Glossy red-brown, ringed with bands of lenticels.
+		case PRESET_ASPEN: // Grey-green, pocked with dark diamond lenticels.
 			return BARK_LENTICELLED;
+		case PRESET_HORNBEAM: // Silver-grey and smooth over its flutes.
 		case PRESET_BEECH:
 		case PRESET_AMERICAN_BEECH:
 		case PRESET_HOLLY:
@@ -6362,6 +6481,11 @@ static const float MOSS_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	0.0f, // White broom.
 	0.0f, // Saltbush.
 	0.0f, // Date palm: desert.
+	0.25f, // Aspen: smooth, but mossy at the fissured foot.
+	0.65f, // Black poplar: deep, damp furrows by rivers.
+	0.3f, // Wild cherry: glossy, sheds its outer skin.
+	0.45f, // Hornbeam: smooth but shady and damp.
+	0.6f, // Sweet chestnut: deep ridges.
 };
 
 float TreeGenerator::_moss_amount() const {
@@ -6549,6 +6673,11 @@ static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	{ 0.2f, 0.05f, 0.1f }, // White broom.
 	{ 0.2f, 0.05f, 0.15f }, // Saltbush.
 	{ 0.1f, 0.0f, 0.1f }, // Date palm.
+	{ 0.75f, 0.3f, 0.15f }, // Aspen: crusts, Physcia and Xanthoria on the base-rich bark.
+	{ 0.75f, 0.45f, 0.3f }, // Black poplar: the classic Xanthoria tree.
+	{ 0.55f, 0.25f, 0.05f }, // Wild cherry.
+	{ 0.85f, 0.15f, 0.0f }, // Hornbeam: smooth, script lichens as on beech.
+	{ 0.7f, 0.5f, 0.05f }, // Sweet chestnut.
 };
 
 float TreeGenerator::_lichen_amount() const {
@@ -9203,6 +9332,11 @@ static const struct {
 	{ 40.0f, 220.0f }, // white broom (whippy switches)
 	{ 50.0f, 200.0f }, // saltbush
 	{ 35.0f, 260.0f }, // date palm (fibrous monocot stem; it bends, and its dense root ball holds)
+	{ 35.0f, 140.0f }, // aspen (quaking aspen, Wood Handbook)
+	{ 34.0f, 150.0f }, // black poplar (as cottonwood)
+	{ 55.0f, 160.0f }, // wild cherry (black cherry)
+	{ 60.0f, 160.0f }, // hornbeam (hard, tough wood)
+	{ 39.0f, 180.0f }, // sweet chestnut (American chestnut; deep rooted)
 };
 static_assert(sizeof(STORM_WOOD) / sizeof(STORM_WOOD[0]) == TreeGenerator::PRESET_MAX, "one storm row per preset");
 
@@ -9483,6 +9617,10 @@ float TreeGenerator::get_bloom(Preset p_preset, float p_day) {
 		// March and April, hawthorn's May blossom, dog rose in June.
 		case PRESET_BLACKTHORN:
 			return ramp(70.0f, 85.0f, 105.0f, 120.0f);
+		// Wild cherry: white clusters from the short spurs in April, as the leaves break (trees.md 5bf; PEP725 BBCH 60-69
+		// for Prunus avium in central Europe: mid to late April, about two weeks).
+		case PRESET_WILD_CHERRY:
+			return ramp(98.0f, 108.0f, 118.0f, 128.0f);
 		case PRESET_HAWTHORN:
 			return ramp(118.0f, 128.0f, 145.0f, 158.0f);
 		case PRESET_DOG_ROSE:
@@ -9783,9 +9921,15 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			case PRESET_WHITE_WILLOW:
 				host = 0.3f;
 				break;
+			case PRESET_BLACK_POPLAR: // Among the most heavily infested hosts (Zuber 2004), whole crowns in old floodplain trees.
+				host = 0.6f;
+				break;
 			case PRESET_ROWAN:
 				host = 0.25f;
 				break;
+			case PRESET_WILD_CHERRY:
+			case PRESET_HORNBEAM:
+			case PRESET_ASPEN:
 			case PRESET_SYCAMORE_MAPLE:
 			case PRESET_BIRCH:
 			case PRESET_RED_MAPLE:
@@ -10972,7 +11116,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 	// Hedge shrubs flower from the same tips that later fruit (trees.md 5ad): hawthorn white over
 	// the whole bush in May, blackthorn white along its bare twigs in March and April, dog rose
 	// pale pink in June.
-	const float blossom = (preset == PRESET_HAWTHORN || preset == PRESET_BLACKTHORN || preset == PRESET_DOG_ROSE || preset == PRESET_CALLIGONUM) ? get_bloom(preset, day) : 0.0f;
+	const float blossom = (preset == PRESET_HAWTHORN || preset == PRESET_BLACKTHORN || preset == PRESET_DOG_ROSE || preset == PRESET_CALLIGONUM || preset == PRESET_WILD_CHERRY) ? get_bloom(preset, day) : 0.0f;
 	if (blossom > 0.0f) {
 		kind = BLOSSOM;
 		share = preset == PRESET_DOG_ROSE ? 0.4f : 1.0f;
@@ -11070,7 +11214,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 	}
 	// Corymbs carry a hundred berries or more each: a rowan bears some dozens of heads.
 	// A stone pine's crown is spent on cones, three years' worth at once: about a thousand.
-	const float budget = (kind == BERRY_ROWAN || kind == BERRY_ELDER ? 80.0f : (kind == CONE_STONE_PINE ? 900.0f : (kind == BLOSSOM ? 3000.0f : (kind == BERRY_HAW || kind == DRUPE_SLOE || kind == HIP_ROSE || kind == NUT_CALLIGONUM || kind == SPIKE_SALTBUSH ? 900.0f : 360.0f)))) * fruit_cover;
+	const float budget = (kind == BERRY_ROWAN || kind == BERRY_ELDER ? 80.0f : (kind == CONE_STONE_PINE ? 900.0f : (kind == BLOSSOM ? (preset == PRESET_WILD_CHERRY ? 9000.0f : 3000.0f) : (kind == BERRY_HAW || kind == DRUPE_SLOE || kind == HIP_ROSE || kind == NUT_CALLIGONUM || kind == SPIKE_SALTBUSH ? 900.0f : 360.0f)))) * fruit_cover;
 	const float p = MIN(share * fruit_cover * present, eligible > 0 ? budget / eligible : 0.0f);
 	// Catkins open before the leaves: hazel from late January, alder February, birch April.
 	const bool open_catkin = (kind == CATKIN_HAZEL && in_days(20.0f, 100.0f)) || (kind == CATKIN_ALDER && in_days(40.0f, 100.0f)) || (kind == CATKIN_BIRCH && in_days(100.0f, 135.0f));
@@ -11545,9 +11689,11 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				// Calligonum: 2-4 small flowers at each joint of the green twiglets, five white tepals
 				// 2-3 mm long with a green-red centre and red-tipped stamens (Flora Palaestina; Danin
 				// 1996), the bush pale with them from a few metres.
-				const bool haw = preset == PRESET_HAWTHORN, rose = preset == PRESET_DOG_ROSE, cal = preset == PRESET_CALLIGONUM;
-				const int k = haw ? 16 + int(cr.randf() * 16.0f) : (rose ? 1 + int(cr.randf() * 2.5f) : (cal ? 6 + int(cr.randf() * 7.0f) : 8 + int(cr.randf() * 9.0f)));
-				const float fr = haw ? Math::lerp(0.0055f, 0.0075f, cr.randf()) : (rose ? Math::lerp(0.022f, 0.028f, cr.randf()) : (cal ? Math::lerp(0.0028f, 0.0036f, cr.randf()) : Math::lerp(0.006f, 0.0075f, cr.randf())));
+				// Wild cherry: umbels of two to six (two umbels a spur here) on long stalks from the spurs, each flower 2.5-3.5 cm, pure white,
+				// yellow anthers (Russell 2003); a tree in flower is white from afar.
+				const bool haw = preset == PRESET_HAWTHORN, rose = preset == PRESET_DOG_ROSE, cal = preset == PRESET_CALLIGONUM, cherry = preset == PRESET_WILD_CHERRY;
+				const int k = haw ? 16 + int(cr.randf() * 16.0f) : (rose ? 1 + int(cr.randf() * 2.5f) : (cal ? 6 + int(cr.randf() * 7.0f) : (cherry ? 5 + int(cr.randf() * 6.0f) : 8 + int(cr.randf() * 9.0f))));
+				const float fr = haw ? Math::lerp(0.0055f, 0.0075f, cr.randf()) : (rose ? Math::lerp(0.022f, 0.028f, cr.randf()) : (cal ? Math::lerp(0.0028f, 0.0036f, cr.randf()) : (cherry ? Math::lerp(0.013f, 0.018f, cr.randf()) : Math::lerp(0.006f, 0.0075f, cr.randf()))));
 				const Color petal_c = rose ? lin(0.97f, 0.8f, 0.84f) : (haw ? lin(0.97f, 0.94f, 0.84f) : (cal ? lin(0.95f, 0.92f, 0.88f) : lin(0.96f, 0.95f, 0.91f)));
 				const Color eye_c = rose ? lin(0.99f, 0.95f, 0.88f) : petal_c;
 				const Color boss_c = haw ? lin(0.55f, 0.22f, 0.32f) : (cal ? lin(0.7f, 0.3f, 0.3f) : lin(0.95f, 0.75f, 0.2f));
@@ -11560,6 +11706,10 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 						fc = (q % 2 == 0 ? at : n.start + n.dir * (n.length * 0.5f) + sd.rotated(d, 2.0f) * 0.02f) + d * 0.01f + (sd * Math::cos(a) + d.cross(sd) * Math::sin(a)) * rr + Vector3(0, 0.008f, 0);
 					} else if (rose) {
 						fc = at + sd.rotated(d, q * 2.4f) * (0.02f * q) + d * 0.01f;
+					} else if (cherry) {
+						// Two umbels a spur (its tip and a bud below), round it on stalks 3-5 cm.
+						const Vector3 root = q % 2 == 0 ? at : n.start + n.dir * (n.length * 0.55f);
+						fc = root + sd.rotated(d, q * 2.4f + cr.randf()) * Math::lerp(0.025f, 0.045f, cr.randf()) + d * 0.01f - Vector3(0, 0.01f, 0);
 					} else {
 						fc = n.start + n.dir * (n.length * Math::lerp(0.2f, 1.0f, cr.randf())) + sd.rotated(d, cr.randf() * float(Math::TAU)) * 0.006f;
 					}
@@ -13001,8 +13151,8 @@ void TreeGenerator::_plan_wounds() {
 	// Frost cracks split thin-barked broadleaves of some size, low on the stem, and their
 	// callus builds into ribs over the winters (Kubler 1988).
 	{
-		static const int THIN[] = { PRESET_OAK, PRESET_RED_OAK, PRESET_WHITE_OAK, PRESET_LIME, PRESET_BEECH, PRESET_AMERICAN_BEECH, PRESET_ASH, PRESET_SYCAMORE_MAPLE, PRESET_SUGAR_MAPLE, PRESET_RED_MAPLE, PRESET_HORSE_CHESTNUT };
-		if (r13 >= 0.12f && wound_species(preset, THIN, 11) && chance(0.18f * CLAMP(r13 / 0.25f, 0.5f, 1.5f))) {
+		static const int THIN[] = { PRESET_OAK, PRESET_RED_OAK, PRESET_WHITE_OAK, PRESET_LIME, PRESET_BEECH, PRESET_AMERICAN_BEECH, PRESET_ASH, PRESET_SYCAMORE_MAPLE, PRESET_SUGAR_MAPLE, PRESET_RED_MAPLE, PRESET_HORSE_CHESTNUT, PRESET_WILD_CHERRY, PRESET_HORNBEAM, PRESET_SWEET_CHESTNUT };
+		if (r13 >= 0.12f && wound_species(preset, THIN, 14) && chance(0.18f * CLAMP(r13 / 0.25f, 0.5f, 1.5f))) {
 			const int n = rng.randf() < 0.3f ? 2 : 1;
 			for (int i = 0; i < n; i++) {
 				Wound w;
@@ -13020,8 +13170,8 @@ void TreeGenerator::_plan_wounds() {
 	// Deer strip smooth pole-stage stems at browse height, pulling the bark upward with their
 	// incisors (Gill 1992; Welch and Scott 1998).
 	{
-		static const int DEER[] = { PRESET_ASH, PRESET_BEECH, PRESET_AMERICAN_BEECH, PRESET_NORWAY_SPRUCE, PRESET_ROWAN, PRESET_WHITE_WILLOW, PRESET_SYCAMORE_MAPLE, PRESET_LIME, PRESET_LARCH, PRESET_RED_MAPLE, PRESET_SUGAR_MAPLE, PRESET_SILVER_FIR };
-		if (r13 >= 0.03f && r13 <= 0.15f && wound_species(preset, DEER, 12) && chance(0.22f + 0.6f * browse)) {
+		static const int DEER[] = { PRESET_ASH, PRESET_BEECH, PRESET_AMERICAN_BEECH, PRESET_NORWAY_SPRUCE, PRESET_ROWAN, PRESET_WHITE_WILLOW, PRESET_SYCAMORE_MAPLE, PRESET_LIME, PRESET_LARCH, PRESET_RED_MAPLE, PRESET_SUGAR_MAPLE, PRESET_SILVER_FIR, PRESET_ASPEN, PRESET_HORNBEAM };
+		if (r13 >= 0.03f && r13 <= 0.15f && wound_species(preset, DEER, 14) && chance(0.22f + 0.6f * browse)) {
 			const int n = 1 + int(rng.randf() * 2.5f);
 			const float a_age = age(0.3f, 15.0f);
 			for (int i = 0; i < n; i++) {
@@ -15310,6 +15460,8 @@ void TreeGenerator::_ice_storm_damage() {
 		case PRESET_SCOTS_PINE:
 		case PRESET_WHITE_PINE:
 		case PRESET_HORSE_CHESTNUT:
+		case PRESET_ASPEN:
+		case PRESET_BLACK_POPLAR:
 			sus = 0.85f;
 			break;
 		case PRESET_OAK:
@@ -18371,7 +18523,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 	};
 	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour, int p_features) {
-		if ((veteran_features.is_empty() && p_features != 3 && !(p_features == 2 && head_r > 0.0f)) || !p_features) {
+		// p_features: 1 a limb sharing the veteran stem's features, 2 the veteran stem, 3 a cut pole, 4 a fluted stem
+		// (hornbeam, trees.md 5bf).
+		if ((veteran_features.is_empty() && p_features < 3 && !(p_features == 2 && head_r > 0.0f)) || !p_features) {
 			return;
 		}
 		Vector3 *vv = r_b.verts.ptrw();
@@ -18397,7 +18551,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// normals swing by tens of degrees, so vertices at the hollow's edge fell in or out of
 			// it at random and folded into pale blades across the opening.
 			Vector3 n = vv[v] - p_pts[ring];
-			if (p_features == 3) {
+			if (p_features >= 3) {
 				// Square to the chain's own axis: poles lean and bend.
 				const Vector3 ax = p_pts[MIN(ring + 1, int(p_pts.size()) - 1)] - p_pts[MAX(ring - 1, 0)];
 				if (ax.length_squared() > 1e-10f) {
@@ -18600,7 +18754,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				w_any = 1.0f;
 			}
 			for (const VeteranFeature &f : veteran_features) {
-				if (p_features == 3) {
+				if (p_features >= 3) {
 					break;
 				}
 				// A basal hollow is the main stem's alone: the forks around it took a second dent
@@ -18697,6 +18851,27 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					off += 0.16f * (0.55f + 0.6f * flank) * MIN(r, vet_r_stem) * Math::exp(-lip * lip);
 					w_any = 1.0f;
 				}
+			}
+			if (p_features == 4) {
+				// Hornbeam's fluted, "muscled" stem (trees.md 5bf; Mitchell 1974; Rackham 2006): broad, rounded ridges
+				// running up the bole and limbs, wandering and merging, five to eight round a mature stem, standing
+				// out about a seventh of its radius; the grooves between them darker and damp. Read on the chain's own
+				// frame, as a pole's flutes are, so they follow its lean; growing with girth from 5 cm.
+				const int col = i % (p_sides + 1);
+				const float th = float(Math::TAU) * float(col % p_sides) / float(p_sides);
+				float along = 0.0f;
+				for (int q = 1; q <= ring; q++) {
+					along += p_pts[q].distance_to(p_pts[q - 1]);
+				}
+				const float u = moss_noise(Vector3(3.4f * Math::cos(th), 3.4f * Math::sin(th), along / MAX(6.0f * r, 0.4f)), 0x686f726eu);
+				// Rounded ridges, narrower grooves.
+				const float ridge = 2.0f * (Math::smoothstep(0.3f, 0.7f, u) - 0.5f);
+				const float thick = Math::smoothstep(0.04f, 0.1f, r);
+				// Fading into the root flare's buttresses below a metre.
+				const float foot = Math::smoothstep(0.0f, 1.0f, h);
+				off += 0.15f * r * ridge * thick * Math::lerp(0.6f, 1.0f, foot);
+				dark = MIN(dark, Math::lerp(1.0f, 0.78f, thick * MAX(-ridge, 0.0f)));
+				w_any = thick > 0.0f ? 1.0f : 0.0f;
 			}
 			if (w_any > 0.0f) {
 				if (!p_colour) {
@@ -19518,7 +19693,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// A knuckle's chain runs on into its pole, as thin as a withy: the map's relief, set by
 		// the knuckle's girth, would furrow it; the knuckle takes the head's knobs instead.
 		const bool relief = near_tube && r0 >= RELIEF_MIN_RADIUS && !(cut_chain && s != veteran_stem && (bolling.has(s) || first.pole)) && bs.relief_gain * scale >= 0.001f;
-		const int vf = s == veteran_stem ? 2 : (vet_share[s] ? 1 : (cut_chain ? 3 : 0));
+		const int vf = s == veteran_stem ? 2 : (vet_share[s] ? 1 : (cut_chain ? 3 : (preset == PRESET_HORNBEAM && r0 >= 0.04f && decay_class <= 2 ? 4 : 0)));
 		// A mesh without LODs (the near variants) carries the near tube alone.
 		if ((fallen || fallen_branch) && r0 >= 0.03f) {
 			// Lying wood is seen from a step away, along its length: its peeled patches, moss and
@@ -19586,6 +19761,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			if (s == veteran_stem || vet_share[s]) {
 				veteran_deform(bark, part, pts, rad, sides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
+			} else if (preset == PRESET_HORNBEAM && rad[0] >= 0.04f && decay_class <= 2) {
+				veteran_deform(bark, part, pts, rad, sides, true, 4);
 			}
 			if (!stem && !hanger && !split_stem && junction_weld) {
 				weld(bark, part, s, pts, rad, sides);
@@ -22046,7 +22223,10 @@ float fire_age_years(vec2 xz) {
 			m->set_shader_parameter(pi.name, v);
 		}
 	}
-	m->set_shader_parameter("flutter_amount", leaf_flutter);
+	// Poplar leaves hang on long stalks flattened across the blade, so they flutter in the lightest air (Niklas 1991,
+	// the aspen petiole's torsional flexibility; trees.md 5bf).
+	const bool poplar = preset == PRESET_ASPEN || preset == PRESET_BLACK_POPLAR;
+	m->set_shader_parameter("flutter_amount", leaf_flutter * (poplar ? 2.5f : 1.0f));
 	m->set_shader_parameter("flutter_size", p_leaf_size);
 	m->set_shader_parameter("leaf_underside", leaf_underside);
 	m->set_shader_parameter("fire_crown_q", Vector4(fire_crown[0], fire_crown[1], fire_crown[2], fire_crown[3]));
@@ -22807,6 +22987,14 @@ static const Habitat HABITATS[TreeGenerator::PRESET_MAX] = {
 	// Date palm: hot deserts on groundwater (oases, wadis); the rainfall is the region's, the water the palm's
 	// own roots find (Zohary and Hopf 2000; Chao and Krueger 2007).
 	{ 18, 30, 8, 22, 20, 400, 0.0f, 15, 0.3f, 0, 0.3f, 0.45f, 8.0f, 1.5f }, // Date palm
+	// Lowland broadleaves (trees.md 5bf; Atlas 2016). Aspen spans the boreal to the Mediterranean mountains, light
+	// demanding, a thin crown; black poplar holds to floodplains; wild cherry to fertile woods and edges; hornbeam to
+	// heavy soils under oak, deep shade; sweet chestnut to mild, acid, well drained ground.
+	{ 0, 14, -25, 6, 350, 1500, 0.4f, 40, 0.2f, 0, 0.2f, 0.45f, 5.0f, 0.8f }, // Aspen
+	{ 7, 16, -10, 8, 400, 1200, 0.3f, 15, 0.5f, 60, 0.2f, 0.55f, 9.0f, 1.4f }, // Black poplar
+	{ 6, 14, -10, 7, 500, 1300, 0.5f, 40, 0.4f, 0, 0.35f, 0.6f, 7.0f, 1.0f }, // Wild cherry
+	{ 6, 13, -10, 6, 450, 1100, 0.5f, 35, 0.3f, 0, 0.75f, 0.85f, 6.0f, 0.9f }, // Hornbeam
+	{ 9, 16, -4, 9, 600, 1600, 0.6f, 40, 0.4f, 0, 0.5f, 0.75f, 9.0f, 1.3f }, // Sweet chestnut
 };
 
 static bool is_shrub(TreeGenerator::Preset p_preset) {
@@ -23149,6 +23337,7 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		const uint64_t bit = 1ull << int(p_preset);
 		const uint64_t ivy_hosts = (1ull << PRESET_OAK) | (1ull << PRESET_BEECH) | (1ull << PRESET_ASH) | (1ull << PRESET_SYCAMORE_MAPLE) | (1ull << PRESET_LIME) |
 				(1ull << PRESET_BLACK_ALDER) | (1ull << PRESET_WHITE_WILLOW) | (1ull << PRESET_HORSE_CHESTNUT) | (1ull << PRESET_HAWTHORN) | (1ull << PRESET_ELDER) |
+				(1ull << PRESET_HORNBEAM) | (1ull << PRESET_SWEET_CHESTNUT) | (1ull << PRESET_BLACK_POPLAR) | (1ull << PRESET_WILD_CHERRY) | (1ull << PRESET_ASPEN) |
 				(1ull << PRESET_SUGAR_MAPLE) | (1ull << PRESET_RED_MAPLE) | (1ull << PRESET_RED_OAK) | (1ull << PRESET_WHITE_OAK) | (1ull << PRESET_AMERICAN_BEECH) | (1ull << PRESET_YELLOW_BIRCH);
 		const uint64_t liana_hosts = (1ull << PRESET_OAK) | (1ull << PRESET_ASH) | (1ull << PRESET_LIME) | (1ull << PRESET_SYCAMORE_MAPLE) | (1ull << PRESET_BLACK_ALDER) |
 				(1ull << PRESET_WHITE_WILLOW) | (1ull << PRESET_SUGAR_MAPLE) | (1ull << PRESET_RED_MAPLE) | (1ull << PRESET_RED_OAK) | (1ull << PRESET_WHITE_OAK);
@@ -24641,7 +24830,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			far = stems.lerp(Color(0.93f, 0.92f, 0.9f), bloom);
 			far.a = p_form == FORM_SAPLING ? 0.5f : 0.7f;
 		}
-		if (p_preset == PRESET_HAWTHORN || p_preset == PRESET_BLACKTHORN || p_preset == PRESET_DOG_ROSE) {
+		if (p_preset == PRESET_HAWTHORN || p_preset == PRESET_BLACKTHORN || p_preset == PRESET_DOG_ROSE || p_preset == PRESET_WILD_CHERRY) {
 			// A hedge in blossom is white from afar: hawthorn smothered in May, blackthorn white on
 			// bare black wood, dog rose pink-flecked (trees.md 5ad).
 			const float bloom = get_bloom(p_preset, season.get("day_of_year", 182.0f)) * (p_preset == PRESET_DOG_ROSE ? 0.15f : (p_preset == PRESET_HAWTHORN ? 0.5f : 0.6f));
@@ -27196,6 +27385,11 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_WHITE_BROOM);
 	BIND_ENUM_CONSTANT(PRESET_SALTBUSH);
 	BIND_ENUM_CONSTANT(PRESET_DATE_PALM);
+	BIND_ENUM_CONSTANT(PRESET_ASPEN);
+	BIND_ENUM_CONSTANT(PRESET_BLACK_POPLAR);
+	BIND_ENUM_CONSTANT(PRESET_WILD_CHERRY);
+	BIND_ENUM_CONSTANT(PRESET_HORNBEAM);
+	BIND_ENUM_CONSTANT(PRESET_SWEET_CHESTNUT);
 	BIND_ENUM_CONSTANT(SHRUB_YOUNG);
 	BIND_ENUM_CONSTANT(SHRUB_MATURE);
 	BIND_ENUM_CONSTANT(SHRUB_OLD);
