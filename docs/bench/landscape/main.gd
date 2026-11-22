@@ -3732,9 +3732,11 @@ func _generated_forest(clearing: bool) -> Biome:
 		tg.mask_channel = 0 # the valley's clearing mask (red), as the cones use it
 	# One variant by default: each variant adds about the woodland's memory again (88M vertices at one).
 	var variants := int(args.get("tree-variants", "1"))
+	if args.has("ice-storm-years") and "ice_storm_years" in tg:
+		tg.set("ice_storm_years", float(args["ice-storm-years"])) # --ice-storm-years=Y: STAND_ICE_STORM's age (trees 772002579b)
 	var stands := {"beech": TreeGenerator.STAND_BEECH, "oak": TreeGenerator.STAND_OAK_MIXED,
 			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW,
-			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19, "alder_carr": 20, "floodplain_willow": 21, "beaver_pond": 22, "deer_wood": 23} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
+			"stonepine": 13, "windthrow": 17, "old_growth": 18, "taiga": 19, "alder_carr": 20, "floodplain_willow": 21, "beaver_pond": 22, "deer_wood": 23, "ice_storm": 24} # STAND_STONE_PINE, STAND_WINDTHROW (by value: older binaries parse it too)
 	var b: Biome
 	if args.has("montado"):
 		# --montado: the Iberian wood pasture, open-grown cork oaks with stone pines among them over a summer-dry
