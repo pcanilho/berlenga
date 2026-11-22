@@ -193,6 +193,12 @@
    "title": "Open worlds"
   },
   {
+   "name": "rendering/pathtracing/scene_feature_elision",
+   "type": "bool",
+   "default": "true",
+   "about": "Compiles the path tracer's code for a BaseMaterial3D feature (snow, glaze, ground deform) out of its hit shaders while no material holds that feature."
+  },
+  {
    "name": "rendering/pathtracing/ser_coherence_hints",
    "type": "bool",
    "default": "true",
@@ -1482,7 +1488,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again, and passing dust devils (`PhysXDustDevils3D`) sweep a band clean that blowing sand fills in again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
