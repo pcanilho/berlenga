@@ -3094,7 +3094,7 @@ void SnowCover3D::_feed_spindrift() {
 	if (Node3D *f = spindrift_node->get_flow()) {
 		f->set("smoke_fade", spindrift_fade(inputs.humidity));
 		f->set("smoke_density", 0.5f);
-		f->set("vorticity", 2.0f);
+		f->set("vorticity", 0.5f); // low enough that the plume keeps the wind's speed and runs long (PhysX f09677c98a)
 	}
 }
 
