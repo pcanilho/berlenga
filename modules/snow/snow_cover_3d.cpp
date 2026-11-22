@@ -1435,7 +1435,9 @@ const TerrainDataMap3D *SnowCover3D::_terrain_map() const {
 	if (o->climate_map.is_empty() || !o->is_inside_tree()) {
 		return nullptr;
 	}
-	return Object::cast_to<TerrainDataMap3D>(o->get_node_or_null(o->climate_map));
+	// Its water and heights only once they are baked (a map may carry the climate alone).
+	const TerrainDataMap3D *m = Object::cast_to<TerrainDataMap3D>(o->get_node_or_null(o->climate_map));
+	return m && m->is_baked() ? m : nullptr;
 }
 
 // Main thread: the inputs (weather, sun, wind, Sx) for one update.
