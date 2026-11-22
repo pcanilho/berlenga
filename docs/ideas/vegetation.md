@@ -1557,3 +1557,21 @@ Built:
 - Not done: mounds as ground relief for ground detail / terrain (they are meshes on the ground); a WorldStand
   contract for mole activity (age of heaps by place).
 
+
+## Next round options (card 22 Nov): storm lodging, leaf drifts, grazing roughs
+Research notes, nothing built yet:
+- Storm lodging in meadows. Tall grass and herbs go down in swirled patches after heavy rain and gusts: the weight of
+  water on the leaves and the wind's moment bend the stems past their base strength (Baker et al. 1998, J. Theor.
+  Biol. 194, the lodging model for cereals; Berry et al. 2004, Adv. Agron. 84). The patches lie in the wind's
+  direction with swirls where gusts turned, and stand back up over days as the stems dry (grasses recover through
+  node gravitropism; cereals far less once ripe). Inputs: WeatherMap3D rain and gusts, the sward's height and the
+  stage. Output: a lodging map the blades read (lean and direction), recovering with time since the storm.
+- Leaf drifts. Autumn litter is blown along the ground and piles up in hollows, against trunks, logs, rocks and walls,
+  and along the downwind edges of clearings; ridges and open ground are swept bare (Orndorff and Lang 1981;
+  Boerner and Kooser 1989, litter redistribution by wind in deciduous forest). Inputs: leaf fall season, wind from
+  WeatherMap3D, terrain curvature and the fields' obstacles. Output: litter that moves and gathers (drift map, deeper
+  litter plants and ground tint in the sinks).
+- Grazing roughs and dung. Cattle and horses avoid grazing near their own dung for months, leaving rank tufts in a
+  grazed lawn (MacDiarmid and Watkin 1972; Bokdam and Gleichman 2000 for horse latrines), and nettles and docks come
+  up on nutrient-rich spots; rabbits keep latrines on mounds. Inputs: WorldStand browse (grazed where) and a dung
+  scatter. Output: tall rough patches and dung pats in the deer and cattle lawns, breaking the even crop.

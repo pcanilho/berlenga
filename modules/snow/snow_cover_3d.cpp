@@ -1807,13 +1807,59 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	update_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 }
 
+// What reaches the ground under the pack (rain through it and melt) wets surfaces and feeds WeatherRunoff3D's
+// streams in place of the precipitation the weather map would put there. With a world tier, the source is the
+// world's cells with the near square's averaged into those it covers, so melt on the whole mountain runs off
+// (spring melt is the main flood water in mountains: Marks et al. 1998) and nothing is counted twice.
+void SnowCover3D::_send_runoff() {
+	WeatherMap3D *weather = owner ? nullptr : WeatherMap3D::get_active();
+	if (!weather) {
+		return;
+	}
+	const int n = resolution;
+	const int m = world ? world->resolution : 0;
+	if (!world || world->cell_runoff.size() != m * m || cell_runoff.size() != n * n || !world->origin_valid || !origin_valid) {
+		weather->set_surface_water_source_cells(get_instance_id(), cell_runoff, n, get_map_rect());
+		return;
+	}
+	const Rect2 wr = world->get_map_rect();
+	const float wcs = wr.size.x / m;
+	runoff_out = world->cell_runoff;
+	LocalVector<float> sum, cnt;
+	sum.resize(m * m);
+	cnt.resize(m * m);
+	for (int i = 0; i < m * m; i++) {
+		sum[i] = 0.0f;
+		cnt[i] = 0.0f;
+	}
+	const float cs = _cell_size();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const Vector2 c((origin_cell.x + x + 0.5f) * cs, (origin_cell.y + z + 0.5f) * cs);
+			const int wx = int(Math::floor((c.x - wr.position.x) / wcs));
+			const int wz = int(Math::floor((c.y - wr.position.y) / wcs));
+			if (wx < 0 || wz < 0 || wx >= m || wz >= m) {
+				continue;
+			}
+			sum[wz * m + wx] += MAX(cell_runoff[z * n + x], 0.0f);
+			cnt[wz * m + wx] += 1.0f;
+		}
+	}
+	// A world cell part covered by the square takes the square's average over its covered share.
+	const float full = (wcs / cs) * (wcs / cs);
+	float *o = runoff_out.ptrw();
+	for (int i = 0; i < m * m; i++) {
+		if (cnt[i] > 0.0f) {
+			const float f = MIN(cnt[i] / full, 1.0f);
+			o[i] = Math::lerp(MAX(o[i], 0.0f), sum[i] / cnt[i], f);
+		}
+	}
+	weather->set_surface_water_source_cells(get_instance_id(), runoff_out, m, wr);
+}
+
 // Main thread, after the cells.
 void SnowCover3D::_update_end() {
-	// What reaches the ground under the pack (rain through it and melt) wets surfaces in place of the
-	// precipitation the weather map would put there. (Not the world tier's: the near square stands for it.)
-	if (WeatherMap3D *weather = owner ? nullptr : WeatherMap3D::get_active()) {
-		weather->set_surface_water_source_cells(get_instance_id(), cell_runoff, resolution, get_map_rect());
-	}
+	_send_runoff();
 	last_step_hours = inputs.dt_h;
 	last_drift = inputs.wind_factor;
 	update_count++;
@@ -3581,6 +3627,9 @@ float SnowCover3D::get_wetness_at(Vector3 p_position) const {
 }
 
 float SnowCover3D::get_runoff_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_runoff_at(p_position);
+	}
 	return MAX(_sample(pub.runoff, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 

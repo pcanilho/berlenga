@@ -1705,6 +1705,21 @@ photographs, e.g. Fikke et al. 2007, COST 727).
   deeper when rain ponds in it; it freezes into the base in the cold (denser, not deeper); a print pressed
   below the water table fills with a dark, smooth pool. Raster and PT agree (`--view=trail --slush=150`).
 
+## Follow-up 44: melt water from the whole terrain (round 6, 22 Nov 2026)
+
+- The cover already handed its runoff (rain through the pack and melt, mm/h) to the weather map as the ground
+  water WeatherRunoff3D routes, but only the near square's: outside it the weather fell back to rain, so a warm
+  spell melting the mountain sent nothing downhill. Spring melt and rain on snow are the main flood water in
+  mountains (Marks et al. 1998, Hydrological Processes 12).
+- With a world tier the source is now the world's cells (4 km at 16 m) with the near square averaged into the
+  cells it covers (by covered share at the square's edge), one source so nothing counts twice.
+  `get_runoff_at` outside the square reads the world tier.
+- Checks (`--test=climate`): a warm clear spell's melt outside the square is the weather's ground water there
+  (0.74 mm/h both); rain on a square cleared bare over the world's 527 mm pack gives 4.00 mm/h, the square's,
+  not the two added.
+- Not here: rivers (PhysXRiver3D) take their discharge from the terrain climate, not from this field; a
+  seasonal melt pulse in them would be the rivers' change.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
@@ -1819,3 +1834,33 @@ Research notes for Paulo's pick; nothing below is built yet.
   little grey, glaze dark and mirror-smooth. Tests: 10 s of a stuck wheel spinning at 10 m/s polishes 0.12 mm
   and drops grip from 0.26 to 0.20. Open: world-links' tyre slip reading it needs a `contract_snow_grip_at`
   in world_contracts.h (asked via the coordinator); slush spray from tyres.
+
+## Next round (proposed 22 Nov 2026, round 6): melt water downhill, wind-shaped snow, weak layers
+
+Research notes for Paulo's pick; nothing below is built yet.
+
+**Melt water into the runoff and rivers.**
+- The cover already tracks melt and rain draining out of the pack (`cell_runoff`), but nothing downhill
+  reads it: WeatherRunoff3D fills puddles and streams from rain alone. Spring melt is the main flood source in
+  mountains (rain-on-snow events, Marks et al. 1998, Hydrological Processes 12; McCabe, Clark and Hay 2007).
+- Build: a published melt runoff field (mm/h, the snow contract) that the runoff and rivers add to rain.
+  The reader side is the weather code, so the request goes to its owner. Checks: a warm spell raises the
+  stream at the valley mouth hours later; frozen ground (the slush seal) sends it overland.
+
+**Wind-shaped snow: wind slab, wind crust, sastrugi.**
+- Wind packs the snow it moves into dense, fine-grained slab (200-400 kg/m3; Li and Pomeroy 1997; Sommer et al.
+  2018, The Cryosphere 12, wind packing in the lab). On exposed ground the surface erodes into sastrugi: sharp
+  ridges 5-50 cm tall along the wind (Filhol and Sturm 2015, JGR Earth Surface 120, snow bedforms; Kochanski,
+  Anderson and Tucker 2019 for barchans and ripples).
+- Build: the drift deposit takes a denser density by wind speed (wind slab, also a slab source for the
+  avalanche stability); a sastrugi height field in the deep-snow surface on scoured cells, ridges aligned
+  with the last strong wind and sized by its speed (real geometry, as the suncups).
+
+**Weak layers and natural avalanches.**
+- Buried surface hoar is kept (follow-up 39). Depth hoar is missing: a shallow pack over a strong temperature
+  gradient (over 10 C/m) turns to large weak cups at the base (Colbeck 1983; Akitaya 1974; SNOWPACK's
+  gradient metamorphism, Lehning et al. 2002). Together with the wind slab above it gives the classic
+  persistent slab problem.
+- Build: a basal depth-hoar share grown by gradient hours; the stability index reads the weakest buried
+  layer (hoar or depth hoar) under a slab; natural releases on slopes where it falls below 1 after loading
+  (Schweizer, Jamieson and Schneebeli 2003, Reviews of Geophysics 41).

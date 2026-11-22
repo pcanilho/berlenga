@@ -3843,6 +3843,24 @@ grown on demand (lazy generation, as the near leaves of 8c).
   dominance is held at 0.56 (shade-grown trees stay monopodial; Oliver and Larson 1996): a leafy cap on a clean bole,
   about 10 thousand internodes, as the stand's beech, ash and lime.
 
+### 5be. Ice storms (21-22 Nov; recommended pick, first of three)
+
+Research: "Research for the likely picks" below. Built so far:
+- Contract: `WorldWeather.glaze_at(pos)`, mm of radial clear ice on exposed twigs (world-contracts.md). No provider
+  yet: the weather has no freezing rain (rain_share is 0 below freezing). Asked for one from the weather owner: liquid
+  precipitation with the ground air at or below 0 C, accreted by Jones' (1998) simple model.
+- Mesh meta `tree_glaze_surface` = (sum of shoot lengths, sum of length x radius) of the standing wood; a needled shoot
+  counts as a 3 cm brush, a leafy broadleaf shoot as 6 cm. Ice on a cylinder weighs rho_ice pi R (2r + R) a metre.
+- TreeWind3D (`glaze_load_enabled`, on): each tree's ice, no more than the rain its crown catches (2.83 R of rain over
+  its plan area, 1.5 for wind-driven rain), loads the crown through the snow-load path (droop, breaks, the storm
+  check). A break shatters the ice off what broke (`glaze_shed` until the melt); `get_glaze_break_count`,
+  `get_instance_glaze_kg`, static `glaze_kg(surface, mm, scale)`.
+- Storm bench `--glaze-test`: 6 mm puts 0.6 t on a young birch and 5.8-6.3 t on broad beech, oak and spruce crowns
+  (the beech's long laterals bow hard), a thaw lets them stand up again, 25 mm breaks 10 limbs and tops, the spruce
+  fewest with the oak and beech.
+- Next: clear ice on twigs and needles (raster and path traced) and icicles near the camera; bent birch and broken tops
+  as stand variants after a storm.
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:

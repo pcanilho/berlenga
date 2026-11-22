@@ -285,6 +285,8 @@ func _setup(kind: String, extent: float, resolution: int, temperature: float) ->
 	weather.cloud_variation = 0.0
 	weather.wind_speed = 3.0
 	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
 	weather.set_physics_process_internal(false)
 	add_child(weather)
 	weather.snap_to_settings()
@@ -310,6 +312,8 @@ func _precipitate(hours: float, rate: float) -> void:
 	weather.advance(1.0)
 	snow.advance(hours * 3600.0)
 	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
 	weather.cloud_cover = 0.0
 	weather.snap_to_settings()
 	weather.advance(1.0)
@@ -2357,6 +2361,7 @@ func _run_climate_tests() -> void:
 	var storm_before := snow.get_world_swe_at(far_q)
 	snow.add_snow(20.0, 100.0)
 	_check("add_snow falls on the world tier outside the square", absf(snow.get_world_swe_at(far_q) - storm_before - 20.0) < 1.0, "%.0f to %.0f mm at 760 m" % [storm_before, snow.get_world_swe_at(far_q)])
+	await _run_melt_runoff_tests()
 
 	await _run_recipe_tests()
 
@@ -2426,6 +2431,52 @@ func _run_climate_tests() -> void:
 			hits += 1
 	_check("cornice mesh: overhangs with collision", cor.get_segment_count() > 10 and tries > 0 and hits >= tries * 0.8, "%d segments; a ray down halfway out stops on the cornice above the lee face in %d of %d places" % [cor.get_segment_count(), hits, tries])
 	cor.queue_free()
+
+
+# Melt water downhill (round 6, docs/ideas/snow.md): a warm clear spell melts the world tier's snow outside the
+# square, and that melt is the weather's ground water there (what WeatherRunoff3D routes into streams); inside
+# the square the square's own runoff stands for it, counted once.
+func _run_melt_runoff_tests() -> void:
+	weather.temperature = 14.0
+	weather.snap_to_settings()
+	for h in 4:
+		snow.advance(3600.0)
+		snow.advance_world(3600.0)
+	weather.advance(60.0)
+	var cs := weather.extent / weather.resolution
+	var best := Vector3.ZERO
+	var melt := 0.0
+	for i in range(-7, 7):
+		for j in range(-7, 7):
+			var q := Vector3((i + 0.5) * cs, 0, (j + 0.5) * cs)
+			if absf(q.x - snow.global_position.x) < snow.extent and absf(q.z - snow.global_position.z) < snow.extent:
+				continue
+			var r := snow.get_runoff_at(q)
+			if r > melt:
+				melt = r
+				best = q
+	var got := weather.get_ground_water_input_at(best)
+	print("  melt: %.2f mm/h leaves the world tier's pack at %s; the weather's ground water there %.2f mm/h (rain %.2f)" % [melt, str(best), got, weather.get_rainfall_at(best)])
+	_check("melt outside the square reaches the weather's ground water", melt > 0.1 and absf(got - melt) < 0.05 * melt + 0.01, "%.2f mm/h melt, %.2f mm/h ground water at %s" % [melt, got, str(best)])
+	# Inside the square: the weather cell's centre reads the square's runoff (averaged to the world's 16 m
+	# cells), not the square's and the world's added. Rain on the square cleared bare, the world's pack under it.
+	snow.clear()
+	weather.rain_rate = 4.0
+	weather.cloud_cover = 1.0
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.advance(3600.0)
+	weather.advance(60.0)
+	var c := snow.global_position + Vector3(0.5 * cs - fposmod(snow.global_position.x, cs), 0, 0.5 * cs - fposmod(snow.global_position.z, cs))
+	var near_avg := 0.0
+	for k in 64:
+		near_avg += snow.get_runoff_at(c + Vector3((k % 8) * 4.0 - 14.0, 0, (k / 8) * 4.0 - 14.0)) / 64.0
+	var got_in := weather.get_ground_water_input_at(c)
+	print("  square: %.1f mm snow, rain %.2f mm/h at %s" % [snow.get_swe_at(c), weather.get_rainfall_at(c), str(c)])
+	_check("the square's runoff is counted once", near_avg > 1.0 and absf(got_in - near_avg) < 0.25 * near_avg + 0.02, "%.2f mm/h ground water at %s, the square's %.2f mm/h (bare), the world tier's pack %.0f mm" % [got_in, str(c), near_avg, snow.get_world_swe_at(c)])
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
 
 
 func _longest_cornice() -> Vector3:

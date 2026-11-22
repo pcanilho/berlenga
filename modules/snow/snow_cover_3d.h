@@ -154,6 +154,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	Vector<float> cell_density; // kg/m3
 	Vector<float> cell_albedo;
 	Vector<float> cell_runoff; // mm/h leaving the pack, last update
+	Vector<float> runoff_out; // the weather's water source with a world tier: its cells, the square's averaged in (mm/h)
 	Vector<float> cell_sx; // degrees, Winstral's maximum upwind slope
 	Vector<float> cell_canopy; // canopy closure over the cell, 0..1 (WeatherMap3D's canopy)
 	Vector<float> cell_canopy_load; // mm of snow water held in the canopy
@@ -372,6 +373,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	void _gather_seal(); // main thread: WorldGround.frost_at under the wet cells
 	void _update_cells(bool p_parallel);
 	void _update_end();
+	void _send_runoff();
 	void _build_upload();
 	void _apply_upload();
 	void _start_background(double p_weather_dt, bool p_world);

@@ -782,9 +782,10 @@ vec3 iridescence_tint(float p_sin, float p_radius_um) {
 	vec3 airy = 4.0 * j * j / max(v * v, vec3(1e-4));
 	float lum = dot(airy, vec3(0.2126, 0.7152, 0.0722));
 	// Pastel in photographs, but the lens's depth along the ray mixes droplet sizes and greys them: the
-	// difference from white is raised by 1.6 (2 gave hard rainbow fringes).
+	// difference from white is raised by 2.2 (with the bands spread over the edge's first 15 % of depth, not its
+	// last metres, which drew the hard fringe; 1.6 left none visible).
 	vec3 tint = airy / max(lum, 1e-6);
-	return clamp(vec3(1.0) + 1.6 * (tint - vec3(1.0)), vec3(0.2), vec3(2.0));
+	return clamp(vec3(1.0) + 2.2 * (tint - vec3(1.0)), vec3(0.15), vec3(2.2));
 }
 
 vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, float jitter, float p_pixel, out float r_t) {
@@ -893,7 +894,7 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 			vec3 irid = vec3(1.0);
 			if (cloud_iridescence > 0.0 && cos_theta > 0.82) {
 				float s_th = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
-				float w_ir = cloud_iridescence * smoothstep(0.82, 0.9, cos_theta) * (1.0 - smoothstep(0.985, 0.995, cos_theta)) * smoothstep(0.0, 0.08, profile) * (1.0 - smoothstep(0.3, 0.9, profile)); // in from the very edge (the lens's last metres drew a hard fringe), out before the thick core
+				float w_ir = cloud_iridescence * smoothstep(0.76, 0.87, cos_theta) * smoothstep(0.0, 0.15, profile) * (1.0 - smoothstep(0.45, 0.95, profile)); // in from the very edge (the lens's last metres drew a hard fringe), out before the thick core
 				irid = mix(vec3(1.0), iridescence_tint(s_th, mix(1.5, 5.0, smoothstep(0.0, 150.0, x)) + 2.5 * wc_value_noise(p.xz / 700.0 + vec2(5.3, 1.7))), w_ir);
 			}
 			vec3 light = sun_radiance * ((exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1) * irid + 0.25 * exp(-0.25 * tau) * phase2);
@@ -1037,7 +1038,7 @@ vec4 march_rain_shafts(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 	return vec4(col, tr);
 }
 
-// Lake-effect snow under its bands (wc_lake_effect), seen from afar: the weather's snowfall there (4 mm/h of water
+// Lake-effect snow under its bands (wc_lake_effect), seen from afar (out to 60 km): the weather's snowfall there (4 mm/h of water
 // at full strength, WeatherMap3D's cells), its visibility as the storms' snow (Rasmussen et al. 1999), in veils
 // trailing downwind as the flakes fall at about 1 to 2 m/s. Near the camera (under 1.5 km) the falling snow's own
 // particles draw it.
@@ -1045,7 +1046,7 @@ vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 am
 	r_t = 0.0;
 	float base = cloud_base_height;
 	float t0 = max(1500.0, p_t_min);
-	float t1 = min(30000.0, p_t_max);
+	float t1 = min(60000.0, p_t_max); // a band is seen from tens of kilometres aside
 	if (rd.y > 0.001) {
 		t1 = min(t1, (base - cam.y) / rd.y);
 	} else if (rd.y < -0.001) {
@@ -1399,11 +1400,27 @@ void sky() {
 #endif
 		vec3 dir_dx = dFdx(EYEDIR);
 		vec3 dir_dy = dFdy(EYEDIR);
+		vec3 rd = EYEDIR;
+#ifdef CLOUD_REPROJECTION
+		if (!AT_CUBEMAP_PASS) {
+			// The pass's pixels are 4 screen pixels apart (each draws one pixel of a 4x4 block): the screen pixel is a
+			// quarter of the derivative. Read at four pixels' footprint, the noise lost its detail (smooth, cotton-ball
+			// clouds) and edges were the pass's blocks.
+			dir_dx *= 0.25;
+			dir_dy *= 0.25;
+			// Each revisit's ray lands somewhere else inside the pixel (an R2 sequence; Roberts 2018), so the resolve's
+			// running mean is the pixel's coverage: an antialiased edge, where a ray through the pixel's centre every
+			// time drew a cloud's hard edge (lenses, turrets) as a staircase.
+			float k = float((REPROJECTION_FRAME >> 4u) & 1023u);
+			vec2 sub = fract(vec2(0.5) + k * vec2(0.7548777, 0.5698403)) - 0.5;
+			rd = normalize(EYEDIR + sub.x * dir_dx + sub.y * dir_dy);
+		}
+#endif
 		float pixel_angle = max(length(dir_dx), length(dir_dy));
 		vec4 clouds = vec4(0.0, 0.0, 0.0, 1.0);
 		float cloud_depth = 0.0;
 		if (dot(e0, vec3(1.0)) > 0.0 || cloud_light_count > 0) {
-			clouds = march_clouds(POSITION, EYEDIR, l0, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter, pixel_angle, cloud_depth);
+			clouds = march_clouds(POSITION, rd, l0, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter, pixel_angle, cloud_depth);
 		}
 		if (clouds.a < 0.999) {
 			// Aerial perspective (Hillaire 2020): the clouds seen through the air in front of them, which
@@ -1477,9 +1494,20 @@ void sky() {
 		// the derivatives are defined here).
 		vec3 dir_dx = dFdx(EYEDIR);
 		vec3 dir_dy = dFdy(EYEDIR);
+		vec3 rd = EYEDIR;
+#ifdef CLOUD_REPROJECTION
+		if (!AT_CUBEMAP_PASS) {
+			// As the scattering sky's branch: a screen pixel is a quarter of the pass's derivative; rays spread in it.
+			dir_dx *= 0.25;
+			dir_dy *= 0.25;
+			float k = float((REPROJECTION_FRAME >> 4u) & 1023u);
+			vec2 sub = fract(vec2(0.5) + k * vec2(0.7548777, 0.5698403)) - 0.5;
+			rd = normalize(EYEDIR + sub.x * dir_dx + sub.y * dir_dy);
+		}
+#endif
 		float pixel_angle = max(length(dir_dx), length(dir_dy));
 		float cloud_depth;
-		vec4 clouds = march_clouds(POSITION, EYEDIR, sun_dir, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter, pixel_angle, cloud_depth);
+		vec4 clouds = march_clouds(POSITION, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter, pixel_angle, cloud_depth);
 		COLOR = clouds.rgb;
 		ALPHA = clouds.a;
 	} else {

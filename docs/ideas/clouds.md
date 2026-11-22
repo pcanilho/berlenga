@@ -740,3 +740,21 @@ over the opaque scene; Hillaire's aerial perspective (2020) does the same for th
   hit by camera rays.
 - **Cost.** Early-outs per storm on the ray's chord through the shaft's column and per pixel on sky depth; 24 steps
   a storm, 16 for lake snow, as in the sky.
+
+## Review 12 (22 Nov 2026; docs: stair-stepped edges everywhere, melted-clay lens, no iridescence, no band)
+
+- **The common cause of the stair steps and the smooth cotton balls.** With the reprojection the cloud pass draws one
+  pixel of each 4x4 block a frame, so dFdx(EYEDIR) there spans four screen pixels: the noise was read at four
+  pixels' footprint (detail gone), and every revisit sent its ray through the same pixel centre, so a cloud's hard
+  edge (a lens, a turret) came out as a staircase. The derivative is now quartered, and each revisit moves the ray
+  inside its pixel on an R2 sequence (Roberts 2018): the resolve's running mean becomes the pixel's coverage, the
+  sub-pixel jitter TAA and Nubis use for edges.
+- **Lens as a stack.** The moist layer is flat-topped (exp(-d^4), about 800 m deep with sharp edges, as under an
+  inversion) where a Gaussian's tails let a strong wave condense a 1.5 km blob; the dry sheets between plates are
+  3 K drier (375 m more lift), so they stay clear as gaps instead of embossing grooves.
+- **Iridescence** 2.2 times the Airy tint's difference from white, over the edge's first 15 % of depth and out to
+  40 degrees from the sun.
+- **Lake band.** The bench view is clear apart from the band (a cold outbreak's sky), seen from 16 km aside looking up
+  it; the dark plane drawn for the lake (the water is the LakeStub contract) is hidden. The veils march to 60 km.
+- **Distant shafts' light.** The irradiance on a sideways normal is about twice ambient_bottom (the bright horizon and
+  sunlit ground in full): halved, so a veil keeps one brightness across the horizon.

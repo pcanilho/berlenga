@@ -893,8 +893,10 @@ float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos) {
 	if (p_state.mid_cover > 0.001f) {
 		const float n = cover_noise(xz + mid_warp(xz - p_state.mid_drift) + Vector2(4721.0f, 8363.0f), p_state.mid_drift, p_state.mid_scale, p_state.evolve);
 		const float rh = wave_layer_rh(n, p_state.mid_cover, mid_cover_at(p_state, xz));
-		const float d = (p_pos.y - p_state.mid_height) / (1.5f * p_state.mid_thickness + 300.0f);
-		const float w = Math::exp(-d * d) * MIN(1.0f, 4.0f * p_state.mid_cover);
+		// A flat-topped profile (exp(-d^4)): moist through some 800 m with sharp edges, as a sounding's moist layer under
+		// an inversion; a Gaussian's long tails let a strong wave condense a lens 1.5 km deep (a blob, not a lens).
+		const float d = (p_pos.y - p_state.mid_height) / (0.75f * p_state.mid_thickness + 150.0f);
+		const float w = Math::exp(-d * d * d * d) * MIN(1.0f, 4.0f * p_state.mid_cover);
 		dep = Math::lerp(dep, MIN(dep, wave_rh_depression(rh, tk)), w);
 	}
 	if (p_state.high_cover > 0.001f) {
@@ -908,11 +910,13 @@ float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos) {
 }
 
 // Pile of plates (altocumulus lenticularis duplicatus, "pile d'assiettes"): where the moist layer is stratified in
-// thin sheets (the radiosonde's stepped humidity), moister and drier sheets alternate about 220 m apart (a lens is 200 to 800 m deep), 1.6 K of dew point
-// depression (200 m of lift) between them, so each lens's edge splits into plates of different widths stacked one over
+// thin sheets (the radiosonde's stepped humidity), moister and drier sheets alternate about 220 m apart (a lens is 200 to 800 m deep): the moist
+// ones 0.8 K nearer saturation, the dry ones 3 K further (375 m more lift), so the dry sheets stay clear as gaps between
+// plates unless the wave is very strong (a 1.6 K swing only embossed grooves into one thick lens), so each lens's edge splits into plates of different widths stacked one over
 // another, merging where the lift is largest (WMO International Cloud Atlas, Ac len duplicatus). In patches some
 // 10 km across; the sheets keep their heights over neighbouring lenses (moist layers run for tens of km), tilting a
-// little over 15 km. Added per sample (the sky's march reads the rest of the depression once a coarse step).
+// little over 15 km and undulating some 150 m over 3 km (a lens's dome cut by level sheets drew each plate's edge as a
+// perfect ellipse, read as a ghost disc from below). Added per sample (the sky's march reads the rest of the depression once a coarse step).
 float wave_plate_depression(const State &p_state, const Vector3 &p_pos) {
 	if (p_state.mid_cover <= 0.001f) {
 		return 0.0f;
@@ -922,9 +926,9 @@ float wave_plate_depression(const State &p_state, const Vector3 &p_pos) {
 	if (stack <= 0.0f) {
 		return 0.0f;
 	}
-	const float d = (p_pos.y - p_state.mid_height) / (1.5f * p_state.mid_thickness + 300.0f);
-	const float sheets = 0.5f + 0.5f * Math::sin(float(Math::TAU) * ((p_pos.y - p_state.mid_height) / 220.0f + 0.15f * value_noise(xz / 15000.0f)));
-	return 1.6f * stack * Math::exp(-d * d) * (smoothstep(0.35f, 0.65f, sheets) - 0.5f);
+	const float d = (p_pos.y - p_state.mid_height) / (0.75f * p_state.mid_thickness + 150.0f);
+	const float sheets = 0.5f + 0.5f * Math::sin(float(Math::TAU) * ((p_pos.y - p_state.mid_height) / 220.0f + 0.15f * value_noise(xz / 15000.0f) + 0.7f * value_noise(xz / 3000.0f + Vector2(8.3f, 2.9f))));
+	return stack * Math::exp(-d * d) * Math::lerp(-0.8f, 3.0f, smoothstep(0.35f, 0.65f, sheets));
 }
 
 float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
@@ -1907,8 +1911,8 @@ float wc_wave_depression(vec3 p) {
 	if (cloud_mid_cover > 0.001) {
 		float n = wc_cover_noise_at(p.xz + wc_mid_warp(p.xz - cloud_mid_drift) + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), cloud_mid_scale);
 		float rh = wc_wave_layer_rh(n, cloud_mid_cover, wc_layer_cover_n(n, cloud_mid_cover, p.xz, false));
-		float d = (p.y - cloud_mid_height) / (1.5 * cloud_mid_thickness + 300.0);
-		float w = exp(-d * d) * min(1.0, 4.0 * cloud_mid_cover);
+		float d = (p.y - cloud_mid_height) / (0.75 * cloud_mid_thickness + 150.0);
+		float w = exp(-d * d * d * d) * min(1.0, 4.0 * cloud_mid_cover); // wave_dew_depression_at(): flat-topped
 		dep = mix(dep, min(dep, -log(rh) * tk * tk / 5423.0), w);
 	}
 	if (cloud_high_cover > 0.001) {
@@ -1942,9 +1946,9 @@ float wc_plate_dep(vec3 p) {
 	if (stack <= 0.0) {
 		return 0.0;
 	}
-	float d = (p.y - cloud_mid_height) / (1.5 * cloud_mid_thickness + 300.0);
-	float sheets = 0.5 + 0.5 * sin(6.2831853 * ((p.y - cloud_mid_height) / 220.0 + 0.15 * wc_value_noise(p.xz / 15000.0)));
-	return 1.6 * stack * exp(-d * d) * (smoothstep(0.35, 0.65, sheets) - 0.5);
+	float d = (p.y - cloud_mid_height) / (0.75 * cloud_mid_thickness + 150.0);
+	float sheets = 0.5 + 0.5 * sin(6.2831853 * ((p.y - cloud_mid_height) / 220.0 + 0.15 * wc_value_noise(p.xz / 15000.0) + 0.7 * wc_value_noise(p.xz / 3000.0 + vec2(8.3, 2.9))));
+	return stack * exp(-d * d) * mix(-0.8, 3.0, smoothstep(0.35, 0.65, sheets));
 }
 
 // p_dep >= 0: the dew point depression already read nearby (the sun samples reuse the step's; the moist layers

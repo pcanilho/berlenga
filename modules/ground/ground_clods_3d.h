@@ -33,6 +33,7 @@
 #pragma once
 
 #include "core/math/random_pcg.h"
+#include "core/templates/hash_set.h"
 #include "core/templates/local_vector.h"
 #include "ground_lump_draw.h"
 #include "ground_lump_scan.h"
@@ -73,6 +74,8 @@ private:
 	// camera moves or the stand changes, the same clods each time (hashed per 0.5 m cell), not kept or crushed.
 	bool rooting = true;
 	LocalVector<Clod> rooted;
+	LocalVector<uint64_t> rooted_keys; // each one's cell and number, so one crushed stays crushed when they are laid again
+	HashSet<uint64_t> rooted_crushed;
 	Vector2 rooted_center = Vector2(1e30f, 1e30f);
 	uint64_t rooted_generation = UINT64_MAX;
 	void _root(GroundSurface3D *p_surface);
