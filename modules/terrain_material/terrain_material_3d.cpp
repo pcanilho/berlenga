@@ -1478,6 +1478,7 @@ void fragment() {
 	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08 * tm_sb, tm_rock_cos + 0.04 * tm_sb, tm_ny);
 	float beach_sand = -1.0;
 	float tm_till = 0.0;
+	float tm_gully = 0.0;
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
 		vec4 g = terrain_geology(wp);
 		beach_sand = clamp(-g.x, 0.0, 1.0);
@@ -1516,6 +1517,15 @@ void fragment() {
 		scree += rest * bare_near;
 		rest *= 1.0 - bare_near;
 		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, tm_cn.y);
+		// Rills and gullies (the droplet erosion's channels): the flow strips a channel's floor of its fines and soil
+		// to a gravel lag (Poesen et al. 2003), the scree layer's stones and grit; below the slope break its load
+		// settles as a fan of fresh fines (the alluvium layer). Rock floors stay rock.
+		vec2 tm_gl = terrain_gully(wp, tm_cn.y);
+		tm_gully = tm_gl.x * (1.0 - rock) * (0.8 + 0.4 * tm_vn(wp * 0.7 + 31.0));
+		tm_gully = clamp(tm_gully, 0.0, 1.0);
+		scree += rest * tm_gully;
+		rest *= 1.0 - tm_gully;
+		alluvium = max(alluvium, smoothstep(0.15, 0.8, tm_gl.y) * smoothstep(0.85, 0.93, tm_cn.y));
 		w[0] = rock;
 		w[1] = scree;
 		w[2] = rest * (1.0 - alluvium);
@@ -1641,6 +1651,7 @@ void fragment() {
 	float porosity = 0.0;
 	float por[5] = float[5](tm_rock_porosity, tm_scree_porosity, tm_soil_porosity, tm_alluvium_porosity, tm_sand_porosity);
 	float tm_sand_b = 0.0; // the sand's share of the blend, for its glitter
+	float tm_stone_b = 0.0; // rock and scree's share, for the salt bloom
 	float tm_sand_dry = 1.0;
 	// The height blend's band widens with the pixel's footprint (about 0.1 m at 70 m to 1 m at 700 m at 1080p): a
 	// pixel far off spans many of the stones and patches whose heights decide the blend, so it takes their mix. A
@@ -1656,9 +1667,11 @@ void fragment() {
 		dn += dns[i] * b;
 		porosity += por[i] * b;
 		tm_sand_b = i == 4 ? b : tm_sand_b;
+		tm_stone_b += i < 2 ? b : 0.0;
 	}
 	total = max(total, 1e-5);
 	tm_sand_b /= total;
+	tm_stone_b /= total;
 	albedo /= total;
 	rough /= total;
 	dn /= total;
@@ -1903,6 +1916,13 @@ void fragment() {
 	}
 )";
 	}
+	// Rill and gully floors carry no sward (the flow scours it) and stay damp after rain: wet soil and gravel darken by
+	// a fifth to a third (Lobell and Asner 2002), and read a little smoother.
+	c += R"(	if (tm_gully > 0.0) {
+		albedo = mix(albedo, tm_stand_bare * 0.78, tm_gully);
+		rough = mix(rough, rough * 0.85, tm_gully);
+	}
+)";
 	// The stand's worn trails and boar rooting (WorldStand through Landscape3D's stand map; docs/ideas/terrain-material.md).
 	// A trail walked bare: the cover gone, the soil packed (Cole 1995; Liddle 1997: trampled soil is denser, its litter
 	// and fine relief worn off), darker and browner, smoother, its clods pressed flat; the tread's edge broken by noise. Rooting: boar turn the topsoil over in patches (Bueno 2013; Welander 2000),
@@ -2036,6 +2056,17 @@ void fragment() {
 		// over the sand of the patch, as BaseMaterial3D draws it, and past the patch over the dune field's sand
 		// (far_ripples), by this material's sand share.
 		c += "\tvec3 gr_sort;\n\tvec3 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx), wn.y, tm_sand_b, gr_sort);\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n\talbedo *= gr_far.z * gr_sort;\n";
+		// Rain pits (GroundSurface3D rain_pits), as BaseMaterial3D draws them: on this material's sand, none in prints.
+		c += R"(	{
+		vec4 gm6 = ground_sand_meta6();
+		if (gm6.x > 0.0) {
+			float gpt;
+			vec2 gps = ground_rain_pits(wp.xz, gm6.x * tm_sand_b * (1.0 - smoothstep(0.003, 0.008, abs(ground_deform_relief(wp.xz)))), gm6.z, length(tm_dpx), gpt);
+			albedo *= gpt;
+			sn = normalize(sn - vec3(gps.x, 0.0, gps.y));
+		}
+	}
+)";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5 * tm_gc_spec;\n";
 	if (grass_tint_enabled) {
@@ -2066,6 +2097,18 @@ void fragment() {
 		// The ground's pore water (GroundSurface3D's wet map: a wet margin round still water, runoff, the swash) on the
 		// terrain past the patch, as the path tracer already draws it (g_wet): never wetted twice with the rain's.
 		c += "\tfloat tm_gwet = ground_wet_at(wp, wn).x;\n";
+		// Adhesion warts (GroundSurface3D adhesion_warts), as BaseMaterial3D draws them, on this material's sand.
+		c += R"(	{
+		vec4 gm7 = ground_sand_meta7();
+		if (gm7.z > 0.0) {
+			float gdamp = smoothstep(0.15, 0.3, tm_gwet);
+			float gcap;
+			vec2 gas = ground_adhesion_warts(wp.xz, gm7.z * gdamp * tm_sand_b, gm7.xy, length(tm_dpx), gcap);
+			sn = normalize(sn - vec3(gas.x, 0.0, gas.y));
+			tm_gwet *= 1.0 - 0.8 * gcap;
+		}
+	}
+)";
 	} else {
 		c += "\tfloat tm_gwet = 0.0;\n";
 	}
@@ -2073,11 +2116,18 @@ void fragment() {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
 		// On printed ground a wet track's water lies in its prints (ground_contact_shape()).
 		c += ground_deform_enabled ? "\tfloat tm_wwet = weather_wetness_at(wp, ground_contact_shape(wp.xz));\n" : "\tfloat tm_wwet = weather_wetness_at(wp);\n";
+		if (salt_bloom) {
+			// Salt bloom on the sea cliffs' rock and scree (weather_salt_bloom_apply, as the rocks' shader): kept on steep
+			// and overhanging faces, washed off the tops, patchy over 2.5 m, 0.9 m and 0.35 m (octaves turned against each other so the value noise's grid does not
+			// show; the finest fades as the pixel nears it); a 4 cm crystal grain.
+			c += "\tweather_salt_bloom_apply(weather_salt_at(wp) * tm_stone_b, max(tm_wetness * tm_wwet, tm_gwet), (1.0 - 0.75 * smoothstep(0.25, 0.8, wn.y)), 0.5 * tm_vn(wp / 2.5 + 37.0) + 0.3 * tm_vn(wp.zyx / 0.9 + 53.0) + 0.2 * mix(0.5, tm_vn(wp.yxz / 0.35 + 71.0), 1.0 - smoothstep(0.08, 0.3, tm_fp0)), mix(0.5, tm_vn(wp / 0.04 + 89.0), 1.0 - smoothstep(0.01, 0.04, tm_fp0)), albedo, rough);\n";
+		}
 		c += "\tweather_wetness_apply(max(tm_wetness * tm_wwet, tm_gwet), wn.y, metallic, porosity, albedo, rough);\n";
 		// A film of rain water drowns the grains' facets.
 		c += "\ttm_sand_dry *= 1.0 - smoothstep(0.05, 0.3, tm_wetness * tm_wwet);\n";
 		// Hoarfrost on clear cold nights (WeatherMap3D dew_and_frost).
 		c += "\tweather_frost_apply(weather_frost_at(wp), wn.y, albedo, rough);\n";
+		c += "\tweather_rime_apply(weather_rime_at(wp) * (1.0 - smoothstep(0.5, 0.85, wn.y)), wn, wp, albedo, rough);\n";
 	} else if (ground_deform_enabled) {
 		c += "\t{\n\t\tfloat gw_f = mix(1.0, 0.2, porosity);\n\t\talbedo *= mix(1.0, gw_f, tm_gwet);\n\t\trough *= mix(1.0, gw_f, 0.5 * tm_gwet);\n\t}\n";
 	}
@@ -2382,6 +2432,7 @@ MAT_SETTER_CODE(bool, rock_detail_enabled)
 MAT_SETTER(float, rock_detail_scale, CLAMP(p_value, 0.1f, 10.0f))
 MAT_SETTER(float, scree_blocks_distance, MAX(p_value, 0.0f))
 MAT_SETTER_CODE(bool, wetness_enabled)
+MAT_SETTER_CODE(bool, salt_bloom)
 MAT_SETTER_CODE(bool, snow_enabled)
 MAT_SETTER_CODE(bool, ground_deform_enabled)
 MAT_SETTER(float, far_start, MAX(p_value, 0.0f))
@@ -2458,7 +2509,13 @@ Color TerrainMaterial3D::contract_ground_albedo_at(const Vector3 &p_position) co
 		const float bare_near = steep * MAX(Math::smoothstep(0.02f, 0.2f, CLAMP(g.g, 0.0f, 1.0f)), Math::smoothstep(0.02f, 0.2f, sg));
 		scree += rest * bare_near;
 		rest *= 1.0f - bare_near;
-		const float alluvium = Math::smoothstep(alluvium_area, alluvium_area + 1.0f, g.a) * Math::smoothstep(0.88f, 0.95f, ny);
+		float alluvium = Math::smoothstep(alluvium_area, alluvium_area + 1.0f, g.a) * Math::smoothstep(0.88f, 0.95f, ny);
+		// Rill and gully floors (as the shader, without its noise): gravel lag, fans of fines below.
+		const Vector2 gl = gen->get_gully_at(p_position, ny);
+		const float gully = gl.x * (1.0f - rock);
+		scree += rest * gully;
+		rest *= 1.0f - gully;
+		alluvium = MAX(alluvium, float(Math::smoothstep(0.15f, 0.8f, float(gl.y)) * Math::smoothstep(0.85f, 0.93f, ny)));
 		w[LAYER_ROCK] = rock;
 		w[LAYER_SCREE] = scree;
 		w[LAYER_SOIL] = rest * (1.0f - alluvium);
@@ -2527,6 +2584,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::FLOAT, rock_detail_scale, get_rock_detail_scale, PROPERTY_HINT_RANGE, "0.1,10,0.01")
 	BIND_PROP(Variant::FLOAT, scree_blocks_distance, get_scree_blocks_distance, PROPERTY_HINT_RANGE, "0,500,0.1,or_greater,suffix:m")
 	BIND_PROP(Variant::BOOL, wetness_enabled, is_wetness_enabled, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::BOOL, salt_bloom, is_salt_bloom, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, snow_enabled, is_snow_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, snow_max_slope, get_snow_max_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")
 	BIND_PROP(Variant::BOOL, ground_deform_enabled, is_ground_deform_enabled, PROPERTY_HINT_NONE, "")

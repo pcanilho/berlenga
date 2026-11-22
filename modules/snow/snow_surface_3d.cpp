@@ -85,6 +85,10 @@ uniform bool has_cups = false;
 uniform bool has_road = false; // cups_tex .g traffic packing, .b glaze mm (SnowCover3D)
 uniform sampler2D cup_tile : filter_linear_mipmap, repeat_enable;
 uniform float cup_tile_size = 3.2;
+uniform sampler2D sas_tex : filter_linear, repeat_disable; // SnowCover3D sastrugi: relief (m) times the carving wind's direction
+uniform bool has_sas = false;
+uniform sampler2D sas_tile : filter_linear_mipmap, repeat_enable;
+uniform float sas_tile_size = 8.0;
 uniform vec4 mesh_rect;
 uniform float min_depth = 0.03;
 uniform float edge_fade = 8.0;
@@ -240,6 +244,47 @@ vec3 snow_cups(vec2 p, float e) {
 	return relief * r;
 }
 
+// Sastrugi (follow-up 46): the cover's relief along the carving wind times a sastrugi tile (ridges along +x,
+// prows facing -x, SnowSurface3D.sastrugi_tile), laid with the same hex-tiling as the suncups but turned to the
+// wind with a little jitter (+-9 degrees) instead of at random.
+vec3 snow_sastrugi(vec2 p, float e) {
+	if (!has_sas) {
+		return vec3(0.0);
+	}
+	vec2 uv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
+	if (!snow_inside(uv)) {
+		return vec3(0.0);
+	}
+	vec2 v = textureLod(sas_tex, uv, 0.0).rg;
+	float relief = length(v);
+	if (relief < 0.003) {
+		return vec3(0.0);
+	}
+	float wind = atan(v.y, v.x);
+	vec2 st = p / sas_tile_size * 2.0 * 1.7320508;
+	vec2 sk = vec2(st.x - 0.57735027 * st.y, 1.15470054 * st.y);
+	ivec2 base = ivec2(floor(sk));
+	vec3 t = vec3(fract(sk), 0.0);
+	t.z = 1.0 - t.x - t.y;
+	float s = t.z < 0.0 ? 1.0 : 0.0;
+	float s2 = 2.0 * s - 1.0;
+	vec3 w = vec3(-t.z * s2, s - t.y * s2, s - t.x * s2);
+	ivec2 vv[3] = ivec2[3](base + ivec2(int(s), int(s)), base + ivec2(int(s), 1 - int(s)), base + ivec2(1 - int(s), int(s)));
+	w = pow(max(w, vec3(0.0)), vec3(6.0));
+	w /= max(w.x + w.y + w.z, 1e-6);
+	vec3 r = vec3(0.0);
+	for (int k = 0; k < 3; k++) {
+		uint h = snow_cup_hash(vv[k] + ivec2(7919, 104729));
+		float a = wind + (float(h & 1023u) / 1023.0 - 0.5) * 0.31;
+		vec2 off = vec2(float((h >> 10u) & 1023u), float((h >> 20u) & 1023u)) / 1023.0;
+		// Into the tile's frame (x along the wind): a turn by -a.
+		mat2 rot = mat2(vec2(cos(a), -sin(a)), vec2(sin(a), cos(a)));
+		vec3 c = textureLod(sas_tile, rot * p / sas_tile_size + off, max(log2(e * 128.0 / sas_tile_size), 0.0)).rgb;
+		r += w[k] * vec3(c.r - 0.5, (c.gb * rot) / sas_tile_size);
+	}
+	return relief * r;
+}
+
 vec3 snow_height_diff(vec2 p, float e, bool p_vertex) {
 	vec3 dg = snow_depth_smooth_grad(p);
 	vec2 ex = vec2(e, 0.0);
@@ -252,7 +297,7 @@ vec3 snow_height_diff(vec2 p, float e, bool p_vertex) {
 	vec2 rz0 = p_vertex ? snow_deform_vertex(p - ez) : snow_deform(p - ez);
 	vec2 rz1 = p_vertex ? snow_deform_vertex(p + ez) : snow_deform(p + ez);
 	vec2 ddr = vec2((rx1.y - rx1.x) - (rx0.y - rx0.x), (rz1.y - rz1.x) - (rz0.y - rz0.x));
-	vec3 cups = snow_cups(p, e) * fade;
+	vec3 cups = (snow_cups(p, e) + snow_sastrugi(p, e)) * fade;
 	float d = dg.x * fade - dr.x + dr.y + cups.x;
 	vec2 dd = dg.yz * fade * 2.0 * e + dg.x * dfade + ddr + cups.yz * 2.0 * e;
 	// Under min_depth the snow is the ground material's; the surface tucks 5 cm under the ground.
@@ -1081,6 +1126,114 @@ Ref<Image> SnowSurface3D::suncup_tile() {
 	return tile;
 }
 
+Ref<Image> SnowSurface3D::sastrugi_tile() {
+	// A periodic sastrugi tile, wind along +x. Sastrugi are erosional bedforms of a cohesive surface whose
+	// hardness varies (Filhol and Sturm 2015, JGR Earth Surface 120): the wind cuts the soft patches and leaves the
+	// hard ones as ridges along it. Here: a hardness field of periodic value noise five times finer across the wind
+	// than along it, eroded at (1.2 - 1.6 H)^2 (soft fastest), faster on faces turned into the wind (1 + 4 dh/dx),
+	// and sheltered (15%) in the lee of higher ground within Werner's (1995) 15 degree shadow, so prows steepen
+	// upwind and tails taper downwind; a little diffusion. The height squared: flat scoured floors between raised
+	// ridges, as sastrugi fields look. 128 cells; R the height 0..1, G and B its gradient per tile width (half
+	// floats), mipmapped.
+	static Ref<Image> tile;
+	if (tile.is_valid()) {
+		return tile;
+	}
+	constexpr int N = 128;
+	constexpr int STEPS = 300;
+	constexpr float DX = 1.0f / N;
+	constexpr float DT = 0.06f / STEPS;
+	LocalVector<float> hard, h, nh;
+	hard.resize(N * N);
+	h.resize(N * N);
+	nh.resize(N * N);
+	RandomPCG rng(11);
+	auto value_noise = [&](int gx, int gz, float weight) {
+		LocalVector<float> g;
+		g.resize(gx * gz);
+		for (int i = 0; i < gx * gz; i++) {
+			g[i] = rng.randf();
+		}
+		for (int z = 0; z < N; z++) {
+			const float fz = float(z) * gz / N;
+			const int z0 = int(fz);
+			float tz = fz - z0;
+			tz = tz * tz * (3.0f - 2.0f * tz);
+			for (int x = 0; x < N; x++) {
+				const float fx = float(x) * gx / N;
+				const int x0 = int(fx);
+				float tx = fx - x0;
+				tx = tx * tx * (3.0f - 2.0f * tx);
+				const int x1 = (x0 + 1) % gx, z1 = (z0 + 1) % gz;
+				const float a = Math::lerp(g[z0 * gx + x0], g[z0 * gx + x1], tx);
+				const float b = Math::lerp(g[z1 * gx + x0], g[z1 * gx + x1], tx);
+				hard[z * N + x] += weight * Math::lerp(a, b, tz);
+			}
+		}
+	};
+	for (int i = 0; i < N * N; i++) {
+		hard[i] = 0.0f;
+		h[i] = 0.0f;
+	}
+	value_noise(4, 20, 1.0f);
+	value_noise(8, 40, 0.35f);
+	float lo = 1e9f, hi = -1e9f;
+	for (int i = 0; i < N * N; i++) {
+		lo = MIN(lo, hard[i]);
+		hi = MAX(hi, hard[i]);
+	}
+	for (int i = 0; i < N * N; i++) {
+		hard[i] = (hard[i] - lo) / MAX(hi - lo, 1e-6f);
+	}
+	auto at = [&](const LocalVector<float> &a, int x, int z) { return a[((z + N) % N) * N + (x + N) % N]; };
+	const float tan15 = Math::tan(Math::deg_to_rad(15.0f));
+	for (int st = 0; st < STEPS; st++) {
+		for (int z = 0; z < N; z++) {
+			for (int x = 0; x < N; x++) {
+				const int i = z * N + x;
+				const float dh = (h[i] - at(h, x - 1, z)) / DX;
+				const float soft = CLAMP(1.2f - 1.6f * hard[i], 0.02f, 1.0f);
+				float e = soft * soft * (1.0f + 4.0f * MAX(dh, 0.0f));
+				for (int k = 1; k <= 24; k++) {
+					if (at(h, x - k, z) - h[i] > k * DX * tan15) {
+						e *= 0.15f;
+						break;
+					}
+				}
+				nh[i] = h[i] - DT * e;
+			}
+		}
+		for (int z = 0; z < N; z++) {
+			for (int x = 0; x < N; x++) {
+				const int i = z * N + x;
+				h[i] = nh[i] + 0.003f * (at(nh, x - 1, z) + at(nh, x + 1, z) + at(nh, x, z - 1) + at(nh, x, z + 1) - 4.0f * nh[i]);
+			}
+		}
+	}
+	lo = 1e9f;
+	hi = -1e9f;
+	for (int i = 0; i < N * N; i++) {
+		lo = MIN(lo, h[i]);
+		hi = MAX(hi, h[i]);
+	}
+	const float scale = 1.0f / MAX(hi - lo, 1e-6f);
+	for (int i = 0; i < N * N; i++) {
+		const float v = (h[i] - lo) * scale;
+		nh[i] = v * v;
+	}
+	Ref<Image> img = Image::create_empty(N, N, false, Image::FORMAT_RGBAH);
+	for (int z = 0; z < N; z++) {
+		for (int x = 0; x < N; x++) {
+			const float gx = (at(nh, x + 1, z) - at(nh, x - 1, z)) * 0.5f * N;
+			const float gz = (at(nh, x, z + 1) - at(nh, x, z - 1)) * 0.5f * N;
+			img->set_pixel(x, z, Color(nh[z * N + x], gx, gz, 1.0f));
+		}
+	}
+	img->generate_mipmaps();
+	tile = img;
+	return tile;
+}
+
 void SnowSurface3D::_update_material() {
 	if (material.is_null()) {
 		return;
@@ -1101,6 +1254,12 @@ void SnowSurface3D::_update_material() {
 			cup_tile_texture = ImageTexture::create_from_image(suncup_tile());
 		}
 		material->set_shader_parameter("cup_tile", cup_tile_texture);
+		material->set_shader_parameter("sas_tex", cover->get_sastrugi_texture());
+		material->set_shader_parameter("has_sas", cover->get_sastrugi_texture().is_valid() && cover->is_sastrugi_enabled());
+		if (sas_tile_texture.is_null()) {
+			sas_tile_texture = ImageTexture::create_from_image(sastrugi_tile());
+		}
+		material->set_shader_parameter("sas_tile", sas_tile_texture);
 	} else {
 		material->set_shader_parameter("snow_rect", Vector4());
 	}
@@ -1233,7 +1392,7 @@ void SnowSurface3D::_notification(int p_what) {
 			}
 			// The cover's texture and rect move on its own schedule.
 			const SnowCover3D *cover = _cover();
-			if (cover && cover->get_snow_texture().is_valid() && material.is_valid() && (material->get_shader_parameter("snow_tex") != Variant(cover->get_snow_texture()) || material->get_shader_parameter("cups_tex") != Variant(cover->get_cups_texture()))) {
+			if (cover && cover->get_snow_texture().is_valid() && material.is_valid() && (material->get_shader_parameter("snow_tex") != Variant(cover->get_snow_texture()) || material->get_shader_parameter("cups_tex") != Variant(cover->get_cups_texture()) || material->get_shader_parameter("sas_tex") != Variant(cover->get_sastrugi_texture()))) {
 				_update_material();
 			} else if (cover && material.is_valid()) {
 				const Rect2 r = cover->get_map_rect();

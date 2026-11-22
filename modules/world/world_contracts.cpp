@@ -32,6 +32,7 @@
 #include "world_contracts.h"
 
 #include "core/math/geometry_2d.h"
+#include "core/templates/hash_set.h"
 
 #include "core/object/class_db.h"
 
@@ -72,6 +73,8 @@ float WorldWeather::sun_visibility_at(const Vector3 &p_position) const WW_CALL(_
 float WorldWeather::canopy_closure_at(const Vector3 &p_position) const WW_CALL(_canopy_closure_at, contract_canopy_closure_at(p_position), 0.0f, p_position)
 float WorldWeather::frost_at(const Vector3 &p_position) const WW_CALL(_frost_at, contract_frost_at(p_position), 0.0f, p_position)
 float WorldWeather::glaze_at(const Vector3 &p_position) const WW_CALL(_glaze_at, contract_glaze_at(p_position), 0.0f, p_position)
+Vector3 WorldWeather::rime_at(const Vector3 &p_position) const WW_CALL(_rime_at, contract_rime_at(p_position), Vector3(), p_position)
+float WorldWeather::valley_fog_top_at(const Vector3 &p_position) const WW_CALL(_valley_fog_top_at, contract_valley_fog_top_at(p_position), float(-Math::INF), p_position)
 float WorldWeather::rainfall_at(const Vector3 &p_position) const WW_CALL(_rainfall_at, contract_rainfall_at(p_position), 0.0f, p_position)
 float WorldWeather::snowfall_at(const Vector3 &p_position) const WW_CALL(_snowfall_at, contract_snowfall_at(p_position), 0.0f, p_position)
 float WorldWeather::smoke_at(const Vector3 &p_position) const WW_CALL(_smoke_at, contract_smoke_at(p_position), 0.0f, p_position)
@@ -90,6 +93,7 @@ float WorldWeather::high_cloud_cover_at(const Vector3 &p_position) const WW_CALL
 float WorldWeather::mid_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_mid_cloud_cover_at, contract_mid_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::cloud_effector_at(const Vector3 &p_position) const WW_CALL(_cloud_effector_at, contract_cloud_effector_at(p_position), 0.0f, p_position)
 float WorldWeather::cloud_base_at(const Vector3 &p_position) const WW_CALL(_cloud_base_at, contract_cloud_base_at(p_position), 1500.0f, p_position)
+float WorldWeather::orographic_factor_at(const Vector3 &p_position) const WW_CALL(_orographic_factor_at, contract_orographic_factor_at(p_position), 1.0f, p_position)
 float WorldWeather::mountain_wave_at(const Vector3 &p_position) const WW_CALL(_mountain_wave_at, contract_mountain_wave_at(p_position), 0.0f, p_position)
 float WorldWeather::mountain_wave_velocity_at(const Vector3 &p_position) const WW_CALL(_mountain_wave_velocity_at, contract_mountain_wave_velocity_at(p_position), 0.0f, p_position)
 float WorldWeather::wave_cloud_density_at(const Vector3 &p_position) const WW_CALL(_wave_cloud_density_at, contract_wave_cloud_density_at(p_position), 0.0f, p_position)
@@ -191,6 +195,8 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("canopy_closure_at", "position"), &WorldWeather::canopy_closure_at);
 	ClassDB::bind_method(D_METHOD("frost_at", "position"), &WorldWeather::frost_at);
 	ClassDB::bind_method(D_METHOD("glaze_at", "position"), &WorldWeather::glaze_at);
+	ClassDB::bind_method(D_METHOD("rime_at", "position"), &WorldWeather::rime_at);
+	ClassDB::bind_method(D_METHOD("valley_fog_top_at", "position"), &WorldWeather::valley_fog_top_at);
 	ClassDB::bind_method(D_METHOD("mean_wind_at", "position"), &WorldWeather::mean_wind_at);
 	ClassDB::bind_method(D_METHOD("wind_aloft_at", "position", "altitude"), &WorldWeather::wind_aloft_at);
 	ClassDB::bind_method(D_METHOD("terrain_lee_at", "position"), &WorldWeather::terrain_lee_at);
@@ -216,6 +222,7 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("mid_cloud_cover_at", "position"), &WorldWeather::mid_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("cloud_effector_at", "position"), &WorldWeather::cloud_effector_at);
 	ClassDB::bind_method(D_METHOD("cloud_base_at", "position"), &WorldWeather::cloud_base_at);
+	ClassDB::bind_method(D_METHOD("orographic_factor_at", "position"), &WorldWeather::orographic_factor_at);
 	ClassDB::bind_method(D_METHOD("mountain_wave_at", "position"), &WorldWeather::mountain_wave_at);
 	ClassDB::bind_method(D_METHOD("mountain_wave_velocity_at", "position"), &WorldWeather::mountain_wave_velocity_at);
 	ClassDB::bind_method(D_METHOD("wave_cloud_density_at", "position"), &WorldWeather::wave_cloud_density_at);
@@ -237,6 +244,8 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_canopy_closure_at, "position");
 	GDVIRTUAL_BIND(_frost_at, "position");
 	GDVIRTUAL_BIND(_glaze_at, "position");
+	GDVIRTUAL_BIND(_rime_at, "position");
+	GDVIRTUAL_BIND(_valley_fog_top_at, "position");
 	GDVIRTUAL_BIND(_mean_wind_at, "position");
 	GDVIRTUAL_BIND(_wind_aloft_at, "position", "altitude");
 	GDVIRTUAL_BIND(_terrain_lee_at, "position");
@@ -260,6 +269,7 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_mid_cloud_cover_at, "position");
 	GDVIRTUAL_BIND(_cloud_effector_at, "position");
 	GDVIRTUAL_BIND(_cloud_base_at, "position");
+	GDVIRTUAL_BIND(_orographic_factor_at, "position");
 	GDVIRTUAL_BIND(_mountain_wave_at, "position");
 	GDVIRTUAL_BIND(_mountain_wave_velocity_at, "position");
 	GDVIRTUAL_BIND(_wave_cloud_density_at, "position");
@@ -437,6 +447,20 @@ Vector2 WorldWater::sediment_deposit_at(const Vector3 &p_position) const {
 	return r;
 }
 
+Vector4 WorldWater::high_water_at(const Vector3 &p_position) const {
+	Vector4 r(-Math::INF, -1.0f, 0.0f, 0.0f);
+	if (GDVIRTUAL_CALL(_high_water_at, p_position, r)) {
+		return r;
+	}
+	for (const WorldWaterProvider *w : providers) {
+		const Vector4 h = w->contract_water_high_water_at(p_position);
+		if (h.x > r.x) {
+			r = h;
+		}
+	}
+	return r;
+}
+
 float WorldWater::breaking_at(const Vector3 &p_position) const {
 	float r = 0.0f;
 	if (GDVIRTUAL_CALL(_breaking_at, p_position, r)) {
@@ -481,6 +505,7 @@ void WorldWater::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sediment_at", "position"), &WorldWater::sediment_at);
 	ClassDB::bind_method(D_METHOD("sediment_deposit_at", "position"), &WorldWater::sediment_deposit_at);
 	ClassDB::bind_method(D_METHOD("breaking_at", "position"), &WorldWater::breaking_at);
+	ClassDB::bind_method(D_METHOD("high_water_at", "position"), &WorldWater::high_water_at);
 	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &WorldWater::add_sediment);
 	ClassDB::bind_method(D_METHOD("add_sediment_mass", "position", "mineral_kg", "ash_kg"), &WorldWater::add_sediment_mass);
 
@@ -494,6 +519,7 @@ void WorldWater::_bind_methods() {
 	GDVIRTUAL_BIND(_sediment_at, "position");
 	GDVIRTUAL_BIND(_sediment_deposit_at, "position");
 	GDVIRTUAL_BIND(_breaking_at, "position");
+	GDVIRTUAL_BIND(_high_water_at, "position");
 	GDVIRTUAL_BIND(_add_sediment, "position", "mineral_kg_s", "ash_kg_s");
 	GDVIRTUAL_BIND(_add_sediment_mass, "position", "mineral_kg", "ash_kg");
 }
@@ -843,6 +869,7 @@ public:
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return stub->sediment_at(p_position); }
 	Vector2 contract_water_sediment_deposit_at(const Vector3 &p_position) const override { return stub->sediment_deposit_at(p_position); }
 	float contract_water_breaking_at(const Vector3 &p_position) const override { return stub->breaking_at(p_position); }
+	Vector4 contract_water_high_water_at(const Vector3 &p_position) const override { return stub->high_water_at(p_position); }
 	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override { stub->add_sediment(p_position, p_mineral_kg_s, p_ash_kg_s); }
 	void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override { stub->add_sediment_mass(p_position, p_mineral_kg, p_ash_kg); }
 };
@@ -1076,6 +1103,8 @@ void WorldGround::_bind_methods() {
 	GDVIRTUAL_BIND(_coarse_cover_at, "position");
 	ClassDB::bind_method(D_METHOD("albedo_at", "position"), &WorldGround::albedo_at);
 	GDVIRTUAL_BIND(_albedo_at, "position");
+	ClassDB::bind_method(D_METHOD("relief_at", "position"), &WorldGround::relief_at);
+	GDVIRTUAL_BIND(_relief_at, "position");
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
 	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &WorldGround::track_mud);
 	ClassDB::bind_method(D_METHOD("has_runoff"), &WorldGround::has_runoff);
@@ -1188,6 +1217,30 @@ void WorldContracts::unregister_cover(WorldCoverProvider *p_provider) {
 	}
 }
 
+void WorldContracts::register_climate(WorldClimateProvider *p_provider) {
+	if (singleton && p_provider && singleton->climate_providers.find(p_provider) < 0) {
+		singleton->climate_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_climate(WorldClimateProvider *p_provider) {
+	if (singleton) {
+		singleton->climate_providers.erase(p_provider);
+	}
+}
+
+float WorldContracts::climate_precipitation_factor_at(const Vector3 &p_position) {
+	if (singleton) {
+		for (const WorldClimateProvider *c : singleton->climate_providers) {
+			const float f = c->contract_precipitation_factor_at(p_position);
+			if (f >= 0.0f) {
+				return f;
+			}
+		}
+	}
+	return 1.0f;
+}
+
 void WorldContracts::register_ground_color(WorldGroundColorProvider *p_provider) {
 	if (singleton && p_provider && singleton->ground_color_providers.find(p_provider) < 0) {
 		singleton->ground_color_providers.push_back(p_provider);
@@ -1198,6 +1251,35 @@ void WorldContracts::unregister_ground_color(WorldGroundColorProvider *p_provide
 	if (singleton) {
 		singleton->ground_color_providers.erase(p_provider);
 	}
+}
+
+void WorldContracts::register_relief(WorldReliefProvider *p_provider) {
+	if (singleton && p_provider && singleton->relief_providers.find(p_provider) < 0) {
+		singleton->relief_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_relief(WorldReliefProvider *p_provider) {
+	if (singleton) {
+		singleton->relief_providers.erase(p_provider);
+	}
+}
+
+Vector2 WorldGround::relief_at(const Vector3 &p_position) const {
+	Vector2 r;
+	if (GDVIRTUAL_CALL(_relief_at, p_position, r)) {
+		return r;
+	}
+	const LocalVector<WorldReliefProvider *> *list = WorldContracts::relief_providers_list();
+	if (list) {
+		for (const WorldReliefProvider *p : *list) {
+			const Vector2 v = p->contract_relief_at(p_position);
+			if (Math::is_finite(v.x)) {
+				return Vector2(v.x, CLAMP(v.y, 0.0f, 1.0f));
+			}
+		}
+	}
+	return Vector2();
 }
 
 void WorldContracts::register_plant_color(WorldPlantColorProvider *p_provider) {
@@ -1435,6 +1517,53 @@ int WorldStand::add_disturbance(const Vector3 &p_center, float p_radius, int p_k
 	_rebuild_grid();
 	_report(Rect2(e.center - Vector2(e.radius, e.radius), Vector2(2.0f * e.radius, 2.0f * e.radius)));
 	return e.id;
+}
+
+int WorldStand::add_disturbances(const PackedVector3Array &p_centers, float p_radius, int p_kind, float p_age_years) {
+	ERR_FAIL_COND_V_MSG(p_kind <= DISTURBANCE_NONE, 0, "A disturbance needs a kind.");
+	if (p_centers.is_empty()) {
+		return 0;
+	}
+	const float r = MAX(p_radius, 0.0f);
+	Rect2 area;
+	bool first = true;
+	HashSet<Vector2i> covered; // the new discs by GRID_CELL, to find the events they replace
+	for (const Vector3 &c : p_centers) {
+		const Rect2 d(Vector2(c.x - r, c.z - r), Vector2(2.0f * r, 2.0f * r));
+		area = first ? d : area.merge(d);
+		first = false;
+		covered.insert(Vector2i(int(Math::floor(c.x / GRID_CELL)), int(Math::floor(c.z / GRID_CELL))));
+	}
+	// Replace the same kind's events lying inside a new disc (their whole disc within it).
+	for (uint32_t i = 0; i < events.size();) {
+		const Event &e = events[i];
+		bool gone = false;
+		if (e.kind == p_kind && e.radius <= r * 1.01f && covered.has(Vector2i(int(Math::floor(e.center.x / GRID_CELL)), int(Math::floor(e.center.y / GRID_CELL))))) {
+			for (const Vector3 &c : p_centers) {
+				if (Vector2(c.x, c.z).distance_to(e.center) + e.radius <= r * 1.01f) {
+					gone = true;
+					break;
+				}
+			}
+		}
+		if (gone) {
+			events.remove_at_unordered(i);
+		} else {
+			i++;
+		}
+	}
+	for (const Vector3 &c : p_centers) {
+		Event e;
+		e.id = next_id++;
+		e.center = Vector2(c.x, c.z);
+		e.radius = r;
+		e.kind = p_kind;
+		e.age = MAX(p_age_years, 0.0f);
+		events.push_back(e);
+	}
+	_rebuild_grid();
+	_report(area);
+	return p_centers.size();
 }
 
 void WorldStand::set_disturbance_age(int p_id, float p_age_years) {
@@ -1835,6 +1964,7 @@ void WorldStand::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("stand_age_at", "position"), &WorldStand::stand_age_at);
 	ClassDB::bind_method(D_METHOD("disturbance_at", "position"), &WorldStand::disturbance_at);
 	ClassDB::bind_method(D_METHOD("add_disturbance", "center", "radius", "kind", "age_years"), &WorldStand::add_disturbance);
+	ClassDB::bind_method(D_METHOD("add_disturbances", "centers", "radius", "kind", "age_years"), &WorldStand::add_disturbances);
 	ClassDB::bind_method(D_METHOD("set_disturbance_age", "id", "age_years"), &WorldStand::set_disturbance_age);
 	ClassDB::bind_method(D_METHOD("remove_disturbance", "id"), &WorldStand::remove_disturbance);
 	ClassDB::bind_method(D_METHOD("clear_disturbances"), &WorldStand::clear_disturbances);
@@ -1870,6 +2000,8 @@ void WorldStand::_bind_methods() {
 	BIND_ENUM_CONSTANT(DISTURBANCE_BEETLE);
 	BIND_ENUM_CONSTANT(DISTURBANCE_BEAVER);
 	BIND_ENUM_CONSTANT(DISTURBANCE_ROOTING);
+	BIND_ENUM_CONSTANT(DISTURBANCE_AVALANCHE);
+	BIND_ENUM_CONSTANT(DISTURBANCE_ICE_STORM);
 }
 
 void WorldContracts::set_fire(const Ref<WorldFire> &p_stub) {
@@ -2059,6 +2191,7 @@ Dictionary WorldContracts::describe_body_bind(Node *p_node) const {
 }
 
 void WorldContracts::_bind_methods() {
+	ClassDB::bind_static_method("WorldContracts", D_METHOD("climate_precipitation_factor_at", "position"), &WorldContracts::climate_precipitation_factor_at);
 	ClassDB::bind_method(D_METHOD("set_weather", "stub"), &WorldContracts::set_weather);
 	ClassDB::bind_method(D_METHOD("get_weather"), &WorldContracts::get_weather);
 	ClassDB::bind_method(D_METHOD("set_ground", "stub"), &WorldContracts::set_ground);

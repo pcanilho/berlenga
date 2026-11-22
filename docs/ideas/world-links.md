@@ -98,6 +98,8 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Bodies out of mud → muddy prints | linked (19 Nov) | world_contact bodies, `WorldGround.mud_depth_at`, new `WorldGround.track_mud` (GroundSurface3D tracked mud) | WeatherMap3D `wet_tracks` keeps a mud film on each body: 1 mm on a sole, 2 mm in a tread out of mud; each print on firm ground hands a share to `track_mud` (same depleting load as the wet prints), so the clay trail thins over a dozen strides; water washes the film off. Bodies that print their own mud (vehicles, wheels, GroundLegMud3D) are skipped. `get_body_mud` |
 | Wheels → worn-in tracks (packed soil, puddles, worn grass) | linked (19 Nov) | GroundSurface3D `worn_tracks` (mud, bab375e1): wheel passes per 25 cm cell | Passes pack the soil (stiffer Bekker k, less infiltration, so puddles stand in used tracks) and wear the grass flat then bare through the `ground_wear_map` / `ground_wear_rect` globals (GrassField3D reads them); fades over `wear_regrowth_days` |
 | Ground colour, snow → light into gas from below | linked (21 Nov) | new `WorldGround.albedo_at` (TerrainMaterial3D layers, wet, under `WorldSnow.albedo_at`) | PhysXFlow3D `ground_from_world` (on): five points over the gas footprint every 0.5 s or 4 m moved, blended over `ground_albedo` x `ground_color` by the share known. Smoke over snow is lit blue-white from below, over red rock warm, darker over wet ground. Most of the light inside a low puff comes up off the ground (physx.md, 21 Nov) |
+| Sea spray salt → salt bloom on stone | linked (rocks f54f88b6; terrain cliffs 22 Nov) | `weather_spray_map` G (WeatherMap3D sea spray salt), weather and ground wetness | Halite efflorescence where the film dries (Mustoe 1982; Goudie and Viles 1997; Huinink et al. 2004): rocks' own shader by cavity and shelter; TerrainMaterial3D `salt_bloom` (on) on rock and scree through `weather_salt_bloom_apply` (material.cpp): the load sets the share (at most 0.4) filled from 2.5 m, 0.9 m and 0.35 m patches, a 4 cm crystal grain, kept on steep faces, gone under any film of water. Same in the path tracer |
+| Sea spray → damp sand holds sharper prints | linked (spray in the surface wetness, 19 Nov; checked 22 Nov) | `WorldWeather.surface_wetness_at` (WeatherMap3D takes the spray's film with the rain's) | GroundSurface3D's sand moisture: damp sand gains capillary cohesion (Namikas and Sherman 1995; Davidson-Arnott et al. 2008), steeper repose and stiffer kphi, so prints in the spray zone keep their walls; dry sand inland slumps. Links check: 1.30 kPa at the waterline under a 12 m/s onshore wind, 1.04 inland |
 | Gravel and pebbles → no sand ripples, less blown sand | contract (19 Nov) | `WorldGround.coarse_cover_at` from RockField3D's cover maps | A gravel lag armours the sand under it (Bagnold 1941; Sharp 1963): sand scales its blown share and ripples by 1 - smoothstep(0.1, 0.35, pebble + gravel) (sand thread builds the read) |
 | Water, snow → fallen leaves | linked (19 Nov) | WorldWater (height, flow), WorldSnow (depth, surface, lake ice), weather wind | LeafFall3D leaves land on the top surface: on water they float with the current plus 3% leeway in the wind (Breivik et al. 2011), on snow they lie on top, are buried by more snow and set down when it melts; lake ice holds them |
 | Vehicles → grass, branches | linked (18 Nov) | world_contact | wheels and bodies join |
@@ -107,6 +109,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Nebkhas → shrubs | linked (19 Nov) | TerrainGenerator3D `get_nebkhas(rect)` (x, top y, z, height m), `get_nebkha_height(pos)` (mound sand alone); `sand_sea_mask` (Image, red 0..1) shapes the ergs | VegetationField3D places a shrub on each mound top; the mounds are sand for the sand thread, no deformation hook needed (terrain-gen cf579682) |
 | Lightning → tree | linked (18 Nov) | lightning | attachment; fire ignition below |
 | Lightning → struck tree variant | linked (20 Nov) | `WorldStand.strike_age_at` | WeatherLightning3D records canopy strikes; VegetationField3D swaps a tree within 3 m of a strike under 8 years old to its `tree_lightning_years` variant, from `get_strikes_in` copies (trees d898414194) |
+| Avalanches → young stands on their paths | linked (22 Nov) | `WorldStand` `DISTURBANCE_AVALANCHE` (6) via `add_disturbances` (one batch; repeats replace their discs) | SnowAvalanche3D `stand_damage` (on): when the dense flow stops, every 16 m block whose peak dynamic pressure passed `stand_damage_pressure` (20 kPa; Bartelt and Stockli 2001, Feistl et al. 2015) restarts the stand (Johnson 1987; Bebi, Kulakowski and Rixen 2009). Readers through stand age: vegetation and tree succession (pioneers in the track); avalanche legacies (snapped stems, alder thickets tagged kind 6) are for the trees and vegetation threads. Snow bench check: 18 of 18 track points reset at 32 kPa, none past the run-out |
 | Beaver dam fails → beaver meadow | linked (20 Nov) | `WorldStand` `DISTURBANCE_BEAVER` (4), age since the pond drained | WorldBeaverDam3D (world module): `breach()` or `state` Breached adds the disc over `pond_radius`, `years_drained` old; trees' STAND_BEAVER_POND follows it; PlantGenerator.make_beaver meadow reads it by RULE_DISTURBANCE (4,4) |
 | Deer browsing → understorey, saplings | linked (20 Nov) | `WorldStand.browse_at`, `browse_reach_at` | browse discs (pressure, reach); vegetation RULE_BROWSE 31, trees' browsed variants (trees.md 5aw) |
 | Game trails → ground detail, mud, snow, grass | linked (20 Nov) | `WorldStand.set_trails` (VegetationField3D.make_game_trails), `trail_at` | one network; readers wear their own surface by passes per year and tread share |
@@ -161,12 +164,16 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Lightning → cloud lights list | linked (20 Nov) | WeatherLightning3D flashes | Listed in `WeatherMap3D.get_cloud_lights()` for readers; the sky keeps its own full-resolution flash glow |
 | Cloud base → lightning strike height | linked (20 Nov) | `cloud_base_at` | WeatherLightning3D starts the leader at the local base |
 | Cloud base → hill fog | linked (20 Nov) | `cloud_base_at`, WorldGround `height_at` | VegetationMist3D: ground within 40 m under the base (cover over 0.3) stands in cloud; wind, overcast and sun do not clear it. The base never drops under ground + 30 m from the day's air alone; an authored base below a ridge stays (fog drip) |
-| Cloud base → snow line, orographic rain | later | `cloud_base_at` | |
+| Terrain climate → upslope rain, rain shadow; air at height → snow line | linked (22 Nov) | `WorldContracts.climate_precipitation_factor_at` (TerrainDataMap3D, a `WorldClimateProvider`: its baked precipitation over the recipe's, Smith and Barstad 2004); `WorldWeather.orographic_factor_at` | WeatherMap3D `orographic_rain` (on): each cell's rain times the climate's factor (refreshed every 10 s and as the square moves; heights read once per cell), and rain or snow by the air at the cell's own ground height (Jennings 2018 with the lapse rate), so the summit snows while the foot rains. SnowCover3D, which reads the climate itself, divides out the weather's factor so it is not counted twice. Links check: a 600 m ridge, 1.05 windward and 1.34 in the lee (spillover over a 1 km ridge), rain share 0.80 at the foot and 0.08 on top |
 | Any system → cloud density | linked (20 Nov) | `add_cloud_effector` callers | `WorldWeather.cloud_effector_at`; shadow bake and sky both see it |
 | Terrain, wind aloft, temperature, humidity, mid/high layers → wave clouds (lenticulars) | linked (20 Nov) | terrain source, `get_wind_aloft`, air, `mid/high_cloud_cover` | `WeatherMap3D.get_wave_cloud_density_at` / `WorldWeather.wave_cloud_density_at`; shadow bake (docs/ideas/clouds.md round 5) |
 | Time of day, wind, humidity, rain → low cloud type (stratus, stratocumulus, cumulus) | linked (20 Nov) | clock, `cur_*` air | `WeatherMap3D.cloud_regime_from_weather`, `get_convective_heating` (docs/ideas/clouds.md round 6) |
 | Wind shear aloft, air temperature → cirrocumulus; high cover (humidity, coming rain) → cirrostratus veil | linked (20 Nov) | `get_wind_aloft`, air | `WeatherMap3D.get_cirrocumulus_share` (docs/ideas/clouds.md round 7) |
 | Storm rain, outflow, steering wind → rain shafts and shelf cloud | linked (20 Nov) | `add_storm` storms | sky rain shafts; `get_cloud_base_at` / `WorldWeather.cloud_base_at` lowered by the shelf (docs/ideas/clouds.md round 8) |
+| Clear calm nights → cold air pools in hollows (frost, valley fog) | linked (22 Nov) | `WorldWeather.air_temperature_at` / `air_humidity_at` (WeatherMap3D `cold_pools`, `get_cold_pool_at`) | Night x clear x calm forcing builds a deficit up to `cold_pool_strength` (8 C) over about 2 h where the cell lies below the mean height within 600 m (topographic position, Lundquist et al. 2008; Whiteman 2000), faded to nothing at the pool's top; breaks up after sunrise or in a wind. Dew, hoarfrost and evaporation take the pooled air per cell; mist, snow and every air reader see it through the contract. Links check: a 200 m valley, 6.9 C pool, -0.9 C on the floor under 5.3 C up the slope, humidity 1.00 vs 0.85, frost only on the floor |
+| Supercooled cloud, wind → rime on windward twigs, rocks and cliffs | linked (22 Nov) | `WorldWeather.rime_at` (Vector3: mm, into the wind); `weather_frost_map` B, A (mm along x, z) | WeatherMap3D `rime` (on): per cell, the fog water at canopy height below 0 C grows 0.3 x LWC x wind at 300 kg/m3 (Makkonen 2000, ISO 12494) into the wind; sheds in a thaw (0.7/h per K to 3 K), sun and rain. `weather_rime_apply` (material.cpp): the faces turned into the wind first, wrapping round as it thickens past 3 cm, feathers drawn out along the wind, thin rime as separate feathers; plants, plant impostors, rocks and steep terrain. SnowRime3D still grows the near-field feather geometry. Links check: 66 mm in 6 h of 0.38 g/m3 at 10 m/s and -6 C, gone after a 6 h thaw. Raster and PT match (project files fork/world-links/rime-raster-pt.png) |
+| Clear night surface cooling → needle ice, frozen ground, puddle ice | linked (22 Nov) | `WorldWeather.surface_temperature_at` (air + WeatherMap3D's radiative cooling) | GroundSurface3D's frost (needle ice, Stefan front) and puddle ice read the surface temperature, not the air: needle ice is a radiation frost, clear calm nights with the air a degree or two above 0 C and the bare surface some degrees below (Outcalt 1971; Lawler 1988). With no sky clock or dew_and_frost off the cooling is 0 and the surface is the air. Ground check (--test=frost): air +1.5 C, 2.4 cm of needles under a clear sky (surface -4.6 C), none overcast (surface 1.6 C) |
+| Saturated cold pool → valley fog sea | linked (22 Nov) | `WorldWeather.valley_fog_top_at` (WeatherMap3D `valley_fog`, `get_valley_fog_top_at`, `get_valley_fog_depth_at`) | Per cell, the fog top is the highest level in the cold pool where air temperature is at or below the dew point; the basin's level is taken from its lowest fogged cell within 600 m, so the top lies flat across the valley and thins out on the slopes (Whiteman 2000; Gultepe et al. 2007). Forms over about 1 h, lifts in 0.5 h / (1 + wind/3) after sunrise. Drawn as one box FogVolume over the map, density `valley_fog_density` (0.02/m) under the top, white droplets plus a multiple-scattering emission so the sea reads white, not grey; PT reads the same froxels, raster and PT match (project files fork/world-links/valley-fog-raster-pt.png). Links check: 28 m deep in a 200 m valley, top 29 m, 30 m 150 m up the valley, clear at 300 m; a 6 m/s wind lifts it with the pool |
 | Air temperature, dew point → cloud base | linked (20 Nov) | `get_air_dew_point` | `WorldWeather.cloud_base_at`; readers mist, lightning, snow line, orographic rain |
 | Mountain waves → wind aloft | linked (20 Nov) | WeatherMountainWaves | `get_wind_at` vertical part above the boundary layer; `WorldWeather.mountain_wave_velocity_at` alone; ground wind unchanged |
 | Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |
@@ -329,19 +336,19 @@ mm a day; Bruijnzeel et al. 2005).
 
 Tyre grip on snow, offered on the 20 Nov card, was already linked (71387ca8): that card is withdrawn.
 
-1. Salt bloom on sea rocks. Source: `WorldWeather.salt_at` (sea spray salt, g/m2), rain wash-off, the sun's
+1. Salt bloom on sea rocks (built 22 Nov). Source: `WorldWeather.salt_at` (sea spray salt, g/m2), rain wash-off, the sun's
    drying. Reader: rocks (the stone material) and cliff faces. Spray-zone rock dries to a white crust of halite where
    the salt load is high and the surface has dried; rain dissolves it within minutes. Salt weathering in the spray
    zone (haloclasty, tafoni and honeycomb hollows) concentrates where wetting and drying alternate most (Mustoe
    1982; Matsukura and Tanaka 2000; Urosevic et al. 2013 on salt crystallisation in porous stone). Shading: a
    crust share = smoothstep of salt load times dryness, raising albedo and roughness in hollows first.
-2. Spray-wet sand holds sharper prints. Source: the weather's spray wetness and the swash's pore water (ground
+2. Spray-wet sand holds sharper prints (checked 22 Nov). Source: the weather's spray wetness and the swash's pore water (ground
    wet map). Reader: sand's print deformation. Surface moisture above about 4-6 % by mass gives sand apparent
    cohesion from capillary bridges, so prints keep steep walls and fine edges and wind lifts less of it (Namikas and
    Sherman 1995; Namikas et al. 2010; Davidson-Arnott et al. 2008 on beach surface moisture); dry sand slumps
    to its angle of repose. Sand already has moisture-driven cohesion from ground water: the link adds the spray's
    wetting above the swash.
-3. Snow line and upslope rain from the cloud base. Source: `WorldWeather.cloud_base_at`, air temperature at
+3. Snow line and upslope rain from the cloud base (built 22 Nov, see the matrix). Source: `WorldWeather.cloud_base_at`, air temperature at
    height, wind, terrain slope. Readers: rain, snow, vegetation. Linear theory of orographic precipitation (Smith
    and Barstad 2004): uplift w = U . grad h condenses water at a rate set by the moist lapse rate, carried
    downwind over a fall time of 1000-2000 s, so windward slopes get more and lee slopes a rain shadow; the snow
@@ -350,3 +357,76 @@ Tyre grip on snow, offered on the 20 Nov card, was already linked (71387ca8): th
 
 Sources: Smith and Barstad 2004 (J. Atmos. Sci. 61); Roe 2005 (Annu. Rev. Earth Planet. Sci.); Namikas and Sherman
 1995; Davidson-Arnott, Yang, Ollerhead, Hesp and Walker 2008; Urosevic et al. 2013; Matsukura and Tanaka 2000.
+
+## Round 9 candidates (22 Nov, card to Paulo)
+
+1. Cold air pools in hollows (built 22 Nov). Source: the weather's air temperature, wind, cloud cover and the terrain heights it
+   already reads for the snow line. Readers: dew and hoarfrost, mist (valley fog), snow melt, plant frost damage.
+   On clear calm nights the cooled air at the ground drains downslope (katabatic flow, about 1-3 m/s) and pools in
+   basins and valley floors, 5-10 C colder than the slopes above, with a warm belt part way up (Whiteman 2000;
+   Clements et al. 2003 on Peter Sinks; Lundquist et al. 2008 on cold pools in mountain basins). Model: a
+   per-cell drainage depth from a flow-accumulation pass over the weather's height grid, scaled by the night's
+   radiative cooling and gated by wind and cloud; the contract's air temperature at a point reads it. Frost and
+   fog then sit in hollows first, as they do.
+2. Avalanche paths keep the forest young (built 22 Nov). Source: SnowCover3D's avalanche runouts. Reader: `WorldStand`
+   (a new disturbance kind, 4 is taken by beaver: avalanche as 6), trees (snapped stems, flagged crowns), vegetation
+   (shrub and alder thickets in the track). Frequent avalanches hold paths in shrubs and young broadleaves while
+   the forest stands either side (Bebi, Kulakowski and Rixen 2009; Patten and Knight 1994; Johnson 1987 on
+   track frequency). A runout records a disturbance over its deposit; return period sets the stand age.
+3. Rime on windward trees and rocks (built 22 Nov). Source: `cloud_base_at`, air temperature below 0 C, wind, liquid water
+   content of the cloud (fog drip already computes it). Readers: trees (crown load, bending with their wind),
+   rocks and terrain material (white feathers growing into the wind on ridges in winter cloud).
+   Accretion rate = collision efficiency x LWC x wind speed x area (Makkonen 2000 ISO 12494 model); hard rime at
+   -5 to -15 C grows upwind as feathers. A per-cell rime load on WorldSnow (or a new WorldIce read) that sun and
+   wind above 0 C shed.
+
+Sources: Whiteman 2000 (Mountain Meteorology); Clements, Whiteman and Horel 2003 (J. Appl. Meteor.); Lundquist,
+Pepin and Rochford 2008 (JGR); Bebi, Kulakowski and Rixen 2009 (Forest Ecol. Manage.); Patten and Knight 1994;
+Makkonen 2000 (Phil. Trans. R. Soc. A); ISO 12494.
+
+## Round 10 candidates (22 Nov, card to Paulo)
+
+1. Valley fog seas from the cold pools. Source: WeatherMap3D's cold pool deficit and depth (`get_cold_pool_at`),
+   the air's dew point. Reader: the clouds (a stratus layer whose top is the pool's top, seen from ridges as a sea
+   of cloud), mist (near field already reads the humidity). Radiation fog fills a basin when the pooled air cools to
+   its dew point and thickens upward to the inversion's base; it lifts and burns off from the edges after sunrise
+   (Whiteman 2000; Gultepe et al. 2007 review of fog; Price 2011 on valley fog in the UK). Per cell: fog top =
+   ground + pool depth where the floor air is saturated; the sky's volumetric clouds draw it as a flat-topped layer.
+2. Needle ice and frost heave on bare wet ground (22 Nov: GroundSurface3D already grew it, mud round 9; the link built is its surface temperature). Source: the weather's surface temperature (cooling term), soil
+   water (ground wetness, rain), night length. Readers: GroundSurface3D (a lifted, crumbly surface that keeps
+   prints sharp until it collapses, pebbles lifted), vegetation (seedlings heaved out on bare soil). Needle ice grows
+   where the surface sits a few degrees below 0 C over moist, fine soil, columns a few centimetres a night (Outcalt
+   1971; Lawler 1988; Grab 2001 on needle ice in mountains). Shading: grey-white columns on wet silt and mud, gone
+   by mid morning.
+3. Fire builds its own cloud (pyrocumulus) (22 Nov: already built in ebdad64b and linked end to end: the cap at the plume's own condensation level, pyroCb lightning and rain through the storm list, its downdraft in the wind the fire spread reads, fire light on the cloud; nothing added). Source: `WorldFire.heat_at` integrated over a burning area, the air's
+   temperature and humidity at height. Reader: the clouds (a convective tower over the plume when the fire's heat
+   flux lifts the plume past the lifting condensation level; Briggs plume rise, Luderer et al. 2006; Fromm et al.
+   2010 on pyroCb), lightning (a pyroCb can strike ahead of the fire), rain (rarely). Flow already carries the
+   smoke near the fire; this adds the cloud seen from far.
+
+Sources: Whiteman 2000; Gultepe et al. 2007 (Pure Appl. Geophys.); Price 2011 (Boundary-Layer Meteorol.); Outcalt
+1971 (Water Resour. Res.); Lawler 1988 (Prog. Phys. Geogr.); Grab 2001; Briggs 1975; Luderer et al. 2006 (Atmos.
+Chem. Phys.); Fromm et al. 2010 (BAMS).
+
+## Round 11 candidates (22 Nov, card to Paulo)
+
+1. Night drainage winds (katabatic flow). Source: the cold pools' forcing (night, clear, calm) and the terrain slope
+   WeatherMap3D already reads. Reader: `WorldWeather.wind_at` near the ground, so smoke, mist, snow drift, grass and
+   tree wind and the fire spread (night fires back down slopes) all see it. Air cooled on a slope runs down it at 1 to
+   3 m/s in a layer some 10 to 50 m deep, strongest a few metres up, and gathers into a down-valley wind
+   (Prandtl 1942 slope flow; Mahrt 1982; Whiteman 2000, ch. 13). Per cell: speed from the radiative cooling and
+   the slope sine (Prandtl's balance), along the fall line, faded by the ambient wind; zero by day (the upslope
+   anabatic flow is weaker and later).
+2. Valley fog wets and rimes what stands in it. Source: the valley fog's depth (built this round). Reader: the
+   fog water at the canopy (`fog_water_at`), so fog drip wets the ground under trees in a fog sea and, below 0 C,
+   rime grows on the trees in it (the hoarfrost forests of inversion valleys). Radiation fog holds 0.05 to 0.3 g/m3
+   of liquid water (Gultepe et al. 2007); today `fog_water_at` reads only the sky's clouds.
+3. Cold pools trap smoke near the ground. Source: the cold pool depth and the smoke layer's column (WeatherMap3D
+   smoke). Reader: the near-ground haze and the smoke a camera sees in a valley at dawn. A night inversion caps the
+   mixing: smoke from a fire or chimneys stays within the pool's depth instead of the 2 km day layer, tens of times
+   denser near the ground, and clears as the pool breaks up mid-morning (Lavdas 1996, smoke in the southern US
+   valleys at night; Achtemeier 2005, PB-Piedmont). Per cell: the mixing depth becomes the pool depth while a pool
+   lies there.
+
+Sources: Prandtl 1942; Mahrt 1982 (J. Atmos. Sci.); Whiteman 2000 (Mountain Meteorology); Gultepe et al. 2007;
+Lavdas 1996 (USDA Forest Service GTR SRS-6); Achtemeier 2005 (Int. J. Wildland Fire).

@@ -228,6 +228,21 @@ private:
 	Ref<Image> painted_image;
 
 	Vector<Storm> storms;
+	// WIND VORTICES (docs/world-contracts.md, "Wind vortices"): dust devils and lee whirls their owners place and move;
+	// get_wind_at adds a Rankine field round each (Tratt et al. 2003). Copy-on-write, so readers on other threads
+	// see a whole list.
+	struct Vortex {
+		int id = 0;
+		Vector3 position; // the foot, on the ground (m)
+		float radius = 3.0f; // core radius R (m)
+		float swirl = 10.0f; // peak tangential speed at R (m/s)
+		float updraft = 3.0f; // peak core updraft (m/s)
+		float spin = 1.0f; // +1 anticlockwise from above, -1 clockwise
+	};
+	Vector<Vortex> vortices;
+	int next_vortex_id = 1;
+	Vector3 _vortex_wind_at(const Vector3 &p_position, float p_height) const;
+	void _publish_vortices();
 	int next_storm_id = 1;
 
 	struct CellPass {
@@ -244,6 +259,9 @@ private:
 		const float *inflow = nullptr;
 		const float *fog_drip = nullptr; // mm/h off the canopy, from the last canopy step
 		const float *spray = nullptr; // mm/h of sea spray settling, from the last spray step
+		const float *oro = nullptr; // the climate's precipitation factor per cell (orographic_rain)
+		const float *height = nullptr; // m, the terrain per cell, for the phase at its height
+		const float *pool = nullptr; // C, the cold air pool's deficit per cell (cold_pools)
 		float rain_fraction = 1.0f;
 		float *puddle = nullptr;
 		float *frost = nullptr;
@@ -568,8 +586,54 @@ private:
 	// Fog drip (docs/ideas/world-links.md, "Fog drip"): cloud water on the ground's level, as the sky's clouds hold it
 	// where the terrain rises into them, combed out by the canopy (Lovett 1984: deposition = LWC x u x efficiency).
 	bool fog_drip = true;
+	// Orographic precipitation and the snow line by height (docs/ideas/world-links.md, "Snow line and upslope rain"):
+	// each cell's rain scaled by the terrain climate's precipitation factor (WorldContracts' climate slot:
+	// TerrainDataMap3D's Smith and Barstad 2004 field), and its phase by the air at the cell's own terrain height.
+	bool orographic_rain = true;
+	Vector<float> cell_oro; // the climate's precipitation factor per cell
+	Vector<float> cell_height; // m, the terrain under each cell (NaN: not known)
+	Vector2i oro_origin = Vector2i(INT32_MAX, INT32_MAX);
+	double oro_age = 1e9;
+	void _update_orography(double p_weather_dt);
+	// Cold air pools in hollows on clear calm nights (cold_pools).
+	static constexpr float COLD_POOL_RADIUS = 600.0f; // m, the topographic position index's box
+	bool cold_pools = true;
+	float cold_pool_strength = 8.0f; // C below the free air at a deep basin's floor
+	Vector<float> cell_pool; // C, deficit per cell
+	Vector<float> cell_pool_depth; // m, the cell below the mean height round it
+	void _update_pool_depths();
+	void _update_cold_pools(double p_weather_dt);
+	// Valley fog (radiation fog filling the cold pools to where their air is saturated): its depth per cell, drawn
+	// as one FogVolume over the map whose fog shader reads the tops from a texture.
+	bool valley_fog = true;
+	float valley_fog_density = 0.02f; // 1/m: about 200 m visibility inside (Koschmieder 3.9 / V)
+	float valley_fog_multiple_scatter = 1.0f; // scale of the multiple-scattering light added inside
+	Vector<float> cell_valley_fog; // m of fog over the cell's ground
+	float valley_fog_max = 0.0f; // m, the deepest this update (0: none)
+	Vector2 valley_fog_span; // the fog's lowest ground and highest top, m
+	Ref<Image> valley_fog_image;
+	Ref<ImageTexture> valley_fog_texture;
+	FogVolume *valley_fog_volume = nullptr;
+	Ref<ShaderMaterial> valley_fog_material;
+	void _update_valley_fog(float p_dt_h);
+	void _apply_valley_fog(bool p_active);
+	float _cold_pool_at(const Vector3 &p_position) const;
 	Vector<float> cell_fog; // g/m3 of cloud water at the canopy
 	Vector<float> cell_fog_drip; // mm/h, the fog's share of the drainage
+	// Freezing rain (weather_rain.cpp, docs/ideas/trees.md 5be): a warm layer aloft (its peak, C above freezing) melts the
+	// snow falling through it; under sub-zero air at the ground the drops arrive supercooled and freeze where they land,
+	// glaze. 0: no warm layer, the phase is rain_fraction()'s.
+	float warm_nose_temperature = 0.0f;
+	// The warm layer's base, m above the map's ground: the cold layer under it refreezes the drops to ice pellets
+	// when it is deep and cold enough (Bourgouin 2000). Ground at or above it is in the warm air: plain rain.
+	float warm_nose_base = 1000.0f;
+	float ice_storm_glaze = 0.0f; // mm, test knob: every cell holds at least this glaze
+	void _glaze_update(float p_dt_h);
+	Vector<float> cell_glaze; // mm of radial clear ice on an exposed twig (Jones 1998)
+	// Rime on an exposed twig (Makkonen 2000), mm times the unit vector into the wind it grew from (x, z).
+	Vector<float> cell_rime_x;
+	Vector<float> cell_rime_z;
+	bool rime = true;
 	// Sea spray (weather_spray.cpp, docs/ideas/world-links.md "Sea spray"): drops torn from breaking waves
 	// (WorldWater.breaking_at) carried downwind over a fine square round the follow point, settling on the shore:
 	// coarse drops within tens of metres (they wet), fine salt aerosol over hundreds. Salt stays on surfaces until
@@ -881,6 +945,11 @@ public:
 	void remove_storm(int p_id);
 	void clear_storms();
 	int get_storm_count() const { return storms.size(); }
+	int add_vortex(const Vector3 &p_position, float p_radius, float p_swirl, float p_updraft, float p_spin = 1.0f);
+	void set_vortex(int p_id, const Vector3 &p_position, float p_radius, float p_swirl, float p_updraft);
+	void remove_vortex(int p_id);
+	int get_vortex_count() const { return vortices.size(); }
+	Vector3 get_vortex_wind_at(const Vector3 &p_position, float p_height_above_ground = 10.0f) const;
 	// Smoke haze (docs/ideas/physx.md, "Smoke haze dims the sun").
 	void set_smoke_haze(bool p_enabled);
 	bool is_smoke_haze() const { return smoke_haze; }
@@ -1010,8 +1079,15 @@ public:
 		float shadow_size = 0.0f;
 		int shadow_res = 0;
 		Vector<float> shadow_values;
+		float ground_height = 0.0f;
+		float warm_nose_temperature = 0.0f;
+		float warm_nose_base = 1000.0f;
 
 		float rain_at(Vector3 p_position) const;
+		// The rain share (liquid_share()) at a world height for the air there.
+		float liquid_share_at(float p_celsius, float p_humidity, float p_world_height) const {
+			return liquid_share(p_celsius, p_humidity, p_world_height - ground_height, warm_nose_temperature, warm_nose_base);
+		}
 		float cloud_cover_at(Vector3 p_position) const;
 		float sun_visibility_at(Vector3 p_position) const;
 	};
@@ -1022,7 +1098,7 @@ public:
 	float contract_air_humidity_at(const Vector3 &p_position) const override { return get_air_humidity_at(p_position); }
 	Vector3 contract_wind_at(const Vector3 &p_position, float p_height_above_ground) const override { return get_wind_at(p_position, p_height_above_ground); }
 	float contract_precipitation_at(const Vector3 &p_position) const override { return get_rain_at(p_position); }
-	float contract_rain_share_at(const Vector3 &p_position) const override { return rain_fraction(get_air_temperature_at(p_position), get_air_humidity_at(p_position)); }
+	float contract_rain_share_at(const Vector3 &p_position) const override { return get_rain_share_at(p_position); }
 	float contract_surface_wetness_at(const Vector3 &p_position) const override { return get_wetness_at(p_position); }
 	float contract_puddle_at(const Vector3 &p_position) const override { return get_puddle_at(p_position); }
 	float contract_contact_wetness_at(const Vector3 &p_position) const override { return get_contact_wetness_at(p_position); }
@@ -1031,6 +1107,7 @@ public:
 	float contract_canopy_closure_at(const Vector3 &p_position) const override { return get_canopy_closure_at(p_position); }
 	float contract_frost_at(const Vector3 &p_position) const override { return get_frost_at(p_position); }
 	float contract_rainfall_at(const Vector3 &p_position) const override { return get_rainfall_at(p_position); }
+	float contract_orographic_factor_at(const Vector3 &p_position) const override { return get_orographic_factor_at(p_position); }
 	float contract_snowfall_at(const Vector3 &p_position) const override { return get_snowfall_at(p_position); }
 	float contract_smoke_at(const Vector3 &p_position) const override { return get_smoke_at(p_position); }
 	float contract_obstacle_height_at(const Vector3 &p_position) const override { return get_obstacle_height_at(p_position); }
@@ -1040,6 +1117,9 @@ public:
 	float contract_sea_spray_at(const Vector3 &p_position) const override { return get_sea_spray_at(p_position); }
 	float contract_salt_at(const Vector3 &p_position) const override { return get_salt_at(p_position); }
 	float contract_canopy_water_at(const Vector3 &p_position) const override { return get_canopy_water_at(p_position); }
+	float contract_glaze_at(const Vector3 &p_position) const override { return get_glaze_at(p_position); }
+	Vector3 contract_rime_at(const Vector3 &p_position) const override { return get_rime_at(p_position); }
+	float contract_valley_fog_top_at(const Vector3 &p_position) const override { return get_valley_fog_top_at(p_position); }
 	float contract_canopy_wetness_at(const Vector3 &p_position) const override { return get_canopy_wetness_at(p_position); }
 	float contract_canopy_drip_at(const Vector3 &p_position) const override { return get_canopy_drip_at(p_position); }
 	float contract_ground_water_input_at(const Vector3 &p_position) const override { return get_ground_water_input_at(p_position); }
@@ -1124,10 +1204,48 @@ public:
 	float get_canopy_water_at(Vector3 p_position) const;
 	float get_canopy_wetness_at(Vector3 p_position) const;
 	float get_canopy_drip_at(Vector3 p_position) const;
+	// Freezing rain: the warm layer aloft's peak (C, 0 none), the share of the precipitation it melts, and the glaze on
+	// exposed twigs (mm of radial clear ice; WorldWeather.glaze_at, the rain map's alpha).
+	void set_warm_nose_temperature(float p_celsius) { warm_nose_temperature = CLAMP(p_celsius, 0.0f, 15.0f); }
+	float get_warm_nose_temperature() const { return warm_nose_temperature; }
+	float get_warm_nose_melt() const;
+	float get_glaze_at(Vector3 p_position) const;
+	static float glaze_accretion_rate(float p_precip_mm_h, float p_wind_m_s);
+	// Rime: supercooled cloud water freezing on what stands in the wind (rime on; WorldWeather.rime_at, the frost map's
+	// blue and alpha).
+	void set_rime(bool p_enabled);
+	bool is_rime_enabled() const { return rime; }
+	Vector3 get_rime_at(Vector3 p_position) const;
+	static float rime_accretion_rate(float p_cloud_water, float p_wind_m_s, float p_celsius);
+	void set_warm_nose_base(float p_height) { warm_nose_base = MAX(p_height, 0.0f); }
+	float get_warm_nose_base() const { return warm_nose_base; }
+	void set_ice_storm_glaze(float p_mm);
+	float get_ice_storm_glaze() const { return ice_storm_glaze; }
+	// The precipitation's phase under the warm layer, at p_height m above the map's ground with p_celsius air there:
+	// the share reaching it liquid (the Jennings split as the floor), and in r_freezing the share landing liquid on
+	// frozen surfaces. Snow melted aloft (get_warm_nose_melt()'s curve, the layer taken 1 km deep) refreezes to ice
+	// pellets in a deep cold layer by Bourgouin's (2000) energies. One split for every reader.
+	static float liquid_share(float p_celsius, float p_humidity, float p_height, float p_nose_celsius, float p_nose_base, float *r_freezing = nullptr);
+	static float warm_nose_melt(float p_nose_celsius);
+	float get_freezing_share_at(Vector3 p_position) const; // 0..1 of the precipitation
 	// Cloud water at the ground (g/m3: 6.7 times the clouds' extinction per metre, droplets of 10 um effective radius)
 	// where the terrain stands in the cloud, and the fog water the canopy drips onto the ground (mm/h).
 	float get_fog_water_at(Vector3 p_position) const;
 	float get_fog_drip_at(Vector3 p_position) const;
+	void set_orographic_rain(bool p_enabled);
+	bool is_orographic_rain_enabled() const { return orographic_rain; }
+	float get_orographic_factor_at(Vector3 p_position) const;
+	void set_cold_pools(bool p_enabled);
+	bool is_cold_pools_enabled() const { return cold_pools; }
+	void set_cold_pool_strength(float p_celsius) { cold_pool_strength = MAX(p_celsius, 0.0f); }
+	float get_cold_pool_strength() const { return cold_pool_strength; }
+	float get_cold_pool_at(Vector3 p_position) const;
+	void set_valley_fog(bool p_enabled);
+	bool is_valley_fog_enabled() const { return valley_fog; }
+	void set_valley_fog_density(float p_sigma) { valley_fog_density = MAX(p_sigma, 0.0f); }
+	float get_valley_fog_density() const { return valley_fog_density; }
+	float get_valley_fog_top_at(Vector3 p_position) const; // absolute height of the fog's top, -INF where none
+	float get_valley_fog_depth_at(Vector3 p_position) const; // m over the ground
 	void set_fog_drip(bool p_enabled) { fog_drip = p_enabled; }
 	bool is_fog_drip_enabled() const { return fog_drip; }
 	// Sea spray settling (mm/h of sea water), the spray's own wet film over the surface storage (0..1), and the

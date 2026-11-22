@@ -78,6 +78,16 @@
 				A stand-replacing disturbance over a disc around [param center] (world XZ) of [param radius] metres, [param age_years] years ago, of [param kind] ([enum Disturbance]; windthrow and beetle kills, which the trees report; fire comes from [WorldFire]). Returns its id. Reports its area through [signal stand_changed].
 			</description>
 		</method>
+		<method name="add_disturbances">
+			<return type="int" />
+			<param index="0" name="centers" type="PackedVector3Array" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="kind" type="int" />
+			<param index="3" name="age_years" type="float" />
+			<description>
+				Adds a disc of [param radius] at each of [param centers], all of one [param kind] and age, with one grid rebuild and one [signal stand_changed] report (an avalanche track, a windthrow). Earlier events of the same kind that a new disc covers are replaced, so a path struck again keeps one event per disc. Returns the number added.
+			</description>
+		</method>
 		<method name="add_strike">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
@@ -256,6 +266,12 @@
 		</constant>
 		<constant name="DISTURBANCE_ROOTING" value="5" enum="Disturbance">
 			Boar rooting turned the soil: the age is the fractional years since. A field-layer disturbance, read by [method rooting_age_at]; [method stand_age_at] and [method disturbance_at] leave it out.
+		</constant>
+		<constant name="DISTURBANCE_AVALANCHE" value="6" enum="Disturbance">
+			A dense avalanche broke the stand (SnowAvalanche3D [code]stand_damage[/code]): the age is the years since.
+		</constant>
+		<constant name="DISTURBANCE_ICE_STORM" value="7" enum="Disturbance">
+			Freezing rain loaded the crowns past breaking (TreeGenerator's ice storm stand): broken tops and limbs, bent birch, the canopy opened but standing. The age is the years since.
 		</constant>
 	</constants>
 </class>

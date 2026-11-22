@@ -47,6 +47,31 @@
 				Adds [param swe_mm] of snow water equivalent everywhere on the map at [param density] (kg/m³), as fresh snow. For scenes that start under snow. With [param world], the world tier outside the near square takes it too (a storm over the whole terrain); false keeps it to the near square.
 			</description>
 		</method>
+		<method name="add_drift">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="depth" type="float" />
+			<param index="3" name="density" type="float" default="300.0" />
+			<description>
+				Lays a cone of wind-packed snow on the near square: [param depth] metres at [param position], fading to none at [param radius] metres, at [param density] kg/m³ (counted as wind slab). For drifts, ploughed banks and piles in scenes and tests.
+			</description>
+		</method>
+		<method name="add_depth_hoar">
+			<return type="void" />
+			<param index="0" name="share" type="float" />
+			<description>
+				Sets the base's depth hoar share (0 to 1) wherever there is snow. For scenes and tests; the cover grows it itself (see [member depth_hoar_enabled]).
+			</description>
+		</method>
+		<method name="add_sastrugi">
+			<return type="void" />
+			<param index="0" name="relief" type="float" />
+			<param index="1" name="wind_direction" type="Vector2" />
+			<description>
+				Sets the sastrugi relief ([param relief] m, ridge to floor, at most 0.4 m and half the pack) carved by a wind blowing toward [param wind_direction] (x, z) wherever there is snow. For scenes and tests; the cover grows them itself (see [member sastrugi_enabled]).
+			</description>
+		</method>
 		<method name="add_suncups">
 			<return type="void" />
 			<param index="0" name="relief" type="float" />
@@ -323,6 +348,13 @@
 				Returns the ground height the snowpack uses at [param position].
 			</description>
 		</method>
+		<method name="get_depth_hoar_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the depth hoar share (0 to 1) at the pack's base at [param position].
+			</description>
+		</method>
 		<method name="get_hoar_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -354,6 +386,13 @@
 			<return type="SnowLakeIce3D" />
 			<description>
 				Returns the [SnowLakeIce3D] this cover made to draw its ice, or [code]null[/code].
+			</description>
+		</method>
+		<method name="get_layers_at" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The pack's layers at [param position] (its cell), bottom first, as dictionaries: [code]swe[/code] (kg/m²), [code]density[/code] (kg/m³), [code]depth[/code] (m), [code]age[/code] (hours) and [code]kind[/code] ([code]"new"[/code] fallen snow under a week old, [code]"wind"[/code] wind-laid or wind-packed slab, [code]"old"[/code] settled, [code]"crust"[/code] a melt-freeze or rain crust, [code]"hoar"[/code] buried surface hoar, with its [code]crystal_mm[/code], [code]"depth_hoar"[/code] the base turned to depth hoar) and [code]liquid[/code] (kg/m², its share of the pack's liquid water). Empty with [member layers_enabled] off.
 			</description>
 		</method>
 		<method name="get_main_thread_msec" qualifiers="const">
@@ -528,6 +567,26 @@
 				The world tier's snow water equivalent at a position, in mm.
 			</description>
 		</method>
+		<method name="get_sastrugi_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the sastrugi at [param position]: their relief (m, the vector's length) times the direction (x, z) of the wind that carved them.
+			</description>
+		</method>
+		<method name="get_sastrugi_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The sastrugi map over the cover's square (RG half floats: relief times the carving wind's direction), read by [SnowSurface3D].
+			</description>
+		</method>
+		<method name="get_wind_slab_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the thickness of wind-packed snow (wind slab) in the pack at [param position], in metres: drift deposits, snow that fell while it drifted, and the surface packed by drifting wind (see [member wind_packing_enabled]). It settles with the pack and melts from the top. Nearest cell, no blending.
+			</description>
+		</method>
 		<method name="get_world_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
@@ -549,6 +608,33 @@
 			<param index="4" name="shortwave" type="float" />
 			<description>
 				The rate surface hoar deposits on the snow in kg/m² per hour for the air temperature, relative humidity (0 to 1), wind at 10 m (m/s), cloud cover (0 to 1) and absorbed shortwave (W/m²); negative where it sublimates. Grows on clear calm nights.
+			</description>
+		</method>
+		<method name="depth_hoar_step" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="share" type="float" />
+			<param index="1" name="gradient" type="float" />
+			<param index="2" name="hours" type="float" />
+			<param index="3" name="wet_share" type="float" />
+			<description>
+				The base's depth hoar share after [param hours] under a temperature [param gradient] (C/m): it grows at [code](G - 10) / 10[/code] per two weeks over 10 C/m (Akitaya 1974; Marbouty 1980; SNOWPACK's kinetic growth), stays under weaker gradients, and goes within about a day once the pack holds liquid water ([param wet_share] over 3%).
+			</description>
+		</method>
+		<method name="depth_hoar_strength" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="share" type="float" />
+			<param index="1" name="density" type="float" />
+			<description>
+				The base's shear strength (Pa) between sintered rounded snow ([code]4 x 14.5 (rho / rho_ice)^1.73[/code] kPa) and faceted depth hoar ([code]18.5 (rho / rho_ice)^2.11[/code] kPa, Jamieson and Johnston 2001) by [param share]. [SnowAvalanche3D] tests the whole pack over it as a slab.
+			</description>
+		</method>
+		<method name="drift_index" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="wind10" type="float" />
+			<param index="1" name="density" type="float" />
+			<param index="2" name="fresh" type="float" />
+			<description>
+				Crocus's driftability index (Vionnet et al. 2012): [code]SI = -2.868 exp(-0.085 U) + 1 + Mo[/code], with mobility [code]Mo = 0.34 (0.75 d - 0.5 s + 0.5) + 0.66 F(rho)[/code] and [code]F = 1.25 - 0.0042 (max(rho, 50) - 50)[/code]. The surface drifts when it is above 0. [param fresh] (0 to 1) stands for the grains' dendricity (fresh) against their sphericity (old).
 			</description>
 		</method>
 		<method name="holding_depth" qualifiers="static">
@@ -606,6 +692,24 @@
 			<param index="4" name="hours" type="float" />
 			<description>
 				Returns lake ice after [param hours] at [param air_celsius] (below 0 °C) from [param ice] metres, under [param snow_depth] metres of snow of [param snow_density] kg/m³: Stefan's law with the heat path through the snow and the air (Leppäranta 1993; Ashton 1989), integrated exactly.
+			</description>
+		</method>
+		<method name="layer_barrier" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="kind_above" type="int" />
+			<param index="1" name="kind_below" type="int" />
+			<description>
+				The liquid water (share by volume, over the 3 cm above the interface) a layer of [param kind_above] ponds over one of [param kind_below] (kinds as numbered: 0 new, 1 wind, 2 old, 3 crust, 4 hoar, 5 depth hoar): 0.08 where fine grains lie over coarse ones (a capillary barrier; Waldner et al. 2004, Avanzi et al. 2016), 0.15 over a crust, 0 where water passes on. Water percolates down through the layers each update; what a barrier ponds is where wet slabs fail.
+			</description>
+		</method>
+		<method name="layer_compaction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="density" type="float" />
+			<param index="1" name="stress" type="float" />
+			<param index="2" name="celsius" type="float" />
+			<param index="3" name="hours" type="float" />
+			<description>
+				A layer's density (kg/m³) after [param hours] under [param stress] (Pa, the weight of the snow above) at [param celsius]: Crocus's viscous settling (Vionnet et al. 2012), eta = eta0 (rho / 250) exp(0.1 (0 - T) + 0.023 rho), eta0 7.62e6 kg/m/s.
 			</description>
 		</method>
 		<method name="new_snow_density" qualifiers="static">
@@ -697,6 +801,36 @@
 				Waits for an update running in the background and swaps its results in now. For tests and tools: the game never needs it.
 			</description>
 		</method>
+		<method name="wind_packing_step" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="density" type="float" />
+			<param index="1" name="wind10" type="float" />
+			<param index="2" name="fresh" type="float" />
+			<param index="3" name="hours" type="float" />
+			<description>
+				The top 10 cm's density after [param hours] of wind: Crocus's wind-driven compaction toward 350 kg/m3 with time constant 48 h / (0.632 SI) while [method drift_index] is above 0, else unchanged.
+			</description>
+		</method>
+		<method name="wind_snow_density" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<param index="1" name="wind10" type="float" />
+			<description>
+				The density of snow falling in wind (kg/m3): Crocus's [code]109 + 6 T + 26 U^0.5[/code] (Vionnet et al. 2012), or [method new_snow_density] where that is higher (calm), between 50 and 350.
+			</description>
+		</method>
+		<method name="sastrugi_step" qualifiers="static">
+			<return type="Vector2" />
+			<param index="0" name="relief" type="Vector2" />
+			<param index="1" name="wind_dir" type="Vector2" />
+			<param index="2" name="eroded" type="float" />
+			<param index="3" name="filled" type="float" />
+			<param index="4" name="depth" type="float" />
+			<param index="5" name="hard" type="bool" />
+			<description>
+				One step of the sastrugi relief (follow-up 46): on a [param hard] surface the depth [param eroded] carves relief along [param wind_dir]; [param filled] (snow laid on them, melt) fills it; at most 0.4 m and half the pack's [param depth].
+			</description>
+		</method>
 		<method name="transport_flux" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="wind10" type="float" />
@@ -749,6 +883,9 @@
 		<member name="drift_obstacles" type="bool" setter="set_drift_obstacles" getter="is_drift_obstacles_enabled" default="true">
 			Rocks, walls, buildings and vehicles (WorldWeather.obstacle_height_at: the weather's [code]weather_shelter[/code] obstacles) count as terrain in the drift's Sx (Winstral and Marks 2002): the wind strips their tops and snow fills in behind them, out to about 15 heights for a wall (Tabler 1991). Blowing snow also reads their lee (WorldWeather.obstacle_lee_at at the snow's surface): the transport flux drops behind them and the snow carried in settles until the drift reaches about 1.2 times the obstacle's height. Read a sixteenth of the square each update; a change bakes Sx again.
 		</member>
+		<member name="drift_relief" type="bool" setter="set_drift_relief" getter="is_drift_relief_enabled" default="true">
+			Blowing snow sees the snow's own relief: drifts, banks and dunes change the wind's shear on the snow as hills do on sand, from linearised flow (Jackson and Hunt 1975, in Kroy, Sauermann and Herrmann's 2002 form, shared with the terrain's dune sea). The shear peaks upwind of a crest and drops past it, so a drift's windward side erodes and its lee fills: a big drift becomes a snow dune and creeps downwind, one shorter than about 20 m flattens, and on bare ground it is blown away. Dry blown snow steeper than 38 degrees slides down as a slip face. The shear is kept for 5 minutes of weather, until the wind turns or the square moves.
+		</member>
 		<member name="drift_strength" type="float" setter="set_drift_strength" getter="get_drift_strength" default="0.6">
 			How strongly drift redistributes falling snow: at full wind, a fully sheltered cell gets [code]1 + drift_strength[/code] times the snowfall and a fully exposed cell [code]1 - drift_strength[/code] times.
 		</member>
@@ -779,6 +916,9 @@
 		</member>
 		<member name="lapse_rate" type="float" setter="set_lapse_rate" getter="get_lapse_rate" default="6.5">
 			How fast the air cools with height above the weather map's ground height, in °C per km (6.5, the standard atmosphere). Sets where rain turns to snow on a mountain and where snow stays.
+		</member>
+		<member name="layers_enabled" type="bool" setter="set_layers_enabled" getter="is_layers_enabled" default="true">
+			The pack as layers (up to eight a cell), as Crocus and SNOWPACK keep it: each snowfall and each wind deposit is a layer with its own density and age, settling under the weight above it ([method layer_compaction]); the wind's packing turns the top into a wind slab layer. The bulk fields stay the pack's total: each update the layers are matched to them, melt, erosion, slides and releases coming off the top and the bulk's settling going to the layers by their pore space. Avalanches weigh a slab over a weak layer by its own layers (light new snow on a dense old pack is light), and the wind packs the top by its own density. About 2.5 ms more an update on a 256 x 256 square. Melt-freeze and rain crusts, buried surface hoar and depth hoar are layers of their own, so older buried weak layers stay known to avalanches; the pack's liquid water is split among the layers, percolating down and ponding over capillary barriers and crusts ([method layer_barrier]), and avalanches read the wettest layer and the interface the water ponds on. See [method get_layers_at].
 		</member>
 		<member name="liquid_capacity" type="float" setter="set_liquid_capacity" getter="get_liquid_capacity" default="0.05">
 			The share of its ice the snowpack holds as liquid water before meltwater and rain drain out.
@@ -816,6 +956,12 @@
 		<member name="slide_angle" type="float" setter="set_slide_angle" getter="get_slide_angle" default="25.0">
 			Ground steeper than this, in degrees, sheds snow beyond what it holds (SnowSlide: 25 degrees).
 		</member>
+		<member name="depth_hoar_enabled" type="bool" setter="set_depth_hoar_enabled" getter="is_depth_hoar_enabled" default="true">
+			Depth hoar: a shallow pack under cold air (a gradient over 10 C/m from a base near 0 C to the air) grows weak basal facets over one to three weeks ([method depth_hoar_step]); [SnowAvalanche3D] releases the whole pack on them once loading outweighs [method depth_hoar_strength]. Drift deposits now also load buried surface hoar.
+		</member>
+		<member name="sastrugi_enabled" type="bool" setter="set_sastrugi_enabled" getter="is_sastrugi_enabled" default="true">
+			Sastrugi (Filhol and Sturm 2015): drifting snow scouring a hard surface (wind slab on top, or snow of 250 kg/m3 and more) carves ridges along the wind, 2% of the scoured snow's depth into relief, none where the drift builds up. New snow, drift deposits and melt fill them. [SnowSurface3D] draws them as geometry.
+		</member>
 		<member name="slide_enabled" type="bool" setter="set_slide_enabled" getter="is_slide_enabled" default="true">
 			If [code]true[/code], snow slides off steep ground to lower cells (SnowSlide, Bernhardt and Schulz 2010): from the highest snow surface down, a cell holding more than [method holding_depth] passes the excess downhill, in proportion to the drop to each lower neighbour. Mass is conserved.
 		</member>
@@ -851,6 +997,9 @@
 		</member>
 		<member name="wind_curvature_length" type="float" setter="set_wind_curvature_length" getter="get_wind_curvature_length" default="20.0">
 			The distance, in metres, over which [member wind_transport_enabled] measures the ground's curvature (MicroMet's length scale; at least two cells).
+		</member>
+		<member name="wind_packing_enabled" type="bool" setter="set_wind_packing_enabled" getter="is_wind_packing_enabled" default="true">
+			Wind slab: snow falling in wind lands denser ([method wind_snow_density]), and where the surface drifts its top 10 cm pack toward 350 kg/m3 ([method wind_packing_step]). Both, with drift deposits, are tracked as [method get_wind_slab_at].
 		</member>
 		<member name="wind_transport_enabled" type="bool" setter="set_wind_transport_enabled" getter="is_wind_transport_enabled" default="true">
 			When on, wind above the transport threshold moves the snow already lying (SnowTran-3D, Liston and Sturm 1998): each cell sends its flux ([method transport_flux]) downwind, so snow leaves where the wind speeds up (windward shoulders, crests) and settles where it slows (below crests, in hollows), laid down wind-packed at 300 kg/m³. The wind over the ground is weighted by its slope along the wind and its curvature (MicroMet, Liston and Elder 2006). Snow under a frozen crust, wet snow and snow under trees stay. Snow comes in at the upwind edge of the map as from a cell like the edge one and leaves at the downwind edge. [member drift_enabled] is separate: it places falling snow.

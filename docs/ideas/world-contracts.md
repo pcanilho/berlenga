@@ -32,12 +32,17 @@ contract returns with no provider.
 | `air_humidity_at(pos)` | 0..1 | 0.7 | Relative, at the live air temperature |
 | `dew_point_at(pos)` | C | from the two above | |
 | `wind_at(pos, height_above_ground)` | m/s, Vector3 | 0 | Mean plus gusts, sheltered by canopy and obstacles, with the terrain's speed-up, turning and updraught; height < 0 is measured from the ground under pos |
+| `wind_at` note: wind vortices | m/s | none | WeatherMap3D `add_vortex(foot, R, swirl, updraft, spin)` / `set_vortex(id, ...)` each frame by the owner / `remove_vortex(id)` (22 Nov). `wind_at` (and `get_wind_parts`' mean, and the shader `weather_wind`, first four vortices) adds a Rankine field round each (Tratt et al. 2003): tangential swirl r/R inside R, swirl R/r outside, gone by 5R; updraft x exp(-(r/R)^2), fading from 4R to 10R up; inflow 0.3 swirl in the lowest R. Owner: PhysXDustDevils3D (updraft 0.3 swirl); lee whirls can use the same call. `get_vortex_wind_at(pos, h)` returns the vortices' part alone |
 | `mean_wind_at(pos)` | m/s, Vector3 (y 0) | 0 | 10 m mean, terrain included, no gusts |
 | `wind_aloft_at(pos, altitude)` | m/s, Vector3 (y 0) | 0 | Free wind: log law and Ekman veer to `boundary_layer_height`, then `wind_shear_aloft` |
 | `terrain_lee_at(pos)` | rad | NaN | Winstral's Sx from the terrain wind (positive in a lee; NaN outside it); fire's lee-slope whirls |
 | `precipitation_at(pos)` | mm/h | 0 | Water equivalent falling |
-| `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there |
+| `rain_share_at(pos)` | 0..1 | 1 | Liquid share (Jennings 2018) at the air there; under a warm nose aloft its melted share too (freezing rain), less what a deep cold layer refreezes to pellets (weather.md "Freezing rain and glaze") |
+| `air_temperature_at(pos)` note | C | | Includes WeatherMap3D's cold air pools (22 Nov): colder in hollows on clear calm nights, fading to the free air at the pool's top; `air_humidity_at` follows with the same vapour |
 | `rainfall_at(pos)`, `snowfall_at(pos)` | mm/h of water | 0 | The precipitation split by `rain_share_at` |
+| `rime_at(pos)` | Vector3: length mm of rime on an exposed twig, direction into the wind it grew from | (0, 0, 0) | WeatherMap3D `rime`: supercooled cloud below 0 C (Makkonen 2000) |
+| `orographic_factor_at(pos)` | ratio | 1 | The terrain climate's factor `precipitation_at` already carries (WeatherMap3D `orographic_rain`); a reader with its own climate read divides it out |
+| `WorldContracts.climate_precipitation_factor_at(pos)` (static) | ratio of the region mean | 1 | The terrain climate slot (`WorldClimateProvider`, TerrainDataMap3D's baked precipitation); the first provider that covers the point answers |
 | `smoke_at(pos)` | g/m2 | 0 | Fires' smoke particulate in the column (the haze layer) |
 | `obstacle_height_at(pos)` | m | 0 | Wind-blocking obstacles (rocks, walls, buildings, vehicles) over the ground, on the provider's shelter grid |
 | `obstacle_lee_at(pos)` | 0..1 | 1 | Near-ground wind behind upwind obstacles over the open wind: 0.15 in the cavity, back to 1 by 25 H |
@@ -53,7 +58,7 @@ contract returns with no provider.
 | `canopy_closure_at(pos)`, `shelter_at(pos, h)` | 0..1 | 0, 1 | |
 | `season()` | dictionary (weather_season.h State) | 15 May, no snow | |
 | `frost_at(pos)` | mm | 0 | Hoarfrost on exposed surfaces (`dew_and_frost`) |
-| `glaze_at(pos)` | mm | 0 | Radial clear ice from freezing rain on exposed twigs and wires (ice storms); provider to come (weather), readers trees (trees.md 5be) |
+| `glaze_at(pos)` | mm | 0 | Radial clear ice from freezing rain on exposed twigs and wires (ice storms); provider WeatherMap3D (`warm_nose_temperature`, `warm_nose_base`, test knob `ice_storm_glaze`), readers trees (trees.md 5be) |
 | Events: `ground_strikes_after(serial)` | list | empty | Lightning, from `WeatherLightning3D` |
 | `day_of_year()` | 1..365 | 135 | The clock's date, else the map's season day |
 | `season_at(pos, day = -1)` | dictionary (season State) | the default climate at pos.y | At the point's height, the live departure included; day < 1 is today |
@@ -73,7 +78,8 @@ contract returns with no provider.
 
 Shader globals (the GPU side of the same contract): `weather_wind_map`, `weather_state_map`, `weather_map_rect`,
 `weather_contact_map`, `weather_shelter_map`, `weather_frost_map` (R frost mm, G surface cooling K),
-`weather_precip_phase`; formats in weather.md. Wind in shaders: `weather_wind(world_pos, height)`,
+`weather_precip_phase`, `weather_vortex_0..3` (x, z, R, swirl x spin) and `weather_vortex_up` (their updrafts);
+formats in weather.md. Wind in shaders: `weather_wind(world_pos, height)`,
 `weather_height_above_ground(world_pos)`, `weather_terrain(xz)` from `WeatherMap3D.get_wind_shader_code()`; all
 globals are declared at start, so a shader compiles with no weather and has no wind.
 
@@ -123,6 +129,7 @@ the live ground.
 | `track_mud(pos, radius, depth, wet, print)` | m of film in; returns m3 laid | 0 laid with no provider | Clay a body carries pressed onto the ground; print x 1 tyre, 2 sole (0 a thrown lump), y yaw, z w length and width. Callers: WeatherMap3D wet tracks (round 7) |
 | `coarse_cover_at(pos)` | share of the ground 0..1: (pebbles, gravel, fine grains) | 0 | The stone fields' cover maps (RockField3D, a separate `WorldCoverProvider` slot, any number of fields, the largest answers). Reader: GroundSurface3D sand (a gravel lag armours the sand: blown share and ripples x 1 - smoothstep(0.1, 0.35, pebble + gravel); Bagnold 1941, Sharp 1963) |
 | `albedo_at(pos)` | linear rgb; a: share known (1 a ground colour answers, the snow's cover alone past it, 0 nothing) | (0, 0, 0, 0) | The ground as drawn, a few metres' mean: TerrainMaterial3D's layer colours weighed as its shader weighs them (generator geology and slope, no texture detail; a separate `WorldGroundColorProvider` slot, registered by `use_generator`), wet by the weather's surface wetness (x mix(1, 0.2, porosity), Lagarde 2013), under the snow (WorldSnow.albedo_at by the materials' level-ground cover). Reader: PhysXFlow3D `ground_from_world` (the light the ground sends up into gas). Plant cover (21 Nov): a `WorldPlantColorProvider` slot (`contract_plant_albedo_at`: rgb the plants' far colour, a the share of ground they hide, < 0 past the producer); GrassField3D (the ground field: its far colour over the ground map's sward cover) and VegetationField3D (its far map, colour and cover) register, each laid over the ground colour in turn, leaves not darkened by rain |
+| `relief_at(pos)` | x m to add to the heightfield's height, y share 0..1 | (0, 0) | The drawn ground over the heightfield (22 Nov, with terrain): a `WorldReliefProvider` slot (`contract_relief_at`, x NaN past the producer; the first that knows the point answers). Landscape3D's cliff relief (50 to 62 degrees) and bank relief (40 to 50) push points along the slope's horizontal normal by d, analytic from the heights alone (no LOD state, the stitch weight ignored), so a placer at fixed xz adds about d tan(slope). GPU placers: globals `terrain_relief_map` (RG half, R m, G share) over `terrain_relief_rect`. Provider: Landscape3D (terrain fills it with the bank relief). Readers to come: VegetationField3D, rock scatter, GrassField3D and ground detail (the map), GroundSurface3D's base height, Landscape3D's own collider on its finest chunks. `get_cliff_point` stays for things laid on the face itself (falls) |
 | pressing | | through the `world_contact` group |
 
 The ground also publishes a shader global, `ground_wet_map` (GroundSurface3D; drawn by `material.cpp`, the path
@@ -176,6 +183,7 @@ below the sea's level reads its own water, and a body above the water reads the 
 | `sediment_at(pos)` | kg/m3 (x mineral, y ash and char) | (0, 0) | Suspended load of the water that answers; river and lake shading cloud and darken by it |
 | `breaking_at(pos)` | m | 0 | Height of the waves breaking: the broken waves in a surf zone (about 0.78 of the depth), whitecap cover times wave height on open water; the largest any producer reports |
 | `add_sediment(pos, mineral_kg_s, ash_kg_s)` | kg/s | dropped with no water | A load entering the water that answers there (runoff off burnt or bare ground, banks, slides); it carries it downstream |
+| `high_water_at(pos)` | Vector4: x the last flood's highest surface (m, world), y days since that peak, z w the peak flow's direction (unit x, z; 0 unknown) | (-INF, -1, 0, 0) | Producers keep their peak stage (Valence: rivers by section, lakes); the highest mark answers. Reader: vegetation wrack lines |
 
 Tests: `WorldContracts.set_water(stub)` replaces the whole contract; `WorldContracts.add_water_stub(stub)` adds a
 script producer beside the real ones (a pool or a sea for a buoyancy bench without one).
@@ -229,10 +237,11 @@ scripts; `set_stand(stub)` for a test.
 | Member | Unit | Default |
 | --- | --- | --- |
 | `stand_age_at(pos)` | years since the last stand-replacing disturbance (world xz) | -1 (old growth) |
-| `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle, 4 beaver (pond drained; years since), 5 rooting (boar; field layer only, left out here: `rooting_age_at`) (new kinds appended only) | 0 |
+| `disturbance_at(pos)` | int: 0 none, 1 fire, 2 wind, 3 beetle, 4 beaver (pond drained; years since), 5 rooting (boar; field layer only, left out here: `rooting_age_at`), 6 avalanche (SnowAvalanche3D `stand_damage`; years since) (new kinds appended only) | 0 |
 | `add_disturbance(center, radius, kind, age_years)`, `set_disturbance_age(id, years)`, `remove_disturbance(id)`, `clear_disturbances()` | a disc, years ago; returns an id | |
 | `strike_age_at(pos)` | years since the youngest lightning strike within 3 m of a trunk at pos (xz) | -1 (none) |
 | `add_strike(pos, age_years)`, `clear_strikes()`, `get_strike_count()`, `get_strikes_in(rect, out)` (C++: (x, z, age) copies touching rect, taken on the main thread for worker placement; stubs' `_strike_age_at` has no list) | the crown attachment point, years ago; up to 4096, oldest dropped | |
+| `add_disturbances(centers, radius, kind, age)` | write: many discs of one kind in one batch, earlier discs of that kind they cover replaced | |
 | `rooting_age_at(pos)` | fractional years since the youngest boar rooting disc (DISTURBANCE_ROOTING) | -1 (none) |
 | `set_trails(Array)`, `get_trails()` | the worn-path network: Dictionaries with points (world xz), width m, passes per year, kind | empty |
 | `trail_at(pos)` | Vector2 (passes per year of the busiest trail, tread share 0..1) | (0, 0) |

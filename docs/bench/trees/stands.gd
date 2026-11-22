@@ -25,6 +25,7 @@ extends Node3D
 #   EDGE=1            env, with --plot: the stand with make_edge()'s mantle and edge trees
 #   AGE=y [KIND=k]    env, with --plot: the make_succession() stage at y years after disturbance kind k
 #   --inside          with --plot: the view from inside the stand, 70 m deep
+#   --day=N           with --plot: leaves by day of year (main.gd's stand-in climate)
 #   --deep            with --inside: from among the canopy trees, away from the stream
 #   --variants=N      meshes per species (default 1)
 #   --fire            build the fire band variants too (five meshes a species) and check their meta
@@ -58,7 +59,7 @@ const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2
 		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
 		"northern hardwood", "eastern oak", "pine-hemlock", "coppice standards", "wood pasture", "pollard row", "stone pine",
-		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "beaver pond", "deer wood", "woodland", "NA woodland"]
+		"olive grove", "date oasis", "beetle spruce", "windthrow", "old-growth beech", "boreal taiga", "alder carr", "floodplain willow", "beaver pond", "deer wood", "ice storm", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
@@ -1009,6 +1010,27 @@ func _stand_checks(only := -1) -> void:
 						if Vector2(x.x, x.z).normalized().dot(dir) < cos(0.5):
 							off += 1
 			_check(thrown > 0 and snapped > 0 and leaning > 0 and stand_count > 0 and off == 0 and plates > 0, "windthrow: %d thrown (%d variants with root plates), %d snapped, %d leaning, %d standing; %d of %d drawn turned off the storm's track" % [thrown, plates, snapped, leaning, stand_count, off, checked])
+		elif i == TreeGenerator.STAND_ICE_STORM:
+			# An ice storm stand (trees.md 5be): bent paper birch, broken tops and stripped crowns all placed, each
+			# damaged variant carrying its kind in tree_ice_storm (1 bent, 2 top broken, 3 limbs), hemlock whole.
+			var placed := [0, 0, 0, 0]
+			var kinds := [0, 0, 0, 0]
+			var wrong := 0
+			for s in sps.size():
+				var nm7: String = sps[s].resource_name
+				var want := 1 if nm7.contains("bent by ice") else (2 if nm7.contains("ice-broken top") else (3 if nm7.contains("ice-stripped") else 0))
+				if want == 0:
+					continue
+				placed[want] += f.get_placements(s).size()
+				for m in sps[s].meshes:
+					var meta: Vector2 = m.get_meta("tree_ice_storm", Vector2(-1, 0)) if m != null else Vector2(-1, 0)
+					if meta.x < 0.0:
+						wrong += 1
+					elif int(meta.y) == want or (want == 2 and int(meta.y) == 3):
+						kinds[want] += 1
+					else:
+						wrong += 1
+			_check(placed[1] > 0 and placed[2] > 0 and placed[3] > 0 and kinds[1] > 0 and kinds[2] > 0 and kinds[3] > 0 and wrong == 0, "ice storm: placed %d bent, %d broken-top, %d stripped; variants %d / %d / %d, %d without their damage" % [placed[1], placed[2], placed[3], kinds[1], kinds[2], kinds[3], wrong])
 		elif i == TreeGenerator.STAND_DEER_WOOD:
 			# A deer wood (trees.md 5aw): browsed saplings placed, every species browsed (none unbrowsed), no shrub layer.
 			var hedged := 0
@@ -1308,6 +1330,19 @@ func _near_leaves_check() -> void:
 		near = null
 		await get_tree().process_frame
 	_check(src.get_near_mesh_count() == 0, "near leaves: meshes are freed once nothing draws them (%d left)" % src.get_near_mesh_count())
+	# An ice storm's band (trees.md 5be): variant + 65536 x band grows that band's glaze as geometry on the near mesh.
+	var t1 := Time.get_ticks_msec()
+	var iced: Mesh = null
+	while iced == null and Time.get_ticks_msec() - t1 < 180000:
+		iced = src.request_near_mesh(sp.near_mesh_key, 0 + 65536 * 2)
+		await get_tree().process_frame
+	var has_ice := false
+	if iced != null:
+		for i in iced.get_surface_count():
+			has_ice = has_ice or iced.surface_get_name(i) == "ice"
+	_check(iced != null and has_ice and float(iced.get_meta("tree_glaze_mm", 0.0)) == 9.0, "near leaves: glaze band 2 builds a near mesh with 9 mm of ice as geometry")
+	iced = null
+	await get_tree().process_frame
 
 # Wind level of detail (trees.md 3c): a camera at eye height on the stand's edge, looking across
 # it. One TreeWind3D solves with the LOD, a second solves everything every frame; the pose
@@ -1457,6 +1492,9 @@ func _disc(img: Image, cx: float, cy: float, r: float, c: Color, ox: int, oy: in
 func _render_plot(i: int, args: Dictionary) -> void:
 	var raster: bool = args.has("raster")
 	gen.rigged = args.has("wind")
+	if args.has("day"):
+		# --day=N: leaves by season, from main.gd's stand-in climate (winter: --day=20).
+		gen.season = load("res://main.gd").weather_season(int(args["day"]))
 	var biome := _biome(i)
 	gen.rigged = false
 	var f: VegetationField3D

@@ -10,6 +10,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="advance_lodging">
+			<return type="void" />
+			<param index="0" name="weather_seconds" type="float" />
+			<description>
+				Steps the whole lodging grid (see [member lodging]) by [param weather_seconds] at once, reading the weather as it is now: for time skips and tests.
+			</description>
+		</method>
 		<method name="crop_calendar_stage" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="sown_day" type="int" />
@@ -32,6 +39,20 @@
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
 				The sward's cover on burnt ground at [param global_position]: 0 on a fresh burn, 1 where the ground never burnt or has recovered (see [member burn_recovery]).
+			</description>
+		</method>
+		<method name="get_lodging_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Storm lodging at [param global_position]: x is the share of blades lying down (0..1), y and z the world direction they lie in. Zero outside the grid round the camera.
+			</description>
+		</method>
+		<method name="get_fairy_ring_at" qualifiers="static">
+			<return type="Vector3" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The meadow fairy ring bands at [param global_position] (see [member fairy_rings]), 0 to 1 each: x the dark front, y the dead band, z the inner dark band. One world layout: [constant PlantSpecies.RULE_FAIRY_RING] places the ring's mushrooms on the same rings.
 			</description>
 		</method>
 		<method name="get_far_color" qualifiers="const">
@@ -275,6 +296,12 @@
 		</member>
 		<member name="ground_tint_enabled" type="bool" setter="set_ground_tint_enabled" getter="is_ground_tint_enabled" default="true">
 			If [code]true[/code], this field publishes its coverage and [member ground_tint] as the [code]grass_ground_*[/code] global uniforms. With several fields, enable it on the one that covers the most ground.
+		</member>
+		<member name="fairy_rings" type="bool" setter="set_fairy_rings" getter="is_fairy_rings" default="true">
+			Meadow fairy rings in the blades: rings 4 to 28 m across (in three of ten 40 m cells, some broken into arcs) with a band of dark, lush, taller grass at the front, a browned, thinned dead band behind it and a weaker dark band inside (Shantz and Piemeisel 1917). Computed in the shader from world position, so it costs no memory or rebuild. Never in crops.
+		</member>
+		<member name="lodging" type="bool" setter="set_lodging" getter="is_lodging" default="true">
+			Storm lodging: where gusts on wet, tall sward pass the stems' base strength (critical 2 m gust 10 m/s for a 0.6 m sward, lower when wet or raining, varying in patches), the blades go down in swirled patches along the wind and stand again over a few days (crops: weeks). Read from [WorldWeather] on a 384 m grid of 4 m cells round the camera, eight rows a frame, and handed to the shader as a texture, so it needs no rebuild.
 		</member>
 		<member name="lean" type="float" setter="set_lean" getter="get_lean" default="0.35">
 			Largest lean of a blade at rest, in metres of tip offset per metre of height.

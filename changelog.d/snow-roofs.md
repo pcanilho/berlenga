@@ -1,0 +1,1 @@
+- Snow: roof faces (group `snow_roof`) keep Eurocode's share of the snowfall and let it slide by their roofing (metal sheds sooner than shingles, a heated roof sooner still); what slides lands as a bank past the eave (`SnowBodies3D.roof_piles`, meta `snow_roof_material`, `snow_roof_heat`).

@@ -84,21 +84,43 @@ bool reproject(ivec2 px, out vec4 r_color) {
 	return true;
 }
 
-// The history clamped to the range of this frame's samples around the pixel (the 3x3 drawn pixels
-// nearest it, min/max as TAA resolves bound their history; Karis, "High Quality Temporal
-// Supersampling", SIGGRAPH 2014): clouds that drifted or grew while the pixel waited 16 frames for its
-// next sample don't trail behind. A min/max box, not variance clipping, so thin bright detail (lit
-// cloud edges) narrower than the 4-pixel sample spacing is kept.
+// The history clamped to the range of this frame's samples around the pixel (min/max of the drawn pixels
+// nearest it, as TAA resolves bound their history; Karis, "High Quality Temporal Supersampling", SIGGRAPH
+// 2014): clouds that drifted or grew while the pixel waited 16 frames for its next sample don't trail behind.
+// A min/max box, not variance clipping, so thin bright detail (lit cloud edges) narrower than the 4-pixel
+// sample spacing is kept.
+// The box is bilinear in the pixel's position: the 3x3 boxes round each of the four drawn pixels about it,
+// weighted by its distance to each. A box taken round the nearest drawn pixel alone jumped where that pixel
+// changed, every 4 pixels, and wherever a single sample's noise pulled it in, the converged history was cut
+// along that 4-pixel grid: cloud edges came out stair-stepped and plate edges as short vertical streaks.
 vec4 clamp_history(ivec2 px, vec4 p_prev) {
-	// The drawn pixels themselves (not bilinear taps, which would dilute a lone bright sample).
-	ivec2 c = ivec2(floor((vec2(px) - vec2(params.offset)) * 0.25 + 0.5));
-	vec4 lo = vec4(1e20);
-	vec4 hi = vec4(-1e20);
-	for (int y = -1; y <= 1; y++) {
-		for (int x = -1; x <= 1; x++) {
-			vec4 s = texelFetch(new_samples, clamp(c + ivec2(x, y), ivec2(0), params.low_size - 1), 0);
-			lo = min(lo, s);
-			hi = max(hi, s);
+	vec2 g = (vec2(px) - vec2(params.offset)) * 0.25;
+	ivec2 c0 = ivec2(floor(g));
+	vec2 f = g - vec2(c0);
+	// The 4x4 drawn pixels round the four (the drawn pixels themselves, not bilinear taps, which would
+	// dilute a lone bright sample).
+	vec4 s[16];
+	for (int y = 0; y < 4; y++) {
+		for (int x = 0; x < 4; x++) {
+			s[y * 4 + x] = texelFetch(new_samples, clamp(c0 + ivec2(x - 1, y - 1), ivec2(0), params.low_size - 1), 0);
+		}
+	}
+	vec4 lo = vec4(0.0);
+	vec4 hi = vec4(0.0);
+	for (int cy = 0; cy < 2; cy++) {
+		for (int cx = 0; cx < 2; cx++) {
+			vec4 l = vec4(1e20);
+			vec4 h = vec4(-1e20);
+			for (int y = 0; y < 3; y++) {
+				for (int x = 0; x < 3; x++) {
+					vec4 v = s[(cy + y) * 4 + cx + x];
+					l = min(l, v);
+					h = max(h, v);
+				}
+			}
+			float w = (cx == 0 ? 1.0 - f.x : f.x) * (cy == 0 ? 1.0 - f.y : f.y);
+			lo += l * w;
+			hi += h * w;
 		}
 	}
 	return clamp(p_prev, lo, hi);

@@ -48,6 +48,8 @@ extends Node3D
 #   --test=burnscar    rain on a burn scar: water-repellent burnt soil (WorldFire) sheds most of the rain as runoff
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
+#   --test=rain         rain pits on dry sand: a shower pits it, still air keeps them, saltation wipes them;
+#                         saltation grows adhesion warts and rain flattens them
 #   --test=avalanche    footsteps on a dune's slip face set off grain avalanches down it; not on the stoss slope
 #   --test=infill       wind fills a print from its upwind side; nothing under the threshold
 #   --view=fringe       a still pool's shore in a desert: the wet margin and the salt crust
@@ -61,6 +63,9 @@ extends Node3D
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --mud=depth,moisture paint a mud layer for --view=ruts (stage 1; the car starts in the frame and drives 12 s)
+#   --adhesion  --view=fringe: wind over the damp margin until adhesion warts grow (--wind=m/s)
+#   --no-nmap  the bench material without its stand-in noise normal map; --taa: TAA on; --sun-alt=deg (ripples view, 9)
+#   --rain-pits=mm  --view=ripples: then a still shower of that much rain (120 mm/h), pitting the sand
 #   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
 #   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b);
 #                  --dry=frames for part of it (600 is all), --dry=0 until the deepest pool starts to crust
@@ -133,6 +138,12 @@ var drift_test := false
 var avalanche_test := false
 var infill_test := false
 var fringe_test := false
+var rain_test := false
+var rain_pits_mm := 0.0
+var no_nmap := false
+var adhesion := false
+var taa := false
+var sun_alt := 9.0
 var steps_test := false
 var near_test := false
 var mud_test := false
@@ -157,6 +168,7 @@ var carry_test := false
 var trackdust_test := false
 var stream_test := false
 var fordcar_test := false
+var parked_test := false
 var trails_test := false
 var setup_mud := Vector2.ZERO # mud depth and moisture _setup lays before the node enters the tree
 var offpatch_test := false
@@ -213,6 +225,12 @@ func _ready() -> void:
 		elif a == "--test=avalanche": avalanche_test = true
 		elif a == "--test=infill": infill_test = true
 		elif a == "--test=fringe": fringe_test = true
+		elif a == "--test=rain": rain_test = true
+		elif a.begins_with("--rain-pits="): rain_pits_mm = float(a.substr(12))
+		elif a == "--no-nmap": no_nmap = true
+		elif a == "--adhesion": adhesion = true
+		elif a == "--taa": taa = true
+		elif a.begins_with("--sun-alt="): sun_alt = float(a.substr(10))
 		elif a == "--test=steps": steps_test = true
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
@@ -237,6 +255,7 @@ func _ready() -> void:
 		elif a == "--test=trackdust": trackdust_test = true
 		elif a == "--test=stream": stream_test = true
 		elif a == "--test=fordcar": fordcar_test = true
+		elif a == "--test=parked": parked_test = true
 		elif a == "--test=trails": trails_test = true
 		elif a == "--test=offpatch": offpatch_test = true
 		elif a == "--test=puddles": puddle_test = true
@@ -279,6 +298,7 @@ func _ready() -> void:
 		await _run_frost_tests()
 		await _run_rut_guidance_tests()
 		await _run_needle_tests()
+		await _run_needle_radiation_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -314,7 +334,7 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test or stream_test or fordcar_test or trails_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test or stream_test or fordcar_test or trails_test or parked_test:
 		if clog_test:
 			await _run_clog_tests()
 		if treads_test:
@@ -355,6 +375,8 @@ func _ready() -> void:
 			await _run_trackdust_tests()
 		if stream_test:
 			await _run_stream_stone_tests()
+		if parked_test:
+			await _run_parked_tests()
 		if fordcar_test:
 			await _run_ford_car_tests()
 		if trails_test:
@@ -376,6 +398,7 @@ func _ready() -> void:
 		return
 	if puddle_test:
 		await _run_puddle_tests()
+		await _run_seal_tests()
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -422,6 +445,11 @@ func _ready() -> void:
 		return
 	if runoff_test:
 		await _run_runoff_tests()
+	if rain_test:
+		await _run_rain_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if burnscar_test:
 		await _run_burnscar_tests()
 		print("RESULT: %d failed" % fails)
@@ -1680,6 +1708,50 @@ func _run_needle_tests() -> void:
 	_check("the ground contract answers from the ground, and a stub replaces only what it overrides", same and mixed and WorldContracts.get_ground().standing_water_at(p) == surface.get_standing_water_at(p), "live %s, stubbed %s" % [same, mixed])
 	wm.queue_free()
 
+# Needle ice from a radiation frost (world-links): a clear calm November night with the air at +1.5 C cools the bare
+# surface some degrees below freezing (the weather's surface temperature), and the needles grow; under an overcast
+# sky the surface stays with the air and none do.
+func _run_needle_radiation_tests() -> void:
+	near_on = false
+	var grown := []
+	for overcast in [false, true]:
+		await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.4, 0.0)
+		surface.mud_layer = false
+		surface.frozen_ground = true
+		surface.needle_ice = true
+		var clock: Node = ClassDB.instantiate("SkyClock")
+		clock.latitude = 46.0
+		clock.month = 11
+		clock.day = 15
+		clock.time_of_day = 1.0
+		clock.time_scale = 0.0
+		add_child(clock)
+		var wm := WeatherMap3D.new()
+		wm.cloud_cover = 1.0 if overcast else 0.0
+		wm.rain_rate = 0.0
+		wm.humidity = 0.75
+		wm.temperature = 1.5
+		wm.wind_speed = 1.0
+		wm.air_daily_cycle = false
+		wm.air_follows_climate = false
+		add_child(wm)
+		wm.sky_clock = wm.get_path_to(clock)
+		wm.snap_to_settings()
+		for i in 150:
+			await get_tree().physics_frame
+		var q := Vector3(0, 0, -2)
+		var ts: float = WorldContracts.get_weather().surface_temperature_at(q)
+		surface.runoff_time_scale = 5000.0
+		for i in 430: # about 10 h
+			await get_tree().physics_frame
+		surface.runoff_time_scale = 1.0
+		grown.append([surface.get_needle_ice_at(q).x, ts])
+		wm.queue_free()
+		clock.queue_free()
+		await get_tree().physics_frame
+	print("  radiation frost: %.1f cm of needles under a clear sky (surface %.1f C), %.1f cm overcast (surface %.1f C), the air +1.5 C" % [grown[0][0] * 100.0, grown[0][1], grown[1][0] * 100.0, grown[1][1]])
+	_check("a clear calm night with the air above freezing grows needle ice from the surface's radiative cooling; an overcast one does not", grown[0][0] > 0.005 and grown[1][0] == 0.0, "%.1f cm clear, %.1f cm overcast" % [grown[0][0] * 100.0, grown[1][0] * 100.0])
+
 # Frozen ground (mud round 8): a night at -8 C freezes the top some 10 cm, a boot no longer marks it and an old rut stays
 # as it is; a thaw leaves a soaked layer on the frost that a boot sinks deeper into than before the frost.
 func _run_frost_tests() -> void:
@@ -2713,6 +2785,41 @@ func _run_flake_tests() -> void:
 		print("  %s: %d clods stuck before the bars, %d after, %d shed; at z %.1f" % [k, before, car.get_mud_splat_count(), car.get_mud_flakes_shed(), car.global_position.z])
 	_check("dried clods shake off over bumps", res["dry"][2] >= 3 and res["dry"][3] > 9.5, "%d of %d shed" % [res["dry"][2], res["dry"][0]])
 	_check("wet ones hold", res["wet"][2] == 0, "%d shed" % res["wet"][2])
+	# Round 23.2: drying runs on the world's clock (a truck parked overnight dries overnight), and the next drive
+	# sheds the dried crust without bumps: fast on smooth ground the air past the body lifts its curled plates.
+	var clocks := {}
+	for scale in [1.0, 60.0]:
+		r = await _flake_car([20.0, 0.5, 2.0, 0.0])
+		car = r[0]
+		wm = r[1]
+		wm.time_scale = scale
+		for i in 120:
+			await get_tree().physics_frame
+		clocks[scale] = car.get_body_mud_wetness()
+	print("  wetness after 2 s at a world clock of 1 and 60: %.3f, %.3f" % [clocks[1.0], clocks[60.0]])
+	_check("parked mud dries on the world's clock", clocks[60.0] < 0.1 and clocks[1.0] > 0.9, "%.3f at 60x, %.3f at 1x" % [clocks[60.0], clocks[1.0]])
+	var runs := {}
+	for k in ["crawl", "fast"]:
+		r = await _flake_car([35.0, 0.05, 10.0, 0.0])
+		car = r[0]
+		car.max_engine_torque = 3000.0 if k == "fast" else 700.0
+		t = 0
+		while car.get_body_mud_wetness() > 0.02 and t < 3600:
+			await get_tree().physics_frame
+			t += 1
+		surface.follow_target = NodePath()
+		surface.queue_free()
+		await get_tree().physics_frame
+		var before := car.get_mud_splat_count()
+		car.throttle = 1.0 if k == "fast" else 0.15
+		var top := 0.0
+		for i in 600:
+			await get_tree().physics_frame
+			top = maxf(top, car.get_linear_velocity().length())
+		runs[k] = [before, car.get_mud_flakes_shed(), top]
+		print("  dried, %s on smooth ground for 10 s (top %.1f m/s): %d of %d clods shed" % [k, top, runs[k][1], before])
+		car.queue_free()
+	_check("driven fast, the air strips dried crust a crawl leaves", runs["fast"][1] >= 4 and runs["fast"][1] > runs["crawl"][1] + 3, "%d at speed, %d crawling" % [runs["fast"][1], runs["crawl"][1]])
 
 
 # Tyre pressure (mud round 12): the same car at road pressure and aired down, on firm ground and in mud.
@@ -3637,6 +3744,63 @@ func _ripple_stats(from_x := 0, from_z := 0, size := -1) -> Array:
 	return [lx, lz, ex / maxf(ez, 1e-12), hi - lo, sqrt(rms / (rows * rows)), mean]
 
 
+# Rain pits and rain crust (GroundSurface3D rain_pits; docs/ideas/sand.md): a shower pits the sand, a new pattern each
+# rain; still air keeps them; saltation wipes them; a soaking leaves no crust while the skin is wet.
+func _run_rain_tests() -> void:
+	await _soil_scene("dry_sand")
+	surface.wind_ripples = true
+	surface.wind_override = Vector2(0.0, 0.0)
+	var t0 := Time.get_ticks_msec()
+	while not surface.is_ripples_ready() and Time.get_ticks_msec() - t0 < 60000:
+		await get_tree().physics_frame
+	_check("no rain, no pits", surface.get_rain_pit_cover() == 0.0 and surface.get_rain_crust() == 0.0, "cover %.2f, crust %.2f" % [surface.get_rain_pit_cover(), surface.get_rain_crust()])
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 120.0
+	add_child(wm)
+	wm.snap_to_settings()
+	var o := Vector3(0.3, 0, 0.2)
+	print("  rainfall %.1f mm/h at the patch" % WorldContracts.get_weather().rainfall_at(o))
+	for i in 30:
+		await get_tree().physics_frame
+	var c1 := surface.get_rain_pit_cover()
+	for i in 90:
+		await get_tree().physics_frame
+	var c2 := surface.get_rain_pit_cover()
+	_check("a shower pits the sand, more as it goes on (covered by about 0.05 mm)", c1 > 0.1 and c2 > c1 and c2 > 0.8, "%.2f after 0.017 mm, %.2f after 0.067 mm" % [c1, c2])
+	_check("no crust while the skin is wet", surface.get_rain_crust() < 0.05, "crust %.2f, wetness %.2f" % [surface.get_rain_crust(), WorldContracts.get_weather().surface_wetness_at(o)])
+	wm.rain_rate = 0.0
+	wm.cloud_cover = 0.0
+	wm.snap_to_settings()
+	for i in 120:
+		await get_tree().physics_frame
+	_check("still air keeps the pits", surface.get_rain_pit_cover() > 0.75, "%.2f" % surface.get_rain_pit_cover())
+	# Wind past the threshold (sped up 100x): the saltation reworks the top grains.
+	surface.wind_override = Vector2(12.0, 0.0)
+	surface.ripple_time_scale = 100.0
+	for i in 600:
+		await get_tree().physics_frame
+	_check("saltation wipes the uncrusted pits", surface.get_rain_pit_cover() < 0.05, "%.3f after 10 s at 12 m/s (x100)" % surface.get_rain_pit_cover())
+	# The same saltation over damp sand built adhesion warts; rain flattens them.
+	var ag := surface.get_adhesion_growth()
+	_check("saltation grows adhesion warts", ag > 0.3, "growth %.2f" % ag)
+	surface.wind_override = Vector2(0.0, 0.0)
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 120.0
+	wm.snap_to_settings()
+	for i in 60:
+		await get_tree().physics_frame
+	wm.rain_rate = 0.0
+	wm.cloud_cover = 0.0
+	wm.snap_to_settings()
+	_check("rain flattens them", surface.get_adhesion_growth() < ag * 0.99, "%.3f after 0.033 mm, was %.3f" % [surface.get_adhesion_growth(), ag])
+	surface.adhesion_warts = false
+	_check("adhesion_warts off reads nothing", surface.get_adhesion_growth() == 0.0, "off")
+	surface.rain_pits = false
+	_check("rain_pits off reads nothing", surface.get_rain_pit_cover() == 0.0 and surface.get_rain_crust() == 0.0, "off")
+	wm.queue_free()
+
+
 func _run_wind_tests() -> void:
 	await _soil_scene("dry_sand")
 	surface.wind_override = Vector2(8.0, 0.0)
@@ -4177,7 +4341,8 @@ func _ground_material(kind_name: String) -> StandardMaterial3D:
 	nz.frequency = 0.03 if kind_name != "litter" else 0.08
 	nz.fractal_octaves = 5
 	nt.noise = nz
-	m.normal_enabled = true
+	# --no-nmap: no stand-in noise normal map (its bumps shade as dark blotches under a low sun).
+	m.normal_enabled = not no_nmap
 	m.normal_texture = nt
 	# World-mapped, as a terrain material is: the patch and the terrain line up.
 	m.uv1_triplanar = true
@@ -5156,7 +5321,8 @@ func _build_ripples() -> void:
 	for c in get_children():
 		if c is DirectionalLight3D:
 			sun = c
-	sun.rotation_degrees = Vector3(-9.0, 120.0, 0.0)
+	sun.rotation_degrees = Vector3(-sun_alt, 120.0, 0.0)
+	get_viewport().use_taa = taa
 	surface.wind_override = Vector2(wind_arg, 0.0)
 	surface.ripple_extent = 8.0
 	surface.wind_ripples = true
@@ -5173,6 +5339,22 @@ func _build_ripples() -> void:
 		await get_tree().physics_frame
 	for i in 90:
 		await get_tree().physics_frame
+	if rain_pits_mm > 0.0:
+		# --rain-pits=mm: a still shower of that much rain on the grown ripples (sped up), then the sun.
+		surface.wind_override = Vector2(0.5, 0.0)
+		var wm := WeatherMap3D.new()
+		wm.cloud_cover = 1.0
+		wm.rain_rate = 120.0
+		add_child(wm)
+		wm.snap_to_settings()
+		for i in int(ceil(rain_pits_mm / 120.0 * 3600.0 * 60.0)):
+			await get_tree().physics_frame
+		wm.rain_rate = 0.0
+		wm.cloud_cover = 0.0
+		wm.snap_to_settings()
+		for i in 30:
+			await get_tree().physics_frame
+		print("rain pits: cover %.2f, crust %.2f" % [surface.get_rain_pit_cover(), surface.get_rain_crust()])
 	print("ripples: %d steps, streamers %.1f g/m/s, coverage %.2f" % [surface.get_ripple_steps(), st.get_flux() * 1000.0, st.get_coverage()])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
@@ -5538,6 +5720,23 @@ func _build_fringe() -> void:
 	for i in 240:
 		await get_tree().physics_frame
 	Engine.time_scale = 1.0
+	get_viewport().use_taa = taa
+	if adhesion:
+		# --adhesion: wind over the damp margin (sped up) until the adhesion warts have grown, then still air.
+		surface.wind_ripples = true
+		var t0 := Time.get_ticks_msec()
+		while not surface.is_ripples_ready() and Time.get_ticks_msec() - t0 < 60000:
+			await get_tree().physics_frame
+		surface.wind_override = Vector2(wind_arg, 0.0)
+		surface.ripple_time_scale = 600.0
+		for i in 600:
+			await get_tree().physics_frame
+			if surface.get_adhesion_growth() >= 1.0:
+				break
+		surface.wind_override = Vector2(0.5, 0.0)
+		for i in 20:
+			await get_tree().physics_frame
+		print("adhesion warts: growth %.2f" % surface.get_adhesion_growth())
 	var cam := Camera3D.new()
 	add_child(cam)
 	var c := cam_arg if cam_arg.size() == 6 else PackedFloat32Array([3.5, 1.4, 6.5, -0.5, 0.0, 2.4])
@@ -6042,6 +6241,26 @@ func _run_ford_tests() -> void:
 	await get_tree().physics_frame
 	st = surface.get_ford_stats()
 	_check("higher up, above the water table, the bank holds under the same wheel", st["bank_failures"] == b1, "%d failures" % (st["bank_failures"] - b1))
+	# Wakes wash the bank (round 22.1): a hull 1.8 m wide driven along the stream 3.6 m off the waterline. At a
+	# walking pace its waves barely reach the bank; at 2 m/s they break on it (Havelock's y^-1/3 decay from v^2 / g),
+	# wet the strip they run up and, over a day of steady traffic past one stretch (sped up), wear it into the stream.
+	var wash := {}
+	for speed in [0.5, 2.0]:
+		st = surface.get_ford_stats()
+		var kg_w0: float = st["wake_wash_kg"]
+		var m3_w0: float = st["wake_water_m3"]
+		var kg_s0 := stream.kg
+		var hb := 0.0
+		for i in 60:
+			surface.wash_wake(Vector3(-4.0, -0.6, -6.0), Vector3(0, 0, speed), 0.9, -0.25, 1440.0)
+			hb = maxf(hb, surface.get_ford_stats()["wake_height"])
+			if i % 6 == 0:
+				await get_tree().physics_frame
+		st = surface.get_ford_stats()
+		wash[speed] = [hb, st["wake_wash_kg"] - kg_w0, st["wake_water_m3"] - m3_w0, stream.kg - kg_s0]
+		print("  wake at %.1f m/s: %.2f m at the bank, washed %.2f kg into the stream (it took %.2f kg), swash %.3f m3" % [speed, hb, wash[speed][1], wash[speed][3], wash[speed][2]])
+	_check("a wading hull's waves break on the bank, higher the faster it goes", wash[2.0][0] > 0.1 and wash[2.0][0] > 4.0 * wash[0.5][0], "%.2f m at 2 m/s, %.3f m at 0.5 m/s" % [wash[2.0][0], wash[0.5][0]])
+	_check("and at speed wash the bank into the stream and wet it; a walking pace does not", wash[2.0][1] > 0.1 and wash[2.0][3] > 0.0 and wash[2.0][2] > wash[0.5][2] and wash[0.5][1] == 0.0, "%.2f kg at 2 m/s, %.2f kg at 0.5 m/s" % [wash[2.0][1], wash[0.5][1]])
 	WorldContracts.clear_overrides()
 
 
@@ -6893,6 +7112,21 @@ func _trail_share() -> Vector2:
 	return Vector2(sum / n, 0.0)
 
 # A game trail along z = 0 for |x| < 6, 1 m wide, walked 365 times a year.
+# Two daily trails crossing at the origin, 2 m wide.
+class WallowStandStub extends WorldStand:
+	func _trail_at(p: Vector3) -> Vector2:
+		if absf(p.z) < 1.0 or absf(p.x) < 1.0:
+			return Vector2(365.0, 1.0)
+		return Vector2.ZERO
+
+
+class WallowAirStub extends WorldWeather:
+	var temp := 20.0
+
+	func _air_temperature_at(_p: Vector3) -> float:
+		return temp
+
+
 class TrailStandStub extends WorldStand:
 	func _trail_at(p: Vector3) -> Vector2:
 		if absf(p.x) > 6.0 or absf(p.z) > 0.5:
@@ -6908,6 +7142,7 @@ func _run_trail_wear_tests() -> void:
 	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.3, 0.0)
 	surface.worn_tracks = true
 	surface.standing_water = true
+	surface.trail_pugging = false # its own check below: a pock's rim by the probe would decide the race
 	WorldContracts.set_stand(TrailStandStub.new())
 	surface.refresh_ground()
 	for i in 5:
@@ -6943,6 +7178,75 @@ func _run_trail_wear_tests() -> void:
 	print("  rain 20 mm/h: water stands on the trail after %d frames, off it after %d (-1 never)" % [first_on, first_off])
 	_check("rain stands on the trail before the ground beside it", first_on >= 0 and (first_off < 0 or first_on < first_off), "%d frames on, %d off" % [first_on, first_off])
 	wm.queue_free()
+	# Pugging (round 21.2): ten days of the trail's traffic (sped up) pock it with hooves where the soil is wet, and
+	# leave it smooth where it is dry.
+	var pocks := {}
+	for wet in [0.2, 0.8]:
+		await _setup("flat", GroundSurface3D.GROUND_SOIL, wet, 0.0)
+		surface.worn_tracks = true
+		surface.refresh_ground()
+		for i in 5:
+			await get_tree().physics_frame
+		var line := []
+		for k in 21:
+			line.append(surface.get_surface_height_at(Vector3(-5.0 + 0.5 * k, 0, 0.05 * (k % 3 - 1))))
+		var n0 := surface.get_trail_pock_count()
+		surface.runoff_time_scale = 86400.0
+		for i in 600:
+			await get_tree().physics_frame
+		surface.runoff_time_scale = 1.0
+		surface.sync_deformation()
+		var deepest := 0.0
+		for k in 21:
+			deepest = maxf(deepest, line[k] - surface.get_surface_height_at(Vector3(-5.0 + 0.5 * k, 0, 0.05 * (k % 3 - 1))))
+		pocks[wet] = [surface.get_trail_pock_count() - n0, deepest]
+		print("  moisture %.1f: %d hoof prints in ten days, deepest along the line %.1f cm" % [wet, pocks[wet][0], deepest * 100.0])
+	_check("hooves pock a wet trail and leave a dry one smooth", pocks[0.2][0] == 0 and pocks[0.8][0] > 20 and pocks[0.8][1] > 0.005, "%d prints dry, %d wet (%.1f cm deep)" % [pocks[0.2][0], pocks[0.8][0], pocks[0.8][1] * 100.0])
+	# Wallows (round 22.3): two trails crossing, walked daily, over a hundred days (sped up): in wet ground animals
+	# roll out muddy bowls at the hashed sites along them, more in the warmth; none in dry ground.
+	surface.trail_pugging = false
+	var wal := {}
+	for leg in [[0.2, 20.0], [0.8, 20.0], [0.8, 2.0]]:
+		await _setup("flat", GroundSurface3D.GROUND_SOIL, leg[0], 0.0)
+		surface.worn_tracks = true
+		surface.trail_pugging = false
+		WorldContracts.clear_overrides()
+		WorldContracts.set_stand(WallowStandStub.new())
+		var air := WallowAirStub.new()
+		air.temp = leg[1]
+		WorldContracts.set_weather(air)
+		surface.refresh_ground()
+		for i in 5:
+			await get_tree().physics_frame
+		var grid := {}
+		for gx in 97:
+			for gz in 97:
+				var q := Vector3(-24.0 + 0.5 * gx, 0, -24.0 + 0.5 * gz)
+				if absf(q.x) < 4.5 or absf(q.z) < 4.5:
+					grid[q] = surface.get_surface_height_at(q)
+		var v0: int = surface.get_wallow_visits()
+		surface.runoff_time_scale = 10.0 * 86400.0
+		for i in 600:
+			await get_tree().physics_frame
+		surface.runoff_time_scale = 1.0
+		surface.sync_deformation()
+		# Against the ground's mean change (frost heave, settling under the weather lift or drop it all).
+		var drops := {}
+		var mean := 0.0
+		for q in grid:
+			drops[q] = grid[q] - surface.get_surface_height_at(q)
+			mean += drops[q] / grid.size()
+		var deepest := 0.0
+		for q in grid:
+			deepest = maxf(deepest, drops[q] - mean)
+		print("    mean change %.1f cm" % (-mean * 100.0))
+		wal[leg] = [surface.get_wallow_count(), surface.get_wallow_visits() - v0, deepest]
+		print("  moisture %.1f, %.0f C: %d wallows, %d visits in 100 days, deepest %.1f cm" % [leg[0], leg[1], wal[leg][0], wal[leg][1], deepest * 100.0])
+	var dry = wal[[0.2, 20.0]]
+	var warm = wal[[0.8, 20.0]]
+	var cold = wal[[0.8, 2.0]]
+	_check("animals roll wallows into wet trails and none into dry ones", dry[0] == 0 and warm[0] >= 1 and warm[2] > 0.05, "%d dry, %d wet, %.1f cm deep" % [dry[0], warm[0], warm[2] * 100.0])
+	_check("they wallow more in the warmth", warm[1] > cold[1], "%d visits at 20 C, %d at 2 C" % [warm[1], cold[1]])
 	WorldContracts.clear_overrides()
 	near_on = true
 
@@ -6957,6 +7261,18 @@ class FordStub extends WorldWater:
 
 	func _flow_at(_p: Vector3) -> Vector3:
 		return Vector3(speed, 0, 0)
+
+	# The bow wave's disturbances (round 21.3), recorded.
+	var pushes := 0
+	var clears := 0
+	var strongest := 0.0
+
+	func _disturb(_owner: int, _p: Vector3, _r: float, s: float) -> void:
+		pushes += 1
+		strongest = maxf(strongest, s)
+
+	func _clear(_owner: int) -> void:
+		clears += 1
 
 
 # A car in a ford (mud round 20.1): buoyed by the water it keeps out and pushed by the current across its side, it
@@ -7016,7 +7332,96 @@ func _run_ford_car_tests() -> void:
 	var rise := boat.global_position.y - y0
 	print("  1.4 m of still water: lifted %.2f m, buoyancy %.1f kN" % [rise, boat.get_water_buoyancy() / 1000.0])
 	_check("in deep still water it floats", rise > 0.2, "lifted %.2f m" % rise)
+	# The cab floods (round 21.1): through 0.05 m2 of gaps (five times the default, to be quick) the floating car
+	# fills, settles and sinks to its wheels; on land again it drains.
+	boat.hull_leak_area = 0.05
+	var y_float := boat.global_position.y
+	for i in 2400:
+		await get_tree().physics_frame
+	var cab := boat.get_cab_water()
+	var settled := y_float - boat.global_position.y
+	stub.depth = 0.0
+	for i in 600:
+		await get_tree().physics_frame
+	var drained := boat.get_cab_water()
+	print("  flooding: %.2f m3 in the cab after 40 s, settled %.2f m; %.2f m3 left 10 s after the water went" % [cab, settled, drained])
+	_check("a floating car's cab floods and it settles, and drains on land", cab > 0.5 and settled > 0.2 and drained < 0.75 * cab, "%.2f m3, settled %.2f m, %.2f m3 left" % [cab, settled, drained])
 	boat.queue_free()
+	# The engine drowns (round 21.1): 0.75 m of still water over a low intake (10 cm over the box's bottom) stalls
+	# it, a snorkel keeps it running, and it starts again 5 s after the intake clears.
+	var runs := {}
+	for snork in [false, true]:
+		stub.depth = 0.0
+		var car := _make_car(1500.0, 800.0, Vector3(0, 0.5, 0))
+		car.snorkel = snork
+		car.air_intake_height = 0.1
+		car.soft_soil = false # a firm ford bottom: the engine is the question here, not the mud
+		for i in 60:
+			await get_tree().physics_frame
+		for i in 60:
+			stub.depth = 0.75 * (i + 1) / 60.0
+			await get_tree().physics_frame
+		for i in 30:
+			await get_tree().physics_frame
+		var drowned := car.is_engine_drowned()
+		var a := car.global_position
+		car.throttle = 1.0
+		for i in 180:
+			await get_tree().physics_frame
+		var went := Vector2(car.global_position.x - a.x, car.global_position.z - a.z).length()
+		car.throttle = 0.0
+		var restarted := false
+		if not snork:
+			stub.depth = 0.0
+			for i in 240:
+				await get_tree().physics_frame
+			var early := car.is_engine_drowned()
+			for i in 150:
+				await get_tree().physics_frame
+			restarted = early and not car.is_engine_drowned()
+		runs[snork] = [drowned, went, restarted]
+		print("  0.75 m of water, snorkel %s: drowned %s, drove %.2f m in 3 s%s" % [snork, drowned, went, "; started again 5 s after it cleared" if restarted else ""])
+		car.queue_free()
+		await get_tree().physics_frame
+	_check("water over the intake stalls the engine; a snorkel keeps it running", runs[false][0] and not runs[true][0] and runs[false][1] < 0.3 and runs[true][1] > 1.0, "%.2f m drowned, %.2f m with a snorkel" % [runs[false][1], runs[true][1]])
+	_check("and it starts again once the intake has been clear 5 s", runs[false][2], "")
+	# The bow wave (round 21.3): a snorkelled car driving through 0.75 m of water pushes it at its keel, harder the faster it
+	# goes, and lets it go once it is out of the water.
+	stub.depth = 0.0
+	var wader := _make_car(1500.0, 800.0, Vector3(0, 0.5, 0))
+	wader.soft_soil = false
+	wader.snorkel = true
+	for i in 60:
+		await get_tree().physics_frame
+	for i in 60:
+		stub.depth = 0.75 * (i + 1) / 60.0
+		await get_tree().physics_frame
+	for i in 30:
+		await get_tree().physics_frame
+	var at_rest := wader.get_bow_wave_strength()
+	var pushes0 := stub.pushes
+	wader.throttle = 1.0
+	var moving := 0.0
+	var trough_hi := 0.0
+	var trough_lo := 0.0
+	for i in 180:
+		await get_tree().physics_frame
+		moving = maxf(moving, wader.get_bow_wave_strength())
+		trough_hi = maxf(trough_hi, wader.get_intake_trough())
+		trough_lo = minf(trough_lo, wader.get_intake_trough())
+	wader.throttle = 0.0
+	var pushed := stub.pushes - pushes0
+	var clears0 := stub.clears
+	stub.depth = 0.0
+	for i in 30:
+		await get_tree().physics_frame
+	var cleared := stub.clears - clears0
+	print("  bow wave: strength %.2f at rest, %.2f driving (%.1f m/s); %d pushes, %d clears once out" % [at_rest, moving, absf(wader.get_forward_speed()), pushed, cleared])
+	_check("a wading car pushes a bow wave, stronger as it goes faster, and lets the water go once out", pushed > 0 and moving > at_rest + 0.05 and cleared > 0 and wader.get_bow_wave_strength() == 0.0, "%.2f at rest, %.2f driving, %d clears" % [at_rest, moving, cleared])
+	# Its trough at the intake (round 22.1): lower water there at a wading pace, the bow wave over it once racing.
+	print("  intake: the water %.2f m lower at a wading pace, %.2f m higher racing" % [trough_hi, -trough_lo])
+	_check("at a wading pace the bow's trough keeps the water lower at the intake; racing, the bow wave climbs over it", trough_hi > 0.03 and trough_lo < -0.03, "%.2f m lower, %.2f m higher" % [trough_hi, -trough_lo])
+	wader.queue_free()
 	WorldContracts.clear_overrides()
 	floor_body.queue_free()
 	near_on = true
@@ -7343,4 +7748,105 @@ func _run_offpatch_tests() -> void:
 	var near_p := Vector3(0.3, 0, 0.2)
 	var on := absf(surface.get_surface_height_at(near_p) - float(h.get_height(near_p)))
 	_check("off its lattice the ground answers its height source, on it the lattice", worst < 0.01 and on < 0.05, "worst %.3f m off, %.3f m on" % [worst, on])
+	near_on = true
+
+
+# Ten minutes of world time a second, for the parked trucks.
+class ParkedClockStub extends WorldWeather:
+	func _time_scale() -> float:
+		return 600.0
+
+
+# Parked trucks sink in (mud round 22.2): two cars stand in the same stiff mud for 30 s, five hours of world time, one
+# settling (creep, suction) and one with it off; then both pull away at the same part throttle. The settled one has
+# sunk further (Buisman's log-time creep), is held by suction at first and so pulls away later; once it has rolled
+# out the suction is gone.
+func _run_parked_tests() -> void:
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.2, 0.0)
+	_apply("soil")
+	surface.near_field = false
+	_add_terrain(80.0, 160, _ground_material("soil"))
+	await _paint_mud(0.4, STIFF_MUD)
+	WorldContracts.clear_overrides()
+	WorldContracts.set_weather(ParkedClockStub.new())
+	var cars := []
+	for k in 2:
+		var at := Vector3(-5.0 + 10.0 * k, 0, 0)
+		var car := _make_car(1500.0, 700.0, Vector3(at.x, height.get_height(at) + 0.9, at.z))
+		car.parked_settling = k == 0
+		cars.append(car)
+	for i in 1800:
+		await get_tree().physics_frame
+	var res := []
+	for car in cars:
+		var sink := 0.0
+		var creep := 0.0
+		var suction := 0.0
+		for w in 4:
+			sink += car.get_wheel_sinkage(w) / 4.0
+			creep += car.get_wheel_creep(w) / 4.0
+		res.append([sink, creep])
+	for car in cars:
+		car.throttle = 0.5
+	var peak := [0.0, 0.0]
+	var starts := [cars[0].global_position, cars[1].global_position]
+	var moved_1s := [0.0, 0.0]
+	for i in 240:
+		await get_tree().physics_frame
+		for k in 2:
+			var s := 0.0
+			for w in 4:
+				s += cars[k].get_wheel_suction(w)
+			peak[k] = maxf(peak[k], s)
+			if i == 59:
+				moved_1s[k] = (cars[k].global_position - starts[k]).length()
+	var moved := [(cars[0].global_position - starts[0]).length(), (cars[1].global_position - starts[1]).length()]
+	var left := 0.0
+	for w in 4:
+		left += cars[0].get_wheel_suction(w)
+	for k in 2:
+		print("  %s: sank %.3f m (creep %.3f m) in 5 h; suction %.2f kN at the pull; %.2f m in 1 s, %.2f m in 4 s" % ["settling" if k == 0 else "settling off", res[k][0], res[k][1], peak[k] / 1000.0, moved_1s[k], moved[k]])
+	_check("a car left five hours in wet mud settles deeper by creep", res[0][1] > 0.01 and res[0][0] > res[1][0] + 0.01, "%.3f m against %.3f m" % [res[0][0], res[1][0]])
+	_check("suction holds it as it pulls away, so it gets going later", peak[0] > 200.0 and moved_1s[0] < moved_1s[1], "%.2f kN; %.2f m against %.2f m in the first second" % [peak[0] / 1000.0, moved_1s[0], moved_1s[1]])
+	_check("as it rolls out of its hollow the suction lets go", moved[0] > 0.5 and left < 0.3 * peak[0], "%.2f m, %.2f kN left" % [moved[0], left / 1000.0])
+	for car in cars:
+		car.queue_free()
+	WorldContracts.clear_overrides()
+
+
+# Puddled clay (mud round 23.1): two equal hollows in wet clay soil, one kneaded by ten wheel passes; the same water
+# poured into each (rain on a wallow or a rut). The kneaded one's floor is sealed: its water stands days longer.
+func _run_seal_tests() -> void:
+	near_on = false
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.75, 0.0)
+	surface.mud_layer = false
+	surface.standing_water = true
+	surface.worn_tracks = true
+	var a := Vector3(-1.2, 0, 0.2)
+	var b := Vector3(1.2, 0, 0.2)
+	for p in [a, b]:
+		surface.press_box(p, Vector2(0.6, 0.6), 0.0, 0.0, 0.1)
+	for i in 10:
+		surface.press_wheel(a + Vector3(0, -0.1, 0), Vector2(0.25, 0.3), 0.0, 0.005, Vector2(0, 1))
+		for f in 20:
+			await get_tree().physics_frame
+	var seal_a := surface.get_seal_at(a)
+	var seal_b := surface.get_seal_at(b)
+	surface.refresh_ground()
+	for f in 5:
+		await get_tree().physics_frame
+	surface.sync_deformation()
+	surface.runoff_time_scale = 100.0
+	for p in [a, b]:
+		surface.add_water(p, 0.25, 0.015)
+	surface.settle(0.05, 0.05)
+	var a0 := _water_volume(a, 0.6).x
+	var b0 := _water_volume(b, 0.6).x
+	surface.settle(1200.0, 1.0)
+	var a1 := _water_volume(a, 0.6).x
+	var b1 := _water_volume(b, 0.6).x
+	surface.runoff_time_scale = 1.0
+	print("  seal %.2f kneaded, %.2f not; water %.1f -> %.1f l kneaded, %.1f -> %.1f l not, after 33 h" % [seal_a, seal_b, a0 * 1000.0, a1 * 1000.0, b0 * 1000.0, b1 * 1000.0])
+	_check("wheels knead wet clay into a seal", seal_a > 0.5 and seal_b == 0.0, "%.2f against %.2f" % [seal_a, seal_b])
+	_check("a sealed hollow holds its rain far longer", a0 > 0.005 and b0 > 0.005 and a1 > 0.5 * a0 and a1 > 2.0 * b1, "%.1f l against %.1f l left" % [a1 * 1000.0, b1 * 1000.0])
 	near_on = true

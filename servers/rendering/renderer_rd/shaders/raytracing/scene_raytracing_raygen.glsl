@@ -2522,6 +2522,85 @@ float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_interdune) {
 	float thin = p_interdune;
 	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
 }
+// Adhesion warts (GroundSurface3D adhesion_warts; docs/ideas/sand.md, "Adhesion warts"): dry grains the wind drives
+// onto damp sand stick where they land and build irregular lumps, longer across the wind, about 1 to 2 cm across and
+// a few millimetres high, their tops of dry, paler grains (Hunter 1973; Kocurek and Fielder 1982). p_grow: how far
+// they have grown (0..1) times the damp share; p_wind: the wind that built them (unit, x and z); p_fp: the pixel's
+// footprint (m), lumps finer than about three pixels fade to their mean. Returns the slope (dh/dx, dh/dz); p_cap: the
+// share of dry grains on top (it dries the pixel's pore water).
+vec2 ground_adhesion_warts(vec2 p_xz, float p_grow, vec2 p_wind, float p_fp, out float p_cap) {
+	p_cap = 0.0;
+	if (p_grow <= 0.0 || dot(p_wind, p_wind) < 0.5) {
+		return vec2(0.0);
+	}
+	float res = 1.0 - smoothstep(0.002, 0.006, p_fp);
+	if (res <= 0.0) {
+		p_cap = 0.5 * p_grow;
+		return vec2(0.0);
+	}
+	// Lumps a centimetre or two across, longer across the wind, that merge into a rough skin as they grow: the
+	// tops of two octaves of value noise over a threshold that falls with the growth, warped and turned against
+	// each other so no lattice shows.
+	vec2 k = p_wind;
+	vec2 t = vec2(-k.y, k.x);
+	// Patchy over decimetres, as the supply of blown grains and the dampness are.
+	float gl = p_grow * mix(0.45, 1.0, ground_ripple_vn(p_xz / 0.7, 79u));
+	float th = 0.72 - 0.3 * gl;
+	float H = 0.002 + 0.003 * gl;
+	float e = 0.0015;
+	vec3 h3;
+	for (int i = 0; i < 3; i++) {
+		vec2 q = p_xz + (i == 1 ? vec2(e, 0.0) : (i == 2 ? vec2(0.0, e) : vec2(0.0)));
+		vec2 ab = vec2(dot(q, k), dot(q, t));
+		ab += 0.005 * vec2(ground_ripple_vn(ab / 0.011, 77u), ground_ripple_vn(ab / 0.011 + 17.3, 78u));
+		vec2 ab2 = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * ab;
+		float n = 0.65 * ground_ripple_vn(ab / vec2(0.008, 0.013), 75u) + 0.35 * ground_ripple_vn(ab2 / vec2(0.0035, 0.005), 76u);
+		h3[i] = smoothstep(th, th + 0.22, n);
+	}
+	// The mean dry-topped share where the lumps are finer than the pixel.
+	p_cap = mix(0.5 * p_grow, h3.x, res);
+	return res * H * vec2(h3.y - h3.x, h3.z - h3.x) / e;
+}
+// Rain pits (GroundSurface3D rain_pits; docs/ideas/sand.md, "Rain pits and rain crust"): each drop digs a crater
+// about 2.5 times its own size, some 0.12 of its width deep, ringed by a low rim of the sand it throws out
+// (Katsuragi 2010; Zhao, van der Meer and Lohse 2015), 3 to 7 mm across here, with two chances in each 1 cm cell,
+// filled by p_cover (the share the rain so far has pitted); p_seed changes the pattern each rain. p_fp: the pixel's
+// footprint (m); craters finer than about three pixels fade to their mean, a slightly darker, rougher skin.
+// Returns the slope (dh/dx, dh/dz); p_tone: the albedo factor.
+vec2 ground_rain_pits(vec2 p_xz, float p_cover, float p_seed, float p_fp, out float p_tone) {
+	float res = 1.0 - smoothstep(0.0007, 0.002, p_fp);
+	p_tone = 1.0 - 0.05 * p_cover * (1.0 - res);
+	if (p_cover <= 0.0 || res <= 0.0) {
+		return vec2(0.0);
+	}
+	ivec2 off = ivec2(int(p_seed) * 7919, int(p_seed) * 104729);
+	ivec2 c0 = ivec2(floor(p_xz / 0.01));
+	vec2 g = vec2(0.0);
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			ivec2 c = c0 + ivec2(dx, dz);
+			for (int k = 0; k < 2; k++) {
+				ivec2 ck = c + off + ivec2(k * 50331, 0);
+				if (ground_ripple_hash(ck, 61u) >= 0.8 * p_cover) {
+					continue;
+				}
+				vec2 m = (vec2(c) + vec2(ground_ripple_hash(ck, 62u), ground_ripple_hash(ck, 63u))) * 0.01;
+				float R = 0.0015 + 0.002 * ground_ripple_hash(ck, 64u) * ground_ripple_hash(ck, 65u);
+				vec2 d = p_xz - m;
+				float r = length(d);
+				float u = r / R;
+				if (u >= 1.6 || r < 1e-6) {
+					continue;
+				}
+				// h = -0.24 R (1 - u^2) inside, and a rim 0.072 R high round u = 1.1.
+				float rim = (u - 1.1) / 0.25;
+				float dhdu = (u < 1.0 ? 0.48 * R * u : 0.0) - 0.072 * R * 8.0 * rim * exp(-rim * rim);
+				g += dhdu / R * (d / r);
+			}
+		}
+	}
+	return g * res;
+}
 // Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
 // 0.5 to 2 m apart and up to 5 cm high (ripple index about 25), broad crests armoured with coarse granules over
 // troughs of finer sand (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). In plan the
@@ -3494,6 +3573,27 @@ void main() {
 							m.normal = normalize(m.normal - vec3(ggs.x, 0.0, ggs.y));
 						}
 					}
+					// Rain pits (material.cpp, the same lines).
+					vec4 m6 = ts.x >= 7 ? texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(6, ts.y - 1), 0) : vec4(0.0);
+					if (m6.x > 0.0) {
+						float gpt;
+						vec2 gps = ground_rain_pits(p, m6.x * gsa.y * (1.0 - smoothstep(0.003, 0.008, abs(rt_ground_relief(p)))), m6.z, rt_cone_width, gpt);
+						m.albedo *= gpt;
+						if (gps != vec2(0.0)) {
+							m.normal = normalize(m.normal - vec3(gps.x, 0.0, gps.y));
+						}
+					}
+					// Adhesion warts (material.cpp, the same lines).
+					vec4 m7 = ts.x >= 8 ? texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(7, ts.y - 1), 0) : vec4(0.0);
+					if (m7.z > 0.0) {
+						float gdamp = smoothstep(0.15, 0.3, g_wet);
+						float gcap;
+						vec2 gas = ground_adhesion_warts(p, m7.z * gdamp * gsa.y, m7.xy, rt_cone_width, gcap);
+						if (gas != vec2(0.0)) {
+							m.normal = normalize(m.normal - vec3(gas.x, 0.0, gas.y));
+						}
+						g_wet *= 1.0 - 0.8 * gcap;
+					}
 				}
 			}
 			if (m2.x > 0.5 && rn > 0) {
@@ -3821,6 +3921,29 @@ void main() {
 			m.clearcoat = min(1.1 * glw, 1.0);
 			m.clearcoat_roughness = 0.45;
 			m.coat_normal = gl.xyz;
+		}
+	}
+
+	// Glaze (BaseMaterial3D glaze): clear ice from freezing rain, the rain map's alpha (mm), as material.cpp's
+	// weather_glaze_apply(), under any snow on it.
+	if (rt_material_glaze(mat)) {
+		uint gzmap = uint(get_rt_param(RT_PARAM_RAIN_MAP));
+		vec4 gzrect = vec4(get_rt_param(RT_PARAM_WETNESS_RECT_X), get_rt_param(RT_PARAM_WETNESS_RECT_Y),
+				get_rt_param(RT_PARAM_WETNESS_RECT_W), get_rt_param(RT_PARAM_WETNESS_RECT_H));
+		if (gzmap != 0u && gzrect.z > 0.0) {
+			vec2 gzsize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(gzmap)], SAMPLER_LINEAR_CLAMP), 0));
+			vec2 gzhalf = 0.5 / max(gzsize, vec2(1.0));
+			vec2 gzuv = clamp(((h.hit_pos + rt_origin.xyz).xz - gzrect.xy) / gzrect.zw, gzhalf, 1.0 - gzhalf);
+			float gzmm = textureLod(sampler2D(bindless_textures[nonuniformEXT(gzmap)], SAMPLER_LINEAR_CLAMP), gzuv, 0.0).a;
+			float gzcover = smoothstep(0.0, 1.0, gzmm);
+			if (gzcover > 0.0) {
+				vec4 gzwet = rt_material_wetness(mat);
+				float gzpor = gzwet.z > 0.5 ? gzwet.x : 0.3; // Without Wetness: bark, a middling porosity (birch bark barely soaks).
+				m.albedo *= mix(1.0, mix(1.0, 0.2, (1.0 - m.metalness) * gzpor), gzcover);
+				m.roughness = mix(m.roughness, 0.06, gzcover);
+				m.specular = mix(m.specular, 0.225, gzcover);
+				m.normal = normalize(mix(m.normal, h.geometry_normal, gzcover * smoothstep(0.5, 6.0, gzmm)));
+			}
 		}
 	}
 

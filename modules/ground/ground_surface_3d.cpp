@@ -222,7 +222,7 @@ GroundSurface3D::Cell GroundSurface3D::material_cell(float p_sand, float p_moist
 		// moving (volume kept), towards a near-flat bed.
 		const float q = bed_load(p_water_speed);
 		if (q > 0.0f) {
-			const float k = 1.5f * q / 0.6f * Math::pow(2.0f * Math::PI / 0.3f, 2.0f) * s;
+			const float k = 1.5f * q / 0.6f * Math::pow(float(2.0 * Math::PI / 0.3), 2.0f) * s;
 			c.rate = MAX(c.rate, k);
 			c.tan_repose = Math::lerp(c.tan_repose, 0.05f, s);
 		}
@@ -693,6 +693,7 @@ void GroundSurface3D::_update_cells() {
 				in.repel = CLAMP(fire->water_repellency_at(p), 0.0f, 1.0f);
 			}
 			in.compacted = worn_tracks && _wear_any() ? wear_compaction(get_wear_at(p)) * (1.0f - 0.5f * sand) : 0.0f;
+			in.sealed = worn_tracks && !wear_cells.is_empty() ? get_seal_at(p) * CLAMP(1.0f - 2.0f * sand, 0.0f, 1.0f) : 0.0f;
 			// Under more than a few centimetres of snow the snow surface takes the print.
 			in.fixed = rock || (snow && float(snow->call("get_depth_at", p)) > 0.03f);
 			// Frozen ground (round 8): a crust holds; a thaw's wet layer over the frost, or a fresh thaw not yet
@@ -1267,6 +1268,16 @@ void GroundSurface3D::set_mud_layer(bool p_enabled) {
 
 void GroundSurface3D::_wear_press(const Vector3 &p_position, const Vector2 &p_half, float p_yaw) {
 	const float r = p_half.length();
+	float knead = 0.0f;
+	if (ground_valid && (int)cell_inputs.size() == ground_n * ground_n) {
+		const int n = ground_n;
+		const int ix = CLAMP(int(Math::round(p_position.x / ground_spacing)) - ground_origin.x, 0, n - 1);
+		const int iz = CLAMP(int(Math::round(p_position.z / ground_spacing)) - ground_origin.y, 0, n - 1);
+		const CellInput &in = cell_inputs[iz * n + ix];
+		if (!in.fixed && in.frozen < 0.5f) {
+			knead = Math::smoothstep(0.55f, 0.75f, MAX(in.moisture, in.mud > 0.02f ? 1.0f : 0.0f)) * CLAMP(1.0f - 2.0f * in.sand, 0.0f, 1.0f);
+		}
+	}
 	const Vector2 ax(Math::cos(p_yaw), -Math::sin(p_yaw));
 	const Vector2 az(Math::sin(p_yaw), Math::cos(p_yaw));
 	const int x0 = int(Math::floor((p_position.x - r) / WEAR_CELL));
@@ -1284,6 +1295,11 @@ void GroundSurface3D::_wear_press(const Vector3 &p_position, const Vector2 &p_ha
 			if (wear_clock - w.last > WEAR_GAP) {
 				w.passes += 1.0f;
 				wear_dirty = true;
+				// Wet clay kneaded by the pass (round 23.1): a tenth of the way to a full seal each pass (puddling
+				// needs working, not one press), only past its plastic wetness.
+				if (knead > 0.0f) {
+					w.seal += 0.1f * knead * (1.0f - w.seal);
+				}
 			}
 			w.last = wear_clock;
 		}
@@ -1347,6 +1363,195 @@ void GroundSurface3D::_on_stand_changed(const Rect2 &p_area) {
 	_update_cells();
 }
 
+// Pugged trails (docs/ideas/mud.md, round 21.2). Hooves on soil wetter than its plastic limit punch in and leave a
+// pocked, puddling tread (treading damage, "pugging": Climo and Richardson 1984; Drewry 2006 on its slow recovery).
+// Over the trails near the followed point (WorldStand.trail_at(), sampled every 0.5 m), a trail walked P times a
+// year gets P / 365 passes a day of game time, each about 11 hoof prints a square metre of tread (a deer's stride of
+// about 0.6 m, two prints a stride over a 0.3 m wide line), drawn at random; each print a 6 x 8 cm hoof at 150 kPa
+// (a red deer's; Bekker's plate sinkage in the soil there), only where the soil is wet past 0.55 of saturation or
+// muddy. At most 64 prints a step; the pocks then slump, fill with rain and grow over as any print.
+void GroundSurface3D::_trail_pug_update(float p_delta) {
+	if (!trail_pugging || !trails_on || !field.valid || !ground_valid || (int)cell_inputs.size() != ground_n * ground_n) {
+		return;
+	}
+	const float rate = 11.0f / (365.0f * 86400.0f) * MAX(runoff_time_scale, 0.0f) * p_delta; // prints per m2 per pass a year
+	if (rate <= 0.0f) {
+		return;
+	}
+	WorldStand *st = WorldContracts::stand();
+	const Vector3 c = _follow_position();
+	const float range = 15.0f;
+	const float step = 0.5f;
+	const int n = ground_n;
+	int printed = 0;
+	for (float z = Math::floor((c.z - range) / step) * step; z < c.z + range && printed < 64; z += step) {
+		for (float x = Math::floor((c.x - range) / step) * step; x < c.x + range && printed < 64; x += step) {
+			const Vector2 tr = st->trail_at(Vector3(x, 0.0f, z));
+			if (tr.x <= 0.0f || tr.y <= 0.0f) {
+				continue;
+			}
+			const int ix = CLAMP(int(Math::round(x / ground_spacing)) - ground_origin.x, 0, n - 1);
+			const int iz = CLAMP(int(Math::round(z / ground_spacing)) - ground_origin.y, 0, n - 1);
+			const CellInput &in = cell_inputs[iz * n + ix];
+			const Cell &cl = _cell_at(x, z);
+			if (in.fixed || !cl.deformable || (in.moisture < 0.55f && cl.mud < 0.02f)) {
+				continue;
+			}
+			// Expected prints in this 0.5 m square, drawn by its own hash and the clock.
+			const float expect = rate * tr.x * tr.y * step * step;
+			uint32_t h = hash_murmur3_one_float(x);
+			h = hash_murmur3_one_float(z, h);
+			h = hash_murmur3_one_32(pug_ticks, h);
+			int k = 0;
+			float u = float(h & 0xffffu) / 65536.0f;
+			// Poisson draws by inversion, a handful at most.
+			float pk = Math::exp(-expect);
+			float cum = pk;
+			while (u > cum && k < 4) {
+				k++;
+				pk *= expect / float(k);
+				cum += pk;
+			}
+			for (int j = 0; j < k && printed < 64; j++) {
+				h = hash_fmix32(h + 0x9e3779b9u);
+				const float ox = (float(h & 0xffu) / 255.0f - 0.5f) * step;
+				const float oz = (float((h >> 8) & 0xffu) / 255.0f - 0.5f) * step;
+				const float yaw = float((h >> 16) & 0xffu) / 255.0f * (float)Math::TAU;
+				const Vector3 p(x + ox, 0.0f, z + oz);
+				const GroundSoil soil = get_soil(p);
+				if (!soil.soft) {
+					continue;
+				}
+				const float kk = soil.kc / 0.06f + soil.kphi; // kN/m^(n+2), a 6 cm plate
+				const float sink = MIN(Math::pow(150.0f / MAX(kk, 1.0f), 1.0f / MAX(soil.n, 0.3f)), MIN(soil.max_sinkage, 0.15f));
+				if (sink < 0.003f) {
+					continue;
+				}
+				const float g = get_surface_height_at(p);
+				press_box(Vector3(p.x, g, p.z), Vector2(0.06f, 0.08f), yaw, g - 0.5f, sink);
+				trail_pocks++;
+				printed++;
+			}
+		}
+	}
+	pug_ticks++;
+}
+
+// Wallows (docs/ideas/mud.md, round 22.3). Wild boar and deer roll in mud: boar to cool (they cannot sweat) and to coat
+// themselves against parasites and sun, most in warm weather (Bracke 2011, a review of wallowing in pigs); red deer
+// stags in the autumn rut (Clutton-Brock, Guinness and Albon 1982). Wallows sit on the animals' paths where the ground
+// is wet and level, and are kept open by use: bowls about 1.5 to 3 m across and a few tens of centimetres deep, with
+// churned rims, that hold rain as puddles. Here: one site in about four 8 m squares along a trail (hashed, so the
+// same every run), used where the soil there is wet (moisture 0.7, or mud) and the ground within 6 degrees of level;
+// one passing animal in ten stops (an assumption), more in the warmth, none on frozen ground (a quarter of that below 10 C, all of it past
+// 25 C). Each visit deepens the bowl by 2 cm toward 35 cm, a quarter of what it moves heaped on the rim as fresh mud,
+// the rest carried off on the coat or trodden flat. Rain fills it through the water field like any hollow.
+void GroundSurface3D::_trail_wallow_update(float p_delta) {
+	if (!trail_wallows || !trails_on || !field.valid || !ground_valid || (int)cell_inputs.size() != ground_n * ground_n) {
+		return;
+	}
+	const float years = MAX(runoff_time_scale, 0.0f) * p_delta / (365.0f * 86400.0f);
+	if (years <= 0.0f) {
+		return;
+	}
+	WorldStand *st = WorldContracts::stand();
+	const WorldWeather *wm = WorldContracts::weather();
+	const Vector3 c = _follow_position();
+	const float range = 16.0f;
+	const float cell = 8.0f;
+	const int n = ground_n;
+	for (int gz = int(Math::floor((c.z - range) / cell)); gz <= int(Math::floor((c.z + range) / cell)); gz++) {
+		for (int gx = int(Math::floor((c.x - range) / cell)); gx <= int(Math::floor((c.x + range) / cell)); gx++) {
+			uint32_t h = hash_murmur3_one_32(uint32_t(gx) * 73856093u ^ uint32_t(gz) * 19349663u, 0x77a110u);
+			h = hash_fmix32(h);
+			if ((h & 0xffu) >= 64u) {
+				continue; // no wallow in this square
+			}
+			// The site: the trail point nearest a hashed spot in the square (searched on a 1 m lattice).
+			const Vector2 spot((gx + 0.15f + 0.7f * float((h >> 8) & 0xffu) / 255.0f) * cell, (gz + 0.15f + 0.7f * float((h >> 16) & 0xffu) / 255.0f) * cell);
+			Vector2 site;
+			Vector2 tr;
+			float best = 1e30f;
+			for (int dz = -3; dz <= 3; dz++) {
+				for (int dx = -3; dx <= 3; dx++) {
+					const Vector2 q = spot + Vector2(dx, dz);
+					const Vector2 t = st->trail_at(Vector3(q.x, 0.0f, q.y));
+					const float d2 = float(dx * dx + dz * dz);
+					if (t.x > 0.0f && t.y > 0.0f && d2 < best) {
+						best = d2;
+						site = q;
+						tr = t;
+					}
+				}
+			}
+			// Only within the deformation field (its edge holds no digs).
+			if (best > 1e29f || MAX(Math::abs(site.x - c.x), Math::abs(site.y - c.z)) > 0.5f * field.extent - 1.5f) {
+				continue;
+			}
+			const int ix = int(Math::round(site.x / ground_spacing)) - ground_origin.x;
+			const int iz = int(Math::round(site.y / ground_spacing)) - ground_origin.y;
+			if (ix < 0 || iz < 0 || ix >= n || iz >= n) {
+				continue;
+			}
+			const CellInput &in = cell_inputs[iz * n + ix];
+			const Cell &cl = _cell_at(site.x, site.y);
+			if (in.fixed || !cl.deformable || in.frozen > 0.5f || (in.moisture < 0.7f && cl.mud < 0.02f)) {
+				continue;
+			}
+			const float e = 1.0f;
+			const float sx = (_ground_at(site.x + e, site.y) - _ground_at(site.x - e, site.y)) / (2.0f * e);
+			const float sz = (_ground_at(site.x, site.y + e) - _ground_at(site.x, site.y - e)) / (2.0f * e);
+			if (Math::sqrt(sx * sx + sz * sz) > Math::tan(Math::deg_to_rad(6.0f))) {
+				continue;
+			}
+			const Vector3 p(site.x, 0.0f, site.y);
+			const float temp = wm && wm->has_provider() ? wm->air_temperature_at(p) : 15.0f;
+			const float warm = 0.25f + 0.75f * Math::smoothstep(10.0f, 25.0f, temp);
+			const float expect = 0.1f * tr.x * warm * years;
+			uint32_t hv = hash_murmur3_one_32(pug_ticks, h);
+			hv = hash_fmix32(hv);
+			const float u = float(hv & 0xffffu) / 65536.0f;
+			int k = 0;
+			float pk = Math::exp(-expect);
+			float cum = pk;
+			while (u > cum && k < 8) {
+				k++;
+				pk *= expect / float(k);
+				cum += pk;
+			}
+			if (k == 0) {
+				continue;
+			}
+			const float r = 0.8f;
+			const float g = _ground_at(site.x, site.y);
+			const float now = MAX(get_dent_at(Vector3(site.x, g, site.y)) - get_rim_at(Vector3(site.x, g, site.y)), 0.0f);
+			float dz = 0.0f;
+			float deep = now;
+			for (int j = 0; j < k; j++) {
+				const float add = 0.02f * MAX(1.0f - deep / 0.35f, 0.0f);
+				dz += add;
+				deep += add;
+			}
+			if (dz <= 0.0f) {
+				continue;
+			}
+			const float vol = dig(Vector3(site.x, g, site.y), r, dz);
+			const float moved = vol > 0.0f ? vol : float(Math::PI) * r * r * dz;
+			// A quarter on the rim, as fresh mud in four lumps round it (each its own hashed angle).
+			for (int q = 0; q < 4; q++) {
+				const float a = (float(q) + 0.5f * float((hv >> (16 + 4 * q)) & 0xfu) / 15.0f) * 0.25f * (float)Math::TAU;
+				const Vector3 at(site.x + Math::cos(a) * 1.15f * r, g, site.y + Math::sin(a) * 1.15f * r);
+				const float lr = 0.45f;
+				add_mud_deposit(at, lr, 0.25f * moved / 4.0f / (float(Math::PI) * lr * lr), q == 3);
+			}
+			// The rolling kneads the wet floor into a seal (round 23.1), a third of the way a visit.
+			_seal_add(Vector3(site.x, g, site.y), r, 1.0f - Math::pow(1.0f - 0.33f, float(k)));
+			wallow_sites.insert(Vector2i(gx, gz));
+			wallow_visits += k;
+		}
+	}
+}
+
 float GroundSurface3D::_trail_passes(const Vector3 &p_position) const {
 	if (!trails_on || wear_regrowth_days <= 0.0f) {
 		return 0.0f;
@@ -1356,6 +1561,25 @@ float GroundSurface3D::_trail_passes(const Vector3 &p_position) const {
 		return 0.0f;
 	}
 	return tr.x * tr.y * wear_regrowth_days / (365.0f * 0.69314718f);
+}
+
+float GroundSurface3D::get_seal_at(Vector3 p_position) const {
+	const Wear *w = wear_cells.getptr(Vector2i(int(Math::floor(p_position.x / WEAR_CELL)), int(Math::floor(p_position.z / WEAR_CELL))));
+	return w ? w->seal : 0.0f;
+}
+
+void GroundSurface3D::_seal_add(const Vector3 &p_position, float p_radius, float p_amount) {
+	for (int z = int(Math::floor((p_position.z - p_radius) / WEAR_CELL)); z <= int(Math::floor((p_position.z + p_radius) / WEAR_CELL)); z++) {
+		for (int x = int(Math::floor((p_position.x - p_radius) / WEAR_CELL)); x <= int(Math::floor((p_position.x + p_radius) / WEAR_CELL)); x++) {
+			const Vector2 d((x + 0.5f) * WEAR_CELL - p_position.x, (z + 0.5f) * WEAR_CELL - p_position.z);
+			if (d.length() > p_radius) {
+				continue;
+			}
+			Wear &w = wear_cells[Vector2i(x, z)];
+			w.seal += CLAMP(p_amount, 0.0f, 1.0f) * (1.0f - w.seal);
+		}
+	}
+	wear_dirty = true;
 }
 
 float GroundSurface3D::get_wear_at(Vector3 p_position) const {
@@ -1385,10 +1609,14 @@ void GroundSurface3D::_wear_update(double p_delta) {
 	if (keep >= 1.0f) {
 		return;
 	}
+	// A puddled seal lasts the season (Sharma and De Datta 1985): it halves over 60 days of game time as drying
+	// cracks, frost and roots open the soil again.
+	const float keep_seal = Math::exp(-float(p_delta) * MAX(runoff_time_scale, 0.0f) * 0.69314718f / (60.0f * 86400.0f));
 	LocalVector<Vector2i> gone;
 	for (KeyValue<Vector2i, Wear> &kv : wear_cells) {
 		kv.value.passes *= keep;
-		if (kv.value.passes < 0.05f && wear_clock - kv.value.last > 1.0) {
+		kv.value.seal *= keep_seal;
+		if (kv.value.passes < 0.05f && kv.value.seal < 0.02f && wear_clock - kv.value.last > 1.0) {
 			gone.push_back(kv.key);
 		}
 	}
@@ -2337,7 +2565,7 @@ void GroundSurface3D::_loose_update(float p_delta) {
 		const float sp2 = vh.length();
 		if (sp2 > 1e-4f) {
 			const float h = MIN(ls.z, 2.0f * rc);
-			const float kp = Math::pow(Math::tan(Math::PI * 0.25f + 0.5f * Math::atan(c.tan_phi)), 2.0f);
+			const float kp = Math::pow(float(Math::tan(Math::PI * 0.25 + 0.5 * Math::atan(c.tan_phi))), 2.0f);
 			const float plough = 2.0f * rc * (0.5f * kp * c.unit_weight * 1000.0f * h * h + 2.0f * MIN(tau, c.cohesion * 1000.0f) * h * Math::sqrt(kp));
 			const float roll = load * 9.81f * Math::sqrt(MAX(h, 0.002f) / (2.0f * rc));
 			const float dv = MIN((plough + roll) * dt / rb->get_mass(), sp2);
@@ -2654,6 +2882,11 @@ float GroundSurface3D::_water_conductivity(const CellInput &p_in) const {
 	// A packed wheel track takes in a fraction of the water the loose soil beside it does (Ankeny et al. 1990), so
 	// rain stands in worn tracks.
 	k *= 1.0f - 0.8f * p_in.compacted;
+	// Puddled clay (round 23.1): wheels and wallowing animals knead wet clay until its structure is gone and its
+	// pores shut; puddling cuts its saturated conductivity by one to three orders of magnitude (Sharma and De Datta
+	// 1985, puddled rice soils; the same seal lines clay ponds and canals), so rain stands in sealed ruts and
+	// wallows for days. Here a full seal takes it to a hundredth.
+	k *= 1.0f - 0.99f * p_in.sealed;
 	return k;
 }
 
@@ -2806,7 +3039,9 @@ void GroundSurface3D::_ice_update(double p_delta) {
 		return;
 	}
 	const WorldWeather *wm = _weather();
-	const float t = wm ? wm->air_temperature_at(_weather_point()) : 10.0f;
+	// The water's surface, not the air: a clear calm night skims a puddle over with the air above freezing (the
+	// weather's radiative cooling, about 4 to 6 K under a clear sky; docs/ideas/world-links.md, "Surface temperature").
+	const float t = wm ? wm->surface_temperature_at(_weather_point()) : 10.0f;
 	if ((int)ice_state.size() != n * n * ICE_FLOATS) {
 		if (t >= 0.0f) {
 			return; // nothing frozen, nothing to freeze
@@ -2928,7 +3163,10 @@ void GroundSurface3D::_frost_update(double p_delta) {
 	}
 	_frost_seed(0);
 	const WorldWeather *wm = _weather();
-	const float t = wm ? wm->air_temperature_at(_weather_point()) : 10.0f;
+	// The ground's surface, not the air: needle ice is a radiation frost's (clear calm nights with the air a degree or
+	// two above freezing and the bare surface some degrees below; Outcalt 1971), and Stefan's front runs from the
+	// surface (docs/ideas/world-links.md, "Surface temperature").
+	const float t = wm ? wm->surface_temperature_at(_weather_point()) : 10.0f;
 	const float dt = float(p_delta) * runoff_time_scale;
 	for (int i = 0; i < n * n; i++) {
 		const CellInput &in = cell_inputs[i];
@@ -5717,6 +5955,85 @@ float GroundSurface3D::get_water_speed_at(const Vector3 &p_position) const {
 
 // Saltation flux from GroundRipples::saltation_flux. The ripple layer steps when q of sand a cell has moved
 // since its last step (q = Q / (bulk density * hop)), a few times a second at most.
+// Rain pits and rain crust (docs/ideas/sand.md, "Rain pits and rain crust"). Each drop pits dry sand: a hundredth of a
+// millimetre of rain lands some 5000 drops of 1.5 mm on a square metre, so the craters cover the sand by about
+// 0.05 mm, and each rain lays a new pattern over the last. The wetted skin dries into a crust that seals the surface,
+// its fines washed into the pores (Valentin and Bresson 1992): from half a millimetre of rain, whole by 3 mm, over
+// half an hour or so of drying. Saltation wipes pits off loose sand in minutes (its impacts rework the top grains)
+// and wears a crust away over hours; the crust keeps the wind off what it covers (the ripples' mask, the prints'
+// filling and get_blown_at(), so the streamers too). The rain is the weather's (WorldWeather rainfall_at, less the
+// canopy's share), at the patch's centre.
+void GroundSurface3D::_rain_marks(float p_dt, float p_ustar) {
+	if (!rain_pits || p_dt <= 0.0f) {
+		return;
+	}
+	const WorldWeather *wm = _weather();
+	float rain = 0.0f;
+	float wet = 0.0f;
+	if (wm) {
+		const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
+		rain = wm->rainfall_at(at) * (1.0f - 0.8f * wm->canopy_closure_at(at));
+		wet = wm->surface_wetness_at(at);
+	}
+	if (rain > 0.0f) {
+		if (rain_pit_cover < 0.02f) {
+			rain_pit_seed = Math::fmod(rain_pit_seed + 1.0f, 4096.0f); // a new rain: a new pattern
+		}
+		const float mm = rain * p_dt / 3600.0f;
+		rain_pit_cover = 1.0f - (1.0f - rain_pit_cover) * Math::exp(-mm / 0.03f);
+		rain_total += mm;
+	}
+	const float seal = Math::smoothstep(0.5f, 3.0f, rain_total) * CLAMP(1.0f - wet / 0.3f, 0.0f, 1.0f);
+	if (seal > rain_crust) {
+		rain_crust += (seal - rain_crust) * MIN(p_dt / 1800.0f, 1.0f);
+	}
+	if (p_ustar > GroundRipples::SAND_USTAR_T && wet < 0.3f) {
+		const float x = (p_ustar / GroundRipples::SAND_USTAR_T - 1.0f) * p_dt * ripple_time_scale;
+		rain_crust *= Math::exp(-x / (6.0f * 3600.0f));
+		rain_pit_cover *= Math::exp(-x * (1.0f - rain_crust) / 300.0f);
+	}
+	if (rain <= 0.0f && rain_pit_cover < 0.005f && rain_crust < 0.005f) { // (light rain builds from less)
+		rain_pit_cover = 0.0f;
+		rain_crust = 0.0f;
+		rain_total = 0.0f;
+	}
+	const float pc = get_rain_pit_cover();
+	const float kc = get_rain_crust();
+	if (Math::abs(pc - rain_published[0]) > 0.01f || Math::abs(kc - rain_published[1]) > 0.01f || ((pc > 0.0f) != (rain_published[0] > 0.0f))) {
+		ripple_dirty = true;
+	}
+}
+
+// Adhesion warts (docs/ideas/sand.md, "Adhesion warts"): saltating grains that land on damp sand stick (the pore
+// water's meniscus holds them) and build up into irregular warts that grow into the wind (Hunter 1973; Kocurek and
+// Fielder 1982), about an hour of strong saltation to full growth here; where the sand is damp is the wet map's to say
+// (the shaders read it per pixel). Rain flattens them (a millimetre or so); dry, they blow away with the rest of the
+// loose sand, as the shaders' damp gate does. The patch-wide state: how far they have grown and the wind that built them.
+void GroundSurface3D::_adhesion(float p_dt, float p_ustar, Vector2 p_dir) {
+	if (!adhesion_warts || p_dt <= 0.0f) {
+		return;
+	}
+	if (p_ustar > GroundRipples::SAND_USTAR_T) {
+		const float x = (p_ustar / GroundRipples::SAND_USTAR_T - 1.0f) * p_dt * ripple_time_scale;
+		if (adhesion_grow < 0.02f) {
+			adhesion_wind = p_dir; // a new set builds to this wind
+		}
+		adhesion_grow = MIN(adhesion_grow + x / 3600.0f, 1.0f);
+	}
+	const WorldWeather *wm = _weather();
+	if (wm) {
+		const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
+		const float rain = wm->rainfall_at(at) * (1.0f - 0.8f * wm->canopy_closure_at(at));
+		adhesion_grow *= Math::exp(-rain * p_dt / 3600.0f / 1.0f);
+	}
+	if (adhesion_grow < 0.005f && p_ustar <= GroundRipples::SAND_USTAR_T) {
+		adhesion_grow = 0.0f; // flattened out (not while it is still building)
+	}
+	if (Math::abs(get_adhesion_growth() - adhesion_published) > 0.01f || ((get_adhesion_growth() > 0.0f) != (adhesion_published > 0.0f))) {
+		ripple_dirty = true;
+	}
+}
+
 void GroundSurface3D::_ripples_update(double p_delta) {
 	if (!wind_ripples || !field.valid) {
 		return;
@@ -5735,6 +6052,8 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 	Vector2 wind = _wind_10m();
 	const float speed = wind.length();
 	const Vector2 dir = speed > 0.1f ? wind / speed : Vector2(1.0f, 0.0f);
+	_rain_marks(float(p_delta), GroundRipples::friction_speed(speed));
+	_adhesion(float(p_delta), GroundRipples::friction_speed(speed), dir);
 	// A grown field for the cells that come in, in the background; again when the wind turns past 35 degrees.
 	if (ripple_task != WorkerThreadPool::INVALID_TASK_ID) {
 		if (WorkerThreadPool::get_singleton()->is_task_completed(ripple_task)) {
@@ -5773,7 +6092,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				const float x = (ripples.origin.x + bx + 0.5f * b) * ripples.cell;
 				const float z = (ripples.origin.y + bz + 0.5f * b) * ripples.cell;
 				const Cell &c = _cell_at(x, z);
-				const float m = c.deformable ? c.blown * _shelter_flux_at(x, z) : 0.0f;
+				const float m = c.deformable ? c.blown * _shelter_flux_at(x, z) * (1.0f - get_rain_crust()) : 0.0f; // a rain crust holds
 				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(x, z) : 0.0f;
 				for (int z2 = bz; z2 < MIN(bz + b, ripples.n); z2++) {
 					for (int x2 = bx; x2 < MIN(bx + b, ripples.n); x2++) {
@@ -5976,6 +6295,15 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[20] = ripple_sand_wind.x; // the dune-building wind, for the granule ripples
 		meta[21] = ripple_sand_wind.y;
 		meta[22] = granule_ripples ? 1.0f : 0.0f;
+		meta[24] = get_rain_pit_cover(); // the rain's marks (_rain_marks())
+		meta[25] = get_rain_crust();
+		meta[26] = rain_pit_seed;
+		rain_published[0] = meta[24];
+		rain_published[1] = meta[25];
+		meta[28] = adhesion_wind.x; // the adhesion warts (_adhesion())
+		meta[29] = adhesion_wind.y;
+		meta[30] = get_adhesion_growth();
+		adhesion_published = meta[30];
 		meta[12] = ripples.tmpl_k.x; // the template's wave vector, for the shaders' dislocations
 		meta[13] = ripples.tmpl_k.y;
 		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
@@ -6078,8 +6406,8 @@ void GroundSurface3D::_age(double p_delta) {
 	if (wm) {
 		rain = wm->precipitation_at(at);
 	}
-	// Sand moves above about 5 m/s at 10 m (Bagnold's threshold for fine dry sand).
-	const float drift = sand_drift_rate * MAX(wind - 5.0f, 0.0f) / 5.0f;
+	// Sand moves above about 5 m/s at 10 m (Bagnold's threshold for fine dry sand); not under a rain crust.
+	const float drift = sand_drift_rate * MAX(wind - 5.0f, 0.0f) / 5.0f * (1.0f - get_rain_crust());
 	const float soften = rain_smoothing * rain;
 	const float dry = Math::exp(-dt / drying_time);
 	const int n = field.resolution;
@@ -6406,6 +6734,8 @@ void GroundSurface3D::_notification(int p_what) {
 			cells_accum += delta;
 			if (cells_accum >= 2.0) {
 				_wear_update(cells_accum);
+				_trail_pug_update(float(cells_accum));
+				_trail_wallow_update(float(cells_accum));
 				cells_accum = 0.0;
 				_update_cells();
 			}
@@ -6816,11 +7146,113 @@ void GroundSurface3D::_ford(const Vector3 &p_position, const Vector2 &p_half, fl
 	add_mud_deposit(toe + Vector3(down.x, 0.0f, down.y) * 0.8f, 0.7f, lay / 2.0f, true);
 }
 
+// Wakes wash the banks (docs/ideas/mud.md, round 22.1). A body pushed through shallow water at speed v raises a bow
+// wave about its stagnation head v^2 / 2g over the surface and draws a trough as deep behind it: crest to trough
+// H0 = v^2 / g near the hull (capped by breaking, 0.78 of the depth). Its diverging waves lose height away from the
+// sailing line as y^-1/3 (Havelock 1908; the decay boat-wake predictors keep, Kriebel and Seelig 2005), so at the
+// bank y from the hull H = H0 (y / b)^-1/3, b the half width. There they break and run up the bank about their own
+// height (Hunt 1959, surf similarity near 1). Erosion is taken from the wave's energy at the bank (Bauer, Lorang and
+// Sherman 2002; Glamore 2008): the breaking wave's orbital speed u = 0.5 sqrt(0.78 g H) shears the bank at
+// 0.5 rho f_w u^2 (f_w 0.03, a rough bed), eroding cohesive soil at Partheniades' rate, as the stones' scour. The
+// swash wets a strip up to the run-up (most runs back). Called by PhysXVehicle3D while its bow is in the water.
+void GroundSurface3D::wash_wake(const Vector3 &p_position, const Vector3 &p_velocity, float p_half_width, float p_water_level, float p_dt) {
+	if (!wake_wash || !stream_fords || !ground_valid || p_dt <= 0.0f || !Math::is_finite(p_water_level)) {
+		return;
+	}
+	const Vector2 v(p_velocity.x, p_velocity.z);
+	const float speed = v.length();
+	if (speed < 0.3f) {
+		return;
+	}
+	const float b = MAX(p_half_width, 0.3f);
+	const float depth0 = p_water_level - _ground_at(p_position.x, p_position.z);
+	if (depth0 < 0.05f) {
+		return;
+	}
+	const float h0 = MIN(speed * speed / 9.81f, 0.78f * depth0);
+	const Vector2 dir = v / speed;
+	const Vector2 side(-dir.y, dir.x);
+	WorldWater *ww = WorldContracts::water();
+	const float tex = is_near_active() ? near_fld.texel() : field.texel();
+	wake_height_last = 0.0f;
+	for (int sgn = -1; sgn <= 1; sgn += 2) {
+		// March out across the sailing line to the waterline (first ground at the surface), within 20 m.
+		Vector2 at;
+		float y = 0.0f;
+		bool found = false;
+		for (int k = 0; k <= 80 && !found; k++) {
+			y = b + 0.25f * k;
+			at = Vector2(p_position.x, p_position.z) + side * (float(sgn) * y);
+			if (_ground_at(at.x, at.y) >= p_water_level - 0.02f) {
+				found = true;
+			}
+		}
+		if (!found) {
+			continue;
+		}
+		const Cell &c = _cell_at(at.x, at.y);
+		if (!c.deformable) {
+			continue;
+		}
+		const float hb = h0 * Math::pow(MAX(y / b, 1.0f), -1.0f / 3.0f);
+		if (hb < 0.01f) {
+			continue;
+		}
+		wake_height_last = MAX(wake_height_last, hb);
+		// The bank's slope up from the waterline, for the run-up's reach.
+		const Vector2 out = side * float(sgn);
+		const float rise = _ground_at(at.x + out.x * 0.5f, at.y + out.y * 0.5f) - _ground_at(at.x, at.y);
+		const float tb = CLAMP(rise / 0.5f, 0.05f, 2.0f);
+		const float runup = hb;
+		const float reach = runup / tb;
+		// Erosion at the break: Partheniades with the scour's critical shear.
+		const float u = 0.5f * Math::sqrt(0.78f * 9.81f * hb);
+		const float tau = 0.5f * 1000.0f * 0.03f * u * u;
+		const float tau_c = CLAMP(0.5f + 0.5f * c.cohesion, 0.5f, 5.0f);
+		const float fines = CLAMP(1.0f - c.sand, 0.0f, 1.0f);
+		const float dry_density = 1500.0f;
+		// The wave train reaches about the hull's length of bank at once.
+		const float len = 2.0f * b;
+		if (tau > tau_c) {
+			const float e = 2e-4f * (tau / tau_c - 1.0f); // kg/m2/s
+			const float dz = e * p_dt / dry_density; // m over the swash strip
+			const Vector2i key(int(Math::floor(at.x * 2.0f)), int(Math::floor(at.y * 2.0f)));
+			float &owed = wake_owed[key];
+			owed += dz;
+			// Digs below a millimetre are lost in the field's precision: owed until one is due.
+			if (owed >= 0.001f) {
+				const float r = MAX(0.5f * MAX(reach, 0.25f), tex);
+				const Vector2 mid = at + out * (0.25f * reach);
+				const float vol = dig(Vector3(mid.x, p_water_level, mid.y), r, owed);
+				const float kg = (vol > 0.0f ? vol : float(Math::PI) * r * r * owed) * dry_density;
+				if (ww && ww->has_provider()) {
+					ww->add_sediment_mass(Vector3(at.x, p_water_level - 0.05f, at.y), kg * fines, 0.0f);
+				}
+				wake_wash_kg += kg;
+				owed = 0.0f;
+			}
+		}
+		// The swash wets the strip it runs up: most runs back down, a fiftieth of the run-up's wedge soaks in, at
+		// the waves' rate (the diverging waves' period 2 pi v cos 35 deg / g).
+		const float period = MAX((float)Math::TAU * speed * 0.82f / 9.81f, 0.3f);
+		const float wedge = 0.5f * runup * reach * len;
+		const float vol_w = 0.02f * wedge * p_dt / period;
+		if (vol_w > 0.0f) {
+			const Vector2 mid = at + out * (0.5f * reach);
+			add_water(Vector3(mid.x, p_water_level + 0.5f * runup, mid.y), MAX(0.5f * MAX(reach, len * 0.5f), tex), vol_w);
+			wake_water_m3 += vol_w;
+		}
+	}
+}
+
 Dictionary GroundSurface3D::get_ford_stats() const {
 	Dictionary d;
 	d["plume_kg"] = ford_plume_kg;
 	d["scour_m3"] = ford_scour_m3;
 	d["bank_failures"] = bank_failures;
+	d["wake_wash_kg"] = wake_wash_kg;
+	d["wake_water_m3"] = wake_water_m3;
+	d["wake_height"] = wake_height_last;
 	return d;
 }
 
@@ -7702,13 +8134,14 @@ void GroundSurface3D::_wear_save() {
 		return;
 	}
 	f->store_32(WEAR_MAGIC);
-	f->store_32(1);
+	f->store_32(2);
 	f->store_double(Time::get_singleton()->get_unix_time_from_system());
 	f->store_32(wear_cells.size());
 	for (const KeyValue<Vector2i, Wear> &kv : wear_cells) {
 		f->store_32(uint32_t(kv.key.x));
 		f->store_32(uint32_t(kv.key.y));
 		f->store_float(kv.value.passes);
+		f->store_float(kv.value.seal);
 	}
 }
 
@@ -7954,23 +8387,30 @@ void GroundSurface3D::_wear_load() {
 		return;
 	}
 	Ref<FileAccess> f = FileAccess::open_compressed(path, FileAccess::READ, FileAccess::COMPRESSION_ZSTD);
-	if (f.is_null() || f->get_32() != WEAR_MAGIC || f->get_32() != 1) {
+	if (f.is_null() || f->get_32() != WEAR_MAGIC) {
+		return;
+	}
+	const uint32_t version = f->get_32();
+	if (version != 1 && version != 2) {
 		return;
 	}
 	const double when = f->get_double();
 	const double away = when > 0.0 ? MAX(Time::get_singleton()->get_unix_time_from_system() - when, 0.0) : 0.0;
 	const float keep = wear_regrowth_days > 0.0f ? float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (double(wear_regrowth_days) * 86400.0))) : 1.0f;
+	const float keep_seal = float(Math::exp(-away * double(ruts_time_scale) * 0.69314718 / (60.0 * 86400.0)));
 	const uint32_t count = f->get_32();
 	for (uint32_t i = 0; i < count && !f->eof_reached(); i++) {
 		const int32_t kx = int32_t(f->get_32());
 		const int32_t kz = int32_t(f->get_32());
 		const Vector2i k(kx, kz);
 		const float passes = f->get_float() * keep;
-		if (passes < 0.05f) {
+		const float seal = version >= 2 ? f->get_float() * keep_seal : 0.0f;
+		if (passes < 0.05f && seal < 0.02f) {
 			continue;
 		}
 		Wear &w = wear_cells[k];
 		w.passes = MAX(w.passes, passes);
+		w.seal = MAX(w.seal, seal);
 	}
 	wear_dirty = true;
 }
@@ -8894,7 +9334,7 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 	float soften = 0.0f;
 	if (p_age > 0.0) {
 		const WorldWeather *wm = _weather();
-		drift = sand_drift_rate * MAX(_wind_10m().length() - 5.0f, 0.0f) / 5.0f;
+		drift = sand_drift_rate * MAX(_wind_10m().length() - 5.0f, 0.0f) / 5.0f * (1.0f - get_rain_crust());
 		if (wm) {
 			const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
 			soften = rain_smoothing * wm->precipitation_at(at);
@@ -9622,6 +10062,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mud_deposit_at", "position"), &GroundSurface3D::get_mud_deposit_at);
 	ClassDB::bind_method(D_METHOD("set_stream_fords", "enabled"), &GroundSurface3D::set_stream_fords);
 	ClassDB::bind_method(D_METHOD("is_stream_fords"), &GroundSurface3D::is_stream_fords);
+	ClassDB::bind_method(D_METHOD("set_wake_wash", "enabled"), &GroundSurface3D::set_wake_wash);
+	ClassDB::bind_method(D_METHOD("is_wake_wash"), &GroundSurface3D::is_wake_wash);
+	ClassDB::bind_method(D_METHOD("wash_wake", "position", "velocity", "half_width", "water_level", "delta"), &GroundSurface3D::wash_wake);
 	ClassDB::bind_method(D_METHOD("get_ford_stats"), &GroundSurface3D::get_ford_stats);
 	ClassDB::bind_method(D_METHOD("set_flood_silt", "enabled"), &GroundSurface3D::set_flood_silt);
 	ClassDB::bind_method(D_METHOD("get_silt_at", "position"), &GroundSurface3D::get_silt_at);
@@ -9700,6 +10143,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_stream_stones"), &GroundSurface3D::is_stream_stones);
 	ClassDB::bind_method(D_METHOD("get_stone_scour_volume"), &GroundSurface3D::get_stone_scour_volume);
 	ClassDB::bind_method(D_METHOD("get_stone_silt_lifted"), &GroundSurface3D::get_stone_silt_lifted);
+	ClassDB::bind_method(D_METHOD("set_trail_pugging", "enabled"), &GroundSurface3D::set_trail_pugging);
+	ClassDB::bind_method(D_METHOD("is_trail_pugging"), &GroundSurface3D::is_trail_pugging);
+	ClassDB::bind_method(D_METHOD("get_trail_pock_count"), &GroundSurface3D::get_trail_pock_count);
 	ClassDB::bind_method(D_METHOD("set_keep_ruts", "enabled"), &GroundSurface3D::set_keep_ruts);
 	ClassDB::bind_method(D_METHOD("is_keeping_ruts"), &GroundSurface3D::is_keeping_ruts);
 	ClassDB::bind_method(D_METHOD("set_ruts_path", "path"), &GroundSurface3D::set_ruts_path);
@@ -9737,6 +10183,13 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_dune_tone", "enabled"), &GroundSurface3D::set_dune_tone);
 	ClassDB::bind_method(D_METHOD("set_granule_ripples", "enabled"), &GroundSurface3D::set_granule_ripples);
 	ClassDB::bind_method(D_METHOD("is_granule_ripples"), &GroundSurface3D::is_granule_ripples);
+	ClassDB::bind_method(D_METHOD("set_rain_pits", "enabled"), &GroundSurface3D::set_rain_pits);
+	ClassDB::bind_method(D_METHOD("is_rain_pits"), &GroundSurface3D::is_rain_pits);
+	ClassDB::bind_method(D_METHOD("get_rain_pit_cover"), &GroundSurface3D::get_rain_pit_cover);
+	ClassDB::bind_method(D_METHOD("get_rain_crust"), &GroundSurface3D::get_rain_crust);
+	ClassDB::bind_method(D_METHOD("set_adhesion_warts", "enabled"), &GroundSurface3D::set_adhesion_warts);
+	ClassDB::bind_method(D_METHOD("is_adhesion_warts"), &GroundSurface3D::is_adhesion_warts);
+	ClassDB::bind_method(D_METHOD("get_adhesion_growth"), &GroundSurface3D::get_adhesion_growth);
 	ClassDB::bind_method(D_METHOD("is_dune_tone"), &GroundSurface3D::is_dune_tone);
 	ClassDB::bind_method(D_METHOD("is_ripple_sorting"), &GroundSurface3D::is_ripple_sorting);
 	ClassDB::bind_method(D_METHOD("is_far_ripples"), &GroundSurface3D::is_far_ripples);
@@ -9855,6 +10308,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_layer"), "set_mud_layer", "is_mud_layer");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flood_silt"), "set_flood_silt", "is_flood_silt");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_fords"), "set_stream_fords", "is_stream_fords");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wake_wash"), "set_wake_wash", "is_wake_wash");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_slides"), "set_mud_slides", "is_mud_slides");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mud_waves"), "set_mud_waves", "is_mud_waves");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "worn_tracks"), "set_worn_tracks", "is_worn_tracks");
@@ -9897,6 +10351,8 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ripple_sorting"), "set_ripple_sorting", "is_ripple_sorting");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dune_tone"), "set_dune_tone", "is_dune_tone");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "granule_ripples"), "set_granule_ripples", "is_granule_ripples");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_pits"), "set_rain_pits", "is_rain_pits");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "adhesion_warts"), "set_adhesion_warts", "is_adhesion_warts");
 	ClassDB::bind_method(D_METHOD("set_slip_avalanches", "enabled"), &GroundSurface3D::set_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("is_slip_avalanches"), &GroundSurface3D::is_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("get_avalanche_count"), &GroundSurface3D::get_avalanche_count);
@@ -9917,6 +10373,13 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "muddy_water"), "set_muddy_water", "is_muddy_water");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tracked_mud"), "set_tracked_mud", "is_tracked_mud");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_stones"), "set_stream_stones", "is_stream_stones");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "trail_pugging"), "set_trail_pugging", "is_trail_pugging");
+	ClassDB::bind_method(D_METHOD("set_trail_wallows", "enabled"), &GroundSurface3D::set_trail_wallows);
+	ClassDB::bind_method(D_METHOD("is_trail_wallows"), &GroundSurface3D::is_trail_wallows);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "trail_wallows"), "set_trail_wallows", "is_trail_wallows");
+	ClassDB::bind_method(D_METHOD("get_wallow_count"), &GroundSurface3D::get_wallow_count);
+	ClassDB::bind_method(D_METHOD("get_seal_at", "position"), &GroundSurface3D::get_seal_at);
+	ClassDB::bind_method(D_METHOD("get_wallow_visits"), &GroundSurface3D::get_wallow_visits);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");

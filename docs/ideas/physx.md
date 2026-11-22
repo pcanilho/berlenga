@@ -2454,6 +2454,52 @@ fringe went from 176 to 178 at its darkest row and 181 to 187 below it (path tra
 at the very edge, and the path tracer's ground beside the cloud is lit a few levels brighter still by the cloud's
 own scattered light, which raster does not bounce onto the scene.
 
+### Wind carries gas: the downwind corridor, catch-up steps, and vorticity in strong wind (22 Nov)
+
+After 1b263d2974 stopped wind-only blocks filling max_blocks, snow's spindrift (2 m cells, 30 m/s at the crest)
+sat as a round puff on its sources. Three things, found by probing velocity and smoke along the plume:
+
+1. Gas lives only in allocated blocks, and Flow reads an unallocated neighbour as still air (its halo is cleared to
+   zero). Flow's own allocation keeps blocks that hold smoke (or move fast and hold some) and their neighbours, but
+   does not run ahead of the smoke: in a test, a 40 m/s jet into still air stayed within its 16 blocks. Before
+   1b263d2974 the wind-only blocks did the work, without limit. Now the wind reserves a DOWNWIND CORRIDOR: the
+   sources' region (emitters grown by collision_range) swept along the wind at the sources for as long as the smoke
+   lasts (to 5% at smoke_fade, at most 12 s). It is swept from the sources, never from the gas, so it cannot run
+   away. The corridor's emitters only allocate (coupling 1e-4); the wind comes from the layers as before, now over
+   the corridor too.
+2. Flow steps at a fixed 60 a second and took at most one step a simulate, so below 60 frames a second the gas ran
+   slow (half speed at 30). maxStepsPerSimulate is now 8, as Godot's physics catches up (max_physics_steps_per_frame).
+   Snow's bench already steps one physics tick a frame, so it was not the cause there.
+3. Flow's vorticity confinement weighs its push by log2(1 + speed) (velocityMask), the absolute speed, not the
+   gas's own swirl: not Galilean invariant (Fedkiw, Stam and Jensen 2001's force is eps h (N x omega) alone), so a
+   strong wind feeds it. Snow's spindrift boiled at random 50 to 120 m/s with vorticity 2 and 1; at 0.5 it streams:
+   22 to 26 m/s along x from 20 to 200 m downwind, smoke 0.1 to 0.5 out to 100 m. Snow's spindrift takes 0.5. A
+   Galilean-invariant mask (the speed relative to the weather wind, a Flow shader patch) is the lasting fix.
+
+### Clothing missing under path tracing on a cold shader cache (22 Nov)
+
+Paulo's playtest on build f2ad55f2: a character dressed by `PhysXSkinnedCloth3D` (body and clothes, the render copy
+replacing the skinned mesh) was missing under path tracing, fine in raster and with PhysX off, and fine again once the
+shader cache was warm. Cause: the path tracer leaves out any surface whose custom hit group is not yet live in the
+pipeline bundle (`_hit_group_ready`), and with `async_shader_compilation` on a new shader takes up to a minute on a
+slow GPU to get there. The cloth copy's material is a ShaderMaterial (vertex() reads `cloth_positions`), and an
+imported body's materials often are too, so the whole character went until they compiled.
+
+The fix is the usual one for async pipeline compiles (a stand-in pipeline until the specialised one is ready, as
+Godot's raster ubershaders and Unreal's default-material fallback do): an opaque surface whose shader never discards
+or writes alpha is traced with the default hit group meanwhile, from the material's standard parameters, over its bare
+mesh (its vertex capture also waits for the shader). A shader that discards or blends can't be stood in for, since
+it may hide the surface outright (the cloth's own source surface is hidden that way), so it still waits. The surface
+stays counted as pending, so a still waits for the real shader, and the instance is planned again every frame until
+it arrives.
+
+0c18e346 (texture content versions) does not touch this path: the solver writes its images from a compute pass,
+which keeps no content version, and the built-in cloth shader already asks for `rt_vertex_dynamic`.
+
+Test: `docs/bench/cloth_pt -- --test` warms path tracing on an empty scene, then adds a body plus a cloth sheet whose
+shaders are new on every run (no cache holds them) and checks both cover their pixels six frames later, while the
+shaders still compile. Release f2ad55f2 fails it (both missing, background behind them); main passes.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

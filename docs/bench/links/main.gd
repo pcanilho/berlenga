@@ -23,6 +23,9 @@ extends Node3D
 #             the sun dries puddles faster than the shade of a canopy and than the night
 #   dew       a clear calm night wets open ground with dew, and frosts it below freezing; clouds and a canopy keep it
 #             dry; the morning sun melts the frost
+#   glaze     a warm nose aloft over -3 C air: the snow melts aloft and lands as freezing rain (rain_share_at
+#             through the contract too), glazing twigs as Jones's (1998) model says; a deep cold layer refreezes it
+#             to pellets (Bourgouin 2000); a thaw takes the ice off; the ice-storm knob holds a glaze
 #   lightning a tall mast takes the strike meant for the ground beside it; striking distance on IEC 62305
 #   fire      a long continuing current lights dry fuel, not wet (PhysX)
 #   contact   a body in world_contact flattens grass without being in grass_trample, and herbs where there is no grass
@@ -236,6 +239,18 @@ func _skip(name: String, why: String) -> void:
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--salt="):
+			await _salt_view(a.substr(7), not OS.get_cmdline_user_args().has("--salt-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
+		if a.begins_with("--valley-fog="):
+			await _valley_fog_view(a.substr(13), OS.get_cmdline_user_args().has("--fog-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
+		if a.begins_with("--rime="):
+			await _rime_view(a.substr(7), OS.get_cmdline_user_args().has("--rime-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
 		if a.begins_with("--frost="):
 			await _frost_view(a.substr(8), OS.get_cmdline_user_args().has("--frost-off"))
 			get_tree().quit()
@@ -263,6 +278,7 @@ func _ready() -> void:
 	await _air_tests()
 	await _water_tests()
 	await _dew_tests()
+	await _glaze_tests()
 	await _lightning_tests()
 	_fire_tests()
 	await _contact_tests()
@@ -284,6 +300,12 @@ func _ready() -> void:
 	await _contract_tests()
 	await _shimmer_tests()
 	await _ground_color_tests()
+	await _salt_bloom_tests()
+	await _spray_sand_tests()
+	await _orographic_tests()
+	await _cold_pool_tests()
+	await _rime_tests()
+	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
 
@@ -927,8 +949,11 @@ func _lee_drift_tests() -> void:
 	snow.drift_obstacles = false
 	snow.advance(6.0 * 3600.0)
 	var lee_off: float = snow.get_depth_at(Vector3(4, 0, 5)) - lee_d
+	var foot_off: float = snow.get_depth_at(Vector3(2.5, 0, 5)) - foot_d
 	var open_off: float = snow.get_depth_at(Vector3(-15, 0, 5)) - open_d
-	_check("lee: drift_obstacles off, the drift is no longer fed and the wind takes it back", lee_off < 0.0 and open_off > 0.05, "%.1f cm 2 H behind it, %.1f cm in the open over 6 more hours" % [lee_off * 100.0, open_off * 100.0])
+	# The wind sees the drift's own relief (SnowCover3D drift_relief): unsheltered, its crest is taken back while snow
+	# still falls in the open.
+	_check("lee: drift_obstacles off, the drift is no longer fed and the wind takes its crest back", foot_off < 0.0 and lee_off < 0.5 * open_off and open_off > 0.05, "%.1f cm at its foot, %.1f cm 2 H behind it, %.1f cm in the open over 6 more hours" % [foot_off * 100.0, lee_off * 100.0, open_off * 100.0])
 	WorldContracts.clear_overrides()
 	snow.queue_free()
 	wall.queue_free()
@@ -1456,6 +1481,62 @@ func _contract_tests() -> void:
 		_check("contracts: weather defaults with no producer", wx.air_temperature_at(Vector3.ZERO) == 15.0 and wx.wind_at(Vector3.ZERO) == Vector3.ZERO and wx.rain_share_at(Vector3.ZERO) == 1.0, "")
 
 
+func _glaze_tests() -> void:
+	var m := _new_map()
+	m.air_daily_cycle = false
+	m.ground_height = 0.0
+	m.temperature = -3.0
+	m.humidity = 0.95
+	m.wind_speed = 5.0
+	m.rain_rate = 3.0
+	m.cloud_cover = 1.0
+	var p := Vector3(10, 0, 10)
+	# No warm layer: at -3 C nearly all of it is snow, no glaze.
+	m.warm_nose_temperature = 0.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	var cold_glaze: float = m.get_glaze_at(p)
+	var cold_share: float = m.get_rain_share_at(p)
+	# A warm nose peaking at +4 C, its base 1 km up: the snow melts aloft, the drops reach the -3 C ground liquid.
+	m.warm_nose_temperature = 4.0
+	m.warm_nose_base = 1000.0
+	m.snap_to_settings()
+	var share: float = m.get_rain_share_at(p)
+	var freezing: float = m.get_freezing_share_at(p)
+	var wx: WorldWeather = WorldContracts.get_weather()
+	_check("glaze: a warm layer aloft turns -3 C snow into freezing rain, through the contract too", cold_share < 0.1 and share > 0.95 and freezing > 0.95 and m.get_snowfall_at(p) < 0.1 * m.get_rain_at(p) and wx.rain_share_at(p) > 0.95, "share %.2f without, %.2f with (freezing %.2f, contract %.2f), snow %.2f mm/h" % [cold_share, share, freezing, wx.rain_share_at(p), m.get_snowfall_at(p)])
+	var rate: float = m.get_rain_at(p) * freezing
+	m.advance(6.0 * 3600.0)
+	var glaze: float = m.get_glaze_at(p)
+	var expect: float = WeatherMap3D.glaze_accretion_rate(rate, m.get_wind_at(p, 10.0).length()) * 6.0
+	_check("glaze: six hours of freezing rain glaze twigs as Jones (1998), little without the warm layer", absf(glaze - expect) < 0.15 * expect and cold_glaze < 0.1 * glaze, "%.2f mm (model %.2f at %.2f mm/h), %.2f mm without the warm layer" % [glaze, expect, rate, cold_glaze])
+	_check("glaze: WorldWeather.glaze_at reads the weather's glaze", wx.has_provider() and is_equal_approx(wx.glaze_at(p), glaze), "%.2f mm" % wx.glaze_at(p))
+	# A deep, cold layer under the warm nose refreezes the drops to ice pellets: no glaze from them.
+	m.warm_nose_base = 1500.0
+	m.temperature = -10.0
+	m.snap_to_settings()
+	var pellets_freezing: float = m.get_freezing_share_at(p)
+	_check("glaze: a deep cold layer refreezes the drops to pellets", pellets_freezing < 0.05, "freezing share %.3f" % pellets_freezing)
+	# The thaw: +4 C and a fresh wind take it off.
+	m.temperature = 4.0
+	m.rain_rate = 0.0
+	m.cloud_cover = 0.0
+	m.wind_speed = 8.0
+	m.snap_to_settings()
+	m.advance(3.0 * 3600.0)
+	var thawed: float = m.get_glaze_at(p)
+	m.advance(6.0 * 3600.0)
+	var gone: float = m.get_glaze_at(p)
+	_check("glaze: a thaw takes the ice off (0.3 mm/h per K, Hock 2003)", absf(glaze - thawed - 3.6) < 0.4 and gone == 0.0, "%.2f mm left of %.2f after 3 h at 4 C, %.2f after 9 h" % [thawed, glaze, gone])
+	# The ice-storm knob holds a glaze for tests and set pieces.
+	m.ice_storm_glaze = 12.0
+	_check("glaze: the ice-storm knob holds its glaze", m.get_glaze_at(p) >= 12.0 and wx.glaze_at(p) >= 12.0, "%.2f mm" % m.get_glaze_at(p))
+	m.ice_storm_glaze = 0.0
+	m.queue_free()
+	await get_tree().physics_frame
+
+
 func _dew_tests() -> void:
 	var m := _new_map()
 	var c := _new_clock(10, 0.0)
@@ -1548,6 +1629,150 @@ func _dew_tests() -> void:
 	c.queue_free()
 	await get_tree().physics_frame
 
+
+
+func _valley_fog_view(path: String, off: bool, pt: bool) -> void:
+	# A valley 200 m deep after a clear calm night, seen from above its shoulder at sunrise.
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 200.0 * (1.0 - exp(-p.x * p.x / (2.0 * 400.0 * 400.0))) + 30.0 * sin(p.z * 0.0021) * cos(p.x * 0.0013)\n"
+	vs.reload()
+	var valley := Node3D.new()
+	valley.set_script(vs)
+	add_child(valley)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var step := 20.0
+	var half := 1600.0
+	var cells := int(2.0 * half / step)
+	for zi in cells:
+		for xi in cells:
+			var quad := [Vector2(xi, zi), Vector2(xi + 1, zi), Vector2(xi + 1, zi + 1), Vector2(xi, zi), Vector2(xi + 1, zi + 1), Vector2(xi, zi + 1)]
+			for q in quad:
+				var px: float = -half + q.x * step
+				var pz: float = -half + q.y * step
+				st.add_vertex(Vector3(px, valley.get_height(Vector3(px, 0, pz)), pz))
+	st.generate_normals()
+	var ground := MeshInstance3D.new()
+	ground.mesh = st.commit()
+	ground.material_override = TerrainMaterial3D.new()
+	add_child(ground)
+	var c := _new_clock(10, 1.0)
+	var m := _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(valley)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.95
+	m.temperature = 6.0
+	m.valley_fog = not off
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(5.0 * 3600.0)
+	print("valley fog %.0f m deep, top %.0f m" % [m.get_valley_fog_depth_at(Vector3.ZERO), m.get_valley_fog_top_at(Vector3.ZERO)])
+	c.time_of_day = 8.0 # just after sunrise: the fog lasts an hour or two into the morning
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-18, 45, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.62, 0.7, 0.82)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.66, 0.75)
+	env.environment.ambient_light_energy = 0.5
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	add_child(env)
+	var cam := Camera3D.new()
+	cam.position = Vector3(260, 110, 260)
+	cam.far = 6000.0
+	add_child(cam)
+	cam.look_at(Vector3(-60, 15, -150))
+	cam.make_current()
+	for i in 40:
+		await RenderingServer.frame_post_draw
+	if pt:
+		env.environment.pathtracing_enabled = true
+		for i in 40:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+func _rime_view(path: String, off: bool, pt: bool) -> void:
+	# A ridge in supercooled cloud, the wind from the left (-x): rime on the faces turned that way.
+	var m := _new_map()
+	m.ground_height = 0.0
+	m.cloud_base_height = -200.0
+	m.cloud_cover = 1.0
+	m.wind_speed = 10.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = -6.0
+	m.humidity = 0.98
+	m.air_follows_climate = false
+	m.rime = not off
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	print("rime %.1f mm" % m.get_rime_at(Vector3.ZERO).length())
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-30, -30, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.62, 0.66, 0.72)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.64, 0.7)
+	env.environment.ambient_light_energy = 0.6
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	add_child(env)
+	var wall := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(1.5, 3, 1.5)
+	wall.mesh = bm
+	wall.rotation_degrees = Vector3(0, 35, 0)
+	wall.position = Vector3(2.2, 1.5, -1.5)
+	wall.material_override = TerrainMaterial3D.new()
+	add_child(wall)
+	var gen := PlantGenerator.new()
+	gen.preset = 0
+	gen.apply_preset_colors()
+	var fern := MeshInstance3D.new()
+	fern.mesh = gen.generate()
+	fern.position = Vector3(0.3, 0, 1.0)
+	add_child(fern)
+	var rg := RockGenerator.new()
+	rg.seed = 3
+	var rock := MeshInstance3D.new()
+	rock.mesh = rg.generate()
+	rock.position = Vector3(-1.6, 0, 0.5)
+	add_child(rock)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 1.4, 5.5)
+	cam.rotation_degrees = Vector3(-10, 0, 0)
+	add_child(cam)
+	cam.make_current()
+	for i in 30:
+		await RenderingServer.frame_post_draw
+	if pt:
+		env.environment.pathtracing_enabled = true
+		for i in 40:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
 
 
 func _frost_view(path: String, off: bool) -> void:
@@ -1723,6 +1948,335 @@ func _shimmer_view(path: String) -> void:
 			get_viewport().get_texture().get_image().save_png("%s/%03d.png" % [clip, i])
 	get_viewport().get_texture().get_image().save_png(path)
 	print("saved ", path)
+
+
+# Spray-wet sand holds sharper prints: the spray's film counts in the weather's surface wetness, which GroundSurface3D
+# takes as its sand's moisture, so beach sand under an onshore gale gains capillary cohesion (steeper print walls)
+# where the same sand beyond the spray stays loose.
+func _spray_sand_tests() -> void:
+	if not ClassDB.class_exists("GroundSurface3D"):
+		_skip("ground: spray-wet sand", "no GroundSurface3D")
+		return
+	WorldContracts.clear_overrides()
+	WorldContracts.add_water_stub(SurfStub.new())
+	var m := _new_map()
+	m.ground_height = 0.0
+	m.wind_speed = 12.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = 12.0
+	m.humidity = 0.8
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	# The shore: a 5 m deep seabed, then a beach rising 2 in 100 (ShoreGround's), as the ground's height source.
+	var shore := GDScript.new()
+	shore.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn -5.0 if p.x < 0.0 else p.x * 0.02\n"
+	shore.reload()
+	var ground_node := Node3D.new()
+	ground_node.set_script(shore)
+	add_child(ground_node)
+	var g: Node3D = ClassDB.instantiate("GroundSurface3D")
+	g.ground_type = 0 # sand
+	g.gpu_simulation = false
+	g.near_field = false
+	g.runoff_channels = false
+	g.standing_water = false
+	g.wind_ripples = false
+	g.world_puddles = false
+	add_child(g)
+	g.height_source = g.get_path_to(ground_node)
+	g.follow_target = g.get_path_to(ground_node)
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	for i in 120:
+		await get_tree().physics_frame
+	var w: WorldWeather = WorldContracts.get_weather()
+	var near := Vector3(4, 0.08, 0)
+	var far := Vector3(220, 4.4, 0)
+	var c_near: float = WorldContracts.get_ground().soil_at(near)["cohesion"]
+	var c_far: float = WorldContracts.get_ground().soil_at(far)["cohesion"]
+	_check("ground: spray-wet beach sand gains capillary cohesion (sharper prints), sand beyond the spray stays loose", w.surface_wetness_at(near) > 0.3 and c_near > c_far + 0.1, "wetness %.2f / %.2f, cohesion %.2f / %.2f kPa at the waterline / inland" % [w.surface_wetness_at(near), w.surface_wetness_at(far), c_near, c_far])
+	WorldContracts.clear_overrides()
+	g.queue_free()
+	ground_node.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
+
+
+# Snow line and upslope rain: a 600 m ridge across a westerly; the terrain climate (TerrainDataMap3D, Smith and Barstad
+# 2004) gives more on its windward side than in its lee, the weather's cells take that factor, and each cell's rain
+# or snow goes by the air at its own height; the snowpack divides the weather's factor out of its own.
+func _orographic_tests() -> void:
+	if not ClassDB.class_exists("TerrainDataMap3D") or not ClassDB.class_exists("ClimateRecipe"):
+		_skip("orographic rain", "no terrain modules")
+		return
+	WorldContracts.clear_overrides()
+	var ridge_script := GDScript.new()
+	ridge_script.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 600.0 * exp(-p.x * p.x / (2.0 * 400.0 * 400.0))\n"
+	ridge_script.reload()
+	var ridge := Node3D.new()
+	ridge.set_script(ridge_script)
+	add_child(ridge)
+	var r := ClimateRecipe.new()
+	r.latitude = 46.0
+	r.reference_height = 0.0
+	r.temperature_january = 2.0
+	r.temperature_july = 19.0
+	r.precipitation = 1200.0
+	r.wind_from = 270.0
+	r.wind_speed = 10.0
+	var dm := TerrainDataMap3D.new()
+	dm.size = 4096.0
+	dm.resolution = 256
+	add_child(dm)
+	dm.height_source = dm.get_path_to(ridge)
+	dm.climate_recipe = r
+	await get_tree().physics_frame
+	dm.bake()
+	dm.bake_climate()
+	var m := _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(ridge)
+	m.terrain_wind_enabled = false
+	m.ground_height = 0.0
+	m.temperature = 3.0
+	m.humidity = 0.8
+	m.cloud_cover = 1.0
+	m.rain_rate = 2.0
+	m.wind_speed = 10.0
+	m.wind_direction = Vector2(1, 0)
+	m.air_follows_climate = false
+	m.fog_drip = false # the summit stands in the cloud base (hill fog would wet it too)
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	# The first two minutes of rain on the dry ground: the foot's film fills, the summit's (sleet, a tenth of it liquid)
+	# barely. Half an hour wets both through (the film holds a few tenths of a millimetre).
+	m.advance(120.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var wet_foot: float = w.surface_wetness_at(Vector3(-1600, 0, 0))
+	var wet_top: float = w.surface_wetness_at(Vector3(0, 600, 0))
+	m.advance(1680.0)
+	w = WorldContracts.get_weather()
+	var wind_side := Vector3(-450, 0, 0)
+	var lee := Vector3(900, 0, 0)
+	var foot := Vector3(-1600, 0, 0)
+	var top := Vector3(0, 600, 0)
+	var f_wind: float = WorldContracts.climate_precipitation_factor_at(wind_side)
+	var f_lee: float = WorldContracts.climate_precipitation_factor_at(lee)
+	var r_wind: float = w.precipitation_at(wind_side)
+	var r_lee: float = w.precipitation_at(lee)
+	var wf: float = w.orographic_factor_at(wind_side)
+	# A ridge 1 km across in a 10 m/s wind: the linear model's condensation and fall delays (about 1000 s each) carry
+	# its precipitation over the crest into the lee (spillover), so the lee gets the most here.
+	_check("orographic: the weather's rain carries the terrain climate's orographic pattern over the ridge", absf(f_wind - f_lee) > 0.1 and absf(r_wind / r_lee - f_wind / f_lee) < 0.05 * f_wind / f_lee and absf(wf - f_wind) < 0.05 * f_wind, "climate factor %.2f windward, %.2f lee; rain %.2f / %.2f mm/h; weather factor %.2f" % [f_wind, f_lee, r_wind, r_lee, wf])
+	_check("orographic: rain wets the foot at +3 C, the 600 m summit (-0.9 C) gets snow (the snow line by each cell's height), its surface wets slower", w.rain_share_at(Vector3(foot.x, 0, 0)) > 0.6 and w.rain_share_at(top) < 0.4 and wet_foot > 0.05 and wet_foot > 4.0 * wet_top, "rain share %.2f at the foot, %.2f on top; wetness after 2 min %.2f / %.2f" % [w.rain_share_at(Vector3(foot.x, 0, 0)), w.rain_share_at(top), wet_foot, wet_top])
+	if ClassDB.class_exists("SnowCover3D"):
+		var snow: Node3D = ClassDB.instantiate("SnowCover3D")
+		snow.extent = 64.0
+		snow.resolution = 16
+		add_child(snow)
+		snow.climate_map = snow.get_path_to(dm)
+		var s_rate: float = snow.get_snowfall_rate_at(top)
+		var expect: float = w.precipitation_at(top) * (1.0 - w.rain_share_at(top))
+		_check("orographic: the snowpack does not count the climate's factor twice (its snowfall matches the weather's on the summit)", absf(s_rate - expect) < 0.2 * expect + 0.01, "snow %.3f mm/h, weather's snowfall %.3f" % [s_rate, expect])
+		snow.queue_free()
+	m.orographic_rain = false
+	m.advance(60.0)
+	var off_ratio: float = w.precipitation_at(wind_side) / maxf(w.precipitation_at(lee), 1e-4)
+	_check("orographic: off, the rain is even again", absf(off_ratio - 1.0) < 0.05, "windward over lee %.2f" % off_ratio)
+	WorldContracts.clear_overrides()
+	m.queue_free()
+	dm.queue_free()
+	ridge.queue_free()
+	await get_tree().physics_frame
+
+
+# Cold air pools: a valley 200 m deep on a clear calm night fills with cold air; the shoulders above stay milder.
+func _cold_pool_tests() -> void:
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 200.0 * (1.0 - exp(-p.x * p.x / (2.0 * 400.0 * 400.0)))\n"
+	vs.reload()
+	var valley := Node3D.new()
+	valley.set_script(vs)
+	add_child(valley)
+	var c := _new_clock(10, 1.0)
+	var m := _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(valley)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.8
+	m.temperature = 6.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(4.0 * 3600.0)
+	var floor_p := Vector3(0, 0, 0)
+	var slope_p := Vector3(500, 108, 0)
+	var shoulder := Vector3(1500, 200, 0)
+	var t_floor: float = m.get_air_temperature_at(floor_p)
+	var t_slope: float = m.get_air_temperature_at(slope_p)
+	var t_shoulder: float = m.get_air_temperature_at(shoulder)
+	var pool: float = m.get_cold_pool_at(floor_p)
+	_check("cold pool: a clear calm night pools cold air on the valley floor, warmer up the slope (an inversion)", pool > 4.0 and t_floor < t_slope - 2.0 and m.get_cold_pool_at(shoulder) < 0.2, "pool %.1f C; air %.1f C on the floor, %.1f C 108 m up the slope, %.1f C on the shoulder" % [pool, t_floor, t_slope, t_shoulder])
+	var w: WorldWeather = WorldContracts.get_weather()
+	var rh_floor: float = w.air_humidity_at(floor_p)
+	var rh_shoulder: float = w.air_humidity_at(shoulder)
+	var fr_floor: float = m.get_frost_at(floor_p)
+	var fr_shoulder: float = m.get_frost_at(shoulder)
+	_check("cold pool: the floor's air saturates (valley fog) and frosts first, the contract reads it", rh_floor > 0.98 and rh_shoulder < 0.92 and fr_floor > fr_shoulder + 0.02 and absf(w.air_temperature_at(floor_p) - t_floor) < 0.01, "humidity %.2f on the floor, %.2f on the shoulder; frost %.3f / %.3f mm" % [rh_floor, rh_shoulder, fr_floor, fr_shoulder])
+	# The saturated pool fills with radiation fog, flat-topped below the shoulders (a sea of fog seen from above).
+	var fog_top: float = w.valley_fog_top_at(floor_p)
+	var fog_depth: float = m.get_valley_fog_depth_at(floor_p)
+	var fog_side: float = w.valley_fog_top_at(Vector3(150, 0, 0))
+	var fog_up: float = w.valley_fog_top_at(Vector3(300, 0, 0))
+	_check("valley fog: the saturated pool fills with fog, its top level across the valley; the slopes above it and the shoulders clear", fog_depth > 20.0 and fog_top < 200.0 and absf(fog_side - fog_top) < 3.0 and fog_up == -INF and w.valley_fog_top_at(shoulder) == -INF, "%.0f m deep on the floor, top at %.0f m there and %.0f m 150 m across (ground 14 m); clear at 300 m (ground 49 m) and on the shoulder" % [fog_depth, fog_top, fog_side])
+	m.wind_speed = 8.0
+	m.snap_to_settings()
+	m.advance(2.0 * 3600.0)
+	_check("valley fog: a wind lifts it with the pool", m.get_valley_fog_depth_at(floor_p) < 1.0, "%.1f m left" % m.get_valley_fog_depth_at(floor_p))
+	var windy: float = m.get_cold_pool_at(floor_p)
+	_check("cold pool: a wind mixes the pool out", windy < 0.5, "pool %.2f C after 2 hours at 8 m/s" % windy)
+	m.wind_speed = 1.0
+	m.cold_pools = false
+	m.snap_to_settings()
+	m.advance(600.0)
+	_check("cold pool: off, the floor has the free air's temperature", m.get_cold_pool_at(floor_p) == 0.0 and absf(m.get_air_temperature_at(floor_p) - 6.0) < 0.05, "%.2f C" % m.get_air_temperature_at(floor_p))
+	m.queue_free()
+	c.queue_free()
+	valley.queue_free()
+	await get_tree().physics_frame
+
+
+# Rime: a summit in supercooled cloud and a westerly wind; the deposit grows into the wind and goes in a thaw.
+func _rime_tests() -> void:
+	WorldContracts.clear_overrides()
+	var m := _new_map()
+	m.ground_height = 1200.0
+	m.cloud_base_height = 1000.0
+	m.cloud_cover = 1.0
+	m.wind_speed = 10.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = -6.0
+	m.humidity = 0.98
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(6.0 * 3600.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var at := Vector3(0, 1200, 0)
+	var lwc: float = w.fog_water_at(at)
+	var r: Vector3 = w.rime_at(at)
+	var rate: float = WeatherMap3D.rime_accretion_rate(lwc, 10.0, -6.0)
+	_check("rime: a summit in supercooled cloud grows rime into the wind (Makkonen 2000), about the rate's worth", r.length() > 5.0 and r.x < -0.95 * r.length() and absf(r.length() - 6.0 * rate) < 0.2 * 6.0 * rate + 1.0, "%.1f mm toward (%.2f, %.2f) in 6 h of %.2f g/m3 cloud at 10 m/s (%.1f mm/h)" % [r.length(), r.x / maxf(r.length(), 1e-4), r.z / maxf(r.length(), 1e-4), lwc, rate])
+	var warm: float = WeatherMap3D.rime_accretion_rate(lwc, 10.0, 0.5)
+	m.cloud_base_height = 2500.0
+	m.temperature = 4.0
+	m.snap_to_settings()
+	m.advance(6.0 * 3600.0)
+	var left: float = w.rime_at(at).length()
+	_check("rime: none grows above freezing (wet growth is glaze), and a thaw out of the cloud sheds it", warm == 0.0 and left < 0.5, "%.2f mm/h at +0.5 C; %.2f mm left after 6 h at +4 C" % [warm, left])
+	m.rime = false
+	_check("rime: off, none", w.rime_at(at) == Vector3(), "")
+	m.queue_free()
+	await get_tree().physics_frame
+
+
+# The drawn ground's relief over the heightfield (WorldGround.relief_at): nothing with no producer, a stub's answer
+# with one (Landscape3D fills it from its cliff and bank relief).
+func _relief_contract_tests() -> void:
+	WorldContracts.clear_overrides()
+	var none: Vector2 = WorldContracts.get_ground().relief_at(Vector3(10, 0, 10))
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _relief_at(p: Vector3) -> Vector2:\n\treturn Vector2(0.25, 0.8) if p.x > 0.0 else Vector2()\n"
+	stub.reload()
+	WorldContracts.set_ground(stub.new())
+	var r: Vector2 = WorldContracts.get_ground().relief_at(Vector3(10, 0, 10))
+	WorldContracts.clear_overrides()
+	_check("relief contract: (0, 0) with no producer, a stub's relief with one", none == Vector2() and r.is_equal_approx(Vector2(0.25, 0.8)), "none %s, stub %s" % [none, r])
+
+
+# Salt bloom on the terrain's sea cliffs: a rock wall (TerrainMaterial3D, steep faces are rock) under the spray's salt
+# (weather_spray_map G) and without it.
+func _salt_scene(p_pt: bool) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.5, 0.6, 0.75)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.6, 0.65)
+	env.environment.ambient_light_energy = 0.5
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if p_pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	root.add_child(env)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-35, 30, 0)
+	root.add_child(sun)
+	var wall := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(8, 4, 0.5)
+	wall.mesh = bm
+	wall.position = Vector3(0, 2, -3)
+	wall.material_override = TerrainMaterial3D.new()
+	root.add_child(wall)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 2, 2)
+	root.add_child(cam)
+	cam.make_current()
+	var img := Image.create(4, 4, false, Image.FORMAT_RG8)
+	img.fill(Color(0, 0.6, 0)) # about 9 g/m2 of salt
+	RenderingServer.global_shader_parameter_set("weather_spray_map", ImageTexture.create_from_image(img))
+	RenderingServer.global_shader_parameter_set("weather_spray_rect", Vector4(-50, -50, 100, 100))
+	return root
+
+
+func _salt_view(path: String, salt: bool, pt: bool) -> void:
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var root := _salt_scene(pt)
+	if not salt:
+		RenderingServer.global_shader_parameter_set("weather_spray_rect", Vector4(0, 0, 0, 0))
+	for i in 20:
+		await RenderingServer.frame_post_draw
+	if pt:
+		(root.get_child(0) as WorldEnvironment).environment.pathtracing_enabled = true
+		for i in 40:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+func _salt_bloom_tests() -> void:
+	if not ClassDB.class_exists("TerrainMaterial3D") or DisplayServer.get_name() == "headless":
+		_skip("salt bloom", "needs a rendering device")
+		return
+	var root := _salt_scene(false)
+	for i in 20:
+		await RenderingServer.frame_post_draw
+	var salted := _centre_luminance(get_viewport().get_texture().get_image())
+	RenderingServer.global_shader_parameter_set("weather_spray_rect", Vector4(0, 0, 0, 0))
+	for i in 5:
+		await RenderingServer.frame_post_draw
+	var bare := _centre_luminance(get_viewport().get_texture().get_image())
+	root.queue_free()
+	await get_tree().process_frame
+	_check("salt bloom: the spray's salt crusts the sea cliff's dry rock white (terrain material), none without salt", salted > 1.2 * bare, "centre luminance %.3f salted, %.3f bare" % [salted, bare])
+
+
+func _centre_luminance(img: Image) -> float:
+	var w := img.get_width()
+	var h := img.get_height()
+	var sum := 0.0
+	var n := 0
+	for y in range(int(h * 0.3), int(h * 0.7), 4):
+		for x in range(int(w * 0.3), int(w * 0.7), 4):
+			sum += img.get_pixel(x, y).get_luminance()
+			n += 1
+	return sum / maxf(n, 1)
 
 
 # The bending alone (the gas drawn invisible): with heat_shimmer on the frame moves above the fire and nowhere

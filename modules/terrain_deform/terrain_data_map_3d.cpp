@@ -873,6 +873,17 @@ float TerrainDataMap3D::get_temperature_at(const Vector3 &p_pos, float p_day) co
 	const float jul = _sample_climate(climate[CLIMATE_TEMPERATURE_JULY].ptr(), 1, 0, p_pos);
 	return 0.5f * (jan + jul) - 0.5f * (jul - jan) * Math::cos(float(Math::TAU) * (p_day - 15.0f) / 365.0f);
 }
+float TerrainDataMap3D::contract_precipitation_factor_at(const Vector3 &p_position) const {
+	if (climate_resolution == 0 || climate_recipe.is_null() || climate_recipe->get_precipitation() <= 0.0f || climate[CLIMATE_PRECIPITATION].is_empty()) {
+		return -1.0f;
+	}
+	const float span = climate_cell * climate_resolution;
+	if (p_position.x < climate_origin.x || p_position.z < climate_origin.y || p_position.x > climate_origin.x + span || p_position.z > climate_origin.y + span) {
+		return -1.0f;
+	}
+	return MAX(get_precipitation_at(p_position) / climate_recipe->get_precipitation(), 0.0f);
+}
+
 float TerrainDataMap3D::get_precipitation_at(const Vector3 &p_pos) const {
 	return _sample_climate(climate[CLIMATE_PRECIPITATION].ptr(), 1, 0, p_pos);
 }
@@ -978,6 +989,9 @@ void TerrainDataMap3D::set_publish_shader_globals(bool p_enable) {
 }
 
 float TerrainDataMap3D::contract_water_height_at(const Vector3 &p_position) const {
+	if (!is_baked()) {
+		return -Math::INF; // registered on entering the tree, baked later: no water yet
+	}
 	const float depth = get_water_depth_at(p_position);
 	return depth > 0.005f ? get_height_at(p_position) + depth : -Math::INF;
 }
@@ -986,9 +1000,11 @@ void TerrainDataMap3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			WorldContracts::register_water(this);
+			WorldContracts::register_climate(this);
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			WorldContracts::unregister_water(this);
+			WorldContracts::unregister_climate(this);
 		} break;
 		case NOTIFICATION_READY: {
 			if (bake_on_ready && !Engine::get_singleton()->is_editor_hint()) {

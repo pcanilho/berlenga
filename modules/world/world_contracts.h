@@ -65,6 +65,8 @@ public:
 	virtual float contract_canopy_closure_at(const Vector3 &p_position) const = 0; // 0..1
 	virtual float contract_frost_at(const Vector3 &p_position) const { return 0.0f; } // mm
 	virtual float contract_glaze_at(const Vector3 &p_position) const { return 0.0f; } // mm of radial clear ice on exposed twigs
+	virtual Vector3 contract_rime_at(const Vector3 &p_position) const { return Vector3(); } // mm of rime on exposed twigs, along the way it grew (into the wind)
+	virtual float contract_valley_fog_top_at(const Vector3 &p_position) const { return -Math::INF; } // m, the top of valley (radiation) fog over the point
 	virtual Vector3 contract_mean_wind_at(const Vector3 &p_position) const { return Vector3(); } // m/s at 10 m, no gusts
 	virtual Vector3 contract_wind_aloft_at(const Vector3 &p_position, float p_altitude) const { return Vector3(); } // m/s, free air
 	virtual float contract_terrain_lee_at(const Vector3 &p_position) const { return NAN; } // rad, Winstral's Sx; NaN: no terrain wind there
@@ -91,6 +93,8 @@ public:
 	virtual float contract_mid_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, the mid (altocumulus) sheet
 	virtual float contract_cloud_effector_at(const Vector3 &p_position) const { return 0.0f; } // -1..1, cloud added (> 0) or cleared by effectors
 	virtual float contract_cloud_base_at(const Vector3 &p_position) const { return 1500.0f; } // m above y = 0, the low cloud's base
+	// The orographic factor the weather's precipitation_at already carries at the point (1: none applied).
+	virtual float contract_orographic_factor_at(const Vector3 &p_position) const { return 1.0f; }
 	virtual float contract_mountain_wave_at(const Vector3 &p_position) const { return 0.0f; } // m, the air's vertical displacement in mountain waves
 	virtual float contract_mountain_wave_velocity_at(const Vector3 &p_position) const { return 0.0f; } // m/s, their vertical wind
 	virtual float contract_wave_cloud_density_at(const Vector3 &p_position) const { return 0.0f; } // 1/m, wave cloud (lenticular) extinction
@@ -123,6 +127,8 @@ protected:
 	GDVIRTUAL1RC(float, _canopy_closure_at, Vector3)
 	GDVIRTUAL1RC(float, _frost_at, Vector3)
 	GDVIRTUAL1RC(float, _glaze_at, Vector3)
+	GDVIRTUAL1RC(Vector3, _rime_at, Vector3)
+	GDVIRTUAL1RC(float, _valley_fog_top_at, Vector3)
 	GDVIRTUAL1RC(Vector3, _mean_wind_at, Vector3)
 	GDVIRTUAL2RC(Vector3, _wind_aloft_at, Vector3, float)
 	GDVIRTUAL1RC(float, _terrain_lee_at, Vector3)
@@ -146,6 +152,7 @@ protected:
 	GDVIRTUAL1RC(float, _mid_cloud_cover_at, Vector3)
 	GDVIRTUAL1RC(float, _cloud_effector_at, Vector3)
 	GDVIRTUAL1RC(float, _cloud_base_at, Vector3)
+	GDVIRTUAL1RC(float, _orographic_factor_at, Vector3)
 	GDVIRTUAL1RC(float, _mountain_wave_at, Vector3)
 	GDVIRTUAL1RC(float, _mountain_wave_velocity_at, Vector3)
 	GDVIRTUAL1RC(float, _wave_cloud_density_at, Vector3)
@@ -177,6 +184,12 @@ public:
 	// storm leaves it and until it melts or sheds. An ice storm is 6 mm and more; 12-25 mm breaks limbs. 0 with no
 	// weather system or none. Readers: trees (load, droop, breaks), wires, surfaces.
 	float glaze_at(const Vector3 &p_position) const;
+	// Rime on exposed twigs and edges (supercooled cloud freezing on contact, Makkonen 2000): its length is the
+	// deposit in mm, its direction horizontal and into the wind it grew from (the feathers point that way).
+	Vector3 rime_at(const Vector3 &p_position) const;
+	// Valley fog: the absolute height of the radiation fog's top over the point (it fills the cold pools of clear calm
+	// nights where their air reaches its dew point), -INF where there is none.
+	float valley_fog_top_at(const Vector3 &p_position) const;
 	Vector3 mean_wind_at(const Vector3 &p_position) const;
 	Vector3 wind_aloft_at(const Vector3 &p_position, float p_altitude) const;
 	float terrain_lee_at(const Vector3 &p_position) const;
@@ -210,6 +223,11 @@ public:
 	float mid_cloud_cover_at(const Vector3 &p_position) const;
 	float cloud_effector_at(const Vector3 &p_position) const;
 	float cloud_base_at(const Vector3 &p_position) const;
+	// The orographic factor precipitation_at already carries at the point (the terrain climate's precipitation
+	// there over its regional mean: more on windward slopes and heights, a rain shadow in the lee; Smith and Barstad
+	// 2004): 1 where none is applied. A reader with its own orographic field divides this out so it is not counted
+	// twice.
+	float orographic_factor_at(const Vector3 &p_position) const;
 	float mountain_wave_at(const Vector3 &p_position) const;
 	float mountain_wave_velocity_at(const Vector3 &p_position) const;
 	float wave_cloud_density_at(const Vector3 &p_position) const;
@@ -251,6 +269,10 @@ public:
 	// Height of the waves breaking at the point (m): the broken waves in the surf zone, whitecaps (cover times wave
 	// height) over open water; 0 where none break.
 	virtual float contract_water_breaking_at(const Vector3 &p_position) const { return 0.0f; }
+	// The last flood's high-water mark over the point: x the highest surface it reached (m, world), y the days since
+	// that peak, z and w the flow's direction at the peak (unit, x and z; zero if not known); (-INF, -1, 0, 0) where
+	// this producer kept none. Readers: wrack lines, silt lines, flood-scoured plants.
+	virtual Vector4 contract_water_high_water_at(const Vector3 &p_position) const { return Vector4(-Math::INF, -1.0f, 0.0f, 0.0f); }
 	// A load entering this water at the point (kg/s of each), from runoff, banks or a landslide; it carries it on.
 	virtual void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {}
 	// A load dropped into this water at once (kg of each): a debris flow's or a landslide's fines, a bank's collapse.
@@ -279,6 +301,7 @@ protected:
 	GDVIRTUAL1RC(Vector2, _sediment_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _sediment_deposit_at, Vector3)
 	GDVIRTUAL1RC(float, _breaking_at, Vector3)
+	GDVIRTUAL1RC(Vector4, _high_water_at, Vector3)
 	GDVIRTUAL3(_add_sediment, Vector3, float, float)
 	GDVIRTUAL3(_add_sediment_mass, Vector3, float, float)
 
@@ -304,6 +327,10 @@ public:
 	Vector2 sediment_deposit_at(const Vector3 &p_position) const;
 	// Height of the waves breaking at the point (m), the largest any producer reports; 0 where none break.
 	float breaking_at(const Vector3 &p_position) const;
+	// The last flood's high-water mark: x the highest surface reached there (m, world), y days since that peak, z and
+	// w the peak flow's direction (unit x, z; zero if not known); (-INF, -1, 0, 0) where no producer kept one. The
+	// highest mark of all producers answers.
+	Vector4 high_water_at(const Vector3 &p_position) const;
 	// A load entering the water that answers at the point (kg/s of mineral and of ash); none there: it is lost.
 	void add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s);
 	// A load dropped into that water at once (kg of mineral and of ash): mixed into the water around the point.
@@ -406,6 +433,8 @@ public:
 		DISTURBANCE_BEETLE = 3,
 		DISTURBANCE_BEAVER = 4, // a beaver pond drained (age: years since)
 		DISTURBANCE_ROOTING = 5, // boar rooting turned the soil (age: fractional years since); ground layer only, see rooting_age_at; new kinds are appended only
+		DISTURBANCE_AVALANCHE = 6, // a dense avalanche broke the stand (SnowAvalanche3D stand_damage; age: years since)
+		DISTURBANCE_ICE_STORM = 7, // freezing rain loaded the crowns past breaking: broken tops and limbs, bent birch (trees STAND_ICE_STORM; age: years since)
 	};
 	// A surface fire that scorched crowns only this low (m) leaves the stand standing.
 	static constexpr float SURFACE_FIRE_SCORCH = 5.0f;
@@ -492,6 +521,10 @@ public:
 	// A stand-replacing disturbance over a disc (xz) that happened p_age_years ago (windthrow, a beetle outbreak; fire
 	// comes from WorldFire). Returns its id. Each change reports its area.
 	int add_disturbance(const Vector3 &p_center, float p_radius, int p_kind, float p_age_years);
+	// Many discs of one kind at once (an avalanche track, a windthrow): one grid rebuild and one stand_changed report.
+	// Earlier events of the same kind that a new disc covers are replaced, so a path struck again and again keeps
+	// one event per disc. Returns the number added.
+	int add_disturbances(const PackedVector3Array &p_centers, float p_radius, int p_kind, float p_age_years);
 	void set_disturbance_age(int p_id, float p_age_years);
 	void remove_disturbance(int p_id);
 	void clear_disturbances();
@@ -578,6 +611,16 @@ public:
 	virtual ~WorldRunoffProvider() {}
 };
 
+// The terrain's climate (TerrainDataMap3D's baked climate): a separate slot, since the climate and the live weather
+// come from different producers. The first that covers the point answers.
+class WorldClimateProvider {
+public:
+	// The mean precipitation at the point over the region's (the orographic pattern, Smith and Barstad 2004's linear
+	// model as baked); < 0 where the climate does not reach.
+	virtual float contract_precipitation_factor_at(const Vector3 &p_position) const = 0;
+	virtual ~WorldClimateProvider() {}
+};
+
 // Coarse grains lying on the ground (the stone fields, RockField3D): a separate slot on the ground contract, since
 // the near ground and the stones come from different producers. Several fields may register; each answers 0 where
 // its map does not reach.
@@ -618,6 +661,19 @@ public:
 	virtual ~WorldPlantColorProvider() {}
 };
 
+// The drawn ground's relief over the heightfield (Landscape3D's cliff and bank relief): a separate slot on the ground
+// contract, since the heightfield and the near ground come from other producers. Placers (plants, rocks, ground
+// detail, the near ground) set what they lay at the heightfield's height plus this. Several may register; the
+// first that knows the point answers.
+class WorldReliefProvider {
+public:
+	// At the point's xz: x the drawn surface's height over the heightfield's (m, + above it; the relief pushes the
+	// surface out along the slope's horizontal normal by d, so about d tan(slope) here), y the relief's share
+	// (0..1, the cliff and bank weights). x NAN where the producer does not reach.
+	virtual Vector2 contract_relief_at(const Vector3 &p_position) const = 0;
+	virtual ~WorldReliefProvider() {}
+};
+
 class WorldGround : public RefCounted {
 	GDCLASS(WorldGround, RefCounted);
 
@@ -648,6 +704,7 @@ protected:
 	GDVIRTUAL5R(float, _track_mud, Vector3, float, float, float, Vector4)
 	GDVIRTUAL1RC(Vector3, _coarse_cover_at, Vector3)
 	GDVIRTUAL1RC(Color, _albedo_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _relief_at, Vector3)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -687,6 +744,10 @@ public:
 	// (1 where a ground colour answers; the snow's cover alone over ground no colour knows; 0 nothing). Readers blend
 	// their own setting toward rgb by a. For the light the ground sends up: gas and haze over it.
 	Color albedo_at(const Vector3 &p_position) const;
+	// The drawn ground's relief over the heightfield at the point's xz: x the height to add to the heightfield's (m),
+	// y its share (0..1). (0, 0) with no relief producer. GPU placers read terrain_relief_map (R height m, G share)
+	// over terrain_relief_rect instead.
+	Vector2 relief_at(const Vector3 &p_position) const;
 };
 
 // Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.
@@ -811,6 +872,8 @@ class WorldContracts : public Object {
 	WorldRunoffProvider *runoff_provider = nullptr;
 	LocalVector<WorldCoverProvider *> cover_providers;
 	LocalVector<WorldGroundColorProvider *> ground_color_providers;
+	LocalVector<WorldReliefProvider *> relief_providers;
+	LocalVector<WorldClimateProvider *> climate_providers;
 	LocalVector<WorldPlantColorProvider *> plant_color_providers;
 	Ref<WorldWater> builtin_water;
 	Ref<WorldWater> water_override;
@@ -850,8 +913,15 @@ public:
 	static void register_cover(WorldCoverProvider *p_provider); // any number: the largest share answers
 	static void unregister_cover(WorldCoverProvider *p_provider);
 	static const LocalVector<WorldCoverProvider *> *cover_providers_list() { return singleton ? &singleton->cover_providers : nullptr; }
+	static void register_climate(WorldClimateProvider *p_provider); // any number: the first that covers the point answers
+	static void unregister_climate(WorldClimateProvider *p_provider);
+	// The climate's precipitation factor at the point (1 where no climate reaches it).
+	static float climate_precipitation_factor_at(const Vector3 &p_position);
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);
+	static void register_relief(WorldReliefProvider *p_provider); // any number: the first that knows the point answers
+	static void unregister_relief(WorldReliefProvider *p_provider);
+	static const LocalVector<WorldReliefProvider *> *relief_providers_list() { return singleton ? &singleton->relief_providers : nullptr; }
 	static const LocalVector<WorldGroundColorProvider *> *ground_color_providers_list() { return singleton ? &singleton->ground_color_providers : nullptr; }
 	static void register_plant_color(WorldPlantColorProvider *p_provider); // any number: each lays its cover over the ground in turn
 	static void unregister_plant_color(WorldPlantColorProvider *p_provider);

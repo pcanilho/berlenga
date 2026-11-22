@@ -163,6 +163,7 @@ class SnowSurface3D : public Node3D {
 	Ref<ArrayMesh> mesh;
 	Ref<ShaderMaterial> material;
 	Ref<ImageTexture> cup_tile_texture;
+	Ref<ImageTexture> sas_tile_texture;
 	Ref<Shader> shader;
 	StaticBody3D *body = nullptr;
 	bool clumps = true; // SnowClumps3D: the lumps a print breaks out of cohesive snow (ground detail)
@@ -312,6 +313,7 @@ public:
 	Rect2 get_deform_rect() const;
 	static SnowSurface3D *get_active() { return active; }
 	static Ref<Image> suncup_tile(); // the periodic suncup relief (R) and its gradient (GB), made once
+	static Ref<Image> sastrugi_tile(); // the periodic sastrugi relief along +x (R) and its gradient (GB), made once
 	double get_step_time_msec() const { return step_msec; }
 	void set_crust_plates(bool p_enabled);
 	bool get_crust_plates() const { return crust_plates; }

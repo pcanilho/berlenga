@@ -125,6 +125,7 @@ private:
 	Vector3 cover_reach, cover_band, cover_size;
 	PackedColorArray cover_colors;
 	bool wetness_enabled = true;
+	bool salt_bloom = true; // the spray's salt crust on rock and scree (WeatherMap3D sea spray)
 	bool snow_enabled = true;
 	float snow_max_slope = 60.0f;
 	bool far_blend_enabled = true;
@@ -206,6 +207,8 @@ public:
 	float get_far_fade() const { return far_fade; }
 	void set_wetness_enabled(bool p_enabled);
 	bool is_wetness_enabled() const { return wetness_enabled; }
+	void set_salt_bloom(bool p_enabled);
+	bool is_salt_bloom() const { return salt_bloom; }
 	void set_snow_enabled(bool p_enabled);
 	bool is_snow_enabled() const { return snow_enabled; }
 	void set_snow_max_slope(float p_degrees);

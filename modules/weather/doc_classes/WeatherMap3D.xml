@@ -90,6 +90,17 @@
 				Adds a storm centred on [param position] (world x, z) and returns its id. Its rain core has [param radius] metres and peaks at [param rain_rate] mm/h; its downburst outflow (Oseguera and Bowles 1988) blows outward, strongest at about 1.12 times [param radius] with [param outflow] m/s. It drifts with the wind aloft, grows in and fades out over [param lifetime] seconds of weather time ([code]0[/code] or less: until removed).
 			</description>
 		</method>
+		<method name="add_vortex">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="swirl" type="float" />
+			<param index="3" name="updraft" type="float" />
+			<param index="4" name="spin" type="float" default="1.0" />
+			<description>
+				Adds a wind vortex (a dust devil, a whirl in a lee) with its foot at [param position] and returns its id. [method get_wind_at] adds a Rankine field round it (Tratt et al. 2003): [param swirl] m/s round the core of [param radius] metres, falling as 1/r outside it and gone by five radii; [param updraft] m/s up the core, fading from four to ten radii up; a weak inflow at the foot. [param spin] [code]1[/code] turns anticlockwise seen from above, [code]-1[/code] clockwise. The first four also reach the shaders' [code]weather_wind[/code]. The owner moves it with [method set_vortex] and removes it with [method remove_vortex].
+			</description>
+		</method>
 		<method name="advance">
 			<return type="void" />
 			<param index="0" name="seconds" type="float" />
@@ -255,6 +266,13 @@
 				Returns every light in the clouds now as an Array of Dictionary [code]{id, position, color, energy, radius, fire, lightning}[/code]: the lights added with [method add_cloud_light], the WorldFire plumes' (id -1, [code]fire[/code] true) and this frame's lightning flashes (id -1, [code]lightning[/code] true). Lightning is listed for readers only; the sky draws flashes itself at full resolution.
 			</description>
 		</method>
+		<method name="get_cold_pool_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The cold air pool's temperature deficit at [param position] (Celsius below the free air): full at a hollow's floor, gone at the pool's top. 0 with [member cold_pools] off.
+			</description>
+		</method>
 		<method name="get_convective_heating" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -349,6 +367,20 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The lee factor of upwind shelter obstacles near the ground at [param position], 0.15 to 1 (1 in the open); a [param position] raised over the ground (a drift's surface) has less, none at 1.2 times the obstacle's height. The contract's [code]obstacle_lee_at[/code].
+			</description>
+		</method>
+		<method name="get_orographic_factor_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The terrain climate's precipitation factor applied to the rain at [param position]; 1 with [member orographic_rain] off or no climate.
+			</description>
+		</method>
+		<method name="get_rime_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The rime at [param position] (see [method WorldWeather.rime_at]).
 			</description>
 		</method>
 		<method name="get_salt_at" qualifiers="const">
@@ -480,6 +512,34 @@
 			<return type="Rect2" />
 			<description>
 				The terrain square's area in world space (x, z, width, depth).
+			</description>
+		</method>
+		<method name="get_valley_fog_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Depth (m) of the valley fog over [param position], from the ground to its top; 0 where the cell has none.
+			</description>
+		</method>
+		<method name="get_valley_fog_top_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Height (m) of the valley fog's top over [param position], [code]-INF[/code] where the cell has none. Answers [method WorldWeather.valley_fog_top_at].
+			</description>
+		</method>
+		<method name="get_vortex_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Wind vortices in the map (see [method add_vortex]).
+			</description>
+		</method>
+		<method name="get_vortex_wind_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="height_above_ground" type="float" default="10.0" />
+			<description>
+				The vortices' part of [method get_wind_at] alone at [param position], [param height_above_ground] metres up.
 			</description>
 		</method>
 		<method name="get_water_temperature" qualifiers="const">
@@ -859,6 +919,22 @@
 				Removes the storm with this [param id].
 			</description>
 		</method>
+		<method name="remove_vortex">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes the wind vortex [param id] (see [method add_vortex]).
+			</description>
+		</method>
+		<method name="rime_accretion_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="cloud_water" type="float" />
+			<param index="1" name="wind_m_s" type="float" />
+			<param index="2" name="celsius" type="float" />
+			<description>
+				Rime growth on a twig in mm/h: collision efficiency 0.3 x cloud water (g/m3) x wind, at 300 kg/m3 (Makkonen 2000; ISO 12494); none at or above 0 C, fading in above -1 C.
+			</description>
+		</method>
 		<method name="set_cloud_effector">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
@@ -910,6 +986,17 @@
 				Water that [param owner] delivers to the ground over [param rect] (world X, Z), in mm/h on a [param resolution] square of [param rates] (row-major in Z then X), in place of the precipitation the map would put there: a [SnowCover3D] passes its runoff (the rain through the pack and its melt), so snow wets surfaces when it melts, not when it falls. The values are copied; call again with new ones. Several sources add up.
 			</description>
 		</method>
+		<method name="set_vortex">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="position" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="swirl" type="float" />
+			<param index="4" name="updraft" type="float" />
+			<description>
+				Moves and resizes the wind vortex [param id] (see [method add_vortex]); its owner calls it as it goes.
+			</description>
+		</method>
 		<method name="snap_to_settings">
 			<return type="void" />
 			<description>
@@ -943,6 +1030,12 @@
 		<member name="cloud_regime_from_weather" type="bool" setter="set_cloud_regime_from_weather" getter="is_cloud_regime_from_weather" default="true">
 			The low cloud follows the weather: its type eases from stratus (humid, calm, stable air) or stratocumulus (wind or drier air) at night and in the morning to [member cloud_type] as the ground heats, stays stratiform while it rains, and its base follows the condensation level (see [method get_cloud_base_now]). Stratocumulus decks break into closed cells, lined up into rolls along a mixing wind. Off, [member cloud_type] and [member cloud_base_height] are used as set.
 		</member>
+		<member name="cold_pool_strength" type="float" setter="set_cold_pool_strength" getter="get_cold_pool_strength" default="8.0">
+			Celsius below the free air at a deep basin's floor on a clear calm night.
+		</member>
+		<member name="cold_pools" type="bool" setter="set_cold_pools" getter="is_cold_pools_enabled" default="true">
+			On clear calm nights cold air drains into hollows and valley floors (Whiteman 2000): [method get_air_temperature_at] and the contract's air temperature are colder there, so dew, hoarfrost and fog form in hollows first. Where it pools follows the topographic position index over 600 m (Lundquist et al. 2008); it builds over about two hours and breaks up after sunrise or in a wind. Needs a sun light or sky clock.
+		</member>
 		<member name="daily_temperature_range" type="float" setter="set_daily_temperature_range" getter="get_daily_temperature_range" default="10.0">
 			The range between the day's coldest and warmest air on a clear calm day (K). An overcast sky halves it and rain narrows it further (Dai, Trenberth and Karl 1999).
 		</member>
@@ -975,6 +1068,12 @@
 		</member>
 		<member name="mid_cloud_thickness" type="float" setter="set_mid_cloud_thickness" getter="get_mid_cloud_thickness" default="400.0">
 			Depth of the mid cloud layer's slab (m).
+		</member>
+		<member name="orographic_rain" type="bool" setter="set_orographic_rain" getter="is_orographic_rain_enabled" default="true">
+			Rain follows the terrain climate ([method WorldContracts.climate_precipitation_factor_at]): more on windward slopes, less in the lee. Rain or snow is decided by the air at each cell's own ground height, so the snow line follows the terrain.
+		</member>
+		<member name="rime" type="bool" setter="set_rime" getter="is_rime_enabled" default="true">
+			Where the ground stands in supercooled cloud (fog water below 0 C) rime grows on twigs and edges into the wind; it sheds in a thaw, in sun and in rain. Kept per cell as mm along the way into the wind; the frost map's blue and alpha carry it to plants, rocks and steep terrain ([code]weather_rime_apply[/code]).
 		</member>
 		<member name="sea_spray" type="bool" setter="set_sea_spray" getter="is_sea_spray_enabled" default="true">
 			Sea spray on the shore: breaking waves ([method WorldWater.breaking_at]) make spray in proportion to the breaker height and the square of the wind past 2 m/s; the wind carries it inland over a square round the follow point. Coarse drops settle within tens of metres ([code]u (1 + H) / 1 m/s[/code]) and wet surfaces and the soil; rising ground catches them, so a cliff face takes the spray and its top stays drier. Fine salt aerosol reaches hundreds of metres ([code]50 s x u[/code]). The salt stays on surfaces until rain washes it off (all but a third by 5 mm) and is published with the spray's wetness as the [code]weather_spray_map[/code] global (R wetness, G [code]1 - exp(-salt / 10 g/m2)[/code]); grass browns at the tips from salt burn.
@@ -1212,6 +1311,12 @@
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="4.0">
 			How often the cells are refreshed, per second. Gusts are evaluated every frame regardless.
+		</member>
+		<member name="valley_fog" type="bool" setter="set_valley_fog" getter="is_valley_fog_enabled" default="true">
+			Fill saturated cold air pools with radiation fog (Whiteman 2000; Gultepe et al. 2007): it forms over about an hour on clear calm nights, sits flat at the basin's saturation level and lifts after sunrise or in a wind. Drawn as a [FogVolume] lit by the froxel fog plus its multiple scattering, so raster and path tracing match. Needs [member cold_pools].
+		</member>
+		<member name="valley_fog_density" type="float" setter="set_valley_fog_density" getter="get_valley_fog_density" default="0.02">
+			Extinction inside the valley fog (1/m); 0.02 gives about 150 m visibility, a moderate radiation fog.
 		</member>
 		<member name="water_temperature" type="float" setter="set_water_temperature" getter="get_water_temperature_setting" default="-100.0">
 			Open water's surface temperature (C) when set; below -99 [method get_water_temperature] follows the climate or the air.

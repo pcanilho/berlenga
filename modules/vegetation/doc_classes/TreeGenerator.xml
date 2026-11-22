@@ -322,6 +322,9 @@
 		</member>
 		<member name="fungi_cover" type="float" setter="set_fungi_cover" getter="get_fungi_cover" default="1.0">
 		</member>
+		<member name="glaze_mm" type="float" setter="set_glaze_mm" getter="get_glaze_mm" default="0.0">
+			Radial clear ice from freezing rain, in mm, grown as geometry: a coat round the limbs and twigs and icicles under them, on its own "ice" surface (near detail; VegetationField3D grows it on near trees from [code]WorldWeather.glaze_at[/code] in bands). 0 for none.
+		</member>
 		<member name="gravitropism" type="float" setter="set_param" getter="get_param" default="0.04">
 			Upward (positive) or downward (negative) bend of branch shoots.
 		</member>
@@ -329,6 +332,15 @@
 			Bending of branches under their own weight (Euler-Bernoulli).
 		</member>
 		<member name="ground_slope" type="float" setter="set_ground_slope" getter="get_ground_slope" default="0.0">
+		</member>
+		<member name="ice_storm" type="float" setter="set_ice_storm" getter="get_ice_storm" default="1.0">
+			[constant STAND_ICE_STORM]: years since the storm, for every tree the stand grows.
+		</member>
+		<member name="ice_storm_damage" type="int" setter="set_ice_storm_damage" getter="get_ice_storm_damage" default="0">
+			With [member ice_storm_years]: 0 picks the damage by the species' susceptibility, 1 bends the tree over (along mesh +X), 2 breaks its top, 3 breaks its upper limbs.
+		</member>
+		<member name="ice_storm_years" type="float" setter="set_ice_storm_years" getter="get_ice_storm_years" default="-1.0">
+			Years since an ice storm loaded the crown past breaking, -1 for none: the top snapped through every fork at half to four fifths of the height (sprouts under the break from the first year), the upper limbs broken back and the fine twigs stripped, or a slender birch bent over in an arch. Susceptible species (birches, lime, willow, soft pines) take it worst, oaks, spruce, fir and hemlock least. The mesh carries meta [code]tree_ice_storm[/code] = (years, damage kind).
 		</member>
 		<member name="internode_length" type="float" setter="set_param" getter="get_param" default="0.45">
 			Shoot segment length in the first year, in metres; also the cell size of the shadow grid.
@@ -620,8 +632,26 @@
 		<constant name="PRESET_SALTBUSH" value="48" enum="Preset">
 			Mediterranean saltbush (Atriplex halimus): a dense, rounded shrub 1-2.5 m of silty, saline flats and coasts, with small silvery-grey ovate leaves held most of the year and pale stems.
 		</constant>
-		<constant name="PRESET_MAX" value="49" enum="Preset">
-			Number of presets.
+		<constant name="PRESET_DATE_PALM" value="49" enum="Preset">
+			Phoenix dactylifera: a tall single trunk clad in cut leaf bases, a crown of feather fronds.
+		</constant>
+		<constant name="PRESET_ASPEN" value="50" enum="Preset">
+			Populus tremula: a slender pioneer of root-sucker clones, round leaves trembling on flattened stalks, grey-green lenticelled bark.
+		</constant>
+		<constant name="PRESET_BLACK_POPLAR" value="51" enum="Preset">
+			Populus nigra: a massive floodplain tree with arching limbs and near-black furrowed bark; mistletoe's heaviest host.
+		</constant>
+		<constant name="PRESET_WILD_CHERRY" value="52" enum="Preset">
+			Prunus avium: a straight stem with its limbs in tiers, banded red-brown bark, white blossom in April, crimson in autumn.
+		</constant>
+		<constant name="PRESET_HORNBEAM" value="53" enum="Preset">
+			Carpinus betulus: a fluted grey stem under a dense crown; very shade tolerant.
+		</constant>
+		<constant name="PRESET_SWEET_CHESTNUT" value="54" enum="Preset">
+			Castanea sativa: a broad dome on a massive bole, long toothed leaves.
+		</constant>
+		<constant name="PRESET_MAX" value="55" enum="Preset">
+			Size of the [enum Preset] enum.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">
 			Beech forest with sycamore and ash; sparse shrubs.
@@ -687,7 +717,10 @@
 		<constant name="STAND_STONE_PINE" value="13" enum="Stand">
 			Stone pine parkland on coastal sands: open-grown [constant PRESET_STONE_PINE] umbrellas about a crown's width apart, with their saplings, snags and logs. The scrub beneath comes from [method PlantGenerator.make_scrub] on the same ground. Not part of [method make_woodland].
 		</constant>
-		<constant name="STAND_MAX" value="14" enum="Stand">
+		<constant name="STAND_ICE_STORM" value="24" enum="Stand">
+			Northern hardwoods after an ice storm ([member ice_storm] years ago): sugar maple, beech, yellow birch and red maple with broken tops and stripped crowns, hemlock nearly whole, paper birch poles bent over, the floor deep in broken limbs. Its species report [constant WorldStand.DISTURBANCE_ICE_STORM] to the stand-age map.
+		</constant>
+		<constant name="STAND_MAX" value="25" enum="Stand">
 			Number of stand types.
 		</constant>
 		<constant name="REGION_EUROPE" value="0" enum="Region">

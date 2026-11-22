@@ -45,7 +45,25 @@
 			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
 			<param index="1" name="season" type="Dictionary" />
 			<description>
-				The share of a preset's plants above ground on the day of [param season]: wood anemone, a spring plant, comes up in late winter and dies down by early summer; the mushrooms fruit from late summer to the first frost, more after rain (soil moisture) and most in autumn; every other preset is 1. [method make_floor] scales its densities by it.
+				The share of a preset's plants above ground on the day of [param season]: wood anemone, a spring plant, comes up in late winter and dies down by early summer; spider webs from spring (sheets) or late July (orbs) to late autumn, most in autumn; the mushrooms fruit from late summer to the first frost, more after rain (soil moisture) and most in autumn; every other preset is 1. [method make_floor] scales its densities by it.
+			</description>
+		</method>
+		<method name="make_dew_webs" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				Spider webs in open grassland as [PlantSpecies]: [constant PRESET_SHEET_WEB] over the sward and [constant PRESET_ORB_WEB] a few metres apart, in their season ([method get_presence]). The silk is drawn by the plant shader and shows only where dew or hoarfrost beads it ([WeatherMap3D] surface wetness and frost); a [code]"dew"[/code] key (0 to 1) in [param season] sets the dew instead, for scenes without a weather map.
+			</description>
+		</method>
+		<method name="make_fairy_rings" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				The mushrooms of meadow fairy rings as [PlantSpecies]: [constant PRESET_FAIRY_RING_MUSHROOM] along the rings' line ([constant PlantSpecies.RULE_FAIRY_RING] -0.25 to 0.1 m), on the same world rings [member GrassField3D.fairy_rings] draws in the grass, out of deep shade, in their season ([method get_presence]).
 			</description>
 		</method>
 		<method name="make_floor" qualifiers="static">
@@ -56,7 +74,7 @@
 			<param index="3" name="impostor_range" type="float" default="15.0" />
 			<param index="4" name="season" type="Dictionary" default="{}" />
 			<description>
-				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance. The leaf litter is the stand's own fallen leaves ([method stand_litter_leaves]); [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for the fallen colours, the share of fresh leaves and the flowering ([member season]).
+				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance. The leaf litter is the stand's own fallen leaves ([method stand_litter_leaves]); [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for the fallen colours, the share of fresh leaves and the flowering ([member season]). Broadleaf floors end with [constant PRESET_LEAF_BANK], leaf drifts where the wind gathers the litter ([constant PlantSpecies.RULE_LITTER_DRIFT]); the leaf litter itself thins on crests and fills hollows by the same drift.
 			</description>
 		</method>
 		<method name="make_banks" qualifiers="static">
@@ -219,6 +237,15 @@
 				Returns the walkers a year that halve a preset's cover on a worn path, from trampling studies (Cole 1995). Plantain 1000, grasses 300, heaths and scrub 40, ferns 30; 0 for presets that are not ground plants.
 			</description>
 		</method>
+		<method name="make_avalanche_track" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				The ground layer of avalanche tracks as [PlantSpecies], placed only where [WorldStand] marks [constant DISTURBANCE_AVALANCHE_KIND] and by the years since the avalanche ([constant PlantSpecies.RULE_STAND_AGE]): torn turf, broken twigs and shed needles in the first years, then fireweed, lady fern, raspberry, a broad-leaved tall forb and bilberry, on slopes up to 45 degrees. The bent shrubs are the trees'.
+			</description>
+		</method>
 		<method name="make_beaver" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.BeaverStand" />
@@ -237,6 +264,16 @@
 			<param index="3" name="season" type="Dictionary" default="{}" />
 			<description>
 				What wild boar leave where they root, as [PlantSpecies] placed by [constant PlantSpecies.RULE_ROOTING] (years since the ground was rooted, from [code]WorldStand.rooting_age_at()[/code]; patches are [code]WorldStand.add_disturbance()[/code] discs of kind [code]DISTURBANCE_ROOTING[/code]): [constant PRESET_ROOTED_SOD] in three age bands (fresh, drying, slumped and greening) for the first year, then the first herbs on the turned soil, herb Robert, nettle and dock in [constant ROOTING_WOOD], mayweed, dock, thistle and plantain in [constant ROOTING_MEADOW]. List the set after the stand's own species. [method make_floor] gives its field layer rooting rules, so it is gone from fresh rooting and back over one to two years.
+			</description>
+		</method>
+		<method name="make_grazing" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="set" type="int" enum="PlantGenerator.GrazeSet" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="season" type="Dictionary" default="{}" />
+			<description>
+				What grazing animals leave on their pasture, as [PlantSpecies]: dung ([constant PRESET_COW_PAT], [constant PRESET_HORSE_DUNG], [constant PRESET_DEER_PELLETS] at several [code]dung_age[/code]s, meta [code]dung_age[/code]) and the ungrazed roughs round it ([constant PRESET_DUNG_ROUGH]), with the weeds of enriched ground. Cattle reject the grass round their pats for months, so the lawn is dotted with rank tufts; horses dung in latrines and never graze them, so the paddock is a mosaic of lawns and roughs; deer leave pellet groups on their lawns ([constant PlantSpecies.RULE_BROWSE]). All keep to the light (crown shade under 0.4, deer 0.9), slopes under 30 degrees and 2 m from water. Roughs and pats carry the meta [code]sward_mound[/code] (radius, m), so a [GrassField3D] whose [member GrassField3D.undergrowth_field] places them keeps its blades from under them. Place the set over the pasture (a mask or its own field); list it after the stand's species.
 			</description>
 		</method>
 		<method name="make_mounds" qualifiers="static">
@@ -652,8 +689,44 @@
 		<constant name="PRESET_MOLEHILL" value="102" enum="Preset">
 			A molehill: a lumpy heap of loose soil about 0.4 m across with crumbs spilt round it; by the season's [code]mound_age[/code] (years) it crusts paler, slumps and grasses over.
 		</constant>
-		<constant name="PRESET_MAX" value="103" enum="Preset">
+		<constant name="PRESET_LEAF_BANK" value="103" enum="Preset">
+			A leaf drift: the stand's fallen leaves ([member litter_leaves]) heaped 8 to 18 cm deep over an ellipse 0.9 to 1.6 m long, over a dark, matted layer of half-rotted leaves. [method make_floor] places it under broadleaf litter where [constant PlantSpecies.RULE_LITTER_DRIFT] passes 1.35: hollows and the feet of trunks, logs and stones.
+		</constant>
+		<constant name="PRESET_COW_PAT" value="104" enum="Preset">
+			A cattle dung pat 20 to 30 cm across: by the season's [code]dung_age[/code] (years) glossy and olive when fresh, crusted grey-brown within weeks, broken into plates and grassed through over months.
+		</constant>
+		<constant name="PRESET_HORSE_DUNG" value="105" enum="Preset">
+			A pile of horse droppings, 6 to 14 balls with straw fibres; by [code]dung_age[/code] paling, crumbling and spreading.
+		</constant>
+		<constant name="PRESET_DEER_PELLETS" value="106" enum="Preset">
+			A deer pellet group, 30 to 90 pellets about a centimetre long in a heap and scattered; by [code]dung_age[/code] near black and glossy, then brown, dull and crumbling.
+		</constant>
+		<constant name="PRESET_DUNG_ROUGH" value="107" enum="Preset">
+			An ungrazed rough round old dung or in a horse latrine: rank, dark green grass 20 to 45 cm tall, shorter at its edge, with flowering culms and a few dead leaves.
+		</constant>
+		<constant name="PRESET_FAIRY_RING_MUSHROOM" value="108" enum="Preset">
+			The fairy ring champignon (Marasmius oreades): clusters of 3 to 8 small buff caps 2 to 5 cm across with a broad boss on slender pale stalks, fruiting from late May to November after rain.
+		</constant>
+		<constant name="PRESET_SHEET_WEB" value="109" enum="Preset">
+			A money spider's sheet web in the sward: mostly small flat sheets 5 to 10 cm across near the ground, some hammocks or domes up to 25 cm higher in the grass, with scaffold threads up to the blade tips.
+		</constant>
+		<constant name="PRESET_ORB_WEB" value="110" enum="Preset">
+			A garden spider's orb web 15 to 30 cm across, hung between two dry stems with its frame and anchor threads; some leave one sector open.
+		</constant>
+		<constant name="PRESET_MAX" value="111" enum="Preset">
 			Number of presets.
+		</constant>
+		<constant name="GRAZE_CATTLE" value="0" enum="GrazeSet">
+			Cattle pasture: pats fresh, crusted and old, an ungrazed rough round older pats, docks and nettles on rich spots.
+		</constant>
+		<constant name="GRAZE_HORSE" value="1" enum="GrazeSet">
+			Horse pasture: latrines (a quarter of the paddock in clumps, one patch layout for the set) with roughs, piles of droppings, nettles and thistles.
+		</constant>
+		<constant name="GRAZE_DEER" value="2" enum="GrazeSet">
+			Deer lawns: pellet groups where [constant PlantSpecies.RULE_BROWSE] is 0.3 or more.
+		</constant>
+		<constant name="GRAZE_MAX" value="3" enum="GrazeSet">
+			Number of grazing sets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
 			Beech wood: deep leaf litter, beech seedlings, woodruff, wood sorrel, wood anemone, few ferns.
@@ -789,6 +862,9 @@
 		</constant>
 		<constant name="BEAVER_MAX" value="2" enum="BeaverStand">
 			Number of beaver stands.
+		</constant>
+		<constant name="DISTURBANCE_AVALANCHE_KIND" value="6">
+			The [WorldStand] disturbance kind of an avalanche track ([constant WorldStand.DISTURBANCE_AVALANCHE]), which [method make_avalanche_track] grows on.
 		</constant>
 		<constant name="DISTURBANCE_BEAVER_KIND" value="4">
 			The [WorldStand] disturbance kind of a drained beaver pond, which [constant BEAVER_MEADOW] grows on.

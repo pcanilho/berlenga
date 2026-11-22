@@ -55,6 +55,9 @@ extends Node3D
 #   --sward-shade=0  with --forest: the grass grows through the bracken and bramble stands (before shot)
 #   --rocks=N        N boulders (lumpy weathered rocks) 3 to 10 m in front of the camera; the fields keep
 #                    out of them (obstacles) unless --rocks-through
+#   --storm[=H]      a wet 12 m/s gale from +x for H hours (default 1) before the shot, with the wind still blowing:
+#                    the meadow lodged in swirled patches (GrassField3D.lodging, docs/ideas/vegetation.md "Storm lodging")
+#   --fairy          looks at the meadow fairy ring nearest the default view (GrassField3D.fairy_rings)
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
 #   --path[=P]       a worn path winding away from the camera, P passes a year (default 3000, a busy footpath; GrassField3D.paths,
 #                    VegetationField3D.paths): the sward and plants thin and shorten towards its line
@@ -102,6 +105,8 @@ var raster := false
 var spp := 16
 var wind := Vector2(3, 1)
 var weather := false
+var storm_hours := 0.0
+var fairy := false
 var frames := 20
 var out := ""
 var clip := ""
@@ -193,6 +198,23 @@ const BALL_R := 0.45
 const TALL_PATCH := 7.0
 const TALL_COVER := 0.65
 
+# A wet summer gale from +x (12 m/s at 2 m, soaked, 20 mm/h of rain), or calm and dry (storm false).
+class StormWeather extends WorldWeather:
+	var storm := true
+
+	func _wind_at(_p: Vector3, _h: float) -> Vector3:
+		return Vector3(12, 0, 0) if storm else Vector3(0.5, 0, 0)
+
+	func _surface_wetness_at(_p: Vector3) -> float:
+		return 1.0 if storm else 0.0
+
+	func _rainfall_at(_p: Vector3) -> float:
+		return 20.0 if storm else 0.0
+
+	func _precipitation_at(_p: Vector3) -> float:
+		return _rainfall_at(_p)
+
+
 class Pond extends Node3D:
 	func get_water_level() -> float:
 		return -0.6
@@ -212,6 +234,8 @@ func _ready() -> void:
 			raster = true # Checks only: no need to path trace every frame.
 		elif a == "--raster": raster = true
 		elif a == "--weather": weather = true
+		elif a == "--fairy": fairy = true
+		elif a.begins_with("--storm"): storm_hours = float(a.get_slice("=", 1)) if a.contains("=") else 1.0
 		elif a == "--trample": trample = true
 		elif a == "--layers=0": layers = false
 		elif a.begins_with("--crop="):
@@ -564,6 +588,9 @@ func _ready() -> void:
 	else:
 		grass.view_facing = 0.0
 		grass.ground_tint_enabled = false
+	if storm_hours > 0.0:
+		WorldContracts.set_weather(StormWeather.new())
+		grass.advance_lodging.call_deferred(storm_hours * 3600.0)
 	if weather:
 		var wm := WeatherMap3D.new()
 		wm.wind_speed = wind.length()
@@ -780,6 +807,22 @@ void fragment() {
 		var eye := shore - dir * 9.0 + Vector2(dir.y, -dir.x) * 1.5
 		cam.position = Vector3(eye.x, height(eye.x, eye.y) + 2.6, eye.y)
 		cam.look_at(Vector3(shore.x + dir.x * 6.0, -0.6, shore.y + dir.y * 6.0))
+	if fairy:
+		# The meadow fairy ring nearest the default view (GrassField3D.fairy_rings), from 8 m off and 4.5 m up.
+		var best := Vector2(6, 20)
+		var bd := 1e9
+		for z in range(-90, 91):
+			for x in range(-90, 91):
+				var b: Vector3 = GrassField3D.get_fairy_ring_at(Vector3(x, 0, z))
+				var d := Vector2(x, z).distance_to(Vector2(6, 20))
+				if b.x > 0.8 and d < bd and height(x, z) > -0.3:
+					bd = d
+					best = Vector2(x, z)
+		var away := (Vector2(6, 20) - best).normalized() if bd > 0.5 else Vector2(0, 1)
+		var eye := best + away * 8.0
+		cam.position = Vector3(eye.x, height(eye.x, eye.y) + 4.5, eye.y)
+		cam.look_at(Vector3(best.x - away.x * 3.0, height(best.x, best.y), best.y - away.y * 3.0))
+		print("GRASS_FAIRY ring front at ", best)
 
 # A closed wood (no tree patches) and, with the mask, an irregular clearing about 22 m across:
 # the trees read the mask's red channel, so they stay out where it is 0, and the meadow, the
@@ -1810,6 +1853,40 @@ func _season_checks() -> void:
 # under the stands the blades thin by the shade, in the open they are as before.
 # Mounds (PlantGenerator.make_mounds) the undergrowth field places: their "sward_mound" discs keep the blades out, and
 # the grass comes back when they go.
+# Storm lodging (docs/ideas/vegetation.md, "Storm lodging"): an hour of a wet gale lays the tall meadow down in
+# patches along the wind; ten calm, dry days later it stands again.
+func _lodging_check(c: Vector2) -> void:
+	var stub := StormWeather.new()
+	WorldContracts.set_weather(stub)
+	grass.advance_lodging(3600.0)
+	var n := 0
+	var sum := 0.0
+	var low := 0
+	var along := 0.0
+	for z in range(-60, 61, 4):
+		for x in range(-60, 61, 4):
+			var l: Vector3 = grass.get_lodging_at(Vector3(c.x + x, 0, c.y + z))
+			n += 1
+			sum += l.x
+			if l.x < 0.2:
+				low += 1
+			if l.x > 0.0:
+				along += l.y * l.x
+	var mean := sum / n
+	along /= maxf(sum, 1e-4)
+	var rect: Vector4 = grass.get_material().get_shader_parameter("lodge_rect")
+	_check("lodging: a wet gale lays the meadow down in patches (mean > 0.3, some cells standing) along the wind (+x)", mean > 0.3 and low > 0 and low < n and along > 0.6 and rect.z > 0.0, "mean %.2f, standing %d of %d, along +x %.2f, map %s" % [mean, low, n, along, rect])
+	stub.storm = false
+	for d in 10:
+		grass.advance_lodging(86400.0)
+	var most := 0.0
+	for z in range(-60, 61, 4):
+		for x in range(-60, 61, 4):
+			most = maxf(most, grass.get_lodging_at(Vector3(c.x + x, 0, c.y + z)).x)
+	rect = grass.get_material().get_shader_parameter("lodge_rect")
+	_check("lodging: ten calm dry days later the meadow stands again (most < 0.05, no map)", most < 0.05 and rect.z == 0.0, "most %.3f, map %s" % [most, rect])
+	WorldContracts.set_weather(null)
+
 func _mound_check(c: Vector2) -> void:
 	var mf := VegetationField3D.new()
 	mf.far_volume = false
@@ -2152,6 +2229,7 @@ func _checks() -> void:
 	for i in 20:
 		grass.update_at(cam.global_position)
 	await _mound_check(c)
+	_lodging_check(c)
 	# The sward's colour reaches WorldGround.albedo_at (WorldPlantColorProvider): gas over the meadow picks up green.
 	var ga: Color = WorldContracts.get_ground().albedo_at(Vector3(c.x, 0, c.y))
 	var gfar: Color = grass.get_far_color()

@@ -371,6 +371,12 @@
 		<member name="propagation_index" type="float" setter="set_propagation_index" getter="get_propagation_index" default="1.5">
 			A fracture opened by a load runs on through slab whose natural stability index is under this value, or under 1.2 times the index where it opened. A uniform slab goes as a whole.
 		</member>
+		<member name="stand_damage" type="bool" setter="set_stand_damage" getter="is_stand_damage_enabled" default="true">
+			When a dense avalanche stops, the stand where its dynamic pressure passed [member stand_damage_pressure] starts again: 16 m discs of [constant WorldStand.DISTURBANCE_AVALANCHE] go to [WorldStand] in one batch, so avalanche paths stay young (Bebi et al. 2009).
+		</member>
+		<member name="stand_damage_pressure" type="float" setter="set_stand_damage_pressure" getter="get_stand_damage_pressure" default="20000.0">
+			Pa: the dense flow's peak dynamic pressure that breaks mature stems (Bartelt and Stockli 2001: from about 10-20 kPa).
+		</member>
 		<member name="trigger_groups" type="PackedStringArray" setter="set_trigger_groups" getter="get_trigger_groups" default="PackedStringArray(&quot;snow_deform&quot;, &quot;grass_trample&quot;, &quot;world_contact&quot;)">
 			Bodies in these groups load the slab under them: their weight spread along their footprint (a metre at least; an 80 kg skier gives Foehn's 0.78 kN/m), nearer the weak layer by as far as they have sunk in ([method WorldSnow.surface_at]). Rigid bodies use their mass, characters [member character_mass], and the [code]snow_mass[/code] or [code]ground_mass[/code] meta overrides both. Vehicle wheels carry their share of the vehicle.
 		</member>

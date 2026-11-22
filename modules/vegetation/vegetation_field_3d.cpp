@@ -31,12 +31,15 @@
 
 #include "vegetation_field_3d.h"
 
+#include "fairy_rings.h"
+
 #include "grass_field_3d.h"
 #include "vegetation_detail.h"
 #include "vegetation_light.h"
 
 // Rigged trees (TreeWind3D, from the trees work) when that class is in the module.
 #include "tree_bark_detail.h"
+#include "tree_generator.h"
 #if __has_include("tree_wind_3d.h")
 #include "tree_wind_3d.h"
 #define VEGETATION_HAS_TREE_WIND
@@ -309,7 +312,7 @@ void VegetationField3D::_stand_discs(LocalVector<Vector4> &r_discs, LocalVector<
 		float years = 1e9f; // The youngest kill in the cell, as the map's youngest event wins.
 		LocalVector<Vector2> points;
 	};
-	HashMap<Vector2i, Cell> cells[4];
+	HashMap<Vector2i, Cell> cells[8];
 	const TypedArray<PlantSpecies> list = biome->get_species();
 	for (int s = 0; s < list.size() && s < int(placements.size()); s++) {
 		const Ref<PlantSpecies> sp = list[s];
@@ -318,7 +321,9 @@ void VegetationField3D::_stand_discs(LocalVector<Vector4> &r_discs, LocalVector<
 		}
 		const Vector2 kd = sp->get_meta(SNAME("stand_disturbance"));
 		const int kind = int(kd.x);
-		if (kind < 1 || kind > 3) {
+		// Fire, wind, beetle, avalanche, ice storm: the stands' own kills. A beaver meadow is the dam's to report and
+		// boar rooting the ground's.
+		if (kind < 1 || kind > 7 || kind == 4 || kind == 5) {
 			continue;
 		}
 		for (const Vector3 &p : placements[s]) {
@@ -329,7 +334,7 @@ void VegetationField3D::_stand_discs(LocalVector<Vector4> &r_discs, LocalVector<
 			c.points.push_back(Vector2(p.x, p.z));
 		}
 	}
-	for (int kind = 1; kind < 4; kind++) {
+	for (int kind = 1; kind < 8; kind++) {
 		for (const KeyValue<Vector2i, Cell> &kv : cells[kind]) {
 			if (kv.value.n < 3) {
 				continue;
@@ -2054,6 +2059,19 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 	LocalVector<Deadwood> local_deadwood; // Logs placed so far (and the canopy field's, through _deadwood_at()).
 	HashMap<Vector2i, LocalVector<int>> local_deadwood_grid;
 	const float crown_reach = p_setup.crown_max * 1.4f;
+	// Leaf drift (_litter_drift), cached on DRIFT_CELL cells as the litter species ask for it (they come after the trees
+	// and logs, so those are placed by then).
+	HashMap<Vector2i, float> drift_cache;
+	auto drift_at = [&](const Vector2 &p_xz) -> float {
+		const Vector2i k(int(Math::floor(p_xz.x / DRIFT_CELL)), int(Math::floor(p_xz.y / DRIFT_CELL)));
+		if (const float *c = drift_cache.getptr(k)) {
+			return *c;
+		}
+		const Vector2 at((k.x + 0.5f) * DRIFT_CELL, (k.y + 0.5f) * DRIFT_CELL);
+		const float d = _litter_drift(map, p_setup.obstacles, local_crown_grid, local_crowns, local_deadwood_grid, local_deadwood, p_setup.other, at, p_setup.wind_dir);
+		drift_cache.insert(k, d);
+		return d;
+	};
 	const Image *mask = p_setup.mask_img.ptr();
 	auto mask_at = [&](const Vector2 &p_xz, int p_channel) -> float {
 		if (!mask || mask->is_empty() || !p_setup.mask_rect.has_point(p_xz)) {
@@ -2091,6 +2109,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool shade_rule = sp->uses_shade();
 		const bool conifer_rule = sp->uses_conifer();
 		const bool litter_rule = sp->uses_litter();
+		const bool drift_rule = sp->uses_litter_drift();
+		const bool fairy_rule = sp->uses_fairy_ring();
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
@@ -2374,7 +2394,19 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (p_setup.other) {
 							litter = 1.0f - (1.0f - litter) * (1.0f - p_setup.other->get_litter_at(Vector3(xz.x, 0.0f, xz.y)));
 						}
+						// Leaf drifts: the wind piles what fell into hollows and against obstacles and sweeps crests.
+						if (litter > 0.0f) {
+							litter = MIN(litter * drift_at(xz), 1.0f);
+						}
 						suit *= sp->rule_weight(PlantSpecies::RULE_LITTER, litter);
+					}
+					if (drift_rule && suit > 0.0f) {
+						suit *= sp->rule_weight(PlantSpecies::RULE_LITTER_DRIFT, drift_at(xz));
+					}
+					if (fairy_rule && suit > 0.0f) {
+						// Meadow fairy rings (fairy_rings.h): the same rings the grass shows.
+						const FairyRings::Hit fh = FairyRings::at(xz);
+						suit *= sp->rule_weight(PlantSpecies::RULE_FAIRY_RING, fh.arc > 0.5f ? fh.distance : 1000.0f);
 					}
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
 						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
@@ -3024,32 +3056,23 @@ void VegetationField3D::_fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &
 // every frame until it has it, then gets its near cell with the same crossfade as eager near
 // meshes; beyond 1.5 x the near cell is freed (and the source may free the mesh).
 void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
-	for (KeyValue<ObjectID, LazyNear> &kv : lazy_near) {
-		LazyNear &c = kv.value;
-		const float d = c.centre.distance_to(p_camera);
-		if (c.near) {
-			if (d > c.range * 1.5f) {
-				_lazy_near_free(c);
-			}
-			continue;
-		}
-		if (d > c.range * 1.2f) {
-			continue;
-		}
-		Object *src = ObjectDB::get_instance(c.source);
-		if (!src) {
-			continue;
-		}
-		const Ref<Mesh> mesh = src->call(SNAME("request_near_mesh"), c.key, c.variant);
-		if (mesh.is_null()) {
-			continue; // Still building.
-		}
+	// Ice storms (trees.md 5be): the glaze over each near cell (WorldWeather.glaze_at, read twice a second), in bands; a
+	// near mesh grows its band's ice as geometry, and a cell whose band changes gets a new near cell once it is built
+	// (the old one draws meanwhile).
+	WorldContracts *wc = WorldContracts::get_singleton();
+	const Ref<WorldWeather> weather = wc ? wc->get_weather() : Ref<WorldWeather>();
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	const bool glaze_check = weather.is_valid() && now - glaze_checked_usec > 500000;
+	if (glaze_check) {
+		glaze_checked_usec = now;
+	}
+	auto make_near = [&](LazyNear &c, const Ref<Mesh> &p_mesh) {
 		Ref<MultiMesh> mm;
 		mm.instantiate();
 		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
 		mm->set_use_custom_data(true);
-		mm->set_mesh(mesh);
-		_fill_cell(mm, mesh, c.xforms, c.customs);
+		mm->set_mesh(p_mesh);
+		_fill_cell(mm, p_mesh, c.xforms, c.customs);
 		const float margin = impostors_traced ? 0.0f : MAX(c.range * 0.1f, 1.0f);
 		c.near = memnew(MultiMeshInstance3D);
 		c.near->set_name(String(c.far->get_name()) + "_Near");
@@ -3061,6 +3084,45 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 		c.far->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
 		c.far->set_visibility_range_begin(c.range);
 		c.far->set_visibility_range_begin_margin(margin);
+	};
+	for (KeyValue<ObjectID, LazyNear> &kv : lazy_near) {
+		LazyNear &c = kv.value;
+		const float d = c.centre.distance_to(p_camera);
+		int band = c.glaze_band;
+		if (weather.is_null()) {
+			band = 0;
+		} else if (glaze_check && d <= c.range * 1.2f) {
+			band = TreeGenerator::glaze_band(weather->glaze_at(c.centre));
+		}
+		if (c.near) {
+			if (d > c.range * 1.5f) {
+				_lazy_near_free(c);
+				continue;
+			}
+			if (band != c.glaze_band) {
+				Object *src = ObjectDB::get_instance(c.source);
+				const Ref<Mesh> mesh = src ? Ref<Mesh>(src->call(SNAME("request_near_mesh"), c.key, c.variant + TreeGenerator::NEAR_GLAZE_STRIDE * band)) : Ref<Mesh>();
+				if (mesh.is_valid()) {
+					_lazy_near_free(c);
+					c.glaze_band = band;
+					make_near(c, mesh);
+				}
+			}
+			continue;
+		}
+		c.glaze_band = band;
+		if (d > c.range * 1.2f) {
+			continue;
+		}
+		Object *src = ObjectDB::get_instance(c.source);
+		if (!src) {
+			continue;
+		}
+		const Ref<Mesh> mesh = src->call(SNAME("request_near_mesh"), c.key, c.variant + TreeGenerator::NEAR_GLAZE_STRIDE * c.glaze_band);
+		if (mesh.is_null()) {
+			continue; // Still building.
+		}
+		make_near(c, mesh);
 	}
 }
 
@@ -5439,6 +5501,86 @@ Color VegetationField3D::contract_plant_albedo_at(const Vector3 &p_position) con
 	return Color(c.r / c.a, c.g / c.a, c.b / c.a, MIN(c.a, 1.0f));
 }
 
+// Leaf drifts (docs/ideas/vegetation.md, "Leaf drifts"). Wind moves fallen leaves along the ground until they lodge:
+// in hollows and furrows, and against anything that breaks the flow, trunks, logs and stones, deepest in their lee and
+// along their windward foot; ridges, knolls and steep slopes are swept to the soil (Orndorff and Lang 1981, Am. Midl.
+// Nat.; Boerner and Kooser 1989, Am. Midl. Nat., litter up to several times deeper in hollows than on ridges; the lee
+// of obstacles as for snowdrifts). The terrain term is the ground's depth under its ring at 2.5 and 6 m (a
+// relative relief, so it reads the same at any map resolution); the obstacles' term decays over half a metre from
+// their side, stronger downwind of them.
+float VegetationField3D::_litter_drift(const TerrainDataMap3D *p_map, const VegetationObstacles &p_rocks, const HashMap<Vector2i, LocalVector<int>> &p_crown_grid, const LocalVector<Crown> &p_crowns, const HashMap<Vector2i, LocalVector<int>> &p_log_grid, const LocalVector<Deadwood> &p_logs, const VegetationField3D *p_other, const Vector2 &p_xz, const Vector2 &p_wind) const {
+	float d = 1.0f;
+	if (p_map) {
+		auto hgt = [&](float p_dx, float p_dz) { return p_map->get_height_at(Vector3(p_xz.x + p_dx, 0.0f, p_xz.y + p_dz)); };
+		const float h0 = hgt(0.0f, 0.0f);
+		const float ring1 = 0.25f * (hgt(2.5f, 0.0f) + hgt(-2.5f, 0.0f) + hgt(0.0f, 2.5f) + hgt(0.0f, -2.5f));
+		const float ring2 = 0.25f * (hgt(4.2f, 4.2f) + hgt(-4.2f, 4.2f) + hgt(4.2f, -4.2f) + hgt(-4.2f, -4.2f));
+		const float hollow = 0.6f * (ring1 - h0) + 0.4f * (ring2 - h0); // m, positive in a hollow.
+		d += 3.5f * CLAMP(hollow, -0.24f, 0.3f);
+		// Steep slopes shed their leaves downhill.
+		const float slope = p_map->get_slope_at(Vector3(p_xz.x, 0.0f, p_xz.y)); // Radians.
+		d *= 1.0f - 0.6f * Math::smoothstep(0.45f, 0.8f, slope);
+	}
+	// The feet of obstacles: a side factor from the direction away from them (downwind: the lee eddy, deepest).
+	float lee = 0.0f;
+	auto foot = [&](float p_gap, const Vector2 &p_away, float p_scale) {
+		if (p_gap > 1.6f) {
+			return;
+		}
+		const float side = p_wind == Vector2() ? 0.75f : 0.55f + 0.45f * p_away.dot(p_wind);
+		lee = MAX(lee, p_scale * side * Math::exp(-MAX(p_gap, 0.0f) / 0.5f));
+	};
+	if (!p_rocks.is_empty()) {
+		Vector2 away;
+		const float gap = p_rocks.clearance(p_xz, 1.6f, &away);
+		foot(gap, away, 1.0f);
+	}
+	DeadwoodHit hit;
+	bool found = deadwood_nearest(p_log_grid, p_logs, p_xz, 1.6f, DEADWOOD_CELL, hit, 0.05f);
+	if (p_other) {
+		found = p_other->_deadwood_at(p_xz, 1.6f, hit, 0.05f) || found;
+	}
+	if (found && hit.side >= 0.0f) {
+		foot(hit.side, hit.across, MIN(1.0f, hit.radius / 0.15f));
+	}
+	if (!p_crowns.is_empty()) {
+		const Vector2i gc(int(Math::floor(p_xz.x / CROWN_CELL)), int(Math::floor(p_xz.y / CROWN_CELL)));
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				const LocalVector<int> *bucket = p_crown_grid.getptr(gc + Vector2i(dx, dz));
+				if (!bucket) {
+					continue;
+				}
+				for (int idx : *bucket) {
+					const Crown &cr = p_crowns[idx];
+					if (cr.stem <= 0.0f) {
+						continue;
+					}
+					const Vector2 to = p_xz - cr.xz;
+					const float len = to.length();
+					if (len < cr.stem + 1.6f && len > 1e-4f) {
+						foot(len - cr.stem, to / len, MIN(1.0f, cr.stem / 0.25f));
+					}
+				}
+			}
+		}
+	}
+	d += 1.3f * lee;
+	return CLAMP(d, 0.15f, 2.5f);
+}
+
+float VegetationField3D::get_litter_drift_at(const Vector3 &p_global_position) const {
+	RWLockRead guard(crown_lock);
+	const Vector2 xz(p_global_position.x, p_global_position.z);
+	const VegetationField3D *other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+	if (other == this) {
+		other = nullptr;
+	}
+	const TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	const Vector2 wind = litter_skew.length_squared() > 1e-8f ? litter_skew.normalized() : Vector2();
+	return _litter_drift(map, obstacle_grid, crown_grid, crowns, deadwood_grid, deadwood, other, xz, wind);
+}
+
 float VegetationField3D::get_litter_at(const Vector3 &p_global_position) const {
 	RWLockRead guard(crown_lock);
 	return crown_litter(crown_grid, crowns, max_crown_radius + 3.0f * LITTER_SPREAD * (1.0f + litter_skew.length()), CROWN_CELL, Vector2(p_global_position.x, p_global_position.z), litter_skew);
@@ -6500,6 +6642,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("get_conifer_at", "global_position"), &VegetationField3D::get_conifer_at);
 	ClassDB::bind_method(D_METHOD("get_litter_at", "global_position"), &VegetationField3D::get_litter_at);
+	ClassDB::bind_method(D_METHOD("get_litter_drift_at", "global_position"), &VegetationField3D::get_litter_drift_at);
 	ClassDB::bind_method(D_METHOD("get_spring_wetness_at", "global_position"), &VegetationField3D::get_spring_wetness_at);
 	ClassDB::bind_method(D_METHOD("get_springs"), &VegetationField3D::get_springs);
 	ClassDB::bind_method(D_METHOD("add_canopy_loss", "xz", "radius", "keep"), &VegetationField3D::add_canopy_loss, DEFVAL(0.0f));

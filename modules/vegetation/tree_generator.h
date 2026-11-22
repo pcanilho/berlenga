@@ -105,6 +105,11 @@ public:
 		PRESET_WHITE_BROOM, // Retama raetam (trees.md 5ae).
 		PRESET_SALTBUSH, // Atriplex halimus (trees.md 5ae).
 		PRESET_DATE_PALM, // Phoenix dactylifera (trees.md 5ai).
+		PRESET_ASPEN, // Populus tremula (trees.md 5bf): slender pioneer of root-sucker clones, trembling leaves.
+		PRESET_BLACK_POPLAR, // Populus nigra (trees.md 5bf): massive floodplain tree, burred and leaning.
+		PRESET_WILD_CHERRY, // Prunus avium (trees.md 5bf): tiered crown, banded red-brown bark, white in April.
+		PRESET_HORNBEAM, // Carpinus betulus (trees.md 5bf): fluted grey stem, dense crown, shade tolerant.
+		PRESET_SWEET_CHESTNUT, // Castanea sativa (trees.md 5bf): broad, long toothed leaves, spiral-furrowed bark.
 		PRESET_MAX,
 	};
 
@@ -142,6 +147,7 @@ public:
 		STAND_FLOODPLAIN_WILLOW, // Softwood floodplain: old split white willows standing in the floods, willow thickets on the bars (trees.md 5at).
 		STAND_BEAVER_POND, // A beaver pond: drowned snags in the water, gnawed stumps, felled and half-gnawed willow and birch on the shore (trees.md 5au).
 		STAND_DEER_WOOD, // A wood under heavy deer browsing: a browse line under the low crowns, saplings hedged into bushes, poles stripped, no shrub layer (trees.md 5aw).
+		STAND_ICE_STORM, // Northern hardwoods after an ice storm: broken tops and stripped limbs, paper birch bent to the ground, ice-broken wood below (trees.md 5be).
 		STAND_MAX,
 	};
 	// The disturbance whose legacy a make_succession() species is (meta "succession_kind"; -1 any). Fire's legacies are
@@ -669,6 +675,7 @@ private:
 	int veteran_stem = -1;
 	void _apply_veteran();
 	void _break_limbs();
+	void _ice_storm_damage();
 	void _measure_lying(const Builder &p_b, int p_v0, int p_v1);
 	void _root_plate(Builder &r_bark);
 	// Storm breaks and windthrow at run time (section 5t): a unit fracture cap and the root plate a
@@ -770,6 +777,14 @@ public:
 	float windthrow_storm = 1.0f;
 	Vector2 windthrow_direction = Vector2(0.92f, -0.38f);
 	int windthrow_band = 0; // While a windthrow stand grows its species: 1 thrown, 2 snapped, 3 leaning survivors.
+	// Years since an ice storm loaded the crown past breaking (trees.md 5be), -1 none: the leader snapped or the limbs
+	// stripped by the species' susceptibility, a slender birch bent over in an arch (along mesh +X); sprouts from the
+	// break after the first year.
+	float ice_storm_years = -1.0f;
+	// STAND_ICE_STORM: years since the storm.
+	float ice_storm = 1.0f;
+	int ice_band = 0; // While an ice storm stand grows its species: 1 bent, 2 broken top, 3 limbs stripped.
+	int ice_damage = 0; // Set by _ice_storm_damage for the mesh meta: 0 none, 1 bent, 2 top broken, 3 limbs broken.
 	int succession_band = 0; // While make_succession grows a stage: 1 the pole stage, 2 old growth's veterans, 3 stand initiation (trees.md 5aq).
 	Preset last_stand_lead = PRESET_MAX; // The lead of the last make_stand().
 	int wet_band = 0; // While a wet stand grows its species: 1 stilt-rooted alder, 2 old floodplain willow (trees.md 5at).
@@ -793,6 +808,24 @@ public:
 	// piled on the upstream face of the stem. The flow runs toward +X (placement turns +X downstream).
 	float flood_height = 0.0f;
 	float flood_years = 0.3f;
+	// Glaze (trees.md 5be): mm of radial clear ice from freezing rain on the standing wood, built as geometry (a shell
+	// round the bark and icicles under it) so the path tracer sees it as the raster does; 0 none.
+	float glaze_mm = 0.0f;
+
+public:
+	// Near meshes in an ice storm: VegetationField3D asks for variant + NEAR_GLAZE_STRIDE x band, the band of
+	// WorldWeather.glaze_at over the cell (glaze_band(): 0 under 2 mm, then 2-6, 6-12, 12-25 and 25 mm up), and the
+	// near build grows that band's glaze_band_mm() as geometry.
+	static constexpr int NEAR_GLAZE_STRIDE = 1 << 16;
+	static int glaze_band(float p_mm) { return p_mm < 2.0f ? 0 : (p_mm < 6.0f ? 1 : (p_mm < 12.0f ? 2 : (p_mm < 25.0f ? 3 : 4))); }
+	static float glaze_band_mm(int p_band) {
+		static const float mm[5] = { 0.0f, 4.0f, 9.0f, 18.0f, 30.0f };
+		return mm[CLAMP(p_band, 0, 4)];
+	}
+
+public:
+	void _glaze_build(const Builder &p_bark, Builder &r_ice) const;
+	void _glaze_surface(const Ref<ArrayMesh> &p_mesh, const Builder &p_ice, const Ref<ArrayMesh> &p_material_source, Array &r_static_materials);
 	float _silt_at(const Vector3 &p_pos, const Vector3 &p_normal) const;
 	void _flood_wrack();
 	// Deer browse (trees.md 5aw): browse 0..1 is the browsing pressure, browse_height the reach (red deer about 1.8 m,
@@ -1209,6 +1242,13 @@ public:
 	void set_beetle_outbreak(float p_years) { beetle_outbreak = MAX(p_years, 0.0f); }
 	float get_beetle_outbreak() const { return beetle_outbreak; }
 	void set_windthrow_years(float p_years) { windthrow_years = p_years < 0.0f ? -1.0f : p_years; }
+	void set_ice_storm_years(float p_years) { ice_storm_years = p_years < 0.0f ? -1.0f : p_years; }
+	float get_ice_storm_years() const { return ice_storm_years; }
+	void set_ice_storm(float p_years) { ice_storm = MAX(p_years, 0.0f); }
+	// With ice_storm_years: 0 the species' odds, or 1 bent, 2 top broken, 3 limbs broken (a stand's bands set it).
+	void set_ice_storm_damage(int p_kind) { ice_band = CLAMP(p_kind, 0, 3); }
+	int get_ice_storm_damage() const { return ice_band; }
+	float get_ice_storm() const { return ice_storm; }
 	float get_windthrow_years() const { return windthrow_years; }
 	void set_far_thinning(bool p_on) { far_thinning = p_on; }
 	bool get_far_thinning() const { return far_thinning; }
@@ -1225,6 +1265,8 @@ public:
 	float get_ground_slope() const { return ground_slope; }
 	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }
 	void set_stilt_height(float p_v) { stilt_height = CLAMP(p_v, 0.0f, 1.5f); }
+	void set_glaze_mm(float p_v) { glaze_mm = CLAMP(p_v, 0.0f, 60.0f); }
+	float get_glaze_mm() const { return glaze_mm; }
 	void set_flood_height(float p_v) { flood_height = CLAMP(p_v, 0.0f, 6.0f); }
 	float get_flood_height() const { return flood_height; }
 	void set_flood_years(float p_v) { flood_years = CLAMP(p_v, 0.0f, 30.0f); }

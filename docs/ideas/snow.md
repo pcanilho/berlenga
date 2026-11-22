@@ -1720,6 +1720,196 @@ photographs, e.g. Fikke et al. 2007, COST 727).
 - Not here: rivers (PhysXRiver3D) take their discharge from the terrain climate, not from this field; a
   seasonal melt pulse in them would be the rivers' change.
 
+## Follow-up 45: wind slab (round 6, 22 Nov 2026)
+
+- Drift deposits were already laid down at 300 kg/m3; what was missing: snow falling in wind, the packing of
+  snow the wind works over in place, and a record of the slab for the avalanche stability.
+- Snowfall in wind: Crocus's new-snow density 109 + 6 T + 26 U^0.5 kg/m3 (Vionnet et al. 2012, GMD 5, after
+  Pahaut 1976), or Hedstrom and Pomeroy's where higher (calm). 151 kg/m3 at -8 C and 12 m/s against 70 calm.
+- Wind packing: Crocus's driftability SI = -2.868 exp(-0.085 U) + 1 + Mo (Guyomarc'h and Merindol 1998) with
+  mobility from density and freshness (albedo stands for dendricity); where SI > 0 at the cell's own wind
+  (MicroMet weights and lee) the top 10 cm settle toward 350 kg/m3 with time constant 48 h / (0.632 SI). Sommer
+  et al. 2018 (The Cryosphere 12): packing only with drift. The pack is one layer, so the top starts from the
+  pack's density.
+- `cell_wind_slab` (m): deposits, snowfall while SI > 0, the packed top; settles with the pack, melts from the
+  top, erosion takes it once the softer snow over it is gone. `get_wind_slab_at`, `wind_packing_enabled`.
+- Checks (`--test=windslab`): SI's thresholds (fresh 100 kg/m3 drifts from about 4 m/s, old 300 kg/m3 from
+  about 11); 12 h at 14 m/s packs 0.1 m of slab, calm none; a windy snowfall is twice as dense and is slab.
+
+## Follow-up 46: sastrugi (round 6, 22 Nov 2026)
+
+- Sastrugi are erosional bedforms of a cohesive surface (Filhol and Sturm 2015, JGR Earth Surface 120): drifting
+  snow scours a hard (wind-packed or sintered) surface whose hardness varies, leaving the hard patches as ridges
+  along the wind with steep prows into it, 5-50 cm tall, 1-5 m long.
+- Cover: `cell_sas_x/z` hold relief (m) times the carving wind's direction. In `_blow`, a cell whose surface is
+  hard at the start (wind slab with no soft cover, from follow-up 45's new `cell_slab_cover`, or 250 kg/m3 and
+  more) and that does not gain snow takes 2% of the snow scoured off it (the saltation's outflow, whatever came
+  in) as relief along the wind; deposits, new snow and melt fill it by their depth; at most 0.4 m and half the
+  pack. Our rate: 5-6 cm an hour at 24 m/s, about nothing under 12.
+- Surface: `SnowSurface3D.sastrugi_tile()` erodes a hardness field (periodic value noise, five times finer across
+  the wind than along) at (1.2 - 1.6 H)^2, faster on faces into the wind and 15% in Werner's (1995) 15 degree
+  shadow, then squares the height (flat floors, raised ridges). The shader lays it with the suncups' hex-tiling,
+  turned to the cell's wind with +-9 degrees of jitter, and adds it to the height like the suncups (real
+  geometry, raster and PT alike).
+- Checks (`--test=sastrugi`): the step's carving, fill, cap and turning; on the cornice ridge in a 24 m/s
+  westerly the windward snow, packed by the wind, carves 0.19 m along +x in 6 h; none on the lee drift (336 mm)
+  and none without wind packing (soft snow). Bench `--view=trail --sastrugi=M[,deg]`, `add_sastrugi`.
+- Media: /mnt/project-files/fork/snow/sastrugi/ (before/after raster, after PT).
+
+## Follow-up 47: depth hoar and wind loading on weak layers (round 6, 22 Nov 2026)
+
+- Depth hoar: over a temperature gradient above about 10 C/m (Akitaya 1974; Marbouty 1980; Colbeck 1983;
+  SNOWPACK's kinetic growth, Lehning et al. 2002) the base turns to large facets over one to three weeks. The
+  pack is one layer, so the cover keeps the base's share (`cell_depth_hoar`, 0..1): the gradient is the air (at
+  most 0 C) over a base near 0 C across the depth; the share grows at (G - 10) / 10 per two weeks, stays under
+  weaker gradients, goes in about a day once the pack holds liquid water (over 3%).
+- Strength: between sintered rounded snow (4 x 14.5 (rho / rho_ice)^1.73 kPa) and facets (18.5 (rho /
+  rho_ice)^2.11 kPa, Jamieson and Johnston 2001) by share, at a layer density of 200 kg/m3 (744 Pa at share 1).
+  `SnowAvalanche3D` tests the whole pack as the slab over it in natural release and in the trigger index: full-
+  depth releases on a loaded shallow-season pack.
+- Wind loading: drift deposits now add to buried surface hoar's burial (and erosion takes it), so wind slab
+  over buried hoar loads it as new snow does.
+- Checks (`--test=depthhoar`): two weeks at 20 C/m make a full share, 8 C/m none, wetting ends it; ten days at
+  -15 C turn 0.29 m to depth hoar, 1.79 m not; on the 38 degree face 1.25 m of old snow plus 30 cm of storm holds
+  over rounded snow (S 1.11) and releases on depth hoar (S 0.86).
+- Seen on the way, not changed: the new-snow slab's load uses the pack's bulk density, so on a dense old pack it
+  overstates the new snow's weight (a 50 cm storm reads S 0.79 over old snow where its own 100 kg/m3 gives 1.1).
+  Needs the recent snow's own mass tracked; noted for a later round.
+
+## Follow-up 48: a drift the wind takes back (round 7, 22 Nov 2026)
+
+Bench: `--test=drift` with `SnowCover3D.add_drift(position, radius, depth, density)` (a cone of wind-packed snow; also
+for ploughed banks and piles in scenes). A 1 m drift on 20 cm of loose snow in a 14 m/s gale at -8 C keeps its crest
+(120 to 118 cm in 6 h); the same drift on bare ground is gone from its centre in 6 h and creeps downwind.
+
+Why it holds: the transport is saturated. The wind arrives carrying a full load off the open snow upwind, so each cell
+passes on what it gets and a cell loses snow only where the wind speeds up (dS/dt = -div Q). The wind's weights see the
+ground, not the snow, so over a drift nothing changes and the drift stays. On bare ground nothing comes in, so it goes.
+
+What was tried (diff /mnt/project-files/fork/snow/drift-relief-wip-3.diff, not pushed):
+- MicroMet's slope and curvature weights on the snow's own relief (as SnowTran-3D does with the snow surface, Liston
+  et al. 2007). The drift does move, but flux rising up the windward face and falling in the lee is anti-diffusive at
+  drift scale: the windward face feeds the lee, which traps the incoming load, so the drift steepens into a spike and
+  grows (1 m to 1.5-1.9 m). This is the dune instability.
+- A slip face (dry blown snow avalanching past 38 degrees, each substep) caps the slope, but the drift still grows
+  (1.2 m to 1.8 m on loose snow).
+
+What it needs: the minimal dune model (Kroy, Sauermann and Herrmann 2002; Andreotti et al. 2002), used for snow
+bedforms by Kochanski et al. 2019 and Filhol and Sturm 2015:
+- Wind shear over the relief from Jackson and Hunt's linear theory, non-local (an FFT of the snow surface on the
+  cover grid): the shear peaks upwind of the crest, not on the face.
+- A saturation length (about 1-5 m for snow saltation): the flux lags the shear, so the windward face erodes up to the
+  crest and the lee fills, and drifts smaller than about 10-20 saturation lengths are flattened, not steepened.
+- Slip faces at the angle of repose, and flow separation behind a crest (the lee eddy the obstacle code already has).
+Drifts then reach Tabler's equilibrium profile on loose snow, migrate as snow dunes and barchans, and are taken back
+where the supply runs out or the wind turns. Cost: one FFT pair per cover update on the near square (64-256 cells).
+
+Reuse, not a second copy: `TerrainDuneSea` (modules/terrain_deform/terrain_dunes.h, the desert dunes) already has
+Kroy's shear, tau = 1 + A (H[h'] + B h'), as a direct-sum Hilbert transform along the wind (reach 32 cells) on a slope
+smoothed by 1-2-1 passes (the saturation length), with slides that move only the excess over the repose. Its
+begin_shear/shear_rows are members on a wrapping grid: split them into a static helper (heights in, shear out,
+wrap optional) that the dune sea and the snow cover both call, and drive the snow's transport weight with it. The
+ground's sand (GroundSurface3D) has Nishimori and Ouchi ripples and a saturation-length flux for dune grass, at
+centimetre and metre scale, not this runaway.
+
+Built (round 7): `SnowCover3D.drift_relief` (on). `DuneShear` (terrain_dunes.h) is now a static helper with heights in,
+shear out and wrapping optional; `TerrainDuneSea` calls it (bit-identical: a standalone run of the old and new header
+hashes the same, and the terrain_gen checks print the same). The snow takes its relief (depth in cells) along the
+wind, 1-2-1 smoothing passes = 2 (l_sat / cell)^2 with a 2 m saturation length (Pomeroy and Gray 1990 put snow
+saltation's development length at metres), A 3 and B 0.5 as the dune sea, reach 32 cells, clamped edges; the wind
+over the cell goes as sqrt(tau). A slip face at 38 degrees on the snow's own relief (snow on steep ground stays
+SnowSlide's) after each blow. The shear is kept 5 minutes of weather, until the wind turns 5 degrees or the square moves.
+- `--test=drift`: a 10 m, 1 m high drift on 20 cm of loose snow in 14 m/s becomes a snow dune: in 6 h its crest is
+  130 cm 4 m downwind and its old place is scoured; without relief it stays at 118 cm. A 4 m drift flattens (60 to
+  43 cm). On bare ground the drift blows away. The links wall case still passes.
+- A per-substep slip face changed nothing (the smoothed shear is stable), so it runs once a blow.
+- Not yet: flow separation past a brink (the shear only falls to its clamp of 0); flux lag beyond the smoothing.
+
+## Follow-up 49: a layered snowpack (round 7, 22 Nov 2026)
+
+Research: Crocus (Vionnet et al. 2012, GMD) keeps up to 50 layers, a new one per snowfall, merges thin similar ones, and
+settles each by a viscosity eta = f1 f2 eta0 (rho / c_eta) exp(a_eta (Tfus - T) + b_eta rho) (eta0 7.62237e6 kg/m/s,
+a_eta 0.1 /K, b_eta 0.023 m3/kg, c_eta 250 kg/m3); SNOWPACK (Bartelt and Lehning 2002) keeps finite elements with
+grain type. On a 256 x 256 square a game can afford a handful a cell.
+
+Built: `SnowCover3D.layers_enabled` (on), `get_layers_at`, static `layer_compaction`.
+- Up to 6 layers a cell, bottom first: snow water, density, age, kind (new, wind, old). A snowfall is a layer (wind
+  when it drifts as it lands); a fall within 6 h of the top one of its kind joins it; past 6 the two thinnest adjacent
+  layers under the top merge. Wind deposits are wind layers; the wind's packing turns the packed top (split off the
+  layer under it) to wind slab at the packed density. New turns old after a week (the avalanche's bonding time).
+  add_snow at 200 kg/m3 or more is old snow; add_drift is wind slab.
+- Each update each row's layers settle under the weight above (Crocus, temperature from the air at the top to 0 C at
+  the base), then are matched to the bulk: what the bulk lost comes off the top (melt, erosion, slides, releases),
+  what it gained past them goes into the top, and the bulk's depth change goes to the layers by their pore space, so
+  fresh snow takes it and dense old snow little. The bulk (CLASS settling and all the processes) stays authoritative.
+- Uses: the avalanche weighs each slab (new snow, over a crust, over buried hoar, the trigger index) by the layers'
+  density over its depth, which fixes the round 6 quirk; the wind packs the top by its own density, so new snow on a
+  dense old pack drifts and packs.
+- `--test=layers`: a calm 40 mm storm on an old pack is [old 51 cm 296] [new 44 cm 91]; the layers add up to the bulk;
+  a gale packs the top 10 cm into a wind layer; three days at +8 C take the top and leave the old layer's 150 mm; 50 cm
+  of new snow on a dense old pack on 38 degrees reads S 1.31 by its own weight against 0.66 by the bulk density.
+- Cost: 16.3 against 13.8 ms an update on a 256 x 256 square (worker thread).
+- Not yet: a melt-freeze crust, buried hoar and depth hoar as layers of their own (their fields still carry them);
+  liquid water per layer; a cut-through view.
+
+## Follow-up 50: snow sliding off roofs (round 7, 22 Nov 2026)
+
+Research: Eurocode 1 (EN 1991-1-3) and ISO 4355 give the load a pitched roof keeps as a share mu1 of the ground's,
+0.8 up to 30 degrees, falling linearly to none at 60. Taylor (1985) and O'Rourke's roof surveys find slippery roofs
+(metal, glass) shed at lower pitches than rough ones, so the bed friction goes with the roofing. Heat lost through a
+roof melts the bed once it beats the snow's insulation, q > k (-T) / d (Tobiasson 1988, ice dams), which is why warm
+roofs shed and cold ones hold. A sliding slab leaves the eave at v = sqrt(2 g L (sin a - tan phi cos a)) and falls
+ballistically, so the debris lands 1-3 m out, further off steep or slippery roofs.
+
+Built (SnowBodies3D): a node in group `snow_roof` is a roof face.
+- It keeps `roof_shape(pitch) / 0.8` of the snowfall and of the ground's first-sight seeding, none past 60 degrees,
+  and holds up to `roof_max_depth` (1.5 m).
+- It slides by `slab_slides` with the roofing's friction, `roof_friction`: metal and glass 10 degrees, tile and
+  slate 20, otherwise 25 (meta `snow_roof_material`); wetness takes 10 off.
+- Meta `snow_roof_heat` (W/m2): when it beats the pack's insulation the bed melts and wets (wet at least 0.6), which
+  breaks the bond and lowers the friction.
+- `roof_piles` (on): the slab is thrown from the eave at the slide speed and lands as a bank of wind-packed cones
+  (add_drift, 1.5 m radius, spaced 0.75 m) along the eave, each cone's share and throw varied a little, mass kept.
+  `get_roof_slides`, `get_roof_landed`.
+- `--test=roofs`: Eurocode share; 80 cm slides off 35 degree metal and holds on shingles; after a storm metal 0.58 m,
+  shingles 1.09 m, warm shingles 0.26 m, 65 degrees none; 5 slides, 6589 kg landed, conserved; bank 2.03 m against
+  0.84 m of level snow.
+- `--view=roofs`: a shed with metal on one side and shingles on the other, shot the moment after the metal side lets
+  go (14th hour of a 4 mm/h snowfall at -6 C): metal bare, shingles 0.59 m, a 1.5 t bank past the metal eave.
+- Not yet: the slab as a falling body (PhysX) and its powder puff; ice dams and icicles at the eave from the same
+  heat (follow-up 13 has icicles from a heated roof already); snow guards; gutters.
+
+## Follow-up 51: water in the layers (round 8, 22 Nov 2026)
+
+Research: SNOWPACK moves water by a bucket scheme or the Richards equation (Wever et al. 2014); Crocus by buckets
+with a holding capacity of about 5% of pore volume. Lab and field work show water stops at fine-over-coarse
+interfaces until the fine layer's suction is overcome (capillary barrier) and ponds in the few centimetres above
+(Waldner, Schneebeli et al. 2004; Avanzi et al. 2016: 5-15% by volume); ice layers pond more and pass water by flow
+fingers. Wet slab avalanches fail where it ponds (Mitterer et al. 2011, the LWC index; Wever et al. 2016).
+
+Built (SnowCover3D, layers on by default):
+- Layer kinds crust, hoar (buried surface hoar, its crystal size from its mass) and depth hoar join new, wind and
+  old; PACK_LAYERS 8. The top crust is the top's crust-thick part at 450 kg/m3 and stays a layer when buried (the
+  bulk keeps only the top crust); snowed-on surface hoar is split off the surface as a hoar layer; the base is depth
+  hoar while the bulk's share is over 0.5. Crusts and hoar are never merged away as traces; when full, the two
+  thinnest other adjacent layers merge. Wet new or wind snow turns old (wet rounding); wet or six-week-old buried
+  hoar is gone.
+- Each layer holds its share of the bulk's liquid (`liquid` in `get_layers_at`): water comes in at the top, drains
+  from the bottom in the warm and refreezes from the top in the cold, and percolates down within the update. Each
+  layer holds liquid_capacity of its ice, plus `layer_barrier` (8% by volume over a capillary barrier, 15% over a
+  crust) in its lowest 3 cm. The bulk's water balance is unchanged: the layers say where its water is.
+- Avalanches: with layers, `_check_release` weighs every buried crust and buried hoar layer (not only the newest)
+  and adds the interface a ponding layer sits on as a wet weak layer; the wet factor reads the wettest layer's index.
+- Fix on the way: a trace of rain (the phase's tail, micrograms in deep frost) resets the bulk's buried crust; the
+  layers keep it now, so avalanches see it. The bulk field is left as it was (world-tier cornice and nesting
+  benches depend on it).
+- `--test=percolation`: rain then frost makes a crust layer on top; a 40 mm storm buries it and it stays; 12 mm of
+  rain at +1 C ponds on it (index 1.87, 4.4 mm in the layer over it); the layers add up to the bulk; two snowed-on
+  hoar nights are two hoar layers (12.3 mm each) where the field keeps one; 30 cm of new snow on a bonded pack on
+  38 degrees releases after 13 h at +2 C with layers and not within a day by the pack's mean wetness.
+- Not yet: ponding that holds back the pack's drainage (it would change the weather's runoff contract); preferential
+  flow fingers; a crust's own strength as a bridge.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
@@ -1864,3 +2054,28 @@ Research notes for Paulo's pick; nothing below is built yet.
 - Build: a basal depth-hoar share grown by gradient hours; the stability index reads the weakest buried
   layer (hoar or depth hoar) under a slab; natural releases on slopes where it falls below 1 after loading
   (Schweizer, Jamieson and Schneebeli 2003, Reviews of Geophysics 41).
+
+## Next round (proposed 22 Nov 2026, round 7): drifts that move, layered snowpack, snow off roofs
+
+1. Snow dunes and drift take-back: the minimal dune model on the cover grid (follow-up 48): Jackson-Hunt shear by
+   FFT, a saturation length, slip faces and lee separation. Drifts migrate, form snow dunes and barchans on open
+   flats, and the wind takes them back when the supply stops or the wind turns.
+2. A layered snowpack: a few layers per cell (as Crocus and SNOWPACK keep), each with density, grain type and age, in
+   place of one bulk layer. Fixes the recent-snow load using the pack's bulk density, and lets crusts, wind slabs,
+   buried hoar and depth hoar stack in the right order for avalanches and the cut-through view.
+3. Snow sliding off roofs: snow on buildings and props (SnowBodies3D) slides off sloped roofs in a thaw or when
+   loaded past the roof's friction (roof snow loads, Taylor 1985; ISO 4355), landing in a pile below (add_drift).
+
+
+## Next round (proposed 22 Nov 2026, round 8): water in the layers, roof slabs that fall, layers you can see
+
+1. Crusts, buried surface hoar and depth hoar as layers of their own, with liquid water per layer: water percolates
+   down (Colbeck 1972 gravity flow; Wever et al. 2014 Richards equation in SNOWPACK, simplified to a bucket per layer)
+   and ponds above fine-over-coarse boundaries (capillary barrier, Waldner et al. 2004), which is where wet slab
+   avalanches fail. The avalanche then reads the weak layer by its kind and wetness instead of the separate fields.
+2. Roof slabs that fall as bodies: the sliding slab becomes a PhysX rigid body (or Blast chunks) that breaks on the
+   eave and lands, with a Flow powder puff, so the bank forms where the pieces land; ice dams at the eave from the
+   same heat (Tobiasson 1988), feeding the icicles (follow-up 13).
+3. Layers you can see: ruts, shovel cuts and avalanche crowns show the stack on their walls, new snow bright and
+   fine, wind slab chalky, old snow coarse and grey, crusts as thin glazed lines (the crown face of a slab avalanche,
+   SnowRunner's trench walls), from the layer stack per cell through the surface's displacement.

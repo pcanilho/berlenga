@@ -51,6 +51,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_geology_map", "sampler2D" },
 		{ "terrain_geology_rect", "vec4" },
 		{ "terrain_detail_keep_map", "sampler2D" },
+		// The droplet erosion's flow and deposits (TerrainGenerator3D.tile_erosion_enabled): rills and gullies.
+		{ "terrain_tile_flow_map", "sampler2D" },
+		{ "terrain_tile_flow_rect", "vec4" },
 		// Loose sand depth on the dune fields (the sand's dune-scale tone).
 		{ "terrain_sand_interdune_map", "sampler2D" },
 		{ "terrain_sand_interdune_rect", "vec4" },
@@ -80,6 +83,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_stand_rect", "vec4" },
 		// Landscape3D's cliff relief for the ground patch drawn over it (metres, landscape origin).
 		{ "terrain_cliff_relief", "vec4" },
+		// The drawn ground's relief over the heightfield for GPU placers (WorldGround.relief_at): R height m, G share.
+		{ "terrain_relief_map", "sampler2D" },
+		{ "terrain_relief_rect", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {

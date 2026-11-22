@@ -3846,9 +3846,23 @@ grown on demand (lazy generation, as the near leaves of 8c).
 ### 5be. Ice storms (21-22 Nov; recommended pick, first of three)
 
 Research: "Research for the likely picks" below. Built so far:
-- Contract: `WorldWeather.glaze_at(pos)`, mm of radial clear ice on exposed twigs (world-contracts.md). No provider
-  yet: the weather has no freezing rain (rain_share is 0 below freezing). Asked for one from the weather owner: liquid
-  precipitation with the ground air at or below 0 C, accreted by Jones' (1998) simple model.
+- Contract: `WorldWeather.glaze_at(pos)`, mm of radial clear ice on exposed twigs (world-contracts.md).
+- Provider (22 Nov): WeatherMap3D `warm_nose_temperature` (C, 0 = none), the peak of a warm layer aloft. Snow falling
+  through it melts, wholly above about +3 C and hardly below +1 C (Stewart and King 1987; Zerr 1997), so
+  `get_rain_share_at` is at least that share. Under sub-zero ground air the drops arrive supercooled and accrete as
+  glaze by Jones' (1998) simple model, dR/dt = sqrt((P rho_w)^2 + (3.6 V W)^2) / (rho_i pi) with W = 0.067 P^0.846
+  (`glaze_accretion_rate`, 1.28 mm/h at 2.5 mm/h in 5 m/s). Above 0 C it melts at 0.3 mm/h per K, the low end of clean
+  ice's degree-day factors (Hock 2003). Per cell, shifted with the map; `get_glaze_at`, contract_glaze_at, and the
+  rain map's alpha (mm) for shaders. Open for the snow owner: SnowCover3D and SnowFall3D take the phase from the static
+  rain_fraction(), so they still count a warm-nose storm as snow.
+- Look (22 Nov): BaseMaterial3D `glaze` (on for every tree surface, the far crown hulls too, and the hulls now also wet
+  like the near leaves): Lagarde's (2013) accumulated water, frozen. A film forms within the first millimetre: ice's
+  surface (n 1.31, F0 0.018: specular 0.225, roughness 0.06), the surface under it seen soaked (porosity, as wet), and
+  3-6 mm fill the bark's relief (normal map depth). Raster and path tracer apply the same lines (raygen reads the rain
+  map's alpha; material bit subsurface_texture 26). Bench: env GLAZE_HOURS=H on main.gd (a 2.5 mm/h warm-nose storm
+  at -3 C, then clear). Backlit, the stems carry the ice's sharp rim highlights; the thickening of the twigs (an
+  ice shell, 3 mm twigs become 15-20 mm glass rods) needs geometry the path tracer also sees: next, as a deferred
+  variant built like the moss shell, with the icicles.
 - Mesh meta `tree_glaze_surface` = (sum of shoot lengths, sum of length x radius) of the standing wood; a needled shoot
   counts as a 3 cm brush, a leafy broadleaf shoot as 6 cm. Ice on a cylinder weighs rho_ice pi R (2r + R) a metre.
 - TreeWind3D (`glaze_load_enabled`, on): each tree's ice, no more than the rain its crown catches (2.83 R of rain over
@@ -3858,8 +3872,61 @@ Research: "Research for the likely picks" below. Built so far:
 - Storm bench `--glaze-test`: 6 mm puts 0.6 t on a young birch and 5.8-6.3 t on broad beech, oak and spruce crowns
   (the beech's long laterals bow hard), a thaw lets them stand up again, 25 mm breaks 10 limbs and tops, the spruce
   fewest with the oak and beech.
-- Next: clear ice on twigs and needles (raster and path traced) and icicles near the camera; bent birch and broken tops
-  as stand variants after a storm.
+- Ice as geometry (22 Nov): TreeGenerator `glaze_mm` builds an "ice" surface (`_glaze_build`, mesh meta
+  `tree_glaze_mm`). Stems and limbs of 4 cm and more: the bark's own vertices pushed out along their normals (relief
+  under the ice, the bark's skin and LOD parts). Thinner wood: a round 6 or 8 sided tube per internode, overlapping at
+  the joints, capped at the tips (the bark's 3 and 4 sided twigs pushed out read as square sticks). The centre rides up
+  a quarter of the glaze (eccentric accretion, deepest on top: Szilder and Lozowski 1994, Makkonen 2000). Icicles
+  under the wood from 2 mm up that slopes less than 45 degrees, about one per 4 cm where a hash lets one grow, 3 to 10
+  glaze depths long (pendant icicles of ice storms; growth, Makkonen 1988), LOD 0 only. Clear ice as SnowIcicles3D's
+  (n 1.31, specular 0.335) but thin walled: as a medium round the wood the path tracer's light paths into the bark
+  crossed it twice more and the white birch drew near black; a few millimetres of ice hardly displace what is under
+  it. The bark's glaze darkening without Wetness takes porosity 0.3 (it was 0.5; birch bark barely soaks).
+  Bench: --set=glaze_mm:7 with GLAZE_HOURS=4; env CROP_HR pins the crop framing.
+- Near trees glazed by the weather (22 Nov): VegetationField3D reads WorldWeather.glaze_at at each near cell twice a
+  second, in bands (TreeGenerator.glaze_band: under 2 mm none, 2-6, 6-12, 12-25, 25 up; grown as 4, 9, 18, 30 mm) and
+  asks its near source for variant + NEAR_GLAZE_STRIDE (65536) x band; the near build grows that glaze as geometry.
+  A cell whose band changes swaps to the new near cell once built. Past the near range the trees keep the material
+  glaze (BaseMaterial3D glaze), which reads the same weather: the ice geometry is near detail, as the near leaves are.
+  Stand bench `--stands --test`: band 2 builds a near oak with 9 mm of ice.
+- After the storm (22 Nov): TreeGenerator._ice_storm_damage, from ice_storm_years (single trees: by the species' odds)
+  or STAND_ICE_STORM's bands. Susceptibility after Lemon 1961 and Hauer et al. 2006: birches, lime, willow, alder,
+  soft pines high; maples, ash, beech middle; white oaks, spruce, fir, hemlock, yew low. Broken top: the leader snapped
+  at 0.5-0.8 of the height where it is at least 6 cm across, the break jagged (broken_ends), epicormic clusters under
+  it from the first summer. Stripped crown: upper-crown limbs (above 45% of the height) broken back at 25-60% of their
+  length, fine twigs stripped (Rhoads et al. 2002: 25-75% crown loss in the 1998 storm). Bent: paper birch poles under
+  a Barr bend (Barr 1984) about the foot toward mesh +X, psi(u) = theta (2u - u^2), theta 55-115 degrees, lowered until
+  the crown clears the ground by 25 cm. Mesh meta tree_ice_storm = (years, 1 bent / 2 top / 3 limbs).
+  STAND_ICE_STORM: northern hardwoods after January 1998 (Irland 2000): sugar maple stripped and broken, beech, yellow
+  birch, red maple, hemlock whole, paper birch poles bent, ice-broken limbs on the floor; species report WorldStand
+  DISTURBANCE_ICE_STORM (7, appended) so the field layer sees the opened canopy. Bench: `--stands --stand-test=24`.
+- Later: the bent birches' tops turning up over the years (phototropic recovery), hangers left in the crowns.
+- Queued after this round (coordinator, 22 Nov): avalanche legacies keyed to WorldStand disturbance 6 (world-links
+  0c249ead): snapped stems lying downslope, flagged crowns at the track edge, green alder and willow thickets in
+  frequent tracks (Bebi et al. 2009).
+
+### 5bf. Missing broadleaves (22 Nov; second of three)
+
+Five presets appended after the date palm (PRESET_ASPEN 50 to PRESET_SWEET_CHESTNUT 54), each with its row in every
+per-preset table (leaf form, phenology, moss, lichens, habitat, storm wood) and the bench's NAMES / spacing / heights.
+Sources: San-Miguel-Ayanz et al. 2016 (European Atlas of Forest Tree Species), EUFORGEN guidelines (black poplar:
+Cottrell 2004; wild cherry: Russell 2003), Rackham 2006, Wood Handbook (green MOR).
+- Aspen (Populus tremula): slender, strong leader, short open crown of ascending limbs (lateral_extension 0.58),
+  round leaves; root suckers (basal_sprouts 0.25); grey-green lenticelled bark; flutter x2.5 (flattened petioles:
+  leaves tremble in the lightest air, Niklas 1991); gold in autumn, early.
+- Black poplar (Populus nigra): fastest-growing native, big arching limbs (gravity_bending 0.25), near-black furrowed
+  bark; floodplains (water_max 60 m); mistletoe's heaviest host (0.6); flutter x2.5.
+- Wild cherry (Prunus avium): monopodial to the top, limbs in tiers (whorled, 4 buds), drooping leaves, red-brown
+  lenticel-banded bark, crimson autumn.
+- Hornbeam (Carpinus betulus): two-ranked fine twigs, dense dome, very shade tolerant (shade_max 0.75, opacity 0.85),
+  smooth grey bark; leaves held late (long fall lag).
+- Sweet chestnut (Castanea sativa): broad dome on a massive bole, long lanceolate leaves (18 cm), late leaf-out.
+- Next (this pick): aspen clones (one bark tint, form and autumn date for a whole sucker patch: a clone id from
+  hashed cells in VegetationField3D, Mitton and Grant 1996), hornbeam's fluted stem (the pollard pole flutes),
+  chestnut's spiral-twisted furrows, cherry blossom before the leaves, and the new species in stands (oak-hornbeam,
+  chestnut coppice, aspen in the taiga and woodland, black poplar on floodplains).
+- Later: WorldWater.high_water_at (1276b430: peak height, days since, flow xz) can drive flood_height and
+  flood_years (5av) instead of hand values.
 
 ## Next-round options (card 20 Nov evening)
 

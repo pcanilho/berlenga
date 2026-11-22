@@ -54,7 +54,8 @@ static const char *preset_names[TreeGenerator::PRESET_MAX] = {
 	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel", "Gorse", "Broom", "Gum Rockrose", "Kermes Oak", "Lentisk", "Dwarf Fan Palm",
 	"Stone Pine", "Cork Oak", "Holm Oak", "Wild Olive", "Maritime Pine", "Carob",
 	"Blackthorn", "Field Maple", "Dog Rose",
-	"Calligonum", "White Broom", "Mediterranean Saltbush", "Date Palm"
+	"Calligonum", "White Broom", "Mediterranean Saltbush", "Date Palm",
+	"Aspen", "Black Poplar", "Wild Cherry", "Hornbeam", "Sweet Chestnut"
 };
 
 // The woody shrubs vegetation places through make_shrub_species (trees.md 5u, 5v): Atlantic heath
@@ -101,7 +102,7 @@ static bool hedge_shrub(TreeGenerator::Preset p_preset) {
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
-	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga", "Alder Carr", "Floodplain Willow", "Beaver Pond", "Deer Wood"
+	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga", "Alder Carr", "Floodplain Willow", "Beaver Pond", "Deer Wood", "Northern Hardwoods after Ice Storm"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -1074,6 +1075,111 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 4;
 			bark_color = Color(0.36f, 0.29f, 0.21f); // Fibre and old leaf bases, grey-brown.
 			leaf_color = Color(0.085f, 0.125f, 0.08f); // Glaucous grey-green.
+			break;
+		// Broadleaves of the European lowlands (trees.md 5bf; San-Miguel-Ayanz et al. 2016, European Atlas of Forest
+		// Tree Species; Rackham, Woodlands, 2006).
+		case PRESET_ASPEN: // Populus tremula: a slender pioneer with a short, narrow, open crown of ascending limbs, the
+			// leader strong to the top; round, crenate leaves on flattened stalks that tremble in the lightest air; smooth
+			// grey-green bark pocked with dark diamond lenticels, black and fissured at the foot; clones from root suckers.
+			p[PARAM_LEADER_GROWTH] = 0.9f;
+			p[PARAM_YEARS] = 30;
+			p[PARAM_APICAL_DOMINANCE] = 0.65f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.57f;
+			p[PARAM_BRANCH_ANGLE] = 36;
+			p[PARAM_DIRECTION_NOISE] = 9;
+			p[PARAM_TWIG_DROOP] = 0.4f; // Leafy short shoots hang a little on the thin twigs.
+			p[PARAM_GRAVITROPISM] = 0.1f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.8f;
+			p[PARAM_SHED_RATIO] = 0.045f; // Light demanding: the lower limbs go early.
+			p[PARAM_LATERAL_EXTENSION] = 0.58f;
+			p[PARAM_BASAL_SPROUTS] = 0.25f; // Root suckers round the foot.
+			p[PARAM_LEAF_SIZE] = 0.065f; // Blade 3-8 cm, nearly round.
+			p[PARAM_LEAF_WIDTH] = 0.5f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 46;
+			p[PARAM_ROOT_FLARE] = 0.3f;
+			bark_color = Color(0.46f, 0.47f, 0.41f); // Grey with a green tinge.
+			leaf_color = Color(0.16f, 0.29f, 0.09f);
+			break;
+		case PRESET_BLACK_POPLAR: // Populus nigra: a massive, often leaning tree of river floodplains, with a broad,
+			// irregular crown of heavy, arching limbs, burrs on the bole and deeply furrowed, near-black bark; deltoid leaves
+			// on flattened stalks (Cottrell, Forestry 77, 2004; EUFORGEN technical guidelines).
+			p[PARAM_LEADER_GROWTH] = 0.85f;
+			p[PARAM_YEARS] = 50;
+			p[PARAM_INTERNODE_LENGTH] = 0.55f; // The fastest-growing native tree.
+			p[PARAM_APICAL_DOMINANCE] = 0.6f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_LATERAL_EXTENSION] = 0.8f;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_DIRECTION_NOISE] = 13;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.45f;
+			p[PARAM_GRAVITY_BENDING] = 0.25f; // The big limbs arch out and down.
+			p[PARAM_SHED_RATIO] = 0.05f;
+			p[PARAM_BASAL_SPROUTS] = 0.15f;
+			p[PARAM_ROOT_FLARE] = 0.6f;
+			p[PARAM_LEAF_SIZE] = 0.075f;
+			p[PARAM_LEAF_WIDTH] = 0.45f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 24;
+			bark_color = Color(0.24f, 0.22f, 0.2f);
+			leaf_color = Color(0.13f, 0.27f, 0.07f);
+			break;
+		case PRESET_WILD_CHERRY: // Prunus avium: a monopodial stem to the top with the limbs in tiers (buds crowded at
+			// the shoot tips), a narrow-domed crown; drooping, toothed leaves; shiny red-brown bark ringed by bands of
+			// lenticels, peeling in horizontal strips; white blossom before the leaves, red in autumn (Russell, EUFORGEN
+			// Prunus avium guidelines, 2003).
+			p[PARAM_LEADER_GROWTH] = 0.95f;
+			p[PARAM_YEARS] = 34;
+			phyllotaxis = PHYLLOTAXIS_WHORLED;
+			p[PARAM_WHORL_BUDS] = 4;
+			p[PARAM_APICAL_DOMINANCE] = 0.72f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.58f;
+			p[PARAM_APICAL_CONTROL] = 0.8f;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_DIRECTION_NOISE] = 8;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
+			p[PARAM_SHED_RATIO] = 0.06f;
+			p[PARAM_TWIG_DROOP] = 0.5f;
+			p[PARAM_LATERAL_EXTENSION] = 0.75f;
+			p[PARAM_LEAF_SIZE] = 0.1f;
+			p[PARAM_LEAF_WIDTH] = 0.4f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 22;
+			bark_color = Color(0.31f, 0.2f, 0.17f); // Red-brown, a grey cast where weathered.
+			leaf_color = Color(0.14f, 0.27f, 0.07f);
+			break;
+		case PRESET_HORNBEAM: // Carpinus betulus: a short, fluted, muscled grey stem under a dense, rounded crown of
+			// fine twigs in two ranks; pleated, doubly toothed leaves held brown through winter on young and cut trees;
+			// very shade tolerant, the classic coppice and hedge tree (Sikkema et al. 2016, Atlas; Rackham 2006).
+			p[PARAM_YEARS] = 45;
+			p[PARAM_APICAL_DOMINANCE] = 0.56f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_DIVERGENCE] = 180;
+			p[PARAM_BRANCH_ANGLE] = 45;
+			p[PARAM_DIRECTION_NOISE] = 12;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.55f;
+			p[PARAM_SHED_RATIO] = 0.025f;
+			p[PARAM_LEAF_SIZE] = 0.08f;
+			p[PARAM_LEAF_WIDTH] = 0.4f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 28;
+			bark_color = Color(0.46f, 0.46f, 0.43f); // Smooth, silver-grey, streaked darker.
+			leaf_color = Color(0.13f, 0.27f, 0.07f);
+			break;
+		case PRESET_SWEET_CHESTNUT: // Castanea sativa: a broad, domed crown on a massive bole whose ridged bark twists
+			// in a spiral with age; long, lanceolate leaves with bristle teeth; spiny burrs; coppiced for poles for
+			// centuries, its old stools and veterans hollow (Conedera et al. 2016, Atlas).
+			p[PARAM_LEADER_GROWTH] = 0.7f;
+			p[PARAM_YEARS] = 60;
+			p[PARAM_INTERNODE_LENGTH] = 0.45f;
+			p[PARAM_APICAL_DOMINANCE] = 0.58f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_DIRECTION_NOISE] = 11;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
+			p[PARAM_SHED_RATIO] = 0.035f;
+			p[PARAM_ROOT_FLARE] = 0.6f;
+			p[PARAM_LEAF_SIZE] = 0.18f; // 15-25 cm.
+			p[PARAM_LEAF_WIDTH] = 0.22f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 14;
+			bark_color = Color(0.33f, 0.29f, 0.24f);
+			leaf_color = Color(0.12f, 0.25f, 0.06f);
 			break;
 		case PRESET_MAX:
 			break;
@@ -4212,6 +4318,11 @@ static const LeafFormSpec LEAF_FORMS[TreeGenerator::PRESET_MAX] = {
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // White broom: a few tiny linear leaves.
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Saltbush: ovate to rhombic, entire.
 	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Date palm: its fronds are built by _palm_geometry.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Aspen: round, crenate.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Black poplar: deltoid.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Wild cherry: obovate, toothed.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Hornbeam: ovate, doubly toothed, pleated.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Sweet chestnut: long lanceolate, bristle-toothed.
 };
 
 Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
@@ -4309,6 +4420,7 @@ Ref<ArrayMesh> TreeGenerator::make_leaf_mesh(Preset p_preset, const Dictionary &
 	m->set_feature(BaseMaterial3D::FEATURE_WETNESS, true);
 	m->set_wetness_porosity(0.15f); // A waxy cuticle barely soaks, as the ground plants' leaves.
 	m->set_wetness_canopy(true);
+	m->set_glaze(true); // Clear ice from freezing rain (trees.md 5be).
 	if (!needles) {
 		m->set_specular(0.3f); // As the canopy's (leaf sheen, 18 Nov).
 		if (LEAF_FORMS[p_preset].kind == LEAF_PINNATE) {
@@ -4423,6 +4535,11 @@ static const LeafSeasonSpec LEAF_SEASONS[TreeGenerator::PRESET_MAX] = {
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // White broom: green stems.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Saltbush: semi-evergreen.
 	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Date palm.
+	{ true, 140.0f, 200.0f, 200.0f, 90.0f, Color(0.55f, 0.38f, 0.03f) }, // Aspen: early; gold, a clone at a time.
+	{ true, 170.0f, 240.0f, 220.0f, 100.0f, Color(0.5f, 0.38f, 0.05f) }, // Black poplar: yellow.
+	{ true, 150.0f, 200.0f, 230.0f, 100.0f, Color(0.55f, 0.13f, 0.04f) }, // Wild cherry: early; crimson and orange.
+	{ true, 230.0f, 280.0f, 220.0f, 160.0f, Color(0.45f, 0.33f, 0.06f) }, // Hornbeam: yellow, then held brown.
+	{ true, 280.0f, 300.0f, 220.0f, 120.0f, Color(0.45f, 0.32f, 0.05f) }, // Sweet chestnut: late; yellow-brown.
 };
 
 TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dictionary &p_season) {
@@ -5143,7 +5260,10 @@ TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
 		case PRESET_ROWAN:
 			// Rowan too: smooth, grey to purplish, with pale lenticels drawn out across the stem
 			// (Raspe et al. 2000); a plain smooth bark read as bare grey tubes up close.
+		case PRESET_WILD_CHERRY: // Glossy red-brown, ringed with bands of lenticels.
+		case PRESET_ASPEN: // Grey-green, pocked with dark diamond lenticels.
 			return BARK_LENTICELLED;
+		case PRESET_HORNBEAM: // Silver-grey and smooth over its flutes.
 		case PRESET_BEECH:
 		case PRESET_AMERICAN_BEECH:
 		case PRESET_HOLLY:
@@ -6361,6 +6481,11 @@ static const float MOSS_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	0.0f, // White broom.
 	0.0f, // Saltbush.
 	0.0f, // Date palm: desert.
+	0.25f, // Aspen: smooth, but mossy at the fissured foot.
+	0.65f, // Black poplar: deep, damp furrows by rivers.
+	0.3f, // Wild cherry: glossy, sheds its outer skin.
+	0.45f, // Hornbeam: smooth but shady and damp.
+	0.6f, // Sweet chestnut: deep ridges.
 };
 
 float TreeGenerator::_moss_amount() const {
@@ -6548,6 +6673,11 @@ static const LichenAffinity LICHEN_AFFINITY[TreeGenerator::PRESET_MAX] = {
 	{ 0.2f, 0.05f, 0.1f }, // White broom.
 	{ 0.2f, 0.05f, 0.15f }, // Saltbush.
 	{ 0.1f, 0.0f, 0.1f }, // Date palm.
+	{ 0.75f, 0.3f, 0.15f }, // Aspen: crusts, Physcia and Xanthoria on the base-rich bark.
+	{ 0.75f, 0.45f, 0.3f }, // Black poplar: the classic Xanthoria tree.
+	{ 0.55f, 0.25f, 0.05f }, // Wild cherry.
+	{ 0.85f, 0.15f, 0.0f }, // Hornbeam: smooth, script lichens as on beech.
+	{ 0.7f, 0.5f, 0.05f }, // Sweet chestnut.
 };
 
 float TreeGenerator::_lichen_amount() const {
@@ -9202,6 +9332,11 @@ static const struct {
 	{ 40.0f, 220.0f }, // white broom (whippy switches)
 	{ 50.0f, 200.0f }, // saltbush
 	{ 35.0f, 260.0f }, // date palm (fibrous monocot stem; it bends, and its dense root ball holds)
+	{ 35.0f, 140.0f }, // aspen (quaking aspen, Wood Handbook)
+	{ 34.0f, 150.0f }, // black poplar (as cottonwood)
+	{ 55.0f, 160.0f }, // wild cherry (black cherry)
+	{ 60.0f, 160.0f }, // hornbeam (hard, tough wood)
+	{ 39.0f, 180.0f }, // sweet chestnut (American chestnut; deep rooted)
 };
 static_assert(sizeof(STORM_WOOD) / sizeof(STORM_WOOD[0]) == TreeGenerator::PRESET_MAX, "one storm row per preset");
 
@@ -9482,6 +9617,10 @@ float TreeGenerator::get_bloom(Preset p_preset, float p_day) {
 		// March and April, hawthorn's May blossom, dog rose in June.
 		case PRESET_BLACKTHORN:
 			return ramp(70.0f, 85.0f, 105.0f, 120.0f);
+		// Wild cherry: white clusters from the short spurs in April, as the leaves break (trees.md 5bf; PEP725 BBCH 60-69
+		// for Prunus avium in central Europe: mid to late April, about two weeks).
+		case PRESET_WILD_CHERRY:
+			return ramp(98.0f, 108.0f, 118.0f, 128.0f);
 		case PRESET_HAWTHORN:
 			return ramp(118.0f, 128.0f, 145.0f, 158.0f);
 		case PRESET_DOG_ROSE:
@@ -9782,9 +9921,15 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 			case PRESET_WHITE_WILLOW:
 				host = 0.3f;
 				break;
+			case PRESET_BLACK_POPLAR: // Among the most heavily infested hosts (Zuber 2004), whole crowns in old floodplain trees.
+				host = 0.6f;
+				break;
 			case PRESET_ROWAN:
 				host = 0.25f;
 				break;
+			case PRESET_WILD_CHERRY:
+			case PRESET_HORNBEAM:
+			case PRESET_ASPEN:
 			case PRESET_SYCAMORE_MAPLE:
 			case PRESET_BIRCH:
 			case PRESET_RED_MAPLE:
@@ -10971,7 +11116,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 	// Hedge shrubs flower from the same tips that later fruit (trees.md 5ad): hawthorn white over
 	// the whole bush in May, blackthorn white along its bare twigs in March and April, dog rose
 	// pale pink in June.
-	const float blossom = (preset == PRESET_HAWTHORN || preset == PRESET_BLACKTHORN || preset == PRESET_DOG_ROSE || preset == PRESET_CALLIGONUM) ? get_bloom(preset, day) : 0.0f;
+	const float blossom = (preset == PRESET_HAWTHORN || preset == PRESET_BLACKTHORN || preset == PRESET_DOG_ROSE || preset == PRESET_CALLIGONUM || preset == PRESET_WILD_CHERRY) ? get_bloom(preset, day) : 0.0f;
 	if (blossom > 0.0f) {
 		kind = BLOSSOM;
 		share = preset == PRESET_DOG_ROSE ? 0.4f : 1.0f;
@@ -11069,7 +11214,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 	}
 	// Corymbs carry a hundred berries or more each: a rowan bears some dozens of heads.
 	// A stone pine's crown is spent on cones, three years' worth at once: about a thousand.
-	const float budget = (kind == BERRY_ROWAN || kind == BERRY_ELDER ? 80.0f : (kind == CONE_STONE_PINE ? 900.0f : (kind == BLOSSOM ? 3000.0f : (kind == BERRY_HAW || kind == DRUPE_SLOE || kind == HIP_ROSE || kind == NUT_CALLIGONUM || kind == SPIKE_SALTBUSH ? 900.0f : 360.0f)))) * fruit_cover;
+	const float budget = (kind == BERRY_ROWAN || kind == BERRY_ELDER ? 80.0f : (kind == CONE_STONE_PINE ? 900.0f : (kind == BLOSSOM ? (preset == PRESET_WILD_CHERRY ? 9000.0f : 3000.0f) : (kind == BERRY_HAW || kind == DRUPE_SLOE || kind == HIP_ROSE || kind == NUT_CALLIGONUM || kind == SPIKE_SALTBUSH ? 900.0f : 360.0f)))) * fruit_cover;
 	const float p = MIN(share * fruit_cover * present, eligible > 0 ? budget / eligible : 0.0f);
 	// Catkins open before the leaves: hazel from late January, alder February, birch April.
 	const bool open_catkin = (kind == CATKIN_HAZEL && in_days(20.0f, 100.0f)) || (kind == CATKIN_ALDER && in_days(40.0f, 100.0f)) || (kind == CATKIN_BIRCH && in_days(100.0f, 135.0f));
@@ -11544,9 +11689,11 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 				// Calligonum: 2-4 small flowers at each joint of the green twiglets, five white tepals
 				// 2-3 mm long with a green-red centre and red-tipped stamens (Flora Palaestina; Danin
 				// 1996), the bush pale with them from a few metres.
-				const bool haw = preset == PRESET_HAWTHORN, rose = preset == PRESET_DOG_ROSE, cal = preset == PRESET_CALLIGONUM;
-				const int k = haw ? 16 + int(cr.randf() * 16.0f) : (rose ? 1 + int(cr.randf() * 2.5f) : (cal ? 6 + int(cr.randf() * 7.0f) : 8 + int(cr.randf() * 9.0f)));
-				const float fr = haw ? Math::lerp(0.0055f, 0.0075f, cr.randf()) : (rose ? Math::lerp(0.022f, 0.028f, cr.randf()) : (cal ? Math::lerp(0.0028f, 0.0036f, cr.randf()) : Math::lerp(0.006f, 0.0075f, cr.randf())));
+				// Wild cherry: umbels of two to six (two umbels a spur here) on long stalks from the spurs, each flower 2.5-3.5 cm, pure white,
+				// yellow anthers (Russell 2003); a tree in flower is white from afar.
+				const bool haw = preset == PRESET_HAWTHORN, rose = preset == PRESET_DOG_ROSE, cal = preset == PRESET_CALLIGONUM, cherry = preset == PRESET_WILD_CHERRY;
+				const int k = haw ? 16 + int(cr.randf() * 16.0f) : (rose ? 1 + int(cr.randf() * 2.5f) : (cal ? 6 + int(cr.randf() * 7.0f) : (cherry ? 5 + int(cr.randf() * 6.0f) : 8 + int(cr.randf() * 9.0f))));
+				const float fr = haw ? Math::lerp(0.0055f, 0.0075f, cr.randf()) : (rose ? Math::lerp(0.022f, 0.028f, cr.randf()) : (cal ? Math::lerp(0.0028f, 0.0036f, cr.randf()) : (cherry ? Math::lerp(0.013f, 0.018f, cr.randf()) : Math::lerp(0.006f, 0.0075f, cr.randf()))));
 				const Color petal_c = rose ? lin(0.97f, 0.8f, 0.84f) : (haw ? lin(0.97f, 0.94f, 0.84f) : (cal ? lin(0.95f, 0.92f, 0.88f) : lin(0.96f, 0.95f, 0.91f)));
 				const Color eye_c = rose ? lin(0.99f, 0.95f, 0.88f) : petal_c;
 				const Color boss_c = haw ? lin(0.55f, 0.22f, 0.32f) : (cal ? lin(0.7f, 0.3f, 0.3f) : lin(0.95f, 0.75f, 0.2f));
@@ -11559,6 +11706,10 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 						fc = (q % 2 == 0 ? at : n.start + n.dir * (n.length * 0.5f) + sd.rotated(d, 2.0f) * 0.02f) + d * 0.01f + (sd * Math::cos(a) + d.cross(sd) * Math::sin(a)) * rr + Vector3(0, 0.008f, 0);
 					} else if (rose) {
 						fc = at + sd.rotated(d, q * 2.4f) * (0.02f * q) + d * 0.01f;
+					} else if (cherry) {
+						// Two umbels a spur (its tip and a bud below), round it on stalks 3-5 cm.
+						const Vector3 root = q % 2 == 0 ? at : n.start + n.dir * (n.length * 0.55f);
+						fc = root + sd.rotated(d, q * 2.4f + cr.randf()) * Math::lerp(0.025f, 0.045f, cr.randf()) + d * 0.01f - Vector3(0, 0.01f, 0);
 					} else {
 						fc = n.start + n.dir * (n.length * Math::lerp(0.2f, 1.0f, cr.randf())) + sd.rotated(d, cr.randf() * float(Math::TAU)) * 0.006f;
 					}
@@ -13000,8 +13151,8 @@ void TreeGenerator::_plan_wounds() {
 	// Frost cracks split thin-barked broadleaves of some size, low on the stem, and their
 	// callus builds into ribs over the winters (Kubler 1988).
 	{
-		static const int THIN[] = { PRESET_OAK, PRESET_RED_OAK, PRESET_WHITE_OAK, PRESET_LIME, PRESET_BEECH, PRESET_AMERICAN_BEECH, PRESET_ASH, PRESET_SYCAMORE_MAPLE, PRESET_SUGAR_MAPLE, PRESET_RED_MAPLE, PRESET_HORSE_CHESTNUT };
-		if (r13 >= 0.12f && wound_species(preset, THIN, 11) && chance(0.18f * CLAMP(r13 / 0.25f, 0.5f, 1.5f))) {
+		static const int THIN[] = { PRESET_OAK, PRESET_RED_OAK, PRESET_WHITE_OAK, PRESET_LIME, PRESET_BEECH, PRESET_AMERICAN_BEECH, PRESET_ASH, PRESET_SYCAMORE_MAPLE, PRESET_SUGAR_MAPLE, PRESET_RED_MAPLE, PRESET_HORSE_CHESTNUT, PRESET_WILD_CHERRY, PRESET_HORNBEAM, PRESET_SWEET_CHESTNUT };
+		if (r13 >= 0.12f && wound_species(preset, THIN, 14) && chance(0.18f * CLAMP(r13 / 0.25f, 0.5f, 1.5f))) {
 			const int n = rng.randf() < 0.3f ? 2 : 1;
 			for (int i = 0; i < n; i++) {
 				Wound w;
@@ -13019,8 +13170,8 @@ void TreeGenerator::_plan_wounds() {
 	// Deer strip smooth pole-stage stems at browse height, pulling the bark upward with their
 	// incisors (Gill 1992; Welch and Scott 1998).
 	{
-		static const int DEER[] = { PRESET_ASH, PRESET_BEECH, PRESET_AMERICAN_BEECH, PRESET_NORWAY_SPRUCE, PRESET_ROWAN, PRESET_WHITE_WILLOW, PRESET_SYCAMORE_MAPLE, PRESET_LIME, PRESET_LARCH, PRESET_RED_MAPLE, PRESET_SUGAR_MAPLE, PRESET_SILVER_FIR };
-		if (r13 >= 0.03f && r13 <= 0.15f && wound_species(preset, DEER, 12) && chance(0.22f + 0.6f * browse)) {
+		static const int DEER[] = { PRESET_ASH, PRESET_BEECH, PRESET_AMERICAN_BEECH, PRESET_NORWAY_SPRUCE, PRESET_ROWAN, PRESET_WHITE_WILLOW, PRESET_SYCAMORE_MAPLE, PRESET_LIME, PRESET_LARCH, PRESET_RED_MAPLE, PRESET_SUGAR_MAPLE, PRESET_SILVER_FIR, PRESET_ASPEN, PRESET_HORNBEAM };
+		if (r13 >= 0.03f && r13 <= 0.15f && wound_species(preset, DEER, 14) && chance(0.22f + 0.6f * browse)) {
 			const int n = 1 + int(rng.randf() * 2.5f);
 			const float a_age = age(0.3f, 15.0f);
 			for (int i = 0; i < n; i++) {
@@ -15281,6 +15432,268 @@ void TreeGenerator::_break_limbs() {
 		if (!nodes[i].removed && nodes[i].parent > 0 && nodes[nodes[i].parent].removed) {
 			nodes[i].removed = true;
 		}
+	}
+}
+
+// Ice storm damage (trees.md 5be). Freezing rain loads a crown with many times its own weight in ice (25 mm of
+// radial ice on a twig is about 6 kg per metre of a 1 cm twig's length, mostly carried at the crown's top and ends),
+// and the damage follows the species and the tree's build more than the ice: Lemon 1961 and Hauer et al. 2006
+// (Ice storm damage to urban trees) rank susceptibility from decurrent, fine-twigged, brittle-wooded trees (birches,
+// lime, willow, poplar, the soft pines) through maples, ash and beech, to the resistant white oaks, spruce, fir and
+// hemlock; Irland 2000 and Rhoads et al. 2002 for the January 1998 storm in the northern hardwoods: the canopy trees
+// lost their tops and upper limbs, the slender paper birch bent over to the ground in arches, most of which stayed
+// bent. The bend is a Barr bend (Barr 1984, Global and local deformations of solid primitives) of the whole tree about
+// its foot toward mesh +X, the stem's tangent turning by psi(u) = theta (2u - u^2) along its height: a cantilever's
+// curve under a load at its tip, steepest at the top.
+void TreeGenerator::_ice_storm_damage() {
+	ice_damage = 0;
+	if (ice_storm_years < 0.0f || nodes.size() < 8) {
+		return;
+	}
+	float sus = 0.5f;
+	switch (preset) {
+		case PRESET_BIRCH:
+		case PRESET_PAPER_BIRCH:
+		case PRESET_LIME:
+		case PRESET_WHITE_WILLOW:
+		case PRESET_BLACK_ALDER:
+		case PRESET_SCOTS_PINE:
+		case PRESET_WHITE_PINE:
+		case PRESET_HORSE_CHESTNUT:
+		case PRESET_ASPEN:
+		case PRESET_BLACK_POPLAR:
+			sus = 0.85f;
+			break;
+		case PRESET_OAK:
+		case PRESET_WHITE_OAK:
+		case PRESET_NORWAY_SPRUCE:
+		case PRESET_SILVER_FIR:
+		case PRESET_HEMLOCK:
+		case PRESET_YEW:
+		case PRESET_HOLLY:
+		case PRESET_BOX:
+			sus = 0.15f;
+			break;
+		default:
+			break;
+	}
+	RandomPCG ir;
+	ir.seed(uint64_t(seed) * 0x9e3779b1u + 0x69636521u);
+	const bool birch = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH;
+	int band = ice_band;
+	if (band == 0) {
+		// A single tree: the species' odds.
+		const float u = ir.randf();
+		if (birch && height < 14.0f && u < 0.5f) {
+			band = 1;
+		} else if (u < 0.35f * sus) {
+			band = 2;
+		} else if (u < sus) {
+			band = 3;
+		}
+	} else if (band == 1 && !birch) {
+		band = 3;
+	}
+	if (band == 0) {
+		return;
+	}
+	const float base_y = nodes[0].start.y;
+	// The main stem from the root: the thickest axis.
+	LocalVector<int> stem;
+	{
+		int k = -1;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (!nodes[i].removed && nodes[i].parent == 0 && (k < 0 || nodes[i].radius > nodes[k].radius)) {
+				k = i;
+			}
+		}
+		for (; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+			stem.push_back(k);
+		}
+	}
+	if (stem.size() < 3) {
+		return;
+	}
+	// Breaks a node's axis at its end: the laterals there and the axis beyond fall.
+	auto snap = [&](int p_k) {
+		const int next = nodes[p_k].main;
+		for (int l = nodes[p_k].first_lateral; l >= 0; l = nodes[l].next_sibling) {
+			nodes[l].removed = true;
+		}
+		nodes[p_k].first_lateral = -1;
+		nodes[p_k].main = -1;
+		nodes[p_k].leafy = false;
+		if (next >= 0) {
+			nodes[next].removed = true;
+		}
+		broken_ends.insert(p_k);
+	};
+	auto propagate = [&]() {
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (!nodes[i].removed && nodes[i].parent > 0 && nodes[nodes[i].parent].removed) {
+				nodes[i].removed = true;
+			}
+		}
+	};
+	if (band == 2) {
+		// The top snapped where the ice-laden crown's lever beat the wood: at half to four fifths of the height. In a
+		// decurrent crown (maples, oaks, birch) the leader has long since forked, so every axis through that level
+		// breaks, each a little higher or lower (a flat cut reads as topping, not ice), and the thin ones with them.
+		const float hb = Math::lerp(0.5f, 0.8f, ir.randf()) * height;
+		float low = 1e9f;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			Node &n = nodes[i];
+			if (!n.removed && n.parent > 0 && nodes[n.parent].removed) {
+				n.removed = true;
+			}
+			if (n.removed) {
+				continue;
+			}
+			const float hi = hb * (1.0f + 0.14f * (float(hash_murmur3_one_32(uint32_t(i), uint32_t(seed) * 2654435761u + 0x746f7021u) & 0xffff) / 65535.0f - 0.5f));
+			// The first node on each path past its level (parents come first): nothing above it survives.
+			if (n.end().y - base_y >= hi) {
+				if (n.radius >= 0.015f) {
+					snap(i);
+					low = MIN(low, n.end().y - base_y);
+				} else {
+					n.removed = true;
+				}
+			}
+		}
+		propagate();
+		if (low > 1e8f) {
+			band = 3;
+		} else {
+			ice_damage = 2;
+			if (ice_storm_years >= 1.0f) {
+				// The stem answers with sprouts from dormant buds under the breaks, from the next summer, and one of
+				// them turns up to take the lead within a few years (Hauer et al. 2006; Irland 2000).
+				veteran_stem = stem[0];
+				float top = 0.0f;
+				for (const int c : stem) {
+					if (!nodes[c].removed) {
+						top = nodes[c].end().y - base_y;
+					}
+				}
+				const float hs = MIN(low, top);
+				const int clusters = 3 + int(ir.randf() * 3.0f);
+				const float az0 = ir.randf() * float(Math::TAU);
+				for (int c = 0; c < clusters; c++) {
+					const float h = hs - Math::lerp(0.2f, MIN(2.5f, 0.3f * hs), ir.randf());
+					const float az = az0 + float(Math::TAU) * (c + 0.3f * (ir.randf() - 0.5f)) / clusters;
+					veteran_features.push_back({ VET_EPICORMIC, h, az, 0.0f, 0.0f, Math::lerp(2.0f, 3.0f, ir.randf()) * MIN(1.0f + 0.5f * ice_storm_years, 3.0f) });
+				}
+			}
+		}
+	}
+	if (band == 3 || band == 2) {
+		// The upper crown's limbs broken back where the ice hung heaviest, a quarter to three fifths along, and the fine
+		// twigs stripped (Rhoads et al. 2002: crown loss in the canopy trees was 25-75%). A broken-top tree
+		// lost limbs too.
+		const float strip = MIN((band == 3 ? Math::lerp(0.5f, 0.85f, ir.randf()) : 0.3f) * (0.5f + sus), 0.95f);
+		LocalVector<int> chain;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			Node &n = nodes[i];
+			if (!n.removed && n.parent > 0 && nodes[n.parent].removed) {
+				n.removed = true; // Below a break made earlier in this pass (parents come before their children).
+			}
+			if (n.removed || n.dead || n.parent <= 0 || nodes[n.parent].main == i || n.start.y - base_y < 0.45f * height) {
+				continue;
+			}
+			if (n.radius >= 0.015f) {
+				if (ir.randf() >= strip) {
+					continue;
+				}
+				chain.clear();
+				float arc = 0.0f;
+				for (int k = i; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+					chain.push_back(k);
+					arc += nodes[k].length;
+				}
+				const float target = arc * Math::lerp(0.25f, 0.6f, ir.randf());
+				float run = 0.0f;
+				for (int c = 0; c + 1 < int(chain.size()); c++) {
+					run += nodes[chain[c]].length;
+					if (run >= target) {
+						if (nodes[chain[c]].radius >= 0.01f) {
+							snap(chain[c]);
+						}
+						break;
+					}
+				}
+			} else if (ir.randf() < 0.5f * strip) {
+				n.removed = true;
+			}
+		}
+		propagate();
+		if (ice_damage == 0) {
+			ice_damage = 3;
+		}
+	}
+	if (band == 1) {
+		// Bent over: the whole tree turned about its foot (Barr bend, above). Paper birch bent past about 40 degrees for
+		// more than a few days stays bent (Frost's birches; Irland 2000); the arch goes past horizontal in the worst, its
+		// crown to the ground, but no lower: theta comes down until the crown clears it.
+		float top = 0.0f;
+		for (const Node &n : nodes) {
+			if (!n.removed) {
+				top = MAX(top, n.end().y - base_y);
+			}
+		}
+		if (top < 2.0f) {
+			return;
+		}
+		const Vector3 base = nodes[0].start;
+		constexpr int STEPS = 64;
+		Vector2 curve[STEPS + 1];
+		float theta = Math::deg_to_rad(Math::lerp(55.0f, 115.0f, ir.randf()));
+		auto build = [&](float p_theta) {
+			curve[0] = Vector2();
+			for (int i = 0; i < STEPS; i++) {
+				const float u = (i + 0.5f) / STEPS;
+				const float psi = p_theta * (2.0f * u - u * u);
+				curve[i + 1] = curve[i] + Vector2(Math::sin(psi), Math::cos(psi)) * (top / STEPS);
+			}
+		};
+		auto bend = [&](const Vector3 &p_p, float p_theta) {
+			const Vector3 rel = p_p - base;
+			if (rel.y <= 0.0f) {
+				return p_p;
+			}
+			const float u = MIN(rel.y / top, 1.0f);
+			const float fi = u * STEPS;
+			const int i = MIN(int(fi), STEPS - 1);
+			const Vector2 c = curve[i].lerp(curve[i + 1], fi - i);
+			const float psi = p_theta * (2.0f * u - u * u);
+			const float cs = Math::cos(psi), sn = Math::sin(psi);
+			const float beyond = MAX(rel.y - top, 0.0f);
+			return base + Vector3(c.x + rel.x * cs + beyond * sn, c.y - rel.x * sn + beyond * cs, rel.z);
+		};
+		for (int tries = 0; tries < 8; tries++) {
+			build(theta);
+			float low = 1e9f;
+			for (const Node &n : nodes) {
+				if (!n.removed && n.end().y - base_y > 1.0f) {
+					low = MIN(low, bend(n.end(), theta).y - base_y);
+				}
+			}
+			if (low > 0.25f || theta < Math::deg_to_rad(35.0f)) {
+				break;
+			}
+			theta -= Math::deg_to_rad(10.0f);
+		}
+		build(theta);
+		for (Node &n : nodes) {
+			const Vector3 a = bend(n.start, theta), b = bend(n.end(), theta);
+			const Vector3 d = b - a;
+			const float len = d.length();
+			n.start = a;
+			if (len > 1e-6f) {
+				n.dir = d / len;
+				n.length = len;
+			}
+		}
+		ice_damage = 1;
 	}
 }
 
@@ -18110,7 +18523,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 	};
 	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour, int p_features) {
-		if ((veteran_features.is_empty() && p_features != 3 && !(p_features == 2 && head_r > 0.0f)) || !p_features) {
+		// p_features: 1 a limb sharing the veteran stem's features, 2 the veteran stem, 3 a cut pole, 4 a fluted stem
+		// (hornbeam, trees.md 5bf).
+		if ((veteran_features.is_empty() && p_features < 3 && !(p_features == 2 && head_r > 0.0f)) || !p_features) {
 			return;
 		}
 		Vector3 *vv = r_b.verts.ptrw();
@@ -18136,7 +18551,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// normals swing by tens of degrees, so vertices at the hollow's edge fell in or out of
 			// it at random and folded into pale blades across the opening.
 			Vector3 n = vv[v] - p_pts[ring];
-			if (p_features == 3) {
+			if (p_features >= 3) {
 				// Square to the chain's own axis: poles lean and bend.
 				const Vector3 ax = p_pts[MIN(ring + 1, int(p_pts.size()) - 1)] - p_pts[MAX(ring - 1, 0)];
 				if (ax.length_squared() > 1e-10f) {
@@ -18339,7 +18754,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				w_any = 1.0f;
 			}
 			for (const VeteranFeature &f : veteran_features) {
-				if (p_features == 3) {
+				if (p_features >= 3) {
 					break;
 				}
 				// A basal hollow is the main stem's alone: the forks around it took a second dent
@@ -18436,6 +18851,27 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					off += 0.16f * (0.55f + 0.6f * flank) * MIN(r, vet_r_stem) * Math::exp(-lip * lip);
 					w_any = 1.0f;
 				}
+			}
+			if (p_features == 4) {
+				// Hornbeam's fluted, "muscled" stem (trees.md 5bf; Mitchell 1974; Rackham 2006): broad, rounded ridges
+				// running up the bole and limbs, wandering and merging, five to eight round a mature stem, standing
+				// out about a seventh of its radius; the grooves between them darker and damp. Read on the chain's own
+				// frame, as a pole's flutes are, so they follow its lean; growing with girth from 5 cm.
+				const int col = i % (p_sides + 1);
+				const float th = float(Math::TAU) * float(col % p_sides) / float(p_sides);
+				float along = 0.0f;
+				for (int q = 1; q <= ring; q++) {
+					along += p_pts[q].distance_to(p_pts[q - 1]);
+				}
+				const float u = moss_noise(Vector3(3.4f * Math::cos(th), 3.4f * Math::sin(th), along / MAX(6.0f * r, 0.4f)), 0x686f726eu);
+				// Rounded ridges, narrower grooves.
+				const float ridge = 2.0f * (Math::smoothstep(0.3f, 0.7f, u) - 0.5f);
+				const float thick = Math::smoothstep(0.04f, 0.1f, r);
+				// Fading into the root flare's buttresses below a metre.
+				const float foot = Math::smoothstep(0.0f, 1.0f, h);
+				off += 0.15f * r * ridge * thick * Math::lerp(0.6f, 1.0f, foot);
+				dark = MIN(dark, Math::lerp(1.0f, 0.78f, thick * MAX(-ridge, 0.0f)));
+				w_any = thick > 0.0f ? 1.0f : 0.0f;
 			}
 			if (w_any > 0.0f) {
 				if (!p_colour) {
@@ -19257,7 +19693,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// A knuckle's chain runs on into its pole, as thin as a withy: the map's relief, set by
 		// the knuckle's girth, would furrow it; the knuckle takes the head's knobs instead.
 		const bool relief = near_tube && r0 >= RELIEF_MIN_RADIUS && !(cut_chain && s != veteran_stem && (bolling.has(s) || first.pole)) && bs.relief_gain * scale >= 0.001f;
-		const int vf = s == veteran_stem ? 2 : (vet_share[s] ? 1 : (cut_chain ? 3 : 0));
+		const int vf = s == veteran_stem ? 2 : (vet_share[s] ? 1 : (cut_chain ? 3 : (preset == PRESET_HORNBEAM && r0 >= 0.04f && decay_class <= 2 ? 4 : 0)));
 		// A mesh without LODs (the near variants) carries the near tube alone.
 		if ((fallen || fallen_branch) && r0 >= 0.03f) {
 			// Lying wood is seen from a step away, along its length: its peeled patches, moss and
@@ -19325,6 +19761,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			if (s == veteran_stem || vet_share[s]) {
 				veteran_deform(bark, part, pts, rad, sides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
+			} else if (preset == PRESET_HORNBEAM && rad[0] >= 0.04f && decay_class <= 2) {
+				veteran_deform(bark, part, pts, rad, sides, true, 4);
 			}
 			if (!stem && !hanger && !split_stem && junction_weld) {
 				weld(bark, part, s, pts, rad, sides);
@@ -20529,6 +20967,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	// The bark surface's arrays as built, for BarkDetail3D's profile (read back later, they stall the render thread).
 	PackedVector3Array bark_profile_verts;
 	PackedColorArray bark_profile_colors;
+	Builder glaze_ice; // The glaze's ice (glaze_mm > 0), built from the finished bark.
 	for (int s = 0; s < 10; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
@@ -20827,6 +21266,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			arrays[Mesh::ARRAY_WEIGHTS] = b.weights;
 		}
 		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0);
+		if (s == 0 && glaze_mm > 0.0f) {
+			_glaze_build(b, glaze_ice);
+		}
 		if (s == 0) {
 			bark_profile_verts = b.verts;
 			bark_profile_colors = b.colors;
@@ -20860,6 +21302,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		m->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
 		m->set_feature(BaseMaterial3D::FEATURE_SNOW, true);
 		m->set_snow_from_weather(true);
+		// Freezing rain coats every exposed surface in clear ice, bark, twigs, needles and leaves (trees.md 5be).
+		m->set_glaze(true);
 		if (rigged) {
 			// Skinned from MultiMesh instance bones (TreeWind3D writes them).
 			m->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, true);
@@ -21032,6 +21476,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 		}
 	}
+	if (!glaze_ice.indices.is_empty()) {
+		_glaze_surface(mesh, glaze_ice, material_source, static_materials);
+	}
 	if (rigged && static_materials.size() == mesh->get_surface_count()) {
 		mesh->set_meta(SNAME("tree_static_materials"), static_materials);
 	}
@@ -21079,6 +21526,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	if (windthrow_years >= 0.0f) {
 		// Storm damage (trees.md 5am): years since the storm; thrown and leaning trees point along mesh +X.
 		mesh->set_meta(SNAME("tree_windthrow_years"), windthrow_years);
+	}
+	if (ice_damage > 0) {
+		// Ice storm damage (trees.md 5be): years since the storm, and 1 bent (along mesh +X), 2 top broken, 3 limbs broken.
+		mesh->set_meta(SNAME("tree_ice_storm"), Vector2(ice_storm_years, float(ice_damage)));
 	}
 	if (far_thinning && !near_build && decay_class == 0 && !fallen && !fallen_branch && height >= 5.0f) {
 		const Ref<ArrayMesh> hull = _crown_hull(mesh);
@@ -21772,7 +22223,10 @@ float fire_age_years(vec2 xz) {
 			m->set_shader_parameter(pi.name, v);
 		}
 	}
-	m->set_shader_parameter("flutter_amount", leaf_flutter);
+	// Poplar leaves hang on long stalks flattened across the blade, so they flutter in the lightest air (Niklas 1991,
+	// the aspen petiole's torsional flexibility; trees.md 5bf).
+	const bool poplar = preset == PRESET_ASPEN || preset == PRESET_BLACK_POPLAR;
+	m->set_shader_parameter("flutter_amount", leaf_flutter * (poplar ? 2.5f : 1.0f));
 	m->set_shader_parameter("flutter_size", p_leaf_size);
 	m->set_shader_parameter("leaf_underside", leaf_underside);
 	m->set_shader_parameter("fire_crown_q", Vector4(fire_crown[0], fire_crown[1], fire_crown[2], fire_crown[3]));
@@ -22533,6 +22987,14 @@ static const Habitat HABITATS[TreeGenerator::PRESET_MAX] = {
 	// Date palm: hot deserts on groundwater (oases, wadis); the rainfall is the region's, the water the palm's
 	// own roots find (Zohary and Hopf 2000; Chao and Krueger 2007).
 	{ 18, 30, 8, 22, 20, 400, 0.0f, 15, 0.3f, 0, 0.3f, 0.45f, 8.0f, 1.5f }, // Date palm
+	// Lowland broadleaves (trees.md 5bf; Atlas 2016). Aspen spans the boreal to the Mediterranean mountains, light
+	// demanding, a thin crown; black poplar holds to floodplains; wild cherry to fertile woods and edges; hornbeam to
+	// heavy soils under oak, deep shade; sweet chestnut to mild, acid, well drained ground.
+	{ 0, 14, -25, 6, 350, 1500, 0.4f, 40, 0.2f, 0, 0.2f, 0.45f, 5.0f, 0.8f }, // Aspen
+	{ 7, 16, -10, 8, 400, 1200, 0.3f, 15, 0.5f, 60, 0.2f, 0.55f, 9.0f, 1.4f }, // Black poplar
+	{ 6, 14, -10, 7, 500, 1300, 0.5f, 40, 0.4f, 0, 0.35f, 0.6f, 7.0f, 1.0f }, // Wild cherry
+	{ 6, 13, -10, 6, 450, 1100, 0.5f, 35, 0.3f, 0, 0.75f, 0.85f, 6.0f, 0.9f }, // Hornbeam
+	{ 9, 16, -4, 9, 600, 1600, 0.6f, 40, 0.4f, 0, 0.5f, 0.75f, 9.0f, 1.3f }, // Sweet chestnut
 };
 
 static bool is_shrub(TreeGenerator::Preset p_preset) {
@@ -22875,6 +23337,7 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		const uint64_t bit = 1ull << int(p_preset);
 		const uint64_t ivy_hosts = (1ull << PRESET_OAK) | (1ull << PRESET_BEECH) | (1ull << PRESET_ASH) | (1ull << PRESET_SYCAMORE_MAPLE) | (1ull << PRESET_LIME) |
 				(1ull << PRESET_BLACK_ALDER) | (1ull << PRESET_WHITE_WILLOW) | (1ull << PRESET_HORSE_CHESTNUT) | (1ull << PRESET_HAWTHORN) | (1ull << PRESET_ELDER) |
+				(1ull << PRESET_HORNBEAM) | (1ull << PRESET_SWEET_CHESTNUT) | (1ull << PRESET_BLACK_POPLAR) | (1ull << PRESET_WILD_CHERRY) | (1ull << PRESET_ASPEN) |
 				(1ull << PRESET_SUGAR_MAPLE) | (1ull << PRESET_RED_MAPLE) | (1ull << PRESET_RED_OAK) | (1ull << PRESET_WHITE_OAK) | (1ull << PRESET_AMERICAN_BEECH) | (1ull << PRESET_YELLOW_BIRCH);
 		const uint64_t liana_hosts = (1ull << PRESET_OAK) | (1ull << PRESET_ASH) | (1ull << PRESET_LIME) | (1ull << PRESET_SYCAMORE_MAPLE) | (1ull << PRESET_BLACK_ALDER) |
 				(1ull << PRESET_WHITE_WILLOW) | (1ull << PRESET_SUGAR_MAPLE) | (1ull << PRESET_RED_MAPLE) | (1ull << PRESET_RED_OAK) | (1ull << PRESET_WHITE_OAK);
@@ -22926,6 +23389,18 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		TreeGenerator look;
 		look.set_preset(p_preset);
 		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.85f, 1.25f, tv));
+	}
+	if (ice_band > 0) {
+		// An ice storm stand's variants (trees.md 5be): one storm, so every tree is the same years since it; the bent
+		// birches are the slender poles of the stand (Frost's birches: paper birch bends over under the ice, the big
+		// ones break instead; Lemon 1961), the broken ones its canopy trees.
+		ice_storm_years = ice_storm;
+		if (ice_band == 1) {
+			const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.41f, 1.0f);
+			TreeGenerator look;
+			look.set_preset(p_preset);
+			params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.3f, 0.5f, tv));
+		}
 	}
 	if (old_growth_band > 0) {
 		// An old-growth stand's ages (trees.md 5an; Uholka, Brandli and Commarmot 2013: 435 living trees a hectare,
@@ -23383,10 +23858,243 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 		hull_material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
 		hull_material->set_roughness(0.55f);
 		hull_material->set_specular(0.5f); // Sheen of many leaves and needles facing the sky: the trees' highlights carry its blue (docs, 20 Nov: hull tips read yellow-green).
+		// Wet and glazed as the near crowns' leaves are, so a storm's crowns read the same past the hull range.
+		hull_material->set_feature(BaseMaterial3D::FEATURE_WETNESS, true);
+		hull_material->set_wetness_porosity(0.15f);
+		hull_material->set_wetness_canopy(true);
+		hull_material->set_glaze(true);
 	}
 	mesh->surface_set_material(0, hull_material);
 	mesh->set_meta(SNAME("hull_cover"), cover);
 	return mesh;
+}
+
+// Glaze as geometry (trees.md 5be). Freezing rain coats the standing wood in clear ice, radially about glaze_mm deep
+// (Jones 1998's equivalent radial ice), thicker on the upper side where the drops strike and run before they freeze
+// (accretions on twigs are eccentric, deepest on top and windward: Szilder and Lozowski 1994, Makkonen 2000). The bark
+// is seen through it (Transmission, n 1.31, as SnowIcicles3D's clear ice).
+// - Stems and limbs (4 cm and more): the bark's own vertices pushed out along their normals, its relief included, so the
+//   plates stay under the ice and the skinning and LOD parts carry over.
+// - Thinner wood: a round tube per internode, 6 or 8 sided, a little longer than the internode so the joints close,
+//   capped at the shoot tips (the bark's 3 and 4 sided twigs, pushed out, read as square sticks).
+// Water that runs round to the underside before freezing hangs there as icicles, a few to ten times the glaze deep, on
+// the lower faces of the limbs and twigs (pendant icicles in ice storms: Hauer et al. 2006, figures 2-4; their growth,
+// Makkonen 1988).
+void TreeGenerator::_glaze_build(const Builder &p_bark, Builder &r_ice) const {
+	const float R = glaze_mm * 0.001f;
+	const float thick = 0.04f;
+	const bool skin = rigged && p_bark.bones.size() == p_bark.verts.size() * 4;
+	auto push_bone = [&](int p_bone) {
+		if (rigged) {
+			r_ice.bones.push_back(p_bone);
+			r_ice.bones.push_back(0);
+			r_ice.bones.push_back(0);
+			r_ice.bones.push_back(0);
+			r_ice.weights.push_back(1.0f);
+			r_ice.weights.push_back(0.0f);
+			r_ice.weights.push_back(0.0f);
+			r_ice.weights.push_back(0.0f);
+		}
+	};
+	// The thick bark, pushed out.
+	for (uint32_t pi = 0; pi < p_bark.parts.size(); pi++) {
+		const Vector4i pt = p_bark.parts[pi];
+		const uint8_t role = pi < p_bark.part_role.size() ? p_bark.part_role[pi] : uint8_t(Builder::ROLE_ALL);
+		if (p_bark.part_size[pi] < thick || pt.x + pt.y > p_bark.indices.size() || pt.z + pt.w > p_bark.verts.size()) {
+			continue;
+		}
+		Vector4i part;
+		r_ice.begin(part);
+		const int base = r_ice.verts.size();
+		for (int v = pt.z; v < pt.z + pt.w; v++) {
+			const Vector3 nn = v < p_bark.normals.size() ? p_bark.normals[v] : Vector3(0, 1, 0);
+			r_ice.verts.push_back(p_bark.verts[v] + nn * (R * (0.75f + 0.5f * MAX(nn.y, 0.0f))));
+			r_ice.normals.push_back(nn);
+			if (rigged) {
+				for (int k = 0; k < 4; k++) {
+					r_ice.bones.push_back(skin ? p_bark.bones[v * 4 + k] : 0);
+					r_ice.weights.push_back(skin ? p_bark.weights[v * 4 + k] : (k == 0 ? 1.0f : 0.0f));
+				}
+			}
+		}
+		bool ok = true;
+		for (int i = pt.x; i < pt.x + pt.y; i++) {
+			const int vi = p_bark.indices[i];
+			if (vi < pt.z || vi >= pt.z + pt.w) {
+				ok = false; // A part that indexes outside its own vertices: left out.
+				break;
+			}
+		}
+		if (!ok) {
+			r_ice.verts.resize(base);
+			r_ice.normals.resize(base);
+			if (rigged) {
+				r_ice.bones.resize(base * 4);
+				r_ice.weights.resize(base * 4);
+			}
+			continue;
+		}
+		for (int i = pt.x; i < pt.x + pt.y; i++) {
+			r_ice.indices.push_back(base + p_bark.indices[i] - pt.z);
+		}
+		r_ice.role = role;
+		r_ice.end(part, p_bark.part_size[pi]);
+	}
+	r_ice.role = Builder::ROLE_ALL;
+	// Thinner wood: a tube per internode, and the icicles under it.
+	const Vector3 up(0, 1, 0);
+	for (uint32_t ni = 0; ni < nodes.size(); ni++) {
+		const Node &n = nodes[ni];
+		if (n.removed || n.length <= 1e-4f) {
+			continue;
+		}
+		const int bone = ni < node_bone.size() ? node_bone[ni] : 0;
+		const bool tip = n.main < 0 || nodes[n.main].removed;
+		const float r0 = n.radius;
+		const float r1 = tip ? n.radius * 0.6f : nodes[n.main].radius;
+		if (r0 < thick) {
+			const int S = r0 + R < 0.006f ? 6 : 8;
+			Vector3 sx = n.dir.cross(up);
+			sx = sx.length_squared() > 1e-6f ? sx.normalized() : Vector3(1, 0, 0);
+			const Vector3 sz = sx.cross(n.dir).normalized();
+			Vector4i part;
+			r_ice.begin(part);
+			const int base = r_ice.verts.size();
+			// The upper side takes more (the centre rides up a quarter of the glaze).
+			const Vector3 lift = up * (0.25f * R);
+			for (int ring = 0; ring < 2; ring++) {
+				const Vector3 c = (ring == 0 ? n.start - n.dir * (0.5f * R) : n.end() + n.dir * (tip ? 0.0f : 0.5f * R)) + lift;
+				const float rr = (ring == 0 ? r0 : r1) + R;
+				for (int k = 0; k < S; k++) {
+					const float a = float(Math::TAU) * k / S;
+					const Vector3 d = sx * Math::cos(a) + sz * Math::sin(a);
+					r_ice.verts.push_back(c + d * rr);
+					r_ice.normals.push_back(d);
+					push_bone(bone);
+				}
+			}
+			for (int k = 0; k < S; k++) {
+				const int a0 = base + k, a1 = base + (k + 1) % S, b0 = a0 + S, b1 = a1 + S;
+				// Clockwise seen from outside (Godot's front faces), as the bark after its flip.
+				r_ice.indices.push_back(a0);
+				r_ice.indices.push_back(b1);
+				r_ice.indices.push_back(b0);
+				r_ice.indices.push_back(a0);
+				r_ice.indices.push_back(a1);
+				r_ice.indices.push_back(b1);
+			}
+			if (tip) {
+				// A rounded drop of ice over the shoot's tip.
+				const int c = r_ice.verts.size();
+				r_ice.verts.push_back(n.end() + lift + n.dir * (r1 + R));
+				r_ice.normals.push_back(n.dir);
+				push_bone(bone);
+				for (int k = 0; k < S; k++) {
+					r_ice.indices.push_back(base + S + k);
+					r_ice.indices.push_back(base + S + (k + 1) % S);
+					r_ice.indices.push_back(c);
+				}
+			}
+			r_ice.end(part, r0);
+		}
+		// Icicles under the less steep wood from 2 mm up, every 4 cm or so, not all of them grown.
+		if (r0 >= 0.002f && Math::abs(n.dir.y) < 0.7f && n.start.y > 0.5f) {
+			const int count = MAX(int(n.length / 0.04f), 1);
+			Vector4i part;
+			r_ice.begin(part);
+			for (int q = 0; q < count; q++) {
+				const uint32_t h = hash_murmur3_one_32(ni * 97u + uint32_t(q), uint32_t(seed) * 2654435761u + 77u);
+				const float u0 = float(h & 0xFFFF) / 65535.0f;
+				const float u1 = float(h >> 16) / 65535.0f;
+				if (u0 < 0.45f) {
+					continue;
+				}
+				const float t = (q + 0.5f) / count;
+				const float rad = Math::lerp(r0, r1, t);
+				// Its root inside the shell's underside.
+				const Vector3 root = n.start + n.dir * (n.length * t) - up * (rad + 0.5f * R);
+				const float len = R * (3.0f + 7.0f * u1 * u1) + rad * 0.5f;
+				const float rr = R * (0.6f + 0.4f * u0);
+				const int S = 6;
+				const int base = r_ice.verts.size();
+				for (int k = 0; k < S; k++) {
+					const float a = float(Math::TAU) * k / S + u1;
+					const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+					r_ice.verts.push_back(root + d * rr);
+					r_ice.normals.push_back((d + up * (rr / MAX(len, 1e-4f))).normalized());
+					push_bone(bone);
+				}
+				r_ice.verts.push_back(root - up * len);
+				r_ice.normals.push_back(-up);
+				push_bone(bone);
+				for (int k = 0; k < S; k++) {
+					r_ice.indices.push_back(base + k);
+					r_ice.indices.push_back(base + (k + 1) % S);
+					r_ice.indices.push_back(base + S);
+				}
+			}
+			// Near detail: the icicles go with the finest twigs' LOD.
+			r_ice.end(part, 0.0f);
+		}
+	}
+}
+
+void TreeGenerator::_glaze_surface(const Ref<ArrayMesh> &p_mesh, const Builder &p_ice, const Ref<ArrayMesh> &p_material_source, Array &r_static_materials) {
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = p_ice.verts;
+	arrays[Mesh::ARRAY_NORMAL] = p_ice.normals;
+	arrays[Mesh::ARRAY_INDEX] = p_ice.indices;
+	const bool skin = rigged && p_ice.bones.size() == p_ice.verts.size() * 4;
+	if (skin) {
+		arrays[Mesh::ARRAY_BONES] = p_ice.bones;
+		arrays[Mesh::ARRAY_WEIGHTS] = p_ice.weights;
+	}
+	Dictionary lods;
+	if (!skip_lods) {
+		const Dictionary all = _bark_lods(p_ice);
+		for (const KeyValue<Variant, Variant> &kv : all) {
+			if (PackedInt32Array(kv.value).size() < p_ice.indices.size()) {
+				lods[kv.key] = kv.value;
+			}
+		}
+	}
+	p_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0);
+	const int at = p_mesh->get_surface_count() - 1;
+	p_mesh->surface_set_name(at, "ice");
+	Ref<Material> mat;
+	if (p_material_source.is_valid()) {
+		for (int i = 0; i < p_material_source->get_surface_count(); i++) {
+			if (p_material_source->surface_get_name(i) == "ice") {
+				mat = p_material_source->surface_get_material(i);
+			}
+		}
+	}
+	Ref<StandardMaterial3D> m = mat;
+	if (m.is_null()) {
+		// Clear ice, as SnowIcicles3D's: light passes through and bends (n 1.31), reflecting 1.8% head-on.
+		m.instantiate();
+		m->set_albedo(Color(0.97f, 0.99f, 1.0f));
+		m->set_roughness(0.06f);
+		m->set_specular(0.335f);
+		m->set_feature(BaseMaterial3D::FEATURE_TRANSMISSION, true);
+		m->set_transmission(1.0f);
+		// Thin walled: a glaze shell is millimetres of ice over the wood, which it hardly displaces. As a medium round
+		// the wood, the path tracer's rays to the lights from bark inside it crossed the ice twice more and the white
+		// birch came out near black.
+		m->set_transmission_thin_walled(true);
+		m->set_transmission_ior(1.31f);
+		if (skin) {
+			m->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, true);
+		}
+	}
+	p_mesh->surface_set_material(at, m);
+	if (rigged) {
+		Ref<StandardMaterial3D> t = m->duplicate();
+		t->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, false);
+		r_static_materials.push_back(t);
+	}
+	p_mesh->set_meta(SNAME("tree_glaze_mm"), glaze_mm);
 }
 
 // Decay class of a tree the storm threw or broke, by the years since (trees.md 5am): a thrown spruce keeps its needles
@@ -23445,7 +24153,11 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	windthrow_storm = p_from.windthrow_storm;
 	windthrow_direction = p_from.windthrow_direction;
 	windthrow_band = p_from.windthrow_band;
+	ice_storm_years = p_from.ice_storm_years;
+	ice_storm = p_from.ice_storm;
+	ice_band = p_from.ice_band;
 	flood_height = p_from.flood_height;
+	glaze_mm = p_from.glaze_mm;
 	flood_years = p_from.flood_years;
 	browse = p_from.browse;
 	browse_height = p_from.browse_height;
@@ -23502,6 +24214,11 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 
 void TreeGenerator::_near_task(void *p_self) {
 	TreeGenerator *self = static_cast<TreeGenerator *>(p_self);
+	// The glaze band rides in the variant (NEAR_GLAZE_STRIDE): grown as ice geometry on this near mesh only.
+	const int code = self->near_task_variant;
+	self->near_task_variant = code % NEAR_GLAZE_STRIDE;
+	const float saved_glaze = self->glaze_mm;
+	self->glaze_mm = glaze_band_mm(code / NEAR_GLAZE_STRIDE);
 	int fb = self->near_living > 0 && self->near_task_variant >= self->near_living ? self->near_task_variant - self->near_living : -1;
 	self->lightning_years = -1.0f;
 	if (fb >= self->near_fire_count + self->near_strike_count) {
@@ -23534,6 +24251,8 @@ void TreeGenerator::_near_task(void *p_self) {
 	self->near_result = self->generate();
 	self->near_build = false;
 	self->material_source.unref();
+	self->glaze_mm = saved_glaze;
+	self->near_task_variant = code;
 	// Keep the copy small between requests: the growth state is only needed while growing.
 	self->nodes.reset();
 	self->buds.reset();
@@ -23640,7 +24359,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			(wet_band > 0 ? int64_t(2000000000000LL) * wet_band : 0) +
 			(beaver_band > 0 ? int64_t(20000000000000LL) * beaver_band : 0) +
 			(browse_band > 0 ? int64_t(100000000000000LL) * browse_band : 0) +
-			(nurse_band > 0 ? int64_t(400000000000000LL) * nurse_band : 0);
+			(nurse_band > 0 ? int64_t(400000000000000LL) * nurse_band : 0) +
+			(ice_band > 0 ? int64_t(2000000000000000LL) * ice_band + int64_t(20000000000000000LL) * MIN(int(ice_storm * 2.0f), 60) : 0);
 	// Placed trees are alive unless a beetle stand grows its kill (single trees keep beetle_years).
 	struct BeetleYearsRestore {
 		float &value;
@@ -23654,6 +24374,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	BeetleYearsRestore windthrow_years_restore{ windthrow_years, windthrow_years };
 	if (windthrow_band == 0) {
 		windthrow_years = -1.0f;
+	}
+	BeetleYearsRestore ice_storm_years_restore{ ice_storm_years, ice_storm_years };
+	if (ice_band == 0) {
+		ice_storm_years = -1.0f;
 	}
 	const Habitat &h = HABITATS[p_preset];
 	if (!mesh_cache.has(key) || mesh_cache[key].size() < MAX(p_variants, 1)) {
@@ -24106,7 +24830,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			far = stems.lerp(Color(0.93f, 0.92f, 0.9f), bloom);
 			far.a = p_form == FORM_SAPLING ? 0.5f : 0.7f;
 		}
-		if (p_preset == PRESET_HAWTHORN || p_preset == PRESET_BLACKTHORN || p_preset == PRESET_DOG_ROSE) {
+		if (p_preset == PRESET_HAWTHORN || p_preset == PRESET_BLACKTHORN || p_preset == PRESET_DOG_ROSE || p_preset == PRESET_WILD_CHERRY) {
 			// A hedge in blossom is white from afar: hawthorn smothered in May, blackthorn white on
 			// bare black wood, dog rose pink-flecked (trees.md 5ad).
 			const float bloom = get_bloom(p_preset, season.get("day_of_year", 182.0f)) * (p_preset == PRESET_DOG_ROSE ? 0.15f : (p_preset == PRESET_HAWTHORN ? 0.5f : 0.6f));
@@ -25141,6 +25865,47 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			}
 			browse_band = 0;
 		} break;
+		case STAND_ICE_STORM: {
+			lead = PRESET_SUGAR_MAPLE;
+			// Northern hardwoods after an ice storm (trees.md 5be; Irland 2000, Ice storms and forest impacts; Rhoads et
+			// al. 2002 for the January 1998 storm): sugar maple, beech, yellow and red maple and birch with their tops and
+			// upper limbs broken off, the crowns thinned to stubs and the floor deep in broken wood; the slender paper
+			// birch bent over in arches; hemlock, which sheds ice off its drooping sprays, nearly whole.
+			stand_forest_shade = 0.4f; // The broken canopy lets the light in.
+			const float years = MAX(ice_storm, 0.0f);
+			auto damaged = [&](Preset p, int p_band, float p_density, bool p_first, const char *p_label) {
+				ice_band = p_band;
+				Ref<PlantSpecies> sp = canopy(p, p_density, 0.0f, 0.0f, false, p_first);
+				ice_band = 0;
+				sp->set_name(String(preset_names[p]) + p_label);
+				return sp;
+			};
+			damaged(PRESET_SUGAR_MAPLE, 3, 1.0f, true, " (ice-stripped crown)");
+			damaged(PRESET_SUGAR_MAPLE, 2, 0.35f, false, " (ice-broken top)");
+			damaged(PRESET_AMERICAN_BEECH, 3, 0.4f, false, " (ice-stripped crown)");
+			damaged(PRESET_YELLOW_BIRCH, 2, 0.3f, false, " (ice-broken top)");
+			damaged(PRESET_RED_MAPLE, 3, 0.3f, false, " (ice-stripped crown)");
+			Ref<PlantSpecies> hemlock = canopy(PRESET_HEMLOCK, 0.3f, 0.0f, 0.0f, false, false);
+			hemlock->set_name("Hemlock (ice storm)");
+			// Paper birch poles bent over, where the canopy's gaps let them grow.
+			ice_band = 1;
+			Ref<PlantSpecies> bent = _stand_species(PRESET_PAPER_BIRCH, true, p_variants, FORM_STAND);
+			ice_band = 0;
+			bent->set_name("Paper Birch (bent by ice)");
+			bent->set_density(0.45f);
+			bent->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.7f));
+			bent->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+			list.push_back(bent);
+			// The broken limbs and tops on the floor.
+			Ref<PlantSpecies> limbs = _stand_species(PRESET_SUGAR_MAPLE, true, p_variants, FORM_BRANCH);
+			limbs->set_name("Sugar Maple (ice-broken limbs)");
+			limbs->set_density(1.2f);
+			list.push_back(limbs);
+			for (int i = 0; i < list.size(); i++) {
+				Ref<PlantSpecies> sp = list[i];
+				sp->set_meta("stand_disturbance", Vector2(7.0f, years)); // WorldStand DISTURBANCE_ICE_STORM.
+			}
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -26075,8 +26840,10 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	}
 	plate.on = false;
 	hanger_bases.clear();
+	ice_damage = 0;
 	if (decay_class == 0 && !fallen && !fallen_branch && envelope.size == Vector3()) {
 		_break_limbs();
+		_ice_storm_damage();
 	}
 	beaver_axis.clear();
 	if (beaver_now == BEAVER_GNAWED && !nodes.is_empty()) {
@@ -26322,6 +27089,12 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_windthrow_years"), &TreeGenerator::get_windthrow_years);
 	ClassDB::bind_method(D_METHOD("set_far_thinning", "enabled"), &TreeGenerator::set_far_thinning);
 	ClassDB::bind_method(D_METHOD("get_far_thinning"), &TreeGenerator::get_far_thinning);
+	ClassDB::bind_method(D_METHOD("set_ice_storm_years", "years"), &TreeGenerator::set_ice_storm_years);
+	ClassDB::bind_method(D_METHOD("get_ice_storm_years"), &TreeGenerator::get_ice_storm_years);
+	ClassDB::bind_method(D_METHOD("set_ice_storm", "years"), &TreeGenerator::set_ice_storm);
+	ClassDB::bind_method(D_METHOD("set_ice_storm_damage", "kind"), &TreeGenerator::set_ice_storm_damage);
+	ClassDB::bind_method(D_METHOD("get_ice_storm_damage"), &TreeGenerator::get_ice_storm_damage);
+	ClassDB::bind_method(D_METHOD("get_ice_storm"), &TreeGenerator::get_ice_storm);
 	ClassDB::bind_method(D_METHOD("set_windthrow_storm", "years"), &TreeGenerator::set_windthrow_storm);
 	ClassDB::bind_method(D_METHOD("get_windthrow_storm"), &TreeGenerator::get_windthrow_storm);
 	ClassDB::bind_method(D_METHOD("set_windthrow_direction", "direction"), &TreeGenerator::set_windthrow_direction);
@@ -26335,6 +27108,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_ground_slope", "slope"), &TreeGenerator::set_ground_slope);
 	ClassDB::bind_method(D_METHOD("get_ground_slope"), &TreeGenerator::get_ground_slope);
 	ClassDB::bind_method(D_METHOD("set_stilt_height", "height"), &TreeGenerator::set_stilt_height);
+	ClassDB::bind_method(D_METHOD("set_glaze_mm", "mm"), &TreeGenerator::set_glaze_mm);
+	ClassDB::bind_method(D_METHOD("get_glaze_mm"), &TreeGenerator::get_glaze_mm);
 	ClassDB::bind_method(D_METHOD("set_flood_height", "height"), &TreeGenerator::set_flood_height);
 	ClassDB::bind_method(D_METHOD("get_flood_height"), &TreeGenerator::get_flood_height);
 	ClassDB::bind_method(D_METHOD("set_flood_years", "years"), &TreeGenerator::set_flood_years);
@@ -26502,6 +27277,9 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_thinning"), "set_far_thinning", "get_far_thinning");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "windthrow_years", PROPERTY_HINT_RANGE, "-1,60,0.1,suffix:yr"), "set_windthrow_years", "get_windthrow_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "windthrow_storm", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:yr"), "set_windthrow_storm", "get_windthrow_storm");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ice_storm_years", PROPERTY_HINT_RANGE, "-1,60,0.1,suffix:yr"), "set_ice_storm_years", "get_ice_storm_years");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ice_storm", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:yr"), "set_ice_storm", "get_ice_storm");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "ice_storm_damage", PROPERTY_HINT_ENUM, "Species Odds,Bent,Top Broken,Limbs Broken"), "set_ice_storm_damage", "get_ice_storm_damage");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "windthrow_direction"), "set_windthrow_direction", "get_windthrow_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cork_stripped_years", PROPERTY_HINT_RANGE, "-1,30,0.01"), "set_cork_stripped_years", "get_cork_stripped_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_wounds", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_bark_wounds", "get_bark_wounds");
@@ -26513,6 +27291,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_erosion", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bank_erosion", "get_bank_erosion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stilt_height", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_stilt_height", "get_stilt_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_height", PROPERTY_HINT_RANGE, "0,6,0.01,suffix:m"), "set_flood_height", "get_flood_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glaze_mm", PROPERTY_HINT_RANGE, "0,60,0.1,suffix:mm"), "set_glaze_mm", "get_glaze_mm");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_years", PROPERTY_HINT_RANGE, "0,30,0.05,suffix:yr"), "set_flood_years", "get_flood_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "browse", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_browse", "get_browse");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "browse_height", PROPERTY_HINT_RANGE, "0.3,3,0.01,suffix:m"), "set_browse_height", "get_browse_height");
@@ -26606,6 +27385,11 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_WHITE_BROOM);
 	BIND_ENUM_CONSTANT(PRESET_SALTBUSH);
 	BIND_ENUM_CONSTANT(PRESET_DATE_PALM);
+	BIND_ENUM_CONSTANT(PRESET_ASPEN);
+	BIND_ENUM_CONSTANT(PRESET_BLACK_POPLAR);
+	BIND_ENUM_CONSTANT(PRESET_WILD_CHERRY);
+	BIND_ENUM_CONSTANT(PRESET_HORNBEAM);
+	BIND_ENUM_CONSTANT(PRESET_SWEET_CHESTNUT);
 	BIND_ENUM_CONSTANT(SHRUB_YOUNG);
 	BIND_ENUM_CONSTANT(SHRUB_MATURE);
 	BIND_ENUM_CONSTANT(SHRUB_OLD);
@@ -26654,6 +27438,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_FLOODPLAIN_WILLOW);
 	BIND_ENUM_CONSTANT(STAND_BEAVER_POND);
 	BIND_ENUM_CONSTANT(STAND_DEER_WOOD);
+	BIND_ENUM_CONSTANT(STAND_ICE_STORM);
 	BIND_ENUM_CONSTANT(SUCCESSION_NONE);
 	BIND_ENUM_CONSTANT(SUCCESSION_FIRE);
 	BIND_ENUM_CONSTANT(SUCCESSION_WIND);

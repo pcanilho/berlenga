@@ -182,6 +182,11 @@ private:
 	Vector2i stand_size;
 	Rect2 stand_rect;
 	HashMap<Vector2i, LocalVector<int>> crown_grid;
+	// Leaf drifts (docs/ideas/vegetation.md, "Leaf drifts"): how the wind has gathered fallen leaves at a point, 1 as
+	// they fell, more in hollows and at the feet of trunks, logs and rocks, less on crests and steep ground. Reads the
+	// given crowns and logs (a placement's own, or the field's), the other field's logs and the rocks.
+	static constexpr float DRIFT_CELL = 0.5f; // The placement caches the drift on cells this size.
+	float _litter_drift(const TerrainDataMap3D *p_map, const VegetationObstacles &p_rocks, const HashMap<Vector2i, LocalVector<int>> &p_crown_grid, const LocalVector<Crown> &p_crowns, const HashMap<Vector2i, LocalVector<int>> &p_log_grid, const LocalVector<Deadwood> &p_logs, const VegetationField3D *p_other, const Vector2 &p_xz, const Vector2 &p_wind) const;
 	float max_crown_radius = 0.0f;
 	bool _in_stem(const Vector2 &p_xz, float p_margin) const;
 	static float near_radius_published;
@@ -588,8 +593,10 @@ private:
 		Vector3 centre; // Global, where the visibility range measures from.
 		LocalVector<Transform3D> xforms;
 		LocalVector<Color> customs;
+		int glaze_band = 0; // The near mesh's glaze band (TreeGenerator::glaze_band of WorldWeather.glaze_at).
 	};
 	HashMap<ObjectID, LazyNear> lazy_near;
+	uint64_t glaze_checked_usec = 0;
 	bool has_near_swap = false; // Some cells swap to near meshes (their margins follow path tracing).
 	void _set_swap_margins(bool p_traced);
 	void _lazy_near_update(const Vector3 &p_camera);
@@ -832,6 +839,8 @@ public:
 	// Leaf fall from the placed crowns, 0 to 1, with a drift past their edges (PlantSpecies.RULE_LITTER).
 	static constexpr float LITTER_SPREAD = 6.0f; // Metres: the drift's e-folding distance past a crown's edge.
 	float get_litter_at(const Vector3 &p_global_position) const;
+	// The leaf drift there (PlantSpecies.RULE_LITTER_DRIFT), from this field's crowns, logs and rocks.
+	float get_litter_drift_at(const Vector3 &p_global_position) const;
 	float get_spring_wetness_at(const Vector3 &p_global_position) const { return springs_seen.at(Vector2(p_global_position.x, p_global_position.z)); }
 	PackedVector4Array get_springs() const;
 	void add_canopy_loss(const Vector2 &p_xz, float p_radius, float p_keep = 0.0f);

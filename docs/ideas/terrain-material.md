@@ -261,6 +261,72 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
   4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
 
+## Relief on moderate slopes: research and plan (22 Nov, card posted, recommended)
+
+Banks and cave mouths at 35 to 50 degrees draw as plain 4 m heightfield triangles with long straight silhouettes:
+cliff relief (Landscape3D::_cliff_offset) only starts at 50 degrees. Soil banks do not keep beds and joints; they slump.
+- What real banks look like: shallow translational slides and slumps leave scarps 0.3 to 1.5 m high and lobes and
+  hummocks below them over 3 to 15 m (Varnes 1978 and Cruden and Varnes 1996, landslide types; Highland and
+  Bobrowsky 2008, USGS landslide handbook); grazed and frost-crept grassland at 30 to 45 degrees carries terracettes,
+  steps 0.2 to 0.5 m tall and 0.3 to 1 m apart along the contour (Vincent and Clarke 1976; Bielecki and Mueller 2002),
+  too fine for vertices, so those go to the per-pixel normal only.
+- How engines do it: the same as cliffs, displacement along the heightfield normal on the finest chunks with a
+  per-pixel normal from the same analytic field (REDengine 3, Gollent 2014; Frostbite, Widmark 2012; Horizon
+  Zero Dawn's terrain, van Muijden 2017, keeps the displacement field shared with placement so foliage sits on it).
+- Plan: a bank offset in Landscape3D (C++ and the material's GLSL port, as for the beds): slump scarps along
+  the contour from a 1D noise in the fall line's coordinate with lobes below, amplitude about 0.35 of the cliff
+  relief, weight rising from 35 to 45 degrees and handing over to the beds by 55. CUSTOM1.w (free) carries the bank
+  share so the pixel normal and ledge shadow march know which field to use. Terracettes in the normal only.
+- Contract gap: vegetation, rocks, ground detail and collision sit on the heightfield, not on the drawn relief.
+  Cliffs carry few plants, banks carry many, so a 0.2 m relief would float or bury grass and stems. So: (1) bank
+  relief weighted by bare share (the material's soil exposure and the generator's cover: bare banks, scree, cave
+  mouths, gully sides) until (2) a published drawn-ground contract, Landscape3D.get_cliff_point (exists, used by
+  waterfalls) or a height-offset map like terrain_stand_map, which vegetation, rocks and ground detail read.
+  (2) is a world-links item for the coordinator.
+- Check: raster and PT frames of a cave mouth bank and a bare gully side, before/after (Landscape3D bank_relief 0),
+  plants on the bank not floating, triangle count on the finest chunks.
+
+## Wet ground glints seen edge on (22 Nov, specular antialiasing tried)
+
+Rocks found single bright pixels down the lit sea cave's mouth (the cave's ground, drawn with this material, wet,
+seen edge on against a low sun ahead), which TAA turns into a pale hairline. Asked for specular antialiasing.
+- Tried: geometric specular AA (Kaplanyan et al. 2016; Tokuyoshi and Kaplanyan 2019 and 2021; HDRP's
+  GeometricNormalFiltering, UE's r.NormalCurvatureToRoughness): alpha^2 += min(variance / (2 pi), 0.18) from the
+  shading normal's screen derivatives, on this material and the cave walls. No change on the dots, even with the
+  kernel at its clamp (roughness 0.3 to about 0.66). Then Smith masking on the geometric normal (Schuessler et al.
+  2017) for bent shading normals: no change either.
+- Debug render of those pixels: both the geometric and the shading normal face the eye by under 0.1, wetness puts
+  roughness under 0.4, and the sun 12 degrees up ahead sits near the mirror direction. Turning specular off clears
+  46 of 52 dots. So the normal does not vary inside the pixel; it is the true grazing glint of a wet surface (GGX
+  with Fresnel near 1 at grazing), on a strip under a pixel wide. That is geometric (coverage) aliasing, not
+  specular aliasing: no NDF filter sees it, and TAA's faint line is the coverage-weighted answer.
+- Godot's own limiter (scene_forward_clustered.glsl) adds its kernel to alpha instead of alpha^2, under-filtering
+  glossy surfaces; left as is (changing it shifts every material, ocean glitter among them).
+- Nothing kept in code (no shown gain). Open: a PT frame of the view to confirm the line is real (60 min cloud
+  timeout at 960x540, 64 spp, so PC queue); if PT shows it, it stays. If it should not be lit at all, the question
+  is the strip's shadowing or wetness at the mouth (rocks).
+
+## Rills and gullies (22 Nov, Paulo's pick)
+
+The generator already cuts rills and gullies: tile erosion (droplets on a 2 m grid, terrain-generation.md stage 4) is
+on by default, but both benches switched it off for speed, so no frame showed it. The rocks bench now runs it by
+default (--no-tiles for a before frame). Built on top:
+- Channels. The droplets' flow is published as terrain_tile_flow_map (R16F flow, G16F deposit m) with
+  terrain_tile_flow_rect; terrain_gully(p, ny) in the generator's shader code and TerrainGenerator3D.get_gully_at
+  give the channel floor share. Rule: the slope-area index A S^2 (Montgomery and Dietrich 1988, 1992) from 300 to
+  1200 m2, times the flow's concentration against its mean 6 m out (1.5 to 3 times). The papers' 25 to 250 m2 marked
+  nearly every mountain flank: the droplets' flow overstates the contributing area on steep ground. The
+  concentration term keeps only the thalwegs (on the rocks world, 2 to 5 m wide lines down each gully).
+- Geometry. gully_incision (1) cuts each channel deeper and narrower than the 2 m droplets can: depth 0.05 sqrt(A)
+  m up to 2 m (half in rock; gully depth grows with stream power, about A^0.5 S: Poesen et al. 2003, Kirkby and
+  Bracken 2009), shaped across the line by the channel share. In get_height(), so collision, the landscape, the ground
+  patch, rocks and plants all see it. Rocks bench: --gully-incision=0 for a before frame, --gully-spot to look at one.
+- Material. Channel floors in soil become a gravel lag (scree layer: the flow strips the fines, Poesen et al. 2003),
+  lose the sward tint and read damp (albedo 0.78, Lobell and Asner 2002); deposits over 0.15 m on gentle ground
+  read as fresh fines (alluvium layer). TerrainMaterial3D's CPU ground contract mirrors both.
+- Open: on the rocks world tile erosion's 15 m max depth makes canyons of most soil gullies; sub-2 m rills still only
+  in the erosion detail normal.
+
 ## Cliff relief on the ground patch (21 Nov)
 
 GroundSurface3D's patch (prints, the beach's sand) is drawn with a copy of the terrain material over a mesh with no

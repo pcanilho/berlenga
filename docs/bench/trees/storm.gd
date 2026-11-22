@@ -325,6 +325,44 @@ func _lateral_bow(k: int) -> Vector2:
 # weighs on every twig. 6-12 mm breaks small branches and weak limbs, 12-25 mm and more larger ones; birch, beech and
 # other spreading broadleaves fail first, conical conifers shed it best.
 func _glaze_test() -> void:
+	# The weather's freezing rain (WeatherMap3D warm_nose_temperature): Jones' (1998) rate, accretion under -3 C air
+	# below a +4 C warm layer, and the thaw.
+	var jr: float = WeatherMap3D.glaze_accretion_rate(2.5, 5.0)
+	_check(absf(jr - 1.28) < 0.02, "Jones 1998: 2.5 mm/h of freezing rain in 5 m/s wind adds %.2f mm/h of radial ice (1.28)" % jr)
+	var gwm := WeatherMap3D.new()
+	add_child(gwm)
+	gwm.set_temperature(-3.0)
+	gwm.set_rain_rate(2.5)
+	gwm.advance(3600.0)
+	_check(gwm.get_glaze_at(Vector3()) == 0.0, "no warm layer aloft: no glaze (%.2f mm)" % gwm.get_glaze_at(Vector3()))
+	gwm.warm_nose_temperature = 4.0
+	for h in 4:
+		gwm.advance(3600.0)
+	var g4: float = gwm.get_glaze_at(Vector3())
+	_check(g4 > 3.0 and g4 < 12.0 and gwm.get_rain_share_at(Vector3()) > 0.99, "a +4 C warm layer over -3 C air: %.1f mm of glaze in 4 h, all of it falling liquid" % g4)
+	gwm.set_rain_rate(0.0)
+	gwm.set_temperature(3.0)
+	for h in 4:
+		gwm.advance(3600.0)
+	_check(gwm.get_glaze_at(Vector3()) < g4 - 2.0, "4 h at +3 C melt it to %.1f mm" % gwm.get_glaze_at(Vector3()))
+	gwm.queue_free()
+	# The ice as geometry (TreeGenerator glaze_mm): an "ice" surface round the wood, skinned on a rigged tree.
+	var ig := TreeGenerator.new()
+	ig.preset = 2
+	ig.rigged = true
+	ig.glaze_mm = 7.0
+	var im: ArrayMesh = ig.generate()
+	var ice := -1
+	for si in im.get_surface_count():
+		if im.surface_get_name(si) == "ice":
+			ice = si
+	var iv := 0
+	var skinned := false
+	if ice >= 0:
+		var ia := im.surface_get_arrays(ice)
+		iv = (ia[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+		skinned = ia[Mesh.ARRAY_BONES] != null and (ia[Mesh.ARRAY_BONES] as PackedInt32Array).size() == iv * 4
+	_check(ice >= 0 and iv > 1000 and skinned and im.get_meta("tree_glaze_mm", 0.0) == 7.0, "glaze_mm 7: a skinned ice surface round the birch's wood (%d vertices)" % iv)
 	var body := StaticBody3D.new()
 	var cs := CollisionShape3D.new()
 	cs.shape = WorldBoundaryShape3D.new()

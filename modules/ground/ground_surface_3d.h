@@ -152,6 +152,7 @@ private:
 	struct Wear {
 		float passes = 0.0f;
 		double last = -1e9;
+		float seal = 0.0f; // round 23.1: puddled clay, its pores kneaded shut (0..1)
 	};
 	static constexpr float WEAR_CELL = 0.25f;
 	static constexpr float WEAR_GAP = 0.25f; // s a cell must go unpressed before the next press is a new pass
@@ -162,6 +163,15 @@ private:
 	void _trails_refresh();
 	void _on_stand_changed(const Rect2 &p_area);
 	float _trail_passes(const Vector3 &p_position) const;
+	bool trail_pugging = true; // round 21.2: hooves pock wet trails
+	uint32_t pug_ticks = 0;
+	int trail_pocks = 0;
+	// Wallows (round 22.3): hashed sites on wet trails that animals roll out into muddy hollows.
+	bool trail_wallows = true;
+	HashSet<Vector2i> wallow_sites;
+	int wallow_visits = 0;
+	void _trail_wallow_update(float p_delta);
+	void _trail_pug_update(float p_delta);
 	bool _wear_any() const { return !wear_cells.is_empty() || trails_on; }
 	// Hidden stones and roots (docs/ideas/mud.md, round 14.3): what lies in a mud layer, per 2 m cell, made on demand
 	// from the cell's hash; a stone a sphere (a == b), a root a capsule from a to b; y's are absolute.
@@ -274,6 +284,12 @@ private:
 	float ford_plume_kg = 0.0f; // sent into the water by wheels and banks
 	float ford_scour_m3 = 0.0f;
 	int bank_failures = 0;
+	// Wakes wash the banks (round 22.1): a wading vehicle's waves on the bank, owed erosion per 0.5 m cell (m).
+	bool wake_wash = true;
+	HashMap<Vector2i, float> wake_owed;
+	float wake_wash_kg = 0.0f;
+	float wake_water_m3 = 0.0f;
+	float wake_height_last = 0.0f;
 	void _ford(const Vector3 &p_position, const Vector2 &p_half, float p_yaw, float p_sinkage, const Vector2 &p_velocity);
 	float silt_total = 0.0f; // kg/m2 laid since start, summed over the 1 m points
 	float silt_pending = 0.0f;
@@ -501,6 +517,22 @@ private:
 	bool far_ripples = true; // the grown field's ripples as a normal over the dune field past the patch
 	bool ripple_sorting = true; // heavy minerals in the troughs, coarse grains on the crests
 	bool granule_ripples = true; // granule ripples on the interdune lag (dune_tone's)
+	// Rain pits and rain crust (_rain_marks()): the share of the sand the last rain pitted, the share sealed under its
+	// dried crust (which keeps the wind off: no ripples, streamers or filling there), the mm of rain since the sand was
+	// last reworked, and the drops' pattern (a new one each rain).
+	bool rain_pits = true;
+	float rain_pit_cover = 0.0f;
+	float rain_crust = 0.0f;
+	float rain_total = 0.0f;
+	float rain_pit_seed = 0.0f;
+	float rain_published[2] = { 0.0f, 0.0f };
+	void _rain_marks(float p_dt, float p_wind);
+	// Adhesion warts (_adhesion()): how far they have grown on the damp sand (0..1) and the wind that built them.
+	bool adhesion_warts = true;
+	float adhesion_grow = 0.0f;
+	Vector2 adhesion_wind = Vector2(1.0f, 0.0f);
+	float adhesion_published = 0.0f;
+	void _adhesion(float p_dt, float p_ustar, Vector2 p_dir);
 	bool dune_tone = true; // the dune field's colour: rubefaction, coarse interdune flats, pale slip faces
 	// Wind fills prints from their upwind side (_drift_prints()).
 	bool wind_fills_prints = true;
@@ -564,7 +596,7 @@ public:
 	// For the streamers (GroundStreamers3D): the 10 m wind over the field and the share of sand the wind can
 	// move at a place.
 	Vector2 get_wind_10m() const { return _wind_10m(); }
-	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown * _shelter_flux_at(p_x, p_z); }
+	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown * _shelter_flux_at(p_x, p_z) * (1.0f - get_rain_crust()); }
 
 private:
 	GroundDeformField field;
@@ -670,6 +702,7 @@ private:
 		float frozen = 0.0f; // frozen soil at the surface (round 8): 0..1, how far it holds as a crust
 		float repel = 0.0f; // a fire's water repellency (WorldFire.water_repellency_at), 0..1
 		float compacted = 0.0f; // worn-in tracks (round 14.2): how far the passes have packed the soil, 0..1
+		float sealed = 0.0f; // puddled clay (round 23.1): its infiltration cut, 0..1
 	};
 	LocalVector<CellInput> cell_inputs;
 	float _water_conductivity(const CellInput &p_in) const;
@@ -989,6 +1022,13 @@ public:
 	void set_tracked_mud(bool p_enabled) { tracked_mud = p_enabled; }
 	void set_stream_stones(bool p_enabled) { stream_stones = p_enabled; }
 	bool is_stream_stones() const { return stream_stones; }
+	void set_trail_pugging(bool p_enabled) { trail_pugging = p_enabled; }
+	bool is_trail_pugging() const { return trail_pugging; }
+	int get_trail_pock_count() const { return trail_pocks; } // hoof prints pressed into wet trails since start
+	void set_trail_wallows(bool p_enabled) { trail_wallows = p_enabled; }
+	bool is_trail_wallows() const { return trail_wallows; }
+	int get_wallow_count() const { return wallow_sites.size(); } // wallow sites rolled out since start
+	int get_wallow_visits() const { return wallow_visits; }
 	float get_stone_scour_volume() const { return stone_scour_m3; } // m3 dug round loose stones by currents
 	float get_stone_silt_lifted() const { return stone_plume_kg; } // kg sent into the water by stones
 	bool is_tracked_mud() const { return tracked_mud; }
@@ -1101,6 +1141,19 @@ public:
 		ripple_dirty = true;
 	}
 	bool is_granule_ripples() const { return granule_ripples; }
+	void set_rain_pits(bool p_enabled) {
+		rain_pits = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_rain_pits() const { return rain_pits; }
+	float get_rain_pit_cover() const { return rain_pits ? rain_pit_cover : 0.0f; }
+	float get_rain_crust() const { return rain_pits ? rain_crust : 0.0f; }
+	void set_adhesion_warts(bool p_enabled) {
+		adhesion_warts = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_adhesion_warts() const { return adhesion_warts; }
+	float get_adhesion_growth() const { return adhesion_warts ? adhesion_grow : 0.0f; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);
@@ -1124,6 +1177,8 @@ public:
 	void set_wear_regrowth_days(float p_days);
 	float get_wear_regrowth_days() const { return wear_regrowth_days; }
 	float get_wear_at(Vector3 p_position) const;
+	float get_seal_at(Vector3 p_position) const; // round 23.1: puddled clay seal, 0..1
+	void _seal_add(const Vector3 &p_position, float p_radius, float p_amount);
 	void add_wear(Vector3 p_position, Vector2 p_size, float p_yaw, float p_passes);
 	void clear_wear();
 	static float wear_compaction(float p_passes);
@@ -1146,6 +1201,9 @@ public:
 	void set_stream_fords(bool p_enabled) { stream_fords = p_enabled; }
 	bool is_stream_fords() const { return stream_fords; }
 	Dictionary get_ford_stats() const;
+	void wash_wake(const Vector3 &p_position, const Vector3 &p_velocity, float p_half_width, float p_water_level, float p_dt);
+	void set_wake_wash(bool p_enabled) { wake_wash = p_enabled; }
+	bool is_wake_wash() const { return wake_wash; }
 	bool is_flood_silt() const { return flood_silt; }
 	float get_flood_silt_total() const { return silt_total; }
 	Vector2 get_silt_at(Vector3 p_position) const;

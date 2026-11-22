@@ -177,6 +177,14 @@ public:
 		PRESET_ANTHILL, // Lasius flavus: a grassed dome of fine soil in old pasture, crest to the east, fine turf and thyme, fresh workings.
 		PRESET_WOOD_ANT_NEST, // Formica rufa group: a thatch dome of needles and twig bits on an earth bank, at sunny gaps in conifer woods.
 		PRESET_MOLEHILL, // Talpa europaea: a heap of loose crumbly soil pushed up from a run; crusting, slumping and greening by the season's "mound_age".
+		PRESET_LEAF_BANK, // A drift of fallen leaves the wind piled in a hollow or against a trunk, log or stone: the stand's litter heaped up to 20 cm.
+		PRESET_COW_PAT, // A cattle dung pat: fresh and glossy, crusting, then broken and grassed through by the season's "dung_age".
+		PRESET_HORSE_DUNG, // A pile of horse droppings (balls of coarse fibre): olive when fresh, paling and crumbling by "dung_age".
+		PRESET_DEER_PELLETS, // A group of deer pellets: dark, glossy when fresh, dull and crumbling by "dung_age".
+		PRESET_DUNG_ROUGH, // An ungrazed rough round old dung: rank, dark green grass two to four times the lawn's height, flowering.
+		PRESET_FAIRY_RING_MUSHROOM, // Marasmius oreades: small buff caps with a broad boss on tough slender stalks, in a meadow fairy ring.
+		PRESET_SHEET_WEB, // A money spider's (Linyphiidae) sheet web in the sward with its scaffold threads: seen only with dew or hoarfrost on it.
+		PRESET_ORB_WEB, // A garden spider's orb web between two dry stems with its frame and anchor threads: seen only with dew or hoarfrost on it.
 		PRESET_MAX,
 	};
 
@@ -320,6 +328,19 @@ private:
 	void _build_anthill();
 	void _build_wood_ant_nest();
 	void _build_molehill();
+	void _build_leaf_bank();
+	float _dung_age() const; // Years since the dung was dropped, from the season's "dung_age"; three days without.
+	void _build_cow_pat();
+	void _build_horse_dung();
+	void _build_deer_pellets();
+	void _build_dung_rough();
+	void _add_silk_line(const Vector3 &p_from, const Vector3 &p_to, float p_wind_from, float p_wind_to);
+	void _build_sheet_web();
+	void _build_orb_web();
+	float silk_orb[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // The orb web built last: radius, spiral spacing (m), radials, the sector left open (turns).
+	// A fallen leaf's spot on a litter card: on its disc (0.13 m), or over the leaf bank's heap (litter_heap) with the
+	// heap's normal in r_up. The same random draws either way, so flat cards keep their seeds.
+	Vector3 _litter_spot(float p_lift, Vector3 &r_up);
 	void _tint_since(Surface p_surface, int p_from, const Color &p_tint);
 	void _build_fireweed();
 	void _build_fire_moss();
@@ -449,16 +470,18 @@ private:
 	void _add_mushroom(const Transform3D &p_base, const MushroomForm &p_form, float p_tilt, float p_tilt_dir);
 	void _add_lathe(Surface p_surface, const LocalVector<Transform3D> &p_frames, const LocalVector<Vector2> &p_rz, const LocalVector<Color> &p_tint, int p_sectors, float p_wave, int p_wave_k, float p_wave_phase, float p_wave_from);
 
-	static Ref<Shader> shaders[2]; // Plain and textured, shared by every generated plant.
+	static Ref<Shader> shaders[3]; // Plain, textured and silk, shared by every generated plant.
 	static Ref<Shader> impostor_shader; // plant_impostor.cpp.
 	static Ref<Shader> _impostor_shader();
-	static Ref<Shader> _plant_shader(bool p_textured);
+	static Ref<Shader> _plant_shader(bool p_textured, bool p_silk = false);
+	Ref<ShaderMaterial> _silk_material() const;
 	Ref<ShaderMaterial> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
 	Ref<ShaderMaterial> _textured_material(const TextureSet &p_set, float p_roughness) const;
 	bool textures = true;
 	int texture_size = 256;
 	float leaf_wear = 0.5f;
 	Array litter_leaves; // Leaf litter: the stand's fallen leaves (forms with share and colour); empty: generic.
+	Vector3 litter_heap; // A leaf bank's heap: half length (x), half width (z), height (y); zero: a flat card.
 	float litter_deposit = 1.0f; // Litter: layers of leaves or needles over the card's own (> 1: the near-camera card, leaf on leaf).
 	uint32_t leaf_serial = 0; // Counts the leaves of a plant: their wear draws from it, not from rng.
 	// Flowering through the year (docs/ideas/vegetation-seasons.md, step 2): the season's degree days
@@ -547,7 +570,8 @@ public:
 	static void tag_species(const Ref<Resource> &p_species, Preset p_preset);
 	static float get_presence(Preset p_preset, const Dictionary &p_season);
 	static float _mushroom_presence(Preset p_preset, const Dictionary &p_season);
-	static bool is_mushroom(Preset p_preset) { return p_preset >= PRESET_FLY_AGARIC && p_preset <= PRESET_HONEY_FUNGUS; }
+	static bool is_silk(Preset p_preset) { return p_preset == PRESET_SHEET_WEB || p_preset == PRESET_ORB_WEB; }
+	static bool is_mushroom(Preset p_preset) { return (p_preset >= PRESET_FLY_AGARIC && p_preset <= PRESET_HONEY_FUNGUS) || p_preset == PRESET_FAIRY_RING_MUSHROOM; }
 	float get_leaf_wear() const { return leaf_wear; }
 	int get_texture_size() const { return texture_size; }
 	Ref<ArrayMesh> generate();
@@ -632,6 +656,9 @@ public:
 	};
 	// The WorldStand disturbance kind a drained beaver pond is reported as (appended after beetle, 3).
 	static constexpr int DISTURBANCE_BEAVER_KIND = 4;
+	// Avalanche tracks: the ground layer where WorldStand marks DISTURBANCE_AVALANCHE (6), by years since the avalanche.
+	static constexpr int DISTURBANCE_AVALANCHE_KIND = 6;
+	static TypedArray<Resource> make_avalanche_track(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	static TypedArray<Resource> make_beaver(BeaverStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	// Boar rooting (docs/ideas/vegetation.md, "Boar rooting"), placed by PlantSpecies.RULE_ROOTING.
 	enum RootingStand {
@@ -648,6 +675,21 @@ public:
 		MOUNDS_MAX,
 	};
 	static TypedArray<Resource> make_mounds(MoundSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Grazing roughs and dung (docs/ideas/vegetation.md, "Grazing roughs and dung").
+	enum GrazeSet {
+		GRAZE_CATTLE, // Cattle pasture: pats fresh to old, an ungrazed rough round each older one, docks and nettles on rich spots.
+		GRAZE_HORSE, // Horse pasture: latrines (patches the horses dung in and never graze: roughs, piles, nettles and thistles).
+		GRAZE_DEER, // Deer lawns (PlantSpecies.RULE_BROWSE): pellet groups where the browsing is heavy.
+		GRAZE_MAX,
+	};
+	// Meadow fairy rings (docs/ideas/vegetation.md, "Meadow fairy rings"): the ring's mushrooms, placed on the rings
+	// GrassField3D.fairy_rings shows (PlantSpecies.RULE_FAIRY_RING).
+	static TypedArray<Resource> make_fairy_rings(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Dewy webs (docs/ideas/vegetation.md): money spiders' sheet webs over the sward and orb webs on dry stems in the
+	// open, drawn as silk by the shader and seen as the dew or hoarfrost beads them (WeatherMap3D's surface wetness
+	// and frost); the season sets how many spiders there are.
+	static TypedArray<Resource> make_dew_webs(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	static TypedArray<Resource> make_grazing(GrazeSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
 	enum AlpineStand {
@@ -714,6 +756,7 @@ VARIANT_ENUM_CAST(PlantGenerator::BurnStand);
 VARIANT_ENUM_CAST(PlantGenerator::BeaverStand);
 VARIANT_ENUM_CAST(PlantGenerator::RootingStand);
 VARIANT_ENUM_CAST(PlantGenerator::MoundSet);
+VARIANT_ENUM_CAST(PlantGenerator::GrazeSet);
 VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
 VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
 VARIANT_ENUM_CAST(PlantGenerator::MarginStand);

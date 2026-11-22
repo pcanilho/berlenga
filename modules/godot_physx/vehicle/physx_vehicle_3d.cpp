@@ -96,6 +96,12 @@ struct PhysXVehicleSoilWheel {
 	// Ruts steer the wheels (docs/ideas/mud.md, round 9): the deformation's cross slope under the tread along the
 	// tyre's lateral direction, and the rut wall's height beside each sidewall (GroundSurface3D::get_rut_guidance()).
 	Vector3 guide;
+	// Parked in mud (docs/ideas/mud.md, round 22.2): world seconds standing on this soil, the creep settlement it has
+	// brought, and the suction holding the tyre (N, the last substep's).
+	float rest = 0.0f;
+	float moved = 0.0f; // m rolled since it last stood
+	float creep = 0.0f;
+	float suction = 0.0f;
 #ifdef MODULE_GROUND_ENABLED
 	GroundSoil soil;
 #endif
@@ -230,6 +236,7 @@ public:
 	float base_sticky_speed = -1.0f;
 	float base_lat_sticky_speed = -1.0f;
 	bool clogging = true;
+	bool parked = true; // round 22.2: parked wheels settle into mud
 
 	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
 		Vehicle4W &v = *vehicle;
@@ -364,8 +371,37 @@ public:
 			// sinkage is a steady state over fresh soil (Lyasko 2010): it builds over the travel of a contact
 			// length, and a wheel spinning in place digs in over seconds rather than at once. A skidding wheel
 			// ploughs at its static sinkage.
-			const float static_z = MAX(probe.static_sinkage, rut);
-			const float target = MAX(slip > 0.0f ? probe.sinkage : probe.static_sinkage, rut);
+			// Parked in mud (round 22.2): a load left standing on soft saturated soil keeps settling after the
+			// undrained sinkage by creep, secondary compression growing with the log of time (Buisman 1936):
+			// dz = C D log10(1 + t / 1 s), C 0.02 for soft clays and organic mud (C_alpha / (1 + e0)), D the
+			// depth the load stresses (two tyre widths, within the loose layer), scaled by how sticky (saturated,
+			// clayey) the soil is. The time is the world's (WorldWeather.time_scale()). Rolling away, the
+			// wheel climbs out of its hollow over a contact length.
+			float creep = 0.0f;
+			if (parked && sw.soil.stickiness > 0.0f) {
+				const float travel = Math::abs(v_lng) * p_dt;
+				const float cl = MAX(probe.contact_length, 0.05f);
+				if (Math::abs(v_lng) < 0.05f) {
+					float scale = 1.0f;
+					if (const WorldWeather *wm = WorldContracts::weather(); wm && wm->has_provider()) {
+						scale = MAX(float(wm->time_scale()), 0.0f);
+					}
+					if (sw.moved > 3.0f * cl) {
+						sw.rest = 0.0f; // stopped somewhere new
+					}
+					sw.moved = 0.0f;
+					sw.rest += p_dt * scale;
+				} else {
+					sw.moved += travel;
+				}
+				const float d = MIN(2.0f * width, MAX(sw.soil.max_sinkage - probe.static_sinkage, 0.0f));
+				creep = 0.02f * sw.soil.stickiness * d * (Math::log(1.0f + sw.rest) / 2.302585f) * Math::exp(-sw.moved / cl);
+			} else {
+				sw.rest = 0.0f;
+			}
+			sw.creep = creep;
+			const float static_z = MAX(probe.static_sinkage + creep, rut);
+			const float target = MAX((slip > 0.0f ? probe.sinkage : probe.static_sinkage) + creep, rut);
 			if (sw.sinkage < static_z) {
 				sw.sinkage += (static_z - sw.sinkage) * MIN(p_dt / 0.1f, 1.0f);
 			}
@@ -489,6 +525,7 @@ public:
 	Vehicle4W *vehicle = nullptr;
 	PhysXVehicleSoilWheel *wheels = nullptr;
 	bool adhesion = true;
+	bool parked = true;
 
 	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
 		Vehicle4W &v = *vehicle;
@@ -532,7 +569,17 @@ public:
 			// At the wheel's actual sinkage (which builds over time), not the steady state of this slip.
 			const float width = 2.0f * wp.halfWidth;
 			// Plus sticky clay holding the tread as it leaves the rut (stage 3).
-			const float resist = GroundTerramechanics::compaction_resistance(sw.soil, width, sw.sinkage, sw.already) + GroundTerramechanics::wheel_bulldozing_resistance(sw.soil, width, wp.radius, sw.sinkage, sw.already) + (adhesion ? GroundTerramechanics::adhesion_resistance(sw.soil, width, sw.sinkage) : 0.0f);
+			// Suction (round 22.2): a footing left in saturated clay is held by the negative pore pressure under it
+			// as it is pulled away, a breakout force past its weight that grows as the soil sets up round it (Vesic
+			// 1969, breakout of objects from the sea bottom; Das and Seeley 1982 on the time to set up). Here the
+			// trailing half of the contact peels at the soil's undrained strength (its cohesion), building over
+			// about ten minutes of rest (1 - exp(-t / 600 s)), scaled by the soil's stickiness, and gone once the
+			// wheel has rolled out (the rest decays over a contact length of travel).
+			sw.suction = 0.0f;
+			if (parked && sw.rest > 0.0f && sw.soil.stickiness > 0.0f) {
+				sw.suction = 1000.0f * sw.soil.cohesion * 0.5f * ws.contact_length * width * sw.soil.stickiness * (1.0f - Math::exp(-sw.rest / 600.0f)) * Math::exp(-sw.moved / MAX(ws.contact_length, 0.05f));
+			}
+			const float resist = GroundTerramechanics::compaction_resistance(sw.soil, width, sw.sinkage, sw.already) + GroundTerramechanics::wheel_bulldozing_resistance(sw.soil, width, wp.radius, sw.sinkage, sw.already) + (adhesion ? GroundTerramechanics::adhesion_resistance(sw.soil, width, sw.sinkage) : 0.0f) + sw.suction;
 			const float r = resist * CLAMP(v_lng / 0.3f, -1.0f, 1.0f);
 			if (r != 0.0f) {
 				const PxVec3 dF = lng * -r;
@@ -600,6 +647,13 @@ struct PhysXVehicle3D::Impl {
 	float belly_support = 0.0f;
 	float belly_deepest = 0.0f; // m under the undisturbed surface, the last step
 	float water_buoyancy = 0.0f; // N (round 20.1)
+	float cab_water = 0.0f; // m3 inside the cab (round 21.1)
+	bool engine_drowned = false;
+	bool bow_on = false; // its disturbances are in the water (round 21.3)
+	float bow_strength = 0.0f;
+	float wake_timer = 0.0f; // since its waves last washed the banks (round 22.1)
+	float intake_trough = 0.0f; // the bow's trough at the intake, m (negative: the bow wave over it)
+	float intake_dry = 0.0f; // s the intake has been clear since it drowned
 	Vector3 water_drag; // N
 	// Mud on the body (stage 3b): per wheel the spray level and the shed kg already counted; the belly's mud line,
 	// the mud's wetness; the meshes painted (their materials copied with Mud on).
@@ -776,6 +830,8 @@ bool PhysXVehicle3D::_build() {
 	impl->soil_tire.vehicle = &impl->vehicle;
 	impl->soil_tire.wheels = impl->soil_wheels;
 	impl->soil_road.clogging = tyre_clogging;
+	impl->soil_road.parked = parked_settling;
+	impl->soil_tire.parked = parked_settling;
 	impl->vehicle.soil_road_component = soft_soil ? &impl->soil_road : nullptr;
 	impl->vehicle.soil_tire_component = soft_soil ? &impl->soil_tire : nullptr;
 #endif
@@ -868,6 +924,9 @@ void PhysXVehicle3D::_notification(int p_what) {
 			v.commandState.steer = (PxReal)steer;
 			v.transmissionCommandState.gear = reverse ? PxVehicleDirectDriveTransmissionCommandState::eREVERSE : PxVehicleDirectDriveTransmissionCommandState::eFORWARD;
 			_engine_controls();
+			if (impl->engine_drowned) {
+				v.commandState.throttle = 0.0f; // stalled: water in the intake
+			}
 			for (uint32_t i = 0; i < 4; i++) {
 				impl->soil_wheels[i].inflation = (float)wheels[impl->wheel_order[i]]->get_tire_pressure();
 				impl->soil_wheels[i].tread = (int)wheels[impl->wheel_order[i]]->get_tread();
@@ -990,6 +1049,22 @@ void PhysXVehicle3D::set_tyre_clogging(bool p_enabled) {
 	impl->soil_road.clogging = p_enabled;
 }
 
+void PhysXVehicle3D::set_parked_settling(bool p_enabled) {
+	parked_settling = p_enabled;
+	impl->soil_road.parked = p_enabled;
+	impl->soil_tire.parked = p_enabled;
+}
+
+real_t PhysXVehicle3D::get_wheel_creep(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].creep;
+}
+
+real_t PhysXVehicle3D::get_wheel_suction(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].suction;
+}
+
 void PhysXVehicle3D::set_belly_drag(bool p_enabled) {
 	belly_drag = p_enabled;
 }
@@ -1028,6 +1103,34 @@ Vector3 PhysXVehicle3D::get_water_drag() const {
 	return impl->water_drag;
 }
 
+void PhysXVehicle3D::set_hull_leak_area(real_t p_area) {
+	hull_leak_area = MAX(p_area, 0.0f);
+}
+
+void PhysXVehicle3D::set_air_intake_height(real_t p_height) {
+	air_intake_height = p_height;
+}
+
+void PhysXVehicle3D::set_snorkel(bool p_enabled) {
+	snorkel = p_enabled;
+}
+
+bool PhysXVehicle3D::is_engine_drowned() const {
+	return impl->engine_drowned;
+}
+
+real_t PhysXVehicle3D::get_cab_water() const {
+	return impl->cab_water;
+}
+
+real_t PhysXVehicle3D::get_bow_wave_strength() const {
+	return impl->bow_strength;
+}
+
+real_t PhysXVehicle3D::get_intake_trough() const {
+	return impl->intake_trough;
+}
+
 // A vehicle in water (docs/ideas/mud.md, round 20.1). Flood studies of vehicles (Shu et al. 2011; Xia et al. 2014;
 // Martinez-Gomariz et al. 2017, full-size cars at UNSW's Water Research Laboratory, 2017) take it as a body on its tyres:
 // buoyancy from the water it keeps out lightens it, the current's drag 0.5 rho Cd A |u - v| (u - v) (Cd about 1.1 on the
@@ -1041,6 +1144,14 @@ void PhysXVehicle3D::_water_step(float p_delta) {
 	PxRigidDynamic *dyn = impl->vehicle.physxActor.rigidBody ? impl->vehicle.physxActor.rigidBody->is<PxRigidDynamic>() : nullptr;
 	WorldWater *ww = WorldContracts::water();
 	if (!river_forces || !dyn || !ww || !ww->has_provider() || impl->chassis_half == Vector3()) {
+		impl->engine_drowned = false;
+		impl->cab_water = 0.0f;
+		if (impl->bow_on && ww) {
+			for (int k = 0; k < 3; k++) {
+				ww->clear((uint64_t(get_instance_id()) << 2) + k);
+			}
+		}
+		impl->bow_on = false;
 		return;
 	}
 	for (int i = 0; i < get_child_count(); i++) {
@@ -1126,6 +1237,108 @@ void PhysXVehicle3D::_water_step(float p_delta) {
 			f += rel * (0.5f * rho * cd * wet / (2.0f * r) * across * s);
 		}
 		push(at, f);
+	}
+	// The bow wave and wake (round 21.3): the hull pushes the water at three points along its keel, moving
+	// disturbances the water's own wave solver turns into a bow wave and a wake (a moving pressure source makes the
+	// Kelvin wake; in shallow water its depth Froude number Fr = v / sqrt(g h) sets it: near 1 the bow wave stands
+	// up and breaks; wading drill keeps to a walking pace, about 2 m/s, so the bow keeps the water down at the
+	// engine bay). The strength is the share of the full push: a resting hull's 0.15, rising to 1 at Fr 0.8,
+	// times how much of the hull is wet.
+	{
+		const uint64_t owner = uint64_t(get_instance_id()) << 2;
+		const Vector3 v_h(lin.x, 0.0f, lin.z);
+		float ground_y = box.origin.y - h.y;
+		for (const PhysXVehicleWheel3D *w : wheels) {
+			if (w && w->is_inside_tree()) {
+				ground_y = MIN(ground_y, float(w->get_global_position().y - w->get_radius()));
+			}
+		}
+		bool any = false;
+		float strongest = 0.0f;
+		for (int k = 0; k < 3; k++) {
+			const Vector3 keel = box.xform(Vector3(0.0f, -h.y, (float(k) - 1.0f) * 0.66f * h.z));
+			const float ws = ww->height_at(keel + Vector3(0.0f, tall, 0.0f));
+			const float wet = Math::is_finite(ws) ? ws - keel.y : 0.0f;
+			if (!(wet > 0.02f)) {
+				ww->clear(owner + k);
+				continue;
+			}
+			const float depth = MAX(ws - ground_y, 0.05f);
+			const float fr = v_h.length() / Math::sqrt(9.81f * depth);
+			const float s = CLAMP(0.15f + 0.85f * fr / 0.8f, 0.15f, 1.0f) * MIN(wet / 0.3f, 1.0f);
+			ww->disturb(owner + k, Vector3(keel.x, ws, keel.z), MAX(h.x, 0.33f * h.z), s);
+			strongest = MAX(strongest, s);
+			any = true;
+		}
+		impl->bow_on = any;
+		impl->bow_strength = strongest;
+		// Its waves wash the banks (round 22.1): the ground takes them from the hull's speed and width, ten times a
+		// second.
+		impl->wake_timer += p_delta;
+		if (any && impl->wake_timer >= 0.1f) {
+			GroundSurface3D *ground = GroundSurface3D::get_active();
+			const Vector3 mid = box.xform(Vector3(0.0f, -h.y, 0.0f));
+			const float level = ww->height_at(mid + Vector3(0.0f, tall, 0.0f));
+			if (ground && Math::is_finite(level)) {
+				ground->wash_wake(mid, v_h, h.x, level, impl->wake_timer);
+			}
+			impl->wake_timer = 0.0f;
+		} else if (!any) {
+			impl->wake_timer = 0.0f;
+		}
+	}
+	// The engine's air intake (round 21.1): hydrolock past it. Wading depths are rated from it (makers' figures,
+	// 0.5 to 0.9 m for off-roaders); a snorkel lifts it over the roof. Water drawn in stalls the engine; it starts
+	// again once the intake has been clear for 5 s (no lasting damage kept).
+	{
+		const float bottom_to_top = 2.0f * h.y;
+		const float hi = snorkel ? bottom_to_top + 0.25f : (air_intake_height >= 0.0f ? float(air_intake_height) : 0.75f * bottom_to_top);
+		const Vector3 intake = box.xform(Vector3(0.0f, -h.y + hi, -0.7f * h.z));
+		// The bow's trough (round 22.1): driven forward at a steady wading pace the water drawn round the bow stands
+		// lower at the engine bay by about the stagnation head v^2 / 2g (Bernoulli along the sides, the flow sped up
+		// round the bluff front); past depth Froude 0.7 the bow wave stands up and by 1 it climbs over the bonnet,
+		// as high again. The wading drill: steady, about walking pace.
+		float level = ww->height_at(intake);
+		if (Math::is_finite(level) && impl->bow_on) {
+			const float vf = Vector3(lin.x, 0.0f, lin.z).length(); // forward or backing: the leading end's bow
+			const float ground_y = box.origin.y - h.y - 0.5f;
+			const float fr = vf / Math::sqrt(9.81f * MAX(level - ground_y, 0.05f));
+			const float head = MIN(vf * vf / (2.0f * 9.81f), 0.4f);
+			impl->intake_trough = head * (1.0f - 2.0f * Math::smoothstep(0.7f, 1.0f, fr));
+			level -= impl->intake_trough;
+		} else {
+			impl->intake_trough = 0.0f;
+		}
+		const bool under = level > intake.y;
+		if (under) {
+			impl->engine_drowned = true;
+			impl->intake_dry = 0.0f;
+		} else if (impl->engine_drowned) {
+			impl->intake_dry += p_delta;
+			if (impl->intake_dry > 5.0f) {
+				impl->engine_drowned = false;
+			}
+		}
+	}
+	// The cab floods through its gaps (doors, floor, vents) at an orifice's rate Q = Cd A sqrt(2 g dh), Cd 0.6, the
+	// head between the water outside at the box's middle and the level inside; out again the same way on land.
+	// What is in it is held in the sealed share of the box and adds its weight at the box's middle.
+	{
+		const float sealed = float(hull_seal) * 8.0f * h.x * h.y * h.z;
+		const float floor_area = MAX(float(hull_seal) * 4.0f * h.x * h.z, 1e-3f);
+		const Vector3 mid = box.xform(Vector3(0.0f, -h.y, 0.0f));
+		const float outside = ww->height_at(mid + Vector3(0.0f, tall, 0.0f));
+		const float level_in = mid.y + impl->cab_water / floor_area;
+		const float out_level = Math::is_finite(outside) ? MAX(outside, mid.y) : mid.y;
+		const float dh = out_level - level_in;
+		if (sealed > 0.0f && hull_leak_area > 0.0f && Math::abs(dh) > 1e-4f) {
+			const float q = 0.6f * float(hull_leak_area) * Math::sqrt(2.0f * 9.81f * Math::abs(dh));
+			impl->cab_water = CLAMP(impl->cab_water + SIGN(dh) * q * p_delta, 0.0f, sealed);
+		}
+		if (impl->cab_water > 0.0f) {
+			const Vector3 at = mid + Vector3(0.0f, 0.5f * impl->cab_water / floor_area, 0.0f);
+			push(at, Vector3(0.0f, -1000.0f * 9.81f * impl->cab_water, 0.0f));
+		}
 	}
 	if (force == Vector3()) {
 		return;
@@ -2204,6 +2417,11 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_tyre_clogging", "enabled"), &PhysXVehicle3D::set_tyre_clogging);
 	ClassDB::bind_method(D_METHOD("is_tyre_clogging"), &PhysXVehicle3D::is_tyre_clogging);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tyre_clogging"), "set_tyre_clogging", "is_tyre_clogging");
+	ClassDB::bind_method(D_METHOD("set_parked_settling", "enabled"), &PhysXVehicle3D::set_parked_settling);
+	ClassDB::bind_method(D_METHOD("is_parked_settling"), &PhysXVehicle3D::is_parked_settling);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "parked_settling"), "set_parked_settling", "is_parked_settling");
+	ClassDB::bind_method(D_METHOD("get_wheel_creep", "wheel"), &PhysXVehicle3D::get_wheel_creep);
+	ClassDB::bind_method(D_METHOD("get_wheel_suction", "wheel"), &PhysXVehicle3D::get_wheel_suction);
 	ClassDB::bind_method(D_METHOD("set_belly_drag", "enabled"), &PhysXVehicle3D::set_belly_drag);
 	ClassDB::bind_method(D_METHOD("is_belly_drag"), &PhysXVehicle3D::is_belly_drag);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "belly_drag"), "set_belly_drag", "is_belly_drag");
@@ -2214,6 +2432,19 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_hull_seal"), &PhysXVehicle3D::get_hull_seal);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hull_seal", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hull_seal", "get_hull_seal");
 	ClassDB::bind_method(D_METHOD("get_water_buoyancy"), &PhysXVehicle3D::get_water_buoyancy);
+	ClassDB::bind_method(D_METHOD("set_hull_leak_area", "area"), &PhysXVehicle3D::set_hull_leak_area);
+	ClassDB::bind_method(D_METHOD("get_hull_leak_area"), &PhysXVehicle3D::get_hull_leak_area);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hull_leak_area", PROPERTY_HINT_RANGE, "0,0.2,0.001,or_greater,suffix:m\u00B2"), "set_hull_leak_area", "get_hull_leak_area");
+	ClassDB::bind_method(D_METHOD("set_air_intake_height", "height"), &PhysXVehicle3D::set_air_intake_height);
+	ClassDB::bind_method(D_METHOD("get_air_intake_height"), &PhysXVehicle3D::get_air_intake_height);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "air_intake_height", PROPERTY_HINT_RANGE, "-1,3,0.01,suffix:m"), "set_air_intake_height", "get_air_intake_height");
+	ClassDB::bind_method(D_METHOD("set_snorkel", "enabled"), &PhysXVehicle3D::set_snorkel);
+	ClassDB::bind_method(D_METHOD("has_snorkel"), &PhysXVehicle3D::has_snorkel);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snorkel"), "set_snorkel", "has_snorkel");
+	ClassDB::bind_method(D_METHOD("is_engine_drowned"), &PhysXVehicle3D::is_engine_drowned);
+	ClassDB::bind_method(D_METHOD("get_cab_water"), &PhysXVehicle3D::get_cab_water);
+	ClassDB::bind_method(D_METHOD("get_bow_wave_strength"), &PhysXVehicle3D::get_bow_wave_strength);
+	ClassDB::bind_method(D_METHOD("get_intake_trough"), &PhysXVehicle3D::get_intake_trough);
 	ClassDB::bind_method(D_METHOD("get_water_drag"), &PhysXVehicle3D::get_water_drag);
 	ClassDB::bind_method(D_METHOD("get_wheel_mud", "wheel"), &PhysXVehicle3D::get_wheel_mud);
 	ClassDB::bind_method(D_METHOD("get_wheel_mud_shed", "wheel"), &PhysXVehicle3D::get_wheel_mud_shed);

@@ -25,6 +25,7 @@ extends Node3D
 #   --pollards        a working willow pollard, a lapsed beech pollard and a hazel coppice stool
 #                     side by side in winter grass (trees.md 5l), seen from 1.7 m, 10 m back
 #   --sun-energy=E    sun energy (default 1.4; 0 for sky light only)
+#   env GLAZE_HOURS=H  an ice storm H hours long before the shot: clear ice on every tree (trees.md 5be)
 #   env FIRE_AGE=Y [SCORCH=H]  a past fire Y years ago, crowns killed up to H m (default 30): needle cast
 #   --colonnade       a colonnade (trees.md 5az): five forest spruce on stilts in a row over one vanished log
 #   --beaver          beaver work (trees.md 5au): a gnawed birch, fresh and old stumps (one resprouting), a felled stem
@@ -37,18 +38,19 @@ extends Node3D
 const NAMES := ["oak", "beech", "birch", "Scots pine", "Norway spruce", "hazel", "hawthorn", "lime", "sycamore maple",
 		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box",
 		"sugar maple", "red maple", "red oak", "white oak", "white pine", "hemlock", "American beech", "paper birch",
-		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom", "gum rockrose", "kermes oak", "lentisk", "dwarf fan palm", "stone pine", "cork oak", "holm oak", "wild olive", "maritime pine", "carob", "blackthorn", "field maple", "dog rose", "calligonum", "white broom", "saltbush", "date palm"]
+		"yellow birch", "witch-hazel", "mountain laurel", "gorse", "broom", "gum rockrose", "kermes oak", "lentisk", "dwarf fan palm", "stone pine", "cork oak", "holm oak", "wild olive", "maritime pine", "carob", "blackthorn", "field maple", "dog rose", "calligonum", "white broom", "saltbush", "date palm", "aspen", "black poplar", "wild cherry", "hornbeam", "sweet chestnut"]
 const SHRUBS := [5, 6, 16, 17, 18, 19, 29, 30, 31, 32, 33, 34, 35, 36, 43, 45, 46, 47, 48] # Shrubs and evergreens that stay leafy low in a stand.
 # Stem spacing in a mature stand (m), as in TreeGenerator's habitat table.
 const STAND_SPACING := [9.0, 7.0, 5.0, 5.5, 4.5, 3.0, 3.0, 7.0, 7.0, 7.0, 9.0, 5.0, 7.0, 6.0, 5.0, 4.0, 3.0, 4.0, 5.0, 2.5,
-		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5, 1.6, 1.6, 1.4, 1.8, 2.2, 2.0, 9.0, 10.0, 7.0, 6.0, 6.0, 9.0, 2.5, 6.0, 2.0, 6.0, 5.0, 3.0, 8.0]
+		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5, 1.6, 1.6, 1.4, 1.8, 2.2, 2.0, 9.0, 10.0, 7.0, 6.0, 6.0, 9.0, 2.5, 6.0, 2.0, 6.0, 5.0, 3.0, 8.0, 5.0, 9.0, 7.0, 6.0, 9.0]
 # Plausible heights (m) for the default ages: mature trees, shrubs at full size.
 const HEIGHT_RANGE := [Vector2(12, 30), Vector2(14, 34), Vector2(10, 28), Vector2(12, 32), Vector2(14, 38), Vector2(2.5, 8), Vector2(3, 10),
 		Vector2(12, 38), Vector2(12, 30), Vector2(14, 40), Vector2(12, 28), Vector2(10, 26), Vector2(10, 25), Vector2(15, 38),
 		Vector2(15, 40), Vector2(5, 15), Vector2(2.5, 8), Vector2(4, 15), Vector2(5, 20), Vector2(1.5, 6),
 		Vector2(15, 37), Vector2(12, 30), Vector2(15, 35), Vector2(15, 32), Vector2(18, 46), Vector2(15, 40), Vector2(15, 35),
 		Vector2(12, 30), Vector2(15, 32), Vector2(3, 9), Vector2(1.5, 6), Vector2(1.0, 2.6), Vector2(1.0, 2.6),
-		Vector2(1.0, 2.5), Vector2(0.5, 2.2), Vector2(1.0, 3.0), Vector2(0.4, 2.5), Vector2(10, 25), Vector2(8, 22), Vector2(6, 22), Vector2(3, 12), Vector2(15, 35), Vector2(5, 15), Vector2(1.5, 5), Vector2(6, 16), Vector2(1, 4), Vector2(0.8, 3), Vector2(1, 3.5), Vector2(0.8, 3), Vector2(8, 22)]
+		Vector2(1.0, 2.5), Vector2(0.5, 2.2), Vector2(1.0, 3.0), Vector2(0.4, 2.5), Vector2(10, 25), Vector2(8, 22), Vector2(6, 22), Vector2(3, 12), Vector2(15, 35), Vector2(5, 15), Vector2(1.5, 5), Vector2(6, 16), Vector2(1, 4), Vector2(0.8, 3), Vector2(1, 3.5), Vector2(0.8, 3), Vector2(8, 22),
+		Vector2(12, 30), Vector2(18, 35), Vector2(12, 30), Vector2(12, 28), Vector2(15, 35)]
 
 var junction_side := 1 # --junction-side=-1: the junction view from the limb's other side.
 var test := false
@@ -448,6 +450,8 @@ func _build_scene() -> void:
 	get_viewport().msaa_3d = Viewport.MSAA_8X
 	if OS.has_environment("LOD0"):
 		get_viewport().mesh_lod_threshold = 0.0
+	if OS.has_environment("GLAZE_HOURS"):
+		_ice_storm(float(OS.get_environment("GLAZE_HOURS")))
 	if OS.has_environment("FIRE_AGE"):
 		_past_fire(float(OS.get_environment("FIRE_AGE")), float(OS.get_environment("SCORCH")) if OS.has_environment("SCORCH") else 30.0)
 	var we := WorldEnvironment.new()
@@ -678,7 +682,13 @@ func _build_scene() -> void:
 		cam.fov = 40.0
 	elif view == "crop" or view == "leaf":
 		var h: float = first_info.height
-		cam.position = Vector3(xs[0] + first_info.crown_radius * 0.9, h * 0.62, 4.0)
+		var cr: float = first_info.crown_radius
+		if OS.has_environment("CROP_HR"): # "height,crown radius": the same framing for a pair whose trees differ a little.
+			var hr := OS.get_environment("CROP_HR").split_floats(",")
+			h = hr[0]
+			cr = hr[1]
+		print("crop framing CROP_HR=%f,%f" % [h, cr])
+		cam.position = Vector3(xs[0] + cr * 0.9, h * 0.62, 4.0)
 		cam.look_at(Vector3(xs[0], h * 0.62, 0))
 		cam.fov = 30.0 if view == "crop" else 7.0
 	else:
@@ -695,6 +705,21 @@ func _build_scene() -> void:
 # A past fire under the whole bench (env FIRE_AGE years ago, SCORCH metres of crown scorch): the fire globals a
 # PhysXFireSpread3D publishes (vegetation_fire.h), set by hand, no flame now. Foliage below the scorch height is
 # killed brown and, with time, cast (trees.md 5af).
+# An ice storm (trees.md 5be): a weather map with a warm layer aloft (+4 C) over -3 C air rains 2.5 mm/h for p_hours, then
+# clears; the glaze stays on everything (env GLAZE_HOURS=H).
+func _ice_storm(p_hours: float) -> void:
+	var wm := WeatherMap3D.new()
+	add_child(wm)
+	wm.set_temperature(-3.0)
+	wm.set_rain_rate(2.5)
+	wm.warm_nose_temperature = 4.0
+	for h in int(ceil(p_hours)):
+		wm.advance(3600.0)
+	wm.set_rain_rate(0.0)
+	wm.advance(1800.0)
+	print("ice storm: %.1f mm of glaze after %.0f h" % [wm.get_glaze_at(Vector3()), p_hours])
+
+
 func _past_fire(p_years: float, p_scorch: float) -> void:
 	var state := Image.create_empty(1, 1, false, Image.FORMAT_RGBA8)
 	state.set_pixel(0, 0, Color(1.0, 0.0, 0.0, sqrt(minf(p_scorch / 48.0, 1.0))))

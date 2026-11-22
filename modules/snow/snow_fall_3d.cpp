@@ -573,7 +573,11 @@ void SnowFall3D::_update(double p_delta) {
 	{
 		const float t_air = cover ? cover->get_air_temperature_at(center) : (weather ? weather->air_temperature_at(center) : -5.0f);
 		const float rh = weather ? weather->air_humidity_at(center) : 0.85f;
-		cur_melt = sleet_enabled ? melted_share(t_air, rh) : 0.0f;
+		// Under a warm layer aloft (WeatherMap3D.warm_nose_temperature) the flakes melted up there reach the
+		// ground as rain, supercooled in cold air near the ground: freezing rain. The weather's rain share over the
+		// plain split (none where a deep cold layer refreezes them to pellets).
+		const float nose = weather ? MAX(weather->rain_share_at(center) - WeatherMap3D::rain_fraction(t_air, rh), 0.0f) : 0.0f;
+		cur_melt = sleet_enabled ? MAX(melted_share(t_air, rh), nose) : nose;
 		cur_aggregate = sleet_enabled ? aggregate_factor(MIN(t_air, 0.0f)) : 1.0f;
 		fall_process->set_shader_parameter("aggregate", cur_aggregate);
 		fall_process->set_shader_parameter("melt", cur_melt);

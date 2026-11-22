@@ -46,6 +46,13 @@
 #include "modules/weather/weather_map_3d.h"
 #include "modules/world/world_contracts.h"
 
+// Ground leaves under the wind 10 cm up (docs/ideas/vegetation.md, "Blowing leaves"): the leaf drift (round 4) is
+// where the near-ground wind is slowed (hollows, the lee of rocks, logs and trunks), so it shelters: the wind there is
+// the open wind over drift^0.6, and leaves slide off the bare, exposed ground and stop in the drifts.
+static float ground_shelter(float p_drift) {
+	return CLAMP(Math::pow(MAX(p_drift, 0.05f), -0.6f), 0.35f, 1.3f);
+}
+
 namespace {
 
 // Andersen, Pesavento and Wang (2005): drag A - B cos 2a over a plate at angle of attack a, circulation lift
@@ -212,9 +219,9 @@ int LeafFall3D::get_buried_count() const {
 	return n;
 }
 
-void LeafFall3D::_spawn(const Vector3 &p_p, const Vector3 &p_v, int p_kind, bool p_lying) {
+int LeafFall3D::_spawn(const Vector3 &p_p, const Vector3 &p_v, int p_kind, bool p_lying) {
 	if (kinds.is_empty()) {
-		return;
+		return -1;
 	}
 	uint32_t slot;
 	if (!free_slots.is_empty()) {
@@ -234,7 +241,7 @@ void LeafFall3D::_spawn(const Vector3 &p_p, const Vector3 &p_v, int p_kind, bool
 			}
 		}
 		if (best < 0) {
-			return;
+			return -1;
 		}
 		slot = best;
 		alive_count--;
@@ -261,6 +268,7 @@ void LeafFall3D::_spawn(const Vector3 &p_p, const Vector3 &p_v, int p_kind, bool
 		l.v = Vector3();
 	}
 	alive_count++;
+	return int(slot);
 }
 
 void LeafFall3D::drop_leaf(const Vector3 &p_position, int p_kind) {
@@ -313,7 +321,47 @@ void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WorldWeather *p_w
 		if (p_weather || fire->has_provider()) {
 			// The fires' indraft near the ground draws leaves in towards the flames.
 			const Vector3 a = (p_weather ? p_weather->wind_at(p_leaf.p, 0.1f) : Vector3()) + (fire->has_provider() ? fire->wind_at(p_leaf.p) : Vector3());
-			const float u = Vector2(a.x, a.z).length();
+			float u = Vector2(a.x, a.z).length();
+			if (u > 0.5f * creep_speed && !litter_fields.is_empty()) {
+				float drift = 1.0f;
+				_field_litter_at(p_leaf.p, drift);
+				u *= ground_shelter(drift);
+			}
+			// Creep (Orndorff and Lang 1981: litter is moved over the floor by the wind and gathers in hollows and
+			// against obstacles): past the creep speed a lying leaf slides downwind at a fraction of the excess, flips
+			// over now and then and turns as it goes; it slows and stops where the sheltered wind drops.
+			const float creep = creep_speed * (p_leaf.on == SURFACE_ICE ? 0.5f : 1.0f);
+			const float slide_was = p_leaf.v.length();
+			if (u > creep) {
+				const Vector2 d = Vector2(a.x, a.z) / MAX(Vector2(a.x, a.z).length(), 1e-4f);
+				const float s = MIN(0.3f * (u - creep), 3.0f);
+				const Vector2 t = d.rotated((rng.randf() - 0.5f) * 0.6f) * s;
+				const float k = 1.0f - Math::exp(-p_delta / 0.25f);
+				p_leaf.v = p_leaf.v.lerp(Vector3(t.x, 0.0f, t.y), k);
+				if (rng.randf() < 0.5f * (u / creep - 1.0f) * p_delta) {
+					p_leaf.b = Basis(p_leaf.b.get_column(0).normalized(), float(Math::PI)) * p_leaf.b; // flipped over
+				}
+				if (slide_was < 0.05f && p_leaf.v.length() >= 0.05f) {
+					crept_count++;
+				}
+			} else if (slide_was > 0.0f) {
+				const float s = MAX(slide_was - 4.0f * p_delta, 0.0f); // friction
+				p_leaf.v = s > 0.0f ? p_leaf.v * (s / slide_was) : Vector3();
+			}
+			const float slide = p_leaf.v.length();
+			if (slide > 0.0f) {
+				p_leaf.p += p_leaf.v * p_delta;
+				uint8_t now_on = SURFACE_GROUND;
+				p_leaf.p.y = _surface_at(p_leaf.p, now_on) + 0.005f;
+				p_leaf.b = Basis(Vector3(0, 1, 0), slide * p_delta * (p_leaf.kind % 2 ? 2.0f : -2.0f)) * p_leaf.b;
+				p_leaf.on = now_on;
+				if (slide > 0.05f) {
+					p_leaf.lying = 0.0f; // still moving: not yet part of the litter
+				}
+				if (now_on == SURFACE_WATER) {
+					p_leaf.v = Vector3();
+				}
+			}
 			if (u > lift_speed && rng.randf() < (u / lift_speed - 1.0f) * 4.0f * p_delta) {
 				p_leaf.lying = -1.0f;
 				p_leaf.v = a * 0.4f + Vector3(0, 0.4f + 0.6f * rng.randf(), 0);
@@ -357,6 +405,64 @@ void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WorldWeather *p_w
 	}
 }
 
+LocalVector<VegetationField3D *> LeafFall3D::_find_fields() const {
+	LocalVector<VegetationField3D *> fields;
+	if (!vegetation_field.is_empty()) {
+		VegetationField3D *f = Object::cast_to<VegetationField3D>(get_node_or_null(vegetation_field));
+		if (f) {
+			fields.push_back(f);
+		}
+	} else if (is_inside_tree()) {
+		const TypedArray<Node> found = get_tree()->get_root()->find_children("*", "VegetationField3D", true, false);
+		for (int i = 0; i < found.size(); i++) {
+			VegetationField3D *f = Object::cast_to<VegetationField3D>(found[i].operator Object *());
+			if (f) {
+				fields.push_back(f);
+			}
+		}
+	}
+	return fields;
+}
+
+// The fields' litter and leaf drift (round 4) on 0.5 m cells, kept till the fields are looked up again (2 s).
+float LeafFall3D::_field_litter_at(const Vector3 &p_p, float &r_drift) {
+	r_drift = 1.0f;
+	if (litter_fields.is_empty()) {
+		return -1.0f;
+	}
+	const Vector2i cell(int(Math::floor(p_p.x * 2.0f)), int(Math::floor(p_p.z * 2.0f)));
+	if (const Vector2 *c = field_cache.getptr(cell)) {
+		r_drift = c->y;
+		return c->x;
+	}
+	float best = -1.0f;
+	const Vector3 at((cell.x + 0.5f) * 0.5f, p_p.y, (cell.y + 0.5f) * 0.5f);
+	for (const ObjectID &id : litter_fields) {
+		const VegetationField3D *f = Object::cast_to<VegetationField3D>(ObjectDB::get_instance(id));
+		if (!f) {
+			continue;
+		}
+		const float l = f->get_litter_at(at);
+		if (l > best) {
+			best = l;
+			r_drift = l > 0.01f ? f->get_litter_drift_at(at) : 1.0f;
+		}
+	}
+	if (field_cache.size() > 40000) {
+		field_cache.clear();
+	}
+	field_cache.insert(cell, Vector2(best, r_drift));
+	return best;
+}
+
+int LeafFall3D::get_sliding_count() const {
+	int n = 0;
+	for (const Leaf &l : leaves) {
+		n += (l.alive && l.lying >= 0.0f && l.v.length_squared() > 0.0025f) ? 1 : 0;
+	}
+	return n;
+}
+
 void LeafFall3D::_step(float p_delta) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const WorldWeather *wm = WorldContracts::weather()->has_provider() ? WorldContracts::weather() : nullptr;
@@ -394,6 +500,61 @@ void LeafFall3D::_step(float p_delta) {
 			} while (d.length_squared() > 1.0f);
 			const Vector3 p = c.center + d * c.radii;
 			_spawn(p, wm ? wm->wind_at(p) * 0.5f : Vector3(), c.kind, false);
+		}
+	}
+	// The fields whose litter the wind takes, looked up every 2 s.
+	field_timer -= p_delta;
+	if (field_timer <= 0.0f) {
+		field_timer = 2.0f;
+		litter_fields.clear();
+		field_cache.clear();
+		if (field_litter > 0.0f) {
+			for (VegetationField3D *f : _find_fields()) {
+				litter_fields.push_back(f->get_instance_id());
+			}
+		}
+	}
+	// The fields' own litter (VegetationField3D.get_litter_at): where the crowns dropped it, the gusts past the creep
+	// speed set leaves sliding off it, and past the lift speed throw them up; the exposed spots give up the most.
+	if (field_litter > 0.0f && wm && !kinds.is_empty() && !litter_fields.is_empty()) {
+		const float ga = _ground_at(cam);
+		const Vector3 a0 = wm->wind_at(Vector3(cam.x, ga, cam.z), 0.1f);
+		const float u0 = Vector2(a0.x, a0.z).length() * 1.3f; // the most exposed spot's
+		if (u0 > creep_speed) {
+			const float area = float(Math::PI) * range * range * 0.25f;
+			field_accum += field_litter * area * 0.0005f * (u0 / creep_speed - 1.0f) * p_delta;
+			int tries = 0;
+			while (field_accum >= 1.0f && tries++ < 64) {
+				field_accum -= 1.0f;
+				const float r = range * 0.5f * Math::sqrt(rng.randf());
+				const float t = rng.randf() * float(Math::TAU);
+				Vector3 p(cam.x + r * Math::cos(t), 0.0f, cam.z + r * Math::sin(t));
+				uint8_t on = SURFACE_GROUND;
+				p.y = _surface_at(p, on);
+				if (on != SURFACE_GROUND) {
+					continue;
+				}
+				float drift = 1.0f;
+				const float litter = _field_litter_at(p, drift);
+				const Vector3 a = wm->wind_at(p, 0.1f);
+				const float u = Vector2(a.x, a.z).length() * ground_shelter(drift);
+				if (litter <= 0.0f || rng.randf() > litter * CLAMP((u - creep_speed) / MAX(u0 - creep_speed, 0.1f), 0.0f, 1.0f)) {
+					continue;
+				}
+				if (u > lift_speed) {
+					_spawn(p + Vector3(0, 0.02f, 0), a * 0.4f + Vector3(0, 0.5f + 0.5f * rng.randf(), 0), int(rng.rand() % kinds.size()), false);
+					lifted_count++;
+				} else {
+					const int at = _spawn(p + Vector3(0, 0.005f, 0), Vector3(), int(rng.rand() % kinds.size()), true);
+					if (at >= 0) {
+						const Vector2 d = Vector2(a.x, a.z).normalized() * 0.3f * (u - creep_speed);
+						leaves[at].v = Vector3(d.x, 0.0f, d.y); // already sliding
+						leaves[at].on = on;
+						crept_count++;
+					}
+				}
+			}
+			field_accum = MIN(field_accum, 1.0f);
 		}
 	}
 	// Loose litter round the camera taken up by the wind.
@@ -583,21 +744,7 @@ void LeafFall3D::_refresh_auto_crowns(const WorldWeather *p_weather, const Vecto
 		preset_shed.clear();
 	}
 	// The fields.
-	LocalVector<VegetationField3D *> fields;
-	if (!vegetation_field.is_empty()) {
-		VegetationField3D *f = Object::cast_to<VegetationField3D>(get_node_or_null(vegetation_field));
-		if (f) {
-			fields.push_back(f);
-		}
-	} else if (is_inside_tree()) {
-		const TypedArray<Node> found = get_tree()->get_root()->find_children("*", "VegetationField3D", true, false);
-		for (int i = 0; i < found.size(); i++) {
-			VegetationField3D *f = Object::cast_to<VegetationField3D>(found[i].operator Object *());
-			if (f) {
-				fields.push_back(f);
-			}
-		}
-	}
+	const LocalVector<VegetationField3D *> fields = _find_fields();
 	// Drop the old automatic crowns, keep the ones added by hand.
 	LocalVector<Crown> kept;
 	for (const Crown &c : crowns) {
@@ -842,6 +989,12 @@ void LeafFall3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_leaf_count"), &LeafFall3D::get_leaf_count);
 	ClassDB::bind_method(D_METHOD("get_lifted_count"), &LeafFall3D::get_lifted_count);
 	ClassDB::bind_method(D_METHOD("get_kicked_count"), &LeafFall3D::get_kicked_count);
+	ClassDB::bind_method(D_METHOD("get_crept_count"), &LeafFall3D::get_crept_count);
+	ClassDB::bind_method(D_METHOD("get_sliding_count"), &LeafFall3D::get_sliding_count);
+	ClassDB::bind_method(D_METHOD("set_creep_speed", "speed"), &LeafFall3D::set_creep_speed);
+	ClassDB::bind_method(D_METHOD("get_creep_speed"), &LeafFall3D::get_creep_speed);
+	ClassDB::bind_method(D_METHOD("set_field_litter", "density"), &LeafFall3D::set_field_litter);
+	ClassDB::bind_method(D_METHOD("get_field_litter"), &LeafFall3D::get_field_litter);
 	ClassDB::bind_method(D_METHOD("get_floating_count"), &LeafFall3D::get_floating_count);
 	ClassDB::bind_method(D_METHOD("get_buried_count"), &LeafFall3D::get_buried_count);
 	ClassDB::bind_method(D_METHOD("set_leeway", "share"), &LeafFall3D::set_leeway);
@@ -861,6 +1014,8 @@ void LeafFall3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shed_rate", PROPERTY_HINT_RANGE, "0,1,0.0001"), "set_shed_rate", "get_shed_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_shed", PROPERTY_HINT_RANGE, "0,200,0.1"), "set_wind_shed", "get_wind_shed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lift_speed", PROPERTY_HINT_RANGE, "0.1,20,0.1,suffix:m/s"), "set_lift_speed", "get_lift_speed");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "creep_speed", PROPERTY_HINT_RANGE, "0.1,20,0.1,suffix:m/s"), "set_creep_speed", "get_creep_speed");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "field_litter", PROPERTY_HINT_RANGE, "0,500,0.1"), "set_field_litter", "get_field_litter");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "litter_density", PROPERTY_HINT_RANGE, "0,500,0.1"), "set_litter_density", "get_litter_density");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lie_time", PROPERTY_HINT_RANGE, "0,3600,1,suffix:s"), "set_lie_time", "get_lie_time");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leeway", PROPERTY_HINT_RANGE, "0,0.2,0.001"), "set_leeway", "get_leeway");

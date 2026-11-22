@@ -1575,3 +1575,185 @@ Research notes, nothing built yet:
   grazed lawn (MacDiarmid and Watkin 1972; Bokdam and Gleichman 2000 for horse latrines), and nettles and docks come
   up on nutrient-rich spots; rabbits keep latrines on mounds. Inputs: WorldStand browse (grazed where) and a dung
   scatter. Output: tall rough patches and dung pats in the deer and cattle lawns, breaking the even crop.
+
+## Storm lodging (round 4, first pick)
+Built in GrassField3D (`lodging`, on by default; `get_lodging_at`, `advance_lodging`).
+- Research. Lodging is the permanent displacement of stems from upright, by stem buckling or by the root plate
+  turning in wet soil (Baker et al. 1998, J. Theor. Biol. 194; Berry et al. 2004, Adv. Agron. 84). The model is a
+  moment balance: the wind's base bending moment grows with the gust speed squared and the shoot's height, rain held
+  on the leaves adds weight and wet soil lowers the anchorage, so the same gale lodges a soaked meadow and spares a
+  dry one. Lodged patches lie along the gust that laid them, with swirls where it turned, and are patchy because the
+  stand's strength varies with fertility and density. Young grass culms lift again at the nodes (gravitropism) over
+  days; ripe cereals hardly recover. Games mostly fake it with a static flattened texture; here it follows the weather.
+- How. A grid of 96 x 96 cells of 4 m round the camera (moves with it, keeps the overlap), stepped eight rows a frame
+  in weather seconds (WorldWeather.time_scale). Each cell reads wind_at(p, 2 m), surface_wetness_at and rainfall_at:
+  risk = (U / Ucrit)^2 x (1 + 0.6 wet) x (1 + min(rain / 40, 0.5)) / (1 - 0.35 wet) x weakness, with
+  Ucrit = 10 m/s x sqrt(0.6 / h) for the sward height h and weakness 0.3 to 1.7 from world-space noise (41 m and
+  13 m). Above risk 1 the lodged share rises toward smoothstep over risk 1 to 4 within about 90 s, along the wind
+  turned by a swirl of up to 40 degrees; otherwise it decays with tau = 2.5 days (crops 40) x (1 + 2 wet).
+  Calm with nothing lodged skips the sweep after one probe.
+- Shader. lodge_map (RGBA8: direction, share) over lodge_rect. Up to the share x 1.05 of the blades lie down along
+  the direction (+-17 degrees each), kinked at the base and 7% shorter; up to x 1.6 lean after them at the patch
+  edges. Grazed lawns do not lodge. No rebuild: tiles, rings and the path tracer read the same map.
+- Check: grass bench --test, a wet 12 m/s gale for an hour lays the 0.5 m meadow down in patches along +x; ten calm
+  dry days later it stands again.
+
+## Leaf drifts (round 4, second pick)
+Built in VegetationField3D (`get_litter_drift_at`, PlantSpecies.RULE_LITTER_DRIFT 33) and PlantGenerator
+(PRESET_LEAF_BANK 103, in make_floor's broadleaf floors).
+- Research. Fallen leaves move with the wind until something stops them, so the litter is redistributed after the
+  fall: hollows, furrows and the feet of obstacles gather it, ridges and knolls are swept to the soil (Orndorff and
+  Lang 1981, Am. Midl. Nat. 106, leaf litter redistribution in a West Virginia hardwood forest; Boerner and Kooser 1989,
+  Am. Midl. Nat. 121, litter several times deeper in hollows than on ridges and sideslopes). Behind trunks, logs and
+  stones the lee eddy drops what the flow carried (the snowdrift mechanism at a smaller scale), and a bank also forms along the windward foot. Games paint this with decals or
+  leave the litter even; here the litter species follow it and leaf banks are real geometry.
+- How. drift = 1 + 3.5 x (the ground's depth under its ring at 2.5 m and at 6 m, 0.6 and 0.4, clamped -0.24 to
+  0.3 m), times 1 - 0.6 smoothstep(25 to 45 degrees of slope), plus 1.3 x the strongest obstacle foot: rocks
+  (obstacles), logs (thicker than 5 cm) and trunks (the crowns' stem foot), exp(-gap / 0.5 m) within 1.6 m, times
+  0.55 + 0.45 cos(angle from the downwind direction), clamped 0.15 to 2.5. The wind is litter_wind or the weather
+  map's. The placement caches it on 0.5 m cells. RULE_LITTER now reads litter x drift (capped at 1): litter thins
+  on crests and fills hollows. RULE_LITTER_DRIFT places by the drift itself.
+- Leaf bank. The stand's own leaves (stand_litter_leaves) heaped over an ellipse 0.9 to 1.6 m long, 8 to 18 cm
+  high, crest towards one end, lumpy, 2.2 layers of coarser leaves, over a dark matted under-layer (centre colour 0.2, 0.13, 0.07)
+  so no ground shows between leaves; leaves follow the heap's face. make_floor appends it last to broadleaf floors
+  (seeds of the rest unchanged): drift 1.35 up (fade 0.25), litter 0.45 up, crown shade 0.06 up, density with the
+  year's leaf cover. sward_mound 0.55 keeps the grass out from under it.
+- Check: vegetation bench --test, drift in the deepest hollow over the highest crest, a stone's downwind foot over
+  its windward foot and open ground; banks last in broadleaf floors, 8 to 25 cm high, none under conifers.
+
+## Grazing roughs and dung (round 4, third pick)
+Built in PlantGenerator (make_grazing, GrazeSet GRAZE_CATTLE / GRAZE_HORSE / GRAZE_DEER; presets PRESET_COW_PAT 104,
+PRESET_HORSE_DUNG 105, PRESET_DEER_PELLETS 106, PRESET_DUNG_ROUGH 107; PRESET_MAX 108; season key "dung_age").
+- Research. Cattle reject the herbage round their own dung for months, so a grazed pasture carries rank, dark green
+  tufts round older pats, several times the pat's area, that flower while the lawn cannot (MacDiarmid and Watkin
+  1972, J. Br. Grassl. Soc. 27, "The cattle dung patch"). Pats are 20 to 30 cm across, glossy olive for a day or
+  two, crusted in weeks, broken and grassed through over months. Horses dung in latrines they never graze, so a
+  paddock becomes a mosaic of short lawns and tall roughs with piles of droppings, nettles and thistles (Odberg and
+  Francis-Smith 1976, Equine Vet. J.). Deer leave pellet groups of 30 to 100 pellets with no rough round them.
+  Games rarely show any of this; pastures read as an even mown lawn.
+- How. Cattle: roughs (sward_mound 0.4 m, spacing 4.5 m), pats at 0.005, 0.06 and 0.4 years, docks and nettles in
+  sparse patches. Horse: one shared patch layout (seed 11100, cover 0.25, 18 m) for latrine roughs, dung piles,
+  nettles and thistles, so they gather in the same clumps. Deer: pellet groups at RULE_BROWSE 0.3 up (fade 0.15),
+  also in the wood (shade to 0.9). All in the light (shade under 0.4), slopes under 30 degrees, 2 m from water.
+  Roughs and pats keep GrassField3D blades out through sward_mound, as the mounds do; the lawn round them is the
+  sward's own (graze_height and the lawn mosaic).
+- Meshes. Pat: a ring-grid dome with a wobbly outline and coil ridges, crust paling from the top and rim, broken
+  into plates with grass through it when old; roughness 0.5 fresh to 0.88 crusted. Horse dung: 6 to 14 domed balls
+  with straw fibres. Deer pellets: 2 x 6 domes each, 2 to 4k triangles a group. Rough: 500 to 750 blades 20 to
+  45 cm, shorter at the edge, 12% dead, 5 to 10 nodding flowering culms.
+- Check: vegetation bench --test, cattle pats of three ages 2 to 6 cm high, a rough over 25 cm that keeps the sward
+  out, one latrine layout for the horse set, deer pellets only on the browsed lawn.
+
+## Next round options (card 22 Nov, round 5): meadow fairy rings, dewy webs, blowing leaves
+Research notes, nothing built yet:
+- Meadow fairy rings. Marasmius oreades and other grassland fungi grow out from a point as a ring of mycelium,
+  0.1 to 0.5 m a year, rings of several metres to tens of metres: an outer band of dark, lush grass (nitrogen the
+  fungus frees), inside it a zone where the grass is browned or dead (the mycelium makes the soil water-repellent),
+  then normal sward again in the middle, and the fruit bodies in a ring after rain (Shantz and Piemeisel 1917,
+  J. Agric. Res. 11, the zones). Built as: ring discs the GrassField3D reads for
+  blade colour and height (dark band, dead band), a meadow mushroom set on the ring's edge with the season's fruiting.
+- Dewy webs. On autumn mornings sheet webs of money spiders (Linyphiidae) and orb webs on tall stems show up by the
+  thousand once dew beads on them; gossamer drifts over the sward on calm days. Built as: thin web meshes (sheets
+  between blades, orbs on tall herbs and thistles) shown where WorldWeather dew or fog is high, sparkling in the sun.
+- Blowing leaves. In autumn gales fallen leaves lift, tumble and skitter over the ground and pile up where the leaf
+  drifts are (round 4), and swirl in eddies behind obstacles. Built as: a GPU particle layer of the stand's own leaves
+  near the camera, driven by WorldWeather gusts, landing into the drift field; few and cheap.
+
+
+## Meadow fairy rings (round 5, first pick)
+Built in modules/vegetation/fairy_rings.h (FairyRings::at, FairyRings::bands, and the same code as GLSL for the
+grass shader), GrassField3D.fairy_rings (on by default, off for crops), PlantSpecies RULE_FAIRY_RING 34 and
+PlantGenerator PRESET_FAIRY_RING_MUSHROOM 108 with make_fairy_rings (PRESET_MAX 109).
+- Layout. One shared ring layout for the whole world, so grass and mushrooms agree without any data passing: 40 m
+  cells, 30% hold a ring, radius 2 to 14 m (more small than large), centre kept inside its cell so a point only
+  reads its own cell. Rings past 40% "broken" open into arcs, as old rings do where they meet each other or a path.
+- Grass. Three bands across the ring edge (Shantz and Piemeisel 1917): a dark, taller outer band (front, 0.55 m),
+  a dead band just inside (0.5 m: blades browned to straw, shorter, some missing), and a weaker inner dark band.
+  Blade height and colour only; no extra geometry, no textures.
+- Mushrooms. A Marasmius-like champignon: buff cap 1.1 to 2.4 cm with a central umbo, 22 widely spaced gills, a
+  tough pale stalk 3.5 to 7 cm, in clusters of 3 to 8. Placed only on the ring's dead band (RULE_FAIRY_RING
+  -0.25 to 0.1 m, the signed distance to the ring front), fruiting from late May to mid November, in the open.
+- Check: vegetation bench --test (mushrooms only on the rings, none off them); grass bench --fairy for a look shot.
+
+## Dewy webs (round 5, second pick)
+Built in modules/vegetation/plant_webs.cpp (PRESET_SHEET_WEB 109, PRESET_ORB_WEB 110, PRESET_MAX 111,
+PlantGenerator.make_dew_webs) and the plant shader's silk variant (PLANT_SILK).
+- Research. Money spiders (Linyphiidae) make horizontal, non-sticky sheet webs and reach very high numbers in
+  grassland and crops (Sunderland, Fraser and Dixon 1986, Pedobiologia 29: up to 160 per m2 in cereal fields;
+  Bristowe 1958, The World of Spiders: over a million an acre from August to December). Silk is 1 to 4 microns
+  thick, so a web is unseen until dew or hoarfrost beads it; on a still autumn morning a whole field turns grey-white
+  with sheets and the orbs of garden spiders hang between tall dead stems, and both vanish as the sun dries them.
+- Technique. The threads are not geometry: each web is a few triangles (a sheet's disc, an orb's disc, crossed strips
+  for single threads) and the fragment shader draws the threads from the UVs, each widened to at least a pixel and
+  faded by its true width over the pixel (Persson's phone-wire anti-aliasing); past a family's spacing its mean cover
+  takes over, so far webs keep their true brightness and never shimmer. Dew drops are modelled as beads along each
+  thread (0.16 to 0.56 mm across, one per 0.5 mm), resolved up close and averaged far off. The surface is blended (a
+  hash only made a fixed sparkle in raster); the path tracer takes the same cover in its any-hit stage. Raster and
+  path traced orbs match at full size (spiral, hub, free zone, open sector, frame and anchors).
+- Sheets: four families of jittered, broken threads 0.7 to 1.2 mm apart, densest in patches a few centimetres across
+  and thinning to nothing at the edge; small flat sheets 5 to 10 cm near the ground and hammocks or domes up to 22 cm
+  higher in the grass, with scaffold threads up to the blade tips. Orbs: 25 to 35 radials out to a five-sided frame,
+  a tight hub spiral, a free zone, the capture spiral 3 to 5 mm apart (wetter, as its glue gathers water), a quarter
+  with one sector open (Zygiella-like), hung between two dry stems with dead heads, frame threads tied to the stems
+  and the ground.
+- Dew. The silk reads WeatherMap3D's surface wetness (where dew lands) and hoarfrost (white, matt beads); a "dew" key
+  in the season sets it instead for scenes without a weather map. Dry, only the hub's denser silk faintly shows.
+- Season: sheets from March to early December, most from late July; orbs late July to October; none under snow.
+- Check: vegetation bench --test (silk shader on every web, sheets low, orbs on stems, seasons); plants bench
+  --close=109 / 110 --dew=1 for a look, --dew=0 to see them gone.
+
+## Blowing leaves (round 5, third pick)
+Built into LeafFall3D (modules/vegetation/leaf_fall_3d.cpp), which already had falling leaves (Andersen, Pesavento and
+Wang 2005 plates), gale lifts, kicks by bodies and leaves on water and snow. What was missing was the ground: lying
+leaves never moved until a gust past the lift speed threw them, and loose litter was one uniform number round the
+camera, not the litter the crowns dropped.
+- Research. Wind moves fallen leaves over the forest floor and gathers them in hollows and against obstacles
+  (Orndorff and Lang 1981, J. Ecol. 69, "Leaf litter redistribution in a West Virginia hardwood forest"); in a breeze
+  that cannot lift them they slide, flip and cartwheel along the ground, the motion everyone notices in autumn.
+- Creep. Past creep_speed (2 m/s at 10 cm, half on ice) a lying leaf slides downwind at 0.3 of the excess (to
+  3 m/s), its heading jittered, flipping over now and then and turning as it goes; with less wind it slows by
+  friction (4 m/s2) and stops. Past lift_speed it is thrown up as before.
+- Shelter. The wind on the ground is the open wind over drift^0.6 (clamped 0.35 to 1.3), drift being the round-4
+  leaf drift field of the VegetationField3D (hollows, the lee of rocks, logs and trunks): leaves slide off exposed
+  ground and stop in the drifts, so moving leaves end where the drawn drifts are.
+- Litter source. field_litter (40 loose leaves per m2 under full litter, on by default) reads
+  VegetationField3D.get_litter_at: the gusts set leaves sliding, or lift them, only where the crowns dropped litter,
+  most from exposed spots. litter_density, the old uniform source, stays for scenes without a field.
+- Not done here: whirls (small vortices that spin leaves up in the lee of buildings, a few metres across; Tratt et al.
+  2003 measured dust devils as Rankine vortices with 5 to 10 m/s swirl and 2 to 3 m/s updraft). They belong in the
+  shared wind (WeatherMap3D), so leaves, dust, smoke and grass all feel them, not in one system's private copy.
+- Check: vegetation bench --test (or --test=blowing): still in light air, all sliding downwind past the creep speed
+  and none lifted; leaves taken off a wood's litter by the wind. weather --test=leaves and links --test still pass.
+
+## Avalanche tracks (after round 5; world-links 0c249ead)
+Built in modules/vegetation/plant_avalanche.cpp: PlantGenerator.make_avalanche_track and DISTURBANCE_AVALANCHE_KIND 6.
+SnowAvalanche3D stand_damage marks the broken stand as WorldStand DISTURBANCE_AVALANCHE with the years since; this is
+the ground layer that grows there (the bent alder and willow shrubs are the trees').
+- Research. Only plants that bend under the snow or regrow fast hold in a track; where it runs most often the
+  vegetation and soil are torn away, and avalanches carry soil, boulders and broken wood into the debris (ALPECOLe,
+  "Avalanches", University of Zurich 2011). Active chutes are kept in shrubs with forbs and ferns: green alder,
+  salmonberry, willow, with false hellebore, lady fern, fireweed and valerian (NRCS ecological site F003XN926WA,
+  North Cascades; LANDFIRE BpS 10830, North Pacific Avalanche Chute Shrubland, 2020). A 2007 Journal of Vegetation
+  Science paper often cited on avalanche-track plant diversity is listed as withdrawn, so it is not used here.
+- Stages by years since the avalanche: torn turf (rooted sod at 0.3 years) to 2, broken twigs to 4 and shed needles to
+  3 from the snapped conifers; fireweed from 1 to 25, lady fern 2 to 60, raspberry (for salmonberry) 2 to 40, a
+  broad-leaved tall forb (butterbur's form, for hellebore and Adenostyles) 3 to 60, bilberry (for huckleberry) 4 to
+  60, all in patches. Slopes up to 45 degrees, out of the edge's deeper shade (0.6).
+- Check: vegetation bench --test, a 5-year kind 6 track holds the flora, none round it or on a windthrow of the same
+  age; debris species fresh, tall forbs later.
+
+## Next round options (card 22 Nov, round 6): snowmelt sward, flood wrack lines, seed down in the wind
+Research notes, nothing built yet:
+- Snowmelt sward. Where snow lay long, the grass comes out flattened and matted in one direction, straw-pale, with grey
+  and pinkish webs of snow mould (Microdochium nivale, Typhula) in patches that lay longest; it greens from the edges
+  over two or three weeks. Built as: GrassField3D reading the snow's lie time (WorldSnow) for a matted lean, pale
+  tint and mould patches that fade as the season warms.
+- Flood wrack lines. After a flood a river or lake leaves strand lines of straw, reed stems, twigs and leaves along
+  the high-water mark, caught on fences and the lower branches, the grass beneath combed flat downstream. Built as:
+  wrack meshes placed along a contour a set height over the water's level (WorldWater), the sward laid flat below it.
+- Seed down in the wind. In late summer thistle, fireweed and willowherb down and dandelion clocks loose their seeds
+  in dry, sunny wind; they drift in the air, catch in the grass and pile in corners. Built as: light particles in the
+  shared wind from the plants that are seeding (their bloom stage), few and cheap, settling into the grass.
+- Later card: lee whirls. WeatherMap3D.add_vortex(position, radius, swirl, updraft, spin) is on main (41dbafbc90) and
+  LeafFall3D feels any vortex through wind_at; what is missing is an owner that spawns whirls in the lee of buildings,
+  rocks and wood edges in gusty wind (Tratt et al. 2003 sizes). A candidate for a future card.

@@ -71,6 +71,12 @@
 				The number of crowns, added by hand and automatic.
 			</description>
 		</method>
+		<method name="get_crept_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Leaves set sliding along the ground so far: lying leaves past [member creep_speed], and those the wind took off the fields' litter ([member field_litter]).
+			</description>
+		</method>
 		<method name="get_floating_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -126,6 +132,12 @@
 				The share of a tree [param preset]'s leaves that the automatic crowns shed a day now, or -1 when no crown of it is near.
 			</description>
 		</method>
+		<method name="get_sliding_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Lying leaves sliding along the ground now.
+			</description>
+		</method>
 		<method name="get_step_time" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -158,8 +170,14 @@
 		<member name="auto_crowns" type="bool" setter="set_auto_crowns" getter="is_auto_crowns" default="true">
 			If [code]true[/code], the crowns near the camera come from the scene's [VegetationField3D] nodes (see [member vegetation_field]), with leaf kinds from each tree's preset, and each sheds with its species' season. Crowns added with [method add_crown] are kept.
 		</member>
+		<member name="creep_speed" type="float" setter="set_creep_speed" getter="get_creep_speed" default="2.0">
+			Wind speed (m/s) at 10 cm above the ground past which lying leaves slide downwind, flipping over now and then (half on ice). Where the leaf drift of a [VegetationField3D] is high (hollows, the lee of rocks, logs and trunks) the wind there counts as sheltered, so leaves slide off exposed ground and stop in the drifts.
+		</member>
 		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
 			If [code]false[/code], the leaves stop.
+		</member>
+		<member name="field_litter" type="float" setter="set_field_litter" getter="get_field_litter" default="40.0">
+			Loose leaves per m2 under full litter ([method VegetationField3D.get_litter_at]) that the wind can take: past [member creep_speed] it sets them sliding, past [member lift_speed] it throws them up, most from exposed spots. [code]0[/code] turns it off.
 		</member>
 		<member name="leaf_area_index" type="float" setter="set_leaf_area_index" getter="get_leaf_area_index" default="4.0">
 			Leaf area index of the automatic crowns (one-sided leaf area per crown ground area), which sets how many leaves a crown holds.

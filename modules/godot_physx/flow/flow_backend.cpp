@@ -374,6 +374,11 @@ bool grid_step(Grid *p_grid, double p_time, float p_delta, const Settings &p_set
 	sim = NvFlowGridSimulateLayerParams_default;
 	sim.densityCellSize = p_settings.cell_size * s;
 	sim.physicsCollisionEnabled = NV_FLOW_TRUE;
+	// Flow steps at a fixed 60 a second and, by default, takes at most one step a simulate: below 60 frames a second
+	// the gas ran slower than the game (half speed at 30 frames a second, an eighth at the cloud benches' few).
+	// Catch up with up to eight steps a frame, as Godot's physics does (max_physics_steps_per_frame, 8): the gas keeps
+	// time with the physics and the game down to 7.5 frames a second, and slows with them below it.
+	sim.maxStepsPerSimulate = 8u;
 	sim.advection.combustionEnabled = p_settings.combustion ? NV_FLOW_TRUE : NV_FLOW_FALSE;
 	sim.advection.gravity = { p_settings.gravity[0] * s, p_settings.gravity[1] * s, p_settings.gravity[2] * s };
 	sim.advection.buoyancyPerTemp = p_settings.buoyancy;

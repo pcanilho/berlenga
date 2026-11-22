@@ -62,6 +62,9 @@ extends Node3D
 #   --only-layer          with --world: only the view's layer is placed
 #   --no-far-thinning     with --world: RockField3D.far_thinning off (each layer whole to its radius, then a cut)
 #   --save-far-cover=p    with --world: save the far cover map (32 m texels to 4 km) and count its stony texels
+#   --frost[=C]           with --world: a cold, wet climate (mean annual air C, -4) so the ground sorts into stone
+#                         circles and stripes (RockField3D.frost_sorting); --no-frost for the before frame;
+#                         --frost-spot (flat soil: circles) or --frost-spot=stripes (4 to 9 degrees)
 #   --trail[=passes]      with --world: a game trail across the spot, 1.5 m before it (WorldStand.set_trails, 0.8 m wide,
 #                         400 passes a year); --rooting[=years] a boar rooting 2 m behind it, that old; --no-wear ignores both
 #   --streaming           with --world: RockField3D streams after the build, so far thinning runs as in play
@@ -77,6 +80,9 @@ extends Node3D
 #   --tracks              with --world: a walker and a two-wheeled cart cross the spot on bends before the still
 #   --roll[=m/s]          with --world: a ball rolled across the spot before the still (stones_react; --no-react off)
 #   --no-river-detail     with --world: RockField3D.ground_detail_rivers off (river beds keep only the river layer's stones)
+#   --no-tiles            with --world: TerrainGenerator3D.tile_erosion_enabled off (no droplet rills and gullies);
+#                         --gully-incision=x the gullies' extra cut (1; 0 for none, a before frame); --gully-spot
+#                         puts the view's spot on the nearest strong gully on soil
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -436,7 +442,8 @@ func _world() -> void:
 	# Heavy generator options are on by default; this bench keeps its own fast choices.
 	gen.glacial_enabled = false
 	gen.glacial_converged = false
-	gen.tile_erosion_enabled = false
+	gen.tile_erosion_enabled = not args.has("no-tiles") # droplet erosion's rills and gullies (--no-tiles: a before frame)
+	gen.gully_incision = float(args.get("gully-incision", "1")) # --gully-incision=0: the droplets' channels without the gullies' extra cut
 	gen.strata_enabled = false
 	gen.guide_preview = false
 	gen.dunes_enabled = false
@@ -448,7 +455,7 @@ func _world() -> void:
 	gen.size = Vector2(WORLD, WORLD)
 	gen.cell_size = float(args.get("cell", "8.0")) # --cell=4 for close shore shots (finer cliff facets)
 	gen.seed = int(args.get("seed", "5"))
-	gen.uplift = 3.0
+	gen.uplift = float(args.get("uplift", "3.0")) # --uplift=k: lower for a gentler world (frost-sorted flats)
 	gen.base_uplift = 0.1
 	var up := Image.create(64, 64, false, Image.FORMAT_RF)
 	for y in 64:
@@ -617,6 +624,84 @@ func _world() -> void:
 					found = p
 		spot = found
 		print("bare spot ", spot, " geology ", gen.get_geology_at(spot))
+	if args.has("gully-spot"):
+		# --gully-spot: a strong gully on an open slope (TerrainGenerator3D.get_gully_at; no rock exposure or fill,
+		# 15 to 35 degrees over 16 m, banks under 4 m high 10 m either side so not a ravine), for close frames.
+		var best := -INF
+		var found := spot
+		for zz in range(-1000, 1001, 6):
+			for xx in range(-1000, 1001, 6):
+				var p := Vector3(xx, 0, zz)
+				var g := gen.get_geology_at(p)
+				var h := gen.get_height(p)
+				if g.g > 0.05 or h < gen.sea_level + 10.0:
+					continue
+				var gx := gen.get_height(p + Vector3(8, 0, 0)) - gen.get_height(p - Vector3(8, 0, 0))
+				var gz := gen.get_height(p + Vector3(0, 0, 8)) - gen.get_height(p - Vector3(0, 0, 8))
+				var ny := Vector3(-gx, 16.0, -gz).normalized().y
+				if ny < cos(deg_to_rad(35.0)) or ny > cos(deg_to_rad(15.0)):
+					continue
+				var gl := gen.get_gully_at(p, ny)
+				if gl.x < 0.5 or gl.y > 0.3:
+					continue
+				var t := Vector3(-gz, 0, gx).normalized() * 10.0
+				var bank := maxf(gen.get_height(p + t), gen.get_height(p - t)) - h
+				if bank > 4.0:
+					continue
+				var score := gl.x - bank * 0.1 - absf(h - gen.sea_level - 80.0) / 400.0
+				if score > best:
+					best = score
+					found = p
+		spot = found
+		print("gully spot ", spot, " channel ", gen.get_gully_at(spot, 0.85))
+	# --frost[=C]: a cold, wet climate (mean annual air C at sea level, -4 by default; 700 mm a year) on a
+	# WeatherMap3D, so the ground sorts into stone circles and stripes (RockField3D.frost_sorting; --no-frost off).
+	if args.has("frost"):
+		var maat := -4.0 if args["frost"] == "1" else float(args["frost"])
+		var cr = ClassDB.instantiate("ClimateRecipe")
+		cr.temperature_january = maat - 14.0
+		cr.temperature_july = maat + 14.0
+		cr.precipitation = 700.0
+		var fw = ClassDB.instantiate("WeatherMap3D")
+		fw.extent = 256.0
+		fw.resolution = 32
+		fw.climate = cr
+		fw.season_day = int(args.get("frost-day", "230")) # late summer: the active layer thawed, the snow gone
+		add_child(fw)
+	if args.has("frost-spot"):
+		# --frost-spot[=stripes]: the nearest ground the frost sorts fully (with --frost), flat for circles or 5 to 9
+		# degrees for stripes.
+		var stripes: bool = args["frost-spot"] == "stripes"
+		var best_f := INF
+		var found_f := spot
+		# Where RockField3D's own frost gate is fully open there and 8 m round (open, even ground), the nearest; the
+		# hillside's slope (over 4 m) picks circles under 2 degrees or stripes from 5.
+		var tried := 0
+		for zz in range(-800, 801, 8):
+			for xx in range(-800, 801, 8):
+				var p := Vector3(xx, 0, zz)
+				var f: Vector2 = rocks.get_frost_at(p)
+				if f.x < 0.95:
+					continue
+				tried += 1
+				var h := gen.get_height(p)
+				var sl := rad_to_deg(atan(Vector2(gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0)), gen.get_height(p + Vector3(0, 0, 4)) - gen.get_height(p - Vector3(0, 0, 4))).length() / 8.0))
+				if (sl < 5.0 or sl > 9.0) if stripes else sl > 2.0:
+					continue
+				var open := true
+				for k in 8:
+					var q := p + Vector3(cos(k * PI / 4.0), 0, sin(k * PI / 4.0)) * 8.0
+					if rocks.get_frost_at(q).x < 0.95 or gen.get_height(q) - h > 4.0:
+						open = false
+						break
+				if not open:
+					continue
+				var dd := Vector2(xx, zz).length()
+				if dd < best_f:
+					best_f = dd
+					found_f = p
+		spot = found_f
+		print("frost spot ", spot, " (", tried, " points fully sorting)")
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
@@ -747,6 +832,14 @@ func _world() -> void:
 		var tb := Time.get_ticks_msec()
 		# --trail[=passes]: a game trail (0.8 m, 400 passes a year) across the spot along x, 1.5 m before it;
 		# --rooting[=years]: a boar rooting 1.5 m across, 2 m behind the spot, that age (0: fresh). WorldStand.
+		rocks.frost_sorting = not args.has("no-frost")
+		if args.has("frost"):
+			var fr := ""
+			for dz in [-6, -3, 0, 3, 6]:
+				for dx in [-6, -3, 0, 3, 6]:
+					var f: Vector2 = rocks.get_frost_at(spot + Vector3(dx, 0, dz))
+					fr += " %.2f/%.2f" % [f.x, f.y]
+			print("frost gate/share round the spot:", fr)
 		if args.has("trail"):
 			var passes := 400.0 if args["trail"] == "1" else float(args["trail"])
 			WorldContracts.get_stand().set_trails([{"points": PackedVector2Array([Vector2(spot.x - 40, spot.z - 1.5), Vector2(spot.x + 40, spot.z - 1.5)]), "width": 0.8, "passes": passes, "kind": "game_trail"}])

@@ -38,6 +38,8 @@
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/templates/hashfuncs.h"
+#include "core/templates/local_vector.h"
 #include "modules/world/world_contracts.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/physics/animatable_body_3d.h"
@@ -61,7 +63,7 @@ bool SnowBodies3D::is_carrier(const Node *p_node) {
 	if (!p_node || p_node->is_in_group(SNAME("snow_ignore"))) {
 		return false;
 	}
-	if (p_node->is_in_group(SNAME("snow_catch"))) {
+	if (p_node->is_in_group(SNAME("snow_catch")) || p_node->is_in_group(SNAME("snow_roof"))) {
 		return true;
 	}
 	// Things that move by themselves or are moved: rigid bodies (vehicles too), animated bodies, the PhysX vehicles
@@ -95,6 +97,11 @@ void SnowBodies3D::track(Node *p_node) {
 	}
 	Body b;
 	b.id = id;
+	if (p_node->is_in_group(SNAME("snow_roof"))) {
+		b.roof = true;
+		b.roof_phi = roof_friction(p_node->get_meta(SNAME("snow_roof_material"), String()));
+		b.roof_heat = MAX(float(p_node->get_meta(SNAME("snow_roof_heat"), 0.0f)), 0.0f);
+	}
 	bodies.insert(id, b);
 }
 
@@ -233,18 +240,107 @@ float SnowBodies3D::_exposure(Node3D *p_node) {
 	return space->intersect_ray(rp, rr) ? 0.0f : 1.0f;
 }
 
-bool SnowBodies3D::slab_slides(float p_depth, float p_density, float p_wetness, float p_slope, float p_cohesion) {
+bool SnowBodies3D::slab_slides(float p_depth, float p_density, float p_wetness, float p_slope, float p_cohesion, float p_friction_deg) {
 	// Mohr-Coulomb on the bed (as the cornice's crack, follow-up 7): the load's shear rho g d sin(slope) against the
 	// bond c plus friction rho g d cos(slope) tan(phi). Melt water at the bed breaks the bond and lubricates it
-	// (wet snow slides off warm roofs at about 25 degrees); phi falls from 25 to 15 degrees with wetness.
+	// (wet snow slides off warm roofs at about 25 degrees); phi falls by 10 degrees with wetness (from 25 on a rough
+	// surface, from about 10 on sheet metal).
 	if (p_depth <= 0.0f || p_slope <= 0.0f) {
 		return false;
 	}
 	const float w = CLAMP(p_wetness, 0.0f, 1.0f);
 	const float load = p_density * GRAVITY * p_depth; // Pa
 	const float c = p_cohesion * (1.0f - w) * (1.0f - w);
-	const float phi = Math::deg_to_rad(25.0f - 10.0f * w);
+	const float phi = Math::deg_to_rad(MAX(p_friction_deg - 10.0f * w, 3.0f));
 	return load * Math::sin(p_slope) > c + load * Math::cos(p_slope) * Math::tan(phi);
+}
+
+// Roofs (follow-up 50). Eurocode 1 (EN 1991-1-3) gives the snow a pitched roof holds as a share mu1 of the ground's:
+// 0.8 up to 30 degrees, falling linearly to none at 60 (snow does not stay on steeper roofs); Taylor (1985) and
+// O'Rourke's roof surveys find slippery roofs shed it at lower pitches, so the bed's friction goes with the roofing:
+// about 10 degrees dry on sheet metal, 20 on tiles and 25 on shingles or rough boards.
+float SnowBodies3D::roof_shape(float p_slope) {
+	const float a = Math::rad_to_deg(MAX(p_slope, 0.0f));
+	return a <= 30.0f ? 0.8f : (a >= 60.0f ? 0.0f : 0.8f * (60.0f - a) / 30.0f);
+}
+
+float SnowBodies3D::roof_friction(const String &p_material) {
+	const String m = p_material.to_lower();
+	if (m == "metal" || m == "glass") {
+		return 10.0f;
+	}
+	if (m == "tile" || m == "slate") {
+		return 20.0f;
+	}
+	return 25.0f; // shingle, boards, felt, thatch
+}
+
+// What slides off a roof lands below the eave: the slab leaves the eave at the speed it slid down the roof's run,
+// v = sqrt(2 g L (sin a - tan phi cos a)), and falls from the eave's height to the ground (a ballistic throw), so a
+// steep or slippery roof throws it further out. It lands as a bank along the eave (cones of wind-packed snow into the
+// cover, mass kept).
+void SnowBodies3D::_land_pile(const Body &r_body, Node3D *p_node, float p_depth_lost, const Vector3 &p_down, float p_slope) {
+	SnowCover3D *cover = SnowCover3D::get_active();
+	if (!roof_piles || !cover || p_depth_lost <= 0.0f || r_body.top_area <= 0.0f) {
+		return;
+	}
+	// The eave: the top's low edge, and its length across the slope.
+	AABB box;
+	bool any = false;
+	for (const ObjectID &gid : r_body.geometry) {
+		GeometryInstance3D *g = ObjectDB::get_instance<GeometryInstance3D>(gid);
+		if (g && g->is_inside_tree()) {
+			const AABB b = g->get_global_transform().xform(g->get_aabb());
+			box = any ? box.merge(b) : b;
+			any = true;
+		}
+	}
+	if (!any) {
+		return;
+	}
+	const Vector3 down = p_down.length() > 1e-4f ? p_down.normalized() : Vector3(1.0f, 0.0f, 0.0f);
+	const Vector3 across = Vector3(-down.z, 0.0f, down.x);
+	const Vector3 c = box.get_center();
+	const float half_run = 0.5f * Math::abs(box.size.x * down.x) + 0.5f * Math::abs(box.size.z * down.z);
+	const float half_len = MAX(0.5f * Math::abs(box.size.x * across.x) + 0.5f * Math::abs(box.size.z * across.z), 0.5f);
+	const Vector3 eave = Vector3(c.x, box.position.y, c.z) + down * half_run;
+	const float run = 2.0f * half_run / MAX(Math::cos(p_slope), 0.1f); // along the slope
+	const float tphi = Math::tan(Math::deg_to_rad(MAX(r_body.roof_phi - 10.0f * r_body.wet, 3.0f)));
+	const float v = Math::sqrt(MAX(2.0f * GRAVITY * run * (Math::sin(p_slope) - tphi * Math::cos(p_slope)), 0.0f));
+	const float ground = cover->get_ground_height_at(eave);
+	const float hgt = MAX(eave.y - ground, 0.0f);
+	const float vs = v * Math::sin(p_slope);
+	const float t = (-vs + Math::sqrt(vs * vs + 2.0f * GRAVITY * hgt)) / GRAVITY;
+	const float throw_d = v * Math::cos(p_slope) * t;
+	const Vector3 land = eave + down * (throw_d + 0.5f);
+	// A bank of cones along the eave, 1.5 m wide each side, spaced half that so they blend into one bank; each cone's
+	// share and its throw vary a little (a slab breaks up unevenly), with the mass kept.
+	const float mass = p_depth_lost * r_body.density * r_body.top_area; // kg
+	const float r = 1.5f;
+	const int k = MAX(int(Math::ceil(4.0f * half_len / r)), 1);
+	const float rho = MAX(r_body.density, 100.0f);
+	uint32_t seed = hash_murmur3_one_32(uint32_t(roof_slides) * 7919u + uint32_t(uint64_t(p_node->get_instance_id())));
+	auto rnd = [&seed]() {
+		seed = hash_murmur3_one_32(seed);
+		return float(seed & 0xffff) / 65535.0f;
+	};
+	LocalVector<float> share;
+	LocalVector<float> reach;
+	share.resize(k);
+	reach.resize(k);
+	float total = 0.0f;
+	for (int j = 0; j < k; j++) {
+		share[j] = 0.7f + 0.6f * rnd();
+		reach[j] = (rnd() - 0.5f) * 0.6f; // m
+		total += share[j];
+	}
+	for (int j = 0; j < k; j++) {
+		const float f = k > 1 ? (float(j) / (k - 1) - 0.5f) * 2.0f * MAX(half_len - 0.5f * r, 0.0f) : 0.0f;
+		const float each = mass * share[j] / total / rho; // m3
+		const float h = 3.0f * each / (float(Math::PI) * r * r);
+		cover->add_drift(land + across * f + down * reach[j], r, h, rho);
+	}
+	roof_landed += mass;
 }
 
 void SnowBodies3D::_measure(Body &r_body, Node3D *p_node) {
@@ -361,6 +457,11 @@ void SnowBodies3D::_step(double p_dt) {
 			b.last_velocity = Vector3();
 			if (snow->has_provider() && b.exposure > 0.5f) {
 				b.depth = CLAMP(snow->depth_at(p), 0.0f, max_depth);
+				if (b.roof) {
+					// A roof holds its Eurocode share of the ground's snow.
+					const float pitch = Math::acos(CLAMP(n->get_global_transform().basis.get_column(1).normalized().y, -1.0f, 1.0f));
+					b.depth *= roof_shape(pitch) / 0.8f;
+				}
 				const float rho = snow->density_at(p);
 				b.density = rho > 0.0f ? rho : SnowCover3D::new_snow_density(t);
 				b.wet = CLAMP(snow->wetness_at(p), 0.0f, 1.0f);
@@ -371,9 +472,13 @@ void SnowBodies3D::_step(double p_dt) {
 		b.last_position = p;
 		b.last_velocity = v;
 
-		// Falling snow builds the load where the sky is open; fresh snow is light and bright.
+		// The top's tilt (a roof face's pitch).
+		const Vector3 up_axis = n->get_global_transform().basis.get_column(1).normalized();
+		const float tilt = Math::acos(CLAMP(up_axis.y, -1.0f, 1.0f));
+		// Falling snow builds the load where the sky is open; fresh snow is light and bright. A roof keeps its
+		// Eurocode share of it (none past 60 degrees: it sloughs off as it falls).
 		if (weather->has_provider() && b.exposure > 0.0f) {
-			const float swe = weather->snowfall_at(p) * dt_h * b.exposure; // mm of water
+			const float swe = weather->snowfall_at(p) * dt_h * b.exposure * (b.roof ? roof_shape(tilt) / 0.8f : 1.0f); // mm of water
 			if (swe > 0.0f) {
 				const float rho_new = SnowCover3D::new_snow_density(t);
 				const float add = swe / 1000.0f * WATER_DENSITY / rho_new;
@@ -400,13 +505,17 @@ void SnowBodies3D::_step(double p_dt) {
 		}
 		// A tilted top lets the load go as one slab (not cloth: it has no one top).
 		if (slide_enabled && b.depth > 0.0f && !n->is_class("PhysXCloth3D")) {
-			const Vector3 up = n->get_global_transform().basis.get_column(1).normalized();
-			const float slope = Math::acos(CLAMP(up.y, -1.0f, 1.0f));
-			if (slab_slides(b.depth, b.density, b.wet, slope, slab_cohesion)) {
+			const Vector3 up = up_axis;
+			const float slope = tilt;
+			if (slab_slides(b.depth, b.density, b.wet, slope, slab_cohesion, b.roof ? b.roof_phi : 25.0f)) {
 				const Vector3 down = Vector3(up.x, 0.0f, up.z).normalized();
 				const float lost = b.depth;
 				b.depth = 0.0f;
 				slabs_slid++;
+				if (b.roof) {
+					roof_slides++;
+					_land_pile(b, n, lost, down, slope);
+				}
 				_shed(b, n, lost, down, t);
 			}
 		}
@@ -419,6 +528,18 @@ void SnowBodies3D::_step(double p_dt) {
 		if (fire->has_provider()) {
 			const float heat = MAX(fire->heat_at(p), 0.0f);
 			melt += heat * dt / (FUSION * MAX(b.density, 50.0f));
+		}
+		// A warm roof: the building's heat loss melts the bed once the snow over it insulates it to 0 C, the heat
+		// the snow conducts up to the cold air, k (0 - T) / d, being less than what comes through the roof (the
+		// warm-roof melt behind ice dams; Tobiasson 1988). The bed's melt water wets it (lubricating the slide).
+		if (b.roof && b.roof_heat > 0.0f && b.depth > 0.0f) {
+			const float k = SnowCover3D::snow_conductivity(b.density);
+			const float up_flux = k * MAX(-t, 0.0f) / MAX(b.depth, 0.01f);
+			const float bed = b.roof_heat - up_flux; // W/m2 melting the bed
+			if (bed > 0.0f) {
+				melt += bed * float(p_dt * scale) / (FUSION * MAX(b.density, 50.0f));
+				b.wet = MAX(b.wet, 0.6f);
+			}
 		}
 		const float rain = weather->has_provider() ? weather->rainfall_at(p) * dt_h : 0.0f; // mm
 		if (b.depth > 0.0f) {
@@ -433,7 +554,7 @@ void SnowBodies3D::_step(double p_dt) {
 			b.density += (300.0f - b.density) * MIN(dt_h / 48.0f, 1.0f);
 			b.albedo = MAX(b.albedo - dt_h * (0.004f + 0.02f * b.wet), 0.55f);
 		}
-		b.depth = MIN(b.depth, max_depth);
+		b.depth = MIN(b.depth, b.roof ? roof_max_depth : max_depth);
 		if (b.depth < MIN_DEPTH) {
 			b.depth = 0.0f;
 			b.wet = 0.0f;
@@ -535,7 +656,15 @@ void SnowBodies3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_body_top_area", "node"), &SnowBodies3D::get_body_top_area);
 	ClassDB::bind_method(D_METHOD("get_clumps_dropped"), &SnowBodies3D::get_clumps_dropped);
 	ClassDB::bind_method(D_METHOD("get_slabs_slid"), &SnowBodies3D::get_slabs_slid);
-	ClassDB::bind_static_method("SnowBodies3D", D_METHOD("slab_slides", "depth", "density", "wetness", "slope", "cohesion"), &SnowBodies3D::slab_slides);
+	ClassDB::bind_static_method("SnowBodies3D", D_METHOD("slab_slides", "depth", "density", "wetness", "slope", "cohesion", "friction"), &SnowBodies3D::slab_slides, DEFVAL(25.0f));
+	ClassDB::bind_static_method("SnowBodies3D", D_METHOD("roof_shape", "slope"), &SnowBodies3D::roof_shape);
+	ClassDB::bind_static_method("SnowBodies3D", D_METHOD("roof_friction", "material"), &SnowBodies3D::roof_friction);
+	ClassDB::bind_method(D_METHOD("get_roof_slides"), &SnowBodies3D::get_roof_slides);
+	ClassDB::bind_method(D_METHOD("get_roof_landed"), &SnowBodies3D::get_roof_landed);
+	ClassDB::bind_method(D_METHOD("set_roof_piles", "enable"), &SnowBodies3D::set_roof_piles);
+	ClassDB::bind_method(D_METHOD("is_roof_piles_enabled"), &SnowBodies3D::is_roof_piles_enabled);
+	ClassDB::bind_method(D_METHOD("set_roof_max_depth", "meters"), &SnowBodies3D::set_roof_max_depth);
+	ClassDB::bind_method(D_METHOD("get_roof_max_depth"), &SnowBodies3D::get_roof_max_depth);
 	ClassDB::bind_method(D_METHOD("set_weight_enabled", "enable"), &SnowBodies3D::set_weight_enabled);
 	ClassDB::bind_method(D_METHOD("is_weight_enabled"), &SnowBodies3D::is_weight_enabled);
 	ClassDB::bind_method(D_METHOD("set_slide_enabled", "enable"), &SnowBodies3D::set_slide_enabled);
@@ -569,6 +698,8 @@ void SnowBodies3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_track"), "set_auto_track", "is_auto_track");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weight_enabled"), "set_weight_enabled", "is_weight_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "slide_enabled"), "set_slide_enabled", "is_slide_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "roof_piles"), "set_roof_piles", "is_roof_piles_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roof_max_depth", PROPERTY_HINT_RANGE, "0,5,0.01,suffix:m"), "set_roof_max_depth", "get_roof_max_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clumps_enabled"), "set_clumps_enabled", "is_clumps_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slab_cohesion", PROPERTY_HINT_RANGE, "0,2000,1,suffix:Pa"), "set_slab_cohesion", "get_slab_cohesion");
 }

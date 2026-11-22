@@ -1,0 +1,1 @@
+- Snow: under the weather's warm layer aloft (`warm_nose_temperature`) the snow cover and falling snow take its rain share, so freezing rain lands as rain on the pack.

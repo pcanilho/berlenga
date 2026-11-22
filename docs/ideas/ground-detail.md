@@ -886,6 +886,20 @@ about -1 to -2 °C (WeatherMap3D / WorldWeather temperature with the lapse rate)
 3 to 10° stripes, soil moisture high. Seasons: active-layer thaw shows the fresh sort in summer; snow hides it in
 winter (snow cover already reads WeatherMap3D).
 
+Outcome (22 Nov, Paulo picked "Both, frost first"): built as `RockField3D.frost_sorting` (on). The pattern is a
+Cahn-Hilliard phase separation, the continuum form of Kessler-Werner's sorting (stones move toward stone-rich
+ground, fines toward fines), run once on a 64 x 64 periodic grid of 0.2 m cells (kappa 1.27, 4000 steps, built
+at the first use): one map at a stone share of 0.25 (isolated fine domains in a stony net: circles) and one at 0.5 with mobility cut along one axis (stripes). Circles are domain
+warped per position; stripes turn to each 48 m block's fall line and blend across block edges, so neither
+repeats. The gate reads the WorldWeather climate of the active WeatherMap3D: mean annual air (lapse with height)
+fades in from 1 to -2 C, precipitation from 250 to 500 mm, slope (normal over 4 m) under 10 to 15 degrees, soil
+depth 0.1 to 0.4 m, rock exposure under 0.4 to 0.7; never in water, sand, talus, or within 2.5 m of the sea.
+Circles below 2 degrees, blending into stripes by 5. On sorting ground the shore and scree draw thin out in the fine
+centres and a frost family is added on the borders (coarse end of the class, 40% on edge 55 to 85 degrees and
+sunk a third, the rest lying, cover 0.6/0.3/0.1 by class); tiles are skipped there. `get_frost_at(position)`
+returns (gate, stone share) for other systems (terrain and vegetation could shade the fine centres). Bench:
+`--world --uplift=0.3 --frost --frost-spot[=stripes] --top=9`; raster and PT match.
+
 **C. Feet and tyres crush the new detail.** The trail armour and the rooting clods do not react to prints yet. The
 reacting-stones path (ground detail "Stones that react") already presses grains into a print and spills them at
 its rim; extend it to the rooting clods (GroundClods3D's crushed test on the print field, as its own clods) and
@@ -896,3 +910,13 @@ tiled, so every one is a single grain the contacts reach). The rooting clods now
 test against the print field (pressed in or heaped over: gone), keyed by cell and number so a crushed clod stays
 gone when the patch is laid again. A tyre across a fresh patch: 193 clods to 169, the rut clean; raster and PT
 match.
+
+**D. Gravel sorted by storm runoff (candidate, 22 Nov).** Overland flow and rills winnow the fines and leave a lag
+of gravel in the rill floors, and drop the load in small fans where the slope eases (Horton 1945; Poesen et al.
+2003 on rock fragment cover and runoff; a stony lag armours a rill bed once the flow can no longer move its
+coarse fraction, as the river beds' Shields threshold). GroundSurface3D already cuts runoff channels (rills, the
+gullies test). Technique, placement-time like the trails: GroundSurface3D publishes its rill field (depth and
+flow per texel, or the channel segments) through a written contract; the detail placement thins fines in a rill
+floor by the flow's Shields share and adds the class's coarse end there as a lag (FAMILY_PEBBLE, rounded a
+little, imbricated across the flow as the river beds' grains), and adds a fan of finer grains where the flow
+spreads. Stones placed only where the channel exists, rebuilt on the field's change signal.

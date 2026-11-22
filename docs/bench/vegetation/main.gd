@@ -88,6 +88,9 @@ static func height(x: float, z: float) -> float:
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a == "--test": test = true
+		elif a == "--test=blowing":
+			test = true
+			only_blowing = true
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -307,6 +310,11 @@ func _physics_process(_d: float) -> void:
 	for s in mini(3, field.biome.species.size()):
 		counts.append(field.get_placements(s).size())
 	print("VEG_POPULATE err=%d plants=%d per_species=%s ms=%.1f" % [err, field.get_plant_count(), str(counts), field.get_populate_time_msec()])
+	if test and only_blowing:
+		await _blowing_checks()
+		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if test:
 		_checks()
 		await _stream_checks()
@@ -314,6 +322,7 @@ func _physics_process(_d: float) -> void:
 		_deadwood_checks()
 		await _place_form_checks()
 		_trunk_checks()
+		await _blowing_checks()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -1042,6 +1051,47 @@ func _stand_check() -> void:
 # Beaver meadows (make_beaver): a drained pond bed reported as WorldStand kind 4, 6 years old, holds the meadow;
 # the ground round it and a windthrow of the same age hold none of it. The pond set zones by water: lilies float
 # only in deep water, rush only on the shore.
+# Avalanche tracks (make_avalanche_track): ground reported as WorldStand kind 6 holds the track's flora by its age (torn
+# turf and debris the first years, fireweed and tall forbs after), none round it or on a windthrow of the same age.
+func _avalanche_check() -> void:
+	var st: WorldStand = WorldContracts.get_stand()
+	var c := Vector2(30, 30)
+	var track := PlantGenerator.make_avalanche_track(1, false)
+	var counts := []
+	for kind in [PlantGenerator.DISTURBANCE_AVALANCHE_KIND, WorldStand.DISTURBANCE_WIND]:
+		st.clear_disturbances()
+		st.add_disturbance(Vector3(c.x, 0, c.y), 10.0, kind, 5.0)
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		f.biome.species.assign(track)
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var on := 0
+		var off := 0
+		for ch in f.get_children(true):
+			if ch is MultiMeshInstance3D and ch.multimesh:
+				var mm: MultiMesh = ch.multimesh
+				for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+					var q: Vector3 = (ch as Node3D).global_transform * mm.get_instance_transform(i).origin
+					var d := Vector2(q.x, q.z).distance_to(c)
+					if d < 7.0:
+						on += 1
+					elif d > 13.0 and d < 30.0:
+						off += 1
+		counts.append([on, off])
+		f.free()
+	st.clear_disturbances()
+	var fresh := 0
+	var grown := 0
+	for sp in track:
+		if sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 0.5) > 0.5: fresh += 1
+		if sp.rule_weight(PlantSpecies.RULE_STAND_AGE, 15.0) > 0.5: grown += 1
+	_check("avalanche track: a 5-year track (kind 6) holds its flora, none round it or on a windthrow; debris first, tall forbs later",
+			counts[0][0] > 30 and counts[0][1] == 0 and counts[1][0] == 0 and counts[1][1] == 0 and fresh >= 3 and grown >= 4, [counts, fresh, grown])
+
 func _beaver_check() -> void:
 	var st: WorldStand = WorldContracts.get_stand()
 	var c := Vector2(30, 30)
@@ -1134,6 +1184,270 @@ func _trails_check() -> void:
 # back and the sods gone; the patch's arrival after the tiles stand is followed.
 # Anthills and molehills (PlantGenerator.make_mounds): every species tells the grass its radius, ant hills keep their
 # east crest, molehills slump with age, wood ant nests stand in the wood near its edge only.
+# Leaf drifts (docs/ideas/vegetation.md, "Leaf drifts"): the wind gathers fallen leaves in hollows and at the feet of
+# obstacles, deepest downwind, and sweeps crests; broadleaf floors end with leaf banks placed by that drift.
+func _drift_check() -> void:
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	var sp := PlantSpecies.new()
+	sp.meshes = [BoxMesh.new()]
+	sp.spacing = 4.0
+	f.biome = Biome.new()
+	f.biome.species.assign([sp])
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.litter_wind = Vector2(0.5, 0.0)
+	var ring := func(p: Vector3) -> float:
+		return 0.6 * ((dm.get_height_at(p + Vector3(2.5, 0, 0)) + dm.get_height_at(p - Vector3(2.5, 0, 0)) + dm.get_height_at(p + Vector3(0, 0, 2.5)) + dm.get_height_at(p - Vector3(0, 0, 2.5))) * 0.25 - dm.get_height_at(p))
+	var hollow := Vector3.ZERO
+	var crest := Vector3.ZERO
+	var flat := Vector3.ZERO
+	var hi := -1e9
+	var lo := 1e9
+	var fl := 1e9
+	for z in range(-60, 61, 5):
+		for x in range(-60, 61, 5):
+			var p := Vector3(x, 0, z)
+			var r: float = ring.call(p)
+			if r > hi:
+				hi = r
+				hollow = p
+			if r < lo:
+				lo = r
+				crest = p
+			if absf(r) < fl and dm.get_slope_at(p) < 0.15:
+				fl = absf(r)
+				flat = p
+	f.obstacles = PackedVector4Array([Vector4(flat.x, dm.get_height_at(flat), flat.z, 0.8)])
+	f.populate()
+	var d_hollow := f.get_litter_drift_at(hollow)
+	var d_crest := f.get_litter_drift_at(crest)
+	var lee := f.get_litter_drift_at(flat + Vector3(1.0, 0, 0))
+	var windward := f.get_litter_drift_at(flat - Vector3(1.0, 0, 0))
+	var away := f.get_litter_drift_at(flat + Vector3(4.0, 0, 0))
+	f.free()
+	_check("leaf drift: more in the deepest hollow than on the highest crest, most at a stone's downwind foot, more there than at its windward foot or 3 m off",
+			d_hollow > d_crest + 0.1 and lee > away + 0.5 and lee > windward and windward > away, "hollow %.2f (%.2f m) crest %.2f (%.2f m); stone lee %.2f windward %.2f away %.2f" % [d_hollow, hi / 0.6, d_crest, lo / 0.6, lee, windward, away])
+	var floor_set := PlantGenerator.make_floor(PlantGenerator.FLOOR_BEECH, 1, false)
+	var last: PlantSpecies = floor_set[floor_set.size() - 1]
+	var bank_ok: bool = last.get_meta("plant_preset", -1) == PlantGenerator.PRESET_LEAF_BANK and last.get_rule_range(PlantSpecies.RULE_LITTER_DRIFT).x >= 1.3 and last.rule_weight(PlantSpecies.RULE_LITTER_DRIFT, 1.0) == 0.0
+	var bh: float = (last.meshes[0] as Mesh).get_aabb().end.y if bank_ok else 0.0
+	# Only where broadleaf crowns dropped litter (needle crowns add none to get_litter_at).
+	var on_litter: bool = bank_ok and last.rule_weight(PlantSpecies.RULE_LITTER, 0.2) == 0.0
+	_check("leaf drift: broadleaf floors end with leaf banks 8 to 25 cm high where the drift passes 1.35, only on broadleaf litter", bank_ok and on_litter and bh > 0.08 and bh < 0.25, [bank_ok, on_litter, bh])
+
+# Grazing roughs and dung (docs/ideas/vegetation.md, "Grazing roughs and dung"): the sets' make-up, and deer pellets
+# only on the heavily browsed lawn.
+func _grazing_check() -> void:
+	var cattle := PlantGenerator.make_grazing(PlantGenerator.GRAZE_CATTLE, 1, false)
+	var horse := PlantGenerator.make_grazing(PlantGenerator.GRAZE_HORSE, 1, false)
+	var deer := PlantGenerator.make_grazing(PlantGenerator.GRAZE_DEER, 1, false)
+	var pat_h := {}
+	var rough_h := 0.0
+	var rough_tag := false
+	for sp in cattle:
+		var pre: int = sp.get_meta("plant_preset", -1)
+		var top: float = (sp.meshes[0] as Mesh).get_aabb().end.y
+		if pre == PlantGenerator.PRESET_COW_PAT:
+			pat_h[float(sp.get_meta("dung_age"))] = top
+		elif pre == PlantGenerator.PRESET_DUNG_ROUGH:
+			rough_h = top
+			rough_tag = sp.has_meta("sward_mound")
+	var ages := pat_h.keys()
+	ages.sort()
+	var pats_age: bool = ages.size() == 3 and pat_h[ages[0]] < 0.06 and pat_h[ages[0]] > 0.015
+	var seeds := {}
+	for sp in horse:
+		if sp.get_patch_scale() > 0.0:
+			seeds[sp.get_patch_seed()] = true
+	_check("grazing: cattle pats of three ages 2-6 cm high, a rough 25 cm+ that keeps the sward out; horse latrines share one patch layout",
+			pats_age and rough_h > 0.25 and rough_tag and seeds.size() == 1, [pat_h, rough_h, rough_tag, seeds.keys()])
+	var st: WorldStand = WorldContracts.get_stand()
+	st.clear_disturbances()
+	st.clear_browse()
+	var c := Vector2(-40, -40)
+	st.add_browse(Vector3(c.x, 0, c.y), 10.0, 0.9, 1.5)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign(deer)
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := 0
+	var off := 0
+	for s in deer.size():
+		for q in f.get_placements(s):
+			var d := Vector2(q.x, q.z).distance_to(c)
+			if d < 8.0:
+				on += 1
+			elif d > 14.0:
+				off += 1
+	f.free()
+	st.clear_browse()
+	_check("grazing: deer pellet groups on the browsed lawn only", on > 3 and off == 0, [on, off])
+
+# Meadow fairy rings (docs/ideas/vegetation.md, "Meadow fairy rings"): the champignons come up on the rings the grass
+# shows (GrassField3D.get_fairy_ring_at), nowhere else.
+func _fairy_check() -> void:
+	var sps := PlantGenerator.make_fairy_rings(1, false)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign(sps)
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := 0
+	var off := 0
+	for q in f.get_placements(0):
+		var b: Vector3 = GrassField3D.get_fairy_ring_at(q)
+		if b.x + b.y > 0.05:
+			on += 1
+		else:
+			off += 1
+	f.free()
+	var dark := 0
+	var dead := 0
+	for z in range(-100, 101):
+		for x in range(-100, 101):
+			var b: Vector3 = GrassField3D.get_fairy_ring_at(Vector3(x + 0.5, 0, z + 0.5))
+			if b.x > 0.5:
+				dark += 1
+			if b.y > 0.5:
+				dead += 1
+	_check("fairy rings: dark and dead bands in a 200 m square; champignons only on the rings", dark > 20 and dead > 20 and on > 20 and off == 0, [dark, dead, on, off])
+
+# Blowing leaves (LeafFall3D.creep_speed): lying leaves stay put in light air, slide downwind once the wind 10 cm up
+# passes the creep speed (2.5 m/s here, from 12 m/s at 10 m over short grass), and only a few lift below the lift speed.
+var only_blowing := false # --test=blowing: the blowing-leaves check alone
+
+func _blowing_checks() -> void:
+	if not ClassDB.class_exists("LeafFall3D"):
+		return
+	var m: Node3D = ClassDB.instantiate("WeatherMap3D")
+	m.extent = 1024.0
+	m.resolution = 64
+	m.wind_direction = Vector2(1, 0)
+	m.roughness_length = 0.03
+	m.transition_time = 0.0
+	m.gust_intensity = 0.0
+	m.gust_patch_strength = 0.0
+	m.wind_speed = 2.0
+	add_child(m)
+	# On dry ground: the bench's pond would float them (LeafFall3D's water branch).
+	var lf: Node3D = null
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.08, 0.05)
+	quad.orientation = PlaneMesh.FACE_Y
+	for c in [Vector2(40, 40), Vector2(-40, 40), Vector2(40, -40), Vector2(-40, -40), Vector2(80, 0), Vector2(0, 80)]:
+		lf = ClassDB.instantiate("LeafFall3D")
+		lf.auto_crowns = false
+		lf.field_litter = 0.0
+		add_child(lf)
+		lf.add_kind(quad, 0.08, 0.003, 0.00025, 1.0)
+		await get_tree().physics_frame
+		for i in 100:
+			lf.drop_leaf(Vector3(c.x + randf_range(-3, 3), -1000.0, c.y + randf_range(-3, 3)), 0) # under the ground: set on it at once
+		for i in 120:
+			await get_tree().physics_frame
+		if lf.get_floating_count() == 0:
+			break
+		lf.queue_free()
+		lf = null
+	if lf == null:
+		_check("blowing leaves: a dry spot for the check", false, [])
+		m.queue_free()
+		return
+	var mean_x := func() -> float:
+		var sx := 0.0
+		var st: PackedVector4Array = lf.get_leaf_states()
+		for v in st:
+			sx += v.x
+		return sx / maxf(st.size(), 1)
+	var calm_slide: int = lf.get_sliding_count()
+	var x0: float = mean_x.call()
+	var lifted0: int = lf.get_lifted_count()
+	m.wind_speed = 12.0
+	m.snap_to_settings()
+	var most := 0
+	for i in 180:
+		await get_tree().physics_frame
+		most = maxi(most, lf.get_sliding_count())
+	var moved: float = mean_x.call() - x0
+	var lifted: int = lf.get_lifted_count() - lifted0
+	_check("blowing leaves: still in light air, sliding downwind past the creep speed, few lifted under the lift speed",
+			calm_slide == 0 and most > 30 and moved > 0.25 and lifted < 10, [calm_slide, most, moved, lifted, lf.get_crept_count()])
+	lf.queue_free()
+	# The field's own litter: under and round its crowns the wind sets leaves sliding off it.
+	var wood := VegetationField3D.new()
+	wood.populate_on_ready = false
+	wood.bark_detail = false
+	var tsp := PlantSpecies.new()
+	tsp.meshes = [BoxMesh.new()]
+	tsp.spacing = 6.0
+	tsp.canopy_radius = 3.0
+	tsp.canopy_opacity = 0.9
+	wood.biome = Biome.new()
+	wood.biome.species.assign([tsp])
+	add_child(wood)
+	wood.data_map = wood.get_path_to(dm)
+	wood.populate()
+	var t0: Vector3 = wood.get_placements(0)[0] if wood.get_placements(0).size() > 0 else Vector3()
+	var lit: float = wood.get_litter_at(t0)
+	var lf2: Node3D = ClassDB.instantiate("LeafFall3D")
+	lf2.auto_crowns = false
+	lf2.field_litter = 40.0
+	add_child(lf2)
+	lf2.vegetation_field = lf2.get_path_to(wood)
+	lf2.add_kind(quad, 0.08, 0.003, 0.00025, 1.0)
+	lf2.global_position = Vector3(t0.x, 0, t0.z)
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.global_position = Vector3(t0.x, t0.y + 1.7, t0.z)
+	cam.current = true
+	for i in 240:
+		await get_tree().physics_frame
+	var from_litter: int = lf2.get_crept_count() + lf2.get_lifted_count()
+	_check("blowing leaves: the wind takes leaves off the field's litter round its crowns", lit > 0.3 and from_litter > 5, [lit, lf2.get_crept_count(), lf2.get_lifted_count()])
+	lf2.queue_free()
+	cam.queue_free()
+	wood.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
+
+func _webs_check() -> void:
+	var autumn := PlantGenerator.make_dew_webs(1, false, {"day_of_year": 270})
+	var spring := PlantGenerator.make_dew_webs(1, false, {"day_of_year": 120})
+	var winter := PlantGenerator.make_dew_webs(1, false, {"day_of_year": 15})
+	var silk := true
+	var orb_r := 0.0
+	var sheet_h := 0.0
+	var orb_h := 0.0
+	for sp in autumn:
+		var ps := sp as PlantSpecies
+		var pre: int = ps.get_meta("plant_preset", -1)
+		for m in ps.meshes:
+			var found := false
+			for s in m.get_surface_count():
+				var mat := m.surface_get_material(s) as ShaderMaterial
+				if mat and mat.shader and mat.shader.code.contains("#define PLANT_SILK"):
+					found = true
+					if pre == PlantGenerator.PRESET_ORB_WEB:
+						orb_r = max(orb_r, (mat.get_shader_parameter("silk_orb") as Vector4).x)
+			silk = silk and found
+			if pre == PlantGenerator.PRESET_SHEET_WEB:
+				sheet_h = max(sheet_h, m.get_aabb().end.y)
+			else:
+				orb_h = max(orb_h, m.get_aabb().end.y)
+	var d := func(set: Array, i: int) -> float: return (set[i] as PlantSpecies).get_density()
+	_check("dew webs: silk shader on every web, sheets low in the sward, orbs on stems; orbs only late summer and autumn, none in winter",
+			silk and orb_r > 0.05 and sheet_h < 0.4 and orb_h > 0.4 and d.call(autumn, 0) > 0.5 and d.call(autumn, 1) > 0.3 and d.call(spring, 1) == 0.0 and d.call(spring, 0) > 0.0 and d.call(winter, 0) == 0.0,
+			[silk, orb_r, sheet_h, orb_h, d.call(autumn, 0), d.call(autumn, 1), d.call(spring, 0), d.call(spring, 1), d.call(winter, 0)])
+
 func _mounds_check() -> void:
 	var meadow := PlantGenerator.make_mounds(PlantGenerator.MOUNDS_MEADOW, 1, false)
 	var wood := PlantGenerator.make_mounds(PlantGenerator.MOUNDS_WOOD, 1, false)
@@ -2061,6 +2375,11 @@ func _checks() -> void:
 	_trails_check()
 	_rooting_check()
 	_mounds_check()
+	_drift_check()
+	_grazing_check()
+	_fairy_check()
+	_webs_check()
+	_avalanche_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []

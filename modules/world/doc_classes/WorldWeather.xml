@@ -178,6 +178,13 @@
 				Override in a stub to replace [method obstacle_lee_at].
 			</description>
 		</method>
+		<method name="_orographic_factor_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override for [method orographic_factor_at].
+			</description>
+		</method>
 		<method name="_precipitation_at" qualifiers="virtual const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -204,6 +211,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Override in a stub to replace [method rainfall_at].
+			</description>
+		</method>
+		<method name="_rime_at" qualifiers="virtual const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override for [method rime_at].
 			</description>
 		</method>
 		<method name="_salt_at" qualifiers="virtual const">
@@ -274,6 +288,13 @@
 			<return type="float" />
 			<description>
 				Override in a stub: [method time_scale].
+			</description>
+		</method>
+		<method name="_valley_fog_top_at" qualifiers="virtual const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Override for [method valley_fog_top_at].
 			</description>
 		</method>
 		<method name="_water_temperature" qualifiers="virtual const">
@@ -480,6 +501,13 @@
 				The near-ground wind at [param position] behind upwind obstacles over the open wind: about 0.15 in the cavity to 2 heights downwind, recovering over 6 heights, 1 past 25 heights or in the open. [param position]'s height over the ground counts as a surface raised in the lee (a snow drift): the lee fades out as it reaches 1.2 times the obstacle's height, a drift at equilibrium (Tabler 1991); pass the ground's height for the bare ground. Blowing snow and sand slow and drop there. Default 1.
 			</description>
 		</method>
+		<method name="orographic_factor_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The orographic factor [method precipitation_at] already carries at [param position] (the terrain climate's precipitation pattern, applied by [WeatherMap3D] [member WeatherMap3D.orographic_rain]); 1 where none is applied. A reader with its own climate read divides this out.
+			</description>
+		</method>
 		<method name="precipitation_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -506,6 +534,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Rain at [param position] (mm/h of liquid). Default 0.
+			</description>
+		</method>
+		<method name="rime_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Rime on exposed twigs and edges at [param position]: the length is the deposit in mm, the direction horizontal and into the wind it grew from (the feathers point that way). Supercooled cloud freezing on contact (Makkonen 2000); zero with no producer.
 			</description>
 		</method>
 		<method name="salt_at" qualifiers="const">
@@ -576,6 +611,13 @@
 			<return type="float" />
 			<description>
 				The weather's time per real second. Default 1.
+			</description>
+		</method>
+		<method name="valley_fog_top_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Height (m) of the top of the valley fog over [param position]: a radiation fog filling a cold air pool to the level where its air is saturated, flat across the basin. [code]-INF[/code] where there is none or with no producer.
 			</description>
 		</method>
 		<method name="washout_at" qualifiers="const">
