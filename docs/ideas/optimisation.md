@@ -94,6 +94,42 @@ GPU timings go on the PC bench list at the end.
   and precompile the pipelines a scene will need at load (Unreal 5's PSO precaching; Godot 4.4's
   ubershader + background specialisation). Cloud-measurable as compile count, ms and RSS.
 
+## Latest work (2025–2026) and what it means here
+
+- **Cluster acceleration structures and partitioned TLAS**, now in both Vulkan (`VK_NV_cluster_acceleration_structure`,
+  `VK_NV_partitioned_acceleration_structure`) and a DirectX preview (Oct 2026) on all three desktop GPU vendors.
+  Microsoft's sample: animated AS memory 6.8 GB to 0.24 GB, per-frame build 788 ms to 3 ms; a partitioned TLAS
+  rebuild 2.9 ms to 0.8 ms ([DirectX blog](https://devblogs.microsoft.com/directx/clas-ptlas-preview/);
+  [Vulkan proposal](https://docs.vulkan.org/features/latest/features/proposals/VK_NV_partitioned_acceleration_structure.html)).
+  This is the Mega Geometry route already listed in [open-world-geometry.md](open-world-geometry.md); it needs
+  hardware and drivers the cloud lacks, so it is a PC-stage item. Compaction is the step that works everywhere now.
+- **Assassin's Creed Shadows (SIGGRAPH 2025 Advances).** A coarse ray-tracing world: low LODs, no skinning, small
+  geometry culled, TLAS rebuilt each frame with time-sliced instance culling; about 2,000 BLASes and 30k instances
+  at about 300 MB. Probe updates budgeted per frame
+  ([slides](https://advances.realtimerendering.com/s2025/content/Advances%202025%20-%20Raytracing%20the%20world%20of%20Assassin's%20Creed%20Shadows.pdf)).
+  Coarser trace geometry would change the PT image here, so it is out under our rule; budgeted updates are in.
+- **Space Marine 2 (REAC 2025).** Static instance data packed to about 4 bytes per instance; GPU culling of 300k
+  instances in about 0.5 ms; pipeline precache limited to the about 2k pipelines actually used out of about 200k
+  permutations ([slides](https://enginearchitecture.org/downloads/REAC_2025_Saber.pdf)). The pipeline point
+  matches our lavapipe finding that driver compile memory, not engine data, drives cloud peaks.
+- **Unreal Engine 5.6.** Instance culling in chunks of 64 instances (including generated ones), distance-driven
+  surface-cache updates, a shared per-frame budget for streaming and loading
+  ([summary by Tom Looman](https://tomlooman.com/unreal-engine-5-6-performance-highlights/)).
+- **BVH research.** Quantised wide BVH nodes and triangles cut memory traffic to about 18% of the baseline in
+  simulation ([Grauer et al. 2025](https://arxiv.org/html/2505.24653v1)); merged-node BVHs 48% smaller and 32%
+  faster ([Haydel et al., HPG 2026](https://graphics.cs.utah.edu/research/projects/bvh-merged-nodes/)); oriented
+  boxes 18–32% faster traversal ([DOBB-BVH, HPG 2025](https://arxiv.org/html/2506.22849v1)). These live inside the
+  GPU driver's BVH, so the engine cannot use them directly; they explain why compaction ratios differ by vendor.
+- **Godot itself.** 4.5's shader baker precompiles shaders at export (load times 20x shorter on Metal and D3D12),
+  on top of 4.4's ubershaders ([release notes](https://godotengine.org/releases/4.5/)). Godot's 2026 CPU-side work
+  found per-frame vertex array creation and freeing as a top cost
+  ([GameDev.net](https://gamedev.net/news/5741-optimizing-cpu-side-rendering-code/)), the same per-frame
+  allocation pattern the profiling pass will look for.
+- **Indie and itch.io.** Mostly instancing, HLOD merging and culling by fog distance, all already in the fork's
+  vegetation and rock systems ([Maze Madness devlog](https://itch.io/devlog/898004/reasonably-seamless-and-scalable-wall-and-ground-rendering.amp):
+  occlusion culling over 50%, distance culling 30–40%; [Sons of Ryke](https://alpaca-sponge-wsff.squarespace.com/sons-of-ryke/optimizing-an-open-world-1):
+  separate low-poly shadow casters, HLOD). Nothing new for us beyond confirming the order: measure, cull, batch.
+
 ## Candidates for the fork
 
 Ordered by expected win for the risk. Each is a separate commit with its own proof.
@@ -106,6 +142,29 @@ Ordered by expected win for the risk. Each is a separate commit with its own pro
    frames. Fixes touching another thread's files go through the coordinator.
 3. **Shader and pipeline audit.** Variant counts, compile ms, RSS per system; remove dead variants,
    precompile at load. Identical frames by construction.
+
+## Design: BLAS compaction
+
+Follows NVIDIA's recipe (build with `ALLOW_COMPACTION`, query `COMPACTED_SIZE` after the build,
+copy with mode `COMPACT`, free the original once the GPU is done with it).
+
+- **Which BLASes.** Only static fast-trace ones: no `ALLOW_UPDATE`, no `PREFER_FAST_BUILD`. That is the
+  surface cache, LOD entries, merged mesh groups and OMM surfaces. Deformed, swept-sphere and procedural
+  BLASes refit every frame and stay as they are.
+- **Where.** Inside `RenderingDevice`, so the RID never changes and no system above it needs to know.
+  `acceleration_structure_build_batch` records a compacted-size query after the batch's builds. When
+  that frame's fence has passed (the same point timestamps are read), the sizes are read without a
+  wait, a right-sized structure is created, and the next batch records the `COMPACT` copies before its
+  own builds. The RD record then points at the new driver structure; the old one goes on the frame
+  disposal list.
+- **TLAS records.** The compacted copy has a new device address. A relocation serial bumps with each
+  swap; keyed TLASes whose cached records predate it rewrite all records once, and the PT pass rebuilds
+  its TLAS that frame. Swaps are batched so this happens at most every few frames.
+- **Rebuilds.** A compacted BLAS has no room for a fresh build, so a rebuild request reallocates it at
+  full size first (and it is compacted again afterwards).
+- **Proof.** A PT frame before and after must be byte-identical (same tree, same traversal). Memory is
+  read from the RD buffer counters. Lavapipe may report little saving since its BVH layout differs from
+  NVIDIA's; the real saving is measured on the PC.
 
 ## PC GPU bench list (when the PC is back)
 
