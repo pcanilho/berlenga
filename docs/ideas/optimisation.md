@@ -217,3 +217,36 @@ copy with mode `COMPACT`, free the original once the GPU is done with it).
   offset sits at a rounding tie keep the direct form. A standalone harness over 4 grid sizes, 6 wind directions
   (ties included) and both edge modes gives bit-identical output, 3.5 times faster (818 ms to 235 ms). Snow and
   ground `--test` pass as before.
+
+## Design: path tracer cost that no setting removes (next round)
+
+The PC numbers for one indoor scene: the path tracer pass grew from about 18 ms to 27 ms over a week of
+features. The settings explain under half of that, and the rest is spread over many commits. Most features
+are gated by runtime branches that the scene never takes. Runtime-gated code is not free on a GPU, for two
+reasons:
+
+- **Live state across `traceRayEXT`.** Every value the raygen keeps across a trace call is spilled to the
+  ray tracing stack and reloaded afterwards. NVIDIA's path tracing work on a 2024 AAA title (Bavoil, NVIDIA
+  developer blog, May 2025) cut spilled live state from 222 to 84 bytes and the main trace pass by 15%. It did
+  this by turning a rarely-repeating loop into a branch (72 bytes gone), keeping radiance and throughput in
+  fp16, packing ray directions into 32 bits and bounce counters into 16 bits, and moving demodulation out of
+  raygen. Their tool is the Nsight Graphics GPU Trace "Ray Tracing Live State" tab: it lists, per call site,
+  each spilled GLSL variable with its bytes.
+- **Register allocation for the worst path.** A branch the scene never takes still reserves its registers,
+  which lowers occupancy for every pixel (Laine, Karras and Aila, "Megakernels Considered Harmful", HPG 2013).
+  The usual answer is permutations: compile the code out where the scene cannot use it (Pettineo, "The Shader
+  Permutation Problem", 2018, on the trade with compile time; the engine already does this for fog, decals,
+  SER and ray query shadows through `RT_FLAG_*` specialization constants).
+
+Plan, after the bisect fixes:
+
+1. On the PC, one Nsight GPU Trace of the indoor scene. Note the raygen's spilled live state per trace site,
+   its register count and active threads per warp. The cloud's software GPU cannot report any of these.
+2. Live-state fixes that leave the image identical: values kept across a trace only because of a feature the
+   path did not take, loop-carried structs, 32-bit counters. Each is proven byte-identical on rt_memory.
+3. Scene-feature specialization constants for the largest blocks the scene does not use. Candidates are
+   media and caustics (the media flag already exists), snow, glaze and wetness, hair, and subsurface. Each one
+   doubles the pipeline variants it touches, so only blocks Nsight shows as costly get one. A variant
+   switch must not make surfaces vanish while it compiles: the engine already traces with the default
+   material while a hit group compiles (b06913a5), and a feature variant can keep the full shader until its
+   own is ready.
