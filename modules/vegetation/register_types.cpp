@@ -41,6 +41,7 @@
 #include "vegetation_mist_3d.h"
 #include "vegetation_pollen_3d.h"
 #include "leaf_fall_3d.h"
+#include "pollen_cloud_3d.h"
 #include "seed_down_3d.h"
 
 #include "core/config/project_settings.h"
@@ -57,6 +58,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(VegetationPollen3D);
 	GDREGISTER_CLASS(LeafFall3D);
 	GDREGISTER_CLASS(SeedDown3D);
+	GDREGISTER_CLASS(PollenCloud3D);
 	GDREGISTER_CLASS(GrassField3D);
 	GDREGISTER_CLASS(TreeGenerator);
 	GDREGISTER_CLASS(BarkDetail3D);

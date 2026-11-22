@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PollenCloud3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Pollen shed by dry wind from conifer crowns and flowering grass, drawn as a drifting haze with NVIDIA Flow.
+	</brief_description>
+	<description>
+		In early summer, dry wind shakes pollen from conifer crowns (the placed crowns of the scene's [VegetationField3D]s that are needle-leaved) and from the flowering sward (the scene's [GrassField3D]s, where their rules grow grass). Every quarter second this picks the nearest sources round the camera, works out how much each sheds from the weather ([WorldWeather]: air humidity, leaf wetness, rain and the wind at the crown or the sward; conifers in [member conifer_window], grasses by their anthesis in the season) and feeds a pool of sphere emitters in a PhysXFlow3D of its own (0.5 m cells, a faint yellow gas a little heavier than air, carried by the weather's wind). Without the PhysX module's Flow the sources are still worked out and nothing is drawn. [VegetationPollen3D] draws the close puffs a body brushing flowering plants shakes out.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_conifer_sources" qualifiers="const">
+			<return type="int" />
+			<description>
+				The conifer crowns shedding at the last update.
+			</description>
+		</method>
+		<method name="get_flow" qualifiers="const">
+			<return type="Node3D" />
+			<description>
+				The PhysXFlow3D drawing the pollen, or [code]null[/code] before the first release or without Flow.
+			</description>
+		</method>
+		<method name="get_grass_sources" qualifiers="const">
+			<return type="int" />
+			<description>
+				The sward points shedding at the last update.
+			</description>
+		</method>
+		<method name="get_release" qualifiers="const">
+			<return type="float" />
+			<description>
+				The weather's share of a full release at the camera at the last update, times the larger share in flower (0 to 1).
+			</description>
+		</method>
+		<method name="get_sources" qualifiers="const">
+			<return type="Array" />
+			<description>
+				The sources of the last update, one [Dictionary] each: [code]position[/code], [code]velocity[/code] (the wind there), [code]radius[/code], [code]rate[/code] (0 to 1 of a full release) and [code]conifer[/code].
+			</description>
+		</method>
+		<method name="has_flow" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether the Flow grid was made.
+			</description>
+		</method>
+		<method name="release_factor" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="humidity" type="float" />
+			<param index="1" name="wetness" type="float" />
+			<param index="2" name="rain_mmh" type="float" />
+			<param index="3" name="wind" type="float" />
+			<description>
+				The weather's share of a full release (0 to 1): dry air (full at 55% relative humidity and under, none over 85%), dry leaves, no rain, and a wind past 3 m/s rising to full at 8 m/s.
+			</description>
+		</method>
+		<method name="update_sources">
+			<return type="void" />
+			<description>
+				Picks the sources and feeds the emitters now. The node does this every 0.25 s while processing.
+			</description>
+		</method>
+		<method name="window_share" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="day" type="int" />
+			<param index="1" name="window" type="Vector2" />
+			<description>
+				The share in flower on a day of the year for a window of days, with 7-day ramps either side.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="color" type="Color" setter="set_color" getter="get_color" default="Color(0.95, 0.84, 0.38, 1)">
+			The pollen's colour (sulphur yellow, as pine pollen).
+		</member>
+		<member name="conifer_window" type="Vector2" setter="set_conifer_window" getter="get_conifer_window" default="Vector2(130, 170)">
+			The days of the year the conifers flower (an estimate for northern temperate pines and spruces).
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			When off, no source sheds.
+		</member>
+		<member name="grass_window" type="Vector2" setter="set_grass_window" getter="get_grass_window" default="Vector2(145, 205)">
+			The days of the year the grasses flower when the weather gives no season (an estimate).
+		</member>
+		<member name="max_conifer_sources" type="int" setter="set_max_conifer_sources" getter="get_max_conifer_sources" default="10">
+			The most conifer crowns shedding at once, nearest first.
+		</member>
+		<member name="max_grass_sources" type="int" setter="set_max_grass_sources" getter="get_max_grass_sources" default="6">
+			The most sward points shedding at once, nearest first.
+		</member>
+		<member name="range" type="float" setter="set_range" getter="get_range" default="60.0">
+			How far round the camera crowns shed, in metres (the sward within 30 m of it at most).
+		</member>
+		<member name="smoke_per_source" type="float" setter="set_smoke_per_source" getter="get_smoke_per_source" default="1.2">
+			The Flow emitter's smoke at a full release.
+		</member>
+		<member name="terrain_path" type="NodePath" setter="set_terrain_path" getter="get_terrain_path" default="NodePath(&quot;&quot;)">
+			The terrain the Flow grid rests on (PhysXFlow3D.terrain_path).
+		</member>
+	</members>
+</class>
