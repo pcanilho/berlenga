@@ -274,6 +274,8 @@ void SnowCover3D::_allocate() {
 	cups_texture.unref();
 	sastrugi_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGH);
 	sastrugi_texture.unref();
+	strata_image.unref();
+	strata_texture.unref();
 	cell_height_valid.resize(nn);
 	cell_ground.fill(0.0f);
 	cell_swe.fill(0.0f);
@@ -1574,6 +1576,44 @@ Array SnowCover3D::get_layers_at(const Vector3 &p_position) const {
 	return out;
 }
 
+// The bands a cut wall shows (follow-up 53), from the layers of one cell (base first): neighbours of one kind and
+// wetness merge (so there are never more than PACK_LAYERS). Depths are scaled to the pack's p_depth. Each entry,
+// top band first: (kind + 1 + 8 if wet) * 256 + the band's bottom under the surface in whole centimetres (to 2.55 m).
+Vector<int> SnowCover3D::strata_bands(const float *p_swe, const float *p_rho, const float *p_liq, const uint8_t *p_kind, int p_count, float p_depth, float p_liquid_capacity) {
+	Vector<int> out;
+	if (p_count <= 0 || p_depth <= 0.001f) {
+		return out;
+	}
+	LocalVector<int> codes; // top first
+	LocalVector<float> thick;
+	float total = 0.0f;
+	for (int j = p_count - 1; j >= 0; j--) {
+		const float t = p_swe[j] / MAX(p_rho[j], 30.0f);
+		if (t <= 0.0f) {
+			continue;
+		}
+		const bool wet = p_liq[j] > 0.3f * p_liquid_capacity * p_swe[j];
+		const int code = MIN(int(p_kind[j]), 7) + 1 + (wet ? 8 : 0);
+		if (!codes.is_empty() && codes[codes.size() - 1] == code) {
+			thick[thick.size() - 1] += t;
+		} else {
+			codes.push_back(code);
+			thick.push_back(t);
+		}
+		total += t;
+	}
+	if (codes.is_empty() || total <= 0.0f) {
+		return out;
+	}
+	const float scale = p_depth / total;
+	float bottom = 0.0f;
+	for (uint32_t b = 0; b < codes.size(); b++) {
+		bottom += thick[b] * scale;
+		out.push_back(MIN(codes[b], 15) * 256 + CLAMP(int(Math::round(bottom * 100.0f)), 0, 255));
+	}
+	return out;
+}
+
 void SnowCover3D::set_layers_enabled(bool p_enabled) {
 	_finish_background(true);
 	layers_enabled = p_enabled;
@@ -2698,6 +2738,28 @@ void SnowCover3D::_build_upload() {
 		}
 		upload_sastrugi = Image::create_from_data(n, n, false, Image::FORMAT_RGH, sb);
 	}
+	// The strata map (round 8, follow-up 53): the pack's layers as up to eight bands, for the walls of ruts and
+	// prints. Each channel holds two bands (see strata_bands), from the surface down: band * 4096 + the next band;
+	// 0 ends the list.
+	upload_strata.unref();
+	// The live layers, not pub's (published after this runs): the same step as the depth map.
+	if (layers_enabled && layer_n.size() == n * n && layer_swe.size() == n * n * PACK_LAYERS && layer_liq.size() == layer_swe.size()) {
+		Vector<uint8_t> tb;
+		tb.resize(n * n * 16);
+		float *tw = reinterpret_cast<float *>(tb.ptrw());
+		for (int i = 0; i < n * n; i++) {
+			const float swe = cell_swe[i];
+			const float depth = swe > SWE_MIN ? swe / cell_density[i] : 0.0f;
+			const int k0 = i * PACK_LAYERS;
+			const Vector<int> bands = strata_bands(layer_swe.ptr() + k0, layer_rho.ptr() + k0, layer_liq.ptr() + k0, layer_kind.ptr() + k0, layer_n[i], depth, liquid_capacity);
+			for (int c = 0; c < 4; c++) {
+				const int a = 2 * c < bands.size() ? bands[2 * c] : 0;
+				const int b = 2 * c + 1 < bands.size() ? bands[2 * c + 1] : 0;
+				tw[i * 4 + c] = float(a * 4096 + b); // two 12-bit bands, exact in a float
+			}
+		}
+		upload_strata = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, tb);
+	}
 	// The catch map: the height of the surface the pack lies on, the canopy's load over its capacity, the
 	// canopy closure and the surface hoar. Materials leave what lies under an overhang bare and give tree crowns their load.
 	if (catch_image.is_valid() && catch_image->get_width() == n) {
@@ -2742,6 +2804,15 @@ void SnowCover3D::_apply_upload() {
 			sastrugi_texture = ImageTexture::create_from_image(sastrugi_image);
 		} else {
 			sastrugi_texture->update(sastrugi_image);
+		}
+	}
+	if (upload_strata.is_valid()) {
+		strata_image = upload_strata;
+		upload_strata.unref();
+		if (strata_texture.is_null() || strata_texture->get_width() != n) {
+			strata_texture = ImageTexture::create_from_image(strata_image);
+		} else {
+			strata_texture->update(strata_image);
 		}
 	}
 	if (upload_catch.is_valid() && catch_image.is_valid() && catch_image->get_width() == n) {
@@ -5334,6 +5405,7 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sastrugi_enabled"), "set_sastrugi_enabled", "is_sastrugi_enabled");
 	ClassDB::bind_method(D_METHOD("get_sastrugi_at", "position"), &SnowCover3D::get_sastrugi_at);
 	ClassDB::bind_method(D_METHOD("get_sastrugi_texture"), &SnowCover3D::get_sastrugi_texture);
+	ClassDB::bind_method(D_METHOD("get_strata_texture"), &SnowCover3D::get_strata_texture);
 	ClassDB::bind_method(D_METHOD("add_sastrugi", "relief", "wind_direction"), &SnowCover3D::add_sastrugi);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("sastrugi_step", "relief", "wind_dir", "eroded", "filled", "depth", "hard"), &SnowCover3D::sastrugi_step);
 	ClassDB::bind_method(D_METHOD("set_wind_packing_enabled", "enabled"), &SnowCover3D::set_wind_packing_enabled);

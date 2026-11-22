@@ -773,6 +773,27 @@ func _run_layer_tests() -> void:
 	print("  after a calm storm on an old pack: %s; bulk %.0f cm %.0f mm" % [after_storm, snow.get_depth_at(p) * 100.0, snow.get_swe_at(p)])
 	_check("a storm on an old pack is a light new layer over a dense old one", ls.size() >= 2 and ls[0]["kind"] == "old" and ls[-1]["kind"] == "new" and float(ls[-1]["density"]) < 0.7 * float(ls[0]["density"]), after_storm)
 	_check("the layers add up to the bulk pack", absf(sums[0] - snow.get_depth_at(p)) < 0.01 and absf(sums[1] - snow.get_swe_at(p)) < 0.5, "%.3f m and %.1f mm against %.3f m and %.1f mm" % [sums[0], sums[1], snow.get_depth_at(p), snow.get_swe_at(p)])
+	# The strata map cut walls draw (follow-up 53): two bands a channel, top first, each (kind + 1) * 256 + bottom cm
+	# (kinds: 0 new, 1 wind, 2 old, 3 crust, 4 hoar, 5 depth hoar).
+	for f in 3:
+		await get_tree().process_frame # the maps reach their textures on the main thread
+	var stex: Texture2D = snow.get_strata_texture()
+	var strata_ok := false
+	var strata_txt := "no map"
+	if stex != null:
+		var simg := stex.get_image()
+		var px := simg.get_pixel(simg.get_width() / 2, simg.get_height() / 2)
+		var kinds_b := []
+		var last_cm := 0
+		for c in 4:
+			var pair := int(px[c])
+			for band in [pair / 4096, pair % 4096]:
+				if band > 0:
+					kinds_b.append(band / 256 - 1)
+					last_cm = band % 256
+		strata_txt = "bands (top first) %s down to %d cm; pack %.0f cm" % [str(kinds_b), last_cm, snow.get_depth_at(p) * 100.0]
+		strata_ok = kinds_b.size() >= 2 and kinds_b[0] == 0 and kinds_b[-1] == 2 and absf(float(last_cm) - snow.get_depth_at(p) * 100.0) <= 1.5
+	_check("cut walls get the layers as bands (new over old, down to the ground)", strata_ok, strata_txt)
 	# A gale over it: the new snow is blown and laid down again as wind slab where it drifts.
 	weather.wind_speed = 14.0
 	weather.snap_to_settings()
@@ -3416,6 +3437,9 @@ func _build_view() -> void:
 	elif view == "roofs":
 		await _build_roofs(cam)
 		return
+	elif view == "strata":
+		await _build_strata(cam)
+		return
 	elif view == "spindrift":
 		await _build_spindrift(cam)
 		return
@@ -3910,6 +3934,77 @@ func _build_roofs(cam: Camera3D) -> void:
 	cam.fov = 50.0
 	PhysicsServer3D.set_active(false) # the pieces hold still while the frame converges (raster and path traced alike)
 	sb.process_mode = Node.PROCESS_MODE_DISABLED # and the landed blocks stop sinking
+	await _save_frame("")
+	get_tree().quit()
+
+
+func _build_strata(cam: Camera3D) -> void:
+	# The pack's layers in the walls of a trench and two ruts (follow-up 53), low across them with the sun
+	# behind the camera: an old settled base turned partly to depth hoar, a storm's snow under a melt-freeze crust,
+	# buried surface hoar, a gale's wind slab and a fresh fall on top.
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 30.0
+	sun.rotation_degrees = Vector3(-35.0, 70.0, 0.0) # from the camera's side, onto the trench's far wall
+	_add_terrain(32.0, 128, Color(0.33, 0.31, 0.27), 6.0)
+	var target := Marker3D.new()
+	target.name = "Probe"
+	add_child(target)
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	weather.temperature = -8.0
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var p := Vector3(0, 0, 0)
+	snow.add_snow(90.0, 300.0) # the old pack
+	for h in 48:
+		snow.advance(3600.0)
+	snow.add_depth_hoar(0.6)
+	snow.advance(3600.0)
+	_precipitate(5.0, 4.0) # a 20 mm storm
+	snow.add_crust(0.02, 3.0) # its top melts and refreezes
+	snow.advance(3600.0)
+	snow.add_hoar(8.0) # a clear night's surface hoar
+	_precipitate(4.0, 4.0) # buried by the next storm
+	weather.wind_speed = 14.0 # a gale packs the top
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	for h in 3:
+		snow.advance(3600.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	_precipitate(2.5, 4.0) # and a last fall of fresh snow
+	print("strata: %s; %.0f cm" % [_layer_text(p), snow.get_depth_at(p) * 100.0])
+	surface = SnowSurface3D.new()
+	surface.snow_cover = NodePath("../SnowCover3D")
+	surface.follow_target = NodePath("../Probe")
+	surface.detail_spacing = 0.03125
+	surface.deform_resolution = 1024
+	surface.deform_extent = 16.0
+	surface.gpu_simulation = false
+	surface.clumps = false
+	surface.crust_plates = false
+	add_child(surface)
+	for i in 10:
+		await get_tree().process_frame
+	var g := snow.get_ground_height_at(p)
+	# A dug trench across the view and two tyre ruts beside it.
+	surface.rim_share = 0.1
+	surface.compacted_density = 900.0 # pressed nearly to the ground: a dug trench
+	surface.press_box(Vector3(0.0, g, 0.0), Vector2(2.4, 7.0), 0.0, g + 0.01)
+	surface.press_box(Vector3(-2.2, g, 0.0), Vector2(0.3, 7.0), 0.0, g + 0.01)
+	surface.press_box(Vector3(-3.2, g, 0.0), Vector2(0.3, 7.0), 0.0, g + 0.01)
+	for i in 30:
+		await get_tree().process_frame
+	var top := g + snow.get_depth_at(p)
+	print("strata: surface %.2f m, trench floor %.2f m" % [top - g, surface.get_height_at(Vector3(0, 0, 0)) - g if surface.has_method("get_height_at") else -1.0])
+	# In the trench, low, across to its far wall and along it.
+	cam.position = Vector3(0.9, top - 0.15, 1.8)
+	cam.look_at(Vector3(-1.2, top - 0.45, -0.6))
+	cam.fov = 50.0
 	await _save_frame("")
 	get_tree().quit()
 

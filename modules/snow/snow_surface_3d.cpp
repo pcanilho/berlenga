@@ -88,6 +88,8 @@ uniform float cup_tile_size = 3.2;
 uniform sampler2D sas_tex : filter_linear, repeat_disable; // SnowCover3D sastrugi: relief (m) times the carving wind's direction
 uniform bool has_sas = false;
 uniform sampler2D sas_tile : filter_linear_mipmap, repeat_enable;
+uniform sampler2D strata_tex : filter_nearest, repeat_disable; // SnowCover3D strata: two bands a channel, band * 4096 + next; band = (kind + 1 + 8 wet) * 256 + bottom (cm)
+uniform bool has_strata = false;
 uniform float sas_tile_size = 8.0;
 uniform vec4 mesh_rect;
 uniform float min_depth = 0.03;
@@ -486,6 +488,57 @@ void fragment() {
 	ALBEDO *= mix(vec3(1.0), vec3(0.86, 0.85, 0.83), packed) * mix(vec3(1.0), vec3(0.55, 0.6, 0.66), polish);
 	ROUGHNESS = mix(mix(clamp(mix(0.7, 0.35, wet) - 0.15 * compact, 0.05, 1.0), 0.08, slush), 0.02, pool);
 	ROUGHNESS = mix(mix(ROUGHNESS, 0.45, packed), 0.04, polish);
+	// The pack's layers in the walls of ruts and prints (follow-up 53): a steep face at depth d under the
+	// untouched surface shows the band the cover's layers put there (a snow pit's wall, Fierz et al. 2009): new
+	// snow bright and soft, wind slab chalky, old rounded snow greyer, a melt-freeze crust a glazed blue line, buried
+	// hoar a dark seam, depth hoar coarse and dull at the base, wet bands darker and glossy. The band edges wander
+	// a few millimetres, as a shovelled wall's do.
+	float strata_wall = has_strata ? smoothstep(0.35, 0.75, 1.0 - nf.y) : 0.0;
+	if (strata_wall > 0.0) {
+		vec2 suv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
+		float d = snow_ground(p) + pack.r - w_pos.y;
+		d += 0.004 * (sin(dot(p, vec2(17.3, 11.1))) + sin(dot(p, vec2(-7.7, 23.9))) + 0.5 * sin(dot(p, vec2(41.0, -37.0))));
+		if (snow_inside(suv) && d > 0.02) {
+			vec4 st = textureLod(strata_tex, suv, 0.0);
+			float top_b = 0.0;
+			float code = 0.0;
+			for (int c = 0; c < 8; c++) {
+				float pair = st[c / 2];
+				float hi_b = floor(pair / 4096.0);
+				float v = (c % 2 == 0) ? hi_b : pair - hi_b * 4096.0;
+				if (v < 1.0) {
+					break;
+				}
+				float k = floor(v / 256.0);
+				float bottom = (v - k * 256.0) * 0.01;
+				// A crust or a hoar seam is drawn at least 1.5 cm thick so it reads as a line.
+				float kk = mod(k - 1.0, 8.0);
+				bottom = (kk == 3.0 || kk == 4.0) ? max(bottom, top_b + 0.015) : max(bottom, top_b);
+				code = k;
+				top_b = bottom;
+				if (d < bottom) {
+					break;
+				}
+			}
+			if (code >= 1.0) {
+				float kind = mod(code - 1.0, 8.0);
+				bool band_wet = code > 8.5;
+				vec3 tint_b = vec3(1.0);
+				float rough_b = 0.75;
+				if (kind == 1.0) { tint_b = vec3(0.93, 0.94, 0.95); rough_b = 0.85; }
+				else if (kind == 2.0) { tint_b = vec3(0.84, 0.87, 0.92); rough_b = 0.8; }
+				else if (kind == 3.0) { tint_b = vec3(0.76, 0.83, 0.92); rough_b = 0.2; }
+				else if (kind == 4.0) { tint_b = vec3(0.55, 0.57, 0.62); rough_b = 0.9; }
+				else if (kind == 5.0) { tint_b = vec3(0.72, 0.71, 0.68); rough_b = 0.95; }
+				if (band_wet) {
+					tint_b *= vec3(0.75, 0.8, 0.86);
+					rough_b = 0.3;
+				}
+				ALBEDO = mix(ALBEDO, ALBEDO * tint_b, strata_wall);
+				ROUGHNESS = mix(ROUGHNESS, rough_b, strata_wall);
+			}
+		}
+	}
 	compact = max(compact, 0.7 * packed + 0.3 * polish); // fewer whole grains to sparkle
 	SPECULAR = 0.335; // ice, F0 0.018
 	METALLIC = 0.0;
@@ -1260,6 +1313,8 @@ void SnowSurface3D::_update_material() {
 			sas_tile_texture = ImageTexture::create_from_image(sastrugi_tile());
 		}
 		material->set_shader_parameter("sas_tile", sas_tile_texture);
+		material->set_shader_parameter("strata_tex", cover->get_strata_texture());
+		material->set_shader_parameter("has_strata", cover->get_strata_texture().is_valid() && cover->is_layers_enabled());
 	} else {
 		material->set_shader_parameter("snow_rect", Vector4());
 	}
@@ -1392,7 +1447,7 @@ void SnowSurface3D::_notification(int p_what) {
 			}
 			// The cover's texture and rect move on its own schedule.
 			const SnowCover3D *cover = _cover();
-			if (cover && cover->get_snow_texture().is_valid() && material.is_valid() && (material->get_shader_parameter("snow_tex") != Variant(cover->get_snow_texture()) || material->get_shader_parameter("cups_tex") != Variant(cover->get_cups_texture()) || material->get_shader_parameter("sas_tex") != Variant(cover->get_sastrugi_texture()))) {
+			if (cover && cover->get_snow_texture().is_valid() && material.is_valid() && (material->get_shader_parameter("snow_tex") != Variant(cover->get_snow_texture()) || material->get_shader_parameter("cups_tex") != Variant(cover->get_cups_texture()) || material->get_shader_parameter("sas_tex") != Variant(cover->get_sastrugi_texture()) || material->get_shader_parameter("strata_tex") != Variant(cover->get_strata_texture()))) {
 				_update_material();
 			} else if (cover && material.is_valid()) {
 				const Rect2 r = cover->get_map_rect();
