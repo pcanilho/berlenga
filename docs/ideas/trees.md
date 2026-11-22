@@ -4094,6 +4094,14 @@ tighter leaf shadows near the camera.
    Escarpment's 1,000-year-old white cedars). Builds on root_stone's rock link: roots that follow a rock's cracks, and
    placement on steep, rocky ground from the terrain map.
 
+### 5bk. Camera cut-out (22 Nov; world-links 904b8caf)
+
+- The tree generator's ShaderMaterials (bark, leaves, needles, fronds) are built from BaseMaterial3D's code, so they
+  carry its cut-out discard as they stand; the loose bark pieces (BarkDetail3D) take it through
+  GrassField3D::add_camera_cutout(). Shadows keep the cut geometry; the path tracer starts camera rays past the same span.
+- Bench: env `CUTOUT="x,y,z,r[,floor]"` on main.gd shots. A hazel cut through the crown shows the same hole raster and
+  PT (/mnt/project-files/fork/trees/cutout/).
+
 ### Research for the likely picks (21 Nov, card pending)
 
 **Ice storms.**

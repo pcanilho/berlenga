@@ -26,6 +26,7 @@ extends Node3D
 #                     side by side in winter grass (trees.md 5l), seen from 1.7 m, 10 m back
 #   --sun-energy=E    sun energy (default 1.4; 0 for sky light only)
 #   env GLAZE_HOURS=H  an ice storm H hours long before the shot: clear ice on every tree (trees.md 5be)
+#   env CUTOUT="x,y,z,r[,floor]"  the camera cut-out to that target (raster and PT must agree)
 #   env LATE_FROST=D  a hard late frost D days before the --day shot: the young leaves out then brown
 #   env FIRE_AGE=Y [SCORCH=H]  a past fire Y years ago, crowns killed up to H m (default 30): needle cast
 #   --cliff=STAND     a stand's cliff trees (trees.md 5bg): its (cliff) species' variants side by side, each on a grey
@@ -79,6 +80,11 @@ var day := -1
 var fails := 0
 
 func _ready() -> void:
+	if OS.has_environment("CUTOUT"):
+		# env CUTOUT="x,y,z,radius[,floor]": the camera cut-out (BaseMaterial3D camera_cutout globals) to that target.
+		var cv := OS.get_environment("CUTOUT").split_floats(",")
+		RenderingServer.global_shader_parameter_set("camera_cutout", Vector4(cv[0], cv[1], cv[2], cv[3]))
+		RenderingServer.global_shader_parameter_set("camera_cutout_floor", cv[4] if cv.size() > 4 else 0.0)
 	if "--storm" in OS.get_cmdline_user_args():
 		# Storm breaks and windthrow on rigged trees: storm.gd.
 		var sargs := {}
