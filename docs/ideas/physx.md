@@ -2476,6 +2476,44 @@ sat as a round puff on its sources. Three things, found by probing velocity and 
    22 to 26 m/s along x from 20 to 200 m downwind, smoke 0.1 to 0.5 out to 100 m. Snow's spindrift takes 0.5. A
    Galilean-invariant mask (the speed relative to the weather wind, a Flow shader patch) is the lasting fix.
 
+### Clothing missing under path tracing on a cold shader cache (22 Nov)
+
+Paulo's playtest on build f2ad55f2: a character dressed by `PhysXSkinnedCloth3D` (body and clothes, the render copy
+replacing the skinned mesh) was missing under path tracing, fine in raster and with PhysX off, and fine again once the
+shader cache was warm. Cause: the path tracer leaves out any surface whose custom hit group is not yet live in the
+pipeline bundle (`_hit_group_ready`), and with `async_shader_compilation` on a new shader takes up to a minute on a
+slow GPU to get there. The cloth copy's material is a ShaderMaterial (vertex() reads `cloth_positions`), and an
+imported body's materials often are too, so the whole character went until they compiled.
+
+The fix is the usual one for async pipeline compiles (a stand-in pipeline until the specialised one is ready, as
+Godot's raster ubershaders and Unreal's default-material fallback do): an opaque surface whose shader never discards
+or writes alpha is traced with the default hit group meanwhile, from the material's standard parameters, over its bare
+mesh (its vertex capture also waits for the shader). A shader that discards or blends can't be stood in for, since
+it may hide the surface outright (the cloth's own source surface is hidden that way), so it still waits. The surface
+stays counted as pending, so a still waits for the real shader, and the instance is planned again every frame until
+it arrives.
+
+0c18e346 (texture content versions) does not touch this path: the solver writes its images from a compute pass,
+which keeps no content version, and the built-in cloth shader already asks for `rt_vertex_dynamic`.
+
+Test: `docs/bench/cloth_pt -- --test` warms path tracing on an empty scene, then adds a body plus a cloth sheet whose
+shaders are new on every run (no cache holds them) and checks both cover their pixels six frames later, while the
+shaders still compile. Release f2ad55f2 fails it (both missing, background behind them); main passes.
+
+### Vorticity confinement relative to the wind (22 Nov)
+
+Flow's vorticity confinement (Fedkiw, Stam and Jensen 2001: push along N x omega, N the unit gradient of |omega|)
+weights the push by `velocityLogMask * log2(velocityLogScale * speed + 1)`, with the speed of the low-passed velocity
+in the grid's frame. The physics doesn't care what frame it is seen from (Galilean invariance), but this weight does:
+in a 20 m/s wind every cell is fast, so confinement pushes everywhere, the push feeds the speed that weights it, and
+spindrift at vorticity 2 boiled to 50-120 m/s eddies (the reason snow runs 0.5). Patch 0012 adds
+`NvFlowVorticityParams.ambientVelocity` and subtracts it from the low-passed velocity before the weight; the module
+sets it from the weather wind at the gas (`WorldContracts::weather()->wind_at`) when `weather_wind` couples the gas.
+With no wind nothing changes.
+
+Checked in raster, same runs with and without: spindrift at vorticity 2 in its gale stays a plume (no boiling) and
+drifts a little wispier; smoke, fire and dust in an 8 m/s wind look the same. Snow keeps 0.5 for now; it can raise it.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

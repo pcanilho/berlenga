@@ -1103,6 +1103,8 @@ void WorldGround::_bind_methods() {
 	GDVIRTUAL_BIND(_coarse_cover_at, "position");
 	ClassDB::bind_method(D_METHOD("albedo_at", "position"), &WorldGround::albedo_at);
 	GDVIRTUAL_BIND(_albedo_at, "position");
+	ClassDB::bind_method(D_METHOD("relief_at", "position"), &WorldGround::relief_at);
+	GDVIRTUAL_BIND(_relief_at, "position");
 	ClassDB::bind_method(D_METHOD("add_runoff_load", "position", "mineral_kg", "ash_kg"), &WorldGround::add_runoff_load);
 	ClassDB::bind_method(D_METHOD("track_mud", "position", "radius", "depth", "wet", "print"), &WorldGround::track_mud);
 	ClassDB::bind_method(D_METHOD("has_runoff"), &WorldGround::has_runoff);
@@ -1249,6 +1251,35 @@ void WorldContracts::unregister_ground_color(WorldGroundColorProvider *p_provide
 	if (singleton) {
 		singleton->ground_color_providers.erase(p_provider);
 	}
+}
+
+void WorldContracts::register_relief(WorldReliefProvider *p_provider) {
+	if (singleton && p_provider && singleton->relief_providers.find(p_provider) < 0) {
+		singleton->relief_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_relief(WorldReliefProvider *p_provider) {
+	if (singleton) {
+		singleton->relief_providers.erase(p_provider);
+	}
+}
+
+Vector2 WorldGround::relief_at(const Vector3 &p_position) const {
+	Vector2 r;
+	if (GDVIRTUAL_CALL(_relief_at, p_position, r)) {
+		return r;
+	}
+	const LocalVector<WorldReliefProvider *> *list = WorldContracts::relief_providers_list();
+	if (list) {
+		for (const WorldReliefProvider *p : *list) {
+			const Vector2 v = p->contract_relief_at(p_position);
+			if (Math::is_finite(v.x)) {
+				return Vector2(v.x, CLAMP(v.y, 0.0f, 1.0f));
+			}
+		}
+	}
+	return Vector2();
 }
 
 void WorldContracts::register_plant_color(WorldPlantColorProvider *p_provider) {

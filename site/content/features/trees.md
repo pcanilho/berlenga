@@ -2,12 +2,12 @@
 title: "Trees"
 weight: 70
 group: "World"
-summary: "Trees and woody shrubs grown by light competition, 50 species in twenty-four stand types; bark, moss, lichen, climbers, seasons, pollards, old trees, deadwood and fungi; weather wind out to 1 km, colliders and touch."
+summary: "Trees and woody shrubs grown by light competition, 55 species in twenty-four stand types; bark, moss, lichen, climbers, seasons, pollards, old trees, deadwood and fungi; weather wind out to 1 km, colliders and touch."
 ---
 
 ## Growth
 
-- **Tree generator** (`TreeGenerator`: `preset`, `years`, `seed`): trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 31 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`).
+- **Tree generator** (`TreeGenerator`: `preset`, `years`, `seed`): trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted and wild cherry flowers white in April.
 
   ![Seven tree species grown in the open, raster](media/trees-species.jpg)
 

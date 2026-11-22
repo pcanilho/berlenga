@@ -661,6 +661,19 @@ public:
 	virtual ~WorldPlantColorProvider() {}
 };
 
+// The drawn ground's relief over the heightfield (Landscape3D's cliff and bank relief): a separate slot on the ground
+// contract, since the heightfield and the near ground come from other producers. Placers (plants, rocks, ground
+// detail, the near ground) set what they lay at the heightfield's height plus this. Several may register; the
+// first that knows the point answers.
+class WorldReliefProvider {
+public:
+	// At the point's xz: x the drawn surface's height over the heightfield's (m, + above it; the relief pushes the
+	// surface out along the slope's horizontal normal by d, so about d tan(slope) here), y the relief's share
+	// (0..1, the cliff and bank weights). x NAN where the producer does not reach.
+	virtual Vector2 contract_relief_at(const Vector3 &p_position) const = 0;
+	virtual ~WorldReliefProvider() {}
+};
+
 class WorldGround : public RefCounted {
 	GDCLASS(WorldGround, RefCounted);
 
@@ -691,6 +704,7 @@ protected:
 	GDVIRTUAL5R(float, _track_mud, Vector3, float, float, float, Vector4)
 	GDVIRTUAL1RC(Vector3, _coarse_cover_at, Vector3)
 	GDVIRTUAL1RC(Color, _albedo_at, Vector3)
+	GDVIRTUAL1RC(Vector2, _relief_at, Vector3)
 
 public:
 	bool has_provider() const { return provider != nullptr || get_script_instance() != nullptr; } // a script stub (set_*) counts
@@ -730,6 +744,10 @@ public:
 	// (1 where a ground colour answers; the snow's cover alone over ground no colour knows; 0 nothing). Readers blend
 	// their own setting toward rgb by a. For the light the ground sends up: gas and haze over it.
 	Color albedo_at(const Vector3 &p_position) const;
+	// The drawn ground's relief over the heightfield at the point's xz: x the height to add to the heightfield's (m),
+	// y its share (0..1). (0, 0) with no relief producer. GPU placers read terrain_relief_map (R height m, G share)
+	// over terrain_relief_rect instead.
+	Vector2 relief_at(const Vector3 &p_position) const;
 };
 
 // Snow: the snowpack and lake ice (docs/ideas/world-contracts.md, Snow). Produced by SnowCover3D.
@@ -854,6 +872,7 @@ class WorldContracts : public Object {
 	WorldRunoffProvider *runoff_provider = nullptr;
 	LocalVector<WorldCoverProvider *> cover_providers;
 	LocalVector<WorldGroundColorProvider *> ground_color_providers;
+	LocalVector<WorldReliefProvider *> relief_providers;
 	LocalVector<WorldClimateProvider *> climate_providers;
 	LocalVector<WorldPlantColorProvider *> plant_color_providers;
 	Ref<WorldWater> builtin_water;
@@ -900,6 +919,9 @@ public:
 	static float climate_precipitation_factor_at(const Vector3 &p_position);
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);
+	static void register_relief(WorldReliefProvider *p_provider); // any number: the first that knows the point answers
+	static void unregister_relief(WorldReliefProvider *p_provider);
+	static const LocalVector<WorldReliefProvider *> *relief_providers_list() { return singleton ? &singleton->relief_providers : nullptr; }
 	static const LocalVector<WorldGroundColorProvider *> *ground_color_providers_list() { return singleton ? &singleton->ground_color_providers : nullptr; }
 	static void register_plant_color(WorldPlantColorProvider *p_provider); // any number: each lays its cover over the ground in turn
 	static void unregister_plant_color(WorldPlantColorProvider *p_provider);

@@ -237,7 +237,9 @@ float rt_caustics_ratio(vec3 p) {
 	return ratio < 0.0 ? 1.0 : ratio;
 }
 
-// Whether the map covers p: the radiance cache would average its lines away there.
+// Whether the map puts lines at p: the radiance cache would average them away there. Dry ground gets
+// as many bent photons as straight ones (ratio exactly 1), so the cache serves it as anywhere else.
 bool rt_caustics_covers(vec3 p) {
-	return rt_caustics_lookup(p) >= 0.0;
+	float ratio = rt_caustics_lookup(p);
+	return ratio >= 0.0 && ratio != 1.0;
 }

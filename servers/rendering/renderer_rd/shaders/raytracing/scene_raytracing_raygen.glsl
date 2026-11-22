@@ -919,7 +919,8 @@ void main() {
 			camera_ray_origin = origin.xyz + direction.xyz * t_near;
 			camera_t_far = max(composite_t_max - t_near, 0.001);
 		}
-		camera_medium = rt_camera_medium(camera_ray_origin);
+		// Only a material that bounds a medium can put the camera in one.
+		camera_medium = rt_material_feature(RT_MATERIAL_FEATURE_MEDIA) ? rt_camera_medium(camera_ray_origin) : 0u;
 	}
 
 	const uint max_bounces = RT_GET_MAX_BOUNCES();

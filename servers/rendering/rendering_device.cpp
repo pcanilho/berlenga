@@ -515,7 +515,15 @@ RID RenderingDevice::blas_create(Span<AccelerationStructureGeometry> p_geometrie
 
 	AccelerationStructure acceleration_structure;
 	acceleration_structure.type = RDD::ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
-	acceleration_structure.driver_id = driver->blas_create(rdd_geometries, p_flags);
+	// Static fast-trace structures are compacted after their build; refitted or fast-build ones would gain little.
+	BitField<AccelerationStructureFlagBits> flags = p_flags;
+	if (acceleration_structure_compaction.enabled && !flags.has_flag(ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT) && !flags.has_flag(ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT)) {
+		flags.set_flag(ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT);
+		acceleration_structure.compactable = true;
+	} else {
+		flags.clear_flag(ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT);
+	}
+	acceleration_structure.driver_id = driver->blas_create(rdd_geometries, flags);
 	ERR_FAIL_COND_V_MSG(!acceleration_structure.driver_id, RID(), "Failed to create BLAS.");
 
 	acceleration_structure.draw_tracker = RDG::resource_tracker_create();
@@ -600,8 +608,11 @@ RID RenderingDevice::tlas_create(uint32_t p_max_instance_count, BitField<Acceler
 	acceleration_structure.draw_tracker->usage = RDG::RESOURCE_USAGE_ACCELERATION_STRUCTURE_READ_WRITE;
 
 	acceleration_structure.max_instance_count = p_max_instance_count;
+	// A new TLAS holds no records yet, so no old storage waits for it.
+	acceleration_structure.relocation_serial = acceleration_structure_compaction.relocation_serial;
 
 	RID id = acceleration_structure_owner.make_rid(acceleration_structure);
+	acceleration_structure_compaction.tlases.insert(id);
 #ifdef DEV_ENABLED
 	set_resource_name(id, "RID:" + itos(id.get_id()));
 #endif
@@ -713,12 +724,16 @@ Error RenderingDevice::blas_build(RID p_blas) {
 	Error err = _acceleration_structure_scratch_buffer_create(blas);
 	ERR_FAIL_COND_V(err != OK, err);
 
+	_blas_restore_full_storage(blas);
 	draw_graph.add_blas_build(blas->driver_id, blas->scratch_buffer, blas->draw_tracker, blas->draw_trackers);
 	driver->acceleration_structure_debug_record_build(blas->driver_id, false, frames_drawn);
 
 	blas->invalidated = false;
 	blas->build_serial = ++acceleration_structure_build_serial;
 	_blas_remove_tlas_dependencies(blas, p_blas);
+	if (blas->compactable) {
+		acceleration_structure_compaction.backlog.push_back({ p_blas, blas->build_serial });
+	}
 
 	return OK;
 }
@@ -772,6 +787,7 @@ Error RenderingDevice::tlas_build(RID p_tlas, Span<AccelerationStructureInstance
 	draw_graph.add_tlas_build(tlas->driver_id, tlas->scratch_buffer, build.instance_buffer, build.instance_offset, build.instance_count, tlas->draw_tracker, draw_trackers);
 	driver->acceleration_structure_debug_record_build(tlas->driver_id, false, frames_drawn);
 	tlas->build_serial = ++acceleration_structure_build_serial;
+	tlas->relocation_serial = acceleration_structure_compaction.relocation_serial;
 
 	return OK;
 }
@@ -935,7 +951,8 @@ Error RenderingDevice::_tlas_write_keyed(AccelerationStructure *p_tlas, Span<Acc
 		keyed.valid = false;
 	}
 
-	const bool all = !keyed.valid;
+	// Records written before a BLAS moved hold its old address.
+	const bool all = !keyed.valid || keyed.relocation_serial != acceleration_structure_compaction.relocation_serial;
 	// Invalid until this build is recorded, so a failure below makes the next build write everything.
 	keyed.valid = false;
 	keyed.touched.clear();
@@ -1081,6 +1098,7 @@ Error RenderingDevice::_tlas_write_keyed(AccelerationStructure *p_tlas, Span<Acc
 	r_build.instance_count = count;
 	p_tlas->invalidated = false;
 	keyed.valid = true;
+	keyed.relocation_serial = acceleration_structure_compaction.relocation_serial;
 	return OK;
 }
 
@@ -1160,6 +1178,9 @@ Error RenderingDevice::_blas_batch_add(RID p_blas, bool p_refit) {
 
 	// A refit reads the previous build, which a BLAS that never built doesn't have.
 	const bool refit = p_refit && !blas->invalidated;
+	if (!refit) {
+		_blas_restore_full_storage(blas);
+	}
 	RDG::RecordedAccelerationStructureBuild build;
 	build.type = refit ? RDG::RecordedAccelerationStructureBuild::TYPE_BLAS_UPDATE : RDG::RecordedAccelerationStructureBuild::TYPE_BLAS_BUILD;
 	build.acceleration_structure = blas->driver_id;
@@ -1170,6 +1191,9 @@ Error RenderingDevice::_blas_batch_add(RID p_blas, bool p_refit) {
 	blas->invalidated = false;
 	blas->build_serial = acceleration_structure_build_serial;
 	_blas_remove_tlas_dependencies(blas, p_blas);
+	if (blas->compactable && !refit) {
+		acceleration_structure_compaction.backlog.push_back({ p_blas, blas->build_serial });
+	}
 	return OK;
 }
 
@@ -1199,6 +1223,7 @@ Error RenderingDevice::_tlas_batch_add(const TLASBuild &p_build) {
 	driver->acceleration_structure_debug_record_build(tlas->driver_id, false, frames_drawn);
 
 	tlas->build_serial = acceleration_structure_build_serial;
+	tlas->relocation_serial = acceleration_structure_compaction.relocation_serial;
 	return OK;
 }
 
@@ -1225,6 +1250,8 @@ Error RenderingDevice::acceleration_structure_build_batch(Span<RID> p_blas_build
 	const auto keep_first_error = [&first_err](Error p_err) {
 		first_err = first_err != OK ? first_err : p_err;
 	};
+	// First, so that this batch's TLASes take the compacted storage.
+	_acceleration_structure_compaction_record_copies(p_blas_builds);
 	for (const RID &blas : p_blas_builds) {
 		keep_first_error(_blas_batch_add(blas, false));
 	}
@@ -1236,6 +1263,7 @@ Error RenderingDevice::acceleration_structure_build_batch(Span<RID> p_blas_build
 	for (const TLASBuild &build : p_tlas_builds) {
 		keep_first_error(_tlas_batch_add(build));
 	}
+	_acceleration_structure_compaction_record_queries();
 
 	if (!acceleration_structure_batch.builds.is_empty()) {
 		// Also covers the scratch memory and structures still used by earlier batches.
@@ -1247,6 +1275,194 @@ Error RenderingDevice::acceleration_structure_build_batch(Span<RID> p_blas_build
 
 RenderingDevice::AccelerationStructureScratchUsage RenderingDevice::acceleration_structure_get_scratch_usage() const {
 	return { acceleration_structure_scratch.batch_peak, acceleration_structure_scratch.size, acceleration_structure_scratch.batch_rollovers };
+}
+
+RenderingDevice::AccelerationStructureCompactionStats RenderingDevice::acceleration_structure_get_compaction_stats() const {
+	AccelerationStructureCompactionStats stats = acceleration_structure_compaction.stats;
+	stats.pending = acceleration_structure_compaction.backlog.size() + acceleration_structure_compaction.pending.size();
+	for (const Frame &f : frames) {
+		stats.pending += f.compaction_queries.size();
+	}
+	stats.retired = acceleration_structure_compaction.retired.size();
+	return stats;
+}
+
+// A fresh build doesn't fit in compacted storage: the BLAS goes back to storage of its full build size, and is compacted
+// again after this build.
+void RenderingDevice::_blas_restore_full_storage(AccelerationStructure *p_blas) {
+	if (!p_blas->compacted) {
+		return;
+	}
+	const RDD::AccelerationStructureID old_storage = driver->blas_restore_full_storage(p_blas->driver_id);
+	if (!old_storage) {
+		return;
+	}
+	p_blas->compacted = false;
+	AccelerationStructureCompaction &compaction = acceleration_structure_compaction;
+	compaction.relocation_serial++;
+	compaction.retired.push_back({ old_storage, compaction.relocation_serial });
+}
+
+// Records the compacting copies whose sizes came back, each into storage of that size, and moves the BLASes into it.
+void RenderingDevice::_acceleration_structure_compaction_record_copies(Span<RID> p_blas_builds) {
+	AccelerationStructureCompaction &compaction = acceleration_structure_compaction;
+	if (compaction.pending.is_empty()) {
+		return;
+	}
+
+	uint32_t copies = 0;
+	uint32_t kept = 0;
+	for (uint32_t i = 0; i < compaction.pending.size(); i++) {
+		const AccelerationStructureCompaction::Pending pending = compaction.pending[i];
+		if (copies >= AccelerationStructureCompaction::COPIES_PER_BATCH) {
+			compaction.pending[kept++] = pending;
+			continue;
+		}
+		AccelerationStructure *blas = acceleration_structure_owner.get_or_null(pending.blas);
+		// Freed, or built again since its size was asked: the newer build has its own query.
+		if (blas == nullptr || blas->compacted || blas->invalidated || blas->build_serial != pending.build_serial) {
+			continue;
+		}
+		// Built again in this batch: the same.
+		bool rebuilt = false;
+		for (const RID &rid : p_blas_builds) {
+			if (rid == pending.blas) {
+				rebuilt = true;
+				break;
+			}
+		}
+		const uint64_t before = driver->acceleration_structure_get_size_bytes(blas->driver_id);
+		if (rebuilt || pending.size == 0 || pending.size > before || (pending.size == before && !compaction.move_all)) {
+			continue;
+		}
+		const RDD::AccelerationStructureID old_storage = driver->blas_compact_relocate(blas->driver_id, pending.size);
+		if (!old_storage) {
+			continue;
+		}
+		if (copies == 0) {
+			compaction.relocation_serial++;
+		}
+		RDG::RecordedAccelerationStructureBuild copy;
+		copy.type = RDG::RecordedAccelerationStructureBuild::TYPE_BLAS_COMPACT_COPY;
+		copy.source = old_storage;
+		copy.acceleration_structure = blas->driver_id;
+		acceleration_structure_batch.builds.push_back(copy);
+		driver->acceleration_structure_debug_record_build(blas->driver_id, false, frames_drawn);
+
+		blas->compacted = true;
+		compaction.retired.push_back({ old_storage, compaction.relocation_serial });
+		compaction.stats.compacted++;
+		compaction.stats.bytes_before += before;
+		compaction.stats.bytes_after += pending.size;
+		copies++;
+	}
+	compaction.pending.resize(kept);
+	if (copies > 0) {
+		print_verbose(vformat("BLAS compaction: %d structures moved (%d in all, %.1f MB to %.1f MB).", copies, compaction.stats.compacted, double(compaction.stats.bytes_before) / 1e6, double(compaction.stats.bytes_after) / 1e6));
+		// The builds and TLAS builds after them read or write other structures, but the TLASes reference the copies.
+		acceleration_structure_batch.barrier_pending = true;
+	}
+}
+
+// Asks for the compacted sizes of the BLASes built so far, behind a barrier so their builds are done.
+void RenderingDevice::_acceleration_structure_compaction_record_queries() {
+	AccelerationStructureCompaction &compaction = acceleration_structure_compaction;
+	if (compaction.backlog.is_empty()) {
+		return;
+	}
+	print_verbose(vformat("BLAS compaction: asking %d sizes.", compaction.backlog.size()));
+	Frame &f = frames[frame];
+	const uint32_t first = f.compaction_queries.size();
+	uint32_t count = 0;
+	uint32_t taken = 0;
+	for (; taken < compaction.backlog.size() && first + count < AccelerationStructureCompaction::QUERIES_PER_FRAME; taken++) {
+		const AccelerationStructureCompaction::Query query = compaction.backlog[taken];
+		const AccelerationStructure *blas = acceleration_structure_owner.get_or_null(query.blas);
+		if (blas == nullptr || blas->compacted || blas->invalidated || blas->build_serial != query.build_serial) {
+			continue;
+		}
+		if (count == 0) {
+			RDG::RecordedAccelerationStructureBuild reset;
+			reset.type = RDG::RecordedAccelerationStructureBuild::TYPE_SIZE_QUERY_RESET;
+			reset.query_pool = f.compaction_query_pool;
+			reset.query_index = first;
+			acceleration_structure_batch.builds.push_back(reset);
+		}
+		RDG::RecordedAccelerationStructureBuild write;
+		write.type = RDG::RecordedAccelerationStructureBuild::TYPE_COMPACTED_SIZE_QUERY;
+		write.barrier_before = count == 0;
+		write.acceleration_structure = blas->driver_id;
+		write.query_pool = f.compaction_query_pool;
+		write.query_index = first + count;
+		acceleration_structure_batch.builds.push_back(write);
+		f.compaction_queries.push_back(query);
+		count++;
+	}
+	if (count > 0) {
+		// The reset covers this batch's queries.
+		for (int64_t i = int64_t(acceleration_structure_batch.builds.size()) - 1; i >= 0; i--) {
+			RDG::RecordedAccelerationStructureBuild &entry = acceleration_structure_batch.builds[i];
+			if (entry.type == RDG::RecordedAccelerationStructureBuild::TYPE_SIZE_QUERY_RESET && entry.query_index == first) {
+				entry.instance_count = count;
+				break;
+			}
+		}
+	}
+	// What didn't fit waits for the next batch.
+	uint32_t kept = 0;
+	for (uint32_t i = taken; i < compaction.backlog.size(); i++) {
+		compaction.backlog[kept++] = compaction.backlog[i];
+	}
+	compaction.backlog.resize(kept);
+}
+
+// The frame is done: reads its compacted sizes, and frees old storage no TLAS points at any more.
+void RenderingDevice::_acceleration_structure_compaction_begin_frame() {
+	AccelerationStructureCompaction &compaction = acceleration_structure_compaction;
+	if (!compaction.enabled) {
+		return;
+	}
+	Frame &f = frames[frame];
+	if (!f.compaction_queries.is_empty()) {
+		thread_local LocalVector<uint64_t> sizes;
+		sizes.resize(f.compaction_queries.size());
+		driver->acceleration_structure_size_query_pool_get_results(f.compaction_query_pool, f.compaction_queries.size(), sizes.ptr());
+		uint64_t asked = 0;
+		uint64_t current = 0;
+		for (uint32_t i = 0; i < f.compaction_queries.size(); i++) {
+			compaction.pending.push_back({ f.compaction_queries[i].blas, f.compaction_queries[i].build_serial, sizes[i] });
+			asked += sizes[i];
+			const AccelerationStructure *blas = acceleration_structure_owner.get_or_null(f.compaction_queries[i].blas);
+			current += blas ? driver->acceleration_structure_get_size_bytes(blas->driver_id) : 0;
+		}
+		print_verbose(vformat("BLAS compaction: %d sizes back, %.2f MB compacted of %.2f MB.", f.compaction_queries.size(), double(asked) / 1e6, double(current) / 1e6));
+		f.compaction_queries.clear();
+	}
+
+	if (compaction.retired.is_empty()) {
+		return;
+	}
+	uint64_t caught_up = compaction.relocation_serial;
+	for (const RID &rid : compaction.tlases) {
+		const AccelerationStructure *tlas = acceleration_structure_owner.get_or_null(rid);
+		if (tlas != nullptr) {
+			caught_up = MIN(caught_up, tlas->relocation_serial);
+		}
+	}
+	uint32_t kept = 0;
+	for (uint32_t i = 0; i < compaction.retired.size(); i++) {
+		const AccelerationStructureCompaction::Retired retired = compaction.retired[i];
+		if (retired.relocation_serial <= caught_up) {
+			// Freed once this frame is done again, after every command recorded so far.
+			AccelerationStructure storage;
+			storage.type = RDD::ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+			storage.driver_id = retired.storage;
+			f.acceleration_structures_to_dispose_of.push_back(storage);
+		} else {
+			compaction.retired[kept++] = retired;
+		}
+	}
+	compaction.retired.resize(kept);
 }
 
 void RenderingDevice::untracked_barrier() {
@@ -8491,6 +8707,7 @@ void RenderingDevice::_free_internal(RID p_id) {
 			_blas_remove_tlas_dependencies(acceleration_structure, p_id);
 		} else if (acceleration_structure->type == ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL) {
 			_tlas_remove_blas_dependencies(acceleration_structure, p_id);
+			acceleration_structure_compaction.tlases.erase(p_id);
 		}
 		RDG::resource_tracker_free(acceleration_structure->draw_tracker);
 		frames[frame].acceleration_structures_to_dispose_of.push_back(*acceleration_structure);
@@ -8886,6 +9103,7 @@ void RenderingDevice::_begin_frame(bool p_presented) {
 	// Erase pending resources.
 	GodotProfileZoneGrouped(_profile_zone, "_free_pending_resources");
 	_free_pending_resources(frame);
+	_acceleration_structure_compaction_begin_frame();
 
 	// Advance staging buffers if used.
 	if (upload_staging_buffers.used) {
@@ -9371,6 +9589,16 @@ Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServ
 	const int64_t scratch_max_mb = CLAMP(int64_t(GLOBAL_GET("rendering/rendering_device/acceleration_structure/max_scratch_buffer_size_mb")), 1, 4095);
 	acceleration_structure_scratch.max_size = uint64_t(scratch_max_mb) * 1000 * 1000;
 
+	acceleration_structure_compaction.enabled = bool(GLOBAL_GET("rendering/rendering_device/acceleration_structure/compaction")) &&
+			(has_feature(SUPPORTS_RAYTRACING_PIPELINE) || has_feature(SUPPORTS_RAY_QUERY)) && driver->acceleration_structure_compaction_is_supported();
+	acceleration_structure_compaction.move_all = OS::get_singleton()->get_environment("RD_BLAS_COMPACTION_MOVE_ALL") == "1";
+	for (uint32_t i = 0; i < frames.size() && acceleration_structure_compaction.enabled; i++) {
+		frames[i].compaction_query_pool = driver->acceleration_structure_size_query_pool_create(AccelerationStructureCompaction::QUERIES_PER_FRAME);
+		if (!frames[i].compaction_query_pool) {
+			acceleration_structure_compaction.enabled = false;
+		}
+	}
+
 	texture_upload_region_size_px = GLOBAL_GET("rendering/rendering_device/staging_buffer/texture_upload_region_size_px");
 	texture_upload_region_size_px = Math::nearest_power_of_2_templated(texture_upload_region_size_px);
 
@@ -9773,12 +10001,24 @@ void RenderingDevice::finalize() {
 	// Erase the transfer workers after all resources have been freed.
 	_free_transfer_workers();
 
+	// Old BLAS storage left after compaction.
+	for (const AccelerationStructureCompaction::Retired &retired : acceleration_structure_compaction.retired) {
+		AccelerationStructure storage;
+		storage.type = RDD::ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+		storage.driver_id = retired.storage;
+		frames[frame].acceleration_structures_to_dispose_of.push_back(storage);
+	}
+	acceleration_structure_compaction.retired.clear();
+
 	// Free everything pending.
 	for (uint32_t i = 0; i < frames.size(); i++) {
 		int f = (frame + i) % frames.size();
 		_free_pending_resources(f);
 		driver->command_pool_free(frames[i].command_pool);
 		driver->timestamp_query_pool_free(frames[i].timestamp_pool);
+		if (frames[i].compaction_query_pool) {
+			driver->acceleration_structure_size_query_pool_free(frames[i].compaction_query_pool);
+		}
 		driver->semaphore_free(frames[i].semaphore);
 		driver->fence_free(frames[i].fence);
 

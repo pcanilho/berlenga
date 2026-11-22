@@ -57,6 +57,15 @@
 				Spider webs in open grassland as [PlantSpecies]: [constant PRESET_SHEET_WEB] over the sward and [constant PRESET_ORB_WEB] a few metres apart, in their season ([method get_presence]). The silk is drawn by the plant shader and shows only where dew or hoarfrost beads it ([WeatherMap3D] surface wetness and frost); a [code]"dew"[/code] key (0 to 1) in [param season] sets the dew instead, for scenes without a weather map.
 			</description>
 		</method>
+		<method name="make_flood_wrack" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				A flood's leavings as [PlantSpecies] of [constant PRESET_FLOOD_WRACK]: the main strand line within 8 cm under the last flood's crest and thinner, sparser lines 0.35 to 0.9 m lower where the falling water left them ([constant PlantSpecies.RULE_HIGH_WATER] from [method WorldWater.high_water_at]), laid along the contour ([member PlantSpecies.follow_flow]), for a year after the flood ([constant PlantSpecies.RULE_FLOOD_AGE]). A [code]"flood_age"[/code] key (years) in [param season] ages the meshes.
+			</description>
+		</method>
 		<method name="make_fairy_rings" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="variants" type="int" default="3" />
@@ -713,7 +722,10 @@
 		<constant name="PRESET_ORB_WEB" value="110" enum="Preset">
 			A garden spider's orb web 15 to 30 cm across, hung between two dry stems with its frame and anchor threads; some leave one sector open.
 		</constant>
-		<constant name="PRESET_MAX" value="111" enum="Preset">
+		<constant name="PRESET_FLOOD_WRACK" value="111" enum="Preset">
+			A flood's strand line 1.2 to 2.6 m long along the high-water mark: silted straw, reed stem pieces, twigs and leaves over a matted mat, its landward edge sharp at the crest and its foot frayed; wet and dark at first, grey and dry within weeks, broken up over a year by the season's [code]"flood_age"[/code] (years).
+		</constant>
+		<constant name="PRESET_MAX" value="112" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="GRAZE_CATTLE" value="0" enum="GrazeSet">

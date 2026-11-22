@@ -80,6 +80,8 @@ public:
 		RULE_ROOTING, // Years since boar last rooted the ground (WorldStand.rooting_age_at); -1 never, which only ranges reaching -1 or 10000 years take.
 		RULE_LITTER_DRIFT, // How the wind gathers fallen leaves (VegetationField3D): 1 as they fell, up to 2.5 in hollows and against trunks, logs and rocks, down to 0.15 on crests.
 		RULE_FAIRY_RING, // Metres from the nearest meadow fairy ring's line (fairy_rings.h), + outside; 1000 with none or in a broken ring's gap.
+		RULE_HIGH_WATER, // Metres of the ground over the last flood's peak surface (WorldWater.high_water_at), - below it; 1000 where no flood is known.
+		RULE_FLOOD_AGE, // Years since that flood's peak (WorldWater.high_water_at); 10000 where no flood is known.
 		RULE_MAX,
 	};
 	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
@@ -269,6 +271,7 @@ public:
 	// The forest edge rule, or meta "edge_distance" (Vector2 m; TreeGenerator.make_edge) where it is left at its default.
 	bool uses_forest_edge() const;
 	bool uses_browse() const { return ranges[RULE_BROWSE].x > 0.0f || ranges[RULE_BROWSE].y < 1.0f; }
+	bool uses_high_water() const { return ranges[RULE_HIGH_WATER].x > -10000.0f || ranges[RULE_HIGH_WATER].y < 10000.0f || ranges[RULE_FLOOD_AGE].x > 0.0f || ranges[RULE_FLOOD_AGE].y < 10000.0f; }
 	bool uses_fairy_ring() const { return ranges[RULE_FAIRY_RING].x > -10000.0f || ranges[RULE_FAIRY_RING].y < 10000.0f; }
 	bool uses_litter_drift() const { return ranges[RULE_LITTER_DRIFT].x > 0.0f || ranges[RULE_LITTER_DRIFT].y < 100.0f; }
 	bool uses_rooting() const { return ranges[RULE_ROOTING].x > -1.0f || ranges[RULE_ROOTING].y < 10000.0f; }
@@ -277,7 +280,7 @@ public:
 		if (p_years < 0.0f) {
 			return (p_rule.x <= -1.0f || p_rule.y >= 10000.0f) ? 1.0f : 0.0f;
 		}
-		return p_rule.z <= 0.0f ? ((p_years >= p_rule.x && p_years <= p_rule.y) ? 1.0f : 0.0f) : Math::smoothstep(p_rule.x - p_rule.z, p_rule.x, p_years) * (1.0f - Math::smoothstep(p_rule.y, p_rule.y + p_rule.z, p_years));
+		return p_rule.z <= 0.0f ? ((p_years >= p_rule.x && p_years <= p_rule.y) ? 1.0f : 0.0f) : Math::smoothstep(float(p_rule.x - p_rule.z), float(p_rule.x), p_years) * (1.0f - Math::smoothstep(float(p_rule.y), float(p_rule.y + p_rule.z), p_years));
 	}
 	Vector3 get_rooting_rule() const { return Vector3(ranges[RULE_ROOTING].x, ranges[RULE_ROOTING].y, fades[RULE_ROOTING]); }
 	void get_forest_edge_rule(Vector2 &r_range, float &r_fade) const;
@@ -355,7 +358,7 @@ public:
 			return 1.0f;
 		}
 		const float fade = 0.04f;
-		return Math::smoothstep(stone_top_water.x - fade, stone_top_water.x, p_h) * (1.0f - Math::smoothstep(stone_top_water.y, stone_top_water.y + fade, p_h));
+		return Math::smoothstep(float(stone_top_water.x) - fade, float(stone_top_water.x), p_h) * (1.0f - Math::smoothstep(float(stone_top_water.y), float(stone_top_water.y) + fade, p_h));
 	}
 	void set_follow_flow(bool p_on) {
 		follow_flow = p_on;

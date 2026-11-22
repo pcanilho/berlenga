@@ -4,7 +4,9 @@
    "name": "rendering/pathtracing/async_shader_compilation",
    "type": "bool",
    "default": "true",
-   "about": "If `true`, path tracing ray hit shaders are compiled asynchronously in the background."
+   "about": "If `true`, path tracing ray hit shaders are compiled asynchronously in the background.",
+   "page": "other",
+   "title": "Other"
   },
   {
    "name": "rendering/pathtracing/debug_heatmap_max_ticks",
@@ -1660,6 +1662,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Frost-sorted ground",
+   "settings": [
+    "RockField3D.frost_sorting"
+   ],
+   "note": "",
+   "what": "on cold, wet, gentle soil, frost sorts the stones into circles round fine-soil centres, drawn out into stripes on slopes.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Breakable stones",
    "settings": [
     "RockField3D.break_stone"
@@ -2649,6 +2662,29 @@
    "topic": "Plants"
   },
   {
+   "name": "Snowmelt sward",
+   "settings": [
+    "GrassField3D.snowmelt"
+   ],
+   "note": "",
+   "what": "where snow lay long the grass comes out matted and pale, with grey snow mould patches that green over weeks.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Flood wrack",
+   "settings": [
+    "PlantGenerator.make_flood_wrack()",
+    "GrassField3D.flood_wash"
+   ],
+   "note": "",
+   "what": "straw, reed and twig strand lines mark the last flood's high water, with the grass below combed flat and silted.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Fairy rings",
    "settings": [
     "GrassField3D.fairy_rings",
@@ -3033,7 +3069,7 @@
     "seed"
    ],
    "note": "",
-   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 31 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`).",
+   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted and wild cherry flowers white in April.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3754,6 +3790,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Snow layers",
+   "settings": [
+    "SnowCover3D.layers_enabled"
+   ],
+   "note": "",
+   "what": "crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Lake ice",
    "settings": [
     "SnowCover3D.lake_ice_enabled"
@@ -4008,10 +4055,11 @@
   {
    "name": "Wind over terrain",
    "settings": [
-    "terrain_wind_enabled"
+    "terrain_wind_enabled",
+    "drainage_winds"
    ],
    "note": "",
-   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes.",
+   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4991,6 +5039,28 @@
    "what": "",
    "page": "open-worlds",
    "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Compacted ray tracing structures",
+   "settings": [
+    "rendering/rendering_device/acceleration_structure/compaction"
+   ],
+   "note": "",
+   "what": "static acceleration structures shrink in video memory after they are built.",
+   "page": "open-worlds",
+   "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Shaders compile in the background",
+   "settings": [
+    "rendering/pathtracing/async_shader_compilation"
+   ],
+   "note": "",
+   "what": "path tracing draws a surface with the default material while its own shader compiles, instead of leaving it out.",
+   "page": "other",
+   "title": "Other",
    "topic": ""
   }
  ]
