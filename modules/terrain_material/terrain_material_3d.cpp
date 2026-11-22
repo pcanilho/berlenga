@@ -2039,6 +2039,17 @@ void fragment() {
 		// over the sand of the patch, as BaseMaterial3D draws it, and past the patch over the dune field's sand
 		// (far_ripples), by this material's sand share.
 		c += "\tvec3 gr_sort;\n\tvec3 gr_far = ground_ripple_far_slope(wp.xz, length(tm_dpx), wn.y, tm_sand_b, gr_sort);\n\tsn = normalize(sn - vec3(gr_far.x, 0.0, gr_far.y));\n\talbedo *= gr_far.z * gr_sort;\n";
+		// Rain pits (GroundSurface3D rain_pits), as BaseMaterial3D draws them: on this material's sand, none in prints.
+		c += R"(	{
+		vec4 gm6 = ground_sand_meta6();
+		if (gm6.x > 0.0) {
+			float gpt;
+			vec2 gps = ground_rain_pits(wp.xz, gm6.x * tm_sand_b * (1.0 - smoothstep(0.003, 0.008, abs(ground_deform_relief(wp.xz)))), gm6.z, length(tm_dpx), gpt);
+			albedo *= gpt;
+			sn = normalize(sn - vec3(gps.x, 0.0, gps.y));
+		}
+	}
+)";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5 * tm_gc_spec;\n";
 	if (grass_tint_enabled) {

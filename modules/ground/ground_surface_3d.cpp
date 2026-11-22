@@ -5717,6 +5717,55 @@ float GroundSurface3D::get_water_speed_at(const Vector3 &p_position) const {
 
 // Saltation flux from GroundRipples::saltation_flux. The ripple layer steps when q of sand a cell has moved
 // since its last step (q = Q / (bulk density * hop)), a few times a second at most.
+// Rain pits and rain crust (docs/ideas/sand.md, "Rain pits and rain crust"). Each drop pits dry sand: a hundredth of a
+// millimetre of rain lands some 5000 drops of 1.5 mm on a square metre, so the craters cover the sand by about
+// 0.05 mm, and each rain lays a new pattern over the last. The wetted skin dries into a crust that seals the surface,
+// its fines washed into the pores (Valentin and Bresson 1992): from half a millimetre of rain, whole by 3 mm, over
+// half an hour or so of drying. Saltation wipes pits off loose sand in minutes (its impacts rework the top grains)
+// and wears a crust away over hours; the crust keeps the wind off what it covers (the ripples' mask, the prints'
+// filling and get_blown_at(), so the streamers too). The rain is the weather's (WorldWeather rainfall_at, less the
+// canopy's share), at the patch's centre.
+void GroundSurface3D::_rain_marks(float p_dt, float p_ustar) {
+	if (!rain_pits || p_dt <= 0.0f) {
+		return;
+	}
+	const WorldWeather *wm = _weather();
+	float rain = 0.0f;
+	float wet = 0.0f;
+	if (wm) {
+		const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
+		rain = wm->rainfall_at(at) * (1.0f - 0.8f * wm->canopy_closure_at(at));
+		wet = wm->surface_wetness_at(at);
+	}
+	if (rain > 0.0f) {
+		if (rain_pit_cover < 0.02f) {
+			rain_pit_seed = Math::fmod(rain_pit_seed + 1.0f, 4096.0f); // a new rain: a new pattern
+		}
+		const float mm = rain * p_dt / 3600.0f;
+		rain_pit_cover = 1.0f - (1.0f - rain_pit_cover) * Math::exp(-mm / 0.03f);
+		rain_total += mm;
+	}
+	const float seal = Math::smoothstep(0.5f, 3.0f, rain_total) * CLAMP(1.0f - wet / 0.3f, 0.0f, 1.0f);
+	if (seal > rain_crust) {
+		rain_crust += (seal - rain_crust) * MIN(p_dt / 1800.0f, 1.0f);
+	}
+	if (p_ustar > GroundRipples::SAND_USTAR_T && wet < 0.3f) {
+		const float x = (p_ustar / GroundRipples::SAND_USTAR_T - 1.0f) * p_dt * ripple_time_scale;
+		rain_crust *= Math::exp(-x / (6.0f * 3600.0f));
+		rain_pit_cover *= Math::exp(-x * (1.0f - rain_crust) / 300.0f);
+	}
+	if (rain_pit_cover < 0.005f && rain_crust < 0.005f) {
+		rain_pit_cover = 0.0f;
+		rain_crust = 0.0f;
+		rain_total = 0.0f;
+	}
+	const float pc = get_rain_pit_cover();
+	const float kc = get_rain_crust();
+	if (Math::abs(pc - rain_published[0]) > 0.01f || Math::abs(kc - rain_published[1]) > 0.01f || ((pc > 0.0f) != (rain_published[0] > 0.0f))) {
+		ripple_dirty = true;
+	}
+}
+
 void GroundSurface3D::_ripples_update(double p_delta) {
 	if (!wind_ripples || !field.valid) {
 		return;
@@ -5735,6 +5784,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 	Vector2 wind = _wind_10m();
 	const float speed = wind.length();
 	const Vector2 dir = speed > 0.1f ? wind / speed : Vector2(1.0f, 0.0f);
+	_rain_marks(float(p_delta), GroundRipples::friction_speed(speed));
 	// A grown field for the cells that come in, in the background; again when the wind turns past 35 degrees.
 	if (ripple_task != WorkerThreadPool::INVALID_TASK_ID) {
 		if (WorkerThreadPool::get_singleton()->is_task_completed(ripple_task)) {
@@ -5773,7 +5823,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				const float x = (ripples.origin.x + bx + 0.5f * b) * ripples.cell;
 				const float z = (ripples.origin.y + bz + 0.5f * b) * ripples.cell;
 				const Cell &c = _cell_at(x, z);
-				const float m = c.deformable ? c.blown * _shelter_flux_at(x, z) : 0.0f;
+				const float m = c.deformable ? c.blown * _shelter_flux_at(x, z) * (1.0f - get_rain_crust()) : 0.0f; // a rain crust holds
 				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(x, z) : 0.0f;
 				for (int z2 = bz; z2 < MIN(bz + b, ripples.n); z2++) {
 					for (int x2 = bx; x2 < MIN(bx + b, ripples.n); x2++) {
@@ -5976,6 +6026,11 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[20] = ripple_sand_wind.x; // the dune-building wind, for the granule ripples
 		meta[21] = ripple_sand_wind.y;
 		meta[22] = granule_ripples ? 1.0f : 0.0f;
+		meta[24] = get_rain_pit_cover(); // the rain's marks (_rain_marks())
+		meta[25] = get_rain_crust();
+		meta[26] = rain_pit_seed;
+		rain_published[0] = meta[24];
+		rain_published[1] = meta[25];
 		meta[12] = ripples.tmpl_k.x; // the template's wave vector, for the shaders' dislocations
 		meta[13] = ripples.tmpl_k.y;
 		if (ripple_image.is_valid() && ripple_image->get_width() == w && ripple_image->get_height() == hgt && ripple_texture.is_valid()) {
@@ -6078,8 +6133,8 @@ void GroundSurface3D::_age(double p_delta) {
 	if (wm) {
 		rain = wm->precipitation_at(at);
 	}
-	// Sand moves above about 5 m/s at 10 m (Bagnold's threshold for fine dry sand).
-	const float drift = sand_drift_rate * MAX(wind - 5.0f, 0.0f) / 5.0f;
+	// Sand moves above about 5 m/s at 10 m (Bagnold's threshold for fine dry sand); not under a rain crust.
+	const float drift = sand_drift_rate * MAX(wind - 5.0f, 0.0f) / 5.0f * (1.0f - get_rain_crust());
 	const float soften = rain_smoothing * rain;
 	const float dry = Math::exp(-dt / drying_time);
 	const int n = field.resolution;
@@ -8894,7 +8949,7 @@ PackedByteArray GroundSurface3D::_gpu_params(const GroundDeformField &p_field, f
 	float soften = 0.0f;
 	if (p_age > 0.0) {
 		const WorldWeather *wm = _weather();
-		drift = sand_drift_rate * MAX(_wind_10m().length() - 5.0f, 0.0f) / 5.0f;
+		drift = sand_drift_rate * MAX(_wind_10m().length() - 5.0f, 0.0f) / 5.0f * (1.0f - get_rain_crust());
 		if (wm) {
 			const Vector3 at(center.x, _ground_at(center.x, center.y), center.y);
 			soften = rain_smoothing * wm->precipitation_at(at);
@@ -9737,6 +9792,10 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_dune_tone", "enabled"), &GroundSurface3D::set_dune_tone);
 	ClassDB::bind_method(D_METHOD("set_granule_ripples", "enabled"), &GroundSurface3D::set_granule_ripples);
 	ClassDB::bind_method(D_METHOD("is_granule_ripples"), &GroundSurface3D::is_granule_ripples);
+	ClassDB::bind_method(D_METHOD("set_rain_pits", "enabled"), &GroundSurface3D::set_rain_pits);
+	ClassDB::bind_method(D_METHOD("is_rain_pits"), &GroundSurface3D::is_rain_pits);
+	ClassDB::bind_method(D_METHOD("get_rain_pit_cover"), &GroundSurface3D::get_rain_pit_cover);
+	ClassDB::bind_method(D_METHOD("get_rain_crust"), &GroundSurface3D::get_rain_crust);
 	ClassDB::bind_method(D_METHOD("is_dune_tone"), &GroundSurface3D::is_dune_tone);
 	ClassDB::bind_method(D_METHOD("is_ripple_sorting"), &GroundSurface3D::is_ripple_sorting);
 	ClassDB::bind_method(D_METHOD("is_far_ripples"), &GroundSurface3D::is_far_ripples);
@@ -9897,6 +9956,7 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ripple_sorting"), "set_ripple_sorting", "is_ripple_sorting");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dune_tone"), "set_dune_tone", "is_dune_tone");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "granule_ripples"), "set_granule_ripples", "is_granule_ripples");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_pits"), "set_rain_pits", "is_rain_pits");
 	ClassDB::bind_method(D_METHOD("set_slip_avalanches", "enabled"), &GroundSurface3D::set_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("is_slip_avalanches"), &GroundSurface3D::is_slip_avalanches);
 	ClassDB::bind_method(D_METHOD("get_avalanche_count"), &GroundSurface3D::get_avalanche_count);

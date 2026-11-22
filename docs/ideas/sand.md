@@ -969,3 +969,29 @@ desert lag, not grey).
   irregular warts and ridges that grow upwind (adhesion structures, Kocurek and Fielder 1982). For oasis margins
   and drying swash: where the wind's sand flux crosses the wet margin, add a rough, upwind-facing wart relief and
   a paler dry-grain tint. Small; reads only up close.
+
+## Rain pits and rain crust (GroundSurface3D `rain_pits`, on; built 22 Nov 2026)
+
+The card's recommended pick, built while the card waits. Each drop digs a crater about 2.5 times its own size, some
+0.12 of its width deep, ringed by a low rim of the sand it throws out (Katsuragi 2010, PRL; Zhao, van der Meer and
+Lohse 2015, PNAS, "Granular impact cratering by liquid drops"). A hundredth of a millimetre of rain lands some 5000
+drops of 1.5 mm on a square metre, so the craters cover dry sand by about 0.05 mm of rain (cover = 1 - exp(-mm /
+0.03)), and each rain lays a new pattern (a seed) over the last. The wetted skin dries into a structural crust,
+its fines washed into the pores (Valentin and Bresson 1992): from half a millimetre of rain, whole by 3 mm, over
+half an hour of drying, never while the surface is wet. Saltation over loose sand wipes the pits in minutes and
+wears the crust away over hours (both scale with u*/u*t - 1, as the ripples' flux does, and with
+ripple_time_scale); the crust keeps the wind off what it covers: the ripples' mask, the prints' wind filling and
+get_blown_at() (so GroundStreamers3D) all take (1 - crust).
+
+- State: patch-wide (cover, crust, mm since rework, seed), from WorldWeather rainfall_at (less 0.8 x canopy
+  closure) and surface_wetness_at at the patch's centre, in _rain_marks() each ripple update.
+- Drawing: ground_rain_pits() (material.cpp, the raygen's copy; TerrainMaterial3D calls the same function through
+  the ground deform code): two chances per 1 cm cell, craters 3 to 7 mm across, h = -0.24 R (1 - u^2) inside and a
+  0.072 R rim at u = 1.1, as a normal; finer than about three pixels they fade to a 5% darker skin. Meta texel 6 of
+  the ripple map (cover, crust, seed), so it needs wind_ripples and dune_tone's sand rows; weighted by the sand
+  share; none in prints (relief over 3 to 8 mm), which cannot tell a print's age from the rain's.
+- Checks: ground --test=rain (a shower pits the sand, more as it goes on; no crust while wet; still air keeps the
+  pits; saltation wipes them; off reads nothing). --view=ripples --rain-pits=mm draws them; raster and path traced
+  agree at 100% crop.
+- Not yet: the crust's own look (sealed skin, fewer grain glints) and crust plates breaking under feet; drops
+  under trees as larger drip craters.
