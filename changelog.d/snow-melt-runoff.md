@@ -1,1 +1,0 @@
-- Snow: melt water from the whole terrain, not only the near square, feeds the ground water that `WeatherRunoff3D` routes into streams.

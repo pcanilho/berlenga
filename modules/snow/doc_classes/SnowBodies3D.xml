@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		Keeps a snow load for every [RigidBody3D] (vehicles too), [AnimatableBody3D], PhysX vehicle and cloth, and any node in the [code]snow_catch[/code] group ([code]snow_ignore[/code] opts out). Falling snow builds the load where the sky is open above the body, at the new snow density; the ground's cover seeds it when a body is first seen; wind over the blowing threshold (Li and Pomeroy 1997, raised for wet and settled snow), counted as the air moving past the body, strips it; jolts over [member shake_threshold] throw it off; warm air, rain and fire melt and wet it. Weather, ground snow and fire are read through [WorldContracts].
-		A node in the [code]snow_roof[/code] group is a roof face: it keeps Eurocode's share of the snowfall ([method roof_shape]), holds up to [member roof_max_depth], and lets its load slide by [method slab_slides] with the friction of its roofing (meta [code]snow_roof_material[/code]: [code]metal[/code], [code]glass[/code], [code]tile[/code], [code]slate[/code], otherwise shingle, see [method roof_friction]). Meta [code]snow_roof_heat[/code] (W/m², heat lost through the roof) melts the bed under the load when it beats the snow's insulation, so a warm roof sheds sooner (Tobiasson 1988). What slides is thrown off the eave at the speed it slid down and lands in [SnowCover3D] as a bank of wind-packed snow ([member roof_piles]).
+		A node in the [code]snow_roof[/code] group is a roof face: it keeps Eurocode's share of the snowfall ([method roof_shape]), holds up to [member roof_max_depth], and lets its load slide by [method slab_slides] with the friction of its roofing (meta [code]snow_roof_material[/code]: [code]metal[/code], [code]glass[/code], [code]tile[/code], [code]slate[/code], otherwise shingle, see [method roof_friction]). Meta [code]snow_roof_heat[/code] (W/m², heat lost through the roof) melts the bed under the load when it beats the snow's insulation, so a warm roof sheds sooner (Tobiasson 1988). What slides leaves the eave as rigid pieces ([member roof_slab_bodies]) that break when they hit hard and come to rest as snow in [SnowCover3D] where they stop, a dry one throwing up a puff of powder where PhysX Flow is present; with that off, it is thrown off the eave at the speed it slid down and lands as a bank of wind-packed snow ([member roof_piles]). On a heated roof in the cold, the bed's melt water freezes at the eave into an ice dam ([member ice_dams]) that holds the snow behind it while it stands a quarter of the snow's depth.
 		The load reaches the body's materials through [member BaseMaterial3D.snow_on_body] (instance uniform [code]snow_body[/code], slot 12: depth in m, albedo, melt water, 1 + density / 1000), which the path tracer reads too. [SnowCover3D] adds one by itself while [member SnowCover3D.bodies_enabled].
 	</description>
 	<tutorials>
@@ -50,6 +50,25 @@
 			<return type="int" />
 			<description>
 				How many clumps shed snow has made so far.
+			</description>
+		</method>
+		<method name="get_chunks_spawned" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many falling roof pieces have been made, breaks included.
+			</description>
+		</method>
+		<method name="get_falling_chunks" qualifiers="const">
+			<return type="int" />
+			<description>
+				Roof pieces still falling or still on the roof waiting to leave the eave.
+			</description>
+		</method>
+		<method name="get_ice_dam_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="node" type="Node" />
+			<description>
+				The height of the ice dam at a roof face's eave, m.
 			</description>
 		</method>
 		<method name="get_roof_landed" qualifiers="const">
@@ -103,6 +122,13 @@
 			<param index="2" name="density" type="float" default="-1.0" />
 			<description>
 				Sets the snow the body carries, m, and its density, kg/m³, when [param density] is given, tracking the body if it was not (a vehicle out of a garage, a scripted scene).
+			</description>
+		</method>
+		<method name="ice_dam_height" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="kg_per_m" type="float" />
+			<description>
+				The height in m of an ice dam holding [param kg_per_m] of ice per metre of eave, drawn as a ridge twice as wide as high.
 			</description>
 		</method>
 		<method name="roof_friction" qualifiers="static">
@@ -166,11 +192,17 @@
 		<member name="max_depth" type="float" setter="set_max_depth" getter="get_max_depth" default="0.4">
 			The most snow a body holds, m.
 		</member>
+		<member name="ice_dams" type="bool" setter="set_ice_dams" getter="is_ice_dams_enabled" default="true">
+			If [code]true[/code], melt water from a heated roof's bed freezes at the eave in the cold (all of it from -4 C; Tobiasson 1988) into an ice dam, drawn along the eave, that melts back in a thaw and holds the snow behind it.
+		</member>
 		<member name="roof_max_depth" type="float" setter="set_roof_max_depth" getter="get_roof_max_depth" default="1.5">
 			The most snow a roof face holds, m ([member max_depth] is for other bodies).
 		</member>
 		<member name="roof_piles" type="bool" setter="set_roof_piles" getter="is_roof_piles_enabled" default="true">
 			If [code]true[/code], snow that slides off a roof face lands in the ground cover as a bank past the eave, its mass kept.
+		</member>
+		<member name="roof_slab_bodies" type="bool" setter="set_roof_slab_bodies" getter="is_roof_slab_bodies_enabled" default="true">
+			If [code]true[/code], a sliding roof slab leaves the eave row by row as irregular rigid pieces (about 1.2 m) that break in four on a hard landing and turn into snow in the cover where they come to rest, their mass kept, as a rounded heap ([method SnowCover3D.add_mound]) with the block sinking out of sight into it over 90 seconds. The pieces sit on collision layer 20 (with layer 1 in their mask), so ground height rays pass through them, and they carry the [code]world_contact_exclude[/code] meta, so they press no prints. If [code]false[/code], it lands at once as a bank ([member roof_piles]).
 		</member>
 		<member name="shake_shed_rate" type="float" setter="set_shake_shed_rate" getter="get_shake_shed_rate" default="3.0">
 			How fast jolts throw the snow off: the share lost per second per g over [member shake_threshold].

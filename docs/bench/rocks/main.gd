@@ -34,7 +34,9 @@ extends Node3D
 #                         (--dist m upstream, 2.5); --no-streams turns cave_streams off
 #   --cave-view=rimstone  with --caves --cave-mesh: the busiest rimstone cascade from about --dist m (1.6), a lamp;
 #                         --pool-water=n live water on the n nearest pools (12), --no-pool-water none
+#                         --downstream from below a dam, looking up at its downstream face; --low a grazing view
 #   --sea-cave-pick=first with --sea-caves: the finder's best site, not the one facing the sun most (frames only)
+#   --sea-cave-near=x,z with --sea-caves: the site nearest that point (a frame keeps its cave when the sun turns)
 #   --no-refine           with --cave-mesh and --cam: the chunks round the camera stay on the coarse grid
 #   --no-sea-water        with --sea-caves --cave-mesh: the sea not drawn inside the caves (a before frame);
 #                         --cave-waves=m the short waves' rms coming in at the mouth (default: from the sea),
@@ -64,7 +66,8 @@ extends Node3D
 #   --save-far-cover=p    with --world: save the far cover map (32 m texels to 4 km) and count its stony texels
 #   --frost[=C]           with --world: a cold, wet climate (mean annual air C, -4) so the ground sorts into stone
 #                         circles and stripes (RockField3D.frost_sorting); --no-frost for the before frame;
-#                         --frost-spot (flat soil: circles) or --frost-spot=stripes (4 to 9 degrees)
+#                         --frost-spot (flat soil: circles) or --frost-spot=stripes (4 to 9 degrees); --no-frost-ground
+#                         keeps the stones but not the material's silt centres and gravel lag (a before frame)
 #   --trail[=passes]      with --world: a game trail across the spot, 1.5 m before it (WorldStand.set_trails, 0.8 m wide,
 #                         400 passes a year); --rooting[=years] a boar rooting 2 m behind it, that old; --no-wear ignores both
 #   --streaming           with --world: RockField3D streams after the build, so far thinning runs as in play
@@ -83,6 +86,9 @@ extends Node3D
 #   --no-tiles            with --world: TerrainGenerator3D.tile_erosion_enabled off (no droplet rills and gullies);
 #                         --gully-incision=x the gullies' extra cut (1; 0 for none, a before frame); --gully-spot
 #                         puts the view's spot on the nearest strong gully on soil
+#   --face-weathering=x   with --world: the ground material's rock-face lichen, moss and seep streaks (1; 0 before)
+#   --bank-relief=x       with --world: Landscape3D.bank_relief (0.8 m; 0 for a before frame); --bank-spot puts the
+#                         spot on a 42 to 52 degree soil bank
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -131,6 +137,7 @@ var cam: Camera3D
 var breaking := false
 var form_stone := {} # the stone --form framed
 var spot_pos := Vector3.ZERO # the view's spot (--roll)
+var bank_side := Vector3.ZERO # --bank-spot: along the bank's contour, for a raking view down its length
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -502,9 +509,15 @@ func _world() -> void:
 	if args.get("ground-scans", "1") != "0" and not args.has("test"): # --ground-scans=0: plain ground layers
 		if _apply_ground_scans(tm, ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers"), args.get("ground-scans", "1")) > 0:
 			tm.update_shader()
+	if args.has("face-weathering"):
+		tm.set_shader_parameter("tm_face_weathering", float(args["face-weathering"]))
 	var land := Landscape3D.new()
 	# Cliff relief is on by default (frames show the ground as the game draws it: without it a backlit cliff reads as
 	# smooth white spur flanks); the checks measure the bare heightfield, and --no-cliff-relief gives a before frame.
+	if args.has("bank-relief"):
+		land.bank_relief = float(args["bank-relief"])
+	if args.has("test"):
+		land.bank_relief = 0.0
 	if args.has("test") or args.has("no-cliff-relief"):
 		land.cliff_relief = 0.0
 	land.name = "Landscape"
@@ -519,6 +532,9 @@ func _world() -> void:
 		_beach_surface(tm)
 		if args.has("no-patch-relief"):
 			get_tree().process_frame.connect(func(): RenderingServer.global_shader_parameter_set("terrain_cliff_relief", Vector4()))
+	if args.has("no-frost-ground"):
+		# --no-frost-ground: the frost stones without the terrain material's silt centres and gravel lag (a before frame).
+		get_tree().process_frame.connect(func(): RenderingServer.global_shader_parameter_set("terrain_frost_rect", Vector4()))
 	if args.has("water"):
 		var waters: Array = gen.build_water(self)
 		if args.has("sea-set"):
@@ -702,6 +718,40 @@ func _world() -> void:
 					found_f = p
 		spot = found_f
 		print("frost spot ", spot, " (", tried, " points fully sorting)")
+	if args.has("bank-spot"):
+		# --bank-spot: a soil bank of 42 to 52 degrees (no rock exposure, not talus) 20 m or more long, for Landscape3D's
+		# bank relief; scored by how much of the bank 8 m either side along the contour is as steep.
+		var best_b := -INF
+		var found_b := spot
+		for zz in range(-800, 801, 6):
+			for xx in range(-800, 801, 6):
+				var p := Vector3(xx, 0, zz)
+				var h := gen.get_height(p)
+				if h < gen.sea_level + 8.0:
+					continue
+				var gx := gen.get_height(p + Vector3(2, 0, 0)) - gen.get_height(p - Vector3(2, 0, 0))
+				var gz := gen.get_height(p + Vector3(0, 0, 2)) - gen.get_height(p - Vector3(0, 0, 2))
+				var sl := rad_to_deg(atan(Vector2(gx, gz).length() / 4.0))
+				if sl < 42.0 or sl > 52.0:
+					continue
+				var g := gen.get_geology_at(p)
+				if g.r > 0.2 or gen.get_talus(p) > 0.1:
+					continue
+				var t := Vector3(-gz, 0, gx).normalized() * 8.0
+				var score := 0.0
+				for q in [p + t, p - t]:
+					var qx := gen.get_height(q + Vector3(2, 0, 0)) - gen.get_height(q - Vector3(2, 0, 0))
+					var qz := gen.get_height(q + Vector3(0, 0, 2)) - gen.get_height(q - Vector3(0, 0, 2))
+					score += 1.0 - absf(rad_to_deg(atan(Vector2(qx, qz).length() / 4.0)) - 47.0) / 20.0
+				score -= Vector2(xx, zz).length() / 4000.0
+				if score > best_b:
+					best_b = score
+					found_b = p
+		spot = found_b
+		var bx := gen.get_height(spot + Vector3(2, 0, 0)) - gen.get_height(spot - Vector3(2, 0, 0))
+		var bz := gen.get_height(spot + Vector3(0, 0, 2)) - gen.get_height(spot - Vector3(0, 0, 2))
+		bank_side = Vector3(-bz, 0, bx).normalized()
+		print("bank spot ", spot, " geology ", gen.get_geology_at(spot))
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
@@ -723,6 +773,11 @@ func _world() -> void:
 	if args.has("dist"):
 		dist = float(args["dist"])
 	cam.position = _view_from(spot, dist)
+	if bank_side != Vector3.ZERO:
+		# Down the bank's length from beside it, a little out from the face and above: the relief reads in silhouette.
+		var bout := Vector3(gen.get_height(spot - Vector3(2, 0, 0)) - gen.get_height(spot + Vector3(2, 0, 0)), 0, gen.get_height(spot - Vector3(0, 0, 2)) - gen.get_height(spot + Vector3(0, 0, 2))).normalized()
+		cam.position = spot + bank_side * dist + bout * dist * 0.35
+		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, spot.y + 2.0)
 	if view == "river" or view == "shore":
 		# Low ground under steep sides: look down on the bed from higher, over the walls round it.
 		cam.position.y = maxf(cam.position.y, spot.y + dist * 0.9)
@@ -933,6 +988,17 @@ func _caves(cam: Camera3D) -> void:
 				best = lit
 				found = [e]
 		print("  sea cave picked by facing: %d sites, mouth at %s facing the sun %.2f" % [many.size(), found[0]["position"], best])
+	if sea_caves and not args.has("test") and found.size() == 1 and args.has("sea-cave-near"):
+		# --sea-cave-near=x,z: the site nearest that point, so a frame keeps its cave when the sun turns.
+		var near: PackedStringArray = str(args["sea-cave-near"]).split(",")
+		var at := Vector2(float(near[0]), float(near[1]))
+		var closest := INF
+		for e in net.find_sea_entrances(r, 12):
+			var ep: Vector3 = e["position"]
+			if Vector2(ep.x, ep.z).distance_to(at) < closest:
+				closest = Vector2(ep.x, ep.z).distance_to(at)
+				found = [e]
+		print("  sea cave picked near %s: mouth at %s" % [at, found[0]["position"]])
 	print("caves: %d entrances found in %d ms" % [found.size(), Time.get_ticks_msec() - t0])
 	var colours := [Color(1, 1, 1), Color(0.2, 0.5, 1), Color(0.1, 0.9, 0.9), Color(1, 0.8, 0.1), Color(1, 0.3, 0.1), Color(0.9, 0.2, 0.9), Color(0.2, 0.9, 0.3)]
 	var names := ["entrance", "tube", "bed", "keyhole", "canyon", "shaft", "sea"]
@@ -1221,37 +1287,62 @@ func _caves(cam: Camera3D) -> void:
 				var pc := pos
 				var best_k := -1
 				var best_c := 0
-				var best_score := -1.0
+				var order: Array = []
+				var near_n: Array = []
 				for k in pools_v.size():
 					var n_near := 0
 					for k2 in pools_v.size():
 						if (pools_v[k2]["center"] as Vector3).distance_to(pools_v[k]["center"]) < 3.0:
 							n_near += 1
+					near_n.append(n_near)
 					var rr := 0.0
 					for v in (pools_v[k]["outline"] as PackedVector2Array):
 						rr += v.length() / 32.0
-					var score: float = float(pools_v[k]["depth"]) * rr * (1.0 + 0.3 * n_near)
-					if score > best_score:
-						best_score = score
-						best_c = n_near
-						best_k = k
-				if best_k >= 0:
-					pc = pools_v[best_k]["center"]
+					order.append([float(pools_v[k]["depth"]) * rr * (1.0 + 0.3 * n_near), k])
+				order.sort_custom(func(x, y): return x[0] > y[0])
+				# Best pool first; a pool in a passage too low to stand the camera in (no air round it) is passed over, or the
+				# camera and lamp end up inside the rock and the frame is black.
 				var eye_r := pc + Vector3(0.9, 1.3, 0.6)
-				var best_air_r := -1.0
-				seed(11)
-				for ii in 400:
-					var cand := pc + Vector3(randf_range(-3, 3), randf_range(0.25, 0.45) if args.has("low") else randf_range(0.8, 1.8), randf_range(-3, 3))
-					var dd := Vector2(cand.x - pc.x, cand.z - pc.z).length()
-					if dd < float(args.get("dist", "1.6")) * 0.8 or dd > float(args.get("dist", "1.6")) * 1.3:
-						continue
-					var air := -net.get_rock_distance(cand)
-					if air > 0.25 and minf(air, 1.0) > best_air_r:
-						best_air_r = minf(air, 1.0)
-						eye_r = cand
+				var dist_r := float(args.get("dist", "1.6"))
+				for ord_k in order:
+					var k: int = ord_k[1]
+					var pk: Vector3 = pools_v[k]["center"]
+					var best_air_r := -1.0
+					var eye_k := pk + Vector3(0.9, 1.3, 0.6)
+					# --downstream: from below the pool's dam, looking back up at its downstream face (toward the nearest lower pool).
+					var down_k := Vector2.ZERO
+					if args.has("downstream"):
+						var dn_best := 1e9
+						for k3 in pools_v.size():
+							var p3: Vector3 = pools_v[k3]["center"]
+							var d3 := Vector2(p3.x - pk.x, p3.z - pk.z).length()
+							if k3 != k and p3.y < pk.y - 0.01 and d3 < 4.0 and d3 < dn_best:
+								dn_best = d3
+								down_k = Vector2(p3.x - pk.x, p3.z - pk.z).normalized()
+						if down_k == Vector2.ZERO:
+							continue
+					seed(11)
+					for ii in 400:
+						var cand := pk + Vector3(randf_range(-3, 3), randf_range(0.25, 0.45) if args.has("low") else randf_range(0.8, 1.8), randf_range(-3, 3))
+						var dd := Vector2(cand.x - pk.x, cand.z - pk.z).length()
+						if dd < dist_r * 0.8 or dd > dist_r * 1.3:
+							continue
+						if down_k != Vector2.ZERO and Vector2(cand.x - pk.x, cand.z - pk.z).dot(down_k) < 0.7 * dd:
+							continue
+						var air := -net.get_rock_distance(cand)
+						if air > 0.25 and minf(air, 1.0) > best_air_r:
+							best_air_r = minf(air, 1.0)
+							eye_k = cand
+					if best_k < 0 or best_air_r > 0.0:
+						best_k = k
+						best_c = near_n[k]
+						pc = pk
+						eye_r = eye_k
+					if best_air_r > 0.0:
+						break
 				cam.position = eye_r
 				# --low: a grazing view across the pool, so it mirrors the roof and its stalactites beyond.
-				cam.look_at(pc + (Vector3(pc.x - eye_r.x, 0, pc.z - eye_r.z).normalized() * 1.5 + Vector3(0, 0.15, 0) if args.has("low") else Vector3.ZERO))
+				cam.look_at(pc + (Vector3(pc.x - eye_r.x, 0, pc.z - eye_r.z).normalized() * 1.5 + Vector3(0, 0.15, 0) if args.has("low") and not args.has("downstream") else Vector3.ZERO))
 				cam.fov = 60.0
 				var lamp_r := OmniLight3D.new()
 				lamp_r.omni_range = 14.0

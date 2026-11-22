@@ -303,11 +303,14 @@ global uniform vec4 terrain_cover_rect;
 global uniform sampler2D rock_contact_map : hint_default_black, filter_linear; // RockField3D: r damp ring, g banked fines
 global uniform sampler2D rock_far_cover_map : hint_default_black, filter_linear; // RockField3D far tier: rgb stone colour, a cover
 global uniform sampler2D rock_far_reach_map : hint_default_black, filter_linear; // RockField3D: rg the fade's start and end, 8 m a step (2040 m at 1)
+global uniform sampler2D terrain_frost_map : hint_default_black, filter_linear; // RockField3D frost_sorting: r gate, g stone share, b dome
+global uniform vec4 terrain_frost_rect; // its origin (x, z) and size (m); size 0 = none
 global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
 global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting
 global uniform vec4 terrain_stand_rect;
 global uniform vec4 terrain_cliff_relief; // Landscape3D: cliff_relief (m), grid spacing (m), grid origin (x, z); x 0 = none
+global uniform vec4 terrain_bank_relief; // Landscape3D: bank_relief (m) in x; 0 = none
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
 )";
@@ -355,6 +358,8 @@ uniform float tm_alluvium_area = 5.5;
 uniform float tm_blend_depth = 0.2;
 uniform int tm_detail_octaves = 4;
 uniform float tm_wetness = 1.0;
+uniform float tm_face_weathering = 1.0; // rock faces weathered by aspect: lichen, moss, seep streaks (0 off)
+uniform float tm_latitude = 46.0; // degrees, north positive: which aspects are shaded
 uniform float tm_snow = 1.0;
 uniform float tm_snow_max_slope = 60.0;
 
@@ -797,8 +802,8 @@ vec3 tm_grain_n(vec2 x) {
 	// hands the undisplaced point and scale in CUSTOM0 and the heightfield normal in CUSTOM1; other meshes leave
 	// them zero and skip it.
 	c += R"(
-varying vec4 tm_cl_p;
-varying vec3 tm_cl_n;
+varying vec4 tm_cl_p; // the undisplaced point (landscape space), w the cliff relief's scale
+varying vec4 tm_cl_n; // the heightfield normal, w the bank relief's scale
 float tm_cl_hash(int a, int b, int c) {
 	uint h = uint(a) * 0x8DA6B343u ^ uint(b) * 0xD8163841u ^ uint(c) * 0xCB1AB31Fu;
 	h ^= h >> 13u;
@@ -872,16 +877,82 @@ float tm_cl_offset(vec3 p) {
 	o += 0.5 * (tm_cl_noise(p * 0.7) - 0.5) + 0.2 * (tm_cl_noise(p * 2.1 + vec3(3.0, 1.0, 7.0)) - 0.5);
 	return o;
 }
+// Seep streaks below the beds' ledges (cyanobacterial ink streaks on limestone, Tintenstriche; desert varnish in dry
+// climates; Viles 1995, Dorn and Oberlander 1981): water runs off a proud bed's lip and down the face of the softer
+// bed under it, staining drip lines that fade down the fall line. The same beds as tm_cl_beds. 0..1.
+float tm_cl_seep(vec3 p) {
+	const float U = 12.0;
+	float yb = p.y + (tm_cl_noise(p * 0.05) - 0.5) * 4.0 + (tm_cl_noise(p * 0.013 + vec3(5.0, 0.0, 2.0)) - 0.5) * 10.0;
+	int unit = int(floor(yb / U));
+	float fu0 = yb - float(unit) * U;
+	int nb = 1 + int(tm_cl_hash(unit, 21, 4) * 4.999);
+	float wb[5];
+	float wsum = 0.0;
+	for (int i = 0; i < 5; i++) {
+		wb[i] = i < nb ? exp(1.1 * (tm_cl_hash(unit, i, 17) + tm_cl_hash(unit, i, 19) - 1.0) * 1.7) : 0.0;
+		wsum += wb[i];
+	}
+	int bi = nb - 1;
+	float lo = 0.0;
+	float T = U;
+	float acc = 0.0;
+	bool found = false;
+	for (int i = 0; i < 5; i++) {
+		if (i < nb && !found) {
+			float th = U * wb[i] / wsum;
+			if (fu0 < acc + th || i == nb - 1) {
+				bi = i;
+				T = th;
+				lo = acc;
+				found = true;
+			}
+			acc += th;
+		}
+	}
+	int bed = unit * 8 + bi;
+	int bed_up = bi + 1 < nb ? bed + 1 : (unit + 1) * 8;
+	float below = T - (fu0 - lo); // metres under the top of this bed
+	float ledge = clamp(1.5 * (tm_cl_proud(p, bed_up) - tm_cl_proud(p, bed)), 0.0, 1.0);
+	// Wetter beds (joints feeding them) seep further.
+	float L = 2.0 + 5.0 * tm_cl_hash(bed, 41, 3);
+	float fade = exp(-below / L) * smoothstep(0.0, 0.25, below);
+	// Drip lines across the face: fine lines 0.3 to 1 m apart in groups, stretched down the fall line.
+	// Along the face: the horizontal across its fall line.
+	// Stretched in y only, so the lines stay put as the face turns (a coordinate taken along the face's own normal
+	// swirled with every bump of the relief).
+	float lines = 0.65 * tm_cl_noise(vec3(p.x * 1.3, p.y * 0.06, p.z * 1.3 + float(bed) * 0.37)) + 0.35 * tm_cl_noise(vec3(p.x * 3.7, p.y * 0.12, p.z * 3.7 + float(bed) * 0.71));
+	float group = tm_cl_noise(vec3(p.x * 0.2, float(bed) * 0.53, p.z * 0.2));
+	return ledge * fade * smoothstep(0.4, 0.75, lines) * smoothstep(0.3, 0.65, group);
+}
+// The banks' slumps (Landscape3D::_bank_offset): scarps and toe lobes in 6 m units along the contour, hummocks.
+float tm_bk_offset(vec3 p) {
+	const float U = 6.0;
+	float yb = p.y + (tm_cl_noise(p * 0.07 + vec3(11.0, 3.0, 5.0)) - 0.5) * 6.0;
+	int unit = int(floor(yb / U));
+	float t = yb / U - float(unit);
+	float strength = 0.4 + 0.6 * tm_cl_hash(unit, 31, 7);
+	float run = tm_cl_noise(vec3(p.x * 0.09, float(unit) * 1.71, p.z * 0.09));
+	float amp = strength * smoothstep(0.35, 0.65, run);
+	float tl = (t - 0.25) / 0.17, ts = (t - 0.78) / 0.12;
+	float ends = smoothstep(0.0, 0.1, t) * (1.0 - smoothstep(0.9, 1.0, t));
+	float o = amp * (0.9 * exp(-tl * tl) - exp(-ts * ts)) * ends;
+	o += 0.35 * (tm_cl_noise(p * 0.35 + vec3(2.0, 9.0, 4.0)) - 0.5) + 0.15 * (tm_cl_noise(p * 1.1 + vec3(7.0, 2.0, 8.0)) - 0.5);
+	return o;
+}
+// Metres out of the face: k.x the cliff relief's scale, k.y the bank's.
+float tm_cl_disp(vec3 p, vec2 k) {
+	return (k.x > 0.0 ? k.x * tm_cl_offset(p) : 0.0) + (k.y > 0.0 ? k.y * tm_bk_offset(p) : 0.0);
+}
 // The relief's normal at the undisplaced point p (landscape space), differenced over e (the pixel's footprint, so
 // relief finer than a pixel fades instead of aliasing).
-vec3 tm_cl_normal(vec3 p, vec3 nb, float k, float e) {
+vec3 tm_cl_normal(vec3 p, vec3 nb, vec2 k, float e) {
 	vec3 m = normalize(vec3(nb.x, 0.0, nb.z));
 	vec3 t1 = cross(nb, vec3(0.0, 1.0, 0.0));
 	t1 = dot(t1, t1) > 1e-8 ? normalize(t1) : vec3(1.0, 0.0, 0.0);
 	vec3 t2 = cross(t1, nb);
 	vec3 a = p + t1 * e, b = p - t1 * e, c = p + t2 * e, d = p - t2 * e;
-	vec3 du = (a + m * k * tm_cl_offset(a)) - (b + m * k * tm_cl_offset(b));
-	vec3 dv = (c + m * k * tm_cl_offset(c)) - (d + m * k * tm_cl_offset(d));
+	vec3 du = (a + m * tm_cl_disp(a, k)) - (b + m * tm_cl_disp(b, k));
+	vec3 dv = (c + m * tm_cl_disp(c, k)) - (d + m * tm_cl_disp(d, k));
 	vec3 nn = cross(dv, du);
 	nn = dot(nn, nb) < 0.0 ? -nn : nn;
 	return dot(nn, nn) > 1e-12 ? normalize(nn) : nb;
@@ -907,18 +978,21 @@ float tm_cl_offset_coarse(vec3 p) {
 	o += 0.5 * (tm_cl_noise(p * 0.7) - 0.5);
 	return o;
 }
+float tm_cl_disp_coarse(vec3 p, vec2 k) {
+	return (k.x > 0.0 ? k.x * tm_cl_offset_coarse(p) : 0.0) + (k.y > 0.0 ? k.y * tm_bk_offset(p) : 0.0);
+}
 // The sun's visibility over the relief at the undisplaced point p (landscape space): l toward the sun, e the pixel's
 // footprint, j a 0-1 jitter for the steps.
-float tm_cl_shadow(vec3 p, vec3 nb, float k, vec3 l, float e, float j) {
+float tm_cl_shadow(vec3 p, vec3 nb, vec2 k, vec3 l, float e, float j) {
 	vec3 m = normalize(vec3(nb.x, 0.0, nb.z));
 	float mn = max(dot(m, nb), 0.3);
 	float rise = dot(l, nb) / mn; // metres out of the face per metre along the ray
 	if (rise <= 0.02) {
 		return 1.0; // the face itself turns from the sun: its lighting and the shadow map have it
 	}
-	vec3 s0 = p + m * (k * tm_cl_offset_coarse(p));
+	vec3 s0 = p + m * tm_cl_disp_coarse(p, k);
 	// Long enough to clear the relief's whole range (about 4 k) at that rise.
-	float t_max = clamp(4.0 * k / rise, 1.0, 16.0);
+	float t_max = clamp(4.0 * (k.x + k.y) / rise, 1.0, 16.0);
 	float vis = 1.0;
 	const int STEPS = 12;
 	for (int i = 0; i < STEPS; i++) {
@@ -926,7 +1000,7 @@ float tm_cl_shadow(vec3 p, vec3 nb, float k, vec3 l, float e, float j) {
 		float t = max(t_max * u * u, 2.0 * e);
 		vec3 q = s0 + l * t;
 		float s = dot(q - p, nb) / mn;
-		float d = s - k * tm_cl_offset_coarse(q - m * s);
+		float d = s - tm_cl_disp_coarse(q - m * s, k);
 		// Soft over the sun's disc (0.53 degrees) or the pixel, whichever is wider.
 		float w = max(t * 0.0093, e);
 		vis = min(vis, smoothstep(-w, w, d + 0.5 * w));
@@ -969,7 +1043,7 @@ vec3 tm_cl_land_n(vec2 xz) {
 }
 )";
 	}
-	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1.xyz;\n";
+	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1;\n";
 	if (ground_deform_enabled) {
 		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
 		// with a copy of this material, takes the printed surface.
@@ -984,11 +1058,11 @@ vec3 tm_cl_land_n(vec2 xz) {
 		// And the landscape under the patch steps back into the face as well as down: its relief is linear between
 		// vertices a metre or so apart while the patch follows it closely, so it stood out of the patch on the ledges
 		// and shaded the patch from the sun (dark faces near the camera).
-		c += R"(	if (!ground_deform_patch && CUSTOM0.w > 0.0 && ground_deform_rect.z > 0.0) {
+		c += R"(	if (!ground_deform_patch && CUSTOM0.w + CUSTOM1.w > 0.0 && ground_deform_rect.z > 0.0) {
 		float cl_lw = ground_deform_lowered((MODEL_MATRIX * vec4(VERTEX, 1.0)).xz);
 		vec2 cl_mh = CUSTOM1.xz;
 		if (cl_lw > 0.0 && dot(cl_mh, cl_mh) > 1e-8) {
-			VERTEX -= vec3(cl_mh.x, 0.0, cl_mh.y) * inversesqrt(dot(cl_mh, cl_mh)) * (1.5 * CUSTOM0.w * cl_lw);
+			VERTEX -= vec3(cl_mh.x, 0.0, cl_mh.y) * inversesqrt(dot(cl_mh, cl_mh)) * (1.5 * (CUSTOM0.w + CUSTOM1.w) * cl_lw);
 		}
 	}
 )";
@@ -998,15 +1072,19 @@ vec3 tm_cl_land_n(vec2 xz) {
 		// steeper next to a cliff's top and foot, so it put relief on faces the landscape leaves plain.
 		vec3 cl_nw = terrain_cliff_relief.y > 0.0 ? tm_cl_land_n(cl_w.xz) : vec3(0.0, 1.0, 0.0);
 		float cl_ml = length(cl_nw.xz);
+		// The face weights (Landscape3D::_relief_weights): cliffs from about 50 degrees, banks from about 40.
 		float cl_wt = 1.0 - clamp((cl_nw.y - 0.47) / (0.64 - 0.47), 0.0, 1.0);
-		if (cl_ml > 1e-4 && cl_wt > 0.0) {
+		float cl_wb = 1.0 - clamp((cl_nw.y - 0.643) / (0.766 - 0.643), 0.0, 1.0);
+		cl_wt = cl_wt * cl_wt * (3.0 - 2.0 * cl_wt);
+		cl_wb = cl_wb * cl_wb * (3.0 - 2.0 * cl_wb) * (1.0 - cl_wt);
+		if (cl_ml > 1e-4 && (cl_wt > 0.0 || (cl_wb > 0.0 && terrain_bank_relief.x > 0.0))) {
 			vec3 cl_p = cl_w;
-			float cl_k = terrain_cliff_relief.x * cl_wt * cl_wt * (3.0 - 2.0 * cl_wt);
-			tm_cl_p = vec4(cl_p, cl_k);
-			tm_cl_n = cl_nw;
+			vec2 cl_k = vec2(terrain_cliff_relief.x * cl_wt, terrain_bank_relief.x * cl_wb);
+			tm_cl_p = vec4(cl_p, cl_k.x);
+			tm_cl_n = vec4(cl_nw, cl_k.y);
 			vec3 cl_m = vec3(cl_nw.x, 0.0, cl_nw.z) / cl_ml;
 			mat4 cl_inv = inverse(MODEL_MATRIX);
-			VERTEX = (cl_inv * vec4(cl_w + cl_m * (cl_k * tm_cl_offset(cl_p)), 1.0)).xyz;
+			VERTEX = (cl_inv * vec4(cl_w + cl_m * tm_cl_disp(cl_p, cl_k), 1.0)).xyz;
 			// The vertex normal from the displaced surface around it, as the landscape's (the shadow map's normal
 			// bias and the triangles' own lighting go by it).
 			NORMAL = normalize(transpose(mat3(cl_inv)) * tm_cl_normal(cl_p, cl_nw, cl_k, 0.3));
@@ -1473,7 +1551,7 @@ void fragment() {
 	float tm_edge_n = (tm_vn(wp / 5.0 + 11.0) - 0.5) * 0.24 + (tm_vn(wp / 1.3 + 23.0) - 0.5) * 0.12 * (1.0 - smoothstep(0.03, 0.15, tm_fp0));
 	// The layers go by the heightfield's own slope where cliff relief displaced the mesh (CUSTOM1): by the displaced
 	// faces' normal a ledge's flat tread took the soil, olive ladder strips under every lip on a grey cliff.
-	vec3 tm_cn = dot(tm_cl_n, tm_cl_n) > 0.5 ? normalize(mat3(MODEL_MATRIX) * tm_cl_n) : wn;
+	vec3 tm_cn = dot(tm_cl_n.xyz, tm_cl_n.xyz) > 0.5 ? normalize(mat3(MODEL_MATRIX) * tm_cl_n.xyz) : wn;
 	float tm_ny = tm_cn.y + tm_edge_n;
 	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08 * tm_sb, tm_rock_cos + 0.04 * tm_sb, tm_ny);
 	float beach_sand = -1.0;
@@ -1678,10 +1756,10 @@ void fragment() {
 	porosity /= total;
 	vec3 sn = normalize(wn + dn);
 	vec3 tm_macro_n = wn; // the surface's own normal, without the layers' fine bump
-	if (tm_cl_p.w > 0.0) {
-		// Cliff relief: the face's normal per pixel (see tm_cl_normal), with the layers' own detail on top.
+	if (tm_cl_p.w > 0.0 || tm_cl_n.w > 0.0) {
+		// Cliff and bank relief: the face's normal per pixel (see tm_cl_normal), with the layers' own detail on top.
 		float cl_fp = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-		vec3 cl_n = tm_cl_normal(tm_cl_p.xyz, normalize(tm_cl_n), tm_cl_p.w, max(0.15, cl_fp));
+		vec3 cl_n = tm_cl_normal(tm_cl_p.xyz, normalize(tm_cl_n.xyz), vec2(tm_cl_p.w, tm_cl_n.w), max(0.15, cl_fp));
 		cl_n = normalize(mat3(MODEL_MATRIX) * cl_n);
 		sn = normalize(cl_n + dn);
 		tm_macro_n = cl_n;
@@ -1690,16 +1768,56 @@ void fragment() {
 		// Where the relief is still wider than a pixel and the pixel faces the sun. sun_direction() is zero under
 		// the path tracer, which traces the displaced faces' own shadows.
 		c += R"(		vec3 cl_l = sun_direction();
-		float cl_k = tm_cl_p.w;
+		float cl_k = tm_cl_p.w + tm_cl_n.w;
 		if (dot(cl_l, cl_l) > 0.5 && dot(sn, cl_l) > 0.0 && cl_k > 0.5 * cl_fp) {
 			vec3 cl_ll = normalize(inverse(mat3(MODEL_MATRIX)) * cl_l);
 			float cl_j = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
-			float cl_v = tm_cl_shadow(tm_cl_p.xyz, normalize(tm_cl_n), cl_k, cl_ll, cl_fp, cl_j);
+			float cl_v = tm_cl_shadow(tm_cl_p.xyz, normalize(tm_cl_n.xyz), vec2(tm_cl_p.w, tm_cl_n.w), cl_ll, cl_fp, cl_j);
 			SUN_SHADOW = mix(1.0, cl_v, smoothstep(0.5 * cl_fp, cl_fp, cl_k));
 		}
 )";
 	}
 	c += R"(	}
+)";
+	// Rock faces weathered by aspect (docs/ideas/terrain-material.md, "Rock faces weather by aspect"): lichen and moss
+	// cover follows how little sun a face gets over the year, the heat load index's idea (McCune and Keon 2002: a
+	// face's insolation from latitude, slope and aspect, folded toward the warmer afternoon side, south-west in the
+	// north); shaded, damp aspects carry far more (Armstrong 1974; Pentecost 1980). Grey-green crusts, now and then
+	// the yellow-green map lichen, dark moss on the most shaded, less steep ledges; seep streaks under the beds'
+	// ledges (tm_cl_seep). North is -z.
+	c += R"(	if (tm_face_weathering > 0.0) {
+		float fw_rock = (w[0] + 0.5 * w[1]) / total;
+		float fw_face = fw_rock * (1.0 - smoothstep(0.55, 0.85, tm_macro_n.y)) * tm_face_weathering;
+		if (fw_face > 0.0) {
+			float fw_lat = radians(clamp(tm_latitude, -89.0, 89.0));
+			float fw_el = radians(90.0) - abs(fw_lat); // the equinox noon sun
+			float fw_az = radians(tm_latitude >= 0.0 ? 200.0 : 340.0); // toward the equator, a little past noon
+			vec3 fw_s = vec3(cos(fw_el) * sin(fw_az), sin(fw_el), -cos(fw_el) * cos(fw_az));
+			float fw_ins = clamp(dot(tm_macro_n, fw_s), 0.0, 1.0);
+			float shade = 1.0 - smoothstep(0.1, 0.7, fw_ins);
+			// Fade the patch noise to its mean as the pixel grows past it.
+			float fw_k = 1.0 - smoothstep(0.15, 0.6, tm_fp0);
+			// Crusts as broad, soft rosettes and colonies: a coverage that grows with shade, a tint of the rock rather
+			// than paint over it, so the rock's own tone and cracks show through.
+			float ln = mix(0.5, 0.55 * tm_vn(wp * 0.45 + 13.0) + 0.3 * tm_vn(wp * 1.3 + 29.0) + 0.15 * tm_vn(wp * 3.7 + 41.0), fw_k);
+			float lc = smoothstep(0.62 - 0.3 * shade, 0.85 - 0.3 * shade, ln) * fw_face;
+			float yellow = smoothstep(0.55, 0.75, tm_vn(wp * 0.21 + 77.0)) * (1.0 - 0.7 * shade);
+			float fw_l = dot(albedo, vec3(0.3, 0.59, 0.11));
+			vec3 lcol = mix(vec3(0.95, 1.0, 0.86), vec3(1.05, 1.08, 0.6), yellow) * mix(fw_l, 0.3, 0.5);
+			lcol *= 0.9 + 0.2 * mix(0.5, tm_vn(wp * 7.0 + 5.0), fw_k);
+			albedo = mix(albedo, lcol, lc * (0.3 + 0.25 * shade));
+			rough = mix(rough, max(rough, 0.9), lc);
+			// Moss on shaded ledges and less steep shaded rock.
+			float moss = shade * shade * smoothstep(0.05, 0.45, tm_macro_n.y) * smoothstep(0.45, 0.8, mix(0.5, 0.7 * tm_vn(wp * 0.5 + 51.0) + 0.3 * tm_vn(wp * 1.9 + 61.0), fw_k)) * fw_face * 0.75;
+			albedo = mix(albedo, vec3(0.08, 0.1, 0.04) * (0.8 + 0.4 * tm_vn(wp * 6.0 + 2.0)), moss);
+			rough = mix(rough, 0.95, moss);
+			// Seep streaks under the ledges, darker where the face is shaded (it stays wet longer).
+			vec3 fw_p = tm_cl_p.w > 0.0 ? tm_cl_p.xyz : wp;
+			float seep = tm_cl_seep(fw_p) * (1.0 - smoothstep(0.55, 0.8, tm_macro_n.y)) * fw_rock * tm_face_weathering;
+			seep = mix(0.5 * seep, seep, fw_k);
+			albedo *= 1.0 - (0.25 + 0.15 * shade) * seep;
+		}
+	}
 )";
 	if (detail) {
 		c += R"(	// The generator's erosion detail below the vertex spacing, faded out where a pixel covers it.
@@ -1994,6 +2112,43 @@ void fragment() {
 					rough = mix(rough, mix(0.97, 0.8, fresh * smoothstep(1.0, 0.5, c0)), rt);
 					sn = normalize(sn - vec3(cg.x, 0.0, cg.y) * rt * mix(0.4, 1.0, fresh));
 				}
+			}
+		}
+	}
+)";
+	// Frost-sorted ground (RockField3D frost_sorting, the same gate and stone share its stones are placed by): the fine
+	// centres of sorted circles and stripes are frost boils, bare silt and clay heaved up each winter so no sward
+	// holds, wet through the thaw (Washburn 1956; Walker et al. 2004, frost-boil ecosystems; Kessler and Werner 2003):
+	// a pale grey-brown silt, darker and smoother wet. The stone borders take a gravel lag between the stones.
+	c += R"(	if (terrain_frost_rect.z > 0.0) {
+		vec2 fuv = (wp.xz - terrain_frost_rect.xy) / terrain_frost_rect.zw;
+		if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
+			vec3 fr = textureLod(terrain_frost_map, fuv, 0.0).rgb;
+			vec2 fe = min(fuv, 1.0 - fuv);
+			float fg = fr.r * smoothstep(0.0, 0.04, min(fe.x, fe.y)) * smoothstep(0.65, 0.85, wn.y);
+			if (fg > 0.0) {
+				// Frost heave domes the centres (b, RockField3D's dome share) about 18 cm over the stone borders: the
+				// normal bends by its slope from the texels two either side.
+				float fdx = 2.0 / float(textureSize(terrain_frost_map, 0).x);
+				vec2 fdh = vec2(textureLod(terrain_frost_map, fuv + vec2(fdx, 0.0), 0.0).b - textureLod(terrain_frost_map, fuv - vec2(fdx, 0.0), 0.0).b, textureLod(terrain_frost_map, fuv + vec2(0.0, fdx), 0.0).b - textureLod(terrain_frost_map, fuv - vec2(0.0, fdx), 0.0).b);
+				fdh *= 0.18 / (2.0 * fdx * terrain_frost_rect.z);
+				sn = normalize(sn - vec3(fdh.x, 0.0, fdh.y) * smoothstep(0.0, 0.04, min(fe.x, fe.y)));
+				float fn = tm_vn(wp * 2.3 + 61.0);
+				float fm = tm_vn(wp * 0.9 + 23.0);
+				// Wide transitions: the fines thin out into the border over the share's whole range, as the sorting does.
+				float centre = (1.0 - smoothstep(0.05, 0.65, fr.g + 0.2 * (fn - 0.5))) * fg;
+				float border = smoothstep(0.35, 0.95, fr.g) * fg;
+				float grain = tm_vn(wp * 19.0 + 7.0);
+				// Silt and clay (a grey-brown, dry about 0.15 in this material's linear albedo; wet about 0.6 of that, darker than the stones round it as
+				// in field photographs of sorted circles), drying out first in patches; a little of the ground's own colour stays (algal crusts, the last of the sward).
+				vec3 silt = vec3(0.15, 0.13, 0.105) * (0.88 + 0.24 * grain) * mix(0.6, 1.0, smoothstep(0.6, 0.85, fm));
+				// The crown drains and dries first; the margin against the stones stays wet and dark.
+				silt *= mix(0.75, 1.12, smoothstep(0.1, 0.8, fr.b));
+				albedo = mix(albedo, silt, 0.85 * centre);
+				rough = mix(rough, mix(0.78, 0.92, smoothstep(0.6, 0.85, fm)), centre); // damp, not puddled: matte
+				vec3 lag = vec3(0.15, 0.145, 0.135) * (0.75 + 0.5 * grain);
+				albedo = mix(albedo, lag, 0.2 * border);
+				rough = mix(rough, max(rough, 0.9), border);
 			}
 		}
 	}

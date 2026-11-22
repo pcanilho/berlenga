@@ -377,6 +377,13 @@ void GrassField3D::_ensure_resources() {
 	}
 }
 
+// The drawn ground's height over the heightfield at p's xz (Landscape3D's bank and cliff relief, WorldGround.relief_at):
+// 0 with no relief producer or out of its reach.
+static float _relief_y(const Vector3 &p_at) {
+	const float r = WorldContracts::ground()->relief_at(p_at).x;
+	return Math::is_finite(r) ? r : 0.0f;
+}
+
 String GrassField3D::get_ground_opened_shader_code() {
 	return R"(
 global uniform sampler2D ground_deform_map;
@@ -2692,7 +2699,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 				return false;
 			}
 			r_spot.edge = _edge_height(suit / MAX(passes > 0.0f ? _trample_cover(passes) : 1.0f, 1e-4f));
-			y = p_map->get_height_at(p);
+			y = p_map->get_height_at(p) + _relief_y(p);
 		}
 		const float lx = CLAMP(x - x0, 0.0f, float(lg - 1));
 		const float lz = CLAMP(z - z0, 0.0f, float(lg - 1));
@@ -2957,7 +2964,9 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 			y_max = -1e30f;
 			for (int j = 0; j < hp_h; j++) {
 				for (int i = 0; i < hp_w; i++) {
-					const float h = hd[(hp_z0 + j) * map_n + hp_x0 + i];
+					// The drawn ground's bank and cliff relief over the heightfield (WorldGround.relief_at), at the texel's
+					// centre, so the blades stand on the surface drawn, not the heightfield under it.
+					const float h = hd[(hp_z0 + j) * map_n + hp_x0 + i] + _relief_y(Vector3(map_rect.position.x + (hp_x0 + i + 0.5f) * mc, 0.0f, map_rect.position.y + (hp_z0 + j + 0.5f) * mc));
 					heights[j * hp_w + i] = h;
 					y_min = MIN(y_min, h);
 					y_max = MAX(y_max, h);
@@ -3447,7 +3456,7 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 					continue;
 				}
 				edge = _edge_height(suit / MAX(passes > 0.0f ? _trample_cover(passes) : 1.0f, 1e-4f));
-				y = p_map->get_height_at(p);
+				y = p_map->get_height_at(p) + _relief_y(p);
 			}
 			const float light = (1.0f - (crowns ? crowns->get_shade_at(p) : 0.0f)) * (p_map ? VegetationLight::exposure(p_map, sun_mean, x, z) : 1.0f);
 			const float shade_t = 1.0f - CLAMP(light, 0.0f, 1.0f);
@@ -3522,7 +3531,7 @@ void GrassField3D::_fill_ring_tile_gpu(const Vector3i &p_key, const Rect2 &p_rec
 			y_max = -1e30f;
 			for (int j = 0; j < hp_h; j++) {
 				for (int i = 0; i < hp_w; i++) {
-					const float hv = hd[(hp_z0 + j) * map_n + hp_x0 + i];
+					const float hv = hd[(hp_z0 + j) * map_n + hp_x0 + i] + _relief_y(Vector3(map_rect.position.x + (hp_x0 + i + 0.5f) * mc, 0.0f, map_rect.position.y + (hp_z0 + j + 0.5f) * mc));
 					heights[j * hp_w + i] = hv;
 					y_min = MIN(y_min, hv);
 					y_max = MAX(y_max, hv);

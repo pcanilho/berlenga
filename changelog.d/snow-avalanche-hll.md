@@ -1,1 +1,0 @@
-- Snow: avalanche flow transport is now second order (MUSCL reconstruction, HLL fluxes, Heun steps, as in RAMMS), so the front keeps its depth and runs at Voellmy's speed for it (`SnowAvalanche3D.get_max_speed_terminal`).

@@ -55,8 +55,8 @@ void initialize_terrain_deform_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(TerrainGenerator3D);
 	// Landscape3D's stand map (worn trails, fresh rooting), declared so the terrain material compiles before it is
 	// published (rect width 0 = none), whichever module registers first.
-	const char *globals[3][2] = { { "terrain_stand_map", "sampler2D" }, { "terrain_stand_rect", "vec4" }, { "terrain_cliff_relief", "vec4" } };
-	for (int i = 0; i < 3; i++) {
+	const char *globals[4][2] = { { "terrain_stand_map", "sampler2D" }, { "terrain_stand_rect", "vec4" }, { "terrain_cliff_relief", "vec4" }, { "terrain_bank_relief", "vec4" } };
+	for (int i = 0; i < 4; i++) {
 		const String setting = String("shader_globals/") + globals[i][0];
 		if (ProjectSettings::get_singleton()->has_setting(setting)) {
 			continue;

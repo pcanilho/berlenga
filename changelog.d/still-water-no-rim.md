@@ -1,1 +1,0 @@
-- Water: the shore's foam rim follows the waves (wind sea height times `wave_amplitude`), so still water such as a small cave pool no longer draws as a white mottle.

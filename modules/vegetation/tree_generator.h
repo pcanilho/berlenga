@@ -159,6 +159,7 @@ public:
 		SUCCESSION_WIND = 2,
 		SUCCESSION_BEETLE = 3,
 		SUCCESSION_BEAVER = 4, // A beaver pond drained (the dam failed): the beaver meadow (trees.md 5bb).
+		SUCCESSION_AVALANCHE = 6, // A dense avalanche broke the stand (WorldStand DISTURBANCE_AVALANCHE; trees.md 5bh).
 	};
 	enum BeaverCut {
 		BEAVER_NONE = 0,
@@ -704,6 +705,7 @@ private:
 		float autumn = 0.0f; // Share of leaves turned.
 		float fallen = 0.0f; // Share of the latest leaf crop on the ground.
 		Color color; // Turned leaf colour.
+		float frost = 0.0f; // Share of the leaves killed by a late frost and not yet replaced by the second flush.
 		// The turned share of the leaves still on the tree.
 		float season_blend() const { return fallen >= 1.0f ? 0.0f : CLAMP((autumn - fallen) / (1.0f - fallen), 0.0f, 1.0f); }
 	};
@@ -784,6 +786,14 @@ public:
 	// STAND_ICE_STORM: years since the storm.
 	float ice_storm = 1.0f;
 	int ice_band = 0; // While an ice storm stand grows its species: 1 bent, 2 broken top, 3 limbs stripped.
+	// A clone's leaf-out and autumn (trees.md 5bf; aspen): x later out (+) or earlier (-), y later turning, -1..1. Stand
+	// variants of aspen draw it per clone; the field gives every stem of a clone one variant (species meta clone_scale).
+	Vector2 phenology_shift;
+	LeafSeason _tree_leaf_season() const;
+	// Set by a near build for a season band (near_season_band()): the leaf state it grows, in place of the season's.
+	bool leaf_season_forced = false;
+	LeafSeason leaf_season_force;
+	static int _leaf_season_code(const LeafSeason &p_ls);
 	int ice_damage = 0; // Set by _ice_storm_damage for the mesh meta: 0 none, 1 bent, 2 top broken, 3 limbs broken.
 	int succession_band = 0; // While make_succession grows a stage: 1 the pole stage, 2 old growth's veterans, 3 stand initiation (trees.md 5aq).
 	Preset last_stand_lead = PRESET_MAX; // The lead of the last make_stand().
@@ -822,6 +832,12 @@ public:
 		static const float mm[5] = { 0.0f, 4.0f, 9.0f, 18.0f, 30.0f };
 		return mm[CLAMP(p_band, 0, 4)];
 	}
+	// Near meshes by the local season (trees.md 5bi): the field asks for variant + NEAR_SEASON_STRIDE x
+	// near_season_band(WorldWeather.season_at over the cell), 0 when the leaves there stand as in this generator's own
+	// season, else 1 + the local leaf state in quarters (out, turned, fallen, frost-browned); the near build grows that
+	// state. A late-frost hollow or a high slope not yet in leaf builds its own near meshes beside the green valley.
+	static constexpr int NEAR_SEASON_STRIDE = NEAR_GLAZE_STRIDE * 8;
+	int near_season_band(const Dictionary &p_local) const;
 
 public:
 	void _glaze_build(const Builder &p_bark, Builder &r_ice) const;
@@ -882,6 +898,17 @@ public:
 	// face. Placement turns +Z downhill (meta tree_ground_slope).
 	float ground_slope = 0.0f;
 	float bank_erosion = 0.0f;
+	// A tree on a cliff (trees.md 5bg): rooted in a crevice of a rock face that falls toward mesh +Z at this angle from
+	// level (radians, 0 none). Grown upright and stunted, its stem is bent back over the face from a little above the
+	// collar (_cliff_bend, on the skeleton), and the finished mesh is turned about its foot by the angle (_cliff_turn),
+	// so collar and roots lie on the face, the stem leaves it square and curves up to lean out at cliff_lean. Limbs
+	// on one side die back over a strip of dead bark (sectored dieback). Mesh meta tree_ground_slope as for banks.
+	float cliff_angle = 0.0f;
+	float cliff_lean = 0.0f; // Radians from vertical, out from the face, at the top of the bend.
+	float cliff_dead_az = 0.0f; // Bearing (level mesh space, from +X toward +Z) of the dead sector.
+	float cliff_dead = 0.0f; // Its half width, radians (0: none).
+	void _cliff_bend();
+	void _cliff_turn(Builder &r_b) const;
 	// Stilt roots (trees.md 5at): an alder on a tussock in a carr whose peat sank round it stands on its roots, which
 	// arch down this far (m) from the foot to the ground. The mesh's ground is at -stilt_height under the root tips;
 	// placement raises the instance by it (mesh meta tree_base_lift).
@@ -1099,6 +1126,7 @@ private:
 		FORM_HEDGE, // A two-metre segment of a cut field hedge, A-shaped or boxed by variant (5ad).
 		FORM_LAID_HEDGE, // A two-metre segment of a hand-laid hedge: pleachers, stakes, binders (trees.md, "Laid hedges").
 		FORM_GROVE, // A cultivated olive in a grove: open-centre pruning, the old trunk split into twisted strands (trees.md, "Ancient olive").
+		FORM_CLIFF, // Rooted in a crevice of a rock face: variants over faces of 57 to 86 degrees (trees.md 5bg).
 		FORM_MAX,
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
@@ -1261,6 +1289,12 @@ public:
 	float get_cork_stripped_years() const { return cork_stripped_years; }
 	void set_root_stone(float p_v) { root_stone = CLAMP(p_v, 0.0f, 2.0f); }
 	float get_root_stone() const { return root_stone; }
+	void set_cliff_angle(float p_v) { cliff_angle = CLAMP(p_v, 0.0f, 1.55f); }
+	float get_cliff_angle() const { return cliff_angle; }
+	void set_cliff_lean(float p_v) { cliff_lean = CLAMP(p_v, 0.0f, 0.8f); }
+	float get_cliff_lean() const { return cliff_lean; }
+	void set_cliff_dieback(float p_v) { cliff_dead = CLAMP(p_v, 0.0f, 1.6f); }
+	float get_cliff_dieback() const { return cliff_dead; }
 	void set_ground_slope(float p_v) { ground_slope = CLAMP(p_v, 0.0f, 1.2f); }
 	float get_ground_slope() const { return ground_slope; }
 	void set_bank_erosion(float p_v) { bank_erosion = CLAMP(p_v, 0.0f, 1.0f); }

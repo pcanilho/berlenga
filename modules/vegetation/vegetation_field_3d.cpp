@@ -191,6 +191,13 @@ const VegetationField3D::Pattern &VegetationField3D::_get_pattern(float p_spacin
 // before the first plants run out. A field takes its radius back (0) when it stops.
 float VegetationField3D::near_radius_published = 0.0f;
 
+// The drawn ground's height over the heightfield at p's xz (Landscape3D's bank and cliff relief, WorldGround.relief_at):
+// 0 with no relief producer or out of its reach.
+static float _relief_y(const Vector3 &p_at) {
+	const float r = WorldContracts::ground()->relief_at(p_at).x;
+	return Math::is_finite(r) ? r : 0.0f;
+}
+
 static HashMap<ObjectID, float> &_near_radii() {
 	static HashMap<ObjectID, float> radii;
 	return radii;
@@ -1412,6 +1419,7 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 	{
 		const Vector2 fd = ps.sp->get_meta(SNAME("fall_dir"), Vector2());
 		ps.fall_dir = fd.length_squared() > 1e-8f ? fd.normalized() : Vector2();
+		ps.fall_downhill = bool(ps.sp->get_meta(SNAME("fall_downhill"), false));
 		ps.fall_scatter = float(ps.sp->get_meta(SNAME("fall_scatter"), 0.0f));
 		ps.fall_water = float(ps.sp->get_meta(SNAME("fall_to_water"), 0.0f));
 	}
@@ -1427,6 +1435,7 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 	}
 	ps.far_widen = bool(ps.sp->get_meta(SNAME("far_widen"), false));
 	ps.far_hull_range = float(ps.sp->get_meta(SNAME("far_hull_range"), 0.0f));
+	ps.clone_scale = float(ps.sp->get_meta(SNAME("clone_scale"), 0.0f));
 	if (ps.far_widen && bool(ps.sp->get_meta(SNAME("far_skyline"), true)) && !ps.meshes.is_empty() && ps.meshes[0].is_valid()) {
 		// Meta far_skyline = false: thinned on the skyline too.
 		ps.far_top = ps.meshes[0]->get_aabb().get_end().y;
@@ -2698,7 +2707,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f, ps.stem_foot * scale, ps.canopy_base * scale };
 						crown.species = s;
 						crown.scale = scale;
-						crown.y = map->get_height_at(p3);
+						crown.y = map->get_height_at(p3) + _relief_y(p3);
 						local_crowns.push_back(crown);
 						local_crown_grid[Vector2i(int(Math::floor(xz.x / CROWN_CELL)), int(Math::floor(xz.y / CROWN_CELL)))].push_back(local_crowns.size() - 1);
 						if (out) {
@@ -2714,7 +2723,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// On a log: on the moss that covers its upper side, not on the bare wood under it
 					// (the trees' moss shell stands up to 1.1 to 2.5 cm proud of the bark, section 5c of
 					// trees.md), so cushions and seedlings are not swallowed by it.
-					float y = on_log ? hit.top + DEADWOOD_MOSS_LIFT / MAX(hit.normal.y, 0.5f) : map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : 0.0f);
+					// On the drawn ground: the heightfield plus Landscape3D's bank and cliff relief (WorldGround.relief_at).
+					float y = on_log ? hit.top + DEADWOOD_MOSS_LIFT / MAX(hit.normal.y, 0.5f) : map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : _relief_y(p3));
 					if (wood_y > -1e8f) {
 						y = wood_y; // On the wood's side (above).
 					}
@@ -2766,6 +2776,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					} else if (bank_variant >= 0 && ps.bank_slopes[bank_variant] > 1e-3f && slope > 1e-3f) {
 						// Its ground falls towards mesh +Z: turn +Z downhill.
 						yaw = Math::atan2(downhill.x, downhill.y);
+					} else if (ps.fall_downhill && slope > 1e-3f) {
+						// Carried down by an avalanche (the trees module, trees.md 5bh): mesh +X down the fall line.
+						yaw = Math::atan2(-downhill.y, downhill.x) + (Math::fmod(r * 7919.0f, 1.0f) - 0.5f) * 2.0f * ps.fall_scatter;
 					} else if (ps.fall_dir != Vector2()) {
 						// Thrown by one storm (the trees module, trees.md 5am): mesh +X along the storm's track, each
 						// tree turned by the gusts and its neighbours within fall_scatter.
@@ -2930,7 +2943,29 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 						}
 					}
-					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : MIN(int(r * variants), variants - 1));
+					int clone_variant = -1;
+					if (ps.clone_scale > 0.0f && variants > 1) {
+						// A clone (aspen, trees.md 5bf; Mitton and Grant 1996): every stem from one root system shares its
+						// genotype, so its form, bark and leaf-out and autumn dates. The clones are jittered cells (a
+						// Worley partition, so no straight edges show in autumn), each one variant.
+						const Vector2 cq = xz / ps.clone_scale;
+						const int cx = int(Math::floor(cq.x)), cz = int(Math::floor(cq.y));
+						float best = 1e9f;
+						uint32_t best_h = 0;
+						for (int dz = -1; dz <= 1; dz++) {
+							for (int dx = -1; dx <= 1; dx++) {
+								const uint32_t h = hash_murmur3_one_32(uint32_t(cx + dx) * 73856093u ^ uint32_t(cz + dz) * 19349663u, uint32_t(ps.clone_scale * 16.0f) + 0x636c6eu);
+								const Vector2 site(float(cx + dx) + 0.15f + 0.7f * float(h & 0xffff) / 65535.0f, float(cz + dz) + 0.15f + 0.7f * float(h >> 16) / 65535.0f);
+								const float d2 = site.distance_squared_to(cq);
+								if (d2 < best) {
+									best = d2;
+									best_h = h;
+								}
+							}
+						}
+						clone_variant = int(hash_murmur3_one_32(best_h, 0x766172u) % uint32_t(variants));
+					}
+					const int variant = fire_variant >= 0 ? fire_variant : (bank_variant >= 0 ? bank_variant : (clone_variant >= 0 ? clone_variant : MIN(int(r * variants), variants - 1)));
 					// Stilt roots: raised by the variant's lift along its own up (scaled and tilted with it).
 					const Vector3 lift = variant < int(ps.base_lifts.size()) ? b.xform(Vector3(0.0f, ps.base_lifts[variant], 0.0f)) : Vector3();
 					const Transform3D world(b, Vector3(xz.x, y, xz.y) + lift);
@@ -3067,7 +3102,9 @@ void VegetationField3D::_fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &
 void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 	// Ice storms (trees.md 5be): the glaze over each near cell (WorldWeather.glaze_at, read twice a second), in bands; a
 	// near mesh grows its band's ice as geometry, and a cell whose band changes gets a new near cell once it is built
-	// (the old one draws meanwhile).
+	// (the old one draws meanwhile). The local season likewise (trees.md 5bi): WorldWeather.season_at over the cell,
+	// banded by the source (TreeGenerator.near_season_band), so a late-frost hollow or a slope not yet in leaf grows
+	// its own leaf state in the near mesh.
 	WorldContracts *wc = WorldContracts::get_singleton();
 	const Ref<WorldWeather> weather = wc ? wc->get_weather() : Ref<WorldWeather>();
 	const uint64_t now = OS::get_singleton()->get_ticks_usec();
@@ -3075,6 +3112,9 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 	if (glaze_check) {
 		glaze_checked_usec = now;
 	}
+	auto near_code = [](int p_variant, int p_glaze, int p_season) {
+		return p_variant + TreeGenerator::NEAR_GLAZE_STRIDE * p_glaze + TreeGenerator::NEAR_SEASON_STRIDE * p_season;
+	};
 	auto make_near = [&](LazyNear &c, const Ref<Mesh> &p_mesh) {
 		Ref<MultiMesh> mm;
 		mm.instantiate();
@@ -3097,29 +3137,36 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 	for (KeyValue<ObjectID, LazyNear> &kv : lazy_near) {
 		LazyNear &c = kv.value;
 		const float d = c.centre.distance_to(p_camera);
-		int band = c.glaze_band;
+		int glaze = c.glaze_band;
+		int season = c.season_band;
 		if (weather.is_null()) {
-			band = 0;
+			glaze = 0;
+			season = 0;
 		} else if (glaze_check && d <= c.range * 1.2f) {
-			band = TreeGenerator::glaze_band(weather->glaze_at(c.centre));
+			glaze = TreeGenerator::glaze_band(weather->glaze_at(c.centre));
+			const TreeGenerator *tg = Object::cast_to<TreeGenerator>(ObjectDB::get_instance(c.source));
+			season = tg ? tg->near_season_band(weather->season_at(c.centre)) : 0;
 		}
+		const int want = near_code(c.variant, glaze, season);
 		if (c.near) {
 			if (d > c.range * 1.5f) {
 				_lazy_near_free(c);
 				continue;
 			}
-			if (band != c.glaze_band) {
+			if (want != near_code(c.variant, c.glaze_band, c.season_band)) {
 				Object *src = ObjectDB::get_instance(c.source);
-				const Ref<Mesh> mesh = src ? Ref<Mesh>(src->call(SNAME("request_near_mesh"), c.key, c.variant + TreeGenerator::NEAR_GLAZE_STRIDE * band)) : Ref<Mesh>();
+				const Ref<Mesh> mesh = src ? Ref<Mesh>(src->call(SNAME("request_near_mesh"), c.key, want)) : Ref<Mesh>();
 				if (mesh.is_valid()) {
 					_lazy_near_free(c);
-					c.glaze_band = band;
+					c.glaze_band = glaze;
+					c.season_band = season;
 					make_near(c, mesh);
 				}
 			}
 			continue;
 		}
-		c.glaze_band = band;
+		c.glaze_band = glaze;
+		c.season_band = season;
 		if (d > c.range * 1.2f) {
 			continue;
 		}
@@ -3127,7 +3174,7 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 		if (!src) {
 			continue;
 		}
-		const Ref<Mesh> mesh = src->call(SNAME("request_near_mesh"), c.key, c.variant + TreeGenerator::NEAR_GLAZE_STRIDE * c.glaze_band);
+		const Ref<Mesh> mesh = src->call(SNAME("request_near_mesh"), c.key, want);
 		if (mesh.is_null()) {
 			continue; // Still building.
 		}
@@ -4929,7 +4976,7 @@ PackedFloat32Array VegetationField3D::get_crowns_in(const Rect2 &p_rect) const {
 		if (c.xz.x + c.radius < p_rect.position.x || c.xz.y + c.radius < p_rect.position.y || c.xz.x - c.radius > p_rect.get_end().x || c.xz.y - c.radius > p_rect.get_end().y) {
 			continue;
 		}
-		const float rec[7] = { c.xz.x, c.xz.y, c.radius, c.top, c.base, c.conifer, c.opacity };
+		const float rec[7] = { float(c.xz.x), float(c.xz.y), float(c.radius), float(c.top), float(c.base), float(c.conifer), float(c.opacity) };
 		for (float f : rec) {
 			res.push_back(f);
 		}

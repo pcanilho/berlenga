@@ -792,3 +792,69 @@ over the opaque scene; Hillaire's aerial perspective (2020) does the same for th
   tried and changed nothing, since the layer is near saturation everywhere and the lift alone sets the outline. The
   ridge now has summits some 16 km apart with saddles under half their height, as a range has; the lenses form over
   the summits, a few km long, and the bench view looks up the wind from downwind.
+
+## Review 14 (22 Nov 2026; docs: zebra iridescence, soft plate, serrated edge)
+
+- **Iridescence as zebra contours.** A single droplet size per point drew the Airy pattern's higher orders, whose
+  rings crowd as the size grows, so each small change of size was a new hard ring; and the size wandered 2.5 um over
+  700 m, so the rings ran across the edge. The tint now averages three sizes (8 % spread; Gedzelman and Lock 2003 need a
+  narrow but not single size), and the size follows the depth in from the edge, wandering 0.6 um over 2.5 km: pastel
+  pink and green bands along the outline.
+- **Soft plate.** The plate's water was uniform inside the lens. It now varies in fibres, the detail noise stretched
+  6:1 along the wind and flattened 3:1 in height (sigma x 0.3 to 1.7), read at the pixel footprint so far lenses keep
+  their mean. One more texture read per fine sample.
+- **Lake band veil.** The bench view moved 4 km further back and looks higher, so the veil meets the ground near the
+  horizon instead of standing over the near ground as a strip. The veil drawn over near ground is unchanged.
+
+## Review 15 (22 Nov 2026; docs: lake veil jagged and striped, smear columns in the band's base)
+
+- **Smear columns.** The band's field (wc_lake_effect) was read bilinearly over its coarse cells, so the band's edge
+  was a polygon of straight runs and the cumulus over it stood those up as flat vertical facets. Now a cubic B-spline
+  read (four bilinear reads, Sigg and Hadwiger 2005, as the wave field), on the CPU too.
+- **Stripes in the veil.** The curtains' finest octave was stretched along the view so its streaks would stand up;
+  that made the pattern follow the camera and each pixel column a ray down one long streak. Isotropic now: the
+  density is the same all the way down, so the sheets stand upright by themselves.
+- **Grain over the ground.** The pass over the scene has no temporal resolve, so its interleaved-gradient jitter
+  stood as a fixed diagonal grain. It now steps at mid-step with 32 steps (16 in the sky): each step's ends follow
+  the pixel's depth, which changes smoothly over the ground, so the veil is smooth. Path tracing has no
+  over-ground veil (the pass is raster only), as before.
+
+## Haboob dust wall in the cloud march (design, 22 Nov 2026; Paulo's haboob pick, sand's contract)
+
+Technique: a participating medium of mineral dust marched with the low cloud, its shape a density current's head
+(Simpson 1997, "Gravity Currents": the raised head about twice the following flow's depth, a nose lifted off the
+ground by friction, lobes and clefts along the front from the lobe-and-cleft instability, Kelvin-Helmholtz billows
+rolling back along the top behind the head; Benjamin 1968 for the head-to-depth ratio). Optics from the contract
+(sand, 22 Nov): mass extinction 0.6 m2/g at 550 nm, per-channel 0.97/1.0/1.04, single-scattering albedo 0.92 at 550
+falling to 0.85 in blue, Henyey-Greenstein g 0.75 (dust's forward peak; Dubovik et al. 2002 AERONET dust).
+
+- Reads (GPU, contract): weather_dust_map over weather_map_rect: R column g/m2, G top above ground (m, already with the
+  nose), B head share 0..1. Concentration c = R / (0.9 G) uniform to 0.8 G, smoothstep to 0 at G (matches
+  dust_concentration_at). Read with the cubic B-spline (the band field's lesson: bilinear cells stand up as facets).
+- Shape at the head (B > 0): lobes and clefts along the front as a 1D noise along the front tangent (gradient of R)
+  at 300 to 800 m (Simpson's lobe spacing scales with the head height, about 1 to 2 heights), moving the top by
+  +-25 % and cutting clefts down to the nose; the nose: density lifted off the ground in the first 50 to 150 m ahead
+  of the foot (the foot trails the nose); billows: a 3D detail noise advected with the outflow on the top surface,
+  the cumulus detail texture at the dust's scale, so the top reads as rolling cauliflower like the photos (Phoenix
+  2011, Khartoum). Body behind the head: smooth, a slight erosion of the top only.
+- March: its own slab from the ground to max top (<= 3 km), entered only where the map's R > 0 along the ray (a coarse
+  pre-pass over the map at the cumulus' coarse steps, as the wave slab). Composited with cloud_over by depth, under
+  the cumulus. 24 coarse steps, refined at the edge; jitter per revisit as the other layers.
+- Light: as the low cloud, Wrenninge's octaves for multiple scattering with the dust's albedo per channel (that is
+  what turns it brown-orange: blue is absorbed more at each scattering), sun transmittance through the dust toward the
+  sun (two reads), ambient from above and the ground. Sun dims inside by the column (the sky and haze readers get it
+  from sand's layer).
+- PT: the same density function in the PT medium (as the clouds' PT path), so raster and PT agree.
+- Cost: zero when no dust (R == 0 everywhere: a uniform flag from WeatherMap3D, like cloud_lake.x). Bench: sand's
+  haboob bench; my checks: 100% crops of the head, raster against PT 640.
+
+## PT parity for the veils over the ground (22 Nov 2026)
+
+Path tracing lost the snow and rain veils over distant ground, for two reasons. First, its camera rays stopped at a
+fixed 10 km, so ground beyond that was sky. They now go to the camera's far plane, as raster draws. Second, the
+veil pass (a full-screen quad that marches the medium to the scene's depth) was switched off under path tracing,
+since blend surfaces are traced there and the pass has no place in the ray-traced scene. Now any material whose
+shader writes POSITION (a screen-space overlay, no world geometry) stays out of the TLAS, and is drawn over the
+traced frame against the traced depth even under path-traced transparency, lit from the trace's light cache. The
+lake view's veil row now matches raster (84 grey at the horizon in both). Under Ray Reconstruction the overlay is
+drawn into the colour before the denoiser; a layer of its own is left for later if it smears.

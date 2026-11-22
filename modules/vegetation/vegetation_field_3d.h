@@ -236,12 +236,14 @@ private:
 		float stone_reach = 0.0f; // How far a root stone reaches from the plant's origin (times its largest scale); 0: none.
 		float frontal = 0.0f; // m2 a plant shows the wind at scale 1 (PlantSpecies.wind_frontal_area).
 		bool wind_flag = false; // Meta "wind_flag": +X turned down the prevailing wind (flagged trees, krummholz).
+		bool fall_downhill = false; // Meta "fall_downhill": +X turned down the fall line, +-fall_scatter (avalanche-thrown trees, trees.md 5bh).
 		Vector2 fall_dir; // Meta "fall_dir" (world xz, unit): +X turned along it, +-fall_scatter (storm-thrown trees, trees.md 5am); zero none.
 		float fall_scatter = 0.0f;
 		float fall_water = 0.0f; // Meta "fall_to_water": that share turned +X toward the water (beaver-felled stems, trees.md 5au).
 		float far_hull_range = 0.0f; // Meta "far_hull_range" (trees, trees.md 9b): past it each variant's mesh meta tree_far_hull is drawn instead.
 		float far_top = 0.0f; // Trees (far_widen): the first mesh's top, for the skyline test (trees.md 9c).
 		bool far_widen = false; // Meta "far_widen" (trees, trees.md 9a): the far tail's survivors widened in their transforms per tile.
+		float clone_scale = 0.0f; // Meta "clone_scale" (m; aspen, trees.md 5bf): one variant per clone, clones as jittered cells this wide.
 		LocalVector<float> bank_slopes; // Per variant, mesh meta "tree_ground_slope".x (radians); empty: no bank forms.
 		// Per variant, mesh meta "tree_fire_years" (years since the fire the tree was grown for, -1 unburnt); empty: none.
 		// A tree takes the variant whose years are nearest the ground's burn age, unburnt ones off burns.
@@ -594,6 +596,7 @@ private:
 		LocalVector<Transform3D> xforms;
 		LocalVector<Color> customs;
 		int glaze_band = 0; // The near mesh's glaze band (TreeGenerator::glaze_band of WorldWeather.glaze_at).
+		int season_band = 0; // Its local season band (TreeGenerator.near_season_band of WorldWeather.season_at).
 	};
 	HashMap<ObjectID, LazyNear> lazy_near;
 	uint64_t glaze_checked_usec = 0;

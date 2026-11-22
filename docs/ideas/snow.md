@@ -1910,6 +1910,73 @@ Built (SnowCover3D, layers on by default):
 - Not yet: ponding that holds back the pack's drainage (it would change the weather's runoff contract); preferential
   flow fingers; a crust's own strength as a bridge.
 
+## Follow-up 52: roof slabs that fall as bodies; ice dams (round 8, 22 Nov 2026)
+
+Research: roof avalanches leave the eave as a slab that breaks into blocks on the eave and again on landing; the debris
+is a lumpy bank 1-3 m out (the same block fracture as slab avalanche debris; Bartelt and Lehning's slab blocks). Ice
+dams: CRREL's work on heated roofs (Tobiasson 1988; Buska and Tobiasson 2001) finds them where the building's heat
+melts the bed and the water refreezes over the cold eave, mostly with the air below about -4 C; they hold the snow
+and feed the icicles.
+
+Built (SnowBodies3D):
+- `roof_slab_bodies` (on): the slab leaves the eave row by row (a row a piece's length up the roof leaves that much
+  later), as rigid pieces about 1.2 m across of the slab's depth, irregular (vertices pushed by a hash of where they
+  lie and of the piece), with snow's friction (0.8 dry); a piece whose speed halves from over 3 m/s breaks in four,
+  a dry one throwing up a puff (its own SnowPowderCloud3D, where Flow is); each comes to rest as an add_drift cone
+  where it stops, mass kept. Off: follow-up 50's thrown bank. `get_falling_chunks`, `get_chunks_spawned`.
+- `ice_dams` (on): the warm roof's bed melt (heat loss over the snow's insulation) from the whole run reaches the eave
+  and freezes there, all of it from -4 C; the dam is a ridge twice as wide as high (`ice_dam_height`), drawn along
+  the eave as hazy ice with a height that wanders, melting back at ice's 0.3 mm an hour per degree. It holds the
+  snow while it stands a quarter of the snow's depth (a rule of thumb for the keyed toe, not a published figure).
+- Fix: `set_body_depth` capped roof faces at `max_depth` (0.4 m), not `roof_max_depth`.
+- `--test=roofs`: 80 cm off a 35 degree metal roof leaves as 20 pieces, 24 after breaks, all down in 8.4 s, 4984 of
+  4984 kg in the cover, a 0.52 m bank; a 30 W/m2 metal roof in 36 h of snow at -8 C grows a 24 cm dam and holds
+  0.77 m, 0.15 m without dams. `--view=roofs --fall=S` (0.45 in the air, 10 landed), physics paused for the frame.
+- Not yet: Blast fracture of the pieces; a dam view; the dam's water feeding SnowIcicles3D directly (it already
+  grows from the roof's heat_loss).
+- Review fixes (22 Nov, docs review of the frames): the pieces read as one slab (cut at 0.6-0.75 of their cell,
+  shifted, turned, each with its own speed and spin, rows staggered by up to 0.25 s; corners knocked off); the bank
+  showed sharp spikes, from two causes: each piece pressed a print with a pushed-up rim as it lay (pieces now carry
+  the `world_contact_exclude` meta), and the cone heaps were only a cell or two across on the 0.5 m grid. Heaps now
+  go through `SnowCover3D.add_mound`: a smooth (1 - (d/r)^2)^2 dome at least 2.5 cells in radius, kept off cells
+  under anything more than a metre above the piece (the bare strip under the eave) and tapered toward them over two
+  cells, so the bank no longer cuts across the wall's corner; the whole volume lands. The block stays in sight on its
+  heap, still and no longer solid, sinking out over 90 s (at most 128). Pieces sit on collision layer 20 so the
+  ground's downward rays (layer 1) never take one for the ground. `--test=roofs` checks a heap keeps its mass and is
+  wider than the grid.
+
+## Follow-up 53: the layers in cut walls (round 8, 22 Nov 2026)
+
+Research: a snow pit wall is how the pack's layers are read (Fierz et al. 2009, the international classification;
+Greene et al., SWAG "Snow, Weather and Avalanches"): new snow bright and soft, wind slab chalky and dense, rounded old
+snow greyer and finer, a melt-freeze crust a hard glazed line, buried surface hoar a thin dark seam (it shows as a
+shadowed line when the wall is brushed), depth hoar coarse, loose and dull at the base, wet layers darker. Games
+show cut snow as one material; the pack here already knows its layers (follow-ups 49 and 51), so the walls of ruts,
+prints and trenches can show them.
+
+Built:
+- SnowCover3D strata map (`get_strata_texture`): per cell, the layers merged into bands (same kind and wetness;
+  wet = liquid over 0.3 of what the layer holds), scaled to the pack's depth, up to eight bands from the surface
+  down, two to a float channel (12 bits each: 4 for the kind, 8 for the bottom's depth in cm). Built with the depth
+  map from the live layers each update.
+- SnowSurface3D: a steep face (weighted in from about 50 to 75 degrees off flat) at depth d under the
+  untouched surface (ground + the cover's depth - the fragment's height, its edge wandering a few mm) takes its
+  band's tint and roughness: new 1.0/0.75, wind 0.93/0.85, old (0.84, 0.87, 0.92)/0.8, crust glazed blue
+  (0.76, 0.83, 0.92)/0.2, hoar a dark seam (0.55)/0.9, depth hoar warm grey (0.72, 0.71, 0.68)/0.95, wet bands
+  x(0.75, 0.8, 0.86) and glossy 0.3. A crust or hoar seam is drawn at least 1.5 cm thick. Raster and path traced
+  alike (the same shader).
+- Docs review (22 Nov): only one line and one band read, and the wall looked like plaster. Now each band also has
+  its grain (value noise at the band's grain size, two octaves, bumping the normal: wind slab 2.5 mm and smooth, new
+  4 mm, old 6 mm, depth hoar 12 mm and deep, a crust glazed nearly flat), faded as grains shrink under a pixel; a
+  crust stands out as a ledge (lit top, shadow line under it), a hoar seam is a recess (0.55, shadowed at its top);
+  stronger tints (old (0.8, 0.84, 0.9), hoar 0.4, depth hoar (0.66, 0.65, 0.62), crust (0.68, 0.79, 0.93) at
+  roughness 0.1); the cut's tool marks as streaks down the wall. The view's pack has two crusts.
+- `--test=layers` checks the map: new over buried hoar over old, down to the pack's depth. `--view=strata`: a
+  2.4 m trench pressed nearly to the ground (compacted_density 900) and two ruts in an 80 cm pack (depth hoar, new,
+  crust, buried hoar, new), seen from inside the trench.
+- Not yet: the walls of the cover's own cuts (avalanche crowns, cornice breaks), which are cell steps, not the print
+  field; grain texture per band (sparkle of depth hoar facets).
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

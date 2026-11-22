@@ -369,6 +369,13 @@ float GroundSurface3D::Columns::sinkage(const GroundDeformField::Body &p_body) c
 // ---------------------------------------------------------------------------------------------------------
 // Lattice and cells
 
+// The ground's height source, on the drawn surface (round 23: the terrain's drawn bank and cliff relief, 57b253b5).
+GroundHeightQuery GroundSurface3D::_height_query() const {
+	GroundHeightQuery q = GroundHeightQuery::make(this, height_source, ground_collision_mask);
+	q.relief = true;
+	return q;
+}
+
 float GroundSurface3D::_ground_at(float p_x, float p_z) const {
 	const int n = ground_n;
 	if (!ground_valid || n < 2) {
@@ -407,7 +414,7 @@ float GroundSurface3D::_edge_distance(float p_x, float p_z) const {
 }
 
 void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
-	const GroundHeightQuery q = GroundHeightQuery::make(this, height_source, ground_collision_mask);
+	const GroundHeightQuery q = _height_query();
 	LocalVector<float> next;
 	next.resize(p_n * p_n);
 	const bool keep = ground_valid && ground_n == p_n;
@@ -1767,7 +1774,7 @@ float GroundSurface3D::_buried_depth(const Vector3 &p_position, float p_radius) 
 				}
 				// The body's top under the nearest point of the disc to its axis (a sphere's or tube's cap).
 				const float off = MAX(d - p_radius, 0.0f);
-				const float top = Math::lerp(b.a.y, b.b.y, t) + Math::sqrt(MAX(b.r * b.r - off * off, 0.0f));
+				const float top = Math::lerp((float)b.a.y, (float)b.b.y, t) + Math::sqrt(MAX(b.r * b.r - off * off, 0.0f));
 				best = MIN(best, MAX(g - top, 0.0f));
 			}
 		}
@@ -1825,9 +1832,9 @@ Ref<ArrayMesh> GroundSurface3D::_buried_mesh(bool p_root, uint32_t p_seed) {
 			return float(_buried_hash(_buried_hash(uint32_t(x) + p_seed * 7919u, uint32_t(y)), uint32_t(z)) & 0xffffu) / 65535.0f;
 		};
 		const int x = int(f.x), y = int(f.y), z = int(f.z);
-		const float a = Math::lerp(Math::lerp(h(x, y, z), h(x + 1, y, z), s.x), Math::lerp(h(x, y + 1, z), h(x + 1, y + 1, z), s.x), s.y);
-		const float b = Math::lerp(Math::lerp(h(x, y, z + 1), h(x + 1, y, z + 1), s.x), Math::lerp(h(x, y + 1, z + 1), h(x + 1, y + 1, z + 1), s.x), s.y);
-		return Math::lerp(a, b, s.z);
+		const float a = Math::lerp(Math::lerp(h(x, y, z), h(x + 1, y, z), (float)s.x), Math::lerp(h(x, y + 1, z), h(x + 1, y + 1, z), (float)s.x), (float)s.y);
+		const float b = Math::lerp(Math::lerp(h(x, y, z + 1), h(x + 1, y, z + 1), (float)s.x), Math::lerp(h(x, y + 1, z + 1), h(x + 1, y + 1, z + 1), (float)s.x), (float)s.y);
+		return Math::lerp(a, b, (float)s.z);
 	};
 	if (!p_root) {
 		// A water-worn stone: a sphere with two octaves of lumps, flattened a little (rested on its broad side).
@@ -1955,7 +1962,7 @@ bool GroundSurface3D::_buried_under(const Vector3 &p_position, float p_radius, f
 				if (d > b.r + p_radius) {
 					continue;
 				}
-				const float over = Math::lerp(b.a.y, b.b.y, t) + b.r - p_bottom;
+				const float over = Math::lerp((float)b.a.y, (float)b.b.y, t) + b.r - p_bottom;
 				if (over > best) {
 					best = over;
 					r_hit = b;
@@ -3515,7 +3522,7 @@ const TerrainGenerator3D *GroundSurface3D::_hole_generator() const {
 	if (!is_inside_tree()) {
 		return nullptr;
 	}
-	const GroundHeightQuery q = GroundHeightQuery::make(this, height_source, ground_collision_mask);
+	const GroundHeightQuery q = _height_query();
 	if (!q.generator || q.generator->get_hole_count() == 0) {
 		return nullptr;
 	}
@@ -3806,7 +3813,7 @@ void GroundSurface3D::_update_patch_material() {
 		// A fresh copy (the source's parameters changed, _sync_patch_params) keeps the world mapping for the patch's
 		// current centre; otherwise it would hold the source's offset until the patch next moves.
 		const Vector3 sc = bm->get_uv1_scale();
-		bm->set_uv1_offset(patch_uv_offset + Vector3(Math::fposmod(center.x * sc.x, 1.0f), Math::fposmod(center.y * sc.y, 1.0f), 0.0f));
+		bm->set_uv1_offset(patch_uv_offset + Vector3(Math::fposmod(float(center.x * sc.x), 1.0f), Math::fposmod(float(center.y * sc.y), 1.0f), 0.0f));
 	} else if (ShaderMaterial *sm = Object::cast_to<ShaderMaterial>(patch_material.ptr())) {
 		sm->set_shader_parameter("ground_deform_patch", true);
 	}
@@ -3887,7 +3894,7 @@ void GroundSurface3D::_follow(Vector3 p_center) {
 		// Mesh UVs are metres from the patch centre: keep the material's world mapping.
 		if (BaseMaterial3D *bm = Object::cast_to<BaseMaterial3D>(patch_material.ptr())) {
 			const Vector3 s = bm->get_uv1_scale();
-			bm->set_uv1_offset(patch_uv_offset + Vector3(Math::fposmod(c.x * s.x, 1.0f), Math::fposmod(c.y * s.y, 1.0f), 0.0f));
+			bm->set_uv1_offset(patch_uv_offset + Vector3(Math::fposmod(float(c.x * s.x), 1.0f), Math::fposmod(float(c.y * s.y), 1.0f), 0.0f));
 		}
 		globals_published = false;
 	}
@@ -4127,8 +4134,8 @@ void GroundSurface3D::_upload() {
 					if (f >= 4.0f) {
 						// Tracked mud (ground_deform.glsl): wet, dark and glossy; dry, a pale matte film.
 						const Vector2 sq = GroundDeformField::mud_band_share_wet(f);
-						tint_albedo[i] = Math::lerp(1.0f, Math::lerp(1.12f, 0.55f, sq.y), sq.x);
-						tint_roughness[i] = Math::lerp(1.0f, Math::lerp(1.0f, 0.45f, sq.y), sq.x);
+						tint_albedo[i] = Math::lerp(1.0f, Math::lerp(1.12f, 0.55f, (float)sq.y), (float)sq.x);
+						tint_roughness[i] = Math::lerp(1.0f, Math::lerp(1.0f, 0.45f, (float)sq.y), (float)sq.x);
 						continue;
 					}
 					if (f >= 2.0f) {
@@ -4340,7 +4347,7 @@ void GroundSurface3D::_far_update(double p_delta, const LocalVector<Node *> &p_s
 	const float fs = ground_spacing * FAR_STEP;
 	// Centred on the fine lattice, in far cells.
 	const Vector2i fo(Math::floor((ground_origin.x + 0.5f * n) / FAR_STEP) - fn / 2, Math::floor((ground_origin.y + 0.5f * n) / FAR_STEP) - fn / 2);
-	const GroundHeightQuery q = GroundHeightQuery::make(this, height_source, ground_collision_mask);
+	const GroundHeightQuery q = _height_query();
 	auto sample_ground = [&](int x, int z) {
 		const float h = q.height(Vector3((fo.x + x) * fs, 0.0f, (fo.y + z) * fs));
 		return Math::is_finite(h) ? h : q.y0;
@@ -6112,7 +6119,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		ripple_sand_depth.resize(sn * sn);
 		ripple_sand_share.resize(sn * sn);
 		ripple_sand_blown.resize(sn * sn);
-		const TerrainGenerator3D *sgen = is_inside_tree() ? GroundHeightQuery::make(this, height_source, ground_collision_mask).generator : nullptr;
+		const TerrainGenerator3D *sgen = is_inside_tree() ? _height_query().generator : nullptr;
 		ripple_sand_wind = sgen ? sgen->get_sand_wind_direction() : Vector2();
 		for (int z = 0; z < sn; z++) {
 			for (int x = 0; x < sn; x++) {
@@ -7820,15 +7827,15 @@ void GroundSurface3D::GPUSink::stamp(const GroundDeformField::Columns &p_columns
 	}
 	const uint32_t flags = (p_box ? 1u : 0u) | (p_round ? 2u : 0u) | ((uint32_t)CLAMP(surface->field.press_tread, 0, 7) << 5u);
 	const float v[12] = {
-		p_position.x, p_position.y, p_position.z, p_radius,
-		p_half.x, p_half.y, p_yaw, p_bottom,
-		p_sink, p_contact_tolerance, p_velocity.x, p_velocity.y
+		(float)p_position.x, (float)p_position.y, (float)p_position.z, p_radius,
+		(float)p_half.x, (float)p_half.y, p_yaw, p_bottom,
+		p_sink, p_contact_tolerance, (float)p_velocity.x, (float)p_velocity.y
 	};
 	const float settle = MAX(surface->field.press_settle, 0.0f);
 	const float d[4] = { 0.0f, float(flags), 0.0f, settle };
 	const Vector4 &fa = surface->field.press_floor_a;
 	const Vector3 &fb = surface->field.press_floor_b;
-	const float fl[8] = { fa.x, fa.y, fa.z, fa.w, fb.x, fb.y, fb.z, 0.0f };
+	const float fl[8] = { (float)fa.x, (float)fa.y, (float)fa.z, (float)fa.w, (float)fb.x, (float)fb.y, (float)fb.z, 0.0f };
 	host.add_stamp(f, v, d, x0, x1, z0, z1, fl);
 	host.slump_until = MAX(host.slump_until, host.time + settle + 0.1);
 }
@@ -7857,8 +7864,8 @@ void GroundSurface3D::GPUSink::amount(const GroundDeformField::Columns &p_column
 		return;
 	}
 	const float v[12] = {
-		p_position.x, p_position.y, p_position.z, p_radius,
-		surface->field.amount_print.x, surface->field.amount_print.y, surface->field.amount_print.z, surface->field.amount_print.w,
+		(float)p_position.x, (float)p_position.y, (float)p_position.z, p_radius,
+		(float)surface->field.amount_print.x, (float)surface->field.amount_print.y, (float)surface->field.amount_print.z, (float)surface->field.amount_print.w,
 		p_depth, tent ? 1.0f : 0.0f, surface->field.amount_fresh, 0.0f
 	};
 	const float settle = MAX(surface->field.press_settle, 0.0f);
@@ -8941,7 +8948,7 @@ float GroundSurface3D::_film_dust_share(const Vector3 &p_position) const {
 	if (sw.x <= 0.0f) {
 		return 0.0f;
 	}
-	return sw.x * (1.0f - Math::smoothstep(0.1f, 0.3f, sw.y));
+	return sw.x * (1.0f - Math::smoothstep(0.1f, 0.3f, (float)sw.y));
 }
 
 // Film lifted at a place: kept as owed in its 1 m cell, and taken off in texel-sized discs as the mass owed reaches
@@ -9007,7 +9014,7 @@ void GroundSurface3D::_film_wind_update(float p_dt, float p_ustar) {
 				}
 				any = true;
 				const Vector2 sw = GroundDeformField::mud_band_share_wet(f);
-				const float a = sw.x * (1.0f - Math::smoothstep(0.1f, 0.3f, sw.y)) * t * t;
+				const float a = sw.x * (1.0f - Math::smoothstep(0.1f, 0.3f, (float)sw.y)) * t * t;
 				dry += Vector3(a, a * (field.origin.x + x + 0.5f) * t, a * (field.origin.y + z + 0.5f) * t);
 			}
 		}
@@ -9735,7 +9742,7 @@ float GroundSurface3D::_off_lattice_height(const Vector3 &p_position) const {
 	if (!is_inside_tree()) {
 		return Math::NaN;
 	}
-	return GroundHeightQuery::make(this, height_source, ground_collision_mask).height(p_position);
+	return _height_query().height(p_position);
 }
 
 float GroundSurface3D::get_ground_height_at(Vector3 p_position) const {

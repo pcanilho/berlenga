@@ -157,6 +157,9 @@
 		<member name="camera" type="NodePath" setter="set_camera" getter="get_camera" default="NodePath(&quot;&quot;)">
 			The camera that picks the levels. Empty: the viewport's current camera.
 		</member>
+		<member name="bank_relief" type="float" setter="set_bank_relief" getter="get_bank_relief" default="0.8">
+			Metres of soil relief built into banks of about 40 to 55 degrees near the camera: slump scarps and toe lobes along the contour with hummocks over them, on the same refined finest-level triangles as [member cliff_relief], handing over to it on steeper faces. Placers read the drawn height through [method WorldGround.relief_at] (or the terrain_relief_map global on the GPU), which this node answers for cliff and bank relief. 0 turns it off.
+		</member>
 		<member name="cast_shadows" type="bool" setter="set_cast_shadows" getter="is_casting_shadows" default="true">
 			Whether the ground casts shadows.
 		</member>

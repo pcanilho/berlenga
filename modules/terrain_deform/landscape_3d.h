@@ -35,6 +35,7 @@
 #include "core/object/worker_thread_pool.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
+#include "modules/world/world_contracts.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
@@ -55,7 +56,7 @@ class TerrainGenerator3D;
 // every 4th point only; chunks the camera needs finer than that are read in full before the first frame, the rest
 // on worker threads, nearest and most needed first. Meshes are built on worker threads and a new set of levels is
 // shown only when all its meshes are ready, so a frame never mixes levels that do not fit.
-class Landscape3D : public Node3D {
+class Landscape3D : public Node3D, public WorldReliefProvider {
 	GDCLASS(Landscape3D, Node3D);
 
 	static constexpr int COARSE = 2; // level read first when streaming (every 4th point)
@@ -104,6 +105,7 @@ class Landscape3D : public Node3D {
 	int lod_levels = 5;
 	real_t lod_error = 1.0;
 	real_t cliff_relief = 0.6; // m, rock ledges built into faces steeper than about 50 degrees at the finest level (0 = off)
+	real_t bank_relief = 0.8; // m, slump scarps and lobes on banks of about 40 to 55 degrees at the finest level (0 = off)
 	Ref<Material> material;
 	bool cast_shadows = true;
 	NodePath camera_path;
@@ -154,11 +156,25 @@ class Landscape3D : public Node3D {
 	ObjectID stand_id;
 	bool stand_published = false;
 	void _update_stand_map(const Vector3 &p_camera);
+	// The relief contract (WorldReliefProvider, WorldGround.relief_at) and its GPU map for placers: terrain_relief_map
+	// (RG16F: r the drawn height over the heightfield in m, g the relief's share) over terrain_relief_rect, a
+	// RELIEF_SIZE square round the camera at RELIEF_RES texels.
+	static constexpr int RELIEF_RES = 256;
+	static constexpr real_t RELIEF_SIZE = 128.0;
+	Ref<ImageTexture> relief_texture;
+	Vector2 relief_origin = Vector2(1e30, 1e30);
+	uint64_t relief_key = 0;
+	bool relief_published = false;
+	bool relief_registered = false;
+	void _update_relief_map(const Vector3 &p_camera);
+	void _clear_relief_map();
+	Vector2 _relief_at_local(const Vector3 &p_local) const;
 	void _clear_stand_map();
 	// cliff_relief and the grid for meshes drawn over the landscape with the terrain material that carry no relief
 	// data of their own (GroundSurface3D's patch): global terrain_cliff_relief = (metres, grid spacing, grid origin),
 	// read in world space as the stand map is (the landscape is not moved).
 	Vector4 cliff_published;
+	real_t bank_published = -1.0;
 	void _publish_cliff_relief(bool p_clear = false);
 
 	// Streaming.
@@ -186,6 +202,9 @@ class Landscape3D : public Node3D {
 	Vector3 _normal(int p_x, int p_z) const;
 	Vector3 _normal_at(real_t p_x, real_t p_z) const; // bilinear, in grid units
 	float _cliff_offset(const Vector3 &p_world) const;
+	float _bank_offset(const Vector3 &p_world) const;
+	// The face weights for a heightfield normal: x the cliff's (cliff_relief), y the bank's (bank_relief), each 0..1.
+	static Vector2 _relief_weights(const Vector3 &p_normal);
 	Vector3 _cliff_point(const Vector3 &p_world, real_t p_weight_scale) const;
 	void _build_cliff_surface(MeshJob &r_job) const;
 	const LocalVector<int> &_indices(int p_level, int p_mask);
@@ -243,6 +262,9 @@ public:
 	real_t get_lod_error() const { return lod_error; }
 	void set_cliff_relief(real_t p_metres);
 	real_t get_cliff_relief() const { return cliff_relief; }
+	void set_bank_relief(real_t p_metres);
+	real_t get_bank_relief() const { return bank_relief; }
+	Vector2 contract_relief_at(const Vector3 &p_position) const override;
 	Vector3 get_cliff_point(const Vector3 &p_global_position) const;
 	void set_material(const Ref<Material> &p_material);
 	Ref<Material> get_material() const { return material; }

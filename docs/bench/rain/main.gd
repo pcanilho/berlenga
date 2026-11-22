@@ -12,13 +12,18 @@ extends Node3D
 #                       (USGS M1 likelihood, Gartner volume) with a path; none unburnt, none again within a
 #                       day, none on ground burnt four years ago
 #                       falling rain: drops in the box, splashes, haze from the drop sizes
+#                       high-water marks: a river's annual flood stage (depth ~ Q^0.40), a lake's by its weir, the contract,
+#                       the sea's strandline (Stockdon 2006 run-up)
 #   --view=pond       a pool in 10 mm/h rain under a wet tree and a shed: rings, streaks, splashes, drips,
 #                     beaded leaves (--close: down on the water and leaves for a 100% crop)
 #   --rate=R          rain rate mm/h (default 10)
+#   --temp=C          the pond's air (default 12); --warm-nose=C a warm layer aloft (freezing rain under 0 C air:
+#                     the rings stay, snow would stop them)
 #   --drops=N         most falling drops drawn (default RainFall3D's 200000; fewer for a quick path traced still)
 #   --raster          raster only (default path traced)
 #   --out=path.png    save the frame and quit
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
+#   --pt-wait=N       most frames to wait for the path traced surfaces (default 600; fewer for a quick cloud still)
 
 const Valley := preload("res://valley.gd")
 const LakeStub := preload("res://lake_stub.gd")
@@ -29,9 +34,12 @@ var test := false
 var close := false
 var out := ""
 var spp := 16
+var pt_wait := 600
 var bounces := 3
 var rate := 10.0
 var drops := 0
+var pond_temp := 12.0
+var warm_nose := 0.0
 var fails := 0
 var weather: WeatherMap3D
 
@@ -44,9 +52,12 @@ func _ready() -> void:
 		elif a == "--close": close = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
+		elif a.begins_with("--pt-wait="): pt_wait = int(a.substr(10))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--rate="): rate = float(a.substr(7))
 		elif a.begins_with("--drops="): drops = int(a.substr(8))
+		elif a.begins_with("--temp="): pond_temp = float(a.substr(7))
+		elif a.begins_with("--warm-nose="): warm_nose = float(a.substr(12))
 	if test:
 		await _run_tests()
 		print("RAIN CHECKS: ", "PASS" if fails == 0 else "%d FAILED" % fails)
@@ -208,7 +219,8 @@ func _box(size: Vector3, pos: Vector3, m: Material, collide := true) -> void:
 
 
 func _build_pond() -> void:
-	weather = _weather(12.0, rate)
+	weather = _weather(pond_temp, rate)
+	weather.warm_nose_temperature = warm_nose
 	weather.advance(1800.0) # half an hour of rain: the canopy full, the ground wet
 	var env := Environment.new()
 	var sky := Sky.new()
@@ -289,7 +301,7 @@ func _build_pond() -> void:
 	if not raster:
 		env.pathtracing_enabled = true
 		# Wait for every path traced surface (animated vegetation needs about 50 frames).
-		for i in 600:
+		for i in pt_wait:
 			await get_tree().process_frame
 			if i > 60 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) == 0:
 				break
@@ -333,6 +345,7 @@ func _sediment_checks() -> void:
 	var head := r.to_global(c.sample_baked(10.0))
 	var tail := r.to_global(c.sample_baked(100.0))
 	_check("river answers the water contract at its head", r.sample_depth(head) > 0.0, "%.2f m deep" % r.sample_depth(head))
+	await _high_water_checks(r, head)
 	var speed: float = r.sample_flow(tail).length()
 	# Long enough for the load to run 90 m at the river's speed (one and a half passes), the clock run 8 times fast.
 	Engine.time_scale = 8.0
@@ -408,6 +421,55 @@ class FireStub extends WorldFire:
 
 var df_events: Array = []
 var df_ground_events := 0
+
+
+# High-water marks (water.md "High-water marks"): the median annual flood's stage by at-a-station hydraulic geometry
+# (depth ~ Q^0.40, Leopold and Maddock 1953) on the river, by the weir law on a lake; the contract hands them on.
+func _high_water_checks(r: PhysXRiver3D, head: Vector3) -> void:
+	var hw: Vector4 = r.get_high_water_at(head)
+	var surf: float = r.sample_height(head)
+	var d: float = r.sample_depth(head)
+	var want: float = d * (pow(r.flood_peak_ratio, 0.4) - 1.0)
+	var doy: int = WorldContracts.get_weather().day_of_year()
+	var age: int = posmod(doy - r.flood_peak_day, 365)
+	_check("river flood mark: annual flood stage by Q^0.40", absf(hw.x - surf - want) < 0.15 * want + 0.02 and is_equal_approx(hw.y, float(age)),
+			"%.2f m over the %.2f m deep water (want %.2f), %d days since its peak (want %d)" % [hw.x - surf, d, want, int(hw.y), age])
+	_check("river flood mark: flow direction downstream", Vector2(hw.z, hw.w).distance_to(Vector2(0, 1)) < 0.05, "(%.2f, %.2f)" % [hw.z, hw.w])
+	var side := head + Vector3(150.0, 0.0, 0.0)
+	_check("river flood mark: the contract hands it on, none off the floodplain",
+			WorldContracts.get_water().high_water_at(head).is_equal_approx(hw) and is_inf(r.get_high_water_at(side).x),
+			"%s, off: %s" % [WorldContracts.get_water().high_water_at(head), r.get_high_water_at(side)])
+	# A lake 40 m across draining over a 4 m sill at y = 0, fed 2 m3/s.
+	var lake := PhysXWaterSurface3D.new()
+	lake.domain_size = Vector2(40, 40)
+	lake.position = Vector3(150.0, 0.0, 0.0)
+	add_child(lake)
+	lake.set_outflow(1234, Vector3(170.0, 0.0, 0.0), Vector3(1, 0, 0), 4.0, 0.0, 1.0)
+	lake.catchment_inflow = 2.0
+	lake.level_from_flows = true
+	await get_tree().physics_frame
+	var lh: Vector4 = lake.get_high_water_at(Vector3(150.0, 0.0, 5.0))
+	var h_now: float = lake.global_position.y + lake.water_level
+	var ratio: float = lh.x / maxf(h_now, 1e-4)
+	_check("lake flood mark: the weir passes the annual flood (head x ratio^(2/3))", absf(ratio - pow(lake.flood_peak_ratio, 2.0 / 3.0)) < 0.05 and is_inf(lake.get_high_water_at(Vector3(150.0, 0.0, 40.0)).x),
+			"head %.3f m now, %.3f m at the mark (x%.2f, want x%.2f)" % [h_now, lh.x, ratio, pow(lake.flood_peak_ratio, 2.0 / 3.0)])
+	lake.queue_free()
+	# The sea's strandline: Stockdon et al. (2006) run-up, R2 = 1.63 m for 2 m, 10 s waves on a 1 in 10 beach.
+	var r2: float = PhysXWaterSurface3D.wave_runup(2.0, 10.0, 0.1)
+	_check("sea strandline: Stockdon 2006 run-up", absf(r2 - 1.634) < 0.01 and PhysXWaterSurface3D.wave_runup(2.0, 10.0, 0.01) < r2, "%.3f m (want 1.634), %.3f m on a 1 in 100 beach" % [r2, PhysXWaterSurface3D.wave_runup(2.0, 10.0, 0.01)])
+	var sea := PhysXWaterSurface3D.new()
+	sea.domain_size = Vector2(40, 40)
+	sea.position = Vector3(-150.0, 0.0, 0.0)
+	add_child(sea)
+	for i in 3:
+		await get_tree().physics_frame
+	var sh: Vector4 = sea.get_high_water_at(Vector3(-150.0, 0.0, 10.0))
+	var top: float = PhysXWaterSurface3D.wave_runup(sea.shore_wave_height * sea.storm_wave_ratio, sea.shore_wave_period * sqrt(sea.storm_wave_ratio), 0.1)
+	var sea_age: int = posmod(WorldContracts.get_weather().day_of_year() - sea.storm_day, 365)
+	var rise: float = sh.x - (sea.global_position.y + sea.water_level)
+	_check("sea strandline: the year's storm run-up over the still level", rise > 0.05 and rise <= top + 0.01 and is_equal_approx(sh.y, float(sea_age)),
+			"%.2f m over the sea (at most %.2f), %d days since the storm (want %d)" % [rise, top, int(sh.y), sea_age])
+	sea.queue_free()
 
 
 func _on_debris_flow(ev: Dictionary) -> void:

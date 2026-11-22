@@ -1142,6 +1142,140 @@ func _wrack_check() -> void:
 		WorldContracts.clear_overrides()
 	_check("flood wrack: main line under the crest, lower lines below, none above or without a recent flood", res[0][0] > 10 and res[0][1] > 0 and res[0][2] == 0 and res[1] == [0, 0, 0] and res[2] == [0, 0, 0], res)
 
+# Bank relief (WorldGround.relief_at, Landscape3D's bank and cliff relief): plants stand on the drawn ground, the
+# heightfield plus the relief, not on the heightfield under it. A script stub raises the ground 0.3 m east of x = 0.
+func _relief_check() -> void:
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _relief_at(p: Vector3) -> Vector2:\n\treturn Vector2(0.3, 1.0) if p.x > 0.0 else Vector2()\n"
+	stub.reload()
+	var res := []
+	for raised in [false, true]:
+		if raised:
+			WorldContracts.set_ground(stub.new())
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		f.biome.species.assign([field.biome.species[1]])
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var east := Vector2(0, 0)
+		var west := Vector2(0, 0)
+		for q in f.get_placements(0):
+			var d: float = q.y - dm.get_height_at(q)
+			if q.x > 0.5:
+				east += Vector2(d, 1)
+			elif q.x < -0.5:
+				west += Vector2(d, 1)
+		res.append([east.x / maxf(east.y, 1.0), west.x / maxf(west.y, 1.0), int(east.y)])
+		f.free()
+		WorldContracts.clear_overrides()
+	_check("bank relief: plants stand on the drawn ground (heightfield plus WorldGround.relief_at), not under it",
+			res[0][2] > 5 and absf(res[0][0]) < 0.02 and absf(res[1][0] - 0.3) < 0.02 and absf(res[1][1]) < 0.02, res)
+
+# Seed down (SeedDown3D): a dandelion seed falls at its measured 0.39 m/s in still air (Cummins et al. 2018), two to
+# three times faster damp; the wind carries seeds downwind and its gusts loft some; heads in seed loose them in a
+# strong dry wind, none in calm air.
+class SeedWeatherStub extends WorldWeather:
+	var wind := Vector3.ZERO
+	var wet := 0.0
+	var season := {}
+	func _wind_at(_p: Vector3, _h: float) -> Vector3:
+		return wind
+	func _surface_wetness_at(_p: Vector3) -> float:
+		return wet
+	func _rainfall_at(_p: Vector3) -> float:
+		return 0.0
+	func _ground_height_at(_p: Vector3) -> float:
+		return 0.0
+	func _season_at(_p: Vector3, _d: int) -> Dictionary:
+		return season
+
+func _seed_mean(sd: SeedDown3D) -> Vector4:
+	var m := Vector4.ZERO
+	var st := sd.get_seed_states()
+	for q in st:
+		m += q
+	return m / maxf(st.size(), 1.0)
+
+func _seed_down_check() -> void:
+	var w := SeedWeatherStub.new()
+	WorldContracts.set_weather(w)
+	var sd := SeedDown3D.new()
+	add_child(sd)
+	sd.set_physics_process_internal(false)
+	# Still air: the measured falling speed, and faster with the pappus closed.
+	sd.release_at(Vector3(0, 10, 0), SeedDown3D.KIND_DANDELION, 100)
+	sd.advance(5.0)
+	var still := (10.0 - _seed_mean(sd).y) / 5.0
+	sd.clear_seeds()
+	w.wet = 1.0
+	sd.release_at(Vector3(0, 10, 0), SeedDown3D.KIND_DANDELION, 100)
+	sd.advance(5.0)
+	var damp := (10.0 - _seed_mean(sd).y) / 5.0
+	sd.clear_seeds()
+	w.wet = 0.0
+	# A 6 m/s wind: downwind, some lofted by the gusts, some landed. Over dry ground (the bench pond is water).
+	var dry := Vector3(0, 0, 0)
+	var water: WorldWater = WorldContracts.get_water()
+	for k in 400:
+		var c := Vector3(-60.0 + (k % 20) * 6.0, 0.0, -60.0 + (k / 20) * 6.0)
+		var ok := true
+		for dx in range(0, 25, 3):
+			if is_finite(water.height_at(c + Vector3(dx, 0, 0))):
+				ok = false
+				break
+		if ok:
+			dry = c
+			break
+	w.wind = Vector3(6, 0, 0)
+	sd.release_at(dry + Vector3(0, 0.6, 0), SeedDown3D.KIND_DANDELION, 200)
+	var top := 0.0
+	for i in 20:
+		sd.advance(0.5)
+		for q in sd.get_seed_states():
+			top = maxf(top, q.y)
+	var windy := _seed_mean(sd) - Vector4(dry.x, 0, dry.z, 0)
+	var landed := sd.get_lying_count()
+	sd.clear_seeds()
+	# Heads in seed: a stand of dandelion clocks loose seeds in a strong dry wind, none in calm air.
+	var forcing := -1.0
+	for f in range(90, 700, 10):
+		if PlantGenerator.get_bloom_shares(PlantGenerator.PRESET_DANDELION, {"forcing": float(f), "day_of_year": 120}).z > 0.3:
+			forcing = f
+			break
+	w.season = {"forcing": forcing, "day_of_year": 120}
+	var gen := PlantGenerator.new()
+	gen.preset = PlantGenerator.PRESET_DANDELION
+	var sp := PlantSpecies.new()
+	sp.meshes = [gen.generate()]
+	sp.spacing = 0.6
+	sp.set_meta("plant_preset", PlantGenerator.PRESET_DANDELION)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign([sp])
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	sd.position = Vector3(0, 0, 0)
+	sd.refresh_sources()
+	var heads := sd.get_source_count()
+	w.wind = Vector3.ZERO
+	sd.advance(10.0, true)
+	var calm := sd.get_released_count()
+	w.wind = Vector3(9, 0, 0)
+	sd.advance(10.0, true)
+	var blown := sd.get_released_count() - calm
+	f.free()
+	sd.free()
+	WorldContracts.set_weather(null)
+	_check("seed down: falls at 0.39 m/s still, 2-3x damp; drifts downwind, gusts loft some; heads loose seeds in wind, none in calm",
+			absf(still - 0.391) < 0.03 and damp > still * 2.0 and windy.x > 3.0 and top > 0.9 and landed > 10 and heads > 50 and calm == 0 and blown > 20,
+			[snappedf(still, 0.001), snappedf(damp, 0.001), windy, snappedf(top, 0.01), landed, heads, forcing, calm, blown])
+
 func _beaver_check() -> void:
 	var st: WorldStand = WorldContracts.get_stand()
 	var c := Vector2(30, 30)
@@ -2431,6 +2565,8 @@ func _checks() -> void:
 	_webs_check()
 	_avalanche_check()
 	_wrack_check()
+	_relief_check()
+	_seed_down_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []

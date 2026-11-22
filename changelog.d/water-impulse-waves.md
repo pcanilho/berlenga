@@ -1,2 +1,0 @@
-### Added
-- `WorldWater.wave(position, direction, height, period, width)`: an impulse wave in metres and seconds from a landslide, avalanche, calving or rockfall entering the water. `PhysXWaterSurface3D.submit_wave` seeds it in the ripple solver as one crest and trough with its long-wave velocity, so it runs one way at sqrt(g h), runs up the shores and reflects; water without a solver takes a splash of the crest's height.

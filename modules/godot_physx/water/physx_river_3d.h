@@ -131,6 +131,16 @@ private:
 	float rain_discharge = 0.0f; // m^3/s from the runoff at the last build
 	double rain_check = 0.0; // s until the runoff is read again
 	void _rain_response_update(double p_delta);
+	// High-water marks (WorldWater.high_water_at, docs/ideas/water.md "High-water marks"): each section keeps the
+	// stage of its median annual flood (flood_peak_ratio times its base flow, on flood_peak_day) and the highest storm
+	// stage it reached in the last year, both as local surface heights; flood_clock counts the weather's days.
+	float flood_peak_ratio = 6.0f;
+	int flood_peak_day = 110;
+	double flood_clock = 0.0;
+	LocalVector<float> flood_season;
+	LocalVector<float> flood_storm;
+	LocalVector<double> flood_storm_t;
+	void _flood_marks_update();
 	// Suspended load (WorldWater sediment, kg/m3: x mineral, y ash) per cross-section and lane across it (section-major),
 	// carried down each lane at its speed and spread across by turbulence; the sources the contract hands in (kg/s), held
 	// until the caller's next call; what settled out (kg/m2); the shading reads it from a texture, sections by lanes.
@@ -309,6 +319,13 @@ public:
 	void set_rain_response(bool p_enable);
 	bool get_rain_response() const { return rain_response; }
 	float get_rain_discharge() const { return rain_discharge; }
+	void set_flood_peak_ratio(float p_ratio) { flood_peak_ratio = MAX(p_ratio, 1.0f); _flood_marks_update(); }
+	float get_flood_peak_ratio() const { return flood_peak_ratio; }
+	void set_flood_peak_day(int p_day) { flood_peak_day = CLAMP(p_day, 0, 364); }
+	int get_flood_peak_day() const { return flood_peak_day; }
+	// The last flood's high-water mark over a world point (WorldWater.high_water_at): x the surface (m, world), y the
+	// days since its peak, z w the flow's direction then (unit x, z); (-INF, -1, 0, 0) off the river's floodplain.
+	Vector4 get_high_water_at(const Vector3 &p_world_pos) const;
 	void set_roughness(float p_roughness);
 	float get_roughness() const { return roughness; }
 	void set_max_slope(float p_slope);
@@ -433,6 +450,7 @@ public:
 	// The water contract (WorldWater): this water's surface, -INF where it has none.
 	float contract_water_height_at(const Vector3 &p_position) const override;
 	Vector3 contract_water_flow_at(const Vector3 &p_position) const override { return sample_flow(p_position); }
+	Vector4 contract_water_high_water_at(const Vector3 &p_position) const override { return get_high_water_at(p_position); }
 	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
 	void contract_water_clear(uint64_t p_owner) override;
 	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return get_sediment_at(p_position); }

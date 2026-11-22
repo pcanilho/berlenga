@@ -81,8 +81,10 @@ void fragment() {
 		discard;
 	}
 	vec3 rd = d / t_max;
-	// Interleaved gradient noise (Jimenez 2014) over the steps.
-	float jitter = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+	// Steps at their middles, not jittered: this pass has no temporal resolve, so interleaved gradient noise (Jimenez
+	// 2014) stood over the ground as a fixed diagonal grain. The steps' ends follow each pixel's depth, which changes
+	// smoothly over the ground, so fixed steps leave no bands.
+	float jitter = 0.5;
 	// Light weights: ambient_bottom (1, 0, 0) and the sun (0, 1, 0) give the march's two sums in r and g.
 	vec4 o = vec4(0.0, 0.0, 0.0, 1.0);
 	float dr;
@@ -148,7 +150,8 @@ void WeatherMap3D::_update_shafts() {
 	Ref<Environment> env = WeatherSkyMaterial::find_environment(this);
 	const RID sky_rid = sky.is_valid() ? sky->get_rid() : RID();
 	RenderingServer *rs = RS::get_singleton();
-	bool show = sky.is_valid() && !(env.is_valid() && env->is_pathtracing_enabled());
+	// Under path tracing too: the path tracer draws screen-space overlays over the traced frame against its depth.
+	bool show = sky.is_valid();
 	if (show) {
 		const int storms = rs->material_get_param(sky_rid, "cloud_storm_count");
 		const Vector4 lake = rs->material_get_param(sky_rid, "cloud_lake");

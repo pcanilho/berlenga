@@ -521,10 +521,19 @@ func _ready() -> void:
 		weather.follow_target = weather.get_path_to(cam)
 	if clock != null:
 		_log("sun altitude %.1f deg, azimuth %.1f deg" % [clock.get_sun_altitude(), clock.get_sun_azimuth()])
+	if args.has("seed-warm") and get_node_or_null("SeedDown") != null:
+		# --seed-warm=S: S seconds of the dry wind loosing seeds before the shot, so the air already carries them.
+		var sdn = get_node("SeedDown")
+		sdn.refresh_sources()
+		for i in int(float(args["seed-warm"]) * 10.0):
+			sdn.advance(0.1, true)
+		_log("seed down: %d sources, %d released, %d aloft, %d lying" % [sdn.get_source_count(), sdn.get_released_count(), sdn.get_aloft_count(), sdn.get_lying_count()])
 	if args.has("worn-path"):
 		_build_worn_path()
 	if args.has("farm-track") and prints != null and prints.has_method("add_wear"):
 		_build_farm_track()
+	if args.get("view", "wide") == "beach" and args.get("cove-props", "1") != "0":
+		_cove_props()
 	if args.get("plants", "1") != "0":
 		_build_cover()
 	_build_mist_pollen()
@@ -901,6 +910,10 @@ func _ready() -> void:
 		await _rime_ridge()
 	if args.has("fog-sea"):
 		await _fog_sea()
+	if args.has("late-frost"):
+		await _fog_sea("late-frost")
+	if args.has("snow-strata"):
+		await _snow_strata()
 	if args.has("lodging"):
 		await _lodging()
 	if args.has("lens-cam"):
@@ -3058,6 +3071,13 @@ func _build_weather() -> void:
 		add_child(leaf_fall)
 		leaf_fall.weather_map = leaf_fall.get_path_to(weather)
 		leaf_fall.litter_density = float(args.get("leaf-litter", "0.5"))
+	# Plumed seeds (SeedDown3D, vegetation 19a84b7e): dandelion, thistle and willowherb heads in seed near the camera
+	# loose them in a dry wind, the shared wind carries them into the grass. --seeds=0 for none.
+	if args.get("seeds", "1") != "0" and ClassDB.class_exists("SeedDown3D"):
+		var sd = ClassDB.instantiate("SeedDown3D")
+		sd.name = "SeedDown"
+		sd.range = float(args.get("seed-range", "40"))
+		add_child(sd)
 	snow.global_position = Vector3(0, 0, 0)
 
 
@@ -4583,6 +4603,50 @@ func _build_camera() -> void:
 			cam.position = top + off
 			cam.position.y = height_at(cam.position.x, cam.position.z) + 3.0
 			cam.look_at(top + Vector3(0, -40, 0))
+		"cliff":
+			# A real rock face for the cliff trees (TreeGenerator cliff_angle, trees 37524fb2): the cell on a 16 m grid
+			# with the most 58-85 degree ground round it, under --cliff-max-h (1200) m and over the sea, with gentler
+			# ground --cliff-dist (35) m out from its foot for the camera. --cliff-cam=front|side (side: the camera
+			# turned --cliff-side-deg, 70, round the face), eye 1.7 m, looking at the face --cliff-look-h (12) m up.
+			var wr: Rect2 = gen.get_world_rect()
+			var e := 4.0
+			var best := -1.0
+			var bp := Vector3.ZERO
+			var bn := Vector3.ZERO
+			var maxh := float(args.get("cliff-max-h", "1200"))
+			var dist := float(args.get("cliff-dist", "35"))
+			var steep := func(x: float, z: float) -> Vector3:
+				var gx := (height_at(x + e, z) - height_at(x - e, z)) / (2.0 * e)
+				var gz := (height_at(x, z + e) - height_at(x, z - e)) / (2.0 * e)
+				return Vector3(gx, rad_to_deg(atan(sqrt(gx * gx + gz * gz))), gz)
+			var x := wr.position.x + 64.0
+			while x < wr.end.x - 64.0:
+				var z := wr.position.y + 64.0
+				while z < wr.end.y - 64.0:
+					var g: Vector3 = steep.call(x, z)
+					var h := height_at(x, z)
+					if g.y > 58.0 and g.y < 85.0 and h < maxh and h > float(gen.sea_level) + 8.0:
+						var n := 0.0
+						for dx in [-16.0, 0.0, 16.0]:
+							for dz in [-16.0, 0.0, 16.0]:
+								var g2: Vector3 = steep.call(x + dx, z + dz)
+								n += 1.0 if g2.y > 52.0 else 0.0
+						var down := -Vector3(g.x, 0, g.z).normalized()
+						var foot := Vector3(x, 0, z) + down * dist
+						var fg: Vector3 = steep.call(foot.x, foot.z)
+						if fg.y < 30.0 and height_at(foot.x, foot.z) > float(gen.sea_level) + 0.5 and n > best:
+							best = n
+							bp = Vector3(x, h, z)
+							bn = down
+					z += 16.0
+				x += 16.0
+			var side: bool = args.get("cliff-cam", "front") == "side"
+			var cd := bn.rotated(Vector3.UP, deg_to_rad(float(args.get("cliff-side-deg", "70")))) if side else bn
+			var cpos := bp + cd * dist
+			cam.fov = 60.0
+			cam.position = Vector3(cpos.x, height_at(cpos.x, cpos.z) + 1.7, cpos.z)
+			cam.look_at(Vector3(bp.x, bp.y + float(args.get("cliff-look-h", "12")), bp.z))
+			_log("cliff face at %s (score %.0f), out %s, cam %s" % [str(bp.round()), best, str(bn.snapped(Vector3.ONE * 0.01)), str(cam.position.round())])
 		_:
 			cam.position = Vector3(300, 520, coast_z + 900.0)
 			cam.look_at(Vector3(-100, 250, -700))
@@ -5601,18 +5665,25 @@ func _campfire() -> void:
 		var fp := at + right * float(args.get("flag-at", "2.5"))
 		fp.y = height_at(fp.x, fp.z)
 		var pole_h := float(args.get("flag-h", "2.2"))
-		var pole := MeshInstance3D.new()
-		var cm := CylinderMesh.new()
-		cm.top_radius = 0.02
-		cm.bottom_radius = 0.025
-		cm.height = pole_h
-		var wood := StandardMaterial3D.new()
-		wood.albedo_color = Color(0.32, 0.24, 0.16)
-		wood.roughness = 0.8
-		cm.material = wood
-		pole.mesh = cm
-		pole.position = fp + Vector3(0, pole_h * 0.5, 0)
-		site.add_child(pole)
+		# The Tripo flagpole (a whitewashed pole in a stone cairn) when the art is there, a plain pole otherwise.
+		var tpole := _tripo("flagpole", pole_h, 1)
+		if tpole != null:
+			tpole.position = fp
+			tpole.rotation.y = atan2(right.x, right.z)
+			site.add_child(tpole)
+		else:
+			var pole := MeshInstance3D.new()
+			var cm := CylinderMesh.new()
+			cm.top_radius = 0.02
+			cm.bottom_radius = 0.025
+			cm.height = pole_h
+			var wood := StandardMaterial3D.new()
+			wood.albedo_color = Color(0.32, 0.24, 0.16)
+			wood.roughness = 0.8
+			cm.material = wood
+			pole.mesh = cm
+			pole.position = fp + Vector3(0, pole_h * 0.5, 0)
+			site.add_child(pole)
 		var cloth = ClassDB.instantiate("PhysXCloth3D")
 		cloth.name = "Flag"
 		cloth.grid_size = Vector2(0.9, 0.6)
@@ -5861,8 +5932,16 @@ func _campfire() -> void:
 		var wood := StandardMaterial3D.new()
 		wood.albedo_color = Color(0.30, 0.22, 0.15)
 		wood.roughness = 0.85
+		# Tripo timber posts and rail (the rail stretched along its length: Tripo's is stubby) or code shapes.
+		var cyaw := atan2(right.x, right.z) - PI * 0.5
 		for sd in [-1.0, 1.0]:
 			var pp: Vector3 = at + right * (span * 0.5 * sd)
+			var tpost := _tripo("timber_post", rail_h + 0.3, 1)
+			if tpost != null:
+				tpost.position = Vector3(pp.x, height_at(pp.x, pp.z) - 0.3, pp.z)
+				tpost.rotation.y = cyaw + 1.3 * sd
+				site.add_child(tpost)
+				continue
 			var post := MeshInstance3D.new()
 			var pm := CylinderMesh.new()
 			pm.top_radius = 0.045
@@ -5872,13 +5951,23 @@ func _campfire() -> void:
 			post.mesh = pm
 			post.position = Vector3(pp.x, height_at(pp.x, pp.z) - 0.3 + pm.height * 0.5, pp.z)
 			site.add_child(post)
-		var rail := MeshInstance3D.new()
-		var rm := BoxMesh.new()
-		rm.size = Vector3(span + 0.25, 0.08, 0.07)
-		rm.material = wood
-		rail.mesh = rm
-		rail.transform = Transform3D(Basis(right, Vector3.UP, right.cross(Vector3.UP)), at + Vector3(0, rail_h + 0.04, 0))
-		site.add_child(rail)
+		var trail := _tripo("timber_rail", 0.08, 1)
+		if trail != null:
+			var tl: Node3D = trail.get_child(0)
+			var box := AABB()
+			for mi in tl.find_children("*", "MeshInstance3D", true, false):
+				box = box.merge((mi as MeshInstance3D).transform * (mi as MeshInstance3D).get_aabb())
+			tl.scale.x *= (span + 0.25) / maxf(box.size.x * tl.scale.x, 1e-4)
+			trail.transform = Transform3D(Basis(right, Vector3.UP, right.cross(Vector3.UP)), at + Vector3(0, rail_h, 0))
+			site.add_child(trail)
+		else:
+			var rail := MeshInstance3D.new()
+			var rm := BoxMesh.new()
+			rm.size = Vector3(span + 0.25, 0.08, 0.07)
+			rm.material = wood
+			rail.mesh = rm
+			rail.transform = Transform3D(Basis(right, Vector3.UP, right.cross(Vector3.UP)), at + Vector3(0, rail_h + 0.04, 0))
+			site.add_child(rail)
 		curtain = ClassDB.instantiate("PhysXCloth3D")
 		curtain.name = "Curtain"
 		var csz := Vector2(1.9, 1.6)
@@ -5924,6 +6013,12 @@ func _campfire() -> void:
 		wood.roughness = 0.85
 		for sd in [-1.0, 1.0]:
 			var pp: Vector3 = at + right * (span * 0.5 * sd)
+			var tpost := _tripo("timber_post", line_h + 0.4, 1)
+			if tpost != null:
+				tpost.position = Vector3(pp.x, height_at(pp.x, pp.z) - 0.35, pp.z)
+				tpost.rotation = Vector3(0, 0.7 + 1.9 * sd, 0.04 * sd)
+				site.add_child(tpost)
+				continue
 			var post := MeshInstance3D.new()
 			var pm := CylinderMesh.new()
 			pm.top_radius = 0.04
@@ -6220,6 +6315,16 @@ func _hut() -> void:
 			low = minf(low, height_at(w.x, w.z))
 	root.global_position = Vector3(at.x, low - hut_box.position.y - 0.05, at.z) - root.basis * Vector3(hut_box.get_center().x, 0, hut_box.get_center().z)
 	_log("hut: box %s, door %s, at %s" % [str(hut_box), str(door_box), str(root.global_position.round())])
+	if args.get("hut-props", "1") != "0":
+		# Firewood stacked along the two side walls (Tripo props), 0.3 m off the logs.
+		for sd in [-1.0, 1.0]:
+			var wp := _tripo("firewood_pile" if sd < 0.0 else "firewood_pile_b", 2.0 if sd < 0.0 else 2.4, 2)
+			if wp == null:
+				break
+			var lx: float = (hut_box.position.x - 0.55) if sd < 0.0 else (hut_box.end.x + 0.65)
+			var lz: float = hut_box.get_center().z + 0.25 * hut_box.size.z * sd
+			var wpos: Vector3 = root.global_transform * Vector3(lx, 0, lz)
+			_put(wp, wpos, root.rotation.y)
 	# Its walls as one collider, for firebrands.
 	var body := StaticBody3D.new()
 	var cs := CollisionShape3D.new()
@@ -6454,6 +6559,9 @@ func _hut_roof_snow() -> void:
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	var hrs := int(float(args["hut-roof-snow"]) if String(args["hut-roof-snow"]) != "" else 24.0)
+	var slide_shot := String(args.get("roof-slide", ""))
+	if slide_shot != "":
+		sb.set("slide_enabled", false) # the load builds first; it is let go for the shot
 	var most := 0.0
 	for h in hrs:
 		snow.advance(3600.0)
@@ -6466,6 +6574,49 @@ func _hut_roof_snow() -> void:
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	_log("hut roof snow: pitch %.0f deg, %d h of snow, roofs held up to %.2f m, %d slides, %.0f kg landed past the eave" % [rad_to_deg(pitch), hrs, most, int(sb.call("get_roof_slides")), float(sb.call("get_roof_landed"))])
+	if slide_shot != "":
+		await _roof_slide_shot(sb, root, axis, other, lo, hi, mid, run, eave_y, slide_shot)
+
+
+# --roof-slide=mid|settled (with --hut-roof-snow): one camera at eye height off the gable end, --slide-out (4) m out
+# from the +side eave and --slide-back (9) m past the end, looking along the eave. The load is held while it builds,
+# then the air warms to --slide-air (2) C and the roof sheds (SnowBodies3D roof_slab_bodies, snow c820c61e). mid: the
+# picture is frozen --slide-frames (14) physics frames after the first slab leaves; settled: --slide-wait (120) s on.
+func _roof_slide_shot(sb: Object, root: Node3D, axis: int, other: int, lo: Vector3, hi: Vector3, mid: float, run: float, eave_y: float, kind: String) -> void:
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var e := Vector3()
+	e[axis] = mid + run + 0.6
+	e[other] = 0.5 * (lo[other] + hi[other])
+	e.y = eave_y - 0.8
+	var cl := Vector3()
+	cl[axis] = mid + run + float(args.get("slide-out", "4"))
+	cl[other] = hi[other] + float(args.get("slide-back", "9"))
+	var cw: Vector3 = root.global_transform * cl
+	var ew: Vector3 = root.global_transform * e
+	c3.global_position = Vector3(cw.x, height_at(cw.x, cw.z) + 1.7, cw.z)
+	c3.look_at(ew)
+	weather.air_follows_climate = false
+	weather.temperature = float(args.get("slide-air", "2"))
+	weather.snap_to_settings()
+	sb.set("slide_enabled", true)
+	var n0 := int(sb.call("get_slabs_slid"))
+	var t := 0
+	while int(sb.call("get_slabs_slid")) == n0 and t < 2000:
+		sb.call("step", 30.0)
+		await get_tree().physics_frame
+		t += 1
+	_log("roof slide: first slab after %d steps of 30 s, %d slid" % [t, int(sb.call("get_slabs_slid"))])
+	if kind == "settled":
+		get_viewport().disable_3d = true
+		for i in int(float(args.get("slide-wait", "120")) * Engine.physics_ticks_per_second):
+			await get_tree().physics_frame
+		get_viewport().disable_3d = false
+		_log("roof slide: settled after %s s, %.0f kg landed" % [args.get("slide-wait", "120"), float(sb.call("get_roof_landed"))])
+	else:
+		for i in int(args.get("slide-frames", "14")):
+			await get_tree().physics_frame
+		Engine.time_scale = 0.0
+		_log("roof slide: frozen mid-slide")
 
 
 func _hut_icicles() -> void:
@@ -6608,6 +6759,295 @@ func _mem_log(tag: String) -> void:
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) >> 20,
 			OS.get_static_memory_usage() >> 20])
+
+
+func _snow_strata() -> void:
+	# --snow-strata: a dug trench in a real pack (snow strata walls, a3d61431): the highest gentle snow at least
+	# --strata-min (0.8) m deep, its season's pack topped by a week's history (a crust on a storm's snow, buried
+	# surface hoar, a gale's wind slab and a fresh fall), then a trench --strata-w (1.2) m wide pressed to the ground,
+	# running along the sun's bearing so the low light rakes the far wall. The camera stands --strata-dist (1.5) m from
+	# that wall at --strata-eye (1.7) m over the snow, looking down into it.
+	var wr: Rect2 = gen.get_world_rect()
+	var best := Vector3.INF
+	var mind := float(args.get("strata-min", "0.8"))
+	var xx := wr.position.x + 200.0
+	while xx < wr.end.x - 200.0:
+		var zz := wr.position.y + 200.0
+		while zz < wr.end.y - 200.0:
+			var p := Vector3(xx, 0, zz)
+			var h := gen.get_height(p)
+			if snow.get_depth_at(p) >= mind and rad_to_deg(atan(_slip_grad(p).length())) < 8.0 and (best == Vector3.INF or h > best.y):
+				best = Vector3(xx, h, zz)
+			zz += 32.0
+		xx += 32.0
+	if best == Vector3.INF:
+		_log("snow strata: no gentle snow %.1f m deep" % mind)
+		return
+	var focus := Node3D.new()
+	focus.name = "StrataFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	weather.follow_target = weather.get_path_to(focus)
+	for i in 30:
+		await get_tree().physics_frame
+	weather.air_follows_climate = false
+	weather.temperature = 0.0
+	weather.snap_to_settings()
+	weather.temperature = -8.0 - (weather.get_air_temperature_at(best) - 0.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.call("add_depth_hoar", 0.6)
+	snow.advance(3600.0)
+	snow.call("add_snow", 20.0, 120.0) # a storm's snow
+	snow.call("add_crust", 0.02, 3.0) # its top melts and refreezes
+	snow.advance(3600.0)
+	snow.call("add_hoar", 8.0) # a clear night's surface hoar
+	snow.call("add_snow", 16.0, 110.0) # buried by the next storm
+	weather.wind_speed = 14.0 # a gale packs the top
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.advance(3.0 * 3600.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.call("add_snow", 10.0, 80.0) # a last fresh fall
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	var nrm := Vector3(sf.z, 0, -sf.x)
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
+	surf.name = "SnowSurface"
+	add_child(surf)
+	surf.set("snow_cover", surf.get_path_to(snow))
+	surf.set("follow_target", surf.get_path_to(focus))
+	surf.set("detail_spacing", 0.03125)
+	for i in 10:
+		await get_tree().physics_frame
+	var g: float = snow.get_ground_height_at(best) if snow.has_method("get_ground_height_at") else best.y
+	var w := float(args.get("strata-w", "1.2"))
+	surf.set("rim_share", 0.1)
+	surf.set("compacted_density", 900.0)
+	surf.call("press_box", Vector3(best.x, g, best.z), Vector2(w, 8.0), atan2(sf.x, sf.z), g + 0.01)
+	for i in 30:
+		await get_tree().physics_frame
+	var top := g + snow.get_depth_at(best + nrm * 3.0)
+	var wall := best - nrm * (w * 0.5)
+	var cp := wall + nrm * float(args.get("strata-dist", "1.5"))
+	c3.global_position = Vector3(cp.x, top + float(args.get("strata-eye", "1.7")), cp.z)
+	c3.look_at(Vector3(wall.x, g + 0.5 * (top - g), wall.z) + sf * 0.8)
+	_log("snow strata: %.2f m of snow at %s (%.0f m), trench %.1f m wide along the sun, cam %s" % [top - g, str(best.round()), best.y, w, str(c3.global_position.snapped(Vector3.ONE * 0.1))])
+
+
+# Tripo's lobster pots come with their netting as sparse wire strands: each of the three stacked pots gets an alpha-cut
+# net of tarred twine (4 cm diamond mesh) over its hoops and across its two ends, an elliptic half-cylinder in the raw
+# model's units (glTF: x along the pot, y up, z across), sized from the raw's cross-sections.
+func _lobster_net(n: Node3D) -> void:
+	var img := Image.create(128, 128, true, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for y in 128:
+		for x in 128:
+			# two families of diagonal strands, 3 texels thick, with a knot where they cross
+			var a := posmod(x + y, 64)
+			var b := posmod(x - y, 64)
+			if a < 3 or b < 3:
+				var shade := 0.07 + 0.03 * sin(float(x * 7 + y * 3))
+				img.set_pixel(x, y, Color(shade, shade * 0.9, shade * 0.75, 1.0))
+	img.generate_mipmaps()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = ImageTexture.create_from_image(img)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.alpha_scissor_threshold = 0.5
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.roughness = 0.85
+	mat.uv1_scale = Vector3(1.0, 1.0, 1.0)
+	# per pot: base height, arch height, half width, half length (raw units, the stack about 0.98 tall)
+	var pots := [Vector4(0.06, 0.23, 0.28, 0.41), Vector4(0.38, 0.2, 0.26, 0.4), Vector4(0.69, 0.27, 0.26, 0.36)]
+	var mesh_cm := 0.04 / 0.98 * 1.3 # one texture tile spans two meshes of 4 cm on a 1.3 m stack
+	for pot in pots:
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var seg := 24
+		var pts := []
+		for i in seg + 1:
+			var t := PI * float(i) / seg
+			pts.append(Vector2(pot.z * cos(t), pot.x + pot.y * sin(t)))
+		var arcs := [0.0]
+		for i in range(1, pts.size()):
+			arcs.append(arcs[-1] + (pts[i] as Vector2).distance_to(pts[i - 1]))
+		for i in seg:
+			for c in [[i, -1.0], [i + 1, -1.0], [i + 1, 1.0], [i, -1.0], [i + 1, 1.0], [i, 1.0]]:
+				var q: Vector2 = pts[c[0]]
+				st.set_uv(Vector2(c[1] * pot.w, arcs[c[0]]) / (mesh_cm * 2.0))
+				st.add_vertex(Vector3(c[1] * pot.w, q.y, q.x))
+		# the two ends: a fan across each half ellipse
+		for e in [-1.0, 1.0]:
+			for i in seg:
+				for q in [Vector2(0.0, pot.x), pts[i], pts[i + 1]]:
+					st.set_uv(Vector2(q.x, q.y) / (mesh_cm * 2.0))
+					st.add_vertex(Vector3(e * pot.w, q.y, q.x))
+		st.generate_normals()
+		var mi := MeshInstance3D.new()
+		mi.name = "LobsterNet"
+		mi.mesh = st.commit()
+		mi.material_override = mat
+		n.add_child(mi)
+
+
+# Sets a prop (from _tripo) on the ground at `p`, turned `yaw` radians, sunk `sink` m so no edge floats on a slope.
+func _put(n: Node3D, p: Vector3, yaw: float, sink := 0.05, parent: Node = null) -> Node3D:
+	n.rotation.y = yaw
+	n.position = Vector3(p.x, height_at(p.x, p.z) - sink, p.z)
+	(parent if parent != null else self).add_child(n)
+	return n
+
+
+# --view=beach: the cove dressed with the Tripo props (--cove-props=0: bare). A sea fort on its rock out in the water,
+# --fort-off (240) m out along the view and --fort-size (36) m across; its causeway running out from the shore; the
+# lighthouse (--lighthouse-h 17 m) and the keeper's house on the highest ground within 120 m of the beach; a fishing
+# boat drawn up at the waterline with an overturned one, fish crates, lobster pots, an anchor and a bollard above it.
+func _cove_props() -> void:
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var f := -c3.global_basis.z
+	f.y = 0.0
+	f = f.normalized()
+	var sd := Vector3(f.z, 0, -f.x)
+	var sea := float(gen.sea_level)
+	# The waterline along the view: the first point out from the camera under the sea.
+	var wl := c3.global_position
+	for k in 400:
+		wl = c3.global_position + f * (k * 1.0)
+		if height_at(wl.x, wl.z) < sea + 0.15:
+			break
+	var placed := []
+	var fp := wl + f * float(args.get("fort-off", "240")) - sd * 60.0
+	var fort := _tripo("sea_fort", float(args.get("fort-size", "36")), 0)
+	if fort != null:
+		# Its rock plinth reaches into the seabed; the walls stand clear of the water.
+		fort.rotation.y = atan2(f.x, f.z) + 0.6
+		fort.position = Vector3(fp.x, minf(height_at(fp.x, fp.z), sea - 6.0), fp.z)
+		add_child(fort)
+		placed.append("fort %s" % str(fort.position.round()))
+		var cw := _tripo("sea_fort_causeway", 48.0, 0)
+		if cw != null:
+			var cs := wl + (fp - wl) * 0.25
+			cw.rotation.y = atan2(-(fp - wl).z, (fp - wl).x)
+			cw.position = Vector3(cs.x, minf(height_at(cs.x, cs.z), sea - 7.0), cs.z)
+			add_child(cw)
+			placed.append("causeway %s" % str(cw.position.round()))
+	# The highest ground within 120 m of the waterline, to the side of the view.
+	var best := Vector3(0, -INF, 0)
+	for i in 24:
+		for j in 12:
+			var q := wl + sd * (-120.0 + i * 10.0) - f * (j * 10.0)
+			var h := height_at(q.x, q.z)
+			if h > best.y and rad_to_deg(data_map.get_slope_at(q)) < 20.0 and absf((q - c3.global_position).dot(sd)) > 25.0:
+				best = Vector3(q.x, h, q.z)
+	if is_finite(best.y):
+		var lh := _tripo("lighthouse", float(args.get("lighthouse-h", "17")), 1)
+		if lh != null:
+			_put(lh, best, atan2(f.x, f.z) + PI, 0.4)
+			placed.append("lighthouse %s" % str(best.round()))
+		var kh := _tripo("lighthouse_keepers_house", 11.0, 0)
+		if kh != null and lh != null:
+			# Tripo gave the tower a second door on its -x side: the keeper's house is built against that side, so it
+			# reads as the passage from the house into the tower.
+			var tx: Vector3 = lh.basis * Vector3(-1, 0, 0)
+			var kp := best + tx * float(args.get("keeper-off", "7.4"))
+			_put(kh, kp, atan2(tx.x, tx.z) + PI, 0.4)
+	# The beach: boats and gear a few metres above the waterline, beside the view.
+	var bp := wl - f * 3.0 + sd * 7.0
+	var gear := [["fishing_boat", 4.6, 2, bp, 0.3], ["fishing_boat_overturned", 4.4, 0, bp - f * 6.0 + sd * 3.0, 1.2],
+		["fish_crates_stack", 1.2, 1, bp - f * 4.0 - sd * 2.5, 0.4], ["lobster_pots", 1.3, 1, bp - f * 5.0 - sd * 4.2, 2.0],
+		["old_anchor", 1.9, 0, bp - f * 2.0 - sd * 5.5, 0.9], ["mooring_bollard", 0.9, 0, bp - f * 8.0 - sd * 0.5, 0.0]]
+	for g in gear:
+		var gn := _tripo(g[0], g[1], g[2])
+		if gn != null and g[0] == "lobster_pots":
+			_lobster_net(gn.get_child(0))
+		if gn != null:
+			_put(gn, g[3], atan2(f.x, f.z) + g[4], 0.06)
+			placed.append(g[0])
+	_log("cove props: waterline %s; %s" % [str(wl.round()), ", ".join(placed)])
+
+
+# The farm track dressed (--farm-props=0: bare): split-rail fence along its right side --fence-off (3.2) m out with a
+# gate 30 m on, round hay bales and a small stack out in the field, a signpost at the start and a high seat at the
+# field edge 70 m on (Tripo props).
+func _farm_props(start: Vector3, fwd: Vector3, bend: float, n: int, seg: float) -> void:
+	var pts := []
+	var p := start + Vector3(fwd.z, 0, -fwd.x) * 0.8
+	var dir := fwd
+	for k in n:
+		pts.append([p, dir])
+		p += dir * seg
+		dir = dir.rotated(Vector3.UP, bend / n)
+	var off := float(args.get("fence-off", "3.2"))
+	var count := 0
+	var along := 6.0
+	while along < seg * n - 3.0:
+		var i := int(along / seg)
+		var q: Vector3 = pts[i][0] + pts[i][1] * fmod(along, seg)
+		var d: Vector3 = pts[i][1]
+		var r := Vector3(-d.z, 0, d.x) # right of the track
+		var kind := "split_rail_fence_gate" if absf(along - 30.0) < 1.5 else ("split_rail_fence" if count % 2 == 0 else "split_rail_fence_b")
+		# split_rail_fence runs along its z, the others along x.
+		var fence := _tripo(kind, 3.0, 2 if kind == "split_rail_fence" else 0)
+		if fence == null:
+			return
+		var yaw := atan2(d.x, d.z) + (0.0 if kind == "split_rail_fence" else PI * 0.5)
+		_put(fence, q + d * 1.5 + r * off, yaw, 0.12)
+		along += 3.0
+		count += 1
+	var mid: Array = pts[mini(int(45.0 / seg), pts.size() - 1)]
+	var rr := Vector3(-mid[1].z, 0, mid[1].x)
+	for k in 3:
+		var hb := _tripo("hay_bale", 1.45, 1)
+		if hb != null:
+			_put(hb, mid[0] + rr * (off + 9.0 + 3.5 * k) + mid[1] * (2.0 * k - 3.0 * (k % 2)), 0.9 * k, 0.08)
+	var st := _tripo("hay_bales_small_stack", 2.0, 2)
+	if st != null:
+		var gp: Array = pts[mini(int(30.0 / seg), pts.size() - 1)]
+		_put(st, gp[0] + Vector3(-gp[1].z, 0, gp[1].x) * (off + 3.0) + gp[1] * 4.0, 0.4, 0.06)
+	var sg := _tripo("trail_signpost", 2.3, 1)
+	if sg != null:
+		var s0: Array = pts[mini(4, pts.size() - 1)]
+		_put(sg, s0[0] - Vector3(-s0[1].z, 0, s0[1].x) * 2.3, atan2(s0[1].x, s0[1].z) + PI * 0.5, 0.25)
+	var hs := _tripo("hunting_high_seat", 4.5, 1)
+	if hs != null:
+		var h0: Array = pts[mini(int(70.0 / seg), pts.size() - 1)]
+		_put(hs, h0[0] + Vector3(-h0[1].z, 0, h0[1].x) * (off + 14.0), atan2(h0[1].x, h0[1].z) + PI, 0.1)
+	_log("farm props: %d fence pieces" % count)
+
+
+# Showcase Tripo props (art-src props/showcase/<slug>/<tier>/<slug>.glb, tier bakes of the raws by tools/tripo_tiers.py;
+# --prop-tier high|medium|low, high by default). Each is loaded once and copied; its origin is the centre of its
+# footprint on the ground. Scaled uniformly so its extent along `axis` (0 x, 1 y, 2 z) is `length` m, then by
+# `stretch` (a rail made longer). null when the art is missing (run fetch_art.sh): callers keep their code shape.
+var _tripo_cache := {}
+func _tripo(slug: String, length: float, axis: int = 1, stretch := Vector3.ONE) -> Node3D:
+	var path := "res://art/showcase/%s/%s/%s.glb" % [slug, args.get("prop-tier", "high"), slug]
+	if not _tripo_cache.has(path):
+		_tripo_cache[path] = _gltf_node(path) if FileAccess.file_exists(path) else null
+		if _tripo_cache[path] == null:
+			_log("prop %s missing (run fetch_art.sh), code shape kept" % slug)
+	var src: Node3D = _tripo_cache[path]
+	if src == null:
+		return null
+	var n := src.duplicate() as Node3D
+	var box := AABB()
+	var first := true
+	for mi in n.find_children("*", "MeshInstance3D", true, false):
+		var m := mi as MeshInstance3D
+		var b: AABB = m.transform * m.get_aabb()
+		box = b if first else box.merge(b)
+		first = false
+	var k := length / maxf(box.size[axis], 1e-4)
+	var root := Node3D.new()
+	root.name = slug
+	n.scale = Vector3.ONE * k * stretch
+	root.add_child(n)
+	return root
 
 
 func _gltf_node(path: String) -> Node3D:
@@ -7070,6 +7510,8 @@ func _build_farm_track() -> void:
 		var days := float(args["track-age"])
 		prints.call("settle", days * 86400.0, 3600.0 * 6.0)
 		_log("farm track: aged %.0f days" % days)
+	if args.get("farm-props", "1") != "0":
+		_farm_props(start, fwd, bend, n, seg)
 	_log("farm track: %d segments, %.0f passes, wear under the camera %.0f, 30 m on %.0f" % [n, passes, float(prints.call("get_wear_at", start + side * 0.8 * 0 )), float(prints.call("get_wear_at", start + fwd * 30.0))])
 
 
@@ -7529,15 +7971,18 @@ func _rime_ridge() -> void:
 	_log("rime ridge: %.0f h of cloud at %.1f C on the crest %s (%.0f m), rime %s, cam %s" % [hrs, weather.get_air_temperature_at(top), str(top.round()), top.y, str(rv), str(cp.round())])
 
 
-func _fog_sea() -> void:
+func _fog_sea(key := "fog-sea") -> void:
 	# --fog-sea[=H]: a clear calm night of H (6) hours before the shot (WeatherMap3D.valley_fog, 2648f0f3): the cold
 	# pools fill with radiation fog, then the clock returns to --time for the dawn view over the fog top. --fog-wind
 	# (0.5) m/s, --fog-humidity (0.95), --fog-air (6) C. Logs the fog top along the camera's view.
-	var hrs := float(args["fog-sea"]) if String(args["fog-sea"]) != "" else 6.0
+	# --late-frost[=H]: the same night in spring, drier (0.6) and colder (--fog-air 2 C): the hollows pool below -2 C
+	# and the young leaves out there brown (WeatherMap3D.late_frost; trees band near meshes by local season, 52d3db3f).
+	var frost := key == "late-frost"
+	var hrs := float(args[key]) if String(args[key]) != "" else (8.0 if frost else 6.0)
 	var t_shot := clock.time_of_day
 	weather.air_follows_climate = false
-	weather.temperature = float(args.get("fog-air", "6"))
-	weather.humidity = float(args.get("fog-humidity", "0.95"))
+	weather.temperature = float(args.get("fog-air", "2" if frost else "6"))
+	weather.humidity = float(args.get("fog-humidity", "0.6" if frost else "0.95"))
 	weather.wind_speed = float(args.get("fog-wind", "0.5"))
 	weather.cloud_cover = 0.0
 	weather.valley_fog = true
@@ -7556,6 +8001,9 @@ func _fog_sea() -> void:
 		p.y = height_at(p.x, p.z)
 		tops.append("%.0f m: ground %.0f top %.0f" % [150.0 + 250.0 * k, p.y, weather.get_valley_fog_top_at(p)])
 	_log("fog sea: %.0f h calm night, cam at %.0f m; %s" % [hrs, c3.global_position.y, ", ".join(tops)])
+	if frost and weather.has_method("get_leaf_frost_at"):
+		var lp := c3.global_position + Vector3(f.x, 0, f.z).normalized() * 20.0
+		_log("late frost: at the camera %s, 20 m on %s (severity, forcing, days)" % [str(weather.get_leaf_frost_at(c3.global_position)), str(weather.get_leaf_frost_at(lp))])
 
 
 func _lodging() -> void:

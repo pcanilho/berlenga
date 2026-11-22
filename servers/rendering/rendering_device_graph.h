@@ -161,6 +161,9 @@ public:
 			TYPE_BLAS_BUILD,
 			TYPE_BLAS_UPDATE,
 			TYPE_TLAS_BUILD,
+			TYPE_BLAS_COMPACT_COPY, // From source into acceleration_structure.
+			TYPE_SIZE_QUERY_RESET, // Queries query_index to query_index + instance_count of query_pool.
+			TYPE_COMPACTED_SIZE_QUERY, // The compacted size of acceleration_structure into query_index of query_pool.
 		};
 
 		Type type = TYPE_BLAS_BUILD;
@@ -171,6 +174,9 @@ public:
 		RDD::BufferID instance_buffer;
 		uint32_t instance_offset = 0;
 		uint32_t instance_count = 0;
+		RDD::AccelerationStructureID source;
+		RDD::QueryPoolID query_pool;
+		uint32_t query_index = 0;
 	};
 
 	enum ResourceUsage {

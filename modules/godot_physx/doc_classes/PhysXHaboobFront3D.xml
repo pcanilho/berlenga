@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXHaboobFront3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		The billowing head of a dust storm's gust front near the camera, drawn in NVIDIA Flow.
+	</brief_description>
+	<description>
+		Reads the dust layer of the active [WeatherMap3D] (its head share, see [method WeatherMap3D.get_dust_head_at]) round [member follow_target], finds where the front runs within [member near_range], and lays [member emitter_count] emitters along its crest. They push dust forward and up with the front in a [PhysXFlow3D] of its own, so the density current's head rolls into billows close up while the weather's wall draws it far away. The points are found again twice a second and travel with the front between scans. Draws nothing while no front is near.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_flow" qualifiers="const">
+			<return type="PhysXFlow3D" />
+			<description>
+				The Flow volume the billows are drawn in, or [code]null[/code] before the node enters the tree.
+			</description>
+		</method>
+		<method name="get_front_point" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Front point [param index] on the ground, in world space. Zero past [method get_front_point_count].
+			</description>
+		</method>
+		<method name="get_front_point_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many points the front has near the target now; zero while no front is in range.
+			</description>
+		</method>
+		<method name="get_front_velocity" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="index" type="int" />
+			<description>
+				The front's travel at point [param index] along the ground, in m/s. Zero past [method get_front_point_count].
+			</description>
+		</method>
+		<method name="scan_now">
+			<return type="void" />
+			<description>
+				Finds the front again now instead of at the next scan.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(0.72, 0.52, 0.34, 1)">
+			The dust's colour in the billows.
+		</member>
+		<member name="emitter_count" type="int" setter="set_emitter_count" getter="get_emitter_count" default="10">
+			How many emitters line the front, up to 16.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			Draws the billows. Off, the front is not searched and nothing is emitted.
+		</member>
+		<member name="flow_cell_size" type="float" setter="set_flow_cell_size" getter="get_flow_cell_size" default="2.0">
+			The Flow grid cell in metres.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			The node, usually the camera, round which the front is searched. Without it, the viewport's current camera.
+		</member>
+		<member name="near_range" type="float" setter="set_near_range" getter="get_near_range" default="300.0">
+			How far from the target the front is searched and how long a stretch of it is drawn (1.6 times this), in metres.
+		</member>
+		<member name="terrain_path" type="NodePath" setter="set_terrain_path" getter="get_terrain_path" default="NodePath(&quot;&quot;)">
+			A terrain to set the front points on. Without it, the world's ground contract, or the weather map's ground height.
+		</member>
+	</members>
+</class>

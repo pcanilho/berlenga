@@ -3921,12 +3921,103 @@ Cottrell 2004; wild cherry: Russell 2003), Rackham 2006, Wood Handbook (green MO
 - Hornbeam (Carpinus betulus): two-ranked fine twigs, dense dome, very shade tolerant (shade_max 0.75, opacity 0.85),
   smooth grey bark; leaves held late (long fall lag).
 - Sweet chestnut (Castanea sativa): broad dome on a massive bole, long lanceolate leaves (18 cm), late leaf-out.
-- Next (this pick): aspen clones (one bark tint, form and autumn date for a whole sucker patch: a clone id from
-  hashed cells in VegetationField3D, Mitton and Grant 1996), hornbeam's fluted stem (the pollard pole flutes),
-  chestnut's spiral-twisted furrows, cherry blossom before the leaves, and the new species in stands (oak-hornbeam,
-  chestnut coppice, aspen in the taiga and woodland, black poplar on floodplains).
+- Hornbeam flutes: veteran_deform mode 4 on every hornbeam chain from 4 cm (ridges a seventh of the radius, five to
+  eight round, wandering up the stem on the chain's frame, darker grooves). Wild cherry blossom: get_bloom days
+  98-128, umbels of 5-10 flowers 2.6-3.6 cm across, two a spur.
+- Aspen clones: species meta clone_scale (25 m) makes VegetationField3D give every stem in a jittered (Worley) cell one
+  variant; each aspen stand variant is a clone (TreeGenerator.phenology_shift: leaf-out up to 45 degree days and
+  autumn 70 senescence units either way; bark whiter, greener or tan; branch angle +-6 degrees; leaf size +-15%).
+- In stands: hornbeam under the oaks of STAND_OAK_MIXED (0.4) and wild cherry among them (0.2); black poplar on the
+  floodplain (0.35, follows the flow); aspen clones with the birch in the taiga's burns. Bench: stands --variants=4
+  checks neighbours within 4 m share a clone.
+- Chestnut spiral bark: the furrows twist round the bole with age, either hand, from 30-50 years
+  to 20-30 degrees on old trees (Mitchell 1974, A Field Guide to the Trees of Britain and Northern Europe). The bark
+  tile's u slides by height x tan(angle) / tile width (TreeGenerator `tube_spiral`, 30 x smoothstep(25, 110 years)), so
+  relief, texture and lichen all run up as helices; 13 degrees on the 60-year preset.
+- Next: a chestnut coppice stand, aspen in make_woodland.
 - Later: WorldWater.high_water_at (1276b430: peak height, days since, flow xz) can drive flood_height and
   flood_years (5av) instead of hand values.
+
+### 5bg. Trees on cliffs (22 Nov; third of three)
+
+Sources: Larson, Matthes and Kelly 2000 (*Cliff Ecology*; American Scientist 1999), Kelly and Larson 1997 (Thuja
+occidentalis on the Niagara Escarpment), Matthes, Larson and Kelly 2002 (sectored architecture), Pirk et al. 2012
+(*Plastic Trees*: a grown skeleton adapted after the fact), Ellenberg 1988 (rock pine woods, Erico-Pinion).
+- `cliff_angle` (radians, 0 none): the tree is rooted in a crevice of a face falling toward mesh +Z at that angle.
+  Grown upright, then two steps. `_cliff_bend` bends the skeleton back over the face (toward -Z) by the angle less
+  `cliff_lean`, along the stem from 2.5 stem radii up over 0.6-1.6 m: a skeletal bend, each limb carried with its stem
+  node and turned the full bend about its own base, so low limbs on the level run grew up as crown limbs did (a space
+  bend folded them). Wood that would run behind the face is pruned. `_cliff_turn` then turns every surface, the
+  skeleton and the wind rig (pivot, centroids, m2 from the inertia about the pivot) about the foot by the angle: the
+  level soil becomes the face, the collar and roots lie on it, and the crown is turned by the lean alone, so its
+  droop, leaf angles and moss stay true. The J or sabre form of cliff cedars.
+- Roots: bearings pulled to the face's joints (down, across, the diagonals; none up), 1.4-2.2x longer, straighter,
+  and run plastered over the rock to near their tips before they go in.
+- Sectored dieback (`cliff_dieback`, half width in radians): limbs on one side are dead grey wood without their
+  finest twigs, and the stem below carries an old strip of dead bark with rolled edges (the lightning strip's shape,
+  wide, 30-120 years old) twisting with the grain: a strip-bark stem.
+- FORM_CLIFF variants: faces of 69, 57, 86 and 77 degrees, lean 6-26 degrees, two in three with a dead sector,
+  internodes 0.42x and years 0.65-0.95x the preset's (cliff cedars: roots confined in crevices set the pace).
+  Mesh meta `tree_ground_slope` (angle, 0): placement turns +Z down the face and picks the nearest variant, as for
+  banks. Stands: cliff yew over the beech woods, Scots pine in the montane conifers, hemlock in the white
+  pine-hemlock; slopes 52-90 degrees, rock 0.25-1 (with geology), any soil depth, open light.
+- Bench: `--cliff=STAND` (each variant on a grey slab at its angle; a stand-in, bench only); stands --test checks
+  every cliff variant: slope meta, under 3% of the mesh behind the face, crown standing off it, under 16 m.
+- Open: the valley bench has no faces steep enough, so nothing is placed there; the landscape scene's cliffs are the
+  real test. Cliff variants of more species (juniper-like shrubs, holm oak) and thicker, ribbon-like roots in cracks.
+
+### 5bh. Avalanche legacies (22 Nov; coordinator's queue, WorldStand DISTURBANCE_AVALANCHE 6)
+
+Research. What a dense avalanche leaves in a mountain forest (Bebi, Kulakowski and Rixen 2009, Snow avalanche
+disturbances in forest ecosystems; Butler and Malanson 1985 and Butler 1979 on avalanche path vegetation, Glacier
+National Park; Reardon, Pederson, Caruso and Fagre 2008, Arctic Antarctic and Alpine Research 40: dendroecological
+indicators; Stoffel and Bollschweiler 2008, tree-ring analysis in natural hazards):
+- Stems snapped or uprooted and carried downslope: the trunks lie along the fall line, tops down, the debris piled
+  in the runout; broken stumps stand where the flow was too weak to uproot.
+- Survivors at the track's edge and inside it where the flow thinned: crowns stripped on the upslope side
+  (flagged downslope), tops broken (decapitated), impact scars on the upslope face of the stem 0.5-3 m up, stems
+  tilted downslope (reaction wood); these are the indicators dendrochronologists date avalanches by.
+- Tracks run every few years or decades never regrow forest: flexible shrubs that bend under the snow and stand up
+  again take them, green alder (Alnus alnobetula, the Grünerlen scrub of the Alps) and willows, their stems swept
+  downslope at the base (sabre or pistol-butt stems from snow creep and glide) and rising at the ends.
+Plan (trees side; the field places by RULE_STAND_AGE and RULE_DISTURBANCE 6 as for the other legacies):
+- make_succession of the mountain stands (subalpine, montane conifer, beech): avalanche legacies tagged
+  SUCCESSION_AVALANCHE 6: lead logs and snapped stumps (0-15 y), survivors flagged downslope with upslope impact
+  scars (0-60 y), and green alder thickets with sabre stems in the young track (0-30 y).
+- Placement: species meta `fall_downhill` (the field turns mesh +X down the fall line), new in VegetationField3D.
+- Sabre stems: the cliff machinery (5bg) at small angles: the soil plane turned to the slope, the stem bent up.
+As built (22 Nov, first half): make_succession of the subalpine, montane conifer and beech stands adds, tagged
+SUCCESSION_AVALANCHE 6, the lead thrown (windthrow band 1 logs, half with root plates) and snapped (band 2 stumps)
+for 0-15 and 15-50 years (decay by the years), at 1.2x stand spacing, and survivors 0-50 years: open-grown, flagged
+(upslope limbs killed, the rest swept downslope) and leaning 5-20 degrees downslope (band 3). All carry species meta
+`fall_downhill`: VegetationField3D turns mesh +X down the fall line (+-fall_scatter). Bench: `--stands --avalanche`
+(a 5-year track: legacies inside only, thrown logs down the fall line). Next: green alder thickets with sabre stems
+in young tracks; upslope impact scars on the survivors.
+
+### 5bi. Leaves by local season (22 Nov; coordinator's ask, for the scene's late-frost hollow)
+
+The forest's meshes grow from one season (the generator's `season`), but leaves follow the season where the tree
+stands: leaf-out comes a few days later per 100 m climbed (Hopkins' bioclimatic law; Vitasse et al. 2009), and a
+late frost browns only the trees in the hollows where cold air pooled that night (Augspurger 2009; Vitasse, Lenz and
+Koerner 2014; the weather side is WeatherMap3D.late_frost, changelog weather-late-frost). Varying season per place
+is usually done with per-instance tints in the leaf shader or with seasonal mesh variants (SpeedTree's season
+setting). Instance tints are not traced here (PT ignores INSTANCE_CUSTOM on rigged multimeshes), so the state goes in
+the geometry.
+
+As built: near meshes are banded by local season, the same way ice storms band them by glaze (5be).
+`TreeGenerator.near_season_band(local)` turns a `WorldWeather.season_at` result into the species' leaf state in
+quarters (out, turned, fallen, frost-browned): 0 when it matches the generator's own season, else 1 + the code
+(at most 625 bands; one per state actually in view is built). VegetationField3D reads `season_at` over each lazy
+near cell twice a second beside `glaze_at` and asks for variant + NEAR_GLAZE_STRIDE x glaze + NEAR_SEASON_STRIDE
+(2^19) x season band; the near build forces that leaf state (`leaf_season_forced`) and grows it: frost-killed leaves
+dark brown and shrivelled, young leaves small and pale, turned and fallen shares as in autumn. Bench:
+`--stands --near-leaves`, a frost hollow's season bands an oak's near mesh and its leaves grow brown (mean leaf rgb
+0.16 0.11 0.04 against 0.13 0.25 0.06 green); the same season without the frost does not band.
+
+Limits: far meshes (past near_leaf_range) keep the generator's season, so a browned hollow is brown within the near
+range and green beyond it; far season bands would need per-band far variants (a memory cost per state). Only
+deciduous species band (evergreens' new shoots are not modelled). Aspen clones' own dates (5bf) are not applied on
+top of a forced band.
 
 ## Next-round options (card 20 Nov evening)
 

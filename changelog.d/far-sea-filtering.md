@@ -1,1 +1,0 @@
-- Water: waves smaller than a pixel move from the normal into the roughness on every wave cascade, so the far sea glitters at the right width without shimmer (`far_filter`, on).

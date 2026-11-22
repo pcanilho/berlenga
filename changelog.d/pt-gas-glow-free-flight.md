@@ -1,1 +1,0 @@
-- Path tracing: simulated gas with glow enabled no longer looks thinner to the camera than to shadow rays. The emission integral's collision budget and its dark-gas cutoff now hand the rest of the segment to plain delta tracking instead of letting the path leave the gas.

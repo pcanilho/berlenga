@@ -274,6 +274,8 @@ void SnowCover3D::_allocate() {
 	cups_texture.unref();
 	sastrugi_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGH);
 	sastrugi_texture.unref();
+	strata_image.unref();
+	strata_texture.unref();
 	cell_height_valid.resize(nn);
 	cell_ground.fill(0.0f);
 	cell_swe.fill(0.0f);
@@ -1574,6 +1576,44 @@ Array SnowCover3D::get_layers_at(const Vector3 &p_position) const {
 	return out;
 }
 
+// The bands a cut wall shows (follow-up 53), from the layers of one cell (base first): neighbours of one kind and
+// wetness merge (so there are never more than PACK_LAYERS). Depths are scaled to the pack's p_depth. Each entry,
+// top band first: (kind + 1 + 8 if wet) * 256 + the band's bottom under the surface in whole centimetres (to 2.55 m).
+Vector<int> SnowCover3D::strata_bands(const float *p_swe, const float *p_rho, const float *p_liq, const uint8_t *p_kind, int p_count, float p_depth, float p_liquid_capacity) {
+	Vector<int> out;
+	if (p_count <= 0 || p_depth <= 0.001f) {
+		return out;
+	}
+	LocalVector<int> codes; // top first
+	LocalVector<float> thick;
+	float total = 0.0f;
+	for (int j = p_count - 1; j >= 0; j--) {
+		const float t = p_swe[j] / MAX(p_rho[j], 30.0f);
+		if (t <= 0.0f) {
+			continue;
+		}
+		const bool wet = p_liq[j] > 0.3f * p_liquid_capacity * p_swe[j];
+		const int code = MIN(int(p_kind[j]), 7) + 1 + (wet ? 8 : 0);
+		if (!codes.is_empty() && codes[codes.size() - 1] == code) {
+			thick[thick.size() - 1] += t;
+		} else {
+			codes.push_back(code);
+			thick.push_back(t);
+		}
+		total += t;
+	}
+	if (codes.is_empty() || total <= 0.0f) {
+		return out;
+	}
+	const float scale = p_depth / total;
+	float bottom = 0.0f;
+	for (uint32_t b = 0; b < codes.size(); b++) {
+		bottom += thick[b] * scale;
+		out.push_back(MIN(codes[b], 15) * 256 + CLAMP(int(Math::round(bottom * 100.0f)), 0, 255));
+	}
+	return out;
+}
+
 void SnowCover3D::set_layers_enabled(bool p_enabled) {
 	_finish_background(true);
 	layers_enabled = p_enabled;
@@ -2217,8 +2257,9 @@ void SnowCover3D::_refresh_lap() {
 				Vector3 pos = _cell_center(x, z);
 				pos.y = cell_ground[i];
 				if (smoke) {
-					// g/m2 over 2000 m, times 0.002 m/s, a tenth black carbon: mg/m2 per hour.
-					dep += MAX(wm->smoke_at(pos), 0.0f) / 2000.0f * 0.002f * 0.1f * 3.6e6f;
+					// The smoke at the snow (g/m3: the layer's 2 km mix, or a cold pool's lid holding it low), times
+					// 0.002 m/s, a tenth black carbon: mg/m2 per hour.
+					dep += MAX(wm->smoke_concentration_at(pos), 0.0f) * 0.002f * 0.1f * 3.6e6f;
 				}
 				if (burn) {
 					const float age = fire->burn_age_at(pos);
@@ -2697,6 +2738,28 @@ void SnowCover3D::_build_upload() {
 		}
 		upload_sastrugi = Image::create_from_data(n, n, false, Image::FORMAT_RGH, sb);
 	}
+	// The strata map (round 8, follow-up 53): the pack's layers as up to eight bands, for the walls of ruts and
+	// prints. Each channel holds two bands (see strata_bands), from the surface down: band * 4096 + the next band;
+	// 0 ends the list.
+	upload_strata.unref();
+	// The live layers, not pub's (published after this runs): the same step as the depth map.
+	if (layers_enabled && layer_n.size() == n * n && layer_swe.size() == n * n * PACK_LAYERS && layer_liq.size() == layer_swe.size()) {
+		Vector<uint8_t> tb;
+		tb.resize(n * n * 16);
+		float *tw = reinterpret_cast<float *>(tb.ptrw());
+		for (int i = 0; i < n * n; i++) {
+			const float swe = cell_swe[i];
+			const float depth = swe > SWE_MIN ? swe / cell_density[i] : 0.0f;
+			const int k0 = i * PACK_LAYERS;
+			const Vector<int> bands = strata_bands(layer_swe.ptr() + k0, layer_rho.ptr() + k0, layer_liq.ptr() + k0, layer_kind.ptr() + k0, layer_n[i], depth, liquid_capacity);
+			for (int c = 0; c < 4; c++) {
+				const int a = 2 * c < bands.size() ? bands[2 * c] : 0;
+				const int b = 2 * c + 1 < bands.size() ? bands[2 * c + 1] : 0;
+				tw[i * 4 + c] = float(a * 4096 + b); // two 12-bit bands, exact in a float
+			}
+		}
+		upload_strata = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, tb);
+	}
 	// The catch map: the height of the surface the pack lies on, the canopy's load over its capacity, the
 	// canopy closure and the surface hoar. Materials leave what lies under an overhang bare and give tree crowns their load.
 	if (catch_image.is_valid() && catch_image->get_width() == n) {
@@ -2741,6 +2804,15 @@ void SnowCover3D::_apply_upload() {
 			sastrugi_texture = ImageTexture::create_from_image(sastrugi_image);
 		} else {
 			sastrugi_texture->update(sastrugi_image);
+		}
+	}
+	if (upload_strata.is_valid()) {
+		strata_image = upload_strata;
+		upload_strata.unref();
+		if (strata_texture.is_null() || strata_texture->get_width() != n) {
+			strata_texture = ImageTexture::create_from_image(strata_image);
+		} else {
+			strata_texture->update(strata_image);
 		}
 	}
 	if (upload_catch.is_valid() && catch_image.is_valid() && catch_image->get_width() == n) {
@@ -4180,6 +4252,90 @@ void SnowCover3D::add_drift(const Vector3 &p_position, float p_radius, float p_d
 	_upload();
 }
 
+// A rounded heap of p_volume m3 of snow (debris that came to rest): a smooth (1 - (d/r)^2)^2 dome rather than
+// add_drift's cone, kept off cells that lie under something higher than p_ceiling (a roof, a wall top) and tapered
+// toward them over p_taper m, so a bank against a building meets the eave's bare strip without a cliff. The whole
+// volume lands on the cells that take it.
+void SnowCover3D::add_mound(const Vector3 &p_position, float p_radius, float p_volume, float p_density, float p_ceiling, float p_taper) {
+	_finish_background(true);
+	if (cell_swe.size() != resolution * resolution) {
+		_allocate();
+		_follow(_follow_position());
+	}
+	if (p_volume <= 0.0f) {
+		return;
+	}
+	const int n = resolution;
+	const float cs = _cell_size();
+	// A heap only a cell or two across draws as a spike (the surface interpolates the cells): at least 2.5 cells
+	// in radius, and the taper toward the bare strip at least two cells long.
+	const float r = MAX(p_radius, 2.5f * cs);
+	const float taper = MAX(p_taper, 2.0f * cs);
+	const float rho_new = CLAMP(p_density, 30.0f, 917.0f);
+	const bool masked = Math::is_finite(p_ceiling) && cell_ground.size() == n * n;
+	const int cx = int(Math::floor(p_position.x / cs)) - origin_cell.x;
+	const int cz = int(Math::floor(p_position.z / cs)) - origin_cell.y;
+	const int reach = int(Math::ceil(r / cs)) + 1;
+	const int treach = masked ? int(Math::ceil(taper / cs)) : 0;
+	auto blocked = [&](int x, int z) {
+		return masked && x >= 0 && z >= 0 && x < n && z < n && cell_ground[z * n + x] > p_ceiling;
+	};
+	LocalVector<int> idx;
+	LocalVector<float> wt;
+	double sum = 0.0;
+	for (int z = MAX(cz - reach, 0); z <= MIN(cz + reach, n - 1); z++) {
+		for (int x = MAX(cx - reach, 0); x <= MIN(cx + reach, n - 1); x++) {
+			const Vector3 c = _cell_center(x, z);
+			const float d2 = (Vector2(c.x - p_position.x, c.z - p_position.z) / r).length_squared();
+			if (d2 >= 1.0f || blocked(x, z)) {
+				continue;
+			}
+			float w = (1.0f - d2) * (1.0f - d2);
+			if (treach > 0) {
+				float near = 1e9f;
+				for (int zz = z - treach; zz <= z + treach; zz++) {
+					for (int xx = x - treach; xx <= x + treach; xx++) {
+						if (blocked(xx, zz)) {
+							near = MIN(near, Vector2(float(xx - x), float(zz - z)).length() * cs);
+						}
+					}
+				}
+				if (near < 1e8f) {
+					const float t = CLAMP((near - 0.5f * cs) / taper, 0.0f, 1.0f);
+					w *= t * t * (3.0f - 2.0f * t);
+				}
+			}
+			if (w <= 0.0f) {
+				continue;
+			}
+			idx.push_back(z * n + x);
+			wt.push_back(w);
+			sum += w;
+		}
+	}
+	if (sum <= 0.0) {
+		// Nowhere open within reach (or off the grid): fall back to a heap on the spot.
+		add_drift(p_position, r, 3.0f * p_volume / (float(Math::PI) * r * r), p_density);
+		return;
+	}
+	const float scale = float(p_volume / (sum * cs * cs));
+	for (uint32_t k = 0; k < idx.size(); k++) {
+		const int i = idx[k];
+		const float add = wt[k] * scale;
+		const float depth_old = cell_swe[i] > SWE_MIN ? cell_swe[i] / cell_density[i] : 0.0f;
+		const float swe = (cell_swe[i] > SWE_MIN ? cell_swe[i] : 0.0f) + add * rho_new;
+		cell_swe.write[i] = swe;
+		cell_density.write[i] = swe / (depth_old + add);
+		_layers_push(i, add * rho_new, rho_new, LAYER_WIND);
+		if (cell_crust.size() == cell_swe.size() && cell_crust[i] > 0.0f) {
+			cell_crust_burial.write[i] += add;
+		}
+	}
+	last_step_hours = 0.0f;
+	update_count++;
+	_upload();
+}
+
 void SnowCover3D::refresh_heights() {
 	_finish_background(true);
 	if (cell_ground.size() == resolution * resolution && origin_valid) {
@@ -5215,6 +5371,7 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &SnowCover3D::clear);
 	ClassDB::bind_method(D_METHOD("add_snow", "swe_mm", "density", "world"), &SnowCover3D::add_snow, DEFVAL(100.0f), DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("add_drift", "position", "radius", "depth", "density"), &SnowCover3D::add_drift, DEFVAL(300.0f));
+	ClassDB::bind_method(D_METHOD("add_mound", "position", "radius", "volume", "density", "ceiling", "taper"), &SnowCover3D::add_mound, DEFVAL(300.0f), DEFVAL(float(Math::INF)), DEFVAL(0.8f));
 	ClassDB::bind_method(D_METHOD("refresh_heights"), &SnowCover3D::refresh_heights);
 	ClassDB::bind_method(D_METHOD("get_map_rect"), &SnowCover3D::get_map_rect);
 	ClassDB::bind_method(D_METHOD("get_depth_at", "position"), &SnowCover3D::get_depth_at);
@@ -5248,6 +5405,7 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sastrugi_enabled"), "set_sastrugi_enabled", "is_sastrugi_enabled");
 	ClassDB::bind_method(D_METHOD("get_sastrugi_at", "position"), &SnowCover3D::get_sastrugi_at);
 	ClassDB::bind_method(D_METHOD("get_sastrugi_texture"), &SnowCover3D::get_sastrugi_texture);
+	ClassDB::bind_method(D_METHOD("get_strata_texture"), &SnowCover3D::get_strata_texture);
 	ClassDB::bind_method(D_METHOD("add_sastrugi", "relief", "wind_direction"), &SnowCover3D::add_sastrugi);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("sastrugi_step", "relief", "wind_dir", "eroded", "filled", "depth", "hard"), &SnowCover3D::sastrugi_step);
 	ClassDB::bind_method(D_METHOD("set_wind_packing_enabled", "enabled"), &SnowCover3D::set_wind_packing_enabled);

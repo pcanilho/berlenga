@@ -100,6 +100,8 @@ struct PhysXVehicleSoilWheel {
 	// brought, and the suction holding the tyre (N, the last substep's).
 	float rest = 0.0f;
 	float moved = 0.0f; // m rolled since it last stood
+	float bite_owed = 0.0f; // m3 of soil the tread's links have cut and not yet thrown (round 23.3)
+	float bite_thrown = 0.0f; // kg thrown since start
 	float creep = 0.0f;
 	float suction = 0.0f;
 #ifdef MODULE_GROUND_ENABLED
@@ -204,7 +206,7 @@ static float _firm_grip(const Vector3 &p_at, float p_speed, float p_standing_wat
 	float glazed = 0.0f;
 	if (const WorldSnow *ws = WorldContracts::snow(); ws && ws->has_provider()) {
 		const Vector2 lake = ws->lake_ice_at(p_at);
-		ice = MAX(ice, Math::smoothstep(0.005f, 0.02f, lake.x) * (1.0f - CLAMP(lake.y, 0.0f, 1.0f)));
+		ice = MAX(ice, Math::smoothstep(0.005f, 0.02f, (float)lake.x) * (1.0f - CLAMP((float)lake.y, 0.0f, 1.0f)));
 		const float d = ws->depth_at(p_at);
 		snow = Math::smoothstep(0.003f, 0.02f, d) * (1.0f - ice);
 		if (snow > 0.0f) {
@@ -330,7 +332,7 @@ public:
 				// about half while wet, a little when dry dust (SAE 2007-01-0736; TRL PPR073).
 				const Vector2 silt = ground->get_silt_at(at);
 				if (silt.x > 0.0f) {
-					sw.grip *= Math::lerp(1.0f, Math::lerp(0.85f, 0.5f, CLAMP(silt.y, 0.0f, 1.0f)), Math::smoothstep(0.0003f, 0.002f, silt.x));
+					sw.grip *= Math::lerp(1.0f, Math::lerp(0.85f, 0.5f, CLAMP((float)silt.y, 0.0f, 1.0f)), Math::smoothstep(0.0003f, 0.002f, (float)silt.x));
 				}
 				road.friction *= sw.grip;
 				sw.printed = false;
@@ -1053,6 +1055,11 @@ void PhysXVehicle3D::set_parked_settling(bool p_enabled) {
 	parked_settling = p_enabled;
 	impl->soil_road.parked = p_enabled;
 	impl->soil_tire.parked = p_enabled;
+}
+
+real_t PhysXVehicle3D::get_wheel_clods_thrown(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].bite_thrown;
 }
 
 real_t PhysXVehicle3D::get_wheel_creep(int p_wheel) const {
@@ -1792,6 +1799,46 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 			flung = thrown - pressed;
 			spray -= pressed / MUD_SPRAY_KG; // pressed down, not thrown up into the arch
 		}
+		// Clods cut by the tread (round 23.3). A grousered wheel slipping in cohesive soil shears it in blocks
+		// between its grousers, as deep as they stand and as long as the slip between one grouser and the next (Wong
+		// 2008, sec. 2.6; Bekker's grouser action); chains' cross links act as tall, sharp grousers. Spinning past
+		// the speed at which the clay lets go of rubber (shedding_speed), the tread carries the cut blocks round and
+		// flings them as clods; slower, they drop off just behind the wheel. Here a quarter of the soil swept by the
+		// grouser depth over the slip,
+		// width x depth x |slip| x tread speed, the rest pressed into the rut's rims as before. Dug from behind the
+		// contact, thrown with the tread's clay; only in cohesive, sticky soil (a liquid mud's cuts slump back in).
+		{
+			PhysXVehicleSoilWheel &bw = impl->soil_wheels[i];
+			const PhysXVehicleWheel3D::TreadSoil ts = PhysXVehicleWheel3D::tread_soil((PhysXVehicleWheel3D::Tread)sw.tread);
+			const float bite = CLAMP((ts.grip - 1.0f) / 0.2f, 0.0f, 1.0f);
+			const float r = v.wheelParams[i].radius;
+			const float tread_v = Math::abs(v.wheelRigidBody1dStates[i].rotationSpeed) * r;
+			const bool flings = tread_v > GroundTerramechanics::shedding_speed(sw.soil, r) * ts.shed;
+			if (sw.soft && bite > 0.0f && sw.soil.stickiness >= 0.2f) {
+				const float stiff = Math::smoothstep(0.2f, 0.5f, sw.soil.stickiness); // cohesive clay (stickiness peaks at plastic wetness)
+				bw.bite_owed += 0.25f * 2.0f * v.wheelParams[i].halfWidth * ts.depth * Math::abs(sw.slip) * tread_v * bite * stiff * float(p_delta);
+			}
+			if (bw.bite_owed >= 2e-4f && ground) {
+				const PhysXVehicleWheel3D *wn = wheels[impl->wheel_order[i]];
+				const float hw = v.wheelParams[i].halfWidth;
+				const float tv = v.wheelRigidBody1dStates[i].rotationSpeed * r;
+				const Vector3 up = get_global_basis().get_column(1).normalized();
+				const Vector3 fwd = get_global_basis().get_column(2).normalized() * (tv >= 0.0f ? 1.0f : -1.0f);
+				const Vector3 back = wn->get_global_position() - up * r - fwd * (0.3f * r);
+				const float cut = ground->dig(back, hw, bw.bite_owed / ((float)Math::PI * hw * hw));
+				if (cut > 0.0f) {
+					if (flings) {
+						flung += cut * 1700.0f;
+					} else {
+						// Too slow to throw: the blocks drop off the tread just behind the wheel as clods.
+						const Vector3 drop = back - fwd * (0.5f * r);
+						ground->track_mud(Vector3(drop.x, ground->get_surface_height_at(drop), drop.z), hw, cut / ((float)Math::PI * hw * hw), 1.0f);
+					}
+					bw.bite_thrown += cut * 1700.0f;
+				}
+				bw.bite_owed = 0.0f;
+			}
+		}
 		if (flung > 0.0f && ground) {
 			// The shed clay leaves the rear of the tread, up and back at the tread's speed (mud stage 4): the
 			// rooster tail of a wheel spun clean. A grains node throws it as mud clods.
@@ -1877,8 +1924,12 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 	// at 20 C, half humidity, 2 m/s of wind and half sun. Rain wets it again and slowly rinses it.
 	float dry_rate = 1.0f;
 	float rain = 0.0f;
+	// The weather's own clock (round 23.2): a truck parked overnight in world time dries overnight, however fast the
+	// world's hours pass.
+	float world_dt = float(p_delta);
 	const Vector3 vel = get_linear_velocity();
 	if (const WorldWeather *wm = WorldContracts::weather(); wm && wm->has_provider()) {
+		world_dt *= MAX(float(wm->time_scale()), 0.0f);
 		const Vector3 at = frame.origin;
 		const float t = wm->air_temperature_at(at);
 		const float es = 6.112f * Math::exp(17.62f * t / (243.12f + t));
@@ -1893,13 +1944,13 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 		impl->mud_wet = 1.0f;
 	} else if (rain > 0.05f) {
 		// A shower soaks it again in a couple of minutes at 2 mm/h, faster harder.
-		impl->mud_wet = MIN(impl->mud_wet + p_delta * rain / 2.0f / 120.0f, 1.0f);
+		impl->mud_wet = MIN(impl->mud_wet + world_dt * rain / 2.0f / 120.0f, 1.0f);
 	} else {
-		impl->mud_wet = MAX(impl->mud_wet - p_delta * dry_rate / MUD_DRY_TIME, 0.0f);
+		impl->mud_wet = MAX(impl->mud_wet - world_dt * dry_rate / MUD_DRY_TIME, 0.0f);
 	}
 	if (rain > 0.05f) {
 		// Rain rinses the clay off over an hour or so at 10 mm/h.
-		const float k = MIN(p_delta * rain / 10.0f / 1000.0f, 1.0f);
+		const float k = MIN(world_dt * rain / 10.0f / 1000.0f, 1.0f);
 		impl->mud_line -= impl->mud_line * k;
 		for (uint32_t i = 0; i < 4; i++) {
 			impl->mud_spray[i] -= impl->mud_spray[i] * k;
@@ -1915,7 +1966,21 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 	if (impl->mud_prev_ok && p_delta > 0.0) {
 		const float jolt = (vel - impl->mud_prev_vel).length() / float(p_delta) / 9.81f;
 		const float dryness = Math::smoothstep(0.35f, 0.05f, impl->mud_wet);
-		const float shake = MAX(jolt - 0.8f, 0.0f) * dryness;
+		// Round 23.2, the next drive after it has dried: the crust cracks into curling plates as it shrinks (a drying
+		// clay film cracks at a spacing of a few times its thickness and its plates curl up at the edges: Kindle 1926;
+		// Allain and Limat 1995), and a curled plate is shed two more ways than by a single hard jolt:
+		// - road vibration under the 0.8 g jolt wears the plates' hold away by fatigue, Basquin's power law of the
+		//   load (exponent 4, as brittle bonds), so a rough track sheds them over a few minutes of driving;
+		// - the air past the body lifts curled plates once its dynamic pressure 0.5 rho v^2 passes about three times
+		//   the plate's own weight per area (a 4 mm clay plate, 1700 kg/m3: about 200 Pa, some 18 m/s).
+		float shake = MAX(jolt - 0.8f, 0.0f) * dryness;
+		if (dryness > 0.0f) {
+			const float vib = MIN(jolt / 0.8f, 1.0f);
+			shake += 0.05f * vib * vib * vib * vib * dryness;
+			const float q = 0.5f * 1.2f * vel.length_squared();
+			const float q_c = 3.0f * 1700.0f * 9.81f * 0.004f;
+			shake += 0.2f * CLAMP(q / q_c - 1.0f, 0.0f, 1.0f) * dryness;
+		}
 		if (shake > 0.0f) {
 			const float rate = MIN(0.6f * shake * float(p_delta), 1.0f);
 			impl->mud_line -= impl->mud_line * 0.3f * rate;
@@ -2421,6 +2486,7 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_parked_settling"), &PhysXVehicle3D::is_parked_settling);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "parked_settling"), "set_parked_settling", "is_parked_settling");
 	ClassDB::bind_method(D_METHOD("get_wheel_creep", "wheel"), &PhysXVehicle3D::get_wheel_creep);
+	ClassDB::bind_method(D_METHOD("get_wheel_clods_thrown", "wheel"), &PhysXVehicle3D::get_wheel_clods_thrown);
 	ClassDB::bind_method(D_METHOD("get_wheel_suction", "wheel"), &PhysXVehicle3D::get_wheel_suction);
 	ClassDB::bind_method(D_METHOD("set_belly_drag", "enabled"), &PhysXVehicle3D::set_belly_drag);
 	ClassDB::bind_method(D_METHOD("is_belly_drag"), &PhysXVehicle3D::is_belly_drag);

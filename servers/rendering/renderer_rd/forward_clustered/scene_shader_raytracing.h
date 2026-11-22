@@ -153,6 +153,9 @@ public:
 	static constexpr uint32_t RT_MATERIAL_FEATURE_REFRACTION = 8; // rendering/pathtracing/refraction.
 	static constexpr uint32_t RT_MATERIAL_FEATURE_SUBSURFACE = 16; // rendering/pathtracing/subsurface_scattering.
 	static constexpr uint32_t RT_MATERIAL_FEATURE_HAIR = 32; // rendering/pathtracing/hair.
+	// Not a setting: some traced material can bound a medium (RenderRaytracing::_materials_bound_media()). Without one, the
+	// camera medium probe and the caustic photons are skipped; they could find nothing.
+	static constexpr uint32_t RT_MATERIAL_FEATURE_MEDIA = 64;
 	// Which path vertices receive decals (rendering/pathtracing/decals). Must match RT_DECAL_MODE_* in GLSL.
 	enum RTDecalMode {
 		RT_DECAL_MODE_ALL_HITS = 0,
@@ -251,6 +254,10 @@ public:
 	static constexpr int RT_PARAM_HAZE_HEIGHT = 82; // scale height (m)
 	static constexpr int RT_PARAM_HAZE_BASE = 83; // base height, relative to rt_origin
 	static constexpr int RT_PARAM_HAZE_REACH = 84; // how far rays that reach the sky carry it (the sky's own aerosol starts there)
+	// WeatherMap3D's warm layer aloft (weather_warm_nose): its peak (C, 1 or less none) and base (m above the ground),
+	// for the rain share under freezing rain.
+	static constexpr int RT_PARAM_PRECIP_NOSE = 85;
+	static constexpr int RT_PARAM_PRECIP_NOSE_BASE = 86;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;
@@ -538,6 +545,7 @@ public:
 		bool needs_full_any_hit = false; // Blend-transparent or alpha: per-HG any-hit for peel/scissor evaluation
 		bool casts_transmitted_shadow = false; // Writes TRANSMISSION or BACKLIGHT: shadow rays keep the light it lets through.
 		bool bounds_medium = false; // Writes TRANSMISSION and IOR: rays cross it into a medium, so it is traced from both sides.
+		bool may_refract = false; // Writes TRANSMISSION and IOR, procedural too: a path or caustic photon can cross it into a medium.
 		bool uses_scene_depth = false; // Reads SCENE_DEPTH; gates the rt_scene_depth imageLoad
 		bool uses_instance_custom = false; // Gates the MultiMesh custom-data buffer read.
 		bool uses_custom_attribs = false; // Reads CUSTOM0-3: gates their vertex fetch (GeometryData::custom_layout).

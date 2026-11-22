@@ -845,6 +845,24 @@ public:
 	virtual uint32_t acceleration_structure_get_scratch_size_bytes(AccelerationStructureID p_acceleration_structure) = 0;
 	virtual void acceleration_structure_debug_record_build(AccelerationStructureID p_acceleration_structure, bool p_update, uint64_t p_frame) {}
 
+	// BLAS compaction: a BLAS built with ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT reports the size of its compacted
+	// copy through a query, then moves into storage of that size with a compacting copy. The structure keeps its ID and
+	// build inputs; only its storage (and so its device address) changes. A driver without support returns false from
+	// acceleration_structure_compaction_is_supported() and is never asked for the rest.
+	virtual bool acceleration_structure_compaction_is_supported() { return false; }
+	virtual QueryPoolID acceleration_structure_size_query_pool_create(uint32_t p_query_count) { return QueryPoolID(); }
+	virtual void acceleration_structure_size_query_pool_free(QueryPoolID p_pool_id) {}
+	// The queries must be finished on the GPU.
+	virtual void acceleration_structure_size_query_pool_get_results(QueryPoolID p_pool_id, uint32_t p_query_count, uint64_t *r_results) {}
+	// Bytes of storage the structure uses now.
+	virtual uint64_t acceleration_structure_get_size_bytes(AccelerationStructureID p_acceleration_structure) { return 0; }
+	// Gives the BLAS new storage of p_size bytes and returns its old storage as a structure of its own, for the
+	// compacting copy to read and the caller to free once the GPU no longer uses it.
+	virtual AccelerationStructureID blas_compact_relocate(AccelerationStructureID p_acceleration_structure, uint64_t p_size) { return AccelerationStructureID(); }
+	// When the BLAS lives in compacted storage, gives it storage of its full build size again (a fresh build doesn't fit
+	// in compacted storage) and returns the old storage as blas_compact_relocate() does; otherwise returns a null ID.
+	virtual AccelerationStructureID blas_restore_full_storage(AccelerationStructureID p_acceleration_structure) { return AccelerationStructureID(); }
+
 	// ----- OPACITY MICROMAP -----
 
 	// One build: the states and the triangle array (an entry per micromap triangle, triangle_entry_size bytes:
@@ -899,6 +917,9 @@ public:
 	virtual void command_update_blas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset) = 0;
 	virtual void command_build_tlas(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, BufferID p_scratch_buffer, uint64_t p_scratch_offset, BufferID p_instance_buffer, uint32_t p_instance_offset, uint32_t p_instance_count) = 0;
 	virtual void command_build_micromap(CommandBufferID p_cmd_buffer, const MicromapBuild &p_build) {}
+	virtual void command_acceleration_structure_size_query_reset(CommandBufferID p_cmd_buffer, QueryPoolID p_pool_id, uint32_t p_first_query, uint32_t p_query_count) {}
+	virtual void command_acceleration_structure_write_compacted_size(CommandBufferID p_cmd_buffer, AccelerationStructureID p_acceleration_structure, QueryPoolID p_pool_id, uint32_t p_query) {}
+	virtual void command_copy_acceleration_structure_compact(CommandBufferID p_cmd_buffer, AccelerationStructureID p_src, AccelerationStructureID p_dst) {}
 	virtual void command_bind_raytracing_pipeline(CommandBufferID p_cmd_buffer, RaytracingPipelineID p_pipeline) = 0;
 	virtual void command_bind_raytracing_uniform_set(CommandBufferID p_cmd_buffer, UniformSetID p_uniform_set, ShaderID p_shader, uint32_t p_set_index) = 0;
 

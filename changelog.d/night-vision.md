@@ -1,2 +1,0 @@
-- Rendering: night vision, the eye's shift from cones to rods in dim light: colour fades toward a blue-grey over the CIE mesopic range while lamps keep theirs (`CameraAttributes.night_vision`, on; SkyClock sets the scene's units).
-- Rendering: sky ambient and reflections no longer take the camera's exposure multiplier twice (ground white at night under a large pre-exposure).

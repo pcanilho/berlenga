@@ -1,1 +1,0 @@
-- Weather: airglow, the upper air's faint green light, brightening toward the horizon and lighting the cloud tops on a moonless night (`airglow_enabled`, on).

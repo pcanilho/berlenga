@@ -49,6 +49,13 @@
 				Discharge (m³/s) at [param s] metres along the river: [member discharge] plus every tributary (a river whose [member mouth_target] is this one) joining upstream of there.
 			</description>
 		</method>
+		<method name="get_high_water_at" qualifiers="const">
+			<return type="Vector4" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
+				The last flood's high-water mark over [param world_position] ([method WorldWater.high_water_at]): x the surface (m, world), y the days since its peak, z and w the flow's direction then (unit x, z). The mark is the higher of the median annual flood's stage ([member flood_peak_ratio] times the base flow, depth by at-a-station hydraulic geometry, Q^0.40) and a storm's from the last year. (-INF, -1, 0, 0) past three flood half-widths of the river or past its ends.
+			</description>
+		</method>
 		<method name="get_length" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -226,6 +233,12 @@
 		</member>
 		<member name="fall_spray" type="bool" setter="set_fall_spray" getter="get_fall_spray" default="true">
 			Spray thrown up where each waterfall lands: droplets launched at a share of the impact speed (a [GPUParticles3D] made by the river), scaled with the fall's power. Not in the editor.
+		</member>
+		<member name="flood_peak_day" type="int" setter="set_flood_peak_day" getter="get_flood_peak_day" default="110">
+			The day of the year (0 = 1 January) of the median annual flood behind the season's high-water mark: late April (snowmelt) by default; a winter day for rain-fed waters.
+		</member>
+		<member name="flood_peak_ratio" type="float" setter="set_flood_peak_ratio" getter="get_flood_peak_ratio" default="6.0">
+			The median annual flood (QMED, about the bankfull flow) as a multiple of the base flow ([member discharge], without storm flow), for the season's high-water mark. Real rivers range from a few to twenty and more (small steep catchments).
 		</member>
 		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="0.25">
 			White water made by the live window where the water runs fast and shears (as [member PhysXWaterSurface3D.flow_foam]); lower than the sea's, since a river runs fast everywhere. 0: none.

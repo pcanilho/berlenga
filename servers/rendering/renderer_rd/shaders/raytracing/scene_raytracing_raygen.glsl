@@ -876,7 +876,9 @@ void main() {
 
 	// Depth composite against a co-tenant viewport (reverse-Z clear is 0.0): primary rays
 	// stop at its depth, and on a primary miss its color/velocity/guides win the pixel.
-	float composite_t_max = 10000.0;
+	// Out to the camera's far plane, as raster draws: a fixed 10 km left distant ground (a plain, the far side of
+	// a lake) to the sky, and the media drawn over it (rain and snow veils) had no ground to stand on.
+	float composite_t_max = max(10000.0, scene_data_block.data.z_far);
 	float composite_prepass_depth = 0.0;
 	// The co-tenant renders the whole shared target before us, so on a primary miss
 	// its color is the correct background whatever its depth. Testing the depth here
@@ -919,7 +921,8 @@ void main() {
 			camera_ray_origin = origin.xyz + direction.xyz * t_near;
 			camera_t_far = max(composite_t_max - t_near, 0.001);
 		}
-		camera_medium = rt_camera_medium(camera_ray_origin);
+		// Only a material that bounds a medium can put the camera in one.
+		camera_medium = rt_material_feature(RT_MATERIAL_FEATURE_MEDIA) ? rt_camera_medium(camera_ray_origin) : 0u;
 	}
 
 	const uint max_bounces = RT_GET_MAX_BOUNCES();
@@ -3821,7 +3824,8 @@ void main() {
 				vec2 gwuv = clamp((gfp.xz - grect.xy) / grect.zw, ght, 1.0 - ght);
 				float gprec = textureLod(sampler2D(bindless_textures[nonuniformEXT(gwmap)], SAMPLER_LINEAR_CLAMP), gwuv, 0.0).r;
 				float gair = get_rt_param(RT_PARAM_PRECIP_TEMPERATURE) - get_rt_param(RT_PARAM_PRECIP_LAPSE) * (gfp.y - get_rt_param(RT_PARAM_PRECIP_GROUND));
-				grate = max(gprec, 0.0) * rain_liquid_share(gair, get_rt_param(RT_PARAM_PRECIP_HUMIDITY));
+				grate = max(gprec, 0.0) * rain_liquid_share_nose(gair, get_rt_param(RT_PARAM_PRECIP_HUMIDITY), gfp.y - get_rt_param(RT_PARAM_PRECIP_GROUND),
+								get_rt_param(RT_PARAM_PRECIP_NOSE), get_rt_param(RT_PARAM_PRECIP_NOSE_BASE));
 			}
 			vec3 grr = grate > 0.0 ? rain_ripples(gfp.xz, scene_data_block.data.time, grate, gffp) : vec3(0.0);
 			gfs += grr.xy * grs;

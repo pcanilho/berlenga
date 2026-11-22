@@ -1,1 +1,0 @@
-- Weather: the scattering sky and its clouds are lit in the same units as the ground (the renderer's factor pi without physical light units), so a clear day reads pale blue with white clouds and shadows get their share of skylight; before, the sky sat 1.65 stops under the ground it lit.

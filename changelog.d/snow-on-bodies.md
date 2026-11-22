@@ -1,1 +1,0 @@
-- Snow: moving things carry their own snow. Crates, vehicles and cloth gather falling snow where the sky is open, start with the ground's snow, and lose it to wind past them, bumps and jolts, thaw, rain and fire, the same in raster and path tracing (`SnowCover3D.bodies_enabled`, on by default; `BaseMaterial3D.snow_on_body`).

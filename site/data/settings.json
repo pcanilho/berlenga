@@ -1037,7 +1037,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`).",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). Rock faces weather by aspect, with lichen, moss and seep streaks on the shaded sides (`tm_face_weathering`, `tm_latitude`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1147,7 +1147,7 @@
     "ploughing"
    ],
    "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in; a vehicle left standing in wet mud keeps settling, and suction holds its tyres as it pulls away.",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in; lugs and chains cut clods out of stiff clay and fling them, or drop them behind the wheel when slow; a vehicle left standing in wet mud keeps settling, and suction holds its tyres as it pulls away.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1233,7 +1233,7 @@
     "wear_regrowth_days"
    ],
    "note": "",
-   "what": "repeated wheel passes pack the soil firmer so it sheds rain, flatten the grass and then wear it bare, and it all regrows over weeks.",
+   "what": "repeated wheel passes pack the soil firmer so it sheds rain, flatten the grass and then wear it bare, and it all regrows over weeks; wheels and wallowing animals knead wet clay into a seal, so rain stands in ruts and wallows for days.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1273,7 +1273,7 @@
     "mud_color_map"
    ],
    "note": "",
-   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates and shakes off on bumps.",
+   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates, shakes off on rough tracks and blows off at speed.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1657,6 +1657,17 @@
    ],
    "note": "",
    "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into tiles of piles shared across cells so it handles far fewer instances, and small stones off screen leave its scene with no change to the image (`rendering/pathtracing/offscreen_record_cull`). Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Frost-sorted ground",
+   "settings": [
+    "RockField3D.frost_sorting"
+   ],
+   "note": "",
+   "what": "on cold, wet, gentle soil, frost sorts the stones into circles round fine-soil centres, drawn out into stripes on slopes.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -2665,10 +2676,14 @@
    "name": "Flood wrack",
    "settings": [
     "PlantGenerator.make_flood_wrack()",
-    "GrassField3D.flood_wash"
+    "GrassField3D.flood_wash",
+    "flood_peak_ratio",
+    "flood_peak_day",
+    "storm_wave_ratio",
+    "storm_day"
    ],
    "note": "",
-   "what": "straw, reed and twig strand lines mark the last flood's high water, with the grass below combed flat and silted.",
+   "what": "rivers and lakes keep the last flood's high-water mark and the sea and lakes the last storm's wave run-up on the beach, and straw, reed and twig strand lines mark it, with the grass below combed flat and silted.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2780,6 +2795,17 @@
    ],
    "note": "",
    "what": "fallen leaves drift past the crowns into edges and clearings, farther downwind, pile into hollows and against trunks, logs and stones, and leave ridges swept bare.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Seed down",
+   "settings": [
+    "SeedDown3D"
+   ],
+   "note": "",
+   "what": "dry wind looses dandelion, thistle and willowherb seeds that drift on the air and catch in the grass.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3058,7 +3084,7 @@
     "seed"
    ],
    "note": "",
-   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted and wild cherry flowers white in April.",
+   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted, sweet chestnut bark spirals round the bole with age, and wild cherry flowers white in April; aspen grows in clones whose stems share bark, form, leaf-out and autumn colour (species meta `clone_scale`), and stands place hornbeam and wild cherry under oaks, black poplar on floodplains and aspen in taiga burns.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3212,10 +3238,13 @@
     "krummholz",
     "ground_slope",
     "bank_erosion",
-    "root_stone"
+    "root_stone",
+    "cliff_angle",
+    "cliff_lean",
+    "cliff_dieback"
    ],
    "note": "",
-   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.",
+   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem; on cliffs a tree rooted in a crevice curves out and up from the face, roots running along its cracks and one side of the crown dying back over a strip of dead bark, with yew, Scots pine and hemlock taking the rock faces in their stands.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"
@@ -3784,7 +3813,7 @@
     "SnowCover3D.layers_enabled"
    ],
    "note": "",
-   "what": "crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail.",
+   "what": "crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail; the walls of ruts, prints and trenches show the layers with their own grain, from fine fresh snow and smooth wind slab to glazed crust ledges, dark buried hoar seams and coarse depth hoar at the base.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3819,11 +3848,13 @@
    "settings": [
     "snow_roof",
     "SnowBodies3D.roof_piles",
+    "roof_slab_bodies",
+    "ice_dams",
     "snow_roof_material",
     "snow_roof_heat"
    ],
    "note": "",
-   "what": "roofs hold the share of snowfall building codes give them and shed it by roofing, metal sooner than shingles and heated roofs sooner still; what slides off lands as a bank past the eave.",
+   "what": "roofs hold the share of snowfall building codes give them and shed it by roofing, metal sooner than shingles and heated roofs sooner still; what slides off leaves the eave as separate rigid blocks that break on landing and settle as rounded debris on a soft bank, and heated roofs grow ice dams that hold the snow back.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -4044,10 +4075,12 @@
   {
    "name": "Wind over terrain",
    "settings": [
-    "terrain_wind_enabled"
+    "terrain_wind_enabled",
+    "drainage_winds",
+    "upslope_winds"
    ],
    "note": "",
-   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes.",
+   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4074,6 +4107,17 @@
    ],
    "note": "",
    "what": "day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Late frost",
+   "settings": [
+    "WeatherMap3D.late_frost"
+   ],
+   "note": "",
+   "what": "a hard spring frost browns the young leaves of species already out, first in cold hollows, until a second flush replaces them weeks later.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4235,10 +4279,11 @@
    "settings": [
     "dew_and_frost",
     "cold_pools",
-    "valley_fog"
+    "valley_fog",
+    "smoke_in_pools"
    ],
    "note": "",
-   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost forms there first, and saturated pools fill with a flat fog sea that lifts after sunrise or in a wind.",
+   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost forms there first, and saturated pools fill with a flat fog sea that lifts after sunrise or in a wind, wetting the trees standing in it and riming them below freezing; smoke stays low in the pools and drains down the slopes until the sun mixes it up.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -5025,6 +5070,17 @@
    ],
    "note": "",
    "what": "",
+   "page": "open-worlds",
+   "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Compacted ray tracing structures",
+   "settings": [
+    "rendering/rendering_device/acceleration_structure/compaction"
+   ],
+   "note": "",
+   "what": "static acceleration structures shrink in video memory after they are built.",
    "page": "open-worlds",
    "title": "Open worlds",
    "topic": ""

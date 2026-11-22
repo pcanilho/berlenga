@@ -1,1 +1,0 @@
-- Water: with `raster_reflections` off (caves, interiors), still water and streams mirror what the screen shows around them (screen-space reflections, material `screen_reflections`, on), and rivers keep their clear water.

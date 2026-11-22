@@ -1,1 +1,0 @@
-- Snow: frozen lakes are drawn and walkable (`SnowLakeIce3D`, added by the snow cover): dark clear ice, white snow ice from flooded snow, sparse thermal cracks, the cover's snow on top; the climate bake keeps the season's ice. Fire melts snow through the shared fire heat.

@@ -173,6 +173,14 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Clear calm nights → cold air pools in hollows (frost, valley fog) | linked (22 Nov) | `WorldWeather.air_temperature_at` / `air_humidity_at` (WeatherMap3D `cold_pools`, `get_cold_pool_at`) | Night x clear x calm forcing builds a deficit up to `cold_pool_strength` (8 C) over about 2 h where the cell lies below the mean height within 600 m (topographic position, Lundquist et al. 2008; Whiteman 2000), faded to nothing at the pool's top; breaks up after sunrise or in a wind. Dew, hoarfrost and evaporation take the pooled air per cell; mist, snow and every air reader see it through the contract. Links check: a 200 m valley, 6.9 C pool, -0.9 C on the floor under 5.3 C up the slope, humidity 1.00 vs 0.85, frost only on the floor |
 | Supercooled cloud, wind → rime on windward twigs, rocks and cliffs | linked (22 Nov) | `WorldWeather.rime_at` (Vector3: mm, into the wind); `weather_frost_map` B, A (mm along x, z) | WeatherMap3D `rime` (on): per cell, the fog water at canopy height below 0 C grows 0.3 x LWC x wind at 300 kg/m3 (Makkonen 2000, ISO 12494) into the wind; sheds in a thaw (0.7/h per K to 3 K), sun and rain. `weather_rime_apply` (material.cpp): the faces turned into the wind first, wrapping round as it thickens past 3 cm, feathers drawn out along the wind, thin rime as separate feathers; plants, plant impostors, rocks and steep terrain. SnowRime3D still grows the near-field feather geometry. Links check: 66 mm in 6 h of 0.38 g/m3 at 10 m/s and -6 C, gone after a 6 h thaw. Raster and PT match (project files fork/world-links/rime-raster-pt.png) |
 | Clear night surface cooling → needle ice, frozen ground, puddle ice | linked (22 Nov) | `WorldWeather.surface_temperature_at` (air + WeatherMap3D's radiative cooling) | GroundSurface3D's frost (needle ice, Stefan front) and puddle ice read the surface temperature, not the air: needle ice is a radiation frost, clear calm nights with the air a degree or two above 0 C and the bare surface some degrees below (Outcalt 1971; Lawler 1988). With no sky clock or dew_and_frost off the cooling is 0 and the surface is the air. Ground check (--test=frost): air +1.5 C, 2.4 cm of needles under a clear sky (surface -4.6 C), none overcast (surface 1.6 C) |
+| Clear calm night, slope → drainage (katabatic) wind | linked (22 Nov) | `WorldWeather.wind_at` (WeatherMap3D `drainage_winds`, `get_drainage_wind_at`); the wind map the shaders read | Prandtl's slope flow per cell: u(z) = C exp(-z/l) sin(z/l), peak 0.32 C at (pi/4) l, C = dT sqrt(g / (T gamma)) with dT the cell's radiative cooling, gamma 0.03 K/m, l = sqrt(2K / (N sin a)), K 0.2 m2/s (Prandtl 1942; Mahrt 1982; Horst and Doran 1986). Along the fall line of the weather's cell heights; none under 2 degrees; builds over 0.5 h with night x clear x calm. Every wind reader sees it: smoke, mist, snow drift, grass and trees, fire spread, firebrands. Links check: 2.1 m/s down a 14 degree slope at 6 m, none at 80 m or on the floor, none overcast or by day |
+| Valley fog → fog water at the canopy (drip, rime) | linked (22 Nov) | `WorldWeather.fog_water_at` (WeatherMap3D fog drip pass) | The fog sea's extinction under its top (`valley_fog_density`, as its FogVolume draws it) joins the sky clouds' at each cell's canopy height, 6.7 g/m3 per 1/m (Stephens 1978): 0.13 g/m3 at the default 0.02/m, a radiation fog's 0.05 to 0.3 (Gultepe et al. 2007). Fog drip wets the ground under trees in it and, below 0 C, rime grows on them (the hoarfrost forests of inversion valleys) through the existing readers. Links check: 0.13 g/m3 on the valley floor in the fog, 0 on the shoulder |
+| Cold pool → smoke held near the ground | linked (22 Nov) | `WorldWeather.smoke_concentration_at` (g/m3; WeatherMap3D `smoke_in_pools`, `get_smoke_concentration_at`) | Smoke let out in a pooled cell goes, by the pool's share (its deficit over 0.5 to 3 C, times night), into a held part of the column that stays out of the layer's wind aloft, drains down the slopes with the drainage wind (0.6 of the jet's peak) and is read through the pool's depth instead of 2 km; the morning's mixing layer (sun sine 0.1 to 0.4) releases it into the layer over half an hour (Lavdas 1996; Achtemeier 2005; Whiteman 2000). Readers: the haze where the camera stands, dirty snow (SnowCover3D's black carbon deposition now reads the concentration). Links check: 1.57 g/m3 at 3 m under the pool for a 50 mg/m3 2 km mix, nothing at 400 m; under 1/100 of it by 14:00 |
+| Land and water temperature → sea and lake breezes | linked (22 Nov) | `WorldWeather.wind_at` (WeatherMap3D `sea_breezes`, `get_sea_breeze_at`) | The lake-effect square's water mask (2 km cells, 128 km) blurred over about 25 km gives each place its way onshore and the breeze's reach; the speed is the gravity current's, 0.4 sqrt(g dT 500 m / T) with dT the air over the water's temperature (Simpson 1994; Steyn 2003; Miller et al. 2003), half and offshore at night, faded by an ambient wind from 4 to 10 m/s, relaxed over an hour. Added to the cell's mean wind, so every wind reader and the shaders see it. Links check: air 24 C over a 17 C sea, 4.2 m/s onshore 3 km in, 2.6 m/s 15 km in, none 60 km in; a land breeze at night; gone in a 12 m/s wind |
+| Sun on slopes → upslope winds and ridge cumulus | linked (22 Nov) | `WorldWeather.wind_at`, the clouds (WeatherMap3D `upslope_winds`, `get_ridge_cloud_count`) | The drainage wind's day side: Prandtl's slope flow driven by a quarter of each cell's surface heating over the air (capped at 5 K), K = 2 m2/s so the layer is tens of metres deep, weakened under cloud and in a wind, relaxed over an hour (Prandtl 1942; Whiteman 2000). Crests 60 m or more above the ground within the cold-pool radius (the same box mean) gather a fair-weather cumulus at the condensation level, 125 m per K of dew-point spread, when that is under about 2 km (Banta 1990); held over the crest, not blown off, as storms with the ridge flag (cover, no rain or lightning). Links check: 1.6 m/s upslope at 15 m by 13:00; one cumulus over a 250 m hill, cover 0.59 on top, none 1.8 km off; none in dry air |
+| Cold pools → late frost on new leaves | linked (22 Nov) | `WorldWeather.season_at` keys `leaf_frost`, `leaf_frost_forcing`, `leaf_frost_days` (WeatherMap3D `late_frost`, `get_leaf_frost_at`) → TreeGenerator leaf season `frost_browned` | Per cell the worst spring air frost (the free air, lapse and the cold pool's deficit), severity 0 at -1.5 C to 1 at -4.5 C, with the season's forcing at the cell's height that night. A species browns by its leaf-out then: none in bud, full while unfolding, 0.4 once grown; the share fades from 21 to 42 days as the second flush grows (Augspurger 2009; Vitasse, Lenz and Koerner 2014). Browned leaves are a separate hash from the autumn order; the shrub leaf paths draw their random only when frosted, so unfrosted trees are unchanged. Links check: 5 April, -4.9 C pooled on a valley floor: birch (out 0.2) all browned there, none on the shoulder at 0.7 C; ash still in bud unharmed; gone at 45 days |
+| Flood stage → high-water marks (wrack, washed grass) | linked (22 Nov) | `WorldWater.high_water_at` (PhysXRiver3D per section, PhysXWaterSurface3D lakes with `level_from_flows`; the sea keeps none) | The median annual flood's stage or a higher storm's in the last year; the highest producer answers. Readers: vegetation wrack lines, GrassField3D flood wash. Links check: a 5 m3/s river 2 m over its surface, a weir-fed lake 1 m over its level, the sea none; bank grass under the river's mark washed, none above |
+| Drawn ground relief → placement | contract (22 Nov) | `WorldGround.relief_at`; `terrain_relief_map` / `terrain_relief_rect` | Landscape3D (terrain 57b253b5) answers from its cliff and bank relief: x the height over the heightfield at a fixed xz, y the share. Readers asked to adopt it 22 Nov: vegetation, rocks, ground detail, mud. Links check: a 45 degree bank answers up to 0.25 m, share 0.47; the flat none |
 | Saturated cold pool → valley fog sea | linked (22 Nov) | `WorldWeather.valley_fog_top_at` (WeatherMap3D `valley_fog`, `get_valley_fog_top_at`, `get_valley_fog_depth_at`) | Per cell, the fog top is the highest level in the cold pool where air temperature is at or below the dew point; the basin's level is taken from its lowest fogged cell within 600 m, so the top lies flat across the valley and thins out on the slopes (Whiteman 2000; Gultepe et al. 2007). Forms over about 1 h, lifts in 0.5 h / (1 + wind/3) after sunrise. Drawn as one box FogVolume over the map, density `valley_fog_density` (0.02/m) under the top, white droplets plus a multiple-scattering emission so the sea reads white, not grey; PT reads the same froxels, raster and PT match (project files fork/world-links/valley-fog-raster-pt.png). Links check: 28 m deep in a 200 m valley, top 29 m, 30 m 150 m up the valley, clear at 300 m; a 6 m/s wind lifts it with the pool |
 | Air temperature, dew point → cloud base | linked (20 Nov) | `get_air_dew_point` | `WorldWeather.cloud_base_at`; readers mist, lightning, snow line, orographic rain |
 | Mountain waves → wind aloft | linked (20 Nov) | WeatherMountainWaves | `get_wind_at` vertical part above the boundary layer; `WorldWeather.mountain_wave_velocity_at` alone; ground wind unchanged |
@@ -410,18 +418,18 @@ Chem. Phys.); Fromm et al. 2010 (BAMS).
 
 ## Round 11 candidates (22 Nov, card to Paulo)
 
-1. Night drainage winds (katabatic flow). Source: the cold pools' forcing (night, clear, calm) and the terrain slope
+1. Night drainage winds (katabatic flow) (built 22 Nov). Source: the cold pools' forcing (night, clear, calm) and the terrain slope
    WeatherMap3D already reads. Reader: `WorldWeather.wind_at` near the ground, so smoke, mist, snow drift, grass and
    tree wind and the fire spread (night fires back down slopes) all see it. Air cooled on a slope runs down it at 1 to
    3 m/s in a layer some 10 to 50 m deep, strongest a few metres up, and gathers into a down-valley wind
    (Prandtl 1942 slope flow; Mahrt 1982; Whiteman 2000, ch. 13). Per cell: speed from the radiative cooling and
    the slope sine (Prandtl's balance), along the fall line, faded by the ambient wind; zero by day (the upslope
    anabatic flow is weaker and later).
-2. Valley fog wets and rimes what stands in it. Source: the valley fog's depth (built this round). Reader: the
+2. Valley fog wets and rimes what stands in it (built 22 Nov). Source: the valley fog's depth (built this round). Reader: the
    fog water at the canopy (`fog_water_at`), so fog drip wets the ground under trees in a fog sea and, below 0 C,
    rime grows on the trees in it (the hoarfrost forests of inversion valleys). Radiation fog holds 0.05 to 0.3 g/m3
    of liquid water (Gultepe et al. 2007); today `fog_water_at` reads only the sky's clouds.
-3. Cold pools trap smoke near the ground. Source: the cold pool depth and the smoke layer's column (WeatherMap3D
+3. Cold pools trap smoke near the ground (built 22 Nov). Source: the cold pool depth and the smoke layer's column (WeatherMap3D
    smoke). Reader: the near-ground haze and the smoke a camera sees in a valley at dawn. A night inversion caps the
    mixing: smoke from a fire or chimneys stays within the pool's depth instead of the 2 km day layer, tens of times
    denser near the ground, and clears as the pool breaks up mid-morning (Lavdas 1996, smoke in the southern US
@@ -430,3 +438,48 @@ Chem. Phys.); Fromm et al. 2010 (BAMS).
 
 Sources: Prandtl 1942; Mahrt 1982 (J. Atmos. Sci.); Whiteman 2000 (Mountain Meteorology); Gultepe et al. 2007;
 Lavdas 1996 (USDA Forest Service GTR SRS-6); Achtemeier 2005 (Int. J. Wildland Fire).
+
+## Round 12 candidates (22 Nov, card to Paulo)
+
+1. Sea and lake breezes (built 22 Nov). Source: the land's surface temperature (the weather's radiative heating by day) against
+   the water's (`WorldWater` and `get_water_temperature`), the coast from the water contract. Reader:
+   `WorldWeather.wind_at` near the coast, so waves on lakes, spray, sand, smoke, grass and trees see it. By day the
+   land warms past the water and a shallow onshore wind of 3 to 6 m/s sets in a few hours after sunrise, reaching
+   10 to 40 km inland with a line of cumulus along its front; at night a weaker land breeze blows off the shore
+   (Simpson 1994, "Sea Breeze and Local Winds"; Miller et al. 2003 review). Per cell: onshore component from the
+   land-water temperature difference, faded by distance from the shore and by the ambient wind.
+2. Day upslope (anabatic) winds and ridge cumulus (built 22 Nov). Source: the sun on slopes (the weather's shortwave and slope
+   per cell), the drainage wind's counterpart. Reader: `wind_at` (1 to 3 m/s upslope by midday), the clouds
+   (cumulus forming first over ridges and peaks where the upslope flows meet; Whiteman 2000, ch. 13; Banta 1990).
+   Per cell: Prandtl's flow with the sign of the surface's heating; the clouds' cover raised over ridgelines.
+3. Late frost in the hollows browns new leaves (built 22 Nov). Source: the air temperature at the canopy (now with the cold pools)
+   against the trees' and plants' leaf-out stage (season forcing). Reader: TreeGenerator leaf colour and the
+   vegetation's leaf season, a frost-damage share that lasts weeks until a second flush (Augspurger 2009 on false
+   springs; Vitasse et al. 2014 on frost in valleys). Below about -2 C after budburst the young leaves die; the
+   hollows' oaks and beeches show it while the slopes above stay green.
+
+Later: Flow's local plumes (campfires, building fires) feed the regional smoke field (PhysX's note, 22 Nov), so a
+campfire's smoke pools in a valley at night.
+
+## Round 13 candidates (22 Nov, card to Paulo)
+
+1. Foehn winds in the lee of ranges. Source: the orographic rain already taken from the air on the windward side
+   (`cell_oro`), the wind across the ridge and the mountain waves' stability. Reader: `air_temperature_at` and
+   `air_humidity_at` in the lee (several K warmer, humidity under 30 %), so snow melts and sublimates fast, the
+   ground and fuels dry (fire), and a cloud gap opens over the lee with a cloud wall on the crest. Isentropic
+   drawdown and the latent heat left behind upwind (Elvidge and Renfrew 2016, BAMS; Wuersch and Sprenger 2015;
+   Seibert 1990). Per cell: dT = the dry/moist lapse difference over the height descended, scaled by the share of
+   the moisture rained out.
+2. Along-valley winds (valley and mountain-plain winds). Source: the valley's air heated and cooled more than the
+   plain's over the same height (the topographic amplification factor, the valley's volume per area). Reader:
+   `wind_at` along valley axes: up-valley by day, 3 to 6 m/s, down-valley at night, deeper and longer-lived than
+   the slope flows; smoke and fog carried along the valley (Whiteman 2000 ch. 10; Zardi and Whiteman 2013).
+   Per cell: the valley axis from the smoothed height field, the pressure gradient from the heating difference.
+3. Flow sources feed the regional smoke (PhysX's note). Source: Flow emitters (campfires, PhysXBuildingFire3D)
+   and their heat release. Reader: WeatherMap3D smoke cells through `add_smoke`, so a campfire's smoke pools in
+   a valley at night, drifts with the drainage and valley winds, and dims the sun (Briggs plume rise for the
+   injection height; the local plume stays Flow's within its domain, the regional field takes what leaves it).
+
+
+Sources: Simpson 1994; Miller et al. 2003 (Rev. Geophys.); Whiteman 2000; Banta 1990 (Atmospheric Processes over
+Complex Terrain); Augspurger 2009 (Funct. Ecol.); Vitasse et al. 2014 (Agric. For. Meteorol.).

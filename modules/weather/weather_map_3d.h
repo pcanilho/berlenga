@@ -82,6 +82,9 @@ public:
 		float fade = 1.0f;
 		float cloud_base = 0.0f; // m, its own cloud base (a fire cloud's plume LCL); <= 0: cloud_base_height
 		float fade_target = 0.0f;
+		// A cumulus over a ridge where the day's upslope winds meet (upslope_winds): eased by fade like a fire cloud,
+		// no rain or lightning.
+		bool ridge = false;
 	};
 
 private:
@@ -122,9 +125,31 @@ private:
 	float smoke_lifetime = 3.0f * 86400.0f; // s of weather time, dilution out of the layer in dry weather
 	bool smoke_washout = true; // rain and snow wash it out (WorldWeather::washout_rate)
 	Vector<float> cell_smoke;
+	Vector<float> cell_smoke_low; // g/m2 of the column held under a cold pool's lid (smoke_in_pools), part of cell_smoke
+	// MINERAL DUST (weather_dust.cpp; docs/ideas/sand.md, "Haboob dust walls"): raised by strong dry wind over loose
+	// ground (the storms' outflow makes haboobs), its own field beside the smoke: it rides the wind near the ground,
+	// settles out and washes out as a coarse aerosol.
+	bool dust_storms = true;
+	float dust_source_share = 0.0f; // loose, dry, open ground's share where no ground producer answers
+	float dust_clay = 8.0f; // % clay in the soil (sets the dust's share of the saltation flux)
+	float dust_layer_depth = 1500.0f; // m, the dust's mixed depth
+	float dust_emission_scale = 1.0f;
+	Vector<float> cell_dust; // g/m2 in the column
+	Vector<float> cell_dust_head; // 0..1, the front's leading edge (the density current's raised nose)
+	Ref<Image> dust_image;
+	Ref<ImageTexture> dust_texture;
+	bool dust_global_added = false;
+	void _dust_step(double p_weather_dt);
+	void _dust_shift(Vector2i p_delta);
+	void _dust_upload();
+	float _dust_loose_at(const Vector3 &p_position) const;
+	bool smoke_in_pools = true;
+	float _pool_share(int p_cell) const;
+	void _smoke_pool_step(float p_dt);
 	void _smoke_step(double p_weather_dt);
 	void _smoke_shift(Vector2i p_delta);
-	float _smoke_sigma() const; // extinction (1/m) of the smoke near the ground where the map follows
+	float _smoke_sigma() const; // extinction (1/m) of the smoke and dust near the ground where the map follows
+	float _dust_sigma() const; // the dust's share of it (dust_storms)
 	bool dew_and_frost = true; // clear calm nights: dew, and hoarfrost below freezing (Monteith 1957)
 	// Season (weather_season.h): the date from a SkyClock, or season_day; the climate from a ClimateRecipe.
 	NodePath sky_clock;
@@ -229,8 +254,8 @@ private:
 
 	Vector<Storm> storms;
 	// WIND VORTICES (docs/world-contracts.md, "Wind vortices"): dust devils and lee whirls their owners place and move;
-	// get_wind_at adds a Rankine field round each (Tratt et al. 2003). Copy-on-write, so readers on other threads
-	// see a whole list.
+	// get_wind_at adds a Rankine field round each (Tratt et al. 2003). Readers take a reference first: copy-on-write,
+	// so readers on other threads see a whole list.
 	struct Vortex {
 		int id = 0;
 		Vector3 position; // the foot, on the ground (m)
@@ -241,6 +266,7 @@ private:
 	};
 	Vector<Vortex> vortices;
 	int next_vortex_id = 1;
+	bool vortices_unpublished = false; // changed while this map was not the active one
 	Vector3 _vortex_wind_at(const Vector3 &p_position, float p_height) const;
 	void _publish_vortices();
 	int next_storm_id = 1;
@@ -399,6 +425,17 @@ private:
 	// what the air over it makes of it now (lake_effect_at()'s params).
 	WeatherLakeEffect lake_effect;
 	bool lake_effect_snow = true;
+	// Sea and lake breezes: from the lake-effect square's water (2 km cells), blurred over about 10 km: per cell the
+	// way onshore (x, z, unit) and the breeze's reach (0..1); the breeze's speed now (m/s, + onshore by day).
+	bool sea_breezes = true;
+	float breeze_speed = 0.0f;
+	Vector<float> breeze_field;
+	Vector2 breeze_corner;
+	float breeze_cell = 0.0f;
+	int breeze_n = 0;
+	void _derive_breeze();
+	void _update_breeze(float p_dt_h);
+	Vector2 _breeze_at(Vector2 p_xz) const;
 	Vector4 lake_params_now;
 	float lake_timer = 0.0f;
 	Ref<ImageTexture> lake_texture;
@@ -600,6 +637,21 @@ private:
 	bool cold_pools = true;
 	float cold_pool_strength = 8.0f; // C below the free air at a deep basin's floor
 	Vector<float> cell_pool; // C, deficit per cell
+	// Night drainage (katabatic) winds: per cell the slope flow's jet (x, z m/s at its peak) and the jet's height (m).
+	bool drainage_winds = true;
+	float drain_level = 0.0f; // 0..1, the night's forcing relaxed over half an hour
+	bool upslope_winds = true;
+	float upslope_level = 0.0f; // 0..1, the day's forcing relaxed over an hour
+	Vector<float> cell_ridge; // m, the cell's height over the mean within COLD_POOL_RADIUS (a ridge's prominence)
+	void _update_ridge_clouds(double p_dt);
+	// Late frost on new leaves (late_frost): per cell the worst recent spring frost, x its severity 0..1, y the
+	// season's forcing (K days) at the cell's height that night, z the weather day it struck.
+	bool late_frost = true;
+	Vector<float> cell_leaf_frost;
+	void _update_leaf_frost();
+	Vector<float> cell_drain;
+	void _update_drainage(float p_dt_h);
+	Vector3 _drainage_wind_at(const Vector3 &p_position, float p_height) const;
 	Vector<float> cell_pool_depth; // m, the cell below the mean height round it
 	void _update_pool_depths();
 	void _update_cold_pools(double p_weather_dt);
@@ -958,6 +1010,28 @@ public:
 	void set_smoke_washout(bool p_v) { smoke_washout = p_v; }
 	bool is_smoke_washout() const { return smoke_washout; }
 	float get_smoke_at(Vector3 p_position) const; // g/m2 of particulate in the column
+	void set_dust_storms(bool p_v);
+	bool is_dust_storms() const { return dust_storms; }
+	void set_dust_source_share(float p_v) { dust_source_share = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_dust_source_share() const { return dust_source_share; }
+	void set_dust_clay(float p_v) { dust_clay = CLAMP(p_v, 0.0f, 40.0f); }
+	float get_dust_clay() const { return dust_clay; }
+	void set_dust_layer_depth(float p_v) { dust_layer_depth = CLAMP(p_v, 50.0f, 5000.0f); }
+	float get_dust_layer_depth() const { return dust_layer_depth; }
+	void set_dust_emission_scale(float p_v) { dust_emission_scale = MAX(p_v, 0.0f); }
+	float get_dust_emission_scale() const { return dust_emission_scale; }
+	float get_dust_at(Vector3 p_position) const; // g/m2 in the column
+	float get_dust_top_at(Vector3 p_position) const; // m above the ground, the layer's top (the front's nose included)
+	float get_dust_head_at(Vector3 p_position) const; // 0..1, the front's leading edge
+	float get_dust_concentration_at(Vector3 p_position) const; // g/m3 at the point
+	float get_dust_optical_depth_at(Vector3 p_position) const; // at 550 nm, the column
+	float get_dust_flux_for(float p_wind10, float p_loose, float p_wetness) const; // g/m2/s raised (the source law)
+	void add_dust(Vector3 p_position, float p_kg);
+	void clear_dust();
+	static float dust_flux(float p_ustar, float p_ustar_threshold, float p_clay_percent); // kg/m2/s
+	float get_smoke_concentration_at(Vector3 p_position) const; // g/m3 at the point
+	void set_smoke_in_pools(bool p_enabled);
+	bool is_smoke_in_pools_enabled() const { return smoke_in_pools; }
 	float get_smoke_optical_depth_at(Vector3 p_position) const; // at 550 nm
 	// The direct sun's transmittance through the smoke layer (RGB) at a point, for a sun along p_to_sun.
 	Vector3 get_smoke_transmittance(Vector3 p_position, Vector3 p_to_sun) const;
@@ -972,7 +1046,7 @@ public:
 	Vector3 get_fire_cloud_for(float p_heat) const;
 	// The storm cells, and how far each has grown (0..1, its rise and decay over its lifetime).
 	const Vector<Storm> &get_storms() const { return storms; }
-	float get_storm_strength(const Storm &p_storm) const { return _storm_weight(p_storm); }
+	float get_storm_strength(const Storm &p_storm) const { return p_storm.ridge ? 0.0f : _storm_weight(p_storm); }
 	// Haze from precipitation: each source (a SnowFall3D, rain) pushes its extinction (1/m), a height
 	// scale for a layer near the ground (<= 0: uniform), its albedo, and optionally a centre and radius.
 	// Sources add up. With drive_environment_fog, the uniform part goes into the environment's
@@ -1110,6 +1184,10 @@ public:
 	float contract_orographic_factor_at(const Vector3 &p_position) const override { return get_orographic_factor_at(p_position); }
 	float contract_snowfall_at(const Vector3 &p_position) const override { return get_snowfall_at(p_position); }
 	float contract_smoke_at(const Vector3 &p_position) const override { return get_smoke_at(p_position); }
+	float contract_smoke_concentration_at(const Vector3 &p_position) const override { return get_smoke_concentration_at(p_position); }
+	float contract_dust_at(const Vector3 &p_position) const override { return get_dust_at(p_position); }
+	float contract_dust_top_at(const Vector3 &p_position) const override { return get_dust_top_at(p_position); }
+	float contract_dust_concentration_at(const Vector3 &p_position) const override { return get_dust_concentration_at(p_position); }
 	float contract_obstacle_height_at(const Vector3 &p_position) const override { return get_obstacle_height_at(p_position); }
 	float contract_obstacle_lee_at(const Vector3 &p_position) const override { return get_obstacle_lee_at(p_position); }
 	float contract_fog_water_at(const Vector3 &p_position) const override { return get_fog_water_at(p_position); }
@@ -1240,6 +1318,18 @@ public:
 	void set_cold_pool_strength(float p_celsius) { cold_pool_strength = MAX(p_celsius, 0.0f); }
 	float get_cold_pool_strength() const { return cold_pool_strength; }
 	float get_cold_pool_at(Vector3 p_position) const;
+	void set_sea_breezes(bool p_enabled);
+	bool is_sea_breezes_enabled() const { return sea_breezes; }
+	Vector2 get_sea_breeze_at(Vector3 p_position) const; // m/s at 10 m, the breeze's share of the mean wind
+	void set_upslope_winds(bool p_enabled);
+	bool is_upslope_winds_enabled() const { return upslope_winds; }
+	int get_ridge_cloud_count() const;
+	void set_late_frost(bool p_enabled);
+	bool is_late_frost_enabled() const { return late_frost; }
+	Vector3 get_leaf_frost_at(const Vector3 &p_position) const;
+	void set_drainage_winds(bool p_enabled);
+	bool is_drainage_winds_enabled() const { return drainage_winds; }
+	Vector3 get_drainage_wind_at(Vector3 p_position, float p_height_above_ground) const;
 	void set_valley_fog(bool p_enabled);
 	bool is_valley_fog_enabled() const { return valley_fog; }
 	void set_valley_fog_density(float p_sigma) { valley_fog_density = MAX(p_sigma, 0.0f); }

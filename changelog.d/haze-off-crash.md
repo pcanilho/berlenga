@@ -1,1 +1,0 @@
-- Weather: turning aerosol haze off in a running scene no longer crashes.

@@ -1,1 +1,0 @@
-- Water: the shore's grid fields (swash film, wet sand, shore foam, depth, ripples) are read with a smooth cubic B-spline filter instead of bilinear, so the swash film and foam no longer show 25 cm cells.

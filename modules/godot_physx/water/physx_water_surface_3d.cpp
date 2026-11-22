@@ -2585,6 +2585,16 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_catchment_inflow", "discharge"), &PhysXWaterSurface3D::set_catchment_inflow);
 	ClassDB::bind_method(D_METHOD("get_catchment_inflow"), &PhysXWaterSurface3D::get_catchment_inflow);
 	ClassDB::bind_method(D_METHOD("get_rain_inflow"), &PhysXWaterSurface3D::get_rain_inflow);
+	ClassDB::bind_method(D_METHOD("set_flood_peak_ratio", "ratio"), &PhysXWaterSurface3D::set_flood_peak_ratio);
+	ClassDB::bind_method(D_METHOD("get_flood_peak_ratio"), &PhysXWaterSurface3D::get_flood_peak_ratio);
+	ClassDB::bind_method(D_METHOD("set_flood_peak_day", "day"), &PhysXWaterSurface3D::set_flood_peak_day);
+	ClassDB::bind_method(D_METHOD("get_flood_peak_day"), &PhysXWaterSurface3D::get_flood_peak_day);
+	ClassDB::bind_method(D_METHOD("get_high_water_at", "world_position"), &PhysXWaterSurface3D::get_high_water_at);
+	ClassDB::bind_method(D_METHOD("set_storm_wave_ratio", "ratio"), &PhysXWaterSurface3D::set_storm_wave_ratio);
+	ClassDB::bind_method(D_METHOD("get_storm_wave_ratio"), &PhysXWaterSurface3D::get_storm_wave_ratio);
+	ClassDB::bind_method(D_METHOD("set_storm_day", "day"), &PhysXWaterSurface3D::set_storm_day);
+	ClassDB::bind_method(D_METHOD("get_storm_day"), &PhysXWaterSurface3D::get_storm_day);
+	ClassDB::bind_static_method("PhysXWaterSurface3D", D_METHOD("wave_runup", "height", "period", "slope"), &PhysXWaterSurface3D::wave_runup);
 	ClassDB::bind_method(D_METHOD("get_outflow_discharge"), &PhysXWaterSurface3D::get_outflow_discharge);
 
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
@@ -2612,6 +2622,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_level"), "set_water_level", "get_water_level");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "level_from_flows"), "set_level_from_flows", "get_level_from_flows");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "catchment_inflow", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:m³/s"), "set_catchment_inflow", "get_catchment_inflow");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_peak_ratio", PROPERTY_HINT_RANGE, "1,50,0.1,or_greater"), "set_flood_peak_ratio", "get_flood_peak_ratio");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "flood_peak_day", PROPERTY_HINT_RANGE, "0,364,1"), "set_flood_peak_day", "get_flood_peak_day");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "storm_wave_ratio", PROPERTY_HINT_RANGE, "1,10,0.1,or_greater"), "set_storm_wave_ratio", "get_storm_wave_ratio");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "storm_day", PROPERTY_HINT_RANGE, "0,364,1"), "set_storm_day", "get_storm_day");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping"), "set_damping", "get_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_amplitude", PROPERTY_HINT_RANGE, "0,2,0.01,or_greater"), "set_ripple_amplitude", "get_ripple_amplitude");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "step_mode", PROPERTY_HINT_ENUM, "Per Tick,Per Frame"), "set_step_mode", "get_step_mode");
@@ -5275,6 +5289,24 @@ float PhysXWaterSurface3D::get_outflow_discharge() const {
 // lake's hollow, so its outlet cell gathers the catchment) less the storm flow its rivers already bring. The level
 // settles again when that moves by over a tenth of the lake's inflow.
 void PhysXWaterSurface3D::_rain_inflow_update(double p_delta) {
+	if (const WorldWeather *ww = WorldContracts::weather()) {
+		flood_clock += p_delta * ww->time_scale() / 86400.0;
+	} else {
+		flood_clock += p_delta / 86400.0;
+	}
+	if (!level_from_flows && shore_waves && !Engine::get_singleton()->is_editor_hint()) {
+		// The sea's storm waves for its strandline, every 10 s.
+		sea_check -= p_delta;
+		if (sea_check <= 0.0) {
+			sea_check = 10.0;
+			const float h = _shore_height();
+			sea_wave_h = h;
+			if (h > sea_storm_h || flood_clock - sea_storm_t > 365.0) {
+				sea_storm_h = h;
+				sea_storm_t = flood_clock;
+			}
+		}
+	}
 	if (!level_from_flows || outflows.is_empty()) {
 		return;
 	}
@@ -5309,14 +5341,8 @@ void PhysXWaterSurface3D::_rain_inflow_update(double p_delta) {
 // The level budget (docs/ideas/water.md "Lake outlets"): steady state, where the outlets pass what flows in.
 // A lake takes hours to days to settle, so it holds the settled level rather than creeping during play.
 // When the level moves (over a centimetre) the rivers leaving and entering it rebuild on the new level.
-void PhysXWaterSurface3D::_settle_level() {
-	if (!level_from_flows || outflows.is_empty() || !is_inside_tree()) {
-		return;
-	}
-	float q_in = catchment_inflow + rain_inflow;
-	for (const Inflow &f : inflows) {
-		q_in += f.discharge;
-	}
+float PhysXWaterSurface3D::_level_for_inflow(float p_q_in) const {
+	const float q_in = p_q_in;
 	float lo = Math::INF;
 	for (const Outflow &f : outflows) {
 		lo = MIN(lo, f.crest);
@@ -5340,11 +5366,114 @@ void PhysXWaterSurface3D::_settle_level() {
 			hi = mid;
 		}
 	}
-	const float level = 0.5f * (lo + hi) - get_global_position().y;
+	return 0.5f * (lo + hi);
+}
+
+// High-water marks (docs/ideas/water.md "High-water marks"): the season's is the level at which the outlets pass the
+// median annual flood (flood_peak_ratio times the base inflow: the rivers' own flow without their storm flow, and the
+// catchment's), on flood_peak_day; a storm that raises the lake higher leaves its own mark, kept a year.
+void PhysXWaterSurface3D::_flood_marks_update() {
+	if (!level_from_flows || outflows.is_empty() || !is_inside_tree()) {
+		flood_season = -Math::INF;
+		return;
+	}
+	float q_base = catchment_inflow;
+	for (const Inflow &f : inflows) {
+		float q = f.discharge;
+		Object *o = ObjectDB::get_instance(ObjectID((uint64_t)f.owner));
+		if (o != nullptr && o->has_method(SNAME("get_rain_discharge"))) {
+			q -= float(o->call(SNAME("get_rain_discharge")));
+		}
+		q_base += MAX(q, 0.0f);
+	}
+	flood_season = _level_for_inflow(MAX(q_base, 0.001f) * flood_peak_ratio);
+	const float now = get_global_position().y + water_level;
+	if (rain_inflow > 0.0f && now > flood_storm) {
+		flood_storm = now;
+		flood_storm_t = flood_clock;
+	}
+}
+
+// Stockdon et al. (2006), eq. 19: R2 = 1.1 (setup + swash / 2), setup 0.35 b sqrt(H0 L0), swash
+// sqrt(H0 L0 (0.563 b^2 + 0.004)), L0 = g T^2 / 2 pi the deep-water wavelength; fitted over ten field experiments
+// on natural beaches (slopes 0.01 to 0.15). On a dissipative beach (Iribarren under 0.3) the infragravity swash rules:
+// R2 = 0.043 sqrt(H0 L0).
+float PhysXWaterSurface3D::wave_runup(float p_height, float p_period, float p_slope) {
+	if (!(p_height > 0.0f) || !(p_period > 0.0f)) {
+		return 0.0f;
+	}
+	const float l0 = 9.81f * p_period * p_period / (float)Math::TAU;
+	const float hl = Math::sqrt(p_height * l0);
+	const float b = CLAMP(p_slope, 0.005f, 0.5f);
+	if (b / Math::sqrt(p_height / l0) < 0.3f) {
+		return 0.043f * hl;
+	}
+	return 1.1f * (0.35f * b * hl + 0.5f * hl * Math::sqrt(0.563f * b * b + 0.004f));
+}
+
+Vector4 PhysXWaterSurface3D::get_high_water_at(const Vector3 &p_world_pos) const {
+	const Vector4 none(-Math::INF, -1.0f, 0.0f, 0.0f);
+	if (!p_world_pos.is_finite() || !is_inside_tree()) {
+		return none;
+	}
+	const int doy = WorldContracts::weather() ? WorldContracts::weather()->day_of_year() : 135;
+	if (!level_from_flows && shore_waves) {
+		// The sea's strandline: the still level plus the storm's run-up on the beach's slope there, swashing up it.
+		const float reach = MAX(render_extent, 0.5f * MAX(active_domain_size.x, active_domain_size.y));
+		if (Math::abs(p_world_pos.x - grid_center.x) > reach || Math::abs(p_world_pos.z - grid_center.y) > reach) {
+			return none;
+		}
+		Vector2 up(0.0f, 0.0f);
+		float slope = 0.1f; // a typical sandy beach, when no ground answers
+		const WorldGround *g = WorldContracts::ground();
+		if (g != nullptr && g->has_provider()) {
+			const float e = 2.0f;
+			const float hx = g->height_at(p_world_pos + Vector3(e, 0, 0)) - g->height_at(p_world_pos - Vector3(e, 0, 0));
+			const float hz = g->height_at(p_world_pos + Vector3(0, 0, e)) - g->height_at(p_world_pos - Vector3(0, 0, e));
+			if (Math::is_finite(hx) && Math::is_finite(hz)) {
+				up = Vector2(hx, hz) / (2.0f * e);
+				slope = up.length();
+				up = slope > 1e-5f ? up / slope : Vector2();
+			}
+		}
+		const float level = get_global_position().y + water_level;
+		// The year's storm: storm_wave_ratio times the waves the shore gets now (its fetch caps a lake's).
+		const float h_now = sea_wave_h >= 0.0f ? sea_wave_h : shore_wave_height;
+		const float h0 = h_now * storm_wave_ratio;
+		// Storm seas keep their steepness (about 1 in 25 offshore), so the period grows as the square root of the height.
+		float runup = wave_runup(h0, shore_wave_period * Math::sqrt(storm_wave_ratio), slope);
+		float age = float(Math::posmod(doy - storm_day, 365));
+		if (sea_storm_h > h0 && flood_clock - sea_storm_t < 365.0) {
+			runup = wave_runup(sea_storm_h, shore_wave_period * Math::sqrt(sea_storm_h / MAX(h_now, 0.01f)), slope);
+			age = float(flood_clock - sea_storm_t);
+		}
+		return Vector4(level + runup, age, up.x, up.y);
+	}
+	if (!Math::is_finite(flood_season) || Math::abs(p_world_pos.x - grid_center.x) > 0.5f * active_domain_size.x ||
+			Math::abs(p_world_pos.z - grid_center.y) > 0.5f * active_domain_size.y) {
+		return none;
+	}
+	if (Math::is_finite(flood_storm) && flood_storm > flood_season && flood_clock - flood_storm_t < 365.0) {
+		return Vector4(flood_storm, float(flood_clock - flood_storm_t), 0.0f, 0.0f);
+	}
+	return Vector4(flood_season, float(Math::posmod(doy - flood_peak_day, 365)), 0.0f, 0.0f);
+}
+
+void PhysXWaterSurface3D::_settle_level() {
+	if (!level_from_flows || outflows.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	float q_in = catchment_inflow + rain_inflow;
+	for (const Inflow &f : inflows) {
+		q_in += f.discharge;
+	}
+	const float level = _level_for_inflow(q_in) - get_global_position().y;
 	if (Math::abs(level - water_level) < 0.01f) {
+		_flood_marks_update();
 		return;
 	}
 	set_water_level(level);
+	_flood_marks_update();
 	for (const Outflow &f : outflows) {
 		if (Object *o = ObjectDB::get_instance(ObjectID((uint64_t)f.owner))) {
 			o->call_deferred(SNAME("rebuild"));

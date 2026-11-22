@@ -69,6 +69,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "rock_far_cover_rect", "vec4" },
 		{ "rock_far_reach_map", "sampler2D" },
 		{ "rock_contact_rect", "vec4" },
+		// The frost-sorted ground (RockField3D frost_sorting publishes it): r gate, g stone share.
+		{ "terrain_frost_map", "sampler2D" },
+		{ "terrain_frost_rect", "vec4" },
 		// The last glaciers' flow and wear, for ice-worn rock in the detail normal (TerrainGenerator3D.ice_worn_detail).
 		{ "terrain_ice_flow", "sampler2D" },
 		{ "terrain_ice_flow_rect", "vec4" },
@@ -78,6 +81,10 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_sky_full", "vec4" },
 		{ "terrain_sky_full2", "vec4" },
 		{ "terrain_sky_full3", "float" },
+		// The far sun shadows' horizon map (TerrainGenerator3D.update_sun_horizon).
+		{ "terrain_sun_horizon_map", "sampler2D" },
+		{ "terrain_sun_horizon_frame", "vec4" },
+		{ "terrain_sun_horizon_size", "vec4" },
 		// The stand's worn trails and fresh rooting (Landscape3D publishes it).
 		{ "terrain_stand_map", "sampler2D" },
 		{ "terrain_stand_rect", "vec4" },
@@ -86,6 +93,8 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		// The drawn ground's relief over the heightfield for GPU placers (WorldGround.relief_at): R height m, G share.
 		{ "terrain_relief_map", "sampler2D" },
 		{ "terrain_relief_rect", "vec4" },
+		// Landscape3D's bank relief for the same patch (x metres).
+		{ "terrain_bank_relief", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {

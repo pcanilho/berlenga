@@ -1,1 +1,0 @@
-- Path tracing: water only a few millimetres deep over a floor (pool and beach edges) no longer turns into dark or saturated blue strips far from the world origin, where the ray offset grew wider than the water.

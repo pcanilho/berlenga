@@ -129,6 +129,26 @@ float rain_liquid_share(float p_celsius, float p_humidity) {
 	return 1.0 - 1.0 / (1.0 + exp(clamp(e, -60.0, 60.0)));
 }
 
+// The same under a warm layer aloft (WeatherMap3D::liquid_share()): p_height m above the map's ground, the warm nose's
+// peak (C, 1 or less: none) and its base (m above the ground). The snow it melts reaches the ground as rain unless a
+// deep cold layer under it refreezes the drops to ice pellets (Bourgouin 2000).
+float rain_liquid_share_nose(float p_celsius, float p_humidity, float p_height, float p_nose_celsius, float p_nose_base) {
+	float plain = rain_liquid_share(p_celsius, p_humidity);
+	if (p_nose_celsius <= 1.0) {
+		return plain;
+	}
+	float x = min((p_nose_celsius - 1.0) / 2.0, 1.0);
+	float melt = x * x * (3.0 - 2.0 * x);
+	if (p_height >= p_nose_base) {
+		return max(plain, melt);
+	}
+	float pa = 9.81 * 1000.0 * log(1.0 + 0.5 * p_nose_celsius / 273.15);
+	float na = p_celsius < 0.0 ? 9.81 * (p_nose_base - p_height) * -log(1.0 + 0.5 * p_celsius / 273.15) : 0.0;
+	float stays = 46.0 + 0.66 * pa;
+	float pellets = 66.0 + 0.66 * pa;
+	return max(plain, melt * (1.0 - clamp((na - stays) / (pellets - stays), 0.0, 1.0)));
+}
+
 // Water beaded on a wet leaf (docs/ideas/rain.md, step 5). A waxy leaf is hydrophobic: rain stands on it as drops
 // rather than a film (contact angles of 90 to 150 degrees on most leaves; Wang et al. 2014's survey), so a wet leaf
 // shows small bright caps, not a darker blade. Lagarde (2013, "Water drop 4a") draws them as a drop texture; here a

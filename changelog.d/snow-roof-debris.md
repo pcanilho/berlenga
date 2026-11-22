@@ -1,0 +1,1 @@
+- Snow: falling roof pieces leave apart and spinning, and land as rounded blocks on a smooth bank kept off the bare strip under the eave (`SnowCover3D.add_mound`).

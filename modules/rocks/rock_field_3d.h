@@ -527,6 +527,27 @@ private:
 	void _sync_scree_blocks() const;
 	void _update_contact(bool p_force);
 	void _clear_contact();
+	// The frost-sorted ground for the terrain material: terrain_frost_map (RGBA8: r gate, g stone share, b the fines' dome) over
+	// terrain_frost_rect, a FROST_MAP_SIZE square round the target.
+	static constexpr int FROST_MAP_RES = 512;
+	static constexpr real_t FROST_MAP_SIZE = 64.0;
+	struct FrostMapJob {
+		const RockField3D *field = nullptr;
+		const TerrainGenerator3D *gen = nullptr;
+		FrostClimate fc;
+		Vector2 origin;
+		Vector<uint8_t> data;
+		bool any = false;
+	};
+	FrostMapJob *frost_map_job = nullptr;
+	WorkerThreadPool::TaskID frost_map_task = WorkerThreadPool::INVALID_TASK_ID;
+	Ref<ImageTexture> frost_map_texture;
+	Vector2 frost_map_origin = Vector2(1e30, 1e30);
+	bool frost_map_published = false;
+	static void _frost_map_job(void *p_job);
+	void _update_frost_map();
+	void _finish_frost_map(bool p_wait);
+	void _clear_frost_map();
 	real_t rockfall_rate = 4.0; // falls per game hour in rockfall_radius
 	real_t rockfall_radius = 150.0;
 	int rockfall_max = 16;

@@ -1,1 +1,0 @@
-- Snow: drifts see the wind over their own shape. A big drift becomes a snow dune that creeps downwind, a small one flattens, and a slip face holds the lee (`SnowCover3D.drift_relief`). The wind shear model is shared with the terrain's dune sea (`DuneShear`).

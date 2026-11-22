@@ -3787,3 +3787,35 @@ Built (20 Nov, Paulo picked "also add wall-reflecting waves"):
   0.6 to 4 m with a Phillips k^-3 spectrum, deep-water dispersion over 4 m, unit variance), each direction offset by a
   fixed random phase. Drawn as geometry (rows every 0.25 m, 17 lanes), so the path tracer has the real waves; steep
   faces (slope > 0.35) break white.
+
+## High-water marks (22 Nov, coordinator: WorldWater.high_water_at for vegetation's wrack lines)
+
+Vegetation strings wrack lines (drift litter, silt, combed grass) along the last flood's highest water. Rivers and
+lakes answer `WorldWater.high_water_at` through `contract_water_high_water_at`.
+
+- **Stage at another flow.** At-a-station hydraulic geometry (Leopold and Maddock 1953, USGS PP 252): depth ~ Q^0.40,
+  width ~ Q^0.26, speed ~ Q^0.34. The fitted 0.40 folds in the spread over the banks, which a fixed-width Manning
+  channel (Q^0.6) leaves out, so each section's flood stage is its bed plus depth x (Q_flood / Q)^0.40.
+- **Which flood.** The season's mark is the median annual flood (QMED in the Flood Estimation Handbook, about the
+  bankfull flow, a 1.5 to 2 year return: Leopold, Wolman and Miller 1964). `flood_peak_ratio` (default 6) sets it as a
+  multiple of the base flow; real rivers range from a few times their mean flow to twenty and more for small steep
+  catchments. The default 6 is a judgement for mid-size temperate rivers. `flood_peak_day` (default 110, late April)
+  dates it: snowmelt in spring; set winter days for rain-fed rivers.
+- **Storms.** A storm that lifts a section (river) or the level (lake) above the season's mark leaves its own mark with
+  its time on the weather's clock (`time_scale`), kept for a year. The highest mark answers, as the contract says.
+- **Lakes.** A lake whose outlets set its level (`level_from_flows`) solves the same broad-crested weir for the flood
+  inflow (flood_peak_ratio times the rivers' base flow plus the catchment's). Still water: no direction. A lake at a
+  fixed level answers no mark. The mark answers over the lake's domain; past the shore the ground stands above it.
+- **Reach.** A river answers within three flood half-widths of its centre line, enough for any floodplain the
+  section's width implies; vegetation compares the ground with the mark, so higher ground takes none.
+- **The sea's strandline (22 Nov).** Wrack on a beach lies where the storm's swash reaches: the 2% exceedance run-up
+  of Stockdon, Holman, Howd and Sallenger (2006, Coastal Engineering 53), R2 = 1.1 (0.35 b sqrt(H0 L0) + sqrt(H0 L0
+  (0.563 b^2 + 0.004)) / 2), L0 = g T^2 / 2 pi, b the foreshore slope (WorldGround's, read 2 m either side; 0.1 when
+  no ground answers); on dissipative beaches (Iribarren under 0.3) R2 = 0.043 sqrt(H0 L0). The year's storm waves are
+  `storm_wave_ratio` (default 4: annual-maximum over typical Hs on exposed Atlantic and North Sea coasts, about 6-10 m
+  over 1.5-2.5 m) times the waves the shore gets now (shore_wave_height, capped by the wind sea, so a lake's fetch
+  caps its own), on `storm_day` (default 15, mid-January); their period grows as the square root of the height (storm
+  seas keep a steepness near 1 in 25). Higher waves seen in the last year leave their own line. The direction is up
+  the beach (the swash's). Every water surface without outlets and with shore_waves answers this, so fixed-level lakes
+  get their wind-wave strandline too. No tides or surge in the sea yet: when they come, the still level becomes the
+  spring high tide plus the surge.

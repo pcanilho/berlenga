@@ -25,6 +25,10 @@ summary: "Sun and moon set by date, time and place; a scattering atmosphere with
 
   *Fair weather cumulus of mixed sizes over a meadow, raster.*
 
+  ![A lenticular plate near the sun with pastel colours along its thin edge, raster](media/sky-cloud-iridescence.jpg)
+
+  *Cloud iridescence: pastel pink and green bands along a lenticular's thin edge near the sun, raster.*
+
 - **Clouds that never repeat** (always on): shape noise read at two scales with an irrational ratio.
 
   ![Cloud cover from above over 24 km, before and after the fix](media/clouds-repeat.jpg)

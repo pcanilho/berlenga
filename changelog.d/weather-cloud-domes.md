@@ -1,1 +1,0 @@
-- Weather: broken cloud domes over more of its height, so a fair-weather sky shows rounded cumulus instead of flat-topped blocks; overcast decks keep their flat tops.

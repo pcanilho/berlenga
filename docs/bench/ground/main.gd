@@ -169,6 +169,7 @@ var trackdust_test := false
 var stream_test := false
 var fordcar_test := false
 var parked_test := false
+var relief_test := false
 var trails_test := false
 var setup_mud := Vector2.ZERO # mud depth and moisture _setup lays before the node enters the tree
 var offpatch_test := false
@@ -256,6 +257,7 @@ func _ready() -> void:
 		elif a == "--test=stream": stream_test = true
 		elif a == "--test=fordcar": fordcar_test = true
 		elif a == "--test=parked": parked_test = true
+		elif a == "--test=relief": relief_test = true
 		elif a == "--test=trails": trails_test = true
 		elif a == "--test=offpatch": offpatch_test = true
 		elif a == "--test=puddles": puddle_test = true
@@ -334,7 +336,7 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test or stream_test or fordcar_test or trails_test or parked_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test or stream_test or fordcar_test or trails_test or parked_test or relief_test:
 		if clog_test:
 			await _run_clog_tests()
 		if treads_test:
@@ -377,6 +379,8 @@ func _ready() -> void:
 			await _run_stream_stone_tests()
 		if parked_test:
 			await _run_parked_tests()
+		if relief_test:
+			await _run_relief_tests()
 		if fordcar_test:
 			await _run_ford_car_tests()
 		if trails_test:
@@ -719,9 +723,11 @@ func _run_tests() -> void:
 	var damp_before := _max_slope(o, 0.3)
 	surface.settle(3.0)
 	var damp_wall := _max_slope(o, 0.3)
-	# Against its own walls before settling: the CPU field (headless) presses on a coarser texel, so its walls start
-	# near 52 degrees rather than the GPU's 70.
-	_check("damp sand keeps steep walls", damp_wall > 45.0 and damp_wall > damp_before - 3.0, "steepest wall %.0f before, %.0f degrees after 3 s" % [damp_before, damp_wall])
+	# Against its own walls before settling, or its repose where they start steeper: the CPU field (headless) presses
+	# on a coarser texel, so its walls start near 52 degrees; the GPU's start near 70 and settle to the damp repose
+	# (GroundSurface3D::material_cell: 33 to 65 degrees with the cohesion, about 62 at moisture 0.4).
+	var damp_repose := lerpf(33.0, 65.0, smoothstep(0.0, 0.5, 0.4))
+	_check("damp sand keeps steep walls", damp_wall > 45.0 and damp_wall > minf(damp_before, damp_repose) - 3.0, "steepest wall %.0f before, %.0f degrees after 3 s (repose %.0f)" % [damp_before, damp_wall, damp_repose])
 	# Mud creeps back slowly.
 	surface.clear_deformation()
 	surface.ground_type = GroundSurface3D.GROUND_SOIL
@@ -2337,12 +2343,17 @@ func _run_clog_tests() -> void:
 		var fill := 0.0
 		for w in 4:
 			fill += tc.get_wheel_mud(w) / 4.0
-		treads[t] = [r[0], fill]
-		print("  tread %d: %.2f m in 4 s, tread %.0f%% full" % [t, r[0], fill * 100.0])
+		var clods := 0.0
+		for w in 4:
+			clods += tc.get_wheel_clods_thrown(w)
+		treads[t] = [r[0], fill, clods]
+		print("  tread %d: %.2f m in 4 s, tread %.0f%% full, %.1f kg of clods cut and flung" % [t, r[0], fill * 100.0, clods])
 	var rd: Array = treads[PhysXVehicleWheel3D.TREAD_ROAD]
 	var mt: Array = treads[PhysXVehicleWheel3D.TREAD_MUD]
 	var ch: Array = treads[PhysXVehicleWheel3D.TREAD_CHAINS]
 	_check("road tyres pack with clay, mud tyres throw it out", rd[1] > 1.2 * mt[1], "%.0f%% full against %.0f%%" % [rd[1] * 100.0, mt[1] * 100.0])
+	# Round 23.3: lugs and above all chains' cross links cut the stiff clay in blocks and fling them as clods.
+	_check("lugs and chains cut clods out of stiff clay, chains most; road tyres none", ch[2] > mt[2] and mt[2] > 1.0 and rd[2] == 0.0, "%.1f kg chains, %.1f kg mud tyres, %.1f kg road" % [ch[2], mt[2], rd[2]])
 	_check("mud tyres and chains get further in sticky clay than road tyres", mt[0] > rd[0] + 0.1 and ch[0] > rd[0] + 0.1,
 			"%.2f m and %.2f m against %.2f m" % [mt[0], ch[0], rd[0]])
 	var g_dry := PhysXVehicleWheel3D.tread_firm_grip(PhysXVehicleWheel3D.TREAD_CHAINS, 0.0, 0.0)
@@ -2797,16 +2808,19 @@ func _run_flake_tests() -> void:
 			await get_tree().physics_frame
 		clocks[scale] = car.get_body_mud_wetness()
 	print("  wetness after 2 s at a world clock of 1 and 60: %.3f, %.3f" % [clocks[1.0], clocks[60.0]])
-	_check("parked mud dries on the world's clock", clocks[60.0] < 0.1 and clocks[1.0] > 0.9, "%.3f at 60x, %.3f at 1x" % [clocks[60.0], clocks[1.0]])
+	_check("parked mud dries on the world's clock", (1.0 - clocks[60.0]) > 30.0 * (1.0 - clocks[1.0]) and clocks[60.0] < 0.8, "%.3f at 60x, %.3f at 1x" % [clocks[60.0], clocks[1.0]])
 	var runs := {}
 	for k in ["crawl", "fast"]:
 		r = await _flake_car([35.0, 0.05, 10.0, 0.0])
 		car = r[0]
 		car.max_engine_torque = 3000.0 if k == "fast" else 700.0
+		# Parked an hour of world time (a minute a frame) to dry.
+		(r[1] as WeatherMap3D).time_scale = 60.0
 		t = 0
-		while car.get_body_mud_wetness() > 0.02 and t < 3600:
+		while car.get_body_mud_wetness() > 0.02 and t < 600:
 			await get_tree().physics_frame
 			t += 1
+		(r[1] as WeatherMap3D).time_scale = 1.0
 		surface.follow_target = NodePath()
 		surface.queue_free()
 		await get_tree().physics_frame
@@ -7850,3 +7864,25 @@ func _run_seal_tests() -> void:
 	_check("wheels knead wet clay into a seal", seal_a > 0.5 and seal_b == 0.0, "%.2f against %.2f" % [seal_a, seal_b])
 	_check("a sealed hollow holds its rain far longer", a0 > 0.005 and b0 > 0.005 and a1 > 0.5 * a0 and a1 > 2.0 * b1, "%.1f l against %.1f l left" % [a1 * 1000.0, b1 * 1000.0])
 	near_on = true
+
+
+# The terrain's drawn relief (WorldGround.relief_at): a 30 cm bulge drawn over x > 2.
+class ReliefStub extends WorldGround:
+	func _relief_at(p: Vector3) -> Vector2:
+		return Vector2(0.3, 1.0) if p.x > 2.0 else Vector2.ZERO
+
+
+# The ground sits on the drawn surface (round 23, terrain 57b253b5): where the terrain draws relief over its
+# heightfield, prints and contact take its height, not the heightfield's.
+func _run_relief_tests() -> void:
+	WorldContracts.clear_overrides()
+	WorldContracts.set_ground(ReliefStub.new())
+	await _setup("flat", GroundSurface3D.GROUND_SOIL, 0.3, 0.0)
+	surface.refresh_ground()
+	for i in 10:
+		await get_tree().physics_frame
+	var off := surface.get_ground_height_at(Vector3(-3, 0, 0))
+	var on := surface.get_ground_height_at(Vector3(4, 0, 0))
+	print("  ground height %.3f m off the relief, %.3f m on it" % [off, on])
+	_check("the ground stands on the terrain's drawn relief", absf(on - off - 0.3) < 0.02, "%.3f m higher" % (on - off))
+	WorldContracts.clear_overrides()

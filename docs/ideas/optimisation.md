@@ -165,13 +165,88 @@ copy with mode `COMPACT`, free the original once the GPU is done with it).
 - **Proof.** A PT frame before and after must be byte-identical (same tree, same traversal). Memory is
   read from the RD buffer counters. Lavapipe may report little saving since its BVH layout differs from
   NVIDIA's; the real saving is measured on the PC.
+- **Switches.** `rendering/rendering_device/acceleration_structure/compaction` (on by default). Env
+  `RD_BLAS_COMPACTION_MOVE_ALL=1` moves every static BLAS even when the driver reports no saving, so the copy
+  path runs on lavapipe. `--verbose` logs each step (`BLAS compaction: ...`).
 
 ## PC GPU bench list (when the PC is back)
 
 - GPU frame time raster and PT on the landscape showcase, before/after each merged change.
-- BLAS compaction: AS memory and trace time (compacted BLASes can be slightly faster to trace).
+- BLAS compaction: AS memory and trace time (compacted BLASes can be slightly faster to trace). Run
+  `docs/bench/rt_memory` and the landscape showcase with `--verbose` and compare "MB to MB" in the log and
+  the video memory line with the setting on and off.
 - Any GPU culling or format change: per-pass GPU timestamps.
 
 ## Results
 
-None yet.
+### BLAS compaction (cloud, lavapipe)
+
+- New bench `docs/bench/rt_memory`: 24 static meshes (sphere, torus, subdivided box, fine relief) on a
+  plane, path traced at 640x360, 4 spp. Lavapipe reports compacted size equal to the build size (12.69 MB
+  of 12.69 MB), so it saves nothing here; with `RD_BLAS_COMPACTION_MOVE_ALL=1` all 6 BLASes moved through
+  the compacting copy and the frame is **byte-identical** to the previous build (max difference 0), with
+  persistent instances off and on (keyed TLAS rewrite path).
+- Memory saving on real GPUs: PC bench list.
+
+### Media skip for caustics and the camera probe
+
+- Caustic photons ran every frame whenever caustics and refraction were on, one photon per pixel over three
+  cascades, even in a scene with no water at all. Only a surface that bounds a medium can bend a photon
+  (`RT_MAT_FLAG_VOLUME`: Transmission that is not thin-walled, or a shader writing TRANSMISSION and IOR), so the
+  renderer now scans the material cache for one (again only when a material changes or a cache entry is rebuilt)
+  and skips the photons and the per-pixel camera medium probe without one (`RT_MATERIAL_FEATURE_MEDIA`).
+- Side effect found on the way: every dry point inside the caustics square read as "covered" by the map, which
+  switched the radiance cache off there, so in a scene without water the cache was off around the camera.
+  Without media the cache is back, as it was before caustics existed.
+- Proof (rt_memory bench, PT 640x360 4 spp): with the water slab (`--medium`) the frame is byte-identical to the
+  previous build. Without media, byte-identical to the previous build with caustics off when the radiance cache
+  is off too (`--no-radiance-cache`; the cache is not bit-repeatable between runs, two runs of one build differ by
+  up to 6/255). With the cache on, the frame equals "caustics off" within that run-to-run noise.
+- On the PC, in an indoor scene with no water, caustics off saved 2.8 ms of 27.2 ms per
+  frame; this change gives that back with caustics left on.
+- With water present, dry ground inside the square also lost the cache (every point the map held counted). Now
+  only points where the map's ratio differs from exactly 1 (bent and straight photons unequal: real lines) keep
+  the cache off. Proof: `--medium` frame byte-identical to the previous build with the cache off; with it on,
+  same mean brightness (137.63 vs 137.62 of 255), differences are the cache's run-to-run noise.
+
+### Dune and drift wind shear (CPU)
+
+- `DuneShear::rows()` (dune sea and snow drifts) rounded and wrapped four indices per cell per reach step
+  (32 by default: 128 `lround` and modulo pairs per cell). The offsets along the wind do not depend on the cell, so
+  they are worked out once per call (and the row offsets once per row), templated on wrap; reach steps where the
+  offset sits at a rounding tie keep the direct form. A standalone harness over 4 grid sizes, 6 wind directions
+  (ties included) and both edge modes gives bit-identical output, 3.5 times faster (818 ms to 235 ms). Snow and
+  ground `--test` pass as before.
+
+## Design: path tracer cost that no setting removes (next round)
+
+The PC numbers for one indoor scene: the path tracer pass grew from about 18 ms to 27 ms over a week of
+features. The settings explain under half of that, and the rest is spread over many commits. Most features
+are gated by runtime branches that the scene never takes. Runtime-gated code is not free on a GPU, for two
+reasons:
+
+- **Live state across `traceRayEXT`.** Every value the raygen keeps across a trace call is spilled to the
+  ray tracing stack and reloaded afterwards. NVIDIA's path tracing work on a 2024 AAA title (Bavoil, NVIDIA
+  developer blog, May 2025) cut spilled live state from 222 to 84 bytes and the main trace pass by 15%. It did
+  this by turning a rarely-repeating loop into a branch (72 bytes gone), keeping radiance and throughput in
+  fp16, packing ray directions into 32 bits and bounce counters into 16 bits, and moving demodulation out of
+  raygen. Their tool is the Nsight Graphics GPU Trace "Ray Tracing Live State" tab: it lists, per call site,
+  each spilled GLSL variable with its bytes.
+- **Register allocation for the worst path.** A branch the scene never takes still reserves its registers,
+  which lowers occupancy for every pixel (Laine, Karras and Aila, "Megakernels Considered Harmful", HPG 2013).
+  The usual answer is permutations: compile the code out where the scene cannot use it (Pettineo, "The Shader
+  Permutation Problem", 2018, on the trade with compile time; the engine already does this for fog, decals,
+  SER and ray query shadows through `RT_FLAG_*` specialization constants).
+
+Plan, after the bisect fixes:
+
+1. On the PC, one Nsight GPU Trace of the indoor scene. Note the raygen's spilled live state per trace site,
+   its register count and active threads per warp. The cloud's software GPU cannot report any of these.
+2. Live-state fixes that leave the image identical: values kept across a trace only because of a feature the
+   path did not take, loop-carried structs, 32-bit counters. Each is proven byte-identical on rt_memory.
+3. Scene-feature specialization constants for the largest blocks the scene does not use. Candidates are
+   media and caustics (the media flag already exists), snow, glaze and wetness, hair, and subsurface. Each one
+   doubles the pipeline variants it touches, so only blocks Nsight shows as costly get one. A variant
+   switch must not make surfaces vanish while it compiles: the engine already traces with the default
+   material while a hit group compiles (b06913a5), and a feature variant can keep the full shader until its
+   own is ready.

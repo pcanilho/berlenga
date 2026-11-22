@@ -1976,7 +1976,7 @@ void TreeGenerator::_grow_year(int p_year) {
 			if (wind_exposure > 0.0f && buds[bi].terminal && on.order == 0) {
 				// Exposed trees stay short: the leader's shoots are shortened by the wind's drying
 				// and loading (Holtmeier 2009), most of all at the tree line.
-				const float above = Math::smoothstep(0.5f, 3.0f, on.end().y - root.y);
+				const float above = Math::smoothstep(0.5f, 3.0f, float(on.end().y - root.y));
 				buds[bi].vigor *= 1.0f - (0.45f + 0.4f * krummholz) * wind_exposure * above;
 			}
 		}
@@ -2037,7 +2037,7 @@ void TreeGenerator::_grow_year(int p_year) {
 		if (wind_exposure > 0.0f && order == 0) {
 			// Exposed stems stay short (Holtmeier 2009): the wind's drying and load shorten the
 			// leader's shoots, a flagged spruce at the tree line 3-8 m after a century.
-			len *= 1.0f - 0.75f * wind_exposure * Math::smoothstep(1.0f, 6.0f, from.end().y - root.y);
+			len *= 1.0f - 0.75f * wind_exposure * Math::smoothstep(1.0f, 6.0f, float(from.end().y - root.y));
 		}
 		// Height growth has a ceiling (the largest annual leader shoots: about 0.6 m for beech and
 		// maple, 0.8-1 m for spruce, larch, birch and white pine; Burns and Honkala 1990; Schutt et
@@ -3313,7 +3313,7 @@ void TreeGenerator::_wind_flag() {
 		}
 		const Node &n = nodes[i];
 		pivot[i] = n.start;
-		const float above = Math::smoothstep(shelter, shelter + 1.5f, n.start.y - ground);
+		const float above = Math::smoothstep(shelter, shelter + 1.5f, float(n.start.y - ground));
 		Vector3 h(n.dir.x, 0.0f, n.dir.z);
 		if (h.length_squared() < 1e-6f || above <= 0.0f) {
 			continue;
@@ -3848,6 +3848,8 @@ static inline float tube_v_len(float p_girth, float p_repeats) {
 // the bark); displaced, the bole's ridges stood through the stems' furrows as teeth (docs, 18 Nov).
 static thread_local Vector3 tube_fade_c;
 static thread_local float tube_fade_r = 0.0f;
+// Sweet chestnut's spiral bark (trees.md 5bf): bark tiles slid round per metre of height; set by _build_mesh.
+static thread_local float tube_spiral = 0.0f;
 static thread_local float tube_fade_r0 = 0.0f; // No relief at all within this.
 // The swept crotch's height over a split, in bole radii.
 static constexpr float TREE_CROTCH_TOP = 1.1f;
@@ -4027,8 +4029,13 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 	// tile over a couple of metres, like a gentle spiral grain), so the copy a tile above or
 	// beside never lines up with this one. One value a ring keeps the seam closed; the crotch
 	// evaluates it at the same points (the bole's ring centre, the stem's axis).
+	// Sweet chestnut's furrows twist round the bole with age (trees.md 5bf; Mitchell 1974: the spiral, either hand,
+	// shows from 30-50 years and grows steeper, 20-30 degrees on old trees): the bark's tiles slide
+	// round the stem by the height times the tangent over a tile's width, so the ridges run up as helices, in relief and
+	// colour alike.
+	const float spiral = tube_spiral;
 	auto twist = [&](const Vector3 &p_p) -> float {
-		return 0.6f * (moss_noise(p_p * 0.45f + Vector3(2.7f, 0.0f, 6.1f), 0x74776973u) - 0.5f);
+		return 0.6f * (moss_noise(p_p * 0.45f + Vector3(2.7f, 0.0f, 6.1f), 0x74776973u) - 0.5f) + spiral * float(p_p.y);
 	};
 	auto relief_at = [&](float p_u, float p_v) -> float {
 		const float x = (p_u - Math::floor(p_u)) * hn - 0.5f, y = (p_v - Math::floor(p_v)) * hn - 0.5f;
@@ -4187,7 +4194,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				// None on a cap's end face: the furrows ran into its centre as pleats.
 				const float face = 1.0f - CLAMP(Math::abs(slope) - 0.5f, 0.0f, 1.0f);
 				rr += p_relief * macro_relief(p_points[r] + dir * p_radii[r]) * relief_at(float(s) / p_sides * repeats + twist(p_points[r]), v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.07f, gy) : 1.0f) * face *
-						(tube_fade_r > 0.0f ? Math::smoothstep(tube_fade_r0, tube_fade_r, p_points[r].distance_to(tube_fade_c)) : 1.0f);
+						(tube_fade_r > 0.0f ? Math::smoothstep(tube_fade_r0, tube_fade_r, float(p_points[r].distance_to(tube_fade_c))) : 1.0f);
 			}
 			const Vector3 n_out = capped ? (dir - t * slope).normalized() : dir;
 			// The cap's end face is mapped flat across it, in the colour of weathered end grain:
@@ -4542,6 +4549,21 @@ static const LeafSeasonSpec LEAF_SEASONS[TreeGenerator::PRESET_MAX] = {
 	{ true, 280.0f, 300.0f, 220.0f, 120.0f, Color(0.45f, 0.32f, 0.05f) }, // Sweet chestnut: late; yellow-brown.
 };
 
+TreeGenerator::LeafSeason TreeGenerator::_tree_leaf_season() const {
+	if (leaf_season_forced) {
+		return leaf_season_force;
+	}
+	if (phenology_shift == Vector2() || season.is_empty()) {
+		return _leaf_season(preset, season);
+	}
+	// A clone's own dates (trees.md 5bf): aspen clones side by side leaf out up to a week or two apart and turn as
+	// far apart in autumn, one bare while the next is still green (Mitton and Grant 1996).
+	Dictionary s = season.duplicate();
+	s["forcing"] = float(s.get("forcing", 1000.0f)) - 45.0f * phenology_shift.x;
+	s["senescence"] = float(s.get("senescence", 0.0f)) - 70.0f * phenology_shift.y;
+	return _leaf_season(preset, s);
+}
+
 TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dictionary &p_season) {
 	LeafSeason ls;
 	ERR_FAIL_INDEX_V(int(p_preset), int(PRESET_MAX), ls);
@@ -4564,7 +4586,37 @@ TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dic
 		ls.out = 0.0f;
 		ls.fallen = 1.0f;
 	}
+	// A late frost (WeatherMap3D.late_frost, through the season at the tree's place): the leaves that were unfolding
+	// that night die and brown, while buds still closed survive (Augspurger 2009; Vitasse, Lenz and Koerner 2014).
+	// Fully grown leaves have hardened somewhat. Dormant buds put out a second flush over three to six weeks, so
+	// early species in the hollows stand brown while late ones (oak, ash) leaf out unharmed after it.
+	const float frost = p_season.get("leaf_frost", 0.0f);
+	if (frost > 0.0f && ls.out > 0.0f) {
+		const float out_then = CLAMP((float(p_season.get("leaf_frost_forcing", 0.0f)) - need) / 150.0f, 0.0f, 1.0f);
+		const float days = p_season.get("leaf_frost_days", 0.0f);
+		const float tender = out_then <= 0.0f ? 0.0f : Math::lerp(1.0f, 0.4f, Math::smoothstep(0.7f, 1.0f, out_then));
+		ls.frost = CLAMP(frost * tender * (1.0f - Math::smoothstep(21.0f, 42.0f, days)), 0.0f, 1.0f);
+	}
 	return ls;
+}
+
+// The leaf state in quarters, 0..624: out + 5 turned + 25 fallen + 125 frost-browned.
+int TreeGenerator::_leaf_season_code(const LeafSeason &p_ls) {
+	const auto q = [](float p_v) { return CLAMP(int(Math::round(p_v * 4.0f)), 0, 4); };
+	return q(p_ls.out) + 5 * q(p_ls.autumn) + 25 * q(p_ls.fallen) + 125 * q(p_ls.frost);
+}
+
+// Per-tree local season for near meshes (trees.md 5bi). The forest's meshes grow from one season, the generator's;
+// the leaves at a place follow the season there (WorldWeather.season_at: forcing and senescence at its height, the
+// late-frost mark of its hollow). The near mesh of a cell whose local leaf state differs is grown in that state, so
+// raster and path tracing both see it in the geometry's vertex colours and leaf counts (instance data is not traced
+// on rigged multimeshes). Quarters keep the number of near meshes small: one per state a species shows in view.
+int TreeGenerator::near_season_band(const Dictionary &p_local) const {
+	if (p_local.is_empty() || int(preset) < 0 || int(preset) >= int(PRESET_MAX) || !LEAF_SEASONS[preset].deciduous) {
+		return 0;
+	}
+	const int here = _leaf_season_code(_leaf_season(preset, p_local));
+	return here == _leaf_season_code(_leaf_season(preset, season)) ? 0 : 1 + here;
 }
 
 Dictionary TreeGenerator::get_leaf_season(Preset p_preset, const Dictionary &p_season) {
@@ -4574,6 +4626,7 @@ Dictionary TreeGenerator::get_leaf_season(Preset p_preset, const Dictionary &p_s
 	d["autumn"] = ls.autumn;
 	d["fallen_fraction"] = ls.fallen;
 	d["autumn_color"] = ls.color;
+	d["frost_browned"] = ls.frost;
 	// Heath shrubs (trees.md 5u): the open share of their flowers, and its colour.
 	if (p_preset == PRESET_GORSE || p_preset == PRESET_BROOM || p_preset == PRESET_GUM_ROCKROSE || p_preset == PRESET_WHITE_BROOM) {
 		d["flowering"] = get_bloom(p_preset, p_season.get("day_of_year", 182.0f));
@@ -5408,7 +5461,7 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt,
 		if (p_ax != 1.0f) {
 			// Stretched cells: the fissures between side-by-side plates open wide, the breaks
 			// across a plate stay narrow.
-			e *= Math::lerp(1.6f, 0.3f, Math::abs(d.x) / len);
+			e *= Math::lerp(1.6f, 0.3f, float(Math::abs(d.x) / len));
 		}
 		// p_vmerge >= 0: walls to a cell above or below split with their own share, so
 		// plates run along the stem for one, two or three cells, offset from their neighbours.
@@ -6535,7 +6588,7 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 	// its underside too. On a log it grows over the upper half and down the flanks, and the
 	// face pressed into the litter stays bare (Soderstrom 1988).
 	// A coppice stool stands open to sun and wind after every cut: moss in patches only.
-	const float foot = (fallen || fallen_branch) ? Math::smoothstep(-0.45f, 0.25f, p_normal.y) : Math::exp(-h / 1.1f) * (cut_height > 0.0f && cut_height <= 0.5f ? 0.5f : 1.0f);
+	const float foot = (fallen || fallen_branch) ? Math::smoothstep(-0.45f, 0.25f, float(p_normal.y)) : Math::exp(-h / 1.1f) * (cut_height > 0.0f && cut_height <= 0.5f ? 0.5f : 1.0f);
 	const float up = p_normal.y;
 	const float top = CLAMP((up - 0.35f) / 0.5f, 0.0f, 1.0f) * 0.75f;
 	const float patch = 0.65f * moss_noise(p_pos * 2.2f, 0x6d6f7373u + uint32_t(seed)) + 0.35f * moss_noise(p_pos * 7.0f, 0x6d6f7374u);
@@ -6571,7 +6624,7 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 				// a cut, trees.md 5ao).
 				const float wander = 0.6f * (moss_noise(p_pos * 6.0f, 0x6261726bu) - 0.5f);
 				const float on_root = 1.0f - Math::smoothstep(1.0f, 2.0f, lat / foot_roots.width + wander);
-				bare = MAX(bare, on_root * Math::smoothstep(0.0f, 0.2f, out / foot_roots.len[k]) * Math::smoothstep(-0.4f, 0.3f, p_normal.y));
+				bare = MAX(bare, on_root * Math::smoothstep(0.0f, 0.2f, out / foot_roots.len[k]) * Math::smoothstep(-0.4f, 0.3f, float(p_normal.y)));
 			}
 			// Patchy, not a clean line: moss creeps up the roots' sides in tongues.
 			bare *= Math::smoothstep(0.0f, 0.4f, patch + 0.3f * bare);
@@ -7221,7 +7274,7 @@ void TreeGenerator::_vase_prune(int p_year) {
 			const Node &n = nodes[l];
 			const float h = n.start.y - base_y;
 			if (!n.removed && !n.dead && h >= 0.6f && h <= 1.6f) {
-				cand.push_back({ l, Math::atan2(n.dir.z, n.dir.x), n.radius });
+				cand.push_back({ l, float(Math::atan2(n.dir.z, n.dir.x)), n.radius });
 			}
 		}
 	}
@@ -7393,7 +7446,7 @@ void TreeGenerator::_split_trunk() {
 	};
 	LocalVector<Sc> sc;
 	for (const int s2 : scaff) {
-		sc.push_back({ s2, Math::atan2(nodes[s2].dir.z, nodes[s2].dir.x) });
+		sc.push_back({ s2, float(Math::atan2(nodes[s2].dir.z, nodes[s2].dir.x)) });
 	}
 	for (uint32_t a = 1; a < sc.size(); a++) {
 		for (uint32_t b = a; b > 0 && sc[b].az < sc[b - 1].az; b--) {
@@ -9888,9 +9941,9 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		if (n.removed || n.dead || n.order < 1 || n.radius > 0.02f || (n.main >= 0 && !nodes[n.main].removed)) {
 			continue;
 		}
-		tips.push_back({ i, CLAMP((n.end().y - base_y) / tall, 0.0f, 1.0f) });
+		tips.push_back({ i, float(CLAMP((n.end().y - base_y) / tall, 0.0f, 1.0f)) });
 	}
-	const LeafSeason ls = _leaf_season(preset, season);
+	const LeafSeason ls = _tree_leaf_season();
 	int big_end = 0;
 	// A parasite's swelling on a limb (mistletoe's sinkers, the fir broom rust's canker): a spindle round the limb,
 	// p_half each way along it, p_r at its middle, easing to the limb's own radius at its ends, a little uneven.
@@ -11201,7 +11254,7 @@ int TreeGenerator::_grow_crown_parts(Builder &r_b) {
 		for (int i = 1; i < int(nodes.size()); i++) {
 			const Node &n = nodes[i];
 			if (!n.removed && !n.dead && n.leafy && n.order >= 1 && n.radius <= 0.012f) {
-				spurs.push_back({ i, CLAMP((n.end().y - base_y) / tall, 0.0f, 1.0f) });
+				spurs.push_back({ i, float(CLAMP((n.end().y - base_y) / tall, 0.0f, 1.0f)) });
 			}
 		}
 	}
@@ -12662,7 +12715,7 @@ void TreeGenerator::_peel_bark(Builder &r_bark) {
 			const Vector3i cell(int(Math::floor(vw[v].x / 0.06f)), int(Math::floor(vw[v].y / 0.06f)), int(Math::floor(vw[v].z / 0.06f)));
 			if (!edge_cells.has(cell) && deadwood_features.size() < 8 * 384) {
 				edge_cells.insert(cell);
-				for (float f : { 0.0f, vw[v].x, vw[v].y, vw[v].z, nr[v].x, nr[v].y, nr[v].z, 0.0f }) {
+				for (float f : { 0.0f, float(vw[v].x), float(vw[v].y), float(vw[v].z), float(nr[v].x), float(nr[v].y), float(nr[v].z), 0.0f }) {
 					deadwood_features.push_back(f);
 				}
 			}
@@ -13096,6 +13149,25 @@ void TreeGenerator::_plan_wounds() {
 			}
 		}
 		len += n.length;
+	}
+	if (cliff_angle > 0.0f && cliff_dead > 0.0f && len >= 1.0f) {
+		// A cliff tree's strip-bark stem (trees.md 5bg; Matthes, Larson and Kelly 2002): the bark died over the
+		// sector fed by a lost root, from the foot to the dead limbs above it, long ago, and woundwood rolled in
+		// thick along both edges (Shigo 1989) but never closed. Drawn as an old bark strip (the lightning strip's
+		// shape, wide and healed at the edges); its bearing is the dead sector's (_cliff_bend). stem_at's azimuth runs
+		// from +X toward -Z on an upright stem, the sector's from +X toward +Z.
+		RandomPCG cr;
+		cr.seed(uint64_t(seed) * 2654435761u + 0x73747269u);
+		Wound w;
+		w.kind = WOUND_LIGHTNING;
+		w.s0 = 0.0f;
+		w.s1 = len * Math::lerp(0.7f, 0.95f, cr.randf());
+		w.az0 = -cliff_dead_az;
+		w.twist = (cr.randf() < 0.5f ? -1.0f : 1.0f) * float(Math::TAU) / Math::lerp(6.0f, 14.0f, cr.randf());
+		w.half_w = MIN(cliff_dead * 0.6f, 1.2f) * MAX(nodes[ms].radius, 0.03f);
+		w.age = Math::lerp(30.0f, 120.0f, cr.randf());
+		w.salt = cr.rand();
+		wounds.push_back(w);
 	}
 	if (len < 2.5f || r13 <= 0.0f) {
 		return;
@@ -14648,7 +14720,7 @@ void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const 
 	// Published for vegetation's climber leaf meshes: position, blade normal, petiole direction,
 	// size, light, the stem's age (0 young, 1 old) and how far up the stem the leaf is (0 foot, 1 tip):
 	// old ivy grows adult shoots with unlobed leaves where it reaches the light high up.
-	const float vals[CLIMBER_LEAF_FLOATS] = { p_at.x, p_at.y, p_at.z, p_normal.x, p_normal.y, p_normal.z, p_out.x, p_out.y, p_out.z, p_size, 0.5f, climber_stem_age, climber_stem_up };
+	const float vals[CLIMBER_LEAF_FLOATS] = { float(p_at.x), float(p_at.y), float(p_at.z), float(p_normal.x), float(p_normal.y), float(p_normal.z), float(p_out.x), float(p_out.y), float(p_out.z), p_size, 0.5f, climber_stem_age, climber_stem_up };
 	for (float v : vals) {
 		climber_leaves.push_back(v);
 	}
@@ -16289,7 +16361,7 @@ PackedFloat32Array TreeGenerator::_collider_data() const {
 				const Vector3 b = n.end();
 				const int bone = rigged && i < int(node_bone.size()) ? node_bone[i] : 0;
 				const float r = rsum / count;
-				const float vals[8] = { a.x, a.y, a.z, b.x, b.y, b.z, r, float(bone) };
+				const float vals[8] = { float(a.x), float(a.y), float(a.z), float(b.x), float(b.y), float(b.z), r, float(bone) };
 				for (float v : vals) {
 					d.push_back(v);
 				}
@@ -16732,9 +16804,9 @@ void TreeGenerator::_build_root_stone(Builder &r_b) const {
 			const float cav = 0.55f + 0.45f * CLAMP(stone.cavity[i], 0.0f, 1.0f);
 			Color c = base;
 			c = Color(c.r * mott * cav, c.g * mott * cav, c.b * mott * cav);
-			const float lich = Math::smoothstep(0.58f, 0.7f, moss_noise(p * 7.0f, ls + 21u)) * Math::smoothstep(0.0f, 0.5f, nn.y);
+			const float lich = Math::smoothstep(0.58f, 0.7f, moss_noise(p * 7.0f, ls + 21u)) * Math::smoothstep(0.0f, 0.5f, float(nn.y));
 			c = c.lerp(lichen_c * cav, 0.75f * lich);
-			c = c.lerp(soil_c, 1.0f - Math::smoothstep(stone.ground - 0.02f, stone.ground + 0.07f, p.y));
+			c = c.lerp(soil_c, 1.0f - Math::smoothstep(stone.ground - 0.02f, stone.ground + 0.07f, float(p.y)));
 			r_b.verts.push_back(p);
 			r_b.normals.push_back(nn);
 			r_b.uvs.push_back(Vector2(p.x, p.z) * 4.0f);
@@ -16763,10 +16835,10 @@ void TreeGenerator::_build_root_stone(Builder &r_b) const {
 			j_amt = Math::lerp(j_amt, Math::round(j_amt * 3.0f) / 3.0f, 0.65f);
 			const Vector3 lp = stone.c + u * stone.r * (1.0f + 0.5f * j_amt);
 			// Grey with darker weathering and pale lichen crusts in patches.
-			const float lich = Math::smoothstep(0.6f, 0.72f, moss_noise(lp * 9.0f, ls + 21u)) * Math::smoothstep(-0.2f, 0.4f, u.y);
+			const float lich = Math::smoothstep(0.6f, 0.72f, moss_noise(lp * 9.0f, ls + 21u)) * Math::smoothstep(-0.2f, 0.4f, float(u.y));
 			const float shade = (0.78f + 0.22f * u.y) * (0.7f + 0.45f * nz2) * (0.85f + 0.25f * nz3) * (1.0f + 0.35f * lich);
 			// Lichen-grey above, soil-stained low down.
-			Color c = base.lerp(Color(0.3f, 0.25f, 0.19f).srgb_to_linear(), 1.0f - Math::smoothstep(stone.ground - 0.02f, stone.ground + 0.08f, lp.y));
+			Color c = base.lerp(Color(0.3f, 0.25f, 0.19f).srgb_to_linear(), 1.0f - Math::smoothstep(stone.ground - 0.02f, stone.ground + 0.08f, float(lp.y)));
 			c = Color(c.r * shade, c.g * shade, c.b * shade);
 			r_b.verts.push_back(lp);
 			r_b.normals.push_back(u);
@@ -16948,7 +17020,7 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 		if (stilt_height <= 0.0f || !p_drape) {
 			return p;
 		}
-		const float w = 1.0f - Math::smoothstep(top, top + 2.0f * tr + 0.2f, p.y - ax.y);
+		const float w = 1.0f - Math::smoothstep(top, top + 2.0f * tr + 0.2f, float(p.y - ax.y));
 		const Vector2 rel(p.x - ax.x, p.z - ax.z);
 		const float d = rel.length();
 		const float to = 0.9f * tr;
@@ -17050,7 +17122,195 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 	}
 }
 
+// Trees on cliffs (trees.md 5bg). A tree rooted in a crevice of a steep rock face leaves the face roughly square to it,
+// then turns up (negative gravitropism, set in reaction wood) and leans out toward the open sky: the J or sabre form of
+// cliff cedars, yews and pines (Larson, Matthes and Kelly 2000, Cliff Ecology; Kelly and Larson 1997 on Thuja
+// occidentalis of the Niagara Escarpment). Built in two steps so neither the collar code (which assumes an upright
+// stem on level soil) nor gravity's work on the crown is redone. First the grown skeleton is bent back over the face,
+// toward -Z, by the face's angle less the final lean, along the stem from a little above the collar: a skeletal
+// bend, each limb carried rigidly with the stem node it leaves (Pirk et al. 2012, Plastic Trees: a grown skeleton
+// adapted after the fact), so limbs low in the bend never fold as a space bend would fold them. Then the finished
+// mesh is turned about the foot by the face's angle (_cliff_turn): the level soil becomes the face, the collar and
+// roots lie on it, and the crown ends up turned by the lean alone, so its droop, leaf angles and moss stay true.
+void TreeGenerator::_cliff_bend() {
+	if (cliff_angle <= 0.0f || fallen || fallen_branch || nodes.size() < 2) {
+		return;
+	}
+	// The spine: the root node, then the main stem (a child of the root, as _main_stem finds it) up its leader.
+	LocalVector<int> spine;
+	spine.push_back(0);
+	for (int k = nodes[0].main >= 0 ? nodes[0].main : _main_stem(); k > 0 && k < int(nodes.size()) && !nodes[k].removed; k = nodes[k].main) {
+		spine.push_back(k);
+	}
+	if (spine.size() < 2) {
+		return;
+	}
+	const float r0 = nodes[spine[1]].radius;
+	const float delta = cliff_angle - cliff_lean;
+	// The bend starts over the collar (whose root sweep reaches about 1.2 stem radii up) and runs over a metre or two,
+	// tighter on small trees; curvature stays under 1 / (2 r) so the stem's inner side never folds.
+	float total = 0.0f;
+	for (const int k : spine) {
+		total += nodes[k].length;
+	}
+	const float s0 = MAX(0.15f, 2.5f * r0);
+	const float ls = MAX(MIN(Math::lerp(0.6f, 1.6f, float((uint32_t(seed) * 2654435761u >> 9) & 255u) / 255.0f), 0.45f * total), 3.0f * delta * r0);
+	auto bend_at = [&](float p_s) {
+		return -delta * Math::smoothstep(s0, s0 + ls, p_s);
+	};
+	// Each spine node's old start and its turn; the new start chains from the previous new end.
+	const int count = int(nodes.size());
+	LocalVector<int> attach; // Per node: the spine node its limb leaves (-1: on the spine).
+	attach.resize(count);
+	for (int i = 0; i < count; i++) {
+		attach[i] = -1;
+	}
+	LocalVector<int> limb_root; // Per limb node: the first node of its limb (a spine node's lateral).
+	limb_root.resize(count);
+	LocalVector<uint8_t> on_spine;
+	on_spine.resize(count);
+	for (int i = 0; i < count; i++) {
+		on_spine[i] = 0;
+	}
+	for (const int k : spine) {
+		on_spine[k] = 1;
+	}
+	// Limbs: everything reached from a spine node's laterals (walk down main and laterals).
+	// Sectored dieback (Larson, Matthes and Kelly 2000; Matthes, Larson and Kelly 2002, Sectored architecture): a
+	// cliff tree's stem carries water in strips from each root to the limbs above it, so when a root dies in a crevice
+	// that dries or breaks, the bark over its strip dies to the top (a strip-bark stem, _plan_wounds) and the limbs on
+	// that side die with it, kept as grey dead wood without their finest twigs.
+	RandomPCG dr;
+	dr.seed(uint64_t(seed) * 0x9e3779b9u + 0x636c6966u);
+	const float foot_y = nodes[0].start.y;
+	LocalVector<int> stack;
+	for (const int k : spine) {
+		for (int l = nodes[k].first_lateral; l >= 0; l = nodes[l].next_sibling) {
+			bool dead_limb = false;
+			if (cliff_dead > 0.0f && !nodes[l].removed) {
+				const Vector2 h(nodes[l].dir.x, nodes[l].dir.z);
+				if (h.length_squared() > 1e-6f) {
+					const float off = Math::abs(Math::angle_difference(cliff_dead_az, float(Math::atan2(h.y, h.x))));
+					const float above = Math::smoothstep(0.3f, 1.0f, float(nodes[l].start.y - foot_y));
+					dead_limb = dr.randf() < 0.9f * above * (1.0f - Math::smoothstep(cliff_dead * 0.8f, cliff_dead * 1.4f, off));
+				}
+			}
+			stack.push_back(l);
+			while (!stack.is_empty()) {
+				const int n = stack[stack.size() - 1];
+				stack.resize(stack.size() - 1);
+				if (n < 0 || n >= count || on_spine[n] || attach[n] >= 0) {
+					continue;
+				}
+				attach[n] = k;
+				limb_root[n] = l;
+				if (dead_limb && !nodes[n].removed) {
+					if (nodes[n].radius < 0.006f && n != l) {
+						nodes[n].removed = true;
+					} else {
+						nodes[n].dead = true;
+						nodes[n].leafy = false;
+					}
+				}
+				if (nodes[n].main >= 0) {
+					stack.push_back(nodes[n].main);
+				}
+				for (int c = nodes[n].first_lateral; c >= 0; c = nodes[c].next_sibling) {
+					stack.push_back(c);
+				}
+			}
+		}
+	}
+	LocalVector<Vector3> old_start;
+	LocalVector<Basis> turn;
+	old_start.resize(count);
+	turn.resize(count);
+	for (int i = 0; i < count; i++) {
+		old_start[i] = nodes[i].start;
+	}
+	// Each spine node starts where its parent's turned frame carries its old start (the main stem's first node need
+	// not start at the root node's end), and turns by the bend at its middle.
+	float s = 0.0f;
+	for (uint32_t q = 0; q < spine.size(); q++) {
+		const int k = spine[q];
+		Node &n = nodes[k];
+		const Basis b(Vector3(1, 0, 0), bend_at(s + 0.5f * n.length));
+		turn[k] = b;
+		if (q > 0) {
+			const int pk = spine[q - 1];
+			n.start = nodes[pk].start + turn[pk].xform(old_start[k] - old_start[pk]);
+		}
+		n.dir = b.xform(n.dir).normalized();
+		s += n.length;
+	}
+	// Limbs leave the stem where its turned frame carries their base, and keep the crown's orientation: a limb low on
+	// the stem's level run grew up from it toward the light over the years as one in the crown did, so every limb takes
+	// the full bend about its own base (net turn: the lean alone) instead of being swung down with the stem.
+	const Basis limb_turn(Vector3(1, 0, 0), -delta);
+	for (int i = 0; i < count; i++) {
+		const int k = attach[i];
+		if (k < 0) {
+			continue;
+		}
+		const int L = limb_root[i];
+		const Vector3 base = nodes[k].start + turn[k].xform(old_start[L] - old_start[k]);
+		Node &n = nodes[i];
+		n.start = base + limb_turn.xform(old_start[i] - old_start[L]);
+		n.dir = limb_turn.xform(n.dir).normalized();
+	}
+	// The rock: wood that would run behind the face (level space: under the soil plane) is not there; it never grew
+	// past the stone (Plastic Trees' obstacle pruning). Parents come before their children in the node list.
+	for (int i = 1; i < count; i++) {
+		Node &n = nodes[i];
+		if (n.removed || on_spine[i]) {
+			continue;
+		}
+		if ((n.parent >= 0 && nodes[n.parent].removed && !on_spine[n.parent]) || n.end().y < foot_y + 0.5f * MAX(n.radius, 0.01f)) {
+			n.removed = true;
+		}
+	}
+	for (Bud &b : buds) {
+		if (b.node >= 0 && b.node < count && (nodes[b.node].removed || nodes[b.node].dead)) {
+			b.alive = false;
+		}
+	}
+}
+
+// The finished mesh turned about the stem's foot by the face's angle, so the level soil becomes the face falling
+// toward +Z (_cliff_bend above). A rigid turn: normals and tangents turn with it.
+void TreeGenerator::_cliff_turn(Builder &r_b) const {
+	if (cliff_angle <= 0.0f || fallen || fallen_branch || nodes.is_empty() || r_b.verts.is_empty()) {
+		return;
+	}
+	const Basis b(Vector3(1, 0, 0), cliff_angle);
+	const Vector3 o = nodes[0].start;
+	const int nv = r_b.verts.size();
+	Vector3 *vw = r_b.verts.ptrw();
+	for (int v = 0; v < nv; v++) {
+		vw[v] = o + b.xform(vw[v] - o);
+	}
+	if (r_b.normals.size() == nv) {
+		Vector3 *nw = r_b.normals.ptrw();
+		for (int v = 0; v < nv; v++) {
+			nw[v] = b.xform(nw[v]);
+		}
+	}
+	if (r_b.use_tangents && r_b.tangents.size() >= nv * 4) {
+		float *tw = r_b.tangents.ptrw();
+		for (int v = 0; v < nv; v++) {
+			const Vector3 t = b.xform(Vector3(tw[v * 4], tw[v * 4 + 1], tw[v * 4 + 2]));
+			tw[v * 4] = t.x;
+			tw[v * 4 + 1] = t.y;
+			tw[v * 4 + 2] = t.z;
+		}
+	}
+}
+
 Ref<ArrayMesh> TreeGenerator::_build_mesh() {
+	struct SpiralGuard {
+		~SpiralGuard() { tube_spiral = 0.0f; }
+	} spiral_guard;
+	tube_spiral = preset == PRESET_SWEET_CHESTNUT ? (((uint32_t(seed) * 2654435761u) >> 31) ? -1.0f : 1.0f) * Math::tan(Math::deg_to_rad(30.0f * Math::smoothstep(25.0f, 110.0f, params[PARAM_YEARS]))) / MAX(_bark_tile(), 0.05f) : 0.0f;
 	struct TileGuard {
 		~TileGuard() {
 			tube_tile = BARK_TILE;
@@ -17997,6 +18257,27 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			root_bend[k] *= 0.4f;
 		}
 	}
+	if (cliff_angle > 0.0f && roots_on && !fallen && !fallen_branch) {
+		// On a cliff (trees.md 5bg) the roots leave the crevice down and across the face along its joints, where water
+		// and fines collect, and run far for a small tree before they find a crack to follow in (Larson, Matthes and
+		// Kelly 2000: cliff roots in fractures); none climbs the face. In level space down the face is +Z (_cliff_turn).
+		for (uint32_t k = 0; k < root_az.size(); k++) {
+			static const float JOINTS[5] = { 0.0f, float(Math::PI) * 0.25f, float(Math::PI) * 0.5f, float(Math::PI) * 0.75f, float(Math::PI) };
+			float best = 0.0f, best_d = 1e9f;
+			for (const float j : JOINTS) {
+				const float d = Math::abs(Math::angle_difference(root_az[k], j));
+				if (d < best_d) {
+					best_d = d;
+					best = j;
+				}
+			}
+			root_az[k] = best + 0.2f * Math::angle_difference(best, root_az[k]);
+			if (root_len[k] > 0.0f) {
+				root_len[k] *= Math::lerp(1.4f, 2.2f, root_rng.randf()) * (0.75f + 0.25f * Math::sin(root_az[k]));
+			}
+			root_bend[k] *= 0.3f;
+		}
+	}
 	foot_roots.az = root_az;
 	foot_roots.len = root_len;
 	foot_roots.bend = root_bend;
@@ -18071,7 +18352,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					const float a_w = rr * 1.15f, b_h = rr * 0.85f * (1.0f - 0.55f * Math::smoothstep(0.25f, 0.6f, t));
 					const float d_c = r_t + root_push(root_top, root_az[best]) * (1.0f - t) + root_len[best] * Math::pow(t, 1.1f) + rr * Math::smoothstep(0.0f, 0.3f, t);
 					const float s1 = Math::smoothstep(0.0f, 0.35f, t);
-					const float yc = (root_top - b_h) * (1.0f - s1) * (1.0f - s1) - rr * (0.1f + 2.0f * Math::smoothstep(0.35f, 0.85f, t)) * s1;
+					// On a cliff (trees.md 5bg) a root runs plastered over the bare rock for most of its length, half
+					// sunk where it has wedged into its crack, and only goes in at its end.
+					const float yc = cliff_angle > 0.0f ? (root_top - b_h) * (1.0f - s1) * (1.0f - s1) - rr * (0.25f + 1.6f * Math::smoothstep(0.7f, 1.0f, t)) * s1
+													 : (root_top - b_h) * (1.0f - s1) * (1.0f - s1) - rr * (0.1f + 2.0f * Math::smoothstep(0.35f, 0.85f, t)) * s1;
 					const float lat = Math::abs(sda) * d_c;
 					const float qe = lat / a_w;
 					// The oval's top, then straight down past its widest point.
@@ -18166,7 +18450,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const int v = p_part.z + i;
 			nw[v] = fn[i] * sgn;
 			if (!relief_img || !taken[i] || r_b.relief_off[v].y <= 0.0f) {
-				vv[v] += nw[v] * (relief_off[i] * Math::smoothstep(0.02f, 0.2f, vv[v].y - ground_y));
+				vv[v] += nw[v] * (relief_off[i] * Math::smoothstep(0.02f, 0.2f, float(vv[v].y - ground_y)));
 			}
 			if (r_b.use_tangents && int(r_b.tangents.size()) >= (v + 1) * 4) {
 				float *tw = r_b.tangents.ptrw() + v * 4;
@@ -18580,12 +18864,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			float hoff = 0.0f; // Pushed along hdir: over the head's top, out from its centre.
 			Vector3 hdir = n;
 			if ((p_features == 2 || p_features == 3) && head_r > 0.0f && p_pts[ring].y > head_y0) {
-				head_win = Math::smoothstep(head_y0, head_y0 + 0.5f * head_r, p_pts[ring].y);
+				head_win = Math::smoothstep(head_y0, head_y0 + 0.5f * head_r, float(p_pts[ring].y));
 				if (p_features == 3) {
 					// The knuckles round the head share its knobs, which fade up each pole.
-					head_win *= 1.0f - Math::smoothstep(1.5f * head_r, 1.9f * head_r, (p_pts[ring] + n * r).distance_to(head_c));
+					head_win *= 1.0f - Math::smoothstep(1.5f * head_r, 1.9f * head_r, float((p_pts[ring] + n * r).distance_to(head_c)));
 					if (cut_jr > 0.0f) {
-						head_win *= 1.0f - Math::smoothstep(0.0f, 1.2f * cut_jr, (p_pts[ring] - cut_j).dot(cut_jdir));
+						head_win *= 1.0f - Math::smoothstep(0.0f, 1.2f * cut_jr, float((p_pts[ring] - cut_j).dot(cut_jdir)));
 					}
 				}
 			}
@@ -19275,7 +19559,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// No swell on steep limbs: weld() leaves them as crotches, where a swollen base would
 			// poke out of the parent's bark.
 			float swell = 0.2f * CLAMP(ratio * 2.5f, 0.2f, 1.0f) * (1.0f - Math::smoothstep(0.35f, 0.6f, ratio)) *
-					Math::smoothstep(0.45f, 0.6f, first.dir.cross(par.dir).length());
+					Math::smoothstep(0.45f, 0.6f, float(first.dir.cross(par.dir).length()));
 			if (first.pole && bolling.has(first.parent)) {
 				// A pole swells where it leaves its knuckle (trees.md 5l): its base is a socket of
 				// callus, whatever its angle; the knuckle is fat enough to take it.
@@ -20096,7 +20380,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						// macro relief, the root collar's re-laid relief and the flare's pushes, and on a
 						// giant's foot the bark stood up to a centimetre over a thin sleeve, which showed
 						// only below the root sweep, cut off level along it (trees.md 5ao).
-						float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, moss.verts[v].y));
+						float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, float(moss.verts[v].y)));
 						if (shell_bark_w == part.w && shell_bark_z >= 0) {
 							under = n.dot(bark.verts[shell_bark_z + i] - moss.verts[v]);
 						}
@@ -20277,7 +20561,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			};
 			RandomPCG er;
 			er.seed(uint64_t(seed) * 40503u + 0x5e5e5eu);
-			const LeafSeason vls = _leaf_season(preset, season);
+			const LeafSeason vls = _tree_leaf_season();
 			for (const VeteranFeature &f : veteran_features) {
 				Vector3 p, out;
 				float r;
@@ -20403,6 +20687,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 							Color c(leaf_color.r * j, leaf_color.g * j, leaf_color.b);
 							if (vls.autumn > er.randf()) {
 								c = c.lerp(vls.color, 0.8f);
+							}
+							if (vls.frost > 0.0f && vls.frost > er.randf()) {
+								c = c.lerp(Color(0.16f, 0.09f, 0.045f), 0.9f); // late frost (draws only then: the stream is unchanged without)
 							}
 							const Vector3 lup = (Vector3(0, 1, 0) + bo * 0.4f).normalized();
 							if (!browse_kept(_browse_keep(at), at)) {
@@ -20536,7 +20823,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	// The season (2c): leaves not yet out or fallen are left off, so drag and mass follow; the
 	// rest grow from small and pale in spring to full size, and turn in autumn in a fixed order
 	// per leaf (the first to turn falls first).
-	const LeafSeason leaf_season = _leaf_season(preset, season);
+	const LeafSeason leaf_season = _tree_leaf_season();
 	uint32_t leaf_slot = 0; // Every broad leaf the summer tree has, kept or not: a stable key.
 	const uint32_t season_seed = hash_murmur3_one_32(uint32_t(seed) * 2654435761u + 977u);
 	// Gum rockrose is summer semi-deciduous (trees.md 5v; Correia and Ascensao 2017): from early
@@ -20548,7 +20835,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		summer_fold = sday <= 175.0f || sday >= 300.0f ? 0.0f : (sday < 205.0f ? (sday - 175.0f) / 30.0f : (sday <= 260.0f ? 1.0f : (300.0f - sday) / 40.0f));
 	}
 	auto season_leaf = [&](uint32_t p_key, Color &r_color, float &r_size) -> bool {
-		if (season.is_empty()) {
+		if (season.is_empty() && !leaf_season_forced) {
 			return true;
 		}
 		if (leaf_season.out <= 0.0f || leaf_season.fallen >= 1.0f) {
@@ -20569,6 +20856,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float young = 1.0f - leaf_season.out;
 			r_size *= Math::lerp(1.0f, 0.3f, young);
 			r_color = r_color.lerp(Color(r_color.r * 1.6f, r_color.g * 1.45f, r_color.b * 0.9f), young * 0.7f);
+		}
+		if (leaf_season.frost > 0.0f) {
+			// Frost-killed: limp, dark brown and shrivelled (a key of its own, so it is not the autumn order).
+			const float hf = float(hash_murmur3_one_32(p_key ^ 0x5bd1e995u, season_seed) & 0xffffff) / float(0x1000000);
+			if (hf < leaf_season.frost) {
+				r_color = r_color.lerp(Color(0.16f, 0.09f, 0.045f), 0.9f);
+				r_size *= 0.8f;
+				return true;
+			}
 		}
 		const float turn = CLAMP((leaf_season.autumn - h) * 6.0f, 0.0f, 1.0f);
 		if (turn > 0.0f) {
@@ -20955,6 +21251,33 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	for (int s = 0; s < 10; s++) {
 		// The stone itself is not draped over itself; it is sheared with the ground.
 		_bank_shear(*builders[s], s != 7);
+	}
+	if (cliff_angle > 0.0f && !fallen && !fallen_branch && !nodes.is_empty()) {
+		// On a cliff (trees.md 5bg): everything turned about the foot onto the face, and with it the skeleton (for the
+		// colliders, snow and the rest read from it below) and the wind rig. A rigid turn keeps each bone's inertia
+		// about its pivot: m2 is rebuilt from it round the moved pivot.
+		for (int s = 0; s < 10; s++) {
+			_cliff_turn(*builders[s]);
+		}
+		const Basis cb(Vector3(1, 0, 0), cliff_angle);
+		const Vector3 o = nodes[0].start;
+		for (Node &n : nodes) {
+			n.start = o + cb.xform(n.start - o);
+			n.dir = cb.xform(n.dir).normalized();
+		}
+		for (RigBone &rb : rig) {
+			const double j = rb.m2 - 2.0 * double(rb.pivot.dot(rb.m1)) + double(rb.pivot.length_squared()) * rb.m0;
+			rb.pivot = o + cb.xform(rb.pivot - o);
+			rb.dir = cb.xform(rb.dir).normalized();
+			if (rb.a0 > 1e-12) {
+				rb.a1 = (o + cb.xform(rb.a1 / float(rb.a0) - o)) * float(rb.a0);
+			}
+			if (rb.m0 > 1e-12) {
+				rb.m1 = (o + cb.xform(rb.m1 / float(rb.m0) - o)) * float(rb.m0);
+			}
+			// j about the pivot is unchanged; the centroid's own spread too: m2 = j + 2 p.m1 - |p|^2 m0.
+			rb.m2 = j + 2.0 * double(rb.pivot.dot(rb.m1)) - double(rb.pivot.length_squared()) * rb.m0;
+		}
 	}
 	// Rigged trees skin from MultiMesh instance bones; a part broken off by a storm or a body
 	// (TreeWind3D) is drawn unskinned, with a twin of each surface's material (section 5t).
@@ -21564,7 +21887,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 		{
 			// The share of its foliage the tree carries in this mesh's season (1 evergreen or in full leaf).
-			const LeafSeason fls = _leaf_season(preset, season);
+			const LeafSeason fls = _tree_leaf_season();
 			mesh->set_meta(SNAME("tree_foliage"), CLAMP(fls.out * (1.0f - fls.fallen), 0.0f, 1.0f));
 		}
 		if (storm_kit && !fallen && decay_class == 0 && !fallen_branch) {
@@ -21579,7 +21902,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// (Jones 1998, the simple ice accretion model, on cylinders). A needled shoot catches the rain like a brush
 			// about 3 cm across, a leafy broadleaf shoot like one 6 cm across.
 			const bool needles = params[PARAM_NEEDLES] > 0.5f;
-			const LeafSeason gls = _leaf_season(preset, season);
+			const LeafSeason gls = _tree_leaf_season();
 			const float in_leaf = needles ? 1.0f : CLAMP(gls.out * (1.0f - gls.fallen), 0.0f, 1.0f);
 			const float shoot_r = needles ? 0.015f : 0.03f * in_leaf;
 			double sl = 0.0, slr = 0.0;
@@ -22389,7 +22712,7 @@ void TreeGenerator::_grow_fire_regrowth(Builder &r_bark, Builder &r_leaves) {
 	if (resp == FIRE_NONE) {
 		return;
 	}
-	const LeafSeason vls = _leaf_season(preset, season);
+	const LeafSeason vls = _tree_leaf_season();
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
 	const float y = fire_years;
 	const float base_y = nodes[0].start.y;
@@ -22467,6 +22790,9 @@ void TreeGenerator::_grow_fire_regrowth(Builder &r_bark, Builder &r_leaves) {
 			Color c(young.r * j, young.g * j, young.b);
 			if (vls.autumn > fr.randf()) {
 				c = c.lerp(vls.color, 0.8f);
+			}
+			if (vls.frost > 0.0f && vls.frost > fr.randf()) {
+				c = c.lerp(Color(0.16f, 0.09f, 0.045f), 0.9f); // late frost (draws only then: the stream is unchanged without)
 			}
 			if (needles) {
 				for (int k = 0; k < 6; k++) {
@@ -23099,6 +23425,25 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		ground_slope = slopes[p_variant % 4];
 		bank_erosion = ground_slope > 0.0f ? Math::lerp(0.3f, 0.9f, t) * Math::lerp(0.6f, 1.0f, ground_slope / 0.85f) : 0.0f;
 		root_stone = p_variant % 8 == 2 ? Math::lerp(0.35f, 0.6f, float((h >> 16) & 255u) / 255.0f) : 0.0f;
+	} else if (p_form == FORM_CLIFF) {
+		// Cliff trees (trees.md 5bg): the variants step through faces of 69, 57, 86 and 77 degrees (the first for a
+		// single-variant stand) so placement picks the nearest, as for banks. Stunted: roots confined in crevices set
+		// the pace (Larson et al. 2000: watering and fertilising cliff cedars barely changed their growth), so shoots
+		// are under half as long and the tree a third of its open-grown height or less. Two in three carry a dead
+		// sector over a strip-bark stem.
+		static const float faces[4] = { 1.2f, 1.0f, 1.5f, 1.35f };
+		const uint32_t h = uint32_t(seed) * 2654435761u;
+		const float t = float((h >> 8) & 255u) / 255.0f;
+		cliff_angle = faces[p_variant % 4];
+		cliff_lean = Math::lerp(0.1f, 0.45f, t);
+		cliff_dead = (h >> 16) % 3u != 0u ? Math::lerp(0.5f, 1.1f, float((h >> 18) & 255u) / 255.0f) : 0.0f;
+		cliff_dead_az = float((h >> 4) & 1023u) / 1023.0f * float(Math::TAU);
+		// From the preset's own values: this runs once per variant on the same generator.
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		params[PARAM_INTERNODE_LENGTH] = look.params[PARAM_INTERNODE_LENGTH] * 0.42f;
+		params[PARAM_LEADER_GROWTH] = look.params[PARAM_LEADER_GROWTH] * 0.4f;
+		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.65f, 0.95f, float((h >> 24) & 255u) / 255.0f));
 	} else if (p_preset == PRESET_DATE_PALM && (p_form == FORM_GROVE || p_form == FORM_OPEN || p_form == FORM_STAND)) {
 		// Date palms (trees.md 5ai): a grove palm tended (skirt and offshoots cut), 15-60 years old; a wild one
 		// any age from a young clump to an old palm, a third of them clumps of two or three trunks.
@@ -23390,6 +23735,22 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		look.set_preset(p_preset);
 		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.85f, 1.25f, tv));
 	}
+	if (p_preset == PRESET_ASPEN) {
+		// Aspen clones (trees.md 5bf; Mitton and Grant 1996; Mitton, 2019): each stand variant is one clone, its bark
+		// whiter, greener or more tan, its limbs steeper or flatter, its leaves larger or smaller, its leaf-out and
+		// autumn earlier or later than the next clone's.
+		const float a = Math::fmod(float(p_variant) * 0.618034f + 0.17f, 1.0f), b = Math::fmod(float(p_variant) * 0.381966f + 0.63f, 1.0f);
+		const float c = Math::fmod(a * 3.1f + b * 1.7f, 1.0f);
+		phenology_shift = Vector2(2.0f * a - 1.0f, 2.0f * b - 1.0f);
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		const Color tints[3] = { Color(0.58f, 0.58f, 0.54f), Color(0.46f, 0.49f, 0.4f), Color(0.5f, 0.46f, 0.38f) };
+		bark_color = look.bark_color.lerp(tints[int(c * 3.0f) % 3], 0.6f);
+		params[PARAM_BRANCH_ANGLE] = look.params[PARAM_BRANCH_ANGLE] + Math::lerp(-6.0f, 6.0f, b);
+		params[PARAM_LEAF_SIZE] = look.params[PARAM_LEAF_SIZE] * Math::lerp(0.85f, 1.15f, c);
+	} else {
+		phenology_shift = Vector2();
+	}
 	if (ice_band > 0) {
 		// An ice storm stand's variants (trees.md 5be): one storm, so every tree is the same years since it; the bent
 		// birches are the slender poles of the stand (Frost's birches: paper birch bends over under the ice, the big
@@ -23617,7 +23978,7 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 			points++;
 		}
 	}
-	const LeafSeason ls = _leaf_season(preset, season);
+	const LeafSeason ls = _tree_leaf_season();
 	Color leaf = leaf_color.lerp(ls.color, ls.season_blend());
 	float leaf_area = 0.0f; // One-sided, opaque part only, of the foliage surface the colour came from.
 	{
@@ -23813,12 +24174,12 @@ Ref<ArrayMesh> TreeGenerator::_crown_hull(const Ref<ArrayMesh> &p_mesh) const {
 			stem = i;
 		}
 	}
-	Vector3 top(box.get_center().x, Math::lerp(box.position.y, box.get_end().y, 0.6f), box.get_center().z);
+	Vector3 top(box.get_center().x, Math::lerp(float(box.position.y), float(box.get_end().y), 0.6f), box.get_center().z);
 	if (stem >= 0) {
 		// Up the bole to the crown's middle height (its lean kept).
 		for (int k = stem; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
 			top = nodes[k].end();
-			if (top.y >= Math::lerp(box.position.y, box.get_end().y, 0.6f)) {
+			if (top.y >= Math::lerp(float(box.position.y), float(box.get_end().y), 0.6f)) {
 				break;
 			}
 		}
@@ -24154,6 +24515,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	windthrow_direction = p_from.windthrow_direction;
 	windthrow_band = p_from.windthrow_band;
 	ice_storm_years = p_from.ice_storm_years;
+	phenology_shift = p_from.phenology_shift;
 	ice_storm = p_from.ice_storm;
 	ice_band = p_from.ice_band;
 	flood_height = p_from.flood_height;
@@ -24176,6 +24538,10 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	bark_chevrons = p_from.bark_chevrons;
 	wind_exposure = p_from.wind_exposure;
 	ground_slope = p_from.ground_slope;
+	cliff_angle = p_from.cliff_angle;
+	cliff_lean = p_from.cliff_lean;
+	cliff_dead = p_from.cliff_dead;
+	cliff_dead_az = p_from.cliff_dead_az;
 	root_stone = p_from.root_stone;
 	bank_erosion = p_from.bank_erosion;
 	stilt_height = p_from.stilt_height;
@@ -24215,10 +24581,23 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 void TreeGenerator::_near_task(void *p_self) {
 	TreeGenerator *self = static_cast<TreeGenerator *>(p_self);
 	// The glaze band rides in the variant (NEAR_GLAZE_STRIDE): grown as ice geometry on this near mesh only.
+	// The local season band above it (NEAR_SEASON_STRIDE, trees.md 5bi): the leaf state this near mesh grows.
 	const int code = self->near_task_variant;
 	self->near_task_variant = code % NEAR_GLAZE_STRIDE;
 	const float saved_glaze = self->glaze_mm;
-	self->glaze_mm = glaze_band_mm(code / NEAR_GLAZE_STRIDE);
+	self->glaze_mm = glaze_band_mm((code % NEAR_SEASON_STRIDE) / NEAR_GLAZE_STRIDE);
+	const int season_band = code / NEAR_SEASON_STRIDE;
+	if (season_band > 0) {
+		const int sc = season_band - 1;
+		LeafSeason ls;
+		ls.color = LEAF_SEASONS[self->preset].autumn;
+		ls.out = float(sc % 5) * 0.25f;
+		ls.autumn = float((sc / 5) % 5) * 0.25f;
+		ls.fallen = float((sc / 25) % 5) * 0.25f;
+		ls.frost = float((sc / 125) % 5) * 0.25f;
+		self->leaf_season_force = ls;
+		self->leaf_season_forced = true;
+	}
 	int fb = self->near_living > 0 && self->near_task_variant >= self->near_living ? self->near_task_variant - self->near_living : -1;
 	self->lightning_years = -1.0f;
 	if (fb >= self->near_fire_count + self->near_strike_count) {
@@ -24252,6 +24631,7 @@ void TreeGenerator::_near_task(void *p_self) {
 	self->near_build = false;
 	self->material_source.unref();
 	self->glaze_mm = saved_glaze;
+	self->leaf_season_forced = false;
 	self->near_task_variant = code;
 	// Keep the copy small between requests: the growth state is only needed while growing.
 	self->nodes.reset();
@@ -24342,7 +24722,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	}
 	// Pollards stand in pasture and along ditches: open-grown (in forest shade their lapsed poles
 	// grew 22 m whips with a crown at the top).
-	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD && p_form != FORM_HEDGE && p_form != FORM_LAID_HEDGE && p_form != FORM_GROVE &&
+	p_stand_grown = p_form != FORM_OPEN && p_form != FORM_POLLARD && p_form != FORM_FLAGGED && p_form != FORM_KRUMMHOLZ && p_form != FORM_BANK && p_form != FORM_THICKET && p_form != FORM_OLD && p_form != FORM_HEDGE && p_form != FORM_LAID_HEDGE && p_form != FORM_GROVE && p_form != FORM_CLIFF &&
 			!(p_form == FORM_SAPLING && scrub_shrub(p_preset)) && !((p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG) && coppice_ages.x >= 0);
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
@@ -24428,6 +24808,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float saved_exposure = wind_exposure;
 		const float saved_krummholz = krummholz;
 		const float saved_slope = ground_slope;
+		const float saved_cliff = cliff_angle;
+		const float saved_cliff_lean = cliff_lean;
+		const float saved_cliff_dead = cliff_dead;
+		const float saved_cliff_az = cliff_dead_az;
 		const float saved_erosion = bank_erosion;
 		const float saved_stilt = stilt_height;
 		const int saved_beaver_cut = beaver_cut;
@@ -24462,7 +24846,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// Gorse's spines are needles but thin stochastically as leaves (trees.md 5x.2): it splits too.
 		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && (params[PARAM_NEEDLES] <= 0.5f || scrub_shrub(Preset(p_preset))) &&
 				(far_lod1 || leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
-				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_HEDGE || p_form == FORM_LAID_HEDGE || p_form == FORM_GROVE);
+				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING || p_form == FORM_COPPICE || p_form == FORM_COPPICE_YOUNG || p_form == FORM_POLLARD || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_BANK || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_HEDGE || p_form == FORM_LAID_HEDGE || p_form == FORM_GROVE || p_form == FORM_CLIFF);
 		if (near_split) {
 			Ref<TreeGenerator> src;
 			src.instantiate();
@@ -24579,6 +24963,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		grove_strands = saved_strands;
 		grove_top = saved_gtop;
 		ground_slope = saved_slope;
+		cliff_angle = saved_cliff;
+		cliff_lean = saved_cliff_lean;
+		cliff_dead = saved_cliff_dead;
+		cliff_dead_az = saved_cliff_az;
 		bank_erosion = saved_erosion;
 		stilt_height = saved_stilt;
 		beaver_cut = saved_beaver_cut;
@@ -24598,7 +24986,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// One full-needle variant for the near range (the field repeats it over the variants):
 		// about 30M vertices for a spruce, so one only, and no LOD copies since it is only drawn
 		// close. GPU memory and path tracing cost of it are not yet measured.
-		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_THICKET || p_form == FORM_OLD)) {
+		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_FLAGGED || p_form == FORM_KRUMMHOLZ || p_form == FORM_THICKET || p_form == FORM_OLD || p_form == FORM_CLIFF)) {
 			needle_sprays = false;
 			skip_lods = true;
 			seed = saved_seed * 31;
@@ -24643,7 +25031,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		sp->set_meta("fall_dir", windthrow_direction);
 		sp->set_meta("fall_scatter", windthrow_band == 1 ? 0.45f : 0.3f);
 	}
-	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)", " (hedge)", " (laid hedge)", " (grove)" };
+	static const char *form_names[FORM_MAX] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)", " (coppice)", " (young coppice)", " (pollard)", " (flagged)", " (krummholz)", " (bank)", " (thicket)", " (old)", " (hedge)", " (laid hedge)", " (grove)", " (cliff)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -24975,6 +25363,23 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		list.push_back(sp);
 		return sp;
 	};
+	// Cliff trees (trees.md 5bg): stunted, old trees in the crevices of rock faces past about 52 degrees, where the
+	// canopy's own trees cannot stand; bare rock rather than soil (with a geology source). Variants step through the
+	// faces' slopes as bank trees do (placement picks the nearest).
+	auto cliff = [&](Preset p, float p_density) {
+		Ref<PlantSpecies> sp = _stand_species(p, false, _bank_variants(p_variants), FORM_CLIFF);
+		sp->set_density(p_density);
+		sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(52.0f, 90.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
+		sp->set_rule_range(PlantSpecies::RULE_SOIL_DEPTH, Vector2(0.0f, 100000.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_SOIL_DEPTH, 0.0f);
+		sp->set_rule_range(PlantSpecies::RULE_ROCK, Vector2(0.25f, 1.0f));
+		sp->set_rule_fade(PlantSpecies::RULE_ROCK, 0.1f);
+		sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.5f));
+		sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+		list.push_back(sp);
+		return sp;
+	};
 	auto clip = [](const Ref<PlantSpecies> &p_sp, PlantSpecies::Rule p_rule, const Vector2 &p_range, float p_fade) {
 		// Narrow a species' range to the stand's belt (never widen past its habitat).
 		const Vector2 r = p_sp->get_rule_range(p_rule);
@@ -25002,6 +25407,9 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			ravine->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
 			ravine->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
 			list.push_back(ravine);
+			// Yew on the limestone cliffs over the beech woods, centuries old in the crevices (Taxus on cliffs: Larson
+			// et al. 2000; the cliff yews of the Wye gorge and the Great Orme).
+			cliff(PRESET_YEW, 0.35f);
 			// Holly and yew are what does grow under beech (Taxo-Fagetum, Ilici-Fagetum).
 			shrub(PRESET_HOLLY, 0.5f);
 			Ref<PlantSpecies> yew = shrub(PRESET_YEW, 0.25f);
@@ -25020,8 +25428,13 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			ash->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.5f);
 			canopy(PRESET_OAK, 1.0f, 70.0f, 0.55f, false, false);
 			canopy(PRESET_LIME, 1.0f, 70.0f, 0.55f, true, false);
+			// Hornbeam under and between the oaks: the oak-hornbeam wood of central Europe (Galio-Carpinetum;
+			// Ellenberg 1988), its second storey in the oaks' light shade (trees.md 5bf).
+			Ref<PlantSpecies> hornbeam = canopy(PRESET_HORNBEAM, 0.4f, 0.0f, 0.0f, false, false);
+			hornbeam->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.75f));
 			open(PRESET_OAK, 0.3f);
 			open(PRESET_BIRCH, 0.4f);
+			canopy(PRESET_WILD_CHERRY, 0.2f, 0.0f, 0.0f, false, false); // Scattered through the canopy, in its gaps.
 			shrub(PRESET_HAZEL, 0.7f);
 			shrub(PRESET_HOLLY, 0.3f);
 			shrub(PRESET_HAWTHORN, 0.35f);
@@ -25041,6 +25454,9 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			clip(open(PRESET_NORWAY_SPRUCE, 0.3f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 			clip(shrub(PRESET_ROWAN, 0.3f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 			clip(shrub(PRESET_ELDER, 0.1f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			// Scots pine on the rock faces and ledges above the closed forest (the relict rock pine woods of the Alps,
+			// Erico-Pinion; Ellenberg 1988).
+			clip(cliff(PRESET_SCOTS_PINE, 0.35f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 		} break;
 		case STAND_SUBALPINE: {
 			lead = PRESET_NORWAY_SPRUCE;
@@ -25160,6 +25576,8 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			open(PRESET_WHITE_PINE, 0.35f);
 			open(PRESET_PAPER_BIRCH, 0.4f);
 			shrub(PRESET_WITCH_HAZEL, 0.3f);
+			// Hemlock on the cliffs and ledges of the gorges (with the white cedar of the escarpments; Larson et al. 2000).
+			cliff(PRESET_HEMLOCK, 0.35f);
 		} break;
 		case STAND_COPPICE_STANDARDS: {
 			lead = PRESET_OAK;
@@ -25623,6 +26041,13 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			burn_birch->set_spacing(HABITATS[PRESET_BIRCH].stand_spacing * 0.6f); // A cohort comes up thick.
 
 			patched(burn_birch, burn_scale, burns, burn_seed, false);
+			// Aspen suckers up from the roots the fire did not reach, in clones, beside the birch (Kuuluvainen and
+			// Aakala 2011; trees.md 5bf).
+			Ref<PlantSpecies> burn_aspen = _stand_species(PRESET_ASPEN, true, p_variants, FORM_STAND);
+			burn_aspen->set_name("Aspen (taiga burn clones)");
+			burn_aspen->set_density(0.6f);
+			burn_aspen->set_spacing(HABITATS[PRESET_ASPEN].stand_spacing * 0.6f);
+			patched(burn_aspen, burn_scale, burns, burn_seed, false);
 			// The dry ground: old fire survivors, kelo, then the younger pine.
 			boreal_band = 2;
 			Ref<PlantSpecies> survivor = _stand_species(PRESET_SCOTS_PINE, true, p_variants, FORM_STAND);
@@ -25733,6 +26158,11 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			list.push_back(thicket);
 			Ref<PlantSpecies> alder = open(PRESET_BLACK_ALDER, 0.3f);
 			clip(alder, PlantSpecies::RULE_WATER_DISTANCE, Vector2(4.0f, 60.0f), 6.0f);
+			// Black poplar where the ground rises out of the willows: the giant of the softwood floodplain, scattered
+			// (Cottrell 2004: wild Populus nigra stands on the gravel and sand the river lays and moves; trees.md 5bf).
+			Ref<PlantSpecies> poplar = canopy(PRESET_BLACK_POPLAR, 0.35f, 0.0f, 0.0f, false, false);
+			poplar->set_follow_flow(true);
+			clip(poplar, PlantSpecies::RULE_WATER_DISTANCE, Vector2(3.0f, 70.0f), 6.0f);
 			stand_forest_shade = 0.4f;
 		} break;
 		case STAND_BEAVER_POND: {
@@ -25909,6 +26339,13 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		case STAND_MAX:
 			break;
 	}
+	for (int i = 0; i < list.size(); i++) {
+		// Aspen grows in clones (trees.md 5bf): the field gives each clone one variant.
+		Ref<PlantSpecies> sp = list[i];
+		if (int(sp->get_meta("preset", -1)) == int(PRESET_ASPEN)) {
+			sp->set_meta("clone_scale", 25.0f);
+		}
+	}
 	if (lead != PRESET_MAX && !list.is_empty()) {
 		// Every stand also regenerates and dies (docs/ideas/trees.md section 5): saplings of its
 		// leading tree wait beneath it, and snags and logs of it lie between the living trees,
@@ -26040,6 +26477,47 @@ Ref<Biome> TreeGenerator::make_succession(Stand p_stand, int p_variants) {
 			grey->set_canopy_opacity(0.15f);
 			tag(grey, from, to, SUCCESSION_BEETLE);
 		}
+	}
+	// Avalanche legacies (trees.md 5bh; Bebi et al. 2009; Butler and Malanson 1985; Reardon et al. 2008) in the
+	// mountain stands: the stems a dense avalanche threw lie down the fall line, tops down, the rest snapped to stumps;
+	// survivors where the flow thinned lean downslope, their upslope limbs stripped (the flagged crowns of a track's
+	// edge). The thrown and snapped wood is the windthrow kit's (5am), carried down the slope instead of a storm's
+	// track: species meta fall_downhill turns mesh +X down the fall line.
+	if (p_stand == STAND_SUBALPINE || p_stand == STAND_MONTANE_CONIFER || p_stand == STAND_BEECH || p_stand == STAND_OLD_GROWTH_BEECH) {
+		const float saved_storm = windthrow_storm;
+		for (int stage = 0; stage < 2; stage++) {
+			const float from = stage == 0 ? 0.0f : e1, to = stage == 0 ? e1 : e2;
+			windthrow_storm = stage == 0 ? 4.0f : 0.5f * (e1 + e2);
+			windthrow_band = 1;
+			Ref<PlantSpecies> thrown = _stand_species(lead, true, p_variants, FORM_LOG);
+			windthrow_band = 2;
+			Ref<PlantSpecies> snapped = _stand_species(lead, true, p_variants, FORM_SNAG);
+			windthrow_band = 0;
+			thrown->set_name(vformat("%s (avalanche thrown, %d-%d y)", preset_names[lead], int(from), int(to)));
+			snapped->set_name(vformat("%s (avalanche snapped, %d-%d y)", preset_names[lead], int(from), int(to)));
+			for (const Ref<PlantSpecies> &sp : { thrown, snapped }) {
+				sp->set_meta("fall_dir", Vector2());
+				sp->set_meta("fall_downhill", true);
+				sp->set_meta("fall_scatter", 0.3f);
+				sp->set_density(stage == 0 ? 0.9f : 0.5f);
+				// The track's stand lies where it stood, the logs about as close as the trees were (as windthrow, 5am).
+				sp->set_spacing(HABITATS[lead].stand_spacing * 1.2f);
+				tag(sp, from, to, SUCCESSION_AVALANCHE);
+			}
+			snapped->set_canopy_opacity(0.0f);
+		}
+		windthrow_storm = 6.0f;
+		windthrow_band = 3;
+		Ref<PlantSpecies> survivor = _stand_species(lead, false, p_variants, FORM_FLAGGED);
+		windthrow_band = 0;
+		survivor->set_name(vformat("%s (avalanche survivor)", preset_names[lead]));
+		survivor->set_meta("fall_dir", Vector2());
+		survivor->set_meta("fall_downhill", true);
+		survivor->set_meta("fall_scatter", 0.25f);
+		survivor->set_density(0.6f);
+		survivor->set_spacing(HABITATS[lead].stand_spacing * 2.0f);
+		tag(survivor, 0.0f, e2, SUCCESSION_AVALANCHE);
+		windthrow_storm = saved_storm;
 	}
 	// Stand initiation: pioneers and the lead's seedlings.
 	{
@@ -26647,7 +27125,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				}
 				for (int p = nodes[i].parent, k = 0; p > 0 && k < 6 && nodes[i].start.distance_to(nodes[p].end()) < 0.6f; p = nodes[p].parent, k++) {
 					if (!head.has(p) && !heads.has(p)) {
-						nodes[p].radius *= Math::lerp(1.3f, 1.05f, nodes[i].start.distance_to(nodes[p].start) / 0.6f);
+						nodes[p].radius *= Math::lerp(1.3f, 1.05f, float(nodes[i].start.distance_to(nodes[p].start) / 0.6f));
 						head.insert(p);
 					}
 				}
@@ -26845,6 +27323,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		_break_limbs();
 		_ice_storm_damage();
 	}
+	_cliff_bend();
 	beaver_axis.clear();
 	if (beaver_now == BEAVER_GNAWED && !nodes.is_empty()) {
 		// The stem's axis and girth at the waist, for _beaver_waist_at: the main stem from the root, up past the waist.
@@ -26955,10 +27434,14 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		// Placement turns the mesh's +Z downhill and picks the variant nearest the ground's slope.
 		mesh->set_meta(SNAME("tree_ground_slope"), Vector2(ground_slope, bank_erosion));
 	}
+	if (cliff_angle > 0.0f && mesh.is_valid() && !fallen && !fallen_branch) {
+		// A cliff tree (trees.md 5bg) is placed as a bank tree: +Z down the face, the variant nearest the face's slope.
+		mesh->set_meta(SNAME("tree_ground_slope"), Vector2(cliff_angle, 0.0f));
+	}
 	if (stone.on && mesh.is_valid()) {
 		// The stone's centre and half extents (mesh space, before any bank shear), for rocks and
 		// the floor to keep clear of it.
-		mesh->set_meta(SNAME("tree_root_stone"), PackedFloat32Array({ stone.c.x, stone.c.y, stone.c.z, stone.r.x, stone.r.y, stone.r.z }));
+		mesh->set_meta(SNAME("tree_root_stone"), PackedFloat32Array({ float(stone.c.x), float(stone.c.y), float(stone.c.z), float(stone.r.x), float(stone.r.y), float(stone.r.z) }));
 	}
 	if (deadwood_stem >= 0) {
 		// Layout (trees.md 5b): a (3), b (3), the widest reach from the axis anywhere along it
@@ -26976,7 +27459,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			widest = MAX(widest, deadwood_profile[i]);
 		}
 		PackedFloat32Array axis;
-		for (float v : { a.x, a.y, a.z, b.x, b.y, b.z, widest, float(DEADWOOD_SAMPLES) }) {
+		for (float v : { float(a.x), float(a.y), float(a.z), float(b.x), float(b.y), float(b.z), widest, float(DEADWOOD_SAMPLES) }) {
 			axis.push_back(v);
 		}
 		for (int i = 0; i < DEADWOOD_SAMPLES; i++) {
@@ -26987,7 +27470,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				deadwood_girth[i] = i > 0 ? deadwood_girth[i - 1] : nodes[deadwood_stem].radius;
 			}
 			const Vector3 &q = deadwood_line[i];
-			for (float v : { q.x, q.y, q.z, deadwood_girth[i] }) {
+			for (float v : { float(q.x), float(q.y), float(q.z), deadwood_girth[i] }) {
 				axis.push_back(v);
 			}
 		}
@@ -27009,7 +27492,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				}
 				const float rr = Math::lerp(wound_rad[i], wound_rad[i + 1], CLAMP((sv - wound_arc[i]) / MAX(wound_arc[i + 1] - wound_arc[i], 1e-6f), 0.0f, 1.0f));
 				const Vector3 p = stem_point(wound_pts, wound_arc, sv, az, rr - 0.5f * w.age, out, ax);
-				for (float f : { 1.0f, p.x, p.y, p.z, out.x, out.y, out.z, w.half_w }) {
+				for (float f : { 1.0f, float(p.x), float(p.y), float(p.z), float(out.x), float(out.y), float(out.z), w.half_w }) {
 					deadwood_features.push_back(f);
 				}
 			}
@@ -27023,7 +27506,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			// 0.95 m at a year, 0.5 m at five (Zadrozny et al. 2017).
 			const float depth = CLAMP(1.6f * plate.thick, 0.35f, 0.95f) * (1.0f - 0.2f * MAX(decay_class - 1, 0));
 			PackedFloat32Array pit;
-			for (float v : { plate.base0.x, plate.base0.y, plate.base0.z, plate.radius * 0.9f, depth }) {
+			for (float v : { float(plate.base0.x), float(plate.base0.y), float(plate.base0.z), plate.radius * 0.9f, depth }) {
 				pit.push_back(v);
 			}
 			mesh->set_meta(SNAME("tree_root_pit"), pit);
@@ -27105,6 +27588,12 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
 	ClassDB::bind_method(D_METHOD("set_root_stone", "radius"), &TreeGenerator::set_root_stone);
 	ClassDB::bind_method(D_METHOD("get_root_stone"), &TreeGenerator::get_root_stone);
+	ClassDB::bind_method(D_METHOD("set_cliff_angle", "angle"), &TreeGenerator::set_cliff_angle);
+	ClassDB::bind_method(D_METHOD("get_cliff_angle"), &TreeGenerator::get_cliff_angle);
+	ClassDB::bind_method(D_METHOD("set_cliff_lean", "lean"), &TreeGenerator::set_cliff_lean);
+	ClassDB::bind_method(D_METHOD("get_cliff_lean"), &TreeGenerator::get_cliff_lean);
+	ClassDB::bind_method(D_METHOD("set_cliff_dieback", "half_width"), &TreeGenerator::set_cliff_dieback);
+	ClassDB::bind_method(D_METHOD("get_cliff_dieback"), &TreeGenerator::get_cliff_dieback);
 	ClassDB::bind_method(D_METHOD("set_ground_slope", "slope"), &TreeGenerator::set_ground_slope);
 	ClassDB::bind_method(D_METHOD("get_ground_slope"), &TreeGenerator::get_ground_slope);
 	ClassDB::bind_method(D_METHOD("set_stilt_height", "height"), &TreeGenerator::set_stilt_height);
@@ -27211,6 +27700,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_far_lod1", "enabled"), &TreeGenerator::set_far_lod1);
 	ClassDB::bind_method(D_METHOD("get_far_lod1"), &TreeGenerator::get_far_lod1);
 	ClassDB::bind_method(D_METHOD("request_near_mesh", "key", "variant"), &TreeGenerator::request_near_mesh);
+	ClassDB::bind_method(D_METHOD("near_season_band", "local_season"), &TreeGenerator::near_season_band);
 	ClassDB::bind_method(D_METHOD("request_variants", "species", "kinds", "wait"), &TreeGenerator::request_variants, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("set_defer_variants", "enabled"), &TreeGenerator::set_defer_variants);
 	ClassDB::bind_method(D_METHOD("get_defer_variants"), &TreeGenerator::get_defer_variants);
@@ -27288,6 +27778,9 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_exposure", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wind_exposure", "get_wind_exposure");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "krummholz", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_krummholz", "get_krummholz");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_slope", PROPERTY_HINT_RANGE, "0,1.2,0.01,radians_as_degrees"), "set_ground_slope", "get_ground_slope");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_angle", PROPERTY_HINT_RANGE, "0,1.55,0.01,radians_as_degrees"), "set_cliff_angle", "get_cliff_angle");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_lean", PROPERTY_HINT_RANGE, "0,0.8,0.01,radians_as_degrees"), "set_cliff_lean", "get_cliff_lean");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_dieback", PROPERTY_HINT_RANGE, "0,1.6,0.01,radians_as_degrees"), "set_cliff_dieback", "get_cliff_dieback");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_erosion", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bank_erosion", "get_bank_erosion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stilt_height", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_stilt_height", "get_stilt_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flood_height", PROPERTY_HINT_RANGE, "0,6,0.01,suffix:m"), "set_flood_height", "get_flood_height");
@@ -27444,6 +27937,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(SUCCESSION_WIND);
 	BIND_ENUM_CONSTANT(SUCCESSION_BEETLE);
 	BIND_ENUM_CONSTANT(SUCCESSION_BEAVER);
+	BIND_ENUM_CONSTANT(SUCCESSION_AVALANCHE);
 	BIND_ENUM_CONSTANT(VARIANT_FIRE);
 	BIND_ENUM_CONSTANT(VARIANT_STRIKE);
 	BIND_ENUM_CONSTANT(VARIANT_BROWSE);

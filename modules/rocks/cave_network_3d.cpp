@@ -2231,18 +2231,28 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 			v.y = MIN(v.y, bed);
 		}
 	}
-	// Inside a pool (under its water, inside its outline): the floor is lined with calcite.
-	auto in_pool = [&](const Vector3 &p) {
+	// Inside a pool (under its water, inside its outline): the floor is lined with calcite. Round the pool the floor is
+	// flowstone too, fading out over 0.45 m: the spill over each dam coats the floor below it, and the cascade's pools
+	// sit in one calcite sheet, so the dams rise out of the floor rather than stand on a different ground (Hammer et al.
+	// 2007: the terraces are one deposit).
+	auto in_pool = [&](const Vector3 &p) -> real_t {
+		real_t w = 0.0;
 		for (const RimPool &pl : shape_pools) {
-			if (p.y > pl.center.y + 0.04 || p.y < pl.center.y - 0.6) {
+			if (p.y > pl.center.y + 0.3 || p.y < pl.center.y - 0.6) {
 				continue;
 			}
 			const Vector2 rel(p.x - pl.center.x, p.z - pl.center.z);
-			if (Geometry2D::is_point_in_polygon(rel, Vector<Vector2>(pl.outline))) {
-				return true;
+			const Vector<Vector2> ol = Vector<Vector2>(pl.outline);
+			if (p.y <= pl.center.y + 0.04 && Geometry2D::is_point_in_polygon(rel, ol)) {
+				return 1.0;
 			}
+			real_t dmin = 1e9;
+			for (int i = 0; i < ol.size(); i++) {
+				dmin = MIN(dmin, Geometry2D::get_closest_point_to_segment(rel, ol[i], ol[(i + 1) % ol.size()]).distance_to(rel));
+			}
+			w = MAX(w, real_t(1.0) - Math::smoothstep(real_t(0.0), real_t(0.45), dmin));
 		}
-		return false;
+		return w;
 	};
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
@@ -2275,8 +2285,8 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 				if (!drips.is_empty()) {
 					_flowstone(drips, p, 0.0, &fw);
 				}
-				if (!shape_pools.is_empty() && in_pool(p)) {
-					fw = 1.0;
+				if (!shape_pools.is_empty()) {
+					fw = MAX(fw, in_pool(p));
 				}
 				// Green: the stream's wet bed and margin.
 				// Blue: the foot of the wall, a few decimetres over the fill (the shader's bank of spalls).
@@ -2769,8 +2779,23 @@ void CaveNetwork3D::_rimstone(const LocalVector<Drip> &p_drips, const Vector3 &p
 					const real_t th = Math::PI * (1.0 - real_t(k) / real_t(K - 1));
 					const real_t cs = Math::cos(th), sn = Math::sin(th);
 					const real_t bottom = (cs < 0.0 ? fj : fd) - 0.03;
-					const real_t y = bottom + (top - bottom) * Math::pow(MAX(sn, real_t(0.0)), real_t(0.3));
-					const real_t off = cs * (cs < 0.0 ? 0.5 * w : (0.5 * w + 0.4 * MAX(top - fd, real_t(0.0))) * lobe);
+					real_t y, off;
+					if (cs < 0.0) {
+						// Upstream: a steep face down into the pool under a small rounded lip.
+						y = bottom + (top - bottom) * Math::pow(MAX(sn, real_t(0.0)), real_t(0.3));
+						off = cs * 0.5 * w;
+					} else {
+						// Downstream: the dam grows out of the floor. Its face is a concave apron of flowstone flaring
+						// out over the floor below (one and a half times the drop), meeting it at a low angle, so the rim
+						// reads as the floor rising into a crest rather than a tube laid on it.
+						const real_t up = 1.0 - cs; // 0 at the foot, 1 at the crest
+						const real_t drop = MAX(top - fd, real_t(0.0));
+						y = bottom + (top - bottom) * (0.25 * up + 0.75 * up * up * up);
+						off = (0.5 * w * sn + (0.4 * w + 1.5 * drop) * lobe * (1.0 - up)) * (cs > 0.0 ? 1.0 : 0.0);
+						if (k == K - 1) {
+							y = fd - 0.03 - 0.45 * MAX(off - 0.1, real_t(0.0)); // the apron's edge under the floor's surface (it falls on past fd)
+						}
+					}
 					const Vector2 P = Q + n * off;
 					mv.push_back(Vector3(P.x, y, P.y));
 					mn.push_back(Vector3());
@@ -2948,6 +2973,12 @@ float vn(vec3 p) {
 			mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
 float fbm(vec3 p) { return 0.5 * vn(p) + 0.25 * vn(p * 2.03 + 7.0) + 0.125 * vn(p * 4.1 + 3.0) + 0.0625 * vn(p * 8.3 + 1.0); }
+float mgour(vec3 p) {
+	// Contours of a smooth field, cut as a sawtooth: each contour a rim (a steep lip on the uphill side of a step, a
+	// gentle back), sinuous and nested like the real scale-like sheets, 3 to 8 cm apart.
+	float t = fract(12.0 * fbm(vec3(p.x * 3.2, p.y * 0.7, p.z * 3.2) + 91.0) + 0.6 * vn(p * 9.0));
+	return 0.006 * smoothstep(0.0, 0.3, t) * (1.0 - t);
+}
 void vertex() {
 	w_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	w_nrm = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
@@ -3091,7 +3122,10 @@ void fragment() {
 	// Close up the fill is grit, not a tint: sand grains and granules of a few millimetres, each its own tone (pale
 	// calcite, grey limestone, a few dark chert), shaded as bumps below (the relief's clasts), so a near bank reads
 	// as sediment rather than a haze.
-	float grit_w = fill_w * on_floor * (1.0 - smoothstep(1.5, 4.5, length(VERTEX))) * (1.0 - clamp(COLOR.g, 0.0, 1.0));
+	// Flowstone (the mesher's red: round formations, the rimstone pools and the sheet they stand in) is a smooth calcite
+	// coat over the fill, so no grit and no pits show through it.
+	float flow_c = smoothstep(0.15, 0.6, clamp(COLOR.r, 0.0, 1.0) + 0.3 * (fbm(w_pos * 5.0 + 17.0) - 0.5)); // a wandering edge, not the triangles'
+	float grit_w = fill_w * on_floor * (1.0 - smoothstep(1.5, 4.5, length(VERTEX))) * (1.0 - clamp(COLOR.g, 0.0, 1.0)) * (1.0 - flow_c);
 	if (grit_w > 0.01) {
 		vec3 gid;
 		float gr = clasts(w_pos, 0.006, gid);
@@ -3169,8 +3203,18 @@ void fragment() {
 	float e = mix(0.005, 0.0015, max(grit_w, 1.0 - smoothstep(0.8, 2.5, length(VERTEX))));
 	float sc_w = wall * scallops_amount;
 	float bed_b = max(bed_floor, 0.42 * grit_w); // the near fill's grit as bumps too
-	float h0 = relief(w_pos, w_nrm, joint_w, near, sc_w, bed_b);
-	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0), w_nrm, joint_w, near, sc_w, bed_b) - h0, relief(w_pos + vec3(0, e, 0), w_nrm, joint_w, near, sc_w, bed_b) - h0, relief(w_pos + vec3(0, 0, e), w_nrm, joint_w, near, sc_w, bed_b) - h0) / e;
+	float near_f = near * (1.0 - flow_c); // flowstone has no pits
+	float h0 = relief(w_pos, w_nrm, joint_w, near_f, sc_w, bed_b);
+	vec3 g = vec3(relief(w_pos + vec3(e, 0, 0), w_nrm, joint_w, near_f, sc_w, bed_b) - h0, relief(w_pos + vec3(0, e, 0), w_nrm, joint_w, near_f, sc_w, bed_b) - h0, relief(w_pos + vec3(0, 0, e), w_nrm, joint_w, near_f, sc_w, bed_b) - h0) / e;
+	// Flowstone floors carry microgours: tiny sinuous rims a few centimetres apart, each a sharp crest with a gentle
+	// back (the same growth as the big dams, at the thin sheet's scale), so the coat is not a blank smooth floor.
+	float mg_w = flow_c * floor_w * (1.0 - smoothstep(2.0, 6.0, length(VERTEX)));
+	vec3 mg_g = vec3(0.0);
+	if (mg_w > 0.01) {
+		float em = 0.004;
+		float m0 = mgour(w_pos);
+		mg_g = mg_w * vec3(mgour(w_pos + vec3(em, 0, 0)) - m0, 0.0, mgour(w_pos + vec3(0, 0, em)) - m0) / em;
+	}
 	vec3 n = normalize(w_nrm);
 	g -= n * dot(g, n);
 	// Sand and mud are smoother than the rock; flowstone and puddles smoother still.
@@ -3178,7 +3222,7 @@ void fragment() {
 	amount = mix(amount, 0.06, smoothstep(0.1, 0.45, bed_b)); // the clasts stand proud of the sand
 	// The tilt is bounded (about 25 degrees): where several octaves' slopes add up, an unbounded bump turns the
 	// normal past the light and leaves black blots, or a groove's lit side a white wire.
-	vec3 tilt = amount * g;
+	vec3 tilt = amount * g + mg_g;
 	tilt *= min(1.0, 0.45 / max(length(tilt), 1e-5));
 	vec3 nb = normalize(n - tilt);
 	NORMAL = normalize((VIEW_MATRIX * vec4(nb, 0.0)).xyz);
@@ -4253,6 +4297,7 @@ Ref<Material> CaveNetwork3D::_rim_material() {
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 uniform vec3 calcite = vec3(0.52, 0.45, 0.35);
 uniform vec3 amber = vec3(0.36, 0.24, 0.13);
+uniform vec3 floor_tint = vec3(0.46, 0.38, 0.28); // the flowstone floor round the pools (the wall shader's), which the apron's thin edge takes on
 varying vec3 w_pos;
 float h3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 float vn(vec3 p) {
@@ -4277,6 +4322,9 @@ void fragment() {
 	// The downstream face darker and more amber (the spill carries the colour), the crest palest.
 	col = mix(col, amber * (0.8 + 0.3 * m), 0.45 * smoothstep(0.55, 1.0, UV.y));
 	col *= 0.8 + 0.25 * vn(vec3(UV.x * 6.0, 0.0, 0.0));
+	// The apron's outer edge is a film of calcite over the floor: the floor's colour shows through it, so the dam
+	// grows out of the floor with no edge line where the two meet (the edge wandering with the spill's lobes).
+	col = mix(col, floor_tint * (0.85 + 0.3 * m), smoothstep(0.7, 1.0, UV.y + 0.12 * (vn(w_pos * 14.0) - 0.5)));
 	// Wet over the crest and the downstream face (the spill), damp at the ends.
 	float wet = smoothstep(0.05, 0.4, UV.y) * (0.6 + 0.4 * m);
 	ALBEDO = col * mix(1.0, 0.78, wet);

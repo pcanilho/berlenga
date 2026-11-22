@@ -3467,6 +3467,41 @@ RTMaterialData *RenderRaytracing::touch_material(uint32_t p_slot) {
 	return entry->ptr;
 }
 
+// Whether any live material in the cache can bound a medium: a BaseMaterial3D with Transmission that is not
+// thin-walled, or a shader writing TRANSMISSION and IOR. Only those turn a path or a caustic photon into a medium
+// (MEDIUM_CHANGE_FLAG), so without one the camera medium probe and the caustics find nothing and are skipped.
+// Errs towards true: a custom shader whose entry is not known yet counts, and freed materials drop out on the next
+// scan, which any material change or rebuild triggers.
+bool RenderRaytracing::_materials_bound_media() {
+	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
+	const uint64_t version = material_storage->material_get_rt_version();
+	if (version == media_scan_material_version && material_rebuild_serial == media_scan_rebuild_serial) {
+		return media_scan_found;
+	}
+	media_scan_material_version = version;
+	media_scan_rebuild_serial = material_rebuild_serial;
+	media_scan_found = false;
+	const uint32_t slot_count = uint32_t(material_chunks.size()) * RT_CACHE_CHUNK_SIZE;
+	for (uint32_t slot = 0; slot < slot_count && !media_scan_found; slot++) {
+		const RTMaterialCacheEntry *entry = _find_material_cache_entry(slot);
+		if (!entry || !entry->ptr) {
+			continue;
+		}
+		const RID material = RID::from_uint64((uint64_t(entry->cached_rid_version) << 32) | slot);
+		if (!material_storage->owns_material(material)) {
+			continue;
+		}
+		const RTMaterialData *mat = entry->ptr;
+		if (mat->data.flags & RT_MAT_FLAG_VOLUME) {
+			media_scan_found = true;
+		} else if (mat->is_custom_shader) {
+			const SceneShaderRaytracing::CustomShaderEntry *custom = mat->rt_sbt_offset > 0 ? shader->get_custom_shader_entry(mat->rt_sbt_offset) : nullptr;
+			media_scan_found = !custom || custom->may_refract;
+		}
+	}
+	return media_scan_found;
+}
+
 RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t p_material_invalidation_counter) {
 	if (!p_material_rid.is_valid()) {
 		return &_rt_default_material();
@@ -3493,6 +3528,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	}
 
 	// Cache miss - need to rebuild material
+	material_rebuild_serial++;
 	if (!entry->ptr) {
 		entry->ptr = memnew(RTMaterialData);
 		entry->ptr->table_index = mat_idx + 1;
@@ -7560,13 +7596,15 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_COUNT] = float(rt_light_count);
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SELF_SHADOW_MASK] = p_state ? float(p_state->shadow_groups.self_shadow_bit) : 0.0f;
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_VISIBILITY] = (p_state && p_state->light_visibility_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/light_visibility_memory")) ? 1.0f : 0.0f;
+		const bool scene_media = GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") && _materials_bound_media();
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_MATERIAL_FEATURES] = float(
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/clearcoat") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_CLEARCOAT : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/back_lighting") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_BACK_LIGHTING : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transmission") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_TRANSMISSION : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_REFRACTION : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/subsurface_scattering") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_SUBSURFACE : 0u) |
-				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/hair") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_HAIR : 0u));
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/hair") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_HAIR : 0u) |
+				(scene_media ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_MEDIA : 0u));
 		// Light reuse (ReSTIR DI, raytracing_lights_inc.glsl): two frames of per-pixel reservoirs,
 		// the slot written turning every frame, and a table renumbering last frame's lights.
 		if (light_reuse) {
@@ -7694,6 +7732,11 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_LAPSE] = phase.y;
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_HUMIDITY] = phase.z;
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_GROUND] = phase.w;
+				static const StringName warm_nose_name = "weather_warm_nose";
+				const Variant nose_var = ms->global_shader_parameter_get_internal(warm_nose_name);
+				const Vector4 nose = nose_var.get_type() == Variant::VECTOR4 ? Vector4(nose_var) : Vector4();
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_NOSE] = nose.x;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_NOSE_BASE] = nose.y;
 				// Its rain map (weather_rain_map, same rect as the state map): the canopy's held water in green.
 				static const StringName rain_map_name = "weather_rain_map";
 				const Variant rain_var = ms->global_shader_parameter_get_internal(rain_map_name);
@@ -7917,7 +7960,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
 		// Water caustics (raytracing_caustics_inc.glsl): the slot written turns every frame; the
 		// shader centres the map's square on what the camera looked at.
-		if (p_state && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/caustics") && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction")) {
+		// Skipped while no material can bound a medium: the photons would only land on dry ground. The slot does not
+		// turn then, so the one written next was cleared by the last frame that ran, and that frame's map is not read.
+		if (p_state && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/caustics") && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") && _materials_bound_media()) {
 			if (!p_state->caustics_buffer.is_valid()) {
 				Vector<uint8_t> zeros;
 				zeros.resize(RT_CAUSTICS_UINTS * sizeof(uint32_t));

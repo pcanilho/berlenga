@@ -12,9 +12,10 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
   *Weather map: a storm's cloud, rain core, wind and the wet ground it leaves.*
 
 - **Wind**: slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.
-- **Wind over terrain** (`terrain_wind_enabled`): faster over crests, calm in lees, turned along valleys and rising up slopes.
+- **Wind over terrain** (`terrain_wind_enabled`, `drainage_winds`, `upslope_winds`): faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests.
 - **Wind near the ground** (`add_canopy`, `add_shelter_box`, `gust_patch_size`; RockField3D `wind_obstacles`, PhysXVehicle3D `wind_obstacle`): shelter inside plant canopies and behind buildings, boulders and vehicles; gust patches sweep across fields.
 - **Season state** (`WeatherMap3D.get_season()`): day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.
+- **Late frost** (`WeatherMap3D.late_frost`): a hard spring frost browns the young leaves of species already out, first in cold hollows, until a second flush replaces them weeks later.
 - **Storms** (`add_storm`): drift with the wind, with a rain core and a downdraft.
 - **Falling rain** (`RainFall3D`): drops sized and falling like real rain, slanting in the wind, with splashes, haze, and drips from leaves and eaves after it stops.
 - **Rain or snow by height** (`WeatherMap3D.get_rain_share_at()`, `warm_nose_temperature`, `warm_nose_base`): rain turns to sleet and then snow as the air cools with height; under a warm layer aloft it falls as freezing rain, or as ice pellets when the cold layer below is deep, and every system reads the same split.
@@ -45,7 +46,7 @@ summary: "One weather map for wind, storms, rain, wet surfaces and puddles, driv
 - **Raindrop rings** (`rain_rings` water uniform): rings on sea, lakes, pools, rivers and puddles; heavy rain dulls reflections.
 - **Runoff** (`WeatherRunoff3D`, `PhysXRiver3D.rain_response`): rain runs off the land and wets the ground it crosses, and rivers and lakes rise with it.
 
-- **Dew and frost** (`dew_and_frost`, `cold_pools`, `valley_fog`): clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost forms there first, and saturated pools fill with a flat fog sea that lifts after sunrise or in a wind.
+- **Dew and frost** (`dew_and_frost`, `cold_pools`, `valley_fog`, `smoke_in_pools`): clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost forms there first, and saturated pools fill with a flat fog sea that lifts after sunrise or in a wind, wetting the trees standing in it and riming them below freezing; smoke stays low in the pools and drains down the slopes until the sun mixes it up.
 - **Fog drip** (`WeatherMap3D.fog_drip`): cloud lying on wooded ground drips from the trees and wets the ground beneath them.
 - **Sea spray** (`WeatherMap3D.sea_spray`): breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips, and shrubs and trees brown leaf by leaf.
 - **Wet tracks** (`WeatherMap3D.wet_tracks`): bodies and vehicles coming out of water, wet mud or puddles leave wet footprints and tyre tracks that fade along the way, drip where they stand, and dry with the weather.

@@ -31,6 +31,8 @@
 
 #include "ground_height_query.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/terrain_deform/terrain_deformer_3d.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
@@ -87,6 +89,11 @@ float GroundHeightQuery::height(Vector3 p_position) const {
 		PhysicsDirectSpaceState3D::RayResult rr;
 		if (space->intersect_ray(rp, rr)) {
 			h = rr.position.y;
+		}
+	}
+	if (relief && Math::is_finite(h)) {
+		if (const WorldGround *wg = WorldContracts::ground()) {
+			h += (float)wg->relief_at(p).x;
 		}
 	}
 	return h;
