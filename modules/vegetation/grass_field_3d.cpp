@@ -60,6 +60,7 @@
 #include "scene/resources/sky.h"
 #include "scene/resources/material.h"
 #include "scene/3d/multimesh_instance_3d.h"
+#include "plant_generator.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
@@ -1880,6 +1881,7 @@ void GrassField3D::_update_mow_state(int p_day) {
 	if (meadows.is_empty()) {
 		mow_state_texture.unref();
 		_publish_mow();
+		_free_bales();
 		return;
 	}
 	Ref<Image> img = Image::create_empty(MAX_HAY_MEADOWS, 1, false, Image::FORMAT_RGBAF);
@@ -1897,6 +1899,7 @@ void GrassField3D::_update_mow_state(int p_day) {
 		mow_state_texture = ImageTexture::create_from_image(img);
 	}
 	_publish_mow();
+	_queue_bales();
 }
 
 // The meadows' index map: 0.5 m texels over their bounds (coarser past 1024 a side), the first meadow over a point wins.
@@ -1940,11 +1943,23 @@ void GrassField3D::_publish_mow() {
 	}
 	if (meadows.is_empty() || mow_texture.is_null() || mow_state_texture.is_null()) {
 		material->set_shader_parameter("mow_rect", Vector4());
+		if (mow_published) {
+			RenderingServer::get_singleton()->global_shader_parameter_set("grass_mow_rect", Vector4());
+			mow_published = false;
+		}
 		return;
 	}
 	material->set_shader_parameter("mow_map", mow_texture);
 	material->set_shader_parameter("mow_state", mow_state_texture);
 	material->set_shader_parameter("mow_rect", Vector4(mow_rect.position.x, mow_rect.position.y, mow_rect.size.x, mow_rect.size.y));
+	if (ground_tint_enabled && is_inside_tree()) {
+		// The field that colours the ground hands the meadows to grass_ground() too, for the far rows.
+		RenderingServer *rs = RenderingServer::get_singleton();
+		rs->global_shader_parameter_set("grass_mow_map", mow_texture->get_rid());
+		rs->global_shader_parameter_set("grass_mow_state", mow_state_texture->get_rid());
+		rs->global_shader_parameter_set("grass_mow_rect", Vector4(mow_rect.position.x, mow_rect.position.y, mow_rect.size.x, mow_rect.size.y));
+		mow_published = true;
+	}
 }
 
 void GrassField3D::_hay_register() {
@@ -1958,6 +1973,133 @@ void GrassField3D::_hay_register() {
 		hay_nodes.erase(this);
 	}
 	hay_generation++;
+}
+
+void GrassField3D::_queue_bales() {
+	if (bales_queued || !is_inside_tree()) {
+		return;
+	}
+	bales_queued = true;
+	callable_mp(this, &GrassField3D::_build_bales).call_deferred();
+}
+
+void GrassField3D::_free_bales() {
+	for (MultiMeshInstance3D *n : bale_nodes) {
+		if (n) {
+			n->queue_free();
+		}
+	}
+	bale_nodes.clear();
+	bale_count = 0;
+}
+
+// Baled: a round baler picks up the windrow and drops a bale each time its chamber is full, so the bales lie along
+// the rows a bale's hay apart (its mass over the row's hay a metre: HAY_YIELD times the pitch), each row's first
+// at its own point. 4 x 4 ft bales hold about 230 kg, 5 x 5 ft 450 kg (UF/IFAS EDIS AN326: 1,000 lb at 5 x 5, a
+// 4 x 4 half of it); 4 x 5 ft between. Ends to the sides of the row, settled on the ground's slope.
+void GrassField3D::_build_bales() {
+	bales_queued = false;
+	_free_bales();
+	if (meadows.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	if (!map) {
+		return;
+	}
+	if (bale_meshes.is_empty()) {
+		for (int i = 0; i < 6; i++) {
+			bale_meshes.push_back(PlantGenerator::make_hay_bale(13100 + i, true));
+		}
+	}
+	const int nv = int(bale_meshes.size());
+	LocalVector<LocalVector<Transform3D>> xf;
+	xf.resize(nv);
+	const Transform3D to_local = get_global_transform().affine_inverse();
+	auto ground = [&](const Vector2 &q) {
+		const Vector3 p(q.x, 0.0f, q.y);
+		return map->get_height_at(p) + _relief_y(p);
+	};
+	for (uint32_t mi = 0; mi < meadows.size(); mi++) {
+		const HayMeadow &m = meadows[mi];
+		if (m.current < 3.5f || m.current >= 5.0f) {
+			continue;
+		}
+		// The same meadow on an earlier sward layer: its bales are that node's.
+		bool other = false;
+		for (const GrassField3D *g : hay_nodes) {
+			if (g == this) {
+				break;
+			}
+			for (const HayMeadow &o : g->meadows) {
+				other = other || (o.polygon == m.polygon && o.row_angle == m.row_angle);
+			}
+		}
+		if (other) {
+			continue;
+		}
+		const Vector2 rd(Math::cos(m.row_angle), Math::sin(m.row_angle));
+		const Vector2 rn(-rd.y, rd.x);
+		float umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
+		for (const Vector2 &v : m.polygon) {
+			umin = MIN(umin, v.dot(rn));
+			umax = MAX(umax, v.dot(rn));
+			vmin = MIN(vmin, v.dot(rd));
+			vmax = MAX(vmax, v.dot(rd));
+		}
+		const float per_m = HAY_YIELD * HAY_ROW_PITCH;
+		for (int row = int(Math::floor(umin / HAY_ROW_PITCH)); row <= int(Math::ceil(umax / HAY_ROW_PITCH)); row++) {
+			uint32_t h = hash_murmur3_one_32(uint32_t(row), hash_murmur3_one_32(mi * 7919u + 17u));
+			auto rnd = [&]() {
+				h = hash_murmur3_one_32(h, 0x9e3779b9u);
+				return float(h & 0xFFFFFF) / float(0x1000000);
+			};
+			float v = vmin + rnd() * 40.0f; // The row's first bale.
+			while (v < vmax) {
+				const int variant = MIN(int(rnd() * nv), nv - 1);
+				const AABB ab = bale_meshes[variant]->get_aabb();
+				const float mass = ab.size.x > 1.4f ? 450.0f : (ab.size.y > 1.4f ? 360.0f : 230.0f);
+				// On the windrow's centre line as the shader lays it (its wander included).
+				const float sway = 0.2f * Math::sin(v * 0.06f + row * 1.7f) + 0.08f * Math::sin(v * 0.27f + row * 0.4f);
+				const float uc = (row + 0.5f) * HAY_ROW_PITCH + sway;
+				const Vector2 q = rn * uc + rd * v;
+				if (m.bounds.has_point(q) && Geometry2D::is_point_in_polygon(q, m.polygon)) {
+					const float e = 0.6f;
+					const float hx = ground(q + rd * e) - ground(q - rd * e);
+					const float hz = ground(q + rn * e) - ground(q - rn * e);
+					const Vector3 up = Vector3(-hx * rd.x - hz * rn.x, 2.0f * e, -hx * rd.y - hz * rn.y).normalized();
+					// Mesh +X (the axis) across the row, a little askew as it rolled out.
+					const float yaw = Math::atan2(-rn.y, rn.x) + (rnd() - 0.5f) * 0.35f;
+					Basis b(Vector3(0, 1, 0), yaw);
+					const Vector3 axis = Vector3(0, 1, 0).cross(up);
+					if (axis.length_squared() > 1e-10f) {
+						b = Basis(axis.normalized(), Math::acos(CLAMP(up.y, -1.0f, 1.0f))) * b;
+					}
+					xf[variant].push_back(to_local * Transform3D(b, Vector3(q.x, ground(q) - 0.02f, q.y)));
+				}
+				v += mass / per_m * (0.85f + 0.3f * rnd());
+			}
+		}
+	}
+	for (int i = 0; i < nv; i++) {
+		if (xf[i].is_empty()) {
+			continue;
+		}
+		Ref<MultiMesh> mm;
+		mm.instantiate();
+		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+		mm->set_mesh(bale_meshes[i]);
+		mm->set_instance_count(xf[i].size());
+		for (uint32_t k = 0; k < xf[i].size(); k++) {
+			mm->set_instance_transform(k, xf[i][k]);
+		}
+		MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+		mmi->set_multimesh(mm);
+		mmi->set_name(vformat("HayBales_%d", i));
+		add_child(mmi, false, INTERNAL_MODE_BACK);
+		bale_nodes.push_back(mmi);
+		bale_count += int(xf[i].size());
+	}
 }
 
 float GrassField3D::mown_days_at(const Vector3 &p_position) {
@@ -6148,6 +6290,9 @@ global uniform vec4 grass_ground_sun; // xy: the sun light's heading (xz); z: ho
 global uniform vec4 grass_ground_view; // xyz: the camera.
 global uniform sampler2D grass_graze_map : hint_default_black, filter_linear, repeat_disable; // R: grazed to a lawn, G: torn by rooting.
 global uniform vec4 grass_graze_rect; // z 0: none.
+global uniform sampler2D grass_mow_map : hint_default_black, filter_nearest, repeat_disable; // Hay meadows: R the meadow (index + 1, 0 none).
+global uniform sampler2D grass_mow_state : hint_default_black, filter_nearest, repeat_disable; // A texel a meadow: r days since mown (below 0 not), g the rows' angle.
+global uniform vec4 grass_mow_rect; // z 0: none.
 global uniform sampler2D crop_ground_map : filter_linear; // GrassField3D.fields: r the field's slot, g the wheelings.
 global uniform sampler2D crop_ground_plots : filter_nearest; // A texel a field (crop_ground()).
 global uniform vec4 crop_ground_rect;
@@ -6239,6 +6384,50 @@ vec2 grass_graze_at(vec3 world_pos) {
 		return vec2(0.0);
 	}
 	return textureLod(grass_graze_map, uv, 0.0).rg;
+}
+
+// Hay meadows past the blades (GrassField3D.hay_meadows; the blade shader does them near): the stubble paler and
+// yellower than the standing sward (the cut stems' pale bases) until it grows back, and the cut grass where it lies:
+// the swaths and windrows as stripes along the rows, as the blades lay them (same pitches, widths and wander), a
+// tedded field all over, curing from the sward's green to green-gold hay.
+vec3 grass_mow_ground(vec3 world_pos, vec3 turf) {
+	if (grass_mow_rect.z <= 0.0) {
+		return turf;
+	}
+	vec2 uv = (world_pos.xz - grass_mow_rect.xy) / grass_mow_rect.zw;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0)))) {
+		return turf;
+	}
+	int mi = int(textureLod(grass_mow_map, uv, 0.0).r * 255.0 + 0.5);
+	if (mi <= 0) {
+		return turf;
+	}
+	vec4 ms = texelFetch(grass_mow_state, ivec2(mi - 1, 0), 0);
+	float md = ms.r;
+	if (md < 0.0) {
+		return turf;
+	}
+	float stub = 1.0 - smoothstep(4.0, 42.0, md);
+	turf = mix(turf, turf * vec3(1.14, 1.1, 0.8), stub);
+	if (md < 3.5) {
+		vec2 rd = vec2(cos(ms.g), sin(ms.g));
+		vec2 rn = vec2(-rd.y, rd.x);
+		float pitch = md < 1.0 ? 3.0 : (md < 2.5 ? 0.0 : 6.0);
+		float half_w = md < 1.0 ? 0.8 : 0.6;
+		float lie = 0.6; // Tedded: a loose layer over it all.
+		if (pitch > 0.0) {
+			float u = dot(world_pos.xz, rn);
+			float row = floor(u / pitch);
+			float v = dot(world_pos.xz, rd);
+			float uc = (row + 0.5) * pitch + 0.2 * sin(v * 0.06 + row * 1.7) + 0.08 * sin(v * 0.27 + row * 0.4);
+			float across = abs(u - uc) / half_w;
+			lie = 1.0 - smoothstep(0.7, 1.05, across);
+		}
+		vec3 cured = vec3(0.4, 0.42, 0.23) * (0.9 + 0.2 * grass_noise(world_pos.xz * 2.1));
+		vec3 hay = mix(turf * vec3(0.95, 1.02, 0.8), cured, smoothstep(0.3, 3.0, md) * 0.85);
+		turf = mix(turf, hay, lie * 0.9);
+	}
+	return turf;
 }
 
 // The turf colour at a point: blades' root colour, patch tint, streaks, thatch.
@@ -6629,6 +6818,8 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 			}
 			turf = mix(turf, far * lum, gone);
 		}
+		// Hay meadows: what the far blades would show of the stubble and the rows.
+		turf = mix(turf, grass_mow_ground(world_pos, turf), max(gone, gone_u));
 	}
 	gone = max(gone, gone_u);
 	// A deer lawn is a closed carpet: bitten short, the grasses tiller densely (20,000 to 40,000 tillers per m2 under
@@ -6956,6 +7147,9 @@ void GrassField3D::_notification(int p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			add_to_group(SNAME("grass_trample_field")); // keeps the trample field (VegetationField3D stands in without one)
 			_hay_register();
+			if (!meadows.is_empty()) {
+				_queue_bales();
+			}
 			if (crop != CROP_NONE) {
 				if (!crop_nodes.has(this)) {
 					crop_nodes.push_back(this);
@@ -6970,9 +7164,16 @@ void GrassField3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			if (mow_published) {
+				RenderingServer::get_singleton()->global_shader_parameter_set("grass_mow_rect", Vector4());
+				mow_published = false;
+			}
 			if (hay_nodes.has(this)) {
 				hay_nodes.erase(this);
 				hay_generation++;
+				if (hay_nodes.is_empty()) {
+					bale_meshes.clear(); // With the tree, not at exit after the rendering server.
+				}
 			}
 			if (plant_color_registered) {
 				WorldContracts::unregister_plant_color(this);
@@ -7499,6 +7700,7 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_hay_meadows"), &GrassField3D::get_hay_meadows);
 	ClassDB::bind_method(D_METHOD("get_mown_days_at", "position"), &GrassField3D::get_mown_days_at);
 	ClassDB::bind_static_method("GrassField3D", D_METHOD("mown_days_at", "position"), &GrassField3D::mown_days_at);
+	ClassDB::bind_method(D_METHOD("get_hay_bale_count"), &GrassField3D::get_hay_bale_count);
 	ClassDB::bind_method(D_METHOD("get_field_stage", "index"), &GrassField3D::get_field_stage);
 	ClassDB::bind_method(D_METHOD("_on_crop_fields_changed"), &GrassField3D::_on_crop_fields_changed);
 	ClassDB::bind_static_method("GrassField3D", D_METHOD("crop_calendar_stage", "sown_day", "harvest_day", "day"), &GrassField3D::crop_calendar_stage);

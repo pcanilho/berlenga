@@ -325,6 +325,7 @@ func _physics_process(_d: float) -> void:
 		await _blowing_checks()
 		await _wrack_live_check()
 		await _sod_fall_check()
+		await _hay_bale_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -1307,8 +1308,8 @@ func _bank_roots_check() -> void:
 	_check("bank roots: fine roots along a scarp's top edge on the variant nearest the face, none without the scarp, no woody roots with no canopy",
 			res[0][0] > 20 and res[0][1] == 0 and res[0][2] == 0 and res[1] == [0, 0, 0] and face_ok, res)
 
-# Hay meadows (GrassField3D.hay_meadows, GrassField3D.mown_days_at): a tall herb is cut inside a meadow mown 2 days ago,
-# not outside it; mown 40 days ago it has grown back; a low herb under the stubble is not cut.
+# Hay meadows (GrassField3D.hay_meadows, GrassField3D.mown_days_at): a tall herb stands as cut stalks (its mesh cut at
+# the stubble) inside a meadow mown 2 days ago, whole outside it and by 40 days; a low herb under the stubble is kept.
 func _hay_check() -> void:
 	var grass := GrassField3D.new()
 	grass.radius = 0.0
@@ -1335,21 +1336,44 @@ func _hay_check() -> void:
 		add_child(f)
 		f.data_map = f.get_path_to(dm)
 		f.populate()
-		var row := []
-		for k in 2:
-			var inside := 0
-			var outside := 0
-			for q in f.get_placements(k):
-				if q.x > -20.0 and q.x < 0.0 and q.z > -20.0 and q.z < 20.0:
-					inside += 1
-				else:
-					outside += 1
-			row.append([inside, outside])
-		res.append(row)
+		var tall_in := 0
+		var cut_in := 0
+		var cut_out := 0
+		for d in f.get_instances_near(0, Vector3(-10, 0, 0), 60.0):
+			var q: Vector3 = (d.transform as Transform3D).origin
+			var top: float = (d.mesh as Mesh).get_aabb().end.y
+			var inside := q.x > -20.0 and q.x < 0.0 and q.z > -20.0 and q.z < 20.0
+			if inside:
+				tall_in += 1
+				cut_in += 1 if top < 0.1 else 0
+			elif top < 0.1:
+				cut_out += 1
+		var low_in := 0
+		for q in f.get_placements(1):
+			if q.x > -20.0 and q.x < 0.0 and q.z > -20.0 and q.z < 20.0:
+				low_in += 1
+		res.append([tall_in, cut_in, cut_out, low_in])
 		f.free()
 	grass.free()
-	_check("hay meadows: the tall herb cut in a meadow mown 2 days ago, not outside, back by 40 days; the low herb kept",
-			res[0][0][0] == 0 and res[0][0][1] > 20 and res[1][0][0] > 20 and res[0][1][0] > 20, res)
+	_check("hay meadows: the tall herb stands as cut stalks in a meadow mown 2 days ago, whole outside it and by 40 days; the low herb kept",
+			res[0][0] > 20 and res[0][1] == res[0][0] and res[0][2] == 0 and res[1][0] > 20 and res[1][1] == 0 and res[0][3] > 20, res)
+
+# Hay bales (GrassField3D, PlantGenerator.make_hay_bale): none while the windrows lie (day 3), dropped along the rows
+# once baled (day 4), on the ground; carted by day 6.
+func _hay_bale_check() -> void:
+	var grass := GrassField3D.new()
+	grass.radius = 0.0
+	add_child(grass)
+	grass.data_map = grass.get_path_to(dm)
+	var meadow := PackedVector2Array([Vector2(-100, -100), Vector2(100, -100), Vector2(100, 100), Vector2(-100, 100)])
+	var counts := []
+	for days in [3.0, 4.0, 6.0]:
+		grass.hay_meadows = [{"polygon": meadow, "row_angle": 0.4, "days": days}]
+		for i in 3:
+			await get_tree().process_frame
+		counts.append(grass.get_hay_bale_count())
+	grass.free()
+	_check("hay bales: none on the windrows' day, along the rows once baled, carted after", counts[0] == 0 and counts[1] > 20 and counts[2] == 0, counts)
 
 # Turf overhangs (make_bank_turf, RULE_BANK_EDGE): a stub's relief raises the ground 1.2 m west of a scarp at x = 0;
 # sod lips stand along its top edge, none on the open ground either side or without the scarp.

@@ -245,6 +245,7 @@ private:
 		bool far_widen = false; // Meta "far_widen" (trees, trees.md 9a): the far tail's survivors widened in their transforms per tile.
 		float clone_scale = 0.0f; // Meta "clone_scale" (m; aspen, trees.md 5bf): one variant per clone, clones as jittered cells this wide.
 		bool hay_cut = false; // A herb taller than a hay meadow's stubble (PlantGenerator species over 12 cm): cut when mown.
+		int base_variants = 0; // hay_cut: meshes [0, base_variants) as grown, [base_variants, 2 base_variants) cut at the stubble.
 		LocalVector<float> face_slopes; // Per variant, mesh meta "bank_face_slope" (radians; bank roots); empty: none.
 		LocalVector<float> bank_slopes; // Per variant, mesh meta "tree_ground_slope".x (radians); empty: no bank forms.
 		// Per variant, mesh meta "tree_fire_years" (years since the fire the tree was grown for, -1 unburnt); empty: none.

@@ -625,7 +625,7 @@ PlantGenerator::Wither::~Wither() {
 	// The vertex alpha is the shader's dead tissue (1 - alpha): yellowing, then browning to
 	// dead_color with the texture's pattern kept, less light through, matte.
 	for (int i = 0; i < SURFACE_MAX; i++) {
-		if (generator->preset == PRESET_BANK_ROOTS || generator->preset == PRESET_BANK_ROOTS_WOODY) {
+		if (generator->preset == PRESET_BANK_ROOTS || generator->preset == PRESET_BANK_ROOTS_WOODY || generator->preset == PRESET_HAY_BALE) {
 			continue; // Roots: no tissue that yellows with the season.
 		}
 		if (i == SURFACE_CENTRE && generator->preset == PRESET_THISTLE) {
@@ -803,6 +803,8 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_BANK_ROOTS:
 		case PRESET_BANK_ROOTS_WOODY:
 			return 1000.0f; // On the face, out of a foot's way.
+		case PRESET_HAY_BALE:
+			return 100000.0f; // Half a tonne of hay: nothing tramples it.
 		case PRESET_COW_PAT:
 		case PRESET_HORSE_DUNG:
 		case PRESET_DEER_PELLETS:
@@ -928,6 +930,7 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_TURF_LIP:
 		case PRESET_BANK_ROOTS:
 		case PRESET_BANK_ROOTS_WOODY:
+		case PRESET_HAY_BALE:
 		case PRESET_MAX:
 			return 0.0f;
 		case PRESET_SEDGE:
@@ -4811,6 +4814,7 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 		case PRESET_TIMOTHY:
 		case PRESET_GRAZED_LAWN:
 		case PRESET_TURF_LIP:
+		case PRESET_HAY_BALE:
 		case PRESET_DUNG_ROUGH:
 		case PRESET_COW_PAT:
 		case PRESET_HORSE_DUNG:
@@ -6634,6 +6638,11 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.3f, 0.23f, 0.15f); // Fallen leaves, silted brown.
 			centre_color = Color(0.34f, 0.3f, 0.23f); // The matted fines and silt under it.
 			break;
+		case PRESET_HAY_BALE:
+			leaf_color = Color(0.64f, 0.6f, 0.37f); // Cured hay, green-gold.
+			centre_color = Color(0.56f, 0.52f, 0.32f); // The wound layers, a little darker in their own shade.
+			stem_color = Color(0.72f, 0.64f, 0.46f); // Sisal twine.
+			break;
 		case PRESET_BANK_ROOTS:
 			stem_color = Color(0.56f, 0.47f, 0.35f); // Fine roots, pale fawn, dusted with the bank's soil.
 			leaf_color = stem_color;
@@ -7226,6 +7235,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_BANK_ROOTS_WOODY:
 			_build_bank_roots(true);
+			break;
+		case PRESET_HAY_BALE:
+			_build_hay_bale();
 			break;
 		case PRESET_LEAF_LITTER:
 			_build_leaf_litter();
@@ -8800,6 +8812,7 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_TURF_LIP);
 	BIND_ENUM_CONSTANT(PRESET_BANK_ROOTS);
 	BIND_ENUM_CONSTANT(PRESET_BANK_ROOTS_WOODY);
+	BIND_ENUM_CONSTANT(PRESET_HAY_BALE);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
@@ -8813,6 +8826,7 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_fairy_rings", "variants", "textures", "season"), &PlantGenerator::make_fairy_rings, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_flood_wrack", "variants", "textures", "season"), &PlantGenerator::make_flood_wrack, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bank_turf", "variants", "textures", "season"), &PlantGenerator::make_bank_turf, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_hay_bale", "seed", "textures"), &PlantGenerator::make_hay_bale, DEFVAL(0), DEFVAL(true));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bank_roots", "variants", "textures", "season"), &PlantGenerator::make_bank_roots, DEFVAL(6), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dew_webs", "variants", "textures", "season"), &PlantGenerator::make_dew_webs, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_grazing", "set", "variants", "textures", "season"), &PlantGenerator::make_grazing, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));

@@ -1956,8 +1956,7 @@ array, for the path tracer's material slot), so the days pass without a rebuild.
 - VegetationField3D: the generator's herbs over 12 cm in a mown meadow are not placed until 28 days on (an estimate);
   GrassField3D.mown_days_at over every meadow node; streamed tiles are placed again when a meadow's days change.
 - Check: grass --test "hay meadows", vegetation --test "hay meadows"; grass --hay=D (0, 1, 3, 5).
-- Not yet: bales lying in the field on day 3 (a Tripo or generated prop), cut herb stalks in the stubble, the far
-  ground showing the rows past the blades' reach.
+- Not yet: the far ground showing the rows past the blades' reach (round 9).
 
 ## Round 9 candidates (research, not built; waiting on a pick)
 - Hay bales: a large round bale of 5 x 5 ft (1.5 m) is the usual reference, about 1,000 lb (450 kg) at
@@ -1970,3 +1969,23 @@ array, for the path tracer's material slot), so the days pass without a rebuild.
 - Far rows: the swaths and windrows on the far ground past the blades' reach, as the crop fields' straw swaths
   already do (paler stripes in crop_ground()).
 - Sod blocks breaking on landing (Blast) and carried off by the river (WorldWater flow at the foot).
+
+## Hay bales and cut stalks (round 9, first pick)
+- PlantGenerator.make_hay_bale / PRESET_HAY_BALE (plant_hay.cpp): round bales of 4 x 4, 4 x 5 and 5 x 5 ft (5 x 5 ft
+  about 450 kg, 4 x 4 half of it: UF/IFAS EDIS AN326); a lathe body with rounded edges and domed ends whose vertex
+  colour draws the wound layers' spiral (pitch 2.5 to 4 cm, an estimate), hay strands wound round it (loose ends
+  lifting), twine bands. About 80k triangles with the generator's LODs.
+- GrassField3D drops them along the windrows' centre lines (the shader's wander included) on day 4 (the windrows
+  gone), a bale's hay apart: its mass over HAY_YIELD (0.5 kg/m2, an estimate for a first cut) times the 6 m pitch; ends
+  to the sides of the row, settled on the slope; carted on day 5. A meadow set on several sward layers gets its bales
+  from the first node holding it. Hay stages now: 0 swaths, 1-2 tedded, 3 windrows, 4 bales, 5 on stubble.
+- Cut stalks: VegetationField3D builds a cut copy of every herb mesh over 12 cm (clipped at 8.5 cm, Sutherland-Hodgman
+  per triangle, attributes interpolated; mesh meta hay_cut_of) and places it in place of the herb in a mown meadow for
+  28 days; streamed tiles are placed again when a meadow's days change.
+- Check: vegetation --test "hay meadows" and "hay bales"; plants --close=115; grass --hay=4.
+- Far rows: the ground shader draws the same swaths, tedded hay and windrows (same stripe formula as the blades, so
+  they meet where the blades end) and paler stubble, from the globals grass_mow_map / grass_mow_state /
+  grass_mow_rect that the first GrassField3D with meadows publishes, as the crop fields' straw swaths do in
+  crop_ground(). Check: grass --far --hay=3 --raster.
+- Plant impostors cut their cover by discard, not ALPHA with a scissor (the project-wide rule for opaque surfaces);
+  dew web silk keeps ALPHA as it is see-through.

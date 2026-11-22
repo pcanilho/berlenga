@@ -723,9 +723,12 @@ void fragment() {
 	vec4 snow_s = snow_cover_at(v_world);
 	float snow = snow_cover_weight(snow_s.x, 60.0, n_world, n_world);
 	snow_cover_apply(snow, snow_s.y, snow_s.z, albedo, rough, metallic, specular);
+	// The card's cut-out by discard, not ALPHA: an ALPHA write makes the material transparent, and the path tracer then
+	// drops its sky light (the trees' finding, 218cc4bcb7); a scissor at 0.5 is the same edge.
+	if (cover < 0.5) {
+		discard;
+	}
 	ALBEDO = albedo;
-	ALPHA = cover;
-	ALPHA_SCISSOR_THRESHOLD = 0.5;
 	ROUGHNESS = rough;
 	METALLIC = metallic;
 	SPECULAR = specular;
