@@ -207,6 +207,13 @@
 				Returns one [Biome] with every woodland stand of [param region]. Europe (all but [constant STAND_HEDGEROW]): riparian, subalpine, montane conifer, beech, oak mixed and pine heath. North America: pine-hemlock, northern hardwood and eastern oak. Canopy trees of all stands come first. Climate rules keep each stand to its belt; where belts overlap, later stands only fill the gaps earlier crowns leave. Append floor species after it.
 			</description>
 		</method>
+		<method name="near_season_band" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="local_season" type="Dictionary" />
+			<description>
+				For a near mesh source: the season band of [param local_season] (a [code]WorldWeather.season_at[/code] result) for this generator's species, [code]0[/code] when the leaves there stand as in [member season], else one more than the local leaf state in quarters. [VegetationField3D] asks [method request_near_mesh] for the variant plus [code]NEAR_SEASON_STRIDE[/code] (2^19) times the band, and the near mesh grows that leaf state (late frost browning, leaf-out by height).
+			</description>
+		</method>
 		<method name="request_near_mesh">
 			<return type="Mesh" />
 			<param index="0" name="key" type="int" />

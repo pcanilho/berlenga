@@ -3966,6 +3966,59 @@ occidentalis on the Niagara Escarpment), Matthes, Larson and Kelly 2002 (sectore
 - Open: the valley bench has no faces steep enough, so nothing is placed there; the landscape scene's cliffs are the
   real test. Cliff variants of more species (juniper-like shrubs, holm oak) and thicker, ribbon-like roots in cracks.
 
+### 5bh. Avalanche legacies (22 Nov; coordinator's queue, WorldStand DISTURBANCE_AVALANCHE 6)
+
+Research. What a dense avalanche leaves in a mountain forest (Bebi, Kulakowski and Rixen 2009, Snow avalanche
+disturbances in forest ecosystems; Butler and Malanson 1985 and Butler 1979 on avalanche path vegetation, Glacier
+National Park; Reardon, Pederson, Caruso and Fagre 2008, Arctic Antarctic and Alpine Research 40: dendroecological
+indicators; Stoffel and Bollschweiler 2008, tree-ring analysis in natural hazards):
+- Stems snapped or uprooted and carried downslope: the trunks lie along the fall line, tops down, the debris piled
+  in the runout; broken stumps stand where the flow was too weak to uproot.
+- Survivors at the track's edge and inside it where the flow thinned: crowns stripped on the upslope side
+  (flagged downslope), tops broken (decapitated), impact scars on the upslope face of the stem 0.5-3 m up, stems
+  tilted downslope (reaction wood); these are the indicators dendrochronologists date avalanches by.
+- Tracks run every few years or decades never regrow forest: flexible shrubs that bend under the snow and stand up
+  again take them, green alder (Alnus alnobetula, the Grünerlen scrub of the Alps) and willows, their stems swept
+  downslope at the base (sabre or pistol-butt stems from snow creep and glide) and rising at the ends.
+Plan (trees side; the field places by RULE_STAND_AGE and RULE_DISTURBANCE 6 as for the other legacies):
+- make_succession of the mountain stands (subalpine, montane conifer, beech): avalanche legacies tagged
+  SUCCESSION_AVALANCHE 6: lead logs and snapped stumps (0-15 y), survivors flagged downslope with upslope impact
+  scars (0-60 y), and green alder thickets with sabre stems in the young track (0-30 y).
+- Placement: species meta `fall_downhill` (the field turns mesh +X down the fall line), new in VegetationField3D.
+- Sabre stems: the cliff machinery (5bg) at small angles: the soil plane turned to the slope, the stem bent up.
+As built (22 Nov, first half): make_succession of the subalpine, montane conifer and beech stands adds, tagged
+SUCCESSION_AVALANCHE 6, the lead thrown (windthrow band 1 logs, half with root plates) and snapped (band 2 stumps)
+for 0-15 and 15-50 years (decay by the years), at 1.2x stand spacing, and survivors 0-50 years: open-grown, flagged
+(upslope limbs killed, the rest swept downslope) and leaning 5-20 degrees downslope (band 3). All carry species meta
+`fall_downhill`: VegetationField3D turns mesh +X down the fall line (+-fall_scatter). Bench: `--stands --avalanche`
+(a 5-year track: legacies inside only, thrown logs down the fall line). Next: green alder thickets with sabre stems
+in young tracks; upslope impact scars on the survivors.
+
+### 5bi. Leaves by local season (22 Nov; coordinator's ask, for the scene's late-frost hollow)
+
+The forest's meshes grow from one season (the generator's `season`), but leaves follow the season where the tree
+stands: leaf-out comes a few days later per 100 m climbed (Hopkins' bioclimatic law; Vitasse et al. 2009), and a
+late frost browns only the trees in the hollows where cold air pooled that night (Augspurger 2009; Vitasse, Lenz and
+Koerner 2014; the weather side is WeatherMap3D.late_frost, changelog weather-late-frost). Varying season per place
+is usually done with per-instance tints in the leaf shader or with seasonal mesh variants (SpeedTree's season
+setting). Instance tints are not traced here (PT ignores INSTANCE_CUSTOM on rigged multimeshes), so the state goes in
+the geometry.
+
+As built: near meshes are banded by local season, the same way ice storms band them by glaze (5be).
+`TreeGenerator.near_season_band(local)` turns a `WorldWeather.season_at` result into the species' leaf state in
+quarters (out, turned, fallen, frost-browned): 0 when it matches the generator's own season, else 1 + the code
+(at most 625 bands; one per state actually in view is built). VegetationField3D reads `season_at` over each lazy
+near cell twice a second beside `glaze_at` and asks for variant + NEAR_GLAZE_STRIDE x glaze + NEAR_SEASON_STRIDE
+(2^19) x season band; the near build forces that leaf state (`leaf_season_forced`) and grows it: frost-killed leaves
+dark brown and shrivelled, young leaves small and pale, turned and fallen shares as in autumn. Bench:
+`--stands --near-leaves`, a frost hollow's season bands an oak's near mesh and its leaves grow brown (mean leaf rgb
+0.16 0.11 0.04 against 0.13 0.25 0.06 green); the same season without the frost does not band.
+
+Limits: far meshes (past near_leaf_range) keep the generator's season, so a browned hollow is brown within the near
+range and green beyond it; far season bands would need per-band far variants (a memory cost per state). Only
+deciduous species band (evergreens' new shoots are not modelled). Aspen clones' own dates (5bf) are not applied on
+top of a forced band.
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:

@@ -1945,6 +1945,38 @@ Built (SnowBodies3D):
   ground's downward rays (layer 1) never take one for the ground. `--test=roofs` checks a heap keeps its mass and is
   wider than the grid.
 
+## Follow-up 53: the layers in cut walls (round 8, 22 Nov 2026)
+
+Research: a snow pit wall is how the pack's layers are read (Fierz et al. 2009, the international classification;
+Greene et al., SWAG "Snow, Weather and Avalanches"): new snow bright and soft, wind slab chalky and dense, rounded old
+snow greyer and finer, a melt-freeze crust a hard glazed line, buried surface hoar a thin dark seam (it shows as a
+shadowed line when the wall is brushed), depth hoar coarse, loose and dull at the base, wet layers darker. Games
+show cut snow as one material; the pack here already knows its layers (follow-ups 49 and 51), so the walls of ruts,
+prints and trenches can show them.
+
+Built:
+- SnowCover3D strata map (`get_strata_texture`): per cell, the layers merged into bands (same kind and wetness;
+  wet = liquid over 0.3 of what the layer holds), scaled to the pack's depth, up to eight bands from the surface
+  down, two to a float channel (12 bits each: 4 for the kind, 8 for the bottom's depth in cm). Built with the depth
+  map from the live layers each update.
+- SnowSurface3D: a steep face (weighted in from about 50 to 75 degrees off flat) at depth d under the
+  untouched surface (ground + the cover's depth - the fragment's height, its edge wandering a few mm) takes its
+  band's tint and roughness: new 1.0/0.75, wind 0.93/0.85, old (0.84, 0.87, 0.92)/0.8, crust glazed blue
+  (0.76, 0.83, 0.92)/0.2, hoar a dark seam (0.55)/0.9, depth hoar warm grey (0.72, 0.71, 0.68)/0.95, wet bands
+  x(0.75, 0.8, 0.86) and glossy 0.3. A crust or hoar seam is drawn at least 1.5 cm thick. Raster and path traced
+  alike (the same shader).
+- Docs review (22 Nov): only one line and one band read, and the wall looked like plaster. Now each band also has
+  its grain (value noise at the band's grain size, two octaves, bumping the normal: wind slab 2.5 mm and smooth, new
+  4 mm, old 6 mm, depth hoar 12 mm and deep, a crust glazed nearly flat), faded as grains shrink under a pixel; a
+  crust stands out as a ledge (lit top, shadow line under it), a hoar seam is a recess (0.55, shadowed at its top);
+  stronger tints (old (0.8, 0.84, 0.9), hoar 0.4, depth hoar (0.66, 0.65, 0.62), crust (0.68, 0.79, 0.93) at
+  roughness 0.1); the cut's tool marks as streaks down the wall. The view's pack has two crusts.
+- `--test=layers` checks the map: new over buried hoar over old, down to the pack's depth. `--view=strata`: a
+  2.4 m trench pressed nearly to the ground (compacted_density 900) and two ruts in an 80 cm pack (depth hoar, new,
+  crust, buried hoar, new), seen from inside the trench.
+- Not yet: the walls of the cover's own cuts (avalanche crowns, cornice breaks), which are cell steps, not the print
+  field; grain texture per band (sparkle of depth hoar facets).
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

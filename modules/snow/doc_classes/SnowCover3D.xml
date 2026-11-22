@@ -586,6 +586,12 @@
 				Returns the sastrugi at [param position]: their relief (m, the vector's length) times the direction (x, z) of the wind that carved them.
 			</description>
 		</method>
+		<method name="get_strata_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The strata map over the cover's square (RGBA floats), read by [SnowSurface3D] to draw the pack's layers in the walls of ruts, prints and trenches. Each channel holds two bands from the surface down, as [code]band * 4096 + next band[/code]; a band is [code](kind + 1 + 8 if wet) * 256[/code] plus the depth of its bottom under the surface in whole centimetres (to 2.55 m), with kinds as [method get_layers_at] (0 new, 1 wind, 2 old, 3 crust, 4 hoar, 5 depth hoar). Neighbouring layers of one kind and wetness share a band; 0 ends the list. Empty while [member layers_enabled] is off.
+			</description>
+		</method>
 		<method name="get_sastrugi_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>

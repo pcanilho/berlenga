@@ -959,6 +959,20 @@ Bench: `--caves --cave-mesh --cave-view=rimstone [--pool-water=n | --no-pool-wat
 compiled shader (afead43f), each live pool costs about 50 MB and 30 ms a frame on lavapipe; the PC queue measures
 it on the GPU.
 
+Grown from the floor (22 Nov). The dams read as tubes laid on the floor: a round section standing on beach sand or
+cave earth, a hard line where the two met. Rimstone is one deposit (Hammer et al. 2007): the spill over each dam coats
+the floor below it, and the pools sit in a single flowstone sheet. Now:
+- Each dam's downstream face is a concave apron of flowstone flaring out over the floor below it (one and a half times
+  the drop), meeting it at a low angle, its outer edge buried; the apron's edge takes the sheet's colour, so there is
+  no line where the dam meets the floor. The upstream face stays a steep lip into the pool.
+- The floor inside and round each pool (fading over 0.45 m) is flowstone (the mesher's red), so the cascade stands in
+  one calcite sheet. The fill's grit and the rock's pits are off under flowstone, and the sheet carries microgours:
+  sinuous rims a few centimetres apart, each a sharp lip with a gentle back (contours of a smooth field cut as a
+  sawtooth, in the normal only, fading by 6 m).
+Bench: `--cave-view=rimstone --low --downstream` frames a dam from below. The view now passes over pools in passages
+too low for the camera (it had put the camera and lamp inside the rock, a black frame). PT check of the pair: PC queue
+(the world's PT still runs out of memory in the cloud).
+
 Sea-cave mist, built (17 Nov): PhysXCaveMist3D (godot_physx, Flow). A CaveNetwork3D with sea caves makes one itself
 (`sea_mist`, on). Each of the 4 nearest sea-cave mouths whose floor the sea reaches gets an emitter: a low slab across
 the mouth's lower half, 2 m inside and 0.6 m over the water. The emitter pulses with the swell (the sea's

@@ -2287,7 +2287,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			const bool frost_on = frost && frost->any && sd2 > sd1 * 1.01f;
 			// The share of the ground each class covers in the stone domains (the borders are clast-supported: Washburn
 			// 1956; Hallet 2013); stones of the coarse end, frost-heaved.
-			static const float frost_cover[3] = { 0.6f, 0.3f, 0.1f };
+			static const float frost_cover[3] = { 0.6f, 0.4f, 0.2f };
 			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on && !frost_on) {
 				break;
 			}
@@ -2468,20 +2468,21 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						pd.yaw = rng.randf() * Math::TAU;
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
 						if (pick >= base + worn + kick + root) {
-							// Frost-sorted: angular frost-shattered stones, many heaved on edge with the long axis up (Washburn
-							// 1956; Hallet 2013), set into the border.
-							pd.key = _library_key(type, RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
+							// Frost-sorted: blocky frost-shattered stones (the rockfall family's fresh joint blocks, not the
+							// talus's chips), piled clast on clast into a border standing over the soil, some heaved up on
+							// edge with the long axis tilted up (Washburn 1956; Hallet 2013).
+							pd.key = _library_key(type, RockGenerator::FAMILY_ROCKFALL, RF_DETAIL_BIN + cls);
 							pd.film = 0.0f;
-							pd.size = sd1 * Math::pow(sd2 / sd1, Math::sqrt(rng.randf()));
+							pd.size = sd1 * Math::pow(sd2 / sd1, Math::pow(rng.randf(), 0.35f));
 							frost_stones.increment();
-							if (rng.randf() < 0.4f) {
-								pd.tilt = Math::deg_to_rad(55.0f + 30.0f * rng.randf());
-								pd.sink = 0.3f + 0.1f * rng.randf();
+							if (rng.randf() < 0.25f) {
+								pd.tilt = Math::deg_to_rad(35.0f + 30.0f * rng.randf());
+								pd.sink = 0.15f + 0.1f * rng.randf();
 								pd.follow = 0.5f;
 							} else {
 								pd.tilt = Math::deg_to_rad(25.0f) * rng.randf();
-								pd.sink = 0.15f + 0.1f * rng.randf();
-								pd.follow = 0.8f;
+								pd.sink = 0.04f + 0.08f * rng.randf();
+								pd.follow = 0.7f;
 							}
 						} else if (pick >= base) {
 							const float q = pick - base;
@@ -3112,11 +3113,13 @@ void RockField3D::_detail_prepare(DetailJob &r_job) {
 	// The shapes the placement can pick: either rock (strata), pebble or scree family, this size class.
 	const int bin = RF_DETAIL_BIN + (layer - LAYER_DETAIL_PEBBLE);
 	const RockGenerator::RockType types[2] = { rock_type, soft_rock_type };
-	const RockGenerator::Family families[2] = { RockGenerator::FAMILY_PEBBLE, RockGenerator::FAMILY_SCREE };
+	// Pebbles (shore, river beds), scree (talus, worn ground) and fresh joint blocks (frost-sorted borders).
+	const RockGenerator::Family families[3] = { RockGenerator::FAMILY_PEBBLE, RockGenerator::FAMILY_SCREE, RockGenerator::FAMILY_ROCKFALL };
+	_frost_climate(rect, r_job.frost);
 	LocalVector<uint32_t> keys, missing;
 	for (int t = 0; t < (use_strata ? 2 : 1); t++) {
-		for (RockGenerator::Family f : families) {
-			const uint32_t k = _library_key(types[t], f, bin);
+		for (int fi = 0; fi < (r_job.frost.any ? 3 : 2); fi++) {
+			const uint32_t k = _library_key(types[t], families[fi], bin);
 			keys.push_back(k);
 			if (!libraries.has(k)) {
 				missing.push_back(k);
@@ -3134,7 +3137,6 @@ void RockField3D::_detail_prepare(DetailJob &r_job) {
 	}
 	_detail_seeds(layer, rect.grow(0.5), r_job.seeds);
 	_sample_wear(rect.grow(1.0), r_job.wear);
-	_frost_climate(rect, r_job.frost);
 	// The block's shared tiles: held while the job reads them, or cut by it (_detail_compute) when there are none yet.
 	r_job.block = _tile_block(r_job.key);
 	if (ground_detail_tiles) {
@@ -7326,13 +7328,16 @@ void RockField3D::_frost_map_job(void *p_job) {
 			open = open || g > 0.0f;
 		}
 	}
-	job->data.resize(R * R * 2);
+	job->data.resize(R * R * 4);
 	uint8_t *w = job->data.ptrw();
 	memset(w, 0, job->data.size());
 	if (!open) {
 		return;
 	}
 	RFFrostFalls falls;
+	LocalVector<float> fine;
+	fine.resize(R * R);
+	memset(fine.ptr(), 0, sizeof(float) * R * R);
 	for (int z = 0; z < R; z++) {
 		const real_t gz = ((z + 0.5) * texel) / 2.0;
 		const int iz = MIN(int(gz), G - 2);
@@ -7347,10 +7352,49 @@ void RockField3D::_frost_map_job(void *p_job) {
 			}
 			const float sl = Math::lerp(Math::lerp(slope[iz * G + ix], slope[iz * G + ix + 1], fx), Math::lerp(slope[(iz + 1) * G + ix], slope[(iz + 1) * G + ix + 1], fx), fz);
 			const float share = rf_frost_share(job->gen, float(job->origin.x + (x + 0.5) * texel), float(job->origin.y + (z + 0.5) * texel), sl, &falls);
-			w[(z * R + x) * 2] = uint8_t(CLAMP(g * 255.0f, 0.0f, 255.0f));
-			w[(z * R + x) * 2 + 1] = uint8_t(CLAMP(share * 255.0f, 0.0f, 255.0f));
+			w[(z * R + x) * 4] = uint8_t(CLAMP(g * 255.0f, 0.0f, 255.0f));
+			w[(z * R + x) * 4 + 1] = uint8_t(CLAMP(share * 255.0f, 0.0f, 255.0f));
+			fine[z * R + x] = g * (1.0f - share);
 			job->any = true;
 		}
+	}
+	if (!job->any) {
+		return;
+	}
+	// b: the fine centres' dome. Frost heave lifts each fine domain some centimetres over its stony border, highest in
+	// the middle (Washburn 1956; Hallet and Prestrud 1986: 5 to 30 cm), and the landscape's metre mesh cannot draw a
+	// dome a metre or two across, so the material bends its normal by it. The fines' share times its own tent blur over
+	// about 2.75 m (two box passes of 11 texels each way), square-rooted: wide domains stand highest, edges ease in.
+	LocalVector<float> blur, tmp;
+	blur.resize(R * R);
+	memcpy(blur.ptr(), fine.ptr(), sizeof(float) * R * R);
+	tmp.resize(R * R);
+	const int K = 5;
+	for (int pass = 0; pass < 2; pass++) {
+		for (int z = 0; z < R; z++) {
+			const float *row = blur.ptr() + z * R;
+			float a = 0.0f;
+			for (int d = -K; d <= K; d++) {
+				a += row[CLAMP(d, 0, R - 1)];
+			}
+			for (int x = 0; x < R; x++) {
+				tmp[z * R + x] = a / float(2 * K + 1);
+				a += row[MIN(x + K + 1, R - 1)] - row[MAX(x - K, 0)];
+			}
+		}
+		for (int x = 0; x < R; x++) {
+			float a = 0.0f;
+			for (int d = -K; d <= K; d++) {
+				a += tmp[CLAMP(d, 0, R - 1) * R + x];
+			}
+			for (int z = 0; z < R; z++) {
+				blur[z * R + x] = a / float(2 * K + 1);
+				a += tmp[MIN(z + K + 1, R - 1) * R + x] - tmp[MAX(z - K, 0) * R + x];
+			}
+		}
+	}
+	for (int i = 0; i < R * R; i++) {
+		w[i * 4 + 2] = uint8_t(CLAMP(Math::sqrt(MAX(fine[i] * blur[i], 0.0f)) * 255.0f, 0.0f, 255.0f));
 	}
 }
 
@@ -7401,7 +7445,7 @@ void RockField3D::_finish_frost_map(bool p_wait) {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (is_inside_tree() && frost_sorting && job->any) {
 		const int R = FROST_MAP_RES;
-		Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RG8, job->data);
+		Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RGBA8, job->data);
 		if (frost_map_texture.is_valid() && frost_map_texture->get_width() == R) {
 			frost_map_texture->update(img);
 		} else {

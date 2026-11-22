@@ -65,7 +65,7 @@ def load(slug):
     ob.parent = None
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     vs = np.empty(len(ob.data.vertices) * 3, dtype=np.float32)
-    ob.data.vertices.foreach_get("co", vs)
+    ob.data.vertices.foreach_get("co", vs.reshape(-1))
     vs = vs.reshape(-1, 3)
     if slug in ALIGN:
         # a long piece Tripo laid diagonally: its main axis in plan (PCA) turned onto x
@@ -73,7 +73,7 @@ def load(slug):
         w, v = np.linalg.eigh(xy.T @ xy)
         ax = v[:, np.argmax(w)]
         ob.data.transform(__import__("mathutils").Matrix.Rotation(-math.atan2(ax[1], ax[0]), 4, "Z"))
-        ob.data.vertices.foreach_get("co", vs)
+        ob.data.vertices.foreach_get("co", vs.reshape(-1))
     # the origin on the ground at the footprint's centre
     lo, hi = vs.min(0), vs.max(0)
     off = Vector((-(lo[0] + hi[0]) * 0.5, -(lo[1] + hi[1]) * 0.5, -lo[2]))
@@ -82,7 +82,7 @@ def load(slug):
         # Tripo set the stock in the plane of the arms; a real stock crosses it. With the stock lying flat, the
         # crown and arms (raw x > 0.135, the shank round there) turn 90 degrees about the shank, so the lower fluke
         # goes into the ground under the origin, the way an anchor lies on a beach.
-        ob.data.vertices.foreach_get("co", vs)
+        ob.data.vertices.foreach_get("co", vs.reshape(-1))
         sel = vs[:, 0] > 0.135
         yz = vs[sel][:, 1:] - np.array([0.0, 0.085], np.float32)
         vs[sel, 1] = -yz[:, 1]

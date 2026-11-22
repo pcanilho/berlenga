@@ -1142,6 +1142,38 @@ func _wrack_check() -> void:
 		WorldContracts.clear_overrides()
 	_check("flood wrack: main line under the crest, lower lines below, none above or without a recent flood", res[0][0] > 10 and res[0][1] > 0 and res[0][2] == 0 and res[1] == [0, 0, 0] and res[2] == [0, 0, 0], res)
 
+# Bank relief (WorldGround.relief_at, Landscape3D's bank and cliff relief): plants stand on the drawn ground, the
+# heightfield plus the relief, not on the heightfield under it. A script stub raises the ground 0.3 m east of x = 0.
+func _relief_check() -> void:
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _relief_at(p: Vector3) -> Vector2:\n\treturn Vector2(0.3, 1.0) if p.x > 0.0 else Vector2()\n"
+	stub.reload()
+	var res := []
+	for raised in [false, true]:
+		if raised:
+			WorldContracts.set_ground(stub.new())
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		f.biome.species.assign([field.biome.species[1]])
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var east := Vector2(0, 0)
+		var west := Vector2(0, 0)
+		for q in f.get_placements(0):
+			var d: float = q.y - dm.get_height_at(q)
+			if q.x > 0.5:
+				east += Vector2(d, 1)
+			elif q.x < -0.5:
+				west += Vector2(d, 1)
+		res.append([east.x / maxf(east.y, 1.0), west.x / maxf(west.y, 1.0), int(east.y)])
+		f.free()
+		WorldContracts.clear_overrides()
+	_check("bank relief: plants stand on the drawn ground (heightfield plus WorldGround.relief_at), not under it",
+			res[0][2] > 5 and absf(res[0][0]) < 0.02 and absf(res[1][0] - 0.3) < 0.02 and absf(res[1][1]) < 0.02, res)
+
 # Seed down (SeedDown3D): a dandelion seed falls at its measured 0.39 m/s in still air (Cummins et al. 2018), two to
 # three times faster damp; the wind carries seeds downwind and its gusts loft some; heads in seed loose them in a
 # strong dry wind, none in calm air.
@@ -2533,6 +2565,7 @@ func _checks() -> void:
 	_webs_check()
 	_avalanche_check()
 	_wrack_check()
+	_relief_check()
 	_seed_down_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).

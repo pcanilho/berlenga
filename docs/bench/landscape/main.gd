@@ -910,6 +910,12 @@ func _ready() -> void:
 		await _rime_ridge()
 	if args.has("fog-sea"):
 		await _fog_sea()
+	if args.has("late-frost"):
+		await _fog_sea("late-frost")
+	if args.has("snow-strata"):
+		await _snow_strata()
+	if args.has("frost-sorted"):
+		_frost_sorted_cam()
 	if args.has("lodging"):
 		await _lodging()
 	if args.has("lens-cam"):
@@ -6555,6 +6561,9 @@ func _hut_roof_snow() -> void:
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	var hrs := int(float(args["hut-roof-snow"]) if String(args["hut-roof-snow"]) != "" else 24.0)
+	var slide_shot := String(args.get("roof-slide", ""))
+	if slide_shot != "":
+		sb.set("slide_enabled", false) # the load builds first; it is let go for the shot
 	var most := 0.0
 	for h in hrs:
 		snow.advance(3600.0)
@@ -6567,6 +6576,49 @@ func _hut_roof_snow() -> void:
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	_log("hut roof snow: pitch %.0f deg, %d h of snow, roofs held up to %.2f m, %d slides, %.0f kg landed past the eave" % [rad_to_deg(pitch), hrs, most, int(sb.call("get_roof_slides")), float(sb.call("get_roof_landed"))])
+	if slide_shot != "":
+		await _roof_slide_shot(sb, root, axis, other, lo, hi, mid, run, eave_y, slide_shot)
+
+
+# --roof-slide=mid|settled (with --hut-roof-snow): one camera at eye height off the gable end, --slide-out (4) m out
+# from the +side eave and --slide-back (9) m past the end, looking along the eave. The load is held while it builds,
+# then the air warms to --slide-air (2) C and the roof sheds (SnowBodies3D roof_slab_bodies, snow c820c61e). mid: the
+# picture is frozen --slide-frames (14) physics frames after the first slab leaves; settled: --slide-wait (120) s on.
+func _roof_slide_shot(sb: Object, root: Node3D, axis: int, other: int, lo: Vector3, hi: Vector3, mid: float, run: float, eave_y: float, kind: String) -> void:
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var e := Vector3()
+	e[axis] = mid + run + 0.6
+	e[other] = 0.5 * (lo[other] + hi[other])
+	e.y = eave_y - 0.8
+	var cl := Vector3()
+	cl[axis] = mid + run + float(args.get("slide-out", "4"))
+	cl[other] = hi[other] + float(args.get("slide-back", "9"))
+	var cw: Vector3 = root.global_transform * cl
+	var ew: Vector3 = root.global_transform * e
+	c3.global_position = Vector3(cw.x, height_at(cw.x, cw.z) + 1.7, cw.z)
+	c3.look_at(ew)
+	weather.air_follows_climate = false
+	weather.temperature = float(args.get("slide-air", "2"))
+	weather.snap_to_settings()
+	sb.set("slide_enabled", true)
+	var n0 := int(sb.call("get_slabs_slid"))
+	var t := 0
+	while int(sb.call("get_slabs_slid")) == n0 and t < 2000:
+		sb.call("step", 30.0)
+		await get_tree().physics_frame
+		t += 1
+	_log("roof slide: first slab after %d steps of 30 s, %d slid" % [t, int(sb.call("get_slabs_slid"))])
+	if kind == "settled":
+		get_viewport().disable_3d = true
+		for i in int(float(args.get("slide-wait", "120")) * Engine.physics_ticks_per_second):
+			await get_tree().physics_frame
+		get_viewport().disable_3d = false
+		_log("roof slide: settled after %s s, %.0f kg landed" % [args.get("slide-wait", "120"), float(sb.call("get_roof_landed"))])
+	else:
+		for i in int(args.get("slide-frames", "14")):
+			await get_tree().physics_frame
+		Engine.time_scale = 0.0
+		_log("roof slide: frozen mid-slide")
 
 
 func _hut_icicles() -> void:
@@ -6711,6 +6763,199 @@ func _mem_log(tag: String) -> void:
 			OS.get_static_memory_usage() >> 20])
 
 
+func _snow_strata() -> void:
+	# --snow-strata: a dug trench in a real pack (snow strata walls, a3d61431): the highest gentle snow at least
+	# --strata-min (0.8) m deep, its season's pack topped by a week's history (a crust on a storm's snow, buried
+	# surface hoar, a gale's wind slab and a fresh fall), then a trench --strata-w (1.2) m wide pressed to the ground,
+	# running along the sun's bearing so the low light rakes the far wall. The camera stands --strata-dist (1.5) m from
+	# that wall at --strata-eye (1.7) m over the snow, looking down into it.
+	var wr: Rect2 = gen.get_world_rect()
+	var best := Vector3.INF
+	var mind := float(args.get("strata-min", "0.8"))
+	var xx := wr.position.x + 200.0
+	while xx < wr.end.x - 200.0:
+		var zz := wr.position.y + 200.0
+		while zz < wr.end.y - 200.0:
+			var p := Vector3(xx, 0, zz)
+			var h := gen.get_height(p)
+			if snow.get_depth_at(p) >= mind and rad_to_deg(atan(_slip_grad(p).length())) < 8.0 and (best == Vector3.INF or h > best.y):
+				best = Vector3(xx, h, zz)
+			zz += 32.0
+		xx += 32.0
+	if best == Vector3.INF:
+		_log("snow strata: no gentle snow %.1f m deep" % mind)
+		return
+	var focus := Node3D.new()
+	focus.name = "StrataFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	weather.follow_target = weather.get_path_to(focus)
+	for i in 30:
+		await get_tree().physics_frame
+	weather.air_follows_climate = false
+	weather.temperature = 0.0
+	weather.snap_to_settings()
+	weather.temperature = -8.0 - (weather.get_air_temperature_at(best) - 0.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.call("add_depth_hoar", 0.6)
+	snow.advance(3600.0)
+	snow.call("add_snow", 20.0, 120.0) # a storm's snow
+	snow.call("add_crust", 0.02, 3.0) # its top melts and refreezes
+	snow.advance(3600.0)
+	snow.call("add_hoar", 8.0) # a clear night's surface hoar
+	snow.call("add_snow", 16.0, 110.0) # buried by the next storm
+	weather.wind_speed = 14.0 # a gale packs the top
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.advance(3.0 * 3600.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.call("add_snow", 10.0, 80.0) # a last fresh fall
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	var nrm := Vector3(sf.z, 0, -sf.x)
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
+	surf.name = "SnowSurface"
+	add_child(surf)
+	surf.set("snow_cover", surf.get_path_to(snow))
+	surf.set("follow_target", surf.get_path_to(focus))
+	surf.set("detail_spacing", 0.03125)
+	for i in 10:
+		await get_tree().physics_frame
+	var g: float = snow.get_ground_height_at(best) if snow.has_method("get_ground_height_at") else best.y
+	var w := float(args.get("strata-w", "1.2"))
+	surf.set("rim_share", 0.1)
+	surf.set("compacted_density", 900.0)
+	surf.call("press_box", Vector3(best.x, g, best.z), Vector2(w, 8.0), atan2(sf.x, sf.z), g + 0.01)
+	for i in 30:
+		await get_tree().physics_frame
+	var top := g + snow.get_depth_at(best + nrm * 3.0)
+	var wall := best - nrm * (w * 0.5)
+	var cp := wall + nrm * float(args.get("strata-dist", "1.5"))
+	c3.global_position = Vector3(cp.x, top + float(args.get("strata-eye", "1.7")), cp.z)
+	c3.look_at(Vector3(wall.x, g + 0.5 * (top - g), wall.z) + sf * 0.8)
+	_log("snow strata: %.2f m of snow at %s (%.0f m), trench %.1f m wide along the sun, cam %s" % [top - g, str(best.round()), best.y, w, str(c3.global_position.snapped(Vector3.ONE * 0.1))])
+
+
+# Tripo's lobster pots come with their netting as sparse wire strands: each of the three stacked pots gets an alpha-cut
+# net of tarred twine (4 cm diamond mesh) over its hoops and across its two ends, an elliptic half-cylinder in the raw
+# model's units (glTF: x along the pot, y up, z across), sized from the raw's cross-sections.
+func _lobster_net(n: Node3D) -> void:
+	var img := Image.create(128, 128, true, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for y in 128:
+		for x in 128:
+			# two families of diagonal strands, 3 texels thick, with a knot where they cross
+			var a := posmod(x + y, 64)
+			var b := posmod(x - y, 64)
+			if a < 3 or b < 3:
+				var shade := 0.07 + 0.03 * sin(float(x * 7 + y * 3))
+				img.set_pixel(x, y, Color(shade, shade * 0.9, shade * 0.75, 1.0))
+	img.generate_mipmaps()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = ImageTexture.create_from_image(img)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.alpha_scissor_threshold = 0.5
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.roughness = 0.85
+	mat.uv1_scale = Vector3(1.0, 1.0, 1.0)
+	# per pot: base height, arch height, half width, half length (raw units, the stack about 0.98 tall)
+	var pots := [Vector4(0.06, 0.23, 0.28, 0.41), Vector4(0.38, 0.2, 0.26, 0.4), Vector4(0.69, 0.27, 0.26, 0.36)]
+	var mesh_cm := 0.04 / 0.98 * 1.3 # one texture tile spans two meshes of 4 cm on a 1.3 m stack
+	for pot in pots:
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var seg := 24
+		var pts := []
+		for i in seg + 1:
+			var t := PI * float(i) / seg
+			pts.append(Vector2(pot.z * cos(t), pot.x + pot.y * sin(t)))
+		var arcs := [0.0]
+		for i in range(1, pts.size()):
+			arcs.append(arcs[-1] + (pts[i] as Vector2).distance_to(pts[i - 1]))
+		for i in seg:
+			for c in [[i, -1.0], [i + 1, -1.0], [i + 1, 1.0], [i, -1.0], [i + 1, 1.0], [i, 1.0]]:
+				var q: Vector2 = pts[c[0]]
+				st.set_uv(Vector2(c[1] * pot.w, arcs[c[0]]) / (mesh_cm * 2.0))
+				st.add_vertex(Vector3(c[1] * pot.w, q.y, q.x))
+		# the two ends: a fan across each half ellipse
+		for e in [-1.0, 1.0]:
+			for i in seg:
+				for q in [Vector2(0.0, pot.x), pts[i], pts[i + 1]]:
+					st.set_uv(Vector2(q.x, q.y) / (mesh_cm * 2.0))
+					st.add_vertex(Vector3(e * pot.w, q.y, q.x))
+		st.generate_normals()
+		var mi := MeshInstance3D.new()
+		mi.name = "LobsterNet"
+		mi.mesh = st.commit()
+		mi.material_override = mat
+		n.add_child(mi)
+
+
+func _frost_sorted_cam() -> void:
+	# --frost-sorted: frost-sorted patterned ground (RockField3D frost_sorting, 94c5a825/1a8aff72). On a 16 m grid, the
+	# flat (under 2 degrees) ground whose sorting gate is strong all round it (eight points 15 m out over 0.6), with
+	# 2-5 degree ground --fs-up (25) m upslope where the borders draw out into stripes. The camera stands --fs-back
+	# (7) m downslope of it at --fs-eye (1.7) m, looking up over the circles to the stripes; --fs-yaw turns it.
+	if rocks == null or not rocks.has_method("get_frost_at"):
+		_log("frost sorted: no RockField3D frost map")
+		return
+	var wr: Rect2 = gen.get_world_rect()
+	var best := -1.0
+	var bp := Vector3.ZERO
+	var bu := Vector3.ZERO
+	var upd := float(args.get("fs-up", "25"))
+	var xx := wr.position.x + 100.0
+	while xx < wr.end.x - 100.0:
+		var zz := wr.position.y + 100.0
+		while zz < wr.end.y - 100.0:
+			var p := Vector3(xx, 0, zz)
+			var g0: Vector2 = rocks.call("get_frost_at", p)
+			if g0.x > 0.6 and rad_to_deg(atan(_slip_grad(p).length())) < 2.0:
+				var ok := true
+				var lo := 1.0
+				for k in 8:
+					var q := p + Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0)) * 15.0
+					var gq: Vector2 = rocks.call("get_frost_at", q)
+					lo = minf(lo, gq.x)
+				if lo > 0.6:
+					# upslope: the steepest rise within 40 m
+					var up := Vector3.ZERO
+					var rise := -INF
+					for k in 16:
+						var d := Vector3(cos(TAU * k / 16.0), 0, sin(TAU * k / 16.0))
+						var r := height_at(p.x + d.x * 40.0, p.z + d.z * 40.0) - height_at(p.x, p.z)
+						if r > rise:
+							rise = r
+							up = d
+					var sp := p + up * upd
+					var sdeg := rad_to_deg(atan(_slip_grad(sp).length()))
+					var gs: Vector2 = rocks.call("get_frost_at", sp)
+					var score := lo + (1.0 if sdeg > 2.0 and sdeg < 5.0 and gs.x > 0.6 else 0.0)
+					if score > best:
+						best = score
+						bp = Vector3(p.x, height_at(p.x, p.z), p.z)
+						bu = up
+			zz += 16.0
+		xx += 16.0
+	if best < 0.0:
+		_log("frost sorted: no sorted ground found")
+		return
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var dir := bu.rotated(Vector3.UP, deg_to_rad(float(args.get("fs-yaw", "0"))))
+	var cp := bp - dir * float(args.get("fs-back", "7"))
+	c3.global_position = Vector3(cp.x, height_at(cp.x, cp.z) + float(args.get("fs-eye", "1.7")), cp.z)
+	var tgt := bp + dir * upd
+	c3.look_at(Vector3(tgt.x, height_at(tgt.x, tgt.z), tgt.z))
+	weather.follow_target = weather.get_path_to(c3)
+	_log("frost sorted: flat at %s (score %.2f), upslope %s, cam %s" % [str(bp.round()), best, str(dir.snapped(Vector3.ONE * 0.01)), str(c3.global_position.round())])
+
+
 # Sets a prop (from _tripo) on the ground at `p`, turned `yaw` radians, sunk `sink` m so no edge floats on a slope.
 func _put(n: Node3D, p: Vector3, yaw: float, sink := 0.05, parent: Node = null) -> Node3D:
 	n.rotation.y = yaw
@@ -6779,6 +7024,8 @@ func _cove_props() -> void:
 		["old_anchor", 1.9, 0, bp - f * 2.0 - sd * 5.5, 0.9], ["mooring_bollard", 0.9, 0, bp - f * 8.0 - sd * 0.5, 0.0]]
 	for g in gear:
 		var gn := _tripo(g[0], g[1], g[2])
+		if gn != null and g[0] == "lobster_pots":
+			_lobster_net(gn.get_child(0))
 		if gn != null:
 			_put(gn, g[3], atan2(f.x, f.z) + g[4], 0.06)
 			placed.append(g[0])
@@ -7785,15 +8032,18 @@ func _rime_ridge() -> void:
 	_log("rime ridge: %.0f h of cloud at %.1f C on the crest %s (%.0f m), rime %s, cam %s" % [hrs, weather.get_air_temperature_at(top), str(top.round()), top.y, str(rv), str(cp.round())])
 
 
-func _fog_sea() -> void:
+func _fog_sea(key := "fog-sea") -> void:
 	# --fog-sea[=H]: a clear calm night of H (6) hours before the shot (WeatherMap3D.valley_fog, 2648f0f3): the cold
 	# pools fill with radiation fog, then the clock returns to --time for the dawn view over the fog top. --fog-wind
 	# (0.5) m/s, --fog-humidity (0.95), --fog-air (6) C. Logs the fog top along the camera's view.
-	var hrs := float(args["fog-sea"]) if String(args["fog-sea"]) != "" else 6.0
+	# --late-frost[=H]: the same night in spring, drier (0.6) and colder (--fog-air 2 C): the hollows pool below -2 C
+	# and the young leaves out there brown (WeatherMap3D.late_frost; trees band near meshes by local season, 52d3db3f).
+	var frost := key == "late-frost"
+	var hrs := float(args[key]) if String(args[key]) != "" else (8.0 if frost else 6.0)
 	var t_shot := clock.time_of_day
 	weather.air_follows_climate = false
-	weather.temperature = float(args.get("fog-air", "6"))
-	weather.humidity = float(args.get("fog-humidity", "0.95"))
+	weather.temperature = float(args.get("fog-air", "2" if frost else "6"))
+	weather.humidity = float(args.get("fog-humidity", "0.6" if frost else "0.95"))
 	weather.wind_speed = float(args.get("fog-wind", "0.5"))
 	weather.cloud_cover = 0.0
 	weather.valley_fog = true
@@ -7812,6 +8062,9 @@ func _fog_sea() -> void:
 		p.y = height_at(p.x, p.z)
 		tops.append("%.0f m: ground %.0f top %.0f" % [150.0 + 250.0 * k, p.y, weather.get_valley_fog_top_at(p)])
 	_log("fog sea: %.0f h calm night, cam at %.0f m; %s" % [hrs, c3.global_position.y, ", ".join(tops)])
+	if frost and weather.has_method("get_leaf_frost_at"):
+		var lp := c3.global_position + Vector3(f.x, 0, f.z).normalized() * 20.0
+		_log("late frost: at the camera %s, 20 m on %s (severity, forcing, days)" % [str(weather.get_leaf_frost_at(c3.global_position)), str(weather.get_leaf_frost_at(lp))])
 
 
 func _lodging() -> void:

@@ -218,6 +218,8 @@ private:
 	Ref<Image> upload_cups;
 	Ref<Image> sastrugi_image, upload_sastrugi;
 	Ref<ImageTexture> sastrugi_texture;
+	Ref<Image> strata_image, upload_strata; // round 8: the top layers as bands for cut walls (RGBAF, see _build_upload)
+	Ref<ImageTexture> strata_texture;
 	Vector<float> cell_hoar_layer;
 	Vector<float> cell_hoar_burial;
 	Vector<float> cell_hoar_age;
@@ -497,6 +499,8 @@ public:
 	bool is_sastrugi_enabled() const { return sastrugi_enabled; }
 	Vector2 get_sastrugi_at(Vector3 p_position) const; // relief (m) times the carving wind's direction
 	Ref<Texture2D> get_sastrugi_texture() const { return sastrugi_texture; }
+	Ref<Texture2D> get_strata_texture() const { return strata_texture; }
+	static Vector<int> strata_bands(const float *p_swe, const float *p_rho, const float *p_liq, const uint8_t *p_kind, int p_count, float p_depth, float p_liquid_capacity);
 	void set_wind_packing_enabled(bool p_enabled) { wind_packing_enabled = p_enabled; }
 	bool is_wind_packing_enabled() const { return wind_packing_enabled; }
 	float get_wind_slab_at(Vector3 p_position) const; // m of wind-packed snow in the pack

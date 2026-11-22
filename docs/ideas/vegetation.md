@@ -1799,6 +1799,12 @@ producers fill it).
 - Grass: a 64 x 6 m grid of the mark round the camera (read every 5 s); blades under the crest (with 6 cm of noise)
   combed flat along the peak's flow direction and yellowed, fading over 7 to 35 days, with a grey-brown silt film
   fading over 20 to 120 days.
+- River scout (grass bench --river; GRASS_RIVER_TOP=1 looks straight down): a PhysXRiver3D (5 m3/s, flood x6)
+  gives a mark 0.68 m over its surface, 7.5 m from the centre line; 132 strands lie on it (ground 0.10 m under to
+  0.02 m over), 20 on the lower lines, and the grass below is combed and silted. The wrack must come ahead of the
+  ground cover in the biome's list: appended after it, the sward's footprints left 16 strands on the same line.
+- Sea and fixed-level lakes now give a mark too (still level plus storm run-up, Valence b7a8c6b63a): strand lines
+  follow it with no change here.
 - Not yet: live re-placement of wrack when a new flood peaks (the field places at populate and on stand changes).
 
 ## Seed down in the wind (round 6, third pick)
@@ -1819,3 +1825,17 @@ kind, so the path tracer sees them. still_shot holds them for stills.
   sun-warmed ground (the shared wind has no thermals); scenes add the node (it is not made by the fields).
 - Bench: vegetation --test checks the fall speed, the damp fall, drift and loft in wind, and release only in wind;
   grass --day=245 --seed-down looks along a thistle's plume (sparse: a head looses a seed or two a second).
+
+## Plants on the drawn bank relief (22 Nov, world-links request)
+Landscape3D draws slump scarps and cliff ledges over the heightfield (bank_relief 0.8 m, cliff_relief 0.6 m,
+WorldGround.relief_at: x the drawn surface's height over the heightfield). Plants placed on the heightfield
+stood inside a pushed-out bank or floated off a cut one. Now:
+- VegetationField3D: each plant (and each canopy record) stands at the heightfield plus relief_at's x; floating
+  plants and plants on logs are unchanged.
+- GrassField3D: the per-tile height texels the blade shader samples carry the relief at each texel's centre, and
+  the CPU blade path adds it per blade, so both paths stand on the same surface. Done on the CPU, not in the vertex
+  shader, so the path tracer's merged MultiMeshes (whose MODEL_MATRIX is the field's) get it too.
+- The relief is sampled at the data map's texel spacing (0.5 m in the benches), so steps finer than that are
+  smoothed under the grass; Landscape3D's own relief is built at its finest level and is close to that scale.
+- Check: vegetation --test "bank relief" (a WorldGround stub raises one half 0.3 m; plants follow it exactly).
+

@@ -1037,7 +1037,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`).",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). Rock faces weather by aspect, with lichen, moss and seep streaks on the shaded sides (`tm_face_weathering`, `tm_latitude`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3813,7 +3813,7 @@
     "SnowCover3D.layers_enabled"
    ],
    "note": "",
-   "what": "crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail.",
+   "what": "crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail; the walls of ruts, prints and trenches show the layers with their own grain, from fine fresh snow and smooth wind slab to glazed crust ledges, dark buried hoar seams and coarse depth hoar at the base.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"

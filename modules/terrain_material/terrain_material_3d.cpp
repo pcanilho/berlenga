@@ -303,7 +303,7 @@ global uniform vec4 terrain_cover_rect;
 global uniform sampler2D rock_contact_map : hint_default_black, filter_linear; // RockField3D: r damp ring, g banked fines
 global uniform sampler2D rock_far_cover_map : hint_default_black, filter_linear; // RockField3D far tier: rgb stone colour, a cover
 global uniform sampler2D rock_far_reach_map : hint_default_black, filter_linear; // RockField3D: rg the fade's start and end, 8 m a step (2040 m at 1)
-global uniform sampler2D terrain_frost_map : hint_default_black, filter_linear; // RockField3D frost_sorting: r gate, g stone share
+global uniform sampler2D terrain_frost_map : hint_default_black, filter_linear; // RockField3D frost_sorting: r gate, g stone share, b dome
 global uniform vec4 terrain_frost_rect; // its origin (x, z) and size (m); size 0 = none
 global uniform vec4 rock_far_cover_rect;
 global uniform vec4 rock_contact_rect;
@@ -358,6 +358,8 @@ uniform float tm_alluvium_area = 5.5;
 uniform float tm_blend_depth = 0.2;
 uniform int tm_detail_octaves = 4;
 uniform float tm_wetness = 1.0;
+uniform float tm_face_weathering = 1.0; // rock faces weathered by aspect: lichen, moss, seep streaks (0 off)
+uniform float tm_latitude = 46.0; // degrees, north positive: which aspects are shaded
 uniform float tm_snow = 1.0;
 uniform float tm_snow_max_slope = 60.0;
 
@@ -874,6 +876,53 @@ float tm_cl_offset(vec3 p) {
 	o += 1.2 * mix(j0, j1, tu * tu * (3.0 - 2.0 * tu));
 	o += 0.5 * (tm_cl_noise(p * 0.7) - 0.5) + 0.2 * (tm_cl_noise(p * 2.1 + vec3(3.0, 1.0, 7.0)) - 0.5);
 	return o;
+}
+// Seep streaks below the beds' ledges (cyanobacterial ink streaks on limestone, Tintenstriche; desert varnish in dry
+// climates; Viles 1995, Dorn and Oberlander 1981): water runs off a proud bed's lip and down the face of the softer
+// bed under it, staining drip lines that fade down the fall line. The same beds as tm_cl_beds. 0..1.
+float tm_cl_seep(vec3 p) {
+	const float U = 12.0;
+	float yb = p.y + (tm_cl_noise(p * 0.05) - 0.5) * 4.0 + (tm_cl_noise(p * 0.013 + vec3(5.0, 0.0, 2.0)) - 0.5) * 10.0;
+	int unit = int(floor(yb / U));
+	float fu0 = yb - float(unit) * U;
+	int nb = 1 + int(tm_cl_hash(unit, 21, 4) * 4.999);
+	float wb[5];
+	float wsum = 0.0;
+	for (int i = 0; i < 5; i++) {
+		wb[i] = i < nb ? exp(1.1 * (tm_cl_hash(unit, i, 17) + tm_cl_hash(unit, i, 19) - 1.0) * 1.7) : 0.0;
+		wsum += wb[i];
+	}
+	int bi = nb - 1;
+	float lo = 0.0;
+	float T = U;
+	float acc = 0.0;
+	bool found = false;
+	for (int i = 0; i < 5; i++) {
+		if (i < nb && !found) {
+			float th = U * wb[i] / wsum;
+			if (fu0 < acc + th || i == nb - 1) {
+				bi = i;
+				T = th;
+				lo = acc;
+				found = true;
+			}
+			acc += th;
+		}
+	}
+	int bed = unit * 8 + bi;
+	int bed_up = bi + 1 < nb ? bed + 1 : (unit + 1) * 8;
+	float below = T - (fu0 - lo); // metres under the top of this bed
+	float ledge = clamp(1.5 * (tm_cl_proud(p, bed_up) - tm_cl_proud(p, bed)), 0.0, 1.0);
+	// Wetter beds (joints feeding them) seep further.
+	float L = 2.0 + 5.0 * tm_cl_hash(bed, 41, 3);
+	float fade = exp(-below / L) * smoothstep(0.0, 0.25, below);
+	// Drip lines across the face: fine lines 0.3 to 1 m apart in groups, stretched down the fall line.
+	// Along the face: the horizontal across its fall line.
+	// Stretched in y only, so the lines stay put as the face turns (a coordinate taken along the face's own normal
+	// swirled with every bump of the relief).
+	float lines = 0.65 * tm_cl_noise(vec3(p.x * 1.3, p.y * 0.06, p.z * 1.3 + float(bed) * 0.37)) + 0.35 * tm_cl_noise(vec3(p.x * 3.7, p.y * 0.12, p.z * 3.7 + float(bed) * 0.71));
+	float group = tm_cl_noise(vec3(p.x * 0.2, float(bed) * 0.53, p.z * 0.2));
+	return ledge * fade * smoothstep(0.4, 0.75, lines) * smoothstep(0.3, 0.65, group);
 }
 // The banks' slumps (Landscape3D::_bank_offset): scarps and toe lobes in 6 m units along the contour, hummocks.
 float tm_bk_offset(vec3 p) {
@@ -1730,6 +1779,46 @@ void fragment() {
 	}
 	c += R"(	}
 )";
+	// Rock faces weathered by aspect (docs/ideas/terrain-material.md, "Rock faces weather by aspect"): lichen and moss
+	// cover follows how little sun a face gets over the year, the heat load index's idea (McCune and Keon 2002: a
+	// face's insolation from latitude, slope and aspect, folded toward the warmer afternoon side, south-west in the
+	// north); shaded, damp aspects carry far more (Armstrong 1974; Pentecost 1980). Grey-green crusts, now and then
+	// the yellow-green map lichen, dark moss on the most shaded, less steep ledges; seep streaks under the beds'
+	// ledges (tm_cl_seep). North is -z.
+	c += R"(	if (tm_face_weathering > 0.0) {
+		float fw_rock = (w[0] + 0.5 * w[1]) / total;
+		float fw_face = fw_rock * (1.0 - smoothstep(0.55, 0.85, tm_macro_n.y)) * tm_face_weathering;
+		if (fw_face > 0.0) {
+			float fw_lat = radians(clamp(tm_latitude, -89.0, 89.0));
+			float fw_el = radians(90.0) - abs(fw_lat); // the equinox noon sun
+			float fw_az = radians(tm_latitude >= 0.0 ? 200.0 : 340.0); // toward the equator, a little past noon
+			vec3 fw_s = vec3(cos(fw_el) * sin(fw_az), sin(fw_el), -cos(fw_el) * cos(fw_az));
+			float fw_ins = clamp(dot(tm_macro_n, fw_s), 0.0, 1.0);
+			float shade = 1.0 - smoothstep(0.1, 0.7, fw_ins);
+			// Fade the patch noise to its mean as the pixel grows past it.
+			float fw_k = 1.0 - smoothstep(0.15, 0.6, tm_fp0);
+			// Crusts as broad, soft rosettes and colonies: a coverage that grows with shade, a tint of the rock rather
+			// than paint over it, so the rock's own tone and cracks show through.
+			float ln = mix(0.5, 0.55 * tm_vn(wp * 0.45 + 13.0) + 0.3 * tm_vn(wp * 1.3 + 29.0) + 0.15 * tm_vn(wp * 3.7 + 41.0), fw_k);
+			float lc = smoothstep(0.62 - 0.3 * shade, 0.85 - 0.3 * shade, ln) * fw_face;
+			float yellow = smoothstep(0.55, 0.75, tm_vn(wp * 0.21 + 77.0)) * (1.0 - 0.7 * shade);
+			float fw_l = dot(albedo, vec3(0.3, 0.59, 0.11));
+			vec3 lcol = mix(vec3(0.95, 1.0, 0.86), vec3(1.05, 1.08, 0.6), yellow) * mix(fw_l, 0.3, 0.5);
+			lcol *= 0.9 + 0.2 * mix(0.5, tm_vn(wp * 7.0 + 5.0), fw_k);
+			albedo = mix(albedo, lcol, lc * (0.3 + 0.25 * shade));
+			rough = mix(rough, max(rough, 0.9), lc);
+			// Moss on shaded ledges and less steep shaded rock.
+			float moss = shade * shade * smoothstep(0.05, 0.45, tm_macro_n.y) * smoothstep(0.45, 0.8, mix(0.5, 0.7 * tm_vn(wp * 0.5 + 51.0) + 0.3 * tm_vn(wp * 1.9 + 61.0), fw_k)) * fw_face * 0.75;
+			albedo = mix(albedo, vec3(0.08, 0.1, 0.04) * (0.8 + 0.4 * tm_vn(wp * 6.0 + 2.0)), moss);
+			rough = mix(rough, 0.95, moss);
+			// Seep streaks under the ledges, darker where the face is shaded (it stays wet longer).
+			vec3 fw_p = tm_cl_p.w > 0.0 ? tm_cl_p.xyz : wp;
+			float seep = tm_cl_seep(fw_p) * (1.0 - smoothstep(0.55, 0.8, tm_macro_n.y)) * fw_rock * tm_face_weathering;
+			seep = mix(0.5 * seep, seep, fw_k);
+			albedo *= 1.0 - (0.25 + 0.15 * shade) * seep;
+		}
+	}
+)";
 	if (detail) {
 		c += R"(	// The generator's erosion detail below the vertex spacing, faded out where a pixel covers it.
 	// The footprint's long axis (stretched by 1 / cos of the view to the ground, up to 10 times): a face seen edge-on
@@ -2034,10 +2123,16 @@ void fragment() {
 	c += R"(	if (terrain_frost_rect.z > 0.0) {
 		vec2 fuv = (wp.xz - terrain_frost_rect.xy) / terrain_frost_rect.zw;
 		if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
-			vec2 fr = textureLod(terrain_frost_map, fuv, 0.0).rg;
+			vec3 fr = textureLod(terrain_frost_map, fuv, 0.0).rgb;
 			vec2 fe = min(fuv, 1.0 - fuv);
 			float fg = fr.r * smoothstep(0.0, 0.04, min(fe.x, fe.y)) * smoothstep(0.65, 0.85, wn.y);
 			if (fg > 0.0) {
+				// Frost heave domes the centres (b, RockField3D's dome share) about 18 cm over the stone borders: the
+				// normal bends by its slope from the texels two either side.
+				float fdx = 2.0 / float(textureSize(terrain_frost_map, 0).x);
+				vec2 fdh = vec2(textureLod(terrain_frost_map, fuv + vec2(fdx, 0.0), 0.0).b - textureLod(terrain_frost_map, fuv - vec2(fdx, 0.0), 0.0).b, textureLod(terrain_frost_map, fuv + vec2(0.0, fdx), 0.0).b - textureLod(terrain_frost_map, fuv - vec2(0.0, fdx), 0.0).b);
+				fdh *= 0.18 / (2.0 * fdx * terrain_frost_rect.z);
+				sn = normalize(sn - vec3(fdh.x, 0.0, fdh.y) * smoothstep(0.0, 0.04, min(fe.x, fe.y)));
 				float fn = tm_vn(wp * 2.3 + 61.0);
 				float fm = tm_vn(wp * 0.9 + 23.0);
 				// Wide transitions: the fines thin out into the border over the share's whole range, as the sorting does.
@@ -2047,6 +2142,8 @@ void fragment() {
 				// Silt and clay (a grey-brown, dry about 0.15 in this material's linear albedo; wet about 0.6 of that, darker than the stones round it as
 				// in field photographs of sorted circles), drying out first in patches; a little of the ground's own colour stays (algal crusts, the last of the sward).
 				vec3 silt = vec3(0.15, 0.13, 0.105) * (0.88 + 0.24 * grain) * mix(0.6, 1.0, smoothstep(0.6, 0.85, fm));
+				// The crown drains and dries first; the margin against the stones stays wet and dark.
+				silt *= mix(0.75, 1.12, smoothstep(0.1, 0.8, fr.b));
 				albedo = mix(albedo, silt, 0.85 * centre);
 				rough = mix(rough, mix(0.78, 0.92, smoothstep(0.6, 0.85, fm)), centre); // damp, not puddled: matte
 				vec3 lag = vec3(0.15, 0.145, 0.135) * (0.75 + 0.5 * grain);

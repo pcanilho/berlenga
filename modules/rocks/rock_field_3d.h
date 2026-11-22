@@ -530,7 +530,7 @@ private:
 	void _sync_scree_blocks() const;
 	void _update_contact(bool p_force);
 	void _clear_contact();
-	// The frost-sorted ground for the terrain material: terrain_frost_map (RG8: r gate, g stone share) over
+	// The frost-sorted ground for the terrain material: terrain_frost_map (RGBA8: r gate, g stone share, b the fines' dome) over
 	// terrain_frost_rect, a FROST_MAP_SIZE square round the target.
 	static constexpr int FROST_MAP_RES = 512;
 	static constexpr real_t FROST_MAP_SIZE = 64.0;
