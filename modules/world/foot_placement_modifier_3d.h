@@ -79,6 +79,7 @@ private:
 	NodePath reference_node;
 	NodePath walker_node;
 	Vector3 pelvis_offset;
+	Vector3 pelvis_rotation; // a rotation vector (axis x angle, radians) in the character's frame
 	real_t ankle_height = -1.0; // m above the sole; < 0: from the rest pose
 	real_t probe_up = 0.5;
 	real_t probe_down = 0.6;
@@ -140,6 +141,8 @@ public:
 	NodePath get_walker_node() const;
 	void set_pelvis_offset(const Vector3 &p_offset);
 	Vector3 get_pelvis_offset() const;
+	void set_pelvis_rotation(const Vector3 &p_rotation);
+	Vector3 get_pelvis_rotation() const;
 	void set_ankle_height(real_t p_height);
 	real_t get_ankle_height() const;
 	void set_probe_up(real_t p_distance);

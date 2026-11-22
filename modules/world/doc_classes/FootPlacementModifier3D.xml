@@ -118,6 +118,9 @@
 		<member name="pelvis_offset" type="Vector3" setter="set_pelvis_offset" getter="get_pelvis_offset" default="Vector3(0, 0, 0)">
 			An extra pelvis offset in metres, in the character's frame ([member reference_node]'s, x left, y up, z forward). Planted feet stay where they are.
 		</member>
+		<member name="pelvis_rotation" type="Vector3" setter="set_pelvis_rotation" getter="get_pelvis_rotation" default="Vector3(0, 0, 0)">
+			A turn of the pelvis about its own origin, as a rotation vector (axis times angle in radians) in the character's frame: a hip dropped on the free side in an idle weight shift is a small turn about the forward axis. Planted feet stay where they are.
+		</member>
 		<member name="plant_height" type="float" setter="set_plant_height" getter="get_plant_height" default="0.06">
 			A foot whose sole the animation holds less than this above its floor, and still, is planted.
 		</member>
