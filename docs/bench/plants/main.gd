@@ -27,9 +27,11 @@ extends Node3D
 #   --browse=B       deer browsing pressure 0..1 (season browse): bitten bramble and raspberry
 #   --rooting=A      years since boar rooting (season rooting_age): the rooted sods' stage
 #   --mound=A        years since a molehill was thrown up (season mound_age): fresh, crusted, grassing over
+#   --taa            temporal anti-aliasing on (and 40 frames to settle): hashed alpha (the webs' silk) resolves
+#   --dew=D          dew 0..1 on the spider webs (season dew), in place of a WeatherMap3D's
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn", "rooted_sod", "anthill", "wood_ant_nest", "molehill", "leaf_bank", "cow_pat", "horse_dung", "deer_pellets", "dung_rough"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn", "rooted_sod", "anthill", "wood_ant_nest", "molehill", "leaf_bank", "cow_pat", "horse_dung", "deer_pellets", "dung_rough", "fairy_ring_mushroom", "sheet_web", "orb_web"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -57,6 +59,8 @@ var burn_age := -1.0
 var browse := -1.0
 var rooting_age := -1.0 # --rooting=A
 var mound_age := -1.0 # --mound=A
+var dew := -1.0 # --dew=D
+var taa := false # --taa
 var n := 0
 var fails := 0
 
@@ -97,6 +101,11 @@ func _ready() -> void:
 			rooting_age = float(a.substr(10))
 		elif a.begins_with("--mound="):
 			mound_age = float(a.substr(8))
+		elif a == "--taa":
+			taa = true
+			get_viewport().use_taa = true
+		elif a.begins_with("--dew="):
+			dew = float(a.substr(6))
 		elif a.begins_with("--wind="):
 			var w := a.substr(7).split(",")
 			wind = Vector2(float(w[0]), float(w[1]))
@@ -118,6 +127,8 @@ func _ready() -> void:
 		season["rooting_age"] = rooting_age
 	if mound_age >= 0.0:
 		season["mound_age"] = mound_age
+	if dew >= 0.0:
+		season["dew"] = dew
 	gen.season = season
 	for p in NAMES.size():
 		if close >= 0 and p != close:
@@ -913,7 +924,7 @@ func _bloom_checks() -> void:
 func _process(_d: float) -> void:
 	n += 1
 	# Raster waits for the wind and the trample field to settle; a traced frame costs minutes here.
-	var settle := 90 if (push or wind != Vector2.ZERO) and raster else 8
+	var settle := 90 if (push or wind != Vector2.ZERO) and raster else (40 if taa else 8)
 	if n < settle:
 		return
 	if seq > 0 and n < settle + seq:

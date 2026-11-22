@@ -564,3 +564,38 @@ void PlantGenerator::_build_leaf_bank() {
 	plant_height = MAX(plant_height, heap.y);
 	mound_still(builders[SURFACE_CENTRE].uv2s, still_from, &builders[SURFACE_CENTRE].colors);
 }
+
+// Meadow fairy rings (docs/ideas/vegetation.md, "Meadow fairy rings"; fairy_rings.h): clusters of fairy ring
+// champignons along the dead band's outer edge, on the same rings GrassField3D.fairy_rings shows, in their season.
+TypedArray<Resource> PlantGenerator::make_fairy_rings(int p_variants, bool p_textures, const Dictionary &p_season) {
+	TypedArray<Resource> out;
+	Ref<PlantGenerator> gen;
+	gen.instantiate();
+	gen->set_textures(p_textures);
+	gen->set_preset(PRESET_FAIRY_RING_MUSHROOM);
+	gen->apply_preset_colors();
+	gen->set_seed(12000);
+	gen->set_season(p_season);
+	Ref<PlantSpecies> sp;
+	sp.instantiate();
+	TypedArray<Mesh> meshes;
+	const TypedArray<ArrayMesh> v = gen->generate_variants(MAX(p_variants, 1));
+	for (int i = 0; i < v.size(); i++) {
+		meshes.push_back(v[i]);
+	}
+	sp->set_meshes(meshes);
+	sp->set_spacing(0.35f);
+	sp->set_footprint(0.1f);
+	sp->set_density(0.8f * get_presence(PRESET_FAIRY_RING_MUSHROOM, p_season));
+	sp->set_scale_range(Vector2(0.85f, 1.2f));
+	sp->set_align_to_ground(1.0f);
+	sp->set_rule_range(PlantSpecies::RULE_FAIRY_RING, Vector2(-0.25f, 0.1f));
+	sp->set_rule_fade(PlantSpecies::RULE_FAIRY_RING, 0.08f);
+	// Grassland: out of deep shade.
+	sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.5f));
+	sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+	sp->set_visibility_range(25.0f);
+	tag_species(sp, PRESET_FAIRY_RING_MUSHROOM);
+	out.push_back(sp);
+	return out;
+}

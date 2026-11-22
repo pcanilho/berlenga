@@ -72,6 +72,10 @@ void WeatherMap3D::_rain_allocate() {
 	cell_fog_drip.fill(0.0f);
 	cell_glaze.resize(n * n);
 	cell_glaze.fill(0.0f);
+	cell_rime_x.resize(n * n);
+	cell_rime_x.fill(0.0f);
+	cell_rime_z.resize(n * n);
+	cell_rime_z.fill(0.0f);
 	rain_image = Image::create_empty(n, n, false, Image::FORMAT_RGBAH);
 	rain_texture.unref();
 	rain_global_added = false;
@@ -83,7 +87,7 @@ void WeatherMap3D::_rain_shift(Vector2i p_delta) {
 	if (cell_canopy.size() != n * n) {
 		return;
 	}
-	for (Vector<float> *v : { &cell_canopy, &cell_glaze }) {
+	for (Vector<float> *v : { &cell_canopy, &cell_glaze, &cell_rime_x, &cell_rime_z }) {
 		if (v->size() != n * n) {
 			continue;
 		}
@@ -213,6 +217,9 @@ void WeatherMap3D::_rain_update(double p_weather_dt) {
 	float *fg = cell_fog.ptrw();
 	float *fd = cell_fog_drip.ptrw();
 	_glaze_update(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
+	float *rx = rime && cell_rime_x.size() == n * n && cell_rime_z.size() == n * n ? cell_rime_x.ptrw() : nullptr;
+	float *rz = rx ? cell_rime_z.ptrw() : nullptr;
+	const bool heights = cell_height.size() == n * n;
 	if (!canopy_water_enabled) {
 		for (int i = 0; i < n * n; i++) {
 			c[i] = 0.0f;
@@ -284,6 +291,31 @@ void WeatherMap3D::_rain_update(double p_weather_dt) {
 		}
 		c[i] = held;
 		d[i] = steps > 0 ? canopy_drainage(held, s) : drain;
+		// Rime: the cloud's supercooled droplets freeze on the twigs and edges facing the wind, building into it
+		// (feathers point upwind). In a thaw or strong sun it loosens and drops off in pieces (ice shedding: a share
+		// an hour, half an hour's half-life at +2 C), faster in rain.
+		if (rx != nullptr && dt_h > 0.0f) {
+			float len = Math::sqrt(rx[i] * rx[i] + rz[i] * rz[i]);
+			if (fg[i] > 0.0f || len > 0.0f) {
+				const Vector3 at((origin_cell.x + float(i % n) + 0.5f) * cs, 0.0f, (origin_cell.y + float(i / n) + 0.5f) * cs);
+				const float gy = heights && Math::is_finite(cell_height[i]) ? cell_height[i] : ground_height;
+				const float t = get_air_temperature_at(Vector3(at.x, gy + 2.0f, at.z));
+				const float u = w.length();
+				const float grow = rime_accretion_rate(fg[i], u, t) * dt_h;
+				if (grow > 0.0f && u > 0.1f) {
+					rx[i] -= grow * w.x / u; // into the wind: against the way it blows
+					rz[i] -= grow * w.y / u;
+				}
+				len = Math::sqrt(rx[i] * rx[i] + rz[i] * rz[i]);
+				const float shed = 0.7f * MIN(MAX(t, 0.0f), 3.0f) + (sun_known ? 0.5f * cur_sun_sine * (1.0f - cur_cloud_cover) : 0.0f) + (t > 0.0f ? 0.2f * MAX(cell_rain[i], 0.0f) : 0.0f); // 1/h
+				if (len > 0.0f) {
+					float keep = Math::exp(-shed * dt_h);
+					keep = len * keep < 0.05f ? 0.0f : MIN(len * keep, 200.0f) / len;
+					rx[i] *= keep;
+					rz[i] *= keep;
+				}
+			}
+		}
 		// The fog's share of what drips (the inputs mix on the leaves).
 		const float in = (1.0f - p) * rain + fog;
 		fd[i] = in > 1e-6f ? d[i] * fog / in : (fog > 0.0f ? d[i] : 0.0f);
@@ -341,6 +373,35 @@ float WeatherMap3D::get_rain_share_at(Vector3 p_position) const {
 	// Under a warm layer aloft its melted share reaches the ground liquid, supercooled where the air is below freezing,
 	// unless a deep cold layer refreezes it to pellets (liquid_share()).
 	return liquid_share(get_air_temperature_at(p_position), get_air_humidity_at(p_position), p_position.y - ground_height, warm_nose_temperature, warm_nose_base);
+}
+
+// Rime accretion on a twig (Makkonen 2000; ISO 12494): dM/dt = a1 a2 a3 w v A, here per unit of the twig's face as
+// radial growth: a1 the collision efficiency (about 0.5 for a centimetre twig in 10 um droplets, Finstad et al. 1988),
+// a3 = 1 (dry growth well below freezing), deposited at Macklin's density (soft to hard rime, 300 kg/m3 here). mm/h.
+// Near 0 C the droplets do not all freeze (wet growth, glaze): it fades out above -1 C.
+float WeatherMap3D::rime_accretion_rate(float p_cloud_water, float p_wind_m_s, float p_celsius) {
+	if (p_cloud_water <= 0.0f || p_wind_m_s <= 0.0f || p_celsius >= 0.0f) {
+		return 0.0f;
+	}
+	const float flux = 0.3f * p_cloud_water * 1e-3f * p_wind_m_s * 3600.0f; // kg/m2/h
+	return flux / 300.0f * 1000.0f * Math::smoothstep(0.0f, 1.0f, -p_celsius);
+}
+
+void WeatherMap3D::set_rime(bool p_enabled) {
+	rime = p_enabled;
+	if (!rime) {
+		cell_rime_x.fill(0.0f);
+		cell_rime_z.fill(0.0f);
+	}
+}
+
+Vector3 WeatherMap3D::get_rime_at(Vector3 p_position) const {
+	const int n = resolution;
+	if (!rime || cell_rime_x.size() != n * n || cell_rime_z.size() != n * n) {
+		return Vector3();
+	}
+	const Vector2 p(p_position.x, p_position.z);
+	return Vector3(_sample(cell_rime_x, p), 0.0f, _sample(cell_rime_z, p));
 }
 
 float WeatherMap3D::get_glaze_at(Vector3 p_position) const {
@@ -411,6 +472,11 @@ void WeatherMap3D::_bind_rain_methods() {
 	ClassDB::bind_method(D_METHOD("get_warm_nose_temperature"), &WeatherMap3D::get_warm_nose_temperature);
 	ClassDB::bind_method(D_METHOD("get_warm_nose_melt"), &WeatherMap3D::get_warm_nose_melt);
 	ClassDB::bind_method(D_METHOD("get_glaze_at", "position"), &WeatherMap3D::get_glaze_at);
+	ClassDB::bind_method(D_METHOD("get_rime_at", "position"), &WeatherMap3D::get_rime_at);
+	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("rime_accretion_rate", "cloud_water", "wind_m_s", "celsius"), &WeatherMap3D::rime_accretion_rate);
+	ClassDB::bind_method(D_METHOD("set_rime", "enabled"), &WeatherMap3D::set_rime);
+	ClassDB::bind_method(D_METHOD("is_rime_enabled"), &WeatherMap3D::is_rime_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rime"), "set_rime", "is_rime_enabled");
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("glaze_accretion_rate", "precip_mm_h", "wind_m_s"), &WeatherMap3D::glaze_accretion_rate);
 	ClassDB::bind_method(D_METHOD("set_warm_nose_base", "height"), &WeatherMap3D::set_warm_nose_base);
 	ClassDB::bind_method(D_METHOD("get_warm_nose_base"), &WeatherMap3D::get_warm_nose_base);

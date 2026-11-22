@@ -23746,6 +23746,11 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 
 void TreeGenerator::_near_task(void *p_self) {
 	TreeGenerator *self = static_cast<TreeGenerator *>(p_self);
+	// The glaze band rides in the variant (NEAR_GLAZE_STRIDE): grown as ice geometry on this near mesh only.
+	const int code = self->near_task_variant;
+	self->near_task_variant = code % NEAR_GLAZE_STRIDE;
+	const float saved_glaze = self->glaze_mm;
+	self->glaze_mm = glaze_band_mm(code / NEAR_GLAZE_STRIDE);
 	int fb = self->near_living > 0 && self->near_task_variant >= self->near_living ? self->near_task_variant - self->near_living : -1;
 	self->lightning_years = -1.0f;
 	if (fb >= self->near_fire_count + self->near_strike_count) {
@@ -23778,6 +23783,8 @@ void TreeGenerator::_near_task(void *p_self) {
 	self->near_result = self->generate();
 	self->near_build = false;
 	self->material_source.unref();
+	self->glaze_mm = saved_glaze;
+	self->near_task_variant = code;
 	// Keep the copy small between requests: the growth state is only needed while growing.
 	self->nodes.reset();
 	self->buds.reset();

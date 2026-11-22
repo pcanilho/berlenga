@@ -1239,6 +1239,67 @@ func _grazing_check() -> void:
 	st.clear_browse()
 	_check("grazing: deer pellet groups on the browsed lawn only", on > 3 and off == 0, [on, off])
 
+# Meadow fairy rings (docs/ideas/vegetation.md, "Meadow fairy rings"): the champignons come up on the rings the grass
+# shows (GrassField3D.get_fairy_ring_at), nowhere else.
+func _fairy_check() -> void:
+	var sps := PlantGenerator.make_fairy_rings(1, false)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign(sps)
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var on := 0
+	var off := 0
+	for q in f.get_placements(0):
+		var b: Vector3 = GrassField3D.get_fairy_ring_at(q)
+		if b.x + b.y > 0.05:
+			on += 1
+		else:
+			off += 1
+	f.free()
+	var dark := 0
+	var dead := 0
+	for z in range(-100, 101):
+		for x in range(-100, 101):
+			var b: Vector3 = GrassField3D.get_fairy_ring_at(Vector3(x + 0.5, 0, z + 0.5))
+			if b.x > 0.5:
+				dark += 1
+			if b.y > 0.5:
+				dead += 1
+	_check("fairy rings: dark and dead bands in a 200 m square; champignons only on the rings", dark > 20 and dead > 20 and on > 20 and off == 0, [dark, dead, on, off])
+
+func _webs_check() -> void:
+	var autumn := PlantGenerator.make_dew_webs(1, false, {"day_of_year": 270})
+	var spring := PlantGenerator.make_dew_webs(1, false, {"day_of_year": 120})
+	var winter := PlantGenerator.make_dew_webs(1, false, {"day_of_year": 15})
+	var silk := true
+	var orb_r := 0.0
+	var sheet_h := 0.0
+	var orb_h := 0.0
+	for sp in autumn:
+		var ps := sp as PlantSpecies
+		var pre: int = ps.get_meta("plant_preset", -1)
+		for m in ps.meshes:
+			var found := false
+			for s in m.get_surface_count():
+				var mat := m.surface_get_material(s) as ShaderMaterial
+				if mat and mat.shader and mat.shader.code.contains("#define PLANT_SILK"):
+					found = true
+					if pre == PlantGenerator.PRESET_ORB_WEB:
+						orb_r = max(orb_r, (mat.get_shader_parameter("silk_orb") as Vector4).x)
+			silk = silk and found
+			if pre == PlantGenerator.PRESET_SHEET_WEB:
+				sheet_h = max(sheet_h, m.get_aabb().end.y)
+			else:
+				orb_h = max(orb_h, m.get_aabb().end.y)
+	var d := func(set: Array, i: int) -> float: return (set[i] as PlantSpecies).get_density()
+	_check("dew webs: silk shader on every web, sheets low in the sward, orbs on stems; orbs only late summer and autumn, none in winter",
+			silk and orb_r > 0.05 and sheet_h < 0.4 and orb_h > 0.4 and d.call(autumn, 0) > 0.5 and d.call(autumn, 1) > 0.3 and d.call(spring, 1) == 0.0 and d.call(spring, 0) > 0.0 and d.call(winter, 0) == 0.0,
+			[silk, orb_r, sheet_h, orb_h, d.call(autumn, 0), d.call(autumn, 1), d.call(spring, 0), d.call(spring, 1), d.call(winter, 0)])
+
 func _mounds_check() -> void:
 	var meadow := PlantGenerator.make_mounds(PlantGenerator.MOUNDS_MEADOW, 1, false)
 	var wood := PlantGenerator.make_mounds(PlantGenerator.MOUNDS_WOOD, 1, false)
@@ -2168,6 +2229,8 @@ func _checks() -> void:
 	_mounds_check()
 	_drift_check()
 	_grazing_check()
+	_fairy_check()
+	_webs_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []

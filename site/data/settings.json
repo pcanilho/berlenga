@@ -2635,6 +2635,29 @@
    "topic": "Plants"
   },
   {
+   "name": "Fairy rings",
+   "settings": [
+    "GrassField3D.fairy_rings",
+    "PlantGenerator.make_fairy_rings()"
+   ],
+   "note": "",
+   "what": "meadows carry rings of dark and dead grass with champignons along them.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Dewy webs",
+   "settings": [
+    "PlantGenerator.make_dew_webs()"
+   ],
+   "note": "",
+   "what": "sheet and orb spider webs show when dew or hoarfrost beads them.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Anthills and molehills",
    "settings": [
     "PlantGenerator.make_mounds()",
@@ -3833,7 +3856,7 @@
     "crowns_enabled"
    ],
    "note": "",
-   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice, breaks through thin ice and pushes a wave across open water.",
+   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`), and the stand starts again there, so avalanche paths stay young forest (`stand_damage`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice, breaks through thin ice and pushes a wave across open water.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3879,10 +3902,11 @@
    "settings": [
     "SnowRime3D",
     "fog_water",
-    "droplet_diameter"
+    "droplet_diameter",
+    "WeatherMap3D.rime"
    ],
    "note": "",
-   "what": "in freezing fog, rime grows on props and twigs as feathers pointing into the wind.",
+   "what": "in freezing fog, rime grows on props and twigs as feathers pointing into the wind, and ground in freezing cloud turns white on the windward side of plants, rocks and cliffs until a thaw sheds it.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -4130,10 +4154,11 @@
   {
    "name": "Dew and frost",
    "settings": [
-    "dew_and_frost"
+    "dew_and_frost",
+    "cold_pools"
    ],
    "note": "",
-   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks.",
+   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost and fog form there first.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

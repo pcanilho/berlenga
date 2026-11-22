@@ -31,12 +31,15 @@
 
 #include "vegetation_field_3d.h"
 
+#include "fairy_rings.h"
+
 #include "grass_field_3d.h"
 #include "vegetation_detail.h"
 #include "vegetation_light.h"
 
 // Rigged trees (TreeWind3D, from the trees work) when that class is in the module.
 #include "tree_bark_detail.h"
+#include "tree_generator.h"
 #if __has_include("tree_wind_3d.h")
 #include "tree_wind_3d.h"
 #define VEGETATION_HAS_TREE_WIND
@@ -2105,6 +2108,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool conifer_rule = sp->uses_conifer();
 		const bool litter_rule = sp->uses_litter();
 		const bool drift_rule = sp->uses_litter_drift();
+		const bool fairy_rule = sp->uses_fairy_ring();
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
@@ -2396,6 +2400,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					if (drift_rule && suit > 0.0f) {
 						suit *= sp->rule_weight(PlantSpecies::RULE_LITTER_DRIFT, drift_at(xz));
+					}
+					if (fairy_rule && suit > 0.0f) {
+						// Meadow fairy rings (fairy_rings.h): the same rings the grass shows.
+						const FairyRings::Hit fh = FairyRings::at(xz);
+						suit *= sp->rule_weight(PlantSpecies::RULE_FAIRY_RING, fh.arc > 0.5f ? fh.distance : 1000.0f);
 					}
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
 						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
@@ -3045,32 +3054,23 @@ void VegetationField3D::_fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &
 // every frame until it has it, then gets its near cell with the same crossfade as eager near
 // meshes; beyond 1.5 x the near cell is freed (and the source may free the mesh).
 void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
-	for (KeyValue<ObjectID, LazyNear> &kv : lazy_near) {
-		LazyNear &c = kv.value;
-		const float d = c.centre.distance_to(p_camera);
-		if (c.near) {
-			if (d > c.range * 1.5f) {
-				_lazy_near_free(c);
-			}
-			continue;
-		}
-		if (d > c.range * 1.2f) {
-			continue;
-		}
-		Object *src = ObjectDB::get_instance(c.source);
-		if (!src) {
-			continue;
-		}
-		const Ref<Mesh> mesh = src->call(SNAME("request_near_mesh"), c.key, c.variant);
-		if (mesh.is_null()) {
-			continue; // Still building.
-		}
+	// Ice storms (trees.md 5be): the glaze over each near cell (WorldWeather.glaze_at, read twice a second), in bands; a
+	// near mesh grows its band's ice as geometry, and a cell whose band changes gets a new near cell once it is built
+	// (the old one draws meanwhile).
+	WorldContracts *wc = WorldContracts::get_singleton();
+	const Ref<WorldWeather> weather = wc ? wc->get_weather() : Ref<WorldWeather>();
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	const bool glaze_check = weather.is_valid() && now - glaze_checked_usec > 500000;
+	if (glaze_check) {
+		glaze_checked_usec = now;
+	}
+	auto make_near = [&](LazyNear &c, const Ref<Mesh> &p_mesh) {
 		Ref<MultiMesh> mm;
 		mm.instantiate();
 		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
 		mm->set_use_custom_data(true);
-		mm->set_mesh(mesh);
-		_fill_cell(mm, mesh, c.xforms, c.customs);
+		mm->set_mesh(p_mesh);
+		_fill_cell(mm, p_mesh, c.xforms, c.customs);
 		const float margin = impostors_traced ? 0.0f : MAX(c.range * 0.1f, 1.0f);
 		c.near = memnew(MultiMeshInstance3D);
 		c.near->set_name(String(c.far->get_name()) + "_Near");
@@ -3082,6 +3082,45 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 		c.far->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
 		c.far->set_visibility_range_begin(c.range);
 		c.far->set_visibility_range_begin_margin(margin);
+	};
+	for (KeyValue<ObjectID, LazyNear> &kv : lazy_near) {
+		LazyNear &c = kv.value;
+		const float d = c.centre.distance_to(p_camera);
+		int band = c.glaze_band;
+		if (weather.is_null()) {
+			band = 0;
+		} else if (glaze_check && d <= c.range * 1.2f) {
+			band = TreeGenerator::glaze_band(weather->glaze_at(c.centre));
+		}
+		if (c.near) {
+			if (d > c.range * 1.5f) {
+				_lazy_near_free(c);
+				continue;
+			}
+			if (band != c.glaze_band) {
+				Object *src = ObjectDB::get_instance(c.source);
+				const Ref<Mesh> mesh = src ? Ref<Mesh>(src->call(SNAME("request_near_mesh"), c.key, c.variant + TreeGenerator::NEAR_GLAZE_STRIDE * band)) : Ref<Mesh>();
+				if (mesh.is_valid()) {
+					_lazy_near_free(c);
+					c.glaze_band = band;
+					make_near(c, mesh);
+				}
+			}
+			continue;
+		}
+		c.glaze_band = band;
+		if (d > c.range * 1.2f) {
+			continue;
+		}
+		Object *src = ObjectDB::get_instance(c.source);
+		if (!src) {
+			continue;
+		}
+		const Ref<Mesh> mesh = src->call(SNAME("request_near_mesh"), c.key, c.variant + TreeGenerator::NEAR_GLAZE_STRIDE * c.glaze_band);
+		if (mesh.is_null()) {
+			continue; // Still building.
+		}
+		make_near(c, mesh);
 	}
 }
 

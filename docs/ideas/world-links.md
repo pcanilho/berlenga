@@ -171,6 +171,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Wind shear aloft, air temperature → cirrocumulus; high cover (humidity, coming rain) → cirrostratus veil | linked (20 Nov) | `get_wind_aloft`, air | `WeatherMap3D.get_cirrocumulus_share` (docs/ideas/clouds.md round 7) |
 | Storm rain, outflow, steering wind → rain shafts and shelf cloud | linked (20 Nov) | `add_storm` storms | sky rain shafts; `get_cloud_base_at` / `WorldWeather.cloud_base_at` lowered by the shelf (docs/ideas/clouds.md round 8) |
 | Clear calm nights → cold air pools in hollows (frost, valley fog) | linked (22 Nov) | `WorldWeather.air_temperature_at` / `air_humidity_at` (WeatherMap3D `cold_pools`, `get_cold_pool_at`) | Night x clear x calm forcing builds a deficit up to `cold_pool_strength` (8 C) over about 2 h where the cell lies below the mean height within 600 m (topographic position, Lundquist et al. 2008; Whiteman 2000), faded to nothing at the pool's top; breaks up after sunrise or in a wind. Dew, hoarfrost and evaporation take the pooled air per cell; mist, snow and every air reader see it through the contract. Links check: a 200 m valley, 6.9 C pool, -0.9 C on the floor under 5.3 C up the slope, humidity 1.00 vs 0.85, frost only on the floor |
+| Supercooled cloud, wind → rime on windward twigs, rocks and cliffs | linked (22 Nov) | `WorldWeather.rime_at` (Vector3: mm, into the wind); `weather_frost_map` B, A (mm along x, z) | WeatherMap3D `rime` (on): per cell, the fog water at canopy height below 0 C grows 0.3 x LWC x wind at 300 kg/m3 (Makkonen 2000, ISO 12494) into the wind; sheds in a thaw (0.7/h per K to 3 K), sun and rain. `weather_rime_apply` (material.cpp): the faces turned into the wind first, wrapping round as it thickens past 3 cm, feathers drawn out along the wind, thin rime as separate feathers; plants, plant impostors, rocks and steep terrain. SnowRime3D still grows the near-field feather geometry. Links check: 66 mm in 6 h of 0.38 g/m3 at 10 m/s and -6 C, gone after a 6 h thaw. Raster and PT match (project files fork/world-links/rime-raster-pt.png) |
 | Air temperature, dew point → cloud base | linked (20 Nov) | `get_air_dew_point` | `WorldWeather.cloud_base_at`; readers mist, lightning, snow line, orographic rain |
 | Mountain waves → wind aloft | linked (20 Nov) | WeatherMountainWaves | `get_wind_at` vertical part above the boundary layer; `WorldWeather.mountain_wave_velocity_at` alone; ground wind unchanged |
 | Fire → smoke haze downwind | linked (19 Nov) | WorldFire `smoke_sources()` (base, kg/s PM2.5) | PhysX eabdcd98: WeatherMap3D carries the smoke into its haze |
@@ -370,7 +371,7 @@ Sources: Smith and Barstad 2004 (J. Atmos. Sci. 61); Roe 2005 (Annu. Rev. Earth 
    (shrub and alder thickets in the track). Frequent avalanches hold paths in shrubs and young broadleaves while
    the forest stands either side (Bebi, Kulakowski and Rixen 2009; Patten and Knight 1994; Johnson 1987 on
    track frequency). A runout records a disturbance over its deposit; return period sets the stand age.
-3. Rime on windward trees and rocks. Source: `cloud_base_at`, air temperature below 0 C, wind, liquid water
+3. Rime on windward trees and rocks (built 22 Nov). Source: `cloud_base_at`, air temperature below 0 C, wind, liquid water
    content of the cloud (fog drip already computes it). Readers: trees (crown load, bending with their wind),
    rocks and terrain material (white feathers growing into the wind on ridges in winter cloud).
    Accretion rate = collision efficiency x LWC x wind speed x area (Makkonen 2000 ISO 12494 model); hard rime at
@@ -380,3 +381,27 @@ Sources: Smith and Barstad 2004 (J. Atmos. Sci. 61); Roe 2005 (Annu. Rev. Earth 
 Sources: Whiteman 2000 (Mountain Meteorology); Clements, Whiteman and Horel 2003 (J. Appl. Meteor.); Lundquist,
 Pepin and Rochford 2008 (JGR); Bebi, Kulakowski and Rixen 2009 (Forest Ecol. Manage.); Patten and Knight 1994;
 Makkonen 2000 (Phil. Trans. R. Soc. A); ISO 12494.
+
+## Round 10 candidates (22 Nov, card to Paulo)
+
+1. Valley fog seas from the cold pools. Source: WeatherMap3D's cold pool deficit and depth (`get_cold_pool_at`),
+   the air's dew point. Reader: the clouds (a stratus layer whose top is the pool's top, seen from ridges as a sea
+   of cloud), mist (near field already reads the humidity). Radiation fog fills a basin when the pooled air cools to
+   its dew point and thickens upward to the inversion's base; it lifts and burns off from the edges after sunrise
+   (Whiteman 2000; Gultepe et al. 2007 review of fog; Price 2011 on valley fog in the UK). Per cell: fog top =
+   ground + pool depth where the floor air is saturated; the sky's volumetric clouds draw it as a flat-topped layer.
+2. Needle ice and frost heave on bare wet ground. Source: the weather's surface temperature (cooling term), soil
+   water (ground wetness, rain), night length. Readers: GroundSurface3D (a lifted, crumbly surface that keeps
+   prints sharp until it collapses, pebbles lifted), vegetation (seedlings heaved out on bare soil). Needle ice grows
+   where the surface sits a few degrees below 0 C over moist, fine soil, columns a few centimetres a night (Outcalt
+   1971; Lawler 1988; Grab 2001 on needle ice in mountains). Shading: grey-white columns on wet silt and mud, gone
+   by mid morning.
+3. Fire builds its own cloud (pyrocumulus). Source: `WorldFire.heat_at` integrated over a burning area, the air's
+   temperature and humidity at height. Reader: the clouds (a convective tower over the plume when the fire's heat
+   flux lifts the plume past the lifting condensation level; Briggs plume rise, Luderer et al. 2006; Fromm et al.
+   2010 on pyroCb), lightning (a pyroCb can strike ahead of the fire), rain (rarely). Flow already carries the
+   smoke near the fire; this adds the cloud seen from far.
+
+Sources: Whiteman 2000; Gultepe et al. 2007 (Pure Appl. Geophys.); Price 2011 (Boundary-Layer Meteorol.); Outcalt
+1971 (Water Resour. Res.); Lawler 1988 (Prog. Phys. Geogr.); Grab 2001; Briggs 1975; Luderer et al. 2006 (Atmos.
+Chem. Phys.); Fromm et al. 2010 (BAMS).

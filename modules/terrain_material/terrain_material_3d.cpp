@@ -2127,6 +2127,7 @@ void fragment() {
 		c += "\ttm_sand_dry *= 1.0 - smoothstep(0.05, 0.3, tm_wetness * tm_wwet);\n";
 		// Hoarfrost on clear cold nights (WeatherMap3D dew_and_frost).
 		c += "\tweather_frost_apply(weather_frost_at(wp), wn.y, albedo, rough);\n";
+		c += "\tweather_rime_apply(weather_rime_at(wp) * (1.0 - smoothstep(0.5, 0.85, wn.y)), wn, wp, albedo, rough);\n";
 	} else if (ground_deform_enabled) {
 		c += "\t{\n\t\tfloat gw_f = mix(1.0, 0.2, porosity);\n\t\talbedo *= mix(1.0, gw_f, tm_gwet);\n\t\trough *= mix(1.0, gw_f, 0.5 * tm_gwet);\n\t}\n";
 	}

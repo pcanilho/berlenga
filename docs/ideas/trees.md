@@ -3883,8 +3883,13 @@ Research: "Research for the likely picks" below. Built so far:
   crossed it twice more and the white birch drew near black; a few millimetres of ice hardly displace what is under
   it. The bark's glaze darkening without Wetness takes porosity 0.3 (it was 0.5; birch bark barely soaks).
   Bench: --set=glaze_mm:7 with GLAZE_HOURS=4; env CROP_HR pins the crop framing.
-- Next: the field picks glazed variants by WorldWeather.glaze_at bands; bent birch and broken tops as stand variants
-  after a storm.
+- Near trees glazed by the weather (22 Nov): VegetationField3D reads WorldWeather.glaze_at at each near cell twice a
+  second, in bands (TreeGenerator.glaze_band: under 2 mm none, 2-6, 6-12, 12-25, 25 up; grown as 4, 9, 18, 30 mm) and
+  asks its near source for variant + NEAR_GLAZE_STRIDE (65536) x band; the near build grows that glaze as geometry.
+  A cell whose band changes swaps to the new near cell once built. Past the near range the trees keep the material
+  glaze (BaseMaterial3D glaze), which reads the same weather: the ice geometry is near detail, as the near leaves are.
+  Stand bench `--stands --test`: band 2 builds a near oak with 9 mm of ice.
+- Next: bent birch and broken tops as stand variants after a storm.
 - Queued after this round (coordinator, 22 Nov): avalanche legacies keyed to WorldStand disturbance 6 (world-links
   0c249ead): snapped stems lying downslope, flagged crowns at the track edge, green alder and willow thickets in
   frequent tracks (Bebi et al. 2009).

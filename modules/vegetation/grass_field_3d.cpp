@@ -35,6 +35,7 @@
 #include "modules/world/world_contracts.h"
 #include "tree_generator.h"
 #include "vegetation_voxel_lod.h"
+#include "fairy_rings.h"
 #include "vegetation_fire.h"
 #include "vegetation_light.h"
 
@@ -501,6 +502,9 @@ void GrassField3D::_build_material() {
 	code += "uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).\n";
 	// Storm lodging (lodging): r, g the direction the blades lie (* 0.5 + 0.5), b the lodged share; rect z 0: none.
 	code += "uniform sampler2D lodge_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 lodge_rect;\n";
+	// Meadow fairy rings (fairy_rings.h): 1 on, 0 off.
+	code += "uniform float fairy_rings = 1.0;\n";
+	code += FairyRings::GLSL;
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
 	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
@@ -1074,6 +1078,7 @@ varying float v_t;
 varying float v_dry;
 varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
 varying float v_graze; // Grazed down to a lawn (graze_map).
+varying float v_fairy_dead; // A blade browned in a fairy ring's dead band.
 varying float v_soft; // Distance softening, 0 near, 1 from 35 m.
 varying float v_wet;
 varying float v_frost;
@@ -1130,6 +1135,22 @@ void vertex() {
 			// Regrowth after a bite is fine young leaf: narrower blades keep the short turf from reading as teeth. The
 			// turf ground under the sward (get_ground_shader_code()) closes it between them.
 			w *= 1.0 - 0.35 * v_graze * (0.4 + fract(rnd * 9.13));
+		}
+	}
+	// Meadow fairy rings (fairy_rings.h; Shantz and Piemeisel 1917): the dark, lush front stands taller; behind it the
+	// dead band, its blades browned, shorter and some gone to bare soil; then a weaker lush band inside.
+	v_fairy_dead = 0.0;
+	vec3 fairy = vec3(0.0);
+	if (fairy_rings > 0.0) {
+		fairy = fairy_ring_bands(base_w.xz);
+		h *= 1.0 + 0.4 * (fairy.x + fairy.z);
+		if (fairy.y > 0.0) {
+			if (fract(rnd * 27.3) < 0.3 * fairy.y) {
+				h = 0.0;
+				w = 0.0;
+			}
+			h *= 1.0 - 0.35 * fairy.y;
+			v_fairy_dead = step(fract(rnd * 19.1), 0.9 * fairy.y);
 		}
 	}
 	// A far ring blade (negative width; GrassField3D::_build_ring_tile()): one of a set thinned with the square of
@@ -1326,6 +1347,8 @@ void vertex() {
 	}
 	// Grazed turf is all young leaf: a brighter, fresher green than the standing sward.
 	v_tint *= mix(vec3(1.0), vec3(1.06, 1.16, 0.88), v_graze);
+	// A fairy ring's lush bands: a deeper, bluer green (nitrogen).
+	v_tint *= mix(vec3(1.0), vec3(0.6, 0.86, 0.5), clamp(fairy.x + fairy.z, 0.0, 1.0));
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
@@ -1366,6 +1389,8 @@ void fragment() {
 	// as orange specks on a dark winter sward).
 	vec3 straw = mix(dry_color, vec3(dot(dry_color, vec3(0.3, 0.59, 0.11))) * vec3(1.0, 0.96, 0.88), 0.5) * 0.85;
 	c = mix(c, straw * mix(0.7, 1.0, t) * (0.75 + 0.5 * fract(v_dry * 31.0)), dead);
+	// Browned in a fairy ring's dead band: a warmer, darker brown than winter straw, the base still a little green.
+	c = mix(c, mix(dry_color, straw, 0.4) * vec3(0.85, 0.72, 0.55) * mix(0.75, 1.0, t), v_fairy_dead * mix(0.7, 1.0, t));
 	// Prefiltered with distance (Bruneton and Neyret 2012, non-linear pre-filtering): once blades are a pixel or
 	// two wide, each blade's own base-to-tip ramp and its dry or dead odd one out alias into grit; their mean over
 	// the sward is what a pixel should see. Past 6 m the blade's colour eases towards that mean (the soft, slightly
@@ -1476,6 +1501,7 @@ void fragment() {
 	material.instantiate();
 	material->set_shader(shader);
 	lodge_dirty = true; // A new material: the lodging map goes to it at the next sweep.
+	material->set_shader_parameter("fairy_rings", fairy_rings && crop == CROP_NONE ? 1.0f : 0.0f);
 	material->set_shader_parameter("base_color", base_color);
 	material->set_shader_parameter("tip_color", tip_color);
 	material->set_shader_parameter("dry_color", dry_color);
@@ -4114,6 +4140,17 @@ void GrassField3D::set_lodging(bool p_on) {
 		lodge_dir.clear();
 	}
 	_lodge_upload();
+}
+
+void GrassField3D::set_fairy_rings(bool p_on) {
+	fairy_rings = p_on;
+	if (material.is_valid()) {
+		material->set_shader_parameter("fairy_rings", fairy_rings && crop == CROP_NONE ? 1.0f : 0.0f);
+	}
+}
+
+Vector3 GrassField3D::get_fairy_ring_at(const Vector3 &p_global_position) {
+	return FairyRings::bands(FairyRings::at(Vector2(p_global_position.x, p_global_position.z)));
 }
 
 Vector3 GrassField3D::get_lodging_at(const Vector3 &p_global_position) const {
@@ -6998,6 +7035,9 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_lodging"), &GrassField3D::is_lodging);
 	ClassDB::bind_method(D_METHOD("get_lodging_at", "global_position"), &GrassField3D::get_lodging_at);
 	ClassDB::bind_method(D_METHOD("advance_lodging", "weather_seconds"), &GrassField3D::advance_lodging);
+	ClassDB::bind_method(D_METHOD("set_fairy_rings", "enabled"), &GrassField3D::set_fairy_rings);
+	ClassDB::bind_method(D_METHOD("is_fairy_rings"), &GrassField3D::is_fairy_rings);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("get_fairy_ring_at", "global_position"), &GrassField3D::get_fairy_ring_at);
 	ClassDB::bind_method(D_METHOD("get_burn_recovery"), &GrassField3D::get_burn_recovery);
 	ClassDB::bind_method(D_METHOD("get_burn_cover_at", "global_position"), &GrassField3D::get_burn_cover_at);
 	ClassDB::bind_method(D_METHOD("get_shell_column_count"), &GrassField3D::get_shell_column_count);
@@ -7056,6 +7096,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burn_recovery", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:yr"), "set_burn_recovery", "get_burn_recovery");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "graze_height", PROPERTY_HINT_RANGE, "0,0.2,0.005,suffix:m"), "set_graze_height", "get_graze_height");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lodging"), "set_lodging", "is_lodging");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fairy_rings"), "set_fairy_rings", "is_fairy_rings");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_GROUP("Wind", "");

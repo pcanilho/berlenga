@@ -111,7 +111,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
 ## Cornices and ice
 
-- **Avalanches** (`SnowCover3D.avalanches_enabled`, `SnowAvalanche3D.trigger()`, `triggers_enabled`, `powder_enabled`, `forests_enabled`, `wet_enabled`, `glide_enabled`, `water_enabled`, `crowns_enabled`): slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice, breaks through thin ice and pushes a wave across open water.
+- **Avalanches** (`SnowCover3D.avalanches_enabled`, `SnowAvalanche3D.trigger()`, `triggers_enabled`, `powder_enabled`, `forests_enabled`, `wet_enabled`, `glide_enabled`, `water_enabled`, `crowns_enabled`): slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`), and the stand starts again there, so avalanche paths stay young forest (`stand_damage`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice, breaks through thin ice and pushes a wave across open water.
 
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
 
@@ -135,7 +135,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Transmission bounces: at the default 3 bounces the icicles stay clear instead of going dark.*
 
-- **Rime** (`SnowRime3D`, `fog_water`, `droplet_diameter`): in freezing fog, rime grows on props and twigs as feathers pointing into the wind.
+- **Rime** (`SnowRime3D`, `fog_water`, `droplet_diameter`; `WeatherMap3D.rime`): in freezing fog, rime grows on props and twigs as feathers pointing into the wind, and ground in freezing cloud turns white on the windward side of plants, rocks and cliffs until a thaw sheds it.
 
 ## Sparkle
 

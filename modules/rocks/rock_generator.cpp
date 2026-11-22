@@ -3583,6 +3583,7 @@ void fragment() {
 	col *= 1.0 - 0.4 * rivulet;
 	rough = mix(rough, 0.07, rivulet);
 	weather_frost_apply(weather_frost_at(v_world), wn.y, col, rough);
+	weather_rime_apply(weather_rime_at(v_world), wn, v_world, col, rough);
 
 	vec4 snow_s = snow_cover_at(v_world);
 	float sw = snow_cover_weight(snow_s.x * snow, snow_max_slope, wn, wn);
