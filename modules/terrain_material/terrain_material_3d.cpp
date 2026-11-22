@@ -2080,6 +2080,18 @@ void fragment() {
 		// The ground's pore water (GroundSurface3D's wet map: a wet margin round still water, runoff, the swash) on the
 		// terrain past the patch, as the path tracer already draws it (g_wet): never wetted twice with the rain's.
 		c += "\tfloat tm_gwet = ground_wet_at(wp, wn).x;\n";
+		// Adhesion warts (GroundSurface3D adhesion_warts), as BaseMaterial3D draws them, on this material's sand.
+		c += R"(	{
+		vec4 gm7 = ground_sand_meta7();
+		if (gm7.z > 0.0) {
+			float gdamp = smoothstep(0.15, 0.3, tm_gwet);
+			float gcap;
+			vec2 gas = ground_adhesion_warts(wp.xz, gm7.z * gdamp * tm_sand_b, gm7.xy, length(tm_dpx), gcap);
+			sn = normalize(sn - vec3(gas.x, 0.0, gas.y));
+			tm_gwet *= 1.0 - 0.8 * gcap;
+		}
+	}
+)";
 	} else {
 		c += "\tfloat tm_gwet = 0.0;\n";
 	}

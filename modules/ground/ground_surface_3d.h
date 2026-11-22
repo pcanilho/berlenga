@@ -515,6 +515,12 @@ private:
 	float rain_pit_seed = 0.0f;
 	float rain_published[2] = { 0.0f, 0.0f };
 	void _rain_marks(float p_dt, float p_wind);
+	// Adhesion warts (_adhesion()): how far they have grown on the damp sand (0..1) and the wind that built them.
+	bool adhesion_warts = true;
+	float adhesion_grow = 0.0f;
+	Vector2 adhesion_wind = Vector2(1.0f, 0.0f);
+	float adhesion_published = 0.0f;
+	void _adhesion(float p_dt, float p_ustar, Vector2 p_dir);
 	bool dune_tone = true; // the dune field's colour: rubefaction, coarse interdune flats, pale slip faces
 	// Wind fills prints from their upwind side (_drift_prints()).
 	bool wind_fills_prints = true;
@@ -1125,6 +1131,12 @@ public:
 	bool is_rain_pits() const { return rain_pits; }
 	float get_rain_pit_cover() const { return rain_pits ? rain_pit_cover : 0.0f; }
 	float get_rain_crust() const { return rain_pits ? rain_crust : 0.0f; }
+	void set_adhesion_warts(bool p_enabled) {
+		adhesion_warts = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_adhesion_warts() const { return adhesion_warts; }
+	float get_adhesion_growth() const { return adhesion_warts ? adhesion_grow : 0.0f; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);
