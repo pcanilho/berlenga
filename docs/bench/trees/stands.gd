@@ -1308,6 +1308,19 @@ func _near_leaves_check() -> void:
 		near = null
 		await get_tree().process_frame
 	_check(src.get_near_mesh_count() == 0, "near leaves: meshes are freed once nothing draws them (%d left)" % src.get_near_mesh_count())
+	# An ice storm's band (trees.md 5be): variant + 65536 x band grows that band's glaze as geometry on the near mesh.
+	var t1 := Time.get_ticks_msec()
+	var iced: Mesh = null
+	while iced == null and Time.get_ticks_msec() - t1 < 180000:
+		iced = src.request_near_mesh(sp.near_mesh_key, 0 + 65536 * 2)
+		await get_tree().process_frame
+	var has_ice := false
+	if iced != null:
+		for i in iced.get_surface_count():
+			has_ice = has_ice or iced.surface_get_name(i) == "ice"
+	_check(iced != null and has_ice and float(iced.get_meta("tree_glaze_mm", 0.0)) == 9.0, "near leaves: glaze band 2 builds a near mesh with 9 mm of ice as geometry")
+	iced = null
+	await get_tree().process_frame
 
 # Wind level of detail (trees.md 3c): a camera at eye height on the stand's edge, looking across
 # it. One TreeWind3D solves with the LOD, a second solves everything every frame; the pose
