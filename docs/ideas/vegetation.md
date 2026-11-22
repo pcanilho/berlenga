@@ -1644,3 +1644,18 @@ PRESET_HORSE_DUNG 105, PRESET_DEER_PELLETS 106, PRESET_DUNG_ROUGH 107; PRESET_MA
 - Check: vegetation bench --test, cattle pats of three ages 2 to 6 cm high, a rough over 25 cm that keeps the sward
   out, one latrine layout for the horse set, deer pellets only on the browsed lawn.
 
+## Next round options (card 22 Nov, round 5): meadow fairy rings, dewy webs, blowing leaves
+Research notes, nothing built yet:
+- Meadow fairy rings. Marasmius oreades and other grassland fungi grow out from a point as a ring of mycelium,
+  0.1 to 0.5 m a year, rings of several metres to tens of metres: an outer band of dark, lush grass (nitrogen the
+  fungus frees), inside it a zone where the grass is browned or dead (the mycelium makes the soil water-repellent),
+  then normal sward again in the middle, and the fruit bodies in a ring after rain (Shantz and Piemeisel 1917,
+  J. Agric. Res. 11, the zones; Fisher 1977 on soil water repellency). Built as: ring discs the GrassField3D reads for
+  blade colour and height (dark band, dead band), a meadow mushroom set on the ring's edge with the season's fruiting.
+- Dewy webs. On autumn mornings sheet webs of money spiders (Linyphiidae) and orb webs on tall stems show up by the
+  thousand once dew beads on them; gossamer drifts over the sward on calm days. Built as: thin web meshes (sheets
+  between blades, orbs on tall herbs and thistles) shown where WorldWeather dew or fog is high, sparkling in the sun.
+- Blowing leaves. In autumn gales fallen leaves lift, tumble and skitter over the ground and pile up where the leaf
+  drifts are (round 4), and swirl in eddies behind obstacles. Built as: a GPU particle layer of the stand's own leaves
+  near the camera, driven by WorldWeather gusts, landing into the drift field; few and cheap.
+
