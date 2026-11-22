@@ -1092,6 +1092,56 @@ func _avalanche_check() -> void:
 	_check("avalanche track: a 5-year track (kind 6) holds its flora, none round it or on a windthrow; debris first, tall forbs later",
 			counts[0][0] > 30 and counts[0][1] == 0 and counts[1][0] == 0 and counts[1][1] == 0 and fresh >= 3 and grown >= 4, [counts, fresh, grown])
 
+# Flood wrack lines (make_flood_wrack): strand lines along the last flood's mark (WorldWater.high_water_at, a script
+# stub here), the main line within 8 cm under the crest and thinner lines lower; none above it, none without a flood
+# or once the flood is old.
+class FloodMarkStub extends WorldWater:
+	var peak := 0.0
+	var days := 12.0
+	func _height_at(_p: Vector3) -> float:
+		return -INF
+	func _high_water_at(_p: Vector3) -> Vector4:
+		return Vector4(peak, days, 1.0, 0.0)
+
+func _wrack_check() -> void:
+	var sps := PlantGenerator.make_flood_wrack(1, false)
+	var hs := []
+	for z in range(-40, 41, 4):
+		for x in range(-40, 41, 4):
+			hs.append(dm.get_height_at(Vector3(x, 0, z)))
+	hs.sort()
+	var stub := FloodMarkStub.new()
+	stub.peak = hs[hs.size() / 2]
+	var res := []
+	for case in ["fresh", "old", "none"]:
+		if case != "none":
+			stub.days = 12.0 if case == "fresh" else 900.0
+			WorldContracts.add_water_stub(stub)
+		var f := VegetationField3D.new()
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = Biome.new()
+		f.biome.species.assign(sps)
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		f.populate()
+		var main_on := 0
+		var low_on := 0
+		var off := 0
+		for k in 2:
+			for q in f.get_placements(k):
+				var d: float = dm.get_height_at(q) - stub.peak
+				if k == 0 and d > -0.12 and d < 0.03:
+					main_on += 1
+				elif k == 1 and d > -1.0 and d < -0.25:
+					low_on += 1
+				else:
+					off += 1
+		res.append([main_on, low_on, off])
+		f.free()
+		WorldContracts.clear_overrides()
+	_check("flood wrack: main line under the crest, lower lines below, none above or without a recent flood", res[0][0] > 10 and res[0][1] > 0 and res[0][2] == 0 and res[1] == [0, 0, 0] and res[2] == [0, 0, 0], res)
+
 func _beaver_check() -> void:
 	var st: WorldStand = WorldContracts.get_stand()
 	var c := Vector2(30, 30)
@@ -2380,6 +2430,7 @@ func _checks() -> void:
 	_fairy_check()
 	_webs_check()
 	_avalanche_check()
+	_wrack_check()
 	_base_lift_check()
 	# Litter only where crowns drop it: every floor set's litter rule is 0 on open ground (litter 0).
 	var open_litter := []

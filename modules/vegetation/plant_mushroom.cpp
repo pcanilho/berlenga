@@ -69,7 +69,7 @@ void PlantGenerator::_add_lathe(Surface p_surface, const LocalVector<Transform3D
 	for (int i = 0; i < n; i++) {
 		const Transform3D &f = p_frames[MIN(i, int(p_frames.size()) - 1)];
 		const Basis fb = f.basis.orthonormalized();
-		const float w = p_wave * Math::smoothstep(p_wave_from, 1.0f, p_rz[i].x / rmax);
+		const float w = p_wave * Math::smoothstep(p_wave_from, 1.0f, float(p_rz[i].x / rmax));
 		for (int s = 0; s < p_sectors; s++) {
 			const float a = s * Math::TAU / p_sectors;
 			const float r = p_rz[i].x * (1.0f + w * mushroom_wave(a, p_wave_k, p_wave_phase));

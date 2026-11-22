@@ -376,7 +376,7 @@ void LeafFall3D::_step_leaf(Leaf &p_leaf, float p_delta, const WorldWeather *p_w
 	Vector3 air = p_weather ? p_weather->wind_at(p_leaf.p) : Vector3();
 	if (const WorldFire *fire = WorldContracts::fire(); fire->has_provider()) {
 		// The indraft is a near-ground inflow: it fades over the first few metres, where the plume takes over.
-		air += fire->wind_at(p_leaf.p) * (1.0f - Math::smoothstep(2.0f, 6.0f, p_leaf.p.y - ground));
+		air += fire->wind_at(p_leaf.p) * (1.0f - Math::smoothstep(2.0f, 6.0f, float(p_leaf.p.y - ground)));
 	}
 	PlateState s{ p_leaf.p, p_leaf.v, p_leaf.b, p_leaf.w };
 	const int n = plate_substeps(p_delta, (p_leaf.v - air).length(), k.length * sc, k.area * sc * sc, k.mass * sc * sc, air_density);
