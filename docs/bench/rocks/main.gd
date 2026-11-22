@@ -668,6 +668,8 @@ func _world() -> void:
 		# 15 to 35 degrees over 16 m, banks under 4 m high 10 m either side so not a ravine), for close frames.
 		var best := -INF
 		var found := spot
+		var best_ravine := -INF
+		var ravine := spot
 		for zz in range(-1000, 1001, 6):
 			for xx in range(-1000, 1001, 6):
 				var p := Vector3(xx, 0, zz)
@@ -685,12 +687,18 @@ func _world() -> void:
 					continue
 				var t := Vector3(-gz, 0, gx).normalized() * 10.0
 				var bank := maxf(gen.get_height(p + t), gen.get_height(p - t)) - h
-				if bank > 4.0:
-					continue
 				var score := gl.x - bank * 0.1 - absf(h - gen.sea_level - 80.0) / 400.0
+				if bank > 4.0:
+					# A ravine: kept only for a world whose strong gullies are all incised deeper than that.
+					if score > best_ravine:
+						best_ravine = score
+						ravine = p
+					continue
 				if score > best:
 					best = score
 					found = p
+		if best == -INF and best_ravine > -INF:
+			found = ravine
 		spot = found
 		print("gully spot ", spot, " channel ", gen.get_gully_at(spot, 0.85))
 	# --frost[=C]: a cold, wet climate (mean annual air C at sea level, -4 by default; 700 mm a year) on a
@@ -971,6 +979,7 @@ func _world() -> void:
 		# --trail[=passes]: a game trail (0.8 m, 400 passes a year) across the spot along x, 1.5 m before it;
 		# --rooting[=years]: a boar rooting 1.5 m across, 2 m behind the spot, that age (0: fresh). WorldStand.
 		rocks.frost_sorting = not args.has("no-frost")
+		rocks.runoff_gravel = not args.has("no-runoff-gravel") # --no-runoff-gravel: the rills and gullies without their lag (a before frame)
 		if args.has("frost"):
 			var fr := ""
 			for dz in [-6, -3, 0, 3, 6]:

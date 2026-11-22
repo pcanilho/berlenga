@@ -2311,7 +2311,16 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			// The share of the ground each class covers in the stone domains (the borders are clast-supported: Washburn
 			// 1956; Hallet 2013); stones of the coarse end, frost-heaved.
 			const float *frost_cover = rf_frost_cover;
-			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on && !frost_on) {
+			// Storm runoff's gravel (docs/ideas/ground-detail.md, "Gravel sorted by storm runoff"): the rills and gullies
+			// the terrain's droplet erosion cut (TerrainGenerator3D.get_gully_at, the rule its material draws their gravel
+			// by) keep a lag of the coarse grains in their floors, the fines washed out (Poesen et al. 2003), and drop
+			// their load as a spread of fine grains on the fans where the slope eases.
+			const bool runoff_on = runoff_gravel && sd2 > sd1 * 1.01f;
+			// The share of the ground each class covers on a channel floor (clast-supported where the flow ran
+			// strongest) and on a fan.
+			static const float lag_cover[3] = { 0.35f, 0.25f, 0.06f };
+			static const float fan_cover[3] = { 0.0f, 0.04f, 0.12f };
+			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on && !frost_on && !runoff_on) {
 				break;
 			}
 			// Each class's cover (count x mean footprint) is held under about half the ground: past that the
@@ -2327,6 +2336,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				float e = 0.0f; // height above the water line
 				float river = 0.0f; // and from a river bed's log-normal
 				RiverBed bed;
+				float gully = 0.0f; // a rill or gully floor's share (as the terrain material's), 0..1
+				float fan = 0.0f; // the fan below it, 0..1
+				Vector2 flow; // downhill
 			};
 			LocalVector<DetailCorner> corners;
 			corners.resize((nx + 1) * (nz + 1));
@@ -2376,6 +2388,19 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							dc.scree = MIN(n_min * (Math::pow(pd1 / scree_dmin, -2.5f) - Math::pow(pd2 / scree_dmin, -2.5f)), cap_scree);
 						}
 					}
+					if (runoff_on) {
+						// As the terrain material: the channel floor where the slope-area index and the flow's concentration
+						// are high (not on bare rock), the fan where the deposit lies on easing ground.
+						const Vector3 n = ground_normal(gen, c.x, c.z, 1.0);
+						const Vector2 gl = gen->get_gully_at(c, n.y);
+						if (gl.x > 0.0f || gl.y > 0.0f) {
+							const float rk = CLAMP(float(gen->get_rock_exposure(c)), 0.0f, 1.0f);
+							dc.gully = CLAMP(float(gl.x) * (1.0f - rk), 0.0f, 1.0f);
+							dc.fan = Math::smoothstep(0.15f, 0.8f, float(gl.y)) * Math::smoothstep(0.85f, 0.93f, float(n.y));
+							const Vector2 f(n.x, n.z);
+							dc.flow = f.length() > 1e-4f ? f.normalized() : Vector2(0, 1);
+						}
+					}
 				}
 			}
 			// Each river segment over the corners it reaches; where two overlap (a bend, a junction) the one deeper inside.
@@ -2418,6 +2443,14 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						// Circles or stripes by the hillside's slope over a few metres (hummocks do not turn circles into stripes).
 						fslope = Math::rad_to_deg(Math::acos(CLAMP(float(fn.y), -1.0f, 1.0f)));
 						rate_max += MIN(frost_cover[cls] * per_cover * fgate, cap_shore);
+					}
+					if (runoff_on) {
+						float gm = 0.0f, fm = 0.0f;
+						for (const DetailCorner *k : cc) {
+							gm = MAX(gm, k->gully);
+							fm = MAX(fm, k->fan);
+						}
+						rate_max += MIN(lag_cover[cls] * per_cover * gm, cap_shore) + MIN(fan_cover[cls] * per_cover * fm, cap_shore);
 					}
 					Vector3 wmax;
 					float stony = 0.0f;
@@ -2480,8 +2513,33 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							shore *= keep;
 							scree *= keep;
 						}
+						float lag = 0.0f, spread = 0.0f;
+						Vector2 flow;
+						if (runoff_on) {
+							float gully = 0.0f, fan = 0.0f;
+							for (int q = 0; q < 4; q++) {
+								gully += w[q] * cc[q]->gully;
+								fan += w[q] * cc[q]->fan;
+								flow += w[q] * cc[q]->flow;
+							}
+							flow = flow.length() > 1e-4f ? flow.normalized() : Vector2(0, 1);
+							if (gully > 0.0f) {
+								// The floor: its coarse lag; the gravel half washed out, the fines mostly.
+								lag = MIN(lag_cover[cls] * per_cover * gully, cap_shore);
+								static const float washed[3] = { 0.0f, 0.4f, 0.8f };
+								shore *= 1.0f - washed[cls] * gully;
+								scree *= 1.0f - washed[cls] * gully;
+							}
+							if (fan > 0.0f) {
+								// The fan: fine grains spread over it, burying some of the coarser ground under it.
+								spread = MIN(fan_cover[cls] * per_cover * fan, cap_shore);
+								const float buried = cls == 0 ? 0.6f : 0.3f;
+								shore *= 1.0f - buried * fan;
+								scree *= 1.0f - buried * fan;
+							}
+						}
 						const float base = shore + scree + river;
-						const float total = base + worn + kick + root + sorted;
+						const float total = base + worn + kick + root + sorted + lag + spread;
 						if (total <= 0.0f || rng.randf() * rate_max > total) {
 							continue;
 						}
@@ -2490,7 +2548,30 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						pd.xz = Vector3(x + fx * sub, 0, z + fz * sub);
 						pd.yaw = rng.randf() * Math::TAU;
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
-						if (pick >= base + worn + kick + root) {
+						if (pick >= base + worn + kick + root + sorted) {
+							if (pick < base + worn + kick + root + sorted + lag) {
+								// The lag: the coarse end of the class, subangular to a little rounded by the short run, imbricated
+								// across the flow (long axis across it, dipping upstream, as a stream's gravel: Rust 1972).
+								pd.key = _library_key(type, rng.randf() < 0.35f ? RockGenerator::FAMILY_PEBBLE : RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
+								pd.size = sd1 * Math::pow(sd2 / sd1, Math::sqrt(rng.randf()));
+								pd.yaw = Math::atan2(-flow.x, -flow.y) + (rng.randf() - 0.5f) * 0.8f;
+								pd.tilt_axis = Vector3(-flow.y, 0, flow.x);
+								pd.tilt = Math::deg_to_rad(8.0f + 17.0f * rng.randf());
+								pd.sink = 0.2f + 0.1f * rng.randf();
+								pd.follow = 0.7f;
+								pd.film = 0.0f;
+								runoff_stones[0].increment();
+							} else {
+								// The fan's spread: the fine end, lying flat, half in the silt laid round it.
+								pd.key = _library_key(type, rng.randf() < 0.5f ? RockGenerator::FAMILY_PEBBLE : RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
+								pd.size = Math::pow(ka - rng.randf() * (ka - kb), -1.0f / 2.5f);
+								pd.tilt = Math::deg_to_rad(10.0f) * rng.randf();
+								pd.sink = 0.25f + 0.1f * rng.randf();
+								pd.follow = 0.9f;
+								pd.film = 0.0f;
+								runoff_stones[1].increment();
+							}
+						} else if (pick >= base + worn + kick + root) {
 							// Frost-sorted: blocky frost-shattered stones (the rockfall family's fresh joint blocks, not the
 							// talus's chips), piled clast on clast into a border standing over the soil, some heaved up on
 							// edge with the long axis tilted up (Washburn 1956; Hallet 2013).
@@ -3040,6 +3121,24 @@ float RockField3D::ReliefGrid::max_in(const Rect2 &p_rect) const {
 		}
 	}
 	return m;
+}
+
+void RockField3D::set_runoff_gravel(bool p_enabled) {
+	if (runoff_gravel == p_enabled) {
+		return;
+	}
+	runoff_gravel = p_enabled;
+	_detail_cancel();
+	LocalVector<Vector3i> drop;
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		if (_is_detail(kv.key.x)) {
+			_free_cell(kv.value);
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		cells.erase(k);
+	}
 }
 
 void RockField3D::set_frost_sorting(bool p_enabled) {
@@ -3666,7 +3765,17 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 		_tile_squares(gen, key.x, rect, N, r_stones, r_job.seeds, top);
 		for (int q = 0; q < N * N; q++) {
 			const Vector3 worn = r_job.wear.max_in(top[q].rect);
-			if (top[q].ok && (MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any || (r_job.relief.any && r_job.relief.max_in(top[q].rect) > 0.01f))) {
+			bool channel = false;
+			if (top[q].ok && runoff_gravel) {
+				// No tile over a rill, gully or fan: its grains lie by the flow.
+				for (int c = 0; c < 5 && !channel; c++) {
+					const Vector2 p = c == 4 ? top[q].rect.get_center() : top[q].rect.position + top[q].rect.size * Vector2(c & 1, c >> 1);
+					const Vector3 n = ground_normal(gen, p.x, p.y, 1.0);
+					const Vector2 gl = gen->get_gully_at(Vector3(p.x, 0, p.y), n.y);
+					channel = gl.x > 0.02f || gl.y > 0.15f;
+				}
+			}
+			if (top[q].ok && (channel || MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any || (r_job.relief.any && r_job.relief.max_in(top[q].rect) > 0.01f))) {
 				top[q].ok = false; // worn ground (a trail, a rooting) keeps its own grains: no tile is cut from it
 				top[q].fail = 4;
 			}
@@ -8123,6 +8232,8 @@ Dictionary RockField3D::get_ground_detail_tile_stats() const {
 	d["skip_bent"] = int64_t(tile_skips[2].get());
 	d["skip_unmatched"] = int64_t(tile_skips[3].get());
 	d["frost_sorted"] = int64_t(frost_stones.get());
+	d["runoff_lag"] = int64_t(runoff_stones[0].get());
+	d["runoff_fan"] = int64_t(runoff_stones[1].get());
 	d["wear_armour"] = int64_t(wear_stones[0].get());
 	d["wear_shoulder"] = int64_t(wear_stones[1].get());
 	d["wear_rooting"] = int64_t(wear_stones[2].get());
@@ -8425,6 +8536,8 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_react_stats"), &RockField3D::get_react_stats);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_rivers"), &RockField3D::is_ground_detail_rivers);
 	ClassDB::bind_method(D_METHOD("set_ground_wear", "enabled"), &RockField3D::set_ground_wear);
+	ClassDB::bind_method(D_METHOD("set_runoff_gravel", "enabled"), &RockField3D::set_runoff_gravel);
+	ClassDB::bind_method(D_METHOD("is_runoff_gravel"), &RockField3D::is_runoff_gravel);
 	ClassDB::bind_method(D_METHOD("set_frost_sorting", "enabled"), &RockField3D::set_frost_sorting);
 	ClassDB::bind_method(D_METHOD("is_frost_sorting"), &RockField3D::is_frost_sorting);
 	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &RockField3D::get_frost_at);
@@ -8505,6 +8618,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_rivers"), "set_ground_detail_rivers", "is_ground_detail_rivers");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_wear"), "set_ground_wear", "is_ground_wear");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "frost_sorting"), "set_frost_sorting", "is_frost_sorting");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_gravel"), "set_runoff_gravel", "is_runoff_gravel");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_tiles"), "set_ground_detail_tiles", "is_ground_detail_tiles");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stones_react"), "set_stones_react", "is_stones_react");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "react_max_bodies", PROPERTY_HINT_RANGE, "0,256,1"), "set_react_max_bodies", "get_react_max_bodies");
