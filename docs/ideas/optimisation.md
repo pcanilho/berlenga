@@ -369,3 +369,35 @@ thread separate); the gameplay test passes.
 
 Next in the same profiles: per-bone `skeleton_bone_set_transform` calls (one per bone, even for characters hidden in
 other parts of the level), the cloth solver on the main thread, and the project's own skeleton modifiers.
+
+## Scene-feature elision: snow, glaze and ground code out of the hit shaders
+
+The split builds put most of the indoor scene's path tracer growth between eb40e5d1 and 03f1cfaa, and 1.2 ms more
+between bb187ac2 and 8db26ca5. Both ranges add BaseMaterial3D features to the shared closest-hit (snow and its
+sparkle, glaze, ground deform with its sand grain glints, exact snow sparkle). Every BaseMaterial3D surface uses
+that one hit shader, and it reads a material's switches from its record at run time, so a scene with no snowy
+material still pays the registers of the snow block on every hit (Laine, Karras and Aila 2013, above). This is
+step 3 of "path tracer cost that no setting removes", for the three blocks the bisect points at.
+
+- Three `RT_FLAGS` bits (`RT_FLAG_SCENE_NO_SNOW`, `_NO_GLAZE`, `_NO_GROUND`, bits 11 to 13). The accessors in
+  `raytracing_data_inc.glsl` return "off" while their bit is set, so the driver folds the specialization
+  constant and drops the block. The SPIR-V does not change (the compile-context key leaves these bits out), only
+  the pipeline.
+- The material storage counts, for each bit of `RTBaseMaterialState`, how many materials hold it (set in
+  `material_set_param`, cleared in `material_free`). A material created this frame is counted before the frame
+  picks its variant, whether or not it is drawn yet, so the count never lags the records.
+- The frame never traces a variant that leaves out a feature the scene holds. While the wanted variant builds,
+  it traces with the variant that leaves nothing out when that one is ready, else with the last variant when its
+  left-out set is within the wanted one's, else raster (as any variant switch). Once the elided variant is in
+  use, the full one is kept built, so a snowy area streamed in later is traced at once.
+- `rendering/pathtracing/scene_feature_elision` (default on) turns it off, for A/B timing on the same build.
+
+Not elided: wetness (rain is on in most scenes), hair, subsurface, clear coat and the base specular's own
+normal (`SPECULAR_NORMAL`, which custom shaders can write). Each is a candidate once the PC trace shows its cost.
+
+Proof on the cloud's software GPU, against the build before it: the memory scene (radiance cache off) traces the
+variant that leaves all three out and saves the same frame byte for byte, with the setting on and off. A copy of
+it with snow from the start (only glaze and ground left out), with all three features on (nothing left out), and
+with snow switched on mid-run (six frames saved across the switch, traced at once with the full variant) all
+match byte for byte. The snow bench's own frame is not repeatable between two runs of one build, so it is not a
+check; its `--test` passes.

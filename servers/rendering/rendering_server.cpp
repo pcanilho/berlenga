@@ -3899,6 +3899,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/light_reuse", false);
 	GLOBAL_DEF("rendering/pathtracing/indirect_reuse", false);
 	GLOBAL_DEF("rendering/pathtracing/indirect_reuse_enhanced", false);
+	GLOBAL_DEF("rendering/pathtracing/scene_feature_elision", true);
 	GLOBAL_DEF("rendering/pathtracing/back_lighting", true);
 	GLOBAL_DEF("rendering/pathtracing/clearcoat", true);
 	GLOBAL_DEF("rendering/pathtracing/transmission", true);

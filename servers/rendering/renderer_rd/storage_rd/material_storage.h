@@ -320,6 +320,7 @@ private:
 		SelfList<Material> update_element;
 
 		uint16_t rt_invalidation_counter = 0; // Bump on param changes for RT cache invalidation.
+		int64_t rt_state_bits = 0; // Its RTBaseMaterialState parameter, counted in rt_state_bit_users.
 
 		Dependency dependency;
 
@@ -336,6 +337,11 @@ private:
 
 	uint64_t material_rt_version = 0;
 	void _material_rt_invalidate(Material *p_material);
+	// How many materials hold each bit of RTBaseMaterialState (BaseMaterial3D's packed switches), and the bits
+	// at least one holds: the path tracer compiles out the features none holds.
+	uint32_t rt_state_bit_users[64] = {};
+	uint64_t rt_state_bits_in_use = 0;
+	void _material_set_rt_state_bits(Material *p_material, int64_t p_bits);
 
 	static void _material_uniform_set_erased(void *p_material);
 
@@ -579,6 +585,7 @@ public:
 
 	// Advances whenever any material's rt_invalidation_counter changes.
 	uint64_t material_get_rt_version() const { return material_rt_version; }
+	uint64_t material_get_rt_state_bits_in_use() const { return rt_state_bits_in_use; }
 
 	// CPU copy of the global uniform buffer, four floats per element; instance uniforms start at their shader_uniforms_offset.
 	_FORCE_INLINE_ Span<const float> global_shader_uniforms_get_values() const {
