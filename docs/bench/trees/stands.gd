@@ -1472,7 +1472,35 @@ func _near_leaves_check() -> void:
 		for i in iced.get_surface_count():
 			has_ice = has_ice or iced.surface_get_name(i) == "ice"
 	_check(iced != null and has_ice and float(iced.get_meta("tree_glaze_mm", 0.0)) == 9.0, "near leaves: glaze band 2 builds a near mesh with 9 mm of ice as geometry")
+	# The local season (trees.md 5bi): a late frost in a hollow (WorldWeather.season_at there) bands the near mesh
+	# (variant + 2^19 x band), and the leaves that were unfolding that night grow dead brown in the geometry.
+	var leaf_rgb := func(m: Mesh) -> Color:
+		var sum := Color(0, 0, 0, 0)
+		var n := 0
+		for i in m.get_surface_count():
+			if m.surface_get_name(i) != "leaves":
+				continue
+			var cols: PackedColorArray = m.surface_get_arrays(i)[Mesh.ARRAY_COLOR]
+			for j in range(0, cols.size(), 7):
+				sum += cols[j]
+				n += 1
+		return sum / max(n, 1)
+	var frost := {"day_of_year": 130.0, "forcing": 400.0, "chilling": 80.0, "senescence": 0.0,
+		"leaf_frost": 1.0, "leaf_frost_forcing": 230.0, "leaf_frost_days": 5.0}
+	var band: int = src.near_season_band(frost)
+	var calm := frost.duplicate()
+	calm.erase("leaf_frost")
+	_check(src.near_season_band({}) == 0 and src.near_season_band(calm) == 0 and band > 0, "near leaves: a frost hollow's season bands the near mesh (%d), the same season without the frost does not" % band)
+	var green: Color = leaf_rgb.call(iced) if iced != null else Color()
 	iced = null
+	var t2 := Time.get_ticks_msec()
+	var frosted: Mesh = null
+	while frosted == null and band > 0 and Time.get_ticks_msec() - t2 < 180000:
+		frosted = src.request_near_mesh(sp.near_mesh_key, 0 + 524288 * band)
+		await get_tree().process_frame
+	var brown: Color = leaf_rgb.call(frosted) if frosted != null else Color()
+	_check(frosted != null and brown.g < green.g * 0.6 and brown.r > brown.g, "near leaves: the frost band grows browned leaves (rgb %.2f %.2f %.2f vs %.2f %.2f %.2f)" % [brown.r, brown.g, brown.b, green.r, green.g, green.b])
+	frosted = null
 	await get_tree().process_frame
 
 # Wind level of detail (trees.md 3c): a camera at eye height on the stand's edge, looking across
