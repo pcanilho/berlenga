@@ -5147,6 +5147,17 @@
    "topic": ""
   },
   {
+   "name": "Resting off screen",
+   "settings": [
+    "Skeleton3D.modifier_update_mode"
+   ],
+   "note": "",
+   "what": "skeleton modifiers can rest while the skeleton is hidden or off screen.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
    "name": "Spring followers",
    "settings": [
     "SecondOrderDynamics"
