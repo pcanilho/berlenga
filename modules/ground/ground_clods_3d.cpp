@@ -324,6 +324,7 @@ void GroundClods3D::_root(GroundSurface3D *p_surface) {
 	if (!st) {
 		if (!rooted.is_empty()) {
 			rooted.clear();
+			rooted_keys.clear();
 			draw_dirty = true;
 		}
 		rooted_generation = UINT64_MAX;
@@ -338,6 +339,7 @@ void GroundClods3D::_root(GroundSurface3D *p_surface) {
 	}
 	const bool had = !rooted.is_empty();
 	rooted.clear();
+	rooted_keys.clear();
 	rooted_generation = gen;
 	rooted_center = c2;
 	const float reach = radius * 1.25f; // past the watched radius, so the camera's quarter-radius moves stay covered
@@ -375,6 +377,10 @@ void GroundClods3D::_root(GroundSurface3D *p_surface) {
 				if (r.randf() * most >= fresh) {
 					continue; // past the patch's edge, or a less fresh part of the cell
 				}
+				const uint64_t key = (uint64_t(uint32_t(i)) << 40) ^ (uint64_t(uint32_t(j)) << 12) ^ uint64_t(k);
+				if (rooted_crushed.has(key)) {
+					continue;
+				}
 				// Log-normal sods (Gardner 1956) round 7 cm, 3 to 16 cm, crumbling smaller as they settle.
 				const float size = CLAMP(0.07f * Math::exp(0.45f * r.randfn(0.0f, 1.0f)), 0.03f, 0.16f) * (0.6f + 0.4f * fresh);
 				Clod cl;
@@ -383,6 +389,7 @@ void GroundClods3D::_root(GroundSurface3D *p_surface) {
 				// Lying loose on top when fresh, slumped half into the ground by the time it has settled.
 				const float sink = SINK + 0.35f * (1.0f - fresh);
 				cl.position = Vector3(at.x, p_surface->get_surface_height_at(at) + size * (0.32f - sink), at.z);
+				cl.relief = scan.relief_at(at); // the print field under it as laid, for the crushing test (_check)
 				const Basis yaw(Vector3(0, 1, 0), r.randf() * float(Math::TAU));
 				// Turned over: tipped any way, up to 50 degrees, flattening out as they slump.
 				const Basis tilt(Vector3(r.random(-1.0f, 1.0f), 0.0f, r.random(-1.0f, 1.0f)).normalized(), r.random(0.0f, 0.9f) * (0.4f + 0.6f * fresh));
@@ -391,6 +398,7 @@ void GroundClods3D::_root(GroundSurface3D *p_surface) {
 				const Color humus = Color(0.062f, 0.046f, 0.033f).lerp(Color(0.11f, 0.085f, 0.06f), r.randf()).lerp(bare, (1.0f - fresh) * 0.6f);
 				cl.color = Color(MIN(humus.r, 1.0f), MIN(humus.g, 1.0f), MIN(humus.b, 1.0f)).linear_to_srgb();
 				rooted.push_back(cl);
+				rooted_keys.push_back(key);
 			}
 		}
 	}
@@ -433,6 +441,29 @@ void GroundClods3D::_check(GroundSurface3D *p_surface, bool p_water) {
 		}
 	}
 	next_slot = clods.is_empty() ? 0 : next_slot % clods.size();
+	// The turned soil's clods: a boot or a tyre that presses them in or heaps over them crushes them, and they stay
+	// crushed (the rooting's patch is laid again from the stand as the camera moves).
+	for (uint32_t i = 0; i < rooted.size();) {
+		const Clod &c = rooted[i];
+		bool gone = false;
+		if (scan.changed_at(c.position)) {
+			const float h = scan.relief_at(c.position);
+			gone = h < c.relief - 0.5f * c.size || h > c.relief + 0.6f * c.size;
+		}
+		if (gone) {
+			if (rooted_crushed.size() > 200000) {
+				rooted_crushed.clear(); // (long play: the oldest are long settled)
+			}
+			rooted_crushed.insert(rooted_keys[i]);
+			rooted[i] = rooted[rooted.size() - 1];
+			rooted_keys[i] = rooted_keys[rooted_keys.size() - 1];
+			rooted.resize(rooted.size() - 1);
+			rooted_keys.resize(rooted_keys.size() - 1);
+			draw_dirty = true;
+		} else {
+			i++;
+		}
+	}
 }
 
 // The clods kept while the camera was away, back where the field is again: as they lay if the print under them is
@@ -516,7 +547,7 @@ void GroundClods3D::update_now() {
 	_watch(surface);
 	_land(surface);
 	_scan(surface);
-	if (!clods.is_empty()) {
+	if (!clods.is_empty() || !rooted.is_empty()) {
 		// Standing water changes slowly: looked at once a second.
 		water_wait += 1;
 		const bool water = surface->is_standing_water() && water_wait >= int(update_rate);
@@ -555,6 +586,8 @@ void GroundClods3D::set_rooting(bool p_enabled) {
 void GroundClods3D::clear() {
 	clods.clear();
 	rooted.clear();
+	rooted_keys.clear();
+	rooted_crushed.clear();
 	rooted_generation = UINT64_MAX;
 	store.clear(false);
 	next_slot = 0;

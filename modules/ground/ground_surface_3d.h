@@ -501,6 +501,16 @@ private:
 	bool far_ripples = true; // the grown field's ripples as a normal over the dune field past the patch
 	bool ripple_sorting = true; // heavy minerals in the troughs, coarse grains on the crests
 	bool granule_ripples = true; // granule ripples on the interdune lag (dune_tone's)
+	// Rain pits and rain crust (_rain_marks()): the share of the sand the last rain pitted, the share sealed under its
+	// dried crust (which keeps the wind off: no ripples, streamers or filling there), the mm of rain since the sand was
+	// last reworked, and the drops' pattern (a new one each rain).
+	bool rain_pits = true;
+	float rain_pit_cover = 0.0f;
+	float rain_crust = 0.0f;
+	float rain_total = 0.0f;
+	float rain_pit_seed = 0.0f;
+	float rain_published[2] = { 0.0f, 0.0f };
+	void _rain_marks(float p_dt, float p_wind);
 	bool dune_tone = true; // the dune field's colour: rubefaction, coarse interdune flats, pale slip faces
 	// Wind fills prints from their upwind side (_drift_prints()).
 	bool wind_fills_prints = true;
@@ -564,7 +574,7 @@ public:
 	// For the streamers (GroundStreamers3D): the 10 m wind over the field and the share of sand the wind can
 	// move at a place.
 	Vector2 get_wind_10m() const { return _wind_10m(); }
-	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown * _shelter_flux_at(p_x, p_z); }
+	float get_blown_at(float p_x, float p_z) const { return _cell_at(p_x, p_z).blown * _shelter_flux_at(p_x, p_z) * (1.0f - get_rain_crust()); }
 
 private:
 	GroundDeformField field;
@@ -1101,6 +1111,13 @@ public:
 		ripple_dirty = true;
 	}
 	bool is_granule_ripples() const { return granule_ripples; }
+	void set_rain_pits(bool p_enabled) {
+		rain_pits = p_enabled;
+		ripple_dirty = true;
+	}
+	bool is_rain_pits() const { return rain_pits; }
+	float get_rain_pit_cover() const { return rain_pits ? rain_pit_cover : 0.0f; }
+	float get_rain_crust() const { return rain_pits ? rain_crust : 0.0f; }
 	void set_mud_layer(bool p_enabled);
 	bool is_mud_layer() const { return mud_layer; }
 	void set_mud_slides(bool p_enabled);

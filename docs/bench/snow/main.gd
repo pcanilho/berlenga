@@ -218,6 +218,8 @@ func _ready() -> void:
 			await _run_spindrift_tests()
 		elif only == "road":
 			await _run_road_tests()
+		elif only == "windslab":
+			await _run_wind_slab_tests()
 		elif only == "rime":
 			await _run_rime_tests()
 		elif only == "transport":
@@ -285,6 +287,8 @@ func _setup(kind: String, extent: float, resolution: int, temperature: float) ->
 	weather.cloud_variation = 0.0
 	weather.wind_speed = 3.0
 	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
 	weather.set_physics_process_internal(false)
 	add_child(weather)
 	weather.snap_to_settings()
@@ -310,6 +314,8 @@ func _precipitate(hours: float, rate: float) -> void:
 	weather.advance(1.0)
 	snow.advance(hours * 3600.0)
 	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
 	weather.cloud_cover = 0.0
 	weather.snap_to_settings()
 	weather.advance(1.0)
@@ -436,6 +442,7 @@ func _run_tests() -> void:
 	await _run_slush_tests()
 	await _run_spindrift_tests()
 	await _run_road_tests()
+	await _run_wind_slab_tests()
 	await _run_hoar_tests()
 	_run_suncup_tests()
 	await _run_rime_tests()
@@ -680,6 +687,60 @@ func _run_spindrift_tests() -> void:
 	_check("drier air thins it sooner (sublimation)", SnowCover3D.spindrift_fade(0.4) > 2.0 * SnowCover3D.spindrift_fade(0.95), "%.3f /s at 40%%, %.3f at 95%%" % [SnowCover3D.spindrift_fade(0.4), SnowCover3D.spindrift_fade(0.95)])
 	var wet: Array = await _spindrift_at(26.0, 2.0)
 	_check("no plume from wet snow", wet[0] == 0.0, "%.2f kg/s at +2 C" % wet[0])
+
+
+# Wind slab (follow-up 45): snow falling in wind lands denser (Crocus, Vionnet et al. 2012), and where the surface
+# drifts (Crocus's driftability SI > 0) its top packs toward 350 kg/m3 as wind slab (Sommer et al. 2018).
+func _wind_case(wind: float, hours: int, fall: float) -> Array:
+	await _setup("flat", 128.0, 32, -8.0)
+	snow.add_snow(30.0, 100.0)
+	weather.temperature = -8.0
+	weather.wind_speed = wind
+	weather.wind_direction = Vector2(1, 0)
+	weather.rain_rate = fall
+	weather.cloud_cover = 1.0 if fall > 0.0 else 0.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var p := Vector3(0, 0, 0)
+	var swe0 := snow.get_swe_at(p)
+	var d0 := snow.get_depth_at(p)
+	for h in hours:
+		weather.advance(60.0)
+		snow.advance(3600.0)
+	var added := snow.get_swe_at(p) - swe0
+	var added_depth := snow.get_depth_at(p) - d0
+	return [snow.get_density_at(p), snow.get_wind_slab_at(p), added, added_depth]
+
+
+func _run_wind_slab_tests() -> void:
+	print("Wind slab (follow-up 45):")
+	var calm_rho := SnowCover3D.wind_snow_density(-8.0, 0.0)
+	var wind_rho := SnowCover3D.wind_snow_density(-8.0, 12.0)
+	_check("snow falling in wind lands denser (Crocus)", absf(calm_rho - SnowCover3D.new_snow_density(-8.0)) < 1.0 and absf(wind_rho - (109.0 - 48.0 + 26.0 * sqrt(12.0))) < 1.0, "%.0f kg/m3 calm, %.0f at 12 m/s" % [calm_rho, wind_rho])
+	_check("fresh light snow drifts in a breeze, old dense snow only in a gale (SI)", SnowCover3D.drift_index(5.0, 100.0, 1.0) > 0.0 and SnowCover3D.drift_index(2.0, 100.0, 1.0) < 0.0 and SnowCover3D.drift_index(8.0, 300.0, 0.0) < 0.0 and SnowCover3D.drift_index(15.0, 300.0, 0.0) > 0.0, "SI %.2f at 5 m/s and %.2f at 2 (fresh, 100 kg/m3); %.2f at 8 and %.2f at 15 (old, 300)" % [SnowCover3D.drift_index(5.0, 100.0, 1.0), SnowCover3D.drift_index(2.0, 100.0, 1.0), SnowCover3D.drift_index(8.0, 300.0, 0.0), SnowCover3D.drift_index(15.0, 300.0, 0.0)])
+	var p24 := SnowCover3D.wind_packing_step(100.0, 10.0, 1.0, 24.0)
+	var p96 := SnowCover3D.wind_packing_step(100.0, 10.0, 1.0, 96.0)
+	_check("wind packing toward 350 kg/m3 over days (48 h / SI)", p24 > 140.0 and p24 < p96 and p96 < 350.0 and SnowCover3D.wind_packing_step(100.0, 2.0, 1.0, 24.0) == 100.0, "%.0f kg/m3 after a day at 10 m/s, %.0f after four; none at 2 m/s" % [p24, p96])
+	var calm: Array = await _wind_case(2.0, 12, 0.0)
+	var gale: Array = await _wind_case(14.0, 12, 0.0)
+	print("  12 h on 30 cm of new snow: calm %.0f kg/m3, slab %.3f m; 14 m/s %.0f kg/m3, slab %.3f m" % [calm[0], calm[1], gale[0], gale[1]])
+	_check("a gale packs the surface into wind slab; calm does not", calm[1] == 0.0 and gale[1] > 0.05 and gale[0] > calm[0] + 10.0, "slab %.3f m and %.0f kg/m3 at 14 m/s, %.3f m and %.0f kg/m3 calm" % [gale[1], gale[0], calm[1], calm[0]])
+	var fall_calm: Array = await _wind_case(1.0, 3, 2.0)
+	var fall_wind: Array = await _wind_case(12.0, 3, 2.0)
+	var rc: float = fall_calm[2] / maxf(fall_calm[3], 1e-6)
+	var rw: float = fall_wind[2] / maxf(fall_wind[3], 1e-6)
+	_check("a windy snowfall lays down a denser, thinner layer, and it counts as slab", rw > rc * 1.3 and fall_wind[1] > fall_calm[1], "new snow %.0f kg/m3 in 12 m/s, %.0f calm; slab %.3f m and %.3f m" % [rw, rc, fall_wind[1], fall_calm[1]])
+	await _setup("flat", 128.0, 32, -8.0)
+	snow.wind_packing_enabled = false
+	snow.add_snow(30.0, 100.0)
+	weather.wind_speed = 14.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	for h in 12:
+		snow.advance(3600.0)
+	_check("off: no slab", snow.get_wind_slab_at(Vector3.ZERO) == 0.0, "%.3f m" % snow.get_wind_slab_at(Vector3.ZERO))
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
 
 
 func _road_wheel(spin: float, roll: float) -> RigidBody3D:
@@ -2357,6 +2418,7 @@ func _run_climate_tests() -> void:
 	var storm_before := snow.get_world_swe_at(far_q)
 	snow.add_snow(20.0, 100.0)
 	_check("add_snow falls on the world tier outside the square", absf(snow.get_world_swe_at(far_q) - storm_before - 20.0) < 1.0, "%.0f to %.0f mm at 760 m" % [storm_before, snow.get_world_swe_at(far_q)])
+	await _run_melt_runoff_tests()
 
 	await _run_recipe_tests()
 
@@ -2426,6 +2488,52 @@ func _run_climate_tests() -> void:
 			hits += 1
 	_check("cornice mesh: overhangs with collision", cor.get_segment_count() > 10 and tries > 0 and hits >= tries * 0.8, "%d segments; a ray down halfway out stops on the cornice above the lee face in %d of %d places" % [cor.get_segment_count(), hits, tries])
 	cor.queue_free()
+
+
+# Melt water downhill (round 6, docs/ideas/snow.md): a warm clear spell melts the world tier's snow outside the
+# square, and that melt is the weather's ground water there (what WeatherRunoff3D routes into streams); inside
+# the square the square's own runoff stands for it, counted once.
+func _run_melt_runoff_tests() -> void:
+	weather.temperature = 14.0
+	weather.snap_to_settings()
+	for h in 4:
+		snow.advance(3600.0)
+		snow.advance_world(3600.0)
+	weather.advance(60.0)
+	var cs := weather.extent / weather.resolution
+	var best := Vector3.ZERO
+	var melt := 0.0
+	for i in range(-7, 7):
+		for j in range(-7, 7):
+			var q := Vector3((i + 0.5) * cs, 0, (j + 0.5) * cs)
+			if absf(q.x - snow.global_position.x) < snow.extent and absf(q.z - snow.global_position.z) < snow.extent:
+				continue
+			var r := snow.get_runoff_at(q)
+			if r > melt:
+				melt = r
+				best = q
+	var got := weather.get_ground_water_input_at(best)
+	print("  melt: %.2f mm/h leaves the world tier's pack at %s; the weather's ground water there %.2f mm/h (rain %.2f)" % [melt, str(best), got, weather.get_rainfall_at(best)])
+	_check("melt outside the square reaches the weather's ground water", melt > 0.1 and absf(got - melt) < 0.05 * melt + 0.01, "%.2f mm/h melt, %.2f mm/h ground water at %s" % [melt, got, str(best)])
+	# Inside the square: the weather cell's centre reads the square's runoff (averaged to the world's 16 m
+	# cells), not the square's and the world's added. Rain on the square cleared bare, the world's pack under it.
+	snow.clear()
+	weather.rain_rate = 4.0
+	weather.cloud_cover = 1.0
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	snow.advance(3600.0)
+	weather.advance(60.0)
+	var c := snow.global_position + Vector3(0.5 * cs - fposmod(snow.global_position.x, cs), 0, 0.5 * cs - fposmod(snow.global_position.z, cs))
+	var near_avg := 0.0
+	for k in 64:
+		near_avg += snow.get_runoff_at(c + Vector3((k % 8) * 4.0 - 14.0, 0, (k / 8) * 4.0 - 14.0)) / 64.0
+	var got_in := weather.get_ground_water_input_at(c)
+	print("  square: %.1f mm snow, rain %.2f mm/h at %s" % [snow.get_swe_at(c), weather.get_rainfall_at(c), str(c)])
+	_check("the square's runoff is counted once", near_avg > 1.0 and absf(got_in - near_avg) < 0.25 * near_avg + 0.02, "%.2f mm/h ground water at %s, the square's %.2f mm/h (bare), the world tier's pack %.0f mm" % [got_in, str(c), near_avg, snow.get_world_swe_at(c)])
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
 
 
 func _longest_cornice() -> Vector3:

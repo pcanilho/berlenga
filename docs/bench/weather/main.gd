@@ -1425,12 +1425,16 @@ func _build_clouds() -> void:
 		weather.temperature = -8.0 if temp_arg <= -999.0 else temp_arg
 		weather.humidity = 0.8
 		weather.water_temperature = 6.0
-		weather.cloud_cover = 0.1 if cover < 0.0 else cover
+		# Clear arctic air off the band (a cold outbreak's sky is clear but for the lake's own cloud).
+		weather.cloud_cover = 0.02 if cover < 0.0 else cover
+		weather.mid_cloud_cover = 0.0 if mid_cover < 0.0 else mid_cover
 		weather.cloud_type = 0.4
 		weather.snap_to_settings()
 		weather.cloud_shadow_extent = 60000.0 # the band's shadow across the whole view (8 km ended in a straight edge)
 		weather.cloud_shadow_resolution = 512
+		# The water itself is the contract (LakeStub); a dark plane drawn for it stood as a straight band on the horizon.
 		var lake := MeshInstance3D.new()
+		lake.visible = false
 		var lm := PlaneMesh.new()
 		lm.size = Vector2(30000, 60000)
 		lake.mesh = lm
@@ -1441,7 +1445,11 @@ func _build_clouds() -> void:
 		wm.metallic_specular = 0.5
 		lake.material_override = wm
 		add_child(lake)
-		cam.look_at_from_position(Vector3(14000, 150, 22000), Vector3(0, 1100, 6000), Vector3.UP)
+		# From 16 km aside of the band's axis, 22 km downwind of the shore, looking up the band at a slant: one line of
+		# cloud with its snow under it running away toward the lake, clear sky beside it.
+		if fov_arg <= 0.0:
+			cam.fov = 40.0
+		cam.look_at_from_position(Vector3(16000, 200, 22000), Vector3(0, 1400, -2000), Vector3.UP)
 		if cam_arg.size() == 6:
 			cam.look_at_from_position(Vector3(cam_arg[0], cam_arg[1], cam_arg[2]), Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
 		for i in 8:

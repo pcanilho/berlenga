@@ -48,6 +48,7 @@ extends Node3D
 #   --test=burnscar    rain on a burn scar: water-repellent burnt soil (WorldFire) sheds most of the rain as runoff
 #   --test=runoff       runoff channels: a falling tide's soaked beach seeps, the water cuts rills down the face
 #                         and lays the sand at the waterline; volume kept; cost of the step
+#   --test=rain         rain pits on dry sand: a shower pits it, still air keeps them, saltation wipes them
 #   --test=avalanche    footsteps on a dune's slip face set off grain avalanches down it; not on the stoss slope
 #   --test=infill       wind fills a print from its upwind side; nothing under the threshold
 #   --view=fringe       a still pool's shore in a desert: the wet margin and the salt crust
@@ -61,6 +62,7 @@ extends Node3D
 #   --view=trail        a walker, a rolling ball and a wheel cross the ground; --ground=KIND picks it:
 #                       dry_sand, damp_sand, soil, mud, litter (default soil)
 #   --mud=depth,moisture paint a mud layer for --view=ruts (stage 1; the car starts in the frame and drives 12 s)
+#   --rain-pits=mm  --view=ripples: then a still shower of that much rain (120 mm/h), pitting the sand
 #   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
 #   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b);
 #                  --dry=frames for part of it (600 is all), --dry=0 until the deepest pool starts to crust
@@ -133,6 +135,8 @@ var drift_test := false
 var avalanche_test := false
 var infill_test := false
 var fringe_test := false
+var rain_test := false
+var rain_pits_mm := 0.0
 var steps_test := false
 var near_test := false
 var mud_test := false
@@ -213,6 +217,8 @@ func _ready() -> void:
 		elif a == "--test=avalanche": avalanche_test = true
 		elif a == "--test=infill": infill_test = true
 		elif a == "--test=fringe": fringe_test = true
+		elif a == "--test=rain": rain_test = true
+		elif a.begins_with("--rain-pits="): rain_pits_mm = float(a.substr(12))
 		elif a == "--test=steps": steps_test = true
 		elif a == "--test=near": near_test = true
 		elif a == "--test=mud": mud_test = true
@@ -422,6 +428,11 @@ func _ready() -> void:
 		return
 	if runoff_test:
 		await _run_runoff_tests()
+	if rain_test:
+		await _run_rain_tests()
+		print("RESULT: %d failed" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if burnscar_test:
 		await _run_burnscar_tests()
 		print("RESULT: %d failed" % fails)
@@ -3637,6 +3648,48 @@ func _ripple_stats(from_x := 0, from_z := 0, size := -1) -> Array:
 	return [lx, lz, ex / maxf(ez, 1e-12), hi - lo, sqrt(rms / (rows * rows)), mean]
 
 
+# Rain pits and rain crust (GroundSurface3D rain_pits; docs/ideas/sand.md): a shower pits the sand, a new pattern each
+# rain; still air keeps them; saltation wipes them; a soaking leaves no crust while the skin is wet.
+func _run_rain_tests() -> void:
+	await _soil_scene("dry_sand")
+	surface.wind_ripples = true
+	surface.wind_override = Vector2(0.0, 0.0)
+	var t0 := Time.get_ticks_msec()
+	while not surface.is_ripples_ready() and Time.get_ticks_msec() - t0 < 60000:
+		await get_tree().physics_frame
+	_check("no rain, no pits", surface.get_rain_pit_cover() == 0.0 and surface.get_rain_crust() == 0.0, "cover %.2f, crust %.2f" % [surface.get_rain_pit_cover(), surface.get_rain_crust()])
+	var wm := WeatherMap3D.new()
+	wm.cloud_cover = 1.0
+	wm.rain_rate = 120.0
+	add_child(wm)
+	wm.snap_to_settings()
+	var o := Vector3(0.3, 0, 0.2)
+	print("  rainfall %.1f mm/h at the patch" % WorldContracts.get_weather().rainfall_at(o))
+	for i in 30:
+		await get_tree().physics_frame
+	var c1 := surface.get_rain_pit_cover()
+	for i in 90:
+		await get_tree().physics_frame
+	var c2 := surface.get_rain_pit_cover()
+	_check("a shower pits the sand, more as it goes on (covered by about 0.05 mm)", c1 > 0.1 and c2 > c1 and c2 > 0.8, "%.2f after 0.017 mm, %.2f after 0.067 mm" % [c1, c2])
+	_check("no crust while the skin is wet", surface.get_rain_crust() < 0.05, "crust %.2f, wetness %.2f" % [surface.get_rain_crust(), WorldContracts.get_weather().surface_wetness_at(o)])
+	wm.rain_rate = 0.0
+	wm.cloud_cover = 0.0
+	wm.snap_to_settings()
+	for i in 120:
+		await get_tree().physics_frame
+	_check("still air keeps the pits", surface.get_rain_pit_cover() > 0.75, "%.2f" % surface.get_rain_pit_cover())
+	# Wind past the threshold (sped up 100x): the saltation reworks the top grains.
+	surface.wind_override = Vector2(12.0, 0.0)
+	surface.ripple_time_scale = 100.0
+	for i in 600:
+		await get_tree().physics_frame
+	_check("saltation wipes the uncrusted pits", surface.get_rain_pit_cover() < 0.05, "%.3f after 10 s at 12 m/s (x100)" % surface.get_rain_pit_cover())
+	surface.rain_pits = false
+	_check("rain_pits off reads nothing", surface.get_rain_pit_cover() == 0.0 and surface.get_rain_crust() == 0.0, "off")
+	wm.queue_free()
+
+
 func _run_wind_tests() -> void:
 	await _soil_scene("dry_sand")
 	surface.wind_override = Vector2(8.0, 0.0)
@@ -5173,6 +5226,22 @@ func _build_ripples() -> void:
 		await get_tree().physics_frame
 	for i in 90:
 		await get_tree().physics_frame
+	if rain_pits_mm > 0.0:
+		# --rain-pits=mm: a still shower of that much rain on the grown ripples (sped up), then the sun.
+		surface.wind_override = Vector2(0.5, 0.0)
+		var wm := WeatherMap3D.new()
+		wm.cloud_cover = 1.0
+		wm.rain_rate = 120.0
+		add_child(wm)
+		wm.snap_to_settings()
+		for i in int(ceil(rain_pits_mm / 120.0 * 3600.0 * 60.0)):
+			await get_tree().physics_frame
+		wm.rain_rate = 0.0
+		wm.cloud_cover = 0.0
+		wm.snap_to_settings()
+		for i in 30:
+			await get_tree().physics_frame
+		print("rain pits: cover %.2f, crust %.2f" % [surface.get_rain_pit_cover(), surface.get_rain_crust()])
 	print("ripples: %d steps, streamers %.1f g/m/s, coverage %.2f" % [surface.get_ripple_steps(), st.get_flux() * 1000.0, st.get_coverage()])
 	env.pathtracing_enabled = not raster
 	await _save_frame()

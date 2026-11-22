@@ -1705,6 +1705,37 @@ photographs, e.g. Fikke et al. 2007, COST 727).
   deeper when rain ponds in it; it freezes into the base in the cold (denser, not deeper); a print pressed
   below the water table fills with a dark, smooth pool. Raster and PT agree (`--view=trail --slush=150`).
 
+## Follow-up 44: melt water from the whole terrain (round 6, 22 Nov 2026)
+
+- The cover already handed its runoff (rain through the pack and melt, mm/h) to the weather map as the ground
+  water WeatherRunoff3D routes, but only the near square's: outside it the weather fell back to rain, so a warm
+  spell melting the mountain sent nothing downhill. Spring melt and rain on snow are the main flood water in
+  mountains (Marks et al. 1998, Hydrological Processes 12).
+- With a world tier the source is now the world's cells (4 km at 16 m) with the near square averaged into the
+  cells it covers (by covered share at the square's edge), one source so nothing counts twice.
+  `get_runoff_at` outside the square reads the world tier.
+- Checks (`--test=climate`): a warm clear spell's melt outside the square is the weather's ground water there
+  (0.74 mm/h both); rain on a square cleared bare over the world's 527 mm pack gives 4.00 mm/h, the square's,
+  not the two added.
+- Not here: rivers (PhysXRiver3D) take their discharge from the terrain climate, not from this field; a
+  seasonal melt pulse in them would be the rivers' change.
+
+## Follow-up 45: wind slab (round 6, 22 Nov 2026)
+
+- Drift deposits were already laid down at 300 kg/m3; what was missing: snow falling in wind, the packing of
+  snow the wind works over in place, and a record of the slab for the avalanche stability.
+- Snowfall in wind: Crocus's new-snow density 109 + 6 T + 26 U^0.5 kg/m3 (Vionnet et al. 2012, GMD 5, after
+  Pahaut 1976), or Hedstrom and Pomeroy's where higher (calm). 151 kg/m3 at -8 C and 12 m/s against 70 calm.
+- Wind packing: Crocus's driftability SI = -2.868 exp(-0.085 U) + 1 + Mo (Guyomarc'h and Merindol 1998) with
+  mobility from density and freshness (albedo stands for dendricity); where SI > 0 at the cell's own wind
+  (MicroMet weights and lee) the top 10 cm settle toward 350 kg/m3 with time constant 48 h / (0.632 SI). Sommer
+  et al. 2018 (The Cryosphere 12): packing only with drift. The pack is one layer, so the top starts from the
+  pack's density.
+- `cell_wind_slab` (m): deposits, snowfall while SI > 0, the packed top; settles with the pack, melts from the
+  top, erosion takes it once the softer snow over it is gone. `get_wind_slab_at`, `wind_packing_enabled`.
+- Checks (`--test=windslab`): SI's thresholds (fresh 100 kg/m3 drifts from about 4 m/s, old 300 kg/m3 from
+  about 11); 12 h at 14 m/s packs 0.1 m of slab, calm none; a windy snowfall is twice as dense and is slab.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

@@ -123,6 +123,9 @@
 		<member name="rock_slope" type="float" setter="set_rock_slope" getter="get_rock_slope" default="40.0">
 			Slope in degrees past which rock shows when there is no geology. With the generator's geology, rock follows its maps, and faces past [member cliff_slope] are bare too.
 		</member>
+		<member name="salt_bloom" type="bool" setter="set_salt_bloom" getter="is_salt_bloom" default="true">
+			The sea spray's salt (WeatherMap3D [member WeatherMap3D.sea_spray]) dries to a white halite crust on the rock and scree of sea cliffs: patchy and grainy, kept on steep faces, washed off tops, and gone while the stone is wet.
+		</member>
 		<member name="sand_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Beach sand.
 		</member>

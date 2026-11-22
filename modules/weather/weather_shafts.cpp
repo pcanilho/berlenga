@@ -98,7 +98,10 @@ void fragment() {
 	// Seen sideways, the sky's irradiance is half sky and half ground, as ambient_bottom under the base.
 	vec3 side = normalize(vec3(-rd.x, 0.0, -rd.z) + vec3(0.0, 1e-4, 0.0));
 	NORMAL = normalize((VIEW_MATRIX * vec4(side, 0.0)).xyz);
-	ALBEDO = vec3(o.r);
+	// The irradiance on a sideways normal takes in the bright horizon and the sunlit ground in full, about twice
+	// the sky's ambient_bottom (measured: the same lake-effect veil just above and just below the horizon); halved
+	// so a veil crossing the horizon keeps one brightness.
+	ALBEDO = vec3(o.r * 0.5);
 	ROUGHNESS = 1.0;
 	METALLIC = 0.0;
 	SPECULAR = 0.0;
