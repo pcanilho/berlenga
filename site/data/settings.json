@@ -3211,6 +3211,17 @@
    "topic": "Growth"
   },
   {
+   "name": "Crown self-shading",
+   "settings": [
+    "TreeGenerator.crown_occlusion"
+   ],
+   "note": "",
+   "what": "in raster, the outer leaves of a crown shade its inner ones.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
    "name": "Stands",
    "settings": [
     "make_stand",
