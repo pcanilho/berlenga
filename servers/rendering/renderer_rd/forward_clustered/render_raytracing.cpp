@@ -3527,7 +3527,13 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.albedo_texture.index = bindless_block->add_texture(albedo_rd);
 	}
 
-	RID normal_rd = get_material_texture("texture_normal");
+	// Feature switches packed by BaseMaterial3D::_update_shader. Absent = not a BaseMaterial3D.
+	const Variant rt_state_var = material_storage->material_get_param(p_material_rid, RTBaseMaterialState::PARAM_NAME);
+	const bool is_base_material = rt_state_var.get_type() == Variant::INT;
+	const RTBaseMaterialState rt_state = is_base_material ? RTBaseMaterialState::decode(rt_state_var) : RTBaseMaterialState();
+
+	// A BaseMaterial3D keeps its normal texture when normal_enabled is off: raster ignores it, and so must this.
+	RID normal_rd = (!is_base_material || rt_state.normal_map) ? get_material_texture("texture_normal") : RID();
 	if (normal_rd.is_valid()) {
 		mat.normal_texture.index = bindless_block->add_texture(normal_rd);
 		mat.flags |= RT_MAT_FLAG_HAS_NORMAL_MAP;
@@ -3537,11 +3543,6 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 			mat.normal_map_depth = normal_scale_var;
 		}
 	}
-
-	// Feature switches packed by BaseMaterial3D::_update_shader. Absent = not a BaseMaterial3D.
-	const Variant rt_state_var = material_storage->material_get_param(p_material_rid, RTBaseMaterialState::PARAM_NAME);
-	const bool is_base_material = rt_state_var.get_type() == Variant::INT;
-	const RTBaseMaterialState rt_state = is_base_material ? RTBaseMaterialState::decode(rt_state_var) : RTBaseMaterialState();
 
 	auto get_texture_idx = [&](const StringName &p_param) -> uint32_t {
 		RID tex_rd = get_material_texture(p_param);

@@ -1652,6 +1652,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
 		rt.ground_deform_terrain = features[FEATURE_GROUND_DEFORM] && !ground_deform_patch;
 		rt.mud = features[FEATURE_MUD];
+		rt.normal_map = features[FEATURE_NORMAL_MAPPING];
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
