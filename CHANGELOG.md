@@ -6,6 +6,15 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-5ff4cdf8 (2026-11-22)
+
+### Changed
+- Camera cut-out: shadow maps of cut-out materials draw with the shared shadow material again, as before the cut-out (no setting).
+- In raster, each tree crown shades its own inner and lower leaves from the sky (setting crown_occlusion).
+
+### Fixed
+- Tree leaves take sky light again under path tracing: crowns in shade no longer go near-black, and raster and path-traced crowns now match in brightness.
+
 ## build-961f7961 (2026-11-22)
 
 ### Added
