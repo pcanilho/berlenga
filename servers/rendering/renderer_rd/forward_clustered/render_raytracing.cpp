@@ -6958,7 +6958,7 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 	ranges.sort();
 	float cell = ranges[ranges.size() / 2] * 0.75f;
 	Vector3 extent = bounds.size;
-	cell = MAX(cell, Math::pow(MAX(extent.x * extent.y * extent.z, 1e-3f) / float(RT_LIGHT_GRID_MAX_CELLS), 1.0f / 3.0f));
+	cell = MAX(cell, Math::pow(MAX(float(extent.x * extent.y * extent.z), 1e-3f) / float(RT_LIGHT_GRID_MAX_CELLS), 1.0f / 3.0f));
 	cell = MAX(cell, 0.25f);
 
 	const uint32_t list_base = RT_LIGHT_GRID_HEADER + global.size() + far.size();
@@ -7751,6 +7751,20 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				}
 				RID rain_rd = rain_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(rain_tex) : RID();
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RAIN_MAP] = (has_weather && rain_rd.is_valid()) ? float(bindless_block->add_texture(rain_rd)) : 0.0f;
+				// Its 10 m wind (weather_wind_map, same rect): the rain a face catches (pt_weather_surface_rain()).
+				static const StringName wind_map_name = "weather_wind_map";
+				const Variant wind_var = ms->global_shader_parameter_get_internal(wind_map_name);
+				RID wind_tex;
+				if (wind_var.get_type() == Variant::RID) {
+					wind_tex = wind_var;
+				} else if (wind_var.get_type() == Variant::OBJECT) {
+					Object *t = wind_var;
+					if (t) {
+						wind_tex = t->call(SNAME("get_rid"));
+					}
+				}
+				RID wind_rd = wind_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(wind_tex) : RID();
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WIND_MAP] = (has_weather && wind_rd.is_valid()) ? float(bindless_block->add_texture(wind_rd)) : 0.0f;
 			}
 			// Its contact wetness (wet where water has been): weather_contact_map and weather_contact_rect.
 			static const StringName contact_map_name = "weather_contact_map";

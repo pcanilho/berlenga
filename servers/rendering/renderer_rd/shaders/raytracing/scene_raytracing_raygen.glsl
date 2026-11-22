@@ -2761,6 +2761,28 @@ float ground_water_between(vec4 p_r, vec4 p_g, vec2 p_f) {
 // ground with pore water p_wet, the water carrying p_mud kg/m3 of clay (mud round 3: churned up by tyres and feet).
 #include "raytracing_rain_inc.glsl"
 
+// The rain a face catches, from the weather (material.cpp weather_surface_rain(): the same maps and lines). p_wp world
+// position, p_n world normal, p_air the surface's own motion through the air, negated (world m/s).
+vec4 pt_weather_surface_rain(vec3 p_wp, vec3 p_n, vec3 p_air) {
+	vec4 wrect = vec4(get_rt_param(RT_PARAM_WETNESS_RECT_X), get_rt_param(RT_PARAM_WETNESS_RECT_Y),
+			get_rt_param(RT_PARAM_WETNESS_RECT_W), get_rt_param(RT_PARAM_WETNESS_RECT_H));
+	if (wrect.z <= 0.0) {
+		return vec4(0.0);
+	}
+	uint smap = uint(get_rt_param(RT_PARAM_WETNESS_MAP));
+	vec2 ht = 0.5 / max(vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), 0)), vec2(1.0));
+	vec2 uv = clamp((p_wp.xz - wrect.xy) / wrect.zw, ht, 1.0 - ht);
+	vec4 st = textureLod(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), uv, 0.0);
+	float air = get_rt_param(RT_PARAM_PRECIP_TEMPERATURE) - get_rt_param(RT_PARAM_PRECIP_LAPSE) * (p_wp.y - get_rt_param(RT_PARAM_PRECIP_GROUND));
+	float rain = max(st.r, 0.0) * rain_liquid_share_nose(air, get_rt_param(RT_PARAM_PRECIP_HUMIDITY), p_wp.y - get_rt_param(RT_PARAM_PRECIP_GROUND),
+										 get_rt_param(RT_PARAM_PRECIP_NOSE), get_rt_param(RT_PARAM_PRECIP_NOSE_BASE));
+	uint rmap = uint(get_rt_param(RT_PARAM_RAIN_MAP));
+	float drip = rmap != 0u ? textureLod(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_LINEAR_CLAMP), uv, 0.0).b : 0.0;
+	uint wmap = uint(get_rt_param(RT_PARAM_WIND_MAP));
+	vec2 wind = (wmap != 0u ? textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), uv, 0.0).rg : vec2(0.0)) + p_air.xz;
+	return rain_surface_catch(p_n, rain, drip, wind, st.g);
+}
+
 vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
 	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
 	float cover = smoothstep(0.0003, 0.002, p_depth);

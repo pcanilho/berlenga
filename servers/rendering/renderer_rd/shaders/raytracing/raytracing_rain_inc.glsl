@@ -181,3 +181,35 @@ vec4 rain_surface_beads(vec3 p_world, vec3 p_normal, float p_wet, float p_footpr
 	vec3 slope = d / radius * (1.0 / sqrt(max(1.0 - r * r, 0.02)));
 	return vec4(slope * shown, mix(mean_cover, 1.0, shown));
 }
+
+// Rain caught by a face (docs/ideas/engine-gaps-from-game.md, A; docs/ideas/rain.md, step 7). The rain falls slanted
+// by the wind, so its flux is a vector: R straight down (mm/h on level ground) and, across, the wind-driven rain of
+// ISO 15927-3 (Lacy 1965; Blocken and Carmeliet 2004), (2/9) U R^(8/9) mm/h on a face square to a wind of U m/s
+// (the airfield index: the free catch, before a building's own wall factor). A face catches the flux it turns
+// into, so a level roof catches R, a windward wall the driven rain, a leeward wall and an underside nothing, and a
+// slope leaning into the wind more than R. Canopy drip falls straight down. Pure: the caller brings the weather.
+// p_normal: the face's world normal (unit, outward). p_rain: liquid rain (mm/h). p_drip: canopy drip (mm/h).
+// p_wind: the 10 m wind (m/s, world xz, the way it blows). p_film: the weather's surface film there (0..1: how long
+// the rain has been at it). Returns x the catch (mm/h on the face), y the film, zw the wind's push on a drop along
+// the face (world xz, in units of the drop's weight).
+vec4 rain_surface_catch(vec3 p_normal, float p_rain, float p_drip, vec2 p_wind, float p_film) {
+	float rain = max(p_rain, 0.0);
+	float across = rain > 0.0 ? (2.0 / 9.0) * pow(rain, 8.0 / 9.0) : 0.0;
+	float c = max(p_normal.y * rain - across * dot(p_normal.xz, p_wind), 0.0) + max(p_drip, 0.0) * max(p_normal.y, 0.0);
+	// The push: drag on a sessile drop of about 3 mm (0.5 rho Cd A u^2 with Cd about 1, A about 7 mm2) over its
+	// weight (about 0.14 mN) is 0.03 u^2; the air at the face moves at about 0.6 of the 10 m wind (the log profile a
+	// few metres up, slowed further against the face), so 0.011 U^2 along the face's own plane.
+	vec3 w = vec3(p_wind.x, 0.0, p_wind.y);
+	w -= p_normal * dot(w, p_normal);
+	vec2 push = 0.011 * w.xz * length(w);
+	float pl = length(push);
+	push *= pl > 3.0 ? 3.0 / pl : 1.0;
+	return vec4(c, clamp(p_film, 0.0, 1.0), push);
+}
+
+// The way water runs on a face: gravity along the face plus the wind's push (rain_surface_catch().zw), in the face's
+// plane. Not normalised: its length is the drive (1 down a vertical face in still air, 0 on a level one).
+vec3 rain_surface_fall_line(vec3 p_normal, vec2 p_push) {
+	vec3 f = vec3(p_push.x, -1.0, p_push.y);
+	return f - p_normal * dot(f, p_normal);
+}
