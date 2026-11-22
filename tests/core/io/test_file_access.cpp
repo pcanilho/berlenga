@@ -297,4 +297,52 @@ TEST_CASE("[FileAccess] Cursor positioning") {
 	}
 }
 
+TEST_CASE("[FileAccess] READ_WRITE store after reading and seeking lands at the seek position") {
+	// Mirrors the Windows export template modifier: read a header field,
+	// seek back inside the bytes just read, then patch it in place.
+	const String path = TestUtils::get_temp_path("file_access_rw_patch.bin");
+	{
+		Ref<FileAccess> w = FileAccess::open(path, FileAccess::WRITE);
+		REQUIRE(w.is_valid());
+		for (uint32_t i = 0; i < 40000; i++) {
+			w->store_32(i);
+		}
+	}
+	{
+		Ref<FileAccess> f = FileAccess::open(path, FileAccess::READ_WRITE);
+		REQUIRE(f.is_valid());
+		f->seek(0x3c);
+		CHECK(f->get_32() == 0x3c / 4);
+		f->seek(0x10);
+		f->store_32(0xdeadbeef);
+		CHECK(f->get_position() == 0x14);
+		f->seek(0x40);
+		CHECK(f->get_32() == 0x40 / 4);
+		f->seek(0x44);
+		f->store_32(0xcafef00d);
+		f->seek(0x100);
+		uint8_t buf[16];
+		f->get_buffer(buf, sizeof(buf));
+		f->seek(0x104);
+		f->store_buffer(buf, 4);
+	}
+	{
+		Ref<FileAccess> r = FileAccess::open(path, FileAccess::READ);
+		REQUIRE(r.is_valid());
+		CHECK(r->get_length() == 160000);
+		r->seek(0x10);
+		CHECK(r->get_32() == 0xdeadbeef);
+		r->seek(0x44);
+		CHECK(r->get_32() == 0xcafef00d);
+		r->seek(0x104);
+		CHECK(r->get_32() == 0x100 / 4);
+		// Nothing written past the cached chunk.
+		r->seek(32768);
+		CHECK(r->get_32() == 32768 / 4);
+		r->seek(32768 + 0x3c);
+		CHECK(r->get_32() == (32768 + 0x3c) / 4);
+	}
+	DirAccess::remove_absolute(path);
+}
+
 } // namespace TestFileAccess

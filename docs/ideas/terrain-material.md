@@ -261,6 +261,31 @@ Image.load_from_file); --ground-scans=0 for plain layers, --ground-scans=rock,sc
   colour: crumpled paper. Past about 32 degrees the rock layer now takes streaks down the fall line (1.3 m by 14 m,
   4 m by 30 m), bed bands (0.9 m) and 18 m tone, and its fine relief eased by up to 0.4.
 
+## Relief on moderate slopes: research and plan (22 Nov, card posted, recommended)
+
+Banks and cave mouths at 35 to 50 degrees draw as plain 4 m heightfield triangles with long straight silhouettes:
+cliff relief (Landscape3D::_cliff_offset) only starts at 50 degrees. Soil banks do not keep beds and joints; they slump.
+- What real banks look like: shallow translational slides and slumps leave scarps 0.3 to 1.5 m high and lobes and
+  hummocks below them over 3 to 15 m (Varnes 1978 and Cruden and Varnes 1996, landslide types; Highland and
+  Bobrowsky 2008, USGS landslide handbook); grazed and frost-crept grassland at 30 to 45 degrees carries terracettes,
+  steps 0.2 to 0.5 m tall and 0.3 to 1 m apart along the contour (Vincent and Clarke 1976; Bielecki and Mueller 2002),
+  too fine for vertices, so those go to the per-pixel normal only.
+- How engines do it: the same as cliffs, displacement along the heightfield normal on the finest chunks with a
+  per-pixel normal from the same analytic field (REDengine 3, Gollent 2014; Frostbite, Widmark 2012; Horizon
+  Zero Dawn's terrain, van Muijden 2017, keeps the displacement field shared with placement so foliage sits on it).
+- Plan: a bank offset in Landscape3D (C++ and the material's GLSL port, as for the beds): slump scarps along
+  the contour from a 1D noise in the fall line's coordinate with lobes below, amplitude about 0.35 of the cliff
+  relief, weight rising from 35 to 45 degrees and handing over to the beds by 55. CUSTOM1.w (free) carries the bank
+  share so the pixel normal and ledge shadow march know which field to use. Terracettes in the normal only.
+- Contract gap: vegetation, rocks, ground detail and collision sit on the heightfield, not on the drawn relief.
+  Cliffs carry few plants, banks carry many, so a 0.2 m relief would float or bury grass and stems. So: (1) bank
+  relief weighted by bare share (the material's soil exposure and the generator's cover: bare banks, scree, cave
+  mouths, gully sides) until (2) a published drawn-ground contract, Landscape3D.get_cliff_point (exists, used by
+  waterfalls) or a height-offset map like terrain_stand_map, which vegetation, rocks and ground detail read.
+  (2) is a world-links item for the coordinator.
+- Check: raster and PT frames of a cave mouth bank and a bare gully side, before/after (Landscape3D bank_relief 0),
+  plants on the bank not floating, triangle count on the finest chunks.
+
 ## Wet ground glints seen edge on (22 Nov, specular antialiasing tried)
 
 Rocks found single bright pixels down the lit sea cave's mouth (the cave's ground, drawn with this material, wet,

@@ -899,6 +899,8 @@ func _ready() -> void:
 		await _dust_devil()
 	if args.has("rime-ridge"):
 		await _rime_ridge()
+	if args.has("fog-sea"):
+		await _fog_sea()
 	if args.has("lodging"):
 		await _lodging()
 	if args.has("lens-cam"):
@@ -7514,6 +7516,35 @@ func _rime_ridge() -> void:
 	weather.snap_to_settings()
 	weather.advance(60.0)
 	_log("rime ridge: %.0f h of cloud at %.1f C on the crest %s (%.0f m), rime %s, cam %s" % [hrs, weather.get_air_temperature_at(top), str(top.round()), top.y, str(rv), str(cp.round())])
+
+
+func _fog_sea() -> void:
+	# --fog-sea[=H]: a clear calm night of H (6) hours before the shot (WeatherMap3D.valley_fog, 2648f0f3): the cold
+	# pools fill with radiation fog, then the clock returns to --time for the dawn view over the fog top. --fog-wind
+	# (0.5) m/s, --fog-humidity (0.95), --fog-air (6) C. Logs the fog top along the camera's view.
+	var hrs := float(args["fog-sea"]) if String(args["fog-sea"]) != "" else 6.0
+	var t_shot := clock.time_of_day
+	weather.air_follows_climate = false
+	weather.temperature = float(args.get("fog-air", "6"))
+	weather.humidity = float(args.get("fog-humidity", "0.95"))
+	weather.wind_speed = float(args.get("fog-wind", "0.5"))
+	weather.cloud_cover = 0.0
+	weather.valley_fog = true
+	weather.snap_to_settings()
+	for i in int(hrs * 6.0):
+		clock.time_of_day = fposmod(t_shot - hrs + i / 6.0, 24.0)
+		weather.advance(600.0)
+		await get_tree().physics_frame
+	clock.time_of_day = t_shot
+	weather.advance(60.0)
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	var f := -c3.global_basis.z
+	var tops := []
+	for k in 6:
+		var p := c3.global_position + Vector3(f.x, 0, f.z).normalized() * (150.0 + 250.0 * k)
+		p.y = height_at(p.x, p.z)
+		tops.append("%.0f m: ground %.0f top %.0f" % [150.0 + 250.0 * k, p.y, weather.get_valley_fog_top_at(p)])
+	_log("fog sea: %.0f h calm night, cam at %.0f m; %s" % [hrs, c3.global_position.y, ", ".join(tops)])
 
 
 func _lodging() -> void:

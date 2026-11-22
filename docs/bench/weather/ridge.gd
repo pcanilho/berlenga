@@ -1,6 +1,6 @@
 extends Node3D
 # A mountain ridge for the wave cloud views: a Witch of Agnesi profile (the standard mountain-wave test ridge,
-# Queney 1948) lying along z, with a few peaks along it, answering get_height() as a terrain source does.
+# Queney 1948) lying along z, with summits and saddles along it, answering get_height() as a terrain source does.
 
 var crest_x := -6000.0 # m
 var height := 2000.0 # m
@@ -11,7 +11,10 @@ func get_height(p: Vector3) -> float:
 	var dx := (p.x - crest_x) / half_width
 	var along := (p.z + 10000.0) / (0.5 * length)
 	var ends := clampf(1.0 - along * along, 0.0, 1.0)
-	var peaks := 0.8 + 0.2 * sin(p.z / 3100.0) * sin(p.z / 1700.0 + 1.0)
+	# Summits some 16 km apart with saddles at under half their height, as a range has: the wave is strong
+	# over the summits only, so its lenses are a few km long instead of one bar the length of the ridge.
+	var s := 0.5 + 0.5 * sin(p.z / 2600.0 + 0.6 * sin(p.z / 5900.0))
+	var peaks := 0.4 + 0.6 * s * s
 	return height * peaks * ends / (1.0 + dx * dx)
 
 func build_mesh(material: Material) -> void:
