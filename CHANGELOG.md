@@ -6,6 +6,50 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-943d6ac9 (2026-11-10)
+
+### Fixed
+- Weather: `WeatherLightning3D.get_last_channel()` keeps the newest ground flash's channel after its light fades.
+- Weather: lightning casts shadows in raster. A far ground flash now lights the raster as a directional light from the channel's direction, with sharp cascaded shadows, instead of an omni light whose shadows were lost over kilometres. `raster_shadow_distance` sets how far its shadows reach.
+- Weather: `snap_to_settings()` refreshes the map's cells at once (so followers read the snapped state, not the old one), and the first update after it eases from there instead of snapping again.
+- Water: `follow_weather` no longer starts from the weather map's stale wind (it snaps on the first cells after a snap), and `WeatherMap3D.advance()` grows the sea along with the rest of the weather.
+- `SnowCover3D` could crash in its parallel update when another node held a copy of its runoff map.
+- `TerrainDataMap3D`: a water surface with a `surface_mesh` outline (a lake) is water only inside its outline again; the open sea still covers the whole map.
+
+### Added
+- Weather: `WeatherMap3D.get_cloud_top_at()`, the top of the cloud the sky draws over a point. Storm flash rates use it: a storm's core reaches the base plus three times `cloud_thickness`.
+- Weather: `WeatherLightning3D` makes lightning from the weather map's storms. The rate follows the cloud top (Price and Rind 1992), and the share that reaches the ground follows the cold cloud depth (Price and Rind 1993). A ground flash is a tortuous, branching channel with return strokes, lit under path tracing as an emissive light and in raster by a light at the channel. Flashes glow inside `WeatherSkyMaterial` clouds. Thunder is synthesized from the channel itself and arrives late by its distance. Scripts can call `strike()` and listen for `struck`.
+- Weather: `WeatherMap3D.set_precipitation_extinction()` lets snow and rain nodes thin the air. Uniform haze drives the environment's fog, coloured by the sky. A layer near the ground becomes lit volumetric fog. Both renderers read it, and the environment is put back as it was when the last source clears.
+- `SnowClimate`: a place's winter (a WGEN-style weather generator) baked over the whole terrain by `SnowCover3D.bake_climate()` through the snowpack model: snow lines where the lapse rate puts them, shaded faces keeping their snow, loaded lee slopes. `SnowCover3D.climate` keeps it as a world tier carried on by the weather; it seeds the near square and is drawn beyond it by materials and the path tracer (`snow_world_map`, `snow_world_rect`).
+- `SnowCornice3D`: the cornices the world tier grows on lee crests in the right wind, drawn near the camera with collision.
+- `SnowCover3D.precipitation_gradient`: more precipitation higher up.
+- `SnowFall3D`: falling and blowing snow around the camera from the `SnowCover3D` and the weather, in raster and under path tracing. Flake sizes and fall speeds follow measurements of snowfall, carried by the weather map's wind with its gusts and shelter; flakes stop under roofs; each is drawn as a streak of its motion during `streak_time`. Above the threshold wind of dry snow, snow blows off the pack in a saltation layer and a drifting layer above it. `get_extinction()` and `get_visibility()` give the fog of the snowfall beyond the particles.
+- `SnowCover3D.get_air_temperature_at()` and `get_snowfall_rate_at()`.
+- `SnowSurface3D`: deep snow as real geometry on top of the `SnowCover3D` pack, in raster and under path tracing. Bodies in the `snow_deform` (or `grass_trample`) group press prints and tracks into it: snow compacts under them and is pushed into a rim, loaded bodies sink by Bekker's pressure-sinkage law, and a collision patch keeps them in their own tracks. New snow and wind fill tracks, settling and melt shrink them, and tracks are kept when the camera leaves and returns. `press()`, `press_box()`, `get_surface_height_at()`.
+- `SnowCover3D.get_new_snow_at()`, `sample_ground_height()`, `get_update_count()`, `get_drift_factor()`.
+- `TerrainGenerator3D` coast and lakes: `ocean_edges` or `sea_map` make sea that the land drains to, with a Dean-profile seabed and beaches; lakes form behind natural dams across valleys (`lake_count`, or `lakes` markers), at their spill level or lower when evaporation wins; `build_water()` creates the sea and lake surfaces (PhysXWaterSurface3D when present) and `build_river_paths()` ends rivers in them.
+- `TerrainGenerator3D.get_detail_shader_code()`: the erosion detail filter's next octaves as a shader function (`terrain_detail_normal()`), its slope differentiated analytically, for gullies below the vertex spacing in the terrain material; octaves fade out by pixel footprint.
+- `TerrainGenerator3D` tile erosion (`tile_erosion_enabled`): droplet hydraulic erosion with loose and bedrock layers plus thermal slides on a fine grid, in overlapping tiles cross-faded so there are no seams; deterministic, threaded. Rills and alluvial valley floors; flow and deposit maps (`get_tile_flow()`, `get_tile_deposit()`).
+- `PlantSpecies.canopy_radius`, `canopy_opacity` and the `shade_range` rule: canopy species shade the ground and understorey species are placed by that shade. `VegetationField3D.get_shade_at()` returns it.
+- `VegetationField3D.weather_map`: the placed canopy is written to `WeatherMap3D.canopy_map`, so snow, wind and light under trees follow the same forest as the shade rule.
+- `TerrainDataMap3D.geology_source`: bakes soil depth, bare rock and scree from a `TerrainGenerator3D`; `PlantSpecies` rules `soil_depth`, `rock` and `talus` keep trees off bare rock and scree.
+
+### Changed
+- README: lightning raster shadows.
+- README: lightning and thunder line.
+- README: vegetation placement by geology line.
+- README: precipitation haze line.
+- README: snow climate and cornices lines and images.
+- README: snow shelter line and image.
+- README: snow sparkle line and image; cornices on milder ranges.
+- README: deep snow with tracks.
+- README: falling snow line, image and clip.
+- README: terrain coast and lakes line and images.
+- README: terrain material detail line and image.
+- README: terrain tile erosion line and image.
+- Blowing snow (`SnowFall3D`) also lifts a fresh surface on a settled pack.
+- `TerrainDataMap3D`: rivers that list their cross-sections are only queried near their channel, so world-size maps with rivers bake about 18 times faster (same result); water surfaces always bake as a level plane, without their waves.
+
 ## build-defbd730 (2026-11-10)
 
 ### Added

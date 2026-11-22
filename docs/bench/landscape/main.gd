@@ -13,6 +13,7 @@ extends Node3D
 #   --spp=N           path tracing samples (default 16)
 #   --view=wide|lake|fall|beach|peak   camera (default wide)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
+#   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
 #   --probe           print coast profiles, lakes and rivers from the generator
 #   --weather=storm|clear         weather state (default storm)
 
@@ -28,7 +29,7 @@ var gen: TerrainGenerator3D
 var heights := PackedFloat32Array()
 var ground_body: StaticBody3D
 var ground_mesh: MeshInstance3D
-var ground_mat: StandardMaterial3D
+var ground_mat: Material
 var ocean: PhysXWaterSurface3D
 var lake: PhysXWaterSurface3D
 var lakes: Array = []
@@ -330,12 +331,22 @@ func _build_ground() -> void:
 	arrays[Mesh.ARRAY_INDEX] = idx
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	ground_mat = StandardMaterial3D.new()
-	ground_mat.vertex_color_use_as_albedo = true
-	ground_mat.roughness = 0.9
-	ground_mat.set_feature(BaseMaterial3D.FEATURE_WETNESS, true)
-	ground_mat.wetness_porosity = 0.8
-	ground_mat.set_feature(BaseMaterial3D.FEATURE_SNOW, true)
+	if args.get("ground", "terrain") == "terrain":
+		# TerrainMaterial3D: layers by the generator's geology, height-blended, biplanar cliffs, erosion detail
+		# normals, grass tint, wetness and snow. Plain colours here (textures would come from LFS).
+		var tm := TerrainMaterial3D.new()
+		tm.use_generator(gen)
+		tm.detail_octaves = int(args.get("mdetail", "4"))
+		tm.update_shader()
+		ground_mat = tm
+	else:
+		var sm := StandardMaterial3D.new()
+		sm.vertex_color_use_as_albedo = true
+		sm.roughness = 0.9
+		sm.set_feature(BaseMaterial3D.FEATURE_WETNESS, true)
+		sm.wetness_porosity = 0.8
+		sm.set_feature(BaseMaterial3D.FEATURE_SNOW, true)
+		ground_mat = sm
 	ground_mesh = MeshInstance3D.new()
 	ground_mesh.name = "GroundMesh"
 	ground_mesh.mesh = mesh
@@ -591,6 +602,8 @@ func _build_vegetation() -> void:
 	veg.populate_on_ready = false
 	add_child(veg)
 	veg.data_map = veg.get_path_to(data_map)
+	# The forest as shelter for the wind: the field writes its stands into the weather map's canopy.
+	veg.weather_map = veg.get_path_to(weather)
 	veg.populate()
 	_log("forest %d plants in %d ms" % [veg.get_plant_count(), Time.get_ticks_msec() - t])
 	# Grass near the camera, on the same maps, moved by the weather's wind.
@@ -604,21 +617,6 @@ func _build_vegetation() -> void:
 	grass.radius = float(args.get("grass-radius", "40"))
 	add_child(grass)
 	grass.data_map = grass.get_path_to(data_map)
-	# The forest as shelter for the wind: stands become canopies in the weather map.
-	weather.canopy_map = _canopy_map()
-	weather.canopy_map_rect = Rect2(-2048, -2048, 4096, 4096)
-
-
-func _canopy_map() -> ImageTexture:
-	var n := 256
-	var img := Image.create(n, n, false, Image.FORMAT_RF)
-	for s in 2:
-		for p in veg.get_placements(s):
-			var x := int((p.x + 2048.0) / 4096.0 * n)
-			var z := int((p.z + 2048.0) / 4096.0 * n)
-			if x >= 0 and z >= 0 and x < n and z < n:
-				img.set_pixel(x, z, Color(12.0 if s == 0 else 10.0, 0, 0))
-	return ImageTexture.create_from_image(img)
 
 
 func _tree_mesh(conifer: bool, h: float) -> Mesh:
@@ -870,9 +868,18 @@ func _checks() -> void:
 	check(lightning.get_ground_strike_count() > strikes_before and on_ground and bright > 0.0, "lightning strikes the ground in the storm (channel %d points, ends %.1f m from the ground, brightness %.2f)" % [ch.size(), absf(ground_end.y - height_at(ground_end.x, ground_end.z)) if ch.size() > 0 else -1.0, bright])
 	var dist := cam.global_position.distance_to(ground_end) if ch.size() > 0 else 0.0
 	var delay := lightning.get_last_thunder_delay()
-	check(delay > 0.0 and absf(delay - dist / 343.0) < 0.35 * dist / 343.0 + 0.5, "thunder follows the flash by its distance (%.1f s for about %.0f m; %.1f s long)" % [delay, dist, lightning.get_last_thunder_length()])
-	_log("flash rate (Price and Rind) for a cloud top at %.0f m: %.2f a minute" % [weather.cloud_base_height + weather.cloud_thickness, lightning.get_flash_rate(weather.cloud_base_height + weather.cloud_thickness)])
-	check(false, "the terrain's geology/detail-normal ShaderMaterial gets the engine's snow and wetness (BaseMaterial3D only)", true)
+	# Thunder starts from the nearest piece of the whole discharge (in-cloud arms too), so the ground end only
+	# bounds it from above; sound speed from the air temperature.
+	var sound := 331.3 + 0.606 * weather.temperature
+	check(delay > 0.0 and delay <= dist / sound + 0.1, "thunder follows the flash, no later than its ground end (%.1f s, ground end %.0f m = %.1f s; %.1f s long)" % [delay, dist, dist / sound, lightning.get_last_thunder_length()])
+	var top := weather.get_cloud_top_at(Vector3(-300, 0, -400)) - height_at(-300, -400)
+	_log("flash rate (Price and Rind) for a cloud %.0f m tall over the ground: %.2f a minute" % [top, lightning.get_flash_rate(top)])
+	# The ground material: TerrainMaterial3D carries the engine's own snow and wetness lines.
+	var gcode := ""
+	if ground_mat is ShaderMaterial:
+		gcode = (ground_mat as ShaderMaterial).shader.code
+	var shared := gcode.contains(BaseMaterial3D.get_snow_shader_code()) and gcode.contains(BaseMaterial3D.get_wetness_shader_code())
+	check(ground_mat is TerrainMaterial3D and shared and gcode.contains("terrain_geology(") and gcode.contains("terrain_detail_normal("), "the ground's geology and detail-normal material gets the engine's snow and wetness (TerrainMaterial3D, shared code)")
 	# Falling snow: on the peak in the storm, none at the coast (rain there).
 	var probe_node := Node3D.new()
 	add_child(probe_node)

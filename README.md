@@ -36,8 +36,17 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Light visibility memory** (`rendering/pathtracing/light_visibility_memory`): hidden lights stop taking samples.
 - **Radiance cache** (`rendering/pathtracing/radiance_cache`): bounces end on cached light.
 - **Light reuse** (`rendering/pathtracing/light_reuse`, off by default): ReSTIR DI reuses light samples across pixels and frames.
+- **Indirect light reuse** (`rendering/pathtracing/indirect_reuse`, off by default): ReSTIR GI; rooms and shade lit by bounced light are far less noisy at the same samples.
 - Shadow-only casters bounce light.
 - Lit raster transparents and rain (`rendering/pathtracing/max_transparency_layers` 0), still traced in reflections.
+
+<details><summary>Image: indirect light reuse</summary>
+
+![A window-lit room at 4 samples per pixel, indirect light reuse off and on](docs/media/indirect-reuse.jpg)
+
+*Indirect light reuse: the same 4 samples per pixel, off then on; both brightened 3x to show the noise.*
+
+</details>
 
 ### Materials
 - **Back lighting** (`rendering/pathtracing/back_lighting`): light through leaves, paper and curtains, with coloured shadows; back light texture.
@@ -233,10 +242,11 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Geology maps** (`terrain_geology()` in shaders): soil, bare rock and scree from the erosion run.
 - **River network** (`build_river_paths()`): rivers with widths and discharges, made into joined `PhysXRiver3D` paths.
 - **Coast and lakes** (`ocean_edges` or `sea_map`; `lake_count`, `lakes`; `build_water()`): sea with a Dean-profile seabed and beaches; lakes behind natural dams; builds the sea and lake surfaces, and rivers end in them.
+- **Climate maps** (`TerrainDataMap3D.bake_climate()`, `ClimateRecipe`): temperature, orographic rain and rain shadows, snow share, aridity, winter and annual sunlight with terrain shadows, and wind exposure.
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: mountain generation, crests, tile erosion, material detail, geology, coast, terrain data maps</summary>
+<details><summary>Images: mountain generation, crests, tile erosion, material detail, geology, coast, climate, terrain data maps</summary>
 
 ![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
 
@@ -272,6 +282,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Coast and lakes: beaches, a shelving seabed and lakes behind dams, from one seed.*
 
+![Climate maps of a range: temperature, precipitation, winter sun, snow share](docs/media/terrain-climate.jpg)
+
+*Climate maps: cold high ridges, rain over the range, shaded faces in winter, snow on the high crest.*
+
 ![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
 
 *Terrain data maps: the stream bed, wet ground and banks come from the maps alone.*
@@ -281,6 +295,8 @@ Each feature that changes the look or the cost can be turned off with the settin
 ### Vegetation
 - **Plant placement** (`VegetationField3D`, `Biome`, `PlantSpecies`): places species by spacing, footprint and rules on slope, wetness and distance to water over a `TerrainDataMap3D`; evenly spread, the same for a seed. 12,899 plants over 256 m place once in about 45 ms, then draw as ordinary MultiMeshes.
 - **Placement by geology** (`TerrainDataMap3D.geology_source`; `PlantSpecies` `soil_depth_range`, `rock_range`, `talus_range`): plants follow the generated soil, rock and scree; trees stay off bare rock and thin soil, grass thins on rock.
+- **Placement by climate** (`temperature_range`, `january_temperature_range`, `precipitation_range`, `aridity_range`, `sunlight_range`): species by temperature, winter frost, rain, aridity and sunlight.
+- **Canopy shade** (`canopy_radius`, `shade_range`; `weather_map`): understorey placed by the shade of placed crowns; crowns feed the weather's canopy map.
 - **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.
 - **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back.
 - **Ground cover** (`GrassField3D` undercoat fields, `view_facing`; `PlantSpecies` patches): edge-on blades widened, ground tinted under grass, clover and flower drifts.
@@ -329,7 +345,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.
 - **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).
 
-<details><summary>Images: weather map, wet ground, lightning</summary>
+<details><summary>Images: weather map, wet ground, lightning, blizzard</summary>
 
 ![Weather map fields round a storm: cloud cover, rain, wind at 10 m, wetness](docs/media/weather-map.jpg)
 
@@ -342,6 +358,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A lightning strike among blocks, raster and path traced](docs/media/weather-lightning.jpg)
 
 *Lightning: the channel lights the ground and casts sharp shadows from the blocks, raster and path traced.*
+
+![A shelter in calm weather, then in a blizzard, raster and path traced](docs/media/weather-blizzard.jpg)
+
+*Precipitation haze: in a blizzard the blowing snow hides the distance.*
 
 </details>
 
@@ -369,6 +389,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Falling snow** (`SnowFall3D`): falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.
 - **Snow climate** (`SnowClimate`): bakes a winter over the whole terrain, with snow lines, shaded faces that keep their snow and loaded lee slopes; the cover carries it on with the weather and draws it far away.
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
+- **Snowstorms** (`SnowFall3D.haze_enabled`, `turbulence`): falling and blowing snow haze the air through the weather map (Pomeroy-Male suspension, 118 m visibility at 20 m/s); flakes ride turbulent eddies.
 - **Shelter** (`SnowCover3D.canopy_enabled`, `shelter_collision_mask`): ground under roofs and overhangs stays bare; tree crowns hold snow and unload it later.
 - **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced.

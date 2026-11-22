@@ -11,6 +11,33 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="blowing_concentration" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="wind10" type="float" />
+			<param index="1" name="height" type="float" />
+			<description>
+				Mass concentration of suspended blowing snow (kg/m³) at [param height] metres over the snow in a [param wind10] m/s wind at 10 m (Pomeroy and Male 1992).
+			</description>
+		</method>
+		<method name="blowing_extinction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="concentration" type="float" />
+			<description>
+				Extinction per metre of blowing snow of [param concentration] kg/m³ (geometric optics, 40 µm grains).
+			</description>
+		</method>
+		<method name="get_blowing_extinction" qualifiers="const">
+			<return type="float" />
+			<description>
+				The blowing snow's extinction at 1 m over the snow under the camera, per metre (0 when none blows).
+			</description>
+		</method>
+		<method name="get_blowing_height_scale" qualifiers="const">
+			<return type="float" />
+			<description>
+				The e-folding height of the blowing-snow haze, in metres.
+			</description>
+		</method>
 		<method name="blowing_threshold" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="celsius" type="float" />
@@ -150,5 +177,11 @@
 		<member name="threshold_wind_override" type="float" setter="set_threshold_wind_override" getter="get_threshold_wind_override" default="-1.0">
 			The threshold wind for blowing snow in m/s at 10 m; negative uses Li and Pomeroy's relation to the air temperature.
 		</member>
-	</members>
+			<member name="haze_enabled" type="bool" setter="set_haze_enabled" getter="is_haze_enabled" default="true">
+			Push the snow's extinction to the active [WeatherMap3D] ([method WeatherMap3D.set_precipitation_extinction]): the falling snow as haze everywhere, the blowing snow as a layer over the snow around the camera. Both renderers draw it.
+		</member>
+		<member name="turbulence" type="float" setter="set_turbulence" getter="get_turbulence" default="1.0">
+			Scale of the turbulent eddies flakes and drifting snow ride on top of the weather wind (Kraichnan's random Fourier modes, σ = 2.5 u*).
+		</member>
+</members>
 </class>

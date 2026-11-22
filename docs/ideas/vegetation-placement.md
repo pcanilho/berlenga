@@ -134,3 +134,15 @@ What we built:
 Checks (bench `docs/bench/vegetation`): a crown core gives the crown's opacity, shade-loving bushes
 land only where shade >= 0.5 (639 of 6183 open-ground bushes), trees are unchanged, and with no
 canopy the field is exactly the old one.
+
+## Climate rules
+
+With `TerrainDataMap3D.bake_climate()` (terrain thread, `docs/ideas/terrain-generation.md`, "Climate
+maps") species also take `temperature_range` (annual mean, sets altitude belts and tree lines with
+the lapse rate), `january_temperature_range` (frost hardiness: beech stops where January means fall
+below about -3 °C, Bolte et al. 2007), `precipitation_range`, `aridity_range` (P/PET) and
+`sunlight_range` (annual shortwave with slope and horizons: thyme and dry grass on south faces, ferns
+and mosses on north faces). All are ignored when the map has no climate. Rain shadows only show on
+maps wider than about 20 km (rain drifts that far downwind); on smaller maps temperature and
+sunlight carry the variation. Check: trees kept to the warmer half by a threshold at the median
+tree temperature.

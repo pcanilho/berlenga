@@ -93,6 +93,7 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_SNOW_WORLD_RECT_W 53
 #define RT_PARAM_SNOW_WORLD_RECT_H 54
 #define RT_PARAM_SNOW_CATCH_MAP 55
+#define RT_PARAM_INDIRECT_REUSE 56 // 0 off, else 1 + the reservoir slot written + 2 when last frame's is valid (raytracing_indirect_reuse_inc.glsl)
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)
