@@ -103,6 +103,8 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Avalanche tracks** (`PlantGenerator.make_avalanche_track()`): ground an avalanche cleared shows torn turf and debris, then fireweed, ferns and tall forbs.
 - **Boar rooting** (`PlantGenerator.make_rooting()`, `ROOTING_WOOD`, `ROOTING_MEADOW`; `WorldStand.DISTURBANCE_ROOTING`): rooted ground shows turned sods and loose stones that dry, slump and green over, loses its plants and takes the first weeds, healing over about two years.
 - **Grazing roughs and dung** (`PlantGenerator.make_grazing()`): cattle pats ringed by ungrazed rank tufts, horse latrines and deer pellets on pastures and lawns.
+- **Snowmelt sward** (`GrassField3D.snowmelt`): where snow lay long the grass comes out matted and pale, with grey snow mould patches that green over weeks.
+- **Flood wrack** (`PlantGenerator.make_flood_wrack()`, `GrassField3D.flood_wash`): straw, reed and twig strand lines mark the last flood's high water, with the grass below combed flat and silted.
 - **Fairy rings** (`GrassField3D.fairy_rings`, `PlantGenerator.make_fairy_rings()`): meadows carry rings of dark and dead grass with champignons along them.
 - **Dewy webs** (`PlantGenerator.make_dew_webs()`): sheet and orb spider webs show when dew or hoarfrost beads them.
 - **Anthills and molehills** (`PlantGenerator.make_mounds()`, `MOUNDS_MEADOW`, `MOUNDS_WOOD`): anthills in sunny meadow groups, wood ant nests at sunny gaps and edges of conifer stands, molehills in lines and arcs; grass keeps out from under them.

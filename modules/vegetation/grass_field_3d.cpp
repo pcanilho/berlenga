@@ -504,6 +504,12 @@ void GrassField3D::_build_material() {
 	code += "uniform sampler2D lodge_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 lodge_rect;\n";
 	// Meadow fairy rings (fairy_rings.h): 1 on, 0 off.
 	code += "uniform float fairy_rings = 1.0;\n";
+	// After the snow (GrassField3D::_update_snowmelt()): per height band (melt_band0.x the first band's height, y the
+	// step), x the days the last lasting snow lay, y the days since it melted out (< 0 none); snowmelt 1 on, 0 off.
+	code += "uniform float snowmelt = 1.0;\nuniform vec2 melt_band0 = vec2(0.0, 50.0);\nuniform vec2 melt_bands[16];\n";
+	// The last flood's mark (GrassField3D::_flood_step()): r the peak surface (m), g days since it, b the flow's angle
+	// then (> 50 unknown), a 1 where known; flood_rect z 0: none.
+	code += "uniform sampler2D flood_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 flood_rect;\n";
 	code += FairyRings::GLSL;
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
@@ -1079,6 +1085,8 @@ varying float v_dry;
 varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
 varying float v_graze; // Grazed down to a lawn (graze_map).
 varying float v_fairy_dead; // A blade browned in a fairy ring's dead band.
+varying vec3 v_melt; // After the snow: x pale and matted, y snow mould, z days since the melt.
+varying vec2 v_wash; // Under the last flood's mark: x combed flat, y silted.
 varying float v_soft; // Distance softening, 0 near, 1 from 35 m.
 varying float v_wet;
 varying float v_frost;
@@ -1201,6 +1209,27 @@ void vertex() {
 		// Laid flat under a pack deeper than it lies: buried, the snow surface shows over it.
 		h *= 1.0 - smoothstep(0.06, 0.12, snow_pk.x) * smoothstep(0.7, 1.0, snow_p);
 	}
+	// After the snow (docs/ideas/vegetation.md, "Snowmelt sward"): where snow lay for weeks the sward comes out matted
+	// flat in swirls, pale from the dark, and where it lay 45 to 60 days and more, with patches of grey snow mould
+	// (Typhula; UMass Extension, Penn State turf lab): grey lint-like mycelium at the melt, then straw to grey-brown,
+	// brittle, matted patches. It stands and greens again over about three weeks. Drifts and hollows lie longer.
+	v_melt = vec3(0.0);
+	if (snowmelt > 0.0) {
+		float fi = clamp((base_w.y - melt_band0.x) / melt_band0.y, 0.0, 14.999);
+		int bi = int(fi);
+		vec2 lb = mix(melt_bands[bi], melt_bands[bi + 1], fract(fi));
+		float drift = (grass_noise(base_w.xz * 0.09 + 41.0) - 0.5) * 16.0 + (grass_noise(base_w.xz * 0.6 + 5.0) - 0.5) * 6.0;
+		float lie = lb.x + drift;
+		float since = lb.y - max(drift, 0.0) * 0.5;
+		if (lb.y >= 0.0 && since >= 0.0 && lie > 20.0) {
+			float mat = smoothstep(20.0, 60.0, lie) * (1.0 - smoothstep(4.0, 24.0, since));
+			float swirl = grass_noise(base_w.xz * 0.45 + 13.0) * 12.566 + (fract(rnd * 37.1) - 0.5) * 0.9;
+			off = mix(off, vec2(cos(swirl), sin(swirl)) * 1.35, mat);
+			float spot = smoothstep(0.6, 0.68, grass_noise(base_w.xz * 2.2 + 9.1)) * smoothstep(0.3, 0.5, grass_noise(base_w.xz * 0.15 + 77.0));
+			float mould = spot * smoothstep(45.0, 75.0, lie) * (1.0 - smoothstep(12.0, 40.0, since));
+			v_melt = vec3(mat, mould, since);
+		}
+	}
 	// Ruts and puddles (mud round 5): pressed blades lie flat, each its own way; where the soil is opened they are gone.
 	vec3 go = grass_ground_opened(base_w.xz);
 	{
@@ -1237,6 +1266,31 @@ void vertex() {
 				float down = lr < la * 1.05 ? 1.0 : 0.45;
 				off = mix(off, ldl * (1.15 + 0.3 * fract(rnd * 7.3)) * down, mix(0.7, 0.95, down));
 				h *= mix(1.0, 0.93, down);
+			}
+		}
+	}
+	// Under the last flood's mark (WorldWater.high_water_at): the current combed the blades flat downstream and left
+	// them grey with silt, with a sharp line at the crest (USGS, Koenig et al. 2016: folded-grass wash lines); they
+	// stand again over weeks, the silt washes off over months.
+	v_wash = vec2(0.0);
+	if (flood_rect.z > 0.0) {
+		vec2 fuv = (base_w.xz - flood_rect.xy) / flood_rect.zw;
+		if (all(greaterThan(fuv, vec2(0.0))) && all(lessThan(fuv, vec2(1.0)))) {
+			vec4 fl = textureLod(flood_map, fuv, 0.0);
+			float line = fl.r + (grass_noise(base_w.xz * 1.7 + 3.0) - 0.5) * 0.06;
+			float under = fl.a > 0.5 && fl.g >= 0.0 ? 1.0 - smoothstep(line - 0.04, line, base_w.y) : 0.0;
+			if (under > 0.0) {
+				float comb = under * (1.0 - smoothstep(7.0, 35.0, fl.g));
+				vec2 fd = fl.b < 50.0 ? vec2(cos(fl.b), sin(fl.b)) : vec2(cos(rnd * 6.2832), sin(rnd * 6.2832));
+				float fj = (fract(rnd * 19.7) - 0.5) * 0.5;
+				fd = mat2(vec2(cos(fj), sin(fj)), vec2(-sin(fj), cos(fj))) * fd;
+				vec2 fdl = (to_local * vec3(fd.x, 0.0, fd.y)).xz;
+				fdl = length(fdl) > 1e-4 ? normalize(fdl) : vec2(0.0, 1.0);
+				off = mix(off, fdl * (1.3 + 0.2 * fract(rnd * 5.3)), comb * 0.95);
+				// Pressed lowest in the strand line's band just under the crest, where the wrack lies on them.
+				float strand = smoothstep(line - 0.12, line - 0.07, base_w.y);
+				h *= mix(1.0, mix(0.9, 0.4, strand), comb);
+				v_wash = vec2(comb, under * (1.0 - smoothstep(20.0, 120.0, fl.g)));
 			}
 		}
 	}
@@ -1391,6 +1445,20 @@ void fragment() {
 	c = mix(c, straw * mix(0.7, 1.0, t) * (0.75 + 0.5 * fract(v_dry * 31.0)), dead);
 	// Browned in a fairy ring's dead band: a warmer, darker brown than winter straw, the base still a little green.
 	c = mix(c, mix(dry_color, straw, 0.4) * vec3(0.85, 0.72, 0.55) * mix(0.75, 1.0, t), v_fairy_dead * mix(0.7, 1.0, t));
+	// Out from under the snow: pale, yellowed leaves (grown in the dark), then snow mould: grey-white lint at the melt,
+	// straw to grey-brown once it dries.
+	if (v_melt.x + v_melt.y > 0.0) {
+		vec3 pale = mix(c, vec3(dot(c, vec3(0.3, 0.59, 0.11))) * vec3(1.15, 1.12, 0.8) + vec3(0.04, 0.04, 0.0), 0.65);
+		c = mix(c, pale, v_melt.x);
+		vec3 lint = vec3(0.72, 0.71, 0.69);
+		vec3 crust = mix(straw, vec3(0.6, 0.57, 0.52), 0.6);
+		c = mix(c, mix(lint, crust, smoothstep(1.0, 5.0, v_melt.z)), v_melt.y * mix(0.8, 1.0, t));
+	}
+	// Flood-washed: yellowed where it lay flat, a grey-brown film of silt that pales as it dries.
+	if (v_wash.x + v_wash.y > 0.0) {
+		c = mix(c, mix(c, straw, 0.5), v_wash.x * 0.5);
+		c = mix(c, vec3(0.34, 0.3, 0.23) * mix(0.8, 1.0, t), v_wash.y * 0.55);
+	}
 	// Prefiltered with distance (Bruneton and Neyret 2012, non-linear pre-filtering): once blades are a pixel or
 	// two wide, each blade's own base-to-tip ramp and its dry or dead odd one out alias into grit; their mean over
 	// the sward is what a pixel should see. Past 6 m the blade's colour eases towards that mean (the soft, slightly
@@ -1502,6 +1570,8 @@ void fragment() {
 	material->set_shader(shader);
 	lodge_dirty = true; // A new material: the lodging map goes to it at the next sweep.
 	material->set_shader_parameter("fairy_rings", fairy_rings && crop == CROP_NONE ? 1.0f : 0.0f);
+	melt_day = -2; // A new material: the snowmelt bands again on the next season step.
+	flood_usec = 0; // And the flood map.
 	material->set_shader_parameter("base_color", base_color);
 	material->set_shader_parameter("tip_color", tip_color);
 	material->set_shader_parameter("dry_color", dry_color);
@@ -2177,7 +2247,7 @@ void GrassField3D::_crop_ground_step() {
 							uint8_t *o = d + (y * w + x) * 2;
 							o[0] = uint8_t(slot);
 							if (pl.tramline_spacing > 0.0f && (pl.headland <= 0.0f || polygon_edge_distance(q, pl.polygon) >= pl.headland)) {
-								const float wv = Math::fposmod(q.dot(n), pl.tramline_spacing) - 0.5f * pl.tramline_spacing;
+								const float wv = Math::fposmod(float(q.dot(n)), pl.tramline_spacing) - 0.5f * pl.tramline_spacing;
 								const float off = Math::abs(Math::abs(wv) - 0.5f * pl.tramline_gauge);
 								o[1] = uint8_t(CLAMP(1.0f - (off - 0.15f) / (0.5f * texel + 0.1f), 0.0f, 1.0f) * 255.0f);
 							}
@@ -2660,7 +2730,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 				const float clump_h = unit(hc, 0);
 				const float clump_yaw = unit(hc, 8) * Math::TAU;
 				const float rnd = unit(hb, 16);
-				const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * sp.shade_t - 0.15f * sp.sun_t) * _trample_scale(sp.passes) * sp.edge;
+				const float height = Math::lerp(float(blade_height.x), float(blade_height.y), 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * sp.shade_t - 0.15f * sp.sun_t) * _trample_scale(sp.passes) * sp.edge;
 				const float yaw = clump_yaw + (unit(hj, 24) - 0.5f) * 1.6f;
 				const Transform3D world(Basis(Vector3(0, 1, 0), yaw), Vector3(x, sp.y, z));
 				xforms.push_back(to_local * world);
@@ -3383,7 +3453,7 @@ void GrassField3D::_build_ring_tile(const Vector3i &p_key, float p_near, Terrain
 			const float shade_t = 1.0f - CLAMP(light, 0.0f, 1.0f);
 			const float sun_t = Math::smoothstep(1.0f, 1.3f, light);
 			const uint32_t hc = clump_hash(x, z, clump_size);
-			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * _trample_scale(passes) * edge;
+			const float height = Math::lerp(float(blade_height.x), float(blade_height.y), 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t) * _trample_scale(passes) * edge;
 			const float yaw = unit(hc, 8) * Math::TAU + (unit(hj, 24) - 0.5f) * 1.6f;
 			xforms.push_back(to_local * Transform3D(Basis(Vector3(0, 1, 0), yaw), Vector3(x, y, z)));
 			const float rnd = unit(hash_fmix32(hb ^ 0x5BD1E995u), 0);
@@ -4142,6 +4212,204 @@ void GrassField3D::set_lodging(bool p_on) {
 	_lodge_upload();
 }
 
+Vector2 GrassField3D::snow_lie(const WeatherSeason::Climate &p_climate, float p_height, int p_day) {
+	// The degree-day pack of WeatherSeason (snow_water_at), day by day from 1 August, keeping the last lie of 10 days
+	// or more over 3 mm of water.
+	const int n = WeatherSeason::days_since(p_day, 213);
+	float swe = 0.0f;
+	int lie_start = -1;
+	float last_lie = 0.0f;
+	int melted_at = -1;
+	for (int k = 0; k <= n; k++) {
+		const float d = float((213 + k - 1) % 365 + 1);
+		const float t = WeatherSeason::day_temperature(p_climate, p_height, d);
+		swe += WeatherSeason::day_precipitation(p_climate, d) * WeatherSeason::snow_share(p_climate, t);
+		swe = MAX(swe - p_climate.melt_factor * MAX(t, 0.0f), 0.0f);
+		if (swe > 3.0f) {
+			if (lie_start < 0) {
+				lie_start = k;
+			}
+		} else if (lie_start >= 0) {
+			if (k - lie_start >= 10) {
+				last_lie = float(k - lie_start);
+				melted_at = k;
+			}
+			lie_start = -1;
+		}
+	}
+	if (lie_start >= 0 && n - lie_start >= 10) {
+		return Vector2(float(n - lie_start), -1.0f); // still under it
+	}
+	return melted_at >= 0 ? Vector2(last_lie, float(n - melted_at)) : Vector2(0.0f, -1.0f);
+}
+
+// Once a day of the season: the lie and melt per 50 m band round the field's height, for the blades.
+void GrassField3D::_update_snowmelt(const Dictionary &p_season) {
+	if (!material.is_valid()) {
+		return;
+	}
+	const int day = int(p_season.get("day_of_year", -1));
+	WeatherSeason::Climate climate;
+	if (!snowmelt || crop != CROP_NONE || day < 1 || !WorldContracts::weather()->season_climate(climate)) {
+		material->set_shader_parameter("snowmelt", 0.0f);
+		melt_day = -2;
+		return;
+	}
+	if (day == melt_day) {
+		return;
+	}
+	melt_day = day;
+	melt_h0 = Math::floor((is_inside_tree() ? get_global_position().y : 0.0f) / 50.0f) * 50.0f - 400.0f;
+	PackedVector2Array bands;
+	bands.resize(16);
+	for (int i = 0; i < 16; i++) {
+		bands.write[i] = snow_lie(climate, melt_h0 + 50.0f * i, day);
+	}
+	material->set_shader_parameter("melt_bands", bands);
+	material->set_shader_parameter("melt_band0", Vector2(melt_h0, 50.0f));
+	material->set_shader_parameter("snowmelt", 1.0f);
+}
+
+Vector3 GrassField3D::get_snowmelt_at(const Vector3 &p_position, int p_day) const {
+	WeatherSeason::Climate climate;
+	if (!WorldContracts::weather()->season_climate(climate)) {
+		return Vector3(0.0f, -1.0f, 0.0f);
+	}
+	int day = p_day;
+	if (day < 1) {
+		day = int(WorldContracts::weather()->season_at(p_position).get("day_of_year", 1));
+	}
+	const Vector2 l = snow_lie(climate, p_position.y, day);
+	const float mat = l.y >= 0.0f && l.x > 20.0f ? Math::smoothstep(20.0f, 60.0f, float(l.x)) * (1.0f - Math::smoothstep(4.0f, 24.0f, float(l.y))) : 0.0f;
+	return Vector3(l.x, l.y, mat);
+}
+
+// The last flood's mark round the camera (WorldWater.high_water_at) on a FLOOD_N grid of FLOOD_CELL m, read again
+// every 5 s and when the camera has moved a quarter of the grid. Cells where no producer knows a flood take their
+// known neighbours' peak (so the line interpolates cleanly to the grid's known edge) but stay unknown for the blades
+// (alpha 0) unless a known neighbour is close.
+void GrassField3D::_flood_step(const Vector3 &p_center, bool p_force) {
+	if (!material.is_valid()) {
+		return;
+	}
+	const WorldWater *water = WorldContracts::water();
+	if (!flood_wash || crop != CROP_NONE || !water->has_provider()) {
+		if (flood_any) {
+			material->set_shader_parameter("flood_rect", Vector4());
+			flood_any = false;
+		}
+		return;
+	}
+	const Vector2i want(int(Math::floor(p_center.x / FLOOD_CELL)) - FLOOD_N / 2, int(Math::floor(p_center.z / FLOOD_CELL)) - FLOOD_N / 2);
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	const bool moved = Math::abs(want.x - flood_origin.x) >= FLOOD_N / 4 || Math::abs(want.y - flood_origin.y) >= FLOOD_N / 4;
+	if (!p_force && flood_usec != 0 && !moved && now - flood_usec < 5000000) {
+		return;
+	}
+	flood_usec = MAX(now, uint64_t(1));
+	flood_origin = want;
+	LocalVector<Color> cells;
+	cells.resize(FLOOD_N * FLOOD_N);
+	bool any = false;
+	for (int y = 0; y < FLOOD_N; y++) {
+		for (int x = 0; x < FLOOD_N; x++) {
+			const Vector3 pos((want.x + x + 0.5f) * FLOOD_CELL, p_center.y, (want.y + y + 0.5f) * FLOOD_CELL);
+			const Vector4 hw = water->high_water_at(pos);
+			Color &c = cells[y * FLOOD_N + x];
+			if (hw.x > -1e20f && hw.y >= 0.0f) {
+				const Vector2 d(hw.z, hw.w);
+				c = Color(hw.x, hw.y, d.length_squared() > 1e-6f ? Math::atan2(d.y, d.x) : 100.0f, 1.0f);
+				any = true;
+			} else {
+				c = Color(0.0f, -1.0f, 100.0f, 0.0f);
+			}
+		}
+	}
+	flood_any = any;
+	if (!any) {
+		material->set_shader_parameter("flood_rect", Vector4());
+		return;
+	}
+	// Spread the known peaks two cells into the unknown ones (values only, not the known mask): the bilinear line
+	// stays at the true peak up to the last known cell.
+	for (int pass = 0; pass < 2; pass++) {
+		LocalVector<Color> next;
+		next.resize(cells.size());
+		for (uint32_t k = 0; k < cells.size(); k++) {
+			next[k] = cells[k];
+		}
+		for (int y = 0; y < FLOOD_N; y++) {
+			for (int x = 0; x < FLOOD_N; x++) {
+				Color &c = next[y * FLOOD_N + x];
+				if (c.g >= 0.0f) {
+					continue;
+				}
+				float sum_h = 0.0f, sum_d = 0.0f, n = 0.0f;
+				float dir = 100.0f;
+				for (int dy = -1; dy <= 1; dy++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int xx = x + dx, yy = y + dy;
+						if (xx < 0 || yy < 0 || xx >= FLOOD_N || yy >= FLOOD_N) {
+							continue;
+						}
+						const Color &o = cells[yy * FLOOD_N + xx];
+						if (o.g >= 0.0f) {
+							sum_h += o.r;
+							sum_d += o.g;
+							dir = o.b;
+							n += 1.0f;
+						}
+					}
+				}
+				if (n > 0.0f) {
+					c = Color(sum_h / n, sum_d / n, dir, c.a);
+				}
+			}
+		}
+		for (uint32_t k = 0; k < cells.size(); k++) {
+			cells[k] = next[k];
+		}
+	}
+	Ref<Image> img = Image::create_empty(FLOOD_N, FLOOD_N, false, Image::FORMAT_RGBAF);
+	for (int y = 0; y < FLOOD_N; y++) {
+		for (int x = 0; x < FLOOD_N; x++) {
+			img->set_pixel(x, y, cells[y * FLOOD_N + x]);
+		}
+	}
+	if (flood_texture.is_valid() && flood_texture->get_width() == FLOOD_N) {
+		flood_texture->update(img);
+	} else {
+		flood_texture = ImageTexture::create_from_image(img);
+	}
+	material->set_shader_parameter("flood_map", flood_texture);
+	material->set_shader_parameter("flood_rect", Vector4(want.x * FLOOD_CELL, want.y * FLOOD_CELL, FLOOD_N * FLOOD_CELL, FLOOD_N * FLOOD_CELL));
+}
+
+Vector3 GrassField3D::get_flood_wash_at(const Vector3 &p_position) const {
+	const Vector4 hw = WorldContracts::water()->high_water_at(p_position);
+	if (!(hw.x > -1e20f && hw.y >= 0.0f) || p_position.y >= hw.x) {
+		return Vector3(0.0f, 0.0f, -1.0f);
+	}
+	return Vector3(1.0f - Math::smoothstep(7.0f, 35.0f, float(hw.y)), 1.0f - Math::smoothstep(20.0f, 120.0f, float(hw.y)), hw.y);
+}
+
+void GrassField3D::set_flood_wash(bool p_on) {
+	flood_wash = p_on;
+	flood_usec = 0;
+	if (material.is_valid() && !p_on) {
+		material->set_shader_parameter("flood_rect", Vector4());
+		flood_any = false;
+	}
+}
+
+void GrassField3D::set_snowmelt(bool p_on) {
+	snowmelt = p_on;
+	melt_day = -2;
+	if (material.is_valid() && !snowmelt) {
+		material->set_shader_parameter("snowmelt", 0.0f);
+	}
+}
+
 void GrassField3D::set_fairy_rings(bool p_on) {
 	fairy_rings = p_on;
 	if (material.is_valid()) {
@@ -4516,7 +4784,7 @@ void GrassField3D::_far_bake_start() {
 			const float z = (iz + unit(hj, 8)) * cell;
 			const uint32_t hc = clump_hash(x, z, clump_size);
 			const float rnd = unit(hb, 16);
-			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16));
+			const float height = Math::lerp(float(blade_height.x), float(blade_height.y), 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16));
 			const float yaw = unit(hc, 8) * Math::TAU + (unit(hj, 24) - 0.5f) * 1.6f;
 			xforms.push_back(Transform3D(Basis(Vector3(0, 1, 0), yaw), Vector3(x, 0.0f, z)));
 			const float order = Math::floor(Math::fmod(rank * 8.0f, 1.0f) * 255.0f);
@@ -6504,6 +6772,9 @@ void GrassField3D::_notification(int p_what) {
 					_lodge_rows(LODGE_ROWS_PER_FRAME, cam->get_global_position());
 				}
 			}
+			if (flood_wash && cam) {
+				_flood_step(cam->get_global_position(), false);
+			}
 			_season_step();
 			if (far_bake_vp) {
 				_far_bake_step();
@@ -6882,6 +7153,7 @@ void GrassField3D::_season_step() {
 		return;
 	}
 	const Dictionary season_now = wm->season_at(get_global_position());
+	_update_snowmelt(season_now);
 	if (crop != CROP_NONE && !plots.is_empty()) {
 		// Fields with a sowing day grow through the year.
 		const int day = int(season_now.get("day_of_year", -1));
@@ -7035,6 +7307,13 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_lodging"), &GrassField3D::is_lodging);
 	ClassDB::bind_method(D_METHOD("get_lodging_at", "global_position"), &GrassField3D::get_lodging_at);
 	ClassDB::bind_method(D_METHOD("advance_lodging", "weather_seconds"), &GrassField3D::advance_lodging);
+	ClassDB::bind_method(D_METHOD("set_snowmelt", "enabled"), &GrassField3D::set_snowmelt);
+	ClassDB::bind_method(D_METHOD("is_snowmelt"), &GrassField3D::is_snowmelt);
+	ClassDB::bind_method(D_METHOD("get_snowmelt_at", "position", "day"), &GrassField3D::get_snowmelt_at, DEFVAL(-1));
+	ClassDB::bind_method(D_METHOD("set_flood_wash", "enabled"), &GrassField3D::set_flood_wash);
+	ClassDB::bind_method(D_METHOD("is_flood_wash"), &GrassField3D::is_flood_wash);
+	ClassDB::bind_method(D_METHOD("get_flood_wash_at", "position"), &GrassField3D::get_flood_wash_at);
+	ClassDB::bind_method(D_METHOD("update_flood_map", "center"), &GrassField3D::update_flood_map);
 	ClassDB::bind_method(D_METHOD("set_fairy_rings", "enabled"), &GrassField3D::set_fairy_rings);
 	ClassDB::bind_method(D_METHOD("is_fairy_rings"), &GrassField3D::is_fairy_rings);
 	ClassDB::bind_static_method("GrassField3D", D_METHOD("get_fairy_ring_at", "global_position"), &GrassField3D::get_fairy_ring_at);
@@ -7097,6 +7376,8 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "graze_height", PROPERTY_HINT_RANGE, "0,0.2,0.005,suffix:m"), "set_graze_height", "get_graze_height");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lodging"), "set_lodging", "is_lodging");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fairy_rings"), "set_fairy_rings", "is_fairy_rings");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snowmelt"), "set_snowmelt", "is_snowmelt");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flood_wash"), "set_flood_wash", "is_flood_wash");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_GROUP("Wind", "");

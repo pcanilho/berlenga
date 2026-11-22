@@ -76,6 +76,8 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_ROOTING] = Vector2(-1.0f, 10000.0f);
 	ranges[RULE_LITTER_DRIFT] = Vector2(0.0f, 100.0f);
 	ranges[RULE_FAIRY_RING] = Vector2(-10000.0f, 10000.0f);
+	ranges[RULE_HIGH_WATER] = Vector2(-10000.0f, 10000.0f);
+	ranges[RULE_FLOOD_AGE] = Vector2(0.0f, 10000.0f);
 }
 
 bool PlantSpecies::uses_forest_edge() const {
@@ -126,7 +128,7 @@ float PlantSpecies::stand_weight(const Vector2 &p_age, float p_age_fade, const V
 	} else if (p_age_fade <= 0.0f) {
 		w = (p_years >= p_age.x && p_years <= p_age.y) ? 1.0f : 0.0f;
 	} else {
-		w = Math::smoothstep(p_age.x - p_age_fade, p_age.x, p_years) * (1.0f - Math::smoothstep(p_age.y, p_age.y + p_age_fade, p_years));
+		w = Math::smoothstep(float(p_age.x) - p_age_fade, float(p_age.x), p_years) * (1.0f - Math::smoothstep(float(p_age.y), float(p_age.y) + p_age_fade, p_years));
 	}
 	if (w <= 0.0f) {
 		return 0.0f;
@@ -135,7 +137,7 @@ float PlantSpecies::stand_weight(const Vector2 &p_age, float p_age_fade, const V
 	if (p_kind_fade <= 0.0f) {
 		return (k >= p_kinds.x && k <= p_kinds.y) ? w : 0.0f;
 	}
-	return w * Math::smoothstep(p_kinds.x - p_kind_fade, p_kinds.x, k) * (1.0f - Math::smoothstep(p_kinds.y, p_kinds.y + p_kind_fade, k));
+	return w * Math::smoothstep(float(p_kinds.x) - p_kind_fade, float(p_kinds.x), k) * (1.0f - Math::smoothstep(float(p_kinds.y), float(p_kinds.y) + p_kind_fade, k));
 }
 
 float PlantSpecies::season_temperature(float p_january, float p_july) {
@@ -244,7 +246,7 @@ float PlantSpecies::rule_weight(Rule p_rule, float p_value) const {
 	if (f <= 0.0f) {
 		return (p_value >= r.x && p_value <= r.y) ? 1.0f : 0.0f;
 	}
-	return Math::smoothstep(r.x - f, r.x, p_value) * (1.0f - Math::smoothstep(r.y, r.y + f, p_value));
+	return Math::smoothstep(float(r.x) - f, float(r.x), p_value) * (1.0f - Math::smoothstep(float(r.y), float(r.y) + f, p_value));
 }
 
 float PlantSpecies::get_suitability(const TerrainDataMap3D *p_map, const Vector3 &p_pos, bool p_patches) const {
@@ -430,7 +432,7 @@ float PlantSpecies::get_patch_weight(const Vector3 &p_pos) const {
 	if (coupe_rotation > 0) {
 		const Vector3 c = get_coupe_at(p_pos);
 		const bool in = int(c.x) >= coupe_ages.x && int(c.x) <= coupe_ages.y;
-		const float w = in ? Math::smoothstep(0.0f, 0.6f, c.y) : 0.0f;
+		const float w = in ? Math::smoothstep(0.0f, 0.6f, float(c.y)) : 0.0f;
 		return patch_invert ? 1.0f - w : w;
 	}
 	if (patch_ring > 0.0f) {
@@ -690,6 +692,10 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "litter_drift_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_LITTER_DRIFT);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "fairy_ring_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_FAIRY_RING);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "fairy_ring_fade", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_FAIRY_RING);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "high_water_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_HIGH_WATER);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "high_water_fade", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_HIGH_WATER);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "flood_age_range", PROPERTY_HINT_NONE, "suffix:yr"), "set_rule_range", "get_rule_range", RULE_FLOOD_AGE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "flood_age_fade", PROPERTY_HINT_RANGE, "0,5,0.01,suffix:yr"), "set_rule_fade", "get_rule_fade", RULE_FLOOD_AGE);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -726,6 +732,8 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_ROOTING);
 	BIND_ENUM_CONSTANT(RULE_LITTER_DRIFT);
 	BIND_ENUM_CONSTANT(RULE_FAIRY_RING);
+	BIND_ENUM_CONSTANT(RULE_HIGH_WATER);
+	BIND_ENUM_CONSTANT(RULE_FLOOD_AGE);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
 	BIND_ENUM_CONSTANT(DEADWOOD_ON);

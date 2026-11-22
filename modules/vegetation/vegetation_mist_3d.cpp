@@ -165,7 +165,7 @@ float VegetationMist3D::weather_mist_level() const {
 	humid = Math::smoothstep(0.86f, 0.97f, wm->air_humidity_at(at) + 0.06f * wet);
 	const float below_dew = wm->dew_point_at(at) - wm->surface_temperature_at(at);
 	humid = MAX(humid, Math::smoothstep(0.0f, 2.0f, below_dew) * Math::smoothstep(0.8f, 0.92f, wm->air_humidity_at(at) + 0.06f * wet));
-	calm = 1.0f - Math::smoothstep(1.5f, 4.0f, wm->mean_wind_at(at).length());
+	calm = 1.0f - Math::smoothstep(1.5f, 4.0f, float(wm->mean_wind_at(at).length()));
 	clear = 1.0f - 0.7f * CLAMP(wm->cloud_cover_at(at), 0.0f, 1.0f);
 	if (wm->air_temperature_at(at) < -12.0f) {
 		humid *= 0.3f; // Ice fog is another thing; little liquid mist this cold.
@@ -312,7 +312,7 @@ void VegetationMist3D::_step(float p_delta) {
 			Vector2 g = _ground_cell(key);
 			// Thinned over the outer third of the patch, so it melts into the environment's fog
 			// beyond instead of ending at a line.
-			const float edge = 1.0f - Math::smoothstep(mist_range * 0.6f, mist_range + mist_cell * 0.5f, off.length());
+			const float edge = 1.0f - Math::smoothstep(mist_range * 0.6f, mist_range + mist_cell * 0.5f, float(off.length()));
 			const Vector3 cell_at((key.x + 0.5f) * mist_cell, g.x, (key.y + 0.5f) * mist_cell);
 			if (reread || c.read_key != key) {
 				c.read_key = key;
@@ -335,7 +335,7 @@ void VegetationMist3D::_step(float p_delta) {
 			// degrees for thick steam). The water lags the season (get_water_temperature).
 			if (Math::is_finite(c.water) && c.water > g.x - 0.5f) {
 				g.x = c.water;
-				smoke = MAX(smoke, c.steam * (1.0f - Math::smoothstep(6.0f, 12.0f, wind.length())) * edge);
+				smoke = MAX(smoke, c.steam * (1.0f - Math::smoothstep(6.0f, 12.0f, float(wind.length()))) * edge);
 			}
 			// The emitter couples the layer towards its level, so it holds the mist where the weather
 			// wants it and refills what a walker stirred away. A tiny level keeps it coupled, so the

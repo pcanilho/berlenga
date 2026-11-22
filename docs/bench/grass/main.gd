@@ -30,6 +30,10 @@ extends Node3D
 #                    ferns (docs/ideas/vegetation-seasons.md)
 #   --drought        with --day: a dry climate (300 mm a year, falling in winter), for a summer drought
 #   --frost          with --day: a dry continental climate (January -8 C, July 18 C, little snow), for a hard frost
+#   --flood=H[,D]    a flood peaked H m over the pond D days ago (default 10): wrack lines along the mark, the grass
+#                    under it combed flat and silted (WorldWater.high_water_at through a script stub)
+#   --snowy          with --day: a snowy winter (January -6 C, July 18 C, 1100 mm): a long lie, then the sward after
+#                    the melt (GrassField3D.snowmelt); prints GRASS_MELT (days lain, days since the melt, matting)
 #   --out=path.png   save the last frame
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
@@ -116,6 +120,8 @@ var grass: GrassField3D
 var season_day := 0
 var drought := false
 var frost := false
+var snowy := false
+var flood := Vector2(-1, 10) # --flood: metres over the pond, days since
 var season_map: WeatherMap3D
 var bench_season := {}
 var cam: Camera3D
@@ -335,6 +341,10 @@ func _ready() -> void:
 		elif a.begins_with("--day="): season_day = int(a.substr(6))
 		elif a == "--drought": drought = true
 		elif a == "--frost": frost = true
+		elif a == "--snowy": snowy = true
+		elif a.begins_with("--flood="):
+			var fp := a.substr(8).split(",")
+			flood = Vector2(float(fp[0]), float(fp[1]) if fp.size() > 1 else 10.0)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -359,6 +369,12 @@ func _ready() -> void:
 			rf.precipitation_seasonality = 0.9
 			rf.precipitation_peak_month = 6
 			season_map.climate = rf
+		if snowy:
+			var rs := ClimateRecipe.new()
+			rs.temperature_january = -6.0
+			rs.temperature_july = 18.0
+			rs.precipitation = 1100.0
+			season_map.climate = rs
 		season_map.season_day = season_day
 		add_child(season_map)
 		bench_season = season_map.get_season()
@@ -381,6 +397,11 @@ func _ready() -> void:
 	var pond := Pond.new()
 	pond.name = "Pond"
 	add_child(pond)
+	if flood.x >= 0.0:
+		var fs := FloodMarkStub.new()
+		fs.peak = pond.get_water_level() + flood.x
+		fs.days = flood.y
+		WorldContracts.add_water_stub(fs)
 	dm = TerrainDataMap3D.new()
 	dm.name = "Map"
 	dm.size = SIZE
@@ -442,6 +463,8 @@ func _ready() -> void:
 		meadow.data_map = meadow.get_path_to(dm)
 	if season_map:
 		grass.season_source = grass.get_path_to(season_map)
+		if snowy:
+			print("GRASS_MELT ", grass.get_snowmelt_at(Vector3(0, height(0.0, 0.0), 0)))
 	if layers:
 		var tall := PlantSpecies.new()
 		tall.patch_scale = TALL_PATCH
@@ -499,6 +522,12 @@ func _ready() -> void:
 		cover.populate_on_ready = false
 		cover.tile_size = 4.0
 		cover.biome = _cover_biome()
+		if flood.x >= 0.0:
+			var fsp: Array[PlantSpecies] = []
+			fsp.assign(cover.biome.species)
+			fsp.append_array(PlantGenerator.make_flood_wrack(3, true, {"flood_age": flood.y / 365.25}))
+			print("GRASS_FLOOD peak %.2f" % (-0.6 + flood.x))
+			cover.biome.species = fsp
 		if OS.get_environment("GRASS_STILL") == "1":
 			cover.still_shot = true # Still shots: stop streaming once settled.
 		cover.forest_floor_enabled = not no_floor
@@ -749,6 +778,18 @@ void fragment() {
 	if graze >= 0.0 and not far_view:
 		cam.position = Vector3(6, height(6, 20) + 1.6, 20)
 		cam.look_at(Vector3(4.5, height(4.5, 11.0), 11.0))
+	if flood.x >= 0.0:
+		# The mark: the first point down the view's line under the flood's peak; seen from 3.5 m up the slope.
+		var peak := -0.6 + flood.x
+		var m := Vector2(6, 20)
+		for i in 400:
+			var q := Vector2(6, 20).lerp(Vector2(0, -8), i / 400.0)
+			if height(q.x, q.y) < peak:
+				m = q
+				break
+		var back := m + (Vector2(6, 20) - m).normalized() * 2.5 + Vector2(1.0, 0)
+		cam.position = Vector3(back.x, height(back.x, back.y) + 1.6, back.y)
+		cam.look_at(Vector3(m.x, peak - 0.1, m.y - 0.5))
 	if crop_fields:
 		cam.position = Vector3(0, height(0, 14) + 16.0, 14)
 		cam.look_at(Vector3(0, height(0, -30), -30))
@@ -2230,6 +2271,8 @@ func _checks() -> void:
 		grass.update_at(cam.global_position)
 	await _mound_check(c)
 	_lodging_check(c)
+	_snowmelt_check()
+	_flood_wash_check()
 	# The sward's colour reaches WorldGround.albedo_at (WorldPlantColorProvider): gas over the meadow picks up green.
 	var ga: Color = WorldContracts.get_ground().albedo_at(Vector3(c.x, 0, c.y))
 	var gfar: Color = grass.get_far_color()
@@ -2372,6 +2415,48 @@ func _burn_tally(centre: Vector3) -> int:
 				if absf(buf[b + 3] - centre.x) < 1.5 and absf(buf[b + 11] - centre.z) < 1.5:
 					n += 1
 	return n
+
+class FloodMarkStub extends WorldWater:
+	var peak := 0.0
+	var days := 10.0
+	func _height_at(_p: Vector3) -> float:
+		return -INF
+	func _high_water_at(_p: Vector3) -> Vector4:
+		return Vector4(peak, days, 1.0, 0.0)
+
+# GrassField3D.flood_wash: under the last flood's mark (WorldWater.high_water_at, a script stub here) the blades lie
+# combed flat downstream and silted, none above it; the shader gets the mark's map, and loses it with the flood.
+func _flood_wash_check() -> void:
+	var g0 := height(0.0, 0.0)
+	var stub := FloodMarkStub.new()
+	stub.peak = g0 + 0.3
+	WorldContracts.add_water_stub(stub)
+	var under: Vector3 = grass.get_flood_wash_at(Vector3(0, g0, 0))
+	var above: Vector3 = grass.get_flood_wash_at(Vector3(0, g0 + 0.5, 0))
+	grass.update_flood_map(cam.global_position)
+	var rect: Vector4 = grass.get_material().get_shader_parameter("flood_rect")
+	WorldContracts.clear_overrides()
+	grass.update_flood_map(cam.global_position)
+	var gone: Vector4 = grass.get_material().get_shader_parameter("flood_rect")
+	_check("flood wash: combed and silted under the mark, not above; the map follows the flood", under.x > 0.8 and under.y > 0.9 and above.z < 0.0 and rect.z > 0.0 and gone.z == 0.0, [under, above, rect, gone])
+
+func _snowmelt_check() -> void:
+	# GrassField3D.snowmelt: a snowy winter (January -6 C, 1100 mm) lies to about day 120 at the meadow; the sward is
+	# matted just after the melt and has stood up again by late summer. Read through WorldContracts.weather().
+	var wm := WeatherMap3D.new()
+	var rs := ClimateRecipe.new()
+	rs.temperature_january = -6.0
+	rs.temperature_july = 18.0
+	rs.precipitation = 1100.0
+	wm.climate = rs
+	add_child(wm)
+	var p := Vector3(0, height(0.0, 0.0), 0)
+	var under: Vector3 = grass.get_snowmelt_at(p, 100)
+	var fresh: Vector3 = grass.get_snowmelt_at(p, 130)
+	var late: Vector3 = grass.get_snowmelt_at(p, 200)
+	wm.free()
+	_check("snowmelt: under snow on day 100, matted after a long lie on day 130, upright by day 200", under.y < 0.0 and under.x > 60.0 and fresh.x > 60.0 and fresh.y >= 0.0 and fresh.z > 0.5 and late.z == 0.0, [under, fresh, late])
+
 
 # radius 0 draws no blades: no near tiles, far rings or shell (a field kept for its rules or ground tint only).
 func _radius_zero_check() -> void:
@@ -2596,6 +2681,17 @@ func _process(dt: float) -> void:
 			var counts := []
 			for i in cover.biome.species.size():
 				counts.append(cover.get_placements(i).size())
+			if flood.x >= 0.0:
+				var n := cover.biome.species.size()
+				for k in [n - 2, n - 1]:
+					var pl: PackedVector3Array = cover.get_placements(k)
+					var dmin := 99.0
+					var dmax := -99.0
+					for q in pl:
+						var d := height(q.x, q.z) - (-0.6 + flood.x)
+						dmin = minf(dmin, d)
+						dmax = maxf(dmax, d)
+					print("GRASS_WRACK %d placed, ground minus peak %.2f..%.2f m" % [pl.size(), dmin, dmax])
 			print("GRASS_COVER %s = %s ms=%.1f" % ["(tree, bramble, bracken, foxglove) flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry grass, tall flowers, tall dry flowers (fern, bilberry, moss, litter)", str(counts), cover.get_populate_time_msec()])
 			if ug_field:
 				ug_field.populate()

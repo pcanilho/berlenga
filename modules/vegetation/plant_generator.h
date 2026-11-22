@@ -185,6 +185,7 @@ public:
 		PRESET_FAIRY_RING_MUSHROOM, // Marasmius oreades: small buff caps with a broad boss on tough slender stalks, in a meadow fairy ring.
 		PRESET_SHEET_WEB, // A money spider's (Linyphiidae) sheet web in the sward with its scaffold threads: seen only with dew or hoarfrost on it.
 		PRESET_ORB_WEB, // A garden spider's orb web between two dry stems with its frame and anchor threads: seen only with dew or hoarfrost on it.
+		PRESET_FLOOD_WRACK, // A flood's strand line along the high-water mark: silted straw, reed pieces, twigs and leaves; dries grey and breaks up by the season's "flood_age".
 		PRESET_MAX,
 	};
 
@@ -331,6 +332,8 @@ private:
 	void _build_leaf_bank();
 	float _dung_age() const; // Years since the dung was dropped, from the season's "dung_age"; three days without.
 	void _build_cow_pat();
+	float _flood_age() const; // Years since the flood's peak, from the season's "flood_age"; about ten days without.
+	void _build_flood_wrack();
 	void _build_horse_dung();
 	void _build_deer_pellets();
 	void _build_dung_rough();
@@ -689,6 +692,9 @@ public:
 	// open, drawn as silk by the shader and seen as the dew or hoarfrost beads them (WeatherMap3D's surface wetness
 	// and frost); the season sets how many spiders there are.
 	static TypedArray<Resource> make_dew_webs(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	// Flood wrack lines (docs/ideas/vegetation.md, "Flood wrack lines"): the strand line a flood leaves along its
+	// high-water mark (PlantSpecies.RULE_HIGH_WATER), laid along the contour (follow_flow: +X downhill).
+	static TypedArray<Resource> make_flood_wrack(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	static TypedArray<Resource> make_grazing(GrazeSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 
 	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").

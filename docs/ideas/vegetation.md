@@ -1757,3 +1757,46 @@ Research notes, nothing built yet:
 - Later card: lee whirls. WeatherMap3D.add_vortex(position, radius, swirl, updraft, spin) is on main (41dbafbc90) and
   LeafFall3D feels any vortex through wind_at; what is missing is an owner that spawns whirls in the lee of buildings,
   rocks and wood edges in gusty wind (Tratt et al. 2003 sizes). A candidate for a future card.
+
+## Snowmelt sward (round 6, first pick)
+Built: GrassField3D.snowmelt (default on, off for crops), get_snowmelt_at(position, day), static snow_lie(climate,
+height, day).
+- Timing: the weather's own degree-day snowpack (WeatherSeason climate through WorldContracts.weather(), the same pack
+  the season uses), stepped daily from 1 August at each height. A lie counts once the pack holds over 3 mm of water for
+  10 days. The field fills a 16-band table (50 m steps round the camera) of days lain and days since the melt when
+  the day changes; the blade shader reads it by blade height, so a slope melts out from the bottom up. Two noise
+  octaves (about 11 m and 1.7 m) move the lie by up to a couple of weeks: drifts lie longer and melt later. The
+  per-site snow grid (SnowCover3D) is not read: it covers a few hundred metres round the player, the sward reaches
+  kilometres, and both follow the same weather.
+- Look: over about 20 days of lie, blades lie flat in swirls (direction from 2.2 m noise) and turn pale and
+  straw-yellow, fading out over 4 to 24 days after the melt. Over about 45 days, grey snow mould spots (a few
+  centimetres to 30 cm, clustered by large-scale noise) show as grey lint at the melt, drying to bleached straw within
+  a week, gone after about six weeks.
+- Sources: UMass Extension, "Snow molds" fact sheet (gray snow mould needs about 45 to 60 days of cover; grey lint-like
+  mycelium on matted leaves; straw to grey-brown patches); Penn State Center for Turfgrass Science, gray snow mold
+  (Typhula incarnata, about 60 days under snow; patches from a few inches to about a foot); pink snow mould spots
+  under 8 in. Neither gives a recovery time: the three to six weeks here are an estimate.
+- Bench: grass --snowy --day=130 (fresh melt) or --day=140 (late); prints GRASS_MELT. Grass --test checks under snow on
+  day 100, matted on day 130, upright by day 200.
+
+## Flood wrack lines (round 6, second pick)
+Built: PlantGenerator.make_flood_wrack, PRESET_FLOOD_WRACK (111, PRESET_MAX 112, plant_wrack.cpp); PlantSpecies
+RULE_HIGH_WATER (35, ground minus the peak, m) and RULE_FLOOD_AGE (36, years); GrassField3D.flood_wash. All read
+WorldWater.high_water_at (world-links' contract: peak surface, days since, the flow's direction then; the water
+producers fill it).
+- Sources: USGS, Koenig et al. 2016, Identifying and preserving high-water mark data (TM 3-A24): debris lines are
+  trails of twigs, grasses and other small debris on grassy overbanks; the landward edge of a debris line is usually
+  the crest, and debris sags as the water falls (lower, thinner lines); seed lines (seeds, needles, grass) go within
+  hours or days; folded-grass wash lines are the boundary between grass bent by the floodwater and grass that was not
+  flooded, with bending and yellowing below the mark. No width or lasting time is given for debris lines: the strip
+  widths (0.2 to 0.5 m), the five weeks the grass lies flat and the year the wrack lasts are estimates.
+- Mesh: a strip 1.2 to 2.6 m along +Z, a silted mat under straw blades, reed culm pieces, twigs (some forked) and
+  leaves laid along the line, landward edge sharp, foot frayed; about 10 to 20k triangles, drawn to 35 m.
+  follow_flow puts mesh +X down the fall line, so the strip lies along the contour.
+- Placement: the main line from 8 cm under the crest to the crest, dense (on a gentle bank that is a metre or two
+  wide; the grass there is pressed lowest, under the wrack); lower lines 0.35 to 0.9 m under it, sparse
+  and smaller; both gone a year after the flood.
+- Grass: a 64 x 6 m grid of the mark round the camera (read every 5 s); blades under the crest (with 6 cm of noise)
+  combed flat along the peak's flow direction and yellowed, fading over 7 to 35 days, with a grey-brown silt film
+  fading over 20 to 120 days.
+- Not yet: live re-placement of wrack when a new flood peaks (the field places at populate and on stand changes).

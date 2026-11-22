@@ -2500,6 +2500,20 @@ Test: `docs/bench/cloth_pt -- --test` warms path tracing on an empty scene, then
 shaders are new on every run (no cache holds them) and checks both cover their pixels six frames later, while the
 shaders still compile. Release f2ad55f2 fails it (both missing, background behind them); main passes.
 
+### Vorticity confinement relative to the wind (22 Nov)
+
+Flow's vorticity confinement (Fedkiw, Stam and Jensen 2001: push along N x omega, N the unit gradient of |omega|)
+weights the push by `velocityLogMask * log2(velocityLogScale * speed + 1)`, with the speed of the low-passed velocity
+in the grid's frame. The physics doesn't care what frame it is seen from (Galilean invariance), but this weight does:
+in a 20 m/s wind every cell is fast, so confinement pushes everywhere, the push feeds the speed that weights it, and
+spindrift at vorticity 2 boiled to 50-120 m/s eddies (the reason snow runs 0.5). Patch 0012 adds
+`NvFlowVorticityParams.ambientVelocity` and subtracts it from the low-passed velocity before the weight; the module
+sets it from the weather wind at the gas (`WorldContracts::weather()->wind_at`) when `weather_wind` couples the gas.
+With no wind nothing changes.
+
+Checked in raster, same runs with and without: spindrift at vorticity 2 in its gale stays a plume (no boiling) and
+drifts a little wispier; smoke, fire and dust in an 8 m/s wind look the same. Snow keeps 0.5 for now; it can raise it.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

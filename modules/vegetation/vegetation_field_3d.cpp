@@ -126,8 +126,8 @@ void poisson_torus(float p_size, float p_r, RandomPCG &p_rng, LocalVector<Vector
 			const float ang = p_rng.randf() * Math::TAU;
 			const float rad = p_r * (1.0f + p_rng.randf());
 			Vector2 p = base + Vector2(Math::cos(ang), Math::sin(ang)) * rad;
-			p.x = Math::fposmod(p.x, p_size);
-			p.y = Math::fposmod(p.y, p_size);
+			p.x = Math::fposmod(float(p.x), p_size);
+			p.y = Math::fposmod(float(p.y), p_size);
 			if (grid[cell_of(p).y * n + cell_of(p).x] >= 0) {
 				continue;
 			}
@@ -970,7 +970,7 @@ bool VegetationField3D::PlaceSetup::browse_differs(float p_b0, float p_b1) const
 	}
 	for (const Vector3 &r : browse_rules) {
 		auto w = [&r](float p_v) {
-			return r.z <= 0.0f ? ((p_v >= r.x && p_v <= r.y) ? 1.0f : 0.0f) : Math::smoothstep(r.x - r.z, r.x, p_v) * (1.0f - Math::smoothstep(r.y, r.y + r.z, p_v));
+			return r.z <= 0.0f ? ((p_v >= r.x && p_v <= r.y) ? 1.0f : 0.0f) : Math::smoothstep(float(r.x - r.z), float(r.x), p_v) * (1.0f - Math::smoothstep(float(r.y), float(r.y + r.z), p_v));
 		};
 		if (w(p_b0) != w(p_b1)) {
 			return true;
@@ -1290,7 +1290,7 @@ float VegetationField3D::_context_weight(const PlantSpecies *p_sp, const Vector2
 		float f;
 		p_sp->get_forest_edge_rule(r, f);
 		const float e = context.edge.is_empty() && r.y >= 10000.0f ? r.y : context.edge_at(p_xz);
-		w *= f <= 0.0f ? ((e >= r.x && e <= r.y) ? 1.0f : 0.0f) : Math::smoothstep(r.x - f, r.x, e) * (1.0f - Math::smoothstep(r.y, r.y + f, e));
+		w *= f <= 0.0f ? ((e >= r.x && e <= r.y) ? 1.0f : 0.0f) : Math::smoothstep(float(r.x) - f, float(r.x), e) * (1.0f - Math::smoothstep(float(r.y), float(r.y) + f, e));
 	}
 	return w;
 }
@@ -2111,6 +2111,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool litter_rule = sp->uses_litter();
 		const bool drift_rule = sp->uses_litter_drift();
 		const bool fairy_rule = sp->uses_fairy_ring();
+		const bool high_water_rule = sp->uses_high_water();
 		const bool dune_rule = sp->uses_dune() && p_setup.dunes;
 		const bool coast_rule = sp->uses_coast();
 		const bool field_rule = sp->uses_field_edge();
@@ -2354,7 +2355,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						// No forest known (no canopy species here or in the canopy field): an interior rule (open-ended inside)
 						// does nothing, an edge rule places nothing.
 						const float e = p_setup.edge.is_empty() && edge_r.y >= 10000.0f ? edge_r.y : p_setup.edge_at(xz);
-						suit *= edge_f <= 0.0f ? ((e >= edge_r.x && e <= edge_r.y) ? 1.0f : 0.0f) : Math::smoothstep(edge_r.x - edge_f, edge_r.x, e) * (1.0f - Math::smoothstep(edge_r.y, edge_r.y + edge_f, e));
+						suit *= edge_f <= 0.0f ? ((e >= edge_r.x && e <= edge_r.y) ? 1.0f : 0.0f) : Math::smoothstep(float(edge_r.x) - edge_f, float(edge_r.x), e) * (1.0f - Math::smoothstep(float(edge_r.y), float(edge_r.y) + edge_f, e));
 					}
 					if (stand_rule && suit > 0.0f) {
 						const int sc = p_setup.stand_cell(xz);
@@ -2407,6 +2408,14 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						// Meadow fairy rings (fairy_rings.h): the same rings the grass shows.
 						const FairyRings::Hit fh = FairyRings::at(xz);
 						suit *= sp->rule_weight(PlantSpecies::RULE_FAIRY_RING, fh.arc > 0.5f ? fh.distance : 1000.0f);
+					}
+					if (high_water_rule && suit > 0.0f) {
+						// The last flood's mark (WorldWater.high_water_at): wrack strands along it, the grass below combed flat.
+						const float ground = map->get_height_at(p3);
+						const Vector4 hw = WorldContracts::water()->high_water_at(Vector3(xz.x, ground, xz.y));
+						const bool known = hw.x > -1e20f && hw.y >= 0.0f;
+						suit *= sp->rule_weight(PlantSpecies::RULE_HIGH_WATER, known ? ground - hw.x : 1000.0f);
+						suit *= sp->rule_weight(PlantSpecies::RULE_FLOOD_AGE, known ? hw.y / 365.25f : 10000.0f);
 					}
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
 						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
@@ -2638,7 +2647,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
 					const float r = (nebkha_sp || row_sp) ? float(hash_murmur3_one_float(xz.x, hash_murmur3_one_float(xz.y)) & 0xFFFFFF) / float(0x1000000) : pat.randoms[i];
-					float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f)) * trodden;
+					float scale = Math::lerp(float(scale_range.x), float(scale_range.y), Math::fmod(r * 104729.0f, 1.0f)) * trodden;
 					if (nebkha_sp && nebkha_unit > 0.0f) {
 						// The shrub that built the mound: its crown about NEBKHA_CROWN of the mound's radius.
 						scale = NEBKHA_CROWN * NEBKHA_RADIUS * mound_h[i] / nebkha_unit * Math::lerp(0.9f, 1.1f, r);

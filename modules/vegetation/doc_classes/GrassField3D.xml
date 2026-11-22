@@ -103,6 +103,21 @@
 				The sward's greenness from the last season read, 0 to 1 (1 without a [member season_source]).
 			</description>
 		</method>
+		<method name="get_flood_wash_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The sward under the last flood's mark at [param position] (see [member flood_wash]): x combed flat (0 to 1), y silted (0 to 1), z the days since the peak; z -1 above the mark or with no flood known ([method WorldWater.high_water_at]).
+			</description>
+		</method>
+		<method name="get_snowmelt_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="day" type="int" default="-1" />
+			<description>
+				The sward after the snow at [param position] (see [member snowmelt]), on day of year [param day] (below 1: the season's day): x the days the last lasting snowpack lay, y the days since it melted (-1 while snow lies or without a lasting pack), z the matting, 0 to 1. Without a weather climate (no [WeatherMap3D]): all zero.
+			</description>
+		</method>
 		<method name="get_shell_column_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -160,6 +175,13 @@
 			<return type="ShaderMaterial" />
 			<description>
 				Returns the blade [ShaderMaterial], built on first use. Its shader parameters can be read but are set from this node's properties.
+			</description>
+		</method>
+		<method name="update_flood_map">
+			<return type="void" />
+			<param index="0" name="center" type="Vector3" />
+			<description>
+				Reads the last flood's mark round [param center] again now (see [member flood_wash]); the field does so on its own every 5 s.
 			</description>
 		</method>
 		<method name="get_tile_count" qualifiers="const">
@@ -323,6 +345,12 @@
 		</member>
 		<member name="season_source" type="NodePath" setter="set_season_source" getter="get_season_source" default="NodePath(&quot;&quot;)">
 			Path to a [WeatherMap3D] whose season ([method WeatherMap3D.get_season]) turns the sward through the year: once a second its greenness ([method season_greenness]) raises the blades' and the ground's dryness towards all thatch (effective dryness [code]dryness + (1 - dryness) (1 - green) season_response[/code]), and the far colour is measured again when that moves by more than 0.05. Empty: [member dryness] as set.
+		</member>
+		<member name="snowmelt" type="bool" setter="set_snowmelt" getter="is_snowmelt" default="true">
+			The sward after a long snow lie: where the season's snowpack (the weather's degree-day pack, by height) lay more than about 20 days, blades lie matted flat in swirls and pale for about three weeks after the melt; past about 45 days, grey snow mould patches (Typhula, a few cm to 30 cm) show as grey lint that dries to straw and greens over in a few weeks. Snow-drift noise moves the lie by metres. Off for crops.
+		</member>
+		<member name="flood_wash" type="bool" setter="set_flood_wash" getter="is_flood_wash" default="true">
+			The sward under the last flood's mark ([method WorldWater.high_water_at]): blades combed flat along the flow at the peak and grey with silt, with a sharp line at the crest, standing again over about five weeks while the silt pales over about four months. Read on a 64-cell grid of 6 m round the camera every 5 s ([method update_flood_map] now). Off for crops.
 		</member>
 		<member name="still_shot" type="bool" setter="set_still_shot" getter="is_still_shot" default="false">
 			For still shots on a tight memory budget (benches on the cloud): once the near tiles, far rings and shell round the camera are complete, the field stops updating (no rebuilds, no trample) until the camera moves 0.5 m or the field is rebuilt. [method is_still_frozen] says when it has settled.

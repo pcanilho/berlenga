@@ -168,8 +168,8 @@ Ref<ArrayMesh> VegetationVoxelLod::make_shell(const Ref<Mesh> &p_mesh, float p_v
 				}
 				if (use_tex) {
 					const Vector2 uv = uvs[i0] * w + uvs[i1] * u + uvs[i2] * v;
-					const int px = CLAMP(int(Math::fposmod(uv.x, 1.0f) * look.image->get_width()), 0, look.image->get_width() - 1);
-					const int py = CLAMP(int(Math::fposmod(uv.y, 1.0f) * look.image->get_height()), 0, look.image->get_height() - 1);
+					const int px = CLAMP(int(Math::fposmod(float(uv.x), 1.0f) * look.image->get_width()), 0, look.image->get_width() - 1);
+					const int py = CLAMP(int(Math::fposmod(float(uv.y), 1.0f) * look.image->get_height()), 0, look.image->get_height() - 1);
 					const Color tc = look.image->get_pixel(px, py);
 					if (look.scissor >= 0.0f && tc.a < look.scissor) {
 						continue; // A cut-out part of the card: nothing there.

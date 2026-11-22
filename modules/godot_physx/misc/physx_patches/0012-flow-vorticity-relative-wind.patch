@@ -1,0 +1,80 @@
+diff --git a/flow/include/nvflow/NvFlow.h b/flow/include/nvflow/NvFlow.h
+index 4173166..d36d13f 100644
+--- a/flow/include/nvflow/NvFlow.h
++++ b/flow/include/nvflow/NvFlow.h
+@@ -993,8 +993,12 @@ typedef struct NvFlowVorticityParams
+     float fuelMask;
+     float burnMask;
+     float smokeMask;
++    NvFlowFloat3 ambientVelocity;
+ }NvFlowVorticityParams;
+ 
++// ambientVelocity is there (an added field, not in NVIDIA's release).
++#define NV_FLOW_VORTICITY_AMBIENT_VELOCITY 1
++
+ #define NvFlowVorticityParams_default_init { \
+     NV_FLOW_TRUE, /*enabled*/ \
+     0.6f,    /*forceScale*/ \
+@@ -1006,7 +1010,8 @@ typedef struct NvFlowVorticityParams
+     0.f,    /*temperatureMask*/ \
+     0.f,    /*fuelMask*/ \
+     0.f,    /*burnMask*/ \
+-    0.f        /*smokeMask*/ \
++    0.f,        /*smokeMask*/ \
++    {0.f, 0.f, 0.f}    /*ambientVelocity*/ \
+ }
+ static const NvFlowVorticityParams NvFlowVorticityParams_default = NvFlowVorticityParams_default_init;
+ 
+@@ -1023,6 +1028,7 @@ NV_FLOW_REFLECT_VALUE(float, temperatureMask, 0, 0)
+ NV_FLOW_REFLECT_VALUE(float, fuelMask, 0, 0)
+ NV_FLOW_REFLECT_VALUE(float, burnMask, 0, 0)
+ NV_FLOW_REFLECT_VALUE(float, smokeMask, 0, 0)
++NV_FLOW_REFLECT_VALUE(NvFlowFloat3, ambientVelocity, 0, 0)
+ NV_FLOW_REFLECT_END(&NvFlowVorticityParams_default)
+ #undef NV_FLOW_REFLECT_TYPE
+ 
+diff --git a/flow/source/nvflow/Vorticity.cpp b/flow/source/nvflow/Vorticity.cpp
+index 037e83e..e0def9d 100644
+--- a/flow/source/nvflow/Vorticity.cpp
++++ b/flow/source/nvflow/Vorticity.cpp
+@@ -148,6 +148,11 @@ namespace
+             mappedLayer[layerParamIdx].fuelMask = layerParamsIn->fuelMask;
+             mappedLayer[layerParamIdx].burnMask = layerParamsIn->burnMask;
+             mappedLayer[layerParamIdx].smokeMask = layerParamsIn->smokeMask;
++
++            mappedLayer[layerParamIdx].ambientVelocityX = layerParamsIn->ambientVelocity.x;
++            mappedLayer[layerParamIdx].ambientVelocityY = layerParamsIn->ambientVelocity.y;
++            mappedLayer[layerParamIdx].ambientVelocityZ = layerParamsIn->ambientVelocity.z;
++            mappedLayer[layerParamIdx].pad4 = 0.f;
+         }
+ 
+         NvFlowBufferTransient* layerTransient = NvFlowUploadBuffer_unmap(in->context, &ptr->layerBuffer);
+diff --git a/flow/source/nvflow/shaders/Vorticity2CS.hlsl b/flow/source/nvflow/shaders/Vorticity2CS.hlsl
+index bc1ee51..7b460bb 100644
+--- a/flow/source/nvflow/shaders/Vorticity2CS.hlsl
++++ b/flow/source/nvflow/shaders/Vorticity2CS.hlsl
+@@ -94,6 +94,10 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupID : SV_Group
+ 
+         velocityLowpass *= (1.f / 7.f);
+ 
++        // The speed relative to the ambient air (the weather wind the gas is carried on): the confinement
++        // follows the gas's own motion, not the frame it is seen from (Galilean invariant).
++        velocityLowpass.xyz -= float3(layerParamsIn[layerParamIdx].ambientVelocityX, layerParamsIn[layerParamIdx].ambientVelocityY, layerParamsIn[layerParamIdx].ambientVelocityZ);
++
+         velocityLowpass.w = length(velocityLowpass.xyz);
+         speed = velocityLowpass.w;
+         speedLog = speed;
+diff --git a/flow/source/nvflow/shaders/VorticityParams.h b/flow/source/nvflow/shaders/VorticityParams.h
+index c660fe0..e79dba1 100644
+--- a/flow/source/nvflow/shaders/VorticityParams.h
++++ b/flow/source/nvflow/shaders/VorticityParams.h
+@@ -52,4 +52,9 @@ struct VorticityCS_LayerParams
+     float fuelMask;
+     float burnMask;
+     float smokeMask;
++
++    float ambientVelocityX;
++    float ambientVelocityY;
++    float ambientVelocityZ;
++    float pad4;
+ };
