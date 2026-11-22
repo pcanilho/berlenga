@@ -407,3 +407,26 @@ Makkonen 2000 (Phil. Trans. R. Soc. A); ISO 12494.
 Sources: Whiteman 2000; Gultepe et al. 2007 (Pure Appl. Geophys.); Price 2011 (Boundary-Layer Meteorol.); Outcalt
 1971 (Water Resour. Res.); Lawler 1988 (Prog. Phys. Geogr.); Grab 2001; Briggs 1975; Luderer et al. 2006 (Atmos.
 Chem. Phys.); Fromm et al. 2010 (BAMS).
+
+## Round 11 candidates (22 Nov, card to Paulo)
+
+1. Night drainage winds (katabatic flow). Source: the cold pools' forcing (night, clear, calm) and the terrain slope
+   WeatherMap3D already reads. Reader: `WorldWeather.wind_at` near the ground, so smoke, mist, snow drift, grass and
+   tree wind and the fire spread (night fires back down slopes) all see it. Air cooled on a slope runs down it at 1 to
+   3 m/s in a layer some 10 to 50 m deep, strongest a few metres up, and gathers into a down-valley wind
+   (Prandtl 1942 slope flow; Mahrt 1982; Whiteman 2000, ch. 13). Per cell: speed from the radiative cooling and
+   the slope sine (Prandtl's balance), along the fall line, faded by the ambient wind; zero by day (the upslope
+   anabatic flow is weaker and later).
+2. Valley fog wets and rimes what stands in it. Source: the valley fog's depth (built this round). Reader: the
+   fog water at the canopy (`fog_water_at`), so fog drip wets the ground under trees in a fog sea and, below 0 C,
+   rime grows on the trees in it (the hoarfrost forests of inversion valleys). Radiation fog holds 0.05 to 0.3 g/m3
+   of liquid water (Gultepe et al. 2007); today `fog_water_at` reads only the sky's clouds.
+3. Cold pools trap smoke near the ground. Source: the cold pool depth and the smoke layer's column (WeatherMap3D
+   smoke). Reader: the near-ground haze and the smoke a camera sees in a valley at dawn. A night inversion caps the
+   mixing: smoke from a fire or chimneys stays within the pool's depth instead of the 2 km day layer, tens of times
+   denser near the ground, and clears as the pool breaks up mid-morning (Lavdas 1996, smoke in the southern US
+   valleys at night; Achtemeier 2005, PB-Piedmont). Per cell: the mixing depth becomes the pool depth while a pool
+   lies there.
+
+Sources: Prandtl 1942; Mahrt 1982 (J. Atmos. Sci.); Whiteman 2000 (Mountain Meteorology); Gultepe et al. 2007;
+Lavdas 1996 (USDA Forest Service GTR SRS-6); Achtemeier 2005 (Int. J. Wildland Fire).
