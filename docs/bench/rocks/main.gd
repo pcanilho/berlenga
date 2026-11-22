@@ -85,6 +85,7 @@ extends Node3D
 #   --no-tiles            with --world: TerrainGenerator3D.tile_erosion_enabled off (no droplet rills and gullies);
 #                         --gully-incision=x the gullies' extra cut (1; 0 for none, a before frame); --gully-spot
 #                         puts the view's spot on the nearest strong gully on soil
+#   --face-weathering=x   with --world: the ground material's rock-face lichen, moss and seep streaks (1; 0 before)
 #   --bank-relief=x       with --world: Landscape3D.bank_relief (0.8 m; 0 for a before frame); --bank-spot puts the
 #                         spot on a 42 to 52 degree soil bank
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
@@ -507,6 +508,8 @@ func _world() -> void:
 	if args.get("ground-scans", "1") != "0" and not args.has("test"): # --ground-scans=0: plain ground layers
 		if _apply_ground_scans(tm, ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers"), args.get("ground-scans", "1")) > 0:
 			tm.update_shader()
+	if args.has("face-weathering"):
+		tm.set_shader_parameter("tm_face_weathering", float(args["face-weathering"]))
 	var land := Landscape3D.new()
 	# Cliff relief is on by default (frames show the ground as the game draws it: without it a backlit cliff reads as
 	# smooth white spur flanks); the checks measure the bare heightfield, and --no-cliff-relief gives a before frame.
