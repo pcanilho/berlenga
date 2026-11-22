@@ -426,7 +426,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 		// The layers move with their cells; cells coming in start with none (the next update gives them the
 		// bulk pack as one old layer).
 		const int L = PACK_LAYERS;
-		const Vector<float> os = layer_swe, orr = layer_rho, oa = layer_age;
+		const Vector<float> os = layer_swe, orr = layer_rho, oa = layer_age, ol = layer_liq;
 		const Vector<uint8_t> ok = layer_kind, on = layer_n;
 		for (int z = 0; z < n; z++) {
 			for (int x = 0; x < n; x++) {
@@ -442,6 +442,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 					layer_swe.write[i * L + k] = os[j * L + k];
 					layer_rho.write[i * L + k] = orr[j * L + k];
 					layer_age.write[i * L + k] = oa[j * L + k];
+					layer_liq.write[i * L + k] = ol[j * L + k];
 					layer_kind.write[i * L + k] = ok[j * L + k];
 				}
 			}
@@ -816,6 +817,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				slab_cover += depth_new; // soft snow over the slab
 			}
 			cell_new_depth.write[i] = depth_new;
+			if (hoar_enabled) {
+				_layers_bury_hoar(i);
+			}
 			_layers_push(i, snow, rho_new, packing && t < 0.0f && drift_index(in.wind_speed, rho_new, 1.0f) > 0.0f ? LAYER_WIND : LAYER_NEW);
 			swe = (swe > SWE_MIN ? swe : 0.0f) + snow;
 			rho = swe / MAX(depth_old + depth_new, 1e-6f);
@@ -1107,6 +1111,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 // b_eta 0.023 m3/kg, c_eta 250 kg/m3), the temperature going from the air's at the top to 0 C at the base. The
 // bulk fields stay the pack's total: the layers' snow and depth are matched to them each update (melt, erosion,
 // slides and releases come off the top), so the layers say how the bulk is split, not a second pack.
+static constexpr float HOAR_MM_PER_KG = SnowCover3D::HOAR_MM_PER_KG_LAYER; // crystal height per kg/m2 deposited (a 0.07 kg/m2 night: 5 mm)
+static constexpr float HOAR_MIN = 0.5f; // mm: smaller crystals do not make a layer
+static constexpr float HOAR_KEEP_HOURS = 1000.0f; // a buried layer counts as weak for about six weeks
 static constexpr float LAYER_MERGE_HOURS = 6.0f;
 static constexpr float LAYER_BOND_HOURS = 168.0f; // a week: new snow is settled and rounded (as the avalanche's recent snow)
 
@@ -1123,6 +1130,7 @@ void SnowCover3D::_layers_alloc() {
 		layer_swe.clear();
 		layer_rho.clear();
 		layer_age.clear();
+		layer_liq.clear();
 		layer_kind.clear();
 		layer_n.clear();
 		return;
@@ -1130,13 +1138,62 @@ void SnowCover3D::_layers_alloc() {
 	layer_swe.resize(nn * PACK_LAYERS);
 	layer_rho.resize(nn * PACK_LAYERS);
 	layer_age.resize(nn * PACK_LAYERS);
+	layer_liq.resize(nn * PACK_LAYERS);
 	layer_kind.resize(nn * PACK_LAYERS);
 	layer_n.resize(nn);
 	layer_swe.fill(0.0f);
 	layer_rho.fill(100.0f);
 	layer_age.fill(0.0f);
+	layer_liq.fill(0.0f);
 	layer_kind.fill(LAYER_OLD);
 	layer_n.fill(0);
+}
+
+static inline bool layer_persistent(uint8_t p_kind) {
+	// Thin layers that matter by what they are, not their mass: never merged away as traces.
+	return p_kind == SnowCover3D::LAYER_CRUST || p_kind == SnowCover3D::LAYER_HOAR;
+}
+
+int SnowCover3D::_layers_room(int p_i) {
+	const int L = PACK_LAYERS;
+	const int b = p_i * L;
+	float *ls = layer_swe.ptrw() + b;
+	float *lr = layer_rho.ptrw() + b;
+	float *la = layer_age.ptrw() + b;
+	float *ll = layer_liq.ptrw() + b;
+	uint8_t *lk = layer_kind.ptrw() + b;
+	int k = layer_n[p_i];
+	if (k < L) {
+		return k;
+	}
+	// Merge the two thinnest adjacent layers under the top one, sparing crusts and buried hoar while any other
+	// pair is left (the merged layer keeps the lower one's kind).
+	int best = -1;
+	for (int pass = 0; pass < 2 && best < 0; pass++) {
+		for (int j = 0; j + 1 < L - 1; j++) {
+			if (pass == 0 && (layer_persistent(lk[j]) || layer_persistent(lk[j + 1]))) {
+				continue;
+			}
+			if (best < 0 || ls[j] + ls[j + 1] < ls[best] + ls[best + 1]) {
+				best = j;
+			}
+		}
+	}
+	const float s = ls[best] + ls[best + 1];
+	const float d = ls[best] / lr[best] + ls[best + 1] / lr[best + 1];
+	ls[best] = s;
+	lr[best] = s > 0.0f ? CLAMP(s / MAX(d, 1e-6f), 30.0f, 917.0f) : lr[best];
+	la[best] = MAX(la[best], la[best + 1]);
+	ll[best] += ll[best + 1];
+	for (int j = best + 1; j + 1 < L; j++) {
+		ls[j] = ls[j + 1];
+		lr[j] = lr[j + 1];
+		la[j] = la[j + 1];
+		ll[j] = ll[j + 1];
+		lk[j] = lk[j + 1];
+	}
+	layer_n.write[p_i] = uint8_t(L - 1);
+	return L - 1;
 }
 
 void SnowCover3D::_layers_push(int p_i, float p_swe, float p_rho, uint8_t p_kind) {
@@ -1159,32 +1216,47 @@ void SnowCover3D::_layers_push(int p_i, float p_swe, float p_rho, uint8_t p_kind
 		lr[k - 1] = CLAMP(s / d, 30.0f, 917.0f);
 		return;
 	}
-	if (k == L) {
-		// Merge the two thinnest adjacent layers under the top one.
-		int best = 0;
-		for (int j = 1; j + 1 < L - 1; j++) {
-			if (ls[j] + ls[j + 1] < ls[best] + ls[best + 1]) {
-				best = j;
-			}
-		}
-		const float s = ls[best] + ls[best + 1];
-		const float d = ls[best] / lr[best] + ls[best + 1] / lr[best + 1];
-		ls[best] = s;
-		lr[best] = s > 0.0f ? CLAMP(s / MAX(d, 1e-6f), 30.0f, 917.0f) : lr[best];
-		la[best] = MAX(la[best], la[best + 1]);
-		for (int j = best + 1; j + 1 < L; j++) {
-			ls[j] = ls[j + 1];
-			lr[j] = lr[j + 1];
-			la[j] = la[j + 1];
-			lk[j] = lk[j + 1];
-		}
-		k = L - 1;
-	}
+	k = _layers_room(p_i);
 	ls[k] = p_swe;
 	lr[k] = rho;
 	la[k] = 0.0f;
+	layer_liq.write[b + k] = 0.0f;
 	lk[k] = p_kind;
 	layer_n.write[p_i] = uint8_t(k + 1);
+}
+
+void SnowCover3D::_layers_split_top(int p_i, float p_swe, float p_rho, uint8_t p_kind) {
+	if (!layers_enabled || driven || p_swe <= 0.0f || layer_n.size() != resolution * resolution || layer_n[p_i] == 0) {
+		return;
+	}
+	const int b = p_i * PACK_LAYERS;
+	int k = layer_n[p_i];
+	if (layer_swe[b + k - 1] <= p_swe * 1.2f) {
+		// The top layer is no thicker than the part asked for: it is that layer.
+		layer_kind.write[b + k - 1] = p_kind;
+		layer_rho.write[b + k - 1] = MAX(layer_rho[b + k - 1], MIN(p_rho, 917.0f));
+		return;
+	}
+	k = _layers_room(p_i);
+	const int t = b + k - 1;
+	const float share = p_swe / layer_swe[t];
+	layer_swe.write[t] -= p_swe;
+	layer_swe.write[t + 1] = p_swe;
+	layer_rho.write[t + 1] = CLAMP(p_rho, 30.0f, 917.0f);
+	layer_age.write[t + 1] = layer_age[t];
+	layer_liq.write[t + 1] = layer_liq[t] * share;
+	layer_liq.write[t] -= layer_liq[t + 1];
+	layer_kind.write[t + 1] = p_kind;
+	layer_n.write[p_i] = uint8_t(k + 1);
+}
+
+void SnowCover3D::_layers_bury_hoar(int p_i) {
+	// The crystals (HOAR_MM_PER_KG mm per kg/m2 deposited) keep their mass as a layer; their size is read back
+	// from it. Split off the top of the pack, so the layers' mass stays the bulk's.
+	if (!layers_enabled || driven || cell_hoar.size() != resolution * resolution || cell_hoar[p_i] < HOAR_MIN) {
+		return;
+	}
+	_layers_split_top(p_i, cell_hoar[p_i] / HOAR_MM_PER_KG, 30.0f, LAYER_HOAR);
 }
 
 void SnowCover3D::_layers_take(int p_i, float p_swe) {
@@ -1193,10 +1265,12 @@ void SnowCover3D::_layers_take(int p_i, float p_swe) {
 	}
 	const int b = p_i * PACK_LAYERS;
 	float *ls = layer_swe.ptrw() + b;
+	float *ll = layer_liq.ptrw() + b;
 	int k = layer_n[p_i];
 	float left = p_swe;
 	while (k > 0 && left > 0.0f) {
 		const float t = MIN(ls[k - 1], left);
+		ll[k - 1] *= ls[k - 1] > 1e-6f ? (ls[k - 1] - t) / ls[k - 1] : 0.0f;
 		ls[k - 1] -= t;
 		left -= t;
 		if (ls[k - 1] <= 1e-4f) {
@@ -1204,6 +1278,104 @@ void SnowCover3D::_layers_take(int p_i, float p_swe) {
 		}
 	}
 	layer_n.write[p_i] = uint8_t(k);
+}
+
+// Water in the layers (round 8, follow-up 51). Each layer holds liquid_capacity of its ice as liquid (the bulk's
+// irreducible water); what is over that percolates down within the update (gravity flow fronts move some tens of
+// centimetres to metres an hour through ripe snow; Colbeck 1972). Where fine grains lie over coarse ones (new or wind
+// snow over old rounded snow, buried hoar or depth hoar) the water stops at the interface until the fine layer's
+// suction is overcome: a capillary barrier, which ponds water in the few centimetres above it (Waldner, Schneebeli
+// et al. 2004; Avanzi et al. 2016, 5-15% by volume); an ice crust under a layer ponds more and lets it through only
+// by flow fingers. That ponding is where wet slab avalanches fail (Mitterer et al. 2011; Wever et al. 2016).
+static constexpr float PONDING_ZONE = 0.03f; // m above the interface that fills
+static constexpr float PONDING_CAPILLARY = 0.08f; // its liquid by volume over a capillary barrier
+static constexpr float PONDING_ICE = 0.15f; // and over an ice crust
+static constexpr float CRUST_LAYER_DENSITY = 450.0f; // kg/m3, a melt-freeze crust (Fierz et al. 2009: MFcr)
+
+float SnowCover3D::layer_barrier(int p_above, int p_below) {
+	const bool fine = p_above == LAYER_NEW || p_above == LAYER_WIND;
+	if (p_below == LAYER_CRUST) {
+		return PONDING_ICE;
+	}
+	if (fine && (p_below == LAYER_OLD || p_below == LAYER_HOAR || p_below == LAYER_DEPTH_HOAR)) {
+		return PONDING_CAPILLARY;
+	}
+	return 0.0f;
+}
+
+void SnowCover3D::_layers_water(int p_i, float p_dt_h, float p_air) {
+	const int b = p_i * PACK_LAYERS;
+	float *ls = layer_swe.ptrw() + b;
+	float *lr = layer_rho.ptrw() + b;
+	float *ll = layer_liq.ptrw() + b;
+	const uint8_t *lk = layer_kind.ptr() + b;
+	const int k = layer_n[p_i];
+	const float cap = MAX(liquid_capacity, 0.0f);
+	// What each layer holds: its share, more just over a barrier, no more than its pores.
+	float hold[PACK_LAYERS];
+	for (int j = 0; j < k; j++) {
+		const float ice = MAX(ls[j] - ll[j], 0.0f);
+		const float depth = ls[j] / MAX(lr[j], 30.0f);
+		const float room = MAX(depth * 1000.0f - ice / 0.917f, 0.0f); // mm of pore space
+		float h = cap * ice;
+		if (j > 0) {
+			const float pond = layer_barrier(lk[j], lk[j - 1]);
+			if (pond > 0.0f) {
+				h += pond * MIN(depth, PONDING_ZONE) * 1000.0f;
+			}
+		}
+		hold[j] = MIN(h, room);
+	}
+	// The bulk's liquid is the pack's: rain and melt come in at the top; in the cold the water refreezes from the
+	// top down, in the warm it drains out from the bottom up.
+	float have = 0.0f;
+	for (int j = 0; j < k; j++) {
+		have += ll[j];
+	}
+	const float want = cell_liquid[p_i];
+	if (want > have) {
+		ll[k - 1] += want - have;
+	} else if (want < have) {
+		float left = have - want;
+		for (int s = 0; s < k && left > 0.0f; s++) {
+			const int j = p_air < 0.0f ? k - 1 - s : s;
+			const float t = MIN(ll[j], left);
+			ll[j] -= t;
+			left -= t;
+		}
+	}
+	// Percolation, top down; the bottom layer keeps what reaches it (the bulk drains the pack).
+	for (int j = k - 1; j > 0; j--) {
+		if (ll[j] > hold[j]) {
+			ll[j - 1] += ll[j] - hold[j];
+			ll[j] = hold[j];
+		}
+	}
+	for (int j = 0; j < k; j++) {
+		ll[j] = MIN(MAX(ll[j], 0.0f), ls[j]);
+	}
+	(void)p_dt_h;
+}
+
+float SnowCover3D::pub_wettest_layer(int p_i, float &r_depth) const {
+	r_depth = 0.0f;
+	const int nn = resolution * resolution;
+	if (pub.layer_n.size() != nn || pub.layer_liq.size() != nn * PACK_LAYERS || pub.layer_n[p_i] == 0) {
+		return 0.0f;
+	}
+	const int b = p_i * PACK_LAYERS;
+	const float cap = MAX(liquid_capacity, 0.005f);
+	float best = 0.0f, depth = 0.0f;
+	for (int j = pub.layer_n[p_i] - 1; j >= 0; j--) {
+		depth += pub.layer_swe[b + j] / MAX(pub.layer_rho[b + j], 30.0f);
+		const float ice = pub.layer_swe[b + j] - pub.layer_liq[b + j];
+		const float index = ice > 0.5f ? pub.layer_liq[b + j] / (cap * ice) : 0.0f;
+		if (index > best) {
+			best = index;
+			r_depth = depth;
+		}
+	}
+	return best;
 }
 
 void SnowCover3D::_layers_sync(int p_i, float p_dt_h, float p_air) {
@@ -1220,6 +1392,7 @@ void SnowCover3D::_layers_sync(int p_i, float p_dt_h, float p_air) {
 	float *ls = layer_swe.ptrw() + b;
 	float *lr = layer_rho.ptrw() + b;
 	float *la = layer_age.ptrw() + b;
+	float *ll = layer_liq.ptrw() + b;
 	uint8_t *lk = layer_kind.ptrw() + b;
 	int k = layer_n[p_i];
 	// The mass: what the bulk lost (melt, erosion, slides, releases) comes off the top; what it gained past the
@@ -1236,6 +1409,7 @@ void SnowCover3D::_layers_sync(int p_i, float p_dt_h, float p_air) {
 			ls[0] = swe;
 			lr[0] = cell_density[p_i];
 			la[0] = LAYER_BOND_HOURS;
+			ll[0] = 0.0f;
 			lk[0] = LAYER_OLD;
 			k = 1;
 			layer_n.write[p_i] = 1;
@@ -1249,7 +1423,32 @@ void SnowCover3D::_layers_sync(int p_i, float p_dt_h, float p_air) {
 	if (k == 0) {
 		return;
 	}
-	// Age and settle, from the top down: each layer under the weight above it and half its own.
+	// What the layers are. The top crust (cell_crust, at the surface) is the top's crust-thick part; a top crust
+	// the bulk no longer has (it melted or broke up) is old snow again. Buried crusts stay crusts. The base is depth
+	// hoar while the bulk's share says so (follow-up 47).
+	const int n = resolution;
+	if (crust_enabled && cell_crust.size() == n * n) {
+		const bool top_crust = cell_crust[p_i] > 0.001f && cell_crust_burial[p_i] < 0.005f;
+		if (top_crust && lk[k - 1] != LAYER_CRUST) {
+			const float rho_c = MAX(CRUST_LAYER_DENSITY, lr[k - 1]);
+			_layers_split_top(p_i, cell_crust[p_i] * rho_c, rho_c, LAYER_CRUST);
+			k = layer_n[p_i];
+		} else if (!top_crust && lk[k - 1] == LAYER_CRUST && (cell_crust[p_i] <= 0.0f || cell_crust_wet[p_i] > 0.5f)) {
+			lk[k - 1] = LAYER_OLD;
+		}
+	}
+	if (cell_depth_hoar.size() == n * n && lk[0] != LAYER_CRUST) {
+		if (cell_depth_hoar[p_i] > 0.5f) {
+			lk[0] = LAYER_DEPTH_HOAR;
+		} else if (lk[0] == LAYER_DEPTH_HOAR && cell_depth_hoar[p_i] < 0.2f) {
+			lk[0] = LAYER_OLD;
+		}
+	}
+	_layers_water(p_i, p_dt_h, p_air);
+	// Age and settle, from the top down: each layer under the weight above it and half its own. Wet new and wind
+	// snow rounds within the day (wet metamorphism; Brun 1989); buried hoar wet through, or past HOAR_KEEP_HOURS,
+	// is gone as a weak layer.
+	const float cap = MAX(liquid_capacity, 0.005f);
 	float above = 0.0f;
 	float depth = 0.0f;
 	for (int j = 0; j < k; j++) {
@@ -1258,30 +1457,36 @@ void SnowCover3D::_layers_sync(int p_i, float p_dt_h, float p_air) {
 	float z = 0.0f; // from the top
 	for (int j = k - 1; j >= 0; j--) {
 		la[j] += p_dt_h;
-		if (lk[j] == LAYER_NEW && la[j] > LAYER_BOND_HOURS) {
+		const bool wet = ll[j] > 0.5f * cap * MAX(ls[j] - ll[j], 0.0f) && ll[j] > 0.01f;
+		if ((lk[j] == LAYER_NEW && (la[j] > LAYER_BOND_HOURS || wet)) || (lk[j] == LAYER_WIND && wet) ||
+				(lk[j] == LAYER_HOAR && (wet || la[j] > HOAR_KEEP_HOURS))) {
 			lk[j] = LAYER_OLD;
 		}
 		const float dj = ls[j] / lr[j];
 		const float mid = depth > 1e-4f ? (z + 0.5f * dj) / depth : 0.0f;
 		const float celsius = MIN(p_air, 0.0f) * (1.0f - mid);
-		lr[j] = layer_compaction(lr[j], 9.81f * (above + 0.5f * ls[j]), celsius, p_dt_h);
+		if (lk[j] != LAYER_HOAR) { // the crystals' layer is read by its mass, not its depth
+			lr[j] = layer_compaction(lr[j], 9.81f * (above + 0.5f * ls[j]), celsius, p_dt_h);
+		}
 		above += ls[j];
 		z += dj;
 	}
 	// Traces (a layer of under half a millimetre of water) join the one under them, as does a layer of the same kind
-	// and age (the wind's packing splits the top off in steps).
+	// and age (the wind's packing splits the top off in steps); crusts and buried hoar stay, thin as they are.
 	int w = 0;
 	for (int j = 0; j < k; j++) {
-		if (w > 0 && (ls[j] < 0.5f || (lk[j] == lk[w - 1] && Math::abs(la[j] - la[w - 1]) < LAYER_MERGE_HOURS))) {
+		if (w > 0 && !layer_persistent(lk[j]) && (ls[j] < 0.5f || (lk[j] == lk[w - 1] && Math::abs(la[j] - la[w - 1]) < LAYER_MERGE_HOURS))) {
 			const float s = ls[w - 1] + ls[j];
 			const float dd = ls[w - 1] / lr[w - 1] + ls[j] / lr[j];
 			ls[w - 1] = s;
 			lr[w - 1] = CLAMP(s / MAX(dd, 1e-6f), 30.0f, 917.0f);
+			ll[w - 1] += ll[j];
 			continue;
 		}
 		ls[w] = ls[j];
 		lr[w] = lr[j];
 		la[w] = la[j];
+		ll[w] = ll[j];
 		lk[w] = lk[j];
 		w++;
 	}
@@ -1351,7 +1556,7 @@ Array SnowCover3D::get_layers_at(const Vector3 &p_position) const {
 	const int x = CLAMP(int(Math::floor(p_position.x / cs)) - origin_cell.x, 0, n - 1);
 	const int z = CLAMP(int(Math::floor(p_position.z / cs)) - origin_cell.y, 0, n - 1);
 	const int i = z * n + x;
-	static const char *KINDS[3] = { "new", "wind", "old" };
+	static const char *KINDS[6] = { "new", "wind", "old", "crust", "hoar", "depth_hoar" };
 	for (int j = 0; j < pub.layer_n[i]; j++) {
 		const int k = i * PACK_LAYERS + j;
 		Dictionary l;
@@ -1359,7 +1564,11 @@ Array SnowCover3D::get_layers_at(const Vector3 &p_position) const {
 		l["density"] = pub.layer_rho[k];
 		l["depth"] = pub.layer_swe[k] / MAX(pub.layer_rho[k], 30.0f);
 		l["age"] = pub.layer_age[k];
-		l["kind"] = String(KINDS[MIN(int(pub.layer_kind[k]), 2)]);
+		l["kind"] = String(KINDS[MIN(int(pub.layer_kind[k]), 5)]);
+		l["liquid"] = pub.layer_liq.size() == pub.layer_swe.size() ? pub.layer_liq[k] : 0.0f;
+		if (pub.layer_kind[k] == LAYER_HOAR) {
+			l["crystal_mm"] = pub.layer_swe[k] * HOAR_MM_PER_KG;
+		}
 		out.push_back(l);
 	}
 	return out;
@@ -1416,11 +1625,8 @@ void SnowCover3D::_update_crust(float &r_crust, float &r_cycles, float &r_burial
 static constexpr float HOAR_LONGWAVE = 70.0f; // W/m2, clear-sky net loss of a snow surface at night
 static constexpr float HOAR_PACK = 5.0f; // W/m2 K, the pack's heat toward its cooling surface
 static constexpr float HOAR_CE = 0.0015f; // bulk transfer coefficient over snow (heat and vapour)
-static constexpr float HOAR_MM_PER_KG = 70.0f; // crystal height per kg/m2 deposited (a 0.07 kg/m2 night: 5 mm)
 static constexpr float HOAR_MAX = 30.0f; // mm
 static constexpr float HOAR_BREAK_WIND = 5.0f; // m/s at 10 m
-static constexpr float HOAR_MIN = 0.5f; // mm: smaller crystals do not make a layer
-static constexpr float HOAR_KEEP_HOURS = 1000.0f; // a buried layer counts as weak for about six weeks
 
 static float _vapour_ice(float p_celsius) { // Pa, over ice (Buck 1981)
 	return 611.15f * Math::exp(22.452f * p_celsius / (272.55f + p_celsius));
@@ -2215,6 +2421,7 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	layer_swe.ptrw();
 	layer_rho.ptrw();
 	layer_age.ptrw();
+	layer_liq.ptrw();
 	layer_kind.ptrw();
 	layer_n.ptrw();
 	cell_cornice_x.ptrw();
@@ -2351,6 +2558,7 @@ void SnowCover3D::_publish_cells() {
 	pub.layer_swe = layer_swe;
 	pub.layer_rho = layer_rho;
 	pub.layer_age = layer_age;
+	pub.layer_liq = layer_liq;
 	pub.layer_kind = layer_kind;
 	pub.layer_n = layer_n;
 	pub.sas_z = cell_sas_z;
@@ -3290,9 +3498,12 @@ void SnowCover3D::_wind_pack(float p_dt_h, const LocalVector<float> &p_wind) {
 						layer_swe.write[b + m] = layer_swe[b + m - 1];
 						layer_rho.write[b + m] = layer_rho[b + m - 1];
 						layer_age.write[b + m] = layer_age[b + m - 1];
+						layer_liq.write[b + m] = layer_liq[b + m - 1];
 						layer_kind.write[b + m] = layer_kind[b + m - 1];
 					}
 					const float part = left * rj;
+					layer_liq.write[b + j + 1] = layer_liq[b + j] * part / MAX(layer_swe[b + j], 1e-6f);
+					layer_liq.write[b + j] -= layer_liq[b + j + 1];
 					layer_swe.write[b + j] -= part;
 					layer_swe.write[b + j + 1] = part;
 					layer_rho.write[b + j + 1] = MIN(rj * packed / r, 917.0f);
@@ -3890,6 +4101,9 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density, bool p_world) {
 	}
 	const float rho_new = CLAMP(p_density, 30.0f, 917.0f);
 	for (int i = 0; i < resolution * resolution; i++) {
+		if (p_swe_mm > 0.0f && hoar_enabled) {
+			_layers_bury_hoar(i);
+		}
 		const float depth_old = cell_swe[i] > SWE_MIN ? cell_swe[i] / cell_density[i] : 0.0f;
 		const float swe = (cell_swe[i] > SWE_MIN ? cell_swe[i] : 0.0f) + MAX(p_swe_mm, 0.0f);
 		cell_swe.write[i] = swe;
@@ -4975,6 +5189,7 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_layers_enabled", "enabled"), &SnowCover3D::set_layers_enabled);
 	ClassDB::bind_method(D_METHOD("is_layers_enabled"), &SnowCover3D::is_layers_enabled);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("layer_compaction", "density", "stress", "celsius", "hours"), &SnowCover3D::layer_compaction);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("layer_barrier", "kind_above", "kind_below"), &SnowCover3D::layer_barrier);
 	ClassDB::bind_method(D_METHOD("is_drift_relief_enabled"), &SnowCover3D::is_drift_relief_enabled);
 	ClassDB::bind_method(D_METHOD("is_drift_obstacles_enabled"), &SnowCover3D::is_drift_obstacles_enabled);
 	ClassDB::bind_method(D_METHOD("set_drift_enabled", "enabled"), &SnowCover3D::set_drift_enabled);

@@ -179,19 +179,32 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	Vector<float> cell_wind_slab; // m of wind-packed snow in the pack (follow-up 45)
 	// The pack's layers (round 7, follow-up 49): up to PACK_LAYERS a cell, bottom first, each with its snow water
 	// (kg/m2), density, age (hours) and kind. The bulk fields stay the pack's total; the layers split it.
-	static constexpr int PACK_LAYERS = 6;
+	// Round 8 (follow-up 51): crusts, buried surface hoar and depth hoar are layers of their own, and each layer
+	// holds its share of the pack's liquid water (kg/m2), which percolates down and ponds over capillary barriers.
+public:
+	static constexpr int PACK_LAYERS = 8;
+	static constexpr float HOAR_MM_PER_KG_LAYER = 70.0f; // buried hoar crystal height per kg/m2 of its layer
 	enum LayerKind : uint8_t {
 		LAYER_NEW, // fallen snow, unbonded
 		LAYER_WIND, // laid down by the wind (wind slab)
 		LAYER_OLD, // settled, rounded
+		LAYER_CRUST, // a melt-freeze crust
+		LAYER_HOAR, // buried surface hoar
+		LAYER_DEPTH_HOAR, // the base turned to depth hoar
 	};
-	Vector<float> layer_swe, layer_rho, layer_age;
+
+private:
+	Vector<float> layer_swe, layer_rho, layer_age, layer_liq;
 	Vector<uint8_t> layer_kind, layer_n;
 	bool layers_enabled = true;
 	void _layers_alloc();
 	void _layers_push(int p_i, float p_swe, float p_rho, uint8_t p_kind);
 	void _layers_take(int p_i, float p_swe);
 	void _layers_sync(int p_i, float p_dt_h, float p_air);
+	int _layers_room(int p_i); // merges two layers under the top when full; the count after
+	void _layers_split_top(int p_i, float p_swe, float p_rho, uint8_t p_kind); // the top p_swe of the pack becomes a layer
+	void _layers_bury_hoar(int p_i); // the surface hoar about to be snowed on becomes a layer
+	void _layers_water(int p_i, float p_dt_h, float p_air);
 	float _top_density(int p_i, float p_depth) const; // the live layers' mean density over the top p_depth m
 	Vector<float> cell_depth_hoar; // 0..1, the base's depth hoar share (follow-up 47)
 	Vector<float> cell_slab_cover; // m of soft snow over the wind slab (0: the slab is the surface)
@@ -305,7 +318,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector<float> cornice_x, cornice_z, cornice_crack;
 		Vector<float> ice, white_ice;
 		Vector<float> lap; // mg/m2 BC equivalent showing at the surface
-		Vector<float> layer_swe, layer_rho, layer_age;
+		Vector<float> layer_swe, layer_rho, layer_age, layer_liq;
 		Vector<uint8_t> layer_kind, layer_n;
 	} pub;
 	// The published layers' mean density over the top p_depth metres of cell p_i (the slab over a weak layer); the
@@ -579,6 +592,12 @@ public:
 	void set_layers_enabled(bool p_enabled);
 	bool is_layers_enabled() const { return layers_enabled; }
 	static float layer_compaction(float p_density, float p_stress, float p_celsius, float p_hours);
+	// How much more liquid water a layer holds than its share where it lies over another (capillary barrier: fine
+	// over coarse grains; an ice crust under it), 1 where water passes on.
+	static float layer_barrier(int p_above, int p_below);
+	// The published layers' wettest liquid index (liquid over what the layer holds by liquid_capacity) in cell
+	// p_i, and the depth from the surface to the bottom of that layer (the interface the water ponds on).
+	float pub_wettest_layer(int p_i, float &r_depth) const;
 	void refresh_heights();
 
 	Rect2 get_map_rect() const;
