@@ -93,6 +93,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Bow wave: a sled's track with raised berms along its sides and a mound where it stopped.*
 
+- **Rut walls give way** (`SnowSurface3D.wall_collapse`): rut and trench walls taller than their layers can hold shed blocks into a lumpy debris toe, sooner where a vehicle works the rut.
+
 - **Packed-snow roads** (`SnowCover3D.traffic_enabled`, `get_grip_at()`): wheels and feet pack the snow they pass, spinning wheels polish it to an ice glaze, and tyre grip falls with it.
 
 ## Falling snow

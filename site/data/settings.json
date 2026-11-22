@@ -3947,6 +3947,17 @@
    "topic": "Deep snow"
   },
   {
+   "name": "Rut walls give way",
+   "settings": [
+    "SnowSurface3D.wall_collapse"
+   ],
+   "note": "",
+   "what": "rut and trench walls taller than their layers can hold shed blocks into a lumpy debris toe, sooner where a vehicle works the rut.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Deep snow"
+  },
+  {
    "name": "Packed-snow roads",
    "settings": [
     "SnowCover3D.traffic_enabled",
