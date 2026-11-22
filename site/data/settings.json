@@ -1147,7 +1147,7 @@
     "ploughing"
    ],
    "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in; a vehicle left standing in wet mud keeps settling, and suction holds its tyres as it pulls away.",
+   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in; lugs and chains cut clods out of stiff clay and fling them, or drop them behind the wheel when slow; a vehicle left standing in wet mud keeps settling, and suction holds its tyres as it pulls away.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1233,7 +1233,7 @@
     "wear_regrowth_days"
    ],
    "note": "",
-   "what": "repeated wheel passes pack the soil firmer so it sheds rain, flatten the grass and then wear it bare, and it all regrows over weeks.",
+   "what": "repeated wheel passes pack the soil firmer so it sheds rain, flatten the grass and then wear it bare, and it all regrows over weeks; wheels and wallowing animals knead wet clay into a seal, so rain stands in ruts and wallows for days.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1273,7 +1273,7 @@
     "mud_color_map"
    ],
    "note": "",
-   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates and shakes off on bumps.",
+   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates, shakes off on rough tracks and blows off at speed.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
