@@ -1082,6 +1082,12 @@ Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour
     good and 32,207 unthinned), fewer primitives (256 M against 259 M and 301 M) and fewer rows. Next: look at what
     the camera rays hit at a missing boulder's pixel (instance and primitive ids, a debug output in raygen), and the
     merged bakes' GPU contents rather than their CPU records.
+  - 22 Nov, evening (main 6f33ff9f): gone. The same repro (shore eye view 640x360, 4 spp, first 750 groups thinned,
+    --no-far-widen, plus --no-tiles since tile erosion now moves the shore) gives a thinned still bit-identical to the
+    unthinned one (0 pixels over 20 against 10,718 on 986d3581). Not from b06913a51d (the compiling-shader fallback):
+    with it taken out the pair still matches. Camera rays forced opaque change nothing either, so the any-hit path
+    is clear. Some change between 986d3581 and 6f33ff9f removed it (or moved the far groups off the line); stills may
+    thin again once a PC check of a thinned build_area still in PT agrees.
 - The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
   world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
   Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.

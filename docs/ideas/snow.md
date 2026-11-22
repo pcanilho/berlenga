@@ -1971,6 +1971,14 @@ Built:
   crust stands out as a ledge (lit top, shadow line under it), a hoar seam is a recess (0.55, shadowed at its top);
   stronger tints (old (0.8, 0.84, 0.9), hoar 0.4, depth hoar (0.66, 0.65, 0.62), crust (0.68, 0.79, 0.93) at
   roughness 0.1); the cut's tool marks as streaks down the wall. The view's pack has two crusts.
+- Second review: the coarse base read as stucco and soft dark streaks ran down the end wall. Depth hoar's grains are
+  now faceted (each 6 mm grain cell its own tilt) with a per-grain brightness speckle (crystal faces to the light or
+  the shade), so it reads as loose sugary grains; tool marks are fainter. The streaks were the deformation field's
+  rim: pressed rims slump tile by tile and leave a ripple along the wall top that grazing light picks out (the view
+  now digs without a rim, as a shovelled trench has none). Not yet: smooth the rim slump across tile seams.
+  Grain under a pixel: raster fades the grains' relief and speckle as the pixel's footprint nears their size (it
+  aliased into salt-and-pepper before); the path tracer keeps them and averages them over its jittered samples, so the
+  two agree at any resolution (both smooth at 960 px across this view, grain at 1920).
 - `--test=layers` checks the map: new over buried hoar over old, down to the pack's depth. `--view=strata`: a
   2.4 m trench pressed nearly to the ground (compacted_density 900) and two ruts in an 80 cm pack (depth hoar, new,
   crust, buried hoar, new), seen from inside the trench.

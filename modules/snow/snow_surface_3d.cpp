@@ -559,7 +559,7 @@ void fragment() {
 				else if (kind == 2.0) { tint_b = vec3(0.8, 0.84, 0.9); rough_b = 0.8; grain = 0.006; bump = 0.3; }
 				else if (kind == 3.0) { tint_b = vec3(0.68, 0.79, 0.93); rough_b = 0.1; grain = 0.02; bump = 0.06; }
 				else if (kind == 4.0) { tint_b = vec3(0.4, 0.43, 0.5); rough_b = 0.95; grain = 0.003; bump = 0.5; shade = 0.55; }
-				else if (kind == 5.0) { tint_b = vec3(0.66, 0.65, 0.62); rough_b = 0.97; grain = 0.012; bump = 0.75; shade = 0.85; }
+				else if (kind == 5.0) { tint_b = vec3(0.66, 0.65, 0.62); rough_b = 0.97; grain = 0.006; bump = 0.4; shade = 0.85; }
 				if (band_wet) {
 					tint_b *= vec3(0.72, 0.78, 0.86);
 					rough_b = 0.25;
@@ -579,9 +579,13 @@ void fragment() {
 				}
 				// Grains: value noise on the wall at the band's grain size (two octaves), plus the cut's tool marks
 				// (streaks down the wall), as a bumped normal.
-				// Grains under a pixel average out: their relief fades as the pixel's footprint nears their size.
-				float foot = (PROJECTION_MATRIX[3][3] != 0.0 ? 1.0 : distance(w_pos, INV_VIEW_MATRIX[3].xyz)) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-				bump *= clamp(grain / max(foot, 1e-6) - 0.75, 0.0, 1.0);
+				// Grains under a pixel average out: in raster their relief fades as the pixel's footprint nears their
+				// size; the path tracer averages them itself over its jittered samples, so it keeps them.
+				float grain_seen = 1.0;
+				if (!IN_PATH_TRACER) {
+					float foot = (PROJECTION_MATRIX[3][3] != 0.0 ? 1.0 : distance(w_pos, INV_VIEW_MATRIX[3].xyz)) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+					grain_seen = clamp(0.7 * grain / max(foot, 1e-6) - 0.75, 0.0, 1.0);
+				}
 				vec3 q = w_pos / grain;
 				vec3 e3 = vec3(0.37, 0.0, 0.0);
 				float n0 = snow_vnoise(q) + 0.5 * snow_vnoise(q * 2.3 + 7.1);
@@ -589,15 +593,23 @@ void fragment() {
 				float ny = snow_vnoise(q + e3.yxy) + 0.5 * snow_vnoise((q + e3.yxy) * 2.3 + 7.1);
 				float nz = snow_vnoise(q + e3.yyx) + 0.5 * snow_vnoise((q + e3.yyx) * 2.3 + 7.1);
 				vec3 gn = vec3(nx - n0, ny - n0, nz - n0) / 0.37;
+				if (kind == 5.0) {
+					// Depth hoar's cups and prisms: faceted, not rounded; the grain cell's own tilt instead of a smooth bump.
+					vec3 fc = floor(w_pos / grain) + 5.0;
+					gn = mix(gn, vec3(snow_vhash(fc) - 0.5, snow_vhash(fc + 1.7) - 0.5, snow_vhash(fc + 3.1) - 0.5) * 3.0, 0.6);
+				}
 				vec3 tq = vec3(w_pos.x * 7.0, w_pos.y * 0.6, w_pos.z * 7.0);
 				float tm0 = snow_vnoise(tq);
 				vec3 tg = vec3(snow_vnoise(tq + vec3(0.2, 0.0, 0.0)) - tm0, 0.0, snow_vnoise(tq + vec3(0.0, 0.0, 0.2)) - tm0) / 0.2;
-				vec3 pert = gn * bump + tg * 0.5;
+				vec3 pert = gn * bump * grain_seen + tg * 0.12;
 				vec3 nb = normalize(nf - (pert - nf * dot(pert, nf)) * strata_wall);
 				nf = nb;
 				tn = vec3(dot(nf, normalize(w_t)), dot(nf, normalize(w_b)), dot(nf, normalize(w_n)));
-				// Coarse grains also break the colour up a little (deeper pores between them).
-				float pores = mix(1.0, 0.86 + 0.14 * n0 / 1.5, clamp(bump, 0.0, 1.0));
+				// Grains also break the colour up: each grain cell its own brightness (crystal faces turned to the
+				// light or into the shade), loose coarse grains most, the pores between them darker.
+				float speck = snow_vhash(floor(w_pos / (grain * 0.7)) + 11.0);
+				float loose = kind == 5.0 ? 1.0 : (kind == 2.0 ? 0.45 : 0.25);
+				float pores = mix(1.0, (0.86 + 0.14 * n0 / 1.5) * mix(0.82, 1.12, speck), clamp(bump * 2.0, 0.0, 1.0) * loose * grain_seen);
 				ALBEDO = mix(ALBEDO, ALBEDO * tint_b * shade * pores, strata_wall);
 				ROUGHNESS = mix(ROUGHNESS, rough_b, strata_wall);
 			}

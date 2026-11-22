@@ -6829,7 +6829,7 @@ func _snow_strata() -> void:
 		await get_tree().physics_frame
 	var g: float = snow.get_ground_height_at(best) if snow.has_method("get_ground_height_at") else best.y
 	var w := float(args.get("strata-w", "1.2"))
-	surf.set("rim_share", 0.1)
+	surf.set("rim_share", 0.0) # dug: the snow is thrown out, no pressed rim
 	surf.set("compacted_density", 900.0)
 	surf.call("press_box", Vector3(best.x, g, best.z), Vector2(w, 8.0), atan2(sf.x, sf.z), g + 0.01)
 	for i in 30:

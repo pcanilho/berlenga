@@ -3996,7 +3996,7 @@ func _build_strata(cam: Camera3D) -> void:
 		await get_tree().process_frame
 	var g := snow.get_ground_height_at(p)
 	# A dug trench across the view and two tyre ruts beside it.
-	surface.rim_share = 0.1
+	surface.rim_share = 0.0 # a dug trench: the snow is thrown out, not pushed into a rim
 	surface.compacted_density = 900.0 # pressed nearly to the ground: a dug trench
 	surface.press_box(Vector3(0.0, g, 0.0), Vector2(2.4, 7.0), 0.0, g + 0.01)
 	surface.press_box(Vector3(-2.2, g, 0.0), Vector2(0.3, 7.0), 0.0, g + 0.01)
