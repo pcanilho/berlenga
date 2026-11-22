@@ -5,3 +5,4 @@
 - Clear ice on surfaces glazed by freezing rain, raster and path traced (`BaseMaterial3D.glaze`, on for trees).
 - Glazed trees as geometry: a clear ice coat round twigs and limbs and icicles under them, seen alike by raster and the path tracer (`TreeGenerator.glaze_mm`).
 - Near trees in a vegetation field grow the weather's glaze as ice geometry, in bands, and swap as it builds or melts.
+- After an ice storm: broken tops, stripped crowns and birch bent over in arches, by species, and a northern hardwood stand after one (`TreeGenerator.ice_storm_years`, `STAND_ICE_STORM`).
