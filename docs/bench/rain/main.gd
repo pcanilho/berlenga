@@ -17,6 +17,7 @@ extends Node3D
 #   --view=pond       a pool in 10 mm/h rain under a wet tree and a shed: rings, streaks, splashes, drips,
 #                     beaded leaves (--close: down on the water and leaves for a 100% crop)
 #   --rate=R          rain rate mm/h (default 10)
+#   --no-weather      no WeatherMap3D: RainFall3D alone at --rate (its rainfall_rate_override); the rings still show
 #   --temp=C          the pond's air (default 12); --warm-nose=C a warm layer aloft (freezing rain under 0 C air:
 #                     the rings stay, snow would stop them)
 #   --drops=N         most falling drops drawn (default RainFall3D's 200000; fewer for a quick path traced still)
@@ -40,6 +41,7 @@ var rate := 10.0
 var drops := 0
 var pond_temp := 12.0
 var warm_nose := 0.0
+var no_weather := false
 var fails := 0
 var weather: WeatherMap3D
 
@@ -58,6 +60,7 @@ func _ready() -> void:
 		elif a.begins_with("--drops="): drops = int(a.substr(8))
 		elif a.begins_with("--temp="): pond_temp = float(a.substr(7))
 		elif a.begins_with("--warm-nose="): warm_nose = float(a.substr(12))
+		elif a == "--no-weather": no_weather = true
 	if test:
 		await _run_tests()
 		print("RAIN CHECKS: ", "PASS" if fails == 0 else "%d FAILED" % fails)
@@ -219,9 +222,10 @@ func _box(size: Vector3, pos: Vector3, m: Material, collide := true) -> void:
 
 
 func _build_pond() -> void:
-	weather = _weather(pond_temp, rate)
-	weather.warm_nose_temperature = warm_nose
-	weather.advance(1800.0) # half an hour of rain: the canopy full, the ground wet
+	if not no_weather:
+		weather = _weather(pond_temp, rate)
+		weather.warm_nose_temperature = warm_nose
+		weather.advance(1800.0) # half an hour of rain: the canopy full, the ground wet
 	var env := Environment.new()
 	var sky := Sky.new()
 	var sm := ProceduralSkyMaterial.new()
@@ -281,6 +285,8 @@ func _build_pond() -> void:
 	fall.follow_target = NodePath("../Probe")
 	if drops > 0:
 		fall.max_drops = drops
+	if no_weather:
+		fall.rainfall_rate_override = rate
 	add_child(fall)
 	var cam := Camera3D.new()
 	add_child(cam)
@@ -297,7 +303,7 @@ func _build_pond() -> void:
 		env.pathtracing_enabled = false
 	for i in 120:
 		await get_tree().process_frame
-	print("rain %.2f mm/h, %d drops, %d drip sources (%.2f drips/s), canopy wetness %.2f, haze %.2f per km" % [fall.get_rainfall_rate(), fall.get_visible_drops(), fall.get_drip_source_count(), fall.get_drip_rate(), weather.get_canopy_wetness_at(Vector3.ZERO), fall.get_extinction() * 1000.0])
+	print("rain %.2f mm/h, %d drops, %d drip sources (%.2f drips/s), canopy wetness %.2f, haze %.2f per km" % [fall.get_rainfall_rate(), fall.get_visible_drops(), fall.get_drip_source_count(), fall.get_drip_rate(), weather.get_canopy_wetness_at(Vector3.ZERO) if weather else 0.0, fall.get_extinction() * 1000.0])
 	if not raster:
 		env.pathtracing_enabled = true
 		# Wait for every path traced surface (animated vegetation needs about 50 frames).

@@ -116,6 +116,37 @@ vec3 rain_ripples(vec2 p_xz, float p_time, float p_rate, float p_footprint) {
 	return r;
 }
 
+// A footstep, a wheel or a dropped stone in shallow standing water (docs/ideas/rain.md, step 7): one impact
+// p_impact = (x, z, age s, amplitude; 1 a walker's step). A sole slapping into a puddle sends out a short train of
+// waves from its edge. In water a centimetre deep their wavelength (about 4 cm) sits where gravity and surface tension
+// both matter, with depth: w^2 = (g k + sigma k^3 / rho) tanh(k h) (Lamb 1932, 267), about 0.26 m/s at h = 1 cm,
+// so the train's front leaves the sole's edge (8 cm) at that speed. The train is wider than a raindrop's packet
+// (a sole is not a point) and spreads as it travels; its height falls with the square root of its radius and with
+// damping in the shallow layer (Lighthill 1978), over its 1.6 s life. Finer than the pixel (p_footprint, m) it fades.
+vec2 water_impact_ripple(vec2 p_xz, vec4 p_impact, float p_footprint) {
+	const float life = 1.6;
+	const float wl = 0.04;
+	const float r0 = 0.08;
+	float age = p_impact.z;
+	if (p_impact.w <= 0.0 || age < 0.0 || age >= life) {
+		return vec2(0.0);
+	}
+	vec2 d = p_xz - p_impact.xy;
+	float r = length(d);
+	float front = r0 + 0.26 * age;
+	float sig = wl * (1.2 + 2.0 * age / life);
+	float x = r - front;
+	if (abs(x) > 3.0 * sig) {
+		return vec2(0.0);
+	}
+	float k = 6.2831853 / wl;
+	float u = 1.0 - age / life;
+	float g = u * u * sqrt(r0 / (r0 + 0.26 * age));
+	float shown = 1.0 - smoothstep(0.3 * wl, wl, p_footprint);
+	float s = 0.3 * p_impact.w * shown * g * (-sin(k * x) - 2.0 * x / (k * sig * sig) * cos(k * x)) * exp(-x * x / (sig * sig));
+	return s * d / max(r, 1e-4);
+}
+
 // A roughness that also carries p_variance of unresolved slope (Beckmann alpha^2 = 2 sigma^2, added to
 // the surface's own alpha^2; alpha is roughness squared).
 float rain_ripple_roughness(float p_roughness, float p_variance) {

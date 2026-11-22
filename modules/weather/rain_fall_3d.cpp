@@ -46,6 +46,7 @@
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/world_3d.h"
 #include "servers/physics_3d/physics_server_3d.h"
+#include "servers/rendering/rendering_server.h"
 
 // Shared by the particle shader and the drop's material: sizes and the splash's shape.
 static const char *RAIN_SHARED = R"(
@@ -856,6 +857,8 @@ void RainFall3D::_update(double p_delta) {
 		cur_rate = 0.0f;
 		cur_share = 1.0f;
 	}
+	// With no weather map the rain readers (rings on water and puddles, raster and path tracer) read this rain instead.
+	_publish_fallback(cur_rate);
 	const float volume = fall_extent.x * fall_extent.y * fall_extent.z;
 	const float wanted = drop_number_density(cur_rate, min_drop_size) * density_scale * volume;
 	cur_ratio = falling_enabled ? CLAMP(wanted / MAX(max_drops, 1), 0.0f, 1.0f) : 0.0f;
@@ -920,6 +923,16 @@ void RainFall3D::_clear_haze() {
 	pushed_sigma = -1.0f;
 }
 
+// weather_rain_fallback (material.cpp: weather_rainfall_at()): the rain this node falls, for the shaders that read
+// rain when no WeatherMap3D publishes its map. The map wins whenever it exists, so there is still one source.
+void RainFall3D::_publish_fallback(float p_rate) {
+	if (Engine::get_singleton()->is_editor_hint() || Math::abs(p_rate - published_fallback) < 1e-3f) {
+		return;
+	}
+	published_fallback = p_rate;
+	RenderingServer::get_singleton()->global_shader_parameter_set(SNAME("weather_rain_fallback"), Vector4(p_rate, 0.0f, 0.0f, 0.0f));
+}
+
 void RainFall3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
@@ -933,6 +946,7 @@ void RainFall3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			_clear_haze();
+			_publish_fallback(0.0f);
 			set_process_internal(false);
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {

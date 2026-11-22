@@ -623,6 +623,14 @@ void BaseMaterial3D::init_shaders() {
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_warm_nose", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Its 10 m wind (get_surface_rain_functions_code(); the weather module declares it too).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_wind_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+}
+
+		// Footsteps and splashes in the ground's standing water (GroundSurface3D): a row of impacts (x, z, age,
+		// amplitude) and their count in x of the info.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/water_impacts", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/water_impact_info", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// The rain RainFall3D falls with no weather map (x: mm/h liquid), for the rain readers then.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_fallback", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_frost_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Its sea spray square (R: the spray's wetness, G: salt on surfaces as 1 - exp(-g/m2 / 10)).
@@ -957,6 +965,7 @@ global uniform sampler2D weather_rain_map; // precipitation mm/h, canopy wetness
 global uniform vec4 weather_rain_rect; // x, z, size; size 0 = no weather
 global uniform vec4 weather_precip_phase; // ground air temperature (C), lapse (K/m), humidity, ground height (m)
 global uniform vec4 weather_warm_nose; // warm layer aloft: peak (C, 0 none), base (m above the ground)
+global uniform vec4 weather_rain_fallback; // with no weather map: x the rain RainFall3D falls (mm/h liquid)
 
 vec4 weather_rain_sample(vec3 p_world_pos) {
 	if (weather_rain_rect.z <= 0.0) {
@@ -972,6 +981,9 @@ float weather_air_temperature_at(vec3 p_world_pos) {
 	return weather_precip_phase.x - weather_precip_phase.y * (p_world_pos.y - weather_precip_phase.w);
 }
 float weather_rainfall_at(vec3 p_world_pos) {
+	if (weather_rain_rect.z <= 0.0) {
+		return max(weather_rain_fallback.x, 0.0); // no weather map: the rain RainFall3D falls, already liquid
+	}
 	float r = weather_rain_sample(p_world_pos).r;
 	return r > 0.0 ? r * rain_liquid_share_nose(weather_air_temperature_at(p_world_pos), weather_precip_phase.z, p_world_pos.y - weather_precip_phase.w, weather_warm_nose.x, weather_warm_nose.y) : 0.0;
 }
@@ -1024,6 +1036,24 @@ float weather_surface_puddle(vec3 p_world_pos, vec3 p_world_normal) {
 }
 )";
 	return code;
+}
+
+// Footsteps and splashes in standing water (water_impact_ripple(), docs/ideas/rain.md step 7): the impacts
+// GroundSurface3D publishes, live ones first (the path tracer reads the same row).
+String BaseMaterial3D::get_water_impact_functions_code() {
+	return R"(
+global uniform sampler2D water_impacts; // x, z, age (s), amplitude; one texel per impact
+global uniform vec4 water_impact_info; // x: live impacts (the first x texels)
+
+vec2 water_impacts_slope(vec2 p_xz, float p_footprint) {
+	vec2 s = vec2(0.0);
+	int n = min(int(water_impact_info.x), textureSize(water_impacts, 0).x);
+	for (int i = 0; i < n; i++) {
+		s += water_impact_ripple(p_xz, texelFetch(water_impacts, ivec2(i, 0), 0), p_footprint);
+	}
+	return s;
+}
+)";
 }
 
 // Glaze (docs/ideas/trees.md 5be): the clear ice freezing rain leaves over everything it wets, p_mm of radial ice
@@ -2377,6 +2407,9 @@ uniform vec3 uv2_offset;
 	if (glaze) {
 		code += get_glaze_functions_code();
 	}
+	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
+		code += get_water_impact_functions_code();
+	}
 
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
 		code += "uniform float fov_override : hint_range(1.0, 179.0, 0.1);\n";
@@ -3547,6 +3580,8 @@ void fragment() {)";
 				float grs = max(gwl.y, gwl.w) * (1.0 - gil.y);
 				vec3 grr = grs > 0.0 ? rain_ripples(gwp.xz, TIME, weather_rainfall_at(gwp), ground_fp) : vec3(0.0);
 				gfs += grr.xy * grs;
+				// Footsteps and splashes in it (water_impacts_slope()).
+				gfs += grs > 0.0 ? water_impacts_slope(gwp.xz, ground_fp) * grs : vec2(0.0);
 				ROUGHNESS = mix(ROUGHNESS, rain_ripple_roughness(ROUGHNESS, grr.z), grs);
 			}
 			if (gfs != vec2(0.0)) {

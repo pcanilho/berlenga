@@ -3898,9 +3898,20 @@ void main() {
 				float gair = get_rt_param(RT_PARAM_PRECIP_TEMPERATURE) - get_rt_param(RT_PARAM_PRECIP_LAPSE) * (gfp.y - get_rt_param(RT_PARAM_PRECIP_GROUND));
 				grate = max(gprec, 0.0) * rain_liquid_share_nose(gair, get_rt_param(RT_PARAM_PRECIP_HUMIDITY), gfp.y - get_rt_param(RT_PARAM_PRECIP_GROUND),
 								get_rt_param(RT_PARAM_PRECIP_NOSE), get_rt_param(RT_PARAM_PRECIP_NOSE_BASE));
+			} else if (grs > 0.0) {
+				grate = max(get_rt_param(RT_PARAM_RAIN_FALLBACK), 0.0); // no weather map: RainFall3D's rain (weather_rainfall_at())
 			}
 			vec3 grr = grate > 0.0 ? rain_ripples(gfp.xz, scene_data_block.data.time, grate, gffp) : vec3(0.0);
 			gfs += grr.xy * grs;
+			// Footsteps and splashes in it (material.cpp: water_impacts_slope()).
+			uint gimp = uint(get_rt_param(RT_PARAM_WATER_IMPACTS)); // (bindless index + 1) * 32 + count
+			if (grs > 0.0 && gimp >= 32u) {
+				uint gimt = gimp / 32u - 1u;
+				int gin = min(int(gimp % 32u), textureSize(sampler2D(bindless_textures[nonuniformEXT(gimt)], SAMPLER_NEAREST_CLAMP), 0).x);
+				for (int i = 0; i < gin; i++) {
+					gfs += water_impact_ripple(gfp.xz, texelFetch(sampler2D(bindless_textures[nonuniformEXT(gimt)], SAMPLER_NEAREST_CLAMP), ivec2(i, 0), 0), gffp) * grs;
+				}
+			}
 			m.roughness = mix(m.roughness, rain_ripple_roughness(m.roughness, grr.z), grs);
 		}
 		if (gfs != vec2(0.0)) {

@@ -922,6 +922,7 @@ public:
 	void set_glaze(bool p_enable);
 	bool is_glaze() const;
 	static String get_glaze_functions_code();
+	static String get_water_impact_functions_code();
 
 	void set_snow_amount(float p_amount);
 	float get_snow_amount() const;

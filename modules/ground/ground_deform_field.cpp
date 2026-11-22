@@ -974,6 +974,9 @@ void GroundDeformField::press_bodies(SceneTree *p_tree, const PackedStringArray 
 					sb.width = st.width;
 					const float ssink = p_columns.sinkage(sb);
 					press(p_columns, st.position, 0.5f * st.length, Vector2(0.5f * st.length, 0.5f * st.width), st.yaw, true, st.position.y, ssink, true, p_contact_tolerance, Vector2());
+					if (impact_sink) {
+						impact_sink->push_back(WaterImpact{ st.position, st.load_share, 0 });
+					}
 				}
 				continue;
 			}
@@ -991,6 +994,10 @@ void GroundDeformField::press_bodies(SceneTree *p_tree, const PackedStringArray 
 			for (int k = 1; k <= steps; k++) {
 				const Vector3 p = from.lerp(center, float(k) / steps);
 				press(p_columns, p, b.radius, b.box ? b.box_half : Vector2(), b.yaw, b.box, p.y - b.half_height, sink, b.round, p_contact_tolerance, velocity);
+			}
+			// A body moving through puddles: its wave trains grow with its speed (a slow wade barely stirs them).
+			if (impact_sink && velocity.length() > 0.2f) {
+				impact_sink->push_back(WaterImpact{ Vector3(center.x, center.y - b.half_height, center.z), CLAMP(float(velocity.length()) / 1.5f, 0.2f, 1.5f), uint64_t(n3->get_instance_id()) });
 			}
 			movers[n3->get_instance_id()] = Mover{ center, frame };
 		}

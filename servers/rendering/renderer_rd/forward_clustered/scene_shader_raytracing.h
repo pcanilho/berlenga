@@ -261,6 +261,11 @@ public:
 	static constexpr int RT_PARAM_PRECIP_NOSE_BASE = 86;
 	// WeatherMap3D's 10 m wind (weather_wind_map) over the wetness rect, for the rain a face catches. 0 = none.
 	static constexpr int RT_PARAM_WIND_MAP = 89;
+	// With no weather map, the rain RainFall3D falls (weather_rain_fallback.x, mm/h liquid): the rings' rain then.
+	static constexpr int RT_PARAM_RAIN_FALLBACK = 87;
+	// Footsteps and splashes in the ground's standing water (water_impacts, water_impact_info): the impacts' texture
+	// and their count, packed as (bindless index + 1) * 32 + count; 0 none.
+	static constexpr int RT_PARAM_WATER_IMPACTS = 88;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

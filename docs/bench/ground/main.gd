@@ -1067,6 +1067,16 @@ func _run_puddle_tests() -> void:
 	_check("ground water seeps into a rut up to the water table", absf(floor_h + w + 0.06) < 0.01, "surface %.1f cm (table -6 cm)" % ((floor_h + w) * 100.0))
 	_check("it stands level", vs.y < 0.003, "%.1f mm from lowest to highest" % (vs.y * 1000.0))
 	_check("none outside the rut", surface.get_standing_water_at(o + Vector3(0.6, 0, 0)) == 0.0, "%.2f mm beside it" % (surface.get_standing_water_at(o + Vector3(0.6, 0, 0)) * 1000.0))
+	# Footsteps and splashes in it (WorldWater.impulse; docs/ideas/rain.md step 7): one wave train where the water
+	# stands, none on the dry ground beside it, gone after its 1.6 s.
+	WorldContracts.get_water().impulse(o, 0.1, 0.3)
+	WorldContracts.get_water().impulse(o + Vector3(0.6, 0, 0), 0.1, 0.3)
+	await get_tree().physics_frame
+	var imps := surface.get_water_impacts()
+	_check("a splash in the rut sends out a wave train, none on the dry ground", imps.size() == 1 and absf(imps[0].w - 1.0) < 0.01, "%d trains" % imps.size())
+	for k in 120:
+		await get_tree().physics_frame
+	_check("and it dies out", surface.get_water_impacts().is_empty(), "%d left after 2 s" % surface.get_water_impacts().size())
 	# A tyre wading up the rut at 2 m/s (mud stage 4c): the water rises ahead of it and falls behind, volume kept
 	# (sources and sinks stopped).
 	surface.runoff_time_scale = 0.0
