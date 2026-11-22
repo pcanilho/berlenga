@@ -2194,6 +2194,9 @@ func _cold_pool_tests() -> void:
 	var fog_side: float = w.valley_fog_top_at(Vector3(150, 0, 0))
 	var fog_up: float = w.valley_fog_top_at(Vector3(300, 0, 0))
 	_check("valley fog: the saturated pool fills with fog, its top level across the valley; the slopes above it and the shoulders clear", fog_depth > 20.0 and fog_top < 200.0 and absf(fog_side - fog_top) < 3.0 and fog_up == -INF and w.valley_fog_top_at(shoulder) == -INF, "%.0f m deep on the floor, top at %.0f m there and %.0f m 150 m across (ground 14 m); clear at 300 m (ground 49 m) and on the shoulder" % [fog_depth, fog_top, fog_side])
+	var fw_floor: float = w.fog_water_at(floor_p)
+	var fw_shoulder: float = w.fog_water_at(shoulder)
+	_check("valley fog: what stands in it stands in cloud water (fog_water_at: the drip under trees, rime below 0 C), the shoulders above it none", fw_floor > 0.05 and fw_floor < 0.4 and fw_shoulder == 0.0, "%.2f g/m3 on the floor, %.2f on the shoulder" % [fw_floor, fw_shoulder])
 	m.wind_speed = 8.0
 	m.snap_to_settings()
 	m.advance(2.0 * 3600.0)
