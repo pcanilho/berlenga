@@ -211,6 +211,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		float direct_normal = 0.0f; // W/m2 at the ground, clear sky
 		float wind_factor = 0.0f; // drift weight, 0..1
 		float wind_speed = 0.0f; // m/s, the flat-ground wind at 10 m
+		float warm_nose_melt = 0.0f; // share melted in a warm layer aloft (WeatherMap3D), falling as rain
 		float drift_norm = 1.0f;
 		float base_precip = 0.0f;
 		double weather_dt = 0.0; // s of weather time this update steps

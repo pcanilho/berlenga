@@ -244,6 +244,7 @@ func _ready() -> void:
 			await _run_fire_tests()
 		elif only == "sleet":
 			_run_sleet_tests()
+			await _run_warm_nose_tests()
 		elif only == "avalanche":
 			await _run_avalanche_tests()
 		elif only == "triggers":
@@ -452,6 +453,7 @@ func _run_tests() -> void:
 	await _run_wind_slab_tests()
 	await _run_sastrugi_tests()
 	await _run_depth_hoar_tests()
+	await _run_warm_nose_tests()
 	await _run_hoar_tests()
 	_run_suncup_tests()
 	await _run_rime_tests()
@@ -855,6 +857,34 @@ func _run_depth_hoar_tests() -> void:
 		while av.is_running():
 			av.step(0.5)
 	_check("the old pack holds alone; 30 cm of new snow holds over rounded snow and releases the whole pack on depth hoar", int(counts[0][0]) == 0 and int(counts[1][0]) == 0 and int(counts[0][1]) == 0 and int(counts[1][1]) >= 1, "%d / %d releases before the storm, %d without depth hoar, %d on it" % [counts[0][0], counts[1][0], counts[0][1], counts[1][1]])
+
+
+# Freezing rain (weather's warm_nose_temperature): under a warm layer aloft the cover and the falling snow take the
+# weather's rain share, so a -4 C storm lands as rain on the pack instead of snow.
+func _run_warm_nose_tests() -> void:
+	print("Freezing rain under a warm layer aloft:")
+	var got := []
+	for nose: float in [0.0, 4.0]:
+		await _setup("flat", 64.0, 16, -4.0)
+		snow.add_snow(40.0, 150.0)
+		weather.temperature = -4.0
+		weather.rain_rate = 2.0
+		weather.cloud_cover = 1.0
+		weather.wind_speed = 1.0
+		weather.warm_nose_temperature = nose
+		weather.snap_to_settings()
+		weather.advance(60.0)
+		var rate := snow.get_snowfall_rate_at(Vector3.ZERO)
+		var d0 := snow.get_depth_at(Vector3.ZERO)
+		for h in 3:
+			weather.advance(60.0)
+			snow.advance(3600.0)
+		got.append([rate, snow.get_depth_at(Vector3.ZERO) - d0, snow.get_swe_at(Vector3.ZERO)])
+	weather.warm_nose_temperature = 0.0
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
+	_check("a warm layer aloft turns the snowfall to rain on the pack (it no longer deepens it)", float(got[0][0]) > 1.0 and float(got[1][0]) < 0.1 and float(got[1][1]) < 0.25 * float(got[0][1]) and float(got[1][2]) > 40.0, "snowfall %.2f mm/h without, %.2f with; the pack %.1f cm deeper without, %.1f cm with (%.0f mm water held)" % [got[0][0], got[1][0], got[0][1] * 100.0, got[1][1] * 100.0, got[1][2]])
 
 
 func _road_wheel(spin: float, roll: float) -> RigidBody3D:
