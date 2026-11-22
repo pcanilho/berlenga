@@ -116,6 +116,62 @@ void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
 	rt_cone_uv_grad = !any(isnan(grads)) && !any(isinf(grads));
 }
 
+#ifdef RT_TEXTURE_STREAMING
+// Texture streaming feedback (docs/ideas/quality-and-budgets.md). Raster fragments write the squared UV
+// derivative each streamed material is sampled at into the streamer's feedback buffer; a path tracer also
+// samples in reflections, refractions and bounces, often off screen. Each closest hit writes its ray cone's
+// footprint the same way (atomicMax of the bit-inverted float, so the sharpest request wins), so the streamer
+// keeps every mip a path reads and path tracing never shows less detail than the rays sample.
+layout(set = 0, binding = 53, std430) buffer restrict RTStreamingFeedback {
+	uint data[];
+}
+rt_streaming_feedback;
+layout(set = 0, binding = 54, std430) restrict readonly buffer RTStreamingIndex {
+	uint data[]; // Per material table entry: its index into rt_streaming_feedback, or 0xFFFFFFFF.
+}
+rt_streaming_index;
+
+// After rt_texture_cone(): the footprint in the material's UV1, as the derivatives raster sees.
+void rt_streaming_report(uint p_geometry_idx) {
+	if (rt_cone_width <= 0.0) {
+		return;
+	}
+	const uint table_index = geometries[p_geometry_idx].material_index & RT_MATERIAL_INDEX_MASK;
+	if (table_index >= uint(rt_streaming_index.data.length())) {
+		return;
+	}
+	const uint feedback_index = rt_streaming_index.data[table_index];
+	if (feedback_index >= uint(rt_streaming_feedback.data.length())) {
+		return;
+	}
+	const MaterialData mat = materials[table_index];
+	vec2 dx;
+	vec2 dy;
+	if ((mat.flags & RT_MAT_FLAG_TRIPLANAR) != 0u) {
+		// Triplanar UVs are scaled world positions: the footprint across the ray (the sharper axis).
+		dx = vec2(rt_cone_width * mat.uv1_scale.x, 0.0);
+		dy = vec2(0.0, rt_cone_width * mat.uv1_scale.y);
+	} else if (rt_cone_uv_grad) {
+		dx = rt_cone_uv_dx * mat.uv1_scale.xy;
+		dy = rt_cone_uv_dy * mat.uv1_scale.xy;
+	} else if (rt_cone_uv_lod > RT_TEXTURE_LOD_BASE) {
+		const float s = exp2(rt_cone_uv_lod);
+		dx = vec2(s * mat.uv1_scale.x, 0.0);
+		dy = vec2(0.0, s * mat.uv1_scale.y);
+	} else {
+		return;
+	}
+	// The same level the raster fragments compute: the minor axis, limited by 16x anisotropy.
+	const float px_sq = dot(dx, dx);
+	const float py_sq = dot(dy, dy);
+	const float lod_sq = max(min(px_sq, py_sq), max(px_sq, py_sq) / 256.0);
+	if (isnan(lod_sq) || isinf(lod_sq)) {
+		return;
+	}
+	atomicMax(rt_streaming_feedback.data[feedback_index], ~floatBitsToUint(lod_sq));
+}
+#endif
+
 // Fetch vertex attributes and transform to world space.
 // Requires hitAttributeEXT HitAttribs and GeometryBuffer/MaterialBuffer bindings.
 HitData compute_hit_data() {
@@ -182,6 +238,9 @@ HitData compute_hit_data() {
 #endif
 	{
 		rt_texture_cone(geom, h.geometry_normal);
+#ifdef RT_TEXTURE_STREAMING
+		rt_streaming_report(h.geometry_idx);
+#endif
 	}
 
 	return h;

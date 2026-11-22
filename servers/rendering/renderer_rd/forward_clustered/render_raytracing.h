@@ -1519,6 +1519,15 @@ class RenderRaytracing {
 	HashMap<uint64_t, RTCacheEntry> surface_lod_cache;
 	Vector<RTMaterialCacheEntry *> material_chunks;
 
+	// Texture streaming (TextureStreaming): the feedback index of each material table entry (UINT32_MAX: none),
+	// read by rt_streaming_report() so path traced hits report the mips they sample, as raster fragments do.
+	RID streaming_index_buffer;
+	uint32_t streaming_index_capacity = 0; // Entries; grow-only.
+	LocalVector<uint32_t> streaming_index;
+	uint32_t streaming_index_frame = UINT32_MAX;
+	void _update_streaming_feedback();
+	static void _texture_replaced_listener(void *p_self, RID p_old, RID p_new);
+
 	// Merged MultiMesh BLAS cache and compute shader.
 	struct MergeShader {
 		enum Mode {

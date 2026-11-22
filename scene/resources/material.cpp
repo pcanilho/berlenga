@@ -32,6 +32,7 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "modules/modules_enabled.gen.h"
 #include "core/error/error_macros.h"
 #include "core/io/resource_loader.h"
 #include "core/object/callable_mp.h"
@@ -3710,6 +3711,24 @@ void fragment() {)";
 			code += "\t\t\tNORMAL_MAP = mix(NORMAL_MAP, vec3(0.5, 0.5, 1.0), vmud.x);\n";
 		}
 		code += "\t\t}\n\t}\n";
+	}
+
+	bool streaming_enabled = false;
+#ifdef MODULE_TEXTURE_STREAMING_ENABLED
+	streaming_enabled = GLOBAL_GET_CACHED(bool, "rendering/textures/streaming/enabled");
+#endif
+	if (streaming_enabled && flags[FLAG_UV1_USE_TRIPLANAR]) {
+		code += R"(
+	// Write triplanar UV to UV for texture streaming feedback.
+	// Pick the UV projection of the dominant triplanar axis.
+	if (uv1_power_normal.x >= uv1_power_normal.y && uv1_power_normal.x >= uv1_power_normal.z) {
+		STREAMING_UV = uv1_triplanar_pos.zy * vec2(-1.0, 1.0);
+	} else if (uv1_power_normal.y >= uv1_power_normal.z) {
+		STREAMING_UV = uv1_triplanar_pos.xz;
+	} else {
+		STREAMING_UV = uv1_triplanar_pos.xy;
+	}
+)";
 	}
 
 	code += "}\n";

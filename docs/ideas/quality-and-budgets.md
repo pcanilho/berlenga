@@ -179,6 +179,32 @@ from a few metres is three quarters of it or more.
 5. Remaining groups (shadows, volumetrics, vegetation, PT samples and bounces, effects), one at a
    time, each with its rows and a frame pair per level.
 
+## Status (22 Nov 2026)
+
+Built: steps 1, 3 and 4, and the first rows of step 5.
+
+- `RenderingQuality` singleton: `rendering/quality/level` (default High) and
+  `rendering/quality/groups/*`; engine rows for textures, geometry, shadows, path tracing and
+  reflections. Runs only in the exported or played project, never saves settings.
+- Upstream texture streaming (PR #113429) on by default, with `keep_visible_ms` (a texture seen
+  recently keeps its mips under budget pressure) and `max_resolution` (the Low/Medium caps).
+- Path tracer feedback: closest hits report the ray-cone footprint into the same per-material
+  buffer; any-hit materials (alpha clip, discard, custom shaders) are kept whole because any-hit
+  reads the base level. The bindless table and RT material cache follow each swap.
+- Feedback includes the DLSS/TAA mip bias.
+
+Bench `docs/bench/texture_budget` (software Vulkan): streamed frames match fully resident frames
+byte for byte, raster and path traced; a poster seen only in a mirror stays sharper under PT than
+raster, so PT feedback is what keeps it. Streaming on vs off on plain textures: identical frames.
+
+Next:
+- Path tracer mesh LOD still off by default; needs the 100% crop check before turning it on.
+- Each swap recreates the bindless set; batch swaps per frame.
+- D3D12 path untested.
+- Game side: switch textures to the streamed import, map the options menu onto
+  `RenderingQuality`, register an 8K-at-Ultra row for character textures, drop the per-level 2K/1K
+  texture copies and per-level mesh threshold scripts.
+
 ## Sources
 
 - Unreal Engine docs: Texture Streaming Overview, Texture Streaming Configuration, Scalability
