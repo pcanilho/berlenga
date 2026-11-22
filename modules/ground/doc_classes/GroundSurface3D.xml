@@ -192,6 +192,18 @@
 				The frozen ground at [param position] (see [member frozen_ground]): the thawed layer on top in metres, the frost's depth in metres, and how weakened the ground is by a thaw (0 to 1).
 			</description>
 		</method>
+		<method name="get_rain_crust" qualifiers="const">
+			<return type="float" />
+			<description>
+				The share of the sand sealed under a dried rain crust, 0 to 1 (0 with [member rain_pits] off).
+			</description>
+		</method>
+		<method name="get_rain_pit_cover" qualifiers="const">
+			<return type="float" />
+			<description>
+				The share of the sand the last rain pitted, 0 to 1 (0 with [member rain_pits] off).
+			</description>
+		</method>
 		<method name="get_rut_guidance" qualifiers="const">
 			<return type="Vector3" />
 			<param index="0" name="contact" type="Vector3" />
@@ -929,6 +941,9 @@
 		</member>
 		<member name="buried_obstacles" type="bool" setter="set_buried_obstacles" getter="is_buried_obstacles" default="true">
 			Stones and tree roots lie hidden in the [member mud_layer] (roots where trees shade the ground): a wheel sinking into the mud stops on one under its middle and rides up ([method get_buried_depth_at]); one under the rest of its print it wraps round, the mud pressed out round the stone's top. Slumping and liquid mud flow round a stone's top, not off it. Near the followed point each is a [StaticBody3D] in the [code]ground_buried[/code] group with its mesh, so once ruts or water uncover one it is solid for wheels and bodies. The same stones are there every time.
+		</member>
+		<member name="rain_pits" type="bool" setter="set_rain_pits" getter="is_rain_pits" default="true">
+			If [code]true[/code], rain from the [WorldContracts] weather (its rainfall, less the canopy's share) pits the sand with raindrop craters, a new pattern each rain, and a wetted skin dries into a rain crust. Saltation wipes the pits off loose sand in minutes and wears the crust away over hours; the crust keeps the wind off what it covers (no ripples, streamers or filled prints there). Drawn in raster and path tracing on the sand block of the ripple map, so it needs [member wind_ripples] and [member dune_tone]; no pits in prints. See [method get_rain_pit_cover] and [method get_rain_crust].
 		</member>
 		<member name="stream_stones" type="bool" setter="set_stream_stones" getter="is_stream_stones" default="true">
 			Loose stones in a stream or ford (the water contract's height and flow) are pushed by the water's drag on their face above the bed and lifted by its buoyancy and lift: on firm ground one starts once the drag beats its submerged weight past its pivot, rolls on against bedload friction and stops in slack water; on mud the drag joins the mud's own hold and brake. A stone at rest in a current on mud is scoured round (a horseshoe hole at its upstream face, a tail in its lee) and settles into its hole; one rolled along a muddy bed under water stirs silt into it.

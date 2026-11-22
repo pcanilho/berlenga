@@ -3846,9 +3846,23 @@ grown on demand (lazy generation, as the near leaves of 8c).
 ### 5be. Ice storms (21-22 Nov; recommended pick, first of three)
 
 Research: "Research for the likely picks" below. Built so far:
-- Contract: `WorldWeather.glaze_at(pos)`, mm of radial clear ice on exposed twigs (world-contracts.md). No provider
-  yet: the weather has no freezing rain (rain_share is 0 below freezing). Asked for one from the weather owner: liquid
-  precipitation with the ground air at or below 0 C, accreted by Jones' (1998) simple model.
+- Contract: `WorldWeather.glaze_at(pos)`, mm of radial clear ice on exposed twigs (world-contracts.md).
+- Provider (22 Nov): WeatherMap3D `warm_nose_temperature` (C, 0 = none), the peak of a warm layer aloft. Snow falling
+  through it melts, wholly above about +3 C and hardly below +1 C (Stewart and King 1987; Zerr 1997), so
+  `get_rain_share_at` is at least that share. Under sub-zero ground air the drops arrive supercooled and accrete as
+  glaze by Jones' (1998) simple model, dR/dt = sqrt((P rho_w)^2 + (3.6 V W)^2) / (rho_i pi) with W = 0.067 P^0.846
+  (`glaze_accretion_rate`, 1.28 mm/h at 2.5 mm/h in 5 m/s). Above 0 C it melts at 0.3 mm/h per K, the low end of clean
+  ice's degree-day factors (Hock 2003). Per cell, shifted with the map; `get_glaze_at`, contract_glaze_at, and the
+  rain map's alpha (mm) for shaders. Open for the snow owner: SnowCover3D and SnowFall3D take the phase from the static
+  rain_fraction(), so they still count a warm-nose storm as snow.
+- Look (22 Nov): BaseMaterial3D `glaze` (on for every tree surface, the far crown hulls too, and the hulls now also wet
+  like the near leaves): Lagarde's (2013) accumulated water, frozen. A film forms within the first millimetre: ice's
+  surface (n 1.31, F0 0.018: specular 0.225, roughness 0.06), the surface under it seen soaked (porosity, as wet), and
+  3-6 mm fill the bark's relief (normal map depth). Raster and path tracer apply the same lines (raygen reads the rain
+  map's alpha; material bit subsurface_texture 26). Bench: env GLAZE_HOURS=H on main.gd (a 2.5 mm/h warm-nose storm
+  at -3 C, then clear). Backlit, the stems carry the ice's sharp rim highlights; the thickening of the twigs (an
+  ice shell, 3 mm twigs become 15-20 mm glass rods) needs geometry the path tracer also sees: next, as a deferred
+  variant built like the moss shell, with the icicles.
 - Mesh meta `tree_glaze_surface` = (sum of shoot lengths, sum of length x radius) of the standing wood; a needled shoot
   counts as a 3 cm brush, a leafy broadleaf shoot as 6 cm. Ice on a cylinder weighs rho_ice pi R (2r + R) a metre.
 - TreeWind3D (`glaze_load_enabled`, on): each tree's ice, no more than the rain its crown catches (2.83 R of rain over
@@ -3858,8 +3872,7 @@ Research: "Research for the likely picks" below. Built so far:
 - Storm bench `--glaze-test`: 6 mm puts 0.6 t on a young birch and 5.8-6.3 t on broad beech, oak and spruce crowns
   (the beech's long laterals bow hard), a thaw lets them stand up again, 25 mm breaks 10 limbs and tops, the spruce
   fewest with the oak and beech.
-- Next: clear ice on twigs and needles (raster and path traced) and icicles near the camera; bent birch and broken tops
-  as stand variants after a storm.
+- Next: the ice shell and icicles on near trees; bent birch and broken tops as stand variants after a storm.
 
 ## Next-round options (card 20 Nov evening)
 

@@ -47,6 +47,14 @@
 				Adds [param swe_mm] of snow water equivalent everywhere on the map at [param density] (kg/m³), as fresh snow. For scenes that start under snow. With [param world], the world tier outside the near square takes it too (a storm over the whole terrain); false keeps it to the near square.
 			</description>
 		</method>
+		<method name="add_sastrugi">
+			<return type="void" />
+			<param index="0" name="relief" type="float" />
+			<param index="1" name="wind_direction" type="Vector2" />
+			<description>
+				Sets the sastrugi relief ([param relief] m, ridge to floor, at most 0.4 m and half the pack) carved by a wind blowing toward [param wind_direction] (x, z) wherever there is snow. For scenes and tests; the cover grows them itself (see [member sastrugi_enabled]).
+			</description>
+		</method>
 		<method name="add_suncups">
 			<return type="void" />
 			<param index="0" name="relief" type="float" />
@@ -528,6 +536,26 @@
 				The world tier's snow water equivalent at a position, in mm.
 			</description>
 		</method>
+		<method name="get_sastrugi_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the sastrugi at [param position]: their relief (m, the vector's length) times the direction (x, z) of the wind that carved them.
+			</description>
+		</method>
+		<method name="get_sastrugi_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The sastrugi map over the cover's square (RG half floats: relief times the carving wind's direction), read by [SnowSurface3D].
+			</description>
+		</method>
+		<method name="get_wind_slab_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the thickness of wind-packed snow (wind slab) in the pack at [param position], in metres: drift deposits, snow that fell while it drifted, and the surface packed by drifting wind (see [member wind_packing_enabled]). It settles with the pack and melts from the top. Nearest cell, no blending.
+			</description>
+		</method>
 		<method name="get_world_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
@@ -549,6 +577,15 @@
 			<param index="4" name="shortwave" type="float" />
 			<description>
 				The rate surface hoar deposits on the snow in kg/m² per hour for the air temperature, relative humidity (0 to 1), wind at 10 m (m/s), cloud cover (0 to 1) and absorbed shortwave (W/m²); negative where it sublimates. Grows on clear calm nights.
+			</description>
+		</method>
+		<method name="drift_index" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="wind10" type="float" />
+			<param index="1" name="density" type="float" />
+			<param index="2" name="fresh" type="float" />
+			<description>
+				Crocus's driftability index (Vionnet et al. 2012): [code]SI = -2.868 exp(-0.085 U) + 1 + Mo[/code], with mobility [code]Mo = 0.34 (0.75 d - 0.5 s + 0.5) + 0.66 F(rho)[/code] and [code]F = 1.25 - 0.0042 (max(rho, 50) - 50)[/code]. The surface drifts when it is above 0. [param fresh] (0 to 1) stands for the grains' dendricity (fresh) against their sphericity (old).
 			</description>
 		</method>
 		<method name="holding_depth" qualifiers="static">
@@ -697,6 +734,36 @@
 				Waits for an update running in the background and swaps its results in now. For tests and tools: the game never needs it.
 			</description>
 		</method>
+		<method name="wind_packing_step" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="density" type="float" />
+			<param index="1" name="wind10" type="float" />
+			<param index="2" name="fresh" type="float" />
+			<param index="3" name="hours" type="float" />
+			<description>
+				The top 10 cm's density after [param hours] of wind: Crocus's wind-driven compaction toward 350 kg/m3 with time constant 48 h / (0.632 SI) while [method drift_index] is above 0, else unchanged.
+			</description>
+		</method>
+		<method name="wind_snow_density" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<param index="1" name="wind10" type="float" />
+			<description>
+				The density of snow falling in wind (kg/m3): Crocus's [code]109 + 6 T + 26 U^0.5[/code] (Vionnet et al. 2012), or [method new_snow_density] where that is higher (calm), between 50 and 350.
+			</description>
+		</method>
+		<method name="sastrugi_step" qualifiers="static">
+			<return type="Vector2" />
+			<param index="0" name="relief" type="Vector2" />
+			<param index="1" name="wind_dir" type="Vector2" />
+			<param index="2" name="eroded" type="float" />
+			<param index="3" name="filled" type="float" />
+			<param index="4" name="depth" type="float" />
+			<param index="5" name="hard" type="bool" />
+			<description>
+				One step of the sastrugi relief (follow-up 46): on a [param hard] surface the depth [param eroded] carves relief along [param wind_dir]; [param filled] (snow laid on them, melt) fills it; at most 0.4 m and half the pack's [param depth].
+			</description>
+		</method>
 		<method name="transport_flux" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="wind10" type="float" />
@@ -816,6 +883,9 @@
 		<member name="slide_angle" type="float" setter="set_slide_angle" getter="get_slide_angle" default="25.0">
 			Ground steeper than this, in degrees, sheds snow beyond what it holds (SnowSlide: 25 degrees).
 		</member>
+		<member name="sastrugi_enabled" type="bool" setter="set_sastrugi_enabled" getter="is_sastrugi_enabled" default="true">
+			Sastrugi (Filhol and Sturm 2015): drifting snow scouring a hard surface (wind slab on top, or snow of 250 kg/m3 and more) carves ridges along the wind, 2% of the scoured snow's depth into relief, none where the drift builds up. New snow, drift deposits and melt fill them. [SnowSurface3D] draws them as geometry.
+		</member>
 		<member name="slide_enabled" type="bool" setter="set_slide_enabled" getter="is_slide_enabled" default="true">
 			If [code]true[/code], snow slides off steep ground to lower cells (SnowSlide, Bernhardt and Schulz 2010): from the highest snow surface down, a cell holding more than [method holding_depth] passes the excess downhill, in proportion to the drop to each lower neighbour. Mass is conserved.
 		</member>
@@ -851,6 +921,9 @@
 		</member>
 		<member name="wind_curvature_length" type="float" setter="set_wind_curvature_length" getter="get_wind_curvature_length" default="20.0">
 			The distance, in metres, over which [member wind_transport_enabled] measures the ground's curvature (MicroMet's length scale; at least two cells).
+		</member>
+		<member name="wind_packing_enabled" type="bool" setter="set_wind_packing_enabled" getter="is_wind_packing_enabled" default="true">
+			Wind slab: snow falling in wind lands denser ([method wind_snow_density]), and where the surface drifts its top 10 cm pack toward 350 kg/m3 ([method wind_packing_step]). Both, with drift deposits, are tracked as [method get_wind_slab_at].
 		</member>
 		<member name="wind_transport_enabled" type="bool" setter="set_wind_transport_enabled" getter="is_wind_transport_enabled" default="true">
 			When on, wind above the transport threshold moves the snow already lying (SnowTran-3D, Liston and Sturm 1998): each cell sends its flux ([method transport_flux]) downwind, so snow leaves where the wind speeds up (windward shoulders, crests) and settles where it slows (below crests, in hollows), laid down wind-packed at 300 kg/m³. The wind over the ground is weighted by its slope along the wind and its curvature (MicroMet, Liston and Elder 2006). Snow under a frozen crust, wet snow and snow under trees stay. Snow comes in at the upwind edge of the map as from a cell like the edge one and leaves at the downwind edge. [member drift_enabled] is separate: it places falling snow.

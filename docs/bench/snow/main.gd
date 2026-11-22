@@ -130,6 +130,7 @@ class BodySnowStub extends WorldSnow:
 #   --taa             raster with TAA (stills set against path traced ones: no per-pixel shadow or dither dots)
 #   --out=path.png    save the last frame and quit
 #   --suncups=M       trail view: suncups of M m relief over the field (the deep-snow surface draws them)
+#   --sastrugi=M[,deg] trail view: sastrugi of M m relief carved by a wind toward deg (0 = +x, the default)
 #   --slush=MM        trail view: 15 cm of old snow over frozen ground, then MM mm of rain at +8 C: slush in its base
 #   --ice-drop=M      icicles view: the edge M m under the roof (the roots must still join it)
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
@@ -165,6 +166,7 @@ var crust_cycles := 0.0
 var transport := true
 var hoar_mm := 0.0 # --hoar=MM: the sparkle view's surface hoar
 var suncups_m := 0.0 # --suncups=M: the sparkle view's suncup relief
+var sastrugi_arg := "" # --sastrugi=M[,deg]
 var slush_mm := 0.0 # --slush=MM: rain on a thin pack over frozen ground (trail view)
 var air := INF # --air=C: the snowfall view's air temperature (sleet near and above 0 C)
 
@@ -191,6 +193,7 @@ func _ready() -> void:
 		elif a.begins_with("--snow="): snow_hours = float(a.substr(7))
 		elif a.begins_with("--hoar="): hoar_mm = float(a.substr(7))
 		elif a.begins_with("--suncups="): suncups_m = float(a.substr(10))
+		elif a.begins_with("--sastrugi="): sastrugi_arg = a.substr(11)
 		elif a.begins_with("--slush="): slush_mm = float(a.substr(8))
 		elif a.begins_with("--sun="): sun_hours = float(a.substr(6))
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
@@ -218,6 +221,10 @@ func _ready() -> void:
 			await _run_spindrift_tests()
 		elif only == "road":
 			await _run_road_tests()
+		elif only == "windslab":
+			await _run_wind_slab_tests()
+		elif only == "sastrugi":
+			await _run_sastrugi_tests()
 		elif only == "rime":
 			await _run_rime_tests()
 		elif only == "transport":
@@ -440,6 +447,8 @@ func _run_tests() -> void:
 	await _run_slush_tests()
 	await _run_spindrift_tests()
 	await _run_road_tests()
+	await _run_wind_slab_tests()
+	await _run_sastrugi_tests()
 	await _run_hoar_tests()
 	_run_suncup_tests()
 	await _run_rime_tests()
@@ -684,6 +693,107 @@ func _run_spindrift_tests() -> void:
 	_check("drier air thins it sooner (sublimation)", SnowCover3D.spindrift_fade(0.4) > 2.0 * SnowCover3D.spindrift_fade(0.95), "%.3f /s at 40%%, %.3f at 95%%" % [SnowCover3D.spindrift_fade(0.4), SnowCover3D.spindrift_fade(0.95)])
 	var wet: Array = await _spindrift_at(26.0, 2.0)
 	_check("no plume from wet snow", wet[0] == 0.0, "%.2f kg/s at +2 C" % wet[0])
+
+
+# Wind slab (follow-up 45): snow falling in wind lands denser (Crocus, Vionnet et al. 2012), and where the surface
+# drifts (Crocus's driftability SI > 0) its top packs toward 350 kg/m3 as wind slab (Sommer et al. 2018).
+func _wind_case(wind: float, hours: int, fall: float) -> Array:
+	await _setup("flat", 128.0, 32, -8.0)
+	snow.add_snow(30.0, 100.0)
+	weather.temperature = -8.0
+	weather.wind_speed = wind
+	weather.wind_direction = Vector2(1, 0)
+	weather.rain_rate = fall
+	weather.cloud_cover = 1.0 if fall > 0.0 else 0.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var p := Vector3(0, 0, 0)
+	var swe0 := snow.get_swe_at(p)
+	var d0 := snow.get_depth_at(p)
+	for h in hours:
+		weather.advance(60.0)
+		snow.advance(3600.0)
+	var added := snow.get_swe_at(p) - swe0
+	var added_depth := snow.get_depth_at(p) - d0
+	return [snow.get_density_at(p), snow.get_wind_slab_at(p), added, added_depth]
+
+
+func _run_wind_slab_tests() -> void:
+	print("Wind slab (follow-up 45):")
+	var calm_rho := SnowCover3D.wind_snow_density(-8.0, 0.0)
+	var wind_rho := SnowCover3D.wind_snow_density(-8.0, 12.0)
+	_check("snow falling in wind lands denser (Crocus)", absf(calm_rho - SnowCover3D.new_snow_density(-8.0)) < 1.0 and absf(wind_rho - (109.0 - 48.0 + 26.0 * sqrt(12.0))) < 1.0, "%.0f kg/m3 calm, %.0f at 12 m/s" % [calm_rho, wind_rho])
+	_check("fresh light snow drifts in a breeze, old dense snow only in a gale (SI)", SnowCover3D.drift_index(5.0, 100.0, 1.0) > 0.0 and SnowCover3D.drift_index(2.0, 100.0, 1.0) < 0.0 and SnowCover3D.drift_index(8.0, 300.0, 0.0) < 0.0 and SnowCover3D.drift_index(15.0, 300.0, 0.0) > 0.0, "SI %.2f at 5 m/s and %.2f at 2 (fresh, 100 kg/m3); %.2f at 8 and %.2f at 15 (old, 300)" % [SnowCover3D.drift_index(5.0, 100.0, 1.0), SnowCover3D.drift_index(2.0, 100.0, 1.0), SnowCover3D.drift_index(8.0, 300.0, 0.0), SnowCover3D.drift_index(15.0, 300.0, 0.0)])
+	var p24 := SnowCover3D.wind_packing_step(100.0, 10.0, 1.0, 24.0)
+	var p96 := SnowCover3D.wind_packing_step(100.0, 10.0, 1.0, 96.0)
+	_check("wind packing toward 350 kg/m3 over days (48 h / SI)", p24 > 140.0 and p24 < p96 and p96 < 350.0 and SnowCover3D.wind_packing_step(100.0, 2.0, 1.0, 24.0) == 100.0, "%.0f kg/m3 after a day at 10 m/s, %.0f after four; none at 2 m/s" % [p24, p96])
+	var calm: Array = await _wind_case(2.0, 12, 0.0)
+	var gale: Array = await _wind_case(14.0, 12, 0.0)
+	print("  12 h on 30 cm of new snow: calm %.0f kg/m3, slab %.3f m; 14 m/s %.0f kg/m3, slab %.3f m" % [calm[0], calm[1], gale[0], gale[1]])
+	_check("a gale packs the surface into wind slab; calm does not", calm[1] == 0.0 and gale[1] > 0.05 and gale[0] > calm[0] + 10.0, "slab %.3f m and %.0f kg/m3 at 14 m/s, %.3f m and %.0f kg/m3 calm" % [gale[1], gale[0], calm[1], calm[0]])
+	var fall_calm: Array = await _wind_case(1.0, 3, 2.0)
+	var fall_wind: Array = await _wind_case(12.0, 3, 2.0)
+	var rc: float = fall_calm[2] / maxf(fall_calm[3], 1e-6)
+	var rw: float = fall_wind[2] / maxf(fall_wind[3], 1e-6)
+	_check("a windy snowfall lays down a denser, thinner layer, and it counts as slab", rw > rc * 1.3 and fall_wind[1] > fall_calm[1], "new snow %.0f kg/m3 in 12 m/s, %.0f calm; slab %.3f m and %.3f m" % [rw, rc, fall_wind[1], fall_calm[1]])
+	await _setup("flat", 128.0, 32, -8.0)
+	snow.wind_packing_enabled = false
+	snow.add_snow(30.0, 100.0)
+	weather.wind_speed = 14.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	for h in 12:
+		snow.advance(3600.0)
+	_check("off: no slab", snow.get_wind_slab_at(Vector3.ZERO) == 0.0, "%.3f m" % snow.get_wind_slab_at(Vector3.ZERO))
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+
+
+# Sastrugi (follow-up 46): wind eroding hard (wind-packed or dense) snow carves ridges along it (Filhol and Sturm
+# 2015); new snow, drift and melt fill them.
+func _run_sastrugi_tests() -> void:
+	print("Sastrugi (follow-up 46):")
+	var v := SnowCover3D.sastrugi_step(Vector2.ZERO, Vector2(1, 0), 0.05, 0.0, 1.0, true)
+	var soft := SnowCover3D.sastrugi_step(Vector2.ZERO, Vector2(1, 0), 0.05, 0.0, 1.0, false)
+	var filled := SnowCover3D.sastrugi_step(Vector2(0.1, 0), Vector2.ZERO, 0.0, 0.04, 1.0, false)
+	var cap := SnowCover3D.sastrugi_step(Vector2(0.3, 0), Vector2(1, 0), 0.3, 0.0, 0.2, true)
+	var turn := SnowCover3D.sastrugi_step(Vector2(0.1, 0), Vector2(0, 1), 0.1, 0.0, 1.0, true)
+	_check("hard snow carved by what the wind takes, soft snow not", absf(v.x - 0.05) < 1e-4 and soft == Vector2.ZERO, "%s from 5 cm off hard snow, %s off soft" % [str(v), str(soft)])
+	_check("new snow fills them; at most half the pack and 0.4 m; they turn toward a new wind", absf(filled.x - 0.06) < 1e-4 and absf(cap.length() - 0.1) < 1e-4 and turn.y > 0.0 and turn.x > 0.0, "%.3f m after 4 cm fill; %.2f m on a 0.2 m pack; %s after a south wind" % [filled.x, cap.length(), str(turn)])
+	# The cornice ridge's windward slope in a westerly gale on 0.4 m of new snow: the wind packs it into slab and
+	# erodes the slab; without wind packing the snow stays soft and is only blown away.
+	var res := []
+	for packing: bool in [true, false]:
+		await _setup("cornice", 256.0, 64, -12.0)
+		snow.wind_packing_enabled = packing
+		snow.add_snow(60.0, 150.0)
+		weather.temperature = -12.0
+		weather.wind_speed = 24.0
+		weather.wind_direction = Vector2(1, 0)
+		weather.snap_to_settings()
+		weather.advance(1.0)
+		for h in 6:
+			snow.advance(3600.0)
+		var best := Vector2.ZERO
+		var lee := 0.0
+		var drift_swe := 0.0
+		for z in range(-60, 61, 8):
+			for x in range(-60, -8, 4):
+				var sv := snow.get_sastrugi_at(Vector3(x, 0, z))
+				if sv.length() > best.length():
+					best = sv
+			# The lee drift: the deepest snow below the crest.
+			for x in range(0, 40, 4):
+				var dq := Vector3(x, 0, z)
+				if snow.get_swe_at(dq) > drift_swe:
+					drift_swe = snow.get_swe_at(dq)
+					lee = snow.get_sastrugi_at(dq).length()
+		res.append([best, lee])
+		print("  packing %s: windward sastrugi %.3f m toward %s, lee drift (%.0f mm) %.3f m" % [str(packing), best.length(), str(best.normalized()), drift_swe, lee])
+	var hard_best: Vector2 = res[0][0]
+	var soft_best: Vector2 = res[1][0]
+	_check("a gale packs and carves the windward snow into sastrugi along the wind", hard_best.length() > 0.02 and hard_best.normalized().x > 0.95, "%.3f m toward %s" % [hard_best.length(), str(hard_best.normalized())])
+	_check("none in the fresh lee deposit, none in soft unpacked snow", float(res[0][1]) < 0.005 and soft_best.length() < 0.005, "lee %.3f m; soft %.3f m" % [res[0][1], soft_best.length()])
 
 
 func _road_wheel(spin: float, roll: float) -> RigidBody3D:
@@ -2886,6 +2996,10 @@ func _build_trail(cam: Camera3D) -> void:
 		snow.add_crust(0.02, crust_cycles)
 	if suncups_m > 0.0:
 		snow.add_suncups(suncups_m) # --suncups=M: a sunny spring week's hollows (the deep-snow surface draws them)
+	if sastrugi_arg != "":
+		var sa := sastrugi_arg.split(",")
+		var deg := float(sa[1]) if sa.size() > 1 else 0.0
+		snow.add_sastrugi(float(sa[0]), Vector2(cos(deg_to_rad(deg)), sin(deg_to_rad(deg)))) # a gale's carving
 	surface = SnowSurface3D.new()
 	surface.crust_plates = not OS.get_cmdline_user_args().has("--no-plates") # --no-plates: the field's ramps alone
 	surface.snow_cover = NodePath("../SnowCover3D")

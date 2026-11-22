@@ -887,6 +887,8 @@ func _ready() -> void:
 		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
 	if args.has("stand-trail"):
 		_stand_trail()
+		if args.has("rooting-tyre") and prints != null:
+			await _rooting_tyre()
 	if args.has("lens-cam"):
 		await _lens_cam()
 	if args.has("sea-effect"):
@@ -6231,6 +6233,37 @@ func _hut() -> void:
 			if i % (Engine.physics_ticks_per_second * 5) == 0:
 				_log("hut fire t %.0f s: state %d, %.0f C, %.0f kW, fuel %.2f, collapsed %s" % [i * float(bf.get("time_scale")) / Engine.physics_ticks_per_second, int(bf.call("get_room_state", 0)), float(bf.call("get_room_temperature", 0)), float(bf.call("get_heat_release")), float(bf.call("get_room_fuel_left", 0)), str(bf.call("is_room_collapsed", 0))])
 		_log("hut fire at %.0f s: state %d, %.0f kW, flashover %.0f s, char %.1f mm, collapsed %s, firebrands %d" % [secs, int(bf.call("get_room_state", 0)), float(bf.call("get_heat_release")), float(bf.call("get_room_flashover_time", 0)), float(bf.call("get_room_char_depth", 0)) * 1000.0, str(bf.call("is_room_collapsed", 0)), int(bf.call("get_firebrand_count"))])
+
+
+func _rooting_tyre() -> void:
+	# --rooting-tyre (with --stand-trail, prints on): a car's two tyres (0.8 m, 0.28 m wide, 1.6 m apart) driven
+	# across the boar rooting square to the view, one through its middle, pressed into the ground's print field
+	# (GroundSurface3D.press_wheel) so the clods they run over are crushed (ground detail 6024a5a0) and a clean rut
+	# runs through the patch. --tyre-sink (0.04) m.
+	var tc: Camera3D = get_viewport().get_camera_3d()
+	var tf := -tc.global_basis.z
+	tf.y = 0.0
+	tf = tf.normalized().rotated(Vector3.UP, deg_to_rad(float(args.get("trail-angle", "12"))))
+	var ts := tf.cross(Vector3.UP).normalized()
+	var rp := tc.global_position + tf * float(args.get("rooting-ahead", "7")) - ts * 2.0
+	prints.follow_target = prints.get_path_to(tc)
+	for i in 30:
+		await get_tree().physics_frame
+	var dir := Vector2(ts.x, ts.z)
+	var side := Vector2(-dir.y, dir.x)
+	var yaw := atan2(dir.x, dir.y)
+	var a := Vector2(rp.x, rp.z) - dir * 5.0
+	var sink := float(args.get("tyre-sink", "0.04"))
+	for i in 101:
+		var p := a + dir * (0.1 * i)
+		for k in 2:
+			var q := p + side * (k * 1.6)
+			var hq := height_at(q.x, q.y)
+			prints.press_wheel(Vector3(q.x, hq, q.y), Vector2(0.8, 0.28), yaw, sink, dir * 3.0)
+		await get_tree().physics_frame
+	for i in 30:
+		await get_tree().physics_frame
+	_log("rooting tyre: 10 m across the rooting at %s, sink %.2f m" % [str(rp.round()), sink])
 
 
 func _stand_trail() -> void:

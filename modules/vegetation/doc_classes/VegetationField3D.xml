@@ -220,6 +220,13 @@
 				Broad-leaf litter fallen at [param global_position], from 0 (none) to 1 (a full mat), from the crowns placed by the last [method populate]. Under a crown it is full; past the rim it thins over about 6 m, the drift of leaves blown out of a stand into its edge or a clearing (Ferrari and Sugita 1996), farther downwind ([member litter_wind]). Needle-leaved crowns add none. Species with a [member PlantSpecies.litter_range] are placed by it.
 			</description>
 		</method>
+		<method name="get_litter_drift_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				How the wind has gathered fallen leaves at [param global_position] ([constant PlantSpecies.RULE_LITTER_DRIFT]): 1 where they lie as they fell; up to 2.5 in hollows (the ground's depth under its ring at 2.5 and 6 m) and within about half a metre of trunks, logs and rocks, deepest on their downwind side ([member litter_wind]); down to 0.15 on crests and slopes over 25 to 45 degrees. The placement scales [method get_litter_at] by it (capped at 1) for species with a [member PlantSpecies.litter_range].
+			</description>
+		</method>
 		<method name="get_stand_shade_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />

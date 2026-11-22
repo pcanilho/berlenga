@@ -91,6 +91,8 @@ public:
 	virtual float contract_mid_cloud_cover_at(const Vector3 &p_position) const { return 0.0f; } // 0..1, the mid (altocumulus) sheet
 	virtual float contract_cloud_effector_at(const Vector3 &p_position) const { return 0.0f; } // -1..1, cloud added (> 0) or cleared by effectors
 	virtual float contract_cloud_base_at(const Vector3 &p_position) const { return 1500.0f; } // m above y = 0, the low cloud's base
+	// The orographic factor the weather's precipitation_at already carries at the point (1: none applied).
+	virtual float contract_orographic_factor_at(const Vector3 &p_position) const { return 1.0f; }
 	virtual float contract_mountain_wave_at(const Vector3 &p_position) const { return 0.0f; } // m, the air's vertical displacement in mountain waves
 	virtual float contract_mountain_wave_velocity_at(const Vector3 &p_position) const { return 0.0f; } // m/s, their vertical wind
 	virtual float contract_wave_cloud_density_at(const Vector3 &p_position) const { return 0.0f; } // 1/m, wave cloud (lenticular) extinction
@@ -146,6 +148,7 @@ protected:
 	GDVIRTUAL1RC(float, _mid_cloud_cover_at, Vector3)
 	GDVIRTUAL1RC(float, _cloud_effector_at, Vector3)
 	GDVIRTUAL1RC(float, _cloud_base_at, Vector3)
+	GDVIRTUAL1RC(float, _orographic_factor_at, Vector3)
 	GDVIRTUAL1RC(float, _mountain_wave_at, Vector3)
 	GDVIRTUAL1RC(float, _mountain_wave_velocity_at, Vector3)
 	GDVIRTUAL1RC(float, _wave_cloud_density_at, Vector3)
@@ -210,6 +213,11 @@ public:
 	float mid_cloud_cover_at(const Vector3 &p_position) const;
 	float cloud_effector_at(const Vector3 &p_position) const;
 	float cloud_base_at(const Vector3 &p_position) const;
+	// The orographic factor precipitation_at already carries at the point (the terrain climate's precipitation
+	// there over its regional mean: more on windward slopes and heights, a rain shadow in the lee; Smith and Barstad
+	// 2004): 1 where none is applied. A reader with its own orographic field divides this out so it is not counted
+	// twice.
+	float orographic_factor_at(const Vector3 &p_position) const;
 	float mountain_wave_at(const Vector3 &p_position) const;
 	float mountain_wave_velocity_at(const Vector3 &p_position) const;
 	float wave_cloud_density_at(const Vector3 &p_position) const;
@@ -578,6 +586,16 @@ public:
 	virtual ~WorldRunoffProvider() {}
 };
 
+// The terrain's climate (TerrainDataMap3D's baked climate): a separate slot, since the climate and the live weather
+// come from different producers. The first that covers the point answers.
+class WorldClimateProvider {
+public:
+	// The mean precipitation at the point over the region's (the orographic pattern, Smith and Barstad 2004's linear
+	// model as baked); < 0 where the climate does not reach.
+	virtual float contract_precipitation_factor_at(const Vector3 &p_position) const = 0;
+	virtual ~WorldClimateProvider() {}
+};
+
 // Coarse grains lying on the ground (the stone fields, RockField3D): a separate slot on the ground contract, since
 // the near ground and the stones come from different producers. Several fields may register; each answers 0 where
 // its map does not reach.
@@ -811,6 +829,7 @@ class WorldContracts : public Object {
 	WorldRunoffProvider *runoff_provider = nullptr;
 	LocalVector<WorldCoverProvider *> cover_providers;
 	LocalVector<WorldGroundColorProvider *> ground_color_providers;
+	LocalVector<WorldClimateProvider *> climate_providers;
 	LocalVector<WorldPlantColorProvider *> plant_color_providers;
 	Ref<WorldWater> builtin_water;
 	Ref<WorldWater> water_override;
@@ -850,6 +869,10 @@ public:
 	static void register_cover(WorldCoverProvider *p_provider); // any number: the largest share answers
 	static void unregister_cover(WorldCoverProvider *p_provider);
 	static const LocalVector<WorldCoverProvider *> *cover_providers_list() { return singleton ? &singleton->cover_providers : nullptr; }
+	static void register_climate(WorldClimateProvider *p_provider); // any number: the first that covers the point answers
+	static void unregister_climate(WorldClimateProvider *p_provider);
+	// The climate's precipitation factor at the point (1 where no climate reaches it).
+	static float climate_precipitation_factor_at(const Vector3 &p_position);
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);
 	static const LocalVector<WorldGroundColorProvider *> *ground_color_providers_list() { return singleton ? &singleton->ground_color_providers : nullptr; }

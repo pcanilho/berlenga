@@ -90,6 +90,7 @@ float WorldWeather::high_cloud_cover_at(const Vector3 &p_position) const WW_CALL
 float WorldWeather::mid_cloud_cover_at(const Vector3 &p_position) const WW_CALL(_mid_cloud_cover_at, contract_mid_cloud_cover_at(p_position), 0.0f, p_position)
 float WorldWeather::cloud_effector_at(const Vector3 &p_position) const WW_CALL(_cloud_effector_at, contract_cloud_effector_at(p_position), 0.0f, p_position)
 float WorldWeather::cloud_base_at(const Vector3 &p_position) const WW_CALL(_cloud_base_at, contract_cloud_base_at(p_position), 1500.0f, p_position)
+float WorldWeather::orographic_factor_at(const Vector3 &p_position) const WW_CALL(_orographic_factor_at, contract_orographic_factor_at(p_position), 1.0f, p_position)
 float WorldWeather::mountain_wave_at(const Vector3 &p_position) const WW_CALL(_mountain_wave_at, contract_mountain_wave_at(p_position), 0.0f, p_position)
 float WorldWeather::mountain_wave_velocity_at(const Vector3 &p_position) const WW_CALL(_mountain_wave_velocity_at, contract_mountain_wave_velocity_at(p_position), 0.0f, p_position)
 float WorldWeather::wave_cloud_density_at(const Vector3 &p_position) const WW_CALL(_wave_cloud_density_at, contract_wave_cloud_density_at(p_position), 0.0f, p_position)
@@ -216,6 +217,7 @@ void WorldWeather::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("mid_cloud_cover_at", "position"), &WorldWeather::mid_cloud_cover_at);
 	ClassDB::bind_method(D_METHOD("cloud_effector_at", "position"), &WorldWeather::cloud_effector_at);
 	ClassDB::bind_method(D_METHOD("cloud_base_at", "position"), &WorldWeather::cloud_base_at);
+	ClassDB::bind_method(D_METHOD("orographic_factor_at", "position"), &WorldWeather::orographic_factor_at);
 	ClassDB::bind_method(D_METHOD("mountain_wave_at", "position"), &WorldWeather::mountain_wave_at);
 	ClassDB::bind_method(D_METHOD("mountain_wave_velocity_at", "position"), &WorldWeather::mountain_wave_velocity_at);
 	ClassDB::bind_method(D_METHOD("wave_cloud_density_at", "position"), &WorldWeather::wave_cloud_density_at);
@@ -260,6 +262,7 @@ void WorldWeather::_bind_methods() {
 	GDVIRTUAL_BIND(_mid_cloud_cover_at, "position");
 	GDVIRTUAL_BIND(_cloud_effector_at, "position");
 	GDVIRTUAL_BIND(_cloud_base_at, "position");
+	GDVIRTUAL_BIND(_orographic_factor_at, "position");
 	GDVIRTUAL_BIND(_mountain_wave_at, "position");
 	GDVIRTUAL_BIND(_mountain_wave_velocity_at, "position");
 	GDVIRTUAL_BIND(_wave_cloud_density_at, "position");
@@ -1188,6 +1191,30 @@ void WorldContracts::unregister_cover(WorldCoverProvider *p_provider) {
 	}
 }
 
+void WorldContracts::register_climate(WorldClimateProvider *p_provider) {
+	if (singleton && p_provider && singleton->climate_providers.find(p_provider) < 0) {
+		singleton->climate_providers.push_back(p_provider);
+	}
+}
+
+void WorldContracts::unregister_climate(WorldClimateProvider *p_provider) {
+	if (singleton) {
+		singleton->climate_providers.erase(p_provider);
+	}
+}
+
+float WorldContracts::climate_precipitation_factor_at(const Vector3 &p_position) {
+	if (singleton) {
+		for (const WorldClimateProvider *c : singleton->climate_providers) {
+			const float f = c->contract_precipitation_factor_at(p_position);
+			if (f >= 0.0f) {
+				return f;
+			}
+		}
+	}
+	return 1.0f;
+}
+
 void WorldContracts::register_ground_color(WorldGroundColorProvider *p_provider) {
 	if (singleton && p_provider && singleton->ground_color_providers.find(p_provider) < 0) {
 		singleton->ground_color_providers.push_back(p_provider);
@@ -2059,6 +2086,7 @@ Dictionary WorldContracts::describe_body_bind(Node *p_node) const {
 }
 
 void WorldContracts::_bind_methods() {
+	ClassDB::bind_static_method("WorldContracts", D_METHOD("climate_precipitation_factor_at", "position"), &WorldContracts::climate_precipitation_factor_at);
 	ClassDB::bind_method(D_METHOD("set_weather", "stub"), &WorldContracts::set_weather);
 	ClassDB::bind_method(D_METHOD("get_weather"), &WorldContracts::get_weather);
 	ClassDB::bind_method(D_METHOD("set_ground", "stub"), &WorldContracts::set_ground);

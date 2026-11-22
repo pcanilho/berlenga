@@ -852,6 +852,26 @@ float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, 
 	return cover;
 }
 
+// Salt bloom (efflorescence) on stone (docs/ideas/world-links.md, "Salt bloom"): the spray's salt crystallises where
+// the film dries, a white halite crust in the sheltered stone that keeps it (p_keep 0..1: hollows and steep faces
+// high, rain-washed tops low), patchy (p_patch 0..1, noise) and grainy (p_grain), gone under any film of water (p_wet), back as it dries
+// (Mustoe 1982; Goudie and Viles 1997; Huinink et al. 2004). The rocks' own shader keeps a like rule. Returns the
+// crust's share.
+float weather_salt_bloom_apply(float p_salt, float p_wet, float p_keep, float p_patch, float p_grain, inout vec3 r_albedo, inout float r_roughness) {
+	if (p_salt <= 0.0) {
+		return 0.0;
+	}
+	// The load sets how much of the stone the crust takes (at most 0.4 of it: a bloom is patchy, never a coat of
+	// paint); the patches fill from their highest values down with soft, thin edges, so a light load shows as
+	// scattered faint patches.
+	float share = 0.4 * smoothstep(0.12, 0.65, p_salt * p_keep);
+	float crust = smoothstep(1.0 - share - 0.07, 1.0 - share + 0.07, p_patch) * smoothstep(0.0, 0.05, share) * (1.0 - smoothstep(0.08, 0.35, p_wet));
+	// The crust is a mat of crystals, thicker and thinner grain to grain (p_grain 0..1, fine noise; 0.5 unresolved).
+	r_albedo = mix(r_albedo, vec3(0.82, 0.81, 0.78), crust * (0.55 + 0.45 * p_grain));
+	r_roughness = mix(r_roughness, 0.92, crust);
+	return crust;
+}
+
 // Salt spray burn on leaves (Boyce 1954; foliar chloride necrosis): from about 2 g/m2 of sea salt (p_salt 0.15) the
 // leaves brown one by one (p_hash, 0..1 steady per leaf), each from the tip and edges in, until by about 20 g/m2
 // (0.85) most are dead brown. Returns the share browned, for the light through the leaf.
@@ -908,6 +928,27 @@ float weather_canopy_drip_at(vec3 p_world_pos) {
 )";
 	}
 	return code;
+}
+
+// Glaze (docs/ideas/trees.md 5be): the clear ice freezing rain leaves over everything it wets, p_mm of radial ice
+// (WeatherMap3D's rain map, alpha). Lagarde 2013's accumulated water ("Water drop 3b"), frozen: a film forms within
+// the first millimetre; the surface is ice's (n 1.31, F0 0.018: specular 0.225), smooth but for frozen ripples; the
+// surface under it is seen soaked (its pores hold the frozen water, as wet); a few millimetres fill its relief.
+// Returns how far the relief is filled (0..1), for the normal. The path tracer has the same lines
+// (scene_raytracing_raygen.glsl).
+String BaseMaterial3D::get_glaze_functions_code() {
+	return R"(
+float weather_glaze_apply(float p_mm, float p_porosity, float p_metallic, inout vec3 r_albedo, inout float r_roughness, inout float r_specular) {
+	float cover = smoothstep(0.0, 1.0, p_mm);
+	if (cover <= 0.0) {
+		return 0.0;
+	}
+	r_albedo *= mix(1.0, mix(1.0, 0.2, (1.0 - p_metallic) * p_porosity), cover);
+	r_roughness = mix(r_roughness, 0.06, cover);
+	r_specular = mix(r_specular, 0.225, cover);
+	return cover * smoothstep(0.5, 6.0, p_mm);
+}
+)";
 }
 
 String BaseMaterial3D::get_snow_functions_code(bool p_from_weather) {
@@ -1604,6 +1645,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.wetness = features[FEATURE_WETNESS];
 		rt.wetness_from_weather = wetness_from_weather;
 		rt.wetness_canopy = features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy;
+		rt.glaze = glaze;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
 		rt.snow_on_body = features[FEATURE_SNOW] && snow_on_body;
@@ -2216,8 +2258,11 @@ uniform vec3 uv2_offset;
 		code += _ground_deform_code(false, ground_deform_patch);
 	}
 	// The rain's functions (raindrop rings on the patch's standing water, beads on a wet canopy), once.
-	if ((features[FEATURE_GROUND_DEFORM] && ground_deform_patch) || (features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy)) {
+	if ((features[FEATURE_GROUND_DEFORM] && ground_deform_patch) || (features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy) || glaze) {
 		code += get_rain_functions_code(true);
+	}
+	if (glaze) {
+		code += get_glaze_functions_code();
 	}
 
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
@@ -3168,6 +3213,17 @@ void fragment() {)";
 						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(ggs.x, 0.0, ggs.y, 0.0)).xyz);
 					}
 				}
+				// Rain pits (GroundSurface3D rain_pits) on the sand the last rain fell on; none in prints (their sand
+				// was turned, or the rain softened them).
+				vec4 gm6 = ground_sand_meta6();
+				if (gm6.x > 0.0) {
+					float gpt;
+					vec2 gps = ground_rain_pits(gwp.xz, gm6.x * gsa.y * (1.0 - smoothstep(0.003, 0.008, abs(ground_deform_relief(gwp.xz)))), gm6.z, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), gpt);
+					ALBEDO *= gpt;
+					if (gps != vec2(0.0)) {
+						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gps.x, 0.0, gps.y, 0.0)).xyz);
+					}
+				}
 			}
 		}
 		vec3 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, -1.0, gr_sort);
@@ -3206,6 +3262,17 @@ void fragment() {)";
 					ALBEDO *= ggt;
 					if (ggs != vec2(0.0)) {
 						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(ggs.x, 0.0, ggs.y, 0.0)).xyz);
+					}
+				}
+				// Rain pits (GroundSurface3D rain_pits) on the sand the last rain fell on; none in prints (their sand
+				// was turned, or the rain softened them).
+				vec4 gm6 = ground_sand_meta6();
+				if (gm6.x > 0.0) {
+					float gpt;
+					vec2 gps = ground_rain_pits(gwp.xz, gm6.x * gsa.y * (1.0 - smoothstep(0.003, 0.008, abs(ground_deform_relief(gwp.xz)))), gm6.z, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), gpt);
+					ALBEDO *= gpt;
+					if (gps != vec2(0.0)) {
+						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gps.x, 0.0, gps.y, 0.0)).xyz);
 					}
 				}
 			}
@@ -3412,6 +3479,16 @@ void fragment() {)";
 		}
 	}
 )";
+	}
+
+	if (glaze) {
+		// Glaze from freezing rain, under any snow that falls on it (weather_glaze_apply()).
+		code += "\t// Glaze: Enabled\n\t{\n";
+		code += String("\t\tfloat glaze_fill = weather_glaze_apply(weather_rain_sample((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz).a, ") + (features[FEATURE_WETNESS] ? "wetness_porosity" : "0.5") + ", METALLIC, ALBEDO, ROUGHNESS, SPECULAR);\n";
+		if (features[FEATURE_NORMAL_MAPPING]) {
+			code += "\t\tNORMAL_MAP_DEPTH *= 1.0 - glaze_fill;\n";
+		}
+		code += "\t}\n";
 	}
 
 	if (features[FEATURE_SNOW]) {
@@ -4660,6 +4737,18 @@ bool BaseMaterial3D::is_wetness_canopy() const {
 	return wetness_canopy;
 }
 
+void BaseMaterial3D::set_glaze(bool p_enable) {
+	if (glaze == p_enable) {
+		return;
+	}
+	glaze = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_glaze() const {
+	return glaze;
+}
+
 void BaseMaterial3D::set_snow_amount(float p_amount) {
 	snow_amount = CLAMP(p_amount, 0.0f, 1.0f);
 	_material_set_param(shader_names->snow_amount, snow_amount);
@@ -4974,6 +5063,52 @@ vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
 // R, faded out over their outer 15%) and the ground's own share (all sand for a sand ground). Returns (depth, share,
 // the depth's weight); (-1, 0, 0) with the tone off (the meta row's fifth texel: x on, yzw the depth rows' rect).
 // The ripple map's sixth meta texel: the generator's dune-building wind (xy) and whether granule ripples are on (z).
+// Rain pits (GroundSurface3D rain_pits; docs/ideas/sand.md, "Rain pits and rain crust"): each drop digs a crater
+// about 2.5 times its own size, some 0.12 of its width deep, ringed by a low rim of the sand it throws out
+// (Katsuragi 2010; Zhao, van der Meer and Lohse 2015), 3 to 7 mm across here, with two chances in each 1 cm cell,
+// filled by p_cover (the share the rain so far has pitted); p_seed changes the pattern each rain. p_fp: the pixel's
+// footprint (m); craters finer than about three pixels fade to their mean, a slightly darker, rougher skin.
+// Returns the slope (dh/dx, dh/dz); p_tone: the albedo factor.
+vec2 ground_rain_pits(vec2 p_xz, float p_cover, float p_seed, float p_fp, out float p_tone) {
+	float res = 1.0 - smoothstep(0.0007, 0.002, p_fp);
+	p_tone = 1.0 - 0.05 * p_cover * (1.0 - res);
+	if (p_cover <= 0.0 || res <= 0.0) {
+		return vec2(0.0);
+	}
+	ivec2 off = ivec2(int(p_seed) * 7919, int(p_seed) * 104729);
+	ivec2 c0 = ivec2(floor(p_xz / 0.01));
+	vec2 g = vec2(0.0);
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			ivec2 c = c0 + ivec2(dx, dz);
+			for (int k = 0; k < 2; k++) {
+				ivec2 ck = c + off + ivec2(k * 50331, 0);
+				if (ground_ripple_hash(ck, 61u) >= 0.8 * p_cover) {
+					continue;
+				}
+				vec2 m = (vec2(c) + vec2(ground_ripple_hash(ck, 62u), ground_ripple_hash(ck, 63u))) * 0.01;
+				float R = 0.0015 + 0.002 * ground_ripple_hash(ck, 64u) * ground_ripple_hash(ck, 65u);
+				vec2 d = p_xz - m;
+				float r = length(d);
+				float u = r / R;
+				if (u >= 1.6 || r < 1e-6) {
+					continue;
+				}
+				// h = -0.24 R (1 - u^2) inside, and a rim 0.072 R high round u = 1.1.
+				float rim = (u - 1.1) / 0.25;
+				float dhdu = (u < 1.0 ? 0.48 * R * u : 0.0) - 0.072 * R * 8.0 * rim * exp(-rim * rim);
+				g += dhdu / R * (d / r);
+			}
+		}
+	}
+	return g * res;
+}
+// The rain's marks on the sand (GroundSurface3D rain_pits): x the share the last rain pitted, y the dried crust's
+// share, z the drops' pattern.
+vec4 ground_sand_meta6() {
+	ivec2 ts = textureSize(ground_ripple_map, 0);
+	return ground_ripple_rect.z > 0.0 && ts.x >= 7 ? texelFetch(ground_ripple_map, ivec2(6, ts.y - 1), 0) : vec4(0.0);
+}
 vec4 ground_sand_meta5() {
 	ivec2 ts = textureSize(ground_ripple_map, 0);
 	return ground_ripple_rect.z > 0.0 && ts.x >= 6 ? texelFetch(ground_ripple_map, ivec2(5, ts.y - 1), 0) : vec4(0.0);
@@ -6357,6 +6492,8 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_wetness_from_weather"), &BaseMaterial3D::is_wetness_from_weather);
 	ClassDB::bind_method(D_METHOD("set_wetness_canopy", "enable"), &BaseMaterial3D::set_wetness_canopy);
 	ClassDB::bind_method(D_METHOD("is_wetness_canopy"), &BaseMaterial3D::is_wetness_canopy);
+	ClassDB::bind_method(D_METHOD("set_glaze", "enable"), &BaseMaterial3D::set_glaze);
+	ClassDB::bind_method(D_METHOD("is_glaze"), &BaseMaterial3D::is_glaze);
 	ClassDB::bind_method(D_METHOD("set_snow_amount", "amount"), &BaseMaterial3D::set_snow_amount);
 	ClassDB::bind_method(D_METHOD("get_snow_amount"), &BaseMaterial3D::get_snow_amount);
 	ClassDB::bind_method(D_METHOD("set_snow_max_slope", "degrees"), &BaseMaterial3D::set_snow_max_slope);
@@ -6684,6 +6821,9 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_amount", "get_wetness_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_from_weather"), "set_wetness_from_weather", "is_wetness_from_weather");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_canopy"), "set_wetness_canopy", "is_wetness_canopy");
+
+	ADD_GROUP("Glaze", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glaze"), "set_glaze", "is_glaze");
 
 	ADD_GROUP("Snow", "snow_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "snow_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_SNOW);

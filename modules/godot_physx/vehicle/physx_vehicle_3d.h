@@ -216,6 +216,20 @@ public:
 	real_t get_hull_seal() const { return hull_seal; }
 	real_t get_water_buoyancy() const; // N, the last step
 	Vector3 get_water_drag() const; // N, the last step
+	// Drowning (docs/ideas/mud.md, round 21.1): water reaching the engine's air intake stalls it (hydrolock), and it
+	// starts again 5 s after the intake is clear; the cab floods through its gaps at an orifice's rate under the head
+	// outside, so a floating car settles and sinks, and drains on land.
+	void set_hull_leak_area(real_t p_area);
+	real_t get_hull_leak_area() const { return hull_leak_area; }
+	void set_air_intake_height(real_t p_height);
+	real_t get_air_intake_height() const { return air_intake_height; }
+	void set_snorkel(bool p_enabled);
+	bool has_snorkel() const { return snorkel; }
+	bool is_engine_drowned() const;
+	real_t get_cab_water() const; // m3 inside
+	// The hull's push on the water (round 21.3), the strongest of its three keel points, 0..1: the water's wave solver
+	// makes the bow wave and wake from it.
+	real_t get_bow_wave_strength() const;
 	// Mud on the body (docs/ideas/mud.md, stage 3b): BaseMaterial3D's Mud layer, turned on in copies of the materials of
 	// the meshes under this node and fed from the wheels' clogging and spray and the belly's mud line.
 	void set_body_mud(bool p_enabled);
@@ -274,6 +288,9 @@ private:
 	bool belly_drag = true;
 	bool river_forces = true; // mud round 20.1: the water contract's buoyancy and current on the chassis and tyres
 	real_t hull_seal = 0.5f; // share of the chassis box that keeps water out
+	real_t hull_leak_area = 0.01f; // m2 of gaps the cab floods through (round 21.1)
+	real_t air_intake_height = -1.0f; // m over the chassis box's bottom; < 0: three quarters of the box's height
+	bool snorkel = false; // the intake raised to 0.25 m over the roof
 	bool body_mud = true;
 	bool wind_obstacle = true;
 	void _belly_step(float p_delta);

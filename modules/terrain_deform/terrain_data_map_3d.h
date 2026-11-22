@@ -43,7 +43,7 @@
 // Barnes 2014), topographic wetness index (Beven and Kirkby 1979), water depth and signed
 // distance to water (Felzenszwalb and Huttenlocher 2012). Baked on the CPU over a square
 // centred on the node.
-class TerrainDataMap3D : public Node3D, public WorldWaterProvider {
+class TerrainDataMap3D : public Node3D, public WorldWaterProvider, public WorldClimateProvider {
 	GDCLASS(TerrainDataMap3D, Node3D);
 
 public:
@@ -171,6 +171,9 @@ public:
 	Ref<ClimateRecipe> get_climate_recipe() const { return climate_recipe; }
 	Error bake_climate();
 	bool has_climate() const { return climate_resolution > 0; }
+	// WorldContracts' climate slot: the baked precipitation over the recipe's regional mean; < 0 outside the climate or
+	// with none.
+	float contract_precipitation_factor_at(const Vector3 &p_position) const override;
 	Rect2 get_climate_rect() const;
 	double get_climate_bake_time_msec() const { return climate_msec; }
 	float get_temperature_at(const Vector3 &p_global_position, float p_day_of_year = -1.0f) const;

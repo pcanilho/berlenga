@@ -92,6 +92,8 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	bool crust_enabled = true;
 	bool hoar_enabled = true; // surface hoar on clear calm nights, buried as a weak layer (round 5)
 	bool suncups_enabled = true; // ablation hollows in sunny melt (follow-up 41)
+	bool sastrugi_enabled = true; // wind-carved ridges on hard eroding snow (follow-up 46)
+	bool wind_packing_enabled = true; // wind-affected snowfall and wind packing of the surface: wind slab (follow-up 45)
 	bool slush_enabled = true; // melt water ponds in the pack's base over frozen ground (follow-up 41)
 	bool slide_enabled = true;
 	float slide_interval = 600.0f; // weather seconds between slide passes
@@ -171,6 +173,9 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// of them: its crystals (mm), the snow over it (m) and the hours since it was buried.
 	Vector<float> cell_hoar;
 	Vector<float> cell_cups; // m, suncup relief (ridge to hollow)
+	Vector<float> cell_wind_slab; // m of wind-packed snow in the pack (follow-up 45)
+	Vector<float> cell_slab_cover; // m of soft snow over the wind slab (0: the slab is the surface)
+	Vector<float> cell_sas_x, cell_sas_z; // m: sastrugi relief times the direction of the wind that carved them (follow-up 46)
 	Vector<float> cell_packed; // 0..1, the share of the cell traffic has packed hard (follow-up 43)
 	Vector<float> cell_glaze; // mm of ice glaze polished on it by slipping wheels
 	Vector<float> cell_slush; // mm of water ponded in the pack's pores over frozen ground (not in cell_swe)
@@ -178,6 +183,8 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	Ref<Image> cups_image;
 	Ref<ImageTexture> cups_texture;
 	Ref<Image> upload_cups;
+	Ref<Image> sastrugi_image, upload_sastrugi;
+	Ref<ImageTexture> sastrugi_texture;
 	Vector<float> cell_hoar_layer;
 	Vector<float> cell_hoar_burial;
 	Vector<float> cell_hoar_age;
@@ -201,6 +208,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector3 sun_dir; // toward the sun; zero = no sun term
 		float direct_normal = 0.0f; // W/m2 at the ground, clear sky
 		float wind_factor = 0.0f; // drift weight, 0..1
+		float wind_speed = 0.0f; // m/s, the flat-ground wind at 10 m
 		float drift_norm = 1.0f;
 		float base_precip = 0.0f;
 		double weather_dt = 0.0; // s of weather time this update steps
@@ -265,10 +273,11 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// it starts and swaps the results in when it is done. Readers on the main thread read `pub`, the
 	// published copies (shared buffers, copied on the worker's first write), so they never wait.
 	struct Published {
-		Vector<float> swe, liquid, density, albedo, runoff, canopy_load, new_depth;
+		Vector<float> swe, liquid, density, albedo, runoff, canopy_load, new_depth, wind_slab;
 		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
 		Vector<float> hoar, hoar_layer, hoar_burial, hoar_age;
 		Vector<float> cups;
+		Vector<float> sas_x, sas_z;
 		Vector<float> slush; // mm
 		Vector<float> packed, glaze;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
@@ -374,6 +383,7 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	void _update_cells(bool p_parallel);
 	void _update_end();
 	void _send_runoff();
+	void _wind_pack(float p_dt_h, const LocalVector<float> &p_wind);
 	void _build_upload();
 	void _apply_upload();
 	void _start_background(double p_weather_dt, bool p_world);
@@ -433,6 +443,13 @@ public:
 	void set_hoar_enabled(bool p_enabled);
 	void set_suncups_enabled(bool p_enabled) { suncups_enabled = p_enabled; }
 	bool is_suncups_enabled() const { return suncups_enabled; }
+	void set_sastrugi_enabled(bool p_enabled) { sastrugi_enabled = p_enabled; }
+	bool is_sastrugi_enabled() const { return sastrugi_enabled; }
+	Vector2 get_sastrugi_at(Vector3 p_position) const; // relief (m) times the carving wind's direction
+	Ref<Texture2D> get_sastrugi_texture() const { return sastrugi_texture; }
+	void set_wind_packing_enabled(bool p_enabled) { wind_packing_enabled = p_enabled; }
+	bool is_wind_packing_enabled() const { return wind_packing_enabled; }
+	float get_wind_slab_at(Vector3 p_position) const; // m of wind-packed snow in the pack
 	void set_slush_enabled(bool p_enabled) { slush_enabled = p_enabled; }
 	bool is_slush_enabled() const { return slush_enabled; }
 	float get_slush_at(Vector3 p_position) const; // m, the saturated layer at the pack's base
@@ -617,6 +634,7 @@ public:
 	static float hoar_deposition_rate(float p_air_celsius, float p_humidity, float p_wind, float p_cloud, float p_shortwave); // kg/m2/h
 	void add_hoar(float p_size_mm); // lays crystals on the snow (tests)
 	void add_suncups(float p_relief); // sets the suncup relief (m) wherever there is snow (scenes, tests)
+	void add_sastrugi(float p_relief, Vector2 p_wind_direction); // sets the sastrugi relief (m) along a wind wherever there is snow
 	// The ground straight from the height source (finer than the cells), NaN where nothing answers.
 	float sample_ground_height(Vector3 p_position) const;
 	void sample_ground_heights(Vector2 p_origin, float p_spacing, int p_width, int p_height, float *r_heights) const;
@@ -639,6 +657,10 @@ public:
 	// The published relations, for scripts and checks.
 	static float snowfall_fraction(float p_celsius, float p_humidity); // Jennings et al. 2018
 	static float new_snow_density(float p_celsius); // Hedstrom and Pomeroy 1998, kg/m3
+	static Vector2 sastrugi_step(Vector2 p_relief, Vector2 p_wind_dir, float p_eroded, float p_filled, float p_depth, bool p_hard); // follow-up 46
+	static float wind_snow_density(float p_celsius, float p_wind10); // snowfall in wind (Crocus, Vionnet et al. 2012), kg/m3
+	static float drift_index(float p_wind10, float p_density, float p_fresh); // Crocus's driftability index SI
+	static float wind_packing_step(float p_density, float p_wind10, float p_fresh, float p_hours); // the top layer's density after p_hours
 	static float holding_depth(float p_slope_degrees, float p_min_mm, float p_decay); // SnowSlide, mm SWE
 	// Cornice growth against the wind over the blowing threshold (Yu et al. 2023): 0 below 1 and above 2,
 	// most at 1.4.

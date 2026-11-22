@@ -56,6 +56,7 @@ render_mode blend_premul_alpha, depth_test_disabled, depth_draw_never, cull_disa
 uniform sampler2D shafts_depth : hint_depth_texture, filter_nearest;
 uniform vec3 shafts_sun_dir = vec3(0.0, 1.0, 0.0);
 uniform float shafts_t_min = 1500.0;
+uniform float shafts_air_sigma = 0.0; // 1/m, the environment's exponential fog (the air and its aerosol)
 )";
 
 static const char *SHAFTS_BODY = R"(
@@ -85,23 +86,32 @@ void fragment() {
 	// Light weights: ambient_bottom (1, 0, 0) and the sun (0, 1, 0) give the march's two sums in r and g.
 	vec4 o = vec4(0.0, 0.0, 0.0, 1.0);
 	float dr;
+	// Each veil seen through the air in front of it (aerial perspective): the ground behind already carries its own
+	// fog, so a veil keeps the air's transmittance to it, exp(-sigma t), and the fogged ground shows through the rest.
+	// Without it a far veil over the ground stood out lighter than the same veil above the horizon (seen in the sky
+	// through that air).
 	if (cloud_storm_count > 0) {
 		o = march_rain_shafts(cam, rd, shafts_sun_dir, vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), jitter, shafts_t_min, t_max, dr);
+		float ta = exp(-shafts_air_sigma * dr);
+		o = vec4(o.rgb * ta, 1.0 - (1.0 - o.a) * ta);
 	}
 	if (cloud_lake.x > 0.0) {
 		vec4 l = march_lake_snow(cam, rd, shafts_sun_dir, vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), jitter, shafts_t_min, t_max, dr);
+		float ta = exp(-shafts_air_sigma * dr);
+		l = vec4(l.rgb * ta, 1.0 - (1.0 - l.a) * ta);
 		o = vec4(o.rgb + o.a * l.rgb, o.a * l.a);
 	}
 	if (o.a >= 0.999) {
 		discard;
 	}
 	// Seen sideways, the sky's irradiance is half sky and half ground, as ambient_bottom under the base.
-	vec3 side = normalize(vec3(-rd.x, 0.0, -rd.z) + vec3(0.0, 1e-4, 0.0));
+	// Tilted 45 degrees up: the ground's half came out warmer than ambient_bottom (which takes the ground at a third).
+	vec3 side = normalize(normalize(vec3(-rd.x, 0.0, -rd.z) + vec3(0.0, 1e-4, 0.0)) + vec3(0.0, 1.0, 0.0));
 	NORMAL = normalize((VIEW_MATRIX * vec4(side, 0.0)).xyz);
-	// The irradiance on a sideways normal takes in the bright horizon and the sunlit ground in full, about twice
-	// the sky's ambient_bottom (measured: the same lake-effect veil just above and just below the horizon); halved
-	// so a veil crossing the horizon keeps one brightness.
-	ALBEDO = vec3(o.r * 0.5);
+	// The irradiance on that normal takes in the bright horizon in full, more than ambient_bottom under the base;
+	// scaled (0.38, measured on the same lake-effect veil just above and just below the horizon) so a veil crossing
+	// the horizon keeps one brightness.
+	ALBEDO = vec3(o.r * 0.38);
 	ROUGHNESS = 1.0;
 	METALLIC = 0.0;
 	SPECULAR = 0.0;
@@ -186,6 +196,7 @@ void WeatherMap3D::_update_shafts() {
 		}
 	}
 	const DirectionalLight3D *sun = sun_light.is_empty() ? nullptr : Object::cast_to<DirectionalLight3D>(get_node_or_null(sun_light));
+	rs->material_set_param(own, "shafts_air_sigma", (env.is_valid() && env->is_fog_enabled()) ? env->get_fog_density() : 0.0f);
 	if (sun) {
 		rs->material_set_param(own, "shafts_sun_dir", sun->get_global_transform().basis.get_column(2).normalized());
 	}

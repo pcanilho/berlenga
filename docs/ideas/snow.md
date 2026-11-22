@@ -1720,6 +1720,42 @@ photographs, e.g. Fikke et al. 2007, COST 727).
 - Not here: rivers (PhysXRiver3D) take their discharge from the terrain climate, not from this field; a
   seasonal melt pulse in them would be the rivers' change.
 
+## Follow-up 45: wind slab (round 6, 22 Nov 2026)
+
+- Drift deposits were already laid down at 300 kg/m3; what was missing: snow falling in wind, the packing of
+  snow the wind works over in place, and a record of the slab for the avalanche stability.
+- Snowfall in wind: Crocus's new-snow density 109 + 6 T + 26 U^0.5 kg/m3 (Vionnet et al. 2012, GMD 5, after
+  Pahaut 1976), or Hedstrom and Pomeroy's where higher (calm). 151 kg/m3 at -8 C and 12 m/s against 70 calm.
+- Wind packing: Crocus's driftability SI = -2.868 exp(-0.085 U) + 1 + Mo (Guyomarc'h and Merindol 1998) with
+  mobility from density and freshness (albedo stands for dendricity); where SI > 0 at the cell's own wind
+  (MicroMet weights and lee) the top 10 cm settle toward 350 kg/m3 with time constant 48 h / (0.632 SI). Sommer
+  et al. 2018 (The Cryosphere 12): packing only with drift. The pack is one layer, so the top starts from the
+  pack's density.
+- `cell_wind_slab` (m): deposits, snowfall while SI > 0, the packed top; settles with the pack, melts from the
+  top, erosion takes it once the softer snow over it is gone. `get_wind_slab_at`, `wind_packing_enabled`.
+- Checks (`--test=windslab`): SI's thresholds (fresh 100 kg/m3 drifts from about 4 m/s, old 300 kg/m3 from
+  about 11); 12 h at 14 m/s packs 0.1 m of slab, calm none; a windy snowfall is twice as dense and is slab.
+
+## Follow-up 46: sastrugi (round 6, 22 Nov 2026)
+
+- Sastrugi are erosional bedforms of a cohesive surface (Filhol and Sturm 2015, JGR Earth Surface 120): drifting
+  snow scours a hard (wind-packed or sintered) surface whose hardness varies, leaving the hard patches as ridges
+  along the wind with steep prows into it, 5-50 cm tall, 1-5 m long.
+- Cover: `cell_sas_x/z` hold relief (m) times the carving wind's direction. In `_blow`, a cell whose surface is
+  hard at the start (wind slab with no soft cover, from follow-up 45's new `cell_slab_cover`, or 250 kg/m3 and
+  more) and that does not gain snow takes 2% of the snow scoured off it (the saltation's outflow, whatever came
+  in) as relief along the wind; deposits, new snow and melt fill it by their depth; at most 0.4 m and half the
+  pack. Our rate: 5-6 cm an hour at 24 m/s, about nothing under 12.
+- Surface: `SnowSurface3D.sastrugi_tile()` erodes a hardness field (periodic value noise, five times finer across
+  the wind than along) at (1.2 - 1.6 H)^2, faster on faces into the wind and 15% in Werner's (1995) 15 degree
+  shadow, then squares the height (flat floors, raised ridges). The shader lays it with the suncups' hex-tiling,
+  turned to the cell's wind with +-9 degrees of jitter, and adds it to the height like the suncups (real
+  geometry, raster and PT alike).
+- Checks (`--test=sastrugi`): the step's carving, fill, cap and turning; on the cornice ridge in a 24 m/s
+  westerly the windward snow, packed by the wind, carves 0.19 m along +x in 6 h; none on the lee drift (336 mm)
+  and none without wind packing (soft snow). Bench `--view=trail --sastrugi=M[,deg]`, `add_sastrugi`.
+- Media: /mnt/project-files/fork/snow/sastrugi/ (before/after raster, after PT).
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
