@@ -5225,6 +5225,7 @@ private:
 	bool _add_expanded_mm_surface(const PendingMMSurface &p_pending, const MMInstanceData &p_instance_data);
 
 	bool _hit_group_ready(const RTMaterialData *p_mat_data) const;
+	static bool _hit_group_fallback_ok(const ShaderData *p_shader, ShaderData::RTBlendClass p_blend_class);
 	void _fill_surface_key(const ShaderData *p_shader, const RTMaterialData *p_mat_data, ShaderData::RTBlendClass p_blend_class, uint8_t p_tlas_mask,
 			RTSurfaceGroupKey &r_key, uint32_t &r_material_flags) const;
 	uint32_t _push_tlas_instance(const Transform3D &p_transform, RID p_blas, const RTSurfaceGroupKey &p_key, bool p_transparent, bool p_raster_mirror);
@@ -5870,10 +5871,18 @@ bool RTTlasBuilder::_plan_mesh_instance(const RTPlanContext &p_ctx, RTPlanScratc
 		if (!mat_data) {
 			return false;
 		}
+		// A custom hit group still compiling (async_shader_compilation): an opaque surface is traced with the default
+		// hit group meanwhile, from the material's standard parameters, so a body doesn't vanish for the seconds its
+		// shader takes on a cold cache. One that discards or blends can't be stood in for (a hidden surface would
+		// show), so it waits. Either way it stays pending, so a still waits for the real shader.
+		bool hit_group_fallback = false;
 		if (!_hit_group_ready(mat_data)) {
 			all_hit_groups_ready = false;
 			record.pending_surfaces++;
-			continue;
+			if (!_hit_group_fallback_ok(surf->shader, blend_class)) {
+				continue;
+			}
+			hit_group_fallback = true;
 		}
 
 		records.resize(records.size() + 1);
@@ -5889,6 +5898,11 @@ bool RTTlasBuilder::_plan_mesh_instance(const RTPlanContext &p_ctx, RTPlanScratc
 		surface.deformed_kind = _plan_deformed_kind(p_inst, surf);
 		surface.flags = uint8_t(transparent ? RT_PLAN_SURFACE_TRANSPARENT : 0);
 		_fill_surface_key(surf->shader, mat_data, blend_class, tlas_mask, rec.key, surface.material_flags);
+		if (hit_group_fallback) {
+			rec.key.sbt_offset = 0;
+			rec.key.opaque = true;
+			surface.material_flags &= ~uint32_t(RT_MAT_FLAG_ALPHA_SCISSOR | RT_MAT_FLAG_CUSTOM_TRANSMITTANCE);
+		}
 		// Captured positions already include the billboard.
 		if (surf->shader && surface.deformed_kind != RT_PLAN_DEFORMED_CAPTURED) {
 			rec.key.billboard = surf->shader->billboard;
@@ -6309,6 +6323,15 @@ bool RTTlasBuilder::_add_expanded_mm_surface(const PendingMMSurface &p_pending, 
 // Custom hit groups are traced once they are live in the pipeline bundle.
 bool RTTlasBuilder::_hit_group_ready(const RTMaterialData *p_mat_data) const {
 	return p_mat_data->rt_sbt_offset == 0 || ctx.rt_shader->is_hg_ready_in_bundle(p_mat_data->rt_sbt_offset, ctx.rt_flags);
+}
+
+// Whether a surface whose custom hit group is still compiling can be traced with the default one meantime: opaque,
+// and a shader that never discards or writes alpha (it may hide the surface outright, as a cloth source's does).
+bool RTTlasBuilder::_hit_group_fallback_ok(const ShaderData *p_shader, ShaderData::RTBlendClass p_blend_class) {
+	if (p_blend_class != ShaderData::RT_BLEND_OPAQUE || p_shader == nullptr) {
+		return false;
+	}
+	return !p_shader->uses_discard && !p_shader->uses_alpha && !p_shader->uses_alpha_clip && !p_shader->uses_alpha_antialiasing && !p_shader->uses_depth_prepass_alpha;
 }
 
 void RTTlasBuilder::_fill_surface_key(const ShaderData *p_shader, const RTMaterialData *p_mat_data, ShaderData::RTBlendClass p_blend_class, uint8_t p_tlas_mask,

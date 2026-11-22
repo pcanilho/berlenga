@@ -1,0 +1,13 @@
+; Engine configuration file.
+config_version=5
+
+[application]
+
+config/name="Cloth path tracing bench"
+run/main_scene="res://main.tscn"
+
+[display]
+
+window/size/viewport_width=320
+window/size/viewport_height=240
+window/vsync/vsync_mode=0
