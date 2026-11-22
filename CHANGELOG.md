@@ -6,6 +6,29 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-47595e0b (2026-11-22)
+
+### Changed
+- Wind shear over dunes and snow drifts is computed about 3.5 times faster, with identical results.
+- Raindrop rings on water keep falling under freezing rain, raster and path traced (the GPU's rain share reads the warm layer aloft, `weather_warm_nose`).
+
+### Added
+- Flow emitters' smoke joins the weather's regional smoke: a campfire's or chimney's smoke drifts past the Flow box and pools in valleys on calm nights (PhysXFlowEmitter3D `regional_smoke`).
+- After an avalanche: in mountain stands, trees thrown down the fall line, snapped stumps, and survivors leaning downslope with their uphill limbs stripped, placed where the world records an avalanche (`TreeGenerator.SUCCESSION_AVALANCHE`, species meta `fall_downhill`).
+- Trees on cliffs: rooted in a crevice, the stem leaves the rock face and curves up to lean out, roots run over the face along its cracks, and one side of the crown dies back over a strip of dead bark (`TreeGenerator.cliff_angle`, `cliff_lean`, `cliff_dieback`).
+- Cliff yew over beech woods, Scots pine in montane conifers and hemlock in white pine-hemlock, on rock faces past 52 degrees.
+- Trees near the camera take the season where they stand: a late frost browns the new leaves in cold hollows, and high slopes leaf out later than the valley (`WorldWeather.season_at`, `TreeGenerator.near_season_band`).
+- Foehn: a wind across a range comes down its lee warmer and drier, several K warmer after the windward side rains out, with a gap in the cloud over the lee (WeatherMap3D `foehn_winds`).
+- Late frost: a spring air frost below about -2 C browns the young leaves of the species already out, first in the cold hollows, until a second flush replaces them weeks later (WeatherMap3D `late_frost`).
+- Sea and lake breezes: warm afternoons blow onshore a few m/s, reaching some 20 km inland, and cool nights blow a weaker land breeze off the shore (WeatherMap3D `sea_breezes`).
+- Smoke in cold pools: smoke let out on a clear calm night stays near the ground in the valleys, drains down the slopes, and mixes up after sunrise (WeatherMap3D `smoke_in_pools`, `WorldWeather.smoke_concentration_at`).
+- Day upslope winds: sunny calm afternoons run the air up slopes at 1 to 2 m/s, and fair-weather cumulus gathers over crests where they meet when the air is moist (WeatherMap3D `upslope_winds`).
+- Along-valley winds: valleys blow up-valley on sunny calm afternoons and down-valley on clear calm nights, a few m/s, carrying smoke and fog along them (WeatherMap3D `valley_winds`).
+
+### Fixed
+- The terrain material compiles again in projects without the far sun shadow globals defined (`terrain_sun_horizon_*` now registered with the others).
+- A weather map or terrain generator that leaves the scene takes its shader maps with it, so ground drawn later no longer reads a freed map's wetness, spray, geology or sky.
+
 ## build-ca985258 (2026-11-22)
 
 ### Changed
