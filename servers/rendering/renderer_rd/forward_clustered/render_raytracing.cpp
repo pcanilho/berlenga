@@ -8324,7 +8324,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		_update_streaming_feedback();
 		RID feedback;
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-		feedback = TextureStreaming::get_singleton()->feedback_buffer_get_uniform_rid();
+		if (TextureStreaming::get_singleton()) {
+			feedback = TextureStreaming::get_singleton()->feedback_buffer_get_uniform_rid();
+		}
 #endif
 		const RID stand_in = RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer();
 		RD::Uniform u;
@@ -8538,7 +8540,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			samplers = RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default();
 		}
 #ifdef MODULE_TEXTURE_STREAMING_ENABLED
-		TextureStreaming::get_singleton()->feedback_report_mipmap_bias(samplers.mipmap_bias); // Feedback reads the mip the sampler reads.
+		if (TextureStreaming::get_singleton()) {
+			TextureStreaming::get_singleton()->feedback_report_mipmap_bias(samplers.mipmap_bias);
+		} // Feedback reads the mip the sampler reads.
 #endif
 		samplers.append_uniforms(uniforms, 16);
 	}
