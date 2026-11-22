@@ -890,3 +890,9 @@ winter (snow cover already reads WeatherMap3D).
 reacting-stones path (ground detail "Stones that react") already presses grains into a print and spills them at
 its rim; extend it to the rooting clods (GroundClods3D's crushed test on the print field, as its own clods) and
 make sure the wear stones carry the same react flags. Small; mostly wiring and a bench pass.
+
+Outcome (22 Nov, done as a gap in the new pieces): the trail's wear stones already react (worn squares are never
+tiled, so every one is a single grain the contacts reach). The rooting clods now take GroundClods3D's crushing
+test against the print field (pressed in or heaped over: gone), keyed by cell and number so a crushed clod stays
+gone when the patch is laid again. A tyre across a fresh patch: 193 clods to 169, the rut clean; raster and PT
+match.
