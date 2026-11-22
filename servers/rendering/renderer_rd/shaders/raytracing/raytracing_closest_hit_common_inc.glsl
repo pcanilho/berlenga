@@ -1727,11 +1727,15 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 
 	// Indirect light reuse: the first bounce of a pixel whose first hit took the diffuse lobe
 	// reports this surface's normal (for the reconnection's cosine) and whether it is rough
-	// enough to be seen the same from nearby surfaces.
+	// enough to be seen the same from nearby surfaces (enhanced: its roughness, for the footprint test).
 	if (total_bounces == 1u && (ps.packed_bounces_flags & RT_IR_DIFFUSE_FLAG) != 0u) {
 		ps.offset_normal = h.geometry_normal;
-		if (m.roughness < RT_IR_MIN_ROUGHNESS || m.transmission > 0.0 || m.hair > 0.0) {
+		bool enhanced = rt_ir_enhanced();
+		if ((!enhanced && m.roughness < RT_IR_MIN_ROUGHNESS) || m.transmission > 0.0 || m.hair > 0.0) {
 			ps.packed_bounces_flags &= ~RT_IR_DIFFUSE_FLAG;
+		} else if (enhanced) {
+			// Raygen decides with the footprint test (rt_ir_reconnectable()).
+			rt_ir.data[rt_ir_record_base(ivec2(RT_LAUNCH_ID.xy)) + 6u] = floatBitsToUint(m.roughness);
 		}
 	}
 
