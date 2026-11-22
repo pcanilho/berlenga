@@ -1,0 +1,53 @@
+name: Windows export test (temporary)
+on:
+  push:
+    branches: [claude/project-thread-ue8044]
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [build-f2ad55f2]
+    env:
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Download
+        run: |
+          $sha = "${{ matrix.tag }}".Substring(6)
+          gh release download ${{ matrix.tag }} -R ${{ github.repository }} -p "berlenga-windows-x86_64-*.zip" -p "berlenga-export-templates-*.tpz" -D dl
+          Expand-Archive dl/berlenga-windows-x86_64-$sha.zip -DestinationPath ed
+          Copy-Item dl/berlenga-export-templates-$sha.tpz tpl.zip
+          Expand-Archive tpl.zip -DestinationPath tpl
+          Get-ChildItem -Recurse ed, tpl | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 300
+      - name: Export and run variants
+        run: |
+          $ed = (Get-ChildItem -Recurse ed -Filter "*.exe" | Where-Object { $_.Name -notmatch "console" } | Select-Object -First 1).FullName
+          $tpl = (Resolve-Path tpl/templates/windows_release_x86_64.exe).Path -replace '\\','/'
+          New-Item -ItemType Directory proj | Out-Null
+          Set-Content proj/project.godot "config_version=5`n`n[application]`n`nconfig/name=`"T`"`nrun/main_scene=`"res://main.tscn`"`nconfig/icon=`"res://icon.svg`"`n"
+          Set-Content proj/main.tscn "[gd_scene format=3]`n`n[node name=`"Main`" type=`"Node`"]`n"
+          Set-Content proj/icon.svg '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="#478cbf"/></svg>'
+          & $ed --headless --path proj --import 2>&1 | Select-Object -Last 3
+          foreach ($mod in @("true","false")) { foreach ($emb in @("false","true")) {
+            $name = "m$mod-e$emb"
+            $p = "[preset.0]`nname=`"Windows`"`nplatform=`"Windows Desktop`"`nrunnable=true`nexport_filter=`"all_resources`"`nexport_path=`"out/$name/t.exe`"`n`n[preset.0.options]`ncustom_template/debug=`"$tpl`"`ncustom_template/release=`"$tpl`"`nbinary_format/embed_pck=$emb`nbinary_format/architecture=`"x86_64`"`napplication/modify_resources=$mod`napplication/icon=`"res://icon.svg`"`n"
+            Set-Content proj/export_presets.cfg $p
+            New-Item -ItemType Directory -Force proj/out/$name | Out-Null
+            & $ed --headless --path proj --export-release Windows "out/$name/t.exe" 2>&1 | Select-String -Pattern "ERROR|WARN" | Select-Object -First 5
+            Write-Host "== $name size $((Get-Item proj/out/$name/t.exe).Length)"
+            try {
+              $pr = Start-Process -FilePath (Resolve-Path proj/out/$name/t.exe) -ArgumentList "--headless","--quit" -Wait -PassThru -NoNewWindow
+              Write-Host "== $name exit $($pr.ExitCode)"
+            } catch { Write-Host "== $name START FAILED: $($_.Exception.Message)" }
+            Copy-Item proj/out/$name/t.exe "$name.exe"
+          } }
+          try { $pr = Start-Process -FilePath (Resolve-Path tpl/templates/windows_release_x86_64.exe) -ArgumentList "--headless","--quit","--path","proj" -Wait -PassThru -NoNewWindow; Write-Host "== template exit $($pr.ExitCode)" } catch { Write-Host "== template START FAILED: $($_.Exception.Message)" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exes
+          path: "*.exe"
+          retention-days: 3
