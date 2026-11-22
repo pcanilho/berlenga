@@ -2635,6 +2635,29 @@
    "topic": "Plants"
   },
   {
+   "name": "Fairy rings",
+   "settings": [
+    "GrassField3D.fairy_rings",
+    "PlantGenerator.make_fairy_rings()"
+   ],
+   "note": "",
+   "what": "meadows carry rings of dark and dead grass with champignons along them.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Dewy webs",
+   "settings": [
+    "PlantGenerator.make_dew_webs()"
+   ],
+   "note": "",
+   "what": "sheet and orb spider webs show when dew or hoarfrost beads them.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Anthills and molehills",
    "settings": [
     "PlantGenerator.make_mounds()",
