@@ -24,6 +24,13 @@
 				Each newly detached piece gets a real outward velocity -- radial direction from [param world_position] to that piece's own centroid, scaled by [member shatter_speed] and the same distance falloff the damage itself used, plus a slight upward bias.
 			</description>
 		</method>
+		<method name="get_piece_body" qualifiers="const">
+			<return type="RID" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Returns the piece's physics body, for effects that push debris (a river carrying it off). An invalid [RID] for an out-of-range index or a dead body.
+			</description>
+		</method>
 		<method name="get_piece_center" qualifiers="const">
 			<return type="Vector3" />
 			<param index="0" name="index" type="int" />

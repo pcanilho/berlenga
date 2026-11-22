@@ -6548,6 +6548,17 @@ Ref<ShaderMaterial> PlantGenerator::_silk_material() const {
 	return m;
 }
 
+bool PlantGenerator::is_plant_mesh(const Ref<Mesh> &p_mesh) {
+	if (p_mesh.is_null() || p_mesh->get_surface_count() == 0) {
+		return false;
+	}
+	const Ref<ShaderMaterial> m = p_mesh->surface_get_material(0);
+	if (m.is_null() || m->get_shader().is_null()) {
+		return false;
+	}
+	return m->get_shader() == shaders[0] || m->get_shader() == shaders[1];
+}
+
 Ref<ShaderMaterial> PlantGenerator::_material(const Color &p_color, float p_roughness, bool p_backlight) const {
 	Ref<ShaderMaterial> m;
 	m.instantiate();

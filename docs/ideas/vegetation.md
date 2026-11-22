@@ -1989,3 +1989,21 @@ array, for the path tracer's material slot), so the days pass without a rebuild.
   crop_ground(). Check: grass --far --hay=3 --raster.
 - Plant impostors cut their cover by discard, not ALPHA with a scissor (the project-wide rule for opaque surfaces);
   dew web silk keeps ALPHA as it is see-through.
+
+## Sod blocks breaking on landing, carried by the river (round 9, third pick)
+- Failed cantilever blocks reach the bank's foot, where "some of these blocks are immediately entrained by the flow,
+  or break up on impact, others will remain there", acting as toe protection until high flows remove them (Henshaw,
+  SERC "Composite river bank erosion in mid-Wales, UK", https://serc.carleton.edu/48228).
+- SodLipFall3D: a falling block that stops faster than break_speed (2.5 m/s, an estimate) in a step becomes a
+  PhysXDestructible3D (Blast) of the lip mesh cut across its length at 2 to 5 cracks about 30 cm apart, each up to 8
+  degrees askew (estimates). The soil surface is clipped exactly (Sutherland-Hodgman), blades and roots go whole with
+  their piece; each piece's shell (its cross-section's convex hull 4 mm inside, run crack to crack) gives collision
+  and draws the torn soil. The landing damages the cracks round the slab's middle, more the harder. Assets are built
+  once per lip variant on a worker when a lip first falls; mass from the shells' volume at 1500 kg/m3.
+- In water: buoyancy and the flow's drag (0.5 rho Cd A |u - v| (u - v), Cd 1.05, the usual textbook value for a cube face-on,
+  not re-checked here; A the side of a cube of the same volume) as impulses, the bed's friction left to the engine. So
+  there is a threshold: in the bench a 1.5 m/s flow barely shifts the pieces, 2 m/s rolls them about 1 m in 3 s.
+- PhysXDestructible3D.get_piece_body(index) added, so effects can push debris.
+- Check: vegetation --test=sod ("sod landing").
+- Hay fixes from the site-shot scout: herbs of hand-built species (plant shader, no plant_preset meta) are cut too,
+  ground features (mounds, dung, wrack, bank sod, webs, bales) never; bales are not dropped in water.

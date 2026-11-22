@@ -2063,7 +2063,12 @@ void GrassField3D::_build_bales() {
 				const float sway = 0.2f * Math::sin(v * 0.06f + row * 1.7f) + 0.08f * Math::sin(v * 0.27f + row * 0.4f);
 				const float uc = (row + 0.5f) * HAY_ROW_PITCH + sway;
 				const Vector2 q = rn * uc + rd * v;
-				if (m.bounds.has_point(q) && Geometry2D::is_point_in_polygon(q, m.polygon)) {
+				const WorldWater *water = WorldContracts::water();
+				const float gy = ground(q);
+				const float wy = water ? water->height_at(Vector3(q.x, gy, q.y)) : -Math::INF;
+				// Not in a pond or a ditch the meadow holds: a baler goes round water.
+				const bool wet = (Math::is_finite(wy) && wy > gy - 0.05f) || (map && map->get_water_depth_at(Vector3(q.x, gy, q.y)) > 0.0f);
+				if (!wet && m.bounds.has_point(q) && Geometry2D::is_point_in_polygon(q, m.polygon)) {
 					const float e = 0.6f;
 					const float hx = ground(q + rd * e) - ground(q - rd * e);
 					const float hz = ground(q + rn * e) - ground(q - rn * e);

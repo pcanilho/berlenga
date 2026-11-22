@@ -585,6 +585,12 @@ public:
 	static float get_presence(Preset p_preset, const Dictionary &p_season);
 	static float _mushroom_presence(Preset p_preset, const Dictionary &p_season);
 	static bool is_silk(Preset p_preset) { return p_preset == PRESET_SHEET_WEB || p_preset == PRESET_ORB_WEB; }
+	// Ground features, not herbs: a mower passes over or round them (mounds, dung, sod, wrack, webs, bales).
+	static bool is_ground_feature(int p_preset) {
+		return p_preset == PRESET_ANTHILL || p_preset == PRESET_WOOD_ANT_NEST || p_preset == PRESET_MOLEHILL || p_preset == PRESET_ROOTED_SOD || p_preset == PRESET_LEAF_BANK || p_preset == PRESET_FLOOD_WRACK || p_preset == PRESET_TURF_LIP || p_preset == PRESET_BANK_ROOTS || p_preset == PRESET_BANK_ROOTS_WOODY || p_preset == PRESET_COW_PAT || p_preset == PRESET_HORSE_DUNG || p_preset == PRESET_DEER_PELLETS || p_preset == PRESET_HAY_BALE || is_silk(Preset(p_preset));
+	}
+	// Whether the mesh is a generated plant (its first surface drawn with the plant shader).
+	static bool is_plant_mesh(const Ref<Mesh> &p_mesh);
 	static bool is_mushroom(Preset p_preset) { return (p_preset >= PRESET_FLY_AGARIC && p_preset <= PRESET_HONEY_FUNGUS) || p_preset == PRESET_FAIRY_RING_MUSHROOM; }
 	float get_leaf_wear() const { return leaf_wear; }
 	int get_texture_size() const { return texture_size; }

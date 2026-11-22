@@ -34,6 +34,7 @@
 #include "fairy_rings.h"
 
 #include "grass_field_3d.h"
+#include "plant_generator.h"
 #include "vegetation_detail.h"
 #include "vegetation_light.h"
 
@@ -1710,15 +1711,21 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 		}
 	}
 	{
-		// Cut when a hay meadow is mown: the plant generator's herbs that stand over the stubble (not trees or shrubs
-		// with a canopy, not the ground features on banks).
+		// Cut when a hay meadow is mown: the plant generator's herbs that stand over the stubble (by preset, or by the
+		// plant shader on a hand-made species' meshes; not trees or shrubs with a canopy, mounds, dung, wrack or bank sod).
 		float top = 0.0f;
 		for (const Ref<Mesh> &m : ps.meshes) {
 			if (m.is_valid()) {
 				top = MAX(top, m->get_aabb().get_end().y);
 			}
 		}
-		ps.hay_cut = p_sp->has_meta(SNAME("plant_preset")) && p_sp->get_canopy_radius() <= 0.0f && !p_sp->uses_bank_edge() && top > 0.12f;
+		const int preset = int(p_sp->get_meta(SNAME("plant_preset"), -1));
+		const bool herb = preset >= 0 ? !PlantGenerator::is_ground_feature(preset) : (!ps.meshes.is_empty() && PlantGenerator::is_plant_mesh(ps.meshes[0]));
+		bool mound = false;
+		for (const Ref<Mesh> &m : ps.meshes) {
+			mound = mound || (m.is_valid() && m->has_meta(SNAME("sward_mound")));
+		}
+		ps.hay_cut = herb && !mound && p_sp->get_canopy_radius() <= 0.0f && !p_sp->uses_bank_edge() && top > 0.12f;
 		ps.base_variants = int(ps.meshes.size());
 		if (ps.hay_cut) {
 			// Always, so a meadow mown later needs no new setup. The same plants cut at the stubble (7.5 to 10 cm; GrassField3D.hay_meadows): their stalks stand in the
