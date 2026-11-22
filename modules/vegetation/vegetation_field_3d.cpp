@@ -549,6 +549,79 @@ void VegetationField3D::add_canopy_loss(const Vector2 &p_xz, float p_radius, flo
 	_apply_canopy_losses(crowns, canopy_losses, canopy_losses.size() - 1);
 }
 
+void VegetationField3D::add_plant_removal(const Vector3 &p_position, float p_radius, int p_species) {
+	ERR_FAIL_COND(p_radius <= 0.0f);
+	plant_removals.push_back(Vector4(p_position.x, p_position.z, p_radius, float(MAX(p_species, -1))));
+	const Rect2 area(p_position.x - p_radius, p_position.z - p_radius, 2.0f * p_radius, 2.0f * p_radius);
+	if (streaming) {
+		if (stream_setup_valid) {
+			removal_dirty = removal_dirty.has_area() ? removal_dirty.merge(area) : area;
+		}
+	} else if (plant_count > 0) {
+		queue_populate();
+	}
+}
+
+PackedVector4Array VegetationField3D::get_plant_removals() const {
+	PackedVector4Array out;
+	for (const Vector4 &r : plant_removals) {
+		out.push_back(r);
+	}
+	return out;
+}
+
+void VegetationField3D::clear_plant_removals() {
+	if (plant_removals.is_empty()) {
+		return;
+	}
+	plant_removals.clear();
+	if (streaming) {
+		if (stream_setup_valid) {
+			removal_dirty = stream_setup.rect;
+		}
+	} else if (plant_count > 0) {
+		queue_populate();
+	}
+}
+
+Array VegetationField3D::get_instances_near(int p_species, const Vector3 &p_position, float p_radius) const {
+	Array out;
+	if (biome.is_null() || p_species < 0 || p_species >= biome->get_species().size()) {
+		return out;
+	}
+	const Ref<PlantSpecies> sp = biome->get_species()[p_species];
+	if (sp.is_null()) {
+		return out;
+	}
+	const TypedArray<Mesh> meshes = sp->get_meshes();
+	const Vector2 c(p_position.x, p_position.z);
+	const float r2 = p_radius * p_radius;
+	for (int i = 0; i < get_child_count(true); i++) {
+		const MultiMeshInstance3D *mmi = Object::cast_to<MultiMeshInstance3D>(get_child(i, true));
+		if (!mmi || !mmi->is_visible() || mmi->get_multimesh().is_null()) {
+			continue;
+		}
+		const Ref<MultiMesh> mm = mmi->get_multimesh();
+		const Ref<Mesh> mesh = mm->get_mesh();
+		if (mesh.is_null() || !meshes.has(mesh)) {
+			continue;
+		}
+		const Transform3D xf = mmi->get_global_transform();
+		const int n = mm->get_visible_instance_count() >= 0 ? mm->get_visible_instance_count() : mm->get_instance_count();
+		for (int k = 0; k < n; k++) {
+			const Transform3D t = xf * mm->get_instance_transform(k);
+			if (Vector2(t.origin.x, t.origin.z).distance_squared_to(c) > r2) {
+				continue;
+			}
+			Dictionary d;
+			d["transform"] = t;
+			d["mesh"] = mesh;
+			out.push_back(d);
+		}
+	}
+	return out;
+}
+
 PackedVector4Array VegetationField3D::get_canopy_losses() const {
 	PackedVector4Array out;
 	for (const Vector4 &l : canopy_losses) {
@@ -1634,6 +1707,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	r_setup.crop_fields = GrassField3D::get_crop_field_mask();
 	_follow_holes(map);
 	r_setup.holes.read(VegetationHoles::source_of(map));
+	r_setup.removals = plant_removals;
 	{
 		const TerrainGenerator3D *gen = VegetationHoles::source_of(map);
 		r_setup.dunes = gen && gen->get_dune_rect().has_area() ? gen : nullptr;
@@ -2678,6 +2752,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// field's and the canopy field's; other woody species keep their footprints.
 					if (canopy_r <= 0.0f && !is_log && (stem_in(local_crown_grid, local_crowns, xz, STEM_MARGIN, CROWN_CELL) || (p_setup.other && p_setup.other->_in_stem(xz, STEM_MARGIN)))) {
 						continue;
+					}
+					if (!p_setup.removals.is_empty() && p_setup.removed_at(xz, s)) {
+						continue; // Taken away (add_plant_removal).
 					}
 					// Footprints of earlier species.
 					bool blocked = false;
@@ -6016,6 +6093,18 @@ void VegetationField3D::_stream_update(double p_delta) {
 	LocalVector<Vector2i> gone;
 	// Ground opened or closed (cave mouths): once no tile is being placed (the workers read the
 	// setup), the setup takes the new holes and the tiles near them are placed again.
+	// Plants taken away (add_plant_removal): once no tile is being placed, the setup takes the new list and the tiles
+	// there are placed again without them.
+	if (removal_dirty.has_area() && stream_jobs.is_empty()) {
+		stream_setup.removals = plant_removals;
+		const Rect2 near = removal_dirty.grow(stream_setup.max_footprint + 0.5f);
+		for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
+			if (Rect2(Vector2(kv.key) * ts, Vector2(ts, ts)).intersects(near)) {
+				kv.value->stale = true; // Placed again; the old one shows until the new one is in.
+			}
+		}
+		removal_dirty = Rect2();
+	}
 	if (holes_dirty.has_area() && stream_jobs.is_empty()) {
 		stream_setup.holes.read(VegetationHoles::source_of(stream_setup.map));
 		stream_setup.crop_fields = GrassField3D::get_crop_field_mask();
@@ -6180,7 +6269,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 
 	// Missing tiles within the radius, nearest first, as many at once as there are workers.
 	const int max_jobs = MAX(1, WorkerThreadPool::get_singleton()->get_thread_count());
-	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area() && !stand_dirty.has_area()) {
+	if (int(stream_jobs.size()) < max_jobs && !holes_dirty.has_area() && !burn_dirty.has_area() && !stand_dirty.has_area() && !removal_dirty.has_area()) {
 		const int r = int(Math::ceil(stream_radius / ts)) + 2;
 		const Vector2i ct(int(Math::floor(centre.x / ts)), int(Math::floor(centre.y / ts)));
 		const Rect2i map_tiles(Vector2i(int(Math::floor(rect.position.x / ts)), int(Math::floor(rect.position.y / ts))),
@@ -6813,6 +6902,10 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("add_canopy_loss", "xz", "radius", "keep"), &VegetationField3D::add_canopy_loss, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_canopy_losses"), &VegetationField3D::get_canopy_losses);
 	ClassDB::bind_method(D_METHOD("clear_canopy_losses"), &VegetationField3D::clear_canopy_losses);
+	ClassDB::bind_method(D_METHOD("add_plant_removal", "position", "radius", "species"), &VegetationField3D::add_plant_removal, DEFVAL(-1));
+	ClassDB::bind_method(D_METHOD("get_plant_removals"), &VegetationField3D::get_plant_removals);
+	ClassDB::bind_method(D_METHOD("clear_plant_removals"), &VegetationField3D::clear_plant_removals);
+	ClassDB::bind_method(D_METHOD("get_instances_near", "species", "position", "radius"), &VegetationField3D::get_instances_near);
 	ClassDB::bind_method(D_METHOD("set_cover_map_enabled", "enable"), &VegetationField3D::set_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("is_cover_map_enabled"), &VegetationField3D::is_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("set_cover_grass", "path"), &VegetationField3D::set_cover_grass);
