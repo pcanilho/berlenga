@@ -1031,7 +1031,8 @@ Their flow is a Burgers-Rott vortex: radial inflow in a shallow layer at the foo
 solid rotation inside the core radius and the swirl falling off outside it (Rankine-like).
 
 - Weather gate (get_favour_at, 0..1): the surface's heating over the air from WeatherMap3D (surface minus air
-  temperature, none under `min_heating` 8 K, full 12 K over it), the 10 m wind (gone by 6 to 11 m/s: shear tears the
+  temperature, none under `min_heating` 8 K, full 12 K over it), the 10 m mean wind (mean_wind_at: not the devils'
+  own swirl) (gone by 6 to 11 m/s: shear tears the
   column), the surface wetness (0.1 to 0.3), sun visibility, and none at all in rain over 0.05 mm/h. Read through
   WorldContracts (the one weather source, no private copy).
 - Spawning: a Poisson process at `frequency` devils per km2 per hour at full favour over the disc of `spawn_range`
@@ -1041,9 +1042,11 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
 - Motion: with 0.7 of the 10 m wind plus a slow wander; spin-up over 15 s, decay over the last 25 s; once the
   favour goes (rain, wind, cloud), it dies within 25 s.
 - Flow column (Burgers-Rott forcing with air-only emitters in one PhysXFlow3D, 0.25 m cells): a foot ring of 8
-  spheres on the core radius blowing tangentially with a weak inflow and an updraft, lifting dust in proportion
-  to the loose sand; a second spinning ring at four radii keeps the spin as the column rises; a warm box core
-  (a few kelvin: buoyancy and the shimmer, no glow, no fire light) lifts it. Flow carries the rest: the column leans
+  spheres on the core radius blowing tangentially with a weak inflow and an updraft, warm (the superheated surface
+  layer), lifting dust in proportion to the loose sand; three spinning rings at 1.5, 3.5 and 6 radii, flaring,
+  keep the wall spinning up the column; a warm box core (a few kelvin: buoyancy and the shimmer, no glow, no fire
+  light) lifts it. The dust fades slowly (0.06/s): the fines hang, so the column is as tall as the updraft takes
+  them (a fast fade, 0.5/s, left a squat 10 m puff). Flow carries the rest: the column leans
   and drifts in the weather's wind (its pull weakened to 0.25/s so the column keeps its own updraft), the dust swirls
   up the wall and fans out on top.
 - Shared wind (Paulo's connectivity rule): each devil is a vortex in WeatherMap3D (add_vortex / set_vortex /
@@ -1054,5 +1057,7 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
 - Checks: docs/bench/dust_devils --test (headless: the gate, drift, spin-up, the vortex in the shared wind (swirl
   on the ring, updraft on the axis, none 8 R out, gone with the devil), the weather's spawns under the cap, rain
   stopping new ones and killing the old); the view renders one devil (--raster, --pair, --flow=prop:value).
+- Look: cloud scouts (lavapipe, ~25 min for 20 s of devil) still showed a squat column with a dark, dense foot;
+  the look and the PT pair go on the PC queue, where a scout takes seconds.
 - Not yet: the swirl mark left on the ripples, GroundStreamers3D taking the grains at the foot, the PT cost on the
   PC queue.

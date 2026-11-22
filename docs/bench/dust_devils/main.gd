@@ -124,6 +124,7 @@ func _run_tests() -> void:
 	var far: Vector3 = m.get_vortex_wind_at(Vector3(d.x + 8.0 * d.z, 0.0, d.y), 2.0)
 	_check("the devil is in the shared wind: its swirl on the ring", m.get_vortex_count() == 1 and abs(vw.z) > 0.8 * d.w and abs(vw.z) < 1.05 * d.w, "%d vortices, %.1f m/s across at R" % [m.get_vortex_count(), vw.z])
 	_check("an updraft on its axis, none 8 radii out", ax.y > 0.25 * d.w and far.length() < 0.01, "up %.1f m/s, %.2f m/s at 8 R" % [ax.y, far.length()])
+	_check("its own swirl does not count as wind against it", dd.get_favour_at(ring) > 0.9, "favour %.2f on its ring" % dd.get_favour_at(ring))
 	var total: Vector3 = m.get_wind_at(ring, 2.0)
 	_check("get_wind_at carries it", abs(total.z) > 0.6 * d.w, "%s" % total)
 	# Spawning from the weather: a high rate over the disc, the cap holds and they stand apart.
@@ -195,6 +196,8 @@ func _view() -> void:
 	mat.normal_texture = nt
 	mat.uv1_scale = Vector3(60, 60, 1)
 	ground.material_override = mat
+	if "--ground-no-shadow" in OS.get_cmdline_user_args():
+		ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(ground)
 	var cam := Camera3D.new()
 	cam.fov = 55.0

@@ -49,6 +49,7 @@ class PhysXDustDevils3D : public Node3D {
 
 public:
 	static constexpr int RING = 8;
+	static constexpr int LEVELS = 3; // spinning rings up the column over the foot ring
 
 private:
 	bool enabled = true;
@@ -74,7 +75,7 @@ private:
 		float dust = 1.0f;
 		int vortex_id = 0; // in the shared wind (WeatherMap3D add_vortex), 0: none
 		PhysXFlowEmitter3D *foot[RING] = {};
-		PhysXFlowEmitter3D *upper[RING] = {};
+		PhysXFlowEmitter3D *upper[LEVELS][RING] = {};
 		PhysXFlowEmitter3D *core = nullptr;
 	};
 	LocalVector<Devil> devils;
