@@ -1,6 +1,11 @@
 // Shared data structures for raytracing shaders.
 // Requires: GL_EXT_buffer_reference, GL_ARB_gpu_shader_int64, raytracing_inc.glsl (for OFFSET_NONE/FLAG_*)
 
+// Shaders without raytracing_common_inc.glsl (opacity_micromap.glsl) have no RT_FLAGS: nothing is elided there.
+#ifndef RT_SCENE_ELIDES
+#define RT_SCENE_ELIDES(m_flag) false
+#endif
+
 // ============================================================================
 // BUFFER REFERENCES
 // ============================================================================
@@ -253,16 +258,25 @@ bool rt_material_wetness_canopy(MaterialData p_mat) {
 
 // BaseMaterial3D glaze: clear ice from freezing rain, the rain map's alpha (material.cpp weather_glaze_apply()).
 bool rt_material_glaze(MaterialData p_mat) {
+	if (RT_SCENE_ELIDES(RT_FLAG_SCENE_NO_GLAZE)) {
+		return false;
+	}
 	return ((p_mat.subsurface_texture >> 26u) & 1u) != 0u;
 }
 
 // BaseMaterial3D Ground Deform on GroundSurface3D's patch: the turned-ground tint is on.
 bool rt_material_ground_deform(MaterialData p_mat) {
+	if (RT_SCENE_ELIDES(RT_FLAG_SCENE_NO_GROUND)) {
+		return false;
+	}
 	return ((p_mat.subsurface >> 29u) & 1u) != 0u;
 }
 
 // BaseMaterial3D Ground Deform off the patch (the terrain round it): only the ground's pore water.
 bool rt_material_ground_terrain(MaterialData p_mat) {
+	if (RT_SCENE_ELIDES(RT_FLAG_SCENE_NO_GROUND)) {
+		return false;
+	}
 	return ((p_mat.subsurface >> 30u) & 1u) != 0u;
 }
 
@@ -283,11 +297,17 @@ bool rt_material_camera_cutout(MaterialData p_mat) {
 
 // BaseMaterial3D snow_on_body: the body's own snow from instance uniform slot 12 (SnowBodies).
 bool rt_material_snow_on_body(MaterialData p_mat) {
+	if (RT_SCENE_ELIDES(RT_FLAG_SCENE_NO_SNOW)) {
+		return false;
+	}
 	return ((p_mat.subsurface_texture >> 25u) & 1u) != 0u;
 }
 
 // BaseMaterial3D Snow: amount (x), snow_max_slope in degrees (y), on (z), cover from the snow map (w).
 vec4 rt_material_snow(MaterialData p_mat) {
+	if (RT_SCENE_ELIDES(RT_FLAG_SCENE_NO_SNOW)) {
+		return vec4(0.0);
+	}
 	return vec4(float((p_mat.hair_crown_z >> 16u) & 0xFFu) / 255.0, float(p_mat.hair_crown_z >> 24u) / 255.0 * 90.0,
 			float((p_mat.subsurface >> 27u) & 1u), float((p_mat.subsurface >> 28u) & 1u));
 }

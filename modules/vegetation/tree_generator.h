@@ -454,6 +454,8 @@ private:
 	Builder climber_adult_b; // Ivy's adult leaves, on their own material (trees.md 5i).
 	bool climber_plant_leaves = true;
 	float leaf_flutter = 1.0f; // Leaf flutter amount (trees.md 3b); 0 keeps the plain material.
+	float crown_occlusion = 1.0f; // Raster sky occlusion inside the crown, baked per leaf (trees.md 5bl); 0 off.
+	PackedByteArray _crown_occlusion(const Builder &p_b) const;
 	Ref<Material> _flutter_material(const Ref<StandardMaterial3D> &p_base, float p_leaf_size) const;
 	Ref<Material> _lichen_material(const Ref<StandardMaterial3D> &p_base);
 	Ref<Texture2D> lichen_texture;
@@ -1404,6 +1406,11 @@ public:
 		mesh_cache.clear();
 	}
 	float get_leaf_flutter() const { return leaf_flutter; }
+	void set_crown_occlusion(float p_amount) {
+		crown_occlusion = CLAMP(p_amount, 0.0f, 2.0f);
+		mesh_cache.clear();
+	}
+	float get_crown_occlusion() const { return crown_occlusion; }
 	void set_veteran(float p_amount) {
 		veteran = CLAMP(p_amount, 0.0f, 1.0f);
 		mesh_cache.clear();

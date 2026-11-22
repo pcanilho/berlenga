@@ -386,7 +386,7 @@
 			Whether the child [SkeletonModifier3D]s run while no camera sees the skeleton. See [enum ModifierUpdateMode].
 		</member>
 		<member name="modifier_visibility_margin" type="float" setter="set_modifier_visibility_margin" getter="get_modifier_visibility_margin" default="2.0">
-			With [constant MODIFIER_UPDATE_MODE_WHEN_VISIBLE], how far beyond its bones the skeleton counts as seen, in the skeleton's space. The modifiers come back while the skeleton is still this far outside the view, so they have settled when it appears.
+			With [constant MODIFIER_UPDATE_MODE_WHEN_ON_SCREEN], how far beyond its bones the skeleton counts as seen, in the skeleton's space. The modifiers come back while the skeleton is still this far outside the view, so they have settled when it appears.
 		</member>
 		<member name="motion_scale" type="float" setter="set_motion_scale" getter="get_motion_scale" default="1.0">
 			Multiplies the 3D position track animation.
@@ -447,7 +447,10 @@
 		<constant name="MODIFIER_UPDATE_MODE_ALWAYS" value="0" enum="ModifierUpdateMode">
 			The modifiers always run.
 		</constant>
-		<constant name="MODIFIER_UPDATE_MODE_WHEN_VISIBLE" value="1" enum="ModifierUpdateMode">
+		<constant name="MODIFIER_UPDATE_MODE_WHEN_SHOWN" value="1" enum="ModifierUpdateMode">
+			The modifiers rest while the skeleton is hidden ([method Node3D.is_visible_in_tree] is [code]false[/code]): a hidden skeleton is neither drawn nor path traced, so this never changes the image. The animation still plays and no time accumulates; when they run again, each modifier gets [method SkeletonModifier3D._skeleton_resumed] first. Suits areas, rooms or streamed cells that are hidden while the player is elsewhere.
+		</constant>
+		<constant name="MODIFIER_UPDATE_MODE_WHEN_ON_SCREEN" value="2" enum="ModifierUpdateMode">
 			The modifiers rest while the skeleton is hidden or no camera sees its bones' bounds grown by [member modifier_visibility_margin]: the animation still plays, but its pose is shown unmodified and no time accumulates. When they run again, each modifier gets [method SkeletonModifier3D._skeleton_resumed] first. Like Unity's [code]CullUpdateTransforms[/code] and Unreal's [code]OnlyTickPoseWhenRendered[/code].
 			[b]Note:[/b] Visibility here is the camera's view only. A skeleton outside it can still show in a shadow, a reflection or the path tracer, where it would show the unmodified pose; use this mode for skeletons that cannot be seen that way either (for example, outside the area the player is in). Without a renderer that culls (headless), only hiding the skeleton rests the modifiers.
 		</constant>

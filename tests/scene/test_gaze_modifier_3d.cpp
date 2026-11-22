@@ -222,7 +222,7 @@ TEST_CASE("[SceneTree][GazeModifier3D] An unseen skeleton rests its modifiers an
 	SceneTree *tree = SceneTree::get_singleton();
 	Skeleton3D *sk = make_rig(tree);
 	GazeModifier3D *g = make_gaze(sk);
-	sk->set_modifier_update_mode(Skeleton3D::MODIFIER_UPDATE_MODE_WHEN_VISIBLE);
+	sk->set_modifier_update_mode(Skeleton3D::MODIFIER_UPDATE_MODE_WHEN_SHOWN);
 	g->set_target_position(sk->get_global_position() + Vector3(-2, 1.6, 3));
 	for (int i = 0; i < 240; i++) {
 		step(sk, 1.0 / 60.0);

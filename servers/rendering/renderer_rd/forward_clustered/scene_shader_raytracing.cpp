@@ -42,6 +42,7 @@
 #include "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h"
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
+#include "servers/rendering/rendering_rt_material_state.h"
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/shader_types.h"
 #include "servers/rendering/storage/environment_storage.h"
@@ -893,6 +894,29 @@ uint32_t SceneShaderRaytracing::compute_rt_flags(RID p_environment, bool p_fog_e
 	return rt_flags_pack(flags, sample_count, max_bounces);
 }
 
+// Scene-feature elision (docs/ideas/optimisation.md, "Scene-feature elision"): a branch the scene never takes still
+// reserves its registers in every hit shader, so a BaseMaterial3D feature no material holds is compiled out through
+// the RT_FLAGS specialization constant. The material storage counts its materials' feature bits, so a material
+// loaded this frame is counted before the frame picks its variant; the variant switch keeps the image (see
+// render_forward_clustered_pt.cpp).
+uint32_t SceneShaderRaytracing::compute_scene_elision_flags() {
+	if (!GLOBAL_GET_CACHED(bool, "rendering/pathtracing/scene_feature_elision")) {
+		return 0;
+	}
+	const RTBaseMaterialState used = RTBaseMaterialState::decode(RendererRD::MaterialStorage::get_singleton()->material_get_rt_state_bits_in_use());
+	uint32_t flags = 0;
+	if (!used.snow) {
+		flags |= RT_FLAG_SCENE_NO_SNOW;
+	}
+	if (!used.glaze) {
+		flags |= RT_FLAG_SCENE_NO_GLAZE;
+	}
+	if (!used.ground_deform_patch && !used.ground_deform_terrain) {
+		flags |= RT_FLAG_SCENE_NO_GROUND;
+	}
+	return flags;
+}
+
 namespace {
 
 using SL = ShaderLanguage;
@@ -1521,6 +1545,7 @@ const SceneShaderRaytracing::PipelineBundle &SceneShaderRaytracing::ensure_pipel
 	}
 	bundle.initial_pipeline_built = true;
 	_mark_bundle_used(bundle);
+	print_verbose(vformat("Path tracing: built pipeline variant 0x%x on the render thread.", p_rt_flags));
 	return bundle;
 }
 

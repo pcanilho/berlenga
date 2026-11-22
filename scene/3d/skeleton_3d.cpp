@@ -495,11 +495,14 @@ bool Skeleton3D::are_modifiers_running() const {
 }
 
 bool Skeleton3D::_modifiers_culled() const {
-	if (modifier_update_mode != MODIFIER_UPDATE_MODE_WHEN_VISIBLE || Engine::get_singleton()->is_editor_hint()) {
+	if (modifier_update_mode == MODIFIER_UPDATE_MODE_ALWAYS || Engine::get_singleton()->is_editor_hint()) {
 		return false;
 	}
 	if (!is_inside_tree() || !is_visible_in_tree()) {
-		return true; // Hidden skeletons are never drawn.
+		return true; // Hidden skeletons are never drawn, nor traced.
+	}
+	if (modifier_update_mode == MODIFIER_UPDATE_MODE_WHEN_SHOWN) {
+		return false;
 	}
 	if (!visibility_instance.is_valid() || OS::get_singleton()->get_current_rendering_method() == "dummy") {
 		return false; // No culling to tell us (headless): keep running.
@@ -511,7 +514,7 @@ bool Skeleton3D::_modifiers_culled() const {
 }
 
 void Skeleton3D::_update_visibility_instance() {
-	const bool want = modifier_update_mode == MODIFIER_UPDATE_MODE_WHEN_VISIBLE && is_inside_tree() && !Engine::get_singleton()->is_editor_hint() && get_world_3d().is_valid();
+	const bool want = modifier_update_mode == MODIFIER_UPDATE_MODE_WHEN_ON_SCREEN && is_inside_tree() && !Engine::get_singleton()->is_editor_hint() && get_world_3d().is_valid();
 	if (!want) {
 		_free_visibility_instance();
 		return;
@@ -1466,7 +1469,7 @@ void Skeleton3D::_bind_methods() {
 
 	ADD_GROUP("Modifier", "modifier_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "modifier_callback_mode_process", PROPERTY_HINT_ENUM, "Physics,Idle,Manual"), "set_modifier_callback_mode_process", "get_modifier_callback_mode_process");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "modifier_update_mode", PROPERTY_HINT_ENUM, "Always,When Visible"), "set_modifier_update_mode", "get_modifier_update_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "modifier_update_mode", PROPERTY_HINT_ENUM, "Always,When Shown,When On Screen"), "set_modifier_update_mode", "get_modifier_update_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "modifier_visibility_margin", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater,suffix:m"), "set_modifier_visibility_margin", "get_modifier_visibility_margin");
 
 	ADD_SIGNAL(MethodInfo("rest_updated"));
@@ -1481,7 +1484,8 @@ void Skeleton3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(MODIFIER_CALLBACK_MODE_PROCESS_IDLE);
 	BIND_ENUM_CONSTANT(MODIFIER_CALLBACK_MODE_PROCESS_MANUAL);
 	BIND_ENUM_CONSTANT(MODIFIER_UPDATE_MODE_ALWAYS);
-	BIND_ENUM_CONSTANT(MODIFIER_UPDATE_MODE_WHEN_VISIBLE);
+	BIND_ENUM_CONSTANT(MODIFIER_UPDATE_MODE_WHEN_SHOWN);
+	BIND_ENUM_CONSTANT(MODIFIER_UPDATE_MODE_WHEN_ON_SCREEN);
 
 #ifndef DISABLE_DEPRECATED
 	ClassDB::bind_method(D_METHOD("clear_bones_global_pose_override"), &Skeleton3D::clear_bones_global_pose_override);

@@ -152,6 +152,11 @@ private:
 	bool light_budget = false; // still shots: smaller GPU fields and tile cache
 	bool subsoil = true; // round 12: a firm base under the loose layer, its depth varied across the ground
 	HashMap<Vector2i, float> mud_deposits; // m of fresh slurry per 1 m cell (debris flows' fans, flood silt)
+	// Dust devil tracks (docs/ideas/sand.md): the share of the ripples a devil's foot swept flat per 1 m cell, regrowing
+	// as saltation rebuilds them.
+	HashMap<Vector2i, float> scours;
+	float _scour_at(float p_x, float p_z) const;
+	void _scours_heal(float p_dt, float p_wind);
 	// Worn-in tracks (docs/ideas/mud.md, round 14.2): the wheel passes each 25 cm cell has taken, decaying as the
 	// sward regrows and the soil loosens, and when it was last pressed (a pass starts when a cell pressed is not
 	// already under a wheel).
@@ -1141,6 +1146,14 @@ public:
 	}
 	bool is_lee_calm_ripples() const { return lee_calm_ripples; }
 	float get_ripple_show_at(const Vector3 &p_position) const;
+	// A dust devil's foot sweeps the ripples off a disc (Reiss et al. 2011): p_amount of the ripples gone at its middle,
+	// fading over its outer 30%. Saltation rebuilds them over some ten minutes of a 10 m/s wind.
+	void add_scour(const Vector3 &p_position, float p_radius, float p_amount);
+	float get_scour_at(const Vector3 &p_position) const { return _scour_at(p_position.x, p_position.z); }
+	void clear_scours() {
+		scours.clear();
+		ripple_mask_accum = 1e9;
+	}
 	bool is_wind_ripples() const { return wind_ripples; }
 	void set_far_ripples(bool p_enabled) {
 		far_ripples = p_enabled;

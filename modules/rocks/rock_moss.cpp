@@ -32,6 +32,7 @@
 #include "rock_moss.h"
 
 #include "core/math/random_pcg.h"
+#include "scene/resources/material.h"
 #include "scene/resources/shader.h"
 #include "scene/resources/surface_tool.h"
 
@@ -394,6 +395,7 @@ Ref<Material> get_material() {
 	// yellow-olive and paler where thin on a dry top; matte, with light through the thin shoots.
 	sh->set_code(R"(shader_type spatial;
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+)" + BaseMaterial3D::get_camera_cutout_shader_code() + R"(
 uniform vec3 moss_deep = vec3(0.022, 0.05, 0.008);
 uniform vec3 moss_tip = vec3(0.075, 0.1, 0.022);
 uniform vec3 moss_dry = vec3(0.12, 0.11, 0.05);
@@ -434,6 +436,10 @@ float tufts(vec3 p) {
 	return shoots(q);
 }
 void fragment() {
+	// The camera cut-out (world-links, 904b8caf): the hole through whatever stands between the camera and the player.
+	if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)) {
+		discard;
+	}
 	vec3 m_pos = vec3(UV.x, UV2.x, UV.y); // metres, stone-aligned, seeded per stone (see build())
 	float thick = COLOR.r;
 	float h = COLOR.g;
@@ -487,7 +493,12 @@ Ref<Material> get_shoot_material() {
 	sh.instantiate();
 	sh->set_code(R"(shader_type spatial;
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+)" + BaseMaterial3D::get_camera_cutout_shader_code() + R"(
 void fragment() {
+	// The camera cut-out (world-links, 904b8caf): the hole through whatever stands between the camera and the player.
+	if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)) {
+		discard;
+	}
 	ALBEDO = COLOR.rgb;
 	ROUGHNESS = 0.8;
 	SPECULAR = 0.3;

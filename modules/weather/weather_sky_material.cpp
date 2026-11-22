@@ -736,9 +736,15 @@ vec4 march_altocumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 		}
 		float pr;
 		float tau = wc_mid_density(p + sun_dir * 30.0, c, foot, pr) * 60.0 + wc_mid_density(p + sun_dir * 110.0, c, foot, pr) * 100.0;
-		// The rest of the way out of the slab toward the sun, at the cloudlets' mean density.
+		// The rest of the way out of the slab toward the sun, past the neighbouring cloudlets. A broken layer is not a
+		// uniform medium: the light threads the gaps, so over each cloudlet spacing (about 700 m) it passes with
+		// 1 - c + c exp(-tau_cell), raised to the number of spacings (the binary-mixture result for a broken layer;
+		// Pomraning 1991, Barker and Davies 1992). At their mean density instead, a low sun's 7 km slant through the slab
+		// left every cloudlet in a sunset sky dark grey, where photographs show them lit gold and pink, the nearer
+		// side of each brightest.
 		float rest = max((y1 - p.y) / sun_up - 160.0, 0.0);
-		tau += rest * 0.5 * c * cloud_mid_tau / (0.45 * cloud_mid_thickness);
+		float tau_cell = 700.0 * cloud_mid_tau / (0.45 * cloud_mid_thickness);
+		tau += -(rest / 700.0) * log(max(1.0 - c + c * exp(-tau_cell), 1e-6));
 		vec3 light = sun_radiance * (exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1 + 0.25 * exp(-0.25 * tau) * phase2);
 		float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
 		light += sun_radiance * diffuse * mix(0.25, 1.0, smoothstep(0.0, 0.6, profile)) * exp(-cloud_surface_occlusion * min(tau, 4.0)) * (2.0 / (4.0 * PI));
@@ -1379,6 +1385,17 @@ vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3
 	// pixel, where the view ray crosses the middle of the cumulus layer (at most 30 km out), followed up the sun
 	// to the sheet. Two-stream transmission, as the bake: most of the light comes through scattered, not cut.
 	vec3 sun_low = sun_radiance;
+	// The sun reaching each layer through the air above its own height (Bruneton's transmittance table): the sun
+	// handed in is the low base's. At a low sun the mid sheet at 4.5 km sees half the air mass the base does, so at
+	// sunset it was lit as dim and red as the base and stood barely brighter than the sky, where photographs show
+	// altocumulus lit gold over a darkening sky.
+	vec3 sun_mid = sun_radiance;
+	vec3 sun_high = sun_radiance;
+#ifdef ATMO_SCATTERING
+	vec3 t_base = max(atmo_light_transmittance(atmo_radii.x + cloud_base_height, sun_dir.y), vec3(1e-4));
+	sun_mid = sun_radiance * min(atmo_light_transmittance(atmo_radii.x + cloud_mid_height, sun_dir.y) / t_base, vec3(20.0));
+	sun_high = sun_radiance * min(atmo_light_transmittance(atmo_radii.x + cloud_high_height, sun_dir.y) / t_base, vec3(20.0));
+#endif
 	if (cloud_mid_cover > 0.001 || cloud_storm_count > 0) {
 		float y_mid_low = cloud_base_height + 0.5 * cloud_thickness;
 		float t_l = rd.y > 0.01 ? (y_mid_low - cam.y) / rd.y : 30000.0;
@@ -1392,14 +1409,14 @@ vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3
 	float d_low;
 	vec4 low = march_cumulus(cam, rd, sun_dir, sun_low, ambient_top, ambient_bottom, steps, jitter, p_pixel, d_low);
 	float d_mid;
-	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
+	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
 	float d_high;
-	vec4 high = march_cirrus(cam, rd, sun_dir, sun_radiance, ambient_top, p_pixel, d_high);
+	vec4 high = march_cirrus(cam, rd, sun_dir, sun_high, ambient_top, p_pixel, d_high);
 	// The two wave slabs, nearer first (the camera is under both but on a mountain top).
 	float d_wa;
-	vec4 wa = march_wave(cloud_wave_slab.xy, cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_wa);
+	vec4 wa = march_wave(cloud_wave_slab.xy, cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_wa);
 	float d_wb;
-	vec4 wb = march_wave(cloud_wave_slab.zw, cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_wb);
+	vec4 wb = march_wave(cloud_wave_slab.zw, cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_wb);
 	float d_wave;
 	vec4 wave = cam.y < cloud_wave_slab.z ? cloud_over(wa, d_wa, wb, d_wb, d_wave) : cloud_over(wb, d_wb, wa, d_wa, d_wave);
 	float d;
