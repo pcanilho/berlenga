@@ -12,32 +12,15 @@
 		[PhysXWaterWake3D] nodes on moving bodies draw their wakes and foam on the surface (up to four), and [method sample_height] includes them.
 		Both simulation grids are centered on the node's global position (plus the [member surface_mesh] footprint's center), fixed when the node enters the tree or a property changes. The node's rotation and scale are not applied to the simulation, so keep it unrotated and unscaled.
 		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate.
-		Where another surface owns the water, the sea cuts itself out (Crest's clip surface, in world space so the path tracer sees it too): every node in the [code]water_clippers[/code] group with a [code]get_water_clip_capsules()[/code] method gives capsules (eight floats each: [code]a.x, a.z, b.x, b.z[/code], the radius at a and at b, negative at a for a flat end, and the other surface's weight at a and at b). Up to 32, the nearest the camera first, are read every half second. Inside one the sea fades out by the weight: raster blends by alpha, the path tracer keeps the surface per sample (stochastic transparency). [code]CaveNetwork3D[/code] uses it along its sea caves' passages, where [code]PhysXSeaCaveWater3D[/code] draws the water.
 	</description>
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="add_sediment">
-			<return type="void" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="mineral_kg_s" type="float" />
-			<param index="2" name="ash_kg_s" type="float" />
-			<description>
-				Load entering the water (kg/s of silt and clay, and of ash), as [method WorldWater.add_sediment] gives it: held until the caller's next call and mixed through the body's volume ([method get_water_volume]) on weather time. It settles out (silt in about half a day, ash in about two) and browns or greys the water in raster and path tracing alike.
-			</description>
-		</method>
 		<method name="clear_inflow">
 			<return type="void" />
 			<param index="0" name="owner" type="int" />
 			<description>
 				Removes the inflow [param owner] registered with [method set_inflow].
-			</description>
-		</method>
-		<method name="clear_outflow">
-			<return type="void" />
-			<param index="0" name="owner" type="int" />
-			<description>
-				Removes the outlet registered by [param owner] (see [method set_outflow]).
 			</description>
 		</method>
 		<method name="clear_sphere">
@@ -80,49 +63,13 @@
 		<method name="get_caustics_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
-				The zero-copy caustics light-pattern texture. Project a receiving surface's world position onto [method get_caustics_light_right] and [method get_caustics_light_up], relative to [method get_caustics_origin], and map the result through [method get_caustics_half_extent] to sample the texture. A half-float texture. Red is the sun's irradiance at [member caustics_reference_depth] over what a flat surface lets through (1 even light, 0 none, above 1 at a focus, up to 64), already multiplied by green; green is 1 where the sun ray through that spot crossed the water's surface over water and 0 where it didn't. Use [code]red + (1 - green)[/code] as the factor on the sun's light, so the outside of a pool's wall, which lines up with lit spots inside the pool, stays evenly lit. Past the simulated square, light counts as coming through water only when the surface is rendered out there ([member render_extent]). Null until [member caustics_enabled] is true and the node has built.
+				The zero-copy caustics light-pattern texture. Project a receiving surface's world position onto [method get_caustics_light_right] and [method get_caustics_light_up], relative to [method get_caustics_origin], and map the result through [method get_caustics_half_extent] to sample the texture. Red is the caustic light; green is 1 where the sun ray through that spot crossed the water's surface over water and 0 where it didn't. Multiply by green, or the outside of a pool's wall, which lines up with lit spots inside the pool, gets caustics its light never passed through. Past the simulated square, light counts as coming through water only when the surface is rendered out there ([member render_extent]). Null until [member caustics_enabled] is true and the node has built.
 			</description>
 		</method>
 		<method name="get_caustics_tile_size" qualifiers="const">
 			<return type="Vector2" />
 			<description>
 				The caustics repeat with the ocean waves, every [member ocean_domain_size]. A receiver can fold its world XZ into the tile around [method get_caustics_origin] ([code]p -= tile * round((p - origin) / tile)[/code]) before projecting, so caustics reach the whole seabed -- all along a beach -- not just the simulated square. The map spans a little more than one tile, so there's no seam.
-			</description>
-		</method>
-		<method name="get_contact_foam_cells" qualifiers="const">
-			<return type="int" />
-			<description>
-				Cells of the last contact map with a contact foam ring on the water (benches and tests).
-			</description>
-		</method>
-		<method name="get_contact_foam_rays" qualifiers="const">
-			<return type="int" />
-			<description>
-				Rays the last contact map took (a coarse pass, then the full resolution only near the waterline).
-			</description>
-		</method>
-		<method name="get_crest_sheet_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Torn spray sheets alive at the last physics tick (see [member crest_sheets]).
-			</description>
-		</method>
-		<method name="get_crest_spray_rate" qualifiers="const">
-			<return type="float" />
-			<description>
-				Droplets a second leaving the open sea's crests at the last update of [member crest_spray] (0 when off, calm or out of reach).
-			</description>
-		</method>
-		<method name="get_detail_slope_variance" qualifiers="const">
-			<return type="float" />
-			<description>
-				Mean square slope of the [member detail_waves] band, from the Phillips saturation range of the sea's JONSWAP spectrum ([code]alpha / 2 ln(k2 / k1)[/code], alpha from the fetch). Where a pixel is too large to show those waves this variance is added to the water's roughness instead.
-			</description>
-		</method>
-		<method name="get_detail_wave_tile" qualifiers="const">
-			<return type="Vector2" />
-			<description>
-				Side of the [member detail_waves] tile in metres: its band starts where the finest cascade's grid stops.
 			</description>
 		</method>
 		<method name="get_effective_fetch" qualifiers="const">
@@ -135,40 +82,6 @@
 			<return type="float" />
 			<description>
 				The foam threshold in use: [member foam_threshold], or with [member whitecap_auto] on, the threshold steered to the wind's whitecap cover.
-			</description>
-		</method>
-		<method name="get_flow_texture" qualifiers="const">
-			<return type="Texture2D" />
-			<description>
-			</description>
-		</method>
-		<method name="get_live_flow_texture" qualifiers="const">
-			<return type="Texture2D" />
-			<description>
-			</description>
-		</method>
-		<method name="get_outflow_discharge" qualifiers="const">
-			<return type="float" />
-			<description>
-				What the outlets pass at the current level (m³/s).
-			</description>
-		</method>
-		<method name="get_rain_inflow" qualifiers="const">
-			<return type="float" />
-			<description>
-				The storm runoff (m³/s) from [WeatherRunoff3D] reaching this lake besides its rivers, added to its inflow when [member level_from_flows] is on.
-			</description>
-		</method>
-		<method name="get_sediment" qualifiers="const">
-			<return type="Vector2" />
-			<description>
-				The body's suspended load (kg/m³: x mineral, y ash), well mixed.
-			</description>
-		</method>
-		<method name="get_water_volume" qualifiers="const">
-			<return type="float" />
-			<description>
-				The water's volume (m³) over its still-water depths, which incoming sediment mixes through.
 			</description>
 		</method>
 		<method name="get_wave_cascade_size" qualifiers="const">
@@ -196,12 +109,6 @@
 				Whether the active camera was under the surface (by [method sample_height] at the camera) when the node last updated the underwater view. Always [code]false[/code] while [member underwater_enabled] is off or the camera is out of reach of the water.
 			</description>
 		</method>
-		<method name="is_contact_foam_ready" qualifiers="const">
-			<return type="bool" />
-			<description>
-				True once the contact map has been measured and the water shows its contact foam, including the second measure shortly after the start (for bodies built late) and with no measure in progress.
-			</description>
-		</method>
 		<method name="is_ripple_resting" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -215,11 +122,6 @@
 				Whether there is water at [param world_pos]'s XZ, at the ripple grid's resolution: inside the [member surface_mesh] footprint, and not over dry seabed ([member seabed_from_floor]). With a [member render_extent] past the simulated square, the open water out to the edge of the rendered surface counts too, carrying on the seabed at the square's edge the way the surface is drawn (the sea side stays sea, a beach stays dry). [code]world_pos.y[/code] is ignored.
 			</description>
 		</method>
-		<method name="rebake_flow">
-			<return type="void" />
-			<description>
-			</description>
-		</method>
 		<method name="recenter">
 			<return type="void" />
 			<param index="0" name="world_position" type="Vector3" />
@@ -227,30 +129,11 @@
 				Moves the simulated ripple square to [param world_position]'s XZ (the node's height is kept), for a sea that follows the camera or the player. Unlike moving the node or changing [member domain_size], it doesn't rebuild the surface: the mesh, the textures and the FFT ocean (sampled in world space, so its waves stay where they are) carry on, and only the ripples are cleared -- no frame without water. A surface with a [member surface_mesh] footprint or a per-cell seabed ([member seabed_from_floor]) depends on where the square is, so it still rebuilds.
 			</description>
 		</method>
-		<method name="remeasure_contact_foam">
-			<return type="void" />
-			<description>
-				Measures the contact map again over the next physics ticks (after bodies were added, moved or removed near the camera). The old map stays shown meanwhile.
-			</description>
-		</method>
 		<method name="remeasure_seabed">
 			<return type="void" />
 			<description>
 				Measures the floor again for [member seabed_from_floor], when it changed at runtime: a dug channel, a raised sandbar, a wall that came down. The ripples, foam and swash carry on, and the waves, the shoreline and [method is_wet] follow the new floor. Changing [member seabed_from_floor] or [member seabed_collision_mask] rebuilds the surface instead, which clears them.
 				The rays are cast on the next physics tick, one per ripple cell, so this costs that one tick more the larger [member grid_resolution] is; don't call it every tick. Needs [member seabed_from_floor].
-			</description>
-		</method>
-		<method name="sample_depth" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="world_pos" type="Vector3" />
-			<description>
-				Water depth in meters at [param world_pos]'s XZ: the surface as [method sample_height] reads it, over the seabed [member seabed_from_floor] measured (or [member depth] without one). Zero or below on dry ground. Safe from the physics thread.
-			</description>
-		</method>
-		<method name="sample_flow" qualifiers="const">
-			<return type="Vector3" />
-			<param index="0" name="world_position" type="Vector3" />
-			<description>
 			</description>
 		</method>
 		<method name="sample_height" qualifiers="const">
@@ -268,13 +151,6 @@
 			<param index="1" name="wake" type="Object" />
 			<description>
 				The same as [method sample_height], but leaving out one [PhysXWaterWake3D]'s contribution (pass [code]null[/code] to leave out nothing). A boat that does its own buoyancy in a script should pass its own wake: otherwise it reads the dip and bow wave its hull pushes into the water and rides its own wake, sinking at the stern and pitching. Other boats' wakes are still included, so it still rocks on theirs. [PhysXBuoyancy3D] (and so [PhysXBoat3D]) already does this for a [PhysXWaterWake3D] that is another child of the same body.
-			</description>
-		</method>
-		<method name="sample_swash" qualifiers="const">
-			<return type="Vector2" />
-			<param index="0" name="world_pos" type="Vector3" />
-			<description>
-				The swash on the shore at [param world_pos]'s XZ: [code]x[/code] is the run-up film on the beach (meters of water over the ground above still water: the run-up's level less the ground's height there; 0 past where it reaches, and 0 below still water, where [method sample_depth] gives the depth), [code]y[/code] the wet sand (0 to 1: 1 under water and where the run-up reached, fading as it dries over [member wet_sand_dry_time]). Read back from the GPU every 8th water step (about 0.13 s behind); the first call turns that readback on, so it returns [code]Vector2(0, 0)[/code] until the first one lands, and outside the simulated square. Safe from the physics thread.
 			</description>
 		</method>
 		<method name="sample_vertical_speed" qualifiers="const">
@@ -295,18 +171,6 @@
 				A river flowing in at [param at] (world, its mouth) heading along [param direction], [param width] metres wide and carrying [param discharge] m³/s. Its outflow spreads as a turbulent plane jet (Rajaratnam): a core about three widths long at the mouth speed, then slowing as the square root of the distance while it widens, worn down by the bed in shallow water. The plume is added to the flow over the simulated square, so the waves, foam and floating bodies ride it; the live water does not simulate it. [PhysXRiver3D] calls this for its [member PhysXRiver3D.mouth_target]; [param owner] identifies the inflow.
 			</description>
 		</method>
-		<method name="set_outflow">
-			<return type="void" />
-			<param index="0" name="owner" type="int" />
-			<param index="1" name="at" type="Vector3" />
-			<param index="2" name="direction" type="Vector3" />
-			<param index="3" name="width" type="float" />
-			<param index="4" name="crest" type="float" />
-			<param index="5" name="coefficient" type="float" />
-			<description>
-				A river leaving this water at [param at] (world, its sill, whose top is at world height [param crest]) along [param direction] (out of the lake). The water drains over the sill as a broad-crested weir [param width] wide ([method weir_discharge]) and converges on it as a sink in a half plane, [code]Q / (pi r h)[/code] at distance r and depth h, added to the flow like the inflows' plumes (floating bodies and foam drift to the outlet). Called by [PhysXRiver3D] ([member PhysXRiver3D.source_lake]).
-			</description>
-		</method>
 		<method name="set_sea_state">
 			<return type="void" />
 			<param index="0" name="wind_speed" type="float" />
@@ -317,13 +181,6 @@
 				Sets [member wind_speed], [member wind_direction], [member wave_amplitude] and [member fetch] at once. Once the surface is running, a change to any of them regenerates the wave spectrum in place: every wave keeps its phase and just grows, calms or turns, and the ripples, wakes and foam carry on -- so a storm can be ramped smoothly, every frame if needed. (Setting the four properties one by one does the same, with one update each.) Changing [member ocean_domain_size] still rebuilds the surface; don't animate it.
 			</description>
 		</method>
-		<method name="set_sediment">
-			<return type="void" />
-			<param index="0" name="kg_m3" type="Vector2" />
-			<description>
-				Sets the body's suspended load (kg/m³: x mineral, y ash), for a lake that starts turbid.
-			</description>
-		</method>
 		<method name="submit_impulse">
 			<return type="void" />
 			<param index="0" name="world_pos" type="Vector3" />
@@ -331,17 +188,6 @@
 			<param index="2" name="strength" type="float" />
 			<description>
 				A one-shot local disturbance (a splash) at [param world_pos]'s XZ -- consumed by the next simulation step, then cleared automatically. Call it once per event (e.g. on impact), not every tick.
-			</description>
-		</method>
-		<method name="submit_wave">
-			<return type="bool" />
-			<param index="0" name="world_pos" type="Vector3" />
-			<param index="1" name="direction" type="Vector3" />
-			<param index="2" name="height" type="float" />
-			<param index="3" name="period" type="float" />
-			<param index="4" name="width" type="float" />
-			<description>
-				An impulse wave in metres and seconds ([method WorldWater.wave]): one crest and trough [param height] m high (crest to trough, at most 0.78 of the depth there, the breaking limit), as long as [param period] s at the long-wave speed sqrt(g h) of the depth at [param world_pos] (at least eight cells), its crest [param width] m wide with tapered ends, centred on [param world_pos] and setting off along [param direction] (XZ). Seeded in one step as height plus the matching velocity, so it travels one way, runs up the shore and reflects. Returns [code]false[/code] where there is no water or [param world_pos] is off the simulated grid.
 			</description>
 		</method>
 		<method name="submit_sphere">
@@ -354,69 +200,22 @@
 				A persistent body proxy that pushes the ripple layer's surface down near [param world_pos]'s XZ, proportional to [param radius] and [param strength]. Call once per physics tick while a body is in the water (e.g. from its own [code]_physics_process[/code]), keyed by any id stable for that body's lifetime -- [code]get_instance_id()[/code] works well. Call [method clear_sphere] with the same id when the body leaves.
 			</description>
 		</method>
-		<method name="weir_discharge" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="coefficient" type="float" />
-			<param index="1" name="width" type="float" />
-			<param index="2" name="head" type="float" />
-			<description>
-				The discharge (m³/s) over a broad-crested weir [param width] wide under [param head] metres of water: [code]Cd (2/3)^(3/2) b sqrt(g) H^(3/2)[/code] (critical depth on the crest; Henderson 1966).
-			</description>
-		</method>
 	</methods>
 	<members>
-		<member name="catchment_inflow" type="float" setter="set_catchment_inflow" getter="get_catchment_inflow" default="0.0">
-			With [member level_from_flows]: water reaching the lake besides the rivers flowing in (rain and springs of its catchment), m³/s.
-		</member>
-		<member name="caustics_enabled" type="bool" setter="set_caustics_enabled" getter="get_caustics_enabled" default="true">
-			Enables the light-space caustics draw pass and its render target. When disabled, the extra GPU buffers and draw are skipped. Clear water ([code]clear_water[/code] in the material) lights the bed it shows with it in the rasterizer: the sun's share of the bed's light is scaled by the map's ratio (the path tracer finds its own caustics). See [method get_caustics_texture]. Off by default: the pass draws every frame, and caustics only show over a floor seen through fairly shallow water (a pool, a beach, a lake shore), so turn it on where you have one.
+		<member name="caustics_enabled" type="bool" setter="set_caustics_enabled" getter="get_caustics_enabled" default="false">
+			Enables the light-space caustics draw pass and its render target. When disabled, the extra GPU buffers and draw are skipped. See [method get_caustics_texture]. Off by default: the pass draws every frame, and caustics only show over a floor seen through fairly shallow water (a pool, a beach, a lake shore), so turn it on where you have one.
 		</member>
 		<member name="caustics_reference_depth" type="float" setter="set_caustics_reference_depth" getter="get_caustics_reference_depth" default="2.5">
-			Distance along the refracted light below the surface at which the caustics map is drawn: the depth where the pattern is sharpest (as HDRP's virtual plane distance). Beds much deeper than this fade to even light.
+			Approximate distance the refracted light travels below the surface before it is mapped into the caustics texture. Larger values spread the pattern farther sideways for oblique light.
 		</member>
 		<member name="caustics_sun_direction" type="Vector3" setter="set_caustics_sun_direction" getter="get_caustics_sun_direction" default="Vector3(-0.35, -1, -0.25)">
-			World-space direction that light travels from the source toward the water, used only while the scene has no visible [DirectionalLight3D] above the horizon (the map otherwise follows the light the water is drawn with). It need not be normalized.
+			World-space direction that light travels from the source toward the water. It need not be normalized.
 		</member>
 		<member name="choppiness" type="float" setter="set_choppiness" getter="get_choppiness" default="1.0">
 			Tessendorf horizontal displacement of the ocean layer: pulls the surface toward the wave crests so they sharpen and the troughs flatten, the way real wind waves look. [code]0[/code] is a pure height field; around [code]1[/code] is realistic, and much higher can fold the surface through itself. Fades out over the shallows with the rest of the ocean chop. Where the displacement folds the surface it also injects whitecap foam (see [member foam_threshold]). [method sample_height] accounts for the displacement.
 		</member>
-		<member name="contact_foam" type="bool" setter="set_contact_foam" getter="get_contact_foam" default="true">
-			Rock contact foam: a ring of white water where the sea meets a steep face (a sea stack, a boulder, a cliff foot), [member contact_foam_width] wide, widening as each crest arrives and drawing back in the trough, churned solid at the rock and lacy further out, plus wash over rock tops up to [member contact_foam_depth] under the surface. Read from a top-down height map of the static bodies in [member contact_foam_mask] over [member contact_foam_extent] round the camera, measured by rays (as the seabed is) and turned into the distance to the contact (an exact Euclidean distance transform) and the face's steepness there, so gentle beaches are left to the shore foam. The map is re-centred as the camera moves, spread over several physics ticks.
-		</member>
-		<member name="contact_foam_depth" type="float" setter="set_contact_foam_depth" getter="get_contact_foam_depth" default="0.6">
-			How deep under the surface (m) a rock top still washes white as crests pass over it. 0 = no wash, only the rings.
-		</member>
-		<member name="contact_foam_extent" type="float" setter="set_contact_foam_extent" getter="get_contact_foam_extent" default="96.0">
-			The side (m) of the square round the camera the contact map covers, at 0.25 m cells. Re-centred when the camera has moved an eighth of it.
-		</member>
-		<member name="contact_foam_mask" type="int" setter="set_contact_foam_mask" getter="get_contact_foam_mask" default="4294967295">
-			Physics layers whose static bodies the contact map measures. Bodies that are not static (floaters, boats, players) are always stepped through.
-		</member>
-		<member name="contact_foam_strength" type="float" setter="set_contact_foam_strength" getter="get_contact_foam_strength" default="0.9">
-			The contact foam's opacity at the rock.
-		</member>
-		<member name="contact_foam_width" type="float" setter="set_contact_foam_width" getter="get_contact_foam_width" default="1.2">
-			The contact foam's width (m) at mean water: it widens to about 1.6 times this under a crest and narrows to about half in a trough, to 1.7 times it on the side the waves strike, and drains outward into the open sea's lace and holes over about two widths (longer in the lee).
-		</member>
-		<member name="contact_wetness" type="bool" setter="set_contact_wetness" getter="get_contact_wetness" default="true">
-			Where the sea reached stays wet in the weather's contact wetness ([code]WeatherMap3D.contact_wetness_enabled[/code]), so sand, rocks, plants and props on the shore stay dark and glossy up to where the waves ran and dry with the weather (much slower than [member wet_sand_dry_time], which is the sea's own wet sand). The swash's wetness is read back from the GPU every eighth step, over land and still water shallower than half a metre (piers and hulls over deeper water are left alone). Needs a varying depth ([member seabed_from_floor]).
-		</member>
-		<member name="crest_sheet_amount" type="int" setter="set_crest_sheet_amount" getter="get_crest_sheet_amount" default="40">
-			Most [member crest_sheets] alive at once.
-		</member>
-		<member name="crest_sheets" type="bool" setter="set_crest_sheets" getter="get_crest_sheets" default="true">
-			From a near-gale (12 m/s, fully by 20 m/s), thin sheets of water the wind tears off the open sea's strongest folding crests, 8 to 30 m from the camera: each flies downwind, curls over and falls back within about a second, tearing into streaks and ligaments as it goes (bag breakup, Troitskaya et al. 2017). Real geometry rebuilt each physics tick, so the path tracer draws it too.
-		</member>
-		<member name="crest_spray" type="bool" setter="set_crest_spray" getter="get_crest_spray" default="true">
-			Spray torn off breaking crests by the wind (spume): droplets leave the open sea where the surface folds (the same test as the whitecaps) once [member wind_speed] passes about 9 m/s, rising to full by 20 m/s, and fly downwind. Emitted within 40 m of the camera, not nearer than 8 m, and drawn like the surf's spray, with soft puffs of fine spume (an eighth as many, a few metres across, kept low and blown along) so the spray reads as white smoke off each crest. The emitters are found on the CPU from the ocean's readback every fourth physics tick.
-		</member>
-		<member name="crest_spray_amount" type="int" setter="set_crest_spray_amount" getter="get_crest_spray_amount" default="6000">
-			Most [member crest_spray] droplets alive at once (the spume puffs are an eighth of this).
-		</member>
 		<member name="cull_margin" type="float" setter="set_cull_margin" getter="get_cull_margin" default="0.0">
 			Extra room (m) added around the surface before it is culled. The surface's bounds already allow for 4 times [member wave_amplitude], or 2 m if that is larger. Raise this for a material that displaces the surface further, such as a whirlpool or a tsunami wall, if the water disappears at grazing angles. A larger margin draws the water more often when it is off-screen.
-		</member>
-		<member name="current" type="Vector2" setter="set_current" getter="get_current" default="Vector2(0, 0)">
 		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.08">
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
@@ -424,55 +223,29 @@
 		<member name="depth" type="float" setter="set_depth" getter="get_depth" default="3.0">
 			Still-water depth in meters used everywhere unless [member seabed_from_floor] measures it per cell (then it only applies where no floor is found below the water). Sets the ripple layer's wave speed, [code]sqrt(g * depth)[/code], and the ocean layer's dispersion and spectrum: in shallow water the long waves carry less energy (TMA spectrum), so set it to the real depth of open water (tens of meters for a sea).
 		</member>
-		<member name="detail_waves" type="bool" setter="set_detail_waves" getter="get_detail_waves" default="true">
-			Short waves the finest cascade's grid cannot carry (from its Nyquist wavelength down to about 8 cm), on a small FFT tile of their own, for the per-pixel normals, and displaced into the open sea mesh near the camera (see [member near_mesh_step]): crests get their ripples and glitter. Where they are smaller than a pixel they fade out and their slope variance goes to the roughness (Bruneton, Neyret and Holzschuch 2010), so the far sea keeps its glitter without shimmering. One more 128² FFT a step.
-		</member>
 		<member name="domain_size" type="Vector2" setter="set_domain_size" getter="get_domain_size" default="Vector2(20, 20)">
 			World-space extent (X, Z) of the local ripple layer -- independent of [member ocean_domain_size], see [member ocean_grid_resolution]'s own note on why. Ignored when [member surface_mesh] is set: the ripple grid is then fitted to the footprint's bounds.
 		</member>
 		<member name="fetch" type="float" setter="set_fetch" getter="get_fetch" default="0.0">
 			How far the wind has blown over open water, in meters. The ocean layer is a fetch-limited JONSWAP spectrum, so fetch sets how tall and how long the wind waves get at a given [member wind_speed]: a few meters give tiny, short ripples, kilometers give a developed sea. [code]0[/code] (auto) uses the [member surface_mesh] footprint's longest side for enclosed water, or a fully developed open sea (100 km) without one. Only wavelengths up to [member ocean_domain_size] are represented, and waves shorter than two ocean grid cells aren't, so a small fetch at a coarse [member ocean_grid_resolution] can leave the ocean layer flat.
 		</member>
-		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="1.0">
-		</member>
-		<member name="flow_foam_impact" type="bool" setter="set_flow_foam_impact" getter="get_flow_foam_impact" default="true">
-			The live window's white water also forms where the water runs into things, not only where it runs fast and shears: where it converges (a jet meeting slack water, two currents colliding) and as a pillow on the upstream face of a rock standing out of the current. Off: shear and supercritical flow only.
-		</member>
-		<member name="flow_foam_persistence" type="float" setter="set_flow_foam_persistence" getter="get_flow_foam_persistence" default="8.0">
-		</member>
-		<member name="flow_period" type="float" setter="set_flow_period" getter="get_flow_period" default="2.0">
-		</member>
 		<member name="foam_enabled" type="bool" setter="set_foam_enabled" getter="get_foam_enabled" default="true">
 			Whether whitecap foam forms at all. Turn it off for water that should never show foam, like a pool or a sheltered pond; turning it off also clears any foam already there. Foam only comes from the ocean waves folding (see [member foam_threshold]) -- bodies disturbing the water don't create it.
 		</member>
 		<member name="foam_persistence" type="float" setter="set_foam_persistence" getter="get_foam_persistence" default="2.5">
-			Time constant in seconds over which whitecap foam fades once its wave has passed. The foam is kept in a texture that moves with the water rather than the wave shape, so a longer persistence leaves longer streaks behind the crests. The default material also breaks fading foam into lace ([code]foam_breakup[/code], [code]foam_detail_scale[/code] and [code]foam_color[/code] shader parameters), gives its patches crisp, ragged edges ([code]foam_crisp[/code], 0 for soft) and lights their rims as a thin raised skin ([code]foam_relief[/code]).
-		</member>
-		<member name="foam_shade" type="float" setter="set_foam_shade" getter="get_foam_shade" default="0.8">
-			How much of the sun a full foam cover stops on its way to the bed, in the caustics map: bubbles send most of the light back up (whitewater's albedo is 0.5 to 0.6) and scatter much of the rest out of the beam, so the sand under whitecaps and shore foam lies in their soft shade. 0: foam lets the light through. The path tracer gets this from the foam itself.
+			Time constant in seconds over which whitecap foam fades once its wave has passed. The foam is kept in a texture that moves with the water rather than the wave shape, so a longer persistence leaves longer streaks behind the crests. The default material also breaks fading foam into lace ([code]foam_breakup[/code], [code]foam_detail_scale[/code] and [code]foam_color[/code] shader parameters).
 		</member>
 		<member name="foam_threshold" type="float" setter="set_foam_threshold" getter="get_foam_threshold" default="0.7">
 			How squeezed the surface must be before whitecap foam forms: foam is injected where the choppy displacement's area Jacobian drops below this ([code]1[/code] = unsqueezed, [code]0[/code] = folding over). Lower gives fewer whitecaps, needing steeper waves; higher gives more. Depends on [member choppiness] -- without it nothing folds and no foam forms.
 		</member>
-		<member name="follow_weather" type="bool" setter="set_follow_weather" getter="get_follow_weather" default="true">
-			If [code]true[/code], [member wind_speed] and [member wind_direction] follow the [WeatherMap3D]'s mean wind at this node. Waves take time to build: the wind the spectrum sees follows the real one over a third of the Shore Protection Manual's growth time for the fetch, g t / U = 68.8 (g F / U^2)^(2/3), in weather time. The spectrum is updated in place, so the waves keep their phases as they grow or turn. On by default; setting [member wind_speed] or [member wind_direction] yourself takes the wind back until this is set again. The shader's [code]cats_paws[/code] uniform (on) also darkens and roughens the ripples where the weather's gust patches pass (cat's paws), from the Cox and Munk slope variance of the local wind.
+		<member name="follow_weather" type="bool" setter="set_follow_weather" getter="get_follow_weather" default="false">
+			If [code]true[/code], [member wind_speed] and [member wind_direction] follow the [WeatherMap3D]'s mean wind at this node. Waves take time to build: the wind the spectrum sees follows the real one over a third of the Shore Protection Manual's growth time for the fetch, g t / U = 68.8 (g F / U^2)^(2/3), in weather time. The spectrum is updated in place, so the waves keep their phases as they grow or turn.
 		</member>
 		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="96">
 			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].
 		</member>
-		<member name="level_from_flows" type="bool" setter="set_level_from_flows" getter="get_level_from_flows" default="false">
-			The level settles where the outlets ([method set_outflow]) pass what flows in (the rivers' inflows plus [member catchment_inflow]): the steady state, since a lake takes hours to days to settle. When it moves by more than a centimetre, [member water_level] changes and the rivers leaving and entering rebuild on the new level.
-		</member>
-		<member name="live_advected_ripples" type="bool" setter="set_live_advected_ripples" getter="get_live_advected_ripples" default="true">
-			The live window's ripples and foam ride the flow's real paths (advected texture coordinates, Neyret 2003): each of the two flow-map phases is carried along by the simulated velocity, so they curl round eddies behind rocks instead of shearing along the local velocity. Off: plain two-phase flow mapping.
-		</member>
-		<member name="live_flow" type="bool" setter="set_live_flow" getter="is_live_flow" default="true">
-		</member>
 		<member name="mesh_detail" type="int" setter="set_mesh_detail" getter="get_mesh_detail" default="1">
 			Rendered mesh cells per [member ocean_grid_resolution] cell (1 to 4). A curling breaker needs cells of about a tenth of the wave's height to fold over cleanly; the vertex and path tracing costs grow with the square of this.
-		</member>
-		<member name="near_mesh_step" type="float" setter="set_near_mesh_step" getter="get_near_mesh_step" default="0.0">
-			Open sea only ([member render_extent] past the simulated square, no [member surface_mesh]): the spacing between the mesh's vertices at the camera, in meters, growing 8% a ring until it reaches the even core's spacing ([member ocean_domain_size] / [member ocean_grid_resolution]), which it keeps out to the core's edge, then the usual growth: finest where it is seen closest (a geometry clipmap's spacing law, in one continuous grid) and nowhere coarser than without it. Where the spacing can carry them, the [member detail_waves] are displaced into the geometry too, so near crests and chop have real silhouettes (also under path tracing). Divided by [member mesh_detail]. [code]0[/code] (the default) keeps an even core over the simulated square; [code]0.03[/code] suits cameras at the water (about twice the vertices; the gain is small: the waves finer than the core's spacing are millimetres high and the per-pixel normal already shows them).
 		</member>
 		<member name="normal_mode" type="int" setter="set_normal_mode" getter="get_normal_mode" enum="PhysXWaterSurface3D.NormalMode" default="0">
 			How the surface's normals and whitecap foam are computed, set on the material through its [code]per_pixel_normals[/code] uniform. [constant NORMAL_MODE_PER_PIXEL] uses the exact slopes and displacement derivatives the ocean FFT also produces ([code]ocean_deriv_tex[/code]), so crests shade smoothly and foam follows the folds at any mesh density -- the realistic choice. [constant NORMAL_MODE_PER_VERTEX] takes finite differences of the displaced mesh, so the shading follows the mesh -- softer, faceted at a coarse [member ocean_grid_resolution], for a stylized look.
@@ -502,10 +275,7 @@
 			Physics layers [member seabed_from_floor]'s rays hit. Only static bodies count; a rigid or character body in the way is skipped.
 		</member>
 		<member name="seabed_from_floor" type="bool" setter="set_seabed_from_floor" getter="get_seabed_from_floor" default="false">
-			When on, the still-water depth of each ripple cell is measured on the first physics tick by a ray straight down onto the static bodies in [member seabed_collision_mask], starting [member seabed_probe_height] above the water. Waves then travel at the local shallow-water speed, cells where the floor is above the water are dry shore ([method sample_height] returns [code]-INF[/code] and [method is_wet] [code]false[/code] there), and the ocean chop fades out over the shallows (see [member shallow_fade_depth]). Where no floor is found the constant [member depth] applies. Combines with [member surface_mesh]: cells outside its footprint stay dry. The floor is measured once; moving it afterwards needs a property change to re-measure.
-		</member>
-		<member name="seabed_probe_height" type="float" setter="set_seabed_probe_height" getter="get_seabed_probe_height" default="100.0">
-			How far above the water [member seabed_from_floor]'s rays start, in metres. Under a roof (water in a cave) keep it below the roof, or the rays find the roof.
+			When on, the still-water depth of each ripple cell is measured on the first physics tick by a ray straight down onto the static bodies in [member seabed_collision_mask], starting 100 m above the water. Waves then travel at the local shallow-water speed, cells where the floor is above the water are dry shore ([method sample_height] returns [code]-INF[/code] and [method is_wet] [code]false[/code] there), and the ocean chop fades out over the shallows (see [member shallow_fade_depth]). Where no floor is found the constant [member depth] applies. Combines with [member surface_mesh]: cells outside its footprint stay dry. The floor is measured once; moving it afterwards needs a property change to re-measure.
 		</member>
 		<member name="shallow_fade_depth" type="float" setter="set_shallow_fade_depth" getter="get_shallow_fade_depth" default="1.0">
 			Water shallower than this many meters fades the ocean chop out, down to none at the waterline, so the surface meets a beach calmly instead of the chop cutting through the sand. Only has an effect where the depth varies ([member seabed_from_floor] or [member surface_mesh]).
@@ -526,7 +296,7 @@
 			How far plunging breakers curl over: a sheet of water (the lip) is thrown off the crest along a ballistic path over the steep face and lands on the water ahead, then sinks into the bore (Thurey et al. 2007). The lip is separate geometry along the crest lines, so it does not need a fine mesh, and it throws spray (see [member shore_spray]). Whether a beach plunges is set by its slope and the swell's steepness (the surf similarity number, Battjes 1974): gentle beaches spill, moderate ones plunge, steep ones surge, so the curl comes and goes along a varied coast. [code]0[/code] leaves only spilling crests.
 		</member>
 		<member name="shore_wave_direction" type="Vector2" setter="set_shore_wave_direction" getter="get_shore_wave_direction" default="Vector2(0, 0)">
-			The direction (X, Z) the shore waves travel in from the open sea before the seabed turns them. [code]Vector2(0, 0)[/code] uses [member wind_direction]; with [member open_sea_beyond] on, it also brings the swell in from every side of the simulated square, so each coast gets surf from the sea in front of it (the lee coasts a lower swell).
+			The direction (X, Z) the shore waves travel in from the open sea before the seabed turns them. [code]Vector2(0, 0)[/code] uses [member wind_direction].
 		</member>
 		<member name="shore_wave_groups" type="float" setter="set_shore_wave_groups" getter="get_shore_wave_groups" default="1.0">
 			How much the shore waves' heights vary from wave to wave. At [code]1[/code] each wave has its own height, as in a real sea: the heights follow a Rayleigh distribution (Longuet-Higgins 1952) with [member shore_wave_height] as their rms, in sets of about five bigger waves every twelve or so, so big sets break on the outer bars while small waves run in further before they break (random-wave breaking, Battjes and Janssen 1978, Thornton and Guza 1983). Bigger waves also spill more and smaller ones plunge more. [code]0[/code] makes every wave the same height, so all crests break at the same place.
@@ -537,8 +307,8 @@
 		<member name="shore_wave_period" type="float" setter="set_shore_wave_period" getter="get_shore_wave_period" default="8.0">
 			Period (s) of the shore waves: longer swell runs faster, is turned more by the seabed, and breaks further out. The second train is 1.13 times longer, so the two beat into sets.
 		</member>
-		<member name="shore_waves" type="bool" setter="set_shore_waves" getter="get_shore_waves" default="true">
-			Swell rolling in onto the shore over the measured seabed ([member seabed_from_floor] or a [member surface_mesh]). Two wave trains whose crests follow a phase field solved over the depth (ray theory), so they slow, turn to follow the depth contours and bunch up in the shallows. They grow as the water shoals (energy flux), break where their height reaches 0.78 of the depth, and run in as white bores up to the waterline. The swash runs them up the sand, as far as the run-up of Stockdon et al. (2006) for the beach slope and the swell. On beaches that plunge the crests curl over first (see [member shore_wave_curl]). Heights vary slowly along the crests, so the waves come in sets. They fade out where the water is deeper than a quarter wavelength, which the FFT ocean carries. Included in [method sample_height]. On enclosed water (a [member surface_mesh]) there is no swell from outside: the height is at most the water's own wind sea (from [member wind_speed] and its fetch), so a still pond has none.
+		<member name="shore_waves" type="bool" setter="set_shore_waves" getter="get_shore_waves" default="false">
+			Swell rolling in onto the shore over the measured seabed ([member seabed_from_floor] or a [member surface_mesh]). Two wave trains whose crests follow a phase field solved over the depth (ray theory), so they slow, turn to follow the depth contours and bunch up in the shallows. They grow as the water shoals (energy flux), break where their height reaches 0.78 of the depth, and run in as white bores up to the waterline. The swash runs them up the sand, as far as the run-up of Stockdon et al. (2006) for the beach slope and the swell. On beaches that plunge the crests curl over first (see [member shore_wave_curl]). Heights vary slowly along the crests, so the waves come in sets. They fade out where the water is deeper than a quarter wavelength, which the FFT ocean carries. Included in [method sample_height].
 		</member>
 		<member name="step_mode" type="int" setter="set_step_mode" getter="get_step_mode" enum="PhysXWaterSurface3D.StepMode" default="0">
 			When the surface advances. [constant STEP_MODE_PER_TICK] runs the whole GPU step every physics tick. [constant STEP_MODE_PER_FRAME] records each physics tick (its delta and the spheres / impulses submitted so far) and runs them in ONE step per rendered frame: the ripple layer still takes one sub-step per tick with that tick's bodies (the same ripples), while the FFT ocean (evaluated at the summed time -- the same waves), foam, swash, the texture blits and the height readbacks run once. When the game runs several physics ticks per frame (a high tick rate, or a physics catch-up), this keeps the surface's cost at one step per frame.
@@ -556,16 +326,11 @@
 		<member name="swell" type="float" setter="set_swell" getter="get_swell" default="0.0">
 			With [constant WAVE_SPREADING_DONELAN_BANNER] or [constant WAVE_SPREADING_HASSELMANN], how much of the sea is swell from a distant storm, 0 to 1: Horvath's term, a [code]cos^2s(theta / 2)[/code] factor with [code]s = 16 tanh(wp / w) swell^2[/code], narrows the long waves to nearly parallel crests. 0 is a pure wind sea.
 		</member>
-		<member name="terrain_source" type="NodePath" setter="set_terrain_source" getter="get_terrain_source" default="NodePath(&quot;&quot;)">
-			A terrain, such as a [TerrainGenerator3D] (which sets it on the sea it builds). Where a [member seabed_from_floor] ray finds nothing (no collision loaded there, a hill higher than [member seabed_probe_height], or one of the terrain's holes such as a cave mouth), the terrain's own height ([code]get_height[/code]) stands for the bed, so a world's sea sees its whole coast and never shows through an open hole above the waterline; a static floor under a hole (a sea cave's) counts as usual. The seabed is measured again when the terrain's [code]holes_changed[/code] signal names a rectangle over the simulated square.
-		</member>
 		<member name="underwater_enabled" type="bool" setter="set_underwater_enabled" getter="get_underwater_enabled" default="true">
 			The view from under the water, in raster: while the camera is under the surface (or within reach of the waves), a full screen pass fogs what lies under the water by the distance the light travels in it, with the medium of the path traced water ([code]pathtraced_absorption[/code], [code]pathtraced_scattering[/code] and [code]pathtraced_scattering_anisotropy[/code] on [member water_material]), lit by the first visible [DirectionalLight3D] refracted into the water and by the environment's sky. The image splits where the surface crosses the lens, and the surface seen from below shows the world above through Snell's window, refracted, and a mirror of the water past the critical angle (total internal reflection). Surfaces under the water lose the light the water above them absorbed. Off, or with the camera away from the water, nothing extra is drawn. The path tracer needs no setting: it starts the camera's rays in the water by itself (with [code]rendering/pathtracing/refraction[/code] on). Transparent objects under the water are not fogged in raster.
 		</member>
 		<member name="underwater_meniscus" type="float" setter="set_underwater_meniscus" getter="get_underwater_meniscus" default="0.35">
 			How dark the thin line is where the surface crosses the lens, with [member underwater_enabled]. [code]0.0[/code] draws none.
-		</member>
-		<member name="wall_friction" type="float" setter="set_wall_friction" getter="get_wall_friction" default="1.5">
 		</member>
 		<member name="water_level" type="float" setter="set_water_level" getter="get_water_level" default="0.0">
 			Mean world-space Y of the surface -- place the node here rather than relying on its own transform, since the rendered mesh and both simulation layers are displaced relative to this baseline.
@@ -577,7 +342,7 @@
 			Linear height multiplier for the FFT ocean waves. At [code]1.0[/code] they have physical heights for the JONSWAP spectrum at [member wind_speed] and [member fetch] (in meters); below 1 reduces them proportionally, 0 removes the FFT ocean waves. This does not scale local ripple disturbances.
 		</member>
 		<member name="wave_cascade_ratio" type="float" setter="set_wave_cascade_ratio" getter="get_wave_cascade_ratio" default="6.0">
-			How much larger each wave cascade's tile is than the last (plus 0.382 with [member wave_tile_breakup]).
+			How much larger each wave cascade's tile is than the last.
 		</member>
 		<member name="wave_cascades" type="int" setter="set_wave_cascades" getter="get_wave_cascades" default="1">
 			Number of FFT tiles summed into the ocean. 1 is the single tile of [member ocean_domain_size], which holds no wave longer than the tile, so a strong wind on open water stays short and low. Each extra cascade is a tile [member wave_cascade_ratio] times larger, carrying the band of longer waves (swell), and every tile keeps only waves shorter than a quarter of its size, so none of them shows its repeat. Each extra cascade costs one more FFT ocean on the GPU.
@@ -585,14 +350,11 @@
 		<member name="wave_spreading" type="int" setter="set_wave_spreading" getter="get_wave_spreading" enum="PhysXWaterSurface3D.WaveSpreading" default="1">
 			How the ocean's wave energy spreads around the wind direction, from Horvath (2015, "Empirical directional wave spectra for computer graphics"). [constant WAVE_SPREADING_DONELAN_BANNER] (default, Horvath's recommendation) is the measured [code]sech^2[/code] spreading: narrowest at the spectrum's peak, so the dominant waves run with the wind, and wider for shorter and longer waves, so short waves cross. [constant WAVE_SPREADING_HASSELMANN] is Hasselmann et al. (1980)'s [code]cos^2s(theta / 2)[/code] form, wider again for short waves. [constant WAVE_SPREADING_COS2] is the earlier [code]cos^2[/code] spreading with a weak back lobe. [member swell] narrows the first two. Changing it regenerates the spectrum in place.
 		</member>
-		<member name="wave_tile_breakup" type="bool" setter="set_wave_tile_breakup" getter="get_wave_tile_breakup" default="true">
-			Keeps the wave tiles from repeating together. Tiles whose sides are whole multiples of each other (40 m, 240 m, and the 5 m [member detail_waves] tile) line up again every few tens of meters, so the same chop, glints and whitecaps come back on a grid. Detuned, each cascade's tile is [code][member wave_cascade_ratio] + 0.382[/code] times the last (6.382 by default) and the detail tile a little larger, ratios as far from any simple fraction as possible, so no two tiles line up again within kilometers. Tiles only grow, so no band changes. [code]false[/code] restores the exact ratios (for comparison).
-		</member>
 		<member name="wet_sand_dry_time" type="float" setter="set_wet_sand_dry_time" getter="get_wet_sand_dry_time" default="12.0">
 			Time constant (s) for sand uncovered by the swash to dry: the wet darkening fades to about a third over this long. See [member swash_run_up].
 		</member>
 		<member name="whitecap_auto" type="bool" setter="set_whitecap_auto" getter="get_whitecap_auto" default="true">
-			If [code]true[/code], the foam threshold is steered each step so the share of sea under whitecaps follows the wind speed as measured at sea (Monahan and O'Muircheartaigh 1980): about 0.1% at 6 m/s, 1% at 10 m/s, 3% at 14 m/s and 8% at 20 m/s, and none in a light breeze. It holds whatever the choppiness, cascades, fetch or spreading. The steering starts from a threshold fitted to the wind (not [member foam_threshold]) and follows the wind as it changes; while new foam is still building up after a start, its reading is scaled up by how far it has filled, so the cover does not overshoot. If [code]false[/code], [member foam_threshold] is used as set.
+			If [code]true[/code], the foam threshold is steered each step so the share of sea under whitecaps follows the wind speed as measured at sea (Monahan and O'Muircheartaigh 1980): about 0.1% at 6 m/s, 1% at 10 m/s, 3% at 14 m/s and 8% at 20 m/s, and none in a light breeze. It holds whatever the choppiness, cascades, fetch or spreading. [member foam_threshold] is then only where the steering starts. If [code]false[/code], [member foam_threshold] is used as set.
 		</member>
 		<member name="whitecap_cover_scale" type="float" setter="set_whitecap_cover_scale" getter="get_whitecap_cover_scale" default="1.0">
 			Multiplies the whitecap cover [member whitecap_auto] aims for. Measured covers at one wind speed spread by about a factor of 3 either way (warmer water and a rising sea foam more), so values between [code]0.3[/code] and [code]3[/code] stay realistic.
@@ -601,7 +363,7 @@
 			Direction (X, Z) the wind blows toward; the FFT ocean waves are aligned with it and travel downwind. Need not be normalized.
 		</member>
 		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="8.0">
-			Wind speed in m/s driving the FFT ocean layer's spectrum -- higher produces longer, larger waves, up to what [member fetch] and [member depth] allow (a storm needs the sea's real depth: at the default 3 m the long waves are held down). From about 14 m/s (Beaufort 7) fading foam is drawn out into streaks along the wind, fully by 22 m/s; from 9 m/s the crests throw spray (see [member crest_spray]).
+			Wind speed in m/s driving the FFT ocean layer's spectrum -- higher produces longer, larger waves, up to what [member fetch] allows.
 		</member>
 	</members>
 	<constants>

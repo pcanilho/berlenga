@@ -1,11 +1,7 @@
 {{ define "main" }}
 <h1>{{ .Title }}</h1>
 {{ .Content }}
-{{ $pages := .Pages.ByWeight }}
-{{ range slice "Rendering" "World" "Simulation" "Engine" }}{{ $g := . }}{{ with where $pages "Params.group" $g }}
-<h3 class="cards-group">{{ $g }}</h3>
 <ul class="cards">
-{{ range . }}<li><a href="{{ .RelPermalink }}"><b>{{ .Title }}</b>{{ with .Params.summary }}<span>{{ . }}</span>{{ end }}</a></li>{{ end }}
+{{ range .Pages.ByWeight }}<li><a href="{{ .RelPermalink }}"><b>{{ .Title }}</b>{{ with .Params.summary }}<span>{{ . }}</span>{{ end }}</a></li>{{ end }}
 </ul>
-{{ end }}{{ end }}
 {{ end }}

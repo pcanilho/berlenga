@@ -10,61 +10,18 @@ extends Node3D
 #                       the cost of one map update
 #                       clouds: the ground share in cloud shadow against cover, the optical depth of the
 #                       thickest column, the baked shadow against a direct march, the bake's cost, and the
-#                       shadow following the clouds as they drift, and clouds forming and clearing over time
-#                       (share of sky held, how much of the ground changes after 1, 5 and 15 minutes)
+#                       shadow following the clouds as they drift
 #                       wind near the ground: a forest's profile against Cionco's, the lee of a wall against
 #                       distance, gust patches (spread and size), the shader code against get_wind_at(), and
 #                       the shelter bake's cost
-#   --test=basics     the checks above down to the cost of one map update (no clouds, no shelter)
-#   --test=clouds     only the cloud checks; --test=basics, --test=clouds and --test=shelter together are --test.
-#                     The shelter and terrain checks draw the wind shader in a SubViewport, which never draws under
-#                     --headless: run them under xvfb with a Vulkan driver (lavapipe on a machine with no GPU), about
-#                     2 min for all of --test
-#   --test=terrain    wind over terrain (docs/ideas/wind.md): a 60 m hill and a 40 m ridge, speed-up on the crest,
-#                     slowing in the lee (Sx), turning on the flanks, the updraught on the windward slope, the
-#                     fade with height, the shader code against get_wind_at(), the bake's cost, and particles
-#                     (CPUParticles3D) catching the wind
-#   --test=leaves     falling leaves (LeafFall3D, docs/ideas/wind.md): a broad leaf flutters down at about 1 m/s and
-#                     drifts sideways, a needle drops near straight, leaves carried by the wind settle, and the wind
-#                     lifts them again past the litter threshold
 #   --view=map        an 8 km map with broken cloud, light rain and a storm drifting through, after an hour;
 #                     saved with --map-out
 #   --view=street     a street that the rain has wetted, with puddles, and a flag in the weather's wind
 #   --view=cloud_map  the clouds from straight above over 24 km (column optical depth), saved with --out
 #   --view=clouds     broken cumulus over fields from a rise, WeatherSkyMaterial sky, cloud shadows on the sun
-#   --view=lenticular wind across a ridge 1.5 km high, a moist mid layer: wave clouds (lenticulars) in its lee
-#   --view=lake_effect cold air (-8 C) down a 200 km lake (6 C) past the camera, 14 km aside of its band: a lake-effect snow band
 #   --view=clouds_low the same from 220 m, looking down on the cloud shadows
 #   --view=clouds_wide fair-weather cumulus (cover 0.3, type 0.4) from 520 m, 10 degrees down, low sun behind:
 #                     the landscape bench's clear wide shot (distant clouds at grazing angles)
-#   --view=shafts     broken cumulus from a rise toward a sun 20 degrees up, aerosol haze: shafts under the clouds
-#                     and across the sky (docs/ideas/weather.md, "Godrays", stages 1 and 2)
-#   --view=towers     towering cumulus (cover 0.4, type 0.8) from a rise, a sun 17 degrees up off to the right: the
-#                     towers' shadows on the clouds behind them (the sun shadow grid, docs/ideas/clouds.md)
-#   --sun-up=D        shafts view: the sun D degrees up (default 20)
-#   --sun-yaw=D       shafts view: the sun D degrees right of the view (default -13)
-#   --mid-cover=C     clouds views: the mid (altocumulus) layer's base cover (WeatherMap3D.mid_cloud_cover)
-#   --cloud-light=x,y,z,E,R[,r,g,b]  clouds views: a point light in the clouds (WeatherMap3D.add_cloud_light;
-#                     orange by default, a fire's); repeatable
-#   --cloud-effector=x,y,z,R,S  clouds views: a density effector (S > 0 adds cloud, < 0 clears); repeatable
-#   --type=T          clouds views: cloud_type (0.05 stratus, 0.2 stratocumulus, 0.6 cumulus)
-#   --wind=W          clouds views: wind_speed at 10 m (m/s)
-#   --temp=C          clouds views: the air temperature (below about 1 C a storm's precipitation falls as snow)
-#   --humidity=H      clouds views: the air's relative humidity at the ground (0 to 1; above 0.82 scud hangs under bases)
-#   --cam=x,y,z,tx,ty,tz  the camera at x,y,z looking at tx,ty,tz (after the view's own placement)
-#   --fov=D           the camera's vertical field of view (degrees), to frame a whole storm
-#   --storm=x,z,R,mm,out  clouds views: a storm (WeatherMap3D.add_storm, held), grown 15 min: its rain shafts under the
-#                     base and the shelf cloud on its gust front ahead of it (it moves with the wind, about 9 km in the 15 min); repeatable
-#   --wind-dir=x,z    clouds views: wind_direction (default 0.6,-0.8; 0,1 blows toward the camera)
-#   --shear-aloft=S   clouds views: wind_shear_aloft (m/s per km); 5 and up gives cirrocumulus (get_cirrocumulus_share)
-#   --no-wave-clouds  lenticular view: WeatherMap3D.wave_clouds off (cost A/B)
-#   --no-distant-shafts  clouds views: WeatherMap3D.distant_shafts off (shafts only where the sky shows; A/B)
-#   --sun-energy=E    clouds views: the sun's light_energy (0: night, for cloud lights)
-#   --high-cover=C    clouds views: the cirrus layer's base cover (WeatherMap3D.high_cloud_cover); with the shafts
-#                     view and --cover=0.05, the 22 and 46 degree ice halos round the sun
-#   --cover=C --haze-km=V  shafts view: cloud cover (default 0.45) and the aerosol's dry visibility (default 40)
-#   --froxel-haze     path traced: the aerosol stays a froxel layer (WeatherMap3D.traced_haze off)
-#   --no-sky-shadow   the sky's air without the clouds' shadow (WeatherSkyMaterial atmo_cloud_shadow_steps 0)
 #   --view=lightning  a storm at night over fields; a ground flash 1.4 km off on the last frame
 #                     (--strike-frames=K: K frames after the flash)
 #   --haze=uniform|layer|both  clouds view: precipitation haze pushed into the map (uniform 2 km
@@ -78,12 +35,8 @@ extends Node3D
 #   --out=path.png    save the last frame and quit
 #   --map-out=path.png  save the map (wind speed red, cloud cover green, wetness blue) and quit
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
-#   --fire=W          clouds views: a fire plume of W watts convective heat 5 km ahead (a WorldFire stub) in dry air
-#                     (humidity 0.3), the weather advanced 30 minutes: its fire cloud at its own condensation level
 #   --no-reprojection  clouds view: every half resolution pixel every frame (WeatherSkyMaterial.cloud_reprojection off)
 #   --pan=D           clouds view: the camera turns D degrees a second (reprojection under motion)
-#   --cloud-time=S    clouds views: the clouds have evolved S seconds (the drift stays), for time-lapse strips
-#   --frozen          clouds views: cloud_evolution off (shapes only slide, as before step 3e)
 #
 # Run with --fixed-fps 30 so raster and path traced frames match.
 
@@ -91,23 +44,6 @@ var view := "street"
 var raster := false
 var pt_from := 0
 var frames := 12
-var mid_cover := -1.0
-var high_cover := -1.0
-var cloud_lights_arg: Array = []
-var storms_arg: Array = []
-var wind_dir_arg := Vector2.ZERO
-var cloud_effectors_arg: Array = []
-var sun_energy := -1.0
-var type_arg := -1.0
-var wind_arg := -1.0
-var temp_arg := -999.0
-var fov_arg := 0.0
-var cam_arg := PackedFloat64Array()
-var humidity_arg := -1.0
-var shear_arg := -1.0
-var wave_clouds_off := false
-var distant_shafts_off := false
-var half_usec := 0
 var out := ""
 var map_out := ""
 var spp := 16
@@ -116,46 +52,14 @@ var rain_hours := 1.0
 var dry_hours := 0.0
 var test := false
 var only_shelter := false
-var only_terrain := false
-var only_leaves := false
 var only_lightning := false
 var only_haze := false
-var only_basics := false
-var only_clouds := false
 var haze := ""
-var no_sky_shadow := false
-var froxel_haze := false
-var sun_up := 20.0
-var sun_yaw := -13.0
-var cover := -1.0
-var haze_km := -1.0
 var strike_frames := 1
 var light_scale := 1.0
 var thunder_out := ""
 var reprojection := true
 var pan := 0.0
-var cloud_time := -1.0
-var frozen := false
-var fire_w := 0.0
-
-
-# A fire's convection column 5 km ahead of the clouds views' camera (--fire=W).
-# A lake 30 km wide (x) and 200 km long (z), its downwind shore at z = -6 km, its surface 5 m over the flat ground.
-class LakeStub extends WorldWater:
-	func _height_at(p: Vector3) -> float:
-		return 5.0 if absf(p.x) < 15000.0 and p.z < -6000.0 and p.z > -206000.0 else -INF
-
-func _exit_tree() -> void:
-	# A script stub left in the contracts outlives the scene and aborts the engine's exit.
-	if view == "lake_effect":
-		WorldContracts.set_water(null)
-
-
-class PlumeStub extends WorldFire:
-	var heat := 0.0
-	func _plumes() -> PackedVector4Array:
-		return PackedVector4Array([Vector4(0, 0, -5000, heat)])
-
 var pan_cam: Camera3D
 var n := 0
 var env: Environment
@@ -170,41 +74,10 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a == "--no-reprojection": reprojection = false
 		elif a.begins_with("--pan="): pan = float(a.substr(6))
-		elif a.begins_with("--cloud-time="): cloud_time = float(a.substr(13))
-		elif a == "--frozen": frozen = true
-		elif a.begins_with("--fire="): fire_w = float(a.substr(7))
-		elif a == "--no-sky-shadow": no_sky_shadow = true
-		elif a == "--froxel-haze": froxel_haze = true
-		elif a.begins_with("--sun-up="): sun_up = float(a.substr(9))
-		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
-		elif a.begins_with("--cover="): cover = float(a.substr(8))
-		elif a.begins_with("--mid-cover="): mid_cover = float(a.substr(12))
-		elif a.begins_with("--high-cover="): high_cover = float(a.substr(13))
-		elif a.begins_with("--cloud-light="): cloud_lights_arg.append(a.substr(14).split_floats(","))
-		elif a.begins_with("--wind-dir="):
-			var wd := a.substr(11).split_floats(",")
-			wind_dir_arg = Vector2(wd[0], wd[1])
-		elif a.begins_with("--storm="): storms_arg.append(a.substr(8).split_floats(","))
-		elif a.begins_with("--cloud-effector="): cloud_effectors_arg.append(a.substr(17).split_floats(","))
-		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
-		elif a == "--no-wave-clouds": wave_clouds_off = true
-		elif a == "--no-distant-shafts": distant_shafts_off = true
-		elif a.begins_with("--type="): type_arg = float(a.substr(7))
-		elif a.begins_with("--wind="): wind_arg = float(a.substr(7))
-		elif a.begins_with("--temp="): temp_arg = float(a.substr(7))
-		elif a.begins_with("--fov="): fov_arg = float(a.substr(6))
-		elif a.begins_with("--cam="): cam_arg = a.substr(6).split_floats(",")
-		elif a.begins_with("--humidity="): humidity_arg = float(a.substr(11))
-		elif a.begins_with("--shear-aloft="): shear_arg = float(a.substr(14))
-		elif a.begins_with("--haze-km="): haze_km = float(a.substr(10))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
-		elif a == "--test=terrain": test = true; only_terrain = true
-		elif a == "--test=leaves": test = true; only_leaves = true
 		elif a == "--test=lightning": test = true; only_lightning = true
 		elif a == "--test=haze": test = true; only_haze = true
-		elif a == "--test=basics": test = true; only_basics = true
-		elif a == "--test=clouds": test = true; only_clouds = true
 		elif a.begins_with("--haze="): haze = a.substr(7)
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
@@ -225,18 +98,10 @@ func _ready() -> void:
 	if test:
 		if only_shelter:
 			await _shelter_tests()
-		elif only_terrain:
-			await _terrain_tests()
-		elif only_leaves:
-			await _leaf_tests()
 		elif only_lightning:
 			await _lightning_tests()
 		elif only_haze:
 			await _haze_tests()
-		elif only_clouds:
-			await _cloud_tests()
-			await _cloud_evolution_tests()
-			await _lake_effect_tests()
 		else:
 			await _run_tests()
 		get_tree().quit()
@@ -249,7 +114,7 @@ func _ready() -> void:
 		await _cloud_map()
 		get_tree().quit()
 		return
-	if view in ["clouds", "clouds_low", "clouds_up", "clouds_wide", "shafts", "towers", "lenticular", "lake_effect"]:
+	if view in ["clouds", "clouds_low", "clouds_wide"]:
 		await _build_clouds()
 		return
 	if view == "projector":
@@ -408,10 +273,7 @@ func _run_tests() -> void:
 		s.queue_free()
 		await get_tree().physics_frame
 
-	if only_basics:
-		return
 	await _cloud_tests()
-	await _cloud_evolution_tests()
 	await _shelter_tests()
 
 
@@ -501,213 +363,6 @@ func _cloud_tests() -> void:
 	c.queue_free()
 	sun.queue_free()
 
-
-
-# Lake-effect snow (docs/ideas/clouds.md): cold air blowing down a long lake (toward +z), the water 6 C, the air -8 C
-# (23.75 K over the 850 hPa air): cloud and snow downwind of the shore on the lake's axis, none to the side; warm air
-# (dT under 10 K) none; the wind across the lake (30 km of fetch, U / L high) rolls.
-func _lake_effect_tests() -> void:
-	var check := func(ok: bool, what: String) -> void:
-		print(("PASS " if ok else "FAIL ") + what)
-	WorldContracts.set_water(LakeStub.new())
-	var m := _new_map()
-	m.wind_direction = Vector2(0, 1)
-	m.wind_speed = 8.0
-	m.temperature = -8.0
-	m.humidity = 0.8
-	m.cloud_cover = 0.1
-	m.water_temperature = 6.0
-	m.snap_to_settings()
-	for i in 8:
-		await get_tree().physics_frame
-	m.advance(60.0)
-	check.call(m.is_lake_effect_ready(), "lake-effect field derived")
-	var line := "lake effect down the axis (z km: fetch km, cloud):"
-	for z in [-150000.0, -60000.0, -20000.0, 0.0, 20000.0, 50000.0]:
-		var p := Vector3(0, 0, z)
-		line += " %.0f: %.0f %.2f," % [z / 1000.0, m.get_lake_fetch_at(p), m.get_lake_effect_at(p)]
-	print(line)
-	var on_axis: float = m.get_lake_effect_at(Vector3(0, 0, 2000))
-	var aside: float = m.get_lake_effect_at(Vector3(40000, 0, 2000))
-	check.call(on_axis > 0.3 and aside < 0.05, "a single band on the lake's axis downwind (%.2f) and none 40 km aside (%.2f)" % [on_axis, aside])
-	check.call(m.get_snowfall_at(Vector3(0, 0, 2000)) > 1.0, "snow falls under the band (%.2f mm/h)" % m.get_snowfall_at(Vector3(0, 0, 2000)))
-	check.call(m.get_cloud_cover_at(Vector3(0, 0, 2000)) > 0.6, "the weather's cover takes the band (%.2f)" % m.get_cloud_cover_at(Vector3(0, 0, 2000)))
-	m.temperature = 6.0
-	m.snap_to_settings()
-	for i in 40:
-		await get_tree().physics_frame
-	check.call(m.get_lake_effect_at(Vector3(0, 0, 2000)) < 0.01, "no lake effect with the water only 9.75 K over the air at 850 hPa")
-	m.temperature = -8.0
-	m.wind_direction = Vector2(1, 0)
-	m.snap_to_settings()
-	for i in 40:
-		await get_tree().physics_frame
-	var rolls := "wind across the lake: cloud along the shore at x 17 km, z -30 to -6 km:"
-	var lo := 1.0
-	var hi := 0.0
-	for k in 25:
-		var v: float = m.get_lake_effect_at(Vector3(17000, 0, -30000 + k * 1000.0))
-		lo = minf(lo, v)
-		hi = maxf(hi, v)
-		rolls += " %.2f" % v
-	print(rolls)
-	check.call(hi - lo > 0.15, "wind-parallel rolls across the wind (range %.2f to %.2f)" % [lo, hi])
-	m.queue_free()
-	WorldContracts.set_water(null)
-	await get_tree().physics_frame
-
-
-# Clouds that form and clear (step 3e): the share of the ground in cloud shadow must hold over time (no pulsing),
-# while the pattern itself changes: the share of points whose shadow state differs after a lag.
-func _cloud_evolution_tests() -> void:
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-90, 0, 0)
-	add_child(sun)
-	var c := _new_map()
-	c.cloud_cover = 0.4
-	c.cloud_type = 0.6
-	c.cloud_variation = 0.35
-	c.cloud_evolution = true
-	c.sun_light = c.get_path_to(sun)
-	c.cloud_shadow_extent = 8192.0
-	c.cloud_shadow_resolution = 256
-	c.snap_to_settings()
-	await get_tree().physics_frame
-	var states := {}
-	var line := "evolving clouds (cover 0.4, variation 0.35, lifetime %.0f s, churn %.1f m/s): shadow share at minute" % [c.cloud_lifetime, c.cloud_churn]
-	var times := [0.0, 60.0, 300.0, 450.0, 900.0, 1350.0, 1800.0, 2700.0, 3600.0]
-	var lo := 1.0
-	var hi := 0.0
-	for t in times:
-		c.set_cloud_time(t)
-		c.update_cloud_shadow()
-		var st := PackedByteArray()
-		st.resize(4096)
-		var shaded := 0
-		for i in 64:
-			for j in 64:
-				var v: float = c.get_sun_visibility_at(Vector3(-3000 + i * 95.0, 0, -3000 + j * 95.0))
-				st[i * 64 + j] = 1 if v < 0.5 else 0
-				shaded += st[i * 64 + j]
-		states[t] = st
-		lo = minf(lo, shaded / 4096.0)
-		hi = maxf(hi, shaded / 4096.0)
-		line += " %.0f: %.0f%%," % [t / 60.0, shaded / 40.96]
-	print(line)
-	print("  share range over the hour: %.0f%% to %.0f%%" % [lo * 100.0, hi * 100.0])
-	var l2 := "  ground whose shadow changed since minute 0, after:"
-	for t in [60.0, 300.0, 900.0, 3600.0]:
-		var diff := 0
-		for k in 4096:
-			if states[t][k] != states[0.0][k]:
-				diff += 1
-		l2 += " %.0f min %.0f%%," % [t / 60.0, diff / 40.96]
-	print(l2)
-	# The whole sky: the cover's share over 64 km (ten cover-noise cells across), so a patch forming or clearing in
-	# the window above cannot hide a pulse of the whole field.
-	for cfg in [[900.0, 1.5], [900.0, 0.0], [0.0, 1.5]]:
-		c.cloud_lifetime = cfg[0]
-		c.cloud_churn = cfg[1]
-		var l3 := "  cloud at 1950 m over 64 km (share of points), lifetime %.0f s, churn %.1f m/s, at minute:" % [cfg[0], cfg[1]]
-		var shares := PackedFloat32Array()
-		for t in [0.0, 225.0, 450.0, 675.0, 900.0, 1800.0, 2700.0, 3600.0]:
-			c.set_cloud_time(t)
-			var above := 0
-			for i in 96:
-				for j in 96:
-					if c.get_cloud_density_at(Vector3(-32000 + i * 667.0, 1950.0, -32000 + j * 667.0)) > 0.0:
-						above += 1
-			shares.append(above / 9216.0)
-			l3 += " %.0f: %.1f%%," % [t / 60.0, above / 92.16]
-		print(l3)
-	c.cloud_lifetime = 900.0
-	c.cloud_churn = 1.5
-	# Control: frozen clouds, the same window moved to eight other places (how much a 64 km window's share
-	# varies by itself, from place to place).
-	c.cloud_evolution = false
-	var l4 := "  control, frozen, the window elsewhere:"
-	for k in 8:
-		var above2 := 0
-		for i in 96:
-			for j in 96:
-				if c.get_cloud_density_at(Vector3(-32000 + i * 667.0 + 70000.0 * (k + 1), 1950.0, -32000 + j * 667.0)) > 0.0:
-					above2 += 1
-		l4 += " %.1f%%," % (above2 / 92.16)
-	print(l4)
-	c.cloud_evolution = true
-	# Off: nothing changes with cloud time.
-	c.cloud_evolution = false
-	c.set_cloud_time(0.0)
-	var f0 := []
-	for i in 32:
-		f0.append(c.get_cloud_density_at(Vector3(-3000 + i * 190.0, 2200.0, 500.0)))
-	c.set_cloud_time(3600.0)
-	var same := true
-	for i in 32:
-		if absf(c.get_cloud_density_at(Vector3(-3000 + i * 190.0, 2200.0, 500.0)) - f0[i]) > 1e-6:
-			same = false
-	print("  cloud_evolution off: density unchanged after an hour of cloud time: %s" % same)
-	# Density effectors: a hole where the cloud is thickest, a cloud where the air is clear.
-	var thick := Vector3.ZERO
-	var clear := Vector3.ZERO
-	var d_thick := 0.0
-	var d_clear := 1.0
-	for i in 32:
-		var q := Vector3(-3000 + i * 190.0, 2200.0, 500.0)
-		var d: float = c.get_cloud_density_at(q)
-		if d > d_thick:
-			d_thick = d
-			thick = q
-		if d < d_clear:
-			d_clear = d
-			clear = q
-	var hole: int = c.add_cloud_effector(thick, 400.0, -1.0)
-	var grow: int = c.add_cloud_effector(clear, 400.0, 1.0)
-	print("  effectors: density in the thickest cloud %.4f -> %.4f with a clearing effector (want 0); clear air %.4f -> %.4f with an adding one (want > 0); contract cloud_effector_at %.2f, %.2f (want -1, 1)" % [d_thick, c.get_cloud_density_at(thick), d_clear, c.get_cloud_density_at(clear), c.get_cloud_effector_at(thick), c.get_cloud_effector_at(clear)])
-	c.remove_cloud_effector(hole)
-	c.remove_cloud_effector(grow)
-	print("  effectors removed: density back %.4f, %.4f (want %.4f, %.4f)" % [c.get_cloud_density_at(thick), c.get_cloud_density_at(clear), d_thick, d_clear])
-	var ids := []
-	for i in 9:
-		ids.append(c.add_cloud_light(Vector3(i * 100.0, 500.0, 0.0), Color(1, 0.6, 0.3), 1000.0, 5000.0))
-	print("  cloud lights: ids %s (the ninth -1), listed %d" % [str(ids), c.get_cloud_lights().size()])
-	for id in ids:
-		c.remove_cloud_light(id)
-	c.queue_free()
-	sun.queue_free()
-	await get_tree().physics_frame
-	await _regime_tests()
-
-# Round 6: the low cloud's type and base from the weather (docs/ideas/clouds.md).
-func _regime_tests() -> void:
-	var m := _new_map()
-	var clock: Node = ClassDB.instantiate("SkyClock")
-	add_child(clock)
-	clock.latitude = 45.0
-	clock.longitude = 0.0
-	clock.utc_offset = 0.0
-	clock.time_scale = 0.0
-	m.sky_clock = m.get_path_to(clock)
-	m.air_daily_cycle = true
-	m.cloud_type = 0.6
-	m.cloud_cover = 0.3
-	m.temperature = 15.0
-	for setup in [[2.0, 0.92, 0.0, "calm, humid"], [8.0, 0.92, 0.0, "windy, humid"], [2.0, 0.6, 0.0, "calm, dry"], [2.0, 0.92, 4.0, "calm, humid, rain 4 mm/h"]]:
-		m.wind_speed = setup[0]
-		m.humidity = setup[1]
-		m.rain_rate = setup[2]
-		var line := "  cloud regime (%s, afternoon type 0.6), type / heating / base at hour:" % setup[3]
-		for h in [4.0, 8.0, 11.0, 14.0, 19.0]:
-			clock.time_of_day = h
-			m.snap_to_settings()
-			line += " %.0fh %.2f / %.2f / %.0f m," % [h, m.get_cloud_type_at(Vector3.ZERO), m.get_convective_heating(), m.get_cloud_base_now()]
-		print(line)
-	m.cloud_regime_from_weather = false
-	m.snap_to_settings()
-	print("  cloud regime off: type %.2f (want 0.60), base %.0f m (want %.0f)" % [m.get_cloud_type_at(Vector3.ZERO), m.get_cloud_base_now(), m.cloud_base_height])
-	m.queue_free()
-	clock.queue_free()
-	await get_tree().physics_frame
 
 func _shelter_tests() -> void:
 	var m := _new_map()
@@ -1198,69 +853,9 @@ func _build_street() -> void:
 
 
 # The cloud layer over open ground: a WeatherSkyMaterial sky, cloud shadows on the sun.
-# The wave field once it is in: the slab where wave cloud can form, the lift and the cloud along a line across the ridge.
-func _wave_report() -> void:
-	for i in 6:
-		await get_tree().process_frame
-	var slab: Vector4 = weather.get_wave_cloud_slab()
-	print("wave cloud slabs %.0f to %.0f m, %.0f to %.0f m, wind aloft at 4500 m %s m/s" % [slab.x, slab.y, slab.z, slab.w, str(weather.get_wind_aloft(Vector3(), 4500.0))])
-	# Top-down round the camera: wave cloud optical depth over 48 km, as characters (the ridge's crest "|").
-	var best := Vector3()
-	var best_tau := 0.0
-	for j in 12:
-		var row := "  "
-		for i in 24:
-			var q := Vector3(pan_cam.position.x - 24000.0 + i * 2000.0, 0.0, pan_cam.position.z - 24000.0 + j * 4000.0)
-			var tau := 0.0
-			var ysum := 0.0
-			for y in range(3500, 9000, 500):
-				var d: float = weather.get_wave_cloud_density_at(Vector3(q.x, y, q.z)) * 500.0
-				tau += d
-				ysum += d * y
-			if tau > best_tau and q.distance_to(Vector3(pan_cam.position.x, 0, pan_cam.position.z)) > 12000.0:
-				best_tau = tau
-				best = Vector3(q.x, ysum / tau, q.z)
-			row += "#" if tau > 3.0 else ("+" if tau > 0.3 else ("|" if absf(q.x + 6000.0) < 1000.0 else " "))
-		print(row)
-	print("  thickest wave cloud over 12 km from the camera: %s, optical depth %.1f" % [str(best), best_tau])
-	# Up that column: the lens's plates (pile of plates: clear sheets between, get_wave_cloud_density_at in 1/m * 1000).
-	var pl := "  up that column, every 50 m from 3500 m:"
-	for k in 40:
-		pl += " %.1f" % (1000.0 * weather.get_wave_cloud_density_at(Vector3(best.x, 3500.0 + k * 50.0, best.z)))
-	print(pl)
-	# Connected: the vertical wind of the waves aloft, none near the ground; dry air or no wind, no wave cloud.
-	var wl := "  wave vertical wind at 4 km, x -12 to +8 km (m/s):"
-	var gl := "  get_wind_at().y there, at 4 km / at 50 m above ground:"
-	for k in 11:
-		var wx := Vector3(-12000.0 + k * 2000.0, 0.0, 0.0)
-		wl += " %.2f(%.0f)" % [weather.get_mountain_wave_velocity_at(wx + Vector3(0, 4000, 0)), weather.get_mountain_wave_at(wx + Vector3(0, 4000, 0))]
-		gl += " %.2f/%.2f" % [weather.get_wind_at(wx + Vector3(0, 4000, 0), 4000.0).y, weather.get_wind_at(wx + Vector3(0, 50, 0), 50.0).y]
-	print(wl)
-	print(gl)
-	if weather.has_method("get_wave_cloud_density_at"):
-		var h0: float = weather.humidity
-		weather.humidity = 0.3
-		weather.snap_to_settings()
-		for i in 2:
-			await get_tree().create_timer(0.6).timeout
-		var dry: Vector4 = weather.get_wave_cloud_slab()
-		print("  humidity 0.3: slabs %.0f to %.0f, %.0f to %.0f m (want empty or narrower)" % [dry.x, dry.y, dry.z, dry.w])
-		weather.humidity = h0
-		weather.snap_to_settings()
-		for i in 2:
-			await get_tree().create_timer(0.6).timeout
-
 func _build_clouds() -> void:
 	var sky_mat = ClassDB.instantiate("WeatherSkyMaterial")
 	sky_mat.cloud_reprojection = reprojection
-	if no_sky_shadow:
-		sky_mat.set_shader_parameter("atmo_cloud_shadow_steps", 0)
-	for a in OS.get_cmdline_user_args():
-		# --sky-params=name:value,...: the sky's shader parameters, for A/B checks of the cloud lighting.
-		if a.begins_with("--sky-params="):
-			for pair in a.substr(13).split(","):
-				var nv := pair.split(":")
-				sky_mat.set_shader_parameter(nv[0], float(nv[1]))
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.process_mode = Sky.PROCESS_MODE_REALTIME
@@ -1286,13 +881,6 @@ func _build_clouds() -> void:
 	add_child(sun)
 	if view == "clouds_wide":
 		sun.look_at_from_position(Vector3(-2500, 1500, 2500), Vector3.ZERO) # low, behind the camera
-	elif view == "shafts":
-		var sd := 2668.0 # ahead
-		var yr := deg_to_rad(sun_yaw)
-		sun.look_at_from_position(Vector3(sin(yr) * sd, sd * tan(deg_to_rad(sun_up)), -cos(yr) * sd), Vector3.ZERO)
-	elif view == "towers":
-		var yt := deg_to_rad(75.0)
-		sun.look_at_from_position(Vector3(sin(yt) * 2668.0, 2668.0 * tan(deg_to_rad(17.0)), -cos(yt) * 2668.0), Vector3.ZERO)
 
 	var cam := Camera3D.new()
 	cam.far = 60000.0
@@ -1301,16 +889,6 @@ func _build_clouds() -> void:
 		cam.fov = 55
 		cam.position = Vector3(0, 520, 0)
 		cam.look_at_from_position(cam.position, Vector3(0, 0, -3000), Vector3.UP) # 10 degrees down
-	elif view == "shafts":
-		cam.position = Vector3(0, 60, 0)
-		cam.look_at_from_position(cam.position, Vector3(-200, 230, -1000), Vector3.UP)
-	elif view == "towers":
-		cam.position = Vector3(0, 60, 0)
-		cam.look_at_from_position(cam.position, Vector3(-150, 330, -1000), Vector3.UP)
-	elif view == "clouds_up":
-		# Looking up 50 degrees: the high and mid layers' texture.
-		cam.position = Vector3(0, 60, 0)
-		cam.look_at_from_position(cam.position, Vector3(0, 60 + 1192, -1000), Vector3.UP)
 	elif view == "clouds_low":
 		# Looking down on the fields: the shadows.
 		cam.position = Vector3(0, 220, 0)
@@ -1319,11 +897,6 @@ func _build_clouds() -> void:
 		# From a rise: sky and shadowed land.
 		cam.position = Vector3(0, 60, 0)
 		cam.look_at_from_position(cam.position, Vector3(0, 160, -1000), Vector3.UP)
-	if fov_arg > 0.0:
-		cam.fov = fov_arg
-	if cam_arg.size() == 6:
-		cam.position = Vector3(cam_arg[0], cam_arg[1], cam_arg[2])
-		cam.look_at_from_position(cam.position, Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
 	add_child(cam)
 	pan_cam = cam
 	cam.make_current()
@@ -1334,128 +907,13 @@ func _build_clouds() -> void:
 	weather.wind_speed = 6.0
 	weather.wind_direction = Vector2(0.6, -0.8)
 	weather.cloud_cover = 0.3 if view == "clouds_wide" else 0.45
-	if cover >= 0.0:
-		weather.cloud_cover = cover
-	if haze_km > 0.0:
-		weather.haze_visibility = haze_km
-		weather.traced_haze = not froxel_haze
 	weather.cloud_type = 0.4 if view == "clouds_wide" else 0.6
-	if view == "towers":
-		weather.cloud_cover = 0.4 if cover < 0.0 else cover
-		weather.cloud_type = 0.8
 	weather.cloud_variation = 0.3
-	if type_arg >= 0.0:
-		weather.cloud_type = type_arg
-	if temp_arg > -999.0:
-		weather.temperature = temp_arg
-	if humidity_arg >= 0.0:
-		weather.humidity = humidity_arg
-	if wind_arg >= 0.0:
-		weather.wind_speed = wind_arg
-	if shear_arg >= 0.0:
-		weather.wind_shear_aloft = shear_arg
-		print("cirrocumulus share %.2f" % weather.get_cirrocumulus_share())
-	if mid_cover >= 0.0:
-		weather.mid_cloud_cover = mid_cover
-	if high_cover >= 0.0:
-		weather.high_cloud_cover = high_cover
-	if wind_dir_arg != Vector2.ZERO:
-		weather.wind_direction = wind_dir_arg
-	for st in storms_arg: # x, z, radius, rain mm/h, outflow m/s: grown (15 min), then held
-		weather.add_storm(Vector2(st[0], st[1]), st[2], st[3], st[4], 0.0)
-	if not storms_arg.is_empty():
-		weather.advance(900.0)
-		var st0: Array = storms_arg[0]
-		# Where the 15 minutes of steering carried it (about 9.6 km along the wind in the bench).
-		var moved: Vector2 = 9600.0 * wind_dir_arg.normalized() if wind_dir_arg != Vector2.ZERO else Vector2.ZERO
-		var line := "storm: cloud base toward the camera, from its first core (m out, base m):"
-		for k in 12:
-			var r := k * 500.0
-			line += " %.0f %.0f," % [r, weather.get_cloud_base_at(Vector3(st0[0] + moved.x, 0.0, st0[1] + moved.y + r))]
-		print(line)
-		var dl := "storm: density up the core (height m, 1/m):"
-		for hgt in [1600.0, 2500.0, 4000.0, 6000.0, 8000.0, 8800.0]:
-			dl += " %.0f %.4f," % [hgt, weather.get_cloud_density_at(Vector3(st0[0] + moved.x, hgt, st0[1] + moved.y))]
-		print(dl)
-	for l in cloud_lights_arg: # x, y, z, energy, reach[, r, g, b]
-		var col := Color(1.0, 0.62, 0.32) if l.size() < 8 else Color(l[5], l[6], l[7])
-		print("cloud light id %d" % weather.add_cloud_light(Vector3(l[0], l[1], l[2]), col, l[3], l[4]))
-	for e in cloud_effectors_arg: # x, y, z, radius, strength
-		print("cloud effector id %d" % weather.add_cloud_effector(Vector3(e[0], e[1], e[2]), e[3], e[4]))
-	if sun_energy >= 0.0:
-		sun.light_energy = sun_energy
 	weather.transition_time = 0.0
 	weather.cloud_shadow_extent = 8192.0
 	weather.cloud_shadow_resolution = 256
 	add_child(weather)
 	weather.sun_light = weather.get_path_to(sun)
-	weather.cloud_evolution = not frozen
-	weather.distant_shafts = not distant_shafts_off
-	if cloud_time >= 0.0:
-		weather.set_cloud_time(cloud_time)
-	if view == "lenticular":
-		# Wind across a ridge (toward +x), a moist mid layer: wave clouds over its lee.
-		weather.wind_direction = Vector2(1.0, 0.0)
-		weather.wind_speed = 7.0
-		weather.cloud_cover = 0.02 if cover < 0.0 else cover
-		if mid_cover < 0.0:
-			weather.mid_cloud_cover = 0.34
-		weather.humidity = 0.8
-		var ridge := Node3D.new()
-		ridge.set_script(load("res://ridge.gd"))
-		ridge.name = "Ridge"
-		add_child(ridge)
-		var rm := StandardMaterial3D.new()
-		rm.albedo_color = Color(0.36, 0.34, 0.3)
-		rm.roughness = 0.9
-		ridge.build_mesh(rm)
-		weather.terrain_source = weather.get_path_to(ridge)
-		weather.wave_clouds = not wave_clouds_off
-		cam.position = Vector3(14000, 300, 24000)
-		cam.look_at_from_position(cam.position, Vector3(2000, 3800, 12000), Vector3.UP)
-		if cam_arg.size() == 6:
-			cam.look_at_from_position(Vector3(cam_arg[0], cam_arg[1], cam_arg[2]), Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
-		weather.rebake_terrain_wind()
-		_wave_report()
-	if view == "lake_effect":
-		# Cold air down a long lake toward the camera on its downwind shore (LakeStub): a lake-effect band.
-		WorldContracts.set_water(LakeStub.new())
-		weather.wind_direction = Vector2(0, 1) if wind_dir_arg == Vector2.ZERO else wind_dir_arg.normalized()
-		weather.wind_speed = 8.0 if wind_arg < 0.0 else wind_arg
-		weather.temperature = -8.0 if temp_arg <= -999.0 else temp_arg
-		weather.humidity = 0.8
-		weather.water_temperature = 6.0
-		# Clear arctic air off the band (a cold outbreak's sky is clear but for the lake's own cloud).
-		weather.cloud_cover = 0.02 if cover < 0.0 else cover
-		weather.mid_cloud_cover = 0.0 if mid_cover < 0.0 else mid_cover
-		weather.cloud_type = 0.4
-		weather.snap_to_settings()
-		weather.cloud_shadow_extent = 60000.0 # the band's shadow across the whole view (8 km ended in a straight edge)
-		weather.cloud_shadow_resolution = 512
-		# The water itself is the contract (LakeStub); a dark plane drawn for it stood as a straight band on the horizon.
-		var lake := MeshInstance3D.new()
-		lake.visible = false
-		var lm := PlaneMesh.new()
-		lm.size = Vector2(30000, 60000)
-		lake.mesh = lm
-		lake.position = Vector3(0, 0.3, -36000)
-		var wm := StandardMaterial3D.new()
-		wm.albedo_color = Color(0.05, 0.08, 0.1)
-		wm.roughness = 0.05
-		wm.metallic_specular = 0.5
-		lake.material_override = wm
-		add_child(lake)
-		# From 16 km aside of the band's axis, 22 km downwind of the shore, looking up the band at a slant: one line of
-		# cloud with its snow under it running away toward the lake, clear sky beside it.
-		if fov_arg <= 0.0:
-			cam.fov = 40.0
-		cam.look_at_from_position(Vector3(16000, 200, 22000), Vector3(0, 1400, -2000), Vector3.UP)
-		if cam_arg.size() == 6:
-			cam.look_at_from_position(Vector3(cam_arg[0], cam_arg[1], cam_arg[2]), Vector3(cam_arg[3], cam_arg[4], cam_arg[5]), Vector3.UP)
-		for i in 8:
-			await get_tree().physics_frame
-		weather.advance(60.0)
-		print("lake effect at the shore: %.2f, snowfall %.2f mm/h, fetch %.0f km" % [weather.get_lake_effect_at(Vector3(0, 0, 0)), weather.get_snowfall_at(Vector3(0, 0, 0)), weather.get_lake_fetch_at(Vector3(0, 0, 0))])
 	if view == "clouds_wide":
 		# The landscape bench's clear weather.
 		weather.extent = 8192.0
@@ -1481,11 +939,11 @@ func _build_clouds() -> void:
 	await albedo.changed
 	var gm := StandardMaterial3D.new()
 	gm.albedo_texture = albedo
-	gm.uv1_scale = Vector3(150, 150, 1)
+	gm.uv1_scale = Vector3(30, 30, 1)
 	gm.roughness = 0.95
 	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(60000, 60000) # to the horizon from the wide view's 520 m (a 12 km plane ended in a grey band)
+	pm.size = Vector2(12000, 12000)
 	ground.mesh = pm
 	ground.material_override = gm
 	add_child(ground)
@@ -1494,7 +952,7 @@ func _build_clouds() -> void:
 	bm.roughness = 0.8
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
-	for i in (0 if view == "towers" else 60): # the towers view: open fields only (a docs frame)
+	for i in 60:
 		var b := MeshInstance3D.new()
 		var box := BoxMesh.new()
 		box.size = Vector3(rng.randf_range(8, 20), rng.randf_range(6, 30), rng.randf_range(8, 20))
@@ -1505,16 +963,6 @@ func _build_clouds() -> void:
 
 	await get_tree().physics_frame
 	weather.snap_to_settings()
-	if fire_w > 0.0:
-		var stub := PlumeStub.new()
-		stub.heat = fire_w
-		WorldContracts.set_fire(stub)
-		weather.humidity = 0.3
-		weather.snap_to_settings()
-		for i in 30:
-			weather.advance(60.0)
-		var fc: Vector3 = weather.get_fire_cloud_for(fire_w)
-		print("fire: rise %.0f m, condensation level %.0f m, strength %.2f, fire clouds %d, map cloud base %.0f m" % [fc.x, fc.y, fc.z, weather.get_fire_cloud_count(), weather.cloud_base_height])
 	weather.update_cloud_shadow()
 	if haze == "uniform" or haze == "both":
 		weather.set_precipitation_extinction(sun, 3.912 / 2000.0, 0.0)
@@ -1707,217 +1155,6 @@ func _process(_delta: float) -> void:
 		env.pathtracing_enabled = not raster
 	if lightning and n == frames - strike_frames - 1:
 		lightning.strike(strike_at, true)
-	if n == frames / 2:
-		half_usec = Time.get_ticks_usec()
 	if out != "" and n >= frames:
-		# The second half's frames, for cost checks (--raster, with --frames well past the warm-up).
-		print("frames %d to %d: %.1f ms a frame" % [frames / 2, frames, (Time.get_ticks_usec() - half_usec) / 1000.0 / (frames - frames / 2)])
 		get_viewport().get_texture().get_image().save_png(out)
 		get_tree().quit()
-
-
-func _terrain_tests() -> void:
-	var hill: Node3D = load("res://hill.gd").new()
-	hill.name = "Hill"
-	add_child(hill)
-	var m := _new_map()
-	m.gust_intensity = 0.0
-	m.gust_patch_strength = 0.0
-	m.terrain_source = m.get_path_to(hill)
-	await get_tree().physics_frame
-	m.rebake_terrain_wind()
-	var tally := [0, 0]
-	var check := func(cond: bool, what: String) -> void:
-		print(("PASS " if cond else "FAIL ") + what)
-		tally[0 if cond else 1] += 1
-	check.call(m.is_terrain_wind_ready(), "terrain wind baked from the hill node (derive %.1f ms, 256 x 256, 8 m cells)" % m.get_terrain_wind_derive_time())
-	var flat: Vector3 = m.get_wind_at(Vector3(-700, 0, 600), 10.0)
-	var crest: Vector3 = m.get_wind_at(Vector3(0, 60, 0), 10.0)
-	var lee: Vector3 = m.get_wind_at(Vector3(990, 0, 0), 10.0)
-	var windward: Vector3 = m.get_wind_at(Vector3(-120, 0, 0), 10.0)
-	var flank: Vector3 = m.get_wind_at(Vector3(-80, 0, 120), 10.0)
-	var high: Vector3 = m.get_wind_at(Vector3(0, 60, 0), 300.0)
-	var high_flat: Vector3 = m.get_wind_at(Vector3(-700, 0, 600), 300.0)
-	print("  10 m wind: flat %.2f, hill crest %.2f, windward slope %.2f (w %.2f), lee of the ridge %.2f (Sx %.1f deg), flank turned %.1f deg" % [
-			Vector2(flat.x, flat.z).length(), Vector2(crest.x, crest.z).length(), Vector2(windward.x, windward.z).length(), windward.y,
-			Vector2(lee.x, lee.z).length(), rad_to_deg(m.get_terrain_lee_at(Vector3(990, 0, 0))), rad_to_deg(Vector2(flank.x, flank.z).angle())])
-	check.call(absf(Vector2(flat.x, flat.z).length() - 8.0) < 0.05, "flat ground keeps the open wind at 10 m")
-	check.call(Vector2(crest.x, crest.z).length() > 8.0 * 1.08, "the crest speeds the wind up (MicroMet curvature)")
-	check.call(Vector2(lee.x, lee.z).length() < 8.0 * 0.85, "the ridge's lee slows it (Sx)")
-	check.call(windward.y > 0.3, "the air climbs the windward slope")
-	check.call(m.get_wind_at(Vector3(120, 0, 0), 10.0).y < -0.3, "and sinks down the lee slope")
-	check.call(absf(Vector2(flank.x, flank.z).angle()) > deg_to_rad(2.0), "the wind turns along the contours on the flank")
-	check.call(absf(Vector2(high.x, high.z).length() / Vector2(high_flat.x, high_flat.z).length() - 1.0) < 0.05, "300 m up, the hill no longer shows")
-	var g: float = m.get_terrain_ground_at(Vector3(0, 0, 0))
-	check.call(absf(g - 60.0) < 1.0, "the ground under the crest is the hill's top (%.1f m)" % g)
-	var a: Vector3 = m.get_wind_at(Vector3(0, 70, 0))
-	check.call(a.distance_to(crest) < 0.01, "no height given: measured from the terrain (10 m over the crest)")
-	var mean_t: Vector2 = m.get_mean_wind_at(Vector3(0, 0, 0))
-	var mean_f: Vector2 = m.get_mean_wind_at(Vector3(0, 0, 0), false)
-	check.call(mean_t.length() > mean_f.length() * 1.05 and absf(mean_f.length() - 8.0) < 0.05, "get_mean_wind_at has the terrain; with terrain = false, the flat wind")
-
-	# The wind aloft for the clouds: log law to the boundary layer, veering to the right (north), then sheared.
-	var w10: Vector2 = m.get_mean_wind_at(Vector3(-700, 0, 600), false)
-	var w1k: Vector2 = m.get_wind_aloft(Vector3(-700, 0, 600), 1000.0)
-	var w3k: Vector2 = m.get_wind_aloft(Vector3(-700, 0, 600), 3000.0)
-	var veer := rad_to_deg(w10.angle_to(w1k))
-	print("  aloft: 10 m %.1f m/s, 1 km %.1f m/s veered %.1f deg, 3 km %.1f m/s" % [w10.length(), w1k.length(), veer, w3k.length()])
-	check.call(veer > 20.0 and veer < 35.0 and w1k.length() > w10.length() * 1.5, "the wind aloft veers clockwise through the boundary layer and grows on the log law")
-	check.call(absf(w3k.length() - w1k.length() - 3.0) < 0.05, "above it, the thermal-wind shear (1.5 m/s per km)")
-
-	# The shader code against get_wind_at() over the hill and the ridge, at 5 m above the ground.
-	var vp := SubViewport.new()
-	vp.size = Vector2i(32, 32)
-	vp.use_hdr_2d = true
-	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	vp.process_mode = Node.PROCESS_MODE_ALWAYS
-	add_child(vp)
-	var rect := ColorRect.new()
-	rect.size = Vector2(32, 32)
-	var sm := ShaderMaterial.new()
-	var sh := Shader.new()
-	sh.code = "shader_type canvas_item;\n" + m.get_wind_shader_code() + """
-void fragment() {
-	vec3 wp = vec3(mix(-300.0, 1100.0, UV.x), 0.0, mix(-300.0, 300.0, UV.y));
-	wp.y = weather_terrain(wp.xz).w + 5.0;
-	COLOR = vec4(weather_wind(wp, weather_height_above_ground(wp)) * 0.05 + 0.5, 1.0);
-}
-"""
-	sm.shader = sh
-	rect.material = sm
-	vp.add_child(rect)
-	get_tree().paused = true
-	for i in 3:
-		await RenderingServer.frame_post_draw
-	var img := vp.get_texture().get_image()
-	var worst := 0.0
-	var mean_err := 0.0
-	var cnt := 0
-	for y in range(2, 32, 6):
-		for x in range(2, 32, 6):
-			var u := (x + 0.5) / 32.0
-			var v := (y + 0.5) / 32.0
-			var wp := Vector3(lerp(-300.0, 1100.0, u), 0.0, lerp(-300.0, 300.0, v))
-			wp.y = m.get_terrain_ground_at(wp) + 5.0
-			var cpu: Vector3 = m.get_wind_at(wp)
-			var c := img.get_pixel(x, y)
-			var e := ((Vector3(c.r, c.g, c.b) - Vector3(0.5, 0.5, 0.5)) / 0.05).distance_to(cpu)
-			worst = max(worst, e)
-			mean_err += e
-			cnt += 1
-	get_tree().paused = false
-	vp.queue_free()
-	check.call(worst < 0.25, "shader code against get_wind_at() at %d points over the hill and ridge: mean difference %.3f m/s, worst %.3f m/s" % [cnt, mean_err / cnt, worst])
-
-	# Particles: one slow puff from a CPUParticles3D on flat ground catches the wind across gravity.
-	var p := CPUParticles3D.new()
-	p.amount = 1
-	p.lifetime = 30.0
-	p.one_shot = true
-	p.explosiveness = 1.0
-	p.direction = Vector3(0, 1, 0)
-	p.spread = 0.0
-	p.initial_velocity_min = 0.0
-	p.initial_velocity_max = 0.0
-	p.gravity = Vector3(0, -0.5, 0)
-	p.position = Vector3(-700, 20, 600)
-	p.local_coords = true
-	p.mesh = QuadMesh.new() # CPUParticles3D only runs with a mesh
-	add_child(p)
-	p.emitting = true
-	for i in 240:
-		await get_tree().physics_frame
-	# The particle positions are not exposed; read where the whole system has gone from its AABB instead.
-	var aabb: AABB = p.capture_aabb()
-	var drift := aabb.get_center().x
-	var w20: Vector3 = m.get_wind_at(Vector3(-700, 20, 600))
-	# From rest with drag k: x = U (t - (1 - exp(-k t)) / k).
-	check.call(absf(drift - w20.x * (4.0 - (1.0 - exp(-4.0)))) < 2.0, "a particle drifts downwind as linear drag predicts (%.1f m in 4 s, the 20 m wind %.1f m/s, wind_drag 1/s)" % [drift, w20.x])
-	p.queue_free()
-	var p2 := CPUParticles3D.new()
-	p2.wind_drag = 0.0
-	check.call(p2.wind_drag == 0.0 and ParticleProcessMaterial.new().wind_drag == 1.0, "wind_drag 1/s by default, 0 switches it off")
-	p2.free()
-	print("terrain: %d passed, %d failed" % [tally[0], tally[1]])
-	m.queue_free()
-	hill.queue_free()
-	await get_tree().physics_frame
-
-
-func _leaf_tests() -> void:
-	if not ClassDB.class_exists("LeafFall3D"):
-		print("FAIL no LeafFall3D in this build")
-		return
-	var tally := [0, 0]
-	var check := func(cond: bool, what: String) -> void:
-		print(("PASS " if cond else "FAIL ") + what)
-		tally[0 if cond else 1] += 1
-	# A beech leaf: 8 cm chord, 30 cm2, 0.25 g dry. A pine needle pair: 8 cm long, 1 mm wide, 0.03 g.
-	var broad: PackedVector4Array = ClassDB.class_call_static("LeafFall3D", "simulate_plate", 0.08, 0.003, 0.00025, 1.0, Vector3.ZERO, 15.0, 10.0)
-	var needle: PackedVector4Array = ClassDB.class_call_static("LeafFall3D", "simulate_plate", 0.08, 0.00008, 0.00003, 0.0, Vector3.ZERO, 15.0, 10.0)
-	var lat_b := 0.0
-	var lat_n := 0.0
-	var swings := 0
-	var prev_x := 0.0
-	var prev_dx := 0.0
-	for i in broad.size():
-		lat_b = maxf(lat_b, Vector2(broad[i].x, broad[i].z).length())
-		if i > 0:
-			var dx := broad[i].x - prev_x
-			if dx * prev_dx < 0.0:
-				swings += 1
-			prev_dx = dx
-		prev_x = broad[i].x
-	for v in needle:
-		lat_n = maxf(lat_n, Vector2(v.x, v.z).length())
-	var t_b := 10.0
-	var vy_b := -broad[broad.size() - 1].y / t_b
-	var vy_n := -needle[needle.size() - 1].y / 10.0
-	# Falling broadside it would reach sqrt(2 m g / (rho S C_D)), C_D 2.4: fluttering, it falls slower than that.
-	var broadside := sqrt(2.0 * 0.00025 * 9.81 / (1.2 * 0.003 * 2.4))
-	print("  broad leaf, still air, 10 s: fell %.1f m (%.2f m/s, broadside terminal %.2f), widest sideways %.2f m, %d swings; needle: %.2f m/s, sideways %.3f m" % [-broad[broad.size() - 1].y, vy_b, broadside, lat_b, swings, vy_n, lat_n])
-	check.call(vy_b > 0.5 * broadside and vy_b < 1.05 * broadside, "a broad leaf flutters down a little slower than it would fall flat")
-	check.call(lat_b > 0.08 and swings >= 4, "and swings from side to side as it falls")
-	check.call(lat_n < lat_b * 0.3, "a needle drops near straight")
-	var windy: PackedVector4Array = ClassDB.class_call_static("LeafFall3D", "simulate_plate", 0.08, 0.003, 0.00025, 1.0, Vector3(5, 0, 0), 15.0, 6.0)
-	var dx := windy[windy.size() - 1].x
-	check.call(dx > 5.0 * 6.0 * 0.7, "in a 5 m/s wind it travels with the air (%.1f m in 6 s)" % dx)
-
-	var m := _new_map()
-	m.wind_speed = 3.0
-	m.gust_intensity = 0.0
-	m.gust_patch_strength = 0.0
-	await get_tree().physics_frame
-	var lf: Node3D = ClassDB.instantiate("LeafFall3D")
-	add_child(lf)
-	var quad := QuadMesh.new()
-	quad.size = Vector2(0.08, 0.05)
-	quad.orientation = PlaneMesh.FACE_Y
-	lf.add_kind(quad, 0.08, 0.003, 0.00025, 1.0)
-	lf.lift_speed = 4.0
-	for i in 200:
-		lf.drop_leaf(Vector3(randf_range(-5, 5), 8.0 + randf() * 4.0, randf_range(-5, 5)), 0)
-	for i in 60 * 30:
-		await get_tree().physics_frame
-	var lying := 0
-	var st: PackedVector4Array = lf.get_leaf_states()
-	var mean_x := 0.0
-	for v in st:
-		if v.w > 0.5:
-			lying += 1
-		mean_x += v.x
-	mean_x /= maxf(st.size(), 1)
-	print("  200 leaves from 8 to 12 m in a 3 m/s wind: %d on the ground after 30 s, moved %.1f m downwind on average, step %.2f ms" % [lying, mean_x, lf.get_step_time()])
-	check.call(lying >= 190, "the leaves settle on the ground")
-	check.call(mean_x > 5.0, "carried downwind on the way")
-	var lifted0: int = lf.get_lifted_count()
-	m.wind_speed = 25.0
-	m.snap_to_settings()
-	for i in 60 * 5:
-		await get_tree().physics_frame
-	var lifted: int = lf.get_lifted_count() - lifted0
-	check.call(lifted > 20, "a gale lifts lying leaves again (%d lifts in 5 s)" % lifted)
-	print("leaves: %d passed, %d failed" % [tally[0], tally[1]])
-	lf.queue_free()
-	m.queue_free()
-	await get_tree().physics_frame

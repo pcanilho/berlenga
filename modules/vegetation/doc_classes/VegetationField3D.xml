@@ -9,77 +9,6 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="get_bark_detail_node" qualifiers="const">
-			<return type="Node" />
-			<description>
-				The [BarkDetail3D] the field made (see [member bark_detail]), or [code]null[/code].
-			</description>
-		</method>
-		<method name="get_contact_trample_at" qualifiers="const">
-			<return type="Vector2" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The bend (world xz, length 0..1) of the ground cover's trample field at [param position], where this field keeps it: with no [GrassField3D] in the scene, one VegetationField3D keeps the field every plant reads (grass_trample_map), pressed by the bodies in the grass_trample and world_contact groups, so herbs, ferns and heath lay down under bodies on bare ground too. Zero where a [GrassField3D] keeps it.
-			</description>
-		</method>
-		<method name="get_far_match_stats" qualifiers="const">
-			<return type="Dictionary" />
-			<description>
-				The live-view match of the far colour ([member far_match_view]): [code]shade[/code] (the factor on the far colour where it stands for plants, the global [code]vegetation_far_shade[/code]), [code]ratio[/code] (covered over bare ground near, against the same far, at the last look), [code]groups[/code] (sample groups used), [code]round[/code], [code]state[/code] (0 idle, 1 waiting, 2 reading), [code]misses[/code] (looks in a row that found too few spots) and [code]gain[/code] (how strongly the on-screen contrast follows the shade). For checking a scene's far blend, since global shader parameters cannot be read back at runtime.
-			</description>
-		</method>
-		<method name="get_far_shade" qualifiers="const">
-			<return type="float" />
-			<description>
-				The current factor on the far colour where it stands for plants (see [member far_match_view]); 1.0 when the match is off or has not run.
-			</description>
-		</method>
-		<method name="get_far_shell_column_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				How many columns the [member far_shell] holds now.
-			</description>
-		</method>
-		<method name="get_near_radius" qualifiers="static">
-			<return type="float" />
-			<description>
-				The global shader parameter [code]vegetation_near_radius[/code]: the smallest [member stream_radius] of the fields streaming now, so a terrain far blend has taken over before the first plants run out; 0 when none streams.
-			</description>
-		</method>
-		<method name="get_spring_wetness_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				The wetness round a desert spring at [param global_position] (x and z), as [constant PlantSpecies.RULE_SPRING] reads it: 0 dry to 1 at the water, -1 off the sand seas. Read with the last placement, and only when a species uses the rule.
-			</description>
-		</method>
-		<method name="add_canopy_loss">
-			<return type="void" />
-			<param index="0" name="xz" type="Vector2" />
-			<param index="1" name="radius" type="float" />
-			<param index="2" name="keep" type="float" default="0.0" />
-			<description>
-				A felled tree or snapped crown: every placed crown centred within [param radius] of [param xz] keeps only [param keep] of its leaf area. [method get_shade_at] sees it at once, and every later repaint of the canopy ([member WeatherMap3D.canopy_map] through [member weather_map]) takes it out again, so streaming does not restore a felled crown. The caller cuts the live canopy map itself ([TreeWind3D] does).
-			</description>
-		</method>
-		<method name="clear_canopy_losses">
-			<return type="void" />
-			<description>
-				Forgets every [method add_canopy_loss]: the next repaint restores those crowns.
-			</description>
-		</method>
-		<method name="get_canopy_losses" qualifiers="const">
-			<return type="PackedVector4Array" />
-			<description>
-				The felled crowns from [method add_canopy_loss]: x, z, radius and the leaf area kept, each.
-			</description>
-		</method>
-		<method name="get_springs" qualifiers="const">
-			<return type="PackedVector4Array" />
-			<description>
-				The desert springs the last placement used, from the terrain ([method TerrainGenerator3D.get_springs]): x, the water's level, z and the discharge in litres a second (w; 0 takes the pools' default) each. For the water and terrain systems to put a pool there. Empty unless a species uses [constant PlantSpecies.RULE_SPRING].
-			</description>
-		</method>
 		<method name="get_stream_stats">
 			<return type="Dictionary" />
 			<description>
@@ -92,21 +21,6 @@
 				The number of placed tiles held around the centre while [member streaming].
 			</description>
 		</method>
-		<method name="get_trunks_near" qualifiers="const">
-			<return type="Array" />
-			<param index="0" name="center" type="Vector3" />
-			<param index="1" name="radius" type="float" />
-			<param index="2" name="height" type="float" default="4.0" />
-			<description>
-				Returns the placed trees within [param radius] metres of [param center] whose meshes carry TreeGenerator's [code]tree_colliders[/code], each once, as a [Dictionary]: [code]base[/code], [code]up[/code] (the trunk's axis), [code]height[/code], [code]radius_base[/code], [code]radius_top[/code], [code]segments[/code] (the trunk's capsules up to [param height] metres, each [code][a, b, radius][/code]), all in world space; [code]preset[/code] (the species' [code]preset[/code] meta), [code]species[/code], [code]variant[/code], [code]basis[/code], [code]custom[/code] (the instance's custom data) and [code]seed[/code] (from where it stands). For close-up bark detail.
-			</description>
-		</method>
-		<method name="is_still_frozen" qualifiers="const">
-			<return type="bool" />
-			<description>
-				With [member still_shot]: [code]true[/code] once it has settled and stopped updating.
-			</description>
-		</method>
 		<method name="is_stream_idle" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -117,28 +31,6 @@
 			<return type="void" />
 			<description>
 				Removes every placed plant.
-			</description>
-		</method>
-		<method name="get_crowns_in" qualifiers="const">
-			<return type="PackedFloat32Array" />
-			<param index="0" name="rect" type="Rect2" />
-			<description>
-				The placed crowns reaching into a world rectangle (x and z), seven floats each: x, z, crown radius, the crown's top and its base (lowest foliage) above the ground, 1 for a conifer or 0, and the crown's opacity. [PhysXFireSpread3D] reads them to light crowns.
-			</description>
-		</method>
-		<method name="get_deadwood_at" qualifiers="const">
-			<return type="Dictionary" />
-			<param index="0" name="global_position" type="Vector3" />
-			<param index="1" name="reach" type="float" default="0.0" />
-			<param index="2" name="min_radius" type="float" default="0.0" />
-			<description>
-				The placed log whose side is nearest the point, seen from above, if it is within [param reach] metres, past any thinner than [param min_radius]: [code]side[/code] (metres from its side, negative under it), [code]radius[/code], [code]top[/code] (the height of its upper surface over the point), [code]normal[/code] and [code]across[/code] (the level unit direction from its axis to the point). Empty when none is that close. Logs are the placed plants of species with the meta [code]deadwood[/code] whose meshes carry [code]tree_deadwood_axis[/code] (see [member PlantSpecies.deadwood_rule]).
-			</description>
-		</method>
-		<method name="get_deadwood_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				How many logs the last placement put down (with their axes).
 			</description>
 		</method>
 		<method name="get_placements" qualifiers="const">
@@ -180,25 +72,6 @@
 				It also gives [code]vegetation_far(world_pos, albedo, camera_pos)[/code]: call it after [code]grass_ground()[/code] with [code]CAMERA_POSITION_WORLD[/code]. Where plants with a [member PlantSpecies.far_color] grew, it blends their colour into the ground as the plant shader thins them away with distance, with the same curve: none up to 35% of the species' range, all of it at the range. It reads the [code]vegetation_far_map[/code], [code]vegetation_far_rect[/code] and [code]vegetation_far_range[/code] global shader parameters, published after each [method populate] that places such plants.
 			</description>
 		</method>
-		<method name="make_game_trails" qualifiers="static">
-			<return type="Array" />
-			<param index="0" name="data_map" type="Node" />
-			<param index="1" name="area" type="Rect2" />
-			<param index="2" name="goals" type="PackedVector3Array" />
-			<param index="3" name="options" type="Dictionary" default="{}" />
-			<description>
-				A network of game trails linking [param goals] (the places animals use: cover, feeding lawns, water) over the [TerrainDataMap3D] [param data_map] within [param area] (world xz). Every pair of goals within reach is routed by least cost, nearest pairs first; slope, water and a seeded roughness raise a cell's cost and traffic already routed over it lowers it, so routes merge into a branching network (the active walker model of trail formation). Returns worn paths in the form [member paths] and [member GrassField3D.paths] take: Dictionaries of [code]points[/code], [code]width[/code], [code]passes[/code] a year and [code]kind[/code] ([code]"game_trail"[/code]), one per stretch of equal traffic.
-				[param options]: [code]cell[/code] (grid metres, 2), [code]reach[/code] (furthest goals linked, 250 m), [code]passes[/code] (a year along one link, 500), [code]width[/code] (tread, 0.35 m), [code]attraction[/code] (0..0.9, how much cheaper worn ground is, 0.6), [code]max_slope_deg[/code] (40), [code]ford_depth[/code] (deepest water waded, 0.4 m), [code]roughness[/code] (0.35), [code]seed[/code] (1).
-			</description>
-		</method>
-		<method name="get_crowns_near" qualifiers="const">
-			<return type="Array" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="radius" type="float" />
-			<description>
-				The placed crowns reaching within [param radius] of [param position] (horizontal distance), one [Dictionary] each: [code]position[/code] (the stem's foot, world), [code]preset[/code] (the species' [code]preset[/code] meta, or -1), [code]height[/code], [code]crown_base[/code] and [code]crown_radius[/code] in metres, scaled by the instance. Height and crown base come from the species' first mesh's [code]crown[/code] meta (height, crown base, crown radius, unscaled) when it has one, else the crown's top and a third of it.
-			</description>
-		</method>
 		<method name="get_shade_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -206,46 +79,11 @@
 				Canopy shade at [param global_position], from 0 (open sky) to 1 (dense crown), from the plants of species with [member PlantSpecies.canopy_radius] placed by the last [method populate]. Each crown stops [member PlantSpecies.canopy_opacity] of the light under its core, fading out a little past its rim; overlapping crowns multiply their transmission. Species with a [member PlantSpecies.shade_range] are placed by it, so list canopy species first in the [Biome].
 			</description>
 		</method>
-		<method name="get_light_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				The light plants grow in at [param global_position]: the open sky left by [method get_shade_at] times how sunny the slope is against the map's mean (the [TerrainDataMap3D] climate's shortwave; 1 without climate), from 0.3 to 1.5. Leaves and grass blades are tinted by it (darker and bluer in shade, paler in full sun), and the far cover map's grass colours take the same tint.
-			</description>
-		</method>
-		<method name="get_litter_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				Broad-leaf litter fallen at [param global_position], from 0 (none) to 1 (a full mat), from the crowns placed by the last [method populate]. Under a crown it is full; past the rim it thins over about 6 m, the drift of leaves blown out of a stand into its edge or a clearing (Ferrari and Sugita 1996), farther downwind ([member litter_wind]). Needle-leaved crowns add none. Species with a [member PlantSpecies.litter_range] are placed by it.
-			</description>
-		</method>
-		<method name="get_litter_drift_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				How the wind has gathered fallen leaves at [param global_position] ([constant PlantSpecies.RULE_LITTER_DRIFT]): 1 where they lie as they fell; up to 2.5 in hollows (the ground's depth under its ring at 2.5 and 6 m) and within about half a metre of trunks, logs and rocks, deepest on their downwind side ([member litter_wind]); down to 0.15 on crests and slopes over 25 to 45 degrees. The placement scales [method get_litter_at] by it (capped at 1) for species with a [member PlantSpecies.litter_range].
-			</description>
-		</method>
 		<method name="get_stand_shade_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
 				The shade the ground gets from the stand: [method get_shade_at] weighed by how closed the canopy is over about 5 m around, on half-metre cells after [method populate]. Under a lone open-grown tree it stays low, so the sward and no litter mat stay there; under a closed canopy it equals the shade. [GrassField3D] reads it for its shade rule, and the forest floor's litter follows it.
-			</description>
-		</method>
-		<method name="get_sward_litter_at" qualifiers="const">
-			<return type="Color" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				The field's undergrowth litter at a point ([member PlantSpecies.litter_color]): the species' litter colours weighed by how much each covers, in rgb, and the combined cover in alpha. Weighed as [method get_sward_shade_at] is. Main thread.
-			</description>
-		</method>
-		<method name="get_sward_shade_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				How much of the grass the field's tall undergrowth shades out at a point, 0 to 1: each species with [member PlantSpecies.sward_shade] weighed by where it grows (its density, rules, patches and shade rule, eased so a stand's sparse margin keeps its grass), not by the placed plants, so it does not change as the field streams. [GrassField3D] reads it through [member GrassField3D.undergrowth_field]. Main thread.
 			</description>
 		</method>
 		<method name="populate">
@@ -260,27 +98,6 @@
 				Populates at the end of the frame, once.
 			</description>
 		</method>
-		<method name="sample_lateral_cover" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Returns the placed plants' frontal area index at a global point: the area they show the wind ([member PlantSpecies.wind_frontal_area] times each plant's scale squared) per square metre of ground, spread over a 1 m grid, at most 0.5. Put this field in [code]GroundSurface3D.wind_shelters[/code] and its plants shelter blowing sand and trap it (Raupach's drag partition): dune grass builds hummocks round itself.
-			</description>
-		</method>
-		<method name="get_path_passes_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Returns the walkers a year at [param position] from [member paths], 0 off every path.
-			</description>
-		</method>
-		<method name="get_species_range" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="species" type="int" />
-			<description>
-				The range the biome's species [param species] is drawn to: its [member PlantSpecies.visibility_range], or for a small species ([member PlantSpecies.detail_size] above 0, with [member detail_reach] on) the distance where that size is still [member detail_pixels] tall, when that is further, up to [member detail_max_range].
-			</description>
-		</method>
 	</methods>
 	<members>
 		<member name="density_mask" type="Texture2D" setter="set_density_mask" getter="get_density_mask">
@@ -288,9 +105,6 @@
 		</member>
 		<member name="density_mask_rect" type="Rect2" setter="set_density_mask_rect" getter="get_density_mask_rect" default="Rect2(0, 0, 0, 0)">
 			The world rectangle (x and z, metres) that [member density_mask] covers.
-		</member>
-		<member name="bark_detail" type="bool" setter="set_bark_detail" getter="is_bark_detail" default="true">
-			Close-up bark on this field's trunks: when a species has trunks ([code]tree_colliders[/code] mesh meta), the field makes a [BarkDetail3D] as an internal child, linked to the field and following the camera. A [BarkDetail3D] the scene puts under the field itself is kept instead. Switch off for tests and benches that do not need it.
 		</member>
 		<member name="biome" type="Biome" setter="set_biome" getter="get_biome">
 			The species to place.
@@ -304,65 +118,11 @@
 		<member name="cover_grass" type="NodePath" setter="set_cover_grass" getter="get_cover_grass" default="NodePath(&quot;&quot;)">
 			A [GrassField3D] whose rules and far colour ([method GrassField3D.get_far_color]) are the cover map's bottom layer.
 		</member>
-		<member name="cover_grass_layers" type="NodePath[]" setter="set_cover_grass_layers" getter="get_cover_grass_layers" default="[]">
-			More [GrassField3D] layers under [member cover_grass] for the cover map, top down: an undercoat that fills the gaps between patches of tall grass. Each layer's share is its rules' suitability over what the layers above leave, in its own [method GrassField3D.get_far_color]; without them the gaps read as bare ground from afar.
-		</member>
 		<member name="cover_map_enabled" type="bool" setter="set_cover_map_enabled" getter="is_cover_map_enabled" default="false">
-			Builds the plant cover seen from far above over the whole [member data_map] and publishes it as the [code]terrain_cover_map[/code] (RGBA8: sRGB cover colour, alpha the share of ground hidden) and [code]terrain_cover_rect[/code] globals, which [TerrainMaterial3D]'s far blend reads. It comes from the species' rules, not the placed plants, so it covers the map while only the camera's surroundings are placed ([member streaming]): crowns from above (the share each canopy species shades over its own placement pattern at its local density, spread by the crown radius), the plants with a [member PlantSpecies.far_color] under them by the shade and stand type those crowns give, and the [member cover_grass] under those. Built on worker threads on [method populate] or when streaming starts (about 70 ms for a square kilometre of oak wood at 4 m); on a streaming field, setting this, [member cover_grass] or [member cover_grass_layers] later builds it again at once, so there is no need to call [method populate] (which would place the whole map and stop the streaming).
+			Builds the plant cover seen from far above over the whole [member data_map] and publishes it as the [code]terrain_cover_map[/code] (RGBA8: sRGB cover colour, alpha the share of ground hidden) and [code]terrain_cover_rect[/code] globals, which [TerrainMaterial3D]'s far blend reads. It comes from the species' rules, not the placed plants, so it covers the map while only the camera's surroundings are placed ([member streaming]): crowns from above (the share each canopy species shades over its own placement pattern at its local density, spread by the crown radius), the plants with a [member PlantSpecies.far_color] under them by the shade and stand type those crowns give, and the [member cover_grass] under those. Built on worker threads on [method populate] or when streaming starts (about 70 ms for a square kilometre of oak wood at 4 m).
 		</member>
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			The [TerrainDataMap3D] that gives height, slope, wetness and water. Its area is the area planted.
-		</member>
-		<member name="detail_max_range" type="float" setter="set_detail_max_range" getter="get_detail_max_range" default="40.0">
-			The furthest a small species is drawn by [member detail_reach], in metres.
-		</member>
-		<member name="detail_pixels" type="float" setter="set_detail_pixels" getter="get_detail_pixels" default="3.0">
-			How many pixels tall a small item still is where [member detail_reach] stops drawing it.
-		</member>
-		<member name="detail_reach" type="bool" setter="set_detail_reach" getter="get_detail_reach" default="true">
-			Small species ([member PlantSpecies.detail_size] above 0: fallen leaves, twigs, mosses, small rosettes, seedlings) are drawn as real geometry out to where they are still [member detail_pixels] tall at the camera's field of view and the viewport's height (the rule [RockField3D]'s ground detail uses), instead of their hand-set [member PlantSpecies.visibility_range], when that is further. Every species with a range is cut into cells of half its range so the range is measured near each plant, and the path tracer instances the small species' shapes (see [method RenderingServer.multimesh_set_rt_instanced]). Read when the field is placed or starts streaming.
-		</member>
-		<member name="detail_reference_height" type="int" setter="set_detail_reference_height" getter="get_detail_reference_height" default="0">
-			A viewport height in pixels for [member detail_reach] in place of the viewport's own (0).
-		</member>
-		<member name="far_match_view" type="bool" setter="set_far_match_view" getter="is_far_match_view" default="true">
-			If [code]true[/code], the far colour that replaces plants past their [member PlantSpecies.visibility_range] is matched to the plants on screen: a few frames after the maps are built (and again when the camera has moved a fifth of the range), the field reads back the rendered image along arcs at covered and bare ground spots near the camera (where plants are drawn) and just past the range (where the far colour is), and scales the far colour where it stands for plants (the global [code]vegetation_far_shade[/code]) until the covered-to-bare ratio matches, within 3%. This carries the plants' own darkening of the ground (their shadowed depths and self-shadow) into the far colour, so the ground does not brighten into a lighter band where the plants end. While the viewport is path traced the match waits, keeping the raster frames' shade. See [method get_far_match_stats].
-		</member>
-		<member name="far_reach" type="float" setter="set_far_reach" getter="get_far_reach" default="3.0">
-			While [member streaming], how far species with a range go on as real plants, as a multiple of their range: from half the range they thin with the square of the distance, by rank so the field stays even, and the plants left grow up to 1.6 times to hold their cover, fading out over the last quarter. Each streamed tile holds only the plants its distance keeps and is rebuilt as the camera comes closer. Small items with a [member PlantSpecies.detail_size] keep their pixel reach. [code]1[/code]: no tail, the plants fade out by their range.
-		</member>
-		<member name="far_shell" type="bool" setter="set_far_shell" getter="is_far_shell" default="true">
-			While [member streaming], the plant cover past the streamed plants out to [member far_shell_range], as one surface draped over the ground: each cell reads every species with a range and a [member PlantSpecies.far_color] from its own rules (suitability with its patches, times its density and the ground it hides), stands at their expected height by cover, lumped by a hash, in their mean far colour, and thins down into the ground where the cover thins. It rises out of the ground inside the streamed plants' thinning. Cells 2 m wide to 400 m, 8 m to 1600 m, 32 m past it. Species that need canopy shade, sand, a coast or pools are left out.
-		</member>
-		<member name="far_shell_clumps" type="bool" setter="set_far_shell_clumps" getter="is_far_shell_clumps" default="true">
-			Where the [member far_shell]'s cells are fine enough, it opens into clumps and gaps (three octaves at 7, 19 and 53 m, each fading out as the cells grow past about a third of its size) with shade at the clumps' feet, so about each stand's cover share of the ground is under clumps, as heath, gorse and scrub grow. Off: an even mass by cover.
-		</member>
-		<member name="far_shell_range" type="float" setter="set_far_shell_range" getter="get_far_shell_range" default="4000.0">
-			How far the [member far_shell] reaches, in metres.
-		</member>
-		<member name="far_volume" type="bool" setter="set_far_volume" getter="is_far_volume" default="true">
-			If [code]true[/code], plants past their [member PlantSpecies.visibility_range] are drawn as real volume out to [member far_volume_range] instead of leaving only the ground's far colour: per tile and species, a voxel shell of the placed plants' leaf cover, porous where the stand is thin, lumpy rather than boxy, in the species' [member PlantSpecies.far_color], crossfading in as the plants thin out. Plain geometry, so path tracing sees the same shell. Plants lower than half a [member far_volume_cell] are left to the far colour. Takes effect at the next [method populate] or streamed tile.
-		</member>
-		<member name="far_volume_cell" type="float" setter="set_far_volume_cell" getter="get_far_volume_cell" default="0.3">
-			The far volume's voxel size in metres. Smaller is finer and costs more triangles.
-		</member>
-		<member name="far_volume_range" type="float" setter="set_far_volume_range" getter="get_far_volume_range" default="150.0">
-			How far the far volume is drawn, in metres; past it only the ground's far colour remains.
-		</member>
-		<member name="litter_wind" type="Vector2" setter="set_litter_wind" getter="get_litter_wind" default="Vector2(0, 0)">
-			Downwind lean of the leaf drift ([method get_litter_at]): its direction is the way the leaf-fall wind blows toward (x, z), its length (up to [code]0.8[/code]) how much farther the drift reaches downwind and the less upwind. Zero: taken from the [member weather_map]'s wind at placement, half a lean at 10 m/s.
-		</member>
-		<member name="obstacles" type="PackedVector4Array" setter="set_obstacles" getter="get_obstacles" default="PackedVector4Array()">
-			Rocks on the ground that no plant grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, for example from [method TerrainGenerator3D.get_boulders]. A ground plant's stem keeps 3 cm off a rock, a tree's trunk foot and a log's length keep clear of it. A ground plant's leaves reach at most 8 cm in over a rock's foot: one that would reach farther grows smaller and leans away from the rock (down to 45% of its size), or is not placed. Give the widest radius of a rock that bulges out above the soil. Give the same list to the [GrassField3D] layers. Takes effect at the next [method populate].
-		</member>
-		<member name="still_shot" type="bool" setter="set_still_shot" getter="is_still_shot" default="false">
-			For still shots on a tight memory budget: once [member streaming] has settled round its centre, the field stops streaming and drops its placement patterns until the centre moves 0.5 m. [method is_still_frozen] says when it has settled.
-		</member>
-		<member name="stone_top_normals" type="PackedVector3Array" setter="set_stone_top_normals" getter="get_stone_top_normals" default="PackedVector3Array()">
-			Optional, one per [member stone_tops] entry: the surface normal of each cap, measured on the stone (for example by a ray down onto its collision hull). With them, a cap is a flat patch of the stone's surface: a plant there is set on the plane through the cap's point and tilted to its normal, which fits sloping and flat stone faces; give a cap radius only as wide as the surface stays within about a centimetre of that plane. Ignored unless it has as many entries as [member stone_tops]. Takes effect at the next [method populate].
-		</member>
-		<member name="stone_tops" type="PackedVector4Array" setter="set_stone_tops" getter="get_stone_tops" default="PackedVector4Array()">
-			The caps of stones that [member PlantSpecies.stone_top] species grow on: each (x, top y, z, cap radius), the stone's highest point and the radius of its rounded top, for example from [code]RockField3D.get_stones()[/code] ([code]top[/code], and about half the [code]footprint[/code]). A plant there is set down the cap as a dome of that radius from the top and tilted with it (or on the cap's plane, with [member stone_top_normals]), 3 mm into the stone. Takes effect at the next [method populate].
 		</member>
 		<member name="populate_on_ready" type="bool" setter="set_populate_on_ready" getter="is_populate_on_ready" default="true">
 			If [code]true[/code], populate when ready (once the map is baked) and again whenever the map is baked again, after terrain edits.
@@ -376,11 +136,8 @@
 		<member name="stream_maps_radius" type="float" setter="set_stream_maps_radius" getter="get_stream_maps_radius" default="96.0">
 			While [member streaming], the canopy map, the stand shade and the forest floor map cover this far around the centre (half-metre cells); the far colour map covers [member stream_radius].
 		</member>
-		<member name="spring_pools" type="NodePath" setter="set_spring_pools" getter="get_spring_pools" default="NodePath(&quot;&quot;)">
-			An [OasisSprings3D] whose pools' outlines ([method OasisSprings3D.get_outline]) the species with [constant PlantSpecies.RULE_POOL_DISTANCE] grow round: [method PlantGenerator.make_desert]'s oasis set puts common reed in the shallows and on the shore and rushes behind. Read when the placement is set up, so the pools must be built first.
-		</member>
 		<member name="stream_radius" type="float" setter="set_stream_radius" getter="get_stream_radius" default="200.0">
-			While [member streaming], tiles within this distance of the centre are placed. Each species is drawn only out to its [member PlantSpecies.visibility_range] (all of the radius when it has none); tiles a tile and a half past the radius are freed. The field publishes the radius as the global shader parameter [code]vegetation_near_radius[/code] (0 when it stops streaming; the last streaming field to publish owns it), so a terrain's far blend can start before the placed plants end.
+			While [member streaming], tiles within this distance of the centre are placed. Each species is drawn only out to its [member PlantSpecies.visibility_range] (all of the radius when it has none); tiles a tile and a half past the radius are freed.
 		</member>
 		<member name="stream_target" type="NodePath" setter="set_stream_target" getter="get_stream_target" default="NodePath(&quot;&quot;)">
 			The [Node3D] streaming follows. Empty: the viewport's camera.
@@ -396,10 +153,6 @@
 		</member>
 		<member name="weather_map" type="NodePath" setter="set_weather_map" getter="get_weather_map" default="NodePath(&quot;&quot;)">
 			Path to a [WeatherMap3D]. After each [method populate] the placed canopy species are written to its [member WeatherMap3D.canopy_map] over the data map's rect (about 1 m cells): crown top height in red, leaf area index over 4 in green, taking [member PlantSpecies.canopy_opacity] as [code]1 - exp(-0.5 LAI)[/code]. [method WeatherMap3D.get_canopy_closure_at] then matches [method get_shade_at], and snow, wind and light under the trees all see the same forest. This replaces any canopy map already set there.
-		</member>
-		<member name="paths" type="Dictionary[]" setter="set_paths" getter="get_paths" default="[]">
-			Worn paths, each a [Dictionary] with [code]points[/code] ([PackedVector3Array], the path's centre line), [code]width[/code] (metres, default 1.0) and [code]passes[/code] (walkers a year, default 1000). Trampling falls off across a path as a Gaussian with sigma a quarter of its width, over a wider tail (15% of the walkers, three times the sigma), so plants shorten over a metre or so towards the tread. Plants with a [member PlantSpecies.trample_resistance] thin out and grow shorter where passes outweigh it, following Cole's trampling experiments; trees, logs and stone-top plants are never trampled. Changing it repopulates.
-			The world's game trails ([code]WorldStand.get_trails()[/code], published from [method VegetationField3D.make_game_trails]) are worn the same way, on top of these, and followed when they change.
 		</member>
 	</members>
 	<signals>

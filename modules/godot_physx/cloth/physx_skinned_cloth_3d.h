@@ -30,7 +30,6 @@
 
 #pragma once
 
-#include "cloth_wetness.h"
 #include "skinned_cloth_solver.h"
 
 #include "scene/3d/node_3d.h"
@@ -87,14 +86,6 @@ class PhysXSkinnedCloth3D : public Node3D {
 	};
 	Vector<ScriptCapsule> script_capsules;
 	bool simulating = true;
-	// Rain soaks the garment and it dries (ClothWetness): darker, heavier, clinging to the body.
-	ClothWetness wet;
-	bool weather_wetting = true;
-	float fabric_density = 0.2f; // kg/m2, dry
-	float water_capacity = 1.0f; // water held when soaked, kg per kg of fabric
-	float wet_applied = -1.0f;
-	float wade_applied = 0.0f;
-	void _update_wetness(float p_delta);
 
 	SkinnedClothSolver *solver = nullptr;
 	MeshInstance3D *render_instance = nullptr;
@@ -237,14 +228,6 @@ public:
 	Vector3 get_fixed_gravity() const { return fixed_gravity; }
 	void set_extra_acceleration(const Vector3 &p_a) { extra_acceleration = p_a; }
 	Vector3 get_extra_acceleration() const { return extra_acceleration; }
-	void set_wetness(float p_wetness);
-	float get_wetness() const { return wet.effective(); }
-	void set_weather_wetting(bool p_enable) { weather_wetting = p_enable; }
-	bool is_weather_wetting() const { return weather_wetting; }
-	void set_fabric_density(float p_density) { fabric_density = MAX(p_density, 0.001f); }
-	float get_fabric_density() const { return fabric_density; }
-	void set_water_capacity(float p_capacity) { water_capacity = MAX(p_capacity, 0.0f); }
-	float get_water_capacity() const { return water_capacity; }
 	// The gravity the cloth steps with right now (world or fixed, + extra_acceleration), m/s^2.
 	Vector3 get_effective_gravity() const;
 	void set_collide_with_body(bool p_enabled);
@@ -264,10 +247,6 @@ public:
 	int get_particle_count() const { return particle_count; }
 	MeshInstance3D *get_render_instance() const;
 	PackedInt32Array get_vertex_particles() const { return vertex_particles; }
-	// The simulated positions (RGBA32F, the render copy's space, one texel per particle, rows of
-	// get_position_texture_width()), on the main RenderingDevice; invalid before a build.
-	RID get_position_texture_rd_rid() const { return solver ? solver->get_position_texture_rd_rid() : RID(); }
-	int get_position_texture_width() const { return solver ? solver->get_texture_width() : 1; }
 	Array get_body_capsules() const;
 
 	PhysXSkinnedCloth3D();

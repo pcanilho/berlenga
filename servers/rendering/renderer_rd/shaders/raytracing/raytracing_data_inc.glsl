@@ -61,9 +61,7 @@ struct GeometryData {
 	// With FLAG_REST: byte offset from vertex_address of the rest block (vertex() inputs, same layout as the
 	// positions and TBN before it).
 	uint rest_byte_offset;
-	// CUSTOM0-3 vertex attributes: bits 0-7 byte offset of the first present one, then 4 bits each (bit 3 present,
-	// bits 0-2 the custom format). See fetch_custom_attrib().
-	uint custom_layout;
+	uint rest_pad;
 };
 
 // ============================================================================
@@ -164,7 +162,7 @@ struct MaterialData {
 	uint transmission_texture; // Red scales transmission.
 	uint medium; // With RT_MAT_FLAG_VOLUME: the extinction code of the volume it bounds, see rt_medium_absorption().
 	uint scatter; // unorm8x4: single-scatter albedo of that volume (rgb) and (g + 1) / 2 of its phase. See rt_material_scatter().
-	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode; wetness in 9-26, see rt_material_wetness(); snow 27-28; ground deform 29, terrain 30; mud 31.
+	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode; wetness in 9-26, see rt_material_wetness(); snow 27-28; ground deform 29.
 	uint subsurface_texture; // texture_subsurface_scattering: red scales the strength.
 	uint hair; // unorm8 beta_m, beta_n, (tilt + 10) / 20; bits 24-25 direction, 26 melanin, 27 cards. See rt_material_hair().
 	uint hair_absorption; // Melanin absorption per fibre diameter (rt_medium_absorption() code).
@@ -246,34 +244,9 @@ vec4 rt_material_wetness(MaterialData p_mat) {
 			float((p_mat.subsurface >> 25u) & 1u), float((p_mat.subsurface >> 26u) & 1u));
 }
 
-// BaseMaterial3D wetness_canopy: a leaf's intercepted water (the rain map's green) and its beads.
-bool rt_material_wetness_canopy(MaterialData p_mat) {
-	return ((p_mat.subsurface_texture >> 24u) & 1u) != 0u;
-}
-
-// BaseMaterial3D glaze: clear ice from freezing rain, the rain map's alpha (material.cpp weather_glaze_apply()).
-bool rt_material_glaze(MaterialData p_mat) {
-	return ((p_mat.subsurface_texture >> 26u) & 1u) != 0u;
-}
-
 // BaseMaterial3D Ground Deform on GroundSurface3D's patch: the turned-ground tint is on.
 bool rt_material_ground_deform(MaterialData p_mat) {
 	return ((p_mat.subsurface >> 29u) & 1u) != 0u;
-}
-
-// BaseMaterial3D Ground Deform off the patch (the terrain round it): only the ground's pore water.
-bool rt_material_ground_terrain(MaterialData p_mat) {
-	return ((p_mat.subsurface >> 30u) & 1u) != 0u;
-}
-
-// BaseMaterial3D Mud: a vehicle's body mud from the instance uniforms (docs/ideas/mud.md, stage 3b).
-bool rt_material_mud(MaterialData p_mat) {
-	return (p_mat.subsurface >> 31u) != 0u;
-}
-
-// BaseMaterial3D snow_on_body: the body's own snow from instance uniform slot 12 (SnowBodies).
-bool rt_material_snow_on_body(MaterialData p_mat) {
-	return ((p_mat.subsurface_texture >> 25u) & 1u) != 0u;
 }
 
 // BaseMaterial3D Snow: amount (x), snow_max_slope in degrees (y), on (z), cover from the snow map (w).

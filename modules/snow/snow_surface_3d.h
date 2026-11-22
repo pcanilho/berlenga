@@ -1,11 +1,10 @@
 /**************************************************************************/
-/*  snow_surface_3d.h                                                     */
+/*  snow_surface_3d.h                                                         */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -37,7 +36,7 @@
 
 #include "core/templates/hash_map.h"
 #include "modules/ground/ground_deform_field.h"
-#include "modules/ground/ground_deform_gpu.h"
+#include "snow_deform_gpu.h"
 #include "scene/resources/texture_rd.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
@@ -49,7 +48,6 @@
 class CollisionShape3D;
 class MeshInstance3D;
 class SnowCover3D;
-class SnowClumps3D;
 class StaticBody3D;
 
 // Deep snow as geometry (docs/ideas/snow.md, stage 2). A camera-following grid, dense near the
@@ -70,8 +68,6 @@ class StaticBody3D;
 // come back when the camera returns.
 class SnowSurface3D : public Node3D {
 	GDCLASS(SnowSurface3D, Node3D);
-
-	static SnowSurface3D *active; // the last to enter the tree: the snow contract reads its surface
 
 	static constexpr int TILE = GroundDeformField::TILE; // deformation texels per cached tile side
 
@@ -128,10 +124,29 @@ class SnowSurface3D : public Node3D {
 		SnowSurface3D *surface = nullptr;
 		void stamp(const GroundDeformField::Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) override;
 	};
+	struct GPUSlot {
+		int slot = 0;
+		uint64_t used = 0;
+	};
+	Ref<SnowDeformGPU> gpu;
 	GPUSink gpu_sink;
-	GroundDeformGPUHost gpu_host;
+	Ref<Texture2DRD> gpu_texture;
+	uint64_t gpu_texture_serial = 0;
+	PackedByteArray gpu_stamps;
+	PackedByteArray gpu_stores;
+	PackedByteArray gpu_shift;
+	HashMap<Vector2i, GPUSlot> gpu_cache; // world tile -> cache slot
+	LocalVector<int> gpu_free_slots;
+	int gpu_slots = 0;
+	uint64_t gpu_cache_clock = 0;
+	LocalVector<float> gpu_tile_stamped; // per field tile: time of the last stamp
+	double gpu_time = 0.0;
+	double gpu_slump_until = -1.0;
+	int gpu_n = 0;
+	bool gpu_reset = true;
 	bool gpu_ground_dirty = true;
 	bool gpu_cover_dirty = true;
+	bool gpu_changed = true; // since the last read back
 	int gpu_cover_n = 0;
 	bool gpu_cover_valid = false;
 	float gpu_relax_keep = 1.0f;
@@ -162,33 +177,8 @@ class SnowSurface3D : public Node3D {
 	MeshInstance3D *mesh_instance = nullptr;
 	Ref<ArrayMesh> mesh;
 	Ref<ShaderMaterial> material;
-	Ref<ImageTexture> cup_tile_texture;
-	Ref<ImageTexture> sas_tile_texture;
 	Ref<Shader> shader;
 	StaticBody3D *body = nullptr;
-	bool clumps = true; // SnowClumps3D: the lumps a print breaks out of cohesive snow (ground detail)
-	SnowClumps3D *clumps_node = nullptr;
-	// Plates of a broken crust as geometry (docs/ideas/snow.md, follow-up 38): the field's 6 cm texels round
-	// each sector's ramp off, so the pieces are slabs over it with crisp edges and a lip.
-	struct CrustBreak {
-		Vector3 position;
-		float radius = 0.0f; // the footprint's, at the crust
-		float thickness = 0.0f;
-		float crack = 0.0f;
-		uint32_t seed = 0;
-		float age = 0.0f;
-		bool built = false;
-		float surface = 0.0f; // the snow surface at the middle when built, to see new snow bury it
-	};
-	mutable LocalVector<CrustBreak> crust_breaks;
-	MeshInstance3D *plates_instance = nullptr;
-	Ref<StandardMaterial3D> plates_material;
-	bool crust_plates = true;
-	bool plates_dirty = false;
-	float plates_check = 0.0f;
-	void _note_break(const Vector3 &p_center, float p_radius, float p_thickness) const;
-	void _crust_plates_step(double p_delta);
-	void _build_plates();
 	CollisionShape3D *collision_node = nullptr;
 	Ref<HeightMapShape3D> collision_shape;
 	Vector2 mesh_center;
@@ -204,8 +194,7 @@ class SnowSurface3D : public Node3D {
 	void _shift_ground(Vector2i p_origin);
 	void _shift_deform(Vector2i p_origin);
 	float _ground_at(float p_x, float p_z) const;
-	float _dent_max(float p_depth, float p_density, float p_wet = 0.0f) const;
-	static float rotten_share(float p_wet); // the share of the dry pack's bearing a wet one keeps
+	float _dent_max(float p_depth, float p_density) const;
 	float _press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, Vector2 p_velocity = Vector2());
 	void _press_movers(double p_delta);
 	void _relax();
@@ -243,10 +232,6 @@ public:
 
 	void set_deform_enabled(bool p_enabled);
 	bool is_deform_enabled() const { return deform_enabled; }
-	const GroundDeformField &get_deform_field() const { return field; } // CPU copy (read back), for GroundLumpScan
-	void set_clumps(bool p_enabled);
-	bool is_clumps() const { return clumps; }
-	SnowClumps3D *get_clumps_node() const { return clumps_node; }
 	void set_deform_extent(float p_extent);
 	float get_deform_extent() const { return deform_extent; }
 	void set_deform_resolution(int p_resolution);
@@ -309,15 +294,9 @@ public:
 	float get_dent_at(Vector3 p_position) const;
 	float get_rim_at(Vector3 p_position) const;
 	Vector2 get_moved_volume() const; // m3: (dent, rim) over the live field
-	int get_cached_tile_count() const { return _gpu_on() ? gpu_host.cache.size() : field.cached_tile_count(); }
+	int get_cached_tile_count() const { return _gpu_on() ? gpu_cache.size() : field.cached_tile_count(); }
 	Rect2 get_deform_rect() const;
-	static SnowSurface3D *get_active() { return active; }
-	static Ref<Image> suncup_tile(); // the periodic suncup relief (R) and its gradient (GB), made once
-	static Ref<Image> sastrugi_tile(); // the periodic sastrugi relief along +x (R) and its gradient (GB), made once
 	double get_step_time_msec() const { return step_msec; }
-	void set_crust_plates(bool p_enabled);
-	bool get_crust_plates() const { return crust_plates; }
-	int get_crust_plate_count() const; // breaks drawn as plates
 	Ref<ShaderMaterial> get_surface_material() const { return material; }
 
 	SnowSurface3D();

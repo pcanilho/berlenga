@@ -10,115 +10,10 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="advance_lodging">
-			<return type="void" />
-			<param index="0" name="weather_seconds" type="float" />
-			<description>
-				Steps the whole lodging grid (see [member lodging]) by [param weather_seconds] at once, reading the weather as it is now: for time skips and tests.
-			</description>
-		</method>
-		<method name="crop_calendar_stage" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="sown_day" type="int" />
-			<param index="1" name="harvest_day" type="int" />
-			<param index="2" name="day" type="int" />
-			<description>
-				The BBCH growth stage on [param day] (of the year) of a cereal sown on [param sown_day], from a temperate sowing calendar (winter crops sown from day 200; spring crops otherwise). Harvested (99) from [param harvest_day], or about ten days after hard dough when it is negative, until the next sowing.
-			</description>
-		</method>
-		<method name="crop_canopy_look" qualifiers="static">
-			<return type="Color" />
-			<param index="0" name="crop" type="int" enum="GrassField3D.Crop" />
-			<param index="1" name="stage" type="float" />
-			<description>
-				The crop seen from a distance at [param stage]: its colour (sRGB) and, in alpha, how much of the soil it covers.
-			</description>
-		</method>
-		<method name="get_burn_cover_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				The sward's cover on burnt ground at [param global_position]: 0 on a fresh burn, 1 where the ground never burnt or has recovered (see [member burn_recovery]).
-			</description>
-		</method>
-		<method name="get_lodging_at" qualifiers="const">
-			<return type="Vector3" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				Storm lodging at [param global_position]: x is the share of blades lying down (0..1), y and z the world direction they lie in. Zero outside the grid round the camera.
-			</description>
-		</method>
-		<method name="get_fairy_ring_at" qualifiers="static">
-			<return type="Vector3" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				The meadow fairy ring bands at [param global_position] (see [member fairy_rings]), 0 to 1 each: x the dark front, y the dead band, z the inner dark band. One world layout: [constant PlantSpecies.RULE_FAIRY_RING] places the ring's mushrooms on the same rings.
-			</description>
-		</method>
 		<method name="get_far_color" qualifiers="const">
 			<return type="Color" />
 			<description>
-				The field seen from a distance, linear: the colour the ground under the grass takes where the blades have thinned away ([code]grass_ground_far[/code]), and the grass layer of [member VegetationField3D.cover_grass]. Measured from a small render of the field's own blades a few frames after it enters the tree and after each change to its look ([signal far_color_changed]); a hand-matched blend of its colours before that and without a RenderingDevice.
-			</description>
-		</method>
-		<method name="get_far_color_lobes" qualifiers="const">
-			<return type="PackedColorArray" />
-			<description>
-				How the far colour changes with the sun's azimuth from the view, [code]phi[/code]: two colours [code]l1[/code], [code]l2[/code], per channel, for the factor [code]1 + l1 cos(phi) + l2 cos(2 phi)[/code] the ground under far grass takes ([code]phi[/code] 0: the sun behind the viewer, where a sward is brightest). Fitted to the render of the blades with the sun at four headings; zero before that.
-			</description>
-		</method>
-		<method name="get_far_published" qualifiers="const">
-			<return type="Dictionary" />
-			<description>
-				What this field publishes for the far ground at the current sun: [code]far[/code] (the far colour at the sun's elevation), [code]lobe1[/code] and [code]lobe2[/code] (its azimuth lobes there), [code]scale[/code] (that colour over the far cover map's, the global [code]grass_ground_far_scale[/code]), [code]sun[/code] (heading x, z and azimuth strength, the global [code]grass_ground_sun[/code]), [code]sun_elevation[/code] in degrees, [code]cover_share[/code] and [code]baked[/code], and the live-view match ([member far_match_view]): [code]view_scale[/code] (the factor on both colours), [code]view_ratio[/code] (blades over far ground on screen at the last look), [code]view_pairs[/code], [code]view_round[/code], [code]view_state[/code] (0 idle, 1 waiting, 2 reading) and [code]view_msec[/code] (the last look's sampling time). For checking a scene's far blend, since global shader parameters cannot be read back at runtime.
-			</description>
-		</method>
-		<method name="get_effective_dryness" qualifiers="const">
-			<return type="float" />
-			<description>
-				The dryness the blades and ground show: [member dryness] browned by the season (see [member season_source]).
-			</description>
-		</method>
-		<method name="get_ring_blade_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns the number of blades in the far rings' tiles (see [member far_rings]).
-			</description>
-		</method>
-		<method name="get_ring_build_msec" qualifiers="const">
-			<return type="float" />
-			<description>
-				Returns the time, in milliseconds, the last frame that built far ring tiles spent on them.
-			</description>
-		</method>
-		<method name="get_ring_tile_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns the number of far ring tiles.
-			</description>
-		</method>
-		<method name="get_season_green" qualifiers="const">
-			<return type="float" />
-			<description>
-				The sward's greenness from the last season read, 0 to 1 (1 without a [member season_source]).
-			</description>
-		</method>
-		<method name="get_shell_column_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns the number of voxel columns in the far shell (see [member far_shell]).
-			</description>
-		</method>
-		<method name="get_shell_tile_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns the number of far shell tiles.
-			</description>
-		</method>
-		<method name="is_far_color_baked" qualifiers="const">
-			<return type="bool" />
-			<description>
-				[code]true[/code] once [method get_far_color] comes from the render of the blades.
+				The field seen from a distance, linear: the colour the ground under the grass takes where the blades have thinned away ([code]grass_ground_far[/code]), and the grass layer of [member VegetationField3D.cover_grass].
 			</description>
 		</method>
 		<method name="add_trample">
@@ -140,7 +35,7 @@
 		<method name="get_blade_count" qualifiers="const">
 			<return type="int" />
 			<description>
-				Returns the number of blades in all live tiles. With [member gpu_fill] it counts the candidates sent to the shader, including those the rules then leave empty.
+				Returns the number of blades in all live tiles.
 			</description>
 		</method>
 		<method name="get_build_time_msec" qualifiers="const">
@@ -175,36 +70,10 @@
 				Returns the trample bend at [param position]: a world x/z direction whose length is the amount, from 0 (upright) to 1 (flat). Zero outside the trample field.
 			</description>
 		</method>
-		<method name="is_gpu_fill_available" qualifiers="static">
-			<return type="bool" />
-			<description>
-				Whether [member gpu_fill] can run: there is a [RenderingDevice] and the fill's compute shader built.
-			</description>
-		</method>
-		<method name="is_still_frozen" qualifiers="const">
-			<return type="bool" />
-			<description>
-				With [member still_shot]: [code]true[/code] once it has settled and stopped updating.
-			</description>
-		</method>
 		<method name="rebuild">
 			<return type="void" />
 			<description>
 				Frees every tile; they are built again around the camera on the next frames.
-			</description>
-		</method>
-		<method name="season_greenness" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="season" type="Dictionary" />
-			<description>
-				How green a temperate sward is for a season state ([method WeatherMap3D.get_season]), 0 to 1: grassland greenness follows soil water and temperature (PhenoGrass, Hufkens et al. 2016; the Growing Season Index of Jolly et al. 2005 without its day-length term, as a temperate sward stays green through short days). [code]smoothstep(0.1, 0.4, soil_moisture) * smoothstep(-8, 2, temperature)[/code]: a summer drought browns it, a hard winter leaves it tan, a mild wet winter keeps it green. 1 for an empty state.
-			</description>
-		</method>
-		<method name="get_field_stage" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="index" type="int" />
-			<description>
-				The growth stage of [member fields] entry [param index] now.
 			</description>
 		</method>
 		<method name="update_at">
@@ -219,16 +88,13 @@
 		<member name="base_color" type="Color" setter="set_base_color" getter="get_base_color" default="Color(0.1, 0.2, 0.05, 1)">
 			Blade colour at the root.
 		</member>
-		<member name="burn_recovery" type="float" setter="set_burn_recovery" getter="get_burn_recovery" default="0.7">
-			Years the sward takes to grow back over burnt ground ([code]WorldFire.burn_age_at[/code]): gone on a fresh burn, short sparse blades first, full cover after this many years. The rules' [member PlantSpecies.burn_recovery] wins when it is set. 0 leaves the grass blind to fire. The ages are read once a bake, so a live fire shows after the next [method rebuild].
-		</member>
-		<member name="blade_height" type="Vector2" setter="set_blade_height" getter="get_blade_height" default="Vector2(0.2, 0.5)">
+		<member name="blade_height" type="Vector2" setter="set_blade_height" getter="get_blade_height" default="Vector2(0.25, 0.6)">
 			Minimum and maximum blade height, in metres. Each clump picks a height in this range.
 		</member>
 		<member name="blade_segments" type="int" setter="set_blade_segments" getter="get_blade_segments" default="4">
 			Segments along each blade. 4 bends smoothly; 1 (a single triangle) suits a short, dense undercoat at a quarter of the vertices.
 		</member>
-		<member name="blade_width" type="float" setter="set_blade_width" getter="get_blade_width" default="0.018">
+		<member name="blade_width" type="float" setter="set_blade_width" getter="get_blade_width" default="0.04">
 			Blade width at the root, in metres.
 		</member>
 		<member name="canopy_field" type="NodePath" setter="set_canopy_field" getter="get_canopy_field" default="NodePath(&quot;&quot;)">
@@ -240,20 +106,11 @@
 		<member name="color_variation" type="float" setter="set_color_variation" getter="get_color_variation" default="0.5">
 			How much blade colour varies: large patches and single blades drift towards yellower or bluer greens and lighter or darker values. 0 gives every blade the same colours.
 		</member>
-		<member name="crop" type="int" setter="set_crop" getter="get_crop" enum="GrassField3D.Crop" default="0">
-			A cereal grown instead of grass: each record is a tiller (a stem, four leaves and the ear, with awns for barley and rye, or the open panicle of oats) as real geometry, set in drill rows [member row_spacing] apart along [member drill_angle], one to three tillers to a plant. [member density] is then tillers per square metre (400 to 600 in a wheat crop) and [member crop_stage] sets the look. Built on the CPU for now ([member gpu_fill] is ignored). Keep [member tile_size] small enough that a tile stays under the path tracer's merged BLAS triangle cap: 1.5 m at 400 tillers per square metre.
-		</member>
-		<member name="crop_stage" type="float" setter="set_crop_stage" getter="get_crop_stage" default="75.0">
-			The crop's growth stage on the BBCH (Zadoks) decimal scale: below 10 nothing has emerged; 10 to 29 leaves and tillers only; 30 to 49 the stem elongates; 51 to 59 the ear emerges; 71 to 89 the grain fills and ripens, the ear and then the straw turning from green to gold while the leaves die from the bottom up and the ears nod (barley hangs right over, wheat stays upright); 99 harvested, leaving stubble about 15 cm high. Changing it only sets shader parameters, except across 10.
-		</member>
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			Path to a [TerrainDataMap3D] giving the ground height and the maps [member rules] read.
 		</member>
-		<member name="density" type="float" setter="set_density" getter="get_density" default="220.0">
+		<member name="density" type="float" setter="set_density" getter="get_density" default="60.0">
 			Blades per square metre near the camera.
-		</member>
-		<member name="drill_angle" type="float" setter="set_drill_angle" getter="get_drill_angle" default="0.0">
-			The direction the crop's rows run, in radians from +X towards +Z. Rows of one 3 m drill bout wander together, so the bouts show across a field.
 		</member>
 		<member name="dry_color" type="Color" setter="set_dry_color" getter="get_dry_color" default="Color(0.55, 0.48, 0.28, 1)">
 			Tip colour of dry blades.
@@ -261,35 +118,8 @@
 		<member name="dryness" type="float" setter="set_dryness" getter="get_dryness" default="0.2">
 			Fraction of blades with dry tips. A third of those are dead from the root (thatch).
 		</member>
-		<member name="far_match_view" type="bool" setter="set_far_match_view" getter="is_far_match_view" default="true">
-			If [code]true[/code], the widest field checks its far colour against the frame: once the far colour is baked, and again when the sun's elevation moves more than 8 degrees or the camera travels more than [member radius], it reads the frame back asynchronously and compares pairs of ground points in the same direction from the camera, one where the blades stand full and one just past the fade band, then scales the published far colour's brightness (and [code]grass_ground_far_scale[/code]) until they agree within 3% (at most five rounds, factor 0.5 to 1.5; pixels that read as sky, haze or water are left out). This takes up lighting the bake's plain ground plane does not reproduce, so the field ends without a lighter or darker ring.
-		</member>
 		<member name="fallback_wind" type="Vector2" setter="set_fallback_wind" getter="get_fallback_wind" default="Vector2(2, 0.5)">
 			Wind velocity (x, z) in metres per second, used when no [WeatherMap3D] publishes wind.
-		</member>
-		<member name="far_ring_range" type="float" setter="set_far_ring_range" getter="get_far_ring_range" default="250.0">
-			Distance from the camera, in metres, to which the far rings reach. They thin out over the last fifth of it as the far shell rises.
-		</member>
-		<member name="far_rings" type="bool" setter="set_far_rings" getter="is_far_rings" default="true">
-			Past the near tiles, one set of wider blades with fewer vertices out to [member far_ring_range], thinned with the square of the distance by each blade's own rank and widened to keep the sward's cover (Ghost of Tsushima, Wohllaib GDC 2021). They fade in over the near tiles' outer band, so no ring or seam shows. Only the widest meadow field (not a crop) grows them.
-		</member>
-		<member name="far_shell" type="bool" setter="set_far_shell" getter="is_far_shell" default="true">
-			Past the far rings, the sward as voxel columns standing on the ground out to [member far_shell_range]: real geometry in the far ground's own colour, so raster and the path tracer see the same shape. It rises out of the ground as the rings thin out and sinks back at its end.
-		</member>
-		<member name="far_shell_range" type="float" setter="set_far_shell_range" getter="get_far_shell_range" default="500.0">
-			Distance from the camera, in metres, where the far shell has sunk back into the ground.
-		</member>
-		<member name="fibre_shading" type="float" setter="set_fibre_shading" getter="get_fibre_shading" default="0.8">
-			The blades' specular as fibres: ANISOTROPY spreading the highlight across each blade (its normals vary across its width, not along it), so a sward reads as a mass of fine fibres with a sheen running over it, as hair does. Raster and the path tracer shade it alike. Wet, frosted, muddy or snowy blades lose it. 0 turns it off.
-		</member>
-		<member name="fields" type="Dictionary[]" setter="set_fields" getter="get_fields" default="[]">
-			With a [member crop]: the fields it grows in, each a [Dictionary]. [code]polygon[/code] ([PackedVector2Array], world XZ) is required; optional [code]drill_angle[/code] and [code]row_spacing[/code] (default the node's), [code]stage[/code] (a fixed BBCH stage; default the node's [member crop_stage]), [code]sown_day[/code] and [code]harvest_day[/code] (days of the year: with a [member season_source] the stage follows a sowing calendar, autumn sowing from day 200 over-wintering, spring sowing through in five months, stubble from harvest to the next sowing), [code]tramline_spacing[/code] (default 24 m; 0 none: paired unsown wheel tracks [code]tramline_gauge[/code] apart, default 1.8 m) and [code]headland[/code] (default 12 m; 0 none: rows run round the edge where the drill turned). Outside the fields nothing grows. Up to 63 fields a node. The ground shader ([method get_ground_shader_code]) draws the drilled soil and darker wheelings under every crop node's fields and, past the tillers, the crop's own colour and cover at its stage ([method crop_canopy_look]). Harvested fields (99) carry the combine's straw swaths, one down each pass (a third of [code]tramline_spacing[/code], or 7.5 m), as lying straw near and paler stripes far off. Grass fields without a crop and [VegetationField3D] plants keep out of every crop node's fields.
-		</member>
-		<member name="gpu_fill" type="bool" setter="set_gpu_fill" getter="is_gpu_fill" default="true">
-			Fill each tile's blades with a compute shader instead of the CPU loop. The CPU lists the cells the tile keeps at its level and bakes [member rules] into a 0.5 m grid; the shader makes every blade from the same hashes, clumps and light and writes the records straight into the tile's [MultiMesh] ([method RenderingServer.multimesh_mark_buffer_rd_changed]), so the path tracer sees them as before. The blades match the CPU path except within a few centimetres of a rule's edge; the main-thread cost of a tile drops by about 40%. Falls back to the CPU without a [RenderingDevice].
-		</member>
-		<member name="graze_height" type="float" setter="set_graze_height" getter="get_graze_height" default="0.04">
-			Height (m) the sward is grazed to where deer browse hard ([method WorldStand.browse_at]): a dense, even lawn with torn pale blade ends, eased in from pressure 0.3 to 0.8. Done in the shader from a pressure grid over the map, followed when the stand changes, so it needs no rebuild. 0 leaves the sward ungrazed.
 		</member>
 		<member name="ground_tint" type="Color" setter="set_ground_tint" getter="get_ground_tint" default="Color(0.05, 0.09, 0.025, 0.85)">
 			Colour the ground takes under the grass (the shaded thatch between blades), with alpha as the strength. Read by terrain shaders through [method get_ground_shader_code].
@@ -297,43 +127,19 @@
 		<member name="ground_tint_enabled" type="bool" setter="set_ground_tint_enabled" getter="is_ground_tint_enabled" default="true">
 			If [code]true[/code], this field publishes its coverage and [member ground_tint] as the [code]grass_ground_*[/code] global uniforms. With several fields, enable it on the one that covers the most ground.
 		</member>
-		<member name="fairy_rings" type="bool" setter="set_fairy_rings" getter="is_fairy_rings" default="true">
-			Meadow fairy rings in the blades: rings 4 to 28 m across (in three of ten 40 m cells, some broken into arcs) with a band of dark, lush, taller grass at the front, a browned, thinned dead band behind it and a weaker dark band inside (Shantz and Piemeisel 1917). Computed in the shader from world position, so it costs no memory or rebuild. Never in crops.
-		</member>
-		<member name="lodging" type="bool" setter="set_lodging" getter="is_lodging" default="true">
-			Storm lodging: where gusts on wet, tall sward pass the stems' base strength (critical 2 m gust 10 m/s for a 0.6 m sward, lower when wet or raining, varying in patches), the blades go down in swirled patches along the wind and stand again over a few days (crops: weeks). Read from [WorldWeather] on a 384 m grid of 4 m cells round the camera, eight rows a frame, and handed to the shader as a texture, so it needs no rebuild.
-		</member>
 		<member name="lean" type="float" setter="set_lean" getter="get_lean" default="0.35">
 			Largest lean of a blade at rest, in metres of tip offset per metre of height.
 		</member>
-		<member name="obstacles" type="PackedVector4Array" setter="set_obstacles" getter="get_obstacles" default="PackedVector4Array()">
-			Rocks on the ground that no blade grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, as [member VegetationField3D.obstacles]. Blades root 2 cm or more off a rock, on both fill paths. Setting it rebuilds the field. Mounds the [member undergrowth_field] or [member canopy_field] places (species with the meta [code]sward_mound[/code], [method PlantGenerator.make_mounds]) are kept out the same way, followed as they come and go.
-		</member>
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="40.0">
-			Distance from the camera, in metres, to which tiles are grown. 0 draws no blades at all (no near tiles, far rings or shell), for a field kept only for its rules or ground tint.
-		</member>
-		<member name="row_spacing" type="float" setter="set_row_spacing" getter="get_row_spacing" default="0.125">
-			The distance between the crop's drill rows, in metres (12 to 15 cm for cereals).
+			Distance from the camera, in metres, to which tiles are grown.
 		</member>
 		<member name="rules" type="PlantSpecies" setter="set_rules" getter="get_rules">
-			Where grass grows: the rules of a [PlantSpecies] over the maps of [member data_map]. Its spacing, footprint and meshes are ignored. Without rules, grass grows on dry land only. With a narrowed [member PlantSpecies.spring_range] it is an oasis sward: it grows only round the desert springs ([constant PlantSpecies.RULE_SPRING]), on the sand seas' damp corridors. Any sward on a sand sea also comes back onto the sand where an oasis's ground is wet.
-		</member>
-		<member name="season_response" type="float" setter="set_season_response" getter="get_season_response" default="1.0">
-			How much the season browns the sward, 0 (not at all) to 1.
-		</member>
-		<member name="season_source" type="NodePath" setter="set_season_source" getter="get_season_source" default="NodePath(&quot;&quot;)">
-			Path to a [WeatherMap3D] whose season ([method WeatherMap3D.get_season]) turns the sward through the year: once a second its greenness ([method season_greenness]) raises the blades' and the ground's dryness towards all thatch (effective dryness [code]dryness + (1 - dryness) (1 - green) season_response[/code]), and the far colour is measured again when that moves by more than 0.05. Empty: [member dryness] as set.
-		</member>
-		<member name="still_shot" type="bool" setter="set_still_shot" getter="is_still_shot" default="false">
-			For still shots on a tight memory budget (benches on the cloud): once the near tiles, far rings and shell round the camera are complete, the field stops updating (no rebuilds, no trample) until the camera moves 0.5 m or the field is rebuilt. [method is_still_frozen] says when it has settled.
-		</member>
-		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
-			Path to the [DirectionalLight3D] whose heading turns the far grass colour (see [method get_far_color_lobes]). Empty: the first visible [DirectionalLight3D] in the field's world. The widest field publishes it with the camera position as [code]grass_ground_sun[/code] and [code]grass_ground_view[/code]; the effect lessens as the sun climbs and is off with the sun down.
+			Where grass grows: the rules of a [PlantSpecies] over the maps of [member data_map]. Its spacing, footprint and meshes are ignored. Without rules, grass grows on dry land only.
 		</member>
 		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="8.0">
 			Edge of a tile, in metres.
 		</member>
-		<member name="tip_color" type="Color" setter="set_tip_color" getter="get_tip_color" default="Color(0.36, 0.44, 0.2, 1)">
+		<member name="tip_color" type="Color" setter="set_tip_color" getter="get_tip_color" default="Color(0.45, 0.6, 0.22, 1)">
 			Blade colour at the tip.
 		</member>
 		<member name="trample_enabled" type="bool" setter="set_trample_enabled" getter="is_trample_enabled" default="true">
@@ -354,45 +160,11 @@
 		<member name="trample_size" type="float" setter="set_trample_size" getter="get_trample_size" default="32.0">
 			Edge, in metres, of the square trample field around the camera.
 		</member>
-		<member name="undergrowth_field" type="NodePath" setter="set_undergrowth_field" getter="get_undergrowth_field" default="NodePath(&quot;&quot;)">
-			Path to a [VegetationField3D] whose tall undergrowth (species with [member PlantSpecies.sward_shade]) shades the sward out: blades thin by [method VegetationField3D.get_sward_shade_at] under its bracken and bramble stands. Usually the herb field, which may differ from [member canopy_field].
-		</member>
 		<member name="view_facing" type="float" setter="set_view_facing" getter="get_view_facing" default="0.6">
 			How much a blade seen edge-on widens across the view (Ghost of Tsushima's view-space thickening), so the field looks full from every side. 0 turns it off.
 		</member>
 		<member name="wind_response" type="float" setter="set_wind_response" getter="get_wind_response" default="0.12">
 			How far blades bend for a given wind speed.
 		</member>
-		<member name="paths" type="Dictionary[]" setter="set_paths" getter="get_paths" default="[]">
-			Worn paths, the same format as [member VegetationField3D.paths]. Along a path the sward thins and shortens by [member trample_resistance], and the ground tint shows the bare trodden soil. Changing it rebuilds the tiles.
-			The world's game trails ([code]WorldStand.get_trails()[/code], published from [method VegetationField3D.make_game_trails]) are worn the same way, on top of these, and followed when they change.
-		</member>
-		<member name="trample_resistance" type="float" setter="set_trample_resistance" getter="get_trample_resistance" default="300.0">
-			Walkers a year on a path that halve the sward's cover. Grasses resist trampling well (Cole 1995); 0 turns paths off for this field.
-		</member>
 	</members>
-	<signals>
-		<signal name="far_color_changed">
-			<description>
-				Emitted when the render of the blades has given a new [method get_far_color].
-			</description>
-		</signal>
-	</signals>
-	<constants>
-		<constant name="CROP_NONE" value="0" enum="Crop">
-			Grass blades (the default).
-		</constant>
-		<constant name="CROP_WHEAT" value="1" enum="Crop">
-			Bread wheat: an awnless, flattened ear held upright, about 0.8 m of straw.
-		</constant>
-		<constant name="CROP_BARLEY" value="2" enum="Crop">
-			Two-row barley: a slim ear with long awns that bends right over when ripe.
-		</constant>
-		<constant name="CROP_OATS" value="3" enum="Crop">
-			Oats: an open panicle of drooping spikelets on whorled branches.
-		</constant>
-		<constant name="CROP_RYE" value="4" enum="Crop">
-			Rye: the tallest, about 1.25 m, a long slender ear with short awns and blue-grey leaves.
-		</constant>
-	</constants>
 </class>

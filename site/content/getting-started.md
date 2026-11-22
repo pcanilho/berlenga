@@ -6,13 +6,11 @@ description: "Download Berlenga, turn on path tracing and find the settings."
 
 ## Download
 
-{{< downloads >}}
-
+[Latest release](https://github.com/pcanilho/berlenga/releases/latest), named by commit:
 
 - **Windows**: for Ray Reconstruction, add NVIDIA's DLSS, Streamline and Reflex DLLs next to the exe (not shipped).
 - **Linux** x86_64 and arm64: no Ray Reconstruction.
-- **macOS**: raster only, no PhysX. Not notarized: on first launch right-click `Berlenga.app` and choose Open, or run `xattr -cr Berlenga.app`.
-- **Export templates** for Windows and Linux (x86_64, arm64), with PhysX and its libraries: install the `.tpz` from Editor > Manage Export Templates > Install from File.
+- **macOS**: raster only.
 
 Projects open as in Godot 4. Without path tracing, Berlenga renders like Godot.
 

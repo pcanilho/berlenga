@@ -46,8 +46,7 @@ class MPMFluidSolver;
 //   * MPM  -- a weakly-compressible MLS-MPM solver on plain compute shaders
 //             (RenderingDevice, no CUDA), so it runs on any Vulkan/Metal/D3D12
 //             device and needs no physics engine. Emission, analytic colliders
-//             (mpm_colliders), a GPU-marched isosurface, and spray, foam and
-//             bubbles (Ihmsen et al. 2012 diffuse particles on the grid).
+//             (mpm_colliders) and a GPU-marched isosurface; no foam yet.
 // "Solver" picks one; Auto uses PBD when a CUDA device is available, else MPM.
 class PhysXParticleFluid3D : public GeometryInstance3D {
 	GDCLASS(PhysXParticleFluid3D, GeometryInstance3D);
@@ -90,7 +89,6 @@ private:
 	// the next render.
 	RID particle_instance;
 
-	static LocalVector<PhysXParticleFluid3D *> water_fluids;
 	SolverBackend solver = SOLVER_AUTO;
 	MPMFluidSolver *mpm = nullptr;
 
@@ -108,10 +106,10 @@ private:
 	// the fluid, and RigidBody3D entries get the reaction impulse back. Up to 32
 	// total (see MAX_COLLIDERS), shared with auto-collected bodies and debris.
 	TypedArray<NodePath> mpm_colliders;
-	// When set, also collides against every body shape overlapping the domain each
-	// step (static ones only through exact shapes) -- so the fluid reacts to walls,
-	// the player, thrown objects etc. without listing them, the way the CUDA path does.
-	bool mpm_auto_colliders = true;
+	// When set, also collides against every non-static PhysicsBody3D overlapping
+	// the domain each step -- so the fluid reacts to the player, thrown objects
+	// etc. without listing them, the way the CUDA path does automatically.
+	bool mpm_auto_colliders = false;
 	RID _mpm_query_shape; // box shape reused for the auto-collider overlap query
 	HashMap<ObjectID, Vector3> _mpm_prev_pos; // last frame's position, for velocity of non-rigid colliders
 
@@ -121,15 +119,6 @@ private:
 	SolverBackend _resolved_solver() const;
 
 protected:
-	// For PhysXGroundGrains3D: the solver, built and configured for emission (null without a device).
-	MPMFluidSolver *_mpm_ready_for_emit();
-	// Granular: grains thrown through the air fly ballistic (the settling damping fades out above ~1 m/s).
-	bool mpm_free_flight = false;
-	// Granular stepped on the physics tick rather than per frame: for grains whose landing the physics step
-	// checks (ground grains), so they keep pace with the bodies throwing them.
-	bool mpm_physics_tick = false;
-	// The mesh each MPM particle is drawn with (a small sphere; ground grains draw sand clumps).
-	virtual Ref<Mesh> _make_mpm_particle_mesh();
 	bool _mpm_configured = false;
 	bool _mpm_emit_mode = false;
 	bool spawned = false;
@@ -148,10 +137,6 @@ private:
 	RID foam_multimesh;
 	RID foam_instance;
 	Ref<Mesh> foam_mesh;
-	// MPM spray (airborne drops): drawn apart from foam and bubbles, as clear water.
-	RID spray_multimesh;
-	RID spray_instance;
-	Ref<Mesh> spray_mesh;
 
 	int particle_count = 4096;
 	float particle_size = 0.1;
@@ -172,7 +157,7 @@ private:
 
 	// When true, PhysX marching-cubes a smooth triangle mesh from the particles
 	// (PxIsosurfaceExtractor) and this node draws it as an ArrayMesh.
-	bool surface_mesh = true; // the default render_mode is Isosurface: a real mesh, traced and shadowed
+	bool surface_mesh = false;
 	// Opt-in: feed PhysX per-particle anisotropy to the isosurface extractor.
 	// Crisper crests, but it needles fast particles, so keep it off while emitting.
 	bool surface_anisotropy = false;
@@ -205,8 +190,6 @@ private:
 	// always-identity instance sidesteps this by never needing the conversion
 	// at all, the same way foam already avoids it.
 	RID array_mesh_instance;
-	RID array_mesh_shadow_instance; // the same mesh, drawn only into shadow maps (_make_surface_shadow_instance)
-	Ref<Material> shadow_material;
 	Ref<Material> water_material;
 	uint32_t surface_mesh_version = 0;
 
@@ -217,7 +200,7 @@ private:
 	Ref<Material> foam_water_material;
 	uint32_t foam_surface_mesh_version = 0;
 
-	bool foam_enabled = true;
+	bool foam_enabled = false;
 	int foam_particle_count = 16384;
 	float foam_lifetime = 1.5;
 	float foam_threshold = 300.0;
@@ -244,11 +227,6 @@ private:
 	void _free_fluid();
 	void _apply_params();
 	void _apply_foam();
-	// MPM spray, foam and bubbles: a lit sphere MultiMesh fed from the solver's diffuse buffer.
-	void _make_mpm_foam();
-	void _mpm_update_diffuse();
-	int _mpm_live_diffuse = 0;
-	int _mpm_foam_slots = 0; // instances allocated in foam_multimesh on the MPM path
 	void _update_render();
 	void _update_surface_mesh();
 	void _commit_iso_mesh(RID p_mesh, PackedVector3Array &verts, PackedVector3Array &normals, PackedInt32Array &indices, const Ref<Material> &p_material, bool p_to_local, bool p_keep_largest_component, float p_feature_size);
@@ -257,9 +235,7 @@ private:
 	// material_override) only ever touches get_instance(), so VoxelGI/baked-light
 	// participation has to be reapplied to each of them by hand instead.
 	void _apply_gi_mode(RID p_instance) const;
-	void _make_surface_shadow_instance();
 	void _emit_step(double p_delta);
-	Vector3 _emission_spread(const Vector3 &p_world_vel, double p_delta, int p_count) const;
 
 protected:
 	void _notification(int p_what);
@@ -267,8 +243,6 @@ protected:
 	static void _bind_methods();
 
 public:
-	// The liquid surface's material (made on first use, clear water): a caller may tint it, as muddy water.
-	Ref<Material> get_liquid_material();
 	void set_solver(SolverBackend p_solver);
 	SolverBackend get_solver() const { return solver; }
 	void set_mpm_domain_size(const Vector3 &p_size);
@@ -356,12 +330,6 @@ public:
 	double get_mpm_step_msec() const;
 
 	PackedVector3Array get_particle_positions() const;
-	// Water landing on fires (PhysXFireSpread3D, PhysXBurnable3D): the liquid fluids in the world (not granular ones),
-	// their particles' world positions without waiting on the GPU (MPM: the last read-back, a frame or two behind),
-	// and each particle's water, kg.
-	static const LocalVector<PhysXParticleFluid3D *> &get_water_fluids() { return water_fluids; }
-	void gather_world_positions(LocalVector<Vector3> &r_positions) const;
-	float get_particle_water_mass() const;
 
 	// 0..1 fraction of the world-space box currently filled with fluid.
 	float get_submersion(const AABB &p_world_aabb) const;

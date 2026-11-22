@@ -13,21 +13,6 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="find_strike_point">
-			<return type="Vector3" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="peak_current" type="float" />
-			<description>
-				Where a storm's ground flash coming down over [param position] with a first stroke of [param peak_current] kA would land: the top of whatever the rolling sphere of [method striking_distance] touches first (terrain, buildings, the weather map's canopy), else the ground below.
-			</description>
-		</method>
-		<method name="striking_distance" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="peak_current" type="float" />
-			<description>
-				The striking distance (m) of a first return stroke of [param peak_current] kA: r = 10 I^0.65 (the electrogeometric model, IEC 62305-3). Storm strikes land on the first thing a sphere of this radius rolling down touches, so tall trees, ridges and buildings draw the strikes of the ground round them; [method strike] lands where it is aimed.
-			</description>
-		</method>
 		<method name="get_active_flash_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -151,9 +136,6 @@
 		</member>
 		<member name="thunder_bus" type="StringName" setter="set_thunder_bus" getter="get_thunder_bus" default="&amp;&quot;Master&quot;">
 			The audio bus thunder plays on.
-		</member>
-		<member name="record_tree_strikes" type="bool" setter="set_record_tree_strikes" getter="is_recording_tree_strikes" default="true">
-			Strikes into a tree crown (the weather's canopy there) are recorded in the stand ([method WorldStand.add_strike]), so fields can swap the struck tree to its scarred variant.
 		</member>
 		<member name="thunder_enabled" type="bool" setter="set_thunder_enabled" getter="is_thunder_enabled" default="true">
 			Flashes make thunder.

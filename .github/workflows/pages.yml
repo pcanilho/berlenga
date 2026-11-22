@@ -11,9 +11,6 @@ on:
       - "doc/classes/Environment.xml"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Release (editor builds)"]
-    types: [completed]
 
 permissions:
   contents: read
@@ -29,9 +26,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          filter: blob:none
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -39,37 +33,10 @@ jobs:
         run: pip install hugo==0.169.0 "pagefind[bin]==1.6.0"
       - id: pages
         uses: actions/configure-pages@v5
-      - name: Latest release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WANT_SHA: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha || '' }}
-        run: |
-          # After a release run, wait until releases/latest is the new build (the API can lag).
-          want=""; [ -n "$WANT_SHA" ] && want="build-${WANT_SHA:0:8}"
-          for i in $(seq 1 30); do
-            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${{ github.repository }}/releases/latest" > /tmp/latest.json || echo '{}' > /tmp/latest.json
-            tag=$(jq -r '.tag_name // ""' /tmp/latest.json)
-            if [ -z "$want" ] || [ "$tag" = "$want" ]; then break; fi
-            echo "latest is $tag, waiting for $want"; sleep 20
-          done
-          jq '{tag_name, published_at, html_url, assets: [.assets[] | {name, size, browser_download_url}]}' /tmp/latest.json > site/data/release.json \
-            || echo '{}' > site/data/release.json
-          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${{ github.repository }}/releases?per_page=30" \
-            | jq '[.[] | {tag_name, published_at, draft}]' > site/data/releases.json || rm -f site/data/releases.json
       - name: Settings table
         run: python site/tools/settings.py
-      - name: What's new
-        run: python site/tools/whatsnew.py || echo '[]' > site/data/whatsnew.json
       - name: Build
         run: hugo --source site --minify --baseURL "${{ steps.pages.outputs.base_url }}/" --destination "${{ github.workspace }}/public"
-      - name: GIF clips to video
-        run: |
-          sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
-          for f in docs/media/*.gif; do
-            ffmpeg -loglevel error -y -i "$f" -movflags +faststart -pix_fmt yuv420p \
-              -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -crf 18 -preset slow \
-              "public/media/$(basename "${f%.gif}").mp4"
-          done
       - name: Search index
         run: python -m pagefind --site public
       - uses: actions/upload-pages-artifact@v3

@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -123,16 +122,6 @@ float WeatherShelter::factor(float p_z, float p_z0, const float p_cell[4]) {
 	return CLAMP(f, 0.0f, 1.0f);
 }
 
-float WeatherShelter::height_at(Vector2 p_xz) const {
-	if (!valid || heights.size() != resolution * resolution) {
-		return 0.0f;
-	}
-	const float cs = cell_size();
-	const int x = int(Math::floor(p_xz.x / cs)) - origin.x;
-	const int y = int(Math::floor(p_xz.y / cs)) - origin.y;
-	return x >= 0 && y >= 0 && x < resolution && y < resolution ? heights[y * resolution + x] : 0.0f;
-}
-
 void WeatherShelter::sample(Vector2 p_xz, float r_cell[4]) const {
 	r_cell[0] = 0.0f;
 	r_cell[1] = 0.0f;
@@ -212,7 +201,7 @@ struct LeePass {
 
 } // namespace
 
-void WeatherShelter::bake(Vector2 p_center, Vector2 p_direction, const LocalVector<AABB> &p_extra, bool p_own) {
+void WeatherShelter::bake(Vector2 p_center, Vector2 p_direction, const LocalVector<AABB> &p_extra) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const int n = resolution;
 	const float cs = cell_size();
@@ -220,6 +209,7 @@ void WeatherShelter::bake(Vector2 p_center, Vector2 p_direction, const LocalVect
 	baked_direction = p_direction.length_squared() > 1e-8f ? p_direction.normalized() : Vector2(1, 0);
 	cells.resize(n * n * 4);
 	float *c = cells.ptrw();
+	Vector<float> heights;
 	heights.resize(n * n);
 	float *h = heights.ptrw();
 	const Vector2 corner(origin.x * cs, origin.y * cs);
@@ -279,10 +269,8 @@ void WeatherShelter::bake(Vector2 p_center, Vector2 p_direction, const LocalVect
 		}
 		hmax = MAX(hmax, top);
 	};
-	if (p_own) {
-		for (const Obstacle &o : obstacles) {
-			add_box(o.box);
-		}
+	for (const Obstacle &o : obstacles) {
+		add_box(o.box);
 	}
 	for (const AABB &box : p_extra) {
 		add_box(box);

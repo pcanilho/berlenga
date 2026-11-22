@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -31,7 +30,6 @@
 
 #pragma once
 
-#include "modules/world/world_contracts.h"
 #include "climate_recipe.h"
 
 #include "scene/3d/node_3d.h"
@@ -43,7 +41,7 @@
 // Barnes 2014), topographic wetness index (Beven and Kirkby 1979), water depth and signed
 // distance to water (Felzenszwalb and Huttenlocher 2012). Baked on the CPU over a square
 // centred on the node.
-class TerrainDataMap3D : public Node3D, public WorldWaterProvider, public WorldClimateProvider {
+class TerrainDataMap3D : public Node3D {
 	GDCLASS(TerrainDataMap3D, Node3D);
 
 public:
@@ -156,8 +154,6 @@ public:
 	float get_flow_at(const Vector3 &p_global_position) const;
 	float get_wetness_at(const Vector3 &p_global_position) const;
 	float get_water_depth_at(const Vector3 &p_global_position) const;
-	// The water contract (WorldWater): the baked lakes and streams, -INF where dry.
-	float contract_water_height_at(const Vector3 &p_position) const override;
 	float get_water_distance_at(const Vector3 &p_global_position) const;
 	float get_soil_depth_at(const Vector3 &p_global_position) const;
 	float get_rock_at(const Vector3 &p_global_position) const;
@@ -171,9 +167,6 @@ public:
 	Ref<ClimateRecipe> get_climate_recipe() const { return climate_recipe; }
 	Error bake_climate();
 	bool has_climate() const { return climate_resolution > 0; }
-	// WorldContracts' climate slot: the baked precipitation over the recipe's regional mean; < 0 outside the climate or
-	// with none.
-	float contract_precipitation_factor_at(const Vector3 &p_position) const override;
 	Rect2 get_climate_rect() const;
 	double get_climate_bake_time_msec() const { return climate_msec; }
 	float get_temperature_at(const Vector3 &p_global_position, float p_day_of_year = -1.0f) const;

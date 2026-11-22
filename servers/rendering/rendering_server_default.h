@@ -490,10 +490,6 @@ public:
 	FUNC1(multimesh_mark_buffer_rd_changed, RID)
 	FUNC2(multimesh_set_bones_per_instance, RID, int)
 	FUNC1RC(int, multimesh_get_bones_per_instance, RID)
-	FUNC2(multimesh_set_rt_instanced, RID, bool)
-	FUNC1RC(bool, multimesh_is_rt_instanced, RID)
-	FUNC2(multimesh_set_rt_offscreen_cull, RID, float)
-	FUNC1RC(float, multimesh_get_rt_offscreen_cull, RID)
 	FUNC1RC(Vector<float>, multimesh_get_buffer, RID)
 
 	FUNC3(multimesh_set_buffer_interpolated, RID, const Vector<float> &, const Vector<float> &)
@@ -967,7 +963,6 @@ public:
 	FUNC8(camera_attributes_set_dof_blur, RID, bool, float, float, bool, float, float, float)
 	FUNC3(camera_attributes_set_exposure, RID, float, float)
 	FUNC6(camera_attributes_set_auto_exposure, RID, bool, float, float, float, float)
-	FUNC2(camera_attributes_set_night_vision, RID, float)
 
 	/* SCENARIO API */
 

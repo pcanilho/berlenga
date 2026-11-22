@@ -607,11 +607,6 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	actions.usage_flag_pointers["SCENE_DEPTH"] = &uses_scene_depth;
 	bool uses_instance_custom = false;
 	actions.usage_flag_pointers["INSTANCE_CUSTOM"] = &uses_instance_custom;
-	bool uses_custom_attribs = false;
-	actions.usage_flag_pointers["CUSTOM0"] = &uses_custom_attribs;
-	actions.usage_flag_pointers["CUSTOM1"] = &uses_custom_attribs;
-	actions.usage_flag_pointers["CUSTOM2"] = &uses_custom_attribs;
-	actions.usage_flag_pointers["CUSTOM3"] = &uses_custom_attribs;
 	// Light through the surface: shadow rays evaluate the fragment in the per-HG any-hit.
 	bool uses_transmission = false;
 	bool uses_backlight = false;
@@ -647,7 +642,6 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	r_entry.needs_full_any_hit = detected_alpha || blend_modei != RendererRD::MaterialStorage::ShaderData::BLEND_MODE_MIX || r_entry.casts_transmitted_shadow;
 	r_entry.uses_scene_depth = uses_scene_depth;
 	r_entry.uses_instance_custom = uses_instance_custom;
-	r_entry.uses_custom_attribs = uses_custom_attribs;
 	r_entry.vertex_code = gen_code.code.has("vertex") ? gen_code.code["vertex"] : String();
 	r_entry.fragment_code = gen_code.code.has("fragment") ? gen_code.code["fragment"] : String();
 	r_entry.fragment_globals = gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT];
@@ -859,10 +853,6 @@ class VertexDependencyCollector {
 			dependencies.mask |= uniform_scope_dependency(uniform->value.scope);
 			if (uniform->value.scope == SL::ShaderNode::Uniform::SCOPE_GLOBAL && !dependencies.global_uniforms.has(p_name)) {
 				dependencies.global_uniforms.push_back(p_name);
-			}
-			if (uniform->value.scope != SL::ShaderNode::Uniform::SCOPE_GLOBAL && uniform->value.scope != SL::ShaderNode::Uniform::SCOPE_INSTANCE &&
-					SL::is_sampler_type(uniform->value.type) && !dependencies.material_textures.has(p_name)) {
-				dependencies.material_textures.push_back(p_name);
 			}
 			return;
 		}
@@ -1332,7 +1322,6 @@ void SceneShaderRaytracing::_poll_variant_tasks(bool p_wait) {
 						bundle.dirty = true;
 					}
 					bundle.initial_pipeline_built = true;
-					_mark_bundle_used(bundle);
 					print_verbose(vformat("Path tracing: built pipeline variant 0x%x on a worker thread in %.1f ms (shaders %.1f ms, pipeline %.1f ms).",
 							task->rt_flags, (task->end_usec - task->start_usec) / 1000.0, (task->shaders_usec - task->start_usec) / 1000.0, (task->end_usec - task->shaders_usec) / 1000.0));
 				} else {
@@ -1364,7 +1353,6 @@ bool SceneShaderRaytracing::is_pipeline_bundle_ready(uint32_t p_rt_flags) const 
 bool SceneShaderRaytracing::request_pipeline_bundle(uint32_t p_rt_flags) {
 	_poll_variant_tasks(false);
 	if (is_pipeline_bundle_ready(p_rt_flags)) {
-		_mark_bundle_used(pipeline_bundles[p_rt_flags]);
 		return true;
 	}
 	if (!async_compilation_enabled || failed_async_variants.has(p_rt_flags)) {
@@ -1402,7 +1390,6 @@ const SceneShaderRaytracing::PipelineBundle &SceneShaderRaytracing::ensure_pipel
 
 	HashMap<uint32_t, PipelineBundle>::Iterator it = pipeline_bundles.find(p_rt_flags);
 	if (it != pipeline_bundles.end() && it->value.initial_pipeline_built) {
-		_mark_bundle_used(it->value);
 		return it->value;
 	}
 
@@ -1422,55 +1409,7 @@ const SceneShaderRaytracing::PipelineBundle &SceneShaderRaytracing::ensure_pipel
 		bundle.dirty = true;
 	}
 	bundle.initial_pipeline_built = true;
-	_mark_bundle_used(bundle);
 	return bundle;
-}
-
-void SceneShaderRaytracing::_mark_bundle_used(PipelineBundle &r_bundle) {
-	r_bundle.last_used_tick = bundle_tick;
-	r_bundle.last_used_usec = OS::get_singleton()->get_ticks_usec();
-}
-
-void SceneShaderRaytracing::_evict_unused_bundles() {
-	// Unused for a few traced frames and some seconds, so toggling between two variants in the
-	// editor does not recompile, while a variant left behind stops holding memory.
-	static constexpr uint64_t EVICT_AFTER_TICKS = 8;
-	static constexpr uint64_t EVICT_AFTER_USEC = 20000000;
-	const uint64_t now = OS::get_singleton()->get_ticks_usec();
-	uint32_t building = UINT32_MAX;
-	{
-		MutexLock lock(compile_lane.mutex);
-		if (compile_lane.to_be_built) {
-			building = compile_lane.to_be_built->rt_flags;
-		}
-	}
-	LocalVector<uint32_t> evict;
-	for (const KeyValue<uint32_t, PipelineBundle> &kv : pipeline_bundles) {
-		const PipelineBundle &b = kv.value;
-		if (kv.key != building && b.last_used_tick + EVICT_AFTER_TICKS < bundle_tick && now - b.last_used_usec > EVICT_AFTER_USEC) {
-			evict.push_back(kv.key);
-		}
-	}
-	for (uint32_t flags : evict) {
-		PipelineBundle &b = pipeline_bundles[flags];
-		if (b.hit_sbt.is_valid()) {
-			RD::get_singleton()->free_rid(b.hit_sbt);
-		}
-		if (b.pipeline.is_valid()) {
-			RD::get_singleton()->free_rid(b.pipeline);
-		}
-		for (const RID &rid : b.per_hg_shaders) {
-			if (rid.is_valid()) {
-				RD::get_singleton()->free_rid(rid);
-			}
-		}
-		if (b.base_shader.is_valid()) {
-			RD::get_singleton()->free_rid(b.base_shader);
-		}
-		print_verbose(vformat("Path tracing: freed pipeline variant 0x%x, unused for %d traced frames.", flags, int(bundle_tick - b.last_used_tick)));
-		pipeline_bundles.erase(flags);
-		ready_version++;
-	}
 }
 
 // Minimal HG0 + empty sentinel pipeline/SBT for first use of a variant.
@@ -1488,6 +1427,7 @@ bool SceneShaderRaytracing::_build_initial_bundle(uint32_t p_rt_flags, PipelineB
 
 // Any thread (RD synchronizes pipeline creation internally).
 RID SceneShaderRaytracing::_create_initial_pipeline(uint32_t p_rt_flags, RID p_base_shader) {
+
 	Vector<RD::PipelineSpecializationConstant> spec_constants;
 	{
 		RD::PipelineSpecializationConstant sc;
@@ -1628,9 +1568,6 @@ SceneShaderRaytracing::PipelineBuildTask *SceneShaderRaytracing::_make_pipeline_
 		}
 		if (entry.uses_instance_custom) {
 			tex_defines += "#define RT_USES_INSTANCE_CUSTOM\n";
-		}
-		if (entry.uses_custom_attribs) {
-			tex_defines += "#define RT_USES_CUSTOM_ATTRIBS\n";
 		}
 		tex_defines += entry.render_mode_defines;
 
@@ -1996,9 +1933,6 @@ void SceneShaderRaytracing::_start_next_build_if_idle() {
 		if (!kv.value.dirty || !kv.value.initial_pipeline_built) {
 			continue;
 		}
-		if (kv.value.last_used_tick + 1 < bundle_tick) {
-			continue; // Not traced lately: stays dirty, rebuilt if it is asked for again.
-		}
 		PipelineBuildTask *task = _make_pipeline_build_task(kv.key, kv.value);
 		if (task) {
 			kv.value.dirty = false;
@@ -2015,8 +1949,6 @@ void SceneShaderRaytracing::_start_next_build_if_idle() {
 }
 
 void SceneShaderRaytracing::drain_completed_compiles() {
-	bundle_tick++;
-	_evict_unused_bundles();
 	while (true) {
 		PipelineBuildTask *finished = nullptr;
 		{
@@ -2094,12 +2026,7 @@ void SceneShaderRaytracing::init(const String p_defines) {
 	for (uint32_t mask = 0; mask < variant_count; mask++) {
 		modes_ptr[mask] = _raygen_variant_preamble(mask);
 	}
-	// Strand hair as linear swept spheres, on devices that have them (render_raytracing.cpp builds them).
-	String defines = p_defines;
-	if (GLOBAL_GET("rendering/pathtracing/linear_swept_spheres") && RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES)) {
-		defines += "\n#define RT_LSS\n";
-	}
-	raygen_shader.initialize(modes, defines);
+	raygen_shader.initialize(modes, p_defines);
 
 	// Slot 0: default HG (source_hash stays zero).
 	{
@@ -2131,13 +2058,6 @@ void SceneShaderRaytracing::init(const String p_defines) {
 			const PipelineBundle &b = ensure_pipeline_bundle(RT_FLAG_NONE);
 			if (!b.pipeline.is_valid()) {
 				WARN_PRINT("Failed to create default raytracing pipeline bundle");
-			}
-			// A start-up guess, not a use: frames usually trace another variant (their sample
-			// count and bounces are part of the flags), so this one must not be kept rebuilding.
-			HashMap<uint32_t, PipelineBundle>::Iterator guess = pipeline_bundles.find(RT_FLAG_NONE);
-			if (guess != pipeline_bundles.end()) {
-				guess->value.last_used_tick = 0;
-				guess->value.last_used_usec = 0;
 			}
 		}
 	} else {
@@ -2172,7 +2092,6 @@ void SceneShaderRaytracing::init(const String p_defines) {
 
 		actions.renames["ALPHA_SCISSOR_THRESHOLD"] = "alpha_scissor_threshold";
 		actions.renames["ALPHA_HASH_SCALE"] = "alpha_hash_scale";
-		actions.renames["OPAQUE_PREPASS_THRESHOLD"] = "opaque_prepass_threshold_out";
 		actions.renames["SCENE_DEPTH"] = "rt_scene_depth";
 		actions.renames["ALPHA_ANTIALIASING_EDGE"] = "alpha_antialiasing_edge";
 		actions.renames["ALPHA_TEXTURE_COORDINATE"] = "alpha_texture_coordinate";
@@ -2204,7 +2123,6 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["RAY_IS_SINGULAR"] = "rt_ray_is_singular(payload.packed_bounces_flags)";
 		actions.renames["RAY_BOUNCES"] = "int(get_total_bounces(payload.packed_bounces_flags))";
 		actions.renames["RAY_DIFFUSE_BOUNCES"] = "int(get_diffuse_bounces(payload.packed_bounces_flags))";
-		actions.renames["RAY_FOOTPRINT"] = "(rt_cone_footprint_log2 > -1e29 ? exp2(rt_cone_footprint_log2) : 0.0)";
 		actions.renames["NORMAL_MAP"] = "normal_map";
 		actions.renames["BENT_NORMAL_MAP"] = "bent_normal_map"; // raster ambient only; the path tracer traces the real light
 		actions.renames["NORMAL_MAP_DEPTH"] = "normal_map_depth";
@@ -2253,10 +2171,6 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["CUSTOM3"] = "custom3_attrib";
 		actions.renames["LIGHT_VERTEX"] = "light_vertex";
 		actions.renames["DIRECTIONAL_SHADOW_OFFSET"] = "directional_shadow_offset";
-		actions.renames["POSITIONAL_SHADOW_OFFSET"] = "positional_shadow_offset";
-		actions.renames["SUN_SHADOW"] = "sun_shadow";
-		actions.renames["sun_direction"] = "sun_direction";
-		actions.renames["relief_sun_direction"] = "relief_sun_direction";
 
 		actions.renames["NODE_POSITION_WORLD"] = "read_model_matrix[3].xyz";
 		actions.renames["CAMERA_POSITION_WORLD"] = "inv_view_matrix[3].xyz";

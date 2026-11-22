@@ -123,9 +123,6 @@ void set_channels(T &r_params, const Emitter &p_emitter) {
 	r_params.coupleRateSmoke = p_emitter.smoke > 0.0f ? c : 0.0f;
 	r_params.coupleRateBurn = p_emitter.burn > 0.0f ? c : 0.0f;
 	r_params.coupleRateDivergence = p_emitter.divergence != 0.0f ? c : 0.0f;
-	if (!p_emitter.allocate) {
-		r_params.allocationScale = 0.0f;
-	}
 }
 
 } // namespace
@@ -176,10 +173,6 @@ void grid_destroy(Grid *p_grid) {
 }
 
 bool acquire_library(char *r_error, int p_error_size) {
-	return acquire_library_named(nullptr, nullptr, r_error, p_error_size);
-}
-
-bool acquire_library_named(const char *p_nvflow, const char *p_nvflowext, char *r_error, int p_error_size) {
 	std::lock_guard<std::mutex> lock(device_mutex);
 	if (library != nullptr) {
 		library->refs++;
@@ -187,34 +180,14 @@ bool acquire_library_named(const char *p_nvflow, const char *p_nvflowext, char *
 	}
 	Library *l = new Library();
 	load_error[0] = '\0';
-	if (p_nvflow != nullptr && p_nvflowext != nullptr) {
-		NvFlowLoaderInitCustom(&l->loader, on_load_error, nullptr, p_nvflow, p_nvflow, p_nvflowext, p_nvflowext);
-	} else {
-		NvFlowLoaderInit(&l->loader, on_load_error, nullptr);
-	}
-	// Both libraries loaded, and they hand out the entry points we call (an old or mismatched build can
-	// load and still lack them).
-	const bool loaded = l->loader.module_nvflow != nullptr && l->loader.module_nvflowext != nullptr;
-	const bool complete = loaded && l->loader.opList_orig != nullptr && l->loader.extOpList_orig != nullptr &&
-			l->loader.gridInterface.createGrid != nullptr && l->loader.gridParamsInterface.createGridParamsNamed != nullptr;
-	if (!complete) {
-		if (!loaded) {
+	NvFlowLoaderInit(&l->loader, on_load_error, nullptr);
+	if (l->loader.module_nvflow == nullptr || l->loader.module_nvflowext == nullptr) {
 #ifdef _WIN32
-			snprintf(r_error, p_error_size, "nvflow.dll / nvflowext.dll not found next to the executable (%s)", load_error);
+		snprintf(r_error, p_error_size, "nvflow.dll / nvflowext.dll not found next to the executable (%s)", load_error);
 #else
-			snprintf(r_error, p_error_size, "libnvflow.so / libnvflowext.so not found next to the executable (%s)", load_error);
+		snprintf(r_error, p_error_size, "libnvflow.so / libnvflowext.so not found next to the executable (%s)", load_error);
 #endif
-		} else {
-			snprintf(r_error, p_error_size, "the Flow libraries next to the executable are missing entry points (a different Flow version?)");
-		}
-		// Close only what opened: NvFlowLoaderDestroy() closes both handles unconditionally, and
-		// dlclose(NULL) crashes.
-		if (l->loader.module_nvflow != nullptr) {
-			NvFlowFreeLibrary(l->loader.module_nvflow);
-		}
-		if (l->loader.module_nvflowext != nullptr) {
-			NvFlowFreeLibrary(l->loader.module_nvflowext);
-		}
+		NvFlowLoaderDestroy(&l->loader);
 		delete l;
 		return false;
 	}
@@ -374,30 +347,17 @@ bool grid_step(Grid *p_grid, double p_time, float p_delta, const Settings &p_set
 	sim = NvFlowGridSimulateLayerParams_default;
 	sim.densityCellSize = p_settings.cell_size * s;
 	sim.physicsCollisionEnabled = NV_FLOW_TRUE;
-	// Flow steps at a fixed 60 a second and, by default, takes at most one step a simulate: below 60 frames a second
-	// the gas ran slower than the game (half speed at 30 frames a second, an eighth at the cloud benches' few).
-	// Catch up with up to eight steps a frame, as Godot's physics does (max_physics_steps_per_frame, 8): the gas keeps
-	// time with the physics and the game down to 7.5 frames a second, and slows with them below it.
-	sim.maxStepsPerSimulate = 8u;
 	sim.advection.combustionEnabled = p_settings.combustion ? NV_FLOW_TRUE : NV_FLOW_FALSE;
 	sim.advection.gravity = { p_settings.gravity[0] * s, p_settings.gravity[1] * s, p_settings.gravity[2] * s };
 	sim.advection.buoyancyPerTemp = p_settings.buoyancy;
-	sim.advection.buoyancyPerSmoke = p_settings.smoke_buoyancy;
 	sim.advection.coolingRate = p_settings.cooling_rate;
 	sim.advection.smoke.fade = p_settings.smoke_fade;
-	sim.advection.smoke.damping = p_settings.smoke_damping;
 	sim.advection.ignitionTemp = p_settings.ignition_temperature;
 	sim.vorticity.forceScale = p_settings.vorticity;
-	// Blocks stay allocated where the gas holds smoke, or moves fast and holds some smoke (the leading edge of a
-	// fast plume, ahead of its smoke). Flow's default asks no smoke at all of a fast block, so wind (weather_wind
-	// drives the whole grid) kept every block it blew through allocated, empty, and filled max_blocks in seconds.
-	sim.summaryAllocate.speedThresholdMinSmoke = 0.5f * sim.summaryAllocate.smokeThreshold;
 	sim.nanoVdbExport.enabled = NV_FLOW_TRUE;
 	sim.nanoVdbExport.readbackEnabled = p_settings.readback ? NV_FLOW_TRUE : NV_FLOW_FALSE;
 	sim.nanoVdbExport.temperatureEnabled = NV_FLOW_TRUE;
 	sim.nanoVdbExport.smokeEnabled = NV_FLOW_TRUE;
-	// Velocity only for a CPU copy (bodies and cloth the gas pushes): the renderer does not need it.
-	sim.nanoVdbExport.velocityEnabled = p_settings.readback ? NV_FLOW_TRUE : NV_FLOW_FALSE;
 
 	p_grid->render = NvFlowGridRenderLayerParams_default;
 	p_grid->render.rayMarch.attenuation = p_settings.attenuation / s;
@@ -509,15 +469,6 @@ bool grid_get_readback(Grid *p_grid, const uint8_t **r_temperature, uint64_t *r_
 	return *r_temperature != nullptr || *r_smoke != nullptr;
 }
 
-bool grid_get_velocity_readback(Grid *p_grid, const uint8_t **r_velocity, uint64_t *r_velocity_size) {
-	if (p_grid == nullptr || p_grid->readback == nullptr || p_grid->readback->velocityNanoVdbReadback == nullptr) {
-		return false;
-	}
-	*r_velocity = p_grid->readback->velocityNanoVdbReadback;
-	*r_velocity_size = p_grid->readback->velocityNanoVdbReadbackSize;
-	return true;
-}
-
 bool nanovdb_bounds(const uint8_t *p_nanovdb, uint64_t p_size, float r_min[3], float r_max[3]) {
 	if (p_nanovdb == nullptr || p_size < PNANOVDB_GRID_SIZE + PNANOVDB_TREE_SIZE) {
 		return false;
@@ -542,27 +493,6 @@ bool nanovdb_bounds(const uint8_t *p_nanovdb, uint64_t p_size, float r_min[3], f
 	r_max[1] = fmaxf(wa.y, wb.y) * inv;
 	r_max[2] = fmaxf(wa.z, wb.z) * inv;
 	return true;
-}
-
-void sample_velocity(const uint8_t *p_nanovdb, uint64_t p_size, const float p_position[3], float r_velocity[3]) {
-	r_velocity[0] = r_velocity[1] = r_velocity[2] = 0.0f;
-	if (p_nanovdb == nullptr || p_size < PNANOVDB_GRID_SIZE + PNANOVDB_TREE_SIZE) {
-		return;
-	}
-	pnanovdb_buf_t buf = pnanovdb_make_buf((uint32_t *)p_nanovdb, p_size / 4u);
-	pnanovdb_grid_handle_t grid = { pnanovdb_address_null() };
-	if (pnanovdb_grid_get_grid_type(buf, grid) != PNANOVDB_GRID_TYPE_VEC3F) {
-		return;
-	}
-	pnanovdb_root_handle_t root = pnanovdb_tree_get_root(buf, pnanovdb_grid_get_tree(buf, grid));
-	const float s = UNITS_PER_METER;
-	pnanovdb_vec3_t w = { p_position[0] * s, p_position[1] * s, p_position[2] * s };
-	const pnanovdb_vec3_t idx = pnanovdb_grid_world_to_indexf(buf, grid, &w);
-	pnanovdb_coord_t ijk = { (int)floorf(idx.x), (int)floorf(idx.y), (int)floorf(idx.z) };
-	const pnanovdb_vec3_t v = pnanovdb_read_vec3(buf, pnanovdb_root_get_value_address(PNANOVDB_GRID_TYPE_VEC3F, buf, root, &ijk));
-	r_velocity[0] = v.x / s;
-	r_velocity[1] = v.y / s;
-	r_velocity[2] = v.z / s;
 }
 
 void sample_dense(const uint8_t *p_nanovdb, uint64_t p_size, const float p_origin[3], float p_cell, const int p_dims[3], int p_z_begin, int p_z_end, float *r_out, int p_stride) {

@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -30,8 +29,6 @@
 /**************************************************************************/
 
 #include "plant_generator.h"
-#include "grass_field_3d.h"
-#include "vegetation_fire.h"
 #include "vegetation_light.h"
 
 #include "scene/resources/surface_tool.h"
@@ -86,7 +83,7 @@ float PlantGenerator::_leaf_width(const Leaf &p_leaf, float p_t) {
 			w = Math::pow(MAX(0.0f, 1.0f - t), 0.55f);
 			break;
 		case LEAF_SPATULATE:
-			w = Math::pow(float(MAX(0.0f, Math::sin(Math::PI * Math::pow(t, 1.8f)))), 0.7f);
+			w = Math::pow(MAX(0.0f, float(Math::sin(Math::PI * Math::pow(t, 1.8f)))), 0.7f);
 			break;
 		case LEAF_PALMATE:
 			w = Math::sqrt(MAX(0.0f, Math::sin(Math::PI * t)));
@@ -95,7 +92,7 @@ float PlantGenerator::_leaf_width(const Leaf &p_leaf, float p_t) {
 	if (p_leaf.lobes > 0 && p_leaf.lobe_depth > 0.0f) {
 		// Teeth pointing back towards the base (dandelion's "lion's teeth"), or round lobes.
 		const float f = Math::fmod(t * p_leaf.lobes, 1.0f);
-		const float tooth = (p_leaf.shape == LEAF_PALMATE || p_leaf.round_lobes) ? 0.5f - 0.5f * Math::cos(f * Math::TAU) : (1.0f - f) * (1.0f - f);
+		const float tooth = p_leaf.shape == LEAF_PALMATE ? 0.5f - 0.5f * Math::cos(f * Math::TAU) : (1.0f - f) * (1.0f - f);
 		w *= 1.0f - p_leaf.lobe_depth * (1.0f - tooth);
 	}
 	return w;
@@ -168,13 +165,9 @@ void PlantGenerator::_add_leaf(Surface p_surface, const Transform3D &p_base, con
 	const int first = b.verts.size();
 	Basis f = p_base.basis.orthonormalized();
 	Vector3 p = p_base.origin;
-	// A grazed or bitten leaf ends short of its tip: the rows stop at span, the outline (and the texture's) unchanged.
-	const float span = 1.0f - CLAMP(p_leaf.cut, 0.0f, 0.9f);
-	const float step = p_leaf.length * span / n;
-	// The torn edge runs slantwise: one side a little shorter.
-	const float tear = span < 1.0f ? (wr() - 0.5f) * 0.6f : 0.0f;
+	const float step = p_leaf.length / n;
 	for (int i = 0; i <= n; i++) {
-		const float t = span * float(i) / n;
+		const float t = float(i) / n;
 		const float lw = _leaf_width(p_leaf, t);
 		const float hw = 0.5f * p_leaf.width * lw;
 		float side_hw[2] = { hw * (1.0f - asym), hw * (1.0f + asym) }; // Left (c = 0), right (c = 2).
@@ -196,16 +189,8 @@ void PlantGenerator::_add_leaf(Surface p_surface, const Transform3D &p_base, con
 		const Vector3 y = f.get_column(1);
 		const float wind = MIN(1.0f, p_wind_base + (1.0f - p_wind_base) * t);
 		const float ao = p_ao * (0.75f + 0.25f * t);
-		Vector3 row[3] = { p - x * side_hw[0] + y * (p_leaf.fold * side_hw[0]), p, p + x * side_hw[1] + y * (p_leaf.fold * side_hw[1]) };
-		float dead_tip = dieback > 0.0f ? Math::smoothstep(1.0f - dieback, 1.0f - dieback * 0.6f, t) : 0.0f;
-		if (span < 1.0f && i == n) {
-			// The torn end: slanted, and the bruised rim dries pale brown within days.
-			row[0] -= f.get_column(2) * (step * MAX(tear, 0.0f));
-			row[2] -= f.get_column(2) * (step * MAX(-tear, 0.0f));
-			dead_tip = MAX(dead_tip, 0.55f);
-		} else if (span < 1.0f && i == n - 1) {
-			dead_tip = MAX(dead_tip, 0.15f);
-		}
+		const Vector3 row[3] = { p - x * side_hw[0] + y * (p_leaf.fold * side_hw[0]), p, p + x * side_hw[1] + y * (p_leaf.fold * side_hw[1]) };
+		const float dead_tip = dieback > 0.0f ? Math::smoothstep(1.0f - dieback, 1.0f - dieback * 0.6f, t) : 0.0f;
 		for (int c = 0; c < 3; c++) {
 			b.verts.push_back(row[c]);
 			// Planar across the blade (u = 0.5 at the midrib, 0 and 1 at the widest point), so the
@@ -222,7 +207,7 @@ void PlantGenerator::_add_leaf(Surface p_surface, const Transform3D &p_base, con
 		}
 		if (i < n) {
 			// Curl down along the length, twist about the midrib (parallel transport otherwise).
-			f = Basis(f.get_column(2), p_leaf.twist * span / n) * Basis(x, p_leaf.bend * span / n) * f;
+			f = Basis(f.get_column(2), p_leaf.twist / n) * Basis(x, p_leaf.bend / n) * f;
 			f.orthonormalize();
 			p += f.get_column(2) * step;
 		}
@@ -275,11 +260,11 @@ Transform3D PlantGenerator::_add_stem(const Transform3D &p_base, float p_length,
 	return Transform3D(f, p);
 }
 
-void PlantGenerator::_add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height, const Color &p_tint, int p_rings, int p_sectors) {
-	// A dome along the base's z: flower centres, clover heads, plantain spikes, succulent leaves.
+void PlantGenerator::_add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height) {
+	// A dome along the base's z: flower centres, clover heads, plantain spikes.
 	Builder &b = builders[p_surface];
-	const int rings = MAX(p_rings, 1);
-	const int sectors = MAX(p_sectors, 3);
+	const int rings = 4;
+	const int sectors = 10;
 	const int first = b.verts.size();
 	const Basis f = p_base.basis.orthonormalized();
 	for (int r = 0; r <= rings; r++) {
@@ -291,7 +276,7 @@ void PlantGenerator::_add_head(Surface p_surface, const Transform3D &p_base, flo
 			b.verts.push_back(p_base.origin + (f.get_column(0) * Math::cos(a) + f.get_column(1) * Math::sin(a)) * rad + f.get_column(2) * h);
 			b.uvs.push_back(Vector2(float(s) / sectors, u));
 			b.uv2s.push_back(Vector2(1.0f, 0.0f));
-			b.colors.push_back(p_tint);
+			b.colors.push_back(Color(1, 1, 1));
 		}
 	}
 	for (int r = 0; r < rings; r++) {
@@ -356,811 +341,8 @@ void PlantGenerator::_add_cup_flower(const Transform3D &p_top, float p_radius) {
 	_add_head(SURFACE_CENTRE, p_top, p_radius * 0.3f, p_radius * 0.25f);
 }
 
-// Flowering by thermal time (docs/ideas/vegetation-seasons.md, step 2). First flowering of herbs
-// follows the degree days above 5 C since 1 January (Fitter and Fitter 2002); the windows below are
-// the British flowering months of the floras (Stace 2019) turned into degree days of a lowland
-// year (about 110 by the end of March, 415 May, 1055 July, 1665 September). A population flowers
-// as a spread of individual heads (Rathcke and Lacey 1985): in a flush each head opens in turn
-// over the first 55% of the window and flowers for 45% of it; continuous flowerers keep opening
-// heads, a quarter of them in seed at any time.
-bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
-	switch (p_preset) {
-		case PRESET_WOOD_ANEMONE:
-			r_phenology = { 70.0f, 330.0f, 60.0f, true }; // March to May; leaves gone by midsummer.
-			return true;
-		case PRESET_VIOLET:
-			r_phenology = { 80.0f, 380.0f, 100.0f, true };
-			return true;
-		case PRESET_DANDELION:
-			r_phenology = { 90.0f, 450.0f, 60.0f, true }; // The April flush; clocks blow within days.
-			return true;
-		case PRESET_DAISY:
-			r_phenology = { 90.0f, 1750.0f, 80.0f, false }; // March to October.
-			return true;
-		case PRESET_WOOD_SORREL:
-			r_phenology = { 130.0f, 420.0f, 80.0f, true };
-			return true;
-		case PRESET_WOODRUFF:
-			r_phenology = { 170.0f, 600.0f, 150.0f, true };
-			return true;
-		case PRESET_HERB_ROBERT:
-			r_phenology = { 170.0f, 1650.0f, 150.0f, false };
-			return true;
-		case PRESET_BUTTERCUP:
-			r_phenology = { 260.0f, 1050.0f, 200.0f, true };
-			return true;
-		case PRESET_SORREL:
-			r_phenology = { 300.0f, 750.0f, 500.0f, true }; // Rust-red panicles stand into late summer.
-			return true;
-		case PRESET_CLOVER:
-			r_phenology = { 450.0f, 1600.0f, 150.0f, false };
-			return true;
-		case PRESET_FOXGLOVE:
-			r_phenology = { 500.0f, 1300.0f, -1.0f, true };
-			return true;
-		case PRESET_YARROW:
-			r_phenology = { 500.0f, 1800.0f, -1.0f, false };
-			return true;
-		case PRESET_KNAPWEED:
-			r_phenology = { 550.0f, 1650.0f, -1.0f, true };
-			return true;
-		case PRESET_WILD_CARROT:
-			r_phenology = { 600.0f, 1700.0f, -1.0f, true }; // The "bird's nest" umbels stand all winter.
-			return true;
-		case PRESET_SCABIOUS:
-			r_phenology = { 750.0f, 1700.0f, -1.0f, true };
-			return true;
-		case PRESET_THISTLE:
-			r_phenology = { 800.0f, 1650.0f, -1.0f, true };
-			return true;
-		case PRESET_HEATHER:
-			r_phenology = { 1150.0f, 1700.0f, -1.0f, true }; // August and September; brown bells all winter.
-			return true;
-		case PRESET_SAXIFRAGE:
-			r_phenology = { 300.0f, 950.0f, 150.0f, true }; // May to July.
-			return true;
-		case PRESET_STONECROP:
-			r_phenology = { 700.0f, 1150.0f, 200.0f, true }; // June and July.
-			return true;
-		case PRESET_THRIFT:
-			r_phenology = { 250.0f, 1500.0f, -1.0f, false }; // April to September; papery heads stand.
-			return true;
-		case PRESET_MARSH_MARIGOLD:
-			r_phenology = { 60.0f, 450.0f, 250.0f, true }; // March to May; the follicles into summer.
-			return true;
-		case PRESET_MEADOWSWEET:
-			r_phenology = { 700.0f, 1650.0f, -1.0f, true }; // June to September; brown stalks all winter.
-			return true;
-		case PRESET_BUTTERBUR:
-			r_phenology = { 40.0f, 330.0f, 150.0f, true }; // March to May, before the leaves.
-			return true;
-		case PRESET_COTTONGRASS:
-			r_phenology = { 80.0f, 380.0f, 800.0f, true }; // April and May; the cotton heads into August.
-			return true;
-		case PRESET_BOG_ASPHODEL:
-			r_phenology = { 900.0f, 1350.0f, -1.0f, true }; // July and August; orange capsules all winter.
-			return true;
-		case PRESET_SUNDEW:
-			r_phenology = { 800.0f, 1300.0f, 200.0f, true }; // June to August.
-			return true;
-		case PRESET_MARRAM:
-			r_phenology = { 950.0f, 1450.0f, -1.0f, true }; // July and August; bleached panicles all winter.
-			return true;
-		case PRESET_DRINN:
-			r_phenology = { 250.0f, 900.0f, -1.0f, true }; // Late winter and spring in the Sahara; plumes stand on.
-			return true;
-		case PRESET_FIREWEED:
-			r_phenology = { 1000.0f, 1700.0f, 500.0f, true }; // July to September; the pods split and the fluff blows into autumn.
-			return true;
-		case PRESET_FIRE_MOSS:
-			r_phenology = { 200.0f, 1200.0f, -1.0f, true }; // Capsules ripen spring to summer and stand.
-			return true;
-		case PRESET_LYME_GRASS:
-			r_phenology = { 750.0f, 1350.0f, -1.0f, true }; // June to August; straw spikes stand.
-			return true;
-		case PRESET_SEA_HOLLY:
-			r_phenology = { 1000.0f, 1650.0f, -1.0f, true }; // July to September; the heads brown on the stems.
-			return true;
-		// Alpine plants flower soon after the snow melts, on small degree-day sums.
-		case PRESET_MOSS_CAMPION:
-			r_phenology = { 350.0f, 900.0f, 300.0f, false }; // June to August, on and off over the cushion.
-			return true;
-		case PRESET_PURPLE_SAXIFRAGE:
-			r_phenology = { 100.0f, 450.0f, 300.0f, true }; // The first after the thaw, April to June.
-			return true;
-		case PRESET_MOUNTAIN_AVENS:
-			r_phenology = { 350.0f, 900.0f, 900.0f, true }; // June to August; the feathery plumes into autumn.
-			return true;
-		case PRESET_ALPINE_SEDGE:
-			r_phenology = { 500.0f, 900.0f, -1.0f, true }; // July; brown spikes stand.
-			return true;
-		case PRESET_DWARF_WILLOW:
-			r_phenology = { 400.0f, 800.0f, 300.0f, true }; // June and July catkins.
-			return true;
-		case PRESET_ALPINE_TOADFLAX:
-			r_phenology = { 450.0f, 1400.0f, 300.0f, false }; // June to September.
-			return true;
-		// Salt marsh and shingle (Stace 2019): the marsh flowers late, the shingle from early summer.
-		case PRESET_GLASSWORT:
-			r_phenology = { 1500.0f, 2200.0f, -1.0f, true }; // August and September; the dead plants stand.
-			return true;
-		case PRESET_CORD_GRASS:
-			r_phenology = { 1400.0f, 2300.0f, -1.0f, true }; // July to November; spikes stand into winter.
-			return true;
-		case PRESET_SEA_ASTER:
-			r_phenology = { 1300.0f, 2500.0f, 400.0f, false }; // July to October.
-			return true;
-		case PRESET_SEA_LAVENDER:
-			r_phenology = { 1300.0f, 2000.0f, -1.0f, true }; // July to September; papery calyces stand.
-			return true;
-		case PRESET_SEA_KALE:
-			r_phenology = { 600.0f, 1000.0f, 900.0f, true }; // June; then the round pods.
-			return true;
-		case PRESET_SEA_CAMPION:
-			r_phenology = { 450.0f, 1700.0f, 300.0f, false }; // May to August.
-			return true;
-		case PRESET_HORNED_POPPY:
-			r_phenology = { 700.0f, 1900.0f, 600.0f, false }; // June to September; the horns after.
-			return true;
-		case PRESET_CORN_POPPY:
-			r_phenology = { 550.0f, 1500.0f, 500.0f, false }; // Late May to August; the capsules stand.
-			return true;
-		case PRESET_CORNFLOWER:
-			r_phenology = { 650.0f, 1550.0f, 400.0f, false }; // June to August.
-			return true;
-		case PRESET_MAYWEED:
-			r_phenology = { 650.0f, 2000.0f, 300.0f, false }; // June to October.
-			return true;
-		case PRESET_COW_PARSLEY:
-			r_phenology = { 250.0f, 650.0f, 600.0f, true }; // April to early June; dead stalks into summer.
-			return true;
-		case PRESET_GROUND_IVY:
-			r_phenology = { 50.0f, 450.0f, 100.0f, true }; // March to May, among the first of the floor.
-			return true;
-		case PRESET_BELL_HEATHER:
-			r_phenology = { 900.0f, 1750.0f, -1.0f, true }; // July to September, before heather; brown bells stand.
-			return true;
-		case PRESET_CROSS_LEAVED_HEATH:
-			r_phenology = { 900.0f, 1750.0f, -1.0f, true }; // July to September.
-			return true;
-		// Mediterranean scrub: windows in the degree days of a mild coastal year (a January near
-		// 11 C runs some 6 a day: about 350 by March, 900 by May, 1,700 by July).
-		case PRESET_ROSEMARY:
-			r_phenology = { 0.0f, 900.0f, 200.0f, false }; // Winter to spring, on and off.
-			return true;
-		case PRESET_FRENCH_LAVENDER:
-			r_phenology = { 300.0f, 1300.0f, 600.0f, true }; // March to June; the bracts fade on the heads.
-			return true;
-		case PRESET_THYME:
-			r_phenology = { 600.0f, 1500.0f, 400.0f, true }; // April to June.
-			return true;
-		case PRESET_SAGE_ROCKROSE:
-			r_phenology = { 550.0f, 1100.0f, -1.0f, true }; // April and May; the capsules stand.
-			return true;
-		default:
-			return false;
-	}
-}
-
-PlantGenerator::Bloom PlantGenerator::_bloom_stage(Preset p_preset, float p_forcing, int p_day, float p_u, float p_u2, float *r_progress, float *r_dead) {
-	if (r_progress) {
-		*r_progress = -1.0f;
-	}
-	float dead = 0.0f;
-	if (!r_dead) {
-		r_dead = &dead;
-	}
-	*r_dead = 0.0f;
-	Phenology ph;
-	if (!_phenology(p_preset, ph)) {
-		return BLOOM_FLOWER;
-	}
-	const float span = MAX(ph.end - ph.onset, 1.0f);
-	if (p_forcing < ph.onset) {
-		// Before this year's flowers: last year's seed stalks still standing early in the year, fewer
-		// as winter storms and snow flatten them, none by June.
-		if (ph.hold < 0.0f && p_day > 0 && p_day < 150 && p_u2 < 0.6f * (1.0f - float(p_day) / 150.0f)) {
-			*r_dead = 1.0f;
-			return BLOOM_SEED;
-		}
-		return BLOOM_NONE;
-	}
-	if (ph.flush) {
-		const float open = ph.onset + 0.55f * p_u * span;
-		const float shut = open + 0.45f * span;
-		if (p_forcing < open) {
-			return BLOOM_NONE;
-		}
-		if (p_forcing < shut) {
-			if (r_progress) {
-				*r_progress = (p_forcing - open) / (shut - open);
-			}
-			return BLOOM_FLOWER;
-		}
-		// Stems die back over some 400 degree days (four to six weeks) after their flowers.
-		*r_dead = CLAMP((p_forcing - shut) / 400.0f, 0.0f, 1.0f);
-		return (ph.hold < 0.0f || p_forcing - shut < ph.hold) ? BLOOM_SEED : BLOOM_NONE;
-	}
-	if (p_forcing < ph.onset + 0.1f * p_u * span) {
-		return BLOOM_NONE;
-	}
-	if (p_forcing <= ph.end) {
-		const float seed_share = 0.25f * MIN((p_forcing - ph.onset) / (0.2f * span), 1.0f);
-		if (r_progress) {
-			*r_progress = 0.5f;
-		}
-		return p_u2 < seed_share ? BLOOM_SEED : BLOOM_FLOWER;
-	}
-	*r_dead = CLAMP((p_forcing - ph.end) / 300.0f, 0.0f, 1.0f);
-	return (ph.hold < 0.0f || p_forcing - ph.end < ph.hold * (0.5f + p_u)) ? BLOOM_SEED : BLOOM_NONE;
-}
-
-PlantGenerator::Bloom PlantGenerator::_bloom(bool p_mixed_seed, float *r_progress, float *r_dead) {
-	const uint32_t h = hash_murmur3_one_32(bloom_serial++, hash_murmur3_one_32(uint32_t(seed) * 131u + uint32_t(preset) + 0x5EEDu));
-	if (bloom_forcing < 0.0f) {
-		if (r_progress) {
-			*r_progress = -1.0f;
-		}
-		if (r_dead) {
-			*r_dead = 0.0f;
-		}
-		return p_mixed_seed ? BLOOM_SEED : BLOOM_FLOWER;
-	}
-	const float u = float(h & 0xFFFFu) / 65535.0f;
-	const float u2 = float(h >> 16) / 65535.0f;
-	return _bloom_stage(preset, bloom_forcing, bloom_day, u, u2, r_progress, r_dead);
-}
-
-PlantGenerator::Wither::Wither(PlantGenerator *p_generator, float p_dead) :
-		generator(p_generator), dead(p_dead) {
-	for (int i = 0; i < SURFACE_MAX; i++) {
-		from[i] = generator->builders[i].colors.size();
-	}
-}
-
-PlantGenerator::Wither::~Wither() {
-	if (dead <= 0.0f) {
-		return;
-	}
-	// The vertex alpha is the shader's dead tissue (1 - alpha): yellowing, then browning to
-	// dead_color with the texture's pattern kept, less light through, matte.
-	for (int i = 0; i < SURFACE_MAX; i++) {
-		if (i == SURFACE_CENTRE && generator->preset == PRESET_THISTLE) {
-			continue; // Thistledown: dry pappus, white.
-		}
-		const Preset pr = generator->preset;
-		if (i == SURFACE_CENTRE && (pr == PRESET_ANTHILL || pr == PRESET_WOOD_ANT_NEST || pr == PRESET_MOLEHILL || pr == PRESET_ROOTED_SOD || pr == PRESET_LEAF_BANK || pr == PRESET_COW_PAT || pr == PRESET_HORSE_DUNG || pr == PRESET_DEER_PELLETS)) {
-			continue; // Soil and thatch: nothing to wither.
-		}
-		PackedColorArray &c = generator->builders[i].colors;
-		for (int k = from[i]; k < c.size(); k++) {
-			Color v = c[k];
-			v.a = MIN(v.a, 1.0f - dead);
-			c.write[k] = v;
-		}
-	}
-}
-
-void PlantGenerator::set_season(const Dictionary &p_season) {
-	season = p_season;
-	bloom_forcing = p_season.has("forcing") ? float(p_season["forcing"]) : -1.0f;
-	bloom_day = p_season.has("day_of_year") ? int(p_season["day_of_year"]) : 0;
-}
-
-// The population's shares (x: no flowers, y: in flower, z: in seed) on a season's day: for tests,
-// and for callers to tell when a species' look has moved enough to generate it again.
-Vector3 PlantGenerator::get_bloom_shares(Preset p_preset, const Dictionary &p_season) {
-	if (!p_season.has("forcing")) {
-		return Vector3(0.0f, 1.0f, 0.0f);
-	}
-	const float forcing = p_season["forcing"];
-	const int day = p_season.has("day_of_year") ? int(p_season["day_of_year"]) : 0;
-	Vector3 shares;
-	const int n = 32;
-	for (int i = 0; i < n; i++) {
-		for (int j = 0; j < n; j++) {
-			const Bloom b = _bloom_stage(p_preset, forcing, day, (i + 0.5f) / n, (j + 0.5f) / n, nullptr);
-			shares[int(b)] += 1.0f / float(n * n);
-		}
-	}
-	return shares;
-}
-
-// Wind-pollinated plants hold ripe pollen in dangling anthers that a jolt empties (Urzay et al. 2009).
-// Relative amounts: reedmace and the meadow grasses shed clouds, sedges and rushes less.
-float PlantGenerator::get_pollen_amount(Preset p_preset) {
-	switch (p_preset) {
-		case PRESET_CATTAIL:
-			return 1.0f;
-		case PRESET_COCKSFOOT:
-		case PRESET_TIMOTHY:
-			return 0.9f;
-		case PRESET_REED:
-		case PRESET_NETTLE:
-			return 0.7f;
-		case PRESET_MARRAM:
-		case PRESET_LYME_GRASS:
-		case PRESET_DRY_GRASS:
-		case PRESET_CORD_GRASS:
-		case PRESET_DRINN:
-		case PRESET_BURNT_TUSSOCK:
-			return 0.6f;
-		case PRESET_DOCK:
-		case PRESET_PLANTAIN:
-		case PRESET_SORREL:
-			return 0.5f;
-		case PRESET_SEDGE:
-		case PRESET_ALPINE_SEDGE:
-			return 0.4f;
-		case PRESET_RUSH:
-		case PRESET_COTTONGRASS:
-			return 0.25f;
-		default:
-			return 0.0f;
-	}
-}
-
-float PlantGenerator::get_pollen_release(Preset p_preset, const Dictionary &p_season) {
-	if (get_pollen_amount(p_preset) <= 0.0f) {
-		return 0.0f;
-	}
-	Phenology ph;
-	if (_phenology(p_preset, ph)) {
-		return get_bloom_shares(p_preset, p_season).y;
-	}
-	// No flowering window in the look: the anthesis months by day of year (Stace 2019; northern
-	// temperate). Grasses late May to July, nettle and docks June to September, plantain May to August.
-	if (!p_season.has("day_of_year")) {
-		return 1.0f;
-	}
-	const float day = float(int(p_season["day_of_year"]));
-	float a = 145.0f, b = 210.0f;
-	switch (p_preset) {
-		case PRESET_NETTLE:
-		case PRESET_DOCK:
-			a = 160.0f;
-			b = 260.0f;
-			break;
-		case PRESET_PLANTAIN:
-			a = 130.0f;
-			b = 235.0f;
-			break;
-		case PRESET_CATTAIL:
-		case PRESET_REED:
-			a = 170.0f;
-			b = 240.0f;
-			break;
-		default:
-			break;
-	}
-	const float ramp = 12.0f;
-	return Math::smoothstep(a - ramp, a + ramp, day) * (1.0f - Math::smoothstep(b - ramp, b + ramp, day));
-}
-
-// Trampling resistance by growth form (Cole 1995, J. Appl. Ecol. 32; Cole and Monz 2002; Liddle
-// 1997, ch. 4): passes a year that halve a plant's cover. Tufted and creeping grasses, sedges and
-// flat rosettes ("path weeds": plantain, daisy, dandelion, clover) resist and recover; mosses
-// middling; erect forbs, ferns and dwarf shrubs (heather, bilberry) break, and fragile things
-// (seedlings, mushrooms, sphagnum, sundew) go first. Litter is trodden into the soil. 0: not
-// trampled (water plants, unknown presets).
-float PlantGenerator::get_trample_resistance(Preset p_preset) {
-	switch (p_preset) {
-		case PRESET_PLANTAIN:
-			return 1000.0f;
-		case PRESET_DANDELION:
-		case PRESET_DAISY:
-			return 600.0f;
-		case PRESET_GROUND_IVY: // Creeping runners rooting at the nodes, as clover.
-		case PRESET_CLOVER:
-		case PRESET_GRAZED_LAWN: // Bent and red fescue lawns take treading as they take grazing.
-			return 500.0f;
-		case PRESET_SEDGE:
-		case PRESET_COCKSFOOT:
-		case PRESET_DRY_GRASS:
-		case PRESET_ALPINE_SEDGE:
-		case PRESET_CORD_GRASS:
-			return 300.0f;
-		case PRESET_TIMOTHY:
-		case PRESET_RUSH:
-		case PRESET_LEAF_LITTER:
-		case PRESET_NEEDLE_LITTER:
-		case PRESET_TWIGS:
-			return 250.0f;
-		case PRESET_YARROW:
-			return 200.0f; // A creeping, low-rosette forb: the toughest of the meadow herbs.
-		case PRESET_BUTTERCUP:
-		case PRESET_PINCUSHION_MOSS:
-		case PRESET_MOSS:
-		case PRESET_FEATHER_MOSS:
-		case PRESET_THRIFT:
-		case PRESET_MARRAM:
-		case PRESET_LYME_GRASS:
-		case PRESET_DRINN:
-			return 150.0f;
-		case PRESET_CHARRED_STEMS:
-			return 5.0f; // Brittle charcoal snaps underfoot.
-		case PRESET_FIREWEED:
-			return 30.0f; // Tall erect forb.
-		case PRESET_FIRE_MOSS:
-			return 60.0f;
-		case PRESET_REINDEER_LICHEN:
-			return 5.0f; // Dry lichen crumbles underfoot and regrows a few millimetres a year (Kumpula 2001).
-		case PRESET_BURNT_TUSSOCK:
-			return 150.0f;
-		case PRESET_ROOTED_SOD:
-			return 40.0f; // Loose clods break up underfoot.
-		case PRESET_MOLEHILL:
-			return 25.0f; // Loose soil spreads underfoot and is trodden flat.
-		case PRESET_LEAF_BANK:
-			return 20.0f; // Loose leaves kicked about and trodden flat.
-		case PRESET_COW_PAT:
-		case PRESET_HORSE_DUNG:
-		case PRESET_DEER_PELLETS:
-			return 15.0f; // Squashed and spread underfoot.
-		case PRESET_DUNG_ROUGH:
-			return 300.0f; // A tussocky grass sward.
-		case PRESET_ANTHILL:
-			return 120.0f; // Firm and grassed; worn down only on busy paths (King 1977: none on tracks).
-		case PRESET_WOOD_ANT_NEST:
-			return 15.0f; // Thatch scatters when trodden or wallowed in.
-		case PRESET_SOIL_CRUST:
-			return 2.0f; // A few passes break it, and it takes decades to heal (Belnap and Lange 2003).
-		case PRESET_DESERT_ANNUALS:
-			return 100.0f;
-		case PRESET_DOCK:
-		case PRESET_STONECROP:
-		case PRESET_COTTONGRASS:
-			return 100.0f;
-		case PRESET_SORREL:
-		case PRESET_VIOLET:
-		case PRESET_THYME:
-		case PRESET_MAYWEED: // Gateways and tracks: it takes some treading.
-		case PRESET_IVY:
-		case PRESET_SEA_PURSLANE:
-		case PRESET_GLASSWORT:
-			return 80.0f;
-		case PRESET_THISTLE:
-		case PRESET_KNAPWEED:
-		case PRESET_CROWBERRY:
-		case PRESET_MOUNTAIN_AVENS:
-		case PRESET_LIVERWORT:
-		case PRESET_BOG_ASPHODEL:
-		case PRESET_SEA_ASTER:
-		case PRESET_SEA_LAVENDER:
-		case PRESET_SEA_CAMPION:
-			return 60.0f;
-		case PRESET_SCABIOUS:
-		case PRESET_WILD_CARROT:
-		case PRESET_WOOD_SORREL:
-		case PRESET_MARSH_MARIGOLD:
-		case PRESET_BRAMBLE:
-		case PRESET_RASPBERRY:
-		case PRESET_DWARF_WILLOW:
-		case PRESET_MOSS_CAMPION:
-		case PRESET_SAXIFRAGE:
-		case PRESET_PURPLE_SAXIFRAGE:
-		case PRESET_ALPINE_TOADFLAX:
-		case PRESET_SEA_HOLLY:
-		case PRESET_HORNED_POPPY:
-		case PRESET_SEA_KALE:
-		case PRESET_CORN_POPPY:
-		case PRESET_CORNFLOWER:
-			return 50.0f;
-		case PRESET_NETTLE:
-		case PRESET_HERB_ROBERT:
-		case PRESET_WOODRUFF:
-		case PRESET_WOOD_ANEMONE:
-		case PRESET_MEADOWSWEET:
-		case PRESET_BUTTERBUR:
-		case PRESET_HEATHER:
-		case PRESET_BELL_HEATHER:
-		case PRESET_CROSS_LEAVED_HEATH:
-		case PRESET_ROSEMARY:
-		case PRESET_FRENCH_LAVENDER:
-		case PRESET_SAGE_ROCKROSE:
-		case PRESET_REED:
-		case PRESET_CATTAIL:
-		case PRESET_COW_PARSLEY:
-			return 40.0f;
-		case PRESET_FERN:
-		case PRESET_BRACKEN:
-		case PRESET_BILBERRY:
-		case PRESET_FOXGLOVE:
-		case PRESET_PARSLEY_FERN:
-		case PRESET_SPLEENWORT:
-		case PRESET_SPHAGNUM:
-		case PRESET_FLY_AGARIC:
-		case PRESET_CEP:
-		case PRESET_CHANTERELLE:
-		case PRESET_BRITTLEGILL:
-		case PRESET_CLOUDED_AGARIC:
-		case PRESET_HONEY_FUNGUS:
-		case PRESET_FAIRY_RING_MUSHROOM:
-			return 30.0f;
-		case PRESET_SHEET_WEB:
-		case PRESET_ORB_WEB:
-			return 2.0f; // Torn by anything passing.
-		case PRESET_SEEDLING:
-		case PRESET_SUNDEW:
-			return 20.0f;
-		default:
-			return 0.0f;
-	}
-}
-
-// Years a preset takes to full cover after a fire (docs/ideas/vegetation.md, "Burnt ground and regrowth"): its share of
-// a stand on burnt ground rises from none to full over them (PlantSpecies.burn_recovery). Grasses and sedges resprout
-// from their crowns within weeks and close in a season (Grime et al. 2007); bracken from its rhizomes in one; herbs in
-// one to two; heaths through the pioneer phase into building, 6 to 10 (Gimingham 1972); woodland mosses and lichens
-// need shade and a decade or more; litter takes some years to build up again; soil crust decades (Belnap and Lange
-// 2003). 0: not touched by fire (water plants, and the burn presets, placed by RULE_BURN_AGE).
-float PlantGenerator::get_burn_recovery(Preset p_preset) {
-	if (is_mushroom(p_preset)) {
-		return 5.0f;
-	}
-	switch (p_preset) {
-		case PRESET_WATER_LILY:
-		case PRESET_RIVER_MOSS:
-		case PRESET_FIREWEED:
-		case PRESET_FIRE_MOSS:
-		case PRESET_CHARRED_STEMS:
-		case PRESET_BURNT_TUSSOCK:
-		case PRESET_ROOTED_SOD:
-		case PRESET_ANTHILL:
-		case PRESET_WOOD_ANT_NEST:
-		case PRESET_MOLEHILL:
-		case PRESET_COW_PAT:
-		case PRESET_HORSE_DUNG:
-		case PRESET_DEER_PELLETS:
-		case PRESET_SHEET_WEB:
-		case PRESET_ORB_WEB:
-		case PRESET_MAX:
-			return 0.0f;
-		case PRESET_SEDGE:
-		case PRESET_DUNG_ROUGH:
-		case PRESET_COCKSFOOT:
-		case PRESET_GRAZED_LAWN:
-		case PRESET_TIMOTHY:
-		case PRESET_DRY_GRASS:
-		case PRESET_REED:
-		case PRESET_CATTAIL:
-		case PRESET_RUSH:
-		case PRESET_COTTONGRASS:
-		case PRESET_MARRAM:
-		case PRESET_LYME_GRASS:
-		case PRESET_ALPINE_SEDGE:
-		case PRESET_CORD_GRASS:
-		case PRESET_DRINN:
-		case PRESET_DESERT_ANNUALS:
-			return 0.7f;
-		case PRESET_BRACKEN:
-		case PRESET_NETTLE:
-		case PRESET_BRAMBLE:
-		case PRESET_RASPBERRY:
-			return 1.2f;
-		case PRESET_HEATHER:
-		case PRESET_BELL_HEATHER:
-		case PRESET_CROSS_LEAVED_HEATH:
-		case PRESET_CROWBERRY:
-			return 8.0f;
-		case PRESET_BILBERRY:
-			return 4.0f; // Resprouts from its rhizomes.
-		case PRESET_ROSEMARY:
-		case PRESET_FRENCH_LAVENDER:
-		case PRESET_THYME:
-		case PRESET_SAGE_ROCKROSE:
-			return 5.0f; // Seeders after the first autumn rains (Calvo et al.).
-		case PRESET_DWARF_WILLOW:
-		case PRESET_MOUNTAIN_AVENS:
-		case PRESET_MOSS_CAMPION:
-		case PRESET_PURPLE_SAXIFRAGE:
-			return 15.0f; // Slow alpine cushions and mats.
-		case PRESET_MOSS:
-		case PRESET_FEATHER_MOSS:
-		case PRESET_PINCUSHION_MOSS:
-		case PRESET_SPHAGNUM:
-		case PRESET_LIVERWORT:
-			return 10.0f;
-		case PRESET_LEAF_LITTER:
-		case PRESET_LEAF_BANK:
-		case PRESET_NEEDLE_LITTER:
-		case PRESET_TWIGS:
-			return 3.0f;
-		case PRESET_SOIL_CRUST:
-			return 30.0f;
-		case PRESET_REINDEER_LICHEN:
-			return 40.0f; // 30 to 60 years back to a carpet after fire (Schulten 1985; Kumpula et al. 2000).
-		case PRESET_IVY:
-		case PRESET_FERN:
-		case PRESET_PARSLEY_FERN:
-		case PRESET_SPLEENWORT:
-		case PRESET_WOOD_SORREL:
-		case PRESET_WOODRUFF:
-		case PRESET_WOOD_ANEMONE:
-			return 4.0f; // Woodland herbs wait for the shade to return.
-		default:
-			return 1.5f; // Herbs: from rootstocks and the seed bank.
-	}
-}
-
-// What shows of one plant of the small ground presets (m), for the pixel reach (vegetation_detail.h;
-// docs/ideas/ground-detail-vegetation.md): a fallen leaf's or a twig's length, a moss cushion's or a
-// rosette's width, a seedling's height; 0 for the rest, which keep their hand-set range.
-static float _preset_detail_size(PlantGenerator::Preset p_preset) {
-	using P = PlantGenerator;
-	switch (p_preset) {
-		case P::PRESET_LEAF_LITTER:
-			return 0.1f;
-		case P::PRESET_NEEDLE_LITTER:
-			return 0.05f;
-		case P::PRESET_TWIGS:
-			return 0.12f;
-		case P::PRESET_MOSS:
-		case P::PRESET_RIVER_MOSS:
-		case P::PRESET_SPHAGNUM:
-			return 0.06f;
-		case P::PRESET_FEATHER_MOSS:
-		case P::PRESET_PINCUSHION_MOSS:
-		case P::PRESET_REINDEER_LICHEN:
-			return 0.08f;
-		case P::PRESET_LIVERWORT:
-		case P::PRESET_STONECROP:
-		case P::PRESET_SUNDEW:
-		case P::PRESET_PURPLE_SAXIFRAGE:
-			return 0.04f;
-		case P::PRESET_SAXIFRAGE:
-		case P::PRESET_MOSS_CAMPION:
-			return 0.05f;
-		case P::PRESET_CLOVER:
-		case P::PRESET_THYME:
-			return 0.06f;
-		case P::PRESET_WOOD_SORREL:
-		case P::PRESET_VIOLET:
-		case P::PRESET_GROUND_IVY:
-		case P::PRESET_DESERT_ANNUALS:
-			return 0.07f;
-		case P::PRESET_SOIL_CRUST:
-		case P::PRESET_FIRE_MOSS:
-			return 0.1f;
-		case P::PRESET_SEEDLING:
-			return 0.15f;
-		default:
-			return 0.0f;
-	}
-}
-
-void PlantGenerator::tag_species(const Ref<Resource> &p_species, Preset p_preset) {
-	if (p_species.is_null()) {
-		return;
-	}
-	p_species->set_meta("plant_preset", int(p_preset));
-	PlantSpecies *sp = Object::cast_to<PlantSpecies>(p_species.ptr());
-	if (sp && sp->get_trample_resistance() <= 0.0f) {
-		sp->set_trample_resistance(get_trample_resistance(p_preset));
-	}
-	if (sp && sp->get_detail_size() <= 0.0f) {
-		sp->set_detail_size(_preset_detail_size(p_preset));
-	}
-	if (sp && sp->get_burn_recovery() <= 0.0f) {
-		sp->set_burn_recovery(get_burn_recovery(p_preset));
-	}
-	const float pollen = get_pollen_amount(p_preset);
-	if (pollen > 0.0f) {
-		p_species->set_meta("pollen", pollen);
-	}
-}
-
 static float smoothstep_f(float p_a, float p_b, float p_x) {
 	return Math::smoothstep(p_a, p_b, p_x);
-}
-
-// Fern fronds through the year (docs/ideas/vegetation-seasons.md, step 3). Without a season: one
-// set of full green fronds, as before. p_emerge, p_unroll: degree days to the first croziers and
-// from there to full fronds; p_onset, p_span: the senescence sum (Delpierre et al. 2009, as the
-// trees use it) over which they yellow and die. A day below -1 C mean in autumn kills them.
-PlantGenerator::FrondSeason PlantGenerator::_frond_season(float p_emerge, float p_unroll, float p_onset, float p_span) const {
-	FrondSeason fs;
-	if (bloom_forcing < 0.0f) {
-		return fs;
-	}
-	const float senescence = season.get("senescence", 0.0f);
-	const float temperature = season.get("temperature", 10.0f);
-	const float snow = season.get("snow_depth", 0.0f);
-	fs.unfurl = CLAMP((bloom_forcing - p_emerge) / p_unroll, 0.0f, 1.0f);
-	fs.dead = CLAMP((senescence - p_onset) / p_span, 0.0f, 1.0f);
-	if (bloom_day > 240 && temperature < -1.0f) {
-		fs.dead = 1.0f;
-	}
-	// Dead fronds stand russet for some weeks, then lodge as the winter's storms and the snow
-	// come (Watt 1976): by the senescence summed after they died, not by their colour.
-	const float since = senescence - (p_onset + p_span);
-	fs.lodge = CLAMP(0.6f * smoothstep_f(20.0f, 160.0f, since) * fs.dead + snow / 0.15f, 0.0f, 1.0f);
-	if (bloom_day > 0 && bloom_day < 200 && fs.unfurl < 1.0f) {
-		// Last year's fronds, flattened by winter, until the new ones close over them.
-		fs.old_share = 1.0f - fs.unfurl;
-		fs.old_lodge = CLAMP(0.6f + float(bloom_day) / 150.0f + snow / 0.15f, 0.0f, 1.0f);
-	}
-	if (fs.unfurl <= 0.0f && fs.old_share <= 0.0f) {
-		fs.old_share = 1.0f; // Never bare: some dead fronds lie on the crown.
-		fs.old_lodge = 1.0f;
-	}
-	return fs;
-}
-
-// Spring ephemerals are above ground only part of the year: wood anemone shoots in late winter,
-// flowers, and its leaves yellow and die down by early summer (Shirreffs 1985).
-float PlantGenerator::get_presence(Preset p_preset, const Dictionary &p_season) {
-	if (is_mushroom(p_preset)) {
-
-		return _mushroom_presence(p_preset, p_season);
-	}
-	if (is_silk(p_preset)) {
-		// Webs: money spiders' sheets from spring, most in autumn when the young have grown (Bristowe 1958: over a
-		// million an acre August to December); garden spiders' orbs late July to October. Snow ends them.
-		if (!p_season.has("day_of_year")) {
-			return 1.0f;
-		}
-		const float day = p_season["day_of_year"];
-		float w = p_preset == PRESET_ORB_WEB ? smoothstep_f(195.0f, 225.0f, day) * (1.0f - smoothstep_f(290.0f, 310.0f, day))
-											 : smoothstep_f(60.0f, 100.0f, day) * (1.0f - smoothstep_f(330.0f, 350.0f, day)) * Math::lerp(0.3f, 1.0f, smoothstep_f(200.0f, 240.0f, day));
-		if (float(p_season.get("snow_depth", 0.0f)) > 0.02f) {
-			w = 0.0f;
-		}
-		return w;
-	}
-	if (!p_season.has("forcing") || p_preset != PRESET_WOOD_ANEMONE) {
-		return 1.0f;
-	}
-	const float forcing = p_season["forcing"];
-	return smoothstep_f(15.0f, 40.0f, forcing) * (1.0f - smoothstep_f(650.0f, 720.0f, forcing));
-}
-
-// Mushrooms fruit in a season (British and central European field guides: chanterelle June to
-// November, brittlegill July to November, fly agaric, cep and honey fungus August or September to
-// November, clouded agaric September to December), in flushes after rain: the soil's moisture
-// (WeatherMap3D's water balance) gates them, and frost and snow end them. Without a season: all
-// present, as other plants.
-float PlantGenerator::_mushroom_presence(Preset p_preset, const Dictionary &p_season) {
-	if (!p_season.has("day_of_year")) {
-		return 1.0f;
-	}
-	float from = 225.0f, to = 320.0f; // Mid August to mid November.
-	switch (p_preset) {
-		case PRESET_CHANTERELLE:
-			from = 170.0f;
-			to = 320.0f;
-			break;
-		case PRESET_FAIRY_RING_MUSHROOM:
-			from = 140.0f; // Late May to November, a flush after each good rain (Phillips 2006).
-			to = 320.0f;
-			break;
-		case PRESET_BRITTLEGILL:
-			from = 195.0f;
-			to = 320.0f;
-			break;
-		case PRESET_CEP:
-			from = 215.0f;
-			to = 300.0f;
-			break;
-		case PRESET_CLOUDED_AGARIC:
-			from = 250.0f;
-			to = 345.0f;
-			break;
-		default:
-			break;
-	}
-	const float day = p_season["day_of_year"];
-	const float ramp = 14.0f;
-	float w = smoothstep_f(from - ramp, from + ramp, day) * (1.0f - smoothstep_f(to - ramp, to + ramp, day));
-	// The main flush in autumn: fewer at the season's edges in summer.
-	w *= Math::lerp(0.35f, 1.0f, smoothstep_f(200.0f, 250.0f, day));
-	if (p_season.has("soil_moisture")) {
-		w *= smoothstep_f(0.1f, 0.3f, float(p_season["soil_moisture"])); // Only a dry spell stops them.
-	}
-	if (float(p_season.get("temperature", 10.0f)) < -1.0f || float(p_season.get("snow_depth", 0.0f)) > 0.02f) {
-		w = 0.0f;
-	}
-	return w;
 }
 
 static Transform3D stem_base(float p_azimuth, float p_elevation) {
@@ -1191,42 +373,7 @@ void PlantGenerator::_build_dandelion() {
 	}
 	const int stalks = rng.randf() < 0.6f ? 1 : 2;
 	for (int s = 0; s < stalks; s++) {
-		const Bloom bloom = _bloom();
-		if (bloom == BLOOM_NONE) {
-			continue;
-		}
 		const Transform3D top = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.3f, 1.5f)), _rand(0.16f, 0.3f), 0.0025f, 0.002f, _rand(-0.25f, 0.25f), 6, 0.0f);
-		if (bloom == BLOOM_SEED) {
-			// The clock: achenes on a small receptacle, each a long beak ending in a parachute of
-			// fine pappus hairs, a ball about 3.5 cm across (achenes on a Fibonacci sphere).
-			_add_head(SURFACE_STEM, top, 0.003f, 0.003f);
-			Leaf beak;
-			beak.shape = LEAF_LINEAR;
-			beak.length = 0.012f;
-			beak.width = 0.0007f;
-			beak.fold = 0.0f;
-			beak.bend = 0.0f;
-			beak.segments = 1;
-			Leaf hair = beak;
-			hair.length = 0.0055f;
-			hair.width = 0.0006f;
-			const int n_seeds = 60;
-			for (int n = 0; n < n_seeds; n++) {
-				const float y = 1.0f - 1.75f * (n + 0.5f) / n_seeds;
-				const float r = Math::sqrt(MAX(0.0f, 1.0f - y * y));
-				const float a = n * GOLDEN_ANGLE;
-				const Vector3 d = top.basis.xform(Vector3(Math::cos(a) * r, Math::sin(a) * r, y)).normalized();
-				_add_leaf(SURFACE_CENTRE, Transform3D(organ_frame(d, top.basis.get_column(2)), top.origin + d * 0.002f), beak, 1.0f);
-				const Vector3 tip = top.origin + d * 0.014f;
-				const Basis pb = organ_frame(d, top.basis.get_column(2));
-				for (int k = 0; k < 6; k++) {
-					const float ak = k * Math::TAU / 6.0f + n;
-					const Vector3 out = (pb.get_column(0) * Math::cos(ak) + pb.get_column(1) * Math::sin(ak) + d * 0.35f).normalized();
-					_add_leaf(SURFACE_CENTRE, Transform3D(organ_frame(out, d), tip), hair, 1.0f);
-				}
-			}
-			continue;
-		}
 		Leaf fl;
 		fl.shape = LEAF_LINEAR;
 		fl.length = 0.017f;
@@ -1294,10 +441,7 @@ void PlantGenerator::_build_clover() {
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(radial, Vector3(0, 1, 0)), top.origin), l, 1.0f);
 		}
 	}
-	const Bloom bloom = rng.randf() < 0.65f ? _bloom() : BLOOM_NONE;
-	if (bloom != BLOOM_NONE) {
-		// Spent florets turn brown and hang down around the pods.
-		const Color tint = bloom == BLOOM_SEED ? Color(0.55f, 0.45f, 0.32f) : Color(1, 1, 1);
+	if (rng.randf() < 0.65f) {
 		const Transform3D top = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.3f, 1.5f)), _rand(0.09f, 0.15f), 0.0012f, 0.001f, 0.0f, 4, 0.0f);
 		Leaf fl;
 		fl.shape = LEAF_LINEAR;
@@ -1308,11 +452,11 @@ void PlantGenerator::_build_clover() {
 		const int florets = 36;
 		for (int n = 0; n < florets; n++) {
 			// Fibonacci sphere, upper 85%; lower florets droop (older, as on real clover).
-			const float y = (bloom == BLOOM_SEED ? 0.4f : 1.0f) - (bloom == BLOOM_SEED ? 1.4f : 1.7f) * (n + 0.5f) / florets;
+			const float y = 1.0f - 1.7f * (n + 0.5f) / florets;
 			const float r = Math::sqrt(MAX(0.0f, 1.0f - y * y));
 			const float a = n * GOLDEN_ANGLE;
 			const Vector3 d = top.basis.xform(Vector3(Math::cos(a) * r, Math::sin(a) * r, y)).normalized();
-			_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, top.basis.get_column(2)), top.origin + d * 0.003f), fl, 1.0f, 1.0f, tint);
+			_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, top.basis.get_column(2)), top.origin + d * 0.003f), fl, 1.0f);
 		}
 	}
 }
@@ -1323,20 +467,13 @@ void PlantGenerator::_build_fern() {
 	const int fronds = int(_rand(4.0f, 8.0f));
 	const float spin = _rand(0.0f, Math::TAU);
 	const float big = _rand(0.3f, 0.55f);
-	// Through the year (docs/ideas/vegetation-seasons.md, step 3): croziers in spring, green
-	// through summer, dying back with the senescence sum; in winter last year's fronds lie dead
-	// around the crown until the new ones have unfurled.
-	const FrondSeason fs = _frond_season(200.0f, 350.0f, 300.0f, 380.0f);
-	auto frond = [&](int p_i, float p_unfurl, float p_dead, float p_lodge) {
-		const Wither wither(this, p_dead);
-		const float u = float(p_i) / fronds;
-		const float grow = Math::lerp(0.15f, 1.0f, p_unfurl);
-		const float length = big * (1.0f - 0.3f * u) * _rand(0.85f, 1.1f) * grow;
+	for (int i = 0; i < fronds; i++) {
+		const float u = float(i) / fronds;
+		const float length = big * (1.0f - 0.3f * u) * _rand(0.85f, 1.1f);
 		const int segs = 12;
-		Basis f = organ_frame(polar_dir(spin + p_i * GOLDEN_ANGLE, Math::lerp(Math::lerp(0.95f, 1.25f, u), 0.2f, p_lodge)), Vector3(0, 1, 0));
+		Basis f = organ_frame(polar_dir(spin + i * GOLDEN_ANGLE, Math::lerp(0.95f, 1.25f, u)), Vector3(0, 1, 0));
 		Vector3 p(0, 0.01f, 0);
-		// A crozier: the rachis rolled into a crook (circinate vernation), unrolling as it grows.
-		const float arch = Math::lerp(7.0f, _rand(1.0f, 1.6f), smoothstep_f(0.0f, 0.7f, p_unfurl)) + p_lodge;
+		const float arch = _rand(1.0f, 1.6f);
 		LocalVector<Transform3D> frames;
 		// Rachis, stepped here so the pinnae can sit on it.
 		const Transform3D start(f, p);
@@ -1350,14 +487,13 @@ void PlantGenerator::_build_fern() {
 		}
 		_add_stem(start, length, 0.002f, 0.0008f, arch, segs, 0.0f);
 		const int pinnae = int(_rand(14.0f, 22.0f));
-		const float pinna_grow = p_unfurl * Math::sqrt(p_unfurl);
 		for (int k = 0; k < pinnae; k++) {
 			const float s = Math::lerp(0.18f, 0.97f, float(k) / (pinnae - 1));
 			const float fi = s * segs;
 			const int fa = MIN(int(fi), segs - 1);
 			const Transform3D fr = frames[fa].interpolate_with(frames[fa + 1], fi - fa);
 			const float side = (k % 2 == 0) ? 1.0f : -1.0f;
-			const float plen = length / grow * pinna_grow * 0.32f * Math::pow(float(MAX(0.0f, Math::sin(Math::PI * (s - 0.1f) / 0.92f))), 0.6f) * (1.0f - 0.25f * s);
+			const float plen = length * 0.32f * Math::pow(MAX(0.0f, float(Math::sin(Math::PI * (s - 0.1f) / 0.92f))), 0.6f) * (1.0f - 0.25f * s);
 			if (plen < 0.004f) {
 				continue;
 			}
@@ -1366,20 +502,12 @@ void PlantGenerator::_build_fern() {
 			l.shape = LEAF_LANCEOLATE;
 			l.length = plen;
 			l.width = plen * 0.28f;
-			l.fold = 0.15f + 0.4f * p_dead; // Dead pinnae curl.
-			l.bend = 0.35f + 0.6f * p_lodge;
+			l.fold = 0.15f;
+			l.bend = 0.35f;
 			l.lobes = 7;
 			l.lobe_depth = 0.45f;
 			l.segments = 8;
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, fr.basis.get_column(1)), fr.origin), l, s);
-		}
-	};
-	for (int i = 0; i < fronds; i++) {
-		if (fs.old_share > 0.0f && float(i) < fronds * fs.old_share + 0.5f) {
-			frond(i, 1.0f, 1.0f, fs.old_lodge);
-		}
-		if (fs.unfurl > 0.0f) {
-			frond(i, fs.unfurl, fs.dead, fs.lodge);
 		}
 	}
 }
@@ -1426,10 +554,6 @@ void PlantGenerator::_build_daisy() {
 	}
 	const int stems = int(_rand(1.0f, 4.0f));
 	for (int s = 0; s < stems; s++) {
-		const Bloom bloom = _bloom();
-		if (bloom == BLOOM_NONE) {
-			continue;
-		}
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.35f, 1.52f));
 		const float len = _rand(0.25f, 0.45f);
 		const float bend = _rand(-0.2f, 0.2f);
@@ -1455,11 +579,6 @@ void PlantGenerator::_build_daisy() {
 		petal.fold = 0.05f;
 		petal.bend = 0.15f;
 		petal.segments = 4;
-		if (bloom == BLOOM_SEED) {
-			// Rays fallen: the disc alone, a dull green-brown cone of achenes.
-			_add_head(SURFACE_CENTRE, top, 0.006f, 0.005f, Color(0.5f, 0.58f, 0.3f));
-			continue;
-		}
 		_add_ray_flower(top, 0.008f, int(_rand(20.0f, 30.0f)), petal);
 	}
 }
@@ -1482,27 +601,15 @@ void PlantGenerator::_build_buttercup() {
 	}
 	const int stems = int(_rand(1.0f, 3.0f));
 	for (int s = 0; s < stems; s++) {
-		const Bloom bloom = _bloom();
-		if (bloom == BLOOM_NONE) {
-			continue;
-		}
-		// In fruit, a small green ball of achenes where the cup was.
-		auto flower = [&](const Transform3D &p_top, float p_radius) {
-			if (bloom == BLOOM_SEED) {
-				_add_head(SURFACE_STEM, p_top, p_radius * 0.35f, p_radius * 0.5f);
-			} else {
-				_add_cup_flower(p_top, p_radius);
-			}
-		};
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.35f, 1.52f));
 		const Transform3D top = _add_stem(base, _rand(0.28f, 0.48f), 0.0018f, 0.0013f, _rand(-0.2f, 0.2f), 8, 0.0f);
-		flower(top, _rand(0.012f, 0.016f));
+		_add_cup_flower(top, _rand(0.012f, 0.016f));
 		// A branch with a second flower, from two thirds up.
 		if (rng.randf() < 0.7f) {
 			Transform3D fork = base.interpolate_with(top, 0.65f);
 			fork.basis = organ_frame(fork.basis.get_column(2) + fork.basis.get_column(0) * _rand(-0.8f, 0.8f), Vector3(0, 1, 0));
 			const Transform3D top2 = _add_stem(fork, _rand(0.08f, 0.14f), 0.0012f, 0.001f, 0.2f, 4, 0.6f);
-			flower(top2, _rand(0.011f, 0.014f));
+			_add_cup_flower(top2, _rand(0.011f, 0.014f));
 		}
 	}
 }
@@ -1522,78 +629,6 @@ LocalVector<Transform3D> PlantGenerator::_stem_frames(const Transform3D &p_base,
 		}
 	}
 	return frames;
-}
-
-// A stem through given frames (a path bent by something other than one even bend: lodged on the
-// ground). Same tube as _add_stem().
-void PlantGenerator::_add_stem_along(const LocalVector<Transform3D> &p_frames, float p_r0, float p_r1, float p_wind_base, Surface p_surface) {
-	if (p_frames.size() < 2) {
-		return;
-	}
-	Builder &b = builders[p_surface];
-	_begin_organ(p_frames[0].origin);
-	const int sides = 5;
-	const int n = int(p_frames.size()) - 1;
-	const int first = b.verts.size();
-	for (int i = 0; i <= n; i++) {
-		const float t = float(i) / n;
-		const float r = Math::lerp(p_r0, p_r1, t);
-		const float wind = MIN(1.0f, p_wind_base + (1.0f - p_wind_base) * t);
-		const Basis f = p_frames[i].basis.orthonormalized();
-		for (int s = 0; s < sides; s++) {
-			const float a = s * Math::TAU / sides;
-			b.verts.push_back(p_frames[i].origin + (f.get_column(0) * Math::cos(a) + f.get_column(1) * Math::sin(a)) * r);
-			b.uvs.push_back(Vector2(float(s) / sides, t));
-			b.uv2s.push_back(Vector2(wind, 0.0f));
-			const float ao = 0.7f + 0.3f * t;
-			b.colors.push_back(Color(ao, ao, ao));
-		}
-		plant_height = MAX(plant_height, p_frames[i].origin.y);
-	}
-	for (int i = 0; i < n; i++) {
-		for (int s = 0; s < sides; s++) {
-			const int a = first + i * sides + s;
-			const int c = first + i * sides + (s + 1) % sides;
-			b.indices.append_array(PackedInt32Array({ a, c, a + sides, c, c + sides, a + sides }));
-		}
-	}
-	_tag_organ(b);
-}
-
-// Lodging: walks a stem's frames from its base and lays every frame that would pass below p_floor
-// on the ground instead (pointing the same way, levelled), and every frame after it too, so a
-// stem that bows over arches down and lies along the ground rather than through it.
-static void ground_follow(LocalVector<Transform3D> &r_frames, float p_floor, bool &r_grounded) {
-	if (r_frames.is_empty()) {
-		return;
-	}
-	Vector3 p = r_frames[0].origin;
-	Vector3 last_flat = Vector3(r_frames[0].basis.get_column(2).x, 0.0f, r_frames[0].basis.get_column(2).z);
-	LocalVector<Vector3> steps;
-	for (uint32_t i = 1; i < r_frames.size(); i++) {
-		steps.push_back(r_frames[i].origin - r_frames[i - 1].origin);
-	}
-	for (uint32_t i = 0; i < r_frames.size(); i++) {
-		Vector3 d = r_frames[i].basis.get_column(2);
-		Vector3 flat(d.x, 0.0f, d.z);
-		if (flat.length_squared() > 1e-6f) {
-			last_flat = flat;
-		}
-		const float len = i + 1 < r_frames.size() ? steps[i].length() : 0.0f;
-		if (r_grounded) {
-			// Lying: levelled along its last heading.
-			r_frames[i].basis = organ_frame(last_flat.normalized(), Vector3(0, 1, 0));
-		}
-		r_frames[i].origin = p;
-		if (i + 1 < r_frames.size()) {
-			p += r_frames[i].basis.get_column(2) * len;
-			if (p.y < p_floor) {
-				// This step reaches the ground: it ends there, and the rest lies along it.
-				p.y = p_floor;
-				r_grounded = true;
-			}
-		}
-	}
 }
 
 Transform3D PlantGenerator::_frame_at(const LocalVector<Transform3D> &p_frames, float p_s) const {
@@ -1688,12 +723,6 @@ void PlantGenerator::_build_thistle() {
 	if (rng.randf() < 0.2f) {
 		return; // A first-year rosette: no stem yet.
 	}
-	float dead = 0.0f;
-	const Bloom bloom = _bloom(false, nullptr, &dead);
-	if (bloom == BLOOM_NONE) {
-		return; // The stem bolts with the flowering.
-	}
-	const Wither wither(this, dead);
 	const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.42f, 1.56f));
 	const float len = _rand(0.4f, 0.75f);
 	const LocalVector<Transform3D> frames = _stem_frames(base, len, 0.1f, 10);
@@ -1716,29 +745,8 @@ void PlantGenerator::_build_thistle() {
 		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((radial + at.basis.get_column(2) * 0.5f).normalized(), at.basis.get_column(2)), at.origin), l, u);
 	}
 	auto add_head = [&](const Transform3D &p_top, float p_r) {
-		// Involucre: a dome of the stem colour; the florets: a brush of thin purple strands. In seed
-		// the dome browns and the florets give way to a loose puff of down.
-		const bool seed_head = bloom == BLOOM_SEED;
-		_add_head(SURFACE_STEM, Transform3D(p_top.basis, p_top.origin - p_top.basis.get_column(2) * p_r * 0.6f), p_r, p_r * 1.8f, seed_head ? Color(0.75f, 0.62f, 0.45f) : Color(1, 1, 1));
-		if (seed_head) {
-			// A shaving brush of pappus out of the top of the involucre, the outer hairs splaying.
-			Leaf down;
-			down.shape = LEAF_LINEAR;
-			down.length = p_r * 1.5f;
-			down.width = 0.0022f;
-			down.fold = 0.0f;
-			down.bend = -0.25f;
-			down.segments = 2;
-			const Basis f = p_top.basis;
-			for (int n = 0; n < 44; n++) {
-				const float uu = Math::sqrt((n + 0.5f) / 44.0f);
-				const float a = n * GOLDEN_ANGLE;
-				const Vector3 radial = f.get_column(0) * Math::cos(a) + f.get_column(1) * Math::sin(a);
-				const Vector3 d = (f.get_column(2) + radial * uu * 0.8f).normalized();
-				_add_leaf(SURFACE_CENTRE, Transform3D(organ_frame(d, f.get_column(2)), p_top.origin + f.get_column(2) * p_r * 0.9f + radial * p_r * uu * 0.5f), down, 1.0f);
-			}
-			return;
-		}
+		// Involucre: a dome of the stem colour; the florets: a brush of thin purple strands.
+		_add_head(SURFACE_STEM, Transform3D(p_top.basis, p_top.origin - p_top.basis.get_column(2) * p_r * 0.6f), p_r, p_r * 1.8f);
 		Leaf fl;
 		fl.shape = LEAF_LINEAR;
 		fl.length = p_r * 1.6f;
@@ -1800,14 +808,6 @@ void PlantGenerator::_build_yarrow() {
 	}
 	const int stems = int(_rand(1.0f, 3.0f));
 	for (int s = 0; s < stems; s++) {
-		float dead = 0.0f;
-		const Bloom bloom = _bloom(false, nullptr, &dead);
-		if (bloom == BLOOM_NONE) {
-			continue;
-		}
-		const Wither wither(this, dead);
-		// Dead corymbs stand brown through winter.
-		const Color head_tint = bloom == BLOOM_SEED ? Color(0.45f, 0.38f, 0.28f) : Color(1, 1, 1);
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.42f, 1.56f));
 		const float len = _rand(0.3f, 0.55f);
 		const LocalVector<Transform3D> frames = _stem_frames(base, len, 0.0f, 8);
@@ -1840,7 +840,7 @@ void PlantGenerator::_build_yarrow() {
 			const float rs = _rand(0.0f, Math::TAU);
 			for (int k = 0; k < 5; k++) {
 				const Vector3 radial = polar_dir(rs + k * Math::TAU / 5.0f, 0.15f);
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(radial, Vector3(0, 1, 0)), ht.origin + radial * 0.0012f), ray, 1.0f, 1.0f, head_tint);
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(radial, Vector3(0, 1, 0)), ht.origin + radial * 0.0012f), ray, 1.0f);
 			}
 		}
 	}
@@ -1882,21 +882,15 @@ void PlantGenerator::_build_dock() {
 	seed.bend = 0.0f;
 	seed.segments = 2;
 	auto whorls = [&](const LocalVector<Transform3D> &p_fr, float p_from, float p_to, float p_wind) {
-		// Dense, uneven whorls of hanging fruits on short stalks (not even rungs of four; see sorrel).
-		const int n = int((p_to - p_from) * 30.0f) + 2;
+		const int n = int((p_to - p_from) * 26.0f) + 2;
 		for (int k = 0; k < n; k++) {
-			const float s = CLAMP(Math::lerp(p_from, p_to, (float(k) + _rand(-0.4f, 0.4f)) / (n - 1)), p_from, p_to);
+			const float s = Math::lerp(p_from, p_to, float(k) / (n - 1));
 			const Transform3D at = _frame_at(p_fr, s);
 			const float a0 = _rand(0.0f, Math::TAU);
-			const int m = int(_rand(3.0f, 7.99f));
-			for (int j = 0; j < m; j++) {
-				const float a = a0 + j * Math::TAU / m + _rand(-0.5f, 0.5f);
+			for (int j = 0; j < 4; j++) {
+				const float a = a0 + j * Math::TAU / 4.0f;
 				const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-				const Vector3 droop = (radial * _rand(0.4f, 1.0f) - at.basis.get_column(2) * _rand(0.3f, 1.2f)).normalized();
-				Leaf f = seed;
-				f.length = f.width = _rand(0.003f, 0.0045f);
-				const Color tint = Color(1, 1, 1).lerp(Color(0.75f, 0.62f, 0.48f), _rand(0.0f, 0.7f));
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(droop, at.basis.get_column(2)), at.origin + radial * 0.0015f + droop * _rand(0.001f, 0.005f)), f, p_wind, 1.0f, tint);
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame((radial - at.basis.get_column(2) * 0.6f).normalized(), at.basis.get_column(2)), at.origin + radial * 0.002f), seed, p_wind);
 			}
 		}
 	};
@@ -1988,46 +982,34 @@ void PlantGenerator::_build_dry_grass() {
 // Leaf litter: fallen leaves of several shapes lying on the ground, edges curled as they dry,
 // in browns, ochres and the odd late yellow; a couple of twigs and dry blades among them.
 void PlantGenerator::_build_leaf_litter() {
-	// Generic leaves (no stand given): p_count of them, p_lift above the card's ground.
-	auto generic = [&](int p_count, float p_lift) {
-		for (int i = 0; i < p_count; i++) {
-			Leaf l;
-			const float pick = rng.randf();
-			l.shape = pick < 0.4f ? LEAF_OVATE : (pick < 0.7f ? LEAF_LANCEOLATE : LEAF_ROUND);
-			l.length = _rand(0.035f, 0.08f);
-			l.width = l.length * (l.shape == LEAF_LANCEOLATE ? 0.35f : 0.65f);
-			l.petiole = 0.1f;
-			if (pick > 0.85f) {
-				l.lobes = 3; // Oak-like.
-				l.lobe_depth = 0.35f;
-			}
-			l.fold = _rand(-0.4f, 0.5f); // Curled up or cupped down as it dried.
-			l.bend = _rand(-0.6f, 0.6f);
-			l.twist = _rand(-0.5f, 0.5f);
-			l.segments = 6;
-			Vector3 n;
-			const Vector3 at = _litter_spot(p_lift, n);
-			const float k = _rand(0.6f, 1.25f);
-			const float hue = rng.randf();
-			const Color tint = hue < 0.15f ? Color(1.5f, 1.3f, 0.5f) : (hue < 0.35f ? Color(1.3f, 0.8f, 0.5f) : Color(k, k * 0.95f, k * 0.9f));
-			// Lying nearly flat, tilted a little; upper or under side up.
-			Vector3 fwd = polar_dir(_rand(0.0f, Math::TAU), _rand(-0.12f, 0.12f));
-			if (litter_heap.y > 0.0f) {
-				fwd = (fwd - n * fwd.dot(n)).normalized() + n * fwd.y;
-			}
-			const Vector3 up = rng.randf() < 0.7f ? n : -n;
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, up), at), l, 0.15f, 0.85f, tint);
+	const int leaves = int(_rand(14.0f, 26.0f));
+	for (int i = 0; i < leaves; i++) {
+		Leaf l;
+		const float pick = rng.randf();
+		l.shape = pick < 0.4f ? LEAF_OVATE : (pick < 0.7f ? LEAF_LANCEOLATE : LEAF_ROUND);
+		l.length = _rand(0.035f, 0.08f);
+		l.width = l.length * (l.shape == LEAF_LANCEOLATE ? 0.35f : 0.65f);
+		l.petiole = 0.1f;
+		if (pick > 0.85f) {
+			l.lobes = 3; // Oak-like.
+			l.lobe_depth = 0.35f;
 		}
-	};
-	// A leaf bank's heap (litter_heap) holds as many leaves over its ellipse as a card over its disc, and no twigs.
-	const float heap_k = litter_heap.y > 0.0f ? litter_heap.x * litter_heap.z / (0.13f * 0.13f) : 1.0f;
-	if (!litter_leaves.is_empty()) {
-		_build_stand_litter(litter_heap.y > 0.0f ? 2.2f : 1.3f);
-	} else {
-		generic(int(_rand(14.0f, 26.0f) * heap_k * (litter_heap.y > 0.0f ? 1.7f : 1.0f)), 0.0f);
+		l.fold = _rand(-0.4f, 0.5f); // Curled up or cupped down as it dried.
+		l.bend = _rand(-0.6f, 0.6f);
+		l.twist = _rand(-0.5f, 0.5f);
+		l.segments = 6;
+		const float r = 0.13f * Math::sqrt(rng.randf());
+		const float a = _rand(0.0f, Math::TAU);
+		const Vector3 at(Math::cos(a) * r, 0.002f + 0.004f * rng.randf(), Math::sin(a) * r);
+		const float k = _rand(0.6f, 1.25f);
+		const float hue = rng.randf();
+		const Color tint = hue < 0.15f ? Color(1.5f, 1.3f, 0.5f) : (hue < 0.35f ? Color(1.3f, 0.8f, 0.5f) : Color(k, k * 0.95f, k * 0.9f));
+		// Lying nearly flat, tilted a little; upper or under side up.
+		const Vector3 fwd = polar_dir(_rand(0.0f, Math::TAU), _rand(-0.12f, 0.12f));
+		const Vector3 up = rng.randf() < 0.7f ? Vector3(0, 1, 0) : Vector3(0, -1, 0);
+		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, up), at), l, 0.15f, 0.85f, tint);
 	}
-	const int twig_draw = int(_rand(0.0f, 4.0f));
-	const int twigs = litter_heap.y > 0.0f ? 0 : twig_draw;
+	const int twigs = int(_rand(0.0f, 4.0f));
 	for (int t = 0; t < twigs; t++) {
 		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.05f, 0.05f)), Vector3(0, 1, 0)), Vector3(_rand(-0.1f, 0.1f), 0.003f, _rand(-0.1f, 0.1f)));
 		const Transform3D e = _add_stem(b, _rand(0.06f, 0.18f), 0.0025f, 0.0012f, _rand(-0.3f, 0.3f), 3, 0.05f);
@@ -2035,176 +1017,6 @@ void PlantGenerator::_build_leaf_litter() {
 			Transform3D side(organ_frame(e.basis.get_column(2) + e.basis.get_column(0) * 0.7f, Vector3(0, 1, 0)), b.origin.lerp(e.origin, 0.6f));
 			_add_stem(side, _rand(0.03f, 0.06f), 0.0012f, 0.0007f, 0.0f, 2, 0.05f);
 		}
-	}
-	// The near-camera card (litter_deposit > 1; docs/ideas/ground-detail-vegetation.md, item 3): the dead-leaves
-	// model (Matheron 1968), leaves falling in sequence over the ones down, so what shows is the top layer. The
-	// card's own leaves and twigs come first, from the same seed as the far card, so the swap only adds leaves:
-	// more layers on top, each a little higher, and broken twig ends among them.
-	if (litter_deposit > 1.0f) {
-		const float extra = litter_deposit - 1.0f;
-		if (!litter_leaves.is_empty()) {
-			_build_stand_litter(1.3f * extra, 0.005f);
-		} else {
-			generic(int(20.0f * extra), 0.005f);
-		}
-		_add_twig_ends(int(_rand(2.0f, 5.0f) * extra), 0.006f);
-	}
-}
-
-// Broken twig ends a few centimetres long lying in the litter, p_lift above the card's ground.
-void PlantGenerator::_add_twig_ends(int p_count, float p_lift) {
-	for (int t = 0; t < p_count; t++) {
-		const float r = 0.12f * Math::sqrt(rng.randf());
-		const float a = _rand(0.0f, Math::TAU);
-		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.06f, 0.06f)), Vector3(0, 1, 0)), Vector3(Math::cos(a) * r, p_lift + 0.0015f, Math::sin(a) * r));
-		const Transform3D e = _add_stem(b, _rand(0.02f, 0.06f), _rand(0.0012f, 0.0025f), 0.0009f, _rand(-0.2f, 0.2f), 2, 0.05f);
-		if (rng.randf() < 0.3f) {
-			// A bud or a short fork at the tip.
-			Transform3D side(organ_frame(e.basis.get_column(2) + e.basis.get_column(0) * 0.8f, Vector3(0, 1, 0)), e.origin);
-			_add_stem(side, _rand(0.008f, 0.02f), 0.0009f, 0.0005f, 0.0f, 2, 0.05f);
-		}
-	}
-}
-
-// The stand's own fallen leaves (docs/ideas/forest-floor.md, step 6): each entry of litter_leaves
-// is a leaf form as TreeGenerator.get_leaf_form() gives it (kind, count, depth, width as half width
-// over length, size in metres) with the stand's share of the litter ("share"), its fallen colour
-// ("color", the autumn colour) and the share of this year's leaves still fresh ("fresh"). Fresh
-// leaves keep that colour; older ones fade to a dull tan brown and curl. A card
-// carries about 1.3 layers of leaves over its disc, so big leaves come few and small ones many.
-void PlantGenerator::_build_stand_litter(float p_layers, float p_lift) {
-	float total = 0.0f;
-	for (int i = 0; i < litter_leaves.size(); i++) {
-		total += float(Dictionary(litter_leaves[i]).get("share", 1.0f));
-	}
-	if (total <= 0.0f) {
-		return;
-	}
-	const float disc = 0.13f;
-	// A leaf bank's heap holds as many leaves over its ellipse as a card over its disc.
-	const float area_k = litter_heap.y > 0.0f ? litter_heap.x * litter_heap.z / (disc * disc) : 1.0f;
-	float area_left = p_layers * Math::PI * disc * disc * area_k;
-	const int guard_max = int(60.0f * MAX(p_layers, 1.3f) / 1.3f * area_k);
-	int guard = 0;
-	while (area_left > 0.0f && guard++ < guard_max) {
-		float pick = rng.randf() * total;
-		Dictionary f = litter_leaves[0];
-		for (int i = 0; i < litter_leaves.size(); i++) {
-			f = litter_leaves[i];
-			pick -= float(f.get("share", 1.0f));
-			if (pick <= 0.0f) {
-				break;
-			}
-		}
-		const int kind = int(f.get("kind", 0));
-		const int count = int(f.get("count", 0));
-		const float depth = float(f.get("depth", 0.0f));
-		const float half_w = CLAMP(float(f.get("width", 0.3f)), 0.05f, 0.7f);
-		const float size = CLAMP(float(f.get("size", 0.08f)), 0.02f, 0.4f) * _rand(0.75f, 1.15f);
-		const Color fallen = f.get("color", Color(0.35f, 0.2f, 0.07f));
-		const float fresh = CLAMP(float(f.get("fresh", 0.3f)), 0.0f, 1.0f);
-		// Weathered: a duller, paler tan-brown as the pigments break down and the tissue thins.
-		const bool is_fresh = rng.randf() < fresh;
-		const float k = _rand(0.8f, 1.15f);
-		Color c = is_fresh ? fallen : fallen.lerp(Color(0.36f, 0.25f, 0.15f), _rand(0.4f, 0.8f)); // Bleached tan-brown.
-		c = c * k;
-		Color tint(c.r / MAX(leaf_color.r, 0.01f), c.g / MAX(leaf_color.g, 0.01f), c.b / MAX(leaf_color.b, 0.01f));
-		Vector3 up;
-		const Vector3 at = _litter_spot(p_lift, up);
-		Vector3 fwd = polar_dir(_rand(0.0f, Math::TAU), _rand(-0.12f, 0.12f));
-		if (litter_heap.y > 0.0f) {
-			fwd = (fwd - up * fwd.dot(up)).normalized() + up * fwd.y; // Lying along the heap's face.
-		}
-		// About a third lie underside up: paler and duller (the lower epidermis, hairier and without
-		// the upper's wax). Shown by colour, the face still up, so a lying leaf is never drawn from
-		// its back face (whose flipped normal map read black or flat in close-ups).
-		if (rng.randf() >= 0.7f) {
-			tint = tint.lerp(tint * 1.25f, 0.8f) * Color(1.0f, 1.0f, 1.08f);
-		}
-		const Basis frame = organ_frame(fwd, up);
-		const float curl = is_fresh ? 0.6f : 1.0f; // Older leaves dry and curl more.
-		Leaf l;
-		l.shape = LEAF_OVATE;
-		l.length = size;
-		l.width = size * 2.0f * half_w;
-		l.petiole = 0.08f;
-		l.fold = _rand(-0.4f, 0.5f) * curl;
-		l.bend = _rand(-0.6f, 0.6f) * curl;
-		l.twist = _rand(-0.5f, 0.5f) * curl;
-		l.segments = litter_heap.y > 0.0f ? 4 : 6; // A leaf bank's many leaves: coarser, mostly seen from metres off.
-		float area = 0.6f * l.length * l.width;
-		switch (kind) {
-			case 1: // Lobed (oaks, hawthorn): rounded lobes along the sides.
-				l.lobes = MAX(count, 1);
-				l.lobe_depth = CLAMP(depth, 0.0f, 0.8f);
-				l.round_lobes = true;
-				l.segments = MAX(6, l.lobes * 3);
-				area *= 1.0f - 0.5f * l.lobe_depth;
-				_add_leaf(SURFACE_LEAF, Transform3D(frame, at), l, 0.15f, 0.85f, tint);
-				break;
-			case 2: // Palmate (maples, sycamore): broad, deep round lobes.
-				l.shape = LEAF_PALMATE;
-				l.width = size * 1.05f;
-				l.lobes = MAX((count - 1) / 2, 1);
-				l.lobe_depth = CLAMP(depth, 0.0f, 0.8f);
-				l.segments = 8;
-				area = 0.5f * l.length * l.width;
-				_add_leaf(SURFACE_LEAF, Transform3D(frame, at), l, 0.15f, 0.85f, tint);
-				break;
-			case 3: { // Pinnate (ash, rowan, elder): mostly loose leaflets, now and then a whole leaf.
-				const int n = MAX(count, 3);
-				Leaf lf = l;
-				lf.shape = LEAF_LANCEOLATE;
-				lf.length = size * 2.4f / (n + 1);
-				lf.width = lf.length * 0.36f;
-				lf.petiole = 0.03f;
-				if (rng.randf() < 0.3f) {
-					Leaf rachis;
-					rachis.shape = LEAF_LINEAR;
-					rachis.length = size;
-					rachis.width = 0.0025f;
-					rachis.fold = 0.0f;
-					rachis.bend = l.bend * 0.3f;
-					rachis.segments = 3;
-					_add_leaf(SURFACE_LEAF, Transform3D(frame, at), rachis, 0.15f, 0.85f, tint);
-					for (int q = 0; q < n; q++) {
-						const float u = (q / 2 + 1.0f) / (n / 2 + 1.0f);
-						const float side = (q % 2 == 0) ? 1.0f : -1.0f;
-						const Vector3 d = (frame.get_column(2) * 0.6f + frame.get_column(0) * side).normalized();
-						const Vector3 p = at + frame.get_column(2) * (q == n - 1 ? size : u * size * 0.9f);
-						_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(q == n - 1 ? frame.get_column(2) : d, frame.get_column(1)), p), lf, 0.15f, 0.85f, tint);
-					}
-					area = 0.6f * lf.length * lf.width * n;
-				} else {
-					_add_leaf(SURFACE_LEAF, Transform3D(frame, at), lf, 0.15f, 0.85f, tint);
-					area = 0.6f * lf.length * lf.width;
-				}
-			} break;
-			case 4: { // Digitate (horse chestnut): leaflets spread from one point.
-				const int n = MAX(count, 5);
-				Leaf lf = l;
-				lf.shape = LEAF_SPATULATE;
-				lf.length = size * 0.6f;
-				lf.width = lf.length * 0.42f;
-				lf.petiole = 0.0f;
-				const float spread = 2.6f;
-				for (int q = 0; q < n; q++) {
-					const float ang = (float(q) / MAX(n - 1, 1) - 0.5f) * spread;
-					const Vector3 d = (frame.get_column(2) * Math::cos(ang) + frame.get_column(0) * Math::sin(ang)).normalized();
-					Leaf lq = lf;
-					lq.length *= 1.0f - 0.35f * Math::abs(ang) / spread * 2.0f;
-					_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, frame.get_column(1)), at), lq, 0.15f, 0.85f, tint);
-				}
-				area = 0.5f * lf.length * lf.width * n;
-			} break;
-			case 5: // Needles: the needle litter preset lies under conifers.
-				area = 0.0f;
-				break;
-			default: // Simple (beech, birch, lime, alder, willow, hazel).
-				_add_leaf(SURFACE_LEAF, Transform3D(frame, at), l, 0.15f, 0.85f, tint);
-				break;
-		}
-		area_left -= MAX(area, 0.0004f);
 	}
 }
 
@@ -2217,27 +1029,11 @@ void PlantGenerator::_build_moss() {
 	// and a few standing proud, where the silhouette shows them.
 	// Feather mosses (Hylocomium, Pleurozium) under conifers: wide, flat, loose carpets.
 	const bool carpet = preset == PRESET_FEATHER_MOSS;
-	// Bog moss hummocks (Sphagnum capillifolium, S. papillosum): mounds 40 to 90 cm across and 10 to
-	// 30 cm high of packed shoots, their surface the star-shaped capitula (Rydin and Jeglum, "The
-	// Biology of Peatlands", 2013). Lawns and hollows are the same mound, lower and wider.
-	const bool hummock = preset == PRESET_SPHAGNUM;
-	// Pincushion moss (Leucobryum glaucum) on acid oak, beech and pine floors: tight round cushions 4 to 20 cm
-	// across and nearly half as high, smooth-domed, pale glaucous (Atherton, Bosanquet and Lawley 2010,
-	// "Mosses and Liverworts of Britain and Ireland"). Often several crowded together.
-	const bool pincushion = preset == PRESET_PINCUSHION_MOSS;
-	float radius = carpet ? _rand(0.18f, 0.32f) : _rand(0.06f, 0.12f);
-	float height = radius * (carpet ? _rand(0.08f, 0.13f) : _rand(0.22f, 0.35f));
-	if (hummock) {
-		radius = _rand(0.2f, 0.45f);
-		height = radius * _rand(0.3f, 0.6f);
-	}
-	if (pincushion) {
-		radius = _rand(0.02f, 0.1f);
-		height = radius * _rand(0.55f, 0.8f);
-	}
+	const float radius = carpet ? _rand(0.18f, 0.32f) : _rand(0.06f, 0.12f);
+	const float height = radius * (carpet ? _rand(0.08f, 0.13f) : _rand(0.22f, 0.35f));
 	Builder &b = builders[SURFACE_CENTRE];
-	const int rings = hummock ? 12 : 8;
-	const int sectors = hummock ? 40 : 28;
+	const int rings = 8;
+	const int sectors = 28;
 	const int first = b.verts.size();
 	float ph[6];
 	for (float &p : ph) {
@@ -2254,14 +1050,8 @@ void PlantGenerator::_build_moss() {
 			const float rr = rim(a) * u;
 			const float x = Math::cos(a) * rr;
 			const float z = Math::sin(a) * rr;
-			// Sphagnum hummocks are broad and smooth, a few low swells over the dome.
-			float lump = hummock ? 1.0f + 0.1f * Math::sin(x * 9.0f + ph[2]) * Math::sin(z * 8.0f + ph[3]) + 0.04f * Math::sin(x * 23.0f + ph[4] + z * 17.0f)
-								 : 1.0f + 0.18f * Math::sin(x * 70.0f + ph[2]) * Math::sin(z * 63.0f + ph[3]) + 0.1f * Math::sin(x * 150.0f + ph[4] + z * 90.0f);
-			if (pincushion) {
-				// Smooth, close-packed domes, bulging over their foot.
-				lump = 1.0f + 0.05f * Math::sin(x * 90.0f + ph[2]) * Math::sin(z * 80.0f + ph[3]);
-			}
-			const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), pincushion ? 0.55f : 0.9f) * lump - 0.004f;
+			const float lump = 1.0f + 0.18f * Math::sin(x * 70.0f + ph[2]) * Math::sin(z * 63.0f + ph[3]) + 0.1f * Math::sin(x * 150.0f + ph[4] + z * 90.0f);
+			const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), 0.9f) * lump - 0.004f;
 			b.verts.push_back(Vector3(x, y, z));
 			b.uvs.push_back(Vector2(x, z) / 0.05f);
 			b.uv2s.push_back(Vector2(0.05f, 0.0f));
@@ -2274,9 +1064,7 @@ void PlantGenerator::_build_moss() {
 			const int a = first + r * sectors + k;
 			const int c = first + r * sectors + (k + 1) % sectors;
 			// The centre ring is degenerate (all at the middle): its triangles collapse harmlessly.
-			// Counter-clockwise seen from above, as every builder winds a surface's upper side
-			// (the mesh pass flips them for Godot), so the dome's outer face is its front face.
-			b.indices.append_array(PackedInt32Array({ a, c, a + sectors, c, c + sectors, a + sectors }));
+			b.indices.append_array(PackedInt32Array({ a, a + sectors, c, c, a + sectors, c + sectors }));
 		}
 	}
 	plant_height = MAX(plant_height, height * 1.3f);
@@ -2285,10 +1073,9 @@ void PlantGenerator::_build_moss() {
 	l.width = 0.002f;
 	l.fold = 0.3f;
 	l.segments = 2;
-	// Sphagnum: capitula over the whole mound, so its outline is knobbly against the light.
-	const int shoots = hummock ? int(_rand(160.0f, 240.0f)) : (pincushion ? int(_rand(15.0f, 30.0f)) : int(_rand(40.0f, 60.0f)));
+	const int shoots = int(_rand(40.0f, 60.0f));
 	for (int s = 0; s < shoots; s++) {
-		const bool edge = s < shoots * (hummock ? 2 : 3) / (hummock ? 5 : 4);
+		const bool edge = s < shoots * 3 / 4;
 		const float a = _rand(0.0f, Math::TAU);
 		const float u = edge ? _rand(0.85f, 1.0f) : _rand(0.0f, 0.7f);
 		const float rr = rim(a) * u;
@@ -2305,87 +1092,6 @@ void PlantGenerator::_build_moss() {
 			const Vector3 d = (nb.get_column(2) * 1.4f + (nb.get_column(0) * Math::cos(bb) + nb.get_column(1) * Math::sin(bb))).normalized();
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, normal), at), l, 0.1f, 1.0f, Color(1.5f * k, 1.45f * k, 1.1f * k));
 		}
-	}
-}
-
-// Reindeer lichen (Cladonia rangiferina, C. stellaris; docs/ideas/vegetation.md, "Boreal taiga floor"): cushions 5 to
-// 10 cm high of densely, repeatedly forked hollow branches (podetia), packed so their tips make a lumpy, cauliflower-like
-// surface, pale ashy grey-green; the tips of C. rangiferina all bend one way (Ahti 1961; Kershaw 1977). As the moss
-// cushions, the packed tips are a dome carrying the shoot-tip texture, with real forked branches where the outline
-// shows them: round the rim and a few standing proud of the top.
-void PlantGenerator::_build_reindeer_lichen() {
-	const float radius = _rand(0.06f, 0.16f);
-	const float height = radius * _rand(0.45f, 0.7f);
-	Builder &b = builders[SURFACE_CENTRE];
-	const int rings = 8;
-	const int sectors = 28;
-	const int first = b.verts.size();
-	float ph[6];
-	for (float &p : ph) {
-		p = _rand(0.0f, Math::TAU);
-	}
-	auto rim = [&](float p_a) {
-		return radius * (1.0f + 0.14f * Math::sin(3.0f * p_a + ph[0]) + 0.08f * Math::sin(5.0f * p_a + ph[1]));
-	};
-	// Cauliflower lumps: florets a few centimetres across over the dome, smaller ones on them.
-	auto lump = [&](float p_x, float p_z) {
-		return 1.0f + 0.16f * Math::sin(p_x * 95.0f + ph[2]) * Math::sin(p_z * 88.0f + ph[3]) + 0.08f * Math::sin(p_x * 210.0f + ph[4]) * Math::sin(p_z * 190.0f + ph[5]);
-	};
-	for (int r = 0; r <= rings; r++) {
-		const float u = float(r) / rings;
-		for (int k = 0; k < sectors; k++) {
-			const float a = k * Math::TAU / sectors;
-			const float rr = rim(a) * u;
-			const float x = Math::cos(a) * rr;
-			const float z = Math::sin(a) * rr;
-			const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), 0.6f) * lump(x, z) - 0.004f;
-			b.verts.push_back(Vector3(x, y, z));
-			b.uvs.push_back(Vector2(x, z) / 0.05f);
-			b.uv2s.push_back(Vector2(0.05f, 0.0f));
-			const float ao = Math::lerp(1.0f, 0.72f, u * u);
-			b.colors.push_back(Color(ao, ao, ao));
-		}
-	}
-	for (int r = 0; r < rings; r++) {
-		for (int k = 0; k < sectors; k++) {
-			const int a = first + r * sectors + k;
-			const int c = first + r * sectors + (k + 1) % sectors;
-			b.indices.append_array(PackedInt32Array({ a, c, a + sectors, c, c + sectors, a + sectors }));
-		}
-	}
-	plant_height = MAX(plant_height, height * 1.3f);
-	// Forked podetia: each forks two or three times, the tips nodding one way (rangiferina).
-	const float nod = _rand(0.0f, Math::TAU);
-	const Vector3 nod_dir(Math::cos(nod), 0.0f, Math::sin(nod));
-	auto fork = [&](auto &&self, const Transform3D &p_base, float p_len, float p_r, int p_depth) -> void {
-		const Transform3D top = _add_stem(p_base, p_len, p_r, p_r * 0.75f, _rand(0.1f, 0.3f), 2, 0.0f);
-		if (p_depth <= 0) {
-			return;
-		}
-		const int kids = _rand(0.0f, 1.0f) < 0.3f ? 3 : 2;
-		const float spin = _rand(0.0f, Math::TAU);
-		for (int k = 0; k < kids; k++) {
-			const float a = spin + k * Math::TAU / kids;
-			const Vector3 side = top.basis.get_column(0) * Math::cos(a) + top.basis.get_column(1) * Math::sin(a);
-			Vector3 d = (top.basis.get_column(2) * 1.3f + side * 0.75f).normalized();
-			if (p_depth == 1) {
-				d = (d + nod_dir * 0.6f).normalized(); // The tips bend over, all one way.
-			}
-			self(self, Transform3D(organ_frame(d, Vector3(0, 1, 0)), top.origin), p_len * _rand(0.65f, 0.8f), p_r * 0.75f, p_depth - 1);
-		}
-	};
-	const int podetia = int(_rand(40.0f, 60.0f) * radius / 0.11f);
-	for (int p = 0; p < podetia; p++) {
-		const bool edge = p < podetia * 2 / 3;
-		const float a = _rand(0.0f, Math::TAU);
-		const float u = edge ? _rand(0.8f, 1.0f) : _rand(0.0f, 0.6f);
-		const float rr = rim(a) * u;
-		const float x = Math::cos(a) * rr;
-		const float z = Math::sin(a) * rr;
-		const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), 0.6f) * lump(x, z) - (edge ? 0.012f : 0.006f);
-		const Vector3 up = Vector3(Math::cos(a) * u * 0.9f, 1.0f, Math::sin(a) * u * 0.9f).normalized();
-		const Transform3D base(organ_frame(up, Vector3(1, 0, 0)), Vector3(x, MAX(y, 0.0f), z));
-		fork(fork, base, _rand(0.006f, 0.011f), 0.0011f, int(_rand(2.0f, 3.99f)));
 	}
 }
 
@@ -2441,46 +1147,26 @@ void PlantGenerator::_build_bilberry() {
 // two to three times pinnate: pinnae longest at the base, pinnules lobed (Page 1976).
 void PlantGenerator::_build_bracken() {
 	const int fronds = int(_rand(2.0f, 5.0f));
-	// Through the year (Watt 1976): croziers push up in May once the
-	// soil has warmed, unroll over five or six weeks, stand green all summer, turn yellow then
-	// russet with the autumn and the first frosts, and stand dead into winter, lodging under wind
-	// and snow; in spring last year's fronds lie flat among the new croziers.
-	const FrondSeason fs = _frond_season(300.0f, 400.0f, 220.0f, 250.0f);
-	auto frond = [&](float p_unfurl, float p_dead, float p_lodge) {
-		const Wither wither(this, p_dead);
-		// Lodged fronds (dead, storm, snow) bow over: the stipe arches down from a lower start and
-		// the blade drapes from it onto the ground and lies there (ground_follow), never standing
-		// on a bare straight stalk.
-		Transform3D base = stem_base(_rand(0.0f, Math::TAU), Math::lerp(_rand(1.35f, 1.52f), 0.4f, p_lodge));
+	for (int i = 0; i < fronds; i++) {
+		Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.35f, 1.52f));
 		base.origin = Vector3(_rand(-0.25f, 0.25f), 0.0f, _rand(-0.25f, 0.25f));
-		// The stipe lengthens first, then the blade unrolls from its crook.
-		const float stipe = _rand(0.35f, 0.75f) * MIN(1.0f, 0.25f + 1.4f * p_unfurl);
-		const float stipe_bend = _rand(0.05f, 0.2f) + 1.7f * p_lodge;
-		bool grounded = false;
-		LocalVector<Transform3D> sf = _stem_frames(base, stipe, stipe_bend, 6);
-		ground_follow(sf, 0.015f, grounded);
-		_add_stem_along(sf, 0.0045f, 0.0035f, 0.0f);
-		// The blade: a knee at the top of the stipe, then a nearly flat blade drooping a little;
-		// lodged, it hangs from the bowed stipe to the ground.
+		const float stipe = _rand(0.35f, 0.75f);
+		const LocalVector<Transform3D> sf = _stem_frames(base, stipe, _rand(0.05f, 0.2f), 4);
+		_add_stem(base, stipe, 0.0045f, 0.0035f, sf.size() > 0 ? 0.1f : 0.0f, 4, 0.0f);
+		// The blade: a knee at the top of the stipe, then a nearly flat blade drooping a little.
 		Transform3D top = sf[sf.size() - 1];
-		const float knee = _rand(0.85f, 1.1f) * smoothstep_f(0.3f, 0.8f, p_unfurl) * (1.0f - p_lodge) + 0.6f * p_lodge;
-		top.basis = Basis(top.basis.get_column(0), grounded ? 0.0f : knee) * top.basis;
+		top.basis = Basis(top.basis.get_column(0), _rand(0.85f, 1.1f)) * top.basis;
 		top.basis.orthonormalize();
-		const float blade = _rand(0.45f, 0.85f) * Math::lerp(0.2f, 1.0f, p_unfurl);
-		const float turn = Math::lerp(6.5f, _rand(0.25f, 0.5f), smoothstep_f(0.0f, 0.75f, p_unfurl)) * (1.0f - 0.9f * p_lodge);
-		const float pinna_grow = p_unfurl * Math::sqrt(p_unfurl);
-		LocalVector<Transform3D> rf = _stem_frames(top, blade, turn, 10);
-		ground_follow(rf, 0.015f, grounded);
-		_add_stem_along(rf, 0.0035f, 0.001f, 0.3f);
+		const float blade = _rand(0.45f, 0.85f);
+		const float turn = _rand(0.25f, 0.5f);
+		const LocalVector<Transform3D> rf = _stem_frames(top, blade, turn, 10);
+		_add_stem(top, blade, 0.0035f, 0.001f, turn, 10, 0.3f);
 		const int pairs = int(_rand(8.0f, 12.0f));
 		for (int k = 0; k < pairs; k++) {
 			const float s = Math::lerp(0.08f, 0.95f, float(k) / (pairs - 1));
 			const Transform3D at = _frame_at(rf, s);
 			// Triangular blade: pinnae shorten from the base to the tip.
-			const float plen = (blade * 0.5f * Math::pow(1.0f - s, 0.85f) + 0.02f) * pinna_grow;
-			if (plen < 0.008f) {
-				continue; // Pinnae still rolled into the crozier.
-			}
+			const float plen = blade * 0.5f * Math::pow(1.0f - s, 0.85f) + 0.02f;
 			for (int side = -1; side <= 1; side += 2) {
 				const Vector3 out = (at.basis.get_column(0) * float(side) + at.basis.get_column(2) * 0.3f).normalized();
 				// The blade is held flat: every lamina faces the sky.
@@ -2499,21 +1185,18 @@ void PlantGenerator::_build_bracken() {
 					_add_leaf(SURFACE_LEAF, pb, l, Math::lerp(0.4f, 1.0f, s));
 					continue;
 				}
-				// A pinna lying on the ground stays on it (no droop into the soil).
-				const float pbend = at.origin.y < 0.08f ? 0.0f : 0.25f;
-				const LocalVector<Transform3D> pf = _stem_frames(pb, plen, pbend, 4);
-				_add_stem(pb, plen, 0.0012f, 0.0005f, pbend, 4, Math::lerp(0.4f, 1.0f, s));
-				// Pinnules crowded along the pinna, overlapping at their bases, so the blade reads as
-				// one lamina and not as a comb of separate teeth (bracken pinnules are confluent).
-				const int pinnules = int(Math::lerp(11.0f, 20.0f, plen / (blade * 0.52f)));
+				const LocalVector<Transform3D> pf = _stem_frames(pb, plen, 0.25f, 4);
+				_add_stem(pb, plen, 0.0012f, 0.0005f, 0.25f, 4, Math::lerp(0.4f, 1.0f, s));
+				// Pinnules crowded along the pinna, nearly touching, so the blade reads as one lamina.
+				const int pinnules = int(Math::lerp(8.0f, 15.0f, plen / (blade * 0.52f)));
 				for (int q = 0; q < pinnules; q++) {
 					const float u = Math::lerp(0.12f, 0.95f, float(q) / MAX(pinnules - 1, 1));
 					const Transform3D pa = _frame_at(pf, u);
 					const float side2 = (q % 2 == 0) ? 1.0f : -1.0f;
 					Leaf l;
 					l.shape = LEAF_LANCEOLATE;
-					l.length = plen * 0.36f * (1.0f - 0.55f * u);
-					l.width = l.length * 0.46f;
+					l.length = plen * 0.32f * (1.0f - 0.6f * u);
+					l.width = l.length * 0.36f;
 					l.lobes = 5;
 					l.lobe_depth = 0.38f;
 					l.fold = 0.12f;
@@ -2524,14 +1207,6 @@ void PlantGenerator::_build_bracken() {
 				}
 			}
 		}
-	};
-	for (int i = 0; i < fronds; i++) {
-		if (fs.old_share > 0.0f && float(i) < fronds * fs.old_share + 0.5f) {
-			frond(1.0f, 1.0f, fs.old_lodge);
-		}
-		if (fs.unfurl > 0.0f) {
-			frond(fs.unfurl, fs.dead, fs.lodge);
-		}
 	}
 }
 
@@ -2539,30 +1214,14 @@ void PlantGenerator::_build_bracken() {
 // alternate leaves of three or five toothed leaflets on a stalk, and clusters of berries near the
 // tips, red ripening to black.
 void PlantGenerator::_build_bramble() {
-	// Deer browsing (_browse; Kirby 2001, Gill and Fuller 2007: bramble is the winter staple of woodland deer): fewer,
-	// shorter canes in a low hummock, leaves eaten whole or in part, cane tips bitten blunt, little flower or fruit.
-	const float browse = _browse();
-	const int canes = int(_rand(5.0f, 9.0f) * (1.0f - 0.4f * browse));
+	const int canes = int(_rand(5.0f, 9.0f));
 	auto compound = [&](const Transform3D &p_at, const Vector3 &p_radial, float p_s, float p_size) -> void {
 		// Leaf stalk, held out and up; leaflets fan from its tip, facing the light.
 		const Vector3 out = (p_radial + Vector3(0, 0.7f, 0) + p_at.basis.get_column(2) * 0.3f).normalized();
 		Transform3D pb(organ_frame(out, Vector3(0, 1, 0)), p_at.origin);
-		if (browse > 0.0f && rng.randf() < 0.25f * browse) {
-			// Eaten whole: a stalk stub, torn.
-			_add_stem(pb, _rand(0.01f, 0.03f), 0.0015f, 0.0013f, 0.1f, 1, p_s * 0.6f);
-			return;
-		}
 		const Transform3D tip = _add_stem(pb, _rand(0.035f, 0.07f), 0.0015f, 0.0012f, 0.3f, 2, p_s * 0.6f);
 		const int leaflets = rng.randf() < 0.4f ? 5 : 3;
 		for (int q = 0; q < leaflets; q++) {
-			float cut = 0.0f;
-			if (browse > 0.0f) {
-				const float r = rng.randf();
-				if (r < 0.18f * browse) {
-					continue; // A leaflet bitten off.
-				}
-				cut = r < 0.75f * browse ? _rand(0.25f, 0.65f) : 0.0f;
-			}
 			const float spread = (float(q) - (leaflets - 1) * 0.5f) * (leaflets == 5 ? 0.75f : 1.0f);
 			const Vector3 f = (Basis(Vector3(0, 1, 0), spread).xform(tip.basis.get_column(2) * Vector3(1, 0, 1)) + Vector3(0, 0.15f, 0)).normalized();
 			Leaf l;
@@ -2575,16 +1234,11 @@ void PlantGenerator::_build_bramble() {
 			l.fold = 0.25f;
 			l.bend = _rand(0.4f, 0.8f);
 			l.segments = 7;
-			l.cut = cut;
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(f, Vector3(0, 1, 0)), tip.origin), l, Math::lerp(0.3f, 1.0f, p_s), Math::lerp(0.75f, 1.0f, p_s));
 		}
 	};
 	for (int c = 0; c < canes; c++) {
-		// (Drawn in this order to keep the unbrowsed canes as they were.)
-		const float cane_el = _rand(1.25f, 1.48f);
-		const float cane_az = _rand(0.0f, Math::TAU);
-		// Browsed canes spread low from the stool instead of arching up.
-		Transform3D base = stem_base(cane_az, browse > 0.0f ? Math::lerp(cane_el, cane_el * 0.55f, browse) : cane_el);
+		Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.25f, 1.48f));
 		base.origin = Vector3(_rand(-0.1f, 0.1f), 0.0f, _rand(-0.1f, 0.1f));
 		float len = _rand(0.9f, 1.9f);
 		float arch = _rand(1.7f, 2.3f);
@@ -2600,32 +1254,8 @@ void PlantGenerator::_build_bramble() {
 				}
 			}
 		}
-		bool bitten = false;
-		if (browse > 0.0f) {
-			// Kept low: the cane is bitten back each winter to the hummock (about 0.3-0.6 m).
-			const float keep = Math::lerp(1.0f, _rand(0.35f, 0.6f), browse);
-			len *= keep;
-			arch *= keep;
-			bitten = rng.randf() < browse;
-		}
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, arch, 14);
-		const Transform3D cane_tip = _add_stem(base, len, 0.0045f, 0.002f, arch, 14, 0.0f);
-		if (bitten) {
-			// The bite leaves a blunt end; two side buds behind it push short shoots with small leaves.
-			const int shoots = int(_rand(2.0f, 5.0f));
-			for (int q = 0; q < shoots; q++) {
-				const Transform3D at = _frame_at(fr, _rand(0.55f, 0.95f));
-				const float b = _rand(0.0f, Math::TAU);
-				const Vector3 d = (at.basis.get_column(0) * Math::cos(b) + at.basis.get_column(1) * Math::sin(b) + Vector3(0, 0.8f, 0)).normalized();
-				Transform3D sb(organ_frame(d, Vector3(0, 1, 0)), at.origin);
-				const float slen = _rand(0.05f, 0.14f);
-				const LocalVector<Transform3D> sf = _stem_frames(sb, slen, 0.3f, 3);
-				_add_stem(sb, slen, 0.0022f, 0.0012f, 0.3f, 3, 0.8f);
-				const Transform3D st = _frame_at(sf, 1.0f);
-				compound(st, st.basis.get_column(0), 0.95f, 0.55f);
-			}
-		}
-		(void)cane_tip;
+		_add_stem(base, len, 0.0045f, 0.002f, arch, 14, 0.0f);
 		const int nodes = int(len / 0.075f);
 		float a = _rand(0.0f, Math::TAU);
 		for (int k = 0; k < nodes; k++) {
@@ -2638,7 +1268,7 @@ void PlantGenerator::_build_bramble() {
 			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
 			compound(at, radial, s, Math::lerp(1.0f, 0.65f, s));
 			// Flowering laterals from the arch: short shoots with their own leaves.
-			if (s > 0.25f && s < 0.85f && rng.randf() < 0.4f * (1.0f - browse)) {
+			if (s > 0.25f && s < 0.85f && rng.randf() < 0.4f) {
 				Transform3D lb(organ_frame((radial + Vector3(0, 0.9f, 0)).normalized(), Vector3(0, 1, 0)), at.origin);
 				const float llen = _rand(0.12f, 0.3f);
 				const LocalVector<Transform3D> lf = _stem_frames(lb, llen, 0.4f, 4);
@@ -2652,128 +1282,12 @@ void PlantGenerator::_build_bramble() {
 				}
 			}
 			// Berry clusters on the upper side of the arch.
-			if (s > 0.35f && s < 0.75f && rng.randf() < 0.35f * (1.0f - browse)) {
+			if (s > 0.35f && s < 0.75f && rng.randf() < 0.35f) {
 				const int berries = int(_rand(3.0f, 8.0f));
 				for (int q = 0; q < berries; q++) {
 					const Vector3 o = at.origin + radial * 0.02f + Vector3(_rand(-0.02f, 0.02f), _rand(-0.03f, 0.0f), _rand(-0.02f, 0.02f));
 					// A drupelet cluster: a small dome (berry colour on the petal surface).
 					_add_head(SURFACE_PETAL, Transform3D(organ_frame(Vector3(0, -1, 0), Vector3(1, 0, 0)), o), _rand(0.006f, 0.009f), _rand(0.009f, 0.013f));
-				}
-			}
-		}
-	}
-}
-
-// Raspberry (Rubus idaeus), the clearing bramble (Grime et al. 2007; Ellenberg light 7): canes suckering up from
-// spreading roots in a loose clump, upright to 1-1.8 m and nodding at the tip, with pinnate leaves of three to five
-// toothed leaflets, and on the second-year canes short flowering laterals with red fruit.
-void PlantGenerator::_build_raspberry() {
-	// Deer browsing (_browse): canes bitten at the leader and bushy from the buds below it, leaves eaten, little fruit.
-	const float browse = _browse();
-	const int canes = int(_rand(6.0f, 12.0f));
-	auto compound = [&](const Transform3D &p_at, const Vector3 &p_radial, float p_s, float p_size) -> void {
-		const Vector3 out = (p_radial + Vector3(0, 0.45f, 0)).normalized();
-		Transform3D pb(organ_frame(out, Vector3(0, 1, 0)), p_at.origin);
-		const float rachis = _rand(0.06f, 0.1f) * p_size;
-		const LocalVector<Transform3D> rf = _stem_frames(pb, rachis, 0.5f, 3);
-		const Transform3D tip = _add_stem(pb, rachis, 0.0016f, 0.0011f, 0.5f, 3, p_s * 0.6f);
-		const int pairs = rng.randf() < 0.45f ? 2 : 1; // Three or five leaflets.
-		auto leaflet = [&](const Transform3D &p_from, const Vector3 &p_dir, float p_len) {
-			float cut = 0.0f;
-			if (browse > 0.0f) {
-				const float r = rng.randf();
-				if (r < 0.3f * browse) {
-					return; // Bitten off.
-				}
-				cut = r < 0.7f * browse ? _rand(0.25f, 0.6f) : 0.0f;
-			}
-			Leaf l;
-			l.cut = cut;
-			l.shape = LEAF_OVATE;
-			l.length = p_len;
-			l.width = l.length * 0.55f;
-			l.petiole = 0.05f;
-			l.lobes = 12;
-			l.lobe_depth = 0.08f; // Doubly serrate.
-			l.fold = 0.3f;
-			l.bend = _rand(0.3f, 0.6f);
-			l.segments = 7;
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((p_dir + Vector3(0, 0.1f, 0)).normalized(), Vector3(0, 1, 0)), p_from.origin), l, Math::lerp(0.3f, 1.0f, p_s), Math::lerp(0.75f, 1.0f, p_s));
-		};
-		// The terminal leaflet, the biggest, on its own stalk; lateral pairs sessile along the rachis.
-		leaflet(tip, tip.basis.get_column(2), _rand(0.1f, 0.14f) * p_size);
-		for (int q = 0; q < pairs; q++) {
-			const Transform3D at = _frame_at(rf, q == 0 ? 0.55f : 0.25f);
-			const Vector3 side = at.basis.get_column(0);
-			const Vector3 fw = at.basis.get_column(2);
-			const float len = _rand(0.08f, 0.11f) * p_size * (q == 0 ? 1.0f : 0.85f);
-			leaflet(at, (side + fw * 0.5f).normalized(), len);
-			leaflet(at, (-side + fw * 0.5f).normalized(), len);
-		}
-	};
-	for (int c = 0; c < canes; c++) {
-		// Suckers: canes come up apart over the clump, upright with a slight outward lean.
-		const float ca = _rand(0.0f, Math::TAU);
-		const float cr = _rand(0.0f, 0.35f);
-		Transform3D base = stem_base(ca, Math::PI * 0.5f - _rand(0.06f, 0.2f)); // Elevation: nearly upright.
-		base.origin = Vector3(Math::cos(ca) * cr, 0.0f, Math::sin(ca) * cr);
-		const bool second_year = rng.randf() < 0.5f; // Floricanes fruit, then die.
-		float len = _rand(0.8f, 1.7f) * (second_year ? 1.0f : 0.85f);
-		float nod = _rand(0.25f, 0.5f); // The tip nods over.
-		const bool bitten = browse > 0.0f && rng.randf() < 0.3f + 0.7f * browse;
-		if (bitten) {
-			len *= Math::lerp(1.0f, _rand(0.3f, 0.55f), browse);
-			nod *= 0.3f; // No soft tip left to nod.
-		}
-		const LocalVector<Transform3D> fr = _stem_frames(base, len, nod, 12);
-		_add_stem(base, len, 0.0055f, 0.0025f, nod, 12, 0.0f);
-		if (bitten) {
-			// Two or three buds below the bite push side shoots: a bushy, flat-topped cane.
-			const int shoots = int(_rand(2.0f, 4.0f));
-			for (int q = 0; q < shoots; q++) {
-				const Transform3D at = _frame_at(fr, _rand(0.7f, 0.95f));
-				const float b = _rand(0.0f, Math::TAU);
-				const Vector3 d = (at.basis.get_column(0) * Math::cos(b) + at.basis.get_column(1) * Math::sin(b) + Vector3(0, 0.9f, 0)).normalized();
-				Transform3D sb(organ_frame(d, Vector3(0, 1, 0)), at.origin);
-				const float slen = _rand(0.08f, 0.22f) * (1.0f - 0.4f * browse);
-				const LocalVector<Transform3D> sf = _stem_frames(sb, slen, 0.4f, 4);
-				_add_stem(sb, slen, 0.0025f, 0.0013f, 0.4f, 4, 0.8f);
-				for (int w = 0; w < 2; w++) {
-					const Transform3D sa = _frame_at(sf, w == 0 ? 0.55f : 1.0f);
-					const float c = b + w * GOLDEN_ANGLE;
-					compound(sa, sa.basis.get_column(0) * Math::cos(c) + sa.basis.get_column(1) * Math::sin(c), 0.9f, 0.7f);
-				}
-			}
-		}
-		const int nodes = int(len / 0.07f);
-		float a = _rand(0.0f, Math::TAU);
-		for (int k = 0; k < nodes; k++) {
-			const float s = (k + 0.7f) / nodes;
-			if (s < 0.18f) {
-				continue; // Bare at the foot, shaded by its neighbours.
-			}
-			const Transform3D at = _frame_at(fr, s);
-			a += GOLDEN_ANGLE;
-			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-			compound(at, radial, s, Math::lerp(1.15f, 0.7f, s));
-			if (second_year && s > 0.35f && rng.randf() < 0.45f * (1.0f - browse)) {
-				// A flowering lateral: a short shoot with a few smaller leaves and fruit hanging under it.
-				Transform3D lb(organ_frame((radial + Vector3(0, 0.6f, 0)).normalized(), Vector3(0, 1, 0)), at.origin);
-				const float llen = _rand(0.1f, 0.22f);
-				const LocalVector<Transform3D> lf = _stem_frames(lb, llen, 0.6f, 4);
-				_add_stem(lb, llen, 0.0018f, 0.001f, 0.6f, 4, s);
-				const int ln = int(_rand(2.0f, 4.0f));
-				for (int q = 0; q < ln; q++) {
-					const float u = (q + 0.8f) / ln;
-					const Transform3D la = _frame_at(lf, u);
-					const float b = a + q * GOLDEN_ANGLE;
-					compound(la, la.basis.get_column(0) * Math::cos(b) + la.basis.get_column(1) * Math::sin(b), Math::lerp(s, 1.0f, u), 0.6f);
-				}
-				const Transform3D end = _frame_at(lf, 1.0f);
-				const int fruit = int(_rand(1.0f, 3.0f));
-				for (int q = 0; q < fruit; q++) {
-					const Vector3 o = end.origin + Vector3(_rand(-0.02f, 0.02f), _rand(-0.04f, -0.01f), _rand(-0.02f, 0.02f));
-					_add_head(SURFACE_PETAL, Transform3D(organ_frame(Vector3(0, -1, 0), Vector3(1, 0, 0)), o), _rand(0.007f, 0.009f), _rand(0.009f, 0.012f));
 				}
 			}
 		}
@@ -2799,18 +1313,6 @@ void PlantGenerator::_build_foxglove() {
 		l.bend = _rand(0.8f, 1.3f);
 		l.segments = 9;
 		_add_leaf(SURFACE_LEAF, stem_base(spin + i * GOLDEN_ANGLE, Math::lerp(0.35f, 0.9f, u)), l, 0.0f, Math::lerp(0.75f, 1.0f, u));
-	}
-	// The spike opens from the bottom up over the plant's flowering (Grime et al. 2007); the lower
-	// bells drop as the top ones open, leaving their seed capsules. In seed: capsules all the way up.
-	float progress = -1.0f;
-	float dead = 0.0f;
-	const Bloom bloom = _bloom(false, &progress, &dead);
-	if (bloom == BLOOM_NONE) {
-		return; // A rosette: the first year, or before the spike rises.
-	}
-	const Wither wither(this, dead);
-	if (bloom == BLOOM_SEED) {
-		progress = 1.2f;
 	}
 	Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.48f, 1.57f));
 	const float len = _rand(0.6f, 1.2f);
@@ -2843,15 +1345,7 @@ void PlantGenerator::_build_foxglove() {
 		const Transform3D at = _frame_at(fr, s);
 		const float a = face + _rand(-0.6f, 0.6f);
 		const Vector3 side(Math::cos(a), 0.0f, Math::sin(a));
-		// Without a season, the mid-flowering spike: buds at the top, every lower bell open.
-		const float open = progress < 0.0f ? 1.0f - smoothstep_f(0.6f, 1.0f, u) : 1.0f - smoothstep_f(progress + 0.15f, progress + 0.45f, u);
-		if (progress >= 0.0f && u < progress) {
-			// A capsule on its pedicel, pointing up and out, green going brown.
-			Transform3D cb(organ_frame((side * 0.6f + Vector3(0, 0.8f, 0)).normalized(), Vector3(0, 1, 0)), at.origin + side * 0.006f);
-			const Transform3D ct = _add_stem(cb, 0.006f, 0.0008f, 0.0008f, 0.0f, 1, s);
-			_add_head(SURFACE_STEM, ct, 0.0035f, 0.009f, bloom == BLOOM_SEED ? Color(0.8f, 0.6f, 0.42f) : Color(1, 1, 1));
-			continue;
-		}
+		const float open = 1.0f - smoothstep_f(0.6f, 1.0f, u); // Buds at the top.
 		const float tube = Math::lerp(0.012f, 0.045f, open);
 		// Short pedicel, then the bell hangs out and down.
 		Transform3D fb(organ_frame((side * 0.8f + Vector3(0, -0.6f, 0)).normalized(), Vector3(0, 1, 0)), at.origin + side * 0.008f);
@@ -2886,8 +1380,6 @@ static float tex_noise(float p_x, float p_y, uint32_t p_seed) {
 	fy = fy * fy * (3.0f - 2.0f * fy);
 	const float a = tex_hash(ix, iy, p_seed);
 	const float b = tex_hash(ix + 1, iy, p_seed);
-
-
 	const float c = tex_hash(ix, iy + 1, p_seed);
 	const float d = tex_hash(ix + 1, iy + 1, p_seed);
 	return Math::lerp(Math::lerp(a, b, fx), Math::lerp(c, d, fx), fy);
@@ -2896,6 +1388,8 @@ static float tex_noise(float p_x, float p_y, uint32_t p_seed) {
 static float tex_fbm(float p_x, float p_y, uint32_t p_seed) {
 	return 0.5f * tex_noise(p_x, p_y, p_seed) + 0.3f * tex_noise(p_x * 2.3f, p_y * 2.3f, p_seed + 7) + 0.2f * tex_noise(p_x * 5.1f, p_y * 5.1f, p_seed + 13);
 }
+
+
 
 // Forest floor (docs/ideas/forest-floor.md).
 
@@ -2929,44 +1423,25 @@ void PlantGenerator::_build_needle_litter() {
 		const Transform3D mid = _add_stem(cb, len * 0.6f, len * 0.12f, len * 0.16f, 0.0f, 3, 0.0f, SURFACE_PETAL);
 		_add_stem(mid, len * 0.4f, len * 0.16f, len * 0.03f, 0.0f, 3, 0.0f, SURFACE_PETAL);
 	}
-	// The near-camera card (litter_deposit > 1): more needles fallen over these, and twig ends.
-	if (litter_deposit > 1.0f) {
-		const int more = int(_rand(70.0f, 120.0f) * (litter_deposit - 1.0f));
-		for (int i = 0; i < more; i++) {
-			n.length = _rand(0.012f, 0.045f);
-			n.bend = _rand(-0.3f, 0.3f);
-			const float r = radius * 1.1f * Math::sqrt(rng.randf());
-			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 at(Math::cos(a) * r, 0.003f + 0.004f * rng.randf(), Math::sin(a) * r);
-			const float k = _rand(0.7f, 1.3f);
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.15f, 0.15f)), Vector3(0, 1, 0)), at), n, 0.0f, 0.9f, Color(k, k * 0.9f, k * 0.8f));
-		}
-		_add_twig_ends(int(_rand(1.0f, 3.0f) * (litter_deposit - 1.0f)), 0.004f);
-	}
 }
 
 // Fallen twigs and small branches: grey-brown sticks lying on the litter, forked, a few side
 // shoots, the thicker ones cracked short.
 void PlantGenerator::_build_twigs() {
-	// Fine woody debris under 1 cm (docs/ideas/forest-floor.md, step 6; Brown 1974's classes):
-	// short broken pieces, a few forked, most of them thin; the trees' generator lays the sticks
-	// and branches from 1 cm up. A card scatters several over half a metre.
-	const int sticks = int(_rand(4.0f, 9.0f));
+	const int sticks = int(_rand(1.0f, 4.0f));
 	for (int i = 0; i < sticks; i++) {
-		const float u = rng.randf();
-		const float len = Math::lerp(0.05f, 0.35f, u * u);
-		const float r0 = Math::lerp(0.001f, 0.0045f, rng.randf() * (0.4f + 0.6f * u)); // 2 to 9 mm thick.
-		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.03f, 0.05f)), Vector3(0, 1, 0)), Vector3(_rand(-0.25f, 0.25f), r0 * 0.6f, _rand(-0.25f, 0.25f)));
-		const float bend = _rand(-0.35f, 0.35f);
-		const LocalVector<Transform3D> fr = _stem_frames(b, len, bend, 4);
-		_add_stem(b, len, r0, r0 * _rand(0.45f, 0.8f), bend, 4, 0.0f);
-		// Longer pieces keep a side twig or two; short ones are broken bits.
-		const int sides = len > 0.15f ? int(_rand(0.0f, 3.0f)) : 0;
+		const float len = _rand(0.15f, 0.7f);
+		const float r0 = len * _rand(0.012f, 0.025f);
+		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.03f, 0.06f)), Vector3(0, 1, 0)), Vector3(_rand(-0.15f, 0.15f), r0, _rand(-0.15f, 0.15f)));
+		const LocalVector<Transform3D> fr = _stem_frames(b, len, _rand(-0.4f, 0.4f), 5);
+		_add_stem(b, len, r0, r0 * 0.4f, _rand(-0.4f, 0.4f), 5, 0.0f);
+		const int sides = int(_rand(1.0f, 5.0f));
 		for (int k = 0; k < sides; k++) {
-			const Transform3D at = _frame_at(fr, _rand(0.25f, 0.85f));
+			const Transform3D at = _frame_at(fr, _rand(0.2f, 0.85f));
 			const float sgn = rng.randf() < 0.5f ? -1.0f : 1.0f;
-			const Vector3 d = (at.basis.get_column(2) + at.basis.get_column(0) * sgn * _rand(0.6f, 1.2f) + Vector3(0, _rand(-0.05f, 0.2f), 0)).normalized();
-			_add_stem(Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), len * _rand(0.15f, 0.4f), r0 * 0.5f, r0 * 0.25f, _rand(-0.4f, 0.4f), 2, 0.0f);
+			const Vector3 d = (at.basis.get_column(2) + at.basis.get_column(0) * sgn * _rand(0.6f, 1.2f) + Vector3(0, _rand(-0.1f, 0.25f), 0)).normalized();
+			const float sl = len * _rand(0.15f, 0.4f);
+			_add_stem(Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), sl, r0 * 0.45f, r0 * 0.15f, _rand(-0.4f, 0.4f), 3, 0.0f);
 		}
 	}
 }
@@ -2997,15 +1472,7 @@ void PlantGenerator::_build_wood_sorrel() {
 	}
 	const int flowers = int(_rand(0.0f, 4.0f));
 	for (int f = 0; f < flowers; f++) {
-		const Bloom bloom = _bloom();
-		if (bloom == BLOOM_NONE) {
-			continue;
-		}
 		const Transform3D top = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.3f, 1.5f)), _rand(0.06f, 0.1f), 0.0008f, 0.0006f, _rand(0.3f, 0.8f), 4, 0.0f);
-		if (bloom == BLOOM_SEED) {
-			_add_head(SURFACE_STEM, top, 0.002f, 0.005f); // The capsule that flings the seeds.
-			continue;
-		}
 		Leaf p;
 		p.shape = LEAF_SPATULATE;
 		p.length = 0.009f;
@@ -3025,33 +1492,6 @@ void PlantGenerator::_build_wood_sorrel() {
 // (advance regeneration, waiting under the canopy for a gap) grow flat horizontal sprays from the
 // upper nodes, the shade form that catches the 1 to 5% of light that reaches the floor.
 void PlantGenerator::_build_seedling() {
-	// A seedling of one of the stand's trees (litter_leaves, as for the leaf litter): its true leaves
-	// take that tree's form at about two thirds of the adult size (shade leaves of young trees).
-	int kind = -1, count = 0;
-	float depth = 0.0f, half_w = 0.3f, adult = 0.0f;
-	if (!litter_leaves.is_empty()) {
-		float total = 0.0f;
-		for (int i = 0; i < litter_leaves.size(); i++) {
-			total += float(Dictionary(litter_leaves[i]).get("share", 1.0f));
-		}
-		float pick = rng.randf() * total;
-		Dictionary f = litter_leaves[0];
-		for (int i = 0; i < litter_leaves.size(); i++) {
-			f = litter_leaves[i];
-			pick -= float(f.get("share", 1.0f));
-			if (pick <= 0.0f) {
-				break;
-			}
-		}
-		kind = int(f.get("kind", 0));
-		count = int(f.get("count", 0));
-		depth = CLAMP(float(f.get("depth", 0.0f)), 0.0f, 0.8f);
-		half_w = CLAMP(float(f.get("width", 0.3f)), 0.05f, 0.7f);
-		adult = CLAMP(float(f.get("size", 0.08f)), 0.02f, 0.4f);
-		if (kind == 5) {
-			kind = -1; // Conifer seedlings are not built here.
-		}
-	}
 	const float len = _rand(0.08f, 0.75f);
 	const float age = CLAMP((len - 0.15f) / 0.5f, 0.0f, 1.0f);
 	const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.4f, 1.55f));
@@ -3077,22 +1517,13 @@ void PlantGenerator::_build_seedling() {
 		az += Math::PI;
 		const Vector3 side(Math::cos(az), 0.0f, Math::sin(az));
 		if (k == 0 && age < 0.3f) {
-			// Seed leaves: a fleshy pair, fan-shaped and wider than long (beech), strap-shaped (maples,
-			// ash), or none above ground where they stay in the seed (oaks).
-			if (kind == 1) {
-				continue;
-			}
+			// Seed leaves: a fleshy pair, fan-shaped, wider than long.
 			Leaf c = l;
 			c.lobes = 0;
 			c.length = _rand(0.015f, 0.02f);
 			c.width = c.length * 1.8f;
 			c.petiole = 0.1f;
 			c.fold = 0.05f;
-			if (kind >= 2) {
-				c.shape = LEAF_LANCEOLATE;
-				c.length = _rand(0.025f, 0.035f);
-				c.width = c.length * 0.25f;
-			}
 			for (int s = -1; s <= 1; s += 2) {
 				const Vector3 cd = (Vector3(-side.z, 0.0f, side.x) * float(s) + Vector3(0, 0.25f, 0)).normalized();
 				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(cd, up), at.origin), c, t1);
@@ -3102,11 +1533,7 @@ void PlantGenerator::_build_seedling() {
 		// Shade leaves: large and thin, the lowest the oldest.
 		l.length = _rand(0.045f, 0.075f) * (0.75f + 0.25f * age);
 		l.width = l.length * _rand(0.55f, 0.65f);
-		if (kind >= 0) {
-			_add_seedling_leaf(Transform3D(organ_frame((side + Vector3(0, 0.12f, 0)).normalized(), up), at.origin), kind, count, depth, half_w, adult * _rand(0.55f, 0.75f) * (0.75f + 0.25f * age), t1);
-		} else {
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((side + Vector3(0, 0.12f, 0)).normalized(), up), at.origin), l, t1);
-		}
+		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((side + Vector3(0, 0.12f, 0)).normalized(), up), at.origin), l, t1);
 		// Side shoots from the upper nodes, longest low down: a layered, flat crown.
 		if (age > 0.25f && t1 > 0.3f && t1 < 0.92f && rng.randf() < 0.3f + 0.35f * age) {
 			const Vector3 sd = (side + Vector3(0, _rand(0.0f, 0.15f), 0)).normalized();
@@ -3123,99 +1550,9 @@ void PlantGenerator::_build_seedling() {
 				Leaf sl_leaf = l;
 				sl_leaf.length = _rand(0.035f, 0.065f) * (1.0f - 0.25f * j / sn);
 				sl_leaf.width = sl_leaf.length * _rand(0.55f, 0.65f);
-				const Transform3D lf_at(organ_frame((across + fwd * 0.45f + Vector3(0, 0.05f, 0)).normalized(), up), s_at.origin);
-				if (kind >= 0) {
-					_add_seedling_leaf(lf_at, kind, count, depth, half_w, adult * _rand(0.45f, 0.65f) * (1.0f - 0.25f * j / sn), MIN(1.0f, t1 + 0.1f * (j + 1)));
-				} else {
-					_add_leaf(SURFACE_LEAF, lf_at, sl_leaf, MIN(1.0f, t1 + 0.1f * (j + 1)));
-				}
+				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((across + fwd * 0.45f + Vector3(0, 0.05f, 0)).normalized(), up), s_at.origin), sl_leaf, MIN(1.0f, t1 + 0.1f * (j + 1)));
 			}
 		}
-	}
-}
-
-// One true leaf of a tree seedling in the tree's form (kind as in litter_leaves): simple, lobed,
-// palmate, pinnate (a short rachis with 3 to 5 leaflets, as young ash and rowan carry) or digitate.
-void PlantGenerator::_add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t) {
-	Leaf l;
-	l.shape = LEAF_OVATE;
-	l.length = p_size;
-	l.width = p_size * 2.0f * p_half_width;
-	l.petiole = 0.1f;
-	l.fold = 0.15f;
-	l.bend = 0.1f;
-	l.segments = 6;
-	const Basis &frame = p_at.basis;
-	switch (p_kind) {
-		case 1:
-			l.lobes = MAX(p_count, 1);
-			l.lobe_depth = p_depth;
-			l.round_lobes = true;
-			l.segments = MAX(6, l.lobes * 3);
-			_add_leaf(SURFACE_LEAF, p_at, l, p_t);
-			break;
-		case 2:
-			l.shape = LEAF_PALMATE;
-			l.width = p_size * 1.05f;
-			l.lobes = MAX((p_count - 1) / 2, 1);
-			l.lobe_depth = p_depth;
-			l.segments = 8;
-			l.petiole = 0.3f;
-			_add_leaf(SURFACE_LEAF, p_at, l, p_t);
-			break;
-		case 3: {
-			const int n = CLAMP(p_count / 2, 1, 2) * 2 + 1;
-			Leaf rachis;
-			rachis.shape = LEAF_LINEAR;
-			rachis.length = p_size * 0.7f;
-			rachis.width = 0.002f;
-			rachis.fold = 0.0f;
-			rachis.segments = 3;
-			_add_leaf(SURFACE_LEAF, p_at, rachis, p_t);
-			Leaf lf = l;
-			lf.shape = LEAF_LANCEOLATE;
-			lf.length = p_size * 1.6f / (n + 1);
-			lf.width = lf.length * 0.4f;
-			lf.petiole = 0.03f;
-			lf.lobes = 6;
-			lf.lobe_depth = 0.04f;
-			for (int q = 0; q < n; q++) {
-				const bool tip = q == n - 1;
-				const float u = (q / 2 + 1.0f) / (n / 2 + 1.0f);
-				const float side = (q % 2 == 0) ? 1.0f : -1.0f;
-				const Vector3 d = tip ? frame.get_column(2) : (frame.get_column(2) * 0.5f + frame.get_column(0) * side).normalized();
-				const Vector3 p = p_at.origin + frame.get_column(2) * (tip ? rachis.length : u * rachis.length * 0.9f);
-				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, frame.get_column(1)), p), lf, p_t);
-			}
-		} break;
-		case 4: {
-			const int n = MAX(p_count, 5);
-			Leaf lf = l;
-			lf.shape = LEAF_SPATULATE;
-			lf.length = p_size * 0.6f;
-			lf.width = lf.length * 0.42f;
-			lf.petiole = 0.0f;
-			Leaf stalk;
-			stalk.shape = LEAF_LINEAR;
-			stalk.length = p_size * 0.4f;
-			stalk.width = 0.002f;
-			stalk.fold = 0.0f;
-			stalk.segments = 2;
-			_add_leaf(SURFACE_LEAF, p_at, stalk, p_t);
-			const Vector3 hub = p_at.origin + frame.get_column(2) * stalk.length;
-			for (int q = 0; q < n; q++) {
-				const float ang = (float(q) / MAX(n - 1, 1) - 0.5f) * 2.6f;
-				const Vector3 d = (frame.get_column(2) * Math::cos(ang) + frame.get_column(0) * Math::sin(ang)).normalized();
-				Leaf lq = lf;
-				lq.length *= 1.0f - 0.35f * Math::abs(ang) / 1.3f;
-				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, frame.get_column(1)), hub), lq, p_t);
-			}
-		} break;
-		default:
-			l.lobes = 6;
-			l.lobe_depth = 0.04f;
-			_add_leaf(SURFACE_LEAF, p_at, l, p_t);
-			break;
 	}
 }
 
@@ -3257,15 +1594,7 @@ void PlantGenerator::_build_woodruff() {
 				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), l, Math::lerp(0.3f, 1.0f, s));
 			}
 		}
-		const Bloom bloom = rng.randf() < 0.6f ? _bloom() : BLOOM_NONE;
-		if (bloom == BLOOM_SEED) {
-			// Small bristly fruits, green, in the old flower heads' place.
-			const Transform3D top = fr[fr.size() - 1];
-			for (int f = 0; f < 4; f++) {
-				const Vector3 off = polar_dir(_rand(0.0f, Math::TAU), _rand(0.6f, 1.2f)) * _rand(0.004f, 0.01f);
-				_add_head(SURFACE_STEM, Transform3D(organ_frame(Vector3(0, 1, 0), Vector3(1, 0, 0)), top.origin + off), 0.0016f, 0.002f);
-			}
-		} else if (bloom == BLOOM_FLOWER) {
+		if (rng.randf() < 0.6f) {
 			const Transform3D top = fr[fr.size() - 1];
 			const int flowers = int(_rand(4.0f, 9.0f));
 			for (int f = 0; f < flowers; f++) {
@@ -3288,8 +1617,6 @@ void PlantGenerator::_build_woodruff() {
 // flower of six to seven tepals, nodding a little.
 void PlantGenerator::_build_wood_anemone() {
 	const int stems = int(_rand(4.0f, 10.0f));
-	// The leaves yellow from about 550 degree days and are gone by 720 (get_presence()).
-	const Wither wither(this, bloom_forcing < 0.0f ? 0.0f : CLAMP((bloom_forcing - 550.0f) / 150.0f, 0.0f, 1.0f));
 	Leaf l;
 	l.shape = LEAF_PALMATE;
 	l.lobes = 3;
@@ -3309,9 +1636,7 @@ void PlantGenerator::_build_wood_anemone() {
 		const float len = _rand(0.1f, 0.22f);
 		const float bend = _rand(0.1f, 0.35f);
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 5);
-		// Out of flower, the stem ends a little above the leaf whorl (no bare flower stalk).
-		const Bloom stage = _bloom();
-		const Transform3D top = _add_stem(base, stage == BLOOM_NONE ? len * 0.68f : len, 0.0012f, 0.0009f, stage == BLOOM_NONE ? bend * 0.68f : bend, 5, 0.0f);
+		const Transform3D top = _add_stem(base, len, 0.0012f, 0.0009f, bend, 5, 0.0f);
 		const Transform3D at = _frame_at(fr, 0.62f);
 		const float spin = _rand(0.0f, Math::TAU);
 		for (int k = 0; k < 3; k++) {
@@ -3320,11 +1645,7 @@ void PlantGenerator::_build_wood_anemone() {
 			const Vector3 d = polar_dir(spin + k * Math::TAU / 3.0f, _rand(0.05f, 0.3f));
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), l, 0.7f);
 		}
-		const Bloom bloom = rng.randf() < 0.85f ? stage : BLOOM_NONE;
-		if (bloom == BLOOM_SEED) {
-			// Tepals fallen: a nodding green head of achenes.
-			_add_head(SURFACE_STEM, Transform3D(organ_frame((top.basis.get_column(2) + Vector3(0, -0.6f, 0)).normalized(), Vector3(0, 1, 0)), top.origin), 0.0035f, 0.005f);
-		} else if (bloom == BLOOM_FLOWER) {
+		if (rng.randf() < 0.85f) {
 			const Vector3 face = (top.basis.get_column(2) + Vector3(0, -0.4f, 0)).normalized();
 			const Basis fb = organ_frame(face, Vector3(0, 1, 0));
 			const int tepals = rng.randf() < 0.5f ? 6 : 7;
@@ -3340,917 +1661,9 @@ void PlantGenerator::_build_wood_anemone() {
 	}
 }
 
-// Common dog-violet (Viola riviniana; Stace 2019): a rosette of long-stalked, heart-shaped leaves
-// 1.5 to 4 cm across with rounded teeth, held 4 to 10 cm up, and nodding blue-violet flowers
-// 1.5 to 2.5 cm across on their own arched stalks: five petals, the lowest broad with a pale spur.
-// Woods, hedge banks and grassland in half shade.
-void PlantGenerator::_build_violet() {
-	const int leaves = int(_rand(8.0f, 16.0f));
-	Leaf l;
-	l.shape = LEAF_ROUND;
-	l.lobes = 7;
-	l.lobe_depth = 0.05f;
-	l.round_lobes = true;
-	l.petiole = 0.0f;
-	l.fold = 0.25f; // The blade cupped and rolled in at the base.
-	l.bend = 0.25f;
-	l.segments = 8;
-	for (int i = 0; i < leaves; i++) {
-		const float az = _rand(0.0f, Math::TAU);
-		const float young = _rand(0.0f, 1.0f);
-		const Transform3D top = _add_stem(stem_base(az, _rand(0.9f, 1.35f)), _rand(0.03f, 0.07f), 0.0011f, 0.0008f, _rand(0.3f, 0.7f), 4, 0.0f);
-		l.length = _rand(0.02f, 0.04f) * (0.7f + 0.3f * young);
-		l.width = l.length * _rand(0.9f, 1.05f);
-		const Vector3 d = (polar_dir(az, 0.0f) + Vector3(0, _rand(0.0f, 0.35f), 0)).normalized();
-		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), top.origin), l, 1.0f);
-	}
-	const int flowers = int(_rand(0.0f, 5.0f));
-	Leaf p;
-	p.shape = LEAF_SPATULATE;
-	p.fold = 0.15f;
-	p.bend = -0.2f;
-	p.segments = 3;
-	for (int f = 0; f < flowers; f++) {
-		const Bloom bloom = _bloom();
-		if (bloom == BLOOM_NONE) {
-			continue;
-		}
-		if (bloom == BLOOM_SEED) {
-			// The capsule stands up on its straightened stalk, three-valved, green.
-			const Transform3D ct = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.25f, 1.5f)), _rand(0.05f, 0.1f), 0.0008f, 0.0006f, _rand(0.0f, 0.3f), 4, 0.0f);
-			_add_head(SURFACE_STEM, ct, 0.003f, 0.009f);
-			continue;
-		}
-		// The stalk arches over so the flower faces sideways and a little down.
-		const Transform3D top = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.0f, 1.35f)), _rand(0.06f, 0.12f), 0.0008f, 0.0006f, _rand(0.8f, 1.3f), 5, 0.0f);
-		const Vector3 face = (top.basis.get_column(2) * Vector3(1, 0, 1) + Vector3(0, -0.15f, 0)).normalized();
-		const Basis fb = organ_frame(face, Vector3(0, 1, 0));
-		const float sz = _rand(0.008f, 0.011f);
-		// Two upper petals, two side petals, one broad lower lip.
-		const float ang[5] = { 1.2f, 1.95f, -0.25f, 3.4f, -1.57f };
-		for (int k = 0; k < 5; k++) {
-			const Vector3 d = (fb.get_column(0) * Math::cos(ang[k]) + fb.get_column(1) * Math::sin(ang[k]) + face * 0.35f).normalized();
-			p.length = k == 4 ? sz * 1.15f : sz;
-			p.width = k == 4 ? sz * 0.9f : sz * 0.65f;
-			_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, face), top.origin), p, 1.0f);
-		}
-		_add_head(SURFACE_CENTRE, Transform3D(fb, top.origin), 0.0012f, 0.002f);
-	}
-}
-
-// Ground ivy (Glechoma hederacea; Stace 2019): a creeping labiate of woods, hedge bottoms and shady grass on
-// moist, richer soils. Square purplish runners lie on the ground and root at the nodes; each node carries a pair
-// of kidney-shaped, round-toothed leaves 1 to 3 cm across on stalks 2 to 5 cm long, so the mat is a few
-// centimetres deep. From March to May short shoots stand up 5 to 15 cm with blue-violet two-lipped flowers in
-// twos and threes in the upper leaf axils.
-void PlantGenerator::_build_ground_ivy() {
-	Leaf l;
-	l.shape = LEAF_ROUND;
-	l.lobes = 9;
-	l.lobe_depth = 0.08f;
-	l.round_lobes = true;
-	l.petiole = 0.0f;
-	l.fold = 0.15f;
-	l.bend = -0.1f; // The blade's edges turned a little down.
-	l.segments = 8;
-	auto pair = [&](const Transform3D &p_node, float p_size, float p_stalk, float p_wind) {
-		const Vector3 along = p_node.basis.get_column(2);
-		const Vector3 side = along.cross(Vector3(0, 1, 0)).normalized();
-		const float tint_k = _rand(0.85f, 1.1f);
-		// Shade and cold flush the leaves purple underneath and along the margin.
-		const Color tint = rng.randf() < 0.25f ? Color(1.15f * tint_k, 0.85f * tint_k, 1.05f * tint_k) : Color(tint_k, tint_k, tint_k);
-		for (int k = 0; k < 2; k++) {
-			const Vector3 out = side * (k == 0 ? 1.0f : -1.0f);
-			// The stalk leans out from the runner and arches, so the blade lies spread over the mat beside it.
-			const Transform3D stalk(organ_frame((out * 1.1f + Vector3(0, 0.8f, 0) + along * _rand(-0.3f, 0.5f)).normalized(), Vector3(0, 1, 0)), p_node.origin);
-			const Transform3D top = _add_stem(stalk, p_stalk * _rand(0.8f, 1.2f), 0.0006f, 0.0005f, _rand(0.6f, 1.0f), 3, p_wind);
-			l.length = p_size * _rand(0.85f, 1.1f);
-			l.width = l.length * _rand(1.15f, 1.35f); // Kidney-shaped: wider than long.
-			const Vector3 d = (out + Vector3(0, _rand(0.1f, 0.4f), 0) + along * 0.3f).normalized();
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), top.origin), l, MIN(p_wind + 0.4f, 1.0f), 1.0f, tint);
-		}
-	};
-	const int runners = int(_rand(2.0f, 5.0f));
-	for (int r = 0; r < runners; r++) {
-		const float az = _rand(0.0f, Math::TAU);
-		Transform3D base(organ_frame(polar_dir(az, -0.02f), Vector3(0, 1, 0)), Vector3(_rand(-0.02f, 0.02f), 0.002f, _rand(-0.02f, 0.02f)));
-		const float len = _rand(0.12f, 0.3f);
-		const float bend = 0.0f; // Rooting at the nodes, the runner stays down.
-		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 6);
-		_add_stem(base, len, 0.0011f, 0.0008f, bend, 6, 0.0f);
-		const int nodes = MAX(int(len / _rand(0.03f, 0.045f)), 3);
-		for (int n = 1; n <= nodes; n++) {
-			const float s = float(n) / nodes;
-			Transform3D node = _frame_at(fr, s);
-			node.origin.y = MIN(node.origin.y, 0.004f); // The runner lies on the ground.
-			// Leaves smaller towards the growing tip.
-			pair(node, Math::lerp(0.034f, 0.016f, s), Math::lerp(0.03f, 0.012f, s), 0.0f);
-		}
-	}
-	// The spring shoots, flowering from the upper axils.
-	const int shoots = int(_rand(0.0f, 3.0f));
-	Leaf p;
-	p.shape = LEAF_SPATULATE;
-	p.fold = 0.3f;
-	p.bend = -0.3f;
-	p.segments = 3;
-	for (int f = 0; f < shoots; f++) {
-		const Bloom bloom = _bloom();
-		if (bloom == BLOOM_NONE) {
-			continue;
-		}
-		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.25f, 1.5f));
-		const float len = _rand(0.05f, 0.14f);
-		const LocalVector<Transform3D> fr = _stem_frames(base, len, _rand(0.0f, 0.3f), 4);
-		_add_stem(base, len, 0.001f, 0.0007f, 0.0f, 4, 0.0f);
-		const int pairs = int(_rand(2.0f, 4.0f));
-		for (int k = 1; k <= pairs; k++) {
-			const float s = float(k) / pairs;
-			const Transform3D node = _frame_at(fr, s);
-			pair(node, Math::lerp(0.02f, 0.012f, s), 0.012f, s);
-			if (bloom != BLOOM_FLOWER || s < 0.5f) {
-				continue;
-			}
-			// Two or three flowers in each upper axil, the tube 1.5 to 2 cm with a spreading lower lip.
-			const int flowers = int(_rand(2.0f, 4.0f));
-			for (int q = 0; q < flowers; q++) {
-				const float a = _rand(0.0f, Math::TAU);
-				const Vector3 face = (Vector3(Math::cos(a), 0.35f, Math::sin(a))).normalized();
-				const Transform3D tube(organ_frame(face, Vector3(0, 1, 0)), node.origin);
-				const Transform3D mouth = _add_stem(tube, _rand(0.009f, 0.014f), 0.0012f, 0.0022f, 0.2f, 2, s, SURFACE_PETAL);
-				p.length = _rand(0.004f, 0.006f);
-				p.width = p.length * 0.9f;
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame((face + Vector3(0, -0.6f, 0)).normalized(), face), mouth.origin), p, 1.0f);
-			}
-		}
-	}
-}
-
-// Herb Robert (Geranium robertianum; Stace 2019): a straggling herb 10 to 40 cm, its stems and
-// stalks flushed red (more in sun), leaves cut into three to five deeply lobed leaflets, and
-// small pink flowers of five rounded petals 1.4 to 1.8 cm across in pairs. Woodland rides,
-// clearings, hedge bottoms and old walls: the light patches of the floor.
-void PlantGenerator::_build_herb_robert() {
-	const int stems = int(_rand(3.0f, 7.0f));
-	Leaf lf;
-	lf.shape = LEAF_PALMATE;
-	lf.lobes = 2;
-	lf.lobe_depth = 0.6f;
-	lf.petiole = 0.15f;
-	lf.fold = 0.15f;
-	lf.bend = 0.3f;
-	lf.segments = 7;
-	Leaf p;
-	p.shape = LEAF_SPATULATE;
-	p.fold = 0.1f;
-	p.bend = -0.15f;
-	p.segments = 3;
-	for (int i = 0; i < stems; i++) {
-		const float az = _rand(0.0f, Math::TAU);
-		const float len = _rand(0.1f, 0.3f);
-		const float bend = _rand(0.3f, 0.7f);
-		const Transform3D base = stem_base(az, _rand(0.9f, 1.3f));
-		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 6);
-		const Transform3D top = _add_stem(base, len, 0.0016f, 0.001f, bend, 6, 0.0f);
-		const int nodes = int(_rand(3.0f, 5.0f));
-		for (int n = 0; n < nodes; n++) {
-			const Transform3D at = _frame_at(fr, (n + 1.0f) / (nodes + 1.0f));
-			for (int s = -1; s <= 1; s += 2) {
-				// Opposite leaves on long stalks; each blade of three leaflets fanned out.
-				const Vector3 side = (at.basis.get_column(0) * float(s) + Vector3(0, 0.3f, 0)).normalized();
-				const Transform3D stalk = _add_stem(Transform3D(organ_frame(side, Vector3(0, 1, 0)), at.origin), _rand(0.02f, 0.045f), 0.0006f, 0.0005f, 0.3f, 2, 0.5f);
-				const float size = _rand(0.022f, 0.035f) * (1.15f - 0.3f * n / nodes);
-				for (int q = -1; q <= 1; q++) {
-					const Vector3 fwd = stalk.basis.get_column(2) * Vector3(1, 0, 1);
-					const Vector3 across = fwd.cross(Vector3(0, 1, 0)).normalized();
-					const Vector3 d = (fwd.normalized() + across * (1.1f * q) + Vector3(0, 0.1f, 0)).normalized();
-					lf.length = size * (q == 0 ? 1.0f : 0.8f);
-					lf.width = lf.length * 0.9f;
-					_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), stalk.origin), lf, 0.8f);
-				}
-			}
-		}
-		const Bloom bloom = rng.randf() < 0.8f ? _bloom() : BLOOM_NONE;
-		if (bloom == BLOOM_SEED) {
-			// The crane's bill: the fruit's long beak, pointing up.
-			const Vector3 up = (top.basis.get_column(2) + Vector3(0, 1.2f, 0)).normalized();
-			_add_stem(Transform3D(organ_frame(up, Vector3(1, 0, 0)), top.origin), _rand(0.015f, 0.022f), 0.0011f, 0.0003f, 0.0f, 2, 1.0f);
-		} else if (bloom == BLOOM_FLOWER) {
-			const Vector3 face = (top.basis.get_column(2) + Vector3(0, 0.6f, 0)).normalized();
-			const Basis fb = organ_frame(face, Vector3(0, 1, 0));
-			const float sz = _rand(0.007f, 0.009f);
-			p.length = sz;
-			p.width = sz * 0.7f;
-			for (int k = 0; k < 5; k++) {
-				const float a = k * Math::TAU / 5.0f;
-				const Vector3 d = (fb.get_column(0) * Math::cos(a) + fb.get_column(1) * Math::sin(a) + face * 0.3f).normalized();
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, face), top.origin), p, 1.0f);
-			}
-			_add_head(SURFACE_CENTRE, Transform3D(fb, top.origin), 0.0012f, 0.0015f);
-		}
-	}
-}
-
 // Ivy (Hedera helix) as ground cover: creeping stems along the floor, branching, rooting as they
 // go, with glossy, dark, three- to five-lobed leaves on long stalks, the blades turned up to the
 // light and overlapping into a carpet 5 to 15 cm deep (oak and ash woods, shaded banks).
-// Tall meadow flowers (docs/ideas/plant-generator.md, "Tall meadow flowers and seed heads"): the
-// forb layer of a hay meadow that stands clear of the grass. About a quarter of the plants are in
-// seed, so a meadow shows both stages.
-
-// Common knapweed (Centaurea nigra): stiff branched stems, narrow leaves, heads that are a hard
-// dark ball of fringed bracts under a brush of purple florets; in seed, dark knobs alone.
-void PlantGenerator::_build_knapweed() {
-	const bool mixed_seed = rng.randf() < 0.25f; // Without a season: a quarter of the plants in seed.
-	bool in_seed = mixed_seed;
-	const int basal = int(_rand(3.0f, 7.0f));
-	const float spin = _rand(0.0f, Math::TAU);
-	for (int i = 0; i < basal; i++) {
-		const float u = float(i) / basal;
-		Leaf l;
-		l.shape = LEAF_LANCEOLATE;
-		l.length = _rand(0.08f, 0.15f);
-		l.width = l.length * 0.24f;
-		l.petiole = 0.2f;
-		l.lobes = i % 2 == 0 ? 3 : 0; // The lower leaves often lobed.
-		l.lobe_depth = 0.3f;
-		l.fold = 0.2f;
-		l.bend = _rand(0.4f, 0.8f);
-		l.segments = 8;
-		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(polar_dir(spin + i * GOLDEN_ANGLE, Math::lerp(0.3f, 0.7f, u)), Vector3(0, 1, 0)), Vector3(0, 0.003f, 0)), l, 0.0f, Math::lerp(0.8f, 1.0f, 1.0f - u));
-	}
-	auto add_head = [&](const Transform3D &p_top, float p_r) {
-		const Vector3 z = p_top.basis.get_column(2);
-		_add_head(SURFACE_CENTRE, Transform3D(p_top.basis, p_top.origin - z * p_r * 0.7f), p_r, p_r * 1.7f);
-		if (in_seed) {
-			return;
-		}
-		Leaf fl;
-		fl.shape = LEAF_LINEAR;
-		fl.length = p_r * 1.5f;
-		fl.width = 0.0015f;
-		fl.fold = 0.0f;
-		fl.bend = -0.15f;
-		fl.segments = 2;
-		const Basis f = p_top.basis;
-		for (int n = 0; n < 24; n++) {
-			const float uu = Math::sqrt((n + 0.5f) / 24.0f);
-			const float a = n * GOLDEN_ANGLE;
-			const Vector3 radial = f.get_column(0) * Math::cos(a) + f.get_column(1) * Math::sin(a);
-			const Vector3 d = (z + radial * uu * 0.9f).normalized();
-			_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, z), p_top.origin + z * p_r * 0.85f + radial * p_r * uu * 0.55f), fl, 1.0f);
-		}
-	};
-	const int stems = int(_rand(1.0f, 3.5f));
-	for (int s = 0; s < stems; s++) {
-		float dead = 0.0f;
-		const Bloom bloom = _bloom(mixed_seed, nullptr, &dead);
-		if (bloom == BLOOM_NONE) {
-			continue; // Leaves only: before the stems bolt, or after they fall.
-		}
-		const Wither wither(this, dead);
-		in_seed = bloom == BLOOM_SEED;
-		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.38f, 1.55f));
-		const float len = _rand(0.35f, 0.75f);
-		const float bend = _rand(-0.15f, 0.15f);
-		const LocalVector<Transform3D> frames = _stem_frames(base, len, bend, 10);
-		const Transform3D top = _add_stem(base, len, 0.0028f, 0.0018f, bend, 10, 0.0f);
-		const int leaves = int(_rand(4.0f, 8.0f));
-		for (int k = 0; k < leaves; k++) {
-			const float u = 0.12f + 0.62f * float(k) / leaves;
-			const Transform3D at = _frame_at(frames, u);
-			const float a = spin + k * GOLDEN_ANGLE;
-			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-			Leaf l;
-			l.shape = LEAF_LANCEOLATE;
-			l.length = _rand(0.04f, 0.07f) * (1.0f - 0.5f * u);
-			l.width = l.length * 0.2f;
-			l.fold = 0.2f;
-			l.bend = 0.4f;
-			l.segments = 5;
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((radial + at.basis.get_column(2) * 0.8f).normalized(), at.basis.get_column(2)), at.origin), l, u);
-		}
-		add_head(top, _rand(0.0065f, 0.009f));
-		const int branches = int(_rand(1.0f, 4.0f));
-		for (int b = 0; b < branches; b++) {
-			Transform3D at = _frame_at(frames, _rand(0.55f, 0.85f));
-			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-			at.basis = organ_frame(at.basis.get_column(2) + radial * 0.7f, Vector3(0, 1, 0));
-			const Transform3D t2 = _add_stem(at, _rand(0.06f, 0.18f), 0.0016f, 0.0013f, -0.35f, 4, 0.7f);
-			add_head(t2, _rand(0.005f, 0.0075f));
-		}
-	}
-}
-
-// Field scabious (Knautia arvensis): hairy, few-branched stems with pairs of deeply lobed
-// leaves, and flat lilac heads whose outer florets are larger, a pincushion with a frill; in seed
-// a bristly ball.
-void PlantGenerator::_build_scabious() {
-	const bool mixed_seed = rng.randf() < 0.25f; // Without a season: a quarter of the plants in seed.
-	bool in_seed = mixed_seed;
-	const int basal = int(_rand(4.0f, 8.0f));
-	const float spin = _rand(0.0f, Math::TAU);
-	for (int i = 0; i < basal; i++) {
-		const float u = float(i) / basal;
-		Leaf l;
-		l.shape = LEAF_LANCEOLATE;
-		l.length = _rand(0.1f, 0.18f);
-		l.width = l.length * 0.28f;
-		l.petiole = 0.25f;
-		l.lobes = i % 3 == 0 ? 0 : 4;
-		l.lobe_depth = 0.55f;
-		l.fold = 0.2f;
-		l.bend = _rand(0.4f, 0.9f);
-		l.segments = 10;
-		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(polar_dir(spin + i * GOLDEN_ANGLE, Math::lerp(0.25f, 0.65f, u)), Vector3(0, 1, 0)), Vector3(0, 0.003f, 0)), l, 0.0f, Math::lerp(0.8f, 1.0f, 1.0f - u));
-	}
-	auto add_head = [&](const Transform3D &p_top, float p_r) {
-		const Transform3D up(organ_frame(p_top.basis.get_column(2).lerp(Vector3(0, 1, 0), 0.3f).normalized(), Vector3(1, 0, 0)), p_top.origin);
-		if (in_seed) {
-			_add_head(SURFACE_CENTRE, Transform3D(up.basis, up.origin - up.basis.get_column(2) * p_r * 0.45f), p_r * 0.55f, p_r * 1.1f);
-			return;
-		}
-		Leaf ray;
-		ray.shape = LEAF_ROUND;
-		ray.length = p_r * 0.75f;
-		ray.width = p_r * 0.6f;
-		ray.fold = 0.15f;
-		ray.bend = 0.2f;
-		ray.lobes = 2;
-		ray.lobe_depth = 0.3f;
-		ray.segments = 3;
-		_add_ray_flower(up, p_r * 0.55f, int(_rand(10.0f, 14.0f)), ray);
-		Leaf fl;
-		fl.shape = LEAF_ROUND;
-		fl.length = p_r * 0.3f;
-		fl.width = p_r * 0.25f;
-		fl.fold = 0.2f;
-		fl.bend = 0.0f;
-		fl.segments = 2;
-		_add_vogel_head(Transform3D(up.basis, up.origin + up.basis.get_column(2) * p_r * 0.15f), p_r * 1.4f, 30, fl);
-	};
-	const int stems = int(_rand(1.0f, 3.0f));
-	for (int s = 0; s < stems; s++) {
-		float dead = 0.0f;
-		const Bloom bloom = _bloom(mixed_seed, nullptr, &dead);
-		if (bloom == BLOOM_NONE) {
-			continue; // Leaves only: before the stems bolt, or after they fall.
-		}
-		const Wither wither(this, dead);
-		in_seed = bloom == BLOOM_SEED;
-		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.35f, 1.52f));
-		const float len = _rand(0.4f, 0.85f);
-		const float bend = _rand(-0.2f, 0.2f);
-		const LocalVector<Transform3D> frames = _stem_frames(base, len, bend, 10);
-		const Transform3D top = _add_stem(base, len, 0.0024f, 0.0015f, bend, 10, 0.0f);
-		for (int k = 0; k < 2; k++) {
-			const Transform3D at = _frame_at(frames, 0.25f + 0.2f * k);
-			for (int side = -1; side <= 1; side += 2) {
-				Leaf l;
-				l.shape = LEAF_LANCEOLATE;
-				l.length = _rand(0.05f, 0.08f) * (1.0f - 0.3f * k);
-				l.width = l.length * 0.3f;
-				l.lobes = 4;
-				l.lobe_depth = 0.65f;
-				l.fold = 0.2f;
-				l.bend = 0.4f;
-				l.segments = 6;
-				const Vector3 out = at.basis.get_column(k % 2 == 0 ? 0 : 1) * float(side);
-				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((out + at.basis.get_column(2) * 0.6f).normalized(), at.basis.get_column(2)), at.origin), l, 0.3f + 0.2f * k);
-			}
-		}
-		add_head(top, _rand(0.017f, 0.021f));
-		const int branches = int(_rand(0.0f, 2.99f));
-		for (int b = 0; b < branches; b++) {
-			Transform3D at = _frame_at(frames, _rand(0.5f, 0.7f));
-			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-			at.basis = organ_frame(at.basis.get_column(2) + radial * 0.5f, Vector3(0, 1, 0));
-			const Transform3D t2 = _add_stem(at, _rand(0.12f, 0.25f), 0.0014f, 0.0011f, -0.25f, 5, 0.6f);
-			add_head(t2, _rand(0.014f, 0.018f));
-		}
-	}
-}
-
-// Wild carrot (Daucus carota): finely divided leaves, ridged stems and a compound umbel, rays
-// each ending in a small umbel of white florets, one dark floret at the centre, a ruff of
-// divided bracts under it; in fruit the rays curl inwards into a hollow "bird's nest".
-void PlantGenerator::_build_wild_carrot() {
-	const bool mixed_seed = rng.randf() < 0.25f; // Without a season: a quarter of the plants in seed.
-	bool in_seed = mixed_seed;
-	auto feather = [&](const Transform3D &p_base, float p_length, float p_wind, float p_droop) {
-		const int segs = 6;
-		const LocalVector<Transform3D> fr = _stem_frames(p_base, p_length, p_droop, segs);
-		_add_stem(p_base, p_length, 0.0012f, 0.0005f, p_droop, segs, p_wind);
-		const int pinnae = int(p_length / 0.012f);
-		for (int k = 0; k < pinnae; k++) {
-			const float s = 0.15f + 0.83f * float(k) / MAX(pinnae - 1, 1);
-			const Transform3D at = _frame_at(fr, s);
-			const float side = (k % 2 == 0) ? 1.0f : -1.0f;
-			Leaf l;
-			l.shape = LEAF_LANCEOLATE;
-			l.length = p_length * 0.28f * Math::sin(Math::PI * MIN(s * 1.05f, 1.0f)) + 0.006f;
-			l.width = l.length * 0.45f;
-			l.lobes = 4;
-			l.lobe_depth = 0.7f;
-			l.fold = 0.1f;
-			l.bend = 0.3f;
-			l.segments = 4;
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((at.basis.get_column(0) * side + at.basis.get_column(2) * 0.6f).normalized(), at.basis.get_column(1)), at.origin), l, Math::lerp(p_wind, 1.0f, s));
-		}
-	};
-	const int basal = int(_rand(4.0f, 8.0f));
-	const float spin = _rand(0.0f, Math::TAU);
-	for (int i = 0; i < basal; i++) {
-		const float u = float(i) / basal;
-		feather(Transform3D(organ_frame(polar_dir(spin + i * GOLDEN_ANGLE, Math::lerp(0.35f, 0.85f, u)), Vector3(0, 1, 0)), Vector3(0, 0.003f, 0)), _rand(0.1f, 0.18f), 0.0f, _rand(0.4f, 0.8f));
-	}
-	// Seeds: the white florets' place, browned through the vertex colour.
-	const Color seed_tint(0.42f, 0.38f, 0.26f);
-	auto umbel = [&](const Transform3D &p_top, float p_radius, bool p_centre) {
-		const Vector3 z(0, 1, 0);
-		const Basis f = organ_frame(z, Vector3(1, 0, 0));
-		const Vector3 c = p_top.origin;
-		// Ruff of divided bracts, pointing out and down.
-		Leaf br;
-		br.shape = LEAF_LINEAR;
-		br.length = p_radius * 0.7f;
-		br.width = 0.0025f;
-		br.lobes = 2;
-		br.lobe_depth = 0.6f;
-		br.bend = 0.6f;
-		br.segments = 3;
-		for (int k = 0; k < 8; k++) {
-			const float a = k * Math::TAU / 8.0f + _rand(-0.2f, 0.2f);
-			const Vector3 radial = f.get_column(0) * Math::cos(a) + f.get_column(1) * Math::sin(a);
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((radial - z * 0.3f).normalized(), z), c), br, 0.8f);
-		}
-		Leaf fl;
-		fl.shape = LEAF_ROUND;
-		fl.length = 0.0016f;
-		fl.width = 0.0018f;
-		fl.fold = 0.1f;
-		fl.bend = 0.1f;
-		fl.segments = 2;
-		const int rays = int(_rand(18.0f, 32.0f));
-		for (int r = 0; r < rays; r++) {
-			const float u = Math::sqrt((r + 0.5f) / rays);
-			const float a = r * GOLDEN_ANGLE;
-			const Vector3 radial = f.get_column(0) * Math::cos(a) + f.get_column(1) * Math::sin(a);
-			// In flower a flat, slightly domed plate; in fruit the outer rays curl up and in.
-			const Vector3 tip = in_seed
-					? c + radial * p_radius * (0.25f + 0.25f * u) + z * p_radius * (0.35f + 0.55f * u)
-					: c + radial * p_radius * u + z * p_radius * (0.45f - 0.2f * u * u);
-			const Vector3 d = tip - c;
-			const Transform3D ray_base(organ_frame(d, Vector3(1, 0, 0)), c);
-			_add_stem(ray_base, d.length(), 0.0005f, 0.0004f, in_seed ? 0.4f * u : 0.0f, in_seed ? 2 : 1, 0.85f);
-			// The umbellet: a little cluster of florets facing up.
-			const int florets = 7;
-			const float ur = p_radius * 0.13f;
-			for (int k = 0; k < florets; k++) {
-				const float uk = Math::sqrt((k + 0.5f) / florets);
-				const float ak = k * GOLDEN_ANGLE + a;
-				const Vector3 rk = f.get_column(0) * Math::cos(ak) + f.get_column(1) * Math::sin(ak);
-				const Vector3 at = tip + rk * ur * uk + z * 0.002f * (1.0f - uk);
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame((z + rk * 0.4f).normalized(), rk), at), fl, 1.0f, 1.0f, in_seed ? seed_tint : Color(1, 1, 1));
-			}
-		}
-		if (p_centre && !in_seed) {
-			_add_head(SURFACE_CENTRE, Transform3D(f, c + z * p_radius * 0.45f), 0.0016f, 0.0014f);
-		}
-	};
-	const int stems = int(_rand(1.0f, 2.99f));
-	for (int s = 0; s < stems; s++) {
-		float dead = 0.0f;
-		const Bloom bloom = _bloom(mixed_seed, nullptr, &dead);
-		if (bloom == BLOOM_NONE) {
-			continue; // Leaves only: before the stems bolt, or after they fall.
-		}
-		const Wither wither(this, dead);
-		in_seed = bloom == BLOOM_SEED;
-		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.4f, 1.55f));
-		const float len = _rand(0.4f, 0.9f);
-		const float bend = _rand(-0.12f, 0.12f);
-		const LocalVector<Transform3D> frames = _stem_frames(base, len, bend, 10);
-		const Transform3D top = _add_stem(base, len, 0.0032f, 0.0018f, bend, 10, 0.0f);
-		for (int k = 0; k < 3; k++) {
-			const Transform3D at = _frame_at(frames, 0.2f + 0.2f * k);
-			const float a = spin + k * GOLDEN_ANGLE;
-			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-			feather(Transform3D(organ_frame((radial + at.basis.get_column(2) * 0.7f).normalized(), at.basis.get_column(2)), at.origin), _rand(0.04f, 0.08f) * (1.0f - 0.25f * k), 0.3f + 0.15f * k, 0.3f);
-		}
-		umbel(top, _rand(0.022f, 0.035f), rng.randf() < 0.6f);
-		const int branches = int(_rand(0.0f, 2.99f));
-		for (int b = 0; b < branches; b++) {
-			Transform3D at = _frame_at(frames, _rand(0.6f, 0.82f));
-			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-			at.basis = organ_frame(at.basis.get_column(2) + radial * 0.55f, Vector3(0, 1, 0));
-			const Transform3D t2 = _add_stem(at, _rand(0.1f, 0.22f), 0.0018f, 0.0013f, -0.3f, 5, 0.6f);
-			umbel(t2, _rand(0.014f, 0.024f), false);
-		}
-	}
-}
-
-// Common sorrel (Rumex acetosa): arrow-shaped leaves on long stalks, a slender stem and a narrow
-// branched panicle of tiny whorled flowers that turn red, then rust-brown in seed.
-void PlantGenerator::_build_sorrel() {
-	const bool mixed_seed = rng.randf() < 0.25f; // Without a season: a quarter of the plants in seed.
-	bool in_seed = mixed_seed;
-	const int basal = int(_rand(4.0f, 8.0f));
-	const float spin = _rand(0.0f, Math::TAU);
-	for (int i = 0; i < basal; i++) {
-		const float u = float(i) / basal;
-		Leaf l;
-		l.shape = LEAF_LANCEOLATE;
-		l.length = _rand(0.07f, 0.12f);
-		l.width = l.length * 0.36f;
-		l.petiole = 0.4f;
-		l.fold = 0.15f;
-		l.bend = _rand(0.3f, 0.7f);
-		l.segments = 8;
-		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(polar_dir(spin + i * GOLDEN_ANGLE, Math::lerp(0.5f, 0.9f, u)), Vector3(0, 1, 0)), Vector3(0, 0.003f, 0)), l, 0.0f, Math::lerp(0.8f, 1.0f, 1.0f - u));
-	}
-	Leaf fl;
-	fl.shape = LEAF_ROUND;
-	fl.length = 0.003f;
-	fl.width = 0.003f;
-	fl.fold = 0.3f;
-	fl.bend = 0.0f;
-	fl.segments = 2;
-	// Loose whorls of drooping flowers on short stalks (Rumex acetosa: whorls of 2 to 8, tepals green
-	// flushed red, the fruiting valves rusty), not even rungs: spacing, count, size, droop and colour
-	// all vary, so a spike reads as a soft rusty haze from a few metres (a regular ladder of flat
-	// petals read as red barcode bars, docs 20 Nov).
-	auto whorls = [&](const LocalVector<Transform3D> &p_fr, float p_from, float p_to, float p_wind) {
-		const int n = int((p_to - p_from) * 26.0f) + 2;
-		for (int k = 0; k < n; k++) {
-			const float s = CLAMP(Math::lerp(p_from, p_to, (float(k) + _rand(-0.4f, 0.4f)) / (n - 1)), p_from, p_to);
-			const Transform3D at = _frame_at(p_fr, s);
-			const float a0 = _rand(0.0f, Math::TAU);
-			const int m = int(_rand(2.0f, 6.99f) * Math::lerp(1.0f, 0.6f, (s - p_from) / MAX(p_to - p_from, 0.01f)));
-			for (int j = 0; j < MAX(m, 2); j++) {
-				const float a = a0 + j * Math::TAU / MAX(m, 2) + _rand(-0.5f, 0.5f);
-				const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-				const Vector3 droop = (radial * _rand(0.4f, 1.0f) - at.basis.get_column(2) * _rand(0.3f, 1.2f)).normalized();
-				const float stalk = _rand(0.001f, 0.004f);
-				Leaf f = fl;
-				f.length = f.width = _rand(0.0022f, 0.0036f);
-				// Green flushed red in flower, rust to brown in seed; a little of each on most spikes.
-				const float r = _rand(0.0f, 1.0f);
-				Color tint = in_seed ? Color(0.62f, 0.5f, 0.42f).lerp(Color(0.55f, 0.42f, 0.3f), r) : Color(1, 1, 1).lerp(Color(0.7f, 0.85f, 0.55f), r * r * 0.8f);
-				const Vector3 at_o = at.origin + radial * 0.0012f + droop * stalk;
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(droop, at.basis.get_column(2)), at_o), f, p_wind, 1.0f, tint);
-			}
-		}
-	};
-	const int stems = int(_rand(1.0f, 2.99f));
-	for (int s = 0; s < stems; s++) {
-		float dead = 0.0f;
-		const Bloom bloom = _bloom(mixed_seed, nullptr, &dead);
-		if (bloom == BLOOM_NONE) {
-			continue; // Leaves only: before the stems bolt, or after they fall.
-		}
-		const Wither wither(this, dead);
-		in_seed = bloom == BLOOM_SEED;
-		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.42f, 1.56f));
-		const float len = _rand(0.35f, 0.8f);
-		const float bend = _rand(-0.15f, 0.15f);
-		const LocalVector<Transform3D> frames = _stem_frames(base, len, bend, 10);
-		_add_stem(base, len, 0.0024f, 0.0011f, bend, 10, 0.0f);
-		for (int k = 0; k < 3; k++) {
-			const Transform3D at = _frame_at(frames, 0.15f + 0.15f * k);
-			const float a = spin + k * GOLDEN_ANGLE;
-			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-			Leaf l;
-			l.shape = LEAF_LANCEOLATE;
-			l.length = _rand(0.03f, 0.06f) * (1.0f - 0.3f * k);
-			l.width = l.length * 0.3f;
-			l.fold = 0.2f;
-			l.bend = 0.3f;
-			l.segments = 5;
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((radial + at.basis.get_column(2) * 1.2f).normalized(), at.basis.get_column(2)), at.origin), l, 0.3f + 0.15f * k);
-		}
-		whorls(frames, 0.62f, 1.0f, 0.6f);
-		const int branches = int(_rand(2.0f, 6.0f));
-		for (int b = 0; b < branches; b++) {
-			Transform3D at = _frame_at(frames, _rand(0.6f, 0.85f));
-			const float a = _rand(0.0f, Math::TAU);
-			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
-			at.basis = organ_frame(at.basis.get_column(2) + radial * 0.35f, Vector3(0, 1, 0));
-			const float bl = _rand(0.04f, 0.12f);
-			const LocalVector<Transform3D> bf = _stem_frames(at, bl, 0.0f, 3);
-			_add_stem(at, bl, 0.0009f, 0.0007f, 0.0f, 3, 0.7f, SURFACE_CENTRE);
-			whorls(bf, 0.2f, 1.0f, 0.85f);
-		}
-	}
-}
-
-// Plants between stones (docs/ideas/vegetation.md, "Plants between stones"): they root in the fine
-// soil caught in the gaps of scree, river gravel and shingle and in rock cracks, where the stones
-// shade the roots, hold water and keep grazing and trampling off.
-
-// Parsley fern (Cryptogramma crispa; Page 1997): a tuft 15 to 30 cm on acid scree and block litter,
-// many bright green fronds from one crown, two or three times divided like parsley; the sterile
-// fronds spread, the fertile ones stand taller with narrow segments rolled over the spores. It dies
-// back early in autumn and its rusty fronds stand into winter.
-void PlantGenerator::_build_parsley_fern() {
-	const int fronds = int(_rand(10.0f, 20.0f));
-	const float spin = _rand(0.0f, Math::TAU);
-	const float big = _rand(0.12f, 0.22f);
-	const FrondSeason fs = _frond_season(180.0f, 300.0f, 250.0f, 300.0f);
-	auto frond = [&](int p_i, float p_unfurl, float p_dead, float p_lodge) {
-		const Wither wither(this, p_dead);
-		const bool fertile = (p_i % 3) == 0;
-		const float grow = Math::lerp(0.15f, 1.0f, p_unfurl);
-		const float stipe = fertile ? 0.55f : 0.45f; // The bare stalk's share of the frond.
-		const float length = big * (fertile ? 1.25f : 1.0f) * _rand(0.8f, 1.1f) * grow;
-		const int segs = 10;
-		// Withered fronds sag before the winter flattens them.
-		const float slump = MAX(p_lodge, 0.3f * p_dead);
-		const float elevation = Math::lerp(fertile ? 1.3f : _rand(0.9f, 1.2f), 0.25f, slump);
-		Basis f = organ_frame(polar_dir(spin + p_i * GOLDEN_ANGLE, elevation), Vector3(0, 1, 0));
-		Vector3 p(0, 0.005f, 0);
-		const float arch = Math::lerp(6.0f, fertile ? 0.3f : _rand(0.5f, 0.9f), smoothstep_f(0.0f, 0.7f, p_unfurl)) + slump;
-		LocalVector<Transform3D> frames;
-		const Transform3D start(f, p);
-		for (int k = 0; k <= segs; k++) {
-			frames.push_back(Transform3D(f, p));
-			if (k < segs) {
-				f = Basis(f.get_column(0), arch / segs) * f;
-				f.orthonormalize();
-				p += f.get_column(2) * (length / segs);
-			}
-		}
-		_add_stem(start, length, 0.0014f, 0.0006f, arch, segs, 0.0f);
-		// The blade: a triangle of pinnae, longest at its base, each a deeply lobed segment.
-		const int pinnae = int(_rand(8.0f, 12.0f));
-		const float pinna_grow = p_unfurl * Math::sqrt(p_unfurl);
-		for (int k = 0; k < pinnae; k++) {
-			const float u = float(k) / float(pinnae - 1);
-			const float s = Math::lerp(stipe, 0.98f, u);
-			const float fi = s * segs;
-			const int fa = MIN(int(fi), segs - 1);
-			const Transform3D fr = frames[fa].interpolate_with(frames[fa + 1], fi - fa);
-			const float side = (k % 2 == 0) ? 1.0f : -1.0f;
-			const float plen = length / grow * pinna_grow * 0.3f * (1.0f - 0.75f * u);
-			if (plen < 0.003f) {
-				continue;
-			}
-			const Vector3 fwd = (fr.basis.get_column(0) * side * 0.75f + fr.basis.get_column(2) * 0.65f).normalized();
-			Leaf l;
-			l.shape = LEAF_LANCEOLATE;
-			l.length = plen;
-			l.width = plen * (fertile ? 0.22f : 0.5f);
-			l.fold = (fertile ? 0.5f : 0.2f) + 0.4f * p_dead;
-			l.bend = 0.3f + 0.6f * p_lodge;
-			l.lobes = fertile ? 0 : 4;
-			l.lobe_depth = 0.6f;
-			l.segments = 6;
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, fr.basis.get_column(1)), fr.origin), l, s);
-		}
-	};
-	for (int i = 0; i < fronds; i++) {
-		if (fs.old_share > 0.0f && float(i) < fronds * fs.old_share + 0.5f) {
-			frond(i, 1.0f, 1.0f, fs.old_lodge);
-		}
-		if (fs.unfurl > 0.0f) {
-			frond(i, fs.unfurl, fs.dead, fs.lodge);
-		}
-	}
-}
-
-// Maidenhair spleenwort (Asplenium trichomanes; Page 1997): a flat rosette of narrow fronds 5 to
-// 20 cm from rock cracks and wall joints, each a shiny black-brown rachis with 15 to 30 pairs of
-// small, rounded-oblong pinnae. Evergreen: old fronds shed their pinnae and the bare black
-// rachises stay in the tuft.
-void PlantGenerator::_build_spleenwort() {
-	const int fronds = int(_rand(8.0f, 18.0f));
-	const float spin = _rand(0.0f, Math::TAU);
-	const float big = _rand(0.07f, 0.15f);
-	Leaf l;
-	l.shape = LEAF_OVATE;
-	l.fold = 0.15f;
-	l.bend = 0.15f;
-	l.segments = 3;
-	for (int i = 0; i < fronds; i++) {
-		const float u = float(i) / float(fronds);
-		const bool old = _rand(0.0f, 1.0f) < 0.2f;
-		const float length = big * _rand(0.75f, 1.1f) * (1.0f - 0.25f * u);
-		const float arch = _rand(0.4f, 1.0f);
-		const Transform3D base(organ_frame(polar_dir(spin + i * GOLDEN_ANGLE, _rand(0.5f, 1.0f)), Vector3(0, 1, 0)), Vector3(0, 0.003f, 0));
-		const int segs = 8;
-		const LocalVector<Transform3D> fr = _stem_frames(base, length, arch, segs);
-		_add_stem(base, length, 0.0009f, 0.0004f, arch, segs, 0.0f);
-		// Old fronds keep a few withered pinnae near the tip.
-		const float keep_from = old ? _rand(0.6f, 1.0f) : 0.08f;
-		const Wither wither(this, old ? 0.8f : 0.0f);
-		const int pairs = int(_rand(12.0f, 20.0f));
-		for (int k = 0; k < pairs; k++) {
-			const float s = Math::lerp(0.08f, 0.97f, (k + 0.5f) / float(pairs));
-			if (s < keep_from) {
-				continue;
-			}
-			const Transform3D at = _frame_at(fr, s);
-			const float plen = MAX(length * 0.06f * (0.5f + 0.5f * Math::sin(float(Math::PI) * s)), 0.002f);
-			for (int side = -1; side <= 1; side += 2) {
-				const Vector3 fwd = (at.basis.get_column(0) * float(side) + at.basis.get_column(2) * 0.25f).normalized();
-				l.length = plen;
-				l.width = plen * 0.7f;
-				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, at.basis.get_column(1)), at.origin), l, s);
-			}
-		}
-	}
-}
-
-// Biting stonecrop (Sedum acre; Stace 2019): a mat of short creeping and rising shoots 2 to 10 cm
-// on shingle, sand, scree and wall tops, packed with fat, egg-shaped succulent leaves 3 to 6 mm
-// (water stores for the drought between stones), and bright yellow stars of five pointed petals
-// in June and July. The leaves are solid beads, so they are geometry on the stem surface.
-void PlantGenerator::_build_stonecrop() {
-	const int shoots = int(_rand(12.0f, 24.0f));
-	const float mat = _rand(0.03f, 0.07f);
-	Leaf p;
-	p.shape = LEAF_LANCEOLATE;
-	p.fold = 0.2f;
-	p.bend = -0.1f;
-	p.segments = 3;
-	for (int i = 0; i < shoots; i++) {
-		const float a = _rand(0.0f, Math::TAU);
-		const float r = mat * Math::sqrt(_rand(0.0f, 1.0f));
-		const Vector3 at(Math::cos(a) * r, 0.0f, Math::sin(a) * r);
-		// Creeping from the base, then turning up (a negative bend curls towards the sky).
-		const float len = _rand(0.02f, 0.06f);
-		const float bend = _rand(-0.6f, -0.2f);
-		const Transform3D base(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(0.35f, 0.9f)), Vector3(0, 1, 0)), at);
-		const int segs = 4;
-		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, segs);
-		_add_stem(base, len, 0.0012f, 0.001f, bend, segs, 0.0f);
-		const int leaves = int(_rand(8.0f, 12.0f));
-		for (int k = 0; k < leaves; k++) {
-			const float s = Math::lerp(0.15f, 1.0f, float(k) / float(leaves - 1));
-			const Transform3D t = _frame_at(fr, s);
-			const float ang = k * GOLDEN_ANGLE;
-			const Vector3 radial = t.basis.get_column(0) * Math::cos(ang) + t.basis.get_column(1) * Math::sin(ang);
-			// Pressed against the shoot towards its tip (imbricate), spreading lower down.
-			const Vector3 d = (radial * Math::lerp(0.9f, 0.35f, s) + t.basis.get_column(2)).normalized();
-			const float sz = _rand(0.003f, 0.005f) * Math::lerp(1.0f, 0.75f, s);
-			_add_head(SURFACE_STEM, Transform3D(organ_frame(d, t.basis.get_column(2)), t.origin), sz * 0.42f, sz, Color(1, 1, 1), 2, 6);
-		}
-		if (_rand(0.0f, 1.0f) >= 0.6f) {
-			continue;
-		}
-		const Bloom bloom = _bloom();
-		const Transform3D top = _frame_at(fr, 1.0f);
-		const Vector3 face = (top.basis.get_column(2) + Vector3(0, 1, 0)).normalized();
-		const Basis fb = organ_frame(face, Vector3(1, 0, 0));
-		if (bloom == BLOOM_SEED) {
-			_add_head(SURFACE_STEM, Transform3D(fb, top.origin), 0.002f, 0.0025f, Color(0.75f, 0.6f, 0.45f), 2, 6);
-		} else if (bloom == BLOOM_FLOWER) {
-			const float sz = _rand(0.005f, 0.007f);
-			p.length = sz;
-			p.width = sz * 0.4f;
-			const float spin = _rand(0.0f, Math::TAU);
-			const Vector3 o = top.origin + face * 0.002f;
-			for (int k = 0; k < 5; k++) {
-				const float pa = spin + k * Math::TAU / 5.0f;
-				const Vector3 d = (fb.get_column(0) * Math::cos(pa) + fb.get_column(1) * Math::sin(pa) + face * 0.2f).normalized();
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, face), o), p, 1.0f);
-			}
-			_add_head(SURFACE_CENTRE, Transform3D(fb, o), 0.0015f, 0.0015f);
-		}
-	}
-}
-
-// Mossy saxifrage (Saxifraga hypnoides; Stace 2019): a loose green cushion of leafy rosettes on
-// rock ledges, scree and stream gravels of the uplands, the leaves cut into three to five narrow
-// pointed lobes, and from May to July white flowers of five petals 1 to 1.5 cm across, one to
-// three on slender stalks 5 to 20 cm.
-void PlantGenerator::_build_saxifrage() {
-	const int rosettes = int(_rand(8.0f, 16.0f));
-	const float cushion = _rand(0.04f, 0.08f);
-	Leaf l;
-	l.shape = LEAF_PALMATE;
-	l.lobes = 2;
-	l.lobe_depth = 0.7f;
-	l.petiole = 0.3f;
-	l.fold = 0.2f;
-	l.bend = 0.2f;
-	l.segments = 5;
-	for (int i = 0; i < rosettes; i++) {
-		const float a = _rand(0.0f, Math::TAU);
-		const float u = Math::sqrt(_rand(0.0f, 1.0f));
-		// On the cushion's dome: rosettes higher in the middle, tilted out at the rim.
-		const Vector3 at(Math::cos(a) * cushion * u, cushion * 0.45f * (1.0f - u * u), Math::sin(a) * cushion * u);
-		const Vector3 up = Vector3(Math::cos(a) * u * 0.8f, 1.0f, Math::sin(a) * u * 0.8f).normalized();
-		const Vector3 foot(at.x * 0.6f, 0.0f, at.z * 0.6f);
-		const Vector3 rise = at - foot;
-		if (rise.length() > 0.005f) {
-			_add_stem(Transform3D(organ_frame(rise, Vector3(1, 0, 0)), foot), rise.length(), 0.0012f, 0.001f, 0.0f, 2, 0.0f);
-		}
-		const Basis nb = organ_frame(up, Vector3(1, 0, 0));
-		const int leaves = int(_rand(6.0f, 10.0f));
-		const float spin = _rand(0.0f, Math::TAU);
-		for (int k = 0; k < leaves; k++) {
-			const float b = spin + k * GOLDEN_ANGLE;
-			const float inner = float(k) / float(leaves); // Later leaves inner: smaller and more upright.
-			const Vector3 radial = nb.get_column(0) * Math::cos(b) + nb.get_column(1) * Math::sin(b);
-			const Vector3 d = (radial * Math::lerp(1.0f, 0.5f, inner) + up * Math::lerp(0.35f, 1.0f, inner)).normalized();
-			l.length = _rand(0.008f, 0.014f) * Math::lerp(1.0f, 0.6f, inner);
-			l.width = l.length * 0.8f;
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, up), at), l, 0.3f);
-		}
-	}
-	plant_height = MAX(plant_height, cushion * 0.6f);
-	Leaf p;
-	p.shape = LEAF_SPATULATE;
-	p.fold = 0.1f;
-	p.bend = -0.2f;
-	p.segments = 3;
-	const int stalks = int(_rand(0.0f, 5.0f));
-	for (int i = 0; i < stalks; i++) {
-		const Bloom bloom = _bloom();
-		if (bloom == BLOOM_NONE) {
-			continue;
-		}
-		const float a = _rand(0.0f, Math::TAU);
-		const float r = cushion * _rand(0.0f, 0.6f);
-		const Transform3D base(organ_frame(polar_dir(a, _rand(1.25f, 1.5f)), Vector3(0, 1, 0)), Vector3(Math::cos(a) * r, cushion * 0.3f, Math::sin(a) * r));
-		const Transform3D top = _add_stem(base, _rand(0.05f, 0.14f), 0.0007f, 0.0005f, _rand(-0.2f, 0.3f), 6, 0.0f);
-		const int heads = int(_rand(1.0f, 3.99f));
-		for (int h = 0; h < heads; h++) {
-			const float ha = _rand(0.0f, Math::TAU);
-			const Vector3 lateral = top.basis.get_column(0) * Math::cos(ha) + top.basis.get_column(1) * Math::sin(ha);
-			const Vector3 dir = (top.basis.get_column(2) + lateral * 0.6f).normalized();
-			const Transform3D pt = _add_stem(Transform3D(organ_frame(dir, Vector3(0, 1, 0)), top.origin), _rand(0.008f, 0.015f), 0.0005f, 0.0004f, 0.4f, 3, 1.0f);
-			if (bloom == BLOOM_SEED) {
-				_add_head(SURFACE_STEM, pt, 0.002f, 0.004f);
-				continue;
-			}
-			const Vector3 face = (pt.basis.get_column(2) + Vector3(0, 0.8f, 0)).normalized();
-			const Basis fb = organ_frame(face, Vector3(1, 0, 0));
-			const float sz = _rand(0.005f, 0.007f);
-			p.length = sz;
-			p.width = sz * 0.75f;
-			const float spin = _rand(0.0f, Math::TAU);
-			for (int k = 0; k < 5; k++) {
-				const float pa = spin + k * Math::TAU / 5.0f;
-				const Vector3 d = (fb.get_column(0) * Math::cos(pa) + fb.get_column(1) * Math::sin(pa) + face * 0.3f).normalized();
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, face), pt.origin), p, 1.0f);
-			}
-			_add_head(SURFACE_CENTRE, Transform3D(fb, pt.origin), 0.0018f, 0.002f);
-		}
-	}
-}
-
-// Thrift (Armeria maritima; Stace 2019): a dense cushion of narrow, grass-like leaves 2 to 15 cm on
-// sea cliffs, shingle and salt marsh and on mountain scree and river gravels, with round pink heads
-// 1.5 to 2.5 cm across on leafless stalks 5 to 30 cm from April to September; spent heads stand
-// papery and pale brown.
-void PlantGenerator::_build_thrift() {
-	const int leaves = int(_rand(40.0f, 80.0f));
-	const float cushion = _rand(0.025f, 0.05f);
-	Leaf l;
-	l.shape = LEAF_LINEAR;
-	l.fold = 0.4f;
-	l.segments = 5;
-	for (int i = 0; i < leaves; i++) {
-		const float a = _rand(0.0f, Math::TAU);
-		const float u = Math::sqrt(_rand(0.0f, 1.0f));
-		const Vector3 at(Math::cos(a) * cushion * u, 0.0f, Math::sin(a) * cushion * u);
-		l.length = _rand(0.03f, 0.09f);
-		l.width = _rand(0.0015f, 0.0025f);
-		l.bend = _rand(0.6f, 1.4f);
-		l.twist = _rand(-0.5f, 0.5f);
-		const float elevation = Math::lerp(1.45f, 0.85f, u) + _rand(-0.15f, 0.15f);
-		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(polar_dir(a + _rand(-0.5f, 0.5f), elevation), Vector3(0, 1, 0)), at), l, 0.0f, 0.85f);
-	}
-	Leaf fl;
-	fl.shape = LEAF_SPATULATE;
-	fl.length = 0.0045f;
-	fl.width = 0.003f;
-	fl.fold = 0.3f;
-	fl.bend = -0.3f;
-	fl.segments = 2;
-	const int scapes = int(_rand(1.0f, 7.0f));
-	for (int i = 0; i < scapes; i++) {
-		float dead = 0.0f;
-		const Bloom bloom = _bloom(false, nullptr, &dead);
-		if (bloom == BLOOM_NONE) {
-			continue;
-		}
-		const float a = _rand(0.0f, Math::TAU);
-		const Vector3 at(Math::cos(a) * cushion * 0.5f, 0.0f, Math::sin(a) * cushion * 0.5f);
-		const Transform3D top = _add_stem(Transform3D(organ_frame(polar_dir(a, _rand(1.3f, 1.5f)), Vector3(0, 1, 0)), at), _rand(0.08f, 0.22f), 0.0009f, 0.0007f, _rand(-0.15f, 0.25f), 6, 0.0f);
-		const Basis hb = top.basis.orthonormalized();
-		const Wither wither(this, bloom == BLOOM_SEED ? MAX(dead, 0.8f) : 0.0f);
-		// The papery involucre cupping the head, then the florets packed over it.
-		_add_head(SURFACE_CENTRE, Transform3D(hb, top.origin), 0.0055f, 0.003f);
-		_add_vogel_head(Transform3D(hb, top.origin + hb.get_column(2) * 0.002f), 0.022f, 40, fl);
-	}
-}
-
 void PlantGenerator::_build_ivy() {
 	const int runners = int(_rand(3.0f, 6.0f));
 	Leaf l;
@@ -4309,16 +1722,12 @@ void PlantGenerator::_build_heather() {
 	bell.width = 0.004f;
 	bell.fold = 0.5f;
 	const float flowering = rng.randf();
-	// Without a season, six plants in ten in flower; with one, the plant's stage. Spent bells stay
-	// on the shoots, brown, through winter.
-	const Bloom bloom = (flowering < 0.6f || bloom_forcing >= 0.0f) ? _bloom() : BLOOM_NONE;
-	const Color bell_tint = bloom == BLOOM_SEED ? Color(0.62f, 0.45f, 0.38f) : Color(1, 1, 1);
 	auto shoot = [&](const Transform3D &p_base, float p_len, float p_r, float p_wind) -> void {
 		const float bend = _rand(-0.3f, 0.3f);
 		const LocalVector<Transform3D> fr = _stem_frames(p_base, p_len, bend, 3);
 		_add_stem(p_base, p_len, p_r, p_r * 0.5f, bend, 3, p_wind);
 		const int scales = int(p_len / 0.0055f);
-		const float spike = bloom != BLOOM_NONE ? 0.35f : 0.0f; // Top share of the shoot in flower.
+		const float spike = flowering < 0.6f ? 0.35f : 0.0f; // Top share of the shoot in flower.
 		for (int k = 0; k < scales; k++) {
 			const float s = 0.1f + 0.9f * float(k) / MAX(scales - 1, 1);
 			const Transform3D at = _frame_at(fr, s);
@@ -4326,7 +1735,7 @@ void PlantGenerator::_build_heather() {
 			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
 			if (s > 1.0f - spike) {
 				const Vector3 d = (radial - at.basis.get_column(2) * 0.3f).normalized();
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, at.basis.get_column(2)), at.origin), bell, Math::lerp(p_wind, 1.0f, s), 1.0f, bell_tint);
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, at.basis.get_column(2)), at.origin), bell, Math::lerp(p_wind, 1.0f, s));
 			} else {
 				sc.length = _rand(0.008f, 0.014f);
 				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((radial * 0.7f + at.basis.get_column(2)).normalized(), Vector3(0, 1, 0)), at.origin), sc, Math::lerp(p_wind, 1.0f, s));
@@ -4356,11 +1765,7 @@ void PlantGenerator::_build_heather() {
 // flat grey-green leaves set alternately in two ranks up the culm, leaning out and drooping at
 // the tip; a large soft plume of purplish-brown spikelets nodding to one side.
 void PlantGenerator::_build_reed() {
-	// Common reed (Phragmites australis): a clone of many culms from one rhizome patch, splaying outwards and arching
-	// (the outer culms lean out, as in a stand's edge), each with long, broad, drooping blades held out from the culm
-	// and a nodding plume (Haslam 1972, "Phragmites communis Trin.", J. Ecol. 60; Clevering and Lissner 1999). Fewer,
-	// upright, narrow culms read as a fence of sticks from a few metres (oasis docs note, 20 Nov).
-	const int culms = int(_rand(12.0f, 22.0f));
+	const int culms = int(_rand(6.0f, 13.0f));
 	const float nod = _rand(0.0f, Math::TAU); // The plumes lean one way, as in a stand in wind.
 	Leaf spk;
 	spk.shape = LEAF_LANCEOLATE;
@@ -4370,32 +1775,28 @@ void PlantGenerator::_build_reed() {
 	spk.bend = 0.2f;
 	spk.segments = 2;
 	for (int c = 0; c < culms; c++) {
-		const Vector2 off(_rand(-0.3f, 0.3f), _rand(-0.3f, 0.3f));
-		// Outer culms lean out further from the clump's middle (up to about 20 degrees) and arch over more.
-		const float out_t = CLAMP(off.length() / 0.42f, 0.0f, 1.0f);
-		const float az = off.length_squared() > 1e-6f ? Math::atan2(off.y, off.x) : _rand(0.0f, Math::TAU);
-		Transform3D base = stem_base(az + _rand(-0.4f, 0.4f), Math::lerp(_rand(1.42f, 1.55f), _rand(1.22f, 1.36f), out_t));
-		base.origin = Vector3(off.x, 0.0f, off.y);
-		const float len = _rand(1.4f, 2.4f) * (1.0f - 0.15f * out_t);
-		const float bend = _rand(0.12f, 0.3f) + 0.25f * out_t;
+		Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.42f, 1.55f));
+		base.origin = Vector3(_rand(-0.22f, 0.22f), 0.0f, _rand(-0.22f, 0.22f));
+		const float len = _rand(1.3f, 2.2f);
+		const float bend = _rand(0.05f, 0.25f);
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 14);
-		const Transform3D top = _add_stem(base, len, 0.005f, 0.0025f, bend, 14, 0.0f);
-		// Leaves from 15% to 85% of the culm, alternating sides, held out and drooping at their tips.
-		const int nodes = int(_rand(7.0f, 11.0f));
+		const Transform3D top = _add_stem(base, len, 0.0045f, 0.0025f, bend, 14, 0.0f);
+		// Leaves from 15% to 85% of the culm, alternating sides.
+		const int nodes = int(_rand(6.0f, 10.0f));
 		const float side0 = _rand(0.0f, Math::TAU);
 		for (int k = 0; k < nodes; k++) {
 			const float u = Math::lerp(0.15f, 0.85f, (k + _rand(0.0f, 0.6f)) / nodes);
 			const Transform3D at = _frame_at(fr, u);
-			const float laz = side0 + (k % 2) * Math::PI + _rand(-0.3f, 0.3f);
-			const Vector3 out(Math::cos(laz), 0.0f, Math::sin(laz));
-			const Vector3 d = (at.basis.get_column(2) * _rand(0.6f, 1.1f) + out).normalized();
+			const float az = side0 + (k % 2) * Math::PI + _rand(-0.3f, 0.3f);
+			const Vector3 out(Math::cos(az), 0.0f, Math::sin(az));
+			const Vector3 d = (at.basis.get_column(2) * _rand(0.9f, 1.4f) + out).normalized();
 			Leaf l;
 			l.shape = LEAF_LINEAR;
-			l.length = _rand(0.3f, 0.5f) * (1.0f - 0.3f * u);
-			l.width = _rand(0.018f, 0.032f);
-			l.fold = 0.2f;
-			l.bend = _rand(1.2f, 2.0f);
-			l.twist = _rand(-0.6f, 0.6f);
+			l.length = _rand(0.22f, 0.42f) * (1.0f - 0.35f * u);
+			l.width = _rand(0.013f, 0.022f);
+			l.fold = 0.15f;
+			l.bend = _rand(0.8f, 1.5f);
+			l.twist = _rand(-0.5f, 0.5f);
 			l.segments = 8;
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), l, u * 0.9f, 0.9f);
 		}
@@ -4403,7 +1804,7 @@ void PlantGenerator::_build_reed() {
 		if (_rand(0.0f, 1.0f) < 0.8f) {
 			const Vector3 lean(Math::cos(nod), 0.0f, Math::sin(nod));
 			Transform3D pb(organ_frame((top.basis.get_column(2) + lean * 0.5f).normalized(), Vector3(0, 1, 0)), top.origin);
-			const float plen = _rand(0.22f, 0.4f);
+			const float plen = _rand(0.18f, 0.32f);
 			const LocalVector<Transform3D> pf = _stem_frames(pb, plen, 0.5f, 6);
 			_add_stem(pb, plen, 0.0018f, 0.0006f, 0.5f, 6, 1.0f);
 			const int branches = int(_rand(10.0f, 16.0f));
@@ -4591,122 +1992,6 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.base_tint = Color(0.75f, 0.6f, 0.05f, 0.6f);
 		} else if (preset == PRESET_CLOVER) {
 			t.base_tint = Color(0.85f, 0.55f, 0.6f, 0.5f);
-		} else if (preset == PRESET_KNAPWEED || preset == PRESET_SCABIOUS) {
-			t.base_tint = petal_color.lerp(Color(1, 1, 1), 0.35f);
-			t.base_tint.a = 0.35f;
-		} else if (preset == PRESET_WILD_CARROT) {
-			t.base_tint = Color(0.9f, 0.92f, 0.75f, 0.3f);
-		} else if (preset == PRESET_SORREL) {
-			t.base_tint = Color(0.45f, 0.35f, 0.12f, 0.4f);
-		} else if (preset == PRESET_STONECROP) {
-			t.base_tint = Color(0.85f, 0.62f, 0.02f, 0.3f);
-		} else if (preset == PRESET_SAXIFRAGE) {
-			t.base_tint = Color(0.88f, 0.9f, 0.62f, 0.25f);
-		} else if (preset == PRESET_THRIFT) {
-			t.base_tint = Color(0.62f, 0.25f, 0.42f, 0.35f);
-		} else if (preset == PRESET_MARSH_MARIGOLD) {
-			l.shape = LEAF_ROUND;
-			t.aspect = 0.95f;
-			t.base_tint = Color(0.92f, 0.6f, 0.02f, 0.35f); // Glossy gold, deeper at the base.
-		} else if (preset == PRESET_GRAZED_LAWN) {
-			// The lawn's petal surface carries its white clover leaflets: round, pinnate veins, the pale chevron.
-			l.shape = LEAF_ROUND;
-			t.aspect = 0.9f;
-			t.venation = VENATION_PINNATE;
-			t.vein = petal_color.lerp(Color(0.75f, 0.85f, 0.6f), 0.35f);
-			t.chevron = 0.6f;
-			t.spots = 0.15f;
-		} else if (preset == PRESET_MEADOWSWEET) {
-			t.base_tint = Color(0.9f, 0.88f, 0.62f, 0.3f);
-		} else if (preset == PRESET_BUTTERBUR) {
-			t.base_tint = Color(0.72f, 0.58f, 0.66f, 0.3f);
-		} else if (preset == PRESET_COTTONGRASS) {
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.05f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 1;
-			t.base_tint = Color(0.85f, 0.82f, 0.72f, 0.3f); // Cotton bristles, creamy at the base.
-		} else if (preset == PRESET_BOG_ASPHODEL) {
-			l.shape = LEAF_LANCEOLATE;
-			t.aspect = 0.25f;
-			t.base_tint = Color(0.9f, 0.62f, 0.05f, 0.35f);
-		} else if (preset == PRESET_SUNDEW) {
-			t.base_tint = Color(0.95f, 0.92f, 0.9f, 0.2f);
-		} else if (preset == PRESET_MOSS_CAMPION) {
-			t.base_tint = Color(0.95f, 0.8f, 0.86f, 0.35f); // Paler towards the throat.
-		} else if (preset == PRESET_PURPLE_SAXIFRAGE) {
-			l.shape = LEAF_ROUND;
-			t.aspect = 0.8f;
-			t.base_tint = Color(0.35f, 0.08f, 0.3f, 0.35f); // Darker veins into the cup.
-		} else if (preset == PRESET_MOUNTAIN_AVENS) {
-			l.shape = LEAF_OVATE;
-			t.aspect = 0.6f;
-			t.base_tint = Color(0.92f, 0.9f, 0.7f, 0.25f);
-		} else if (preset == PRESET_ALPINE_TOADFLAX) {
-			l.shape = LEAF_ROUND;
-			t.aspect = 1.0f;
-			t.base_tint = Color(0.3f, 0.15f, 0.5f, 0.4f);
-		} else if (preset == PRESET_SEA_ASTER) {
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.18f;
-			t.base_tint = Color(0.9f, 0.88f, 0.95f, 0.25f); // Paler at the base of the ray.
-		} else if (preset == PRESET_SEA_LAVENDER) {
-			l.shape = LEAF_ROUND;
-			t.aspect = 1.0f;
-			t.base_tint = Color(0.92f, 0.9f, 0.95f, 0.3f); // The pale papery calyx under the corolla.
-		} else if (preset == PRESET_SEA_KALE) {
-			l.shape = LEAF_ROUND;
-			t.aspect = 0.9f;
-			t.base_tint = Color(0.86f, 0.9f, 0.7f, 0.25f); // Greenish claws.
-		} else if (preset == PRESET_SEA_CAMPION) {
-			t.aspect = 0.75f;
-			t.base_tint = Color(0.95f, 0.9f, 0.92f, 0.2f);
-		} else if (preset == PRESET_BELL_HEATHER || preset == PRESET_CROSS_LEAVED_HEATH) {
-			l.shape = LEAF_OVATE;
-			t.aspect = 0.75f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 3;
-			t.base_tint = Color(0.6f, 0.5f, 0.55f, 0.35f); // Darker at the mouth's lobes and the calyx.
-		} else if (preset == PRESET_ROSEMARY || preset == PRESET_THYME) {
-			l.shape = LEAF_ROUND;
-			t.aspect = 0.9f;
-			t.base_tint = Color(0.95f, 0.95f, 1.0f, 0.3f); // Paler throat; rosemary's dark spots read as the vein lines.
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 3;
-		} else if (preset == PRESET_FRENCH_LAVENDER) {
-			l.shape = LEAF_OVATE;
-			t.aspect = 0.55f;
-			t.venation = VENATION_PARALLEL; // The bracts' net of darker veins.
-			t.parallel_veins = 5;
-			t.base_tint = Color(0.45f, 0.2f, 0.5f, 0.3f);
-		} else if (preset == PRESET_SAGE_ROCKROSE) {
-			l.shape = LEAF_ROUND;
-			t.aspect = 1.1f;
-			t.venation = VENATION_PALMATE; // Crumpled silk, creased from the base.
-			t.base_tint = Color(0.95f, 0.8f, 0.2f, 0.45f); // The yellow spot at each petal's base.
-		} else if (preset == PRESET_HORNED_POPPY) {
-			l.shape = LEAF_ROUND;
-			t.aspect = 1.0f;
-			t.venation = VENATION_PALMATE; // Crumpled silk, veined from the base.
-			t.base_tint = Color(0.95f, 0.72f, 0.05f, 0.35f);
-		} else if (preset == PRESET_CORN_POPPY) {
-			l.shape = LEAF_ROUND;
-			t.aspect = 1.15f;
-			t.venation = VENATION_PALMATE;
-			t.vein = petal_color.lerp(Color(0.35f, 0.0f, 0.02f), 0.35f); // Darker crumple lines.
-			t.base_tint = Color(0.05f, 0.03f, 0.04f, 0.5f); // The black blotch at the base.
-		} else if (preset == PRESET_CORNFLOWER) {
-			l.shape = LEAF_SPATULATE;
-			t.aspect = 0.5f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 5;
-			t.base_tint = Color(0.35f, 0.25f, 0.65f, 0.35f); // The funnel's throat, violet.
-		} else if (preset == PRESET_MAYWEED) {
-			t.base_tint = Color(0.95f, 0.92f, 0.6f, 0.3f);
-		} else if (preset == PRESET_COW_PARSLEY) {
-			l.shape = LEAF_ROUND;
-			t.aspect = 1.0f;
-			t.base_tint = Color(0.88f, 0.92f, 0.78f, 0.3f);
 		} else {
 			t.base_tint = Color(0.9f, 0.55f, 0.02f, 0.4f);
 		}
@@ -4795,11 +2080,6 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			break;
 		case PRESET_COCKSFOOT:
 		case PRESET_TIMOTHY:
-		case PRESET_GRAZED_LAWN:
-		case PRESET_DUNG_ROUGH:
-		case PRESET_COW_PAT:
-		case PRESET_HORSE_DUNG:
-		case PRESET_DEER_PELLETS:
 			l.shape = LEAF_LINEAR;
 			t.aspect = 0.03f;
 			t.venation = VENATION_PARALLEL;
@@ -4816,7 +2096,6 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.spots = 0.6f;
 			break;
 		case PRESET_LEAF_LITTER:
-		case PRESET_LEAF_BANK:
 			l.shape = LEAF_OVATE;
 			t.aspect = 0.6f;
 			t.vein = leaf_color.lerp(Color(0.6f, 0.45f, 0.25f), 0.5f);
@@ -4824,7 +2103,6 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.spots = 1.0f;
 			break;
 		case PRESET_MOSS:
-		case PRESET_PINCUSHION_MOSS:
 			l.shape = LEAF_LINEAR;
 			t.aspect = 0.15f;
 			t.venation = VENATION_PARALLEL;
@@ -4849,7 +2127,6 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.spots = 0.25f;
 			break;
 		case PRESET_BRAMBLE:
-		case PRESET_RASPBERRY:
 			l.shape = LEAF_OVATE;
 			l.lobes = 10;
 			l.lobe_depth = 0.07f;
@@ -4929,103 +2206,12 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.yellowing = 0.1f;
 			t.spots = 0.15f;
 			break;
-		case PRESET_BELL_HEATHER:
-		case PRESET_CROSS_LEAVED_HEATH:
-		case PRESET_CROWBERRY:
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.45f; // The needle fills its narrow card.
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 1;
-			t.vein = leaf_color.lerp(Color(0.8f, 0.82f, 0.75f), 0.35f); // The pale rolled-under margin line.
-			t.yellowing = 0.1f;
-			t.spots = 0.05f;
-			break;
-		case PRESET_ROSEMARY:
-		case PRESET_FRENCH_LAVENDER:
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.2f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 1;
-			t.vein = leaf_color.lerp(Color(0.85f, 0.87f, 0.82f), 0.3f); // The rolled, white-felted margin.
-			t.yellowing = 0.08f;
-			t.spots = 0.05f;
-			break;
-		case PRESET_THYME:
-			l.shape = LEAF_LANCEOLATE;
-			t.aspect = 0.4f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 1;
-			t.yellowing = 0.1f;
-			t.spots = 0.1f; // The oil glands.
-			break;
-		case PRESET_SAGE_ROCKROSE:
-			l.shape = LEAF_OVATE;
-			t.aspect = 0.58f;
-			t.venation = VENATION_PINNATE; // The sunken net of the sage leaf.
-			t.vein = leaf_color.lerp(Color(0.12f, 0.14f, 0.08f), 0.4f);
-			t.yellowing = 0.15f;
-			t.spots = 0.15f;
-			break;
 		case PRESET_HEATHER:
 			l.shape = LEAF_LINEAR;
 			t.aspect = 0.3f;
 			t.venation = VENATION_PARALLEL;
 			t.parallel_veins = 1;
 			t.yellowing = 0.2f;
-			break;
-		case PRESET_VIOLET:
-			l.shape = LEAF_ROUND;
-			l.lobes = 7;
-			l.lobe_depth = 0.05f;
-			t.aspect = 1.0f;
-			t.venation = VENATION_PALMATE;
-			t.yellowing = 0.1f;
-			break;
-		case PRESET_GROUND_IVY:
-			l.shape = LEAF_ROUND;
-			l.lobes = 9;
-			l.lobe_depth = 0.08f;
-			t.aspect = 1.15f;
-			t.venation = VENATION_PALMATE;
-			t.yellowing = 0.1f;
-			t.spots = 0.0f;
-			break;
-		case PRESET_HERB_ROBERT:
-			l.shape = LEAF_PALMATE;
-			l.lobes = 2;
-			l.lobe_depth = 0.6f;
-			t.aspect = 0.9f;
-			t.venation = VENATION_PALMATE;
-			t.yellowing = 0.1f;
-			t.spots = 0.2f;
-			break;
-		case PRESET_KNAPWEED:
-			l.shape = LEAF_LANCEOLATE;
-			t.aspect = 0.22f;
-			t.yellowing = 0.25f;
-			t.spots = 0.3f;
-			break;
-		case PRESET_SCABIOUS:
-			l.shape = LEAF_LANCEOLATE;
-			l.lobes = 4;
-			l.lobe_depth = 0.55f;
-			t.aspect = 0.28f;
-			t.vein = leaf_color.lerp(Color(0.55f, 0.6f, 0.45f), 0.3f); // Hairy, greyish.
-			t.yellowing = 0.2f;
-			break;
-		case PRESET_WILD_CARROT:
-			l.shape = LEAF_LANCEOLATE;
-			l.lobes = 4;
-			l.lobe_depth = 0.7f;
-			t.aspect = 0.45f;
-			t.yellowing = 0.2f;
-			break;
-		case PRESET_SORREL:
-			l.shape = LEAF_LANCEOLATE;
-			t.aspect = 0.36f;
-			t.vein = Color(0.4f, 0.22f, 0.12f); // Reddish midribs.
-			t.yellowing = 0.2f;
-			t.spots = 0.4f;
 			break;
 		case PRESET_WATER_LILY:
 			l.shape = LEAF_ROUND;
@@ -5035,288 +2221,6 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.yellowing = 0.3f;
 			t.spots = 0.5f;
 			break;
-		case PRESET_PARSLEY_FERN:
-			l.shape = LEAF_LANCEOLATE;
-			l.lobes = 4;
-			l.lobe_depth = 0.6f;
-			t.aspect = 0.32f;
-			t.yellowing = 0.15f;
-			t.spots = 0.1f;
-			break;
-		case PRESET_SPLEENWORT:
-			l.shape = LEAF_OVATE;
-			t.aspect = 0.7f;
-			t.vein = leaf_color.lerp(Color(0.3f, 0.4f, 0.2f), 0.2f); // Veins hidden in a thick pinna.
-			t.yellowing = 0.1f;
-			t.spots = 0.25f;
-			break;
-		case PRESET_SAXIFRAGE:
-			l.shape = LEAF_PALMATE;
-			l.lobes = 2;
-			l.lobe_depth = 0.7f;
-			t.aspect = 0.8f;
-			t.venation = VENATION_PALMATE;
-			t.yellowing = 0.15f;
-			break;
-		case PRESET_THRIFT:
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.08f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 1;
-			t.yellowing = 0.25f;
-			t.spots = 0.1f;
-			break;
-		case PRESET_MARSH_MARIGOLD:
-			l.shape = LEAF_ROUND;
-			l.lobes = 9;
-			l.lobe_depth = 0.05f;
-			l.round_lobes = true;
-			t.aspect = 1.15f;
-			t.venation = VENATION_PALMATE;
-			t.vein = leaf_color.lerp(Color(0.3f, 0.42f, 0.18f), 0.25f);
-			t.yellowing = 0.15f;
-			t.spots = 0.1f;
-			break;
-		case PRESET_MEADOWSWEET:
-			l.shape = LEAF_OVATE;
-			l.lobes = 6;
-			l.lobe_depth = 0.12f;
-			t.aspect = 0.45f;
-			t.vein = leaf_color.lerp(Color(0.2f, 0.3f, 0.1f), 0.4f); // Deeply impressed, darker veins.
-			t.yellowing = 0.2f;
-			t.spots = 0.3f;
-			break;
-		case PRESET_BUTTERBUR:
-			l.shape = LEAF_ROUND;
-			l.lobes = 14;
-			l.lobe_depth = 0.035f;
-			t.aspect = 1.05f;
-			t.venation = VENATION_PALMATE;
-			t.vein = leaf_color.lerp(Color(0.55f, 0.6f, 0.35f), 0.4f);
-			t.yellowing = 0.3f;
-			t.spots = 0.5f; // Big leaves collect slug and insect damage.
-			break;
-		case PRESET_RIVER_MOSS:
-			l.shape = LEAF_OVATE;
-			t.aspect = 0.5f;
-			t.vein = leaf_color.lerp(Color(0.12f, 0.2f, 0.06f), 0.3f); // The costa.
-			t.yellowing = 0.05f;
-			t.spots = 0.0f;
-			break;
-		case PRESET_SPHAGNUM:
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.2f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 1;
-			t.yellowing = 0.0f;
-			t.spots = 0.0f;
-			break;
-		case PRESET_COTTONGRASS:
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.06f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 3;
-			t.yellowing = 0.45f; // Red-brown tips, as cotton grass leaves have from midsummer.
-			t.spots = 0.1f;
-			break;
-		case PRESET_BOG_ASPHODEL:
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.12f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 5;
-			t.yellowing = 0.3f;
-			t.spots = 0.1f;
-			break;
-		case PRESET_SUNDEW:
-			l.shape = LEAF_ROUND;
-			t.aspect = 1.0f;
-			t.venation = VENATION_PALMATE;
-			t.vein = Color(0.55f, 0.1f, 0.08f);
-			t.yellowing = 0.0f;
-			t.spots = 0.6f; // The tentacles' bases, red dots over the blade.
-			break;
-		case PRESET_FIREWEED:
-			l.shape = LEAF_LANCEOLATE;
-			t.aspect = 0.14f;
-			t.venation = VENATION_PINNATE;
-			t.vein = leaf_color.lerp(Color(0.85f, 0.85f, 0.75f), 0.55f); // The pale midrib and the veins looping short of the margin.
-			t.yellowing = 0.15f;
-			t.spots = 0.15f;
-			break;
-		case PRESET_BURNT_TUSSOCK:
-		case PRESET_ROOTED_SOD:
-		case PRESET_ANTHILL:
-		case PRESET_WOOD_ANT_NEST:
-		case PRESET_MOLEHILL:
-		case PRESET_CHARRED_STEMS:
-		case PRESET_MARRAM:
-		case PRESET_LYME_GRASS:
-		case PRESET_DRINN:
-		case PRESET_DESERT_ANNUALS:
-			l.shape = LEAF_LINEAR;
-			t.aspect = preset == PRESET_LYME_GRASS ? 0.05f : 0.03f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = preset == PRESET_MARRAM ? 5 : 9; // Marram's rolled leaf shows its ribs.
-			t.vein = leaf_color.lerp(Color(0.8f, 0.78f, 0.62f), 0.3f);
-			t.yellowing = 0.25f; // Straw tips.
-			t.spots = 0.1f;
-			break;
-		case PRESET_MOSS_CAMPION:
-		case PRESET_ALPINE_TOADFLAX:
-			l.shape = LEAF_LINEAR;
-			t.aspect = preset == PRESET_MOSS_CAMPION ? 0.12f : 0.15f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 1;
-			t.yellowing = 0.1f;
-			t.spots = 0.05f;
-			break;
-		case PRESET_PURPLE_SAXIFRAGE:
-			l.shape = LEAF_OVATE;
-			t.aspect = 0.55f;
-			t.vein = Color(0.62f, 0.66f, 0.6f); // The lime pit at the tip, pale.
-			t.yellowing = 0.1f;
-			t.spots = 0.2f;
-			break;
-		case PRESET_MOUNTAIN_AVENS:
-			l.shape = LEAF_LANCEOLATE;
-			l.lobes = 5;
-			l.lobe_depth = 0.35f;
-			l.round_lobes = true;
-			t.aspect = 0.38f;
-			t.vein = Color(0.06f, 0.12f, 0.03f); // Deeply impressed veins, dark.
-			t.yellowing = 0.15f;
-			t.spots = 0.15f;
-			break;
-		case PRESET_ALPINE_SEDGE:
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.03f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 3;
-			t.yellowing = 0.55f; // The browned, curled tips.
-			t.spots = 0.1f;
-			break;
-		case PRESET_DWARF_WILLOW:
-			l.shape = LEAF_ROUND;
-			t.aspect = 0.95f;
-			t.vein = Color(0.3f, 0.45f, 0.12f); // Net veins, paler.
-			t.yellowing = 0.15f;
-			t.spots = 0.2f;
-			break;
-		case PRESET_GLASSWORT:
-			// No blades: the jointed stems carry the stem colour.
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.2f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 1;
-			t.yellowing = 0.0f;
-			t.spots = 0.0f;
-			break;
-		case PRESET_CORD_GRASS:
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.04f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 7;
-			t.vein = leaf_color.lerp(Color(0.7f, 0.72f, 0.6f), 0.3f);
-			t.yellowing = 0.35f; // In-rolled, withered tips.
-			t.spots = 0.1f;
-			break;
-		case PRESET_SEA_PURSLANE:
-			l.shape = LEAF_SPATULATE;
-			t.aspect = 0.38f;
-			t.vein = leaf_color.lerp(Color(0.8f, 0.82f, 0.78f), 0.2f); // Veins hidden under the meal.
-			t.yellowing = 0.05f;
-			t.spots = 0.5f; // The silvery bladder hairs, a fine mealy fleck.
-			break;
-		case PRESET_SEA_ASTER:
-			l.shape = LEAF_LANCEOLATE;
-			t.aspect = 0.14f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 1;
-			t.yellowing = 0.15f;
-			t.spots = 0.05f;
-			break;
-		case PRESET_SEA_LAVENDER:
-			l.shape = LEAF_OVATE;
-			t.aspect = 0.32f;
-			t.vein = leaf_color.lerp(Color(0.62f, 0.66f, 0.42f), 0.5f); // The broad pale midrib.
-			t.yellowing = 0.2f;
-			t.spots = 0.1f;
-			break;
-		case PRESET_SEA_KALE:
-			l.shape = LEAF_OVATE;
-			t.aspect = 0.7f;
-			t.vein = Color(0.72f, 0.8f, 0.78f); // The broad pale midrib and veins.
-			t.yellowing = 0.1f;
-			t.spots = 0.0f;
-			break;
-		case PRESET_SEA_CAMPION:
-			l.shape = LEAF_LANCEOLATE;
-			t.aspect = 0.3f;
-			t.yellowing = 0.05f;
-			t.spots = 0.0f;
-			break;
-		case PRESET_HORNED_POPPY:
-			l.shape = LEAF_OVATE;
-			t.aspect = 0.42f;
-			t.vein = leaf_color.lerp(Color(0.8f, 0.84f, 0.82f), 0.35f);
-			t.yellowing = 0.1f;
-			t.spots = 0.4f; // The rough, warty hairs.
-			break;
-		case PRESET_CORN_POPPY:
-			l.shape = LEAF_LANCEOLATE;
-			l.lobes = 5;
-			l.lobe_depth = 0.55f;
-			t.aspect = 0.3f;
-			t.yellowing = 0.15f;
-			t.spots = 0.3f; // Bristly.
-			break;
-		case PRESET_CORNFLOWER:
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.1f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 3;
-			t.vein = leaf_color.lerp(Color(0.75f, 0.78f, 0.72f), 0.3f); // Grey cottony down.
-			t.yellowing = 0.1f;
-			break;
-		case PRESET_MAYWEED:
-			l.shape = LEAF_LINEAR;
-			t.aspect = 0.06f;
-			t.venation = VENATION_PARALLEL;
-			t.parallel_veins = 1;
-			t.yellowing = 0.15f;
-			break;
-		case PRESET_COW_PARSLEY:
-			l.shape = LEAF_LANCEOLATE;
-			l.lobes = 5;
-			l.lobe_depth = 0.75f;
-			t.aspect = 0.5f;
-			t.yellowing = 0.15f;
-			break;
-		case PRESET_SEA_HOLLY:
-			l.shape = LEAF_ROUND;
-			t.aspect = 0.9f;
-			t.venation = VENATION_PALMATE;
-			t.vein = Color(0.88f, 0.92f, 0.9f); // The white veins and spiny margin.
-			t.yellowing = 0.0f;
-			t.spots = 0.0f;
-			break;
-		case PRESET_LIVERWORT:
-			l.shape = LEAF_SPATULATE;
-			t.aspect = 0.35f;
-			t.vein = leaf_color.lerp(Color(0.05f, 0.14f, 0.03f), 0.5f); // The darker midline.
-			t.yellowing = 0.05f;
-			t.spots = 0.3f; // The pores of the air chambers, pale dots over the surface.
-			break;
-		case PRESET_STONECROP: // Succulent leaves are solid beads on the stem surface, untextured.
-		case PRESET_FLY_AGARIC:
-		case PRESET_CEP:
-		case PRESET_CHANTERELLE:
-		case PRESET_BRITTLEGILL:
-		case PRESET_CLOUDED_AGARIC:
-		case PRESET_HONEY_FUNGUS:
-		case PRESET_FAIRY_RING_MUSHROOM:
-		case PRESET_SHEET_WEB:
-		case PRESET_ORB_WEB:
 		case PRESET_MAX:
 			break;
 	}
@@ -5703,21 +2607,6 @@ PlantGenerator::TextureSet PlantGenerator::_bake_moss_texture(uint32_t p_seed) c
 		const float t = tone[i];
 		Color c = base * (0.25f + 0.95f * h);
 		c = c.lerp(Color(base.r * 1.6f + 0.04f, base.g * 1.3f + 0.03f, base.b * 0.8f), h * t * 0.6f); // Fresh, yellower tips.
-		if (preset == PRESET_PINCUSHION_MOSS) {
-			// Leucobryum: the leaves' empty hyaline cells make the packed tips pale, glaucous, near white where dry,
-			// with little dark between them.
-			c = base * (0.6f + 0.55f * h);
-			c = c.lerp(Color(base.r * 1.3f + 0.04f, base.g * 1.25f + 0.04f, base.b * 1.3f + 0.04f), h * t * 0.6f);
-		}
-		// The bytes are sRGB: scaled so the cushion's mean green albedo is about 0.06 linear,
-		// inside the 0.05 to 0.1 measured for mosses (and the trees' moss shell), not 0.02.
-		c *= 1.55f;
-		if (preset == PRESET_REINDEER_LICHEN) {
-			// Cladonia: a froth of pale hollow branchlets, grey-green with darker hollows only deep down;
-			// lichen mats are among the brightest ground covers (visible albedo about 0.3 to 0.4).
-			c = base * (0.78f + 0.3f * h);
-			c = c.lerp(Color(base.r * 1.08f + 0.04f, base.g * 1.08f + 0.04f, base.b * 1.0f + 0.03f), h * t * 0.5f);
-		}
 		aw[i * 3 + 0] = uint8_t(CLAMP(c.get_r8(), 0, 255));
 		aw[i * 3 + 1] = uint8_t(CLAMP(c.get_g8(), 0, 255));
 		aw[i * 3 + 2] = uint8_t(CLAMP(c.get_b8(), 0, 255));
@@ -5886,30 +2775,10 @@ String PlantGenerator::shader_common_code() {
 	String code = WeatherMap3D::get_wind_shader_code();
 	code += VegetationLight::SHADER_CODE;
 	// VegetationField3D packs the light a plant grew in into the fraction of its range (custom y).
-	code += "float vegetation_light_of(float y) { float f = fract(y); return f > 0.5 / 101.0 ? f * (101.0 / 100.0) * 1.5 : 1.0; }\n";
-	// VegetationField3D's far thinning (VegetationField3D::_far_keep(), which this mirrors): custom x holds the plant's
-	// rank in its fraction and the end of its species' far tail in whole metres (0: none), y the range. The scale a
-	// plant is drawn at d metres from the main camera (0: thinned out).
-	code += R"(float vegetation_far_scale(vec4 c, float d) {
-	float range = floor(c.y);
-	float reach = floor(c.x);
-	float rank = fract(c.x);
-	if (reach <= range) {
-		float keep = clamp((range - d) / (range * 0.65), 0.0, 1.0);
-		return smoothstep(rank, rank + 0.12, keep * 1.12) * (1.0 + 0.25 * (1.0 - keep));
-	}
-	float d0 = 0.5 * range;
-	float tail = d0 * d0 / max(d * d, d0 * d0);
-	float keep = tail * clamp((reach - d) / (reach * 0.25), 0.0, 1.0);
-	return smoothstep(rank, rank + 0.12, keep * 1.12) * min(inversesqrt(tail), 1.6);
-}
-)";
+	code += "float vegetation_light_of(float y) { return y > 0.0 ? fract(y) * (101.0 / 100.0) * 1.5 : 1.0; }\n";
 	// The wind code already declares weather_map_rect: the wetness lines without their globals.
 	code += BaseMaterial3D::get_wetness_functions_code(false);
 	code += BaseMaterial3D::get_snow_shader_code();
-	code += BaseMaterial3D::get_rain_functions_code(true);
-	code += VegetationFire::SHADER_CODE;
-	code += VegetationFire::WIND_CODE;
 	code += R"(
 global uniform sampler2D weather_state_map;
 
@@ -5921,13 +2790,10 @@ float weather_wetness_at(vec3 p_world_pos) {
 	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
 	return textureLod(weather_state_map, uv, 0.0).g;
 }
-)";
-	code += BaseMaterial3D::get_frost_sampling_code();
-	code += R"(
 
 global uniform vec4 grass_wind; // xy: fallback wind (m/s, x and z), z: the grass's response (rad per m/s).
 
-vec3 plant_air_wind(vec3 wp, float h) {
+vec3 plant_wind(vec3 wp, float h) {
 	if (weather_map_rect.z > 0.0) {
 		return weather_wind(wp, h);
 	}
@@ -5941,18 +2807,14 @@ vec3 plant_air_wind(vec3 wp, float h) {
 	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
 	return vec3(w.x, 0.0, w.y) * g;
 }
-
-vec3 plant_wind(vec3 wp, float h) {
-	return plant_air_wind(wp, h) + fire_wind_at(wp.xz); // the fires' indraft on top (WorldFire.wind_at)
-}
 )";
 	return code;
 }
 
-Ref<Shader> PlantGenerator::shaders[3];
+Ref<Shader> PlantGenerator::shaders[2];
 
-Ref<Shader> PlantGenerator::_plant_shader(bool p_textured, bool p_silk) {
-	Ref<Shader> &sh = shaders[p_silk ? 2 : (p_textured ? 1 : 0)];
+Ref<Shader> PlantGenerator::_plant_shader(bool p_textured) {
+	Ref<Shader> &sh = shaders[p_textured ? 1 : 0];
 	if (sh.is_valid()) {
 		return sh;
 	}
@@ -5960,11 +2822,7 @@ Ref<Shader> PlantGenerator::_plant_shader(bool p_textured, bool p_silk) {
 	if (p_textured) {
 		code += "#define PLANT_TEXTURED\n";
 	}
-	if (p_silk) {
-		code += "#define PLANT_SILK\n";
-	}
 	code += shader_common_code();
-	code += GrassField3D::get_ground_opened_shader_code();
 	code += R"(
 global uniform sampler2D grass_trample_map;
 global uniform vec4 grass_trample_rect;
@@ -5984,106 +2842,7 @@ uniform sampler2D backlight_tex : hint_default_black, filter_linear_mipmap_aniso
 varying vec3 v_world;
 varying vec3 v_geo_n;
 varying float v_light;
-varying vec3 v_tone; // The plant's own tone (no two plants of a species alike).
 uniform float light_response = 1.0;
-
-#ifdef PLANT_SILK
-// Silk (docs/ideas/vegetation.md, "Dewy webs"): threads 1 to 4 microns thick, drawn here, not modelled. Each is a line in
-// the web's own plane (UV, in metres) widened to at least a pixel and faded by its true width over the pixel (Persson's
-// phone-wire anti-aliasing), so a far web keeps its true mean cover; past the spacing of a family of threads the
-// family's mean cover takes over. Dew and hoarfrost bead the threads (drops 0.1 to 0.4 mm), which is when webs are
-// seen. Blended, not hashed or clipped: a web is mostly a thin veil of sub-pixel cover, which a hash only turns into a
-// fixed sparkle; webs seldom overlap, so sorting by instance is enough, and they cast no shadow map (the drops are
-// clear). COLOR.b picks the pattern: 0 a sheet (four families of broken, jittered threads), 0.5 one thread along UV.x
-// (UV.y across), 1 an orb round its hub; COLOR.r thins a sheet towards its edge.
-uniform vec4 silk_orb = vec4(0.12, 0.004, 28.0, 0.0); // radius, capture spiral spacing (m), radials, open sector (turns)
-uniform float silk_dew = -1.0; // >= 0: this much dew, in place of the weather's (scenes without a WeatherMap3D)
-
-float silk_h(float x) {
-	return fract(sin(x * 91.3458) * 47453.5453);
-}
-
-// The cover of a thread of half width w (m) at distance d, over a pixel fp wide.
-float silk_line(float d, float w, float fp) {
-	float wp = max(2.0 * w, fp);
-	return (1.0 - smoothstep(0.5 * wp - 0.5 * fp, 0.5 * wp + 0.5 * fp, d)) * 2.0 * w / wp;
-}
-
-// Half width along a thread at t (m): the dry silk, or the dew's beads, one in each 0.5 mm, their profile when a pixel
-// resolves them and their mean width when it does not.
-float silk_width(float t, float seed, float dew, float fp) {
-	const float cell = 0.0005;
-	float i = floor(t / cell);
-	float r = dew * mix(0.08e-3, 0.28e-3, silk_h(i + seed));
-	float c = (i + 0.2 + 0.6 * silk_h(i * 3.1 + seed)) * cell;
-	float x = t - c;
-	float profile = sqrt(max(r * r - x * x, 0.0));
-	float mean = 1.5708 * r * r / cell;
-	return max(1.5e-6, mix(profile, mean, smoothstep(0.5 * cell, 2.0 * cell, fp)));
-}
-
-// A family of parallel threads about s apart: cover at p.
-float silk_family(vec2 p, float a, float s, float seed, float dew, float fp, float broken) {
-	vec2 n = vec2(cos(a), sin(a));
-	float u = dot(p, n) / s;
-	float i = floor(u);
-	float d = abs(u - i - 0.5 - 0.35 * (silk_h(i + seed) - 0.5)) * s;
-	float t = dot(p, vec2(-n.y, n.x));
-	float w = silk_width(t, i * 0.37 + seed, dew, fp);
-	// Broken: a share of each thread's 2 cm lengths missing, so the sheet reads tangled, not woven.
-	float on = step(broken, silk_h(floor(t / 0.02 + silk_h(i * 1.3 + seed) * 7.0) * 1.37 + i * 0.11 + seed));
-	float far_k = smoothstep(0.4 * s, 1.5 * s, fp);
-	return mix(silk_line(d, w, fp) * on, min(2.0 * w / s, 1.0) * (1.0 - broken), far_k);
-}
-
-float silk_cover(vec2 p, float kind, float dew, float fp) {
-	if (kind < 0.25) {
-		float keep = 1.0;
-		for (int k = 0; k < 4; k++) {
-			float a = float(k) * 0.785 + 0.4 * silk_h(float(k) + 7.0);
-			keep *= 1.0 - silk_family(p, a, 0.0007 * (1.0 + 0.25 * float(k)), float(k) * 13.0, dew * 0.65, fp, 0.25);
-		}
-		// Denser and thinner parts a few centimetres across, as the spider laid it.
-		vec2 q = p * 45.0;
-		float patchy = 0.5 + 0.25 * sin(q.x + 1.7 * sin(q.y * 0.8)) + 0.25 * sin(q.y * 1.3 + 1.3 * sin(q.x * 0.7 + 2.0));
-		return (1.0 - keep) * mix(0.35, 1.0, patchy);
-	}
-	if (kind < 0.75) {
-		return silk_line(abs(p.y), silk_width(p.x, 3.0, dew, fp), fp);
-	}
-	// The orb: radials out to the frame (a pentagon, as _build_orb_web() ties it), the hub's tight spiral, a free zone,
-	// then the capture spiral (Archimedean) out to a wavy rim; one sector open in some.
-	float R = silk_orb.x;
-	float r = length(p);
-	float th = atan(p.y, p.x);
-	float tu = th / 6.2831853 + 0.5;
-	const float m = 5.0;
-	float fa = mod(th - 0.3, 6.2831853 / m) - 3.14159265 / m;
-	float frame = R * 1.4 * cos(3.14159265 / m) / cos(fa);
-	if (r > frame) {
-		return 0.0;
-	}
-	float N = silk_orb.z;
-	float rs = 6.2831853 * max(r, 1e-4) / N;
-	float k = floor(tu * N + 0.5);
-	float dr = abs(tu * N + 0.5 - k - 0.5) * rs;
-	float wr = silk_width(r, k * 1.3, dew * 0.8, fp);
-	float cr = mix(silk_line(dr, wr, fp), min(2.0 * wr / rs, 1.0), smoothstep(0.4 * rs, 1.5 * rs, fp));
-	float r_hub = 0.1 * R, r_free = 0.25 * R;
-	float rim = R * (1.0 + 0.06 * sin(th * 3.0 + R * 40.0) + 0.04 * sin(th * 5.0 + 1.3));
-	bool in_hub = r < r_hub;
-	float sp = in_hub ? 0.0012 : silk_orb.y;
-	float u = (r - (in_hub ? 0.0 : r_free)) / sp - tu;
-	float ds = abs(fract(u) - 0.5) * sp;
-	float on = in_hub ? 1.0 : step(r_free, r) * step(r, rim);
-	if (silk_orb.w > 0.0) {
-		on *= in_hub ? 1.0 : step(silk_orb.w, fract(tu + 0.25 + 0.5 * silk_orb.w));
-	}
-	float ws = silk_width(th * r, floor(u) * 2.1, dew * 1.4, fp); // The capture spiral's glue gathers the most water.
-	float cs = mix(silk_line(ds, ws, fp), min(2.0 * ws / sp, 1.0), smoothstep(0.4 * sp, 1.5 * sp, fp));
-	return 1.0 - (1.0 - cr) * (1.0 - cs * on);
-}
-#endif
 
 
 vec3 rotate_about(vec3 v, vec3 axis, float a) {
@@ -6109,27 +2868,6 @@ void vertex() {
 	vec3 root = MODEL_MATRIX[3].xyz;
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
 	vec3 rest_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	// Ruts, digs and puddles (mud round 6): a light print lays the plant down, a rut or standing water takes it.
-	vec3 go = grass_ground_opened(root.xz);
-	float plant_rnd = fract(sin(dot(root.xz, vec2(12.9898, 78.233))) * 43758.5453);
-	// Each plant's own tone, so repeated variants do not read as copies: its leaves a little
-	// lighter or darker (up to 8%) and yellower or bluer (up to 5%), as plants of one species
-	// differ by genotype, age and the soil under them. Mean 1, so far colours hold.
-	{
-		// From the instance's rank and scale (per plant, and kept by the path tracer's merged
-		// copies, where MODEL_MATRIX is the field's).
-		vec2 hk = vec2(INSTANCE_CUSTOM.x, INSTANCE_CUSTOM.z);
-		float h1 = fract(sin(dot(hk, vec2(39.3468, 11.1353))) * 24634.6345);
-		float h2 = fract(sin(dot(hk, vec2(73.1567, 52.2353))) * 31758.2347);
-		float lv = 1.0 + 0.16 * (h1 - 0.5);
-		float yl = 0.1 * (h2 - 0.5);
-		v_tone = lv * vec3(1.0 + yl, 1.0 + 0.3 * yl, 1.0 - yl);
-		// Regrowth on burnt ground (VegetationField3D, w's fraction): the first season's shoots come up a lighter,
-		// fresher yellow-green than the stand around (young leaves, richer in nitrogen on the ash: the post-fire
-		// green flush), fading over a year and a half. Living tissue only.
-		float flush = fract(INSTANCE_CUSTOM.w) / 0.99;
-		v_tone *= mix(vec3(1.0), vec3(1.10, 1.22, 0.84), clamp(flush, 0.0, 1.0) * light_response);
-	}
 	if (w > 0.0) {
 		float resp = (grass_wind.z > 0.0 ? grass_wind.z : 0.12) / max(stiffness, 0.05);
 		vec3 wind = to_local * plant_wind(root, max(height * 0.66, 0.05));
@@ -6162,21 +2900,6 @@ void vertex() {
 			if (press > 1e-3 && length(b) > 1e-4) {
 				push = normalize((to_local * vec3(b.x, 0.0, b.y)).xz) * 1.2 / max(sqrt(stiffness), 0.3);
 			}
-		}
-		if (go.x > press) {
-			// Pressed into the ground: laid over its own way, as a wheel or boot leaves a plant.
-			float ga = plant_rnd * 6.2831853;
-			press = go.x;
-			push = normalize((to_local * vec3(cos(ga), 0.0, sin(ga))).xz) * 1.2 / max(sqrt(stiffness), 0.3);
-		}
-		// Snow (docs/ideas/world-links.md): a settled pack's weight bows the plant down and out, each part
-		// over its own side, till it lies under the snow; it rises again as the pack melts.
-		float snow_p = snow_press(snow_pack_at(root), stiffness);
-		if (snow_p > press) {
-			float ga = plant_rnd * 6.2831853;
-			vec2 own = normalize((to_local * vec3(cos(ga), 0.0, sin(ga))).xz);
-			press = snow_p;
-			push = (hl > 1e-4 ? hd : own) * 1.2 / max(sqrt(stiffness), 0.3);
 		}
 		// Sway: on top of the mean lean, each organ rocks at its own natural frequency, driven by
 		// the turbulence (de Langre 2008: herbs and grasses 0.5 to 4 Hz, lower for taller and
@@ -6219,24 +2942,18 @@ void vertex() {
 	}
 	// Far distance (docs/ideas/plant-generator.md, stage 6): VegetationField3D gives each instance
 	// its blue-noise rank among the plants kept there (x) and its species' range (y). The share
-	// kept falls from 1 at 35% of the range to 0 at the range, or with a far tail (far_reach) from
-	// half the range with the square of the distance; a plant shrinks to nothing as the share
-	// passes its rank, and the survivors grow to hold the cover (Horizon Zero Dawn's thinning by
-	// rank, Ghost of Tsushima's widening). Measured from the main camera, so
+	// kept falls from 1 at 35% of the range to 0 at the range; a plant shrinks to nothing as the
+	// share passes its rank, and the survivors grow a little to hold the cover (Horizon Zero
+	// Dawn's thinning by rank, Ghost of Tsushima's widening). Measured from the main camera, so
 	// shadow and other passes thin the same plants; the ground's colour takes over (vegetation_far()).
 	v_light = vegetation_light_of(INSTANCE_CUSTOM.y);
 	if (INSTANCE_CUSTOM.y > 0.0) {
-		VERTEX *= vegetation_far_scale(INSTANCE_CUSTOM, length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz));
+		float range = floor(INSTANCE_CUSTOM.y);
+		float d = length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz);
+		float keep = clamp((range - d) / (range * 0.65), 0.0, 1.0);
+		float s = smoothstep(INSTANCE_CUSTOM.x, INSTANCE_CUSTOM.x + 0.12, keep * 1.12);
+		VERTEX *= s * (1.0 + 0.25 * (1.0 - keep));
 	}
-	// Fire (vegetation_fire.h): a herb under the flame shrivels towards its base as it burns.
-	vec4 fire_v = fire_state_at(MODEL_MATRIX[3].xz);
-	if (fire_v.x > 0.0) {
-		float b = fire_v.x * (1.0 - smoothstep(0.7, 1.3, height / max(fire_v.z, 0.02)));
-		VERTEX *= vec3(mix(1.0, 0.75, b), mix(1.0, 0.3, b), mix(1.0, 0.75, b));
-	}
-	// Torn out where the soil opened (a dither by the plant, so a rut's edge thins), and standing on the dented ground.
-	VERTEX *= 1.0 - step(plant_rnd, 0.97 * go.y + 0.02) * step(1e-3, go.y);
-	VERTEX -= to_local * vec3(0.0, go.z, 0.0);
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_geo_n = normalize(mat3(MODEL_MATRIX) * NORMAL);
 }
@@ -6259,75 +2976,18 @@ void fragment() {
 		albedo = mix(albedo, mix(yellow, brown, smoothstep(0.35, 0.85, dead)), smoothstep(0.0, 0.5, dead));
 		back *= 1.0 - 0.7 * dead;
 	}
-	albedo *= v_tone;
 	// Living tissue acclimates to its light (sun and shade leaves); litter and dead tissue do not.
 	albedo = mix(albedo, vegetation_light_tint(albedo, v_light), light_response * (1.0 - dead));
 	float rough = roughness;
 	float metallic = 0.0;
 	float specular = 0.35; // Leaf cuticle.
 	vec3 n_world = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
-	// Fire: charred under the flame, scorched brown up to the scorch height; the burning band glows.
-	// At this point's own world position, and the height above the plant's base clamped to its height: the path
-	// tracer reruns vertex() for a merged MultiMesh with the field's transform, not the plant's.
-	vec3 fire_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	vec4 fire_s = fire_state_at(fire_w.xz);
-	float fire_n = fract(sin(dot(floor(fire_w * 25.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
-	float burnt = fire_foliage_apply(fire_s, clamp(fire_w.y - MODEL_MATRIX[3].y, 0.0, height), fire_n, albedo, rough);
-	back *= 1.0 - burnt;
-	EMISSION = fire_glow_color(fire_s.y) * 4.0 * burnt;
-	// Mud thrown or splashed onto it (mud round 7), thickest low down.
-	float mud_c = grass_mud_apply(grass_ground_mud(fire_w.xz), fire_w, clamp(fire_w.y - MODEL_MATRIX[3].y, 0.0, height), albedo);
-	rough = mix(rough, 0.85, mud_c);
-	back *= 1.0 - mud_c;
-	// Rain: leaves barely soak (low porosity), they darken a little and turn glossy. They stay wet while the canopy's
-	// water (WeatherMap3D, Rutter's interception store) is held on them, after the ground has begun to dry, and the water
-	// stands on them as beads (rain_surface_beads(); upward faces hold them, undersides shed them).
-	{
-		float leaf_wet = max(weather_wetness_at(v_world), weather_canopy_wetness_at(v_world));
-		weather_wetness_apply(leaf_wet, n_world.y, metallic, 0.15, albedo, rough);
-#if defined(RT)
-		float bead_fp = 0.0;
-#else
-		vec3 bead_fw = fwidth(v_world);
-		float bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);
-#endif
-		vec4 bead = rain_surface_beads(v_world, n_world, leaf_wet * smoothstep(-0.2, 0.6, n_world.y), bead_fp);
-		if (bead.w > 0.0) {
-			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(bead.xyz, 0.0)).xyz);
-			rough = mix(rough, 0.05, bead.w);
-			specular = mix(specular, 0.5, bead.w);
-			albedo *= 1.0 - 0.5 * bead.w;
-		}
-	}
-	weather_frost_apply(weather_frost_at(v_world), n_world.y, albedo, rough);
-	weather_rime_apply(weather_rime_at(v_world), n_world, v_world, albedo, rough);
-	// Salt spray burns the leaves near the sea (WeatherMap3D sea_spray), leaf by leaf.
-	weather_salt_burn_apply(weather_salt_at(v_world), fract(sin(dot(floor(v_world * 6.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453), albedo);
+	// Rain: leaves barely soak (low porosity), they darken a little and turn glossy.
+	weather_wetness_apply(weather_wetness_at(v_world), n_world.y, metallic, 0.15, albedo, rough);
 	// Snow lies on the faces that look up.
 	vec4 snow_s = snow_cover_at(v_world);
 	float snow = snow_cover_weight(snow_s.x, 60.0, n_world, n_world);
 	snow_cover_apply(snow, snow_s.y, snow_s.z, albedo, rough, metallic, specular);
-#ifdef PLANT_SILK
-	{
-		// Dew (the weather's surface water) and hoarfrost bead the silk; dry, it is all but unseen.
-		float frost_k = smoothstep(0.0, 0.05, weather_frost_at(v_world));
-		float dew = silk_dew >= 0.0 ? silk_dew : smoothstep(0.03, 0.4, weather_wetness_at(v_world));
-		dew = max(dew, frost_k);
-#if defined(RT)
-		float fp = length(v_world - CAMERA_POSITION_WORLD) * 0.0011 / max(abs(dot(n_world, normalize(CAMERA_POSITION_WORLD - v_world))), 0.2);
-#else
-		float fp = max(length(fwidth(UV)) * 0.7, 1e-5);
-#endif
-		float cover = silk_cover(UV, COLOR.b, dew, fp) * mix(1.0, COLOR.r, step(COLOR.b, 0.25));
-		// Water beads: clear lenses that throw back glints and pass the light through; hoarfrost: white and matt.
-		albedo = mix(vec3(0.82, 0.84, 0.86), vec3(0.92), frost_k);
-		rough = mix(0.12, 0.55, frost_k);
-		specular = 0.5;
-		metallic = 0.0;
-		back = vec3(0.6) * (1.0 - frost_k);
-		ALPHA = cover;
-	}
-#endif
 	ALBEDO = albedo;
 	ROUGHNESS = rough;
 	METALLIC = metallic;
@@ -6343,162 +3003,7 @@ void fragment() {
 void PlantGenerator::free_shaders() {
 	shaders[0].unref();
 	shaders[1].unref();
-	shaders[2].unref();
 	impostor_shader.unref();
-}
-
-// Climber leaves for the trees' vines, one leaf per mesh (docs/ideas/plant-generator.md,
-// "Climber leaves"). Ivy (Hedera helix): palmate, 3 to 5 shallow lobes, dark and glossy with pale
-// veins. Old man's beard (Clematis vitalba): pinnate, five ovate leaflets on a rachis that twines.
-// Honeysuckle (Lonicera periclymenum): ovate to elliptic, entire, short-stalked, dull green.
-Array PlantGenerator::make_climber_leaves(int p_climber, int p_variants) {
-	Array out;
-	const int climber = p_climber == PRESET_IVY ? CLIMBER_IVY : CLAMP(p_climber, 0, int(CLIMBER_IVY_ADULT));
-	Ref<PlantGenerator> g;
-	g.instantiate();
-	g->preset = PRESET_IVY; // Ivy's texture spec, adjusted below for the others.
-	g->leaf_wear = 0.25f; // A few bites and the odd yellowing leaf among the four.
-	Leaf l;
-	l.length = 1.0f;
-	l.segments = 8;
-	float roughness = 0.6f;
-	LeafTexture t = g->_leaf_texture_spec(false);
-	switch (climber) {
-		case CLIMBER_IVY:
-			g->leaf_color = Color(0.05f, 0.15f, 0.04f);
-			l.shape = LEAF_PALMATE;
-			l.lobes = 2;
-			l.lobe_depth = 0.28f;
-			l.width = 1.1f;
-			l.fold = 0.1f;
-			l.bend = 0.15f;
-			break;
-		case CLIMBER_IVY_ADULT:
-			// Ivy's adult shoots, which stand out from the stem where an old plant reaches the light
-			// (heteroblasty, Metcalfe 2005 Biol. Flora Br. Isles: Hedera helix): ovate to rhombic,
-			// entire, tapering to a point, a little paler and glossier than the lobed juvenile leaves.
-			g->leaf_color = Color(0.07f, 0.19f, 0.05f);
-			l.shape = LEAF_OVATE;
-			l.width = 0.62f;
-			l.fold = 0.12f;
-			l.bend = 0.12f;
-			l.petiole = 0.08f;
-			roughness = 0.5f;
-			break;
-		case CLIMBER_CLEMATIS:
-			g->leaf_color = Color(0.1f, 0.24f, 0.06f);
-			l.shape = LEAF_OVATE;
-			l.width = 0.55f;
-			l.fold = 0.15f;
-			l.bend = 0.3f;
-			roughness = 0.72f;
-			break;
-		default: // CLIMBER_HONEYSUCKLE
-			g->leaf_color = Color(0.11f, 0.25f, 0.08f);
-			l.shape = LEAF_OVATE;
-			l.width = 0.55f;
-			l.fold = 0.2f;
-			l.bend = 0.25f;
-			l.petiole = 0.06f;
-			roughness = 0.75f;
-			break;
-	}
-	t = g->_leaf_texture_spec(false);
-	t.leaf = l;
-	t.aspect = l.width;
-	if (climber == CLIMBER_IVY || climber == CLIMBER_IVY_ADULT) {
-		t.venation = VENATION_PALMATE;
-		t.vein = Color(0.38f, 0.45f, 0.3f);
-		t.yellowing = 0.1f;
-		t.spots = 0.15f;
-	} else {
-		t.venation = VENATION_PINNATE;
-		t.yellowing = 0.2f;
-		t.spots = 0.2f;
-	}
-	const TextureSet ts = g->_bake_leaf_texture(t, 9001u + uint32_t(climber) * 101u);
-	Ref<ShaderMaterial> mat = g->_textured_material(ts, roughness);
-	mat->set_shader_parameter("height", 1.0f);
-	mat->set_shader_parameter("stiffness", 1.5f);
-	mat->set_shader_parameter("light_response", 1.0f);
-	const Basis flat = organ_frame(Vector3(0, 0, 1), Vector3(0, 1, 0));
-	for (int v = 0; v < MAX(p_variants, 1); v++) {
-		g->seed = v;
-		g->rng.seed(uint64_t(9001 + climber * 31 + v));
-		for (Builder &b : g->builders) {
-			b = Builder();
-		}
-		g->organ = 0;
-		g->organ_bases.clear();
-		Leaf lv = l;
-		lv.width = l.width * g->_rand(0.9f, 1.1f);
-		lv.bend = l.bend * g->_rand(0.7f, 1.3f);
-		lv.twist = g->_rand(-0.15f, 0.15f);
-		if (climber == CLIMBER_CLEMATIS) {
-			// A rachis with two opposite pairs of stalked leaflets and one at the tip.
-			Leaf rachis;
-			rachis.shape = LEAF_LINEAR;
-			rachis.length = 0.62f;
-			rachis.width = 0.025f;
-			rachis.fold = 0.0f;
-			rachis.bend = 0.2f;
-			rachis.segments = 4;
-			g->_add_leaf(SURFACE_LEAF, Transform3D(flat, Vector3()), rachis, 0.0f);
-			const float at[2] = { 0.3f, 0.58f };
-			for (int k = 0; k < 2; k++) {
-				for (int side = -1; side <= 1; side += 2) {
-					Leaf lf = lv;
-					lf.length = g->_rand(0.36f, 0.44f) * (k == 0 ? 1.0f : 0.92f);
-					lf.width = lf.length * lv.width;
-					const Vector3 d = Vector3(float(side), 0.0f, 0.55f).normalized();
-					g->_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), Vector3(0.012f * side, 0.002f, at[k] * 0.62f)), lf, 0.3f + 0.3f * k);
-				}
-			}
-			Leaf tip = lv;
-			tip.length = 0.38f;
-			tip.width = tip.length * lv.width;
-			g->_add_leaf(SURFACE_LEAF, Transform3D(flat, Vector3(0.0f, 0.003f, 0.6f)), tip, 0.8f);
-		} else {
-			lv.width = lv.width * lv.length;
-			g->_add_leaf(SURFACE_LEAF, Transform3D(flat, Vector3()), lv, 0.0f);
-		}
-		Builder &b = g->builders[SURFACE_LEAF];
-		b.normals.resize(b.verts.size());
-		b.normals.fill(Vector3());
-		Vector3 *nw = b.normals.ptrw();
-		const Vector3 *vr = b.verts.ptr();
-		int *iw = b.indices.ptrw();
-		for (int i = 0; i < b.indices.size(); i += 3) {
-			SWAP(iw[i + 1], iw[i + 2]);
-		}
-		for (int i = 0; i < b.indices.size(); i += 3) {
-			const int i0 = b.indices[i];
-			const int i1 = b.indices[i + 2];
-			const int i2 = b.indices[i + 1];
-			const Vector3 fn = (vr[i1] - vr[i0]).cross(vr[i2] - vr[i0]);
-			nw[i0] += fn;
-			nw[i1] += fn;
-			nw[i2] += fn;
-		}
-		for (int i = 0; i < b.verts.size(); i++) {
-			nw[i] = nw[i].length_squared() > 0.0f ? nw[i].normalized() : Vector3(0, 1, 0);
-		}
-		Array arrays;
-		arrays.resize(Mesh::ARRAY_MAX);
-		arrays[Mesh::ARRAY_VERTEX] = b.verts;
-		arrays[Mesh::ARRAY_NORMAL] = b.normals;
-		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
-		arrays[Mesh::ARRAY_TEX_UV2] = b.uv2s;
-		arrays[Mesh::ARRAY_COLOR] = b.colors;
-		arrays[Mesh::ARRAY_INDEX] = b.indices;
-		Ref<ArrayMesh> m;
-		m.instantiate();
-		m->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
-		m->surface_set_material(0, mat);
-		m->set_name(vformat("climber_leaf_%d_%d", climber, v));
-		out.push_back(m);
-	}
-	return out;
 }
 
 Ref<ShaderMaterial> PlantGenerator::_textured_material(const TextureSet &p_set, float p_roughness) const {
@@ -6509,20 +3014,6 @@ Ref<ShaderMaterial> PlantGenerator::_textured_material(const TextureSet &p_set, 
 	m->set_shader_parameter("normal_tex", p_set.normal);
 	m->set_shader_parameter("backlight_tex", p_set.backlight);
 	m->set_shader_parameter("roughness", p_roughness);
-	return m;
-}
-
-Ref<ShaderMaterial> PlantGenerator::_silk_material() const {
-	Ref<ShaderMaterial> m;
-	m.instantiate();
-	m->set_shader(_plant_shader(false, true));
-	m->set_shader_parameter("roughness", 0.12f);
-	if (preset == PRESET_ORB_WEB) {
-		m->set_shader_parameter("silk_orb", Vector4(silk_orb[0], silk_orb[1], silk_orb[2], silk_orb[3]));
-	}
-	if (season.has("dew")) {
-		m->set_shader_parameter("silk_dew", float(season["dew"]));
-	}
 	return m;
 }
 
@@ -6543,7 +3034,7 @@ void PlantGenerator::apply_preset_colors() {
 	switch (preset) {
 		case PRESET_DANDELION:
 			petal_color = Color(1.0f, 0.75f, 0.03f);
-			centre_color = Color(0.9f, 0.9f, 0.86f); // The clock's pappus (the flower is all florets).
+			centre_color = Color(0.95f, 0.65f, 0.05f);
 			break;
 		case PRESET_PLANTAIN:
 			leaf_color = Color(0.13f, 0.27f, 0.07f);
@@ -6580,7 +3071,6 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.13f, 0.25f, 0.09f);
 			stem_color = Color(0.2f, 0.3f, 0.12f);
 			petal_color = Color(0.55f, 0.12f, 0.45f);
-			centre_color = Color(0.86f, 0.84f, 0.8f); // Thistledown.
 			break;
 		case PRESET_YARROW:
 			leaf_color = Color(0.13f, 0.27f, 0.08f);
@@ -6591,11 +3081,6 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.12f, 0.26f, 0.06f);
 			centre_color = Color(0.36f, 0.16f, 0.08f); // Ripening stem and branches.
 			petal_color = Color(0.45f, 0.2f, 0.08f); // Winged seeds.
-			break;
-		case PRESET_GRAZED_LAWN:
-			leaf_color = Color(0.12f, 0.27f, 0.08f); // Fresh regrowth after each bite: a bright, even green.
-			stem_color = Color(0.25f, 0.3f, 0.12f);
-			petal_color = Color(0.1f, 0.25f, 0.07f); // White clover leaflets.
 			break;
 		case PRESET_COCKSFOOT:
 			leaf_color = Color(0.14f, 0.27f, 0.12f); // Bluish green.
@@ -6614,45 +3099,9 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.33f, 0.22f, 0.11f);
 			stem_color = Color(0.22f, 0.16f, 0.1f);
 			break;
-		case PRESET_COW_PAT:
-			centre_color = Color(0.17f, 0.125f, 0.04f); // Olive-brown dung; the crust pales by age (vertex colours).
-			leaf_color = Color(0.13f, 0.27f, 0.07f); // Grass coming through an old pat.
-			stem_color = Color(0.3f, 0.28f, 0.18f);
-			break;
-		case PRESET_HORSE_DUNG:
-			centre_color = Color(0.25f, 0.22f, 0.1f); // Olive-khaki balls of coarse fibre.
-			leaf_color = Color(0.13f, 0.27f, 0.07f);
-			stem_color = Color(0.45f, 0.4f, 0.25f); // Undigested straw in it.
-			break;
-		case PRESET_DEER_PELLETS:
-			centre_color = Color(0.06f, 0.045f, 0.03f); // Near black, brown as they dry.
-			leaf_color = Color(0.13f, 0.27f, 0.07f);
-			stem_color = Color(0.3f, 0.28f, 0.18f);
-			break;
-		case PRESET_DUNG_ROUGH:
-			leaf_color = Color(0.09f, 0.23f, 0.05f); // Rank and dark: the dung's nitrogen (MacDiarmid and Watkin 1972).
-			stem_color = Color(0.28f, 0.33f, 0.14f);
-			centre_color = Color(0.42f, 0.4f, 0.24f); // Flowering spikelets, straw-green.
-			break;
-		case PRESET_LEAF_BANK:
-			leaf_color = Color(0.33f, 0.22f, 0.11f); // As the litter's, so the stand's leaf colours tint alike.
-			stem_color = Color(0.22f, 0.16f, 0.1f);
-			centre_color = Color(0.2f, 0.13f, 0.07f); // Matted, half-rotted leaves under the loose ones, darker and damp.
-			break;
 		case PRESET_MOSS:
 			leaf_color = Color(0.17f, 0.3f, 0.05f);
 			centre_color = Color(0.12f, 0.21f, 0.045f); // The packed shoots below the tips.
-			break;
-		case PRESET_PINCUSHION_MOSS:
-			// Leucobryum glaucum: pale glaucous grey-green (the leaves' empty hyaline cells), near white when dry.
-			leaf_color = Color(0.36f, 0.45f, 0.3f);
-			centre_color = Color(0.3f, 0.38f, 0.25f);
-			break;
-		case PRESET_GROUND_IVY:
-			leaf_color = Color(0.1f, 0.25f, 0.06f); // Dark, often purple-flushed in shade and cold.
-			stem_color = Color(0.3f, 0.2f, 0.18f); // Square runners, purplish.
-			petal_color = Color(0.42f, 0.32f, 0.68f); // Blue-violet lipped flowers.
-			centre_color = Color(0.85f, 0.75f, 0.85f);
 			break;
 		case PRESET_BILBERRY:
 			leaf_color = Color(0.17f, 0.36f, 0.08f);
@@ -6667,11 +3116,6 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.09f, 0.22f, 0.05f); // Dark, glossy above.
 			stem_color = Color(0.3f, 0.12f, 0.1f); // Red-purple canes.
 			petal_color = Color(0.06f, 0.03f, 0.05f); // Ripe berries.
-			break;
-		case PRESET_RASPBERRY:
-			leaf_color = Color(0.17f, 0.31f, 0.08f); // Matt, paler than bramble; the downy underside whitish.
-			stem_color = Color(0.36f, 0.32f, 0.22f); // First-year canes glaucous green-brown, bristly.
-			petal_color = Color(0.62f, 0.06f, 0.08f); // Ripe red fruit.
 			break;
 		case PRESET_FOXGLOVE:
 			leaf_color = Color(0.16f, 0.3f, 0.1f);
@@ -6700,7 +3144,7 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.95f, 0.75f, 0.1f);
 			break;
 		case PRESET_NEEDLE_LITTER:
-			leaf_color = Color(0.27f, 0.15f, 0.07f); // Dead needles: red-brown, a shade over the mat they lie on (forest_litter()).
+			leaf_color = Color(0.42f, 0.24f, 0.1f); // Rusty dead needles.
 			centre_color = Color(0.3f, 0.19f, 0.09f);
 			petal_color = Color(0.36f, 0.23f, 0.12f); // Cones.
 			stem_color = Color(0.3f, 0.24f, 0.17f);
@@ -6736,386 +3180,10 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.05f, 0.15f, 0.04f); // Dark, glossy.
 			stem_color = Color(0.22f, 0.2f, 0.12f);
 			break;
-		case PRESET_VIOLET:
-			leaf_color = Color(0.1f, 0.27f, 0.06f);
-			stem_color = Color(0.2f, 0.3f, 0.1f);
-			petal_color = Color(0.36f, 0.27f, 0.62f); // Blue-violet.
-			centre_color = Color(0.9f, 0.85f, 0.75f);
-			break;
-		case PRESET_HERB_ROBERT:
-			leaf_color = Color(0.16f, 0.3f, 0.07f);
-			stem_color = Color(0.45f, 0.12f, 0.1f); // Red stems.
-			petal_color = Color(0.85f, 0.38f, 0.6f); // Pink.
-			centre_color = Color(0.9f, 0.6f, 0.7f);
-			break;
-		case PRESET_KNAPWEED:
-			leaf_color = Color(0.13f, 0.25f, 0.08f); // Dull, rough.
-			stem_color = Color(0.22f, 0.3f, 0.12f);
-			petal_color = Color(0.5f, 0.15f, 0.42f); // Red-purple florets.
-			centre_color = Color(0.16f, 0.11f, 0.07f); // The dark bract knob.
-			break;
-		case PRESET_SCABIOUS:
-			leaf_color = Color(0.16f, 0.28f, 0.1f); // Greyish with hairs.
-			stem_color = Color(0.26f, 0.32f, 0.15f);
-			petal_color = Color(0.55f, 0.48f, 0.78f); // Lilac.
-			centre_color = Color(0.4f, 0.38f, 0.26f); // The bristly fruiting head.
-			break;
-		case PRESET_WILD_CARROT:
-			leaf_color = Color(0.14f, 0.28f, 0.08f);
-			stem_color = Color(0.26f, 0.34f, 0.14f);
-			petal_color = Color(0.93f, 0.93f, 0.88f);
-			centre_color = Color(0.25f, 0.06f, 0.15f); // The dark central floret.
-			break;
-		case PRESET_SORREL:
-			leaf_color = Color(0.13f, 0.28f, 0.07f);
-			stem_color = Color(0.32f, 0.24f, 0.12f); // Reddening stems.
-			petal_color = Color(0.62f, 0.16f, 0.09f); // Red flowers.
-			centre_color = Color(0.4f, 0.14f, 0.08f); // The panicle's red branches.
-			break;
-		case PRESET_BELL_HEATHER:
-			leaf_color = Color(0.1f, 0.19f, 0.06f); // Dark, glossy.
-			stem_color = Color(0.27f, 0.17f, 0.11f);
-			petal_color = Color(0.55f, 0.08f, 0.32f); // Crimson-purple.
-			break;
-		case PRESET_CROSS_LEAVED_HEATH:
-			leaf_color = Color(0.34f, 0.42f, 0.3f); // Grey-green, downy.
-			stem_color = Color(0.3f, 0.22f, 0.15f);
-			petal_color = Color(0.86f, 0.58f, 0.64f); // Pale rose.
-			break;
-		case PRESET_CROWBERRY:
-			leaf_color = Color(0.09f, 0.2f, 0.05f); // Glossy dark green.
-			stem_color = Color(0.3f, 0.16f, 0.1f); // Red-brown.
-			centre_color = Color(0.03f, 0.03f, 0.04f); // Black berries.
-			break;
-		case PRESET_ROSEMARY:
-			leaf_color = Color(0.13f, 0.2f, 0.1f); // Dark, leathery.
-			stem_color = Color(0.32f, 0.26f, 0.2f); // Grey-brown flaking bark.
-			petal_color = Color(0.62f, 0.68f, 0.86f); // Pale blue.
-			centre_color = Color(0.2f, 0.24f, 0.16f); // The green-purple calyx.
-			break;
-		case PRESET_FRENCH_LAVENDER:
-			leaf_color = Color(0.38f, 0.43f, 0.34f); // Grey-felted.
-			stem_color = Color(0.33f, 0.3f, 0.24f);
-			petal_color = Color(0.48f, 0.22f, 0.52f); // The purple bracts.
-			centre_color = Color(0.16f, 0.07f, 0.2f); // The dark purple spike.
-			break;
-		case PRESET_THYME:
-			leaf_color = Color(0.3f, 0.36f, 0.26f); // Grey-green.
-			stem_color = Color(0.3f, 0.2f, 0.15f); // Wiry, red-brown.
-			petal_color = Color(0.8f, 0.62f, 0.78f); // Pale pink-mauve.
-			centre_color = Color(0.46f, 0.32f, 0.38f); // The purplish, hairy calyces.
-			break;
-		case PRESET_SAGE_ROCKROSE:
-			leaf_color = Color(0.25f, 0.3f, 0.18f); // Grey-green, rough.
-			stem_color = Color(0.32f, 0.24f, 0.17f);
-			petal_color = Color(0.93f, 0.92f, 0.88f); // White.
-			centre_color = Color(0.85f, 0.65f, 0.08f); // The yellow stamens.
-			break;
 		case PRESET_HEATHER:
 			leaf_color = Color(0.13f, 0.22f, 0.07f); // Dark, dull green.
 			stem_color = Color(0.25f, 0.18f, 0.12f);
 			petal_color = Color(0.55f, 0.3f, 0.5f); // Pink-mauve.
-			break;
-		// Mushrooms: petal the cap, centre the gills (or pores), ring and warts, stem the stalk.
-		case PRESET_FLY_AGARIC:
-			petal_color = Color(0.78f, 0.1f, 0.04f);
-			centre_color = Color(0.93f, 0.92f, 0.86f);
-			stem_color = Color(0.92f, 0.9f, 0.84f);
-			break;
-		case PRESET_CEP:
-			petal_color = Color(0.42f, 0.26f, 0.13f);
-			centre_color = Color(0.82f, 0.8f, 0.55f); // Tubes: white, then olive-yellow.
-			stem_color = Color(0.8f, 0.74f, 0.6f);
-			break;
-		case PRESET_CHANTERELLE:
-			petal_color = Color(0.95f, 0.65f, 0.12f);
-			centre_color = Color(0.95f, 0.68f, 0.18f);
-			stem_color = Color(0.93f, 0.66f, 0.2f);
-			break;
-		case PRESET_BRITTLEGILL:
-			petal_color = Color(0.75f, 0.08f, 0.1f);
-			centre_color = Color(0.94f, 0.93f, 0.88f);
-			stem_color = Color(0.93f, 0.92f, 0.88f);
-			break;
-		case PRESET_SHEET_WEB:
-		case PRESET_ORB_WEB:
-			stem_color = Color(0.62f, 0.55f, 0.42f); // The orb's dry stems, bleached straw.
-			centre_color = Color(0.85f, 0.86f, 0.88f); // The silk's beads (the silk shader's own colour).
-			break;
-		case PRESET_FAIRY_RING_MUSHROOM:
-			petal_color = Color(0.7f, 0.55f, 0.38f); // Buff to tan, drying paler (hygrophanous).
-			centre_color = Color(0.9f, 0.84f, 0.7f); // Distant, cream gills.
-			stem_color = Color(0.82f, 0.74f, 0.6f);
-			break;
-		case PRESET_CLOUDED_AGARIC:
-			petal_color = Color(0.5f, 0.48f, 0.44f);
-			centre_color = Color(0.88f, 0.84f, 0.7f);
-			stem_color = Color(0.78f, 0.75f, 0.68f);
-			break;
-		case PRESET_HONEY_FUNGUS:
-			// Tawny honey caps; whitish gills going cream; stalks pale yellow under the ring,
-			// the foot darkened in _mushroom_form().
-			petal_color = Color(0.62f, 0.47f, 0.24f); // Honey to tawny, less orange than a chanterelle.
-			centre_color = Color(0.9f, 0.84f, 0.68f);
-			stem_color = Color(0.8f, 0.66f, 0.4f);
-			break;
-		case PRESET_PARSLEY_FERN:
-			leaf_color = Color(0.19f, 0.4f, 0.08f); // Bright, fresh green against grey stone.
-			stem_color = Color(0.3f, 0.38f, 0.14f);
-			break;
-		case PRESET_SPLEENWORT:
-			leaf_color = Color(0.08f, 0.22f, 0.05f); // Dark, evergreen.
-			stem_color = Color(0.09f, 0.05f, 0.035f); // The shiny black-brown rachis.
-			break;
-		case PRESET_STONECROP:
-			leaf_color = Color(0.28f, 0.44f, 0.1f);
-			stem_color = Color(0.3f, 0.45f, 0.11f); // The fat, yellow-green leaves (on the stem surface).
-			petal_color = Color(0.95f, 0.78f, 0.06f);
-			centre_color = Color(0.88f, 0.7f, 0.1f);
-			break;
-		case PRESET_SAXIFRAGE:
-			leaf_color = Color(0.14f, 0.32f, 0.07f);
-			stem_color = Color(0.22f, 0.3f, 0.12f);
-			petal_color = Color(0.95f, 0.95f, 0.92f);
-			centre_color = Color(0.85f, 0.8f, 0.4f);
-			break;
-		case PRESET_THRIFT:
-			leaf_color = Color(0.15f, 0.3f, 0.13f); // Bluish, grass-like.
-			stem_color = Color(0.26f, 0.33f, 0.16f);
-			petal_color = Color(0.86f, 0.46f, 0.64f); // Pink.
-			centre_color = Color(0.62f, 0.48f, 0.34f); // The papery bracts under the head.
-			break;
-		case PRESET_MARSH_MARIGOLD:
-			leaf_color = Color(0.07f, 0.22f, 0.05f); // Dark and glossy.
-			stem_color = Color(0.2f, 0.3f, 0.1f);
-			petal_color = Color(0.98f, 0.74f, 0.02f);
-			centre_color = Color(0.95f, 0.68f, 0.06f);
-			break;
-		case PRESET_MEADOWSWEET:
-			leaf_color = Color(0.1f, 0.25f, 0.06f);
-			stem_color = Color(0.33f, 0.17f, 0.1f); // Reddish.
-			petal_color = Color(0.93f, 0.9f, 0.76f); // Cream.
-			centre_color = Color(0.85f, 0.8f, 0.55f);
-			break;
-		case PRESET_BUTTERBUR:
-			leaf_color = Color(0.13f, 0.3f, 0.08f);
-			stem_color = Color(0.32f, 0.3f, 0.17f); // Grooved stalks, flushed red at the foot.
-			petal_color = Color(0.74f, 0.52f, 0.6f); // Lilac-pink heads.
-			centre_color = Color(0.6f, 0.45f, 0.5f);
-			break;
-		case PRESET_RIVER_MOSS:
-			leaf_color = Color(0.09f, 0.24f, 0.06f); // Dark green, blackish when old.
-			stem_color = Color(0.1f, 0.14f, 0.05f);
-			break;
-		case PRESET_SPHAGNUM:
-			// Ochre-green, as S. papillosum; make_bog() sets the red and green kinds.
-			leaf_color = Color(0.42f, 0.36f, 0.12f);
-			centre_color = Color(0.3f, 0.26f, 0.09f);
-			break;
-		case PRESET_COTTONGRASS:
-			leaf_color = Color(0.16f, 0.28f, 0.08f);
-			stem_color = Color(0.22f, 0.3f, 0.1f);
-			petal_color = Color(0.95f, 0.94f, 0.9f); // The cotton.
-			centre_color = Color(0.2f, 0.16f, 0.1f); // The dark spikelet the cotton comes from.
-			break;
-		case PRESET_BOG_ASPHODEL:
-			leaf_color = Color(0.2f, 0.32f, 0.1f);
-			stem_color = Color(0.4f, 0.3f, 0.1f);
-			petal_color = Color(0.95f, 0.78f, 0.08f);
-			centre_color = Color(0.9f, 0.4f, 0.05f); // Orange, woolly anthers; the capsules after.
-			break;
-		case PRESET_SUNDEW:
-			leaf_color = Color(0.5f, 0.12f, 0.06f); // Red in the open, greener in shade.
-			stem_color = Color(0.4f, 0.12f, 0.08f);
-			petal_color = Color(0.55f, 0.08f, 0.06f); // The tentacles.
-			centre_color = Color(0.85f, 0.82f, 0.78f); // The dew drops.
-			break;
-		case PRESET_DRINN:
-			leaf_color = Color(0.36f, 0.38f, 0.27f); // Grey-green and dusty; much of the tussock dead straw.
-			stem_color = Color(0.55f, 0.5f, 0.36f);
-			centre_color = Color(0.82f, 0.78f, 0.66f); // Silvery plumed awns.
-			break;
-		case PRESET_DESERT_ANNUALS:
-			leaf_color = Color(0.2f, 0.34f, 0.1f); // Fresh after rain; the season dries them to straw.
-			stem_color = Color(0.3f, 0.36f, 0.16f);
-			centre_color = Color(0.6f, 0.55f, 0.4f);
-			petal_color = Color(0.85f, 0.75f, 0.3f);
-			break;
-		case PRESET_FIREWEED:
-			leaf_color = Color(0.11f, 0.25f, 0.07f); // Dark green above.
-			stem_color = Color(0.4f, 0.15f, 0.11f); // Reddish.
-			petal_color = Color(0.72f, 0.1f, 0.42f); // Magenta-pink.
-			centre_color = Color(0.85f, 0.83f, 0.8f); // White style and seed fluff.
-			break;
-		case PRESET_REINDEER_LICHEN:
-			leaf_color = Color(0.6f, 0.62f, 0.52f); // Ashy grey-green (C. rangiferina); C. stellaris is yellower.
-			centre_color = Color(0.56f, 0.58f, 0.48f);
-			stem_color = Color(0.62f, 0.63f, 0.54f);
-			break;
-		case PRESET_FIRE_MOSS:
-			leaf_color = Color(0.25f, 0.33f, 0.08f); // Yellow-green shoots.
-			centre_color = Color(0.17f, 0.24f, 0.05f);
-			stem_color = Color(0.6f, 0.3f, 0.08f); // Orange setae.
-			petal_color = Color(0.45f, 0.25f, 0.08f); // Ripe capsules, orange-brown (unripe ones tinted green).
-			break;
-		case PRESET_CHARRED_STEMS:
-			stem_color = Color(0.035f, 0.031f, 0.028f); // Charcoal; the vertex tint weathers it silver-grey.
-			centre_color = Color(0.55f, 0.54f, 0.52f); // Ash.
-			leaf_color = Color(0.13f, 0.24f, 0.06f); // Resprouting heather shoots.
-			break;
-		case PRESET_ROOTED_SOD:
-			centre_color = Color(0.085f, 0.064f, 0.045f); // Moist humus, as the terrain's turned soil (TerrainMaterial3D).
-			stem_color = Color(0.62f, 0.55f, 0.42f); // Live roots, pale buff.
-			leaf_color = Color(0.15f, 0.26f, 0.08f); // The torn turf's grass (the vertex tint dries it).
-			break;
-		case PRESET_ANTHILL:
-			centre_color = Color(0.12f, 0.18f, 0.06f); // The turf, as the sward reads from a few metres once the LOD has dropped the blades (the crumbs' tint lifts it to pale loam).
-			stem_color = Color(0.36f, 0.3f, 0.2f); // Dead fescue bases.
-			leaf_color = Color(0.17f, 0.27f, 0.1f); // Sheep's fescue and thyme, greyer than the pasture round it.
-			break;
-		case PRESET_WOOD_ANT_NEST:
-			centre_color = Color(0.25f, 0.155f, 0.08f); // Thatch under the loose needles: older needles, bud scales, resin.
-			stem_color = Color(0.33f, 0.2f, 0.1f); // Fresh needles, rusty brown.
-			leaf_color = Color(0.16f, 0.22f, 0.08f); // Moss on the old earth bank.
-			break;
-		case PRESET_MOLEHILL:
-			centre_color = Color(0.2f, 0.14f, 0.09f); // Moist subsoil, crumbly and dark when fresh.
-			stem_color = Color(0.36f, 0.3f, 0.2f);
-			leaf_color = Color(0.15f, 0.27f, 0.08f); // Grass growing back over it.
-			break;
-		case PRESET_BURNT_TUSSOCK:
-			stem_color = Color(0.04f, 0.035f, 0.03f); // Charred stubble and crown.
-			centre_color = Color(0.5f, 0.49f, 0.47f); // Ash.
-			leaf_color = Color(0.16f, 0.36f, 0.07f); // The bright green flush.
-			break;
-		case PRESET_SOIL_CRUST:
-			// Cyanobacterial and lichen crust: dark brown-black (scytonemin), lichen specks grey, green and orange.
-			leaf_color = Color(0.09f, 0.075f, 0.06f);
-			centre_color = Color(0.5f, 0.47f, 0.4f); // The palest of its lichens; each fleck's tint darkens it.
-			// The skin's rim: a little darker than the sand it binds; its vertex colours darken the middle to the
-			// cyanobacteria's brown (light crust some 0.75 of it, mature dark crust 0.5), so its edge fades into the sand.
-			stem_color = Color(0.6f, 0.48f, 0.34f);
-			break;
-		case PRESET_MARRAM:
-			leaf_color = Color(0.33f, 0.37f, 0.26f); // Grey-green, the rolled leaf's waxy outer side.
-			stem_color = Color(0.4f, 0.42f, 0.28f);
-			centre_color = Color(0.72f, 0.68f, 0.52f); // Pale straw panicles.
-			break;
-		case PRESET_LYME_GRASS:
-			leaf_color = Color(0.42f, 0.54f, 0.58f); // Glaucous blue-grey.
-			stem_color = Color(0.42f, 0.5f, 0.48f);
-			centre_color = Color(0.5f, 0.56f, 0.5f);
-			break;
-		case PRESET_SEA_HOLLY:
-			leaf_color = Color(0.42f, 0.53f, 0.55f); // Waxy glaucous blue-green.
-			stem_color = Color(0.5f, 0.6f, 0.64f);
-			centre_color = Color(0.42f, 0.52f, 0.78f); // Powder-blue heads.
-			break;
-		case PRESET_MOSS_CAMPION:
-			leaf_color = Color(0.2f, 0.34f, 0.1f); // Bright, stiff green.
-			stem_color = Color(0.36f, 0.3f, 0.2f); // The dead leaves packed inside.
-			petal_color = Color(0.86f, 0.36f, 0.58f); // Pink.
-			centre_color = Color(0.9f, 0.85f, 0.75f);
-			break;
-		case PRESET_PURPLE_SAXIFRAGE:
-			leaf_color = Color(0.22f, 0.32f, 0.22f); // Blue-green, lime-pitted.
-			stem_color = Color(0.3f, 0.3f, 0.2f);
-			petal_color = Color(0.55f, 0.16f, 0.48f); // Purple.
-			centre_color = Color(0.7f, 0.5f, 0.2f);
-			break;
-		case PRESET_MOUNTAIN_AVENS:
-			leaf_color = Color(0.11f, 0.22f, 0.06f); // Dark glossy green.
-			stem_color = Color(0.34f, 0.24f, 0.16f); // Woody.
-			petal_color = Color(0.96f, 0.95f, 0.9f);
-			centre_color = Color(0.92f, 0.75f, 0.12f); // Yellow stamens.
-			break;
-		case PRESET_ALPINE_SEDGE:
-			leaf_color = Color(0.26f, 0.34f, 0.12f); // Olive green; the curled tips brown.
-			stem_color = Color(0.4f, 0.36f, 0.2f);
-			centre_color = Color(0.32f, 0.22f, 0.12f); // Brown spikes.
-			break;
-		case PRESET_DWARF_WILLOW:
-			leaf_color = Color(0.17f, 0.36f, 0.08f); // Bright, glossy.
-			stem_color = Color(0.38f, 0.24f, 0.14f);
-			centre_color = Color(0.7f, 0.35f, 0.2f); // Red-tinged catkins.
-			break;
-		case PRESET_ALPINE_TOADFLAX:
-			leaf_color = Color(0.3f, 0.42f, 0.4f); // Glaucous blue-grey.
-			stem_color = Color(0.32f, 0.4f, 0.38f);
-			petal_color = Color(0.4f, 0.24f, 0.62f); // Violet.
-			centre_color = Color(0.95f, 0.55f, 0.08f); // The orange palate.
-			break;
-		case PRESET_GLASSWORT:
-			leaf_color = Color(0.32f, 0.5f, 0.12f);
-			stem_color = Color(0.34f, 0.52f, 0.12f); // Translucent fleshy yellow-green (reddens in autumn: make_saltmarsh).
-			centre_color = Color(0.38f, 0.5f, 0.14f);
-			break;
-		case PRESET_CORD_GRASS:
-			leaf_color = Color(0.3f, 0.38f, 0.24f); // Grey-green.
-			stem_color = Color(0.38f, 0.42f, 0.26f);
-			centre_color = Color(0.6f, 0.5f, 0.3f); // Yellow-brown spikes.
-			break;
-		case PRESET_SEA_PURSLANE:
-			leaf_color = Color(0.46f, 0.52f, 0.44f); // Silvery mealy grey-green.
-			stem_color = Color(0.4f, 0.32f, 0.24f);
-			break;
-		case PRESET_SEA_ASTER:
-			leaf_color = Color(0.26f, 0.4f, 0.18f); // Fleshy, slightly glaucous.
-			stem_color = Color(0.32f, 0.38f, 0.2f);
-			petal_color = Color(0.72f, 0.64f, 0.86f); // Pale lilac rays.
-			centre_color = Color(0.92f, 0.72f, 0.12f); // Yellow disc.
-			break;
-		case PRESET_SEA_LAVENDER:
-			leaf_color = Color(0.2f, 0.32f, 0.12f); // Leathery dark green.
-			stem_color = Color(0.36f, 0.4f, 0.24f);
-			petal_color = Color(0.5f, 0.38f, 0.72f); // Lavender-purple.
-			break;
-		case PRESET_SEA_KALE:
-			leaf_color = Color(0.36f, 0.48f, 0.5f); // Waxy glaucous blue-grey.
-			stem_color = Color(0.4f, 0.5f, 0.48f);
-			petal_color = Color(0.95f, 0.95f, 0.9f); // White.
-			centre_color = Color(0.85f, 0.75f, 0.25f);
-			break;
-		case PRESET_SEA_CAMPION:
-			leaf_color = Color(0.3f, 0.42f, 0.36f); // Glaucous.
-			stem_color = Color(0.32f, 0.42f, 0.34f);
-			petal_color = Color(0.96f, 0.95f, 0.93f); // White.
-			centre_color = Color(0.7f, 0.55f, 0.58f); // The pink-veined bladder.
-			break;
-		case PRESET_HORNED_POPPY:
-			leaf_color = Color(0.42f, 0.5f, 0.52f); // Grey-blue, rough-hairy.
-			stem_color = Color(0.45f, 0.54f, 0.52f);
-			petal_color = Color(0.98f, 0.82f, 0.08f); // Yellow.
-			centre_color = Color(0.5f, 0.56f, 0.48f); // Glaucous pods.
-			break;
-		case PRESET_CORN_POPPY:
-			leaf_color = Color(0.15f, 0.3f, 0.08f);
-			stem_color = Color(0.22f, 0.34f, 0.12f);
-			petal_color = Color(0.8f, 0.05f, 0.03f); // Scarlet.
-			centre_color = Color(0.32f, 0.4f, 0.27f); // The glaucous capsule.
-			break;
-		case PRESET_CORNFLOWER:
-			leaf_color = Color(0.24f, 0.33f, 0.19f); // Grey-green, cottony.
-			stem_color = Color(0.3f, 0.38f, 0.23f);
-			petal_color = Color(0.12f, 0.28f, 0.85f); // Cornflower blue.
-			centre_color = Color(0.3f, 0.33f, 0.2f); // The bracts, fringed darker.
-			break;
-		case PRESET_MAYWEED:
-			leaf_color = Color(0.13f, 0.3f, 0.08f);
-			stem_color = Color(0.26f, 0.34f, 0.13f);
-			petal_color = Color(0.96f, 0.96f, 0.93f); // White rays.
-			centre_color = Color(0.9f, 0.7f, 0.08f); // The domed yellow disc.
-			break;
-		case PRESET_COW_PARSLEY:
-			leaf_color = Color(0.12f, 0.3f, 0.07f); // Fresh, fern-like.
-			stem_color = Color(0.27f, 0.36f, 0.14f); // Furrowed, sometimes purple-tinged.
-			petal_color = Color(0.95f, 0.95f, 0.92f); // Lacy white.
-			centre_color = Color(0.4f, 0.45f, 0.22f);
-			break;
-		case PRESET_LIVERWORT:
-			leaf_color = Color(0.1f, 0.26f, 0.06f);
-			stem_color = Color(0.08f, 0.2f, 0.05f);
-			centre_color = Color(0.1f, 0.27f, 0.06f); // The thallus (on the centre surface).
 			break;
 		case PRESET_MAX:
 			break;
@@ -7131,7 +3199,6 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 	organ = 0;
 	organ_bases.clear();
 	leaf_serial = 0;
-	bloom_serial = 0;
 	rng.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(preset) + 1);
 	switch (preset) {
 		case PRESET_DANDELION:
@@ -7191,45 +3258,6 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_BRAMBLE:
 			_build_bramble();
 			break;
-		case PRESET_RASPBERRY:
-			_build_raspberry();
-			break;
-		case PRESET_GRAZED_LAWN:
-			_build_grazed_lawn();
-			break;
-		case PRESET_ROOTED_SOD:
-			_build_rooted_sod();
-			break;
-		case PRESET_ANTHILL:
-			_build_anthill();
-			break;
-		case PRESET_WOOD_ANT_NEST:
-			_build_wood_ant_nest();
-			break;
-		case PRESET_MOLEHILL:
-			_build_molehill();
-			break;
-		case PRESET_LEAF_BANK:
-			_build_leaf_bank();
-			break;
-		case PRESET_COW_PAT:
-			_build_cow_pat();
-			break;
-		case PRESET_HORSE_DUNG:
-			_build_horse_dung();
-			break;
-		case PRESET_DEER_PELLETS:
-			_build_deer_pellets();
-			break;
-		case PRESET_DUNG_ROUGH:
-			_build_dung_rough();
-			break;
-		case PRESET_SHEET_WEB:
-			_build_sheet_web();
-			break;
-		case PRESET_ORB_WEB:
-			_build_orb_web();
-			break;
 		case PRESET_FOXGLOVE:
 			_build_foxglove();
 			break;
@@ -7272,189 +3300,6 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_HEATHER:
 			_build_heather();
 			break;
-		case PRESET_VIOLET:
-			_build_violet();
-			break;
-		case PRESET_HERB_ROBERT:
-			_build_herb_robert();
-			break;
-		case PRESET_KNAPWEED:
-			_build_knapweed();
-			break;
-		case PRESET_SCABIOUS:
-			_build_scabious();
-			break;
-		case PRESET_WILD_CARROT:
-			_build_wild_carrot();
-			break;
-		case PRESET_FLY_AGARIC:
-		case PRESET_CEP:
-		case PRESET_CHANTERELLE:
-		case PRESET_BRITTLEGILL:
-		case PRESET_CLOUDED_AGARIC:
-		case PRESET_HONEY_FUNGUS:
-		case PRESET_FAIRY_RING_MUSHROOM:
-			_build_mushrooms();
-			break;
-		case PRESET_SORREL:
-			_build_sorrel();
-			break;
-		case PRESET_PARSLEY_FERN:
-			_build_parsley_fern();
-			break;
-		case PRESET_SPLEENWORT:
-			_build_spleenwort();
-			break;
-		case PRESET_STONECROP:
-			_build_stonecrop();
-			break;
-		case PRESET_SAXIFRAGE:
-			_build_saxifrage();
-			break;
-		case PRESET_THRIFT:
-			_build_thrift();
-			break;
-		case PRESET_MARSH_MARIGOLD:
-			_build_marsh_marigold();
-			break;
-		case PRESET_MEADOWSWEET:
-			_build_meadowsweet();
-			break;
-		case PRESET_BUTTERBUR:
-			_build_butterbur();
-			break;
-		case PRESET_RIVER_MOSS:
-			_build_river_moss();
-			break;
-		case PRESET_LIVERWORT:
-			_build_liverwort();
-			break;
-		case PRESET_SPHAGNUM:
-			_build_moss();
-			break;
-		case PRESET_COTTONGRASS:
-			_build_cottongrass();
-			break;
-		case PRESET_BOG_ASPHODEL:
-			_build_bog_asphodel();
-			break;
-		case PRESET_SUNDEW:
-			_build_sundew();
-			break;
-		case PRESET_MARRAM:
-			_build_marram();
-			break;
-		case PRESET_LYME_GRASS:
-			_build_lyme_grass();
-			break;
-		case PRESET_SEA_HOLLY:
-			_build_sea_holly();
-			break;
-		case PRESET_MOSS_CAMPION:
-			_build_moss_campion();
-			break;
-		case PRESET_PURPLE_SAXIFRAGE:
-			_build_purple_saxifrage();
-			break;
-		case PRESET_MOUNTAIN_AVENS:
-			_build_mountain_avens();
-			break;
-		case PRESET_ALPINE_SEDGE:
-			_build_alpine_sedge();
-			break;
-		case PRESET_DWARF_WILLOW:
-			_build_dwarf_willow();
-			break;
-		case PRESET_ALPINE_TOADFLAX:
-			_build_alpine_toadflax();
-			break;
-		case PRESET_GLASSWORT:
-			_build_glasswort();
-			break;
-		case PRESET_CORD_GRASS:
-			_build_cord_grass();
-			break;
-		case PRESET_SEA_PURSLANE:
-			_build_sea_purslane();
-			break;
-		case PRESET_SEA_ASTER:
-			_build_sea_aster();
-			break;
-		case PRESET_SEA_LAVENDER:
-			_build_sea_lavender();
-			break;
-		case PRESET_SEA_KALE:
-			_build_sea_kale();
-			break;
-		case PRESET_SEA_CAMPION:
-			_build_sea_campion();
-			break;
-		case PRESET_HORNED_POPPY:
-			_build_horned_poppy();
-			break;
-		case PRESET_CORN_POPPY:
-			_build_corn_poppy();
-			break;
-		case PRESET_CORNFLOWER:
-			_build_cornflower();
-			break;
-		case PRESET_MAYWEED:
-			_build_mayweed();
-			break;
-		case PRESET_COW_PARSLEY:
-			_build_cow_parsley();
-			break;
-		case PRESET_PINCUSHION_MOSS:
-			_build_moss();
-			break;
-		case PRESET_GROUND_IVY:
-			_build_ground_ivy();
-			break;
-		case PRESET_DRINN:
-			_build_drinn();
-			break;
-		case PRESET_DESERT_ANNUALS:
-			_build_desert_annuals();
-			break;
-		case PRESET_SOIL_CRUST:
-			_build_soil_crust();
-			break;
-		case PRESET_FIREWEED:
-			_build_fireweed();
-			break;
-		case PRESET_FIRE_MOSS:
-			_build_fire_moss();
-			break;
-		case PRESET_REINDEER_LICHEN:
-			_build_reindeer_lichen();
-			break;
-		case PRESET_CHARRED_STEMS:
-			_build_charred_stems();
-			break;
-		case PRESET_BURNT_TUSSOCK:
-			_build_burnt_tussock();
-			break;
-		case PRESET_BELL_HEATHER:
-			_build_bell_heather();
-			break;
-		case PRESET_CROSS_LEAVED_HEATH:
-			_build_cross_leaved_heath();
-			break;
-		case PRESET_CROWBERRY:
-			_build_crowberry();
-			break;
-		case PRESET_ROSEMARY:
-			_build_rosemary();
-			break;
-		case PRESET_FRENCH_LAVENDER:
-			_build_french_lavender();
-			break;
-		case PRESET_THYME:
-			_build_thyme();
-			break;
-		case PRESET_SAGE_ROCKROSE:
-			_build_sage_rockrose();
-			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -7481,73 +3326,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 	im.instantiate();
 	LocalVector<CardSurface> card_surfaces;
 	const Color colors[SURFACE_MAX] = { leaf_color, stem_color, petal_color, centre_color };
-	// Lily pads: waxy, shed water. Marsh marigold's leaves and sepals shine; liverworts and aquatic
-	// mosses are wet.
-	float leaf_rough = 0.72f;
-	switch (preset) {
-		case PRESET_WATER_LILY:
-			leaf_rough = 0.35f;
-			break;
-		case PRESET_IVY:
-			leaf_rough = 0.6f;
-			break;
-		case PRESET_MARSH_MARIGOLD:
-			leaf_rough = 0.38f;
-			break;
-		case PRESET_LIVERWORT:
-			leaf_rough = 0.4f;
-			break;
-		case PRESET_RIVER_MOSS:
-			leaf_rough = 0.45f;
-			break;
-		case PRESET_LYME_GRASS:
-			leaf_rough = 0.5f; // Waxy bloom.
-			break;
-		case PRESET_SEA_HOLLY:
-			leaf_rough = 0.35f; // Leathery and waxy.
-			break;
-		case PRESET_MOUNTAIN_AVENS:
-		case PRESET_DWARF_WILLOW:
-			leaf_rough = 0.38f; // Glossy upper faces.
-			break;
-		case PRESET_ALPINE_TOADFLAX:
-		case PRESET_PURPLE_SAXIFRAGE:
-		case PRESET_SEA_CAMPION:
-		case PRESET_HORNED_POPPY:
-			leaf_rough = 0.55f; // Waxy bloom.
-			break;
-		case PRESET_GLASSWORT:
-		case PRESET_SEA_ASTER:
-			leaf_rough = 0.35f; // Fleshy, wet-looking succulent skin.
-			break;
-		case PRESET_SEA_KALE:
-		case PRESET_SEA_LAVENDER:
-			leaf_rough = 0.42f; // Thick, waxy.
-			break;
-		case PRESET_SEA_PURSLANE:
-		case PRESET_CROSS_LEAVED_HEATH:
-			leaf_rough = 0.85f; // Mealy or downy hairs scatter.
-			break;
-		case PRESET_BELL_HEATHER:
-		case PRESET_CROWBERRY:
-			leaf_rough = 0.35f; // Glossy needles.
-			break;
-		case PRESET_ROSEMARY:
-			leaf_rough = 0.45f; // Leathery, a dull sheen above.
-			break;
-		case PRESET_FRENCH_LAVENDER:
-		case PRESET_THYME:
-		case PRESET_SAGE_ROCKROSE:
-		case PRESET_CORNFLOWER:
-			leaf_rough = 0.85f; // Felted or rough with hairs.
-			break;
-		default:
-			break;
-	}
-	// Fresh dung is wet and glossy for a day or two, then dulls as the crust forms.
-	const bool dung = preset == PRESET_COW_PAT || preset == PRESET_HORSE_DUNG || preset == PRESET_DEER_PELLETS;
-	const float centre_rough = dung ? Math::lerp(0.5f, 0.88f, Math::smoothstep(0.0f, 0.03f, _dung_age())) : (preset == PRESET_LIVERWORT ? 0.6f : (preset == PRESET_SUNDEW ? 0.08f : 0.8f));
-	const float roughness[SURFACE_MAX] = { leaf_rough, 0.75f, (preset == PRESET_BUTTERCUP || preset == PRESET_MARSH_MARIGOLD) ? 0.22f : 0.5f, centre_rough }; // Sundew: the glistening dew.
+	const float roughness[SURFACE_MAX] = { preset == PRESET_WATER_LILY ? 0.35f : (preset == PRESET_IVY ? 0.6f : 0.72f), 0.75f, preset == PRESET_BUTTERCUP ? 0.2f : 0.5f, 0.8f }; // Lily pads: waxy, shed water.
 	for (int s = 0; s < SURFACE_MAX; s++) {
 		Builder &b = builders[s];
 		if (b.indices.is_empty()) {
@@ -7592,13 +3371,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		// since edge-collapse simplification stalls on many small islands.
 		// Not petals: a flower's few petals are its colour accent far off, and dropping some of
 		// them dims the drift even with the area kept (seen in the heath shots).
-		// Also the many-island accents of the burn presets, which meshoptimizer cannot thin either (stochastic
-		// simplification of aggregate detail, Cook et al. 2007): fire moss's capsules, the ash on charred stems and
-		// burnt tussock stubs; their colour holds as the survivors grow to keep the area.
-		// And the flower spikes of sorrel and dock: hundreds of tepals a few mm across, which meshoptimizer's
-		// sloppy fallback welded into flat red bars (docs 20 Nov).
-		const bool island_accents = ((preset == PRESET_FIRE_MOSS || preset == PRESET_SORREL || preset == PRESET_DOCK) && s == SURFACE_PETAL) || ((preset == PRESET_CHARRED_STEMS || preset == PRESET_BURNT_TUSSOCK) && s == SURFACE_CENTRE);
-		if (lods && (s == SURFACE_LEAF || island_accents)) {
+		if (lods && s == SURFACE_LEAF) {
 			CardSurface cs;
 			if (_card_lods(b, cs)) {
 				arrays[Mesh::ARRAY_CUSTOM0] = cs.custom;
@@ -7608,7 +3381,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			}
 		}
 		Ref<ShaderMaterial> mat;
-		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_SPHAGNUM || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_FIRE_MOSS || preset == PRESET_REINDEER_LICHEN) && s == SURFACE_CENTRE) {
+		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS) && s == SURFACE_CENTRE) {
 			const uint64_t key = (uint64_t(preset) << 40) ^ (uint64_t(s) << 36) ^ (uint64_t(uint32_t(seed % 3)) << 32) ^ uint64_t(Math::abs(int(leaf_color.to_rgba32()) % 1000003)) ^ (uint64_t(texture_size) << 44);
 			TextureSet *ts = texture_cache.getptr(key);
 			if (!ts) {
@@ -7616,12 +3389,6 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 				ts = texture_cache.getptr(key);
 			}
 			mat = _textured_material(*ts, 0.9f);
-		} else if (is_silk(preset) && s == SURFACE_CENTRE) {
-			mat = _silk_material();
-		} else if (is_mushroom(preset)) {
-			// Thick flesh: no light through. Caps with a slight sheen (moist skin), matt stalks and gills.
-			// Honey fungus caps are dry and finely fibrillose: matt (at 0.5 they read as glossy bread rolls, docs 16 Nov).
-			mat = _material(colors[s], s == SURFACE_PETAL ? (preset == PRESET_HONEY_FUNGUS ? 0.68f : 0.45f) : 0.85f, false);
 		} else if (textures && (s == SURFACE_LEAF || s == SURFACE_PETAL)) {
 			// One texture set per preset, colour and variant (three per preset): shared by the
 			// plants of a meadow, so a thousand dandelions cost three textures.
@@ -7637,9 +3404,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		}
 		mat->set_shader_parameter("height", MAX(plant_height * size, 0.05f));
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
-		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
+		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_RASPBERRY ? 3.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL || preset == PRESET_MARRAM || preset == PRESET_SEA_HOLLY || preset == PRESET_CORD_GRASS || preset == PRESET_GLASSWORT ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_PINCUSHION_MOSS || preset == PRESET_SOIL_CRUST || preset == PRESET_FIRE_MOSS || preset == PRESET_CHARRED_STEMS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || preset == PRESET_STONECROP || preset == PRESET_RIVER_MOSS || preset == PRESET_LIVERWORT || preset == PRESET_SPHAGNUM || is_mushroom(preset) ? 50.0f : 1.5f))));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -7706,142 +3473,10 @@ struct FloorSpec {
 	float conifer_min, conifer_max; // 0..1: any stand.
 	float visibility;
 	float water_max = 0.0f; // > 0: within this distance of water (riparian).
-	PlantSpecies::DeadwoodRule deadwood = PlantSpecies::DEADWOOD_AVOID;
-	float deadwood_size = 0.0f; // DEADWOOD_ON: the thinnest log (radius, m); DEADWOOD_BESIDE: the band (m).
-	bool uphill = false; // DEADWOOD_BESIDE: the uphill side only.
-	// Stand age (PlantSpecies.RULE_STAND_AGE, years since a stand-replacing disturbance) and its kinds; defaults: any.
-	float stand_from = -1.0f, stand_to = 100000.0f, stand_fade = 0.0f;
-	float kind_min = 0.0f, kind_max = 100.0f;
-	// Forest edge (PlantSpecies.RULE_FOREST_EDGE, metres inside the canopy's edge); defaults: any.
-	float edge_from = -100000.0f, edge_to = 100000.0f, edge_fade = 0.0f;
-	// Deer browsing pressure (PlantSpecies.RULE_BROWSE, 0..1); defaults: any. browse_mesh > 0: the meshes are built
-	// browsed at that pressure (the season's "browse").
-	float browse_from = 0.0f, browse_to = 1.0f, browse_fade = 0.0f;
-	float browse_mesh = 0.0f;
 };
 } // namespace
 
-// The leaves a stand drops (docs/ideas/forest-floor.md, step 6): its broadleaf species by their
-// share of the litter, with the form and fallen colour TreeGenerator gives each one when that
-// class is present (get_leaf_form(), get_leaf_season() for the season), else the same values kept
-// here. Indices are TreeGenerator's presets.
-namespace {
-struct LitterTree {
-	int preset; // TreeGenerator::Preset.
-	int kind, count;
-	float depth, width, size;
-	Color fallen;
-};
-// kind: 0 simple, 1 lobed, 2 palmate, 3 pinnate, 4 digitate (TreeGenerator::LeafKind).
-const LitterTree LITTER_OAK = { 0, 1, 4, 0.55f, 0.3f, 0.1f, Color(0.3f, 0.18f, 0.05f) };
-const LitterTree LITTER_BEECH = { 1, 0, 0, 0.0f, 0.32f, 0.08f, Color(0.38f, 0.17f, 0.04f) };
-const LitterTree LITTER_BIRCH = { 2, 0, 0, 0.0f, 0.35f, 0.05f, Color(0.45f, 0.33f, 0.04f) };
-const LitterTree LITTER_HAZEL = { 5, 0, 0, 0.0f, 0.42f, 0.09f, Color(0.4f, 0.31f, 0.05f) };
-const LitterTree LITTER_HAWTHORN = { 6, 1, 2, 0.7f, 0.4f, 0.045f, Color(0.32f, 0.11f, 0.04f) };
-const LitterTree LITTER_LIME = { 7, 0, 0, 0.0f, 0.45f, 0.08f, Color(0.42f, 0.32f, 0.05f) };
-const LitterTree LITTER_SYCAMORE = { 8, 2, 5, 0.45f, 0.5f, 0.13f, Color(0.38f, 0.28f, 0.05f) };
-const LitterTree LITTER_ASH = { 9, 3, 9, 0.0f, 0.18f, 0.25f, Color(0.32f, 0.32f, 0.09f) };
-const LitterTree LITTER_ALDER = { 11, 0, 0, 0.0f, 0.45f, 0.08f, Color(0.17f, 0.21f, 0.06f) };
-const LitterTree LITTER_WILLOW = { 12, 0, 0, 0.0f, 0.12f, 0.09f, Color(0.38f, 0.33f, 0.07f) };
-const LitterTree LITTER_ELDER = { 16, 3, 5, 0.0f, 0.2f, 0.2f, Color(0.3f, 0.22f, 0.08f) };
-const LitterTree LITTER_SUGAR_MAPLE = { 20, 2, 5, 0.6f, 0.5f, 0.12f, Color(0.55f, 0.2f, 0.02f) };
-const LitterTree LITTER_RED_MAPLE = { 21, 2, 3, 0.35f, 0.5f, 0.09f, Color(0.5f, 0.05f, 0.03f) };
-const LitterTree LITTER_RED_OAK = { 22, 1, 4, 0.65f, 0.35f, 0.16f, Color(0.35f, 0.07f, 0.03f) };
-const LitterTree LITTER_WHITE_OAK = { 23, 1, 4, 0.6f, 0.32f, 0.14f, Color(0.28f, 0.1f, 0.06f) };
-const LitterTree LITTER_AMERICAN_BEECH = { 26, 0, 0, 0.0f, 0.3f, 0.1f, Color(0.42f, 0.28f, 0.06f) };
-const LitterTree LITTER_YELLOW_BIRCH = { 28, 0, 0, 0.0f, 0.3f, 0.09f, Color(0.48f, 0.36f, 0.04f) };
-} // namespace
-
-Array PlantGenerator::stand_litter_leaves(FloorStand p_stand, const Dictionary &p_season) {
-	struct Share {
-		LitterTree tree;
-		float share;
-	};
-	LocalVector<Share> mix;
-	switch (p_stand) {
-		case FLOOR_BEECH:
-			mix = LocalVector<Share>({ { LITTER_BEECH, 0.8f }, { LITTER_SYCAMORE, 0.1f }, { LITTER_ASH, 0.1f } });
-			break;
-		case FLOOR_OAK_MIXED:
-			mix = LocalVector<Share>({ { LITTER_OAK, 0.55f }, { LITTER_LIME, 0.2f }, { LITTER_HAZEL, 0.15f }, { LITTER_ASH, 0.1f } });
-			break;
-		case FLOOR_MONTANE_CONIFER:
-			mix = LocalVector<Share>({ { LITTER_BEECH, 0.8f }, { LITTER_SYCAMORE, 0.2f } });
-			break;
-		case FLOOR_RIPARIAN:
-			mix = LocalVector<Share>({ { LITTER_ALDER, 0.6f }, { LITTER_WILLOW, 0.3f }, { LITTER_ELDER, 0.1f } });
-			break;
-		case FLOOR_HEDGEROW:
-			mix = LocalVector<Share>({ { LITTER_HAWTHORN, 0.4f }, { LITTER_HAZEL, 0.3f }, { LITTER_OAK, 0.15f }, { LITTER_ELDER, 0.15f } });
-			break;
-		case FLOOR_NORTHERN_HARDWOOD:
-			mix = LocalVector<Share>({ { LITTER_SUGAR_MAPLE, 0.5f }, { LITTER_AMERICAN_BEECH, 0.3f }, { LITTER_YELLOW_BIRCH, 0.2f } });
-			break;
-		case FLOOR_EASTERN_OAK:
-			mix = LocalVector<Share>({ { LITTER_RED_OAK, 0.45f }, { LITTER_WHITE_OAK, 0.35f }, { LITTER_RED_MAPLE, 0.2f } });
-			break;
-		case FLOOR_PINE_HEATH:
-		case FLOOR_PINE_HEMLOCK:
-		case FLOOR_BOREAL_TAIGA:
-			mix = LocalVector<Share>({ { LITTER_BIRCH, 1.0f } });
-			break;
-		case FLOOR_MEDITERRANEAN:
-			mix = LocalVector<Share>({ { LITTER_OAK, 1.0f } }); // Cork and holm oak: lobed oak leaves stand in for their leathery ones.
-			break;
-		default:
-			break;
-	}
-	const bool trees = ClassDB::class_exists("TreeGenerator") && ClassDB::has_method("TreeGenerator", "get_leaf_form");
-	const bool seasons = trees && !p_season.is_empty() && ClassDB::has_method("TreeGenerator", "get_leaf_season");
-	Array out;
-	for (const Share &m : mix) {
-		Dictionary d;
-		d["kind"] = m.tree.kind;
-		d["count"] = m.tree.count;
-		d["depth"] = m.tree.depth;
-		d["width"] = m.tree.width;
-		d["size"] = m.tree.size;
-		d["color"] = m.tree.fallen;
-		d["fresh"] = 0.3f;
-		if (trees) {
-			MethodBind *form = ClassDB::get_method("TreeGenerator", "get_leaf_form");
-			const Variant pv = m.tree.preset;
-			const Variant *args[1] = { &pv };
-			Callable::CallError err;
-			const Variant r = form ? form->call(nullptr, args, 1, err) : Variant();
-			if (err.error == Callable::CallError::CALL_OK && r.get_type() == Variant::DICTIONARY) {
-				const Dictionary f = r;
-				static const char *keys[5] = { "kind", "count", "depth", "width", "size" };
-				for (const char *key : keys) {
-					if (f.has(key)) {
-						d[key] = f[key];
-					}
-				}
-			}
-		}
-		if (seasons) {
-			MethodBind *season = ClassDB::get_method("TreeGenerator", "get_leaf_season");
-			const Variant pv = m.tree.preset;
-			const Variant sv = p_season;
-			const Variant *args[2] = { &pv, &sv };
-			Callable::CallError err;
-			const Variant r = season ? season->call(nullptr, args, 2, err) : Variant();
-			if (err.error == Callable::CallError::CALL_OK && r.get_type() == Variant::DICTIONARY) {
-				const Dictionary ls = r;
-				if (ls.has("autumn_color")) {
-					d["color"] = ls["autumn_color"];
-				}
-				// This year's fallen leaves are the fresh ones among the older litter.
-				d["fresh"] = CLAMP(float(ls.get("fallen_fraction", 0.0f)) * 0.7f, 0.05f, 0.7f);
-			}
-		}
-		d["share"] = m.share;
-		out.push_back(d);
-	}
-	return out;
-}
-
-TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_variants, bool p_textures, float p_impostor_range, const Dictionary &p_season) {
+TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_variants, bool p_textures, float p_impostor_range) {
 	using P = PlantGenerator;
 	// Shared by every stand.
 	const FloorSpec gap_bramble = { P::PRESET_BRAMBLE, 1.4f, 0.6f, 0.8f, 0.8f, 1.2f, 7.0f, 0.4f, 0.05f, 0.7f, 0.15f, 0.0f, 1.0f, 45.0f };
@@ -7851,19 +3486,9 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 	const FloorSpec seedling = { P::PRESET_SEEDLING, 0.8f, 0.15f, 0.5f, 0.8f, 1.2f, 5.0f, 0.3f, 0.4f, 0.97f, 0.1f, 0.0f, 1.0f, 30.0f };
 	const FloorSpec sorrel = { P::PRESET_WOOD_SORREL, 0.25f, 0.1f, 0.9f, 0.9f, 1.2f, 3.0f, 0.35f, 0.55f, 1.0f, 0.15f, 0.0f, 1.0f, 18.0f };
 	const FloorSpec moss = { P::PRESET_MOSS, 0.3f, 0.0f, 0.6f, 0.8f, 1.6f, 4.0f, 0.3f, 0.6f, 1.0f, 0.15f, 0.0f, 1.0f, 15.0f };
-	const FloorSpec twigs = { P::PRESET_TWIGS, 0.55f, 0.0f, 0.7f, 0.8f, 1.2f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 1.0f, 18.0f };
-	// Scale 1 to 1.35 keeps a beech leaf at 6 to 11 cm (about 1.5 times was hand-size); spacing
-	// closer to keep the cover.
-	const FloorSpec leaves = { P::PRESET_LEAF_LITTER, 0.17f, 0.0f, 0.6f, 1.0f, 1.35f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 0.5f, 15.0f };
+	const FloorSpec twigs = { P::PRESET_TWIGS, 0.9f, 0.0f, 0.5f, 0.8f, 1.2f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 1.0f, 18.0f };
+	const FloorSpec leaves = { P::PRESET_LEAF_LITTER, 0.2f, 0.0f, 0.6f, 1.2f, 1.8f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 0.5f, 15.0f };
 	const FloorSpec needles = { P::PRESET_NEEDLE_LITTER, 0.35f, 0.0f, 0.8f, 0.8f, 1.3f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.5f, 1.0f, 15.0f };
-	// Broad-leaved herbs of the lighter floor (Ellenberg light 4 to 6): violets in half shade,
-	// herb Robert in rides, gaps and edges.
-	const FloorSpec violet = { P::PRESET_VIOLET, 0.3f, 0.06f, 0.6f, 0.9f, 1.2f, 4.0f, 0.3f, 0.2f, 0.9f, 0.15f, 0.0f, 0.6f, 18.0f };
-	const FloorSpec herb_robert = { P::PRESET_HERB_ROBERT, 0.4f, 0.1f, 0.6f, 0.8f, 1.2f, 5.0f, 0.3f, 0.1f, 0.75f, 0.15f, 0.0f, 0.7f, 25.0f };
-	// Small plants under 5 cm where the floor was thin (docs/ideas/ground-detail-vegetation.md, item 4): pincushion
-	// moss in crowded colonies on acid litter under deep shade, ground ivy's creeping mats on richer, moister floors.
-	const FloorSpec pincushion = { P::PRESET_PINCUSHION_MOSS, 0.45f, 0.04f, 0.55f, 0.8f, 1.3f, 2.5f, 0.2f, 0.5f, 1.0f, 0.15f, 0.0f, 1.0f, 15.0f };
-	const FloorSpec ground_ivy = { P::PRESET_GROUND_IVY, 0.3f, 0.05f, 0.6f, 0.9f, 1.3f, 5.0f, 0.3f, 0.25f, 0.95f, 0.15f, 0.0f, 0.6f, 18.0f };
 	const FloorSpec bilberry = { P::PRESET_BILBERRY, 0.35f, 0.12f, 0.9f, 1.0f, 1.4f, 7.0f, 0.6f, 0.3f, 1.0f, 0.15f, 0.4f, 1.0f, 25.0f };
 	LocalVector<FloorSpec> set;
 	switch (p_stand) {
@@ -7872,7 +3497,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			set = LocalVector<FloorSpec>({ gap_bramble, gap_foxglove, fern, seedling,
 				{ P::PRESET_WOODRUFF, 0.3f, 0.1f, 0.9f, 0.9f, 1.2f, 4.0f, 0.3f, 0.5f, 1.0f, 0.15f, 0.0f, 0.5f, 20.0f },
 				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 5.0f, 0.3f, 0.4f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
-				violet, herb_robert, sorrel, pincushion, moss, twigs, leaves, needles });
+				sorrel, moss, twigs, leaves, needles });
 			set[2].density = 0.35f; // Few ferns under beech.
 			set[3].density = 0.8f; // Beech seedlings carpet the floor.
 			break;
@@ -7882,13 +3507,13 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				{ P::PRESET_IVY, 0.6f, 0.0f, 0.9f, 0.9f, 1.3f, 6.0f, 0.45f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 25.0f },
 				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 6.0f, 0.4f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
 				{ P::PRESET_WOODRUFF, 0.3f, 0.1f, 0.7f, 0.9f, 1.2f, 4.0f, 0.2f, 0.5f, 1.0f, 0.15f, 0.0f, 0.5f, 20.0f },
-				violet, herb_robert, ground_ivy, pincushion, moss, twigs, leaves, needles });
+				moss, twigs, leaves, needles });
 			set[0].shade_max = 0.9f; // Bramble runs under oak, not only in gaps.
 			set[0].patch_cover = 0.5f;
 			break;
 		case FLOOR_MONTANE_CONIFER:
 			// Spruce, fir and beech: wood sorrel, ferns and bilberry on mixed litter.
-			set = LocalVector<FloorSpec>({ gap_bramble, gap_foxglove, fern, seedling, bilberry, sorrel, pincushion, moss, twigs, leaves, needles });
+			set = LocalVector<FloorSpec>({ gap_bramble, gap_foxglove, fern, seedling, bilberry, sorrel, moss, twigs, leaves, needles });
 			set[2].density = 0.9f;
 			set[2].patch_cover = 0.6f;
 			break;
@@ -7907,38 +3532,19 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			set = LocalVector<FloorSpec>({ gap_bracken, seedling, bilberry,
 				{ P::PRESET_HEATHER, 0.45f, 0.15f, 0.9f, 0.9f, 1.3f, 8.0f, 0.55f, 0.0f, 0.7f, 0.15f, 0.0f, 1.0f, 30.0f },
 				{ P::PRESET_DRY_GRASS, 0.3f, 0.0f, 0.7f, 0.7f, 1.1f, 6.0f, 0.45f, 0.0f, 0.8f, 0.15f, 0.0f, 1.0f, 15.0f },
-				pincushion, moss, twigs, needles });
+				moss, twigs, needles });
 			set[1].density = 0.25f;
 			set[2].density = 1.0f;
 			set[2].patch_cover = 0.7f;
 			set[2].conifer_min = 0.0f;
 			break;
-		case FLOOR_BOREAL_TAIGA: {
-			// Boreal pine and spruce with birch in burn patches (docs/ideas/vegetation.md, "Boreal taiga floor"; Cajander's
-			// site types): reindeer lichen carpets under the open pine crowns, feather moss and bilberry under the dense
-			// spruce, crowberry and heather in the open, wavy hair-grass and hair moss under the birch.
-			const FloorSpec lichen = { P::PRESET_REINDEER_LICHEN, 0.2f, 0.0f, 0.95f, 0.8f, 1.4f, 7.0f, 0.75f, 0.0f, 0.5f, 0.15f, 0.5f, 1.0f, 25.0f };
-			const FloorSpec feather = { P::PRESET_FEATHER_MOSS, 0.28f, 0.0f, 0.95f, 0.9f, 1.4f, 5.0f, 0.8f, 0.4f, 1.0f, 0.15f, 0.4f, 1.0f, 20.0f };
-			const FloorSpec crowberry = { P::PRESET_CROWBERRY, 0.4f, 0.1f, 0.6f, 0.8f, 1.2f, 6.0f, 0.45f, 0.0f, 0.6f, 0.15f, 0.3f, 1.0f, 25.0f };
-			const FloorSpec heather = { P::PRESET_HEATHER, 0.45f, 0.15f, 0.5f, 0.9f, 1.3f, 8.0f, 0.4f, 0.0f, 0.35f, 0.15f, 0.0f, 1.0f, 30.0f };
-			const FloorSpec hair_grass = { P::PRESET_DRY_GRASS, 0.3f, 0.0f, 0.8f, 0.7f, 1.1f, 6.0f, 0.55f, 0.0f, 0.9f, 0.15f, 0.0f, 0.45f, 15.0f };
-			FloorSpec hair_moss = moss;
-			hair_moss.conifer_max = 0.5f; // Polytrichum on the burnt mineral soil under the birch.
-			hair_moss.shade_min = 0.2f;
-			set = LocalVector<FloorSpec>({ seedling, bilberry, lichen, feather, crowberry, heather, hair_grass, hair_moss, twigs, leaves, needles });
-			set[0].density = 0.3f;
-			set[1].density = 0.9f;
-			set[1].shade_min = 0.35f; // Bilberry with the moss under spruce (Myrtillus type).
-			set[1].patch_cover = 0.6f;
-			break;
-		}
 		case FLOOR_RIPARIAN:
 			// Alder and willow on wet ground: nettle, sedge, rush, ferns.
 			set = LocalVector<FloorSpec>({ { P::PRESET_NETTLE, 0.5f, 0.15f, 0.9f, 0.9f, 1.3f, 6.0f, 0.55f, 0.0f, 0.9f, 0.15f, 0.0f, 1.0f, 35.0f },
 				fern,
 				{ P::PRESET_SEDGE, 0.35f, 0.1f, 0.9f, 0.9f, 1.4f, 5.0f, 0.5f, 0.0f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f, 15.0f },
 				{ P::PRESET_RUSH, 0.6f, 0.2f, 0.7f, 0.9f, 1.2f, 5.0f, 0.4f, 0.0f, 0.8f, 0.15f, 0.0f, 1.0f, 30.0f, 8.0f },
-				ground_ivy, moss, twigs, leaves });
+				moss, twigs, leaves });
 			break;
 		case FLOOR_HEDGEROW:
 			// Hedge bottoms: bramble, nettle, ivy, foxglove, fern.
@@ -7946,7 +3552,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				{ P::PRESET_NETTLE, 0.5f, 0.15f, 0.8f, 0.9f, 1.3f, 5.0f, 0.45f, 0.0f, 0.9f, 0.15f, 0.0f, 1.0f, 35.0f },
 				gap_foxglove, fern,
 				{ P::PRESET_IVY, 0.6f, 0.0f, 0.9f, 0.9f, 1.3f, 5.0f, 0.5f, 0.2f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f },
-				violet, herb_robert, ground_ivy, twigs, leaves });
+				twigs, leaves });
 			set[0].shade_max = 0.95f;
 			set[0].density = 1.0f;
 			set[0].patch_cover = 0.7f;
@@ -7957,7 +3563,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			// wood sorrel, maple seedlings by the thousand.
 			set = LocalVector<FloorSpec>({ gap_bramble, fern, seedling,
 				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 6.0f, 0.45f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
-				violet, sorrel, moss, twigs, leaves, needles });
+				sorrel, moss, twigs, leaves, needles });
 			set[1].density = 0.8f;
 			set[1].patch_cover = 0.55f;
 			set[2].density = 0.9f;
@@ -7980,303 +3586,18 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			set[2].density = 0.4f;
 			set[3].density = 0.4f;
 			break;
-		case FLOOR_MEDITERRANEAN:
-			// Montado and dehesa (docs/ideas/vegetation.md, "Mediterranean woodland ground layer"; Joffre et al. 1999):
-			// a continuous layer of annual grasses under and between the open crowns, browned by summer, thinner in
-			// the crowns' shade; thistles and French lavender in the open, sage-leaved rockrose in loose patches where
-			// grazing has eased (Pinto-Correia et al. 2011), thyme on the thin soil; oak litter and twigs under the
-			// crowns, needles under stone pine.
-			set = LocalVector<FloorSpec>({ { P::PRESET_DRY_GRASS, 0.16f, 0.0f, 1.0f, 1.2f, 1.8f, 6.0f, 0.85f, 0.0f, 0.85f, 0.15f, 0.0f, 1.0f, 30.0f },
-					{ P::PRESET_THISTLE, 1.0f, 0.2f, 0.35f, 0.8f, 1.2f, 8.0f, 0.35f, 0.0f, 0.5f, 0.15f, 0.0f, 1.0f, 35.0f },
-					{ P::PRESET_FRENCH_LAVENDER, 0.6f, 0.2f, 0.5f, 0.8f, 1.3f, 7.0f, 0.4f, 0.0f, 0.6f, 0.15f, 0.0f, 1.0f, 40.0f },
-					{ P::PRESET_SAGE_ROCKROSE, 0.8f, 0.35f, 0.55f, 0.8f, 1.4f, 10.0f, 0.4f, 0.0f, 0.7f, 0.15f, 0.0f, 1.0f, 45.0f },
-					{ P::PRESET_THYME, 0.35f, 0.08f, 0.4f, 0.8f, 1.2f, 5.0f, 0.35f, 0.0f, 0.5f, 0.15f, 0.0f, 1.0f, 20.0f },
-					twigs, leaves, needles });
-			set[5].density = 0.4f; // Few twigs: open crowns, little dead wood left in a worked wood.
-			set[6].density = 0.1f; // Evergreen oaks shed a little all year: thin litter, the grass shows through.
-			break;
 		case FLOOR_MAX:
 			break;
 	}
-	// How much leaf litter lies on the ground (docs/ideas/forest-floor.md, step 6): a stand drops
-	// about its leaf area each autumn (F layers) and it decays at k per year (Hobbie et al. 2006),
-	// so t years after the fall the layers are F exp(-k t) / (1 - exp(-k)) and they hide
-	// 1 - exp(-layers) of the ground. Leaf fall taken as 1 November; without a season, midsummer.
-	struct Decay {
-		float layers, k;
-	};
-	Decay decay = { 5.0f, 0.3f };
-	Color twig_bark(0.3f, 0.26f, 0.21f);
-	switch (p_stand) {
-		case FLOOR_BEECH:
-			decay = { 5.0f, 0.3f };
-			twig_bark = Color(0.36f, 0.34f, 0.31f); // Smooth grey.
-			break;
-		case FLOOR_OAK_MIXED:
-			decay = { 5.0f, 0.45f }; // Oak slow, lime, hazel and ash fast.
-			twig_bark = Color(0.27f, 0.22f, 0.17f);
-			break;
-		case FLOOR_MONTANE_CONIFER:
-			decay = { 2.5f, 0.3f };
-			twig_bark = Color(0.3f, 0.24f, 0.18f);
-			break;
-		case FLOOR_RIPARIAN:
-			decay = { 4.0f, 1.5f }; // Alder litter is gone within the year.
-			twig_bark = Color(0.24f, 0.2f, 0.17f);
-			break;
-		case FLOOR_HEDGEROW:
-			decay = { 3.0f, 0.8f };
-			twig_bark = Color(0.26f, 0.21f, 0.16f);
-			break;
-		case FLOOR_NORTHERN_HARDWOOD:
-			decay = { 5.0f, 0.4f };
-			twig_bark = Color(0.33f, 0.3f, 0.26f);
-			break;
-		case FLOOR_EASTERN_OAK:
-			decay = { 5.0f, 0.35f };
-			twig_bark = Color(0.26f, 0.21f, 0.17f);
-			break;
-		case FLOOR_PINE_HEATH:
-		case FLOOR_SUBALPINE:
-		case FLOOR_PINE_HEMLOCK:
-		case FLOOR_BOREAL_TAIGA:
-			twig_bark = Color(0.33f, 0.24f, 0.17f); // Pine and spruce twigs, reddish.
-			break;
-		default:
-			break;
-	}
-	const float day = p_season.has("day_of_year") ? float(p_season["day_of_year"]) : 196.0f;
-	const float since_fall = Math::fposmod(day - 305.0f, 365.0f) / 365.0f;
-	const float layers = decay.layers * Math::exp(-decay.k * since_fall) / (1.0f - Math::exp(-decay.k));
-	const float leaf_cover = 1.0f - Math::exp(-layers);
-
-	// On and beside fallen wood (docs/ideas/forest-floor.md, 6.6), after the floor's own species
-	// (their indices stay put; the floor already keeps off the logs): moss over the upper side of any log, wood sorrel and seedlings rooted on thick
-	// rotting ones (nurse logs), ferns along the side, leaves banked against the uphill side under
-	// broadleaves. Nothing grows until the trees module places logs.
-	if (!set.is_empty()) {
-		FloorSpec log_moss = { P::PRESET_MOSS, 0.16f, 0.0f, 0.95f, 0.6f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.15f, 0.0f, 1.0f, 15.0f };
-		log_moss.deadwood = PlantSpecies::DEADWOOD_ON;
-		log_moss.deadwood_size = 0.05f;
-		FloorSpec log_sorrel = { P::PRESET_WOOD_SORREL, 0.3f, 0.0f, 0.45f, 0.7f, 1.0f, 0.0f, 0.0f, 0.2f, 1.0f, 0.15f, 0.0f, 1.0f, 18.0f };
-		log_sorrel.deadwood = PlantSpecies::DEADWOOD_ON;
-		log_sorrel.deadwood_size = 0.15f;
-		FloorSpec log_seedling = { P::PRESET_SEEDLING, 0.45f, 0.0f, 0.35f, 0.7f, 1.1f, 0.0f, 0.0f, 0.0f, 0.97f, 0.1f, 0.0f, 1.0f, 30.0f };
-		log_seedling.deadwood = PlantSpecies::DEADWOOD_ON;
-		log_seedling.deadwood_size = 0.2f;
-		FloorSpec log_fern = { P::PRESET_FERN, 0.8f, 0.15f, 0.7f, 1.0f, 1.6f, 0.0f, 0.0f, 0.3f, 1.0f, 0.15f, 0.0f, 1.0f, 35.0f };
-		log_fern.deadwood = PlantSpecies::DEADWOOD_BESIDE;
-		log_fern.deadwood_size = 0.7f;
-		FloorSpec log_leaves = { P::PRESET_LEAF_LITTER, 0.22f, 0.0f, 0.9f, 1.0f, 1.4f, 0.0f, 0.0f, 0.0f, 1.0f, 0.15f, 0.0f, 0.6f, 15.0f };
-		log_leaves.deadwood = PlantSpecies::DEADWOOD_BESIDE;
-		log_leaves.deadwood_size = 0.35f;
-		log_leaves.uphill = true;
-		const bool broadleaf = p_stand != FLOOR_PINE_HEATH && p_stand != FLOOR_SUBALPINE && p_stand != FLOOR_PINE_HEMLOCK && p_stand != FLOOR_MONTANE_CONIFER && p_stand != FLOOR_BOREAL_TAIGA;
-		for (const FloorSpec &f : { log_moss, log_sorrel, log_seedling, log_fern }) {
-			set.push_back(f);
-		}
-		if (broadleaf) {
-			set.push_back(log_leaves);
-		}
-		// Clearings (docs/ideas/vegetation.md, "Floors that follow forest age"; Wohlgemuth et al. 2002 on Swiss
-		// windthrows): where a storm or beetles killed the stand (WorldStand.stand_age_at, kinds wind and beetle; fire
-		// has make_burn), light-demanding ruderals take the opened ground in the first years (fireweed, foxglove,
-		// nettle on the nutrient flush), raspberry and tall clearing grass (wood small-reed) peak at three to ten
-		// years and hold for a decade or two, and all of it thins out as the young stand closes over it (shade).
-		if (p_stand != FLOOR_HEDGEROW && p_stand != FLOOR_MEDITERRANEAN) {
-			auto clearing = [&](P::Preset p_preset, float p_spacing, float p_footprint, float p_density, float p_smin, float p_smax, float p_patch, float p_cover, float p_vis, float p_from, float p_to, float p_fade) {
-				FloorSpec f = { p_preset, p_spacing, p_footprint, p_density, p_smin, p_smax, p_patch, p_cover, 0.0f, 0.5f, 0.15f, 0.0f, 1.0f, p_vis };
-				f.stand_from = p_from;
-				f.stand_to = p_to;
-				f.stand_fade = p_fade;
-				f.kind_min = 2.0f; // Wind and beetle.
-				f.kind_max = 3.0f;
-				set.push_back(f);
-			};
-			clearing(P::PRESET_FIREWEED, 0.8f, 0.15f, 0.5f, 0.9f, 1.3f, 12.0f, 0.5f, 90.0f, 0.5f, 10.0f, 3.0f);
-			clearing(P::PRESET_RASPBERRY, 0.9f, 0.35f, 0.75f, 0.8f, 1.2f, 10.0f, 0.5f, 70.0f, 2.0f, 18.0f, 5.0f);
-			clearing(P::PRESET_COCKSFOOT, 0.4f, 0.1f, 0.7f, 1.3f, 1.8f, 14.0f, 0.55f, 60.0f, 1.0f, 20.0f, 5.0f);
-			if (p_stand != FLOOR_BOREAL_TAIGA && p_stand != FLOOR_SUBALPINE) {
-				clearing(P::PRESET_FOXGLOVE, 1.2f, 0.25f, 0.3f, 0.9f, 1.2f, 9.0f, 0.35f, 60.0f, 1.0f, 6.0f, 2.0f);
-				clearing(P::PRESET_NETTLE, 0.5f, 0.15f, 0.5f, 0.9f, 1.3f, 6.0f, 0.3f, 35.0f, 1.0f, 10.0f, 3.0f);
-			}
-			// Forest edges (Harper et al. 2005; Wicklein et al. 2020 on edge herb layers): side light reaches 10-30 m
-			// under the canopy, so light-demanding grasses, bramble and nettle (nutrients drifting in from the open)
-			// grow on under crowns near the edge that would shade them out deeper in. They read the edge from the
-			// field's (or its canopy field's) forest; without one they are not placed.
-			const bool broad = p_stand != FLOOR_PINE_HEATH && p_stand != FLOOR_SUBALPINE && p_stand != FLOOR_PINE_HEMLOCK && p_stand != FLOOR_MONTANE_CONIFER && p_stand != FLOOR_BOREAL_TAIGA;
-			auto edge = [&](P::Preset p_preset, float p_spacing, float p_footprint, float p_density, float p_smin, float p_smax, float p_patch, float p_cover, float p_vis, float p_from, float p_to, float p_fade) {
-				FloorSpec f = { p_preset, p_spacing, p_footprint, p_density, p_smin, p_smax, p_patch, p_cover, 0.0f, 0.85f, 0.15f, 0.0f, 1.0f, p_vis };
-				f.edge_from = p_from;
-				f.edge_to = p_to;
-				f.edge_fade = p_fade;
-				set.push_back(f);
-			};
-			edge(broad ? P::PRESET_COCKSFOOT : P::PRESET_DRY_GRASS, 0.3f, 0.08f, 0.75f, 0.9f, 1.4f, 8.0f, 0.6f, 40.0f, -8.0f, 12.0f, 10.0f);
-			if (broad) {
-				edge(P::PRESET_BRAMBLE, 1.4f, 0.6f, 0.7f, 0.8f, 1.2f, 8.0f, 0.45f, 45.0f, -6.0f, 10.0f, 8.0f);
-				edge(P::PRESET_NETTLE, 0.5f, 0.15f, 0.5f, 0.9f, 1.3f, 6.0f, 0.35f, 35.0f, -4.0f, 6.0f, 6.0f);
-			} else {
-				edge(P::PRESET_RASPBERRY, 0.9f, 0.35f, 0.4f, 0.7f, 1.0f, 8.0f, 0.4f, 70.0f, -5.0f, 8.0f, 6.0f);
-			}
-		}
-		// Soil mushrooms last, after everything else (docs/ideas/mushrooms.md): few, so they claim
-		// no ground from the herbs. Mycorrhizal ones under their hosts' crowns (shade) by stand
-		// type (conifer share: fly agaric with spruce, pine and birch, cep, chanterelle and
-		// brittlegill with oak, beech and conifers), in loose patches round the hosts; the clouded
-		// agaric in rings and arcs (patch edges); honey fungus in tufts beside deadwood. Their
-		// season and the soil's moisture set their density (get_presence()).
-		const FloorSpec fly_agaric = { P::PRESET_FLY_AGARIC, 2.5f, 0.15f, 0.14f, 0.9f, 1.1f, 10.0f, 0.25f, 0.3f, 1.0f, 0.15f, 0.25f, 1.0f, 30.0f };
-		const FloorSpec cep = { P::PRESET_CEP, 2.5f, 0.15f, 0.1f, 0.9f, 1.1f, 10.0f, 0.25f, 0.4f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f };
-		const FloorSpec chanterelle = { P::PRESET_CHANTERELLE, 1.6f, 0.12f, 0.14f, 0.9f, 1.1f, 6.0f, 0.3f, 0.4f, 1.0f, 0.15f, 0.0f, 1.0f, 20.0f };
-		const FloorSpec brittlegill = { P::PRESET_BRITTLEGILL, 2.0f, 0.1f, 0.12f, 0.9f, 1.1f, 8.0f, 0.3f, 0.4f, 1.0f, 0.15f, 0.0f, 1.0f, 20.0f };
-		const FloorSpec clouded = { P::PRESET_CLOUDED_AGARIC, 0.9f, 0.12f, 0.6f, 0.9f, 1.1f, 9.0f, 0.35f, 0.3f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f };
-		FloorSpec honey = { P::PRESET_HONEY_FUNGUS, 1.4f, 0.0f, 1.0f, 0.9f, 1.1f, 0.0f, 0.0f, 0.0f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f };
-		honey.deadwood = PlantSpecies::DEADWOOD_BESIDE;
-		honey.deadwood_size = 0.4f; // Then moved onto the wood's side (VegetationField3D, wood feeders).
-		switch (p_stand) {
-			case FLOOR_BEECH:
-			case FLOOR_OAK_MIXED:
-				set.push_back(cep);
-				set.push_back(chanterelle);
-				set.push_back(brittlegill);
-				set.push_back(clouded);
-				set.push_back(honey);
-				break;
-			case FLOOR_MONTANE_CONIFER:
-				set.push_back(fly_agaric);
-				set.push_back(cep);
-				set.push_back(chanterelle);
-				set.push_back(brittlegill);
-				set.push_back(clouded);
-				set.push_back(honey);
-				break;
-			case FLOOR_PINE_HEATH:
-				set.push_back(fly_agaric);
-				set.push_back(cep);
-				set.push_back(chanterelle);
-				set.push_back(brittlegill);
-				break;
-			case FLOOR_SUBALPINE:
-			case FLOOR_BOREAL_TAIGA:
-				set.push_back(fly_agaric);
-				set.push_back(brittlegill);
-				break;
-			case FLOOR_NORTHERN_HARDWOOD:
-			case FLOOR_EASTERN_OAK:
-			case FLOOR_PINE_HEMLOCK:
-				// The North American woods have their own fly agaric, chanterelles and honey fungi.
-				set.push_back(fly_agaric);
-				set.push_back(chanterelle);
-				set.push_back(honey);
-				break;
-			case FLOOR_RIPARIAN:
-			case FLOOR_HEDGEROW:
-				set.push_back(clouded);
-				set.push_back(honey);
-				break;
-			default:
-				break;
-		}
-	}
-	// Deer browsing (docs/ideas/vegetation.md, "Deer browsing"; WorldStand.browse_at): appended after the rest so every
-	// other species keeps its seed. Under heavy pressure woods lose bramble and the palatable herbs and turn grassy
-	// and ferny (Gill and Fuller 2007, Kirby 2001, Morecroft et al. 2001 Wytham exclosures, Boulanger et al. 2018);
-	// in clearings and rides deer keep short grazed lawns (Putman 1986; Kuijper et al. 2009).
-	if (p_stand != FLOOR_HEDGEROW && p_stand != FLOOR_MEDITERRANEAN) {
-		const uint32_t base_count = set.size();
-		for (uint32_t i = 0; i < base_count; i++) {
-			FloorSpec &f = set[i];
-			switch (f.preset) {
-				case P::PRESET_BRAMBLE:
-				case P::PRESET_RASPBERRY: {
-					// Full canes where deer are few; past about a third, the bitten low hummocks instead.
-					f.browse_to = 0.35f;
-					f.browse_fade = 0.15f;
-					FloorSpec b = f;
-					b.browse_from = 0.35f;
-					b.browse_to = 1.0f;
-					b.browse_mesh = 0.85f;
-					b.density *= 0.8f;
-					b.scale_min *= 0.9f;
-					b.scale_max *= 0.9f;
-					set.push_back(b);
-				} break;
-				case P::PRESET_WOODRUFF:
-				case P::PRESET_WOOD_ANEMONE:
-				case P::PRESET_VIOLET:
-				case P::PRESET_BILBERRY:
-				case P::PRESET_IVY:
-				case P::PRESET_FIREWEED:
-				case P::PRESET_HERB_ROBERT:
-				case P::PRESET_WOOD_SORREL:
-					// Palatable herbs and dwarf shrubs thin steadily with pressure: about a fifth left at the heaviest.
-					f.browse_to = 0.3f;
-					f.browse_fade = 1.0f;
-					break;
-				case P::PRESET_COCKSFOOT:
-					if (f.stand_from > -1.0f) {
-						f.browse_to = 0.5f; // The tall clearing grass gives way to the deer lawn.
-						f.browse_fade = 0.3f;
-					}
-					break;
-				default:
-					break;
-			}
-		}
-		const bool broad = p_stand != FLOOR_PINE_HEATH && p_stand != FLOOR_SUBALPINE && p_stand != FLOOR_PINE_HEMLOCK && p_stand != FLOOR_MONTANE_CONIFER && p_stand != FLOOR_BOREAL_TAIGA;
-		auto browsed = [&](P::Preset p_preset, float p_spacing, float p_footprint, float p_density, float p_smin, float p_smax, float p_patch, float p_cover, float p_shade_max, float p_vis, float p_from, float p_fade) {
-			FloorSpec f = { p_preset, p_spacing, p_footprint, p_density, p_smin, p_smax, p_patch, p_cover, 0.0f, p_shade_max, 0.15f, 0.0f, 1.0f, p_vis };
-			f.browse_from = p_from;
-			f.browse_fade = p_fade;
-			set.push_back(f);
-		};
-		// Grazed lawns in the light (clearings, rides, open glades), with white clover in them.
-		browsed(P::PRESET_GRAZED_LAWN, 0.2f, 0.06f, 0.95f, 0.9f, 1.15f, 12.0f, 0.8f, 0.45f, 18.0f, 0.45f, 0.2f);
-		browsed(P::PRESET_CLOVER, 0.5f, 0.1f, 0.35f, 0.7f, 1.0f, 6.0f, 0.35f, 0.45f, 25.0f, 0.5f, 0.2f);
-		// Under the crowns the floor goes grassy (unpalatable or grazing-tolerant grasses) and ferny (Dryopteris).
-		browsed(broad ? P::PRESET_COCKSFOOT : P::PRESET_DRY_GRASS, 0.35f, 0.08f, 0.55f, 0.6f, 0.9f, 9.0f, 0.55f, 0.8f, 40.0f, 0.4f, 0.3f);
-		browsed(P::PRESET_FERN, 1.1f, 0.35f, 0.35f, 1.1f, 1.7f, 10.0f, 0.4f, 0.95f, 35.0f, 0.5f, 0.3f);
-	}
-	// Leaf drifts (docs/ideas/vegetation.md, "Leaf drifts"), last so the rest keep their seeds: banks of the stand's
-	// leaves where the wind piles them (PlantSpecies.RULE_LITTER_DRIFT over 1.35: hollows, the feet of trunks, logs
-	// and stones), under broadleaf litter. Deepest after the leaf fall, settling and rotting down through the year.
-	bool leafy = false;
-	for (const FloorSpec &f : set) {
-		leafy = leafy || (f.preset == P::PRESET_LEAF_LITTER && f.deadwood == PlantSpecies::DEADWOOD_AVOID);
-	}
-	if (leafy) {
-		set.push_back({ P::PRESET_LEAF_BANK, 1.6f, 0.55f, 0.85f, 0.7f, 1.3f, 0.0f, 0.0f, 0.06f, 1.0f, 0.05f, 0.0f, 0.6f, 25.0f }); // About 18k triangles each: to 25 m.
-	}
 	TypedArray<Resource> out;
 	int seed_base = 1000 + int(p_stand) * 100;
-	for (FloorSpec f : set) {
-		if (f.preset == P::PRESET_LEAF_LITTER && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
-			f.density = CLAMP(0.9f * leaf_cover, 0.1f, 0.9f);
-		}
-		if (f.preset == P::PRESET_LEAF_BANK) {
-			f.density *= CLAMP(0.35f + 0.65f * leaf_cover, 0.0f, 1.0f); // Fewer and lower once the year's fall has rotted.
-		}
-		f.density *= get_presence(f.preset, p_season); // Spring plants gone by summer.
+	for (const FloorSpec &f : set) {
 		Ref<PlantGenerator> gen;
 		gen.instantiate();
 		gen->set_textures(p_textures);
 		gen->set_preset(f.preset);
 		gen->apply_preset_colors();
 		gen->set_seed(seed_base);
-		if (f.browse_mesh > 0.0f) {
-			Dictionary season = p_season.duplicate();
-			season["browse"] = f.browse_mesh;
-			gen->set_season(season);
-		} else {
-			gen->set_season(p_season);
-		}
-		if (f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_SEEDLING || f.preset == P::PRESET_LEAF_BANK) {
-			gen->set_litter_leaves(stand_litter_leaves(p_stand, p_season));
-		}
-		if (f.preset == P::PRESET_TWIGS) {
-			gen->stem_color = twig_bark;
-		}
 		Ref<PlantSpecies> sp;
 		sp.instantiate();
 		TypedArray<Mesh> meshes;
@@ -8285,42 +3606,8 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			meshes.push_back(v[i]);
 		}
 		sp->set_meshes(meshes);
-		// Near the camera the litter lies leaf on leaf (docs/ideas/ground-detail-vegetation.md, item 3): the same
-		// cards from the same seeds with more layers fallen on top and broken twig ends, swapped in within a few
-		// metres, so the swap only adds leaves.
-		if ((f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_NEEDLE_LITTER) && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
-			gen->set_litter_deposit(2.5f);
-			const TypedArray<ArrayMesh> nv = gen->generate_variants(MAX(p_variants, 1));
-			gen->set_litter_deposit(1.0f);
-			TypedArray<Mesh> near;
-			for (int i = 0; i < nv.size(); i++) {
-				near.push_back(nv[i]);
-			}
-			sp->set_near_meshes(near);
-			sp->set_near_range(7.0f);
-		}
 		sp->set_spacing(f.spacing);
 		sp->set_footprint(f.footprint);
-		// Bracken and bramble shade the sward out under their stands (a GrassField3D reads it
-		// through undergrowth_field): bracken's fronds and litter leave little grass (Marrs and
-		// Watt 2006), bramble a little more.
-		// Their litter covers the ground under them: bracken's dead fronds lie as a deep mat of
-		// rust-brown rachises and pinnae that outlasts the winter (Marrs and Watt 2006), bramble
-		// drops its leaves over bare soil.
-		if (f.preset == P::PRESET_BRACKEN) {
-			sp->set_sward_shade(0.85f);
-			sp->set_litter_color(PlantSpecies::BRACKEN_LITTER);
-			// The stand's front: shorter fronds over its outer few metres, leaning out to the light.
-			sp->set_margin_width(3.0f);
-			sp->set_margin_scale(0.55f);
-			sp->set_margin_lean(20.0f);
-		} else if (f.preset == P::PRESET_BRAMBLE || f.preset == P::PRESET_RASPBERRY) {
-			sp->set_sward_shade(f.preset == P::PRESET_RASPBERRY ? 0.5f : 0.7f);
-			sp->set_litter_color(PlantSpecies::BRAMBLE_LITTER);
-			sp->set_margin_width(2.0f);
-			sp->set_margin_scale(0.7f);
-			sp->set_margin_lean(15.0f);
-		}
 		sp->set_density(f.density);
 		sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
 		if (f.patch_scale > 0.0f) {
@@ -8339,71 +3626,13 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, f.water_max * 0.3f);
 		}
 		sp->set_visibility_range(f.visibility);
-		if (f.stand_from > -1.0f || f.stand_to < 100000.0f) {
-			sp->set_rule_range(PlantSpecies::RULE_STAND_AGE, Vector2(f.stand_from, f.stand_to));
-			sp->set_rule_fade(PlantSpecies::RULE_STAND_AGE, f.stand_fade);
-		}
-		if (f.kind_min > 0.0f || f.kind_max < 100.0f) {
-			sp->set_rule_range(PlantSpecies::RULE_DISTURBANCE, Vector2(f.kind_min, f.kind_max));
-		}
-		if (f.browse_from > 0.0f || f.browse_to < 1.0f) {
-			sp->set_rule_range(PlantSpecies::RULE_BROWSE, Vector2(f.browse_from, f.browse_to));
-			sp->set_rule_fade(PlantSpecies::RULE_BROWSE, f.browse_fade);
-		}
-		if (f.browse_mesh > 0.0f) {
-			sp->set_meta("browsed", f.browse_mesh);
-		}
-		if (f.edge_from > -100000.0f || f.edge_to < 100000.0f) {
-			sp->set_rule_range(PlantSpecies::RULE_FOREST_EDGE, Vector2(f.edge_from, f.edge_to));
-			sp->set_rule_fade(PlantSpecies::RULE_FOREST_EDGE, f.edge_fade);
-		} else if (f.deadwood == PlantSpecies::DEADWOOD_AVOID && (f.preset == P::PRESET_WOOD_SORREL || f.preset == P::PRESET_WOODRUFF || f.preset == P::PRESET_WOOD_ANEMONE || f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS || f.preset == P::PRESET_VIOLET)) {
-			// Shade herbs and forest mosses of the interior thin out over the edge's first 10-20 m, where the side
-			// light dries and warms the floor (Harper et al. 2005); with no forest edge known the rule does nothing.
-			sp->set_rule_range(PlantSpecies::RULE_FOREST_EDGE, Vector2(12.0f, 100000.0f));
-			sp->set_rule_fade(PlantSpecies::RULE_FOREST_EDGE, 18.0f);
-		}
-		if ((f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS) && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
-			// Forest mosses dry out and die back on an opened floor and build up again over decades as the stand closes
-			// (Hylocomium and Pleurozium; Jonsson and Esseen 1998): thin for the first years after a disturbance.
-			sp->set_rule_range(PlantSpecies::RULE_STAND_AGE, Vector2(6.0f, 100000.0f));
-			sp->set_rule_fade(PlantSpecies::RULE_STAND_AGE, 10.0f);
-		}
-		if ((f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_TWIGS) && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
-			// Litter lies where the crowns drop it, drifting past their edges into the light
-			// (PlantSpecies.RULE_LITTER), not only in their shade. Twigs fall nearer the trunk. Out in full light (no
-			// crown shade at all) the sward grows through what drifts in and earthworms pull it down within months
-			// (Satchell 1967; Knollenberg et al. 1985, about 90% of an orchard sward's leaf fall gone over winter), so
-			// no mat lies there, as forest_floor() draws the ground: a clearing's middle stays turf, its rim keeps the
-			// drift (a clearing ringed by crowns sums every edge's tail to a full litter value).
-			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.06f, 1.0f));
-			sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.05f);
-			// The fade runs below the range's start: it must end above 0, or open ground with no
-			// crowns near (litter 0) still gets leaves.
-			sp->set_rule_range(PlantSpecies::RULE_LITTER, Vector2(f.preset == P::PRESET_TWIGS ? 0.4f : 0.3f, 1.0f));
-			sp->set_rule_fade(PlantSpecies::RULE_LITTER, 0.25f);
-		}
-		if (f.preset == P::PRESET_LEAF_BANK) {
-			// Where litter lies (as the leaf litter's rules) and the wind has gathered it well past what fell.
-			sp->set_rule_range(PlantSpecies::RULE_LITTER, Vector2(0.45f, 1.0f));
-			sp->set_rule_fade(PlantSpecies::RULE_LITTER, 0.2f);
-			sp->set_rule_range(PlantSpecies::RULE_LITTER_DRIFT, Vector2(1.35f, 100.0f));
-			sp->set_rule_fade(PlantSpecies::RULE_LITTER_DRIFT, 0.25f);
-			sp->set_align_to_ground(1.0f);
-			sp->set_meta("sward_mound", 0.55f); // Grass keeps out from under the heap.
-		}
 		if (f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS) {
 			sp->set_rule_range(PlantSpecies::RULE_SPRAY, Vector2(0.0f, 1.0f)); // Mosses take a fall's spray zone.
-		}
-		if (f.preset == P::PRESET_CLOUDED_AGARIC) {
-			sp->set_patch_ring(0.5f); // Rings and arcs along the patches' edges.
-		}
-		if (is_mushroom(f.preset)) {
-			sp->set_meta("mushroom", true);
 		}
 		// Far away the ground takes the plant's colour (VegetationField3D's vegetation_far_map):
 		// the leaves, a little darker for the shade inside the plant, hiding more ground the
 		// taller the plant. Litter and twigs are the ground's own (forest_floor()).
-		if (f.preset != P::PRESET_LEAF_LITTER && f.preset != P::PRESET_NEEDLE_LITTER && f.preset != P::PRESET_TWIGS && !is_mushroom(f.preset) && v.size() > 0) {
+		if (f.preset != P::PRESET_LEAF_LITTER && f.preset != P::PRESET_NEEDLE_LITTER && f.preset != P::PRESET_TWIGS && v.size() > 0) {
 			const Ref<ArrayMesh> m0 = v[0];
 			const float h = m0.is_valid() ? m0->get_aabb().get_end().y : 0.2f;
 			const Color lc = gen->get_leaf_color() * 0.8f;
@@ -8411,167 +3640,10 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		}
 		// The larger shrubs, dense with thousands of triangles each, turn into impostors past the
 		// range (raster only; docs/ideas/vegetation-lod-streaming.md).
-		if (p_impostor_range > 0.0f && (f.preset == P::PRESET_BRAMBLE || f.preset == P::PRESET_RASPBERRY || f.preset == P::PRESET_BRACKEN)) {
+		if (p_impostor_range > 0.0f && (f.preset == P::PRESET_BRAMBLE || f.preset == P::PRESET_BRACKEN)) {
 			add_impostors(sp, p_impostor_range);
 		}
-		// Ferns, mosses, wood sorrel and seedlings gather at the foot of rocks (nurse objects:
-		// shelter and runoff), the floor's own, not those on or beside logs.
-		if (f.deadwood != PlantSpecies::DEADWOOD_ON && f.deadwood != PlantSpecies::DEADWOOD_BESIDE) {
-			switch (f.preset) {
-				case P::PRESET_FERN:
-					sp->set_rock_foot(2.5f);
-					break;
-				case P::PRESET_MOSS:
-				case P::PRESET_FEATHER_MOSS:
-				case P::PRESET_PINCUSHION_MOSS:
-					sp->set_rock_foot(3.0f);
-					break;
-				case P::PRESET_WOOD_SORREL:
-				case P::PRESET_SEEDLING:
-					sp->set_rock_foot(1.5f);
-					break;
-				default:
-					break;
-			}
-		}
-		if (f.deadwood != PlantSpecies::DEADWOOD_AVOID) {
-			sp->set_deadwood_rule(f.deadwood);
-			if (f.deadwood == PlantSpecies::DEADWOOD_ON) {
-				sp->set_deadwood_min_radius(f.deadwood_size);
-				sp->set_align_to_ground(1.0f); // Set on the log's curved upper side.
-			} else {
-				sp->set_deadwood_band(f.deadwood_size);
-				sp->set_deadwood_uphill(f.uphill);
-				// Ferns and banked leaves by any fallen wood; honey fungus by logs and stumps only,
-				// whose rotting wood feeds it.
-				sp->set_deadwood_min_radius(f.preset == P::PRESET_HONEY_FUNGUS ? 0.12f : 0.0f);
-				sp->set_deadwood_from_wood(f.preset == P::PRESET_HONEY_FUNGUS);
-			}
-			sp->set_far_color(Color(0, 0, 0, 0)); // Too few to colour the far ground.
-		}
-		if (f.deadwood != PlantSpecies::DEADWOOD_ON && f.preset != P::PRESET_BRAMBLE && f.preset != P::PRESET_RASPBERRY && f.preset != P::PRESET_BRACKEN) {
-			// Boar rooting (make_rooting; RULE_ROOTING): the turned patch loses its field layer and gets it back by
-			// growth form: litter with the next leaf fall, herbs, grasses and ferns over a year or two, mosses slower
-			// (Bueno et al. 2013; Welander 2000). Bramble, raspberry and bracken stands are rarely rooted (deep
-			// rhizomes, thorny cover).
-			const bool litter = f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_NEEDLE_LITTER || f.preset == P::PRESET_TWIGS;
-			const bool mossy = f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS || f.preset == P::PRESET_PINCUSHION_MOSS || f.preset == P::PRESET_SPHAGNUM || f.preset == P::PRESET_REINDEER_LICHEN;
-			sp->set_rule_range(PlantSpecies::RULE_ROOTING, Vector2(litter ? 0.35f : (mossy ? 1.5f : 0.8f), 10000.0f));
-			sp->set_rule_fade(PlantSpecies::RULE_ROOTING, litter ? 0.3f : (mossy ? 1.2f : 0.6f));
-		}
 		sp->set_meta("floor", true);
-		tag_species(sp, f.preset);
-		out.push_back(sp);
-		seed_base += 11;
-	}
-	return out;
-}
-
-// Plants between stones (docs/ideas/vegetation.md, "Plants between stones"): the crevice flora of
-// scree, river gravel and shingle, kept to the gaps between the obstacles (PlantSpecies.stone_gap),
-// with mosses, sedges and rushes gathering at the stones' feet (rock_foot).
-TypedArray<Resource> PlantGenerator::make_stones(StoneStand p_stand, int p_variants, bool p_textures, const Dictionary &p_season) {
-	using P = PlantGenerator;
-	struct StoneSpec {
-		Preset preset;
-		float spacing, footprint, density, scale_min, scale_max;
-		float gap, rock_foot, visibility;
-		float water_max = 0.0f; // > 0: within this distance of water.
-		bool top = false; // On the stones' tops (VegetationField3D.stone_tops).
-		float damp = 0.0f; // PlantSpecies.stone_top_damp; < 0 also the dry, yellow-olive colours.
-		Vector2 water; // PlantSpecies.stone_top_water: the top's height over the water.
-		bool flow = false; // PlantSpecies.follow_flow.
-	};
-	LocalVector<StoneSpec> set;
-	switch (p_stand) {
-		case STONES_SCREE:
-			// Acid upland scree and block litter (Pigott 1956; Page 1997): parsley fern its mark,
-			// mossy saxifrage on damper ground, spleenwort and thrift scattered. Its mosses
-			// (Racomitrium, Andreaea) grow on the stones, not on the loose fines between them.
-			set = LocalVector<StoneSpec>({ { P::PRESET_PARSLEY_FERN, 0.35f, 0.1f, 0.9f, 0.8f, 1.2f, 1.0f, 0.0f, 30.0f },
-					{ P::PRESET_SAXIFRAGE, 0.25f, 0.06f, 0.6f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
-					{ P::PRESET_SPLEENWORT, 0.25f, 0.05f, 0.4f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
-					{ P::PRESET_THRIFT, 0.3f, 0.05f, 0.3f, 0.8f, 1.2f, 1.0f, 0.0f, 25.0f },
-					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.8f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true, 1.0f },
-					{ P::PRESET_MOSS, 0.1f, 0.0f, 0.8f, 0.6f, 0.9f, 0.0f, 0.0f, 15.0f, 0.0f, true, -1.0f } });
-			break;
-		case STONES_RIVER:
-			// River and stream gravels: saxifrage and stonecrop on the bars, sedges and rushes at the
-			// stones' feet near the water, moss on the damp side. The stones' tops sort by how often
-			// the water covers them (Scarlett and O'Hare 2006): aquatic moss trailing downstream on
-			// those under and just over the surface, liverworts in the splash band on damp tops,
-			// land mosses only above the flood line.
-			set = LocalVector<StoneSpec>({ { P::PRESET_SAXIFRAGE, 0.35f, 0.06f, 0.5f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
-					{ P::PRESET_STONECROP, 0.3f, 0.05f, 0.6f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
-					{ P::PRESET_THRIFT, 0.5f, 0.05f, 0.15f, 0.8f, 1.2f, 1.0f, 0.0f, 25.0f },
-					{ P::PRESET_SEDGE, 0.4f, 0.1f, 0.6f, 0.8f, 1.2f, 0.5f, 2.0f, 25.0f, 6.0f },
-					{ P::PRESET_RUSH, 0.6f, 0.15f, 0.4f, 0.8f, 1.1f, 0.5f, 1.5f, 30.0f, 4.0f },
-					{ P::PRESET_MOSS, 0.25f, 0.0f, 0.5f, 0.6f, 1.2f, 1.0f, 3.0f, 15.0f },
-					{ P::PRESET_MOSS, 0.09f, 0.0f, 0.9f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true, 0.6f, Vector2(0.12f, 1e3f) },
-					{ P::PRESET_MOSS, 0.11f, 0.0f, 0.35f, 0.6f, 0.9f, 0.0f, 0.0f, 15.0f, 0.0f, true, -1.0f, Vector2(0.3f, 1e3f) },
-					{ P::PRESET_RIVER_MOSS, 0.04f, 0.0f, 0.95f, 0.9f, 1.4f, 0.0f, 0.0f, 15.0f, 0.0f, true, 0.0f, Vector2(-0.6f, 0.1f), true },
-					{ P::PRESET_LIVERWORT, 0.1f, 0.0f, 0.7f, 0.7f, 1.1f, 0.0f, 0.0f, 15.0f, 0.0f, true, 0.8f, Vector2(0.03f, 0.4f) } });
-			break;
-		case STONES_SHORE:
-			// Shingle above the strandline (Scott 1963): thrift and stonecrop in the stable gaps,
-			// a little dry grass.
-			set = LocalVector<StoneSpec>({ { P::PRESET_THRIFT, 0.35f, 0.05f, 0.7f, 0.8f, 1.3f, 1.0f, 0.0f, 25.0f },
-					{ P::PRESET_STONECROP, 0.3f, 0.05f, 0.6f, 0.8f, 1.2f, 1.0f, 0.0f, 20.0f },
-					{ P::PRESET_DRY_GRASS, 0.4f, 0.08f, 0.4f, 0.7f, 1.1f, 0.7f, 0.0f, 25.0f } });
-			break;
-		case STONES_MAX:
-			break;
-	}
-	TypedArray<Resource> out;
-	int seed_base = 5000 + int(p_stand) * 100;
-	for (const StoneSpec &f : set) {
-		Ref<PlantGenerator> gen;
-		gen.instantiate();
-		gen->set_textures(p_textures);
-		gen->set_preset(f.preset);
-		gen->apply_preset_colors();
-		if (f.top && f.damp < 0.0f) {
-			// Sun-dried tops: hoary, yellow-olive cushions (Racomitrium, Grimmia), smaller and sparser.
-			gen->set_leaf_color(Color(0.44f, 0.42f, 0.25f));
-			gen->set_centre_color(Color(0.32f, 0.3f, 0.17f));
-		}
-		gen->set_seed(seed_base);
-		gen->set_season(p_season);
-		Ref<PlantSpecies> sp;
-		sp.instantiate();
-		TypedArray<Mesh> meshes;
-		const TypedArray<ArrayMesh> v = gen->generate_variants(MAX(p_variants, 1));
-		for (int i = 0; i < v.size(); i++) {
-			meshes.push_back(v[i]);
-		}
-		sp->set_meshes(meshes);
-		sp->set_spacing(f.spacing);
-		sp->set_footprint(f.footprint);
-		sp->set_density(f.density * get_presence(f.preset, p_season));
-		sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
-		sp->set_stone_gap(f.gap);
-		sp->set_rock_foot(f.rock_foot);
-		if (f.top) {
-			// Moss cushions on the stones' tops, more on the damp river stones; set on the cap's curve.
-			sp->set_stone_top(true);
-			sp->set_stone_top_damp(f.damp);
-			sp->set_stone_top_water(f.water);
-			if (f.water.x < f.water.y) {
-				// The ground under a stone in the stream is under water; the top is what counts.
-				sp->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, 3.0f));
-			}
-			sp->set_align_to_ground(1.0f);
-		}
-		sp->set_follow_flow(f.flow); // Still water or a level bed: a random turn.
-		sp->set_visibility_range(f.visibility);
-		if (f.water_max > 0.0f) {
-			sp->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, f.water_max));
-			sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, f.water_max * 0.3f);
-		}
-		// Too sparse and low to colour the far ground; the stones are what shows there.
-		sp->set_far_color(Color(0, 0, 0, 0));
-		sp->set_meta("stones", true);
-		tag_species(sp, f.preset);
 		out.push_back(sp);
 		seed_base += 11;
 	}
@@ -8605,24 +3677,11 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("generate_variants", "count"), &PlantGenerator::generate_variants);
 	ClassDB::bind_method(D_METHOD("apply_preset_colors"), &PlantGenerator::apply_preset_colors);
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Dandelion,Plantain,Clover,Fern,Sedge,Daisy,Buttercup,Nettle,Thistle,Yarrow,Dock,Cocksfoot,Timothy,Dry Grass,Leaf Litter,Moss,Bilberry,Bracken,Bramble,Foxglove,Reed,Cattail,Rush,Water Lily,Needle Litter,Twigs,Wood Sorrel,Seedling,Feather Moss,Woodruff,Wood Anemone,Ivy,Heather,Violet,Herb Robert,Knapweed,Scabious,Wild Carrot,Sorrel,Fly Agaric,Cep,Chanterelle,Brittlegill,Clouded Agaric,Honey Fungus"), "set_preset", "get_preset");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Dandelion,Plantain,Clover,Fern,Sedge,Daisy,Buttercup,Nettle,Thistle,Yarrow,Dock,Cocksfoot,Timothy,Dry Grass,Leaf Litter,Moss,Bilberry,Bracken,Bramble,Foxglove,Reed,Cattail,Rush,Water Lily,Needle Litter,Twigs,Wood Sorrel,Seedling,Feather Moss,Woodruff,Wood Anemone,Ivy,Heather"), "set_preset", "get_preset");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "size", PROPERTY_HINT_RANGE, "0.1,4,0.01"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leaf_wear", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_leaf_wear", "get_leaf_wear");
-	ClassDB::bind_method(D_METHOD("set_litter_leaves", "leaves"), &PlantGenerator::set_litter_leaves);
-	ClassDB::bind_method(D_METHOD("set_litter_deposit", "deposit"), &PlantGenerator::set_litter_deposit);
-	ClassDB::bind_method(D_METHOD("get_litter_deposit"), &PlantGenerator::get_litter_deposit);
-	ClassDB::bind_method(D_METHOD("get_litter_leaves"), &PlantGenerator::get_litter_leaves);
-	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "litter_leaves"), "set_litter_leaves", "get_litter_leaves");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "litter_deposit", PROPERTY_HINT_RANGE, "1,4,0.1"), "set_litter_deposit", "get_litter_deposit");
-	ClassDB::bind_method(D_METHOD("set_season", "season"), &PlantGenerator::set_season);
-	ClassDB::bind_method(D_METHOD("get_season"), &PlantGenerator::get_season);
-	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_bloom_shares", "preset", "season"), &PlantGenerator::get_bloom_shares);
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_pollen_amount", "preset"), &PlantGenerator::get_pollen_amount);
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_pollen_release", "preset", "season"), &PlantGenerator::get_pollen_release);
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_presence", "preset", "season"), &PlantGenerator::get_presence);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "textures"), "set_textures", "get_textures");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "texture_size", PROPERTY_HINT_RANGE, "32,2048,1"), "set_texture_size", "get_texture_size");
 	ADD_GROUP("Colors", "");
@@ -8664,113 +3723,7 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_WOOD_ANEMONE);
 	BIND_ENUM_CONSTANT(PRESET_IVY);
 	BIND_ENUM_CONSTANT(PRESET_HEATHER);
-	BIND_ENUM_CONSTANT(PRESET_VIOLET);
-	BIND_ENUM_CONSTANT(PRESET_HERB_ROBERT);
-	BIND_ENUM_CONSTANT(PRESET_KNAPWEED);
-	BIND_ENUM_CONSTANT(PRESET_SCABIOUS);
-	BIND_ENUM_CONSTANT(PRESET_WILD_CARROT);
-	BIND_ENUM_CONSTANT(PRESET_SORREL);
-	BIND_ENUM_CONSTANT(PRESET_FLY_AGARIC);
-	BIND_ENUM_CONSTANT(PRESET_CEP);
-	BIND_ENUM_CONSTANT(PRESET_CHANTERELLE);
-	BIND_ENUM_CONSTANT(PRESET_BRITTLEGILL);
-	BIND_ENUM_CONSTANT(PRESET_CLOUDED_AGARIC);
-	BIND_ENUM_CONSTANT(PRESET_HONEY_FUNGUS);
-	BIND_ENUM_CONSTANT(PRESET_PARSLEY_FERN);
-	BIND_ENUM_CONSTANT(PRESET_SPLEENWORT);
-	BIND_ENUM_CONSTANT(PRESET_STONECROP);
-	BIND_ENUM_CONSTANT(PRESET_SAXIFRAGE);
-	BIND_ENUM_CONSTANT(PRESET_THRIFT);
-	BIND_ENUM_CONSTANT(PRESET_MARSH_MARIGOLD);
-	BIND_ENUM_CONSTANT(PRESET_MEADOWSWEET);
-	BIND_ENUM_CONSTANT(PRESET_BUTTERBUR);
-	BIND_ENUM_CONSTANT(PRESET_RIVER_MOSS);
-	BIND_ENUM_CONSTANT(PRESET_LIVERWORT);
-	BIND_ENUM_CONSTANT(PRESET_SPHAGNUM);
-	BIND_ENUM_CONSTANT(PRESET_COTTONGRASS);
-	BIND_ENUM_CONSTANT(PRESET_BOG_ASPHODEL);
-	BIND_ENUM_CONSTANT(PRESET_SUNDEW);
-	BIND_ENUM_CONSTANT(PRESET_MARRAM);
-	BIND_ENUM_CONSTANT(PRESET_LYME_GRASS);
-	BIND_ENUM_CONSTANT(PRESET_SEA_HOLLY);
-	BIND_ENUM_CONSTANT(PRESET_MOSS_CAMPION);
-	BIND_ENUM_CONSTANT(PRESET_PURPLE_SAXIFRAGE);
-	BIND_ENUM_CONSTANT(PRESET_MOUNTAIN_AVENS);
-	BIND_ENUM_CONSTANT(PRESET_ALPINE_SEDGE);
-	BIND_ENUM_CONSTANT(PRESET_DWARF_WILLOW);
-	BIND_ENUM_CONSTANT(PRESET_ALPINE_TOADFLAX);
-	BIND_ENUM_CONSTANT(PRESET_GLASSWORT);
-	BIND_ENUM_CONSTANT(PRESET_CORD_GRASS);
-	BIND_ENUM_CONSTANT(PRESET_SEA_PURSLANE);
-	BIND_ENUM_CONSTANT(PRESET_SEA_ASTER);
-	BIND_ENUM_CONSTANT(PRESET_SEA_LAVENDER);
-	BIND_ENUM_CONSTANT(PRESET_SEA_KALE);
-	BIND_ENUM_CONSTANT(PRESET_SEA_CAMPION);
-	BIND_ENUM_CONSTANT(PRESET_HORNED_POPPY);
-	BIND_ENUM_CONSTANT(PRESET_BELL_HEATHER);
-	BIND_ENUM_CONSTANT(PRESET_CROSS_LEAVED_HEATH);
-	BIND_ENUM_CONSTANT(PRESET_CROWBERRY);
-	BIND_ENUM_CONSTANT(PRESET_ROSEMARY);
-	BIND_ENUM_CONSTANT(PRESET_FRENCH_LAVENDER);
-	BIND_ENUM_CONSTANT(PRESET_THYME);
-	BIND_ENUM_CONSTANT(PRESET_SAGE_ROCKROSE);
-	BIND_ENUM_CONSTANT(PRESET_CORN_POPPY);
-	BIND_ENUM_CONSTANT(PRESET_CORNFLOWER);
-	BIND_ENUM_CONSTANT(PRESET_MAYWEED);
-	BIND_ENUM_CONSTANT(PRESET_COW_PARSLEY);
-	BIND_ENUM_CONSTANT(PRESET_PINCUSHION_MOSS);
-	BIND_ENUM_CONSTANT(PRESET_GROUND_IVY);
-	BIND_ENUM_CONSTANT(PRESET_DRINN);
-	BIND_ENUM_CONSTANT(PRESET_DESERT_ANNUALS);
-	BIND_ENUM_CONSTANT(PRESET_SOIL_CRUST);
-	BIND_ENUM_CONSTANT(PRESET_FIREWEED);
-	BIND_ENUM_CONSTANT(PRESET_FIRE_MOSS);
-	BIND_ENUM_CONSTANT(PRESET_CHARRED_STEMS);
-	BIND_ENUM_CONSTANT(PRESET_BURNT_TUSSOCK);
-	BIND_ENUM_CONSTANT(PRESET_REINDEER_LICHEN);
-	BIND_ENUM_CONSTANT(PRESET_RASPBERRY);
-	BIND_ENUM_CONSTANT(PRESET_GRAZED_LAWN);
-	BIND_ENUM_CONSTANT(PRESET_ROOTED_SOD);
-	BIND_ENUM_CONSTANT(PRESET_ANTHILL);
-	BIND_ENUM_CONSTANT(PRESET_WOOD_ANT_NEST);
-	BIND_ENUM_CONSTANT(PRESET_MOLEHILL);
-	BIND_ENUM_CONSTANT(PRESET_LEAF_BANK);
-	BIND_ENUM_CONSTANT(PRESET_COW_PAT);
-	BIND_ENUM_CONSTANT(PRESET_HORSE_DUNG);
-	BIND_ENUM_CONSTANT(PRESET_DEER_PELLETS);
-	BIND_ENUM_CONSTANT(PRESET_DUNG_ROUGH);
-	BIND_ENUM_CONSTANT(PRESET_FAIRY_RING_MUSHROOM);
-	BIND_ENUM_CONSTANT(PRESET_SHEET_WEB);
-	BIND_ENUM_CONSTANT(PRESET_ORB_WEB);
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dunes", "stand", "variants", "textures", "season"), &PlantGenerator::make_dunes, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_desert", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_desert, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_burn", "stand", "variants", "textures", "season"), &PlantGenerator::make_burn, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_avalanche_track", "variants", "textures", "season"), &PlantGenerator::make_avalanche_track, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_beaver", "stand", "variants", "textures", "season"), &PlantGenerator::make_beaver, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_rooting", "stand", "variants", "textures", "season"), &PlantGenerator::make_rooting, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_mounds", "set", "variants", "textures", "season"), &PlantGenerator::make_mounds, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_fairy_rings", "variants", "textures", "season"), &PlantGenerator::make_fairy_rings, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dew_webs", "variants", "textures", "season"), &PlantGenerator::make_dew_webs, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_grazing", "set", "variants", "textures", "season"), &PlantGenerator::make_grazing, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_alpine", "stand", "variants", "textures", "season"), &PlantGenerator::make_alpine, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_saltmarsh", "stand", "variants", "textures", "season"), &PlantGenerator::make_saltmarsh, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_margin", "stand", "variants", "textures", "season"), &PlantGenerator::make_margin, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_heath", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_heath, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_scrub", "stand", "variants", "textures", "season", "shrubs"), &PlantGenerator::make_scrub, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()), DEFVAL(true));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_trample_resistance", "preset"), &PlantGenerator::get_trample_resistance);
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_burn_recovery", "preset"), &PlantGenerator::get_burn_recovery);
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("apply_scrub_rules", "species", "stand"), &PlantGenerator::apply_scrub_rules);
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_woody_shrub", "tree_preset", "form", "variants", "season", "density", "patch_scale", "patch_cover", "seed"), &PlantGenerator::make_woody_shrub);
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_banks", "stand", "variants", "textures", "season"), &PlantGenerator::make_banks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));
-	BIND_ENUM_CONSTANT(CLIMBER_IVY);
-	BIND_ENUM_CONSTANT(CLIMBER_CLEMATIS);
-	BIND_ENUM_CONSTANT(CLIMBER_HONEYSUCKLE);
-	BIND_ENUM_CONSTANT(CLIMBER_IVY_ADULT);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_impostor", "mesh", "frames", "frame_size"), &PlantGenerator::make_impostor, DEFVAL(8), DEFVAL(64));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("add_impostors", "species", "range", "frames", "frame_size"), &PlantGenerator::add_impostors, DEFVAL(8), DEFVAL(64));
 	BIND_ENUM_CONSTANT(FLOOR_BEECH);
@@ -8783,66 +3736,6 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FLOOR_NORTHERN_HARDWOOD);
 	BIND_ENUM_CONSTANT(FLOOR_EASTERN_OAK);
 	BIND_ENUM_CONSTANT(FLOOR_PINE_HEMLOCK);
-	BIND_ENUM_CONSTANT(FLOOR_MEDITERRANEAN);
-	BIND_ENUM_CONSTANT(FLOOR_BOREAL_TAIGA);
 	BIND_ENUM_CONSTANT(FLOOR_MAX);
-	BIND_ENUM_CONSTANT(STONES_SCREE);
-	BIND_ENUM_CONSTANT(STONES_RIVER);
-	BIND_ENUM_CONSTANT(STONES_SHORE);
-	BIND_ENUM_CONSTANT(STONES_MAX);
-	BIND_ENUM_CONSTANT(BANKS_STREAM);
-	BIND_ENUM_CONSTANT(BANKS_LAKE);
-	BIND_ENUM_CONSTANT(BANKS_FALLS);
-	BIND_ENUM_CONSTANT(BANKS_MAX);
-	BIND_ENUM_CONSTANT(BOG_BLANKET);
-	BIND_ENUM_CONSTANT(BOG_VALLEY);
-	BIND_ENUM_CONSTANT(BOG_MAX);
-	BIND_ENUM_CONSTANT(DUNES_EMBRYO);
-	BIND_ENUM_CONSTANT(DUNES_MOBILE);
-	BIND_ENUM_CONSTANT(DUNES_FIXED);
-	BIND_ENUM_CONSTANT(DUNES_MAX);
-	BIND_ENUM_CONSTANT(DESERT_FLANKS);
-	BIND_ENUM_CONSTANT(DESERT_INTERDUNE);
-	BIND_ENUM_CONSTANT(DESERT_OASIS);
-	BIND_ENUM_CONSTANT(DESERT_MAX);
-	BIND_ENUM_CONSTANT(BURN_HEATH);
-	BIND_ENUM_CONSTANT(BURN_GRASS);
-	BIND_ENUM_CONSTANT(BURN_SCRUB);
-	BIND_ENUM_CONSTANT(BURN_MAX);
-	BIND_ENUM_CONSTANT(ROOTING_WOOD);
-	BIND_ENUM_CONSTANT(ROOTING_MEADOW);
-	BIND_ENUM_CONSTANT(ROOTING_MAX);
-	BIND_ENUM_CONSTANT(MOUNDS_MEADOW);
-	BIND_ENUM_CONSTANT(MOUNDS_WOOD);
-	BIND_ENUM_CONSTANT(MOUNDS_MAX);
-	BIND_ENUM_CONSTANT(GRAZE_CATTLE);
-	BIND_ENUM_CONSTANT(GRAZE_HORSE);
-	BIND_ENUM_CONSTANT(GRAZE_DEER);
-	BIND_ENUM_CONSTANT(GRAZE_MAX);
-	BIND_ENUM_CONSTANT(BEAVER_POND);
-	BIND_ENUM_CONSTANT(BEAVER_MEADOW);
-	BIND_ENUM_CONSTANT(BEAVER_MAX);
-	BIND_CONSTANT(DISTURBANCE_BEAVER_KIND);
-	BIND_CONSTANT(DISTURBANCE_AVALANCHE_KIND);
-	BIND_ENUM_CONSTANT(ALPINE_FELLFIELD);
-	BIND_ENUM_CONSTANT(ALPINE_GRASSLAND);
-	BIND_ENUM_CONSTANT(ALPINE_SNOWBED);
-	BIND_ENUM_CONSTANT(ALPINE_SCREE);
-	BIND_ENUM_CONSTANT(ALPINE_MAX);
-	BIND_ENUM_CONSTANT(SALTMARSH_PIONEER);
-	BIND_ENUM_CONSTANT(SALTMARSH_MID);
-	BIND_ENUM_CONSTANT(SALTMARSH_HIGH);
-	BIND_ENUM_CONSTANT(SALTMARSH_SHINGLE);
-	BIND_ENUM_CONSTANT(SALTMARSH_MAX);
-	BIND_ENUM_CONSTANT(MARGIN_HEADLAND);
-	BIND_ENUM_CONSTANT(MARGIN_VERGE);
-	BIND_ENUM_CONSTANT(MARGIN_MAX);
-	BIND_ENUM_CONSTANT(HEATH_DRY);
-	BIND_ENUM_CONSTANT(HEATH_WET);
-	BIND_ENUM_CONSTANT(HEATH_MARITIME);
-	BIND_ENUM_CONSTANT(HEATH_MAX);
-	BIND_ENUM_CONSTANT(SCRUB_GARRIGUE);
-	BIND_ENUM_CONSTANT(SCRUB_MAQUIS);
-	BIND_ENUM_CONSTANT(SCRUB_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }

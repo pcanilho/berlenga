@@ -30,9 +30,6 @@
 
 #pragma once
 
-#include "modules/world/world_contracts.h"
-#include "water_body_contacts.h"
-#include "water_contact_map.h"
 #include "water_raster_reflections.h"
 #include "water_solver.h"
 
@@ -40,7 +37,6 @@
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 
-class Camera3D;
 class Mesh;
 class MeshInstance3D;
 class Material;
@@ -80,10 +76,8 @@ class ParticleProcessMaterial;
 // separate from the zero-copy texture path above per the project plan's own
 // note: two consumers, two different freshness/precision needs, one
 // underlying simulation.
-class PhysXWaterSurface3D : public Node3D, public WorldWaterProvider {
+class PhysXWaterSurface3D : public Node3D {
 	GDCLASS(PhysXWaterSurface3D, Node3D);
-
-	WaterBodyContacts body_contacts; // world_contact bodies push the ripples (docs/ideas/world-links.md)
 
 protected:
 	static void _bind_methods();
@@ -130,19 +124,6 @@ public:
 	// outflow spreads into this water as a plume. Called by PhysXRiver3D.
 	void set_inflow(int64_t p_owner, const Vector3 &p_at, const Vector3 &p_direction, float p_width, float p_discharge);
 	void clear_inflow(int64_t p_owner);
-	// A river leaving at p_at (world, its sill, at world height p_crest) along p_direction (out of the lake):
-	// the lake drains over the sill as a broad-crested weir, and its water converges on the outlet. Called by
-	// PhysXRiver3D (source_lake).
-	void set_outflow(int64_t p_owner, const Vector3 &p_at, const Vector3 &p_direction, float p_width, float p_crest, float p_coefficient);
-	void clear_outflow(int64_t p_owner);
-	// Broad-crested weir (Henderson 1966): m^3/s over a sill p_width wide under p_head of water.
-	static float weir_discharge(float p_coefficient, float p_width, float p_head);
-	void set_level_from_flows(bool p_enabled);
-	bool get_level_from_flows() const { return level_from_flows; }
-	void set_catchment_inflow(float p_discharge);
-	float get_catchment_inflow() const { return catchment_inflow; }
-	float get_rain_inflow() const { return rain_inflow; }
-	float get_outflow_discharge() const;
 	void set_water_level(float p_level);
 	float get_water_level() const { return water_level; }
 	void set_damping(float p_damping);
@@ -168,17 +149,8 @@ public:
 	~PhysXWaterSurface3D();
 	void set_wave_cascades(int p_count);
 	int get_wave_cascades() const { return wave_cascades; }
-	// Detail waves: a small FFT tile carrying the short waves (down to about 8 cm) the finest cascade's grid
-	// cannot, for the per-pixel normals only; faded out by each pixel's footprint, its slope variance going to
-	// the roughness instead (Bruneton, Neyret and Holzschuch 2010). docs/ideas/water.md "Ocean detail".
-	void set_detail_waves(bool p_enabled);
-	bool get_detail_waves() const { return detail_waves; }
-	Vector2 get_detail_wave_tile() const;
-	float get_detail_slope_variance() const;
 	void set_wave_cascade_ratio(float p_ratio);
 	float get_wave_cascade_ratio() const { return wave_cascade_ratio; }
-	void set_wave_tile_breakup(bool p_enabled);
-	bool get_wave_tile_breakup() const { return wave_tile_breakup; }
 	// Tile size of cascade i (0 = ocean_domain_size).
 	Vector2 get_wave_cascade_size(int p_index) const;
 	// Shore waves (docs/ideas/water.md "Step 5b"): swell that turns with the
@@ -206,23 +178,6 @@ public:
 	// Most spray droplets alive at once.
 	void set_shore_spray_amount(int p_amount);
 	int get_shore_spray_amount() const { return shore_spray_amount; }
-	// Spray torn off breaking crests by the wind (spume, Andreas 1998): droplets leave the open sea's crests
-	// where the surface folds (the whitecap test) once the wind passes about 9 m/s, more with the wind, and
-	// fly downwind. Drawn like the surf's spray, near the camera. crest_spray_amount: droplets alive at most.
-	void set_crest_spray(bool p_enabled);
-	bool get_crest_spray() const { return crest_spray; }
-	void set_crest_spray_amount(int p_amount);
-	int get_crest_spray_amount() const { return crest_spray_amount; }
-	// Droplets a second leaving the crests at the last update (for tests and profiling).
-	float get_crest_spray_rate() const { return crest_spray_rate; }
-	// Torn spray sheets (docs/ideas/water.md "Torn spray sheets"): from a near-gale, thin sheets of water the wind
-	// tears off the folding crests, flying downwind and tearing apart; geometry rebuilt each tick, so the path
-	// tracer sees them. crest_sheet_amount: sheets alive at most.
-	void set_crest_sheets(bool p_enabled);
-	bool get_crest_sheets() const { return crest_sheets; }
-	void set_crest_sheet_amount(int p_amount);
-	int get_crest_sheet_amount() const { return crest_sheet_amount; }
-	int get_crest_sheet_count() const { return (int)sheets.size(); }
 	// The last breaker build: crest points, lip vertices and triangles, the
 	// spray rate (droplets/s) and the CPU time it took (ms).
 	Dictionary get_breaker_stats() const;
@@ -282,29 +237,6 @@ public:
 	// from the seabed) leave a foamy sheet at the waterline. 0 = none.
 	void set_shore_foam_band(float p_depth);
 	float get_shore_foam_band() const { return shore_foam_band; }
-	// Rock contact foam (docs/ideas/water.md "Rock contact foam"): a ring of white water where the sea meets a
-	// steep face -- a stack, a boulder, a cliff foot -- contact_foam_width wide, widening as each crest arrives,
-	// and wash over rock tops up to contact_foam_depth under the surface. Read from a top-down map of the static
-	// bodies in contact_foam_mask over contact_foam_extent round the camera (rays, re-measured as it moves).
-	// Gentle beaches are left to the shore foam.
-	void set_contact_foam(bool p_enabled);
-	bool get_contact_foam() const { return contact_foam; }
-	void set_contact_foam_mask(uint32_t p_mask);
-	uint32_t get_contact_foam_mask() const { return contact_foam_mask; }
-	void set_contact_foam_width(float p_width);
-	float get_contact_foam_width() const { return contact_foam_width; }
-	void set_contact_foam_strength(float p_strength);
-	float get_contact_foam_strength() const { return contact_foam_strength; }
-	void set_contact_foam_depth(float p_depth);
-	float get_contact_foam_depth() const { return contact_foam_depth; }
-	void set_contact_foam_extent(float p_extent);
-	float get_contact_foam_extent() const { return contact_foam_extent; }
-	void remeasure_contact_foam();
-	// Cells of the last map with a contact ring on the water, and the rays it took (benches, tests).
-	int get_contact_foam_cells() const { return contact_map.get_contact_cells(); }
-	int get_contact_foam_rays() const { return contact_map.get_last_ray_count(); }
-	// True once the map is measured, including the second measure after the start (benches wait for it).
-	bool is_contact_foam_ready() const { return contact_shown && contact_settle_ticks == 0 && !contact_dirty && !contact_map.is_busy(); }
 	void set_open_sea_beyond(bool p_open);
 	// Wind / direction / height / fetch at once — ONE in-place spectrum update (no rebuild once built).
 	void set_sea_state(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
@@ -330,10 +262,6 @@ public:
 	float get_swash_drain_speed() const { return swash_drain_speed; }
 	void set_wet_sand_dry_time(float p_seconds);
 	float get_wet_sand_dry_time() const { return wet_sand_dry_time; }
-	// Wet sand, rocks and props where the sea reached, kept by the weather's contact wetness (WeatherMap3D) and
-	// drying with the weather: what the swash wetted along the shore, still water shallower than half a metre.
-	void set_contact_wetness(bool p_enabled);
-	bool get_contact_wetness() const { return contact_wetness; }
 
 	// Optional shape: any flat mesh whose X/Z footprint (node-local) is the
 	// water's outline -- a disc, a kidney bean, a lake with an island. When
@@ -353,15 +281,6 @@ public:
 	bool get_seabed_from_floor() const { return seabed_from_floor; }
 	void set_seabed_collision_mask(uint32_t p_mask);
 	uint32_t get_seabed_collision_mask() const { return seabed_collision_mask; }
-	// How far above the water the seabed rays start (m): under a roof (a cave) keep it below the roof.
-	void set_seabed_probe_height(real_t p_height);
-	real_t get_seabed_probe_height() const { return seabed_probe_height; }
-	// A terrain with holes (TerrainGenerator3D: is_hole, get_height, signal holes_changed): where a seabed ray
-	// falls through a hole (a cave mouth) onto nothing, the terrain's own height closes it, so the sea never shows
-	// through an open hole above the waterline; a static floor under the hole (a sea cave's) is used as it is.
-	// The seabed is measured again when holes change over the water.
-	void set_terrain_source(const NodePath &p_path);
-	NodePath get_terrain_source() const { return terrain_source; }
 	// Water shallower than this fades the ocean chop out, to none at the
 	// waterline.
 	void set_shallow_fade_depth(float p_depth);
@@ -379,10 +298,6 @@ public:
 	// the vertex and path tracing costs grow with the square.
 	void set_mesh_detail(int p_detail);
 	int get_mesh_detail() const { return mesh_detail; }
-	// Open sea (render_extent): the vertex spacing at the camera, growing 8% a ring until it reaches the even core's spacing
-	// (docs/ideas/water.md "Camera-centred water mesh"); 0 = the old even core over the simulated square.
-	void set_near_mesh_step(float p_step);
-	float get_near_mesh_step() const { return near_mesh_step; }
 
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
@@ -409,8 +324,6 @@ public:
 	Vector3 get_caustics_sun_direction() const { return caustics_sun_direction; }
 	void set_caustics_reference_depth(float p_depth);
 	float get_caustics_reference_depth() const { return caustics_reference_depth; }
-	void set_foam_shade(float p_shade) { foam_shade = CLAMP(p_shade, 0.0f, 1.0f); }
-	float get_foam_shade() const { return foam_shade; }
 	// The resulting texture -- assign it to a floor material's albedo/
 	// emission using get_caustics_light_right(), get_caustics_light_up(),
 	// get_caustics_origin(), and get_caustics_half_extent() as projection
@@ -428,23 +341,6 @@ public:
 	// both layers (ripple + ocean), matching what the rendered mesh shows.
 	// Returns -INF over dry cells when a surface_mesh is set.
 	float sample_height(Vector3 p_world_pos) const;
-	// The water contract (WorldWater): this water's surface, -INF where it has none.
-	float contract_water_height_at(const Vector3 &p_position) const override;
-	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
-	void contract_water_clear(uint64_t p_owner) override;
-	void contract_water_impulse(const Vector3 &p_position, float p_radius, float p_strength) override;
-	void contract_water_wave(const Vector3 &p_position, const Vector3 &p_direction, float p_height, float p_period, float p_width) override { submit_wave(p_position, p_direction, p_height, p_period, p_width); }
-	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return sample_depth(p_position) > 0.0f ? sediment : Vector2(); }
-	// Breaking waves for sea spray (WorldWater.breaking_at): the surf zone, where the shore swell is taller than
-	// about 0.78 of the still depth (saturated surf, Thornton and Guza 1982), breaks at 0.78 d; open water gives its
-	// whitecap cover times the wind sea's significant height (4 sigma).
-	float contract_water_breaking_at(const Vector3 &p_position) const override;
-	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override;
-	void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override;
-	// The body's suspended load (kg/m3: x mineral, y ash), well mixed; it settles out over hours to days.
-	Vector2 get_sediment() const { return sediment; }
-	void set_sediment(const Vector2 &p_kg_m3);
-	float get_water_volume() const; // m3 over the still-water depths
 	// The same, leaving out one wake (a boat's buoyancy reading the water
 	// under it shouldn't sink into its own wake's dip).
 	float sample_height_excluding_wake(Vector3 p_world_pos, ObjectID p_wake) const;
@@ -463,14 +359,6 @@ public:
 	void set_wake_slot(int p_slot, const Ref<Texture2D> &p_height, const Vector4 &p_rect);
 	// False outside the surface_mesh footprint (always true without one).
 	bool is_wet(Vector3 p_world_pos) const;
-	// Water depth (m) at a world position: the surface as drawn (sample_height) over the measured seabed (or the
-	// constant depth without one); <= 0 on dry ground.
-	float sample_depth(Vector3 p_world_pos) const;
-	// The swash on the shore at a world position: x the run-up film on the beach (m of water over ground above still
-	// water, 0 past the run-up and below still water), y the wet sand
-	// (0..1, 1 under water and where the run-up reached, fading as it dries). Read back from the GPU every 8th
-	// water step (about 0.13 s behind), asked for from the first call on; zero until the first readback.
-	Vector2 sample_swash(Vector3 p_world_pos) const;
 
 	// Flow (docs/ideas/water.md step 3b): a current in m/s. With a measured
 	// seabed (seabed_from_floor, or a surface_mesh footprint) the flow over
@@ -509,13 +397,6 @@ public:
 	float get_flow_foam() const { return flow_foam; }
 	void set_flow_foam_persistence(float p_seconds);
 	float get_flow_foam_persistence() const { return flow_foam_persistence; }
-	// Also where the live water runs into things: convergence, and the pillow on a rock's upstream face.
-	void set_flow_foam_impact(bool p_enabled);
-	bool get_flow_foam_impact() const { return flow_foam_impact; }
-	// The live window's waves and foam carried along the flow's real paths (advected coordinates), not straight
-	// along the local velocity: they go round eddies instead of smearing.
-	void set_live_advected_ripples(bool p_enabled);
-	bool get_live_advected_ripples() const { return live_advected_ripples; }
 	// The live flow's velocity at cell centres (RG m/s, B flow foam), or null when off.
 	Ref<Texture2D> get_live_flow_texture() const;
 	// Solves the flow again (after the seabed or the current changed; done
@@ -525,12 +406,6 @@ public:
 	void submit_sphere(int p_owner, Vector3 p_world_pos, float p_radius, float p_strength = 1.0f);
 	void clear_sphere(int p_owner);
 	void submit_impulse(Vector3 p_world_pos, float p_radius, float p_strength);
-	// An impulse wave in metres and seconds (a landslide, an avalanche, calving or rockfall entering the water): one
-	// crest and trough p_height high (crest to trough) and p_period long, its crest p_width wide, setting off from
-	// p_world_pos along p_direction (xz). Its length is the period times the long-wave speed sqrt(g h) at the depth
-	// there, as the ripple solver carries it; at most 0.78 of that depth high (the breaking limit). False where
-	// there is no water or the point is off the simulated grid.
-	bool submit_wave(Vector3 p_world_pos, Vector3 p_direction, float p_height, float p_period, float p_width);
 
 private:
 	WaterSolver solver;
@@ -557,10 +432,8 @@ private:
 	Vector2 wind_direction = Vector2(1, 0);
 	float wave_amplitude = 1.0f;
 	int wave_cascades = 1;
-	bool detail_waves = true;
 	float wave_cascade_ratio = 6.0f;
-	bool wave_tile_breakup = true;
-	bool shore_waves = true;
+	bool shore_waves = false;
 	float shore_wave_height = 0.8f; // m, offshore
 	float shore_wave_period = 8.0f; // s
 	float shore_wave_curl = 1.0f;
@@ -609,45 +482,6 @@ private:
 	float _sample_height_at(Vector3 p_world_pos, ObjectID p_wake, float p_origin_y) const;
 	void _hide_breakers();
 	void _update_breaker_spray(const LocalVector<Vector3> &p_points, const LocalVector<Vector3> &p_dirs, const LocalVector<float> &p_weights, float p_rate, float p_speed);
-	static Ref<Mesh> _spray_droplet_mesh();
-	bool crest_spray = true;
-	int crest_spray_amount = 6000;
-	float crest_spray_rate = 0.0f;
-	uint32_t crest_spray_tick = 0;
-	GPUParticles3D *crest_spray_node = nullptr;
-	Ref<ParticleProcessMaterial> crest_spray_material;
-	Ref<ImageTexture> crest_spray_points_tex;
-	GPUParticles3D *crest_spume_node = nullptr;
-	Ref<ParticleProcessMaterial> crest_spume_material;
-	void _make_crest_spume();
-	RandomPCG crest_rng;
-	void _update_crest_spray();
-	struct CrestSheet {
-		Vector3 root; // where the sheet leaves the crest (world)
-		Vector3 across; // along the crest (unit, horizontal)
-		Vector3 throw_dir; // horizontal launch direction (unit)
-		float speed = 0.0f; // horizontal launch speed (m/s)
-		float rise = 0.0f; // vertical launch speed (m/s)
-		float span = 1.0f; // metres along the crest at launch
-		float feed = 0.3f; // seconds the root keeps feeding the sheet
-		float life = 1.0f; // seconds
-		float age = 0.0f;
-		float seed = 0.0f;
-	};
-	bool crest_sheets = true;
-	int crest_sheet_amount = 40;
-	LocalVector<CrestSheet> sheets;
-	MeshInstance3D *sheet_instance = nullptr;
-	Ref<ArrayMesh> sheet_mesh;
-	Ref<ShaderMaterial> sheet_material;
-	RandomPCG sheet_rng;
-	float sheet_fold_share = 0.0f;
-	float sheet_spawn = 0.0f;
-	void _update_crest_sheets(float p_dt);
-	void _update_foam_streaks();
-	// The summed cascades' Jacobian (Tessendorf's folding test, as the shader's foam) at the resting point
-	// (p_x, p_z) relative to the grid centre, and the surface point it moves to (relative to the node).
-	float _ocean_jacobian_at(float p_x, float p_z, float p_fade, Vector3 &r_point) const;
 	void _bake_shore_waves();
 	void _update_shore_material();
 	// The shore waves' height at (p_x, p_z) relative to the grid centre, and its rate of change.
@@ -674,14 +508,6 @@ private:
 		double previous_time = 0.0;
 	};
 	LocalVector<WaveCascade *> extra_cascades;
-	WaveCascade *detail_cascade = nullptr; // the detail waves' tile (the normal; displaced near the camera on the open sea mesh), or null
-	int detail_resolution = 128;
-	float _detail_k_min() const; // the finest cascade's Nyquist wavenumber (rad/m)
-	float _wind_sea_sigma(float p_k_lo, float p_k_hi) const;
-	float _shore_height() const;
-	float measured_sigma = -1.0f; // the simulated sea's rms height (m), from the CPU grids; < 0 until read
-	int sigma_countdown = 0;
-	float shore_baked_height = -1.0f; // the swell height the shore waves were last baked for (m)
 	void _configure_cascades(const WaterSolver::Settings &p_base);
 	void _clear_cascades();
 	// The wavenumber where cascade i hands over to cascade i + 1 (rad/m).
@@ -692,10 +518,7 @@ private:
 	float swell = 0.0f;
 	float render_extent = 0.0f;
 	int mesh_detail = 1;
-	float near_mesh_step = 0.0f;
-	static constexpr float NEAR_MESH_GROWTH = 0.08f;
-	bool follow_weather = true;
-	bool wind_explicit = false; // set_wind_speed/direction called by hand: the weather does not drive the sea
+	bool follow_weather = false;
 	bool weather_sea_valid = false;
 	uint64_t weather_snap_serial = 0;
 	double weather_advanced_seen = 0.0;
@@ -714,28 +537,11 @@ private:
 	float whitecap_pushed = -100.0f; // last one sent to the solvers and material
 	float whitecap_measured = -1.0f;
 	double whitecap_clock = -1.0;
-	float whitecap_fit_wind = -1.0f; // the wind the threshold's feedforward last followed
-	double whitecap_fill_start = 0.0; // when the persistent foam last started filling (a start or a big change)
 	float _live_foam_threshold() const { return whitecap_auto ? whitecap_threshold : foam_threshold; }
 	void _steer_whitecaps();
 	void _push_foam_settings();
 	float foam_persistence = 2.5f;
 	float shore_foam_band = 0.5f;
-	bool contact_foam = true;
-	uint32_t contact_foam_mask = 0xFFFFFFFF;
-	float contact_foam_width = 1.2f;
-	float contact_foam_strength = 0.9f;
-	float contact_foam_depth = 0.6f;
-	float contact_foam_extent = 96.0f;
-	WaterContactMap contact_map;
-	Ref<ImageTexture> contact_texture;
-	bool contact_shown = false;
-	bool contact_dirty = true; // measure again at the next tick
-	int contact_settle_ticks = 30; // one more measure this many physics ticks after the start (bodies built late)
-	void _update_contact_foam();
-	void _push_contact_foam();
-	void _push_shore_wave_activity();
-	float shore_wave_activity_sent = -1.0f;
 	// Open water past the simulated square (render_extent > domain, no surface_mesh): true = it is open, deep sea
 	// everywhere past the square (full chop, wet, never lifted onto the ground) -- for a sea whose ripple square
 	// follows a focus that may sit over land; false = the square's edge seabed carries on outward (a beach scene).
@@ -744,10 +550,6 @@ private:
 	float swash_run_up = 0.3f;
 	float swash_drain_speed = 0.12f;
 	float wet_sand_dry_time = 12.0f;
-	bool contact_wetness = true;
-	uint64_t contact_wet_serial = 0;
-	Vector<float> contact_wet_cells;
-	void _wet_ground();
 	// Longest side of the surface_mesh footprint (0 = none), for auto fetch.
 	real_t footprint_extent = 0.0;
 
@@ -759,8 +561,6 @@ private:
 	// footprint's center when surface_mesh is set), and the ripple domain
 	// actually in use -- both fixed at _rebuild().
 	Vector2 grid_center;
-	mutable Vector3 breaking_sigma_key = Vector3(-1, -1, -1); // wind, amplitude, fetch of the cached sigma
-	mutable float breaking_sigma = 0.0f;
 	Vector2 active_domain_size;
 	// Wet/dry cells from the surface_mesh footprint (empty = none set), and
 	// the still-water depth per ripple cell actually in use (<= 0 = dry;
@@ -768,34 +568,17 @@ private:
 	// sample_height().
 	PackedByteArray footprint_mask;
 	PackedFloat32Array cell_depth;
-	// Suspended load (WorldWater sediment), the body well mixed (a lake or pool; the open sea dilutes it to nothing),
-	// and the source rate the contract hands in, held until the caller's next call.
-	Vector2 sediment;
-	Vector2 sediment_src;
-	uint64_t sediment_src_frame = 0;
-	float sediment_src_age = 1e9f;
-	Vector2 sediment_shown = Vector2(-1.0f, -1.0f);
-	void _sediment_update(double p_delta);
 	// WaterSolver::shallow_fade() of each cell_depth, for sample_height()'s
 	// ocean fade (bilinear on this, so a wall cell doesn't drag it down).
 	PackedFloat32Array cell_fade;
 	void _update_cell_fade();
 	bool seabed_from_floor = false;
 	uint32_t seabed_collision_mask = 1;
-	real_t seabed_probe_height = 100.0;
 	float shallow_fade_depth = 1.0f;
 	// Seabed rays need the floor in the physics space, so with
 	// seabed_from_floor the solver is configured on the first physics tick.
 	bool seabed_pending = false;
-	int seabed_tries = 0;
-	bool seabed_remeasure_pending = false;
-	NodePath terrain_source;
-	ObjectID terrain_connected;
-	void _connect_terrain();
-	void _disconnect_terrain();
-	void _on_terrain_holes_changed(const Rect2 &p_rect);
-	float _rest_depth_at(float p_rel_x, float p_rel_z) const; // the measured seabed's still-water depth (m)
-	mutable SafeFlag swash_queried; // sample_swash() was called: keep the swash readback on // remeasure_seabed(): rays on the next tick, then in place
+	bool seabed_remeasure_pending = false; // remeasure_seabed(): rays on the next tick, then in place
 	Ref<ShaderMaterial> water_material;
 	Vector2 current;
 	float flow_period = 2.0f;
@@ -805,19 +588,15 @@ private:
 	float wall_friction = 1.5f;
 	float flow_foam = 1.0f;
 	float flow_foam_persistence = 8.0f;
-	bool flow_foam_impact = true;
-	bool live_advected_ripples = true;
 	PackedFloat32Array flow_faces; // baked face fluxes sent to the solver (4 a cell), empty = none
 	Vector<float> cached_live_velocity; // live face velocities read back (2 a cell)
 	Ref<Texture2DRD> live_flow_texture;
-	Ref<Texture2DRD> live_offset_texture; // advected ripple coordinates (water_flow_offset.glsl)
 	void _send_flow_to_solver();
 	Vector2 _live_flow_at(float p_x, float p_z) const;
 	Ref<Image> flow_image;
 	Ref<ImageTexture> flow_texture;
 	void _bake_flow();
 	void _update_flow_material();
-	void _update_detail_material();
 	// Flow at grid-relative (x, z), as the shader's flow_at().
 	Vector2 _flow_at(float p_x, float p_z) const;
 	// Rivers flowing in (PhysXRiver3D's mouth): each spreads as a turbulent
@@ -830,24 +609,6 @@ private:
 		float discharge = 0.0f;
 	};
 	LocalVector<Inflow> inflows;
-	// Rivers leaving (PhysXRiver3D's source_lake): each drains over its sill; the water converges on it.
-	struct Outflow {
-		int64_t owner = 0;
-		Vector3 at; // world, the sill's centre
-		Vector3 direction; // world, horizontal unit, out of the lake
-		float width = 1.0f;
-		float crest = 0.0f; // world height of the sill
-		float coefficient = 0.85f;
-	};
-	LocalVector<Outflow> outflows;
-	bool level_from_flows = false; // the level settles where the outlets pass the inflows (docs "Lake outlets")
-	float catchment_inflow = 0.0f; // m^3/s from rain and springs, besides the rivers flowing in
-	// Storm runoff (docs/ideas/rain.md, step 3): the world's runoff (WeatherRunoff3D) reaching the lake other than by
-	// the rivers flowing in (their own storm flow comes with their inflows), read every 10 s.
-	float rain_inflow = 0.0f;
-	double rain_check = 0.0;
-	void _rain_inflow_update(double p_delta);
-	void _settle_level();
 	PackedVector2Array plume_cells; // m/s per ripple cell, world xz
 	Ref<ImageTexture> plume_texture;
 	void _bake_plumes();
@@ -855,7 +616,6 @@ private:
 	// The shader's flow_phases() at grid-relative (x, z): the two phases' offsets and the first's weight.
 	float _flow_phases(float p_x, float p_z, Vector2 &r_offset_a, Vector2 &r_offset_b) const;
 	// An ocean grid at grid-relative (x, z), carried by the flow (the shader's ocean_tex()).
-	float _tile_blend_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z) const;
 	float _ocean_flow_sample(const Vector<float> &p_grid, float p_x, float p_z, float p_weight, const Vector2 &p_offset_a, const Vector2 &p_offset_b, int p_n = -1, Vector2 p_domain = Vector2()) const;
 	ObjectID wakes[MAX_WAKES];
 	Vector2 mesh_offset; // see _update_mesh_offset()
@@ -882,40 +642,23 @@ private:
 	bool underwater_enabled = true;
 	float underwater_meniscus = 0.35f;
 	bool underwater_shown = false;
-	Vector3 water_light_sun_dir = Vector3(0, -1, 0);
-	Vector3 water_light_sun_irradiance;
-	Vector3 water_light_sun_travel; // the scene sun's direction of travel while it is up, else zero
-	Vector3 water_light_sky;
 	bool underwater_camera_below = false;
 	MeshInstance3D *underwater_fog_instance = nullptr;
 	Ref<ShaderMaterial> underwater_fog_material;
 	Ref<ShaderMaterial> underwater_surface_material;
 	LocalVector<StringName> underwater_shared_params; // uniforms the passes copy from water_material
-	// Lamps under the water (docs/ideas/water.md "Lamp beams under water"): the nearest omni and spot lights
-	// below the surface, found every half second while the camera is under, scattered into beams.
-	LocalVector<ObjectID> underwater_lamps;
-	int underwater_lamp_scan = 0;
-	void _scan_underwater_lamps(const Vector3 &p_camera, float p_level);
-	void _update_underwater_lamps();
 	RID underwater_sky_baked;
 	int underwater_sky_rebake = 0;
 	Color underwater_sky_radiance;
-	void _update_water_light(const Camera3D *p_camera);
 	void _update_underwater();
 	void _set_underwater_shown(bool p_shown);
 	// Raster reflections from above (sky panorama + sun glitter), see water_raster_reflections.h.
 	bool raster_reflections = true;
 	WaterRasterReflections raster_reflection_state;
 	void _update_raster_reflections();
-	// Water clip capsules from the "water_clippers" group (each has get_water_clip_capsules()), polled.
-	double water_clip_poll = 0.0;
-	PackedFloat32Array water_clip_last;
-	Ref<ImageTexture> water_clip_texture; // 32 x 2 RGBA float: the capsules (see the shader's water_clip_tex)
-	void _update_water_clips(double p_delta);
-	bool caustics_enabled = true; // a draw pass every frame (the desktop measures and trims it)
+	bool caustics_enabled = false; // off by default: a draw pass every frame, only worth it over a visible floor
 	Vector3 caustics_sun_direction = Vector3(-0.35f, -1.0f, -0.25f);
 	float caustics_reference_depth = 2.5f;
-	float foam_shade = 0.8f; // of the sun a full foam cover stops on its way to the bed (the caustics map)
 
 	Vector<float> cached_ripple_height;
 	int cached_ripple_n = 0;
@@ -954,11 +697,11 @@ private:
 	void _reinit_spectrum();
 	void _set_spreading();
 	// Casts the seabed rays; fills cell_depth.
-	int _sample_seabed(bool p_quiet = false);
+	void _sample_seabed();
 	static PackedByteArray _rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n);
 	// Plane over [-extent/2, extent/2]^2: uniform cells over the simulated
 	// p_inner size, then spacing growing geometrically outward.
-	Ref<Mesh> _build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent, real_t p_near_step) const;
+	Ref<Mesh> _build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const;
 	Ref<Mesh> _build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const;
 	void _bind_textures();
 	void _refresh_cpu_cache();

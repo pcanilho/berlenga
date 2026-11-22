@@ -27,7 +27,6 @@ def can_build(env, platform):
             _notified = True
         return False
 
-    env.module_add_dependencies("godot_physx", ["world"])
     return True
 
 
@@ -49,14 +48,6 @@ def get_doc_classes():
         "PhysXFlow3D",
         "PhysXFlowEmitter3D",
         "PhysXFlowRenderEffect",
-        "PhysXGroundDust3D",
-        "PhysXDustDevils3D",
-        "PhysXRockDust3D",
-        "PhysXBuildingFire3D",
-        "PhysXDebrisSurge3D",
-        "PhysXBurnable3D",
-        "PhysXFireSpread3D",
-        "PhysXCaveMist3D",
         "PhysXLensDirt3D",
         "PhysXLensFlare3D",
         "PhysXLensFlareSettings",
@@ -64,7 +55,6 @@ def get_doc_classes():
         "PXTGI3D",
         "PhysXVehicle3D",
         "PhysXVehicleWheel3D",
-        "PhysXWinch3D",
         "PhysXMotorcycle3D",
         "PhysXTank3D",
         "PhysXRiver3D",
@@ -73,11 +63,7 @@ def get_doc_classes():
         "PhysXBoat3D",
         "PhysXWaterWake3D",
         "PhysXWaterSpray3D",
-        "PhysXLiveWater3D",
-        "PhysXSeaCaveWater3D",
-        "PhysXWaterPusher3D",
         "PhysXWaterMist3D",
-        "PhysXWaterfalls3D",
     ]
 
 

@@ -59,14 +59,6 @@ public:
 	// in large mixed rigid-body scenes.
 	inline static int solver_type = 0;
 
-	// physics/physx_3d/streaming/statics_per_step
-	//
-	// How many waiting static bodies enter the scene each step when many arrive at once (a streamed region), so
-	// the region's broad-phase and query-tree insertion spreads over a few frames instead of one hitch. Statics
-	// near moving bodies, and any a query touches, go in at once, so nothing falls through or is missed.
-	// 0 = all at once.
-	inline static int statics_per_step = 1024;
-
 	// physics/physx_3d/simulation/allow_sleep
 	//
 	// When false, no rigid body ever sleeps (equivalent to RigidBody3D.can_sleep

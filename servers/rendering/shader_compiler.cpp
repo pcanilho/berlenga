@@ -447,12 +447,6 @@ static String _get_global_shader_uniform_from_type_and_index(const String &p_buf
 	}
 }
 
-// Screen and depth texture lookups that take a 2D UV as their second argument (two-layer refraction wraps them).
-static bool _is_peel_texture_func(const StringName &p_name) {
-	const String name = p_name;
-	return name == "texture" || name == "textureLod" || name == "textureGrad" || name == "textureOffset" || name == "textureLodOffset" || name == "textureGradOffset";
-}
-
 String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, GeneratedCode &r_gen_code, IdentifierActions &p_actions, const DefaultIdentifierActions &p_default_actions, bool p_assigning, bool p_use_scope) {
 	String code;
 
@@ -1261,8 +1255,6 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 					// sampler2D and sampler2D array and vec2 UV and vec3 UV.
 					bool multiview_uv_needed = false;
 					bool is_normal_roughness_texture = false;
-					String screen_uv_code; // a screen or depth texture lookup's UV, for the two-layer wrap
-					bool is_depth_lookup = false;
 
 					for (int i = 1; i < onode->arguments.size(); i++) {
 						if (i > 1) {
@@ -1341,7 +1333,6 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 											is_screen_texture = true;
 										} else if (u.hint == ShaderLanguage::ShaderNode::Uniform::HINT_DEPTH_TEXTURE) {
 											is_depth_texture = true;
-											is_depth_lookup = true;
 										} else if (u.hint == ShaderLanguage::ShaderNode::Uniform::HINT_NORMAL_ROUGHNESS_TEXTURE) {
 											is_normal_roughness_texture = true;
 										}
@@ -1422,9 +1413,6 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 							}
 						} else if (multiview_uv_needed && !texture_func_no_uv && i == 2) {
 							// UV coordinate after using color, depth or normal roughness texture.
-							if (is_screen_texture || is_depth_lookup) {
-								screen_uv_code = node_code;
-							}
 							node_code = "multiview_uv(" + node_code + ".xy)";
 
 							code += node_code;
@@ -1442,21 +1430,6 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 						}
 					}
 					code += ")";
-					if (is_screen_texture && actions.screen_texture_second_layer && !screen_uv_code.is_empty() && _is_peel_texture_func(vnode->name)) {
-						// Two-layer refraction: the same lookup in the copy holding the second layer where
-						// peel_screen_ok() allows (scene_forward_clustered.glsl), the opaque copy elsewhere.
-						static const String plain = "Sampler(color_buffer,"; // multiviewSampler(…)
-						const int at = code.find(plain);
-						if (at >= 0) {
-							const String peeled = code.substr(0, at) + "Sampler(color_buffer_peel," + code.substr(at + plain.length());
-							code = "(peel_screen_ok((" + screen_uv_code + ").xy) ? " + peeled + " : " + code + ")";
-						}
-					}
-					if (is_depth_lookup && actions.screen_texture_second_layer && !screen_uv_code.is_empty() && _is_peel_texture_func(vnode->name)) {
-						// Two-layer refraction: a screen-reading surface's depth lookups see the layer its screen
-						// lookups see, so its refracted ray stops at the pool, not the bucket floor beneath it.
-						code = "peel_depth_merge((" + screen_uv_code + ").xy, " + code + ")";
-					}
 					if (is_screen_texture && !texture_func_returns_data && actions.apply_luminance_multiplier) {
 						if (RS::get_singleton()->is_low_end()) {
 							code = "(" + code + " / vec4(vec3(scene_data_block.data.luminance_multiplier), 1.0))";

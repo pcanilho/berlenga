@@ -6,17 +6,11 @@ extends Node3D
 #   --view=cascade   closer, on the step and the white water below it
 #   --view=top       straight down on the cascade, for the foam
 #   --view=bend      looking up a bend (with --carve: deep on the outside)
-#   --view=jump      side-on below the step: the fast water and the hydraulic jump that ends it
-#   --view=train     low, looking upstream at the jump: the stationary wave train below it (standing_waves)
 #   --view=rocks     straight down on the rocks: the current parting round them, foam trails behind
-#   --view=creek     low, upstream of the middle boulder (with --live): its pillow, the seam and eddies behind it
-#   --shadow-bar=Y  a board hung over the view's centre at height Y (the water) toward the sun: its shadow across the water
 #   --raster         raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N       frames rendered before --out is saved (default 12)
 #   --pt-from=N      rasterize until frame N, path trace from then on
-#   --pt-freeze      with --pt-from: stop the clock there, so the still is one instant (caustics, foam)
-#   --no-near-mesh   with --live: the coarse ribbon in the live window (live_near_mesh_spacing 0)
 #   --out=path.png   save the last frame and quit
 #   --seq=N          also save the N frames after --frames (for a GIF)
 #   --river=prop:value  a PhysXRiver3D property, e.g. --river=discharge:12.0
@@ -29,30 +23,11 @@ extends Node3D
 #                    flows into, and a tributary joining from the side below the step
 #   --view=joins     from above: the tributary's confluence and the lake
 #   --view=mouth     the river's mouth and its plume into the lake
-#   --narrows        the channel narrows below the step (5 m to 3.5 m and back): cross-waves in the fast water
-#   --outlet         the river leaves a lake at the top of the valley over a sill (source_lake): its discharge
-#                    is the lake's head over the sill; --lake=prop:value sets a lake property (e.g.
-#                    --lake=level_from_flows:true --lake=catchment_inflow:3.0); --view=outlet looks at the sill
-#   --silt=M,A       muddy water: M kg/s of silt and A of ash enter at the river's head (WorldWater sediment), the
-#                    clock run 30 times fast until --frames so the load fills the river (use --frames=200 or more);
-#                    with --joins the lake takes what the river leaves it (--lake=sediment:Vector2(0.05,0))
-#   --silt-bank=F    with --silt, the load enters F of the half width off the centre line (1 the left bank, -1 the
-#                    right): a plume along that bank that spreads across downstream
-#   --plume-test     a left-bank silt source (clock 30 times fast): checks that it hugs that bank below the source,
-#                    spreads across further down and settles only where the water is slack; prints PASS/FAIL, quits
 #   --falls          the step is a 6 m cliff: the river goes over it as a waterfall
 #   --view=fall      the waterfall from the side
 #   --view=fallfront the waterfall from downstream, looking up at the falling sheet
 #   --live           the live window: shallow-water simulation round the rocks (eddies, live foam)
-#   --contact        with --live, a WeatherMap3D (dry) whose contact wetness the live window writes (with --falls
-#                    alone: the falls' mist wets the rock round the foot); prints the
-#                    wet share of the window every 60 frames
-#   --fall-run=M     with --falls, the cliff's face runs M metres out each side of the lip (default 0.1): 1.5 or more
-#                    makes a sloping face the water keeps to (a contact fall)
-#   --mist-dry       with --falls --contact, the mist leaves the rock dry (PhysXWaterMist3D.wet_surfaces off)
-#   --sound-wav=P    with --falls, save each fall's synthesised roar as P_<i>.wav and print its level, then quit
 #   --mist           with --falls, print the mist's densest point and its spread each second
-#   --sun=P,Y        the sun's pitch and yaw in degrees (default -50,-140); --sun=-35,180 puts the fall's face in shade
 #   --report         print the cross-sections and the boxes' positions
 #   --bake-time=N    time N rebuilds with the multigrid flow solve and with the older SOR sweeps
 #                    (physics/physx_3d/water/multigrid_flow), print each mean and how far the two flows differ
@@ -60,36 +35,21 @@ extends Node3D
 # Run with --fixed-fps 30.
 
 var view := "overview"
-var sound_wav := ""
 var raster := false
 var spp := 16
 var bounces := 3
 var frames := 12
 var pt_from := 0
-var no_near_mesh := false # --no-near-mesh: the coarse ribbon in the live window (live_near_mesh_spacing 0)
-var pt_freeze := false # --pt-freeze: stop the clock when path tracing starts, so the accumulated still holds one instant
 var out := ""
 var seq := 0
 var report := false
-var lake_params := {}
-var narrows := false
 var mist_report := false
 var bake_time := 0
 var carve := false
 var live := false
-var contact := false
-var weather: Node3D
 var joins := false
-var outlet := false
-var outlet_lake: Node3D
 var falls := false
-var mist_dry := false
-var fall_run := 0.1
-var sun_rot := Vector3(-50, -140, 0)
 var lake: Node3D
-var silt := Vector2.ZERO
-var silt_bank := 0.0
-var plume_test := false
 var tributary: Node3D
 var focus: Marker3D
 var ground_body: StaticBody3D
@@ -111,18 +71,13 @@ func _valley_x(z: float) -> float:
 # Ground height: a valley falling 0.5% downstream (+z), a 1.5 m step at z = 0, a parabolic channel 6 m wide.
 # With --joins: a lake basin from z = 30 down, and a side valley for the tributary.
 func _ground(x: float, z: float) -> float:
-	var base := -0.005 * z - (6.0 * smoothstep(-fall_run, fall_run, z) if falls else 1.5 * smoothstep(-0.75, 0.75, z))
+	var base := -0.005 * z - (6.0 * smoothstep(-0.1, 0.1, z) if falls else 1.5 * smoothstep(-0.75, 0.75, z))
 	var d := absf(x - _valley_x(z))
 	var channel := 1.2 * (1.0 - pow(d / 3.0, 2.0)) if d < 3.0 and not carve else 0.0
 	var wall := 3.0
 	if joins:
 		base -= 3.5 * smoothstep(30.0, 40.0, z)
 		wall += 9.0 * smoothstep(28.0, 42.0, z)
-	if outlet:
-		# A lake basin above z = -30, 2.5 m deeper and wider; the river leaves it over a sill at z = -28.
-		var basin := 1.0 - smoothstep(-40.0, -29.0, z)
-		base -= 2.5 * basin
-		wall += 5.0 * basin
 	var h := base - channel + minf(maxf(d - wall, 0.0) * 0.4, 3.0)
 	if joins:
 		h = minf(h, _tributary_ground(x, z))
@@ -152,42 +107,18 @@ func _ready() -> void:
 		elif a.begins_with("--bake-time="): bake_time = int(a.substr(12))
 		elif a == "--carve": carve = true
 		elif a == "--live": live = true
-		elif a == "--contact": contact = true
 		elif a == "--joins": joins = true
 		elif a == "--falls": falls = true
-		elif a == "--mist-dry": mist_dry = true
-		elif a.begins_with("--sound-wav="): sound_wav = a.substr(12)
-		elif a.begins_with("--fall-run="): fall_run = float(a.substr(11))
-		elif a == "--outlet": outlet = true
-		elif a.begins_with("--shadow-bar="): _add_shadow_bar.call_deferred(float(a.substr(13)))
-		elif a.begins_with("--silt="):
-			var sv := a.substr(7).split(",")
-			silt = Vector2(float(sv[0]), float(sv[1]) if sv.size() > 1 else 0.0)
-		elif a.begins_with("--silt-bank="): silt_bank = float(a.substr(12))
-		elif a == "--plume-test":
-			plume_test = true
-			silt = Vector2(20.0, 0.0)
-			silt_bank = 0.8
-			frames = maxi(frames, 300)
-		elif a == "--narrows": narrows = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
-		elif a == "--pt-freeze": pt_freeze = true
-		elif a == "--no-near-mesh": no_near_mesh = true
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
-		elif a.begins_with("--sun="):
-			var sp := a.substr(6).split(",")
-			sun_rot = Vector3(float(sp[0]), float(sp[1]), 0.0)
 		elif a.begins_with("--river="):
 			var rkv := a.substr(8).split(":", true, 1)
 			river_params[rkv[0]] = str_to_var(rkv[1])
-		elif a.begins_with("--lake="):
-			var lkv := a.substr(7).split(":", true, 1)
-			lake_params[lkv[0]] = str_to_var(lkv[1])
 		elif a.begins_with("--water="):
 			var wkv := a.substr(8).split(":", true, 1)
 			water_params[wkv[0]] = str_to_var(wkv[1])
@@ -215,7 +146,7 @@ func _ready() -> void:
 	add_child(we)
 
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = sun_rot
+	sun.rotation_degrees = Vector3(-50, -140, 0)
 	sun.shadow_enabled = true
 	add_child(sun)
 
@@ -223,21 +154,13 @@ func _ready() -> void:
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
 	rock_mat.roughness = 0.8
-	rock_mat.wetness_enabled = true
 	# Rocks in the channel above the step, standing out of the water, on their own physics layer (2)
-	# so a carving river, which measures the uncarved terrain, still finds them: generated subrounded granite
-	# boulders (RockGenerator) where the build has the rocks module, boxes otherwise.
-	var rock_i := 0
+	# so a carving river, which measures the uncarved terrain, still finds them.
 	for r in [[-14.0, 0.8, Vector3(1.0, 2.0, 1.4), 0.5], [-24.0, -0.9, Vector3(1.2, 2.0, 1.0), -0.4], [-31.0, 0.3, Vector3(0.8, 2.0, 0.9), 1.1]]:
 		var rz: float = r[0]
 		var rx: float = _valley_x(rz) + r[1]
 		var size: Vector3 = r[2]
-		var at := Vector3(rx, _ground(rx, rz) - (1.2 if carve else 0.0) + 0.6, rz)
-		if ClassDB.class_exists("RockGenerator"):
-			_boulder(size, at, r[3], rock_i)
-		else:
-			_slab(size, at, Vector3(0.2, r[3], 0.1), rock_mat, 3)
-		rock_i += 1
+		_slab(size, Vector3(rx, _ground(rx, rz) - (1.2 if carve else 0.0) + 0.6, rz), Vector3(0.2, r[3], 0.1), rock_mat, 3)
 
 	if not ClassDB.class_exists("PhysXRiver3D"):
 		push_error("This build has no PhysXRiver3D.")
@@ -245,19 +168,12 @@ func _ready() -> void:
 		return
 	river = ClassDB.instantiate("PhysXRiver3D")
 	var curve := Curve3D.new()
-	var z := -28.0 if outlet else -48.0
+	var z := -48.0
 	while z <= 48.0:
 		curve.add_point(Vector3(_valley_x(z), _ground(_valley_x(z), z), z))
 		z += 4.0
 	river.set("curve", curve)
 	river.set("default_width", 5.0)
-	if narrows:
-		# The fast water below the step runs into a narrowing (5 m to 3.5 m) and out again: cross-waves.
-		var w := PackedFloat32Array()
-		for i in curve.point_count:
-			var zz := curve.get_point_position(i).z
-			w.push_back(5.0 - 1.5 * clampf(1.0 - absf(zz - 10.0) / 6.0, 0.0, 1.0))
-		river.set("widths", w)
 	river.set("discharge", 6.0)
 	river.set("step_length", 0.5)
 	river.set("cross_segments", 24)
@@ -269,26 +185,6 @@ func _ready() -> void:
 		river.set("live_flow", true)
 		river.set("live_domain_size", 32.0)
 		river.set("live_grid_resolution", 160)
-		if no_near_mesh:
-			river.set("live_near_mesh_spacing", 0.0)
-		if contact and ClassDB.class_exists("WeatherMap3D"):
-			weather = ClassDB.instantiate("WeatherMap3D")
-			weather.set("rain_rate", 0.0)
-			weather.set("drive_environment_fog", false)
-			add_child(weather)
-			(func(): weather.set("follow_target", weather.get_path_to(focus))).call_deferred()
-	if falls and contact and not live and ClassDB.class_exists("WeatherMap3D"):
-		# The mist wets the rock round the foot (PhysXWaterMist3D.wet_surfaces): a dry WeatherMap3D on the fall.
-		focus = Marker3D.new()
-		focus.position = Vector3(_valley_x(2.0), -6.0, 2.0)
-		add_child(focus)
-		weather = ClassDB.instantiate("WeatherMap3D")
-		weather.set("rain_rate", 0.0)
-		weather.set("humidity", 0.6)
-		weather.set("drive_environment_fog", false)
-		weather.set("contact_wetness_size", 48.0)
-		add_child(weather)
-		(func(): weather.set("follow_target", weather.get_path_to(focus))).call_deferred()
 	if carve:
 		river.set("carve", true)
 		river.set("carve_depth", 1.2)
@@ -307,23 +203,7 @@ func _ready() -> void:
 		lake.set("wave_amplitude", 0.15)
 		lake.set("render_extent", 0.0)
 		add_child(lake)
-	if outlet:
-		outlet_lake = ClassDB.instantiate("PhysXWaterSurface3D")
-		outlet_lake.position = Vector3(_valley_x(-40.0), 0.0, -40.0)
-		outlet_lake.set("domain_size", Vector2(24, 24))
-		outlet_lake.set("grid_resolution", 128)
-		outlet_lake.set("seabed_from_floor", true)
-		outlet_lake.set("water_level", -0.75)
-		outlet_lake.set("ocean_grid_resolution", 64)
-		outlet_lake.set("wind_speed", 2.0)
-		outlet_lake.set("wave_amplitude", 0.05)
-		outlet_lake.set("render_extent", 0.0)
-		for k in lake_params:
-			outlet_lake.set(k, lake_params[k])
-		add_child(outlet_lake)
 	add_child(river)
-	if outlet:
-		river.set("source_lake", river.get_path_to(outlet_lake))
 	if joins:
 		river.set("mouth_target", river.get_path_to(lake))
 		tributary = ClassDB.instantiate("PhysXRiver3D")
@@ -378,30 +258,10 @@ func _ready() -> void:
 		print("flow difference: max %.4f m/s, mean %.5f m/s (fastest %.2f m/s)" % [worst, sum / maxi(fields[0].size(), 1), top])
 		ProjectSettings.set_setting("physics/physx_3d/water/multigrid_flow", keep)
 		river.call("rebuild")
-	if report and outlet:
-		for dz in [2.0, 5.0, 10.0]:
-			var pz: float = -28.0 - dz
-			print("  lake flow %4.1f m above the sill: %s m/s" % [dz, str(outlet_lake.call("sample_flow", Vector3(_valley_x(pz), -0.75, pz)))])
-		print("outlet: lake level %.3f, head %.3f m, discharge %.3f m3/s (lake sees %.3f)" % [outlet_lake.global_position.y + outlet_lake.get("water_level"), river.call("get_outlet_head"), river.call("get_outlet_discharge"), outlet_lake.call("get_outflow_discharge")])
 	if report:
 		for i in range(0, river.call("get_section_count"), 8):
 			var s: Dictionary = river.call("get_section", i)
-			print("s=%5.1f surface=%6.2f slope=%.3f speed=%.2f foam=%.2f cascade=%s q=%.1f Fr=%.2f crit=%6.2f super=%.3f" % [s.s, s.surface, s.slope, s.speed, s.foam, s.cascade, river.call("get_discharge_at", s.s), s.froude, s.critical_height, s.superelevation])
-		if OS.get_environment("RIVER_ALL") != "":
-			for i in river.call("get_section_count"):
-				var sa: Dictionary = river.call("get_section", i)
-				var dmax := 0.0
-				for dv in sa.depths: dmax = maxf(dmax, dv)
-				print("  i=%d s=%.1f surf=%.3f crit=%.3f Fr=%.2f dmax=%.2f width=%.1f" % [i, sa.s, sa.surface, sa.critical_height, sa.froude, dmax, sa.width])
-		for i in river.call("get_section_count"):
-			var sj: Dictionary = river.call("get_section", i)
-			var cw: PackedFloat32Array = sj.cross_waves
-			var cw_max := 0.0
-			for v in cw: cw_max = maxf(cw_max, absf(v))
-			if cw_max > 0.005:
-				print("  cross-waves at s=%.1f: up to %.3f m (Fr %.2f, width %.1f)" % [sj.s, cw_max, sj.froude, sj.width])
-			if sj.jump > 0.0:
-				print("jump at s=%.1f: Fr1 %.2f, surface %.2f, train %.3f m x %.2f m" % [sj.s, sj.jump, sj.surface, sj.wave_amplitude, sj.wave_length])
+			print("s=%5.1f surface=%6.2f slope=%.3f speed=%.2f foam=%.2f cascade=%s q=%.1f" % [s.s, s.surface, s.slope, s.speed, s.foam, s.cascade, river.call("get_discharge_at", s.s)])
 		_print_cross()
 		if falls:
 			for i in range(92, 112):
@@ -410,8 +270,8 @@ func _ready() -> void:
 		for f in river.call("get_waterfalls"):
 			print("fall lip=%s impact=%s height=%.2f q=%.2f lip_speed=%.2f impact_speed=%.2f breakup=%.2f throw=%.2f" % [f.lip, f.impact, f.height, f.discharge, f.lip_speed, f.impact_speed, f.breakup_length, f.throw])
 
-	# Floating boxes, dropped upstream (not in the creek view, a close shot of the water).
-	for i in (0 if view == "creek" else 3):
+	# Floating boxes, dropped upstream.
+	for i in 3:
 		var body := RigidBody3D.new()
 		body.mass = 30.0
 		var cs := CollisionShape3D.new()
@@ -429,7 +289,7 @@ func _ready() -> void:
 		body.add_child(mi)
 		var b: Node3D = ClassDB.instantiate("PhysXBuoyancy3D")
 		body.add_child(b)
-		var bz := (-26.0 if outlet else -30.0) + 4.0 * i
+		var bz := -30.0 + 4.0 * i
 		var bx := _valley_x(bz) + (i - 1) * 0.6
 		body.position = Vector3(bx, river.call("sample_height", Vector3(bx, 0, bz)) + 0.2, bz)
 		add_child(body)
@@ -442,12 +302,6 @@ func _ready() -> void:
 	match view:
 		"cascade":
 			cam.look_at_from_position(Vector3(9.0, 5.0, 10.0), Vector3(_valley_x(0.0), -2.0, 0.0))
-		"jump":
-			cam.look_at_from_position(Vector3(_valley_x(8.0) + 11.0, 3.5, 6.0), Vector3(_valley_x(8.0), -2.4, 9.0))
-		"outlet":
-			cam.look_at_from_position(Vector3(_valley_x(-44.0) + 5.0, 2.0, -46.0), Vector3(_valley_x(-29.0), -1.0, -29.0))
-		"train":
-			cam.look_at_from_position(Vector3(_valley_x(26.0) + 2.5, -0.7, 26.0), Vector3(_valley_x(14.0), -1.9, 14.0))
 		"bend":
 			cam.look_at_from_position(Vector3(_valley_x(-23.6) + 2.0, 6.0, -14.0), Vector3(_valley_x(-23.6), -1.5, -23.6))
 		"joins":
@@ -460,10 +314,6 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(_valley_x(12.0) + 3.0, -2.5, 13.0), Vector3(_valley_x(0.0), -3.0, 0.0))
 		"rocks":
 			cam.look_at_from_position(Vector3(_valley_x(-22.0) + 0.5, 16.0, -20.0), Vector3(_valley_x(-22.0), -1.0, -21.99))
-		"creek":
-			# Low, from upstream and the side, on the middle boulder: the current parting round it, its pillow,
-			# the seam behind it and the eddies in its lee.
-			cam.look_at_from_position(Vector3(_valley_x(-29.0) + 2.0, 1.6, -29.5), Vector3(_valley_x(-24.0) - 0.6, -0.8, -23.0))
 		"top":
 			cam.look_at_from_position(Vector3(_valley_x(2.0), 14.0, 2.0), Vector3(_valley_x(2.0), -2.0, 2.01))
 		_:
@@ -537,7 +387,6 @@ func _build_ground(p_fresh := true) -> void:
 	mat.albedo_texture = _checker(Color(0.52, 0.48, 0.36), Color(0.42, 0.39, 0.3))
 	mat.roughness = 0.95
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.wetness_enabled = true # the weather's wetness (with --contact: where the river and the falls' mist reach)
 	var body := StaticBody3D.new()
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
@@ -587,37 +436,6 @@ func _print_joins() -> void:
 		print(line)
 
 
-# A generated boulder about p_size (its longest horizontal side), its collision its own convex hull, on physics
-# layers 1 and 2 as the slabs.
-func _boulder(p_size: Vector3, p_pos: Vector3, p_yaw: float, p_seed: int) -> void:
-	var g = ClassDB.instantiate("RockGenerator")
-	g.set("rock_type", 0) # granite
-	g.set("family", 2) # glacial: subrounded boulders
-	g.set("seed", 11 + p_seed)
-	var mesh: ArrayMesh = g.call("generate")
-	var b := maxf(p_size.x, p_size.z) * 1.1
-	var s := b * 0.5
-	# Stood 1.6 times taller than its own shape, so it stands out of the water as the slabs did. The scale is
-	# baked into the collision hull's points (physics bodies take no non-uniform scale).
-	var scale := Vector3(s, s * 1.6, s)
-	var hull := PackedVector3Array()
-	for v in mesh.get_faces():
-		hull.append(v * scale)
-	var shape := ConvexPolygonShape3D.new()
-	shape.points = hull
-	var body := StaticBody3D.new()
-	body.collision_layer = 3
-	var cs := CollisionShape3D.new()
-	cs.shape = shape
-	body.add_child(cs)
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.scale = scale
-	body.add_child(mi)
-	body.transform = Transform3D(Basis(Vector3.UP, p_yaw), p_pos + Vector3(0, -0.5 - float(mesh.get_meta("rock_bottom", -0.5)) * s * 1.6, 0))
-	add_child(body)
-
-
 func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material, p_layers := 1) -> void:
 	var body := StaticBody3D.new()
 	body.collision_layer = p_layers
@@ -637,92 +455,10 @@ func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material, p_l
 	add_child(body)
 
 
-func _physics_process(_delta: float) -> void:
-	if silt != Vector2.ZERO and river != null and river.is_inside_tree():
-		river.call("add_sediment", _across(3.0, silt_bank), silt.x, silt.y)
-
-
-# The point s metres down the river's centre line, f of its half width towards the left bank (-f the right).
-func _across(s: float, f: float) -> Vector3:
-	var c: Curve3D = river.get("curve")
-	var p := c.sample_baked(s)
-	var t := (c.sample_baked(s + 0.5) - c.sample_baked(maxf(s - 0.5, 0.0)))
-	t.y = 0.0
-	var side := Vector3.UP.cross(t.normalized())
-	var w := 5.0
-	var count: int = river.call("get_section_count")
-	var best := INF
-	for i in count:
-		var sec: Dictionary = river.call("get_section", i)
-		if absf(float(sec["s"]) - s) < best:
-			best = absf(float(sec["s"]) - s)
-			w = float(sec["width"])
-	return river.to_global(p + side * f * 0.5 * w)
-
-
-func _plume_test() -> void:
-	var results := []
-	var near := []
-	for s in [12.0, 25.0, 45.0]:
-		var left: Vector2 = river.call("get_sediment_at", _across(s, 0.7))
-		var right: Vector2 = river.call("get_sediment_at", _across(s, -0.7))
-		near.append([s, left.x, right.x])
-		print("plume %4.0f m: left bank %.4f, right bank %.4f kg/m3" % [s, left.x, right.x])
-	var length: float = river.call("get_length")
-	var far_s := length - 8.0
-	var fl: Vector2 = river.call("get_sediment_at", _across(far_s, 0.7))
-	var fr: Vector2 = river.call("get_sediment_at", _across(far_s, -0.7))
-	print("plume %4.0f m: left bank %.4f, right bank %.4f kg/m3" % [far_s, fl.x, fr.x])
-	var first: Array = near[0]
-	results.append(["hugs the left bank below the source", first[1] > 3.0 * maxf(first[2], 1e-6) and first[1] > 0.0, "%.4f against %.4f" % [first[1], first[2]]])
-	var r0: float = first[2] / maxf(first[1], 1e-9)
-	var r1: float = fr.x / maxf(fl.x, 1e-9)
-	results.append(["spreads across further down", fl.x > 0.0 and r1 > r0, "right/left %.3f at %.0f m, %.3f at %.0f m" % [r0, first[0], r1, far_s]])
-	var bank_dep := 0.0
-	var mid_dep := 0.0
-	var mid_speed := 0.0
-	for s in range(6, int(length) - 4, 2):
-		bank_dep = maxf(bank_dep, (river.call("get_sediment_deposit_at", _across(float(s), 0.95)) as Vector2).x)
-		mid_dep = maxf(mid_dep, (river.call("get_sediment_deposit_at", _across(float(s), 0.0)) as Vector2).x)
-	results.append(["settles only in slack water (bank over the fast middle)", bank_dep > 0.0 and bank_dep > 5.0 * mid_dep, "bank %.5f, middle %.5f kg/m2" % [bank_dep, mid_dep]])
-	var ww = WorldContracts.get_water() if ClassDB.class_exists("WorldContracts") else null
-	if ww != null:
-		var best := Vector2.ZERO
-		for s in range(6, int(length) - 4, 2):
-			var d: Vector2 = ww.sediment_deposit_at(_across(float(s), 0.95))
-			if d.x > best.x:
-				best = d
-		results.append(["WorldWater.sediment_deposit_at reads it", absf(best.x - bank_dep) < 1e-4 * maxf(bank_dep, 1.0), "%.5f" % best.x])
-	var fails := 0
-	for r in results:
-		print("%s %s  (%s)" % ["PASS" if r[1] else "FAIL", r[0], r[2]])
-		if not r[1]:
-			fails += 1
-	print("plume test: %d of %d pass" % [results.size() - fails, results.size()])
-
-
 func _process(_delta: float) -> void:
 	n += 1
-	if silt != Vector2.ZERO:
-		Engine.time_scale = 30.0 if n < frames - 2 else 1.0
-	if plume_test and n == frames:
-		_plume_test()
-		get_tree().quit()
-		return
-	if weather != null and n % 60 == 0:
-		var wet_n := 0
-		var total := 0
-		for i in range(-15, 16):
-			for j in range(-15, 16):
-				var p := focus.global_position + Vector3(i, 0.0, j)
-				total += 1
-				if float(weather.call("get_contact_wetness_at", p)) > 0.5:
-					wet_n += 1
-		print("frame %d: contact wetness over half on %d of %d points round the live window" % [n, wet_n, total])
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
-		if pt_freeze:
-			Engine.time_scale = 0.0
 	if mist_report and n == frames - 1:
 		for m in river.find_children("*", "PhysXWaterMist3D", true, false):
 			var t0 := Time.get_ticks_usec()
@@ -732,23 +468,8 @@ func _process(_delta: float) -> void:
 			var t2 := Time.get_ticks_usec()
 			var up := (t1 - t0) / 1000.0
 			print("mist: step %.2f ms, upload %.2f ms, grid about %s cells, %d steps a second" % [((t2 - t1) / 1000.0 - up) / (2.0 * m.update_rate), up, m.size / maxf(m.cell_size, 0.0001), int(m.update_rate)])
-	if mist_dry and n == 1:
-		for m in river.find_children("*", "PhysXWaterMist3D", true, false):
-			m.set("wet_surfaces", false)
-	if sound_wav != "" and n == 5:
-		var i := 0
-		for p in river.find_children("*", "AudioStreamPlayer3D", true, false):
-			var path := "%s_%d.wav" % [sound_wav, i]
-			p.stream.save_to_wav(path)
-			print("fall sound %d: %s volume %.1f dB unit size %.0f m, %.1f s loop -> %s" % [i, p.get_parent().name, p.volume_db, p.unit_size, p.stream.get_length(), path])
-			i += 1
-		print("fall sounds: %d" % i)
-		get_tree().quit()
 	if mist_report and n % 30 == 0:
 		for m in river.find_children("*", "PhysXWaterMist3D", true, false):
-			if weather and not live:
-				var foot: Vector3 = m.global_transform * m.source_position
-				print("frame %d contact wetness at the foot %.2f, 4 m to the side %.2f, 10 m out %.2f" % [n, weather.call("get_contact_wetness_at", foot), weather.call("get_contact_wetness_at", foot + Vector3(4, 0, 0)), weather.call("get_contact_wetness_at", foot + Vector3(0, 0, 10))])
 			print("frame %d mist max %.2f g/m3 at foot %.2f, 5 m up %.2f, 10 m out %.2f" % [n, m.get_max_density(), m.sample_density(m.global_transform * (m.source_position + Vector3(0, 1, 0))), m.sample_density(m.global_transform * (m.source_position + Vector3(0, 5, 0))), m.sample_density(m.global_transform * (m.source_position + Vector3(0, 1, -10)))])
 	if report and n % 60 == 0:
 		for b in boxes:
@@ -763,52 +484,8 @@ func _process(_delta: float) -> void:
 		print("live window, frame %d:" % n)
 		_print_cross()
 	if out != "" and n >= frames + seq:
-		if "--silt-probe" in OS.get_cmdline_user_args() and river is PhysXRiver3D:
-			# --silt-probe: the load (kg/m3) along the river's line every 4 m, with the speed there.
-			var cv: Curve3D = (river as PhysXRiver3D).curve
-			var L := cv.get_baked_length()
-			var line := []
-			var off := 0.0
-			while off < L:
-				var q: Vector3 = river.global_transform * cv.sample_baked(off)
-				line.append("%.0f:%.3f@%.1f" % [off, (river as PhysXRiver3D).get_sediment_at(q).x, (river as PhysXRiver3D).sample_flow(q).length()])
-				off += 4.0
-			print("silt along the river: ", " ".join(line))
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
 		get_tree().quit()
 	elif out == "" and n >= frames:
 		get_tree().quit()
-
-# --shadow-bar=Y: a 10 m x 1 m board hung 5 m up toward the sun over the point where the view's centre meets the height
-# Y (the water), so its shadow falls across the water in the middle of the frame (the water shadow check).
-func _add_shadow_bar(y: float) -> void:
-	# The scene is built over a few frames: wait for the view's camera.
-	for i in 600:
-		if get_viewport().get_camera_3d() != null:
-			break
-		await get_tree().process_frame
-	await get_tree().process_frame
-	var cam := get_viewport().get_camera_3d()
-	var sun: DirectionalLight3D = null
-	for c in find_children("*", "DirectionalLight3D", true, false):
-		sun = c
-		break
-	if cam == null or sun == null:
-		return
-	var o := cam.global_position
-	var f := -cam.global_basis.z
-	if absf(f.y) < 1e-3 or (y - o.y) / f.y <= 0.0:
-		return
-	var hit := o + f * ((y - o.y) / f.y)
-	var to_sun := sun.global_basis.z.normalized() # a directional light shines along its -Z
-	var flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
-	var long := Vector3(-flat.z, 0.0, flat.x)
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(10.0, 0.15, 1.0)
-	mi.mesh = bm
-	add_child(mi)
-	mi.global_basis = Basis(long, Vector3.UP, long.cross(Vector3.UP))
-	mi.global_position = hit + to_sun * (5.0 / maxf(to_sun.y, 0.2))
-	print("shadow bar over %s, its shadow on the water at %s" % [str(mi.global_position), str(hit)])

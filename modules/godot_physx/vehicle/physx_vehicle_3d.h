@@ -40,9 +40,6 @@
 #include "scene/resources/physics_material.h"
 
 class PhysXVehicleWheel3D;
-namespace physx {
-class PxRigidActor;
-}
 
 // A real, PhysX-specific 4-wheel vehicle -- offers PxVehicle2 capability
 // stock VehicleBody3D/VehicleWheel3D structurally can't (real engine torque
@@ -93,8 +90,6 @@ protected:
 	void _validate_property(PropertyInfo &p_property) const;
 
 public:
-	// The grip share firm ground gives a tread at a point (wet, ice, snow from the world contracts), for tests.
-	static float get_firm_grip_at(const Vector3 &p_position, float p_speed, int p_tread);
 	void set_mass(real_t p_mass);
 	real_t get_mass() const { return mass; }
 	void set_moment_of_inertia(const Vector3 &p_moi);
@@ -184,83 +179,7 @@ public:
 	// underlying Vehicle4W uses internally).
 	real_t get_wheel_jounce(int p_wheel) const;
 	real_t get_wheel_separation(int p_wheel) const;
-	// Soft soil (docs/ideas/sand.md, stage 1): on a GroundSurface3D's soft material the wheels sink, print ruts
-	// and feel the soil's traction limit and motion resistance. Per wheel: sinkage m, resistance and traction N.
-	void set_soft_soil(bool p_enabled);
-	bool is_soft_soil() const { return soft_soil; }
-	real_t get_wheel_sinkage(int p_wheel) const;
-	// The tyre's deflection past its deflection at road pressure (200 kPa, the default), m: how much lower an aired-down tyre stands.
-	real_t get_wheel_deflection(int p_wheel) const;
-	real_t get_wheel_soil_resistance(int p_wheel) const;
-	real_t get_wheel_soil_traction(int p_wheel) const;
-	real_t get_wheel_soil_side_force(int p_wheel) const; // N, sidewall bulldozing against a side slide
-	real_t get_wheel_slip(int p_wheel) const;
-	bool is_wheel_on_soft_soil(int p_wheel) const;
-	// Mud on wheels and the belly (docs/ideas/mud.md, stage 3): sticky clay packs the tread (0 clean to 1 full, a
-	// slick's grip) and is flung off past a tread speed, washed in water; the chassis' underside, once in the mud,
-	// is held up by it (high-centring), dragged and ploughs a trough. N for the belly's forces.
-	void set_tyre_clogging(bool p_enabled);
-	bool is_tyre_clogging() const { return tyre_clogging; }
-	void set_parked_settling(bool p_enabled);
-	bool is_parked_settling() const { return parked_settling; }
-	real_t get_wheel_creep(int p_wheel) const;
-	real_t get_wheel_suction(int p_wheel) const;
-	void set_belly_drag(bool p_enabled);
-	bool is_belly_drag() const { return belly_drag; }
-	real_t get_wheel_mud(int p_wheel) const;
-	real_t get_wheel_mud_shed(int p_wheel) const; // kg thrown off so far
-	real_t get_belly_drag() const;
-	real_t get_belly_support() const;
-	// Water (docs/ideas/mud.md, round 20.1): in any water of the water contract (a river, a ford, a flood, a lake) the
-	// chassis box and the tyres are buoyed by the water they keep out and dragged by the current past them, so a
-	// fording truck is lightened, slips and is carried off past the depth and speed flood tests find.
-	void set_river_forces(bool p_enabled);
-	bool is_river_forces() const { return river_forces; }
-	void set_hull_seal(real_t p_share);
-	real_t get_hull_seal() const { return hull_seal; }
-	real_t get_water_buoyancy() const; // N, the last step
-	Vector3 get_water_drag() const; // N, the last step
-	// Drowning (docs/ideas/mud.md, round 21.1): water reaching the engine's air intake stalls it (hydrolock), and it
-	// starts again 5 s after the intake is clear; the cab floods through its gaps at an orifice's rate under the head
-	// outside, so a floating car settles and sinks, and drains on land.
-	void set_hull_leak_area(real_t p_area);
-	real_t get_hull_leak_area() const { return hull_leak_area; }
-	void set_air_intake_height(real_t p_height);
-	real_t get_air_intake_height() const { return air_intake_height; }
-	void set_snorkel(bool p_enabled);
-	bool has_snorkel() const { return snorkel; }
-	bool is_engine_drowned() const;
-	real_t get_cab_water() const; // m3 inside
-	// The hull's push on the water (round 21.3), the strongest of its three keel points, 0..1: the water's wave solver
-	// makes the bow wave and wake from it.
-	real_t get_bow_wave_strength() const;
-	real_t get_intake_trough() const;
-	// Mud on the body (docs/ideas/mud.md, stage 3b): BaseMaterial3D's Mud layer, turned on in copies of the materials of
-	// the meshes under this node and fed from the wheels' clogging and spray and the belly's mud line.
-	void set_body_mud(bool p_enabled);
-	bool is_body_mud() const { return body_mud; }
-	real_t get_wheel_mud_spray(int p_wheel) const; // 0..1, the spray level round the wheel
-	real_t get_body_mud_line() const; // m above the chassis bottom
-	real_t get_body_mud_wetness() const; // 1 fresh, 0 dry
-	Color get_body_mud_color() const; // sRGB, from the ground's mud colour at the wheels
-	// Clods that stuck to the body (mud stage 4b): a splat at p_world, spread along p_velocity, of p_volume m3.
-	void add_mud_splat(const Vector3 &p_world, const Vector3 &p_velocity, float p_volume);
-	int get_mud_splat_count() const;
-	// Stuck clods that dried and shook off on jolts so far (round 11).
-	int get_mud_flakes_shed() const;
-	// Stuck clod p_index: its position in the vehicle's frame and how much of it is left (w, 0..1).
-	Vector4 get_mud_splat(int p_index) const;
-	// For a grains node: the live vehicles, and whether a point is inside one's chassis box.
-	static void get_mud_vehicles(LocalVector<PhysXVehicle3D *> &r_vehicles);
-	bool mud_box_contains(const Vector3 &p_world) const;
-	// The chassis box as a wind obstacle for the weather's shelter (the weather_shelter group): snow and sand
-	// drift in a parked vehicle's lee.
-	Array get_wind_obstacles(const Rect2 &p_rect) const;
-	void set_wind_obstacle(bool p_enabled);
-	bool is_wind_obstacle() const { return wind_obstacle; }
 	Vector3 get_actor_position() const;
-	// The chassis actor once built (its frame is this node's), else null; for joints to it (PhysXWinch3D).
-	physx::PxRigidActor *get_px_actor() const;
 
 	PackedStringArray get_configuration_warnings() const override;
 
@@ -288,23 +207,6 @@ private:
 	real_t front_anti_roll_stiffness = 0.0f;
 	real_t rear_anti_roll_stiffness = 0.0f;
 	real_t tire_force_point = 0.0f;
-	bool soft_soil = true;
-	bool tyre_clogging = true;
-	bool parked_settling = true; // round 22.2
-	bool belly_drag = true;
-	bool river_forces = true; // mud round 20.1: the water contract's buoyancy and current on the chassis and tyres
-	real_t hull_seal = 0.5f; // share of the chassis box that keeps water out
-	real_t hull_leak_area = 0.01f; // m2 of gaps the cab floods through (round 21.1)
-	real_t air_intake_height = -1.0f; // m over the chassis box's bottom; < 0: three quarters of the box's height
-	bool snorkel = false; // the intake raised to 0.25 m over the roof
-	bool body_mud = true;
-	bool wind_obstacle = true;
-	void _belly_step(float p_delta);
-	void _water_step(float p_delta);
-	void _body_mud_step(float p_delta);
-	void _wade_step();
-	void _body_mud_meshes();
-	void _mud_register(bool p_on);
 
 	real_t throttle = 0.0f;
 	real_t brake = 0.0f;
@@ -326,7 +228,6 @@ private:
 	// later" convention GodotPhysXBody3D's own shape/mode-change path already
 	// uses. No-op if not yet built.
 	void _rebuild_if_live();
-	int _soil_slot(int p_wheel) const;
 	void _chassis_material(real_t &r_friction, real_t &r_bounce) const;
 	void _chassis_material_changed();
 	bool _build();

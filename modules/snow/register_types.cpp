@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -33,13 +32,7 @@
 #include "register_types.h"
 
 #include "snow_climate.h"
-#include "snow_clumps_3d.h"
 #include "snow_cornice_3d.h"
-#include "snow_avalanche_3d.h"
-#include "snow_bodies_3d.h"
-#include "snow_powder_cloud_3d.h"
-#include "snow_rime_3d.h"
-#include "snow_lake_ice_3d.h"
 #include "snow_cover_3d.h"
 #include "snow_fall_3d.h"
 #include "snow_icicles_3d.h"
@@ -55,15 +48,9 @@ void initialize_snow_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(SnowClimate);
 	GDREGISTER_CLASS(SnowCover3D);
 	GDREGISTER_CLASS(SnowCornice3D);
-	GDREGISTER_CLASS(SnowLakeIce3D);
-	GDREGISTER_CLASS(SnowBodies3D);
-	GDREGISTER_CLASS(SnowAvalanche3D);
-	GDREGISTER_CLASS(SnowPowderCloud3D);
 	GDREGISTER_CLASS(SnowSurface3D);
 	GDREGISTER_CLASS(SnowFall3D);
 	GDREGISTER_CLASS(SnowIcicles3D);
-	GDREGISTER_CLASS(SnowRime3D);
-	GDREGISTER_CLASS(SnowClumps3D);
 }
 
 void uninitialize_snow_module(ModuleInitializationLevel p_level) {

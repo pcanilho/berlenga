@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -31,17 +30,13 @@
 
 #include "register_types.h"
 
-#include "rain_fall_3d.h"
 #include "sky_clock.h"
 #include "weather_lightning_3d.h"
 #include "weather_map_3d.h"
-#include "weather_runoff_3d.h"
 #include "weather_sky_material.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
-#include "scene/3d/cpu_particles_3d.h"
-#include "scene/resources/particle_process_material.h"
 
 void initialize_weather_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
@@ -51,8 +46,6 @@ void initialize_weather_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(WeatherSkyMaterial);
 	GDREGISTER_CLASS(WeatherLightning3D);
 	GDREGISTER_CLASS(SkyClock);
-	GDREGISTER_CLASS(RainFall3D);
-	GDREGISTER_CLASS(WeatherRunoff3D);
 
 	// A shader that names a global uniform only compiles once the global exists, so the ones
 	// WeatherMap3D.get_wind_shader_code() reads are declared here with no data, as BaseMaterial3D
@@ -69,14 +62,6 @@ void initialize_weather_module(ModuleInitializationLevel p_level) {
 		{ "weather_shelter_rect", "vec4" },
 		{ "weather_patch_info", "vec4" },
 		{ "weather_ground_height", "float" },
-		{ "weather_terrain_map", "sampler2D" },
-		{ "weather_terrain_rect", "vec4" },
-		{ "weather_terrain_info", "vec4" },
-		{ "weather_vortex_0", "vec4" },
-		{ "weather_vortex_1", "vec4" },
-		{ "weather_vortex_2", "vec4" },
-		{ "weather_vortex_3", "vec4" },
-		{ "weather_vortex_up", "vec4" },
 	};
 	for (const auto &g : globals) {
 		Dictionary d;
@@ -90,17 +75,6 @@ void initialize_weather_module(ModuleInitializationLevel p_level) {
 		}
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, String("shader_globals/") + g.name, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), d);
 	}
-
-	// Godot's particles drift with the same wind (ParticleProcessMaterial and CPUParticles3D wind_drag).
-	ParticleProcessMaterial::set_weather_wind_shader_code(WeatherMap3D::get_wind_shader_code());
-	CPUParticles3D::weather_wind_sampler = [](const Vector3 &p_position, float p_height, Vector3 &r_air) -> bool {
-		const WeatherMap3D *wm = WeatherMap3D::get_active();
-		if (wm == nullptr) {
-			return false;
-		}
-		r_air = wm->get_wind_at(p_position, p_height);
-		return true;
-	};
 }
 
 void uninitialize_weather_module(ModuleInitializationLevel p_level) {
@@ -108,6 +82,4 @@ void uninitialize_weather_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	WeatherSkyMaterial::cleanup();
-	ParticleProcessMaterial::set_weather_wind_shader_code(String());
-	CPUParticles3D::weather_wind_sampler = nullptr;
 }

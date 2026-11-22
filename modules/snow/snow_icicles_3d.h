@@ -1,11 +1,10 @@
 /**************************************************************************/
-/*  snow_icicles_3d.h                                                     */
+/*  snow_icicles_3d.h                                                         */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -54,37 +53,17 @@ class SnowIcicles3D : public Node3D {
 	struct Icicle {
 		Vector3 position; // local, the root
 		float share = 1.0f; // of the water along the edge
-		float power = 0.75f; // the taper: radius as the distance from the tip to this power
-		float film = 0.0f; // the share the thin film between drip points brings
-		float along = 0.0f; // m along the edge
 		float length = 0.0f; // m
 		float radius = 0.0f; // m, at the root
-		Vector2 own_lean; // the axis's own slope (x, z per metre down), from the film's path down one side
-		Vector<Vector2> bend; // the axis's sideways offset every AXIS_STEP down from the root (local x, z)
-		bool dripping = false; // water left over at the tip in the last step: a pendant drop hangs there
 	};
 	Vector<Icicle> icicles;
-	LocalVector<Vector3> drips; // drip points: m along the edge, mean flow, phase of its wet and dry spells
-	float melt_hours = 0.0f; // hours of melt since the sites were placed (the drip points' clock)
-	void _update_shares();
 	bool sites_dirty = true;
 	MeshInstance3D *mesh_instance = nullptr;
 	Ref<StandardMaterial3D> default_material;
-	Ref<ShaderMaterial> default_core_material;
+	Ref<StandardMaterial3D> default_core_material;
 	Ref<Material> core_material;
 	bool hazy_core = true;
-	Vector3 wind_direction; // local, horizontal: the way the wind blows the tip's drop (zero: none)
-	bool curtains = true;
 	uint64_t seen_update = 0;
-	// Roots joined to what they hang from: each root's column runs up to the first surface above it within
-	// attach_reach (meshes under attach_path, or the parent's when empty), so no icicle floats under an eave.
-	NodePath attach_path;
-	float attach_reach = 0.5f;
-	LocalVector<Vector3> attach_tris; // local, the surfaces near the edge (three points each)
-	bool attach_dirty = true;
-	Vector<float> attach_heights; // m above each icicle's root, last build
-	void _gather_attach();
-	float _attach_height(const Vector3 &p_root) const;
 	float drawn_change = 0.0f;
 	float last_supply = 0.0f; // kg/h along the whole edge, last step
 	float last_dripped = 0.0f; // kg/h
@@ -109,7 +88,6 @@ public:
 	int get_icicle_count() const { return icicles.size(); }
 	float get_icicle_length(int p_index) const;
 	float get_icicle_radius(int p_index) const;
-	Vector3 get_icicle_position(int p_index) const; // its root, local to the node
 	float get_longest() const;
 	float get_ice_mass() const; // kg
 	float get_last_supply() const { return last_supply; }
@@ -137,16 +115,4 @@ public:
 	Ref<Material> get_core_material() const { return core_material; }
 	void set_hazy_core(bool p_enabled);
 	bool get_hazy_core() const { return hazy_core; }
-	void set_wind_direction(const Vector3 &p_direction);
-	Vector3 get_wind_direction() const { return wind_direction; }
-	void set_curtains(bool p_enabled);
-	bool get_curtains() const { return curtains; }
-	// The axis's sideways offset (local x, z) p_depth below an icicle's root.
-	Vector2 get_icicle_offset(int p_index, float p_depth) const;
-	bool is_icicle_dripping(int p_index) const;
-	void set_attach_path(const NodePath &p_path);
-	NodePath get_attach_path() const { return attach_path; }
-	void set_attach_reach(float p_reach);
-	float get_attach_reach() const { return attach_reach; }
-	float get_icicle_attach(int p_index) const; // m its root's column rises to the surface above (0: none found)
 };

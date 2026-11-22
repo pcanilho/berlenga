@@ -47,10 +47,7 @@ extends Node3D
 #                     camera 8 m away, "nolod" to draw every strand at any distance, "novolume" for
 #                     strands that pass through each other (volume_enabled off), "taa" for temporal
 #                     antialiasing, "mvview" to see the motion vectors, "nodeep" for the shadow map
-#                     alone (deep_shadows off), "lamp" for night under an omni light beside the head
-#                     ("spotlamp" a spot light; "nolocal" without the lamp's own deep shadow map),
-#                     "nosimplify" to draw every groomed point (simplify_tolerance 0), "nocollide" without
-#                     strand-strand collision between guides; "wet" for soaked hair; "snow" for snow lying on it; "cards" for hair cards; "cloth" for a capelet the hair rests on ("nocloth": it does not); "farN" for N metres away; "box" for broad
+#                     alone (deep_shadows off); "box" for broad
 #                     rounded shoulders (spheres only on the skull), "body" to make the shoulders (with
 #                     or without "box") the collision body, held still and seen from the side,
 #                     "skinned" to skin them to a tilted bone (the head stays still), "hidebox" to see the drape;
@@ -207,14 +204,8 @@ func _ready() -> void:
 				# From the side, the hair against the shoulders' top and back.
 				cam.look_at_from_position(Vector3(1.5, 0.3, 0.2), Vector3(0, 0.12, -0.05))
 			elif hair.contains("far"):
-				# 8 m away: the distance LOD draws about half the strands. "farN": N metres away.
-				var far_m := 8.0
-				var far_re := RegEx.create_from_string("far(\\d+)")
-				var far_hit := far_re.search(hair)
-				if far_hit:
-					far_m = far_hit.get_string(1).to_float()
-				var far_dir := Vector3(3.0, 1.8, 7.2).normalized()
-				cam.look_at_from_position(Vector3(0, 0.2, 0) + far_dir * far_m, Vector3(0, 0.2, 0))
+				# 8 m away: the distance LOD draws about half the strands.
+				cam.look_at_from_position(Vector3(3.0, 2.0, 7.2), Vector3(0, 0.2, 0))
 			else:
 				cam.look_at_from_position(Vector3(0.55, 0.45, 1.45), Vector3(0, 0.2, 0))
 			_strands_sim()
@@ -699,17 +690,6 @@ func _strands_sim() -> void:
 	h.lod_enabled = not hair.contains("nolod")
 	h.volume_enabled = not hair.contains("novolume")
 	h.deep_shadows = not hair.contains("nodeep")
-	# "nohairshadow": the strands cast no shadow (cast_hair_shadows off).
-	h.cast_hair_shadows = not hair.contains("nohairshadow")
-	# "grey": one strand in six grey; "bleach": lengths lightened by the sun toward the tips.
-	if hair.contains("grey"):
-		h.grey_ratio = 0.17
-	if hair.contains("bleach"):
-		h.sun_bleaching = 0.8
-	h.strand_collision = not hair.contains("nocollide")
-	if hair.contains("nosimplify"):
-		# Every groomed point drawn (simplify_tolerance 0).
-		h.simplify_tolerance = 0.0
 	if hair.contains("taa"):
 		# Temporal antialiasing, which follows the strands by their motion vectors.
 		get_viewport().use_taa = true
@@ -721,44 +701,8 @@ func _strands_sim() -> void:
 		for c in get_children():
 			if c is DirectionalLight3D:
 				c.rotation_degrees = Vector3(-15, 160, 0)
-	if hair.contains("lamp"):
-		# Night under a lamp: the sun off, the sky dimmed, and an omni light up and to the side
-		# of the head ("spotlamp": a spot light aimed at it), which gets its own deep opacity map
-		# ("nolocal": it does not, the shadow maps alone as before).
-		for c in get_children():
-			if c is DirectionalLight3D:
-				c.visible = false
-			if c is WorldEnvironment:
-				c.environment.background_energy_multiplier = 0.05
-		var lamp: Light3D
-		if hair.contains("spotlamp"):
-			var spot := SpotLight3D.new()
-			spot.spot_range = 4.0
-			spot.spot_angle = 25.0
-			lamp = spot
-		else:
-			var omni := OmniLight3D.new()
-			omni.omni_range = 4.0
-			lamp = omni
-		lamp.light_energy = 2.0
-		lamp.shadow_enabled = true
-		add_child(lamp)
-		lamp.look_at_from_position(Vector3(-0.55, 0.85, 0.3), Vector3(0, 0.3, 0))
-		if hair.contains("nolocal"):
-			h.deep_shadow_local_lights = 0
 	if hair.contains("all"):
 		h.guide_ratio = 1.0
-	if hair.contains("cards"):
-		# Far hair as thick strands: each clump hands over once it is 2 pixels across or less.
-		h.cards_enabled = true
-	if hair.contains("wet"):
-		# Soaked hair (wetness 1, held there): darker, glossier, heavier and clumped.
-		h.weather_wetting = false
-		h.wetness = 1.0
-	if hair.contains("snow"):
-		# Snow lying on the hair (snow 1, held there): on the top layer only.
-		h.weather_wetting = false
-		h.snow = 1.0
 	h.wind = Vector3(1.5, 0, 0)
 	if hair.contains("wind"):
 		# Head held still in a moderate breeze (6 m/s, Beaufort 4) with gusts.
@@ -805,32 +749,6 @@ func _strands_sim() -> void:
 			h.collision_body = h.get_path_to(body)
 		if hair.contains("hidebox"):
 			body.visible = false
-	if hair.contains("cloth"):
-		# A capelet over the shoulders, standing 4 cm off them (PhysXSkinnedCloth3D, its hem free
-		# to move 3 cm): the hair rests on it ("nocloth": the hair ignores it and sinks through).
-		var cape := MeshInstance3D.new()
-		cape.mesh = _capelet()
-		var cloth_mat := StandardMaterial3D.new()
-		cloth_mat.albedo_color = Color(0.32, 0.36, 0.42)
-		cloth_mat.roughness = 0.95
-		cloth_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		cape.material_override = cloth_mat
-		var cskel := Skeleton3D.new()
-		cskel.add_bone("spine")
-		sim_head.add_child(cskel)
-		var csk := Skin.new()
-		csk.add_named_bind("spine", Transform3D())
-		cape.skin = csk
-		sim_head.add_child(cape)
-		cape.skeleton = cape.get_path_to(cskel)
-		var cloth := PhysXSkinnedCloth3D.new()
-		cloth.collide_with_body = false
-		cloth.max_distances = _capelet_distances(cape.mesh)
-		sim_head.add_child(cloth)
-		cloth.mesh_instance_path = cloth.get_path_to(cape)
-		cloth.set_body_capsules([{"a": Vector3(0, 0.03, 0), "b": Vector3(0, 0.03, 0), "radius": 0.17}])
-		if not hair.contains("nocloth"):
-			h.collision_cloth = h.get_path_to(cloth)
 	if hair.begins_with("compare"):
 		# The same groom drawn still by HairMesh with BaseMaterial3D Hair, beside it.
 		h.simulating = false
@@ -863,56 +781,6 @@ func _strands_sim() -> void:
 		add_child(hi2)
 
 
-# A capelet: a shell 0.19 m around the shoulders' sphere (centre 0.27 m below the head), from a
-# neck hole 35 degrees off the top to a hem 80 degrees off it, skinned wholly to bone 0.
-func _capelet() -> ArrayMesh:
-	var rings := 14
-	var segs := 48
-	var verts := PackedVector3Array()
-	var normals := PackedVector3Array()
-	var bones := PackedInt32Array()
-	var weights := PackedFloat32Array()
-	var idx := PackedInt32Array()
-	for r in rings + 1:
-		var th := deg_to_rad(lerpf(35.0, 80.0, float(r) / rings))
-		for sg in segs:
-			var ph := TAU * sg / segs
-			var d := Vector3(sin(th) * cos(ph), cos(th), sin(th) * sin(ph))
-			verts.append(Vector3(0, -0.27, 0) + d * 0.19)
-			normals.append(d)
-			bones.append_array([0, 0, 0, 0])
-			weights.append_array([1.0, 0.0, 0.0, 0.0])
-	for r in rings:
-		for sg in segs:
-			var a := r * segs + sg
-			var b := r * segs + (sg + 1) % segs
-			idx.append_array([a, b, a + segs, b, b + segs, a + segs])
-	var arr := []
-	arr.resize(Mesh.ARRAY_MAX)
-	arr[Mesh.ARRAY_VERTEX] = verts
-	arr[Mesh.ARRAY_NORMAL] = normals
-	arr[Mesh.ARRAY_BONES] = bones
-	arr[Mesh.ARRAY_WEIGHTS] = weights
-	arr[Mesh.ARRAY_INDEX] = idx
-	var m := ArrayMesh.new()
-	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	return m
-
-
-# The capelet held at its neck, its hem free to move 3 cm.
-func _capelet_distances(p_mesh: ArrayMesh) -> PackedFloat32Array:
-	var verts: PackedVector3Array = p_mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-	var top := -1e9
-	var low := 1e9
-	for v in verts:
-		top = maxf(top, v.y)
-		low = minf(low, v.y)
-	var out := PackedFloat32Array()
-	for v in verts:
-		out.append(0.03 * clampf((top - v.y) / maxf(top - low, 1e-4), 0.0, 1.0))
-	return out
-
-
 # The box's surface skinned wholly to bone 0, in the bone's bind space at rest.
 func _skinned_box(p_box: PrimitiveMesh) -> ArrayMesh:
 	var a := p_box.get_mesh_arrays()
@@ -933,7 +801,7 @@ func _skinned_box(p_box: PrimitiveMesh) -> ArrayMesh:
 
 func _process(_delta: float) -> void:
 	n += 1
-	if sim_head and not hair.contains("wind") and not hair.contains("box") and not hair.contains("body") and not hair.contains("cloth"):
+	if sim_head and not hair.contains("wind") and not hair.contains("box") and not hair.contains("body"):
 		var t := n / 30.0
 		# Shake for three full periods (ends back at x = 0), then turn.
 		if t < 2.5:

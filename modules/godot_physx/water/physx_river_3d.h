@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -31,13 +30,10 @@
 
 #pragma once
 
-#include "modules/world/world_contracts.h"
-#include "water_body_contacts.h"
 #include "water_raster_reflections.h"
 #include "water_solver.h"
 
 #include "scene/3d/path_3d.h"
-#include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
 
 class MeshInstance3D;
@@ -55,14 +51,8 @@ class Texture2DRD;
 // carried downstream. The surface is a mesh of its own (the path tracer sees
 // it as a water medium), and sample_height() / sample_flow() give buoyancy
 // the same river.
-// The river surface's shader (per vertex: UV2 flow, COLOR.r (depth + 1) / 4, COLOR.g white water, COLOR.b bank
-// fade); PhysXLiveWater3D draws with it too.
-const String &physx_river_water_shader_src();
-
-class PhysXRiver3D : public Path3D, public WorldWaterProvider {
+class PhysXRiver3D : public Path3D {
 	GDCLASS(PhysXRiver3D, Path3D);
-
-	WaterBodyContacts body_contacts; // world_contact bodies push the ripples (docs/ideas/world-links.md)
 
 public:
 	struct Section {
@@ -89,18 +79,6 @@ public:
 		float mouth_fade = 1.0f; // 1 on the river, fading to 0 past its mouth into the water it joins
 		bool fall_drop = false; // the ribbon from here to the next section is under a waterfall's jet (hidden)
 		float plunge = 0.0f; // 0..1 white water where a waterfall's jet lands
-		float froude = 0.0f; // section Froude number Q / (A sqrt(g A / T))
-		float critical = 0.0f; // local y of the critical-depth surface (-INF: none)
-		float jump = 0.0f; // > 0 at a hydraulic jump's toe: the upstream Froude number Fr1
-		float jump_foam = 0.0f; // 0..1 white water in a jump's roller
-		float tilt = 0.0f; // surface rise per m towards the left bank (bend superelevation)
-		LocalVector<float> wave_at; // standing cross-wave height per cross sample (supercritical flow), m
-		// An undular jump's (or a roller's tail) stationary wave train passing here: amplitude (m), wavenumber
-		// (rad/m), the toe's arc length and the decay length (m); the shader draws it (finer than the sections).
-		float wave_amp = 0.0f;
-		float wave_k = 0.0f;
-		float wave_s0 = 0.0f;
-		float wave_decay = 1.0f;
 	};
 	// A free overfall: the water leaves the lip and falls clear of the ground.
 	struct Fall {
@@ -125,40 +103,9 @@ private:
 	PackedFloat32Array depths;
 	float default_width = 4.0f;
 	float discharge = 2.0f; // m^3/s
-	// Storm flow (docs/ideas/rain.md, step 3): the world's runoff (WeatherRunoff3D) reaching the river's upstream end
-	// is added to its discharge, so it rises and runs faster in rain and falls back after.
-	bool rain_response = true;
-	float rain_discharge = 0.0f; // m^3/s from the runoff at the last build
-	double rain_check = 0.0; // s until the runoff is read again
-	void _rain_response_update(double p_delta);
-	// Suspended load (WorldWater sediment, kg/m3: x mineral, y ash) per cross-section and lane across it (section-major),
-	// carried down each lane at its speed and spread across by turbulence; the sources the contract hands in (kg/s), held
-	// until the caller's next call; what settled out (kg/m2); the shading reads it from a texture, sections by lanes.
-	LocalVector<Vector2> sed_c;
-	LocalVector<Vector2> sed_bed;
-	int sed_lanes = 0;
-	LocalVector<Vector2> sed_src;
-	LocalVector<uint64_t> sed_src_frame;
-	LocalVector<float> sed_src_age; // s since the source was last given
-	float sed_s0 = 0.0f;
-	float sed_ds = 0.0f;
-	bool sed_any = false;
-	double sed_tex_wait = 0.0;
-	Ref<ImageTexture> sediment_tex;
-	void _sediment_resample();
-	void _sediment_update(double p_delta);
-	void _sediment_texture();
-	bool _sediment_cell(const Vector3 &p_position, int &r_k, int &r_j) const;
-	Vector2 _sediment_lookup(const LocalVector<Vector2> &p_field, const Vector3 &p_world_pos) const;
 	float roughness = 0.035f; // Manning n
 	float max_slope = 0.08f; // steeper drops are cascades
-	bool gradually_varied_flow = true; // standard step profile (backwater, drawdown, jumps) instead of normal depth
-	bool bend_superelevation = true; // the surface banks up against the outside of bends
-	bool standing_waves = true; // undular jump trains and supercritical cross-waves
 	bool snap_to_ground = true;
-	float ground_probe_height = 50.0f; // how far above the curve the ground rays start
-	float ground_probe_depth = 200.0f; // how far below the curve they look
-	int ground_probe_tries = 0; // builds put off while no ray found the ground (a floor joining the space late)
 	uint32_t ground_collision_mask = 1;
 	uint32_t obstacle_collision_mask = 0; // rocks measured on top of the (base) ground
 	float step_length = 1.0f; // m between cross-sections
@@ -182,12 +129,6 @@ private:
 	float wall_friction = 1.5f; // 1/s, along rocks and banks
 	float flow_foam = 0.25f; // a river runs fast everywhere: less than the sea's 1
 	float flow_foam_persistence = 4.0f; // s
-	bool flow_foam_impact = true; // also where the water runs into things (water_ripple.glsl)
-	bool live_advected_ripples = true; // ripples carried along the live flow's real paths (water_flow_offset.glsl)
-	bool live_surface_waves = true; // dispersive surface waves over the live window (water_surface_waves.glsl)
-	float live_surface_wave_strength = 1.0f;
-	float live_near_mesh_spacing = 0.1f; // m between vertices of the ribbon inside the live window (0: off)
-	float live_near_mesh_used = 0.0f; // the spacing the last build used (raised to stay inside the budget)
 	float live_damping = 0.05f;
 	NodePath live_follow; // empty: the viewport's camera
 
@@ -198,38 +139,15 @@ private:
 	Vector2 live_center;
 	Ref<Texture2DRD> live_height_tex;
 	Ref<Texture2DRD> live_flow_tex;
-	Ref<Texture2DRD> live_offset_tex;
-	Ref<Texture2DRD> live_wave_tex;
-	RID live_wave_rid;
 	Vector<float> live_height_cache;
 	Vector<float> live_velocity_cache;
 	PackedFloat32Array live_depth; // still-water depth per window cell, for the tilt fit
 	Vector3 live_tilt; // the window's mean plane (h0, dh/dx, dh/dz), taken out
 	int live_refresh = 0;
-	bool contact_wetness = true;
-	uint64_t contact_wet_serial = 0;
-	int contact_wet_skip = 0; // reads to drop after the window moves (taken before it moved)
-	Vector<float> contact_wet_cells;
-	void _live_wet_ground();
 
 	// Joins: where the river ends (a lake, the sea, or another river), and the
 	// rivers flowing into this one.
 	NodePath mouth_target;
-	// Lake outlets (docs/ideas/water.md "Lake outlets"): a river leaving a lake takes its discharge from the
-	// lake's head over its sill (a broad-crested weir).
-	NodePath source_lake;
-	float outlet_coefficient = 0.85f; // the weir's discharge coefficient (0.85 rough natural sill, 1 smooth crest)
-	float outlet_discharge = -1.0f; // m^3/s from the lake at the last build (< 0 without a lake)
-	float outlet_head = 0.0f; // m, the lake above the sill at the last build
-	ObjectID source_id; // the lake this river last registered its outlet with
-	float outlet_free = 0.0f; // m^3/s the sill would pass with free flow over it (critical depth on the crest)
-	float outlet_crest = 0.0f; // world height of the sill
-	float outlet_crest_s = 0.0f; // its arc length
-	float outlet_level = 0.0f; // the lake's world level
-	Vector3 outlet_at; // world, the sill's centre
-	Vector3 outlet_dir; // world, downstream
-	float outlet_width = 1.0f;
-	void _register_outlet();
 	float mouth_blend = 6.0f; // m past the shoreline over which the ribbon fades into the water it joins
 	struct Tributary {
 		ObjectID river;
@@ -244,11 +162,8 @@ private:
 
 	// Waterfalls (see docs/ideas/water.md "Step 4f").
 	float fall_min_height = 1.5f; // m; 0 turns falls off (every drop stays a cascade)
-	PackedVector3Array fall_exclusions; // lip and foot pairs of faces drawn by another node (PhysXWaterfalls3D)
 	bool fall_spray = true;
 	bool fall_mist = true;
-	bool fall_sound = true;
-	float fall_sound_volume_db = 0.0f; // added to the level from the fall's acoustic power
 	float fall_mist_amount = 1.0f; // scales the mist each fall makes (its own grid, without a PhysXFlow3D)
 	Ref<ShaderMaterial> fall_material;
 	LocalVector<Fall> falls;
@@ -269,7 +184,6 @@ private:
 	void _build_fall_effects();
 	void _on_curve_changed();
 	void _solve_flow(float p_ds);
-	void _solve_standing_waves();
 	bool _strip_at(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const;
 	float _psi_at(const Vector3 &p_world, float &r_depth) const;
 	void _live_fields(PackedFloat32Array &r_depth, PackedFloat32Array &r_flux) const;
@@ -280,9 +194,6 @@ private:
 	Node *_mouth_node() const;
 	void _register_mouth();
 	void _unregister_mouth();
-	Node *_source_node() const;
-	void _measure_outlet(PhysicsDirectSpaceState3D *p_space, const Ref<Curve3D> &p_curve, float p_ds);
-	void _unregister_outlet();
 	void _on_target_rebuilt();
 	Vector2 _live_velocity_at(const Vector3 &p_world) const;
 	float _live_height_at(const Vector3 &p_world) const;
@@ -296,8 +207,6 @@ protected:
 	static void _bind_methods();
 
 public:
-	// The falling-sheet shader (streaks riding the water, aeration, break-up), shared with PhysXWaterfalls3D.
-	static String get_fall_shader_code();
 	void set_widths(const PackedFloat32Array &p_widths);
 	PackedFloat32Array get_widths() const { return widths; }
 	void set_depths(const PackedFloat32Array &p_depths);
@@ -306,25 +215,12 @@ public:
 	float get_default_width() const { return default_width; }
 	void set_discharge(float p_discharge);
 	float get_discharge() const { return discharge; }
-	void set_rain_response(bool p_enable);
-	bool get_rain_response() const { return rain_response; }
-	float get_rain_discharge() const { return rain_discharge; }
 	void set_roughness(float p_roughness);
 	float get_roughness() const { return roughness; }
 	void set_max_slope(float p_slope);
 	float get_max_slope() const { return max_slope; }
-	void set_gradually_varied_flow(bool p_enabled);
-	bool get_gradually_varied_flow() const { return gradually_varied_flow; }
-	void set_bend_superelevation(bool p_enabled);
-	bool get_bend_superelevation() const { return bend_superelevation; }
-	void set_standing_waves(bool p_enabled);
-	bool get_standing_waves() const { return standing_waves; }
 	void set_snap_to_ground(bool p_snap);
 	bool get_snap_to_ground() const { return snap_to_ground; }
-	void set_ground_probe_height(float p_height);
-	float get_ground_probe_height() const { return ground_probe_height; }
-	void set_ground_probe_depth(float p_depth);
-	float get_ground_probe_depth() const { return ground_probe_depth; }
 	void set_ground_collision_mask(uint32_t p_mask);
 	uint32_t get_ground_collision_mask() const { return ground_collision_mask; }
 	void set_obstacle_collision_mask(uint32_t p_mask);
@@ -357,9 +253,6 @@ public:
 	bool get_raster_reflections() const { return raster_reflections; }
 	void set_live_flow(bool p_enabled);
 	bool get_live_flow() const { return live_flow; }
-	// Banks and rocks the live water reached stay wet in the weather's contact wetness (WeatherMap3D).
-	void set_contact_wetness(bool p_enabled);
-	bool get_contact_wetness() const { return contact_wetness; }
 	void set_live_domain_size(float p_size);
 	float get_live_domain_size() const { return live_domain_size; }
 	void set_live_grid_resolution(int p_n);
@@ -370,16 +263,6 @@ public:
 	float get_flow_foam() const { return flow_foam; }
 	void set_flow_foam_persistence(float p_seconds);
 	float get_flow_foam_persistence() const { return flow_foam_persistence; }
-	void set_flow_foam_impact(bool p_enabled);
-	bool get_flow_foam_impact() const { return flow_foam_impact; }
-	void set_live_advected_ripples(bool p_enabled);
-	bool get_live_advected_ripples() const { return live_advected_ripples; }
-	void set_live_surface_waves(bool p_enabled);
-	bool get_live_surface_waves() const { return live_surface_waves; }
-	void set_live_surface_wave_strength(float p_strength);
-	float get_live_surface_wave_strength() const { return live_surface_wave_strength; }
-	void set_live_near_mesh_spacing(float p_spacing);
-	float get_live_near_mesh_spacing() const { return live_near_mesh_spacing; }
 	void set_live_damping(float p_damping);
 	float get_live_damping() const { return live_damping; }
 	void set_live_follow(const NodePath &p_path);
@@ -392,12 +275,6 @@ public:
 	void clear_sphere(int p_owner);
 	void set_mouth_target(const NodePath &p_path);
 	NodePath get_mouth_target() const { return mouth_target; }
-	void set_source_lake(const NodePath &p_path);
-	NodePath get_source_lake() const { return source_lake; }
-	void set_outlet_coefficient(float p_coefficient);
-	float get_outlet_coefficient() const { return outlet_coefficient; }
-	float get_outlet_discharge() const { return MAX(outlet_discharge, 0.0f); }
-	float get_outlet_head() const { return outlet_head; }
 	void set_mouth_blend(float p_blend);
 	float get_mouth_blend() const { return mouth_blend; }
 	// A river joining this one at p_world (its mouth) adds p_discharge downstream of there.
@@ -407,16 +284,10 @@ public:
 	float get_discharge_at(float p_s) const;
 	void set_fall_min_height(float p_height);
 	float get_fall_min_height() const { return fall_min_height; }
-	void set_fall_exclusions(const PackedVector3Array &p_points);
-	PackedVector3Array get_fall_exclusions() const { return fall_exclusions; }
 	void set_fall_spray(bool p_enabled);
 	bool get_fall_spray() const { return fall_spray; }
 	void set_fall_mist(bool p_enabled);
 	bool get_fall_mist() const { return fall_mist; }
-	void set_fall_sound(bool p_enabled);
-	bool get_fall_sound() const { return fall_sound; }
-	void set_fall_sound_volume_db(float p_db);
-	float get_fall_sound_volume_db() const { return fall_sound_volume_db; }
 	void set_fall_mist_amount(float p_amount);
 	float get_fall_mist_amount() const { return fall_mist_amount; }
 	void set_fall_material(const Ref<ShaderMaterial> &p_material);
@@ -430,20 +301,6 @@ public:
 	void rebuild();
 	// Water surface height at a world position, -INF off the river or where it's dry.
 	float sample_height(const Vector3 &p_world_pos) const;
-	// The water contract (WorldWater): this water's surface, -INF where it has none.
-	float contract_water_height_at(const Vector3 &p_position) const override;
-	Vector3 contract_water_flow_at(const Vector3 &p_position) const override { return sample_flow(p_position); }
-	void contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) override;
-	void contract_water_clear(uint64_t p_owner) override;
-	Vector2 contract_water_sediment_at(const Vector3 &p_position) const override { return get_sediment_at(p_position); }
-	Vector2 contract_water_sediment_deposit_at(const Vector3 &p_position) const override { return get_sediment_deposit_at(p_position); }
-	void contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) override;
-	void contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) override;
-	// The suspended load (kg/m3: x mineral, y ash) at a world position on the river; zero off it.
-	Vector2 get_sediment_at(const Vector3 &p_world_pos) const;
-	// What settled out of the load onto the bed there (kg/m2: x mineral, y ash), slack water by the banks and in pools.
-	Vector2 get_sediment_deposit_at(const Vector3 &p_world_pos) const;
-	void clear_sediment_deposit();
 	// Depth-averaged water velocity (m/s, world) at a world position; zero off the river.
 	Vector3 sample_flow(const Vector3 &p_world_pos) const;
 	// Water depth (m) under a world position, <= 0 off the river.

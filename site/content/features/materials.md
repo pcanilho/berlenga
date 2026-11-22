@@ -1,7 +1,6 @@
 ---
 title: "Materials"
 weight: 20
-group: "Rendering"
 summary: "Clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster."
 ---
 
@@ -21,7 +20,7 @@ summary: "Clearcoat, back lighting, thin-glass transmission, subsurface scatteri
 
   *Transmission: the spheres show through and the floor gets green-tinted light.*
 
-- **Raster refraction through solids** (`transmission_thickness`, glTF `KHR_materials_volume` thicknessFactor): raster refraction leaves a solid through its far side, not just the front face, filtered by the refracted footprint so thin curved ice and drops do not speckle.
+- **Raster refraction through solids** (`transmission_thickness`, glTF `KHR_materials_volume` thicknessFactor): raster refraction leaves a solid through its far side, not just the front face.
 
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): matches raster, with traced coat reflections; coat texture.
 
@@ -44,9 +43,4 @@ summary: "Clearcoat, back lighting, thin-glass transmission, subsurface scatteri
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
-- `sun_visibility(world_position)` in spatial shaders returns the sun's shadow and cloud shadow at any point, as a 0 to 1 colour (raster, Forward+ and Mobile).
-- `sun_direction()` in spatial shaders gives the sun's world-space direction, and the fragment output `SUN_SHADOW` multiplies the sun's shadow (raster, Forward+ and Mobile).
-- `OPAQUE_PREPASS_THRESHOLD` in `fragment()` picks which fragments of a `depth_prepass_alpha` material write depth (default 0.99), in all three renderers.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders; `SPECULAR_NORMAL` output, a separate normal for the specular lobe under path tracing.
-- `RAY_FOOTPRINT` in spatial shaders: under path tracing, reads the ray cone's width at the hit, to filter detail smaller than a pixel.
-- `ANISOTROPY` and `ANISOTROPY_FLOW` from custom shaders are path traced as anisotropic GGX.

@@ -45,7 +45,6 @@ void GodotPhysXProjectSettings::register_settings() {
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/simulation/stabilization"), true);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/simulation/cpu_worker_threads", PROPERTY_HINT_RANGE, U"0,32,1"), 0);
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/cloth/tearing"), true);
-	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/streaming/statics_per_step", PROPERTY_HINT_RANGE, U"0,65536,1,or_greater"), 1024);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "physics/physx_3d/simulation/max_depenetration_velocity", PROPERTY_HINT_RANGE, "0,100,0.1,suffix:m/s"), 0.0);
 #ifdef GODOT_PHYSX_GPU
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/simulation/gpu_dynamics"), true);
@@ -66,5 +65,4 @@ void GodotPhysXProjectSettings::read_settings() {
 	cpu_worker_threads = GLOBAL_GET("physics/physx_3d/simulation/cpu_worker_threads");
 	max_depenetration_velocity = GLOBAL_GET("physics/physx_3d/simulation/max_depenetration_velocity");
 	soft_body_mode = GLOBAL_GET("physics/physx_3d/soft_body/mode");
-	statics_per_step = GLOBAL_GET("physics/physx_3d/streaming/statics_per_step");
 }

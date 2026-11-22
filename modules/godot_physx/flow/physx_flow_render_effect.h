@@ -31,7 +31,6 @@
 #pragma once
 
 #include "flow_scatter_rd.h"
-#include "flow_shimmer_rd.h"
 
 #include "core/os/mutex.h"
 #include "core/templates/hash_map.h"
@@ -81,8 +80,6 @@ class PhysXFlowRenderEffect : public CompositorEffect {
 
 	// PhysXFlow3D.light_scattering's pass (shared by every flow).
 	FlowScatterRD scatter;
-	// PhysXFlow3D.heat_shimmer's pass (shared by every flow).
-	FlowShimmerRD shimmer;
 
 	void _render(int p_callback_type, const RenderData *p_render_data);
 
@@ -92,11 +89,9 @@ protected:
 public:
 	// Writes p_src (sampled) over p_dst (an RGBA16F storage image), rgb scaled
 	// by p_scale, on the render thread.
-	void copy_texture(RenderingDevice *p_rd, const RID &p_src, const RID &p_dst, const Size2i &p_size, float p_scale = 1.0f, bool p_keep_alpha = false);
+	void copy_texture(RenderingDevice *p_rd, const RID &p_src, const RID &p_dst, const Size2i &p_size, float p_scale = 1.0f);
 	// Adds point / spot light scattering in a flow's gas onto p_color.
 	FlowScatterRD &get_scatter() { return scatter; }
-	// Bends the frame through a flow's hot air (raster).
-	FlowShimmerRD &get_shimmer() { return shimmer; }
 
 	static void register_flow(PhysXFlow3D *p_flow);
 	static void unregister_flow(PhysXFlow3D *p_flow);

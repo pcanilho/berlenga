@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -54,8 +53,6 @@ class PhysXWaterMist3D : public Node3D {
 	Vector3 source_position; // local
 	Vector3 source_extents = Vector3(3.0f, 0.5f, 1.0f); // local half extents
 	float source_rate = 200.0f; // grams of fine drops a second
-	float column_height = 0.0f; // m above the source's centre: a falling column there sheds mist too (0: none)
-	float column_share = 0.4f; // of source_rate, fed evenly along that column
 	float jet_speed = 3.0f; // m/s: the air leaving the source
 	Vector3 jet_direction = Vector3(0.0f, 0.0f, -1.0f); // local, horizontal: the air spreads round it, never back against it
 	float drop_radius = 20.0f; // micrometres
@@ -65,10 +62,6 @@ class PhysXWaterMist3D : public Node3D {
 	float diffusion = 0.5f; // m^2/s
 	float update_rate = 15.0f; // Hz
 	bool emitting = true;
-	bool wet_surfaces = true;
-	double wet_accum = 0.0;
-	LocalVector<float> wet_cells;
-	void _wet_surfaces();
 
 	Vector3i dims;
 	Vector3 grid_min; // world
@@ -88,7 +81,6 @@ class PhysXWaterMist3D : public Node3D {
 	void _step(float p_dt);
 	void _upload();
 	Vector3 _ambient_wind() const;
-	float _wall_fade(int p_x, int p_y, int p_z) const;
 	float _humidity() const;
 
 protected:
@@ -113,10 +105,6 @@ public:
 	Vector3 get_source_extents() const { return source_extents; }
 	void set_source_rate(float p_rate);
 	float get_source_rate() const { return source_rate; }
-	void set_column_height(float p_height);
-	float get_column_height() const { return column_height; }
-	void set_column_share(float p_share);
-	float get_column_share() const { return column_share; }
 	void set_jet_speed(float p_speed);
 	float get_jet_speed() const { return jet_speed; }
 	void set_jet_direction(const Vector3 &p_direction);
@@ -133,13 +121,6 @@ public:
 	float get_diffusion() const { return diffusion; }
 	void set_update_rate(float p_rate);
 	float get_update_rate() const { return update_rate; }
-	// The mist wets what it drifts against: the WeatherMap3D's contact wetness under the box takes, per column,
-	// the wetness at which the drops deposited balance what dries (weather contact drying time).
-	void set_wet_surfaces(bool p_enabled);
-	bool get_wet_surfaces() const { return wet_surfaces; }
-	// The deposition velocity (m/s) of drops of this radius on rock and plants in a wind of this speed: Stokes
-	// settling plus impaction, about 2% of the wind (fog interception, Lovett 1984; Katata et al. 2008).
-	static float deposition_velocity(float p_radius_um, float p_wind_speed);
 	void set_emitting(bool p_emitting);
 	bool is_emitting() const { return emitting; }
 

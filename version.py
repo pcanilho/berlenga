@@ -5,5 +5,5 @@ minor = 8
 patch = 0
 status = "dev"
 module_config = ""
-website = "https://berlenga.canilho.net"
+website = "https://godotengine.org"
 docs = "latest"

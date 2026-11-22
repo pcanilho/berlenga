@@ -1515,20 +1515,6 @@ layout(location = 0) out vec4 motion_vectors;
 
 /* clang-format off */
 
-// sun_visibility(world_position): the Compatibility renderer keeps its shadows in its own passes, so no
-// directional shadow can be read at an arbitrary point here; the light counts as unshadowed.
-vec3 sun_visibility(vec3 p_world) {
-	return vec3(1.0);
-}
-
-// sun_direction(): zero here, so a per-pixel shadow march (SUN_SHADOW) is skipped.
-vec3 sun_direction() {
-	return vec3(0.0);
-}
-vec3 relief_sun_direction() {
-	return vec3(0.0);
-}
-
 #GLOBALS
 
 /* clang-format on */
@@ -2318,10 +2304,6 @@ void main() {
 	float alpha_hash_scale = 1.0;
 #endif // ALPHA_HASH_USED
 
-#ifdef OPAQUE_PREPASS_THRESHOLD_USED
-	float opaque_prepass_threshold_out = 0.99;
-#endif
-
 #ifdef ALPHA_ANTIALIASING_EDGE_USED
 	float alpha_antialiasing_edge = 0.0;
 	vec2 alpha_texture_coordinate = vec2(0.0, 0.0);
@@ -2331,8 +2313,6 @@ void main() {
 	vec3 light_vertex = vertex;
 #endif //LIGHT_VERTEX_USED
 	float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET (Forward+ only)
-	float positional_shadow_offset = 0.0; // POSITIONAL_SHADOW_OFFSET (Forward+ and Mobile only)
-	float sun_shadow = 1.0; // SUN_SHADOW (Forward+ and Mobile only)
 
 	highp mat3 model_normal_matrix;
 	if (bool(model_flags & uint(FLAGS_NON_UNIFORM_SCALE))) {
@@ -2379,13 +2359,8 @@ void main() {
 #else
 #ifdef MODE_RENDER_DEPTH
 #ifdef USE_OPAQUE_PREPASS
-#ifdef OPAQUE_PREPASS_THRESHOLD_USED
-	float prepass_threshold = opaque_prepass_threshold > 0.9 ? opaque_prepass_threshold_out : opaque_prepass_threshold;
-#else
-	float prepass_threshold = opaque_prepass_threshold;
-#endif
 
-	if (alpha < prepass_threshold) {
+	if (alpha < opaque_prepass_threshold) {
 		discard;
 	}
 #endif // USE_OPAQUE_PREPASS

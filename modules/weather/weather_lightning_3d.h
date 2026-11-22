@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -91,8 +90,6 @@ private:
 		float leader = 0.02f; // s, the stepped leader coming down
 		LocalVector<float> stroke_time;
 		LocalVector<float> stroke_peak;
-		float peak_current = 30.0f; // kA, the first return stroke's
-		bool canopy = false; // struck a tree or something standing, not the bare ground
 		float continuing_start = 0.0f;
 		float continuing_length = 0.0f;
 		float end = 0.5f; // s, when its light is gone
@@ -133,13 +130,11 @@ private:
 	bool raster_light_shadows = true;
 	float raster_shadow_distance = 400.0f;
 	bool thunder_enabled = true;
-	bool record_tree_strikes = true; // canopy strikes go to WorldStand (strike_age_at) for struck-tree variants
 	float thunder_volume_db = 0.0f;
 	StringName thunder_bus = SNAME("Master");
 	uint32_t seed = 1;
 
 	RandomPCG rng;
-	Vector3 _attach_point(const Vector3 &p_below, float p_cloud_base, float p_fallback, float p_peak_current, WeatherMap3D *p_map, bool &r_canopy);
 	double clock = 0.0;
 	uint64_t next_id = 1;
 	LocalVector<Flash> flashes;
@@ -154,7 +149,7 @@ private:
 
 	void _process_frame(double p_delta);
 	void _storm_strikes(WeatherMap3D *p_map, double p_delta, const Vector3 &p_listener);
-	int _start_flash(const Vector3 &p_position, bool p_cloud_to_ground, WeatherMap3D *p_map, float p_storm_radius, bool p_attach = true);
+	int _start_flash(const Vector3 &p_position, bool p_cloud_to_ground, WeatherMap3D *p_map, float p_storm_radius);
 	void _grow_channel(Flash &r_flash, const Vector3 &p_top, const Vector3 &p_ground);
 	void _grow_in_cloud(Flash &r_flash, const Vector3 &p_centre, float p_spread, float p_height);
 	void _plan_timing(Flash &r_flash);
@@ -198,8 +193,6 @@ public:
 	float get_raster_shadow_distance() const { return raster_shadow_distance; }
 	void set_thunder_enabled(bool p_enabled);
 	bool is_thunder_enabled() const { return thunder_enabled; }
-	void set_record_tree_strikes(bool p_enabled) { record_tree_strikes = p_enabled; }
-	bool is_recording_tree_strikes() const { return record_tree_strikes; }
 	void set_thunder_volume_db(float p_db);
 	float get_thunder_volume_db() const { return thunder_volume_db; }
 	void set_thunder_bus(const StringName &p_bus);
@@ -211,28 +204,6 @@ public:
 	float get_flash_rate(float p_cloud_top) const;
 	// The share of flashes that reach the ground for a cloud top and freezing level (m), Price and Rind 1993.
 	static float ground_flash_fraction(float p_cloud_top, float p_freezing_level);
-	// Striking distance (m) for a first return stroke's peak current (kA): the electrogeometric model's
-	// r = 10 I^0.65 (IEC 62305-3).
-	static float striking_distance(float p_peak_current);
-	// Where a storm's ground flash coming down over p_position with p_peak_current kA would land.
-	Vector3 find_strike_point(const Vector3 &p_position, float p_peak_current);
-	// Ground strikes for other systems (fire): a short history shared by every WeatherLightning3D. Each has a
-	// serial; read those after the last one you saw.
-	struct GroundStrike {
-		uint64_t serial = 0;
-		Vector3 position;
-		float peak_current = 0.0f; // kA
-		float continuing_current = 0.0f; // s of long continuing current (0: none), what lights fuels
-		bool canopy = false;
-	};
-	static void get_ground_strikes_after(uint64_t p_serial, LocalVector<GroundStrike> &r_strikes);
-	static uint64_t get_last_ground_strike_serial();
-
-private:
-	static LocalVector<GroundStrike> recent_strikes;
-	static uint64_t strike_serial;
-
-public:
 
 	// A flash now, at world x, z (y is found by a ray down); returns its id.
 	int strike(const Vector3 &p_position, bool p_cloud_to_ground = true);

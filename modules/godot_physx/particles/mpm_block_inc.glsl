@@ -50,20 +50,11 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 extra; // x collider count, y collider friction, z surface iso density, w surface kernel
 	vec4 gran; // unused on this path
 	vec4 blockp; // x = hash slot count (pow2), y = block-pool capacity (MAX_BLOCKS)
-	vec4 diffuse_a; // diffuse particles: x frame dt, y spawn rate, z frame seed, w capacity (0 = off)
-	vec4 diffuse_b; // x mean lifetime, y buoyancy scale, z largest bubble radius, w smallest
-	vec4 diffuse_c; // potential clamps: x/y trapped air (m/s), z/w kinetic energy (J/kg)
 };
 
 layout(set = 0, binding = 1, std430) restrict buffer Particles {
 	Particle particles[];
 };
-
-// A slot given back to a height field (PhysXGroundGrains3D: the grain was deposited) has v.w = 1 until an
-// emit reuses it; every pass skips it. Emitted and seeded particles start with v.w = 0, and g2p writes 0.
-bool particle_dead(uint p_id) {
-	return particles[p_id].v.w > 0.5;
-}
 layout(set = 0, binding = 2, std430) restrict buffer GridAcc {
 	int grid_i[];
 }; // 4 ints / cell: mass, mom.xyz -- indexed (blockslot*64 + celllin)

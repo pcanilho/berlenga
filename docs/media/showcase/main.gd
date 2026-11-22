@@ -1,12 +1,8 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|plaza|room|textures|glass|far|night|physx|fluid|tearing|campfire --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|plaza|room|textures|glass|far|night|physx|tearing --spp=N --rr --out=path.png --frames=N --far=N --raster
 # --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
 # --bounces=N (path tracing bounces after the shot sets its own; 0: direct light only)
-# --flow=property:value (a PhysXFlow3D property in the physx shot, or a PhysXParticleFluid3D one in the fluid shot)
-# --sky (the physx shot under a procedural sky that is also its ambient light)
-# --sun=pitch,yaw (the physx shot's sun, in degrees)
-# --freeze=N (raster until N frames before the end, then time stops and the path tracer accumulates)
 var shot := "lights"
 var spp := 16
 var out := "out.png"
@@ -15,10 +11,6 @@ var far := 0
 var raster := false
 var rr := false
 var bounces := -1
-var flow_props := {}
-var sky := false
-var sun_rotation := Vector3.INF # --sun=pitch,yaw (degrees): the physx shot's sun
-var freeze := 0
 var n := 0
 var env := Environment.new()
 
@@ -32,21 +24,13 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a == "--rr": rr = true
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
-		elif a.begins_with("--flow="):
-			var fkv := a.substr(7).split(":")
-			flow_props[fkv[0]] = float(fkv[1])
-		elif a == "--sky": sky = true
-		elif a.begins_with("--sun="):
-			var sv := a.substr(6).split(",")
-			sun_rotation = Vector3(float(sv[0]), float(sv[1]), 0)
-		elif a.begins_with("--freeze="): freeze = int(a.substr(9))
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
 			ProjectSettings.set_setting(kv[0], float(kv[1]))
 	seed(11)
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0, 0, 0)
-	env.pathtracing_enabled = not raster and freeze <= 0
+	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = 3
 	env.pathtracing_denoiser = 0
@@ -281,15 +265,9 @@ func shot_physx() -> void:
 	env.background_color = Color(0.05, 0.06, 0.08)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.12, 0.12, 0.14)
-	if sky:
-		var s := Sky.new()
-		s.sky_material = ProceduralSkyMaterial.new()
-		env.sky = s
-		env.background_mode = Environment.BG_SKY
-		env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	camera(Vector3(0.3, 2.3, 6.6), Vector3(0, 1.2, -0.4), 50)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-40, 160, 0) if sun_rotation == Vector3.INF else sun_rotation
+	sun.rotation_degrees = Vector3(-40, 160, 0)
 	sun.light_energy = 1.4
 	sun.shadow_enabled = true
 	add_child(sun)
@@ -394,8 +372,6 @@ func shot_physx() -> void:
 	var flow = ClassDB.instantiate("PhysXFlow3D")
 	flow.smoke_density = 8.0
 	flow.position = Vector3(2.5, 0, 0.6)
-	for k in flow_props:
-		flow.set(k, flow_props[k])
 	add_child(flow)
 	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
 	em.position = Vector3(0, 0.3, 0)
@@ -436,479 +412,6 @@ func shot_physx() -> void:
 
 # A small lit scene --far metres from the world origin on x and z (try 65536), for
 # rendering/pathtracing/relative_origin_grid on and off.
-# Water from a pipe in a plastered wall pouring into a wooden bucket on a tiled floor, under a low side
-# sun, at the PhysXParticleFluid3D defaults (clear water, isosurface). The bucket's walls, the floor and the
-# wall are static boxes the fluid finds by itself (mpm_auto_colliders). A fine particle size keeps the
-# surface smooth. Needs the CC0 Poly Haven assets fetch_ext.sh downloads into ext/.
-func ext_material(name: String, uv_scale: float, metallic := 0.0) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	var dir := "res://ext/%s/" % name
-	m.albedo_texture = ImageTexture.create_from_image(Image.load_from_file(dir + "Diffuse.jpg"))
-	m.normal_enabled = true
-	m.normal_texture = ImageTexture.create_from_image(Image.load_from_file(dir + "nor_gl.jpg"))
-	m.roughness_texture = ImageTexture.create_from_image(Image.load_from_file(dir + "Rough.jpg"))
-	m.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
-	m.ao_enabled = true
-	m.ao_texture = ImageTexture.create_from_image(Image.load_from_file(dir + "AO.jpg"))
-	m.metallic = metallic
-	m.uv1_triplanar = true
-	m.uv1_world_triplanar = true
-	m.uv1_scale = Vector3.ONE * uv_scale
-	return m
-
-# A pipe along +Z with a real bore: outer and inner walls and the ring at the open end.
-func pipe_mesh(r_out: float, r_in: float, length: float, m: Material) -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var seg := 32
-	for k in seg:
-		var a0 := TAU * k / seg
-		var a1 := TAU * (k + 1) / seg
-		var d0 := Vector3(cos(a0), sin(a0), 0)
-		var d1 := Vector3(cos(a1), sin(a1), 0)
-		for wall in [[r_out, 1.0], [r_in, -1.0]]:
-			var r: float = wall[0]
-			var sgn: float = wall[1]
-			var p00 := d0 * r
-			var p01 := d1 * r
-			var p10 := d0 * r + Vector3(0, 0, length)
-			var p11 := d1 * r + Vector3(0, 0, length)
-			var tri := [p00, p10, p11, p00, p11, p01] if sgn > 0.0 else [p00, p11, p10, p00, p01, p11]
-			for v in tri:
-				var vv: Vector3 = v
-				st.set_normal(Vector3(vv.x, vv.y, 0).normalized() * sgn)
-				st.set_uv(Vector2(vv.z, atan2(vv.y, vv.x)))
-				st.add_vertex(vv)
-		var z := Vector3(0, 0, length)
-		for v in [d0 * r_in + z, d1 * r_out + z, d0 * r_out + z, d0 * r_in + z, d1 * r_in + z, d1 * r_out + z]:
-			st.set_normal(Vector3(0, 0, 1))
-			st.add_vertex(v)
-	st.set_material(m)
-	return st.commit()
-
-func static_box(size: Vector3, xform: Transform3D) -> void:
-	var body := StaticBody3D.new()
-	var cs := CollisionShape3D.new()
-	var bs := BoxShape3D.new()
-	bs.size = size
-	cs.shape = bs
-	body.add_child(cs)
-	body.transform = xform
-	add_child(body)
-
-# Cold, heavy smoke released on the flank of a valley built as a trimesh (not a box), so only the Flow
-# terrain_floor keeps it out of the ground: it should slide down the slope and pool along the valley floor.
-# Compare with --flow=terrain_floor:0.
-func valley_h(x: float, z: float) -> float:
-	return 0.45 * abs(x) + 0.12 * z
-
-func shot_flowslope() -> void:
-	if not ClassDB.class_exists("PhysXFlow3D"):
-		push_error("This build has no PhysX module.")
-		get_tree().quit(1)
-		return
-	var s := Sky.new()
-	s.sky_material = ProceduralSkyMaterial.new()
-	env.sky = s
-	env.background_mode = Environment.BG_SKY
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-35, -60, 0)
-	sun.light_energy = 1.6
-	sun.shadow_enabled = true
-	add_child(sun)
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var n := 48
-	var half := 9.0
-	var faces := PackedVector3Array()
-	for j in n:
-		for i in n:
-			var x0 := -half + 2.0 * half * i / n
-			var x1 := -half + 2.0 * half * (i + 1) / n
-			var z0 := -half + 2.0 * half * j / n
-			var z1 := -half + 2.0 * half * (j + 1) / n
-			var q := [Vector3(x0, valley_h(x0, z0), z0), Vector3(x1, valley_h(x1, z0), z0), Vector3(x1, valley_h(x1, z1), z1), Vector3(x0, valley_h(x0, z1), z1)]
-			for v in [q[0], q[1], q[2], q[0], q[2], q[3]]:
-				st.add_vertex(v)
-				faces.append(v)
-	st.generate_normals()
-	st.set_material(mat(Color(0.42, 0.40, 0.36), 0.9))
-	var ground := MeshInstance3D.new()
-	ground.mesh = st.commit()
-	add_child(ground)
-	var body := StaticBody3D.new()
-	var cs := CollisionShape3D.new()
-	var tri := ConcavePolygonShape3D.new()
-	tri.set_faces(faces)
-	cs.shape = tri
-	body.add_child(cs)
-	add_child(body)
-	var flow = ClassDB.instantiate("PhysXFlow3D")
-	flow.cell_size = 0.08
-	flow.smoke_density = 6.0
-	flow.smoke_fade = 0.15
-	flow.combustion = false
-	flow.smoke_buoyancy = -3.0 # heavier than air
-	for k in flow_props:
-		flow.set(k, flow_props[k])
-	add_child(flow)
-	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
-	em.position = Vector3(-4.0, valley_h(-4.0, -2.0) + 0.5, -2.0)
-	em.radius = 0.5
-	em.velocity = Vector3(1.5, -0.5, 0.0)
-	em.smoke = 1.0
-	em.temperature = 0.0
-	flow.add_child(em)
-	em.flow = em.get_path_to(flow)
-	camera(Vector3(3.0, 4.2, 5.0), Vector3(-1.8, 1.0, -1.5), 50)
-	if OS.get_cmdline_user_args().has("--vehicle"):
-		# A car (its shapes live on its own PhysX actor, not Godot's) driving down the valley floor through
-		# the pooled dust: the gas must part round it, with no errors gathering its colliders.
-		var car = ClassDB.instantiate("PhysXVehicle3D")
-		car.mass = 900.0
-		car.max_engine_torque = 300.0
-		car.can_sleep = false
-		var ccs := CollisionShape3D.new()
-		ccs.shape = BoxShape3D.new()
-		(ccs.shape as BoxShape3D).size = Vector3(1.6, 0.6, 3.2)
-		ccs.position = Vector3(0, 0.45, 0)
-		car.add_child(ccs)
-		var body_mesh := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(1.6, 0.6, 3.2)
-		bm.material = mat(Color(0.6, 0.15, 0.1), 0.5)
-		body_mesh.mesh = bm
-		body_mesh.position = ccs.position
-		car.add_child(body_mesh)
-		for k in 4:
-			var w = ClassDB.instantiate("PhysXVehicleWheel3D")
-			w.position = Vector3(0.75 if k % 2 == 0 else -0.75, 0.0, 1.1 if k < 2 else -1.1)
-			w.radius = 0.32
-			w.half_width = 0.12
-			w.use_as_steering = k < 2
-			w.use_as_traction = true
-			car.add_child(w)
-		car.position = Vector3(0.0, valley_h(0.0, -7.5) + 0.6, -7.5)
-		add_child(car)
-		get_tree().create_timer(2.0, true, true).timeout.connect(func() -> void: car.throttle = 0.6)
-	if OS.get_cmdline_user_args().has("--mover"):
-		# A crate sliding down the flank through the dust: it must push the gas, and never become floor.
-		var crate := RigidBody3D.new()
-		var cc := CollisionShape3D.new()
-		var cbs := BoxShape3D.new()
-		cbs.size = Vector3(0.8, 0.8, 0.8)
-		cc.shape = cbs
-		crate.add_child(cc)
-		var cm := MeshInstance3D.new()
-		var cbm := BoxMesh.new()
-		cbm.size = cbs.size
-		cbm.material = mat(Color(0.55, 0.42, 0.28), 0.8)
-		cm.mesh = cbm
-		crate.add_child(cm)
-		crate.physics_material_override = PhysicsMaterial.new()
-		crate.physics_material_override.friction = 0.05
-		crate.position = Vector3(-6.5, valley_h(-6.5, -1.6) + 0.7, -1.6)
-		add_child(crate)
-
-# A campfire on a wooded slope at dusk: Flow combustion (fuel burns above its ignition temperature into heat and
-# smoke), the gas glowing by its heat, PhysXFlow3D's fire light (raster) and embers, and the smoke, heavier than
-# the air once cool, settling down the slope on the terrain floor. Poly Haven CC0 assets (fetch_ext.sh).
-func campfire_h(x: float, z: float) -> float:
-	return 0.14 * z + 0.03 * sin(1.7 * x) * cos(1.3 * z)
-
-func gltf_scene(path: String) -> Node3D:
-	var doc := GLTFDocument.new()
-	var gstate := GLTFState.new()
-	doc.append_from_file(path, gstate)
-	return doc.generate_scene(gstate)
-
-func shot_campfire() -> void:
-	if not ClassDB.class_exists("PhysXFlow3D"):
-		push_error("This build has no PhysX module.")
-		get_tree().quit(1)
-		return
-	if not FileAccess.file_exists("res://ext/rocks/rock_moss_set_01_1k.gltf"):
-		push_error("Run fetch_ext.sh first: the campfire shot uses CC0 Poly Haven assets.")
-		get_tree().quit(1)
-		return
-	# Dusk: a low, cool sky; the fire is the warm light.
-	var s := Sky.new()
-	var sm := ProceduralSkyMaterial.new()
-	sm.sky_top_color = Color(0.10, 0.14, 0.26)
-	sm.sky_horizon_color = Color(0.36, 0.30, 0.34)
-	sm.ground_horizon_color = Color(0.20, 0.18, 0.18)
-	sm.ground_bottom_color = Color(0.05, 0.05, 0.05)
-	sm.sky_energy_multiplier = 0.35
-	s.sky_material = sm
-	env.sky = s
-	env.background_mode = Environment.BG_SKY
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.6
-	# Dusk haze: the far ground fades into the sky.
-	env.fog_enabled = true
-	env.fog_light_color = Color(0.12, 0.1, 0.12)
-	env.fog_density = 0.03
-	env.fog_sky_affect = 0.0
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-8, 120, 0) if sun_rotation == Vector3.INF else sun_rotation
-	sun.light_color = Color(0.75, 0.62, 0.65)
-	sun.light_energy = 0.25
-	sun.shadow_enabled = true
-	add_child(sun)
-	# Looking down at the fire, so the frame ends on firelit and dark ground, not at a horizon.
-	camera(Vector3(1.7, campfire_h(1.7, 2.2) + 1.6, 2.2), Vector3(0.0, 0.12, -0.15), 30)
-
-	# Ground: forest floor, burned black in a ring round the fire (one shader, so raster and PT agree).
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var n := 120
-	var half := 30.0
-	var faces := PackedVector3Array()
-	for j in n:
-		for i in n:
-			var x0 := -half + 2.0 * half * i / n
-			var x1 := -half + 2.0 * half * (i + 1) / n
-			var z0 := -half + 2.0 * half * j / n
-			var z1 := -half + 2.0 * half * (j + 1) / n
-			var q := [Vector3(x0, campfire_h(x0, z0), z0), Vector3(x1, campfire_h(x1, z0), z0), Vector3(x1, campfire_h(x1, z1), z1), Vector3(x0, campfire_h(x0, z1), z1)]
-			for v in [q[0], q[1], q[2], q[0], q[2], q[3]]:
-				st.set_uv(Vector2(v.x, v.z))
-				st.add_vertex(v)
-				faces.append(v)
-	st.generate_normals()
-	st.generate_tangents()
-	var gsh := Shader.new()
-	gsh.code = """shader_type spatial;
-uniform sampler2D forest_albedo : source_color, filter_linear_mipmap, repeat_enable;
-uniform sampler2D forest_normal : hint_normal, filter_linear_mipmap, repeat_enable;
-uniform sampler2D forest_rough : filter_linear_mipmap, repeat_enable;
-uniform sampler2D burn_albedo : source_color, filter_linear_mipmap, repeat_enable;
-uniform sampler2D burn_normal : hint_normal, filter_linear_mipmap, repeat_enable;
-uniform sampler2D burn_rough : filter_linear_mipmap, repeat_enable;
-uniform vec2 fire = vec2(0.0);
-void fragment() {
-	vec2 uv = UV * 0.5;
-	float r = length(UV - fire);
-	float edge = texture(burn_rough, UV * 0.37).g;
-	float b = 1.0 - smoothstep(0.7, 1.4, r + 0.3 * (edge - 0.5));
-	ALBEDO = mix(texture(forest_albedo, uv).rgb, texture(burn_albedo, uv * 1.5).rgb, b);
-	NORMAL_MAP = mix(texture(forest_normal, uv).rgb, texture(burn_normal, uv * 1.5).rgb, b);
-	ROUGHNESS = mix(texture(forest_rough, uv).g, texture(burn_rough, uv * 1.5).g, b);
-}
-"""
-	var gm := ShaderMaterial.new()
-	gm.shader = gsh
-	for pair in [["forest", "forest_ground_04"], ["burn", "burned_ground_01"]]:
-		var dir := "res://ext/%s/" % pair[1]
-		gm.set_shader_parameter(pair[0] + "_albedo", ImageTexture.create_from_image(Image.load_from_file(dir + "Diffuse.jpg")))
-		gm.set_shader_parameter(pair[0] + "_normal", ImageTexture.create_from_image(Image.load_from_file(dir + "nor_gl.jpg")))
-		gm.set_shader_parameter(pair[0] + "_rough", ImageTexture.create_from_image(Image.load_from_file(dir + "Rough.jpg")))
-	st.set_material(gm)
-	var ground := MeshInstance3D.new()
-	ground.mesh = st.commit()
-	add_child(ground)
-	var body := StaticBody3D.new()
-	var cs := CollisionShape3D.new()
-	var tri := ConcavePolygonShape3D.new()
-	tri.set_faces(faces)
-	cs.shape = tri
-	body.add_child(cs)
-	add_child(body)
-
-	# A ring of mossy stones (the rock set's six rocks, scaled to 25-35 cm, twice round) and dry branches leaned
-	# into a cone over the fire.
-	var rocks := gltf_scene("res://ext/rocks/rock_moss_set_01_1k.gltf")
-	var rock_meshes := []
-	for c in rocks.find_children("*", "MeshInstance3D", true, false):
-		rock_meshes.append(c)
-	var ring := 11
-	for k in ring:
-		var src: MeshInstance3D = rock_meshes[k % rock_meshes.size()]
-		var r := MeshInstance3D.new()
-		r.mesh = src.mesh
-		var a := TAU * k / ring
-		var p := Vector3(cos(a) * 0.5, 0, sin(a) * 0.5)
-		p.y = campfire_h(p.x, p.z) + 0.02
-		var sc := 0.11 + 0.025 * sin(3.7 * k)
-		r.transform = Transform3D(Basis(Vector3.UP, a * 1.7 + k).scaled(Vector3(sc, sc * 0.8, sc)), p)
-		add_child(r)
-	rocks.free()
-	var sticks := gltf_scene("res://ext/branches/dry_branches_medium_01_1k.gltf")
-	var stick_meshes := []
-	for c in sticks.find_children("*", "MeshInstance3D", true, false):
-		stick_meshes.append(c)
-	var base_y := campfire_h(0, 0)
-	# The burning ends char and glow: the wood's own textures, blackened towards the fuel bed, with glowing cracks
-	# (Voronoi cell edges, the alligator pattern of charred wood) whose glow is the blackbody colour of the heat.
-	var char_sh := Shader.new()
-	char_sh.code = """shader_type spatial;
-uniform sampler2D albedo_tex : source_color, filter_linear_mipmap, repeat_enable;
-uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap, repeat_enable;
-uniform sampler2D rough_tex : filter_linear_mipmap, repeat_enable;
-uniform vec3 fire = vec3(0.0);
-varying vec3 wpos;
-vec3 hash3(vec3 p) {
-	p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6)));
-	return fract(sin(p) * 43758.5453);
-}
-// Distance to the nearest Voronoi cell edge (F2 - F1).
-float cell_edge(vec3 p) {
-	vec3 i = floor(p);
-	float f1 = 8.0, f2 = 8.0;
-	for (int z = -1; z <= 1; z++) for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
-		vec3 c = vec3(float(x), float(y), float(z));
-		float d = length(i + c + hash3(i + c) - p);
-		if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) { f2 = d; }
-	}
-	return f2 - f1;
-}
-void vertex() {
-	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-}
-void fragment() {
-	vec3 d = wpos - fire;
-	float heat = (1.0 - smoothstep(0.04, 0.24, length(d.xz))) * (1.0 - smoothstep(0.02, 0.32, d.y));
-	float charred = smoothstep(0.0, 0.35, heat + 0.15 * (hash3(floor(wpos * 60.0)).x - 0.5));
-	vec3 wood = texture(albedo_tex, UV).rgb;
-	ALBEDO = mix(wood, vec3(0.025, 0.022, 0.02), charred);
-	NORMAL_MAP = texture(normal_tex, UV).rgb;
-	ROUGHNESS = mix(texture(rough_tex, UV).g, 0.9, charred);
-	float crack = 1.0 - smoothstep(0.02, 0.09, cell_edge(wpos * 55.0));
-	float glow = crack * smoothstep(0.35, 0.9, heat);
-	EMISSION = vec3(1.0, 0.33, 0.04) * glow * 6.0;
-}
-"""
-	for k in 7:
-		var src: MeshInstance3D = stick_meshes[k % stick_meshes.size()]
-		var m := MeshInstance3D.new()
-		m.mesh = src.mesh
-		var std := src.mesh.surface_get_material(0) as StandardMaterial3D
-		if std == null:
-			std = src.get_active_material(0) as StandardMaterial3D
-		if std:
-			var cm := ShaderMaterial.new()
-			cm.shader = char_sh
-			cm.set_shader_parameter("albedo_tex", std.albedo_texture)
-			cm.set_shader_parameter("normal_tex", std.normal_texture)
-			cm.set_shader_parameter("rough_tex", std.roughness_texture)
-			cm.set_shader_parameter("fire", Vector3(0, base_y, 0))
-			m.material_override = cm
-		var a := TAU * k / 7 + 0.3
-		# Leaned into a cone: foot on the ground, tip over the fire's centre.
-		var foot := Vector3(cos(a) * 0.3, base_y, sin(a) * 0.3)
-		var tip := Vector3(0.02 * cos(3.0 * a), base_y + 0.36, 0.02 * sin(3.0 * a))
-		var z := (tip - foot).normalized()
-		var x := z.cross(Vector3.UP).normalized()
-		var bz := Basis(x, z.cross(x), z)
-		m.transform = Transform3D(bz.scaled(Vector3.ONE * 0.45), (foot + tip) * 0.5)
-		add_child(m)
-	sticks.free()
-
-	var flow = ClassDB.instantiate("PhysXFlow3D")
-	flow.cell_size = 0.015
-	flow.smoke_density = 0.7
-	flow.combustion = true
-	# Flames about 0.7 m tall, as Heskestad's flame-height correlation gives for a ~50 kW campfire 0.4 m across:
-	# the gas cools out of its glow in about a third of a second of rise.
-	flow.cooling_rate = 7.0
-	flow.vorticity = 4.0
-	flow.buoyancy = 4.0 # hot gas rises fast and stretches into tongues
-	flow.emission_strength = 8.0 # a campfire's flame against dusk exposure
-	flow.temperature_range = 1.0 # the fuel bed's gas at the ramp's top, a sooty flame's ~1,500 K core
-	flow.smoke_buoyancy = -0.4 # cooled smoke is heavier than the dusk air and drifts down the slope
-	for k in flow_props:
-		flow.set(k, flow_props[k])
-	add_child(flow)
-	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
-	em.position = Vector3(0, base_y + 0.05, 0)
-	em.shape = 1 # box: a bed of burning wood
-	em.size = Vector3(0.32, 0.06, 0.32)
-	em.fuel = 1.0
-	em.temperature = 1.0
-	em.burn = 0.0
-	em.smoke = 0.02
-	em.divergence = 0.3
-	em.velocity = Vector3(0, 1.0, 0)
-	flow.add_child(em)
-	em.flow = em.get_path_to(flow)
-
-func shot_fluid() -> void:
-	if not ClassDB.class_exists("PhysXParticleFluid3D"):
-		push_error("This build has no PhysX module.")
-		get_tree().quit(1)
-		return
-	if not FileAccess.file_exists("res://ext/bucket/wooden_bucket_01_1k.gltf"):
-		push_error("Run fetch_ext.sh first: the fluid shot uses CC0 Poly Haven assets.")
-		get_tree().quit(1)
-		return
-	var s := Sky.new()
-	s.sky_material = ProceduralSkyMaterial.new()
-	env.sky = s
-	env.background_mode = Environment.BG_SKY
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ssr_enabled = true
-	camera(Vector3(0.75, 1.0, 0.8), Vector3(0.0, 0.4, -0.22), 44)
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-28, -65, 0) if sun_rotation == Vector3.INF else sun_rotation
-	sun.light_energy = 1.8
-	sun.shadow_enabled = true
-	add_child(sun)
-	# Floor and wall.
-	box(Vector3(20, 0.2, 20), Vector3(0, -0.1, 0), ext_material("large_grey_tiles", 0.5))
-	static_box(Vector3(20, 0.2, 20), Transform3D(Basis(), Vector3(0, -0.1, 0)))
-	box(Vector3(20, 4, 0.2), Vector3(0, 2.0, -0.7), ext_material("plastered_stone_wall", 0.5))
-	static_box(Vector3(20, 4, 0.2), Transform3D(Basis(), Vector3(0, 2.0, -0.7)))
-	# The pipe out of the wall: a flange on the wall and an open bore at its end.
-	var metal := ext_material("metal_plate", 4.0, 0.85)
-	var pipe := MeshInstance3D.new()
-	pipe.mesh = pipe_mesh(0.026, 0.02, 0.32, metal)
-	pipe.position = Vector3(0, 0.78, -0.6)
-	add_child(pipe)
-	var flange := MeshInstance3D.new()
-	var fm := CylinderMesh.new()
-	fm.top_radius = 0.06
-	fm.bottom_radius = 0.06
-	fm.height = 0.02
-	fm.material = metal
-	flange.mesh = fm
-	flange.rotation_degrees = Vector3(90, 0, 0)
-	flange.position = Vector3(0, 0.78, -0.59)
-	add_child(flange)
-	# The bucket: Poly Haven's wooden_bucket_01, its walls held by a ring of boxes and a bottom.
-	var doc := GLTFDocument.new()
-	var gstate := GLTFState.new()
-	doc.append_from_file("res://ext/bucket/wooden_bucket_01_1k.gltf", gstate)
-	var bucket: Node3D = doc.generate_scene(gstate)
-	var bucket_pos := Vector3(0, 0, -0.16)
-	bucket.position = bucket_pos
-	bucket.rotation_degrees = Vector3(0, 40, 0)
-	add_child(bucket)
-	# The staves lean out: about 13 cm inside at the bottom, 16 cm at the rim.
-	var ring := 16
-	var lean := atan2(0.03, 0.33)
-	for k in ring:
-		var a := TAU * k / ring
-		var r := 0.145 + 0.0175
-		var basis := Basis(Vector3.UP, a) * Basis(Vector3(0, 0, 1), -lean)
-		static_box(Vector3(0.035, 0.36, 2.0 * r * tan(PI / ring) + 0.02), Transform3D(basis, bucket_pos + Vector3(cos(a) * r, 0.17, -sin(a) * r)))
-	static_box(Vector3(0.3, 0.04, 0.3), Transform3D(Basis(), bucket_pos + Vector3(0, 0.02, 0)))
-	var fluid = ClassDB.instantiate("PhysXParticleFluid3D")
-	fluid.position = Vector3(0, 0.78, -0.27)
-	fluid.particle_size = 0.007
-	fluid.particle_count = 120000
-	fluid.mpm_domain_size = Vector3(1.2, 1.6, 1.2)
-	fluid.spawn_on_ready = false
-	fluid.emitting = true
-	fluid.emission_radius = 0.016
-	fluid.emission_velocity = Vector3(0.0, 0.0, 0.5)
-	fluid.emission_rate = 8000.0
-	for k in flow_props:
-		fluid.set(k, flow_props[k])
-	if OS.get_cmdline_user_args().has("--fluid-opaque"):
-		fluid.material_override = mat(Color(0.9, 0.9, 0.9), 0.5)
-	add_child(fluid)
-
 func shot_far() -> void:
 	env.background_color = Color(0.25, 0.3, 0.4)
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
@@ -991,9 +494,6 @@ func shot_night() -> void:
 
 func _process(_d: float) -> void:
 	n += 1
-	if freeze > 0 and n == frames - freeze:
-		Engine.time_scale = 0.0
-		env.pathtracing_enabled = true
 	if n == frames:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)

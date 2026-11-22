@@ -24,80 +24,16 @@
 				Each newly detached piece gets a real outward velocity -- radial direction from [param world_position] to that piece's own centroid, scaled by [member shatter_speed] and the same distance falloff the damage itself used, plus a slight upward bias.
 			</description>
 		</method>
-		<method name="get_piece_center" qualifiers="const">
-			<return type="Vector3" />
-			<param index="0" name="index" type="int" />
-			<description>
-				Returns the world position of the middle of the piece's chunks, from its live body and the node's scale. [code]Vector3(0, 0, 0)[/code] for an out-of-range index or a dead body.
-			</description>
-		</method>
-		<method name="get_piece_chunks" qualifiers="const">
-			<return type="PackedInt32Array" />
-			<param index="0" name="index" type="int" />
-			<description>
-				Returns the asset chunk indices piece [param index] carries: one for a lone chunk, several for an island that is still bonded. For an asset from [method PhysXBlastAuthoring.build_prefractured], chunk [code]i + 1[/code] is piece [code]i[/code].
-			</description>
-		</method>
 		<method name="get_piece_count">
 			<return type="int" />
 			<description>
 				Returns how many pieces are live right now: [code]1[/code] while intact (the chunk-0 placeholder), then one per still-simulating piece, dropping as debris passes [member kill_y] or reaches its [member piece_lifetime]. A chunk's piece is always freed before that chunk can be spawned again (e.g. when a still-bonded group's later split re-emits chunks that were already live), so this never exceeds the asset's visible chunk count no matter how many times it fractures.
 			</description>
 		</method>
-		<method name="get_piece_linear_velocity" qualifiers="const">
-			<return type="Vector3" />
-			<param index="0" name="index" type="int" />
-			<description>
-				Returns the piece's linear velocity from its live body, for effects that follow debris (dust at impacts). [code]Vector3(0, 0, 0)[/code] for an out-of-range index or a dead body.
-			</description>
-		</method>
-		<method name="get_piece_mass" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="index" type="int" />
-			<description>
-				Returns the mass of the piece's live body. [code]0.0[/code] for an out-of-range index or a dead body.
-			</description>
-		</method>
-		<method name="get_piece_rest_center" qualifiers="const">
-			<return type="Vector3" />
-			<param index="0" name="index" type="int" />
-			<description>
-				Where the piece's chunks sat in the intact object, in this node's local space: for effects that marked a part of the intact object (a burning patch) and follow it onto the pieces.
-			</description>
-		</method>
-		<method name="get_piece_volume" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="index" type="int" />
-			<description>
-				The volume of the piece's chunks, in cubic metres, with the node's scale.
-			</description>
-		</method>
-		<method name="get_render_materials" qualifiers="const">
-			<return type="Array" />
-			<description>
-				The materials its chunks draw with: [member material_override] alone when set, else the asset's materials by slot. For effects that restyle every piece (see [method set_material_remap]).
-			</description>
-		</method>
 		<method name="is_fractured" qualifiers="const">
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] once a hit has broken anything off this object. It stays [code]true[/code] from then on, even after every piece is gone. See also [signal fractured].
-			</description>
-		</method>
-		<method name="set_instance_shader_parameter">
-			<return type="void" />
-			<param index="0" name="name" type="StringName" />
-			<param index="1" name="value" type="Variant" />
-			<description>
-				Sets an instance shader parameter on every piece, live and spawned later (a [PhysXBurnable3D] sets its char front this way).
-			</description>
-		</method>
-		<method name="set_material_remap">
-			<return type="void" />
-			<param index="0" name="from" type="Material" />
-			<param index="1" name="to" type="Material" />
-			<description>
-				Draws [param to] wherever a piece would draw [param from] (one of [method get_render_materials]), on every piece, live and spawned later: a [PhysXBurnable3D] swaps in its burning look this way, so the char stays on the pieces as the structure breaks.
 			</description>
 		</method>
 	</methods>
@@ -113,9 +49,6 @@
 		</member>
 		<member name="blast_asset" type="PhysXBlastAsset" setter="set_blast_asset" getter="get_blast_asset">
 			The fractured mesh data to use, saved by the in-editor fracture dialog (or [PhysXBlastAuthoring] directly). Preferred over [member asset_path] / [member chunks_path] when set.
-		</member>
-		<member name="buried_below_y" type="float" setter="set_buried_below_y" getter="get_buried_below_y" default="-1e+09">
-			Pieces whose middle starts below this world height stay where they are: static, with no outward kick. This is for the part of an object set into the ground, such as a half-buried stone, which would otherwise start inside the terrain and be pushed down through it. The default, far below anything, turns this off.
 		</member>
 		<member name="cast_shadow" type="int" setter="set_cast_shadow" getter="get_cast_shadow" enum="PhysXDestructible3D.ShadowCastingSetting" default="1">
 			Shadow-casting behavior for every piece's render mesh, the same four settings as [member GeometryInstance3D.cast_shadow]. Applies uniformly, intact or fractured -- changing it re-pushes to every already-existing piece immediately.
@@ -150,12 +83,6 @@
 		<member name="impact_damage_scale" type="float" setter="set_impact_damage_scale" getter="get_impact_damage_scale" default="1.0">
 			[member dynamic]-only. Once a collision's impulse clears [member impact_strength], this scales how much extra damage the excess produces: [code]damage = (impulse - impact_strength) * impact_damage_scale[/code] (before the [member health] × 1.5 floor -- see [method apply_radial_damage]'s note). Raise it so impacts that do clear the threshold break things more decisively; it has no effect on whether an impact counts as a hit at all, only on how much damage a qualifying one deals.
 		</member>
-		<member name="initial_angular_velocity" type="Vector3" setter="set_initial_angular_velocity" getter="get_initial_angular_velocity" default="Vector3(0, 0, 0)">
-			[member dynamic]-only. The angular velocity the intact body starts with, in radians per second. Set it before the node enters the tree, or while it is still intact after: the body then takes it at once. Use it with [member initial_linear_velocity] when swapping a moving object for a destructible, so it keeps its motion.
-		</member>
-		<member name="initial_linear_velocity" type="Vector3" setter="set_initial_linear_velocity" getter="get_initial_linear_velocity" default="Vector3(0, 0, 0)">
-			[member dynamic]-only. The linear velocity the intact body starts with (a falling tree swapped for a destructible mid-fall keeps falling). Set it before the node enters the tree, or while it is still intact after: the body then takes it at once.
-		</member>
 		<member name="impact_radius" type="float" setter="set_impact_radius" getter="get_impact_radius" default="5.0">
 			[member dynamic]-only. The [code]max_radius[/code] passed to the auto-triggered [method apply_radial_damage] call on a qualifying impact, centered on the contact point ([code]min_radius[/code] is always [code]0[/code] for this path -- full damage right at the contact, falling off to [member impact_radius]). How far a hard impact's damage reaches into the rest of the object, not how hard the impact needs to be.
 		</member>
@@ -167,9 +94,6 @@
 		</member>
 		<member name="lod_bias" type="float" setter="set_lod_bias" getter="get_lod_bias" default="1.0">
 			Mesh LOD selection bias for every piece, the same as [member GeometryInstance3D.lod_bias]. Higher values keep more detail at a distance.
-		</member>
-		<member name="max_depenetration_velocity" type="float" setter="set_max_depenetration_velocity" getter="get_max_depenetration_velocity" default="3.0">
-			How fast, in m/s, the PhysX engine may push this destructible's pieces out of an overlap. Pieces split at a break start touching, and with no cap they were thrown apart at tens of m/s, through the ground. [code]0[/code] leaves it to [member ProjectSettings.physics/physx_3d/simulation/max_depenetration_velocity] (uncapped by default). Other physics engines ignore it.
 		</member>
 		<member name="mass" type="float" setter="set_mass" getter="get_mass" default="1.0">
 			The whole intact object's mass, same meaning as [member RigidBody3D.mass]. Read-only while [member auto_mass] is on (see its own note). Once fractured, each piece gets a share of this proportional to its own volume -- a large remaining chunk and a tiny sliver don't get the same weight.

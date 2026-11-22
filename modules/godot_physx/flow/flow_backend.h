@@ -71,8 +71,6 @@ struct Emitter {
 	float smoke = 1.0f;
 	float divergence = 0.0f;
 	float couple_rate = 2.0f;
-	// false: acts only where gas already is (the ambient wind), reserving no blocks of its own.
-	bool allocate = true;
 	// A solid for the gas: zero smoke/heat inside, the gas takes on
 	// body_velocity there. Allocates no grid of its own.
 	bool collision = false;
@@ -83,10 +81,8 @@ struct Settings {
 	float cell_size = 0.05f; // meters
 	float gravity[3] = { 0, -9.81f, 0 }; // m/s^2, sets "up" for buoyancy
 	float buoyancy = 2.0f; // per unit temperature
-	float smoke_buoyancy = 0.0f; // per unit smoke: below 0, the smoke is heavier than air (dust)
 	float cooling_rate = 1.5f;
 	float smoke_fade = 0.65f;
-	float smoke_damping = 0.3f; // share of the smoke lost per second (Flow's default), plus rain washout
 	float vorticity = 0.6f;
 	float ignition_temperature = 0.05f;
 	bool combustion = true;
@@ -108,8 +104,6 @@ struct Settings {
 // Loads Flow's libraries on first use (shared by every grid); false, with
 // the reason in r_error, if they aren't there.
 bool acquire_library(char *r_error, int p_error_size);
-// The same with other library names (tests: a missing library must fail softly, not crash).
-bool acquire_library_named(const char *p_nvflow, const char *p_nvflowext, char *r_error, int p_error_size);
 void release_library();
 
 // A grid on Godot's RenderingDevice. Must be called -- like every grid_*
@@ -165,8 +159,6 @@ bool grid_step(Grid *p_grid, double p_time, float p_delta, const Settings &p_set
 // The newest completed readback; false until the first one lands. The
 // pointers stay valid until the next grid_step.
 bool grid_get_readback(Grid *p_grid, const uint8_t **r_temperature, uint64_t *r_temperature_size, const uint8_t **r_smoke, uint64_t *r_smoke_size);
-// The same readback's velocity grid (NanoVDB Vec3f, Flow units a second); null when the export has none yet.
-bool grid_get_velocity_readback(Grid *p_grid, const uint8_t **r_velocity, uint64_t *r_velocity_size);
 
 // World-space bounds (meters) of a NanoVDB grid's active region; false if
 // it's empty.
@@ -176,9 +168,6 @@ bool nanovdb_bounds(const uint8_t *p_nanovdb, uint64_t p_size, float r_min[3], f
 // cells (x fastest) whose min corner is p_origin (meters), p_cell meters
 // apart -- only z slices [p_z_begin, p_z_end). Values land p_stride floats
 // apart in r_out (indexed over the whole box, not the slice range).
-// Gas velocity in metres a second at a world point (meters) of a NanoVDB Vec3f velocity grid; zero outside it.
-void sample_velocity(const uint8_t *p_nanovdb, uint64_t p_size, const float p_position[3], float r_velocity[3]);
-
 void sample_dense(const uint8_t *p_nanovdb, uint64_t p_size, const float p_origin[3], float p_cell, const int p_dims[3], int p_z_begin, int p_z_end, float *r_out, int p_stride);
 
 } // namespace FlowBackend

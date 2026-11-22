@@ -14,9 +14,6 @@
 //   b  running mean square of the local surface rise at the waterline, to
 //      tell the bigger crests (the ones that run up) from the everyday chop,
 //      whatever the sea state.
-//   a  uprush 0..1: 1 while the run-up is climbing, fading over about half a
-//      second once it stalls or drains, so the bore's bright front shows on
-//      the uprush only and the backwash is a clear film.
 // Reads src, writes dst; a second dispatch in copy mode (res.y == 1)
 // copies dst back to src.
 
@@ -174,6 +171,5 @@ void main() {
 	// blocks); the materials add the fine detail per pixel.
 	float wn = 0.6 * value_noise(rel_c * 0.9) + 0.4 * value_noise(rel_c * 1.9 + 5.0);
 	float wet = max(smoothstep(-0.01, 0.02, depth + r + (wn - 0.5) * 0.12), s.g * swash.w);
-	float up = r > s.r + 1e-5 ? 1.0 : s.a * exp(-swash.x / 0.5);
-	imageStore(dst_tex, c, vec4(r, wet, ms, up));
+	imageStore(dst_tex, c, vec4(r, wet, ms, 0.0));
 }

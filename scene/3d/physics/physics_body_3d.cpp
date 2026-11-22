@@ -30,8 +30,6 @@
 
 #include "physics_body_3d.h"
 
-#include "core/config/engine.h"
-#include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "scene/main/scene_tree.h"
 
@@ -54,16 +52,6 @@ void PhysicsBody3D::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "axis_lock_angular_x"), "set_axis_lock", "get_axis_lock", PhysicsServer3D::BODY_AXIS_ANGULAR_X);
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "axis_lock_angular_y"), "set_axis_lock", "get_axis_lock", PhysicsServer3D::BODY_AXIS_ANGULAR_Y);
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "axis_lock_angular_z"), "set_axis_lock", "get_axis_lock", PhysicsServer3D::BODY_AXIS_ANGULAR_Z);
-}
-
-void PhysicsBody3D::_join_world_contact() {
-	if (Engine::get_singleton()->is_editor_hint()) {
-		return;
-	}
-	static const bool auto_join = GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/3d/world_contact/auto_join"), true);
-	if (auto_join && !has_meta(SNAME("world_contact_exclude"))) {
-		add_to_group(SNAME("world_contact"));
-	}
 }
 
 PhysicsBody3D::PhysicsBody3D(PhysicsServer3D::BodyMode p_mode) :

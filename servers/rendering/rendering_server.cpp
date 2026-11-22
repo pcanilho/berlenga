@@ -2498,10 +2498,6 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("multimesh_mark_buffer_rd_changed", "multimesh"), &RenderingServer::multimesh_mark_buffer_rd_changed);
 	ClassDB::bind_method(D_METHOD("multimesh_set_bones_per_instance", "multimesh", "bones"), &RenderingServer::multimesh_set_bones_per_instance);
 	ClassDB::bind_method(D_METHOD("multimesh_get_bones_per_instance", "multimesh"), &RenderingServer::multimesh_get_bones_per_instance);
-	ClassDB::bind_method(D_METHOD("multimesh_set_rt_instanced", "multimesh", "instanced"), &RenderingServer::multimesh_set_rt_instanced);
-	ClassDB::bind_method(D_METHOD("multimesh_is_rt_instanced", "multimesh"), &RenderingServer::multimesh_is_rt_instanced);
-	ClassDB::bind_method(D_METHOD("multimesh_set_rt_offscreen_cull", "multimesh", "min_degrees"), &RenderingServer::multimesh_set_rt_offscreen_cull);
-	ClassDB::bind_method(D_METHOD("multimesh_get_rt_offscreen_cull", "multimesh"), &RenderingServer::multimesh_get_rt_offscreen_cull);
 	ClassDB::bind_method(D_METHOD("multimesh_get_buffer", "multimesh"), &RenderingServer::multimesh_get_buffer);
 
 	ClassDB::bind_method(D_METHOD("multimesh_set_buffer_interpolated", "multimesh", "buffer", "buffer_previous"), &RenderingServer::multimesh_set_buffer_interpolated);
@@ -3245,7 +3241,6 @@ void RenderingServer::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("camera_attributes_set_dof_blur", "camera_attributes", "far_enable", "far_distance", "far_transition", "near_enable", "near_distance", "near_transition", "amount"), &RenderingServer::camera_attributes_set_dof_blur);
 	ClassDB::bind_method(D_METHOD("camera_attributes_set_exposure", "camera_attributes", "multiplier", "normalization"), &RenderingServer::camera_attributes_set_exposure);
-	ClassDB::bind_method(D_METHOD("camera_attributes_set_night_vision", "camera_attributes", "luminance_per_energy"), &RenderingServer::camera_attributes_set_night_vision);
 	ClassDB::bind_method(D_METHOD("camera_attributes_set_auto_exposure", "camera_attributes", "enable", "min_sensitivity", "max_sensitivity", "speed", "scale"), &RenderingServer::camera_attributes_set_auto_exposure);
 
 	BIND_ENUM_CONSTANT(RSE::DOF_BOKEH_BOX);
@@ -3835,7 +3830,6 @@ void RenderingServer::init() {
 	GLOBAL_DEF_RST(PropertyInfo(Variant::FLOAT, "rendering/anti_aliasing/quality/smaa_edge_detection_threshold", PROPERTY_HINT_RANGE, "0.01,0.2,0.01"), 0.05);
 
 	GLOBAL_DEF("rendering/anti_aliasing/quality/use_debanding", false);
-	GLOBAL_DEF("rendering/transparency/refraction_second_layer", true);
 
 	{
 		String mode_hints;
@@ -3911,8 +3905,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/opacity_micromap_max_level", PROPERTY_HINT_RANGE, "1,12,1"), 10);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/cull_max_distance", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), 0.0);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/cull_min_size", PROPERTY_HINT_RANGE, "0,5,0.01,suffix:°"), 0.0);
-	GLOBAL_DEF("rendering/pathtracing/offscreen_record_cull", true);
-	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/relative_origin_grid", PROPERTY_HINT_RANGE, "0,65536,1,suffix:m"), 64.0);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/relative_origin_grid", PROPERTY_HINT_RANGE, "0,65536,1,suffix:m"), 1024.0);
 	GLOBAL_DEF("rendering/pathtracing/transparency_at_output_size", true);
 	GLOBAL_DEF("rendering/pathtracing/transparent_lighting/enabled", true);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/near", PROPERTY_HINT_RANGE, "0.05,100,0.01,or_greater,suffix:m"), 0.5);

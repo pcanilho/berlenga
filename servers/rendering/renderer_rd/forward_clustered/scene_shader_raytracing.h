@@ -116,7 +116,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 88;
+	static constexpr int RT_PARAM_COUNT = 64;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -222,35 +222,6 @@ public:
 	static constexpr int RT_PARAM_GROUND_DEFORM_X = 61;
 	static constexpr int RT_PARAM_GROUND_DEFORM_Z = 62;
 	static constexpr int RT_PARAM_GROUND_DEFORM_SIZE = 63;
-	// WeatherMap3D contact wetness (wet where water has been, weather_contact_map): bindless index
-	// (0 = none), the square's world XZ origin and its side.
-	static constexpr int RT_PARAM_CONTACT_WET_MAP = 64;
-	static constexpr int RT_PARAM_CONTACT_WET_X = 65;
-	static constexpr int RT_PARAM_CONTACT_WET_Z = 66;
-	static constexpr int RT_PARAM_CONTACT_WET_SIZE = 67;
-	// GroundSurface3D's ripple map (window, sand share over the patch, a row of numbers) for the far ripples.
-	static constexpr int RT_PARAM_GROUND_RIPPLE_MAP = 68;
-	// GroundSurface3D's pore water map (wetness, sheen; its last row the rect) for the wet sand look.
-	static constexpr int RT_PARAM_GROUND_WET_MAP = 69;
-	// GroundSurface3D's finer near field (docs/ideas/mud.md, stage 0): bindless index (0 = none), its world XZ
-	// origin and size; used inside its square, faded into the main field over its outer half metre.
-	static constexpr int RT_PARAM_GROUND_NEAR_MAP = 70;
-	static constexpr int RT_PARAM_GROUND_NEAR_X = 71;
-	static constexpr int RT_PARAM_GROUND_NEAR_Z = 72;
-	static constexpr int RT_PARAM_GROUND_NEAR_SIZE = 73;
-	static constexpr int RT_PARAM_VEHICLE_MUD_SPLATS = 74;
-	// WeatherMap3D's precipitation phase (weather_precip_phase): air temperature at the reference ground (C), its
-	// lapse (K/m), relative humidity, the reference ground height (m). The raindrop rings' rain share.
-	static constexpr int RT_PARAM_PRECIP_TEMPERATURE = 75;
-	static constexpr int RT_PARAM_PRECIP_LAPSE = 76;
-	static constexpr int RT_PARAM_PRECIP_HUMIDITY = 77;
-	static constexpr int RT_PARAM_PRECIP_GROUND = 78;
-	static constexpr int RT_PARAM_RAIN_MAP = 79;
-	static constexpr int RT_PARAM_HAZE_SIGMA = 80; // WeatherMap3D aerosol haze as a traced medium: extinction (1/m) at the base, 0 = none
-	static constexpr int RT_PARAM_HAZE_ALBEDO = 81;
-	static constexpr int RT_PARAM_HAZE_HEIGHT = 82; // scale height (m)
-	static constexpr int RT_PARAM_HAZE_BASE = 83; // base height, relative to rt_origin
-	static constexpr int RT_PARAM_HAZE_REACH = 84; // how far rays that reach the sky carry it (the sky's own aerosol starts there)
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;
@@ -540,7 +511,6 @@ public:
 		bool bounds_medium = false; // Writes TRANSMISSION and IOR: rays cross it into a medium, so it is traced from both sides.
 		bool uses_scene_depth = false; // Reads SCENE_DEPTH; gates the rt_scene_depth imageLoad
 		bool uses_instance_custom = false; // Gates the MultiMesh custom-data buffer read.
-		bool uses_custom_attribs = false; // Reads CUSTOM0-3: gates their vertex fetch (GeometryData::custom_layout).
 		bool is_procedural = false; // Uses intersection shader instead of triangle geometry
 		String render_mode_defines; // The render modes the hit shading reads (hair_strands, hair_cards, sss_mode_skin).
 		uint32_t alpha_texture_buffer_offset = UINT32_MAX; // Byte offset of hint_alpha texture index in CustomMaterialUniforms UBO; UINT32_MAX if absent
@@ -594,19 +564,9 @@ public:
 
 		bool dirty = false;
 		bool initial_pipeline_built = false;
-
-		// Last traced frame (bundle_tick) and time this variant was asked for. A variant nobody asks
-		// for any more (the start-up guess, a sample count or debug view changed since) is not
-		// rebuilt when materials arrive, and is freed after a while: each holds a full set of
-		// hit-group pipelines, which a CPU driver keeps in system memory.
-		uint64_t last_used_tick = 0;
-		uint64_t last_used_usec = 0;
 	};
 
 	HashMap<uint32_t, PipelineBundle> pipeline_bundles;
-	uint64_t bundle_tick = 2; // Advanced once per traced frame by drain_completed_compiles().
-	void _mark_bundle_used(PipelineBundle &r_bundle);
-	void _evict_unused_bundles();
 
 	// Single-lane async bundle rebuild (worker: SPIR-V + raytracing_pipeline_create; main: SBT + swap).
 	// No queue: a dirty bundle IS the target state (SceneShaderRaytracing::PipelineBundle::dirty), always

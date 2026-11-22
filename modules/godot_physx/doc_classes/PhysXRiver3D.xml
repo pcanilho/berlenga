@@ -13,21 +13,6 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="add_sediment">
-			<return type="void" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="mineral_kg_s" type="float" />
-			<param index="2" name="ash_kg_s" type="float" />
-			<description>
-				Load entering the river at [param position] (kg/s of silt and clay, and of ash), as [method WorldWater.add_sediment] gives it: a rate held for 2 seconds after each call (call it every frame, or at least every second, for as long as the load enters; one call alone sends a 2 s slug downstream), carried down at the river's speed and mixed across it ([param mineral_kg_s] over the discharge downstream). It browns (silt) or greys (ash) the water in raster and path tracing alike.
-			</description>
-		</method>
-		<method name="clear_sediment_deposit">
-			<return type="void" />
-			<description>
-				Forgets what has settled on the bed (a scene reset, or the ground taking it up into its own layer).
-			</description>
-		</method>
 		<method name="clear_sphere">
 			<return type="void" />
 			<param index="0" name="owner" type="int" />
@@ -61,49 +46,17 @@
 				World XZ centre of the live window.
 			</description>
 		</method>
-		<method name="get_outlet_discharge" qualifiers="const">
-			<return type="float" />
-			<description>
-				With [member source_lake]: the discharge (m³/s) the lake passes over the outlet's sill at the last build, which the river carries instead of [member discharge]. 0 without a lake.
-			</description>
-		</method>
-		<method name="get_outlet_head" qualifiers="const">
-			<return type="float" />
-			<description>
-				With [member source_lake]: how far (m) the lake stood above the outlet's sill at the last build.
-			</description>
-		</method>
-		<method name="get_rain_discharge" qualifiers="const">
-			<return type="float" />
-			<description>
-				The storm flow (m³/s) from [WeatherRunoff3D] added to [member discharge] at the last build.
-			</description>
-		</method>
 		<method name="get_section" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="index" type="int" />
 			<description>
-				One cross-section, for tools and tests: [code]centre[/code] (world), [code]s[/code] (m along the river), [code]width[/code], [code]surface[/code] (world height), [code]slope[/code], [code]speed[/code] (mean, m/s), [code]foam[/code], [code]cascade[/code], [code]froude[/code] (the section's Froude number), [code]critical_height[/code] (world height of critical depth), [code]jump[/code] (the upstream Froude number of a hydraulic jump that ends here, else 0), [code]superelevation[/code] (m, outside bank above inside bank), [code]wave_amplitude[/code] and [code]wave_length[/code] (m, a standing wave train passing here, see [member standing_waves]), and per sample across, [code]depths[/code], [code]speeds[/code] (along the river), [code]across[/code] (towards the left bank), [code]foams[/code] and [code]cross_waves[/code] (m, the standing cross-wave height in fast water).
+				One cross-section, for tools and tests: [code]centre[/code] (world), [code]s[/code] (m along the river), [code]width[/code], [code]surface[/code] (world height), [code]slope[/code], [code]speed[/code] (mean, m/s), [code]foam[/code], [code]cascade[/code], and per sample across, [code]depths[/code], [code]speeds[/code] (along the river), [code]across[/code] (towards the left bank) and [code]foams[/code].
 			</description>
 		</method>
 		<method name="get_section_count" qualifiers="const">
 			<return type="int" />
 			<description>
 				The number of cross-sections (one every [member step_length]).
-			</description>
-		</method>
-		<method name="get_sediment_at" qualifiers="const">
-			<return type="Vector2" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The suspended load (kg/m³: x mineral, y ash) at [param position] on the river; zero off it. The load is held per cross-section and per lane across the channel: a load entering by one bank runs down that bank as a plume and spreads across by turbulent mixing (0.6 d u*, Fischer et al. 1979) over some tens of channel widths.
-			</description>
-		</method>
-		<method name="get_sediment_deposit_at" qualifiers="const">
-			<return type="Vector2" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				What has settled out of the load onto the bed at [param position] (kg/m², x mineral, y ash): where the bed shear is under the stress for deposition (slack water by the banks, pools), silt settles at about 0.15 mm/s and ash five times slower. Also answered through [method WorldWater.sediment_deposit_at].
 			</description>
 		</method>
 		<method name="get_waterfalls" qualifiers="const">
@@ -164,14 +117,11 @@
 		</method>
 	</methods>
 	<members>
-		<member name="bank_margin" type="float" setter="set_bank_margin" getter="get_bank_margin" default="1.0">
-			How far (m) the water mesh reaches past each bank, so the waterline can follow the measured ground.
-		</member>
 		<member name="base_height_source" type="NodePath" setter="set_base_height_source" getter="get_base_height_source" default="NodePath(&quot;&quot;)">
 			A node with a [code]base_height_at(world_xz: Vector2) -&gt; float[/code] method giving the ground as it was before carving (a terrain deformer keeps those heights). When set, the river reads the ground from it instead of measuring, so once its channel is carved it does not measure the channel and carve deeper on every rebuild. Return NAN where there is no ground.
 		</member>
-		<member name="bend_superelevation" type="bool" setter="set_bend_superelevation" getter="get_bend_superelevation" default="true">
-			The surface banks up towards the outside of each bend by about [code]U² w / (g r)[/code] (the centrifugal tilt of open-channel flow round a bend), held to half the mean depth across the half width.
+		<member name="bank_margin" type="float" setter="set_bank_margin" getter="get_bank_margin" default="1.0">
+			How far (m) the water mesh reaches past each bank, so the waterline can follow the measured ground.
 		</member>
 		<member name="carve" type="bool" setter="set_carve" getter="get_carve" default="false">
 			The river designs its own channel and offers it to a terrain deformer as height brushes ([method get_carve_brushes], [signal carve_changed]): a flat floor [member carve_depth] below the uncarved ground that never climbs downstream (through a rise it cuts), banks sloping up to the ground, and at a bend the deep part moved towards the outer bank. The water then sits in that channel. The river does not change any ground itself.
@@ -188,9 +138,6 @@
 		<member name="carve_falloff" type="float" setter="set_carve_falloff" getter="get_carve_falloff" default="2.0">
 			How far (m) past the banks the brush fades out, so the cut blends into the ground.
 		</member>
-		<member name="contact_wetness" type="bool" setter="set_contact_wetness" getter="get_contact_wetness" default="true">
-			With [member live_flow], banks and rocks the live window's water reached stay wet in the weather's contact wetness ([code]WeatherMap3D.contact_wetness_enabled[/code]) and dry with the weather. Read back from the GPU every eighth step, over the banks and water shallower than half a metre.
-		</member>
 		<member name="cross_segments" type="int" setter="set_cross_segments" getter="get_cross_segments" default="12">
 			Samples across the river, for the ground, the depth and the flow.
 		</member>
@@ -202,9 +149,6 @@
 		</member>
 		<member name="discharge" type="float" setter="set_discharge" getter="get_discharge" default="2.0">
 			Water carried by the river (m³/s). A brook carries 0.1 to 1, a small river 5 to 50.
-		</member>
-		<member name="fall_exclusions" type="PackedVector3Array" setter="set_fall_exclusions" getter="get_fall_exclusions" default="PackedVector3Array()">
-			Faces another node draws, as pairs of points (lip, then foot, in global coordinates): the ribbon down each is hidden and no waterfall is made there. [PhysXWaterfalls3D] sets it on every river in the tree for its contact falls.
 		</member>
 		<member name="fall_material" type="ShaderMaterial" setter="set_fall_material" getter="get_fall_material">
 			The waterfalls' falling sheet. Left empty, a built-in shader: a thin slab of water whose streaks ride the falling water, turning white with the air it takes in and breaking into clumps past its break-up length. Its vertex data: UV = (travel time since the lip in s, distance across in m), UV2.x = speed, COLOR.r = edge fade, COLOR.g = aeration, COLOR.b = how far past break-up.
@@ -218,20 +162,11 @@
 		<member name="fall_mist_amount" type="float" setter="set_fall_mist_amount" getter="get_fall_mist_amount" default="1.0">
 			Scales the mist each fall's [PhysXWaterMist3D] is fed.
 		</member>
-		<member name="fall_sound" type="bool" setter="set_fall_sound" getter="get_fall_sound" default="true">
-			The roar of each waterfall: an [AudioStreamPlayer3D] at its foot playing a loop synthesised for that fall from the ringing of the air bubbles its plunge drags under. Each bubble rings at its Minnaert frequency (3.26 / radius), damped by viscous, thermal and radiation losses and rising in pitch as it nears the surface; the radii follow measured plume spectra, and the largest grow with the impact speed, so a tall fall rumbles low and a small cascade hisses. Its level comes from the fall's acoustic power, about 3e-7 of the jet's kinetic power. Not in the editor.
-		</member>
-		<member name="fall_sound_volume_db" type="float" setter="set_fall_sound_volume_db" getter="get_fall_sound_volume_db" default="0.0">
-			Added to each waterfall's level (dB), which is otherwise set from its acoustic power: 80 dB SPL at 10 m plays at 0 dB.
-		</member>
 		<member name="fall_spray" type="bool" setter="set_fall_spray" getter="get_fall_spray" default="true">
 			Spray thrown up where each waterfall lands: droplets launched at a share of the impact speed (a [GPUParticles3D] made by the river), scaled with the fall's power. Not in the editor.
 		</member>
 		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="0.25">
 			White water made by the live window where the water runs fast and shears (as [member PhysXWaterSurface3D.flow_foam]); lower than the sea's, since a river runs fast everywhere. 0: none.
-		</member>
-		<member name="flow_foam_impact" type="bool" setter="set_flow_foam_impact" getter="get_flow_foam_impact" default="true">
-			The live window's white water also forms where the water runs into things, not only where it runs fast and shears: where it converges (a jet meeting slack water, two currents colliding) and as a pillow on the upstream face of a rock standing out of the current. Off: shear and supercritical flow only.
 		</member>
 		<member name="flow_foam_persistence" type="float" setter="set_flow_foam_persistence" getter="get_flow_foam_persistence" default="4.0">
 			Seconds the live window's white water lasts as the water carries it.
@@ -239,20 +174,8 @@
 		<member name="foam_persistence" type="float" setter="set_foam_persistence" getter="get_foam_persistence" default="4.0">
 			Seconds white water lasts as the current carries it downstream.
 		</member>
-		<member name="gradually_varied_flow" type="bool" setter="set_gradually_varied_flow" getter="get_gradually_varied_flow" default="true">
-			The water surface follows the energy and momentum of the flow (the standard step method) instead of a running normal depth: it pools behind bed bumps and draws down to critical depth before each step and fall. Fast, shallow water at the foot of a step lower than [member fall_min_height] (Rand's depth for a free overfall) runs on until it meets slower water whose momentum holds it, and jumps up there to the sequent depth (Bélanger); a jump with an upstream Froude number above 1.7 gets a white roller. Only where the river's bed is measured on the ground (or snapped) and no depth is given.
-		</member>
 		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
 			The physics layers measured as ground. Only static bodies count.
-		</member>
-		<member name="ground_probe_depth" type="float" setter="set_ground_probe_depth" getter="get_ground_probe_depth" default="200.0">
-			How far below the curve the ground rays of [member snap_to_ground] look. Where none finds ground within it, the bed there is the parabola past the banks (dry). Keep it a little over the deepest water where the ground is in layers (a stream in a cave: a ray starting inside the rock past its banks goes on down through it to a passage below and laid deep water over the bank).
-		</member>
-		<member name="ground_probe_height" type="float" setter="set_ground_probe_height" getter="get_ground_probe_height" default="50.0">
-			How far above the curve the ground rays of [member snap_to_ground] start. Keep it under any roof over the water (a stream in a cave: a few decimetres), or the rays find the roof instead of the bed. While no ray finds any ground, the build waits up to 30 physics ticks for a floor that joins the physics space late.
-		</member>
-		<member name="live_advected_ripples" type="bool" setter="set_live_advected_ripples" getter="get_live_advected_ripples" default="true">
-			The live window's ripples and foam ride the flow's real paths (advected texture coordinates, Neyret 2003): each of the two flow-map phases is carried along by the simulated velocity, so they curl round eddies behind rocks instead of shearing along the local velocity. Off: plain two-phase flow mapping.
 		</member>
 		<member name="live_damping" type="float" setter="set_live_damping" getter="get_live_damping" default="0.05">
 			How fast the live part of the flow dies away (1/s). The baked flow never decays.
@@ -269,15 +192,6 @@
 		<member name="live_grid_resolution" type="int" setter="set_live_grid_resolution" getter="get_live_grid_resolution" default="192">
 			Cells along each side of the live window.
 		</member>
-		<member name="live_near_mesh_spacing" type="float" setter="set_live_near_mesh_spacing" getter="get_live_near_mesh_spacing" default="0.1">
-			Vertex spacing (m) of the ribbon inside the live window, so the surface waves ([member live_surface_waves]) stand up as real geometry near the camera. The dense part follows the window and stays under about 200,000 quads (the spacing grows past that). [code]0[/code] keeps the coarse ribbon.
-		</member>
-		<member name="live_surface_wave_strength" type="float" setter="set_live_surface_wave_strength" getter="get_live_surface_wave_strength" default="1.0">
-			How strongly the current raises surface waves where it runs into dry ground (stones, the points of the banks), as a share of the stagnation head [code]0.5 v² / g[/code]. Used with [member live_surface_waves].
-		</member>
-		<member name="live_surface_waves" type="bool" setter="set_live_surface_waves" getter="get_live_surface_waves" default="true">
-			Dispersive surface waves over the live window (Jeschke and Wojtan 2023): short waves travel at their own speed ([code]ω² = g k tanh(k d)[/code]), wrap round stones, reflect off the banks and trail behind them as a wake in the current. They run on a 512 × 512 grid over the live window, stepped exactly in Fourier space at four depths, and add their slope to the surface. Turn off in tests that do not need them.
-		</member>
 		<member name="max_slope" type="float" setter="set_max_slope" getter="get_max_slope" default="0.08">
 			Drops steeper than this (m per m) are cascades: the water falls down them instead of flowing.
 		</member>
@@ -290,12 +204,6 @@
 		<member name="obstacle_collision_mask" type="int" setter="set_obstacle_collision_mask" getter="get_obstacle_collision_mask" default="0">
 			Physics layers of rocks and other obstacles in the river, measured on top of the ground. The flow parts round them and white water gathers at them. Needed with [member carve], since a carving river measures the uncarved terrain from [member base_height_source]; without carving, rocks on the [member ground_collision_mask] layers are found anyway.
 		</member>
-		<member name="outlet_coefficient" type="float" setter="set_outlet_coefficient" getter="get_outlet_coefficient" default="0.85">
-			The discharge coefficient of the outlet's sill, a broad-crested weir: about 0.85 for a rough natural sill, 1.0 for a smooth long crest.
-		</member>
-		<member name="rain_response" type="bool" setter="set_rain_response" getter="get_rain_response" default="true">
-			Add the world's runoff ([WeatherRunoff3D]) at the upstream end to the discharge: the river rises and runs faster in rain and falls back after.
-		</member>
 		<member name="raster_reflections" type="bool" setter="set_raster_reflections" getter="get_raster_reflections" default="true">
 			Raster only: open water mirrors the sky and the sun's glitter by the exact Fresnel term, as the path tracer sees it (the same as [member PhysXWaterSurface3D.raster_reflections]). Off, the surface is the unlit tint it was before.
 		</member>
@@ -304,12 +212,6 @@
 		</member>
 		<member name="snap_to_ground" type="bool" setter="set_snap_to_ground" getter="get_snap_to_ground" default="true">
 			Measure the ground under the river by raycasts. Off: the curve is the water surface, and the bed is a parabola [member depths] deep.
-		</member>
-		<member name="source_lake" type="NodePath" setter="set_source_lake" getter="get_source_lake" default="NodePath(&quot;&quot;)">
-			A [PhysXWaterSurface3D] lake this river drains. Its discharge then comes from the lake's head over the sill (the highest bed in the river's first 12 m) as a broad-crested weir, [code]Q = Cd (2/3)^(3/2) b sqrt(g) H^(3/2)[/code] with [member outlet_coefficient] as Cd, unless the channel below is too slow to carry that: then the sill is drowned and the discharge is the one whose energy at the sill the lake's level just reaches. No head, no flow (a trickle). The lake's water converges on the outlet, and with [member PhysXWaterSurface3D.level_from_flows] its level settles where the outlet passes what flows in. Replaces [member discharge].
-		</member>
-		<member name="standing_waves" type="bool" setter="set_standing_waves" getter="get_standing_waves" default="true">
-			Standing surface patterns from the solved profile (needs [member gradually_varied_flow]): below a weak hydraulic jump (Froude number 1 to 1.7) a train of smooth stationary waves whose wavelength is the one that stands still in the current downstream, decaying over about four wavelengths (a weak tail below stronger jumps); in fast (supercritical) water, cross-waves that leave each bank where the channel narrows or widens at the angle [code]asin(1/Fr)[/code] and reflect off the far bank, making diamond patterns. The water material's [code]froude_overlay[/code] parameter colours the water by its Froude number for tuning (blue slow, green near critical, red fast, white at jump toes).
 		</member>
 		<member name="step_length" type="float" setter="set_step_length" getter="get_step_length" default="1.0">
 			Distance (m) between cross-sections along the river.

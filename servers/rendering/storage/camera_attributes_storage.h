@@ -41,7 +41,6 @@ private:
 		float exposure_multiplier = 1.0;
 		float exposure_normalization = 1.0;
 		float exposure_sensitivity = 100.0; // In ISO.
-		float night_vision_luminance = 0.0; // cd/m2 per unit of light energy; 0: no night vision.
 
 		bool use_auto_exposure = false;
 		float auto_exposure_min_sensitivity = 50.0;
@@ -99,8 +98,6 @@ public:
 
 	void camera_attributes_set_exposure(RID p_camera_attributes, float p_multiplier, float p_exposure_normalization);
 	float camera_attributes_get_exposure_normalization_factor(RID p_camera_attributes);
-	void camera_attributes_set_night_vision(RID p_camera_attributes, float p_luminance_per_energy);
-	float camera_attributes_get_night_vision(RID p_camera_attributes);
 
 	void camera_attributes_set_auto_exposure(RID p_camera_attributes, bool p_enable, float p_min_sensitivity, float p_max_sensitivity, float p_speed, float p_scale);
 	float camera_attributes_get_auto_exposure_min_sensitivity(RID p_camera_attributes);

@@ -17,11 +17,5 @@
   {{ if lt (add $i 1) (len $list) }}{{ with index $list (add $i 1) }}<a class="next" href="{{ .RelPermalink }}"><small>Next</small>{{ .Title }}</a>{{ end }}{{ end }}
 </nav>
 {{ end }}
-{{ $d := site.Data.settings }}{{ with $d }}{{ $d := . }}{{ $pairs := slice }}
-{{ range $d.project }}{{ $pairs = $pairs | append .name (anchorize .name) "" }}{{ end }}
-{{ range $d.environment }}{{ $pairs = $pairs | append .name (anchorize .name) "" }}{{ end }}
-{{ range $d.features }}{{ $id := anchorize (printf "%s-%s" .page .name) }}{{ $pg := .page }}{{ range .settings }}{{ $pairs = $pairs | append . $id $pg }}{{ end }}{{ end }}
-<script type="application/json" id="setmap" data-url="{{ (site.GetPage "/settings").RelPermalink }}">{{ $pairs | jsonify | safeJS }}</script>
-{{ end }}
 <p class="edit" data-pagefind-ignore><a href="{{ site.Params.repo }}/edit/main/site/content/{{ .File.Path }}">Edit this page on GitHub</a></p>
 {{ end }}

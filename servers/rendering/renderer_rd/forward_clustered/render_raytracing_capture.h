@@ -69,9 +69,6 @@ public:
 	struct VertexDependencies {
 		uint32_t mask = DEP_UNKNOWN;
 		Vector<StringName> global_uniforms;
-		// Material sampler uniforms vertex() reads: their textures' content versions join the material stamp, so a
-		// texture rewritten in place (ImageTexture.update) recaptures the surface though no parameter changed.
-		Vector<StringName> material_textures;
 	};
 
 	// Recorded regardless of the mode, so the mode can change at runtime without recompiling.

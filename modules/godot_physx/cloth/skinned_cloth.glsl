@@ -63,8 +63,6 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 out_y;
 	vec4 out_z;
 	vec4 self_params; // x self-collision thickness (m), 0 = off
-	vec4 water; // x the water's surface (world y; very low = none), y drag rate toward the current (1/s), z share of gravity left under water (the fabric's weight less its buoyancy)
-	vec4 water_flow; // xyz the current (m/s)
 };
 
 // Per dispatch (push constants -- the uniform buffer can't change between
@@ -457,16 +455,8 @@ void main() {
 		vec3 t_last = mix(target_prev[i].xyz, target[i].xyz, max(pass.frac - 1.0 / float(max(counts.z, 1)), 0.0));
 		vec3 v_anim = t - t_last;
 		vec3 v = v_anim + ((p.xyz - prev[i].xyz) - v_anim) * step.y;
-		vec3 g = gravity.xyz;
-		if (p.y < water.x) {
-			// Under water: buoyancy takes most of the fabric's weight, and the current drags it along (Morison
-			// drag, quadratic in the relative speed, as a rate the caller sets from the current's speed).
-			vec3 d = p.xyz - prev[i].xyz;
-			v -= (d - water_flow.xyz * step.x) * (1.0 - exp(-water.y * step.x));
-			g *= water.z;
-		}
 		prev[i] = vec4(p.xyz, 0.0);
-		vec3 np = p.xyz + v + g * step.x * step.x;
+		vec3 np = p.xyz + v + gravity.xyz * step.x * step.x;
 		pos[i] = vec4(mix(np, t, step.z), p.w);
 		return;
 	}

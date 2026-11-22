@@ -103,17 +103,6 @@ public:
 	// surfaces, cooking failed, etc).
 	Ref<PhysXBlastAsset> fracture_mesh(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern = PATTERN_VORONOI, const Ref<Texture2D> &p_cutout_pattern = Ref<Texture2D>());
 
-	// An asset from pieces cut outside Blast (a procedural rock split along its own rough breaks): p_root is the
-	// whole object's Mesh arrays, p_pieces one Mesh arrays per leaf piece, p_bonds Dictionaries with "chunks"
-	// (Vector2i, piece indices), "centroid", "normal" (from the first piece to the second) and "area". Chunk 0 is
-	// the root, chunk i + 1 piece i; every leaf is a support chunk. The arrays are kept as chunk_meshes, so pieces
-	// keep their normals, colours and UVs. Returns a null Ref on failure.
-	// A piece (or the root) may also be a Mesh or an Array of surfaces with several materials (see
-	// PhysXBlastAsset.chunk_meshes; p_materials becomes the asset's materials by slot); its first surface must be
-	// the closed shell, which gives the chunk's collision and volume. A bond may carry "health": its initial
-	// health as a multiple of the destructible's health, so a thin joint breaks before a thick one.
-	Ref<PhysXBlastAsset> build_prefractured(const Variant &p_root, const Array &p_pieces, const Array &p_bonds, const Array &p_materials = Array());
-
 	// Why the last fracture_mesh() failed (empty if it didn't), and what it warned about -- the same text it printed,
 	// for a UI to show (the fracture dialog does).
 	String get_last_error() const { return last_error; }

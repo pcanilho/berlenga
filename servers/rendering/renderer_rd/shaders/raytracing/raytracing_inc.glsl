@@ -11,28 +11,6 @@
 #define RT_HIT_GEOMETRY_IDX (gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT)
 #define RT_RQ_GEOMETRY_IDX(m_rq, m_committed) uint(rayQueryGetIntersectionInstanceCustomIndexEXT(m_rq, m_committed) + rayQueryGetIntersectionGeometryIndexEXT(m_rq, m_committed))
 
-#ifdef RT_LSS
-// Linear swept spheres (strand hair on devices that have them, render_raytracing.cpp): segment j of a strand
-// surface is the round tube around triangles 4j..4j+3 of its two crossed strips (four vertices a point, the
-// first strip's two sides first). A hit u along the segment reads its attributes on the first strip's centre
-// line: triangle 4j (v0, v0+1, v0+4) up to the middle, 4j+1 (v0+1, v0+5, v0+4) after, with barycentrics of
-// their second and third vertices.
-int rt_lss_triangle(int p_segment, float p_u) {
-	return p_segment * 4 + (p_u < 0.5 ? 0 : 1);
-}
-vec2 rt_lss_barycentrics(float p_u) {
-	return p_u < 0.5 ? vec2(0.5, p_u) : vec2(p_u - 0.5, 0.5);
-}
-// Ray query candidates and commits that are swept spheres, as their strip triangle.
-#define RT_RQ_IS_TRIANGLE(m_rq) (rayQueryGetIntersectionTypeEXT(m_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT || rayQueryIsLSSHitNV(m_rq, false))
-#define RT_RQ_PRIMITIVE(m_rq, m_committed) (rayQueryIsLSSHitNV(m_rq, m_committed) ? rt_lss_triangle(rayQueryGetIntersectionPrimitiveIndexEXT(m_rq, m_committed), rayQueryGetIntersectionLSSHitValueNV(m_rq, m_committed)) : rayQueryGetIntersectionPrimitiveIndexEXT(m_rq, m_committed))
-#define RT_RQ_BARYCENTRICS(m_rq, m_committed) (rayQueryIsLSSHitNV(m_rq, m_committed) ? rt_lss_barycentrics(rayQueryGetIntersectionLSSHitValueNV(m_rq, m_committed)) : rayQueryGetIntersectionBarycentricsEXT(m_rq, m_committed))
-#else
-#define RT_RQ_IS_TRIANGLE(m_rq) (rayQueryGetIntersectionTypeEXT(m_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
-#define RT_RQ_PRIMITIVE(m_rq, m_committed) rayQueryGetIntersectionPrimitiveIndexEXT(m_rq, m_committed)
-#define RT_RQ_BARYCENTRICS(m_rq, m_committed) rayQueryGetIntersectionBarycentricsEXT(m_rq, m_committed)
-#endif
-
 #ifndef PI
 #define PI 3.141592653589f
 #endif
@@ -122,28 +100,6 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_GROUND_DEFORM_X 61 // its world XZ origin and size
 #define RT_PARAM_GROUND_DEFORM_Z 62
 #define RT_PARAM_GROUND_DEFORM_SIZE 63
-#define RT_PARAM_CONTACT_WET_MAP 64 // WeatherMap3D contact wetness (weather_contact_map, R), 0 = none
-#define RT_PARAM_CONTACT_WET_X 65 // its world XZ origin and side
-#define RT_PARAM_CONTACT_WET_Z 66
-#define RT_PARAM_CONTACT_WET_SIZE 67
-#define RT_PARAM_GROUND_WET_MAP 69 // GroundSurface3D pore water map (wetness, sheen; last row its rect), 0 = none
-#define RT_PARAM_GROUND_RIPPLE_MAP 68 // GroundSurface3D ripple map for far ripples (sand stage 3), 0 = none
-#define RT_PARAM_GROUND_NEAR_MAP 70 // GroundSurface3D finer near field (mud stage 0), as the deform map, 0 = none
-#define RT_PARAM_GROUND_NEAR_X 71 // its world XZ origin and size
-#define RT_PARAM_GROUND_NEAR_Z 72
-#define RT_PARAM_GROUND_NEAR_SIZE 73
-#define RT_PARAM_VEHICLE_MUD_SPLATS 74 // PhysXVehicle3D stuck clods (mud stage 4b), bindless index, 0 = none
-// WeatherMap3D's precipitation phase (weather_precip_phase): the rain share at a height for the raindrop rings
-#define RT_PARAM_PRECIP_TEMPERATURE 75 // air temperature at the reference ground height (C)
-#define RT_PARAM_PRECIP_LAPSE 76 // its fall with height (K/m)
-#define RT_PARAM_PRECIP_HUMIDITY 77 // relative humidity, 0..1
-#define RT_PARAM_PRECIP_GROUND 78 // the reference ground height (m, world)
-#define RT_PARAM_RAIN_MAP 79 // WeatherMap3D's rain map (weather_rain_map, rect = RT_PARAM_WETNESS_RECT_*): G canopy wetness; 0 = none
-#define RT_PARAM_HAZE_SIGMA 80 // WeatherMap3D aerosol haze as a traced medium: extinction (1/m) at the base, 0 = none
-#define RT_PARAM_HAZE_ALBEDO 81
-#define RT_PARAM_HAZE_HEIGHT 82 // scale height (m)
-#define RT_PARAM_HAZE_BASE 83 // base height, relative to rt_origin
-#define RT_PARAM_HAZE_REACH 84 // how far rays that reach the sky carry it (the sky's own aerosol starts there)
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)
@@ -429,8 +385,6 @@ const uint FLAG_SIDE_CHECK = 64u;
 const uint FLAG_SELF_SHADOWING = 128u;
 // Captured geometry that also keeps its vertex() inputs (the rest pose) at GeometryData::rest_byte_offset.
 const uint FLAG_REST = 256u;
-// A merged MultiMesh whose instance records start with the 3x4 transform baked into its BLAS (fetch_instance_transform()).
-const uint FLAG_INSTANCE_XFORM = 512u;
 
 // ============================================================================
 // RANDOM NUMBER GENERATION - PCG (Permuted Congruential Generator)

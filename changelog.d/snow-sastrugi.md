@@ -1,1 +1,0 @@
-- Snow: sastrugi. Drifting snow scouring wind-packed or dense snow carves ridges along the wind, drawn as geometry by `SnowSurface3D` (`SnowCover3D.sastrugi_enabled`).

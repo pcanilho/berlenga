@@ -6,5 +6,3 @@ run/main_scene="res://main.tscn"
 window/size/viewport_width=960
 window/size/viewport_height=540
 window/vsync/vsync_mode=0
-[rendering]
-pathtracing/async_shader_compilation=false

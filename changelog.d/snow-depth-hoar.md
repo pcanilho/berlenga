@@ -1,1 +1,0 @@
-- Snow: depth hoar. Shallow packs under cold air grow weak basal facets, and a later storm or wind load can release the whole pack (`SnowCover3D.depth_hoar_enabled`, `get_depth_hoar_at`).

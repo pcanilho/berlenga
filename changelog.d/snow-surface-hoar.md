@@ -1,1 +1,0 @@
-- Snow: surface hoar grows on clear, calm, humid nights (bulk-transfer frost deposition on a radiatively cooled surface), breaks in wind, wets away in sun or rain, and new snow buries it as a persistent weak layer that avalanches release on (`hoar_enabled`).

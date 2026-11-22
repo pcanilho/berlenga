@@ -1011,71 +1011,7 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 /* clang-format on */
 #endif
 
-// sun_visibility(world_position) (spatial fragment and light): the first directional light's shadow,
-// with its projector (the cloud shadow), at any world position. One hardware PCF tap from the cascade
-// that covers the point; callers that march through a medium jitter their steps instead.
-vec3 sun_visibility(vec3 p_world) {
-	if (scene_data_block.data.directional_light_count == 0u) {
-		return vec3(1.0);
-	}
-	mat4 view = transpose(mat4(scene_data_block.data.view_matrix[0], scene_data_block.data.view_matrix[1], scene_data_block.data.view_matrix[2], vec4(0.0, 0.0, 0.0, 1.0)));
-	vec3 vertex = (view * vec4(p_world, 1.0)).xyz;
-	float shadow = 1.0;
-	if (directional_lights.data[0].shadow_opacity > 0.001) {
-		float depth_z = -vertex.z;
-		vec4 splits = directional_lights.data[0].shadow_split_offsets;
-		vec4 coord = vec4(-1.0);
-		if (depth_z < splits.x) {
-			coord = directional_lights.data[0].shadow_matrix1 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.x, 1.0);
-		} else if (depth_z < splits.y) {
-			coord = directional_lights.data[0].shadow_matrix2 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.y, 1.0);
-		} else if (depth_z < splits.z) {
-			coord = directional_lights.data[0].shadow_matrix3 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.z, 1.0);
-		} else if (depth_z < splits.w) {
-			coord = directional_lights.data[0].shadow_matrix4 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.w, 1.0);
-		}
-		if (coord.w > 0.0) {
-			coord /= coord.w;
-			shadow = textureProj(sampler2DShadow(directional_shadow_atlas, shadow_sampler), vec4(coord.xy, coord.z, 1.0));
-			shadow = mix(shadow, 1.0, smoothstep(directional_lights.data[0].fade_from, directional_lights.data[0].fade_to, vertex.z));
-			shadow = mix(1.0, shadow, directional_lights.data[0].shadow_opacity);
-		}
-	}
-	vec3 projector = vec3(1.0);
-	vec4 rect = directional_lights.data[0].projector_rect;
-	if (rect != vec4(0.0)) {
-		vec2 uv = vec2(dot(vec4(vertex, 1.0), directional_lights.data[0].projector_u), dot(vec4(vertex, 1.0), directional_lights.data[0].projector_v));
-		if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
-			vec4 proj = textureLod(sampler2D(decal_atlas_srgb, light_projector_sampler), uv * rect.zw + rect.xy, 0.0);
-			projector = proj.rgb * proj.a;
-		}
-	}
-	return shadow * projector;
-}
-
-// sun_direction() (spatial fragment and light): the first directional light's direction, toward the light, in
-// world space; zero without one. For a surface that shadows itself per pixel and hands the result to SUN_SHADOW.
-vec3 sun_direction() {
-	if (scene_data_block.data.directional_light_count == 0u) {
-		return vec3(0.0);
-	}
-	mat3 inv_view = mat3(transpose(mat4(scene_data_block.data.inv_view_matrix[0], scene_data_block.data.inv_view_matrix[1], scene_data_block.data.inv_view_matrix[2], vec4(0.0, 0.0, 0.0, 1.0))));
-	return normalize(inv_view * directional_lights.data[0].direction);
-}
-
-// relief_sun_direction(): sun_direction() for relief without geometry (parallax); the path tracer's is nonzero.
-vec3 relief_sun_direction() {
-	return sun_direction();
-}
-
 #GLOBALS
-
-// POSITIONAL_SHADOW_OFFSET (spatial fragment output): moves this fragment's omni and spot shadow
-// lookups toward each light by that many metres (as DIRECTIONAL_SHADOW_OFFSET for directional
-// lights), so a surface that shadows itself another way (strand hair's deep opacity maps) can skip
-// its own layers in the shadow map and keep what lies beyond them. Global: the light functions
-// read it. Declared in every pass, as the material's code writes it in every pass.
-float positional_shadow_offset = 0.0;
 
 #define scene_data scene_data_block.data
 
@@ -1311,10 +1247,6 @@ void main() {
 	float alpha_hash_scale_highp = 1.0;
 #endif // ALPHA_HASH_USED
 
-#ifdef OPAQUE_PREPASS_THRESHOLD_USED
-	float opaque_prepass_threshold_out = scene_data.opaque_prepass_threshold;
-#endif
-
 #ifdef ALPHA_ANTIALIASING_EDGE_USED
 	float alpha_antialiasing_edge_highp = 0.0;
 	vec2 alpha_texture_coordinate = vec2(0.0, 0.0);
@@ -1333,7 +1265,6 @@ void main() {
 	vec3 light_vertex = vertex;
 #endif //LIGHT_VERTEX_USED
 	float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET
-	float sun_shadow = 1.0; // SUN_SHADOW: multiplies the first directional light's shadow (a surface's own relief)
 
 	mat3 model_normal_matrix;
 	if (bool(instances.data[draw_call.instance_index].flags & INSTANCE_FLAGS_NON_UNIFORM_SCALE)) {
@@ -1494,12 +1425,7 @@ void main() {
 
 #ifdef MODE_RENDER_DEPTH
 #if defined(USE_OPAQUE_PREPASS) || defined(ALPHA_ANTIALIASING_EDGE_USED)
-#ifdef OPAQUE_PREPASS_THRESHOLD_USED
-	float prepass_threshold = scene_data.opaque_prepass_threshold > 0.9 ? opaque_prepass_threshold_out : scene_data.opaque_prepass_threshold;
-#else
-	float prepass_threshold = scene_data.opaque_prepass_threshold;
-#endif
-	if (alpha < half(prepass_threshold)) {
+	if (alpha < half(scene_data.opaque_prepass_threshold)) {
 		discard;
 	}
 #endif // USE_OPAQUE_PREPASS || ALPHA_ANTIALIASING_EDGE_USED
@@ -2182,7 +2108,7 @@ void main() {
 #undef BIAS_FUNC
 				}
 
-				shadows[i] = i == 0u ? shadow * half(sun_shadow) : shadow; // SUN_SHADOW
+				shadows[i] = shadow;
 			}
 
 #ifdef USE_LIGHTMAP

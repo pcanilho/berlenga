@@ -1756,32 +1756,22 @@ _FORCE_INLINE_ bool _heightmap_face_cull_segment(_HeightmapSegmentCullParams &p_
 	return false;
 }
 
-// A height map triangle with a NaN height at any corner is part of a hole, as in the Jolt and PhysX backends; its
-// plane would be NaN.
-static _FORCE_INLINE_ bool _heightmap_face_solid(const GodotFaceShape3D &p_face) {
-	return Math::is_finite(p_face.vertex[0].y) && Math::is_finite(p_face.vertex[1].y) && Math::is_finite(p_face.vertex[2].y);
-}
-
 _FORCE_INLINE_ bool _heightmap_cell_cull_segment(_HeightmapSegmentCullParams &p_params, const _HeightmapGridCullState &p_state) {
 	// First triangle.
 	p_params.heightmap->_get_point(p_state.x, p_state.z, p_params.face->vertex[0]);
 	p_params.heightmap->_get_point(p_state.x + 1, p_state.z, p_params.face->vertex[1]);
 	p_params.heightmap->_get_point(p_state.x, p_state.z + 1, p_params.face->vertex[2]);
-	if (_heightmap_face_solid(*p_params.face)) {
-		p_params.face->normal = Plane(p_params.face->vertex[0], p_params.face->vertex[1], p_params.face->vertex[2]).normal;
-		if (_heightmap_face_cull_segment(p_params)) {
-			return true;
-		}
+	p_params.face->normal = Plane(p_params.face->vertex[0], p_params.face->vertex[1], p_params.face->vertex[2]).normal;
+	if (_heightmap_face_cull_segment(p_params)) {
+		return true;
 	}
 
 	// Second triangle.
 	p_params.face->vertex[0] = p_params.face->vertex[1];
 	p_params.heightmap->_get_point(p_state.x + 1, p_state.z + 1, p_params.face->vertex[1]);
-	if (_heightmap_face_solid(*p_params.face)) {
-		p_params.face->normal = Plane(p_params.face->vertex[0], p_params.face->vertex[1], p_params.face->vertex[2]).normal;
-		if (_heightmap_face_cull_segment(p_params)) {
-			return true;
-		}
+	p_params.face->normal = Plane(p_params.face->vertex[0], p_params.face->vertex[1], p_params.face->vertex[2]).normal;
+	if (_heightmap_face_cull_segment(p_params)) {
+		return true;
 	}
 
 	return false;
@@ -2081,21 +2071,17 @@ void GodotHeightMapShape3D::cull(const AABB &p_local_aabb, QueryCallback p_callb
 			_get_point(x, z, face.vertex[0]);
 			_get_point(x + 1, z, face.vertex[1]);
 			_get_point(x, z + 1, face.vertex[2]);
-			if (_heightmap_face_solid(face)) {
-				face.normal = Plane(face.vertex[0], face.vertex[1], face.vertex[2]).normal;
-				if (p_callback(p_userdata, &face)) {
-					return;
-				}
+			face.normal = Plane(face.vertex[0], face.vertex[1], face.vertex[2]).normal;
+			if (p_callback(p_userdata, &face)) {
+				return;
 			}
 
 			// Second triangle.
 			face.vertex[0] = face.vertex[1];
 			_get_point(x + 1, z + 1, face.vertex[1]);
-			if (_heightmap_face_solid(face)) {
-				face.normal = Plane(face.vertex[0], face.vertex[1], face.vertex[2]).normal;
-				if (p_callback(p_userdata, &face)) {
-					return;
-				}
+			face.normal = Plane(face.vertex[0], face.vertex[1], face.vertex[2]).normal;
+			if (p_callback(p_userdata, &face)) {
+				return;
 			}
 		}
 	}
@@ -2143,9 +2129,8 @@ void GodotHeightMapShape3D::_build_accelerator() {
 
 			Range r;
 
-			// NaN heights (holes) are left out; a chunk all hole keeps min over max, so every segment skips it.
-			r.min = Math::INF;
-			r.max = -Math::INF;
+			r.min = _get_height(x0, z0);
+			r.max = r.min;
 
 			// Compute min and max height for this chunk.
 			// We have to include one extra cell to account for neighbors.
@@ -2168,11 +2153,11 @@ void GodotHeightMapShape3D::_build_accelerator() {
 			for (int z = z0; z < z_max; ++z) {
 				for (int x = x0; x < x_max; ++x) {
 					real_t height = _get_height(x, z);
-					if (!Math::is_finite(height)) {
-						continue;
+					if (height < r.min) {
+						r.min = height;
+					} else if (height > r.max) {
+						r.max = height;
 					}
-					r.min = MIN(r.min, height);
-					r.max = MAX(r.max, height);
 				}
 			}
 

@@ -51,7 +51,6 @@ vec3 fetch_object_position(in GeometryData geom, uint idx) {
 void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
 	rt_cone_uv_lod = RT_TEXTURE_LOD_BASE;
 	rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
-	rt_cone_width = 0.0;
 	rt_cone_uv_grad = false;
 	float width = payload_cone_width(payload, rt_cone_eye_width()) + rt_cone_spread_angle() * gl_HitTEXT;
 	if ((payload.packed_bounces_flags & (CAUSTIC_PHOTON_FLAG | PEEL_RAY_FLAG)) == CAUSTIC_PHOTON_FLAG) {
@@ -64,7 +63,6 @@ void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
 	vec3 dir = gl_WorldRayDirectionEXT;
 	float cos_n = max(abs(dot(world_normal, dir)), 0.05);
 	rt_cone_footprint_log2 = log2(width / cos_n);
-	rt_cone_width = width;
 
 	if (geom.uv_byte_offset == OFFSET_NONE || geom.attribute_address == 0ul || geom.vertex_address == 0ul) {
 		return;
@@ -166,13 +164,6 @@ HitData compute_hit_data() {
 
 		h.is_front_face = rt_triangle_front_facing(geom);
 		h.geometry_normal = rt_side_checked_normal(geom, h.geometry_normal, h.is_front_face);
-#ifdef RT_LSS
-		// A swept sphere: the round fibre's own normal, always met from outside.
-		if (rt_lss_hit && dot(rt_lss_offset, rt_lss_offset) > 0.0) {
-			h.geometry_normal = normalize(rt_lss_offset);
-			h.is_front_face = true;
-		}
-#endif
 	}
 
 	h.hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
@@ -282,7 +273,7 @@ vec3 rt_hit_prev_world_pos(vec3 hit_pos) {
 	}
 #endif
 #ifdef RT_HIT_ATTRIBS_DECLARED
-	prev_obj_pos = rt_prev_triangle_object_pos(geom, RT_HIT_PRIMITIVE_ID, attribs, prev_obj_pos);
+	prev_obj_pos = rt_prev_triangle_object_pos(geom, gl_PrimitiveID, attribs, prev_obj_pos);
 #endif
 
 	return rt_prev_world_pos(geom_idx, prev_obj_pos, mat4(gl_ObjectToWorldEXT));
@@ -408,8 +399,6 @@ MaterialProperties material_properties_coated(vec3 p_albedo, float p_metallic, f
 	material.hairPlaneNormal = p_coat_normal;
 	material.hairParams = vec4(0.3, 0.3, 2.0, 0.0);
 	material.hairCards = false;
-	material.anisotropy = 0.0;
-	material.anisoTangent = vec3(1.0, 0.0, 0.0);
 	return material;
 }
 
@@ -434,8 +423,6 @@ MaterialProperties material_properties_from_result(HitData h, MaterialResult m, 
 	material.hairPlaneNormal = h.geometry_normal;
 	material.hairParams = m.hair_params;
 	material.hairCards = m.hair_cards;
-	material.anisotropy = m.aniso.w;
-	material.anisoTangent = m.aniso.xyz;
 	return material;
 }
 
@@ -500,7 +487,7 @@ vec3 debug_directional_shadow_blocker(vec3 p_geometry_normal, uint p_receiver_sh
 		if (transparent && (mat_flags & (RT_MAT_FLAG_NO_RAY_QUERY_ALPHA | RT_MAT_FLAG_INSTANCE_FADE)) == RT_MAT_FLAG_NO_RAY_QUERY_ALPHA) {
 			continue;
 		}
-		vec4 surface = ray_query_surface(geometry_idx, RT_RQ_PRIMITIVE(rq, false), RT_RQ_BARYCENTRICS(rq, false), 0.0);
+		vec4 surface = ray_query_surface(geometry_idx, rayQueryGetIntersectionPrimitiveIndexEXT(rq, false), rayQueryGetIntersectionBarycentricsEXT(rq, false), 0.0);
 		if (transparent) {
 			// Expected value of ray_query_shadow_transmittance's stochastic coverage.
 			transmittance *= (1.0 - surface.a) * mix(vec3(1.0), surface.rgb, surface.a);
@@ -872,8 +859,7 @@ float reflection_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties mat
 		}
 		vec3 H = normalize(V + L);
 		vec3 Ns = dot(material.specularNormal, material.specularNormal) > 0.5 ? material.specularNormal : N;
-		pdf += p_spec * (material.anisotropy > 0.0 ? anisoGGXReflectionPdf(Ns, material.anisoTangent, V, L, alpha, material.anisotropy)
-													  : sampleGGXVNDFReflectionPdf(alpha, alpha * alpha, max(dot(Ns, H), 0.0), max(dot(Ns, V), 0.0), max(dot(L, H), 0.0)));
+		pdf += p_spec * sampleGGXVNDFReflectionPdf(alpha, alpha * alpha, max(dot(Ns, H), 0.0), max(dot(Ns, V), 0.0), max(dot(L, H), 0.0));
 	}
 	return pdf;
 }
@@ -886,25 +872,21 @@ float opaque_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties materia
 	return reflection_continuation_pdf(N, V, L, material);
 }
 
-// Probability of a bounce ray passing through a transmissive surface: the transmitted share of its
-// light at this view, by the Fresnel at the shading normal (pbrt's dielectric picks reflection with
-// probability F). Head-on shares (F0) sent water's reflection 2% of the rays at every angle, each
-// weighted F / 0.02, up to fifteen times, at grazing views: sky glints speckled over open water.
-float transmission_lobe_probability(MaterialProperties material, vec3 N, vec3 V) {
+// Probability of a bounce ray passing through a thin transmissive surface: the transmitted
+// share of its light.
+float transmission_lobe_probability(MaterialProperties material) {
 	if (material.transmissivness <= 0.0) {
 		return 0.0;
 	}
-	vec3 f0 = materialSpecularF0(material);
-	float fr = luminance(evalFresnel(f0, godotF90(f0, material.metalness), clamp(abs(dot(N, V)), 0.0, 1.0)));
-	float trans_lum = luminance(material.baseColor) * material.transmissivness * (1.0 - fr);
-	float lum = trans_lum + fr + luminance(materialDiffuseReflectance(material)) + luminance(backlightTransmittance(material));
+	float trans_lum = luminance(thinTransmittance(material));
+	float lum = trans_lum + luminance(materialSpecularF0(material)) + luminance(materialDiffuseReflectance(material)) + luminance(backlightTransmittance(material));
 	return lum > 0.0 ? clamp(trans_lum / lum, 0.01, 0.99) : 0.0;
 }
 
 // The reflection and back light lobes' density. The thin transmission lobe adds none: no light
 // sample draws its directions (a ray through it weighs what it finds in full).
 float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
-	float p_trans = transmission_lobe_probability(material, N, V);
+	float p_trans = transmission_lobe_probability(material);
 	return (1.0 - p_trans) * opaque_continuation_pdf(N, V, L, material);
 }
 
@@ -1054,65 +1036,6 @@ float rt_emissive_hit_weight(uint p_geometry_idx, uint p_prim, vec3 p_from, vec3
 	return rt_mis_power(p_bsdf_pdf, pdf_l);
 }
 
-// The shadow terminator of smooth-shaded meshes: the interpolated normal faces a light while the flat
-// triangle under it already turns away, so its shadow ray starts below the surface the normals describe
-// and hits the neighbouring triangles. Under a grazing sun a coarse, ridged mesh (bark) breaks into
-// whole triangles of black. Raster hides it with shadow-map bias. Hanika, "Hacking the Shadow
-// Terminator", Ray Tracing Gems II (2021), ch. 4: lift the shadow ray's origin onto the curved surface
-// the vertex normals imply, by projecting the hit onto each vertex's tangent plane where it lies below
-// it and blending those by the barycentrics. Points already above every tangent plane do not move.
-vec3 rt_terminator_shadow_point(HitData h) {
-#ifdef ENABLE_INTERSECTION_SHADERS
-	if ((geometries[h.geometry_idx].flags & FLAG_PROCEDURAL) != 0u) {
-		return h.hit_pos;
-	}
-#endif
-#ifdef RT_LSS
-	if (rt_lss_hit) {
-		return h.hit_pos;
-	}
-#endif
-	GeometryData geom = geometries[h.geometry_idx];
-	if (geom.normal_byte_offset == OFFSET_NONE || geom.vertex_address == 0ul) {
-		return h.hit_pos;
-	}
-	uint i0, i1, i2;
-	get_triangle_indices(geom, i0, i1, i2);
-	vec3 bary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
-	mat4x3 o2w = gl_ObjectToWorldEXT;
-	mat3 nm = mat3(normalize(o2w[0]), normalize(o2w[1]), normalize(o2w[2]));
-	vec3 p0 = o2w * vec4(fetch_object_position(geom, i0), 1.0);
-	vec3 p1 = o2w * vec4(fetch_object_position(geom, i1), 1.0);
-	vec3 p2 = o2w * vec4(fetch_object_position(geom, i2), 1.0);
-	TBNResult t0, t1, t2;
-	if ((geom.flags & FLAG_COMPRESSED) != 0u) {
-		t0 = fetch_tbn_compressed_vertex(geom, i0);
-		t1 = fetch_tbn_compressed_vertex(geom, i1);
-		t2 = fetch_tbn_compressed_vertex(geom, i2);
-	} else {
-		t0 = fetch_tbn_uncompressed_vertex(geom, i0);
-		t1 = fetch_tbn_uncompressed_vertex(geom, i1);
-		t2 = fetch_tbn_uncompressed_vertex(geom, i2);
-	}
-	vec3 n0 = normalize(nm * t0.normal);
-	vec3 n1 = normalize(nm * t1.normal);
-	vec3 n2 = normalize(nm * t2.normal);
-	// Back faces of side-checked materials shade with the flipped normal: lift towards that side.
-	float side = dot(bary.x * n0 + bary.y * n1 + bary.z * n2, h.geometry_normal) < 0.0 ? -1.0 : 1.0;
-	n0 *= side;
-	n1 *= side;
-	n2 *= side;
-	vec3 p = h.hit_pos;
-	vec3 lift = bary.x * min(0.0, dot(p - p0, n0)) * n0 + bary.y * min(0.0, dot(p - p1, n1)) * n1 + bary.z * min(0.0, dot(p - p2, n2)) * n2;
-	// Keep it local: a lift past a fraction of the triangle's size means a broken normal, not curvature.
-	float size = max(max(distance(p0, p1), distance(p1, p2)), distance(p2, p0));
-	float len = length(lift);
-	if (len > 0.25 * size) {
-		lift *= 0.25 * size / len;
-	}
-	return p - lift;
-}
-
 // p_is_indirect: the path made a diffuse bounce, scaling lights by indirect_energy and emission by emission_indirect.
 // p_bsdf_pdf: PathState::bsdf_pdf of the ray that hit (0: the emission counts in full).
 vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_indirect, float p_bsdf_pdf, inout uint rng_state) {
@@ -1122,12 +1045,12 @@ vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_
 	}
 	if (p_bsdf_pdf > 0.0 && any(notEqual(m.emissive, vec3(0.0)))) {
 		// The emissive surfaces' light sample at the last vertex found this light too.
-		emission_weight *= rt_emissive_hit_weight(h.geometry_idx, RT_HIT_PRIMITIVE_ID, gl_WorldRayOriginEXT, h.hit_pos, p_bsdf_pdf);
+		emission_weight *= rt_emissive_hit_weight(h.geometry_idx, gl_PrimitiveID, gl_WorldRayOriginEXT, h.hit_pos, p_bsdf_pdf);
 	}
 	vec3 lit = m.emissive * emission_weight;
 	MaterialProperties material = material_properties_from_result(h, m, N, V);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
-	vec3 hit_pos_offset = offset_ray_origin(rt_terminator_shadow_point(h), h.geometry_normal, gl_HitTEXT);
+	vec3 hit_pos_offset = offset_ray_origin(h.hit_pos, h.geometry_normal, gl_HitTEXT);
 	rt_set_shadow_origins(hit_pos_offset, offset_ray_origin(h.hit_pos, -h.geometry_normal, gl_HitTEXT), h.geometry_normal);
 	uint layers = geometries[h.geometry_idx].layers;
 	uint shadow_mask = rt_receiver_shadow_mask(h.geometry_idx);
@@ -1262,7 +1185,7 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	}
 
 	// Thin transmission: straight through the surface, with its share of the light.
-	float p_trans = transmission_lobe_probability(material, N, V);
+	float p_trans = transmission_lobe_probability(material);
 	if (p_trans > 0.0) {
 		if (rand(ps.rng_state) < p_trans) {
 			vec3 trans_dir;
@@ -1394,11 +1317,11 @@ vec2 dlss_rr_specular_motion_vector(vec3 p_hit_pos, vec3 p_prev_hit_pos, vec3 p_
 	// A/B: TerminateOnFirstHit stops at whichever hit traversal finds first, not the closest.
 	rayQueryInitializeEXT(spec_rq, tlas, RT_RAY_FLAGS | gl_RayFlagsTerminateOnFirstHitEXT, p_mask, spec_origin, 0.001, spec_dir, 10000.0);
 	while (rayQueryProceedEXT(spec_rq)) {
-		if (RT_RQ_IS_TRIANGLE(spec_rq) &&
+		if (rayQueryGetIntersectionTypeEXT(spec_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT &&
 				ray_query_alpha_test(
 						RT_RQ_GEOMETRY_IDX(spec_rq, false),
-						RT_RQ_PRIMITIVE(spec_rq, false),
-						RT_RQ_BARYCENTRICS(spec_rq, false))) {
+						rayQueryGetIntersectionPrimitiveIndexEXT(spec_rq, false),
+						rayQueryGetIntersectionBarycentricsEXT(spec_rq, false))) {
 			rayQueryConfirmIntersectionEXT(spec_rq);
 		}
 	}
@@ -1412,8 +1335,8 @@ vec2 dlss_rr_specular_motion_vector(vec3 p_hit_pos, vec3 p_prev_hit_pos, vec3 p_
 	vec3 reflected_pos = spec_origin + spec_dir * spec_t;
 	uint reflected_geom_idx = RT_RQ_GEOMETRY_IDX(spec_rq, true);
 	vec3 reflected_obj_pos = rt_prev_triangle_object_pos(geometries[reflected_geom_idx],
-			uint(RT_RQ_PRIMITIVE(spec_rq, true)),
-			RT_RQ_BARYCENTRICS(spec_rq, true),
+			uint(rayQueryGetIntersectionPrimitiveIndexEXT(spec_rq, true)),
+			rayQueryGetIntersectionBarycentricsEXT(spec_rq, true),
 			(mat4(rayQueryGetIntersectionWorldToObjectEXT(spec_rq, true)) * vec4(reflected_pos, 1.0)).xyz);
 	vec3 reflected_prev_pos = rt_prev_world_pos(reflected_geom_idx, reflected_obj_pos,
 			mat4(rayQueryGetIntersectionObjectToWorldEXT(spec_rq, true)));

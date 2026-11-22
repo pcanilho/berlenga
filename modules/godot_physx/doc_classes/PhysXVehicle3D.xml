@@ -19,15 +19,6 @@
 				Stops the car and [param body] (a [PhysicsBody3D] or another PhysX vehicle) colliding: they pass through each other, its wheels included, as with [method PhysicsBody3D.add_collision_exception_with]. Either side having the exception is enough, so a [RigidBody3D] or [CharacterBody3D] needs nothing of its own.
 			</description>
 		</method>
-		<method name="add_mud_splat">
-			<return type="void" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="velocity" type="Vector3" />
-			<param index="2" name="volume" type="float" />
-			<description>
-				Sticks a clod of [param volume] m³ of mud to the body at world [param position], spread into a splat along its flight [param velocity]. A [PhysXGroundGrains3D]'s mud clods call it when they meet the chassis box. The body keeps the last 32. See [member body_mud].
-			</description>
-		</method>
 		<method name="apply_central_force">
 			<return type="void" />
 			<param index="0" name="force" type="Vector3" />
@@ -84,68 +75,6 @@
 				The chassis's world-space angular velocity, in radians per second.
 			</description>
 		</method>
-		<method name="get_belly_drag" qualifiers="const">
-			<return type="float" />
-			<description>
-				The drag the ground puts on the chassis underside where it rides in the soil (shear and bulldozing of the soil ahead), in newtons. [code]0[/code] while the belly is clear. See [member belly_drag].
-			</description>
-		</method>
-		<method name="get_belly_support" qualifiers="const">
-			<return type="float" />
-			<description>
-				The load the ground carries on the chassis underside, in newtons: weight taken off the wheels once the car is high-centred. See [member belly_drag].
-			</description>
-		</method>
-		<method name="get_body_mud_line" qualifiers="const">
-			<return type="float" />
-			<description>
-				How high the mud reaches on the body, in metres above the chassis box's underside: the deepest the belly has sat in mud. See [member body_mud].
-			</description>
-		</method>
-		<method name="get_body_mud_color" qualifiers="const">
-			<return type="Color" />
-			<description>
-				The colour of the clay on the body: [member GroundSurface3D.mud_color] (or its [member GroundSurface3D.mud_color_map]) where the wheels turn in mud, averaged over the last few metres driven. See [member body_mud].
-			</description>
-		</method>
-		<method name="get_body_mud_wetness" qualifiers="const">
-			<return type="float" />
-			<description>
-				How wet the body's mud is, [code]1[/code] fresh to [code]0[/code] dried to a crust (over about five minutes). See [member body_mud].
-			</description>
-		</method>
-		<method name="get_bow_wave_strength" qualifiers="const">
-			<return type="float" />
-			<description>
-				How hard the hull pushes the water at the last step, 0 to 1 (the strongest of three points along its keel, given to the water contract as moving disturbances that the water's wave solver turns into a bow wave and a wake): 0.15 at rest, rising to 1 at a depth Froude number of 0.8, times how much of the hull is wet. See [member river_forces].
-			</description>
-		</method>
-		<method name="get_intake_trough" qualifiers="const">
-			<return type="float" />
-			<description>
-				How much lower the water stands at the engine's air intake than the still surface, m, at the last step: about the stagnation head v^2 / 2g at a wading pace (the bow's trough), turning negative past a depth Froude number of 0.7 as the bow wave stands up and climbs over the bonnet. The intake (see [member air_intake_height]) reads the water at this level.
-			</description>
-		</method>
-		<method name="get_wheel_creep" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				How far the wheel has settled past its load's sinkage by standing in wet mud, m (see [member parked_settling]).
-			</description>
-		</method>
-		<method name="get_wheel_suction" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				The suction holding the wheel in its hollow as it pulls away, N, at the last substep (see [member parked_settling]).
-			</description>
-		</method>
-		<method name="get_cab_water" qualifiers="const">
-			<return type="float" />
-			<description>
-				Cubic metres of water inside the cab: it floods through [member hull_leak_area] at an orifice's rate under the water's head outside, weighs the vehicle down, and drains on land. See [member river_forces].
-			</description>
-		</method>
 		<method name="get_collision_exceptions" qualifiers="const">
 			<return type="Node[]" />
 			<description>
@@ -182,19 +111,6 @@
 				The chassis's world-space linear velocity. It reads the chassis itself, so a velocity just set with [method set_linear_velocity] or changed by an impulse reads back at once.
 			</description>
 		</method>
-		<method name="get_mud_splat" qualifiers="const">
-			<return type="Vector4" />
-			<param index="0" name="index" type="int" />
-			<description>
-				Stuck clod [param index]: its position in the vehicle's frame ([code]x[/code], [code]y[/code], [code]z[/code]) and how much of it is left ([code]w[/code], 1 fresh, washing to 0). Water washes clods under its line, faster as it runs past.
-			</description>
-		</method>
-		<method name="get_mud_splat_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				How many clods are stuck to the body (at most 32). See [method add_mud_splat].
-			</description>
-		</method>
 		<method name="get_rid" qualifiers="const">
 			<return type="RID" />
 			<description>
@@ -207,51 +123,11 @@
 				The gear the gearbox is shifting to, numbered as [member gear] (the current gear when no shift is under way). A new gear is taken only once the current shift has finished ([member gear_switch_time]).
 			</description>
 		</method>
-		<method name="get_water_buoyancy" qualifiers="const">
-			<return type="float" />
-			<description>
-				The water's lift on the chassis box and the tyres at the last step, in newtons. See [member river_forces].
-			</description>
-		</method>
-		<method name="get_water_drag" qualifiers="const">
-			<return type="Vector3" />
-			<description>
-				The current's horizontal drag on the chassis box and the tyres at the last step, in newtons. See [member river_forces].
-			</description>
-		</method>
-		<method name="get_wheel_deflection" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				How much further tyre [param wheel] is squashed than at road pressure (200 kPa, the default), in metres: an aired-down tyre (low [member PhysXVehicleWheel3D.tire_pressure]) stands lower on a longer flat. Negative above road pressure. Wheel index as in [method get_wheel_jounce].
-			</description>
-		</method>
 		<method name="get_wheel_jounce" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="wheel" type="int" />
 			<description>
 				How compressed wheel [param wheel]'s suspension is right now, from [code]0[/code] (fully extended / max droop) to that wheel's own [member PhysXVehicleWheel3D.suspension_travel] (fully compressed / bottomed out). [param wheel] is the child index among this node's [PhysXVehicleWheel3D] children, in the order they were added -- not a fixed front-left/front-right/rear-left/rear-right order. Useful for tuning [member PhysXVehicleWheel3D.suspension_stiffness]: resting jounce well under half of [member PhysXVehicleWheel3D.suspension_travel] leaves real margin before the suspension bottoms out under braking, cornering, or a bump.
-			</description>
-		</method>
-		<method name="get_wheel_mud" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				How full wheel [param wheel]'s tread is of packed mud, [code]0[/code] (clean) to [code]1[/code] (a slick of clay). Wheel index as in [method get_wheel_jounce]. See [member tyre_clogging].
-			</description>
-		</method>
-		<method name="get_wheel_mud_shed" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				The mud wheel [param wheel] has thrown or washed off its tread so far, in kilograms. Useful to drive spray and clods. See [member tyre_clogging].
-			</description>
-		</method>
-		<method name="get_wheel_mud_spray" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				How much mud wheel [param wheel] has thrown up its arch and along the body, [code]0[/code] (clean) to [code]1[/code] (caked). Standing water washes it off. See [member body_mud].
 			</description>
 		</method>
 		<method name="get_wheel_separation" qualifiers="const">
@@ -261,65 +137,10 @@
 				[code]0[/code] when wheel [param wheel] can reach the ground within its suspension travel. A negative value means the wheel is penetrating the ground even at full compression -- [member PhysXVehicleWheel3D.suspension_travel] is too short for the current ride height. [param wheel] uses the same child-index convention as [method get_wheel_jounce].
 			</description>
 		</method>
-		<method name="get_wheel_sinkage" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				How far wheel [param wheel] has sunk into soft ground, in metres ([code]0[/code] off soft ground). Wheel index as in [method get_wheel_jounce]. See [member soft_soil].
-			</description>
-		</method>
-		<method name="get_wheel_slip" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				Wheel [param wheel]'s slip as terramechanics measures it, [code]-1[/code] (locked, skidding) to [code]1[/code] (spinning in place), on soft ground; [code]0[/code] elsewhere.
-			</description>
-		</method>
-		<method name="get_wheel_soil_resistance" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				The motion resistance the soft ground puts on wheel [param wheel] (compaction and bulldozing of the soil it moves into), in newtons.
-			</description>
-		</method>
-		<method name="get_wheel_soil_side_force" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				The push of the soft ground against wheel [param wheel]'s sidewall while it slides sideways (side bulldozing, as in a drift), in newtons.
-			</description>
-		</method>
-		<method name="get_wheel_soil_traction" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				The traction the soft ground under wheel [param wheel] can give at its current slip (Janosi-Hanamoto), in newtons.
-			</description>
-		</method>
-		<method name="get_wind_obstacles" qualifiers="const">
-			<return type="Array" />
-			<param index="0" name="rect" type="Rect2" />
-			<description>
-				The chassis box as a world [AABB] when it overlaps [param rect] (empty before the vehicle is built or while [member wind_obstacle] is off). WeatherMap3D reads it for its shelter: snow and blown sand drift in a parked vehicle's lee.
-			</description>
-		</method>
-		<method name="is_engine_drowned" qualifiers="const">
-			<return type="bool" />
-			<description>
-				[code]true[/code] while the engine is stalled by water drawn into its air intake ([member air_intake_height], [member snorkel]); it starts again 5 s after the intake is clear. The throttle does nothing meanwhile.
-			</description>
-		</method>
 		<method name="is_sleeping" qualifiers="const">
 			<return type="bool" />
 			<description>
 				Returns whether the underlying PhysX vehicle actor is currently sleeping.
-			</description>
-		</method>
-		<method name="is_wheel_on_soft_soil" qualifiers="const">
-			<return type="bool" />
-			<param index="0" name="wheel" type="int" />
-			<description>
-				Returns [code]true[/code] when wheel [param wheel] stands on a [GroundSurface3D]'s soft material.
 			</description>
 		</method>
 		<method name="remove_collision_exception_with">
@@ -356,9 +177,6 @@
 		<member name="ackermann_strength" type="float" setter="set_ackermann_strength" getter="get_ackermann_strength" default="1.0">
 			How much Ackermann steering correction to apply to the front (steering) axle, from [code]0[/code] (both front wheels always turn by the same angle, like [VehicleWheel3D]) to [code]1[/code] (full correction: the inside wheel of a turn steers more sharply than the outside wheel, matching how a real front axle is geometrically linked).
 		</member>
-		<member name="air_intake_height" type="float" setter="set_air_intake_height" getter="get_air_intake_height" default="-1.0">
-			The engine's air intake over the chassis box's bottom, in metres, near the box's front: water over it stalls the engine (see [method is_engine_drowned]). Negative: three quarters of the box's height. See [member snorkel].
-		</member>
 		<member name="autobox_down_ratio" type="float" setter="set_autobox_down_ratio" getter="get_autobox_down_ratio" default="0.5">
 			The automatic gearbox shifts down when the engine falls below this fraction of [member engine_max_rpm]. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
 		</member>
@@ -370,12 +188,6 @@
 		</member>
 		<member name="automatic_transmission" type="bool" setter="set_automatic_transmission" getter="is_automatic_transmission" default="true">
 			A control, read every physics tick. If [code]true[/code], the automatic gearbox picks the forward gears. While [member clutch] is pressed past halfway it holds its gear, so revving against the clutch for a launch doesn't shift up standing still. If [code]false[/code], the gearbox goes to [member gear]. Either way, [member reverse] selects the reverse gear. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
-		</member>
-		<member name="belly_drag" type="bool" setter="set_belly_drag" getter="is_belly_drag" default="true">
-			When the chassis box's underside meets soft ground deeper than the ruts, the soil holds it up by its bearing pressure (Bekker) and drags it by its shear and adhesion, bulldozing at the front, and the body presses its own trough. A car sunk to its axles high-centres and has to be dug or winched out. See [method get_belly_drag] and [method get_belly_support].
-		</member>
-		<member name="body_mud" type="bool" setter="set_body_mud" getter="is_body_mud" default="true">
-			Mud cakes the meshes under this node: the tyres as their treads pack (see [member tyre_clogging]), the arches and sides as the wheels throw it, the underside up to the deepest the belly sat in mud. It lands wet and dark and dries over minutes to a pale crust; standing water washes the spray off. The node turns [member BaseMaterial3D.mud_enabled] on in copies of its meshes' [BaseMaterial3D] materials and feeds them each physics tick; [ShaderMaterial]s are left alone.
 		</member>
 		<member name="brake" type="float" setter="set_brake" getter="get_brake" default="0.0">
 			Brake pedal input, [code]0[/code] to [code]1[/code]. Scales up to [member max_brake_torque] of braking torque at each wheel. Set every physics tick from script; does not persist on its own the way a real pedal would.
@@ -452,12 +264,6 @@
 		<member name="handbrake" type="float" setter="set_handbrake" getter="get_handbrake" default="0.0">
 			Brake input for the rear wheels only, from [code]0[/code] to [code]1[/code], on top of [member brake] (up to [member max_brake_torque]): a parking brake, or to lock the rear wheels into a slide.
 		</member>
-		<member name="hull_leak_area" type="float" setter="set_hull_leak_area" getter="get_hull_leak_area" default="0.01">
-			The gaps the cab floods through, in square metres (Cd 0.6): with the default a floating car fills and settles over a few minutes. 0 keeps it dry. See [method get_cab_water].
-		</member>
-		<member name="hull_seal" type="float" setter="set_hull_seal" getter="get_hull_seal" default="0.5">
-			The share of the chassis box that keeps water out, for its buoyancy: a car's body keeps out about half its box and floats near 0.5 to 0.6 m of still water. See [member river_forces].
-		</member>
 		<member name="limited_slip_center_bias" type="float" setter="set_limited_slip_center_bias" getter="get_limited_slip_center_bias" default="1.3">
 			With [constant DIFFERENTIAL_LIMITED_SLIP] and both axles driven: the largest ratio between the front and rear wheels' speeds before torque moves to the slower axle. 0 leaves it open; otherwise it must be greater than [member limited_slip_center_target].
 		</member>
@@ -506,18 +312,6 @@
 		<member name="reverse_gear_ratio" type="float" setter="set_reverse_gear_ratio" getter="get_reverse_gear_ratio" default="4.0">
 			The reverse gear's ratio, as a positive number. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
 		</member>
-		<member name="river_forces" type="bool" setter="set_river_forces" getter="is_river_forces" default="true">
-			In any water of the water contract (a river, a ford, a flood, a lake) the chassis box and the tyres are buoyed by the water they keep out ([member hull_seal]) and dragged by the current past them (drag coefficient 1.1 on the wet face), so a fording vehicle is lightened, its tyres grip less and the current carries it off past the depth and speed vehicle flood tests find. Its hull also pushes a bow wave and a wake into the water (see [method get_bow_wave_strength]), whose waves wash the banks of the active [GroundSurface3D] (see [member GroundSurface3D.wake_wash]). Skipped when the vehicle has a [code]PhysXBuoyancy3D[/code] child.
-		</member>
-		<member name="parked_settling" type="bool" setter="set_parked_settling" getter="is_parked_settling" default="true">
-			Wheels left standing in wet, sticky mud keep settling by creep, with the log of the world's time (Buisman's secondary compression, about 2% of two tyre widths per tenfold time), and the soil sets up round them so suction holds the tyre as it pulls away (half the contact at the soil's cohesion, building over about ten minutes). Both let go as the wheel rolls out of its hollow, over about a contact length. The time runs at [method WorldWeather.time_scale].
-		</member>
-		<member name="snorkel" type="bool" setter="set_snorkel" getter="has_snorkel" default="false">
-			A snorkel: the engine's air intake raised to 0.25 m over the chassis box's roof, so it wades as deep as the body allows.
-		</member>
-		<member name="soft_soil" type="bool" setter="set_soft_soil" getter="is_soft_soil" default="true">
-			On a [GroundSurface3D]'s soft material (sand, soil, mud) the wheels sink by their load and tyre pressure, print ruts, get their grip from the soil's shear strength and feel its motion resistance (Bekker and Wong terramechanics). A spinning wheel digs itself in. Off firm ground nothing changes. See [member PhysXVehicleWheel3D.tire_pressure].
-		</member>
 		<member name="steer" type="float" setter="set_steer" getter="get_steer" default="0.0">
 			Steering input, [code]-1[/code] to [code]1[/code]. Scales up to [member max_steer_angle] on the front (steering) axle, modified by [member ackermann_strength]. Set every physics tick from script.
 		</member>
@@ -529,12 +323,6 @@
 		</member>
 		<member name="tire_grip" type="float" setter="set_tire_grip" getter="get_tire_grip" default="1.0">
 			A live multiplier on every tire's grip: below [code]1[/code] for ice, mud or wet roads, above for sticky tires. It takes effect at once, without rebuilding the vehicle (the wheels' own [code]tire_*[/code] properties rebuild it), so it can follow the ground the vehicle is on every frame.
-		</member>
-		<member name="tyre_clogging" type="bool" setter="set_tyre_clogging" getter="is_tyre_clogging" default="true">
-			In sticky clay the tyre tread packs with mud as it turns, more as it spins: a packed tread grips like a slick (the clay shears against itself) and its mass adds to the wheel's inertia, and the clay's adhesion drags on the wheel. Spun fast enough the tyre throws the mud off; it scours on sand, dries and drops on firm ground and washes off in standing water. See [method get_wheel_mud].
-		</member>
-		<member name="wind_obstacle" type="bool" setter="set_wind_obstacle" getter="is_wind_obstacle" default="true">
-			The chassis blocks the wind: the vehicle joins the [code]weather_shelter[/code] group, so WeatherMap3D slows the wind in its lee and snow and sand drift there. The weather checks it every 2 seconds and bakes its shelter again when the vehicle has moved.
 		</member>
 	</members>
 	<constants>

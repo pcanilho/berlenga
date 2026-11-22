@@ -468,17 +468,6 @@ void RendererSceneRenderRD::_render_buffers_copy_depth_texture(const RenderDataR
 	RD::get_singleton()->draw_command_end_label();
 }
 
-// Night vision in the tonemap: cd/m2 per unit of the rendered buffer, from the camera's luminance of one unit of
-// light energy and the pre-exposure the lights took (exposure multiplier and normalization). 0: off.
-static float _night_vision_luminance(RID p_camera_attributes) {
-	if (p_camera_attributes.is_null()) {
-		return 0.0f;
-	}
-	const float per_energy = RSG::camera_attributes->camera_attributes_get_night_vision(p_camera_attributes);
-	const float pre_exposure = RSG::camera_attributes->camera_attributes_get_exposure_normalization_factor(p_camera_attributes);
-	return per_energy > 0.0f && pre_exposure > 0.0f ? per_energy / pre_exposure : 0.0f;
-}
-
 void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const RenderDataRD *p_render_data, bool p_use_msaa) {
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 
@@ -833,7 +822,6 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 			tonemap.white = environment_get_white(p_render_data->environment, limit_agx_white, max_value);
 			tonemap.exposure = environment_get_exposure(p_render_data->environment);
 			tonemap.max_value = max_value;
-			tonemap.night_luminance = _night_vision_luminance(p_render_data->camera_attributes);
 		}
 
 		tonemap.use_color_correction = false;
@@ -1026,7 +1014,6 @@ void RendererSceneRenderRD::_post_process_subpass(RID p_source_texture, RID p_fr
 		tonemap.exposure = environment_get_exposure(p_render_data->environment);
 		tonemap.white = environment_get_white(p_render_data->environment, limit_agx_white, max_value);
 		tonemap.max_value = max_value;
-		tonemap.night_luminance = _night_vision_luminance(p_render_data->camera_attributes);
 	}
 
 	// We don't support glow or auto exposure here, if they are needed, don't use subpasses!

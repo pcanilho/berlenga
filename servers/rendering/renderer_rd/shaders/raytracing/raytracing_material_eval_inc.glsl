@@ -30,7 +30,6 @@ struct MaterialResult {
 	vec4 hair_params; // Longitudinal roughness, azimuthal roughness, cuticle tilt (degrees), fibre offset h.
 	bool hair_cards; // Light passes through (cards); otherwise a shell folds it back out.
 	bool hair_strand; // Strand geometry (HairMesh): hair_params.w is the true fibre offset at the hit.
-	vec4 aniso; // ANISOTROPY: xyz the world tangent its lobe widens along (after ANISOTROPY_FLOW), w the amount; 0 = none.
 };
 
 void material_result_no_hair(inout MaterialResult r) {
@@ -42,7 +41,6 @@ void material_result_no_hair(inout MaterialResult r) {
 	r.hair_params = vec4(0.3, 0.3, 2.0, 0.0);
 	r.hair_cards = false;
 	r.hair_strand = false;
-	r.aniso = vec4(1.0, 0.0, 0.0, 0.0);
 }
 
 // Sensible default for a mid-grey diffuse surface.
@@ -95,7 +93,6 @@ vec2 rt_cone_uv_dy = vec2(0.0);
 bool rt_cone_uv_grad = false;
 float rt_cone_uv_lod = RT_TEXTURE_LOD_BASE;
 float rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
-float rt_cone_width = 0.0; // The cone's width at the hit (m), across the ray: a pixel's footprint, as raster's.
 
 vec4 sample_bindless_texture(uint tex_idx, vec2 uv) {
 	// The samplers are the render buffers' own (bindings 16-27), so their mipmap bias (the

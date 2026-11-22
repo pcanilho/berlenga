@@ -13,13 +13,6 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="add_hole">
-			<return type="bool" />
-			<param index="0" name="box" type="Transform3D" />
-			<description>
-				Opens the ground inside an oriented box (the unit cube [code][-1, 1][/code] on each axis through [param box]), for a cave mouth's passage: the heights stay, [method is_hole] answers true where the ground lies inside it, and [Landscape3D] leaves those samples out of its mesh and collision. A box equal to one already added is ignored (returns false). Emits [signal holes_changed]. Holes are dropped when the terrain is generated again.
-			</description>
-		</method>
 		<method name="bake">
 			<return type="int" />
 			<description>
@@ -39,12 +32,6 @@
 			<param index="0" name="parent" type="Node" />
 			<description>
 				Creates the water of the last [method generate] under [param parent] and returns the nodes: a [code]PhysXWaterSurface3D[/code] (by class name, when the PhysX module is in the build) for the sea, at sea level over the generated rectangle with [code]seabed_from_floor[/code], [code]shore_waves[/code], [code]open_sea_beyond[/code] and [code]follow_weather[/code] on and three [code]wave_cascades[/code], and one per lake at its level with [code]surface_mesh[/code] set to the lake's outline and [code]follow_weather[/code] on. Without the PhysX module, plain [MeshInstance3D] sheets. Call it after the ground is written (the water reads its seabed through physics) and before [method build_river_paths], which then sets each river's [code]mouth_target[/code] to the sea or lake it ends in.
-			</description>
-		</method>
-		<method name="clear_holes">
-			<return type="void" />
-			<description>
-				Removes every hole.
 			</description>
 		</method>
 		<method name="clear_result">
@@ -105,40 +92,6 @@
 				Drainage area per grid node, [constant Image.FORMAT_RF], square metres.
 			</description>
 		</method>
-		<method name="get_dune_height" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				Metres of wind-blown sand the dunes ([member dunes_enabled]) laid over the ground at [param global_position] (x and z); 0 outside them. [method get_height] includes it.
-			</description>
-		</method>
-		<method name="get_dune_rect" qualifiers="const">
-			<return type="Rect2" />
-			<description>
-				The world x and z rectangle the dunes' grid covers; empty without dunes.
-			</description>
-		</method>
-		<method name="get_beach_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				The beach at [param global_position] (x and z): 1 on the beach face, fading to 0 over the backshore; 0 inland, at sea and on coasts with no beach. For plant rules: strandline and shingle plants on the backshore.
-			</description>
-		</method>
-		<method name="get_coast_exposure_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				Wave exposure of the land near the coast at [param global_position] (x and z), from the fetch: the open water in 32 directions, out to 5 km (or the grid's edge, open ocean), on a log scale. 0 in an enclosed inlet, about 0.5 in a bay a few hundred metres across, 1 on a coast open to the ocean; 0 more than 300 m from the sea and at sea. For plant rules: salt marsh only on sheltered shores.
-			</description>
-		</method>
-		<method name="get_dune_stability" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				Marram cover on the dunes at [param global_position] (x and z), 0 bare and mobile to 1 fixed; 0 outside them. For plant rules: bare sand, partly fixed or fixed dunes.
-			</description>
-		</method>
 		<method name="get_geology_at" qualifiers="const">
 			<return type="Color" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -170,14 +123,6 @@
 				Grid nodes along X and Z of the last [method generate].
 			</description>
 		</method>
-		<method name="get_gully_at" qualifiers="const">
-			<return type="Vector2" />
-			<param index="0" name="global_position" type="Vector3" />
-			<param index="1" name="normal_y" type="float" />
-			<description>
-				Rills and gullies at a world position, as the shaders' [code]terrain_gully()[/code] gives them: x the channel floor share 0..1 (the slope-area index A S^2, Montgomery and Dietrich 1988, on the droplets' flow, where the flow is concentrated), y the deposit depth in metres. [param normal_y] is the ground normal's y. Zero when [member tile_erosion_enabled] is off.
-			</description>
-		</method>
 		<method name="get_height" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -189,18 +134,6 @@
 			<return type="Image" />
 			<description>
 				Generated heights per grid node, [constant Image.FORMAT_RF], metres.
-			</description>
-		</method>
-		<method name="get_hole_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				How many holes there are.
-			</description>
-		</method>
-		<method name="get_holes" qualifiers="const">
-			<return type="Transform3D[]" />
-			<description>
-				The hole boxes, as given to [method add_hole].
 			</description>
 		</method>
 		<method name="get_inflow_cells" qualifiers="const">
@@ -239,46 +172,10 @@
 				Deposition passes the last [method generate] ran, over all steps and levels (0 with [member deposition] 0). Each step solves the deposition exactly in two sweeps, then runs passes until no node moves 5 cm; one or two a step is usual.
 			</description>
 		</method>
-		<method name="get_last_dune_max" qualifiers="const">
-			<return type="float" />
-			<description>
-				The deepest sand (m) the last dune run left; 0 without [member dunes_enabled].
-			</description>
-		</method>
-		<method name="get_last_dune_msec" qualifiers="const">
-			<return type="float" />
-			<description>
-				Milliseconds the last dune run took.
-			</description>
-		</method>
-		<method name="get_last_dune_volume" qualifiers="const">
-			<return type="float" />
-			<description>
-				Cubic metres of sand the last dune run left on the land.
-			</description>
-		</method>
 		<method name="get_last_generate_msec" qualifiers="const">
 			<return type="float" />
 			<description>
 				Time the last [method generate] took, in milliseconds.
-			</description>
-		</method>
-		<method name="get_last_glacial_residual" qualifiers="const">
-			<return type="float" />
-			<description>
-				The steady-state imbalance (m of ice a year) the last glaciation's last ice solve left: the largest over all but the worst 0.2% of the ice nodes.
-			</description>
-		</method>
-		<method name="get_last_glacial_steps" qualifiers="const">
-			<return type="int" />
-			<description>
-				Multigrid cycles and sweeps the last glaciation's converged ice solves took in all ([member glacial_converged]); 0 without it.
-			</description>
-		</method>
-		<method name="get_last_preview_msec" qualifiers="const">
-			<return type="float" />
-			<description>
-				Milliseconds the last [method preview] took, the write included.
 			</description>
 		</method>
 		<method name="get_last_runoff_msec" qualifiers="const">
@@ -311,79 +208,10 @@
 				Time the last [method write_to_terrain] took, in milliseconds.
 			</description>
 		</method>
-		<method name="get_last_sun_horizon_msec" qualifiers="const">
-			<return type="float" />
-			<description>
-				Time the last rebuild of the far sun shadows' horizon map took, in milliseconds.
-			</description>
-		</method>
-		<method name="get_material_geology_at" qualifiers="const">
-			<return type="Color" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				[method get_geology_image]'s channels at a point: soil depth (negative on beach and dune sand), rock exposure, talus (negative for moraine till), log10 drainage area. NaN in r outside the result.
-			</description>
-		</method>
-		<method name="get_springs" qualifiers="const">
-			<return type="PackedVector4Array" />
-			<description>
-				The oasis springs of the last [method generate] (see [member oasis_count]): x, the still water's level y, z, and 0 for the discharge (the pools' default). Set this generator as an [OasisSprings3D]'s [code]spring_source[/code] and that node as [member oasis_springs].
-			</description>
-		</method>
-		<method name="get_sun_horizon_image" qualifiers="const">
-			<return type="Image" />
-			<description>
-				The far sun shadows' horizon map (FORMAT_RF: the tangent of each point's horizon toward the sun, -1 off the ground), null before the first [method update_sun_horizon].
-			</description>
-		</method>
 		<method name="get_mean_runoff" qualifiers="const">
 			<return type="float" />
 			<description>
 				Mean runoff over the land of the last [method generate] with a [member climate_recipe], in mm a year. Lakes balance their inflow and evaporation with it.
-			</description>
-		</method>
-		<method name="carve_oases">
-			<return type="bool" />
-			<description>
-				Carves the oasis hollows again to the pools of [member oasis_springs] (rebuilding them first); [method generate] does it on its own. Call it when the pools change after the ground was made, then write the ground again. Returns [code]true[/code] when any hollow was carved.
-			</description>
-		</method>
-		<method name="get_nebkha_height" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				Sand (m) the nebkha mounds add at [param global_position] (x and z), on top of [method get_sand_sea_height]; 0 off the mounds. [method get_height] includes it.
-			</description>
-		</method>
-		<method name="get_nebkhas" qualifiers="const">
-			<return type="PackedVector4Array" />
-			<param index="0" name="rect" type="Rect2" />
-			<description>
-				The nebkhas of the last [method generate] whose plant stands inside [param rect]: (x, ground y at the mound's top, z, mound height in m). Each mound is sand trapped by one shrub, so a vegetation system places a shrub (taller and wider for higher mounds) at each. Their tails point downwind along [member sand_sea_wind_angle]. Deterministic for the seed.
-			</description>
-		</method>
-		<method name="get_last_sand_sea_max" qualifiers="const">
-			<return type="float" />
-			<description>
-				The deepest sand (m) the last sand sea run left; 0 without a [member sand_sea_rect].
-			</description>
-		</method>
-		<method name="get_last_sand_sea_msec" qualifiers="const">
-			<return type="float" />
-			<description>
-				Milliseconds the last sand sea run took.
-			</description>
-		</method>
-		<method name="get_last_sky_msec" qualifiers="const">
-			<return type="float" />
-			<description>
-				Milliseconds the last sky occlusion bake took (see [member sky_occlusion]).
-			</description>
-		</method>
-		<method name="get_last_sky_light_msec" qualifiers="const">
-			<return type="float" />
-			<description>
-				Milliseconds the last [method update_sky_light] took.
 			</description>
 		</method>
 		<method name="get_river_sites" qualifiers="const">
@@ -424,40 +252,6 @@
 				Water leaving the ground at a position for the rivers, in mm: in [param month] (0 January to 11 December), or a year with -1. A monthly water balance (McCabe and Markstrom 2007) of the [member climate_recipe]'s climate: rain and snow split by temperature, the snowpack melting by degree days and sunshine (Hock 1999), a soil water store losing Thornthwaite evapotranspiration (Thornthwaite and Mather 1957), a share of the rain running off at once and the rest of the surplus through a groundwater store. Without a recipe, [member river_runoff].
 			</description>
 		</method>
-		<method name="get_sand_depth_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				Loose sand depth (m) at [param global_position] (x and z) on the dune belts and sand seas: the dunes' and the sea's sand over the ground they were grown on, 0 on bare interdune floors; -1 off the dune fields. The materials use [method get_sand_interdune_at], which is derived from it.
-			</description>
-		</method>
-		<method name="get_sand_interdune_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				How much a point on the dune fields is interdune floor, 0..1: its sand depth against the deepest sand within about 50 m (under a fifth of it is floor, over two fifths dune), or a thin sand sheet under a few metres; -1 off the dune fields. The floors between dunes carry a coarse deflation lag (Lancaster 1995), drawn by the materials' dune tone and granule ripples. Published to shaders as [code]terrain_sand_interdune_map[/code] (see [method get_sand_shader_code]).
-			</description>
-		</method>
-		<method name="get_sand_sea_height" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				Sand (m) the sand sea added to the ground at [param global_position] (x and z); 0 outside [member sand_sea_rect].
-			</description>
-		</method>
-		<method name="get_sand_shader_code" qualifiers="static">
-			<return type="String" />
-			<description>
-				Shader code declaring the [code]terrain_sand_interdune_map[/code], [code]terrain_sand_interdune_rect[/code] and [code]terrain_sand_wind[/code] shader globals and a function [code]float terrain_sand_interdune(vec3 world_pos)[/code] returning what [method get_sand_interdune_at] returns (-1 with no generator).
-			</description>
-		</method>
-		<method name="get_scree_sorting" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				How far down its talus apron a world position lies, 0..1: 0 at the apex under the wall, 1 at the toe (the distance down the receivers from the apron's top over the whole run through that point). Big blocks run furthest, so a stone placer grades its sizes by it (fall sorting, Kirkby and Statham 1975). 0 off the scree ([method get_talus] under 0.3).
-			</description>
-		</method>
 		<method name="get_sediment_depth" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -469,20 +263,6 @@
 			<return type="Image" />
 			<description>
 				Sediment thickness per grid node, [constant Image.FORMAT_RF], metres.
-			</description>
-		</method>
-		<method name="get_sky_image" qualifiers="const">
-			<return type="Image" />
-			<param index="0" name="layer" type="int" default="0" />
-			<description>
-				One layer of the ground's seen sky, [member sky_cell] apart from the result's corner: RGBA half of the nine spherical harmonics (luminance, over the whole sky's first) of the sky each node sees past its horizons, harmonics 0 to 3 in [param layer] 0, 4 to 7 in 1, 8 in 2. Published to shaders as the [code]terrain_sky_map[/code] array, with [code]terrain_sky_rect[/code] and the whole sky's harmonics in [code]terrain_sky_full[/code], [code]terrain_sky_full2[/code] and [code]terrain_sky_full3[/code]. Empty without [member sky_occlusion].
-			</description>
-		</method>
-		<method name="get_sky_visibility" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				The sky view factor at [param global_position], 0 to 1 (1 without [member sky_occlusion]).
 			</description>
 		</method>
 		<method name="get_snow_water_at" qualifiers="const">
@@ -561,36 +341,6 @@
 				The world X and Z rectangle the generator covers ([code]position.y[/code] is Z).
 			</description>
 		</method>
-		<method name="apply_touch_ups">
-			<return type="bool" />
-			<description>
-				Applies the [TerrainBrush3D] nodes under this generator (at any depth, in tree order) to the ground the last [method generate] made, then re-solves the water: the rivers re-route where the brushes moved the ground, a lake the brushes left alone stays as it was, and a closed basin they made or changed (a dug hollow, the valley behind a raised dam) fills to its spill point. Ground a flatten brush covers keeps no erosion detail; the tile erosion fades wherever a brush moved the ground. [method generate] applies the touch-ups itself, and moving or changing a brush calls this and [method write_to_terrain] once it has been still for 0.4 s. Returns [code]false[/code] with no generated ground. Emits [signal changing] and [signal generated].
-			</description>
-		</method>
-		<method name="get_last_touch_up_cells" qualifiers="const">
-			<return type="int" />
-			<description>
-				Grid cells the last touch-ups moved by more than a centimetre.
-			</description>
-		</method>
-		<method name="get_last_touch_up_lakes" qualifiers="const">
-			<return type="int" />
-			<description>
-				Lakes the last touch-ups made (in basins they dug or dammed, or where they changed a generated lake).
-			</description>
-		</method>
-		<method name="get_last_touch_up_msec" qualifiers="const">
-			<return type="float" />
-			<description>
-				Time the last touch-ups took, in milliseconds.
-			</description>
-		</method>
-		<method name="guide_changed">
-			<return type="void" />
-			<description>
-				Called by a [TerrainGuide3D] under this generator when it moves or changes: with [member guide_preview], runs [method preview] once the guide has been still for 0.4 s.
-			</description>
-		</method>
 		<method name="has_result" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -609,19 +359,6 @@
 				Whether the last [method generate] made any sea.
 			</description>
 		</method>
-		<method name="is_hole" qualifiers="const">
-			<return type="bool" />
-			<param index="0" name="global_position" type="Vector3" />
-			<description>
-				Whether the ground at [param global_position]'s x and z lies inside a hole.
-			</description>
-		</method>
-		<method name="preview">
-			<return type="int" />
-			<description>
-				Runs [method generate] and [method write_to_terrain] at [member guide_preview_scale] times [member cell_size], then restores the cell size. Returns the vertices written.
-			</description>
-		</method>
 		<method name="sample_heights" qualifiers="const">
 			<return type="Image" />
 			<param index="0" name="origin" type="Vector2" />
@@ -631,30 +368,10 @@
 				The final ground (as [method get_height]) on a regular grid of [param size] points starting at world [param origin] (x, z), [param spacing] metres apart, as an [constant Image.FORMAT_RF] image. Rows are computed in parallel. Points outside the rectangle are NaN.
 			</description>
 		</method>
-		<method name="touch_up_changed">
-			<return type="void" />
-			<description>
-				Called by a [TerrainBrush3D] under this generator when it moves or changes: runs [method apply_touch_ups] and [method write_to_terrain] once the brush has been still for 0.4 s.
-			</description>
-		</method>
 		<method name="write_to_terrain">
 			<return type="int" />
 			<description>
 				Writes the generated heights into the ground's vertices inside the rectangle. Returns the number written.
-			</description>
-		</method>
-		<method name="update_sun_horizon">
-			<return type="bool" />
-			<param index="0" name="to_sun" type="Vector3" />
-			<description>
-				Rebuilds the far sun shadows' horizon map for the sun in direction [param to_sun] (world, toward the light): each point's horizon toward the sun as a tangent, on the sky grid ([member sky_cell]) turned to the sun's azimuth, by a convex-hull sweep along each line (Timonen and Westerholm 2010). Skipped, returning [code]false[/code], while the azimuth stays within a quarter degree of the last built; the map does not depend on the sun's elevation. Called on its own a few times a second while [member sun_shadows] is on; needs [member sky_occlusion].
-			</description>
-		</method>
-		<method name="update_sky_light">
-			<return type="bool" />
-			<param index="0" name="panorama" type="Image" />
-			<description>
-				Weighs each node's seen sky by the light of [param panorama], a radiance panorama as [method RenderingServer.sky_bake_panorama] returns it, and updates the sky texture. [member sky_light_source] does this by itself. Returns [code]false[/code] without a sky occlusion bake.
 			</description>
 		</method>
 	</methods>
@@ -695,7 +412,7 @@
 		<member name="deformer" type="NodePath" setter="set_deformer" getter="get_deformer" default="NodePath(&quot;&quot;)">
 			Optional [TerrainDeformer3D]. Its brushes are lifted before the write and applied again after it, and its terrain is used when [member terrain] is empty.
 		</member>
-		<member name="deposition" type="float" setter="set_deposition" getter="get_deposition" default="0.5">
+		<member name="deposition" type="float" setter="set_deposition" getter="get_deposition" default="0.0">
 			Sediment deposition, the [code]G[/code] of Yuan et al. 2019: [code]dh/dt = U - K A^m S + (G / A) Qs[/code], with [code]Qs[/code] the sediment carried from upstream. 0 keeps rivers cutting only. Where ranges rise out of ground that does not rise (low [member base_uplift]), about 0.5 makes the rivers leaving the mountains build flat alluvial plains with winding channels; higher values build fans up the range front. Where all the ground rises, deposition steepens the rivers instead and the mountains stand higher. Alluvium is added to [method get_sediment_depth]. Generation takes up to about 80% longer.
 		</member>
 		<member name="detail_assumed_slope" type="float" setter="set_detail_assumed_slope" getter="get_detail_assumed_slope" default="0.6">
@@ -722,27 +439,6 @@
 		<member name="detail_wavelength" type="float" setter="set_detail_wavelength" getter="get_detail_wavelength" default="128.0">
 			Width of the largest gullies, in metres.
 		</member>
-		<member name="dune_belt_width" type="float" setter="set_dune_belt_width" getter="get_dune_belt_width" default="300.0">
-			How far inland from the beaches (m) the dunes may reach. Sand blown past it is lost.
-		</member>
-		<member name="dune_cell" type="float" setter="set_dune_cell" getter="get_dune_cell" default="2.0">
-			Cell size (m) of the dunes' own grid. It grows if the belt would need more than four million cells.
-		</member>
-		<member name="dune_steps" type="int" setter="set_dune_steps" getter="get_dune_steps" default="1500">
-			Steps of the dune run. [member dune_supply] is spread over them, so more steps give the same sand longer to shape and travel, at more cost.
-		</member>
-		<member name="dune_supply" type="float" setter="set_dune_supply" getter="get_dune_supply" default="250.0">
-			Sand (m³ per metre of beach) the dry beaches give the wind over the whole run. A foredune 10 m high and 50 m wide holds about 250.
-		</member>
-		<member name="dune_vegetation" type="float" setter="set_dune_vegetation" getter="get_dune_vegetation" default="1.0">
-			How well marram grows behind the beaches, 0 to 1. With it, foredunes build along the plant line and blowouts and parabolic dunes open where the cover fails; at 0 the sand runs inland bare.
-		</member>
-		<member name="dune_wind_angle" type="float" setter="set_dune_wind_angle" getter="get_dune_wind_angle" default="0.0">
-			The dune-building wind's direction, in degrees from straight onshore (the mean direction up the beaches).
-		</member>
-		<member name="dunes_enabled" type="bool" setter="set_dunes_enabled" getter="is_dunes_enabled" default="true">
-			Coastal dunes: the dry beaches feed wind-blown sand inland over [member dune_belt_width] on a grid of [member dune_cell] (Werner's 1995 slab model, moved as expected amounts as Nilles et al. 2024 do, with a wind shadow behind crests, the wind's speed-up over them and avalanching past the angle of repose). Marram, after Nield and Baas 2008, grows under gentle burial, dies when buried deep or blown out, and holds and traps the sand. The sand is added to the ground and to the geology's beach sand. It adds seconds to [method generate] where there are beaches.
-		</member>
 		<member name="erodibility" type="float" setter="set_erodibility" getter="get_erodibility" default="2e-05">
 			Stream power coefficient [code]K[/code]. Relief at equilibrium grows with [member uplift] / [member erodibility].
 		</member>
@@ -755,32 +451,14 @@
 		<member name="generate_button" type="Callable" setter="" getter="get_bake_button" default="Callable()">
 			The inspector's Generate button: runs [method bake].
 		</member>
-		<member name="glacial_converged" type="bool" setter="set_glacial_converged" getter="is_glacial_converged" default="true">
-			If [code]true[/code], the last glaciation's steady-ice solves run until the ice balances its mass to within 0.5 m a year, instead of a fixed count of pseudo steps that stop before the ice settles: nonlinear projected Gauss-Seidel with multigrid cycles, and ice thicknesses at the cell faces that conserve mass over steep beds (Jarosch, Schoof and Anslow 2013). Each solve stops after 300 cycles: next to a trench the erosion has cut deep under a cliff the ice settles slowly, and there it is left close to balance rather than exactly balanced (on the hanging valley bench, 29 m a year at the worst 0.2% of the ice nodes, against well over 1000 m a year without this). Earlier ice ages keep the quick steps. The glacial terrain changes a little and the glacial stage takes several times longer.
-		</member>
-		<member name="glacial_enabled" type="bool" setter="set_glacial_enabled" getter="is_glacial_enabled" default="true">
-			If [code]true[/code], ice ages: glaciers grow where the ground stands above the equilibrium line ([code]glacial_ela[/code]), carve troughs and cirques over part of the run ([code]glacial_share[/code]), and the last glaciation leaves its basins as lakes. Adds tens of seconds to [method generate].
-		</member>
 		<member name="ground_mesh" type="NodePath" setter="set_ground_mesh" getter="get_ground_mesh" default="NodePath(&quot;&quot;)">
 			A [MeshInstance3D] regenerated from a [HeightMapShape3D] ground after the write. The [member deformer]'s ground mesh is used when empty.
-		</member>
-		<member name="gully_incision" type="float" setter="set_gully_incision" getter="get_gully_incision" default="1.0">
-			Scale of the gullies cut along the tile erosion's concentrated flow lines, narrower and deeper than the 2 m droplet grid can: depth 0.05 sqrt(A) m up to 2 m (half in rock), shaped across the line by the channel share of [method get_gully_at]. 0 for none. Needs [member tile_erosion_enabled].
-		</member>
-		<member name="guide_preview" type="bool" setter="set_guide_preview" getter="is_guide_preview" default="true">
-			When a [TerrainGuide3D] under this generator moves or changes, run a coarse [method preview] a moment later, so the guide's effect shows while drawing.
-		</member>
-		<member name="guide_preview_scale" type="float" setter="set_guide_preview_scale" getter="get_guide_preview_scale" default="4.0">
-			How many times coarser than [member cell_size] the guide preview runs.
 		</member>
 		<member name="height_offset" type="float" setter="set_height_offset" getter="get_height_offset" default="0.0">
 			Added to every generated height.
 		</member>
 		<member name="hillslope_diffusion" type="float" setter="set_hillslope_diffusion" getter="get_hillslope_diffusion" default="0.01">
 			Soil creep [code]k_d[/code] in square metres per year: rounds hilltops and softens ridges. 0 keeps sharp ridges.
-		</member>
-		<member name="ice_worn_detail" type="bool" setter="set_ice_worn_detail" getter="is_ice_worn_detail" default="true">
-			If [code]true[/code] and the last glaciation left ice ([member glacial_enabled]), the generator publishes the ice's flow and wear ([code]terrain_ice_flow[/code]) so the ground's detail normal smooths the faces the ice ground against, roughens the faces it plucked, and adds striations along its flow.
 		</member>
 		<member name="inflow_area" type="float" setter="set_inflow_area" getter="get_inflow_area" default="25.0">
 			Area (km²) an inflow marker without [code]area[/code] metadata brings in.
@@ -818,35 +496,14 @@
 		<member name="max_sea_depth" type="float" setter="set_max_sea_depth" getter="get_max_sea_depth" default="60.0">
 			Deepest the seabed goes (m below sea level).
 		</member>
-		<member name="oasis_count" type="int" setter="set_oasis_count" getter="get_oasis_count" default="3">
-			Springs on each sand sea, where a confined aquifer reaches its lowest interdune floors (Siwa, Farafra): sites on a 48 m lattice where the sand is thin, scored by how far the floor lies under the ground 120 m round, the deepest kept at least 400 m apart, the still water 0.6 m under the lowest ground at the site. [method get_springs] lists them. 0: none.
-		</member>
-		<member name="oasis_springs" type="NodePath" setter="set_oasis_springs" getter="get_oasis_springs" default="NodePath(&quot;&quot;)">
-			An [OasisSprings3D] whose pools the hollows are carved to: inside 0.92 of each pool's outline a bed falling to some 2.4 m (less for small pools) with lumps and runnels, meeting the still water at 0.92 of the outline so the outline lies under a thin film of water; past it a 7 degree beach for 3 m, then a 24 degree bank up to the dunes.
-		</member>
-		<member name="plunging_cliffs" type="bool" setter="set_plunging_cliffs" getter="is_plunging_cliffs" default="true">
-			Steep coasts with no beach run on below the sea: the land's slope 15 to 80 m inland, where steeper than about 31 degrees, is carried down through the swash line and under the water to 25 m, the floor joining the seabed profile within 160 m (plunging cliffs, Sunamura 1992). Off, every coast keeps a low strip over the swash and a shallow seabed.
-		</member>
 		<member name="max_soil_depth" type="float" setter="set_max_soil_depth" getter="get_max_soil_depth" default="2.0">
 			Deepest soil and alluvium (basin fill comes on top).
-		</member>
-		<member name="meander_age" type="float" setter="set_meander_age" getter="get_meander_age" default="3000.0">
-			Years the rivers on flat alluvial floors have meandered (Howard and Knutson 1984), with neck and chute cutoffs leaving oxbows. 0 keeps them as routed.
-		</member>
-		<member name="moraine_age" type="float" setter="set_moraine_age" getter="get_moraine_age" default="2000.0">
-			Years the last glaciation's margins stood still, building moraines: terminal loops and lateral ridges of wall rockfall and basal debris, which can dam lakes. 0 builds none.
-		</member>
-		<member name="nebkha_density" type="float" setter="set_nebkha_density" getter="get_nebkha_density" default="1.0">
-			Nebkhas (coppice dunes) on the sand sea's thin sand: mounds of sand held by a shrub, a dome round the plant 0.2 to 3.5 m high (mostly about 1 m) with its flanks under the angle of repose and a tail in its lee of up to five heights; a quarter are wearing down, lower and wider (Hesp 1981; Tengberg 1995; Cheng et al. 2024; Charbonneau et al. 2026). They lie in patches where the sea's sand is under 3 m deep (interdune flats and the thinning margins), on gentle ground, out of gullies and off water, on sites some 10 m apart; 1 keeps up to 90% of the suitable sites in a patch, 0 builds none. [method get_nebkhas] lists them for planting.
 		</member>
 		<member name="ocean_edges" type="int" setter="set_ocean_edges" getter="get_ocean_edges" default="0">
 			Edges of the rectangle that are open sea (bits as in [member outlet_edges]). The sea cells are the run's outlets, held at sea level, so the land drains to the coast; set [member outlet_edges] to 0 to make the sea the only outlet.
 		</member>
 		<member name="outlet_edges" type="int" setter="set_outlet_edges" getter="get_outlet_edges" default="15">
 			Edges of the rectangle held at [member sea_level] where water leaves: bits [constant OUTLET_NEGATIVE_X], [constant OUTLET_POSITIVE_X], [constant OUTLET_NEGATIVE_Z], [constant OUTLET_POSITIVE_Z].
-		</member>
-		<member name="outwash_age" type="float" setter="set_outwash_age" getter="get_outwash_age" default="10000.0">
-			Years the glacial outwash has worked since the ice left: gravel reaches below the last ice stand braid across flat outwash plains, and the basins the ice wore fill from the bottom up. 0 builds none.
 		</member>
 		<member name="publish_shader_globals" type="bool" setter="set_publish_shader_globals" getter="is_publishing_shader_globals" default="true">
 			Publishes the geology map as the [code]terrain_geology_map[/code] and [code]terrain_geology_rect[/code] shader globals after each [method generate] (see [method get_geology_shader_code]).
@@ -869,39 +526,6 @@
 		<member name="river_width_coefficient" type="float" setter="set_river_width_coefficient" getter="get_river_width_coefficient" default="7.0">
 			River width per square root of discharge: [code]width = coefficient * discharge^0.5[/code] (hydraulic geometry, Leopold and Maddock 1953). About 7 for mean flows.
 		</member>
-		<member name="sand_sea_compound" type="bool" setter="set_sand_sea_compound" getter="is_sand_sea_compound" default="true">
-			Compound dunes: the sea first grows large dunes (draa) on a grid of twice [member sand_sea_scale], keeps most of them as a still core, then grows the ordinary dunes from a fresh cover over them, so big dunes carry small dunes on their flanks as in large ergs (Lancaster 1988; Bristow, Bugler and Parker 2000). Not for [constant SAND_SEA_BARCHAN]. Takes some 1.6 times as long; off, the sea is grown once.
-		</member>
-		<member name="sand_sea_depth" type="float" setter="set_sand_sea_depth" getter="get_sand_sea_depth" default="12.0">
-			Sand (m) over the sand sea, on average. Transverse, linear and star dunes want a thick cover (some 2 to 5 times [member sand_sea_scale]); barchans a thin one (under a third of it), between which the bare floor shows.
-		</member>
-		<member name="sand_sea_edge" type="float" setter="set_sand_sea_edge" getter="get_sand_sea_edge" default="300.0">
-			Distance (m) over which the sand thins out to nothing at the edge of [member sand_sea_rect].
-		</member>
-		<member name="sand_sea_kind" type="int" setter="set_sand_sea_kind" getter="get_sand_sea_kind" enum="TerrainGenerator3D.SandSeaKind" default="0">
-			The wind regime, which picks the dunes: one wind for transverse ridges or barchans, two winds 120 degrees apart for linear dunes along their mean, three for star dunes.
-		</member>
-		<member name="sand_sea_mask" type="Image" setter="set_sand_sea_mask" getter="get_sand_sea_mask">
-			Optional: where inside [member sand_sea_rect] the sand may lie, the red channel from 0 (none) to 1, stretched over the whole rect. The sea's supply and its result are both scaled by it, so an erg can follow basins or a drawn outline instead of the rect; soften its edges over a few hundred metres for a natural margin (nebkhas gather in the thinning sand there).
-		</member>
-		<member name="sand_sea_rect" type="Rect2" setter="set_sand_sea_rect" getter="get_sand_sea_rect" default="Rect2(0, 0, 0, 0)">
-			Where the desert sand sea lies, in global x and z (m). Empty, there is none.
-		</member>
-		<member name="sand_sea_scale" type="float" setter="set_sand_sea_scale" getter="get_sand_sea_scale" default="4.0">
-			Metres a cell of the sand sea. Heights scale with it, so the dunes keep their shapes and angles and grow with it: crests come some 25 cells apart (100 m at 4 m). Past 1024 cells a side it grows to fit.
-		</member>
-		<member name="sand_sea_steps" type="int" setter="set_sand_sea_steps" getter="get_sand_sea_steps" default="300">
-			Steps of the sand sea run, each lifting every cell's sand once on average. More steps give older, bigger and fewer dunes, at more cost; barchans want about 600.
-		</member>
-		<member name="sand_sea_wind_angle" type="float" setter="set_sand_sea_wind_angle" getter="get_sand_sea_wind_angle" default="0.0">
-			The way the dune-building wind blows (for linear and star dunes, their mean), in degrees from +X toward +Z.
-		</member>
-		<member name="sand_seas_enabled" type="bool" setter="set_sand_seas_enabled" getter="is_sand_seas_enabled" default="true">
-			Desert sand seas over [member sand_sea_rect]: Paris et al.'s 2019 desertscape simulation (stochastic slabs, a quarter of a cell tall, that hop downwind, faster up slopes facing the wind, settle more on sand than on bare ground and always in the wind shadow behind crests, and slide past the angle of repose), with the wind's shear over the dunes from linearised flow (Kroy et al. 2002) eroding the stoss and dropping the sand past the crest, so the dunes have long gentle stoss slopes (10 to 15 degrees) and slip faces at the angle of repose, on cells of [member sand_sea_scale], wrapped like an endless erg and run in parallel by bands of rows. It lies on the generated ground, filling hollows and sliding off slopes past its repose, thins out over [member sand_sea_edge] and on water, and is added to the ground and to the geology's sand. A 2 km square at 4 m takes some 45 seconds on four cores.
-		</member>
-		<member name="scree_age" type="float" setter="set_scree_age" getter="get_scree_age" default="10000.0">
-			Years the cliffs have shed scree onto cones and aprons at their feet. 0 builds none.
-		</member>
 		<member name="sea_level" type="float" setter="set_sea_level" getter="get_sea_level" default="0.0">
 			Height of the outlets and of the flat start.
 		</member>
@@ -919,21 +543,6 @@
 		</member>
 		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(4096, 4096)">
 			Width (X) and depth (Z) in metres of the rectangle generated, centred on the node.
-		</member>
-		<member name="sky_cell" type="float" setter="set_sky_cell" getter="get_sky_cell" default="8.0">
-			Spacing in metres of the sky occlusion grid.
-		</member>
-		<member name="sky_distance" type="float" setter="set_sky_distance" getter="get_sky_distance" default="4000.0">
-			How far in metres each node looks for its horizon. Past the result the ground counts as level.
-		</member>
-		<member name="sky_light_interval" type="float" setter="set_sky_light_interval" getter="get_sky_light_interval" default="2.0">
-			Seconds between reads of the sky for [member sky_light_source]. A read that finds the sky within 2% of the last one used changes nothing.
-		</member>
-		<member name="sky_light_source" type="NodePath" setter="set_sky_light_source" getter="get_sky_light_source" default="NodePath(&quot;&quot;)">
-			A [WorldEnvironment] or [Camera3D] whose sky lights the ground: its radiance is read back as a small panorama now and then ([member sky_light_interval]) and passed to [method update_sky_light]. Without it the seen sky is weighed as an even sky.
-		</member>
-		<member name="sky_occlusion" type="bool" setter="set_sky_occlusion" getter="is_sky_occlusion_enabled" default="true">
-			Bake the ground's horizons after [method generate], in 16 directions out to [member sky_distance], and from them the sky each node sees (see [method get_sky_image]). [TerrainMaterial3D] reads it for raster ambient light ([member TerrainMaterial3D.sky_occlusion_enabled]), so slopes the hills hide from part of the sky, such as a low sunset glow, do not take its light; the path tracer finds the hills itself.
 		</member>
 		<member name="soil_depth_scale" type="float" setter="set_soil_depth_scale" getter="get_soil_depth_scale" default="0.5">
 			Depth over which soil production halves, e-fold (h0 in Heimsath et al. 1997). Larger gives deeper soils.
@@ -956,7 +565,7 @@
 		<member name="strata_dip_direction" type="float" setter="set_strata_dip_direction" getter="get_strata_dip_direction" default="0.0">
 			The way the layers go down, degrees clockwise from north (-Z).
 		</member>
-		<member name="strata_enabled" type="bool" setter="set_strata_enabled" getter="is_strata_enabled" default="true">
+		<member name="strata_enabled" type="bool" setter="set_strata_enabled" getter="is_strata_enabled" default="false">
 			Layered rock: bands of hard rock in a sequence of soft rock, rising with the uplift (Forte, Yanites and Whipple 2016). Hard rock erodes [member strata_hardness] times slower; where a river has cut through a band into the soft rock under it, the undercut block breaks off and the face retreats upstream as a cliff (the caprock waterfall, Gilbert 1907; Haviv et al. 2010). Rivers step down over waterfalls ([method get_waterfalls]) between flatter reaches, and the range stands higher than in one rock. Off, the ground is the same as without these settings.
 		</member>
 		<member name="strata_hard_fraction" type="float" setter="set_strata_hard_fraction" getter="get_strata_hard_fraction" default="0.35">
@@ -970,12 +579,6 @@
 		</member>
 		<member name="strata_wobble" type="float" setter="set_strata_wobble" getter="get_strata_wobble" default="12.0">
 			Metres the layer heights wander by (fbm noise of 700 m), so the bands do not follow contour lines exactly.
-		</member>
-		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
-			The DirectionalLight3D whose direction the far sun shadows follow. Empty: the first visible one in the scene.
-		</member>
-		<member name="sun_shadows" type="bool" setter="set_sun_shadows" getter="is_sun_shadows" default="true">
-			Far sun shadows for [TerrainMaterial3D] (raster): the ground's horizon toward the sun, rebuilt with [method update_sun_horizon] whenever the sun's azimuth moves, published as the [code]terrain_sun_horizon_map[/code], [code]terrain_sun_horizon_frame[/code] and [code]terrain_sun_horizon_size[/code] shader globals. Exact hill and mountain shadows at any range, where the shadow cascades end. Needs [member sky_occlusion] (it reads the same grid).
 		</member>
 		<member name="talus_angle" type="float" setter="set_talus_angle" getter="get_talus_angle" default="35.0">
 			Angle of repose for scree: rock steeper than this sheds talus, which settles on slopes below it.
@@ -992,7 +595,7 @@
 		<member name="tile_erosion_droplets" type="float" setter="set_tile_erosion_droplets" getter="get_tile_erosion_droplets" default="1.0">
 			Droplets per grid cell. More gives deeper, more connected rills.
 		</member>
-		<member name="tile_erosion_enabled" type="bool" setter="set_tile_erosion_enabled" getter="is_tile_erosion_enabled" default="true">
+		<member name="tile_erosion_enabled" type="bool" setter="set_tile_erosion_enabled" getter="is_tile_erosion_enabled" default="false">
 			Runs hydraulic and thermal erosion on a fine grid at the end of [method generate] (stage 4): droplet erosion (Beyer 2015, after Mei et al. 2007's capacity law) cutting rills and gullies and laying fans and valley fills, two layers (loose cover erodes first, bedrock at [member tile_erosion_rock_hardness]; Stava et al. 2008), and thermal slides of loose material steeper than [member talus_angle]. Overlapping tiles are eroded on their own, each seeded by its index, and cross-faded, so the result does not depend on threads. [method get_height] includes it; turning it off shows the ground without it.
 		</member>
 		<member name="tile_erosion_max_depth" type="float" setter="set_tile_erosion_max_depth" getter="get_tile_erosion_max_depth" default="15.0">
@@ -1024,12 +627,6 @@
 		</member>
 	</members>
 	<signals>
-		<signal name="holes_changed">
-			<param index="0" name="rect" type="Rect2" />
-			<description>
-				Holes were added or removed over [param rect] (x and z).
-			</description>
-		</signal>
 		<signal name="changing">
 			<description>
 				Emitted when [method generate] or [method clear_result] starts, before any result is replaced. Work that reads the ground on other threads (a [Landscape3D] streaming its heights) finishes here.
@@ -1059,18 +656,6 @@
 		</constant>
 		<constant name="OUTLET_POSITIVE_Z" value="8" enum="OutletEdge">
 			The edge at the largest Z.
-		</constant>
-		<constant name="SAND_SEA_TRANSVERSE" value="0" enum="SandSeaKind">
-			One wind over thick sand: long ridges across the wind.
-		</constant>
-		<constant name="SAND_SEA_BARCHAN" value="1" enum="SandSeaKind">
-			One wind over thin sand: crescents with horns pointing downwind.
-		</constant>
-		<constant name="SAND_SEA_LINEAR" value="2" enum="SandSeaKind">
-			Two winds 120 degrees apart, in turn: ridges along their mean.
-		</constant>
-		<constant name="SAND_SEA_STAR" value="3" enum="SandSeaKind">
-			Three winds from every side, in long turns: peaks with arms in every direction.
 		</constant>
 	</constants>
 </class>

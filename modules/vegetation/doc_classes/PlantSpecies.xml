@@ -9,13 +9,6 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="get_patch_depth" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				How far inside one of the species' patches a point lies, in metres: positive inside, negative outside, about 0 where [method get_patch_weight] crosses one half. A large number for species without patches.
-			</description>
-		</method>
 		<method name="get_patch_weight" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -53,14 +46,6 @@
 				Returns the weight of [param value] against [param rule]: 1 inside the range, falling to 0 over the fade (smoothstep), 0 beyond.
 			</description>
 		</method>
-		<method name="season_temperature" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="january" type="float" />
-			<param index="1" name="july" type="float" />
-			<description>
-				The growing season's mean temperature for a place with these January and July means, on the annual harmonic: the mean over the days whose mean is at least 0.9 C, or [code]-10[/code] when there are fewer than 94 such days (Paulsen and Körner 2014). Trees stop where it falls to 6.4 C, whatever the mean annual temperature, so oceanic mountains with mild winters and cool summers have low treelines. [constant RULE_SEASON_TEMPERATURE] uses it.
-			</description>
-		</method>
 		<method name="set_rule_fade">
 			<return type="void" />
 			<param index="0" name="rule" type="int" enum="PlantSpecies.Rule" />
@@ -77,27 +62,6 @@
 				Sets the range (min, max) of a rule in its units, see [enum Rule].
 			</description>
 		</method>
-		<method name="burn_cover" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="age" type="float" />
-			<description>
-				Returns the share of this species' cover back on ground that burnt [param age] years ago: [code]smoothstep(0, burn_recovery, age)[/code], none on a fresh burn. 1 where it never burnt (negative [param age]) or when [member burn_recovery] is 0.
-			</description>
-		</method>
-		<method name="trample_cover" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="passes" type="float" />
-			<description>
-				Returns the cover left after [param passes] walkers a year: [code]1 / (1 + x^2)[/code] with [code]x = passes / trample_resistance[/code], falling to 0 between 2.5 and 5 times the resistance (a bare tread). 1 when [member trample_resistance] is 0.
-			</description>
-		</method>
-		<method name="trample_scale" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="passes" type="float" />
-			<description>
-				Returns the size of the plants left after [param passes] walkers a year, from 1 down to 0.45 on a heavily used path.
-			</description>
-		</method>
 	</methods>
 	<members>
 		<member name="align_to_ground" type="float" setter="set_align_to_ground" getter="get_align_to_ground" default="0.0">
@@ -109,27 +73,6 @@
 		<member name="aridity_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1000)">
 			Aridity index (annual precipitation over potential evapotranspiration, Thornthwaite) where the species grows: below 0.5 is dry steppe, above 1 humid. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
-		<member name="beach_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member beach_range].
-		</member>
-		<member name="beach_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
-			Range of [constant RULE_BEACH].
-		</member>
-		<member name="browse_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			The soft edge of [member browse_range].
-		</member>
-		<member name="browse_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
-			Deer browsing pressure ([constant RULE_BROWSE]), 0 none to 1 heavy, from [method WorldStand.browse_at]; 0 where no browsing is known. [method PlantGenerator.make_floor] thins palatable herbs with it, swaps bramble and raspberry for bitten ones past about 0.35 and adds grazed lawns, grass and fern where it is high.
-		</member>
-		<member name="burn_age_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member burn_age_range], in years.
-		</member>
-		<member name="burn_age_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 1000)">
-			Years since the ground burnt where the species grows (see [constant RULE_BURN_AGE]); -1 is ground that never burnt. Narrowing it from the default makes the species a burn plant, placed only on burns of those ages.
-		</member>
-		<member name="burn_recovery" type="float" setter="set_burn_recovery" getter="get_burn_recovery" default="0.0">
-			Years this species takes to full cover after a fire: on burnt ground ([method WorldFire.burn_age_at]) its suitability is multiplied by [method burn_cover]. 0: fire does not thin it. [method PlantGenerator.tag_species] sets it from [method PlantGenerator.get_burn_recovery]. Ignored by a species using [member burn_age_range].
-		</member>
 		<member name="canopy_conifer" type="bool" setter="set_canopy_conifer" getter="is_canopy_conifer" default="false">
 			If [code]true[/code], this species' crown is needle-leaved (pine, spruce, fir, larch). [VegetationField3D] counts each crown's share of the cover overhead, so the floor under it can follow the stand type through [member conifer_range].
 		</member>
@@ -138,12 +81,6 @@
 		</member>
 		<member name="canopy_radius" type="float" setter="set_canopy_radius" getter="get_canopy_radius" default="0.0">
 			Crown radius in metres (times each plant's scale). Above 0 the species shades the ground under it, and later species in the [Biome] with a [member shade_range] are placed by that shade (see [method VegetationField3D.get_shade_at]).
-		</member>
-		<member name="coast_exposure_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member coast_exposure_range].
-		</member>
-		<member name="coast_exposure_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
-			Range of [constant RULE_COAST_EXPOSURE].
 		</member>
 		<member name="conifer_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Fade width outside [member conifer_range].
@@ -157,62 +94,17 @@
 		<member name="curvature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1000, 1000)">
 			Ground curvature range in 1/m: positive in hollows and valley floors, negative on ridges.
 		</member>
-		<member name="deadwood_band" type="float" setter="set_deadwood_band" getter="get_deadwood_band" default="0.6">
-			With [constant DEADWOOD_BESIDE]: how far from a log's side the species grows, in metres, thinning out across the band.
-		</member>
-		<member name="deadwood_from_wood" type="bool" setter="set_deadwood_from_wood" getter="is_deadwood_from_wood" default="false">
-			With [constant DEADWOOD_BESIDE]: the plant comes up out of the wood itself, as wood-decay fungi do (honey fungus). Its foot moves onto the log's side where it meets the ground, a little into the bark, and it turns so its +X faces out of the wood.
-		</member>
-		<member name="deadwood_min_radius" type="float" setter="set_deadwood_min_radius" getter="get_deadwood_min_radius" default="0.08">
-			With [constant DEADWOOD_ON]: the thinnest log it grows on (radius, metres). Thickness stands for decay: thin branches stay bare, thick rotting trunks carry seedlings. With [constant DEADWOOD_BESIDE]: the thinnest log it grows beside (0: by any fallen wood).
-		</member>
-		<member name="deadwood_rule" type="int" setter="set_deadwood_rule" getter="get_deadwood_rule" enum="PlantSpecies.DeadwoodRule" default="0">
-			How the species meets fallen wood placed by [VegetationField3D] (this field's or its [member VegetationField3D.canopy_field]'s): species with the meta [code]deadwood[/code] whose meshes carry the meta [code]tree_deadwood_axis[/code] (start, end and radius in mesh space, as [code]TreeGenerator[/code] gives its logs, fallen branches and sticks). An uprooted tree's log also carries [code]tree_root_pit[/code] (centre, radius, depth in mesh space): whatever the rule, no plant grows in that pit, and a [GrassField3D] with this field as its [code]undergrowth_field[/code] leaves it bare.
-		</member>
-		<member name="deadwood_uphill" type="bool" setter="set_deadwood_uphill" getter="is_deadwood_uphill" default="false">
-			With [constant DEADWOOD_BESIDE]: only on the uphill side of a log on sloping ground, where creeping leaf litter piles against it.
-		</member>
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1.0">
 			Fraction of the Poisson-disk points kept where every rule is fully met, from 0 to 1.
-		</member>
-		<member name="detail_size" type="float" setter="set_detail_size" getter="get_detail_size" default="0.0">
-			The size in metres of what shows of one plant or item (a fallen leaf, a twig, a cushion of moss, a seedling's height). When above 0, [VegetationField3D] draws the species out to where that size is still [member VegetationField3D.detail_pixels] tall on screen (never less than [member visibility_range], never more than [member VegetationField3D.detail_max_range]), instead of the hand-set range. The preset sets ([method PlantGenerator.make_floor] and the others) set it for their small presets: litter, twigs, mosses, small rosettes and seedlings.
-		</member>
-		<member name="disturbance_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			The soft edge of [member disturbance_range].
-		</member>
-		<member name="disturbance_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 100)">
-			The kind of stand-replacing disturbance behind the stand age ([constant RULE_DISTURBANCE], [method WorldStand.disturbance_at]): 0 none, 1 fire, 2 wind, 3 beetle. Pick one kind with [code]Vector2(k, k)[/code]. Left at the default, a [method TreeGenerator.make_succession] species takes its meta [code]succession_kind[/code] (-1 any).
-		</member>
-		<member name="dune_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member dune_range].
-		</member>
-		<member name="dune_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 1)">
-			Range of coastal dune stability the plant grows on ([method TerrainGenerator3D.get_dune_stability]: marram cover, [code]0[/code] bare moving sand to [code]1[/code] fixed), with [code]-1[/code] off the dune sand (less than 0.3 m of it). Only applied where the map's [member TerrainDataMap3D.geology_source] has built dunes; [method PlantGenerator.make_dunes] sets embryo and mobile dunes to the moving sand and fixed dunes to the held sand.
 		</member>
 		<member name="far_color" type="Color" setter="set_far_color" getter="get_far_color" default="Color(0, 0, 0, 0)">
 			The plant seen from far above (rgb) and how much of the ground it hides (alpha, 0 to 1). Beyond its [member visibility_range] the plants are thinned away, and [VegetationField3D] bakes this colour into the ground's [code]vegetation_far_map[/code] where they grew, so a stand of them stays a patch of their colour to the horizon (see [method VegetationField3D.get_floor_shader_code]). Alpha 0 leaves the ground as it is.
 		</member>
-		<member name="field_edge_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member field_edge_range], in metres.
-		</member>
-		<member name="field_edge_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100000, 100000)">
-			Metres from the nearest crop field's edge where the species grows (see [constant RULE_FIELD_EDGE]).
-		</member>
 		<member name="floating" type="bool" setter="set_floating" getter="is_floating" default="false">
 			If [code]true[/code], plants sit level on the water surface ([method TerrainDataMap3D.get_water_depth_at] above the ground), as water lilies do. Pair it with a [member water_depth_range] that starts above zero.
 		</member>
-		<member name="follow_flow" type="bool" setter="set_follow_flow" getter="is_follow_flow" default="false">
-			If [code]true[/code], each plant is turned so its +X axis points downhill, the way water runs over the ground there, instead of a random yaw: aquatic mosses trail downstream.
-		</member>
 		<member name="footprint" type="float" setter="set_footprint" getter="get_footprint" default="0.5">
 			Radius in metres that later species in the [Biome] keep clear of (a trunk and its shade). 0 leaves room for anything.
-		</member>
-		<member name="forest_edge_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			The soft edge of [member forest_edge_range], metres.
-		</member>
-		<member name="forest_edge_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100000, 100000)">
-			Metres from the edge of the field's forest canopy ([constant RULE_FOREST_EDGE]): positive inside the forest, negative out in the open, -1000 where the field has no canopy. The forest is where the field's canopy species (canopy radius over 0, without a shade or forest edge rule) would close it, from their rules, patches and density, on a grid of 2 m or more. A shrub mantle is about [code]Vector2(-8, 3)[/code]. Left at the default, a species takes its meta [code]edge_distance[/code] ([method TreeGenerator.make_edge]). A variant with mesh meta [code]tree_open_side[/code] (Vector3) is turned so that side faces the open.
 		</member>
 		<member name="height_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member height_range].
@@ -226,21 +118,6 @@
 		<member name="january_temperature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100, 100)">
 			January mean temperature in °C where the species grows: its frost hardiness, for example [code]Vector2(-3, 100)[/code] for beech, which stops where winters are much colder. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
-		<member name="litter_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member litter_range].
-		</member>
-		<member name="litter_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
-			Range of leaf litter fallen from the crowns the plant may grow on ([method VegetationField3D.get_litter_at]): full under broad-leaved crowns, thinning over a few metres past their rim, so litter drifts into edges and clearings. Needle-leaved crowns drop none.
-		</member>
-		<member name="margin_lean" type="float" setter="set_margin_lean" getter="get_margin_lean" default="0.0">
-			How far, in degrees, plants at the very edge of a patch lean out towards the open, easing to upright over [member margin_width]. Bracken 20 and bramble 15 in [method PlantGenerator.make_floor].
-		</member>
-		<member name="margin_scale" type="float" setter="set_margin_scale" getter="get_margin_scale" default="1.0">
-			The size of plants at the very edge of a patch, as a share of their own, growing to full size over [member margin_width]: a bracken stand's advancing front of shorter fronds (0.55 in [method PlantGenerator.make_floor]; bramble 0.7).
-		</member>
-		<member name="margin_width" type="float" setter="set_margin_width" getter="get_margin_width" default="0.0">
-			How deep into its patches a species' margin reaches, in metres (see [member margin_scale] and [member margin_lean]); 0 for none. Only for species with patches ([member patch_scale]). Bracken 3 m and bramble 2 m in [method PlantGenerator.make_floor].
-		</member>
 		<member name="meshes" type="Mesh[]" setter="set_meshes" getter="get_meshes" default="[]">
 			Mesh variants; each plant picks one at random. Plants carry ([code]variant, scale, random, species[/code]) in [code]INSTANCE_CUSTOM[/code] for their materials.
 		</member>
@@ -253,12 +130,6 @@
 		<member name="near_meshes" type="Mesh[]" setter="set_near_meshes" getter="get_near_meshes" default="[]">
 			Heavier meshes drawn within [member near_range], one per entry of [member meshes] in the same order (a shorter list repeats). Each plant keeps its variant, so a tree with real needles near the camera and needle sprays beyond it stays the same tree. The field cuts such a species into cells about a quarter of [member near_range] across (at least 4 m), so the swap happens a few plants at a time, and crossfades the two over the last tenth of the range with a dither.
 		</member>
-		<member name="near_mesh_key" type="int" setter="set_near_mesh_key" getter="get_near_mesh_key" default="0">
-			Passed to [member near_mesh_source]'s [code]request_near_mesh[/code], to say which plant's near meshes are wanted.
-		</member>
-		<member name="near_mesh_source" type="Object" setter="set_near_mesh_source" getter="get_near_mesh_source">
-			Near meshes on demand, for heavy meshes only plants that come near need: an object with [code]request_near_mesh(key: int, variant: int) -&gt; Mesh[/code], returning [code]null[/code] while the mesh is still being built. Used when [member near_meshes] is empty and [member near_range] is above 0: [VegetationField3D] asks for each cell within 1.2 x [member near_range] of the camera every frame until it has the mesh, then draws it with the same crossfade as [member near_meshes], and frees the cell beyond 1.5 x, so the source can free meshes nothing draws. Only the object's id is kept: keep the source alive yourself.
-		</member>
 		<member name="near_range" type="float" setter="set_near_range" getter="get_near_range" default="0.0">
 			Distance in metres within which [member near_meshes] are drawn instead of [member meshes]. 0 turns the swap off.
 		</member>
@@ -267,9 +138,6 @@
 		</member>
 		<member name="patch_invert" type="bool" setter="set_patch_invert" getter="is_patch_invert" default="false">
 			If [code]true[/code], the species grows between the patches instead. Two species with the same [member patch_scale], [member patch_cover] and [member patch_seed], one inverted, share the ground exactly (for example tall grass in patches and clover between them).
-		</member>
-		<member name="patch_ring" type="float" setter="set_patch_ring" getter="get_patch_ring" default="0.0">
-			When above 0, the species grows only along the edges of its patches ([member patch_scale], [member patch_cover], [member patch_seed]), in a band about this wide in metres: the arcs and rings in which fairy-ring fungi fruit along their mycelium's advancing front. The weight is [code]exp(-(d / patch_ring)^2)[/code], d the distance to the patch edge. [method PlantGenerator.make_floor] sets it for the clouded agaric.
 		</member>
 		<member name="patch_scale" type="float" setter="set_patch_scale" getter="get_patch_scale" default="0.0">
 			Size of the patches, in metres. The species then grows only in patches (clover beds, flower drifts, stands of tall grass), from value noise over the ground. 0 turns patches off.
@@ -280,41 +148,14 @@
 		<member name="precipitation_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member precipitation_range].
 		</member>
-		<member name="pool_distance_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			The soft edge of [member pool_distance_range], metres.
-		</member>
-		<member name="pool_distance_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100000, 100000)">
-			Metres from an oasis spring pool's shore ([constant RULE_POOL_DISTANCE]); the default leaves the rule off.
-		</member>
 		<member name="precipitation_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 100000)">
 			Annual precipitation in mm where the species grows. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
 		<member name="random_yaw" type="bool" setter="set_random_yaw" getter="is_random_yaw" default="true">
 			If [code]true[/code], each plant turns to a random angle around its up axis.
 		</member>
-		<member name="rooting_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Fade in years at each end of [member rooting_range].
-		</member>
-		<member name="rooting_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 10000)">
-			Years since wild boar last rooted the ground ([constant RULE_ROOTING]), from [code]WorldStand.rooting_age_at()[/code]; -1 where it never was, which only ranges starting at -1 or reaching 10000 take. A species with [code](0.8, 10000)[/code] is gone from fresh rooting and back after about a year; one with [code](0, 1.5)[/code] grows only on rooted ground (the ruderals that come first).
-		</member>
-		<member name="fairy_ring_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member fairy_ring_range].
-		</member>
-		<member name="fairy_ring_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-10000, 10000)">
-			Metres from the line of the nearest meadow fairy ring ([constant RULE_FAIRY_RING]; the same world layout as [member GrassField3D.fairy_rings]), positive outside the ring; 1000 where there is none or in the gap of a broken ring. The ring's mushrooms take about [code](-0.3, 0.15)[/code].
-		</member>
-		<member name="litter_drift_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member litter_drift_range].
-		</member>
-		<member name="litter_drift_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 100)">
-			How the wind has gathered fallen leaves at the point ([constant RULE_LITTER_DRIFT], from [VegetationField3D]): 1 where they lie as they fell, up to 2.5 in hollows and on the lee and windward feet of trunks, logs and rocks, down to 0.15 on crests and steep slopes. Leaf banks take [code](1.35, 100)[/code]. The same drift scales [constant RULE_LITTER] (capped at 1), so litter thins on ridges and fills hollows.
-		</member>
 		<member name="rock_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member rock_range].
-		</member>
-		<member name="rock_foot" type="float" setter="set_rock_foot" getter="get_rock_foot" default="0.0">
-			How much more the species grows at the foot of a rock ([member VegetationField3D.obstacles]), where shelter and the rain running off the rock keep the ground moist: its suitability is multiplied by [code]1 + rock_foot * exp(-d / 0.5)[/code], d the distance past the rock's edge in metres. Near a rock the species also grows in the gaps between its patches ([member patch_scale]): the patch weight there is at least [code]1 - exp(-rock_foot * exp(-d / 0.5))[/code]. [method PlantGenerator.make_floor]: ferns 2.5, mosses 3, wood sorrel and seedlings 1.5.
 		</member>
 		<member name="rock_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
 			Bare rock exposure (0 to 1) where the species grows, from the map's [member TerrainDataMap3D.geology_source]. Trees and most plants need little: for example [code]Vector2(0, 0.3)[/code]. Ignored when the map has no geology.
@@ -324,12 +165,6 @@
 		</member>
 		<member name="shade_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member shade_range].
-		</member>
-		<member name="season_temperature_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member season_temperature_range], C.
-		</member>
-		<member name="season_temperature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100, 100)">
-			Range of [constant RULE_SEASON_TEMPERATURE], C.
 		</member>
 		<member name="shade_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
 			Canopy shade (0 open sky, 1 dense crown) where the species grows, from the canopy species placed before it by a [VegetationField3D]: for example [code]Vector2(0.4, 1)[/code] for bilberry, ferns and mosses, [code]Vector2(0, 0.3)[/code] for meadow plants. Ignored outside a [VegetationField3D] (a [GrassField3D] has no canopy).
@@ -349,18 +184,6 @@
 		<member name="spacing" type="float" setter="set_spacing" getter="get_spacing" default="2.0">
 			Minimum distance in metres between two plants of this species (Poisson-disk radius).
 		</member>
-		<member name="spring_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member spring_range].
-		</member>
-		<member name="spring_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 1)">
-			Where round a desert spring the species grows (see [constant RULE_SPRING]): 1 at the oasis's water, 0 out of a palm's root reach of it, -1 off the sand seas. Narrowing it from the default [code](-1, 1)[/code] makes the species an oasis plant, which also grows on the sand seas' sand.
-		</member>
-		<member name="stand_age_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			The soft edge of [member stand_age_range], years.
-		</member>
-		<member name="stand_age_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 100000)">
-			Years since the last stand-replacing disturbance ([constant RULE_STAND_AGE], [method WorldStand.stand_age_at]). Old growth (-1, no disturbance known) counts as inside a range starting at -1 or reaching 10000 years. Left at the default, a [method TreeGenerator.make_succession] species takes its meta [code]succession_age[/code]. [VegetationField3D] samples the stand on a grid and places a streamed tile again when a change there moves a species across its range.
-		</member>
 		<member name="sunlight_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member sunlight_range].
 		</member>
@@ -373,30 +196,6 @@
 		<member name="spray_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 0.5)">
 			Waterfall spray potential (0 to 1, [method TerrainDataMap3D.get_spray_at]) where the species grows. By default no plant grows in a fall's soaked zone, where only mosses and wet rock hold; mosses from [method PlantGenerator.make_floor] take [code]Vector2(0, 1)[/code]. Ignored when the map has no geology.
 		</member>
-		<member name="litter_color" type="Color" setter="set_litter_color" getter="get_litter_color" default="Color(0, 0, 0, 0)">
-			The species' own litter on the ground under its stands, linear colour in rgb and how much of the ground it covers in alpha: bracken's mat of dead fronds and bramble's leaves (set by [method PlantGenerator.make_floor]). A [GrassField3D] with [member GrassField3D.undergrowth_field] lays it on the ground where the stands shade the sward out, so the ground there is litter instead of bare soil ([method VegetationField3D.get_sward_litter_at]).
-		</member>
-		<member name="sand_mobility_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member sand_mobility_range].
-		</member>
-		<member name="sand_mobility_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1, 1)">
-			Where on the desert sand seas the species grows (see [constant RULE_SAND_MOBILITY]): 0 the stable interdune ground under thin sand, 1 the moving crests and slip faces, -1 off the sand seas. Narrowing it from the default [code](-1, 1)[/code] makes the species a sand-sea plant, which grows on their loose sand. Other species keep off the sand seas wherever their sand lies deeper than 5 to 30 cm (read from the generator, no rule needed).
-		</member>
-		<member name="stone_top_damp" type="float" setter="set_stone_top_damp" getter="get_stone_top_damp" default="0.0">
-			For a [member stone_top] species: whether it keeps to damp or to dry stone tops. Each top is damp (1) or dry (0), the whole stone alike: damp where [code]1.0 * a + 0.5 * low + 0.7 * shelter + 0.6 * shade[/code] reaches 0.45 (give or take 0.05 per stone), measured at its cap: a how far the cap tilts to the north (-Z), low 1 for a top 5 cm or less over the ground falling to 0 at 0.8 m, shelter how steeply taller stone tops within 2 m rise over it (as a tangent, full at 45 degrees; stones to the south count fully, those to the north half), shade the canopy's shade. Its suitability is multiplied by [code]lerp(1, damp, stone_top_damp)[/code] when positive and [code]lerp(1, 1 - damp, -stone_top_damp)[/code] when negative, so green cushions keep to the low, shaded, north-tilted tops and dry ones to the high, sunlit ones. [method PlantGenerator.make_stones] pairs a green moss (positive) with a smaller, sparser, yellow-olive one (-1).
-		</member>
-		<member name="stone_top_water" type="Vector2" setter="set_stone_top_water" getter="get_stone_top_water" default="Vector2(0, 0)">
-			For a [member stone_top] species: the band of the top's height over the water surface, in metres, that it keeps to (fading over 4 cm past each end); off while [code]x &gt;= y[/code]. The water surface over a top is the ground under it plus the map's water depth there; a top on dry ground counts as its height over the ground plus a quarter of its distance to the water. Aquatic mosses take a band from under the water to just over it (with a [member water_depth_range] that reaches under water, since the bed under the stone is), and dry-ground mosses one from above the flood line.
-		</member>
-		<member name="stone_top" type="bool" setter="set_stone_top" getter="is_stone_top" default="false">
-			If [code]true[/code], the species grows only on the tops of stones ([member VegetationField3D.stone_tops]), set on the stone's cap and tilted with its curve: moss cushions on boulders and scree. A plant reaching more than 1.5 cm past its cap grows smaller to fit (down to 45% of its size), or is not placed. Its other rules still apply at the stone's place.
-		</member>
-		<member name="stone_gap" type="float" setter="set_stone_gap" getter="get_stone_gap" default="0.0">
-			How strictly the species keeps to the gaps between stones ([member VegetationField3D.obstacles]): the fine soil caught between scree, river gravel and shingle, and rock cracks. Its suitability is multiplied by [code]lerp(1, g, stone_gap)[/code], g the product of two terms: the plant roots against a stone (full within 8 cm of the nearest stone's edge, none past 20 cm), and a second stone is close by ([code]exp(-d / 0.12)[/code], reaching 0 at [code]d = 0.48[/code], d the distance in metres to the edge of the second-nearest stone), so a point against a stone with another close by counts as a gap, and open ground and the foot of a lone boulder do not. At [code]1.0[/code] it grows nowhere else, and not at all where there are no obstacles; pressed between stones its leaves may reach 18 cm in over a stone (10 cm more than other plants), and past that it is made smaller rather than left out. [method PlantGenerator.make_stones] uses 1 for its crevice plants.
-		</member>
-		<member name="sward_shade" type="float" setter="set_sward_shade" getter="get_sward_shade" default="0.0">
-			How much of the grass a stand of this species shades out under it, 0 to 1: bracken and bramble (0.85 and 0.7 in [method PlantGenerator.make_floor]) leave little sward beneath them. A [GrassField3D] reads it through [member GrassField3D.undergrowth_field] and [method VegetationField3D.get_sward_shade_at].
-		</member>
 		<member name="talus_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member talus_range].
 		</member>
@@ -408,12 +207,6 @@
 		</member>
 		<member name="temperature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100, 100)">
 			Mean annual temperature in °C where the species grows; with the lapse rate it sets tree lines and altitude belts. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
-		</member>
-		<member name="tide_height_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member tide_height_range], m.
-		</member>
-		<member name="tide_height_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-10000, 10000)">
-			Range of [constant RULE_TIDE_HEIGHT], m above the sea.
 		</member>
 		<member name="visibility_range" type="float" setter="set_visibility_range" getter="get_visibility_range" default="0.0">
 			Distance, in metres, beyond which the species is not drawn. For ground cover too small to see far away. Plants with the generated plant material thin out before it: from 35% of the range the share drawn falls to none at the range, each plant shrinking away in the order of its placement rank while the rest grow slightly to hold the cover, so there are no pops; [member far_color] then carries them on the ground. 0 draws it at any distance.
@@ -435,12 +228,6 @@
 		</member>
 		<member name="wetness_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1000, 1000)">
 			Topographic wetness index range: about 4 to 7 on hillsides, 10 and above where water collects.
-		</member>
-		<member name="wind_frontal_area" type="float" setter="set_wind_frontal_area" getter="get_wind_frontal_area" default="-1.0">
-			Square metres one plant at scale 1 shows the wind, for the shelter it gives blowing sand ([method VegetationField3D.sample_lateral_cover]). Negative: 0.4 of its first mesh's height times its mean width (a grass tuft's leaves block about that share of its outline). 0: no shelter.
-		</member>
-		<member name="trample_resistance" type="float" setter="set_trample_resistance" getter="get_trample_resistance" default="0.0">
-			Walkers a year on a worn path that halve this species' cover. 0: not trampled. Rosettes such as plantain resist most, then grasses; ferns, heaths and tall forbs least. [method PlantGenerator.tag_species] sets it from [method PlantGenerator.get_trample_resistance].
 		</member>
 	</members>
 	<constants>
@@ -495,74 +282,8 @@
 		<constant name="RULE_SPRAY" value="16" enum="Rule">
 			Waterfall spray potential, [code]0[/code] to [code]1[/code] ([method TerrainDataMap3D.get_spray_at]).
 		</constant>
-		<constant name="RULE_LITTER" value="17" enum="Rule">
-			Broad-leaf litter fallen from the crowns, [code]0[/code] to [code]1[/code] ([method VegetationField3D.get_litter_at]).
-		</constant>
-		<constant name="RULE_DUNE" value="18" enum="Rule">
-			Coastal dune stability, [code]0[/code] bare moving sand to [code]1[/code] fixed under marram ([method TerrainGenerator3D.get_dune_stability]); [code]-1[/code] off the dune sand. Only applied where the map's [member TerrainDataMap3D.geology_source] has built dunes.
-		</constant>
-		<constant name="RULE_SEASON_TEMPERATURE" value="19" enum="Rule">
-			The growing season's mean temperature, C ([method season_temperature]), from the map's January and July means. Needs the map's climate; only worked out for species whose range is narrower than the default.
-		</constant>
-		<constant name="RULE_TIDE_HEIGHT" value="20" enum="Rule">
-			Height above the sea, m: the ground of the map's [member TerrainDataMap3D.geology_source] over its sea ([member TerrainGenerator3D.sea_level] plus [member TerrainGenerator3D.height_offset]). Salt marsh zones by it. The coast rules need a geology source with a sea; without one, a species that uses any of them is not placed.
-		</constant>
-		<constant name="RULE_COAST_EXPOSURE" value="21" enum="Rule">
-			Exposure to the sea's waves, [code]0[/code] sheltered to [code]1[/code] open ([method TerrainGenerator3D.get_coast_exposure_at]); [code]0[/code] far from the sea, so pair it with [constant RULE_TIDE_HEIGHT]. Needs a geology source with a sea.
-		</constant>
-		<constant name="RULE_BEACH" value="22" enum="Rule">
-			Beach mask, [code]1[/code] on the beach face fading over the backshore, [code]0[/code] inland ([method TerrainGenerator3D.get_beach_at]). Needs a geology source with a sea.
-		</constant>
-		<constant name="RULE_FIELD_EDGE" value="23" enum="Rule">
-			Metres from the nearest crop field's edge ([member GrassField3D.fields]), negative inside the field. A species using it may grow in the fields; without fields it is not placed.
-		</constant>
-		<constant name="RULE_SAND_MOBILITY" value="24" enum="Rule">
-			Desert sand seas: 0 stable interdune ground under thin sand to 1 a moving crest or slip face, -1 off the sand seas ([member TerrainGenerator3D.sand_sea_rect]). From the sand sea's depth against its local low and high over about a crest spacing, raised on slopes over 20 degrees.
-		</constant>
-		<constant name="RULE_BURN_AGE" value="25" enum="Rule">
-			Years since the ground last burnt, from [method WorldFire.burn_age_at]; -1 where it never burnt. A species using it grows only on burnt ground (the burn presets, [method PlantGenerator.make_burn]).
-		</constant>
-		<constant name="RULE_SPRING" value="26" enum="Rule">
-			Wetness round a desert spring, 0 dry to 1 at its water; -1 off the sand seas. Springs are the deepest hollows of a sand sea below its smoothed surface (at least 2 m, 900 m apart); the ground is wet where it lies within 5 m of the spring's water level, up to 250 m out. A species using it grows on the sand seas' sand ([method PlantGenerator.make_desert] with [constant PlantGenerator.DESERT_OASIS]).
-		</constant>
-		<constant name="RULE_POOL_DISTANCE" value="27" enum="Rule">
-			Metres from the nearest oasis spring pool's shore ([member VegetationField3D.spring_pools]), negative in the pool. A species using it grows only round those pools, on their sand too.
-		</constant>
-		<constant name="RULE_STAND_AGE" value="28" enum="Rule">
-			Years since the last stand-replacing disturbance (stand_age_range).
-		</constant>
-		<constant name="RULE_DISTURBANCE" value="29" enum="Rule">
-			The kind of that disturbance (disturbance_range).
-		</constant>
-		<constant name="RULE_FOREST_EDGE" value="30" enum="Rule">
-			Metres from the forest canopy's edge, positive inside (forest_edge_range).
-		</constant>
-		<constant name="RULE_BROWSE" value="31" enum="Rule">
-			Deer browsing pressure, 0 to 1 (browse_range).
-		</constant>
-		<constant name="RULE_ROOTING" value="32" enum="Rule">
-			Years since boar rooted the ground, -1 never (rooting_range).
-		</constant>
-		<constant name="RULE_LITTER_DRIFT" value="33" enum="Rule">
-			How the wind gathers fallen leaves, 1 as fallen (litter_drift_range).
-		</constant>
-		<constant name="RULE_FAIRY_RING" value="34" enum="Rule">
-			Metres from the nearest meadow fairy ring's line, + outside (fairy_ring_range).
-		</constant>
-		<constant name="RULE_MAX" value="35" enum="Rule">
+		<constant name="RULE_MAX" value="17" enum="Rule">
 			Number of rules.
-		</constant>
-		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">
-			Kept off a log's footprint (closer to its axis than its radius, seen from above).
-		</constant>
-		<constant name="DEADWOOD_ON" value="1" enum="DeadwoodRule">
-			Only on logs at least [member deadwood_min_radius] thick, set on the upper surface (height and tilt from the cylinder, the upper two thirds of its width; use [member align_to_ground] 1 to follow the curve). Mosses, wood sorrel, seedlings on nurse logs.
-		</constant>
-		<constant name="DEADWOOD_BESIDE" value="2" enum="DeadwoodRule">
-			Only within [member deadwood_band] of a log's side. Ferns along a trunk, leaves banked against it.
-		</constant>
-		<constant name="DEADWOOD_IGNORE" value="3" enum="DeadwoodRule">
-			Fallen wood does not matter to it.
 		</constant>
 	</constants>
 </class>

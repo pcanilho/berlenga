@@ -64,11 +64,6 @@ using namespace RendererSceneRenderImplementation;
 // Grouping variants kept per mesh. Variants appear when material state changes which surfaces merge.
 static constexpr uint32_t RT_MESH_GROUP_MAX_VARIANTS = 4;
 
-// Off-screen cull band (see _update_cull_band).
-static constexpr float RT_CULL_BAND_GUARD = 15.0f; // Degrees a side.
-static constexpr float RT_CULL_BAND_TURN = 7.5f; // Degrees.
-static constexpr float RT_CULL_BAND_MOVE = 1.0f; // Metres.
-
 RTBlasTransformPool::Slot RTBlasTransformPool::allocate(const float *p_matrix) {
 	RD *rd = RD::get_singleton();
 	if (free_slots.is_empty()) {
@@ -159,8 +154,6 @@ static void _release_deformed_entry(RTDeformedCacheEntry &r_entry) {
 	_free_rid_if_valid(r_entry.owned_ib);
 	_free_rid_if_valid(r_entry.owned_vb_full);
 	_free_rid_if_valid(r_entry.prev_pos_vb);
-	_free_rid_if_valid(r_entry.lss_points);
-	_free_rid_if_valid(r_entry.lss_segments);
 }
 
 static void _reset_deformed_entry(RTDeformedCacheEntry &r_entry) {
@@ -204,9 +197,6 @@ static bool _rt_merged_mm_entry_expired(const RTMergedMMEntry &p_entry, uint32_t
 	static const uint32_t MM_BLAS_CACHE_TTL = (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_blas_cache_ttl_frames");
 	return p_entry.last_used_frame != 0 && p_frame - p_entry.last_used_frame > MM_BLAS_CACHE_TTL;
 }
-
-static bool _fill_surface_blas_geometry(void *p_mesh_surface, RID p_vertex_buffer_override, RID p_index_buffer_override, bool p_force_uncompressed,
-		RTSurfaceData *r_surf_data, RD::AccelerationStructureGeometry &r_as_geom, uint32_t p_lod);
 
 // Refreshes the entry's private index copy; call only after its BLAS was freed.
 static void _copy_deformed_indices(void *p_mesh_surface, uint32_t p_vertex_count, uint64_t p_cache_key, RTDeformedCacheEntry &r_entry) {
@@ -319,8 +309,6 @@ static bool _rt_multimesh_source(RID p_multimesh, RTInstanceSource &r_source) {
 	r_source.custom_offset = mesh_storage->multimesh_uses_custom_data(p_multimesh) ? mesh_storage->multimesh_get_custom_data_offset(p_multimesh) : UINT32_MAX;
 	r_source.last_change = mesh_storage->multimesh_get_last_change(p_multimesh);
 	r_source.trail_steps = mesh_storage->multimesh_bones_per_instance(p_multimesh); // Instance bones read like trail records.
-	r_source.instanced = mesh_storage->multimesh_rt_instanced(p_multimesh);
-	r_source.offscreen_cull = mesh_storage->multimesh_rt_offscreen_cull(p_multimesh);
 	return r_source.count > 0;
 }
 
@@ -392,10 +380,9 @@ static uint64_t _rt_merged_triangle_count(const RTInstanceSource &p_source, void
 		return 0;
 	}
 	const uint64_t triangles = uint64_t(p_source.count) * (indexed ? index_count / 3 : vertex_count / 3);
-	// MultiMeshes above the cap, or asked to (multimesh_set_rt_instanced), use the expanded TLAS entries; particles and
-	// captured surfaces have none.
+	// MultiMeshes above the cap use the expanded TLAS fallback; particles and captured surfaces have none.
 	static const uint32_t MM_MERGED_BLAS_MAX_TRIANGLES = (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles");
-	if (!p_source.particles && !p_captured && (p_source.instanced || triangles > MM_MERGED_BLAS_MAX_TRIANGLES)) {
+	if (!p_source.particles && !p_captured && triangles > MM_MERGED_BLAS_MAX_TRIANGLES) {
 		return 0;
 	}
 	return triangles;
@@ -546,18 +533,6 @@ void RenderRaytracing::initialize(RenderForwardClustered *p_owner) {
 		RD::get_singleton()->set_resource_name(mm_merge_shader.pipeline[i], "RT MM merge pipeline [mode=" + itos(i) + "]");
 	}
 
-	// Strand hair as linear swept spheres, where the device has them (the shaders get RT_LSS alike).
-	lss_enabled = GLOBAL_GET("rendering/pathtracing/linear_swept_spheres") && RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES);
-	if (lss_enabled) {
-		Vector<String> lss_modes;
-		lss_modes.push_back("\n");
-		lss_shader.shader.initialize(lss_modes);
-		lss_shader.version = lss_shader.shader.version_create();
-		lss_shader.version_shader = lss_shader.shader.version_get_shader(lss_shader.version, 0);
-		lss_shader.pipeline = RD::get_singleton()->compute_pipeline_create(lss_shader.version_shader);
-		lss_enabled = lss_shader.pipeline.is_valid();
-	}
-
 	_omm_initialize();
 }
 
@@ -589,9 +564,6 @@ RenderRaytracing::~RenderRaytracing() {
 	}
 
 	mm_merge_shader.shader.version_free(mm_merge_shader.version);
-	if (lss_shader.version.is_valid()) {
-		lss_shader.shader.version_free(lss_shader.version);
-	}
 	if (omm_shader.version.is_valid()) {
 		omm_shader.shader.version_free(omm_shader.version);
 	}
@@ -1562,13 +1534,6 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 	BitField<RD::BufferCreationBits> prev_flags = RD::BUFFER_CREATION_AS_STORAGE_BIT |
 			RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT;
 
-	// Swept spheres read the positions in a compute pass: the owned copy is then a storage buffer too.
-	if (p_source.swept_spheres) {
-		owned_full_flags.set_flag(RD::BUFFER_CREATION_AS_STORAGE_BIT);
-		if (!entry.owned_vb_storage) {
-			entry.owned_vb_full_capacity = 0;
-		}
-	}
 	// Reallocate owned storage if the surface grew.
 	if (entry.owned_vb_full_capacity < full_size) {
 		if (entry.ptr && entry.ptr->blas.is_valid()) {
@@ -1579,7 +1544,6 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 		entry.owned_vb_full = rd->vertex_buffer_create(full_size, Span<uint8_t>(), owned_full_flags);
 		ERR_FAIL_COND_V(!entry.owned_vb_full.is_valid(), nullptr);
 		entry.owned_vb_full_capacity = full_size;
-		entry.owned_vb_storage = p_source.swept_spheres;
 		rd->set_resource_name(entry.owned_vb_full, "RT deformed owned VB [" + itos(p_source.cache_key) + "]");
 		entry.prev_pos_seeded = false;
 		needs_new_blas = true;
@@ -1620,19 +1584,11 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 		}
 		_free_rid_if_valid(entry.ptr->blas);
 		_copy_deformed_indices(p_mesh_surface, vertex_count, p_source.cache_key, entry);
-		entry.lss_checked = false;
-		if (!(p_source.swept_spheres && lss_enabled && _populate_swept_spheres_blas(p_mesh_surface, vertex_count, p_source.cache_key, entry, r_dirty_blas_list))) {
-			_free_rid_if_valid(entry.lss_points);
-			_free_rid_if_valid(entry.lss_segments);
-			_populate_surface_blas(p_mesh_surface, entry.owned_vb_full, entry.owned_ib, true, true, true,
-					static_cast<uint32_t>(p_source.cache_key), entry.ptr, r_dirty_blas_list);
-		}
+		_populate_surface_blas(p_mesh_surface, entry.owned_vb_full, entry.owned_ib, true, true, true,
+				static_cast<uint32_t>(p_source.cache_key), entry.ptr, r_dirty_blas_list);
 		entry.blas_built_once = entry.ptr->blas.is_valid();
 	} else if (data_changed) {
 		cache_misses++;
-		if (entry.lss_points.is_valid()) {
-			_update_swept_sphere_points(entry);
-		}
 		// Rewriting the BLAS in place is only ordered after earlier traces of the frame by the owned_vb_full copy above.
 		LocalVector<RID> &queue = p_source.force_rebuild ? r_dirty_blas_list : r_dirty_blas_update_list;
 		queue.push_back(entry.ptr->blas);
@@ -1659,113 +1615,6 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 	touch.commit();
 
 	return entry.ptr;
-}
-
-// Linear swept spheres of a strand surface: when its triangles are two crossed strips per strand point, as
-// PhysXHair3D draws them (four vertices a point, the first strip's two sides first; per segment the first
-// strip's two triangles, then the second's), segment j becomes one tube from point a/4 to the next, a its
-// first index. The shaders read a hit's attributes on the first strip (rt_lss_triangle). False, leaving
-// the entry without points, when the layout differs: the caller then builds triangles.
-bool RenderRaytracing::_populate_swept_spheres_blas(void *p_mesh_surface, uint32_t p_vertex_count, uint64_t p_cache_key, RTDeformedCacheEntry &r_entry, LocalVector<RID> &r_dirty_blas_list) {
-	RD *rd = RD::get_singleton();
-	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
-	const RID index_source = mesh_storage->mesh_surface_get_index_buffer(p_mesh_surface);
-	const uint32_t index_count = index_source.is_valid() ? mesh_storage->mesh_surface_get_index_count(p_mesh_surface) : 0;
-	if (!r_entry.owned_vb_storage || index_count == 0 || index_count % 12u != 0 || p_vertex_count % 4u != 0 || p_vertex_count < 8) {
-		return false;
-	}
-	const uint32_t point_count = p_vertex_count / 4u;
-	const uint32_t segment_count = index_count / 12u;
-
-	if (!r_entry.lss_checked || r_entry.lss_point_count != point_count || r_entry.lss_segment_count != segment_count || !r_entry.lss_segments.is_valid()) {
-		// Read once per rebuild of the surface (a stall), never per frame.
-		r_entry.lss_checked = true;
-		_free_rid_if_valid(r_entry.lss_points);
-		_free_rid_if_valid(r_entry.lss_segments);
-		r_entry.lss_point_count = 0;
-		r_entry.lss_segment_count = 0;
-		const bool is_16bit = p_vertex_count <= 65536;
-		const Vector<uint8_t> bytes = rd->buffer_get_data(index_source, 0, index_count * (is_16bit ? 2u : 4u));
-		if (bytes.size() < int64_t(index_count * (is_16bit ? 2u : 4u))) {
-			return false;
-		}
-		const uint16_t *i16 = (const uint16_t *)bytes.ptr();
-		const uint32_t *i32 = (const uint32_t *)bytes.ptr();
-		static const uint32_t pattern[12] = { 0, 1, 4, 1, 5, 4, 2, 3, 6, 3, 7, 6 };
-		Vector<uint32_t> segments;
-		segments.resize(segment_count);
-		uint32_t *seg = segments.ptrw();
-		for (uint32_t j = 0; j < segment_count; j++) {
-			const uint32_t base = j * 12u;
-			const uint32_t a = is_16bit ? i16[base] : i32[base];
-			if (a % 4u != 0 || a + 7u >= p_vertex_count) {
-				return false;
-			}
-			for (uint32_t k = 1; k < 12; k++) {
-				const uint32_t v = is_16bit ? i16[base + k] : i32[base + k];
-				if (v != a + pattern[k]) {
-					return false;
-				}
-			}
-			seg[j] = a / 4u;
-		}
-		const BitField<RD::BufferCreationBits> input_flags = RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT | RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT;
-		r_entry.lss_segments = rd->storage_buffer_create(segment_count * 4u, segments.to_byte_array(), 0, input_flags);
-		r_entry.lss_points = rd->storage_buffer_create(point_count * 16u, Vector<uint8_t>(), 0, input_flags);
-		if (!r_entry.lss_segments.is_valid() || !r_entry.lss_points.is_valid()) {
-			_free_rid_if_valid(r_entry.lss_points);
-			_free_rid_if_valid(r_entry.lss_segments);
-			return false;
-		}
-		rd->set_resource_name(r_entry.lss_segments, "RT swept sphere segments [" + itos(p_cache_key) + "]");
-		rd->set_resource_name(r_entry.lss_points, "RT swept sphere points [" + itos(p_cache_key) + "]");
-		r_entry.lss_point_count = point_count;
-		r_entry.lss_segment_count = segment_count;
-	}
-
-	// The geometry entry and its buffer addresses as for triangles: the shaders fetch every attribute from them.
-	RTSurfaceData *surf_data = r_entry.ptr;
-	blas_transform_pool.release(surf_data->blas_transform);
-	RD::AccelerationStructureGeometry triangles;
-	if (!_fill_surface_blas_geometry(p_mesh_surface, r_entry.owned_vb_full, r_entry.owned_ib, true, surf_data, triangles, 0)) {
-		return false;
-	}
-	_update_swept_sphere_points(r_entry);
-
-	RD::AccelerationStructureGeometry geometry;
-	geometry.type = RD::AccelerationStructureGeometry::TYPE_LINEAR_SWEPT_SPHERES;
-	geometry.flags = triangles.flags;
-	geometry.geometry.swept_spheres.buffer = r_entry.lss_points;
-	geometry.geometry.swept_spheres.stride = 16;
-	geometry.geometry.swept_spheres.point_count = r_entry.lss_point_count;
-	geometry.geometry.swept_spheres.index_buffer = r_entry.lss_segments;
-	geometry.geometry.swept_spheres.segment_count = r_entry.lss_segment_count;
-	surf_data->blas = _create_blas({ &geometry, 1 }, true, true, "RT BLAS swept spheres [" + itos(p_cache_key) + "]", r_dirty_blas_list);
-	return surf_data->blas.is_valid();
-}
-
-// Writes each point's tube (centre, radius) from the entry's copy of the capture.
-void RenderRaytracing::_update_swept_sphere_points(RTDeformedCacheEntry &r_entry) {
-	RD *rd = RD::get_singleton();
-	Vector<RD::Uniform> uniforms;
-	{
-		RD::Uniform u(RD::UNIFORM_TYPE_STORAGE_BUFFER, 0, r_entry.owned_vb_full);
-		uniforms.push_back(u);
-	}
-	{
-		RD::Uniform u(RD::UNIFORM_TYPE_STORAGE_BUFFER, 1, r_entry.lss_points);
-		uniforms.push_back(u);
-	}
-	RID uniform_set = rd->uniform_set_create(uniforms, lss_shader.version_shader, 0, /*p_linear_pool=*/true);
-	ERR_FAIL_COND(!uniform_set.is_valid());
-	const uint32_t push[4] = { r_entry.lss_point_count, 0, 0, 0 };
-	RD::ComputeListID list = rd->compute_list_begin();
-	rd->compute_list_bind_compute_pipeline(list, lss_shader.pipeline);
-	rd->compute_list_bind_uniform_set(list, uniform_set, 0);
-	rd->compute_list_set_push_constant(list, push, sizeof(push));
-	rd->compute_list_dispatch_threads(list, r_entry.lss_point_count, 1, 1);
-	rd->compute_list_end();
-	rd->free_rid(uniform_set);
 }
 
 // Skinned / blend shape vertex buffer of a mesh instance surface; `current_vb` is invalid when the surface isn't deformed.
@@ -1842,10 +1691,7 @@ static uint64_t _rt_capture_global_uniforms(RTPlanScratch &r_scratch, const RTVe
 	}
 	const RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 	const uint64_t stamp = RTVertexCapture::global_uniforms_stamp(p_traits.dependencies.global_uniforms, [material_storage](const StringName &p_name) {
-		// The texture and its content version: a global sampler rewritten in place recaptures as one swapped.
-		const RID texture = material_storage->global_shader_uniform_get_texture(p_name);
-		const uint64_t version = RendererRD::TextureStorage::get_singleton()->texture_get_content_version(texture);
-		return RTVertexCapture::GlobalUniformValue{ material_storage->global_shader_uniform_get_values(p_name), texture.get_id() ^ (version * 0x9E3779B97F4A7C15ull) };
+		return RTVertexCapture::GlobalUniformValue{ material_storage->global_shader_uniform_get_values(p_name), material_storage->global_shader_uniform_get_texture(p_name).get_id() };
 	});
 	r_scratch.global_uniform_stamps.push_back({ &p_traits, stamp });
 	return stamp;
@@ -1884,20 +1730,6 @@ RTVertexCapture::Stamps RenderRaytracing::_capture_inputs(RTPlanScratch &r_scrat
 	if (p_dependencies & RTVertexCapture::DEP_MATERIAL_UNIFORMS) {
 		const uint64_t material[2] = { surf->rt_material.get_id(), material_storage->material_get_rt_invalidation_counter(surf->rt_material) };
 		stamps.material = _rt_hash_bytes(material, sizeof(material));
-		// The textures vertex() samples, rewritten in place: no parameter changes, only their content versions.
-		const Vector<StringName> &textures = surf->shader->rt_capture.dependencies.material_textures;
-		if (!textures.is_empty()) {
-			RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
-			uint64_t versions[2] = { stamps.material, 0 };
-			for (const StringName &name : textures) {
-				const Variant param = material_storage->material_get_param(surf->rt_material, name);
-				if (param.get_type() == Variant::RID || param.get_type() == Variant::OBJECT) {
-					versions[1] = texture_storage->texture_get_content_version(RID(param));
-					versions[0] = _rt_hash_bytes(versions, sizeof(versions));
-				}
-			}
-			stamps.material = versions[0];
-		}
 	}
 	if (inst->mesh_instance.is_valid()) {
 		stamps.deformation = mesh_storage->mesh_instance_get_last_change(inst->mesh_instance, surf->surface_index);
@@ -2107,7 +1939,6 @@ RTPlanArena &RenderRaytracing::_open_plan_arena(RTViewportState *p_state, const 
 	}
 	RTPlanArena &arena = p_state->plan_arenas[p_state->plan_current];
 	if (!opened) {
-		_update_cull_band(p_state, p_render_data); // Before the slots are checked: a new band drops the culling instances' slots.
 		_persistent_open(p_state, p_render_data, p_ctx);
 		RTPersistentInstances *persistent = p_state->persistent && p_state->persistent->active ? p_state->persistent : nullptr;
 		if (persistent) {
@@ -2921,15 +2752,12 @@ static void _fill_surface_geometry_data(
 		geom.uv2_byte_offset = attrib_offset;
 		attrib_offset += attributes_compressed ? sizeof(uint16_t) * 2 : sizeof(float) * 2;
 	}
-	// CUSTOM0-3 follow in order; the hit shaders read them for vertex() (CUSTOM0..CUSTOM3), as raster's vertex stage does.
-	geom.custom_layout = MIN(attrib_offset, 0xFFu);
 	for (int ci = 0; ci < RSE::ARRAY_CUSTOM_COUNT; ci++) {
 		const uint32_t fmt_shift[RSE::ARRAY_CUSTOM_COUNT] = { RSE::ARRAY_FORMAT_CUSTOM0_SHIFT, RSE::ARRAY_FORMAT_CUSTOM1_SHIFT, RSE::ARRAY_FORMAT_CUSTOM2_SHIFT, RSE::ARRAY_FORMAT_CUSTOM3_SHIFT };
 		if (surface_format & (1ULL << (RSE::ARRAY_CUSTOM0 + ci))) {
 			uint32_t fmt = (surface_format >> fmt_shift[ci]) & RSE::ARRAY_FORMAT_CUSTOM_MASK;
 			const uint32_t fmtsize[RSE::ARRAY_CUSTOM_MAX] = { 4, 4, 4, 8, 4, 8, 12, 16 };
 			attrib_offset += fmtsize[fmt];
-			geom.custom_layout |= (8u | (fmt & 7u)) << (8 + 4 * ci);
 		}
 	}
 	geom.attribute_stride = attrib_offset;
@@ -3113,13 +2941,6 @@ static void pack_uniform(const ShaderLanguage::ShaderNode::Uniform &u, const Var
 				fv[0] = _def_real(u, 0);
 				fv[1] = _def_real(u, 1);
 				fv[2] = _def_real(u, 2);
-				if (u.hint == SL::ShaderNode::Uniform::HINT_SOURCE_COLOR) {
-					// A source_color default is sRGB, as raster converts it (material_storage.cpp).
-					const Color c = Color(fv[0], fv[1], fv[2]).srgb_to_linear();
-					fv[0] = c.r;
-					fv[1] = c.g;
-					fv[2] = c.b;
-				}
 			}
 			memcpy(dst, fv, 12);
 		} break;
@@ -3143,12 +2964,6 @@ static void pack_uniform(const ShaderLanguage::ShaderNode::Uniform &u, const Var
 			} else {
 				for (int i = 0; i < 4; i++) {
 					fv[i] = _def_real(u, i);
-				}
-				if (u.hint == SL::ShaderNode::Uniform::HINT_SOURCE_COLOR) {
-					const Color c = Color(fv[0], fv[1], fv[2], fv[3]).srgb_to_linear();
-					fv[0] = c.r;
-					fv[1] = c.g;
-					fv[2] = c.b;
 				}
 			}
 			memcpy(dst, fv, 16);
@@ -3527,13 +3342,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.albedo_texture.index = bindless_block->add_texture(albedo_rd);
 	}
 
-	// Feature switches packed by BaseMaterial3D::_update_shader. Absent = not a BaseMaterial3D.
-	const Variant rt_state_var = material_storage->material_get_param(p_material_rid, RTBaseMaterialState::PARAM_NAME);
-	const bool is_base_material = rt_state_var.get_type() == Variant::INT;
-	const RTBaseMaterialState rt_state = is_base_material ? RTBaseMaterialState::decode(rt_state_var) : RTBaseMaterialState();
-
-	// A BaseMaterial3D keeps its normal texture when normal_enabled is off: raster ignores it, and so must this.
-	RID normal_rd = (!is_base_material || rt_state.normal_map) ? get_material_texture("texture_normal") : RID();
+	RID normal_rd = get_material_texture("texture_normal");
 	if (normal_rd.is_valid()) {
 		mat.normal_texture.index = bindless_block->add_texture(normal_rd);
 		mat.flags |= RT_MAT_FLAG_HAS_NORMAL_MAP;
@@ -3543,6 +3352,11 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 			mat.normal_map_depth = normal_scale_var;
 		}
 	}
+
+	// Feature switches packed by BaseMaterial3D::_update_shader. Absent = not a BaseMaterial3D.
+	const Variant rt_state_var = material_storage->material_get_param(p_material_rid, RTBaseMaterialState::PARAM_NAME);
+	const bool is_base_material = rt_state_var.get_type() == Variant::INT;
+	const RTBaseMaterialState rt_state = is_base_material ? RTBaseMaterialState::decode(rt_state_var) : RTBaseMaterialState();
 
 	auto get_texture_idx = [&](const StringName &p_param) -> uint32_t {
 		RID tex_rd = get_material_texture(p_param);
@@ -3802,25 +3616,16 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.wetness_porosity = rt_unorm8(get_float("wetness_porosity", 0.5f));
 		mat.subsurface.wetness_amount = rt_unorm8(get_float("wetness_amount", 1.0f));
 		mat.subsurface.wetness_from_weather = rt_state.wetness_from_weather;
-		mat.subsurface_texture.wetness_canopy = rt_state.wetness_canopy;
 	}
 	if (rt_state.snow) {
 		mat.subsurface.snow = 1;
 		mat.subsurface.snow_from_weather = rt_state.snow_from_weather;
-		mat.subsurface_texture.snow_on_body = rt_state.snow_on_body;
 		mat.hair_crown_z.snow_amount = rt_unorm8(get_float("snow_amount", 1.0f));
 		mat.hair_crown_z.snow_max_slope = rt_unorm8(get_float("snow_max_slope", 60.0f) / 90.0f);
 	}
 	if (rt_state.ground_deform_patch) {
 		mat.subsurface.ground_deform = 1;
 	}
-	if (rt_state.ground_deform_terrain) {
-		mat.subsurface.ground_terrain = 1;
-	}
-	if (rt_state.mud) {
-		mat.subsurface.mud = 1;
-	}
-	mat.subsurface_texture.glaze = rt_state.glaze;
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
 	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
 	if (rt_state.transmission) {
@@ -5687,11 +5492,10 @@ bool RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMa
 		return false;
 	}
 	bool persistable = !is_particles;
-	// The CPU mirror of the records is only read for expanded surfaces (one TLAS entry per record, or a merge that
-	// falls back to them); captured ones (vertex() captured: grass, plants in wind) read the GPU buffer only. It is
-	// filled below, here in the gather (a first access reads the GPU buffer back, safe now), only when some surface
-	// may expand: a GPU-written MultiMesh whose surfaces are all captured never gets a CPU copy.
-	bool needs_cpu_records = false;
+	if (!is_particles) {
+		// Populate data cache now - first access triggers GPU readback, safe here.
+		mesh_storage->multimesh_get_local_data_ptr(source.base);
+	}
 
 	// World-space particle records are drawn without the node transform.
 	const Transform3D node_transform = source.world_space ? Transform3D() : p_inst.transform;
@@ -5766,15 +5570,7 @@ bool RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMa
 		pending.bake.bake_motion = rt_material_can_own_velocity(pending.material_flags, _rt_dominant_layer_alpha()) &&
 				(captured || source.prev_offset != source.current_offset ||
 						(pending.bake.billboard_index != UINT32_MAX && state->merge_billboards[pending.bake.billboard_index] != state->merge_billboards[pending.bake.prev_billboard_index]));
-		// Expanded surfaces, and merged ones that fall back to expanding (add_multimesh_surfaces), read the CPU
-		// records; captured surfaces never do.
-		if (!is_particles && !pending.bake.captured) {
-			needs_cpu_records = true;
-		}
 		pending_mm_surfaces.push_back(pending);
-	}
-	if (needs_cpu_records) {
-		mesh_storage->multimesh_get_local_data_ptr(source.base);
 	}
 	return persistable;
 }
@@ -6092,11 +5888,6 @@ uint32_t RTTlasBuilder::_surface_lod(const Instance &p_inst, const RTPlanSurface
 RTSurfaceData *RTTlasBuilder::_process_plan_surface(const Instance &p_inst, const RTPlanSurface &p_surface, uint32_t p_lod) {
 	const SurfaceCache *surf = static_cast<const SurfaceCache *>(p_surface.surf);
 	RTSurfaceData *surf_data = nullptr;
-	// A captured surface whose first capture waits for the dynamic budget traces its bare mesh until then (a terrain
-	// chunk not yet lowered under a ground patch, say): pending, so a still waits for the real one.
-	if (p_surface.deformed_kind != RT_PLAN_DEFORMED_CAPTURED && RenderRaytracing::is_capture_surface(surf, ctx.capture_mode)) {
-		pending_surface_count++;
-	}
 	if (p_surface.deformed_kind != RT_PLAN_DEFORMED_NONE) {
 		const RTDeformedGeometrySource source = _deformed_source(p_inst, p_surface);
 		if (source.is_deformed()) {
@@ -6121,7 +5912,6 @@ RTDeformedGeometrySource RTTlasBuilder::_deformed_source(const Instance &p_inst,
 		source = _rt_mesh_instance_source(p_inst.mesh_instance, surf->surface_index);
 		source.cache_handle = &surf->rt_deformed_handle;
 	}
-	source.swept_spheres = captured && rt.lss_enabled && surf->shader && surf->shader->hair_strands;
 	source.surface_counter = p_surface.surface_counter;
 	return source;
 }
@@ -6219,13 +6009,6 @@ bool RTTlasBuilder::_add_merged_mm_surface(const PendingMMSurface &p_pending, co
 		geom.instance_data_primitive_divisor = merged_sd.geometry.primitive_count / p_pending.source.count;
 		geom.instance_data_layout = p_instance_data.layout;
 		sources.instance_data = p_instance_data.source;
-		// 3D records (the first field after the transform at 12, not 8) of plain instances, not particles,
-		// billboards or vertex captures: the hit shader can put each instance's own transform back.
-		const RTInstanceSource &src = p_pending.source;
-		const uint32_t first_field = MIN(src.color_offset, src.custom_offset);
-		if (!src.particles && p_pending.bake.billboard_index == UINT32_MAX && (geom.flags & RT_GEOM_FLAG_CAPTURED) == 0 && first_field >= 12 && first_field != UINT32_MAX) {
-			geom.flags |= RT_GEOM_FLAG_INSTANCE_XFORM;
-		}
 	}
 	const uint32_t facing_flags = _push_tlas_instance(p_pending.instance_transform, merged_sd.blas, p_pending.key, p_pending.transparent, p_pending.raster_mirror);
 	_push_tlas_entry(geom, sources, facing_flags, p_pending.mat_data, p_pending.material_flags, p_pending.layer_mask, p_pending.instance_uniforms_ofs, p_pending.instance_alpha,
@@ -6251,33 +6034,10 @@ bool RTTlasBuilder::_add_expanded_mm_surface(const PendingMMSurface &p_pending, 
 		surf_data = rt._omm_surface(p_pending.mm_surf, p_pending.surface_counter, p_pending.mat_data, p_pending.material_flags, p_pending.instance_alpha, surf_data, dirty_blas_list);
 	}
 
-	// multimesh_set_rt_offscreen_cull(): records outside the viewport's cull band (and 1 m or ten sizes past it, so the
-	// band's own lag and their shadows stay covered) that look smaller than the set angle stay out of the TLAS.
-	const bool cull = source.offscreen_cull > 0.0f && state && state->cull_band_valid && p_pending.bake.billboard_index == UINT32_MAX;
-	const float cull_tan = cull ? Math::tan(Math::deg_to_rad(MIN(source.offscreen_cull, 45.0f))) : 0.0f;
-	const RT_GeometryData &sg = surf_data->geometry;
-	const Vector3 surf_center = Vector3(sg.aabb_pos_x, sg.aabb_pos_y, sg.aabb_pos_z) + Vector3(sg.aabb_size_x, sg.aabb_size_y, sg.aabb_size_z) * 0.5f;
-	const float surf_radius = Vector3(sg.aabb_size_x, sg.aabb_size_y, sg.aabb_size_z).length() * 0.5f;
-	const Vector3 cull_eye = cull ? state->cull_band_camera.origin : Vector3();
-	uint32_t pushed = 0;
-
 	for (uint32_t mi = 0; mi < source.count; mi++) {
 		const float *d = mm_data + (source.current_offset + mi) * source.stride;
 		const float *prev_d = mm_data + (source.prev_offset + mi) * source.stride;
 		Transform3D world = p_pending.instance_transform * _rt_mm_record_transform(d);
-		if (cull) {
-			const Vector3 c = world.xform(surf_center);
-			const float scale = MAX(world.basis.get_column(0).length(), MAX(world.basis.get_column(1).length(), world.basis.get_column(2).length()));
-			const float r = surf_radius * scale;
-			float out = -Math::INF;
-			for (int p = 0; p < 4; p++) {
-				out = MAX(out, (float)state->cull_band_planes[p].distance_to(c));
-			}
-			if (out > MAX(10.0f * r, r + RT_CULL_BAND_MOVE) && r < cull_tan * c.distance_to(cull_eye)) {
-				continue;
-			}
-		}
-		pushed++;
 		Transform3D prev_world = p_pending.prev_instance_transform * _rt_mm_record_transform(prev_d);
 		if (p_pending.bake.billboard_index != UINT32_MAX) {
 			const uint32_t custom_offset = state->merge_billboards[p_pending.bake.billboard_index].custom_offset;
@@ -6301,7 +6061,7 @@ bool RTTlasBuilder::_add_expanded_mm_surface(const PendingMMSurface &p_pending, 
 	if (collect_render_info) {
 		const uint32_t vertices = mesh_storage->mesh_surface_get_vertices_drawn_count(p_pending.mesh_surface);
 		const uint32_t prim_count = _rt_indices_to_primitives(p_pending.mm_surf->primitive, vertices);
-		_record_stats(mark, pushed, prim_count * pushed, prim_count);
+		_record_stats(mark, source.count, prim_count * source.count, prim_count);
 	}
 	return true;
 }
@@ -6413,82 +6173,14 @@ void RTTlasBuilder::_record_stats(const DirtyMark &p_mark, uint32_t p_instances,
 void RenderRaytracing::_update_trace_origin(RTViewportState *p_state, const RenderDataRD *p_render_data) {
 	const double grid = GLOBAL_GET_CACHED(double, "rendering/pathtracing/relative_origin_grid");
 	const Vector3 cam = p_render_data->scene_data ? p_render_data->scene_data->cam_transform.origin : Vector3();
-	// The grid point nearest the camera, kept until the camera is 3/4 of a cell from it (hysteresis): traced
-	// positions near the camera stay within about a cell of zero. Anchored on the cell's corner instead, a camera
-	// just below a grid line (z = -1.5 with a 1024 m grid) put the scene at z = +1024, where offset_ray_origin()'s
-	// 256 ulps are 3 cm: a ray refracted into a thin icicle started past its core and never met it.
 	if (grid <= 0.0) {
 		p_state->rt_origin = Vector3();
-	} else if (!p_state->rt_origin_valid || Math::abs(cam.x - p_state->rt_origin.x) > 0.75 * grid ||
-			Math::abs(cam.z - p_state->rt_origin.z) > 0.75 * grid) {
-		p_state->rt_origin = Vector3(Math::round(cam.x / grid) * grid, 0.0, Math::round(cam.z / grid) * grid);
+	} else if (!p_state->rt_origin_valid || cam.x < p_state->rt_origin.x || cam.x >= p_state->rt_origin.x + grid ||
+			cam.z < p_state->rt_origin.z || cam.z >= p_state->rt_origin.z + grid) {
+		p_state->rt_origin = Vector3(Math::floor(cam.x / grid) * grid, 0.0, Math::floor(cam.z / grid) * grid);
 	}
 	p_state->rt_origin_valid = grid > 0.0;
 	trace_origin = p_state->rt_origin;
-}
-
-// The band only moves when the camera turns past half the guard or moves RT_CULL_BAND_MOVE metres, so a record
-// culled against it stays outside the real frustum until then; a new band bumps the rt_generation of every
-// instance whose MultiMesh culls, so their persistent slots are rebuilt against it.
-
-void RenderRaytracing::_update_cull_band(RTViewportState *p_state, const RenderDataRD *p_render_data) {
-	// A new band (or none) changes which records the culling instances keep: their slots are rebuilt.
-	const auto bump_culling = [p_render_data]() {
-		using GeometryInstance = RenderForwardClustered::GeometryInstanceForwardClustered;
-		RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
-		const PagedArray<RenderGeometryInstance *> &instances = *p_render_data->rt_instances;
-		for (uint64_t i = 0; i < instances.size(); i++) {
-			GeometryInstance *inst = static_cast<GeometryInstance *>(instances[i]);
-			if (inst && inst->data && inst->data->base_type == RSE::INSTANCE_MULTIMESH && mesh_storage->multimesh_rt_offscreen_cull(inst->data->base) > 0.0f) {
-				inst->bump_rt_generation();
-			}
-		}
-	};
-	const RenderSceneDataRD *scene_data = p_render_data->scene_data;
-	const bool enabled = GLOBAL_GET_CACHED(bool, "rendering/pathtracing/offscreen_record_cull");
-	if (!enabled || !scene_data || scene_data->cam_orthogonal || scene_data->view_count > 1) {
-		if (p_state->cull_band_valid) {
-			bump_culling();
-		}
-		p_state->cull_band_valid = false;
-		return;
-	}
-	const Transform3D &cam = scene_data->cam_transform;
-	if (p_state->cull_band_valid) {
-		const Vector3 f0 = -p_state->cull_band_camera.basis.get_column(2).normalized();
-		const Vector3 f1 = -cam.basis.get_column(2).normalized();
-		const Vector3 u0 = p_state->cull_band_camera.basis.get_column(1).normalized();
-		const Vector3 u1 = cam.basis.get_column(1).normalized();
-		const float turn_cos = Math::cos(Math::deg_to_rad(RT_CULL_BAND_TURN));
-		if (f0.dot(f1) >= turn_cos && u0.dot(u1) >= turn_cos && cam.origin.distance_to(p_state->cull_band_camera.origin) <= RT_CULL_BAND_MOVE) {
-			return;
-		}
-	}
-	const Projection &proj = scene_data->cam_projection;
-	const real_t fov = proj.get_fov(); // Horizontal, degrees.
-	const real_t aspect = proj.get_aspect();
-	if (!(fov > 0.0) || !(aspect > 0.0)) {
-		if (p_state->cull_band_valid) {
-			bump_culling();
-		}
-		p_state->cull_band_valid = false;
-		return;
-	}
-	// Widen the horizontal and the vertical field each by the guard on both sides.
-	const real_t fovy = Projection::get_fovy(fov, 1.0 / aspect);
-	const real_t wide_x = MIN(fov + 2.0 * RT_CULL_BAND_GUARD, 179.0);
-	const real_t wide_y = MIN(fovy + 2.0 * RT_CULL_BAND_GUARD, 179.0);
-	Projection wide;
-	wide.set_perspective(wide_y, Math::tan(Math::deg_to_rad(wide_x * 0.5)) / Math::tan(Math::deg_to_rad(wide_y * 0.5)), proj.get_z_near(), proj.get_z_far(), false);
-	const Vector<Plane> planes = wide.get_projection_planes(cam);
-	ERR_FAIL_COND(planes.size() < 6);
-	p_state->cull_band_planes[0] = planes[Projection::PLANE_LEFT];
-	p_state->cull_band_planes[1] = planes[Projection::PLANE_TOP];
-	p_state->cull_band_planes[2] = planes[Projection::PLANE_RIGHT];
-	p_state->cull_band_planes[3] = planes[Projection::PLANE_BOTTOM];
-	p_state->cull_band_camera = cam;
-	p_state->cull_band_valid = true;
-	bump_culling();
 }
 
 RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data, uint32_t p_rt_flags, LocalVector<RTCaptureRequest> &r_captures) {
@@ -7277,9 +6969,6 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, cons
 			ld.spot.inv_attenuation = rt_half(1.0f / MAX(0.001f, ls->light_get_param(base, RSE::LIGHT_PARAM_SPOT_ATTENUATION)));
 		}
 		ld.projector_texture.index = _light_projector_texture(base);
-		// How strongly it lights participating media, as raster volumetric fog and Flow's scattering read it.
-		const float volume_energy_m1 = ls->light_get_param(base, RSE::LIGHT_PARAM_VOLUMETRIC_FOG_ENERGY) - 1.0f;
-		memcpy(&ld.reserved[0], &volume_energy_m1, sizeof(float));
 		if (r_instances) {
 			r_instances->push_back(light_instance);
 		}
@@ -7662,68 +7351,6 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_Y] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_W] = has_weather ? rect.z : 0.0f;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_H] = has_weather ? rect.w : 0.0f;
-			// Its precipitation phase (weather_precip_phase): the rain share at a height, for the raindrop rings.
-			{
-				static const StringName precip_phase_name = "weather_precip_phase";
-				const Variant phase_var = ms->global_shader_parameter_get_internal(precip_phase_name);
-				const Vector4 phase = phase_var.get_type() == Variant::VECTOR4 ? Vector4(phase_var) : Vector4();
-				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_TEMPERATURE] = phase.x;
-				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_LAPSE] = phase.y;
-				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_HUMIDITY] = phase.z;
-				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_GROUND] = phase.w;
-				// Its rain map (weather_rain_map, same rect as the state map): the canopy's held water in green.
-				static const StringName rain_map_name = "weather_rain_map";
-				const Variant rain_var = ms->global_shader_parameter_get_internal(rain_map_name);
-				RID rain_tex;
-				if (rain_var.get_type() == Variant::RID) {
-					rain_tex = rain_var;
-				} else if (rain_var.get_type() == Variant::OBJECT) {
-					Object *t = rain_var;
-					if (t) {
-						rain_tex = t->call(SNAME("get_rid"));
-					}
-				}
-				RID rain_rd = rain_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(rain_tex) : RID();
-				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RAIN_MAP] = (has_weather && rain_rd.is_valid()) ? float(bindless_block->add_texture(rain_rd)) : 0.0f;
-			}
-			// Its contact wetness (wet where water has been): weather_contact_map and weather_contact_rect.
-			static const StringName contact_map_name = "weather_contact_map";
-			static const StringName contact_rect_name = "weather_contact_rect";
-			const Variant crect_var = ms->global_shader_parameter_get_internal(contact_rect_name);
-			const Vector4 crect = crect_var.get_type() == Variant::VECTOR4 ? Vector4(crect_var) : Vector4();
-			RID contact_tex;
-			const Variant ctex_var = ms->global_shader_parameter_get_internal(contact_map_name);
-			if (ctex_var.get_type() == Variant::RID) {
-				contact_tex = ctex_var;
-			} else if (ctex_var.get_type() == Variant::OBJECT) {
-				Object *t = ctex_var;
-				if (t) {
-					contact_tex = t->call(SNAME("get_rid"));
-				}
-			}
-			RID contact_rd = contact_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(contact_tex) : RID();
-			const bool has_contact = has_weather && contact_rd.is_valid() && crect.z > 0.0f;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CONTACT_WET_MAP] = has_contact ? float(bindless_block->add_texture(contact_rd)) : 0.0f;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CONTACT_WET_X] = crect.x;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CONTACT_WET_Z] = crect.y;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CONTACT_WET_SIZE] = has_contact ? crect.z : 0.0f;
-		}
-		// PhysXVehicle3D's stuck clods for BaseMaterial3D Mud (mud stage 4b).
-		{
-			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
-			static const StringName splats_name = "vehicle_mud_splats";
-			RID splat_tex;
-			const Variant tex_var = ms->global_shader_parameter_get_internal(splats_name);
-			if (tex_var.get_type() == Variant::RID) {
-				splat_tex = tex_var;
-			} else if (tex_var.get_type() == Variant::OBJECT) {
-				Object *t = tex_var;
-				if (t) {
-					splat_tex = t->call(SNAME("get_rid"));
-				}
-			}
-			RID splat_rd = splat_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(splat_tex) : RID();
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_VEHICLE_MUD_SPLATS] = splat_rd.is_valid() ? float(bindless_block->add_texture(splat_rd)) : 0.0f;
 		}
 		// GroundSurface3D's deform map for its BaseMaterial3D patch (turned-ground tint).
 		{
@@ -7747,82 +7374,6 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_X] = rect.x;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_Z] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_SIZE] = rect.z;
-		}
-		// And its finer near field (rect width 0 = none).
-		{
-			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
-			static const StringName near_map_name = "ground_deform_near_map";
-			static const StringName near_rect_name = "ground_deform_near_rect";
-			const Variant rect_var = ms->global_shader_parameter_get_internal(near_rect_name);
-			const Vector4 rect = rect_var.get_type() == Variant::VECTOR4 ? Vector4(rect_var) : Vector4();
-			RID near_tex;
-			const Variant tex_var = ms->global_shader_parameter_get_internal(near_map_name);
-			if (tex_var.get_type() == Variant::RID) {
-				near_tex = tex_var;
-			} else if (tex_var.get_type() == Variant::OBJECT) {
-				Object *t = tex_var;
-				if (t) {
-					near_tex = t->call(SNAME("get_rid"));
-				}
-			}
-			RID near_rd = near_tex.is_valid() && rect.z > 0.0f ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(near_tex) : RID();
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_NEAR_MAP] = near_rd.is_valid() ? float(bindless_block->add_texture(near_rd)) : 0.0f;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_NEAR_X] = rect.x;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_NEAR_Z] = rect.y;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_NEAR_SIZE] = near_rd.is_valid() ? rect.z : 0.0f;
-		}
-		// WeatherMap3D's aerosol haze as a traced medium (weather_haze_medium: extinction, albedo, scale height, base;
-		// weather_haze_reach), published while the scene is path traced.
-		{
-			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
-			static const StringName haze_medium_name = "weather_haze_medium";
-			static const StringName haze_reach_name = "weather_haze_reach";
-			const Variant medium_var = ms->global_shader_parameter_get_internal(haze_medium_name);
-			const Vector4 medium = medium_var.get_type() == Variant::VECTOR4 ? Vector4(medium_var) : Vector4();
-			const Variant reach_var = ms->global_shader_parameter_get_internal(haze_reach_name);
-			const bool has_haze = medium.x > 0.0f && medium.z > 0.0f;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_HAZE_SIGMA] = has_haze ? medium.x : 0.0f;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_HAZE_ALBEDO] = medium.y;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_HAZE_HEIGHT] = has_haze ? medium.z : 1.0f;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_HAZE_BASE] = float(double(medium.w) - p_state->rt_origin.y);
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_HAZE_REACH] = reach_var.get_type() == Variant::FLOAT ? float(reach_var) : 0.0f;
-		}
-		// And its wind ripple map, for the far ripples past the window (rect width 0 = ripples off).
-		{
-			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
-			static const StringName ripple_map_name = "ground_ripple_map";
-			static const StringName ripple_rect_name = "ground_ripple_rect";
-			const Variant rect_var = ms->global_shader_parameter_get_internal(ripple_rect_name);
-			const Vector4 rect = rect_var.get_type() == Variant::VECTOR4 ? Vector4(rect_var) : Vector4();
-			RID ripple_tex;
-			const Variant tex_var = ms->global_shader_parameter_get_internal(ripple_map_name);
-			if (tex_var.get_type() == Variant::RID) {
-				ripple_tex = tex_var;
-			} else if (tex_var.get_type() == Variant::OBJECT) {
-				Object *t = tex_var;
-				if (t) {
-					ripple_tex = t->call(SNAME("get_rid"));
-				}
-			}
-			RID ripple_rd = ripple_tex.is_valid() && rect.z > 0.0f ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(ripple_tex) : RID();
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_RIPPLE_MAP] = ripple_rd.is_valid() ? float(bindless_block->add_texture(ripple_rd)) : 0.0f;
-		}
-		// And its pore water map (sand stage 4): wet sand's look.
-		{
-			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
-			static const StringName wet_map_name = "ground_wet_map";
-			RID wet_tex;
-			const Variant tex_var = ms->global_shader_parameter_get_internal(wet_map_name);
-			if (tex_var.get_type() == Variant::RID) {
-				wet_tex = tex_var;
-			} else if (tex_var.get_type() == Variant::OBJECT) {
-				Object *t = tex_var;
-				if (t) {
-					wet_tex = t->call(SNAME("get_rid"));
-				}
-			}
-			RID wet_rd = wet_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(wet_tex) : RID();
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_WET_MAP] = wet_rd.is_valid() ? float(bindless_block->add_texture(wet_rd)) : 0.0f;
 		}
 		// Snow for BaseMaterial3D Snow: SnowCover3D's global snow map (depth, albedo, wetness,
 		// density) and its rect, as the raster shader reads them. Width 0 = no snowpack.
@@ -8158,9 +7709,8 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			float emission[4];
 			float heat_ramp[8][4];
 			float smoke_color[4];
-			float shimmer[4];
 		};
-		static_assert(sizeof(VolumeParams) == 400, "RTVolumeParams layout changed");
+		static_assert(sizeof(VolumeParams) == 384, "RTVolumeParams layout changed");
 		VolumeParams vp = {};
 		RTSparseVolume vol;
 		const bool has_volume = RTVolumes::get_volume(vol);
@@ -8186,7 +7736,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			vp.medium[3] = vol.density_majorant;
 			vp.emission[0] = vol.emission_scale;
 			vp.emission[1] = vol.temperature_range > 0.0f ? 1.0f / vol.temperature_range : 1.0f;
-			vp.emission[2] = vol.emission_scale > 0.0f ? (vol.emission_proxy_light ? 2.0f : 1.0f) : 0.0f;
+			vp.emission[2] = vol.emission_scale > 0.0f ? 1.0f : 0.0f;
 			for (int i = 0; i < 8; i++) {
 				vp.heat_ramp[i][0] = vol.heat_ramp[i].r;
 				vp.heat_ramp[i][1] = vol.heat_ramp[i].g;
@@ -8196,10 +7746,6 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			vp.smoke_color[0] = vol.smoke_color.r;
 			vp.smoke_color[1] = vol.smoke_color.g;
 			vp.smoke_color[2] = vol.smoke_color.b;
-			vp.shimmer[0] = vol.temperature_range > 0.0f ? vol.shimmer_kelvin / vol.temperature_range : 0.0f;
-			vp.shimmer[1] = vol.shimmer_air_kelvin;
-			vp.shimmer[2] = vol.shimmer_turbulence;
-			vp.shimmer[3] = vol.shimmer_time;
 		}
 		// No simulated gas this frame: the dense boxes (waterfall mist), if any. emission.w holds their
 		// count, which switches the shader to them; level[] holds the boxes, two uvec4 each.

@@ -40,7 +40,6 @@
 #include "core/version.h"
 #include "scene/main/scene_tree.h"
 #include "scene/resources/texture.h"
-#include "servers/rendering/rain_ripples_glsl.gen.h"
 #include "servers/rendering/rendering_rt_material_state.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -611,18 +610,6 @@ void BaseMaterial3D::init_shaders() {
 		map_rect["type"] = "vec4";
 		map_rect["value"] = Vector4();
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		// Its contact wetness (wet where water has been): a fine square round the camera.
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_contact_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		// Its rain readers' map and the precipitation's phase (get_rain_functions_code()).
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_rain_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_precip_phase", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_frost_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		// Its sea spray square (R: the spray's wetness, G: salt on surfaces as 1 - exp(-g/m2 / 10)).
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_spray_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_spray_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
@@ -631,12 +618,11 @@ void BaseMaterial3D::init_shaders() {
 		// And its world tier, the coarse pack over the whole terrain drawn outside the near square.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		// Under the path tracer every ice grain a facet, per ray (docs/ideas/snow.md, follow-up 5). On by
-		// default (it settles with the denoiser or many samples); off, the path tracer uses the raster's
-		// footprint grid.
+		// Under the path tracer every ice grain a facet, per ray (docs/ideas/snow.md, follow-up 5). Off by
+		// default: it needs many samples or the denoiser; off, the path tracer uses the raster's footprint grid.
 		Dictionary exact;
 		exact["type"] = "bool";
-		exact["value"] = true;
+		exact["value"] = false;
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_exact_glints", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), exact);
 		// Ground deformation reads GroundSurface3D's (rect width 0 = none: nothing lowered, nothing moved).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
@@ -644,21 +630,6 @@ void BaseMaterial3D::init_shaders() {
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_height", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_height_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_skirt", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		// Its finer near field (docs/ideas/mud.md, stage 0), used inside its own square.
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_near_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_near_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		// The clods stuck to vehicles' bodies (docs/ideas/mud.md, stage 4b): a row per PhysXVehicle3D.
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/vehicle_mud_splats", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		// And its wind ripples (docs/ideas/sand.md, stage 3): a fine height layer over the middle of the patch.
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
-		// The grown ripple field's slope (periodic, mipmapped) for the far ripples past the window.
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_ripple_far", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		// And its pore water (sand stage 4): wetness and sheen on the lattice, the last row its rect.
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_wet_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		// And its worn-in tracks (docs/ideas/mud.md, round 14.2): wheel passes on the lattice (rect w 1 when set).
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_wear_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
-		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_wear_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -746,102 +717,22 @@ void BaseMaterial3D::finish_shaders() {
 // (terrain shaders above all), so there is one source and the two never drift apart. The path tracer applies
 // the same lines for BaseMaterial3D in scene_raytracing_raygen.glsl; a ShaderMaterial runs this code in its own
 // hit shader.
-String BaseMaterial3D::get_frost_sampling_code() {
-	return R"(global uniform sampler2D weather_frost_map;
-
-// Hoarfrost on exposed surfaces (WeatherMap3D dew_and_frost), mm of water; 0 with no weather map.
-float weather_frost_at(vec3 p_world_pos) {
-	if (weather_map_rect.z <= 0.0) {
-		return 0.0;
-	}
-	vec2 half_texel = 0.5 / vec2(textureSize(weather_frost_map, 0));
-	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
-	return max(textureLod(weather_frost_map, uv, 0.0).r, 0.0);
-}
-
-// Rime on twigs and edges (WeatherMap3D rime): mm along the horizontal way into the wind it grew from (x, z); zero
-// with no weather map.
-vec2 weather_rime_at(vec3 p_world_pos) {
-	if (weather_map_rect.z <= 0.0) {
-		return vec2(0.0);
-	}
-	vec2 half_texel = 0.5 / vec2(textureSize(weather_frost_map, 0));
-	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
-	return textureLod(weather_frost_map, uv, 0.0).ba;
-}
-
-global uniform sampler2D weather_spray_map;
-global uniform vec4 weather_spray_rect;
-
-// Sea salt on surfaces (WeatherMap3D sea_spray) as 1 - exp(-g/m2 / 10), 0..1; 0 outside its square, easing out over
-// the square's outer twentieth.
-float weather_salt_at(vec3 p_world_pos) {
-	if (weather_spray_rect.z <= 0.0) {
-		return 0.0;
-	}
-	vec2 uv = (p_world_pos.xz - weather_spray_rect.xy) / weather_spray_rect.zw;
-	vec2 e = min(uv, 1.0 - uv);
-	float edge = smoothstep(0.0, 0.05, min(e.x, e.y));
-	return edge > 0.0 ? textureLod(weather_spray_map, uv, 0.0).g * edge : 0.0;
-}
-)";
-}
-
 String BaseMaterial3D::get_wetness_functions_code(bool p_from_weather) {
 	String code;
 	if (p_from_weather) {
 		code += R"(global uniform sampler2D weather_state_map;
 global uniform vec4 weather_map_rect;
-global uniform sampler2D weather_contact_map;
-global uniform vec4 weather_contact_rect;
 
-// Wet where water has been (WeatherMap3D contact wetness, 0..1); 0 outside its square, easing out
-// over the square's outer tenth so its edge never shows.
-float weather_contact_wetness_at(vec3 p_world_pos) {
-	if (weather_contact_rect.z <= 0.0) {
-		return 0.0;
-	}
-	vec2 uv = (p_world_pos.xz - weather_contact_rect.xy) / weather_contact_rect.zw;
-	vec2 e = min(uv, 1.0 - uv);
-	float edge = smoothstep(0.0, 0.1, min(e.x, e.y));
-	if (edge <= 0.0) {
-		return 0.0;
-	}
-	// Catmull-Rom from five bilinear taps (the corner taps dropped; Jimenez 2016, Filmic SMAA): prints a texel or two
-	// across keep their shape instead of a bilinear texel's square.
-	vec2 ts = vec2(textureSize(weather_contact_map, 0));
-	vec2 sp = uv * ts;
-	vec2 t1 = floor(sp - 0.5) + 0.5;
-	vec2 f = sp - t1;
-	vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
-	vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
-	vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
-	vec2 w3 = f * f * (-0.5 + 0.5 * f);
-	vec2 w12 = w1 + w2;
-	vec2 t0 = (t1 - 1.0) / ts;
-	vec2 t3 = (t1 + 2.0) / ts;
-	vec2 t12 = (t1 + w2 / w12) / ts;
-	float a = w12.x * w0.y, b = w0.x * w12.y, c = w12.x * w12.y, d = w3.x * w12.y, g = w12.x * w3.y;
-	float r = textureLod(weather_contact_map, vec2(t12.x, t0.y), 0.0).r * a + textureLod(weather_contact_map, vec2(t0.x, t12.y), 0.0).r * b + textureLod(weather_contact_map, t12, 0.0).r * c + textureLod(weather_contact_map, vec2(t3.x, t12.y), 0.0).r * d + textureLod(weather_contact_map, vec2(t12.x, t3.y), 0.0).r * g;
-	return clamp(r / (a + b + c + d + g), 0.0, 1.0) * edge;
-}
-
-// Ground wetness from the weather map (0 dry, 1 soaked) and where water has been; 0 with no weather map.
-// p_contact_shape scales where water has been: a printed ground's own outline (ground_contact_shape()), finer than
-// the contact map's texels.
-float weather_wetness_at(vec3 p_world_pos, float p_contact_shape) {
+// Ground wetness from the weather map (0 dry, 1 soaked); 0 where no weather map is set.
+float weather_wetness_at(vec3 p_world_pos) {
 	if (weather_map_rect.z <= 0.0) {
 		return 0.0;
 	}
 	vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
-	return max(textureLod(weather_state_map, uv, 0.0).g, weather_contact_wetness_at(p_world_pos) * p_contact_shape);
-}
-float weather_wetness_at(vec3 p_world_pos) {
-	return weather_wetness_at(p_world_pos, 1.0);
+	return textureLod(weather_state_map, uv, 0.0).g;
 }
 )";
-		code += get_frost_sampling_code();
 	}
 	code += R"(
 // Wet surfaces, Lagarde 2013 ("Water drop 3b"): water in the pores darkens porous surfaces and smooths them.
@@ -852,154 +743,8 @@ void weather_wetness_apply(float p_wet, float p_normal_y, float p_metallic, floa
 	r_albedo *= mix(1.0, wet_factor, wet);
 	r_roughness *= mix(1.0, wet_factor, 0.5 * wet);
 }
-
-// Hoarfrost: ice crystals grown from the air on the faces that see the sky (they cool by radiation), white and
-// matte; a few tenths of a millimetre of water frost the surface over (fresh rime's albedo about 0.8, Warren 1982).
-// Returns the cover, for what else it hides.
-float weather_frost_apply(float p_frost, float p_normal_y, inout vec3 r_albedo, inout float r_roughness) {
-	float cover = smoothstep(0.0, 0.3, p_frost) * smoothstep(0.0, 0.8, p_normal_y);
-	r_albedo = mix(r_albedo, vec3(0.78, 0.8, 0.84), 0.65 * cover);
-	r_roughness = mix(r_roughness, 0.8, cover);
-	return cover;
-}
-
-// Smooth value noise for the rime's grain (trilinear over hashed lattice values, quintic fade).
-float weather_rime_vn(vec3 p) {
-	vec3 i = floor(p);
-	vec3 f = p - i;
-	f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-	vec4 h = vec4(0.0, 57.0, 113.0, 170.0) + dot(i, vec3(1.0, 57.0, 113.0));
-	vec4 a = fract(sin(h) * 43758.5453);
-	vec4 b = fract(sin(h + 1.0) * 43758.5453);
-	vec4 x = mix(a, b, f.x);
-	vec2 y = mix(x.xz, x.yw, f.y);
-	return mix(y.x, y.y, f.z);
-}
-
-// Rime (docs/ideas/world-links.md, "Rime"): supercooled cloud frozen on what stands in the wind, on the faces turned
-// into it first; a thick deposit wraps round to the sides (rime ice on summit trees, "snow ghosts"). White and matte,
-// soft rime's albedo about 0.8 (Warren 1982). p_rime from weather_rime_at(), p_normal the world normal, p_pos the
-// world position (the feathers' grain: cells drawn out along the wind, as feathers grow, and finer crust between).
-// Returns the cover.
-float weather_rime_apply(vec2 p_rime, vec3 p_normal, vec3 p_pos, inout vec3 r_albedo, inout float r_roughness) {
-	float mm = length(p_rime);
-	if (mm <= 0.05) {
-		return 0.0;
-	}
-	vec3 into = vec3(p_rime.x, 0.0, p_rime.y) / mm;
-	// The grain in a frame with one axis along the wind: feathers some centimetres long, a few millimetres across.
-	vec3 side = normalize(cross(into, vec3(0.0, 1.0, 0.0)));
-	vec3 q = vec3(dot(p_pos, into) * 18.0, p_pos.y * 70.0, dot(p_pos, side) * 70.0);
-	float grain = 0.6 * weather_rime_vn(q) + 0.4 * weather_rime_vn(q * 2.7 + 19.0);
-	float patch = weather_rime_vn(p_pos * 2.5 + 7.0);
-	float wrap = 0.5 * smoothstep(30.0, 150.0, mm);
-	float face = smoothstep(0.05 - wrap, 0.55 - wrap, dot(p_normal, into) + 0.3 * (patch - 0.5));
-	float cover = smoothstep(0.3, 4.0, mm) * face * smoothstep(-0.9, -0.4, p_normal.y);
-	// Thin rime is separate feathers with the surface between them; thick rime is a crust.
-	float fill = smoothstep(1.0 - smoothstep(0.5, 25.0, mm) - 0.15, 1.0 - smoothstep(0.5, 25.0, mm) + 0.15, grain + 0.2 * patch);
-	cover *= mix(0.35, 1.0, fill);
-	r_albedo = mix(r_albedo, vec3(0.84, 0.86, 0.9) * (0.9 + 0.1 * grain), 0.9 * cover);
-	r_roughness = mix(r_roughness, 0.85, cover);
-	return cover;
-}
-
-// Salt bloom (efflorescence) on stone (docs/ideas/world-links.md, "Salt bloom"): the spray's salt crystallises where
-// the film dries, a white halite crust in the sheltered stone that keeps it (p_keep 0..1: hollows and steep faces
-// high, rain-washed tops low), patchy (p_patch 0..1, noise) and grainy (p_grain), gone under any film of water (p_wet), back as it dries
-// (Mustoe 1982; Goudie and Viles 1997; Huinink et al. 2004). The rocks' own shader keeps a like rule. Returns the
-// crust's share.
-float weather_salt_bloom_apply(float p_salt, float p_wet, float p_keep, float p_patch, float p_grain, inout vec3 r_albedo, inout float r_roughness) {
-	if (p_salt <= 0.0) {
-		return 0.0;
-	}
-	// The load sets how much of the stone the crust takes (at most 0.4 of it: a bloom is patchy, never a coat of
-	// paint); the patches fill from their highest values down with soft, thin edges, so a light load shows as
-	// scattered faint patches.
-	float share = 0.4 * smoothstep(0.12, 0.65, p_salt * p_keep);
-	float crust = smoothstep(1.0 - share - 0.07, 1.0 - share + 0.07, p_patch) * smoothstep(0.0, 0.05, share) * (1.0 - smoothstep(0.08, 0.35, p_wet));
-	// The crust is a mat of crystals, thicker and thinner grain to grain (p_grain 0..1, fine noise; 0.5 unresolved).
-	r_albedo = mix(r_albedo, vec3(0.82, 0.81, 0.78), crust * (0.55 + 0.45 * p_grain));
-	r_roughness = mix(r_roughness, 0.92, crust);
-	return crust;
-}
-
-// Salt spray burn on leaves (Boyce 1954; foliar chloride necrosis): from about 2 g/m2 of sea salt (p_salt 0.15) the
-// leaves brown one by one (p_hash, 0..1 steady per leaf), each from the tip and edges in, until by about 20 g/m2
-// (0.85) most are dead brown. Returns the share browned, for the light through the leaf.
-float weather_salt_burn_apply(float p_salt, float p_hash, inout vec3 r_albedo) {
-	float b = smoothstep(0.15, 0.85, p_salt);
-	if (b <= 0.0) {
-		return 0.0;
-	}
-	float leaf = smoothstep(p_hash - 0.1, p_hash + 0.1, b * 1.1);
-	float lum = dot(r_albedo, vec3(0.2126, 0.7152, 0.0722));
-	vec3 brown = vec3(0.36, 0.25, 0.11) * clamp(lum * 4.0, 0.6, 1.3);
-	float burnt = clamp(0.85 * leaf + 0.15 * b, 0.0, 1.0);
-	r_albedo = mix(r_albedo, brown, burnt);
-	return burnt;
-}
 )";
 	return code;
-}
-
-// Rain (docs/ideas/rain.md): the raindrop rings every water surface draws (rain_ripples(), the same file the path
-// tracer includes) and, with p_from_weather, the weather's rain at a point. Any shader may add this once.
-String BaseMaterial3D::get_rain_functions_code(bool p_from_weather) {
-	String code = RAIN_RIPPLES_GLSL;
-	if (p_from_weather) {
-		code += R"(
-global uniform sampler2D weather_rain_map; // precipitation mm/h, canopy wetness, canopy drip mm/h
-global uniform vec4 weather_rain_rect; // x, z, size; size 0 = no weather
-global uniform vec4 weather_precip_phase; // ground air temperature (C), lapse (K/m), humidity, ground height (m)
-
-vec4 weather_rain_sample(vec3 p_world_pos) {
-	if (weather_rain_rect.z <= 0.0) {
-		return vec4(0.0);
-	}
-	vec2 half_texel = 0.5 / vec2(textureSize(weather_rain_map, 0));
-	vec2 uv = clamp((p_world_pos.xz - weather_rain_rect.xy) / weather_rain_rect.zw, half_texel, 1.0 - half_texel);
-	return textureLod(weather_rain_map, uv, 0.0);
-}
-
-// The air's temperature at a height, and the rain (mm/h, liquid) there: WeatherMap3D.get_rainfall_at().
-float weather_air_temperature_at(vec3 p_world_pos) {
-	return weather_precip_phase.x - weather_precip_phase.y * (p_world_pos.y - weather_precip_phase.w);
-}
-float weather_rainfall_at(vec3 p_world_pos) {
-	float r = weather_rain_sample(p_world_pos).r;
-	return r > 0.0 ? r * rain_liquid_share(weather_air_temperature_at(p_world_pos), weather_precip_phase.z) : 0.0;
-}
-// Leaves' wetness from the canopy's held water (0..1), and the drip off them (mm/h): Rutter's interception.
-float weather_canopy_wetness_at(vec3 p_world_pos) {
-	return weather_rain_sample(p_world_pos).g;
-}
-float weather_canopy_drip_at(vec3 p_world_pos) {
-	return weather_rain_sample(p_world_pos).b;
-}
-)";
-	}
-	return code;
-}
-
-// Glaze (docs/ideas/trees.md 5be): the clear ice freezing rain leaves over everything it wets, p_mm of radial ice
-// (WeatherMap3D's rain map, alpha). Lagarde 2013's accumulated water ("Water drop 3b"), frozen: a film forms within
-// the first millimetre; the surface is ice's (n 1.31, F0 0.018: specular 0.225), smooth but for frozen ripples; the
-// surface under it is seen soaked (its pores hold the frozen water, as wet); a few millimetres fill its relief.
-// Returns how far the relief is filled (0..1), for the normal. The path tracer has the same lines
-// (scene_raytracing_raygen.glsl).
-String BaseMaterial3D::get_glaze_functions_code() {
-	return R"(
-float weather_glaze_apply(float p_mm, float p_porosity, float p_metallic, inout vec3 r_albedo, inout float r_roughness, inout float r_specular) {
-	float cover = smoothstep(0.0, 1.0, p_mm);
-	if (cover <= 0.0) {
-		return 0.0;
-	}
-	r_albedo *= mix(1.0, mix(1.0, 0.2, (1.0 - p_metallic) * p_porosity), cover);
-	r_roughness = mix(r_roughness, 0.06, cover);
-	r_specular = mix(r_specular, 0.225, cover);
-	return cover * smoothstep(0.5, 6.0, p_mm);
-}
-)";
 }
 
 String BaseMaterial3D::get_snow_functions_code(bool p_from_weather) {
@@ -1059,61 +804,7 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 	cover = mix(cover, min(crown_load * 2.0, 1.0), crown);
 	return vec4(cover, s.g, clamp(s.b, 0.0, 1.0), 1.0);
 }
-
-// The snowpack's depth (m) and density (kg/m3) at a world position, (0, 0) where no pack answers: the near square
-// over the world tier, as snow_cover_at() reads them. For what the pack's weight does (plants pressed under it).
-vec2 snow_pack_at(vec3 p_world_pos) {
-	vec4 s = vec4(0.0);
-	if (snow_world_rect.z > 0.0) {
-		vec2 wuv = (p_world_pos.xz - snow_world_rect.xy) / snow_world_rect.zw;
-		if (all(greaterThanEqual(wuv, vec2(0.0))) && all(lessThanEqual(wuv, vec2(1.0)))) {
-			vec2 wh = 0.5 / vec2(textureSize(snow_world_map, 0));
-			s = textureLod(snow_world_map, clamp(wuv, wh, 1.0 - wh), 0.0);
-		}
-	}
-	if (snow_map_rect.z > 0.0) {
-		vec2 nuv = (p_world_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
-		vec2 ne = min(nuv, 1.0 - nuv);
-		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
-		if (nw > 0.0) {
-			vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
-			s = mix(s, textureLod(snow_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
-		}
-	}
-	return vec2(max(s.r, 0.0), max(s.a, 0.0) * 1000.0);
-}
-
-// How far a pack's weight presses a plant over, 0 to 1 (docs/ideas/world-links.md, snow on plants): the load
-// rho g d against the stems' stiffness. Settled snow lays herbs and grasses flat (the snow press of alpine
-// swards, Koerner 2003, "Alpine Plant Life", ch. 3) from about 0.3 kPa; stiffer dwarf shrubs bow under more
-// (p_stiffness over the grass's, bending going as its square). A dusting presses nothing.
-float snow_press(vec2 p_pack, float p_stiffness) {
-	float load = p_pack.y * 9.81 * p_pack.x; // Pa
-	return smoothstep(0.0, 1.0, load / (300.0 * max(p_stiffness * p_stiffness, 0.05))) * smoothstep(0.02, 0.06, p_pack.x);
-}
-
-// Surface hoar on the pack's top at a world position (mm; SnowCover3D hoar_enabled): the catch map's alpha is
-// 1 + mm / 10 where the cover answers. None on what lies well under or above that top (a roof's underside, a
-// crown).
-float snow_hoar_at(vec3 p_world_pos) {
-	if (snow_map_rect.z <= 0.0) {
-		return 0.0;
-	}
-	vec2 nuv = (p_world_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
-	if (any(lessThan(nuv, vec2(0.0))) || any(greaterThan(nuv, vec2(1.0)))) {
-		return 0.0;
-	}
-	vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
-	vec4 c = textureLod(snow_catch_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0);
-	if (c.a <= 1.0) {
-		return 0.0;
-	}
-	float dy = p_world_pos.y - c.r;
-	return (c.a - 1.0) * 10.0 * smoothstep(-0.8, -0.4, dy) * (1.0 - smoothstep(1.0, 1.5, dy));
-}
 )";
-	} else {
-		code += "float snow_hoar_at(vec3 p_world_pos) {\n\treturn 0.0;\n}\n";
 	}
 	code += R"(
 // Snow weight on a surface from the covered share. Snow slides off past p_max_slope (its angle of repose) and
@@ -1144,15 +835,9 @@ void snow_cover_apply(float p_snow, float p_albedo, float p_wet, inout vec3 r_al
 // Deliot and Belcour 2023, reduced to one facet per cell): a cell holding n grains has a facet with chance
 // min(share n, 1) covering share / chance of it, fading as more facets share the cell. Returns the facet's
 // normal and its weight (0: none).
-vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint, float p_hoar) {
-	// Surface hoar (p_hoar, mm): its crystals are flat ice plates and feathers a few mm to cm across, standing
-	// on the snow (Colbeck 1988; Lang et al. 1984), each one a mirror. Over hoar, the cell is the crystal's size,
-	// most crystals show a smooth face, and a share hf of the facets are plates set every way, their normals
-	// spread evenly over the sky up to 60 degrees off the snow's (past that the coat's grazing Fresnel would only
-	// darken the snow under it): far fewer, larger and brighter glints than the grains', from any sun.
-	float hf = smoothstep(0.5, 4.0, p_hoar);
-	float grain = max(0.002, 0.0006 * p_hoar);
-	float share = mix(0.25, 0.35, hf);
+vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
+	const float grain = 0.002;
+	const float share = 0.25;
 	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
 	if (level > 5.0) {
 		return vec4(p_n, 0.0);
@@ -1173,13 +858,8 @@ vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint, float p_hoar) {
 	if (r0 >= chance) {
 		return vec4(p_n, 0.0);
 	}
-	float ct;
-	if (r0 < chance * hf) {
-		ct = mix(0.5, 1.0, r1);
-	} else {
-		float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
-		ct = inversesqrt(1.0 + tan2);
-	}
+	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
+	float ct = inversesqrt(1.0 + tan2);
 	float st = sqrt(max(1.0 - ct * ct, 0.0));
 	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 b = cross(p_n, t);
@@ -1195,7 +875,7 @@ vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint, float p_hoar) {
 // NORMAL, NORMAL_MAP, NORMAL_MAP_DEPTH, CLEARCOAT and CLEARCOAT_ROUGHNESS; p_footprint is the pixel's size in
 // metres at the surface.
 void snow_glint_apply(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, float p_snow, float p_wet, mat4 p_view, vec3 p_tangent, vec3 p_binormal, inout vec3 r_normal, inout vec3 r_normal_map, inout float r_normal_map_depth, inout float r_clearcoat, inout float r_clearcoat_roughness) {
-	vec4 g = snow_glint(p_world_pos, p_geo_normal, p_footprint, snow_hoar_at(p_world_pos));
+	vec4 g = snow_glint(p_world_pos, p_geo_normal, p_footprint);
 	float gw = g.w * step(0.5, p_snow) * (1.0 - smoothstep(0.05, 0.3, p_wet));
 	if (gw <= 0.0) {
 		return;
@@ -1222,10 +902,8 @@ void snow_glint_apply(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, fl
 // is an ice facet, its normal GGX-tilted (alpha 0.4); a pixel's samples land on different grains, so the path
 // tracer integrates the footprint's own facets (the reference Jakob et al. 2014 and Yan et al. 2014 measure
 // their counting models against), at any distance and on any bounce.
-vec3 snow_grain_facet(vec3 p_pos, vec3 p_n, float p_hoar) {
-	// Over surface hoar (p_hoar, mm), crystal-sized cells, a share hf of them plates set every way (as snow_glint).
-	float hf = smoothstep(0.5, 4.0, p_hoar);
-	float grain = max(0.002, 0.0006 * p_hoar);
+vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
+	const float grain = 0.002;
 	ivec3 q = ivec3(floor(p_pos / grain));
 	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u);
 	h ^= h >> 16u;
@@ -1235,15 +913,8 @@ vec3 snow_grain_facet(vec3 p_pos, vec3 p_n, float p_hoar) {
 	h ^= h >> 16u;
 	float r1 = float(h & 0xffffu) / 65536.0;
 	float r2 = float(h >> 16u) / 65536.0;
-	uint h2 = h * 0x9e3779b9u;
-	h2 ^= h2 >> 15u;
-	float ct;
-	if (float(h2 & 0xffffu) / 65536.0 < hf) {
-		ct = mix(0.5, 1.0, r1);
-	} else {
-		float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
-		ct = inversesqrt(1.0 + tan2);
-	}
+	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
+	float ct = inversesqrt(1.0 + tan2);
 	float st = sqrt(max(1.0 - ct * ct, 0.0));
 	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 b = cross(p_n, t);
@@ -1263,7 +934,7 @@ void snow_glint_apply_specular(vec3 p_world_pos, vec3 p_geo_normal, float p_foot
 	if (gw <= 0.0) {
 		return;
 	}
-	r_specular_normal = normalize((p_view * vec4(snow_grain_facet(p_world_pos, p_geo_normal, snow_hoar_at(p_world_pos)), 0.0)).xyz);
+	r_specular_normal = normalize((p_view * vec4(snow_grain_facet(p_world_pos, p_geo_normal), 0.0)).xyz);
 	r_roughness = mix(r_roughness, 0.22, gw);
 }
 )";
@@ -1276,383 +947,6 @@ String BaseMaterial3D::get_wetness_shader_code() {
 
 String BaseMaterial3D::get_snow_shader_code() {
 	return get_snow_functions_code(true);
-}
-
-String BaseMaterial3D::get_mud_functions_code() {
-	// The vehicle's frame (world to vehicle rows), its wheels (centre, radius), their tread fill and thrown spray, the
-	// belly (chassis bottom y, mud line m, wetness 0..1) and the clay's colour, written by PhysXVehicle3D at fixed slots
-	// that the path tracer reads too (scene_raytracing_raygen.glsl, VMUD_SLOT_*).
-	String code = R"(instance uniform vec4 mud_frame0 : instance_index(0);
-instance uniform vec4 mud_frame1 : instance_index(1);
-instance uniform vec4 mud_frame2 : instance_index(2);
-instance uniform vec4 mud_wheel0 : instance_index(3);
-instance uniform vec4 mud_wheel1 : instance_index(4);
-instance uniform vec4 mud_wheel2 : instance_index(5);
-instance uniform vec4 mud_wheel3 : instance_index(6);
-instance uniform vec4 mud_fill : instance_index(7);
-instance uniform vec4 mud_spray : instance_index(8);
-instance uniform vec4 mud_body : instance_index(9);
-instance uniform vec4 mud_color : instance_index(10);
-instance uniform vec4 mud_splat : instance_index(11);
-global uniform sampler2D vehicle_mud_splats;
-
-)";
-	code += R"(// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
-// Off-road games keep an accumulation level per region and let it threshold a splat mask, so mud lands as flecks and
-// grows into a cake. Here the regions are the vehicle's own (each tyre's tread, the spray each wheel throws up its arch
-// and back along the body, the belly up to the deepest it sat in mud), in the vehicle's frame (x across, y up, z forward,
-// m), and the mask is an object-space noise: no authored mask, no UVs, the same in both renderers.
-float vmud_hash(vec3 p_c) {
-	uvec3 q = uvec3(ivec3(p_c));
-	uint h = (q.x * 73856093u) ^ (q.y * 19349663u) ^ (q.z * 83492791u);
-	h ^= h >> 16u;
-	h *= 0x7feb352du;
-	h ^= h >> 15u;
-	h *= 0x846ca68bu;
-	h ^= h >> 16u;
-	return float(h & 0xffffu) / 65535.0;
-}
-float vmud_noise(vec3 p_p) {
-	vec3 i = floor(p_p);
-	vec3 f = fract(p_p);
-	f = f * f * (3.0 - 2.0 * f);
-	float a = mix(vmud_hash(i), vmud_hash(i + vec3(1.0, 0.0, 0.0)), f.x);
-	float b = mix(vmud_hash(i + vec3(0.0, 1.0, 0.0)), vmud_hash(i + vec3(1.0, 1.0, 0.0)), f.x);
-	float c = mix(vmud_hash(i + vec3(0.0, 0.0, 1.0)), vmud_hash(i + vec3(1.0, 0.0, 1.0)), f.x);
-	float d = mix(vmud_hash(i + vec3(0.0, 1.0, 1.0)), vmud_hash(i + vec3(1.0, 1.0, 1.0)), f.x);
-	return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
-}
-// The splat field, 0..1: splashes of about 6 cm with 2 cm drops; the drops fade to their mean over a footprint p_fw (m)
-// that cannot hold them.
-float vmud_splat(vec3 p_p, float p_fw) {
-	float fine = mix(vmud_noise(p_p * 48.0 + 17.0), 0.5, smoothstep(0.004, 0.015, p_fw));
-	return 0.6 * vmud_noise(p_p * 16.0) + 0.4 * fine;
-}
-// One wheel (p_w: centre, radius; its tread fill and thrown spray, 0..1).
-float vmud_wheel(vec3 p_p, vec4 p_w, float p_fill, float p_spray) {
-	if (p_w.w <= 0.0) {
-		return 0.0;
-	}
-	vec3 q = (p_p - p_w.xyz) / p_w.w;
-	float rho = length(q.yz);
-	// The tyre: its tread packed as full as the fill, the sidewall a little less.
-	float tyre = p_fill * (1.0 - smoothstep(1.0, 1.06, rho)) * (1.0 - smoothstep(0.55, 0.7, abs(q.x))) * mix(0.55, 1.0, smoothstep(0.6, 0.9, rho));
-	// The spray: thrown off the top and back of the tread, up the arch and back along the lower body, thinning outwards
-	// (as far as about 1.5 m behind and 0.8 m above a 35 cm wheel), heaviest low down.
-	float e = length((q - vec3(0.0, 0.4, -1.2)) / vec3(2.2, 2.4, 4.4));
-	float spray = p_spray * (1.0 - smoothstep(0.25, 1.0, e)) * mix(1.0, 0.6, smoothstep(0.0, 2.0, q.y));
-	return max(tyre, spray);
-}
-// The accumulation level at p_p (0 clean, 1 caked). p_body: chassis bottom (y), mud line above it (m).
-// A leg (mud stage 4e), p_p in its shin's frame (x across, y up from the sole, z forward; see vmud_at()); p_leg: mud
-// line above the sole (m), shin length (m), shin radius (m), flecks (0..1). The boot below the ankle reaches forward
-// to the toe.
-float vmud_leg(vec3 p_p, vec4 p_leg) {
-	if (p_leg.x <= 0.0 && p_leg.w <= 0.0) {
-		return 0.0;
-	}
-	float up = p_p.y;
-	float boot = 1.0 - smoothstep(0.1, 0.16, up);
-	// Within the shin (a little proud of it), or within the boot's footprint, reaching 22 cm forward to the toe.
-	vec2 q = vec2(p_p.x, p_p.z - boot * clamp(p_p.z, 0.0, 0.14));
-	float r = mix(1.3 * p_leg.z, 0.09, boot);
-	float on = (1.0 - smoothstep(r, 1.4 * r, length(q))) * step(-0.06, up) * (1.0 - smoothstep(p_leg.y, p_leg.y + 0.04, up));
-	if (on <= 0.0) {
-		return 0.0;
-	}
-	// The line ragged round the leg and higher at the front (the toe throws it up the shin).
-	float line = p_leg.x * (0.7 + 0.5 * vmud_noise(vec3(p_p.x * 30.0, 0.0, p_p.z * 30.0) + 61.0)) * (1.0 + 0.25 * smoothstep(-0.02, 0.05, p_p.z));
-	float lvl = p_leg.x > 0.0 ? 1.0 - clamp((up - line) / (0.03 + 0.3 * p_leg.x), 0.0, 1.0) : 0.0;
-	// Flecks thrown up the shin by the stride, thinning upwards.
-	float fleck = p_leg.w * (1.0 - smoothstep(0.0, 0.4, up - line)) * smoothstep(0.72, 0.8, vmud_noise(p_p * 45.0 + 7.0));
-	return on * max(lvl, fleck);
-}
-float vmud_seg(vec3 p_p, vec3 p_a, vec3 p_b) {
-	vec3 ab = p_b - p_a;
-	float t = clamp(dot(p_p - p_a, ab) / max(dot(ab, ab), 1e-8), 0.0, 1.0);
-	return length(p_p - p_a - ab * t);
-}
-float vmud_level(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body) {
-	if (p_body.w > 0.5) {
-		return vmud_leg(p_p, p_fill);
-	}
-	float lvl = 0.0;
-	if (p_body.y > 0.0) {
-		// Caked below the line, flecked above it, the line's edge ragged.
-		float line = p_body.y * (0.7 + 0.6 * vmud_noise(vec3(p_p.x * 3.0, 0.0, p_p.z * 3.0) + 41.0));
-		lvl = 1.0 - clamp((p_p.y - p_body.x - line) / (0.1 + 0.5 * p_body.y), 0.0, 1.0);
-	}
-	lvl = max(lvl, vmud_wheel(p_p, p_w0, p_fill.x, p_spray.x));
-	lvl = max(lvl, vmud_wheel(p_p, p_w1, p_fill.y, p_spray.y));
-	lvl = max(lvl, vmud_wheel(p_p, p_w2, p_fill.z, p_spray.z));
-	lvl = max(lvl, vmud_wheel(p_p, p_w3, p_fill.w, p_spray.w));
-	return lvl;
-}
-// Levels joined as an "or" of their shares of a full cake (1.25): a + b - a b / 1.25. Overlapping splats and runs
-// merge into one cake with no seam or ridge where they meet (a plain or smooth maximum leaves one), and a cake already
-// full stays full.
-float vmud_join(float a, float b) {
-	a = clamp(a, 0.0, 1.25);
-	b = clamp(b, 0.0, 1.25);
-	return a + b - a * b / 1.25;
-}
-// The level thresholds the splat field: a low level keeps only the splats' peaks, a full one covers all. The cake lies
-// where the field f = splat + 1.2 level passes 1.075; its edge is a ramp p_w wide in f, at least 0.15 and wider where a
-// footprint holds more of the field (a filtered step), so outlines stay smooth at any distance and in both renderers.
-float vmud_cover_f(float p_f, float p_w) {
-	return smoothstep(1.075 - 0.5 * p_w, 1.075 + 0.5 * p_w, p_f);
-}
-float vmud_cover(float p_level, float p_splat) {
-	return p_level <= 0.0 ? 0.0 : vmud_cover_f(p_splat + 1.2 * p_level, 0.15);
-}
-// Desiccation cracks (mud round 11): drying clay shrinks against the panel it sticks to and splits into plates a few
-// times as wide as the layer is thick (Groisman and Kaplan 1994); a layer under a critical thickness dries whole
-// (Routh 2013), and the cracks open as it dries, the plates' edges curling up off the panel. The plates are cells of a
-// cellular (Worley 1996) distance, F2 - F1, in the vehicle's frame, warped so they read as clay rather than foam.
-vec2 vmud_cells(vec3 p_p) {
-	vec3 i = floor(p_p);
-	vec3 f = p_p - i;
-	float d1 = 8.0;
-	float d2 = 8.0;
-	for (int z = -1; z <= 1; z++) {
-		for (int y = -1; y <= 1; y++) {
-			for (int x = -1; x <= 1; x++) {
-				vec3 o = vec3(float(x), float(y), float(z));
-				vec3 cc = i + o;
-				vec3 jit = vec3(vmud_hash(cc + vec3(911.0, 0.0, 0.0)), vmud_hash(cc + vec3(0.0, 577.0, 0.0)), vmud_hash(cc + vec3(0.0, 0.0, 313.0)));
-				float d = length(o + 0.1 + 0.8 * jit - f);
-				if (d < d1) {
-					d2 = d1;
-					d1 = d;
-				} else if (d < d2) {
-					d2 = d;
-				}
-			}
-		}
-	}
-	return vec2(d1, d2);
-}
-// At p_p (vehicle frame, m) for a cake p_h thick, p_dry dry (0..1) over a footprint p_fw: (the crack's share, the
-// plate's curl, m).
-vec2 vmud_crack(vec3 p_p, float p_h, float p_dry, float p_fw) {
-	float on = smoothstep(0.0028, 0.0045, p_h) * smoothstep(0.45, 0.9, p_dry);
-	if (on <= 0.0 || p_fw > 0.012) {
-		return vec2(0.0);
-	}
-	const float CELL = 0.022;
-	vec3 q = p_p / CELL + 0.35 * vec3(vmud_noise(p_p * 31.0 + 5.0), vmud_noise(p_p * 31.0 + 19.0), vmud_noise(p_p * 31.0 + 37.0));
-	vec2 d = vmud_cells(q);
-	// Half the distance between the two nearest plate centres' bisector, in m: how far to the plate's edge.
-	float e = 0.5 * (d.y - d.x) * CELL;
-	float w = 0.0006 * on;
-	float fw = max(p_fw, 1e-4);
-	// A filtered step over the footprint, faded where a pixel holds many plates.
-	float open = (1.0 - smoothstep(w - 0.5 * fw, w + 0.5 * fw, e)) * (1.0 - smoothstep(0.004, 0.012, p_fw));
-	float curl = 0.0007 * on * (1.0 - smoothstep(w, w + 0.005, e));
-	return vec2(open, curl);
-}
-// The cake's relief (m): thicker where it lies deep (a splat's middle, below the mud line), lumpy, and with a lip a few
-// mm wide just inside its edge where a splash's crown piles up; its edge a step.
-float vmud_height(float p_f, float p_w, float p_level, float p_splat, vec3 p_p, float p_fw) {
-	float c = vmud_cover_f(p_f, p_w);
-	float lip = 1.0 - smoothstep(0.05, 0.35, p_f - 1.075);
-	// Aggregate: grit of a few mm and the odd lump of a pebble or a root, fading over a footprint too wide to hold them.
-	float grit = (vmud_noise(p_p * 260.0 + 11.0) - 0.5) * (1.0 - smoothstep(0.0015, 0.005, p_fw));
-	// (two value noises on different, turned lattices: one alone thresholded this high leaves grid-aligned crosses)
-	float ln = 0.5 * (vmud_noise(p_p * 70.0 + 29.0) + vmud_noise(vec3(0.8 * p_p.x + 0.6 * p_p.z, p_p.y, 0.8 * p_p.z - 0.6 * p_p.x) * 93.0 + 5.0));
-	float lump = smoothstep(0.62, 0.78, ln) * (1.0 - smoothstep(0.004, 0.015, p_fw));
-	return c * (0.002 + 0.0016 * clamp(p_level, 0.0, 1.25) + 0.002 * p_splat + 0.0015 * lip + 0.0005 * grit + 0.0012 * lump);
-}
-// A clod that stuck to the body (mud stage 4b; p_a: where, in the vehicle's frame, and its radius; p_b: its flight
-// direction and amount): a splat spread along the flight, a short tail ahead of the hit and a shorter rim behind it.
-float vmud_splat_one(vec3 p_p, vec4 p_a, vec4 p_b) {
-	vec3 d = p_p - p_a.xyz;
-	float along = dot(d, p_b.xyz);
-	float e = length(d - along * p_b.xyz) / p_a.w + max(along, 0.0) / (2.5 * p_a.w) + max(-along, 0.0) / (0.7 * p_a.w);
-	// A ragged rim (the splash's fingers) and a halo of droplets thrown past it, thresholded by the splat field. The
-	// core is a dome, deepest in the middle.
-	float rag = 0.75 + 0.5 * vmud_noise(p_p * 22.0 + 7.0);
-	e *= rag;
-	float core = 1.25 * (1.0 - smoothstep(0.3, 1.0, e));
-	float halo = 0.5 * (1.0 - smoothstep(1.0, 2.2, e));
-	float lvl = p_b.w * max(core, halo);
-	// Drip runs: wet clay is thick, so it sags only a little way down the panel the clod hit, in a few short fat runs,
-	// lumpy along their length, each ending in a bead. None from a clod that hit a roof or a floor.
-	vec3 tn = cross(vec3(0.0, 1.0, 0.0), p_b.xyz);
-	float tl = length(tn);
-	if (d.y < 0.0 && tl > 0.3 && abs(dot(d, cross(tn, vec3(0.0, 1.0, 0.0)))) < 0.5 * p_a.w * tl) {
-		float seed = dot(p_a.xyz, vec3(13.1, 7.7, 5.3));
-		// The runs wander a little as they sag.
-		float t = dot(d, tn) / tl + 0.006 * (vmud_noise(vec3(d.y * 35.0, seed, 7.5)) - 0.5);
-		// Runs in lanes about 3 cm wide across the panel, about half of them with a run: each its own length and
-		// width, so every splat drips a little whatever its seed.
-		float u = t * 30.0;
-		float lane = floor(u);
-		float fu = fract(u) - 0.5;
-		float has = step(0.45, vmud_hash(vec3(lane, seed, 1.0)));
-		// From the splat's lower rim, 2 to 6 cm past it whatever the splat's size: clay is too stiff to run far.
-		float run = 0.015 + 0.035 * vmud_hash(vec3(lane, seed, 5.0)) + 0.08 * p_a.w;
-		// Measured from the ragged rim above it in its own column (where the dome thins out, e about 0.7 across the
-		// splat's round), found in two steps since the rim's raggedness moves it; a lane past the splat's side has no
-		// rim above it and no run.
-		float rr = 0.7 * p_a.w / (0.75 + 0.5 * vmud_noise((p_p - vec3(0.0, d.y + 0.7 * p_a.w, 0.0)) * 22.0 + 7.0));
-		float rim = sqrt(max(rr * rr - t * t, 0.0));
-		rr = 0.68 * p_a.w / (0.75 + 0.5 * vmud_noise((p_p - vec3(0.0, d.y + rim, 0.0)) * 22.0 + 7.0));
-		has *= step(abs(t), 0.9 * rr);
-		rim = sqrt(max(rr * rr - t * t, 0.0));
-		// A third of a run's length inside it, so the run grows out of the rim's thin edge with no gap.
-		float down = max(-d.y - rim + 0.3 * run, 0.0) / run;
-		float bead = exp(-pow((down - 1.15) / 0.1, 2.0));
-		float lumpy = 0.14 * (vmud_noise(vec3(u * 2.0, d.y * 70.0, seed)) - 0.5);
-		// Half its lane's width (0.2 to 0.33 of it), thinning as it runs, swelling at the bead.
-		float half_w = (0.2 + 0.13 * vmud_hash(vec3(lane, seed, 9.0))) * (1.0 - 0.45 * down) + 0.14 * bead + lumpy;
-		// Nothing inside the splat itself (it would show as ridges where the run meets the dome).
-		float drip = has * (1.0 - smoothstep(half_w - 0.05, half_w, abs(fu))) * smoothstep(0.0, 0.3, down) * (1.0 - smoothstep(1.25, 1.31, down)) * (1.0 - smoothstep(0.35, 0.6, abs(t) / p_a.w));
-		// Only past the cake's thick part (its halo of droplets aside): inside it a run would show its lane's edges
-		// in the relief.
-		lvl = vmud_join(lvl, (1.0 + 0.15 * bead) * p_b.w * drip * (1.0 - smoothstep(0.2, 0.6, p_b.w * core)));
-	}
-	return lvl;
-}
-// Spatter is drawn out along its flight (mud stage 4d): the direction out from the nearest wheel, the way its spray
-// left the tread, with a faint vertical grain where it ran (stuck clods carry their own drip runs).
-vec3 vmud_flow(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3) {
-	vec3 flow = vec3(0.0, -1.0, 0.0);
-	float best = 1e9;
-	vec4 w[4] = vec4[](p_w0, p_w1, p_w2, p_w3);
-	for (int k = 0; k < 4; k++) {
-		if (w[k].w > 0.0) {
-			vec3 d = p_p - w[k].xyz;
-			float l = length(d);
-			if (l < best && l > 1e-4) {
-				best = l;
-				flow = d / l;
-			}
-		}
-	}
-	return flow;
-}
-// The splat field sampled with the flight squeezed out of it (features nearly twice as long along it) and the
-// vertical grain.
-float vmud_streaked(vec3 p_p, vec3 p_flow, float p_fw) {
-	vec3 q = p_p - p_flow * (0.45 * dot(p_p, p_flow));
-	return vmud_splat(q, p_fw) + 0.15 * (vmud_noise(vec3(p_p.x * 45.0, p_p.y * 5.0, p_p.z * 45.0) + 3.0) - 0.5);
-}
-)";
-	code += R"(// The clods stuck to this vehicle (mud stage 4b): its row of PhysXVehicle3D's splat texture, two texels a clod.
-float vmud_splats_level(vec3 p_p, vec4 p_splat) {
-	float lvl = 0.0;
-	int row = int(p_splat.x);
-	int n = int(p_splat.y);
-	for (int k = 0; k < n; k++) {
-		lvl = vmud_join(lvl, vmud_splat_one(p_p, texelFetch(vehicle_mud_splats, ivec2(2 * k, row), 0), texelFetch(vehicle_mud_splats, ivec2(2 * k + 1, row), 0)));
-	}
-	return lvl;
-}
-)";
-	code += R"(// Every region's level and the stuck clods'.
-float vmud_all(vec3 p_p, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body, vec4 p_splat) {
-	float lvl = vmud_level(p_p, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body);
-	if (p_splat.y > 0.0) {
-		lvl = max(lvl, vmud_splats_level(p_p, p_splat));
-	}
-	return lvl;
-}
-// The mud at world point p_world on a vehicle (p_frame0..2: world to vehicle rows; p_splat: its row of stuck clods
-// and their count, see vmud_splats_level()): (cover, relief gradient in world space (x, y, z) per m). The cover's edge
-// is filtered over the footprint p_fw; the gradient fades out over a footprint too wide to hold the lumps.
-vec4 vmud_at(vec3 p_world, float p_fw, vec4 p_frame0, vec4 p_frame1, vec4 p_frame2, vec4 p_w0, vec4 p_w1, vec4 p_w2, vec4 p_w3, vec4 p_fill, vec4 p_spray, vec4 p_body, vec4 p_splat, out vec2 r_tone) {
-	r_tone = vec2(1.0, 0.0);
-	bool legs = p_body.w > 0.5;
-	if (legs) {
-		// Legs (mud stage 4e): p_w0/p_w1 the left sole and knee (w: its mud line, its flecks), p_w2/p_w3 the right,
-		// p_frame0.xyz the way the character faces, p_fill.x the shin radius. The nearer leg's own frame: along the
-		// shin, across it, towards the toe, so the mud moves with the bones through the stride.
-		bool left = vmud_seg(p_world, p_w0.xyz, p_w1.xyz) <= vmud_seg(p_world, p_w2.xyz, p_w3.xyz);
-		vec4 sole = left ? p_w0 : p_w2;
-		vec4 knee = left ? p_w1 : p_w3;
-		vec3 ax = knee.xyz - sole.xyz;
-		float len = length(ax);
-		ax = len > 1e-4 ? ax / len : vec3(0.0, 1.0, 0.0);
-		vec3 across = cross(ax, p_frame0.xyz);
-		across = dot(across, across) > 1e-6 ? normalize(across) : normalize(cross(ax, abs(ax.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0)));
-		vec3 front = cross(across, ax);
-		p_fill = vec4(sole.w, len, p_fill.x, knee.w);
-		p_frame0 = vec4(across, -dot(across, sole.xyz));
-		p_frame1 = vec4(ax, -dot(ax, sole.xyz));
-		p_frame2 = vec4(front, -dot(front, sole.xyz));
-		p_splat = vec4(0.0);
-	}
-	vec3 p = vec3(dot(p_frame0.xyz, p_world) + p_frame0.w, dot(p_frame1.xyz, p_world) + p_frame1.w, dot(p_frame2.xyz, p_world) + p_frame2.w);
-	float lvl = vmud_all(p, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat);
-	if (lvl <= 0.0) {
-		return vec4(0.0);
-	}
-	float fw = max(p_fw, 1e-4);
-	// The differences' step follows the footprint, fine enough near to hold the grit.
-	float e = clamp(1.5 * fw, 0.0008, 0.003);
-	vec3 flow = legs ? vec3(0.0, -1.0, 0.0) : vmud_flow(p, p_w0, p_w1, p_w2, p_w3);
-	float s = vmud_streaked(p, flow, fw);
-	float f = s + 1.2 * lvl;
-	vec3 px = p + vec3(e, 0.0, 0.0);
-	vec3 py = p + vec3(0.0, e, 0.0);
-	vec3 pz = p + vec3(0.0, 0.0, e);
-	vec3 ls = vec3(vmud_all(px, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat), vmud_all(py, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat),
-			vmud_all(pz, p_w0, p_w1, p_w2, p_w3, p_fill, p_spray, p_body, p_splat));
-	vec3 ss = vec3(vmud_streaked(px, flow, fw), vmud_streaked(py, flow, fw), vmud_streaked(pz, flow, fw));
-	vec3 fs = ss + 1.2 * ls;
-	// The edge's ramp: as wide as the field changes over one and a half footprints, and no softer: clay is there or
-	// not, so where the field rises slowly its edge stays crisp rather than fading over centimetres.
-	float w = max(0.03, 1.5 * length(fs - f) / e * fw);
-	float c = vmud_cover_f(f, w);
-	if (c <= 0.0) {
-		return vec4(0.0);
-	}
-	float h0 = vmud_height(f, w, lvl, s, p, fw);
-	vec3 hs = vec3(vmud_height(fs.x, w, ls.x, ss.x, px, fw), vmud_height(fs.y, w, ls.y, ss.y, py, fw), vmud_height(fs.z, w, ls.z, ss.z, pz, fw));
-	// Drying cracks (round 11): the cake's dryness here, its thick middle drying last (as vmud_apply() tones it).
-	float t0 = smoothstep(0.85, 1.2, lvl);
-	float dry = 1.0 - clamp(p_body.z + 0.6 * t0 * (1.0 - p_body.z) + 0.25 * t0, 0.0, 1.0);
-	if (dry > 0.45 && !legs) {
-		vec3 ts = smoothstep(vec3(0.85), vec3(1.2), ls);
-		vec3 drys = 1.0 - clamp(p_body.z + 0.6 * ts * (1.0 - p_body.z) + 0.25 * ts, 0.0, 1.0);
-		vec2 k0 = vmud_crack(p, h0, dry, fw);
-		vec2 kx = vmud_crack(px, hs.x, drys.x, fw);
-		vec2 ky = vmud_crack(py, hs.y, drys.y, fw);
-		vec2 kz = vmud_crack(pz, hs.z, drys.z, fw);
-		h0 = (h0 + k0.y) * (1.0 - k0.x);
-		hs = (hs + vec3(kx.y, ky.y, kz.y)) * (1.0 - vec3(kx.x, ky.x, kz.x));
-		// The panel shows in the crack.
-		c *= 1.0 - k0.x;
-	}
-	vec3 g = hs - h0;
-	g *= (1.0 - smoothstep(0.004, 0.02, fw)) / e;
-	// Back to world space: the frame's rows are a rotation.
-	vec3 gw = g.x * p_frame0.xyz + g.y * p_frame1.xyz + g.z * p_frame2.xyz;
-	// The tone: clay mottled over a few cm (more or less silt and organic matter) with a speckle of grit, and the
-	// thick middle of a cake still wet (darker, glossier) after its thin edges have dried.
-	float mottle = vmud_noise(p * 9.0 + 53.0);
-	float speck = (vmud_noise(p * 260.0 + 11.0) - 0.5) * (1.0 - smoothstep(0.0015, 0.006, fw));
-	r_tone = vec2(0.78 + 0.45 * mottle + 0.35 * speck, smoothstep(0.85, 1.2, lvl));
-	return vec4(c, gw);
-}
-// Wet clay dark and glossy, drying to a pale matte crust (the crack crust's tone).
-void vmud_apply(float p_cover, vec2 p_tone, vec3 p_color, float p_wet, inout vec3 r_albedo, inout float r_roughness, inout float r_metallic, inout float r_specular) {
-	// The thick middle stays wet longer: it dries last.
-	float wet = clamp(p_wet + 0.6 * p_tone.y * (1.0 - p_wet) + 0.25 * p_tone.y, 0.0, 1.0);
-	vec3 dry = p_color * 1.6;
-	dry = mix(dry, vec3(dot(dry, vec3(0.299, 0.587, 0.114))), 0.2);
-	vec3 clay = mix(dry, p_color * 0.5, wet) * p_tone.x * mix(1.0, 0.62, p_tone.y * wet);
-	// Patches richer in iron oxide read warmer, siltier ones greyer.
-	clay *= mix(vec3(0.93, 0.97, 1.06), vec3(1.07, 0.99, 0.9), clamp((p_tone.x - 0.75) / 0.5, 0.0, 1.0));
-	r_albedo = mix(r_albedo, clay, p_cover);
-	// Wet clay glistens, but not as plastic: grit breaks its film up.
-	r_roughness = mix(r_roughness, clamp(mix(0.95, 0.36, wet) + 0.35 * abs(1.0 - p_tone.x), 0.2, 1.0), p_cover);
-	r_metallic = mix(r_metallic, 0.0, p_cover);
-	r_specular = mix(r_specular, 0.5, p_cover);
-}
-)";
-	return code;
 }
 
 void BaseMaterial3D::_update_shader() {
@@ -1695,15 +989,9 @@ void BaseMaterial3D::_update_shader() {
 		rt.hair_cards = hair_cards;
 		rt.wetness = features[FEATURE_WETNESS];
 		rt.wetness_from_weather = wetness_from_weather;
-		rt.wetness_canopy = features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy;
-		rt.glaze = glaze;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
-		rt.snow_on_body = features[FEATURE_SNOW] && snow_on_body;
 		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
-		rt.ground_deform_terrain = features[FEATURE_GROUND_DEFORM] && !ground_deform_patch;
-		rt.mud = features[FEATURE_MUD];
-		rt.normal_map = features[FEATURE_NORMAL_MAPPING];
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -2167,15 +1455,6 @@ uniform float snow_amount : hint_range(0.0, 1.0, 0.01);
 uniform float snow_max_slope : hint_range(0.0, 90.0, 0.1);
 )";
 		code += get_snow_functions_code(snow_from_weather);
-		if (snow_on_body) {
-			// The snow a moving body carries (SnowBodies, docs/ideas/snow.md follow-up 18): depth m, albedo, melt water,
-			// 1 + density / 1000 (0: not tracked). Slot 12, after the mud slots; the path tracer reads the same slot.
-			code += "instance uniform vec4 snow_body : instance_index(12);\n";
-		}
-	}
-
-	if (features[FEATURE_MUD]) {
-		code += get_mud_functions_code();
 	}
 
 	if (features[FEATURE_REFRACTION] || features[FEATURE_TRANSMISSION]) {
@@ -2309,13 +1588,6 @@ uniform vec3 uv2_offset;
 	if (features[FEATURE_GROUND_DEFORM]) {
 		code += _ground_deform_code(false, ground_deform_patch);
 	}
-	// The rain's functions (raindrop rings on the patch's standing water, beads on a wet canopy), once.
-	if ((features[FEATURE_GROUND_DEFORM] && ground_deform_patch) || (features[FEATURE_WETNESS] && wetness_from_weather && wetness_canopy) || glaze) {
-		code += get_rain_functions_code(true);
-	}
-	if (glaze) {
-		code += get_glaze_functions_code();
-	}
 
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
 		code += "uniform float fov_override : hint_range(1.0, 179.0, 0.1);\n";
@@ -2328,11 +1600,6 @@ void vertex() {)";
 	if (features[FEATURE_GROUND_DEFORM]) {
 		// First, so everything below (triplanar positions, world normals) sees the moved vertex.
 		code += "\n	ground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n";
-		if (ground_deform_patch) {
-			// vertex() must read the serial for the path tracer to count the material's parameters among what its
-			// capture depends on; declared and unread, bumping it recaptured nothing.
-			code += "	VERTEX.y += 0.0 * ground_deform_serial;\n";
-		}
 	}
 
 	if (flags[FLAG_SRGB_VERTEX_COLOR]) {
@@ -2881,7 +2148,7 @@ void fragment() {)";
 			code += "	float transmission_tex = texture(texture_transmission, base_uv).r;\n";
 		}
 		const char *transmission_uv = features[FEATURE_REFRACTION] ? "refraction_uv" : "SCREEN_UV";
-		code += "	vec3 transmission_absorption = vec3(1.0);\n	vec3 transmission_scatter = vec3(0.0);\n	float transmission_lod = 0.0;\n";
+		code += "	vec3 transmission_absorption = vec3(1.0);\n	vec3 transmission_scatter = vec3(0.0);\n";
 		if (!transmission_thin_walled) {
 			// Into a medium (glTF KHR_materials_volume, KHR_materials_ior): the view ray refracts by the IOR over
 			// the depth behind the surface, and the light it finds is absorbed over that path (Beer-Lambert).
@@ -2918,16 +2185,6 @@ void fragment() {)";
 		transmission_uv = SCREEN_UV;
 		transmission_found = transmission_back;
 	}
-	// Solids (a thickness set): filter the read by its footprint (as texture LOD from UV derivatives, or a ray
-	// cone's spread). Through a strongly curved solid (a thin rod of ice, a drop) the sphere model sends
-	// neighbouring pixels to far apart points, and a sharp read of each speckles and dashes what lies behind; a
-	// real lens averages over that spread. Flat panes map a pixel to about a pixel and stay sharp; open media
-	// (water over a floor, no thickness) are not filtered, so a pool's floor keeps its detail.
-	vec2 transmission_px = vec2(textureSize(screen_texture, 0));
-	vec2 transmission_dx = dFdx(transmission_uv) * transmission_px;
-	vec2 transmission_dy = dFdy(transmission_uv) * transmission_px;
-	float transmission_footprint = max(max(dot(transmission_dx, transmission_dx), dot(transmission_dy, transmission_dy)), 1.0);
-	transmission_lod = transmission_thickness > 0.0 ? clamp(0.5 * log2(transmission_footprint), 0.0, 6.0) : 0.0;
 	if (transmission_attenuation_distance > 0.0) {
 		float transmission_path = transmission_inside >= 0.0 ? transmission_inside : min(distance(transmission_found.xyz, VERTEX), 1.0e4);
 		transmission_absorption = pow(max(transmission_attenuation_color.rgb, vec3(1.0e-4)), vec3(transmission_path / transmission_attenuation_distance));
@@ -2941,7 +2198,7 @@ void fragment() {)";
 	float transmission_amount = clamp(transmission * transmission_tex, 0.0, 1.0) * (1.0 - METALLIC);
 	float transmission_f0 = 0.16 * SPECULAR * SPECULAR;
 	float transmission_fresnel = transmission_f0 + (1.0 - transmission_f0) * pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
-	EMISSION += textureLod(screen_texture, %s, max(ROUGHNESS * 8.0, transmission_lod)).rgb * ALBEDO * transmission_absorption * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
+	EMISSION += textureLod(screen_texture, %s, ROUGHNESS * 8.0).rgb * ALBEDO * transmission_absorption * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
 	ALBEDO *= 1.0 - transmission_amount;
 	ALBEDO += transmission_scatter * transmission_amount;
 	// Force transparency on the material (required to read the screen behind it).
@@ -3211,173 +2468,12 @@ void fragment() {)";
 	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
 		// Turned ground (docs/ideas/ground-deform.md): darker and, wet, smoother where freshly dug; the path
 		// tracer applies the same factors (scene_raytracing_raygen.glsl).
-		code += R"(	vec3 ground_wet = vec3(0.0);
-	float ground_fp = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-	ground_fp = PROJECTION_MATRIX[3][3] != 0.0 ? ground_fp : length(VERTEX) * ground_fp;
-	{
+		code += R"(	{
 		vec2 gd_tint = ground_deform_tint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
 		ALBEDO *= gd_tint.x;
-		// The field's millimetre relief (a swash mark's lip, a print's rim) is finer than the shadow map can shade:
-		// raster only, as SSAO is, its curvature lightens what stands up and darkens the foot of it, the depth
-		// buffer's unsharp mask (Luft, Colditz and Deussen 2006) on the field's own heights a texel and a half
-		// round. The path tracer shadows it for real.
-		{
-			vec2 gdp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
-			float gde = 1.5 * max(mix(ground_deform_rect.w, ground_deform_near_rect.w, ground_deform_near_weight(gdp)), 1e-3);
-			float gdk = 1.0 - smoothstep(0.5 * gde, 1.5 * gde, ground_fp);
-			if (gdk > 0.0) {
-				float gh0 = ground_deform_relief(gdp);
-				float gh1 = ground_deform_relief(gdp + vec2(gde, 0.0));
-				float gh2 = ground_deform_relief(gdp - vec2(gde, 0.0));
-				float gh3 = ground_deform_relief(gdp + vec2(0.0, gde));
-				float gh4 = ground_deform_relief(gdp - vec2(0.0, gde));
-				float ghm = 0.25 * (gh1 + gh2 + gh3 + gh4);
-				// Only millimetre relief: where the heights round it span centimetres (a tread's lugs, a rut's wall)
-				// the geometry is there for the shadow map and the path tracer to shade for real, and this term made
-				// it read far darker in raster than traced.
-				float gspan = max(max(max(gh1, gh2), max(gh3, gh4)), gh0) - min(min(min(gh1, gh2), min(gh3, gh4)), gh0);
-				// Faded out over the field's outer fifth, so its square has no edge on the ground past it.
-				vec2 gdr = min(gdp - ground_deform_rect.xy, ground_deform_rect.xy + ground_deform_rect.z - gdp);
-				float gcv = clamp((gh0 - ghm) / 0.0015, -1.0, 1.0) * gdk * (1.0 - smoothstep(0.004, 0.01, gspan)) * smoothstep(0.0, 0.2 * ground_deform_rect.z, min(gdr.x, gdr.y));
-				ALBEDO *= 1.0 + (gcv > 0.0 ? 0.35 : 0.4) * gcv;
-			}
-		}
-		// The sheen of freshly pressed ground is the sole's smear on the floor: the walls it tears keep their
-		// roughness. On a print's curved wall the sheen made a mirror-sharp spot of sun.
-		float gd_up = smoothstep(0.5, 0.85, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);
-		ROUGHNESS = clamp(ROUGHNESS * mix(1.0, gd_tint.y, gd_up), 0.0, 1.0);
-		vec3 gr_sort;
-		// The dune field's colour at this scale (GroundSurface3D dune_tone), on the sand.
-		{
-			vec3 gwp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-			vec4 gsa = ground_sand_at(gwp.xz);
-			if (gsa.y > 0.0) {
-				float gny = (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y;
-				vec3 gdt = mix(ground_dune_tone(gwp.xz, gny, -1.0), ground_dune_tone(gwp.xz, gny, gsa.x), gsa.z);
-				ALBEDO *= mix(vec3(1.0), gdt, gsa.y);
-				// Granule ripples on the interdune lag (GroundSurface3D granule_ripples), across the dune-building wind.
-				vec4 gm5 = ground_sand_meta5();
-				if (gm5.z > 0.5) {
-					vec3 ggt;
-					vec2 ggs = ground_granule_ripples(gwp.xz, gsa.y * gsa.z * gsa.w * ground_dune_lag(gwp.xz, gny, gsa.x), gm5.xy, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), ggt);
-					ALBEDO *= ggt;
-					if (ggs != vec2(0.0)) {
-						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(ggs.x, 0.0, ggs.y, 0.0)).xyz);
-					}
-				}
-				// Rain pits (GroundSurface3D rain_pits) on the sand the last rain fell on; none in prints (their sand
-				// was turned, or the rain softened them).
-				vec4 gm6 = ground_sand_meta6();
-				if (gm6.x > 0.0) {
-					float gpt;
-					vec2 gps = ground_rain_pits(gwp.xz, gm6.x * gsa.y * (1.0 - smoothstep(0.003, 0.008, abs(ground_deform_relief(gwp.xz)))), gm6.z, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), gpt);
-					ALBEDO *= gpt;
-					if (gps != vec2(0.0)) {
-						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gps.x, 0.0, gps.y, 0.0)).xyz);
-					}
-				}
-			}
-		}
-		vec3 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, -1.0, gr_sort);
-		if (gr_far.xy != vec2(0.0)) {
-			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gr_far.x, 0.0, gr_far.y, 0.0)).xyz);
-		}
-		ALBEDO *= gr_far.z * gr_sort;
-		ground_wet = ground_wet_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
-		// Adhesion warts (GroundSurface3D adhesion_warts) where blown dry sand sticks to damp sand (the pool's own
-		// water covers them where it stands).
-		{
-			vec4 gm7 = ground_sand_meta7();
-			if (gm7.z > 0.0) {
-				vec2 gax = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
-				float gdamp = smoothstep(0.15, 0.3, ground_wet.x);
-				float gcap;
-				vec2 gas = ground_adhesion_warts(gax, gm7.z * gdamp * ground_sand_at(gax).y, gm7.xy, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), gcap);
-				if (gas != vec2(0.0)) {
-					NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gas.x, 0.0, gas.y, 0.0)).xyz);
-				}
-				ground_wet.x *= 1.0 - 0.8 * gcap;
-			}
-		}
-		// Loose sand shows its grains' colours (sand_glints).
-		if (ground_wet.z > 0.0) {
-			ALBEDO *= mix(1.0, ground_grain_speckle((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, ground_fp), ground_wet.z);
-		}
+		ROUGHNESS = clamp(ROUGHNESS * gd_tint.y, 0.0, 1.0);
 	}
 )";
-	} else if (features[FEATURE_GROUND_DEFORM]) {
-		// The terrain round the patch: the ground's pore water carries on over it (the far lattice), so wet ground
-		// has no edge where the patch tucks under the terrain. No grains here: they show on the patch only.
-		code += R"(	vec3 ground_wet = ground_wet_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
-	ground_wet.z = 0.0;
-	// The dune field's wind ripples past the patch (GroundSurface3D far_ripples), as on the patch past its window.
-	{
-		// Adhesion warts (GroundSurface3D adhesion_warts) where blown dry sand sticks to damp sand (the pool's own
-		// water covers them where it stands).
-		{
-			vec4 gm7 = ground_sand_meta7();
-			if (gm7.z > 0.0) {
-				vec2 gax = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
-				float gdamp = smoothstep(0.15, 0.3, ground_wet.x);
-				float gcap;
-				vec2 gas = ground_adhesion_warts(gax, gm7.z * gdamp * ground_sand_at(gax).y, gm7.xy, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), gcap);
-				if (gas != vec2(0.0)) {
-					NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gas.x, 0.0, gas.y, 0.0)).xyz);
-				}
-				ground_wet.x *= 1.0 - 0.8 * gcap;
-			}
-		}
-
-		vec3 gr_sort;
-		// The dune field's colour at this scale (GroundSurface3D dune_tone), on the sand.
-		{
-			vec3 gwp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-			vec4 gsa = ground_sand_at(gwp.xz);
-			if (gsa.y > 0.0) {
-				float gny = (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y;
-				vec3 gdt = mix(ground_dune_tone(gwp.xz, gny, -1.0), ground_dune_tone(gwp.xz, gny, gsa.x), gsa.z);
-				ALBEDO *= mix(vec3(1.0), gdt, gsa.y);
-				// Granule ripples on the interdune lag (GroundSurface3D granule_ripples), across the dune-building wind.
-				vec4 gm5 = ground_sand_meta5();
-				if (gm5.z > 0.5) {
-					vec3 ggt;
-					vec2 ggs = ground_granule_ripples(gwp.xz, gsa.y * gsa.z * gsa.w * ground_dune_lag(gwp.xz, gny, gsa.x), gm5.xy, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), ggt);
-					ALBEDO *= ggt;
-					if (ggs != vec2(0.0)) {
-						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(ggs.x, 0.0, ggs.y, 0.0)).xyz);
-					}
-				}
-				// Rain pits (GroundSurface3D rain_pits) on the sand the last rain fell on; none in prints (their sand
-				// was turned, or the rain softened them).
-				vec4 gm6 = ground_sand_meta6();
-				if (gm6.x > 0.0) {
-					float gpt;
-					vec2 gps = ground_rain_pits(gwp.xz, gm6.x * gsa.y * (1.0 - smoothstep(0.003, 0.008, abs(ground_deform_relief(gwp.xz)))), gm6.z, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), gpt);
-					ALBEDO *= gpt;
-					if (gps != vec2(0.0)) {
-						NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gps.x, 0.0, gps.y, 0.0)).xyz);
-					}
-				}
-			}
-		}
-		vec3 gr_far = ground_ripple_far_slope((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, length(VERTEX) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y), (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, -1.0, gr_sort);
-		if (gr_far.xy != vec2(0.0)) {
-			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gr_far.x, 0.0, gr_far.y, 0.0)).xyz);
-		}
-		ALBEDO *= gr_far.z * gr_sort;
-	}
-)";
-	}
-	if (features[FEATURE_GROUND_DEFORM]) {
-		if (!features[FEATURE_WETNESS]) {
-			// Pore water (sand stage 4) darkens and smooths the sand by Lagarde's porous model, porosity 0.6.
-			code += R"(	{
-		float gw_f = mix(1.0, 0.2, (1.0 - METALLIC) * 0.6);
-		ALBEDO *= mix(1.0, gw_f, ground_wet.x);
-		ROUGHNESS *= mix(1.0, gw_f, 0.5 * ground_wet.x);
-	}
-)";
-		}
 	}
 
 	if (features[FEATURE_WETNESS]) {
@@ -3388,190 +2484,11 @@ void fragment() {)";
 	// Wetness: Enabled
 	float wet = wetness_amount;
 )";
-		// Printed ground shapes where a wet track's water lies by its own prints (ground_contact_shape()).
-		const String wet_at = features[FEATURE_GROUND_DEFORM]
-				? String("weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, ground_contact_shape((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz))")
-				: String("weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz)");
-		if (wetness_from_weather && wetness_canopy) {
-			// A canopy stays wet while it holds the water it intercepted (Rutter's store, WeatherMap3D), after the
-			// ground has begun to dry.
-			code += "\twet *= max(" + wet_at + ", weather_canopy_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz));\n";
-		} else if (wetness_from_weather) {
-			code += "\twet *= " + wet_at + ";\n";
-		}
-		if (features[FEATURE_GROUND_DEFORM]) {
-			code += "\twet = max(wet, ground_wet.x);\n";
+		if (wetness_from_weather) {
+			code += "\twet *= weather_wetness_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);\n";
 		}
 		code += R"(	weather_wetness_apply(wet, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, METALLIC, wetness_porosity, ALBEDO, ROUGHNESS);
 )";
-		if (wetness_from_weather && wetness_canopy) {
-			// Water beaded on a waxy leaf (rain_surface_beads(), docs/ideas/rain.md step 5): upward faces hold the
-			// drops, undersides shed them. The path tracer draws the same beads at full detail (scene_raytracing_raygen.glsl;
-			// a ShaderMaterial made from this code puts the footprint under #if defined(RT), as TreeGenerator's flutter).
-			code += R"(	{
-		vec3 bead_wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-		vec3 bead_n = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
-		vec3 bead_fw = fwidth(bead_wp);
-		float bead_fp = max(max(bead_fw.x, bead_fw.y), bead_fw.z);
-		vec4 bead = rain_surface_beads(bead_wp, bead_n, wet * smoothstep(-0.2, 0.6, bead_n.y), bead_fp);
-		if (bead.w > 0.0) {
-			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(bead.xyz, 0.0)).xyz);
-			ROUGHNESS = mix(ROUGHNESS, 0.05, bead.w);
-			SPECULAR = mix(SPECULAR, 0.5, bead.w);
-			ALBEDO *= 1.0 - 0.5 * bead.w;
-		}
-	}
-)";
-		}
-	}
-	if (features[FEATURE_GROUND_DEFORM]) {
-		// A film of water standing on saturated sand (Lagarde 2013's accumulated water): its surface hides the
-		// sand's relief and is smooth.
-		// A fresh deposit (a debris fan, mud round 13) lies over the soil in the flow's own colour, as the flow's sheet
-		// draws it beyond the print field (GroundDebrisFlow3D), so the two meet with no seam.
-		code += R"(	{
-		vec4 gdep = ground_deposit_state((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz);
-		ALBEDO = mix(ALBEDO, gdep.yzw, clamp(gdep.x, 0.0, 1.0));
-		ROUGHNESS = mix(ROUGHNESS, 0.55, clamp(gdep.x, 0.0, 1.0));
-	}
-	NORMAL_MAP_DEPTH *= 1.0 - 0.85 * ground_wet.y;
-	ROUGHNESS = mix(ROUGHNESS, 0.2, 0.6 * ground_wet.y);
-)";
-		// The salt crust round still water in a dry climate (GroundSurface3D salt_crusts), over the wet margin.
-		code += "\tground_salt_apply((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y, length(fwidth((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz)), ALBEDO, ROUGHNESS);\n";
-	}
-	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
-		// Standing water in ruts and prints (mud stage 2): the patch lies on the water's level there (its
-		// vertices, ground_deform_vertex()); the surface is water's, the bed under it soaked and, deeper, hidden by
-		// the clay the water carries. The path tracer applies the same lines.
-		code += R"(	{
-		float gwd = ground_deform_water((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
-		if (gwd > 0.0) {
-			vec4 gwl = ground_water_look(gwd, ground_wet.x, ground_deform_water_mud((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz));
-			ALBEDO *= gwl.x;
-			ROUGHNESS = mix(ROUGHNESS, gwl.z, max(gwl.y, 0.85 * gwl.w));
-			SPECULAR = mix(SPECULAR, 0.25, max(gwl.y, gwl.w));
-			NORMAL_MAP_DEPTH *= 1.0 - max(gwl.y, 0.6 * gwl.w);
-			ground_wet.z *= 1.0 - gwl.y;
-			// Ice over it (ground_ice_look()): ice's surface (F0 0.018), white where it holds air or is cracked; no
-			// ripples under it.
-			vec2 gis = ground_ice_state((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz).xy;
-			vec2 gisl = vec2(0.0);
-			vec4 gil = gis.x > 0.0 ? ground_ice_look((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, min(gis.x, gwd), gwd, gis.y, ground_fp, gisl) : vec4(0.0);
-			gil *= gwl.y;
-			gisl *= gwl.y;
-			ALBEDO = mix(ALBEDO, vec3(0.8, 0.83, 0.86), gil.x);
-			ROUGHNESS = mix(ROUGHNESS, gil.z, gil.y);
-			SPECULAR = mix(SPECULAR, 0.22, gil.y);
-			// Running water's ripples, swept downstream (ground_water_flow()).
-			vec3 gwn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
-			vec2 gfs = ground_water_flow((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz, gwn, gwd, TIME, ground_fp) * max(gwl.y, gwl.w) * (1.0 - gil.y) + gisl;
-			// Raindrop rings on the water (rain_ripples(); none under ice); the impacts finer than the pixel roughen it.
-			{
-				vec3 gwp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-				float grs = max(gwl.y, gwl.w) * (1.0 - gil.y);
-				vec3 grr = grs > 0.0 ? rain_ripples(gwp.xz, TIME, weather_rainfall_at(gwp), ground_fp) : vec3(0.0);
-				gfs += grr.xy * grs;
-				ROUGHNESS = mix(ROUGHNESS, rain_ripple_roughness(ROUGHNESS, grr.z), grs);
-			}
-			if (gfs != vec2(0.0)) {
-				NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gfs.x, 0.0, gfs.y, 0.0)).xyz);
-			}
-		}
-	}
-)";
-	}
-	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
-		// Needle ice (mud round 9, ground_needle_look()): the lifted cap's clods with white needles between them,
-		// then the thaw's loose crumbs, rough and matte. The mesh carries the lift itself.
-		code += R"(	{
-		vec3 gnp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-		vec4 gns = ground_ice_state(gnp.xz);
-		if (gns.z > 0.0 || gns.w > 0.0) {
-			float gng = max(abs(dot(normalize(VIEW), NORMAL)), 0.15);
-			vec2 gnsl;
-			vec4 gnl = ground_needle_look(gnp.xz, gns.z, clamp(gns.w, 0.0, 1.0), ground_fp / gng, gnsl);
-			ALBEDO = mix(ALBEDO * gnl.y, vec3(0.75, 0.78, 0.81), gnl.x);
-			ROUGHNESS = mix(mix(ROUGHNESS, 1.0, 0.6 * gnl.z), 0.3, gnl.x);
-			SPECULAR = mix(SPECULAR, 0.22, gnl.x);
-			NORMAL = normalize(NORMAL - (VIEW_MATRIX * vec4(gnsl.x, 0.0, gnsl.y, 0.0)).xyz);
-		}
-	}
-)";
-	}
-	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
-		// Desiccation cracks (mud stage 2b): the mesh carries those its spacing can (ground_deform_top()); the shading
-		// takes the rest: the slopes of the walls and rims finer than the mesh, and the slots' darkness (a slot w wide
-		// and d deep sees about w / (w + 2 d) of the sky). The layer still drying is dark with its water; dry, the
-		// crust of fine clay is pale and matte, the cracks' walls the darker soil under it.
-		code += R"(	{
-		vec3 gcp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-		vec4 gcs = ground_crack_state(gcp.xz);
-		if (gcs.x > 0.0 && gcs.y > 0.0) {
-			GroundCracks gc = ground_cracks(gcp.xz, gcs);
-			float gcv = 1.5 * max(mix(ground_deform_rect.w, ground_deform_near_rect.w, ground_deform_near_weight(gcp.xz)), 1e-3);
-			// The footprint stretched along the ground at a grazing view (the pixel's long axis there).
-			float gcg = max(abs(dot(normalize(VIEW), NORMAL)), 0.15);
-			vec4 gcf = ground_crack_height(gc, max(ground_fp / gcg, 1e-4));
-			vec4 gcm = ground_crack_height(gc, gcv);
-			vec3 gcn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
-			gcn = normalize(gcn - vec3(gcf.y - gcm.y, 0.0, gcf.z - gcm.z));
-			NORMAL = normalize((VIEW_MATRIX * vec4(gcn, 0.0)).xyz);
-			float gcd = max(gc.depth.x, 1e-4);
-			float gcw = max(max(gc.width.x, gc.width.y), 1e-4);
-			float gcsky = gcw / (gcw + 2.0 * gcd);
-			ALBEDO *= mix(1.0, 0.7 * gcsky, max(gcf.w - gcm.w, 0.0));
-			ALBEDO *= mix(1.0, 0.75, gcf.w * max(gcs.w, 0.0));
-		}
-		float gcc = max(gcs.w, 0.0);
-		vec3 gcl = ALBEDO * 1.9;
-		ALBEDO = mix(ALBEDO, mix(gcl, vec3(dot(gcl, vec3(0.299, 0.587, 0.114))), 0.2), gcc);
-		ROUGHNESS = mix(ROUGHNESS, 1.0, 0.5 * gcc);
-		// A pool's bed (a drying layer over 9 mm: plates over 3.5 cm): its fine clay buries the soil's grain, damp or dry.
-		NORMAL_MAP_DEPTH *= 1.0 - 0.8 * smoothstep(0.035, 0.05, gcs.y) * step(1e-4, abs(gcs.w) + gcs.x);
-		float gcdmp = max(-gcs.w - ground_wet.x, 0.0);
-		ALBEDO *= 1.0 - 0.5 * gcdmp;
-		ROUGHNESS = mix(ROUGHNESS, 0.45, 0.6 * gcdmp);
-	}
-)";
-	}
-	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
-		// Then, on dry loose sand, the grains that mirror the sun (sand_glints), as the snow's sparkle: the facet
-		// is the coat lobe on its own normal, the sand keeps its shading.
-		code += R"(	{
-		float gl_w = ground_wet.z * (1.0 - smoothstep(0.05, 0.3, ground_wet.x));
-		vec4 gl = gl_w > 0.0 ? ground_glint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz), ground_fp) : vec4(0.0);
-		gl_w *= gl.w;
-		if (gl_w > 0.0) {
-			vec2 nm = NORMAL_MAP.xy * 2.0 - 1.0;
-			vec3 base = normalize(mix(NORMAL, TANGENT * nm.x + BINORMAL * nm.y + NORMAL * sqrt(max(0.0, 1.0 - dot(nm, nm))), NORMAL_MAP_DEPTH));
-			vec3 f = normalize((VIEW_MATRIX * vec4(gl.xyz, 0.0)).xyz);
-			mat3 tbf = mat3(TANGENT, BINORMAL, f);
-			if (abs(determinant(tbf)) > 1e-3) {
-				vec3 k = inverse(tbf) * base;
-				if (k.z > 0.0) {
-					k /= length(k);
-					NORMAL = f;
-					NORMAL_MAP = vec3(k.xy * 0.5 + 0.5, 1.0);
-					NORMAL_MAP_DEPTH = 1.0;
-					// Quartz F0 0.045 is 1.1 of the coat's 0.04.
-					CLEARCOAT = min(1.1 * gl_w, 1.0);
-					CLEARCOAT_ROUGHNESS = 0.45;
-				}
-			}
-		}
-	}
-)";
-	}
-
-	if (glaze) {
-		// Glaze from freezing rain, under any snow that falls on it (weather_glaze_apply()).
-		code += "\t// Glaze: Enabled\n\t{\n";
-		code += String("\t\tfloat glaze_fill = weather_glaze_apply(weather_rain_sample((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz).a, ") + (features[FEATURE_WETNESS] ? "wetness_porosity" : "0.3") + ", METALLIC, ALBEDO, ROUGHNESS, SPECULAR);\n";
-		if (features[FEATURE_NORMAL_MAPPING]) {
-			code += "\t\tNORMAL_MAP_DEPTH *= 1.0 - glaze_fill;\n";
-		}
-		code += "\t}\n";
 	}
 
 	if (features[FEATURE_SNOW]) {
@@ -3597,17 +2514,6 @@ void fragment() {)";
 		snow_s.x *= snow_amount;
 )";
 		}
-		if (snow_on_body) {
-			// A tracked body's own load (Niu and Yang 2007 cover from its depth and density), else the cover above, or
-			// none when the body's snow does not come from the weather.
-			code += R"(		if (snow_body.w > 0.5) {
-			snow_s = vec4(snow_amount * tanh(max(snow_body.x, 0.0) / (0.025 * max((snow_body.w - 1.0) * 10.0, 0.5))), snow_body.y, clamp(snow_body.z, 0.0, 1.0), 1.0);
-		})";
-			code += snow_from_weather ? "\n" : R"( else {
-			snow_s.x = 0.0;
-		}
-)";
-		}
 		code += R"(		float snow = snow_cover_weight(snow_s.x, snow_max_slope, snow_n_geo, snow_n);
 		float snow_wet = snow_s.z;
 		float snow_specular = SPECULAR;
@@ -3622,29 +2528,6 @@ void fragment() {)";
 		snow_glint_apply((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, snow_n_geo, snow_fp, snow, snow_wet, VIEW_MATRIX, TANGENT, BINORMAL, NORMAL, NORMAL_MAP, NORMAL_MAP_DEPTH, CLEARCOAT, CLEARCOAT_ROUGHNESS);
 	}
 )";
-	}
-
-	if (features[FEATURE_MUD]) {
-		// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b). The path tracer applies the same lines from the same
-		// instance uniforms (scene_raytracing_raygen.glsl).
-		code += R"(
-	// Mud: Enabled
-	{
-		float vmud_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-		float vmud_fp = PROJECTION_MATRIX[3][3] != 0.0 ? vmud_pix : length(VERTEX) * vmud_pix;
-		vec2 vmud_tone;
-		vec4 vmud = vmud_at((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, vmud_fp, mud_frame0, mud_frame1, mud_frame2, mud_wheel0, mud_wheel1, mud_wheel2, mud_wheel3, mud_fill, mud_spray, mud_body, mud_splat, vmud_tone);
-		if (vmud.x > 0.0) {
-			float vmud_specular = SPECULAR;
-			vmud_apply(vmud.x, vmud_tone, mud_color.rgb, mud_body.z, ALBEDO, ROUGHNESS, METALLIC, vmud_specular);
-			SPECULAR = vmud_specular;
-			vec3 vmud_g = (VIEW_MATRIX * vec4(vmud.yzw, 0.0)).xyz;
-			NORMAL = normalize(NORMAL - (vmud_g - dot(vmud_g, NORMAL) * NORMAL));
-)";
-		if (features[FEATURE_NORMAL_MAPPING]) {
-			code += "\t\t\tNORMAL_MAP = mix(NORMAL_MAP, vec3(0.5, 0.5, 1.0), vmud.x);\n";
-		}
-		code += "\t\t}\n\t}\n";
 	}
 
 	code += "}\n";
@@ -4808,30 +3691,6 @@ bool BaseMaterial3D::is_wetness_from_weather() const {
 	return wetness_from_weather;
 }
 
-void BaseMaterial3D::set_wetness_canopy(bool p_enable) {
-	if (wetness_canopy == p_enable) {
-		return;
-	}
-	wetness_canopy = p_enable;
-	_queue_shader_change();
-}
-
-bool BaseMaterial3D::is_wetness_canopy() const {
-	return wetness_canopy;
-}
-
-void BaseMaterial3D::set_glaze(bool p_enable) {
-	if (glaze == p_enable) {
-		return;
-	}
-	glaze = p_enable;
-	_queue_shader_change();
-}
-
-bool BaseMaterial3D::is_glaze() const {
-	return glaze;
-}
-
 void BaseMaterial3D::set_snow_amount(float p_amount) {
 	snow_amount = CLAMP(p_amount, 0.0f, 1.0f);
 	_material_set_param(shader_names->snow_amount, snow_amount);
@@ -4862,18 +3721,6 @@ bool BaseMaterial3D::is_snow_from_weather() const {
 	return snow_from_weather;
 }
 
-void BaseMaterial3D::set_snow_on_body(bool p_enable) {
-	if (snow_on_body == p_enable) {
-		return;
-	}
-	snow_on_body = p_enable;
-	_queue_shader_change();
-}
-
-bool BaseMaterial3D::is_snow_on_body() const {
-	return snow_on_body;
-}
-
 void BaseMaterial3D::set_ground_deform_patch(bool p_enable) {
 	if (ground_deform_patch == p_enable) {
 		return;
@@ -4896,1124 +3743,23 @@ global uniform vec4 ground_deform_rect; // x, z, size, texel (m); size 0 = none
 global uniform sampler2D ground_deform_height; // the ground, m
 global uniform vec4 ground_deform_height_rect;
 global uniform vec4 ground_deform_skirt; // depth, margin, fade (m)
-global uniform sampler2D ground_deform_near_map; // the finer near field, as ground_deform_map
-global uniform vec4 ground_deform_near_rect; // x, z, size, texel (m); size 0 = none
-global uniform sampler2D ground_ripple_map; // wind ripples: height (m), share of sand they show on
-global uniform vec4 ground_ripple_rect; // x, z, size, cell (m); size 0 = none
-global uniform sampler2D ground_ripple_far : filter_linear_mipmap_anisotropic, repeat_enable; // the grown field's slope
-global uniform sampler2D ground_wet_map : filter_linear, repeat_disable; // pore water: wetness, sheen; last row its rect
 )";
 	if (p_patch_uniform) {
 		code += "uniform bool ground_deform_patch = false;\n";
 	} else {
 		code += vformat("const bool ground_deform_patch = %s;\n", p_patch ? "true" : "false");
 	}
-	if (p_patch_uniform || p_patch) {
-		// Bumped by GroundSurface3D each frame its field's texture is rewritten: the path tracer recaptures vertex()
-		// output when a material parameter changes, not when a texture it samples is rewritten in place.
-		code += "uniform float ground_deform_serial = 0.0;\n";
-	}
 	code += R"(
-// The near field's weight at p_xz: 1 inside its square, faded to 0 over its outer metre
-// (GroundSurface3D::NEAR_BLEND). A metre, not less: a rut or print row coming in from outside starts fresh
-// at the near field's edge (its first stamps shove up a heap the main field made long before), and that
-// start must lie where the main field still shows.
-float ground_deform_near_weight(vec2 p_xz) {
-	if (ground_deform_near_rect.z <= 0.0) {
-		return 0.0;
-	}
-	vec2 e = min(p_xz - ground_deform_near_rect.xy, ground_deform_near_rect.xy + ground_deform_near_rect.z - p_xz);
-	return smoothstep(0.0, 1.0, min(e.x, e.y));
-}
 vec4 ground_deform_sample(vec2 p_xz) {
 	vec2 uv = (p_xz - ground_deform_rect.xy) / ground_deform_rect.z;
 	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
 		return vec4(0.0, 0.0, 1.0, 1.0);
 	}
-	vec4 d = textureLod(ground_deform_map, uv, 0.0);
-	float nw = ground_deform_near_weight(p_xz);
-	if (nw > 0.0) {
-		d = mix(d, textureLod(ground_deform_near_map, (p_xz - ground_deform_near_rect.xy) / ground_deform_near_rect.z, 0.0), nw);
-	}
-	return d;
+	return textureLod(ground_deform_map, uv, 0.0);
 }
-// Where a wet track's water lies on printed ground (WeatherMap3D contact wetness, whose texels are 12.5 cm): in the
-// prints and tread lines the field pressed, 0 between them, so the wet follows a sole's or a tyre's outline and the
-// contact map sets only how wet it is. 1 off the field, eased in over its outer metre.
-float ground_contact_shape(vec2 p_xz) {
-	if (ground_deform_rect.z <= 0.0) {
-		return 1.0;
-	}
-	vec2 e = min(p_xz - ground_deform_rect.xy, ground_deform_rect.xy + ground_deform_rect.z - p_xz);
-	float in_field = smoothstep(0.5, 1.5, min(e.x, e.y));
-	if (in_field <= 0.0) {
-		return 1.0;
-	}
-	return mix(1.0, smoothstep(0.0005, 0.002, ground_deform_sample(p_xz).r), in_field);
-}
-// The deformation's own relief at p_xz (m, up): what is laid less what is pressed, with standing water's level.
-float ground_deform_relief(vec2 p_xz) {
-	vec4 d = ground_deform_sample(p_xz);
-	return max(d.g, 0.0) - d.r;
-}
-// The deformed ground (R: the net depression, dent less rim) and, on top, its standing water (G, mud stage 2).
 float ground_deform_surface(vec2 p_xz) {
 	vec4 d = ground_deform_sample(p_xz);
-	return textureLod(ground_deform_height, (p_xz - ground_deform_height_rect.xy) / ground_deform_height_rect.zw, 0.0).r - d.r;
-}
-// Wind ripples on the patch's middle (GroundSurface3D wind_ripples): m, faded out over the layer's last 0.4 m.
-float ground_ripple(vec2 p_xz) {
-	if (ground_ripple_rect.z <= 0.0) {
-		return 0.0;
-	}
-	vec2 uv = (p_xz - ground_ripple_rect.xy) / ground_ripple_rect.z;
-	vec2 e = min(uv, 1.0 - uv) * ground_ripple_rect.z;
-	if (min(e.x, e.y) <= 0.0) {
-		return 0.0;
-	}
-	// The window is the map's first n rows (under it: the sand share over the patch and a row of numbers).
-	float rows = float(textureSize(ground_ripple_map, 0).y);
-	uv.y *= (ground_ripple_rect.z / max(ground_ripple_rect.w, 1e-4)) / rows;
-	vec2 r = textureLod(ground_ripple_map, uv, 0.0).rg;
-	// Faded in over the outer 15% of the window, so its edge does not show as a line.
-	return r.x * r.y * smoothstep(ground_ripple_rect.w, 0.15 * ground_ripple_rect.z, min(e.x, e.y));
-}
-// Far ripples: past the window, the grown field (periodic) as a slope on the rest of the patch where there is
-// sand, faded in as the window's own ripples fade out. Returns the slope (dh/dx, dh/dz) times its weight; the
-// path tracer reads the same map (scene_raytracing_raygen.glsl).
-// The ripples' variation (nothing repeating may show): the grown field tiles every few metres, so each point reads
-// it through a three-octave world-space warp (crests turn and change spacing over tens of metres and bend over a
-// few) and edge dislocations in pairs along the crests (a crest forks into two and rejoins: the Y-junctions of
-// real ripple fields), with a height that wanders between 20 and 100% and smooth sheets between fields. p_k is the grown field's dominant wave
-// vector (rad/m), so a dislocation shifts its crests by exactly one wavelength. The real ripples' window is filled
-// through the same lines (GroundRipples::vary), so the two meet crest to crest.
-float ground_ripple_hash(ivec2 p_c, uint p_s) {
-	uint h = (uint(p_c.x) * 0x8da6b343u) ^ (uint(p_c.y) * 0xd8163841u) ^ (p_s * 0xcb1ab31fu);
-	h = (h ^ (h >> 16u)) * 0x7feb352du;
-	h = (h ^ (h >> 15u)) * 0x846ca68bu;
-	h ^= h >> 16u;
-	return float(h >> 8u) * (1.0 / 16777216.0);
-}
-float ground_ripple_vn(vec2 p_p, uint p_s) {
-	vec2 i = floor(p_p);
-	vec2 f = p_p - i;
-	vec2 u = f * f * (3.0 - 2.0 * f);
-	ivec2 c = ivec2(i);
-	return mix(mix(ground_ripple_hash(c, p_s), ground_ripple_hash(c + ivec2(1, 0), p_s), u.x), mix(ground_ripple_hash(c + ivec2(0, 1), p_s), ground_ripple_hash(c + ivec2(1, 1), p_s), u.x), u.y);
-}
-// The ripple field's patchy height (the amplitude ground_ripple_vary() returns), alone.
-float ground_ripple_amp(vec2 p) {
-	float amp = mix(0.2, 1.0, smoothstep(0.1, 0.9, 0.5 * ground_ripple_vn(p / 6.0, 7u) + 0.5 * ground_ripple_vn(p / 1.8, 8u)));
-	amp *= smoothstep(0.36, 0.6, 0.7 * ground_ripple_vn(p / 16.0, 15u) + 0.3 * ground_ripple_vn(p / 5.0, 16u));
-	return amp;
-}
-vec3 ground_ripple_vary(vec2 p_xz, vec2 p_k) {
-	vec2 p = p_xz;
-	vec2 o = 4.0 * (vec2(ground_ripple_vn(p / 24.0, 1u), ground_ripple_vn(p / 24.0, 2u)) - 0.5);
-	o += 1.2 * (vec2(ground_ripple_vn(p / 6.0, 3u), ground_ripple_vn(p / 6.0, 4u)) - 0.5);
-	o += 0.06 * (vec2(ground_ripple_vn(p / 1.7, 5u), ground_ripple_vn(p / 1.7, 6u)) - 0.5);
-	// Ripple fields on a real beach are patchy over tens of metres: smooth sheets where the surface was damp or
-	// crusted when the wind blew (beach moisture patchiness, Davidson-Arnott et al. 2008; Bauer et al. 2009)
-	// between fields of low and full ripples, so no even texture runs to the horizon.
-	float amp = ground_ripple_amp(p);
-	float kk = dot(p_k, p_k);
-	if (kk > 0.0) {
-		vec2 kn = p_k / sqrt(kk);
-		vec2 t = vec2(-kn.y, kn.x);
-		// Spacing: a stretch along the crests' normal only, so crests crowd and open by up to a fifth over a few metres.
-		o += kn * (0.3 * (ground_ripple_vn(vec2(dot(p, kn) / 2.5, dot(p, t) / 6.0), 14u) - 0.5));
-		ivec2 c0 = ivec2(floor(p / 2.0));
-		float ph = 0.0;
-		for (int dz = -1; dz <= 1; dz++) {
-			for (int dx = -1; dx <= 1; dx++) {
-				ivec2 c = c0 + ivec2(dx, dz);
-				if (ground_ripple_hash(c, 9u) >= 0.5) {
-					continue;
-				}
-				vec2 m = (vec2(c) + vec2(ground_ripple_hash(c, 10u), ground_ripple_hash(c, 11u))) * 2.0;
-				float hl = 0.15 + 0.3 * ground_ripple_hash(c, 12u);
-				vec2 da = p - (m - t * hl);
-				vec2 db = p - (m + t * hl);
-				float sgn = ground_ripple_hash(c, 13u) < 0.5 ? -1.0 : 1.0;
-				ph += sgn * atan(da.x * db.y - da.y * db.x, dot(da, db)) * (1.0 - smoothstep(0.9, 1.9, length(p - m)));
-			}
-		}
-		o += p_k * (ph / kk);
-	}
-	return vec3(o, amp);
-}
-// p_fp: the pixel's width on the ground (m), its narrow axis. Crests closer than about three pixels fade out: drawn
-// any finer they alias into even moire bands (a stripe pattern no real field has, worst through the water's
-// refraction, which resamples the screen), so the far ripples are prefiltered to the pixel as LEAN-style filtering
-// would. Returns the slope (x, z) and an albedo factor (the unresolved crests' tone), and in p_sort the grain
-// sorting's tint on the window's ripples and the far ones. Past the patch it carries on over the dune field (far_ripples).
-// Grain sorting on wind ripples (GroundSurface3D ripple_sorting): the wind rolls the coarse grains up to the crests
-// and leaves the small dense ones (magnetite, ilmenite, garnet) in the troughs, so a ripple field shows dark lines
-// in its troughs and paler, coarser crests (Bagnold 1941; Anderson and Bunas 1993; Sharp 1963). p_t: the ripple's
-// height in standard deviations of the grown field's (troughs below 0); the dark lag patchy over metres, as the
-// heavy-mineral share is. p_resolved: 1 where the crests are resolved; finer, the pixel takes the bands' mean,
-// scaled by p_amp, the field's height there (LEAN's point again: an unresolved pattern is its statistics).
-vec3 ground_ripple_sort_tint(float p_t, vec2 p_xz, float p_resolved, float p_amp) {
-	float heavy = mix(0.35, 1.0, ground_ripple_vn(p_xz / 7.0, 31u));
-	vec3 lag = mix(vec3(1.0), vec3(0.5, 0.48, 0.47), 0.6 * heavy);
-	vec3 coarse = vec3(1.05, 1.0, 0.92);
-	vec3 rt = mix(vec3(1.0), lag, smoothstep(0.2, 0.75, -p_t)) * mix(vec3(1.0), coarse, smoothstep(0.3, 0.8, p_t));
-	// About a fifth of a ripple's length lies in each band.
-	vec3 mt = mix(vec3(1.0), mix(vec3(1.0), lag, 0.25) * mix(vec3(1.0), coarse, 0.25), clamp(p_amp, 0.0, 1.0));
-	return mix(mt, rt, p_resolved);
-}
-// The coarse lag's share on an interdune flat (the dune tone's lag term): the floors between dunes, flat, patchy.
-float ground_dune_lag(vec2 p_xz, float p_normal_y, float p_interdune) {
-	if (p_interdune < 0.0) {
-		return 0.0;
-	}
-	float thin = p_interdune;
-	return thin * smoothstep(0.93, 0.98, p_normal_y) * mix(0.45, 1.0, ground_ripple_vn(p_xz / 23.0, 43u));
-}
-// Granule ripples (megaripples) on that lag: the coarse grains the wind cannot lift creep up into long, low ripples
-// 0.5 to 2 m apart and up to 5 cm high (ripple index about 25), broad crests armoured with coarse granules over
-// troughs of finer sand (Sharp 1963; Ellwood, Evans and Wilson 1975; Yizhaq 2008; Lammel et al. 2018). In plan the
-// crests are sinuous and fork in Y-junctions, and each fades out along its length over a few metres. Crests run
-// across p_wind, the dune-building wind (unit, x and z). p_weight: the lag's share; p_fp: the pixel's footprint (m),
-// crests closer than about four pixels fade to their mean tone. Returns the slope (dh/dx, dh/dz); p_tint: the albedo
-// factor (the crests' coarse grains, paler than the troughs' fines).
-// The phase (in wavelengths): the spacing wanders between about 0.5 and 2 m (a warp along the wind whose slope adds
-// to or takes from the 1.1 m mean) and the crests bend over metres; they end by tapering out (no phase defects:
-// a defect's closed contours read as small rimmed pits).
-float ground_granule_phase(vec2 p_xz, vec2 p_k, vec2 p_t) {
-	float along = dot(p_xz, p_k);
-	float across = dot(p_xz, p_t);
-	float s = along / 1.1 + 2.5 * ground_ripple_vn(vec2(along / 6.0, across / 5.0), 52u) + 1.2 * ground_ripple_vn(p_xz / 9.0, 51u);
-	return s;
-}
-vec2 ground_granule_ripples(vec2 p_xz, float p_weight, vec2 p_wind, float p_fp, out vec3 p_tint) {
-	p_tint = vec3(1.0);
-	if (p_weight <= 0.0 || dot(p_wind, p_wind) < 0.5) {
-		return vec2(0.0);
-	}
-	vec2 k = p_wind;
-	vec2 t = vec2(-k.y, k.x);
-	float along = dot(p_xz, k);
-	float across = dot(p_xz, t);
-	// Crests tens of wavelengths long that taper out at their ends (or merge at a fork).
-	float amp = p_weight * smoothstep(0.15, 0.5, ground_ripple_vn(vec2(along / 3.0, across / 15.0), 53u));
-	if (amp <= 0.0) {
-		return vec2(0.0);
-	}
-	// The slope from the phase's own gradient (the warp turns the crests), by differences.
-	float e = 0.03;
-	float s = ground_granule_phase(p_xz, k, t);
-	vec2 gs = vec2(ground_granule_phase(p_xz + vec2(e, 0.0), k, t) - s, ground_granule_phase(p_xz + vec2(0.0, e), k, t) - s);
-	gs /= e;
-	float c = 0.5 + 0.5 * cos(6.2831853 * s);
-	// Resolved by the local spacing (1 / |grad s|).
-	float lam = 1.0 / max(length(gs), 0.3);
-	float resolved = 1.0 - smoothstep(0.15 * lam, 0.3 * lam, p_fp);
-	vec3 crest = vec3(1.08, 1.05, 0.99);
-	vec3 trough = vec3(0.95, 0.92, 0.87);
-	// About a third of a ripple's length is crest: the unresolved pixel takes the mean.
-	vec3 rt = mix(trough, crest, smoothstep(0.35, 0.8, c));
-	vec3 mt = mix(trough, crest, 0.4);
-	p_tint = mix(vec3(1.0), mix(mt, rt, resolved), amp);
-	// Low and rounded (h = 0.04 amp c, slopes under 7 degrees, so a low sun leaves no hard-edged dark troughs):
-	// dh/dp = 0.04 amp dc/ds grad s.
-	float dhds = 0.04 * amp * (-3.14159265 * sin(6.2831853 * s));
-	return resolved * dhds * gs;
-}
-// Dune-scale sand colour (docs/ideas/sand.md, "Dune-scale tone"): three of the changes a dune field shows from afar.
-// Rubefaction: iron-oxide coats redden grains that have lain still for millennia (Walker 1979; Pye and Tsoar 2009),
-// patchy over hundreds of metres and strongest on the stable sand of the interdunes. Interdune flats: the
-// wind strips the fine sand and leaves a coarser, darker lag (Sharp 1963; Lancaster 1995). Slip faces: grain flows of
-// fine, well-sorted sand, paler than the windward slope (Bagnold 1941). p_interdune: the interdune floor's share
-// (TerrainGenerator3D.get_sand_interdune_at()), below 0 off the dune fields or unknown (only the slip faces show there).
-vec3 ground_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
-	vec3 t = vec3(1.0);
-	if (p_interdune >= 0.0) {
-		float thin = p_interdune;
-		float age = smoothstep(0.25, 0.7, 0.65 * ground_ripple_vn(p_xz / 420.0, 41u) + 0.35 * ground_ripple_vn(p_xz / 130.0, 42u));
-		t *= mix(vec3(1.0), vec3(1.15, 0.93, 0.78), age * (0.7 + 0.3 * thin));
-		float lag = ground_dune_lag(p_xz, p_normal_y, p_interdune);
-		t *= mix(vec3(1.0), vec3(0.84, 0.74, 0.62), lag);
-	}
-	// Slopes of about 29 to 33 degrees: the slip face at the sand's repose.
-	float slip = smoothstep(0.78, 0.84, p_normal_y) * (1.0 - smoothstep(0.88, 0.93, p_normal_y));
-	t *= mix(vec3(1.0), vec3(1.08, 1.07, 1.05), slip);
-	return t;
-}
-// The dune tone's inputs (GroundSurface3D dune_tone), from the ripple map: under the patch, the interdune floors' share
-// from its generator (TerrainGenerator3D.get_sand_interdune_at(), below 0 off the dune fields or with none) and the
-// ground's sand share (the sand block, G and B); past it, the same share over a kilometre round the patch (the depth rows,
-// R, faded out over their outer 15%) and the ground's own share (all sand for a sand ground). Returns (depth, share,
-// the depth's weight); (-1, 0, 0) with the tone off (the meta row's fifth texel: x on, yzw the depth rows' rect).
-// The ripple map's sixth meta texel: the generator's dune-building wind (xy) and whether granule ripples are on (z).
-// Rain pits (GroundSurface3D rain_pits; docs/ideas/sand.md, "Rain pits and rain crust"): each drop digs a crater
-// about 2.5 times its own size, some 0.12 of its width deep, ringed by a low rim of the sand it throws out
-// (Katsuragi 2010; Zhao, van der Meer and Lohse 2015), 3 to 7 mm across here, with two chances in each 1 cm cell,
-// filled by p_cover (the share the rain so far has pitted); p_seed changes the pattern each rain. p_fp: the pixel's
-// footprint (m); craters finer than about three pixels fade to their mean, a slightly darker, rougher skin.
-// Returns the slope (dh/dx, dh/dz); p_tone: the albedo factor.
-vec2 ground_rain_pits(vec2 p_xz, float p_cover, float p_seed, float p_fp, out float p_tone) {
-	float res = 1.0 - smoothstep(0.0007, 0.002, p_fp);
-	p_tone = 1.0 - 0.05 * p_cover * (1.0 - res);
-	if (p_cover <= 0.0 || res <= 0.0) {
-		return vec2(0.0);
-	}
-	ivec2 off = ivec2(int(p_seed) * 7919, int(p_seed) * 104729);
-	ivec2 c0 = ivec2(floor(p_xz / 0.01));
-	vec2 g = vec2(0.0);
-	for (int dz = -1; dz <= 1; dz++) {
-		for (int dx = -1; dx <= 1; dx++) {
-			ivec2 c = c0 + ivec2(dx, dz);
-			for (int k = 0; k < 2; k++) {
-				ivec2 ck = c + off + ivec2(k * 50331, 0);
-				if (ground_ripple_hash(ck, 61u) >= 0.8 * p_cover) {
-					continue;
-				}
-				vec2 m = (vec2(c) + vec2(ground_ripple_hash(ck, 62u), ground_ripple_hash(ck, 63u))) * 0.01;
-				float R = 0.0015 + 0.002 * ground_ripple_hash(ck, 64u) * ground_ripple_hash(ck, 65u);
-				vec2 d = p_xz - m;
-				float r = length(d);
-				float u = r / R;
-				if (u >= 1.6 || r < 1e-6) {
-					continue;
-				}
-				// h = -0.24 R (1 - u^2) inside, and a rim 0.072 R high round u = 1.1.
-				float rim = (u - 1.1) / 0.25;
-				float dhdu = (u < 1.0 ? 0.48 * R * u : 0.0) - 0.072 * R * 8.0 * rim * exp(-rim * rim);
-				g += dhdu / R * (d / r);
-			}
-		}
-	}
-	return g * res;
-}
-// The rain's marks on the sand (GroundSurface3D rain_pits): x the share the last rain pitted, y the dried crust's
-// share, z the drops' pattern.
-vec4 ground_sand_meta6() {
-	ivec2 ts = textureSize(ground_ripple_map, 0);
-	return ground_ripple_rect.z > 0.0 && ts.x >= 7 ? texelFetch(ground_ripple_map, ivec2(6, ts.y - 1), 0) : vec4(0.0);
-}
-// Adhesion warts (GroundSurface3D adhesion_warts; docs/ideas/sand.md, "Adhesion warts"): dry grains the wind drives
-// onto damp sand stick where they land and build irregular lumps, longer across the wind, about 1 to 2 cm across and
-// a few millimetres high, their tops of dry, paler grains (Hunter 1973; Kocurek and Fielder 1982). p_grow: how far
-// they have grown (0..1) times the damp share; p_wind: the wind that built them (unit, x and z); p_fp: the pixel's
-// footprint (m), lumps finer than about three pixels fade to their mean. Returns the slope (dh/dx, dh/dz); p_cap: the
-// share of dry grains on top (it dries the pixel's pore water).
-vec2 ground_adhesion_warts(vec2 p_xz, float p_grow, vec2 p_wind, float p_fp, out float p_cap) {
-	p_cap = 0.0;
-	if (p_grow <= 0.0 || dot(p_wind, p_wind) < 0.5) {
-		return vec2(0.0);
-	}
-	float res = 1.0 - smoothstep(0.002, 0.006, p_fp);
-	if (res <= 0.0) {
-		p_cap = 0.5 * p_grow;
-		return vec2(0.0);
-	}
-	// Lumps a centimetre or two across, longer across the wind, that merge into a rough skin as they grow: the
-	// tops of two octaves of value noise over a threshold that falls with the growth, warped and turned against
-	// each other so no lattice shows.
-	vec2 k = p_wind;
-	vec2 t = vec2(-k.y, k.x);
-	// Patchy over decimetres, as the supply of blown grains and the dampness are.
-	float gl = p_grow * mix(0.45, 1.0, ground_ripple_vn(p_xz / 0.7, 79u));
-	float th = 0.72 - 0.3 * gl;
-	float H = 0.002 + 0.003 * gl;
-	float e = 0.0015;
-	vec3 h3;
-	for (int i = 0; i < 3; i++) {
-		vec2 q = p_xz + (i == 1 ? vec2(e, 0.0) : (i == 2 ? vec2(0.0, e) : vec2(0.0)));
-		vec2 ab = vec2(dot(q, k), dot(q, t));
-		ab += 0.005 * vec2(ground_ripple_vn(ab / 0.011, 77u), ground_ripple_vn(ab / 0.011 + 17.3, 78u));
-		vec2 ab2 = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8)) * ab;
-		float n = 0.65 * ground_ripple_vn(ab / vec2(0.008, 0.013), 75u) + 0.35 * ground_ripple_vn(ab2 / vec2(0.0035, 0.005), 76u);
-		h3[i] = smoothstep(th, th + 0.22, n);
-	}
-	// The mean dry-topped share where the lumps are finer than the pixel.
-	p_cap = mix(0.5 * p_grow, h3.x, res);
-	return res * H * vec2(h3.y - h3.x, h3.z - h3.x) / e;
-}
-// The adhesion warts' state (GroundSurface3D adhesion_warts): xy the wind that built them, z how far they grew.
-vec4 ground_sand_meta7() {
-	ivec2 ts = textureSize(ground_ripple_map, 0);
-	return ground_ripple_rect.z > 0.0 && ts.x >= 8 ? texelFetch(ground_ripple_map, ivec2(7, ts.y - 1), 0) : vec4(0.0);
-}
-vec4 ground_sand_meta5() {
-	ivec2 ts = textureSize(ground_ripple_map, 0);
-	return ground_ripple_rect.z > 0.0 && ts.x >= 6 ? texelFetch(ground_ripple_map, ivec2(5, ts.y - 1), 0) : vec4(0.0);
-}
-vec4 ground_sand_at(vec2 p_xz) {
-	if (ground_ripple_rect.z <= 0.0) {
-		return vec4(-1.0, 0.0, 0.0, 0.0);
-	}
-	ivec2 ts = textureSize(ground_ripple_map, 0);
-	vec4 m4 = ts.x >= 5 ? texelFetch(ground_ripple_map, ivec2(4, ts.y - 1), 0) : vec4(0.0);
-	if (m4.x < 0.5) {
-		return vec4(-1.0, 0.0, 0.0, 0.0);
-	}
-	vec4 m1 = texelFetch(ground_ripple_map, ivec2(1, ts.y - 1), 0);
-	vec4 m2 = texelFetch(ground_ripple_map, ivec2(2, ts.y - 1), 0);
-	vec4 m3 = texelFetch(ground_ripple_map, ivec2(3, ts.y - 1), 0);
-	int n = int(m2.y + 0.5);
-	int sn = int(m2.z + 0.5);
-	vec2 su = (p_xz - m1.xy) / m1.z * float(sn) - 0.5;
-	if (sn > 0 && all(greaterThanEqual(su, vec2(-0.5))) && all(lessThanEqual(su, vec2(float(sn) - 0.5)))) {
-		ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
-		ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
-		vec2 sf = clamp(su - floor(su), 0.0, 1.0);
-		vec3 a = texelFetch(ground_ripple_map, ivec2(s0.x, n + s0.y), 0).gba;
-		vec3 b = texelFetch(ground_ripple_map, ivec2(s1.x, n + s0.y), 0).gba;
-		vec3 c = texelFetch(ground_ripple_map, ivec2(s0.x, n + s1.y), 0).gba;
-		vec3 d = texelFetch(ground_ripple_map, ivec2(s1.x, n + s1.y), 0).gba;
-		vec3 r = mix(mix(a, b, sf.x), mix(c, d, sf.x), sf.y);
-		// A corner off the dune fields: none of the depth's tone (no blend to a made-up depth).
-		// The blown share eases to the ground's past the block (all of it) over the block's outer 4 m, so nothing the
-		// share gates stops at the block's edge.
-		vec2 be = min(p_xz - m1.xy, m1.xy + m1.z - p_xz);
-		r.z = mix(1.0, r.z, smoothstep(0.0, 4.0, min(be.x, be.y)));
-		return min(min(a.x, b.x), min(c.x, d.x)) < 0.0 ? vec4(-1.0, r.y, 0.0, r.z) : vec4(r.xy, 1.0, r.z);
-	}
-	int dn = ts.y - 1 - (n + sn + n);
-	vec2 du = (p_xz - m4.yz) / max(m4.w, 1e-4) * float(dn) - 0.5;
-	if (dn <= 0 || any(lessThan(du, vec2(-0.5))) || any(greaterThan(du, vec2(float(dn) - 0.5)))) {
-		return vec4(-1.0, m3.z, 0.0, 1.0);
-	}
-	int r0 = n + sn + n;
-	ivec2 d0 = clamp(ivec2(floor(du)), ivec2(0), ivec2(dn - 1));
-	ivec2 d1 = clamp(d0 + 1, ivec2(0), ivec2(dn - 1));
-	vec2 df = clamp(du - floor(du), 0.0, 1.0);
-	vec4 q = vec4(texelFetch(ground_ripple_map, ivec2(d0.x, r0 + d0.y), 0).r, texelFetch(ground_ripple_map, ivec2(d1.x, r0 + d0.y), 0).r,
-			texelFetch(ground_ripple_map, ivec2(d0.x, r0 + d1.y), 0).r, texelFetch(ground_ripple_map, ivec2(d1.x, r0 + d1.y), 0).r);
-	if (min(min(q.x, q.y), min(q.z, q.w)) < 0.0) {
-		return vec4(-1.0, m3.z, 0.0, 1.0);
-	}
-	vec2 de = min(p_xz - m4.yz, m4.yz + m4.w - p_xz);
-	return vec4(mix(mix(q.x, q.y, df.x), mix(q.z, q.w, df.x), df.y), m3.z, smoothstep(0.0, 0.15 * m4.w, min(de.x, de.y)), 1.0);
-}
-vec3 ground_ripple_far_slope(vec2 p_xz, float p_fp, float p_normal_y, float p_far_share, out vec3 p_sort) {
-	p_sort = vec3(1.0);
-	if (ground_ripple_rect.z <= 0.0) {
-		return vec3(0.0, 0.0, 1.0);
-	}
-	ivec2 ts = textureSize(ground_ripple_map, 0);
-	vec4 m1 = texelFetch(ground_ripple_map, ivec2(1, ts.y - 1), 0);
-	vec4 m2 = texelFetch(ground_ripple_map, ivec2(2, ts.y - 1), 0);
-	vec4 m3 = texelFetch(ground_ripple_map, ivec2(3, ts.y - 1), 0);
-	if (m2.x < 0.5) {
-		return vec3(0.0, 0.0, 1.0);
-	}
-	int n = int(m2.y + 0.5);
-	int sn = int(m2.z + 0.5);
-	// Past the patch's sand block, the dune field's own (GroundSurface3D far_ripples): the material's sand share
-	// (p_far_share; below 0, the ground's: all sand when the GroundSurface3D's ground is sand), eased in over the
-	// block's outer 4 m so its square never shows.
-	float far = m2.w > 0.5 ? (p_far_share < 0.0 ? m3.z : p_far_share) : 0.0;
-	float sand = far;
-	vec2 su = (p_xz - m1.xy) / m1.z * float(sn) - 0.5;
-	if (all(greaterThanEqual(su, vec2(-0.5))) && all(lessThanEqual(su, vec2(float(sn) - 0.5)))) {
-		ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
-		ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
-		vec2 sf = clamp(su - floor(su), 0.0, 1.0);
-		float block = mix(mix(texelFetch(ground_ripple_map, ivec2(s0.x, n + s0.y), 0).r, texelFetch(ground_ripple_map, ivec2(s1.x, n + s0.y), 0).r, sf.x),
-				mix(texelFetch(ground_ripple_map, ivec2(s0.x, n + s1.y), 0).r, texelFetch(ground_ripple_map, ivec2(s1.x, n + s1.y), 0).r, sf.x), sf.y);
-		vec2 be = min(p_xz - m1.xy, m1.xy + m1.z - p_xz);
-		sand = mix(far, block, m2.w > 0.5 ? smoothstep(0.0, 4.0, min(be.x, be.y)) : 1.0);
-	}
-	vec2 uv = (p_xz - ground_ripple_rect.xy) / ground_ripple_rect.z;
-	vec2 e = min(uv, 1.0 - uv) * ground_ripple_rect.z;
-	float live = min(e.x, e.y) > 0.0 ? smoothstep(ground_ripple_rect.w, 0.15 * ground_ripple_rect.z, min(e.x, e.y)) : 0.0;
-	// None on a slip face: past about 30 degrees the sand avalanches and the ripples are buried (Bagnold 1941).
-	float w = sand * (1.0 - live) * smoothstep(0.85, 0.91, p_normal_y);
-	float lam = dot(m3.xy, m3.xy) > 0.0 ? 6.2831853 / length(m3.xy) : 0.11;
-	float resolved = 1.0 - smoothstep(0.22 * lam, 0.4 * lam, p_fp);
-	// The window's own ripples, in the grown field's units (m3.w, its spread; 0 with the sorting off).
-	if (m3.w > 0.0 && live > 0.0) {
-		p_sort = ground_ripple_sort_tint(ground_ripple(p_xz) / m3.w, p_xz, resolved, 0.0);
-	}
-	if (w <= 0.0) {
-		return vec3(0.0, 0.0, 1.0);
-	}
-	// Cell c's centre is at c * cell, its texel (c mod n).
-	// Shader level of detail (Olano, Kuehne and Simmons 2003): where the crests are finer than the pixel only the
-	// field's patchy height is used (the tone), so the warp and the dislocation loop are skipped there.
-	vec3 vr = resolved > 0.0 ? ground_ripple_vary(p_xz, m3.xy) : vec3(0.0, 0.0, ground_ripple_amp(p_xz));
-	// Crests finer than the pixel still shade it: each lee slope's share in the low light, the reason a ripple field
-	// reads as a patchy tone across a dune from far off (LEAN mapping's point, Olano and Baker 2010: unresolved
-	// slopes become the pixel's statistics, not its normal). Up to 15% darker at full height, by the field's
-	// patchy amplitude.
-	float tone = 1.0 - 0.15 * w * vr.z * (1.0 - resolved);
-	vec2 tuv = ((p_xz + vr.xy) / ground_ripple_rect.w + 0.5) / m1.w * ground_ripple_rect.w;
-	vec3 tf = resolved > 0.0 ? texture(ground_ripple_far, tuv).rgb : vec3(0.0);
-	if (m3.w > 0.0) {
-		p_sort *= mix(vec3(1.0), ground_ripple_sort_tint(vr.z * tf.z, p_xz, resolved, vr.z), w);
-	}
-	w *= resolved;
-	if (w <= 0.0) {
-		return vec3(0.0, 0.0, tone);
-	}
-	return vec3(w * vr.z * tf.xy, tone);
-}
-// The ground's pore water at p_world (sand stage 4): (wetness, standing film) for Lagarde 2013's wet surfaces,
-// and the share of loose dry sand that shows its grains (sand glints); the path tracer reads the same map
-// (scene_raytracing_raygen.glsl). The fine lattice's block, faded by its weight (A) into the far lattice's block
-// (GroundSurface3D::_wet_publish()), so wet ground carries on past the patch with no edge.
-vec4 ground_wet_block(vec2 p_xz, vec4 p_rect, int p_block, ivec2 p_ts, float p_rows) {
-	vec2 uv = (p_xz - p_rect.xy) / max(p_rect.z, 1e-3);
-	if (p_rect.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-		return vec4(0.0);
-	}
-	float v = clamp(uv.y * p_rows, 0.5, p_rows - 0.5) + float(p_block) * p_rows;
-	return textureLod(ground_wet_map, vec2(uv.x, v / float(p_ts.y)), 0.0);
-}
-// The wet map's blocks: the fine lattice, then the far one (texel 1's tag 3.5), the cracks (texel 2's 4.5), the
-// puddle ice (texel 3's 5.5), the mud on plants (texel 4's 6.5; GrassField3D reads it), fresh deposits (texel 5's
-// 7.5) and the salt crust (texel 6's 8.5), each there only when tagged.
-int ground_wet_blocks(ivec2 p_ts) {
-	int b = 1;
-	for (int k = 1; k < 7; k++) {
-		if (p_ts.x > k && abs(texelFetch(ground_wet_map, ivec2(k, p_ts.y - 1), 0).w - (2.5 + float(k))) < 0.01) {
-			b++;
-		}
-	}
-	return b;
-}
-vec3 ground_wet_at(vec3 p_world, vec3 p_normal) {
-	ivec2 ts = textureSize(ground_wet_map, 0);
-	if (ts.y < 2) {
-		return vec3(0.0);
-	}
-	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
-	// r.w tags a published map (2.5): the global's default texture must not read as a wet square.
-	if (abs(r.w - 2.5) > 0.01) {
-		return vec3(0.0);
-	}
-	vec4 rf = ts.x > 1 ? texelFetch(ground_wet_map, ivec2(1, ts.y - 1), 0) : vec4(0.0);
-	bool far = abs(rf.w - 3.5) < 0.01;
-	float rows = float((ts.y - 1) / ground_wet_blocks(ts));
-	vec4 wn = ground_wet_block(p_world.xz, r, 0, ts, rows);
-	vec4 wf = far ? ground_wet_block(p_world.xz, rf, 1, ts, rows) : vec4(0.0);
-	vec3 w = vec3(mix(wf.xy, wn.xy, wn.w), wn.z * wn.w);
-	// G is the saturation; the standing film is classified here, after filtering, so its edge runs smoothly between
-	// the lattice's points.
-	return vec3(clamp(w.x, 0.0, 1.0) * smoothstep(-0.6, 0.2, p_normal.y), smoothstep(0.95, 1.0, w.y) * smoothstep(0.35, 0.7, p_normal.y), clamp(w.z, 0.0, 1.0));
-}
-// Desiccation cracks (docs/ideas/mud.md, stage 2b), the same lines in material.cpp and scene_raytracing_raygen.glsl.
-// Drying clay cracks into plates whose size follows the drying layer's thickness (Groisman and Kaplan 1994). The
-// cracks come in generations (Bohn, Pauchard and Couder 2005, "Hierarchical crack pattern as formed by successive
-// domain divisions"): the first ones meet at about 120 degrees and part the layer into large domains; each domain
-// then splits across its long axis, the new crack meeting the old ones at right angles (T junctions), and the
-// halves split again, each generation narrower and shallower than the one before. Wetting and drying again moves
-// the junctions towards 120 degrees and the plates towards hexagons (Goehring et al. 2010, "Evolving mud-crack
-// patterns"). The plates' rims curl up as their top dries and shrinks first (Allen 1986).
-// Here: the first generation is the Voronoi cells of a jittered hexagonal lattice (Quilez's two-pass border
-// distance); the second a line through each cell's seed towards its nearest neighbour, so across the cell's long
-// axis and square to the edge it shares with that neighbour; the third, in each half, a line square to the second
-// that may end short of the far edge, tapering out. The pattern meanders (a smooth warp) and its width wanders.
-vec2 ground_crack_hash(ivec2 p_c, uint p_salt) {
-	uint h = (uint(p_c.x) * 73856093u) ^ (uint(p_c.y) * 19349663u) ^ (p_salt * 83492791u);
-	h ^= h >> 16u;
-	h *= 0x7feb352du;
-	h ^= h >> 15u;
-	h *= 0x846ca68bu;
-	h ^= h >> 16u;
-	return vec2(float(h & 0xffffu), float(h >> 16u)) / 65535.0;
-}
-vec2 ground_crack_seed(ivec2 p_c, float p_jitter) {
-	// Lattice basis (1, 0), (0.5, 0.866): hexagonal plates at no jitter.
-	return vec2(float(p_c.x) + 0.5 * float(p_c.y), 0.8660254 * float(p_c.y)) + p_jitter * (ground_crack_hash(p_c, 0u) - 0.5);
-}
-// A smooth value noise in 0..1 (two channels).
-vec2 ground_crack_noise(vec2 p_p, uint p_salt) {
-	ivec2 i = ivec2(floor(p_p));
-	vec2 f = fract(p_p);
-	f = f * f * (3.0 - 2.0 * f);
-	vec2 a = ground_crack_hash(i, p_salt);
-	vec2 b = ground_crack_hash(i + ivec2(1, 0), p_salt);
-	vec2 c = ground_crack_hash(i + ivec2(0, 1), p_salt);
-	vec2 d = ground_crack_hash(i + ivec2(1, 1), p_salt);
-	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-// The cracks near a point: per generation (x, y, z) the distance (m) to it, its width and depth (m), and the
-// direction (xz) in which the distance grows; and the rims' curl (height m, reach m).
-struct GroundCracks {
-	vec3 dist;
-	vec3 width;
-	vec3 depth;
-	vec2 dir1;
-	vec2 dir2;
-	vec2 dir3;
-	float curl;
-	float reach;
-	float scale; // the first generation's domain size, m
-};
-// p_c: the crack state (opening 0..1, plate size m, regularity 0..1, crust 0..1 or negative while damp).
-GroundCracks ground_cracks(vec2 p_xz, vec4 p_c) {
-	GroundCracks g;
-	float reg = clamp(p_c.z, 0.0, 1.0);
-	float open = clamp(p_c.x, 0.0, 1.0);
-	float thick = 0.25 * p_c.y;
-	// A silt skin (mud round 15.1, its share sent as a negative regularity by the ground's crack state). Its plates
-	// are some ten times the layer across, so thick here is 2.5 layers. It shrinks more (fresh slurry), cracks
-	// through the layer only, and its plates curl up at their edges well into the plate (mud curls, Allen 1986).
-	float skin = clamp(-p_c.z, 0.0, 1.0);
-	// The first generation's domains: two to three plates across, one as the cycles make them hexagons.
-	float s1 = p_c.y * mix(2.4, 1.1, reg);
-	vec2 q = p_xz / s1;
-	q += 0.22 * (ground_crack_noise(q * 0.8, 5u) - 0.5) + 0.025 * (ground_crack_noise(q * 6.0, 6u) - 0.5);
-	float jit = mix(0.9, 0.25, reg);
-	// The nearest seed, then the distance to the cell's border and the nearest neighbour's direction.
-	vec2 l = vec2(q.x - q.y * 0.57735027, q.y * 1.1547005);
-	ivec2 c = ivec2(floor(l));
-	vec2 best = vec2(0.0);
-	ivec2 id = c;
-	float bd = 1e9;
-	for (int j = -1; j <= 2; j++) {
-		for (int i = -1; i <= 2; i++) {
-			ivec2 k = c + ivec2(i, j);
-			vec2 r = ground_crack_seed(k, jit) - q;
-			float d = dot(r, r);
-			if (d < bd) {
-				bd = d;
-				best = r;
-				id = k;
-			}
-		}
-	}
-	float e1 = 1e9;
-	vec2 n1 = vec2(1.0, 0.0);
-	vec2 nn = vec2(1.0, 0.0);
-	float nnd = 1e9;
-	for (int j = -2; j <= 2; j++) {
-		for (int i = -2; i <= 2; i++) {
-			ivec2 k = id + ivec2(i, j);
-			if (all(equal(k, id))) {
-				continue;
-			}
-			vec2 dr = ground_crack_seed(k, jit) - q - best;
-			float dl = dot(dr, dr);
-			if (dl > 1e-8) {
-				vec2 dn = dr * inversesqrt(dl);
-				float e = dot(best + 0.5 * dr, dn);
-				if (e < e1) {
-					e1 = e;
-					n1 = dn;
-				}
-				if (dl < nnd) {
-					nnd = dl;
-					nn = dn;
-				}
-			}
-		}
-	}
-	vec2 x = -best; // from the seed, in domain units
-	vec2 h2 = ground_crack_hash(id, 2u);
-	vec2 h3 = ground_crack_hash(id, 3u);
-	// Second generation: along the nearest neighbour's direction, turned and shifted a little.
-	float a2 = (h2.y - 0.5) * 0.4;
-	vec2 u2 = vec2(nn.x * cos(a2) - nn.y * sin(a2), nn.x * sin(a2) + nn.y * cos(a2));
-	vec2 v2 = vec2(-u2.y, u2.x);
-	float t2 = dot(x, v2) - (h2.x - 0.5) * 0.16;
-	bool split2 = h2.x * 0.7 + h2.y * 0.3 < 0.92 - 0.75 * reg;
-	// Third generation, in this half: square to the second, from it outwards, ending at a length of its own.
-	float side = t2 >= 0.0 ? 1.0 : 0.0;
-	vec2 h3s = side > 0.5 ? h3 : ground_crack_hash(id, 4u);
-	float t3 = dot(x, u2) - (h3s.x - 0.5) * 0.5;
-	float len3 = mix(0.25, 0.9, h3s.y);
-	// A silt skin's plates are small and thin: they split across, rim to rim, and do not grow the short spurs.
-	bool split3 = split2 && skin < 0.5 && h3s.x * 0.5 + h3s.y * 0.5 < 0.75 - 0.65 * reg;
-	// Widths: the layer's shrinkage (8%, Peron et al. 2009 for clays) shared out over the generations, which open
-	// in turn as the layer dries; each wanders along its length.
-	float strain = mix(0.08, 0.12, skin) * s1;
-	vec2 wander = ground_crack_noise(q * 3.0, 7u);
-	g.width = vec3(0.5 * smoothstep(0.0, 0.5, open), 0.3 * smoothstep(0.3, 0.8, open), 0.17 * smoothstep(0.6, 1.0, open)) * strain;
-	g.width *= vec3(0.55 + 0.9 * wander.x, 0.55 + 0.9 * wander.y, 0.5 + wander.x);
-	g.width.z *= smoothstep(len3, 0.55 * len3, abs(t2)); // the tip tapers out
-	g.depth = thick * mix(1.0, 0.4, skin) * vec3(1.0, 0.75, 0.45) * clamp(4.0 * open, 0.0, 1.0);
-	g.dist = vec3(max(e1, 0.0), split2 ? abs(t2) : 1e3, split3 && abs(t2) < len3 ? abs(t3) : 1e3) * s1;
-	g.dir1 = -n1;
-	g.dir2 = t2 >= 0.0 ? v2 : -v2;
-	g.dir3 = t3 >= 0.0 ? u2 : -u2;
-	g.curl = max(p_c.w, 0.0) * open * mix(0.35, 0.5, skin) * thick;
-	g.reach = mix(0.06, 0.18, skin) * s1;
-	g.scale = s1;
-	return g;
-}
-// The surface's offset at the cracks seen through a footprint p_fw (m) wide: (height m, its slope x, z, the share of
-// the footprint that is crack). A crack narrower than the footprint spreads into a dip of the same volume as wide
-// as the footprint (a box filter), and the curl likewise; so the mesh takes the cracks its spacing carries, the
-// shading those it does not.
-vec4 ground_crack_height(GroundCracks p_g, float p_fw) {
-	float fw = max(p_fw, 1e-4);
-	float h = 0.0;
-	vec2 slope = vec2(0.0);
-	float cover = 0.0;
-	// The rims' curl: each crack lifts the plate's edge beside it over a short reach; joined as a smooth union
-	// (1 - the product of what each leaves flat), so the plate's middle stays flat with no crease where the
-	// nearest crack changes.
-	float reach = max(p_g.reach, 0.5 * fw);
-	float flat_all = 1.0;
-	float fl[3];
-	vec2 fg[3];
-	for (int k = 0; k < 3; k++) {
-		float d = k == 0 ? p_g.dist.x : (k == 1 ? p_g.dist.y : p_g.dist.z);
-		float w = k == 0 ? p_g.width.x : (k == 1 ? p_g.width.y : p_g.width.z);
-		float dp = k == 0 ? p_g.depth.x : (k == 1 ? p_g.depth.y : p_g.depth.z);
-		vec2 dir = k == 0 ? p_g.dir1 : (k == 1 ? p_g.dir2 : p_g.dir3);
-		fl[k] = 1.0;
-		fg[k] = vec2(0.0);
-		if (w <= 0.0) {
-			continue;
-		}
-		// The rim beside it: e beyond the crack's edge.
-		// A crack lifts its rims only once it has opened a few millimetres (a tapering tip lifts none).
-		float e = max(d - 0.5 * w, 0.0);
-		float x = exp(-e / reach) * smoothstep(0.0, 0.005, w);
-		fl[k] = 1.0 - x;
-		fg[k] = d > 0.5 * w ? dir * (x / reach) : vec2(0.0); // the slope of (1 - x)
-		flat_all *= fl[k];
-		float hw = 0.5 * max(w, fw);
-		float deep = dp * min(w / fw, 1.0);
-		if (d < hw) {
-			// Steep walls over the outer third of the half width, a rounded floor.
-			float t = 1.0 - d / hw;
-			float s = smoothstep(0.0, 0.35, t);
-			float hk = -deep * s;
-			if (hk < h) {
-				h = hk;
-				float ds = t < 0.35 ? 6.0 * (t / 0.35) * (1.0 - t / 0.35) / 0.35 : 0.0;
-				slope = dir * (deep * ds / hw);
-			}
-			cover = max(cover, min(w / fw, 1.0) * (t < 0.35 ? s : 1.0));
-		}
-	}
-	// A footprint wider than a fraction of a domain spans whole plates: their mean, flat, with the cracks' mean
-	// share. The curled rims are wider than the cracks: they go on into footprints up to a few reaches wide, so a
-	// mesh that cannot carry the slots still carries the dished plates.
-	// The slots and the curled rims add: the rim rises from the plate to the slot's lip and the slot cuts down from
-	// there, so a coarse footprint sees a dip between two lifted lips (each plate a shallow dish) and no step where
-	// the slot's half width ends.
-	float fade = 1.0 - smoothstep(0.04 * p_g.scale, 0.12 * p_g.scale, fw);
-	float curl_fade = 1.0 - smoothstep(p_g.reach, 3.0 * p_g.reach, fw);
-	float keep = max(fade, curl_fade);
-	h *= keep;
-	slope *= keep;
-	if (p_g.curl > 0.0) {
-		float c = p_g.curl * (p_g.reach / reach) * keep;
-		h += c * (1.0 - flat_all);
-		vec2 g = fg[0] * fl[1] * fl[2] + fg[1] * fl[0] * fl[2] + fg[2] * fl[0] * fl[1];
-		slope -= c * g;
-	}
-	float mean = clamp(dot(p_g.width, vec3(1.0)) * 2.0 / max(p_g.scale, 1e-4), 0.0, 1.0);
-	return vec4(h, slope, mix(mean, cover, fade));
-}
-// The crack state at p_xz: the wet map's crack block (GroundSurface3D::_wet_publish()); 0 where none.
-vec4 ground_crack_state(vec2 p_xz) {
-	ivec2 ts = textureSize(ground_wet_map, 0);
-	if (ts.x < 3 || ts.y < 2) {
-		return vec4(0.0);
-	}
-	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
-	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(2, ts.y - 1), 0).w - 4.5) > 0.01) {
-		return vec4(0.0);
-	}
-	int far = abs(texelFetch(ground_wet_map, ivec2(1, ts.y - 1), 0).w - 3.5) < 0.01 ? 1 : 0;
-	return ground_wet_block(p_xz, r, 1 + far, ts, float((ts.y - 1) / ground_wet_blocks(ts)));
-}
-// The ice at p_xz (rounds 7 and 9): the wet map's ice block, after the fine, far and crack ones (puddle ice's
-// thickness m, its broken share; needle ice's height m, the loose crumbs its thaw left); 0 where none.
-vec4 ground_ice_state(vec2 p_xz) {
-	ivec2 ts = textureSize(ground_wet_map, 0);
-	if (ts.x < 4 || ts.y < 2) {
-		return vec4(0.0);
-	}
-	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
-	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(3, ts.y - 1), 0).w - 5.5) > 0.01) {
-		return vec4(0.0);
-	}
-	int at = 1;
-	for (int k = 1; k < 3; k++) {
-		at += abs(texelFetch(ground_wet_map, ivec2(k, ts.y - 1), 0).w - (2.5 + float(k))) < 0.01 ? 1 : 0;
-	}
-	return ground_wet_block(p_xz, r, at, ts, float((ts.y - 1) / ground_wet_blocks(ts)));
-}
-// A fresh deposit at p_xz (a debris fan, mud round 13): the wet map's last block, x its cover (0..1), yzw its linear
-// colour (the flow's ash and char); 0 where none.
-vec4 ground_deposit_state(vec2 p_xz) {
-	ivec2 ts = textureSize(ground_wet_map, 0);
-	if (ts.x < 6 || ts.y < 2) {
-		return vec4(0.0);
-	}
-	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
-	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(5, ts.y - 1), 0).w - 7.5) > 0.01) {
-		return vec4(0.0);
-	}
-	int b = ground_wet_blocks(ts);
-	int salt = ts.x > 6 && abs(texelFetch(ground_wet_map, ivec2(6, ts.y - 1), 0).w - 8.5) < 0.01 ? 1 : 0;
-	return ground_wet_block(p_xz, r, b - 1 - salt, ts, float((ts.y - 1) / b));
-}
-// The salt crust at p_xz (GroundSurface3D salt_crusts): the wet map's last block (texel 6's tag 8.5), 0 to 1; 0 where none.
-float ground_salt_state(vec2 p_xz) {
-	ivec2 ts = textureSize(ground_wet_map, 0);
-	if (ts.x < 7 || ts.y < 2) {
-		return 0.0;
-	}
-	vec4 r = texelFetch(ground_wet_map, ivec2(0, ts.y - 1), 0);
-	if (abs(r.w - 2.5) > 0.01 || abs(texelFetch(ground_wet_map, ivec2(6, ts.y - 1), 0).w - 8.5) > 0.01) {
-		return 0.0;
-	}
-	int b = ground_wet_blocks(ts);
-	return ground_wet_block(p_xz, r, b - 1, ts, float((ts.y - 1) / b)).x;
-}
-// Salt polygons (the crust buckles into plates some 10 cm across with raised rims, Lasser et al. 2023): a Voronoi
-// lattice in cell units, x the distance to the cell's edge (cell units), y the cell's random 0..1.
-vec2 ground_salt_cells(vec2 p_p) {
-	vec2 ip = floor(p_p);
-	vec2 fp = p_p - ip;
-	float d1 = 8.0;
-	float d2 = 8.0;
-	vec2 id = ip;
-	for (int j = -1; j <= 1; j++) {
-		for (int i = -1; i <= 1; i++) {
-			vec2 g = vec2(float(i), float(j));
-			uvec2 q = uvec2(ivec2(ip + g) + ivec2(32768));
-			uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
-			h = (h ^ (h >> 16u)) * 2246822519u;
-			h ^= h >> 13u;
-			vec2 o = vec2(float(h & 0xffffu), float(h >> 16u)) / 65535.0;
-			vec2 r = g + 0.15 + 0.7 * o - fp;
-			float d = dot(r, r);
-			if (d < d1) {
-				d2 = d1;
-				d1 = d;
-				id = ip + g;
-			} else if (d < d2) {
-				d2 = d;
-			}
-		}
-	}
-	uvec2 q = uvec2(ivec2(id) + ivec2(32768));
-	uint h = (q.x * 2654435761u) ^ (q.y * 2246822519u);
-	h = (h ^ (h >> 15u)) * 2654435761u;
-	return vec2(0.5 * (sqrt(d2) - sqrt(d1)), float(h >> 8u) / 16777215.0);
-}
-// A salt crust (efflorescence) round still water in a dry climate: the salts the fringe's water leaves as it
-// evaporates, white and matte in patches that join as the crust thickens (playa crusts' albedo about 0.5 to 0.7,
-// Nield et al. 2015). The same lines in scene_raytracing_raygen.glsl.
-// p_fp: the pixel's footprint in metres (0 for full detail): past about a plate the plates give way to their share.
-void ground_salt_apply(vec3 p_world, float p_normal_y, float p_fp, inout vec3 r_albedo, inout float r_roughness) {
-	float c = ground_salt_state(p_world.xz);
-	if (c <= 0.0) {
-		return;
-	}
-	// Thicker and thinner along the shore (1.5 m), in patches (35 and 9 cm) of polygonal plates 10 cm across, whole
-	// plates crusted or bare, with whiter raised rims; a thin bloom under the crusts: off-white, never the snow's white.
-	vec2 p = p_world.xz;
-	float ce = c * mix(0.35, 1.0, ground_ripple_vn(p / 1.5, 23u));
-	float nz = 0.6 * ground_ripple_vn(p / 0.35, 21u) + 0.4 * ground_ripple_vn(p / 0.09, 22u);
-	float up = smoothstep(0.3, 0.8, p_normal_y);
-	float share = smoothstep(1.0 - ce, 1.35 - ce, nz);
-	vec2 cell = ground_salt_cells(p / 0.1);
-	float plate = step(cell.y, share) * (0.85 + 0.15 * (1.0 - smoothstep(0.0, 0.08, cell.x)));
-	float cover = mix(plate, 0.9 * share, smoothstep(0.03, 0.1, p_fp)) * up;
-	r_albedo = mix(r_albedo, vec3(0.56, 0.53, 0.48), max(0.75 * cover, 0.15 * ce * up));
-	r_roughness = mix(r_roughness, 0.92, min(cover, 1.0));
-	// The cracks between the plates, a few millimetres wide, showing the damp sand under them (gone past a few mm
-	// a pixel, where their share is in the plates' mix).
-	// Plate by plate a little whiter or greyer; the cracks open and close along their length.
-	float gap = 0.05 * ground_ripple_vn(p / 0.04, 25u);
-	float near = (1.0 - smoothstep(0.004, 0.012, p_fp)) * step(cell.y, share) * up;
-	r_albedo *= 1.0 + near * (0.12 * fract(cell.y * 17.0) - 0.06 - 0.25 * (1.0 - smoothstep(gap, gap + 0.02, cell.x)));
-}
-// The patch's surface with its standing water and its cracks (the cracks the mesh's spacing can carry).
-float ground_deform_top(vec2 p_xz) {
-	vec4 d = ground_deform_sample(p_xz);
-	float h = textureLod(ground_deform_height, (p_xz - ground_deform_height_rect.xy) / ground_deform_height_rect.zw, 0.0).r - d.r + max(d.g, 0.0);
-	vec4 cs = ground_crack_state(p_xz);
-	if (cs.x > 0.0 && cs.y > 0.0) {
-		float e = max(mix(ground_deform_rect.w, ground_deform_near_rect.w, ground_deform_near_weight(p_xz)), 1e-3);
-		// Filtered to the mesh's Nyquist: one and a half vertex spacings.
-		h += ground_crack_height(ground_cracks(p_xz, cs), 1.5 * e).x;
-	}
-	return h;
-}
-// Standing water over the deformed ground (docs/ideas/mud.md, stage 2), the same lines in material.cpp and
-// scene_raytracing_raygen.glsl: (albedo factor, share that is water, water's roughness, 0) at a depth (m) over
-// ground with pore water p_wet, the water carrying p_mud kg/m3 of clay (mud round 3: churned up by tyres and feet).
-vec4 ground_water_look(float p_depth, float p_wet, float p_mud) {
-	// A film reads as water once it covers the grains' relief (half a millimetre), whole by 2 mm.
-	float cover = smoothstep(0.0003, 0.002, p_depth);
-	// Thinner, it already glistens: a seepage sheet a few hundredths of a millimetre deep fills the pores between
-	// the top grains and its surface is smooth (Lagarde 2013's accumulated water), though the grains still show.
-	// Fully a mirror only from most of a millimetre: a sheet of a tenth of one between rills is wet sand with a
-	// sheen, so the water in the channels, deepening across them, reads as the brightest and their banks round off
-	// (from 0.3 mm the whole sheet was one mirror, the dry ridges cut out of it as flat-sided steps).
-	float gloss = smoothstep(0.00004, 0.0008, p_depth);
-	// The bed under it is soaked (Lagarde 2013, porosity 0.6: albedo 0.52), less what its pore water already took.
-	float soak = mix(1.0, 0.52, cover * (1.0 - clamp(p_wet, 0.0, 1.0)));
-	// Rut water carries clay: it hides the bed within a centimetre or so (Beer-Lambert down and back up, an
-	// e-folding depth of 1 cm, water with a few grams of clay a litre) and scatters back a darker soil colour.
-	// Stirred, it carries more: the attenuation grows with the clay (Beer-Lambert in the concentration), so at some
-	// 40 kg/m3 it hides the bed under a millimetre.
-	float murk = 1.0 - exp(-2.0 * p_depth * (3.0 + max(p_mud, 0.0)) / 0.03);
-	// Thick with clay it no longer shows the soaked bed darker: it scatters back the clay's own colour (the dry
-	// ground's, a little darker: the pore water's darkening, Lagarde's 0.52 with p_wet of it already applied, undone),
-	// milky brown, as the slurry it is.
-	float slurry = max(p_mud, 0.0) / (max(p_mud, 0.0) + 30.0);
-	float bed = soak * mix(1.0, 0.75, murk * cover);
-	float clay = 0.8 / mix(1.0, 0.52, clamp(p_wet, 0.0, 1.0));
-	return vec4(mix(bed, clay, slurry * murk * cover), cover, 0.03, gloss);
-}
-// Flowing water (docs/ideas/sand.md, flowing rills): the sheet's surface carries small ripples that the flow
-// sweeps downstream, drawn as a flow map does (Vlachos 2010, Water Flow in Portal 2): a ripple pattern advected by
-// the water's velocity over a one-second cycle, two copies half a cycle apart cross-faded so neither's reset shows.
-// The velocity is the shallow water's own, by Manning (n 0.025, as the GPU's water) from the depth and the surface's
-// slope (its normal): downhill, d^(2/3) sqrt(S) / n. The same lines are in material.cpp and
-// scene_raytracing_raygen.glsl.
-vec2 ground_flow_grad(vec2 p_cell) {
-	uvec2 q = uvec2(ivec2(floor(p_cell)) + ivec2(1 << 20));
-	uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
-	h ^= h >> 16u;
-	h *= 0x7feb352du;
-	h ^= h >> 15u;
-	h *= 0x846ca68bu;
-	h ^= h >> 16u;
-	float a = float(h) * (6.2831853 / 4294967296.0);
-	return vec2(cos(a), sin(a));
-}
-// Gradient noise and its slope, p in cells (quintic fade).
-vec3 ground_flow_noise(vec2 p) {
-	vec2 i = floor(p);
-	vec2 f = p - i;
-	vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-	vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
-	vec2 ga = ground_flow_grad(i);
-	vec2 gb = ground_flow_grad(i + vec2(1.0, 0.0));
-	vec2 gc = ground_flow_grad(i + vec2(0.0, 1.0));
-	vec2 gd = ground_flow_grad(i + vec2(1.0, 1.0));
-	float va = dot(ga, f);
-	float vb = dot(gb, f - vec2(1.0, 0.0));
-	float vc = dot(gc, f - vec2(0.0, 1.0));
-	float vd = dot(gd, f - vec2(1.0, 1.0));
-	float k = va - vb - vc + vd;
-	float v = va + u.x * (vb - va) + u.y * (vc - va) + u.x * u.y * k;
-	vec2 d = ga + u.x * (gb - ga) + u.y * (gc - ga) + u.x * u.y * (ga - gb - gc + gd) + du * (u.yx * k + vec2(vb, vc) - va);
-	return vec3(v, d);
-}
-// The ripples' slope (d/dx, d/dz) on water p_depth deep (m) whose surface normal is p_n (world), at time p_t (s);
-// p_fp is the pixel's footprint (m): ripples finer than two pixels fade out rather than alias.
-vec2 ground_water_flow(vec2 p_xz, vec3 p_n, float p_depth, float p_t, float p_fp) {
-	float s = length(p_n.xz) / max(p_n.y, 0.2);
-	float speed = min(pow(max(p_depth, 0.0), 2.0 / 3.0) * sqrt(s) / 0.025, 1.5);
-	// Ripples stand up once the sheet runs (a few cm/s); still water stays a mirror.
-	float run = smoothstep(0.03, 0.25, speed);
-	if (run <= 0.0 || s < 1e-4) {
-		return vec2(0.0);
-	}
-	vec2 dir = p_n.xz / length(p_n.xz);
-	vec2 v = dir * speed;
-	// Stretched across the flow, as the small transverse ripples on sheet flow are: cells twice as long across.
-	vec2 side = vec2(-dir.y, dir.x);
-	float ph0 = fract(p_t);
-	float ph1 = fract(p_t + 0.5);
-	float w0 = 1.0 - abs(2.0 * ph0 - 1.0);
-	vec2 slope = vec2(0.0);
-	for (int o = 0; o < 2; o++) {
-		// Wavelengths 2 cm and 7 mm, heights a twentieth of them.
-		float l = o == 0 ? 0.02 : 0.007;
-		float fade = 1.0 - smoothstep(0.25 * l, 0.5 * l, p_fp);
-		if (fade <= 0.0) {
-			continue;
-		}
-		for (int k = 0; k < 2; k++) {
-			float ph = k == 0 ? ph0 : ph1;
-			float w = k == 0 ? w0 : 1.0 - w0;
-			vec2 q = p_xz - v * ph;
-			vec2 c = vec2(dot(q, dir), 0.5 * dot(q, side)) / l + vec2(17.0 * float(k) + 5.0 * float(o), 31.0 * float(k));
-			vec3 n = ground_flow_noise(c);
-			// Back from the stretched cells to world: d/d(along) = n.y / l, d/d(across) = 0.5 n.z / l.
-			slope += w * fade * 0.05 * (dir * n.y + side * 0.5 * n.z);
-		}
-	}
-	return slope * run;
-}
-// Puddle ice (docs/ideas/mud.md, round 7), the same lines in material.cpp and scene_raytracing_raygen.glsl.
-// The Voronoi cells of p (in cells, Worley 1996): x about the distance to the nearest edge (half of F2 - F1), yz
-// the nearest site's two hashes (0..1), w the distance to that site.
-vec4 ground_ice_cells(vec2 p) {
-	vec2 i = floor(p);
-	vec2 f = p - i;
-	float d1 = 8.0;
-	float d2 = 8.0;
-	vec2 h1 = vec2(0.0);
-	for (int y = -1; y <= 1; y++) {
-		for (int x = -1; x <= 1; x++) {
-			vec2 c = vec2(float(x), float(y));
-			vec2 g = ground_flow_grad(i + c);
-			vec2 g2 = ground_flow_grad(i + c + vec2(311.0, 173.0));
-			vec2 o = c + 0.5 + 0.4 * g * (0.5 + 0.5 * g2.x) - f;
-			float d = dot(o, o);
-			if (d < d1) {
-				d2 = d1;
-				d1 = d;
-				h1 = 0.5 + 0.5 * g2;
-			} else if (d < d2) {
-				d2 = d;
-			}
-		}
-	}
-	return vec4(0.5 * (sqrt(d2) - sqrt(d1)), h1, sqrt(d1));
-}
-// Ice p_h thick (m) over a puddle p_depth deep, p_broken of it broken into plates, seen with a footprint of p_fp (m):
-// (the share that is white, the share that is ice, its roughness, 0); r_slope the tilt of a broken plate. A puddle
-// freezes from its rim in: there the ice reaches the bed (and the water under it drains or freezes out its air), so
-// the rim is milky white with trapped bubbles, the middle clear and dark over the water (black ice). The surface is
-// not a mirror: frozen ripples and rime frost it a little. Broken, the ice lies in tilted plates (larger the thicker
-// it is) with white fractured edges and open water between them.
-vec4 ground_ice_look(vec2 p_xz, float p_h, float p_depth, float p_broken, float p_fp, out vec2 r_slope) {
-	r_slope = vec2(0.0);
-	float ice = smoothstep(0.0003, 0.001, p_h);
-	if (ice <= 0.0) {
-		return vec4(0.0);
-	}
-	// Frozen to the bed (the rim), and a ragged edge to that zone.
-	float n = ground_flow_noise(p_xz / 0.12 + vec2(41.0, 7.0)).x;
-	float through = smoothstep(0.55, 0.95, p_h / max(p_depth, 1e-4) + 0.3 * n);
-	// Bubbles: dots of 1 to 3 mm on a 1.5 cm grid, crowded where it froze through, sparse in the clear ice; past a
-	// couple of millimetres a pixel they average out.
-	vec4 bc = ground_ice_cells(p_xz / 0.015);
-	float br = 0.0007 + 0.0015 * bc.z;
-	float dense = mix(0.08, 0.9, through);
-	float dot_ = step(bc.y, dense) * (1.0 - smoothstep(br, br + p_fp, bc.w * 0.015));
-	float avg = dense * 3.14159 * br * br / (0.015 * 0.015);
-	float bubbles = mix(dot_, avg, smoothstep(0.002, 0.006, p_fp));
-	float milk = clamp(0.75 * through + 0.6 * bubbles * (1.0 - 0.5 * through) + 0.06, 0.0, 0.9);
-	// Frozen ripples: a gentle relief that breaks the mirror.
-	vec3 rip = ground_flow_noise(p_xz / 0.05 + vec2(3.0, 19.0));
-	r_slope = 0.04 * rip.yz;
-	float s = clamp(0.06 + 2.0 * p_h, 0.06, 0.25);
-	vec4 pc = ground_ice_cells(p_xz / s);
-	// Broken where the load went through (the share past 0.4): the lattice's smooth falloff leaves no stray plates.
-	float brk = step(pc.y, (p_broken - 0.4) / 0.6);
-	float pe = pc.x * s;
-	float gap = 0.003 + 0.004 * pc.z;
-	float open = brk * (1.0 - smoothstep(gap, gap + p_fp, pe));
-	float rim = brk * (1.0 - smoothstep(gap, gap + 0.012 + p_fp, pe)) * (1.0 - open);
-	// Broken plates tip: one edge sinks, the other rises from the water.
-	r_slope += brk * (1.0 - open) * 0.35 * vec2(pc.z - 0.5, fract(pc.y * 7.31) - 0.5);
-	float cover = ice * (1.0 - open);
-	float white = cover * clamp(milk + 0.5 * rim, 0.0, 0.9);
-	return vec4(white, cover, mix(0.12, 0.45, white / max(cover, 1e-3)), 0.0);
-}
-// The crust's tear field at p_xz (in units of 5 cm), warped by noise at two scales so the tears wander and nothing
-// repeats.
-vec2 ground_needle_q(vec2 p_xz) {
-	vec2 w = vec2(ground_flow_noise(p_xz / 0.9 + vec2(13.0, 71.0)).x, ground_flow_noise(p_xz / 0.9 + vec2(97.0, 29.0)).x);
-	vec2 w2 = vec2(ground_flow_noise(p_xz / 0.17 + vec2(3.0, 41.0)).x, ground_flow_noise(p_xz / 0.17 + vec2(59.0, 7.0)).x);
-	// A finer jitter a centimetre or so across: torn soil breaks jagged, not in smooth curves.
-	vec2 w3 = vec2(ground_flow_noise(p_xz / 0.012 + vec2(11.0, 83.0)).x, ground_flow_noise(p_xz / 0.012 + vec2(37.0, 19.0)).x);
-	return p_xz / 0.05 + 1.6 * w + 0.5 * w2 + 0.12 * w3;
-}
-// Needle ice (docs/ideas/mud.md, round 9), the same lines in material.cpp and scene_raytracing_raygen.glsl. Ice
-// needles p_h tall (m) stand upright under a crust of soil they lifted (Outcalt 1971; Lawler 1988). The crust stays
-// whole over most of the ground, a lumpy skin; in patches it tears open along meandering lines (where it lifted most
-// unevenly), and in the tears, lens-shaped and up to about a third of the needles' height wide, the needles show
-// side-on: bright upright columns about a millimetre apart, with the crust's dark underside over them. After the
-// thaw the crust lies as loose crumbs (p_loose) a few millimetres across. Returns (the share that is needle ice
-// showing, the soil's albedo factor, the crumbs' weight for a rough matte surface, 0); r_slope the crust's lumps and
-// the crumbs' tilt.
-vec4 ground_needle_look(vec2 p_xz, float p_h, float p_loose, float p_fp, out vec2 r_slope) {
-	r_slope = vec2(0.0);
-	float lift = smoothstep(0.002, 0.015, p_h);
-	// The tears: where a warped noise crosses zero (meandering, branching lines, no cells to repeat), its distance
-	// from the line its value over its slope; open only in patches about half a metre across.
-	vec2 q = ground_needle_q(p_xz);
-	vec3 n = ground_flow_noise(q * 0.7);
-	float e = abs(n.x) / max(length(n.yz) * 0.7 / 0.05, 1.0);
-	float tear = lift * smoothstep(0.05, 0.45, ground_flow_noise(p_xz / 0.45 + vec2(31.0, 11.0)).x);
-	// The opening swells and pinches along its line.
-	float along = clamp(0.5 + 0.9 * ground_flow_noise(p_xz / 0.03 + vec2(7.0, 3.0)).x, 0.0, 1.0);
-	float gw = tear * p_h * (0.05 + 0.35 * along);
-	float far_ = smoothstep(0.003, 0.02, p_fp);
-	float gap = gw > 1e-5 ? 1.0 - smoothstep(gw, gw + p_fp, e) : 0.0;
-	// In the tear the needles stand side-on: columns about a millimetre apart (each its own brightness), averaging
-	// out past a millimetre or two a pixel; the outer fifth of the opening is the crust's dark underside.
-	vec4 col = ground_ice_cells(p_xz / 0.0012 + vec2(17.0, 5.0));
-	float cols = mix(0.35 + 0.65 * smoothstep(0.25, 0.05, col.x) * (0.6 + 0.4 * col.y), 0.6, smoothstep(0.0008, 0.003, p_fp));
-	float under = 1.0 - smoothstep(0.6, 0.85, e / max(gw, 1e-5));
-	float white = gap * cols * under;
-	// Past a few millimetres a pixel it averages out to its share of the area.
-	white = mix(white, tear * clamp(0.3 * p_h / 0.05, 0.0, 0.25) * 0.6, far_);
-	float shadow = gap * (1.0 - under);
-	// The crust's lumps a few centimetres across; beside a tear its edges curl up away from the opening.
-	vec3 lump = ground_flow_noise(p_xz / 0.035 + vec2(23.0, 2.0));
-	vec2 away = sign(n.x) * normalize(n.yz + 1e-6);
-	float edge = tear * (1.0 - gap) * (1.0 - smoothstep(gw, gw + 0.01, e));
-	r_slope = lift * (1.0 - gap) * 0.1 * lump.yz - 0.3 * edge * away;
-	vec4 k = ground_ice_cells(p_xz / 0.006);
-	float fine = 1.0 - smoothstep(0.002, 0.008, p_fp);
-	r_slope += p_loose * fine * 0.5 * vec2(k.y - 0.5, k.z - 0.5);
-	float shade = mix(1.0, mix(1.0, 0.8 + 0.4 * k.y, fine), p_loose) * (1.0 - 0.7 * clamp(shadow, 0.0, 1.0));
-	return vec4(white, shade, p_loose, 0.0);
-}
-// Sand grains (docs/ideas/sand.md, sand glints; the same functions are in scene_raytracing_raygen.glsl). Grains
-// of 0.25 mm counted per cell of the pixel's footprint, as the snow's sparkle is (Zirr and Kaplanyan 2016;
-// Deliot and Belcour 2023): the cell is the grain size doubled until it covers the footprint.
-uint ground_grain_hash(ivec3 p_q, uint p_level) {
-	uint h = (uint(p_q.x) * 73856093u) ^ (uint(p_q.y) * 19349663u) ^ (uint(p_q.z) * 83492791u) ^ (p_level * 2654435761u);
-	h ^= h >> 16u;
-	h *= 0x7feb352du;
-	h ^= h >> 15u;
-	h *= 0x846ca68bu;
-	h ^= h >> 16u;
-	return h;
-}
-// Grain colour: sand is a mix of grains (quartz, feldspar, dark heavy minerals) whose colours average out over
-// the footprint, their contrast falling as one over the square root of the grains a cell holds; blended across
-// levels so it never steps. An albedo factor about 1.
-float ground_grain_layer(vec3 p_pos, float p_footprint, float p_grain, uint p_salt) {
-	float lf = max(log2(max(p_footprint, p_grain) / p_grain), 0.0);
-	float l0 = floor(lf);
-	float v = 0.0;
-	for (int k = 0; k < 2; k++) {
-		float level = l0 + float(k);
-		float cell = p_grain * exp2(level);
-		uint h = ground_grain_hash(ivec3(floor(p_pos / cell)), uint(level) + p_salt);
-		// The sum of two uniforms: a rounded spread about 0, standard deviation 0.41.
-		float s = (float(h & 0xffffu) + float(h >> 16u)) / 65535.0 - 1.0;
-		v += (k == 0 ? 1.0 - (lf - l0) : lf - l0) * s / exp2(level);
-	}
-	return v;
-}
-// Medium sand (0.25 mm) and the coarse grains, shell bits and dark minerals among it (about 1.2 mm), which are
-// what still read as single grains from half a metre.
-float ground_grain_speckle(vec3 p_pos, float p_footprint) {
-	return 1.0 + 0.8 * ground_grain_layer(p_pos, p_footprint, 0.00025, 0u) + 0.45 * ground_grain_layer(p_pos, p_footprint, 0.0012, 40u);
-}
-// A share of the grains are clean faces (quartz cleavage, mica flakes) that mirror a light: one facet per cell, as
-// snow_glint() with sand's grain and share; returns its normal and weight (0: none).
-vec4 ground_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
-	const float grain = 0.00025;
-	const float share = 0.12;
-	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
-	if (level > 7.0) {
-		return vec4(p_n, 0.0);
-	}
-	float cell = grain * exp2(level);
-	uint h = ground_grain_hash(ivec3(floor(p_pos / cell)), uint(level) + 17u);
-	float r0 = float(h & 0x3ffu) / 1023.0;
-	float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
-	float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
-	float grains = exp2(2.0 * level);
-	float chance = min(share * grains, 1.0);
-	if (r0 >= chance) {
-		return vec4(p_n, 0.0);
-	}
-	float tan2 = 0.25 * r1 / max(1.0 - r1, 1e-3);
-	float ct = inversesqrt(1.0 + tan2);
-	float st = sqrt(max(1.0 - ct * ct, 0.0));
-	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-	vec3 b = cross(p_n, t);
-	float phi = 6.2831853 * r2;
-	vec3 f = normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
-	return vec4(f, share / chance / sqrt(max(share * grains, 1.0)));
+	return textureLod(ground_deform_height, (p_xz - ground_deform_height_rect.xy) / ground_deform_height_rect.zw, 0.0).r + d.g - d.r;
 }
 // The share of the skirt the terrain is lowered by at p_xz: none at the field's edge, all past margin + fade.
 float ground_deform_lowered(vec2 p_xz) {
@@ -6029,22 +3775,14 @@ void ground_deform_vertex(mat4 p_model, inout vec3 r_vertex, inout vec3 r_normal
 	if (ground_deform_patch) {
 		// The deformed surface, its normal and tangents by central differences over one field texel. Where
 		// the terrain is not lowered (the field's outer margin) the patch tucks 5 cm under it.
-		float e = max(mix(ground_deform_rect.w, ground_deform_near_rect.w, ground_deform_near_weight(w.xz)), 1e-3);
-		// Standing water lifts the patch to its level: the water is the surface there, in both renderers.
-		vec2 slope = vec2(ground_deform_top(w.xz + vec2(e, 0.0)) - ground_deform_top(w.xz - vec2(e, 0.0)),
-				ground_deform_top(w.xz + vec2(0.0, e)) - ground_deform_top(w.xz - vec2(0.0, e))) / (2.0 * e);
-		w.y = ground_deform_top(w.xz) - 0.05 * (1.0 - ground_deform_lowered(w.xz));
-		// Ripples, their slope over their own cell.
-		if (ground_ripple_rect.z > 0.0) {
-			float er = max(ground_ripple_rect.w, 1e-3);
-			w.y += ground_ripple(w.xz);
-			slope += vec2(ground_ripple(w.xz + vec2(er, 0.0)) - ground_ripple(w.xz - vec2(er, 0.0)),
-					ground_ripple(w.xz + vec2(0.0, er)) - ground_ripple(w.xz - vec2(0.0, er))) / (2.0 * er);
-		}
+		float e = max(ground_deform_rect.w, 1e-3);
+		float hx = ground_deform_surface(w.xz + vec2(e, 0.0)) - ground_deform_surface(w.xz - vec2(e, 0.0));
+		float hz = ground_deform_surface(w.xz + vec2(0.0, e)) - ground_deform_surface(w.xz - vec2(0.0, e));
+		w.y = ground_deform_surface(w.xz) - 0.05 * (1.0 - ground_deform_lowered(w.xz));
 		mat3 n_to_model = transpose(mat3(p_model));
-		r_normal = normalize(n_to_model * normalize(vec3(-slope.x, 1.0, -slope.y)));
-		r_tangent = normalize(n_to_model * normalize(vec3(1.0, slope.x, 0.0)));
-		r_binormal = normalize(n_to_model * normalize(vec3(0.0, slope.y, 1.0)));
+		r_normal = normalize(n_to_model * normalize(vec3(-hx, 2.0 * e, -hz)));
+		r_tangent = normalize(n_to_model * normalize(vec3(2.0 * e, hx, 0.0)));
+		r_binormal = normalize(n_to_model * normalize(vec3(0.0, hz, 2.0 * e)));
 	} else {
 		w.y -= ground_deform_skirt.x * ground_deform_lowered(w.xz);
 	}
@@ -6055,66 +3793,7 @@ vec2 ground_deform_tint(vec3 p_world) {
 	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
 		return vec2(1.0);
 	}
-	vec4 d = ground_deform_sample(p_world.xz);
-	// A < 0: muddy water over it, whose surface hides the turned ground's gloss (ground_deform_water_mud()).
-	return vec2(d.b, d.a < 0.0 ? 1.0 : d.a);
-}
-// How far a print, rut, dig, standing water or laid mud has opened the ground's cover (turf, a meadow's tint) to the
-// soil under it, 0 to 1: a rut deeper than a few cm, freshly turned or mud-filmed ground, a puddle. A plain step
-// presses the sward flat without breaking it.
-float ground_deform_exposed(vec3 p_world) {
-	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
-		return 0.0;
-	}
-	vec4 d = ground_deform_sample(p_world.xz);
-	// An old rut the sward has grown back over (mud round 6: A just over 1) shows its ground cover again.
-	float regrown = clamp((d.a - 1.0) / 0.02, 0.0, 1.0);
-	float relief = smoothstep(0.01, 0.04, abs(d.r)) * (1.0 - regrown);
-	float turned = smoothstep(0.03, 0.15, abs(1.0 - d.b));
-	float water = d.a < 0.0 ? 1.0 : smoothstep(5e-4, 3e-3, d.g);
-	return max(max(relief, turned), water);
-}
-// The clay the standing water carries at a world position, kg/m3 (mud round 3; the map's A under muddy water).
-float ground_deform_water_mud(vec3 p_world) {
-	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
-		return 0.0;
-	}
-	return 400.0 * max(-ground_deform_sample(p_world.xz).a, 0.0);
-}
-// Standing water's depth between texels. The water's level (bed plus depth) is what varies smoothly, so the depth
-// is taken as the level less the bed, interpolated, with dry texels given their wet neighbours' mean level (a
-// level-set extension, as heightfield water renderers do at the wet/dry front): the waterline then runs across the
-// texels where the level meets the bed. Interpolating the depth itself and thresholding it near zero (the film's
-// gloss starts at 20 um) draws every dry texel as a square island with stepped edges. p_r and p_g: the four texels'
-// net depression and depth (textureGather order), p_f the position between them.
-float ground_water_between(vec4 p_r, vec4 p_g, vec2 p_f) {
-	vec4 wet = step(vec4(1e-7), p_g);
-	float n = dot(wet, vec4(1.0));
-	if (n == 0.0) {
-		return 0.0;
-	}
-	float fill = dot((p_g - p_r) * wet, vec4(1.0)) / n;
-	vec4 dz = mix(vec4(fill) + p_r, p_g, wet);
-	return max(mix(mix(dz.w, dz.z, p_f.x), mix(dz.x, dz.y, p_f.x), p_f.y), 0.0);
-}
-// Standing water over the patch at a world position, m (0 off the patch).
-float ground_deform_water(vec3 p_world) {
-	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
-		return 0.0;
-	}
-	vec2 uv = (p_world.xz - ground_deform_rect.xy) / ground_deform_rect.z;
-	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-		return 0.0;
-	}
-	vec2 f = fract(uv * vec2(textureSize(ground_deform_map, 0)) - 0.5);
-	float w = ground_water_between(textureGather(ground_deform_map, uv, 0), textureGather(ground_deform_map, uv, 1), f);
-	float nw = ground_deform_near_weight(p_world.xz);
-	if (nw > 0.0) {
-		vec2 nuv = (p_world.xz - ground_deform_near_rect.xy) / ground_deform_near_rect.z;
-		vec2 nf = fract(nuv * vec2(textureSize(ground_deform_near_map, 0)) - 0.5);
-		w = mix(w, ground_water_between(textureGather(ground_deform_near_map, nuv, 0), textureGather(ground_deform_near_map, nuv, 1), nf), nw);
-	}
-	return w;
+	return ground_deform_sample(p_world.xz).ba;
 }
 )";
 	return code;
@@ -6617,10 +4296,6 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wetness_amount"), &BaseMaterial3D::get_wetness_amount);
 	ClassDB::bind_method(D_METHOD("set_wetness_from_weather", "enable"), &BaseMaterial3D::set_wetness_from_weather);
 	ClassDB::bind_method(D_METHOD("is_wetness_from_weather"), &BaseMaterial3D::is_wetness_from_weather);
-	ClassDB::bind_method(D_METHOD("set_wetness_canopy", "enable"), &BaseMaterial3D::set_wetness_canopy);
-	ClassDB::bind_method(D_METHOD("is_wetness_canopy"), &BaseMaterial3D::is_wetness_canopy);
-	ClassDB::bind_method(D_METHOD("set_glaze", "enable"), &BaseMaterial3D::set_glaze);
-	ClassDB::bind_method(D_METHOD("is_glaze"), &BaseMaterial3D::is_glaze);
 	ClassDB::bind_method(D_METHOD("set_snow_amount", "amount"), &BaseMaterial3D::set_snow_amount);
 	ClassDB::bind_method(D_METHOD("get_snow_amount"), &BaseMaterial3D::get_snow_amount);
 	ClassDB::bind_method(D_METHOD("set_snow_max_slope", "degrees"), &BaseMaterial3D::set_snow_max_slope);
@@ -6630,8 +4305,6 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_ground_deform_patch"), &BaseMaterial3D::is_ground_deform_patch);
 	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_ground_deform_shader_code"), &BaseMaterial3D::get_ground_deform_shader_code);
 	ClassDB::bind_method(D_METHOD("is_snow_from_weather"), &BaseMaterial3D::is_snow_from_weather);
-	ClassDB::bind_method(D_METHOD("set_snow_on_body", "enable"), &BaseMaterial3D::set_snow_on_body);
-	ClassDB::bind_method(D_METHOD("is_snow_on_body"), &BaseMaterial3D::is_snow_on_body);
 
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
 	ClassDB::bind_method(D_METHOD("get_point_size"), &BaseMaterial3D::get_point_size);
@@ -6947,24 +4620,16 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_porosity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_porosity", "get_wetness_porosity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_amount", "get_wetness_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_from_weather"), "set_wetness_from_weather", "is_wetness_from_weather");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_canopy"), "set_wetness_canopy", "is_wetness_canopy");
-
-	ADD_GROUP("Glaze", "");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glaze"), "set_glaze", "is_glaze");
 
 	ADD_GROUP("Snow", "snow_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "snow_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_SNOW);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_snow_amount", "get_snow_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_max_slope", PROPERTY_HINT_RANGE, "0,90,0.1,degrees"), "set_snow_max_slope", "get_snow_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_from_weather"), "set_snow_from_weather", "is_snow_from_weather");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_on_body"), "set_snow_on_body", "is_snow_on_body");
 
 	ADD_GROUP("Ground Deform", "ground_deform_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "ground_deform_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_GROUND_DEFORM);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_deform_patch"), "set_ground_deform_patch", "is_ground_deform_patch");
-
-	ADD_GROUP("Mud", "mud_");
-	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "mud_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_MUD);
 
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
@@ -7105,7 +4770,6 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FEATURE_WETNESS);
 	BIND_ENUM_CONSTANT(FEATURE_SNOW);
 	BIND_ENUM_CONSTANT(FEATURE_GROUND_DEFORM);
-	BIND_ENUM_CONSTANT(FEATURE_MUD);
 	BIND_ENUM_CONSTANT(FEATURE_MAX);
 
 	BIND_ENUM_CONSTANT(BLEND_MODE_MIX);

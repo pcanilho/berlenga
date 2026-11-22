@@ -112,9 +112,6 @@ public:
 	void set_shadow(bool p_enable);
 	bool has_shadow() const;
 
-	// The light's RenderingServer RID (its instance's base), for render-side effects that pair with it.
-	RID get_light_rid() const { return light; }
-
 	void set_negative(bool p_enable);
 	bool is_negative() const;
 

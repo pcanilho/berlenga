@@ -24,18 +24,6 @@ vec4 fetch_instance_custom(GeometryData geom, uint primitive_id) {
 	return fetch_instance_field(geom, primitive_id, 16u, vec4(0.0));
 }
 
-// The hit instance's own transform in a merged MultiMesh (FLAG_INSTANCE_XFORM): the record's leading 3x4 rows.
-mat4 fetch_instance_transform(GeometryData geom, uint primitive_id) {
-	uint divisor = geom.instance_data_primitive_divisor;
-	if (geom.instance_data_address == 0ul || divisor == 0u) {
-		return mat4(1.0);
-	}
-	uint stride = geom.instance_data_layout & 0xffu;
-	FloatBuffer d = FloatBuffer(geom.instance_data_address + uint64_t((primitive_id / divisor) * stride) * 4ul);
-	return mat4(vec4(d.v[0], d.v[4], d.v[8], 0.0), vec4(d.v[1], d.v[5], d.v[9], 0.0), vec4(d.v[2], d.v[6], d.v[10], 0.0),
-			vec4(d.v[3], d.v[7], d.v[11], 1.0));
-}
-
 // ============================================================================
 // VERTEX ATTRIBUTES
 // ============================================================================
@@ -96,12 +84,9 @@ void get_triangle_indices_ex(in GeometryData geom, uint primitive_id, out uint i
 }
 
 #if defined(RT_STAGE_CLOSEST_HIT) || defined(RT_STAGE_ANY_HIT) || defined(RT_STAGE_INTERSECTION)
-#ifndef RT_HIT_PRIMITIVE_ID
-#define RT_HIT_PRIMITIVE_ID gl_PrimitiveID
-#endif
-// Convenience wrapper using the hit's primitive (hit shaders only).
+// Convenience wrapper using gl_PrimitiveID (hit shaders only).
 void get_triangle_indices(in GeometryData geom, out uint i0, out uint i1, out uint i2) {
-	get_triangle_indices_ex(geom, RT_HIT_PRIMITIVE_ID, i0, i1, i2);
+	get_triangle_indices_ex(geom, gl_PrimitiveID, i0, i1, i2);
 }
 #endif
 
@@ -158,56 +143,6 @@ vec2 fetch_uv(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
 
 vec2 fetch_uv2(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
 	return fetch_uv_at(geom, geom.uv2_byte_offset, geom.uv2_scale_packed, i0, i1, i2, bary);
-}
-
-// ============================================================================
-// CUSTOM0-3 VERTEX ATTRIBUTES (GeometryData::custom_layout)
-// ============================================================================
-// Byte size of a custom attribute format (RSE::ArrayCustomFormat).
-uint custom_attrib_size(uint fmt) {
-	return fmt == 3u || fmt == 5u ? 8u : (fmt == 6u ? 12u : (fmt == 7u ? 16u : 4u));
-}
-
-vec4 fetch_custom_vertex(in GeometryData geom, uint word_offset, uint fmt, uint index) {
-	Uint32Buffer attr = Uint32Buffer(geom.attribute_address);
-	uint w = index * (geom.attribute_stride >> 2u) + word_offset;
-	switch (fmt) {
-		case 0u:
-			return unpackUnorm4x8(attr.v[w]);
-		case 1u:
-			return unpackSnorm4x8(attr.v[w]);
-		case 2u:
-			return vec4(unpackHalf2x16(attr.v[w]), 0.0, 0.0);
-		case 3u:
-			return vec4(unpackHalf2x16(attr.v[w]), unpackHalf2x16(attr.v[w + 1u]));
-		case 4u:
-			return vec4(uintBitsToFloat(attr.v[w]), 0.0, 0.0, 0.0);
-		case 5u:
-			return vec4(uintBitsToFloat(attr.v[w]), uintBitsToFloat(attr.v[w + 1u]), 0.0, 0.0);
-		case 6u:
-			return vec4(uintBitsToFloat(attr.v[w]), uintBitsToFloat(attr.v[w + 1u]), uintBitsToFloat(attr.v[w + 2u]), 0.0);
-		default:
-			return vec4(uintBitsToFloat(attr.v[w]), uintBitsToFloat(attr.v[w + 1u]), uintBitsToFloat(attr.v[w + 2u]), uintBitsToFloat(attr.v[w + 3u]));
-	}
-}
-
-// CUSTOM<p_index> at the hit, interpolated as raster's varyings are; zero when the mesh has none.
-vec4 fetch_custom_attrib(in GeometryData geom, uint p_index, uint i0, uint i1, uint i2, vec3 bary) {
-	uint layout_bits = geom.custom_layout;
-	if (geom.attribute_address == 0ul || ((layout_bits >> (8u + 4u * p_index)) & 8u) == 0u) {
-		return vec4(0.0);
-	}
-	uint offset = layout_bits & 0xFFu;
-	for (uint k = 0u; k < p_index; k++) {
-		uint f = (layout_bits >> (8u + 4u * k)) & 0xFu;
-		if ((f & 8u) != 0u) {
-			offset += custom_attrib_size(f & 7u);
-		}
-	}
-	uint fmt = (layout_bits >> (8u + 4u * p_index)) & 7u;
-	uint word_offset = offset >> 2u;
-	return bary.x * fetch_custom_vertex(geom, word_offset, fmt, i0) + bary.y * fetch_custom_vertex(geom, word_offset, fmt, i1) +
-			bary.z * fetch_custom_vertex(geom, word_offset, fmt, i2);
 }
 
 // ============================================================================

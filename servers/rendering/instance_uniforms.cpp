@@ -84,23 +84,10 @@ bool InstanceUniforms::materials_finish(RID p_self) {
 		return false;
 	}
 
-	// The slots it needs: its materials' highest instance uniform index + 1 (more after a material change: moved).
-	int32_t count = 1;
-	for (const KeyValue<StringName, Item> &kv : _parameters) {
-		if (kv.value.is_valid()) {
-			count = MAX(count, kv.value.index + 1);
-		}
-	}
-	if (is_allocated() && count > _count) {
-		RSG::material_storage->global_shader_parameters_instance_free(p_self);
-		_location = -1;
-	}
-
 	const bool should_alloc = !is_allocated();
 
 	if (should_alloc) {
-		_location = RSG::material_storage->global_shader_parameters_instance_allocate(p_self, count);
-		_count = count;
+		_location = RSG::material_storage->global_shader_parameters_instance_allocate(p_self);
 	}
 
 	for (KeyValue<StringName, Item> &kv : _parameters) {

@@ -33,12 +33,6 @@
 				Returns the number of deformation tiles kept for areas the field has left.
 			</description>
 		</method>
-		<method name="get_clumps_node" qualifiers="const">
-			<return type="SnowClumps3D" />
-			<description>
-				Returns the internal [SnowClumps3D] while [member clumps] is on and the node is in the tree, otherwise [code]null[/code].
-			</description>
-		</method>
 		<method name="get_deform_rect" qualifiers="const">
 			<return type="Rect2" />
 			<description>
@@ -114,13 +108,6 @@
 				Like [method press], with a flat rectangular print [param size] wide (x) and long (y), turned by [param yaw] radians about up: a boot, a runner, a crate.
 			</description>
 		</method>
-		<method name="rotten_share" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="wetness" type="float" />
-			<description>
-				The share of its bearing (pressure-sinkage moduli) a pack keeps at liquid saturation [param wetness] (0 to 1): 1 dry, 0.15 soaked. Wet snow loses its bonds (Yamanoi and Endo 2002), so boots and wheels posthole in a rotten spring pack; it also packs denser under the load and throws more aside.
-			</description>
-		</method>
 		<method name="sync_deformation">
 			<return type="void" />
 			<description>
@@ -149,9 +136,6 @@
 		</member>
 		<member name="character_mass" type="float" setter="set_character_mass" getter="get_character_mass" default="75.0">
 			The mass of a [CharacterBody3D] in a deform group, in kilograms, unless the node has a [code]snow_mass[/code] meta.
-		</member>
-		<member name="clumps" type="bool" setter="set_clumps" getter="is_clumps" default="true">
-			Lumps of snow broken out of the rims of the prints in cohesive snow, drawn as geometry near the camera by an internal [SnowClumps3D] (see [method get_clumps_node]).
 		</member>
 		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
 			If [code]true[/code], a heightfield body follows the deformed snow surface around the camera, so bodies stand on the snow and sink into their own prints.

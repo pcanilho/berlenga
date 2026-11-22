@@ -1,1 +1,0 @@
-- Snow: exact path traced sparkle (`snow_exact_glints`, every ice grain a facet per ray) is on by default; set it to `false` for the raster's footprint grid under the path tracer.

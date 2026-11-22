@@ -1,1 +1,0 @@
-- Water: rivers see stones through shallow water without rows of copies (screen-space refraction marched along the ray) and fade softly against the ground at the waterline in raster; `ground_probe_depth` keeps a cave stream's bed probes from laying deep water over its banks.

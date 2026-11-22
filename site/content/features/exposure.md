@@ -1,7 +1,6 @@
 ---
 title: "Exposure"
-weight: 30
-group: "Rendering"
+weight: 100
 summary: "Histogram metering, dark-scene key, local exposure."
 ---
 

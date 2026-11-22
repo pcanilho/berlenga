@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -34,17 +33,6 @@
 #include "flow_poisson.h"
 #include "physx_water_mist_3d.h"
 #include "physx_water_surface_3d.h"
-#include "water_fall_sound.h"
-#include "water_foam_shared.h"
-#include "water_sediment.h"
-
-#include "scene/3d/audio_stream_player_3d.h"
-
-#include "modules/modules_enabled.gen.h" // For weather.
-#ifdef MODULE_WEATHER_ENABLED
-#include "modules/weather/weather_map_3d.h"
-#include "modules/weather/weather_runoff_3d.h"
-#endif
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
@@ -54,9 +42,7 @@
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/gpu_particles_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
-#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
-#include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/mesh.h"
@@ -71,14 +57,10 @@
 
 namespace {
 
-// Seconds each copy of the ripples rides the current (the shader's flow_period; the live window's advected
-// coordinates restart on the same phases).
-constexpr float RIVER_FLOW_PERIOD = 1.5f;
-
 // The river surface. Per vertex (built by PhysXRiver3D): UV = (arc length,
 // distance across) in m, UV2 = flow (local xz, m/s), COLOR.r = water depth
 // encoded as (d + 1) / 4, COLOR.g = white water, COLOR.b = fade past the banks.
-const char *RIVER_SHADER_SRC_HEAD = R"(
+const char *RIVER_SHADER_SRC = R"(
 shader_type spatial;
 #if defined(RT)
 // The path tracer's copy is a medium boundary: it bends light, tints with
@@ -94,9 +76,6 @@ uniform float water_time = 0.0;
 // Two-phase flow (Vlachos 2010): each copy of the ripples rides the current for
 // one flow_period, then restarts while the other one is showing.
 uniform float flow_period = 1.5;
-// A cross-fade in from another surface over this many metres of arc length from UV.x = 0 (0: none): a dither
-// complementary to the one PhysXWaterSurface3D cuts itself out with (PhysXSeaCaveWater3D, at a sea cave's arch).
-uniform float fade_in_length = 0.0;
 uniform vec4 water_color : source_color = vec4(0.10, 0.25, 0.24, 0.72);
 uniform vec4 shallow_color : source_color = vec4(0.32, 0.42, 0.34, 0.35);
 uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
@@ -104,11 +83,6 @@ uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 // green taken out per metre, more fine silt scattering).
 uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
 uniform vec3 pathtraced_scattering = vec3(0.09, 0.1, 0.09);
-// The suspended load along the river (WorldWater sediment, kg/m3: r mineral, g ash) by arc length: x = (s - s0) / span.
-uniform bool sediment_on = false;
-uniform sampler2D sediment_tex : hint_default_black, filter_linear, repeat_disable;
-uniform vec2 sediment_range = vec2(0.0, 1.0);
-uniform int sediment_lanes = 1;
 uniform float pathtraced_scattering_anisotropy : hint_range(-0.9, 0.95) = 0.85;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.03;
 // Ripples: cells per metre, and their slope in still water and per m/s of current
@@ -118,25 +92,6 @@ uniform float ripple_strength = 0.06;
 uniform float ripple_speed_strength = 0.12;
 uniform float foam_detail_scale = 1.5;
 uniform float foam_breakup : hint_range(0.0, 1.0) = 0.6;
-// Crisp white water, as the open sea's (docs/ideas/water.md "Crisp foam on the open sea"): torn into holes and
-// strands at three scales with bubble grain (Plateau borders, Weaire and Hutzler 1999), its edge a narrow step of
-// the amount against a ragged threshold (Sea of Thieves, Atlas) and once more at the pixel's own scale. 0: the
-// older soft value-noise lace.
-uniform float foam_crisp : hint_range(0.0, 1.0) = 1.0;
-// The foam as a skin about this share of 3 cm thick: its gradient tilts the normal, so rims catch the sun on one
-// side (Crest's foam 3D lighting); and its bubbles' domes tilt it by foam_grain_tilt.
-uniform float foam_relief : hint_range(0.0, 2.0) = 0.5;
-uniform float foam_grain_tilt : hint_range(0.0, 2.0) = 0.15;
-// Capillary ripples down to about a centimetre (three more octaves under the ripples), each faded out where it is
-// finer than the pixel and its slope put into the surface's roughness instead (Bruneton, Neyret and Holzschuch
-// 2010), so the near water is sharp and the far water glitters without shimmering. 0: the three coarse octaves.
-uniform float ripple_detail : hint_range(0.0, 2.0) = 1.0;
-// Sun caustics on the bed seen through clear water (raster; the path tracer finds its own): the ripples bend the
-// refracted sun, and the bed's light scales by how the bundle of rays narrows or spreads there, one over the
-// determinant of the map from where a ray enters the surface to where it lands (I + z (1 - 1/n) H, H the surface's
-// Hessian, from the ripples' slope; Wallace's WebGL water, 2011, as a closed form). Capped where the rays cross,
-// where the sun's half-degree disc keeps the real lines finite. 0: off.
-uniform float caustics_strength : hint_range(0.0, 2.0) = 1.0;
 // The surface fades out over this much water depth (m) at the waterline.
 uniform float edge_softness : hint_range(0.0, 0.5, 0.005) = 0.06;
 // A living waterline: the edge laps in and out by up to this much water depth
@@ -150,12 +105,6 @@ uniform float edge_foam : hint_range(0.0, 1.0, 0.01) = 0.35;
 // ruts, tufts): up to this much depth (m), fixed to the ground, so the line
 // runs in and out of little bays and points instead of following the mesh.
 uniform float edge_relief : hint_range(0.0, 0.3, 0.005) = 0.05;
-// Debug: colour the water by its Froude number (blue subcritical, green critical, red supercritical, white
-// at jump toes).
-uniform bool froude_overlay = false;
-// Metres between the river's cross-sections (set by PhysXRiver3D): standing waves shorter than a few sections
-// are drawn in the slope only, as the mesh would facet them into ridges.
-uniform float section_step = 1.0;
 // The live window (set by PhysXRiver3D while live_flow runs): a square of
 // shallow-water simulation round the camera. Height is the disturbance on the
 // river's own surface; flow is the total velocity (rg, world xz, m/s) with the
@@ -168,40 +117,12 @@ uniform vec2 live_texel = vec2(0.25);
 uniform vec3 live_tilt = vec3(0.0);
 uniform sampler2D live_height_tex : hint_default_black, filter_linear, repeat_disable;
 uniform sampler2D live_flow_tex : hint_default_black, filter_linear, repeat_disable;
-// Advected ripple coordinates (water_flow_offset.glsl): how far each phase's ripples have drifted from where plain
-// flow mapping puts them, following the live flow's real paths (round eddies, not straight along today's
-// velocity). Phase A in rg, B in ba (m).
-uniform bool live_advected = false;
-uniform sampler2D live_offset_tex : hint_default_black, filter_linear, repeat_disable;
-// Dispersive surface waves over the live window (water_surface_waves.glsl): h (m) in r, on a finer grid.
-uniform bool live_waves = false;
-uniform sampler2D live_wave_tex : hint_default_black, filter_linear, repeat_disable;
-uniform vec2 live_wave_texel = vec2(0.1);
-uniform float live_near_spacing = 0.0; // m between the dense ribbon's vertices in the live window (0: none)
-// Clear water (raster, seen from above; docs/ideas/water.md "Clear water you can see into"): the bed read
-// through the surface along the refracted ray and passed through the path tracer's medium, as on the sea
-// (PhysXWaterSurface3D). Off: the older tint (water_color, shallow_color).
-uniform bool clear_water = true;
-// Screen-space reflections with raster_reflections off (a cave stream: no sky to mirror), as PhysXWaterSurface3D's.
-uniform bool screen_reflections = true;
-// Raster: the water thins out over this much of its own depth (m) against what the screen shows behind it -- the
-// bank, a stone standing out of it -- so the shoreline is soft and follows the ground, not the ribbon's
-// waterline interpolated between its vertices (depth fade, as UE's Water and Crest do it).
-uniform float shore_depth_fade : hint_range(0.0, 0.3, 0.005) = 0.05;
-#if !defined(RT)
-uniform sampler2D clear_screen : hint_screen_texture, filter_linear, repeat_disable;
-uniform sampler2D clear_depth : hint_depth_texture, filter_nearest, repeat_disable;
-#endif
 // Raster reflections from above (water_raster_reflections.h).
-)";
-const char *RIVER_SHADER_SRC_TAIL = R"(
+)" WATER_RASTER_REFLECTIONS_GLSL R"(
 varying vec3 v_world;
 varying vec2 v_flow;
 varying vec4 v_info;
 varying vec3 v_normal;
-varying vec4 v_wave; // undular train: amplitude, wavenumber, toe arc length, decay length
-varying float v_s;
-varying float v_n; // distance across, m (to the left bank)
 
 float r_hash(vec2 p) {
 	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -239,80 +160,6 @@ vec2 ripple_slope(vec2 p) {
 	return s;
 }
 
-// Gust ripples (docs/ideas/wind.md): the shared wind roughens the water where it blows. The short waves' mean
-// square slope follows the local wind as Cox and Munk (1954) measured it (0.00512 U10 beyond the calm), and
-// vanishes below the capillary onset (about 1 m/s), so lulls leave glassy patches and gusts sweep darker cat's
-// paws over the river. The wavelets' crests lie across the wind; they ride the current and creep downwind at
-// about the slowest capillary-gravity phase speed (0.23 m/s). Narrow water is fetch-limited: wind_ripple_strength.
-uniform bool wind_ripples = true;
-uniform float wind_ripple_strength : hint_range(0.0, 2.0, 0.01) = 0.5;
-vec2 river_wind_slope(vec2 xz, vec2 flow) {
-#ifdef RIVER_WEATHER
-	if (!wind_ripples || weather_map_rect.z <= 0.0) {
-		return vec2(0.0);
-	}
-	float z0 = max(weather_wind_info.w, 1e-5);
-	vec3 w = weather_wind(vec3(xz.x, 0.0, xz.y), 2.0);
-	float u10 = length(w.xz) / max(weather_open_profile(2.0, z0), 1e-3);
-	float var = (0.0025 + 0.00512 * u10) * smoothstep(0.7, 2.5, u10);
-	if (var <= 1e-6) {
-		return vec2(0.0);
-	}
-	vec2 d = w.xz / max(length(w.xz), 1e-4);
-	vec2 c = vec2(-d.y, d.x);
-	vec2 q = xz - (flow + d * 0.23) * water_time;
-	// Short along the wind (crests across it), longer across it.
-	vec2 g = ripple_slope(vec2(dot(q, d) * 9.0, dot(q, c) * 4.0) + vec2(31.7, 3.3));
-	// ripple_slope's rms is about 0.35 per axis: scale it to the Cox-Munk rms.
-	return (d * g.x + c * g.y * 0.6) * (sqrt(var) * wind_ripple_strength / 0.35);
-#else
-	return vec2(0.0);
-#endif
-}
-
-// Capillary octaves under ripple_slope (wavelengths of about 5, 2.3 and 1 cm at ripple_scale 1), each faded by the
-// pixel's footprint (m); r_hidden: the mean square slope faded out, for the roughness.
-const float RIPPLE_DETAIL_FREQ[3] = float[3](19.0, 41.0, 88.0);
-const float RIPPLE_DETAIL_AMP[3] = float[3](0.16, 0.11, 0.07);
-vec2 ripple_detail_slope(vec2 p, float footprint, out float r_hidden) {
-	vec2 s = vec2(0.0);
-	r_hidden = 0.0;
-	for (int i = 0; i < 3; i++) {
-		float f = RIPPLE_DETAIL_FREQ[i];
-		// A noise cell is 1/f m: full while it spans four pixels or more, gone under one.
-		float shown = 1.0 - smoothstep(0.25, 1.0, footprint * f * ripple_scale);
-		float a = RIPPLE_DETAIL_AMP[i];
-		if (shown > 0.0) {
-			s += r_noise_grad(p * f + vec2(3.1 * float(i), -7.7 * float(i))) * a * shown;
-		}
-		r_hidden += 0.5 * a * a * (1.0 - shown); // (value-noise gradients: mean square about half the peak)
-	}
-	return s;
-}
-
-// The ripples' slope (both flow phases, as the fragment blends them) at world point x, before their amplitude.
-vec2 river_ripple_field(vec2 x, vec2 o_a, vec2 o_b, float w) {
-	vec2 p = x * ripple_scale;
-	return (ripple_slope(p - o_a * ripple_scale) * w + ripple_slope(p - o_b * ripple_scale + vec2(13.1, 7.7)) * (1.0 - w))
-			/ sqrt(w * w + (1.0 - w) * (1.0 - w));
-}
-
-// The bed's sun scaled by the ripples' focusing: x where the sun's ray entered the surface, z the water it then
-// crossed along the vertical, amp the ripples' amplitude.
-float river_caustic(vec2 x, float z, float amp, vec2 o_a, vec2 o_b, float w) {
-	const float e = 0.015;
-	vec2 s0 = river_ripple_field(x, o_a, o_b, w);
-	vec2 sx = river_ripple_field(x + vec2(e, 0.0), o_a, o_b, w);
-	vec2 sz = river_ripple_field(x + vec2(0.0, e), o_a, o_b, w);
-	// Hessian of the height (columns: d slope / dx, d slope / dz), symmetrised.
-	float hxx = (sx.x - s0.x) / e;
-	float hzz = (sz.y - s0.y) / e;
-	float hxz = 0.5 * ((sx.y - s0.y) + (sz.x - s0.x)) / e;
-	float k = z * (1.0 - 1.0 / 1.333) * amp;
-	float det = (1.0 + k * hxx) * (1.0 + k * hzz) - k * k * hxz * hxz;
-	return 1.0 / max(abs(det), 0.25);
-}
-
 // The two phases' offsets and the first one's weight.
 float flow_phases(vec2 p, vec2 flow, out vec2 o_a, out vec2 o_b) {
 	float t = water_time / max(flow_period, 0.05) + r_noise(p * 0.05);
@@ -337,59 +184,18 @@ void vertex() {
 	v_flow = (MODEL_MATRIX * vec4(UV2.x, 0.0, UV2.y, 0.0)).xz;
 	v_info = COLOR;
 	v_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
-	v_wave = CUSTOM0;
-	v_s = UV.x;
-	v_n = UV.y;
-	{
-		float x = UV.x - CUSTOM0.z;
-		if (CUSTOM0.x > 0.0 && x > 0.0) {
-			// Height only where the mesh can carry it (four sections or more a wavelength), fading at the banks;
-			// the slope is drawn per pixel below.
-			float mesh_share = smoothstep(3.0, 6.0, TAU / (CUSTOM0.y * section_step));
-			float bank = smoothstep(0.0, 0.2, COLOR.r * 4.0 - 1.0);
-			float h = mesh_share * bank * CUSTOM0.x * sin(CUSTOM0.y * x) * exp(-x / CUSTOM0.w) * min(x * CUSTOM0.y / PI, 1.0);
-			VERTEX.y += h;
-			v_world.y += h;
-		}
-	}
 	vec2 cuv;
 	float live = live_weight(v_world.xz, cuv);
 	if (live > 0.0) {
-		// The live water's rise and fall on the river's surface, onto the banks as far as the live
-		// water runs up them (1 m, the solver's run-up band; a dry bank reads below its ground).
+		// The live water's rise and fall on the river's surface.
 		vec2 off = v_world.xz - live_center;
-		float h = (textureLod(live_height_tex, cuv, 0.0).r - (live_tilt.x + dot(live_tilt.yz, off))) * live * step(-0.99, v_info.r * 4.0 - 1.0);
+		float h = (textureLod(live_height_tex, cuv, 0.0).r - (live_tilt.x + dot(live_tilt.yz, off))) * live * step(0.0, v_info.r * 4.0 - 1.0);
 		VERTEX.y += h;
 		v_world.y += h;
-		if (live_waves && live_near_spacing > 0.0) {
-			// The surface waves as geometry where the ribbon is dense enough to carry them (Planet Coaster 2's
-			// near-camera water: real silhouettes and parallax, the slope still drawn per pixel).
-			float carry = 1.0 - smoothstep(1.5 * live_wave_texel.x, 4.0 * live_wave_texel.x, live_near_spacing);
-			h = textureLod(live_wave_tex, cuv, 0.0).r * live * carry;
-			// Depth-limited: no wave stands higher than the water under it allows (breaking at H = 0.78 d,
-			// McCowan 1894: amplitude 0.39 d), softly; at a stone's foot or the waterline that is a few millimetres,
-			// where the grid's last wet cell would otherwise stand up as a spike.
-			float a_max = max(0.39 * (v_info.r * 4.0 - 1.0), 0.0);
-			h = a_max > 1e-4 ? h / sqrt(1.0 + (h * h) / (a_max * a_max)) : 0.0;
-			// White water damps them, as it damps the ripples' slope in fragment() (the film's elasticity): the
-			// foam lies on a calm sheet instead of standing on steep facets as shards.
-			float foam_v = max(COLOR.g, textureLod(live_flow_tex, cuv, 0.0).b * live);
-			h *= 1.0 - smoothstep(0.05, 0.5, foam_v);
-			VERTEX.y += h;
-			v_world.y += h;
-		}
 	}
 }
 
 void fragment() {
-	// The cross-fade in (fade_in_length): raster blends by alpha, the path tracer picks per sample.
-	float fade_w = fade_in_length > 0.0 ? smoothstep(0.0, fade_in_length, v_s) : 1.0;
-	bool faded = water_fade_noise(v_world.xz) >= fade_w;
-#if !defined(RT)
-	if (fade_w <= 0.0) {
-		discard;
-	}
-#endif
 	vec2 flow = v_flow;
 	float live_foam = 0.0;
 	vec2 live_slope = vec2(0.0);
@@ -403,62 +209,16 @@ void fragment() {
 		float hx = texture(live_height_tex, cuv + vec2(du.x, 0.0)).r - texture(live_height_tex, cuv - vec2(du.x, 0.0)).r;
 		float hz = texture(live_height_tex, cuv + vec2(0.0, du.y)).r - texture(live_height_tex, cuv - vec2(0.0, du.y)).r;
 		live_slope = (vec2(hx, hz) / (2.0 * live_texel) - live_tilt.yz) * live;
-		if (live_waves) {
-			// The surface waves' slope (central differences on their own grid).
-			vec2 dw = live_wave_texel / live_size;
-			float wx = texture(live_wave_tex, cuv + vec2(dw.x, 0.0)).r - texture(live_wave_tex, cuv - vec2(dw.x, 0.0)).r;
-			float wz = texture(live_wave_tex, cuv + vec2(0.0, dw.y)).r - texture(live_wave_tex, cuv - vec2(0.0, dw.y)).r;
-			// Held under the steepness short waves break at (slope about 0.3 for capillary-gravity waves; Stokes'
-			// limit is 0.44), softly: the turbulence source can pile more than real water stands up into a trough,
-			// and facets past it turned away from the eye sent path-traced rays through the surface into the bed.
-			vec2 ws = vec2(wx, wz) / (2.0 * live_wave_texel);
-			ws /= sqrt(1.0 + dot(ws, ws) / (0.3 * 0.3));
-			live_slope += ws * live;
-		}
 	}
 	vec2 p = v_world.xz * ripple_scale;
 	vec2 o_a;
 	vec2 o_b;
 	float w = flow_phases(v_world.xz, flow, o_a, o_b);
-	if (live_advected && live > 0.0) {
-		vec4 d = texture(live_offset_tex, cuv) * live;
-		o_a += d.xy;
-		o_b += d.zw;
-	}
 	// Surface-gradient blend of the two phases, renormalised so the crossover
 	// doesn't flatten the ripples (phase B is shifted half a tile, so the two are
 	// close to independent).
 	vec2 slope = (ripple_slope(p - o_a * ripple_scale) * w + ripple_slope(p - o_b * ripple_scale + vec2(13.1, 7.7)) * (1.0 - w))
 			/ sqrt(w * w + (1.0 - w) * (1.0 - w));
-	// The pixel's footprint on the water (m). The path tracer's is its ray cone's: drawing every octave there left the
-	// ripples finer than a pixel to the samples, a speckle of sky and bank glints over distant water that raster
-	// filters into the roughness (Toksvig; the hidden slope variance below).
-#if defined(RT)
-	float footprint = RAY_FOOTPRINT;
-	// The foam keeps its full structure: raster steps its filtered edge crisp again, which the path tracer can't.
-	const float foam_fp = 0.0;
-#else
-	// From the distance and the smooth (undisplaced) surface's tilt to the eye, not fwidth: over the near mesh's
-	// wave facets the screen derivatives jump from triangle to triangle, and every footprint-scaled detail (the
-	// foam's structure, its crisp edge) changed with them along the polygon edges.
-	vec3 to_eye = CAMERA_POSITION_WORLD - v_world;
-	float eye_d = length(to_eye);
-	// (An orthographic camera's pixel is the same size at every distance, and it looks along its own axis.)
-	bool ortho = PROJECTION_MATRIX[3][3] > 0.5;
-	vec3 eye_dir = ortho ? INV_VIEW_MATRIX[2].xyz : to_eye / max(eye_d, 1e-4);
-	float pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-	float footprint = (ortho ? 1.0 : eye_d) * pix / max(abs(dot(eye_dir, normalize(v_normal))), 0.15);
-	float foam_fp = footprint;
-#endif
-	float ripple_hidden = 0.0;
-	if (ripple_detail > 0.0) {
-		float h_a;
-		float h_b;
-		vec2 d_a = ripple_detail_slope(p - o_a * ripple_scale, footprint, h_a);
-		vec2 d_b = ripple_detail_slope(p - o_b * ripple_scale + vec2(13.1, 7.7), footprint, h_b);
-		slope += ripple_detail * (d_a * w + d_b * (1.0 - w)) / sqrt(w * w + (1.0 - w) * (1.0 - w));
-		ripple_hidden = ripple_detail * ripple_detail * (h_a * w + h_b * (1.0 - w));
-	}
 	float speed = length(flow);
 	float depth = v_info.r * 4.0 - 1.0;
 	// The waterline laps: carried by the current (the same two phases as the
@@ -472,36 +232,12 @@ void fragment() {
 	float relief = 0.5 * r_noise(rq) + 0.3 * r_noise(rq * 3.1 + 17.0) + 0.2 * r_noise(rq * 8.3 - 5.0);
 	depth += edge_relief * (relief - 0.5) * 2.0;
 	// Calm at the waterline: ripples die out over the last 15 cm.
-	float ripple_amp = (ripple_strength + ripple_speed_strength * speed) * smoothstep(0.0, 0.15, depth);
-	slope *= ripple_amp;
-	ripple_hidden *= ripple_amp * ripple_amp;
-	slope += river_wind_slope(v_world.xz, flow) * smoothstep(0.0, 0.15, depth);
+	slope *= (ripple_strength + ripple_speed_strength * speed) * smoothstep(0.0, 0.15, depth);
 	vec3 n_mesh = normalize(v_normal);
 	if (n_mesh.y < 0.0) {
 		n_mesh = -n_mesh;
 	}
 	slope += live_slope * smoothstep(0.0, 0.15, depth);
-	{
-		// The undular train's slope along the current (stationary waves: d/ds of a sin(kx) e^(-x/L)).
-		float x = v_s - v_wave.z;
-		if (v_wave.x > 0.0 && x > 0.0 && speed > 1e-3) {
-			float e = exp(-x / v_wave.w) * min(x * v_wave.y / PI, 1.0);
-			float dh = v_wave.x * e * (v_wave.y * cos(v_wave.y * x) - sin(v_wave.y * x) / v_wave.w);
-			slope += flow / speed * dh * smoothstep(0.0, 0.2, depth);
-		}
-	}
-	// Raindrop rings (rain_ripples(), docs/ideas/rain.md), carried by the current: each ring rides the water it
-	// fell on, so the rings are read in the two flow phases the ripples use and blended the same way.
-	float river_roughness = pathtraced_roughness;
-	if (rain_rings) {
-		float rr_rate = weather_rainfall_at(vec3(v_world.x, weather_precip_phase.w, v_world.z));
-		if (rr_rate > 0.0) {
-			float rr_fp = max(footprint, 1e-5);
-			vec3 rr = rain_ripples(v_world.xz - o_a, TIME, rr_rate, rr_fp) * w + rain_ripples(v_world.xz - o_b + vec2(13.1, 7.7), TIME, rr_rate, rr_fp) * (1.0 - w);
-			slope += rr.xy * smoothstep(0.0, 0.05, depth);
-			river_roughness = rain_ripple_roughness(river_roughness, rr.z);
-		}
-	}
 	vec3 world_normal = normalize(n_mesh - vec3(slope.x, 0.0, slope.y));
 
 	// White water, broken into lace that rides the current.
@@ -512,109 +248,22 @@ void fragment() {
 	float lace = lace_a * w + lace_b * (1.0 - w);
 	// Foam caught along the waterline, broken into lace.
 	float edge_band = edge_foam * (1.0 - smoothstep(0.0, 0.12, depth)) * smoothstep(-0.01, 0.02, depth);
-	// Capped below 1 so the lace always opens: at full strength the white water would cover whole sections of
-	// the ribbon as solid blocks with straight ends.
-	float foam = clamp(min(max(max(v_info.g, live_foam), edge_band), 0.85) * (1.0 + foam_breakup) - lace * foam_breakup, 0.0, 1.0);
+	float foam = clamp(max(max(v_info.g, live_foam), edge_band) * (1.0 + foam_breakup) - lace * foam_breakup, 0.0, 1.0);
 	foam = foam * foam * (3.0 - 2.0 * foam);
-	if (foam_crisp > 0.0) {
-		// The white water's amount drawn as foam (wf_structure, water_foam_shared.h), each phase riding the current (the flow mapping
-		// draws it out along the current by itself). Not rotated to the local current: world coordinates turned by
-		// an angle that varies over the water shear by that angle times their distance from the origin, combing
-		// the pattern into hairlines wherever the current turns.
-		// The amount the structure tears is the white water read as how much foam is left: the live flow foam sits
-		// near 1 wherever it is made, which kept every patch a solid sheet, so only the thickest stays a sheet and
-		// the rest drains into lace with clear water between.
-		float amount = foam * foam;
-		const vec2 sd = vec2(1.0, 0.0);
-		const float stretch = 0.0;
-		float f_a = wf_structure(v_world.xz - o_a, amount, foam_fp, sd, stretch, foam_detail_scale, foam_crisp);
-		float f_b = wf_structure(v_world.xz - o_b + vec2(5.3, 2.1), amount, foam_fp, sd, stretch, foam_detail_scale, foam_crisp);
-		float crisp = f_a * w + f_b * (1.0 - w);
-		float foam_soft = crisp;
-#if !defined(RT)
-		// Crisp at every distance: the edge stepped once more at the pixel's own scale (about three pixels wide),
-		// up only as far as the foam beside it reaches, keeping 0.8 of the soft value (the open sea's step).
-		// The pixel's change is the pattern's world gradient (chain rule through the screen derivatives, exact
-		// on each triangle) times the smooth footprint: fwidth itself jumped from facet to facet over the near
-		// mesh's waves, and the step's sharpness with it, drawing the triangles' edges into the foam.
-		float fwf = fwidth(crisp);
-		{
-			vec2 cdx = dFdx(v_world.xz);
-			vec2 cdy = dFdy(v_world.xz);
-			float cdet = cdx.x * cdy.y - cdx.y * cdy.x;
-			if (abs(cdet) > 1e-12) {
-				float gx = dFdx(crisp);
-				float gy = dFdy(crisp);
-				vec2 g = vec2(cdy.y * gx - cdx.y * gy, cdx.x * gy - cdy.x * gx) / cdet;
-				fwf = min(length(g) * footprint * 1.4, fwf * 4.0);
-			}
-		}
-		fwf = max(fwf, 1e-3);
-		float stepped = clamp((crisp - 0.3) / (3.0 * fwf) + 0.5, 0.0, 1.0) * min(crisp + 2.0 * fwf, 1.0);
-		crisp = max(stepped, 0.8 * crisp);
-#endif
-		// The milky haze thin white water leaves between the patches stays (a third of the soft foam).
-		crisp = max(crisp, 0.35 * foam);
-		foam = mix(foam, crisp, foam_crisp);
-		if (foam > 0.01) {
-			// Foam damps the ripples under it (the film's elasticity, as slicks do), its bubbles' domes catch the
-			// light, and its rims stand up as a thin skin.
-			world_normal = normalize(mix(world_normal, n_mesh, clamp(foam, 0.0, 1.0)));
-			vec2 bs = wf_bubble_slope(v_world.xz - o_a, foam_fp) * w + wf_bubble_slope(v_world.xz - o_b + vec2(5.3, 2.1), foam_fp) * (1.0 - w);
-			world_normal = normalize(world_normal - vec3(bs.x, 0.0, bs.y) * foam * foam_grain_tilt);
-#if !defined(RT)
-			if (foam_relief > 0.0) {
-				vec2 rdx = dFdx(v_world.xz);
-				vec2 rdy = dFdy(v_world.xz);
-				float fdx = dFdx(foam_soft);
-				float fdy = dFdy(foam_soft);
-				float rdet = rdx.x * rdy.y - rdx.y * rdy.x;
-				if (abs(rdet) > 1e-12) {
-					vec2 fg = vec2(rdy.y * fdx - rdx.y * fdy, rdx.x * fdy - rdy.x * fdx) / rdet;
-					fg = clamp(fg * 0.03 * foam_relief, vec2(-1.2), vec2(1.2));
-					world_normal = normalize(world_normal - vec3(fg.x, 0.0, fg.y));
-				}
-			}
-#endif
-		}
-	}
-	// The ribbon's own sides (where water spread over flat ground reaches them) and its fade into the water at the
-	// mouth, broken by the bank's relief, so neither shows as a ruler-straight edge.
-	float bank_fade = smoothstep(0.0, 0.7, v_info.b * 1.6 - 0.45 + (relief - 0.5) * 0.9);
-	// The load the water carries here (silt browns it, ash greys it), in the medium for raster and path tracer alike.
-	vec3 sed_abs = vec3(0.0);
-	vec3 sed_sca = vec3(0.0);
-	if (sediment_on) {
-		// Across by lane (right bank to left): the texel's b is the section's half extent.
-		float sx = (v_s - sediment_range.x) / max(sediment_range.y, 1e-3);
-		float half_extent = max(texture(sediment_tex, vec2(sx, 0.5)).b, 1e-3);
-		float lane = clamp((v_n + half_extent) / (2.0 * half_extent), 0.0, 1.0) * float(sediment_lanes - 1);
-		vec2 sc = texture(sediment_tex, vec2(sx, (lane + 0.5) / float(max(sediment_lanes, 1)))).rg;
-		sed_abs = sediment_absorption_of(sc);
-		sed_sca = sediment_scattering_of(sc);
-	}
-	// The medium with its load (similarity, water_sediment.h), and white water taking the loaded water's colour.
-	vec3 med_sca = water_medium_scattering(pathtraced_scattering, sed_sca, pathtraced_scattering_anisotropy);
-	float med_g = water_medium_g(pathtraced_scattering, sed_sca, pathtraced_scattering_anisotropy);
-	vec3 white_rgb = foam_color.rgb * sediment_foam_tint(sed_abs);
 
 #if defined(RT)
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
-	ALBEDO = mix(vec3(1.0), white_rgb, foam);
-	// The ripples finer than the ray's cone as roughness, as raster (GGX alpha squared plus their slope variance).
-	ROUGHNESS = mix(pow(pow(river_roughness, 4.0) + ripple_hidden, 0.25), 0.8, foam);
+	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
+	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = 1.0 - foam;
 	IOR = 1.33;
-	// Clear over the last few cm to the waterline: there the water is a film, but a ray let through it at a grazing
-	// angle can run on under the bank's ground through metres of the medium, tinting a dotted line along the shore.
-	float film = smoothstep(0.0, 0.12, depth);
-	ABSORPTION = (pathtraced_absorption + sed_abs) * film;
-	SCATTERING = med_sca * film;
-	SCATTERING_ANISOTROPY = med_g;
+	ABSORPTION = pathtraced_absorption;
+	SCATTERING = pathtraced_scattering;
+	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
 	// Gone past the waterline and the banks' fade, as in raster.
-	ALPHA = faded ? 0.0 : smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
+	ALPHA = smoothstep(0.0, max(edge_softness, 1e-3), depth) * v_info.b;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
 	// Open water keeps PhysXWaterSurface3D's raster look: its own colour with a
@@ -626,125 +275,28 @@ void fragment() {
 	vec3 n = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
 	float deep = smoothstep(0.0, 1.2, depth);
-	vec3 unlit_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl);
-	vec3 base_rgb = unlit_rgb * water_raster_body_light();
+	vec3 base_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl) * water_raster_body_light();
 	float base_a = mix(shallow_color.a, water_color.a, deep);
-	// Also with raster_reflections off (underground, no sky): the bed shows through all the same, lit by the scene.
-	// Under solid white water (all the colour is the foam's: the water's part is scaled by 1 - foam) the bed's
-	// march and its caustics are skipped.
-	if (clear_water && foam > 0.995) {
-		base_rgb = vec3(0.0);
-		unlit_rgb = vec3(0.0);
-		base_a = 1.0;
-	} else if (clear_water) {
-		// The bed through the water, refracted, in place of the tint and its blend; its sun is inside it.
-		vec3 sun_dir;
-		vec3 sun_irr;
-		vec3 sky;
-		water_light_in_water(sun_dir, sun_irr, sky);
-		vec3 seen;
-		vec3 bed_p;
-		float sun_share;
-		base_rgb = water_clear_through_ex(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption + sed_abs, med_sca, med_g, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, true, seen, bed_p, sun_share);
-		if (caustics_strength > 0.0 && sun_share > 0.0 && sun_dir.y < -0.05) {
-			// Back up the refracted sun ray from the bed to the surface it came through.
-			float z = max(v_world.y - bed_p.y, 0.0);
-			vec2 x_in = bed_p.xz - sun_dir.xz * (z / -sun_dir.y);
-			// White water where the sun came in scatters it before it can focus: no pattern under it.
-			vec2 cuv_in;
-			float live_in = live_weight(x_in, cuv_in);
-			float foam_in = live_in > 0.0 ? texture(live_flow_tex, cuv_in).b * live_in : 0.0;
-			// Faded where the bed's ripple cells (about 12 cm at the finest) shrink under a few pixels.
-			float shown = (1.0 - clamp(foam_in, 0.0, 1.0)) * caustics_strength * (1.0 - smoothstep(0.25, 1.0, footprint * 8.6 * ripple_scale));
-			// The pattern's three ripple evaluations and the sun's shadow only where any of it shows.
-			if (shown > 0.001) {
-				float e = river_caustic(x_in, z / -sun_dir.y, ripple_amp, o_a, o_b, w);
-				float vis = dot(sun_visibility(bed_p), vec3(1.0 / 3.0));
-				base_rgb += seen * sun_share * vis * (e - 1.0) * shown;
-			}
-		}
-		unlit_rgb = vec3(0.0);
-		base_a = 1.0;
-	}
-	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
-	{
-		float zd = texture(clear_depth, SCREEN_UV).r;
-		if (zd > 0.0 && shore_depth_fade > 0.0) {
-			vec4 b = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, zd, 1.0);
-			float th = v_world.y - (INV_VIEW_MATRIX * vec4(b.xyz / b.w, 1.0)).y;
-			edge *= smoothstep(0.0, shore_depth_fade, th);
-		}
-	}
+	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * v_info.b;
 	float a0 = mix(base_a, foam_color.a, foam) * edge;
 	// The reflection term is linear in the colour, so the water's part and the
 	// foam's part split exactly: what was one unshaded colour is now emission
 	// plus a lit albedo, the same where the light is the old fixed one.
-	// The sun's share (body light and glitter) goes through light(), so the water takes the scene's shadows.
-	vec3 sun_body;
-	vec4 sun_glint;
-	float sun_a2;
-	// The capillary ripples finer than the pixel, as roughness (GGX alpha squared plus their slope variance).
-	float rough_eff = pow(pow(river_roughness, 4.0) + ripple_hidden, 0.25);
-	vec3 sky_part;
-	float sky_f;
-	vec4 refl = water_raster_reflect_ex(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), rough_eff, unlit_rgb * (1.0 - foam), sun_body, sun_glint, sun_a2, sky_part, sky_f);
-	if (screen_reflections) {
-		if (raster_reflections) {
-			// The banks in the mirror where the screen holds them, the sky elsewhere.
-			refl = water_screen_over_sky(clear_screen, clear_depth, refl, sky_part, sky_f, n, VERTEX, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
-		} else {
-			refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, edge * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
-		}
-	}
-	wr_sun_body = sun_body;
-	wr_sun_glint = sun_glint;
-	wr_sun_a2 = sun_a2;
+	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness);
 	float a_new = max(refl.a, 1e-4);
 	// Light the surface let through (1 - F), recovered from the alpha it returned.
 	float through = a0 < 0.9999 ? clamp((1.0 - refl.a) / (1.0 - a0), 0.0, 1.0) : 1.0;
 	float keep = a0 * through / a_new;
 	NORMAL = n;
 	EMISSION = refl.rgb;
-	ALBEDO = white_rgb * foam * keep;
+	ALBEDO = foam_color.rgb * foam * keep;
 	ROUGHNESS = 0.85;
 	SPECULAR = 0.25 * foam;
 	METALLIC = 0.0;
-	ALPHA = refl.a * fade_w;
-	if (froude_overlay) {
-		float fr = v_info.a * 4.0;
-		vec3 c = fr < 1.0 ? mix(vec3(0.05, 0.15, 0.9), vec3(0.1, 0.85, 0.2), smoothstep(0.3, 1.0, fr)) : mix(vec3(0.1, 0.85, 0.2), vec3(0.95, 0.1, 0.05), smoothstep(1.0, 2.5, fr));
-		c = v_info.a > 0.99 ? vec3(1.0) : c;
-		EMISSION = c * 0.8;
-		ALBEDO = vec3(0.0);
-		ALPHA = max(edge, 0.85 * step(0.01, edge));
-	}
+	ALPHA = refl.a;
 #endif
 }
-
-#if !defined(RT)
-// The lights on the river: the white water (ALBEDO) as a Lambert surface, and the open water's sun share
-// (water_raster_reflections.h), all under each light's shadow and cloud projector.
-void light() {
-	DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * max(dot(NORMAL, LIGHT), 0.0) / PI;
-	SPECULAR_LIGHT += water_raster_sun_light(LIGHT, VIEW, LIGHT_COLOR * ATTENUATION, LIGHT_IS_DIRECTIONAL, INV_VIEW_MATRIX, wr_sun_body, wr_sun_glint, wr_sun_a2);
-}
-#endif
 )";
-
-// The shared wind for the gust ripples (river_wind_slope), when the weather module is in.
-static String _river_wind_src() {
-#ifdef MODULE_WEATHER_ENABLED
-	return "\n#define RIVER_WEATHER\n" + WeatherMap3D::get_wind_shader_code();
-#else
-	return String();
-#endif
-}
-
-// The whole shader: head, the shared wind, the raster reflections (water_raster_reflections.h), tail.
-static const String &river_shader_src() {
-	static const String src = String(RIVER_SHADER_SRC_HEAD) + BaseMaterial3D::get_rain_functions_code(true) + "\nuniform bool rain_rings = true;\n" + _river_wind_src() + WATER_RASTER_REFLECTIONS_GLSL + WATER_FOAM_SHARED_GLSL + WATER_SEDIMENT_GLSL + RIVER_SHADER_SRC_TAIL;
-	return src;
-}
 
 // A waterfall's falling sheet: a thin slab of water (two faces q/|v| apart, so
 // the path tracer refracts through a real sheet). Per vertex (built by
@@ -764,11 +316,6 @@ uniform float water_time = 0.0;
 uniform vec4 water_color : source_color = vec4(0.30, 0.42, 0.42, 0.45);
 uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
-// The load the river carries (silt, ash: water_sediment.h), its absorption: the sheet and its white water take its colour.
-uniform vec3 sediment_absorption = vec3(0.0);
-uniform vec3 sediment_scattering = vec3(0.0);
-// The water a ray crosses through the sheet, for its tint under path tracing (m).
-uniform float sheet_thickness = 0.1;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.05;
 // Streaks: per metre across, and per second of travel along (the pattern rides
 // the water, so it stretches as the sheet speeds up).
@@ -789,21 +336,6 @@ float f_noise(vec2 p) {
 			mix(f_hash(i + vec2(0.0, 1.0)), f_hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
-// A loaded sheet scatters: what it sends back is the turbid medium's diffuse reflectance (the river's own, by the
-// similarity relation and Hapke's two-stream: water_raster_reflections.h), over the share of the light the sheet's
-// thickness holds (diffuse attenuation both ways); the rest passes through. Silt makes a fall a tan curtain, not a
-// dark brown glass. Clear water: no scattering, held 0.
-float sheet_held(vec3 a, vec3 b_red) {
-	vec3 sig = sqrt(3.0 * a * (a + b_red));
-	vec3 h = 1.0 - exp(-2.0 * sig * sheet_thickness);
-	return dot(h, vec3(1.0 / 3.0));
-}
-vec3 sheet_diffuse(vec3 a, vec3 b_red) {
-	vec3 wp = b_red / max(a + b_red, vec3(1e-6));
-	vec3 gam = sqrt(max(1.0 - wp, vec3(0.0)));
-	return (1.0 - gam) / (1.0 + gam);
-}
-
 void fragment() {
 	float edge = COLOR.r;
 	float aeration = COLOR.g;
@@ -816,34 +348,24 @@ void fragment() {
 	float holes = broken * 0.8 + (1.0 - edge) * 0.6;
 	float cover = smoothstep(-0.04, 0.04, streak - holes + 0.12);
 #if defined(RT)
-	// A falling sheet is one surface with holes: traced as a thin wall (straight through, tinted by its thickness),
-	// not as the boundary of a medium, which a path leaving through a hole never left (see the contact sheet).
-	vec3 white = foam_color.rgb * exp(-sediment_absorption * 0.035);
-	vec3 a_t = pathtraced_absorption + sediment_absorption;
-	vec3 b_red = sediment_scattering * 0.05;
-	float held = sheet_held(a_t, b_red);
-	vec3 body = mix(exp(-a_t * sheet_thickness), sheet_diffuse(a_t, b_red), held);
-	ALBEDO = mix(body, white, foam);
-	ROUGHNESS = mix(pathtraced_roughness, 0.8, max(foam, held));
+	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
+	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
-	TRANSMISSION = (1.0 - foam) * (1.0 - held);
+	TRANSMISSION = 1.0 - foam;
+	IOR = 1.33;
+	ABSORPTION = pathtraced_absorption;
 	ALPHA = cover;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
 	// Lit by the scene's lights, shadows and sky like any surface (it was unshaded with a fixed light,
 	// so a fall in a shaded valley glowed flat white): white water scatters diffusely, the clear sheet
 	// is a smooth dielectric showing the sky in its specular.
-	vec3 white = foam_color.rgb * exp(-sediment_absorption * 0.035);
-	vec3 a_t = pathtraced_absorption + sediment_absorption;
-	vec3 b_red = sediment_scattering * 0.05;
-	float held = sheet_held(a_t, b_red);
-	vec3 body = mix(water_color.rgb * exp(-sediment_absorption * 0.035), sheet_diffuse(a_t, b_red), held);
-	ALBEDO = mix(body, white, foam);
-	ROUGHNESS = mix(pathtraced_roughness + 0.1, 0.85, max(foam, held));
+	ALBEDO = mix(water_color.rgb, foam_color.rgb, foam);
+	ROUGHNESS = mix(pathtraced_roughness + 0.1, 0.85, foam);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
-	ALPHA = mix(mix(water_color.a, 1.0, held), foam_color.a, foam) * cover;
+	ALPHA = mix(water_color.a, foam_color.a, foam) * cover;
 #endif
 }
 )";
@@ -854,21 +376,9 @@ constexpr float CASCADE_MIN_DROP = 0.15f; // m
 
 } // namespace
 
-// The river's surface shader, shared with PhysXLiveWater3D (same per-vertex layout).
-const String &physx_river_water_shader_src() {
-	return river_shader_src();
-}
-
-String PhysXRiver3D::get_fall_shader_code() {
-	return String(FALL_SHADER_SRC);
-}
-
 namespace {
 float cross_value(const PhysXRiver3D::Section &p_sec, const LocalVector<float> &p_values, float p_n, float p_margin, int p_m) {
 	const float half = 0.5f * p_sec.width + p_margin;
-	if (!Math::is_finite(p_n)) {
-		return p_values[0];
-	}
 	const float u = CLAMP((p_n + half) / (2.0f * half) * p_m, 0.0f, (float)p_m);
 	const int j = MIN((int)u, p_m - 1);
 	return Math::lerp(p_values[j], p_values[j + 1], u - j);
@@ -884,29 +394,12 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_default_width"), &PhysXRiver3D::get_default_width);
 	ClassDB::bind_method(D_METHOD("set_discharge", "discharge"), &PhysXRiver3D::set_discharge);
 	ClassDB::bind_method(D_METHOD("get_discharge"), &PhysXRiver3D::get_discharge);
-	ClassDB::bind_method(D_METHOD("get_sediment_at", "position"), &PhysXRiver3D::get_sediment_at);
-	ClassDB::bind_method(D_METHOD("get_sediment_deposit_at", "position"), &PhysXRiver3D::get_sediment_deposit_at);
-	ClassDB::bind_method(D_METHOD("clear_sediment_deposit"), &PhysXRiver3D::clear_sediment_deposit);
-	ClassDB::bind_method(D_METHOD("add_sediment", "position", "mineral_kg_s", "ash_kg_s"), &PhysXRiver3D::contract_water_add_sediment);
-	ClassDB::bind_method(D_METHOD("set_rain_response", "enable"), &PhysXRiver3D::set_rain_response);
-	ClassDB::bind_method(D_METHOD("get_rain_response"), &PhysXRiver3D::get_rain_response);
-	ClassDB::bind_method(D_METHOD("get_rain_discharge"), &PhysXRiver3D::get_rain_discharge);
 	ClassDB::bind_method(D_METHOD("set_roughness", "roughness"), &PhysXRiver3D::set_roughness);
 	ClassDB::bind_method(D_METHOD("get_roughness"), &PhysXRiver3D::get_roughness);
 	ClassDB::bind_method(D_METHOD("set_max_slope", "slope"), &PhysXRiver3D::set_max_slope);
-	ClassDB::bind_method(D_METHOD("set_gradually_varied_flow", "enabled"), &PhysXRiver3D::set_gradually_varied_flow);
-	ClassDB::bind_method(D_METHOD("get_gradually_varied_flow"), &PhysXRiver3D::get_gradually_varied_flow);
-	ClassDB::bind_method(D_METHOD("set_bend_superelevation", "enabled"), &PhysXRiver3D::set_bend_superelevation);
-	ClassDB::bind_method(D_METHOD("get_bend_superelevation"), &PhysXRiver3D::get_bend_superelevation);
-	ClassDB::bind_method(D_METHOD("set_standing_waves", "enabled"), &PhysXRiver3D::set_standing_waves);
-	ClassDB::bind_method(D_METHOD("get_standing_waves"), &PhysXRiver3D::get_standing_waves);
 	ClassDB::bind_method(D_METHOD("get_max_slope"), &PhysXRiver3D::get_max_slope);
 	ClassDB::bind_method(D_METHOD("set_snap_to_ground", "snap"), &PhysXRiver3D::set_snap_to_ground);
 	ClassDB::bind_method(D_METHOD("get_snap_to_ground"), &PhysXRiver3D::get_snap_to_ground);
-	ClassDB::bind_method(D_METHOD("set_ground_probe_height", "height"), &PhysXRiver3D::set_ground_probe_height);
-	ClassDB::bind_method(D_METHOD("get_ground_probe_height"), &PhysXRiver3D::get_ground_probe_height);
-	ClassDB::bind_method(D_METHOD("set_ground_probe_depth", "depth"), &PhysXRiver3D::set_ground_probe_depth);
-	ClassDB::bind_method(D_METHOD("get_ground_probe_depth"), &PhysXRiver3D::get_ground_probe_depth);
 	ClassDB::bind_method(D_METHOD("set_ground_collision_mask", "mask"), &PhysXRiver3D::set_ground_collision_mask);
 	ClassDB::bind_method(D_METHOD("get_ground_collision_mask"), &PhysXRiver3D::get_ground_collision_mask);
 	ClassDB::bind_method(D_METHOD("set_obstacle_collision_mask", "mask"), &PhysXRiver3D::set_obstacle_collision_mask);
@@ -919,26 +412,14 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bank_margin"), &PhysXRiver3D::get_bank_margin);
 	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXRiver3D::set_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXRiver3D::get_foam_persistence);
-	ClassDB::bind_method(D_METHOD("set_source_lake", "path"), &PhysXRiver3D::set_source_lake);
-	ClassDB::bind_method(D_METHOD("get_source_lake"), &PhysXRiver3D::get_source_lake);
-	ClassDB::bind_method(D_METHOD("set_outlet_coefficient", "coefficient"), &PhysXRiver3D::set_outlet_coefficient);
-	ClassDB::bind_method(D_METHOD("get_outlet_coefficient"), &PhysXRiver3D::get_outlet_coefficient);
-	ClassDB::bind_method(D_METHOD("get_outlet_discharge"), &PhysXRiver3D::get_outlet_discharge);
-	ClassDB::bind_method(D_METHOD("get_outlet_head"), &PhysXRiver3D::get_outlet_head);
 	ClassDB::bind_method(D_METHOD("set_mouth_target", "path"), &PhysXRiver3D::set_mouth_target);
 	ClassDB::bind_method(D_METHOD("get_mouth_target"), &PhysXRiver3D::get_mouth_target);
 	ClassDB::bind_method(D_METHOD("set_fall_min_height", "height"), &PhysXRiver3D::set_fall_min_height);
 	ClassDB::bind_method(D_METHOD("get_fall_min_height"), &PhysXRiver3D::get_fall_min_height);
-	ClassDB::bind_method(D_METHOD("set_fall_exclusions", "points"), &PhysXRiver3D::set_fall_exclusions);
-	ClassDB::bind_method(D_METHOD("get_fall_exclusions"), &PhysXRiver3D::get_fall_exclusions);
 	ClassDB::bind_method(D_METHOD("set_fall_spray", "enabled"), &PhysXRiver3D::set_fall_spray);
 	ClassDB::bind_method(D_METHOD("get_fall_spray"), &PhysXRiver3D::get_fall_spray);
 	ClassDB::bind_method(D_METHOD("set_fall_mist", "enabled"), &PhysXRiver3D::set_fall_mist);
 	ClassDB::bind_method(D_METHOD("get_fall_mist"), &PhysXRiver3D::get_fall_mist);
-	ClassDB::bind_method(D_METHOD("set_fall_sound", "enabled"), &PhysXRiver3D::set_fall_sound);
-	ClassDB::bind_method(D_METHOD("get_fall_sound"), &PhysXRiver3D::get_fall_sound);
-	ClassDB::bind_method(D_METHOD("set_fall_sound_volume_db", "db"), &PhysXRiver3D::set_fall_sound_volume_db);
-	ClassDB::bind_method(D_METHOD("get_fall_sound_volume_db"), &PhysXRiver3D::get_fall_sound_volume_db);
 	ClassDB::bind_method(D_METHOD("set_fall_mist_amount", "amount"), &PhysXRiver3D::set_fall_mist_amount);
 	ClassDB::bind_method(D_METHOD("get_fall_mist_amount"), &PhysXRiver3D::get_fall_mist_amount);
 	ClassDB::bind_method(D_METHOD("set_fall_material", "material"), &PhysXRiver3D::set_fall_material);
@@ -950,8 +431,6 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_raster_reflections", "enabled"), &PhysXRiver3D::set_raster_reflections);
 	ClassDB::bind_method(D_METHOD("get_raster_reflections"), &PhysXRiver3D::get_raster_reflections);
 	ClassDB::bind_method(D_METHOD("set_live_flow", "enabled"), &PhysXRiver3D::set_live_flow);
-	ClassDB::bind_method(D_METHOD("set_contact_wetness", "enabled"), &PhysXRiver3D::set_contact_wetness);
-	ClassDB::bind_method(D_METHOD("get_contact_wetness"), &PhysXRiver3D::get_contact_wetness);
 	ClassDB::bind_method(D_METHOD("get_live_flow"), &PhysXRiver3D::get_live_flow);
 	ClassDB::bind_method(D_METHOD("set_live_domain_size", "size"), &PhysXRiver3D::set_live_domain_size);
 	ClassDB::bind_method(D_METHOD("get_live_domain_size"), &PhysXRiver3D::get_live_domain_size);
@@ -963,16 +442,6 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_flow_foam"), &PhysXRiver3D::get_flow_foam);
 	ClassDB::bind_method(D_METHOD("set_flow_foam_persistence", "seconds"), &PhysXRiver3D::set_flow_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_flow_foam_persistence"), &PhysXRiver3D::get_flow_foam_persistence);
-	ClassDB::bind_method(D_METHOD("set_flow_foam_impact", "enabled"), &PhysXRiver3D::set_flow_foam_impact);
-	ClassDB::bind_method(D_METHOD("get_flow_foam_impact"), &PhysXRiver3D::get_flow_foam_impact);
-	ClassDB::bind_method(D_METHOD("set_live_advected_ripples", "enabled"), &PhysXRiver3D::set_live_advected_ripples);
-	ClassDB::bind_method(D_METHOD("get_live_advected_ripples"), &PhysXRiver3D::get_live_advected_ripples);
-	ClassDB::bind_method(D_METHOD("set_live_surface_waves", "enabled"), &PhysXRiver3D::set_live_surface_waves);
-	ClassDB::bind_method(D_METHOD("get_live_surface_waves"), &PhysXRiver3D::get_live_surface_waves);
-	ClassDB::bind_method(D_METHOD("set_live_surface_wave_strength", "strength"), &PhysXRiver3D::set_live_surface_wave_strength);
-	ClassDB::bind_method(D_METHOD("get_live_surface_wave_strength"), &PhysXRiver3D::get_live_surface_wave_strength);
-	ClassDB::bind_method(D_METHOD("set_live_near_mesh_spacing", "spacing"), &PhysXRiver3D::set_live_near_mesh_spacing);
-	ClassDB::bind_method(D_METHOD("get_live_near_mesh_spacing"), &PhysXRiver3D::get_live_near_mesh_spacing);
 	ClassDB::bind_method(D_METHOD("set_live_damping", "damping"), &PhysXRiver3D::set_live_damping);
 	ClassDB::bind_method(D_METHOD("get_live_damping"), &PhysXRiver3D::get_live_damping);
 	ClassDB::bind_method(D_METHOD("set_live_follow", "path"), &PhysXRiver3D::set_live_follow);
@@ -1010,49 +479,31 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "depths"), "set_depths", "get_depths");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "default_width", PROPERTY_HINT_RANGE, "0.1,100,0.05,or_greater,suffix:m"), "set_default_width", "get_default_width");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snap_to_ground"), "set_snap_to_ground", "get_snap_to_ground");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_probe_height", PROPERTY_HINT_RANGE, "0,200,0.05,or_greater,suffix:m"), "set_ground_probe_height", "get_ground_probe_height");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_probe_depth", PROPERTY_HINT_RANGE, "0.1,200,0.05,or_greater,suffix:m"), "set_ground_probe_depth", "get_ground_probe_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ground_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_ground_collision_mask", "get_ground_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "obstacle_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_obstacle_collision_mask", "get_obstacle_collision_mask");
 	ADD_GROUP("Hydraulics", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "discharge", PROPERTY_HINT_RANGE, "0.01,1000,0.01,or_greater,suffix:m³/s"), "set_discharge", "get_discharge");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_response"), "set_rain_response", "get_rain_response");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.01,0.15,0.001"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_slope", PROPERTY_HINT_RANGE, "0.005,1,0.005,or_greater"), "set_max_slope", "get_max_slope");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gradually_varied_flow"), "set_gradually_varied_flow", "get_gradually_varied_flow");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bend_superelevation"), "set_bend_superelevation", "get_bend_superelevation");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standing_waves"), "set_standing_waves", "get_standing_waves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
-	ADD_GROUP("Outlet", "outlet_");
-	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "source_lake", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D"), "set_source_lake", "get_source_lake");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "outlet_coefficient", PROPERTY_HINT_RANGE, "0.3,1.2,0.01"), "set_outlet_coefficient", "get_outlet_coefficient");
 	ADD_GROUP("Mouth", "mouth_");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "mouth_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D,PhysXRiver3D"), "set_mouth_target", "get_mouth_target");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mouth_blend", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater,suffix:m"), "set_mouth_blend", "get_mouth_blend");
 	ADD_GROUP("Waterfalls", "fall_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_min_height", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_fall_min_height", "get_fall_min_height");
-	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "fall_exclusions"), "set_fall_exclusions", "get_fall_exclusions");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_spray"), "set_fall_spray", "get_fall_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_mist"), "set_fall_mist", "get_fall_mist");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_mist_amount", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater"), "set_fall_mist_amount", "get_fall_mist_amount");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_sound"), "set_fall_sound", "get_fall_sound");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_sound_volume_db", PROPERTY_HINT_RANGE, "-40,20,0.1,suffix:dB"), "set_fall_sound_volume_db", "get_fall_sound_volume_db");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fall_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_fall_material", "get_fall_material");
 	ADD_SIGNAL(MethodInfo("rebuilt"));
 	ADD_GROUP("Live flow", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_flow"), "set_live_flow", "get_live_flow");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "contact_wetness"), "set_contact_wetness", "get_contact_wetness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "raster_reflections"), "set_raster_reflections", "get_raster_reflections");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_domain_size", PROPERTY_HINT_RANGE, "8,256,1,or_greater,suffix:m"), "set_live_domain_size", "get_live_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "live_grid_resolution", PROPERTY_HINT_RANGE, "32,512,1"), "set_live_grid_resolution", "get_live_grid_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,suffix:1/s"), "set_wall_friction", "get_wall_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam", PROPERTY_HINT_RANGE, "0,4,0.05"), "set_flow_foam", "get_flow_foam");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam_persistence", PROPERTY_HINT_RANGE, "0.1,60,0.1,suffix:s"), "set_flow_foam_persistence", "get_flow_foam_persistence");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flow_foam_impact"), "set_flow_foam_impact", "get_flow_foam_impact");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_advected_ripples"), "set_live_advected_ripples", "get_live_advected_ripples");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_surface_waves"), "set_live_surface_waves", "get_live_surface_waves");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_surface_wave_strength", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_live_surface_wave_strength", "get_live_surface_wave_strength");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_near_mesh_spacing", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_live_near_mesh_spacing", "get_live_near_mesh_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_damping", PROPERTY_HINT_RANGE, "0,1,0.005"), "set_live_damping", "get_live_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "live_follow", PROPERTY_HINT_NODE_TYPE, "Node3D"), "set_live_follow", "get_live_follow");
 	ADD_GROUP("Carve", "carve_");
@@ -1084,11 +535,6 @@ RIVER_SETTER(default_width, float, default_width, MAX(p_value, 0.05f))
 RIVER_SETTER(discharge, float, discharge, MAX(p_value, 0.001f))
 RIVER_SETTER(roughness, float, roughness, CLAMP(p_value, 0.005f, 0.5f))
 RIVER_SETTER(max_slope, float, max_slope, MAX(p_value, 0.001f))
-RIVER_SETTER(gradually_varied_flow, bool, gradually_varied_flow, p_value)
-RIVER_SETTER(ground_probe_height, float, ground_probe_height, MAX(p_value, 0.0f))
-RIVER_SETTER(ground_probe_depth, float, ground_probe_depth, MAX(p_value, 0.1f))
-RIVER_SETTER(bend_superelevation, bool, bend_superelevation, p_value)
-RIVER_SETTER(standing_waves, bool, standing_waves, p_value)
 RIVER_SETTER(snap_to_ground, bool, snap_to_ground, p_value)
 RIVER_SETTER(ground_collision_mask, uint32_t, ground_collision_mask, p_value)
 RIVER_SETTER(obstacle_collision_mask, uint32_t, obstacle_collision_mask, p_value)
@@ -1124,97 +570,8 @@ void PhysXRiver3D::set_mouth_blend(float p_blend) {
 	_queue_build();
 }
 
-Node *PhysXRiver3D::_source_node() const {
-	if (source_lake.is_empty() || !is_inside_tree()) {
-		return nullptr;
-	}
-	Node *n = get_node_or_null(source_lake);
-	return n == this ? nullptr : n;
-}
-
-void PhysXRiver3D::set_source_lake(const NodePath &p_path) {
-	_unregister_outlet();
-	source_lake = p_path;
-	_queue_build();
-}
-
-void PhysXRiver3D::set_outlet_coefficient(float p_coefficient) {
-	outlet_coefficient = CLAMP(p_coefficient, 0.05f, 2.0f);
-	_queue_build();
-}
-
-// The lake's head over the outlet's sill gives the river's discharge (a broad-crested weir, Henderson 1966:
-// Q = Cd (2/3)^(3/2) b sqrt(g) H^(3/2)). The sill is the highest bed in the river's first 12 m.
-void PhysXRiver3D::_measure_outlet(PhysicsDirectSpaceState3D *p_space, const Ref<Curve3D> &p_curve, float p_ds) {
-	PhysXWaterSurface3D *lake = Object::cast_to<PhysXWaterSurface3D>(_source_node());
-	if (lake == nullptr) {
-		_unregister_outlet();
-		outlet_discharge = -1.0f;
-		outlet_head = 0.0f;
-		return;
-	}
-	const float length = p_curve->get_baked_length();
-	const Transform3D xf = get_global_transform();
-	float crest = -Math::INF;
-	float crest_s = 0.0f;
-	for (float s = 0.0f; s <= MIN(12.0f, length) + 1e-4f; s += MAX(p_ds, 0.25f)) {
-		const Vector3 c = p_curve->sample_baked(s, true);
-		float y = 0.0f;
-		if (_base_ground_at(p_space, c, y)) {
-			const float wy = xf.xform(Vector3(c.x, y, c.z)).y;
-			if (wy > crest) {
-				crest = wy;
-				crest_s = s;
-			}
-		}
-	}
-	const Vector3 at_local = p_curve->sample_baked(crest_s, true);
-	if (!Math::is_finite(crest)) {
-		crest = xf.xform(at_local).y; // no ground found: the curve's own height is the sill
-	}
-	outlet_level = lake->get_global_position().y + lake->get_water_level();
-	outlet_width = widths.is_empty() ? default_width : _point_value(widths, 0, default_width);
-	outlet_crest = crest;
-	outlet_crest_s = crest_s;
-	outlet_head = MAX(outlet_level - crest, 0.0f);
-	outlet_free = PhysXWaterSurface3D::weir_discharge(outlet_coefficient, outlet_width, outlet_head);
-	outlet_discharge = outlet_free; // drowned by the channel below, if it is too slow to carry it (in _build)
-	Vector3 ahead = p_curve->sample_baked(MIN(crest_s + 1.0f, length), true) - p_curve->sample_baked(MAX(crest_s - 1.0f, 0.0f), true);
-	ahead.y = 0.0f;
-	outlet_dir = xf.basis.xform(ahead.length_squared() > 1e-8f ? ahead.normalized() : Vector3(1, 0, 0));
-	outlet_at = xf.xform(at_local);
-	if (source_id.is_valid() && source_id != lake->get_instance_id()) {
-		_unregister_outlet();
-	}
-}
-
-// Registered after the build, with the discharge the channel let through: the lake drains by the same law (its
-// coefficient scaled by the share the channel lets through), so its level budget and its approach flow agree with
-// the river.
-void PhysXRiver3D::_register_outlet() {
-	PhysXWaterSurface3D *lake = Object::cast_to<PhysXWaterSurface3D>(_source_node());
-	if (lake == nullptr || outlet_discharge < 0.0f) {
-		_unregister_outlet();
-		return;
-	}
-	const float share = outlet_free > 1e-6f ? outlet_discharge / outlet_free : 1.0f;
-	source_id = lake->get_instance_id();
-	lake->set_outflow((int64_t)(uint64_t)get_instance_id(), outlet_at, outlet_dir, outlet_width, outlet_crest, outlet_coefficient * share);
-}
-
-void PhysXRiver3D::_unregister_outlet() {
-	if (!source_id.is_valid()) {
-		return;
-	}
-	if (PhysXWaterSurface3D *lake = Object::cast_to<PhysXWaterSurface3D>(ObjectDB::get_instance(source_id))) {
-		lake->clear_outflow((int64_t)(uint64_t)get_instance_id());
-	}
-	source_id = ObjectID();
-}
-
 float PhysXRiver3D::get_discharge_at(float p_s) const {
-	// A lake outlet runs on what the lake passes over its sill (a trickle with no head, so the ribbon stays).
-	float q = (outlet_discharge >= 0.0f ? MAX(outlet_discharge, 0.01f) : discharge) + rain_discharge;
+	float q = discharge;
 	for (const Tributary &t : tributaries) {
 		if (p_s >= t.s) {
 			q += t.discharge;
@@ -1357,52 +714,15 @@ void PhysXRiver3D::set_wall_friction(float p_friction) {
 void PhysXRiver3D::set_flow_foam(float p_strength) {
 	flow_foam = MAX(p_strength, 0.0f);
 	if (live_configured) {
-		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
 	}
 }
 
 void PhysXRiver3D::set_flow_foam_persistence(float p_seconds) {
 	flow_foam_persistence = MAX(p_seconds, 0.05f);
 	if (live_configured) {
-		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
 	}
-}
-
-void PhysXRiver3D::set_flow_foam_impact(bool p_enabled) {
-	flow_foam_impact = p_enabled;
-	if (live_configured) {
-		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
-	}
-}
-
-void PhysXRiver3D::set_live_surface_waves(bool p_enabled) {
-	live_surface_waves = p_enabled;
-	if (live_configured) {
-		live_solver.set_surface_waves(live_surface_waves, live_surface_wave_strength);
-	}
-	_live_material();
-}
-
-void PhysXRiver3D::set_live_surface_wave_strength(float p_strength) {
-	live_surface_wave_strength = MAX(p_strength, 0.0f);
-	if (live_configured) {
-		live_solver.set_surface_waves(live_surface_waves, live_surface_wave_strength);
-	}
-}
-
-void PhysXRiver3D::set_live_near_mesh_spacing(float p_spacing) {
-	live_near_mesh_spacing = MAX(p_spacing, 0.0f);
-	if (sections.size() >= 2 && mesh_instance != nullptr) {
-		_build_mesh();
-	}
-}
-
-void PhysXRiver3D::set_live_advected_ripples(bool p_enabled) {
-	live_advected_ripples = p_enabled;
-	if (live_configured) {
-		live_solver.set_advected_ripples(live_advected_ripples, RIVER_FLOW_PERIOD);
-	}
-	_live_material();
 }
 
 void PhysXRiver3D::set_live_follow(const NodePath &p_path) {
@@ -1429,13 +749,6 @@ bool PhysXRiver3D::_strip_at(const Vector3 &p_world, int &r_section, float &r_t,
 	const int count = (int)sections.size();
 	const Ref<Curve3D> c = get_curve();
 	if (count < 2 || c.is_null() || !is_inside_tree()) {
-		return false;
-	}
-	if (!p_world.is_finite()) {
-		// A body that has left the world (it would index the cross-section with NaN).
-		r_section = 0;
-		r_t = 0.0f;
-		r_n = 0.0f;
 		return false;
 	}
 	const Vector3 local = get_global_transform().affine_inverse().xform(p_world);
@@ -1480,7 +793,7 @@ float PhysXRiver3D::_psi_at(const Vector3 &p_world, float &r_depth) const {
 	}
 	if (on) {
 		const float d = Math::lerp(value(sections[i], sections[i].depth), value(sections[i + 1], sections[i + 1].depth), t);
-		r_depth = d; // (signed: ground above the water is negative, so the live window's water runs up banks only as far as they are low)
+		r_depth = d > 0.0f ? d : 0.0f;
 	}
 	return Math::lerp(value(sections[i], sections[i].psi_at), value(sections[i + 1], sections[i + 1].psi_at), t);
 }
@@ -1552,13 +865,6 @@ void PhysXRiver3D::_live_stop() {
 	if (live_flow_tex.is_valid()) {
 		live_flow_tex->set_texture_rd_rid(RID());
 	}
-	if (live_offset_tex.is_valid()) {
-		live_offset_tex->set_texture_rd_rid(RID());
-	}
-	if (live_wave_tex.is_valid()) {
-		live_wave_tex->set_texture_rd_rid(RID());
-	}
-	live_wave_rid = RID();
 	live_bound = false;
 	live_configured = false;
 	live_height_cache.clear();
@@ -1580,16 +886,7 @@ void PhysXRiver3D::_live_material() {
 		water_material->set_shader_parameter(SNAME("live_height_tex"), live_height_tex);
 		water_material->set_shader_parameter(SNAME("live_flow_tex"), live_flow_tex);
 		water_material->set_shader_parameter(SNAME("live_tilt"), live_tilt);
-		water_material->set_shader_parameter(SNAME("live_offset_tex"), live_offset_tex);
 	}
-	water_material->set_shader_parameter(SNAME("live_advected"), on && live_advected_ripples && live_offset_tex.is_valid());
-	const bool waves = on && live_surface_waves && live_wave_tex.is_valid() && live_wave_rid.is_valid();
-	if (waves) {
-		water_material->set_shader_parameter(SNAME("live_wave_tex"), live_wave_tex);
-		water_material->set_shader_parameter(SNAME("live_wave_texel"), Vector2(live_domain_size, live_domain_size) / 512.0f);
-	}
-	water_material->set_shader_parameter(SNAME("live_waves"), waves);
-	water_material->set_shader_parameter(SNAME("live_near_spacing"), live_near_mesh_used);
 }
 
 // The live window: the shallow-water solver of PhysXWaterSurface3D's live flow
@@ -1648,20 +945,14 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		live_depth = depth;
 		live_tilt = Vector3();
 		live_solver.configure(st);
-		live_solver.set_flow_foam(flow_foam, flow_foam_persistence, flow_foam_impact);
-		live_solver.set_advected_ripples(live_advected_ripples, RIVER_FLOW_PERIOD);
-		live_solver.set_surface_waves(live_surface_waves, live_surface_wave_strength);
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
 		live_solver.set_base_flux(flux, wall_friction);
 		live_configured = true;
 		live_fields_dirty = false;
 		live_bound = false;
-		if (live_near_mesh_spacing > 0.0f) {
-			_build_mesh(); // the dense ribbon round the new window
-		}
 	} else if (MAX(Math::abs(want.x - live_center.x), Math::abs(want.y - live_center.y)) > 0.25f * live_domain_size || live_fields_dirty) {
 		live_center = want;
 		live_solver.recenter(live_center);
-		contact_wet_skip = 2;
 		PackedFloat32Array depth;
 		PackedFloat32Array flux;
 		_live_fields(depth, flux);
@@ -1672,9 +963,6 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		live_fields_dirty = false;
 		live_height_cache.clear();
 		live_velocity_cache.clear();
-		if (live_near_mesh_spacing > 0.0f) {
-			_build_mesh(); // the dense ribbon follows the window
-		}
 		_live_material();
 	}
 	live_solver.step(p_delta);
@@ -1687,10 +975,6 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		}
 		live_height_tex->set_texture_rd_rid(live_solver.get_ripple_height_texture_rd_rid());
 		live_flow_tex->set_texture_rd_rid(live_solver.get_velocity_texture_rd_rid());
-		if (live_offset_tex.is_null()) {
-			live_offset_tex.instantiate();
-		}
-		live_offset_tex->set_texture_rd_rid(live_solver.get_flow_offset_texture_rd_rid());
 		live_bound = true;
 		_live_material();
 	}
@@ -1702,55 +986,6 @@ void PhysXRiver3D::_live_update(double p_delta) {
 		live_solver.get_velocity_grid(live_velocity_cache);
 		_live_fit_tilt();
 	}
-	_live_wet_ground();
-}
-
-void PhysXRiver3D::set_contact_wetness(bool p_enabled) {
-	contact_wetness = p_enabled;
-	if (!p_enabled) {
-		live_solver.set_wetness_readback(false);
-	}
-}
-
-// Where the live water reached (the swash pass's wetness on the window, read back every few steps), over the
-// banks and water shallower than half a metre, into the weather's contact wetness.
-void PhysXRiver3D::_live_wet_ground() {
-#ifdef MODULE_WEATHER_ENABLED
-	WeatherMap3D *weather = WeatherMap3D::get_active();
-	const bool want = contact_wetness && weather != nullptr && weather->is_contact_wetness_enabled();
-	live_solver.set_wetness_readback(want);
-	if (!want) {
-		return;
-	}
-	Vector<float> wet;
-	int n = 0;
-	uint64_t serial = 0;
-	if (!live_solver.get_wetness_grid(wet, n, serial) || serial == contact_wet_serial || live_depth.size() != n * n) {
-		return;
-	}
-	contact_wet_serial = serial;
-	if (contact_wet_skip > 0) {
-		contact_wet_skip--;
-		return;
-	}
-	contact_wet_cells.resize(n * n);
-	float *cw = contact_wet_cells.ptrw();
-	const float *w = wet.ptr();
-	const float *d = live_depth.ptr();
-	bool any = false;
-	for (int i = 0; i < n * n; i++) {
-		// Faded over the grid's outer eighth, so the wet band does not end in a straight line at its edge.
-		const int x = i % n;
-		const int z = i / n;
-		const float edge = MIN(MIN(x, n - 1 - x), MIN(z, n - 1 - z)) / MAX(0.125f * n, 1.0f);
-		cw[i] = d[i] <= 0.5f ? CLAMP(w[i], 0.0f, 1.0f) * MIN(edge, 1.0f) : 0.0f;
-		any = any || cw[i] > 0.0f;
-	}
-	if (any) {
-		const Vector2 size(live_domain_size, live_domain_size);
-		weather->add_contact_wetness_cells(cw, n, n, Rect2(live_center - 0.5f * size, size));
-	}
-#endif
 }
 
 // The live water settles into a gentle tilt across the window: the velocity
@@ -1886,15 +1121,12 @@ void PhysXRiver3D::_notification(int p_what) {
 			_queue_build();
 			set_physics_process_internal(true);
 			set_process_internal(!Engine::get_singleton()->is_editor_hint());
-			WorldContracts::register_water(this);
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
-			WorldContracts::unregister_water(this);
 			set_physics_process_internal(false);
 			set_process_internal(false);
 			_live_stop();
 			_unregister_mouth();
-			_unregister_outlet();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			// Ground rays need the ground in the physics space, which it is by the first tick.
@@ -1902,431 +1134,17 @@ void PhysXRiver3D::_notification(int p_what) {
 				_build();
 			}
 			_live_update(get_physics_process_delta_time());
-			if (!Engine::get_singleton()->is_editor_hint()) {
-				body_contacts.update(
-						get_tree(), get_physics_process_delta_time(),
-						[this](const Vector3 &p) { return sample_height(p); },
-						[this](const Vector3 &p) { return sample_flow(p); },
-						[this](int o, const Vector3 &p, float r, float s) { submit_sphere(o, p, r, s); },
-						[this](int o) { clear_sphere(o); },
-						[this](const Vector3 &p, float r, float s) { submit_sphere(int(uint64_t(get_instance_id()) ^ 0x5a5a), p, r, s); });
-			}
-			_rain_response_update(get_physics_process_delta_time());
-			_sediment_update(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			water_time += get_process_delta_time();
 			if (water_material.is_valid()) {
 				water_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
-				if (live_configured) {
-					live_solver.set_flow_clock((float)Math::fmod(water_time, 3600.0)); // (the clock the ripples' phases run on)
-					// The surface waves' texture is made on their first step (and again after a clear): follow it.
-					const RID wave_rid = live_bound && live_surface_waves ? live_solver.get_surface_wave_texture_rd_rid() : RID();
-					if (wave_rid != live_wave_rid) {
-						if (live_wave_tex.is_null()) {
-							live_wave_tex.instantiate();
-						}
-						live_wave_tex->set_texture_rd_rid(wave_rid);
-						live_wave_rid = wave_rid;
-						_live_material();
-					}
-				}
 				raster_reflection_state.update(this, water_material, raster_reflections);
 			}
 			if (fall_material.is_valid() && !falls.is_empty()) {
 				fall_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
 			}
 		} break;
-	}
-}
-
-// Storm flow: every 10 s, the runoff's peak discharge within two of its cells of the river's upstream end. The
-// river is rebuilt when that moves by more than a tenth of its flow (depth and speed follow by Manning, so a
-// river in spate is deeper and faster), at most every 10 s.
-void PhysXRiver3D::_rain_response_update(double p_delta) {
-	rain_check -= p_delta;
-	if (rain_check > 0.0 || Engine::get_singleton()->is_editor_hint()) {
-		return;
-	}
-	rain_check = 10.0;
-	float q = 0.0f;
-#ifdef MODULE_WEATHER_ENABLED
-	const WeatherRunoff3D *ro = WeatherRunoff3D::get_active();
-	const Ref<Curve3D> c = get_curve();
-	if (rain_response && ro != nullptr && c.is_valid() && c->get_point_count() > 0) {
-		const Vector3 at = get_global_transform().xform(c->get_point_position(0));
-		const float reach = 2.0f * ro->get_extent() / float(MAX(ro->get_resolution(), 1));
-		q = ro->get_max_discharge_in(Rect2(at.x - reach, at.z - reach, 2.0f * reach, 2.0f * reach));
-	}
-#endif
-	if (Math::abs(q - rain_discharge) > 0.1f * MAX(discharge + rain_discharge, 0.05f) || (q == 0.0f && rain_discharge > 0.0f)) {
-		rain_discharge = q;
-		_queue_build();
-	}
-}
-
-// The load is held per cross-section and per lane across it (the cross samples the depth and speed are kept on),
-// so a source by one bank is a plume along that bank that spreads to the far side only over a mixing length. A
-// rebuild (a storm's rise moves the sections) keeps the load and the deposit by resampling them by arc length.
-void PhysXRiver3D::_sediment_resample() {
-	const int count = (int)sections.size();
-	const float s0 = count > 0 ? sections[0].s : 0.0f;
-	const float ds = count > 1 ? sections[1].s - sections[0].s : 0.0f;
-	const int lanes = count > 0 ? (int)sections[0].depth.size() : 0;
-	if ((int)sed_c.size() == count * lanes && sed_lanes == lanes && s0 == sed_s0 && ds == sed_ds) {
-		return;
-	}
-	LocalVector<Vector2> c;
-	LocalVector<Vector2> bed;
-	c.resize(count * lanes);
-	bed.resize(count * lanes);
-	const int old_count = sed_lanes > 0 ? (int)sed_c.size() / sed_lanes : 0;
-	for (int i = 0; i < count; i++) {
-		for (int j = 0; j < lanes; j++) {
-			c[i * lanes + j] = Vector2();
-			bed[i * lanes + j] = Vector2();
-			if (old_count > 1 && sed_ds > 0.0f && lanes > 1) {
-				const float x = (sections[i].s - sed_s0) / sed_ds;
-				const int k = CLAMP((int)Math::floor(x), 0, old_count - 2);
-				const float t = CLAMP(x - k, 0.0f, 1.0f);
-				const int jj = CLAMP((int)Math::round(float(j) * (sed_lanes - 1) / (lanes - 1)), 0, sed_lanes - 1);
-				c[i * lanes + j] = sed_c[k * sed_lanes + jj].lerp(sed_c[(k + 1) * sed_lanes + jj], t);
-				if ((int)sed_bed.size() == (int)sed_c.size()) {
-					bed[i * lanes + j] = sed_bed[k * sed_lanes + jj].lerp(sed_bed[(k + 1) * sed_lanes + jj], t);
-				}
-			}
-		}
-	}
-	sed_c = c;
-	sed_bed = bed;
-	sed_src.resize(count * lanes);
-	sed_src_frame.resize(count * lanes);
-	sed_src_age.resize(count * lanes);
-	for (uint32_t i = 0; i < sed_src.size(); i++) {
-		sed_src[i] = Vector2();
-		sed_src_frame[i] = 0;
-		sed_src_age[i] = 1e9f;
-	}
-	sed_s0 = s0;
-	sed_ds = ds;
-	sed_lanes = lanes;
-}
-
-// The cell (section k, lane j) for a point: the nearer section, the nearest lane holding water (a point on a dry
-// bank enters the water at its edge). False off the river.
-bool PhysXRiver3D::_sediment_cell(const Vector3 &p_position, int &r_k, int &r_j) const {
-	int i;
-	float t;
-	float n;
-	if (!_locate(p_position, i, t, n)) {
-		return false;
-	}
-	const int k = t < 0.5f ? i : i + 1;
-	if (k < 0 || k >= (int)sections.size() || sed_lanes < 2 || (int)sed_c.size() != (int)sections.size() * sed_lanes) {
-		return false;
-	}
-	const Section &sec = sections[k];
-	const float half = 0.5f * sec.width + bank_margin;
-	const int j0 = CLAMP((int)Math::round((n + half) / (2.0f * half) * (sed_lanes - 1)), 0, sed_lanes - 1);
-	for (int r = 0; r < sed_lanes; r++) {
-		for (int sgn = -1; sgn <= 1; sgn += 2) {
-			const int j = j0 + sgn * r;
-			if (j >= 0 && j < sed_lanes && sec.depth[j] > 0.0f) {
-				r_k = k;
-				r_j = j;
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
-void PhysXRiver3D::contract_water_add_sediment(const Vector3 &p_position, float p_mineral_kg_s, float p_ash_kg_s) {
-	_sediment_resample();
-	int k;
-	int j;
-	if (!_sediment_cell(p_position, k, j)) {
-		return;
-	}
-	// A source holds its rate until its caller's next call: calls in one frame add, a later frame's replace.
-	const int cell = k * sed_lanes + j;
-	const uint64_t frame = Engine::get_singleton()->get_physics_frames();
-	if (sed_src_frame[cell] != frame) {
-		sed_src[cell] = Vector2();
-		sed_src_frame[cell] = frame;
-	}
-	sed_src[cell] += Vector2(MAX(p_mineral_kg_s, 0.0f), MAX(p_ash_kg_s, 0.0f));
-	sed_src_age[cell] = 0.0f;
-	sed_any = true;
-}
-
-// A load dropped in at once: into the water of the cell it lands in (its depth times the lanes' and the sections'
-// spacing), then carried and spread on as any other; what the cell cannot hold (a hyperconcentrated flood's most) is
-// mixed through the whole section. A debris flow's dump would otherwise be held as a rate for the sources' two
-// seconds (twice its mass), and a second dump into the same place on a later frame replaced the first.
-void PhysXRiver3D::contract_water_add_sediment_mass(const Vector3 &p_position, float p_mineral_kg, float p_ash_kg) {
-	_sediment_resample();
-	int k;
-	int j;
-	if (sed_ds <= 0.0f || !_sediment_cell(p_position, k, j)) {
-		return;
-	}
-	const Section &sec = sections[k];
-	const float dn = (sec.width + 2.0f * bank_margin) / float(sed_lanes - 1);
-	Vector2 mass(MAX(p_mineral_kg, 0.0f), MAX(p_ash_kg, 0.0f));
-	Vector2 &c = sed_c[k * sed_lanes + j];
-	const float volume = MAX(sec.depth[j], 0.01f) * dn * sed_ds;
-	const float room = MAX(WaterSediment::MAX_LOAD - c.x - c.y, 0.0f) * volume;
-	const float total = mass.x + mass.y;
-	const float into = MIN(total, room);
-	if (total > 0.0f) {
-		c += mass * (into / total) / volume;
-		mass *= (total - into) / total;
-	}
-	if (mass.x + mass.y > 0.0f) {
-		float section_volume = 0.0f;
-		for (int jj = 0; jj < sed_lanes; jj++) {
-			section_volume += MAX(sec.depth[jj], 0.0f) * dn * sed_ds;
-		}
-		for (int jj = 0; jj < sed_lanes && section_volume > 0.0f; jj++) {
-			if (sec.depth[jj] > 0.0f) {
-				Vector2 &cj = sed_c[k * sed_lanes + jj];
-				cj += mass / section_volume;
-				const float t = cj.x + cj.y;
-				if (t > WaterSediment::MAX_LOAD) {
-					cj *= WaterSediment::MAX_LOAD / t;
-				}
-			}
-		}
-	}
-	sed_any = sed_any || total > 0.0f;
-}
-
-// Bilinear in the section and the lane (n from the right bank to the left).
-Vector2 PhysXRiver3D::_sediment_lookup(const LocalVector<Vector2> &p_field, const Vector3 &p_world_pos) const {
-	int i;
-	float t;
-	float n;
-	if (sed_lanes < 2 || (int)p_field.size() != (int)sections.size() * sed_lanes || !_locate(p_world_pos, i, t, n)) {
-		return Vector2();
-	}
-	Vector2 v[2];
-	for (int e = 0; e < 2; e++) {
-		const Section &sec = sections[i + e];
-		const float half = 0.5f * sec.width + bank_margin;
-		const float x = CLAMP((n + half) / (2.0f * half), 0.0f, 1.0f) * (sed_lanes - 1);
-		const int j = MIN((int)Math::floor(x), sed_lanes - 2);
-		v[e] = p_field[(i + e) * sed_lanes + j].lerp(p_field[(i + e) * sed_lanes + j + 1], x - j);
-	}
-	return v[0].lerp(v[1], t);
-}
-
-Vector2 PhysXRiver3D::get_sediment_at(const Vector3 &p_world_pos) const {
-	return sed_any ? _sediment_lookup(sed_c, p_world_pos) : Vector2();
-}
-
-Vector2 PhysXRiver3D::get_sediment_deposit_at(const Vector3 &p_world_pos) const {
-	return _sediment_lookup(sed_bed, p_world_pos);
-}
-
-void PhysXRiver3D::clear_sediment_deposit() {
-	for (Vector2 &b : sed_bed) {
-		b = Vector2();
-	}
-}
-
-// Washload in each lane, carried at the lane's own speed (semi-Lagrangian along the arc length, any step stable): a
-// source of r kg/s into a lane gives r / (u d dn) downstream of it (each step adds r dt over the cell's water, d dn ds),
-// so one by a slow bank stays a narrow, strong plume. Across, turbulent diffusion spreads it (depth-averaged
-// advection-diffusion, Elder 1959; Fischer et al. 1979, ch. 5): eps_t = 0.6 d u* in natural, meandering channels
-// (0.15 in straight flumes; Rutherford 1994 gives 0.3 to 1.0), u* = u n sqrt(g) / d^(1/6) from Manning, solved
-// implicitly per section with the flux between lanes weighted by the shallower depth, so mass is kept and dry lanes
-// pass none. A bank plume crosses a channel W wide over L about 0.4 u W^2 / eps_t (Fischer's mixing length): tens of
-// widths, as the brown ribbons that hug one bank below a tributary or a slipping bank in every aerial photograph.
-// Settling: where the bed shear falls below the stress for deposition, the load drops out at w_s C (1 - tau_b /
-// tau_d) per area (Krone 1962; Mehta and Partheniades 1975), held as a deposit (kg/m2) the ground can read: slack
-// water by the banks and in pools silts up, the fast thread carries its load on. Load reaching the mouth leaves the river.
-void PhysXRiver3D::_sediment_update(double p_delta) {
-	if (!sed_any) {
-		return;
-	}
-	_sediment_resample();
-	const int count = (int)sections.size();
-	const int lanes = sed_lanes;
-	if (count < 2 || lanes < 2 || sed_ds <= 0.0f) {
-		return;
-	}
-	const float dt = float(p_delta);
-	LocalVector<Vector2> c;
-	c.resize(count * lanes);
-	bool any = false;
-	// Along: each lane at its own speed.
-	for (int i = 0; i < count; i++) {
-		const Section &sec = sections[i];
-		const float dn = (sec.width + 2.0f * bank_margin) / float(lanes - 1);
-		for (int j = 0; j < lanes; j++) {
-			const int cell = i * lanes + j;
-			const float d = sec.depth[j];
-			Vector2 v;
-			if (d > 0.0f) {
-				const float u = MAX(sec.speed_at[j], 0.0f);
-				const float x = float(i) - u * dt / sed_ds;
-				if (x >= 0.0f) {
-					const int k = MIN((int)Math::floor(x), count - 2);
-					const float t = CLAMP(x - k, 0.0f, 1.0f);
-					v = sed_c[k * lanes + j].lerp(sed_c[(k + 1) * lanes + j], t);
-				}
-				if (sed_src_age[cell] < 2.0f) {
-					v += sed_src[cell] * (dt / (MAX(d, 0.01f) * dn * sed_ds));
-				}
-			}
-			sed_src_age[cell] += dt;
-			any = any || sed_src_age[cell] < 2.0f;
-			c[cell] = v;
-		}
-	}
-	// Across, implicit (Thomas), then settling.
-	const float ws_mineral = WaterSediment::MINERAL_SETTLING_SPEED;
-	const float ws_ash = WaterSediment::ASH_SETTLING_SPEED;
-	const float tau_d = WaterSediment::DEPOSITION_STRESS;
-	LocalVector<float> a, b, cc;
-	LocalVector<Vector2> r;
-	a.resize(lanes);
-	b.resize(lanes);
-	cc.resize(lanes);
-	r.resize(lanes);
-	for (int i = 0; i < count; i++) {
-		const Section &sec = sections[i];
-		const float dn = (sec.width + 2.0f * bank_margin) / float(lanes - 1);
-		const float g_n = roughness * Math::sqrt(GRAVITY);
-		for (int j = 0; j < lanes; j++) {
-			a[j] = 0.0f;
-			cc[j] = 0.0f;
-		}
-		for (int j = 0; j + 1 < lanes; j++) {
-			const float d0 = sec.depth[j];
-			const float d1 = sec.depth[j + 1];
-			if (d0 <= 0.0f || d1 <= 0.0f) {
-				continue;
-			}
-			const float h = MIN(d0, d1);
-			const float u = 0.5f * (sec.speed_at[j] + sec.speed_at[j + 1]);
-			const float ustar = u * g_n / Math::pow(h, 1.0f / 6.0f);
-			const float k = 0.6f * h * ustar * h * dt / (dn * dn); // eps_t h, times dt / dn^2
-			cc[j] = -k;
-			a[j + 1] = -k;
-		}
-		for (int j = 0; j < lanes; j++) {
-			const float d = sec.depth[j];
-			if (d > 0.0f) {
-				b[j] = d - a[j] - cc[j];
-				r[j] = c[i * lanes + j] * d;
-			} else {
-				b[j] = 1.0f;
-				r[j] = Vector2();
-			}
-		}
-		for (int j = 1; j < lanes; j++) {
-			const float w = a[j] / b[j - 1];
-			b[j] -= w * cc[j - 1];
-			r[j] -= r[j - 1] * w;
-		}
-		r[lanes - 1] /= b[lanes - 1];
-		for (int j = lanes - 2; j >= 0; j--) {
-			r[j] = (r[j] - r[j + 1] * cc[j]) / b[j];
-		}
-		for (int j = 0; j < lanes; j++) {
-			const int cell = i * lanes + j;
-			const float d = sec.depth[j];
-			Vector2 v = d > 0.0f ? r[j] : Vector2();
-			if (d > 0.0f && (v.x > 0.0f || v.y > 0.0f)) {
-				const float u = MAX(sec.speed_at[j], 0.0f);
-				const float ustar = u * g_n / Math::pow(MAX(d, 0.01f), 1.0f / 6.0f);
-				const float share = MAX(1.0f - 1000.0f * ustar * ustar / tau_d, 0.0f);
-				if (share > 0.0f) {
-					const Vector2 kept(Math::exp(-ws_mineral * share * dt / d), Math::exp(-ws_ash * share * dt / d));
-					const Vector2 settled = v * (Vector2(1.0f, 1.0f) - kept);
-					sed_bed[cell] += settled * d;
-					v *= kept;
-				}
-				const float t = v.x + v.y;
-				if (t > WaterSediment::MAX_LOAD) {
-					v *= WaterSediment::MAX_LOAD / t;
-				}
-			}
-			c[cell] = v;
-			any = any || v.x > 1e-6f || v.y > 1e-6f;
-		}
-	}
-	sed_c = c;
-	sed_any = any;
-	sed_tex_wait -= p_delta;
-	if (sed_tex_wait <= 0.0 || !any) {
-		sed_tex_wait = 0.1;
-		_sediment_texture();
-	}
-}
-
-void PhysXRiver3D::_sediment_texture() {
-	if (water_material.is_null()) {
-		return;
-	}
-	const int count = (int)sections.size();
-	const int lanes = sed_lanes;
-	if (!sed_any || count < 2 || lanes < 2 || (int)sed_c.size() != count * lanes) {
-		water_material->set_shader_parameter(SNAME("sediment_on"), false);
-		if (fall_material.is_valid()) {
-			fall_material->set_shader_parameter(SNAME("sediment_absorption"), Vector3());
-			fall_material->set_shader_parameter(SNAME("sediment_scattering"), Vector3());
-		}
-		return;
-	}
-	if (fall_material.is_valid()) {
-		// The falls take the river's mean load (a fall is a few metres of a river carrying it all the way).
-		Vector2 mean;
-		float weight = 0.0f;
-		for (int i = 0; i < count; i++) {
-			for (int j = 0; j < lanes; j++) {
-				const float q = MAX(sections[i].depth[j], 0.0f) * sections[i].speed_at[j];
-				mean += sed_c[i * lanes + j] * q;
-				weight += q;
-			}
-		}
-		const Vector2 load = weight > 0.0f ? mean / weight : Vector2();
-		fall_material->set_shader_parameter(SNAME("sediment_absorption"), WaterSediment::absorption(load));
-		fall_material->set_shader_parameter(SNAME("sediment_scattering"), WaterSediment::scattering(load));
-	}
-	// One texel per cell: x along the sections, y across the lanes (right bank to left); b the section's half extent,
-	// so the shader finds the lane from its distance across.
-	Vector<uint8_t> bytes;
-	bytes.resize(count * lanes * 12);
-	float *f = (float *)bytes.ptrw();
-	for (int j = 0; j < lanes; j++) {
-		for (int i = 0; i < count; i++) {
-			const int p = (j * count + i) * 3;
-			f[p + 0] = sed_c[i * lanes + j].x;
-			f[p + 1] = sed_c[i * lanes + j].y;
-			f[p + 2] = 0.5f * sections[i].width + bank_margin;
-		}
-	}
-	Ref<Image> img = Image::create_from_data(count, lanes, false, Image::FORMAT_RGBF, bytes);
-	if (sediment_tex.is_valid() && sediment_tex->get_width() == count && sediment_tex->get_height() == lanes) {
-		sediment_tex->update(img);
-	} else {
-		sediment_tex = ImageTexture::create_from_image(img);
-	}
-	// Texel centres at the sections: x = (s - s0 + ds / 2) / (count ds).
-	water_material->set_shader_parameter(SNAME("sediment_tex"), sediment_tex);
-	water_material->set_shader_parameter(SNAME("sediment_range"), Vector2(sed_s0 - 0.5f * sed_ds, sed_ds * count));
-	water_material->set_shader_parameter(SNAME("sediment_lanes"), lanes);
-	water_material->set_shader_parameter(SNAME("sediment_on"), true);
-}
-
-void PhysXRiver3D::set_rain_response(bool p_enable) {
-	rain_response = p_enable;
-	if (!p_enable && rain_discharge > 0.0f) {
-		rain_discharge = 0.0f;
-		_queue_build();
 	}
 }
 
@@ -2354,8 +1172,8 @@ bool PhysXRiver3D::_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 
 	if (p_space == nullptr) {
 		return false;
 	}
-	const real_t PROBE_ABOVE = ground_probe_height;
-	const real_t PROBE_BELOW = ground_probe_depth;
+	constexpr real_t PROBE_ABOVE = 50.0;
+	constexpr real_t PROBE_BELOW = 200.0;
 	constexpr int MAX_SKIPS = 8;
 	const Transform3D xf = get_global_transform();
 	PhysicsDirectSpaceState3D::RayParameters ray;
@@ -2475,8 +1293,6 @@ void PhysXRiver3D::_build() {
 		space = get_world_3d()->get_direct_space_state();
 	}
 
-	_measure_outlet(space, c, ds);
-
 	// Where each tributary joins: its mouth's place along this river, and which bank.
 	{
 		const Transform3D inv = get_global_transform().affine_inverse();
@@ -2524,21 +1340,6 @@ void PhysXRiver3D::_build() {
 		float y = 0.0f;
 		bed_found[i] = _base_ground_at(space, sec.centre, y) ? 1 : 0;
 		bed[i] = bed_found[i] ? y : sec.centre.y - (given_depth[i] > 0.0f ? given_depth[i] : 0.0f);
-	}
-	if (space != nullptr) {
-		// A floor added with the river (a cave chunk and its stream) can reach the physics space a few ticks later:
-		// no ray at all finding it puts the build off, up to 30 ticks, before settling on the given depths.
-		bool any = false;
-		for (int i = 0; i < count && !any; i++) {
-			any = bed_found[i] != 0;
-		}
-		if (!any && ground_probe_tries < 30) {
-			ground_probe_tries++;
-			sections.clear();
-			build_pending = true;
-			return;
-		}
-		ground_probe_tries = 0;
 	}
 
 	// Ground across each section, measured once (independent of the water).
@@ -2599,16 +1400,6 @@ void PhysXRiver3D::_build() {
 				ground_found[k] = 1;
 			}
 		}
-	}
-	// The ground without obstacles, for the gradually varied profile (the water goes round rocks: the
-	// flow solve's job, not the section's).
-	LocalVector<float> bare_ground;
-	LocalVector<uint8_t> bare_found;
-	bare_ground.resize(ground.size());
-	bare_found.resize(ground_found.size());
-	for (uint32_t k = 0; k < ground.size(); k++) {
-		bare_ground[k] = ground[k];
-		bare_found[k] = ground_found[k];
 	}
 	// Rocks and other obstacles on their own layers stand on the (base or
 	// carved) ground: a carved river measures the uncarved terrain, which has
@@ -2679,52 +1470,6 @@ void PhysXRiver3D::_build() {
 			}
 		}
 		bed_slope[i] = used > 0 ? MAX(drop / used, 1e-4f) : max_slope;
-	}
-
-	// A lake outlet is drowned when the channel below is too slow to carry what a free sill would pass: its
-	// normal depth stands above critical on the crest, and the discharge is the one whose energy at the sill
-	// (normal depth plus velocity head) the lake's level just reaches (Henderson 1966, ch. 6).
-	if (outlet_discharge > 0.0f) {
-		const float to_local = get_global_transform().origin.y;
-		const float level = outlet_level - to_local;
-		const int ic = CLAMP((int)Math::round(outlet_crest_s / ds), 0, count - 1);
-		const float dn = (sections[ic].width + 2.0f * bank_margin) / m;
-		auto energy = [&](float p_q) -> float {
-			const float target = p_q / Math::sqrt(bed_slope[ic]);
-			float lo = 0.0f;
-			float hi = 20.0f;
-			for (int it = 0; it < 30; it++) {
-				const float mid = 0.5f * (lo + hi);
-				if (conveyance_at(ic, bed[ic] + mid, mid) < target) {
-					lo = mid;
-				} else {
-					hi = mid;
-				}
-			}
-			const float d = 0.5f * (lo + hi);
-			float area = 0.0f;
-			for (int j = 0; j <= m; j++) {
-				area += dn * MAX(depth_at(ic, j, bed[ic] + d, d), 0.0f);
-			}
-			const float u = p_q / MAX(area, 1e-3f);
-			return bed[ic] + d + u * u / (2.0f * GRAVITY);
-		};
-		if (energy(outlet_discharge) > level) {
-			float lo = 0.0f;
-			float hi = outlet_discharge;
-			for (int it = 0; it < 24; it++) {
-				const float mid = 0.5f * (lo + hi);
-				if (energy(mid) <= level) {
-					lo = mid;
-				} else {
-					hi = mid;
-				}
-			}
-			outlet_discharge = lo;
-			for (int i = 0; i < count; i++) {
-				sections[i].discharge = get_discharge_at(sections[i].s);
-			}
-		}
 	}
 
 	// Surface: the normal depth over the real cross-section where the river
@@ -2821,368 +1566,6 @@ void PhysXRiver3D::_build() {
 			}
 		}
 	}
-	// Gradually varied flow (docs/ideas/water.md "River profile from hydraulics"): the standard step
-	// method (Chow 1959, ch. 10) on the real cross-sections, replacing normal depth. Subcritical water is
-	// stepped up from its downstream control (the mouth's level, or critical depth where the water must
-	// pass it), supercritical water down from its upstream one; where both exist the one with the larger
-	// specific force holds, so a fast reach ends in a hydraulic jump where the momentum of the slower water
-	// below matches it (Belanger's sequent depth). Falls (bed steps steeper than max_slope) break the steps.
-	for (int i = 0; i < count; i++) {
-		sections[i].froude = 0.0f;
-		sections[i].critical = -Math::INF;
-		sections[i].jump = 0.0f;
-		sections[i].jump_foam = 0.0f;
-		sections[i].tilt = 0.0f;
-	}
-	{
-		// Wet area A, top width T, conveyance K and the hydrostatic force term P = integral(d^2 / 2 dn), on
-		// the ground without obstacles.
-		auto bare_depth = [&](int p_i, int p_j, float p_surface) -> float {
-			const int k = p_i * (m + 1) + p_j;
-			if (bare_found[k]) {
-				return p_surface - bare_ground[k];
-			}
-			return depth_at(p_i, p_j, p_surface, p_surface - bed[p_i]);
-		};
-		auto props_one = [&](int p_i, float p_z, float &r_a, float &r_t, float &r_k, float &r_p) {
-			const Section &sec = sections[p_i];
-			const float dn = (sec.width + 2.0f * bank_margin) / m;
-			r_a = r_t = r_k = r_p = 0.0f;
-			for (int j = 0; j <= m; j++) {
-				const float d = bare_depth(p_i, j, p_z);
-				if (d > 0.0f) {
-					const float w = ((j == 0 || j == m) ? 0.5f : 1.0f) * dn;
-					r_a += w * d;
-					r_t += w;
-					r_k += w * Math::pow(d, 5.0f / 3.0f);
-					r_p += w * 0.5f * d * d;
-				}
-			}
-			r_k /= roughness;
-		};
-		// The widest of the sections within a metre (at the same surface height): a short narrowing, a
-		// boulder in the bed, is passed round rather than choking the river.
-		const int reach = MAX(1, (int)Math::round(1.0f / ds));
-		auto props = [&](int p_i, float p_z, float &r_a, float &r_t, float &r_k, float &r_p) {
-			props_one(p_i, p_z, r_a, r_t, r_k, r_p);
-			for (int o = -reach; o <= reach; o++) {
-				const int q = p_i + o;
-				// Not across a step: below a cascade the same level is a deeper section, not this one.
-				if (o == 0 || q < 0 || q >= count || Math::abs(bed[q] - bed[p_i]) > max_slope * Math::abs(o) * ds) {
-					continue;
-				}
-				float a, t, k, p;
-				props_one(q, p_z, a, t, k, p);
-				if (a > r_a) {
-					r_a = a;
-					r_t = t;
-					r_k = k;
-					r_p = p;
-				}
-			}
-		};
-		auto energy = [&](int p_i, float p_z, float &r_sf) -> float {
-			float a, t, k, p;
-			props(p_i, p_z, a, t, k, p);
-			const float q = sections[p_i].discharge;
-			r_sf = k > 1e-9f ? (q / k) * (q / k) : 1.0f;
-			return p_z + (a > 1e-6f ? q * q / (2.0f * GRAVITY * a * a) : 1e3f);
-		};
-		auto momentum = [&](int p_i, float p_z) -> float {
-			float a, t, k, p;
-			props(p_i, p_z, a, t, k, p);
-			const float q = sections[p_i].discharge;
-			return (a > 1e-6f ? q * q / (GRAVITY * a) : 1e6f) + p;
-		};
-		// Which sections the profile owns: on measured ground (or snapped), no given depth, not past the mouth.
-		LocalVector<uint8_t> owned;
-		owned.resize(count);
-		LocalVector<uint8_t> fall_after; // a bed step steeper than max_slope to the next section
-		fall_after.resize(count);
-		for (int i = 0; i < count; i++) {
-			owned[i] = gradually_varied_flow && given_depth[i] <= 0.0f && (bed_found[i] || snap_to_ground) && sections[i].mouth_fade >= 1.0f;
-			fall_after[i] = i + 1 < count && (bed[i] - bed[i + 1]) / ds > max_slope; // a cascade: max_slope's meaning
-		}
-		// Sections on a cascade keep their surface (the falls' own treatment); the profile breaks there.
-		for (int i = 0; i < count; i++) {
-			if (fall_after[i] || (i > 0 && fall_after[i - 1])) {
-				owned[i] = 0;
-			}
-		}
-		auto brink = [&](int p_i) -> bool { // the last section above a cascade
-			return p_i + 1 < count && (fall_after[p_i + 1] || fall_after[p_i]);
-		};
-		// The lowest point of each section's bare ground (the bed under any rock).
-		LocalVector<float> low;
-		low.resize(count);
-		for (int i = 0; i < count; i++) {
-			low[i] = bed[i];
-			for (int j = 0; j <= m; j++) {
-				const int k = i * (m + 1) + j;
-				if (bare_found[k]) {
-					low[i] = MIN(low[i], bare_ground[k]);
-				}
-			}
-		}
-		// Critical surfaces: Q^2 T / (g A^3) = 1.
-		LocalVector<float> zc;
-		zc.resize(count);
-		for (int i = 0; i < count; i++) {
-			const float q = sections[i].discharge;
-			float lo = 0.002f;
-			float hi = 20.0f;
-			for (int it = 0; it < 40; it++) {
-				const float mid = 0.5f * (lo + hi);
-				float a, t, k, p;
-				props(i, low[i] + mid, a, t, k, p);
-				if (a > 1e-6f && q * q * t / (GRAVITY * a * a * a) > 1.0f) {
-					lo = mid;
-				} else {
-					hi = mid;
-				}
-			}
-			zc[i] = low[i] + 0.5f * (lo + hi);
-			sections[i].critical = zc[i];
-		}
-		if (gradually_varied_flow) {
-			// Subcritical, from downstream up. E_i - Sf_i ds / 2 = E_{i+1} + Sf_{i+1} ds / 2 on the deep branch.
-			LocalVector<float> z_sub;
-			LocalVector<uint8_t> control; // the water passes critical depth here
-			z_sub.resize(count);
-			control.resize(count);
-			// Below a steep reach (normal depth under critical) with nothing holding the water up downstream,
-			// there is no slow water to step: only critical stands in (whose specific force any fast water
-			// beats) until the slope eases, where the water passes critical (the control).
-			bool steep_tail = false;
-			for (int i = count - 1; i >= 0; i--) {
-				control[i] = 0;
-				if (!owned[i]) {
-					z_sub[i] = sections[i].surface;
-					steep_tail = false;
-					continue;
-				}
-				if (steep_tail) {
-					z_sub[i] = zc[i];
-					if (sections[i].surface >= zc[i] || brink(i)) {
-						control[i] = 1;
-						steep_tail = false;
-					}
-					continue;
-				}
-				if (brink(i)) {
-					// A free overfall: critical depth just upstream of the lip (Rouse 1936; the brink's own
-					// drawdown to 0.715 y_c is _find_falls'), unless the pool below drowns the step.
-					float tail = -Math::INF;
-					for (int j = i + 1; j < count; j++) {
-						if (owned[j]) {
-							tail = z_sub[j];
-							break;
-						}
-					}
-					z_sub[i] = MAX(zc[i], tail);
-					control[i] = 1;
-					steep_tail = false;
-					continue;
-				}
-				if (i == count - 1 || !owned[i + 1]) {
-					// The end, the edge of the owned reach, or a brink: normal depth (or the level the reach
-					// below holds), never below critical (a brink's own drawdown is _find_falls').
-					z_sub[i] = MAX(i + 1 < count && !owned[i + 1] ? MAX(sections[i].surface, z_sub[i + 1]) : sections[i].surface, zc[i]);
-					control[i] = brink(i) || z_sub[i] <= zc[i] + 1e-4f;
-					steep_tail = !brink(i) && z_sub[i] <= zc[i] + 1e-4f;
-					continue;
-				}
-				float sf_down;
-				const float e_down = energy(i + 1, z_sub[i + 1], sf_down);
-				const float target = e_down + 0.5f * sf_down * ds;
-				auto residual = [&](float p_z) -> float {
-					float sf;
-					const float e = energy(i, p_z, sf);
-					return e - 0.5f * sf * ds - target;
-				};
-				if (residual(zc[i]) >= 0.0f) {
-					z_sub[i] = zc[i]; // no subcritical water carries this: it passes critical here
-					control[i] = 1;
-					continue;
-				}
-				float lo = zc[i];
-				float hi = zc[i] + 1.0f;
-				while (residual(hi) < 0.0f && hi < zc[i] + 40.0f) {
-					hi += 2.0f * (hi - zc[i]);
-				}
-				for (int it = 0; it < 40; it++) {
-					const float mid = 0.5f * (lo + hi);
-					if (residual(mid) < 0.0f) {
-						lo = mid;
-					} else {
-						hi = mid;
-					}
-				}
-				z_sub[i] = 0.5f * (lo + hi);
-			}
-			// Supercritical, from upstream down, chosen where its specific force is the larger.
-			bool alive = false;
-			float z_prev = 0.0f;
-			float fr_prev = 0.0f;
-			for (int i = 0; i < count; i++) {
-				Section &sec = sections[i];
-				if (!owned[i]) {
-					alive = false;
-					continue;
-				}
-				float z_sup = -Math::INF;
-				if (alive) {
-					float sf_up;
-					const float e_up = energy(i - 1, z_prev, sf_up);
-					const float target = e_up - 0.5f * sf_up * ds;
-					auto residual = [&](float p_z) -> float {
-						float sf;
-						const float e = energy(i, p_z, sf);
-						return e + 0.5f * sf * ds - target;
-					};
-					if (residual(zc[i]) <= 0.0f) {
-						float lo = low[i] + 0.002f;
-						float hi = zc[i];
-						for (int it = 0; it < 40; it++) {
-							const float mid = 0.5f * (lo + hi);
-							if (residual(mid) > 0.0f) {
-								lo = mid;
-							} else {
-								hi = mid;
-							}
-						}
-						z_sup = 0.5f * (lo + hi);
-					} else {
-						alive = false; // too little energy to stay fast: it chokes to critical
-					}
-				} else if (i > 0 && !owned[i - 1]) {
-					// The foot of a step: the water arrives fast and shallow. Rand (1955), for a free overfall
-					// onto a floor h below the brink: y1 = 0.54 h (y_c / h)^1.275, which keeps the fraction
-					// E1 / E0 of the energy above the floor; that fraction is applied to this section's shape.
-					int j = i - 1;
-					bool dropped = false;
-					while (j >= 0 && !owned[j]) {
-						dropped = dropped || fall_after[j];
-						j--;
-					}
-					dropped = dropped || (j >= 0 && fall_after[j]);
-					const float h = j >= 0 ? low[j] - low[i] : 0.0f;
-					const float qw = sections[i].discharge / MAX(sections[i].width, 0.5f);
-					const float yc = Math::pow(qw * qw / GRAVITY, 1.0f / 3.0f);
-					// A waterfall (a drop of fall_min_height or more) plunges into the pool it has dug instead:
-					// natural falls scour one, so its foot stays at the pool's level.
-					const bool plunges = fall_min_height > 0.0f && j >= 0 && zc[j] - sections[i].surface >= fall_min_height;
-					if (dropped && h > yc && !plunges) {
-						const float y1 = MAX(0.54f * h * Math::pow(yc / h, 1.275f), 0.01f);
-						const float kept = (y1 + qw * qw / (2.0f * GRAVITY * y1 * y1)) / (h + 1.5f * yc);
-						float sf;
-						const float target = low[i] + kept * (energy(j, zc[j], sf) - low[i]);
-						if (energy(i, zc[i], sf) < target) {
-							float lo = low[i] + 0.002f;
-							float hi = zc[i];
-							for (int it = 0; it < 40; it++) {
-								const float mid = 0.5f * (lo + hi);
-								if (energy(i, mid, sf) > target) {
-									lo = mid;
-								} else {
-									hi = mid;
-								}
-							}
-							z_sup = 0.5f * (lo + hi);
-						}
-					} else if (sections[i].surface < zc[i] - 1e-3f) {
-						z_sup = sections[i].surface; // a steep reach's own inflow: normal depth
-					}
-				} else if (i == 0 && sections[i].surface < zc[i] - 1e-3f) {
-					z_sup = sections[i].surface;
-				}
-				float z = z_sub[i];
-				if (Math::is_finite(z_sup) && z_sup < z_sub[i] - 1e-4f && momentum(i, z_sup) > momentum(i, z_sub[i])) {
-					z = z_sup;
-					alive = true;
-				} else {
-					// The fast water meets slower water whose momentum it cannot push back: a jump.
-					if (alive && fr_prev > 1.0f) {
-						sec.jump = fr_prev;
-					}
-					alive = false;
-				}
-				// Leaving a control (the water passed critical here) into a steep reach: fast water from here.
-				if (!alive && control[i] && i + 1 < count && owned[i + 1] && !brink(i) && sections[i + 1].surface < zc[i + 1]) {
-					alive = true;
-				}
-				if (brink(i)) {
-					alive = false; // the water drops into the pool below: subcritical from there
-				}
-				sec.surface = z;
-				sec.centre.y = z;
-				float a, t, k, p;
-				props(i, z, a, t, k, p);
-				sec.froude = (a > 1e-6f && t > 1e-6f) ? sec.discharge / (a * Math::sqrt(GRAVITY * a / t)) : 0.0f;
-				z_prev = z;
-				fr_prev = sec.froude;
-			}
-			// Through a cascade the surface only falls: a section the passes did not own keeps the original
-			// running-min level, which can sit above a brink the profile drew down to critical.
-			for (int i = 1; i < count; i++) {
-				if (!owned[i] && (fall_after[i] || fall_after[i - 1]) && sections[i].surface > sections[i - 1].surface) {
-					sections[i].surface = MAX(sections[i - 1].surface, low[i] + 0.002f);
-					sections[i].centre.y = sections[i].surface;
-				}
-			}
-			// Cascades from the profile (as above, but a jump steps the surface up, not down).
-			for (int i = 1; i < count; i++) {
-				if (owned[i]) {
-					const float drop = sections[i - 1].surface - sections[i].surface;
-					sections[i].cascade = drop / ds > max_slope && drop > CASCADE_MIN_DROP;
-				}
-			}
-			// A jump's roller: white water over about six sequent depths (Peterka 1958), stronger the higher
-			// Fr1 (an undular jump, Fr1 below about 1.7, has none: Chanson 1995).
-			for (int i = 0; i < count; i++) {
-				const float fr1 = sections[i].jump;
-				if (fr1 <= 0.0f) {
-					continue;
-				}
-				const float y2 = MAX(sections[i].surface - bed[i], 0.05f);
-				const float roller = 6.0f * y2;
-				float f = CLAMP((fr1 - 1.7f) / 2.8f, 0.0f, 1.0f);
-				const float strength = 0.35f + 0.65f * f * f * (3.0f - 2.0f * f);
-				if (fr1 < 1.7f) {
-					continue;
-				}
-				for (int k = i; k < count && sections[k].s - sections[i].s <= roller; k++) {
-					const float u = (sections[k].s - sections[i].s) / MAX(roller, 1e-3f);
-					sections[k].jump_foam = MAX(sections[k].jump_foam, strength * (1.0f - u * u));
-				}
-			}
-		}
-		// Froude where the profile was not stepped.
-		for (int i = 0; i < count; i++) {
-			Section &sec = sections[i];
-			if (sec.froude <= 0.0f) {
-				float a, t, k, p;
-				props(i, sec.surface, a, t, k, p);
-				sec.froude = (a > 1e-6f && t > 1e-6f) ? sec.discharge / (a * Math::sqrt(GRAVITY * a / t)) : 0.0f;
-			}
-		}
-		// Bend superelevation: the surface banks up to the outside of a bend by about U^2 w / (g r) (Chow 1959,
-		// 17-4), here as a tilt U^2 curvature / g across, held to half the mean depth over the half width.
-		if (bend_superelevation) {
-			for (int i = 0; i < count; i++) {
-				Section &sec = sections[i];
-				float a, t, k, p;
-				props(i, sec.surface, a, t, k, p);
-				if (a <= 1e-6f || t <= 1e-6f || sec.mouth_fade < 1.0f) {
-					continue;
-				}
-				const float u = sec.discharge / a;
-				const float half = 0.5f * sec.width + bank_margin;
-				const float limit = 0.5f * (a / t) / MAX(half, 0.1f);
-				sec.tilt = CLAMP(-sec.curvature * u * u / GRAVITY, -limit, limit);
-			}
-		}
-	}
 	_find_falls(space, bed, ds);
 	for (int i = 0; i < count; i++) {
 		const int a = MAX(0, i - half_window);
@@ -3202,7 +1585,7 @@ void PhysXRiver3D::_build() {
 		float area = 0.0f;
 		float wet_width = 0.0f;
 		for (int j = 0; j <= m; j++) {
-			const float d = depth_at(i, j, sec.surface + sec.tilt * (-half + j * dn), sec.surface - bed[i]);
+			const float d = depth_at(i, j, sec.surface, sec.surface - bed[i]);
 			sec.depth[j] = d;
 			const float w = (j == 0 || j == m) ? 0.5f : 1.0f;
 			if (d > 0.0f) {
@@ -3222,24 +1605,20 @@ void PhysXRiver3D::_build() {
 		const float mean_depth = wet_width > 1e-4f ? area / wet_width : 0.0f;
 		const float froude = mean_depth > 1e-3f ? sec.speed / Math::sqrt(GRAVITY * mean_depth) : 0.0f;
 		float source = CLAMP((froude - 0.8f) / 0.8f, 0.0f, 1.0f);
-		// Fast water alone is lace, not a sheet: it whitens only where air gets in (a cascade, a plunge,
-		// a jump's roller), so a long supercritical run below a drop keeps its texture.
-		source = 0.4f * source * source * (3.0f - 2.0f * source);
+		source = source * source * (3.0f - 2.0f * source);
 		if (sec.cascade) {
 			source = 1.0f;
 		}
-		source = MAX(source, MAX(sec.plunge, sec.jump_foam));
+		source = MAX(source, sec.plunge);
 		carried_foam *= Math::exp(-ds / (MAX(sec.speed, 0.1f) * foam_persistence));
 		carried_foam = MAX(carried_foam, source);
 		sec.foam = carried_foam;
 	}
 	_solve_flow(ds);
-	_solve_standing_waves();
 	_build_mesh();
 	_build_fall_effects();
 	live_fields_dirty = true;
 	_register_mouth();
-	_register_outlet();
 	emit_signal(SNAME("rebuilt"));
 	update_configuration_warnings();
 	if (carve) {
@@ -3544,13 +1923,11 @@ void PhysXRiver3D::_solve_flow(float p_ds) {
 				const float speed = Math::sqrt(sec.speed_at[j] * sec.speed_at[j] + sec.across_at[j] * sec.across_at[j]);
 				const float fr = speed / Math::sqrt(GRAVITY * d);
 				float f = CLAMP((fr - 0.8f) / 0.8f, 0.0f, 1.0f);
-				// Lace, not a sheet (as past a rock): fast water whitens through only where air is driven
-				// in, at a cascade, a plunge or a jump's roller.
-				src = 0.4f * f * f * (3.0f - 2.0f * f);
+				src = f * f * (3.0f - 2.0f * f);
 				if (sec.cascade) {
 					src = 1.0f;
 				}
-				src = MAX(src, MAX(sec.plunge, sec.jump_foam));
+				src = MAX(src, sec.plunge);
 				// A rock next to this sample.
 				bool by_rock = false;
 				for (int di = -1; di <= 1 && !by_rock; di++) {
@@ -3590,174 +1967,16 @@ void PhysXRiver3D::_solve_flow(float p_ds) {
 	}
 }
 
-// Standing waves (docs/ideas/water.md "River standing waves"), baked from the solved profile.
-void PhysXRiver3D::_solve_standing_waves() {
-	const int count = (int)sections.size();
-	const int m = cross_segments;
-	LocalVector<float> mean_depth;
-	mean_depth.resize(count);
-	for (int i = 0; i < count; i++) {
-		Section &sec = sections[i];
-		sec.wave_at.resize(m + 1);
-		for (int j = 0; j <= m; j++) {
-			sec.wave_at[j] = 0.0f;
-		}
-		sec.wave_amp = 0.0f;
-		sec.wave_k = 0.0f;
-		sec.wave_s0 = 0.0f;
-		sec.wave_decay = 1.0f;
-		float area = 0.0f;
-		float wet = 0.0f;
-		const float dn = (sec.width + 2.0f * bank_margin) / m;
-		for (int j = 0; j <= m; j++) {
-			if (sec.depth[j] > 0.0f) {
-				area += sec.depth[j] * dn;
-				wet += dn;
-			}
-		}
-		mean_depth[i] = wet > 1e-4f ? area / wet : 0.0f;
-	}
-	if (!standing_waves || !gradually_varied_flow || count < 3) {
-		return;
-	}
-	// Undular jumps: the stationary train below each toe.
-	for (int i = 1; i < count; i++) {
-		const float fr1 = sections[i].jump;
-		if (fr1 <= 1.0f) {
-			continue;
-		}
-		const int down = MIN(i + 2, count - 1);
-		const float y1 = mean_depth[i - 1];
-		const float y2 = mean_depth[down];
-		const float u2 = sections[down].speed;
-		if (y2 < 0.02f || y2 <= y1) {
-			continue;
-		}
-		const float fr2 = u2 / Math::sqrt(GRAVITY * y2);
-		if (fr2 >= 0.98f) {
-			continue;
-		}
-		// Fr2^2 x = tanh(x), x = k y2 (stationary: the phase speed equals the current).
-		const float f2 = fr2 * fr2;
-		float lo = 1e-3f;
-		float hi = 1.0f / MAX(f2, 1e-3f) + 1.0f;
-		for (int it = 0; it < 40; it++) {
-			const float x = 0.5f * (lo + hi);
-			if (f2 * x < Math::tanh(x)) {
-				lo = x;
-			} else {
-				hi = x;
-			}
-		}
-		const float k = MAX(0.5f * (lo + hi), 0.15f) / y2;
-		const float wavelength = (float)Math::TAU / k;
-		// Undular below Fr1 1.7 (Chanson and Montes 1995); above it the roller takes most of the energy.
-		const float share = fr1 <= 1.7f ? 1.0f : 0.33f;
-		const float amp = MIN(0.4f * (y2 - y1), 0.3f * y2) * share;
-		const float decay = (fr1 <= 1.7f ? 4.0f : 2.0f) * wavelength;
-		const float s0 = sections[i].s;
-		for (int q = i; q < count; q++) {
-			Section &sec = sections[q];
-			const float x = sec.s - s0;
-			if (x > 5.0f * decay || (q > i && (sec.jump > 0.0f || sec.cascade || sec.fall_drop))) {
-				break;
-			}
-			if (amp * Math::exp(-x / decay) > sec.wave_amp * Math::exp(-(sec.s - sec.wave_s0) / sec.wave_decay)) {
-				sec.wave_amp = amp;
-				sec.wave_k = k;
-				sec.wave_s0 = s0;
-				sec.wave_decay = decay;
-			}
-		}
-	}
-	// Cross-waves in supercritical flow (Ippen 1951): each wall's angle into the flow, carried along the
-	// characteristics at the Mach angle, directly and after up to three reflections.
-	LocalVector<float> theta;
-	theta.resize(count);
-	for (int i = 0; i < count; i++) {
-		const int a = MAX(i - 2, 0);
-		const int b = MIN(i + 2, count - 1);
-		const float ds = sections[b].s - sections[a].s;
-		// Each wall moves in by half the narrowing: positive turns into the flow.
-		theta[i] = ds > 1e-4f ? -0.5f * (sections[b].width - sections[a].width) / ds : 0.0f;
-		if (sections[i].cascade || sections[i].fall_drop || sections[i].froude < 1.0f) {
-			theta[i] = 0.0f;
-		}
-	}
-	auto theta_at = [&](int p_from, float p_s) -> float {
-		// Walk upstream from p_from to arc length p_s; the characteristic stops at subcritical water or a step.
-		int q = p_from;
-		while (q > 0 && sections[q].s > p_s) {
-			if (sections[q].froude < 1.0f || sections[q].cascade || sections[q].fall_drop || sections[q].jump > 0.0f) {
-				return 0.0f;
-			}
-			q--;
-		}
-		if (sections[q].s > p_s) {
-			return 0.0f;
-		}
-		if (q + 1 >= count) {
-			return theta[q]; // at the last section (no travel to the wall): its own angle
-		}
-		const float span = sections[q + 1].s - sections[q].s;
-		const float t = span > 1e-5f ? (p_s - sections[q].s) / span : 0.0f;
-		return Math::lerp(theta[q], theta[q + 1], CLAMP(t, 0.0f, 1.0f));
-	};
-	for (int i = 1; i < count; i++) {
-		Section &sec = sections[i];
-		const float fr = sec.froude;
-		if (fr < 1.05f || sec.cascade || sec.fall_drop || mean_depth[i] < 0.02f) {
-			continue;
-		}
-		const float f2 = fr * fr;
-		// Linear gain, eased in from Fr 1.05 to 1.25 where linear theory breaks down near critical.
-		const float gain = mean_depth[i] * f2 / Math::sqrt(f2 - 1.0f) * CLAMP((fr - 1.05f) / 0.2f, 0.0f, 1.0f);
-		const float tan_b = 1.0f / Math::sqrt(f2 - 1.0f); // tan(asin(1/Fr))
-		const float w = sec.width;
-		const float half = 0.5f * w + bank_margin;
-		float sum = 0.0f;
-		int wet = 0;
-		for (int j = 0; j <= m; j++) {
-			const float n = -half + 2.0f * half * j / m;
-			if (sec.depth[j] <= 0.0f) {
-				continue;
-			}
-			const float d_left = CLAMP(0.5f * w - n, 0.0f, w);
-			const float d_right = w - d_left;
-			const float travel[2][4] = { { d_left, 2.0f * w - d_left, 2.0f * w + d_left, 4.0f * w - d_left }, { d_right, 2.0f * w - d_right, 2.0f * w + d_right, 4.0f * w - d_right } };
-			float h = 0.0f;
-			for (int side = 0; side < 2; side++) {
-				float loss = 1.0f;
-				for (int r = 0; r < 4; r++) {
-					h += loss * theta_at(i, sec.s - travel[side][r] / tan_b);
-					loss *= 0.8f;
-				}
-			}
-			h = CLAMP(gain * h, -0.4f * mean_depth[i], 0.4f * mean_depth[i]);
-			sec.wave_at[j] = h;
-			sum += h;
-			wet++;
-		}
-		// Keep the solved 1D profile: only the pattern across.
-		const float mean = wet > 0 ? sum / wet : 0.0f;
-		for (int j = 0; j <= m; j++) {
-			if (sec.depth[j] > 0.0f) {
-				sec.wave_at[j] -= mean;
-			}
-		}
-	}
-}
-
 void PhysXRiver3D::_build_mesh() {
 	if (mesh_instance == nullptr) {
 		mesh_instance = memnew(MeshInstance3D);
-		// Path tracer only: its shadow rays from the bed cross the water, absorbed on the sun's way down.
-		mesh_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_ON);
-		mesh_instance->set_shadow_renderers(RSE::SHADOW_RENDERER_PATH_TRACER);
+		mesh_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
 		add_child(mesh_instance, false, INTERNAL_MODE_BACK);
 	}
 	if (water_material.is_null()) {
-		Ref<Shader> shader = water_shared_shader(river_shader_src());
+		Ref<Shader> shader;
+		shader.instantiate();
+		shader->set_code(RIVER_SHADER_SRC);
 		water_material.instantiate();
 		water_material->set_shader(shader);
 		_live_material();
@@ -3782,8 +2001,6 @@ void PhysXRiver3D::_build_mesh() {
 	uvs.resize(count * row);
 	uv2s.resize(count * row);
 	colors.resize(count * row);
-	PackedFloat32Array custom0;
-	custom0.resize(count * row * 4);
 	for (int i = 0; i < count; i++) {
 		const Section &sec = sections[i];
 		const float half = 0.5f * sec.width + bank_margin;
@@ -3791,27 +2008,13 @@ void PhysXRiver3D::_build_mesh() {
 		for (int j = 0; j <= m; j++) {
 			const int k = i * row + j;
 			const float n = -half + 2.0f * half * j / m;
-			const float wave = j < (int)sec.wave_at.size() ? sec.wave_at[j] : 0.0f;
-			verts.set(k, sec.centre + sec.side * n + Vector3(0.0f, sec.tilt * n + wave, 0.0f));
-			custom0.set(k * 4 + 0, sec.wave_amp);
-			custom0.set(k * 4 + 1, sec.wave_k);
-			// The crests bow downstream mid-channel (slower water by the banks holds them back): a quarter
-			// wavelength at the banks, as in photographs of undular jumps (Chanson 2009).
-			const float r = CLAMP(n / MAX(0.5f * sec.width, 0.1f), -1.0f, 1.0f);
-			custom0.set(k * 4 + 2, sec.wave_s0 - (sec.wave_k > 0.0f ? 0.25f * (float)Math::TAU / sec.wave_k * r * r : 0.0f));
-			custom0.set(k * 4 + 3, sec.wave_decay);
+			verts.set(k, sec.centre + sec.side * n);
 			uvs.set(k, Vector2(sec.s, n));
 			const Vector3 v = tangent * sec.speed_at[j] + sec.side * sec.across_at[j];
 			uv2s.set(k, Vector2(v.x, v.z));
 			const float foam = sec.foam_at[j] * sec.mouth_fade;
-			// Where the water still stands at the ribbon's outer sample (spread over flat ground wider than the
-			// channel, as onto a beach), the ribbon would cut it off along a straight line: fade it out over the
-			// outer third instead, and the shader breaks that fade up with the bank's relief.
-			const bool spills = sec.depth[n < 0.0f ? 0 : m] > 0.0f;
-			const float fade_from = spills ? 0.65f * half : 0.5f * sec.width;
-			const float width_fade = (1.0f - CLAMP((Math::abs(n) - fade_from) / MAX(half - fade_from, 1e-3f), 0.0f, 1.0f)) * sec.mouth_fade;
-			// Alpha: the Froude number over 4 (the Froude overlay), up to 0.98; 1 marks a jump's toe.
-			colors.set(k, Color(CLAMP((sec.depth[j] + 1.0f) * 0.25f, 0.0f, 1.0f), foam, width_fade, sec.jump > 0.0f ? 1.0f : CLAMP(sec.froude * 0.25f, 0.0f, 0.98f)));
+			const float width_fade = (1.0f - CLAMP((Math::abs(n) - 0.5f * sec.width) / MAX(bank_margin, 1e-3f), 0.0f, 1.0f)) * sec.mouth_fade;
+			colors.set(k, Color(CLAMP((sec.depth[j] + 1.0f) * 0.25f, 0.0f, 1.0f), foam, width_fade, 1.0f));
 		}
 	}
 	for (int i = 0; i < count; i++) {
@@ -3825,100 +2028,6 @@ void PhysXRiver3D::_build_mesh() {
 			normals.set(i * row + j, nrm.length_squared() > 1e-12f ? nrm.normalized() : Vector3(0, 1, 0));
 		}
 	}
-	// The live window's ribbon, dense (docs/ideas/water.md "Real ripple geometry near the camera"): the strips
-	// whose corners come within the window (plus a strip's size, so the seam with the coarse ribbon lies where the
-	// live heights have faded to nothing) are cut into quads about live_near_mesh_spacing across, attributes
-	// bilinear between the section samples, for the surface waves' heights to stand up as geometry.
-	LocalVector<int> fine_along; // per strip: 0 coarse, else its cuts along the current
-	int fine_across = 1; // cuts per cross segment (the same for every dense strip, so their shared rows match)
-	live_near_mesh_used = 0.0f;
-	if (live_near_mesh_spacing > 0.0f && live_flow && live_configured) {
-		const Transform3D gt = get_global_transform();
-		float reach = 0.0f;
-		for (int i = 0; i < count; i++) {
-			reach = MAX(reach, MAX(step_length, (sections[i].width + 2.0f * bank_margin) / m));
-		}
-		const float half_w = 0.5f * live_domain_size + 1.5f * reach;
-		auto near = [&](const Vector3 &p_local) {
-			const Vector3 g = gt.xform(p_local);
-			return MAX(Math::abs(g.x - live_center.x), Math::abs(g.z - live_center.y)) <= half_w;
-		};
-		fine_along.resize(count - 1);
-		float along_len_sum = 0.0f;
-		float across_max = 0.0f;
-		int strips = 0;
-		for (int i = 0; i + 1 < count; i++) {
-			const bool in = near(verts[i * row]) || near(verts[i * row + m]) || near(verts[(i + 1) * row]) || near(verts[(i + 1) * row + m]) || near(sections[i].centre);
-			fine_along[i] = in ? 1 : 0;
-			if (in) {
-				strips++;
-				along_len_sum += sections[i].centre.distance_to(sections[i + 1].centre);
-				across_max = MAX(across_max, MAX(sections[i].width, sections[i + 1].width) + 2.0f * bank_margin);
-			}
-		}
-		if (strips > 0) {
-			// At most about 200,000 quads: past that the spacing grows (and the waves' heights fade, in the shader).
-			const float budget = 200000.0f;
-			float spacing = live_near_mesh_spacing;
-			const float quads = (along_len_sum / spacing) * (across_max / spacing);
-			if (quads > budget) {
-				spacing *= Math::sqrt(quads / budget);
-			}
-			live_near_mesh_used = spacing;
-			fine_across = CLAMP((int)Math::ceil(across_max / m / spacing), 1, 64);
-			for (int i = 0; i + 1 < count; i++) {
-				if (fine_along[i]) {
-					fine_along[i] = CLAMP((int)Math::ceil(sections[i].centre.distance_to(sections[i + 1].centre) / spacing), 1, 64);
-				}
-			}
-		}
-	}
-	const int fine_row = m * fine_across + 1;
-	LocalVector<int> fine_section_row; // per section: first vertex of its dense row, -1 none yet
-	if (!fine_along.is_empty()) {
-		fine_section_row.resize(count);
-		for (int i = 0; i < count; i++) {
-			fine_section_row[i] = -1;
-		}
-	}
-	// A vertex at strip i, a fraction u of the way along it, at cross position v (in segments), its attributes
-	// bilinear between the four coarse samples round it.
-	auto add_fine_vertex = [&](int p_i, float p_u, float p_v) -> int {
-		const int j0 = MIN((int)Math::floor(p_v), m - 1);
-		const float t = p_v - j0;
-		const int i1 = MIN(p_i + 1, count - 1);
-		const int a = p_i * row + j0;
-		const int b = i1 * row + j0;
-		const float w00 = (1.0f - p_u) * (1.0f - t);
-		const float w01 = (1.0f - p_u) * t;
-		const float w10 = p_u * (1.0f - t);
-		const float w11 = p_u * t;
-		const int k = verts.size();
-		verts.push_back(verts[a] * w00 + verts[a + 1] * w01 + verts[b] * w10 + verts[b + 1] * w11);
-		const Vector3 nr = normals[a] * w00 + normals[a + 1] * w01 + normals[b] * w10 + normals[b + 1] * w11;
-		normals.push_back(nr.length_squared() > 1e-12f ? nr.normalized() : Vector3(0, 1, 0));
-		uvs.push_back(uvs[a] * w00 + uvs[a + 1] * w01 + uvs[b] * w10 + uvs[b + 1] * w11);
-		uv2s.push_back(uv2s[a] * w00 + uv2s[a + 1] * w01 + uv2s[b] * w10 + uv2s[b + 1] * w11);
-		colors.push_back(colors[a] * w00 + colors[a + 1] * w01 + colors[b] * w10 + colors[b + 1] * w11);
-		for (int c = 0; c < 4; c++) {
-			custom0.push_back(custom0[a * 4 + c] * w00 + custom0[(a + 1) * 4 + c] * w01 + custom0[b * 4 + c] * w10 + custom0[(b + 1) * 4 + c] * w11);
-		}
-		return k;
-	};
-	// The dense row along section i (shared by the two strips either side of it).
-	auto section_row = [&](int p_i) -> int {
-		if (fine_section_row[p_i] < 0) {
-			const int strip = MIN(p_i, count - 2);
-			const float u = p_i == strip ? 0.0f : 1.0f;
-			fine_section_row[p_i] = verts.size();
-			for (int b = 0; b < fine_row; b++) {
-				add_fine_vertex(strip, u, (float)b / fine_across);
-			}
-		}
-		return fine_section_row[p_i];
-	};
-	LocalVector<int> strip_rows;
-	int strip_rows_of = -1; // the strip strip_rows holds
 	for (int i = 0; i + 1 < count; i++) {
 		for (int j = 0; j < m; j++) {
 			const int k00 = i * row + j;
@@ -3928,37 +2037,6 @@ void PhysXRiver3D::_build_mesh() {
 			// Skip quads that are dry all round (ground well above the water).
 			const float dmax = MAX(MAX(sections[i].depth[j], sections[i].depth[j + 1]), MAX(sections[i + 1].depth[j], sections[i + 1].depth[j + 1]));
 			if (dmax < -0.05f || MAX(sections[i].mouth_fade, sections[i + 1].mouth_fade) <= 0.0f || sections[i].fall_drop) {
-				continue;
-			}
-			if (!fine_along.is_empty() && fine_along[i] > 0) {
-				// This quad cut into fine_along x fine_across, the same winding.
-				const int fa = fine_along[i];
-				if (strip_rows_of != i) {
-					strip_rows_of = i;
-					strip_rows.resize(fa + 1);
-					strip_rows[0] = section_row(i);
-					for (int a = 1; a < fa; a++) {
-						strip_rows[a] = verts.size();
-						for (int b = 0; b < fine_row; b++) {
-							add_fine_vertex(i, (float)a / fa, (float)b / fine_across);
-						}
-					}
-					strip_rows[fa] = section_row(i + 1);
-				}
-				for (int a = 0; a < fa; a++) {
-					for (int b = j * fine_across; b < (j + 1) * fine_across; b++) {
-						const int f00 = strip_rows[a] + b;
-						const int f01 = f00 + 1;
-						const int f10 = strip_rows[a + 1] + b;
-						const int f11 = f10 + 1;
-						indices.push_back(f00);
-						indices.push_back(f01);
-						indices.push_back(f10);
-						indices.push_back(f01);
-						indices.push_back(f11);
-						indices.push_back(f10);
-					}
-				}
 				continue;
 			}
 			// Clockwise seen from above: the top is the front face, which the path
@@ -3984,16 +2062,11 @@ void PhysXRiver3D::_build_mesh() {
 	arrays[Mesh::ARRAY_TEX_UV] = uvs;
 	arrays[Mesh::ARRAY_TEX_UV2] = uv2s;
 	arrays[Mesh::ARRAY_COLOR] = colors;
-	arrays[Mesh::ARRAY_CUSTOM0] = custom0;
 	arrays[Mesh::ARRAY_INDEX] = indices;
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
-	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT);
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 	mesh_instance->set_mesh(mesh);
-	if (water_material.is_valid()) {
-		water_material->set_shader_parameter(SNAME("section_step"), count > 1 ? (sections[count - 1].s - sections[0].s) / (count - 1) : step_length);
-		water_material->set_shader_parameter(SNAME("live_near_spacing"), live_near_mesh_used);
-	}
 }
 
 // Waterfalls (docs/ideas/water.md "Step 4f"). A run of cascade sections that
@@ -4008,51 +2081,6 @@ void PhysXRiver3D::_find_falls(PhysicsDirectSpaceState3D *p_space, const LocalVe
 	for (Section &sec : sections) {
 		sec.fall_drop = false;
 		sec.plunge = 0.0f;
-	}
-	// Faces another node draws (PhysXWaterfalls3D's contact falls, as lip and foot pairs): the ribbon down them is
-	// hidden under that sheet, and no fall is made there.
-	if (fall_exclusions.size() >= 2) {
-		const Transform3D to_local = (is_inside_tree() ? get_global_transform() : get_transform()).affine_inverse();
-		for (int e = 0; e + 1 < fall_exclusions.size(); e += 2) {
-			const Vector3 lip = to_local.xform(fall_exclusions[e]);
-			const Vector3 foot = to_local.xform(fall_exclusions[e + 1]);
-			const Vector2 l2(lip.x, lip.z);
-			const Vector2 f2(foot.x, foot.z);
-			int first = -1;
-			for (int k = 0; k + 1 < count; k++) {
-				const Vector3 c = sections[k].centre.lerp(sections[k + 1].centre, 0.5f);
-				const Vector2 c2(c.x, c.z);
-				const Vector2 seg = f2 - l2;
-				const float t = seg.length_squared() > 1e-6f ? CLAMP((c2 - l2).dot(seg) / seg.length_squared(), 0.0f, 1.0f) : 0.0f;
-				const float reach = MAX(6.0f, sections[k].width);
-				if (c2.distance_to(l2 + seg * t) < reach && sections[k].surface < lip.y + 1.0f && sections[k + 1].surface > foot.y - 1.0f) {
-					sections[k].fall_drop = true;
-					if (first < 0) {
-						first = k;
-					}
-				}
-			}
-			// The water draws down to the brink depth before the lip (Rouse 1936), as at the river's own falls:
-			// standing at its full depth up to the hidden stretch, the ribbon ended in a block of water hanging
-			// over the face's first row. Over about 4 y_c, and at least the last section before the lip.
-			if (first > 0) {
-				const Section &sl = sections[first];
-				const float q = sl.discharge / MAX(sl.width, 0.5f);
-				const float yc = Math::pow(q * q / GRAVITY, 1.0f / 3.0f);
-				const float brink = MAX(lip.y, p_bed[first]) + MAX(0.715f * yc, 0.01f);
-				const float span = MAX(4.0f * yc, 1.5f * p_ds);
-				for (int k = first - 1; k >= 0; k--) {
-					Section &sec = sections[k];
-					const float f = 1.0f - (sl.s - sec.s) / span;
-					if (f <= 0.0f) {
-						break;
-					}
-					const float y = Math::lerp(sec.surface, MAX(brink, p_bed[k] + 0.02f), f * f);
-					sec.surface = MIN(sec.surface, y);
-					sec.centre.y = sec.surface;
-				}
-			}
-		}
 	}
 	if (fall_min_height <= 0.0f || count < 3) {
 		return;
@@ -4113,10 +2141,6 @@ void PhysXRiver3D::_find_falls(PhysicsDirectSpaceState3D *p_space, const LocalVe
 		fall.lip = sa.centre.lerp(sections[a + 1].centre, t_lip);
 		fall.lip.y = p_bed[a];
 		fall.pool = sections[b].surface;
-		// A fall another node draws (a contact fall on its face) is not drawn again here.
-		if (sections[a].fall_drop || sections[b].fall_drop) {
-			continue;
-		}
 		// The free jet must stay clear of the ground (the underside of the sheet
 		// against the bed under it); a steep chute it would run down stays a cascade.
 		const float drop = fall.lip.y + 0.5f * yb - fall.pool;
@@ -4191,7 +2215,9 @@ void PhysXRiver3D::_build_fall_mesh() {
 		add_child(fall_instance, false, INTERNAL_MODE_BACK);
 	}
 	if (fall_material.is_null()) {
-		Ref<Shader> shader = water_shared_shader(FALL_SHADER_SRC);
+		Ref<Shader> shader;
+		shader.instantiate();
+		shader->set_code(FALL_SHADER_SRC);
 		fall_material.instantiate();
 		fall_material->set_shader(shader);
 	}
@@ -4332,7 +2358,7 @@ void PhysXRiver3D::_build_fall_effects() {
 		}
 	}
 	fall_effects.clear();
-	if (Engine::get_singleton()->is_editor_hint() || (!fall_spray && !fall_mist && !fall_sound)) {
+	if (Engine::get_singleton()->is_editor_hint() || (!fall_spray && !fall_mist)) {
 		return;
 	}
 	const Ref<Curve3D> c = get_curve();
@@ -4427,39 +2453,12 @@ void PhysXRiver3D::_build_fall_effects() {
 				fall_effects.push_back(mist);
 			}
 		}
-		if (fall_sound) {
-			// The roar is the ringing of the bubbles the plunge drags under (Minnaert resonators): synthesised once per
-			// fall as a seamless loop (WaterFallSound), at a level from the fall's acoustic power, about 3e-7 of the
-			// jet's kinetic power. A free field over the pool spreads it on a half sphere: the level at unit_size
-			// (10 m) is 10 log10(W / (2 pi 100) / 1e-12) dB SPL, mapped so 80 dB SPL plays at 0 dB.
-			const float q_total = fall.q * fall.width;
-			const uint32_t seed = uint32_t(Math::abs(fall.lip.x * 73.0f + fall.lip.z * 151.0f)) + uint32_t(fall_effects.size());
-			AudioStreamPlayer3D *snd = memnew(AudioStreamPlayer3D);
-			snd->set_name("FallSound");
-			Transform3D sxf = xf;
-			sxf.origin += Vector3(0, 0.5f * MIN(fall.height, 4.0f), 0);
-			snd->set_transform(sxf);
-			snd->set_stream(WaterFallSound::make(fall.impact_speed, q_total, seed));
-			const float w = WaterFallSound::sound_power(fall.impact_speed, q_total);
-			const float spl = 10.0f * Math::log(MAX(w, 1e-12f) / (Math::TAU * 100.0f) / 1e-12f) / Math::log(10.0f);
-			snd->set_unit_size(10.0f);
-			snd->set_volume_db(CLAMP(spl - 80.0f + fall_sound_volume_db, -60.0f, 12.0f));
-			snd->set_max_db(12.0f);
-			snd->set_autoplay(true);
-			add_child(snd, false, INTERNAL_MODE_BACK);
-			fall_effects.push_back(snd);
-		}
 	}
 	(void)c;
 }
 
 void PhysXRiver3D::set_fall_min_height(float p_height) {
 	fall_min_height = MAX(p_height, 0.0f);
-	_queue_build();
-}
-
-void PhysXRiver3D::set_fall_exclusions(const PackedVector3Array &p_points) {
-	fall_exclusions = p_points;
 	_queue_build();
 }
 
@@ -4470,16 +2469,6 @@ void PhysXRiver3D::set_fall_spray(bool p_enabled) {
 
 void PhysXRiver3D::set_fall_mist(bool p_enabled) {
 	fall_mist = p_enabled;
-	_queue_build();
-}
-
-void PhysXRiver3D::set_fall_sound(bool p_enabled) {
-	fall_sound = p_enabled;
-	_queue_build();
-}
-
-void PhysXRiver3D::set_fall_sound_volume_db(float p_db) {
-	fall_sound_volume_db = p_db;
 	_queue_build();
 }
 
@@ -4519,7 +2508,7 @@ Array PhysXRiver3D::get_waterfalls() const {
 bool PhysXRiver3D::_locate(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const {
 	const int count = (int)sections.size();
 	const Ref<Curve3D> c = get_curve();
-	if (count < 2 || c.is_null() || !is_inside_tree() || !p_world.is_finite()) {
+	if (count < 2 || c.is_null() || !is_inside_tree()) {
 		return false;
 	}
 	Vector3 local = get_global_transform().affine_inverse().xform(p_world);
@@ -4575,19 +2564,7 @@ float PhysXRiver3D::sample_height(const Vector3 &p_world_pos) const {
 	if (d <= 0.0f) {
 		return -Math::INF;
 	}
-	float local_y = Math::lerp(sections[i].surface + sections[i].tilt * n, sections[i + 1].surface + sections[i + 1].tilt * n, t);
-	if (!sections[i].wave_at.is_empty() && !sections[i + 1].wave_at.is_empty()) {
-		local_y += Math::lerp(cross_value(sections[i], sections[i].wave_at, n, bank_margin, cross_segments), cross_value(sections[i + 1], sections[i + 1].wave_at, n, bank_margin, cross_segments), t);
-	}
-	{
-		// The undular train (the shader draws a short one in the slope only, but bodies ride the real waves).
-		const Section &a = sections[i];
-		const float s = Math::lerp(a.s, sections[i + 1].s, t);
-		const float x = s - a.wave_s0;
-		if (a.wave_amp > 0.0f && x > 0.0f) {
-			local_y += a.wave_amp * Math::sin(a.wave_k * x) * Math::exp(-x / a.wave_decay) * MIN(x * a.wave_k / (float)Math::PI, 1.0f);
-		}
-	}
+	const float local_y = Math::lerp(sections[i].surface, sections[i + 1].surface, t);
 	const Transform3D xf = get_global_transform();
 	const Vector3 local = xf.affine_inverse().xform(p_world_pos);
 	return xf.xform(Vector3(local.x, local_y, local.z)).y + _live_height_at(p_world_pos);
@@ -4638,21 +2615,13 @@ Dictionary PhysXRiver3D::get_section(int p_index) const {
 	d["speed"] = sec.speed;
 	d["foam"] = sec.foam;
 	d["cascade"] = sec.cascade;
-	d["froude"] = sec.froude;
-	d["critical_height"] = Math::is_finite(sec.critical) ? xf.xform(Vector3(sec.centre.x, sec.critical, sec.centre.z)).y : -Math::INF;
-	d["jump"] = sec.jump;
-	d["wave_amplitude"] = sec.wave_amp;
-	d["wave_length"] = sec.wave_k > 0.0f ? (float)Math::TAU / sec.wave_k : 0.0f;
-	d["superelevation"] = sec.tilt * (sec.width + 2.0f * bank_margin);
 	d["under_fall"] = sec.fall_drop;
 	d["plunge"] = sec.plunge;
 	PackedFloat32Array depth;
 	PackedFloat32Array speed;
 	PackedFloat32Array across;
 	PackedFloat32Array foam;
-	PackedFloat32Array waves;
 	for (uint32_t j = 0; j < sec.depth.size(); j++) {
-		waves.push_back(j < sec.wave_at.size() ? sec.wave_at[j] : 0.0f);
 		depth.push_back(sec.depth[j]);
 		speed.push_back(sec.speed_at[j]);
 		across.push_back(sec.across_at[j]);
@@ -4662,7 +2631,6 @@ Dictionary PhysXRiver3D::get_section(int p_index) const {
 	d["speeds"] = speed;
 	d["across"] = across;
 	d["foams"] = foam;
-	d["cross_waves"] = waves;
 	return d;
 }
 
@@ -4754,18 +2722,4 @@ PackedStringArray PhysXRiver3D::get_configuration_warnings() const {
 		warnings.push_back(RTR("Draw the river's path: it needs at least two curve points, from source to mouth."));
 	}
 	return warnings;
-}
-
-float PhysXRiver3D::contract_water_height_at(const Vector3 &p_position) const {
-	return sample_height(p_position);
-}
-
-void PhysXRiver3D::contract_water_disturb(uint64_t p_owner, const Vector3 &p_position, float p_radius, float p_strength) {
-	if (Math::is_finite(sample_height(p_position))) {
-		submit_sphere(int(p_owner & 0x7fffffff), p_position, p_radius, p_strength);
-	}
-}
-
-void PhysXRiver3D::contract_water_clear(uint64_t p_owner) {
-	clear_sphere(int(p_owner & 0x7fffffff));
 }

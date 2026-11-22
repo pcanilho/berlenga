@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -31,17 +30,15 @@
 
 #include "physx_water_mist_3d.h"
 
-#include "modules/world/world_contracts.h"
-
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/fog_volume.h"
 #include "scene/main/viewport.h"
-#include "scene/resources/3d/fog_material.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/environment.h"
+#include "scene/resources/3d/fog_material.h"
 #include "scene/resources/image_texture.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_volumes.h"
 
@@ -162,20 +159,24 @@ float PhysXWaterMist3D::extinction_per_density(float p_radius_um) {
 }
 
 Vector3 PhysXWaterMist3D::_ambient_wind() const {
+#ifdef MODULE_WEATHER_ENABLED
 	if (follow_weather) {
-		if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
-			return weather->wind_at(get_global_position() + Vector3(0.0f, 2.0f, 0.0f), 2.0f);
+		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
+			return weather->get_wind_at(get_global_position() + Vector3(0.0f, 2.0f, 0.0f), 2.0f);
 		}
 	}
+#endif
 	return wind;
 }
 
 float PhysXWaterMist3D::_humidity() const {
+#ifdef MODULE_WEATHER_ENABLED
 	if (follow_weather) {
-		if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
-			return weather->air_humidity_at(get_global_position());
+		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
+			return weather->get_air_humidity();
 		}
 	}
+#endif
 	return humidity;
 }
 
@@ -206,16 +207,6 @@ void PhysXWaterMist3D::_build_grid() {
 	const Vector3 ext = source_extents.abs().maxf(0.05f);
 	const float r0 = MAX(2.0f * ext.z, 1.5f);
 	float weight_sum = 0.0f;
-	// The falling column over the source (a tall free fall sheds mist all the way down): a second soft box from the
-	// source's top up to column_height, fed with column_share of the rate.
-	const bool has_column = column_height > ext.y && column_share > 0.0f;
-	const float col_mid = 0.5f * (ext.y + column_height);
-	const Vector3 col_ext(ext.x, 0.5f * (column_height - ext.y), ext.z);
-	LocalVector<float> column_w;
-	float column_sum = 0.0f;
-	if (has_column) {
-		column_w.resize(n);
-	}
 	for (int z = 0; z < dims.z; z++) {
 		for (int y = 0; y < dims.y; y++) {
 			for (int x = 0; x < dims.x; x++) {
@@ -228,12 +219,6 @@ void PhysXWaterMist3D::_build_grid() {
 				const float w = Math::exp(-out_of.length_squared());
 				source[c] = w;
 				weight_sum += w;
-				if (has_column) {
-					const Vector3 out_col = ((q - Vector3(0.0f, col_mid, 0.0f)).abs() - col_ext).maxf(0.0f) / cell;
-					const float wc = Math::exp(-out_col.length_squared());
-					column_w[c] = wc;
-					column_sum += wc;
-				}
 				// The spray wind: the air the fall drags down leaves the impact as a wall jet, spreading out
 				// from the impact line and slowing as it widens (r0 / (r0 + r)), its layer thickening with
 				// distance (about 0.1 r, Glauert 1956); none goes back against the jet (the cliff). Near the
@@ -252,14 +237,9 @@ void PhysXWaterMist3D::_build_grid() {
 		}
 	}
 	// Normalised so the source adds source_rate grams a second in all.
-	const float share = has_column && column_sum > 0.0f ? CLAMP(column_share, 0.0f, 1.0f) : 0.0f;
-	const float scale = (emitting && weight_sum > 0.0f) ? (1.0f - share) * source_rate / (weight_sum * cell * cell * cell) : 0.0f;
-	const float column_scale = (emitting && share > 0.0f) ? share * source_rate / (column_sum * cell * cell * cell) : 0.0f;
+	const float scale = (emitting && weight_sum > 0.0f) ? source_rate / (weight_sum * cell * cell * cell) : 0.0f;
 	for (int i = 0; i < n; i++) {
 		source[i] *= scale;
-		if (share > 0.0f) {
-			source[i] += column_w[i] * column_scale;
-		}
 	}
 }
 
@@ -443,7 +423,7 @@ void PhysXWaterMist3D::_upload() {
 		uint16_t *w = (uint16_t *)bytes.ptrw();
 		const float *rho = density.ptr() + z * d.x * d.y;
 		for (int i = 0; i < d.x * d.y; i++) {
-			w[i] = Math::make_half_float(rho[i] * _wall_fade(i % d.x, i / d.x, z));
+			w[i] = Math::make_half_float(rho[i]);
 		}
 		slices.write[z] = Image::create_from_data(d.x, d.y, false, Image::FORMAT_RH, bytes);
 	}
@@ -479,80 +459,13 @@ void PhysXWaterMist3D::advance(float p_seconds) {
 		_step(dt);
 	}
 	_upload();
-	_wet_surfaces();
-}
-
-float PhysXWaterMist3D::deposition_velocity(float p_radius_um, float p_wind_speed) {
-	return settling_speed(p_radius_um) + 0.02f * MAX(p_wind_speed, 0.0f);
-}
-
-// Mist wetting rock (docs/ideas/water.md, waterfall stage 3). A surface in mist takes drops at the flux
-// LWC v_d (g/m^2/s, v_d the deposition velocity) and holds about 50 g/m^2 before it looks wet (a film that
-// fills the pores near the surface; Lagarde 2013); it dries over the weather's contact drying time T. The
-// wetness where the two balance is F / (F + C / T). Each column of the box takes its densest cell (a face
-// standing in the column meets it) and the air's speed there, the source's jet plus the wind.
-void PhysXWaterMist3D::_wet_surfaces() {
-#ifdef MODULE_WEATHER_ENABLED
-	if (!wet_surfaces || dims.x <= 0 || dims.z <= 0 || density.size() != uint32_t(dims.x * dims.y * dims.z)) {
-		return;
-	}
-	WeatherMap3D *weather = WeatherMap3D::get_active();
-	if (!weather || !weather->is_contact_wetness_enabled()) {
-		return;
-	}
-	const float dry_time = weather->get_contact_drying_time();
-	if (dry_time <= 0.0f) {
-		return; // raining: the rain keeps it wet
-	}
-	const float capacity = 50.0f; // g/m^2
-	const float ambient = _ambient_wind().length();
-	wet_cells.resize(dims.x * dims.z);
-	bool any = false;
-	for (int z = 0; z < dims.z; z++) {
-		for (int x = 0; x < dims.x; x++) {
-			float flux = 0.0f;
-			for (int y = 0; y < dims.y; y++) {
-				const int c = (z * dims.y + y) * dims.x + x;
-				const float lwc = density[c];
-				if (lwc <= 0.0f) {
-					continue;
-				}
-				const float u = (jet.size() == density.size() ? jet[c].length() : 0.0f) + ambient;
-				flux = MAX(flux, lwc * deposition_velocity(drop_radius, u));
-			}
-			const float w = flux / (flux + capacity / dry_time);
-			wet_cells[z * dims.x + x] = w;
-			any = any || w > 0.002f;
-		}
-	}
-	if (any) {
-		weather->add_contact_wetness_cells(wet_cells.ptr(), dims.x, dims.z, Rect2(Vector2(grid_min.x, grid_min.z), Vector2(dims.x, dims.z) * cell));
-	}
-#endif
-}
-
-void PhysXWaterMist3D::set_wet_surfaces(bool p_enabled) {
-	wet_surfaces = p_enabled;
-}
-
-// Soft walls: what is drawn fades to nothing over the last cells at the sides and the top of the box, so the box
-// never shows as an outline (the mist inside it reaches the walls wherever the air carries it). The floor keeps its
-// mist: the box stands on the ground.
-float PhysXWaterMist3D::_wall_fade(int p_x, int p_y, int p_z) const {
-	auto ramp = [](int p_i, int p_n) {
-		const float w = MIN(3.0f, 0.25f * p_n);
-		const float t = CLAMP(float(MIN(p_i, p_n - 1 - p_i)) / MAX(w, 1.0f), 0.0f, 1.0f);
-		return t * t * (3.0f - 2.0f * t);
-	};
-	const float top = CLAMP(float(dims.y - 1 - p_y) / MAX(MIN(3.0f, 0.25f * dims.y), 1.0f), 0.0f, 1.0f);
-	return ramp(p_x, dims.x) * ramp(p_z, dims.z) * top * top * (3.0f - 2.0f * top);
 }
 
 float PhysXWaterMist3D::get_cell_density(int p_x, int p_y, int p_z) const {
 	if (p_x < 0 || p_y < 0 || p_z < 0 || p_x >= dims.x || p_y >= dims.y || p_z >= dims.z) {
 		return 0.0f;
 	}
-	return density[(p_z * dims.y + p_y) * dims.x + p_x] * _wall_fade(p_x, p_y, p_z);
+	return density[(p_z * dims.y + p_y) * dims.x + p_x];
 }
 
 float PhysXWaterMist3D::sample_density(const Vector3 &p_world) const {
@@ -606,11 +519,6 @@ void PhysXWaterMist3D::_notification(int p_what) {
 			if (steps > 0) {
 				_upload();
 			}
-			wet_accum += get_physics_process_delta_time();
-			if (wet_accum >= 0.5) {
-				wet_accum = 0.0;
-				_wet_surfaces();
-			}
 		} break;
 	}
 }
@@ -630,16 +538,6 @@ MIST_SETTER(jet_direction, const Vector3 &, jet_direction, p_value)
 
 void PhysXWaterMist3D::set_source_rate(float p_rate) {
 	source_rate = MAX(p_rate, 0.0f);
-	grid_dirty = true;
-}
-
-void PhysXWaterMist3D::set_column_height(float p_height) {
-	column_height = MAX(p_height, 0.0f);
-	grid_dirty = true;
-}
-
-void PhysXWaterMist3D::set_column_share(float p_share) {
-	column_share = CLAMP(p_share, 0.0f, 1.0f);
 	grid_dirty = true;
 }
 
@@ -681,10 +579,6 @@ void PhysXWaterMist3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_source_position"), &PhysXWaterMist3D::get_source_position);
 	ClassDB::bind_method(D_METHOD("set_source_extents", "extents"), &PhysXWaterMist3D::set_source_extents);
 	ClassDB::bind_method(D_METHOD("get_source_extents"), &PhysXWaterMist3D::get_source_extents);
-	ClassDB::bind_method(D_METHOD("set_column_height", "height"), &PhysXWaterMist3D::set_column_height);
-	ClassDB::bind_method(D_METHOD("get_column_height"), &PhysXWaterMist3D::get_column_height);
-	ClassDB::bind_method(D_METHOD("set_column_share", "share"), &PhysXWaterMist3D::set_column_share);
-	ClassDB::bind_method(D_METHOD("get_column_share"), &PhysXWaterMist3D::get_column_share);
 	ClassDB::bind_method(D_METHOD("set_source_rate", "grams_per_second"), &PhysXWaterMist3D::set_source_rate);
 	ClassDB::bind_method(D_METHOD("get_source_rate"), &PhysXWaterMist3D::get_source_rate);
 	ClassDB::bind_method(D_METHOD("set_jet_speed", "speed"), &PhysXWaterMist3D::set_jet_speed);
@@ -705,9 +599,6 @@ void PhysXWaterMist3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_update_rate"), &PhysXWaterMist3D::get_update_rate);
 	ClassDB::bind_method(D_METHOD("set_emitting", "emitting"), &PhysXWaterMist3D::set_emitting);
 	ClassDB::bind_method(D_METHOD("is_emitting"), &PhysXWaterMist3D::is_emitting);
-	ClassDB::bind_method(D_METHOD("set_wet_surfaces", "enabled"), &PhysXWaterMist3D::set_wet_surfaces);
-	ClassDB::bind_method(D_METHOD("get_wet_surfaces"), &PhysXWaterMist3D::get_wet_surfaces);
-	ClassDB::bind_static_method("PhysXWaterMist3D", D_METHOD("deposition_velocity", "radius_um", "wind_speed"), &PhysXWaterMist3D::deposition_velocity);
 	ClassDB::bind_method(D_METHOD("sample_density", "world_position"), &PhysXWaterMist3D::sample_density);
 	ClassDB::bind_method(D_METHOD("get_max_density"), &PhysXWaterMist3D::get_max_density);
 	ClassDB::bind_method(D_METHOD("advance", "seconds"), &PhysXWaterMist3D::advance);
@@ -719,8 +610,6 @@ void PhysXWaterMist3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "source_position", PROPERTY_HINT_NONE, "suffix:m"), "set_source_position", "get_source_position");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "source_extents", PROPERTY_HINT_NONE, "suffix:m"), "set_source_extents", "get_source_extents");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "source_rate", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:g/s"), "set_source_rate", "get_source_rate");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "column_height", PROPERTY_HINT_RANGE, "0,500,0.5,or_greater,suffix:m"), "set_column_height", "get_column_height");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "column_share", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_column_share", "get_column_share");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "jet_speed", PROPERTY_HINT_RANGE, "0,30,0.1,suffix:m/s"), "set_jet_speed", "get_jet_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "jet_direction"), "set_jet_direction", "get_jet_direction");
 	ADD_GROUP("Air", "");
@@ -730,7 +619,6 @@ void PhysXWaterMist3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "diffusion", PROPERTY_HINT_RANGE, "0,5,0.05,suffix:m²/s"), "set_diffusion", "get_diffusion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "update_rate", PROPERTY_HINT_RANGE, "1,60,1,suffix:Hz"), "set_update_rate", "get_update_rate");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wet_surfaces"), "set_wet_surfaces", "get_wet_surfaces");
 }
 
 PhysXWaterMist3D::PhysXWaterMist3D() {

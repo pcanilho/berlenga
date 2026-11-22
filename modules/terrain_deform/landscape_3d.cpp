@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -36,9 +35,6 @@
 
 #include "terrain_generator_3d.h"
 
-#include "modules/world/world_contracts.h"
-
-#include "core/math/geometry_2d.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -69,28 +65,8 @@ float Landscape3D::_h(int p_x, int p_z) const {
 
 // Central differences at 1 m. Where a chunk is not read yet its points between the 4 m grid are interpolated, and
 // there this gives exactly the 4 m central difference at the 4 m points (the only ones its meshes use).
-// At a crease (a dune's brink, a terrace edge, a cliff top: the slope changes by more than about 10 degrees between
-// one side of the point and the other) the central difference averages the two faces, and the light rounds the
-// edge over two metres. There each axis takes the one-sided difference from the smoother side instead (the
-// essentially non-oscillatory choice, Harten et al. 1987: the stencil with the smaller second difference), so the
-// faces next to an edge keep their own slope and the edge stays sharp in the shading as in the geometry.
-static _FORCE_INLINE_ real_t _eno_slope(float a2, float a1, float c, float b1, float b2, real_t p_spacing) {
-	const real_t back = c - a1, fwd = b1 - c;
-	const real_t central = 0.5f * (back + fwd);
-	const real_t kink = Math::abs(fwd - back) / p_spacing;
-	if (kink < 0.18f) {
-		return central;
-	}
-	const real_t eno = Math::abs(c - 2.0f * a1 + a2) <= Math::abs(b2 - 2.0f * b1 + c) ? back : fwd;
-	const real_t t = CLAMP((kink - 0.18f) / (0.35f - 0.18f), real_t(0.0), real_t(1.0));
-	return Math::lerp(central, eno, t * t * (3.0f - 2.0f * t));
-}
-
 Vector3 Landscape3D::_normal(int p_x, int p_z) const {
-	const float c = _h(p_x, p_z);
-	const real_t sx = _eno_slope(_h(p_x - 2, p_z), _h(p_x - 1, p_z), c, _h(p_x + 1, p_z), _h(p_x + 2, p_z), spacing);
-	const real_t sz = _eno_slope(_h(p_x, p_z - 2), _h(p_x, p_z - 1), c, _h(p_x, p_z + 1), _h(p_x, p_z + 2), spacing);
-	return Vector3(-sx, spacing, -sz).normalized();
+	return Vector3(_h(p_x - 1, p_z) - _h(p_x + 1, p_z), 2.0f * spacing, _h(p_x, p_z - 1) - _h(p_x, p_z + 1)).normalized();
 }
 
 // Indices of a chunk at p_level, in vertex rows of (n + 1), n = chunk_quads >> p_level. The grid is cut into 2 x 2
@@ -198,333 +174,14 @@ void Landscape3D::_measure_task(uint32_t p_index, void *p_userdata) {
 	_measure_chunk(p_index % cw, p_index / cw);
 }
 
-// Mesh cache keys: the chunk's height generation, chunk index, level (3 bits), edge mask (9 bits: 4 coarser sides,
-// cliff relief on, 4 sides whose neighbour has none).
+// Mesh cache keys: the chunk's height generation, chunk index, level (3 bits), edge mask (4 bits).
 uint64_t Landscape3D::_mesh_key(int p_chunk, int p_level, int p_mask) const {
-	return (uint64_t(chunks[p_chunk].gen) << 36) | (uint64_t(p_chunk) << 12) | (uint64_t(p_level) << 9) | uint64_t(p_mask);
+	return (uint64_t(chunks[p_chunk].gen) << 32) | (uint64_t(p_chunk) << 7) | (uint64_t(p_level) << 4) | uint64_t(p_mask);
 }
 
 // Vertex data of one chunk mesh, ready for the renderer. Reads only the grid and the indices, so it runs on worker
 // threads while the main thread leaves both alone.
-// Cliff relief (cliff_relief). A heightfield has no vertices on a face steeper than its spacing: a 30 m wall is one
-// strip of stretched triangles, whatever the shader draws on it. So at the finest level the triangles of steep faces
-// are refined where an edge spans more height than the spacing (red-green refinement: an edge is split by its own
-// end points only, so the two triangles on it, in this chunk or the next, always agree and nothing cracks), and every
-// vertex is pushed out along the face's horizontal normal by a rock relief: beds 3 m thick that stand proud or sit
-// back (differential erosion of strata; ledges), staggered joint blocks along them, and roughness. Displacement along
-// the normal is how REDengine 3 (Gollent 2014) and Frostbite (Widmark 2012) break up terrain cliffs. Sides whose
-// neighbour is coarser keep their vertices and edges as they are, so the stitching there is untouched.
-static inline float _lc_hash(int32_t a, int32_t b, int32_t c) {
-	uint32_t h = uint32_t(a) * 0x8DA6B343u ^ uint32_t(b) * 0xD8163841u ^ uint32_t(c) * 0xCB1AB31Fu;
-	h ^= h >> 13;
-	h *= 0x5BD1E995u;
-	h ^= h >> 15;
-	return float(h & 0xFFFFFFu) / float(0xFFFFFF);
-}
-
-static inline float _lc_noise(const Vector3 &p) {
-	const Vector3 i = p.floor();
-	Vector3 f = p - i;
-	f = f * f * (Vector3(3, 3, 3) - 2.0f * f);
-	const int32_t x = int32_t(i.x), y = int32_t(i.y), z = int32_t(i.z);
-	auto hh = [&](int dx, int dy, int dz) { return _lc_hash(x + dx, y + dy, z + dz + 7919); };
-	const float a = Math::lerp(Math::lerp(hh(0, 0, 0), hh(1, 0, 0), f.x), Math::lerp(hh(0, 1, 0), hh(1, 1, 0), f.x), f.y);
-	const float b = Math::lerp(Math::lerp(hh(0, 0, 1), hh(1, 0, 1), f.x), Math::lerp(hh(0, 1, 1), hh(1, 1, 1), f.x), f.y);
-	return Math::lerp(a, b, f.z);
-}
-
-Vector3 Landscape3D::_normal_at(real_t p_x, real_t p_z) const {
-	const int x = int(Math::floor(p_x)), z = int(Math::floor(p_z));
-	const real_t u = p_x - x, v = p_z - z;
-	return (_normal(x, z) * (1 - u) * (1 - v) + _normal(x + 1, z) * u * (1 - v) + _normal(x, z + 1) * (1 - u) * v + _normal(x + 1, z + 1) * u * v).normalized();
-}
-
-// Metres out of the face (negative: back into it) at a point of the landscape's own space, before cliff_relief.
-float Landscape3D::_cliff_offset(const Vector3 &p) const {
-	// Beds as a real sequence draws them (bed thickness in stratified rock is near log-normal; resistant beds stand out
-	// as ledges, weak ones weather back: differential erosion). Each 12 m unit holds 1 to 5 beds of uneven
-	// thickness; most beds sit near flush, about one in four is a hard one standing proud, and each bed's ledge fades
-	// and breaks along the face (every 10-30 m) so no stripe runs on unbroken. The step to the next bed is rounded over the
-	// top of the lower bed (a lit lip, not a saw cut; at least two vertex rows so it does not alias).
-	const real_t U = 12.0;
-	const real_t yb = p.y + (_lc_noise(p * 0.05f) - 0.5f) * 4.0f + (_lc_noise(p * 0.013f + Vector3(5, 0, 2)) - 0.5f) * 10.0f;
-	const int32_t unit = int32_t(Math::floor(yb / U));
-	const real_t fu0 = yb - unit * U;
-	const int nb = 1 + int(_lc_hash(unit, 21, 4) * 4.999f);
-	float wsum = 0.0f, wb[5];
-	for (int i = 0; i < nb; i++) {
-		// Log-normal weights: a few thick beds and several thin ones.
-		wb[i] = Math::exp(1.1f * (_lc_hash(unit, i, 17) + _lc_hash(unit, i, 19) - 1.0f) * 1.7f);
-		wsum += wb[i];
-	}
-	int bi = 0;
-	real_t lo = 0.0, T = U;
-	for (int i = 0; i < nb; i++) {
-		const real_t th = U * wb[i] / wsum;
-		if (fu0 < lo + th || i == nb - 1) {
-			bi = i;
-			T = th;
-			break;
-		}
-		lo += th;
-	}
-	const int32_t bed = unit * 8 + bi;
-	const int32_t bed_up = bi + 1 < nb ? bed + 1 : (unit + 1) * 8;
-	const real_t fy = fu0 - lo;
-	const auto proud = [&](int32_t p_bed) {
-		const float hard = _lc_hash(p_bed, 11, 3);
-		const float base = hard > 0.75f ? 0.6f + 1.4f * (hard - 0.75f) * 4.0f : (hard - 0.4f) * 0.9f;
-		// Along the face the ledge swells, thins and breaks off.
-		const float run = _lc_noise(Vector3(p.x * 0.06f, float(p_bed) * 1.37f, p.z * 0.06f));
-		return base * Math::smoothstep(0.4f, 0.7f, run) * (0.6f + 0.8f * run);
-	};
-	const float o0 = proud(bed);
-	const float o1 = proud(bed_up);
-	const real_t lip = MIN(real_t(1.5), MAX(real_t(0.6), T * 0.5f));
-	const real_t ty = CLAMP((fy - (T - lip)) / lip, real_t(0.0), real_t(1.0));
-	float o = Math::lerp(o0, o1, float(ty * ty * (3.0f - 2.0f * ty)));
-	// Joints across the beds, 4.5 m apart and staggered bed to bed, each block a little forward or back.
-	const real_t u = p.x * 0.8f + p.z * 0.6f + _lc_hash(bed, 5, 1) * 4.5f;
-	const int32_t jb = int32_t(Math::floor(u / 4.5f));
-	const real_t fu = u - jb * 4.5f;
-	const float j0 = _lc_hash(bed, jb, 9) - 0.5f, j1 = _lc_hash(bed, jb + 1, 9) - 0.5f;
-	const real_t tu = CLAMP((fu - 3.0f) / 1.5f, real_t(0.0), real_t(1.0));
-	o += 1.2f * Math::lerp(j0, j1, float(tu * tu * (3.0f - 2.0f * tu)));
-	// Roughness.
-	o += 0.5f * (_lc_noise(p * 0.7f) - 0.5f) + 0.2f * (_lc_noise(p * 2.1f + Vector3(3, 1, 7)) - 0.5f);
-	return o;
-}
-
-// The displaced point for a point on the heightfield surface (landscape space).
-Vector3 Landscape3D::_cliff_point(const Vector3 &p, real_t p_weight_scale) const {
-	const Vector3 n = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
-	const Vector2 m(n.x, n.z);
-	const real_t ml = m.length();
-	if (ml < 1e-4f || p_weight_scale <= 0.0) {
-		return p;
-	}
-	// Faces past about 50 degrees, full past about 62.
-	const real_t w = (1.0f - CLAMP((n.y - 0.47f) / (0.64f - 0.47f), real_t(0.0), real_t(1.0)));
-	if (w <= 0.0) {
-		return p;
-	}
-	const real_t ws = w * w * (3.0f - 2.0f * w) * p_weight_scale;
-	const real_t d = cliff_relief * _cliff_offset(p) * ws;
-	return p + Vector3(m.x / ml, 0.0, m.y / ml) * d;
-}
-
-Vector3 Landscape3D::get_cliff_point(const Vector3 &p_global_position) const {
-	// Where the drawn surface is over a point of the heightfield surface (global space): the point itself unless
-	// cliff_relief pushes it out of or into a steep face. For water laid on a face (falls, sheets).
-	if (cliff_relief <= 0.0 || heights.is_empty()) {
-		return p_global_position;
-	}
-	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
-	return xf.xform(_cliff_point(xf.affine_inverse().xform(p_global_position), 1.0));
-}
-
-void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
-	const int cx = r_job.chunk % cw;
-	const int cz = r_job.chunk / cw;
-	const int n = chunk_quads;
-	const int row = n + 1;
-	const Vector3 corner(origin.x + cx * chunk_quads * spacing, 0.0, origin.y + cz * chunk_quads * spacing);
-	LocalVector<Vector3> base; // landscape space
-	LocalVector<real_t> keep; // 1 = free to move, 0 = on a side stitched to a coarser neighbour
-	base.resize(row * row);
-	keep.resize(row * row);
-	for (int j = 0; j <= n; j++) {
-		for (int i = 0; i <= n; i++) {
-			const int x = cx * chunk_quads + i, z = cz * chunk_quads + j;
-			base[j * row + i] = Vector3(origin.x + x * spacing, _h(x, z), origin.y + z * spacing);
-			const int fm = r_job.mask | (r_job.mask >> 5);
-			const bool fixed = (j == 0 && (fm & 1)) || (i == n && (fm & 2)) || (j == n && (fm & 4)) || (i == 0 && (fm & 8));
-			keep[j * row + i] = fixed ? 0.0 : 1.0;
-		}
-	}
-	auto on_fixed_side = [&](const Vector3 &a, const Vector3 &b) {
-		const real_t x0 = corner.x, x1 = corner.x + n * spacing, z0 = corner.z, z1 = corner.z + n * spacing;
-		const real_t e = spacing * 1e-3f;
-		const int fm = r_job.mask | (r_job.mask >> 5);
-		return ((fm & 1) && Math::abs(a.z - z0) < e && Math::abs(b.z - z0) < e) || ((fm & 2) && Math::abs(a.x - x1) < e && Math::abs(b.x - x1) < e) || ((fm & 4) && Math::abs(a.z - z1) < e && Math::abs(b.z - z1) < e) || ((fm & 8) && Math::abs(a.x - x0) < e && Math::abs(b.x - x0) < e);
-	};
-	// Displacement of each vertex (from its position only, so both chunks on an edge agree), read once.
-	LocalVector<Vector3> disp;
-	LocalVector<uint8_t> has_disp;
-	disp.resize(base.size());
-	has_disp.resize(base.size());
-	memset(has_disp.ptr(), 0, has_disp.size());
-	auto disp_of = [&](int a) -> Vector3 {
-		if (!has_disp[a]) {
-			disp[a] = _cliff_point(base[a], 1.0) - base[a];
-			has_disp[a] = 1;
-		}
-		return disp[a];
-	};
-	// Along a face the relief steps at each ledge's lip and each joint: an edge is split too where the relief at its
-	// middle strays from the straight line between its ends (error-driven tessellation of a displacement, as adaptive
-	// displacement mapping does, Moreton 2001; Nießner et al. 2016), so a lip and the shadow it casts follow vertices
-	// placed along it instead of zig-zagging across the triangles.
-	auto split = [&](int a, int b) -> bool {
-		if (on_fixed_side(base[a], base[b])) {
-			return false;
-		}
-		const real_t dy = Math::abs(base[a].y - base[b].y);
-		if (dy > 1.0f * spacing) {
-			return true;
-		}
-		if (Vector2(base[a].x - base[b].x, base[a].z - base[b].z).length() < 0.3f * spacing && dy < 0.3f * spacing) {
-			return false;
-		}
-		const Vector3 da = disp_of(a), db = disp_of(b);
-		if (da.is_zero_approx() && db.is_zero_approx()) {
-			return false;
-		}
-		const Vector3 pm = (base[a] + base[b]) * 0.5f;
-		const Vector3 dm = _cliff_point(pm, 1.0) - pm;
-		return (dm - (da + db) * 0.5f).length() > 0.08f;
-	};
-	HashMap<uint64_t, int> mids;
-	auto mid = [&](int a, int b) -> int {
-		const uint64_t k = a < b ? (uint64_t(a) << 32 | uint32_t(b)) : (uint64_t(b) << 32 | uint32_t(a));
-		if (const int *f = mids.getptr(k)) {
-			return *f;
-		}
-		const int id = int(base.size());
-		base.push_back((base[a] + base[b]) * 0.5f);
-		keep.push_back(MIN(keep[a], keep[b]) < 1.0 ? (keep[a] + keep[b]) * 0.5f : 1.0f);
-		disp.push_back(Vector3());
-		has_disp.push_back(0);
-		mids.insert(k, id);
-		return id;
-	};
-	LocalVector<int> tris;
-	struct T {
-		int a, b, c, depth;
-	};
-	LocalVector<T> stack;
-	const LocalVector<int> &idx = indices[0][r_job.mask & 15];
-	const LocalVector<uint8_t> *hl = chunk_holes.getptr(r_job.chunk);
-	for (uint32_t t = 0; t < idx.size(); t += 3) {
-		if (hl && _hole_tri(hl, 0, idx[t], idx[t + 1], idx[t + 2])) {
-			continue; // a hole: refinement splits edges by their end points only, so the neighbours are unaffected
-		}
-		stack.push_back({ idx[t], idx[t + 1], idx[t + 2], 0 });
-		while (!stack.is_empty()) {
-			const T tr = stack[stack.size() - 1];
-			stack.remove_at(stack.size() - 1);
-			int v[3] = { tr.a, tr.b, tr.c };
-			bool s[3] = { false, false, false };
-			int cnt = 0;
-			if (tr.depth < 6) {
-				for (int e = 0; e < 3; e++) {
-					s[e] = split(v[e], v[(e + 1) % 3]);
-					cnt += s[e] ? 1 : 0;
-				}
-			}
-			if (cnt == 0) {
-				tris.push_back(v[0]);
-				tris.push_back(v[1]);
-				tris.push_back(v[2]);
-				continue;
-			}
-			const int d = tr.depth + 1;
-			if (cnt == 3) {
-				const int ab = mid(v[0], v[1]), bc = mid(v[1], v[2]), ca = mid(v[2], v[0]);
-				stack.push_back({ v[0], ab, ca, d });
-				stack.push_back({ ab, v[1], bc, d });
-				stack.push_back({ ca, bc, v[2], d });
-				stack.push_back({ ab, bc, ca, d });
-				continue;
-			}
-			// Rotate so the split edges start at the first: one split edge is v0-v1, two are v0-v1 and v1-v2.
-			int r = 0;
-			if (cnt == 1) {
-				r = s[0] ? 0 : (s[1] ? 1 : 2);
-			} else {
-				r = !s[2] ? 0 : (!s[0] ? 1 : 2);
-			}
-			const int a = v[r], b = v[(r + 1) % 3], c = v[(r + 2) % 3];
-			if (cnt == 1) {
-				const int m = mid(a, b);
-				stack.push_back({ a, m, c, d });
-				stack.push_back({ m, b, c, d });
-			} else {
-				const int ab = mid(a, b), bc = mid(b, c);
-				stack.push_back({ ab, b, bc, d });
-				stack.push_back({ a, ab, bc, d });
-				stack.push_back({ a, bc, c, d });
-			}
-		}
-	}
-	// Displace, and the normal from the displaced surface around each point (seamless: it reads positions only).
-	PackedVector3Array verts;
-	PackedVector3Array norms;
-	// For the material's per-pixel relief normal (TerrainMaterial3D, cliff relief): CUSTOM0 the undisplaced point in
-	// landscape space and the displacement scale (cliff_relief times the face weight), CUSTOM1 the heightfield normal.
-	// Both are linear over each triangle of the undisplaced surface, so the pixel gets them exactly; the vertex
-	// normals below only light what the triangles can carry, and the ledges' edges came out saw-toothed.
-	PackedFloat32Array cus0, cus1;
-	verts.resize(base.size());
-	norms.resize(base.size());
-	cus0.resize(base.size() * 4);
-	cus1.resize(base.size() * 4);
-	Vector3 *vp = verts.ptrw();
-	Vector3 *nw = norms.ptrw();
-	float *c0 = cus0.ptrw();
-	float *c1 = cus1.ptrw();
-	const real_t e = 0.3f;
-	for (uint32_t i = 0; i < base.size(); i++) {
-		const Vector3 p = base[i];
-		vp[i] = _cliff_point(p, keep[i]) - corner;
-		const Vector3 nb = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
-		{
-			const real_t w = (1.0f - CLAMP((nb.y - 0.47f) / (0.64f - 0.47f), real_t(0.0), real_t(1.0)));
-			const real_t ml = Vector2(nb.x, nb.z).length();
-			c0[i * 4 + 0] = p.x;
-			c0[i * 4 + 1] = p.y;
-			c0[i * 4 + 2] = p.z;
-			c0[i * 4 + 3] = ml < 1e-4f ? 0.0f : float(cliff_relief * w * w * (3.0f - 2.0f * w) * keep[i]);
-			c1[i * 4 + 0] = nb.x;
-			c1[i * 4 + 1] = nb.y;
-			c1[i * 4 + 2] = nb.z;
-			c1[i * 4 + 3] = 0.0f;
-		}
-		if (nb.y > 0.64f || keep[i] <= 0.0) {
-			nw[i] = nb;
-			continue;
-		}
-		Vector3 t1 = nb.cross(Vector3(0, 1, 0));
-		t1 = t1.length_squared() > 1e-8f ? t1.normalized() : Vector3(1, 0, 0);
-		const Vector3 t2 = t1.cross(nb);
-		const Vector3 du = _cliff_point(p + t1 * e, keep[i]) - _cliff_point(p - t1 * e, keep[i]);
-		const Vector3 dv = _cliff_point(p + t2 * e, keep[i]) - _cliff_point(p - t2 * e, keep[i]);
-		Vector3 nn = dv.cross(du);
-		if (nn.dot(nb) < 0.0) {
-			nn = -nn;
-		}
-		nw[i] = nn.length_squared() > 1e-12f ? nn.normalized() : nb;
-	}
-	PackedInt32Array ia;
-	ia.resize(tris.size());
-	memcpy(ia.ptrw(), tris.ptr(), tris.size() * sizeof(int));
-	Array arrays;
-	arrays.resize(RSE::ARRAY_MAX);
-	arrays[RSE::ARRAY_VERTEX] = verts;
-	arrays[RSE::ARRAY_NORMAL] = norms;
-	arrays[RSE::ARRAY_CUSTOM0] = cus0;
-	arrays[RSE::ARRAY_CUSTOM1] = cus1;
-	arrays[RSE::ARRAY_INDEX] = ia;
-	const uint64_t cflags = (uint64_t(RSE::ARRAY_CUSTOM_RGBA_FLOAT) << RSE::ARRAY_FORMAT_CUSTOM0_SHIFT) | (uint64_t(RSE::ARRAY_CUSTOM_RGBA_FLOAT) << RSE::ARRAY_FORMAT_CUSTOM1_SHIFT);
-	RS::get_singleton()->mesh_create_surface_data_from_arrays(&r_job.surface, RSE::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), cflags);
-	r_job.triangles = int(tris.size() / 3);
-}
-
 void Landscape3D::_build_surface(MeshJob &r_job) const {
-	if (r_job.mask & 16) {
-		_build_cliff_surface(r_job);
-		return;
-	}
 	const int cx = r_job.chunk % cw;
 	const int cz = r_job.chunk / cw;
 	const int s = 1 << r_job.level;
@@ -543,29 +200,17 @@ void Landscape3D::_build_surface(MeshJob &r_job) const {
 			nw[j * (n + 1) + i] = _normal(x, z);
 		}
 	}
-	const LocalVector<int> &idx = indices[r_job.level][r_job.mask & 15];
+	const LocalVector<int> &idx = indices[r_job.level][r_job.mask];
 	PackedInt32Array ia;
-	const LocalVector<uint8_t> *hl = chunk_holes.getptr(r_job.chunk);
-	if (hl) {
-		// Triangles touching a hole sample are left out (a cave mouth's passage; its rock hides the edge).
-		for (uint32_t t = 0; t < idx.size(); t += 3) {
-			if (!_hole_tri(hl, r_job.level, idx[t], idx[t + 1], idx[t + 2])) {
-				ia.push_back(idx[t]);
-				ia.push_back(idx[t + 1]);
-				ia.push_back(idx[t + 2]);
-			}
-		}
-	} else {
-		ia.resize(idx.size());
-		memcpy(ia.ptrw(), idx.ptr(), idx.size() * sizeof(int));
-	}
+	ia.resize(idx.size());
+	memcpy(ia.ptrw(), idx.ptr(), idx.size() * sizeof(int));
 	Array arrays;
 	arrays.resize(RSE::ARRAY_MAX);
 	arrays[RSE::ARRAY_VERTEX] = verts;
 	arrays[RSE::ARRAY_NORMAL] = norms;
 	arrays[RSE::ARRAY_INDEX] = ia;
 	RS::get_singleton()->mesh_create_surface_data_from_arrays(&r_job.surface, RSE::PRIMITIVE_TRIANGLES, arrays);
-	r_job.triangles = int(ia.size() / 3);
+	r_job.triangles = int(idx.size() / 3);
 }
 
 void Landscape3D::_mesh_task(uint32_t p_index, void *p_userdata) {
@@ -713,24 +358,6 @@ void Landscape3D::_collision_tile(int p_chunk) {
 	float *w = h.ptrw();
 	for (int j = 0; j < row; j++) {
 		memcpy(w + j * row, heights.ptr() + size_t(cz * chunk_quads + j) * gw + cx * chunk_quads, row * sizeof(float));
-	}
-	if (const LocalVector<uint8_t> *hl = chunk_holes.getptr(p_chunk)) {
-		// A NaN height is a hole for every physics backend here (PhysX eHOLE, Jolt FLT_MAX, Godot Physics): it takes
-		// every triangle touching the sample, so only samples whose quads are all holes go (the collision hole sits
-		// inside the drawn one; the cave block's own collision covers its edge).
-		const int n = chunk_quads;
-		for (int j = 0; j < row; j++) {
-			for (int i = 0; i < row; i++) {
-				bool all = true;
-				for (int k = 0; k < 4 && all; k++) {
-					const int qi = i - 1 + (k & 1), qj = j - 1 + (k >> 1);
-					all = qi >= 0 && qj >= 0 && qi < n && qj < n && (*hl)[qj * n + qi];
-				}
-				if (all) {
-					w[j * row + i] = Math::NaN;
-				}
-			}
-		}
 	}
 	Dictionary d;
 	d["width"] = row;
@@ -941,9 +568,6 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 	}
 	for (int i = 0; i < n; i++) {
 		want[i] = MAX(want[i], floor_l[i]);
-		if (chunks[i].fine && chunk_holes.has(i)) {
-			want[i] = 0; // a hole keeps its shape at any distance
-		}
 	}
 	// Neighbours at most one level apart; the finer side wins (never below the floor: a neighbour sits at or above
 	// its own floor, which is at most one under this one's).
@@ -969,9 +593,6 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 	need.resize(n);
 	for (int i = 0; i < n; i++) {
 		need[i] = chunks[i].fine ? 0 : (raw[i] < COARSE ? (chunks[i].error[COARSE] * scale_of[i] > lod_error * FIRST_VIEW_SLACK ? 3 : 2) : 1);
-		if (!chunks[i].fine && chunk_holes.has(i)) {
-			need[i] = 3;
-		}
 	}
 	for (int z = 0; z < ch; z++) {
 		for (int x = 0; x < cw; x++) {
@@ -987,11 +608,6 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 		}
 	}
 	target_mask.resize(n);
-	LocalVector<uint8_t> rel;
-	rel.resize(n);
-	for (int i = 0; i < n; i++) {
-		rel[i] = cliff_relief * scale_of[i] >= lod_error * 0.5 ? 1 : 0;
-	}
 	bool ready = true;
 	for (int z = 0; z < ch; z++) {
 		for (int x = 0; x < cw; x++) {
@@ -1008,17 +624,6 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 			}
 			if (x > 0 && want[z * cw + x - 1] > l) {
 				mask |= 8;
-			}
-			// Cliff relief on the finest chunks where it spans half the pixel error or more; sides next to a chunk
-			// without it keep their edges (bits 5 to 8), like sides next to a coarser one.
-			if (cliff_relief > 0.0 && l == 0 && rel[z * cw + x]) {
-				mask |= 16;
-				const int nbi[4] = { z > 0 ? (z - 1) * cw + x : -1, x < cw - 1 ? z * cw + x + 1 : -1, z < ch - 1 ? (z + 1) * cw + x : -1, x > 0 ? z * cw + x - 1 : -1 };
-				for (int sd = 0; sd < 4; sd++) {
-					if (nbi[sd] >= 0 && !(want[nbi[sd]] == 0 && rel[nbi[sd]])) {
-						mask |= 32 << sd;
-					}
-				}
 			}
 			target_mask[z * cw + x] = mask;
 			if (ready && !meshes.has(_mesh_key(z * cw + x, l, mask))) {
@@ -1367,18 +972,6 @@ void Landscape3D::set_lod_error(real_t p_pixels) {
 	lods_dirty = true;
 }
 
-void Landscape3D::set_cliff_relief(real_t p_metres) {
-	if (Math::is_equal_approx(cliff_relief, MAX(p_metres, real_t(0.0)))) {
-		return;
-	}
-	cliff_relief = MAX(p_metres, real_t(0.0));
-	// New meshes for every chunk (the cache keys carry the height generation).
-	for (uint32_t i = 0; i < chunks.size(); i++) {
-		chunks[i].gen++;
-	}
-	lods_dirty = true;
-}
-
 void Landscape3D::set_material(const Ref<Material> &p_material) {
 	material = p_material;
 	_apply_material();
@@ -1391,14 +984,6 @@ void Landscape3D::set_cast_shadows(bool p_enable) {
 
 void Landscape3D::clear() {
 	_on_source_changing();
-	chunk_holes.clear();
-	if (TerrainGenerator3D *hg = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(hole_source))) {
-		const Callable hcb = callable_mp(this, &Landscape3D::_on_holes_changed);
-		if (hg->is_connected(SNAME("holes_changed"), hcb)) {
-			hg->disconnect(SNAME("holes_changed"), hcb);
-		}
-	}
-	hole_source = ObjectID();
 	_free_instances();
 	_free_all_collision();
 	_evict(true);
@@ -1417,117 +1002,6 @@ void Landscape3D::clear() {
 	detail_estimate = 0.0f;
 	have_camera = false;
 	lods_dirty = true;
-}
-
-/* Holes */
-
-// A triangle is in a hole when the quad holding its centroid is (each triangle of a level's 2x2 fan lies in one
-// quad of that level): the hole follows its box to within half a quad, not a whole quad around every hole sample.
-bool Landscape3D::_hole_tri(const LocalVector<uint8_t> *p_holes, int p_level, int p_a, int p_b, int p_c) const {
-	// Holes are cut at level 0 only (a hole's chunk is pinned there once its heights are read): a coarse triangle
-	// spans many quads, and dropping it for its centre quad opened the ground far past the hole.
-	if (p_level > 0) {
-		return false;
-	}
-	const int s = 1 << p_level;
-	const int rl = (chunk_quads >> p_level) + 1;
-	const real_t x = real_t((p_a % rl) + (p_b % rl) + (p_c % rl)) * s / 3.0f;
-	const real_t z = real_t((p_a / rl) + (p_b / rl) + (p_c / rl)) * s / 3.0f;
-	const int qx = CLAMP(int(x), 0, chunk_quads - 1), qz = CLAMP(int(z), 0, chunk_quads - 1);
-	return (*p_holes)[qz * chunk_quads + qx] != 0;
-}
-
-int Landscape3D::get_hole_quad_count() const {
-	int n = 0;
-	for (const KeyValue<int, LocalVector<uint8_t>> &kv : chunk_holes) {
-		for (uint8_t f : kv.value) {
-			n += f;
-		}
-	}
-	return n;
-}
-
-void Landscape3D::_on_holes_changed(const Rect2 &p_rect) {
-	_refresh_holes(p_rect);
-}
-
-// Reads the source's holes over the chunks touching p_rect (global x, z); a chunk whose holes changed gets new
-// meshes (its key changes) and its collision tile again.
-void Landscape3D::_refresh_holes(const Rect2 &p_rect) {
-	const TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(ObjectDB::get_instance(hole_source));
-	if (!gen || chunks.is_empty()) {
-		return;
-	}
-	_wait_all(); // mesh jobs read the flags
-	const Transform3D gt = is_inside_tree() ? get_global_transform() : Transform3D();
-	const Transform3D inv = gt.affine_inverse();
-	Vector2 lo(1e30f, 1e30f), hi(-1e30f, -1e30f);
-	for (int k = 0; k < 4; k++) {
-		const Vector3 c = inv.xform(Vector3((k & 1) ? p_rect.get_end().x : p_rect.position.x, 0, (k & 2) ? p_rect.get_end().y : p_rect.position.y));
-		lo = lo.min(Vector2(c.x, c.z));
-		hi = hi.max(Vector2(c.x, c.z));
-	}
-	const real_t size = chunk_quads * spacing;
-	const int x0 = CLAMP(int(Math::floor((lo.x - origin.x) / size)) - 1, 0, cw - 1), x1 = CLAMP(int(Math::floor((hi.x - origin.x) / size)) + 1, 0, cw - 1);
-	const int z0 = CLAMP(int(Math::floor((lo.y - origin.y) / size)) - 1, 0, ch - 1), z1 = CLAMP(int(Math::floor((hi.y - origin.y) / size)) + 1, 0, ch - 1);
-	for (int cz = z0; cz <= z1; cz++) {
-		for (int cx = x0; cx <= x1; cx++) {
-			const int ci = cz * cw + cx;
-			LocalVector<uint8_t> f;
-			bool any = false;
-			Vector2 wlo(1e30f, 1e30f), whi(-1e30f, -1e30f);
-			for (int k = 0; k < 4; k++) {
-				const Vector3 c = gt.xform(Vector3(origin.x + (cx + (k & 1)) * size, 0, origin.y + (cz + ((k >> 1) & 1)) * size));
-				wlo = wlo.min(Vector2(c.x, c.z));
-				whi = whi.max(Vector2(c.x, c.z));
-			}
-			if (gen->has_holes_in(Rect2(wlo, whi - wlo).grow(spacing))) {
-				// One flag per quad: a hole where the ground across the quad (from its lowest corner to its highest, at
-				// its centre) passes through a hole box. On a steep wall the centre's height alone can lie above or
-				// below a passage the wall crosses.
-				f.resize(chunk_quads * chunk_quads);
-				for (int j = 0; j < chunk_quads; j++) {
-					for (int i = 0; i < chunk_quads; i++) {
-						const Vector3 w = gt.xform(Vector3(origin.x + (cx * chunk_quads + i + 0.5f) * spacing, 0, origin.y + (cz * chunk_quads + j + 0.5f) * spacing));
-						bool h = false;
-						if (gen->has_holes_in(Rect2(w.x, w.z, 0, 0).grow(spacing))) {
-							real_t ylo = 1e30, yhi = -1e30;
-							for (int k = 0; k < 4; k++) {
-								const Vector3 cw3 = gt.xform(Vector3(origin.x + (cx * chunk_quads + i + (k & 1)) * spacing, 0, origin.y + (cz * chunk_quads + j + ((k >> 1) & 1)) * spacing));
-								const real_t hy = gen->get_height(cw3);
-								ylo = MIN(ylo, hy);
-								yhi = MAX(yhi, hy);
-							}
-							h = gen->is_hole_span(w.x, w.z, ylo, yhi);
-						}
-						f[j * chunk_quads + i] = h ? 1 : 0;
-						any = any || h;
-					}
-				}
-			}
-			const LocalVector<uint8_t> *old = chunk_holes.getptr(ci);
-			bool same = (old == nullptr) == !any;
-			if (same && any) {
-				for (int k = 0; k < chunk_quads * chunk_quads && same; k++) {
-					same = (*old)[k] == f[k];
-				}
-			}
-			if (same) {
-				continue;
-			}
-			if (any) {
-				chunk_holes[ci] = f;
-			} else {
-				chunk_holes.erase(ci);
-			}
-			chunks[ci].gen++;
-			if (chunks[ci].body.is_valid()) {
-				_free_collision(ci);
-			}
-			lods_dirty = true;
-		}
-	}
-	_update_collision();
 }
 
 bool Landscape3D::rebuild() {
@@ -1663,16 +1137,6 @@ bool Landscape3D::rebuild() {
 			_set_chunk_mesh(i, levels - 1, 0);
 		}
 	}
-	if (TerrainGenerator3D *hg = Object::cast_to<TerrainGenerator3D>(src)) {
-		hole_source = hg->get_instance_id();
-		const Callable hcb = callable_mp(this, &Landscape3D::_on_holes_changed);
-		if (!hg->is_connected(SNAME("holes_changed"), hcb)) {
-			hg->connect(SNAME("holes_changed"), hcb);
-		}
-		if (hg->get_hole_count() > 0) {
-			_refresh_holes(Rect2(-1e9, -1e9, 2e9, 2e9));
-		}
-	}
 	_update_collision();
 	update_gizmos();
 	const uint64_t t_end = OS::get_singleton()->get_ticks_usec();
@@ -1689,7 +1153,7 @@ int Landscape3D::get_chunk_lod(const Vector2i &p_chunk) const {
 
 int Landscape3D::get_chunk_edge_mask(const Vector2i &p_chunk) const {
 	ERR_FAIL_COND_V(p_chunk.x < 0 || p_chunk.y < 0 || p_chunk.x >= cw || p_chunk.y >= ch, -1);
-	return chunks[p_chunk.y * cw + p_chunk.x].mask & 15;
+	return chunks[p_chunk.y * cw + p_chunk.x].mask;
 }
 
 bool Landscape3D::is_chunk_loaded(const Vector2i &p_chunk) const {
@@ -1708,7 +1172,7 @@ PackedVector3Array Landscape3D::get_chunk_triangles(const Vector2i &p_chunk) con
 	PackedVector3Array out;
 	ERR_FAIL_COND_V(p_chunk.x < 0 || p_chunk.y < 0 || p_chunk.x >= cw || p_chunk.y >= ch, out);
 	const Chunk &c = chunks[p_chunk.y * cw + p_chunk.x];
-	const LocalVector<int> &idx = indices[c.lod][c.mask & 15];
+	const LocalVector<int> &idx = indices[c.lod][c.mask];
 	ERR_FAIL_COND_V(idx.is_empty(), out);
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
 	const int s = 1 << c.lod;
@@ -1782,168 +1246,6 @@ Dictionary Landscape3D::get_stats() const {
 }
 
 
-// The stand's ground map (docs/ideas/terrain-material.md, "Trails and rooting"): WorldStand's worn trails and boar
-// rooting, rasterised round the camera for TerrainMaterial3D. Trails: the tread share (trail_at's: flat over the
-// middle half, easing to the edge) times the wear their passes give. Trampling takes the field layer's cover off
-// roughly as 1 - exp(-passes / P) (Cole 1995, Liddle 1997: a few hundred passes a year keep a line bare in most
-// field layers), P = 300 here. Rooting: the freshness of turned soil, 1 up to a season after the boar, gone by two
-// years as litter and the field layer close over it. Rebuilt when the camera crosses a 64 m step or the stand changes.
-void Landscape3D::_update_stand_map(const Vector3 &p_camera) {
-	WorldStand *st = WorldContracts::stand();
-	if (!st) {
-		_clear_stand_map();
-		return;
-	}
-	const real_t step = 64.0;
-	const Vector2 origin = Vector2(Math::round(p_camera.x / step) * step, Math::round(p_camera.z / step) * step) - Vector2(STAND_SIZE, STAND_SIZE) * 0.5;
-	const uint64_t gen = st->get_stand_generation();
-	if (origin == stand_origin && gen == stand_generation && st->get_instance_id() == stand_id) {
-		return;
-	}
-	stand_origin = origin;
-	stand_generation = gen;
-	stand_id = st->get_instance_id();
-	const int R = STAND_RES;
-	const real_t texel = STAND_SIZE / real_t(R);
-	const bool scripted = st->get_script_instance() != nullptr;
-	LocalVector<uint8_t> trail;
-	trail.resize(R * R);
-	memset(trail.ptr(), 0, trail.size());
-	bool any = false;
-	auto wear = [](float p_passes) { return 1.0f - Math::exp(-MAX(p_passes, 0.0f) / 300.0f); };
-	if (scripted) {
-		// A script stand answers per point only: sampled at 1 m, spread over the texels.
-		const int C = int(STAND_SIZE);
-		for (int z = 0; z < C; z++) {
-			for (int x = 0; x < C; x++) {
-				const Vector2 t = st->trail_at(Vector3(origin.x + x + 0.5, 0.0, origin.y + z + 0.5));
-				const float v = t.y * wear(t.x);
-				if (v <= 0.0f) {
-					continue;
-				}
-				any = true;
-				const uint8_t b = uint8_t(CLAMP(v * 255.0f, 0.0f, 255.0f));
-				for (int dz = 0; dz < 2; dz++) {
-					for (int dx = 0; dx < 2; dx++) {
-						trail[(z * 2 + dz) * R + x * 2 + dx] = b;
-					}
-				}
-			}
-		}
-	} else {
-		const Array trails = st->get_trails();
-		for (int t = 0; t < trails.size(); t++) {
-			const Dictionary d = trails[t];
-			LocalVector<Vector2> pts;
-			const Variant pv = d.get("points", Variant());
-			if (pv.get_type() == Variant::PACKED_VECTOR3_ARRAY) {
-				for (const Vector3 &q : PackedVector3Array(pv)) {
-					pts.push_back(Vector2(q.x, q.z));
-				}
-			} else if (pv.get_type() == Variant::PACKED_VECTOR2_ARRAY) {
-				for (const Vector2 &q : PackedVector2Array(pv)) {
-					pts.push_back(q);
-				}
-			}
-			const float hw = 0.5f * MAX(float(d.get("width", 0.6f)), 0.05f);
-			const float w = wear(float(d.has("passes") ? d["passes"] : d.get("passes_per_year", 0.0f)));
-			if (w <= 0.0f) {
-				continue;
-			}
-			for (uint32_t i = 0; i + 1 < pts.size(); i++) {
-				const Vector2 a = pts[i], b = pts[i + 1];
-				const int x0 = MAX(0, int(Math::floor((MIN(a.x, b.x) - hw - origin.x) / texel))), x1 = MIN(R - 1, int(Math::ceil((MAX(a.x, b.x) + hw - origin.x) / texel)));
-				const int z0 = MAX(0, int(Math::floor((MIN(a.y, b.y) - hw - origin.y) / texel))), z1 = MIN(R - 1, int(Math::ceil((MAX(a.y, b.y) + hw - origin.y) / texel)));
-				for (int z = z0; z <= z1; z++) {
-					for (int x = x0; x <= x1; x++) {
-						const Vector2 p(origin.x + (x + 0.5) * texel, origin.y + (z + 0.5) * texel);
-						const float dist = p.distance_to(Geometry2D::get_closest_point_to_segment(p, a, b));
-						if (dist > hw) {
-							continue;
-						}
-						const float v = (1.0f - Math::smoothstep(0.5f * hw, hw, dist)) * w;
-						const uint8_t bv = uint8_t(CLAMP(v * 255.0f, 0.0f, 255.0f));
-						if (bv > trail[z * R + x]) {
-							trail[z * R + x] = bv;
-							any = true;
-						}
-					}
-				}
-			}
-		}
-	}
-	// Rooting: sampled every 2 m (the discs are metres across), bilinear over the texels.
-	const int G = int(STAND_SIZE / 2.0) + 1;
-	LocalVector<float> fresh;
-	fresh.resize(G * G);
-	bool any_rooting = false;
-	for (int z = 0; z < G; z++) {
-		for (int x = 0; x < G; x++) {
-			const float age = st->rooting_age_at(Vector3(origin.x + x * 2.0, 0.0, origin.y + z * 2.0));
-			const float f = age < 0.0f ? 0.0f : 1.0f - Math::smoothstep(0.25f, 2.0f, age);
-			fresh[z * G + x] = f;
-			any_rooting = any_rooting || f > 0.0f;
-		}
-	}
-	if (!any && !any_rooting) {
-			_clear_stand_map();
-		stand_origin = origin;
-		stand_generation = gen;
-		stand_id = st->get_instance_id();
-		return;
-	}
-	Vector<uint8_t> data;
-	data.resize(R * R * 2);
-	uint8_t *w = data.ptrw();
-	for (int z = 0; z < R; z++) {
-		const real_t gz = ((z + 0.5) * texel) / 2.0;
-		const int iz = MIN(int(gz), G - 2);
-		const real_t fz = gz - iz;
-		for (int x = 0; x < R; x++) {
-			float g = 0.0f;
-			if (any_rooting) {
-				const real_t gx = ((x + 0.5) * texel) / 2.0;
-				const int ix = MIN(int(gx), G - 2);
-				const real_t fx = gx - ix;
-				const float r0 = Math::lerp(fresh[iz * G + ix], fresh[iz * G + ix + 1], float(fx));
-				const float r1 = Math::lerp(fresh[(iz + 1) * G + ix], fresh[(iz + 1) * G + ix + 1], float(fx));
-				g = Math::lerp(r0, r1, float(fz));
-			}
-			w[(z * R + x) * 2] = trail[z * R + x];
-			w[(z * R + x) * 2 + 1] = uint8_t(CLAMP(g * 255.0f, 0.0f, 255.0f));
-		}
-	}
-	Ref<Image> img = Image::create_from_data(R, R, false, Image::FORMAT_RG8, data);
-	if (stand_texture.is_valid() && stand_texture->get_width() == R) {
-		stand_texture->update(img);
-	} else {
-		stand_texture = ImageTexture::create_from_image(img);
-	}
-	RenderingServer *rs = RenderingServer::get_singleton();
-	rs->global_shader_parameter_set("terrain_stand_map", stand_texture->get_rid());
-	rs->global_shader_parameter_set("terrain_stand_rect", Vector4(origin.x, origin.y, STAND_SIZE, STAND_SIZE));
-	stand_published = true;
-}
-
-void Landscape3D::_clear_stand_map() {
-	if (stand_published) {
-		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_stand_rect", Vector4());
-		stand_published = false;
-	}
-	stand_origin = Vector2(1e30, 1e30);
-	stand_generation = UINT64_MAX;
-	stand_id = ObjectID();
-}
-
-void Landscape3D::_publish_cliff_relief(bool p_clear) {
-	const Vector4 v = p_clear || heights.is_empty() ? Vector4() : Vector4(cliff_relief, spacing, origin.x, origin.y);
-	if (v == cliff_published) {
-		return;
-	}
-	cliff_published = v;
-	RenderingServer::get_singleton()->global_shader_parameter_set("terrain_cliff_relief", v);
-}
-
 void Landscape3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
@@ -1954,8 +1256,6 @@ void Landscape3D::_notification(int p_what) {
 			_wait_all();
 			_free_instances();
 			_free_all_collision();
-			_clear_stand_map();
-			_publish_cliff_relief(true);
 			set_process_internal(false);
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
@@ -2002,10 +1302,6 @@ void Landscape3D::_notification(int p_what) {
 					_launch_meshes(false);
 				}
 			}
-			if (cam) {
-				_update_stand_map(cam->get_global_transform().origin);
-			}
-			_publish_cliff_relief();
 			_update_collision();
 			_launch_heights();
 			if (frame % 60 == 0) {
@@ -2040,9 +1336,6 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_lod_error"), &Landscape3D::get_lod_error);
 	ClassDB::bind_method(D_METHOD("set_material", "material"), &Landscape3D::set_material);
 	ClassDB::bind_method(D_METHOD("get_material"), &Landscape3D::get_material);
-	ClassDB::bind_method(D_METHOD("set_cliff_relief", "metres"), &Landscape3D::set_cliff_relief);
-	ClassDB::bind_method(D_METHOD("get_cliff_relief"), &Landscape3D::get_cliff_relief);
-	ClassDB::bind_method(D_METHOD("get_cliff_point", "global_position"), &Landscape3D::get_cliff_point);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enable"), &Landscape3D::set_cast_shadows);
 	ClassDB::bind_method(D_METHOD("is_casting_shadows"), &Landscape3D::is_casting_shadows);
 	ClassDB::bind_method(D_METHOD("set_camera", "path"), &Landscape3D::set_camera);
@@ -2073,8 +1366,6 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_chunk_loaded", "chunk"), &Landscape3D::is_chunk_loaded);
 	ClassDB::bind_method(D_METHOD("get_chunk_grid"), &Landscape3D::get_chunk_grid);
 	ClassDB::bind_method(D_METHOD("get_lod_count"), &Landscape3D::get_lod_count);
-	ClassDB::bind_method(D_METHOD("get_hole_chunk_count"), &Landscape3D::get_hole_chunk_count);
-	ClassDB::bind_method(D_METHOD("get_hole_quad_count"), &Landscape3D::get_hole_quad_count);
 	ClassDB::bind_method(D_METHOD("get_chunk_lod", "chunk"), &Landscape3D::get_chunk_lod);
 	ClassDB::bind_method(D_METHOD("get_chunk_edge_mask", "chunk"), &Landscape3D::get_chunk_edge_mask);
 	ClassDB::bind_method(D_METHOD("get_chunk_lod_error", "chunk", "level"), &Landscape3D::get_chunk_lod_error);
@@ -2093,7 +1384,6 @@ void Landscape3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_error", PROPERTY_HINT_RANGE, "0.05,16,0.05,suffix:px"), "set_lod_error", "get_lod_error");
 	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_relief", PROPERTY_HINT_RANGE, "0,2,0.05,or_greater,suffix:m"), "set_cliff_relief", "get_cliff_relief");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_shadows"), "set_cast_shadows", "is_casting_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_heights"), "set_stream_heights", "is_streaming_heights");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "camera", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Camera3D"), "set_camera", "get_camera");

@@ -557,10 +557,6 @@ public:
 	virtual void _multimesh_mark_buffer_rd_changed(RID p_multimesh) override {} // No RenderingDevice buffers.
 	virtual void _multimesh_set_bones_per_instance(RID p_multimesh, int p_bones) override {} // Not supported: every record draws as an instance.
 	virtual int _multimesh_get_bones_per_instance(RID p_multimesh) const override { return 1; }
-	virtual void _multimesh_set_rt_instanced(RID p_multimesh, bool p_instanced) override {} // No path tracer.
-	virtual bool _multimesh_is_rt_instanced(RID p_multimesh) const override { return false; }
-	virtual void _multimesh_set_rt_offscreen_cull(RID p_multimesh, float p_min_degrees) override {} // No path tracer.
-	virtual float _multimesh_get_rt_offscreen_cull(RID p_multimesh) const override { return 0.0f; }
 	virtual Vector<float> _multimesh_get_buffer(RID p_multimesh) const override;
 
 	virtual void _multimesh_set_visible_instances(RID p_multimesh, int p_visible) override;

@@ -1,42 +1,4 @@
 extends Node3D
-
-# A fire on the ground east of x = 2 m: 928 W/m2, enough to melt 10 mm of water an hour.
-class FireStub extends WorldFire:
-	func _heat_at(p: Vector3) -> float:
-		return 928.0 if p.x > 2.0 else 0.0
-# Records the impulse waves handed to the water (WorldWater.wave), for the avalanche-into-water checks.
-class WaveStub extends WorldWater:
-	var waves: Array = []
-	func _wave(position: Vector3, direction: Vector3, height: float, period: float, width: float) -> void:
-		waves.append([position, direction, height, period, width])
-# Weather for the body checks: one value everywhere, an hour of weather per second.
-class BodyWeatherStub extends WorldWeather:
-	var t := -5.0
-	var wind := Vector3()
-	var snowfall := 0.0
-	var rain := 0.0
-	func _air_temperature_at(_p: Vector3) -> float:
-		return t
-	func _air_humidity_at(_p: Vector3) -> float:
-		return 0.9
-	func _wind_at(_p: Vector3, _h: float) -> Vector3:
-		return wind
-	func _snowfall_at(_p: Vector3) -> float:
-		return snowfall
-	func _rainfall_at(_p: Vector3) -> float:
-		return rain
-	func _precipitation_at(_p: Vector3) -> float:
-		return snowfall + rain
-	func _time_scale() -> float:
-		return 3600.0
-# Ground snow for the body checks: 20 cm of 150 kg/m3 everywhere.
-class BodySnowStub extends WorldSnow:
-	func _depth_at(_p: Vector3) -> float:
-		return 0.2
-	func _density_at(_p: Vector3) -> float:
-		return 150.0
-	func _wetness_at(_p: Vector3) -> float:
-		return 0.0
 # SnowCover3D bench: checks the snowpack against the published relations, and renders snow on a mountain
 # or on props, raster or path traced.
 #
@@ -56,41 +18,19 @@ class BodySnowStub extends WorldSnow:
 #                       mesh you can stand on
 #   --view=mountain   a 700 m mountain after a day of snow and two days of sun (snow line, south faces melted)
 #   --view=trail      deep snow as geometry: a walker, rolling balls and a wheel leave tracks (SnowSurface3D)
-#   --view=snowfall   falling snow over deep snow and a shed (flakes stop under the roof); --wind=M m/s;
-#                     --air=C for wet snow and sleet near and above 0 C
+#   --view=snowfall   falling snow over deep snow and a shed (flakes stop under the roof); --wind=M m/s
 #                     at 10 m (default 4; 15 or more blows the snow off the ground)
 #   --view=climate   a winter baked over the mountain (SnowClimate): snow line, shaded north faces, loaded lee
 #   --view=cornice   a corniced ridge from below its lee face
-#   --view=avalanche  a metre of new snow on a 38 degree face releases and piles at the toe (--before: the
-#                     loaded face before it goes); --test=avalanche for the checks
-#                     --powder [--at=S]: the run in real time, shot S s after release (default 9) with its
-#                     powder cloud (PhysX Flow; traced, it also saves the raster frame of the same cloud as
-#                     <out>_raster.png; --no-gas: without the cloud, quick); --crown: the crown wall from
-#                     14 m down the bed (--crown-far: from 40 m); --wet: a thaw first, then a wet slide (--triggered: the
-#                     same release, dry); --test=triggers, --test=powder, --test=forest, --test=wet for
-#                     triggers, the cloud, forests (holding, braking, pressure on trees) and wet snow;
-#                     --test=waves: avalanches into a lake (impulse waves, lake ice)
-#   --view=bodies     three crates after a snowfall: one left out, one just driven in, one from a shed (SnowBodies3D)
-#   --test=bodies     snow on moving things (follow-up 18): seeded, built by snowfall, sheltered, blown and shaken
-#                     off, melted, burnt
-#   --view=lake       a frozen lake from its shore after two weeks of frost and a light snow (--snow=H)
 #   --view=sparkle    dry new snow at the feet against a low sun ahead: glinting grains; --melt=H hours of thaw
-#                     first wets it (the glints go); --glints=exact (default) / grid: every grain a facet under the path tracer, or the raster's grid
-#                     (sparkle) prints the share of glinting pixels and the mean luminance; --hoar=MM: surface hoar
-#                     of MM mm over the field (its upright plates flash in the low sun)
-#   --view=rime       a fence and a bare shrub after a day in freezing fog (8 m/s, -6 C, 0.25 g/m3): rime feathers into
-#                     the wind [--close: the rail and the wire]; --test=rime checks the accretion
+#                     first wets it (the glints go); --glints=exact: every grain a facet under the path tracer
+#                     (sparkle) prints the share of glinting pixels and the mean luminance
 #   --view=shelter    a shed and young spruces after a snowfall: bare ground under the roof, snow in the
 #                     crowns and less under them (--test=shelter for the checks)
 #   --test=background updates on worker threads (follow-up 14): the same pack as updates run in the frame,
 #                     the getters steady while one runs, the main thread's share of each update
-#   --test=water      snow and water (follow-up 15): snow on a lake melts into it, lake ice grows by Stefan's
-#                     law under the frost (against Ashton's observed coefficients), holds the snow, floods
-#                     into snow ice under a heavy load and melts in a thaw
 #   --test=crust      melt-freeze crusts: formed by a thaw and a frost, harder each cycle, a boot breaks a
 #                     first-cycle crust and stands on a second-cycle one, new snow over it
-#   --view=spindrift  the cornice ridge in a 20 m/s westerly after new snow: plumes off the crest (PhysX Flow),
-#                     --at=S seconds of plume (default 12), --wind=M m/s; traced, it also saves _raster from the same run
 #   --view=windblown  a ridge after new snow and a day of 15 m/s wind (--snow=H hours of wind, default 24;
 #                     --transport=0 without the wind moving lying snow)
 #   --test=transport  the wind moving lying snow (SnowTran-3D): the flux against Tabler (1991), a ridge
@@ -101,22 +41,11 @@ class BodySnowStub extends WorldSnow:
 #                     falling in a thaw with its debris at the foot of the face, none with failure off
 #   --test=icicles    icicles: tip and wall rates (Makkonen 1988), the ratio of the two against Maeno et al.
 #                     (1994), an eave in a day of thaw over frost, water kept, thickening once the wall
-#                     freezes all of it, melting back; the shape: plumb in still air, leaning in wind, tips dripping
+#                     freezes all of it, melting back
 #   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
-#                     [--wind=S: a steady wind along the eave by day, the tips lean; --dense: a week of melt with
-#                     sites 5 cm apart, rippled icicles bridged into curtains] [--no-core: clear ice only]
-#                     [--hero (implies --dense): 1.7 m out from the eave, a little above, a fused pair centred, root to
-#                     tip (--under: from under the roof, raster only for now; --wall: head on against a boarded front); pass --resolution 1920x1080]
-#                     [--black-core: a black core, to see where raster and the trace see it]
 #   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
-#   --settled         (trail view) 0.4 m of settled snow (300 kg/m3) instead of fresh: prints break clumps
-#   --no-clumps       (trail view) no snow clumps beside the prints
-#   --no-plates       (trail view) a broken crust without its plates (the field's ramps alone)
-#   --prints-close    (trail view) 1.5 m over two boot prints (with --crust=1: the broken crust's pieces)
-#   --clumps-close    (trail view) the camera low beside the small ball's furrow
-#   --away            (trail view) the field leaves for 300 m and comes back: are the clumps kept?
 #   --sled            (trail view) a sled pulled at 4 m/s for 2 s and lifted away: its bow wave and berm
 #   --deform=R,E[,S]  (trail view) deformation texels R over E m, triangles every S m
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
@@ -127,12 +56,7 @@ class BodySnowStub extends WorldSnow:
 #   --steps=N         save N frames as the snow builds (time-lapse) to --out with _NNN before .png
 #   --probe           print the snowpack along the axes (mountain view)
 #   --raster          raster only (default path traced)
-#   --taa             raster with TAA (stills set against path traced ones: no per-pixel shadow or dither dots)
 #   --out=path.png    save the last frame and quit
-#   --suncups=M       trail view: suncups of M m relief over the field (the deep-snow surface draws them)
-#   --sastrugi=M[,deg] trail view: sastrugi of M m relief carved by a wind toward deg (0 = +x, the default)
-#   --slush=MM        trail view: 15 cm of old snow over frozen ground, then MM mm of rain at +8 C: slush in its base
-#   --ice-drop=M      icicles view: the edge M m under the roof (the roots must still join it)
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 
 const GroundScript := preload("res://ground.gd")
@@ -164,26 +88,15 @@ var only := ""
 var melt_hours := 0.0
 var crust_cycles := 0.0
 var transport := true
-var hoar_mm := 0.0 # --hoar=MM: the sparkle view's surface hoar
-var suncups_m := 0.0 # --suncups=M: the sparkle view's suncup relief
-var sastrugi_arg := "" # --sastrugi=M[,deg]
-var slush_mm := 0.0 # --slush=MM: rain on a thin pack over frozen ground (trail view)
-var air := INF # --air=C: the snowfall view's air temperature (sleet near and above 0 C)
 
 
 func _ready() -> void:
-	# 4x MSAA for raster stills: thin geometry far off (a crown wall a pixel high) is otherwise a row of dots.
-	get_viewport().msaa_3d = Viewport.MSAA_4X
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--view="): view = a.substr(7)
-		if a == "--glints=exact" or a == "--glints=grid":
-			# Every grain a facet under the path tracer (follow-up 5, the default), or stage 5's footprint grid.
-			RenderingServer.global_shader_parameter_set("snow_exact_glints", a == "--glints=exact")
+		if a == "--glints=exact":
+			# Every grain a facet under the path tracer (follow-up 5), against the footprint grid (stage 5).
+			RenderingServer.global_shader_parameter_set("snow_exact_glints", true)
 		elif a == "--raster": raster = true
-		elif a == "--taa":
-			# Raster stills set against path traced ones: TAA resolves the per-pixel shadow and dither dots
-			# (the bench holds still a few frames before saving, so it converges).
-			get_viewport().use_taa = true
 		elif a.begins_with("--test"):
 			test = true
 			only = a.substr(7)
@@ -191,10 +104,6 @@ func _ready() -> void:
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--snow="): snow_hours = float(a.substr(7))
-		elif a.begins_with("--hoar="): hoar_mm = float(a.substr(7))
-		elif a.begins_with("--suncups="): suncups_m = float(a.substr(10))
-		elif a.begins_with("--sastrugi="): sastrugi_arg = a.substr(11)
-		elif a.begins_with("--slush="): slush_mm = float(a.substr(8))
 		elif a.begins_with("--sun="): sun_hours = float(a.substr(6))
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
@@ -203,7 +112,6 @@ func _ready() -> void:
 		elif a.begins_with("--transport="): transport = a.substr(12) != "0"
 		elif a.begins_with("--crack="): crack_days = int(a.substr(8))
 		elif a == "--fall": fall = true
-		elif a.begins_with("--air="): air = float(a.substr(6))
 	if test:
 		if only == "climate":
 			await _run_climate_tests()
@@ -211,61 +119,14 @@ func _ready() -> void:
 			await _run_shelter_tests()
 		elif only == "crust":
 			await _run_crust_tests()
-			await _run_rotten_tests()
-			await _run_slush_tests()
-		elif only == "hoar":
-			await _run_hoar_tests()
-		elif only == "suncups":
-			_run_suncup_tests()
-		elif only == "spindrift":
-			await _run_spindrift_tests()
-		elif only == "road":
-			await _run_road_tests()
-		elif only == "layers":
-			await _run_layer_tests()
-		elif only == "roofs":
-			await _run_roof_tests()
-		elif only == "drift":
-			await _run_drift_tests()
-		elif only == "windslab":
-			await _run_wind_slab_tests()
-		elif only == "sastrugi":
-			await _run_sastrugi_tests()
-		elif only == "depthhoar":
-			await _run_depth_hoar_tests()
-		elif only == "rime":
-			await _run_rime_tests()
 		elif only == "transport":
 			await _run_transport_tests()
 		elif only == "failure":
 			await _run_failure_tests()
 		elif only == "icicles":
 			_run_icicle_tests()
-			await _run_icicle_attach_tests()
 		elif only == "background":
 			await _run_background_tests()
-		elif only == "water":
-			await _run_water_tests()
-		elif only == "fire":
-			await _run_fire_tests()
-		elif only == "sleet":
-			_run_sleet_tests()
-			await _run_warm_nose_tests()
-		elif only == "avalanche":
-			await _run_avalanche_tests()
-		elif only == "triggers":
-			await _run_trigger_tests()
-		elif only == "powder":
-			await _run_powder_tests()
-		elif only == "forest":
-			await _run_forest_tests()
-		elif only == "wet":
-			await _run_wet_tests()
-		elif only == "waves":
-			await _run_impulse_wave_tests()
-		elif only == "bodies":
-			await _run_body_tests()
-			await _run_body_slab_tests()
 
 		else:
 			await _run_tests()
@@ -301,8 +162,6 @@ func _setup(kind: String, extent: float, resolution: int, temperature: float) ->
 	weather.cloud_variation = 0.0
 	weather.wind_speed = 3.0
 	weather.rain_rate = 0.0
-	weather.cloud_cover = 0.0
-	weather.snap_to_settings()
 	weather.set_physics_process_internal(false)
 	add_child(weather)
 	weather.snap_to_settings()
@@ -328,8 +187,6 @@ func _precipitate(hours: float, rate: float) -> void:
 	weather.advance(1.0)
 	snow.advance(hours * 3600.0)
 	weather.rain_rate = 0.0
-	weather.cloud_cover = 0.0
-	weather.snap_to_settings()
 	weather.cloud_cover = 0.0
 	weather.snap_to_settings()
 	weather.advance(1.0)
@@ -452,38 +309,12 @@ func _run_tests() -> void:
 	await _run_transport_tests()
 	await _run_surface_tests()
 	await _run_crust_tests()
-	await _run_rotten_tests()
-	await _run_slush_tests()
-	await _run_spindrift_tests()
-	await _run_road_tests()
-	await _run_layer_tests()
-	await _run_roof_tests()
-	await _run_drift_tests()
-	await _run_wind_slab_tests()
-	await _run_sastrugi_tests()
-	await _run_depth_hoar_tests()
-	await _run_warm_nose_tests()
-	await _run_hoar_tests()
-	_run_suncup_tests()
-	await _run_rime_tests()
 	await _run_fall_tests()
 	await _run_shelter_tests()
 	await _run_climate_tests()
 	await _run_failure_tests()
 	_run_icicle_tests()
-	await _run_icicle_attach_tests()
 	await _run_background_tests()
-	await _run_water_tests()
-	await _run_fire_tests()
-	_run_sleet_tests()
-	await _run_body_tests()
-	await _run_body_slab_tests()
-	await _run_avalanche_tests()
-	await _run_trigger_tests()
-	await _run_powder_tests()
-	await _run_forest_tests()
-	await _run_wet_tests()
-	await _run_impulse_wave_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -520,8 +351,6 @@ func _walk(z: float, from_x: float = -3.0, to_x: float = 3.0) -> void:
 	(ws.shape as CapsuleShape3D).height = 1.8
 	wk.add_child(ws)
 	wk.add_to_group("snow_deform")
-	# A boot dragged along the line (the crust's answer to a load), not a walk: pressed as its body shape.
-	wk.set_meta("world_contact_walker", false)
 	add_child(wk)
 	var steps_n := int((to_x - from_x) / 0.1)
 	for i in steps_n + 1:
@@ -623,577 +452,6 @@ func _run_transport_tests() -> void:
 	_check("a frozen crust holds the snow", absf(c1 - c0) < 0.1, "%.2f to %.2f mm on the windward side" % [c0, c1])
 
 
-func _run_rotten_tests() -> void:
-	print("Rotten snow (follow-up 41):")
-	_check("a wet pack keeps a share of its bearing (Yamanoi and Endo 2002)", SnowSurface3D.rotten_share(0.0) == 1.0 and absf(SnowSurface3D.rotten_share(1.0) - 0.15) < 1e-4, "%.2f dry, %.2f soaked" % [SnowSurface3D.rotten_share(0.0), SnowSurface3D.rotten_share(1.0)])
-	# 0.4 m of old spring snow at 400 kg/m3: firm in the cold, rotten in a warm afternoon.
-	await _surface_setup(160.0, 400.0)
-	await _walk(-1.0)
-	var dry := _trail_stats(-1.0)
-	await _weather_to(8.0, 10.0)
-	var wet := snow.get_wetness_at(Vector3(0.0, 0, 1.0))
-	await _walk(1.0)
-	var rotten := _trail_stats(1.0)
-	var q := Vector3(0.0, 0, 1.0)
-	_check("boots posthole in a wet spring pack", wet > 0.5 and rotten.dent > 2.0 * maxf(dry.dent, 0.01), "%.3f m in the cold, %.3f m when wet (wetness %.2f; %.2f m at %.0f kg/m3)" % [dry.dent, rotten.dent, wet, snow.get_depth_at(q), snow.get_density_at(q)])
-
-
-func _run_slush_tests() -> void:
-	print("Slush over frozen ground (follow-up 41):")
-	var seal_frozen := SnowCover3D.ground_seal(Vector3(0.0, 0.3, 0.0))
-	var seal_thawed := SnowCover3D.ground_seal(Vector3(0.1, 0.3, 0.0))
-	_check("concrete frost seals the base, a thawed top or unfrozen ground does not", seal_frozen > 0.99 and seal_thawed == 0.0 and SnowCover3D.ground_seal(Vector3()) == 0.0, "%.2f frozen, %.2f under 10 cm thawed" % [seal_frozen, seal_thawed])
-	var flat := SnowCover3D.slush_drain_rate(500.0, 0.0, 50.0)
-	var steep := SnowCover3D.slush_drain_rate(500.0, sin(deg_to_rad(20.0)), 50.0)
-	_check("slush ponds for days on the flat and drains in hours off a slope (Darcy, K about 8 mm/s)", 1.0 / flat > 72.0 and 1.0 / steep < 12.0, "e-folds in %.0f h flat, %.1f h at 20 degrees (50 m slope)" % [1.0 / flat, 1.0 / steep])
-	# 0.4 m of spring snow, two warm days: over unfrozen ground the melt soaks away; over frozen ground it ponds.
-	var q := Vector3(0.0, 0, 1.0)
-	await _surface_setup(160.0, 400.0)
-	await _weather_to(10.0, 48.0)
-	var open_slush := snow.get_slush_at(q)
-	var open_depth := snow.get_depth_at(q)
-	var stub := GDScript.new()
-	stub.source_code = "extends WorldGround\nfunc _frost_at(_p: Vector3) -> Vector3:\n\treturn Vector3(0.0, 0.3, 0.0)\n"
-	stub.reload()
-	WorldContracts.set_ground(stub.new())
-	await _surface_setup(160.0, 400.0)
-	await _weather_to(10.0, 48.0)
-	var slush := snow.get_slush_at(q)
-	var swe := snow.get_swe_at(q)
-	var wet := snow.get_wetness_at(q)
-	var depth_frozen := snow.get_depth_at(q)
-	# Then a hard frost: the slush freezes into the pack's base (denser, not deeper).
-	await _weather_to(-8.0, 24.0)
-	var frozen_slush := snow.get_slush_at(q)
-	var swe_frozen := snow.get_swe_at(q)
-	var depth_after := snow.get_depth_at(q)
-	WorldContracts.clear_overrides()
-	_check("melt water ponds as slush over frozen ground, drains away over thawed", open_slush == 0.0 and slush > 0.02 and wet == 1.0, "%.3f m of slush, none over thawed ground" % slush)
-	_check("the slush is pore water: inside the pack, no deeper than the drained pack", slush <= depth_frozen + 1e-4 and absf(depth_frozen - open_depth) < 0.02, "%.3f of %.3f m (%.3f m over thawed ground)" % [slush, depth_frozen, open_depth])
-	_check("a hard frost freezes it into the base: denser, not deeper", frozen_slush < 0.5 * slush and swe_frozen > swe + 5.0 and depth_after <= depth_frozen + 1e-3, "%.3f m left, %.0f to %.0f mm SWE, %.3f to %.3f m" % [frozen_slush, swe, swe_frozen, depth_frozen, depth_after])
-
-
-func _spindrift_at(wind: float, temp: float) -> Array:
-	weather.temperature = temp
-	weather.wind_speed = wind
-	weather.wind_direction = Vector2(1, 0)
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	snow.advance(600.0)
-	await get_tree().physics_frame
-	return [snow.get_spindrift_rate(), snow.get_spindrift_sources()]
-
-
-func _run_spindrift_tests() -> void:
-	print("Spindrift off ridges (follow-up 42):")
-	# The cornice ridge (crest along z at x = 0, a 50 degree lee face to the east), 0.4 m of new snow, westerlies.
-	await _setup("cornice", 256.0, 64, -10.0)
-	snow.add_snow(40.0, 100.0)
-	var calm: Array = await _spindrift_at(4.0, -10.0)
-	var gale: Array = await _spindrift_at(18.0, -10.0)
-	var storm: Array = await _spindrift_at(26.0, -10.0)
-	var srcs: Array = gale[1]
-	var on_crest := srcs.size() > 0
-	for s: Dictionary in srcs:
-		var p: Vector3 = s["position"]
-		var v: Vector3 = s["velocity"]
-		if absf(p.x) > 8.0 or v.x <= 0.0:
-			on_crest = false
-	_check("no plume under the threshold wind (Li and Pomeroy 1997)", calm[0] == 0.0 and (calm[1] as Array).is_empty(), "%.2f kg/s at 4 m/s (6.4 m/s at most over the crest)" % calm[0])
-	_check("a gale streams snow off the lee crest, downwind", gale[0] > 0.0 and on_crest, "%.1f kg/s from %d sources at 18 m/s, all on the crest blowing east" % [gale[0], srcs.size()])
-	_check("stronger wind, far more snow (flux about u^4)", storm[0] > 2.5 * gale[0], "%.1f kg/s at 26 m/s against %.1f at 18" % [storm[0], gale[0]])
-	var cloud: SnowPowderCloud3D = snow.get_spindrift()
-	_check("the plume is a Flow gas fed from the crest", cloud != null and (not ClassDB.class_exists("PhysXFlow3D") or (cloud.has_flow() and cloud.get_active_sources() == (storm[1] as Array).size())), "%s, %d emitters" % ["flow" if cloud and cloud.has_flow() else "no flow", cloud.get_active_sources() if cloud else 0])
-	_check("drier air thins it sooner (sublimation)", SnowCover3D.spindrift_fade(0.4) > 2.0 * SnowCover3D.spindrift_fade(0.95), "%.3f /s at 40%%, %.3f at 95%%" % [SnowCover3D.spindrift_fade(0.4), SnowCover3D.spindrift_fade(0.95)])
-	var wet: Array = await _spindrift_at(26.0, 2.0)
-	_check("no plume from wet snow", wet[0] == 0.0, "%.2f kg/s at +2 C" % wet[0])
-
-
-# Wind slab (follow-up 45): snow falling in wind lands denser (Crocus, Vionnet et al. 2012), and where the surface
-# drifts (Crocus's driftability SI > 0) its top packs toward 350 kg/m3 as wind slab (Sommer et al. 2018).
-func _wind_case(wind: float, hours: int, fall: float) -> Array:
-	await _setup("flat", 128.0, 32, -8.0)
-	snow.add_snow(30.0, 100.0)
-	weather.temperature = -8.0
-	weather.wind_speed = wind
-	weather.wind_direction = Vector2(1, 0)
-	weather.rain_rate = fall
-	weather.cloud_cover = 1.0 if fall > 0.0 else 0.0
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	var p := Vector3(0, 0, 0)
-	var swe0 := snow.get_swe_at(p)
-	var d0 := snow.get_depth_at(p)
-	for h in hours:
-		weather.advance(60.0)
-		snow.advance(3600.0)
-	var added := snow.get_swe_at(p) - swe0
-	var added_depth := snow.get_depth_at(p) - d0
-	return [snow.get_density_at(p), snow.get_wind_slab_at(p), added, added_depth]
-
-
-# The pack's layers (follow-up 49): each fall and each wind deposit a layer with its own density and age, settling
-# under the weight above it (Crocus's viscosity); the bulk stays the total, melt and erosion take the top.
-func _layer_text(p: Vector3) -> String:
-	var t := ""
-	for l: Dictionary in snow.get_layers_at(p):
-		t += "[%s %.0f cm %.0f kg/m3 %.0f h] " % [l["kind"], float(l["depth"]) * 100.0, l["density"], l["age"]]
-	return t.strip_edges()
-
-
-func _layer_sum(p: Vector3) -> Array:
-	var d := 0.0
-	var w := 0.0
-	for l: Dictionary in snow.get_layers_at(p):
-		d += float(l["depth"])
-		w += float(l["swe"])
-	return [d, w]
-
-
-func _run_layer_tests() -> void:
-	print("Layers (follow-up 49):")
-	var fresh := SnowCover3D.layer_compaction(100.0, 2000.0, -5.0, 24.0)
-	var cold := SnowCover3D.layer_compaction(100.0, 2000.0, -25.0, 24.0)
-	var dense := SnowCover3D.layer_compaction(350.0, 2000.0, -5.0, 24.0)
-	_check("a layer settles under the weight above it, slower cold and dense (Crocus viscosity)", fresh > 115.0 and cold < fresh and cold > 100.0 and dense - 350.0 < fresh - 100.0 and SnowCover3D.layer_compaction(100.0, 0.0, -5.0, 24.0) == 100.0, "100 kg/m3 under 2 kPa for a day: %.0f at -5 C, %.0f at -25 C; 350 goes to %.0f" % [fresh, cold, dense])
-	await _setup("flat", 64.0, 16, -8.0)
-	snow.crust_enabled = false # no sun crust under the new snow (it would hold the top from packing)
-	var p := Vector3(0, 0, 0)
-	snow.add_snow(150.0, 300.0) # an old settled pack
-	for h in 48:
-		snow.advance(3600.0)
-	weather.wind_speed = 1.0
-	weather.snap_to_settings()
-	_precipitate(10.0, 4.0) # a 40 mm storm, calm
-	var after_storm := _layer_text(p)
-	var ls: Array = snow.get_layers_at(p)
-	var sums := _layer_sum(p)
-	print("  after a calm storm on an old pack: %s; bulk %.0f cm %.0f mm" % [after_storm, snow.get_depth_at(p) * 100.0, snow.get_swe_at(p)])
-	_check("a storm on an old pack is a light new layer over a dense old one", ls.size() >= 2 and ls[0]["kind"] == "old" and ls[-1]["kind"] == "new" and float(ls[-1]["density"]) < 0.7 * float(ls[0]["density"]), after_storm)
-	_check("the layers add up to the bulk pack", absf(sums[0] - snow.get_depth_at(p)) < 0.01 and absf(sums[1] - snow.get_swe_at(p)) < 0.5, "%.3f m and %.1f mm against %.3f m and %.1f mm" % [sums[0], sums[1], snow.get_depth_at(p), snow.get_swe_at(p)])
-	# A gale over it: the new snow is blown and laid down again as wind slab where it drifts.
-	weather.wind_speed = 14.0
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	for h in 6:
-		snow.advance(3600.0)
-		if OS.get_cmdline_user_args().has("--verbose"):
-			print("    gale h%d: %s slab %.3f crust %.3f@%.3f rho %.0f blown %.4f" % [h, _layer_text(p), snow.get_wind_slab_at(p), snow.get_crust_thickness_at(p), snow.get_crust_depth_at(p), snow.get_density_at(p), snow.get_blown_flux_max()])
-	var kinds := []
-	for x in range(-28, 29, 4):
-		for l: Dictionary in snow.get_layers_at(Vector3(x, 0, 0)):
-			if not kinds.has(l["kind"]):
-				kinds.append(l["kind"])
-	print("  after a gale: %s" % _layer_text(p))
-	var top: Array = snow.get_layers_at(p)
-	_check("a gale packs the top into a wind slab layer", top.size() >= 2 and top[-1]["kind"] == "wind" and kinds.has("wind"), _layer_text(p))
-	var base_swe: float = float(top[0]["swe"])
-	var all_swe := snow.get_swe_at(p)
-	# Warm hours: the melt takes the top layers first.
-	weather.wind_speed = 1.0
-	weather.temperature = 8.0
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	for h in 72:
-		snow.advance(3600.0)
-	var warm: Array = snow.get_layers_at(p)
-	sums = _layer_sum(p)
-	print("  after 3 days at +8 C: %s" % _layer_text(p))
-	_check("melt takes the top: the old layer under it keeps its snow", warm.size() >= 1 and warm[0]["kind"] == "old" and absf(float(warm[0]["swe"]) - base_swe) < 1.0 and snow.get_swe_at(p) < all_swe - 1.0 and absf(sums[1] - snow.get_swe_at(p)) < 0.5, "%s; base %.1f of %.1f mm, pack %.1f of %.1f mm" % [_layer_text(p), float(warm[0]["swe"]), base_swe, snow.get_swe_at(p), all_swe])
-	snow.layers_enabled = false
-	snow.advance(3600.0)
-	_check("off: no layers", snow.get_layers_at(p).is_empty(), "%d" % snow.get_layers_at(p).size())
-	snow.layers_enabled = true
-	weather.temperature = -8.0
-	weather.snap_to_settings()
-	# The storm slab's own weight (the round 6 quirk): 50 cm of new snow on a dense old pack on the 38 degree face.
-	# With layers the slab weighs its own 100 kg/m3; without, the pack's bulk density overstated it.
-	var lowest := []
-	for layered: bool in [true, false]:
-		await _setup("avalanche", 256.0, 128, -8.0)
-		snow.drift_enabled = false
-		snow.slide_enabled = false
-		snow.hoar_enabled = false
-		snow.crust_enabled = false # the new snow alone: no sun crust or depth hoar under it
-		snow.depth_hoar_enabled = false
-		snow.layers_enabled = layered
-		var av: SnowAvalanche3D = snow.get_avalanches()
-		av.natural_release = false
-		snow.add_snow(150.0, 300.0)
-		weather.temperature = -8.0
-		weather.snap_to_settings()
-		for d in 8:
-			snow.advance(86400.0) # past a week: bonded, no longer the new snow
-		snow.add_snow(50.0, 100.0)
-		await get_tree().physics_frame
-		var lo_s := 1e9
-		for x in range(-120, 0, 10):
-			for z in range(-60, 61, 20):
-				lo_s = minf(lo_s, av.get_trigger_index_at(Vector3(x, 0, z), 0.0))
-		lowest.append(lo_s)
-	_check("a storm slab on a dense old pack weighs its own density (layers)", float(lowest[0]) > 1.2 * float(lowest[1]) and float(lowest[0]) > 1.0, "lowest S %.2f with layers, %.2f with the bulk density" % [lowest[0], lowest[1]])
-
-
-# Snow sliding off roofs (follow-up 50): a roof face (snow_roof group) keeps Eurocode's share of the snowfall, slides
-# when the load beats its bed's bond and friction (slippery metal sheds, rough shingles hold, a warm roof's wet bed
-# lets go), and the slab lands as a bank in the cover past the eave.
-func _roof_face(at: Vector3, pitch_deg: float, material: String, heat: float) -> Node3D:
-	var r := Node3D.new()
-	r.add_to_group("snow_roof")
-	r.set_meta("snow_roof_material", material)
-	r.set_meta("snow_roof_heat", heat)
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(5, 0.1, 6) # 5 m run down the slope (x), 6 m along the eave
-	bm.material = StandardMaterial3D.new()
-	mi.mesh = bm
-	r.add_child(mi)
-	add_child(r)
-	r.global_position = at
-	r.rotation_degrees = Vector3(0, 0, -pitch_deg) # falls toward +x
-	return r
-
-
-func _run_roof_tests() -> void:
-	print("Roofs (follow-up 50):")
-	_check("Eurocode's roof share: 0.8 to 30 degrees, half at 45, none from 60", absf(SnowBodies3D.roof_shape(deg_to_rad(20.0)) - 0.8) < 1e-4 and absf(SnowBodies3D.roof_shape(deg_to_rad(45.0)) - 0.4) < 1e-4 and SnowBodies3D.roof_shape(deg_to_rad(65.0)) == 0.0, "%.2f, %.2f, %.2f" % [SnowBodies3D.roof_shape(deg_to_rad(20.0)), SnowBodies3D.roof_shape(deg_to_rad(45.0)), SnowBodies3D.roof_shape(deg_to_rad(65.0))])
-	var slope := deg_to_rad(35.0)
-	_check("80 cm of snow slides off a 35 degree metal roof, not off shingles", SnowBodies3D.slab_slides(0.8, 100.0, 0.0, slope, 250.0, SnowBodies3D.roof_friction("metal")) and not SnowBodies3D.slab_slides(0.8, 100.0, 0.0, slope, 250.0, SnowBodies3D.roof_friction("shingle")), "friction %.0f and %.0f degrees" % [SnowBodies3D.roof_friction("metal"), SnowBodies3D.roof_friction("shingle")])
-	await _setup("flat", 64.0, 64, -6.0)
-	snow.drift_enabled = false
-	snow.wind_transport_enabled = false
-	var sb: SnowBodies3D = snow.get_bodies()
-	var metal := _roof_face(Vector3(-14, 5, -12), 35.0, "metal", 0.0)
-	var shingle := _roof_face(Vector3(-14, 5, 12), 35.0, "shingle", 0.0)
-	var warm := _roof_face(Vector3(10, 5, 12), 35.0, "shingle", 25.0)
-	var steep := _roof_face(Vector3(10, 5, -12), 65.0, "shingle", 0.0)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	_check("roof faces are tracked", sb.is_tracked(metal) and sb.is_tracked(shingle) and sb.is_tracked(warm) and sb.is_tracked(steep), "%d tracked" % sb.get_tracked_count())
-	weather.wind_speed = 1.0
-	weather.rain_rate = 4.0
-	weather.cloud_cover = 1.0
-	weather.temperature = -6.0
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	var land := Vector3(-14 + 2.5 + 1.0, 0, -12) # past the metal roof's eave
-	var open := Vector3(0, 0, 0)
-	var max_metal := 0.0
-	var max_shingle := 0.0
-	var max_warm := 0.0
-	var max_steep := 0.0
-	for h in 24:
-		snow.advance(3600.0)
-		for k in 6:
-			sb.step(600.0)
-		if OS.get_cmdline_user_args().has("--verbose"):
-			print("    h%d metal %.2f shingle %.2f warm %.2f steep %.2f slides %d" % [h, sb.get_body_depth(metal), sb.get_body_depth(shingle), sb.get_body_depth(warm), sb.get_body_depth(steep), sb.get_roof_slides()])
-		max_metal = maxf(max_metal, sb.get_body_depth(metal))
-		max_shingle = maxf(max_shingle, sb.get_body_depth(shingle))
-		max_warm = maxf(max_warm, sb.get_body_depth(warm))
-		max_steep = maxf(max_steep, sb.get_body_depth(steep))
-	var pile := 0.0
-	for x in range(0, 9):
-		pile = maxf(pile, snow.get_depth_at(land + Vector3(x, 0, 0)))
-	print("  a day of 4 mm/h at -6 C, the most each roof held: metal %.2f m, shingles %.2f m, warm shingles %.2f m, 65 degrees %.2f m; %d slides, %.0f kg landed; bank %.2f m against %.2f m in the open" % [max_metal, max_shingle, max_warm, max_steep, sb.get_roof_slides(), sb.get_roof_landed(), pile, snow.get_depth_at(open)])
-	_check("a metal roof sheds its load sooner than a shingled one", max_metal < 0.7 * max_shingle and max_shingle > 0.8, "metal up to %.2f m, shingles up to %.2f m" % [max_metal, max_shingle])
-	_check("a warm roof's wet bed lets go sooner still; a 65 degree roof holds none", max_warm < 0.5 * max_shingle and max_steep < 0.005, "warm up to %.2f m, 65 degrees %.3f m" % [max_warm, max_steep])
-	_check("what slid lands as a bank past the eave", sb.get_roof_landed() > 100.0 and pile > snow.get_depth_at(open) + 0.1, "%.0f kg; bank %.2f m against %.2f m" % [sb.get_roof_landed(), pile, snow.get_depth_at(open)])
-	weather.rain_rate = 0.0
-	weather.cloud_cover = 0.0
-	weather.snap_to_settings()
-
-
-# Drift take-back (follow-up 48): a lone drift in a gale. The wind arrives carrying a full load off the open snow
-# upwind, so the drift loses snow only where the wind speeds up over it: with drift_relief the wind sees the snow's own
-# relief (DuneShear, Kroy et al. 2002), so the drift's stoss erodes and its lee fills: a big drift becomes a snow dune
-# and creeps downwind, holding its height, and a drift shorter than the smallest dune (some 10-20 saturation lengths)
-# flattens. Without relief a drift on loose snow keeps its place and crest. On bare ground it is blown away.
-func _drift_case(relief: bool, cover: float, hours: int, radius := 5.0, depth := 1.0) -> Array:
-	await _setup("flat", 64.0, 64, -8.0)
-	snow.wind_packing_enabled = false
-	snow.sastrugi_enabled = false
-	snow.drift_relief = relief
-	if cover > 0.0:
-		snow.add_snow(cover, 100.0)
-	snow.add_drift(Vector3(0.5, 0, 0.5), radius, depth, 250.0)
-	weather.temperature = -8.0
-	weather.wind_speed = 14.0
-	weather.wind_direction = Vector2(1, 0)
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	var line := func() -> Array:
-		var a := []
-		for x in [-6, -3, 0, 3, 6, 9]:
-			a.append(snow.get_depth_at(Vector3(x + 0.5, 0, 0.5)))
-		return a
-	var before: Array = line.call()
-	var t0 := Time.get_ticks_msec()
-	for h in hours * 6:
-		snow.advance(600.0)
-	var ms := Time.get_ticks_msec() - t0
-	var peak := 0.0
-	var peak_x := 0.0
-	for z in range(-10, 11, 2):
-		for x in range(-12, 28):
-			var d := snow.get_depth_at(Vector3(x + 0.5, 0, z + 0.5))
-			if d > peak:
-				peak = d
-				peak_x = x
-	return [before, line.call(), peak, peak_x, ms]
-
-
-func _run_drift_tests() -> void:
-	print("Lone drifts (follow-up 48):")
-	var fmt := func(a: Array) -> String:
-		var s := ""
-		for d in a:
-			s += "%.0f " % (d * 100.0)
-		return s.strip_edges()
-	var on: Array = await _drift_case(true, 20.0, 6)
-	var off: Array = await _drift_case(false, 20.0, 6)
-	print("  cm at -6..9 m on 20 cm of loose snow: start %s; 6 h at 14 m/s with relief %s (peak %.0f cm at %.0f m, %d ms), without %s (peak %.0f cm, %d ms)" % [fmt.call(on[0]), fmt.call(on[1]), on[2] * 100.0, on[3], on[4], fmt.call(off[1]), off[2] * 100.0, off[4]])
-	_check("add_drift lays a cone of snow", absf(on[0][2] - 1.2) < 0.05 and absf(on[0][0] - 0.2) < 0.02, "%.0f cm at its centre on 20 cm" % (on[0][2] * 100.0))
-	_check("a 10 m drift on loose snow in a gale becomes a snow dune: it creeps downwind and holds its height (no spike)", on[3] >= 2.0 and on[2] < 1.25 * on[0][2] and on[2] > 0.6 * on[0][2] and on[1][2] < 0.5 * on[0][2], "crest %.0f cm (from %.0f) at %.0f m; %.0f cm left where it stood" % [on[2] * 100.0, on[0][2] * 100.0, on[3], on[1][2] * 100.0])
-	var small: Array = await _drift_case(true, 20.0, 6, 2.0, 0.4)
-	var small_off: Array = await _drift_case(false, 20.0, 6, 2.0, 0.4)
-	print("  a 4 m drift: start %s; 6 h with relief %s (peak %.0f cm), without %s" % [fmt.call(small[0]), fmt.call(small[1]), small[2] * 100.0, fmt.call(small_off[1])])
-	_check("a drift shorter than the smallest dune flattens", small[2] < 0.75 * small[0][2] and small_off[1][2] > 0.9 * small_off[0][2], "crest %.0f cm of %.0f; %.0f without relief" % [small[2] * 100.0, small[0][2] * 100.0, small_off[1][2] * 100.0])
-	_check("drift_relief off: the drift keeps its crest (the wind does not see it)", off[1][2] > 0.9 * off[0][2], "%.0f cm of %.0f" % [off[1][2] * 100.0, off[0][2] * 100.0])
-	var bare: Array = await _drift_case(true, 0.0, 6)
-	print("  on bare ground: start %s, 6 h %s (peak %.0f cm at %.0f m)" % [fmt.call(bare[0]), fmt.call(bare[1]), bare[2] * 100.0, bare[3]])
-	_check("a drift on bare ground is blown away (nothing comes in), with no spike", bare[1][2] < 0.5 * bare[0][2] and bare[2] < bare[0][2], "%.0f cm of %.0f at its centre, peak %.0f cm" % [bare[1][2] * 100.0, bare[0][2] * 100.0, bare[2] * 100.0])
-	snow.drift_relief = true
-
-func _run_wind_slab_tests() -> void:
-	print("Wind slab (follow-up 45):")
-	var calm_rho := SnowCover3D.wind_snow_density(-8.0, 0.0)
-	var wind_rho := SnowCover3D.wind_snow_density(-8.0, 12.0)
-	_check("snow falling in wind lands denser (Crocus)", absf(calm_rho - SnowCover3D.new_snow_density(-8.0)) < 1.0 and absf(wind_rho - (109.0 - 48.0 + 26.0 * sqrt(12.0))) < 1.0, "%.0f kg/m3 calm, %.0f at 12 m/s" % [calm_rho, wind_rho])
-	_check("fresh light snow drifts in a breeze, old dense snow only in a gale (SI)", SnowCover3D.drift_index(5.0, 100.0, 1.0) > 0.0 and SnowCover3D.drift_index(2.0, 100.0, 1.0) < 0.0 and SnowCover3D.drift_index(8.0, 300.0, 0.0) < 0.0 and SnowCover3D.drift_index(15.0, 300.0, 0.0) > 0.0, "SI %.2f at 5 m/s and %.2f at 2 (fresh, 100 kg/m3); %.2f at 8 and %.2f at 15 (old, 300)" % [SnowCover3D.drift_index(5.0, 100.0, 1.0), SnowCover3D.drift_index(2.0, 100.0, 1.0), SnowCover3D.drift_index(8.0, 300.0, 0.0), SnowCover3D.drift_index(15.0, 300.0, 0.0)])
-	var p24 := SnowCover3D.wind_packing_step(100.0, 10.0, 1.0, 24.0)
-	var p96 := SnowCover3D.wind_packing_step(100.0, 10.0, 1.0, 96.0)
-	_check("wind packing toward 350 kg/m3 over days (48 h / SI)", p24 > 140.0 and p24 < p96 and p96 < 350.0 and SnowCover3D.wind_packing_step(100.0, 2.0, 1.0, 24.0) == 100.0, "%.0f kg/m3 after a day at 10 m/s, %.0f after four; none at 2 m/s" % [p24, p96])
-	var calm: Array = await _wind_case(2.0, 12, 0.0)
-	var gale: Array = await _wind_case(14.0, 12, 0.0)
-	print("  12 h on 30 cm of new snow: calm %.0f kg/m3, slab %.3f m; 14 m/s %.0f kg/m3, slab %.3f m" % [calm[0], calm[1], gale[0], gale[1]])
-	_check("a gale packs the surface into wind slab; calm does not", calm[1] == 0.0 and gale[1] > 0.05 and gale[0] > calm[0] + 10.0, "slab %.3f m and %.0f kg/m3 at 14 m/s, %.3f m and %.0f kg/m3 calm" % [gale[1], gale[0], calm[1], calm[0]])
-	var fall_calm: Array = await _wind_case(1.0, 3, 2.0)
-	var fall_wind: Array = await _wind_case(12.0, 3, 2.0)
-	var rc: float = fall_calm[2] / maxf(fall_calm[3], 1e-6)
-	var rw: float = fall_wind[2] / maxf(fall_wind[3], 1e-6)
-	_check("a windy snowfall lays down a denser, thinner layer, and it counts as slab", rw > rc * 1.3 and fall_wind[1] > fall_calm[1], "new snow %.0f kg/m3 in 12 m/s, %.0f calm; slab %.3f m and %.3f m" % [rw, rc, fall_wind[1], fall_calm[1]])
-	await _setup("flat", 128.0, 32, -8.0)
-	snow.wind_packing_enabled = false
-	snow.add_snow(30.0, 100.0)
-	weather.wind_speed = 14.0
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	for h in 12:
-		snow.advance(3600.0)
-	_check("off: no slab", snow.get_wind_slab_at(Vector3.ZERO) == 0.0, "%.3f m" % snow.get_wind_slab_at(Vector3.ZERO))
-	weather.rain_rate = 0.0
-	weather.cloud_cover = 0.0
-
-
-# Sastrugi (follow-up 46): wind eroding hard (wind-packed or dense) snow carves ridges along it (Filhol and Sturm
-# 2015); new snow, drift and melt fill them.
-func _run_sastrugi_tests() -> void:
-	print("Sastrugi (follow-up 46):")
-	var v := SnowCover3D.sastrugi_step(Vector2.ZERO, Vector2(1, 0), 0.05, 0.0, 1.0, true)
-	var soft := SnowCover3D.sastrugi_step(Vector2.ZERO, Vector2(1, 0), 0.05, 0.0, 1.0, false)
-	var filled := SnowCover3D.sastrugi_step(Vector2(0.1, 0), Vector2.ZERO, 0.0, 0.04, 1.0, false)
-	var cap := SnowCover3D.sastrugi_step(Vector2(0.3, 0), Vector2(1, 0), 0.3, 0.0, 0.2, true)
-	var turn := SnowCover3D.sastrugi_step(Vector2(0.1, 0), Vector2(0, 1), 0.1, 0.0, 1.0, true)
-	_check("hard snow carved by what the wind takes, soft snow not", absf(v.x - 0.05) < 1e-4 and soft == Vector2.ZERO, "%s from 5 cm off hard snow, %s off soft" % [str(v), str(soft)])
-	_check("new snow fills them; at most half the pack and 0.4 m; they turn toward a new wind", absf(filled.x - 0.06) < 1e-4 and absf(cap.length() - 0.1) < 1e-4 and turn.y > 0.0 and turn.x > 0.0, "%.3f m after 4 cm fill; %.2f m on a 0.2 m pack; %s after a south wind" % [filled.x, cap.length(), str(turn)])
-	# The cornice ridge's windward slope in a westerly gale on 0.4 m of new snow: the wind packs it into slab and
-	# erodes the slab; without wind packing the snow stays soft and is only blown away.
-	var res := []
-	for packing: bool in [true, false]:
-		await _setup("cornice", 256.0, 64, -12.0)
-		snow.wind_packing_enabled = packing
-		snow.add_snow(60.0, 150.0)
-		weather.temperature = -12.0
-		weather.wind_speed = 24.0
-		weather.wind_direction = Vector2(1, 0)
-		weather.snap_to_settings()
-		weather.advance(1.0)
-		for h in 6:
-			snow.advance(3600.0)
-		var best := Vector2.ZERO
-		var lee := 0.0
-		var drift_swe := 0.0
-		for z in range(-60, 61, 8):
-			for x in range(-60, -8, 4):
-				var sv := snow.get_sastrugi_at(Vector3(x, 0, z))
-				if sv.length() > best.length():
-					best = sv
-			# The lee drift: the deepest snow below the crest.
-			for x in range(0, 40, 4):
-				var dq := Vector3(x, 0, z)
-				if snow.get_swe_at(dq) > drift_swe:
-					drift_swe = snow.get_swe_at(dq)
-					lee = snow.get_sastrugi_at(dq).length()
-		res.append([best, lee])
-		print("  packing %s: windward sastrugi %.3f m toward %s, lee drift (%.0f mm) %.3f m" % [str(packing), best.length(), str(best.normalized()), drift_swe, lee])
-	var hard_best: Vector2 = res[0][0]
-	var soft_best: Vector2 = res[1][0]
-	_check("a gale packs and carves the windward snow into sastrugi along the wind", hard_best.length() > 0.02 and hard_best.normalized().x > 0.95, "%.3f m toward %s" % [hard_best.length(), str(hard_best.normalized())])
-	_check("none in the fresh lee deposit, none in soft unpacked snow", float(res[0][1]) < 0.005 and soft_best.length() < 0.005, "lee %.3f m; soft %.3f m" % [res[0][1], soft_best.length()])
-
-
-# Depth hoar (follow-up 47): a shallow pack under cold air grows weak basal facets (over 10 C/m, Akitaya 1974;
-# Marbouty 1980), and a storm's load later releases the whole pack on them.
-func _run_depth_hoar_tests() -> void:
-	print("Depth hoar (follow-up 47):")
-	var strong := SnowCover3D.depth_hoar_step(0.0, 20.0, 336.0, 0.0)
-	var weak := SnowCover3D.depth_hoar_step(0.0, 8.0, 336.0, 0.0)
-	var wet := SnowCover3D.depth_hoar_step(1.0, 30.0, 24.0, 0.1)
-	_check("grows over 10 C/m in about two weeks, not under it; melt water at the base ends it", absf(strong - 1.0) < 0.01 and weak == 0.0 and wet < 0.4, "%.2f after two weeks at 20 C/m, %.2f at 8 C/m; %.2f a day after it got wet" % [strong, weak, wet])
-	var dh := SnowCover3D.depth_hoar_strength(1.0, 200.0)
-	var rounded := SnowCover3D.depth_hoar_strength(0.0, 200.0)
-	_check("depth hoar holds a fraction of settled snow's strength (Jamieson and Johnston 2001)", dh < 0.25 * rounded and dh > 300.0, "%.0f Pa against %.0f Pa" % [dh, rounded])
-	# A shallow and a deep pack under -15 C air for ten days.
-	var shares := []
-	for swe: float in [60.0, 600.0]:
-		await _setup("flat", 64.0, 16, -15.0)
-		snow.add_snow(swe, 200.0)
-		weather.temperature = -15.0
-		weather.wind_speed = 1.0
-		weather.snap_to_settings()
-		weather.advance(1.0)
-		for d in 10:
-			snow.advance(86400.0)
-		shares.append([snow.get_depth_hoar_at(Vector3.ZERO), snow.get_depth_at(Vector3.ZERO)])
-	_check("a shallow pack in a cold spell turns to depth hoar, a deep one does not", float(shares[0][0]) > 0.5 and float(shares[1][0]) < 0.1, "%.2f in %.2f m, %.2f in %.2f m after ten days at -15 C" % [shares[0][0], shares[0][1], shares[1][0], shares[1][1]])
-	# On the 38 degree face: 1.25 m of old snow, sintered; then 30 cm of new snow, with and without depth hoar under it.
-	var counts := []
-	for share: float in [0.0, 1.0]:
-		await _setup("avalanche", 256.0, 128, -8.0)
-		snow.drift_enabled = false
-		snow.slide_enabled = false
-		var av: SnowAvalanche3D = snow.get_avalanches()
-		av.natural_release = false
-		snow.add_snow(150.0, 120.0)
-		weather.temperature = -8.0
-		weather.snap_to_settings()
-		snow.depth_hoar_enabled = false # the share is set below
-		snow.hoar_enabled = false # no surface hoar on the clear nights: one weak layer at a time
-		for d in 10:
-			snow.advance(86400.0)
-		snow.add_depth_hoar(share)
-		av.natural_release = true
-		await get_tree().physics_frame
-		await get_tree().physics_frame
-		var before := av.get_release_count()
-		snow.add_snow(30.0, 100.0)
-		var lo_s := 1e9
-		for x in range(-120, 0, 10):
-			for z in range(-60, 61, 20):
-				lo_s = minf(lo_s, av.get_trigger_index_at(Vector3(x, 0, z), 0.0))
-		print("  depth hoar %.0f: lowest stability on the face after the storm %.2f" % [share, lo_s])
-		await get_tree().physics_frame
-		await get_tree().physics_frame
-		counts.append([before, av.get_release_count() - before])
-		while av.is_running():
-			av.step(0.5)
-	_check("the old pack holds alone; 30 cm of new snow holds over rounded snow and releases the whole pack on depth hoar", int(counts[0][0]) == 0 and int(counts[1][0]) == 0 and int(counts[0][1]) == 0 and int(counts[1][1]) >= 1, "%d / %d releases before the storm, %d without depth hoar, %d on it" % [counts[0][0], counts[1][0], counts[0][1], counts[1][1]])
-
-
-# Freezing rain (weather's warm_nose_temperature): under a warm layer aloft the cover and the falling snow take the
-# weather's rain share, so a -4 C storm lands as rain on the pack instead of snow.
-func _run_warm_nose_tests() -> void:
-	print("Freezing rain under a warm layer aloft:")
-	var got := []
-	for nose: float in [0.0, 4.0]:
-		await _setup("flat", 64.0, 16, -4.0)
-		snow.add_snow(40.0, 150.0)
-		weather.temperature = -4.0
-		weather.rain_rate = 2.0
-		weather.cloud_cover = 1.0
-		weather.wind_speed = 1.0
-		weather.warm_nose_temperature = nose
-		weather.snap_to_settings()
-		weather.advance(60.0)
-		var rate := snow.get_snowfall_rate_at(Vector3.ZERO)
-		var d0 := snow.get_depth_at(Vector3.ZERO)
-		for h in 3:
-			weather.advance(60.0)
-			snow.advance(3600.0)
-		got.append([rate, snow.get_depth_at(Vector3.ZERO) - d0, snow.get_swe_at(Vector3.ZERO)])
-	weather.warm_nose_temperature = 0.0
-	weather.rain_rate = 0.0
-	weather.cloud_cover = 0.0
-	weather.snap_to_settings()
-	_check("a warm layer aloft turns the snowfall to rain on the pack (it no longer deepens it)", float(got[0][0]) > 1.0 and float(got[1][0]) < 0.1 and float(got[1][1]) < 0.25 * float(got[0][1]) and float(got[1][2]) > 40.0, "snowfall %.2f mm/h without, %.2f with; the pack %.1f cm deeper without, %.1f cm with (%.0f mm water held)" % [got[0][0], got[1][0], got[0][1] * 100.0, got[1][1] * 100.0, got[1][2]])
-
-
-func _road_wheel(spin: float, roll: float) -> RigidBody3D:
-	# A 0.66 m car tyre, 0.2 m tread, 300 kg on it (3 kN), held in place resting on the snow at x = 0, z = 1.
-	var w := RigidBody3D.new()
-	w.mass = 300.0
-	w.freeze = true
-	w.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
-	var cs := CollisionShape3D.new()
-	var cy := CylinderShape3D.new()
-	cy.radius = 0.33
-	cy.height = 0.2
-	cs.shape = cy
-	cs.rotation_degrees = Vector3(90, 0, 0) # its axle along z: it rolls along x
-	w.add_child(cs)
-	add_child(w)
-	w.add_to_group("world_contact")
-	w.global_position = Vector3(0.3, snow.get_ground_height_at(Vector3(0.3, 0, 1)) + snow.get_depth_at(Vector3(0.3, 0, 1)) + 0.3, 1.0)
-	w.linear_velocity = Vector3(roll, 0, 0)
-	w.angular_velocity = Vector3(0, 0, -(roll + spin) / 0.33)
-	return w
-
-
-func _run_road_tests() -> void:
-	print("Packed-snow roads (follow-up 43):")
-	var g0 := SnowCover3D.ice_grip(-0.5, 0.0)
-	var g20 := SnowCover3D.ice_grip(-20.0, 0.0)
-	var gw := SnowCover3D.ice_grip(-5.0, 1.0)
-	_check("ice grips least near melting and when wet, better in the cold (Wallman and Astrom 2001)", g0 < 0.07 and g20 > 0.13 and g20 < 0.16 and gw < 0.06, "%.2f at -0.5 C, %.2f at -20 C, %.2f wet" % [g0, g20, gw])
-	await _surface_setup(60.0, 250.0)
-	weather.temperature = -6.0
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	var q := Vector3(0.3, 0, 1.0)
-	snow.advance(3600.0) # past the new-snow layer: an hour on, nothing fresh on top
-	await get_tree().physics_frame
-	var loose := snow.get_grip_at(q)
-	# A wheel rolling without slipping: it packs the snow, it does not polish it.
-	var w := _road_wheel(0.0, 5.0)
-	for i in 60:
-		await get_tree().physics_frame
-	var packed := snow.get_packed_at(q)
-	var rolled_glaze := snow.get_glaze_at(q)
-	var packed_grip := snow.get_grip_at(q)
-	w.queue_free()
-	# Spinning in place (stuck at a junction): its friction melts the surface and the melt freezes as a glaze.
-	w = _road_wheel(10.0, 0.0)
-	for i in 600:
-		await get_tree().physics_frame
-	w.queue_free()
-	var glaze := snow.get_glaze_at(q)
-	var polished := snow.get_grip_at(q)
-	_check("a rolling wheel packs the snow and leaves no glaze", packed > 0.5 and rolled_glaze < 0.005 and packed_grip < loose and packed_grip > 0.2, "packed %.2f, glaze %.3f mm; grip %.2f loose, %.2f packed" % [packed, rolled_glaze, loose, packed_grip])
-	_check("a spinning wheel polishes a glaze: the grip falls toward ice", glaze > 0.05 and polished < packed_grip - 0.03, "%.2f mm of glaze after 10 s at 10 m/s slip; grip %.2f" % [glaze, polished])
-	# Settled: the cells carry it through an update, then a warm spell melts the glaze and new snow covers it.
-	snow.advance(60.0)
-	await get_tree().physics_frame
-	var kept := snow.get_glaze_at(q)
-	await _weather_to(4.0, 3.0)
-	var melted := snow.get_glaze_at(q)
-	weather.temperature = -6.0
-	weather.snap_to_settings()
-	snow.add_snow(5.0, 100.0)
-	_check("the glaze lasts through updates, melts in a thaw", kept > 0.8 * glaze and melted < 0.5 * kept, "%.2f mm after an update, %.2f after 3 h at +4 C" % [kept, melted])
-	_check("new snow on a packed road: the tyre runs in loose snow again", absf(snow.get_grip_at(q) - 0.3) < 0.02, "grip %.2f" % snow.get_grip_at(q))
-
-
 func _run_crust_tests() -> void:
 	print("Crusts:")
 	var s1 := SnowCover3D.crust_strength(1.0, 0.02)
@@ -1222,10 +480,6 @@ func _run_crust_tests() -> void:
 	var vol := surface.get_moved_volume() - v0
 	_check("a boot (%.0f kPa) breaks a first-cycle crust" % boot, st1 < boot and broken.dent > 0.05, "%.3f m deep" % broken.dent)
 	_check("the crust cracks around the hole and the pieces tip in", broken.edge > 0.01 and broken.cv > 0.3 and vol.y <= 0.3 * vol.x + 1e-4, "%.3f m down 25 cm from the middle, varying %.0f%% along it (jagged); rim %.4f of %.4f m3 pressed" % [broken.edge, broken.cv * 100.0, vol.y, vol.x])
-	for i in 30:
-		await get_tree().physics_frame
-	var plates := surface.get_crust_plate_count()
-	_check("a broken crust lies in plates (follow-up 38; the dragged boot makes one hole)", plates >= 1, "%d holes with plates" % plates)
 	await _weather_to(8.0, 10.0)
 	await _weather_to(-8.0, 14.0)
 	var c2 := snow.get_crust_cycles_at(p)
@@ -1250,141 +504,6 @@ func _run_crust_tests() -> void:
 	var none := _trail_stats(-9.0)
 	print("  beside an unbroken trail (crusts off): %.3f m" % none.edge)
 	_check("crust_enabled off: the boot sinks as before", snow.get_crust_strength_at(p) == 0.0 and none.dent > buried.dent + 0.02, "%.3f m deep" % none.dent)
-
-
-func _run_rime_tests() -> void:
-	print("Rime (round 5):")
-	var e_twig := SnowRime3D.collision_efficiency(8.0, 20.0, 0.005)
-	var e_rail := SnowRime3D.collision_efficiency(8.0, 20.0, 0.05)
-	var e_post := SnowRime3D.collision_efficiency(8.0, 20.0, 0.3)
-	_check("thin collectors catch more of the fog than thick ones (Finstad et al. 1988)", e_twig > 0.5 and e_rail < e_twig and e_post < e_rail, "5 mm %.2f, 5 cm %.2f, 30 cm %.2f at 8 m/s" % [e_twig, e_rail, e_post])
-	var soft := SnowRime3D.rime_density(20.0, 3.0, -15.0)
-	var hard := SnowRime3D.rime_density(20.0, 15.0, -2.0)
-	_check("rime is soft in a light cold wind, hard in a strong mild one (Macklin 1962)", soft < 250.0 and hard > 500.0, "%.0f and %.0f kg/m3" % [soft, hard])
-	var rate := SnowRime3D.accretion_rate(8.0, 0.25, -6.0, 20.0, 0.01)
-	_check("a 1 cm twig in dense fog gains millimetres an hour", rate > 0.001 and rate < 0.02, "%.1f mm/h" % (rate * 1000.0))
-	_check("none above freezing or without fog", SnowRime3D.accretion_rate(8.0, 0.25, 1.0, 20.0, 0.01) == 0.0 and SnowRime3D.accretion_rate(8.0, 0.0, -6.0, 20.0, 0.01) == 0.0, "")
-	var holder := Node3D.new()
-	add_child(holder)
-	var pole := MeshInstance3D.new()
-	var cm := CylinderMesh.new()
-	cm.top_radius = 0.01
-	cm.bottom_radius = 0.01
-	cm.height = 1.0
-	cm.rings = 8
-	pole.mesh = cm
-	pole.position = Vector3(40.0, 1.0, 40.0)
-	holder.add_child(pole)
-	var rime := SnowRime3D.new()
-	rime.target_group = ""
-	add_child(rime)
-	rime.target_paths = [rime.get_path_to(holder)]
-	rime.refresh_targets()
-	for h in 12:
-		rime.grow(1.0, -6.0, Vector3(8.0, 0.0, 0.0), 0.25)
-	var th := rime.get_target_thickness(0)
-	var g := rime.get_growth_direction(0)
-	var upwind := rime.get_thickness_at(Vector3(39.99, 1.0, 40.0))
-	var downwind := rime.get_thickness_at(Vector3(40.01, 1.0, 40.0))
-	_check("rime builds on the windward side, growing into the wind", th > 0.01 and g.x < -0.9 and upwind > 0.3 * th and downwind < 0.05 * th, "%.1f cm in 12 h (windward middle %.1f cm, lee %.1f mm), toward (%.2f, %.2f, %.2f)" % [th * 100.0, upwind * 100.0, downwind * 1000.0, g.x, g.y, g.z])
-	_check("drawn as a crust with feathers", rime.get_feather_count() > 20, "%d feathers" % rime.get_feather_count())
-	for h in 24:
-		rime.grow(1.0, 4.0, Vector3(2.0, 0.0, 0.0), 0.0)
-	_check("a thaw takes it off", rime.get_target_thickness(0) < 0.001, "%.1f mm left" % (rime.get_target_thickness(0) * 1000.0))
-	# A twig at 45 degrees: its collector is its own width, not its world box's.
-	pole.rotation_degrees = Vector3(45.0, 30.0, 0.0)
-	rime.refresh_targets()
-	_check("a slanted twig's collector is its width", rime.get_target_diameter(0) < 0.025, "%.1f mm for a 20 mm pole at 45 degrees" % (rime.get_target_diameter(0) * 1000.0))
-	rime.queue_free()
-	holder.queue_free()
-	await get_tree().process_frame
-
-
-func _run_suncup_tests() -> void:
-	print("Suncups (follow-up 41):")
-	# Five sunny spring days: 25 mm of melt a day from the direct sun, 5 from the air, in 1 m of old snow.
-	var a := 0.0
-	for day in 5:
-		for h in 6:
-			a = SnowCover3D.suncup_step(a, 25.0 / 6.0, 5.0 / 6.0, 0.0, 0.0, 0.0, 1.0)
-	_check("five sunny days grow suncups (full grown in about 5 days; Mitchell and Tiedje 2010)", a > 0.15 and a <= 0.3, "%.2f m ridge to hollow" % a)
-	var b := a
-	for day in 3:
-		b = SnowCover3D.suncup_step(b, 2.0, 30.0, 0.0, 0.0, 0.0, 1.0)
-	_check("warm cloudy days melt them flat (air heats the surface evenly)", b < 0.5 * a, "%.2f to %.2f m in 3 days of 30 mm air melt" % [a, b])
-	var filled := SnowCover3D.suncup_step(a, 0.0, 0.0, 0.0, 0.12, 0.0, 1.0)
-	_check("new snow fills the hollows", absf(filled - maxf(a - 0.12, 0.0)) < 0.005, "%.2f m under 12 cm of new snow" % filled)
-	var dirty := 0.0
-	var thick := 0.0
-	for day in 5:
-		for h in 6:
-			dirty = SnowCover3D.suncup_step(dirty, 25.0 / 6.0, 5.0 / 6.0, 0.0, 0.0, 5.0e4, 1.0)
-			thick = SnowCover3D.suncup_step(thick, 25.0 / 6.0, 5.0 / 6.0, 0.0, 0.0, 5.0e6, 1.0)
-	_check("dust on the ridges deepens them, a thick layer stops them (Rhodes et al. 1987)", dirty > a and thick < 0.01, "%.2f m dusty, %.3f m under a thick layer" % [dirty, thick])
-	var shallow := 0.0
-	for day in 5:
-		for h in 6:
-			shallow = SnowCover3D.suncup_step(shallow, 25.0 / 6.0, 0.0, 0.0, 0.0, 0.0, 0.2)
-	_check("no deeper than half the pack", shallow <= 0.1 + 1e-4, "%.2f m in 20 cm of snow" % shallow)
-
-
-func _run_hoar_tests() -> void:
-	print("Surface hoar (round 5):")
-	var r := [0.0]
-	var e_clear := SnowCover3D.hoar_deposition(-10.0, 0.9, 1.5, 0.0, 0.0)
-	var e_cloud := SnowCover3D.hoar_deposition(-10.0, 0.9, 1.5, 1.0, 0.0)
-	var e_dry := SnowCover3D.hoar_deposition(-10.0, 0.3, 1.5, 0.0, 0.0)
-	var e_sun := SnowCover3D.hoar_deposition(-10.0, 0.9, 1.5, 0.0, 250.0)
-	_check("a clear humid night deposits frost; cloud, dry air or sun stop it (bulk transfer)", e_clear > 0.003 and e_clear < 0.02 and e_cloud < 0.3 * e_clear and e_dry < 0.0 and e_sun < e_clear * 0.3, "clear %.4f, overcast %.4f, 30%% humidity %.4f, sunny %.4f kg/m2/h" % [e_clear, e_cloud, e_dry, e_sun])
-	var s5 := SnowCover3D.buried_hoar_strength(5.0, 0.0)
-	var s15 := SnowCover3D.buried_hoar_strength(15.0, 0.0)
-	var s5_old := SnowCover3D.buried_hoar_strength(5.0, 24.0 * 21.0)
-	_check("buried hoar is weak, weaker with larger crystals, gains slowly (Jamieson and Schweizer 2000)", s5 > 300.0 and s5 < 800.0 and s15 < s5 and s5_old > s5 * 1.5 and s5_old < 3.0 * s5, "5 mm %.0f Pa, 15 mm %.0f Pa, 5 mm after three weeks %.0f Pa" % [s5, s15, s5_old])
-	await _surface_setup(80.0, 200.0)
-	var p := Vector3(0.5, 0, 0.5)
-	weather.cloud_cover = 0.0
-	weather.humidity = 0.9
-	weather.wind_speed = 1.5
-	await _weather_to(-10.0, 12.0)
-	var night := snow.get_hoar_at(p)
-	_check("a clear calm night at -10 C grows surface hoar", night > 2.0 and night < 15.0, "%.1f mm" % night)
-	await _weather_to(-10.0, 24.0)
-	var nights := snow.get_hoar_at(p)
-	_check("more clear calm nights grow it on", nights > night * 1.5, "%.1f mm after three nights" % nights)
-	weather.wind_speed = 6.0
-	await _weather_to(-10.0, 2.0)
-	var blown := snow.get_hoar_at(p)
-	_check("a 6 m/s wind breaks it", blown < 0.1 * nights, "%.2f mm" % blown)
-	weather.wind_speed = 1.5
-	weather.cloud_cover = 1.0
-	await _weather_to(-10.0, 12.0)
-	var overcast := snow.get_hoar_at(p)
-	weather.cloud_cover = 0.0
-	await _weather_to(-10.0, 12.0)
-	var regrown := snow.get_hoar_at(p)
-	_check("none under overcast, it grows again under a clear sky", overcast < 1.0 and regrown > 2.0, "%.2f mm overcast, %.1f mm clear" % [overcast, regrown])
-	snow.add_snow(30.0, 100.0)
-	await get_tree().physics_frame
-	var layer := snow.get_buried_hoar_at(p)
-	var depth := snow.get_buried_hoar_depth_at(p)
-	_check("new snow buries it as a weak layer", absf(layer - regrown) < 0.01 and absf(depth - 0.3) < 0.03 and snow.get_hoar_at(p) == 0.0, "%.1f mm crystals under %.2f m" % [layer, depth])
-	var slope := deg_to_rad(38.0)
-	var tau := 100.0 * 9.81 * depth * sin(slope) * cos(slope)
-	var stab := SnowCover3D.buried_hoar_strength(layer, 0.0) / tau
-	var stab_new := SnowAvalanche3D.stability_index(depth, 100.0, 100.0, 48.0, slope)
-	# A skier (Foehn 1987's line load, 1 kN/m) on it.
-	var ski := tau + SnowAvalanche3D.added_shear(1000.0, depth * cos(slope), slope)
-	var sk := SnowCover3D.buried_hoar_strength(layer, 0.0) / ski
-	var sk_new := SnowAvalanche3D.weak_layer_strength(100.0, 48.0) / ski
-	_check("on a 38 degree slope it is weaker than two-day-old new snow, and a skier fails it", stab < stab_new and sk < 1.0 and sk_new > sk * 1.5, "S %.2f over buried hoar (%.2f in the new snow), with a skier %.2f (%.2f)" % [stab, stab_new, sk, sk_new])
-	await _weather_to(-10.0, 48.0)
-	_check("it stays buried and ages", snow.get_buried_hoar_at(p) > 0.0 and snow.get_buried_hoar_age_at(p) > 1.9, "%.1f mm, %.1f days" % [snow.get_buried_hoar_at(p), snow.get_buried_hoar_age_at(p)])
-	await _weather_to(4.0, 1.0)
-	_check("a thaw wets the surface crystals away", snow.get_hoar_at(p) == 0.0, "%.2f mm" % snow.get_hoar_at(p))
-	snow.hoar_enabled = false
-	await _weather_to(-10.0, 12.0)
-	_check("hoar_enabled off: none grows", snow.get_hoar_at(p) == 0.0, "%.2f mm" % snow.get_hoar_at(p))
-	snow.hoar_enabled = true
 
 
 func _surface_setup(swe: float, density: float) -> void:
@@ -1500,15 +619,7 @@ func _run_surface_tests() -> void:
 		wk.global_position = Vector3(-3.0 + i * 0.1, d0 + 0.9, 3.0)
 		await get_tree().physics_frame
 	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
-	# Its feet print (WorldWalkerSteps), 9 cm either side of its line: the deepest print over 2 m.
-	var trail := 0.0
-	var trail_at := Vector3(0.0, 0, 3.0)
-	for k in 201:
-		for zf in [2.91, 3.09]:
-			var fq := Vector3(-1.0 + 0.01 * k, 0, zf)
-			if surface.get_dent_at(fq) > trail:
-				trail = surface.get_dent_at(fq)
-				trail_at = fq
+	var trail := surface.get_dent_at(Vector3(0.0, 0, 3.0))
 	_check("a character walking leaves a trail", trail > 0.1, "%.3f m deep" % trail)
 	wk.queue_free()
 	var probe: Node3D = get_node("Probe")
@@ -1520,7 +631,7 @@ func _run_surface_tests() -> void:
 	for i in 4:
 		await get_tree().physics_frame
 	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
-	var back := surface.get_dent_at(trail_at)
+	var back := surface.get_dent_at(Vector3(0.0, 0, 3.0))
 	_check("trails survive leaving and coming back", cached > 0 and absf(back - trail) < 0.002, "%d tiles cached, %.3f m after, %.3f m before" % [cached, back, trail])
 
 	# New snow settles into the prints; the pack settling shrinks the step; melt takes it all.
@@ -1704,15 +815,6 @@ func _run_shelter_tests() -> void:
 	print("  closure %.2f: canopy holds %.1f mm of %.1f mm capacity; %.1f mm under it, %.1f mm in the open" % [closure, held, cap, under, open])
 	_check("a canopy holds snow and shades the ground", closure > 0.5 and held > 3.0 and held <= cap + 0.01 and under < open * 0.8 and absf(under + held - open) < open * 0.1, "%.1f + %.1f mm against %.1f in the open" % [under, held, open])
 	_check("interception keeps the water", absf(w1 - w0 - (open * 64.0 * 64.0)) < open * 64.0 * 64.0 * 0.05, "%.0f kg on the map against %.0f fallen" % [w1 - w0, open * 64.0 * 64.0])
-	# A crown jolted from outside the weather (WorldSnow.shake_canopy; trees, docs/ideas/trees.md 5al): half the held
-	# snow within 3 m drops onto the pack below at the next update, the water kept.
-	var moved: float = Engine.get_singleton("WorldContracts").get_snow().shake_canopy(Vector3(0, 0, 0), 3.0, 0.5)
-	snow.advance(1.0)
-	var held_s := snow.get_canopy_load_at(Vector3(0, 0, 0))
-	var under_s := snow.get_swe_at(Vector3(0, 0, 0))
-	_check("a shaken crown drops its snow onto the pack (shake_canopy)", moved > 0.0 and absf(held_s - held * 0.5) < held * 0.1 and absf(under_s - under - (held - held_s)) < held * 0.1 and absf(snow.get_total_water() - w1) < w1 * 0.01, "%.0f kg moved; %.1f mm left of %.1f, %.1f mm below (was %.1f)" % [moved, held_s, held, under_s, under])
-	held = held_s
-	under = under_s
 	weather.temperature = -1.0
 	weather.wind_speed = 6.0
 	weather.snap_to_settings()
@@ -1743,8 +845,6 @@ func _background_run(background: bool, updates: int) -> Dictionary:
 	snow.advance(60.0)
 	snow.advance_world(3600.0)
 	snow.background_updates = background
-	# The fresh load can avalanche on these slopes; the flow's timing would differ between the two runs.
-	snow.avalanches_enabled = false
 	snow.update_rate = 2.0
 	var start: int = snow.get_update_count()
 	var main_ms: Array[float] = []
@@ -1812,748 +912,13 @@ func _run_background_tests() -> void:
 			top = maxf(top, v)
 		return "mean %.2f ms, worst %.2f ms" % [s / maxf(m.size(), 1), top]
 	print("  main thread per update, 256 x 256 cells and a 64 x 64 world tier every 3rd update: in the frame %s; in the background %s (cells, drift, slides and cornices %.2f ms on a worker)" % [fmt.call(ma), fmt.call(mb), b.work_ms])
-	# Medians, not the worst update: on a loaded machine (a render alongside) the scheduler can stall any one
-	# update in either mode, but the typical frame cost only drops when the work leaves the main thread.
-	var med := func(m: Array[float]) -> float:
-		var c := m.duplicate()
-		c.sort()
-		return c[c.size() / 2] if c.size() > 0 else 0.0
-	var med_a: float = med.call(ma)
-	var med_b: float = med.call(mb)
-	_check("the frame no longer waits for the update", med_b < 0.5 * med_a, "median %.2f ms against %.2f ms" % [med_b, med_a])
-
-
-# A lake around the mountain's foot: a water surface the terrain data map takes as a water source (any node
-# with get_water_level(), as PhysXWaterSurface3D has).
-func _lake(level: float) -> void:
-	var ws := GDScript.new()
-	ws.source_code = "extends Node3D\nvar level := 0.0\nfunc get_water_level() -> float:\n\treturn level\n"
-	ws.reload()
-	var lake := Node3D.new()
-	lake.set_script(ws)
-	lake.set("level", level)
-	lake.name = "Lake"
-	add_child(lake)
-	var dm := TerrainDataMap3D.new()
-	dm.name = "WaterMap"
-	dm.size = 1024.0
-	dm.resolution = 256
-	add_child(dm)
-	dm.height_source = dm.get_path_to(ground)
-	dm.water_sources = [dm.get_path_to(lake)]
-	dm.bake()
-	snow.climate_map = snow.get_path_to(dm)
-	snow.refresh_heights()
-
-
-func _run_water_tests() -> void:
-	print("Follow-up 15: snow and water")
-	# Stefan's law against the field: Ashton (1989) gives h = a sqrt(FDD) (cm, degree-days) with a about 2.7
-	# for a windy lake without snow and 1.4 to 2.4 for lakes with snow; Stefan's ideal is 3.6.
-	var bare := SnowCover3D.lake_ice_growth(0.0, -10.0, 0.0, 300.0, 24.0 * 30.0)
-	var snowy := SnowCover3D.lake_ice_growth(0.0, -10.0, 0.2, 300.0, 24.0 * 30.0)
-	var a_bare := bare * 100.0 / sqrt(300.0)
-	var a_snow := snowy * 100.0 / sqrt(300.0)
-	_check("lake ice by Stefan's law, bare", a_bare > 2.4 and a_bare < 3.6, "%.1f cm after 30 days at -10 C, a = %.2f (windy lake 2.7, Stefan's ideal 3.6)" % [bare * 100.0, a_bare])
-	# Snow conducts heat 18 times less than ice (Sturm et al. 1997: 0.13 W/(m K) at 300 kg/m3 against 2.24), so
-	# 20 cm of it insulates like 3.5 m of ice: lakes reach Ashton's 1.4 to 2.4 with snow only because the snow
-	# comes later and floods into snow ice.
-	_check("snow insulates the ice", snowy < bare * 0.25 and absf(SnowCover3D.snow_conductivity(300.0) - 0.126) < 0.002, "%.1f cm under 20 cm of snow from the start (k = %.3f W/(m K))" % [snowy * 100.0, SnowCover3D.snow_conductivity(300.0)])
-	var split := SnowCover3D.lake_ice_growth(SnowCover3D.lake_ice_growth(0.0, -10.0, 0.0, 300.0, 100.0), -10.0, 0.0, 300.0, 100.0)
-	_check("ice growth adds up over steps", absf(split - SnowCover3D.lake_ice_growth(0.0, -10.0, 0.0, 300.0, 200.0)) < 1e-5, "%.4f m in two steps of 100 h" % split)
-
-	await _setup("mountain", 512.0, 128, -5.0)
-	var shore := Vector3(200.0, 0, 0)
-	var level: float = ground.get_height(shore)
-	_lake(level)
-	var wet := Vector3(240.0, 0, 0)
-	var dry := Vector3(120.0, 0, 0)
-	_check("the lake is found", snow.get_water_level_at(wet) > ground.get_height(wet) and snow.get_water_level_at(dry) == -INF, "water at %.1f m over a bed at %.1f m; none at %.0f m from the summit" % [snow.get_water_level_at(wet), ground.get_height(wet), dry.x])
-	snow.lake_ice_enabled = false
-	_precipitate(10.0, 2.0)
-	_check("snow on open water melts into it", snow.get_swe_at(wet) == 0.0 and snow.get_swe_at(dry) > 15.0 and snow.get_runoff_at(wet) > 0.0, "%.1f mm on the lake, %.1f mm on land; %.2f mm/h into the lake" % [snow.get_swe_at(wet), snow.get_swe_at(dry), snow.get_runoff_at(wet)])
-	_check("the pack over the lake lies at its surface", absf(snow.get_ground_height_at(wet) - level) < 0.01, "%.2f m (water %.2f m)" % [snow.get_ground_height_at(wet), level])
-
-	# Frost: ten days at -10 C on clear water grow ice as the relation says.
-	await _setup("mountain", 512.0, 128, -10.0)
-	_lake(level)
-	snow.advance(240.0 * 3600.0)
-	var air := snow.get_air_temperature_at(Vector3(wet.x, level, wet.z)) # the lapse rate at the lake's height
-	var want := SnowCover3D.lake_ice_growth(0.0, air, 0.0, 300.0, 240.0)
-	var got := snow.get_ice_thickness_at(wet)
-	_check("ice grows in the frost", absf(got - want) < 0.005 and snow.get_ice_thickness_at(dry) == 0.0, "%.1f cm after 10 days at %.1f C (relation %.1f cm); none on land" % [got * 100.0, air, want * 100.0])
-	_precipitate(10.0, 2.0)
-	_check("the ice holds the snow", snow.get_swe_at(wet) > 15.0, "%.1f mm on %.1f cm of ice" % [snow.get_swe_at(wet), snow.get_ice_thickness_at(wet) * 100.0])
-	# A heavy load on the ice floods it: past the buoyancy (1000 - 917) h it turns to snow ice.
-	var ice0 := snow.get_ice_thickness_at(wet)
-	snow.add_snow(150.0, 250.0)
-	snow.advance(600.0)
-	snow.advance(6.0 * 3600.0)
-	var cap := 83.0 * snow.get_ice_thickness_at(wet)
-	_check("a heavy load floods into snow ice", snow.get_swe_at(wet) <= cap + 1.0 and snow.get_ice_thickness_at(wet) > ice0 + 0.05, "ice %.1f -> %.1f cm, %.0f mm of snow left on it (the ice floats %.0f mm)" % [ice0 * 100.0, snow.get_ice_thickness_at(wet) * 100.0, snow.get_swe_at(wet), cap])
-	_check("the flooded layer is white snow ice", snow.get_white_ice_thickness_at(wet) > 0.03 and snow.get_white_ice_thickness_at(wet) <= snow.get_ice_thickness_at(wet), "%.1f cm of the %.1f cm" % [snow.get_white_ice_thickness_at(wet) * 100.0, snow.get_ice_thickness_at(wet) * 100.0])
-	# The drawn ice: a sheet over the lake at its level plus the freeboard, solid where it bears a walker.
-	var li: SnowLakeIce3D = snow.get_lake_ice()
-	li.collision_radius = 1000.0
-	li.rebuild()
-	var top := snow.get_water_level_at(wet) + SnowLakeIce3D.freeboard(snow.get_ice_thickness_at(wet))
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	var hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(wet + Vector3(0, top + 20.0, 0), wet + Vector3(0, top - 20.0, 0)))
-	_check("the ice is drawn and walkable", li != null and li.get_quad_count() > 100 and li.get_walkable_count() > 100 and not hit.is_empty() and absf(hit.position.y - top) < 0.05, "%d cells drawn, %d walkable; a ray stops at %.2f m (ice top %.2f m)" % [li.get_quad_count() if li else 0, li.get_walkable_count() if li else 0, hit.position.y if not hit.is_empty() else -INF, top])
-	# Load on the ice (world links): a walker stands on it, a heavy vehicle goes through (Gold 1971, P = A h^2).
-	var spot := wet + Vector3(0, 0, 24)
-	var spot_ice := snow.get_ice_thickness_at(spot)
-	var spot_top := snow.get_water_level_at(spot) + SnowLakeIce3D.freeboard(spot_ice)
-	var walker := Node3D.new()
-	walker.add_to_group("world_contact")
-	walker.set_meta("ground_mass", 80.0)
-	walker.set_meta("trample_radius", 0.3)
-	add_child(walker)
-	walker.global_position = Vector3(spot.x, spot_top + 0.3, spot.z)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	var walker_ok := snow.get_ice_break_count() == 0 and snow.get_ice_thickness_at(spot) == spot_ice
-	var load_cap := SnowCover3D.ice_breaking_load(spot_ice, snow.get_white_ice_thickness_at(spot) / maxf(spot_ice, 1e-4), snow.get_air_temperature_at(spot))
-	walker.set_meta("ground_mass", 1.5 * load_cap) # half again what this ice bears
-	walker.set_meta("trample_radius", 1.0)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	var through := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(spot + Vector3(0, spot_top + 5.0, 0), spot + Vector3(0, spot_top - 5.0, 0)))
-	_check("a walker stands on lake ice, a load past its bearing breaks through", spot_ice > 0.05 and walker_ok and snow.get_ice_break_count() >= 1 and snow.get_ice_thickness_at(spot) == 0.0 and through.is_empty() and snow.get_ice_thickness_at(wet) > 0.05, "%.1f cm of ice bears %.0f kg; 80 kg stood, half again broke through (%d breaks, %.1f cm left, ray %s)" % [spot_ice * 100.0, load_cap, snow.get_ice_break_count(), snow.get_ice_thickness_at(spot) * 100.0, "through" if through.is_empty() else "stopped"])
-	walker.queue_free()
-	snow.advance(3600.0)
-	_check("the hole stays broken through the next update and freezes over thin", snow.get_ice_thickness_at(spot) < 0.3 * spot_ice, "%.1f cm an hour later at -10 C (was %.1f cm)" % [snow.get_ice_thickness_at(spot) * 100.0, spot_ice * 100.0])
-	var white0 := snow.get_white_ice_thickness_at(wet)
-	# A thaw: the snow goes first, then the ice.
-	await _weather_to(12.0, 0.0)
-	var ice1 := snow.get_ice_thickness_at(wet)
-	var swe1 := snow.get_swe_at(wet)
-	snow.advance(24.0 * 3600.0 * 10.0)
-	_check("a thaw melts the snow, then the ice", snow.get_swe_at(wet) == 0.0 and snow.get_ice_thickness_at(wet) < ice1 - 0.02, "%.0f mm of snow and %.1f cm of ice -> %.1f mm and %.1f cm after 10 days at %.1f C" % [swe1, ice1 * 100.0, snow.get_swe_at(wet), snow.get_ice_thickness_at(wet) * 100.0, snow.get_air_temperature_at(Vector3(wet.x, level, wet.z))])
-	var lost := ice1 - snow.get_ice_thickness_at(wet)
-	_check("the thaw takes the white ice first", white0 - snow.get_white_ice_thickness_at(wet) > 0.99 * minf(lost, white0), "%.1f cm of ice lost, %.1f -> %.1f cm of white ice" % [lost * 100.0, white0 * 100.0, snow.get_white_ice_thickness_at(wet) * 100.0])
-	snow.advance(24.0 * 3600.0 * 30.0)
-	li.rebuild()
-	_check("open water again, nothing drawn", snow.get_ice_thickness_at(wet) == 0.0 and li.get_quad_count() == 0, "%.1f cm, %d cells" % [snow.get_ice_thickness_at(wet) * 100.0, li.get_quad_count()])
-
-
-func _run_sleet_tests() -> void:
-	print("Sleet (follow-up 17)")
-	var a_cold := SnowFall3D.aggregate_factor(-10.0)
-	var a_warm := SnowFall3D.aggregate_factor(-0.5)
-	_check("flakes aggregate near 0 C (Hobbs, Chang and Locatelli 1974: 2 to 3 times)", is_equal_approx(a_cold, 1.0) and a_warm > 2.0 and a_warm < 3.0, "x%.2f at -10 C, x%.2f at -0.5 C" % [a_cold, a_warm])
-	var m0 := SnowFall3D.melted_share(-1.0, 0.85)
-	var m1 := SnowFall3D.melted_share(1.0, 0.85)
-	var m3 := SnowFall3D.melted_share(3.0, 0.85)
-	_check("falling snow melts in air above 0 C, as the rain-or-snow split", m0 == 0.0 and m1 > 0.0 and m3 > m1 and absf(m1 - (1.0 - SnowCover3D.snowfall_fraction(1.0, 0.85))) < 1e-5, "%.2f at -1 C, %.2f at 1 C, %.2f at 3 C" % [m0, m1, m3])
-	var v_dry := SnowFall3D.wet_fall_speed(2.0, 0.0)
-	var v_half := SnowFall3D.wet_fall_speed(2.0, 0.5)
-	var v_wet := SnowFall3D.wet_fall_speed(2.0, 1.0)
-	_check("a melting flake keeps its slow fall until mostly melted, then falls as a drop (Mitra et al. 1990)", v_dry > 0.8 and v_dry < 1.5 and v_half < 1.5 * v_dry and absf(v_wet - 6.55) < 0.1, "%.2f m/s dry, %.2f half melted, %.2f melted (2 mm drop)" % [v_dry, v_half, v_wet])
-
-
-func _body_box(at: Vector3) -> RigidBody3D:
-	var b := RigidBody3D.new()
-	b.freeze = true
-	var cs := CollisionShape3D.new()
-	var sh := BoxShape3D.new()
-	sh.size = Vector3(1, 1, 1)
-	cs.shape = sh
-	b.add_child(cs)
-	var mi := MeshInstance3D.new()
-	mi.name = "Mesh"
-	var bm := BoxMesh.new()
-	bm.material = StandardMaterial3D.new()
-	mi.mesh = bm
-	b.add_child(mi)
-	add_child(b)
-	b.global_position = at
-	return b
-
-
-func _run_body_tests() -> void:
-	print("Snow on moving things (follow-up 18)")
-	for c in get_children():
-		c.queue_free()
-	await get_tree().process_frame
-	var w := BodyWeatherStub.new()
-	WorldContracts.set_weather(w)
-	WorldContracts.set_snow(BodySnowStub.new())
-	var sb := SnowBodies3D.new()
-	sb.update_rate = 0.1 # the checks step it by hand
-	add_child(sb)
-	var a := _body_box(Vector3(0, 1, 0))
-	var roofed := _body_box(Vector3(10, 1, 0))
-	var roof := StaticBody3D.new()
-	var rcs := CollisionShape3D.new()
-	var rsh := BoxShape3D.new()
-	rsh.size = Vector3(4, 0.2, 4)
-	rcs.shape = rsh
-	roof.add_child(rcs)
-	add_child(roof)
-	roof.global_position = Vector3(10, 4, 0)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	_check("rigid bodies are found and tracked by themselves", sb.is_tracked(a) and sb.is_tracked(roofed) and not sb.is_tracked(roof), "%d tracked" % sb.get_tracked_count())
-	sb.step(0.1)
-	var mat := (a.get_node("Mesh") as MeshInstance3D).get_active_material(0) as StandardMaterial3D
-	_check("a body in the open starts with the ground's snow; one under a roof with none", absf(sb.get_body_depth(a) - 0.2) < 1e-3 and sb.get_body_depth(roofed) == 0.0, "%.3f m open, %.3f m roofed" % [sb.get_body_depth(a), sb.get_body_depth(roofed)])
-	var p: Variant = (a.get_node("Mesh") as MeshInstance3D).get_instance_shader_parameter("snow_body")
-	_check("its materials show the load (snow_on_body, from the body only) and the load reaches them", mat.snow_on_body and mat.snow_enabled and not mat.snow_from_weather and p is Vector4 and absf(p.x - 0.2) < 2e-3, "%s" % [p])
-	# Snowfall: 2 mm/h of water for an hour at -5 C.
-	w.snowfall = 2.0
-	sb.set_body_depth(a, 0.0)
-	sb.set_body_depth(roofed, 0.0)
-	sb.step(1.0)
-	var expect := 2.0 / SnowCover3D.new_snow_density(-5.0)
-	_check("falling snow builds the load at the new snow density (Hedstrom and Pomeroy 1998), not under a roof", absf(sb.get_body_depth(a) - expect) < 1e-3 and sb.get_body_depth(roofed) < 1e-4, "%.4f m in an hour (expected %.4f), %.4f m roofed" % [sb.get_body_depth(a), expect, sb.get_body_depth(roofed)])
-	w.snowfall = 0.0
-	# Wind: calm keeps it, a gale over the blowing threshold strips it.
-	sb.set_body_depth(a, 0.1)
-	w.wind = Vector3(3, 0, 0)
-	for i in 10:
-		sb.step(0.1)
-	var calm := sb.get_body_depth(a)
-	w.wind = Vector3(20, 0, 0)
-	for i in 10:
-		sb.step(0.1)
-	var gale := sb.get_body_depth(a)
-	w.wind = Vector3()
-	_check("wind over the blowing threshold (Li and Pomeroy 1997) strips it; a breeze does not", absf(calm - 0.1) < 1e-3 and gale < 0.05, "%.3f m after 1 s at 3 m/s, %.3f m after 1 s more at 20 m/s (threshold %.1f m/s at -5 C)" % [calm, gale, SnowFall3D.blowing_threshold(-5.0)])
-	# Driving into still air is the same wind.
-	a.global_position.x += 2.5 # up to speed first (the start is a jolt of its own)
-	sb.step(0.1)
-	a.global_position.x += 2.5
-	sb.step(0.1)
-	sb.set_body_depth(a, 0.1)
-	for i in 10:
-		a.global_position.x += 2.5 # 25 m/s
-		sb.step(0.1)
-	var driven := sb.get_body_depth(a)
-	_check("driving fast blows it off too (the air past the body is what counts)", driven < 0.06, "%.3f m after 1 s at 25 m/s" % driven)
-	# Shaking: a jolt of several g throws it off; a steady crawl does not.
-	a.global_position = Vector3(0, 1, 0)
-	sb.step(0.1)
-	sb.step(0.1)
-	sb.set_body_depth(a, 0.1)
-	for i in 10:
-		a.global_position.z += 0.05
-		sb.step(0.1)
-	var crawl := sb.get_body_depth(a)
-	for i in 10:
-		a.global_position.y = 1.0 + (0.1 if i % 2 == 0 else 0.0) # 10 cm up and down every tenth of a second
-		sb.step(0.1)
-	var shaken := sb.get_body_depth(a)
-	_check("jolts over half a g shake it off; a slow crawl keeps it", absf(crawl - 0.1) < 1e-3 and shaken < 0.03, "%.3f m after a crawl, %.3f m after 1 s of shaking at about 20 g" % [crawl, shaken])
-	# Thaw: +5 C for two hours melts and wets it.
-	sb.set_body_depth(a, 0.1)
-	w.t = 5.0
-	sb.step(1.0)
-	sb.step(1.0)
-	var thawed := sb.get_body_depth(a)
-	var wet := sb.get_body_wetness(a)
-	w.t = -5.0
-	_check("a thaw melts it and wets what is left", thawed < 0.1 and thawed > 0.0 and wet > 0.0, "%.4f m of 0.1 after 2 h at 5 C, wetness %.2f" % [thawed, wet])
-	# Fire: a body standing in the FireStub's heat.
-	WorldContracts.set_fire(FireStub.new())
-	sb.set_body_depth(a, 0.05)
-	a.global_position = Vector3(5, 1, 0)
-	sb.step(0.1)
-	sb.set_body_depth(a, 0.05)
-	sb.step(10.0)
-	var burnt := sb.get_body_depth(a)
-	_check("fire's heat melts it at 0.334 MJ/kg", burnt < 0.05, "%.4f m of 0.05 after 10 s in 928 W/m2" % burnt)
-	sb.untrack(a)
-	var cleared: Variant = (a.get_node("Mesh") as MeshInstance3D).get_instance_shader_parameter("snow_body")
-	_check("an untracked body drops back to its material's own snow", cleared == Vector4(), "%s" % [cleared])
-	# Weight (follow-up 19): 10 cm of 100 kg/m3 on a 1 m2 top is 10 kg pressing a free 10 kg body down at g.
-	var free := _body_box(Vector3(20, 5, 0))
-	free.freeze = false
-	free.gravity_scale = 0.0
-	free.mass = 10.0
-	free.linear_damp_mode = RigidBody3D.DAMP_MODE_REPLACE
-	free.linear_damp = 0.0
-	await get_tree().physics_frame
-	sb.set_body_depth(free, 0.1, 100.0)
-	sb.step(0.1)
-	var load_mass := sb.get_body_load_mass(free)
-	var t0 := Time.get_ticks_usec()
-	for i in 30:
-		await get_tree().physics_frame
-	var vy := free.linear_velocity.y
-	var t_s := 30.0 / Engine.physics_ticks_per_second
-	var expect_v := -load_mass * 9.81 / free.mass * t_s
-	_check("the load weighs on the body (mass = depth x density x top area)", absf(load_mass - 10.0) < 0.5 and absf(vy - expect_v) < 0.15 * absf(expect_v), "%.1f kg of snow on %.2f m2; %.2f m/s down after %.2f s (expected %.2f)" % [load_mass, sb.get_body_top_area(free), -vy, t_s, -expect_v])
-	free.queue_free()
-	# Slabs (Mohr-Coulomb on the bed): dry snow holds on a 40 degree roof, wet snow goes, deep dry snow goes when steep.
-	var dry40 := SnowBodies3D.slab_slides(0.15, 150.0, 0.0, deg_to_rad(40.0), 250.0)
-	var wet40 := SnowBodies3D.slab_slides(0.15, 150.0, 0.6, deg_to_rad(40.0), 250.0)
-	var wet20 := SnowBodies3D.slab_slides(0.15, 150.0, 0.6, deg_to_rad(20.0), 250.0)
-	var deep80 := SnowBodies3D.slab_slides(0.4, 150.0, 0.0, deg_to_rad(80.0), 250.0)
-	_check("a slab slides by Mohr-Coulomb: wet snow off a 40 degree roof, not a 20 degree one; dry holds unless deep and steep", not dry40 and wet40 and not wet20 and deep80, "dry 40: %s, wet 40: %s, wet 20: %s, deep dry 80: %s" % [dry40, wet40, wet20, deep80])
-	WorldContracts.clear_overrides()
-	for c in get_children():
-		c.queue_free()
-	await get_tree().process_frame
-
-
-func _run_body_slab_tests() -> void:
-	# A crate tipped over in deep snow: its 30 cm of settled snow slides off its side as clumps on the snow.
-	await _surface_setup(60.0, 250.0)
-	var sb: SnowBodies3D = snow.get_bodies()
-	sb.update_rate = 0.1
-	var tipped := _body_box(Vector3(0, 1.0, 0))
-	tipped.rotation_degrees = Vector3(0, 0, 75.0)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	sb.step(0.1)
-	var clumps: SnowClumps3D = surface.get_clumps_node()
-	var before := clumps.get_spawned_total() if clumps else 0
-	sb.set_body_depth(tipped, 0.3, 280.0)
-	sb.step(0.1)
-	var made := (clumps.get_spawned_total() if clumps else 0) - before
-	_check("a tipped body's load slides off as a slab and lands as clumps on the snow", sb.get_body_depth(tipped) == 0.0 and sb.get_slabs_slid() >= 1 and made > 0, "%.3f m left, %d slabs, %d clumps" % [sb.get_body_depth(tipped), sb.get_slabs_slid(), made])
-
-
-func _run_avalanche_tests() -> void:
-	print("Avalanches (follow-up 20)")
-	# The stability index (Foehn 1987) with Jamieson and Johnston's (2001) strength: half a metre of new snow
-	# holds on a 38 degree slope, a metre does not; two days of sintering holds the metre.
-	var s50 := SnowAvalanche3D.stability_index(0.5, 100.0, 100.0, 0.0, deg_to_rad(38.0))
-	var s100 := SnowAvalanche3D.stability_index(1.0, 100.0, 100.0, 0.0, deg_to_rad(38.0))
-	var s100_old := SnowAvalanche3D.stability_index(1.0, 100.0, 100.0, 48.0, deg_to_rad(38.0))
-	_check("the stability index: 50 cm of new snow holds on 38 degrees, a metre fails, two days later it holds", s50 > 1.0 and s100 < 1.0 and s100_old > 1.0, "S = %.2f, %.2f, %.2f" % [s50, s100, s100_old])
-	await _setup("avalanche", 256.0, 128, -8.0)
-	snow.drift_enabled = false
-	snow.slide_enabled = false
-	var av: SnowAvalanche3D = snow.get_avalanches()
-	# 30 cm first: no release.
-	snow.add_snow(30.0, 100.0)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	var calm := av.get_release_count()
-	# A storm: another metre of light snow.
-	snow.add_snow(90.0, 90.0)
-	var water0 := snow.get_total_water()
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	var released := av.get_release_count() - calm
-	var t := 0.0
-	while av.is_running() and t < 200.0:
-		av.step(0.25)
-		t += 0.25
-	var water1 := snow.get_total_water()
-	var toe := snow.get_depth_at(Vector3(40.0, 0, 0))
-	var face := snow.get_depth_at(Vector3(-40.0, 0, 0))
-	_check("30 cm of new snow stays; a metre more releases on the 38 degree face", calm == 0 and released >= 1, "%d releases after 30 cm, %d after the storm" % [calm, released])
-	_check("it runs out past the toe and stops (Voellmy mu 0.2, xi 1500)", not av.is_running() and av.get_run_out() > 60.0 and av.get_max_speed() > 10.0 and av.get_max_speed() < 70.0, "%.0f m run-out, %.1f m/s at most, %.0f s" % [av.get_run_out(), av.get_max_speed(), t])
-	_check("it runs at Voellmy's steady speed for its depth, within 20% (second-order HLL transport)", av.get_max_speed() > 0.8 * av.get_max_speed_terminal() and av.get_max_speed() < 1.2 * av.get_max_speed_terminal(), "%.1f m/s against %.1f m/s" % [av.get_max_speed(), av.get_max_speed_terminal()])
-	_check("the snow moves, none is made or lost", av.get_released_volume() > 1000.0 and absf(water1 - water0) < 0.005 * water0, "%.0f m3 released, %.0f m3 entrained, water %.0f -> %.0f t" % [av.get_released_volume(), av.get_entrained_volume(), water0 / 1000.0, water1 / 1000.0])
-	_check("debris piles at the toe; the face keeps its old snow", toe > 1.3 and face < 1.0, "%.2f m at the toe (40 m out), %.2f m on the face" % [toe, face])
-	# A trigger (a skier, a cornice drop) releases what natural release left.
-	av.natural_release = false
-	snow.add_snow(40.0, 100.0)
-	await get_tree().physics_frame
-	var ok := av.trigger(Vector3(-50.0, 0, 30.0), 12.0)
-	_check("a trigger releases the slab round it", ok and av.is_running(), "running: %s" % av.is_running())
-	while av.is_running():
-		av.step(0.5)
-	av.natural_release = true
-
-
-func _trigger_body(at: Vector3, mass: float, size: Vector3) -> RigidBody3D:
-	# A frozen body standing on the snow: a person (size.y over 1 m: a capsule 0.3 m round) or a sled (a box).
-	var b := RigidBody3D.new()
-	b.mass = mass
-	b.freeze = true
-	var cs := CollisionShape3D.new()
-	if size.y > 1.0:
-		var c := CapsuleShape3D.new()
-		c.radius = 0.3
-		c.height = size.y
-		cs.shape = c
-	else:
-		var bx := BoxShape3D.new()
-		bx.size = size
-		cs.shape = bx
-	b.add_child(cs)
-	b.add_to_group("snow_deform")
-	add_child(b)
-	b.global_position = Vector3(at.x, snow.get_ground_height_at(at) + snow.get_depth_at(at) + size.y * 0.5, at.z)
-	return b
-
-
-func _trigger_setup() -> SnowAvalanche3D:
-	await _setup("avalanche", 256.0, 128, -8.0)
-	snow.drift_enabled = false
-	snow.slide_enabled = false
-	var av: SnowAvalanche3D = snow.get_avalanches()
-	av.natural_release = false
-	return av
-
-
-func _run_trigger_tests() -> void:
-	print("Avalanche triggers (follow-up 21)")
-	var flat := SnowAvalanche3D.added_shear(1000.0, 1.0, 0.0)
-	_check("a line load's shear at depth on the flat is Flamant's, 0.207 P / D (Foehn 1987)", absf(flat - 207.0) < 2.0, "%.1f Pa under 1 kN/m at 1 m" % flat)
-	var face := Vector3(-40.0, 0.0, 6.0)
-	var person_load := 80.0 * 9.81
-	# Fresh: 60 cm of new snow holds on the 38 degree face by itself, a person standing on it releases it.
-	var av := await _trigger_setup()
-	snow.add_snow(60.0, 100.0)
-	for i in 3:
-		await get_tree().physics_frame
-	var s_alone := av.get_trigger_index_at(face, 0.0)
-	var s_person := av.get_trigger_index_at(face, person_load)
-	var quiet := av.get_release_count()
-	var person := _trigger_body(face, 80.0, Vector3(0.6, 1.8, 0.6))
-	for i in 3:
-		await get_tree().physics_frame
-	var vol := av.get_released_volume()
-	_check("60 cm of new snow holds alone; a person standing on it releases the slope", quiet == 0 and s_alone > 1.0 and av.get_trigger_count() == 1 and vol > 1000.0, "index %.2f alone, %.2f under a person; %d triggered, %.0f m3" % [s_alone, s_person, av.get_trigger_count(), vol])
-	while av.is_running():
-		av.step(0.5)
-	person.queue_free()
-	# A metre, five cold days on: it has settled and sintered, a person holds, a sled (400 kg, 2.5 m) releases it.
-	av = await _trigger_setup()
-	snow.add_snow(100.0, 100.0)
-	await get_tree().physics_frame
-	snow.advance(120.0 * 3600.0)
-	for i in 3:
-		await get_tree().physics_frame
-	var sled_load := 400.0 * 9.81 / 2.5
-	s_person = av.get_trigger_index_at(face, person_load)
-	var s_sled := av.get_trigger_index_at(face, sled_load)
-	person = _trigger_body(face, 80.0, Vector3(0.6, 1.8, 0.6))
-	for i in 3:
-		await get_tree().physics_frame
-	var after_person := av.get_trigger_count()
-	person.queue_free()
-	await get_tree().physics_frame
-	var sled := _trigger_body(face + Vector3(0, 0, 4.0), 400.0, Vector3(2.5, 0.5, 1.0))
-	for i in 3:
-		await get_tree().physics_frame
-	_check("a metre five days on: a person holds, a sled releases it", after_person == 0 and av.get_trigger_count() == 1, "index %.2f under a person, %.2f under a sled; %d then %d triggered (%.2f m, %.0f kg/m3)" % [s_person, s_sled, after_person, av.get_trigger_count(), snow.get_depth_at(face), snow.get_density_at(face)])
-	while av.is_running():
-		av.step(0.5)
-	sled.queue_free()
-	# A buried crust: a week-old slab over facets on a crust. A heavy load on the flat collapses it (whumpf) and the
-	# collapse runs back along the crust to the face, which releases from 20 m away.
-	av = await _trigger_setup()
-	snow.add_snow(30.0, 100.0)
-	snow.add_crust(0.02, 2.0)
-	snow.add_snow(100.0, 100.0)
-	await get_tree().physics_frame
-	snow.advance(170.0 * 3600.0)
-	for i in 3:
-		await get_tree().physics_frame
-	var flat_at := Vector3(15.0, 0.0, 0.0)
-	var i_light := av.get_trigger_index_at(flat_at, person_load)
-	var i_heavy := av.get_trigger_index_at(flat_at, 3000.0)
-	var light := av.apply_load(flat_at, person_load)
-	var heavy := av.apply_load(flat_at, 3000.0)
-	_check("a buried crust: a person on the flat holds, a heavy load collapses it and the face releases from afar", light == 0 and heavy == 1 and av.get_collapse_count() == 1 and av.is_running() and av.get_released_volume() > 500.0, "results %d, %d; %d collapse; %.2f m over the crust; index on the flat %.2f under a person, %.2f under 3 kN/m; %.0f m3 released" % [light, heavy, av.get_collapse_count(), snow.get_depth_at(flat_at), i_light, i_heavy, av.get_released_volume()])
-	while av.is_running():
-		av.step(0.5)
-	# Snow from the weather map (not add_snow) builds the slab too, update by update.
-	av = await _trigger_setup()
-	_precipitate(6.0, 2.0)
-	for i in 3:
-		await get_tree().physics_frame
-	var fell := snow.get_depth_at(face)
-	_check("snowfall from the weather map builds the slab", fell > 0.02 and absf(av.get_recent_snow_at(face) - fell) < 0.1 * fell, "%.3f m fell, %.3f m of it new slab" % [fell, av.get_recent_snow_at(face)])
-	# Nothing triggers with triggers off.
-	av = await _trigger_setup()
-	av.triggers_enabled = false
-	snow.add_snow(60.0, 100.0)
-	await get_tree().physics_frame
-	person = _trigger_body(face, 80.0, Vector3(0.6, 1.8, 0.6))
-	for i in 3:
-		await get_tree().physics_frame
-	_check("triggers_enabled off: the person stands on it", av.get_trigger_count() == 0 and not av.is_running(), "%d triggered" % av.get_trigger_count())
-	person.queue_free()
-
-
-func _run_powder_tests() -> void:
-	print("Powder cloud (follow-up 23)")
-	var av := await _trigger_setup()
-	av.natural_release = true
-	var far := Vector3(90.0, 0.0, 0.0)
-	snow.add_snow(30.0, 100.0)
-	await get_tree().physics_frame
-	var far0 := snow.get_depth_at(far)
-	snow.add_snow(90.0, 90.0)
-	var water0 := snow.get_total_water()
-	# A grid over the run-out, 8 m apart: past each column's debris toe the cloud's layer is all that changed.
-	var grid0: Array[float] = []
-	for kz in 25:
-		for kx in 31:
-			grid0.append(snow.get_depth_at(Vector3(8.0 * kx, 0.0, -96.0 + 8.0 * kz)))
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	var t := 0.0
-	var peak_air := 0.0
-	var peak_rho := 0.0
-	while (av.is_running() or av.get_suspended_mass() > 0.0) and t < 300.0:
-		av.step(0.25)
-		t += 0.25
-		peak_air = maxf(peak_air, av.get_suspended_mass())
-	var water1 := snow.get_total_water()
-	var layer := 0.0
-	for kz in 25:
-		for kx in range(30, -1, -1):
-			var at := Vector3(8.0 * kx, 0.0, -96.0 + 8.0 * kz)
-			var d := snow.get_depth_at(at) - grid0[kz * 31 + kx]
-			if d >= 0.15:
-				break # this column's debris toe
-			if d > layer:
-				layer = d
-				far = at
-	far0 = snow.get_depth_at(far) - layer
-	_check("a fast dry avalanche throws snow into the air, and all of it settles", av.get_powder_taken() > 1000.0 and absf(av.get_powder_settled() - av.get_powder_taken()) < 0.01 * av.get_powder_taken() and av.get_suspended_mass() == 0.0, "%.1f t up (%.1f t in the air at once), %.1f t down, %.0f s" % [av.get_powder_taken() / 1000.0, peak_air / 1000.0, av.get_powder_settled() / 1000.0, t])
-	_check("the cloud outruns the dense flow", av.get_powder_reach() > av.get_run_out() + 10.0, "powder settles %.0f m from the release, the dense flow ran %.0f m" % [av.get_powder_reach(), av.get_run_out()])
-	_check("it leaves a thin layer of powder past the debris", layer > 0.0005 and layer < 0.15, "%.1f cm at (%.0f, %.0f) (%.2f m of snow there before)" % [layer * 100.0, far.x, far.z, far0])
-	_check("no snow is made or lost", absf(water1 - water0) < 0.005 * water0, "water %.0f -> %.0f t" % [water0 / 1000.0, water1 / 1000.0])
-	# A wet slide: the same load after a thaw makes no cloud.
-	av = await _trigger_setup()
-	snow.add_snow(30.0, 100.0)
-	snow.add_snow(90.0, 90.0)
-	weather.temperature = 4.0
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	snow.advance(3.0 * 3600.0)
-	await get_tree().physics_frame
-	var wet := snow.get_wetness_at(Vector3(-40.0, 0, 0))
-	av.trigger(Vector3(-50.0, 0, 0), 30.0)
-	t = 0.0
-	while (av.is_running() or av.get_suspended_mass() > 0.0) and t < 300.0:
-		av.step(0.25)
-		t += 0.25
-	_check("a wet slide makes no powder cloud", av.get_release_count() >= 1 and av.get_powder_taken() == 0.0, "wetness %.2f, %d released at %.1f m/s, %.0f kg up" % [wet, av.get_release_count(), av.get_max_speed(), av.get_powder_taken()])
-
-
-func _avalanche_run(av: SnowAvalanche3D) -> float:
-	var t := 0.0
-	while (av.is_running() or av.get_suspended_mass() > 0.0) and t < 300.0:
-		av.step(0.25)
-		t += 0.25
-	return t
-
-
-func _debris_reach() -> float:
-	# The farthest point along the run-out (x, three lines across) with 10 cm of debris over the 1.3 m storm cover.
-	var far := 0.0
-	for z in [-20.0, 0.0, 20.0]:
-		for x in range(0, 128, 2):
-			if snow.get_depth_at(Vector3(x, 0, z)) > 1.4:
-				far = maxf(far, float(x))
-	return far
-
-
-func _run_forest_tests() -> void:
-	print("Forests and avalanches (follow-up 24)")
-	# Anchoring: the storm that releases the bare face holds under a closed forest (Teich et al. 2012).
-	var av := await _trigger_setup()
-	av.natural_release = true
-	for z in range(-128, 129, 8):
-		for x in range(-128, 4, 8):
-			weather.add_canopy(Vector2(x, z), 7.0, 18.0, 4.0)
-	weather.rebake_shelter()
-	for i in 16:
-		snow.advance(1.0) # the cover reads the canopy a sixteenth of its rows an update
-	var face := Vector3(-40.0, 0.0, 6.0)
-	var closure := weather.get_canopy_closure_at(face)
-	snow.add_snow(30.0, 100.0)
-	await get_tree().physics_frame
-	snow.add_snow(90.0, 90.0)
-	for i in 3:
-		await get_tree().physics_frame
-	var s_forest := av.get_trigger_index_at(face, 0.0)
-	var s_person := av.get_trigger_index_at(face, 80.0 * 9.81)
-	_check("a closed forest holds the storm slab that releases on the bare face", av.get_release_count() == 0 and s_person > 1.0, "closure %.2f, %.2f m under the trees; index %.1f alone, %.1f under a person; %d released" % [closure, snow.get_depth_at(face), s_forest, s_person, av.get_release_count()])
-	# Braking: the same avalanche runs out over the flat, then through a forest strip on the run-out.
-	av = await _trigger_setup()
-	av.natural_release = true
-	snow.add_snow(30.0, 100.0)
-	await get_tree().physics_frame
-	snow.add_snow(90.0, 90.0)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	await _avalanche_run(av)
-	var open_run := _debris_reach()
-	var toe_p := av.get_peak_pressure_at(Vector3(10.0, 0, 0))
-	var contract_p := (WorldContracts.get_snow() as WorldSnow).avalanche_peak_pressure_at(Vector3(10.0, 0, 0))
-	# The track's stand starts again where the flow broke trunks (WorldStand DISTURBANCE_AVALANCHE), not beside it.
-	var stand: WorldStand = WorldContracts.get_stand()
-	var broke := 0
-	var broke_p := 0.0
-	for x in range(-60, 12, 4):
-		var at := Vector3(x, 0, 6)
-		if stand.disturbance_at(at) == WorldStand.DISTURBANCE_AVALANCHE and stand.stand_age_at(at) == 0.0:
-			broke += 1
-			broke_p = maxf(broke_p, av.get_peak_pressure_at(at))
-	# Past the run-out (debris to about 60 m) the stand stands.
-	var past := stand.disturbance_at(Vector3(110, 0, 6))
-	_check("the dense flow resets the stand on its track (avalanche paths stay young), not past its run-out", broke >= 3 and past != WorldStand.DISTURBANCE_AVALANCHE, "%d of 18 points on the track reset (peak %.0f kPa), kind %d past the run-out (%.1f kPa there)" % [broke, broke_p / 1000.0, past, av.get_peak_pressure_at(Vector3(110, 0, 6)) / 1000.0])
-	av = await _trigger_setup()
-	av.natural_release = true
-	for z in range(-128, 129, 8):
-		for x in range(12, 128, 8):
-			weather.add_canopy(Vector2(x, z), 7.0, 18.0, 4.0)
-	weather.rebake_shelter()
-	for i in 16:
-		snow.advance(1.0) # the cover reads the canopy a sixteenth of its rows an update
-	snow.add_snow(30.0, 100.0)
-	await get_tree().physics_frame
-	snow.add_snow(90.0, 90.0)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	await _avalanche_run(av)
-	var forest_run := _debris_reach()
-	_check("a forest on the run-out brakes it: its debris stops sooner, some of it among the trees", forest_run < open_run - 10.0 and av.get_detrained_volume() > 100.0, "debris (10 cm and more) reaches x = %.0f m into the forest against %.0f m in the open; %.0f m3 stopped by the stems" % [forest_run, open_run, av.get_detrained_volume()])
-	_check("trees in its path take its dynamic pressure, 1/2 rho u^2 (and read it through the snow contract)", toe_p > 5000.0 and toe_p < 200000.0 and absf(contract_p - toe_p) < 1.0, "%.0f kPa at the toe, %.0f kPa through WorldSnow (Bartelt and Stoeckli 2001: trunks break from about 10-20 kPa)" % [toe_p / 1000.0, contract_p / 1000.0])
-
-
-func _thaw(t: float, hours: float, rain: float = 0.0) -> void:
-	# Warm air (and rain) on the pack, an hour an update so the avalanche node sees each one.
-	weather.temperature = t
-	weather.rain_rate = rain
-	weather.cloud_cover = 1.0 if rain > 0.0 else 0.0
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	for i in int(hours):
-		snow.advance(3600.0)
-		await get_tree().physics_frame
-
-
-func _deposit_peak() -> float:
-	# The deepest snow on the run-out (x 0 to 128 m), over the gully and beside it.
-	var top := 0.0
-	for z in range(-30, 31, 2):
-		for x in range(0, 128, 2):
-			top = maxf(top, snow.get_depth_at(Vector3(x, 0, z)))
-	return top
-
-
-func _run_wet_tests() -> void:
-	print("Wet spring avalanches (follow-up 25)")
-	var face := Vector3(-40.0, 0.0, 6.0)
-	# Meltwater: 60 cm of new snow that holds in frost releases by itself once a thaw wets it.
-	var av := await _trigger_setup()
-	av.natural_release = true
-	snow.add_snow(60.0, 100.0)
-	for i in 3:
-		await get_tree().physics_frame
-	var s_dry := av.get_trigger_index_at(face, 0.0)
-	var quiet := av.get_release_count()
-	await _thaw(4.0, 6.0)
-	var released := av.get_release_count()
-	var wet_flow := av.get_flow_wetness()
-	_check("meltwater weakens the slab: what holds in frost releases in a thaw", quiet == 0 and s_dry > 1.0 and released >= 1 and wet_flow > 0.05, "index %.2f in frost, 0 released; after 6 h at +4 C %d released, the flow %.0f%% wet" % [s_dry, released, wet_flow * 100.0])
-	# Rheology: the same slab triggered dry and wet. The wet one runs slower and shorter and piles up deeper.
-	av = await _trigger_setup()
-	snow.add_snow(60.0, 100.0)
-	await get_tree().physics_frame
-	av.trigger(Vector3(-50.0, 0, 0), 30.0)
-	await _avalanche_run(av)
-	var dry_speed := av.get_max_speed()
-	var dry_out := av.get_run_out()
-	var dry_pile := _deposit_peak()
-	av = await _trigger_setup()
-	snow.add_snow(60.0, 100.0)
-	await get_tree().physics_frame
-	await _thaw(4.0, 6.0)
-	av.trigger(Vector3(-50.0, 0, 0), 30.0)
-	var wetness := av.get_flow_wetness()
-	await _avalanche_run(av)
-	_check("a wet flow runs slower and stops shorter, in a deeper pile", wetness > 0.3 and av.get_max_speed() < 0.85 * dry_speed and av.get_run_out() < dry_out - 5.0 and _deposit_peak() > dry_pile, "dry %.1f m/s, %.0f m, piles %.2f m; wet (%.0f%%) %.1f m/s, %.0f m, piles %.2f m" % [dry_speed, dry_out, dry_pile, wetness * 100.0, av.get_max_speed(), av.get_run_out(), _deposit_peak()])
-	# Glide: an old, bonded pack on the face; rain on it drains through to the ground. Cracks open, then it goes
-	# full depth. None on the flat.
-	av = await _trigger_setup()
-	snow.add_snow(300.0, 150.0)
-	snow.advance(10.0 * 24.0 * 3600.0) # ten cold days: the storm has bonded
-	await get_tree().physics_frame
-	av.natural_release = true
-	var depth0 := snow.get_depth_at(face)
-	var cracked_at := -1
-	var hours := 0
-	while hours < 96 and av.get_glide_count() == 0:
-		await _thaw(3.0, 1.0, 2.0)
-		hours += 1
-		if cracked_at < 0 and av.get_glide_crack_count() > 0:
-			cracked_at = hours
-	var flat_glide := av.get_glide_at(Vector3(60.0, 0, 0))
-	_check("rain on an old pack opens glide cracks, then it releases full depth", cracked_at > 0 and av.get_glide_count() >= 1 and av.get_released_volume() > 500.0 and flat_glide == 0.0, "%.2f m of old snow; cracks after %d h of rain, a glide avalanche after %d h, %.0f m3 (%.0f%% wet); no glide on the flat" % [depth0, cracked_at, hours, av.get_released_volume(), av.get_flow_wetness() * 100.0])
-
-
-func _run_impulse_wave_tests() -> void:
-	print("Avalanches into water (follow-up 26)")
-	# Heller and Hager (2010): F 2, S 0.5, M 1 at 45 degrees gives P 1.25 and H_M 0.66 h.
-	var p := SnowAvalanche3D.impulse_product(2.0 * sqrt(9.81 * 10.0), 5.0, 1000.0 * 10.0 * 100.0, 10.0, 10.0, deg_to_rad(45.0))
-	var hm := SnowAvalanche3D.impulse_wave_height(p, 10.0, 0.0, 0.0)
-	var far := SnowAvalanche3D.impulse_wave_height(p, 10.0, 300.0, 0.0)
-	var side := SnowAvalanche3D.impulse_wave_height(p, 10.0, 300.0, deg_to_rad(90.0))
-	_check("the impulse product and the wave it makes (Heller and Hager 2010; Heller et al. 2009)", absf(p - 1.251) < 0.01 and absf(hm - 6.64) < 0.05 and far < hm and side < far, "P %.3f, H_M %.2f m in 10 m of water; %.2f m 300 m out ahead, %.2f m to the side; leading period %.1f s there" % [p, hm, far, side, SnowAvalanche3D.impulse_wave_period(1.0, 10.0, 300.0)])
-	# The storm avalanche runs into an open lake at the foot of the face.
-	var stub := WaveStub.new()
-	WorldContracts.set_water(stub)
-	var av := await _lake_avalanche(0.0)
-	WorldContracts.clear_overrides()
-	var entered := av.get_water_entry_mass()
-	var wave := av.get_wave_height_at(Vector3(60.0, 0, 0))
-	var biggest: Array = []
-	for w in stub.waves:
-		if biggest.is_empty() or w[2] > biggest[2]:
-			biggest = w
-	_check("the water is handed the wave in metres and seconds (WorldWater.wave)", stub.waves.size() == av.get_wave_count() and not biggest.is_empty() and absf(biggest[2] - av.get_wave_height_at(biggest[0])) < 0.01 * biggest[2] + 1e-3 and biggest[1].x > 0.5 and absf(biggest[1].y) < 1e-4 and biggest[3] > 1.0 and biggest[3] < 60.0 and biggest[4] >= 2.0, "%d sent; biggest %.2f m, %.1f s, %.0f m wide, heading (%.2f, %.2f)" % [stub.waves.size(), biggest[2] if not biggest.is_empty() else 0.0, biggest[3] if not biggest.is_empty() else 0.0, biggest[4] if not biggest.is_empty() else 0.0, biggest[1].x if not biggest.is_empty() else 0.0, biggest[1].z if not biggest.is_empty() else 0.0])
-	_check("an avalanche into open water plunges in and pushes a wave", entered > 1.0e5 and av.get_wave_count() >= 1 and wave > 0.05 and wave < 12.0, "%.0f t into the lake, %d waves; %.2f m high 60 m out (%.0f m deep there)" % [entered / 1000.0, av.get_wave_count(), wave, 15.0])
-	# Thick ice carries it (no wave); thin ice breaks under it.
-	av = await _lake_avalanche(30.0)
-	var thick := snow.get_ice_thickness_at(Vector3(40.0, 0, 0))
-	_check("thick lake ice carries the avalanche: no wave", av.get_wave_count() == 0 and av.get_ice_broken() == 0 and thick > 0.3, "%.2f m of ice; %d waves, %d ice cells broken, run-out %.0f m" % [thick, av.get_wave_count(), av.get_ice_broken(), av.get_run_out()])
-	av = await _lake_avalanche(0.5)
-	var thin := snow.get_ice_thickness_at(Vector3(80.0, 0, 0))
-	_check("thin lake ice breaks under it, and the snow goes in", av.get_ice_broken() > 0 and av.get_water_entry_mass() > 0.0, "%.2f m of ice far out; %d cells broken, %.0f t into the lake" % [thin, av.get_ice_broken(), av.get_water_entry_mass() / 1000.0])
-
-
-func _lake_avalanche(freeze_days: float) -> SnowAvalanche3D:
-	# The storm (as in the avalanche tests) on the face over a lake, after freeze_days of hard frost on the lake.
-	await _setup("avalanche_lake", 256.0, 128, -15.0)
-	snow.drift_enabled = false
-	snow.slide_enabled = false
-	_lake(0.0)
-	var av: SnowAvalanche3D = snow.get_avalanches()
-	av.natural_release = false
-	if freeze_days > 0.0:
-		snow.advance(freeze_days * 24.0 * 3600.0)
-	await get_tree().physics_frame
-	snow.add_snow(30.0, 100.0)
-	await get_tree().physics_frame
-	snow.add_snow(90.0, 90.0)
-	await get_tree().physics_frame
-	av.trigger(Vector3(-45.0, 0, 0), 40.0)
-	await _avalanche_run(av)
-	return av
-
-
-func _run_fire_tests() -> void:
-	print("Fire melts snow (WorldFire)")
-	await _setup("flat", 32.0, 32, -8.0)
-	snow.drift_enabled = false
-	_precipitate(10.0, 2.0)
-	var hot := Vector3(8.0, 0, 0)
-	var cold := Vector3(-8.0, 0, 0)
-	var h0 := snow.get_swe_at(hot)
-	WorldContracts.set_fire(FireStub.new())
-	snow.advance(2.0 * 3600.0)
-	WorldContracts.clear_overrides()
-	var lost := h0 - snow.get_swe_at(hot)
-	_check("fire heat melts the pack at 0.334 MJ/kg, in frost", absf(lost - 20.0) < 1.0 and absf(snow.get_swe_at(cold) - h0) < 0.5, "%.1f mm melted in 2 h under 928 W/m2 at -8 C (energy gives 20.0); %.1f mm beside it of %.1f" % [lost, snow.get_swe_at(cold), h0])
-	# The snow contract other systems read (vehicle grip, plants): the cover answers it.
-	var ws: WorldSnow = WorldContracts.get_snow()
-	var surf := snow.get_ground_height_at(cold) + snow.get_depth_at(cold)
-	_check("the snow contract reads the cover", ws.has_provider() and absf(ws.depth_at(cold) - snow.get_depth_at(cold)) < 1e-4 and absf(ws.density_at(cold) - snow.get_density_at(cold)) < 1e-3 and absf(ws.surface_at(cold) - surf) < 1e-3 and ws.lake_ice_at(cold) == Vector2(), "depth %.3f m, density %.0f kg/m3, surface %.3f m" % [ws.depth_at(cold), ws.density_at(cold), ws.surface_at(cold)])
+	var top_b := 0.0
+	var top_a := 0.0
+	for v in mb:
+		top_b = maxf(top_b, v)
+	for v in ma:
+		top_a = maxf(top_a, v)
+	_check("the frame no longer waits for the update", top_b < 0.5 * top_a, "worst %.2f ms against %.2f ms" % [top_b, top_a])
 
 
 func _climate(wind_speed: float) -> SnowClimate:
@@ -2802,7 +1167,7 @@ func _run_climate_tests() -> void:
 	var far_q := snow.global_position + Vector3(-700.0, 0, 300.0)
 	var w_before := snow.get_world_swe_at(fq)
 	var far_before := snow.get_world_swe_at(far_q)
-	snow.add_snow(30.0, 100.0, false) # the square alone: what feeds back is the square's
+	snow.add_snow(30.0, 100.0)
 	var near_now := 0.0
 	for k in 16:
 		near_now += snow.get_swe_at(fq + Vector3((k % 4) * 4.0 - 6.0, 0, (k / 4) * 4.0 - 6.0)) / 16.0
@@ -2812,11 +1177,6 @@ func _run_climate_tests() -> void:
 	var w_after := snow.get_world_swe_at(fq)
 	var far_after := snow.get_world_swe_at(far_q)
 	_check("the square feeds the world tier under it (two-way nesting)", w_after > w_before + 10.0 and absf(w_after - near_now) < 0.05 * maxf(near_now, 10.0) and absf(far_after - far_before) < 5.0, "world %.0f mm before, %.0f after, square %.0f mm there; far away %.0f to %.0f mm" % [w_before, w_after, near_now, far_before, far_after])
-	# A storm (add_snow's default) falls on the world tier too: slopes outside the square carry it.
-	var storm_before := snow.get_world_swe_at(far_q)
-	snow.add_snow(20.0, 100.0)
-	_check("add_snow falls on the world tier outside the square", absf(snow.get_world_swe_at(far_q) - storm_before - 20.0) < 1.0, "%.0f to %.0f mm at 760 m" % [storm_before, snow.get_world_swe_at(far_q)])
-	await _run_melt_runoff_tests()
 
 	await _run_recipe_tests()
 
@@ -2886,52 +1246,6 @@ func _run_climate_tests() -> void:
 			hits += 1
 	_check("cornice mesh: overhangs with collision", cor.get_segment_count() > 10 and tries > 0 and hits >= tries * 0.8, "%d segments; a ray down halfway out stops on the cornice above the lee face in %d of %d places" % [cor.get_segment_count(), hits, tries])
 	cor.queue_free()
-
-
-# Melt water downhill (round 6, docs/ideas/snow.md): a warm clear spell melts the world tier's snow outside the
-# square, and that melt is the weather's ground water there (what WeatherRunoff3D routes into streams); inside
-# the square the square's own runoff stands for it, counted once.
-func _run_melt_runoff_tests() -> void:
-	weather.temperature = 14.0
-	weather.snap_to_settings()
-	for h in 4:
-		snow.advance(3600.0)
-		snow.advance_world(3600.0)
-	weather.advance(60.0)
-	var cs := weather.extent / weather.resolution
-	var best := Vector3.ZERO
-	var melt := 0.0
-	for i in range(-7, 7):
-		for j in range(-7, 7):
-			var q := Vector3((i + 0.5) * cs, 0, (j + 0.5) * cs)
-			if absf(q.x - snow.global_position.x) < snow.extent and absf(q.z - snow.global_position.z) < snow.extent:
-				continue
-			var r := snow.get_runoff_at(q)
-			if r > melt:
-				melt = r
-				best = q
-	var got := weather.get_ground_water_input_at(best)
-	print("  melt: %.2f mm/h leaves the world tier's pack at %s; the weather's ground water there %.2f mm/h (rain %.2f)" % [melt, str(best), got, weather.get_rainfall_at(best)])
-	_check("melt outside the square reaches the weather's ground water", melt > 0.1 and absf(got - melt) < 0.05 * melt + 0.01, "%.2f mm/h melt, %.2f mm/h ground water at %s" % [melt, got, str(best)])
-	# Inside the square: the weather cell's centre reads the square's runoff (averaged to the world's 16 m
-	# cells), not the square's and the world's added. Rain on the square cleared bare, the world's pack under it.
-	snow.clear()
-	weather.rain_rate = 4.0
-	weather.cloud_cover = 1.0
-	weather.snap_to_settings()
-	weather.advance(60.0)
-	snow.advance(3600.0)
-	weather.advance(60.0)
-	var c := snow.global_position + Vector3(0.5 * cs - fposmod(snow.global_position.x, cs), 0, 0.5 * cs - fposmod(snow.global_position.z, cs))
-	var near_avg := 0.0
-	for k in 64:
-		near_avg += snow.get_runoff_at(c + Vector3((k % 8) * 4.0 - 14.0, 0, (k / 8) * 4.0 - 14.0)) / 64.0
-	var got_in := weather.get_ground_water_input_at(c)
-	print("  square: %.1f mm snow, rain %.2f mm/h at %s" % [snow.get_swe_at(c), weather.get_rainfall_at(c), str(c)])
-	_check("the square's runoff is counted once", near_avg > 1.0 and absf(got_in - near_avg) < 0.25 * near_avg + 0.02, "%.2f mm/h ground water at %s, the square's %.2f mm/h (bare), the world tier's pack %.0f mm" % [got_in, str(c), near_avg, snow.get_world_swe_at(c)])
-	weather.rain_rate = 0.0
-	weather.cloud_cover = 0.0
-	weather.snap_to_settings()
 
 
 func _longest_cornice() -> Vector3:
@@ -3012,42 +1326,6 @@ func _run_failure_tests() -> void:
 			_check("a thaw brings them down sooner", day > 0 and day < days["cold"], "day %d against %d" % [day, days["cold"]])
 
 
-func _run_icicle_attach_tests() -> void:
-	# Roots joined to what they hang from: an eave slab 0.2 m above the edge (a placement that leaves the
-	# roots under it, as at the hut), and a gap past the reach.
-	var holder := Node3D.new()
-	add_child(holder)
-	var slab := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(2.4, 0.1, 0.6)
-	slab.mesh = bm
-	slab.position = Vector3(0, 0.25, 0)
-	holder.add_child(slab)
-	var ice := SnowIcicles3D.new()
-	holder.add_child(ice)
-	ice.edge = PackedVector3Array([Vector3(-1, 0, 0), Vector3(1, 0, 0)])
-	for day in 3:
-		ice.grow(6.0, -4.0, 0.5, 0.9)
-		ice.grow(18.0, -8.0, 0.5, 0.0)
-	await get_tree().process_frame
-	var lo := INF
-	var hi := -INF
-	var n := 0
-	for k in ice.get_icicle_count():
-		if ice.get_icicle_length(k) < 0.01:
-			continue
-		lo = minf(lo, ice.get_icicle_attach(k))
-		hi = maxf(hi, ice.get_icicle_attach(k))
-		n += 1
-	_check("roots join the eave above them (0.2 m up)", n > 0 and lo > 0.195 and hi < 0.205, "%d icicles, %.3f to %.3f m" % [n, lo, hi])
-	ice.attach_reach = 0.15
-	var far := 0.0
-	for k in ice.get_icicle_count():
-		far = maxf(far, ice.get_icicle_attach(k))
-	_check("nothing within reach: roots left as placed", far == 0.0, "%.3f m" % far)
-	holder.queue_free()
-
-
 func _run_icicle_tests() -> void:
 	print("Icicles (follow-up 6):")
 	var tip_still := SnowIcicles3D.tip_growth_rate(-10.0, 0.0) * 100.0
@@ -3073,38 +1351,6 @@ func _run_icicle_tests() -> void:
 	var m0 := ice.get_ice_mass()
 	ice.grow(24.0, -8.0, 0.5, 0.004)
 	_check("a trickle the wall freezes: thicker, no longer (Szilder and Lozowski 1994)", ice.get_longest() < l0 + 0.002 and ice.get_ice_mass() > m0, "longest %.3f to %.3f m, %.3f to %.3f kg" % [l0, ice.get_longest(), m0, ice.get_ice_mass()])
-	# Shape (follow-up 37): the film's own lean stays gentle; a steady wind leans the tips downwind.
-	var lean_still := 0.0
-	var k_long := 0
-	for k in ice.get_icicle_count():
-		if ice.get_icicle_length(k) > ice.get_icicle_length(k_long):
-			k_long = k
-		var len_k := ice.get_icicle_length(k)
-		if len_k > 0.05:
-			lean_still = maxf(lean_still, ice.get_icicle_offset(k, len_k).length() / len_k)
-	_check("in still air an icicle hangs near plumb (its film's side bends it a little)", lean_still < 0.1, "steepest lean %.3f" % lean_still)
-	var windy := SnowIcicles3D.new()
-	windy.edge = PackedVector3Array([Vector3(-1, 0, 0), Vector3(1, 0, 0)])
-	windy.wind_direction = Vector3(1, 0, 0)
-	for day in 3:
-		windy.grow(6.0, -4.0, 5.0, 0.9)
-		windy.grow(18.0, -8.0, 0.5, 0.0)
-	var lean_x := 0.0
-	var n_long := 0
-	for k in windy.get_icicle_count():
-		var len_k := windy.get_icicle_length(k)
-		if len_k > 0.05:
-			lean_x += windy.get_icicle_offset(k, len_k).x / len_k
-			n_long += 1
-	lean_x /= maxf(n_long, 1)
-	_check("a 5 m/s wind leans the tips downwind (the drop's drag; Maeno et al. 1994)", lean_x > 0.3 and lean_x < 0.8, "mean lean %.2f (%.0f degrees) over %d icicles" % [lean_x, rad_to_deg(atan(lean_x)), n_long])
-	windy.grow(0.5, -4.0, 0.5, 0.9)
-	var drips := 0
-	for k in windy.get_icicle_count():
-		if windy.is_icicle_dripping(k):
-			drips += 1
-	_check("water left at the tips hangs as drops while they grow", drips > 0, "%d of %d tips dripping" % [drips, windy.get_icicle_count()])
-	windy.free()
 	ice.grow(12.0, 4.0, 2.0, 0.0)
 	_check("a thaw melts them back", ice.get_longest() < l0 * 0.8, "%.3f m after 12 h at +4 C" % ice.get_longest())
 	ice.free()
@@ -3137,28 +1383,8 @@ func _build_view() -> void:
 		await _setup("cornice", 512.0, 256, -6.0)
 	elif view == "sparkle":
 		await _setup("flat", 32.0, 128, -6.0)
-	elif view == "rime":
-		await _setup("flat", 32.0, 128, -6.0)
-	elif view == "lake":
-		await _setup("mountain", 512.0, 128, -12.0)
-	elif view == "avalanche":
-		if OS.get_cmdline_user_args().has("--powder"):
-			# Wider, at the same 2 m cells: the deep-snow geometry the shot sees (320 m) stays over the cover, whose
-			# edge otherwise showed as a dotted seam across the far slope.
-			await _setup("avalanche_bowl", 320.0, 160, -8.0)
-		else:
-			await _setup("avalanche", 256.0, 128, -8.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
-	elif view == "dunes":
-		await _setup("flat", 64.0, 64, -8.0)
-	elif view == "roofs":
-		await _setup("flat", 64.0, 128, -6.0)
-	elif view == "spindrift":
-		await _setup("cornice", 512.0, 256, -12.0)
-	elif view == "icicles" and OS.get_cmdline_user_args().has("--hero") and not OS.get_cmdline_user_args().has("--wall"):
-		# --hero looks out from under the roof: snow out to 64 m, past where the view meets the horizon haze.
-		await _setup("flat", 128.0, 256, -6.0)
 	elif view == "shelter" or view == "icicles":
 		await _setup("flat", 32.0, 128, -6.0)
 	else:
@@ -3171,11 +1397,6 @@ func _build_view() -> void:
 		# A snowy land below the horizon, not the default brown: clear ice shows what lies behind and below it.
 		sky_material.ground_horizon_color = Color(0.72, 0.75, 0.8)
 		sky_material.ground_bottom_color = Color(0.55, 0.58, 0.62)
-	elif view == "avalanche":
-		# Snow below the horizon, as bright as the snow there is under this sky (albedo 0.84 under the sky's own
-		# colours), so raster's ambient lights walls as the path tracer's bounce off the real snow does.
-		sky_material.ground_horizon_color = Color(0.53, 0.54, 0.56)
-		sky_material.ground_bottom_color = Color(0.33, 0.38, 0.46)
 	sky.sky_material = sky_material
 	env.sky = sky
 	env.background_mode = Environment.BG_SKY
@@ -3185,9 +1406,6 @@ func _build_view() -> void:
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = bounces
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--pt-debug="):
-			env.pathtracing_debug_mode = int(a.substr(11)) # Environment.PathtracingDebugMode
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -3215,35 +1433,14 @@ func _build_view() -> void:
 	elif view == "sparkle":
 		await _build_sparkle(cam)
 		return
-	elif view == "rime":
-		await _build_rime(cam)
-		return
-	elif view == "lake":
-		await _build_lake(cam)
-		return
 	elif view == "windblown":
 		await _build_windblown(cam)
-		return
-	elif view == "dunes":
-		await _build_dunes(cam)
-		return
-	elif view == "roofs":
-		await _build_roofs(cam)
-		return
-	elif view == "spindrift":
-		await _build_spindrift(cam)
 		return
 	elif view == "shelter":
 		await _build_shelter(cam)
 		return
 	elif view == "icicles":
 		await _build_icicles(cam)
-		return
-	elif view == "bodies":
-		await _build_bodies(cam)
-		return
-	elif view == "avalanche":
-		await _build_avalanche(cam)
 		return
 	else:
 		snow.drift_enabled = false
@@ -3310,17 +1507,6 @@ func _build_trail(cam: Camera3D) -> void:
 			# Down on the end of the sled's track and the berm its bow wave left.
 			cam.position = Vector3(0.2, 1.0, 5.6)
 			cam.look_at(Vector3(-2.2, 0.2, 3.4))
-	if OS.get_cmdline_user_args().has("--prints-close"):
-		# From 1.5 m over two boot prints, the sun high enough to light their floors: the pieces of a broken crust.
-		cam.position = Vector3(-1.4, 1.05, 2.35)
-		cam.look_at(Vector3(-2.6, 0.3, 1.35))
-		cam.fov = 45.0
-		sun.rotation_degrees = Vector3(-38.0, 100.0, 0.0) # higher and from the side, into the prints
-	if OS.get_cmdline_user_args().has("--clumps-close"):
-		# Low beside the small ball's furrow, looking back along it: the clumps it broke out of the rim.
-		cam.position = Vector3(-1.2, 0.8, 0.2)
-		cam.look_at(Vector3(-4.2, 0.4, -0.9))
-		cam.fov = 45.0
 	var target := Marker3D.new()
 	target.name = "Probe"
 	add_child(target)
@@ -3329,37 +1515,15 @@ func _build_trail(cam: Camera3D) -> void:
 	var hours := snow_hours if snow_hours >= 0.0 else 0.0
 	if hours > 0.0:
 		_precipitate(hours, 2.0)
-	elif OS.get_cmdline_user_args().has("--settled"):
-		snow.add_snow(120.0, 300.0) # 0.4 m of settled snow: cohesive, prints break lumps out of it
-	elif slush_mm > 0.0:
-		# --slush=MM: 15 cm of old spring snow on concrete frost (a stand-in ground answering frost_at), then rain
-		# at +8 C for ten hours: what the pack cannot hold stays in its base.
-		var frozen := GDScript.new()
-		frozen.source_code = "extends WorldGround\nfunc _frost_at(_p: Vector3) -> Vector3:\n\treturn Vector3(0.0, 0.3, 0.0)\n"
-		frozen.reload()
-		WorldContracts.set_ground(frozen.new())
-		snow.add_snow(50.0, 330.0)
-		print("slush: before the rain %.3f m, %.0f mm" % [snow.get_depth_at(Vector3(0, 0, 1)), snow.get_swe_at(Vector3(0, 0, 1))])
-		weather.temperature = 8.0
-		_precipitate(10.0, slush_mm / 10.0)
-		var sp := Vector3(0.0, 0, 1.0)
-		print("slush: %.3f m of %.3f m, wetness %.2f, %.0f mm SWE" % [snow.get_slush_at(sp), snow.get_depth_at(sp), snow.get_wetness_at(sp), snow.get_swe_at(sp)])
 	else:
 		snow.add_snow(45.0, 110.0) # 0.41 m of fresh snow
 	if crust_cycles > 0.0:
 		# A 2 cm melt-freeze crust on top: one cycle breaks under a boot, two hold it.
 		snow.add_crust(0.02, crust_cycles)
-	if suncups_m > 0.0:
-		snow.add_suncups(suncups_m) # --suncups=M: a sunny spring week's hollows (the deep-snow surface draws them)
-	if sastrugi_arg != "":
-		var sa := sastrugi_arg.split(",")
-		var deg := float(sa[1]) if sa.size() > 1 else 0.0
-		snow.add_sastrugi(float(sa[0]), Vector2(cos(deg_to_rad(deg)), sin(deg_to_rad(deg)))) # a gale's carving
 	surface = SnowSurface3D.new()
-	surface.crust_plates = not OS.get_cmdline_user_args().has("--no-plates") # --no-plates: the field's ramps alone
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
-	if OS.get_cmdline_user_args().has("--close") or OS.get_cmdline_user_args().has("--prints-close"):
+	if OS.get_cmdline_user_args().has("--close"):
 		# Triangles as fine as the deformation texels (6 cm), for the pieces of a broken crust.
 		surface.detail_spacing = 0.0625
 	for a in OS.get_cmdline_user_args():
@@ -3372,8 +1536,6 @@ func _build_trail(cam: Camera3D) -> void:
 				surface.detail_spacing = float(v[2])
 		if a == "--gpu=0":
 			surface.gpu_simulation = false # the print field on the CPU (default: compute shaders where there is a GPU)
-		if a == "--no-clumps":
-			surface.clumps = false # no snow clumps beside the prints (ground detail)
 	add_child(surface)
 	# Movers, driven on set paths so the shot is the same each run: a walker whose two boots print the
 	# snow (boot boxes in the snow_deform group, 80 kg on 0.035 m2: Bekker), a cart wheel and two balls
@@ -3394,7 +1556,6 @@ func _build_trail(cam: Camera3D) -> void:
 	wm.material_override = dark
 	walker.add_child(wm)
 	walker.position = Vector3(-7.0, 1.5, 1.3)
-	walker.set_meta("world_contact_exclude", true) # only its boots print; the capsule is a stand-in
 	add_child(walker)
 	for k in 2:
 		var foot := Node3D.new()
@@ -3490,26 +1651,6 @@ func _build_trail(cam: Camera3D) -> void:
 	surface.sync_deformation()
 	var mv := surface.get_moved_volume()
 	print("print field on the %s: dent %.4f m3, rim %.4f m3" % ["GPU" if surface.is_gpu_active() else "CPU", mv.x, mv.y])
-	var clumps: SnowClumps3D = surface.get_clumps_node()
-	if clumps:
-		clumps.update_now()
-		print("snow clumps: %d lying, %d broken off; update %.2f ms mean, %.2f ms worst (%d updates)" % [clumps.get_clump_count(), clumps.get_spawned_total(), clumps.get_update_msec_mean(), clumps.get_update_msec_worst(), clumps.get_update_runs()])
-		if OS.get_cmdline_user_args().has("--away"):
-			# The field leaves for 300 m and comes back: the clumps are kept meanwhile and lie where they were.
-			var lying := clumps.get_clump_count()
-			var probe: Node3D = get_node("Probe")
-			probe.global_position = Vector3(300.0, 0, 0)
-			for i in 6:
-				await get_tree().physics_frame
-			clumps.update_now()
-			var away := clumps.get_parked_count()
-			probe.global_position = Vector3.ZERO
-			for i in 30:
-				await get_tree().physics_frame
-			surface.sync_deformation()
-			for i in 10:
-				clumps.update_now()
-			print("snow clumps away and back: %d lying, %d kept while away, %d lying again, %d still kept" % [lying, away, clumps.get_clump_count(), clumps.get_parked_count()])
 	if we and not raster:
 		we.environment.pathtracing_enabled = true
 	await _save_frame("")
@@ -3629,199 +1770,6 @@ func _build_windblown(cam: Camera3D) -> void:
 	get_tree().quit()
 
 
-func _build_roofs(cam: Camera3D) -> void:
-	# A shed with a metal roof on one side and shingles on the other after a day of snow (follow-up 50): the metal
-	# side has shed its load into a bank past the eave, the shingled side still holds it.
-	snow.drift_enabled = false
-	snow.wind_transport_enabled = false
-	sun.visible = true
-	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 60.0
-	sun.rotation_degrees = Vector3(-24.0, 200.0, 0.0)
-	_add_terrain(64.0, 128, Color(0.33, 0.31, 0.27), 6.0)
-	var wall_mat := StandardMaterial3D.new()
-	wall_mat.albedo_color = Color(0.42, 0.3, 0.22)
-	var walls := MeshInstance3D.new()
-	var wb := BoxMesh.new()
-	wb.size = Vector3(6, 3, 7)
-	wb.material = wall_mat
-	walls.mesh = wb
-	walls.position = Vector3(0, 1.5, 0)
-	add_child(walls)
-	var pitch := 35.0
-	var half := 3.0 / cos(deg_to_rad(pitch)) # the run of each face, eave to ridge
-	var roofs: Array[Node3D] = []
-	for side in [1, -1]:
-		var r := Node3D.new()
-		r.add_to_group("snow_roof")
-		r.set_meta("snow_roof_material", "metal" if side > 0 else "shingle")
-		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(half + 0.4, 0.08, 7.6)
-		var m := StandardMaterial3D.new()
-		m.albedo_color = Color(0.35, 0.38, 0.4) if side > 0 else Color(0.22, 0.2, 0.19)
-		m.metallic = 0.8 if side > 0 else 0.0
-		m.roughness = 0.4 if side > 0 else 0.9
-		bm.material = m
-		mi.mesh = bm
-		r.add_child(mi)
-		add_child(r)
-		# The face's middle sits half way down from the ridge, moved 0.2 m outward along the slope so the extra 0.4 m
-		# is all eave overhang and the two faces meet at the ridge.
-		var down := Vector3(side * cos(deg_to_rad(pitch)), -sin(deg_to_rad(pitch)), 0.0)
-		r.position = Vector3(0, 3.0 + 3.0 * tan(deg_to_rad(pitch)), 0) + down * (half * 0.5 + 0.2)
-		r.rotation_degrees = Vector3(0, 0, -side * pitch)
-		roofs.append(r)
-	var target := Marker3D.new()
-	target.name = "Probe"
-	add_child(target)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	snow.refresh_heights()
-	var sb: SnowBodies3D = snow.get_bodies()
-	weather.wind_speed = 1.0
-	weather.rain_rate = 4.0
-	weather.cloud_cover = 1.0
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	var hours := snow_hours if snow_hours >= 0.0 else 14.0 # the metal side let go in the 14th hour
-	# The shot is the moment after the first slide (or --snow hours): the metal side bare, the shingles still loaded.
-	var slid := false
-	for h in int(hours):
-		snow.advance(3600.0)
-		for k in 6:
-			sb.step(600.0)
-			slid = snow_hours < 0.0 and sb.get_roof_slides() > 0
-			if slid:
-				break
-		if slid:
-			break
-	weather.rain_rate = 0.0
-	weather.cloud_cover = 0.2
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	print("roofs: %d slides, %.0f kg landed; metal %.2f m, shingles %.2f m" % [sb.get_roof_slides(), sb.get_roof_landed(), sb.get_body_depth(roofs[0]), sb.get_body_depth(roofs[1])])
-	surface = SnowSurface3D.new()
-	surface.snow_cover = NodePath("../SnowCover3D")
-	surface.follow_target = NodePath("../Probe")
-	add_child(surface)
-	cam.position = Vector3(1.5, 11.0, 15.0) # high off the gable end: both faces and both eaves in view
-	cam.look_at(Vector3(1.0, 2.0, 0.0))
-	cam.fov = 50.0
-	for i in 8:
-		await get_tree().physics_frame
-	await _save_frame("")
-	get_tree().quit()
-
-
-func _build_dunes(cam: Camera3D) -> void:
-	# Two drifts on 20 cm of loose snow in a 14 m/s wind from the left (follow-up 48): after --hours (6) the big one
-	# is a snow dune crept downwind with a slip face, the small one flattened. --relief=0: the wind does not see them.
-	snow.drift_enabled = false
-	snow.wind_packing_enabled = false
-	snow.sastrugi_enabled = false
-	snow.drift_relief = not OS.get_cmdline_user_args().has("--relief=0")
-	sun.visible = true
-	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 60.0
-	sun.rotation_degrees = Vector3(-18.0, 160.0, 0.0) # low, from behind the camera's right: the slip faces in shade
-	_add_terrain(64.0, 128, Color(0.33, 0.31, 0.27), 6.0)
-	var target := Marker3D.new()
-	target.name = "Probe"
-	add_child(target)
-	await get_tree().physics_frame
-	snow.refresh_heights()
-	snow.add_snow(20.0, 100.0)
-	snow.add_drift(Vector3(-6.5, 0, -2.5), 5.0, 1.0, 250.0)
-	snow.add_drift(Vector3(-4.5, 0, 6.5), 2.0, 0.4, 250.0)
-	weather.temperature = -8.0
-	weather.wind_speed = 14.0
-	weather.wind_direction = Vector2(1, 0)
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	var hours := snow_hours if snow_hours >= 0.0 else 6.0
-	for i in int(round(hours * 6.0)):
-		snow.advance(600.0)
-	var prof := "dune profile (x: cm):"
-	for x in range(-12, 13, 2):
-		prof += " %d: %.0f" % [x, snow.get_depth_at(Vector3(x + 0.5, 0, -2.0)) * 100.0]
-	print(prof)
-	if OS.get_cmdline_user_args().has("--map"):
-		for z in range(-10, 11):
-			var row := "%3d " % z
-			for x in range(-14, 14):
-				row += "%3d" % int(snow.get_depth_at(Vector3(x + 0.5, 0, z + 0.5)) * 100.0)
-			print(row)
-	surface = SnowSurface3D.new()
-	surface.snow_cover = NodePath("../SnowCover3D")
-	surface.follow_target = NodePath("../Probe")
-	add_child(surface)
-	cam.position = Vector3(2.0, 3.2, 15.0)
-	cam.look_at(Vector3(-2.0, 0.4, 0.0))
-	cam.fov = 50.0
-	for i in 8:
-		await get_tree().physics_frame
-	await _save_frame("")
-	get_tree().quit()
-
-
-func _build_spindrift(cam: Camera3D) -> void:
-	# The cornice ridge (crest along z, 150 m up, a 50 degree lee face to the east) after 0.3 m of new snow, in a
-	# westerly gale: snow streams off the crest and out over the lee in plumes (follow-up 42).
-	snow.drift_enabled = false
-	sun.visible = true
-	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 800.0
-	sun.rotation_degrees = Vector3(-22.0, 150.0, 0.0) # low, from the south-east: the plumes lit from the side
-	_add_terrain(512.0, 256, Color(0.33, 0.31, 0.27), 32.0)
-	await get_tree().physics_frame
-	snow.refresh_heights()
-	snow.add_snow(30.0, 100.0)
-	var wind := 20.0
-	var at_s := 12.0
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--wind="):
-			wind = float(a.substr(7))
-		if a.begins_with("--at="):
-			at_s = float(a.substr(5))
-	weather.wind_speed = wind
-	weather.wind_direction = Vector2(1, 0)
-	weather.humidity = 0.7
-	weather.snap_to_settings()
-	weather.advance(1.0)
-	snow.advance(600.0)
-	print("spindrift: %.0f kg/s off the crest from %d sources at %.0f m/s" % [snow.get_spindrift_rate(), snow.get_spindrift_source_count(), wind])
-	print("  world wind at the crest %s" % str(WorldContracts.get_weather().wind_at(Vector3(0, 160, 0))))
-	for sd: Dictionary in snow.get_spindrift_sources().slice(0, 3):
-		print("  source at %s, %s m/s, %.0f kg/s" % [str(sd["position"]), str(sd["velocity"]), sd["rate"]])
-	# From the south along the ridge, a little above the crest: the ridge in profile, the wind blowing left to right
-	# and the plumes streaming off the crest over the lee against the sky.
-	cam.position = Vector3(70.0, 185.0, 470.0)
-	cam.far = 3000.0
-	cam.look_at(Vector3(70.0, 150.0, 0.0))
-	cam.fov = 50.0
-	var wenv: Environment = null
-	for c in get_children():
-		if c is WorldEnvironment:
-			wenv = c.environment
-	var traced := wenv != null and wenv.pathtracing_enabled
-	if traced:
-		wenv.pathtracing_enabled = false
-	# One physics tick a frame so Flow steps with the frames (as the powder view).
-	Engine.max_physics_steps_per_frame = 1
-	for i in int(at_s * Engine.physics_ticks_per_second):
-		await get_tree().physics_frame
-	var cloud: SnowPowderCloud3D = snow.get_spindrift()
-	print("spindrift: flow %s, %d emitters" % ["yes" if cloud and cloud.has_flow() else "no", cloud.get_active_sources() if cloud else 0])
-	if traced:
-		await _save_frame("_raster")
-		process_mode = Node.PROCESS_MODE_ALWAYS
-		get_tree().paused = true
-		wenv.pathtracing_enabled = true
-	await _save_frame("")
-	get_tree().quit()
-
-
 func _build_icicles(cam: Camera3D) -> void:
 	# A lean-to shed after a snowfall and three sunny days at -4 C: melt off its roof freezes at the eave.
 	snow.drift_enabled = false
@@ -3838,41 +1786,14 @@ func _build_icicles(cam: Camera3D) -> void:
 	floor_body.add_child(floor_shape)
 	add_child(floor_body)
 	var wood := _ground_material(Color(0.42, 0.28, 0.16), 1.0)
-	var shed := not OS.get_cmdline_user_args().has("--no-shed") # --no-shed: the icicles alone in the air
-	if shed:
-		_prop(BoxMesh.new(), Vector3(5.0, 0.12, 3.4), Vector3(-2.5, 2.6, -1.5), Vector3(10, 0, 0), wood)
-	for p in ([Vector3(-4.8, 1.25, -0.1), Vector3(-0.2, 1.25, -0.1), Vector3(-4.8, 1.25, -2.9), Vector3(-0.2, 1.25, -2.9)] if shed else []):
+	_prop(BoxMesh.new(), Vector3(5.0, 0.12, 3.4), Vector3(-2.5, 2.6, -1.5), Vector3(10, 0, 0), wood)
+	for p in [Vector3(-4.8, 1.25, -0.1), Vector3(-0.2, 1.25, -0.1), Vector3(-4.8, 1.25, -2.9), Vector3(-0.2, 1.25, -2.9)]:
 		var post := MeshInstance3D.new()
 		post.mesh = BoxMesh.new()
 		post.scale = Vector3(0.15, 2.5, 0.15)
 		post.position = p
 		post.material_override = wood
 		add_child(post)
-	var hero := OS.get_cmdline_user_args().has("--hero")
-	if hero and OS.get_cmdline_user_args().has("--wall"):
-		# --hero --wall: the shed's front wall, set back under the eave as a house wall is: vertical boards 14 cm wide
-		# with 1 cm gaps, each its own weathered tone, so the ice has a lit, lined ground to refract.
-		var backing := MeshInstance3D.new()
-		backing.mesh = BoxMesh.new()
-		backing.scale = Vector3(4.6, 2.37, 0.02)
-		backing.position = Vector3(-2.5, 1.185, -0.56)
-		backing.material_override = _ground_material(Color(0.12, 0.09, 0.07), 1.0)
-		add_child(backing)
-		var tones: Array[StandardMaterial3D] = []
-		for k in 5:
-			var v := 0.85 + 0.07 * k
-			tones.append(_ground_material(Color(0.5 * v, 0.41 * v, 0.31 * v), 1.0))
-		var bx := -4.75
-		var nb := 0
-		while bx < -0.25:
-			var board := MeshInstance3D.new()
-			board.mesh = BoxMesh.new()
-			board.scale = Vector3(0.14, 2.37, 0.022)
-			board.position = Vector3(bx + 0.07, 1.185, -0.5)
-			board.material_override = tones[(nb * 7 + nb / 3) % tones.size()]
-			add_child(board)
-			bx += 0.15
-			nb += 1
 	weather.rebake_shelter()
 	await get_tree().physics_frame
 	await get_tree().physics_frame
@@ -3881,118 +1802,21 @@ func _build_icicles(cam: Camera3D) -> void:
 	# The roof's front edge: 1.7 m out from its middle, dropped by its 10 degree slope, under its thickness.
 	# Rooted a little inside the roof.
 	var eave_y := 2.6 - 1.7 * sin(deg_to_rad(10.0)) - 0.03
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--ice-drop="): # --ice-drop=M: the edge M m below the roof (roots must still join it)
-			eave_y -= float(a.substr(11))
 	var ice := SnowIcicles3D.new()
 	ice.name = "Icicles"
 	ice.spacing = 0.12
-	# --hero implies --dense: a week of melt at 5 cm sites, so there are long icicles and fused pairs to frame.
-	var dense: bool = OS.get_cmdline_user_args().has("--dense") or OS.get_cmdline_user_args().has("--hero")
-	if dense:
-		ice.spacing = 0.05 # --dense: a dripping stretch, sites close enough that neighbours bridge into curtains
-	if OS.get_cmdline_user_args().has("--no-surface") and surface != null:
-		surface.visible = false # --no-surface: the deep-snow surface hidden (what the ice shows without it)
-	if OS.get_cmdline_user_args().has("--plain-ice"):
-		# --plain-ice: the ice's settings without its ripple normal map (what the map does to the trace)
-		var pim := StandardMaterial3D.new()
-		pim.albedo_color = Color(0.97, 0.99, 1.0)
-		pim.roughness = 0.06
-		pim.metallic_specular = 0.335
-		pim.transmission_enabled = true
-		pim.transmission_amount = 1.0
-		pim.transmission_ior = 1.31
-		for a in OS.get_cmdline_user_args():
-			if a.begins_with("--ice-ior="):
-				pim.transmission_ior = float(a.substr(10))
-		pim.transmission_thickness = 0.04
-		ice.material = pim
-	if OS.get_cmdline_user_args().has("--hidden-ice"):
-		# --hidden-ice: the clear ice fully transparent, the core alone (is the core there for the trace?)
-		var hm := StandardMaterial3D.new()
-		hm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-		hm.alpha_scissor_threshold = 0.5
-		hm.albedo_color = Color(1, 1, 1, 0)
-		ice.material = hm
-	if OS.get_cmdline_user_args().has("--no-curtains"):
-		ice.curtains = false # --no-curtains: no webs between fused neighbours
-	if OS.get_cmdline_user_args().has("--no-core"):
-		ice.hazy_core = false # --no-core: clear ice only (checks what the core adds)
-	if OS.get_cmdline_user_args().has("--black-core"):
-		var black := StandardMaterial3D.new() # --black-core: shows where the trace and raster see the core
-		black.albedo_color = Color(0, 0, 0)
-		ice.core_material = black
 	ice.edge = PackedVector3Array([Vector3(-4.95, eave_y, 0.12), Vector3(-0.05, eave_y, 0.12)])
 	add_child(ice)
 	# Three days: six hours of melt off the sunny roof (0.3 mm/h over its 3.4 m) at -4 C, then a night at -8 C.
-	# --wind=S: a steady wind along the eave by day (it leans the tips; follow-up 37).
-	var day_wind := 0.5
-	if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--wind=")):
-		day_wind = wind
-		ice.wind_direction = Vector3(-1, 0, 0)
-	# --dense: a week of it (long, thick icicles, rippled).
-	for day in (7 if dense else 3):
-		ice.grow(6.0, -4.0, day_wind, 0.3 * 3.4)
+	for day in 3:
+		ice.grow(6.0, -4.0, 0.5, 0.3 * 3.4)
 		ice.grow(18.0, -8.0, 0.5, 0.0)
-	# The last afternoon's melt still running: the tips drip.
-	ice.grow(0.25, -4.0, day_wind, 0.3 * 3.4)
-	var rmax := 0.0
-	for k in ice.get_icicle_count():
-		rmax = maxf(rmax, ice.get_icicle_radius(k))
-	print("icicles: %d sites, longest %.2f m, thickest %.1f cm across, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), rmax * 200.0, ice.get_ice_mass()])
-	var n_long := 0
-	var n_stub := 0
-	var n_bare := 0
-	for k in ice.get_icicle_count():
-		var l := ice.get_icicle_length(k)
-		if l >= 0.25:
-			n_long += 1
-		elif l <= 0.0:
-			n_bare += 1
-		elif l < 0.08:
-			n_stub += 1
-	print("icicles: %d long (25 cm or more), %d stubs (under 8 cm), %d bare" % [n_long, n_stub, n_bare])
+	print("icicles: %d sites, longest %.2f m, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), ice.get_ice_mass()])
 	# At the icicles' height along the eave, the sky and the field behind them.
 	cam.position = Vector3(-0.2, 2.05, 1.1)
 	cam.look_at(Vector3(-2.2, 2.1, 0.17))
 	cam.fov = 50.0
-	if hero:
-		# From under the roof, 1.7 m back from the eave and a little above the icicles' middle, looking out
-		# at the snow: a run of them root to tip, backlit by the low sun, the longest fused pair (neighbours
-		# bridged at the root) in the middle. Shoot with --resolution 1920x1080. (--wall: from outside, head on,
-		# against the shed's boarded front.)
-		var best := -1
-		var best_len := 0.0
-		for k in ice.get_icicle_count() - 1:
-			var a := ice.get_icicle_position(k)
-			var b := ice.get_icicle_position(k + 1)
-			var ra := ice.get_icicle_radius(k)
-			var rb := ice.get_icicle_radius(k + 1)
-			var l := minf(ice.get_icicle_length(k), ice.get_icicle_length(k + 1))
-			var gap := Vector2(a.x - b.x, a.z - b.z).length() - ra - rb
-			if gap > 0.0 and gap < minf(ra, rb) and a.x > -3.6 and a.x < -1.4 and l > best_len:
-				best = k
-				best_len = l
-		var mid := Vector3(-2.5, eave_y - 0.25, 0.12)
-		if best >= 0:
-			mid = (ice.get_icicle_position(best) + ice.get_icicle_position(best + 1)) * 0.5
-			mid.y -= 0.5 * maxf(ice.get_icicle_length(best), ice.get_icicle_length(best + 1))
-			print("hero pair %d/%d at x %.2f, %.2f m" % [best, best + 1, mid.x, best_len])
-		if OS.get_cmdline_user_args().has("--wall"):
-			cam.position = mid + Vector3(0.45, -0.08, 1.62)
-		else:
-			# From outside the eave by default; --under: from under the roof (the path tracer misreads a camera
-			# under a thin roof as inside a medium until rt_camera_medium is fixed, so raster only for now).
-			cam.position = mid + Vector3(-0.4, 0.4, 1.55)
-			if OS.get_cmdline_user_args().has("--under"):
-				cam.position = mid + Vector3(-0.4, 0.4, -1.55) # under the roof, 2.45 m up
-			for a in OS.get_cmdline_user_args():
-				if a.begins_with("--cam-offset="): # --cam-offset=x,y,z: the camera from the hero pair (tests)
-					var c := a.substr(13).split_floats(",")
-					cam.position = mid + Vector3(c[0], c[1], c[2])
-		cam.look_at(mid)
-		cam.fov = 26.0
-	elif OS.get_cmdline_user_args().has("--close"):
+	if OS.get_cmdline_user_args().has("--close"):
 		# The longest icicles at 100%: the ripples, the clear sheath and the hazy core.
 		cam.position = Vector3(-0.1, 2.1, 0.75)
 		cam.look_at(Vector3(-0.6, 2.12, 0.17))
@@ -4065,321 +1889,6 @@ func _build_shelter(cam: Camera3D) -> void:
 	get_tree().quit()
 
 
-# A frozen lake at the mountain's foot from its shore: two weeks of frost, then a light snow on the ice.
-func _build_lake(cam: Camera3D) -> void:
-	sun.visible = true
-	sun.shadow_enabled = true
-	sun.rotation_degrees = Vector3(-18.0, 120.0, 0.0)
-	_add_terrain(512.0, 256, Color(0.33, 0.31, 0.27), 64.0)
-	var level: float = ground.get_height(Vector3(200.0, 0, 0))
-	_lake(level)
-	# The open water under the ice (dark, smooth), for where the ice is thin or gone.
-	var water := MeshInstance3D.new()
-	var pm := PlaneMesh.new()
-	pm.size = Vector2(512.0, 512.0)
-	water.mesh = pm
-	var wm := StandardMaterial3D.new()
-	wm.albedo_color = Color(0.02, 0.04, 0.05)
-	wm.roughness = 0.04
-	water.material_override = wm
-	water.position = Vector3(0, level, 0)
-	add_child(water)
-	await get_tree().physics_frame
-	snow.refresh_heights()
-	snow.advance(14.0 * 24.0 * 3600.0)
-	_precipitate(snow_hours if snow_hours >= 0.0 else 1.5, 1.0)
-	snow.get_lake_ice().rebuild()
-	# Stand on the shore looking out along it.
-	var x := 150.0
-	while x < 250.0 and ground.get_height(Vector3(x, 0, 0)) > level + 0.8:
-		x += 1.0
-	var at := Vector3(x - 6.0, 0, 0)
-	cam.position = at + Vector3(0, ground.get_height(at) + 1.7, 0)
-	cam.look_at(Vector3(x + 40.0, level, -45.0))
-	cam.fov = 55.0
-	cam.far = 2000.0
-	var p := Vector3(x + 30.0, 0, 0)
-	print("lake: level %.2f m, ice %.1f cm (%.1f cm white), snow %.1f mm, %d cells drawn" % [level, snow.get_ice_thickness_at(p) * 100.0, snow.get_white_ice_thickness_at(p) * 100.0, snow.get_swe_at(p), snow.get_lake_ice().get_quad_count()])
-	await _save_frame("")
-
-
-func _build_avalanche(cam: Camera3D) -> void:
-	# A metre of new snow on a 38 degree face: it releases, runs out over the flat and piles at the toe. --before
-	# shoots the loaded face before it goes.
-	snow.drift_enabled = false
-	snow.slide_enabled = false
-	sun.visible = true
-	sun.shadow_enabled = true
-	sun.rotation_degrees = Vector3(-30.0, -60.0, 0.0)
-	_add_terrain(snow.extent, int(snow.extent / 2.0), Color(0.33, 0.31, 0.27), 16.0)
-	# The deposit near the camera as geometry (the deep-snow surface), its blocks as clumps.
-	var probe := Marker3D.new()
-	probe.name = "Probe"
-	probe.position = Vector3(15.0, 0.0, 0.0)
-	add_child(probe)
-	surface = SnowSurface3D.new()
-	surface.snow_cover = NodePath("../SnowCover3D")
-	surface.follow_target = NodePath("../Probe")
-	surface.extent = 200.0 # the release and the whole run-out as deep-snow geometry
-	surface.deform_extent = 96.0 # and the debris granules over the whole deposit (they live in the print field)
-	add_child(surface)
-	await get_tree().physics_frame
-	var av: SnowAvalanche3D = snow.get_avalanches()
-	var wet := OS.get_cmdline_user_args().has("--wet")
-	var triggered := wet or OS.get_cmdline_user_args().has("--triggered")
-	var powder := OS.get_cmdline_user_args().has("--powder")
-	if OS.get_cmdline_user_args().has("--before") or triggered or powder:
-		av.natural_release = false
-	if triggered or powder:
-		# An old, bonded pack under the storm (60 cm a week and more old): the slab breaks away from it, leaving a
-		# crown step and a white bed, as slabs do.
-		snow.add_snow(90.0, 150.0)
-		snow.advance(8.0 * 24.0 * 3600.0)
-		await get_tree().physics_frame
-	snow.add_snow(30.0, 100.0)
-	await get_tree().physics_frame
-	snow.add_snow(90.0, 90.0)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	if wet:
-		# --wet: a spring thaw (12 h at +5 C) soaks the storm snow, then the slab goes as a wet slide.
-		await _thaw(5.0, 12.0)
-	if triggered:
-		# --triggered (dry) and --wet release the same face, so the two compare.
-		av.trigger(Vector3(-40.0, 0, 0), 30.0) # inside the face: the crown breaks across the slope, below the ridge
-		print("triggered slide: %.0f%% wet" % (av.get_flow_wetness() * 100.0))
-	if powder:
-		# A wide dry slab across the face in front of the camera (left to itself the face lets go wherever it is
-		# weakest, here off to both sides of the frame, and its cloud with it).
-		# One physics tick a frame: Flow steps once a frame, so on a slow renderer the gas keeps pace with the slide
-		# (with several ticks a frame it falls behind and the cloud is only the emitters' trail).
-		Engine.max_physics_steps_per_frame = 1
-		if OS.get_cmdline_user_args().has("--no-gas"):
-			# --no-gas: the snow alone (the slide, its bed and crown), quick: no Flow to keep pace with.
-			av.get_powder_cloud().enabled = false
-			Engine.max_physics_steps_per_frame = 32
-		var pflow: Node = av.get_powder_cloud().get_flow()
-		if pflow:
-			pflow.set("scattering_resolution", 0) # full: quarter averages away the billows at still sizes
-			for a in OS.get_cmdline_user_args():
-				if a.begins_with("--flow-set="):
-					# --flow-set=prop=value[;prop=value]: try PhysXFlow3D settings on the powder cloud.
-					for kv in a.substr(11).split(";"):
-						var pv := kv.split("=")
-						pflow.set(pv[0], str_to_var(pv[1]))
-		av.trigger(Vector3(-40.0, 0, 0), 60.0)
-		surface.extent = 320.0 # the deep-snow geometry over the whole face the camera sees, out to the camera
-		# Mid-run in real time, so PhysX Flow steps the cloud with it: --at=S seconds after release (default 9).
-		var at_s := 9.0
-		for a in OS.get_cmdline_user_args():
-			if a.begins_with("--at="):
-				at_s = float(a.substr(5))
-		# Stepped under raster (path tracing every frame would take hours here), then frozen for the path-traced still.
-		var wenv: Environment = get_viewport().find_world_3d().environment
-		if wenv == null:
-			for c in get_children():
-				if c is WorldEnvironment:
-					wenv = c.environment
-		var traced := wenv != null and wenv.pathtracing_enabled
-		if traced:
-			wenv.pathtracing_enabled = false
-		var frames := 0
-		while av.is_running() and frames < int(at_s * Engine.physics_ticks_per_second):
-			await get_tree().physics_frame
-			frames += 1
-		var cloud := av.get_powder_cloud()
-		print("powder: %.1f t up, %.1f t in the air, Flow %s, %d sources, front %.1f m/s" % [av.get_powder_taken() / 1000.0, av.get_suspended_mass() / 1000.0, cloud.has_flow(), cloud.get_active_sources(), av.get_max_speed()])
-		# Back and up far enough to hold the whole front (--head-on: from straight down the track, flank to flank).
-		if OS.get_cmdline_user_args().has("--head-on"):
-			cam.position = Vector3(92.0, snow.get_ground_height_at(Vector3(92, 0, 12)) + 15.0, 12.0)
-			cam.look_at(Vector3(-15.0, 12.0, 0.0))
-		else:
-			# Three-quarters from the side, so the head's height and the cloud trailing back up the track both show.
-			cam.position = Vector3(100.0, snow.get_ground_height_at(Vector3(100, 0, 115)) + 28.0, 115.0)
-			cam.look_at(Vector3(-25.0, 16.0, -10.0))
-		cam.fov = 66.0
-		cam.far = 1000.0
-		sun.directional_shadow_max_distance = 400.0
-		# Shot with the sun over the camera's right shoulder (the slide ran under (-30, -60), behind the face): from
-		# behind the face, the bowl's rim past the edge of the bench terrain shades the run-out in one renderer and
-		# not the other. Light on the camera's side keeps every shadow inside the scene.
-		sun.rotation_degrees = Vector3(-40.0, 40.0, 0.0)
-		if OS.get_cmdline_user_args().has("--crown"):
-			_crown_camera(cam)
-		if traced:
-			# The raster frame of the same cloud first (_raster.png beside --out): Flow is not bit-for-bit the
-			# same from run to run, so a raster run and a traced run do not show one cloud.
-			await _save_frame("_raster")
-			process_mode = Node.PROCESS_MODE_ALWAYS
-			get_tree().paused = true
-			wenv.pathtracing_enabled = true
-		await _save_frame("")
-		return
-	var t := 0.0
-	while av.is_running() and t < 200.0:
-		av.step(0.25)
-		t += 0.25
-	print("avalanche: %d released, %.0f m3, run-out %.0f m, %.1f m/s, toe %.2f m" % [av.get_release_count(), av.get_released_volume(), av.get_run_out(), av.get_max_speed(), snow.get_depth_at(Vector3(40, 0, 0))])
-	# Shot with the sun 55 degrees up from behind the ridge (the slide ran under 30 degrees, which melts the same
-	# but left the whole 38 degree face in shade): it rakes the face, the crown wall stands in its own shade and
-	# throws a band of shadow down the bed.
-	sun.rotation_degrees = Vector3(-55.0, -60.0, 0.0)
-	cam.position = Vector3(42.0, snow.get_ground_height_at(Vector3(42, 0, 9)) + snow.get_depth_at(Vector3(42, 0, 9)) + 2.2, 9.0)
-	cam.look_at(Vector3(-25.0, 18.0, 0.0))
-	cam.fov = 55.0
-	if OS.get_cmdline_user_args().has("--close"):
-		# --close: the debris at the toe from 20 m.
-		cam.position = Vector3(22.0, snow.get_ground_height_at(Vector3(22, 0, 14)) + snow.get_depth_at(Vector3(22, 0, 14)) + 3.0, 14.0)
-		cam.look_at(Vector3(2.0, 1.0, 0.0))
-	if OS.get_cmdline_user_args().has("--crown"):
-		_crown_camera(cam)
-	if OS.get_cmdline_user_args().has("--toe"):
-		# --toe: the deposit's tongue from above and in front, to see its outline.
-		cam.position = Vector3(45.0, 22.0, 30.0)
-		cam.look_at(Vector3(5.0, 0.0, 0.0))
-		cam.fov = 50.0
-	cam.far = 1000.0
-	await _save_frame("")
-
-
-func _crown_camera(cam: Camera3D) -> void:
-	# --crown: the crown wall from 14 m down the bed (found along z = 0 as the biggest drop in depth).
-	var best := 0.0
-	var cx := -60.0
-	for i in 120:
-		var x := -100.0 + i * 0.5
-		var drop := snow.get_depth_at(Vector3(x, 0, 0)) - snow.get_depth_at(Vector3(x + 0.5, 0, 0))
-		if drop > best:
-			best = drop
-			cx = x
-	# --crown-far: from 40 m off, three-quarters from the side and above, as the wide shots see it.
-	var far := OS.get_cmdline_user_args().has("--crown-far")
-	var gx := cx + (30.0 if far else 14.0)
-	var gz := 28.0 if far else 6.0
-	cam.position = Vector3(gx, snow.get_ground_height_at(Vector3(gx, 0, gz)) + snow.get_depth_at(Vector3(gx, 0, gz)) + (10.0 if far else 3.0), gz)
-	cam.look_at(Vector3(cx, snow.get_ground_height_at(Vector3(cx, 0, 0)) + 0.5, -2.0))
-	print("crown at x %.1f, %.2f m step" % [cx, best])
-
-
-func _build_bodies(cam: Camera3D) -> void:
-	# Three crates after six hours of snow: one left out (it carries the ground's load and the fall on it), one
-	# just driven in on a trailer (the wind of its speed and the bumps took most of it), one from a shed (bare).
-	snow.drift_enabled = false
-	sun.visible = true
-	sun.shadow_enabled = true
-	sun.rotation_degrees = Vector3(-35.0, -40.0, 0.0)
-	_add_terrain(32.0, 128, Color(0.36, 0.33, 0.28), 2.0)
-	_precipitate(6.0, 2.0)
-	var crates: Array[RigidBody3D] = []
-	for i in 3:
-		var b := _body_box(Vector3(-1.6 + 1.6 * i, ground.get_height(Vector3(-1.6 + 1.6 * i, 0, 0)) + 0.5, 0))
-		var m := (b.get_node("Mesh") as MeshInstance3D).mesh.material as StandardMaterial3D
-		m.albedo_color = Color(0.42, 0.3, 0.18)
-		m.roughness = 0.8
-		crates.append(b)
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	var sb := snow.get_bodies()
-	sb.update_rate = 0.1
-	sb.step(0.1)
-	sb.set_body_depth(crates[1], 0.006)
-	sb.set_body_depth(crates[2], 0.0)
-	sb.step(0.1)
-	print("bodies: %.3f m, %.3f m, %.3f m on the crates (ground %.3f m)" % [sb.get_body_depth(crates[0]), sb.get_body_depth(crates[1]), sb.get_body_depth(crates[2]), snow.get_depth_at(Vector3())])
-	cam.position = Vector3(0.6, ground.get_height(Vector3(0, 0, 3.4)) + 3.4, 3.4)
-	cam.look_at(Vector3(0, ground.get_height(Vector3()) + 0.6, 0))
-	cam.fov = 50.0
-	await _save_frame("")
-
-
-func _build_rime(cam: Camera3D) -> void:
-	# A fence on a hill in freezing fog: posts, rails, a wire and a bare shrub after a day of 8 m/s wind at -6 C
-	# through 0.25 g/m3 of cloud water. Rime feathers point into the wind, thickest on the wire, the twigs and the
-	# rails' windward edges.
-	snow.drift_enabled = false
-	sun.visible = true
-	sun.shadow_enabled = true
-	sun.rotation_degrees = Vector3(-25.0, 140.0, 0.0)
-	_add_terrain(32.0, 128, Color(0.36, 0.33, 0.28), 2.0)
-	var wood := _ground_material(Color(0.36, 0.27, 0.19), 1.0)
-	var metal := StandardMaterial3D.new()
-	metal.albedo_color = Color(0.3, 0.3, 0.32)
-	metal.metallic = 0.8
-	metal.roughness = 0.5
-	var fence := Node3D.new()
-	fence.name = "Fence"
-	fence.add_to_group("rime")
-	add_child(fence)
-	for k in 3:
-		var post := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(0.08, 1.3, 0.08)
-		bm.subdivide_height = 12
-		post.mesh = bm
-		post.position = Vector3(0.0, 0.65, -1.6 + 1.6 * k)
-		post.material_override = wood
-		fence.add_child(post)
-	for y in [0.55, 1.05]:
-		var rail := MeshInstance3D.new()
-		var rm := BoxMesh.new()
-		rm.size = Vector3(0.03, 0.08, 3.4)
-		rm.subdivide_depth = 40
-		rail.mesh = rm
-		rail.position = Vector3(-0.055, y, 0.0)
-		rail.material_override = wood
-		fence.add_child(rail)
-	var wire := MeshInstance3D.new()
-	var wm := CylinderMesh.new()
-	wm.top_radius = 0.0025
-	wm.bottom_radius = 0.0025
-	wm.height = 3.4
-	wm.rings = 60
-	wm.radial_segments = 8
-	wire.mesh = wm
-	wire.rotation_degrees = Vector3(90.0, 0.0, 0.0)
-	wire.position = Vector3(-0.045, 1.25, 0.0)
-	wire.material_override = metal
-	fence.add_child(wire)
-	# A bare shrub: twigs fanning up from a root, 4 to 8 mm thick.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 7
-	for k in 14:
-		var twig := MeshInstance3D.new()
-		var tm := CylinderMesh.new()
-		var r := rng.randf_range(0.002, 0.004)
-		tm.top_radius = r * 0.5
-		tm.bottom_radius = r
-		tm.height = rng.randf_range(0.5, 0.9)
-		tm.rings = 10
-		tm.radial_segments = 6
-		twig.mesh = tm
-		var tilt := rng.randf_range(10.0, 45.0)
-		var turn := rng.randf_range(0.0, 360.0)
-		twig.rotation_degrees = Vector3(tilt, turn, 0.0)
-		twig.position = Vector3(0.9, 0.0, 0.8) + twig.transform.basis.y * tm.height * 0.5
-		twig.material_override = wood
-		fence.add_child(twig)
-	var rime := SnowRime3D.new()
-	rime.name = "Rime"
-	add_child(rime)
-	await get_tree().physics_frame
-	rime.refresh_targets()
-	var hours := 24
-	for h in hours:
-		rime.grow(1.0, -6.0, Vector3(8.0, 0.0, 0.0), 0.25)
-	print("rime: %d parts, %d feathers, density %.0f kg/m3, wire %.1f cm, post %.1f cm, %.1f mm/h at the most" % [rime.get_target_count(), rime.get_feather_count(), rime.get_last_density(), rime.get_thickness_at(Vector3(-0.05, 1.25, 0.4)) * 100.0, rime.get_thickness_at(Vector3(-0.04, 0.3, 0.0)) * 100.0, rime.get_last_rate() * 1000.0])
-	# From upwind and to the side: the feathers stand out toward the camera, into the wind.
-	cam.position = Vector3(-1.7, 1.35, 1.5)
-	cam.look_at(Vector3(0.1, 0.85, 0.3))
-	cam.fov = 40.0
-	if OS.get_cmdline_user_args().has("--close"):
-		cam.position = Vector3(-0.55, 1.2, 0.6)
-		cam.look_at(Vector3(-0.06, 1.12, 0.05))
-		cam.fov = 30.0
-	await _save_frame("")
-	get_tree().quit()
-
-
 func _build_sparkle(cam: Camera3D) -> void:
 	snow.drift_enabled = false
 	sun.visible = true
@@ -4431,17 +1940,8 @@ func _build_sparkle(cam: Camera3D) -> void:
 		weather.temperature = 3.0
 		weather.snap_to_settings()
 		weather.advance(1.0)
-		for a in OS.get_cmdline_user_args():
-			if a.begins_with("--sun-pitch="): # the melt under this sun (suncups need a high one)
-				sun.rotation_degrees.x = -float(a.substr(12))
 		snow.advance(melt_hours * 3600.0)
-	if hoar_mm > 0.0:
-		# A clear calm night's surface hoar over the field (SnowCover3D.hoar_enabled grows it; set here so the
-		# look is tested alone): the crystals' upright plates flash in the low sun.
-		snow.add_hoar(hoar_mm)
-		snow.advance(1.0)
 	var p := Vector3(0, 0, 0)
-	print("sparkle: hoar %.1f mm, suncups %.3f m" % [snow.get_hoar_at(p), snow.get_suncup_relief_at(p)])
 	print("sparkle: depth %.2f m, density %.0f, albedo %.2f" % [snow.get_depth_at(p), snow.get_density_at(p), snow.get_albedo_at(p)])
 	await _save_frame("")
 	# The share of glinting pixels: over the snow below the horizon, those a fifth brighter than the ring of
@@ -4502,8 +2002,6 @@ func _build_snowfall(cam: Camera3D) -> void:
 	weather.rain_rate = 3.0
 	weather.cloud_cover = 1.0
 	weather.wind_speed = wind
-	if air < INF:
-		weather.temperature = air
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	var deep := SnowSurface3D.new()
@@ -4558,7 +2056,6 @@ func _build_snowfall(cam: Camera3D) -> void:
 		if steps > 0:
 			await _save_frame("_%03d" % s)
 	print("visibility %.0f m in the falling snow; blowing snow %.4f /m at 1 m (%.0f m), layer %.2f m deep; haze at 1 m %.4f /m" % [fall.get_visibility(), fall.get_blowing_extinction(), 3.912 / maxf(fall.get_blowing_extinction(), 1e-6), fall.get_blowing_height_scale(), weather.get_precipitation_extinction_at(Vector3(0, weather.get_ground_height() + 1.0, 0))])
-	print("sleet: air %.1f C, melted share %.2f, aggregates x%.2f" % [snow.get_air_temperature_at(Vector3(0, 1, 0)), fall.get_melted_share(), fall.get_aggregate()])
 	print("snowfall %.2f mm/h, %d flakes, blowing %.0f%% at %.1f m/s (threshold %.1f)" % [fall.get_snowfall_rate(), fall.get_visible_flakes(), fall.get_blowing_amount() * 100.0, fall.get_wind_speed_10m(), fall.get_threshold_wind()])
 	if we and not raster:
 		we.environment.pathtracing_enabled = true
@@ -4614,70 +2111,8 @@ func _physics_process(delta: float) -> void:
 
 
 func _save_frame(suffix: String) -> void:
-	# Light probes for raster and path traced comparisons: --no-sun-shadow, --no-sun (the sky alone), --no-sun-specular,
-	# --sun-pitch=D (the sun's elevation), --plain-ground [--white-lambert], --sun-only.
-	if sun != null and OS.get_cmdline_user_args().has("--no-sun-shadow"):
-		sun.shadow_enabled = false
-	if sun != null and OS.get_cmdline_user_args().has("--no-sun"):
-		sun.visible = false
-	if sun != null and OS.get_cmdline_user_args().has("--no-sun-specular"):
-		sun.light_specular = 0.0
-	if OS.get_cmdline_user_args().has("--sun-only"):
-		# The sun alone, untonemapped: a black sky with no ambient (linear values to compare).
-		var wenv: Environment = get_viewport().find_world_3d().environment
-		wenv.background_mode = Environment.BG_COLOR
-		wenv.background_color = Color(0, 0, 0)
-		wenv.ambient_light_source = Environment.AMBIENT_SOURCE_DISABLED
-		wenv.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
-		wenv.tonemap_mode = Environment.TONE_MAPPER_LINEAR
-		wenv.set("pathtracing_sky_shader_enabled", false)
-		wenv.sky = null
-	if OS.get_cmdline_user_args().has("--plain-ground"):
-		# A plain StandardMaterial3D plane with the snow's albedo, roughness and specular over the view: is a gap
-		# the snow material's or the renderer's?
-		var plane := MeshInstance3D.new()
-		var pm := PlaneMesh.new()
-		pm.size = Vector2(400.0, 400.0)
-		plane.mesh = pm
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = Color(0.83, 0.83, 0.83)
-		mat.roughness = 0.7
-		mat.metallic_specular = 0.335
-		if OS.get_cmdline_user_args().has("--white-lambert"):
-			mat.albedo_color = Color(1, 1, 1)
-			mat.diffuse_mode = BaseMaterial3D.DIFFUSE_LAMBERT
-			mat.metallic_specular = 0.0
-		plane.material_override = mat
-		plane.position.y = 0.5
-		add_child(plane)
-		for i in 4:
-			await get_tree().process_frame
-	for a in OS.get_cmdline_user_args():
-		if sun != null and a.begins_with("--sun-pitch="):
-			sun.rotation_degrees.x = -float(a.substr(12)) # the sun's elevation in degrees
-	for i in (40 if get_viewport().use_taa else 12): # TAA converges over some frames
+	for i in 12:
 		await get_tree().process_frame
-	# Path traced: wait until every displaced surface has been captured for the trace (a big deep-snow mesh
-	# takes several frames), or the still shows it flat.
-	var waited := 0
-	while not raster and waited < 600 and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_PENDING_SURFACES) > 0:
-		await get_tree().process_frame
-		waited += 1
-	if waited > 0:
-		print("waited %d frames for the trace's surfaces" % waited)
-	# --time=N: the viewport's mean GPU time over N frames (timestamp queries), for cost comparisons.
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--time="):
-			var vp := get_viewport().get_viewport_rid()
-			RenderingServer.viewport_set_measure_render_time(vp, true)
-			for i in 3:
-				await RenderingServer.frame_post_draw
-			var gpu := 0.0
-			var n := int(a.substr(7))
-			for i in n:
-				await RenderingServer.frame_post_draw
-				gpu += RenderingServer.viewport_get_measured_render_time_gpu(vp)
-			print("gpu time: %.2f ms a frame over %d frames" % [gpu / maxf(n, 1), n])
 	await RenderingServer.frame_post_draw
 	if not out.is_empty():
 		var path := out.replace(".png", suffix + ".png")

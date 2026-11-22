@@ -51,7 +51,7 @@ public:
 	virtual void global_shader_parameters_load_settings(bool p_load_textures = true) = 0;
 	virtual void global_shader_parameters_clear() = 0;
 
-	virtual int32_t global_shader_parameters_instance_allocate(RID p_instance, int p_count) = 0; // p_count: slots (its highest instance uniform index + 1)
+	virtual int32_t global_shader_parameters_instance_allocate(RID p_instance) = 0;
 	virtual void global_shader_parameters_instance_free(RID p_instance) = 0;
 	virtual void global_shader_parameters_instance_update(RID p_instance, int p_index, const Variant &p_value, int p_flags_count = 0) = 0;
 

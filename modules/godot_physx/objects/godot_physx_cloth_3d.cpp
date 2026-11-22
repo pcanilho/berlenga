@@ -336,8 +336,7 @@ void GodotPhysXCloth3D::apply_wind(const Vector3 &p_wind, float p_drag, float p_
 	}
 
 	if ((p_drag > 0.0f || p_lift > 0.0f) && p_wind.length_squared() >= 0.0f) {
-		const PxVec3 wind_base = to_px(p_wind);
-		const bool has_air = air.size() == (int)vertex_count;
+		const PxVec3 wind = to_px(p_wind);
 		for (uint32_t t = 0; t + 2 < indices.size(); t += 3) {
 			const uint32_t a = indices[t];
 			const uint32_t b = indices[t + 1];
@@ -353,7 +352,6 @@ void GodotPhysXCloth3D::apply_wind(const Vector3 &p_wind, float p_drag, float p_
 			const PxVec3 n = cr / twice_area;
 			const float area = 0.5f * twice_area;
 			const PxVec3 v_tri = (hv[a].getXYZ() + hv[b].getXYZ() + hv[c].getXYZ()) * (1.0f / 3.0f);
-			const PxVec3 wind = has_air ? wind_base + to_px((air[a] + air[b] + air[c]) / 3.0f) : wind_base;
 			const PxVec3 rel = wind - v_tri;
 			const float vn = n.dot(rel);
 			const PxVec3 tangential = rel - n * vn;

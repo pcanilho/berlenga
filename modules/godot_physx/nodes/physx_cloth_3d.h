@@ -33,11 +33,6 @@
 #include "../cloth/xpbd_cloth_solver.h"
 
 #include "scene/3d/visual_instance_3d.h"
-
-#include "../cloth/cloth_wetness.h" // not Flow's: builds without flow_sdk need it too
-#ifdef GODOT_PHYSX_FLOW
-#include "../flow/physx_cloth_burn.h"
-#endif
 #include "scene/resources/mesh.h"
 
 // A cloth patch simulated by the PhysX module. On an NVIDIA machine with GPU
@@ -84,38 +79,10 @@ private:
 	Vector3 wind = Vector3(0, 0, 0); // constant base breeze, on top of the area
 	float wind_turbulence = 0.4;
 	bool weather_wind = true; // add the WeatherMap3D wind when there is one
-	// A PhysXFlow3D whose gas blows the cloth (its velocity at each vertex), and which the cloth stirs back.
-	NodePath flow_path;
-	LocalVector<Vector3> flow_prev_positions; // world, last step, for the cloth's own velocity
-	void _couple_flow(double p_delta);
-	void _eddy_air(const Vector3 &p_wind); // wind_turbulence's eddies across the cloth, when no Flow gas drives it
-	bool eddies_on = false;
 	float drag = 1.0;
 	float lift = 0.2;
 
 	float tear_factor = 0.0; // 0 = off; else edges stretched past this many rest lengths break
-
-	// Burning (with Flow): heat from a PhysXFireSpread3D's flames, Flow's hot gas and burning objects lights the
-	// fabric; it chars, glows and burns through into holes (CPU solver).
-	bool burnable = true;
-	NodePath fire_path;
-	float flame_spread = 0.02f;
-	float burn_through_time = 3.0f;
-#ifdef GODOT_PHYSX_FLOW
-	PhysXClothBurn burn;
-	RID burn_override;
-	PackedColorArray burn_colors;
-	void _step_burn(double p_delta);
-#endif
-
-	// Wet from the weather (docs/ideas/physx.md, "Rain soaks cloth"): rain soaks the fabric up to water_capacity times
-	// its own weight; wet, it is heavier, limper, darker and clings to what it touches, then dries in the air.
-	ClothWetness wet;
-	bool weather_wetting = true;
-	float water_capacity = 1.0f; // kg of water a kg of fabric holds soaked (cotton about 1, wool more, polyester less)
-	float wet_applied = 0.0f; // the wetness the solver's masses and stiffness last took
-	float snow_load = 0.0f; // kg/m2 of snow lying on the fabric (SnowBodies3D writes it)
-	void _update_wetness(double p_delta, const Vector3 &p_wind);
 
 	PinMode pin_mode = PIN_TOP_EDGE;
 	PackedInt32Array pinned_vertices; // extra explicit pins, by vertex index
@@ -133,10 +100,6 @@ private:
 	bool built = false;
 	double wind_time = 0.0;
 	Transform3D last_anchor_xform;
-	// Where the cloth was built, and whether it has stepped since: a script move before the first step (placing a
-	// spawned cloth) rebuilds it there. Once it runs, the cloth owns its world positions.
-	Transform3D built_xform;
-	bool stepped = false;
 	LocalVector<int> pinned_index_cache; // resolved pin set (mode + explicit)
 
 	PackedVector3Array render_verts;
@@ -153,7 +116,6 @@ private:
 	void _resolve_pins();
 	void _step(double p_delta);
 	void _collide();
-	LocalVector<Vector3> pre_step_positions; // world, before the solver step, for swept collision
 	void _update_mesh(); // CPU: from the solver
 	bool _fill_uvs(int p_count);
 	void _update_gpu_mesh(); // GPU: from the server readback
@@ -198,8 +160,6 @@ public:
 	NodePath get_wind_area() const { return wind_area; }
 	void set_wind(const Vector3 &p_v);
 	Vector3 get_wind() const { return wind; }
-	void set_flow_path(const NodePath &p_path) { flow_path = p_path; }
-	NodePath get_flow_path() const { return flow_path; }
 	void set_weather_wind(bool p_v);
 	bool get_weather_wind() const { return weather_wind; }
 	void set_wind_turbulence(float p_v);
@@ -238,31 +198,7 @@ public:
 	// Local-space positions of the currently pinned vertices (for the editor gizmo).
 	PackedVector3Array get_pinned_positions() const;
 	int release_pins(const PackedInt32Array &p_vertices);
-	void move_pins(const PackedInt32Array &p_vertices, const PackedVector3Array &p_positions);
 	int tear(const Vector3 &p_from, const Vector3 &p_to);
-	void set_wetness(float p_v);
-	float get_wetness() const { return wet.effective(); }
-	void set_weather_wetting(bool p_v) { weather_wetting = p_v; }
-	bool is_weather_wetting() const { return weather_wetting; }
-	void set_water_capacity(float p_v);
-	float get_water_capacity() const { return water_capacity; }
-	// Water held, kg/m2.
-	float get_water_load() const { return wet.effective() * density * water_capacity; }
-	void set_snow_load(float p_v);
-	float get_snow_load() const { return snow_load; }
-
-	void set_burnable(bool p_v);
-	bool is_burnable() const { return burnable; }
-	void set_fire_path(const NodePath &p_v) { fire_path = p_v; }
-	NodePath get_fire_path() const { return fire_path; }
-	void set_flame_spread(float p_v);
-	float get_flame_spread() const { return flame_spread; }
-	void set_burn_through_time(float p_v);
-	float get_burn_through_time() const { return burn_through_time; }
-	// Sets the fabric alight at the particle nearest a world position (CPU solver, Flow builds).
-	void ignite(const Vector3 &p_position);
-	int get_burnt_count() const;
-	int get_burning_count() const;
 	// True when the GPU (PhysX deformable-surface) path is in use.
 	bool is_gpu_accelerated() const { return gpu_cloth.is_valid(); }
 

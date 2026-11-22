@@ -34,15 +34,6 @@
 // define within this cell, vs. the old code's finite-difference estimate of it
 // (which also incidentally blended slightly across cell boundaries via its
 // e=DX*0.5 sample offset). Standard technique for GPU marching cubes normals.
-//
-// Smooth shading: a cell's own trilinear gradient jumps from cell to cell, so the
-// surface shaded as facets. Normals now come from central-difference gradients at
-// the grid nodes, interpolated trilinearly across the cell, as GPU marching cubes
-// does (GPU Gems 3, ch. 1): neighbouring cells share their nodes' gradients, so the
-// normal is continuous over the surface. The block's densities plus a two-node halo
-// (9^3) are fetched once into shared memory by a loop with a single dsample() call
-// site, so block_lookup() is still not inlined per vertex (see above), then smoothed
-// once (see main()).
 
 layout(set = 1, binding = 0, std430) restrict buffer MeshVerts {
 	vec4 mverts[];
@@ -67,22 +58,6 @@ const int EA[6] = int[6](0, 0, 0, 1, 1, 2);
 const int EB[6] = int[6](1, 2, 3, 2, 3, 3);
 const int INC[12] = int[12](0, 1, 2, 0, 3, 4, 1, 3, 5, 2, 4, 5);
 
-shared float sh_raw[729]; // this block's nodes -2..6 on each axis, as scattered
-shared float sh_density[343]; // nodes -1..5, smoothed
-
-float sh_at(ivec3 n) { // n: node relative to the block's first, -1..5
-	ivec3 i = n + 1;
-	return sh_density[(i.z * 7 + i.y) * 7 + i.x];
-}
-
-// Outward unit normal at local position fx in the cell, from the 8 corner gradients cg.
-vec3 smooth_normal(vec3 fx, vec3 cg[8]) {
-	vec3 g = mix(mix(mix(cg[0], cg[1], fx.x), mix(cg[3], cg[2], fx.x), fx.y),
-			mix(mix(cg[4], cg[5], fx.x), mix(cg[7], cg[6], fx.x), fx.y), fx.z);
-	float len = length(g);
-	return len > 1e-6 ? -g / len : vec3(0.0, 1.0, 0.0); // outward = down-gradient
-}
-
 float dsample(ivec3 c) {
 	int slot = block_lookup(c >> 2);
 	if (slot < 0) {
@@ -104,13 +79,13 @@ vec3 cell_gradient(vec3 fx, float cv[8]) {
 	return len > 1e-6 ? -g / len : vec3(0.0, 1.0, 0.0); // outward = down-gradient
 }
 
-void write_tri(vec3 p0, vec3 p1, vec3 p2, vec3 f0, vec3 f1, vec3 f2, vec3 cg[8]) {
+void write_tri(vec3 p0, vec3 p1, vec3 p2, vec3 f0, vec3 f1, vec3 f2, float cv[8]) {
 	float mx = DX * 3.0;
 	if (distance(p0, p1) > mx || distance(p1, p2) > mx || distance(p2, p0) > mx) {
 		return;
 	}
 	vec3 fn = cross(p1 - p0, p2 - p0);
-	vec3 outn = smooth_normal((f0 + f1 + f2) * (1.0 / 3.0), cg);
+	vec3 outn = cell_gradient((f0 + f1 + f2) * (1.0 / 3.0), cv);
 	// Godot's front faces wind CLOCKWISE seen from outside: cross(p1 - p0, p2 - p0) must point INTO the
 	// fluid, so a back-face-culled material shows the outside and DO_SIDE_CHECK keeps the outward normal.
 	if (dot(fn, outn) > 0.0) {
@@ -129,9 +104,9 @@ void write_tri(vec3 p0, vec3 p1, vec3 p2, vec3 f0, vec3 f1, vec3 f2, vec3 cg[8])
 	mverts[o + 0] = vec4(p0, 0.0);
 	mverts[o + 1] = vec4(p1, 0.0);
 	mverts[o + 2] = vec4(p2, 0.0);
-	mnorms[o + 0] = vec4(smooth_normal(f0, cg), 0.0);
-	mnorms[o + 1] = vec4(smooth_normal(f1, cg), 0.0);
-	mnorms[o + 2] = vec4(smooth_normal(f2, cg), 0.0);
+	mnorms[o + 0] = vec4(cell_gradient(f0, cv), 0.0);
+	mnorms[o + 1] = vec4(cell_gradient(f1, cv), 0.0);
+	mnorms[o + 2] = vec4(cell_gradient(f2, cv), 0.0);
 }
 
 void main() {
@@ -143,42 +118,13 @@ void main() {
 	ivec3 bc = unpack_block(bkey[bslot]);
 	ivec3 lc = ivec3(int(lin) & 3, (int(lin) >> 2) & 3, int(lin) >> 4);
 	ivec3 cell = bc * BLK + lc;
-	for (int i = int(lin); i < 729; i += BCELLS) {
-		ivec3 n = ivec3(i % 9, (i / 9) % 9, i / 81) - 2;
-		sh_raw[i] = dsample(bc * BLK + n);
-	}
-	barrier();
-	// One binomial (1 2 1) pass each way over the scattered density before marching. The field
-	// sampled from a sparse stream dips below the iso level between particles, which marched into
-	// small closed bubbles inside the liquid: hidden on an opaque surface, but through clear water
-	// they showed as bright cell-sized outlines, like cracked glass. The blur closes them and
-	// smooths the surface; a feature thinner than a cell thins slightly with it.
-	for (int i = int(lin); i < 343; i += BCELLS) {
-		ivec3 n = ivec3(i % 7, (i / 7) % 7, i / 49) + 1; // into sh_raw's -2..6 indexing
-		float sum = 0.0;
-		for (int dz = -1; dz <= 1; dz++) {
-			for (int dy = -1; dy <= 1; dy++) {
-				for (int dx = -1; dx <= 1; dx++) {
-					ivec3 m = n + ivec3(dx, dy, dz);
-					float w = float((2 - abs(dx)) * (2 - abs(dy)) * (2 - abs(dz)));
-					sum += w * sh_raw[(m.z * 9 + m.y) * 9 + m.x];
-				}
-			}
-		}
-		sh_density[i] = sum * (1.0 / 64.0);
-	}
-	barrier();
 
 	float cv[8];
 	vec3 cp[8];
-	vec3 cg[8];
 	for (int k = 0; k < 8; k++) {
-		ivec3 n = lc + CORNER[k];
-		cv[k] = sh_at(n);
-		cp[k] = ORIGIN + vec3(cell + CORNER[k]) * DX;
-		cg[k] = vec3(sh_at(n + ivec3(1, 0, 0)) - sh_at(n - ivec3(1, 0, 0)),
-				sh_at(n + ivec3(0, 1, 0)) - sh_at(n - ivec3(0, 1, 0)),
-				sh_at(n + ivec3(0, 0, 1)) - sh_at(n - ivec3(0, 0, 1)));
+		ivec3 cc = cell + CORNER[k];
+		cv[k] = dsample(cc);
+		cp[k] = ORIGIN + vec3(cc) * DX;
 	}
 
 	for (int t = 0; t < 6; t++) {
@@ -194,7 +140,7 @@ void main() {
 		}
 
 		vec3 ev[6];
-		vec3 ef[6]; // local fx per edge, parallel to ev[] -- for smooth_normal()
+		vec3 ef[6]; // local fx per edge, parallel to ev[] -- for cell_gradient()
 		for (int e = 0; e < 6; e++) {
 			int i = EA[e], j = EB[e];
 			if (((mask >> i) & 1) != ((mask >> j) & 1)) {
@@ -215,7 +161,7 @@ void main() {
 				}
 			}
 			write_tri(ev[INC[lone * 3 + 0]], ev[INC[lone * 3 + 1]], ev[INC[lone * 3 + 2]],
-					ef[INC[lone * 3 + 0]], ef[INC[lone * 3 + 1]], ef[INC[lone * 3 + 2]], cg);
+					ef[INC[lone * 3 + 0]], ef[INC[lone * 3 + 1]], ef[INC[lone * 3 + 2]], cv);
 		} else {
 			int in0 = -1, in1 = -1, out0 = -1, out1 = -1;
 			for (int k = 0; k < 4; k++) {
@@ -249,8 +195,8 @@ void main() {
 					e_bd = e;
 				}
 			}
-			write_tri(ev[e_ac], ev[e_ad], ev[e_bd], ef[e_ac], ef[e_ad], ef[e_bd], cg);
-			write_tri(ev[e_ac], ev[e_bd], ev[e_bc], ef[e_ac], ef[e_bd], ef[e_bc], cg);
+			write_tri(ev[e_ac], ev[e_ad], ev[e_bd], ef[e_ac], ef[e_ad], ef[e_bd], cv);
+			write_tri(ev[e_ac], ev[e_bd], ev[e_bc], ef[e_ac], ef[e_bd], ef[e_bc], cv);
 		}
 	}
 }

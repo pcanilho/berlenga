@@ -285,10 +285,6 @@ public:
 	virtual void multimesh_mark_buffer_rd_changed(RID p_multimesh) = 0;
 	virtual void multimesh_set_bones_per_instance(RID p_multimesh, int p_bones) = 0;
 	virtual int multimesh_get_bones_per_instance(RID p_multimesh) const = 0;
-	virtual void multimesh_set_rt_instanced(RID p_multimesh, bool p_instanced) = 0;
-	virtual bool multimesh_is_rt_instanced(RID p_multimesh) const = 0;
-	virtual void multimesh_set_rt_offscreen_cull(RID p_multimesh, float p_min_degrees) = 0;
-	virtual float multimesh_get_rt_offscreen_cull(RID p_multimesh) const = 0;
 	virtual Vector<float> multimesh_get_buffer(RID p_multimesh) const = 0;
 
 	// Interpolation.
@@ -736,7 +732,6 @@ public:
 	virtual void camera_attributes_set_dof_blur(RID p_camera_attributes, bool p_far_enable, float p_far_distance, float p_far_transition, bool p_near_enable, float p_near_distance, float p_near_transition, float p_amount) = 0;
 	virtual void camera_attributes_set_exposure(RID p_camera_attributes, float p_multiplier, float p_exposure_normalization) = 0;
 	virtual void camera_attributes_set_auto_exposure(RID p_camera_attributes, bool p_enable, float p_min_sensitivity, float p_max_sensitivity, float p_speed, float p_scale) = 0;
-	virtual void camera_attributes_set_night_vision(RID p_camera_attributes, float p_luminance_per_energy) = 0;
 
 	/* SCENARIO API */
 

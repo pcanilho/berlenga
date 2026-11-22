@@ -33,8 +33,6 @@
 #include "godot_physx_project_settings.h"
 #include "godot_physx_server_3d.h"
 #include "physx_info.h"
-
-#include "modules/modules_enabled.gen.h" // For ground.
 #ifdef GODOT_PHYSX_BLAST
 #include "blast/godot_physx_blast_probe.h"
 #include "blast/physx_blast_asset.h"
@@ -44,26 +42,15 @@
 #include "cloth/physx_hair_3d.h"
 #include "cloth/physx_skinned_cloth_3d.h"
 #ifdef GODOT_PHYSX_FLOW
-#include "flow/physx_building_fire_3d.h"
-#include "flow/physx_burnable_3d.h"
-#include "flow/physx_cave_mist_3d.h"
-#include "flow/physx_fire_spread_3d.h"
 #include "flow/physx_flow_3d.h"
 #include "flow/physx_flow_emitter_3d.h"
 #include "flow/physx_flow_render_effect.h"
-#include "flow/physx_ground_dust_3d.h"
-#include "flow/physx_dust_devils_3d.h"
-#include "flow/physx_rock_dust_3d.h"
 #endif
 #include "nodes/physx_chunk_emitter_3d.h"
 #include "nodes/physx_cloth_3d.h"
 #include "nodes/physx_fluid_render_effect.h"
 #include "nodes/physx_gi_effect.h"
-#include "nodes/physx_debris_surge_3d.h"
 #include "nodes/physx_granular_3d.h"
-#ifdef MODULE_GROUND_ENABLED
-#include "nodes/physx_ground_grains_3d.h"
-#endif
 #include "nodes/physx_lens_dirt_3d.h"
 #include "nodes/physx_lens_dirt_effect.h"
 #include "nodes/physx_lens_flare_3d.h"
@@ -80,19 +67,13 @@
 #include "vehicle/physx_tank_3d.h"
 #include "vehicle/physx_vehicle_3d.h"
 #include "vehicle/physx_vehicle_wheel_3d.h"
-#include "vehicle/physx_winch_3d.h"
 #include "water/physx_boat_3d.h"
 #include "water/physx_buoyancy_3d.h"
-#include "water/physx_live_water_3d.h"
 #include "water/physx_river_3d.h"
-#include "water/physx_sea_cave_water_3d.h"
 #include "water/physx_water_mist_3d.h"
-#include "water/physx_water_pusher_3d.h"
 #include "water/physx_water_spray_3d.h"
 #include "water/physx_water_surface_3d.h"
-#include "water/oasis_springs_3d.h"
 #include "water/physx_water_wake_3d.h"
-#include "water/physx_waterfalls_3d.h"
 #include "water/water_ripple_probe.h"
 
 #include "core/config/project_settings.h"
@@ -140,10 +121,6 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXParticleFluid3D);
 		GDREGISTER_INTERNAL_CLASS(PhysXFluidRenderEffect);
 		GDREGISTER_CLASS(PhysXGranular3D);
-		GDREGISTER_CLASS(PhysXDebrisSurge3D);
-#ifdef MODULE_GROUND_ENABLED
-		GDREGISTER_CLASS(PhysXGroundGrains3D);
-#endif
 		GDREGISTER_CLASS(PhysXCloth3D);
 		GDREGISTER_CLASS(PhysXSkinnedCloth3D);
 		GDREGISTER_CLASS(PhysXHair3D);
@@ -160,22 +137,16 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		// Runtime-bridge MVP probe, not public API yet -- see water/water_ripple_probe.h.
 		GDREGISTER_CLASS(WaterRippleProbe);
 		GDREGISTER_CLASS(PhysXWaterSurface3D);
-		GDREGISTER_CLASS(OasisSprings3D);
 		GDREGISTER_CLASS(PhysXBuoyancy3D);
 		GDREGISTER_CLASS(PhysXRiver3D);
 		GDREGISTER_CLASS(PhysXBoat3D);
 		GDREGISTER_CLASS(PhysXWaterWake3D);
 		GDREGISTER_CLASS(PhysXWaterSpray3D);
-		GDREGISTER_CLASS(PhysXLiveWater3D);
-		GDREGISTER_CLASS(PhysXSeaCaveWater3D);
 		GDREGISTER_CLASS(PhysXWaterMist3D);
-		GDREGISTER_CLASS(PhysXWaterPusher3D);
-		GDREGISTER_CLASS(PhysXWaterfalls3D);
 		// Runtime-bridge MVP probe, not public API yet -- see vehicle/godot_physx_vehicle_probe.h.
 		GDREGISTER_CLASS(GodotPhysXVehicleProbe);
 		GDREGISTER_CLASS(PhysXVehicle3D);
 		GDREGISTER_CLASS(PhysXVehicleWheel3D);
-		GDREGISTER_CLASS(PhysXWinch3D);
 		// Runtime-bridge MVP probe, not public API yet -- see vehicle/godot_physx_motorcycle_probe.h.
 		GDREGISTER_CLASS(GodotPhysXMotorcycleProbe);
 		GDREGISTER_CLASS(PhysXMotorcycle3D);
@@ -194,17 +165,6 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXFlowEmitter3D);
 		GDREGISTER_CLASS(PhysXFlowRenderEffect);
 		GDREGISTER_CLASS(PhysXFlowTracedEffect);
-		GDREGISTER_CLASS(PhysXDustDevils3D);
-#ifdef MODULE_GROUND_ENABLED
-		GDREGISTER_CLASS(PhysXGroundDust3D);
-#endif
-#ifdef MODULE_ROCKS_ENABLED
-		GDREGISTER_CLASS(PhysXRockDust3D);
-		GDREGISTER_CLASS(PhysXCaveMist3D);
-#endif
-		GDREGISTER_CLASS(PhysXFireSpread3D);
-		GDREGISTER_CLASS(PhysXBurnable3D);
-		GDREGISTER_CLASS(PhysXBuildingFire3D);
 #endif
 	}
 
@@ -232,7 +192,6 @@ void uninitialize_godot_physx_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
 		PhysXFlowRenderEffect::free_shared();
 		PhysXFlowTracedEffect::free_shared();
-		PhysXBurnable3D::free_materials();
 	}
 #endif
 }

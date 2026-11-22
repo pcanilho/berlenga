@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -31,14 +30,11 @@
 
 #pragma once
 
-#include "hair_cards.h"
-#include "scene/resources/image_texture.h"
 #include "hair_strand_solver.h"
 
 #include "scene/3d/node_3d.h"
 #include "scene/resources/3d/hair_groom.h"
 
-class Camera3D;
 class MeshInstance3D;
 class Shader;
 class ShaderMaterial;
@@ -54,12 +50,9 @@ class PhysXHair3D : public Node3D {
 
 	Ref<HairGroom> groom;
 	float root_width = 0.0004f;
-	float simplify_tolerance = 0.5f; // share of root_width a drawn strand may stray from its points
 	float tip_width = 0.0001f;
 	float melanin = 0.5f;
 	float melanin_redness = 0.0f;
-	float grey_ratio = 0.0f; // the share of strands with no melanin
-	float sun_bleaching = 0.0f; // how much the sun has lightened the lengths toward the tips
 	float roughness = 0.3f;
 	float radial_roughness = 0.3f;
 	bool hair_shading = true;
@@ -91,55 +84,16 @@ class PhysXHair3D : public Node3D {
 	float guide_ratio = 0.1f;
 	PackedVector4Array collision_spheres; // this node's space: centre, radius
 	NodePath collision_body;
-	NodePath collision_cloth; // a PhysXSkinnedCloth3D the hair rests on
-	float cloth_thickness = 0.005f;
 	float collision_cell_size = 0.01f;
 	bool deep_shadows = true;
 	NodePath deep_shadow_light;
 	ObjectID deep_shadow_light_cache; // the light found (deep_shadow_light, or the first shadowed DirectionalLight3D)
 	uint64_t deep_shadow_search_frame = 0;
-	int deep_shadow_local_lights = 3; // omni and spot lights with their own map, at most
-	LocalVector<ObjectID> deep_shadow_local_cache; // shadowed omni and spot lights found by the search
-	uint64_t deep_shadow_local_search_frame = 0;
-	int deep_shadow_on = 0; // deep opacity maps last set on the material
-	int snow_slot_set = -2; // the snow's map last set on the material (-2: not yet)
+	bool deep_shadow_on = false; // last set on the material
 	int draw_slot_points = 1;
 	bool volume_enabled = true;
 	float volume_friction = 0.2f;
 	float volume_stiffness = 1.0f;
-	bool strand_collision = true;
-	float strand_collision_radius = 0.002f;
-	float strand_collision_friction = 0.3f;
-	// Wet hair (Ward et al. 2004; Gupta and Magnenat-Thalmann 2007): 0 dry, 1 soaked.
-	float wetness = 0.0f;
-	bool weather_wetting = true; // rain from the WeatherMap3D wets the hair; it dries without
-	float water_capacity = 1.0f; // mm of rain that soak the hair
-	float drying_time = 3600.0f; // s from soaked to dry
-	float wet_clumping = 0.8f; // how far wet strands gather onto their guides (0..1)
-	float wet_look = 0.0f; // the wetness last set on the material
-	float rain_shelter = 1.0f; // share of the rain that reaches the hair (roofs above it)
-	// Snow settled on the hair (stage 2r): the share of its top layer covered (0..1), and the snow
-	// (mm of water) that covers it.
-	float snow = 0.0f;
-	float snow_capacity = 1.0f;
-	float snow_look = 0.0f; // the cover last set on the material
-	MeshInstance3D *snow_instance = nullptr; // the clumps of snow on the strands
-	Ref<ShaderMaterial> snow_material;
-	float rain_shelter_timer = 0.0f;
-	// Thick strands for distant hair (docs/ideas/hair.md, stage 3): one strip a clump.
-	bool cards_enabled = true;
-	int card_count = 1024;
-	float _screen_size(const Camera3D *p_camera) const;
-	MeshInstance3D *card_instance = nullptr;
-	Ref<ShaderMaterial> card_material;
-	Ref<HairCardBake> card_bake;
-	Ref<ImageTexture> card_data; // per clump point: its two axes and half widths, its direction, its strand count
-	Vector4 card_scalp; // the scalp's sphere for the cards (centre, radius; w 0: none)
-	int card_first = 0; // the cards' strands follow the groom's in the solver; 0: no cards
-	bool card_mode = false; // thick strands only: the strands hidden and idle
-	float thick_width_min = 0.0f; // the clumps' narrowest and widest full width (m), 0: no clumps
-	float thick_width_max = 0.0f;
-	float thick_px_set = -1.0f; // the pixel size the materials hold (0: no mixing)
 	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
 	struct BodyCache {
 		ObjectID mesh_instance;
@@ -151,13 +105,6 @@ class PhysXHair3D : public Node3D {
 		int per_vertex = 0;
 	} body_cache;
 	PackedVector3Array skinned;
-	struct ClothCache {
-		ObjectID cloth;
-		RID mesh;
-		RID texture;
-		PackedInt32Array tris; // three particles each
-	} cloth_cache;
-	void _cloth_settings(HairStrandSolver::Settings &r_settings);
 
 	HairStrandSolver *solver = nullptr;
 	MeshInstance3D *render_instance = nullptr;
@@ -169,16 +116,6 @@ class PhysXHair3D : public Node3D {
 	bool build_pending = false;
 
 	static Ref<Shader> render_shaders[2]; // Godot standard lighting, hair shading
-	static Ref<Shader> card_shaders[2];
-	static Ref<Shader> snow_shader;
-	// The strands' copy drawn only into the shadow maps (cast_hair_shadows).
-	bool cast_hair_shadows = true;
-	MeshInstance3D *shadow_instance = nullptr;
-	Ref<ShaderMaterial> shadow_material;
-	LocalVector<StringName> shadow_params;
-	static Ref<Shader> shadow_shaders[2];
-	void _make_shadow_copy();
-	void _sync_shadow_copy();
 
 	void _groom_changed();
 	void _queue_build();
@@ -187,20 +124,10 @@ class PhysXHair3D : public Node3D {
 	void _make_material();
 	void _step(double p_delta);
 	Vector3 _fibre_absorption() const;
-	Vector3 _fibre_absorption_pheo() const;
-	float _mass_exponent() const;
-	Vector2 _fibre_roughness() const;
-	void _update_wetness(double p_delta);
-	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_guide_pool = 0) const;
-	void _set_look(const Ref<ShaderMaterial> &p_material) const;
-	void _build_cards(const AABB &p_bounds);
-	static Vector4 _fit_scalp(const PackedVector3Array &p_points, const PackedInt32Array &p_counts);
-	void _build_snow(const AABB &p_bounds, const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_slot_points, int p_drawn_points);
-	int _render_points(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, PackedInt32Array &r_points) const;
+	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) const;
 	Color _mass_color() const;
 	void _body_triangles(PackedVector3Array &r_tris);
 	class DirectionalLight3D *_deep_shadow_light();
-	void _deep_shadow_local_lights(const Vector3 &p_center, float p_radius, uint32_t p_layers, LocalVector<class Light3D *> &r_lights);
 
 protected:
 	void _notification(int p_what);
@@ -213,16 +140,10 @@ public:
 	Ref<HairGroom> get_groom() const;
 	void set_root_width(float p_width);
 	float get_root_width() const;
-	void set_simplify_tolerance(float p_tolerance);
-	float get_simplify_tolerance() const;
 	void set_tip_width(float p_width);
 	float get_tip_width() const;
 	void set_melanin(float p_melanin);
 	float get_melanin() const;
-	void set_grey_ratio(float p_ratio);
-	float get_grey_ratio() const;
-	void set_sun_bleaching(float p_amount);
-	float get_sun_bleaching() const;
 	void set_melanin_redness(float p_redness);
 	float get_melanin_redness() const;
 	void set_roughness(float p_roughness);
@@ -282,52 +203,18 @@ public:
 	float get_turbulence_size() const;
 	void set_collision_body(const NodePath &p_path);
 	NodePath get_collision_body() const;
-	void set_collision_cloth(const NodePath &p_path);
-	NodePath get_collision_cloth() const;
-	void set_cloth_thickness(float p_thickness);
-	float get_cloth_thickness() const;
 	void set_collision_cell_size(float p_size);
 	float get_collision_cell_size() const;
 	void set_deep_shadows(bool p_enabled);
 	bool is_deep_shadows() const;
 	void set_deep_shadow_light(const NodePath &p_path);
 	NodePath get_deep_shadow_light() const;
-	void set_deep_shadow_local_lights(int p_count);
-	int get_deep_shadow_local_lights() const;
 	void set_volume_enabled(bool p_enabled);
 	bool is_volume_enabled() const;
 	void set_volume_friction(float p_friction);
 	float get_volume_friction() const;
 	void set_volume_stiffness(float p_stiffness);
-	void set_strand_collision(bool p_enabled);
-	bool is_strand_collision() const;
-	void set_strand_collision_radius(float p_radius);
-	float get_strand_collision_radius() const;
-	void set_strand_collision_friction(float p_friction);
-	float get_strand_collision_friction() const;
 	float get_volume_stiffness() const;
-	void set_wetness(float p_wetness);
-	float get_wetness() const;
-	void set_weather_wetting(bool p_enabled);
-	bool get_weather_wetting() const;
-	void set_water_capacity(float p_mm);
-	float get_water_capacity() const;
-	void set_drying_time(float p_seconds);
-	float get_drying_time() const;
-	void set_snow(float p_snow);
-	float get_snow() const;
-	void set_snow_capacity(float p_mm);
-	float get_snow_capacity() const;
-	void set_wet_clumping(float p_clumping);
-	float get_wet_clumping() const;
-	void set_cast_hair_shadows(bool p_enabled);
-	bool is_casting_hair_shadows() const;
-	void set_cards_enabled(bool p_enabled);
-	bool is_cards_enabled() const;
-	void set_card_count(int p_count);
-	int get_card_count() const;
-	float get_screen_size() const;
-	bool is_drawing_cards() const;
 	void set_collision_spheres(const PackedVector4Array &p_spheres);
 	PackedVector4Array get_collision_spheres() const;
 

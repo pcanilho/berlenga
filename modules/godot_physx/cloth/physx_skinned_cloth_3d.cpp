@@ -50,9 +50,6 @@
 #include "scene/scene_string_names.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
-#include "modules/modules_enabled.gen.h" // For weather.
-#include "modules/world/world_contracts.h"
-
 namespace {
 
 const char *CLOTH_RENDER_SHADER = R"(
@@ -70,9 +67,6 @@ uniform float normal_sign = 1.0;
 uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable, hint_default_white;
 uniform vec4 albedo_color : source_color = vec4(1.0);
 uniform float roughness : hint_range(0.0, 1.0) = 0.9;
-uniform float cloth_wetness = 0.0; // PhysXSkinnedCloth3D's wetness, 0 dry .. 1 soaked
-uniform float cloth_wade_line = -1000000.0; // world y: fabric below it has been under water (wading)
-uniform float cloth_wade_wet = 0.0; // that band's wetness
 
 void vertex() {
 	int i = int(CUSTOM0.x + 0.5);
@@ -91,16 +85,8 @@ void vertex() {
 
 void fragment() {
 	vec4 c = texture(albedo_texture, UV) * albedo_color;
-	// Wet fabric: water in the weave lowers the index contrast at each fibre, so light scatters deeper and more of it is
-	// absorbed (Lekner and Dorf 1988, n = 1.33); a soaked surface turns a little glossier only near saturation.
-	vec3 wet_albedo = c.rgb * 0.4 / (1.0 - 0.6 * c.rgb);
-	// Waded: soaked up to the band's top, a ragged 2 cm tide line where the wicking stops.
-	float wet_y = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y;
-	// The wicking front climbs unevenly along the weave: a wavering edge, a couple of centimetres.
-	float wet_line = cloth_wade_line + 0.012 * sin(UV.x * 41.0 + 2.0 * sin(UV.x * 13.0)) + 0.007 * sin(UV.x * 117.0 + UV.y * 9.0);
-	float wet_here = max(cloth_wetness, cloth_wade_wet * (1.0 - smoothstep(wet_line - 0.012, wet_line, wet_y)));
-	ALBEDO = mix(c.rgb, wet_albedo, clamp(2.0 * wet_here, 0.0, 1.0));
-	ROUGHNESS = roughness * (1.0 - 0.12 * smoothstep(0.8, 1.0, wet_here));
+	ALBEDO = c.rgb;
+	ROUGHNESS = roughness;
 	// Single-layer cloth shows both sides (capes, open hems): light the back
 	// faces from their own side.
 	if (!FRONT_FACING) {
@@ -206,14 +192,6 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_fixed_gravity"), &PhysXSkinnedCloth3D::get_fixed_gravity);
 	ClassDB::bind_method(D_METHOD("set_extra_acceleration", "acceleration"), &PhysXSkinnedCloth3D::set_extra_acceleration);
 	ClassDB::bind_method(D_METHOD("get_extra_acceleration"), &PhysXSkinnedCloth3D::get_extra_acceleration);
-	ClassDB::bind_method(D_METHOD("set_wetness", "wetness"), &PhysXSkinnedCloth3D::set_wetness);
-	ClassDB::bind_method(D_METHOD("get_wetness"), &PhysXSkinnedCloth3D::get_wetness);
-	ClassDB::bind_method(D_METHOD("set_weather_wetting", "enable"), &PhysXSkinnedCloth3D::set_weather_wetting);
-	ClassDB::bind_method(D_METHOD("is_weather_wetting"), &PhysXSkinnedCloth3D::is_weather_wetting);
-	ClassDB::bind_method(D_METHOD("set_fabric_density", "density"), &PhysXSkinnedCloth3D::set_fabric_density);
-	ClassDB::bind_method(D_METHOD("get_fabric_density"), &PhysXSkinnedCloth3D::get_fabric_density);
-	ClassDB::bind_method(D_METHOD("set_water_capacity", "capacity"), &PhysXSkinnedCloth3D::set_water_capacity);
-	ClassDB::bind_method(D_METHOD("get_water_capacity"), &PhysXSkinnedCloth3D::get_water_capacity);
 	ClassDB::bind_method(D_METHOD("get_effective_gravity"), &PhysXSkinnedCloth3D::get_effective_gravity);
 	ClassDB::bind_method(D_METHOD("get_animation_drive"), &PhysXSkinnedCloth3D::get_animation_drive);
 	ClassDB::bind_method(D_METHOD("set_collide_with_body", "enabled"), &PhysXSkinnedCloth3D::set_collide_with_body);
@@ -262,11 +240,6 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "extra_acceleration", PROPERTY_HINT_NONE, "suffix:m/s\u00b2"), "set_extra_acceleration", "get_extra_acceleration");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "self_collision"), "set_self_collision", "get_self_collision");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "self_collision_thickness", PROPERTY_HINT_RANGE, "0.001,0.1,0.001,suffix:m"), "set_self_collision_thickness", "get_self_collision_thickness");
-	ADD_GROUP("Wetness", "");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness", "get_wetness");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wetting"), "set_weather_wetting", "is_weather_wetting");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fabric_density", PROPERTY_HINT_RANGE, "0.02,2,0.01,or_greater,suffix:kg/m\u00b2"), "set_fabric_density", "get_fabric_density");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_capacity", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_water_capacity", "get_water_capacity");
 }
 
 void PhysXSkinnedCloth3D::_notification(int p_what) {
@@ -341,8 +314,6 @@ void PhysXSkinnedCloth3D::_make_copy_material(MeshInstance3D *p_source) {
 	copy_material->set_shader_parameter("cloth_normals", nrm_texture);
 	copy_material->set_shader_parameter("texture_width", solver ? solver->get_texture_width() : 1);
 	copy_material->set_shader_parameter("normal_sign", normal_sign);
-	copy_material->set_shader_parameter("cloth_wetness", MAX(wet.wetness, 0.0f));
-	wet_applied = wet.wetness;
 	if (render_instance) {
 		render_instance->set_surface_override_material(0, copy_material);
 	}
@@ -1257,31 +1228,14 @@ void PhysXSkinnedCloth3D::_advance(double p_delta) {
 	}
 	prev_boxes = captured_boxes;
 
-	_update_wetness((float)p_delta);
-	// Wet: the fabric weighs (1 + water_capacity w) as much, so the same push (extra_acceleration: wind, force
-	// fields) moves it less; the water film holds it to the body (a slight drive toward the skinned pose, more
-	// friction on the colliders) and damps its swing.
-	const float w = wet.effective();
 	SkinnedClothSolver::Settings s;
 	s.stiffness = stiffness;
-	s.damping = 1.0f - (1.0f - damping) * (1.0f - 0.3f * w);
+	s.damping = damping;
 	s.thickness = thickness;
 	s.backstop = backstop;
-	s.animation_drive = animation_drive + (1.0f - animation_drive) * 0.002f * w;
-	s.friction = s.friction + (1.0f - s.friction) * 0.6f * w;
-	s.gravity = get_effective_gravity() - extra_acceleration * (water_capacity * w / (1.0f + water_capacity * w));
+	s.animation_drive = animation_drive;
+	s.gravity = get_effective_gravity();
 	s.self_collision_thickness = self_collision ? self_collision_thickness : 0.0f;
-	// Under water (wading, docs/ideas/physx.md "River current drags clothing"): woven fibre is denser than water
-	// (cotton 1.54, polyester 1.38, wool 1.31 g/cm3), so soaked fabric keeps about 30% of its weight; the current
-	// drags it at Morison's 0.5 rho Cd |u| per its areal mass (Cd about 1.2 for a sheet across the flow), the
-	// speed relative to the fabric taken as the current's plus a little for its own sway.
-	if (wet.water_surface > -1.0e8f) {
-		const float areal = fabric_density * (1.0f + water_capacity);
-		s.water_height = wet.water_surface;
-		s.water_flow = wet.water_flow;
-		s.water_drag = MIN(0.5f * 1000.0f * 1.2f * (wet.water_flow.length() + 0.1f) / MAX(areal, 0.05f), 200.0f);
-		s.water_gravity = 0.3f;
-	}
 	s.output_xform = source->get_global_transform_interpolated().affine_inverse(); // (as drawn — matches the capture)
 	solver->step(captured_bones, capsule_data, box_data, p_delta, substeps, s);
 
@@ -1460,46 +1414,6 @@ void PhysXSkinnedCloth3D::set_self_collision(bool p_enabled) {
 
 void PhysXSkinnedCloth3D::set_self_collision_thickness(float p_thickness) {
 	self_collision_thickness = MAX(p_thickness, 0.001f);
-}
-
-void PhysXSkinnedCloth3D::set_wetness(float p_wetness) {
-	wet.wetness = CLAMP(p_wetness, 0.0f, 1.0f);
-	if (copy_material.is_valid()) {
-		copy_material->set_shader_parameter("cloth_wetness", wet.wetness);
-		wet_applied = wet.wetness;
-	}
-}
-
-// Rain caught, held and dried (ClothWetness). A garment on a moving body faces every way: its catch is taken as a
-// vertical cylinder's (rain through its projected width at the drops' slant, spread over pi times that width of
-// fabric) for 85% of the fabric, and the shoulders' and hood's horizontal share, ~15%, catching all that falls on it.
-void PhysXSkinnedCloth3D::_update_wetness(float p_delta) {
-	MeshInstance3D *ri = ObjectDB::get_instance<MeshInstance3D>(render_instance_id);
-	if (ri == nullptr) {
-		return;
-	}
-	const AABB box = ri->get_global_transform().xform(ri->get_aabb());
-	Vector3 wind;
-	if (const WorldWeather *wm = WorldContracts::weather(); wm->has_provider()) {
-		wind = wm->wind_at(box.get_center());
-	}
-	bool update_catch = false;
-	wet.step(this, box, wind, p_delta, fabric_density * water_capacity, weather_wetting, update_catch);
-	if (update_catch) {
-		const float u = Vector2(wind.x, wind.z).length();
-		const float sigma = 0.3f * u + 0.5f;
-		const float slant = Math::sqrt(u * u + sigma * sigma) / ClothWetness::DROP_SPEED;
-		wet.rain_catch = 0.15f + 0.85f * slant / Math::PI;
-	}
-	if (copy_material.is_valid() && (Math::abs(wet.wetness - wet_applied) > 0.01f || (wet.wetness == 0.0f && wet_applied != 0.0f))) {
-		copy_material->set_shader_parameter("cloth_wetness", wet.wetness);
-		wet_applied = wet.wetness;
-	}
-	if (copy_material.is_valid() && (wet.wade_wet > 0.0f || wade_applied > 0.0f)) {
-		copy_material->set_shader_parameter("cloth_wade_line", wet.wade_line);
-		copy_material->set_shader_parameter("cloth_wade_wet", wet.wade_wet);
-		wade_applied = wet.wade_wet;
-	}
 }
 
 Vector3 PhysXSkinnedCloth3D::get_effective_gravity() const {

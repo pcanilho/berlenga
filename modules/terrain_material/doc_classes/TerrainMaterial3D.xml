@@ -9,13 +9,6 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="get_ground_albedo_at" qualifiers="const">
-			<return type="Color" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The ground's mean albedo at [param position] (linear rgb) as this material lays its layers there, without texture detail; alpha: the layers' porosity, or below 0 where the generator given to [method use_generator] does not reach. After [method use_generator] the material answers [method WorldGround.albedo_at] with it.
-			</description>
-		</method>
 		<method name="get_layer" qualifiers="const">
 			<return type="TerrainMaterialLayer" />
 			<param index="0" name="layer" type="int" enum="TerrainMaterial3D.Layer" />
@@ -27,20 +20,6 @@
 			<return type="String" />
 			<description>
 				Returns the shader code the material writes for its current settings.
-			</description>
-		</method>
-		<method name="set_ground_cover">
-			<return type="void" />
-			<param index="0" name="near" type="Texture2D" />
-			<param index="1" name="far" type="Texture2D" />
-			<param index="2" name="near_rect" type="Rect2" />
-			<param index="3" name="far_rect" type="Rect2" />
-			<param index="4" name="reach" type="Vector3" />
-			<param index="5" name="band" type="Vector3" />
-			<param index="6" name="size" type="Vector3" />
-			<param index="7" name="colors" type="PackedColorArray" />
-			<description>
-				Small stones drawn as part of the ground past where real ones stop (set by [RockField3D], see [member RockField3D.ground_detail_cover]). [param near] and [param far] are cover maps over [param near_rect] and [param far_rect] (world X and Z, in metres); [param reach], [param band] and [param size] are the pebbles', gravel's and fine gravel's reach from the camera, the band they hand over in and their mean size; [param colors] the rock types' linear albedo. Single grains are drawn while a pixel covers under about a third of one, their mean once it covers more than one. [code]null[/code] maps turn it off.
 			</description>
 		</method>
 		<method name="set_layer">
@@ -87,24 +66,6 @@
 		<member name="detail_octaves" type="int" setter="set_detail_octaves" getter="get_detail_octaves" default="4">
 			Octaves of the erosion detail normal. It fades out where a pixel covers it.
 		</member>
-		<member name="far_blend_enabled" type="bool" setter="set_far_blend_enabled" getter="is_far_blend_enabled" default="true">
-			If [code]true[/code], far ground takes the plant cover's colour from the cover map a [VegetationField3D] publishes, taking over from the near grass tint between [member far_start] and [member far_start] + [member far_fade]. Without a field publishing the cover map it does nothing.
-		</member>
-		<member name="far_fade" type="float" setter="set_far_fade" getter="get_far_fade" default="150.0">
-			Distance in metres over which the far blend takes over.
-		</member>
-		<member name="far_shadow_start" type="float" setter="set_far_shadow_start" getter="get_far_shadow_start" default="150.0">
-			Distance (m) from the camera where the far sun shadows start to fade in, full at twice it: the ground's own horizon toward the sun ([member TerrainGenerator3D.sun_shadows]) shades it where the shadow cascades thin out and end, with a soft edge of the sun's half degree. Raster only (the path tracer traces the hills' shadows); needs [member sky_occlusion_enabled]. 0 switches them off.
-		</member>
-		<member name="far_start" type="float" setter="set_far_start" getter="get_far_start" default="300.0">
-			Distance from the camera in metres where the far blend starts.
-		</member>
-		<member name="far_start_from_vegetation" type="bool" setter="set_far_start_from_vegetation" getter="is_far_start_from_vegetation" default="true">
-			If [code]true[/code], the far blend ends where a streaming [VegetationField3D]'s placed plants end (the global shader parameter [code]vegetation_near_radius[/code]): it starts at that radius less [member far_fade]. With no field streaming it uses [member far_start].
-		</member>
-		<member name="cliff_self_shadow" type="bool" setter="set_cliff_self_shadow" getter="is_cliff_self_shadow" default="true">
-			If [code]true[/code], ledges of a [Landscape3D]'s [member Landscape3D.cliff_relief] shadow each other per pixel under the first directional light: a short march toward the sun through the same relief that bends the faces' normals. The shadow map holds the ledges only near the camera and too coarsely for half-metre steps; the march keeps their shadow lines sharp at any distance where the relief is wider than a pixel. Forward+ and Mobile; the path tracer traces the real shadows instead.
-		</member>
 		<member name="geology_enabled" type="bool" setter="set_geology_enabled" getter="is_geology_enabled" default="true">
 			Follow the generator's geology maps when they are set.
 		</member>
@@ -114,41 +75,20 @@
 		<member name="ground_deform_enabled" type="bool" setter="set_ground_deform_enabled" getter="is_ground_deform_enabled" default="true">
 			Take prints from a [GroundSurface3D] whose [member GroundSurface3D.material] is this material: the terrain sinks under the printed patch and freshly turned ground darkens (see [method BaseMaterial3D.get_ground_deform_shader_code]).
 		</member>
-		<member name="rock_detail_enabled" type="bool" setter="set_rock_detail_enabled" getter="is_rock_detail_enabled" default="true">
-			If [code]true[/code], steep faces and scree get rock detail without textures: a height from 3D noise (joints, beds, pits) and scree stones over a gravel and fines matrix, turned into a normal by its surface gradient and filtered by the pixel's footprint so it does not alias. [member rock_detail_scale] sets its size.
-		</member>
 		<member name="rock_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Bare rock.
 		</member>
 		<member name="rock_slope" type="float" setter="set_rock_slope" getter="get_rock_slope" default="40.0">
 			Slope in degrees past which rock shows when there is no geology. With the generator's geology, rock follows its maps, and faces past [member cliff_slope] are bare too.
 		</member>
-		<member name="salt_bloom" type="bool" setter="set_salt_bloom" getter="is_salt_bloom" default="true">
-			The sea spray's salt (WeatherMap3D [member WeatherMap3D.sea_spray]) dries to a white halite crust on the rock and scree of sea cliffs: patchy and grainy, kept on steep faces, washed off tops, and gone while the stone is wet.
-		</member>
 		<member name="sand_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Beach sand.
-		</member>
-		<member name="sand_dune_tone" type="bool" setter="set_sand_dune_tone" getter="is_sand_dune_tone" default="true">
-			If [code]true[/code], the sand varies in colour at the dune field's scale: redder where grains have lain longer (iron-oxide coats, patchy over hundreds of metres, strongest on thin stable sand), a coarser, darker lag on flat interdune floors, and paler, finer sand on slip faces at the angle of repose. The depth terms need a [TerrainGenerator3D] with dunes or a sand sea ([method TerrainGenerator3D.get_sand_depth_at]); the slip faces show on any sand. The same lines as [member GroundSurface3D.dune_tone], so the two meet without a seam.
-		</member>
-		<member name="sand_granule_ripples" type="bool" setter="set_sand_granule_ripples" getter="is_sand_granule_ripples" default="true">
-			If [code]true[/code], the coarse lag on thin, flat interdune sand (the [member sand_dune_tone]'s dark flats) carries granule ripples: long, low ripples about 1.2 m apart and up to 5 cm high, broad crests of darker coarse grains running across the generator's dune-building wind ([member TerrainGenerator3D.sand_sea_wind_angle]), drawn as a normal and tint; where a pixel spans several crests it takes their mean tone. The same lines as [member GroundSurface3D.granule_ripples].
-		</member>
-		<member name="scree_blocks_distance" type="float" setter="set_scree_blocks_distance" getter="get_scree_blocks_distance" default="0.0">
-			Metres from the camera inside which the scree draws no stones of its own (parallax blocks, their normal and tone), only their bed of gravel and fines, because real stones lie there (RockField3D's scree layer out to its radius). The shader's stones fade in over the last fifth. 0: shader stones everywhere.
 		</member>
 		<member name="scree_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Loose rock below cliffs.
 		</member>
 		<member name="sea_level" type="float" setter="set_sea_level" getter="get_sea_level" default="0.0">
 			Height of the sea, the base of the beach band.
-		</member>
-		<member name="sky_occlusion" type="float" setter="set_sky_occlusion" getter="get_sky_occlusion" default="1.0">
-			How much of the ground's sky occlusion applies, 0 to 1.
-		</member>
-		<member name="sky_occlusion_enabled" type="bool" setter="set_sky_occlusion_enabled" getter="is_sky_occlusion_enabled" default="true">
-			Raster only: the ground's ambient light comes from the sky its surface sees ([member TerrainGenerator3D.sky_occlusion]): ambient occlusion is the irradiance of that sky over the whole sky's, on the shading normal, from the harmonics in the [code]terrain_sky_map[/code] global. Without it, a slope under higher ground takes light from the whole sky, such as a low sunset glow the hills hide. The path tracer ignores it.
 		</member>
 		<member name="snow_enabled" type="bool" setter="set_snow_enabled" getter="is_snow_enabled" default="true">
 			Lay the [SnowCover3D] snowpack over the ground.

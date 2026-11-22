@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -34,8 +33,6 @@
 #include "weather_clouds.h"
 #include "weather_map_3d.h"
 #include "weather_sky_material.h"
-
-#include "modules/world/world_contracts.h"
 
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -339,80 +336,6 @@ bool WeatherLightning3D::_path_traced() const {
 	return env.is_valid() && env->is_pathtracing_enabled();
 }
 
-// Where the leader comes down (world-links link 4): the electrogeometric model (Golde 1945; IEC 62305-3's
-// rolling sphere). The downward leader's tip is caught by the first thing within the striking distance r of it, so
-// coming down over p_below it meets a top at height h and distance d across when the tip is at h + sqrt(r^2 - d^2),
-// the bare ground when it is at r: the highest of those wins. Tops are what a ray down finds (terrain, buildings)
-// plus the weather map's canopy over it, so a lone tree or a ridge takes the strikes of the ground round it.
-Vector3 WeatherLightning3D::_attach_point(const Vector3 &p_below, float p_cloud_base, float p_fallback, float p_peak_current, WeatherMap3D *p_map, bool &r_canopy) {
-	const float r = striking_distance(p_peak_current);
-	const float y0 = _ground_at(p_below, p_fallback);
-	Vector3 best(p_below.x, y0, p_below.z);
-	float best_tip = y0 + r;
-	r_canopy = false;
-	auto top_at = [&](float p_x, float p_z, bool &r_tree) {
-		const float g = _ground_at(Vector3(p_x, p_cloud_base, p_z), p_fallback);
-		const float c = p_map ? p_map->get_canopy_height_at(Vector3(p_x, g, p_z)) : 0.0f;
-		r_tree = c > 0.5f;
-		return g + MAX(c, 0.0f);
-	};
-	{
-		bool tree = false;
-		const float t = top_at(p_below.x, p_below.z, tree);
-		if (t + r > best_tip) {
-			best = Vector3(p_below.x, t, p_below.z);
-			best_tip = t + r;
-			r_canopy = tree;
-		}
-	}
-	// Rings out to r: 8 directions on each of 6 rings.
-	for (int ring = 1; ring <= 6; ring++) {
-		const float d = r * ring / 6.0f;
-		const float lift = Math::sqrt(MAX(r * r - d * d, 0.0f));
-		for (int k = 0; k < 8; k++) {
-			const float a = float(Math::TAU) * (k + 0.5f * (ring & 1)) / 8.0f;
-			const float x = p_below.x + d * Math::cos(a);
-			const float z = p_below.z + d * Math::sin(a);
-			bool tree = false;
-			const float t = top_at(x, z, tree);
-			if (t + lift > best_tip + 0.01f) {
-				best = Vector3(x, t, z);
-				best_tip = t + lift;
-				r_canopy = tree;
-			}
-		}
-	}
-	return best;
-}
-
-Vector3 WeatherLightning3D::find_strike_point(const Vector3 &p_position, float p_peak_current) {
-	WeatherMap3D *map = WeatherMap3D::get_active();
-	const float ground = map ? map->get_ground_height() : 0.0f;
-	const float base = WorldContracts::weather()->cloud_base_at(p_position); // the local base (WorldWeather.cloud_base_at)
-	bool canopy = false;
-	return _attach_point(Vector3(p_position.x, MAX(base, ground + 500.0f), p_position.z), MAX(base, ground + 500.0f), ground, p_peak_current, map, canopy);
-}
-
-float WeatherLightning3D::striking_distance(float p_peak_current) {
-	return 10.0f * Math::pow(MAX(p_peak_current, 0.1f), 0.65f);
-}
-
-LocalVector<WeatherLightning3D::GroundStrike> WeatherLightning3D::recent_strikes;
-uint64_t WeatherLightning3D::strike_serial = 0;
-
-void WeatherLightning3D::get_ground_strikes_after(uint64_t p_serial, LocalVector<GroundStrike> &r_strikes) {
-	r_strikes.clear();
-	for (const GroundStrike &s : recent_strikes) {
-		if (s.serial > p_serial) {
-			r_strikes.push_back(s);
-		}
-	}
-}
-
-uint64_t WeatherLightning3D::get_last_ground_strike_serial() {
-	return strike_serial;
-}
-
 float WeatherLightning3D::_ground_at(const Vector3 &p_from, float p_fallback) const {
 	Ref<World3D> world = get_world_3d();
 	PhysicsDirectSpaceState3D *space = world.is_valid() ? world->get_direct_space_state() : nullptr;
@@ -653,7 +576,7 @@ void WeatherLightning3D::_build_mesh(Flash &r_flash, const Vector3 &p_camera, fl
 	r_flash.mesh = mi;
 }
 
-int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_ground, WeatherMap3D *p_map, float p_storm_radius, bool p_attach) {
+int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_ground, WeatherMap3D *p_map, float p_storm_radius) {
 	if (!is_inside_tree()) {
 		return 0;
 	}
@@ -671,8 +594,7 @@ int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_
 	}
 	const Vector2 ct = WeatherClouds::cover_type_at(state, Vector2(p_position.x, p_position.z));
 	const float top_height = WeatherClouds::top_height(state, MAX(ct.y, 0.9f));
-	// The local cloud base (WorldWeather.cloud_base_at: the day's condensation level, lower over a storm).
-	const float base = WorldContracts::weather()->cloud_base_at(p_position);
+	const float base = state.base_height;
 
 	Flash f;
 	f.id = next_id++;
@@ -680,15 +602,8 @@ int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_
 	f.cloud_to_ground = p_cloud_to_ground;
 	const Vector3 listener = _listener();
 	if (p_cloud_to_ground) {
-		// The first stroke's peak current, log-normal about a 31 kA median (CIGRE; Berger et al. 1975), sets how
-		// far the leader reaches out to a tall thing (world-links link 4).
-		f.peak_current = CLAMP(31.0f * Math::exp(rng.randfn(0.0f, 0.7f)), 3.0f, 300.0f);
-		if (p_attach) {
-			f.ground = _attach_point(Vector3(p_position.x, base, p_position.z), base, ground_height, f.peak_current, p_map, f.canopy);
-		} else {
-			f.ground = Vector3(p_position.x, _ground_at(Vector3(p_position.x, base, p_position.z), ground_height), p_position.z);
-			f.canopy = p_map && p_map->get_canopy_height_at(f.ground) > 0.5f;
-		}
+		const float y = _ground_at(Vector3(p_position.x, base, p_position.z), ground_height);
+		f.ground = Vector3(p_position.x, y, p_position.z);
 		// The channel leaves the cloud base up to a few hundred metres to one side.
 		const Vector3 top(p_position.x + rng.randfn(0.0f, 300.0f), base + 100.0f, p_position.z + rng.randfn(0.0f, 300.0f));
 		f.glow = top + Vector3(0.0f, 0.15f * top_height, 0.0f);
@@ -700,22 +615,6 @@ int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_
 		_grow_in_cloud(f, f.glow, MIN(p_storm_radius, 4000.0f), 0.3f * top_height);
 	}
 	_plan_timing(f);
-	if (p_cloud_to_ground) {
-		GroundStrike s;
-		s.serial = ++strike_serial;
-		s.position = f.ground;
-		s.peak_current = f.peak_current;
-		s.continuing_current = f.continuing_length;
-		s.canopy = f.canopy;
-		if (recent_strikes.size() >= 32) {
-			recent_strikes.remove_at(0);
-		}
-		recent_strikes.push_back(s);
-		// A tree hit keeps its scar: the stand records it for the tree's struck variant (world-links, Lightning -> tree).
-		if (s.canopy && record_tree_strikes && WorldContracts::stand()) {
-			WorldContracts::stand()->add_strike(s.position, 0.0f);
-		}
-	}
 
 	if (p_cloud_to_ground) {
 		Viewport *vp = get_viewport();
@@ -901,10 +800,6 @@ void WeatherLightning3D::_push_sky() {
 	if (count == 0 && !sky_had_flashes) {
 		return;
 	}
-	if (WeatherMap3D *map = WeatherMap3D::get_active()) {
-		// Listed with the clouds' lights (WeatherMap3D.get_cloud_lights), for water reflections and other readers.
-		map->set_flash_cloud_lights(lit, count, channel_color, 8000.0f);
-	}
 	sky->set_lightning(lit, count, channel_color);
 	sky_had_flashes = count > 0;
 }
@@ -1034,8 +929,7 @@ void WeatherLightning3D::_notification(int p_what) {
 // API
 
 int WeatherLightning3D::strike(const Vector3 &p_position, bool p_cloud_to_ground) {
-	// A scripted strike lands where it is aimed (on whatever stands there); storms' strikes find their own mark.
-	return _start_flash(p_position, p_cloud_to_ground, WeatherMap3D::get_active(), 3000.0f, false);
+	return _start_flash(p_position, p_cloud_to_ground, WeatherMap3D::get_active(), 3000.0f);
 }
 
 PackedVector3Array WeatherLightning3D::get_last_channel() const {
@@ -1168,8 +1062,6 @@ void WeatherLightning3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_raster_shadow_distance"), &WeatherLightning3D::get_raster_shadow_distance);
 	ClassDB::bind_method(D_METHOD("set_thunder_enabled", "enabled"), &WeatherLightning3D::set_thunder_enabled);
 	ClassDB::bind_method(D_METHOD("is_thunder_enabled"), &WeatherLightning3D::is_thunder_enabled);
-	ClassDB::bind_method(D_METHOD("set_record_tree_strikes", "enabled"), &WeatherLightning3D::set_record_tree_strikes);
-	ClassDB::bind_method(D_METHOD("is_recording_tree_strikes"), &WeatherLightning3D::is_recording_tree_strikes);
 	ClassDB::bind_method(D_METHOD("set_thunder_volume_db", "db"), &WeatherLightning3D::set_thunder_volume_db);
 	ClassDB::bind_method(D_METHOD("get_thunder_volume_db"), &WeatherLightning3D::get_thunder_volume_db);
 	ClassDB::bind_method(D_METHOD("set_thunder_bus", "bus"), &WeatherLightning3D::set_thunder_bus);
@@ -1206,12 +1098,9 @@ void WeatherLightning3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "raster_shadow_distance", PROPERTY_HINT_RANGE, "10,4000,1,or_greater,suffix:m"), "set_raster_shadow_distance", "get_raster_shadow_distance");
 	ADD_GROUP("Thunder", "thunder_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "thunder_enabled"), "set_thunder_enabled", "is_thunder_enabled");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "record_tree_strikes"), "set_record_tree_strikes", "is_recording_tree_strikes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "thunder_volume_db", PROPERTY_HINT_RANGE, "-80,24,0.1,suffix:dB"), "set_thunder_volume_db", "get_thunder_volume_db");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING_NAME, "thunder_bus"), "set_thunder_bus", "get_thunder_bus");
 
-	ClassDB::bind_method(D_METHOD("find_strike_point", "position", "peak_current"), &WeatherLightning3D::find_strike_point);
-	ClassDB::bind_static_method("WeatherLightning3D", D_METHOD("striking_distance", "peak_current"), &WeatherLightning3D::striking_distance);
 	ADD_SIGNAL(MethodInfo("struck", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::BOOL, "cloud_to_ground"), PropertyInfo(Variant::FLOAT, "distance")));
 }
 

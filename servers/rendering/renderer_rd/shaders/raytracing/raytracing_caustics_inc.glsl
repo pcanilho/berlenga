@@ -2,7 +2,7 @@
 // water caustics of Gruen (Ray Tracing Gems, 2019) and Yang and Ouyang (Ray Tracing Gems II,
 // ch. 30, 2021), fed to the path tracer's sun light instead of drawn over the screen.
 //
-// Raygen shoots photons from the sun (one a pixel, more on small frames: RT_CAUSTICS_MIN_PHOTONS) across a square (rendering/pathtracing/caustics_area)
+// Raygen shoots one photon a pixel from the sun across a square (rendering/pathtracing/caustics_area)
 // around the point the camera looked at last frame (the centre pixel's first surface). Where a photon enters a medium's surface
 // (RT_MAT_FLAG_VOLUME, or a shader writing IOR), the surface's own material bends it (normal maps
 // and shader ripples included), and two photons go on from there: the bent one, and a straight
@@ -40,9 +40,6 @@
 #define RT_CAUSTICS_DEPTH_TOLERANCE 0.3 // metres a point may lie off the depth its texel's photons landed at
 #define RT_CAUSTICS_MAX_RATIO 32.0
 #define RT_CAUSTICS_EDGE_FADE 0.08 // share of the map across, at each border, over which caustics fade out
-#define RT_CAUSTICS_MIN_PHOTONS 4u // photons a texel a frame each cascade gets at least (raygen)
-#define RT_CAUSTICS_MAX_PER_PIXEL 6u // the most photons a pixel sends to one cascade
-#define RT_CAUSTICS_MIN_SUN_RADIUS 0.0046 // radians: the sun's angular radius, the least disc photons start from
 #define RT_CAUSTICS_SUN_HEIGHT 2000.0 // metres above the area's centre the photons start
 
 // Ray input on non-peel rays: a caustic photon. The hit reports the surface instead of shading

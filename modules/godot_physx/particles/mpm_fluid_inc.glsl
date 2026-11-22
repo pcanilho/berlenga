@@ -45,7 +45,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	ivec4 res_count; // xyz grid resolution (nodes), w particle count
 	vec4 fluid; // x rest_density, y stiffness, z dynamic_viscosity, w particle_mass
 	vec4 bmin; // xyz domain min (world), w = surface mass boost
-	vec4 bmax; // xyz domain max (world), w = granular flag (0 fluid / 1 granular / 2 granular, free flight)
+	vec4 bmax; // xyz domain max (world), w = granular flag (0 fluid / 1 granular)
 	vec4 extra; // x collider count, y collider friction, z surface iso density, w surface kernel
 	vec4 gran; // granular: x = Drucker-Prager alpha (friction), y = cohesion, z = shear modulus mu, w = Lame lambda
 };
@@ -53,12 +53,6 @@ layout(set = 0, binding = 0, std140) uniform Params {
 layout(set = 0, binding = 1, std430) restrict buffer Particles {
 	Particle particles[];
 };
-
-// A slot given back to a height field (PhysXGroundGrains3D: the grain was deposited) has v.w = 1 until an
-// emit reuses it; every pass skips it. Emitted and seeded particles start with v.w = 0, and g2p writes 0.
-bool particle_dead(uint p_id) {
-	return particles[p_id].v.w > 0.5;
-}
 layout(set = 0, binding = 2, std430) restrict buffer GridAcc {
 	int grid_i[];
 }; // 4 ints / node: mass, mom.xyz
@@ -94,7 +88,6 @@ layout(set = 0, binding = 8, std430) restrict readonly buffer SDFVoxels {
 #define NCOL (int(extra.x))
 #define CFRIC (extra.y)
 #define GRANULAR (bmax.w > 0.5)
-#define FREE_FLIGHT (bmax.w > 1.5)
 #define DP_ALPHA (gran.x)
 #define DP_COH (gran.y)
 #define GMU (gran.z)

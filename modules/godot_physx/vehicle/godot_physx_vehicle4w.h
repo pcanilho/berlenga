@@ -109,12 +109,6 @@ public:
 	PxVehicleTireStickyState tireStickyStates[4];
 	PxVehicleTireForce tireForces[4];
 	PxVehicleWheelRigidBody1dState wheelRigidBody1dStates[4];
-	// Soft soil (Berlenga, docs/ideas/sand.md stage 1): optional components owned by the node. The first runs
-	// once a step after the road query (it lowers each wheel's road by its sinkage and prints the rut), the
-	// second in each substep after the tire forces (it limits them to what the soil can carry and adds its
-	// motion resistance). Set before configure; null: not in the sequence.
-	PxVehicleComponent *soil_road_component = nullptr;
-	PxVehicleComponent *soil_tire_component = nullptr;
 	PxVehicleWheelLocalPose wheelLocalPoses[4];
 	PxVehicleRigidBodyState rigidBodyState;
 
@@ -461,16 +455,10 @@ public:
 			componentSequence.add(static_cast<PxVehicleDirectDriveActuationStateComponent *>(this));
 		}
 		componentSequence.add(static_cast<PxVehiclePhysXRoadGeometrySceneQueryComponent *>(this));
-		if (soil_road_component) {
-			componentSequence.add(soil_road_component);
-		}
 
 		componentSequenceSubstepGroupHandle = componentSequence.beginSubstepGroup(3);
 		componentSequence.add(static_cast<PxVehicleSuspensionComponent *>(this));
 		componentSequence.add(static_cast<PxVehicleTireComponent *>(this));
-		if (soil_tire_component) {
-			componentSequence.add(soil_tire_component);
-		}
 		componentSequence.add(static_cast<PxVehiclePhysXConstraintComponent *>(this));
 		if (engine_drive) {
 			add_engine_drivetrain(componentSequence);

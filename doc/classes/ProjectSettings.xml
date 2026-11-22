@@ -2688,9 +2688,6 @@
 			Time (in seconds) of inactivity before which a 3D physics body will put to sleep. See [constant PhysicsServer3D.SPACE_PARAM_BODY_TIME_TO_SLEEP].
 			[b]Note:[/b] This project setting is only effective when using GodotPhysics3D. It has no effect when using Jolt Physics.
 		</member>
-		<member name="physics/3d/world_contact/auto_join" type="bool" setter="" getter="" default="true">
-			If [code]true[/code], every [CharacterBody3D], [RigidBody3D] and [PhysicalBone3D] joins the [code]world_contact[/code] group as it enters the tree, which the ground, snow, grass and other plants, trees and water read to feel bodies: prints, trampling, bending branches, ripples. A body with the [code]world_contact_exclude[/code] meta stays out.
-		</member>
 		<member name="physics/common/enable_object_picking" type="bool" setter="" getter="" default="true">
 			Enables [member Viewport.physics_object_picking] on the root viewport.
 		</member>
@@ -3363,9 +3360,6 @@
 		<member name="rendering/pathtracing/mesh_lod" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], the path tracer traces each static mesh surface at the level of detail the rasterizer would draw it at, using the mesh's LODs (generated on import) and [member rendering/mesh_lod/lod_change/threshold_pixels]. Each level is built once and shared by every instance at that level. Far geometry then costs less acceleration-structure memory and build time, which matters in large worlds; near geometry is unchanged. Skinned, blend-shape and other deformed surfaces always trace at full detail. Off by default, so distant meshes keep their full detail in reflections, shadows and bounce light.
 		</member>
-		<member name="rendering/pathtracing/offscreen_record_cull" type="bool" setter="" getter="" default="true">
-			If [code]true[/code], MultiMeshes that set [method RenderingServer.multimesh_set_rt_offscreen_cull] leave out of path tracing their instances outside the camera's view that look smaller than their set angle, as film renderers do with sub-pixel detail. Turn off to compare, or to keep every instance in reflections.
-		</member>
 		<member name="rendering/pathtracing/persistent_instances" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], each traced mesh instance keeps its acceleration-structure instances and geometry data from frame to frame, and only instances that changed (moved, changed material, mesh, layers or visibility) are written again. In scenes with many static objects this removes most of the path tracer's per-object CPU work each frame. A changed material rewrites only the instances that use it; changing a mesh, the shadow-caster masks of the lights or the camera's cull mask, or moving the relative origin, rewrites them all once. A MultiMesh above [member rendering/pathtracing/multimesh_merged_blas_max_triangles] keeps its per-record instances the same way, and writes them all again in a frame where any record changes. Skinned, blend-shape, vertex-captured, billboard and mesh-LOD surfaces, merged MultiMeshes and particles are written every frame as before. When disabled, every instance is written every frame, as Godot does.
 		</member>
@@ -3378,8 +3372,8 @@
 		<member name="rendering/pathtracing/radiance_cache" type="bool" setter="" getter="" default="true">
 			The path tracer learns, in cells around the camera, how much light rough surfaces send back, their own lighting and further bounces together. When a path bounces off a rough surface onto another rough surface, it reads that surface's cell and ends there instead of sampling lights and tracing further bounces. One pixel in eight traces its paths in full each frame to keep the cells current. At the same render time this lowers noise in indirect light, at the price of a small bias where cells are coarse and a few frames of lag when lighting changes. What the camera sees directly, mirrors and glossy surfaces are never cached. Not used while environment fog is enabled. Uses 16 MiB of video memory.
 		</member>
-		<member name="rendering/pathtracing/relative_origin_grid" type="float" setter="" getter="" default="64.0">
-			Size in meters of the grid the path tracer's origin snaps to. The path tracer works in positions relative to the grid point nearest the camera (on the X and Z axes), so 32-bit positions on the GPU stay precise near the camera wherever it is in the world. Rays leave each surface a few hundred float steps of the position's size off it, so the further traced positions are from zero, the thicker the detail they step over: at 1 km that is about 3 cm (thin ice, glass and leaves lose what lies just behind their surface). The origin moves only when the camera is three quarters of a cell from it, and shaders still see absolute world positions. Set to [code]0.0[/code] to trace in absolute world positions, as Godot does.
+		<member name="rendering/pathtracing/relative_origin_grid" type="float" setter="" getter="" default="1024.0">
+			Size in meters of the grid the path tracer's origin snaps to. The path tracer works in positions relative to the corner of the grid cell the camera is in (on the X and Z axes), so 32-bit positions on the GPU stay precise when the camera is kilometers from the world origin. Without it, shadows, reflections and contact points start to break up past about 10 km. The origin moves only when the camera leaves its cell, and shaders still see absolute world positions. Set to [code]0.0[/code] to trace in absolute world positions, as Godot does.
 		</member>
 		<member name="rendering/pathtracing/simulated_gas" type="bool" setter="" getter="" default="true">
 			The path tracer traces simulated gas (smoke and fire from the PhysX module's Flow node) as a participating medium: light scatters inside it, it casts soft shadows, it shows in reflections, and fire emits light into the scene. The Flow volume nearest the camera is traced; the others keep Flow's own ray march. When disabled, all Flow volumes use Flow's ray march drawn over the path traced image. Has no effect without the PhysX module or without path tracing.
@@ -3410,10 +3404,6 @@
 			When enabled, setting [member MultiMesh.buffer] keeps a CPU-side mirror of the instance transform data in sync with the GPU buffer. This allows the path tracer to read per-instance transforms without performing a GPU-to-CPU readback on first access, eliminating the one-time stall that occurs otherwise.
 			[b]Warning:[/b] Enabling this setting increases CPU memory usage. Every [MultiMesh] that assigns [member MultiMesh.buffer] will maintain a full duplicate of its transform data in RAM.
 			Enable this only when [MultiMesh] nodes with frequently updated transforms are present in path-traced scenes and the GPU readback stall is measurable.
-			[b]Note:[/b] Requires a restart to take effect.
-		</member>
-		<member name="rendering/pathtracing/linear_swept_spheres" type="bool" setter="" getter="" default="false">
-			If [code]true[/code], on a device with linear swept spheres (Vulkan [code]VK_NV_ray_tracing_linear_swept_spheres[/code], hardware hair primitives) the path tracer traces strand hair ([code]render_mode hair_strands[/code] on a mesh of two crossed strips per strand point, as PhysXHair3D draws it) as round tubes between the strand points, one primitive per segment instead of four triangles, and shades each fibre from where the ray meets it across its width. Other devices, and other surfaces, trace triangles as before. Off by default until it has been checked on such a device; off asks for no extension.
 			[b]Note:[/b] Requires a restart to take effect.
 		</member>
 		<member name="rendering/pathtracing/multimesh_merged_blas_max_triangles" type="int" setter="" getter="" default="65536">
@@ -3783,10 +3773,6 @@
 		<member name="rendering/textures/webp_compression/lossless_compression_factor" type="float" setter="" getter="" default="25">
 			The default compression factor for lossless WebP. Decompression speed is mostly unaffected by the compression factor. Supported values are 0 to 100.
 		</member>
-		<member name="rendering/transparency/refraction_second_layer" type="bool" setter="" getter="" default="true">
-			If [code]true[/code], the Forward+ renderer depth-peels the transparent pass once before it is drawn, so a refractive surface (one reading [code]hint_screen_texture[/code], such as a [BaseMaterial3D] with refraction or transmission) also sees the refractive or transparent surface directly behind it, for example the pool under a stream of water or a second pane of glass. A lookup reads that layer only where it lies clearly behind the surface doing the lookup, so a surface never refracts its own image. Costs two depth-only and two colour passes over the screen-reading surfaces and one more screen copy, and only when a visible material reads the screen texture.
-			[b]Note:[/b] Only one extra layer is peeled; a third refractive layer still sees the opaque scene. Not used in multiview (XR).
-		</member>
 		<member name="rendering/viewport/hdr_2d" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], enables [member Viewport.use_hdr_2d] on the root Viewport. 2D rendering will use a high dynamic range (HDR) [code]RGBA16[/code] format framebuffer. Additionally, 2D rendering will be performed on linear values and will be converted using the appropriate transfer function immediately before blitting to the screen.
 			Practically speaking, this means that the end result of the Viewport will not be clamped to the [code]0-1[/code] range and can be used in 3D rendering without color encoding adjustments. This allows 2D rendering to take advantage of effects requiring high dynamic range (e.g. 2D glow) as well as substantially improves the appearance of effects requiring highly detailed gradients.
@@ -3819,12 +3805,6 @@
 		</member>
 		<member name="shader_globals/snow_map_rect" type="Dictionary" setter="" getter="" default="{ &quot;type&quot;: &quot;vec4&quot;, &quot;value&quot;: Vector4(0, 0, 0, 0) }">
 			Global shader parameter: the world XZ rectangle (x, z, width, depth) a [code]SnowCover3D[/code] covers. Declared by the engine so materials that read the snow ([member BaseMaterial3D.snow_from_weather]) compile without one; a width of 0 means no snowpack. A project's own declaration replaces it.
-		</member>
-		<member name="shader_globals/weather_contact_map" type="Dictionary" setter="" getter="" default="{ &quot;type&quot;: &quot;sampler2D&quot;, &quot;value&quot;: &quot;&quot; }">
-			Global shader parameter: a [code]WeatherMap3D[/code]'s contact wetness (red, 0 to 1), where water has been, over [member shader_globals/weather_contact_rect]. Declared by the engine so materials that read the weather compile without one. A project's own declaration replaces it.
-		</member>
-		<member name="shader_globals/weather_contact_rect" type="Dictionary" setter="" getter="" default="{ &quot;type&quot;: &quot;vec4&quot;, &quot;value&quot;: Vector4(0, 0, 0, 0) }">
-			Global shader parameter: the world XZ square (x, z, width, depth) of a [code]WeatherMap3D[/code]'s contact wetness; a width of 0 means none. A project's own declaration replaces it.
 		</member>
 		<member name="shader_globals/weather_map_rect" type="Dictionary" setter="" getter="" default="{ &quot;type&quot;: &quot;vec4&quot;, &quot;value&quot;: Vector4(0, 0, 0, 0) }">
 			Global shader parameter: the world XZ rectangle (x, z, width, depth) a [code]WeatherMap3D[/code] covers. Declared by the engine so materials that read the weather ([member BaseMaterial3D.wetness_from_weather]) compile without one; a width of 0 means no weather. A project's own declaration replaces it.

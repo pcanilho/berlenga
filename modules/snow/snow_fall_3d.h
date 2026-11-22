@@ -1,11 +1,10 @@
 /**************************************************************************/
-/*  snow_fall_3d.h                                                        */
+/*  snow_fall_3d.h                                                            */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -101,9 +100,6 @@ class SnowFall3D : public Node3D {
 
 	float cur_rate = 0.0f;
 	float cur_ratio = 0.0f;
-	bool sleet_enabled = true;
-	float cur_melt = 0.0f;
-	float cur_aggregate = 1.0f;
 	float cur_blow = 0.0f;
 	float cur_threshold = 0.0f;
 	float cur_wind10 = 0.0f;
@@ -188,13 +184,6 @@ public:
 	static float flake_number_density(float p_rate_mm_h, float p_min_size_mm); // flakes per m3 above the size, Gunn and Marshall 1958
 	static float flake_size_slope(float p_rate_mm_h); // L, per mm
 	static float fall_speed(float p_size_mm);
-	static float aggregate_factor(float p_celsius); // flake size factor near 0 C, Hobbs, Chang and Locatelli 1974
-	static float melted_share(float p_celsius, float p_humidity); // melted mass share of falling snow, 0..1
-	static float wet_fall_speed(float p_melted_diameter_mm, float p_melted_share); // m/s, Mitra et al. 1990
-	float get_melted_share() const { return cur_melt; }
-	float get_aggregate() const { return cur_aggregate; }
-	void set_sleet_enabled(bool p_enabled) { sleet_enabled = p_enabled; }
-	bool is_sleet_enabled() const { return sleet_enabled; }
 	static float snowfall_extinction(float p_rate_mm_h); // per m // m/s, Locatelli and Hobbs 1974, aggregates of dendrites
 	static float blowing_threshold(float p_celsius); // m/s at 10 m, Li and Pomeroy 1997, dry snow
 	static float saltation_flux_ratio(float p_wind10, float p_threshold); // Pomeroy 1989, relative to 1.5 x threshold

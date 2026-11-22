@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -31,14 +30,12 @@
 
 #pragma once
 
-#include "climate_recipe.h"
-
 #include "core/templates/local_vector.h"
-#include "core/variant/typed_array.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/mesh.h"
 
+#include "climate_recipe.h"
 #include "modules/noise/noise.h"
 
 // Generates mountain ranges for a whole world: uplift (where the rock rises: a painted map, Path3D ranges, noise)
@@ -55,12 +52,6 @@ public:
 		OUTLET_POSITIVE_X = 2,
 		OUTLET_NEGATIVE_Z = 4,
 		OUTLET_POSITIVE_Z = 8,
-	};
-	enum SandSeaKind {
-		SAND_SEA_TRANSVERSE, // one wind: ridges across it
-		SAND_SEA_BARCHAN, // one wind over thin sand: crescents
-		SAND_SEA_LINEAR, // two winds 120 degrees apart: ridges along their mean
-		SAND_SEA_STAR, // three winds: arms in every direction
 	};
 
 private:
@@ -82,7 +73,7 @@ private:
 	real_t erodibility = 2.0e-5;
 	real_t area_exponent = 0.5;
 	real_t hillslope_diffusion = 0.01; // m^2/yr
-	real_t deposition = 0.5; // G of Yuan et al. 2019; 0 = incision only
+	real_t deposition = 0.0; // G of Yuan et al. 2019; 0 = incision only
 	real_t critical_slope = 40.0; // degrees
 	real_t flow_exponent = 1.0;
 	real_t time_step = 20000.0; // years
@@ -108,13 +99,12 @@ private:
 	real_t cliff_ledge_strength = 1.0;
 
 	// Tile erosion (stage 4): droplet hydraulic plus thermal erosion on a fine grid, in overlapping tiles.
-	bool tile_erosion_enabled = true;
+	bool tile_erosion_enabled = false;
 	real_t tile_erosion_spacing = 2.0; // m
 	real_t tile_erosion_tile_size = 512.0; // m
 	real_t tile_erosion_apron = 128.0; // m
 	real_t tile_erosion_droplets = 1.0; // per cell
 	real_t tile_erosion_max_depth = 15.0; // m
-	real_t gully_incision = 1.0; // scale of the gullies' extra cut along the droplets' channels (0: none)
 	real_t tile_erosion_rock_hardness = 0.25;
 
 	// Geology and rivers (stage 5).
@@ -126,7 +116,7 @@ private:
 
 	// Layered rock (strata): hard bands erode slower and stand in cliffs, so rivers crossing them step down in
 	// knickpoints and waterfalls (docs/ideas/terrain-generation.md, "Waterfalls from rock layers").
-	bool strata_enabled = true;
+	bool strata_enabled = false;
 	real_t strata_spacing = 90.0; // m, one hard and one soft layer
 	real_t strata_hard_fraction = 0.35; // share of the spacing that is hard rock
 	real_t strata_hardness = 100.0; // erodibility of soft rock over hard (rock strength squared, Sklar and Dietrich 2001)
@@ -139,20 +129,15 @@ private:
 	// Glaciers (docs/ideas/terrain-generation.md, "Glacial erosion"): ice from the shallow ice approximation erodes
 	// troughs, cirques and overdeepened basins; ice ages alternate with the rivers, and a last glaciation after them
 	// leaves its basins as lakes.
-	bool glacial_enabled = true;
+	bool glacial_enabled = false;
 	real_t glacial_ela = 500.0; // m, equilibrium line altitude
 	real_t glacial_share = 0.5; // share of the run's time under ice
 	real_t glacial_final = 100000.0; // years of the last glaciation, after the rivers
 	real_t glacial_erosion = 1.0; // multiplier on K_g of Herman et al. 2015
 	real_t glacial_sliding = 1.0; // sliding speed over depth-averaged ice speed
-	bool glacial_converged = true; // the last glaciation solves its steady ice to convergence instead of fixed pseudo steps
-	real_t last_glacial_residual = 0.0;
-	int last_glacial_outer = 0;
 	real_t glacial_rock_variation = 0.0; // spread of rock quality under the ice (log of the erosion multiplier); 0 even
 	real_t glacial_rock_scale = 500.0; // m, wavelength of that variation
 	real_t glacial_inflow_balance = 0.0; // m/yr of ice per m2 of each inflow's off-map catchment (0: water only)
-	real_t glacial_coarse_cell = 0.0; // m, ice grid of the ice ages between river steps; 0 = the last glaciation's
-	bool ice_worn_detail = true; // publish terrain_ice_flow: the detail normal smooths stoss faces, roughens lee faces, adds striations
 	real_t last_glacial_eroded = 0.0;
 	real_t last_glacial_ice_area = 0.0;
 	real_t last_glacial_msec = 0.0;
@@ -172,31 +157,8 @@ private:
 	real_t seabed_profile = 0.1; // A in the Dean profile depth = A x^(2/3) (m^(1/3)); fine sand ~0.1
 	real_t shelf_slope = 0.03; // added past the surf zone (300 m)
 	real_t max_sea_depth = 60.0; // m
-	bool plunging_cliffs = true; // steep coasts without a beach run on below the sea (no strip at the swash line)
 	real_t beach_width = 80.0; // m, mean; it varies along the coast
 	real_t beach_slope = 0.03;
-	// Coastal dunes (terrain_dunes.h): wind-blown sand off the beaches, on its own fine grid over the belt behind them.
-	bool dunes_enabled = true;
-	real_t dune_belt_width = 300.0; // m inland from the beaches
-	real_t dune_cell = 2.0; // m
-	real_t dune_supply = 250.0; // m3 of sand per metre of beach over the run
-	int dune_steps = 1500;
-	real_t dune_wind_angle = 0.0; // degrees from onshore
-	real_t dune_vegetation = 1.0; // marram: 0 none (bare sand), 1 where it can grow
-	// Desert sand seas (TerrainDuneSea in terrain_dunes.h): dune fields over sand_sea_rect (none while it is empty).
-	bool sand_seas_enabled = true;
-	Rect2 sand_sea_rect;
-	SandSeaKind sand_sea_kind = SAND_SEA_TRANSVERSE;
-	real_t sand_sea_depth = 12.0; // m of sand, on average
-	real_t sand_sea_wind_angle = 0.0; // degrees, the way the (mean) wind blows, from +X toward +Z
-	real_t sand_sea_scale = 4.0; // m a cell; dunes come out some 25 cells apart and scale with it
-	int sand_sea_steps = 300;
-	real_t sand_sea_edge = 300.0; // m over which the sand thins out at the sea's edge
-	bool sand_sea_compound = true; // large dunes (draa) with ordinary dunes on their flanks
-	Ref<Image> sand_sea_mask; // optional: 0..1 (red) stretched over sand_sea_rect, where the sea's sand may lie
-	real_t nebkha_density = 1.0;
-	int oasis_count = 3; // springs per sand sea, on its lowest interdune floors
-	NodePath oasis_springs; // an OasisSprings3D whose pools the hollows are carved to // vegetated sand mounds on the sea's thin sand and margins (0: none)
 
 	// Lakes: natural dams across valleys, the water behind them.
 	int lake_count = 0;
@@ -228,9 +190,7 @@ private:
 	LocalVector<float> soil;
 	LocalVector<float> rock;
 	LocalVector<float> talus;
-	LocalVector<float> scree_sorting; // 0 at a talus apron's apex, 1 at its toe (fall sorting)
 	LocalVector<float> beach; // 1 on the beach face, fading over the backshore; 0 inland and where no beach
-	LocalVector<float> coast_exposure; // 0 sheltered to 1 open to the sea's waves, within coast_exposure_reach of the sea
 	LocalVector<float> hardness; // 0 soft .. 1 hard rock at the surface (strata)
 	LocalVector<int32_t> receivers;
 	LocalVector<float> channel_area; // D8 drainage area along the receivers, for the rivers
@@ -248,7 +208,6 @@ private:
 		real_t run = 0.0; // m from the lip cell to the foot cell
 		real_t h_top = 0.0, h_bottom = 0.0;
 		real_t half_width = 0.0; // m held vertical either side of the river's line
-		bool notch = false; // a tall fall: the face is left as it stands and only a notch is cut at the lip
 	};
 	// Plunge pools at the foot of falls (Mason and Arumugam 1985 depth, Pagliara et al. 2006 shape).
 	struct PlungePool {
@@ -265,16 +224,6 @@ private:
 		real_t floor_top = 0.0, floor_bottom = 0.0, length = 0.0;
 	};
 	double gorge_age = 0.0; // years of lip retreat; 0 none
-	double moraine_age = 2000.0; // years the last glaciation's margins stood still, building moraines; 0 none
-	double last_moraine_volume = 0.0; // m3 of debris the last generate() laid in moraines
-	double scree_age = 10000.0; // years cliffs have shed scree onto cones at their feet; 0 none
-	double last_scree_volume = 0.0; // m3 of scree the last generate() laid
-	LocalVector<float> scree_cover, till_cover; // m of scree and of moraine till laid on each cell, for the materials
-	double meander_age = 3000.0; // years the rivers on flat alluvial floors have meandered; 0 none
-	int last_meander_count = 0; // reaches meandered by the last generate()
-	int last_oxbow_count = 0;
-	double outwash_age = 10000.0; // years the glacial outwash rivers have braided; 0 none
-	int last_braid_count = 0;
 	double gorge_rate = 0.013; // m a year per sqrt(m3/s)
 	LocalVector<Gorge> gorges;
 	bool fall_lips = true;
@@ -284,32 +233,6 @@ private:
 	LocalVector<FallLip> lips;
 	LocalVector<PlungePool> pools;
 	LocalVector<LocalVector<int>> lip_buckets; // per LIP_BUCKET-metre square of the result
-	// Meandered channels (world x, z), cut into the full-resolution ground and followed by the rivers' points.
-	struct Channel {
-		LocalVector<Vector2> points;
-		LocalVector<real_t> bed; // bed height at each point
-		LocalVector<real_t> dep; // channel depth at each point (eased in and out at the ends)
-		real_t half_width = 5.0, depth = 1.0;
-		bool reach = false; // the river's course (else an oxbow)
-		int foot_cell = -1; // a reach's last cell: the river's course below it is cut once the rivers are routed
-		// A braidplain (outwash_age): relief rows along the points, braid_cols across braid_half each side, added to
-		// the ground; braid_thread marks the water's thread through one (its bed relative to the floor until final).
-		LocalVector<float> braid;
-		int braid_cols = 0;
-		real_t braid_half = 0.0;
-		bool braid_thread = false;
-		LocalVector<float> stage_rel; // a braidplain's mean-flow water surface over its floor, per row
-		LocalVector<real_t> stage; // the same in world height once the ground is final
-		int head_cell = -1; // the river cell at the plain's head (its discharge)
-	};
-	static constexpr real_t CHANNEL_BUCKET = 32.0;
-	LocalVector<Channel> channels;
-	LocalVector<LocalVector<int>> chan_buckets;
-	int chan_bx = 0, chan_bz = 0;
-	LocalVector<int32_t> channel_of_cell; // the channel cut through each cell, -1 none
-	float _apply_channels(real_t p_x, real_t p_z, float p_g) const;
-	void _bucket_channels();
-	void _cut_tails();
 	int lip_bx = 0, lip_bz = 0;
 	void _bake_lips();
 	float _apply_lips(real_t p_x, real_t p_z, float p_g) const;
@@ -345,37 +268,16 @@ private:
 	LocalVector<ObjectID> lake_nodes;
 	void _build_sea_mask(LocalVector<uint8_t> &r_sea) const;
 	void _shape_coast(const LocalVector<uint8_t> &p_sea);
-	void _coast_exposure(const LocalVector<uint8_t> &p_sea, const double *p_to_sea);
-	float _coast_exposure_cell(const uint8_t *p_sea, int p_i) const;
-	static void _coast_exposure_task(void *p_userdata, uint32_t p_index);
 	void _make_lakes(const LocalVector<uint8_t> &p_sea);
-	// p_want marks the cells that make a basin a lake (none: the cells the last glaciation's ice covered).
-	void _basin_lakes(std::vector<uint8_t> &r_taken, const uint8_t *p_want = nullptr, double p_min_area = -1.0);
-	// Touch-ups: TerrainBrush3D nodes under the generator, applied to the ground generate() made, the water re-solved.
-	LocalVector<float> heights_generated; // the ground as generate() left it, before the touch-ups
-	LocalVector<int32_t> receivers_generated;
-	LocalVector<int32_t> water_body_generated;
-	LocalVector<LakeInfo> lakes_generated;
-	LocalVector<Channel> channels_generated; // before the river tails were cut
-	LocalVector<float> touch_mask; // per cell: the mask of the brushes that moved it (the tile erosion fades there)
-	LocalVector<float> touch_flat; // per cell: the mask of the flatten brushes (the erosion detail fades there)
-	int last_touch_cells = 0;
-	int last_touch_lakes = 0;
-	double last_touch_msec = 0.0;
-	double touch_wait = -1.0;
-	void _brushes(LocalVector<class TerrainBrush3D *> &r_out, Node *p_node = nullptr) const;
-	void _touch_up();
+	void _basin_lakes(std::vector<uint8_t> &r_taken);
 	struct InflowPoint {
 		Vector2 position;
 		double area = 0.0; // m2
 		double sill = 0.0; // m radius of resistant rock round the entry (0: none)
 		double level = NAN; // height (eroded metres) the sill is not worn below
 		double erosion = 1.0; // share of the area that erodes (1: all; 0: water only)
-		double slope = 0.0; // > 0: an apron of rock falling away past the sill radius at this rise over run
-		Vector2 side; // the apron's half plane (zero: all round)
 	};
 	LocalVector<InflowPoint> _inflow_points() const;
-	void _guides(LocalVector<class TerrainGuide3D *> &r_out, Node *p_node = nullptr) const;
 	void _inflow_grid(const LocalVector<InflowPoint> &p_points, int p_nx, int p_ny, double p_dx, const uint8_t *p_outlet, LocalVector<double> &r_area, LocalVector<double> &r_sill, LocalVector<double> &r_level, LocalVector<double> *r_water) const;
 	void _route_rivers();
 	float _water_fade(real_t p_x, real_t p_z) const;
@@ -384,60 +286,11 @@ private:
 	Vector3 _lake_center(int p_lake) const;
 	Ref<ImageTexture> geology_texture;
 	Ref<ImageTexture> detail_keep_texture; // share of the erosion detail kept, per node (_bake_detail_keep)
-	// Interdune floors on the dune belts and sand seas, 0..1 per node; -1 off them (_bake_sand_interdune, for the
-	// materials' dune-scale tone: the coarse lag and granule ripples on the floors between dunes, rubefaction).
-	LocalVector<float> sand_interdune;
-	Ref<ImageTexture> sand_interdune_texture;
-	bool sand_interdune_dirty = true;
-	void _bake_sand_interdune();
 	// Static spray potential of the falls (0..1) on its own finer grid over the result (_bake_spray).
 	real_t spray_cell = 4.0;
 	int spray_nx = 0, spray_ny = 0;
 	LocalVector<float> spray;
 	Ref<ImageTexture> spray_texture;
-	Ref<ImageTexture> ice_flow_texture; // rg flow direction, b wear (ice_worn_detail)
-	// Sky occlusion of the ground (_bake_sky): sky view factor and bent normal on their own grid over the result.
-	bool sky_occlusion = true;
-	real_t sky_cell = 8.0;
-	real_t sky_distance = 4000.0;
-	int sky_nx = 0, sky_ny = 0;
-	LocalVector<float> sky_vis;
-	LocalVector<uint8_t> sky_horizon; // TerrainSky::DIRECTIONS per node
-	LocalVector<float> sky_sh; // 9 per node: the seen sky's harmonics over the whole sky's first
-	float sky_full[9] = { 1, 0, 0, 0, 0, 0, 0, 0, 0 }; // the whole sky's harmonics over its first
-	Ref<Texture2DArray> sky_texture; // three layers of RGBA half: harmonics 0-3, 4-7, 8
-	double last_sky_msec = 0.0;
-	double last_sky_light_msec = 0.0;
-	// Far sun shadows (docs/ideas/terrain-material.md, "Far sun shadows"): the ground's horizon toward the sun on a
-	// grid turned to the sun's azimuth, redone when the azimuth moves.
-	bool sun_shadows = true;
-	NodePath sun_light; // a DirectionalLight3D; empty: the first one in the scene
-	ObjectID sun_light_found;
-	double sun_poll_wait = 0.0;
-	double sun_search_wait = 0.0;
-	real_t sun_azimuth_done = -1000.0; // radians; far off: not built
-	LocalVector<float> sun_heights; // the sky grid's heights (sky_nx x sky_ny, sky_cell apart)
-	Ref<ImageTexture> sun_horizon_texture;
-	Vector4 sun_horizon_frame; // (to the sun x, z, s0, t0)
-	Vector4 sun_horizon_size; // (span along s, across t, 1 on)
-	double last_sun_horizon_msec = 0.0;
-	static void _sun_horizon_lines(void *p_job, uint32_t p_part);
-	void _sun_poll(double p_delta);
-	// The sky light, read back from an environment's sky now and then (sky_light_source).
-	NodePath sky_light_source;
-	// Guide preview: a coarse run (guide_preview_scale times the cell size) a moment after a guide changes.
-	bool guide_preview = true;
-	real_t guide_preview_scale = 4.0;
-	double preview_wait = -1.0;
-	double last_preview_msec = 0.0;
-	real_t sky_light_interval = 2.0;
-	double sky_light_wait = 0.0;
-	PackedFloat32Array sky_light_last; // the last panorama used, to skip updates when the sky has not changed
-	void _bake_sky();
-	void _upload_sky();
-	static void _sky_light_row(void *p_job, uint32_t p_row);
-	void _sky_light(const void *p_bins);
-	void _sky_light_poll(double p_delta);
 	void _bake_spray();
 	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).
 	int tile_nx = 0;
@@ -446,12 +299,6 @@ private:
 	LocalVector<float> tile_delta; // eroded minus input ground
 	LocalVector<float> tile_flow;
 	LocalVector<float> tile_deposit;
-	// The droplets' flow (cells upslope, roughly) and deposit depth (m) on the tile grid, R16F + G16F, for the
-	// material's rills and gullies (global terrain_tile_flow_map; terrain_tile_flow_rect, a zero rect when off).
-	Ref<ImageTexture> tile_flow_texture;
-	void _bake_tile_flow_texture();
-	real_t _gully_channel(real_t p_x, real_t p_z, real_t p_normal_y) const;
-	float _gully_cut(real_t p_x, real_t p_z) const;
 	double last_tile_erosion_msec = 0.0;
 	double last_water_msec = 0.0;
 	struct TileJob {
@@ -464,70 +311,6 @@ private:
 	static void _erode_tile(void *p_job, uint32_t p_tile);
 	void _erode_tiles();
 	float _tile_sample(const LocalVector<float> &p_grid, real_t p_x, real_t p_z) const;
-	// The dunes' result on their grid (dune_nx x dune_nz nodes from dune_origin, dune_grid_cell apart).
-	int dune_nx = 0;
-	int dune_nz = 0;
-	Vector2 dune_origin;
-	real_t dune_grid_cell = 2.0;
-	LocalVector<float> dune_sand; // m of sand
-	LocalVector<float> dune_plants; // 0..1 marram cover
-	LocalVector<float> dune_cover; // 0..1 loose sand at the surface, per node of the result (the geology's sand)
-	double last_dune_msec = 0.0;
-	double last_dune_volume = 0.0;
-	double last_dune_max = 0.0;
-	struct DuneJob;
-	static void _dune_tile(void *p_job, uint32_t p_tile);
-	void _build_dunes();
-	float _dune_sample(const LocalVector<float> &p_grid, real_t p_x, real_t p_z) const;
-	// The sand sea's result on its grid (sea_nx x sea_nz nodes from sea_origin, sea_cell apart).
-	int sea_nx = 0;
-	int sea_nz = 0;
-	Vector2 sea_origin;
-	real_t sea_cell = 4.0;
-	Vector2 sea_brink_dir; // the dune-building wind (one-wind seas: transverse, barchan); zero: no brink sharpening
-	LocalVector<float> sea_sand; // m of sand
-	LocalVector<float> sea_cover; // 0..1 loose sand at the surface, per node of the result
-	double last_sand_sea_msec = 0.0;
-	double last_sand_sea_max = 0.0;
-	static void _sand_sea_band(void *p_sea, uint32_t p_band);
-	static void _sand_sea_shear(void *p_sea, uint32_t p_part);
-	void _build_sand_sea();
-	float _sea_sample(real_t p_x, real_t p_z) const;
-	LocalVector<float> sea_mask; // sand_sea_mask resampled on the sea's grid (empty: no mask)
-	// Nebkhas (docs/ideas/dunes.md, "Nebkhas"): mounds of sand held by a shrub, each a dome round the plant and a
-	// tail downwind, bucketed for get_height.
-	struct Nebkha {
-		Vector2 pos;
-		float height = 0.0f; // m at the plant
-		float radius = 0.0f; // m, the dome's
-		float tail = 0.0f; // m from the plant to the tail's end, downwind
-	};
-	LocalVector<Nebkha> nebkhas;
-	// Oases (docs/ideas/dunes.md, "Oases"): springs on the sand seas' lowest interdune floors, and hollows carved to
-	// the pools OasisSprings3D sizes for them.
-	struct Oasis {
-		Vector2 centre;
-		float level = 0.0f; // the still water's height
-		float radius[128]; // the pool's outline, at even angles from +X toward +Z
-		float bank[128]; // the same, smoothed round the pool: the bank's contours follow it, so no outline jag runs out as a ray
-		LocalVector<Vector4> runnels; // (angle at the shore, how far in it reaches as a share of the shore, width m, depth m)
-		float reach = 0.0f; // m from the centre the hollow reaches
-		uint32_t seed = 0;
-		PackedVector3Array vents;
-	};
-	LocalVector<Vector4> springs_found; // (x, level, z, discharge 0 = the pools' default)
-	LocalVector<Oasis> oases;
-	void _place_springs();
-	void _carve_oases();
-	float _oasis_height(real_t p_x, real_t p_z, float p_ground) const;
-	LocalVector<LocalVector<uint32_t>> neb_buckets;
-	int neb_bx = 0;
-	int neb_bz = 0;
-	Vector2 neb_origin;
-	Vector2 neb_dir; // downwind
-	void _build_nebkhas();
-	float _nebkha_sample(real_t p_x, real_t p_z) const;
-	real_t _sea_cubic(real_t p_gx, real_t p_gz) const;
 	float _ground_detail(real_t p_x, real_t p_z) const;
 	bool result_deposition = false; // the last generate() deposited (alluvium smooths the detail)
 	Rect2 result_rect; // where the last generate() ran; the result stays there if the node moves
@@ -557,7 +340,6 @@ private:
 	};
 	static void _fill_row(void *p_job, uint32_t p_row);
 	void _publish_globals();
-	void _notification(int p_what);
 	Vector3 _cell_position(int p_cell) const;
 	Array _rivers(real_t p_min_area, bool p_cells) const;
 	void _bake_runoff(const LocalVector<uint8_t> &p_sea);
@@ -568,14 +350,6 @@ private:
 	void _alluvium_reach();
 	void _bake_detail_keep();
 	void _fill(real_t p_x0, real_t p_z0, real_t p_spacing, int p_width, int p_rows, float *r_out) const;
-
-	// Holes (cave mouths): oriented boxes, the unit cube [-1, 1]^3 through `box`.
-	struct Hole {
-		Transform3D box;
-		Transform3D inv;
-		Rect2 rect; // plan bounds
-	};
-	LocalVector<Hole> holes;
 
 protected:
 	static void _bind_methods();
@@ -668,8 +442,6 @@ public:
 	void set_tile_erosion_droplets(real_t p_value) { tile_erosion_droplets = MAX(p_value, real_t(0.0)); }
 	real_t get_tile_erosion_droplets() const { return tile_erosion_droplets; }
 	void set_tile_erosion_max_depth(real_t p_value) { tile_erosion_max_depth = MAX(p_value, real_t(0.1)); }
-	void set_gully_incision(real_t p_value) { gully_incision = MAX(p_value, real_t(0.0)); }
-	real_t get_gully_incision() const { return gully_incision; }
 	real_t get_tile_erosion_max_depth() const { return tile_erosion_max_depth; }
 	void set_tile_erosion_rock_hardness(real_t p_value) { tile_erosion_rock_hardness = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
 	real_t get_tile_erosion_rock_hardness() const { return tile_erosion_rock_hardness; }
@@ -685,8 +457,6 @@ public:
 	real_t get_talus_angle() const { return talus_angle; }
 	void set_talus_reach(real_t p_value) { talus_reach = MAX(p_value, real_t(1.0)); }
 	real_t get_talus_reach() const { return talus_reach; }
-	// The sea build_water() made (null: none), for nodes that change its floor (RockField3D's coast forms).
-	Node *get_sea_node() const { return ObjectDB::get_instance<Node>(sea_node); }
 	void set_glacial_enabled(bool p_enable) { glacial_enabled = p_enable; }
 	bool is_glacial_enabled() const { return glacial_enabled; }
 	void set_glacial_ela(real_t p_value) { glacial_ela = p_value; }
@@ -703,16 +473,8 @@ public:
 	real_t get_glacial_rock_scale() const { return glacial_rock_scale; }
 	void set_glacial_inflow_balance(real_t p_value) { glacial_inflow_balance = MAX(p_value, real_t(0.0)); }
 	real_t get_glacial_inflow_balance() const { return glacial_inflow_balance; }
-	void set_glacial_coarse_cell(real_t p_value) { glacial_coarse_cell = MAX(p_value, real_t(0.0)); }
-	real_t get_glacial_coarse_cell() const { return glacial_coarse_cell; }
-	void set_ice_worn_detail(bool p_enabled) { ice_worn_detail = p_enabled; }
-	bool is_ice_worn_detail() const { return ice_worn_detail; }
 	void set_glacial_sliding(real_t p_value) { glacial_sliding = MAX(p_value, real_t(0.0)); }
 	real_t get_glacial_sliding() const { return glacial_sliding; }
-	void set_glacial_converged(bool p_value) { glacial_converged = p_value; }
-	bool is_glacial_converged() const { return glacial_converged; }
-	real_t get_last_glacial_residual() const { return last_glacial_residual; }
-	int get_last_glacial_steps() const { return last_glacial_outer; }
 	real_t get_last_glacial_eroded() const { return last_glacial_eroded; }
 	real_t get_last_glacial_ice_area() const { return last_glacial_ice_area; }
 	real_t get_last_glacial_msec() const { return last_glacial_msec; }
@@ -769,89 +531,14 @@ public:
 	real_t get_shelf_slope() const { return shelf_slope; }
 	void set_max_sea_depth(real_t p_value) { max_sea_depth = MAX(p_value, real_t(0.1)); }
 	real_t get_max_sea_depth() const { return max_sea_depth; }
-	void set_plunging_cliffs(bool p_value) { plunging_cliffs = p_value; }
-	bool is_plunging_cliffs() const { return plunging_cliffs; }
 	void set_beach_width(real_t p_value) { beach_width = MAX(p_value, real_t(0.0)); }
 	real_t get_beach_width() const { return beach_width; }
 	void set_beach_slope(real_t p_value) { beach_slope = CLAMP(p_value, real_t(0.001), real_t(1.0)); }
 	real_t get_beach_slope() const { return beach_slope; }
-	void set_dunes_enabled(bool p_value) { dunes_enabled = p_value; }
-	bool is_dunes_enabled() const { return dunes_enabled; }
-	void set_dune_belt_width(real_t p_value) { dune_belt_width = MAX(p_value, real_t(0.0)); }
-	real_t get_dune_belt_width() const { return dune_belt_width; }
-	void set_dune_cell(real_t p_value) { dune_cell = CLAMP(p_value, real_t(0.5), real_t(16.0)); }
-	real_t get_dune_cell() const { return dune_cell; }
-	void set_dune_supply(real_t p_value) { dune_supply = MAX(p_value, real_t(0.0)); }
-	real_t get_dune_supply() const { return dune_supply; }
-	void set_dune_steps(int p_value) { dune_steps = MAX(p_value, 0); }
-	int get_dune_steps() const { return dune_steps; }
-	void set_dune_wind_angle(real_t p_value) { dune_wind_angle = p_value; }
-	real_t get_dune_wind_angle() const { return dune_wind_angle; }
-	void set_dune_vegetation(real_t p_value) { dune_vegetation = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
-	real_t get_dune_vegetation() const { return dune_vegetation; }
-	real_t get_dune_height(const Vector3 &p_global_position) const { return _dune_sample(dune_sand, p_global_position.x, p_global_position.z); }
-	real_t get_dune_stability(const Vector3 &p_global_position) const { return _dune_sample(dune_plants, p_global_position.x, p_global_position.z); }
-	real_t get_beach_at(const Vector3 &p_global_position) const;
-	real_t get_coast_exposure_at(const Vector3 &p_global_position) const;
-	Rect2 get_dune_rect() const;
-	real_t get_last_dune_msec() const { return last_dune_msec; }
-	real_t get_last_dune_volume() const { return last_dune_volume; }
-	real_t get_last_dune_max() const { return last_dune_max; }
-	void set_sand_seas_enabled(bool p_value) { sand_seas_enabled = p_value; }
-	bool is_sand_seas_enabled() const { return sand_seas_enabled; }
-	void set_sand_sea_rect(const Rect2 &p_rect) { sand_sea_rect = p_rect.abs(); }
-	Rect2 get_sand_sea_rect() const { return sand_sea_rect; }
-	void set_sand_sea_kind(SandSeaKind p_kind) { sand_sea_kind = p_kind; }
-	SandSeaKind get_sand_sea_kind() const { return sand_sea_kind; }
-	void set_sand_sea_depth(real_t p_value) { sand_sea_depth = MAX(p_value, real_t(0.0)); }
-	real_t get_sand_sea_depth() const { return sand_sea_depth; }
-	void set_sand_sea_wind_angle(real_t p_value) { sand_sea_wind_angle = p_value; }
-	real_t get_sand_sea_wind_angle() const { return sand_sea_wind_angle; }
-	void set_sand_sea_scale(real_t p_value) { sand_sea_scale = CLAMP(p_value, real_t(0.5), real_t(64.0)); }
-	real_t get_sand_sea_scale() const { return sand_sea_scale; }
-	void set_sand_sea_steps(int p_value) { sand_sea_steps = MAX(p_value, 0); }
-	int get_sand_sea_steps() const { return sand_sea_steps; }
-	void set_sand_sea_edge(real_t p_value) { sand_sea_edge = MAX(p_value, real_t(0.0)); }
-	real_t get_sand_sea_edge() const { return sand_sea_edge; }
-	real_t get_sand_sea_height(const Vector3 &p_global_position) const { return _sea_sample(p_global_position.x, p_global_position.z); }
-	real_t get_sand_depth_at(const Vector3 &p_global_position) const;
-	real_t get_sand_interdune_at(const Vector3 &p_global_position) const;
-	// The dune-building wind (unit, x and z) the sand sea was grown under: granule ripples' crests run across it.
-	Vector2 get_sand_wind_direction() const { return Vector2(Math::cos(Math::deg_to_rad(sand_sea_wind_angle)), Math::sin(Math::deg_to_rad(sand_sea_wind_angle))); }
-	void set_sand_sea_compound(bool p_value) { sand_sea_compound = p_value; }
-	bool is_sand_sea_compound() const { return sand_sea_compound; }
-	void set_sand_sea_mask(const Ref<Image> &p_mask) { sand_sea_mask = p_mask; }
-	Ref<Image> get_sand_sea_mask() const { return sand_sea_mask; }
-	void set_nebkha_density(real_t p_value) { nebkha_density = MAX(p_value, real_t(0.0)); }
-	real_t get_nebkha_density() const { return nebkha_density; }
-	real_t get_nebkha_height(const Vector3 &p_global_position) const { return _nebkha_sample(p_global_position.x, p_global_position.z); }
-	PackedVector4Array get_nebkhas(const Rect2 &p_rect) const;
-	void set_oasis_count(int p_value) { oasis_count = CLAMP(p_value, 0, 64); }
-	int get_oasis_count() const { return oasis_count; }
-	void set_oasis_springs(const NodePath &p_path) { oasis_springs = p_path; }
-	NodePath get_oasis_springs() const { return oasis_springs; }
-	PackedVector4Array get_springs() const;
-	bool carve_oases();
-	real_t get_last_sand_sea_msec() const { return last_sand_sea_msec; }
-	real_t get_last_sand_sea_max() const { return last_sand_sea_max; }
 	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
 	int get_lake_count() const { return lake_count; }
 	void set_gorge_age(double p_years) { gorge_age = MAX(p_years, 0.0); }
 	double get_gorge_age() const { return gorge_age; }
-	void set_moraine_age(double p_years) { moraine_age = MAX(p_years, 0.0); }
-	double get_moraine_age() const { return moraine_age; }
-	double get_last_moraine_volume() const { return last_moraine_volume; }
-	void set_scree_age(double p_years) { scree_age = MAX(p_years, 0.0); }
-	double get_scree_age() const { return scree_age; }
-	double get_last_scree_volume() const { return last_scree_volume; }
-	void set_meander_age(double p_years) { meander_age = MAX(p_years, 0.0); }
-	double get_meander_age() const { return meander_age; }
-	int get_last_meander_count() const { return last_meander_count; }
-	int get_last_oxbow_count() const { return last_oxbow_count; }
-	void set_outwash_age(double p_years) { outwash_age = MAX(p_years, 0.0); }
-	double get_outwash_age() const { return outwash_age; }
-	int get_last_braid_count() const { return last_braid_count; }
-	Array get_braidplains() const;
 	void set_gorge_rate(double p_rate) { gorge_rate = MAX(p_rate, 0.0); }
 	double get_gorge_rate() const { return gorge_rate; }
 	void set_fan_backfill(bool p_enable) { fan_backfill = p_enable; }
@@ -902,16 +589,6 @@ public:
 	// Generated ground (bicubic between grid nodes, plus height_offset, plus the detail filter); NaN outside or
 	// before generate().
 	real_t get_height(const Vector3 &p_global_position) const;
-	// Holes: where the ground is open (a cave mouth's passage). The heights stay as they are; is_hole() says
-	// whether the ground at a point's x, z lies inside a hole, and Landscape3D leaves those samples out of its mesh
-	// and collision. p_box maps the unit cube [-1, 1]^3 onto the hole. Holes go when the terrain is generated again.
-	bool add_hole(const Transform3D &p_box);
-	void clear_holes();
-	bool is_hole(const Vector3 &p_global_position) const;
-	bool is_hole_span(real_t p_x, real_t p_z, real_t p_y0, real_t p_y1) const;
-	bool has_holes_in(const Rect2 &p_rect) const;
-	int get_hole_count() const { return int(holes.size()); }
-	TypedArray<Transform3D> get_holes() const;
 	// The simulated ground without the detail filter.
 	real_t get_base_height(const Vector3 &p_global_position) const;
 	real_t get_drainage_area(const Vector3 &p_global_position) const;
@@ -924,8 +601,6 @@ public:
 
 	// Tile erosion.
 	real_t get_tile_flow(const Vector3 &p_global_position) const;
-	// (channel floor 0..1, deposit m) as the shaders' terrain_gully(): the slope-area rule on the droplets' flow.
-	Vector2 get_gully_at(const Vector3 &p_global_position, real_t p_normal_y) const;
 	real_t get_tile_deposit(const Vector3 &p_global_position) const;
 	double get_last_tile_erosion_msec() const { return last_tile_erosion_msec; }
 
@@ -933,7 +608,6 @@ public:
 	real_t get_soil_depth(const Vector3 &p_global_position) const;
 	real_t get_rock_exposure(const Vector3 &p_global_position) const;
 	real_t get_talus(const Vector3 &p_global_position) const;
-	real_t get_scree_sorting(const Vector3 &p_global_position) const;
 	real_t get_rock_hardness(const Vector3 &p_global_position) const;
 	Array get_river_sites(real_t p_min_area = 1.0e5, real_t p_min_discharge = 0.0, real_t p_run = 200.0) const;
 	Array get_waterfalls(real_t p_min_area = 1.0e5, real_t p_min_height = 5.0) const;
@@ -942,53 +616,10 @@ public:
 	real_t get_spray_cell() const { return spray_cell; }
 	real_t get_spray_potential(const Vector3 &p_global_position) const;
 	Ref<Image> get_spray_image() const;
-	void set_sky_occlusion(bool p_enable);
-	bool is_sky_occlusion_enabled() const { return sky_occlusion; }
-	void set_sky_cell(real_t p_cell) { sky_cell = MAX(p_cell, real_t(1.0)); }
-	real_t get_sky_cell() const { return sky_cell; }
-	void set_sky_distance(real_t p_distance) { sky_distance = MAX(p_distance, real_t(0.0)); }
-	real_t get_sky_distance() const { return sky_distance; }
-	real_t get_sky_visibility(const Vector3 &p_global_position) const;
-	Ref<Image> get_sky_image(int p_layer = 0) const;
-	double get_last_sky_msec() const { return last_sky_msec; }
-	double get_last_sky_light_msec() const { return last_sky_light_msec; }
-	bool update_sky_light(const Ref<Image> &p_panorama);
-	void set_guide_preview(bool p_enable) { guide_preview = p_enable; }
-	bool is_guide_preview() const { return guide_preview; }
-	void set_guide_preview_scale(real_t p_scale) { guide_preview_scale = CLAMP(p_scale, real_t(1.0), real_t(16.0)); }
-	real_t get_guide_preview_scale() const { return guide_preview_scale; }
-	// A guide under this generator changed: with guide_preview, run preview() once it has been still for 0.4 s.
-	void guide_changed();
-	// generate() and write_to_terrain() at guide_preview_scale times the cell size; the cell size is restored after.
-	int preview();
-	double get_last_preview_msec() const { return last_preview_msec; }
-	// Apply the TerrainBrush3D touch-ups under this generator to the generated ground and re-solve the lakes and
-	// rivers (generate() does this itself). False with no generated ground.
-	bool apply_touch_ups();
-	// A brush under this generator changed: apply_touch_ups() and write_to_terrain() once it has been still for 0.4 s.
-	void touch_up_changed();
-	int get_last_touch_up_cells() const { return last_touch_cells; }
-	int get_last_touch_up_lakes() const { return last_touch_lakes; }
-	double get_last_touch_up_msec() const { return last_touch_msec; }
-	void set_sun_shadows(bool p_enable);
-	bool is_sun_shadows() const { return sun_shadows; }
-	void set_sun_light(const NodePath &p_path);
-	NodePath get_sun_light() const { return sun_light; }
-	bool update_sun_horizon(const Vector3 &p_to_sun);
-	Ref<Image> get_sun_horizon_image() const;
-	real_t get_last_sun_horizon_msec() const { return last_sun_horizon_msec; }
-	void set_sky_light_source(const NodePath &p_path);
-	NodePath get_sky_light_source() const { return sky_light_source; }
-	void set_sky_light_interval(real_t p_seconds) { sky_light_interval = MAX(p_seconds, real_t(0.0)); }
-	real_t get_sky_light_interval() const { return sky_light_interval; }
 	Color get_geology_at(const Vector3 &p_global_position) const;
-	// get_geology_image()'s channels at a point (sand as a negative soil depth, till as a negative talus), the map
-	// the materials lay their layers by; NaN in r outside the result.
-	Color get_material_geology_at(const Vector3 &p_global_position) const;
 	Ref<Image> get_geology_image() const;
 	Ref<Texture2D> get_geology_texture() const { return geology_texture; }
 	static String get_geology_shader_code();
-	static String get_sand_shader_code();
 	String get_detail_shader_code() const;
 	real_t get_discharge(real_t p_area) const;
 	Array get_rivers(real_t p_min_area) const;
@@ -1017,4 +648,3 @@ public:
 };
 
 VARIANT_ENUM_CAST(TerrainGenerator3D::OutletEdge);
-VARIANT_ENUM_CAST(TerrainGenerator3D::SandSeaKind);

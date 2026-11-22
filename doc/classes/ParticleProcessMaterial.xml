@@ -449,12 +449,6 @@
 		<member name="velocity_pivot" type="Vector3" setter="set_velocity_pivot" getter="get_velocity_pivot" default="Vector3(0, 0, 0)">
 			A pivot point used to calculate radial and orbital velocity of particles.
 		</member>
-		<member name="wind_drag" type="float" setter="set_wind_drag" getter="get_wind_drag" default="1.0">
-			Rate (1/s) at which each particle's velocity across gravity is pulled toward the air's velocity from the active [WeatherMap3D] (linear drag, as Houdini's POP Wind and Niagara's Wind Force). About 1.5 for a raindrop, 10 for a snowflake, 1 for a spark. A particle's own fall is unchanged; the gusts' vertical part still lifts it. [code]0[/code] turns the wind off. With no [WeatherMap3D] in the scene, nothing changes.
-		</member>
-		<member name="wind_height" type="float" setter="set_wind_height" getter="get_wind_height" default="-1.0">
-			Height above the ground (m) at which the wind is read. [code]-1[/code] reads it at each particle's own height above the sampled terrain.
-		</member>
 	</members>
 	<signals>
 		<signal name="emission_shape_changed">

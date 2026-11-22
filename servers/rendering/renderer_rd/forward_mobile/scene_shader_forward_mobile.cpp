@@ -676,7 +676,6 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 
 		actions.renames["ALPHA_SCISSOR_THRESHOLD"] = "alpha_scissor_threshold_highp";
 		actions.renames["ALPHA_HASH_SCALE"] = "alpha_hash_scale_highp";
-		actions.renames["OPAQUE_PREPASS_THRESHOLD"] = "opaque_prepass_threshold_out";
 		actions.renames["ALPHA_ANTIALIASING_EDGE"] = "alpha_antialiasing_edge_highp";
 		actions.renames["ALPHA_TEXTURE_COORDINATE"] = "alpha_texture_coordinate";
 
@@ -745,11 +744,6 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.renames["CUSTOM3"] = "custom3_attrib";
 		actions.renames["LIGHT_VERTEX"] = "light_vertex";
 		actions.renames["DIRECTIONAL_SHADOW_OFFSET"] = "directional_shadow_offset";
-		actions.renames["sun_visibility"] = "sun_visibility";
-		actions.renames["sun_direction"] = "sun_direction";
-		actions.renames["relief_sun_direction"] = "relief_sun_direction";
-		actions.renames["SUN_SHADOW"] = "sun_shadow";
-		actions.renames["POSITIONAL_SHADOW_OFFSET"] = "positional_shadow_offset";
 
 		actions.renames["NODE_POSITION_WORLD"] = "read_model_matrix[3].xyz";
 		actions.renames["CAMERA_POSITION_WORLD"] = "inv_view_matrix[3].xyz";
@@ -811,7 +805,6 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 
 		actions.usage_defines["ALPHA_SCISSOR_THRESHOLD"] = "#define ALPHA_SCISSOR_USED\n";
 		actions.usage_defines["ALPHA_HASH_SCALE"] = "#define ALPHA_HASH_USED\n";
-		actions.usage_defines["OPAQUE_PREPASS_THRESHOLD"] = "#define OPAQUE_PREPASS_THRESHOLD_USED\n";
 		actions.usage_defines["ALPHA_ANTIALIASING_EDGE"] = "#define ALPHA_ANTIALIASING_EDGE_USED\n";
 		actions.usage_defines["ALPHA_TEXTURE_COORDINATE"] = "@ALPHA_ANTIALIASING_EDGE";
 		actions.usage_defines["PREMUL_ALPHA_FACTOR"] = "#define PREMUL_ALPHA_USED";

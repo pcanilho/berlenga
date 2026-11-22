@@ -47,16 +47,7 @@ if env["platform"] == "windows":
     if physx_gpu:
         physx_libs.append("PhysXGpu_64")  # import lib for PhysXGpu_64.dll
 elif env["platform"] == "linuxbsd":
-    # PhysX names its arm64 output folder linux.aarch64 where Godot says arm64.
-    _physx_arch = "aarch64" if env["arch"] == "arm64" else env["arch"]
-    physx_lib = os.path.join(physx_sdk, "bin", "linux." + _physx_arch, "release")
-    if not os.path.isdir(physx_lib) and env["arch"] == "arm64":
-        # Fall back to whichever arm output folder the SDK build made.
-        import glob
-
-        _arm = [d for d in glob.glob(os.path.join(physx_sdk, "bin", "linux.*", "release")) if "arm" in d or "aarch64" in d]
-        if _arm:
-            physx_lib = _arm[0]
+    physx_lib = os.path.join(physx_sdk, "bin", "linux.x86_64", "release")
     # No GPU lib to link on Linux, PhysX loads it itself at runtime.
     physx_libs = list(physx_static_libs)
 else:
@@ -198,9 +189,6 @@ if flow_sdk:
     # ("nvflow/nanovdb/PNanoVDB.h" from the include root).
     env_physx.Append(CPPPATH=[flow_inc, os.path.join(flow_inc, "nvflow"), os.path.join(flow_inc, "nvflowext")])
     env_physx.Append(CPPDEFINES=["GODOT_PHYSX_FLOW"])
-    if env["tests"]:
-        # The module's doctest headers compile in tests/, outside env_physx (tests/test_flow_loader.h).
-        env.Append(CPPDEFINES=["GODOT_PHYSX_FLOW"])
     if env["platform"] == "windows":
         flow_bin = os.path.join(flow_sdk, "_build", "windows-x86_64", "release")
         for _flow_dll in ("nvflow.dll", "nvflowext.dll"):
@@ -253,11 +241,9 @@ _mpm_bs_glsl = (
     "mpm_bs_surface.glsl",
     "mpm_bs_march.glsl",
     "mpm_bs_render.glsl",
-    "mpm_bs_diffuse_advect.glsl",
-    "mpm_bs_diffuse_spawn.glsl",
 )
 _mpm_glsl_dep = [os.path.join("particles", "mpm_fluid_inc.glsl"), "#glsl_builders.py"]
-_mpm_bs_glsl_dep = [os.path.join("particles", "mpm_block_inc.glsl"), os.path.join("particles", "mpm_bs_diffuse_inc.glsl"), "#glsl_builders.py"]
+_mpm_bs_glsl_dep = [os.path.join("particles", "mpm_block_inc.glsl"), "#glsl_builders.py"]
 for _glsl in _mpm_glsl:
     env_physx.GLSL_HEADER(os.path.join("particles", _glsl))
     env_physx.Depends(os.path.join("particles", _glsl + ".gen.h"), _mpm_glsl_dep)
@@ -289,8 +275,6 @@ _water_blit_glsl = (
     "water_foam.glsl",
     "water_shore_foam.glsl",
     "water_swash.glsl",
-    "water_flow_offset.glsl",
-    "water_surface_waves.glsl",
 )
 for _glsl in _water_blit_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))

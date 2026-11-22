@@ -1,7 +1,6 @@
 ---
 title: "DLSS Ray Reconstruction"
-weight: 40
-group: "Rendering"
+weight: 110
 summary: "DLSS 4.5 Ray Reconstruction; pixel antialiasing when it is off."
 ---
 

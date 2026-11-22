@@ -756,8 +756,6 @@ void CPUParticles3D::_update_internal() {
 	}
 }
 
-CPUParticles3D::WindSampler CPUParticles3D::weather_wind_sampler = nullptr;
-
 void CPUParticles3D::_particles_process(double p_delta) {
 	p_delta *= speed_scale;
 
@@ -785,11 +783,6 @@ void CPUParticles3D::_particles_process(double p_delta) {
 	}
 
 	double system_phase = time / lifetime;
-
-	// The shared wind: drag toward the air across gravity (see ParticleProcessMaterial::wind_drag).
-	const bool wind_on = wind_drag > 0.0f && weather_wind_sampler != nullptr;
-	const Transform3D wind_to_world = local_coords ? get_global_transform() : Transform3D();
-	const Vector3 wind_down = gravity.length_squared() > 0.0f ? gravity.normalized() : Vector3(0, -1, 0);
 
 	bool should_be_active = false;
 	for (int i = 0; i < pcount; i++) {
@@ -1122,22 +1115,6 @@ void CPUParticles3D::_particles_process(double p_delta) {
 			}
 			if (curve_parameters[PARAM_INITIAL_LINEAR_VELOCITY].is_valid()) {
 				p.velocity = p.velocity.normalized() * tex_linear_velocity;
-			}
-
-			if (wind_on) {
-				Vector3 air;
-				if (weather_wind_sampler(wind_to_world.xform(p.transform.origin), wind_height, air)) {
-					if (local_coords) {
-						air = wind_to_world.basis.xform_inv(air);
-					}
-					Vector3 rel = air - p.velocity;
-					rel -= wind_down * rel.dot(wind_down);
-					rel += wind_down * air.dot(wind_down);
-					p.velocity += rel * (1.0f - Math::exp(-wind_drag * float(local_delta)));
-					if (particle_flags[PARTICLE_FLAG_DISABLE_Z]) {
-						p.velocity.z = 0.0;
-					}
-				}
 			}
 
 			if (parameters_max[PARAM_DAMPING] + tex_damping > 0.0) {
@@ -1566,9 +1543,6 @@ void CPUParticles3D::convert_from_particles(Node *p_particles) {
 	CONVERT_PARAM(PARAM_ANIM_OFFSET);
 
 #undef CONVERT_PARAM
-
-	set_wind_drag(material->get_wind_drag());
-	set_wind_height(material->get_wind_height());
 }
 
 void CPUParticles3D::_bind_methods() {
@@ -1724,10 +1698,6 @@ void CPUParticles3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_scale_curve_z"), &CPUParticles3D::get_scale_curve_z);
 	ClassDB::bind_method(D_METHOD("set_scale_curve_z", "scale_curve"), &CPUParticles3D::set_scale_curve_z);
 
-	ClassDB::bind_method(D_METHOD("set_wind_drag", "drag"), &CPUParticles3D::set_wind_drag);
-	ClassDB::bind_method(D_METHOD("get_wind_drag"), &CPUParticles3D::get_wind_drag);
-	ClassDB::bind_method(D_METHOD("set_wind_height", "height"), &CPUParticles3D::set_wind_height);
-	ClassDB::bind_method(D_METHOD("get_wind_height"), &CPUParticles3D::get_wind_height);
 	ClassDB::bind_method(D_METHOD("convert_from_particles", "particles"), &CPUParticles3D::convert_from_particles);
 
 	ADD_SIGNAL(MethodInfo("finished"));
@@ -1754,9 +1724,6 @@ void CPUParticles3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flatness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_flatness", "get_flatness");
 	ADD_GROUP("Gravity", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "gravity"), "set_gravity", "get_gravity");
-	ADD_GROUP("Wind", "wind_");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_drag", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater,suffix:1/s"), "set_wind_drag", "get_wind_drag");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_height", PROPERTY_HINT_RANGE, "-1,100,0.1,or_greater,suffix:m"), "set_wind_height", "get_wind_height");
 	ADD_GROUP("Initial Velocity", "initial_");
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "initial_velocity_min", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater"), "set_param_min", "get_param_min", PARAM_INITIAL_LINEAR_VELOCITY);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "initial_velocity_max", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater"), "set_param_max", "get_param_max", PARAM_INITIAL_LINEAR_VELOCITY);

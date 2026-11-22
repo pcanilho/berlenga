@@ -1283,7 +1283,6 @@ MaterialStorage::MaterialStorage() {
 
 		actions.renames["ALPHA_SCISSOR_THRESHOLD"] = "alpha_scissor_threshold";
 		actions.renames["ALPHA_HASH_SCALE"] = "alpha_hash_scale";
-		actions.renames["OPAQUE_PREPASS_THRESHOLD"] = "opaque_prepass_threshold_out";
 		actions.renames["ALPHA_ANTIALIASING_EDGE"] = "alpha_antialiasing_edge";
 		actions.renames["ALPHA_TEXTURE_COORDINATE"] = "alpha_texture_coordinate";
 
@@ -1352,11 +1351,6 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["CUSTOM3"] = "custom3_attrib";
 		actions.renames["LIGHT_VERTEX"] = "light_vertex";
 		actions.renames["DIRECTIONAL_SHADOW_OFFSET"] = "directional_shadow_offset";
-		actions.renames["sun_visibility"] = "sun_visibility";
-		actions.renames["sun_direction"] = "sun_direction";
-		actions.renames["relief_sun_direction"] = "relief_sun_direction";
-		actions.renames["SUN_SHADOW"] = "sun_shadow";
-		actions.renames["POSITIONAL_SHADOW_OFFSET"] = "positional_shadow_offset";
 
 		actions.renames["NODE_POSITION_WORLD"] = "model_matrix[3].xyz";
 		actions.renames["CAMERA_POSITION_WORLD"] = "scene_data_block.data.inv_view_matrix[3].xyz";
@@ -1418,7 +1412,6 @@ MaterialStorage::MaterialStorage() {
 
 		actions.usage_defines["ALPHA_SCISSOR_THRESHOLD"] = "#define ALPHA_SCISSOR_USED\n";
 		actions.usage_defines["ALPHA_HASH_SCALE"] = "#define ALPHA_HASH_USED\n";
-		actions.usage_defines["OPAQUE_PREPASS_THRESHOLD"] = "#define OPAQUE_PREPASS_THRESHOLD_USED\n";
 		actions.usage_defines["ALPHA_ANTIALIASING_EDGE"] = "#define ALPHA_ANTIALIASING_EDGE_USED\n";
 		actions.usage_defines["ALPHA_TEXTURE_COORDINATE"] = "@ALPHA_ANTIALIASING_EDGE";
 		actions.usage_defines["PREMULT_ALPHA_FACTOR"] = "#define PREMULT_ALPHA_USED";
@@ -1586,7 +1579,6 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["LIGHT3_SIZE"] = "directional_lights.data[3].color_size.w";
 		actions.renames["AT_CUBEMAP_PASS"] = "AT_CUBEMAP_PASS";
 		actions.renames["AT_HALF_RES_PASS"] = "AT_HALF_RES_PASS";
-		actions.renames["REPROJECTION_FRAME"] = "0u"; // no half_res_reprojection here
 		actions.renames["AT_QUARTER_RES_PASS"] = "AT_QUARTER_RES_PASS";
 		actions.usage_defines["HALF_RES_COLOR"] = "\n#define USES_HALF_RES_COLOR\n";
 		actions.usage_defines["QUARTER_RES_COLOR"] = "\n#define USES_QUARTER_RES_COLOR\n";
@@ -2124,15 +2116,12 @@ GLuint MaterialStorage::global_shader_parameters_get_uniform_buffer() const {
 	return global_shader_uniforms.buffer;
 }
 
-int32_t MaterialStorage::global_shader_parameters_instance_allocate(RID p_instance, int p_count) {
+int32_t MaterialStorage::global_shader_parameters_instance_allocate(RID p_instance) {
 	ERR_FAIL_COND_V(global_shader_uniforms.instance_buffer_pos.has(p_instance), -1);
-	// Only the slots its materials' instance uniforms use (their highest index + 1), not all 16: a scene of many
-	// instances with one instance uniform each fits sixteen times as many in the same buffer.
-	const int count = CLAMP(p_count, 1, int(ShaderLanguage::MAX_INSTANCE_UNIFORM_INDICES));
-	int32_t pos = _global_shader_uniform_allocate(count);
+	int32_t pos = _global_shader_uniform_allocate(ShaderLanguage::MAX_INSTANCE_UNIFORM_INDICES);
 	global_shader_uniforms.instance_buffer_pos[p_instance] = pos; //save anyway
 	ERR_FAIL_COND_V_MSG(pos < 0, -1, vformat("Too many instances using shader instance variables. Consider increasing rendering/limits/global_shader_variables/buffer_size in the Project Settings. Maximum items supported by this hardware is: %d.", Config::get_singleton()->max_uniform_buffer_size / sizeof(GlobalShaderUniforms::Value)));
-	global_shader_uniforms.buffer_usage[pos].elements = count;
+	global_shader_uniforms.buffer_usage[pos].elements = ShaderLanguage::MAX_INSTANCE_UNIFORM_INDICES;
 	return pos;
 }
 
@@ -2154,7 +2143,7 @@ void MaterialStorage::global_shader_parameters_instance_update(RID p_instance, i
 	if (pos < 0) {
 		return; //again, not allocated, ignore
 	}
-	ERR_FAIL_INDEX(p_index, MAX(int(global_shader_uniforms.buffer_usage[pos].elements), 1));
+	ERR_FAIL_INDEX(p_index, ShaderLanguage::MAX_INSTANCE_UNIFORM_INDICES);
 
 	Variant::Type value_type = p_value.get_type();
 	ERR_FAIL_COND_MSG(p_value.get_type() > Variant::COLOR, "Unsupported variant type for instance parameter: " + Variant::get_type_name(value_type)); //anything greater not supported

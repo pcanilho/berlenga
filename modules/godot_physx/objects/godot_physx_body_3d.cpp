@@ -30,13 +30,14 @@
 
 #include "godot_physx_body_3d.h"
 
+#include "godot_physx_material.h"
+
 #include "../godot_physx_conversions.h"
 #include "../godot_physx_project_settings.h"
 #include "../joints/godot_physx_joint_3d.h"
 #include "../shapes/godot_physx_shape_3d.h"
 #include "../spaces/godot_physx_direct_state_3d.h"
 #include "../spaces/godot_physx_space_3d.h"
-#include "godot_physx_material.h"
 
 #include <PxPhysicsAPI.h>
 
@@ -63,9 +64,8 @@ GodotPhysXBody3D::~GodotPhysXBody3D() {
 	}
 	_destroy_actor();
 	if (px_material) {
-		// (shared; the last user's release is deferred: its handle must not be reused before a GPU scene has synced
-		// the removal)
-		GodotPhysXSpace3D::release_material(px_material);
+		// (not released here: its handle must not be reused before a GPU scene has synced the removal)
+		GodotPhysXSpace3D::defer_material_release(px_material);
 		px_material = nullptr;
 	}
 	if (direct_state) {
@@ -75,7 +75,11 @@ GodotPhysXBody3D::~GodotPhysXBody3D() {
 
 PxMaterial *GodotPhysXBody3D::_get_material() {
 	if (!px_material && space && space->get_px_physics()) {
-		px_material = GodotPhysXSpace3D::acquire_material(space->get_px_physics(), friction, bounce);
+		px_material = space->get_px_physics()->createMaterial(
+				(PxReal)Math::abs(friction), (PxReal)Math::abs(friction), (PxReal)CLAMP(bounce, (real_t)0.0, (real_t)1.0));
+		if (px_material) {
+			godot_physx_apply_material(px_material, friction, bounce);
+		}
 	}
 	return px_material ? px_material : (space ? space->get_default_material() : nullptr);
 }
@@ -91,16 +95,8 @@ void GodotPhysXBody3D::_destroy_actor() {
 	if (space) {
 		space->body_actor_gone(this); // the areas it overlaps take their pairs back (an exit unless it re-enters)
 	}
-	if (px_actor->getScene()) {
-		if (space && joints.is_empty() && px_actor->is<PxRigidStatic>() && px_actor->getScene() == space->get_px_scene()) {
-			space->queue_static_removal(px_actor); // leaves with the space's next batch, then released
-			px_actor = nullptr;
-			px_shapes.clear();
-			return;
-		}
-		px_actor->getScene()->removeActor(*px_actor);
-	} else if (space) {
-		space->cancel_static_actor(px_actor); // never reached the scene
+	if (space && space->get_px_scene()) {
+		space->get_px_scene()->removeActor(*px_actor);
 	}
 	px_actor->release();
 	px_actor = nullptr;
@@ -199,9 +195,6 @@ void GodotPhysXBody3D::_shapes_edited() {
 	if (!px_actor || !space) {
 		return;
 	}
-	if (!px_actor->getScene()) {
-		space->pending_static_changed();
-	}
 	const bool non_kinematic_dynamic = _is_dynamic() && mode != PhysicsServer3D::BODY_MODE_KINEMATIC;
 	bool has_separation_ray = false;
 	for (const ShapeRef &sr : shapes) {
@@ -288,11 +281,7 @@ void GodotPhysXBody3D::_build_actor() {
 	_apply_axis_lock();
 	_apply_solver_iterations();
 
-	if (mode == PhysicsServer3D::BODY_MODE_STATIC && joints.is_empty()) {
-		space->queue_static_actor(px_actor); // enters with the space's next batch
-	} else {
-		scene->addActor(*px_actor);
-	}
+	scene->addActor(*px_actor);
 	_gravity_scale_changed();
 
 	// The actor pointer changed; any joints referencing this body must be
@@ -340,16 +329,9 @@ void GodotPhysXBody3D::_apply_dynamic_flags() {
 		dyn->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_SPECULATIVE_CCD, true);
 	}
 	// overlapping bodies separate at most this fast (the SDK default is unbounded: they popped apart in one step)
-	if (max_depenetration_velocity >= 0.0f) {
-		dyn->setMaxDepenetrationVelocity(max_depenetration_velocity > 0.0f ? (PxReal)max_depenetration_velocity : PX_MAX_F32);
-	} else if (GodotPhysXProjectSettings::max_depenetration_velocity > 0.0) {
+	if (GodotPhysXProjectSettings::max_depenetration_velocity > 0.0) {
 		dyn->setMaxDepenetrationVelocity((PxReal)GodotPhysXProjectSettings::max_depenetration_velocity);
 	}
-}
-
-void GodotPhysXBody3D::set_max_depenetration_velocity(float p_velocity) {
-	max_depenetration_velocity = p_velocity;
-	_apply_dynamic_flags();
 }
 
 void GodotPhysXBody3D::set_space(GodotPhysXSpace3D *p_space) {
@@ -626,20 +608,8 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 			break;
 	}
 
-	if (px_material && (p_param == PhysicsServer3D::BODY_PARAM_FRICTION || p_param == PhysicsServer3D::BODY_PARAM_BOUNCE) && space && space->get_px_physics()) {
-		// Materials are shared: move this body's shapes to the one for its new values.
-		PxMaterial *m = GodotPhysXSpace3D::acquire_material(space->get_px_physics(), friction, bounce);
-		if (m && m != px_material) {
-			for (PxShape *ps : px_shapes) {
-				if (ps) {
-					ps->setMaterials(&m, 1);
-				}
-			}
-			GodotPhysXSpace3D::release_material(px_material);
-			px_material = m;
-		} else if (m) {
-			GodotPhysXSpace3D::release_material(m); // the same one: drop the extra reference
-		}
+	if (px_material && (p_param == PhysicsServer3D::BODY_PARAM_FRICTION || p_param == PhysicsServer3D::BODY_PARAM_BOUNCE)) {
+		godot_physx_apply_material(px_material, friction, bounce);
 	}
 
 	if (space && px_actor) {
@@ -735,9 +705,6 @@ void GodotPhysXBody3D::set_state(PhysicsServer3D::BodyState p_state, const Varia
 					}
 				} else {
 					px_actor->setGlobalPose(pose);
-					if (!px_actor->getScene() && space) {
-						space->pending_static_changed(); // still waiting to enter: its bounds moved
-					}
 				}
 			}
 		} break;

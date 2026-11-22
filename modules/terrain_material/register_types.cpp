@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -51,38 +50,11 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_geology_map", "sampler2D" },
 		{ "terrain_geology_rect", "vec4" },
 		{ "terrain_detail_keep_map", "sampler2D" },
-		// The droplet erosion's flow and deposits (TerrainGenerator3D.tile_erosion_enabled): rills and gullies.
-		{ "terrain_tile_flow_map", "sampler2D" },
-		{ "terrain_tile_flow_rect", "vec4" },
-		// Loose sand depth on the dune fields (the sand's dune-scale tone).
-		{ "terrain_sand_interdune_map", "sampler2D" },
-		{ "terrain_sand_interdune_rect", "vec4" },
-		{ "terrain_sand_wind", "vec4" },
 		// The generator's fall spray, and the plant cover colour the far ground blends to (vegetation publishes it).
 		{ "terrain_spray_potential", "sampler2D" },
 		{ "terrain_spray_rect", "vec4" },
 		{ "terrain_cover_map", "sampler2D" },
 		{ "terrain_cover_rect", "vec4" },
-		// Where stones sit (RockField3D.ground_contact publishes it).
-		{ "rock_contact_map", "sampler2D" },
-		{ "rock_far_cover_map", "sampler2D" },
-		{ "rock_far_cover_rect", "vec4" },
-		{ "rock_far_reach_map", "sampler2D" },
-		{ "rock_contact_rect", "vec4" },
-		// The last glaciers' flow and wear, for ice-worn rock in the detail normal (TerrainGenerator3D.ice_worn_detail).
-		{ "terrain_ice_flow", "sampler2D" },
-		{ "terrain_ice_flow_rect", "vec4" },
-		// The ground's seen sky (TerrainGenerator3D.sky_occlusion).
-		{ "terrain_sky_map", "sampler2DArray" },
-		{ "terrain_sky_rect", "vec4" },
-		{ "terrain_sky_full", "vec4" },
-		{ "terrain_sky_full2", "vec4" },
-		{ "terrain_sky_full3", "float" },
-		// The stand's worn trails and fresh rooting (Landscape3D publishes it).
-		{ "terrain_stand_map", "sampler2D" },
-		{ "terrain_stand_rect", "vec4" },
-		// Landscape3D's cliff relief for the ground patch drawn over it (metres, landscape origin).
-		{ "terrain_cliff_relief", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {
@@ -90,7 +62,7 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		}
 		Dictionary d;
 		d["type"] = g.type;
-		d["value"] = String(g.type) == "vec4" ? Variant(Vector4()) : (String(g.type) == "float" ? Variant(0.0) : Variant(""));
+		d["value"] = String(g.type) == "vec4" ? Variant(Vector4()) : Variant("");
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, String("shader_globals/") + g.name, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), d);
 	}
 }

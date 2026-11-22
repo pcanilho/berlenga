@@ -38,7 +38,7 @@ function openBox(img) {
   box.showModal();
 }
 document.querySelectorAll('.content img').forEach((img) => {
-  if (img.closest('a') || img.closest('.hero h1')) return;
+  if (img.closest('a')) return;
   img.classList.add('zoomable');
   img.tabIndex = 0;
   const open = () => openBox(img);
@@ -283,117 +283,4 @@ document.querySelectorAll('.content img.zoomable').forEach((img) => {
   const q = new URLSearchParams(location.search).get('q');
   if (q) box.value = q;
   run();
-})();
-
-// Feature pages: link setting names to their row on the settings page.
-(() => {
-  const el = document.getElementById('setmap');
-  if (!el) return;
-  let pairs; try { pairs = JSON.parse(el.textContent); } catch (e) { return; }
-  const page = location.pathname.split('/').filter(Boolean).pop();
-  const map = new Map();
-  for (let i = 0; i + 2 < pairs.length; i += 3) {
-    const name = pairs[i], id = pairs[i + 1], pg = pairs[i + 2];
-    const k = name.trim();
-    if (!k || (map.has(k) && !(pg && pg === page))) continue;
-    map.set(k, id);
-  }
-  const base = el.dataset.url;
-  document.querySelectorAll('.prose code').forEach((c) => {
-    if (c.closest('a, pre')) return;
-    const id = map.get(c.textContent.trim());
-    if (!id) return;
-    const a = document.createElement('a');
-    a.className = 'setlink'; a.href = base + '#' + id; a.title = 'In the settings table';
-    c.replaceWith(a); a.appendChild(c);
-  });
-})();
-
-// Copy buttons on code blocks.
-(() => {
-  document.querySelectorAll('.prose pre').forEach((pre) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'pre-wrap';
-    pre.replaceWith(wrap); wrap.appendChild(pre);
-    const b = document.createElement('button');
-    b.className = 'iconbtn copy'; b.type = 'button'; b.setAttribute('aria-label', 'Copy');
-    const icon = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
-    const tick = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m5 12 5 5 9-10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    b.innerHTML = icon;
-    b.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(pre.innerText.replace(/\n$/, '')); } catch (e) { return; }
-      b.innerHTML = tick; b.classList.add('done'); b.setAttribute('aria-label', 'Copied');
-      setTimeout(() => { b.innerHTML = icon; b.classList.remove('done'); b.setAttribute('aria-label', 'Copy'); }, 1500);
-    });
-    wrap.appendChild(b);
-  });
-})();
-
-// Settings page: show a linked row even if a filter would hide it.
-(() => {
-  const go = () => {
-    const id = decodeURIComponent(location.hash.slice(1));
-    const row = id && document.getElementById(id);
-    if (!row || row.tagName !== 'TR') return;
-    const box = document.querySelector('[data-set-filter]');
-    if (row.hidden && box) { box.value = ''; box.dispatchEvent(new Event('input')); }
-    const all = document.querySelector('[data-set-tab="all"]');
-    if (row.closest('[hidden]') && all) all.click();
-    row.scrollIntoView({ block: 'start' });
-  };
-  window.addEventListener('hashchange', go);
-  if (location.hash) requestAnimationFrame(go);
-})();
-
-// Downloads: mark the build for this system.
-(() => {
-  const items = document.querySelectorAll('.dl-item');
-  if (!items.length) return;
-  const ua = navigator.userAgent, plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
-  let os = '';
-  if (/Win/i.test(plat) || /Windows/.test(ua)) os = 'windows';
-  else if (/Mac/i.test(plat) || /Mac OS X/.test(ua)) { if (!/iPhone|iPad/.test(ua)) os = 'macos'; }
-  else if (/Linux/i.test(plat) || /Linux/.test(ua)) { if (!/Android/.test(ua)) os = /aarch64|arm64|armv8/i.test(plat + ua) ? 'linux-arm64' : 'linux-x64'; }
-  items.forEach((a) => { if (a.dataset.os === os) a.classList.add('mine'); });
-})();
-
-// Sidebar groups: remember folded groups; the current page's group stays open.
-(() => {
-  const groups = document.querySelectorAll('.navgroup');
-  if (!groups.length) return;
-  let shut = [];
-  try { shut = JSON.parse(localStorage.getItem('navShut') || '[]'); } catch (e) {}
-  groups.forEach((d) => {
-    if (shut.includes(d.dataset.group) && !d.hasAttribute('data-here')) d.open = false;
-    d.addEventListener('toggle', () => {
-      const s = new Set(shut);
-      if (d.open) s.delete(d.dataset.group); else s.add(d.dataset.group);
-      shut = [...s];
-      try { localStorage.setItem('navShut', JSON.stringify(shut)); } catch (e) {}
-    });
-  });
-})();
-
-// Feature pages: each bold feature name gets its own link (#name, as Hugo's anchorize).
-(() => {
-  const prose = document.querySelector('.prose');
-  if (!prose || !document.querySelector('.eyebrow')) return;
-  const slug = (t) => t.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}_-]/gu, '');
-  prose.querySelectorAll(':scope > ul > li').forEach((li) => {
-    let host = li;
-    if (li.firstElementChild && li.firstElementChild.tagName === 'P' && li.firstChild === li.firstElementChild) host = li.firstElementChild;
-    const b = host.firstElementChild;
-    if (!b || b.tagName !== 'STRONG' || host.firstChild !== b) return;
-    const id = slug(b.textContent);
-    if (!id || document.getElementById(id)) return;
-    li.id = id;
-    li.classList.add('feat');
-    const a = document.createElement('a');
-    a.className = 'anchor'; a.href = '#' + id; a.textContent = '#';
-    a.setAttribute('aria-label', 'Link to this feature'); a.setAttribute('data-pagefind-ignore', '');
-    li.prepend(a);
-  });
-  const id = decodeURIComponent(location.hash.slice(1));
-  const el = id && document.getElementById(id);
-  if (el && el.classList.contains('feat')) requestAnimationFrame(() => el.scrollIntoView({ block: 'start' }));
 })();

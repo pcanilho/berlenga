@@ -27,7 +27,7 @@ def make_splash_editor(target, source, env):
         file.write(f"""\
 #include "core/math/color.h"
 
-static const Color boot_splash_editor_bg_color = Color(0.125, 0.13, 0.14);
+static const Color boot_splash_editor_bg_color = Color(0.125, 0.145, 0.192);
 inline constexpr const unsigned char boot_splash_editor_png[] = {{
 {methods.format_buffer(buffer, 1)}
 }};

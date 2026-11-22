@@ -25,7 +25,7 @@ mat4 rt_view_matrix = transpose(mat4(scene_data_block.data.view_matrix[0],
 
 GeometryData rt_geom = geometries[rt_geometry_idx];
 #ifdef RT_USES_INSTANCE_CUSTOM
-instance_custom = fetch_instance_custom(rt_geom, uint(RT_HIT_PRIMITIVE_ID));
+instance_custom = fetch_instance_custom(rt_geom, uint(gl_PrimitiveID));
 #endif
 read_model_matrix = mat4(gl_ObjectToWorldEXT);
 // Matches the rasterizer's uniform-scale case; instance scale flags that would
@@ -55,19 +55,7 @@ tangent = mat3(rt_world_to_object) * rt_tangent;
 binormal = mat3(rt_world_to_object) * rt_bitangent;
 uv_interp = rt_uv;
 uv2_interp = rt_uv2;
-#if defined(RT_USES_CUSTOM_ATTRIBS) && defined(RT_HIT_ATTRIBS_DECLARED)
-// CUSTOM0-3 for vertex() (raster reads them per vertex; here they are interpolated at the hit).
-{
-	uint rt_ci0, rt_ci1, rt_ci2;
-	get_triangle_indices(rt_geom, rt_ci0, rt_ci1, rt_ci2);
-	vec3 rt_cbary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
-	custom0_attrib = fetch_custom_attrib(rt_geom, 0u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
-	custom1_attrib = fetch_custom_attrib(rt_geom, 1u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
-	custom2_attrib = fetch_custom_attrib(rt_geom, 2u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
-	custom3_attrib = fetch_custom_attrib(rt_geom, 3u, rt_ci0, rt_ci1, rt_ci2, rt_cbary);
-}
-#endif
-color_interp = rt_color * fetch_instance_color(rt_geom, uint(RT_HIT_PRIMITIVE_ID));
+color_interp = rt_color * fetch_instance_color(rt_geom, uint(gl_PrimitiveID));
 // VIEW is view-space in the rasterizer; rotate the incoming ray to match.
 view = -normalize(mat3(rt_view_matrix) * gl_WorldRayDirectionEXT);
 rt_front_facing = rt_front_face;
@@ -80,24 +68,6 @@ rt_in_shadow_pass = is_shadow_ray(payload.packed_bounces_flags) || get_total_bou
 mat4 rt_default_modelview_matrix = rt_view_matrix * mat4(gl_ObjectToWorldEXT);
 rt_modelview_matrix = rt_default_modelview_matrix;
 rt_modelview_normal_matrix = mat3(rt_modelview_matrix);
-
-// A merged MultiMesh: the BLAS holds every instance baked into the node's space, while raster runs vertex() on the
-// mesh with MODEL_MATRIX = node x instance. Give vertex() the same: the hit in the instance's own space, and the
-// instance's transform folded into the model matrices.
-if ((rt_geom.flags & FLAG_INSTANCE_XFORM) != 0u) {
-	mat4 rt_ixf = fetch_instance_transform(rt_geom, uint(RT_HIT_PRIMITIVE_ID));
-	mat3 rt_ixf_inv3 = inverse(mat3(rt_ixf));
-	vertex = rt_ixf_inv3 * (vertex - rt_ixf[3].xyz);
-	// Normals by the inverse transpose of the instance's 3x3 (its own normal matrix), inverted.
-	normal = normalize(transpose(mat3(rt_ixf)) * normal);
-	tangent = normalize(rt_ixf_inv3 * tangent);
-	binormal = normalize(rt_ixf_inv3 * binormal);
-	read_model_matrix = read_model_matrix * rt_ixf;
-	model_normal_matrix = mat3(read_model_matrix);
-	rt_default_modelview_matrix = rt_default_modelview_matrix * rt_ixf;
-	rt_modelview_matrix = rt_default_modelview_matrix;
-	rt_modelview_normal_matrix = mat3(rt_modelview_matrix);
-}
 
 // Captured geometry already went through vertex(); re-running it must only produce the varyings.
 bool rt_captured = (rt_geom.flags & FLAG_CAPTURED) != 0u;

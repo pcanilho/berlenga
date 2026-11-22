@@ -1,1 +1,0 @@
-- Snow: icicles hang in clusters under drip points that wet and dry over the days of melt, with stubs and bare gaps between and each taper a little different; raster draws the milky core as wide as the clear ice magnifies it, as the path tracer does.

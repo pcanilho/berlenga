@@ -461,28 +461,10 @@ GodotPhysXShape3D *query_shape(RID p_shape_rid) {
 	return shape;
 }
 
-// Before a shape query: the waiting statics the shape can reach (swept along its motion, plus the margin) go in.
-void flush_for_shape(GodotPhysXSpace3D *p_space, const GodotPhysXShape3D::ScaledGeometry &p_geometry, const PhysicsDirectSpaceState3D::ShapeParameters &p_parameters) {
-	const PxTransform pose = to_px(p_parameters.transform) * p_geometry.local_pose;
-	PxBounds3 reach;
-	PxGeometryQuery::computeGeomBounds(reach, p_geometry.geom.any(), pose, (PxReal)p_parameters.margin + 0.01f);
-	if (p_parameters.motion != Vector3()) {
-		const PxVec3 m = to_px(p_parameters.motion);
-		reach.include(reach.minimum + m);
-		reach.include(reach.maximum + m);
-	}
-	p_space->flush_pending_actors(reach);
-}
-
 } //namespace
 
 bool GodotPhysXDirectSpaceState3D::intersect_ray(const RayParameters &p_parameters, RayResult &r_result) {
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
-	if (scene) {
-		PxBounds3 reach = PxBounds3::boundsOfPoints(to_px(p_parameters.from), to_px(p_parameters.to));
-		reach.fattenFast(0.01f);
-		space->flush_pending_actors(reach); // statics waiting to enter that the ray can reach go in first
-	}
 	ERR_FAIL_NULL_V(scene, false);
 
 	const Vector3 delta = p_parameters.to - p_parameters.from;
@@ -531,11 +513,6 @@ bool GodotPhysXDirectSpaceState3D::intersect_ray(const RayParameters &p_paramete
 
 int GodotPhysXDirectSpaceState3D::intersect_point(const PointParameters &p_parameters, ShapeResult *r_results, int p_result_max) {
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
-	if (scene) {
-		PxBounds3 reach = PxBounds3::boundsOfPoints(to_px(p_parameters.position), to_px(p_parameters.position));
-		reach.fattenFast(0.01f);
-		space->flush_pending_actors(reach);
-	}
 	ERR_FAIL_NULL_V(scene, 0);
 	if (p_result_max <= 0) {
 		return 0;
@@ -574,7 +551,6 @@ int GodotPhysXDirectSpaceState3D::intersect_shape(const ShapeParameters &p_param
 	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
 	ERR_FAIL_NULL_V(shape, 0);
 	const GodotPhysXShape3D::ScaledGeometry g = shape->scaled_geometry(p_parameters.transform.basis.get_scale());
-	flush_for_shape(space, g, p_parameters);
 	if (p_result_max <= 0) {
 		return 0;
 	}
@@ -614,7 +590,6 @@ bool GodotPhysXDirectSpaceState3D::cast_motion(const ShapeParameters &p_paramete
 	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
 	ERR_FAIL_NULL_V(shape, false);
 	const GodotPhysXShape3D::ScaledGeometry g = shape->scaled_geometry(p_parameters.transform.basis.get_scale());
-	flush_for_shape(space, g, p_parameters);
 
 	const real_t motion_len = p_parameters.motion.length();
 	if (motion_len <= CMP_EPSILON) {
@@ -656,7 +631,6 @@ bool GodotPhysXDirectSpaceState3D::collide_shape(const ShapeParameters &p_parame
 	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
 	ERR_FAIL_NULL_V(shape, false);
 	const GodotPhysXShape3D::ScaledGeometry g = shape->scaled_geometry(p_parameters.transform.basis.get_scale());
-	flush_for_shape(space, g, p_parameters);
 	if (p_result_max <= 0) {
 		return false;
 	}
@@ -693,7 +667,6 @@ bool GodotPhysXDirectSpaceState3D::rest_info(const ShapeParameters &p_parameters
 	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
 	ERR_FAIL_NULL_V(shape, false);
 	const GodotPhysXShape3D::ScaledGeometry g = shape->scaled_geometry(p_parameters.transform.basis.get_scale());
-	flush_for_shape(space, g, p_parameters);
 
 	QueryFilter filter;
 	filter.set_from(p_parameters);

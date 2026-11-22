@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -33,24 +32,17 @@
 #pragma once
 
 #include "snow_climate.h"
-#include "snow_powder_cloud_3d.h"
-
-#include <vector>
 
 #include "core/io/image.h"
 #include "core/object/worker_thread_pool.h"
 #include "modules/ground/ground_height_query.h"
 #include "modules/weather/weather_map_3d.h"
-#include "modules/world/world_contracts.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
 class PhysicsDirectSpaceState3D;
 
-class SnowAvalanche3D;
-class SnowBodies3D;
 class SnowCornice3D;
-class SnowLakeIce3D;
 class TerrainDeformer3D;
 class TerrainDataMap3D;
 
@@ -63,12 +55,10 @@ class TerrainDataMap3D;
 // refrozen, snow sliding off steep slopes (SnowSlide, Bernhardt and Schulz 2010) and wind piling it in lee
 // and stripping exposed ground (Winstral et al. 2002). Materials read it through the snow_map global
 // (BaseMaterial3D Snow), scripts through get_*_at().
-class SnowCover3D : public Node3D, public WorldSnowProvider {
+class SnowCover3D : public Node3D {
 	GDCLASS(SnowCover3D, Node3D);
 	friend class SnowCornice3D;
 	friend class SnowSurface3D;
-	friend class SnowLakeIce3D;
-	friend class SnowAvalanche3D;
 
 	static SnowCover3D *active;
 
@@ -92,12 +82,6 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	float melt_shortwave_factor = 0.0094f; // mm m2 / (h W)
 	float liquid_capacity = 0.05f; // share of the pack's water it holds as liquid
 	bool crust_enabled = true;
-	bool hoar_enabled = true; // surface hoar on clear calm nights, buried as a weak layer (round 5)
-	bool suncups_enabled = true; // ablation hollows in sunny melt (follow-up 41)
-	bool depth_hoar_enabled = true; // basal facets grown under a strong temperature gradient (follow-up 47)
-	bool sastrugi_enabled = true; // wind-carved ridges on hard eroding snow (follow-up 46)
-	bool wind_packing_enabled = true; // wind-affected snowfall and wind packing of the surface: wind slab (follow-up 45)
-	bool slush_enabled = true; // melt water ponds in the pack's base over frozen ground (follow-up 41)
 	bool slide_enabled = true;
 	float slide_interval = 600.0f; // weather seconds between slide passes
 	float slide_angle = 25.0f; // degrees
@@ -159,7 +143,6 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	Vector<float> cell_density; // kg/m3
 	Vector<float> cell_albedo;
 	Vector<float> cell_runoff; // mm/h leaving the pack, last update
-	Vector<float> runoff_out; // the weather's water source with a world tier: its cells, the square's averaged in (mm/h)
 	Vector<float> cell_sx; // degrees, Winstral's maximum upwind slope
 	Vector<float> cell_canopy; // canopy closure over the cell, 0..1 (WeatherMap3D's canopy)
 	Vector<float> cell_canopy_load; // mm of snow water held in the canopy
@@ -172,42 +155,6 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	Vector<float> cell_crust_cycles;
 	Vector<float> cell_crust_burial;
 	Vector<float> cell_crust_wet;
-	// Surface hoar (docs/ideas/snow.md, round 5): the crystals on the surface (mm), and the newest buried layer
-	// of them: its crystals (mm), the snow over it (m) and the hours since it was buried.
-	Vector<float> cell_hoar;
-	Vector<float> cell_cups; // m, suncup relief (ridge to hollow)
-	Vector<float> cell_wind_slab; // m of wind-packed snow in the pack (follow-up 45)
-	// The pack's layers (round 7, follow-up 49): up to PACK_LAYERS a cell, bottom first, each with its snow water
-	// (kg/m2), density, age (hours) and kind. The bulk fields stay the pack's total; the layers split it.
-	static constexpr int PACK_LAYERS = 6;
-	enum LayerKind : uint8_t {
-		LAYER_NEW, // fallen snow, unbonded
-		LAYER_WIND, // laid down by the wind (wind slab)
-		LAYER_OLD, // settled, rounded
-	};
-	Vector<float> layer_swe, layer_rho, layer_age;
-	Vector<uint8_t> layer_kind, layer_n;
-	bool layers_enabled = true;
-	void _layers_alloc();
-	void _layers_push(int p_i, float p_swe, float p_rho, uint8_t p_kind);
-	void _layers_take(int p_i, float p_swe);
-	void _layers_sync(int p_i, float p_dt_h, float p_air);
-	float _top_density(int p_i, float p_depth) const; // the live layers' mean density over the top p_depth m
-	Vector<float> cell_depth_hoar; // 0..1, the base's depth hoar share (follow-up 47)
-	Vector<float> cell_slab_cover; // m of soft snow over the wind slab (0: the slab is the surface)
-	Vector<float> cell_sas_x, cell_sas_z; // m: sastrugi relief times the direction of the wind that carved them (follow-up 46)
-	Vector<float> cell_packed; // 0..1, the share of the cell traffic has packed hard (follow-up 43)
-	Vector<float> cell_glaze; // mm of ice glaze polished on it by slipping wheels
-	Vector<float> cell_slush; // mm of water ponded in the pack's pores over frozen ground (not in cell_swe)
-	Vector<float> cell_seal; // 0..1, how far frozen ground under the pack stops melt water draining (WorldGround.frost_at)
-	Ref<Image> cups_image;
-	Ref<ImageTexture> cups_texture;
-	Ref<Image> upload_cups;
-	Ref<Image> sastrugi_image, upload_sastrugi;
-	Ref<ImageTexture> sastrugi_texture;
-	Vector<float> cell_hoar_layer;
-	Vector<float> cell_hoar_burial;
-	Vector<float> cell_hoar_age;
 	Vector<uint8_t> cell_height_valid;
 	Vector2 sx_direction;
 	bool sx_valid = false;
@@ -228,8 +175,6 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector3 sun_dir; // toward the sun; zero = no sun term
 		float direct_normal = 0.0f; // W/m2 at the ground, clear sky
 		float wind_factor = 0.0f; // drift weight, 0..1
-		float wind_speed = 0.0f; // m/s, the flat-ground wind at 10 m
-		float warm_nose_melt = 0.0f; // share melted in a warm layer aloft (WeatherMap3D), falling as rain
 		float drift_norm = 1.0f;
 		float base_precip = 0.0f;
 		double weather_dt = 0.0; // s of weather time this update steps
@@ -265,8 +210,6 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	void _prepare_inputs(double p_weather_dt, bool p_blocking);
 	void _update_row(uint32_t p_row, void *p_unused);
 	void _slide();
-	void _update_hoar(int p_i, const Vector3 &p_pos, float p_air, float p_snow, float p_rain, float p_melt, float p_rho_before, float p_rho, float p_swe, const Inputs &p_in);
-	void _clear_hoar(int p_i);
 	void _update_crust(float &r_crust, float &r_cycles, float &r_burial, float &r_wet, float p_rain, float p_melt_depth, float p_refrozen, float p_liquid_before, float p_liquid) const;
 	void _update(double p_weather_dt, bool p_blocking);
 	void _upload(); // the textures and the published copies, now (main thread)
@@ -294,129 +237,25 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	// it starts and swaps the results in when it is done. Readers on the main thread read `pub`, the
 	// published copies (shared buffers, copied on the worker's first write), so they never wait.
 	struct Published {
-		Vector<float> swe, liquid, density, albedo, runoff, canopy_load, new_depth, wind_slab;
+		Vector<float> swe, liquid, density, albedo, runoff, canopy_load, new_depth;
 		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
-		Vector<float> hoar, hoar_layer, hoar_burial, hoar_age;
-		Vector<float> cups;
-		Vector<float> sas_x, sas_z;
-		Vector<float> depth_hoar;
-		Vector<float> slush; // mm
-		Vector<float> packed, glaze;
 		Vector<float> cornice_x, cornice_z, cornice_crack;
-		Vector<float> ice, white_ice;
-		Vector<float> lap; // mg/m2 BC equivalent showing at the surface
-		Vector<float> layer_swe, layer_rho, layer_age;
-		Vector<uint8_t> layer_kind, layer_n;
 	} pub;
-	// The published layers' mean density over the top p_depth metres of cell p_i (the slab over a weak layer); the
-	// bulk density where there are none.
-	float pub_top_density(int p_i, float p_depth) const;
 	bool background_updates = true;
 	WorkerThreadPool::TaskID cover_task = WorkerThreadPool::INVALID_TASK_ID;
 	bool cover_task_world = false; // the task carries the world tier's turn
 	double world_dt = 0.0;
 	// The terrain climate's precipitation per cell (mm a year), read on the main thread.
 	Vector<float> cell_climate_precip;
-	Vector<float> cell_fire; // W/m2 from WorldFire, read on the main thread each update (empty with no fire)
-	// Sea salt on the snow and lake ice (WorldWeather.salt_at, g/m2): its brine melts them below 0 C (salt_melt).
-	bool salt_melt = true;
-	Vector<float> cell_salt; // empty with none
-	Vector<float> cell_salt_seen; // the surface salt last read (new salt is what it rose by)
-	Vector<float> cell_salt_pack; // g/m2 of salt in the pack's brine (the meltwater draining out takes its share)
-	void _refresh_salt();
-	// Wind obstacles (rocks, walls, buildings, vehicles; WorldWeather.obstacle_height_at), m over the ground: Sx
-	// counts them as terrain. Read on the main thread a band of rows an update into obstacle_next; an Sx bake takes
-	// it in when it starts (its rows read cell_obstacle on workers).
-	Vector<float> cell_obstacle, obstacle_next;
-	Vector<float> cell_lee; // the near-ground wind behind them over the open (WorldWeather.obstacle_lee_at), for blowing snow
-	Vector2i obstacle_origin;
-	int obstacle_row = 0; // the sweep reads a band of rows each update
-	bool obstacle_sweep_changed = false, obstacle_sweep_any = false;
-	bool obstacle_active = false; // the last full sweep found obstacles or lee
-	bool drift_obstacles = true;
-	bool drift_relief = true; // the wind sees the snow's own relief (follow-up 48)
-	std::vector<float> relief_shear_cache; // the wind's shear over the snow's relief (DuneShear), and when and how it was taken
-	float relief_shear_age = 0.0f; // hours
-	Vector2i relief_shear_origin;
-	Vector2 relief_shear_dir;
-	// Light-absorbing particles (docs/ideas/world-links.md, dirty snow), mg/m2 of black carbon equivalent: on the
-	// surface, under the snow fallen since (deep) with that snow's depth (m) over it, and the deposition from the
-	// smoke haze and burnt forest (mg/m2 per hour, read on the main thread every few seconds).
-	bool impurities = true;
-	Vector<float> cell_lap, cell_lap_deep, cell_lap_cover, cell_lap_in;
-	uint64_t lap_refresh_usec = 0;
-	struct ImpurityDrop {
-		Vector2 center;
-		float radius = 0.0f;
-		float mg = 0.0f;
-	};
-	LocalVector<ImpurityDrop> impurity_drops;
-	// Crowns shaken from outside the weather (WorldSnow.shake_canopy): applied at the next update's start.
-	struct CanopyShake {
-		Vector2 center;
-		float radius = 0.0f;
-		float share = 0.0f;
-	};
-	LocalVector<CanopyShake> canopy_shakes;
-	void _apply_canopy_shakes();
-	void _refresh_lap();
-	// Water (docs/ideas/snow.md, follow-up 15): the water surface over the cell from the terrain data map
-	// (-INF: dry land), read on the main thread, and the lake ice on it (m).
-	Vector<float> cell_water;
-	Vector<float> cell_ice; // m of lake ice
-	Vector<float> cell_white_ice; // m of it that is snow ice (flooded snow, white), the rest clear
-	bool lake_ice_enabled = true;
-	SnowLakeIce3D *lake_ice = nullptr; // the drawn ice, an internal child
-	bool bodies_enabled = true;
-	SnowBodies3D *bodies_node = nullptr; // snow carried by moving things, an internal child
-	bool avalanches_enabled = true;
-	SnowAvalanche3D *avalanche_node = nullptr; // slab release and run-out, an internal child
-	// Spindrift plumes (follow-up 42): snow blown off lee crests, as a light Flow gas (SnowPowderCloud3D).
-	bool spindrift_enabled = true;
-	int max_spindrift = 16;
-	SnowPowderCloud3D *spindrift_node = nullptr;
-	LocalVector<SnowPowderCloud3D::Source> spindrift_next; // worker: this update's sources
-	LocalVector<SnowPowderCloud3D::Source> spindrift_sources; // main thread: what feeds the plume
-	float spindrift_rate = 0.0f; // kg/s off all crests
-	void _find_spindrift(Vector2 p_wind); // worker, after the cells
-	void _feed_spindrift(); // main thread
-	const TerrainDataMap3D *_terrain_map() const;
 	uint64_t main_usec = 0; // main-thread time of the last update (gather, start, swap in)
 	// The textures' images, built off the main thread.
 	Ref<Image> upload_snow;
 	Ref<Image> upload_catch;
 	void _publish_cells();
-	// Lake ice broken under bodies too heavy for it (docs/ideas/world-links.md, bodies → lake ice): world x, z and
-	// radius, cut from the published ice at once and from the cells at the next update's start.
-	struct IceBreak {
-		Vector2 center;
-		float radius = 0.0f;
-	};
-	LocalVector<IceBreak> ice_breaks;
-	int ice_break_count = 0;
-	void _cut_ice(Vector<float> &r_ice, Vector<float> &r_white) const;
-	void _ice_load_step();
-	// Traffic (follow-up 43): what bodies rolling and slipping on the snow did since the last update.
-	struct TrafficMark {
-		Vector2 center;
-		float radius = 0.0f;
-		float pack = 0.0f; // share of a cell's area passed over
-		float glaze = 0.0f; // mm of glaze over a cell's area
-	};
-	LocalVector<TrafficMark> traffic_marks;
-	bool traffic_enabled = true;
-	void _traffic_step(double p_delta);
-	void _apply_traffic(Vector<float> &r_packed, Vector<float> &r_glaze, const LocalVector<TrafficMark> &p_marks, uint32_t p_from) const;
 	void _refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only);
-	void _refresh_fire();
-	void _refresh_obstacles();
 	void _update_begin(double p_weather_dt, bool p_blocking);
-	void _gather_seal(); // main thread: WorldGround.frost_at under the wet cells
 	void _update_cells(bool p_parallel);
 	void _update_end();
-	void _send_runoff();
-	void _repose(const LocalVector<float> &p_flux, int p_passes);
-	void _wind_pack(float p_dt_h, const LocalVector<float> &p_wind);
 	void _build_upload();
 	void _apply_upload();
 	void _start_background(double p_weather_dt, bool p_world);
@@ -445,7 +284,6 @@ public:
 	void set_canopy_enabled(bool p_enabled) { canopy_enabled = p_enabled; }
 	bool is_canopy_enabled() const { return canopy_enabled; }
 	float get_canopy_load_at(Vector3 p_position) const;
-	float shake_canopy(Vector3 p_position, float p_radius, float p_share);
 	float get_canopy_capacity_at(Vector3 p_position) const;
 	static float canopy_capacity(float p_closure, float p_snow_density);
 	Ref<Texture2D> get_catch_texture() const { return catch_texture; }
@@ -473,40 +311,6 @@ public:
 	float get_liquid_capacity() const { return liquid_capacity; }
 	void set_crust_enabled(bool p_enabled);
 	bool is_crust_enabled() const { return crust_enabled; }
-	void set_hoar_enabled(bool p_enabled);
-	void set_suncups_enabled(bool p_enabled) { suncups_enabled = p_enabled; }
-	bool is_suncups_enabled() const { return suncups_enabled; }
-	void set_depth_hoar_enabled(bool p_enabled) { depth_hoar_enabled = p_enabled; }
-	bool is_depth_hoar_enabled() const { return depth_hoar_enabled; }
-	float get_depth_hoar_at(Vector3 p_position) const; // 0..1, the base's depth hoar share
-	void add_depth_hoar(float p_share); // sets it wherever there is snow (scenes, tests)
-	void set_sastrugi_enabled(bool p_enabled) { sastrugi_enabled = p_enabled; }
-	bool is_sastrugi_enabled() const { return sastrugi_enabled; }
-	Vector2 get_sastrugi_at(Vector3 p_position) const; // relief (m) times the carving wind's direction
-	Ref<Texture2D> get_sastrugi_texture() const { return sastrugi_texture; }
-	void set_wind_packing_enabled(bool p_enabled) { wind_packing_enabled = p_enabled; }
-	bool is_wind_packing_enabled() const { return wind_packing_enabled; }
-	float get_wind_slab_at(Vector3 p_position) const; // m of wind-packed snow in the pack
-	void set_slush_enabled(bool p_enabled) { slush_enabled = p_enabled; }
-	bool is_slush_enabled() const { return slush_enabled; }
-	float get_slush_at(Vector3 p_position) const; // m, the saturated layer at the pack's base
-	float get_packed_at(Vector3 p_position) const; // 0..1, traffic-packed share
-	float get_glaze_at(Vector3 p_position) const; // mm of polished ice glaze
-	float get_grip_at(Vector3 p_position) const; // tyre-road friction coefficient on the snow, -1 bare
-	void add_traffic(Vector3 p_position, float p_radius, float p_pack, float p_glaze_mm);
-	static float ice_grip(float p_celsius, float p_wetness); // friction on polished ice
-	void set_traffic_enabled(bool p_enabled) { traffic_enabled = p_enabled; }
-	bool is_traffic_enabled() const { return traffic_enabled; }
-	static float slush_height(float p_swe, float p_liquid, float p_density, float p_slush); // m
-	static float ground_seal(Vector3 p_frost); // 0..1 from WorldGround.frost_at (thawed top m, frost depth m, weakening)
-	static float slush_drain_rate(float p_density, float p_slope_sine, float p_length); // 1/h, Darcy flow off a slope of that length
-	static constexpr float SLUSH_SLOPE_LENGTH = 50.0f; // m, the slope a slush layer drains along
-	// One step of suncup relief p_relief (m): grown by melt from direct sun (mm water), smoothed by melt from the
-	// air, rain (mm) and filled by new snow (m deep); p_dirt mg/m2 of particles on the surface.
-	static float suncup_step(float p_relief, float p_sun_melt, float p_air_melt, float p_rain, float p_new_depth, float p_dirt, float p_depth);
-	float get_suncup_relief_at(Vector3 p_position) const; // m
-	Ref<Texture2D> get_cups_texture() const { return cups_texture; }
-	bool is_hoar_enabled() const { return hoar_enabled; }
 	void set_slide_enabled(bool p_enabled);
 	bool is_slide_enabled() const { return slide_enabled; }
 	void set_slide_interval(float p_seconds);
@@ -517,10 +321,6 @@ public:
 	float get_slide_min_holding() const { return slide_min_holding; }
 	void set_slide_holding_decay(float p_per_degree);
 	float get_slide_holding_decay() const { return slide_holding_decay; }
-	void set_drift_obstacles(bool p_enabled);
-	bool is_drift_obstacles_enabled() const { return drift_obstacles; }
-	void set_drift_relief(bool p_enabled);
-	bool is_drift_relief_enabled() const { return drift_relief; }
 	void set_drift_enabled(bool p_enabled);
 	bool is_drift_enabled() const { return drift_enabled; }
 	void set_drift_distance(float p_m);
@@ -573,17 +373,11 @@ public:
 
 	void advance(float p_seconds);
 	void clear();
-	void add_snow(float p_swe_mm, float p_density = 100.0f, bool p_world = true);
-	void add_drift(const Vector3 &p_position, float p_radius, float p_depth, float p_density = 300.0f);
-	Array get_layers_at(const Vector3 &p_position) const;
-	void set_layers_enabled(bool p_enabled);
-	bool is_layers_enabled() const { return layers_enabled; }
-	static float layer_compaction(float p_density, float p_stress, float p_celsius, float p_hours);
+	void add_snow(float p_swe_mm, float p_density = 100.0f);
 	void refresh_heights();
 
 	Rect2 get_map_rect() const;
 	float get_depth_at(Vector3 p_position) const; // m
-	float get_surface_depth_at(Vector3 p_position) const; // m, Catmull-Rom between cells as the drawn surface
 	float get_swe_at(Vector3 p_position) const; // mm
 	float get_density_at(Vector3 p_position) const; // kg/m3
 	float get_albedo_at(Vector3 p_position) const;
@@ -591,72 +385,6 @@ public:
 	float get_runoff_at(Vector3 p_position) const; // mm/h
 	float get_ground_height_at(Vector3 p_position) const;
 	float get_new_snow_at(Vector3 p_position) const; // m laid by the last update
-	// Water (follow-up 15): the water surface at a point from the terrain data map at climate_map (-INF over
-	// dry land), and the lake ice on it (m). Snow falling on open water melts into it; on ice thick enough
-	// it lies at the water surface.
-	float get_water_level_at(Vector3 p_position) const;
-	float get_ice_thickness_at(Vector3 p_position) const;
-	float get_white_ice_thickness_at(Vector3 p_position) const;
-	SnowLakeIce3D *get_lake_ice() const { return lake_ice; }
-	SnowBodies3D *get_bodies() const { return bodies_node; }
-	SnowAvalanche3D *get_avalanches() const { return avalanche_node; }
-	void set_spindrift_enabled(bool p_enabled);
-	bool is_spindrift_enabled() const { return spindrift_enabled; }
-	void set_max_spindrift(int p_count) { max_spindrift = CLAMP(p_count, 1, 32); }
-	int get_max_spindrift() const { return max_spindrift; }
-	float get_spindrift_rate() const { return spindrift_rate; } // kg/s blown off the crests in the square
-	int get_spindrift_source_count() const { return (int)spindrift_sources.size(); }
-	Array get_spindrift_sources() const; // [{position, velocity, rate}] strongest first
-	SnowPowderCloud3D *get_spindrift() const { return spindrift_node; }
-	static float spindrift_fade(float p_humidity); // 1/s, Flow smoke_fade: the plume sublimating
-	void set_avalanches_enabled(bool p_enabled);
-	bool is_avalanches_enabled() const { return avalanches_enabled; }
-	void set_bodies_enabled(bool p_enabled);
-	bool is_bodies_enabled() const { return bodies_enabled; }
-
-	// The snow contract (WorldContracts::snow()).
-	float contract_snow_depth_at(const Vector3 &p_position) const override { return get_depth_at(p_position); }
-	float contract_snow_density_at(const Vector3 &p_position) const override;
-	float contract_snow_wetness_at(const Vector3 &p_position) const override { return get_wetness_at(p_position); }
-	float contract_snow_surface_at(const Vector3 &p_position) const override;
-	float contract_snow_crust_at(const Vector3 &p_position) const override { return get_crust_strength_at(p_position); }
-	Vector2 contract_snow_lake_ice_at(const Vector3 &p_position) const override;
-	void contract_snow_add_impurity(const Vector3 &p_position, float p_radius, float p_mg_per_m2) override { add_impurity(p_position, p_radius, p_mg_per_m2); }
-	float contract_snow_impurity_at(const Vector3 &p_position) const override { return get_impurity_at(p_position); }
-	float contract_snow_albedo_at(const Vector3 &p_position) const override {
-		const float a = get_albedo_at(p_position);
-		return a > 0.0f ? a : -1.0f;
-	}
-	float contract_snow_grip_at(const Vector3 &p_position) const override { return get_grip_at(p_position); }
-	float contract_snow_avalanche_pressure_at(const Vector3 &p_position) const override;
-	float contract_snow_avalanche_peak_pressure_at(const Vector3 &p_position) const override;
-	float contract_snow_canopy_load_at(const Vector3 &p_position) const override { return get_canopy_load_at(p_position); }
-	float contract_snow_canopy_capacity_at(const Vector3 &p_position) const override { return get_canopy_capacity_at(p_position); }
-	float contract_snow_shake_canopy(const Vector3 &p_position, float p_radius, float p_share) override { return shake_canopy(p_position, p_radius, p_share); }
-	void add_impurity(Vector3 p_position, float p_radius, float p_mg_per_m2);
-	float get_impurity_at(Vector3 p_position) const;
-	// The albedo the particles take off clean snow: 0.35 (1 - e^(-L / 15 mg/m2)), about 0.02 for the first mg/m2 (Warren
-	// and Wiscombe 1980) and near 0.35 for a burnt forest's debris or a dust storm's layer (Painter et al. 2007;
-	// Gleason et al. 2013).
-	static float impurity_albedo_drop(float p_mg_per_m2);
-	void set_impurities_enabled(bool p_enabled) { impurities = p_enabled; }
-	bool is_impurities_enabled() const { return impurities; }
-	void set_lake_ice_enabled(bool p_enabled);
-	bool is_lake_ice_enabled() const { return lake_ice_enabled; }
-	void set_salt_melt(bool p_enabled) { salt_melt = p_enabled; }
-	bool is_salt_melt_enabled() const { return salt_melt; }
-	// The freezing point depression of the salt's brine at a point (K): what salt_melt adds to the air there.
-	float get_salt_depression_at(Vector3 p_position) const;
-	// Lake ice after p_hours at p_air_celsius from p_ice m with p_snow_depth m of snow of p_snow_density
-	// kg/m3 on it: Stefan's law with the snow and the air's boundary layer insulating it (Leppaeranta 1993),
-	// growing below freezing; it does not melt here (the update melts it in a thaw once the snow is gone).
-	static float lake_ice_growth(float p_ice, float p_air_celsius, float p_snow_depth, float p_snow_density, float p_hours);
-	static float snow_conductivity(float p_density); // W/(m K), Sturm et al. 1997
-	// The load floating ice carries before it breaks: P = A h^2 (kg, h in cm; Gold 1971), A about 10 at failure.
-	static float ice_breaking_load(float p_ice, float p_white_share, float p_air_celsius);
-	int get_ice_break_count() const { return ice_break_count; }
-	static constexpr float ICE_WALK = 0.05f; // m of ice that bears a person (the deep snow and its collision lie on it)
-	static constexpr float ICE_HOLD = 0.02f; // m of ice that keeps snow on it (thinner, snow sinks into slush and melts)
 	// The top crust (docs/ideas/snow.md, follow-up 3d): its thickness, the snow over it, its melt-freeze
 	// cycles and the pressure it bears before breaking (0 while it is wet).
 	float get_crust_thickness_at(Vector3 p_position) const; // m
@@ -665,20 +393,6 @@ public:
 	float get_crust_strength_at(Vector3 p_position) const; // kPa
 	static float crust_strength(float p_cycles, float p_thickness); // kPa, frozen
 	void add_crust(float p_thickness, float p_cycles);
-	// Surface hoar (round 5): the crystals on the surface, and the newest buried layer of them (its crystals, the
-	// snow over it, days since buried, and the shear strength it holds).
-	float get_hoar_at(Vector3 p_position) const; // mm
-	float get_buried_hoar_at(Vector3 p_position) const; // mm, 0 none
-	float get_buried_hoar_depth_at(Vector3 p_position) const; // m of snow over it
-	float get_buried_hoar_age_at(Vector3 p_position) const; // days
-	// The surface's frost deposition (kg/m2/h, negative: sublimation) and its temperature under the night sky.
-	static float hoar_deposition(float p_air_celsius, float p_humidity, float p_wind, float p_cloud, float p_shortwave, float &r_surface_celsius);
-	// A buried surface hoar layer's shear strength (Pa) by crystal size and age (Jamieson and Schweizer 2000).
-	static float buried_hoar_strength(float p_size_mm, float p_age_hours);
-	static float hoar_deposition_rate(float p_air_celsius, float p_humidity, float p_wind, float p_cloud, float p_shortwave); // kg/m2/h
-	void add_hoar(float p_size_mm); // lays crystals on the snow (tests)
-	void add_suncups(float p_relief); // sets the suncup relief (m) wherever there is snow (scenes, tests)
-	void add_sastrugi(float p_relief, Vector2 p_wind_direction); // sets the sastrugi relief (m) along a wind wherever there is snow
 	// The ground straight from the height source (finer than the cells), NaN where nothing answers.
 	float sample_ground_height(Vector3 p_position) const;
 	void sample_ground_heights(Vector2 p_origin, float p_spacing, int p_width, int p_height, float *r_heights) const;
@@ -701,12 +415,6 @@ public:
 	// The published relations, for scripts and checks.
 	static float snowfall_fraction(float p_celsius, float p_humidity); // Jennings et al. 2018
 	static float new_snow_density(float p_celsius); // Hedstrom and Pomeroy 1998, kg/m3
-	static float depth_hoar_step(float p_share, float p_gradient, float p_hours, float p_wet_share); // follow-up 47
-	static float depth_hoar_strength(float p_share, float p_density); // Pa, the base's shear strength
-	static Vector2 sastrugi_step(Vector2 p_relief, Vector2 p_wind_dir, float p_eroded, float p_filled, float p_depth, bool p_hard); // follow-up 46
-	static float wind_snow_density(float p_celsius, float p_wind10); // snowfall in wind (Crocus, Vionnet et al. 2012), kg/m3
-	static float drift_index(float p_wind10, float p_density, float p_fresh); // Crocus's driftability index SI
-	static float wind_packing_step(float p_density, float p_wind10, float p_fresh, float p_hours); // the top layer's density after p_hours
 	static float holding_depth(float p_slope_degrees, float p_min_mm, float p_decay); // SnowSlide, mm SWE
 	// Cornice growth against the wind over the blowing threshold (Yu et al. 2023): 0 below 1 and above 2,
 	// most at 1.4.

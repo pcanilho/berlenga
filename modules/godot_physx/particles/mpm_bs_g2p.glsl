@@ -10,9 +10,6 @@ void main() {
 	if (id >= uint(PCOUNT)) {
 		return;
 	}
-	if (particle_dead(id)) {
-		return;
-	}
 
 	Particle p = particles[id];
 	vec3 x = p.x_d.xyz;
@@ -45,10 +42,7 @@ void main() {
 		}
 	}
 
-	// Light velocity damping, per unit time: 1.2/s is the old 0.996 a substep at
-	// the default 5 substeps and 60 Hz. Per substep it grew with the adaptive
-	// substep count -- at 128 substeps a stream fell at under 1 m/s.
-	new_v *= exp(-1.2 * DT);
+	new_v *= 0.996;
 
 	float sp = length(new_v);
 	if (sp > 25.0) {

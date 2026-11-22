@@ -1,5 +1,5 @@
 def can_build(env, platform):
-    env.module_add_dependencies("ground", ["terrain_deform", "world"])
+    env.module_add_dependencies("ground", ["terrain_deform", "weather"])
     return True
 
 
@@ -9,11 +9,6 @@ def configure(env):
 
 def get_doc_classes():
     return [
-        "GroundClods3D",
-        "GroundDebrisFlow3D",
-        "GroundDust3D",
-        "GroundLegMud3D",
-        "GroundStreamers3D",
         "GroundSurface3D",
     ]
 

@@ -6,7 +6,7 @@
 	<description>
 		Fills a box-shaped region with fluid particles that are simulated on the GPU and collide with the rigid bodies in the same space. The particles are drawn as a [MultiMesh] of small spheres; [member GeometryInstance3D.material_override] applies to them.
 		Particles can also be streamed in over time by enabling [member emitting], which turns the node into a faucet or hose: particles spawn near the node origin at [member emission_rate] per second with [member emission_velocity] (in node-local space) and, once [member particle_count] is reached, the oldest particles are recycled.
-		Two solvers back the node, chosen by [member solver]. The [b]PBD[/b] solver is PhysX 5's position-based fluid and needs a usable CUDA device; it supports the anisotropic surface ([member surface_anisotropy]). The [b]MPM[/b] solver is a material-point-method fluid that runs on any GPU through plain compute shaders, for machines without CUDA; its grid is block-sparse and boundless (it follows the fluid — [member mpm_domain_size] no longer confines it), it couples with the bodies listed in [member mpm_colliders] (or, with [member mpm_auto_colliders], every nearby body), it makes spray, foam and bubbles ([member foam_enabled]), and it has its own tuning under the [b]MPM[/b] group. On [code]Auto[/code] the node picks PBD when CUDA is available and MPM otherwise.
+		Two solvers back the node, chosen by [member solver]. The [b]PBD[/b] solver is PhysX 5's position-based fluid and needs a usable CUDA device; it supports foam ([member foam_enabled]) and the anisotropic surface ([member surface_anisotropy]). The [b]MPM[/b] solver is a material-point-method fluid that runs on any GPU through plain compute shaders, for machines without CUDA; its grid is block-sparse and boundless (it follows the fluid — [member mpm_domain_size] no longer confines it), it couples with the bodies listed in [member mpm_colliders] (or, with [member mpm_auto_colliders], every nearby body), and it has its own tuning under the [b]MPM[/b] group. On [code]Auto[/code] the node picks PBD when CUDA is available and MPM otherwise.
 		For sand, gravel or snow instead of a liquid, use [PhysXGranular3D] -- it shares this node's machinery but simulates the material as grains that pile and hold a slope.
 		The [b]PBD[/b] solver only does anything when [member ProjectSettings.physics/3d/physics_engine] is set to [code skip-lint]PhysX[/code] (it runs through the Godot PhysX physics server). If it resolves to the PBD solver without a CUDA device it is inert and emits a warning. The [b]MPM solver is the exception[/b]: it runs on any GPU through its own compute shaders and works regardless of the physics engine setting -- only the PBD path requires the PhysX engine.
 	</description>
@@ -80,8 +80,8 @@
 		<member name="foam_buoyancy" type="float" setter="set_foam_buoyancy" getter="get_foam_buoyancy" default="0.9">
 			How strongly bubble-type foam particles (those below the surface) rise back up, from 0 to 1. Only used when [member foam_enabled] is set.
 		</member>
-		<member name="foam_enabled" type="bool" setter="set_foam_enabled" getter="is_foam_enabled" default="true">
-			When enabled, the solver spawns diffuse particles — foam, spray and bubbles — wherever the fluid is agitated enough (splashes, streams hitting a pool, fast-moving crests). They do not affect the fluid. With [constant RENDER_MODE_ISOSURFACE] they are drawn as their own coarse isosurface layer — a whiter, rougher froth that sits on the water and depth-sorts with it; with [constant RENDER_MODE_SCREEN_SPACE] as soft white flecks over the surface (foam below the surface fades with its depth); otherwise as a cloud of small spheres. On the MPM solver the particles spawn where air is trapped, at breaking crests and in fast water (Ihmsen et al. 2012); bubbles rise through the water at the speed their size gives them, foam rides the surface until its lifetime runs out; foam and bubbles are drawn as small white spheres and airborne spray as clear water drops, in every render mode. A smooth stream makes none: only liquid striking liquid traps air. Toggling this or changing [member foam_particle_count] rebuilds the particle buffer.
+		<member name="foam_enabled" type="bool" setter="set_foam_enabled" getter="is_foam_enabled" default="false">
+			When enabled, the solver spawns diffuse particles — foam, spray and bubbles — wherever the fluid is agitated enough (splashes, streams hitting a pool, fast-moving crests). They do not affect the fluid. With [constant RENDER_MODE_ISOSURFACE] they are drawn as their own coarse isosurface layer — a whiter, rougher froth that sits on the water and depth-sorts with it; with [constant RENDER_MODE_SCREEN_SPACE] as soft white flecks over the surface (foam below the surface fades with its depth); otherwise as a cloud of small spheres. The MPM solver makes no foam. Toggling this or changing [member foam_particle_count] rebuilds the particle buffer.
 		</member>
 		<member name="foam_lifetime" type="float" setter="set_foam_lifetime" getter="get_foam_lifetime" default="1.5">
 			How long, in seconds, a diffuse particle lives before it disappears. Only used when [member foam_enabled] is set.
@@ -90,16 +90,16 @@
 			Maximum number of diffuse particles. Only used when [member foam_enabled] is set.
 		</member>
 		<member name="foam_size" type="float" setter="set_foam_size" getter="get_foam_size" default="0.0">
-			Froth clump scale, in meters, for the foam layer — independent of [member particle_size]. Larger values give chunkier sea-foam, smaller values a finer spray. [code]0[/code] means follow [member particle_size]. Only used when [member foam_enabled] is set; changing it while [member surface_mesh] is on rebuilds the foam extractor. On the MPM solver it is the largest bubble's diameter; smaller ones follow the size spread of real entrained air.
+			Froth clump scale, in meters, for the foam layer — independent of [member particle_size]. Larger values give chunkier sea-foam, smaller values a finer spray. [code]0[/code] means follow [member particle_size]. Only used when [member foam_enabled] is set; changing it while [member surface_mesh] is on rebuilds the foam extractor.
 		</member>
 		<member name="foam_threshold" type="float" setter="set_foam_threshold" getter="get_foam_threshold" default="300.0">
-			How agitated the fluid must be locally before diffuse particles spawn there. Lower values produce foam more readily. Only used when [member foam_enabled] is set, and only by the PBD solver.
+			How agitated the fluid must be locally before diffuse particles spawn there. Lower values produce foam more readily. Only used when [member foam_enabled] is set.
 		</member>
 		<member name="gravity_scale" type="float" setter="set_gravity_scale" getter="get_gravity_scale" default="1.0">
 			Multiplies the gravity the fluid falls with. The PBD solver takes a change at once; the MPM solver takes it at its next configure ([method spawn], or a grid rebuild), like [member viscosity].
 		</member>
-		<member name="mpm_auto_colliders" type="bool" setter="set_mpm_auto_colliders" getter="is_mpm_auto_colliders" default="true">
-			MPM solver only. When enabled, the fluid also collides with every [PhysicsBody3D] shape overlapping [member mpm_domain_size] each step — walls, a floor or a basin, the player, thrown objects, moving platforms — without listing them in [member mpm_colliders], the way the PBD solver collides with the whole space automatically. Each shape of a body is its own collider. A [StaticBody3D] joins only through sphere, box, capsule, cylinder and world boundary shapes; for a static mesh or heightmap, bake a [GPUParticlesCollisionSDF3D] around it and list that in [member mpm_colliders]. The nearest shapes are taken up to a shared limit of 32 colliders. Costs one overlap query per step.
+		<member name="mpm_auto_colliders" type="bool" setter="set_mpm_auto_colliders" getter="is_mpm_auto_colliders" default="false">
+			MPM solver only. When enabled, the fluid also collides with every non-static [PhysicsBody3D] overlapping [member mpm_domain_size] each step — the player, thrown objects, moving platforms — without listing them in [member mpm_colliders], the way the PBD solver collides with the whole space automatically. Static bodies (walls, a floor) are skipped; put those in [member mpm_colliders] once. The nearest bodies are taken up to a shared limit of 32 colliders. Costs one overlap query per step.
 		</member>
 		<member name="mpm_colliders" type="NodePath[]" setter="set_mpm_colliders" getter="get_mpm_colliders" default="[]">
 			MPM solver only. [PhysicsBody3D] (or [CollisionShape3D]) nodes the fluid collides with, resolved to an analytic sphere, box, capsule, cylinder or plane from each node's first shape. Any other shape collides as a rough sphere, and the node shows a warning. [RigidBody3D] entries also receive the fluid's reaction force. A [PhysXChunkEmitter3D] here is expanded into one collider per active chunk. Up to 32 colliders total, shared with [member mpm_auto_colliders] and chunk expansion. The PBD solver ignores this and collides with the whole space.
@@ -112,10 +112,10 @@
 			[PhysXGranular3D] only (hidden on the fluid). Number of dense grid cells along the box's X axis. [code]0[/code] derives it from [member particle_size] at roughly two cells per grain. The MPM fluid grid is block-sparse with a fixed cell size of [code]2 * particle_size[/code], so it ignores this.
 		</member>
 		<member name="mpm_stiffness" type="float" setter="set_mpm_stiffness" getter="get_mpm_stiffness" default="6000.0">
-			MPM solver only. Pressure stiffness of the weakly-compressible fluid. Higher values resist compression harder (less springy, more incompressible) but need more substeps to stay stable: each step takes as many as this stiffness needs at the current [member particle_size] (at least [member mpm_substeps], at most 128), so a fine particle size costs more substeps. Past 128 the stiffness is lowered for that step and a warning is printed.
+			MPM solver only. Pressure stiffness of the weakly-compressible fluid. Higher values resist compression harder (less springy, more incompressible) but need more [member mpm_substeps] to stay stable.
 		</member>
 		<member name="mpm_substeps" type="int" setter="set_mpm_substeps" getter="get_mpm_substeps" default="5">
-			MPM solver only. The fewest simulation substeps per step. A step takes more when [member mpm_stiffness] needs them at the current [member particle_size] (up to 128), so raise this only for extra stability, for example with fast colliders.
+			MPM solver only. Simulation substeps per physics frame. More substeps are more stable and more expensive; the grid-density pressure model stays stable at low counts, so the default is deliberately small.
 		</member>
 		<member name="particle_count" type="int" setter="set_particle_count" getter="get_particle_count" default="4096">
 			Capacity of the particle buffer. For [method spawn] this is also limited by how many fit in [member spawn_region_size] at [member particle_size] spacing; for [member emitting] it is the point at which the oldest particles start being recycled.
@@ -123,7 +123,7 @@
 		<member name="particle_size" type="float" setter="set_particle_size" getter="get_particle_size" default="0.1">
 			Rest distance between neighboring particles, in meters. Also the diameter of the rendered spheres. Drives the fluid's rest density.
 		</member>
-		<member name="render_mode" type="int" setter="set_render_mode" getter="get_render_mode" enum="PhysXParticleFluid3D.RenderMode" default="1">
+		<member name="render_mode" type="int" setter="set_render_mode" getter="get_render_mode" enum="PhysXParticleFluid3D.RenderMode" default="0">
 			How the fluid is drawn. [constant RENDER_MODE_ISOSURFACE] marches a mesh every few steps (the most expensive on the CPU (PBD) path, but a real mesh: it casts shadows and shows in reflections and other cameras); [constant RENDER_MODE_SCREEN_SPACE] builds the surface from the particles each frame on the screen instead, much cheaper (see [member screen_space_resolution]), and has the scene light it: its lights and their shadows, ambient light and reflections light the surface like any other, so it darkens in shadow and at night instead of glowing. Screen Space draws in the frame just before transparent geometry and writes the liquid's depth: transparent objects (and a [PhysXFlow3D]'s smoke and fire) in front of the liquid draw over it, and those behind it are hidden where it's solid rather than seen through it. It shows only in the camera that renders it (it casts no shadow, isn't seen in reflections or in what a screen-reading material such as refractive glass samples, and isn't fogged), and every screen-space fluid in view merges into one surface shaded with the nearest one's look. Scenes saved with the older [code]surface_mesh = true[/code] load as [constant RENDER_MODE_ISOSURFACE].
 		</member>
 		<member name="screen_space_radius" type="float" setter="set_screen_space_radius" getter="get_screen_space_radius" default="1.5">
@@ -175,7 +175,7 @@
 			PBD when a CUDA device is available, MPM otherwise.
 		</constant>
 		<constant name="SOLVER_PBD" value="1" enum="SolverBackend">
-			PhysX 5's position-based fluid. Requires CUDA. Supports the anisotropic surface.
+			PhysX 5's position-based fluid. Requires CUDA. Supports foam and the anisotropic surface.
 		</constant>
 		<constant name="SOLVER_MPM" value="2" enum="SolverBackend">
 			Material-point-method fluid on plain GPU compute, for machines without CUDA. Block-sparse boundless grid; couples through [member mpm_colliders] / [member mpm_auto_colliders].

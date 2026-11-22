@@ -265,31 +265,6 @@ void XPBDClothSolver::_finalize() {
 	rest_volume = _mesh_volume(rest_positions);
 }
 
-void XPBDClothSolver::refresh_masses() {
-	const int n = positions.size();
-	if ((int)base_inv_mass.size() != n || (int)rest_positions.size() != n) {
-		return;
-	}
-	LocalVector<float> mass;
-	mass.resize(n);
-	for (int i = 0; i < n; i++) {
-		mass[i] = 0.0f;
-	}
-	for (int t = 0; t + 2 < (int)indices.size(); t += 3) {
-		const int a = indices[t];
-		const int b = indices[t + 1];
-		const int c = indices[t + 2];
-		const float m = 0.5f * (rest_positions[b] - rest_positions[a]).cross(rest_positions[c] - rest_positions[a]).length() * settings.density / 3.0f;
-		mass[a] += m;
-		mass[b] += m;
-		mass[c] += m;
-	}
-	for (int i = 0; i < n; i++) {
-		base_inv_mass[i] = 1.0f / MAX(mass[i], 1.0e-6f);
-		inv_mass[i] = pinned[i] ? 0.0f : base_inv_mass[i];
-	}
-}
-
 // One global XPBD volume constraint: C = V(x) - pressure * rest_volume, with the
 // per-vertex gradient dV/dx_i accumulated from the incident triangles. Keeps a
 // closed soft body from pancaking under gravity and lets pressure > 1 inflate it.
@@ -421,21 +396,16 @@ void XPBDClothSolver::_apply_aero(float p_dt, const Vector3 &p_wind) {
 		const Vector3 n = cr / twice_area;
 		const float area = 0.5f * twice_area;
 		const Vector3 v_tri = (velocities[a] + velocities[b] + velocities[c]) / 3.0f;
-		const Vector3 wind = air.size() == positions.size() ? p_wind + (air[a] + air[b] + air[c]) / 3.0f : p_wind;
-		const Vector3 rel = wind - v_tri;
+		const Vector3 rel = p_wind - v_tri;
 		const float vn = n.dot(rel);
 		const Vector3 tangential = rel - n * vn;
 		// Drag pushes along the normal in proportion to how square-on the flow is;
 		// lift nudges along the in-plane flow so slack cloth ripples.
-		// Implicit in the normal speed (k / (1 + k) of it): explicit quadratic drag over a whole frame overshoots and
-		// blows up once the cloth moves fast against the air (a sheet dropped, or stopped short by a rail).
-		const float per = area * Math::abs(vn) * (p_dt / 3.0f);
-		const int tv[3] = { a, b, c };
-		for (int k = 0; k < 3; k++) {
-			const float kd = settings.drag * per * inv_mass[tv[k]];
-			const float damp = 1.0f / (1.0f + kd);
-			velocities[tv[k]] += n * (vn * kd * damp) + tangential * (settings.lift * per * inv_mass[tv[k]] * damp);
-		}
+		const Vector3 force = n * (settings.drag * area * vn * Math::abs(vn)) + tangential * (settings.lift * area * Math::abs(vn));
+		const Vector3 impulse = force * (p_dt / 3.0f);
+		velocities[a] += impulse * inv_mass[a];
+		velocities[b] += impulse * inv_mass[b];
+		velocities[c] += impulse * inv_mass[c];
 	}
 }
 
@@ -450,7 +420,6 @@ int XPBDClothSolver::step(float p_dt, const Vector3 &p_gravity, const Vector3 &p
 	const float vel_retain = MAX(1.0f - settings.damping * p_dt, 0.0f);
 
 	_apply_aero(p_dt, p_wind);
-	const float water_blend = 1.0f - Math::exp(-MAX(settings.water_drag, 0.0f) * sdt);
 
 	for (int s = 0; s < substeps; s++) {
 		// Integrate.
@@ -463,12 +432,7 @@ int XPBDClothSolver::step(float p_dt, const Vector3 &p_gravity, const Vector3 &p
 				}
 				continue;
 			}
-			if (positions[i].y < settings.water_height) {
-				velocities[i] += p_gravity * (settings.water_gravity * sdt);
-				velocities[i] += (settings.water_flow - velocities[i]) * water_blend;
-			} else {
-				velocities[i] += p_gravity * sdt;
-			}
+			velocities[i] += p_gravity * sdt;
 			positions[i] += velocities[i] * sdt;
 		}
 
@@ -684,59 +648,6 @@ bool XPBDClothSolver::_split_vertex(int p_v, int p_toward) {
 	}
 	last_tears.push_back(positions[p_v]);
 	return true;
-}
-
-int XPBDClothSolver::burn_away(const LocalVector<uint8_t> &p_gone) {
-	if (p_gone.size() < positions.size()) {
-		return 0;
-	}
-	LocalVector<int> kept;
-	kept.reserve(indices.size());
-	LocalVector<uint8_t> touched;
-	touched.resize(positions.size());
-	memset(touched.ptr(), 0, touched.size());
-	int removed = 0;
-	for (uint32_t t = 0; t + 2 < indices.size(); t += 3) {
-		const int a = indices[t], b = indices[t + 1], c = indices[t + 2];
-		// A triangle leaves once all its corners have burnt through; until then the burn shader eats it from the burnt
-		// corners along a soft edge, so holes are round rather than the mesh's triangle staircase.
-		if (p_gone[a] && p_gone[b] && p_gone[c]) {
-			touched[a] = touched[b] = touched[c] = 1;
-			removed++;
-			continue;
-		}
-		kept.push_back(a);
-		kept.push_back(b);
-		kept.push_back(c);
-	}
-	if (removed == 0) {
-		return 0;
-	}
-	indices = kept;
-	auto valid = [&](const DistanceConstraint &c) {
-		if (c.via_a < 0) {
-			return _has_tri(indices, c.a, c.b);
-		}
-		if (c.via_b < 0) {
-			return _has_tri(indices, c.a, c.via_a) && _has_tri(indices, c.via_a, c.b);
-		}
-		return _has_tri(indices, c.a, c.via_a, c.via_b) && _has_tri(indices, c.b, c.via_a, c.via_b);
-	};
-	for (uint32_t ci = 0; ci < constraints.size();) {
-		const DistanceConstraint &c = constraints[ci];
-		const bool near = touched[c.a] || touched[c.b] || (c.via_a >= 0 && touched[c.via_a]) || (c.via_b >= 0 && touched[c.via_b]);
-		if (near && !valid(c)) {
-			constraints.remove_at_unordered(ci);
-		} else {
-			ci++;
-		}
-	}
-	for (uint32_t v = 0; v < touched.size(); v++) {
-		if (touched[v]) {
-			_vertex_mass(v);
-		}
-	}
-	return removed;
 }
 
 int XPBDClothSolver::_tear_overstretched(float p_dt) {

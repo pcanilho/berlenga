@@ -35,8 +35,6 @@
 #include "mpm_bs_clear.glsl.gen.h"
 #include "mpm_bs_clearnodes.glsl.gen.h"
 #include "mpm_bs_couple.glsl.gen.h"
-#include "mpm_bs_diffuse_advect.glsl.gen.h"
-#include "mpm_bs_diffuse_spawn.glsl.gen.h"
 #include "mpm_bs_g2p.glsl.gen.h"
 #include "mpm_bs_grid.glsl.gen.h"
 #include "mpm_bs_march.glsl.gen.h"
@@ -68,7 +66,7 @@ namespace {
 constexpr int FLOATS_PER_PARTICLE = 32; // 8 * vec4 (x/v/C x3/F x3)
 constexpr int FLOATS_PER_COLLIDER = 16; // 4 * vec4 (c0..c3)
 constexpr int MAX_COLLIDERS = 32; // analytic colliders per step (rigid bodies + expanded debris chunks)
-constexpr uint32_t PARAMS_BYTES = 192; // 12 * vec4, std140 (dense uses the first 8; block-sparse adds blockp and the diffuse_* vectors)
+constexpr uint32_t PARAMS_BYTES = 160; // 10 * vec4, std140 (dense uses the first 8; block-sparse adds blockp)
 constexpr float IMP_FIXED = 1024.0f;
 constexpr uint32_t GROUP = 64;
 constexpr uint32_t TRI_BUDGET = 200000; // isosurface triangle cap
@@ -86,8 +84,6 @@ constexpr float EOS_GAMMA = 7.0f; // mirrors GAMMA in mpm_block_inc.glsl -- keep
 // ~200 boundary with a small margin, at least for this repro; revisit if a
 // future repro at very different particle_size/substeps disagrees.
 constexpr float STIFFNESS_CFL_SAFETY = 0.12f;
-// The most substeps a fluid step takes to keep its stiffness (above this it is clamped instead).
-constexpr int MAX_SUBSTEPS = 128;
 
 uint32_t groups_for(int p_count) {
 	return (uint32_t)((p_count + (int)GROUP - 1) / (int)GROUP);
@@ -276,8 +272,6 @@ void MPMFluidSolverGPU::rt_compile(Ref<MPMFluidSolverGPU> p_self) {
 		mpm_bs_surface_shader_glsl,
 		mpm_bs_march_shader_glsl,
 		mpm_bs_render_shader_glsl,
-		mpm_bs_diffuse_advect_shader_glsl,
-		mpm_bs_diffuse_spawn_shader_glsl,
 	};
 	for (int i = 0; i < PASS_MAX; i++) {
 		// PASS_BS_MARCH is compiled lazily (see _ensure_bs_march_pipeline()), not
@@ -336,7 +330,7 @@ void MPMFluidSolverGPU::_rt_free_buffers() {
 			uset[i] = RID();
 		}
 	}
-	RID *bufs[] = { &buf_params, &buf_particles, &buf_grid_i, &buf_grid_v, &buf_colliders, &buf_cimp, &buf_mm, &buf_surf, &buf_mverts, &buf_mnorms, &buf_mcount, &buf_bhash, &buf_bhash_val, &buf_bkey, &buf_bcounts, &buf_bargs, &buf_sdf, &buf_diffuse, &buf_dhead, &buf_dout };
+	RID *bufs[] = { &buf_params, &buf_particles, &buf_grid_i, &buf_grid_v, &buf_colliders, &buf_cimp, &buf_mm, &buf_surf, &buf_mverts, &buf_mnorms, &buf_mcount, &buf_bhash, &buf_bhash_val, &buf_bkey, &buf_bcounts, &buf_bargs, &buf_sdf };
 	for (RID *b : bufs) {
 		if (b->is_valid()) {
 			rd->free_rid(*b);
@@ -383,16 +377,6 @@ void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
 			u.append_id(buf_sdf);
 			uniforms.push_back(u);
 		}
-		if (p == PASS_BS_DIFFUSE_ADVECT || p == PASS_BS_DIFFUSE_SPAWN) {
-			const RID diffuse_bufs[3] = { buf_diffuse, buf_dhead, buf_dout };
-			for (int d = 0; d < 3; d++) {
-				RD::Uniform u;
-				u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-				u.binding = 14 + d; // see mpm_bs_diffuse_inc.glsl
-				u.append_id(diffuse_bufs[d]);
-				uniforms.push_back(u);
-			}
-		}
 		uset[p] = rd->uniform_set_create(uniforms, shader[p], 0);
 		ERR_FAIL_COND(uset[p].is_null());
 	}
@@ -412,7 +396,7 @@ void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
 	}
 }
 
-void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_particles, int p_capacity, int p_node_count, int p_tri_budget, bool p_block_sparse, int p_max_blocks, int p_hash_slots, PackedByteArray p_sdf, int p_diffuse_capacity) {
+void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_particles, int p_capacity, int p_node_count, int p_tri_budget, bool p_block_sparse, int p_max_blocks, int p_hash_slots, PackedByteArray p_sdf) {
 	if (rd == nullptr || !_shaders_ok) {
 		return;
 	}
@@ -429,12 +413,10 @@ void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray 
 	block_sparse = p_block_sparse;
 	max_blocks = p_max_blocks;
 	hash_slots = p_hash_slots;
-	diffuse_capacity = p_block_sparse ? MAX(p_diffuse_capacity, 0) : 0;
 
 	{
 		MutexLock lock(cache_mtx);
 		mm_cache = PackedFloat32Array();
-		dout_cache = PackedFloat32Array();
 		imp_cache.clear();
 		surf_verts_cache = PackedVector3Array();
 		surf_norms_cache = PackedVector3Array();
@@ -469,11 +451,6 @@ void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray 
 		buf_bkey = rd->storage_buffer_create(max_blocks * sizeof(uint32_t));
 		buf_bcounts = rd->storage_buffer_create(4 * sizeof(uint32_t));
 		buf_bargs = rd->storage_buffer_create(4 * sizeof(uint32_t), Span<uint8_t>(), RD::STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT);
-		// Diffuse particles. One slot even when off, so every set stays complete.
-		const int dslots = MAX(diffuse_capacity, 1);
-		buf_diffuse = rd->storage_buffer_create(dslots * 8 * sizeof(float));
-		buf_dhead = rd->storage_buffer_create(4 * sizeof(uint32_t));
-		buf_dout = rd->storage_buffer_create(dslots * 4 * sizeof(float));
 		buf_mverts = rd->storage_buffer_create(tri_budget * 3 * 4 * sizeof(float));
 		buf_mnorms = rd->storage_buffer_create(tri_budget * 3 * 4 * sizeof(float));
 		PackedByteArray mc;
@@ -505,10 +482,6 @@ void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray 
 	if (block_sparse) {
 		rd->buffer_clear(buf_bcounts, 0, 4 * sizeof(uint32_t));
 		rd->buffer_clear(buf_bargs, 0, 4 * sizeof(uint32_t));
-		const int dslots = MAX(diffuse_capacity, 1);
-		rd->buffer_clear(buf_diffuse, 0, dslots * 8 * sizeof(float)); // life 0: every slot free
-		rd->buffer_clear(buf_dhead, 0, 4 * sizeof(uint32_t));
-		rd->buffer_clear(buf_dout, 0, dslots * 4 * sizeof(float));
 	}
 
 	_rt_rebuild_uniform_sets();
@@ -616,12 +589,6 @@ void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 			}
 			pass(PASS_BS_G2P, pg);
 		}
-		if (diffuse_capacity > 0) {
-			// Once a frame, on the last substep's grid: move the diffuse particles,
-			// then spawn new ones (they move from the next frame on).
-			pass(PASS_BS_DIFFUSE_ADVECT, groups_for(diffuse_capacity));
-			pass(PASS_BS_DIFFUSE_SPAWN, pg);
-		}
 		if (p_want_surface && pipeline[PASS_BS_MARCH].is_valid()) {
 			pass(PASS_BS_SURFACE, pg);
 			rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_BS_MARCH]);
@@ -647,9 +614,6 @@ void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 			return;
 		}
 		rd->buffer_get_data_async(buf_mm, callable_mp(this, &MPMFluidSolverGPU::rt_on_mm).bind(p_self), 0, capacity * 12 * sizeof(float));
-		if (diffuse_capacity > 0) {
-			rd->buffer_get_data_async(buf_dout, callable_mp(this, &MPMFluidSolverGPU::rt_on_dout).bind(p_self), 0, diffuse_capacity * 4 * sizeof(float));
-		}
 		if (p_ncol > 0) {
 			rd->buffer_get_data_async(buf_cimp, callable_mp(this, &MPMFluidSolverGPU::rt_on_impulses).bind(p_self, p_ncol), 0, p_ncol * 4 * sizeof(int32_t));
 		}
@@ -766,13 +730,6 @@ void MPMFluidSolverGPU::_local_reap() {
 	if (mm.size() > 0) {
 		memcpy(mm_cache.ptrw(), mm.ptr(), MIN((int)mm.size(), (int)(capacity * 12 * sizeof(float))));
 	}
-	if (block_sparse && diffuse_capacity > 0) {
-		Vector<uint8_t> dd = rd->buffer_get_data(buf_dout, 0, diffuse_capacity * 4 * sizeof(float));
-		dout_cache.resize(diffuse_capacity * 4);
-		if (dd.size() > 0) {
-			memcpy(dout_cache.ptrw(), dd.ptr(), MIN((int)dd.size(), (int)(diffuse_capacity * 4 * sizeof(float))));
-		}
-	}
 
 	imp_cache.clear();
 	if (_submitted_ncol > 0) {
@@ -817,23 +774,6 @@ void MPMFluidSolverGPU::rt_emit(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 	}
 }
 
-void MPMFluidSolverGPU::rt_kill(Ref<MPMFluidSolverGPU> p_self, PackedInt32Array p_slots) {
-	if (rd == nullptr || !built.is_set() || buf_particles.is_null()) {
-		return;
-	}
-	if (local && _submitted) {
-		_local_reap();
-	}
-	const float dead = 1.0f;
-	const int stride = FLOATS_PER_PARTICLE * (int)sizeof(float);
-	for (int i = 0; i < p_slots.size(); i++) {
-		const int slot = p_slots[i];
-		if (slot >= 0 && slot < capacity) {
-			rd->buffer_update(buf_particles, slot * stride + 7 * (int)sizeof(float), sizeof(float), &dead); // v.w
-		}
-	}
-}
-
 void MPMFluidSolverGPU::rt_read_positions(Ref<MPMFluidSolverGPU> p_self, int p_count) {
 	if (rd == nullptr || !built.is_set() || buf_particles.is_null()) {
 		pos_ready.set();
@@ -863,15 +803,6 @@ void MPMFluidSolverGPU::rt_on_mm(const PackedByteArray &p_data, Ref<MPMFluidSolv
 	const int n = MIN(p_data.size(), (int)(capacity * 12 * sizeof(float)));
 	if (n > 0) {
 		memcpy(mm_cache.ptrw(), p_data.ptr(), n);
-	}
-}
-
-void MPMFluidSolverGPU::rt_on_dout(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self) {
-	MutexLock lock(cache_mtx);
-	dout_cache.resize(diffuse_capacity * 4);
-	const int n = MIN(p_data.size(), (int)(diffuse_capacity * 4 * sizeof(float)));
-	if (n > 0) {
-		memcpy(dout_cache.ptrw(), p_data.ptr(), n);
 	}
 }
 
@@ -1114,7 +1045,7 @@ LocalVector<float> MPMFluidSolver::_seed_block(int &r_count) const {
 	return data;
 }
 
-void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_bytes, bool p_warn) const {
+void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_bytes) const {
 	r_bytes.resize(PARAMS_BYTES);
 	uint8_t *b = r_bytes.ptrw();
 	const Vector3 center = domain_xform.origin;
@@ -1161,8 +1092,8 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 		const float max_c = (float)(STIFFNESS_CFL_SAFETY * (double)dx / dt_sub);
 		const float max_stiffness = (max_c * max_c) * MAX(settings.rest_density, 1.0f) / EOS_GAMMA;
 		effective_stiffness = MIN(settings.stiffness, max_stiffness);
-		if (p_warn && effective_stiffness < settings.stiffness - 1.0f) {
-			WARN_PRINT_ONCE(vformat("PhysX MPM fluid: mpm_stiffness (%.0f) needs more than %d substeps a step at this particle_size -- clamped to %.0f. Lower mpm_stiffness or increase particle_size to use the full configured value.", settings.stiffness, MAX_SUBSTEPS, max_stiffness));
+		if (effective_stiffness < settings.stiffness - 1.0f) {
+			WARN_PRINT_ONCE(vformat("PhysX MPM fluid: mpm_stiffness (%.0f) is unstable at the current particle_size/mpm_substeps -- clamped to %.0f. Raise mpm_substeps, lower mpm_stiffness, or increase particle_size to use the full configured value.", settings.stiffness, max_stiffness));
 		}
 	}
 	put_f(52, effective_stiffness);
@@ -1175,7 +1106,7 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 	put_f(80, bmax.x);
 	put_f(84, bmax.y);
 	put_f(88, bmax.z);
-	put_f(92, settings.granular ? (settings.granular_free_flight ? 2.0f : 1.0f) : 0.0f);
+	put_f(92, settings.granular ? 1.0f : 0.0f);
 	put_f(96, (float)p_ncol);
 	put_f(100, settings.collider_friction);
 	put_f(104, surf_iso_density);
@@ -1197,26 +1128,6 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 	put_f(132, (float)max_blocks);
 	put_f(136, 0.0f);
 	put_f(140, 0.0f);
-
-	// diffuse_a/b/c (block-sparse fluid only; capacity 0 = off). See mpm_bs_diffuse_inc.glsl.
-	const bool diffuse = !settings.granular && settings.diffuse_capacity > 0;
-	const float rmax = MAX(settings.diffuse_radius, 1e-5f);
-	put_f(144, (float)frame_dt);
-	put_f(148, MAX(settings.diffuse_rate, 0.0f));
-	put_f(152, (float)(frame_seed & 0xffffff)); // exact as a float
-	put_f(156, diffuse ? (float)settings.diffuse_capacity : 0.0f);
-	put_f(160, MAX(settings.diffuse_lifetime, 0.01f));
-	put_f(164, MAX(settings.diffuse_buoyancy, 0.0f));
-	put_f(168, rmax);
-	put_f(172, rmax / 6.0f);
-	// Potential clamps (Ihmsen Eq. 1). Trapped air is a speed here: the grid
-	// weights sum to one, where Ihmsen's SPH kernel sums over ~30 neighbours. It is
-	// measured against each particle's own APIC field (see the spawn pass): a smooth
-	// falling stream reads under 0.05 m/s, a plunge into the pool 0.05 to 0.3.
-	put_f(176, 0.06f);
-	put_f(180, 0.3f);
-	put_f(184, 0.5f * 0.6f * 0.6f);
-	put_f(188, 0.5f * 3.0f * 3.0f);
 }
 
 void MPMFluidSolver::_pack_colliders(const LocalVector<SphereCollider> &p_colliders, PackedByteArray &r_bytes) const {
@@ -1295,11 +1206,11 @@ void MPMFluidSolver::configure(const Settings &p_settings, const Transform3D &p_
 	}
 
 	PackedByteArray params;
-	_pack_params(1.0 / 60.0 / settings.substeps, 0, params, false); // the real substeps are chosen per step
+	_pack_params(1.0 / 60.0 / settings.substeps, 0, params);
 
 	gpu->built.set_to(false);
 	const bool bs = !settings.granular;
-	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_build).bind(gpu, params, job_particles, capacity, node_count, (int)TRI_BUDGET, bs, max_blocks, hash_slots, baked_voxels, bs ? settings.diffuse_capacity : 0));
+	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_build).bind(gpu, params, job_particles, capacity, node_count, (int)TRI_BUDGET, bs, max_blocks, hash_slots, baked_voxels));
 }
 
 void MPMFluidSolver::emit(const LocalVector<EmittedParticle> &p_new) {
@@ -1333,18 +1244,6 @@ void MPMFluidSolver::emit(const LocalVector<EmittedParticle> &p_new) {
 
 	write_head = (write_head + n) % capacity;
 	pcount = MIN(pcount + n, capacity);
-}
-
-void MPMFluidSolver::kill(const LocalVector<int> &p_slots) {
-	if (!is_available() || p_slots.is_empty()) {
-		return;
-	}
-	PackedInt32Array slots;
-	slots.resize(p_slots.size());
-	for (uint32_t i = 0; i < p_slots.size(); i++) {
-		slots.write[i] = p_slots[i];
-	}
-	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_kill).bind(gpu, slots));
 }
 
 int MPMFluidSolver::get_baked_field(const Ref<Texture3D> &p_texture, float p_voxel, Vector3i &r_size, bool &r_hollow) {
@@ -1422,21 +1321,8 @@ void MPMFluidSolver::step(double p_delta, const LocalVector<SphereCollider> &p_c
 	const int ncol = MIN((int)p_colliders.size(), MAX_COLLIDERS);
 	const bool bench = OS::get_singleton()->has_environment("MPM_BENCH");
 
-	// Enough substeps for the configured stiffness: the EOS's sound speed must not cross more than
-	// STIFFNESS_CFL_SAFETY of a cell per substep (see _pack_params). With too few, the stiffness was
-	// clamped instead -- at a fine particle_size down to a tenth of mpm_stiffness or less, and the
-	// liquid sagged like a gel, settling in layers along its spawn lattice instead of splashing.
-	int substeps = settings.substeps;
-	if (!settings.granular) {
-		const double c_sound = Math::sqrt((double)EOS_GAMMA * (double)settings.stiffness / (double)MAX(settings.rest_density, 1.0f));
-		const int needed = (int)Math::ceil(p_delta * c_sound / ((double)STIFFNESS_CFL_SAFETY * (double)dx));
-		substeps = CLAMP(needed, settings.substeps, MAX_SUBSTEPS);
-	}
-
-	frame_dt = p_delta;
-	frame_seed++;
 	PackedByteArray params;
-	_pack_params(p_delta / (double)substeps, ncol, params);
+	_pack_params(p_delta / (double)settings.substeps, ncol, params);
 	PackedByteArray cdata;
 	if (ncol > 0) {
 		_pack_colliders(p_colliders, cdata);
@@ -1452,7 +1338,7 @@ void MPMFluidSolver::step(double p_delta, const LocalVector<SphereCollider> &p_c
 		gpu->imp_cache.clear();
 	}
 
-	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_step).bind(gpu, params, cdata, ncol, pcount, node_count, grid_dims, substeps, p_want_surface, bench));
+	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_step).bind(gpu, params, cdata, ncol, pcount, node_count, grid_dims, settings.substeps, p_want_surface, bench));
 }
 
 double MPMFluidSolver::get_last_step_msec() const {
@@ -1461,14 +1347,6 @@ double MPMFluidSolver::get_last_step_msec() const {
 	}
 	MutexLock lock(gpu->cache_mtx);
 	return gpu->last_step_usec / 1000.0;
-}
-
-PackedFloat32Array MPMFluidSolver::get_diffuse_buffer() const {
-	if (gpu.is_null()) {
-		return PackedFloat32Array();
-	}
-	MutexLock lock(gpu->cache_mtx);
-	return gpu->dout_cache;
 }
 
 PackedFloat32Array MPMFluidSolver::get_multimesh_buffer() const {

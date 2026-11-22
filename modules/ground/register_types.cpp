@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -31,11 +30,6 @@
 
 #include "register_types.h"
 
-#include "ground_streamers_3d.h"
-#include "ground_clods_3d.h"
-#include "ground_debris_flow_3d.h"
-#include "ground_dust_3d.h"
-#include "ground_leg_mud_3d.h"
 #include "ground_surface_3d.h"
 
 #include "core/object/class_db.h"
@@ -46,11 +40,6 @@ void initialize_ground_module(ModuleInitializationLevel p_level) {
 	}
 	// The ground_deform_* shader globals are declared with BaseMaterial3D's (material.cpp).
 	GDREGISTER_CLASS(GroundSurface3D);
-	GDREGISTER_CLASS(GroundStreamers3D);
-	GDREGISTER_CLASS(GroundDust3D);
-	GDREGISTER_CLASS(GroundLegMud3D);
-	GDREGISTER_CLASS(GroundClods3D);
-	GDREGISTER_CLASS(GroundDebrisFlow3D);
 }
 
 void uninitialize_ground_module(ModuleInitializationLevel p_level) {

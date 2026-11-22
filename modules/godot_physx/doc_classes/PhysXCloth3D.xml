@@ -10,31 +10,6 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="get_burning_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns how many vertices are burning now (lit and not yet burnt through). See [member burnable].
-			</description>
-		</method>
-		<method name="get_burnt_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns how many vertices have burnt through. Their triangles have left the mesh.
-			</description>
-		</method>
-		<method name="get_water_load" qualifiers="const">
-			<return type="float" />
-			<description>
-				Water the fabric holds now, in kg per square metre.
-			</description>
-		</method>
-		<method name="ignite">
-			<return type="void" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Sets the fabric alight at the vertex nearest [param position] (global space), like a match held to it. The flame then spreads over the cloth by itself. Needs [member burnable] and the CPU solver.
-			</description>
-		</method>
 		<method name="get_pinned_positions" qualifiers="const">
 			<return type="PackedVector3Array" />
 			<description>
@@ -63,14 +38,6 @@
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] when strain tearing is on for this cloth: [member tear_factor] is above 1 and the project setting [code]physics/physx_3d/cloth/tearing[/code] is enabled.
-			</description>
-		</method>
-		<method name="move_pins">
-			<return type="void" />
-			<param index="0" name="vertices" type="PackedInt32Array" />
-			<param index="1" name="positions" type="PackedVector3Array" />
-			<description>
-				Holds the given vertices pinned at new places in the node's local space, for example pegs on a line set closer together than the cloth is wide, so that it hangs in swags between them. Lasts until the pins are next resolved (a change to [member pin_mode] or [member pinned_vertices], or [method reset]). CPU solver only.
 			</description>
 		</method>
 		<method name="release_pins">
@@ -102,12 +69,6 @@
 		<member name="bend_stiffness" type="float" setter="set_bend_stiffness" getter="get_bend_stiffness" default="0.1">
 			Resistance to folding, from 0 (limp) to 1 (stiff). Low values give soft, drapey cloth.
 		</member>
-		<member name="burn_through_time" type="float" setter="set_burn_through_time" getter="get_burn_through_time" default="3.0">
-			Seconds from a part of the fabric catching fire to its burning through into a hole (each part varies by about 30%). Thin cotton or linen takes a few seconds; heavy canvas longer.
-		</member>
-		<member name="burnable" type="bool" setter="set_burnable" getter="is_burnable" default="true">
-			When on, the cloth takes heat from a [PhysXFireSpread3D] fire's flames, hot [PhysXFlow3D] gas and burning [PhysXBurnable3D] objects, and catches fire once the heat it has taken in brings it to ignition (thermally thin ignition, about 100 kJ/m² for light fabric). Flame spreads over the cloth fast upward and slowly down and across, chars the fabric with a glowing edge, and burns holes through it, so the cloth opens, sags and falls apart; flames rise from the burning edge through Flow emitters. Uses the CPU solver: [constant SIM_AUTO] picks it while a fire exists in the scene. Costs nothing until heat reaches the cloth.
-		</member>
 		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
 			When enabled, each vertex is pushed out of any physics body it overlaps each step.
 		</member>
@@ -125,15 +86,6 @@
 		</member>
 		<member name="drag" type="float" setter="set_drag" getter="get_drag" default="1.0">
 			How hard air pushes on a triangle face-on. Drives the billow.
-		</member>
-		<member name="fire_path" type="NodePath" setter="set_fire_path" getter="get_fire_path" default="NodePath(&quot;&quot;)">
-			Optional [PhysXFireSpread3D] the cloth takes heat from. When empty, the cloth uses the fire whose area it hangs over, if any.
-		</member>
-		<member name="flame_spread" type="float" setter="set_flame_spread" getter="get_flame_spread" default="0.02">
-			How fast flame creeps across and down the fabric, in metres per second. Upward it runs about eight times faster, as on a hanging curtain.
-		</member>
-		<member name="flow" type="NodePath" setter="set_flow_path" getter="get_flow_path" default="NodePath(&quot;&quot;)">
-			A [PhysXFlow3D] whose gas blows the cloth: each vertex takes the gas velocity there (on top of [member wind]) for the [member drag] and [member lift] model, so a fire's updraft lifts a tarp and a blast's front snaps a flag. The cloth stirs the gas back: some of its moving particles enter it as moving solids ([method PhysXFlow3D.add_transient_solid]).
 		</member>
 		<member name="grid_columns" type="int" setter="set_grid_columns" getter="get_grid_columns" default="24">
 			Vertices across the generated grid. Ignored when [member source_mesh] is set.
@@ -162,9 +114,6 @@
 		<member name="simulation_mode" type="int" setter="set_simulation_mode" getter="get_simulation_mode" enum="PhysXCloth3D.SimulationMode" default="0">
 			Which solver runs the cloth. [constant SIM_AUTO] uses the GPU deformable surface when a CUDA device is available and the built-in CPU solver otherwise. The GPU option is hidden in the inspector on machines without CUDA; a scene saved with it still loads elsewhere and falls back to the CPU solver. See [method is_gpu_accelerated].
 		</member>
-		<member name="snow_load" type="float" setter="set_snow_load" getter="get_snow_load" default="0.0">
-			Snow lying on the fabric, kg/m², added to its weight so it sags under it ([SnowBodies3D] writes it as snow settles and slides off). Takes effect without rebuilding the cloth (CPU solver).
-		</member>
 		<member name="source_mesh" type="Mesh" setter="set_source_mesh" getter="get_source_mesh">
 			A triangle mesh to simulate instead of a generated grid. Its first surface is used.
 		</member>
@@ -176,12 +125,6 @@
 		</member>
 		<member name="tear_factor" type="float" setter="set_tear_factor" getter="get_tear_factor" default="0.0">
 			How far a structural edge can stretch, as a multiple of its rest length and averaged over 50 ms, before it breaks. When one does, the cloth splits a vertex there in two, so the rip opens without losing any triangles and runs on as the load moves to the next edges; a pinned edge that breaks rips free of what holds it. At most a few vertices split per physics tick. [code]0[/code] (or anything up to [code]1[/code]) turns tearing off. Softer cloth ([member stiffness]) stretches further under the same load, so it tears at a lower force for the same factor. Tearing runs on the CPU solver: with [constant SIM_AUTO] a tearing cloth always uses it. The project setting [code]physics/physx_3d/cloth/tearing[/code] switches tearing off for every cloth. See also [signal torn].
-		</member>
-		<member name="water_capacity" type="float" setter="set_water_capacity" getter="get_water_capacity" default="1.0">
-			Kilograms of water a kilogram of the fabric holds when soaked, past which rain drips off: about 1 for cotton, more for wool and towelling, 0.3 for polyester.
-		</member>
-		<member name="weather_wetting" type="bool" setter="set_weather_wetting" getter="is_weather_wetting" default="true">
-			When enabled and a [WeatherMap3D] is active, rain soaks the cloth: it catches the rain by how it faces the rain's slant in the wind (a sheet hanging across the wind gets wet too), not under a roof or a closed canopy. It dries in the air at the rate open water evaporates for the air's temperature, humidity and wind (Penman's wind function), slower for the last water in the fibres.
 		</member>
 		<member name="weather_wind" type="bool" setter="set_weather_wind" getter="get_weather_wind" default="true">
 			If [code]true[/code] and a [WeatherMap3D] is in the scene, its wind at the cloth (mean wind on the log law plus its gusts) is added to [member wind] and the [member wind_area] wind. [member wind_turbulence] still shapes only those two.
@@ -197,9 +140,6 @@
 		</member>
 		<member name="wind_turbulence" type="float" setter="set_wind_turbulence" getter="get_wind_turbulence" default="0.4">
 			Adds a swirling gust on top of the steady wind, as a fraction of its speed.
-		</member>
-		<member name="wetness" type="float" setter="set_wetness" getter="get_wetness" default="0.0">
-			How wet the fabric is, 0 dry to 1 soaked ([member water_capacity]). Wet cloth is heavier (it carries the water's weight), bends more easily, looks darker and slightly glossier (light trapped in the wet weave, Lekner and Dorf 1988), and clings: it sticks to what it touches and slides less. Heat must boil the water off before it can catch fire, and flame spreads over it more slowly. Set it from a script to soak or dry a cloth at once (CPU solver; the look needs Flow). Cloth that dips under water (the world water contract) soaks in the part that went under; reading this gives the whole cloth's water, that part included. Under water the fabric keeps about 30% of its weight and the current drags it (CPU solver), so a sheet or flag dipped in a river streams downstream.
 		</member>
 	</members>
 	<signals>

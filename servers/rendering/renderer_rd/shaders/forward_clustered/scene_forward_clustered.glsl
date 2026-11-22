@@ -1092,156 +1092,7 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 /* clang-format on */
 #endif
 
-// sun_visibility(world_position) (spatial fragment and light): the first directional light's shadow,
-// with its projector (the cloud shadow), at any world position. One hardware PCF tap from the cascade
-// that covers the point; callers that march through a medium jitter their steps instead.
-vec3 sun_visibility(vec3 p_world) {
-	if (scene_data_block.data.directional_light_count == 0u) {
-		return vec3(1.0);
-	}
-	mat4 view = transpose(mat4(scene_data_block.data.view_matrix[0], scene_data_block.data.view_matrix[1], scene_data_block.data.view_matrix[2], vec4(0.0, 0.0, 0.0, 1.0)));
-	vec3 vertex = (view * vec4(p_world, 1.0)).xyz;
-	float shadow = 1.0;
-	if (directional_lights.data[0].shadow_opacity > 0.001) {
-		float depth_z = -vertex.z;
-		vec4 splits = directional_lights.data[0].shadow_split_offsets;
-		vec4 coord = vec4(-1.0);
-		if (depth_z < splits.x) {
-			coord = directional_lights.data[0].shadow_matrix1 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.x, 1.0);
-		} else if (depth_z < splits.y) {
-			coord = directional_lights.data[0].shadow_matrix2 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.y, 1.0);
-		} else if (depth_z < splits.z) {
-			coord = directional_lights.data[0].shadow_matrix3 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.z, 1.0);
-		} else if (depth_z < splits.w) {
-			coord = directional_lights.data[0].shadow_matrix4 * vec4(vertex + directional_lights.data[0].direction * directional_lights.data[0].shadow_bias.w, 1.0);
-		}
-		if (coord.w > 0.0) {
-			coord /= coord.w;
-			shadow = textureProj(sampler2DShadow(directional_shadow_atlas, shadow_sampler), vec4(coord.xy, coord.z, 1.0));
-			shadow = mix(shadow, 1.0, smoothstep(directional_lights.data[0].fade_from, directional_lights.data[0].fade_to, vertex.z));
-			shadow = mix(1.0, shadow, directional_lights.data[0].shadow_opacity);
-		}
-	}
-	vec3 projector = vec3(1.0);
-	vec4 rect = directional_lights.data[0].projector_rect;
-	if (rect != vec4(0.0)) {
-		vec2 uv = vec2(dot(vec4(vertex, 1.0), directional_lights.data[0].projector_u), dot(vec4(vertex, 1.0), directional_lights.data[0].projector_v));
-		if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
-			vec4 proj = textureLod(sampler2D(decal_atlas_srgb, light_projector_sampler), uv * rect.zw + rect.xy, 0.0);
-			projector = proj.rgb * proj.a;
-		}
-	}
-	return shadow * projector;
-}
-
-// sun_direction() (spatial fragment and light): the first directional light's direction, toward the light, in
-// world space; zero without one. For a surface that shadows itself per pixel and hands the result to SUN_SHADOW.
-vec3 sun_direction() {
-	if (scene_data_block.data.directional_light_count == 0u) {
-		return vec3(0.0);
-	}
-	mat3 inv_view = mat3(transpose(mat4(scene_data_block.data.inv_view_matrix[0], scene_data_block.data.inv_view_matrix[1], scene_data_block.data.inv_view_matrix[2], vec4(0.0, 0.0, 0.0, 1.0))));
-	return normalize(inv_view * directional_lights.data[0].direction);
-}
-
-// relief_sun_direction(): sun_direction() for relief without geometry (parallax); the path tracer's is nonzero.
-vec3 relief_sun_direction() {
-	return sun_direction();
-}
-
-// Two-layer refraction (depth peeling). color_buffer_peel holds, per pixel, the second screen-reading layer where
-// there is one, else the front one, else the opaque scene; peel_depth and peel_depth_second hold the front and second
-// layers' depths (reverse Z, 0 where none). A screen texture lookup reads it only where the layer it shows there is
-// another sheet clearly behind this surface: the pool under or beside the falling stream, a second pane of glass.
-// Elsewhere it reads the opaque copy, as without peeling, so a surface never refracts its own image. The shader
-// compiler wraps screen texture lookups with this.
-#if defined(MODE_RENDER_SDF) || defined(USE_MULTIVIEW)
-#define color_buffer_peel color_buffer
-#endif
-float peel_linear_depth(float z) {
-	// inv_projection_matrix is a macro needing a local scene_data here; view 0 is the same matrix.
-	vec4 v = scene_data_block.data.inv_projection_matrix_view[0] * vec4(0.0, 0.0, z, 1.0);
-	return -v.z / v.w;
-}
-// The depth (reverse Z) of the layer color_buffer_peel shows at uv when this surface may refract it, else 0.
-float peel_layer_depth(vec2 uv) {
-#if defined(MODE_RENDER_SDF) || defined(USE_MULTIVIEW)
-	return 0.0;
-#else
-	if (!bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_PEEL_ACTIVE)) {
-		return 0.0;
-	}
-	// The 2x2 texels a filtered colour lookup at uv blends: all must agree, judged by the nearest of them, so the
-	// edge of a layer never lets in a pixel of this surface's own image.
-	vec4 second4 = textureGather(sampler2D(peel_depth_second, SAMPLER_NEAREST_CLAMP), uv, 0);
-	vec4 front4 = textureGather(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), uv, 0);
-	float second = max(max(second4.x, second4.y), max(second4.z, second4.w));
-	float front = max(max(front4.x, front4.y), max(front4.z, front4.w));
-	if (second > 0.0 && min(min(second4.x, second4.y), min(second4.z, second4.w)) <= 0.0) {
-		return 0.0; // the edge of the second layer
-	}
-	float own_lin = peel_linear_depth(gl_FragCoord.z);
-	if (second > 0.0) {
-		// The second layer: it must lie clearly behind this surface, and no other screen-reading surface clearly in
-		// front of this one there (else that second layer may be this very surface).
-		bool ok = peel_linear_depth(second) - own_lin > 0.01 + 0.01 * own_lin && own_lin - peel_linear_depth(front) < 0.1 + 0.1 * own_lin;
-		return ok ? second : 0.0;
-	}
-	if (front <= 0.0) {
-		return 0.0; // nothing screen-reading there: both copies match
-	}
-	if (min(min(front4.x, front4.y), min(front4.z, front4.w)) <= 0.0) {
-		return 0.0; // the edge of the front layer
-	}
-	// The front layer: it must lie clearly behind this surface and be another sheet, not this one curving away. Walk
-	// the front depth from here to there: this surface continues smoothly, another sheet starts at a jump or a gap.
-	if (peel_linear_depth(front) - own_lin <= 0.01 + 0.01 * own_lin) {
-		return 0.0;
-	}
-	vec2 start = gl_FragCoord.xy * scene_data_block.data.screen_pixel_size;
-	// A jump: a step well beyond the last one (a curved surface's slope grows smoothly, even toward its rim).
-	float prev = own_lin;
-	float prev_step = 0.01 + 0.01 * own_lin;
-	for (int i = 1; i <= 8; i++) {
-		float d = textureLod(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), mix(start, uv, float(i) * 0.125), 0.0).r;
-		if (d <= 0.0) {
-			return front;
-		}
-		float l = peel_linear_depth(d);
-		float step = l - prev;
-		float jump = 3.0 * abs(prev_step) + 0.005 + 0.005 * l;
-		if (step < -jump) {
-			return 0.0; // another surface in front on the way: can't tell, keep the opaque copy
-		}
-		if (step > 3.0 * max(prev_step, 0.0) + 0.005 + 0.005 * l) {
-			return front;
-		}
-		prev = l;
-		prev_step = step;
-	}
-	return 0.0;
-#endif
-}
-bool peel_screen_ok(vec2 uv) {
-	return peel_layer_depth(uv) > 0.0;
-}
-// A screen-reading surface's depth texture lookups also see that layer (nearer in reverse Z), so a refracted ray
-// stops at the pool's surface rather than the bucket floor under it.
-vec4 peel_depth_merge(vec2 uv, vec4 depth) {
-#ifdef SCREEN_TEXTURE_USED
-	depth.r = max(depth.r, peel_layer_depth(uv));
-#endif
-	return depth;
-}
-
 #GLOBALS
-
-// POSITIONAL_SHADOW_OFFSET (spatial fragment output): moves this fragment's omni and spot shadow
-// lookups toward each light by that many metres (as DIRECTIONAL_SHADOW_OFFSET for directional
-// lights), so a surface that shadows itself another way (strand hair's deep opacity maps) can skip
-// its own layers in the shadow map and keep what lies beyond them. Global: the light functions
-// read it. Declared in every pass, as the material's code writes it in every pass.
-float positional_shadow_offset = 0.0;
 
 #ifdef MODE_RENDER_DEPTH
 
@@ -1384,38 +1235,6 @@ vec3 encode24(vec3 v) {
 }
 #endif // MODE_RENDER_NORMAL_ROUGHNESS
 
-// Directional light p_index through the participating media in its volume shadow (a volumetric shadow
-// map of optical depth from the light's side), at view-space p_vertex.
-float directional_volume_shadow(uint p_index, vec3 p_vertex) {
-	vec4 u = directional_lights.data[p_index].volume_shadow_u;
-	if (u == vec4(0.0)) {
-		return 1.0;
-	}
-	vec4 v4 = vec4(p_vertex, 1.0);
-	vec3 uvw = vec3(dot(v4, u), dot(v4, directional_lights.data[p_index].volume_shadow_v), dot(v4, directional_lights.data[p_index].volume_shadow_w));
-	if (any(lessThan(uvw.xy, vec2(0.0))) || any(greaterThan(uvw.xy, vec2(1.0))) || uvw.z < 0.0) {
-		return 1.0;
-	}
-	// Past the box, all of the medium: its last slice.
-	float optical_depth = textureLod(sampler3D(volume_shadow_texture, SAMPLER_LINEAR_CLAMP), vec3(uvw.xy, min(uvw.z, 1.0)), 0.0).r;
-	// A forward-scattering medium passes on more than its direct beam: the light it scatters within the
-	// forward peak goes on toward the ground as if unscattered. The delta-Eddington scaling (Joseph, Wiscombe
-	// and Weinman 1976): the peak's share f = g^2 of each scatter, w f of the extinction, is taken out of the
-	// optical depth. A dark or isotropic medium keeps Beer's law.
-	float w = uintBitsToFloat(directional_lights.data[p_index].pad.x);
-	float g = uintBitsToFloat(directional_lights.data[p_index].pad.y);
-	float direct = exp(-optical_depth * (1.0 - w * g * g));
-	// A bright medium (snow powder, steam, white smoke) also lets through the light it scatters many times: the
-	// two-stream total transmittance of a slab (direct and diffuse; Meador and Weaver 1980, with the similarity
-	// relations), exp(-kappa tau_a') / (1 + 3/4 tau_s'), kappa^2 = 3 (1 + tau_s' / tau_a'), tau_s' = (1 - g) w tau
-	// and tau_a' = (1 - w) tau. Beer's law alone left the ground under a white cloud as dark as under black smoke,
-	// where the path tracer's is lit through it.
-	float tau_s = (1.0 - g) * w * optical_depth;
-	float tau_a = (1.0 - w) * optical_depth;
-	float total = exp(-sqrt(3.0 * tau_a * (tau_a + tau_s))) / (1.0 + 0.75 * tau_s);
-	return max(direct, total);
-}
-
 void fragment_shader(in SceneData scene_data) {
 	uint instance_index = instance_index_interp;
 
@@ -1527,10 +1346,6 @@ void fragment_shader(in SceneData scene_data) {
 	float alpha_hash_scale = 1.0;
 #endif // ALPHA_HASH_USED
 
-#ifdef OPAQUE_PREPASS_THRESHOLD_USED
-	float opaque_prepass_threshold_out = scene_data.opaque_prepass_threshold;
-#endif
-
 #ifdef ALPHA_ANTIALIASING_EDGE_USED
 	float alpha_antialiasing_edge = 0.0;
 	vec2 alpha_texture_coordinate = vec2(0.0, 0.0);
@@ -1549,7 +1364,6 @@ void fragment_shader(in SceneData scene_data) {
 	vec3 light_vertex = vertex;
 #endif //LIGHT_VERTEX_USED
 	float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET
-	float sun_shadow = 1.0; // SUN_SHADOW: multiplies the first directional light's shadow (a surface's own relief)
 
 	mat3 model_normal_matrix;
 	if (bool(instances.data[instance_index].flags & INSTANCE_FLAGS_NON_UNIFORM_SCALE)) {
@@ -1655,14 +1469,7 @@ void fragment_shader(in SceneData scene_data) {
 
 #ifdef MODE_RENDER_DEPTH
 #if defined(USE_OPAQUE_PREPASS) || defined(ALPHA_ANTIALIASING_EDGE_USED)
-#ifdef OPAQUE_PREPASS_THRESHOLD_USED
-	// The material's own threshold in the pre-pass (0.99 there by default); the other depth
-	// passes (shadows: 0.1) keep theirs.
-	float prepass_threshold = scene_data.opaque_prepass_threshold > 0.9 ? opaque_prepass_threshold_out : scene_data.opaque_prepass_threshold;
-#else
-	float prepass_threshold = scene_data.opaque_prepass_threshold;
-#endif
-	if (alpha < prepass_threshold) {
+	if (alpha < scene_data.opaque_prepass_threshold) {
 		discard;
 	}
 #endif // USE_OPAQUE_PREPASS || ALPHA_ANTIALIASING_EDGE_USED
@@ -2826,9 +2633,6 @@ void fragment_shader(in SceneData scene_data) {
 #undef BIAS_FUNC
 				} // shadows
 
-				if (i == 0u) {
-					shadow *= sun_shadow; // SUN_SHADOW
-				}
 				if (i < 4) {
 					shadow0 |= uint(clamp(shadow * 255.0, 0.0, 255.0)) << (i * 8);
 				} else {
@@ -2948,9 +2752,9 @@ void fragment_shader(in SceneData scene_data) {
 
 			light_compute(normal, directional_lights.data[i].direction, normalize(view), size_A,
 #ifndef DEBUG_DRAW_PSSM_SPLITS
-					directional_lights.data[i].color * directional_lights.data[i].energy * directional_projector_color(i, vertex) * directional_volume_shadow(i, vertex),
+					directional_lights.data[i].color * directional_lights.data[i].energy * directional_projector_color(i, vertex),
 #else
-					directional_lights.data[i].color * directional_lights.data[i].energy * tint * directional_projector_color(i, vertex) * directional_volume_shadow(i, vertex),
+					directional_lights.data[i].color * directional_lights.data[i].energy * tint * directional_projector_color(i, vertex),
 #endif
 					true, shadow, f0, roughness, metallic, directional_lights.data[i].specular, albedo, alpha, screen_uv, energy_compensation,
 #ifdef LIGHT_BACKLIGHT_USED
@@ -3475,27 +3279,5 @@ void main() {
 	}
 #endif
 
-#ifndef MODE_RENDER_SDF
-	// Two-layer refraction (depth peeling, Everitt 2001): the front-depth and second-layer passes draw only
-	// screen-reading surfaces (water, glass), and the second layer only the nearest of them behind the front one,
-	// so the front layer's refraction can show it.
-	if (bool(scene_data_block.data.flags & (SCENE_DATA_FLAGS_PEEL_FRONT | SCENE_DATA_FLAGS_PEEL_BEHIND | SCENE_DATA_FLAGS_PEEL_FRONT_COLOR))) {
-#ifndef SCREEN_TEXTURE_USED
-		discard;
-#else
-		if (bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_PEEL_BEHIND)) {
-			float front = texelFetch(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), ivec2(gl_FragCoord.xy), 0).r;
-			if (gl_FragCoord.z >= front * (1.0 - 1.0e-3)) {
-				discard; // the front layer itself, or nothing in front (front 0: no screen-reading surface here)
-			}
-		} else if (bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_PEEL_FRONT_COLOR)) {
-			float front = texelFetch(sampler2D(peel_depth, SAMPLER_NEAREST_CLAMP), ivec2(gl_FragCoord.xy), 0).r;
-			if (gl_FragCoord.z < front * (1.0 - 1.0e-3)) {
-				discard; // behind the front layer
-			}
-		}
-#endif
-	}
-#endif
 	fragment_shader(scene_data_block.data);
 }

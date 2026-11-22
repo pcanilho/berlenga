@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -40,7 +39,7 @@ class TerrainDataMap3D;
 // without climate). Packed into instance custom data as 0..1.5 in 1/100 steps.
 namespace VegetationLight {
 
-constexpr float LIGHT_MAX = 1.5f;
+constexpr float MAX = 1.5f;
 
 // The map's mean annual shortwave (TerrainDataMap3D climate), 0 without climate.
 float sun_mean(const TerrainDataMap3D *p_map);
@@ -48,26 +47,13 @@ float sun_mean(const TerrainDataMap3D *p_map);
 // Sun exposure of a point against the map's mean: 1 without climate.
 float exposure(const TerrainDataMap3D *p_map, float p_sun_mean, float p_x, float p_z);
 
-// 1..100: 0 is left for "no light recorded" (instances of other systems that only carry a whole
-// number there), which the shader reads as open ground.
 inline float pack(float p_light) {
-	return MAX(1.0f, Math::round(CLAMP(p_light / LIGHT_MAX, 0.0f, 1.0f) * 100.0f));
+	return Math::round(CLAMP(p_light / MAX, 0.0f, 1.0f) * 100.0f);
 }
 
 // Sun and shade leaves (Lichtenthaler et al. 2007): leaves grown in shade carry more chlorophyll
 // b and fewer carotenoids, so read darker and bluer green; leaves in full sun on a sunny slope carry
 // more xanthophylls and dry first, so read paler and yellower. Open flat ground is unchanged.
-// vegetation_light_tint() on the CPU, for colours that stand for the plants from afar (the far
-// cover map), so they shift with the light as the near leaves do.
-inline void tint(float &r_r, float &r_g, float &r_b, float p_light) {
-	const float shade = 1.0f - CLAMP(p_light, 0.0f, 1.0f);
-	const float x = CLAMP((p_light - 1.0f) / 0.3f, 0.0f, 1.0f);
-	const float sun = x * x * (3.0f - 2.0f * x);
-	r_r *= Math::lerp(1.0f, 0.72f, shade) * Math::lerp(1.0f, 1.12f, sun);
-	r_g *= Math::lerp(1.0f, 0.85f, shade) * Math::lerp(1.0f, 1.05f, sun);
-	r_b *= Math::lerp(1.0f, 0.84f, shade) * Math::lerp(1.0f, 0.74f, sun);
-}
-
 static constexpr const char *SHADER_CODE = R"(
 vec3 vegetation_light_tint(vec3 c, float light) {
 	float shade = 1.0 - clamp(light, 0.0, 1.0);

@@ -43,14 +43,6 @@ float rand01(uint seed) {
 
 vec2 gaussian_pair(ivec2 m) {
 	uint seed = (uint(m.x + 32768) & 0xffffu) | ((uint(m.y + 32768) & 0xffffu) << 16);
-	// The larger cascades (a band below the next smaller one: k_max set) draw their own numbers, salted by their
-	// tile size. Seeded by the mode index alone, every cascade's band (the same mode indices on a tile `ratio`
-	// times larger) was a scaled copy of the others: at the start their slopes added up in phase round the
-	// origin and the summed crests read as folded (wide white patches), until the slower long waves drifted
-	// apart. Independent draws per cascade are what the random-phase model asks for (Tessendorf 2001).
-	if (extra.w > 0.0) {
-		seed = hash_u32(seed ^ hash_u32(floatBitsToUint(domain_wind.x)));
-	}
 	float u1 = max(rand01(seed * 2u + 1u), 1e-6);
 	float u2 = rand01(seed * 2u + 2u);
 	float r = sqrt(-2.0 * log(u1));

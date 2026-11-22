@@ -81,8 +81,6 @@ public:
 	RID shader_shore_foam, pipeline_shore_foam;
 	// Swash run-up and wet sand (water_swash.glsl), on the ripple grid.
 	RID shader_swash, pipeline_swash;
-	RID shader_flow_offset, pipeline_flow_offset;
-	RID shader_surface_waves, pipeline_surface_waves;
 
 	RID buf_params;
 	RID buf_state_a, buf_state_b; // ping-pong ripple state (h, h_prev, foam, _)
@@ -149,7 +147,6 @@ public:
 	RID tex_shore_depth;
 	bool has_cell_depth = false;
 	float shallow_fade_depth = 1.0f;
-	float caustics_foam_shade = 0.8f; // of the sun a full foam cover stops on its way to the bed (water_caustics_map.glsl)
 	// Baked current as face fluxes (RGBA32F, m^2/s: +x, +z, -x, -z faces; see water_ripple.glsl),
 	// read by the shallow-water passes; zeros = still water. And the live total velocity at cell
 	// centres (RGBA16F, m/s in rg) the first pass writes for materials.
@@ -159,30 +156,6 @@ public:
 	float wall_friction = 1.5f;
 	float flow_foam = 1.0f; // white water made by the live flow (water_ripple.glsl), 0 = none
 	float flow_foam_persistence = 8.0f; // s
-	bool flow_foam_impact = true; // convergence and stagnation sources too (water_ripple.glsl)
-	// Advected ripple coordinates (water_flow_offset.glsl): RGBA32F on the ripple grid, the two flow-map phases'
-	// offsets carried by the live flow, as differences from plain flow mapping; materials add them.
-	bool advected_ripples = false;
-	float advected_period = 2.0f;
-	SafeNumeric<uint32_t> flow_clock_bits{ 0u }; // the materials' clock (float bits), set from the main thread
-	float flow_clock_last = -1.0f; // the clock at the last advection step; < 0 = restart
-	Vector2 flow_grid_center; // world xz of the ripple grid's centre (the phases' noise is world-anchored)
-	RID tex_flow_offset, tex_flow_offset_tmp;
-	RID buf_flow_offset_params, buf_flow_offset_copy_params, uset_flow_offset, uset_flow_offset_copy;
-	// Dispersive surface waves (water_surface_waves.glsl) on a finer power-of-two grid over the ripple grid's
-	// domain: RG32F h (m) and phi; built on first use, freed with the rest.
-	bool surface_waves = false;
-	float surface_wave_strength = 1.0f;
-	float surface_wave_time = 0.0f;
-	bool surface_wave_clear = true;
-	int surface_wave_n = 0;
-	RID tex_surface_waves;
-	RID buf_sw_params[3], uset_sw[3];
-	RID buf_sw_packed, buf_sw_d[4], buf_sw_m[4];
-	RID buf_sw_rows_params, buf_sw_cols_params;
-	RID uset_sw_fwd_rows, uset_sw_fwd_cols, uset_sw_inv_rows, uset_sw_inv_cols;
-	void _rt_build_surface_waves();
-	void _rt_free_surface_waves();
 	RID buf_blit_ripple_params, buf_blit_ocean_params; // just {n}, uploaded once at build (grid resolution is fixed per configure())
 	RID uset_blit_ripple, uset_blit_ocean;
 
@@ -230,15 +203,6 @@ public:
 	double ripple_cache_time = 0.0; // the simulation clock at the step each cache was read from
 	double ocean_cache_time = 0.0;
 	SafeFlag height_ready;
-	// Wet sand (the swash texture's g) read back every few steps while wanted (WaterSolver::set_wetness_readback),
-	// for the weather's contact wetness. Guarded by cache_mtx.
-	SafeFlag swash_wet_wanted;
-	int swash_read_countdown = 0; // render thread only
-	Vector<float> swash_wet_cache;
-	Vector<float> swash_run_cache; // the swash texture's r: the run-up film (m)
-	uint64_t swash_wet_serial = 0;
-	void _rt_store_swash(const uint8_t *p_data, int p_bytes);
-	void rt_on_swash(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
 
 	// Ripple rest (WaterSolver::set_rest_threshold): consecutive ripple readbacks, all taken after the last step that
 	// had a body or an impulse, whose peak |height - water_level| stayed below the threshold. Written on the render
@@ -307,10 +271,7 @@ public:
 	// The baked current's face fluxes (4 floats a cell, grid_resolution^2 cells; empty = still water) and the wall
 	// friction (1/s) along dry ground, in place: the live velocities restart from the new flow.
 	void rt_set_base_flux(Ref<WaterSolverGPU> p_self, PackedFloat32Array p_flux, float p_wall_friction);
-	void rt_set_flow_foam(Ref<WaterSolverGPU> p_self, float p_strength, float p_persistence, bool p_impact);
-	void rt_set_advected_ripples(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_period);
-	void rt_set_surface_waves(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_strength);
-	void rt_set_flow_grid_center(Ref<WaterSolverGPU> p_self, Vector2 p_center);
+	void rt_set_flow_foam(Ref<WaterSolverGPU> p_self, float p_strength, float p_persistence);
 
 	// Async readback callbacks: RenderingDevice invokes them with the data as
 	// the runtime arg; Callable::bind APPENDS the bound args, so the data
@@ -459,20 +420,7 @@ public:
 	void set_base_flux(const PackedFloat32Array &p_flux, float p_wall_friction);
 	bool has_base_flux() const { return !base_flux.is_empty(); }
 	// White water the live flow makes where it runs fast and shears (0 = none), and how long it lasts (s).
-	// p_impact: also where it runs into things (convergence, and the pillow on a rock's upstream face).
-	void set_flow_foam(float p_strength, float p_persistence, bool p_impact = true);
-	// Advected ripple coordinates (water_flow_offset.glsl) for materials whose two-phase flow uses p_period
-	// seconds; set_flow_clock() passes the clock those materials animate with (the same value, every frame).
-	void set_advected_ripples(bool p_enabled, float p_period);
-	void set_flow_clock(float p_time);
-	// RGBA32F on the ripple grid: phase A's offset correction in rg, phase B's in ba (m); invalid until built.
-	RID get_flow_offset_texture_rd_rid() const;
-	// Dispersive surface waves over the ripple grid (water_surface_waves.glsl; Jeschke and Wojtan 2023): short waves
-	// at their own speed, wrapping round stones and reflecting off banks, raised where the current meets dry ground
-	// with the stagnation head times p_strength. Needs a current (set_base_flux).
-	void set_surface_waves(bool p_enabled, float p_strength = 1.0f);
-	// RG32F, SURFACE_WAVE_N square over the ripple grid's domain: h (m) in r; invalid until the first step with it on.
-	RID get_surface_wave_texture_rd_rid() const;
+	void set_flow_foam(float p_strength, float p_persistence);
 	// Live face velocities read back from the GPU (u' on each cell's +x face, w' on its +z face, m/s, on top of the
 	// baked flow); empty until a readback lands with a current running.
 	void get_velocity_grid(Vector<float> &r_velocity) const;
@@ -504,11 +452,6 @@ public:
 	// One-shot, event-driven (a splash) -- queued, consumed by the next
 	// step(), then cleared. Not persistent like spheres.
 	void submit_impulse(const Vector3 &p_world_pos, float p_radius, float p_strength);
-	// One-shot progressive wave (WorldWater.wave): a single crest and trough p_height high (crest to trough) and
-	// p_wavelength long, centred on p_world_pos and travelling along p_direction (xz) at p_celerity (m/s), its
-	// crest p_width wide with tapered ends. Seeded as height plus the matching long-wave velocity
-	// (u = eta c / h), so it runs one way. Takes two impulse slots; false when they are not free.
-	bool submit_wave(const Vector3 &p_world_pos, const Vector2 &p_direction, float p_height, float p_wavelength, float p_celerity, float p_width);
 
 	// Zero-copy RD texture RIDs (R32_SFLOAT height, meters) for a caller-side
 	// Texture2DRD to wrap directly -- valid once is_available(). This is the
@@ -538,8 +481,6 @@ public:
 	// p_shore_band: still-water depth (m) within which waves arriving over the
 	// shallows leave shore foam (0 = none). p_shore_undertow: steady seaward
 	// drift (m/s) the backwash drags that foam back out with.
-	// How much of the sun a full foam cover stops on its way to the bed (0..1): the foam's shade in the caustics map.
-	void set_caustics_foam_shade(float p_shade);
 	void set_foam_settings(bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow);
 	// R32F shore foam (0..1) on the ripple grid; valid once is_available().
 	RID get_shore_foam_texture_rd_rid() const;
@@ -607,13 +548,6 @@ public:
 	// Mean whitecap foam (0..1) over the ocean grid at the last readback,
 	// -1 before the first one or with foam off.
 	float get_foam_cover() const;
-	// Wet sand on the ripple grid (0..1, the swash's wetness: 1 under water and where the run-up reached, fading as
-	// it dries), read back from the GPU every few steps once asked for. get_wetness_grid() returns false before
-	// the first read; r_serial changes with each new one.
-	void set_wetness_readback(bool p_enabled);
-	bool get_wetness_grid(Vector<float> &r_wet, int &r_n, uint64_t &r_serial) const;
-	// The run-up film (m of water over the sand, the swash texture's r) from the same readback.
-	bool get_run_up_grid(Vector<float> &r_run_up, int &r_n) const;
 	// dh/dx of the ocean layer from the FFT (readback, for tests).
 	void get_ocean_slope_x_grid(Vector<float> &r_slope_x) const;
 
@@ -650,7 +584,6 @@ private:
 		Vector3 world_pos;
 		float radius = 0.0f;
 		float strength = 0.0f;
-		bool raw = false; // packed as given (a wave's second slot), not made grid-relative
 	};
 	Vector<ImpulseSlot> pending_impulses;
 

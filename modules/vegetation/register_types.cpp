@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -34,13 +33,7 @@
 #include "grass_field_3d.h"
 #include "plant_generator.h"
 #include "plant_species.h"
-#include "tree_bark_detail.h"
-#include "tree_generator.h"
-#include "tree_wind_3d.h"
 #include "vegetation_field_3d.h"
-#include "vegetation_mist_3d.h"
-#include "vegetation_pollen_3d.h"
-#include "leaf_fall_3d.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
@@ -52,13 +45,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(PlantSpecies);
 	GDREGISTER_CLASS(Biome);
 	GDREGISTER_CLASS(VegetationField3D);
-	GDREGISTER_CLASS(VegetationMist3D);
-	GDREGISTER_CLASS(VegetationPollen3D);
-	GDREGISTER_CLASS(LeafFall3D);
 	GDREGISTER_CLASS(GrassField3D);
-	GDREGISTER_CLASS(TreeGenerator);
-	GDREGISTER_CLASS(BarkDetail3D);
-	GDREGISTER_CLASS(TreeWind3D);
 	GDREGISTER_CLASS(PlantGenerator);
 	// Declared so terrain shaders using GrassField3D.get_ground_shader_code() compile without a field.
 	const struct {
@@ -66,54 +53,25 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		const char *type;
 	} globals[] = {
 		{ "grass_ground_map", "sampler2D" },
-		{ "grass_ground_litter", "sampler2D" },
 		{ "grass_ground_rect", "vec4" },
 		{ "grass_ground_color", "vec4" },
 		{ "grass_ground_fade", "vec4" },
 		{ "grass_ground_far", "vec4" },
-		{ "grass_ground_far_lobe1", "vec4" },
-		{ "grass_ground_far_lobe2", "vec4" },
-		{ "grass_ground_far_scale", "vec4" },
-		{ "grass_ground_under", "vec4" },
-		{ "grass_ground_under_far", "vec4" },
-		{ "grass_ground_sun", "vec4" },
-		{ "grass_ground_view", "vec4" },
 		{ "grass_ground_dry", "vec4" },
 		{ "grass_ground_params", "vec4" },
-		{ "crop_ground_map", "sampler2D" },
-		{ "crop_ground_plots", "sampler2D" },
-		{ "crop_ground_rect", "vec4" },
-		{ "crop_ground_fade", "vec4" },
-		{ "crop_ground_sun", "vec4" },
-		{ "crop_ground_lobe1", "vec4" },
-		{ "crop_ground_lobe2", "vec4" },
-		{ "crop_ground_view", "vec4" },
-		{ "grass_graze_map", "sampler2D" }, // GrassField3D deer lawns: R grazed down, G torn by rooting.
-		{ "grass_graze_rect", "vec4" },
 		{ "grass_trample_map", "sampler2D" },
 		{ "grass_trample_rect", "vec4" },
-		// PhysXFireSpread3D's plant state (vegetation_fire.h); set only while a fire burns.
-		{ "fire_state_map", "sampler2D" },
-		{ "fire_char_map", "sampler2D" },
-		{ "fire_age_map", "sampler2D" }, // R: years since the ground there burnt / 2 (0 never), over fire_char_rect
-		{ "fire_char_rect", "vec4" },
-		{ "fire_wind_map", "sampler2D" },
-		{ "fire_wind_rect", "vec4" },
 		{ "grass_wind", "vec4" },
 		{ "forest_floor_map", "sampler2D" },
 		{ "forest_floor_rect", "vec4" },
 		{ "vegetation_far_map", "sampler2D" },
 		{ "vegetation_far_rect", "vec4" },
 		{ "vegetation_far_range", "float" },
-		{ "vegetation_far_shade", "float" },
-		{ "vegetation_near_radius", "float" },
 	};
 	for (const auto &g : globals) {
 		Dictionary d;
 		d["type"] = g.type;
-		// A scale is 1 until a field sets it.
-		const bool unit = String(g.name) == "grass_ground_far_scale" || String(g.name) == "vegetation_far_shade" || String(g.name) == "crop_ground_view";
-		d["value"] = String(g.type) == "vec4" ? Variant(unit ? Vector4(1, 1, 1, 1) : Vector4()) : (String(g.type) == "float" ? Variant(unit ? 1.0f : 0.0f) : Variant(""));
+		d["value"] = String(g.type) == "vec4" ? Variant(Vector4()) : (String(g.type) == "float" ? Variant(0.0f) : Variant(""));
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, String("shader_globals/") + g.name, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), d);
 	}
 }
@@ -122,7 +80,5 @@ void uninitialize_vegetation_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
-	TreeGenerator::free_climber_leaves();
 	PlantGenerator::free_shaders();
-	GrassField3D::free_gpu_fill();
 }

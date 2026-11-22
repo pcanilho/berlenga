@@ -1,0 +1,2 @@
+### Added
+- Landscape3D: ground collision near a target (`collision_enabled`, `collision_radius`, `collision_target`, layer, mask, `physics_material`): one static heightfield per chunk at full detail, built and freed as the target moves (49 chunks in under 2 ms at 1 m, 0.3 ms per 64 m step). PhysX heightfields take a `fan_blocks` key so their cells split like the drawn mesh and bodies rest on the drawn triangles.

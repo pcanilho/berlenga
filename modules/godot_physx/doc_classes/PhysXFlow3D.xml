@@ -13,43 +13,16 @@
 	<tutorials>
 	</tutorials>
 	<methods>
-		<method name="add_transient_solid">
-			<return type="void" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="radius" type="float" />
-			<param index="2" name="velocity" type="Vector3" />
-			<description>
-				Adds a sphere solid moving at [param velocity] (m/s) for the next simulation step only: the gas cannot enter it and takes on its velocity there. [PhysXCloth3D] calls it for some of its moving particles when its [member PhysXCloth3D.flow] is set, so a flapping flag stirs and parts the smoke.
-			</description>
-		</method>
 		<method name="get_stats" qualifiers="const">
 			<return type="Dictionary" />
 			<description>
 				Diagnostics: [code]running[/code], [code]error[/code], [code]start_ms[/code] (grid creation), [code]step_ms[/code], [code]render_calls[/code], [code]render_outputs[/code], [code]readback_bytes[/code], [code]bounds[/code] (the gas, with [member cpu_readback]), [code]active_blocks[/code] (sparse blocks in use, of [member max_blocks]), [code]scatter_lights[/code] / [code]scatter_passes[/code] / [code]scatter_no_source[/code] (see [member light_scattering]: lights picked last step, scattering passes run, frames Flow had no volume to hand over), and Flow's pipeline / pass / resource counts.
 			</description>
 		</method>
-		<method name="get_washout_rate" qualifiers="const">
-			<return type="float" />
-			<description>
-				The rate (1/s) at which the last step's rain and snow washed smoke out of the gas, from [method WorldWeather.washout_at] at the gas's centre: coarse when [member smoke_buoyancy] is below 0 (dust). 0 without [member rain_washout] or a weather producer.
-			</description>
-		</method>
-		<method name="get_world_ground_albedo" qualifiers="const">
-			<return type="Color" />
-			<description>
-				What [member ground_from_world] last read under the gas: linear rgb, alpha the share known (0: none).
-			</description>
-		</method>
 		<method name="is_running" qualifiers="const">
 			<return type="bool" />
 			<description>
 				Whether Flow is running for this node (see the configuration warnings if not).
-			</description>
-		</method>
-		<method name="request_velocity">
-			<return type="void" />
-			<description>
-				Keeps the gas velocity read back to the CPU for the next second, for [method sample_velocity]. Call it every step while sampling.
 			</description>
 		</method>
 		<method name="sample_smoke" qualifiers="const">
@@ -66,26 +39,10 @@
 				The temperature at [param position] (world space), from the last CPU readback, in the same units as [member PhysXFlowEmitter3D.temperature], [member ignition_temperature] and [member temperature_range] -- e.g. how much a fire hurts or how hot a sensor reads. Needs [member cpu_readback]; returns [code]-1.0[/code] without it. The readback lags a few frames behind the simulation.
 			</description>
 		</method>
-		<method name="sample_velocity" qualifiers="const">
-			<return type="Vector3" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The gas velocity at [param position] (world space) in metres a second, from the last readback, a few frames behind the simulation. It is read back while [member cpu_readback] is on, while [member push_bodies] has dynamic bodies near the gas, or for a second after [method request_velocity]. Zero outside the gas or without a readback.
-			</description>
-		</method>
 	</methods>
 	<members>
-		<member name="ambient_scattering" type="bool" setter="set_ambient_scattering" getter="is_ambient_scattering" default="true">
-			When enabled, the environment's ambient light lights the gas in raster, as it does Godot's volumetric fog: [member Environment.ambient_light_color] mixed with the sky's radiance by [member Environment.ambient_light_sky_contribution], scaled by [member Environment.ambient_light_energy]. Each point is dimmed by all the gas above it, read from a volumetric shadow map built looking straight down (with [member scattering_shadow_steps] at [code]0[/code], not at all), so the inside of a dense plume is darker than its edge. It replaces the flat grey floor Flow's own renderer gives the unlit side of the smoke. It shares the light scattering pass, at [member scattering_resolution]. The path tracer lights the gas with the sky and ambient on its own, so this only affects raster.
-		</member>
-		<member name="body_drag" type="float" setter="set_body_drag" getter="get_body_drag" default="1.0">
-			The drag coefficient for [member push_bodies]: about [code]1.0[/code] for boxy debris, [code]0.5[/code] for a ball, up to [code]2.0[/code] for flat sheets.
-		</member>
 		<member name="buoyancy" type="float" setter="set_buoyancy" getter="get_buoyancy" default="2.0">
 			Upward acceleration per unit of temperature: hot gas rises, cool gas hangs. "Up" is opposite the project's default gravity.
-		</member>
-		<member name="cast_shadows" type="bool" setter="set_cast_shadows" getter="is_cast_shadows" default="true">
-			When enabled, the gas shadows the scene in raster from the first shadow-casting [DirectionalLight3D]: a volumetric shadow map over the grid, seen from the light, holds the gas's optical depth from the light's side through 32 depth slices, and opaque surfaces in and behind the gas are darkened by the gas between them and the light. It is built once a frame and read by the next frame's opaque pass, and only the Forward+ renderer reads it. The path tracer shadows through the gas on its own, so this only affects raster.
 		</member>
 		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="0.05">
 			Simulation cell size in meters. Smaller is finer detail and more GPU cost.
@@ -108,23 +65,8 @@
 		<member name="cpu_readback" type="bool" setter="set_cpu_readback" getter="is_cpu_readback" default="false">
 			Copy temperature and smoke back to the CPU every few steps, for [method sample_smoke], [method sample_temperature] and the [code]bounds[/code] in [method get_stats]. Off by default: it costs a full field copy each time and isn't needed for rendering.
 		</member>
-		<member name="diffuse_transmission" type="bool" setter="set_diffuse_transmission" getter="is_diffuse_transmission" default="true">
-			When enabled, bright gas lets the scene behind it through in raster, blurred, by multiple scattering (as under the path tracer), not only along its direct beam: blue sky shows through a white cloud and a shadowed slope shows through snow powder. Needs [member ambient_scattering] or [member sun_scattering]. Costs one copy of the frame and a few taps per gas pixel.
-		</member>
-		<member name="ember_rate" type="float" setter="set_ember_rate" getter="get_ember_rate" default="40.0">
-			With [member embers], how many embers the fire throws up a second.
-		</member>
-		<member name="embers" type="bool" setter="set_embers" getter="is_embers" default="true">
-			When enabled, a burning fire (emitters feeding fuel with [member combustion] on, or gas hotter than [member ignition_temperature]) throws up glowing embers: small emissive sparks carried up by the plume that drift, cool from yellow-orange to dull red along the blackbody colours of their temperature, and fall. They draw in raster and under the path tracer.
-		</member>
 		<member name="emission_strength" type="float" setter="set_emission_strength" getter="get_emission_strength" default="4.0">
-			How bright the [member heat_ramp] glow is. [code]0[/code] turns glowing off. The gas glows where it has smoke, as much as it absorbs (in raster through its opacity, in the path tracer through its extinction), so clear hot air does not glow.
-		</member>
-		<member name="fire_light" type="bool" setter="set_fire_light" getter="is_fire_light" default="true">
-			When enabled, a burning fire (see [member embers]) lights the scene in raster through a shadowed point light in its flames, coloured by [member heat_ramp] and pulsing at the frequency real flames puff at for the fire's width, [code]1.5 / sqrt(width)[/code] times a second (Cetegen and Ahmed 1993), about twice a second for a campfire. The gas's own glow lights nothing in raster, so without it a fire leaves the ground around it dark. The path tracer uses it too, as the flame's light source: the gas's glow would light the ground only when a bounce ray happens to hit it, so its glow then shows only to camera and mirror rays and the fire is not counted twice.
-		</member>
-		<member name="fire_light_energy" type="float" setter="set_fire_light_energy" getter="get_fire_light_energy" default="1.0">
-			Scales the [member fire_light]. It already grows with the burning area. The light scatters in the gas at a tenth of its strength ([member Light3D.light_volumetric_fog_energy]), so it does not wash the flames it stands in into an orange haze.
+			How bright the [member heat_ramp] glow is. [code]0[/code] turns glowing off.
 		</member>
 		<member name="floor_enabled" type="bool" setter="set_floor_enabled" getter="is_floor_enabled" default="false">
 			When enabled, gas never goes below [member floor_height]: a wide solid lies under it (it reserves no blocks and holds no gas). Colliders can't describe terrain heightmaps or trimeshes, so without a floor gas sinks into the ground and spends the grid's blocks there.
@@ -132,45 +74,18 @@
 		<member name="floor_height" type="float" setter="set_floor_height" getter="get_floor_height" default="0.0">
 			The world height of the floor's top (used when [member floor_enabled] is on).
 		</member>
-		<member name="ground_albedo" type="float" setter="set_ground_albedo" getter="get_ground_albedo" default="0.25">
-			How much light the ground under the gas reflects, for the raster light scattering pass: the sunlit ground (in the gas's own shadow) lights the gas from below, as the path tracer's bounces off the real ground do, so a cloud's base is not left dark. [code]0.25[/code] suits grass and soil, sand is about [code]0.4[/code], fresh snow about [code]0.8[/code] ([SnowPowderCloud3D] uses that). [code]0[/code] lights the underside only by the sky's lower half. The path tracer ignores it and bounces off the scene itself.
-		</member>
-		<member name="ground_color" type="Color" setter="set_ground_color" getter="get_ground_color" default="Color(1, 1, 1, 1)">
-			The colour of the ground under the gas, for the raster light scattering pass; [member ground_albedo] scales it. The light the ground sends up into the gas takes this colour, as the path tracer's bounces take the ground's own: a blue-grey ground or a snowfield under a blue sky lights a cloud's base bluer than a brown field does. White leaves the ground grey.
-		</member>
-		<member name="ground_from_world" type="bool" setter="set_ground_from_world" getter="is_ground_from_world" default="true">
-			The light the ground sends up into the gas takes the colour of the real ground under it ([method WorldGround.albedo_at]: terrain layers, wet ground, snow), read at five points over the gas every half second, blended over [member ground_albedo] and [member ground_color] by how much of it the world knows. Off, or with no ground colour in the world, those two alone.
-		</member>
 		<member name="heat_ramp" type="Gradient" setter="set_heat_ramp" getter="get_heat_ramp">
-			How the gas glows by temperature, from [code]0[/code] to [member temperature_range]: each color is the glow at that temperature, its alpha how much it glows instead of showing the lit smoke. Empty uses a blackbody: [code]0[/code] to [member temperature_range] spans 600 K to 1,500 K, coloured as a blackbody at that temperature and as bright as Planck's law makes it at 580 nm (alpha above [code]1[/code] at the top), so a flame has a bright core and sharp tongues and the cooler gas over it reads as smoke.
-		</member>
-		<member name="heat_shimmer" type="bool" setter="set_heat_shimmer" getter="is_heat_shimmer" default="true">
-			Light bends through the gas's hot air. Air's refractive index falls with its density (Gladstone-Dale), so each view ray turns by the gradient of the index across it, from the simulated temperature plus the turbulence below the grid. The raster renderers shift the frame by where the bent rays land; the path tracer bends its camera rays. Flows whose emitters bring no heat (dust, mist) skip it.
-		</member>
-		<member name="heat_shimmer_kelvin" type="float" setter="set_heat_shimmer_kelvin" getter="get_heat_shimmer_kelvin" default="1200.0">
-			Kelvin above the surrounding air (from the weather) at a temperature of [member temperature_range]: Flow's temperature in kelvin, for the refractive index.
-		</member>
-		<member name="heat_shimmer_turbulence" type="float" setter="set_heat_shimmer_turbulence" getter="get_heat_shimmer_turbulence" default="0.35">
-			The turbulent temperature fluctuation below the grid's cells, as a share of the gas's excess over the air (about 0.3 to 0.4 on a fire plume's axis). It carries most of the visible shimmer. 0: only the simulated field bends light.
+			How the gas glows by temperature, from [code]0[/code] to [member temperature_range]: each color is the glow at that temperature, its alpha how much it glows instead of showing the lit smoke. Empty uses a built-in fire ramp (transparent when cool, deep orange when warm, yellow-white when hot).
 		</member>
 		<member name="ignition_temperature" type="float" setter="set_ignition_temperature" getter="get_ignition_temperature" default="0.05">
 			The temperature above which fuel burns (see [member combustion]).
 		</member>
-		<member name="light_scattering" type="bool" setter="set_light_scattering" getter="is_light_scattering" default="true">
-			When enabled, nearby [OmniLight3D] and [SpotLight3D] nodes light the gas: each glows in the smoke in its own color, fading with distance the way it fades on surfaces (its [member OmniLight3D.omni_range] / [member SpotLight3D.spot_range], [member OmniLight3D.omni_attenuation] / [member SpotLight3D.spot_attenuation], spot cone), dimmed by the gas between it and each point and by the gas in front of the camera. Flow's own renderer only lights the gas with the scene's first [DirectionalLight3D]; this is an extra pass over the pixels the gas covers. Turn it off where the gas has no lights near it.
+		<member name="light_scattering" type="bool" setter="set_light_scattering" getter="is_light_scattering" default="false">
+			When enabled, nearby [OmniLight3D] and [SpotLight3D] nodes light the gas: each glows in the smoke in its own color, fading with distance the way it fades on surfaces (its [member OmniLight3D.omni_range] / [member SpotLight3D.spot_range], [member OmniLight3D.omni_attenuation] / [member SpotLight3D.spot_attenuation], spot cone), dimmed by the gas between it and each point and by the gas in front of the camera. Flow's own renderer only lights the gas with the scene's first [DirectionalLight3D]; this is an extra pass over the pixels the gas covers, so it's off by default.
 			Up to [member scattering_max_lights] lights are used, the strongest at the gas first. Each light's [member Light3D.light_volumetric_fog_energy] scales its glow, as it does for Godot's volumetric fog: set it to [code]0[/code] to keep a light out of the gas.
 		</member>
 		<member name="max_blocks" type="int" setter="set_max_blocks" getter="get_max_blocks" default="1024">
 			The most sparse blocks the gas may take up -- a GPU memory budget, since Flow reserves memory for all of them when the grid starts (about 0.45 MB a block: the default 1024 is roughly 0.5 GB). A small plume uses a few hundred; [method get_stats] reports [code]active_blocks[/code]. Gas that would need more is cut off, with a warning. Changing it restarts the simulation.
-		</member>
-		<member name="push_bodies" type="bool" setter="set_push_bodies" getter="is_push_bodies" default="true">
-			When enabled, the gas pushes the dynamic bodies in it (debris, Blast pieces, crates) with quadratic drag, [code]0.5 * 1.2 * body_drag * A * |u - v| * (u - v)[/code], where [code]u[/code] is the gas velocity, [code]v[/code] the body's and [code]A[/code] the shape's mean projected area (its surface over four). A blast's front or a fire's updraft carries light debris, as NVIDIA APEX Turbulence did. The bodies push back as moving solids through [member collide_with_bodies]. The gas velocity is read back while such bodies are near it, a few frames late.
-		</member>
-		<member name="rain_washout" type="bool" setter="set_rain_washout" getter="is_rain_washout" default="true">
-			Rain and snow over the gas wash its smoke out ([method WorldWeather.washout_at]), on top of Flow's own loss of 0.3 of the smoke a second: heavy dust clears noticeably faster in a downpour, fine smoke hardly at all.
-		</member>
-		<member name="scattering_albedo" type="float" setter="set_scattering_albedo" getter="get_scattering_albedo" default="0.9">
-			The share of light the gas scatters at each scattering event rather than absorbs (its single-scattering albedo), in both the path tracer and the raster light scattering pass, on top of [member smoke_color]. Light that scatters many times inside thick gas keeps [code]albedo^n[/code] of itself, so this sets how bright the inside of a dense cloud stays: [code]0.9[/code] suits smoke and dust, ice grains barely absorb (above [code]0.999[/code], Warren 1982), so snow powder wants about [code]0.99[/code]. The raster pass weighs its multiple-scattering approximation by it relative to [code]0.9[/code].
 		</member>
 		<member name="scattering_anisotropy" type="float" setter="set_scattering_anisotropy" getter="get_scattering_anisotropy" default="0.4">
 			With [member light_scattering], how much the gas scatters light forward (toward a camera looking at the light) rather than evenly in every direction: [code]0[/code] glows the same from every side, higher values make a bright halo when looking toward a light, negative values light the gas most when the light is behind the camera.
@@ -192,16 +107,10 @@
 			With [member light_scattering], the steps of the march toward each light that lets the gas shade itself (a light inside thick smoke glows near it and dims further in). [code]0[/code] skips it: cheaper, but light then reaches every point as if through clear air.
 		</member>
 		<member name="scattering_strength" type="float" setter="set_scattering_strength" getter="get_scattering_strength" default="1.0">
-			With [member light_scattering], a multiplier on the light the gas scatters. The glow is colored by [member smoke_color]. The path tracer does not see it (its gas scatters as its [member smoke_color] says): keep it at [code]1[/code] for raster and path-traced frames to match.
-		</member>
-		<member name="scattering_temporal" type="bool" setter="set_scattering_temporal" getter="is_scattering_temporal" default="true">
-			When enabled, the light scattering pass ([member light_scattering], [member ambient_scattering], [member sun_scattering]) moves its march's start offset every frame and blends the result with the previous frames, reprojected and clamped to the current frame's neighbourhood, as volumetric fog does. The step pattern then averages out instead of showing as bands at the gas's edges. History is dropped where the scene behind the gas moves, and when the pass runs for more than one view in a frame only the first view is blended.
+			With [member light_scattering], a multiplier on the light the gas scatters. The glow is colored by [member smoke_color].
 		</member>
 		<member name="shadow_steps" type="int" setter="set_shadow_steps" getter="get_shadow_steps" default="48">
 			How far the self-shadowing reaches toward the light, in steps of three quarters of a cell (48 is about 1.8 m at the default [member cell_size]). Too few for the gas's width leaves it lit almost evenly. [code]0[/code] turns self-shadowing off.
-		</member>
-		<member name="smoke_buoyancy" type="float" setter="set_smoke_buoyancy" getter="get_smoke_buoyancy" default="0.0">
-			The lift per unit of smoke, whatever its temperature (Flow's buoyancy per smoke). Below [code]0[/code] the smoke is heavier than air and sinks, slides down slopes and pools in hollows, like dust, sand or cold fog; above [code]0[/code] it rises on its own. [member buoyancy] still adds the lift from heat.
 		</member>
 		<member name="smoke_color" type="Color" setter="set_smoke_color" getter="get_smoke_color" default="Color(0.8, 0.8, 0.8, 1)">
 			The smoke's color, lit by the scene's sun: white steam, gray or black smoke, brown dust, colored signal smoke. See also [member smoke_ramp].
@@ -215,29 +124,11 @@
 		<member name="smoke_ramp" type="Gradient" setter="set_smoke_ramp" getter="get_smoke_ramp">
 			The smoke's color by temperature, from [code]0[/code] to [member temperature_range] -- e.g. black soot near a fire turning light gray as it cools. Empty uses [member smoke_color] at every temperature. Alpha is ignored (opacity comes from the smoke itself).
 		</member>
-		<member name="sun_scattering" type="bool" setter="set_sun_scattering" getter="is_sun_scattering" default="true">
-			When enabled, the scene's [DirectionalLight3D] nodes light the gas in raster through the light scattering pass instead of Flow's own renderer: each with its color, energy and [member Light3D.light_volumetric_fog_energy], the Henyey-Greenstein phase of [member scattering_anisotropy], the gas between the point and the light (for the first directional light all of it, read from the same volumetric shadow map as [member cast_shadows]; for others over [member scattering_shadow_reach] in [member scattering_shadow_steps] steps; with a multiple-scattering approximation), and the light's shadow cascades, so a wall between the sun and the smoke shades it as it shades Godot's volumetric fog. Flow's renderer then only draws the smoke's opacity and its glow. The path tracer lights the gas on its own, so this only affects raster.
-		</member>
 		<member name="temperature_range" type="float" setter="set_temperature_range" getter="get_temperature_range" default="2.0">
 			The temperature at the end of [member heat_ramp].
 		</member>
-		<member name="terrain_floor" type="bool" setter="set_terrain_floor" getter="is_terrain_floor" default="true">
-			When enabled, the ground under the gas is a solid for it, so smoke and dust lie on slopes, run down them and pool in hollows instead of sinking into the terrain. The ground is laid as tiles of [member terrain_floor_spacing], each tilted to the local slope and overlapping its neighbours, in the region the gas and its emitters cover. The heights come from [member terrain_path], or else from a ray straight down that only counts static bodies on [member collision_mask]; ground made of boxes, spheres or capsules is already a solid through [member collide_with_bodies] and gets no tiles. Heights are re-read once a second. A heightmap has no overhangs, so gas can't go under arches or into caves on the terrain itself.
-		</member>
-		<member name="terrain_floor_spacing" type="float" setter="set_terrain_floor_spacing" getter="get_terrain_floor_spacing" default="0.5">
-			The width of a [member terrain_floor] tile, in meters. A wide region uses wider tiles (doubling) so it stays within 32 tiles a side.
-		</member>
-		<member name="terrain_path" type="NodePath" setter="set_terrain_path" getter="get_terrain_path" default="NodePath(&quot;&quot;)">
-			The terrain the [member terrain_floor] reads heights from: a TerrainDeformer3D, a baked TerrainDataMap3D, a TerrainGenerator3D, Terrain3D, or any node with [code]get_height(position)[/code]. Empty: a ray down onto static bodies.
-		</member>
 		<member name="vorticity" type="float" setter="set_vorticity" getter="get_vorticity" default="0.6">
 			Vorticity confinement: keeps small swirls alive for rolling, billowing gas.
-		</member>
-		<member name="weather_wind" type="bool" setter="set_weather_wind" getter="is_weather_wind" default="true">
-			If [code]true[/code], the weather's wind (the world contract's wind, from a [WeatherMap3D]) is laid over the gas as air-only layers up to 4 m thick, so smoke from every emitter leans and drifts with the same air as the grass and trees, more aloft where the wind is stronger. The layers reserve no blocks. With no weather provider, nothing changes.
-		</member>
-		<member name="weather_wind_coupling" type="float" setter="set_weather_wind_coupling" getter="get_weather_wind_coupling" default="1.0">
-			Rate (1/s) at which the gas's velocity is pulled toward the weather's wind with [member weather_wind].
 		</member>
 	</members>
 	<constants>

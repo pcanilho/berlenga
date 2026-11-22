@@ -42,7 +42,7 @@
 #include "servers/rendering/rendering_server.h"
 
 namespace {
-constexpr int PARAMS_BYTES = 176; // 11 * vec4, std140 -- see skinned_cloth.glsl's Params
+constexpr int PARAMS_BYTES = 144; // 9 * vec4, std140 -- see skinned_cloth.glsl's Params
 constexpr uint32_t GROUP = 64; // local_size_x
 
 uint32_t groups_for(int p_count) {
@@ -300,7 +300,7 @@ void SkinnedClothSolverGPU::rt_step(Ref<SkinnedClothSolverGPU> p_self, PackedFlo
 	memset(params, 0, sizeof(params));
 	int32_t counts[8] = { n, hash_size, MAX(p_substeps, 1), 0, MIN((int)p_capsules.size() / 16, MAX_CAPSULES), tex_width, bone_count, MIN((int)p_boxes.size() / 32, MAX_BOXES) };
 	memcpy(params, counts, sizeof(counts));
-	memcpy(params + 32, p_params.ptr(), MIN(p_params.size(), 36) * 4);
+	memcpy(params + 32, p_params.ptr(), MIN(p_params.size(), 28) * 4);
 	const bool self_collision = p_params.size() > 24 && p_params[24] > 0.0f;
 	rd->buffer_update(buf_params, 0, PARAMS_BYTES, params);
 
@@ -425,7 +425,7 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 	// Velocity kept per substep from a per-second damping fraction.
 	const float keep = Math::pow(1.0f - CLAMP(p_settings.damping, 0.0f, 0.999f), dt);
 	PackedFloat32Array params;
-	params.resize(36);
+	params.resize(28);
 	params.fill(0.0f);
 	float *w = params.ptrw();
 	w[0] = dt;
@@ -442,12 +442,6 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 	w[10] = p_settings.friction;
 	w[11] = p_settings.backstop;
 	w[24] = MAX(p_settings.self_collision_thickness, 0.0f);
-	w[28] = p_settings.water_height;
-	w[29] = MAX(p_settings.water_drag, 0.0f);
-	w[30] = p_settings.water_gravity;
-	w[32] = p_settings.water_flow.x;
-	w[33] = p_settings.water_flow.y;
-	w[34] = p_settings.water_flow.z;
 	const Transform3D &o = p_settings.output_xform;
 	for (int r = 0; r < 3; r++) {
 		w[12 + r * 4 + 0] = o.basis.rows[r].x;

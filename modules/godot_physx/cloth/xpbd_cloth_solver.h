@@ -71,12 +71,6 @@ public:
 		// Strain tearing, as PhysX 2's tearable cloth (tearFactor): after each step, a structural edge
 		// stretched past tear_factor times its rest length breaks by splitting a vertex. 0 = off.
 		float tear_factor = 0.0f;
-		// Under water (world y below water_height): particles keep water_gravity of their weight (soaked fibre is
-		// denser than water) and are drawn toward the current water_flow at water_drag (1/s).
-		float water_height = -1.0e9f;
-		Vector3 water_flow;
-		float water_drag = 0.0f;
-		float water_gravity = 0.3f;
 	};
 
 	// Most vertex splits made per step: the rest of the overloaded edges wait a step, so a rip runs
@@ -114,15 +108,9 @@ public:
 	void set_pin_target(int p_vertex, const Vector3 &p_world_pos);
 	void clear_pin_target(int p_vertex);
 
-	// Recomputes every vertex's mass from the rest triangles and settings.density (a cloth taking up water), keeping
-	// pins and motion.
-	void refresh_masses();
-
 	// Advance the simulation. p_wind is a world-space air velocity.
 	// Returns how many vertices tore apart (split) at the end of this step (settings.tear_factor).
 	int step(float p_dt, const Vector3 &p_gravity, const Vector3 &p_wind);
-	// Air velocity per particle on top of p_wind (a gas sampled at the cloth); empty: none.
-	void set_air(const LocalVector<Vector3> &p_air) { air = p_air; }
 
 	// Mutable access for the node's post-step world-collision pass.
 	LocalVector<Vector3> &positions_mut() { return positions; }
@@ -145,10 +133,6 @@ public:
 	// Cut the cloth along a segment in its local rest XY plane: constraints and triangles whose
 	// rest edges cross it are removed, so the two sides separate. Returns the constraints removed.
 	int tear(const Vector2 &p_from, const Vector2 &p_to);
-	// Burn holes: drop every triangle whose three vertices are marked in p_gone (one flag per vertex), the
-	// constraints the mesh no longer holds together, and the mass the lost cloth carried. Returns the
-	// triangles removed.
-	int burn_away(const LocalVector<uint8_t> &p_gone);
 
 private:
 	struct DistanceConstraint {
@@ -175,7 +159,6 @@ private:
 	LocalVector<float> base_inv_mass; // inv_mass with pinning ignored
 	LocalVector<int> pinned; // 1 == pinned
 	LocalVector<Vector3> pin_target; // NaN component == no target
-	LocalVector<Vector3> air; // per particle, m/s
 	LocalVector<DistanceConstraint> constraints;
 	LocalVector<int> indices;
 	LocalVector<Vector2> uvs;

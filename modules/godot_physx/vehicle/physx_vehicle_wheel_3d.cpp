@@ -34,7 +34,6 @@
 #include "physx_tank_3d.h"
 #include "physx_vehicle_3d.h"
 
-#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 
 PhysXVehicleWheel3D::PhysXVehicleWheel3D() {
@@ -57,14 +56,10 @@ void PhysXVehicleWheel3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_ENTER_TREE: {
-			// Deferred: its sibling wheels, which share the weight, may not have entered yet.
-			callable_mp(this, &PhysXVehicleWheel3D::_join_world_contact).call_deferred();
 			if (PhysXVehicle3D *v = Object::cast_to<PhysXVehicle3D>(get_parent())) {
 				vehicle = v;
 				v->wheels.push_back(this);
 				v->_rebuild_if_live();
-				// Its own soil model ruts the ground (docs/ideas/sand.md); the generic body press stays off it.
-				set_meta(SNAME("ground_self_pressing"), true);
 			} else if (PhysXMotorcycle3D *m = Object::cast_to<PhysXMotorcycle3D>(get_parent())) {
 				motorcycle = m;
 				m->wheels.push_back(this);
@@ -103,49 +98,13 @@ void PhysXVehicleWheel3D::_rebuild_parent_if_live() {
 	}
 }
 
-// Every wheel is a body the world feels (docs/ideas/world-links.md, contact 1): grass flattens under it, branches
-// give way, snow ruts. The systems read its size from these metas, as they do for any body.
-void PhysXVehicleWheel3D::_join_world_contact() {
-	add_to_group(SNAME("world_contact"));
-	const float r = float(radius);
-	const float w = float(half_width);
-	set_meta(SNAME("trample_radius"), MAX(w, 0.05f) + 0.05f);
-	set_meta(SNAME("touch_radius"), r);
-	set_meta(SNAME("snow_radius"), MAX(w, 0.05f));
-	set_meta(SNAME("deform_wheel_radius"), r);
-	set_meta(SNAME("deform_wheel_width"), 2.0f * w);
-	// Its share of the vehicle's weight.
-	Node *parent = get_parent();
-	real_t mass = 0.0;
-	if (PhysXVehicle3D *v = Object::cast_to<PhysXVehicle3D>(parent)) {
-		mass = v->get_mass();
-	} else if (PhysXMotorcycle3D *m = Object::cast_to<PhysXMotorcycle3D>(parent)) {
-		mass = m->get_mass();
-	} else if (PhysXTank3D *t = Object::cast_to<PhysXTank3D>(parent)) {
-		mass = t->get_mass();
-	}
-	if (mass > 0.0 && parent) {
-		int count = 0;
-		for (int i = 0; i < parent->get_child_count(); i++) {
-			count += Object::cast_to<PhysXVehicleWheel3D>(parent->get_child(i)) ? 1 : 0;
-		}
-		set_meta(SNAME("ground_mass"), float(mass) / MAX(count, 1));
-	}
-}
-
 void PhysXVehicleWheel3D::set_radius(real_t p_v) {
 	radius = p_v;
-	if (is_inside_tree()) {
-		_join_world_contact();
-	}
 	update_gizmos();
 	_rebuild_parent_if_live();
 }
 void PhysXVehicleWheel3D::set_half_width(real_t p_v) {
 	half_width = p_v;
-	if (is_inside_tree()) {
-		_join_world_contact();
-	}
 	_rebuild_parent_if_live();
 }
 void PhysXVehicleWheel3D::set_wheel_mass(real_t p_v) {
@@ -198,52 +157,6 @@ void PhysXVehicleWheel3D::set_tire_slide_grip(real_t p_v) {
 	tire_slide_grip = p_v;
 	_rebuild_parent_if_live();
 }
-void PhysXVehicleWheel3D::set_tire_pressure(real_t p_v) {
-	tire_pressure = MAX(p_v, (real_t)10.0); // Read live by the soft-soil step: no rebuild.
-}
-PhysXVehicleWheel3D::TreadSoil PhysXVehicleWheel3D::tread_soil(Tread p_tread) {
-	// Lugs and chain links shear the soil below the tread's face as well as at it (Wong 2008, sec. 2.6: grousers);
-	// forestry chains add about a fifth to a wheel's pull on soft ground (Forest Research FCTN013; Sever et al.
-	// 2018, CROJFE 39). Open voids throw clay out sooner and fill slower; a closed road tread packs and holds it.
-	TreadSoil t;
-	switch (p_tread) {
-		case TREAD_ROAD:
-			t.grip = 0.85f;
-			t.fill = 1.4f;
-			t.shed = 1.3f;
-			t.depth = 0.009f;
-			break;
-		case TREAD_ALL_TERRAIN:
-			break;
-		case TREAD_MUD:
-			t.grip = 1.12f;
-			t.fill = 0.6f;
-			t.shed = 0.7f;
-			t.depth = 0.025f;
-			break;
-		case TREAD_CHAINS:
-			t.grip = 1.2f;
-			t.fill = 0.5f; // the links flex and crack the clay out
-			t.shed = 0.75f;
-			t.depth = 0.02f;
-			t.clog_bite = 0.5f;
-			break;
-	}
-	return t;
-}
-
-float PhysXVehicleWheel3D::tread_firm_grip(Tread p_tread, float p_ice, float p_snow) {
-	// Dry: rubber on the road; chains ride on steel. Ice: chains about treble a tyre's 0.1; snow: about double
-	// (CRREL tyre and chain tests, Shoop et al.).
-	static const float dry[4] = { 1.0f, 0.97f, 0.9f, 0.6f };
-	static const float ice[4] = { 1.0f, 1.0f, 1.0f, 3.0f };
-	static const float snow[4] = { 0.9f, 1.0f, 1.3f, 2.0f };
-	const int i = CLAMP((int)p_tread, 0, 3);
-	const float a = CLAMP(p_ice, 0.0f, 1.0f);
-	const float b = CLAMP(p_snow, 0.0f, 1.0f) * (1.0f - a);
-	return dry[i] * (1.0f - a - b) + ice[i] * a + snow[i] * b;
-}
-
 void PhysXVehicleWheel3D::set_use_as_steering(bool p_v) {
 	use_as_steering = p_v;
 	_rebuild_parent_if_live();
@@ -306,17 +219,6 @@ void PhysXVehicleWheel3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_friction", PROPERTY_HINT_RANGE, "0.1,3,0.01,or_greater"), "set_tire_friction", "get_tire_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_rest_grip", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_tire_rest_grip", "get_tire_rest_grip");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_slide_grip", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_tire_slide_grip", "get_tire_slide_grip");
-	ClassDB::bind_method(D_METHOD("set_tire_pressure", "value"), &PhysXVehicleWheel3D::set_tire_pressure);
-	ClassDB::bind_method(D_METHOD("get_tire_pressure"), &PhysXVehicleWheel3D::get_tire_pressure);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_pressure", PROPERTY_HINT_RANGE, "10,1000,1,or_greater,suffix:kPa"), "set_tire_pressure", "get_tire_pressure");
-	ClassDB::bind_method(D_METHOD("set_tread", "tread"), &PhysXVehicleWheel3D::set_tread);
-	ClassDB::bind_method(D_METHOD("get_tread"), &PhysXVehicleWheel3D::get_tread);
-	ClassDB::bind_static_method("PhysXVehicleWheel3D", D_METHOD("tread_firm_grip", "tread", "ice", "snow"), &PhysXVehicleWheel3D::tread_firm_grip);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "tread", PROPERTY_HINT_ENUM, "Road,All Terrain,Mud,Chains"), "set_tread", "get_tread");
-	BIND_ENUM_CONSTANT(TREAD_ROAD);
-	BIND_ENUM_CONSTANT(TREAD_ALL_TERRAIN);
-	BIND_ENUM_CONSTANT(TREAD_MUD);
-	BIND_ENUM_CONSTANT(TREAD_CHAINS);
 
 	ClassDB::bind_method(D_METHOD("set_use_as_steering", "value"), &PhysXVehicleWheel3D::set_use_as_steering);
 	ClassDB::bind_method(D_METHOD("is_used_as_steering"), &PhysXVehicleWheel3D::is_used_as_steering);

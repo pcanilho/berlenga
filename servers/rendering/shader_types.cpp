@@ -62,7 +62,6 @@ void ShaderTypes::add_raster_ray_renames(HashMap<StringName, String> &r_renames)
 	r_renames["RAY_IS_SINGULAR"] = "true";
 	r_renames["RAY_BOUNCES"] = "0";
 	r_renames["RAY_DIFFUSE_BOUNCES"] = "0";
-	r_renames["RAY_FOOTPRINT"] = "0.0";
 }
 
 ShaderTypes *ShaderTypes::singleton = nullptr;
@@ -155,8 +154,6 @@ ShaderTypes::ShaderTypes() {
 	// this fragment): a surface that shades its own self-shadowing, such as strand hair with a deep
 	// opacity map, skips its own layers in the shadow map.
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["DIRECTIONAL_SHADOW_OFFSET"] = ShaderLanguage::TYPE_FLOAT;
-	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["POSITIONAL_SHADOW_OFFSET"] = ShaderLanguage::TYPE_FLOAT;
-	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["SUN_SHADOW"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["FRAGCOORD"] = constt(ShaderLanguage::TYPE_VEC4);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["FRONT_FACING"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["NORMAL"] = ShaderLanguage::TYPE_VEC3;
@@ -230,8 +227,6 @@ ShaderTypes::ShaderTypes() {
 
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_SCISSOR_THRESHOLD"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_HASH_SCALE"] = ShaderLanguage::TYPE_FLOAT;
-	// render_mode depth_prepass_alpha: the alpha from which a fragment enters the depth pre-pass (default 0.99).
-	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["OPAQUE_PREPASS_THRESHOLD"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_ANTIALIASING_EDGE"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_TEXTURE_COORDINATE"] = ShaderLanguage::TYPE_VEC2;
 
@@ -243,9 +238,6 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_IS_SINGULAR"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_BOUNCES"] = constt(ShaderLanguage::TYPE_INT);
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_DIFFUSE_BOUNCES"] = constt(ShaderLanguage::TYPE_INT);
-	// The path tracer ray's cone where it meets the surface (ray cones), in world units: detail finer than this is
-	// below the pixel. 0 where unknown and in raster, which has screen derivatives.
-	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["RAY_FOOTPRINT"] = constt(ShaderLanguage::TYPE_FLOAT);
 
 	shader_modes[RSE::SHADER_SPATIAL].functions["light"].built_ins["MODEL_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
 	shader_modes[RSE::SHADER_SPATIAL].functions["light"].built_ins["VIEW_MATRIX"] = constt(ShaderLanguage::TYPE_MAT4);
@@ -311,40 +303,6 @@ ShaderTypes::ShaderTypes() {
 		report_func.arguments.push_back(ShaderLanguage::StageFunctionInfo::Argument("kind", ShaderLanguage::TYPE_UINT));
 		report_func.return_type = ShaderLanguage::TYPE_VOID;
 		shader_modes[RSE::SHADER_SPATIAL].functions["intersection"].stage_functions["report_intersection"] = report_func;
-	}
-
-	{
-		// The first directional light's visibility at a world position: its shadow maps times its projector
-		// (the fork's cloud shadow), for media a shader marches through itself (underwater light). 1 where
-		// the point is past the shadow range or the renderer has no shadow maps to read.
-		ShaderLanguage::StageFunctionInfo func;
-		func.skip_function = "vertex";
-		func.arguments.push_back(ShaderLanguage::StageFunctionInfo::Argument("world_position", ShaderLanguage::TYPE_VEC3));
-		func.return_type = ShaderLanguage::TYPE_VEC3;
-		shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].stage_functions["sun_visibility"] = func;
-		shader_modes[RSE::SHADER_SPATIAL].functions["light"].stage_functions["sun_visibility"] = func;
-	}
-
-	{
-		// The first directional light's direction (toward the light, world space), for a surface that shadows
-		// itself per pixel (SUN_SHADOW). Zero where there is no directional light or the renderer traces its
-		// own shadows (the path tracer), so a shader can skip its march there.
-		ShaderLanguage::StageFunctionInfo func;
-		func.skip_function = "vertex";
-		func.return_type = ShaderLanguage::TYPE_VEC3;
-		shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].stage_functions["sun_direction"] = func;
-		shader_modes[RSE::SHADER_SPATIAL].functions["light"].stage_functions["sun_direction"] = func;
-	}
-
-	{
-		// The same direction for relief drawn without geometry (parallax occlusion): nonzero under the path tracer
-		// too, which has no faces to trace there and applies SUN_SHADOW to the sun's light instead. Zero only
-		// without a directional light.
-		ShaderLanguage::StageFunctionInfo func;
-		func.skip_function = "vertex";
-		func.return_type = ShaderLanguage::TYPE_VEC3;
-		shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].stage_functions["relief_sun_direction"] = func;
-		shader_modes[RSE::SHADER_SPATIAL].functions["light"].stage_functions["relief_sun_direction"] = func;
 	}
 
 	// spatial render modes
@@ -594,7 +552,6 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SKY].functions["global"].built_ins["AT_HALF_RES_PASS"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SKY].functions["global"].built_ins["AT_QUARTER_RES_PASS"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SKY].functions["global"].built_ins["AT_CUBEMAP_PASS"] = constt(ShaderLanguage::TYPE_BOOL);
-	shader_modes[RSE::SHADER_SKY].functions["global"].built_ins["REPROJECTION_FRAME"] = constt(ShaderLanguage::TYPE_UINT);
 	shader_modes[RSE::SHADER_SKY].functions["global"].built_ins["LIGHT0_ENABLED"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SKY].functions["global"].built_ins["LIGHT0_DIRECTION"] = constt(ShaderLanguage::TYPE_VEC3);
 	shader_modes[RSE::SHADER_SKY].functions["global"].built_ins["LIGHT0_ENERGY"] = constt(ShaderLanguage::TYPE_FLOAT);

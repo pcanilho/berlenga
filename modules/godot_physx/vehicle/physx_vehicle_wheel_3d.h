@@ -61,30 +61,8 @@ class PhysXVehicleWheel3D : public Node3D {
 protected:
 	static void _bind_methods();
 	void _notification(int p_what);
-	void _join_world_contact();
 
 public:
-	// The tread (docs/ideas/mud.md, round 10): what the tyre's face does to soft soil and mud. Road: shallow sipes,
-	// grips best on firm ground and packs with clay; all terrain: the default; mud terrain: deep open lugs that bite
-	// further into soft soil and throw clay out; chains: steel cross links that cut through the slick a clogged tread
-	// leaves, bite hardest into mud, snow and ice, and slide on dry tarmac.
-	enum Tread {
-		TREAD_ROAD,
-		TREAD_ALL_TERRAIN,
-		TREAD_MUD,
-		TREAD_CHAINS,
-	};
-	struct TreadSoil {
-		float grip = 1.0f; // the soft soil's shear limit share the tread takes (lugs shear deeper: Wong 2008, sec. 2.6)
-		float fill = 1.0f; // how fast clay packs into it
-		float shed = 1.0f; // the tread speed it throws clay off at, to all terrain's
-		float depth = 0.02f; // m, the voids clay packs into
-		float clog_bite = 0.0f; // the share of a clogged tread's lost grip it still bites through
-	};
-	static TreadSoil tread_soil(Tread p_tread);
-	// The tread's grip on firm ground, as a share of the surface's own friction, for its ice and snow cover (0..1).
-	static float tread_firm_grip(Tread p_tread, float p_ice, float p_snow);
-
 	void set_radius(real_t p_v);
 	real_t get_radius() const { return radius; }
 	void set_half_width(real_t p_v);
@@ -115,13 +93,6 @@ public:
 	real_t get_tire_rest_grip() const { return tire_rest_grip; }
 	void set_tire_slide_grip(real_t p_v);
 	real_t get_tire_slide_grip() const { return tire_slide_grip; }
-
-	// Soft soil (docs/ideas/sand.md, stage 1): the tyre's inflation pressure, kPa. Below the pressure a rigid
-	// wheel would put on soft ground the tyre flattens and sinks less (Wong 2008, the elastic mode): airing down.
-	void set_tire_pressure(real_t p_v);
-	real_t get_tire_pressure() const { return tire_pressure; }
-	void set_tread(Tread p_tread) { tread = p_tread; } // read live by the soft-soil step: no rebuild
-	Tread get_tread() const { return tread; }
 
 	void set_use_as_steering(bool p_v);
 	bool is_used_as_steering() const { return use_as_steering; }
@@ -159,8 +130,6 @@ private:
 	real_t tire_friction = 1.0f;
 	real_t tire_rest_grip = 0.9f;
 	real_t tire_slide_grip = 0.7f;
-	real_t tire_pressure = 200.0f;
-	Tread tread = TREAD_ALL_TERRAIN;
 	bool use_as_steering = false;
 	bool use_as_traction = true;
 
@@ -169,5 +138,3 @@ private:
 	// physics state, it's just data the parent reads at build time.
 	void _rebuild_parent_if_live();
 };
-
-VARIANT_ENUM_CAST(PhysXVehicleWheel3D::Tread);

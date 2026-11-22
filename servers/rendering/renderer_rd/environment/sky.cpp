@@ -809,7 +809,6 @@ void SkyRD::init() {
 		actions.renames["LIGHT3_SIZE"] = "directional_lights.data[3].color_size.w";
 		actions.renames["AT_CUBEMAP_PASS"] = "AT_CUBEMAP_PASS";
 		actions.renames["AT_HALF_RES_PASS"] = "AT_HALF_RES_PASS";
-		actions.renames["REPROJECTION_FRAME"] = "sky_scene_data.frame_number";
 		actions.renames["AT_QUARTER_RES_PASS"] = "AT_QUARTER_RES_PASS";
 		actions.custom_samplers["RADIANCE"] = "SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP";
 		actions.usage_defines["HALF_RES_COLOR"] = "\n#define USES_HALF_RES_COLOR\n";
@@ -1393,12 +1392,7 @@ void SkyRD::update_radiance_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, 
 			}
 			sky->processing_layer = 1;
 		}
-		// The map was drawn with the brightness multiplier, which holds the camera's exposure (its pre-exposure, and
-		// the physical units' normalization) as well as the background's energy: the exposure goes into the baked
-		// value, so that IBL_exposure_normalization (current over baked) does not apply it a second time. Without
-		// this, ambient and reflected sky light took the pre-exposure squared (white at night under x4e4).
-		const float bg_energy = RendererSceneRenderRD::get_singleton()->environment_get_bg_energy_multiplier(p_env);
-		sky->baked_exposure = p_luminance_multiplier * (bg_energy > 0.0f ? p_brightness_multiplier / bg_energy : 1.0f);
+		sky->baked_exposure = p_luminance_multiplier;
 		sky->reflection.dirty = false;
 
 	} else {
@@ -1441,17 +1435,8 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 	RID out_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_OUT, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT, RD::TEXTURE_SAMPLES_1, size);
 	RID history_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, size);
 
-	// The frame number the sky shader reads as REPROJECTION_FRAME, so a shader knows which of its pixels it draws
-	// (the low four bits) and how many times it has drawn it (the rest): its samples per pixel can be stratified.
-	const uint32_t step = bayer[sky_scene_state.ubo.frame_number & 15];
+	const uint32_t step = bayer[state->frame & 15];
 	state->frame++;
-	if (!state->valid) {
-		state->since_reset = 0;
-	}
-	// Each block's pixel is drawn once every 16 frames, so this is how many samples it has had since the
-	// history was last reset, this one included.
-	const uint32_t drawn = state->since_reset / 16 + 1;
-	state->since_reset++;
 	const Vector2i offset(step & 3, step >> 2);
 
 	// The pass's pixel (i, j) draws full resolution pixel (4i + offset.x, 4j + offset.y): its
@@ -1486,11 +1471,9 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 		int32_t offset[2];
 		int32_t low_size[2];
 		uint32_t history_valid;
-		uint32_t drawn;
-		float history_scale; // this frame's pre-exposure over the history's
-		float pad[3];
+		uint32_t pad;
 	} pc;
-	static_assert(sizeof(PushConstant) == 128);
+	static_assert(sizeof(PushConstant) == 112);
 	auto store_columns = [](const Basis &p_basis, float *r_dst) {
 		for (int c = 0; c < 3; c++) {
 			const Vector3 col = p_basis.get_column(c);
@@ -1517,12 +1500,7 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 	pc.low_size[0] = low_size.x;
 	pc.low_size[1] = low_size.y;
 	pc.history_valid = state->valid ? 1u : 0u;
-	pc.drawn = drawn;
-	// The pass's colour carries the luminance multiplier (the camera's pre-exposure), which auto exposure
-	// changes every frame while it adapts: the history is rescaled to this frame's, or the pixels drawn
-	// this frame stand apart from the rest as a 4x4 lattice.
-	pc.history_scale = (state->valid && state->prev_luminance > 0.0f) ? p_luminance_multiplier / state->prev_luminance : 1.0f;
-	pc.pad[0] = pc.pad[1] = pc.pad[2] = 0.0f;
+	pc.pad = 0;
 
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 	RID sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
@@ -1542,7 +1520,6 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 
 	state->prev_orientation = p_orientation;
 	state->prev_projection = p_projection;
-	state->prev_luminance = p_luminance_multiplier;
 	state->valid = true;
 }
 

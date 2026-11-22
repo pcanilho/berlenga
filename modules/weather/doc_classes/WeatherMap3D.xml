@@ -34,49 +34,11 @@
 				Adds a round stand of plants (world x, z centre, radius and canopy height in metres) and returns its id. [param density] is Cionco's attenuation coefficient: about 1 for open orchards, 2 to 3 for crops and most forests, 4 for dense stands (Cionco 1978). Under the canopy the wind falls off as [code]u(hc) exp(a (z / hc - 1))[/code]; above it the log law starts from a displaced ground at 0.7 hc with roughness 0.1 hc (Raupach 1994). Takes effect at the next shelter bake (see [method rebake_shelter]).
 			</description>
 		</method>
-		<method name="add_cloud_effector">
-			<return type="int" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="radius" type="float" />
-			<param index="2" name="strength" type="float" />
-			<description>
-				Adds a density effector to the cumulus layer and returns its id, or -1 when eight are already present. Within [param radius] metres of [param position] the cloud gains (strength &gt; 0) or loses (strength &lt; 0) density, falling off linearly to the edge; strength -1 clears the cloud at the centre, 1 makes one where the air was clear. An effector rides the clouds: it moves with the cumulus drift ([method get_wind_aloft] at the layer), so [param position] is where it is now. The shadow bake, [method get_cloud_density_at] and the sky all see it. Read the field through [method get_cloud_effector_at] (contract [code]WorldWeather.cloud_effector_at[/code]).
-			</description>
-		</method>
-		<method name="add_cloud_light">
-			<return type="int" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="color" type="Color" />
-			<param index="2" name="energy" type="float" />
-			<param index="3" name="reach" type="float" />
-			<description>
-				Adds a point light that lights the clouds (a fire, a town's glow, a flare) and returns its id, or -1 when eight are already present. [param energy] is its intensity in the sun's units times square metres: at distance d the cloud receives [code]energy / d^2[/code] of what a sun of energy 1 gives, smoothly faded to 0 at [param reach] metres. It lights the clouds only: add an [OmniLight3D] for the ground. Fires registered with WorldFire add their own lights and share the eight shader slots by brightness.
-			</description>
-		</method>
-		<method name="add_contact_wetness">
-			<return type="void" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="radius" type="float" />
-			<param index="2" name="amount" type="float" default="1.0" />
-			<description>
-				Wets a disc where water touched (a splash, a wading leg, a dripping body): [param amount] 0 to 1, kept where it is more than what is there, easing out over the disc's outer quarter. It then dries over [method get_contact_drying_time]. Only inside the contact square round the camera ([member contact_wetness_size]).
-			</description>
-		</method>
-		<method name="add_contact_wetness_grid">
-			<return type="void" />
-			<param index="0" name="values" type="PackedFloat32Array" />
-			<param index="1" name="width" type="int" />
-			<param index="2" name="height" type="int" />
-			<param index="3" name="rect" type="Rect2" />
-			<description>
-				Wets from a grid of [param width] by [param height] values (0 to 1, row-major in z then x) laid over [param rect] in world XZ, e.g. the wet cells of a live water area. Kept where more than what is there.
-			</description>
-		</method>
 		<method name="add_shelter_box">
 			<return type="int" />
 			<param index="0" name="box" type="AABB" />
 			<description>
-				Adds a solid obstacle (a building, a wall) as a world box and returns its id. Downwind of it the wind near the ground drops to 0.15 of the open wind in a cavity about 2 heights long (Hosker 1984), then recovers over about 6 heights: 0.8 at 10 heights, nearly all at 20 (Heisler and DeWalle 1988). The lee fades out above the obstacle's height. Visible [VisualInstance3D] nodes in the [code]weather_shelter[/code] group are added the same way, from their bounding boxes, at each bake; a node in the group with a [code]get_wind_obstacles(rect: Rect2) -&gt; Array[/code] method gives its own world boxes instead (RockField3D gives its boulders, PhysXVehicle3D its chassis). Each box counts its height from the terrain under its middle. A node with a few boxes (a vehicle) is checked every 2 seconds and the square bakes again when it has moved.
+				Adds a solid obstacle (a building, a wall) as a world box and returns its id. Downwind of it the wind near the ground drops to 0.15 of the open wind in a cavity about 2 heights long (Hosker 1984), then recovers over about 6 heights: 0.8 at 10 heights, nearly all at 20 (Heisler and DeWalle 1988). The lee fades out above the obstacle's height. Visible [VisualInstance3D] nodes in the [code]weather_shelter[/code] group are added the same way, from their bounding boxes, at each bake.
 			</description>
 		</method>
 		<method name="add_storm">
@@ -90,17 +52,6 @@
 				Adds a storm centred on [param position] (world x, z) and returns its id. Its rain core has [param radius] metres and peaks at [param rain_rate] mm/h; its downburst outflow (Oseguera and Bowles 1988) blows outward, strongest at about 1.12 times [param radius] with [param outflow] m/s. It drifts with the wind aloft, grows in and fades out over [param lifetime] seconds of weather time ([code]0[/code] or less: until removed).
 			</description>
 		</method>
-		<method name="add_vortex">
-			<return type="int" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="radius" type="float" />
-			<param index="2" name="swirl" type="float" />
-			<param index="3" name="updraft" type="float" />
-			<param index="4" name="spin" type="float" default="1.0" />
-			<description>
-				Adds a wind vortex (a dust devil, a whirl in a lee) with its foot at [param position] and returns its id. [method get_wind_at] adds a Rankine field round it (Tratt et al. 2003): [param swirl] m/s round the core of [param radius] metres, falling as 1/r outside it and gone by five radii; [param updraft] m/s up the core, fading from four to ten radii up; a weak inflow at the foot. [param spin] [code]1[/code] turns anticlockwise seen from above, [code]-1[/code] clockwise. The first four also reach the shaders' [code]weather_wind[/code]. The owner moves it with [method set_vortex] and removes it with [method remove_vortex].
-			</description>
-		</method>
 		<method name="advance">
 			<return type="void" />
 			<param index="0" name="seconds" type="float" />
@@ -108,33 +59,11 @@
 				Runs the weather forward by [param seconds] of weather time at once (in steps of a minute): storms drift, the base state eases, surfaces wet and dry.
 			</description>
 		</method>
-		<method name="aerosol_extinction" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="dry_visibility_km" type="float" />
-			<param index="1" name="humidity" type="float" />
-			<description>
-				Extinction (1/m) at the ground of the background aerosol haze: Koschmieder's 3.912 / visibility for dry air, grown with the relative humidity as (1 - RH)^-0.35 (Hänel 1976), with the humidity capped at 0.98.
-			</description>
-		</method>
-		<method name="canopy_drainage" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="held_mm" type="float" />
-			<param index="1" name="storage_mm" type="float" />
-			<description>
-				Rutter et al. (1975) drainage from a canopy holding [param held_mm] of water against its capacity [param storage_mm], in mm/h.
-			</description>
-		</method>
 		<method name="clear_precipitation_extinction">
 			<return type="void" />
 			<param index="0" name="source" type="Object" />
 			<description>
 				Removes [param source]'s haze. When the last source clears, the environment's fog is put back as it was.
-			</description>
-		</method>
-		<method name="clear_salt">
-			<return type="void" />
-			<description>
-				Clears the sea spray square's salt and spray film.
 			</description>
 		</method>
 		<method name="clear_shelter">
@@ -156,445 +85,16 @@
 				Stops the water delivered by [param owner] (see [method set_surface_water_source]); the precipitation reaches the ground there again. Sources whose owner is freed are dropped on their own.
 			</description>
 		</method>
-		<method name="get_air_dew_point" qualifiers="const">
-			<return type="float" />
-			<description>
-				The dew point of the air now (C), from [method get_air_temperature] and [method get_air_humidity] (Magnus).
-			</description>
-		</method>
 		<method name="get_air_humidity" qualifiers="const">
 			<return type="float" />
 			<description>
-				The relative humidity of the air now (0..1): [member humidity] eased over [member transition_time] is the humidity at the day's mean temperature; with [member air_daily_cycle] the vapour holds through the day, so it rises as the air cools at night and falls in the afternoon.
-			</description>
-		</method>
-		<method name="get_air_humidity_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The live air's relative humidity at [param position] (0..1): the dew point falls 1.8 K/km above the map's [member ground_height] while the air cools 6.5 K/km.
-			</description>
-		</method>
-		<method name="get_air_mean_temperature" qualifiers="const">
-			<return type="float" />
-			<description>
-				The day's mean air temperature now (C): with a [member climate] and [member air_follows_climate], the climate's mean for the date at [member ground_height] plus [member season_anomaly]; else [member temperature]; eased over [member transition_time].
+				The relative humidity the cells use now (0..1): [member humidity] eased over [member transition_time].
 			</description>
 		</method>
 		<method name="get_air_temperature" qualifiers="const">
 			<return type="float" />
 			<description>
-				The air temperature now (C), as everything that melts, freezes, dries, burns or fogs reads it: the day's mean ([method get_air_mean_temperature]) through the day's cycle when [member air_daily_cycle] is on and a [member sky_clock] is set.
-			</description>
-		</method>
-		<method name="get_air_temperature_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The live air at [param position] (C): [method get_air_temperature] less 6.5 K per km above the map's [member ground_height] (the standard lapse rate).
-			</description>
-		</method>
-		<method name="add_smoke">
-			<return type="void" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="kg" type="float" />
-			<description>
-				Adds [param kg] of smoke particulate to the smoke layer over [param position] (fires add theirs through [method WorldFire.smoke_sources] on their own).
-			</description>
-		</method>
-		<method name="clear_smoke">
-			<return type="void" />
-			<description>
-				Clears the smoke layer.
-			</description>
-		</method>
-		<method name="get_body_mud" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="body" type="Node" />
-			<description>
-				For a body in the [code]world_contact[/code] group: the mud it carries on its soles or tread, in metres of film. Prints on firm ground hand it to [method WorldGround.track_mud] a little at a time; water washes it off. See [member wet_tracks].
-			</description>
-		</method>
-		<method name="get_body_water" qualifiers="const">
-			<return type="Vector2" />
-			<param index="0" name="body" type="Node" />
-			<description>
-				For a body in the [code]world_contact[/code] group: x, the water on its feet or tread (0..1, 1 just out of water), y, the water running off it (0..1). See [member wet_tracks].
-			</description>
-		</method>
-		<method name="get_cirrocumulus_share" qualifiers="const">
-			<return type="float" />
-			<description>
-				How far the shear across the high cloud layer overcomes its stability, 0 to 1: from the gradient Richardson number between the mid and high layers (N from a 6.5 K/km lapse at the layer's temperature, the shear from [method get_wind_aloft], so from [member wind_shear_aloft]), ramping from Ri 20 to Ri 2. The sky breaks patches of the thinner cirrus sheet into cirrocumulus grains and ripples by this share; where the high cover is extensive the sheet is a cirrostratus veil instead.
-			</description>
-		</method>
-		<method name="get_cloud_base_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The base of the low cloud over [param position] (m, its x and z): [method get_cloud_base_now], blended to each storm's own base under its shield and lowered along a storm's gust front by its shelf cloud (up to 450 m, ahead of the storm the way it moves, by its outflow). The provider of [method WorldWeather.cloud_base_at].
-			</description>
-		</method>
-		<method name="get_cloud_base_now" qualifiers="const">
-			<return type="float" />
-			<description>
-				Returns the low cloud's base now (m above y = 0). With [member cloud_regime_from_weather], [member cloud_base_height] plus how far the condensation level of the day's air (125 m per kelvin of dew point depression, Espy) sits above that of the default air (15 C, humidity 0.7): lower in moist air and at night, rising through a dry afternoon; the day's air never lowers it under 30 m above the ground under the camera, but a [member cloud_base_height] set below the ground stays (a ridge in the cloud: hill fog, fog drip). Contract [code]WorldWeather.cloud_base_at[/code].
-			</description>
-		</method>
-		<method name="get_cloud_effector_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Returns the summed strength of the density effectors at [param position], -1 (cleared) to 1 (added), 0 where there are none.
-			</description>
-		</method>
-		<method name="get_cloud_effector_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns how many density effectors were added with [method add_cloud_effector].
-			</description>
-		</method>
-		<method name="get_cloud_light_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Returns how many cloud lights were added with [method add_cloud_light] (the fires' own and lightning are not counted).
-			</description>
-		</method>
-		<method name="get_cloud_lights" qualifiers="const">
-			<return type="Array" />
-			<description>
-				Returns every light in the clouds now as an Array of Dictionary [code]{id, position, color, energy, radius, fire, lightning}[/code]: the lights added with [method add_cloud_light], the WorldFire plumes' (id -1, [code]fire[/code] true) and this frame's lightning flashes (id -1, [code]lightning[/code] true). Lightning is listed for readers only; the sky draws flashes itself at full resolution.
-			</description>
-		</method>
-		<method name="get_cold_pool_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The cold air pool's temperature deficit at [param position] (Celsius below the free air): full at a hollow's floor, gone at the pool's top. 0 with [member cold_pools] off.
-			</description>
-		</method>
-		<method name="get_convective_heating" qualifiers="const">
-			<return type="float" />
-			<description>
-				Returns the ground's convective heating, 0 (a still night) to 1 (a clear afternoon): the day's warming (Parton and Logan) less under cloud. 1 without a SkyClock.
-			</description>
-		</method>
-		<method name="get_fire_cloud_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Fire clouds over the fires' plumes now (they are also among [method get_storm_count]'s storms, with no rain unless they grow into a pyrocumulonimbus).
-			</description>
-		</method>
-		<method name="get_fire_cloud_for" qualifiers="const">
-			<return type="Vector3" />
-			<param index="0" name="heat" type="float" />
-			<description>
-				The fire cloud a plume carrying [param heat] watts of convective heat would make in this weather: x its rise (m; through the sun-mixed layer near the ground, then by Briggs's 1975 laws in the stable air above, bent over by the wind), y the lifting condensation level (125 m per kelvin of dew point depression), z its strength (0: none; 1: a full cumulus cap; up to 2 as it grows into a pyrocumulonimbus, from about 2 km of rise past the condensation level).
-			</description>
-		</method>
-		<method name="get_fog_drip_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The fog water dripping off the canopy at [param position] (mm/h): the fog's share of Rutter's canopy drainage. It wets the surface and adds to [method get_ground_water_input_at].
-			</description>
-		</method>
-		<method name="get_fog_water_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Cloud water at the canopy over [param position] (g/m3): the sky's clouds where the ground rises into them, 6.7 g/m3 per 1/m of their extinction (droplets of 10 um effective radius, Stephens 1978).
-			</description>
-		</method>
-		<method name="get_high_cloud_cover_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The high cloud sheet's cover over [param position], 0 to 1: its drifting patches plus the anvil shields storms spread downwind of themselves. Not part of [method get_cloud_cover_at]: the sheet is optically thin and shades the ground only through [method get_sun_visibility_at], by its own optical depth.
-			</description>
-		</method>
-		<method name="get_lake_effect_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Lake-effect cloud at [param position] (0 to 1), as the sky draws it: cold air over open water at least about 13 K warmer than the air at 850 hPa (Niziol et al. 1995) builds convection that grows with the fetch (from about 10 km of open water, full from 50) and reaches some 60 km inland. With the wind over the longest fetch under about 0.06 m/s per km it forms one band along the fetch's axis, above about 0.11 wind-parallel rolls (Laird, Kristovich and Walsh 2003). Snow falls under it (about 4 mm/h of water at full strength) through the weather's cells, so [method get_snowfall_at] and the cloud cover follow it. 0 with [member lake_effect_snow] off.
-			</description>
-		</method>
-		<method name="get_lake_fetch_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The open water crossed upwind of [param position] (km), each kilometre weighted by exp(-s / 60 km) for its distance s back from the point, from the lake-effect square (128 km round the camera at 2 km, water a metre deep or more from [WorldWater]; water beyond its edge continues as the edge holds). 0 before the square is sampled.
-			</description>
-		</method>
-		<method name="get_mid_cloud_cover_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The mid cloud layer's cover (altocumulus, altostratus) over [param position], 0 to 1: its drifting patches plus a band round each storm's anvil. Not part of [method get_cloud_cover_at]: the layer shades the ground only by its own optical depth ([method get_mid_cloud_optical_depth_at]) through [method get_sun_visibility_at].
-			</description>
-		</method>
-		<method name="get_mid_cloud_optical_depth_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The mid cloud layer's vertical optical depth over [param position]: its cover there times [member mid_cloud_optical_depth]. The cloud shadow bake and anything else that shades by the layer read this one number.
-			</description>
-		</method>
-		<method name="get_mountain_wave_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Returns the air's vertical displacement (m) in mountain waves at [param position], positive where lifted (0 with [member wave_clouds] off or outside the waves' square). Linear theory (Smith 1980): the terrain round the camera (a 51 km square at 400 m, through the same terrain source as the terrain wind) under the wind aloft at the mid layer's height and the buoyancy frequency of the 6.5 K/km lapse rate; only the top U / N of the terrain lifts the air (the dividing streamline). No rotors or lee turbulence.
-			</description>
-		</method>
-		<method name="get_mountain_wave_velocity_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Returns the mountain waves' vertical wind (m/s) at [param position]: the wind aloft times the displacement's slope along it. [method get_wind_at] adds it above [member boundary_layer_height], blended in over 300 m so the air near the ground is unchanged.
-			</description>
-		</method>
-		<method name="get_obstacle_height_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The height over the ground of shelter obstacles at [param position] (nodes in the [code]weather_shelter[/code] group and [method add_shelter_box] boxes), m, on the shelter grid. 0 in the open. The contract's [code]obstacle_height_at[/code].
-			</description>
-		</method>
-		<method name="get_obstacle_lee_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The lee factor of upwind shelter obstacles near the ground at [param position], 0.15 to 1 (1 in the open); a [param position] raised over the ground (a drift's surface) has less, none at 1.2 times the obstacle's height. The contract's [code]obstacle_lee_at[/code].
-			</description>
-		</method>
-		<method name="get_orographic_factor_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The terrain climate's precipitation factor applied to the rain at [param position]; 1 with [member orographic_rain] off or no climate.
-			</description>
-		</method>
-		<method name="get_rime_at" qualifiers="const">
-			<return type="Vector3" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The rime at [param position] (see [method WorldWeather.rime_at]).
-			</description>
-		</method>
-		<method name="get_salt_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Sea salt on surfaces at [param position], g/m2 (see [member sea_spray]); 0 outside the spray square.
-			</description>
-		</method>
-		<method name="get_salt_deposition_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Sea salt settling at [param position] now, g/m2/h: the coarse spray's salt (35 g per kg of sea water) and the fine aerosol.
-			</description>
-		</method>
-		<method name="get_sea_spray_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Sea spray settling at [param position], mm/h of sea water (see [member sea_spray]); 0 outside the spray square.
-			</description>
-		</method>
-		<method name="get_sea_spray_rect" qualifiers="const">
-			<return type="Rect2" />
-			<description>
-				The sea spray square in world XZ (empty before the first update). Shaders read it as [code]weather_spray_rect[/code].
-			</description>
-		</method>
-		<method name="get_smoke_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Smoke particulate in the column over [param position], g/m² (0 off the map).
-			</description>
-		</method>
-		<method name="get_smoke_optical_depth_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The smoke's optical depth over [param position] at 550 nm: 4.5 m²/g of particulate (Reid et al. 2005). Around 1 the sun turns orange; past 3 it is a dim red disc.
-			</description>
-		</method>
-		<method name="get_smoke_transmittance" qualifiers="const">
-			<return type="Vector3" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="to_sun" type="Vector3" />
-			<description>
-				The direct sun's transmittance (red, green, blue) through the smoke layer at [param position], for a sun along [param to_sun]: the column where the ray crosses the middle of the layer (about 1 km up; no further out than the map reaches, so a low sun still reads the smoke), along the slant path (about ten air masses at the horizon, smoothly), losing blue first (Angstrom exponent 1.8). [SkyClock] dims and colours the sun light by it.
-			</description>
-		</method>
-		<method name="get_frost_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Hoarfrost on exposed surfaces at [param position], in mm of water: deposited on clear calm nights below 0 C at the surface (see [member dew_and_frost]), melted by the morning sun or mild air. Shaders read it from the global [code]weather_frost_map[/code] (R, mm; G, the surface's temperature less the air's, K) over [code]weather_map_rect[/code].
-			</description>
-		</method>
-		<method name="get_season_on_day" qualifiers="const">
-			<return type="Dictionary" />
-			<param index="0" name="day" type="int" />
-			<description>
-				The season state (as [method get_season]) on another day of the year [param day] (1-365) at the ground, for rates such as the day-to-day leaf fall.
-			</description>
-		</method>
-		<method name="get_spray_wetness_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The sea spray's own film at [param position] over [member surface_storage], 0..1. [method get_wetness_at] includes it.
-			</description>
-		</method>
-		<method name="get_sun_sine" qualifiers="const">
-			<return type="float" />
-			<description>
-				The sine of the sun's elevation (0 below the horizon): from [member sun_light], else the [member sky_clock].
-			</description>
-		</method>
-		<method name="diurnal_shape" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="solar_hour" type="float" />
-			<param index="1" name="day_length" type="float" />
-			<description>
-				The day's temperature cycle of Parton and Logan (1981), 0 at the minimum just after sunrise and 1 at the afternoon peak, for the local solar hour and the day length in hours.
-			</description>
-		</method>
-		<method name="get_surface_temperature_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				An exposed surface's temperature at [param position] (C): the air's plus the radiative cooling of a clear night or the sun's warming, from the cell's net radiation over the exchange with the air (4 sigma T^3 + 5 + 4 u W/m2/K). Needs a sun light or a sky clock; otherwise the air's.
-			</description>
-		</method>
-		<method name="get_terrain_divert_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The terrain's turn of the wind at [param position] (rad, positive clockwise seen from above): toward the contours, as MicroMet's diverting angle. 0 outside the terrain square.
-			</description>
-		</method>
-		<method name="get_terrain_ground_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The sampled ground height at [param position] (m), or NaN outside the terrain square.
-			</description>
-		</method>
-		<method name="get_terrain_lee_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Winstral's Sx at [param position] (rad): the steepest rise of the upwind ground within [member terrain_lee_reach]. Positive in a lee, negative on ground exposed to the wind.
-			</description>
-		</method>
-		<method name="get_terrain_speed_factor_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The terrain's speed factor W at [param position] at 10 m: above 1 on crests and windward slopes, below 1 in hollows and lees, 1 on flat ground and outside the terrain square.
-			</description>
-		</method>
-		<method name="get_terrain_wind_derive_time" qualifiers="const">
-			<return type="float" />
-			<description>
-				The time the last terrain wind derivation took (ms), for benches.
-			</description>
-		</method>
-		<method name="get_terrain_wind_rect" qualifiers="const">
-			<return type="Rect2" />
-			<description>
-				The terrain square's area in world space (x, z, width, depth).
-			</description>
-		</method>
-		<method name="get_valley_fog_depth_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Depth (m) of the valley fog over [param position], from the ground to its top; 0 where the cell has none.
-			</description>
-		</method>
-		<method name="get_valley_fog_top_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Height (m) of the valley fog's top over [param position], [code]-INF[/code] where the cell has none. Answers [method WorldWeather.valley_fog_top_at].
-			</description>
-		</method>
-		<method name="get_vortex_count" qualifiers="const">
-			<return type="int" />
-			<description>
-				Wind vortices in the map (see [method add_vortex]).
-			</description>
-		</method>
-		<method name="get_vortex_wind_at" qualifiers="const">
-			<return type="Vector3" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="height_above_ground" type="float" default="10.0" />
-			<description>
-				The vortices' part of [method get_wind_at] alone at [param position], [param height_above_ground] metres up.
-			</description>
-		</method>
-		<method name="get_water_temperature" qualifiers="const">
-			<return type="float" />
-			<description>
-				Open water's surface temperature (C): with a [member climate], the air's seasonal mean a month earlier (lakes and the sea lag the air; Livingstone and Lotter 1998), never below 0 C; without one, the day's mean air. Steam fog forms where the air is much colder than this.
-			</description>
-		</method>
-		<method name="get_water_temperature_setting" qualifiers="const">
-			<return type="float" />
-			<description>
-				The [member water_temperature] override (C); below -99 open water follows the climate or the air.
-			</description>
-		</method>
-		<method name="get_wave_cloud_density_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Returns the wave cloud (lenticular) extinction (1/m) at [param position]. Air lifted by the mountain waves cools at the dry rate and saturates once the lift passes 125 m per kelvin of dew point depression; past that it condenses at the moist adiabat's rate, as droplets, or ice below about -25 C. The humidity aloft is Manabe and Wetherald's profile from the air's humidity, moistened round the mid and high layers' clouds, so lenticulars form where those layers are moist and the waves are strong. Fixed to the terrain; no drift.
-			</description>
-		</method>
-		<method name="get_wave_cloud_slab" qualifiers="const">
-			<return type="Vector4" />
-			<description>
-				Returns the heights (m) where wave cloud can form now: x to y round the mid layer, z to w round the high layer (a pair is empty when its second value is not above its first). The sky marches only these.
-			</description>
-		</method>
-		<method name="get_wind_aloft" qualifiers="const">
-			<return type="Vector2" />
-			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="altitude" type="float" />
-			<description>
-				The mean wind at [param altitude] (m above the ground) over [param position] (x, z, m/s), for clouds: the log law up to [member boundary_layer_height], turning with height (Ekman veer, 20 degrees over the sea to 30 over land, to the right in the northern hemisphere), then growing by [member wind_shear_aloft] per km.
-			</description>
-		</method>
-		<method name="is_lake_effect_ready" qualifiers="const">
-			<return type="bool" />
-			<description>
-				Whether the lake-effect field has been derived for the current wind (the water is sampled over a few physics ticks).
-			</description>
-		</method>
-		<method name="is_terrain_wind_ready" qualifiers="const">
-			<return type="bool" />
-			<description>
-				[code]true[/code] once the terrain square has its heights and its wind field.
-			</description>
-		</method>
-		<method name="penman_evaporation" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="net_radiation" type="float" />
-			<param index="1" name="wind_2m" type="float" />
-			<param index="2" name="celsius" type="float" />
-			<param index="3" name="humidity" type="float" />
-			<description>
-				Evaporation from a wet surface (mm/h): Penman's (1948) combination of the net radiation (W/m2; below zero adds nothing) and the air's drying power (his wind function, at the wind at 2 m).
+				The air temperature the cells use now (C): [member temperature] eased over [member transition_time].
 			</description>
 		</method>
 		<method name="get_canopy_closure_at" qualifiers="const">
@@ -604,32 +104,11 @@
 				The share of the sky the canopy closes over [param position] (0..1), from the shelter canopy there (see [method add_canopy] and [member canopy_map]): its attenuation coefficient taken as a leaf area index through Beer's law with an extinction of 0.5 (Monsi and Saeki 1953), about 0.4 for an open orchard and 0.7 for a forest. [code]0[/code] where there is no canopy. Snow interception and the light under the trees can follow it.
 			</description>
 		</method>
-		<method name="get_canopy_drip_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Water dripping off the leaves at [param position], in mm/h (Rutter's interception model).
-			</description>
-		</method>
 		<method name="get_canopy_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The height (m) of the shelter canopy over [param position], [code]0[/code] where there is none.
-			</description>
-		</method>
-		<method name="get_canopy_water_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Water held on the leaves at [param position], in mm.
-			</description>
-		</method>
-		<method name="get_canopy_wetness_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				How wet the leaves are at [param position], 0 to 1: the water held over [member canopy_storage]. Leaves stay wet after the ground begins to dry.
 			</description>
 		</method>
 		<method name="get_cloud_cover_at" qualifiers="const">
@@ -652,12 +131,6 @@
 				The last cloud shadow bake: the sun's transmittance over [member cloud_shadow_extent], in the plane of [member sun_light], sRGB encoded. The map gives it to that light as its projector.
 			</description>
 		</method>
-		<method name="get_cloud_time" qualifiers="const">
-			<return type="float" />
-			<description>
-				Seconds of weather time the clouds have evolved for, with [member cloud_evolution] (see [method set_cloud_time]).
-			</description>
-		</method>
 		<method name="get_cloud_top_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -670,38 +143,6 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Cloud type at [param position], 0 (stratus) to 1 (cumulonimbus), as in the Nubis weather map.
-			</description>
-		</method>
-		<method name="get_contact_drying_time" qualifiers="const">
-			<return type="float" />
-			<description>
-				How long contact wetness takes to fall to 1/e now, in seconds of weather time: [member contact_wetness_dry_time] scaled by the air's vapour deficit (saturation pressure times one minus the humidity) and the wind, against 20 C, half humidity and 2 m/s. [code]0[/code] while it rains (nothing dries).
-			</description>
-		</method>
-		<method name="get_contact_wetness_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Contact wetness (0 to 1) at [param position]: how wet the water that touched it has left it. [code]0[/code] outside the contact square.
-			</description>
-		</method>
-		<method name="get_contact_wetness_rect" qualifiers="const">
-			<return type="Rect2" />
-			<description>
-				The contact square in world XZ, published with its texture as the shader globals [code]weather_contact_rect[/code] and [code]weather_contact_map[/code].
-			</description>
-		</method>
-		<method name="get_day_of_year" qualifiers="const">
-			<return type="int" />
-			<description>
-				Day of the year (1 to 365) of the [member sky_clock]'s date, or [member season_day] without one.
-			</description>
-		</method>
-		<method name="get_ground_water_input_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Water reaching the ground at [param position], in mm/h: throughfall and drip under a canopy, the rainfall elsewhere. Read by [WeatherRunoff3D].
 			</description>
 		</method>
 		<method name="get_gust_texture" qualifiers="const">
@@ -719,9 +160,8 @@
 		<method name="get_mean_wind_at" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
-			<param index="1" name="terrain" type="bool" default="true" />
 			<description>
-				The mean wind at 10 m at [param position] (x, z, m/s), without gusts. With [param terrain] (default), the terrain's speed-up, turning and lee calm are applied (see [member terrain_wind_enabled]); [code]false[/code] gives the flat-ground wind, for systems that apply their own terrain terms.
+				The mean wind at 10 m at [param position] (x, z, m/s), without gusts.
 			</description>
 		</method>
 		<method name="get_precipitation_extinction_at" qualifiers="const">
@@ -743,40 +183,6 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Rain rate at [param position], in mm/h.
-			</description>
-		</method>
-		<method name="get_rain_share_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The share of the precipitation at [param position] that falls as rain, 0 to 1 (Jennings et al. 2018, from the air temperature at that height and [member humidity]).
-			</description>
-		</method>
-		<method name="get_rain_texture" qualifiers="const">
-			<return type="Texture2D" />
-			<description>
-				The rain map over [method get_map_rect]: red the precipitation (mm/h), green the canopy's wetness, blue its drip (mm/h). Published as the shader global [code]weather_rain_map[/code].
-			</description>
-		</method>
-		<method name="get_rainfall_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Rain (liquid) at [param position], in mm/h.
-			</description>
-		</method>
-		<method name="get_season">
-			<return type="Dictionary" />
-			<description>
-				The season at [member ground_height] on [method get_day_of_year]: one state for every system that follows the year (trees, ground plants, snow, water). Keys: [code]day_of_year[/code]; [code]latitude_deg[/code]; [code]photoperiod_h[/code], day length (Forsythe et al. 1995); [code]temperature[/code], the day's mean, C; [code]forcing[/code], growing degree days above 5 C since 1 January; [code]chilling[/code], days with a mean of 0 to 5 C since 1 November (Cannell and Smith 1983); [code]senescence[/code], from the first day after midsummer the day is under 13.2 h, the sum of max(0, 20 - T) (photoperiod / 13.2)² (Delpierre et al. 2009); [code]snow_depth[/code] (m), [code]snow_cover[/code] (0 to 1) and [code]snow_line_m[/code] (m), from a degree-day snowpack built since 1 August; [code]soil_frost[/code], freezing degree days since 1 August under no snow, thawed back by warm days (K days); [code]soil_moisture[/code], 0 to 1 of the soil's water capacity (a Thornthwaite and Mather bucket).
-				The sums run over a climatological year from [member climate] (a harmonic of its January and July means, as TerrainGenerator3D's water balance), shifted by [member season_anomaly], so any date is right at once. Cached until the day changes or the anomaly moves 0.25 K. Ground snow at a place is [code]SnowCover3D[/code]'s; this is the site's.
-			</description>
-		</method>
-		<method name="get_season_at_height" qualifiers="const">
-			<return type="Dictionary" />
-			<param index="0" name="height" type="float" />
-			<description>
-				[method get_season] at another height (m), with the climate's lapse rate. Not cached.
 			</description>
 		</method>
 		<method name="get_shelter_at" qualifiers="const">
@@ -803,13 +209,6 @@
 			<return type="Texture2D" />
 			<description>
 				The texture published as [code]weather_shelter_map[/code].
-			</description>
-		</method>
-		<method name="get_snowfall_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				Snow at [param position], in mm/h of water.
 			</description>
 		</method>
 		<method name="get_state_texture" qualifiers="const">
@@ -878,31 +277,11 @@
 				Bakes the shelter square now. It also bakes by itself when canopies or boxes change, when the camera has moved an eighth of [member shelter_extent], and when the wind has turned by about 3 degrees. Call it after moving nodes in the [code]weather_shelter[/code] group.
 			</description>
 		</method>
-		<method name="rebake_terrain_wind">
-			<return type="void" />
-			<description>
-				Samples the terrain's heights again and rebuilds the terrain wind (after the ground changed).
-			</description>
-		</method>
 		<method name="remove_canopy">
 			<return type="void" />
 			<param index="0" name="id" type="int" />
 			<description>
 				Removes a canopy added with [method add_canopy].
-			</description>
-		</method>
-		<method name="remove_cloud_effector">
-			<return type="void" />
-			<param index="0" name="id" type="int" />
-			<description>
-				Removes a density effector added with [method add_cloud_effector]. Unknown ids are ignored.
-			</description>
-		</method>
-		<method name="remove_cloud_light">
-			<return type="void" />
-			<param index="0" name="id" type="int" />
-			<description>
-				Removes a cloud light added with [method add_cloud_light]. Unknown ids are ignored.
 			</description>
 		</method>
 		<method name="remove_shelter_box">
@@ -917,50 +296,6 @@
 			<param index="0" name="id" type="int" />
 			<description>
 				Removes the storm with this [param id].
-			</description>
-		</method>
-		<method name="remove_vortex">
-			<return type="void" />
-			<param index="0" name="id" type="int" />
-			<description>
-				Removes the wind vortex [param id] (see [method add_vortex]).
-			</description>
-		</method>
-		<method name="rime_accretion_rate" qualifiers="static">
-			<return type="float" />
-			<param index="0" name="cloud_water" type="float" />
-			<param index="1" name="wind_m_s" type="float" />
-			<param index="2" name="celsius" type="float" />
-			<description>
-				Rime growth on a twig in mm/h: collision efficiency 0.3 x cloud water (g/m3) x wind, at 300 kg/m3 (Makkonen 2000; ISO 12494); none at or above 0 C, fading in above -1 C.
-			</description>
-		</method>
-		<method name="set_cloud_effector">
-			<return type="void" />
-			<param index="0" name="id" type="int" />
-			<param index="1" name="position" type="Vector3" />
-			<param index="2" name="radius" type="float" />
-			<param index="3" name="strength" type="float" />
-			<description>
-				Moves or changes a density effector added with [method add_cloud_effector]; [param position] is where it is now. Unknown ids are ignored.
-			</description>
-		</method>
-		<method name="set_cloud_light">
-			<return type="void" />
-			<param index="0" name="id" type="int" />
-			<param index="1" name="position" type="Vector3" />
-			<param index="2" name="color" type="Color" />
-			<param index="3" name="energy" type="float" />
-			<param index="4" name="reach" type="float" />
-			<description>
-				Moves or changes a cloud light added with [method add_cloud_light]. Unknown ids are ignored.
-			</description>
-		</method>
-		<method name="set_cloud_time">
-			<return type="void" />
-			<param index="0" name="seconds" type="float" />
-			<description>
-				Sets how far the clouds have evolved (seconds of weather time), for a time-lapse or to start a scene on other clouds. The drift with the wind is separate and unchanged.
 			</description>
 		</method>
 		<method name="set_precipitation_extinction">
@@ -986,28 +321,10 @@
 				Water that [param owner] delivers to the ground over [param rect] (world X, Z), in mm/h on a [param resolution] square of [param rates] (row-major in Z then X), in place of the precipitation the map would put there: a [SnowCover3D] passes its runoff (the rain through the pack and its melt), so snow wets surfaces when it melts, not when it falls. The values are copied; call again with new ones. Several sources add up.
 			</description>
 		</method>
-		<method name="set_vortex">
-			<return type="void" />
-			<param index="0" name="id" type="int" />
-			<param index="1" name="position" type="Vector3" />
-			<param index="2" name="radius" type="float" />
-			<param index="3" name="swirl" type="float" />
-			<param index="4" name="updraft" type="float" />
-			<description>
-				Moves and resizes the wind vortex [param id] (see [method add_vortex]); its owner calls it as it goes.
-			</description>
-		</method>
 		<method name="snap_to_settings">
 			<return type="void" />
 			<description>
 				Jumps the eased weather to the settings at once, without a transition (for example when a scene loads).
-			</description>
-		</method>
-		<method name="step_contact">
-			<return type="void" />
-			<param index="0" name="seconds" type="float" />
-			<description>
-				Steps the contact wetness square and the bodies' wet and muddy tracks (see [member wet_tracks]) by [param seconds] without waiting for a frame, for benches and tests that move bodies faster than the renderer draws. The weather's own processing keeps stepping them every frame.
 			</description>
 		</method>
 		<method name="update_cloud_shadow">
@@ -1018,81 +335,6 @@
 		</method>
 	</methods>
 	<members>
-		<member name="air_daily_cycle" type="bool" setter="set_air_daily_cycle" getter="get_air_daily_cycle" default="true">
-			With a [member sky_clock], the air follows the day: coolest just after sunrise, warmest in the afternoon, falling through the night (Parton and Logan 1981), over [member daily_temperature_range] narrowed by clouds and rain, around the day's mean. The humidity follows at a held dew point, so clear nights near saturation bring mist.
-		</member>
-		<member name="air_follows_climate" type="bool" setter="set_air_follows_climate" getter="get_air_follows_climate" default="true">
-			With a [member climate], the day's mean air temperature is the climate's for the date at [member ground_height] plus [member season_anomaly], which then sets how warm or cold the weather runs; [member temperature] is used only without a climate or with this off.
-		</member>
-		<member name="boundary_layer_height" type="float" setter="set_boundary_layer_height" getter="get_boundary_layer_height" default="1000.0">
-			Depth of the atmospheric boundary layer (m): the log law and the Ekman veer of [method get_wind_aloft] reach up to it.
-		</member>
-		<member name="cloud_regime_from_weather" type="bool" setter="set_cloud_regime_from_weather" getter="is_cloud_regime_from_weather" default="true">
-			The low cloud follows the weather: its type eases from stratus (humid, calm, stable air) or stratocumulus (wind or drier air) at night and in the morning to [member cloud_type] as the ground heats, stays stratiform while it rains, and its base follows the condensation level (see [method get_cloud_base_now]). Stratocumulus decks break into closed cells, lined up into rolls along a mixing wind. Off, [member cloud_type] and [member cloud_base_height] are used as set.
-		</member>
-		<member name="cold_pool_strength" type="float" setter="set_cold_pool_strength" getter="get_cold_pool_strength" default="8.0">
-			Celsius below the free air at a deep basin's floor on a clear calm night.
-		</member>
-		<member name="cold_pools" type="bool" setter="set_cold_pools" getter="is_cold_pools_enabled" default="true">
-			On clear calm nights cold air drains into hollows and valley floors (Whiteman 2000): [method get_air_temperature_at] and the contract's air temperature are colder there, so dew, hoarfrost and fog form in hollows first. Where it pools follows the topographic position index over 600 m (Lundquist et al. 2008); it builds over about two hours and breaks up after sunrise or in a wind. Needs a sun light or sky clock.
-		</member>
-		<member name="daily_temperature_range" type="float" setter="set_daily_temperature_range" getter="get_daily_temperature_range" default="10.0">
-			The range between the day's coldest and warmest air on a clear calm day (K). An overcast sky halves it and rain narrows it further (Dai, Trenberth and Karl 1999).
-		</member>
-		<member name="dew_and_frost" type="bool" setter="set_dew_and_frost" getter="get_dew_and_frost" default="true">
-			On clear calm nights exposed surfaces lose more by radiation to the sky than the air's drying brings back, and the vapour condenses on them (Monteith 1957): dew joins the surface water film, and below 0 C at the surface it deposits as hoarfrost ([method get_frost_at]). Clouds and canopies return the longwave, so clouded and sheltered spots stay dry. Needs a sun light or a sky clock.
-		</member>
-		<member name="fog_drip" type="bool" setter="set_fog_drip" getter="is_fog_drip_enabled" default="true">
-			Fog drip: where the ground stands in the cloud, plants comb the cloud water out, deposition = LWC x wind x a capture efficiency (Lovett 1984), 0.003 over short plants up to 0.018 under a closed canopy ([method get_canopy_closure_at]; deposition velocities of about 2 to 9 cm/s in a 5 m/s wind, Gallagher et al. 1988, Katata et al. 2008). It enters the canopy's water balance with the rain, so it drips once the leaves hold their storage, wets the ground under the trees and feeds the runoff. In the cloud the air is saturated and the canopy does not dry.
-		</member>
-		<member name="high_cloud_cover" type="float" setter="set_high_cloud_cover" getter="get_high_cloud_cover" default="0.25">
-			The base cover of the high cloud sheet (cirrus, cirrostratus) at [member high_cloud_height]. The weather drives what is drawn: dry air thins it to 0.3 of this, rain set in [member rain_rate] thickens it, easing four times faster than the rain so the sheet arrives first. See docs/ideas/clouds.md.
-		</member>
-		<member name="high_cloud_height" type="float" setter="set_high_cloud_height" getter="get_high_cloud_height" default="8000.0">
-			Height of the high cloud sheet (m above y = 0). It drifts with [method get_wind_aloft] at this height and its fibres lie along that wind.
-		</member>
-		<member name="high_cloud_optical_depth" type="float" setter="set_high_cloud_optical_depth" getter="get_high_cloud_optical_depth" default="1.0">
-			Vertical optical depth of the high sheet at full cover (ice clouds measure 0.03 to 3). Sets how much it veils the sky and dims the sun.
-		</member>
-		<member name="lake_effect_snow" type="bool" setter="set_lake_effect_snow" getter="is_lake_effect_snow" default="true">
-			Lake-effect snow: bands of convective cloud and snow downwind of open water when cold air crosses it (see [method get_lake_effect_at]).
-		</member>
-		<member name="mid_cloud_cover" type="float" setter="set_mid_cloud_cover" getter="get_mid_cloud_cover" default="0.15">
-			The base cover of the mid cloud layer (altocumulus; a full cover is an altostratus sheet) at [member mid_cloud_height]. The weather drives what is drawn: dry air thins it to 0.2 of this, rain set in [member rain_rate] thickens it into a sheet, easing twice as fast as the rain (after the cirrus, before the rain). It follows the rain and never makes it: precipitation stays the main layer's. It stays out of [member cloud_cover] and [method get_cloud_cover_at]. It drifts with [method get_wind_aloft] at its height. See docs/ideas/clouds.md.
-		</member>
-		<member name="mid_cloud_height" type="float" setter="set_mid_cloud_height" getter="get_mid_cloud_height" default="4500.0">
-			Height of the middle of the mid cloud layer's slab (m above y = 0). Its cloudlets lie in rows across the wind at this height.
-		</member>
-		<member name="mid_cloud_optical_depth" type="float" setter="set_mid_cloud_optical_depth" getter="get_mid_cloud_optical_depth" default="4.0">
-			Vertical optical depth of the mid cloud layer at full cover (altocumulus measure about 2 to 10). Sets how much it shades the ground and how grey its sheet looks from below.
-		</member>
-		<member name="mid_cloud_thickness" type="float" setter="set_mid_cloud_thickness" getter="get_mid_cloud_thickness" default="400.0">
-			Depth of the mid cloud layer's slab (m).
-		</member>
-		<member name="orographic_rain" type="bool" setter="set_orographic_rain" getter="is_orographic_rain_enabled" default="true">
-			Rain follows the terrain climate ([method WorldContracts.climate_precipitation_factor_at]): more on windward slopes, less in the lee. Rain or snow is decided by the air at each cell's own ground height, so the snow line follows the terrain.
-		</member>
-		<member name="rime" type="bool" setter="set_rime" getter="is_rime_enabled" default="true">
-			Where the ground stands in supercooled cloud (fog water below 0 C) rime grows on twigs and edges into the wind; it sheds in a thaw, in sun and in rain. Kept per cell as mm along the way into the wind; the frost map's blue and alpha carry it to plants, rocks and steep terrain ([code]weather_rime_apply[/code]).
-		</member>
-		<member name="sea_spray" type="bool" setter="set_sea_spray" getter="is_sea_spray_enabled" default="true">
-			Sea spray on the shore: breaking waves ([method WorldWater.breaking_at]) make spray in proportion to the breaker height and the square of the wind past 2 m/s; the wind carries it inland over a square round the follow point. Coarse drops settle within tens of metres ([code]u (1 + H) / 1 m/s[/code]) and wet surfaces and the soil; rising ground catches them, so a cliff face takes the spray and its top stays drier. Fine salt aerosol reaches hundreds of metres ([code]50 s x u[/code]). The salt stays on surfaces until rain washes it off (all but a third by 5 mm) and is published with the spray's wetness as the [code]weather_spray_map[/code] global (R wetness, G [code]1 - exp(-salt / 10 g/m2)[/code]); grass browns at the tips from salt burn.
-		</member>
-		<member name="sea_spray_extent" type="float" setter="set_sea_spray_extent" getter="get_sea_spray_extent" default="512.0">
-			Side of the sea spray square, m.
-		</member>
-		<member name="sea_spray_resolution" type="int" setter="set_sea_spray_resolution" getter="get_sea_spray_resolution" default="128">
-			Cells along each side of the sea spray square.
-		</member>
-		<member name="sun_drying" type="bool" setter="set_sun_drying" getter="get_sun_drying" default="true">
-			The sun dries wet surfaces: evaporation is Penman's combination of the net radiation (the sun's shortwave under the cloud shadow and the canopy, less the longwave loss; FAO-56) and the air's drying power, so puddles in sun go well before those in shade.
-		</member>
-		<member name="aerosol_haze" type="bool" setter="set_aerosol_haze" getter="get_aerosol_haze" default="true">
-			Fills the air with background aerosol haze, from [member haze_visibility] and the air's humidity, thinning with height over [member haze_height]. The volumetric fog lights it with the sun, the sun's shadows and the cloud shadow, so shafts of light show between clouds and past ridges. Past the volumetric fog's reach the [WeatherSkyMaterial] carries the same haze in its air (see [method WeatherSkyMaterial.set_aerosol]), where the clouds' shadow draws the shafts on across the sky. Off, the air is clear unless the [Environment] adds fog.
-		</member>
-		<member name="canopy_free_throughfall" type="float" setter="set_canopy_free_throughfall" getter="get_canopy_free_throughfall" default="0.25">
-			The share of the rain that falls through the canopy without touching a leaf (Rutter's p).
-		</member>
 		<member name="canopy_map" type="Texture2D" setter="set_canopy_map" getter="get_canopy_map">
 			A map of plant canopies over [member canopy_map_rect]: canopy height in red (metres in a float texture, else times [member canopy_map_max_height]) and Cionco's attenuation coefficient over 4 in green. For vegetation systems that place whole forests.
 		</member>
@@ -1102,32 +344,14 @@
 		<member name="canopy_map_rect" type="Rect2" setter="set_canopy_map_rect" getter="get_canopy_map_rect" default="Rect2(-256, -256, 512, 512)">
 			The world rect [member canopy_map] covers (x and z of its corner, then its size).
 		</member>
-		<member name="canopy_storage" type="float" setter="set_canopy_storage" getter="get_canopy_storage" default="1.0">
-			The water the leaves hold before they drain, in mm (Rutter's S).
-		</member>
-		<member name="canopy_water_enabled" type="bool" setter="set_canopy_water_enabled" getter="is_canopy_water_enabled" default="true">
-			Track the water the canopy intercepts: wet leaves after rain and their drip.
-		</member>
-		<member name="climate" type="Resource" setter="set_climate" getter="get_climate">
-			The climate of the place for [method get_season]: a [code]ClimateRecipe[/code], or any resource with its property names (temperature_january, temperature_july, lapse_rate_january, lapse_rate_july, reference_height, precipitation, precipitation_seasonality, precipitation_peak_month, rain_snow_threshold, daily_temperature_spread, melt_factor, soil_capacity, latitude). Without one, a temperate default (3 C in January, 22 C in July, 900 mm).
-		</member>
 		<member name="cloud_base_height" type="float" setter="set_cloud_base_height" getter="get_cloud_base_height" default="1500.0">
 			Height of the cloud base, in metres above y = 0.
-		</member>
-		<member name="cloud_churn" type="float" setter="set_cloud_churn" getter="get_cloud_churn" default="1.5">
-			How fast the cloud shapes change (m/s), with [member cloud_evolution]: the shape noise's two reads slide apart at this speed, so each cloud reshapes over a few minutes, and the edges' detail churns at twice it. The share of sky the clouds cover does not change with it.
 		</member>
 		<member name="cloud_cover" type="float" setter="set_cloud_cover" getter="get_cloud_cover" default="0.4">
 			Cloud cover, 0 (clear) to 1 (overcast). With [member cloud_variation], it is how much of the sky is cloud, in patches.
 		</member>
 		<member name="cloud_density" type="float" setter="set_cloud_density" getter="get_cloud_density" default="1.0">
 			Scale on the clouds' extinction. At [code]1[/code], the measured values: about 0.04 per metre in stratus, up to 0.1 in cumulus (Frostbite, 2016).
-		</member>
-		<member name="cloud_evolution" type="bool" setter="set_cloud_evolution" getter="get_cloud_evolution" default="true">
-			If [code]true[/code], clouds form and clear over time and their tops climb, in the sky, in path traced frames and in the cloud shadows alike: the cover noise moves through time (each octave over [member cloud_lifetime], smaller ones faster) and the cloud shapes churn at [member cloud_churn]. If [code]false[/code], the clouds only slide with the wind.
-		</member>
-		<member name="cloud_lifetime" type="float" setter="set_cloud_lifetime" getter="get_cloud_lifetime" default="900.0">
-			Seconds of weather time over which the largest patches of cloud cover form and clear, with [member cloud_evolution]. Each finer octave of the cover noise turns over faster, by 2.03^(-2/3) per octave (Kolmogorov's l^(2/3)). [code]0[/code] keeps the cover fixed while the shapes still churn.
 		</member>
 		<member name="cloud_scale" type="float" setter="set_cloud_scale" getter="get_cloud_scale" default="6000.0">
 			Size of the cloud cover patches, in metres.
@@ -1144,12 +368,6 @@
 		<member name="cloud_shape_scale" type="float" setter="set_cloud_shape_scale" getter="get_cloud_shape_scale" default="3000.0">
 			Size of one tile of the 3D shape noise, in metres. Single clouds are about a quarter of it across.
 		</member>
-		<member name="cloud_size_mix" type="float" setter="set_cloud_size_mix" getter="get_cloud_size_mix" default="1.0">
-			Large clouds among the small. A third read of the shape noise, 2.618 times larger, is blended in by a slow noise, so some stretches of sky hold a few big cumulus and others many small ones, as fair-weather cumulus sizes spread over a decade. [code]0[/code] gives every cloud the same size (the old look); costs one more noise read per cloud sample.
-		</member>
-		<member name="cloud_shear" type="float" setter="set_cloud_shear" getter="get_cloud_shear" default="0.4">
-			Scale on how far the wind shear leans the clouds' tops downwind of their bases. The wind aloft grows and veers with height, so tissue that rose higher was carried further: towers lean and their tops stream out, the lean growing as height squared so the base stays upright. [code]0[/code] keeps the clouds upright. At 1 the full sheared drift smeared fair-weather cumulus into slanted sides (they rise in minutes, through less of the shear than the drift assumes).
-		</member>
 		<member name="cloud_thickness" type="float" setter="set_cloud_thickness" getter="get_cloud_thickness" default="1500.0">
 			Depth of the cloud layer for cumulus ([member cloud_type] 0.7), in metres. Stratus is a quarter of it; cumulonimbus (type above 0.8, as storms make) towers up to five times it.
 		</member>
@@ -1159,35 +377,8 @@
 		<member name="cloud_variation" type="float" setter="set_cloud_variation" getter="get_cloud_variation" default="0.35">
 			How far the drifting noise moves the cloud cover up or down from [member cloud_cover]. [code]0[/code] gives an even sky.
 		</member>
-		<member name="contact_wetness_dry_time" type="float" setter="set_contact_wetness_dry_time" getter="get_contact_wetness_dry_time" default="600.0">
-			Seconds for contact wetness to fall to 1/e at 20 C, half humidity and a light wind; warmer, drier or windier air dries it faster (see [method get_contact_drying_time]).
-		</member>
-		<member name="contact_wetness_enabled" type="bool" setter="set_contact_wetness_enabled" getter="is_contact_wetness_enabled" default="true">
-			Wet where water has been: a fine square round the camera that keeps, per texel, the most water that touched it (live water, splashes, scripts) and dries it over time. Wetness readers (BaseMaterial3D Wetness, terrain, grass, the path tracer) take the wetter of it and the rain's.
-		</member>
-		<member name="contact_wetness_resolution" type="int" setter="set_contact_wetness_resolution" getter="get_contact_wetness_resolution" default="512">
-			Texels along each side of the contact square.
-		</member>
-		<member name="contact_wetness_size" type="float" setter="set_contact_wetness_size" getter="get_contact_wetness_size" default="64.0">
-			Side of the contact square in metres. It follows the camera (or [member follow_target]) and keeps what overlaps when it moves.
-		</member>
-		<member name="distant_shafts" type="bool" setter="set_distant_shafts" getter="is_distant_shafts" default="true">
-			Draws the storms' rain and snow shafts and the lake-effect snow veils over the scene as well as against the sky: a screen pass marches them from 1.5 km out to the depth buffer, so a shaft stands in front of a far ridge. Raster only (hidden while the environment path traces). See docs/ideas/clouds.md.
-		</member>
 		<member name="drive_environment_fog" type="bool" setter="set_drive_environment_fog" getter="get_drive_environment_fog" default="true">
 			The haze from [method set_precipitation_extinction] drives the environment's fog and volumetric fog, while the game runs. Off, the sources only answer [method get_precipitation_extinction_at].
-		</member>
-		<member name="fire_clouds" type="bool" setter="set_fire_clouds" getter="is_fire_clouds" default="true">
-			Fire plumes ([method WorldFire.plumes]) that rise past the lifting condensation level make clouds over them: a pyrocumulus cap that grows over about five minutes of weather time while the fire feeds it, held over the bent-over plume, then drifts off and evaporates over a quarter of an hour once it stops. A plume that rises some 2 km past it towers into a pyrocumulonimbus: storm cloud, lightning ([WeatherLightning3D]), a downdraft's outflow and a little rain. Small fires on a stable night make none; on a sunny afternoon a fire of about a gigawatt caps itself.
-		</member>
-		<member name="smoke_haze" type="bool" setter="set_smoke_haze" getter="is_smoke_haze" default="true">
-			Fires' smoke ([method WorldFire.smoke_sources]) builds a smoke layer over the map, carried and spread by the wind aloft and cleared over [member smoke_lifetime]. Over the map's centre it thickens the aerosol haze, narrows the daily temperature range (a cooler day under thick smoke; Robock 1988), and [SkyClock] dims and reddens the sun through it.
-		</member>
-		<member name="smoke_lifetime" type="float" setter="set_smoke_lifetime" getter="get_smoke_lifetime" default="259200.0">
-			Weather seconds over which the smoke layer clears in dry weather (dilution out of the layer), as an e-folding time: three days by default.
-		</member>
-		<member name="smoke_washout" type="bool" setter="set_smoke_washout" getter="is_smoke_washout" default="true">
-			Rain and snow wash the smoke layer out under them ([method WorldWeather.washout_rate], fine particles): a shower barely thins it, hours of heavy rain clear most of it.
 		</member>
 		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="4096.0">
 			Width of the map, in metres.
@@ -1206,12 +397,6 @@
 		</member>
 		<member name="gust_patch_strength" type="float" setter="set_gust_patch_strength" getter="get_gust_patch_strength" default="0.35">
 			How much the gust patches vary the wind near the ground: the standard deviation of the speed over its mean (0.3 to 0.5 at the top of crops and forests, Finnigan 2000). [code]0[/code] turns them off.
-		</member>
-		<member name="haze_height" type="float" setter="set_haze_height" getter="get_haze_height" default="1200.0">
-			Scale height (m) of the aerosol haze: its density falls by 1/e over this height above the ground (the boundary layer).
-		</member>
-		<member name="haze_visibility" type="float" setter="set_haze_visibility" getter="get_haze_visibility" default="40.0">
-			Visibility (km) through the aerosol haze in dry air. Humid air lowers it as the aerosol swells.
 		</member>
 		<member name="humidity" type="float" setter="set_humidity" getter="get_humidity" default="0.7">
 			Relative humidity of the air, 0 to 1. Drier air dries surfaces faster. While it rains, the air is taken as at least 97%.
@@ -1240,12 +425,6 @@
 		<member name="roughness_length" type="float" setter="set_roughness_length" getter="get_roughness_length" default="0.03">
 			Aerodynamic roughness length z0 of the ground, in metres: about 0.0002 over the sea, 0.03 over open land, 0.5 to 1 over a town. It sets how the wind slows near the ground and how gusty it is.
 		</member>
-		<member name="season_anomaly" type="float" setter="set_season_anomaly" getter="get_season_anomaly" default="0.0">
-			How much warmer (K) this year runs than the [member climate]: with [member air_follows_climate] on, the air's offset from the climate's mean for the day; with it off, the live air temperature's departure from that mean, averaged over about a month of weather time while the map runs. Set it for a warm or cold spell or year.
-		</member>
-		<member name="season_day" type="int" setter="set_season_day" getter="get_season_day" default="135">
-			Day of the year for [method get_season] when there is no [member sky_clock] (135 is 15 May).
-		</member>
 		<member name="shelter_enabled" type="bool" setter="set_shelter_enabled" getter="get_shelter_enabled" default="true">
 			Wind near the ground drops inside plant canopies ([method add_canopy], [member canopy_map]) and in the lee of obstacles ([method add_shelter_box], the [code]weather_shelter[/code] group), on a square of [member shelter_extent] around the camera. Applies to [method get_wind_at] and, through [code]weather_shelter_map[/code], to shaders.
 		</member>
@@ -1254,9 +433,6 @@
 		</member>
 		<member name="shelter_resolution" type="int" setter="set_shelter_resolution" getter="get_shelter_resolution" default="256">
 			Cells across the shelter square (2 m cells by default).
-		</member>
-		<member name="sky_clock" type="NodePath" setter="set_sky_clock" getter="get_sky_clock" default="NodePath(&quot;&quot;)">
-			The [SkyClock] whose date and latitude [method get_season] uses.
 		</member>
 		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
 			The [DirectionalLight3D] the clouds shadow. The map sets that light's [member Light3D.light_projector], [member DirectionalLight3D.projector_size] and [member DirectionalLight3D.projector_offset] to its cloud shadow, which darkens the ground in raster and path traced rendering alike, and clears the projector again when the map leaves the tree. Empty: no cloud shadows.
@@ -1267,44 +443,8 @@
 		<member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="15.0">
 			Air temperature, in degrees Celsius, for evaporation.
 		</member>
-		<member name="terrain_collision_mask" type="int" setter="set_terrain_collision_mask" getter="get_terrain_collision_mask" default="1">
-			Physics layers that the terrain rays hit when no height source is found (see [member terrain_source]).
-		</member>
-		<member name="terrain_curvature_length" type="float" setter="set_terrain_curvature_length" getter="get_terrain_curvature_length" default="40.0">
-			MicroMet's curvature length scale eta (m): about half the wavelength of the terrain's features. The terrain's effect on the wind fades as exp(-h / (2 eta)) above the ground (the inner layer of flow over hills).
-		</member>
-		<member name="terrain_curvature_weight" type="float" setter="set_terrain_curvature_weight" getter="get_terrain_curvature_weight" default="0.5">
-			MicroMet's curvature weight gc: how much crests speed the wind up and hollows slow it.
-		</member>
-		<member name="terrain_floor" type="float" setter="set_terrain_floor" getter="get_terrain_floor" default="-1000000000.0">
-			Heights below this are treated as this height (m), so a seabed does not steer the wind over the sea. Set from a height source's [code]sea_level[/code] when it has one.
-		</member>
-		<member name="terrain_lee_reach" type="float" setter="set_terrain_lee_reach" getter="get_terrain_lee_reach" default="100.0">
-			How far upwind (m) the lee shelter Sx looks for rising ground (Winstral, Marks and Gurney 2002, about 100 m).
-		</member>
-		<member name="terrain_lee_strength" type="float" setter="set_terrain_lee_strength" getter="get_terrain_lee_strength" default="0.4">
-			How much the wind slows in a deep lee: the speed factor is reduced by up to this share as Sx goes from 5 to 25 degrees.
-		</member>
-		<member name="terrain_slope_weight" type="float" setter="set_terrain_slope_weight" getter="get_terrain_slope_weight" default="0.5">
-			MicroMet's slope weight gs: how much the wind speeds up climbing a slope and slows going down one.
-		</member>
-		<member name="terrain_source" type="NodePath" setter="set_terrain_source" getter="get_terrain_source" default="NodePath(&quot;&quot;)">
-			A node with [code]get_height(position)[/code] (or a Terrain3D) that gives the ground's height for the terrain wind. Empty: the first TerrainDeformer3D, Landscape3D, TerrainGenerator3D or Terrain3D in the scene, else rays on [member terrain_collision_mask].
-		</member>
-		<member name="terrain_wind_enabled" type="bool" setter="set_terrain_wind_enabled" getter="is_terrain_wind_enabled" default="true">
-			If [code]true[/code], the wind follows the terrain round the camera (MicroMet, Liston and Elder 2006): faster over crests and up windward slopes, calmer in lees (Winstral's Sx), turned along the contours, and rising up slopes, fading with height above the ground. Applied in [method get_wind_at], [method get_wind_parts], [method get_mean_wind_at] and the shader's [code]weather_wind()[/code].
-		</member>
-		<member name="terrain_wind_extent" type="float" setter="set_terrain_wind_extent" getter="get_terrain_wind_extent" default="2048.0">
-			Width of the terrain wind square (m), centred on the camera. It moves when the camera has moved an eighth of it.
-		</member>
-		<member name="terrain_wind_resolution" type="int" setter="set_terrain_wind_resolution" getter="get_terrain_wind_resolution" default="256">
-			Cells along each side of the terrain wind square.
-		</member>
 		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
 			Weather seconds per real second: storms, transitions, wetting and drying run this much faster than the clock (60 makes a game hour a real minute). Gusts always run in real time.
-		</member>
-		<member name="traced_haze" type="bool" setter="set_traced_haze" getter="get_traced_haze" default="true">
-			Under path tracing, the [member aerosol_haze] is a traced medium instead of a volumetric fog layer. Every path segment draws its distances exactly against the haze's height profile and lights it with the sun's direct beam through the clouds and through traced shadows, so shafts are as sharp as the shadows that cast them, at any distance and in reflections. Rays that reach the sky carry it out to the volumetric fog's reach, where the [WeatherSkyMaterial]'s own aerosol takes over. Raster rendering is unchanged.
 		</member>
 		<member name="transition_time" type="float" setter="set_transition_time" getter="get_transition_time" default="600.0">
 			Time constant over which the weather eases toward changed settings, in weather seconds. [code]0[/code] changes at once.
@@ -1312,29 +452,11 @@
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="4.0">
 			How often the cells are refreshed, per second. Gusts are evaluated every frame regardless.
 		</member>
-		<member name="valley_fog" type="bool" setter="set_valley_fog" getter="is_valley_fog_enabled" default="true">
-			Fill saturated cold air pools with radiation fog (Whiteman 2000; Gultepe et al. 2007): it forms over about an hour on clear calm nights, sits flat at the basin's saturation level and lifts after sunrise or in a wind. Drawn as a [FogVolume] lit by the froxel fog plus its multiple scattering, so raster and path tracing match. Needs [member cold_pools].
-		</member>
-		<member name="valley_fog_density" type="float" setter="set_valley_fog_density" getter="get_valley_fog_density" default="0.02">
-			Extinction inside the valley fog (1/m); 0.02 gives about 150 m visibility, a moderate radiation fog.
-		</member>
-		<member name="water_temperature" type="float" setter="set_water_temperature" getter="get_water_temperature_setting" default="-100.0">
-			Open water's surface temperature (C) when set; below -99 [method get_water_temperature] follows the climate or the air.
-		</member>
-		<member name="wet_tracks" type="bool" setter="set_wet_tracks" getter="is_wet_tracks_enabled" default="true">
-			Wet tracks: bodies in the [code]world_contact[/code] group coming out of water ([method WorldWater.depth_at]), wet mud, standing water or puddles carry water on their feet or tread. Each footprint (a stride apart, alternating sides) presses 15% of it onto the ground, tyres a continuous line losing 3% every 15 cm, so a trail fades over a dozen or so strides; the body also drips round itself, e-folding over 40 s. Prints and drips go into the contact wetness square, which dries them by [method get_contact_drying_time] (air, wind and sun).
-		</member>
 		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
 			The way the wind blows toward, as x and z.
 		</member>
-		<member name="wind_shear_aloft" type="float" setter="set_wind_shear_aloft" getter="get_wind_shear_aloft" default="1.5">
-			How fast the wind grows above [member boundary_layer_height] (m/s per km), the thermal-wind shear the clouds lean with.
-		</member>
 		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="5.0">
 			Mean wind speed at 10 m above the ground, in m/s.
-		</member>
-		<member name="wave_clouds" type="bool" setter="set_wave_clouds" getter="is_wave_clouds" default="true">
-			Mountain waves over the terrain and the wave clouds (lenticulars) they raise in moist air; their vertical wind joins [method get_wind_at] above the boundary layer. See [method get_wave_cloud_density_at].
 		</member>
 	</members>
 	<constants>

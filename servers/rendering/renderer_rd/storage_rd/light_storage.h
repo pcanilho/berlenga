@@ -237,29 +237,9 @@ private:
 		float projector_rect[4]; // In the sRGB decal atlas; zero without a projector.
 		float projector_u[4]; // View-space position to projector u: dot(vec4(vertex, 1.0), projector_u).
 		float projector_v[4];
-		// View-space position to the volume shadow's u, v and depth (see directional_volume_shadow_set);
-		// all zero without one.
-		float volume_shadow_u[4];
-		float volume_shadow_v[4];
-		float volume_shadow_w[4];
 	};
 
 	uint32_t max_directional_lights;
-
-	// A directional light's shadow through participating media (a volumetric shadow map: a light-space
-	// 3D texture of the optical depth from the light's side), fed each frame by whoever renders the
-	// medium. One at a time; it lapses unless renewed.
-	struct VolumeShadow {
-		RID light; // the directional light (base RID)
-		RID texture; // 3D, R16F: optical depth from the light's side, over u, v and depth
-		Transform3D world_to_shadow; // world -> (u, v, depth) in 0..1
-		// The medium's single-scattering albedo and anisotropy: a bright, scattering medium lets through more
-		// than its optical depth's direct beam (light scattered on toward the ground), 0 for none.
-		float albedo = 0.0f;
-		float anisotropy = 0.0f;
-		uint64_t frame = 0;
-	} volume_shadow;
-	RID volume_shadow_empty;
 	DirectionalLightData *directional_lights = nullptr;
 	RID directional_light_buffer;
 
@@ -1250,11 +1230,6 @@ public:
 
 	Rect2i get_directional_shadow_rect();
 	void update_directional_shadow_atlas();
-
-	// Sets the volume shadow of directional light p_light for this frame (p_texture RID(): clears it).
-	void directional_volume_shadow_set(RID p_light, RID p_texture, const Transform3D &p_world_to_shadow, float p_albedo = 0.0f, float p_anisotropy = 0.0f);
-	// The volume shadow texture the scene shaders bind (a white 1x1 without one).
-	RID directional_volume_shadow_get_texture();
 
 	_FORCE_INLINE_ RID directional_shadow_get_texture() {
 		return directional_shadow.depth;

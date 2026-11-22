@@ -45,7 +45,6 @@
 #include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_validation.h" // IWYU pragma: keep. Class layout depends on RT_VALIDATION_ENABLED.
 #include "servers/rendering/renderer_rd/shaders/raytracing/multimesh_merge.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/raytracing/opacity_micromap.glsl.gen.h"
-#include "servers/rendering/renderer_rd/shaders/raytracing/swept_spheres.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/rendering_device.h"
 
@@ -117,9 +116,7 @@ struct alignas(8) RT_GeometryData {
 	// With RT_GEOM_FLAG_REST: byte offset from vertex_buffer_address of the rest block, the vertex() inputs of a
 	// capture in the same layout as the positions and TBN before it.
 	uint32_t rest_byte_offset;
-	// The CUSTOM0-3 vertex attributes in the attribute buffer: bits 0-7 byte offset of the first present one, then per
-	// attribute 4 bits (bit 3 present, bits 0-2 its RSE::ArrayCustomFormat). Packed by rt_pack_custom_layout().
-	uint32_t custom_layout;
+	uint32_t rest_pad;
 };
 static_assert(sizeof(RT_GeometryData) == 160, "RT_GeometryData must be 160 bytes for std430");
 
@@ -263,17 +260,11 @@ struct alignas(16) RT_MaterialData {
 		uint32_t snow_from_weather : 1; // Cover = amount times the snow map's (RT_PARAM_SNOW_*).
 		// GroundSurface3D's patch (docs/ideas/ground-deform.md): turned-ground tint from RT_PARAM_GROUND_DEFORM_*.
 		uint32_t ground_deform : 1;
-		// The terrain round the patch: only the ground's pore water (the far lattice) from RT_PARAM_GROUND_WET_MAP.
-		uint32_t ground_terrain : 1;
-		// BaseMaterial3D Mud (docs/ideas/mud.md, stage 3b): a vehicle's body mud from the instance uniforms.
-		uint32_t mud : 1;
+		uint32_t unused : 2;
 	} subsurface;
 	struct { // texture_subsurface_scattering: red scales the strength.
 		uint32_t index : TEXTURE_INDEX_BITS;
-		uint32_t wetness_canopy : 1; // BaseMaterial3D wetness_canopy: the canopy's water (RT_PARAM_RAIN_MAP) and beads.
-		uint32_t snow_on_body : 1; // BaseMaterial3D snow_on_body: the body's snow from instance uniform slot 12.
-		uint32_t glaze : 1; // BaseMaterial3D glaze: clear ice from freezing rain (RT_PARAM_RAIN_MAP alpha).
-		uint32_t unused : 5;
+		uint32_t unused : 8;
 	} subsurface_texture;
 	// BaseMaterial3D Hair (RT_MAT_FLAG_HAIR), see rt_material_set_hair() and GLSL rt_material_hair().
 	struct {
@@ -570,7 +561,7 @@ struct alignas(16) RT_LightData {
 		uint32_t index : RT_MaterialData::TEXTURE_INDEX_BITS; // Bindless sRGB projector, RT_LIGHT_NO_PROJECTOR when unset.
 		uint32_t unused : 8;
 	} projector_texture;
-	uint32_t reserved[3]; // Directional projector: float corner u, v (metres, relative to rt_origin), fp16 size u, v. Positional: float volumetric fog energy - 1 in [0]. Keeps the 64-byte stride.
+	uint32_t reserved[3]; // Directional projector: float corner u, v (metres, relative to rt_origin), fp16 size u, v. Else free; keeps the 64-byte stride.
 };
 static_assert(sizeof(RT_LightData) == 64, "RT_LightData must be 64 bytes for std430, with every bitfield struct in one uint");
 
@@ -751,9 +742,6 @@ enum {
 	RT_GEOM_FLAG_SELF_SHADOWING = 128u,
 	// Captured geometry that also keeps its vertex() inputs at rest_byte_offset: hit shaders re-run vertex() on them.
 	RT_GEOM_FLAG_REST = 256u,
-	// A merged MultiMesh whose instance records start with the 3x4 transform baked into its BLAS: hit shaders read it
-	// and run vertex() in the instance's own space with MODEL_MATRIX = node x instance, as raster does.
-	RT_GEOM_FLAG_INSTANCE_XFORM = 512u,
 };
 
 // Facing state of the path traced triangles of one TLAS instance.
@@ -927,9 +915,6 @@ struct RTDeformedGeometrySource {
 	uint64_t cache_key = 0; // Caller-defined cache identity.
 	uint32_t cache_version = 0; // Changes when the resource behind `cache_key` is recycled.
 	uint32_t surface_counter = 0; // Changes when the underlying mesh surface changes.
-	// A captured render_mode hair_strands surface on a device with linear swept spheres: traced as swept
-	// spheres when its triangles are laid out as two crossed strips per point (process_deformed_surface).
-	bool swept_spheres = false;
 
 	// False for static surfaces, which are traced from their mesh buffers.
 	bool is_deformed() const { return captured || current_vb.is_valid(); }
@@ -1011,7 +996,6 @@ struct RTDeformedCacheEntry {
 
 	RID owned_vb_full;
 	uint32_t owned_vb_full_capacity = 0; // Bytes; grow-only.
-	bool owned_vb_storage = false; // owned_vb_full is also a storage buffer (swept spheres read it).
 	RID prev_pos_vb;
 	uint64_t prev_pos_vb_address = 0; // Device address of prev_pos_vb, taken when it is allocated.
 	uint32_t prev_pos_vb_capacity = 0; // Bytes; grow-only.
@@ -1025,15 +1009,6 @@ struct RTDeformedCacheEntry {
 	bool prev_pos_current = false; // prev_pos_vb already equals the positions in owned_vb_full.
 
 	RTCaptureState capture; // Vertex capture held by this entry, for captured mesh surfaces.
-
-	// Linear swept spheres of a strand surface (RTDeformedGeometrySource::swept_spheres): one point (centre,
-	// radius) per four vertices, written from each new capture, and one segment per four triangles, the index
-	// of its first point. Both are invalid while the surface is traced as triangles.
-	RID lss_points;
-	RID lss_segments;
-	uint32_t lss_point_count = 0;
-	uint32_t lss_segment_count = 0;
-	bool lss_checked = false; // The surface's index layout was checked (since its last BLAS rebuild).
 };
 
 // A surface whose raster vertex() output is captured for the path tracer this frame.
@@ -1078,8 +1053,6 @@ struct RTInstanceSource {
 	Vector3 dead_position; // Node-space point dead particles collapse to; keeps BLAS bounds near the emitter.
 	bool particles = false; // Particle systems have no triangle cap and no CPU fallback.
 	bool world_space = false; // Records are already in world space; the TLAS instance uses identity.
-	bool instanced = false; // multimesh_set_rt_instanced(): one TLAS entry per record, never a merged BLAS.
-	float offscreen_cull = 0.0f; // multimesh_set_rt_offscreen_cull(): degrees; records this small and off screen stay out.
 };
 
 // One billboard entry of multimesh_merge.glsl (std430 layout). Bases are columns in MultiMesh node space.
@@ -1474,17 +1447,10 @@ struct RTViewportState {
 	uint32_t frame_counter = 0;
 
 	// Camera-relative tracing: every position the trace sees is world minus this anchor, the
-	// grid point nearest the camera on a grid of rendering/pathtracing/relative_origin_grid metres
-	// (x and z). It moves only when the camera is 3/4 of a cell away. Zero when the setting is 0.
+	// camera's cell on a grid of rendering/pathtracing/relative_origin_grid metres (x and z).
+	// It moves only when the camera leaves its cell. Zero when the setting is 0.
 	Vector3 rt_origin;
 	bool rt_origin_valid = false;
-
-	// Off-screen cull band of MultiMeshes with multimesh_set_rt_offscreen_cull(): the camera frustum's side planes
-	// widened by RT_CULL_BAND_GUARD degrees a side. Redone only when the camera turns or moves past the limits below,
-	// so instances keep their persistent slots between; invalid for orthographic cameras.
-	bool cull_band_valid = false;
-	Transform3D cull_band_camera;
-	Plane cull_band_planes[4];
 
 	// Set per frame: the screen-space sky texture was drawn and primary-ray
 	// misses should read it instead of the prefiltered radiance octmap.
@@ -1666,7 +1632,6 @@ class RenderRaytracing {
 	RTPlanContext _make_plan_context(const RenderDataRD *p_render_data, uint32_t p_rt_flags, const LocalVector<RTCaptureRequest> *p_captures) const;
 	RTPlanArena &_open_plan_arena(RTViewportState *p_state, const RenderDataRD *p_render_data, const RTPlanContext &p_ctx);
 	void _update_trace_origin(RTViewportState *p_state, const RenderDataRD *p_render_data);
-	void _update_cull_band(RTViewportState *p_state, const RenderDataRD *p_render_data);
 
 	// Persistent instance slots (render_raytracing_persistent.h).
 	bool _persistent_wanted(const RenderDataRD *p_render_data) const;
@@ -1736,17 +1701,6 @@ class RenderRaytracing {
 		uint64_t known = 0;
 		uint64_t unknown = 0;
 	} omm_stats;
-
-	// Strand hair as linear swept spheres (RTDeformedGeometrySource::swept_spheres).
-	struct SweptSpheresShader {
-		SweptSpheresShaderRD shader;
-		RID version;
-		RID version_shader;
-		RID pipeline;
-	} lss_shader;
-	bool lss_enabled = false; // The device has linear swept spheres and the project asks for them.
-	bool _populate_swept_spheres_blas(void *p_mesh_surface, uint32_t p_vertex_count, uint64_t p_cache_key, RTDeformedCacheEntry &r_entry, LocalVector<RID> &r_dirty_blas_list);
-	void _update_swept_sphere_points(RTDeformedCacheEntry &r_entry);
 
 	void _omm_initialize();
 	void _omm_finalize();

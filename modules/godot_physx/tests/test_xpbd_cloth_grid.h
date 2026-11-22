@@ -1,11 +1,10 @@
 /**************************************************************************/
-/*  test_xpbd_cloth_grid.h                                                */
+/*  test_xpbd_cloth_grid.h                                                            */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -123,35 +122,6 @@ TEST_CASE("[Modules][PhysX] A tear opens a few vertices a step") {
 	for (int f = 0; f < 10; f++) {
 		CHECK(solver.step(1.0f / 60.0f, Vector3(0, -4000.0f, 0), Vector3()) <= XPBDClothSolver::MAX_TEARS_PER_STEP);
 	}
-}
-
-// A wet cloth carries its water's weight (refresh_masses after the density rises): the same wind blows it out less,
-// and its pins hold.
-TEST_CASE("[Modules][PhysX] Heavier cloth blows out less and keeps its pins") {
-	float reach[2];
-	for (int k = 0; k < 2; k++) {
-		XPBDClothSolver solver;
-		solver.build_grid(8, 8, Vector2(1.0f, 1.0f));
-		for (int x = 0; x < 8; x++) {
-			solver.set_pinned(x, true);
-		}
-		solver.reset(Transform3D());
-		if (k == 1) {
-			solver.settings.density *= 2.0f; // soaked cotton
-			solver.refresh_masses();
-		}
-		const Vector3 top = solver.get_positions()[0];
-		for (int f = 0; f < 180; f++) {
-			solver.step(1.0f / 60.0f, Vector3(0, -9.8f, 0), Vector3(0, 0, 2.0f));
-		}
-		CHECK(solver.get_positions()[0].is_equal_approx(top));
-		float z = 0.0f;
-		for (uint32_t i = 0; i < solver.get_positions().size(); i++) {
-			z += Math::abs(solver.get_positions()[i].z);
-		}
-		reach[k] = z / solver.get_positions().size();
-	}
-	CHECK(reach[1] < reach[0] * 0.9f);
 }
 
 } // namespace TestXPBDClothGrid

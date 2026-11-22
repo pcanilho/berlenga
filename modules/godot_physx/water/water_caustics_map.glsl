@@ -30,7 +30,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 light_up_refdepth; // xyz light-space "up" basis vector (unit), w reference_depth (world units along the refracted ray)
 	vec4 ripple_domain;     // xy ripple layer's domain size, z 1 if per-cell depth is set, w shallow_fade_depth
 	vec4 ocean_domain;      // xy ocean layer's domain size, zw unused
-	vec4 viewport_wh;       // xy render target size in pixels, z the foam's shade, w unused
+	vec4 viewport_wh;       // xy render target size in pixels, zw unused
 	vec4 light_origin;      // xyz center of the projected map, w unused
 };
 
@@ -74,34 +74,13 @@ layout(location = 0) out vec2 v_flat_xz;
 // 0 = refracted caustics, 1 = the flat water mask (see main()).
 layout(location = 1) flat out int v_mode;
 
-// Cubic B-spline height (Sigg and Hadwiger, GPU Gems 2 ch. 20: four bilinear taps). Bilinear heights have
-// slopes constant over each texel, which focus the light onto the texel edges as a square grid.
-float ocean_h_cubic(vec2 uv) {
-	vec2 res = max(ocean_domain.zw, vec2(1.0));
-	vec2 p = uv * res - 0.5;
-	vec2 i = floor(p);
-	vec2 f = p - i;
-	vec2 f2 = f * f;
-	vec2 f3 = f2 * f;
-	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
-	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
-	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
-	vec2 w3 = f3 / 6.0;
-	vec2 g0 = w0 + w1;
-	vec2 g1 = w2 + w3;
-	vec2 h0 = (i - 0.5 + w1 / g0) / res;
-	vec2 h1 = (i + 1.5 + w3 / g1) / res;
-	return g0.y * (g0.x * texture(ocean_height_tex, vec2(h0.x, h0.y)).r + g1.x * texture(ocean_height_tex, vec2(h1.x, h0.y)).r) +
-			g1.y * (g0.x * texture(ocean_height_tex, vec2(h0.x, h1.y)).r + g1.x * texture(ocean_height_tex, vec2(h1.x, h1.y)).r);
-}
-
 float sample_h(vec2 world_xz) {
 	// Ocean wraps (it's periodic -- that's what lets receivers tile the
 	// map); ripples mirror past their grid, seam-free.
 	vec2 uv_r = world_xz / ripple_domain.xy + 0.5;
 	uv_r = 1.0 - abs(mod(uv_r, 2.0) - 1.0);
-	vec2 uv_o = (world_xz + light_origin.xz) / ocean_domain.xy + 0.5; // repeat sampler; the ocean is anchored to the world, xz to the map's centre
-	return texture(ripple_height_tex, uv_r).r + ocean_h_cubic(uv_o) * ocean_fade(world_xz);
+	vec2 uv_o = world_xz / ocean_domain.xy + 0.5; // repeat sampler
+	return texture(ripple_height_tex, uv_r).r + texture(ocean_height_tex, uv_o).r * ocean_fade(world_xz);
 }
 
 void main() {
@@ -197,45 +176,16 @@ float ocean_fade(vec2 xz) {
 	return smoothstep(0.0, min(max(ripple_domain.w, 1e-3), 0.3), depth_at(xz));
 }
 
-// The foam on the surface (whitecaps in the ocean's rest coordinates, shore foam on the ripple grid): bubbles send
-// most of the sun back up, so the bed under a foam patch is in its soft shade (docs/ideas/water.md, "Foam shade").
-layout(set = 0, binding = 4) uniform sampler2D ocean_foam_tex;
-layout(set = 0, binding = 5) uniform sampler2D shore_foam_tex;
-// viewport_wh.z: of the sun a full foam cover stops (reflected back up and scattered sideways; PhysXWaterSurface3D's
-// foam_shade, 0.8): whitewater's albedo is 0.5 to 0.6 (Whitlock et al. 1982; Koepke 1984) and the bubble layer
-// scatters most of the rest out of the beam.
-
 layout(location = 0) in vec2 v_flat_xz;
 layout(location = 1) flat in int v_mode;
 
 layout(location = 0) out vec4 out_color;
 
-// Cubic B-spline height (Sigg and Hadwiger, GPU Gems 2 ch. 20: four bilinear taps). Bilinear heights have
-// slopes constant over each texel, which focus the light onto the texel edges as a square grid.
-float ocean_h_cubic(vec2 uv) {
-	vec2 res = max(ocean_domain.zw, vec2(1.0));
-	vec2 p = uv * res - 0.5;
-	vec2 i = floor(p);
-	vec2 f = p - i;
-	vec2 f2 = f * f;
-	vec2 f3 = f2 * f;
-	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
-	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
-	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
-	vec2 w3 = f3 / 6.0;
-	vec2 g0 = w0 + w1;
-	vec2 g1 = w2 + w3;
-	vec2 h0 = (i - 0.5 + w1 / g0) / res;
-	vec2 h1 = (i + 1.5 + w3 / g1) / res;
-	return g0.y * (g0.x * texture(ocean_height_tex, vec2(h0.x, h0.y)).r + g1.x * texture(ocean_height_tex, vec2(h1.x, h0.y)).r) +
-			g1.y * (g0.x * texture(ocean_height_tex, vec2(h0.x, h1.y)).r + g1.x * texture(ocean_height_tex, vec2(h1.x, h1.y)).r);
-}
-
 float sample_h(vec2 world_xz) {
 	vec2 uv_r = world_xz / ripple_domain.xy + 0.5;
 	uv_r = 1.0 - abs(mod(uv_r, 2.0) - 1.0);
-	vec2 uv_o = (world_xz + light_origin.xz) / ocean_domain.xy + 0.5; // repeat sampler; the ocean is anchored to the world, xz to the map's centre
-	return texture(ripple_height_tex, uv_r).r + ocean_h_cubic(uv_o) * ocean_fade(world_xz);
+	vec2 uv_o = world_xz / ocean_domain.xy + 0.5; // repeat sampler
+	return texture(ripple_height_tex, uv_r).r + texture(ocean_height_tex, uv_o).r * ocean_fade(world_xz);
 }
 
 vec2 project_refracted_point(vec2 xz, out float incidence) {
@@ -268,7 +218,7 @@ void main() {
 	}
 	vec2 source_dx = dFdx(v_flat_xz);
 	vec2 source_dy = dFdy(v_flat_xz);
-	float incidence; // unused: the receivers' own sun light carries the surface's transmission
+	float incidence;
 	vec2 refracted = project_refracted_point(v_flat_xz, incidence);
 	vec2 refracted_dx = dFdx(refracted);
 	vec2 refracted_dy = dFdy(refracted);
@@ -278,20 +228,7 @@ void main() {
 	float flat_projection_area = abs(light_right_ext.x * light_up_refdepth.z -
 			light_right_ext.z * light_up_refdepth.x);
 	float concentration = flat_projection_area * source_area / max(refracted_area, 1e-9);
-	// Physical: the sun's irradiance at the reference depth over what a flat surface would let through there
-	// (1 = even light, 0 = none reaches, far above 1 at a focus), summed over every part of the surface that
-	// lands on the texel (additive blending), so where folds overlap their light adds. Held below 64 (a
-	// half float's precision there is still a few percent). Receivers read R + (1 - G): the dry share of a texel
-	// is lit evenly.
-	vec2 uv_o = (v_flat_xz + light_origin.xz) / ocean_domain.xy + 0.5;
-	vec2 uv_r = v_flat_xz / ripple_domain.xy + 0.5;
-	// The cover the surface draws from each field (its smoothstep, and for the swash's foam the open lace that
-	// physx_water_surface_3d's shore_foam_at draws: 0.5 g^2 + 0.1 g), not the raw amount.
-	float foam = smoothstep(0.0, 1.0, texture(ocean_foam_tex, uv_o).r) * ocean_fade(v_flat_xz);
-	if (all(greaterThanEqual(uv_r, vec2(0.0))) && all(lessThanEqual(uv_r, vec2(1.0)))) {
-		float g = smoothstep(0.0, 1.0, texture(shore_foam_tex, uv_r).r);
-		foam = max(foam, 0.5 * g * g + 0.1 * g);
-	}
-	float through = 1.0 - viewport_wh.z * clamp(foam, 0.0, 1.0);
-	out_color = vec4(min(concentration, 64.0) * through * wet_at(v_flat_xz), 0.0, 0.0, 0.0);
+	float focused_light = max(concentration - 1.0, 0.0);
+	float tone = focused_light / (focused_light + 8.0);
+	out_color = vec4(incidence * tone * wet_at(v_flat_xz), 0.0, 0.0, 0.0);
 }

@@ -1,1 +1,0 @@
-- Weather: the sky hazes far clouds into the horizon on its own, with the weather's default 40 km haze until a WeatherMap3D sets it, so the far deck no longer runs to the horizon as a crisp strip of small puffs (WeatherSkyMaterial).

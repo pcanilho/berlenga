@@ -33,7 +33,6 @@
 #include "core/io/json.h"
 #include "core/object/callable_mp.h"
 #include "core/os/os.h"
-#include "core/os/time.h"
 #include "core/version.h"
 #include "editor/editor_string_names.h"
 #include "editor/settings/editor_settings.h"
@@ -47,8 +46,7 @@ bool EngineUpdateLabel::_can_check_updates() const {
 void EngineUpdateLabel::_check_update() {
 	checked_update = true;
 	_set_status(UpdateStatus::BUSY);
-	// Berlenga ships builds named after their commit on GitHub releases, not Godot version numbers.
-	http->request("https://api.github.com/repos/pcanilho/berlenga/releases/latest", { "Accept: application/vnd.github+json" });
+	http->request("https://godotengine.org/versions.json");
 }
 
 void EngineUpdateLabel::_http_request_completed(int p_result, int p_response_code, const PackedStringArray &p_headers, const PackedByteArray &p_body) {
@@ -64,43 +62,103 @@ void EngineUpdateLabel::_http_request_completed(int p_result, int p_response_cod
 		return;
 	}
 
-	Dictionary release;
+	Array version_array;
 	{
-		const String s = String::utf8((const char *)p_body.ptr(), p_body.size());
-		const Variant result = JSON::parse_string(s);
-		if (result.get_type() != Variant::DICTIONARY) {
+		const uint8_t *r = p_body.ptr();
+		String s = String::utf8((const char *)r, p_body.size());
+
+		Variant result = JSON::parse_string(s);
+		if (result == Variant()) {
 			_set_status(UpdateStatus::ERROR);
 			_set_message(TTR("Failed to parse version JSON."), theme_cache.error_color);
 			return;
 		}
-		release = result;
+		if (result.get_type() != Variant::ARRAY) {
+			_set_status(UpdateStatus::ERROR);
+			_set_message(TTR("Received JSON data is not a valid version array."), theme_cache.error_color);
+			return;
+		}
+		version_array = result;
 	}
 
-	const String tag = release.get("tag_name", "");
-	const String published = String(release.get("published_at", "")).trim_suffix("Z");
+	UpdateMode update_mode = UpdateMode(int(EDITOR_GET("network/connection/check_for_updates")));
+	if (update_mode == UpdateMode::AUTO) {
+		if (_get_version_type(GODOT_VERSION_STATUS) == VersionType::STABLE) {
+			update_mode = UpdateMode::NEWEST_STABLE;
+		} else {
+			update_mode = UpdateMode::NEWEST_UNSTABLE;
+		}
+	}
+	bool stable_only = update_mode == UpdateMode::NEWEST_STABLE || update_mode == UpdateMode::NEWEST_PATCH;
+
 	available_newer_version = String();
-	available_url = String();
-	if (tag.is_empty() || published.is_empty()) {
-		_set_status(UpdateStatus::UP_TO_DATE);
-		return;
+	for (const Variant &data_bit : version_array) {
+		const Dictionary version_info = data_bit;
+
+		const String base_version_string = version_info.get("name", "");
+		const PackedStringArray version_bits = base_version_string.split(".");
+
+		if (version_bits.size() < 2) {
+			continue;
+		}
+
+		int minor = version_bits[1].to_int();
+		if (version_bits[0].to_int() != GODOT_VERSION_MAJOR || minor < GODOT_VERSION_MINOR) {
+			continue;
+		}
+
+		int patch = 0;
+		if (version_bits.size() >= 3) {
+			patch = version_bits[2].to_int();
+		}
+
+		if (minor == GODOT_VERSION_MINOR && patch < GODOT_VERSION_PATCH) {
+			continue;
+		}
+
+		if (update_mode == UpdateMode::NEWEST_PATCH && minor > GODOT_VERSION_MINOR) {
+			continue;
+		}
+
+		const Array releases = version_info.get("releases", Array());
+		if (releases.is_empty()) {
+			continue;
+		}
+
+		const Dictionary newest_release = releases[0];
+		const String release_string = newest_release.get("name", "unknown");
+
+		int release_index;
+		VersionType release_type = _get_version_type(release_string, &release_index);
+
+		if (minor > GODOT_VERSION_MINOR || patch > GODOT_VERSION_PATCH) {
+			if (stable_only && release_type != VersionType::STABLE) {
+				continue;
+			}
+
+			available_newer_version = vformat("%s-%s", base_version_string, release_string);
+			break;
+		}
+
+		int current_version_index;
+		VersionType current_version_type = _get_version_type(GODOT_VERSION_STATUS, &current_version_index);
+
+		if (int(release_type) > int(current_version_type)) {
+			break;
+		}
+
+		if (int(release_type) == int(current_version_type) && release_index <= current_version_index) {
+			break;
+		}
+
+		available_newer_version = vformat("%s-%s", base_version_string, release_string);
+		break;
 	}
 
-	// Release tags are "build-<short commit hash>". The build being run is the latest release
-	// when its own commit hash starts with that short hash.
-	const String release_hash = tag.trim_prefix("build-");
-	const String own_hash = String(GODOT_VERSION_HASH);
-	const bool same_build = !own_hash.is_empty() && !release_hash.is_empty() && own_hash.begins_with(release_hash);
-
-	// Otherwise the release is newer when it was published after this build's commit.
-	const int64_t published_unix = Time::get_singleton()->get_unix_time_from_datetime_string(published);
-	const bool newer = published_unix > 0 && (GODOT_VERSION_TIMESTAMP == 0 || published_unix > (int64_t)GODOT_VERSION_TIMESTAMP);
-
-	if (!same_build && newer) {
-		available_newer_version = tag;
-		available_url = release.get("html_url", "https://github.com/pcanilho/berlenga/releases/latest");
+	if (!available_newer_version.is_empty()) {
 		_set_status(UpdateStatus::UPDATE_AVAILABLE);
 		_set_message(vformat(TTR("Update available: %s."), available_newer_version), theme_cache.update_color);
-	} else {
+	} else if (available_newer_version.is_empty()) {
 		_set_status(UpdateStatus::UP_TO_DATE);
 	}
 }
@@ -236,7 +294,7 @@ void EngineUpdateLabel::pressed() {
 		} break;
 
 		case UpdateStatus::UPDATE_AVAILABLE: {
-			OS::get_singleton()->shell_open(available_url);
+			OS::get_singleton()->shell_open("https://godotengine.org/download/archive/" + available_newer_version);
 		} break;
 
 		default: {

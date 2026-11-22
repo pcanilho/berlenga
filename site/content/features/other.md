@@ -1,7 +1,6 @@
 ---
 title: "Other"
-weight: 110
-group: "Engine"
+weight: 130
 summary: "Cached shadows, time-sliced reflection probes, video memory queries, fixes."
 ---
 

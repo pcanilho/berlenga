@@ -32,7 +32,6 @@
 
 #include "physx_blast_asset.h"
 
-#include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
@@ -86,35 +85,6 @@ protected:
 	void _validate_property(PropertyInfo &p_property) const;
 
 public:
-	// Render data of one chunk surface (one material slot), object-local. Public for PhysXBlastAsset.prepare_render.
-	struct ChunkSurface {
-		int slot = 0;
-		PackedVector3Array vertices;
-		PackedVector3Array normals;
-		// From the asset's chunk_meshes, when it has them (empty otherwise).
-		PackedFloat32Array tangents;
-		PackedColorArray colors;
-		PackedVector2Array uv, uv2;
-		// Indexed chunk_meshes keep their index (a third of the vertices to copy and upload); empty: a soup.
-		PackedInt32Array indices;
-	};
-	// Each chunk's surfaces, from its triangle soup (flat normals) or the asset's chunk_meshes.
-	static void build_chunk_surfaces(const LocalVector<PackedVector3Array> &p_points, const Array &p_meshes, const Array &p_materials, LocalVector<LocalVector<ChunkSurface>> &r_surfaces);
-	// A ChunkSurface as Mesh arrays.
-	static Array chunk_surface_arrays(const ChunkSurface &p_surface);
-
-	// Velocity a dynamic destructible starts with (a falling tree swapped in mid-fall keeps its motion). Set before
-	// it enters the tree, or while intact after: the intact body takes it at once.
-	void set_initial_linear_velocity(const Vector3 &p_velocity);
-	Vector3 get_initial_linear_velocity() const { return initial_linear_velocity; }
-	void set_initial_angular_velocity(const Vector3 &p_velocity);
-	Vector3 get_initial_angular_velocity() const { return initial_angular_velocity; }
-
-	// How fast overlapping pieces may be pushed apart (m/s, PhysX only). Split pieces start touching at the break;
-	// uncapped, PhysX threw them apart at tens of m/s and through the ground. 0: uncapped (or the project setting).
-	void set_max_depenetration_velocity(float p_velocity);
-	float get_max_depenetration_velocity() const { return max_depenetration_velocity; }
-
 	void set_asset_path(const String &p_path);
 	String get_asset_path() const { return asset_path; }
 	void set_chunks_path(const String &p_path);
@@ -312,12 +282,6 @@ public:
 	// gap, missing the pile entirely) instead of accumulating forever.
 	// Default is low enough not to trigger on an ordinary scene; set it to
 	// match this scene's actual floor/void.
-	// Pieces whose middle starts below this world height stay where they are (static, no kick): the part of an
-	// object set into the ground (a half-buried stone), which would otherwise start inside the terrain and be
-	// pushed down through it. The default, far below anything, turns this off.
-	void set_buried_below_y(float p_y) { buried_below_y = p_y; }
-	float get_buried_below_y() const { return buried_below_y; }
-
 	void set_kill_y(float p_y) { kill_y = p_y; }
 	float get_kill_y() const { return kill_y; }
 
@@ -348,12 +312,6 @@ public:
 	// demo-script concern layered on top.
 	int apply_radial_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius);
 
-	// For effects that restyle every piece, live and future (PhysXBurnable3D's char): the materials its chunks draw
-	// with (the asset's by slot, or material_override), a stand-in for one of them, and instance shader parameters.
-	Array get_render_materials() const;
-	void set_material_remap(const Ref<Material> &p_from, const Ref<Material> &p_to);
-	void set_instance_shader_parameter(const StringName &p_name, const Variant &p_value);
-
 	// Live piece count right now: 1 while intact (the chunk-0 placeholder),
 	// then one per still-simulating piece, dropping as debris passes kill_y.
 	// Because _spawn_piece() frees a chunk's previous piece before spawning
@@ -372,18 +330,7 @@ public:
 	// or a dead body (call get_piece_count() first); get_piece_chunk()
 	// returns UINT32_MAX there.
 	Transform3D get_piece_transform(int p_index) const;
-	// The asset chunk indices a piece carries (an island holds several; for build_prefractured, chunk i + 1 is piece i).
-	PackedInt32Array get_piece_chunks(int p_index) const;
 	uint32_t get_piece_chunk(int p_index) const;
-	// The piece's body state, for effects that follow debris (rockfall dust): its linear velocity, the world
-	// position of its chunks' centroid, and its mass. Zero for an out-of-range index or a dead body.
-	Vector3 get_piece_linear_velocity(int p_index) const;
-	Vector3 get_piece_center(int p_index) const;
-	float get_piece_mass(int p_index) const;
-	// Where a piece's chunks sat in the intact object (this node's local space, unscaled), and their volume (m3,
-	// scaled): what an effect that marked the intact object (a burning patch) needs to find its pieces again.
-	Vector3 get_piece_rest_center(int p_index) const;
-	float get_piece_volume(int p_index) const;
 
 	PackedStringArray get_configuration_warnings() const override;
 
@@ -419,9 +366,6 @@ private:
 	String chunks_path;
 	Ref<PhysXBlastAsset> blast_asset;
 	Ref<Material> material_override_res;
-	HashMap<RID, Ref<Material>> material_remap; // a surface material's stand-in on every piece (a burning look)
-	HashMap<StringName, Variant> instance_params; // instance shader parameters on every piece
-	void _apply_remap_and_params(RenderingServer *p_rs, RID p_instance, RID p_mesh) const;
 	GIMode gi_mode = GI_MODE_STATIC;
 	ShadowCastingSetting cast_shadow = SHADOW_CASTING_SETTING_ON;
 	float transparency = 0.0f;
@@ -446,7 +390,6 @@ private:
 	float impact_damage_scale = 1.0f;
 	float impact_radius = 5.0f;
 	float kill_y = -1000.0f;
-	float buried_below_y = -1.0e9f;
 	float piece_lifetime = 0.0f;
 	float piece_shrink_time = 0.0f;
 	bool freeze_when_asleep = false;
@@ -486,18 +429,16 @@ private:
 	RID _chunk_shape(uint32_t p_chunk);
 	// Per-chunk render data, by material slot, computed once per load. A
 	// piece's mesh gets ONE surface per slot (not per chunk: an island of
-	// ~190 chunks was ~190 draw calls). A chunk's surfaces take their slots
-	// from the asset's chunk_meshes (several for a multi-material chunk,
-	// drawn with PhysXBlastAsset.materials); everything else is slot 0.
+	// ~190 chunks was ~190 draw calls). Every chunk is slot 0 today -- the
+	// asset keeps positions only; an interior-face slot (Blast's
+	// kMaterialInteriorId) slots in here once authoring keeps it.
+	struct ChunkSurface {
+		int slot = 0;
+		PackedVector3Array vertices;
+		PackedVector3Array normals;
+	};
 	LocalVector<LocalVector<ChunkSurface>> chunk_surfaces;
 	void _compute_chunk_surfaces();
-	// The asset's shared render cache, or this node's own for asset_path/chunks_path.
-	Ref<PhysXBlastRenderCache> render_cache;
-	RID _chunk_mesh(uint32_t p_chunk);
-	Vector3 initial_linear_velocity;
-	Vector3 initial_angular_velocity;
-	float max_depenetration_velocity = 3.0f;
-	void _apply_depenetration_cap(RID p_body) const;
 	void _free_chunk_cache();
 	// Whether an island made of p_chunks stays STATIC under `anchor`.
 	bool _island_anchored(const LocalVector<uint32_t> &p_chunks) const;
@@ -505,10 +446,8 @@ private:
 
 	struct ChunkVisual {
 		RID body; // its shapes are the shared chunk_shapes[] of chunk_indices, not owned
-		// One render instance per chunk, of the shared per-chunk meshes (PhysXBlastRenderCache): a split moves
-		// instances instead of rebuilding a merged mesh (about a second for a tree).
-		LocalVector<RID> instances;
-		LocalVector<RID> instance_meshes; // each instance's chunk mesh
+		RID mesh;
+		RID instance;
 		// Which asset chunks this piece renders/collides, aligned with
 		// `shapes`. One entry while intact (chunk 0, the placeholder) and
 		// for a single-chunk (leaf) split product; an island split product
@@ -542,7 +481,6 @@ private:
 		bool shrinking = false;
 		Vector3 shrink_pivot;
 	};
-	void _set_piece_transform(const ChunkVisual &p_piece, const Transform3D &p_transform) const;
 	// Frees pieces[p_index] and retires its Blast actor (so a later hit can't
 	// split it and bring its chunks back): kill_y and piece_lifetime.
 	void _retire_piece(uint32_t p_index);
@@ -573,9 +511,6 @@ private:
 	// i.e. always from a moment before physics has had any chance to
 	// overwrite it.
 	Vector3 spawn_scale = Vector3(1, 1, 1);
-	// The node transform last written from the intact dynamic body (or spawned at): a different one at the next step
-	// was set by a script (a spawn, a respawn), and the body is moved there.
-	Transform3D synced;
 
 	bool _load();
 	bool _load_asset_bytes(const PackedByteArray &p_bytes);

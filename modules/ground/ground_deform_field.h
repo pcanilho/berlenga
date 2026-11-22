@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -38,8 +37,6 @@
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "core/variant/variant.h"
-
-#include "modules/world/world_walker_steps.h"
 
 class Image;
 class ImageTexture;
@@ -91,9 +88,6 @@ public:
 	class StampSink {
 	public:
 		virtual void stamp(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) = 0;
-		// add_amount's stamp: dig (p_depth > 0) or deposit (p_depth < 0) a set depth over a disc. p_cell: the size of
-		// the grid cell it writes (runoff, blown sand), 0 for none (see amount_cover()).
-		virtual void amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell = 0.0f) {}
 		virtual ~StampSink() {}
 	};
 	class Columns {
@@ -101,73 +95,21 @@ public:
 		virtual Column column(float p_x, float p_z) const = 0;
 		// Bekker sinkage of p_body at its position, m.
 		virtual float sinkage(const Body &p_body) const = 0;
-		// A body this owner deforms its own way (a car's wheels on the ground, through its soil model).
-		virtual bool skips(const Node3D *p_node) const { return false; }
 		virtual ~Columns() {}
 	};
 
 	float extent = 32.0f;
 	int resolution = 512;
 	int max_cached_tiles = 1024;
-	// Mud tracked onto firm ground (mud round 3): fresh values from 4 are a laid film of clay, 4 + its share in
-	// sixteenths + 0.06 x its wetness (ground_deform.glsl mud_band()).
-	static float mud_band(float p_share, float p_wet) {
-		const float b = CLAMP(Math::round(p_share * 16.0f) - 1.0f, 0.0f, 15.0f);
-		return 4.0f + b / 16.0f + 0.06f * CLAMP(p_wet, 0.0f, 1.0f);
-	}
-	static Vector2 mud_band_share_wet(float p_w) {
-		const float v = p_w - 4.0f;
-		const float b = Math::floor(v * 16.0f + 1e-4f);
-		return Vector2((b + 1.0f) / 16.0f, CLAMP((v - b / 16.0f) / 0.06f, 0.0f, 1.0f));
-	}
-	Vector4 amount_print; // a tracked-mud film's print (mud_print_mask(): kind, yaw, sole half extents)
-	static float mud_print_mask(const Vector4 &p_b, float p_x, float p_z, Vector3 p_pos);
-	float amount_fresh = 0.0f; // deposits (add_amount) mark the sand they lay this fresh (0..1, dries away; for digs, 0..1 scales the tint they leave), or from 2 a band of another sand, 2 plus its share, that stays (a swash mark's heavy minerals); below 0, digs take only laid sand (rim) and its tint, and at -2 level the dent too (a washed swash line)
 	bool track_fresh = false; // a third channel, 1 where freshly turned, decayed by the owner
 	float press_settle = 0.0f; // seconds of slumping a pressed tile owes (0: none, snow)
-	int press_tread = 0; // a wheel's tread for its box presses (tread_relief(): 0 none, 1 road .. 4 chains)
-	// A hard body in the ground under the next presses (mud round 15.2): a capsule from press_floor_a.xyz to
-	// press_floor_b of radius press_floor_a.w (0: none). The pressed surface stays on its top: the mud is dug out
-	// round a stone a wheel meets, not the whole print held up.
-	Vector4 press_floor_a;
-	Vector3 press_floor_b;
-	// The capsule's top over (x, z), or -1e9 off it.
-	static float floor_top(const Vector4 &p_a, const Vector3 &p_b, float p_x, float p_z) {
-		if (p_a.w <= 0.0f) {
-			return -1e9f;
-		}
-		const Vector2 a2(p_a.x, p_a.z);
-		const Vector2 ab(p_b.x - p_a.x, p_b.z - p_a.z);
-		const float l2 = ab.length_squared();
-		const Vector2 p(p_x, p_z);
-		const float t = l2 > 1e-8f ? CLAMP((p - a2).dot(ab) / l2, 0.0f, 1.0f) : 0.0f;
-		const float d2 = (a2 + ab * t).distance_squared_to(p);
-		const float r2 = p_a.w * p_a.w;
-		return d2 < r2 ? p_a.y + (p_b.y - p_a.y) * t + Math::sqrt(r2 - d2) : -1e9f;
-	}
-	// The heave zone round a print, in footing widths at least (0: half the equivalent radius only, snow).
-	// The ground uses 1: Prandtl's passive wedge beside a strip footing on undrained clay reaches one width
-	// out, so the pushed soil rises as a broad lip rather than a wall round the print.
-	float rim_reach = 0.0f;
-	static float rim_ring(bool p_box, Vector2 p_half, float p_radius, float p_reach) {
-		const float base = 0.5f * (p_box ? Math::sqrt(p_half.x * p_half.y) : p_radius);
-		const float width = p_box ? 2.0f * MIN(p_half.x, p_half.y) : p_radius;
-		return MAX(base, p_reach * width);
-	}
 	StampSink *stamp_sink = nullptr;
-	// The finest texel the stamps land on (a near field fed through stamp_sink), 0 for this field's own: a
-	// moving body is pressed at least once per such texel, or each press leaves its own tooth in the rim.
-	float stamp_step = 0.0f;
 
 	Vector2i origin; // texel index of the first texel
 	bool valid = false;
 	LocalVector<float> dent; // m below the undisturbed surface
 	LocalVector<float> rim; // m on top
 	LocalVector<float> fresh;
-	LocalVector<float> water; // standing water, m (the ground on the GPU: read back with the field, not shifted)
-	LocalVector<float> water_mud; // the clay the standing water carries, kg/m3 (mud round 3)
-	LocalVector<float> regrown; // the share of the sward grown back over a rut since it was pressed, 0..1 (mud round 6; GPU read back)
-	LocalVector<float> water_cut; // the bed the runoff cut (+) or filled (-) since the field last moved, m (GPU runoff)
 	LocalVector<uint8_t> tile_active; // something deformed in the tile
 	LocalVector<float> tile_settle; // seconds of slumping owed (0: asleep)
 	LocalVector<float> tile_wait; // seconds a slow tile has saved up before its next pass
@@ -185,8 +127,6 @@ public:
 	void invalidate() { valid = false; }
 	void clear();
 	int cached_tile_count() const { return cache.size(); }
-	bool has_cached(Vector2i p_tile) const { return cache.has(p_tile); }
-	void forget_cached(Vector2i p_tile) { cache.erase(p_tile); }
 
 	float sample(const LocalVector<float> &p_field, float p_x, float p_z) const;
 	float dent_at(float p_x, float p_z) const { return valid ? sample(dent, p_x, p_z) : 0.0f; }
@@ -195,26 +135,6 @@ public:
 
 	// Presses down to p_bottom within the footprint (a bowl when p_round, an oriented box when
 	// p_box), and p_sink below the undisturbed surface. Returns the volume moved, m3.
-	// Grains leaving (p_depth > 0: dug, rim first) or landing (p_depth < 0: dent first) over a disc of
-	// p_radius, p_depth deep (sand stage 2). Returns the volume, m3 (0 when a stamp sink takes it).
-	// An amount's share of a texel offset (p_dx, p_dz) from its centre: a disc of p_radius antialiased over one texel,
-	// or (p_tent) a bilinear tent p_radius each way. A grid's cells (runoff, blown sand) reach the finer near field as
-	// tents one cell wide, whose copies add up to the smooth interpolation of the cells' values: the near field draws
-	// what the main field draws, without the round pits and egg-crate dimples its fine texels would show of discs.
-	// The disc holds pi r^2, the tent r^2.
-	static float amount_cover(float p_dx, float p_dz, float p_radius, float p_texel, bool p_tent) {
-		if (p_tent) {
-			return MAX(1.0f - Math::abs(p_dx) / p_radius, 0.0f) * MAX(1.0f - Math::abs(p_dz) / p_radius, 0.0f);
-		}
-		return CLAMP(0.5f - (Math::sqrt(p_dx * p_dx + p_dz * p_dz) - p_radius) / p_texel, 0.0f, 1.0f);
-	}
-	// add_amount() lays a bilinear tent p_radius wide instead of a disc: the tents of a lattice p_radius apart sum flat.
-	bool amount_tent = false;
-	float amount_scale(Vector3 p_position, float p_radius, bool p_tent = false) const;
-	float add_amount(const Columns &p_columns, Vector3 p_position, float p_radius, float p_depth, float p_cell = 0.0f);
-	static float sole_sd(float p_lx, float p_lz, Vector2 p_half);
-	static float sole_relief(float p_lx, float p_lz, Vector2 p_half);
-	static float tread_relief(int p_code, float p_wx, float p_wz, float p_lx, float p_lz, Vector2 p_half, float p_cy, float p_sy, float p_slip);
 	float press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity = Vector2());
 	// Bodies in p_groups press along the path they moved since the last call.
 	void press_bodies(SceneTree *p_tree, const PackedStringArray &p_groups, const Columns &p_columns, float p_character_mass, float p_character_area, float p_contact_tolerance, double p_delta);
@@ -249,7 +169,6 @@ private:
 		uint64_t frame = 0;
 	};
 	HashMap<ObjectID, Mover> movers;
-	WorldWalkerSteps walker_steps; // a walker's footfalls (its soles, not its body shape)
 	uint64_t frame = 0;
 
 	int channels() const { return track_fresh ? 3 : 2; }

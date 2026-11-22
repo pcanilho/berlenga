@@ -133,7 +133,6 @@ private:
 		uint64_t use_rotation_3d : 1;
 		uint64_t use_rotation_velocity_3d : 1;
 		uint64_t use_rotation_velocity_3d_curve : 1;
-		uint64_t weather_wind : 1;
 
 		MaterialKey() {
 			memset(this, 0, sizeof(MaterialKey));
@@ -173,7 +172,6 @@ private:
 		mk.attractor_enabled = attractor_interaction_enabled;
 		mk.collision_scale = collision_scale;
 		mk.turbulence_enabled = turbulence_enabled;
-		mk.weather_wind = wind_drag > 0.0f && !weather_wind_shader_code.is_empty();
 		mk.limiter_curve = velocity_limit_curve.is_valid() ? 1 : 0;
 		mk.alpha_curve = alpha_curve.is_valid() ? 1 : 0;
 		mk.emission_curve = emission_curve.is_valid() ? 1 : 0;
@@ -388,14 +386,6 @@ private:
 	//do not save emission points here
 
 	bool attractor_interaction_enabled = false;
-
-	// The shared wind (WeatherMap3D, docs/ideas/wind.md): particles take linear drag toward the air velocity
-	// across gravity, at wind_drag per second (1 / the time they take to catch the wind); the gusts' vertical
-	// part pushes them too, but the drag does not brake their fall. Needs the weather module, which hands in
-	// its shader code; no WeatherMap3D in the scene, no wind.
-	float wind_drag = 1.0f;
-	float wind_height = -1.0f; // m above the ground; < 0: from the particle's height
-	static String weather_wind_shader_code;
 	CollisionMode collision_mode;
 	bool collision_scale = false;
 	float collision_friction = 0.0f;
@@ -525,15 +515,6 @@ public:
 	Vector3 get_rotation_velocity_3d_max() const;
 	void set_rotation_velocity_3d_curve(const Ref<Texture2D> &p_texture);
 	Ref<Texture2D> get_rotation_velocity_3d_curve() const;
-
-	void set_wind_drag(float p_drag);
-	float get_wind_drag() const { return wind_drag; }
-	void set_wind_height(float p_height);
-	float get_wind_height() const { return wind_height; }
-	// Called by the weather module at start: GLSL defining weather_wind(world_pos, height) and
-	// weather_height_above_ground(world_pos).
-	static void set_weather_wind_shader_code(const String &p_code) { weather_wind_shader_code = p_code; }
-	static bool has_weather_wind() { return !weather_wind_shader_code.is_empty(); }
 
 	void set_attractor_interaction_enabled(bool p_enable);
 	bool is_attractor_interaction_enabled() const;

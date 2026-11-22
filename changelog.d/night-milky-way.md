@@ -1,1 +1,0 @@
-- Weather: the night sky takes a Milky Way panorama in galactic coordinates (`milky_way` texture, `milky_way_luminance`), turned with the stars by the sky clock.

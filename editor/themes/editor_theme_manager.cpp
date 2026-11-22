@@ -333,10 +333,6 @@ EditorThemeManager::ThemeConfiguration EditorThemeManager::_create_theme_config(
 			} else if (config.preset == "Breeze Dark") {
 				preset_accent_color = Color(0.239, 0.682, 0.914);
 				preset_base_color = Color(0.1255, 0.1373, 0.149);
-			} else if (config.preset == "Godot") {
-				// Upstream Godot's default colors.
-				preset_accent_color = Color(0.337, 0.62, 1.0);
-				preset_base_color = Color(0.161, 0.161, 0.161);
 			} else if (config.preset == "Godot 2") {
 				preset_accent_color = Color(0.53, 0.67, 0.89);
 				preset_base_color = Color(0.24, 0.23, 0.27);
@@ -353,11 +349,6 @@ EditorThemeManager::ThemeConfiguration EditorThemeManager::_create_theme_config(
 				preset_base_color = Color(0.9, 0.9, 0.9);
 				preset_contrast = light_contrast;
 				preset_icon_saturation = 1;
-			} else if (config.preset == "Silver") {
-				// The docs site's dark palette: silver on near-black.
-				preset_accent_color = Color(0.788, 0.808, 0.831);
-				preset_base_color = Color(0.082, 0.094, 0.106);
-				preset_contrast = 0.35;
 			} else if (config.preset == "Solarized (Dark)") {
 				preset_accent_color = Color(0.15, 0.55, 0.82);
 				preset_base_color = Color(0.03, 0.21, 0.26);
@@ -366,9 +357,9 @@ EditorThemeManager::ThemeConfiguration EditorThemeManager::_create_theme_config(
 				preset_accent_color = Color(0.15, 0.55, 0.82);
 				preset_base_color = Color(0.89, 0.86, 0.79);
 				preset_contrast = light_contrast;
-			} else { // Default: Berlenga steel on graphite.
-				preset_accent_color = Color(0.56, 0.71, 0.85);
-				preset_base_color = Color(0.125, 0.13, 0.14);
+			} else { // Default
+				preset_accent_color = Color(0.337, 0.62, 1.0);
+				preset_base_color = Color(0.161, 0.161, 0.161);
 			}
 
 			config.accent_color = preset_accent_color;

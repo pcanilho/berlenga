@@ -1,4 +1,0 @@
-### Added
-
-- Vegetation: cereal crops on `GrassField3D` (`crop`: wheat, barley, oats, rye). Each tiller is real geometry (stem, four leaves, the ear with awns, or the open oat panicle) in drill rows (`row_spacing`, `drill_angle`), one to three tillers to a plant, swaying in the same wind as the grass. `crop_stage` (BBCH) sets the look: leafy rows, stem elongation, heading, ears and straw ripening from green to gold with the leaves dying from the bottom, nodding barley, and stubble after harvest.
-- Vegetation: crop fields (`GrassField3D.fields`): polygons each with its own drill angle, fixed stage or sowing calendar (`sown_day`, `harvest_day` with a season source; `crop_calendar_stage`), tramlines (paired unsown wheel tracks) and a headland drilled round the edge. The ground under them shows the drilled soil and darker wheelings, and past the tillers the crop's colour and cover at its stage (`crop_canopy_look`), so fields read as a patchwork to the horizon.

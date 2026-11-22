@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -36,7 +35,6 @@
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
-#include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
 #include "scene/resources/physics_material.h"
 #include "servers/rendering/rendering_server_types.h"
@@ -103,7 +101,6 @@ class Landscape3D : public Node3D {
 	int chunk_quads = 64;
 	int lod_levels = 5;
 	real_t lod_error = 1.0;
-	real_t cliff_relief = 0.6; // m, rock ledges built into faces steeper than about 50 degrees at the finest level (0 = off)
 	Ref<Material> material;
 	bool cast_shadows = true;
 	NodePath camera_path;
@@ -128,14 +125,6 @@ class Landscape3D : public Node3D {
 	int levels = 1; // lod_levels clamped to the chunk size
 	LocalVector<Chunk> chunks;
 	HashMap<uint64_t, MeshEntry> meshes;
-	// Holes from the source TerrainGenerator3D (cave mouths): per chunk holding any, one flag per quad
-	// (chunk_quads^2, tested at its centre). Triangles whose centroid is in a hole quad are left out; such chunks keep the
-	// finest level.
-	HashMap<int, LocalVector<uint8_t>> chunk_holes;
-	ObjectID hole_source;
-	void _refresh_holes(const Rect2 &p_rect);
-	void _on_holes_changed(const Rect2 &p_rect);
-	bool _hole_tri(const LocalVector<uint8_t> *p_holes, int p_level, int p_a, int p_b, int p_c) const;
 	LocalVector<int> indices[8][16]; // per (level, edge mask)
 	uint64_t frame = 0;
 	Transform3D last_camera;
@@ -143,23 +132,6 @@ class Landscape3D : public Node3D {
 	real_t last_viewport_height = 0.0;
 	bool lods_dirty = true;
 	bool have_camera = false;
-
-	// The stand's ground map (WorldStand worn trails and boar rooting) for TerrainMaterial3D: globals
-	// terrain_stand_map (RG8: r trail wear, g fresh rooting) and terrain_stand_rect, a STAND_SIZE square round the camera.
-	static constexpr int STAND_RES = 512;
-	static constexpr real_t STAND_SIZE = 256.0;
-	Ref<ImageTexture> stand_texture;
-	Vector2 stand_origin = Vector2(1e30, 1e30);
-	uint64_t stand_generation = UINT64_MAX;
-	ObjectID stand_id;
-	bool stand_published = false;
-	void _update_stand_map(const Vector3 &p_camera);
-	void _clear_stand_map();
-	// cliff_relief and the grid for meshes drawn over the landscape with the terrain material that carry no relief
-	// data of their own (GroundSurface3D's patch): global terrain_cliff_relief = (metres, grid spacing, grid origin),
-	// read in world space as the stand map is (the landscape is not moved).
-	Vector4 cliff_published;
-	void _publish_cliff_relief(bool p_clear = false);
 
 	// Streaming.
 	ObjectID stream_source; // the TerrainGenerator3D read from worker threads
@@ -184,10 +156,6 @@ class Landscape3D : public Node3D {
 
 	float _h(int p_x, int p_z) const;
 	Vector3 _normal(int p_x, int p_z) const;
-	Vector3 _normal_at(real_t p_x, real_t p_z) const; // bilinear, in grid units
-	float _cliff_offset(const Vector3 &p_world) const;
-	Vector3 _cliff_point(const Vector3 &p_world, real_t p_weight_scale) const;
-	void _build_cliff_surface(MeshJob &r_job) const;
 	const LocalVector<int> &_indices(int p_level, int p_mask);
 	void _measure(const float *p_h, int p_stride, float *r_error, float &r_min, float &r_max) const;
 	void _measure_chunk(int p_cx, int p_cz);
@@ -241,9 +209,6 @@ public:
 	int get_lod_levels() const { return lod_levels; }
 	void set_lod_error(real_t p_pixels);
 	real_t get_lod_error() const { return lod_error; }
-	void set_cliff_relief(real_t p_metres);
-	real_t get_cliff_relief() const { return cliff_relief; }
-	Vector3 get_cliff_point(const Vector3 &p_global_position) const;
 	void set_material(const Ref<Material> &p_material);
 	Ref<Material> get_material() const { return material; }
 	void set_cast_shadows(bool p_enable);
@@ -276,8 +241,6 @@ public:
 
 	Vector2i get_chunk_grid() const { return Vector2i(cw, ch); }
 	int get_lod_count() const { return levels; }
-	int get_hole_chunk_count() const { return chunk_holes.size(); }
-	int get_hole_quad_count() const;
 	int get_chunk_lod(const Vector2i &p_chunk) const;
 	int get_chunk_edge_mask(const Vector2i &p_chunk) const;
 	real_t get_chunk_lod_error(const Vector2i &p_chunk, int p_level) const;

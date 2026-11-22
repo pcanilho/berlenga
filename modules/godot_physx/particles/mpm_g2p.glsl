@@ -10,9 +10,6 @@ void main() {
 	if (id >= uint(PCOUNT)) {
 		return;
 	}
-	if (particle_dead(id)) {
-		return;
-	}
 
 	Particle p = particles[id];
 	vec3 x = p.x_d.xyz;
@@ -42,13 +39,7 @@ void main() {
 
 	// Gentle global damping. Granular material creeps at an unconfined free
 	// surface (continuum MPM sand always does); a touch more damping settles it.
-	// Grains thrown through the air (ground grains) fly ballistic: the damping fades out above ~1 m/s,
-	// where nothing is creeping.
-	float damp = GRANULAR ? 0.992 : 0.996;
-	if (FREE_FLIGHT) {
-		damp = mix(damp, 1.0, smoothstep(0.5, 1.5, length(new_v)));
-	}
-	new_v *= damp;
+	new_v *= GRANULAR ? 0.992 : 0.996;
 
 	// safety clamp: nothing in a plausible fluid moves faster than this, and it
 	// stops a bad grid velocity (coupling spike, coarse-grid aliasing) from

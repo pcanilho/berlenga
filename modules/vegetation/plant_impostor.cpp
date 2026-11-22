@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -657,7 +656,10 @@ void vertex() {
 	v_scale = 1.0;
 	v_light = vegetation_light_of(INSTANCE_CUSTOM.y);
 	if (INSTANCE_CUSTOM.y > 0.0) {
-		v_scale = vegetation_far_scale(INSTANCE_CUSTOM, length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz));
+		float range = floor(INSTANCE_CUSTOM.y);
+		float dist = length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz);
+		float keep = clamp((range - dist) / (range * 0.65), 0.0, 1.0);
+		v_scale = smoothstep(INSTANCE_CUSTOM.x, INSTANCE_CUSTOM.x + 0.12, keep * 1.12) * (1.0 + 0.25 * (1.0 - keep));
 		p *= v_scale;
 	}
 	VERTEX = p;
@@ -713,12 +715,7 @@ void fragment() {
 	float rough = roughness;
 	float metallic = 0.0;
 	float specular = 0.35;
-	vec3 fire_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	float burnt = fire_foliage_apply(fire_state_at(fire_w.xz), clamp(fire_w.y - MODEL_MATRIX[3].y, 0.0, 2.0 * radius), fract(v_uv0.x * 37.0 + v_uv0.y * 11.0), albedo, rough);
-	back *= 1.0 - burnt;
-	weather_wetness_apply(max(weather_wetness_at(v_world), weather_canopy_wetness_at(v_world)), n_world.y, metallic, 0.15, albedo, rough);
-	weather_frost_apply(weather_frost_at(v_world), n_world.y, albedo, rough);
-	weather_rime_apply(weather_rime_at(v_world), n_world, v_world, albedo, rough);
+	weather_wetness_apply(weather_wetness_at(v_world), n_world.y, metallic, 0.15, albedo, rough);
 	vec4 snow_s = snow_cover_at(v_world);
 	float snow = snow_cover_weight(snow_s.x, 60.0, n_world, n_world);
 	snow_cover_apply(snow, snow_s.y, snow_s.z, albedo, rough, metallic, specular);

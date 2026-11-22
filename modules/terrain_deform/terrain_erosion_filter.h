@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -44,7 +43,6 @@
 // downhill (their phase varies across the slope), cos for height and sin for slope; the neighbouring cells are
 // blended with a smooth distance weight (the 5x5 cells around the point), and the blended (cos, sin) pair is renormalized when longer than 1/2.
 
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
 

@@ -29,12 +29,6 @@
 				How much of the hull's buoyancy is in use this physics tick: [code]0[/code] out of the water, [code]1[/code] fully under.
 			</description>
 		</method>
-		<method name="get_total_volume" qualifiers="const">
-			<return type="float" />
-			<description>
-				With [member volume_mode] [constant VOLUME_SHAPES]: the body's volume from its collision shapes (m³).
-			</description>
-		</method>
 		<method name="get_water_height" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="world_pos" type="Vector3" />
@@ -47,14 +41,8 @@
 		<member name="angular_drag" type="float" setter="set_angular_drag" getter="get_angular_drag" default="40.0">
 			Damping on the body's rotation (N·m per rad/s), scaled by how much of the hull is in the water.
 		</member>
-		<member name="default_density" type="float" setter="set_default_density" getter="get_default_density" default="500.0">
-			With [member mass_from_densities]: the density (kg/m³) of a collision shape without [code]buoyancy_density[/code] metadata.
-		</member>
 		<member name="disturb_water" type="bool" setter="set_disturb_water" getter="get_disturb_water" default="true">
 			Push the water's ripple layer where the body floats, more as it moves.
-		</member>
-		<member name="drag_coefficient" type="float" setter="set_drag_coefficient" getter="get_drag_coefficient" default="1.0">
-			With [member volume_mode] [constant VOLUME_SHAPES]: form drag [code]0.5 rho Cd A |v| v[/code] on the wet part, A the body's frontal area (about its volume to the two thirds), against the body's speed through the water. Stops a body that dives within a body length or two.
 		</member>
 		<member name="hull_area" type="float" setter="set_hull_area" getter="get_hull_area" default="0.0">
 			The hull's footprint on the water (m²), shared between the sample points. With the body's mass it sets the draft: a body floats when [code]water_density * hull_area * depth[/code] equals its mass. [code]0[/code] uses three quarters of the collision shapes' bounding footprint.
@@ -64,12 +52,6 @@
 		</member>
 		<member name="linear_drag" type="float" setter="set_linear_drag" getter="get_linear_drag" default="60.0">
 			Drag on each submerged point against its velocity (N per m/s per m² of footprint, scaled by how deep it is). Keeps the body from bobbing forever and settles drifting. A [PhysXBoat3D] adds its own directional hull drag on top.
-		</member>
-		<member name="mass_from_densities" type="bool" setter="set_mass_from_densities" getter="get_mass_from_densities" default="false">
-			With [member volume_mode] [constant VOLUME_SHAPES]: the body's mass and centre of mass come from its collision shapes' volumes and densities: a [code]buoyancy_density[/code] metadata float (kg/m³) on each [CollisionShape3D], [member default_density] without one. 0 is air: it displaces water and weighs nothing, so a thin steel shell round an air box floats. Wood is about 500, ice 917, steel 7850.
-		</member>
-		<member name="max_cells" type="int" setter="set_max_cells" getter="get_max_cells" default="32">
-			With [member volume_mode] [constant VOLUME_SHAPES]: how many cells the body's boxes, cylinders and capsules are cut into in all (spheres are one each). More cells follow the waves along a long hull more closely.
 		</member>
 		<member name="ripple_radius" type="float" setter="set_ripple_radius" getter="get_ripple_radius" default="0.0">
 			Radius (m) of the body's disturbance in the ripple layer. [code]0[/code] uses half the collision shapes' footprint size.
@@ -83,25 +65,11 @@
 		<member name="sample_points" type="PackedVector3Array" setter="set_sample_points" getter="get_sample_points" default="PackedVector3Array()">
 			Points on the hull, in the body's space, where the water pushes. Empty generates six on the bottom of the collision shapes' bounds. More points follow the waves more closely; their spread sets how stiffly the body resists pitching and rolling.
 		</member>
-		<member name="volume_mode" type="int" setter="set_volume_mode" getter="get_volume_mode" enum="PhysXBuoyancy3D.VolumeMode" default="0">
-			How the body's displaced water is measured: probe points sharing [member hull_area] up to [member hull_height] ([constant VOLUME_POINTS]), or the body's collision shapes ([constant VOLUME_SHAPES]).
-		</member>
 		<member name="water_density" type="float" setter="set_water_density" getter="get_water_density" default="1000.0">
 			Density of the water (kg/m³). [code]1000[/code] for fresh water, about [code]1025[/code] for sea water.
 		</member>
 		<member name="water_surface_path" type="NodePath" setter="set_water_surface_path" getter="get_water_surface_path" default="NodePath(&quot;&quot;)">
 			The [PhysXWaterSurface3D] or [PhysXRiver3D] to float on. On a river the body drags against its current; it does not disturb the river surface yet.
 		</member>
-		<member name="wave_damping" type="float" setter="set_wave_damping" getter="get_wave_damping" default="0.2">
-			With [member volume_mode] [constant VOLUME_SHAPES]: the damping of heave, pitch and roll by the waves a floating body radiates, as a share of the critical damping of its waterline's stiffness [code]rho g A[/code] (0.1 to 0.3 for barge-like hulls). Without it a body bobs for many seconds.
-		</member>
 	</members>
-	<constants>
-		<constant name="VOLUME_POINTS" value="0" enum="VolumeMode">
-			Probe points (from [member sample_points] or the bottom of the collision shapes' bounds) each push up by the weight of the water above them, over its share of [member hull_area], up to [member hull_height].
-		</constant>
-		<constant name="VOLUME_SHAPES" value="1" enum="VolumeMode">
-			The body's collision shapes are its volume. Spheres are pontoons (the exact submerged cap, pushed at its centroid); boxes, cylinders and capsules are cut into cells (up to [member max_cells]), each pushed up by its own depth into the water at its centre, so a long hull feels the waves along it and a tilted body is righted by its own shape; other shapes are their bounding box at three quarters' fill. With [member mass_from_densities] each body floats at its own density, no tuning.
-		</constant>
-	</constants>
 </class>

@@ -1,0 +1,1 @@
+- Snow: background cover updates read the weather through `WeatherMap3D::get_snapshot()` on the worker; the main thread's share of an update drops from about 1 ms to 0.3 ms.

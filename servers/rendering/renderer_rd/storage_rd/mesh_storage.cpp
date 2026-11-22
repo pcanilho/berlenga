@@ -1663,10 +1663,9 @@ void MeshStorage::_multimesh_allocate_data(RID p_multimesh, int p_instances, RSE
 		if (RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY)) {
 			mm_flags.set_flag(RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
 		}
-		// Cleared on the GPU: a zeroed CPU copy sent through the staging buffer cost more than the rest
-		// of a MultiMesh's creation, which grass and plant tiles do several times a frame.
-		multimesh->buffer = RD::get_singleton()->storage_buffer_create(buffer_size, {}, 0, mm_flags);
-		RD::get_singleton()->buffer_clear(multimesh->buffer, 0, buffer_size);
+		LocalVector<uint8_t> zeros;
+		zeros.resize_initialized(buffer_size);
+		multimesh->buffer = RD::get_singleton()->storage_buffer_create(buffer_size, zeros.span(), 0, mm_flags);
 	}
 
 	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH);
@@ -2211,11 +2210,8 @@ void MeshStorage::_multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_
 	// rendering/pathtracing/multimesh_cache_cpu_transforms: keep a CPU mirror of the
 	// transform buffer so the path tracer never needs a GPU->CPU readback.
 	// Trade-off: CPU memory usage doubles for every MultiMesh that calls set_buffer().
-	// A MultiMesh expanded into one TLAS entry per record (multimesh_set_rt_instanced) is read on the CPU by the path
-	// tracer every build, so it keeps the mirror too: never a readback (a stall, and one made in the frame the buffer
-	// was set, before the upload ran, read stale records: those instances vanished from the path tracer).
 	static const bool keep_cpu_cache = GLOBAL_GET("rendering/pathtracing/multimesh_cache_cpu_transforms");
-	if ((keep_cpu_cache || multimesh->rt_instanced) && multimesh->data_cache.size() == 0) {
+	if (keep_cpu_cache && multimesh->data_cache.size() == 0) {
 		// Initialize the data cache from the data we already have on CPU.
 		uint32_t cache_size = multimesh->instances * multimesh->stride_cache;
 		if (multimesh->motion_vectors_enabled) {
@@ -2292,10 +2288,8 @@ void MeshStorage::_multimesh_mark_buffer_rd_changed(RID p_multimesh) {
 	multimesh->records_version++;
 	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH_DATA);
 
-	// The path tracer reads the CPU mirror only for expanded MultiMeshes, and fills it on first use (a merged or
-	// captured one reads the GPU buffer): a mirror is kept fresh once it exists, and made for the AABB when there is
-	// no custom one, never only because the device can trace rays (GPU-filled grass rings would double their memory).
-	const bool needs_cpu_copy = !multimesh->data_cache.is_empty() || multimesh->custom_aabb == AABB() || multimesh->rt_instanced;
+	const bool needs_cpu_copy = !multimesh->data_cache.is_empty() || multimesh->custom_aabb == AABB() ||
+			RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY);
 	if (!needs_cpu_copy) {
 		return;
 	}
@@ -2321,39 +2315,6 @@ int MeshStorage::_multimesh_get_bones_per_instance(RID p_multimesh) const {
 	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
 	ERR_FAIL_NULL_V(multimesh, 1);
 	return multimesh->bones_per_instance;
-}
-
-void MeshStorage::_multimesh_set_rt_instanced(RID p_multimesh, bool p_instanced) {
-	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
-	ERR_FAIL_NULL(multimesh);
-	if (multimesh->rt_instanced == p_instanced) {
-		return;
-	}
-	multimesh->rt_instanced = p_instanced;
-	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH);
-}
-
-bool MeshStorage::_multimesh_is_rt_instanced(RID p_multimesh) const {
-	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
-	ERR_FAIL_NULL_V(multimesh, false);
-	return multimesh->rt_instanced;
-}
-
-void MeshStorage::_multimesh_set_rt_offscreen_cull(RID p_multimesh, float p_min_degrees) {
-	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
-	ERR_FAIL_NULL(multimesh);
-	const float v = MAX(p_min_degrees, 0.0f);
-	if (multimesh->rt_offscreen_cull == v) {
-		return;
-	}
-	multimesh->rt_offscreen_cull = v;
-	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH);
-}
-
-float MeshStorage::_multimesh_get_rt_offscreen_cull(RID p_multimesh) const {
-	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
-	ERR_FAIL_NULL_V(multimesh, 0.0f);
-	return multimesh->rt_offscreen_cull;
 }
 
 void MeshStorage::_multimesh_request_rd_readback(MultiMesh *multimesh, RID p_multimesh) {

@@ -1,7 +1,6 @@
 ---
 title: "Lighting"
 weight: 10
-group: "Rendering"
 summary: "4096 path-traced lights (upstream 64); emissive surfaces count as lights; light visibility memory, radiance cache, light reuse."
 ---
 

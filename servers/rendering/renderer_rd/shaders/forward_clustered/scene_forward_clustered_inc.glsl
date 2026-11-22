@@ -321,10 +321,6 @@ layout(set = 0, binding = 19) uniform sampler2D ltc_lut2;
 layout(set = 0, binding = 20) uniform texture2D area_light_atlas;
 
 layout(set = 0, binding = 21) uniform texture2DArray volumetric_fog_noise;
-
-// A directional light's shadow through participating media (LightStorage::VolumeShadow): the optical depth
-// from the light's side over the medium's box (u, v across the light, depth along it).
-layout(set = 0, binding = 22) uniform texture3D volume_shadow_texture;
 /* Set 1: Render Pass (changes per render pass) */
 
 layout(set = 1, binding = 0, std140) uniform SceneDataBlock {
@@ -507,12 +503,6 @@ layout(set = 1, binding = 36) uniform texture2D ssr_mip_level_buffer;
 // plight_update): irradiance and its luminance-weighted direction, a froxel grid.
 layout(set = 1, binding = 37) uniform texture3D pt_light_cache_irradiance;
 layout(set = 1, binding = 38) uniform texture3D pt_light_cache_direction;
-// Two-layer refraction: the front screen-reading surfaces' depth (reverse Z; 0 where none), for the second-layer pass.
-layout(set = 1, binding = 39) uniform texture2D peel_depth;
-// The screen copy with the second layer in it (see peel_screen_ok()).
-layout(set = 1, binding = 40) uniform texture2D color_buffer_peel;
-// Two-layer refraction: the second layer's depth (reverse Z; 0 where none), for the transparent pass.
-layout(set = 1, binding = 41) uniform texture2D peel_depth_second;
 
 #endif
 

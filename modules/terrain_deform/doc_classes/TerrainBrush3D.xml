@@ -5,7 +5,6 @@
 	</brief_description>
 	<description>
 		Lowers, raises, flattens or offsets the ground to this node's global height, inside its [member shape] and over a soft [member falloff] band around it. Follows the node's position, rotation around Y and scale. Add it to a [TerrainDeformer3D]'s [member TerrainDeformer3D.brushes]; moving it re-applies the deformer.
-		As a child (at any depth) of a [TerrainGenerator3D] it is a touch-up instead: the generator applies it to the ground it generated and re-solves the lakes and rivers there (see [method TerrainGenerator3D.apply_touch_ups]); moving or changing it re-applies the touch-ups a moment later.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -14,12 +13,6 @@
 			<return type="Dictionary" />
 			<description>
 				The brush as [TerrainDeformer3D] reads it: [code]rect[/code], [code]cell_size[/code], [code]size[/code], [code]heights[/code], [code]mask[/code] and [code]mode[/code]. Empty when disabled.
-			</description>
-		</method>
-		<method name="get_world_rect" qualifiers="const">
-			<return type="Rect2" />
-			<description>
-				The brush's world XZ bounds with its [member falloff] band ([code]position.y[/code] is Z).
 			</description>
 		</method>
 	</methods>

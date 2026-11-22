@@ -1,15 +1,12 @@
 ---
 title: "Water"
-weight: 60
-group: "World"
-summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boat wakes, white water, rivers and waterfalls, live water that floods and drains, shore waves, camera under water."
+weight: 30
+summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white water, rivers and waterfalls, shore waves, camera under water."
 ---
 
 ## Light in water
 
-- **Shadows on water** (always on): rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing, on the surface and inside the water, seen from above or below; path traced shadows pass through the water, so a shallow bed takes the depth's tint on the way down as well as up. The open sea's raster colour matches the path tracer's. At a low sun, waves shade their own lee sides (`wave_shadows`).
 - **Refraction** (`rendering/pathtracing/refraction`): water and glass blocks bend light by their IOR, with total internal reflection and depth tint; glTF `KHR_materials_volume`, `KHR_materials_ior`.
-- **Two-layer refraction** (`rendering/transparency/refraction_second_layer`): in raster, water and glass refract the water or glass behind them, so a pool shows through a falling stream.
 
   ![A pool with a checkered floor and coloured posts, refraction off and on](media/water-refraction.jpg)
 
@@ -21,21 +18,15 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Murky water: a green glow fills the deep end.*
 
-- **Caustics** (`rendering/pathtracing/caustics`; raster `caustics_enabled`, `foam_shade`): sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun, and foam shades the sand beneath it while gaps in the swash lace stay lit, as under path tracing.
+- **Caustics** (`rendering/pathtracing/caustics`): sunlight lines under rippled water.
 
   ![A rippled pool, caustics off and on](media/caustics.jpg)
 
   *Caustics: bright lines on the pool floor.*
 
-  ![Clear shallows over sand, raster, caustics_enabled off and on](media/water-raster-caustics.jpg)
-
-  *Raster caustics: sunlight focused by the waves lies in a web over the sand of the shallows.*
-
 - **Caustic cascades** (`rendering/pathtracing/caustics_cascades`): sun caustics out to 256 m, near lines unchanged.
 
 ## Sea and lakes
-
-- **Clear water** (`clear_water`, `shore_depth_fade`): in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth; rivers fade softly into the bank at the waterline.
 
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 
@@ -43,11 +34,11 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Ocean: sand and caustic light through the water.*
 
-- **Ocean swell** (`wave_cascades`, `wave_tile_breakup`): up to four wave layers give long swell under the chop, each layer blended so its tile never repeats (Heitz and Neyret 2018), whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
+- **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
 
-  ![Deep open sea under overcast sky with three wave layers, raster](media/ocean-swell.jpg)
+  ![Open sea with one wave layer and with three](media/ocean-swell.jpg)
 
-  *Ocean swell: three wave layers run long swell under the chop, and no wave tile repeats.*
+  *Ocean swell: one layer repeats the same foam patches; three layers add long swell.*
 
 - **Measured wave spreading** (`wave_spreading`, `swell`): Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.
 
@@ -55,50 +46,11 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Wave spreading: cos² gave long parallel crests; the measured spreading breaks them up, and swell adds long crests back.*
 
-- **Whitecaps by wind speed** (`whitecap_auto`; `whitecap_cover_scale`): whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.
+- **Whitecaps by wind speed** (`whitecap_auto`, on; `whitecap_cover_scale`): whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.
 
   ![Sea from above at 6, 14 and 20 m/s, fixed whitecap threshold and whitecap_auto](media/whitecaps.jpg)
 
   *Whitecaps: with a fixed threshold the cover barely changes with the wind; now it grows from none at 6 m/s to many at 20 m/s.*
-
-- **Storm seas** (`crest_spray`, `crest_spray_amount`): above 9 m/s of wind, breaking crests throw puffs of spume downwind; above 14 m/s, gale foam lies in thin broken streaks along the wind.
-
-  ![Storm sea at 20 m/s looking downwind, without and with storm spray, raster](media/water-storm-seas.jpg)
-
-  *Storm seas: at 20 m/s spume blows off the far crests and foam lies in broken streaks along the wind.*
-
-- **Torn spray sheets** (`crest_sheets`): in a gale the wind tears thin sheets of water off folding crests, in raster and path tracing.
-
-  ![A gale sea from 2 m up across the wind, without and with torn spray sheets, raster](media/water-spray-sheets.jpg)
-
-  *Torn spray sheets: veils of spray stream downwind off the folding crests.*
-
-- **Crisp sea foam** (`foam_crisp`, `foam_relief`): sharp patch edges, torn lobed holes and bubble relief, up close and at range; distant foam keeps its lace in raster instead of turning to flat white sheets.
-
-  ![Sea foam on a rough sea a few metres away, without and with crisp foam, raster](media/water-foam-crisp.jpg)
-
-  *Crisp sea foam: soft foam turns into torn patches with ragged holes, floating rafts and raised bubble relief.*
-
-- **Crest glow** (`crest_glow`): low sun shines through a thin line along the high crest tops in the water's own colour, scaled to the sea's chop, in raster; path tracing already scatters through them.
-
-  ![A low sun ahead over a moderate sea from 1.3 m up, without and with crest glow, raster](media/water-crest-glow.jpg)
-
-  *Crest glow: the low sun lights the thin top of the near wave crest in the water's own turquoise.*
-
-- **Spilling rollers** (`roller_strength`): breaking crests carry a raised, churning roller of white water.
-- **Ocean detail** (`detail_waves`, `far_filter`; `bubble_strength`): short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width, and the far sea mirrors the sky through their mean Fresnel instead of turning into a pale sheet; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
-
-  ![Sun glitter on a moderate sea from 2 m up, without and with detail waves, raster](media/water-ocean-detail.jpg)
-
-  *Ocean detail: the sun's path breaks into fine glints instead of a few smooth streaks.*
-
-  ![A fresh whitecap seen steeply from 4 m up, raster](media/water-bubble-plume.jpg)
-
-  *Ocean detail: a turquoise bubble plume glows under a fresh whitecap.*
-
-  ![The far sea toward a low sun from 1.3 m up, without and with far filtering, raster](media/water-far-sea.jpg)
-
-  *Far filtering: grainy far crests and dark posts along the horizon settle into smooth distant sea.*
 
 - **Lake ripples** (automatic from `fetch`): on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.
 
@@ -106,17 +58,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Lake ripples: short wind waves and sun glitter on a lake, where the surface used to lie flat.*
 
-- **Impulse waves** (`WorldWater.wave()`): avalanches, slides and calving ice send waves across lakes that shoal and reflect off the shores.
-- **Oasis springs** (`OasisSprings3D`): still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents, in clear spring water, and only where the ground is hollowed.
-- **Sea caves** (`PhysXSeaCaveWater3D`, `wavelets`): the sea's own water runs inside sea caves, handed over softly at the arch, with waves reflecting off the walls and small wavelets rippling the water inside.
-
-  ![Water inside a sea cave looking out to the sea, wavelets off and on, raster](media/water-sea-cave-wavelets.jpg)
-
-  *Sea cave wavelets: off, the cave water is glassy; on, small wavelets break up the glitter and ripple the water inside.*
-
-- **Cave pools** (`seabed_probe_height`): pool water under a cave roof measures the real floor beneath it, so a shallow pool thins out to its rim.
-- **Underground reflections** (`screen_reflections`): with `raster_reflections` off, still water and streams mirror the cave around them in raster; rivers keep clear water.
-- **Raster reflections** (`raster_reflections` on PhysXWaterSurface3D and PhysXRiver3D): raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer, and omni and spot lights glint on all raster water; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk, and the bed is lit through the surface's Fresnel transmission, as under path tracing.
+- **Raster reflections** (`raster_reflections` on PhysXWaterSurface3D and PhysXRiver3D): raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk.
 
   ![Raster sea toward the sun, before and with raster_reflections](media/water-reflections.jpg)
 
@@ -139,15 +81,11 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
 ## Shore
 
-- **Shore waves** (`shore_waves`; `open_sea_beyond`, `terrain_source`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only, and a generated world's sea breaks on every coast, in sections that spill, show lit faces under the lip and tear open into lace foam.
+- **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).
 
   ![Waves breaking on a beach, raster](media/shore-waves.gif)
 
   *Shore waves: swell breaks into foam on the beach.*
-
-  ![Surf breaking in sections onto a sandy beach, raster](media/shore-surf.jpg)
-
-  *Surf: breakers open into torn lace foam over sand ripples in the shallows.*
 
   ![Waves run up a sloping beach and draw back](media/shore-runup.gif)
 
@@ -160,9 +98,6 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Plunging breakers: the sheet thrown off the crest, with spray along its thin edge.*
 
-- **Shore wetness** (`contact_wetness` on PhysXWaterSurface3D and PhysXRiver3D): sand, rocks and plants stay wet up to where the waves ran or the river reached, and dry with the weather.
-- **Rock contact foam** (`contact_foam`): white water rings where the sea meets stacks, boulders and cliff feet, widening as each wave arrives, and washes over rock tops just under the surface.
-
 ## Currents and rivers
 
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
@@ -171,7 +106,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Currents: the boxes drift past the rock.*
 
-- **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies. Splashes and wakes near the camera wash up beaches and banks and drain back.
+- **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
 
   ![Flecks carried past a rock, baked flow vs live flow](media/live-flow.gif)
 
@@ -181,9 +116,6 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *River live flow: the wake swings behind the rock.*
 
-- **Live water** (`PhysXLiveWater3D`, `streaming`): water from springs, rain or a breaking dam runs downhill over any ground, fills hollows and floods. The live area follows the camera; water left behind stays in place and flows again on return.
-- **Buoyancy from shapes** (PhysXBuoyancy3D `volume_mode`, `mass_from_densities`): bodies take their volume from their collision shapes and their mass from per-shape densities, so wood, ice and steel hulls float at their real drafts.
-- **Bodies push water** (`PhysXWaterPusher3D`): legs, hulls and props push live water, seas and rivers aside as they move, heaping water ahead and leaving a wake behind.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
 
   ![Foam lines trailing a rock in a current](media/white-water.gif)
@@ -196,13 +128,7 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
   *Rivers: the cascade and the white water below it.*
 
-  - Pools behind bumps, draws down before steps and ends fast reaches in a hydraulic jump; the surface banks up round bends (`gradually_varied_flow`, `bend_superelevation`).
-  - A train of smooth standing waves below a weak hydraulic jump, and cross-waves where fast water narrows (`standing_waves`).
-  - A river leaving a lake carries what the lake passes over its sill, drowned or free, and the lake settles at the level where its outlets pass its inflow (`source_lake`, `level_from_flows`).
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.
-  - River surface (`foam_crisp`, `ripple_detail`, `caustics_strength`): crisp foam that drains into lace, capillary ripples, and sun caustics on the bed from the river's own ripples.
-  - Sediment (`add_sediment()`, `add_sediment_mass()` on rivers and lakes): rivers carry silt and ash downstream and lakes settle it out, and debris flows dump their fines in at once, up to hyperconcentrated flow; silt turns the water tan to brown, after measured silt optics, and ash greys it; waterfalls on silty rivers fall as a tan curtain and their white water turns beige, raster and path traced alike. Silt entering by one bank runs down that bank as a plume and spreads across over tens of widths, and slack water by the banks and in pools silts up.
-  - Live ripples (`live_surface_waves`, `live_near_mesh_spacing`): ripples travel at their own speed, wrap round stones and reflect off the banks, and near the camera they are real geometry.
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
 
     ![A river parting round a rock, raster vs path traced](media/river-rocks.jpg)
@@ -221,28 +147,18 @@ summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boa
 
     *Waterfall: the sheet breaks up into white water above the pool.*
 
-  - Waterfall mist (`fall_mist_amount`, `PhysXWaterMist3D`): a simulated mist grid per fall, drawn as a raster FogVolume and path traced; the mist wets the rock and ground it drifts over (`wet_surfaces`).
+  - Waterfall mist (`fall_mist_amount`, `PhysXWaterMist3D`): a simulated mist grid per fall, drawn as a raster FogVolume and path traced.
 
     ![A waterfall into a pool, raster, before and with mist](media/waterfall-mist.jpg)
 
     *Waterfall mist: a haze now rises from the pool and drifts past the fall.*
 
-  - Waterfall sound (`PhysXRiver3D.fall_sound`): each fall roars at its foot, synthesised from the ringing of the bubbles its plunge entrains, pitched by impact speed and levelled by its power; nothing is recorded.
-
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
-- **Contact waterfalls** (`PhysXWaterfalls3D`, `contact_falls`, `wet_margin`, `surface`): water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges. Thin falls over stepped rock run ledge to ledge as threads with wet rock between them, as their flow sets (`rock_step`); big flows stay fully covered. The sheets follow cliff relief ledge by ledge. Falling water counts as water for everything it touches: bodies and clothes in a fall get wet and are pushed down.
-
-  ![A contact waterfall running down a rock face, raster](media/contact-falls.jpg)
-
-  *Contact waterfall: white water down the face, thinning at its soft edges, with darker wet rock beside it.*
-
-- **Plunging waterfalls** (`plunge_falls`, `column_density`, `wind_exposure`): tall falls break up into a falling column of clumps slowed by the air, inside a spray veil and soft mist; where the face leans into the jet, the fall keeps to the rock and fans out down it.
-
 - **Faster flow bakes** (`physics/physx_3d/water/multigrid_flow`): multigrid-preconditioned conjugate gradients bake the flow 7 to 10 times faster than SOR.
 
 ## Under water
 
-- **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line. In raster, omni and spot lights glow and scatter in the water, as under path tracing.
+- **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
   ![Under water near crates, raster vs path traced](media/underwater.jpg)
 

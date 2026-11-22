@@ -169,14 +169,6 @@
    "title": "Open worlds"
   },
   {
-   "name": "rendering/pathtracing/offscreen_record_cull",
-   "type": "bool",
-   "default": "true",
-   "about": "If `true`, MultiMeshes that set `RenderingServer.multimesh_set_rt_offscreen_cull` leave out of path tracing their instances outside the camera's view that look smaller than their set angle, as film renderers do with sub-pixel detail.",
-   "page": "rocks",
-   "title": "Rocks"
-  },
-  {
    "name": "rendering/pathtracing/persistent_instances",
    "type": "bool",
    "default": "false",
@@ -211,7 +203,7 @@
   {
    "name": "rendering/pathtracing/relative_origin_grid",
    "type": "float",
-   "default": "64.0",
+   "default": "1024.0",
    "about": "Size in meters of the grid the path tracer's origin snaps to.",
    "page": "open-worlds",
    "title": "Open worlds"
@@ -277,14 +269,6 @@
    "type": "bool",
    "default": "false",
    "about": "When enabled, setting `MultiMesh.buffer` keeps a CPU-side mirror of the instance transform data in sync with the GPU buffer."
-  },
-  {
-   "name": "rendering/pathtracing/linear_swept_spheres",
-   "type": "bool",
-   "default": "false",
-   "about": "If `true`, on a device with linear swept spheres (Vulkan `VK_NV_ray_tracing_linear_swept_spheres`, hardware hair primitives) the path tracer traces strand hair (`render_mode hair_strands` on a mesh of two crossed strips per strand point, as PhysXHair3D draws it) as round tubes between the strand points, one primitive per segment instead of four triangles, and shades each fibre from where the ray meets it across its width.",
-   "page": "hair",
-   "title": "Hair"
   },
   {
    "name": "rendering/pathtracing/multimesh_merged_blas_max_triangles",
@@ -600,7 +584,7 @@
     "KHR_materials_volume"
    ],
    "note": "",
-   "what": "raster refraction leaves a solid through its far side, not just the front face, filtered by the refracted footprint so thin curved ice and drops do not speckle.",
+   "what": "raster refraction leaves a solid through its far side, not just the front face.",
    "page": "materials",
    "title": "Materials",
    "topic": ""
@@ -641,47 +625,386 @@
    "topic": ""
   },
   {
-   "name": "Histogram metering",
+   "name": "Refraction",
    "settings": [
-    "rendering/camera/auto_exposure/metering"
+    "rendering/pathtracing/refraction"
    ],
    "note": "",
-   "what": "lamps in view no longer darken the scene.",
-   "page": "exposure",
-   "title": "Exposure",
-   "topic": ""
+   "what": "water and glass blocks bend light by their IOR, with total internal reflection and depth tint; glTF `KHR_materials_volume`, `KHR_materials_ior`.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
   },
   {
-   "name": "Dark-scene key",
+   "name": "Murky water",
    "settings": [
-    "dark_scene_luminance"
+    "IOR",
+    "ABSORPTION",
+    "SCATTERING",
+    "KHR_materials_scatter"
    ],
    "note": "",
-   "what": "night stays night.",
-   "page": "exposure",
-   "title": "Exposure",
-   "topic": ""
+   "what": "scattering media; `IOR`, `ABSORPTION` and `SCATTERING` in shaders; glTF `KHR_materials_scatter` draft.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
   },
   {
-   "name": "Local exposure",
+   "name": "Caustics",
    "settings": [
-    "local_highlight_contrast",
-    "local_shadow_contrast"
+    "rendering/pathtracing/caustics"
+   ],
+   "note": "",
+   "what": "sunlight lines under rippled water.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Caustic cascades",
+   "settings": [
+    "rendering/pathtracing/caustics_cascades"
+   ],
+   "note": "",
+   "what": "sun caustics out to 256 m, near lines unchanged.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Path-traced ocean",
+   "settings": [
+    "PhysXWaterSurface3D",
+    "pathtraced_absorption",
+    "pathtraced_scattering",
+    "pathtraced_roughness"
+   ],
+   "note": "",
+   "what": "waves refract, tint and scatter, with caustics on the seabed.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Ocean swell",
+   "settings": [
+    "wave_cascades"
+   ],
+   "note": "",
+   "what": "up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Measured wave spreading",
+   "settings": [
+    "wave_spreading",
+    "swell"
+   ],
+   "note": "",
+   "what": "Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Whitecaps by wind speed",
+   "settings": [
+    "whitecap_auto",
+    "whitecap_cover_scale"
+   ],
+   "note": "",
+   "what": "whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Lake ripples",
+   "settings": [
+    "fetch"
+   ],
+   "note": "",
+   "what": "on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Raster reflections",
+   "settings": [
+    "raster_reflections"
+   ],
+   "note": "",
+   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Finer water mesh up close",
+   "settings": [
+    "mesh_detail"
    ],
    "note": "",
    "what": "",
-   "page": "exposure",
-   "title": "Exposure",
-   "topic": ""
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
   },
   {
-   "name": "Pixel antialiasing",
-   "settings": [],
+   "name": "Boat wakes",
+   "settings": [
+    "PhysXWaterWake3D.dispersive",
+    "breaking_slope"
+   ],
    "note": "",
-   "what": "when Ray Reconstruction is off: samples after the first spread over the pixel (R2 sequence), so sub-pixel detail antialiases instead of sparkling.",
-   "page": "dlss-ray-reconstruction",
-   "title": "DLSS Ray Reconstruction",
-   "topic": ""
+   "what": "waves stepped with deep-water dispersion in Fourier space form the Kelvin pattern, a 19.5 degree wedge of transverse and diverging waves.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Shore waves",
+   "settings": [
+    "shore_waves"
+   ],
+   "note": "",
+   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
+   "name": "Wave groups",
+   "settings": [
+    "shore_wave_groups"
+   ],
+   "note": "",
+   "what": "shore waves arrive in sets with their own Rayleigh heights, so each breaks at its own place.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
+   "name": "Plunging breakers",
+   "settings": [
+    "shore_wave_curl",
+    "shore_spray",
+    "shore_spray_amount"
+   ],
+   "note": "",
+   "what": "the crest throws a sheet of water that lands ahead and sinks into the bore, with spray where it is thin and where it lands.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
+   "name": "Currents",
+   "settings": [
+    "current",
+    "flow_period"
+   ],
+   "note": "",
+   "what": "flow round rocks and along shores carries waves, foam and floating objects.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Live flow",
+   "settings": [
+    "live_flow",
+    "wall_friction"
+   ],
+   "note": "",
+   "what": "near the player, rocks and banks shed wakes and eddies.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "White water",
+   "settings": [
+    "flow_foam"
+   ],
+   "note": "",
+   "what": "foam in fast water, trailing rocks and drifting downstream.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Rivers",
+   "settings": [
+    "PhysXRiver3D",
+    "discharge",
+    "roughness",
+    "max_slope"
+   ],
+   "note": "",
+   "what": "drawn as a curve; finds its depth and never runs uphill.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Faster flow bakes",
+   "settings": [
+    "physics/physx_3d/water/multigrid_flow"
+   ],
+   "note": "",
+   "what": "multigrid-preconditioned conjugate gradients bake the flow 7 to 10 times faster than SOR.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Camera under water",
+   "settings": [
+    "underwater_enabled"
+   ],
+   "note": "",
+   "what": "fog, scattering, Snell's window, image split at the water line.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Under water"
+  },
+  {
+   "name": "Fibre shading",
+   "settings": [
+    "rendering/pathtracing/hair"
+   ],
+   "note": "",
+   "what": "Chiang hair model under path tracing, melanin colour, on shells, cards and strands; mask for single-material characters.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Raster hair shading",
+   "settings": [
+    "PhysXHair3D.hair_shading"
+   ],
+   "note": "",
+   "what": "Marschner model as Unreal evaluates it, with multiple scattering and light through the strands in shadow maps, so backlit hair glows.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Deep opacity shadows",
+   "settings": [
+    "PhysXHair3D.deep_shadows",
+    "hair_shading"
+   ],
+   "note": "",
+   "what": "raster strands shadow themselves in depth, calibrated against the path tracer.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Custom hair shaders",
+   "settings": [
+    "HAIR",
+    "HAIR_ABSORPTION",
+    "HAIR_ROUGHNESS",
+    "hair_strands",
+    "hair_cards",
+    "IN_PATH_TRACER"
+   ],
+   "note": "",
+   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Strand grooms",
+   "settings": [
+    "HairGroom",
+    "HairMesh"
+   ],
+   "note": "",
+   "what": "grown on a scalp mesh or loaded from a HAIR file.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Moving strand hair",
+   "settings": [
+    "PhysXHair3D"
+   ],
+   "note": "",
+   "what": "AMD TressFX's simulation on GPU compute, guide and follow strands, velocity shock propagation, wind with gusts and turbulence, collision spheres.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Raster strands",
+   "settings": [],
+   "note": "TressFX coverage",
+   "what": "blended and sorted far to near on the GPU each frame; smooth without TAA or MSAA, and the hair shadows itself.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Distance LOD",
+   "settings": [
+    "PhysXHair3D",
+    "lod_enabled",
+    "lod_start_distance",
+    "lod_end_distance",
+    "lod_strand_ratio"
+   ],
+   "note": "",
+   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Motion vectors for strands",
+   "settings": [
+    "PREVIOUS_FRAME",
+    "render_mode alpha_motion_vectors"
+   ],
+   "note": "",
+   "what": "TAA, FSR 2 and DLSS follow moving hair instead of smearing it; shaders get `PREVIOUS_FRAME` and `render_mode alpha_motion_vectors`.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Body collision",
+   "settings": [
+    "PhysXHair3D",
+    "collision_body",
+    "collision_cell_size"
+   ],
+   "note": "",
+   "what": "strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
+   "name": "Hair volume",
+   "settings": [
+    "volume_enabled",
+    "volume_friction",
+    "volume_stiffness"
+   ],
+   "note": "",
+   "what": "strands push and drag on each other through a density grid, so hair keeps its volume.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
   },
   {
    "name": "Mountain generation",
@@ -697,43 +1020,6 @@
    ],
    "note": "",
    "what": "raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; on crests gullies keep part of their depth and a ridged noise adds irregular pinnacles; the same for a seed; writes into Terrain3D or a HeightMapShape3D.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Generation"
-  },
-  {
-   "name": "Terrain guides",
-   "settings": [
-    "TerrainGuide3D",
-    "apron_slope"
-   ],
-   "note": "",
-   "what": "paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion. With `guide_preview`, a 4x coarser run follows a guide in the editor as it is drawn.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Generation"
-  },
-  {
-   "name": "Coast and beach guides",
-   "settings": [
-    "TerrainGuide3D",
-    "invert",
-    "roughness"
-   ],
-   "note": "",
-   "what": "draw a bay, a shore or an island, with a wandering shoreline that rivers run into, and set where its beaches go and how wide.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Generation"
-  },
-  {
-   "name": "Touch-ups",
-   "settings": [
-    "TerrainBrush3D",
-    "TerrainGenerator3D"
-   ],
-   "note": "",
-   "what": "height brushes reshape the generated ground and lakes and rivers re-solve around them, so a raised dam backs up a lake and a dug hollow holds a pond.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -792,40 +1078,7 @@
     "glacial_erosion"
    ],
    "note": "",
-   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`; 0 is even rock) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain. With `glacial_converged`, the ice settles to a steady state before it carves, conserving mass over cliffs.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Generation"
-  },
-  {
-   "name": "Valley fill",
-   "settings": [
-    "outwash_age"
-   ],
-   "note": "",
-   "what": "sediment left after the ice fills glacial troughs to flat floors, while cirque lakes stay open.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Generation"
-  },
-  {
-   "name": "Moraines",
-   "settings": [
-    "moraine_age"
-   ],
-   "note": "",
-   "what": "debris carried down the last glaciers builds ridges at their margins that dam lakes. Till draws as soil with stones through it, the stones kept above the grass.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Generation"
-  },
-  {
-   "name": "Ice-worn rock",
-   "settings": [
-    "ice_worn_detail"
-   ],
-   "note": "",
-   "what": "faces toward the old ice flow are smoothed, faces away are stepped, with striations.",
+   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -838,17 +1091,6 @@
    ],
    "note": "",
    "what": "rock beds of uneven thickness step faces steeper than 40 degrees into ledges.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Generation"
-  },
-  {
-   "name": "Scree",
-   "settings": [
-    "scree_age"
-   ],
-   "note": "",
-   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks; up close, each is an angular stone standing in a bed of gravel and fines.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -871,17 +1113,6 @@
    ],
    "note": "",
    "what": "rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors; solved exactly per step along the river tree, at about half the earlier cost.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Rivers, coasts and lakes"
-  },
-  {
-   "name": "Meandering rivers",
-   "settings": [
-    "meander_age"
-   ],
-   "note": "",
-   "what": "bends grow and migrate across flat valley floors; cut-off loops leave oxbows that silt up, and the river water follows the new course.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Rivers, coasts and lakes"
@@ -972,29 +1203,6 @@
    "topic": "Rivers, coasts and lakes"
   },
   {
-   "name": "Coastal dunes",
-   "settings": [
-    "dunes_enabled"
-   ],
-   "note": "",
-   "what": "beaches feed wind-blown sand inland; marram builds foredunes along the plant line, and blowouts and parabolic dunes open where the cover fails.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Rivers, coasts and lakes"
-  },
-  {
-   "name": "Sand seas",
-   "settings": [
-    "sand_sea_rect",
-    "sand_sea_kind"
-   ],
-   "note": "",
-   "what": "a desert area fills with wind-built transverse, linear, star or barchan dunes that bank against the hills, thin out at their edges and stop at rivers; each has a long gentle windward slope and a steep slip face at the angle of repose. Older sand is redder, coarse interdune flats darker and slip faces paler (TerrainMaterial3D `sand_dune_tone`, GroundSurface3D `dune_tone`).",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Rivers, coasts and lakes"
-  },
-  {
    "name": "Geology maps",
    "settings": [
     "terrain_geology()"
@@ -1035,52 +1243,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`).",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Far sun shadows",
-   "settings": [
-    "TerrainMaterial3D.far_shadow_start"
-   ],
-   "note": "",
-   "what": "past the shadow maps' reach, ridges cast the low sun's shadow across distant terrain in raster.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Sky occlusion",
-   "settings": [
-    "TerrainGenerator3D.sky_occlusion",
-    "TerrainMaterial3D.sky_occlusion"
-   ],
-   "note": "",
-   "what": "raster ground is lit only by the sky its hills leave open, from a horizon bake and the live sky, matching path tracing at dusk.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Rock detail",
-   "settings": [
-    "rock_detail_enabled"
-   ],
-   "note": "",
-   "what": "steep rock shows bedding planes and breaks into irregular jointed blocks, and scree and till show loose stones that stand out of the gravel in parallax with their own shadows, also path traced; no textures and no stretching on any face.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Cliff relief",
-   "settings": [
-    "cliff_relief"
-   ],
-   "note": "",
-   "what": "steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too. In raster, ledges shadow each other per pixel where the shadow map is too coarse (TerrainMaterial3D `cliff_self_shadow`).",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1093,7 +1256,7 @@
     "far_fade"
    ],
    "note": "",
-   "what": "far ground takes the colour of the plant cover map. With `far_start_from_vegetation` the blend starts where the streamed plants end, else at `far_start`.",
+   "what": "far ground takes the colour of the plant cover map.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1131,402 +1294,7 @@
     "BaseMaterial3D.ground_deform_enabled"
    ],
    "note": "",
-   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose, a step on a dry dune slip face sets off a grain flow down it (`slip_avalanches`), and wind fills prints from the upwind side (`wind_fills_prints`). The prints simulate on the GPU (`gpu_simulation`). Within 8 m of the camera a 1.6 cm field (`near_field`) keeps print rims and lips crisp and matches the ground beyond its edge; boot prints show heel, toe and tread, and wet ground carries on past the deform patch.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Soft ground",
-   "settings": [
-    "soft_soil",
-    "parked_settling",
-    "tire_pressure",
-    "ploughing"
-   ],
-   "note": "",
-   "what": "vehicles sink into soft ground, print ruts and feel its grip and resistance (Bekker-Wong); tyres aired down flatten into a longer contact patch and sink less in sand and mud, but roll harder on firm ground; bodies sliding through sand slow as they plough it; `get_footing_at()` gives walkers effort, speed and slide; old ruts steer the wheels, which slide down a rut wall into it and shove the wall when steering out; wheels sliding sideways across a slope dig in; a vehicle left standing in wet mud keeps settling, and suction holds its tyres as it pulls away.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Deep mud",
-   "settings": [
-    "GroundSurface3D.mud_layer",
-    "mud_map",
-    "data_map"
-   ],
-   "note": "",
-   "what": "wet ground, painted or wherever water gathers, gets a soft clay layer that flows as a Bingham fluid (O'Brien and Julien), holds ruts when stiff and lets a car sink to its axles as slurry. It lies on a firm base of varying depth that wheels can dig down to for grip (`subsoil`), and logs and branches settled in it become corduroy that spreads wheel load and snaps when too thin (`mats`). Liquid mud a wheel shoves aside runs on as a wave and the rut closes behind it (`mud_waves`).",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Hidden and loose stones",
-   "settings": [
-    "GroundSurface3D.buried_obstacles",
-    "buried_density",
-    "buried_kick",
-    "stream_stones"
-   ],
-   "note": "",
-   "what": "stones and roots hidden in mud lift a sinking wheel and show as ruts deepen, and liquid mud flows round them. Tyres press the mud out round a stone, knock an uncovered one loose, push a stone low in the rut into its floor or squeeze it out under the shoulder, and shove loose stones ahead with a furrow and a heap. Loose stones settle as deep as the mud bears them and become hidden again once out of sight; slurry and debris flows carry them along, and streams roll them on once the current beats their weight, dropping them in slack water, with stones sunk in mud holding harder. The current scours a hole round a stone on a stream bed and leaves a tail of sediment behind it, and stones rolled over a muddy bed stir up silt that drifts downstream.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Tyre clogging",
-   "settings": [
-    "PhysXVehicle3D.tyre_clogging"
-   ],
-   "note": "",
-   "what": "sticky clay packs the tread until it grips like a slick, and spinning throws it off.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Treads and chains",
-   "settings": [
-    "PhysXVehicleWheel3D.tread"
-   ],
-   "note": "",
-   "what": "road, all-terrain, mud or chains per wheel; mud tyres and chains bite deeper and clog less in sticky clay, and each prints its own pattern in the rut.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Belly drag",
-   "settings": [
-    "PhysXVehicle3D.belly_drag"
-   ],
-   "note": "",
-   "what": "a car sunk past its clearance rides on its belly, is dragged by the soil and can high-centre.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Winch",
-   "settings": [
-    "PhysXWinch3D",
-    "rated_pull",
-    "line_speed",
-    "brake_hold"
-   ],
-   "note": "",
-   "what": "a cable winch that slows under load, stalls at its rated pull and slips its brake; the cable sags and lies on the ground.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Worn tracks",
-   "settings": [
-    "GroundSurface3D.worn_tracks",
-    "wear_regrowth_days"
-   ],
-   "note": "",
-   "what": "repeated wheel passes pack the soil firmer so it sheds rain, flatten the grass and then wear it bare, and it all regrows over weeks.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Stream fords",
-   "settings": [
-    "GroundSurface3D.stream_fords"
-   ],
-   "note": "",
-   "what": "wheels crossing a stream scour its bed and its soft banks give way under them.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Vehicles in water",
-   "settings": [
-    "PhysXVehicle3D.river_forces",
-    "hull_seal",
-    "hull_leak_area",
-    "air_intake_height",
-    "snorkel",
-    "wake_wash"
-   ],
-   "note": "",
-   "what": "rivers, fords and floods buoy a vehicle by how much of its body keeps water out and push it with the current, carrying it off when the water is deep and fast; a wading vehicle pushes a bow wave and wake that grow with speed and break on the banks, wetting the strip they run up and slowly wearing it away; at a steady pace the trough behind the bow keeps the water low at the air intake, but too fast the bow wave climbs over it; its cab floods through door and floor gaps until it settles and sinks, then drains on land, and the engine stalls once water reaches the air intake, which a snorkel lifts over the roof.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Mud on vehicles",
-   "settings": [
-    "PhysXVehicle3D.body_mud",
-    "mud_color",
-    "mud_color_map"
-   ],
-   "note": "",
-   "what": "tyres, arches and bellies cake with the clay they drive through, in the ground's own clay colour, wet at first; it dries with the weather, cracks into curling plates and shakes off on bumps.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Mud spray",
-   "settings": [
-    "PhysXGroundGrains3D.mud_spray"
-   ],
-   "note": "",
-   "what": "spinning wheels fling clods of wet clay that land back in the ground.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Mud splats",
-   "settings": [
-    "PhysXVehicle3D.add_mud_splat()"
-   ],
-   "note": "",
-   "what": "clods that hit a vehicle stick as domed splats that drip, dry and wash off in water.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Mud on plants",
-   "settings": [
-    "GroundSurface3D.plant_mud"
-   ],
-   "note": "",
-   "what": "thrown clay and muddy splashes spatter grass and plants, and rain washes it off.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Muddy water",
-   "settings": [
-    "GroundSurface3D.muddy_water"
-   ],
-   "note": "",
-   "what": "tyres and boots churn clay into standing water, which turns milky brown, drifts with the flow and settles out over minutes; tyre spray flies brown and stains the wheel arches.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Tracked mud",
-   "settings": [
-    "GroundSurface3D.tracked_mud"
-   ],
-   "note": "",
-   "what": "tyres, boots and other bodies leaving clay lay a film of mud on firm ground, printed with the tyre's chevron lugs or the boot's heel and forefoot, that fades as they clean and dries pale in place, then lifts as dust under tyres and in the wind, also after a reload, until the trail fades in patches; thrown clods land as cakes of wet clay that dry where they lie.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Ruts that stay",
-   "settings": [
-    "GroundSurface3D.keep_ruts",
-    "ruts_time_scale",
-    "ruts_away_rain",
-    "ruts_regrowth_time"
-   ],
-   "note": "",
-   "what": "prints, ruts, worn tracks, puddles, flood silt, debris fans and loose stones (where they lie, how deep and how turned) are saved per tile as the ground streams out and are still there on return, in the same session or the next, aged by the time away: mud dries, rain softens ruts and puddles evaporate; grass grows back over them with the growing season, stalling in winter and drought; kept puddles keep the clay in their water and the cracks a dried pool left.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Flood silt",
-   "settings": [
-    "GroundSurface3D.flood_silt"
-   ],
-   "note": "",
-   "what": "rivers over their banks and other floodwater soak the ground and leave their silt behind as fresh mud: a thin skin, slick while wet, that dries pale and cracks, and once its crust is broken gives dust under tyres and in the wind.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Mud slides",
-   "settings": [
-    "GroundSurface3D.mud_slides"
-   ],
-   "note": "",
-   "what": "soaked mud runs off slopes it can no longer hold and fills the ruts below.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Mud on legs",
-   "settings": [
-    "GroundLegMud3D",
-    "boot_suction"
-   ],
-   "note": "",
-   "what": "each leg is coated to the depth its foot sank and flecked by the stride; the mud dries over minutes and rinses off in standing water; sticky mud grips a lifting foot, slows the stride and can keep the boot.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Standing water",
-   "settings": [
-    "GroundSurface3D.standing_water",
-    "world_puddles",
-    "add_puddle()"
-   ],
-   "note": "",
-   "what": "rain the ground cannot take and ground water gather level in ruts and prints, then soak in and dry, as real geometry in raster and path tracing; puddles form in hollows and wet flats and stay as dry hollows in dry weather; `add_puddle()` digs and fills an irregular clay puddle that stays level on slopes; below 0 C puddles freeze (`puddle_ice`), bearing a foot and breaking into plates under a wheel.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Frozen ground",
-   "settings": [
-    "GroundSurface3D.frozen_ground",
-    "needle_ice"
-   ],
-   "note": "",
-   "what": "soil freezes from the top, holds ruts rigid and stands water; after the thaw it stays soft for days. Frosty nights lift wet bare soil on ice needles, and the thaw leaves loose crumbs that print deep.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Desiccation cracks",
-   "settings": [
-    "GroundSurface3D.desiccation_cracks"
-   ],
-   "note": "",
-   "what": "soaked clay dries to a pale matte crust that cracks into plates; rain closes the cracks, and each wet-dry cycle makes the pattern more regular.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Thrown sand",
-   "settings": [
-    "PhysXGroundGrains3D",
-    "tread_depth",
-    "kick()"
-   ],
-   "note": "",
-   "what": "spinning wheels and kicks throw sand that flies and lands back in the ground as fans, with the volume kept; a drifting car throws sand out of the turn, heaps a berm on the outside and scuffs a wide track, and the sand pushes back on the sliding tyre.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Wind ripples",
-   "settings": [
-    "GroundSurface3D.wind_ripples",
-    "ripple_extent"
-   ],
-   "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Blowing sand",
-   "settings": [
-    "GroundStreamers3D",
-    "GroundSurface3D.obstacle_lee"
-   ],
-   "note": "",
-   "what": "grains hop over dry sand as densely as the wind carries it, in streamers near the threshold wind, and drop in the lee of boulders, walls and parked vehicles.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Dust",
-   "settings": [
-    "GroundDust3D",
-    "GroundSurface3D.dust_emission"
-   ],
-   "note": "",
-   "what": "the wind lifts dust off dry sand, and sliding tyres lift billowing clouds of it, carried on the wind until it settles; needs volumetric fog.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Sand glints",
-   "settings": [
-    "GroundSurface3D.sand_glints"
-   ],
-   "note": "",
-   "what": "up close, dry sand shows the colours of its grains and the odd grain flashing in the sun; in low sun, sun-aligned grain facets glitter across dry sand.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Rain pits",
-   "settings": [
-    "GroundSurface3D.rain_pits"
-   ],
-   "note": "",
-   "what": "raindrops pit dry sand with small rimmed craters, a new pattern each shower, and the wetted skin dries into a crust that holds off the wind.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Adhesion warts",
-   "settings": [
-    "GroundSurface3D.adhesion_warts"
-   ],
-   "note": "",
-   "what": "blown dry sand sticks to damp sand at water edges and builds small rough lumps with pale dry tops; rain flattens them.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Wet sand",
-   "settings": [
-    "GroundSurface3D.water_coupling",
-    "water_sources"
-   ],
-   "note": "",
-   "what": "water fills the pores of sand below it, wets a margin up to 15 cm above still water (`water_fringe`), topped in a dry climate by a pale, patchy salt crust (`salt_crusts`), and drains after, darkening and glossing it, drying back up the beach; damp sand holds steep walls; water faster than the Shields threshold rounds off prints as bed load, keeping the sand volume.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Swash marks",
-   "settings": [
-    "GroundSurface3D.swash_marks"
-   ],
-   "note": "",
-   "what": "each wave leaves a thin scalloped ridge of sand at its highest reach, and higher waves smooth older lines.",
-   "page": "terrain",
-   "title": "Terrain",
-   "topic": "Ground"
-  },
-  {
-   "name": "Runoff channels",
-   "settings": [
-    "GroundSurface3D.runoff_channels"
-   ],
-   "note": "",
-   "what": "water seeping out of a beach after the tide, and rain the ground cannot take, cuts a braided net of rills from the top of the seepage face and lays the sand down at their foot on a low-tide terrace; on soil it cuts gullies along ruts and spreads a fan below, faster on softer ground.",
+   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1542,720 +1310,6 @@
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
-  },
-  {
-   "name": "Rock generator",
-   "settings": [
-    "RockGenerator",
-    "rock_type",
-    "family",
-    "transport_distance",
-    "weathering"
-   ],
-   "note": "",
-   "what": "rocks and stones as real geometry, broken along each rock type's joints, rounded by transport and weathered by rock type; joint sets at varying angles, stepped fracture faces and broken corners on fallen blocks; granite, limestone, sandstone, basalt and slate.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Shapes"
-  },
-  {
-   "name": "Tafoni",
-   "settings": [
-    "salt"
-   ],
-   "note": "",
-   "what": "salt weathering carves honeycomb hollows and tafoni into coastal and dry inland stone.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Shapes"
-  },
-  {
-   "name": "Close-up detail",
-   "settings": [
-    "RockField3D",
-    "close_up_enabled",
-    "close_up_radius"
-   ],
-   "note": "",
-   "what": "stones near the camera get real geometry for their grain: crystals whose cleavage faces glint in low sun, weathering pits, hairline cracks, spalled flakes and stepped fresh breaks, so the outline breaks too.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Shapes"
-  },
-  {
-   "name": "Mineral glints",
-   "settings": [
-    "RockField3D.mineral_glints"
-   ],
-   "note": "",
-   "what": "glossy crystals in granite and other quartz-bearing rock keep sparkling at a distance, counted per pixel footprint, and lichen, moss, water, snow and dust cover them.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Shapes"
-  },
-  {
-   "name": "Ground contact and aspect",
-   "settings": [
-    "contact_height",
-    "aspect_strength",
-    "ground_contact",
-    "ground_blend",
-    "ground_blend_height",
-    "ground_material"
-   ],
-   "note": "",
-   "what": "stones sit in the soil, with damp, gritty ground and fines banked uphill round each foot; the foot blends into the ground with a soil band, or takes the ground's own grain with a damp, darker foot (the landscape's TerrainMaterial3D when `ground_material` is unset), and stones take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Shapes"
-  },
-  {
-   "name": "Moss cushions",
-   "settings": [
-    "moss_cushions"
-   ],
-   "note": "",
-   "what": "on near stones, moss grows as real cushions 1 to 3.5 cm thick, with tufts that hold up under path tracing.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Shapes"
-  },
-  {
-   "name": "Rock fields",
-   "settings": [
-    "RockField3D",
-    "rockfall_",
-    "scree_",
-    "glacial_",
-    "river_",
-    "shore_",
-    "cliff_",
-    "layer_enabled",
-    "far_thinning",
-    "far_radius",
-    "far_min_size",
-    "far_widen"
-   ],
-   "note": "",
-   "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it; past the near field, only the larger rocks carry on out to the horizon, grown so the slope keeps its stone cover.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Placement"
-  },
-  {
-   "name": "Ground detail",
-   "settings": [
-    "RockField3D",
-    "ground_detail",
-    "ground_detail_pixels",
-    "ground_detail_cover",
-    "ground_detail_rivers",
-    "ground_detail_tiles",
-    "stones_react"
-   ],
-   "note": "",
-   "what": "pebbles and gravel from 1 to 8 cm as real stones near the camera, sized and sorted like the beach, scree or river bed around them (coarse on riffles, silted in pools, each stone tilted against the flow), each drawn only while it stays a few pixels tall; the path tracer traces every one, grouped into tiles of piles shared across cells so it handles far fewer instances, and small stones off screen leave its scene with no change to the image (`rendering/pathtracing/offscreen_record_cull`). Beyond that the ground takes on their cover, colour and shading toward the sun, so no edge shows where the stones stop. Feet and wheels press the stones into the bed, push some aside and flick a few loose, which settle again.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Placement"
-  },
-  {
-   "name": "Breakable stones",
-   "settings": [
-    "RockField3D.break_stone"
-   ],
-   "note": "",
-   "what": "stones split into pieces along rough rock breaks, and layered rock into slabs.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Placement"
-  },
-  {
-   "name": "Live rockfall",
-   "settings": [
-    "RockField3D.live_rockfall",
-    "live_rockfall_rate",
-    "live_rockfall_radius",
-    "live_rockfall_max"
-   ],
-   "note": "",
-   "what": "cliff blocks fall in frost, thaw and rain, and break on impact.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Placement"
-  },
-  {
-   "name": "Rockfall dust",
-   "settings": [
-    "rockfall_dust"
-   ],
-   "note": "",
-   "what": "falling and breaking stones throw up dust where they hit.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Placement"
-  },
-  {
-   "name": "Tors and coasts",
-   "settings": [
-    "layer_enabled",
-    "LAYER_TOR",
-    "LAYER_COAST",
-    "salt_bloom"
-   ],
-   "note": "",
-   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks cut into sharp-edged joint blocks with spray pitting only on upward faces, arches and wave-cut platforms on rocky coasts, with a wet barnacle and weed band below high water and a dark splash band above; on sheltered rock, sea spray salt dries to a white crust that is gone while the rock is wet.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Placement"
-  },
-  {
-   "name": "Landforms",
-   "settings": [
-    "layer_enabled",
-    "LAYER_LANDFORM"
-   ],
-   "note": "",
-   "what": "hoodoo rows on bare soft slopes, limestone pavement on flat limestone benches, rows of sandstone fins on gentle bare sandstone, about half pierced by an arch, clusters of rounded sandstone knobs (goblins) on flat bare sandstone, and bedrock slabs drilled with potholes, grinder stones inside, on steep stream reaches.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Placement"
-  },
-  {
-   "name": "Caves",
-   "settings": [
-    "CaveNetwork3D.build_meshes()",
-    "follow_target",
-    "speleothems",
-    "scallops",
-    "cave_streams",
-    "add_sea_cave()",
-    "sea_surge",
-    "terrain3d"
-   ],
-   "note": "",
-   "what": "cave networks grow behind limestone cliff-foot entrances (Paris 2021) and are meshed into the hillside around the opening, also on Terrain3D; stalactites, stalagmites and columns grow where water drips through the roof, and flow scallops the walls; streams run over washed, wet gravel beds. Sea caves follow cracks into sea cliffs, their walls stepped by beds of uneven thickness, flooded at the mouth by the sea, which surges in with each swell so bodies wade and swim and the walls get wet, some ending in a chamber with a blowhole to the cliff top.",
-   "page": "rocks",
-   "title": "Rocks",
-   "topic": "Placement"
-  },
-  {
-   "name": "Shadows on water",
-   "settings": [
-    "wave_shadows"
-   ],
-   "note": "",
-   "what": "rivers, lakes and the sea take shadows from terrain, objects and clouds in raster, as they already do under path tracing, on the surface and inside the water, seen from above or below; path traced shadows pass through the water, so a shallow bed takes the depth's tint on the way down as well as up. The open sea's raster colour matches the path tracer's. At a low sun, waves shade their own lee sides (`wave_shadows`).",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
-  },
-  {
-   "name": "Refraction",
-   "settings": [
-    "rendering/pathtracing/refraction"
-   ],
-   "note": "",
-   "what": "water and glass blocks bend light by their IOR, with total internal reflection and depth tint; glTF `KHR_materials_volume`, `KHR_materials_ior`.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
-  },
-  {
-   "name": "Two-layer refraction",
-   "settings": [
-    "rendering/transparency/refraction_second_layer"
-   ],
-   "note": "",
-   "what": "in raster, water and glass refract the water or glass behind them, so a pool shows through a falling stream.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
-  },
-  {
-   "name": "Murky water",
-   "settings": [
-    "IOR",
-    "ABSORPTION",
-    "SCATTERING",
-    "KHR_materials_scatter"
-   ],
-   "note": "",
-   "what": "scattering media; `IOR`, `ABSORPTION` and `SCATTERING` in shaders; glTF `KHR_materials_scatter` draft.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
-  },
-  {
-   "name": "Caustics",
-   "settings": [
-    "rendering/pathtracing/caustics",
-    "caustics_enabled",
-    "foam_shade"
-   ],
-   "note": "",
-   "what": "sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun, and foam shades the sand beneath it while gaps in the swash lace stay lit, as under path tracing.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
-  },
-  {
-   "name": "Caustic cascades",
-   "settings": [
-    "rendering/pathtracing/caustics_cascades"
-   ],
-   "note": "",
-   "what": "sun caustics out to 256 m, near lines unchanged.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Light in water"
-  },
-  {
-   "name": "Clear water",
-   "settings": [
-    "clear_water",
-    "shore_depth_fade"
-   ],
-   "note": "",
-   "what": "in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth; rivers fade softly into the bank at the waterline.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Path-traced ocean",
-   "settings": [
-    "PhysXWaterSurface3D",
-    "pathtraced_absorption",
-    "pathtraced_scattering",
-    "pathtraced_roughness"
-   ],
-   "note": "",
-   "what": "waves refract, tint and scatter, with caustics on the seabed.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Ocean swell",
-   "settings": [
-    "wave_cascades",
-    "wave_tile_breakup"
-   ],
-   "note": "",
-   "what": "up to four wave layers give long swell under the chop, each layer blended so its tile never repeats (Heitz and Neyret 2018), whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Measured wave spreading",
-   "settings": [
-    "wave_spreading",
-    "swell"
-   ],
-   "note": "",
-   "what": "Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Whitecaps by wind speed",
-   "settings": [
-    "whitecap_auto",
-    "whitecap_cover_scale"
-   ],
-   "note": "",
-   "what": "whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Storm seas",
-   "settings": [
-    "crest_spray",
-    "crest_spray_amount"
-   ],
-   "note": "",
-   "what": "above 9 m/s of wind, breaking crests throw puffs of spume downwind; above 14 m/s, gale foam lies in thin broken streaks along the wind.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Torn spray sheets",
-   "settings": [
-    "crest_sheets"
-   ],
-   "note": "",
-   "what": "in a gale the wind tears thin sheets of water off folding crests, in raster and path tracing.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Crisp sea foam",
-   "settings": [
-    "foam_crisp",
-    "foam_relief"
-   ],
-   "note": "",
-   "what": "sharp patch edges, torn lobed holes and bubble relief, up close and at range; distant foam keeps its lace in raster instead of turning to flat white sheets.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Crest glow",
-   "settings": [
-    "crest_glow"
-   ],
-   "note": "",
-   "what": "low sun shines through a thin line along the high crest tops in the water's own colour, scaled to the sea's chop, in raster; path tracing already scatters through them.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Spilling rollers",
-   "settings": [
-    "roller_strength"
-   ],
-   "note": "",
-   "what": "breaking crests carry a raised, churning roller of white water.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Ocean detail",
-   "settings": [
-    "detail_waves",
-    "far_filter",
-    "bubble_strength"
-   ],
-   "note": "",
-   "what": "short ripples down to 8 cm; on every wave cascade, waves smaller than a pixel pass into the surface roughness, so near and far sun glitter keeps the right width, and the far sea mirrors the sky through their mean Fresnel instead of turning into a pale sheet; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Lake ripples",
-   "settings": [
-    "fetch"
-   ],
-   "note": "",
-   "what": "on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Impulse waves",
-   "settings": [
-    "WorldWater.wave()"
-   ],
-   "note": "",
-   "what": "avalanches, slides and calving ice send waves across lakes that shoal and reflect off the shores.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Oasis springs",
-   "settings": [
-    "OasisSprings3D"
-   ],
-   "note": "",
-   "what": "still spring pools in the desert, each sized by its spring's water balance and with its own outline, with sand boils heaving at the vents, in clear spring water, and only where the ground is hollowed.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Sea caves",
-   "settings": [
-    "PhysXSeaCaveWater3D",
-    "wavelets"
-   ],
-   "note": "",
-   "what": "the sea's own water runs inside sea caves, handed over softly at the arch, with waves reflecting off the walls and small wavelets rippling the water inside.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Cave pools",
-   "settings": [
-    "seabed_probe_height"
-   ],
-   "note": "",
-   "what": "pool water under a cave roof measures the real floor beneath it, so a shallow pool thins out to its rim.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Underground reflections",
-   "settings": [
-    "screen_reflections"
-   ],
-   "note": "",
-   "what": "with `raster_reflections` off, still water and streams mirror the cave around them in raster; rivers keep clear water.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Raster reflections",
-   "settings": [
-    "raster_reflections"
-   ],
-   "note": "",
-   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer, and omni and spot lights glint on all raster water; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk, and the bed is lit through the surface's Fresnel transmission, as under path tracing.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Finer water mesh up close",
-   "settings": [
-    "mesh_detail"
-   ],
-   "note": "",
-   "what": "",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Boat wakes",
-   "settings": [
-    "PhysXWaterWake3D.dispersive",
-    "breaking_slope"
-   ],
-   "note": "",
-   "what": "waves stepped with deep-water dispersion in Fourier space form the Kelvin pattern, a 19.5 degree wedge of transverse and diverging waves.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Sea and lakes"
-  },
-  {
-   "name": "Shore waves",
-   "settings": [
-    "shore_waves",
-    "open_sea_beyond",
-    "terrain_source"
-   ],
-   "note": "",
-   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); lakes get shore waves from their own wind only, and a generated world's sea breaks on every coast, in sections that spill, show lit faces under the lip and tear open into lace foam.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Shore"
-  },
-  {
-   "name": "Wave groups",
-   "settings": [
-    "shore_wave_groups"
-   ],
-   "note": "",
-   "what": "shore waves arrive in sets with their own Rayleigh heights, so each breaks at its own place.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Shore"
-  },
-  {
-   "name": "Plunging breakers",
-   "settings": [
-    "shore_wave_curl",
-    "shore_spray",
-    "shore_spray_amount"
-   ],
-   "note": "",
-   "what": "the crest throws a sheet of water that lands ahead and sinks into the bore, with spray where it is thin and where it lands.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Shore"
-  },
-  {
-   "name": "Shore wetness",
-   "settings": [
-    "contact_wetness"
-   ],
-   "note": "",
-   "what": "sand, rocks and plants stay wet up to where the waves ran or the river reached, and dry with the weather.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Shore"
-  },
-  {
-   "name": "Rock contact foam",
-   "settings": [
-    "contact_foam"
-   ],
-   "note": "",
-   "what": "white water rings where the sea meets stacks, boulders and cliff feet, widening as each wave arrives, and washes over rock tops just under the surface.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Shore"
-  },
-  {
-   "name": "Currents",
-   "settings": [
-    "current",
-    "flow_period"
-   ],
-   "note": "",
-   "what": "flow round rocks and along shores carries waves, foam and floating objects.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Live flow",
-   "settings": [
-    "live_flow",
-    "wall_friction"
-   ],
-   "note": "",
-   "what": "near the player, rocks and banks shed wakes and eddies. Splashes and wakes near the camera wash up beaches and banks and drain back.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Live water",
-   "settings": [
-    "PhysXLiveWater3D",
-    "streaming"
-   ],
-   "note": "",
-   "what": "water from springs, rain or a breaking dam runs downhill over any ground, fills hollows and floods. The live area follows the camera; water left behind stays in place and flows again on return.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Buoyancy from shapes",
-   "settings": [
-    "volume_mode",
-    "mass_from_densities"
-   ],
-   "note": "",
-   "what": "bodies take their volume from their collision shapes and their mass from per-shape densities, so wood, ice and steel hulls float at their real drafts.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Bodies push water",
-   "settings": [
-    "PhysXWaterPusher3D"
-   ],
-   "note": "",
-   "what": "legs, hulls and props push live water, seas and rivers aside as they move, heaping water ahead and leaving a wake behind.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "White water",
-   "settings": [
-    "flow_foam"
-   ],
-   "note": "",
-   "what": "foam in fast water, trailing rocks and drifting downstream.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Rivers",
-   "settings": [
-    "PhysXRiver3D",
-    "discharge",
-    "roughness",
-    "max_slope",
-    "gradually_varied_flow",
-    "bend_superelevation",
-    "standing_waves",
-    "source_lake",
-    "level_from_flows",
-    "carve",
-    "foam_crisp",
-    "ripple_detail",
-    "caustics_strength",
-    "live_surface_waves",
-    "live_near_mesh_spacing",
-    "obstacle_collision_mask",
-    "live_flow",
-    "mouth_target",
-    "fall_min_height",
-    "fall_mist_amount",
-    "PhysXWaterMist3D",
-    "wet_surfaces",
-    "PhysXRiver3D.fall_sound",
-    "edge_lap_height",
-    "edge_relief",
-    "edge_foam"
-   ],
-   "note": "",
-   "what": "drawn as a curve; finds its depth and never runs uphill.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Contact waterfalls",
-   "settings": [
-    "PhysXWaterfalls3D",
-    "contact_falls",
-    "wet_margin",
-    "surface"
-   ],
-   "note": "",
-   "what": "water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges. Thin falls over stepped rock run ledge to ledge as threads with wet rock between them, as their flow sets (`rock_step`); big flows stay fully covered. The sheets follow cliff relief ledge by ledge. Falling water counts as water for everything it touches: bodies and clothes in a fall get wet and are pushed down.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Plunging waterfalls",
-   "settings": [
-    "plunge_falls",
-    "column_density",
-    "wind_exposure"
-   ],
-   "note": "",
-   "what": "tall falls break up into a falling column of clumps slowed by the air, inside a spray veil and soft mist; where the face leans into the jet, the fall keeps to the rock and fans out down it.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Faster flow bakes",
-   "settings": [
-    "physics/physx_3d/water/multigrid_flow"
-   ],
-   "note": "",
-   "what": "multigrid-preconditioned conjugate gradients bake the flow 7 to 10 times faster than SOR.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Currents and rivers"
-  },
-  {
-   "name": "Camera under water",
-   "settings": [
-    "underwater_enabled"
-   ],
-   "note": "",
-   "what": "fog, scattering, Snell's window, image split at the water line. In raster, omni and spot lights glow and scatter in the water, as under path tracing.",
-   "page": "water",
-   "title": "Water",
-   "topic": "Under water"
   },
   {
    "name": "Plant placement",
@@ -2274,11 +1328,10 @@
    "name": "Streamed placement",
    "settings": [
     "VegetationField3D.streaming",
-    "stream_radius",
-    "still_shot"
+    "stream_radius"
    ],
    "note": "",
-   "what": "tiles are placed on worker threads around the camera, identical to a full placement, and `still_shot` stops streaming once the view settles; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.",
+   "what": "tiles are placed on worker threads around the camera, identical to a full placement; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Placement"
@@ -2328,66 +1381,6 @@
    "topic": "Placement"
   },
   {
-   "name": "Worn paths",
-   "settings": [
-    "VegetationField3D.paths",
-    "GrassField3D.paths"
-   ],
-   "note": "",
-   "what": "along paths, plants and grass thin out and shorten by how well they resist trampling, leaving bare trodden soil.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Placement"
-  },
-  {
-   "name": "Cereal crops",
-   "settings": [
-    "GrassField3D.crop",
-    "crop_stage"
-   ],
-   "note": "",
-   "what": "wheat, barley, oats and rye as real plants in drill rows, with spikelet ears and barley awns, through their growth stages from green rows to gold ears and stubble with straw swaths.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Placement"
-  },
-  {
-   "name": "Crop fields",
-   "settings": [
-    "GrassField3D.fields"
-   ],
-   "note": "",
-   "what": "field outlines with their own drill direction, sowing date, tramlines and headland; the ground carries the crop's colour into the distance.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Placement"
-  },
-  {
-   "name": "Hedgerows and margins",
-   "settings": [
-    "GrassField3D.hedges",
-    "hedge_voxel_lods",
-    "PlantGenerator.make_margin()"
-   ],
-   "note": "",
-   "what": "field edges carry hedgerows of mixed native shrubs with a gateway per field, and headland and verge strips of field weeds; far hedges switch to voxel levels.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Placement"
-  },
-  {
-   "name": "Clear of boulders",
-   "settings": [
-    "VegetationField3D.obstacles",
-    "GrassField3D.obstacles"
-   ],
-   "note": "",
-   "what": "grass, ground plants, tree feet and fallen logs keep out of boulders.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Placement"
-  },
-  {
    "name": "Waterfall spray",
    "settings": [
     "PlantSpecies.spray_range"
@@ -2428,18 +1421,7 @@
     "GrassField3D"
    ],
    "note": "",
-   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind (each blade answers gusts at its own frequency, about 2 Hz, and the sway rolls downwind as waves) and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced. Highlights run along each blade over a folded mid vein, raster and path traced alike (`fibre_shading`).",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Grass"
-  },
-  {
-   "name": "Grass on the GPU",
-   "settings": [
-    "GrassField3D.gpu_fill"
-   ],
-   "note": "",
-   "what": "grass tiles are filled in compute, about 40% less main-thread cost per tile.",
+   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -2448,53 +1430,7 @@
    "name": "Grass edge fade",
    "settings": [],
    "note": "always on",
-   "what": "grass holds full density over the inner half of the grass radius, then blades thin and shrink across the outer band, and the ground takes their colour beyond (measured from a render of the blades, so any grass look matches), so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Grass"
-  },
-  {
-   "name": "Far grass in sunlight",
-   "settings": [
-    "GrassField3D.sun_light"
-   ],
-   "note": "",
-   "what": "distant grass brightens looking away from the sun and darkens looking into it, measured from the blades at four sun headings.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Grass"
-  },
-  {
-   "name": "Grass edge match",
-   "settings": [
-    "GrassField3D.far_match_view"
-   ],
-   "note": "",
-   "what": "after each bake the ground past the grass is matched to the blades in view, so there is no brightness step where the blades end.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Grass"
-  },
-  {
-   "name": "Grass under undergrowth",
-   "settings": [
-    "GrassField3D.undergrowth_field",
-    "PlantSpecies.sward_shade",
-    "PlantSpecies.litter_color"
-   ],
-   "note": "",
-   "what": "grass thins and shortens under bracken and bramble stands, as their shade kills the sward, and the stands lay their own litter beneath; thin margins keep their grass.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Grass"
-  },
-  {
-   "name": "Seasonal grass",
-   "settings": [
-    "GrassField3D.season_source"
-   ],
-   "note": "",
-   "what": "grass browns in drought and hard cold and stays green in a mild winter, read from the season.",
+   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -2519,7 +1455,7 @@
     "GrassField3D.trample_recovery"
    ],
    "note": "",
-   "what": "bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream. Wet gales lodge tall grass flat in swirled patches that stand again over days (`GrassField3D.lodging`).",
+   "what": "bodies lay grass down and it springs back.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -2543,18 +1479,7 @@
     "PlantGenerator"
    ],
    "note": "",
-   "what": "meadow plants including tall flowers (knapweed, field scabious, wild carrot, common sorrel, some in seed), forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Plants by season",
-   "settings": [
-    "PlantGenerator.season"
-   ],
-   "note": "",
-   "what": "17 flowering herbs open, go to seed and die back to standing stalks by degree days; fern croziers unroll in spring, fronds die back russet and lie flat through winter, and wood anemone dies down after flowering.",
+   "what": "meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2563,211 +1488,10 @@
    "name": "Forest floor",
    "settings": [
     "PlantGenerator.make_floor(stand, variants)",
-    "FLOOR_MEDITERRANEAN",
-    "FLOOR_BOREAL_TAIGA",
     "VegetationField3D.forest_floor_enabled"
    ],
    "note": "",
-   "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter. Under boreal pine, pale reindeer lichen carpets the floor in lumpy cushions, crushed underfoot and slow to return after fire.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Stand age",
-   "settings": [
-    "PlantSpecies.RULE_STAND_AGE",
-    "RULE_DISTURBANCE"
-   ],
-   "note": "",
-   "what": "plants follow the years since the last fire, windthrow or beetle kill, so pioneers flood a fresh burn or blowdown and shade plants return as the stand closes; the ground is re-placed live when a disturbance moves a species across its range.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Deer browsing",
-   "settings": [
-    "WorldStand.add_browse()",
-    "PlantSpecies.RULE_BROWSE",
-    "PRESET_GRAZED_LAWN",
-    "GrassField3D.graze_height"
-   ],
-   "note": "",
-   "what": "where deer feed, bramble and raspberry are bitten low, palatable herbs thin, the floor turns grassy, the grass is grazed short and clearings become close-cropped deer lawns.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Game trails",
-   "settings": [
-    "VegetationField3D.make_game_trails()",
-    "GroundSurface3D.trail_pugging",
-    "trail_wallows"
-   ],
-   "note": "",
-   "what": "animals wear a branching network of trails between cover, feeding lawns and water, routed by least cost over slope and water and merging where traffic runs; grass wears to trodden soil along them, stones stand proud on the tread, the packed ground pools rain first, and wet trails churn into hoof-pocked mud where traffic is heaviest, and animals roll muddy wallows into wet level stretches, more in warm weather.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Avalanche tracks",
-   "settings": [
-    "PlantGenerator.make_avalanche_track()"
-   ],
-   "note": "",
-   "what": "ground an avalanche cleared shows torn turf and debris, then fireweed, ferns and tall forbs.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Boar rooting",
-   "settings": [
-    "PlantGenerator.make_rooting()",
-    "ROOTING_WOOD",
-    "ROOTING_MEADOW",
-    "WorldStand.DISTURBANCE_ROOTING"
-   ],
-   "note": "",
-   "what": "rooted ground shows turned sods and loose stones that dry, slump and green over, loses its plants and takes the first weeds, healing over about two years.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Grazing roughs and dung",
-   "settings": [
-    "PlantGenerator.make_grazing()"
-   ],
-   "note": "",
-   "what": "cattle pats ringed by ungrazed rank tufts, horse latrines and deer pellets on pastures and lawns.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Fairy rings",
-   "settings": [
-    "GrassField3D.fairy_rings",
-    "PlantGenerator.make_fairy_rings()"
-   ],
-   "note": "",
-   "what": "meadows carry rings of dark and dead grass with champignons along them.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Dewy webs",
-   "settings": [
-    "PlantGenerator.make_dew_webs()"
-   ],
-   "note": "",
-   "what": "sheet and orb spider webs show when dew or hoarfrost beads them.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Anthills and molehills",
-   "settings": [
-    "PlantGenerator.make_mounds()",
-    "MOUNDS_MEADOW",
-    "MOUNDS_WOOD"
-   ],
-   "note": "",
-   "what": "anthills in sunny meadow groups, wood ant nests at sunny gaps and edges of conifer stands, molehills in lines and arcs; grass keeps out from under them.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Stand margins",
-   "settings": [
-    "PlantSpecies.margin_width",
-    "margin_scale",
-    "margin_lean"
-   ],
-   "note": "",
-   "what": "bracken and bramble stands grow shorter and lean outward toward their edges.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Rock foot",
-   "settings": [
-    "PlantSpecies.rock_foot"
-   ],
-   "note": "",
-   "what": "ferns, mosses, wood sorrel and seedlings gather within about half a metre of a rock's foot.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Plants on and between stones",
-   "settings": [
-    "PlantSpecies.stone_top",
-    "PlantSpecies.stone_gap",
-    "PlantGenerator.make_stones()"
-   ],
-   "note": "",
-   "what": "moss grows on the tops of generated stones, green cushions on low, shaded tops and hoary yellow-olive ones on high, sunlit tops (`PlantSpecies.stone_top_damp`), and crevice ferns, stonecrop, saxifrage and thrift only in the gaps of scree, gravel and shingle.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Plants on deadwood",
-   "settings": [
-    "PlantSpecies.deadwood_rule"
-   ],
-   "note": "",
-   "what": "ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Woodland mushrooms",
-   "settings": [
-    "PlantGenerator",
-    "PlantSpecies.patch_ring",
-    "PlantSpecies.deadwood_from_wood"
-   ],
-   "note": "",
-   "what": "fly agaric, cep, chanterelle, brittlegill, clouded agaric and honey fungus, with stalks, caps, gills or tubes, rings and warts, come up under their host trees from late summer to the first frost; honey fungus grows in clumps out of the side of deadwood, clouded agaric in fairy-ring arcs.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Leaf drift",
-   "settings": [
-    "PlantSpecies.litter_range",
-    "VegetationField3D.litter_wind",
-    "RULE_LITTER_DRIFT",
-    "PRESET_LEAF_BANK"
-   ],
-   "note": "",
-   "what": "fallen leaves drift past the crowns into edges and clearings, farther downwind, pile into hollows and against trunks, logs and stones, and leave ridges swept bare.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Falling leaves",
-   "settings": [
-    "LeafFall3D",
-    "creep_speed",
-    "field_litter"
-   ],
-   "note": "",
-   "what": "leaves fall from the crowns through the wind as autumn sheds them, slide and flip along the ground in a breeze to settle in the leaf drifts, and gusts and passing bodies lift them off the ground; on ponds and rivers they float and drift, and on snow they lie until it melts and brings them back out.",
+   "what": "herbs, mosses and seedlings by the stand above, and the ground under closed canopy turns to leaf, needle or moss litter.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2780,112 +1504,6 @@
    ],
    "note": "",
    "what": "reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Waterside plants",
-   "settings": [
-    "PlantGenerator.make_banks()",
-    "PlantSpecies.stone_top_water",
-    "follow_flow"
-   ],
-   "note": "",
-   "what": "marsh marigold, meadowsweet and butterbur line streams, lakes and falls by distance to water; river stones carry river moss and liverwort by height over the water, the moss trailing downstream.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Bog plants",
-   "settings": [
-    "PlantGenerator.make_bog()"
-   ],
-   "note": "",
-   "what": "sphagnum hummocks, cotton grass, bog asphodel and sundew on wet level ground.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Atlantic heath",
-   "settings": [
-    "PlantGenerator.make_heath()"
-   ],
-   "note": "",
-   "what": "bell heather, cross-leaved heath and crowberry in dry, wet and cliff-top heath, placed by rain, winter cold and wetness.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Mediterranean scrub",
-   "settings": [
-    "PlantGenerator.make_scrub()"
-   ],
-   "note": "",
-   "what": "rosemary, French lavender, thyme and sage-leaved rockrose, as garrigue on thin soil and maquis on deeper soil where winters are mild and summers dry; the rockrose folds and greys its leaves in drought.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Dune plants",
-   "settings": [
-    "PlantGenerator.make_dunes()",
-    "GroundSurface3D.wind_shelters"
-   ],
-   "note": "",
-   "what": "marram, lyme grass and sea holly on sand; they shelter it from the wind, so blowing sand piles into mounds round them.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Salt marsh and shingle plants",
-   "settings": [
-    "PlantGenerator.make_saltmarsh()"
-   ],
-   "note": "",
-   "what": "glasswort, cord-grass, sea purslane, sea aster and sea lavender zoned by height above the tide on sheltered marsh; sea kale, sea campion and horned-poppy on shingle backshores.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Alpine and scree plants",
-   "settings": [
-    "PlantGenerator.make_alpine()"
-   ],
-   "note": "",
-   "what": "fellfield, alpine grassland, snowbed and scree sets above the treeline, placed by climate, curvature, sunlight, soil depth and talus.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Desert plants",
-   "settings": [
-    "PlantGenerator.make_desert()",
-    "DESERT_OASIS",
-    "PlantSpecies.RULE_SPRING",
-    "RULE_POOL_DISTANCE",
-    "VegetationField3D.spring_pools"
-   ],
-   "note": "",
-   "what": "oases grow at the terrain's springs with date palms, olives and a ring of shrubs, reeds and rushes edge the spring pools, and each nebkha mound holds a shrub.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Beaver ponds and meadows",
-   "settings": [
-    "PlantGenerator.make_beaver()"
-   ],
-   "note": "",
-   "what": "pond plants by water depth, and after the dam fails a meadow that runs from rush and sedge through tall grass, buttercup, meadowsweet and marsh marigold over the decades.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2908,38 +1526,6 @@
    ],
    "note": "",
    "what": "plants bend away from bodies and spring back, and lean in the wind.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Ground mist",
-   "settings": [
-    "VegetationMist3D",
-    "mist_amount"
-   ],
-   "note": "",
-   "what": "at dawn, low mist pools in hollows and drifts through the grass, set by the weather and sun; bodies part it, and it burns off as the sun climbs.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Pollen puffs",
-   "settings": [
-    "VegetationPollen3D"
-   ],
-   "note": "",
-   "what": "brushing grasses and other wind-pollinated plants in flower releases a puff of pollen; each plant recharges, and wet plants stay still.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Sun and shade growth",
-   "settings": [],
-   "note": "always on",
-   "what": "grass and ground plants take the colour and height of the light they grow in, like sun and shade leaves.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2968,23 +1554,10 @@
   {
    "name": "Far thinning",
    "settings": [
-    "PlantSpecies.far_color",
-    "far_reach",
-    "far_shell"
+    "PlantSpecies.far_color"
    ],
    "note": "",
-   "what": "plants thin out one by one in blue-noise order with distance, out to three times their range, and leave their colour on the ground beyond, with no tile pops; taller cover drapes on to the horizon as a shell.",
-   "page": "vegetation",
-   "title": "Vegetation",
-   "topic": "Plants"
-  },
-  {
-   "name": "Far plants as volume",
-   "settings": [
-    "VegetationField3D.far_volume"
-   ],
-   "note": "",
-   "what": "past their range, plants keep a porous voxel shell of their leaf cover out to 150 m.",
+   "what": "plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3025,596 +1598,178 @@
    "topic": "Instances"
   },
   {
-   "name": "Tree generator",
+   "name": "Weather map",
    "settings": [
-    "TreeGenerator",
-    "preset",
-    "years",
-    "seed"
+    "WeatherMap3D"
    ],
    "note": "",
-   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 31 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`).",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "one weather state round the camera (wind, cloud cover, rain, wetness, puddles), read by every shader through global uniforms, raster and path traced.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
   },
   {
-   "name": "Stand and open forms",
+   "name": "Wind",
    "settings": [
-    "forest_shade",
-    "forest_spacing"
+    "roughness_length"
    ],
    "note": "",
-   "what": "trees grown in a closed stand shed their lower limbs to a long clear bole under a narrow crown; open-grown trees keep leaves down to their lower limbs.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
   },
   {
-   "name": "Conifer crowns",
+   "name": "Wind near the ground",
    "settings": [
-    "crown_cone"
+    "add_canopy",
+    "add_shelter_box",
+    "gust_patch_size"
    ],
    "note": "",
-   "what": "spruce, fir, larch, pine and hemlock keep their cone, with branches to the top.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "shelter inside plant canopies and behind buildings; gust patches sweep across fields.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
   },
   {
-   "name": "Stands",
+   "name": "Storms",
    "settings": [
-    "make_stand",
-    "make_woodland"
+    "add_storm"
    ],
    "note": "",
-   "what": "twenty-four stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock, plus managed coppice with standards, wood pasture and pollard rows (`STAND_COPPICE_STANDARDS`, `STAND_WOOD_PASTURE`, `STAND_POLLARD_ROW`), date palm oases (`STAND_DATE_OASIS`) beetle-killed spruce (`STAND_BEETLE_SPRUCE`), alder carr on stilt roots over moss tussocks (`STAND_ALDER_CARR`, `stilt_height`), old broken and leaning floodplain willows (`STAND_FLOODPLAIN_WILLOW`), beaver ponds with drowned snags that drain into meadows of standing dead trees (`STAND_BEAVER_POND`), deer-browsed wood (`STAND_DEER_WOOD`), old-growth beech (`STAND_OLD_GROWTH_BEECH`), with veteran giants over a pole layer, gaps where single giants fell and five times more deadwood lying than standing, and boreal taiga (`STAND_BOREAL_TAIGA`) with fire-scarred survivor pines, charred and cracked into blocks at their foot (`fire_scars`), and silver kelo snags and logs, bare to the soil with spiral grain (`kelo`). Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "drift with the wind, with a rain core and a downdraft.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
   },
   {
-   "name": "Pollards and coppice",
+   "name": "Lightning and thunder",
    "settings": [
-    "cut_height",
-    "cut_cycle",
-    "cut_since"
+    "WeatherLightning3D"
    ],
    "note": "",
-   "what": "trees cut back on a cycle regrow straight poles from a swollen, knobbly head or a ground stool; lapsed pollards carry big limbs. Coppice with standards is cut in straight-edged coupes in turn (`coupe_rotation`, `coupe_ages`), so neighbouring coupes stand at different ages, with rides along some edges (`ride_width`). Poles swell into collars and carry branch scars; coppice stools end in old rotted cuts under a callus lip, and their rods swell at the nodes.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "strikes from storm cells at a rate set by cloud-top height, lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
   },
   {
-   "name": "Shrubs and hedges",
+   "name": "Precipitation haze",
    "settings": [
-    "stems",
-    "envelope"
+    "WeatherMap3D.set_precipitation_extinction()"
    ],
    "note": "",
-   "what": "many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
   },
   {
-   "name": "Field hedges",
+   "name": "Wet surfaces and puddles",
    "settings": [
-    "SHRUB_HEDGE"
+    "surface_storage",
+    "puddle_drain_rate",
+    "temperature",
+    "humidity"
    ],
    "note": "",
-   "what": "hawthorn, blackthorn, hazel, field maple and dog rose as flailed 2 m hedge segments, with blossom and fruit in season; foliage grows in clumps with gaps and shaded undersides, and each grown-out shrub takes its own habit. Laid hedges (`SHRUB_LAID_HEDGE`, `FORM_LAID_HEDGE`): stems cut and laid over at 28 to 40 degrees between stakes every 45 cm, held by twisted hazel binders.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
   },
   {
-   "name": "Gorse and broom",
+   "name": "Followers",
    "settings": [
-    "TreeGenerator.make_shrub_species()"
+    "follow_weather",
+    "weather_wind"
    ],
    "note": "",
-   "what": "real spines, flowers and pods, flowering by season, in young, mature, old, thicket and cushion forms.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
   },
   {
-   "name": "Mediterranean shrubs",
+   "name": "Sun and moon clock",
    "settings": [
-    "TreeGenerator.make_shrub_species()"
+    "SkyClock"
    ],
    "note": "",
-   "what": "gum rockrose, kermes oak and lentisk, with flowers, acorns and drupes as geometry.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "date, time and place point the sun and moon lights, with moon phases (Meeus); the sun is within 0.0004 degrees of the ephemeris and sunrise within half a minute of the almanac (`docs/bench/sky --test`).",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
   },
   {
-   "name": "Dwarf fan palm",
+   "name": "Sky atmosphere",
    "settings": [
-    "PRESET_DWARF_FAN_PALM"
+    "WeatherSkyMaterial.atmosphere_model",
+    "SkyClock.drive_light_energy"
    ],
    "note": "",
-   "what": "clumps of short fibrous trunks or stemless crowns, with pleated fan leaves on spiny stalks, a skirt of dead leaves, spring flower clusters and dates that ripen from green to red-brown.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "multiple scattering (Hillaire 2020) lit by sun and moon, with twilight, the Earth's shadow and clouds hazed to the horizon; `atmo_far_water` hazes far sea, `energy_per_lux` scales the lights.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
   },
   {
-   "name": "Date palm",
+   "name": "Cloud layer",
    "settings": [
-    "PRESET_DATE_PALM"
+    "cloud_base_height",
+    "cloud_thickness",
+    "cloud_density"
    ],
    "note": "",
-   "what": "a tall trunk latticed with old leaf bases, arching feather fronds over a skirt of dead ones, offshoots at the foot of wild palms (cut on tended ones) and date bunches through the year; path tracing keeps every leaflet and date.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
   },
   {
-   "name": "Stone pine",
-   "settings": [
-    "PRESET_STONE_PINE"
-   ],
-   "note": "",
-   "what": "an umbrella crown on a clear bole, cones in three ages and plated red-brown bark.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "name": "Clouds that never repeat",
+   "settings": [],
+   "note": "always on",
+   "what": "shape noise read at two scales with an irrational ratio.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
   },
   {
-   "name": "Mediterranean trees",
+   "name": "Cloud reprojection",
    "settings": [
-    "PRESET_HOLM_OAK",
-    "PRESET_WILD_OLIVE",
-    "PRESET_MARITIME_PINE",
-    "PRESET_CAROB",
-    "PRESET_CORK_OAK",
-    "cork_stripped_years"
+    "WeatherSkyMaterial.cloud_reprojection"
    ],
    "note": "",
-   "what": "holm oak and carob split low into dense domes, wild olive grows crooked stems from one stool, maritime pine runs onto a long clear bole with thick dark bark plates over deep furrows, dull red-brown only at the furrow floor, and cork oak carries thick cork plates or a stripped trunk that turns from orange to red-brown and darkens as new cork grows back.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
   },
   {
-   "name": "Wind, bank and rock trees",
+   "name": "Cloud shadows",
    "settings": [
-    "wind_exposure",
-    "krummholz",
-    "ground_slope",
-    "bank_erosion",
-    "root_stone"
+    "sun_light"
    ],
    "note": "",
-   "what": "at the tree line, windward limbs die back and the rest turn downwind, and krummholz grows as low domed cushions stretched downwind on layered stems under a skin of needled shoots, cut at the snow surface; the tree line follows the growing season's mean temperature, as the alpine plants do; trees on stream banks and gorge sides lean their roots downhill, with eroded roots arching off the face; roots can drape over a boulder beside the stem.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
+   "what": "the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
   },
   {
-   "name": "Clearings",
+   "name": "Sun projector",
    "settings": [
-    "mask_channel"
+    "light_projector",
+    "projector_size",
+    "projector_offset"
    ],
    "note": "",
-   "what": "painted clearings and paths keep trees and shrubs out.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Growth"
-  },
-  {
-   "name": "Branch collars",
-   "settings": [
-    "junction_weld"
-   ],
-   "note": "",
-   "what": "branches flare into their parent in a short collar with a bark ridge in the crotch. Limbs that would grow into thicker wood bend away or die back to it.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Surface roots",
-   "settings": [
-    "root_flare"
-   ],
-   "note": "",
-   "what": "buttress roots run out of the trunk flare, tapering as they sink into the soil, longer on shallow-rooted species.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Bark",
-   "settings": [
-    "bark_relief"
-   ],
-   "note": "",
-   "what": "a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing. Smooth beech bark shows cross-stem creases, lenticel streaks and fine grain, and carries stemflow tracks, low algae and crust lichen.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Close-up bark",
-   "settings": [
-    "BarkDetail3D",
-    "density",
-    "detail_pixels"
-   ],
-   "note": "",
-   "what": "loose bark as real pieces on trunks near the camera, by bark family: lifting plates on pines, small scales, flakes curling out at one end and torn strips of paper bark, with the inner bark showing on their undersides and broken edges.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Bark stories",
-   "settings": [
-    "bark_wounds"
-   ],
-   "note": "",
-   "what": "frost ribs, lightning scars, deer stripping and resin runs on trunks; drying checks open as real splits and knots on lying logs.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Branch-scar chevrons",
-   "settings": [
-    "bark_chevrons"
-   ],
-   "note": "",
-   "what": "living beech and birch carry dark chevrons below shed limbs, longer and flatter with age, black on birch.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Bark moss",
-   "settings": [
-    "moss_cover"
-   ],
-   "note": "",
-   "what": "moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions with ragged margins near the camera.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Crown parts",
-   "settings": [
-    "fruit_cover",
-    "mistletoe",
-    "witches_brooms"
-   ],
-   "note": "",
-   "what": "cones, catkins with bract scales, ash keys in bunches, and rowan and elder berries in dense corymbs on branching stalks in season; winter buds on shoot tips; mistletoe balls up to 0.8 m across on broadleaves, fir and pine, and witches' brooms as twig nests on birches and broom rust on silver fir.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Bark lichen",
-   "settings": [
-    "lichen_cover"
-   ],
-   "note": "",
-   "what": "lichen on bark, placed by height, crown light, stem age and moss; beard lichens and oakmoss hang from and stand off crown twigs on near trees. 0 turns it off.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Climbers",
-   "settings": [
-    "climber",
-    "climber_cover"
-   ],
-   "note": "",
-   "what": "ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree. Old ivy has woody stems that thicken with the host's age and lie on the bark ridges, with unlobed adult leaves high on old stems.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Leaf shapes",
-   "settings": [
-    "TreeGenerator.get_leaf_form()"
-   ],
-   "note": "",
-   "what": "simple, lobed, palmate and compound leaves per species, with the true outline as geometry; compound leaflets take a toothed, veined texture, and leaf undersides are paler.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Needles",
-   "settings": [
-    "needle_sprays",
-    "near_needle_range"
-   ],
-   "note": "",
-   "what": "real needles near the camera, crossed needle sprays beyond.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Near leaf detail",
-   "settings": [
-    "near_leaf_range"
-   ],
-   "note": "",
-   "what": "lobed and compound leaves are built for trees near the camera; further out each leaf is a simple leaf of the same area.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Seasons",
-   "settings": [
-    "season"
-   ],
-   "note": "",
-   "what": "leaves come out, turn and fall by species from the shared season state; larch turns gold and goes bare, evergreens stay.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Tree LODs",
-   "settings": [
-    "far_lod1",
-    "far_thinning"
-   ],
-   "note": "",
-   "what": "far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level. Far broadleaf meshes use the lighter leaf level, with about 60% fewer leaf vertices and the same path traced look at 60 m. Past a species' range, distant trees swap to light crown hulls of lobes that keep the crown's cover and colour; trees whose crowns break the skyline are never thinned, so ridgelines keep their silhouette (species meta `far_skyline`).",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wood and leaves"
-  },
-  {
-   "name": "Old trees",
-   "settings": [
-    "veteran"
-   ],
-   "note": "",
-   "what": "basal hollows, rot holes, woodpecker holes, burls, epicormic shoots and snapped crowns on the clear bole, listed by `get_veteran_features()`.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Deadwood",
-   "settings": [
-    "decay_class",
-    "fallen",
-    "bark_peel",
-    "uprooted"
-   ],
-   "note": "",
-   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes. Bark comes away in plates by decay class, from the top of snags and the upper side of logs, baring grey or brown checked wood; peeled edges show the bark's thickness. Logs settle along the ground at every decay class, and fallen sticks lie as snapped, kinked pieces. Windthrown trees lie with their root plate on edge, its torn underside holding soil clods, stones and root stubs, the butt held off the ground.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Bark beetle kill",
-   "settings": [
-    "beetle_years"
-   ],
-   "note": "",
-   "what": "spruce go from green attack, with boring dust on the lower stem and at the foot, to rust-red crowns and then grey snags, in fronts through the stand.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "After fire",
-   "settings": [
-    "fire_years"
-   ],
-   "note": "",
-   "what": "burnt stands recover by species: cork oak resprouts along its stem and limbs, holm oak from the root collar, and maritime pine and rockrose reseed on the ash bed, while the bark char fades over the years.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Forests that age",
-   "settings": [
-    "make_succession()",
-    "report_windthrow"
-   ],
-   "note": "",
-   "what": "after fire, windthrow or beetles, a stand regrows by stage from seedlings and pioneers through crowded poles to the mature stand and old growth with veterans, placed by the years since; storm and beetle kills mark where it starts again.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Forest edges",
-   "settings": [
-    "make_edge()",
-    "edge_open",
-    "RULE_FOREST_EDGE"
-   ],
-   "note": "",
-   "what": "a shrub mantle in front of the trees, and edge trees with low branches and crowns reaching toward the open, turned to face it.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Beaver work",
-   "settings": [
-    "beaver_cut",
-    "beaver_years"
-   ],
-   "note": "",
-   "what": "stems gnawed to an hourglass, pencil-point stumps that resprout, and felled stems lying toward the water.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Flood marks",
-   "settings": [
-    "flood_height",
-    "flood_years"
-   ],
-   "note": "",
-   "what": "floodplain trees carry a silt film up to the last high-water line, higher on the upstream face, with flood debris caught at the line.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Deer browse",
-   "settings": [
-    "browse",
-    "browse_height",
-    "browse_variants"
-   ],
-   "note": "",
-   "what": "browsed saplings grow as low hedged bushes, and grown trees show a level browse line, following the deer pressure map.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Nurse logs",
-   "settings": [
-    "nurse_seedlings",
-    "nurse_stilt"
-   ],
-   "note": "",
-   "what": "conifer seedlings root on rotting logs, and trees stand on stilt roots where their log rotted away, in spruce colonnades along a vanished log.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Lightning strikes",
-   "settings": [
-    "lightning_years"
-   ],
-   "note": "",
-   "what": "a torn pale strip down the stem with bark and splinters thrown round the foot, greying and healing over the years; trees the weather's lightning strikes turn fresh-struck, then heal (`lightning_variants`).",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Ice storms",
-   "settings": [
-    "ice_storm_years",
-    "STAND_ICE_STORM"
-   ],
-   "note": "",
-   "what": "after an ice storm, trees show broken tops and stripped crowns by species, and birch bend over in arches; a northern hardwood stand carries the damage.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Broken limbs",
-   "settings": [
-    "limb_breakage"
-   ],
-   "note": "",
-   "what": "snapped ends get a splintered fracture face and torn bark; storms break limbs on living trees, leaving some hanging.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Fungi",
-   "settings": [
-    "fungi_cover"
-   ],
-   "note": "",
-   "what": "bracket fungi and mushroom tufts with stalks, caps and gills grow as geometry on old and dead wood, by host and decay class.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Fallen branches",
-   "settings": [
-    "fallen_branch"
-   ],
-   "note": "",
-   "what": "shed limbs and sticks on the forest floor, from the stand's own trees.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Old trees and deadwood"
-  },
-  {
-   "name": "Tree wind",
-   "settings": [
-    "TreeWind3D",
-    "TreeGenerator.rigged"
-   ],
-   "note": "",
-   "what": "trees sway in the weather map's wind and gusts, each limb at its own frequency.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wind and touch"
-  },
-  {
-   "name": "Storm damage",
-   "settings": [
-    "TreeWind3D.storm_enabled"
-   ],
-   "note": "",
-   "what": "storm wind breaks limbs and throws trees by wood strength and root anchorage; they fall and break apart on landing.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wind and touch"
-  },
-  {
-   "name": "Leaf flutter",
-   "settings": [
-    "leaf_flutter"
-   ],
-   "note": "",
-   "what": "leaves flutter and twist on their stalks in the same wind as grass and plants.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wind and touch"
-  },
-  {
-   "name": "Far wind",
-   "settings": [
-    "wind_range",
-    "lod_enabled",
-    "lod_pixel_error",
-    "budget_msec"
-   ],
-   "note": "",
-   "what": "trees move in the wind out to 1 km, with far ones posed less often and with fewer limbs.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wind and touch"
-  },
-  {
-   "name": "Colliders and touch",
-   "settings": [
-    "collision_enabled",
-    "touch_enabled",
-    "break_speed"
-   ],
-   "note": "",
-   "what": "trunks and limbs collide near the camera; characters and vehicles push branches aside, and fast bodies snap thin ones off.",
-   "page": "trees",
-   "title": "Trees",
-   "topic": "Wind and touch"
+   "what": "`light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
   },
   {
    "name": "Snow cover",
@@ -3622,19 +1777,7 @@
     "SnowCover3D"
    ],
    "note": "",
-   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift; snow and rain falling on open water melt into it, and fire melts the snow under it at any air temperature. Sea salt from spray melts shore snow and bare lake ice below freezing, until the brine is diluted or drains away with the melt (`salt_melt`).",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Snowpack"
-  },
-  {
-   "name": "Dirty snow",
-   "settings": [
-    "SnowCover3D.impurities_enabled",
-    "rockfall_dust"
-   ],
-   "note": "",
-   "what": "smoke, burnt forest, rockfall dust and other settling dust darken the snow and make it melt sooner, until fresh snow buries the dirt.",
+   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3687,23 +1830,10 @@
   {
    "name": "Wind moves lying snow",
    "settings": [
-    "SnowCover3D.wind_transport_enabled",
-    "drift_obstacles",
-    "drift_relief"
+    "SnowCover3D.wind_transport_enabled"
    ],
    "note": "",
-   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow; snow drifts in behind rocks, walls, buildings and vehicles and blows off their tops; the wind shapes large drifts into dunes with steep lee slip faces and flattens small ones.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Snowpack"
-  },
-  {
-   "name": "Spindrift",
-   "settings": [
-    "SnowCover3D.spindrift_enabled"
-   ],
-   "note": "",
-   "what": "in strong wind, dry snow streams off sharp lee crests as plumes that drift downwind and thin as they sublimate.",
+   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3711,83 +1841,10 @@
   {
    "name": "Melt-freeze crusts",
    "settings": [
-    "SnowCover3D.crust_enabled",
-    "SnowSurface3D.crust_plates"
+    "SnowCover3D.crust_enabled"
    ],
    "note": "",
-   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots stand on hard ones and break thin ones into flat, sharp-edged plates tipped into the hole, with steps between them.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Snowpack"
-  },
-  {
-   "name": "Suncups",
-   "settings": [
-    "SnowCover3D.suncups_enabled"
-   ],
-   "note": "",
-   "what": "sunny spring melt digs cups into deep snow; warm cloud, rain or new snow smooths them out.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Snowpack"
-  },
-  {
-   "name": "Rotten snow and slush",
-   "settings": [
-    "SnowCover3D.slush_enabled"
-   ],
-   "note": "",
-   "what": "a wet spring pack bears less, so boots and wheels posthole deeper; melt water it cannot hold ponds at its base over frozen ground as grey-blue glossy slush, drains only downslope and refreezes in frost; prints in it fill with water.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Snowpack"
-  },
-  {
-   "name": "Surface hoar",
-   "settings": [
-    "SnowCover3D.hoar_enabled"
-   ],
-   "note": "",
-   "what": "frost feathers grow on the snow on clear calm nights and, once snowed over, stay buried as a weak layer.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Snowpack"
-  },
-  {
-   "name": "Lake ice",
-   "settings": [
-    "SnowCover3D.lake_ice_enabled"
-   ],
-   "note": "",
-   "what": "lakes freeze, slower under insulating snow, flood into white snow ice under heavy snow and thaw in spring; clear ice is dark with sparse cracks and walkable from 5 cm; heavier bodies and vehicles break through ice too thin for their weight, and the hole freezes over again.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Snowpack"
-  },
-  {
-   "name": "Snow on bodies",
-   "settings": [
-    "SnowBodies3D",
-    "weight_enabled",
-    "slide_enabled",
-    "clumps_enabled"
-   ],
-   "note": "",
-   "what": "snow lying on a body weighs on it, slides off tilted tops as slabs and drops off in clumps.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Snowpack"
-  },
-  {
-   "name": "Roof snow",
-   "settings": [
-    "snow_roof",
-    "SnowBodies3D.roof_piles",
-    "snow_roof_material",
-    "snow_roof_heat"
-   ],
-   "note": "",
-   "what": "roofs hold the share of snowfall building codes give them and shed it by roofing, metal sooner than shingles and heated roofs sooner still; what slides off lands as a bank past the eave.",
+   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -3840,35 +1897,12 @@
    "topic": "Deep snow"
   },
   {
-   "name": "Packed-snow roads",
-   "settings": [
-    "SnowCover3D.traffic_enabled",
-    "get_grip_at()"
-   ],
-   "note": "",
-   "what": "wheels and feet pack the snow they pass, spinning wheels polish it to an ice glaze, and tyre grip falls with it.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Deep snow"
-  },
-  {
    "name": "Falling snow",
    "settings": [
     "SnowFall3D"
    ],
    "note": "",
    "what": "falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Falling snow"
-  },
-  {
-   "name": "Sleet",
-   "settings": [
-    "SnowFall3D.sleet_enabled"
-   ],
-   "note": "",
-   "what": "near 0 C falling snow clumps into large wet flakes; above it the flakes melt as they fall, smaller, faster and greyer.",
    "page": "snow",
    "title": "Snow",
    "topic": "Falling snow"
@@ -3884,25 +1918,6 @@
    "page": "snow",
    "title": "Snow",
    "topic": "Falling snow"
-  },
-  {
-   "name": "Avalanches",
-   "settings": [
-    "SnowCover3D.avalanches_enabled",
-    "SnowAvalanche3D.trigger()",
-    "triggers_enabled",
-    "powder_enabled",
-    "forests_enabled",
-    "wet_enabled",
-    "glide_enabled",
-    "water_enabled",
-    "crowns_enabled"
-   ],
-   "note": "",
-   "what": "slabs release where the snowpack's stability index fails, or under people, sleds, vehicles and falling cornices, also remotely along buried crusts, leaving a crown wall, flanks that fade downslope and a grey scoured bed; they run out as a Voellmy flow that picks up snow on the way and piles debris where it stops, and fast dry ones throw up a powder cloud that settles as fresh snow. Closed forest anchors the slab, and stems brake the flow and stop snow among the trees; the powder cloud snaps thin stems and crowns, and dense flow breaks or uproots trunks and carries them downslope (`TreeWind3D.avalanche_enabled`), and the stand starts again there, so avalanche paths stay young forest (`stand_damage`). In spring, meltwater weakens the pack; wet slides run slower and shorter and pile up deep in lumpy debris of snowballs and granules, and on a wet base the whole pack glides and releases to the ground. A slide onto a lake runs on over thick ice, breaks through thin ice and pushes a wave across open water.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Cornices and ice"
   },
   {
    "name": "Cornices",
@@ -3930,26 +1945,10 @@
    "name": "Icicles",
    "settings": [
     "SnowIcicles3D",
-    "hazy_core",
-    "curtains",
-    "wind_direction"
+    "hazy_core"
    ],
    "note": "",
-   "what": "grown from roof melt water below freezing; clear ice with a hazy core, tapering like real dripping icicles, leaning with the wind they grew in, with drops at dripping tips and curtains where neighbours fuse; they hang in clusters under drip points that wet and dry over the days, with stubs and bare gaps between.",
-   "page": "snow",
-   "title": "Snow",
-   "topic": "Cornices and ice"
-  },
-  {
-   "name": "Rime",
-   "settings": [
-    "SnowRime3D",
-    "fog_water",
-    "droplet_diameter",
-    "WeatherMap3D.rime"
-   ],
-   "note": "",
-   "what": "in freezing fog, rime grows on props and twigs as feathers pointing into the wind, and ground in freezing cloud turns white on the windward side of plants, rocks and cliffs until a thaw sheds it.",
+   "what": "grown from roof melt water below freezing; clear ice with a hazy core.",
    "page": "snow",
    "title": "Snow",
    "topic": "Cornices and ice"
@@ -3984,439 +1983,46 @@
    "topic": "Sparkle"
   },
   {
-   "name": "Weather map",
+   "name": "Histogram metering",
    "settings": [
-    "WeatherMap3D"
+    "rendering/camera/auto_exposure/metering"
    ],
    "note": "",
-   "what": "one weather state round the camera (wind, cloud cover, rain, wetness, puddles), read by every shader through global uniforms, raster and path traced.",
-   "page": "weather",
-   "title": "Weather",
+   "what": "lamps in view no longer darken the scene.",
+   "page": "exposure",
+   "title": "Exposure",
    "topic": ""
   },
   {
-   "name": "Wind",
+   "name": "Dark-scene key",
    "settings": [
-    "roughness_length"
+    "dark_scene_luminance"
    ],
    "note": "",
-   "what": "slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.",
-   "page": "weather",
-   "title": "Weather",
+   "what": "night stays night.",
+   "page": "exposure",
+   "title": "Exposure",
    "topic": ""
   },
   {
-   "name": "Wind over terrain",
+   "name": "Local exposure",
    "settings": [
-    "terrain_wind_enabled"
+    "local_highlight_contrast",
+    "local_shadow_contrast"
    ],
    "note": "",
-   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes.",
-   "page": "weather",
-   "title": "Weather",
+   "what": "",
+   "page": "exposure",
+   "title": "Exposure",
    "topic": ""
   },
   {
-   "name": "Wind near the ground",
-   "settings": [
-    "add_canopy",
-    "add_shelter_box",
-    "gust_patch_size",
-    "wind_obstacles",
-    "wind_obstacle"
-   ],
-   "note": "",
-   "what": "shelter inside plant canopies and behind buildings, boulders and vehicles; gust patches sweep across fields.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Season state",
-   "settings": [
-    "WeatherMap3D.get_season()"
-   ],
-   "note": "",
-   "what": "day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Storms",
-   "settings": [
-    "add_storm"
-   ],
-   "note": "",
-   "what": "drift with the wind, with a rain core and a downdraft.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Falling rain",
-   "settings": [
-    "RainFall3D"
-   ],
-   "note": "",
-   "what": "drops sized and falling like real rain, slanting in the wind, with splashes, haze, and drips from leaves and eaves after it stops.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Rain or snow by height",
-   "settings": [
-    "WeatherMap3D.get_rain_share_at()",
-    "warm_nose_temperature",
-    "warm_nose_base"
-   ],
-   "note": "",
-   "what": "rain turns to sleet and then snow as the air cools with height; under a warm layer aloft it falls as freezing rain, or as ice pellets when the cold layer below is deep, and every system reads the same split.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Lake-effect snow",
-   "settings": [
-    "WeatherMap3D.lake_effect_snow"
-   ],
-   "note": "",
-   "what": "cold air crossing open water builds snow bands downwind, reaching some 60 km inland.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Lightning and thunder",
-   "settings": [
-    "WeatherLightning3D"
-   ],
-   "note": "",
-   "what": "strikes from storm cells at a rate set by cloud-top height, hitting tall things first and starting fires in dry fuel (`PhysXFireSpread3D.lightning_ignition`), lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Precipitation haze",
-   "settings": [
-    "WeatherMap3D.set_precipitation_extinction()"
-   ],
-   "note": "",
-   "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Haze and cloud shadow in fog",
-   "settings": [
-    "aerosol_haze",
-    "haze_visibility"
-   ],
-   "note": "",
-   "what": "volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Shafts across the sky",
-   "settings": [
-    "atmo_cloud_shadow_steps"
-   ],
-   "note": "",
-   "what": "the air under the clouds reads a baked cloud shadow map, so light shafts reach across the whole sky, and the weather's haze carries on past the volumetric fog.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Path traced haze",
-   "settings": [
-    "WeatherMap3D.traced_haze"
-   ],
-   "note": "",
-   "what": "under path tracing the haze is a traced medium lit through shadows and the clouds' direct beam, so shafts stay sharp at any distance and show in reflections.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Smoke haze",
-   "settings": [
-    "WeatherMap3D.smoke_haze",
-    "smoke_washout",
-    "PhysXFlow3D.rain_washout"
-   ],
-   "note": "",
-   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Wet surfaces and puddles",
-   "settings": [
-    "surface_storage",
-    "puddle_drain_rate",
-    "temperature",
-    "humidity"
-   ],
-   "note": "",
-   "what": "fill with rain and dry by evaporation, faster in sun than in shade or at night (`sun_drying`); materials with Wetness on darken and gloss up; leaves hold rain as beads and stay wet after the ground dries (`wetness_canopy`, `canopy_storage`).",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Raindrop rings",
-   "settings": [
-    "rain_rings"
-   ],
-   "note": "",
-   "what": "rings on sea, lakes, pools, rivers and puddles; heavy rain dulls reflections.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Runoff",
-   "settings": [
-    "WeatherRunoff3D",
-    "PhysXRiver3D.rain_response"
-   ],
-   "note": "",
-   "what": "rain runs off the land and wets the ground it crosses, and rivers and lakes rise with it.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Dew and frost",
-   "settings": [
-    "dew_and_frost",
-    "cold_pools",
-    "valley_fog"
-   ],
-   "note": "",
-   "what": "clear calm nights bring dew, and hoarfrost below freezing on ground, grass, plants and rocks; cold air pools in valleys and hollows, so frost forms there first, and saturated pools fill with a flat fog sea that lifts after sunrise or in a wind.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Fog drip",
-   "settings": [
-    "WeatherMap3D.fog_drip"
-   ],
-   "note": "",
-   "what": "cloud lying on wooded ground drips from the trees and wets the ground beneath them.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Sea spray",
-   "settings": [
-    "WeatherMap3D.sea_spray"
-   ],
-   "note": "",
-   "what": "breaking waves wet the shore and cliff faces downwind and leave salt that rain washes off; salted grass browns at the tips, and shrubs and trees brown leaf by leaf.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Wet tracks",
-   "settings": [
-    "WeatherMap3D.wet_tracks"
-   ],
-   "note": "",
-   "what": "bodies and vehicles coming out of water, wet mud or puddles leave wet footprints and tyre tracks that fade along the way, drip where they stand, and dry with the weather.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Contact wetness",
-   "settings": [
-    "contact_wetness_enabled"
-   ],
-   "note": "",
-   "what": "ground that running water crossed stays dark after it drains, then dries with the weather.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Rain on rock",
-   "settings": [
-    "rain_rivulets"
-   ],
-   "note": "",
-   "what": "rivulets run down rock faces while it rains, and the rock dries in patches after.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Air temperature",
-   "settings": [
-    "air_follows_climate",
-    "air_daily_cycle"
-   ],
-   "note": "",
-   "what": "follows the season and the time of day.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Followers",
-   "settings": [
-    "follow_weather",
-    "cats_paws",
-    "weather_wind",
-    "wind_drag"
-   ],
-   "note": "",
-   "what": "water waves grow with the weather's wind (`follow_weather`) and gusts darken the ripples in moving cat's paws (`cats_paws` shader uniform); cloth, hair and smoke move in it (`weather_wind`); particles drift with it and its gusts (`wind_drag`); tyres lose grip on wet, flooded and icy ground and aquaplane at speed, and slip on lying snow (most on powder and slush, almost as on ice on a hard crust) and on bare lake ice, where chains and lugs win it back.",
-   "page": "weather",
-   "title": "Weather",
-   "topic": ""
-  },
-  {
-   "name": "Sun and moon clock",
-   "settings": [
-    "SkyClock"
-   ],
-   "note": "",
-   "what": "date, time and place point the sun and moon lights, with moon phases (Meeus); the sun is within 0.0004 degrees of the ephemeris and sunrise within half a minute of the almanac (`docs/bench/sky --test`).",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Sky atmosphere",
-   "settings": [
-    "WeatherSkyMaterial.atmosphere_model",
-    "SkyClock.drive_light_energy"
-   ],
-   "note": "",
-   "what": "multiple scattering (Hillaire 2020) lit by sun and moon, with twilight, the Earth's shadow and clouds hazed to the horizon; `atmo_far_water` hazes far sea, `energy_per_lux` scales the lights.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Night sky",
-   "settings": [
-    "stars_enabled",
-    "moon_disc_enabled",
-    "airglow_enabled",
-    "milky_way"
-   ],
-   "note": "",
-   "what": "the 9,100 naked-eye stars of the Yale Bright Star Catalogue, placed by the sky clock, coloured by temperature, dimmed by the air and hidden behind clouds, with glare on the brightest; the moon disc shows its real phase and earthshine; on moonless nights the faint green airglow of the upper air brightens toward the horizon and lights cloud tops; the Milky Way comes from a galactic panorama turned with the stars.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Eye adaptation",
-   "settings": [
-    "SkyClock.drive_exposure",
-    "adaptation"
-   ],
-   "note": "",
-   "what": "exposure follows the light on the ground like an adapting eye, so twilight, moonlit and starlit scenes stay readable.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Night vision",
-   "settings": [
-    "CameraAttributes.night_vision"
-   ],
-   "note": "",
-   "what": "in dim light colour fades to the eye's blue-grey night vision (Purkinje shift) while lamps, lit windows and the moon keep theirs, from the scene's real luminance, in raster and path tracing.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Cloud layer",
-   "settings": [
-    "cloud_base_height",
-    "cloud_thickness",
-    "cloud_density"
-   ],
-   "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms tower into a leaning cumulonimbus with a flat anvil downwind and mammatus beneath, and hang rain shafts under their base, slanted by the low wind, as dense as the rain is heavy and drawn in front of far terrain (`WeatherMap3D.distant_shafts`), or in cold storms snow shafts that trail long soft veils downwind, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; lenticular clouds stack in plates whose thin edges near the sun show iridescence (`cloud_iridescence`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Clouds that never repeat",
+   "name": "Pixel antialiasing",
    "settings": [],
-   "note": "always on",
-   "what": "shape noise read at two scales with an irrational ratio.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Evolving clouds",
-   "settings": [
-    "cloud_evolution",
-    "cloud_lifetime",
-    "cloud_churn"
-   ],
    "note": "",
-   "what": "clouds form, clear and reshape over time instead of only drifting.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Cloud reprojection",
-   "settings": [
-    "WeatherSkyMaterial.cloud_reprojection"
-   ],
-   "note": "",
-   "what": "clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Cloud shadows",
-   "settings": [
-    "sun_light",
-    "cloud_light_grid_enabled"
-   ],
-   "note": "",
-   "what": "the clouds' shadow is baked into the sun's projector, matching in raster and path tracing, and clouds shade each other across the whole layer, with long shadows at low sun.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
-   "topic": ""
-  },
-  {
-   "name": "Sun projector",
-   "settings": [
-    "light_projector",
-    "projector_size",
-    "projector_offset"
-   ],
-   "note": "",
-   "what": "`light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.",
-   "page": "sky-and-clouds",
-   "title": "Sky and clouds",
+   "what": "when Ray Reconstruction is off: samples after the first spread over the pixel (R2 sequence), so sub-pixel detail antialiases instead of sparkling.",
+   "page": "dlss-ray-reconstruction",
+   "title": "DLSS Ray Reconstruction",
    "topic": ""
   },
   {
@@ -4426,196 +2032,6 @@
    ],
    "note": "",
    "what": "",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Lit smoke in raster",
-   "settings": [
-    "ambient_scattering",
-    "sun_scattering",
-    "cast_shadows",
-    "scattering_temporal",
-    "ground_albedo",
-    "ground_color",
-    "diffuse_transmission"
-   ],
-   "note": "",
-   "what": "smoke takes sky and ambient light, the sun through scene shadows and light bounced up from sunlit ground in the ground's colour, and shadows the scene; bright clouds show the scene behind them blurred, as under path tracing, and dense clouds lit from behind glow on their shaded side; `scattering_temporal` removes step banding at its edges.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Smoke on the ground",
-   "settings": [
-    "terrain_floor",
-    "smoke_buoyancy"
-   ],
-   "note": "",
-   "what": "Flow gas rests on the terrain and slides downhill, and heavier-than-air smoke pools as dust or fog. In raster, smoke, dust and snow clouds shade themselves as under path tracing, darker in the body under bright tops.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Gas pushes bodies",
-   "settings": [
-    "PhysXFlow3D.push_bodies",
-    "PhysXCloth3D.flow"
-   ],
-   "note": "",
-   "what": "Flow smoke, blasts and fire updrafts blow debris, Blast pieces, flags and tarps, and the cloth stirs the gas back.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Spreading fire",
-   "settings": [
-    "PhysXFireSpread3D",
-    "fuel_patchiness"
-   ],
-   "note": "",
-   "what": "grass and leaf litter catch and burn at Rothermel's rate of spread, faster downwind and uphill and stopped by wet fuel or poured water (which billows up as white steam, also where fire meets a shore), behind a glowing front with Flow flames and smoke. The fire leaves a ragged burn scar: grass burns to charred stubble with glowing tips, small plants and crops char, tree bark chars to the flame length and leaves brown up to the scorch height. Burnt grass shows its ash, white-grey where dry fuel burnt out and black char where it was damp, thinned by wind and darkened by rain (`grass_ash`); strong wind lifts ash off cold burnt ground as low grey dust that darkens snow downwind (`blowing_ash`). Duff smoulders for hours behind the front under pale low smoke until heavy rain puts it out, and wind can relight it (`smouldering`); burnt soil sheds rain, and the runoff washes its ash away. The fire draws air in at its base, and nearby plants, hair, falling leaves, ash, embers, smoke and dust lean or drift into it.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Fuel moisture from the weather",
-   "settings": [
-    "PhysXFireSpread3D.use_weather_moisture"
-   ],
-   "note": "",
-   "what": "fuel dries or damps toward the air's equilibrium moisture, and rain wets it, slows the fire and puts it out.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Burning objects",
-   "settings": [
-    "PhysXBurnable3D",
-    "embers",
-    "collapse_share"
-   ],
-   "note": "",
-   "what": "wooden props catch fire from burning ground nearby or from embers piling at wall feet and on top faces, char with glowing cracks, smoulder in rain, go out under poured water, break apart as their timber chars through (EN 1995-1-2) with the pieces keeping their char, or carrying their flames and embers as they fall and smouldering where they land, and throw embers that ride their plume and the wind and start spot fires downwind.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Burning buildings",
-   "settings": [
-    "PhysXBuildingFire3D",
-    "rooms",
-    "growth_time",
-    "collapse_share"
-   ],
-   "note": "",
-   "what": "wooden buildings catch from embers and ground fire; rooms flash over, the window glass breaks into falling shards (`glass_panes`) and flames run up the wall above as sheets bent by the wind; wind blows in through windward openings, pushes hot gas through the doors and drives the flames out to leeward; fire spreads room to room, ceilings and roofs sag and fall in, and the frame collapses. Burnt-out rooms smoulder for hours, smoking and shedding embers in the wind, and can rekindle. A hose or fluid water knocks a room back below flashover and puts it out, with steam pouring from its windows; a weak stream only holds it (`apply_water()`).",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Burning logs",
-   "settings": [
-    "PhysXFireSpread3D.vegetation_field"
-   ],
-   "note": "",
-   "what": "fallen logs and branches catch from the fire under them, flame for minutes, then smoulder with glowing bark.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Debris flows",
-   "settings": [
-    "WeatherRunoff3D.debris_flows",
-    "GroundDebrisFlow3D",
-    "levee_height",
-    "push_bodies",
-    "PhysXDebrisSurge3D",
-    "surge_count_max",
-    "max_boulder",
-    "stop_slope"
-   ],
-   "note": "",
-   "what": "after a fire, intense rain on steep burnt basins sends debris flows down their channels in surges with boulders at the front, throwing mud; the flow gathers loose bed on the way and spreads into a fan of fresh mud where it stops, with levees along its edges, burying ruts and shoving logs and props aside.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Spot fires",
-   "settings": [
-    "PhysXFireSpread3D.spotting",
-    "spotting_scale"
-   ],
-   "note": "",
-   "what": "burning grass, litter and logs throw embers that the plume lifts and the wind carries; one landing on dry fuel starts a new fire ahead of the front.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Crown fire",
-   "settings": [
-    "PhysXFireSpread3D.crown_fire",
-    "foliar_moisture"
-   ],
-   "note": "",
-   "what": "trees and shrubs catch from the ground fire under them (Van Wagner): low crowns torch, high ones only scorch, dense stands burn crown to crown, and torching trees throw far more embers; fire whirls spin up on strong flanks in a cross wind, on steep lee slopes and where the terrain wind separates behind a crest, loft firebrands higher and run across the slope, spreading the fire sideways (`fire_whirls`); a torched tree drops burning twigs and stands as bare black branches over grey ash. Fire chars the stem feet: fire-killed trees stand as snags and, years later, snap at the charred foot in a storm and leave a stump.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Fire clouds",
-   "settings": [
-    "WeatherMap3D.fire_clouds"
-   ],
-   "note": "",
-   "what": "a plume that rises past its own condensation level, above or below the day's cumulus, grows a pyrocumulus; the largest tower into a pyrocumulonimbus with lightning.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Fire light and embers",
-   "settings": [
-    "PhysXFlow3D.fire_light",
-    "embers"
-   ],
-   "note": "",
-   "what": "a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers with the flame's puffing, and throws up glowing embers, in raster and path tracing.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Heat shimmer",
-   "settings": [
-    "PhysXFlow3D.heat_shimmer"
-   ],
-   "note": "",
-   "what": "hot air above fires bends the view behind it, following the simulated temperature, in raster and path tracing.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Particle fluid surface",
-   "settings": [
-    "PhysXParticleFluid3D.render_mode",
-    "foam_enabled"
-   ],
-   "note": "",
-   "what": "particle fluids draw as clear water on a real isosurface mesh that casts shadows, shows in reflections and is path traced; Screen Space is the lighter alternative. Spray falls as clear drops, and foam and bubbles form only where water strikes water, so a smooth pour stays clear.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""
@@ -4633,317 +2049,12 @@
    "topic": ""
   },
   {
-   "name": "Burning cloth",
-   "settings": [
-    "PhysXCloth3D.burnable"
-   ],
-   "note": "",
-   "what": "cloth catches fire, chars with a glowing edge and burns through in holes until it falls apart.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Wet cloth",
-   "settings": [
-    "PhysXCloth3D",
-    "PhysXSkinnedCloth3D",
-    "weather_wetting",
-    "wetness",
-    "water_capacity"
-   ],
-   "note": "",
-   "what": "rain soaks cloth by how it faces the rain and it dries in the air; wet cloth is heavier, darker, clings and is slow to catch fire, and worn clothing swings less, clings to the body and wets up to a ragged tide line when wading; river current drags worn clothing and loose flags and sheets under water, where soaked fabric sinks slowly and streams downstream.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Blast materials",
-   "settings": [
-    "PhysXBlastAsset.materials",
-    "bond_healths"
-   ],
-   "note": "",
-   "what": "pieces carry several materials and each bond its own strength, so a limb breaks into bark, wood and leaves, and a twig joint gives before a trunk joint.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Blast without stalls",
-   "settings": [
-    "PhysXBlastAsset.prepare_render()",
-    "initial_linear_velocity",
-    "initial_angular_velocity"
-   ],
-   "note": "",
-   "what": "piece meshes are built once per asset, off the main thread, so a large break does not stall the frame; destructibles can start already moving.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Streaming without stalls",
-   "settings": [
-    "physics/physx_3d/streaming/statics_per_step"
-   ],
-   "note": "",
-   "what": "static bodies of streamed regions enter over a few frames, nearest first, and removals are batched; bodies with the same friction and bounce share one material, so the cost stays flat as the world grows.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "World contact",
-   "settings": [
-    "physics/3d/world_contact/auto_join"
-   ],
-   "note": "",
-   "what": "every moving body bends plants, presses prints into ground and snow, and leaves ripples in water.",
-   "page": "physics",
-   "title": "Physics (PhysX 5)",
-   "topic": ""
-  },
-  {
-   "name": "Fibre shading",
-   "settings": [
-    "rendering/pathtracing/hair"
-   ],
-   "note": "",
-   "what": "Chiang hair model under path tracing, melanin colour, on shells, cards and strands; mask for single-material characters.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Shading"
-  },
-  {
-   "name": "Raster hair shading",
-   "settings": [
-    "PhysXHair3D.hair_shading"
-   ],
-   "note": "",
-   "what": "Marschner model as Unreal evaluates it, with multiple scattering and light through the strands in shadow maps, so backlit hair glows.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Shading"
-  },
-  {
-   "name": "Deep opacity shadows",
-   "settings": [
-    "PhysXHair3D.deep_shadows",
-    "hair_shading"
-   ],
-   "note": "",
-   "what": "raster strands shadow themselves in depth, calibrated against the path tracer; omni and spot lights too (`deep_shadow_local_lights`).",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Shading"
-  },
-  {
-   "name": "Hair shadows",
-   "settings": [
-    "cast_hair_shadows"
-   ],
-   "note": "",
-   "what": "raster strand hair casts shadows on the face, body and ground.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Shading"
-  },
-  {
-   "name": "Custom hair shaders",
-   "settings": [
-    "HAIR",
-    "HAIR_ABSORPTION",
-    "HAIR_ROUGHNESS",
-    "POSITIONAL_SHADOW_OFFSET",
-    "hair_strands",
-    "hair_cards",
-    "IN_PATH_TRACER"
-   ],
-   "note": "",
-   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` and `POSITIONAL_SHADOW_OFFSET` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Shading"
-  },
-  {
-   "name": "Strand grooms",
-   "settings": [
-    "HairGroom",
-    "HairMesh"
-   ],
-   "note": "",
-   "what": "grown on a scalp mesh or loaded from a HAIR file.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Moving strand hair",
-   "settings": [
-    "PhysXHair3D"
-   ],
-   "note": "",
-   "what": "AMD TressFX's simulation on GPU compute, guide and follow strands, velocity shock propagation, wind with gusts and turbulence, collision spheres.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Swept sphere strands",
-   "settings": [
-    "rendering/pathtracing/linear_swept_spheres"
-   ],
-   "note": "",
-   "what": "where the GPU traces swept spheres in hardware, strands are traced as round tubes, one primitive per segment, and shaded where the ray meets the fibre; other GPUs keep crossed strips. Not yet checked on supporting hardware.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Raster strands",
-   "settings": [],
-   "note": "TressFX coverage",
-   "what": "blended and sorted far to near on the GPU each frame; smooth without TAA or MSAA, and the hair shadows itself.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Distance LOD",
-   "settings": [
-    "PhysXHair3D",
-    "lod_enabled",
-    "lod_start_distance",
-    "lod_end_distance",
-    "lod_strand_ratio"
-   ],
-   "note": "",
-   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand. Straight hair is drawn through fewer points with the same look (`simplify_tolerance`).",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Far hair for crowds",
-   "settings": [
-    "cards_enabled",
-    "card_count"
-   ],
-   "note": "",
-   "what": "far strand hair hands over to one thick strand per clump, a clump at a time once it is 2 pixels across, simulating only the guides once the whole head has handed over. Raster only; path tracing keeps the strands.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Motion vectors for strands",
-   "settings": [
-    "PREVIOUS_FRAME",
-    "render_mode alpha_motion_vectors"
-   ],
-   "note": "",
-   "what": "TAA, FSR 2 and DLSS follow moving hair instead of smearing it; shaders get `PREVIOUS_FRAME` and `render_mode alpha_motion_vectors`.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Wet hair",
-   "settings": [
-    "wetness",
-    "weather_wetting",
-    "wet_clumping"
-   ],
-   "note": "",
-   "what": "strands soak in rain and dry over time, turning darker, glossier, heavier, flatter and clumped.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Snow on hair",
-   "settings": [
-    "snow",
-    "snow_capacity"
-   ],
-   "note": "",
-   "what": "snow from the weather settles on the top layer and windward side as small clumps, on strands and hair cards alike, and melts into wetness.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Grey and sun-bleached hair",
-   "settings": [
-    "grey_ratio",
-    "sun_bleaching"
-   ],
-   "note": "",
-   "what": "single grey strands mixed through the hair, and lengths lighter and warmer toward the tips.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Strands"
-  },
-  {
-   "name": "Body collision",
-   "settings": [
-    "PhysXHair3D",
-    "collision_body",
-    "collision_cell_size"
-   ],
-   "note": "",
-   "what": "strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Collision"
-  },
-  {
-   "name": "Hair on cloth",
-   "settings": [
-    "collision_cloth",
-    "cloth_thickness"
-   ],
-   "note": "",
-   "what": "strands rest on simulated cloth such as a collar or hood, lying over it as it moves.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Collision"
-  },
-  {
-   "name": "Strand-strand collision",
-   "settings": [
-    "strand_collision",
-    "strand_collision_radius",
-    "strand_collision_friction"
-   ],
-   "note": "",
-   "what": "guide strands no longer pass through each other, with friction.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Collision"
-  },
-  {
-   "name": "Hair volume",
-   "settings": [
-    "volume_enabled",
-    "volume_friction",
-    "volume_stiffness"
-   ],
-   "note": "",
-   "what": "strands push and drag on each other through a density grid, so hair keeps its volume.",
-   "page": "hair",
-   "title": "Hair",
-   "topic": "Collision"
-  },
-  {
    "name": "Camera-relative tracing",
    "settings": [
     "rendering/pathtracing/relative_origin_grid"
    ],
    "note": "",
-   "what": "the trace origin follows the camera on a grid, so shadows, reflections and thin refractive detail near the camera stay exact far from the world origin.",
+   "what": "exact shadows and reflections far from the origin.",
    "page": "open-worlds",
    "title": "Open worlds",
    "topic": ""

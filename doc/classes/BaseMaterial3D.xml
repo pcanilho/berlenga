@@ -360,9 +360,6 @@
 		<member name="msdf_pixel_range" type="float" setter="set_msdf_pixel_range" getter="get_msdf_pixel_range" default="4.0">
 			The width of the range around the shape between the minimum and maximum representable signed distance.
 		</member>
-		<member name="mud_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
-			If [code]true[/code], mud cakes the surface where a [code]PhysXVehicle3D[/code] has picked it up: its tyres' packed treads, the spray each wheel has thrown up its arch and along the body, and the belly up to the deepest it sat in mud. The vehicle turns this on in copies of the materials under it (see its [code]body_mud[/code]) and writes the instance uniforms [code]mud_*[/code] each physics tick. The mud lands as splats that grow into a cake as it accumulates, wet and dark when fresh and drying to a pale, matte crust. The path tracer applies the same model.
-		</member>
 		<member name="no_depth_test" type="bool" setter="set_flag" getter="get_flag" default="false">
 			If [code]true[/code], depth testing is disabled and the object will be drawn in render order.
 		</member>
@@ -444,16 +441,13 @@
 			How much of the snow settles on this surface, from 0 to 1. With [member snow_from_weather], it scales the snow cover the snowpack gives; without, it is the snow cover, for a script to set.
 		</member>
 		<member name="snow_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
-			If [code]true[/code], snow settles on the surface: from the [code]SnowCover3D[/code] snowpack (its depth, density, age and meltwater) or from [member snow_amount]. The snow-covered share follows the depth and density of the pack (Niu and Yang 2007); snow holds on surfaces flatter than [member snow_max_slope] and, while thin, on the facets of the normal map that face up, so the surface's detail shows through until the snow buries it. Snow takes its albedo from the pack's age (fresh 0.84, old dry 0.70, melting 0.50), the reflectance of ice, a rough top that turns smoother when wet, and smooths over the normal map. The path tracer applies the same model. With the global shader parameter [code]snow_exact_glints[/code] on (the default), the path tracer instead makes every 2 mm ice grain of dry snow a facet, per ray: the snow's specular comes from the grain each sample hits, so a pixel's samples integrate the grains in its footprint, at any distance and on every bounce. It needs many samples or the denoiser to settle. Custom shaders get the same with [code]snow_glint_apply_specular()[/code] from [method get_snow_shader_code].
+			If [code]true[/code], snow settles on the surface: from the [code]SnowCover3D[/code] snowpack (its depth, density, age and meltwater) or from [member snow_amount]. The snow-covered share follows the depth and density of the pack (Niu and Yang 2007); snow holds on surfaces flatter than [member snow_max_slope] and, while thin, on the facets of the normal map that face up, so the surface's detail shows through until the snow buries it. Snow takes its albedo from the pack's age (fresh 0.84, old dry 0.70, melting 0.50), the reflectance of ice, a rough top that turns smoother when wet, and smooths over the normal map. The path tracer applies the same model. With the global shader parameter [code]snow_exact_glints[/code] on (off by default), the path tracer instead makes every 2 mm ice grain of dry snow a facet, per ray: the snow's specular comes from the grain each sample hits, so a pixel's samples integrate the grains in its footprint, at any distance and on every bounce. It needs many samples or the denoiser to settle. Custom shaders get the same with [code]snow_glint_apply_specular()[/code] from [method get_snow_shader_code].
 		</member>
 		<member name="snow_from_weather" type="bool" setter="set_snow_from_weather" getter="is_snow_from_weather" default="true">
 			If [code]true[/code], the snow cover comes from the snowpack at this point (the [code]snow_map[/code] and [code]snow_map_rect[/code] global shader parameters a [code]SnowCover3D[/code] publishes) times [member snow_amount]; without a snowpack there is no snow. If [code]false[/code], [member snow_amount] alone is the snow cover.
 		</member>
 		<member name="snow_max_slope" type="float" setter="set_snow_max_slope" getter="get_snow_max_slope" default="60.0">
 			The steepest slope snow holds on, in degrees (its angle of repose). Snow holds fully on slopes 20 degrees flatter and thins out up to this angle.
-		</member>
-		<member name="snow_on_body" type="bool" setter="set_snow_on_body" getter="is_snow_on_body" default="false">
-			If [code]true[/code], a moving body's own snow shows on this material: the [code]snow_body[/code] instance uniform (slot 12) that [SnowBodies3D] sets replaces the cover from the weather. Instances it does not set keep [member snow_from_weather]'s snow, or none without it.
 		</member>
 		<member name="specular_mode" type="int" setter="set_specular_mode" getter="get_specular_mode" enum="BaseMaterial3D.SpecularMode" default="0">
 			The method for rendering the specular blob.
@@ -604,9 +598,6 @@
 		</member>
 		<member name="wetness_amount" type="float" setter="set_wetness_amount" getter="get_wetness_amount" default="1.0">
 			How wet the surface is, from 0 to 1. With [member wetness_from_weather], it scales the wetness of the weather map; without, it is the wetness, for a script to set (a prop pulled out of water, a sprinkled lawn).
-		</member>
-		<member name="wetness_canopy" type="bool" setter="set_wetness_canopy" getter="is_wetness_canopy" default="false">
-			With [member wetness_from_weather], the surface is a leaf: it stays wet while the canopy holds the rain it intercepted ([method WeatherMap3D.get_canopy_wetness_at]), after the ground has begun to dry, and the water stands on it as beads on the faces that look up.
 		</member>
 		<member name="wetness_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
 			If [code]true[/code], the surface darkens and turns glossier when wet, following Lagarde's physically based wet surfaces (2013): water in the pores of porous surfaces (soil, bark, stone, fabric) darkens them down to 20% of their albedo and smooths them; non-porous surfaces barely change. The wetness comes from the [code]WeatherMap3D[/code] (its rain film and puddles drying over time) or from [member wetness_amount]. Surfaces facing down catch less rain. The path tracer applies the same model. Puddles are separate.
@@ -799,10 +790,7 @@
 		<constant name="FEATURE_GROUND_DEFORM" value="17" enum="Feature">
 			Constant for setting [member ground_deform_enabled].
 		</constant>
-		<constant name="FEATURE_MUD" value="18" enum="Feature">
-			Constant for setting [member mud_enabled].
-		</constant>
-		<constant name="FEATURE_MAX" value="19" enum="Feature">
+		<constant name="FEATURE_MAX" value="18" enum="Feature">
 			Represents the size of the [enum Feature] enum.
 		</constant>
 		<constant name="BLEND_MODE_MIX" value="0" enum="BlendMode">

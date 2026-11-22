@@ -69,13 +69,7 @@ struct RTBaseMaterialState {
 	uint32_t snow : 1; // BaseMaterial3D Snow.
 	uint32_t snow_from_weather : 1; // BaseMaterial3D snow_from_weather: cover from SnowCover3D's snow map.
 	uint32_t ground_deform_patch : 1; // BaseMaterial3D Ground Deform on GroundSurface3D's patch: turned-ground tint.
-	uint32_t ground_deform_terrain : 1; // BaseMaterial3D Ground Deform off the patch: the ground's pore water only.
-	uint32_t mud : 1; // BaseMaterial3D Mud: a vehicle's body mud from its instance uniforms (docs/ideas/mud.md, stage 3b).
-	uint32_t wetness_canopy : 1; // BaseMaterial3D wetness_canopy: a leaf's intercepted water and beads (docs/ideas/rain.md).
-	uint32_t snow_on_body : 1; // BaseMaterial3D snow_on_body: a moving body's own snow from instance uniform slot 12.
-	uint32_t glaze : 1; // BaseMaterial3D glaze: clear ice from freezing rain, the rain map's alpha (docs/ideas/trees.md 5be).
-	uint32_t normal_map : 1; // BaseMaterial3D normal_enabled: its texture_normal stays set when it is off.
-	uint32_t unused : 22;
+	uint32_t unused : 28;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 

@@ -1,1 +1,0 @@
-- Snow: people, sleds, vehicles and falling cornices trigger avalanches. Their weight adds shear on the weak layer under them, a boot sunk in powder more than a ski, and a collapse along a buried crust can release a slope from the flat below (`SnowAvalanche3D.triggers_enabled`, on by default; `apply_load`).

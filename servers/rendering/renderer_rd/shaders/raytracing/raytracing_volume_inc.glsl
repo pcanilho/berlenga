@@ -24,10 +24,9 @@ struct RTVolumeParams {
 	vec4 world_max; // xyz: simulation units; w: 1 when a volume is present
 	vec4 block_size; // xyz: block size (simulation units); w: layer index
 	vec4 medium; // x: extinction per meter at density 1; y: albedo; z: HG g; w: density majorant
-	vec4 emission; // x: emission scale (radiance per heat ramp unit); y: 1 / temperature range; z: 1 when emissive, 2 when a proxy light carries its lighting (emission seen after a diffuse bounce is dropped); w: dense box count (0: the sparse atlas)
+	vec4 emission; // x: emission scale; y: 1 / temperature range; z: 1 when emissive; w: dense box count (0: the sparse atlas)
 	vec4 heat_ramp[8]; // rgb: emitted color along the temperature range
 	vec4 smoke_color; // rgb: scattering color
-	vec4 shimmer; // heat shimmer (rt_volume_bend): x: kelvin per temperature unit (0: off), y: air kelvin, z: sub-grid turbulence, w: time (s)
 };
 
 layout(set = 0, binding = 47) uniform texture3D rt_volume_density; // r: temperature, a: smoke
@@ -160,14 +159,11 @@ bool rt_volume_span(vec3 p_origin, vec3 p_dir, float p_t_max, out float r_t0, ou
 	return r_t1 > r_t0;
 }
 
-// Scattering events in the gas a path may take beyond max_bounces (scene_raytracing_raygen.glsl).
-const uint RT_VOLUME_MAX_SCATTERS = 32u;
-
 float rt_volume_sigma_t(float p_smoke) {
 	return rt_volume.medium.x * clamp(p_smoke, 0.0, rt_volume.medium.w);
 }
 
-// The radiance the gas glows with at a temperature (times its extinction: the emission coefficient).
+// The emission coefficient (radiance per meter) at a temperature.
 vec3 rt_volume_emitted(float p_temperature) {
 	if (rt_volume.emission.z < 0.5 || p_temperature <= 0.0) {
 		return vec3(0.0);
@@ -194,39 +190,12 @@ float rt_volume_free_flight(vec3 p_origin, vec3 p_dir, float p_t_max, inout uint
 	if (majorant <= 0.0) {
 		return -1.0;
 	}
-	// Glowing gas: track against a larger majorant (more null collisions, still unbiased; Novak et al.
-	// 2018, "Monte Carlo Methods for Volumetric Light Transport Simulation"), about one every 6 cm, so
-	// the emission integral is gathered along a flame instead of from the one or two collisions its thin
-	// smoke gives, which left a fire as scattered bright fireflies at a few samples a pixel.
-	if (rt_volume.emission.z > 0.5) {
-		majorant = max(majorant, 16.0);
-	}
 	RTVolumeAccessor acc = rt_volume_accessor();
 	float t = t0;
-	// Glowing gas: the emission integral along the whole segment by ratio tracking (each collision weighted
-	// by the transmittance so far), while delta tracking still picks where the path scatters. Stopping the
-	// emission at the scattering point instead made every sample all or nothing where smoke hangs in front
-	// of a flame (speckle); both estimate the same integral (Novak et al. 2018).
-	bool emissive = rt_volume.emission.z > 0.5;
-	float base_majorant = rt_volume.medium.x * rt_volume.medium.w;
-	float tr = 1.0;
-	float hit = -1.0;
-	for (uint i = 0u; i < 1024u; i++) {
-		// The emission integral's budget spent (512 collisions at the glow majorant cover only 32 m of allocated
-		// blocks), or the gas behind too dark to add to it: drop the emission and its dense majorant, and let delta
-		// tracking finish the segment alone at the gas's own majorant (any bound above the extinction stays
-		// unbiased; the exponential steps are memoryless). Before, the path left the gas without a collision here,
-		// and the camera saw glow-enabled smoke about three times thinner than its shadow rays and raster did.
-		if (emissive && (i >= 512u || tr < 0.002)) {
-			emissive = false;
-			majorant = base_majorant;
-		}
-		if (!emissive && hit >= 0.0) {
-			return hit;
-		}
+	for (uint i = 0u; i < 512u; i++) {
 		t -= log(max(1.0 - rand(rng_state), 1e-7)) / majorant;
 		if (t >= t1) {
-			return hit;
+			return -1.0;
 		}
 		vec3 p = (p_origin + rt_origin.xyz + p_dir * t) * upm;
 		vec2 ts;
@@ -236,23 +205,15 @@ float rt_volume_free_flight(vec3 p_origin, vec3 p_dir, float p_t_max, inout uint
 			continue;
 		}
 		float sigma_t = rt_volume_sigma_t(ts.y);
-		// Emission at every collision, real or null: the emission coefficient / majorant estimates its
-		// integral along the ray. The gas emits as much as it absorbs (Kirchhoff): the heat ramp's radiance
-		// times its extinction, so a thick hot cloud glows at the ramp's color and clear hot air does not glow.
-		if (emissive) {
-			r_emitted += rt_volume_emitted(ts.x) * (tr * sigma_t / majorant);
-		}
-		if (hit < 0.0 && rand(rng_state) * majorant < sigma_t) {
-			hit = t;
-			if (!emissive) {
-				return hit;
-			}
-		}
-		if (emissive) {
-			tr *= 1.0 - sigma_t / majorant;
+		// Emission at every collision, real or null: the emission coefficient / majorant
+		// estimates its integral along the ray up to the collision. Fire emits by temperature,
+		// whatever smoke it carries.
+		r_emitted += rt_volume_emitted(ts.x) / majorant;
+		if (rand(rng_state) * majorant < sigma_t) {
+			return t;
 		}
 	}
-	return hit;
+	return -1.0;
 }
 
 // Ratio tracking transmittance from p_origin along p_dir over p_t_max meters.
@@ -313,125 +274,6 @@ vec3 rt_volume_sample_hg(vec3 p_forward, float p_g, vec2 p_u) {
 	vec3 t = abs(p_forward.z) < 0.999 ? normalize(cross(vec3(0.0, 0.0, 1.0), p_forward)) : vec3(1.0, 0.0, 0.0);
 	vec3 b = cross(p_forward, t);
 	return normalize(t * (sin_t * cos(phi)) + b * (sin_t * sin(phi)) + p_forward * cos_t);
-}
-
-// Heat shimmer (docs/ideas/heat-shimmer.md): light bends through the gas's hot air. Air's refractive index
-// falls with its density (Gladstone-Dale: n - 1 = 2.9e-4 at 15 C, scaling as 1 / T), and a ray turns by the
-// integral of the index's gradient across it (the eikonal ray equation). Resolved gradient from the
-// temperature field, plus the turbulent fluctuations below the grid (rms a share of the excess, George, Alpert
-// and Tamanini 1977) as independent kicks over their correlation length. The same constants as the raster
-// pass (modules/godot_physx/flow/flow_shimmer_rd.cpp).
-const float RTV_SHIMMER_N0 = 2.9e-4;
-const float RTV_SHIMMER_EDDY = 0.04; // m
-const float RTV_SHIMMER_RISE = 1.5; // m/s
-const float RTV_SHIMMER_NOISE_RMS = 0.40;
-
-float rt_shimmer_hash(vec3 q) {
-	q = fract(q * 0.3183099 + 0.1) * 17.0;
-	return fract(q.x * q.y * q.z * (q.x + q.y + q.z)) * 2.0 - 1.0;
-}
-
-// Value noise's analytic gradient (Quilez, "Value noise derivatives"), per lattice unit.
-vec3 rt_shimmer_noise_grad(vec3 x) {
-	vec3 i = floor(x);
-	vec3 f = x - i;
-	vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-	vec3 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
-	float a = rt_shimmer_hash(i);
-	float b = rt_shimmer_hash(i + vec3(1, 0, 0));
-	float c = rt_shimmer_hash(i + vec3(0, 1, 0));
-	float d = rt_shimmer_hash(i + vec3(1, 1, 0));
-	float e = rt_shimmer_hash(i + vec3(0, 0, 1));
-	float f1 = rt_shimmer_hash(i + vec3(1, 0, 1));
-	float g = rt_shimmer_hash(i + vec3(0, 1, 1));
-	float h = rt_shimmer_hash(i + vec3(1, 1, 1));
-	float k1 = b - a;
-	float k2 = c - a;
-	float k3 = e - a;
-	float k4 = a - b - c + d;
-	float k5 = a - c - e + g;
-	float k6 = a - b - e + f1;
-	float k7 = -a + b + c - d + e - f1 - g + h;
-	return du * vec3(k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z, k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x, k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y);
-}
-
-// The turbulent temperature's gradient (per metre, per unit rms) at a point in meters: eddies carried up at the
-// plume's rise and renewed about once per turnover.
-vec3 rt_shimmer_eddy_grad(vec3 p_pos, float p_time) {
-	float tau = p_time * RTV_SHIMMER_RISE / (3.0 * RTV_SHIMMER_EDDY);
-	float k = floor(tau);
-	float w = tau - k;
-	vec3 q = p_pos / RTV_SHIMMER_EDDY - vec3(0.0, p_time * RTV_SHIMMER_RISE / RTV_SHIMMER_EDDY, 0.0);
-	vec3 g0 = rt_shimmer_noise_grad(q + vec3(17.31, 3.7, 9.13) * k);
-	vec3 g1 = rt_shimmer_noise_grad(q + vec3(17.31, 3.7, 9.13) * (k + 1.0));
-	return (g0 * (1.0 - w) + g1 * w) / (sqrt(w * w + (1.0 - w) * (1.0 - w)) * RTV_SHIMMER_NOISE_RMS * RTV_SHIMMER_EDDY);
-}
-
-// Bends a ray through the hot gas: marches the straight ray across the volume, sums the index gradient across
-// it, and returns the bent line through the deflection's centroid (r_origin moved so the line passes there). Up
-// to the centroid the bent line stays within delta * distance of the straight one (millimetres), so gas behind a
-// surface does not move that surface.
-void rt_volume_bend(inout vec3 r_origin, inout vec3 r_dir, float p_t_max, inout uint rng_state) {
-	if (!rt_volume_enabled() || rt_volume.shimmer.x <= 0.0 || rt_volume.emission.w > 0.5) {
-		return;
-	}
-	float t0;
-	float t1;
-	if (!rt_volume_span(r_origin, r_dir, p_t_max, t0, t1)) {
-		return;
-	}
-	float upm = rt_volume.world_min.w;
-	vec3 cell = rt_volume.block_size.xyz / vec3(rt_volume.level[0].xyz + 1u); // simulation units
-	vec3 cell_m = cell / upm;
-	float h = min(min(cell_m.x, cell_m.y), cell_m.z);
-	float kelvin = rt_volume.shimmer.x;
-	float air = rt_volume.shimmer.y;
-	float turbulence = rt_volume.shimmer.z;
-	float kick = sqrt(RTV_SHIMMER_EDDY / h);
-	RTVolumeAccessor acc = rt_volume_accessor();
-	vec3 bend = vec3(0.0);
-	float w_sum = 0.0;
-	float t_sum = 0.0;
-	float t = t0 + h * rand(rng_state);
-	for (uint i = 0u; i < 256u && t < t1; i++) {
-		vec3 p = (r_origin + rt_origin.xyz + r_dir * t) * upm;
-		vec2 ts;
-		if (!rt_volume_fetch(p, acc, ts)) {
-			t += rt_volume_block_exit(p, r_dir, upm);
-			continue;
-		}
-		float excess = max(ts.x, 0.0) * kelvin;
-		if (excess > 0.5) {
-			RTVolumeAccessor nb = acc;
-			vec2 x0, x1, y0, y1, z0, z1;
-			rt_volume_fetch(p - vec3(cell.x, 0.0, 0.0), nb, x0);
-			rt_volume_fetch(p + vec3(cell.x, 0.0, 0.0), nb, x1);
-			rt_volume_fetch(p - vec3(0.0, cell.y, 0.0), nb, y0);
-			rt_volume_fetch(p + vec3(0.0, cell.y, 0.0), nb, y1);
-			rt_volume_fetch(p - vec3(0.0, 0.0, cell.z), nb, z0);
-			rt_volume_fetch(p + vec3(0.0, 0.0, cell.z), nb, z1);
-			vec3 grad_t = vec3(x1.x - x0.x, y1.x - y0.x, z1.x - z0.x) / (2.0 * cell_m) * kelvin; // K/m
-			float temp_k = air + excess;
-			float dn_dt = -RTV_SHIMMER_N0 * 288.15 / (temp_k * temp_k);
-			vec3 g = dn_dt * grad_t * h;
-			if (turbulence > 0.0) {
-				g += dn_dt * (turbulence * excess) * rt_shimmer_eddy_grad(p / upm, rt_volume.shimmer.w) * (h * kick);
-			}
-			vec3 perp = g - r_dir * dot(g, r_dir);
-			bend += perp;
-			float w = length(perp);
-			w_sum += w;
-			t_sum += w * t;
-		}
-		t += h;
-	}
-	if (w_sum <= 0.0) {
-		return;
-	}
-	float tc = t_sum / w_sum;
-	vec3 bent = normalize(r_dir + bend);
-	r_origin += (r_dir - bent) * tc;
-	r_dir = bent;
 }
 
 #endif // RT_VOLUME_INC

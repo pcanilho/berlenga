@@ -30,11 +30,5 @@
 			If [member auto_exposure_enabled] is [code]true[/code], this can be used as a method of exposure compensation, doubling the value will increase the exposure value (measured in EV100) by 1 stop.
 			[b]Note:[/b] Only available when [member ProjectSettings.rendering/lights_and_shadows/use_physical_light_units] is enabled.
 		</member>
-		<member name="luminance_per_energy" type="float" setter="set_luminance_per_energy" getter="get_luminance_per_energy" default="0.0">
-			The luminance, in cd/m², of a white surface lit by one unit of light energy, before exposure: the scene's light units. [SkyClock] sets it when it drives the exposure. [code]0[/code] (units unknown) leaves [member night_vision] off.
-		</member>
-		<member name="night_vision" type="bool" setter="set_night_vision" getter="is_night_vision_enabled" default="true">
-			The eye's shift from cones to rods in dim light, applied before tone mapping. Over the CIE mesopic range (5 cd/m² down to 0.005 cd/m²), each pixel's colour fades toward its scotopic luminance in one blue-grey hue, so blues brighten and reds darken against each other (the Purkinje shift) while lamps and lit windows keep their colour. It needs the scene's luminance in physical units, so it does nothing until [member luminance_per_energy] is set.
-		</member>
 	</members>
 </class>

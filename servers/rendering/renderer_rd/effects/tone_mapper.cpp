@@ -155,7 +155,6 @@ void ToneMapper::tonemapper(RID p_source_color, RID p_dst_framebuffer, const Ton
 	tonemap.push_constant.tonemapper_params[3] = p_settings.tonemapper_params[3];
 	tonemap.push_constant.flags |= p_settings.use_auto_exposure ? TONEMAP_FLAG_USE_AUTO_EXPOSURE : 0;
 	tonemap.push_constant.exposure = p_settings.exposure;
-	tonemap.push_constant.night_luminance = p_settings.night_luminance;
 	tonemap.push_constant.white = p_settings.white;
 	tonemap.push_constant.auto_exposure_scale = p_settings.auto_exposure_scale;
 	tonemap.push_constant.luminance_multiplier = p_settings.luminance_multiplier;

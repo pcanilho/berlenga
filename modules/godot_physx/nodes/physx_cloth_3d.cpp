@@ -40,13 +40,10 @@
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
-#ifdef GODOT_PHYSX_FLOW
-#include "../flow/physx_fire_spread_3d.h"
-#include "../flow/physx_flow_3d.h"
-#endif
-
 #include "modules/modules_enabled.gen.h" // For weather.
-#include "modules/world/world_contracts.h"
+#ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_map_3d.h"
+#endif
 
 // Map a friendly 0..1 stiffness to XPBD compliance (m/N). 1 -> rigid, 0 -> slack.
 static float _stiffness_to_compliance(float p_stiffness, float p_max_compliance) {
@@ -59,21 +56,17 @@ void PhysXCloth3D::_apply_solver_settings() {
 	s.substeps = MAX(substeps, 1);
 	s.stretch_compliance = _stiffness_to_compliance(stiffness, 5.0e-3f);
 	s.shear_compliance = _stiffness_to_compliance(shear_stiffness, 2.0e-1f);
-	// Water softens the fibres (it plasticises cellulose: wet cotton bends about half as stiffly) and adds its weight.
-	s.bend_compliance = _stiffness_to_compliance(bend_stiffness * (1.0f - 0.5f * wet.effective()), 6.0e-1f);
+	s.bend_compliance = _stiffness_to_compliance(bend_stiffness, 6.0e-1f);
 	s.damping = MAX(damping, 0.0f);
 	s.drag = MAX(drag, 0.0f);
 	s.lift = MAX(lift, 0.0f);
-	// Snow lying on it adds its weight too (SnowBodies3D), so the fabric sags under it.
-	s.density = MAX(density, 1.0e-3f) * (1.0f + water_capacity * wet.effective()) + snow_load;
+	s.density = MAX(density, 1.0e-3f);
 	s.tear_factor = is_tearing() ? tear_factor : 0.0f;
 	solver.settings = s;
 }
 
 void PhysXCloth3D::_rebuild() {
 	_destroy();
-	stepped = false;
-	built_xform = is_inside_tree() ? get_global_transform() : Transform3D();
 
 	_apply_solver_settings();
 
@@ -122,11 +115,6 @@ bool PhysXCloth3D::_try_build_gpu() {
 	if (simulation_mode == SIM_CPU || (simulation_mode == SIM_AUTO && is_tearing())) {
 		return false; // strain tearing splits vertices, which only the CPU solver can do
 	}
-#ifdef GODOT_PHYSX_FLOW
-	if (simulation_mode == SIM_AUTO && burnable && PhysXFireSpread3D::any()) {
-		return false; // a fire in the scene: burning holes drop triangles, which only the CPU solver can do
-	}
-#endif
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	if (!server || !server->has_gpu() || get_world_3d().is_null()) {
 		return false;
@@ -199,14 +187,6 @@ void PhysXCloth3D::_destroy() {
 		collision_sphere = RID();
 	}
 	solver.clear();
-#ifdef GODOT_PHYSX_FLOW
-	burn.reset();
-	if (burn_override.is_valid() && is_inside_tree()) {
-		const Ref<Material> mo = get_material_override();
-		RenderingServer::get_singleton()->instance_geometry_set_material_override(get_instance(), mo.is_valid() ? mo->get_rid() : RID());
-	}
-	burn_override = RID();
-#endif
 	pinned_index_cache.clear();
 }
 
@@ -273,56 +253,6 @@ void PhysXCloth3D::_resolve_pins() {
 	last_anchor_xform = anchor ? anchor->get_global_transform() : Transform3D();
 }
 
-// Smooth value noise in -1..1 (quintic fade), for the eddies.
-static float _eddy_noise(const Vector3 &p_p, uint32_t p_seed) {
-	const Vector3 i = p_p.floor();
-	const Vector3 f = p_p - i;
-	const Vector3 u = f * f * f * (f * (f * 6.0f - Vector3(15, 15, 15)) + Vector3(10, 10, 10));
-	auto h = [p_seed](int x, int y, int z) {
-		uint32_t n = (uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u ^ (uint32_t)z * 83492791u ^ p_seed * 2654435761u;
-		n = (n ^ (n >> 13)) * 1274126177u;
-		return float((n ^ (n >> 16)) & 0xffff) / 32767.5f - 1.0f;
-	};
-	const int x = (int)i.x, y = (int)i.y, z = (int)i.z;
-	const float a = Math::lerp(Math::lerp(h(x, y, z), h(x + 1, y, z), u.x), Math::lerp(h(x, y + 1, z), h(x + 1, y + 1, z), u.x), u.y);
-	const float b = Math::lerp(Math::lerp(h(x, y, z + 1), h(x + 1, y, z + 1), u.x), Math::lerp(h(x, y + 1, z + 1), h(x + 1, y + 1, z + 1), u.x), u.y);
-	return Math::lerp(a, b, u.z);
-}
-
-// Turbulence varies over the cloth, not only in time: eddies carried along by the mean wind (Taylor's frozen
-// turbulence), at two scales near the size of a sheet, push its parts differently so it ripples and billows instead
-// of tilting as a plane. Gusts near the ground are about 0.3 to 0.5 of the mean speed (turbulence intensity), most of
-// it along the wind.
-void PhysXCloth3D::_eddy_air(const Vector3 &p_wind) {
-	const bool has_flow = !flow_path.is_empty();
-	const float speed = p_wind.length();
-	if (has_flow || wind_turbulence <= 0.0f || speed < 0.05f) {
-		if (eddies_on) {
-			eddies_on = false;
-			if (!has_flow) {
-				solver.set_air(LocalVector<Vector3>());
-			}
-		}
-		return;
-	}
-	eddies_on = true;
-	const LocalVector<Vector3> &pos = solver.get_positions();
-	LocalVector<Vector3> air;
-	air.resize(pos.size());
-	const Vector3 drift = p_wind * (float)wind_time;
-	const float amp = speed * wind_turbulence * 0.6f;
-	for (uint32_t i = 0; i < pos.size(); i++) {
-		const Vector3 q = pos[i] - drift;
-		const Vector3 q1 = q / 1.2f;
-		const Vector3 q2 = q / 0.45f + Vector3(0.0f, 0.0f, (float)wind_time * 0.7f);
-		air[i] = Vector3(_eddy_noise(q1, 1u) + 0.5f * _eddy_noise(q2, 4u),
-						 0.6f * (_eddy_noise(q1, 2u) + 0.5f * _eddy_noise(q2, 5u)),
-						 _eddy_noise(q1, 3u) + 0.5f * _eddy_noise(q2, 6u)) *
-				amp;
-	}
-	solver.set_air(air);
-}
-
 Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 	if (!wind_enabled) {
 		return Vector3();
@@ -373,9 +303,10 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 		w += perp * (speed * wind_turbulence * 0.5f * sway);
 		w += up * (speed * wind_turbulence * 0.3f * Math::sin(t * 3.7f));
 	}
+#ifdef MODULE_WEATHER_ENABLED
 	// The world's wind at the cloth, with its own gusts (wind_turbulence only shapes the local wind above).
-	const WorldWeather *weather = WorldContracts::weather();
-	if (weather_wind && weather->has_provider()) {
+	const WeatherMap3D *weather = weather_wind ? WeatherMap3D::get_active() : nullptr;
+	if (weather) {
 		const LocalVector<Vector3> &sp = solver.get_positions();
 		Vector3 center = get_global_transform().origin;
 		if (!sp.is_empty()) {
@@ -385,12 +316,9 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 			}
 			center /= (float)sp.size();
 		}
-		w += weather->wind_at(center);
+		w += weather->get_wind_at(center);
 	}
-	// A fire's indraft near the ground (WorldContracts' fire): a sheet beside a fire leans into it.
-	if (const WorldFire *fire = WorldContracts::fire(); fire->has_provider()) {
-		w += fire->wind_at(get_global_transform().xform(get_aabb().get_center()));
-	}
+#endif
 	return w;
 }
 
@@ -398,19 +326,8 @@ void PhysXCloth3D::_step(double p_delta) {
 	if (!built || !simulating || p_delta <= 0.0) {
 		return;
 	}
-	if (!stepped) {
-		if (!get_global_transform().is_equal_approx(built_xform)) {
-			_rebuild(); // placed by a script after it entered the tree
-			if (!built) {
-				return;
-			}
-		}
-		stepped = true;
-	}
 
 	const Vector3 wind_now = _sample_wind(p_delta);
-	_couple_flow(p_delta);
-	_update_wetness(p_delta, wind_now);
 
 	// --- GPU path: the deformable surface is stepped by the physics server. ---
 	if (gpu_cloth.is_valid()) {
@@ -463,22 +380,6 @@ void PhysXCloth3D::_step(double p_delta) {
 	}
 	const Vector3 gravity = gravity_vec.normalized() * gravity_mag;
 
-	// Under water (docs/ideas/physx.md, "River current drags flags and sheets"): as worn clothing, soaked fabric keeps
-	// about 30% of its weight and the current drags it at Morison's 0.5 rho Cd |u| per its soaked areal mass.
-	if (wet.water_surface > -1.0e8f) {
-		const float areal = MAX(density, 1.0e-3f) * (1.0f + water_capacity);
-		solver.settings.water_height = wet.water_surface;
-		solver.settings.water_flow = wet.water_flow;
-		solver.settings.water_drag = MIN(0.5f * 1000.0f * 1.2f * (wet.water_flow.length() + 0.1f) / MAX(areal, 0.05f), 200.0f);
-		solver.settings.water_gravity = 0.3f;
-	} else {
-		solver.settings.water_height = -1.0e9f;
-		solver.settings.water_drag = 0.0f;
-	}
-	_eddy_air(wind_now);
-	if (collision_enabled) {
-		pre_step_positions = solver.get_positions();
-	}
 	const int torn = solver.step((float)p_delta, gravity, wind_now);
 	if (torn > 0) {
 		const Transform3D inv = get_global_transform().affine_inverse();
@@ -491,199 +392,7 @@ void PhysXCloth3D::_step(double p_delta) {
 	if (collision_enabled) {
 		_collide();
 	}
-#ifdef GODOT_PHYSX_FLOW
-	_step_burn(p_delta);
-#endif
 	_update_mesh();
-}
-
-// Rain in, evaporation out (ClothWetness); the catch from how the cloth faces the rain.
-void PhysXCloth3D::_update_wetness(double p_delta, const Vector3 &p_wind) {
-	if (render_verts.size() < 3) {
-		return;
-	}
-	const Transform3D gt = get_global_transform();
-	bool update_catch = false;
-	wet.step(this, gt.xform(get_aabb()), p_wind, (float)p_delta, density * water_capacity, weather_wetting, update_catch);
-	if (update_catch) {
-		// |n . d| / |d.y| over the cloth's triangles, both faces: a sheet facing the wind wets almost as fast as a flat
-		// one, and one streaming edge on to the rain wets through the gusts.
-		Vector3 dirs[4];
-		float dy = 1.0f;
-		ClothWetness::rain_directions(p_wind, dirs, dy);
-		const Basis b = gt.basis;
-		float area = 0.0f;
-		float caught = 0.0f;
-		const Vector3 *v = render_verts.ptr();
-		const int *ix = render_indices.ptr();
-		const int vn = render_verts.size();
-		for (int t = 0; t + 2 < render_indices.size(); t += 3) {
-			if (ix[t] >= vn || ix[t + 1] >= vn || ix[t + 2] >= vn) {
-				continue;
-			}
-			const Vector3 cr = b.xform((v[ix[t + 1]] - v[ix[t]]).cross(v[ix[t + 2]] - v[ix[t]]));
-			area += cr.length();
-			for (const Vector3 &d : dirs) {
-				caught += 0.25f * Math::abs(cr.dot(d));
-			}
-		}
-		wet.rain_catch = area > 0.0f ? caught / (area * MAX(dy, 0.05f)) : 0.0f;
-	}
-	if (Math::abs(wet.effective() - wet_applied) > 0.01f || (wet.effective() == 0.0f && wet_applied != 0.0f)) {
-		wet_applied = wet.effective();
-		_apply_solver_settings();
-		if (built && !gpu_cloth.is_valid()) {
-			solver.refresh_masses();
-		}
-	}
-}
-
-void PhysXCloth3D::set_wetness(float p_v) {
-	wet.wetness = CLAMP(p_v, 0.0f, 1.0f);
-	wet_applied = wet.effective();
-	_apply_solver_settings();
-	if (built && !gpu_cloth.is_valid()) {
-		solver.refresh_masses();
-	}
-}
-
-// Without a rebuild (set_density rebuilds): the snow side writes it about ten times a second.
-void PhysXCloth3D::set_snow_load(float p_v) {
-	const float v = MAX(p_v, 0.0f);
-	if (Math::abs(v - snow_load) < 1.0e-4f) {
-		return;
-	}
-	snow_load = v;
-	_apply_solver_settings();
-	if (built && !gpu_cloth.is_valid()) {
-		solver.refresh_masses();
-	}
-}
-
-void PhysXCloth3D::set_water_capacity(float p_v) {
-	water_capacity = MAX(p_v, 0.0f);
-	_apply_solver_settings();
-	if (built && !gpu_cloth.is_valid()) {
-		solver.refresh_masses();
-	}
-}
-
-#ifdef GODOT_PHYSX_FLOW
-void PhysXCloth3D::_step_burn(double p_delta) {
-	if (!burnable || p_delta <= 0.0) {
-		return;
-	}
-	PhysXFireSpread3D *fire = fire_path.is_empty() ? PhysXFireSpread3D::find_at(get_global_position()) : Object::cast_to<PhysXFireSpread3D>(get_node_or_null(fire_path));
-	PhysXFlow3D *flow = flow_path.is_empty() ? nullptr : Object::cast_to<PhysXFlow3D>(get_node_or_null(flow_path));
-	if (!flow && fire) {
-		flow = fire->get_flow();
-	}
-	burn.settings.flame_spread = flame_spread;
-	burn.settings.burn_through_time = burn_through_time;
-	burn.settings.water = get_water_load();
-	burn.step(this, solver, fire, flow, float(p_delta));
-}
-#endif
-
-void PhysXCloth3D::set_burnable(bool p_v) {
-	burnable = p_v;
-}
-
-void PhysXCloth3D::set_flame_spread(float p_v) {
-	flame_spread = MAX(p_v, 0.0f);
-}
-
-void PhysXCloth3D::set_burn_through_time(float p_v) {
-	burn_through_time = MAX(p_v, 0.1f);
-}
-
-void PhysXCloth3D::ignite(const Vector3 &p_position) {
-#ifdef GODOT_PHYSX_FLOW
-	ERR_FAIL_COND_MSG(gpu_cloth.is_valid(), "PhysXCloth3D.ignite() needs the CPU solver; set simulation_mode to SIM_CPU.");
-	if (built) {
-		burn.ignite(solver, p_position);
-	}
-#endif
-}
-
-int PhysXCloth3D::get_burnt_count() const {
-#ifdef GODOT_PHYSX_FLOW
-	return burn.get_burnt_count();
-#else
-	return 0;
-#endif
-}
-
-int PhysXCloth3D::get_burning_count() const {
-#ifdef GODOT_PHYSX_FLOW
-	return burn.get_burning_count();
-#else
-	return 0;
-#endif
-}
-
-// Two-way coupling with a Flow gas, as APEX Turbulence drove APEX Clothing: each vertex takes the gas velocity there
-// (read back a few frames late) as extra air for the drag and lift model, and a few of the moving particles enter
-// the gas as sphere solids carrying their velocity, so a flapping flag stirs smoke and parts it.
-void PhysXCloth3D::_couple_flow(double p_delta) {
-#ifdef GODOT_PHYSX_FLOW
-	PhysXFlow3D *flow = flow_path.is_empty() ? nullptr : Object::cast_to<PhysXFlow3D>(get_node_or_null(flow_path));
-	if (flow == nullptr || p_delta <= 0.0) {
-		if (!flow_prev_positions.is_empty()) {
-			// Unhooked: no gas air any more.
-			flow_prev_positions.clear();
-			solver.set_air(LocalVector<Vector3>());
-			if (gpu_cloth.is_valid() && GodotPhysXServer3D::get_singleton()) {
-				GodotPhysXServer3D::get_singleton()->cloth_set_air(gpu_cloth, Vector<Vector3>());
-			}
-		}
-		return;
-	}
-	flow->request_velocity();
-	LocalVector<Vector3> world;
-	if (gpu_cloth.is_valid()) {
-		const Transform3D gt = get_global_transform();
-		world.resize(render_verts.size());
-		for (int i = 0; i < render_verts.size(); i++) {
-			world[i] = gt.xform(render_verts[i]);
-		}
-	} else {
-		world = solver.get_positions();
-	}
-	const uint32_t n = world.size();
-	if (n == 0) {
-		return;
-	}
-	LocalVector<Vector3> air_local;
-	air_local.resize(n);
-	for (uint32_t i = 0; i < n; i++) {
-		air_local[i] = flow->sample_velocity(world[i]);
-	}
-	if (gpu_cloth.is_valid()) {
-		GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
-		if (server) {
-			Vector<Vector3> air;
-			air.resize(n);
-			memcpy(air.ptrw(), air_local.ptr(), n * sizeof(Vector3));
-			server->cloth_set_air(gpu_cloth, air);
-		}
-	} else {
-		solver.set_air(air_local);
-	}
-	// The cloth into the gas: up to 32 particles that move, a cell or so across.
-	if (flow_prev_positions.size() == n) {
-		const uint32_t stride = MAX(1u, n / 32u);
-		const float radius = MAX(flow->get_cell_size(), 0.03f);
-		const float inv_dt = 1.0f / (float)p_delta;
-		for (uint32_t i = 0; i < n; i += stride) {
-			const Vector3 v = (world[i] - flow_prev_positions[i]) * inv_dt;
-			if (v.length_squared() > 0.09f) { // 0.3 m/s: still cloth is left out
-				flow->add_transient_solid(world[i], radius, v);
-			}
-		}
-	}
-	flow_prev_positions = world;
-#endif
 }
 
 void PhysXCloth3D::_update_gpu_mesh() {
@@ -760,14 +469,10 @@ void PhysXCloth3D::_collide() {
 	}
 
 	const float radius = MAX(solver.vertex_radius(), 0.005f);
-	// Wet fabric clings: it sticks to what it touches over a film-thin gap, and slides less (water raises the friction
-	// of fabric on skin and on most surfaces, Gerhardt et al. 2008).
-	const float gap = wet.effective() > 0.05f ? radius * 1.5f * wet.effective() : 0.0f;
-	const float wet_friction = friction + (1.0f - friction) * 0.6f * wet.effective();
 	if (collision_sphere.is_null()) {
 		collision_sphere = ps->sphere_shape_create();
 	}
-	ps->shape_set_data(collision_sphere, radius + gap);
+	ps->shape_set_data(collision_sphere, radius);
 
 	PhysicsDirectSpaceState3D::ShapeParameters params;
 	params.shape_rid = collision_sphere;
@@ -778,31 +483,9 @@ void PhysXCloth3D::_collide() {
 	LocalVector<Vector3> &pos = solver.positions_mut();
 	LocalVector<Vector3> &vel = solver.velocities_mut();
 	const int n = solver.vertex_count();
-	const bool swept = (int)pre_step_positions.size() == n;
 	for (int i = 0; i < n; i++) {
 		if (solver.is_pinned(i)) {
 			continue;
-		}
-		// Swept: a particle the step carried across a thin collider (a rope, a rail, an edge), which the overlap test
-		// below would push out on the far side, is stopped where its path met the surface.
-		if (swept) {
-			const Vector3 move = pos[i] - pre_step_positions[i];
-			const float len = move.length();
-			if (len > 0.25f * radius) {
-				PhysicsDirectSpaceState3D::RayParameters rp;
-				rp.from = pre_step_positions[i];
-				rp.to = pos[i]; // the centre's own path: only a real crossing, not a graze ahead of a sliding particle
-				rp.collision_mask = collision_mask;
-				rp.hit_from_inside = false;
-				PhysicsDirectSpaceState3D::RayResult rr;
-				if (ss->intersect_ray(rp, rr) && rr.position.is_finite() && rr.normal.is_finite() && rr.normal.length_squared() > 0.25f && rr.normal.dot(move) < 0.0f && rr.position.distance_squared_to(rp.from) > 1.0e-10f) {
-					pos[i] = rr.position + rr.normal * (radius + 0.001f);
-					const float vn = vel[i].dot(rr.normal);
-					if (vn < 0.0f) {
-						vel[i] -= rr.normal * vn;
-					}
-				}
-			}
 		}
 		params.transform = Transform3D(Basis(), pos[i]);
 		PhysicsDirectSpaceState3D::ShapeRestInfo info;
@@ -813,22 +496,13 @@ void PhysXCloth3D::_collide() {
 		// shape out and info.point as (center - normal * penetration), so the
 		// penetration depth is just the projection back onto the normal.
 		const Vector3 push_dir = info.normal;
-		const float depth = (pos[i] - info.point).dot(push_dir) - gap;
+		const float depth = (pos[i] - info.point).dot(push_dir);
 		if (depth > 0.0f) {
 			pos[i] += push_dir * (depth + 0.001f);
 			const float vn = vel[i].dot(push_dir);
 			Vector3 v_tangent = vel[i] - push_dir * vn;
-			v_tangent *= (1.0f - wet_friction); // Coulomb-style sliding friction
+			v_tangent *= (1.0f - friction); // Coulomb-style sliding friction
 			vel[i] = v_tangent + push_dir * MAX(vn, 0.0f); // no inward velocity
-		} else if (gap > 0.0f && depth > -gap) {
-			// Within the water film's reach of the surface: capillary adhesion draws the wet fabric onto it and holds it
-			// against peeling away.
-			pos[i] += push_dir * (depth * 0.5f * wet.effective());
-			const float vn = vel[i].dot(push_dir);
-			if (vn > 0.0f) {
-				vel[i] -= push_dir * vn * 0.8f * wet.effective();
-			}
-			vel[i] -= (vel[i] - push_dir * vel[i].dot(push_dir)) * (0.5f * wet_friction);
 		}
 	}
 }
@@ -898,23 +572,6 @@ void PhysXCloth3D::_update_mesh() {
 		arrays[RSE::ARRAY_TEX_UV] = render_uvs;
 	}
 	arrays[RSE::ARRAY_INDEX] = render_indices;
-#ifdef GODOT_PHYSX_FLOW
-	// The burn state for the burn material: char, glow, scorch and how far each part has burnt through.
-	// Also while wet: the same material darkens with the water held.
-	if (burn.has_marks() || wet.effective() > 0.0f || burn_override.is_valid()) {
-		burn.fill_colors(burn_colors, n);
-		arrays[RSE::ARRAY_COLOR] = burn_colors;
-		if (burn.settings.wetness != wet.effective()) {
-			burn.settings.wetness = wet.effective();
-			burn.update_wetness();
-		}
-		const RID m = burn.get_material(get_material_override());
-		if (m != burn_override && m.is_valid()) {
-			burn_override = m;
-			rs->instance_geometry_set_material_override(get_instance(), m);
-		}
-	}
-#endif
 	rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
 
 	AABB box(render_verts[0], Vector3());
@@ -940,23 +597,6 @@ int PhysXCloth3D::tear(const Vector3 &p_from, const Vector3 &p_to) {
 		_update_mesh();
 	}
 	return removed;
-}
-
-// Holds pinned vertices at new places (local space), as pegs set closer than the cloth is wide so it hangs in swags
-// between them. CPU solver; lasts until the pins are next resolved.
-void PhysXCloth3D::move_pins(const PackedInt32Array &p_vertices, const PackedVector3Array &p_positions) {
-	ERR_FAIL_COND(p_vertices.size() != p_positions.size());
-	ERR_FAIL_COND_MSG(gpu_cloth.is_valid(), "PhysXCloth3D.move_pins() needs the CPU solver; set simulation_mode to SIM_CPU.");
-	if (!built) {
-		return;
-	}
-	const Transform3D gt = get_global_transform();
-	for (int i = 0; i < p_vertices.size(); i++) {
-		const int v = p_vertices[i];
-		if (v >= 0 && v < solver.vertex_count()) {
-			solver.set_pin_target(v, gt.xform(p_positions[i]));
-		}
-	}
 }
 
 int PhysXCloth3D::release_pins(const PackedInt32Array &p_vertices) {
@@ -1037,8 +677,7 @@ void PhysXCloth3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
 			// Only the rest pose lives in local space; a running sim owns world
-			// positions, so a mid-sim move should not teleport it (a move before
-			// the first step rebuilds it there: see _step).
+			// positions, so a mid-sim move should not teleport it.
 		} break;
 	}
 }
@@ -1249,28 +888,7 @@ void PhysXCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_vertex_count"), &PhysXCloth3D::get_vertex_count);
 	ClassDB::bind_method(D_METHOD("get_pinned_positions"), &PhysXCloth3D::get_pinned_positions);
 	ClassDB::bind_method(D_METHOD("release_pins", "vertices"), &PhysXCloth3D::release_pins);
-	ClassDB::bind_method(D_METHOD("move_pins", "vertices", "positions"), &PhysXCloth3D::move_pins);
 	ClassDB::bind_method(D_METHOD("tear", "from", "to"), &PhysXCloth3D::tear);
-	ClassDB::bind_method(D_METHOD("set_wetness", "wetness"), &PhysXCloth3D::set_wetness);
-	ClassDB::bind_method(D_METHOD("set_snow_load", "kg_per_m2"), &PhysXCloth3D::set_snow_load);
-	ClassDB::bind_method(D_METHOD("get_snow_load"), &PhysXCloth3D::get_snow_load);
-	ClassDB::bind_method(D_METHOD("get_wetness"), &PhysXCloth3D::get_wetness);
-	ClassDB::bind_method(D_METHOD("set_weather_wetting", "enable"), &PhysXCloth3D::set_weather_wetting);
-	ClassDB::bind_method(D_METHOD("is_weather_wetting"), &PhysXCloth3D::is_weather_wetting);
-	ClassDB::bind_method(D_METHOD("set_water_capacity", "capacity"), &PhysXCloth3D::set_water_capacity);
-	ClassDB::bind_method(D_METHOD("get_water_capacity"), &PhysXCloth3D::get_water_capacity);
-	ClassDB::bind_method(D_METHOD("get_water_load"), &PhysXCloth3D::get_water_load);
-	ClassDB::bind_method(D_METHOD("set_burnable", "enable"), &PhysXCloth3D::set_burnable);
-	ClassDB::bind_method(D_METHOD("is_burnable"), &PhysXCloth3D::is_burnable);
-	ClassDB::bind_method(D_METHOD("set_fire_path", "path"), &PhysXCloth3D::set_fire_path);
-	ClassDB::bind_method(D_METHOD("get_fire_path"), &PhysXCloth3D::get_fire_path);
-	ClassDB::bind_method(D_METHOD("set_flame_spread", "speed"), &PhysXCloth3D::set_flame_spread);
-	ClassDB::bind_method(D_METHOD("get_flame_spread"), &PhysXCloth3D::get_flame_spread);
-	ClassDB::bind_method(D_METHOD("set_burn_through_time", "seconds"), &PhysXCloth3D::set_burn_through_time);
-	ClassDB::bind_method(D_METHOD("get_burn_through_time"), &PhysXCloth3D::get_burn_through_time);
-	ClassDB::bind_method(D_METHOD("ignite", "position"), &PhysXCloth3D::ignite);
-	ClassDB::bind_method(D_METHOD("get_burnt_count"), &PhysXCloth3D::get_burnt_count);
-	ClassDB::bind_method(D_METHOD("get_burning_count"), &PhysXCloth3D::get_burning_count);
 	ClassDB::bind_method(D_METHOD("is_gpu_accelerated"), &PhysXCloth3D::is_gpu_accelerated);
 
 	ClassDB::bind_method(D_METHOD("set_simulation_mode", "mode"), &PhysXCloth3D::set_simulation_mode);
@@ -1303,8 +921,6 @@ void PhysXCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_area"), &PhysXCloth3D::get_wind_area);
 	ClassDB::bind_method(D_METHOD("set_wind", "wind"), &PhysXCloth3D::set_wind);
 	ClassDB::bind_method(D_METHOD("get_wind"), &PhysXCloth3D::get_wind);
-	ClassDB::bind_method(D_METHOD("set_flow_path", "path"), &PhysXCloth3D::set_flow_path);
-	ClassDB::bind_method(D_METHOD("get_flow_path"), &PhysXCloth3D::get_flow_path);
 	ClassDB::bind_method(D_METHOD("set_weather_wind", "enabled"), &PhysXCloth3D::set_weather_wind);
 	ClassDB::bind_method(D_METHOD("get_weather_wind"), &PhysXCloth3D::get_weather_wind);
 	ClassDB::bind_method(D_METHOD("set_wind_turbulence", "turbulence"), &PhysXCloth3D::set_wind_turbulence);
@@ -1355,21 +971,10 @@ void PhysXCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_turbulence", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_wind_turbulence", "get_wind_turbulence");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wind"), "set_weather_wind", "get_weather_wind");
-	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "flow", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFlow3D"), "set_flow_path", "get_flow_path");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drag", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_drag", "get_drag");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lift", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lift", "get_lift");
 	ADD_GROUP("Tearing", "tear_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tear_factor", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_tear_factor", "get_tear_factor");
-	ADD_GROUP("Wetness", "");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness", "get_wetness");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_load", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:kg/m²"), "set_snow_load", "get_snow_load");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wetting"), "set_weather_wetting", "is_weather_wetting");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_capacity", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_water_capacity", "get_water_capacity");
-	ADD_GROUP("Burning", "");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "burnable"), "set_burnable", "is_burnable");
-	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "fire_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXFireSpread3D"), "set_fire_path", "get_fire_path");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flame_spread", PROPERTY_HINT_RANGE, "0,0.5,0.001,suffix:m/s"), "set_flame_spread", "get_flame_spread");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burn_through_time", PROPERTY_HINT_RANGE, "0.1,30,0.1,suffix:s"), "set_burn_through_time", "get_burn_through_time");
 	ADD_GROUP("Pinning", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pin_mode", PROPERTY_HINT_ENUM, "None,Top Edge,Top Corners,Left Edge,Right Edge"), "set_pin_mode", "get_pin_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_INT32_ARRAY, "pinned_vertices"), "set_pinned_vertices", "get_pinned_vertices");

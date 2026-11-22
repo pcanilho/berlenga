@@ -1,1 +1,0 @@
-- Snow: forests hold and brake avalanches. Closed canopy anchors the slab (none release from closure 0.5), the stems slow a running avalanche and stop snow among the trees, and the flow reports the pressure it puts on trees (`SnowAvalanche3D.forests_enabled`, on by default; `get_pressure_at`, `get_peak_pressure_at`).

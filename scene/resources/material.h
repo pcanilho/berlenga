@@ -227,7 +227,6 @@ public:
 		FEATURE_WETNESS,
 		FEATURE_SNOW,
 		FEATURE_GROUND_DEFORM,
-		FEATURE_MUD,
 		FEATURE_MAX
 	};
 
@@ -414,7 +413,6 @@ private:
 		uint64_t hair_direction : 2;
 		uint64_t hair_cards : 1;
 		uint64_t wetness_from_weather : 1;
-		uint64_t wetness_canopy : 1;
 		uint64_t snow_from_weather : 1;
 		uint64_t ground_deform_patch : 1;
 
@@ -476,7 +474,6 @@ private:
 		mk.hair_direction = hair_direction;
 		mk.hair_cards = hair_cards;
 		mk.wetness_from_weather = wetness_from_weather;
-		mk.wetness_canopy = wetness_canopy;
 		mk.snow_from_weather = snow_from_weather;
 		mk.ground_deform_patch = ground_deform_patch;
 
@@ -495,16 +492,6 @@ private:
 			if (flags[i]) {
 				mk.flags |= ((uint64_t)1 << i);
 			}
-		}
-		// The key's bitfields are full: snow_on_body rides in the flags' top bit (FLAG_MAX is well under 31).
-		static_assert(FLAG_MAX < 31);
-		if (snow_on_body) {
-			mk.flags |= (1u << 31);
-		}
-		// And glaze in the features' top bit.
-		static_assert(FEATURE_MAX < 31);
-		if (glaze) {
-			mk.feature_mask |= (1u << 31);
 		}
 
 		return mk;
@@ -651,12 +638,9 @@ private:
 	float wetness_porosity = 0.5f;
 	float wetness_amount = 1.0f;
 	bool wetness_from_weather = true;
-	bool wetness_canopy = false;
-	bool glaze = false;
 	float snow_amount = 1.0f;
 	float snow_max_slope = 60.0f;
 	bool snow_from_weather = true;
-	bool snow_on_body = false;
 	bool ground_deform_patch = false;
 	float point_size = 0.0f;
 	float alpha_scissor_threshold = 0.0f;
@@ -747,15 +731,9 @@ public:
 	// The weather's wetness and the snowpack's snow as shader code any spatial shader can use (docs/ideas/terrain-material.md).
 	// BaseMaterial3D generates its own wetness and snow from the same functions.
 	static String get_wetness_functions_code(bool p_from_weather);
-	// weather_frost_map and weather_frost_at(): hoarfrost (WeatherMap3D dew_and_frost), for shaders that declare
-	// weather_map_rect themselves; get_wetness_functions_code(true) includes it.
-	static String get_frost_sampling_code();
 	static String get_snow_functions_code(bool p_from_weather);
-	static String get_rain_functions_code(bool p_from_weather);
 	static String get_wetness_shader_code();
 	static String get_snow_shader_code();
-	// Mud on a vehicle's body (docs/ideas/mud.md, stage 3b): the functions, and the instance uniforms PhysXVehicle3D writes.
-	static String get_mud_functions_code();
 
 	void set_albedo(const Color &p_albedo);
 	Color get_albedo() const;
@@ -903,14 +881,6 @@ public:
 	void set_wetness_from_weather(bool p_enable);
 	bool is_wetness_from_weather() const;
 
-	void set_wetness_canopy(bool p_enable);
-	bool is_wetness_canopy() const;
-
-	// Glaze: clear ice from freezing rain over the surface, from the weather's rain map (WorldWeather.glaze_at).
-	void set_glaze(bool p_enable);
-	bool is_glaze() const;
-	static String get_glaze_functions_code();
-
 	void set_snow_amount(float p_amount);
 	float get_snow_amount() const;
 
@@ -919,8 +889,6 @@ public:
 
 	void set_snow_from_weather(bool p_enable);
 	bool is_snow_from_weather() const;
-	void set_snow_on_body(bool p_enable);
-	bool is_snow_on_body() const;
 
 	// Ground deformation (docs/ideas/ground-deform.md): set by GroundSurface3D on its copy of the ground
 	// material, which draws the deformed patch; the terrain's own material is lowered under it.

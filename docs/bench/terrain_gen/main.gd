@@ -206,18 +206,6 @@ func _build_generator(cell: float) -> void:
 	noise.fractal_octaves = 3
 	gen = TerrainGenerator3D.new()
 	gen.name = "Generator"
-	# Heavy generator options are on by default; this bench keeps its own fast choices.
-	gen.glacial_enabled = false
-	gen.glacial_converged = false
-	gen.tile_erosion_enabled = false
-	gen.strata_enabled = false
-	gen.guide_preview = false
-	gen.dunes_enabled = false
-	gen.deposition = 0.0
-	gen.moraine_age = 0.0
-	gen.scree_age = 0.0
-	gen.meander_age = 0.0
-	gen.outwash_age = 0.0
 	gen.size = Vector2(WORLD, WORLD)
 	gen.cell_size = cell
 	gen.seed = int(args.get("seed", "1"))
@@ -509,34 +497,6 @@ func _run_checks() -> void:
 	check(soil_flat > 4.0 * soil_steep, "soil deeper on gentle ground (%.2f m) than steep (%.2f m)" % [soil_flat, soil_steep])
 	talus_slope /= maxi(talus_n, 1)
 	check(talus_n > 50 and talus_slope < repose, "scree lies below repose (%d cells, mean slope %.2f, repose %.2f)" % [talus_n, talus_slope, repose])
-	# Fall sorting (Kirkby and Statham 1975): on scree, fines stop near the apex and big blocks run to the toe,
-	# so get_scree_sorting rises downslope. Compare each talus cell with its lowest talus neighbour.
-	var wr := gen.get_world_rect()
-	var sort_pairs := 0
-	var sort_down := 0
-	var sort_bad := 0
-	for z in range(1, gs.y - 1):
-		for x in range(1, gs.x - 1):
-			if geo.get_pixel(x, z).b <= 0.5:
-				continue
-			var h0 := hgrid.get_pixel(x, z).r
-			var lo := Vector2i(-1, -1)
-			var lo_h := h0
-			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-				var q: Vector2i = Vector2i(x, z) + d
-				var hq := hgrid.get_pixel(q.x, q.y).r
-				if hq < lo_h - 0.05 and geo.get_pixel(q.x, q.y).b > 0.5:
-					lo = q
-					lo_h = hq
-			var s0 := gen.get_scree_sorting(Vector3(wr.position.x + x * cs, 0, wr.position.y + z * cs))
-			if s0 < 0.0 or s0 > 1.0:
-				sort_bad += 1
-			if lo.x < 0:
-				continue
-			sort_pairs += 1
-			if gen.get_scree_sorting(Vector3(wr.position.x + lo.x * cs, 0, wr.position.y + lo.y * cs)) >= s0 - 0.02:
-				sort_down += 1
-	check(sort_bad == 0 and sort_pairs > 30 and sort_down > 0.8 * sort_pairs, "scree sorting rises downslope (%d of %d talus steps)" % [sort_down, sort_pairs])
 	var gc := gen.get_geology_at(Vector3(100, 0, 100))
 	check(absf(gc.r - gen.get_soil_depth(Vector3(100, 0, 100))) < 1e-5 and absf(gc.g - gen.get_rock_exposure(Vector3(100, 0, 100))) < 1e-5, "get_geology_at agrees with the single queries")
 
@@ -644,7 +604,6 @@ func _run_checks() -> void:
 	_strata_checks()
 	_runoff_checks()
 	_deposition_checks()
-	_sand_sea_checks()
 	_landscape_checks()
 
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
@@ -757,28 +716,6 @@ func _coast_checks() -> void:
 	for r in rivers:
 		ends[r["ends_in"]] = ends.get(r["ends_in"], 0) + 1
 	check(not ends.has("edge") and ends.get("sea", 0) >= 3, "every river reaches the sea, a lake or another river %s" % str(ends))
-	# Beach mask and wave exposure for plant rules: along rays in from each edge, the first dry ground is open to the
-	# ocean round an island (exposure high), some of it beach; the island's middle is neither.
-	var ex_max := 0.0
-	var ex_bad := 0
-	var beach_hits := 0
-	for e in 4:
-		for t in [-0.25, 0.0, 0.25]:
-			var dir := [Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 0, -1)][e] as Vector3
-			var start: Vector3 = -dir * 2040.0 + Vector3(dir.z, 0, dir.x) * WORLD * float(t)
-			for k in 400:
-				var q: Vector3 = start + dir * (k * 8.0)
-				if is_nan(gen.get_water_level(q)):
-					var shore := q + dir * 8.0
-					var ex := gen.get_coast_exposure_at(shore)
-					var b := gen.get_beach_at(shore)
-					if ex < 0.0 or ex > 1.0 or b < 0.0 or b > 1.0:
-						ex_bad += 1
-					ex_max = maxf(ex_max, ex)
-					if b > 0.0:
-						beach_hits += 1
-					break
-	check(ex_bad == 0 and ex_max > 0.6 and gen.get_coast_exposure_at(Vector3.ZERO) == 0.0 and gen.get_beach_at(Vector3.ZERO) == 0.0, "coast exposure open on an island's shore (%.2f), none inland; beach at %d of 12 landfalls" % [ex_max, beach_hits])
 	var lakes := gen.get_lake_results()
 	check(lakes.size() >= 1, "lakes form behind natural dams (%d)" % lakes.size())
 	var held := true
@@ -1052,7 +989,6 @@ func _build_view() -> void:
 	if args.has("landscape"):
 		# The ground as a Landscape3D: chunk meshes with LODs at the given spacing (1 m by default).
 		var ls := Landscape3D.new()
-		ls.cliff_relief = 0.0 # on by default; this bench measures without it
 		ls.spacing = float(args["landscape"]) if args["landscape"] != "1" else 1.0
 		ls.lod_error = float(args.get("lod-error", "1.0"))
 		ls.stream_heights = not args.has("no-stream")
@@ -1194,7 +1130,6 @@ func _edge_key(a: Vector3, b: Vector3) -> String:
 func _landscape_checks() -> void:
 	# Landscape3D: chunk meshes with an LOD chain over the generated ground, coarse here so the checks stay fast.
 	var ls := Landscape3D.new()
-	ls.cliff_relief = 0.0 # on by default; this bench measures without it
 	ls.spacing = float(args.get("spacing", "16"))
 	ls.chunk_quads = int(args.get("quads", "16"))
 	ls.lod_levels = 4
@@ -1214,7 +1149,6 @@ func _landscape_checks() -> void:
 	var seye := Transform3D(Basis(), sprobe + Vector3(0, gen.get_height(sprobe) + 30.0, 0)).looking_at(Vector3(1500, 0, 1500))
 	ls.update_lods(seye, sproj, 540.0)
 	var fullls := Landscape3D.new()
-	fullls.cliff_relief = 0.0 # on by default; this bench measures without it
 	fullls.spacing = ls.spacing
 	fullls.chunk_quads = ls.chunk_quads
 	fullls.lod_levels = ls.lod_levels
@@ -1330,7 +1264,6 @@ func _landscape_checks() -> void:
 	check(int(ls.get_stats()["lod_switches"]) - sw0 <= 2, "a 1 m jiggle does not flip levels (%d switches)" % (int(ls.get_stats()["lod_switches"]) - sw0))
 	# Full detail at 1 m over a 1 km square: build time and update cost.
 	var big := Landscape3D.new()
-	big.cliff_relief = 0.0 # on by default; this bench measures without it
 	big.spacing = 1.0
 	big.height_image = gen.sample_heights(Vector2(-500, -400), 1.0, Vector2i(1025, 1025))
 	big.origin = Vector2(-500, -400)
@@ -1359,7 +1292,6 @@ func _landscape_checks() -> void:
 func _landscape_collision_checks() -> void:
 	# Ground collision: static heightfields at full detail around a target, split like the drawn level 0 mesh.
 	var ls := Landscape3D.new()
-	ls.cliff_relief = 0.0 # on by default; this bench measures without it
 	ls.spacing = 2.0
 	ls.chunk_quads = 32
 	ls.collision_radius = 100.0
@@ -1433,7 +1365,6 @@ func _landscape_collision_checks() -> void:
 	check(int(ls.get_stats()["collision_tiles"]) == 0, "collision off frees every tile")
 	# Cost at game settings: 1 m spacing, 64-quad chunks, 192 m radius, ground read in full; a 64 m step.
 	var game := Landscape3D.new()
-	game.cliff_relief = 0.0 # on by default; this bench measures without it
 	game.collision_target = NodePath()
 	add_child(game)
 	game.source = game.get_path_to(gen)
@@ -1479,261 +1410,6 @@ func _deposition_checks() -> void:
 	gen.base_uplift = 0.1
 	gen.deposition = 0.0
 	gen.generate()
-
-
-func _sand_sea_checks() -> void:
-	# Sand seas (TerrainDuneSea, Paris et al. 2019): none while the rect is empty; over a rect, dunes with real relief,
-	# the same for the same seed, and nothing outside it.
-	var before := _hash(gen.get_height_image())
-	gen.sand_seas_enabled = false
-	gen.generate()
-	check(_hash(gen.get_height_image()) == before, "an empty sand_sea_rect leaves the terrain byte for byte")
-	gen.sand_seas_enabled = true
-	gen.sand_sea_rect = Rect2(1000, 800, 900, 900)
-	gen.sand_sea_scale = 4.0
-	gen.sand_sea_depth = 12.0
-	gen.sand_sea_steps = 120
-	# The plain sea first (one scale of dunes); compound dunes are checked after.
-	gen.sand_sea_compound = false
-	gen.generate()
-	var first := _hash(gen.get_height_image())
-	var vals := PackedFloat32Array()
-	for i in 400:
-		var p := Vector3(1200 + (i % 20) * 25.0, 0, 1000 + (i / 20) * 25.0)
-		vals.append(gen.get_sand_sea_height(p))
-	var mean := 0.0
-	for v in vals:
-		mean += v
-	mean /= vals.size()
-	var dev := 0.0
-	for v in vals:
-		dev += (v - mean) * (v - mean)
-	dev = sqrt(dev / vals.size())
-	check(gen.get_last_sand_sea_max() > 12.0, "the sand sea builds dunes higher than its cover (%.1f m over 12 m, %.0f ms)" % [gen.get_last_sand_sea_max(), gen.get_last_sand_sea_msec()])
-	check(dev > 2.0, "its dunes have relief (sand %.1f m, spread %.1f m)" % [mean, dev])
-	check(gen.get_sand_sea_height(Vector3(0, 0, 0)) == 0.0 and gen.get_sand_sea_height(Vector3(1450, 0, 750)) == 0.0, "no sand outside the rect")
-	# The cross-section along the wind (+x): long gentle stoss slopes and short slip faces at the repose (the shear
-	# over the dunes), not ridges with the same slope both ways. Slopes over 8 m (two cells), where there is sand.
-	var rising := 0
-	var falling := 0
-	var lee := PackedFloat32Array()
-	for row in 13:
-		var z := 1000.0 + row * 50.0
-		for i in 125:
-			var x := 1200.0 + i * 4.0
-			var a := gen.get_sand_sea_height(Vector3(x - 4.0, 0, z))
-			var b := gen.get_sand_sea_height(Vector3(x + 4.0, 0, z))
-			if a + b < 1.0:
-				continue
-			var g := (b - a) / 8.0
-			if g > 0.08:
-				rising += 1
-			elif g < -0.08:
-				falling += 1
-				lee.append(-g)
-	lee.sort()
-	var lee90 := rad_to_deg(atan(lee[int(lee.size() * 0.9)])) if lee.size() > 0 else 0.0
-	var stoss_share := float(rising) / maxf(rising + falling, 1)
-	check(stoss_share > 0.55 and lee90 > 25.0 and lee90 < 36.0, "the dunes rise gently into the wind and drop at the repose past the crest (stoss %.0f%% of the sloping sand, lee 90th percentile %.0f deg)" % [stoss_share * 100.0, lee90])
-	gen.generate()
-	check(_hash(gen.get_height_image()) == first, "the same seed gives the same sand sea")
-	# Compound dunes: large dunes under the ordinary ones, so the sand varies more over a few hundred metres (the
-	# spread of 200 m means) while the ordinary dunes keep their slip faces.
-	# The large dunes take the full steps to grow apart.
-	gen.sand_sea_steps = 300
-	gen.sand_sea_edge = 60.0 # the default 300 m fade covers most of this small sea
-	gen.generate()
-	var plain_big := _sea_spread_big()
-	gen.sand_sea_compound = true
-	gen.generate()
-	var comp_big := _sea_spread_big()
-	var comp_hash := _hash(gen.get_height_image())
-	gen.generate()
-	check(_hash(gen.get_height_image()) == comp_hash, "the same seed gives the same compound sea")
-	gen.sand_sea_steps = 120
-	gen.sand_sea_edge = 300.0
-	gen.generate()
-	check(comp_big > plain_big * 1.3, "compound dunes: large dunes under the ordinary ones (power at 267-800 m over 80-200 m %.2f, against %.2f plain, %.0f ms)" % [comp_big, plain_big, gen.get_last_sand_sea_msec()])
-	_nebkha_checks()
-	_oasis_checks()
-	_sun_horizon_checks()
-	gen.sand_sea_rect = Rect2()
-	gen.generate()
-
-
-# How much the large dunes weigh against the ordinary ones: power of the sand along the wind (rows of 200 samples 4 m
-# apart over the sea's middle, a direct Fourier sum) at wavelengths of 267-800 m over that at 80-200 m.
-func _sea_spread_big() -> float:
-	var big := 0.0
-	var small := 0.0
-	for row in 16:
-		var z := 880.0 + row * 46.0
-		var v := PackedFloat32Array()
-		for i in 200:
-			v.append(gen.get_sand_sea_height(Vector3(1050.0 + i * 4.0, 0, z)))
-		for k in range(1, 11):
-			var re := 0.0
-			var im := 0.0
-			for i in 200:
-				var a := TAU * k * i / 200.0
-				re += v[i] * cos(a)
-				im += v[i] * sin(a)
-			if k <= 3:
-				big += re * re + im * im
-			else:
-				small += re * re + im * im
-	return big / maxf(small, 0.001)
-
-
-func _spread(p_v: PackedFloat32Array) -> float:
-	var m := 0.0
-	for v in p_v:
-		m += v
-	m /= p_v.size()
-	var d := 0.0
-	for v in p_v:
-		d += (v - m) * (v - m)
-	return sqrt(d / p_v.size())
-
-
-func _oasis_checks() -> void:
-	# Oases: springs on the sea's deepest interdune floors, and hollows carved to OasisSprings3D's pools: the bed
-	# meets the water at 0.92 of the outline (the outline itself just above the water), deep in the middle.
-	var springs := gen.get_springs()
-	check(springs.size() > 0 and springs.size() <= gen.oasis_count, "springs on the sand sea's low floors (%d)" % springs.size())
-	if springs.is_empty() or not ClassDB.class_exists("OasisSprings3D"):
-		return
-	var oasis: Node3D = ClassDB.instantiate("OasisSprings3D")
-	oasis.seabed_from_floor = false
-	add_child(oasis)
-	oasis.spring_source = oasis.get_path_to(gen)
-	gen.oasis_springs = gen.get_path_to(oasis)
-	gen.generate()
-	var ok: bool = oasis.get_pool_count() == gen.get_springs().size()
-	var worst_in := -100.0
-	var worst_out := 100.0
-	var shallowest := 100.0
-	for i in oasis.get_pool_count():
-		var line: PackedVector2Array = oasis.get_outline(i)
-		var c := Vector2.ZERO
-		for q in line:
-			c += q
-		c /= line.size()
-		var level: float = gen.get_springs()[i].y
-		for q in line:
-			var inner := c + (q - c) * 0.85
-			worst_in = maxf(worst_in, gen.get_height(Vector3(inner.x, 0, inner.y)) - level)
-			worst_out = minf(worst_out, gen.get_height(Vector3(q.x, 0, q.y)) - level)
-		shallowest = minf(shallowest, level - gen.get_height(Vector3(c.x, 0, c.y)))
-	check(ok and worst_in < 0.0 and worst_out > 0.0 and shallowest > 0.5, "oasis hollows meet the water inside the outline (bed at 0.85 of it %.2f m under the water at most, the outline %.2f m over it at least, %.1f m deep in the middle at least)" % [-worst_in, worst_out, shallowest])
-	gen.oasis_springs = NodePath()
-	oasis.queue_free()
-	gen.generate()
-
-
-func _sun_horizon_checks() -> void:
-	# Far sun shadows: the horizon map toward a low sun matches a brute-force march over the ground (8 m steps).
-	var to_sun := Vector3(cos(0.6), 0.25, sin(0.6)).normalized()
-	check(gen.update_sun_horizon(to_sun), "the sun's horizon map builds (%.0f ms)" % gen.get_last_sun_horizon_msec())
-	check(not gen.update_sun_horizon(to_sun), "and is not rebuilt while the azimuth holds")
-	var img := gen.get_sun_horizon_image()
-	if img == null:
-		return
-	var d := Vector2(to_sun.x, to_sun.z).normalized()
-	var u := Vector2(-d.y, d.x)
-	var rect := gen.get_world_rect()
-	var s0 := INF
-	var t0 := INF
-	var s1 := -INF
-	var t1 := -INF
-	for k in 4:
-		var q := rect.position + Vector2(rect.size.x if k & 1 else 0.0, rect.size.y if k & 2 else 0.0)
-		s0 = minf(s0, q.dot(d))
-		t0 = minf(t0, q.dot(u))
-		s1 = maxf(s1, q.dot(d))
-		t1 = maxf(t1, q.dot(u))
-	var err := 0.0
-	var n := 0
-	for i in 40:
-		var p := rect.position + rect.size * Vector2(0.2 + 0.6 * fmod(i * 0.618, 1.0), 0.2 + 0.6 * fmod(i * 0.382 + 0.1, 1.0))
-		var h0 := gen.get_height(Vector3(p.x, 0, p.y))
-		var best := -1.0
-		var best_k := 0
-		for k in range(1, 400):
-			var q := p + d * (k * 8.0)
-			if not rect.has_point(q):
-				break
-			var tq := (gen.get_height(Vector3(q.x, 0, q.y)) - h0) / (k * 8.0)
-			if tq > best:
-				best = tq
-				best_k = k
-		var px := (p.dot(d) - s0) / gen.sky_cell
-		var py := (p.dot(u) - t0) / gen.sky_cell
-		var m := img.get_pixel(clampi(roundi(px), 0, img.get_width() - 1), clampi(roundi(py), 0, img.get_height() - 1)).r
-		# Shadows cast from 200 m and more (the far shadows' work; near the 8 m grid's own smoothing shows).
-		if best > 0.02 and best_k >= 25:
-			err += absf(atan(m) - atan(best))
-			n += 1
-	check(n > 5 and rad_to_deg(err / n) < 1.5, "its horizons match a march over the ground (mean %.2f deg over %d points shaded from 200 m or more)" % [rad_to_deg(err / maxf(n, 1)), n])
-
-
-func _nebkha_checks() -> void:
-	# Nebkhas (Hesp 1981; Tengberg 1995): mounds on the sea's thin sand only, 0.4 to 2 m, longer downwind (+x) than
-	# upwind, part of get_height, and none at density 0. A sand_sea_mask keeps the sand inside it.
-	var r := gen.sand_sea_rect
-	var neb := gen.get_nebkhas(r)
-	var thin := 0
-	var sizes := true
-	var lee_longer := 0
-	var lone := 0
-	var tailed := 0
-	for n in neb:
-		var p := Vector3(n.x, 0, n.z)
-		if gen.get_sand_sea_height(p) < 3.0:
-			thin += 1
-		sizes = sizes and n.w >= 0.17 and n.w <= 3.51 and gen.get_nebkha_height(p) >= n.w - 0.01
-		# Mounds standing alone (none within 20 m), so a neighbour's tail does not reach the samples.
-		var alone := true
-		for m in neb:
-			if m != n and Vector2(m.x - n.x, m.z - n.z).length() < 20.0:
-				alone = false
-				break
-		if not alone:
-			continue
-		lone += 1
-		var up := gen.get_nebkha_height(p + Vector3(-1.5 * n.w, 0, 0))
-		var down := gen.get_nebkha_height(p + Vector3(1.5 * n.w, 0, 0))
-		if down >= up - 0.001:
-			lee_longer += 1
-		if down > up + 0.01:
-			tailed += 1
-	check(neb.size() > 20 and thin == neb.size(), "nebkhas lie on the sea's thin sand (%d mounds, %d on sand under 3 m)" % [neb.size(), thin])
-	check(sizes and lone > 5 and lee_longer == lone and tailed * 3 >= lone, "each is 0.2 to 3.5 m high at its plant, never higher upwind, some with a tail downwind (sizes %s, %d of %d lone mounds never higher upwind, %d with a tail)" % [sizes, lee_longer, lone, tailed])
-	if neb.size() > 0:
-		var n0: Vector4 = neb[0]
-		var p0 := Vector3(n0.x, 0, n0.z)
-		var with_mound := gen.get_height(p0)
-		var mound := gen.get_nebkha_height(p0) # its own or a neighbour's tail over it, whichever is higher
-		gen.nebkha_density = 0.0
-		gen.generate()
-		var rise := with_mound - gen.get_height(p0)
-		check(gen.get_nebkhas(r).is_empty() and absf(rise - mound) < 0.01, "get_height carries the mounds (%.2f m higher with them, mound sand %.2f m) and density 0 builds none" % [rise, mound])
-		gen.nebkha_density = 1.0
-	# A mask covering the left half only: no sand on the right.
-	var mask := Image.create(64, 64, false, Image.FORMAT_R8)
-	for y in 64:
-		for x in 64:
-			mask.set_pixel(x, y, Color(clampf((40.0 - x) / 16.0, 0.0, 1.0), 0, 0))
-	gen.sand_sea_mask = mask
-	gen.generate()
-	var left := 0.0
-	var right := 0.0
-	for i in 100:
-		var z := r.position.y + 100.0 + (i % 10) * 70.0
-		left += gen.get_sand_sea_height(Vector3(r.position.x + 150.0 + (i / 10) * 25.0, 0, z))
-		right += gen.get_sand_sea_height(Vector3(r.position.x + r.size.x * 0.75 + (i / 10) * 15.0, 0, z))
-	check(left > 200.0 and right < 1.0, "a sand_sea_mask keeps the sand inside it (%.0f m summed inside, %.1f m outside)" % [left, right])
-	gen.sand_sea_mask = null
 
 
 # Valley floors: how much of the land below the mountains is flat, how deep its alluvium, by drainage area.
@@ -2261,7 +1937,6 @@ func _landscape_time() -> void:
 	cam.global_transform = eye
 	cam.make_current()
 	var ls := Landscape3D.new()
-	ls.cliff_relief = 0.0 # on by default; this bench measures without it
 	ls.spacing = float(args.get("spacing", "1"))
 	ls.stream_heights = not args.has("no-stream")
 	add_child(ls)

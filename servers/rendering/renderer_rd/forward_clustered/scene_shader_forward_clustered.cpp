@@ -31,8 +31,6 @@
 #include "scene_shader_forward_clustered.h"
 
 #include "core/config/project_settings.h"
-#include "core/io/file_access.h"
-#include "core/os/os.h"
 #include "core/math/math_defs.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h"
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
@@ -70,7 +68,6 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	uses_alpha_motion_vectors = false;
 	rt_force_opaque = false;
 	rt_force_transparent = false;
-	hair_strands = false;
 	uses_discard = false;
 	uses_roughness = false;
 	uses_normal = false;
@@ -175,7 +172,6 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.render_mode_flags["alpha_motion_vectors"] = &uses_alpha_motion_vectors;
 	actions.render_mode_flags["rt_force_opaque"] = &rt_force_opaque;
 	actions.render_mode_flags["rt_force_transparent"] = &rt_force_transparent;
-	actions.render_mode_flags["hair_strands"] = &hair_strands;
 
 	actions.usage_flag_pointers["SSS_STRENGTH"] = &uses_sss;
 	actions.usage_flag_pointers["SSS_TRANSMITTANCE_DEPTH"] = &uses_transmittance;
@@ -305,10 +301,6 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 #endif
 	pipeline_hash_map.clear_pipelines();
 
-	if (gen_code.uses_screen_texture) {
-		// The two-layer peel passes keep only screen-reading surfaces (see SCENE_DATA_FLAGS_PEEL_*).
-		gen_code.defines.push_back("#define SCREEN_TEXTURE_USED\n");
-	}
 	SceneShaderForwardClustered::singleton->shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], gen_code.defines);
 
 	ubo_size = gen_code.uniform_total_size;
@@ -777,19 +769,7 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 	RID shader_rid = get_shader_variant(p_pipeline_key.version, p_pipeline_key.color_pass_flags, p_pipeline_key.ubershader);
 	ERR_FAIL_COND(shader_rid.is_null());
 
-	// PIPELINE_MEM_LOG=1 in the environment: one line per pipeline compiled, with its time, the process's resident
-	// memory round it and the head of its shader (which material's pipelines cost a CPU driver what).
-	static const bool pipe_log = OS::get_singleton()->has_environment("PIPELINE_MEM_LOG");
-	auto rss_mb = []() -> int64_t {
-		Ref<FileAccess> f = FileAccess::open("/proc/self/statm", FileAccess::READ);
-		return f.is_valid() ? f->get_line().get_slicec(' ', 1).to_int() * 4 / 1024 : 0;
-	};
-	const uint64_t pl_t0 = OS::get_singleton()->get_ticks_msec();
-	const int64_t pl_m0 = pipe_log ? rss_mb() : 0;
 	RID pipeline = RD::get_singleton()->render_pipeline_create(shader_rid, p_pipeline_key.framebuffer_format_id, p_pipeline_key.vertex_format_id, primitive_rd, raster_state, multisample_state, depth_stencil_state, blend_state, 0, 0, specialization_constants);
-	if (pipe_log) {
-		print_line(vformat("PIPE %d ms rss %d -> %d MB uber %d ver %d flags %d code %d path '%s' head '%s'", int64_t(OS::get_singleton()->get_ticks_msec() - pl_t0), pl_m0, rss_mb(), int(p_pipeline_key.ubershader), int(p_pipeline_key.version), int(p_pipeline_key.color_pass_flags), code.length(), path, code.substr(0, 160).replace("\n", " ").replace("\t", " ")));
-	}
 	ERR_FAIL_COND(pipeline.is_null());
 
 	pipeline_hash_map.add_compiled_pipeline(p_pipeline_key.hash(), pipeline);
@@ -1040,7 +1020,6 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 
 		actions.renames["ALPHA_SCISSOR_THRESHOLD"] = "alpha_scissor_threshold";
 		actions.renames["ALPHA_HASH_SCALE"] = "alpha_hash_scale";
-		actions.renames["OPAQUE_PREPASS_THRESHOLD"] = "opaque_prepass_threshold_out";
 		actions.renames["ALPHA_ANTIALIASING_EDGE"] = "alpha_antialiasing_edge";
 		actions.renames["ALPHA_TEXTURE_COORDINATE"] = "alpha_texture_coordinate";
 
@@ -1111,11 +1090,6 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["CUSTOM3"] = "custom3_attrib";
 		actions.renames["LIGHT_VERTEX"] = "light_vertex";
 		actions.renames["DIRECTIONAL_SHADOW_OFFSET"] = "directional_shadow_offset";
-		actions.renames["sun_visibility"] = "sun_visibility";
-		actions.renames["sun_direction"] = "sun_direction";
-		actions.renames["relief_sun_direction"] = "relief_sun_direction";
-		actions.renames["SUN_SHADOW"] = "sun_shadow";
-		actions.renames["POSITIONAL_SHADOW_OFFSET"] = "positional_shadow_offset";
 
 		actions.renames["NODE_POSITION_WORLD"] = "read_model_matrix[3].xyz";
 		actions.renames["CAMERA_POSITION_WORLD"] = "inv_view_matrix[3].xyz";
@@ -1177,7 +1151,6 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 
 		actions.usage_defines["ALPHA_SCISSOR_THRESHOLD"] = "#define ALPHA_SCISSOR_USED\n";
 		actions.usage_defines["ALPHA_HASH_SCALE"] = "#define ALPHA_HASH_USED\n";
-		actions.usage_defines["OPAQUE_PREPASS_THRESHOLD"] = "#define OPAQUE_PREPASS_THRESHOLD_USED\n";
 		actions.usage_defines["ALPHA_ANTIALIASING_EDGE"] = "#define ALPHA_ANTIALIASING_EDGE_USED\n";
 		actions.usage_defines["ALPHA_TEXTURE_COORDINATE"] = "@ALPHA_ANTIALIASING_EDGE";
 		actions.usage_defines["PREMUL_ALPHA_FACTOR"] = "#define PREMUL_ALPHA_USED\n";
@@ -1251,7 +1224,6 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.instance_uniform_index_variable = "instances.data[instance_index_interp].instance_uniforms_ofs";
 
 		actions.check_multiview_samplers = true;
-		actions.screen_texture_second_layer = true;
 
 		compiler.initialize(actions);
 	}

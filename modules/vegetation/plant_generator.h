@@ -5,7 +5,6 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -38,8 +37,6 @@
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 
-class PlantSpecies;
-
 // Small plants for ground cover (docs/ideas/plant-generator.md), after Prusinkiewicz et al.,
 // "The use of positional information in the modeling of plants" (2001): organs placed along
 // axes by phyllotaxis, their size, angle and bend functions of their position; leaves, petals
@@ -52,15 +49,6 @@ public:
 	static String shader_common_code(); // Wind, wetness and snow lines shared with the impostor shader.
 	static Ref<ArrayMesh> make_impostor(const Ref<Mesh> &p_mesh, int p_frames = 8, int p_frame_size = 64);
 	static void add_impostors(const Ref<Resource> &p_species, float p_range, int p_frames = 8, int p_frame_size = 64);
-	// Single leaves of climbers for TreeGenerator's vines (CLIMBER_* or PRESET_IVY): each lies in
-	// local XZ, its base at the origin, pointing +Z, 1 m long, with the plant ShaderMaterial.
-	enum Climber {
-		CLIMBER_IVY,
-		CLIMBER_CLEMATIS,
-		CLIMBER_HONEYSUCKLE,
-		CLIMBER_IVY_ADULT, // Ivy's adult, flowering shoots high on old stems: unlobed.
-	};
-	static Array make_climber_leaves(int p_climber, int p_variants = 4);
 	enum Preset {
 		PRESET_DANDELION,
 		PRESET_PLANTAIN,
@@ -95,96 +83,6 @@ public:
 		PRESET_WOOD_ANEMONE,
 		PRESET_IVY,
 		PRESET_HEATHER,
-		PRESET_VIOLET,
-		PRESET_HERB_ROBERT,
-		PRESET_KNAPWEED,
-		PRESET_SCABIOUS,
-		PRESET_WILD_CARROT,
-		PRESET_SORREL,
-		// Woodland-floor mushrooms (docs/ideas/mushrooms.md): soil fungi, real geometry.
-		PRESET_FLY_AGARIC,
-		PRESET_CEP,
-		PRESET_CHANTERELLE,
-		PRESET_BRITTLEGILL,
-		PRESET_CLOUDED_AGARIC,
-		PRESET_HONEY_FUNGUS,
-		// Plants between stones (docs/ideas/vegetation.md, "Plants between stones"): scree, river
-		// gravels, shingle and rock cracks.
-		PRESET_PARSLEY_FERN,
-		PRESET_SPLEENWORT,
-		PRESET_STONECROP,
-		PRESET_SAXIFRAGE,
-		PRESET_THRIFT,
-		// Waterside and wet-stone plants (docs/ideas/vegetation.md, "Waterside and wet-stone plants").
-		PRESET_MARSH_MARIGOLD,
-		PRESET_MEADOWSWEET,
-		PRESET_BUTTERBUR,
-		PRESET_RIVER_MOSS,
-		PRESET_LIVERWORT,
-		// Bog and moor plants (docs/ideas/vegetation.md, "Bog and moor plants").
-		PRESET_SPHAGNUM,
-		PRESET_COTTONGRASS,
-		PRESET_BOG_ASPHODEL,
-		PRESET_SUNDEW,
-		PRESET_MARRAM,
-		PRESET_LYME_GRASS,
-		PRESET_SEA_HOLLY,
-		// Alpine and scree plants (plant_alpine.cpp).
-		PRESET_MOSS_CAMPION,
-		PRESET_PURPLE_SAXIFRAGE,
-		PRESET_MOUNTAIN_AVENS,
-		PRESET_ALPINE_SEDGE,
-		PRESET_DWARF_WILLOW,
-		PRESET_ALPINE_TOADFLAX,
-		// Salt marsh and shingle plants (plant_saltmarsh.cpp).
-		PRESET_GLASSWORT,
-		PRESET_CORD_GRASS,
-		PRESET_SEA_PURSLANE,
-		PRESET_SEA_ASTER,
-		PRESET_SEA_LAVENDER,
-		PRESET_SEA_KALE,
-		PRESET_SEA_CAMPION,
-		PRESET_HORNED_POPPY,
-		// Atlantic heath dwarf shrubs (plant_heath.cpp).
-		PRESET_BELL_HEATHER,
-		PRESET_CROSS_LEAVED_HEATH,
-		PRESET_CROWBERRY,
-		// Mediterranean scrub dwarf shrubs (plant_scrub.cpp).
-		PRESET_ROSEMARY,
-		PRESET_FRENCH_LAVENDER,
-		PRESET_THYME,
-		PRESET_SAGE_ROCKROSE,
-		// Field margins (plant_margin.cpp).
-		PRESET_CORN_POPPY,
-		PRESET_CORNFLOWER,
-		PRESET_MAYWEED,
-		PRESET_COW_PARSLEY,
-		PRESET_PINCUSHION_MOSS,
-		PRESET_GROUND_IVY,
-		PRESET_DRINN,
-		PRESET_DESERT_ANNUALS,
-		PRESET_SOIL_CRUST,
-		// Burnt ground and regrowth (plant_burn.cpp).
-		PRESET_FIREWEED,
-		PRESET_FIRE_MOSS,
-		PRESET_CHARRED_STEMS,
-		PRESET_BURNT_TUSSOCK,
-		PRESET_REINDEER_LICHEN, // Cladonia rangiferina / stellaris: pale branched cushions on dry boreal pine floors.
-		PRESET_RASPBERRY, // Rubus idaeus: upright suckering canes of clearings and windthrows, pinnate leaves, red fruit.
-		PRESET_GRAZED_LAWN, // A deer lawn: a dense mat of fine grasses grazed to 2-8 cm, the blade ends torn and drying.
-		PRESET_ROOTED_SOD, // Boar rooting: turf clods torn up and flung over, roots up, the grass drying; slumping and greening by the season's "rooting_age".
-		// Mounds (plant_mounds.cpp).
-		PRESET_ANTHILL, // Lasius flavus: a grassed dome of fine soil in old pasture, crest to the east, fine turf and thyme, fresh workings.
-		PRESET_WOOD_ANT_NEST, // Formica rufa group: a thatch dome of needles and twig bits on an earth bank, at sunny gaps in conifer woods.
-		PRESET_MOLEHILL, // Talpa europaea: a heap of loose crumbly soil pushed up from a run; crusting, slumping and greening by the season's "mound_age".
-		PRESET_LEAF_BANK, // A drift of fallen leaves the wind piled in a hollow or against a trunk, log or stone: the stand's litter heaped up to 20 cm.
-		PRESET_COW_PAT, // A cattle dung pat: fresh and glossy, crusting, then broken and grassed through by the season's "dung_age".
-		PRESET_HORSE_DUNG, // A pile of horse droppings (balls of coarse fibre): olive when fresh, paling and crumbling by "dung_age".
-		PRESET_DEER_PELLETS, // A group of deer pellets: dark, glossy when fresh, dull and crumbling by "dung_age".
-		PRESET_DUNG_ROUGH, // An ungrazed rough round old dung: rank, dark green grass two to four times the lawn's height, flowering.
-		PRESET_FAIRY_RING_MUSHROOM, // Marasmius oreades: small buff caps with a broad boss on tough slender stalks, in a meadow fairy ring.
-		PRESET_SHEET_WEB, // A money spider's (Linyphiidae) sheet web in the sward with its scaffold threads: seen only with dew or hoarfrost on it.
-		PRESET_ORB_WEB, // A garden spider's orb web between two dry stems with its frame and anchor threads: seen only with dew or hoarfrost on it.
 		PRESET_MAX,
 	};
 
@@ -208,8 +106,6 @@ public:
 		int lobes = 0; // Lobes on each side (dandelion teeth, buttercup lobes).
 		float lobe_depth = 0.0f;
 		int segments = 10;
-		bool round_lobes = false; // Rounded lobes (oak) instead of teeth pointing back.
-		float cut = 0.0f; // Fraction of the length bitten or grazed off the tip: a torn, drying edge where it ends.
 	};
 
 	enum Venation {
@@ -289,16 +185,13 @@ private:
 	void _add_leaf(Surface p_surface, const Transform3D &p_base, const Leaf &p_leaf, float p_wind_base, float p_ao = 1.0f, const Color &p_tint = Color(1, 1, 1));
 	LocalVector<Transform3D> _stem_frames(const Transform3D &p_base, float p_length, float p_bend, int p_segments) const;
 	Transform3D _frame_at(const LocalVector<Transform3D> &p_frames, float p_s) const;
-	void _add_stem_along(const LocalVector<Transform3D> &p_frames, float p_r0, float p_r1, float p_wind_base, Surface p_surface = SURFACE_STEM);
 	void _add_grass_tuft(int p_blades, float p_length_min, float p_length_max, float p_width_min, float p_width_max, float p_spread);
 	Transform3D _add_stem(const Transform3D &p_base, float p_length, float p_r0, float p_r1, float p_bend, int p_segments, float p_wind_base, Surface p_surface = SURFACE_STEM);
-	void _add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height, const Color &p_tint = Color(1, 1, 1), int p_rings = 4, int p_sectors = 10);
+	void _add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height);
 	void _add_ray_flower(const Transform3D &p_top, float p_radius, int p_rays, const Leaf &p_petal);
 	void _add_vogel_head(const Transform3D &p_top, float p_radius, int p_florets, const Leaf &p_floret);
 	void _add_cup_flower(const Transform3D &p_top, float p_radius);
 
-	void _build_stand_litter(float p_layers = 1.3f, float p_lift = 0.0f);
-	void _add_twig_ends(int p_count, float p_lift);
 	void _build_dandelion();
 	void _build_plantain();
 	void _build_clover();
@@ -314,41 +207,6 @@ private:
 	void _build_timothy();
 	void _build_dry_grass();
 	void _build_leaf_litter();
-	void _build_ground_ivy();
-	void _build_drinn();
-	void _build_desert_annuals();
-	void _build_soil_crust();
-	// Burnt ground (plant_burn.cpp): the season's "burn_age" sets each one's stage.
-	float _burn_age() const;
-	float _browse() const; // Deer browsing pressure from the season's "browse" (0..1), 0 without.
-	float _rooting_age() const; // Years since boar rooting, from the season's "rooting_age"; a month without.
-	void _build_rooted_sod();
-	void _lump_since(int p_from, const Vector3 &p_centre, float p_radius, float p_amount);
-	float _mound_age() const; // Years since a molehill was thrown up, from the season's "mound_age"; a fortnight without.
-	void _build_anthill();
-	void _build_wood_ant_nest();
-	void _build_molehill();
-	void _build_leaf_bank();
-	float _dung_age() const; // Years since the dung was dropped, from the season's "dung_age"; three days without.
-	void _build_cow_pat();
-	void _build_horse_dung();
-	void _build_deer_pellets();
-	void _build_dung_rough();
-	void _add_silk_line(const Vector3 &p_from, const Vector3 &p_to, float p_wind_from, float p_wind_to);
-	void _build_sheet_web();
-	void _build_orb_web();
-	float silk_orb[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // The orb web built last: radius, spiral spacing (m), radials, the sector left open (turns).
-	// A fallen leaf's spot on a litter card: on its disc (0.13 m), or over the leaf bank's heap (litter_heap) with the
-	// heap's normal in r_up. The same random draws either way, so flat cards keep their seeds.
-	Vector3 _litter_spot(float p_lift, Vector3 &r_up);
-	void _tint_since(Surface p_surface, int p_from, const Color &p_tint);
-	void _build_fireweed();
-	void _build_fire_moss();
-	void _build_reindeer_lichen();
-	void _build_raspberry();
-	void _build_grazed_lawn();
-	void _build_charred_stems();
-	void _build_burnt_tussock();
 	void _build_moss();
 	void _build_bilberry();
 	void _build_bracken();
@@ -362,168 +220,22 @@ private:
 	void _build_twigs();
 	void _build_wood_sorrel();
 	void _build_seedling();
-	void _build_violet();
-	void _build_herb_robert();
-	void _build_knapweed();
-	void _build_scabious();
-	void _build_wild_carrot();
-	void _build_sorrel();
-	void _build_parsley_fern();
-	void _build_spleenwort();
-	void _build_stonecrop();
-	void _build_saxifrage();
-	void _build_thrift();
-	// Waterside plants (plant_waterside.cpp).
-	// A broad, round blade as a disc (big leaves: the strip of _add_leaf cannot droop and wave).
-	// Frame: z from the stalk's top along the blade, y its upper face; the stalk meets it in the
-	// sinus between the basal lobes. p_cleft: half-angle of the sinus (radians).
-	void _add_disc_leaf(const Transform3D &p_at, float p_radius, float p_cleft, float p_droop, float p_wave, int p_teeth, float p_wind_base, int p_rings, int p_sectors, float p_saw = 0.035f);
-	void _build_marsh_marigold();
-	void _build_meadowsweet();
-	void _build_butterbur();
-	void _build_river_moss();
-	void _build_liverwort();
-	// Bog plants (plant_bog.cpp); sphagnum hummocks are _build_moss().
-	void _build_cottongrass();
-	void _build_bog_asphodel();
-	void _build_sundew();
-	void _add_dune_spike(const Transform3D &p_top, float p_length, float p_radius);
-	void _build_marram();
-	void _build_lyme_grass();
-	void _build_sea_holly();
-	// Alpine and scree plants (plant_alpine.cpp).
-	void _build_moss_campion();
-	void _build_purple_saxifrage();
-	void _build_mountain_avens();
-	void _build_alpine_sedge();
-	void _build_dwarf_willow();
-	void _build_alpine_toadflax();
-	// Salt marsh and shingle plants (plant_saltmarsh.cpp).
-	void _build_glasswort();
-	void _build_cord_grass();
-	void _build_sea_purslane();
-	void _build_sea_aster();
-	void _build_sea_lavender();
-	void _build_sea_kale();
-	void _build_sea_campion();
-	void _build_horned_poppy();
-	// Field margins (plant_margin.cpp).
-	void _build_corn_poppy();
-	void _build_cornflower();
-	void _build_mayweed();
-	void _build_cow_parsley();
-	// Atlantic heath (plant_heath.cpp).
-	void _build_bell_heather();
-	void _build_cross_leaved_heath();
-	void _build_crowberry();
-	// Mediterranean scrub (plant_scrub.cpp).
-	void _build_rosemary();
-	void _build_french_lavender();
-	void _build_thyme();
-	void _build_sage_rockrose();
-	template <typename F>
-	void _scrub_mound(float p_r, float p_h, int p_stems, float p_stem_r, float p_twig_len, float p_twig_step, float p_rise_min, F p_twig);
-	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();
 	void _build_ivy();
 	void _build_heather();
 	void _add_pad(const Vector3 &p_centre, float p_radius, float p_heading);
 
-	// Mushrooms (plant_mushroom.cpp): each part a surface of revolution of a profile (Desbenoit et
-	// al. 2004), gills as fins under the cap.
-	struct MushroomForm {
-		float cap_r = 0.04f; // Cap radius (m).
-		float cap_h = 0.025f; // Rise of the cap's top above its margin.
-		float cap_thick = 0.012f; // Flesh at the centre.
-		float dome = 0.6f; // Profile exponent: higher is a rounder, fuller dome.
-		float funnel = 0.0f; // Centre sunk below the margin (chanterelle), fraction of cap_h.
-		float umbo = 0.0f; // A boss at the centre, fraction of cap_h.
-		float curl = 0.0f; // Margin turned down and in (m).
-		float wave = 0.0f; // Wavy margin, fraction of the radius.
-		int wave_k = 5;
-		int gills = 40; // Long gills; short ones between.
-		float gill_depth = 0.006f;
-		float decurrent = 0.0f; // How far the gills run down the stalk (m).
-		float tube_depth = 0.0f; // > 0: a tube layer (pores) instead of gills.
-		float stalk_h = 0.06f;
-		float stalk_r = 0.006f; // At the top.
-		float stalk_base = 1.0f; // Radius at the base over the top's.
-		float bulb = 0.0f; // Extra radius of a basal bulb, over the top radius.
-		int volva = 0; // Rims round the bulb (fly agaric).
-		float ring = 0.0f; // Ring height on the stalk (fraction), 0: none.
-		float ring_w = 0.0f; // Ring skirt width (m).
-		int warts = 0;
-		float wart_r = 0.004f;
-		float scales = 0.0f; // Dark scales on the cap (honey fungus), 0 to 1.
-		Color stalk_foot = Color(1, 1, 1); // Stalk tint at its foot (honey fungus darkens to brown).
-		Color ring_tint = Color(1, 1, 1); // The ring's tint.
-		float stalk_wave = 0.0f; // Sideways sway of the stalk's axis (rad over its length), fused tufts.
-		Color cap_centre = Color(1, 1, 1); // Tint at the centre against the margin.
-		Color cap_margin = Color(1, 1, 1);
-		float cap_fade = 0.0f; // How far the centre colour reaches out (0: the margin colour from mid-cap).
-		float fibrils = 0.0f; // Radial innate fibrils: darker streaks running out from the centre (0: none).
-		float moist_band = 0.0f; // Hygrophanous: a darker, wetter-looking band inside the margin as the cap dries from the centre.
-	};
-	MushroomForm _mushroom_form(float p_age);
-	void _build_mushrooms();
-	void _add_mushroom(const Transform3D &p_base, const MushroomForm &p_form, float p_tilt, float p_tilt_dir);
-	void _add_lathe(Surface p_surface, const LocalVector<Transform3D> &p_frames, const LocalVector<Vector2> &p_rz, const LocalVector<Color> &p_tint, int p_sectors, float p_wave, int p_wave_k, float p_wave_phase, float p_wave_from);
-
-	static Ref<Shader> shaders[3]; // Plain, textured and silk, shared by every generated plant.
+	static Ref<Shader> shaders[2]; // Plain and textured, shared by every generated plant.
 	static Ref<Shader> impostor_shader; // plant_impostor.cpp.
 	static Ref<Shader> _impostor_shader();
-	static Ref<Shader> _plant_shader(bool p_textured, bool p_silk = false);
-	Ref<ShaderMaterial> _silk_material() const;
+	static Ref<Shader> _plant_shader(bool p_textured);
 	Ref<ShaderMaterial> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
 	Ref<ShaderMaterial> _textured_material(const TextureSet &p_set, float p_roughness) const;
 	bool textures = true;
 	int texture_size = 256;
 	float leaf_wear = 0.5f;
-	Array litter_leaves; // Leaf litter: the stand's fallen leaves (forms with share and colour); empty: generic.
-	Vector3 litter_heap; // A leaf bank's heap: half length (x), half width (z), height (y); zero: a flat card.
-	float litter_deposit = 1.0f; // Litter: layers of leaves or needles over the card's own (> 1: the near-camera card, leaf on leaf).
 	uint32_t leaf_serial = 0; // Counts the leaves of a plant: their wear draws from it, not from rng.
-	// Flowering through the year (docs/ideas/vegetation-seasons.md, step 2): the season's degree days
-	// (forcing, base 5 C, from 1 January) and day; -1 without a season. Each flowering stem draws
-	// its own place in the population's flowering from bloom_serial, not from rng.
-	Dictionary season;
-	float bloom_forcing = -1.0f;
-	int bloom_day = 0;
-	uint32_t bloom_serial = 0;
-	enum Bloom {
-		BLOOM_NONE, // Not yet flowering (leaves only), or the seed head has gone.
-		BLOOM_FLOWER,
-		BLOOM_SEED,
-	};
-	struct Phenology {
-		float onset = 0.0f; // Degree days to the first flowers.
-		float end = 0.0f; // Degree days to the last.
-		float hold = -1.0f; // Degree days the seed heads stand after flowering; -1: through winter.
-		bool flush = true; // One flush (each head in turn); false: flowering on and off through the window.
-	};
-	static bool _phenology(Preset p_preset, Phenology &r_phenology);
-	static Bloom _bloom_stage(Preset p_preset, float p_forcing, int p_day, float p_u, float p_u2, float *r_progress, float *r_dead = nullptr);
-	struct FrondSeason {
-		float unfurl = 1.0f; // This year's fronds: 0 none yet, 0..1 croziers unrolling, 1 full.
-		float dead = 0.0f; // Their dying back (the shader's dead tissue).
-		float lodge = 0.0f; // Lying down: 0 upright, 1 flat on the ground.
-		float old_share = 0.0f; // Last year's dead fronds still lying there, as a share of the fronds.
-		float old_lodge = 1.0f;
-	};
-	FrondSeason _frond_season(float p_emerge, float p_unroll, float p_onset, float p_span) const;
-	// A flowering stem's stage. Without a season the builder's own draw decides (in seed or in flower).
-	// r_dead: how far a stem in seed has died back (0 green, 1 a standing dead stalk).
-	Bloom _bloom(bool p_mixed_seed = false, float *r_progress = nullptr, float *r_dead = nullptr);
-	// Everything added while it lives (a flowering stem, its leaves and heads) takes the colours of a
-	// dead stalk by p_dead, through the vertex colours.
-	struct Wither {
-		PlantGenerator *generator = nullptr;
-		float dead = 0.0f;
-		int from[SURFACE_MAX] = {};
-		Wither(PlantGenerator *p_generator, float p_dead);
-		~Wither();
-	};
 	HashMap<uint64_t, TextureSet> texture_cache;
 	LeafTexture _leaf_texture_spec(bool p_petal) const;
 	TextureSet _bake_leaf_texture(const LeafTexture &p_spec, uint32_t p_seed) const;
@@ -554,24 +266,6 @@ public:
 	bool get_textures() const { return textures; }
 	void set_texture_size(int p_size) { texture_size = CLAMP(p_size, 32, 2048); }
 	void set_leaf_wear(float p_wear) { leaf_wear = CLAMP(p_wear, 0.0f, 1.0f); }
-	void set_litter_leaves(const Array &p_leaves) { litter_leaves = p_leaves; }
-	Array get_litter_leaves() const { return litter_leaves; }
-	void set_litter_deposit(float p_deposit) { litter_deposit = CLAMP(p_deposit, 1.0f, 4.0f); }
-	float get_litter_deposit() const { return litter_deposit; }
-	void set_season(const Dictionary &p_season);
-	Dictionary get_season() const { return season; }
-	static Vector3 get_bloom_shares(Preset p_preset, const Dictionary &p_season);
-	// Wind pollination (docs/ideas/vegetation.md, "Ground mist and pollen"): how much pollen a brushed
-	// plant of the preset sheds at full flower (0 for insect-pollinated plants), and the share of it
-	// shedding on the season's day.
-	static float get_pollen_amount(Preset p_preset);
-	static float get_pollen_release(Preset p_preset, const Dictionary &p_season);
-	// Sets the meta plant_preset, and pollen for wind-pollinated presets, on a species a make_* returns.
-	static void tag_species(const Ref<Resource> &p_species, Preset p_preset);
-	static float get_presence(Preset p_preset, const Dictionary &p_season);
-	static float _mushroom_presence(Preset p_preset, const Dictionary &p_season);
-	static bool is_silk(Preset p_preset) { return p_preset == PRESET_SHEET_WEB || p_preset == PRESET_ORB_WEB; }
-	static bool is_mushroom(Preset p_preset) { return (p_preset >= PRESET_FLY_AGARIC && p_preset <= PRESET_HONEY_FUNGUS) || p_preset == PRESET_FAIRY_RING_MUSHROOM; }
 	float get_leaf_wear() const { return leaf_wear; }
 	int get_texture_size() const { return texture_size; }
 	Ref<ArrayMesh> generate();
@@ -590,175 +284,10 @@ public:
 		FLOOR_NORTHERN_HARDWOOD,
 		FLOOR_EASTERN_OAK,
 		FLOOR_PINE_HEMLOCK,
-		FLOOR_MEDITERRANEAN, // Cork and holm oak, stone pine (montado, dehesa): dry grass and herbs, rockrose and lavender patches.
-		FLOOR_BOREAL_TAIGA, // Pine and spruce with birch burn patches: reindeer lichen under open pine, feather moss under spruce.
 		FLOOR_MAX,
 	};
-	static Array stand_litter_leaves(FloorStand p_stand, const Dictionary &p_season = Dictionary());
-	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true, float p_impostor_range = 15.0f, const Dictionary &p_season = Dictionary());
-
-	// Plants between stones (docs/ideas/vegetation.md, "Plants between stones").
-	enum StoneStand {
-		STONES_SCREE,
-		STONES_RIVER,
-		STONES_SHORE,
-		STONES_MAX,
-	};
-	static TypedArray<Resource> make_stones(StoneStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-
-	// Waterside and wet-stone plants (docs/ideas/vegetation.md, "Waterside and wet-stone plants").
-	enum BankStand {
-		BANKS_STREAM, // Upland and lowland streams: tall herbs on the banks, aquatic moss on the stones.
-		BANKS_LAKE, // Still water: marsh marigold and meadowsweet at the edge, no current.
-		BANKS_FALLS, // Waterfall spray zones: liverworts and mosses on the wet rock.
-		BANKS_MAX,
-	};
-	static TypedArray<Resource> make_banks(BankStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-
-	// Bog and moor plants (docs/ideas/vegetation.md, "Bog and moor plants").
-	enum BogStand {
-		BOG_BLANKET, // Upland blanket bog: hummocks with heather, cotton grass, asphodel in the lawns.
-		BOG_VALLEY, // Valley mire: wetter, green sphagnum lawns and hollows, more cotton grass.
-		BOG_MAX,
-	};
-	static TypedArray<Resource> make_bog(BogStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	// Sand dunes by distance to the water: strandline embryo dunes, mobile marram foredunes, fixed
-	// dunes behind (docs/ideas/vegetation.md, "Dune grass").
-	enum DuneStand {
-		DUNES_EMBRYO,
-		DUNES_MOBILE,
-		DUNES_FIXED,
-		DUNES_MAX,
-	};
-	static TypedArray<Resource> make_dunes(DuneStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	// Desert sand seas (docs/ideas/vegetation.md, "Arid ground"), placed by PlantSpecies.RULE_SAND_MOBILITY.
-	enum DesertStand {
-		DESERT_FLANKS, // Dune flanks and plinths: drinn tussocks.
-		DESERT_INTERDUNE, // Interdune corridors: sparse drinn, the rain-flush annuals, soil crust.
-		DESERT_OASIS, // Oases at desert springs (PlantSpecies.RULE_SPRING): the date palm stand and a ring of shrubs.
-		DESERT_MAX,
-	};
-	// p_shrubs: TreeGenerator's desert shrubs too (calligonum, white broom, saltbush).
-	static TypedArray<Resource> make_desert(DesertStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary(), bool p_shrubs = true);
-	// Burnt ground (docs/ideas/vegetation.md, "Burnt ground and regrowth"), placed by PlantSpecies.RULE_BURN_AGE.
-	enum BurnStand {
-		BURN_HEATH, // Heather moor: charred stems, fire moss, fireweed, resprouting moor-grass.
-		BURN_GRASS, // Grassland: resprouting tussocks, a little fire moss and fireweed.
-		BURN_SCRUB, // Scrub: tall charred skeletons standing longer, fireweed between.
-		BURN_MAX,
-	};
-	static TypedArray<Resource> make_burn(BurnStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	// Beaver ponds and drained beaver meadows (docs/ideas/vegetation.md, "Beaver ponds and meadows").
-	enum BeaverStand {
-		BEAVER_POND, // An active pond: lilies, bulrush, tussock sedge, then rush, marsh marigold and meadowsweet up the shore.
-		BEAVER_MEADOW, // The drained bed, by years since draining (WorldStand kind 4): rush and sedge, then a sedge and tall-grass meadow.
-		BEAVER_MAX,
-	};
-	// The WorldStand disturbance kind a drained beaver pond is reported as (appended after beetle, 3).
-	static constexpr int DISTURBANCE_BEAVER_KIND = 4;
-	// Avalanche tracks: the ground layer where WorldStand marks DISTURBANCE_AVALANCHE (6), by years since the avalanche.
-	static constexpr int DISTURBANCE_AVALANCHE_KIND = 6;
-	static TypedArray<Resource> make_avalanche_track(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	static TypedArray<Resource> make_beaver(BeaverStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	// Boar rooting (docs/ideas/vegetation.md, "Boar rooting"), placed by PlantSpecies.RULE_ROOTING.
-	enum RootingStand {
-		ROOTING_WOOD, // Woodland floor: rooted sods, then herb Robert, nettle and dock.
-		ROOTING_MEADOW, // Meadow and wood edge: rooted sods, then mayweed, dock, thistle and plantain.
-		ROOTING_MAX,
-	};
-	static TypedArray<Resource> make_rooting(RootingStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	// Anthills and molehills (docs/ideas/vegetation.md, "Anthills and molehills"). Their species carry the meta
-	// "sward_mound" (the mound's radius at scale 1, m): GrassField3D keeps its blades out from under them.
-	enum MoundSet {
-		MOUNDS_MEADOW, // Old pasture: yellow meadow ant hills, molehills fresh, crusted and grassing over.
-		MOUNDS_WOOD, // Woodland: wood ant nests at sunny conifer gaps and edges, a few molehills under broadleaves.
-		MOUNDS_MAX,
-	};
-	static TypedArray<Resource> make_mounds(MoundSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	// Grazing roughs and dung (docs/ideas/vegetation.md, "Grazing roughs and dung").
-	enum GrazeSet {
-		GRAZE_CATTLE, // Cattle pasture: pats fresh to old, an ungrazed rough round each older one, docks and nettles on rich spots.
-		GRAZE_HORSE, // Horse pasture: latrines (patches the horses dung in and never graze: roughs, piles, nettles and thistles).
-		GRAZE_DEER, // Deer lawns (PlantSpecies.RULE_BROWSE): pellet groups where the browsing is heavy.
-		GRAZE_MAX,
-	};
-	// Meadow fairy rings (docs/ideas/vegetation.md, "Meadow fairy rings"): the ring's mushrooms, placed on the rings
-	// GrassField3D.fairy_rings shows (PlantSpecies.RULE_FAIRY_RING).
-	static TypedArray<Resource> make_fairy_rings(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	// Dewy webs (docs/ideas/vegetation.md): money spiders' sheet webs over the sward and orb webs on dry stems in the
-	// open, drawn as silk by the shader and seen as the dew or hoarfrost beads them (WeatherMap3D's surface wetness
-	// and frost); the season sets how many spiders there are.
-	static TypedArray<Resource> make_dew_webs(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	static TypedArray<Resource> make_grazing(GrazeSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-
-	// Alpine and scree plants (docs/ideas/vegetation.md, "Alpine and scree plants").
-	enum AlpineStand {
-		ALPINE_FELLFIELD, // Exposed ridges blown free of snow: cushions and mats.
-		ALPINE_GRASSLAND, // The closed sward of the slopes: curved sedge.
-		ALPINE_SNOWBED, // Hollows where snow lies late: dwarf willow and moss.
-		ALPINE_SCREE, // Moving scree: toadflax, saxifrage mats, avens.
-		ALPINE_MAX,
-	};
-	static TypedArray<Resource> make_alpine(AlpineStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	// Salt marsh by height in the tidal frame, and the shingle backshore above it (plant_saltmarsh.cpp).
-	enum SaltmarshStand {
-		SALTMARSH_PIONEER, // Bare mud about mean high water neaps: glasswort and cord-grass.
-		SALTMARSH_MID, // Low to mid marsh: sea purslane, sea aster, sea lavender.
-		SALTMARSH_HIGH, // High marsh: thrift, sea lavender, sea rush, a fine sward.
-		SALTMARSH_SHINGLE, // The backshore above the tides: sea kale, sea campion, horned-poppy.
-		SALTMARSH_MAX,
-	};
-	static TypedArray<Resource> make_saltmarsh(SaltmarshStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	// The plants along a crop field's edge, placed by the distance to it (plant_margin.cpp).
-	enum MarginStand {
-		MARGIN_HEADLAND, // The crop's outer metres and the uncropped strip: corn poppy, cornflower, mayweed.
-		MARGIN_VERGE, // The grass strip by the hedge: cow parsley, cocksfoot, nettle, knapweed.
-		MARGIN_MAX,
-	};
-	static TypedArray<Resource> make_margin(MarginStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
-	// Atlantic heath on acid, oceanic, open ground (plant_heath.cpp).
-	enum HeathStand {
-		HEATH_DRY, // Free-draining ground: heather, bell heather, crowberry, wiry grasses.
-		HEATH_WET, // Where water gathers, short of bog: cross-leaved heath, heather, cottongrass, sphagnum.
-		HEATH_MARITIME, // Exposed cliff tops: wind-pruned heather and bell heather, thrift, crowberry.
-		HEATH_MAX,
-	};
-	// p_shrubs: TreeGenerator's woody shrubs too (gorse, broom; heavy meshes, two variants each).
-	static TypedArray<Resource> make_heath(HeathStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary(), bool p_shrubs = true);
-	// Mediterranean scrub on summer-dry, mild ground (plant_scrub.cpp).
-	enum ScrubStand {
-		SCRUB_GARRIGUE, // Thin soil and rock: open rosemary, thyme and rockrose with bare ground between.
-		SCRUB_MAQUIS, // Deeper soil: closed rockrose and lavender under the tall shrubs.
-		SCRUB_MAX,
-	};
-	// p_shrubs: TreeGenerator's woody shrubs too (gum rockrose, kermes oak, lentisk).
-	static TypedArray<Resource> make_scrub(ScrubStand p_stand, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary(), bool p_shrubs = true);
-	// A TreeGenerator shrub (TreeGenerator::Preset, ShrubForm) for a heath or scrub set: its own meshes,
-	// footprint, crown and far colour, at most two variants, in clumps; rules are the caller's.
-	static Ref<PlantSpecies> make_woody_shrub(int p_tree_preset, int p_form, int p_variants, const Dictionary &p_season, float p_density, float p_patch_scale, float p_patch_cover, int p_seed);
-	// The scrub's climate and soil rules on any species (TreeGenerator's woody scrub shrubs).
-	static void apply_scrub_rules(const Ref<PlantSpecies> &p_species, ScrubStand p_stand);
-	// Passes a year on a worn path that halve the preset's cover, by its growth form (0: not trampled).
-	static float get_trample_resistance(Preset p_preset);
-	// Years to full cover after a fire (PlantSpecies.burn_recovery); 0 for water plants and the burn presets.
-	static float get_burn_recovery(Preset p_preset);
+	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true, float p_impostor_range = 15.0f);
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
-VARIANT_ENUM_CAST(PlantGenerator::Climber);
 VARIANT_ENUM_CAST(PlantGenerator::FloorStand);
-VARIANT_ENUM_CAST(PlantGenerator::StoneStand);
-VARIANT_ENUM_CAST(PlantGenerator::BankStand);
-VARIANT_ENUM_CAST(PlantGenerator::BogStand);
-VARIANT_ENUM_CAST(PlantGenerator::DuneStand);
-VARIANT_ENUM_CAST(PlantGenerator::DesertStand);
-VARIANT_ENUM_CAST(PlantGenerator::BurnStand);
-VARIANT_ENUM_CAST(PlantGenerator::BeaverStand);
-VARIANT_ENUM_CAST(PlantGenerator::RootingStand);
-VARIANT_ENUM_CAST(PlantGenerator::MoundSet);
-VARIANT_ENUM_CAST(PlantGenerator::GrazeSet);
-VARIANT_ENUM_CAST(PlantGenerator::AlpineStand);
-VARIANT_ENUM_CAST(PlantGenerator::SaltmarshStand);
-VARIANT_ENUM_CAST(PlantGenerator::MarginStand);
-VARIANT_ENUM_CAST(PlantGenerator::HeathStand);
-VARIANT_ENUM_CAST(PlantGenerator::ScrubStand);

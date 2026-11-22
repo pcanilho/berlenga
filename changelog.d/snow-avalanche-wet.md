@@ -1,1 +1,0 @@
-- Snow: wet spring avalanches. Meltwater and rain weaken the pack until slabs release on their own, wet slides run slower and shorter and pile up deep with levees, and on a wet base the whole pack glides, opens glide cracks and releases full depth (`SnowAvalanche3D.wet_enabled`, `glide_enabled`, on by default).

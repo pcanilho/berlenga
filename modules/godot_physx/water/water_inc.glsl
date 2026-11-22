@@ -14,7 +14,6 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 ripple; // x alpha (damping), y gravity, z cell size, w water_level (mean surface y)
 	ivec4 res_count; // x grid resolution N (ripple grid, cells per side), y num_spheres, z num_impulses, w unused
 	vec4 ripple_control; // x body disturbance amplitude, y wall friction (1/s), z flow foam strength, w flow foam persistence (s)
-	vec4 flow_extra; // x 1 = impact foam (convergence and stagnation sources, water_ripple.glsl), yzw unused
 };
 
 // Ripple state: x=h (height above water_level), y=h_prev, z=foam, w unused.
