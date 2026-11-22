@@ -871,6 +871,8 @@ func _ready() -> void:
 		await _suncups()
 	if args.has("slush-prints") and snow != null:
 		await _slush_prints()
+	if args.has("sastrugi") and snow != null:
+		await _sastrugi()
 	if args.has("spindrift-cam") and snow != null:
 		await _spindrift_cam()
 	if (args.has("face-sun") or args.has("face-away")) and sun != null:
@@ -7154,6 +7156,64 @@ func _slush_prints() -> void:
 		await get_tree().process_frame
 	_log("slush prints: air at the spot %.1f C during the rain" % weather.get_air_temperature_at(best))
 	_log("slush prints: %.0f mm rain on %s at %s (%.1f deg), frost %s; after: depth %.3f m, swe %.0f mm, slush %.3f m, wetness %.2f; %d prints; cam %s" % [mm, before, str(best.round()), best_s, str(frost), snow.get_depth_at(probe), snow.get_swe_at(probe), float(snow.call("get_slush_at", probe)), float(snow.call("get_wetness_at", probe)), n + 1, str(c3.global_position.round())])
+
+
+func _sastrugi() -> void:
+	# --sastrugi[=H]: H (12) hours of a gale (--wind, 20 m/s) over the highest gentle (under --sas-max-deg, 20) snow
+	# at least 0.4 m deep (SnowCover3D sastrugi, snow 2e127292; wind slab 7325de7b): the cover carves its own ridges
+	# along the wind. The wind blows square to the sun (--sas-yaw, 90) so the low light rakes the ridges; the camera
+	# --sas-eye (1.7) m up looks downwind along them, a SnowSurface3D round it draws them.
+	var wr: Rect2 = gen.get_world_rect()
+	var best := Vector3.INF
+	var xx := wr.position.x + 200.0
+	while xx < wr.end.x - 200.0:
+		var zz := wr.position.y + 200.0
+		while zz < wr.end.y - 200.0:
+			var p := Vector3(xx, 0, zz)
+			var h := gen.get_height(p)
+			if snow.get_depth_at(p) >= 0.4 and rad_to_deg(atan(_slip_grad(p).length())) < float(args.get("sas-max-deg", "20")) and (best == Vector3.INF or h > best.y):
+				best = Vector3(xx, h, zz)
+			zz += 32.0
+		xx += 32.0
+	if best == Vector3.INF:
+		_log("sastrugi: no gentle deep snow")
+		return
+	var to_sun := sun.global_basis.z
+	var sf := Vector3(to_sun.x, 0, to_sun.z).normalized()
+	var wd := sf.rotated(Vector3.UP, deg_to_rad(float(args.get("sas-yaw", "90"))))
+	var focus := Node3D.new()
+	focus.name = "SastrugiFocus"
+	add_child(focus)
+	focus.global_position = best
+	snow.follow_target = snow.get_path_to(focus)
+	weather.follow_target = weather.get_path_to(focus)
+	for i in 30:
+		await get_tree().physics_frame
+	var keep := weather.wind_speed
+	weather.wind_direction = Vector2(wd.x, wd.z)
+	weather.wind_speed = float(args.get("wind", "20"))
+	weather.air_follows_climate = false
+	weather.temperature = float(args.get("sas-temp", "-8"))
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	var hrs := float(args["sastrugi"]) if String(args["sastrugi"]) != "" else 12.0
+	snow.advance(hrs * 3600.0)
+	weather.wind_speed = float(args.get("sas-after-wind", "6"))
+	weather.snap_to_settings()
+	weather.advance(60.0)
+	var c3: Camera3D = get_viewport().get_camera_3d()
+	c3.global_position = best - wd * 3.0 + Vector3.UP * (float(args.get("sas-eye", "1.7")) + snow.get_depth_at(best))
+	var tgt := best + wd * 6.0
+	c3.look_at(Vector3(tgt.x, gen.get_height(tgt) + snow.get_depth_at(tgt), tgt.z))
+	var surf: Node3D = ClassDB.instantiate("SnowSurface3D")
+	surf.name = "SnowSurface"
+	add_child(surf)
+	surf.set("snow_cover", surf.get_path_to(snow))
+	surf.set("follow_target", surf.get_path_to(c3))
+	for i in 10:
+		await get_tree().physics_frame
+	var sv = snow.call("get_sastrugi_at", best + wd * 5.0) if snow.has_method("get_sastrugi_at") else Vector2()
+	_log("sastrugi: %.0f h of %.0f m/s over %.2f m of snow at %s (%.0f m), relief %.3f m (%s), cam %s" % [hrs, float(args.get("wind", "20")), snow.get_depth_at(best), str(best.round()), best.y, sv.length(), str(sv), str(c3.global_position.round())])
 
 
 func _spindrift_cam() -> void:
