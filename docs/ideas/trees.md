@@ -3889,7 +3889,18 @@ Research: "Research for the likely picks" below. Built so far:
   A cell whose band changes swaps to the new near cell once built. Past the near range the trees keep the material
   glaze (BaseMaterial3D glaze), which reads the same weather: the ice geometry is near detail, as the near leaves are.
   Stand bench `--stands --test`: band 2 builds a near oak with 9 mm of ice.
-- Next: bent birch and broken tops as stand variants after a storm.
+- After the storm (22 Nov): TreeGenerator._ice_storm_damage, from ice_storm_years (single trees: by the species' odds)
+  or STAND_ICE_STORM's bands. Susceptibility after Lemon 1961 and Hauer et al. 2006: birches, lime, willow, alder,
+  soft pines high; maples, ash, beech middle; white oaks, spruce, fir, hemlock, yew low. Broken top: the leader snapped
+  at 0.5-0.8 of the height where it is at least 6 cm across, the break jagged (broken_ends), epicormic clusters under
+  it from the first summer. Stripped crown: upper-crown limbs (above 45% of the height) broken back at 25-60% of their
+  length, fine twigs stripped (Rhoads et al. 2002: 25-75% crown loss in the 1998 storm). Bent: paper birch poles under
+  a Barr bend (Barr 1984) about the foot toward mesh +X, psi(u) = theta (2u - u^2), theta 55-115 degrees, lowered until
+  the crown clears the ground by 25 cm. Mesh meta tree_ice_storm = (years, 1 bent / 2 top / 3 limbs).
+  STAND_ICE_STORM: northern hardwoods after January 1998 (Irland 2000): sugar maple stripped and broken, beech, yellow
+  birch, red maple, hemlock whole, paper birch poles bent, ice-broken limbs on the floor; species report WorldStand
+  DISTURBANCE_ICE_STORM (7, appended) so the field layer sees the opened canopy. Bench: `--stands --stand-test=24`.
+- Later: the bent birches' tops turning up over the years (phototropic recovery), hangers left in the crowns.
 - Queued after this round (coordinator, 22 Nov): avalanche legacies keyed to WorldStand disturbance 6 (world-links
   0c249ead): snapped stems lying downslope, flagged crowns at the track edge, green alder and willow thickets in
   frequent tracks (Bebi et al. 2009).

@@ -312,7 +312,7 @@ void VegetationField3D::_stand_discs(LocalVector<Vector4> &r_discs, LocalVector<
 		float years = 1e9f; // The youngest kill in the cell, as the map's youngest event wins.
 		LocalVector<Vector2> points;
 	};
-	HashMap<Vector2i, Cell> cells[4];
+	HashMap<Vector2i, Cell> cells[8];
 	const TypedArray<PlantSpecies> list = biome->get_species();
 	for (int s = 0; s < list.size() && s < int(placements.size()); s++) {
 		const Ref<PlantSpecies> sp = list[s];
@@ -321,7 +321,9 @@ void VegetationField3D::_stand_discs(LocalVector<Vector4> &r_discs, LocalVector<
 		}
 		const Vector2 kd = sp->get_meta(SNAME("stand_disturbance"));
 		const int kind = int(kd.x);
-		if (kind < 1 || kind > 3) {
+		// Fire, wind, beetle, avalanche, ice storm: the stands' own kills. A beaver meadow is the dam's to report and
+		// boar rooting the ground's.
+		if (kind < 1 || kind > 7 || kind == 4 || kind == 5) {
 			continue;
 		}
 		for (const Vector3 &p : placements[s]) {
@@ -332,7 +334,7 @@ void VegetationField3D::_stand_discs(LocalVector<Vector4> &r_discs, LocalVector<
 			c.points.push_back(Vector2(p.x, p.z));
 		}
 	}
-	for (int kind = 1; kind < 4; kind++) {
+	for (int kind = 1; kind < 8; kind++) {
 		for (const KeyValue<Vector2i, Cell> &kv : cells[kind]) {
 			if (kv.value.n < 3) {
 				continue;

@@ -434,6 +434,7 @@ public:
 		DISTURBANCE_BEAVER = 4, // a beaver pond drained (age: years since)
 		DISTURBANCE_ROOTING = 5, // boar rooting turned the soil (age: fractional years since); ground layer only, see rooting_age_at; new kinds are appended only
 		DISTURBANCE_AVALANCHE = 6, // a dense avalanche broke the stand (SnowAvalanche3D stand_damage; age: years since)
+		DISTURBANCE_ICE_STORM = 7, // freezing rain loaded the crowns past breaking: broken tops and limbs, bent birch (trees STAND_ICE_STORM; age: years since)
 	};
 	// A surface fire that scorched crowns only this low (m) leaves the stand standing.
 	static constexpr float SURFACE_FIRE_SCORCH = 5.0f;

@@ -1444,7 +1444,7 @@ real_t cave_profile(CaveNetwork3D::PassageType p_type, real_t u, real_t v, real_
 			const real_t bed = (t - bed_lo(j)) / (bed_lo(j + 1) - bed_lo(j));
 			const real_t amp = 0.18 * r * (0.3 + 1.4 * real_t(cave_hash(j, 1, 0, 0x5eabedu)));
 			const real_t lip = 0.45 + 0.25 * real_t(cave_hash(j, 2, 0, 0x5eabedu)); // where the bed's soft lower part starts
-			const real_t step = amp * (Math::smoothstep(real_t(0.0), real_t(0.12), bed) - Math::smoothstep(lip, lip + 0.12, bed));
+			const real_t step = amp * (Math::smoothstep(real_t(0.0), real_t(0.12), bed) - Math::smoothstep(lip, real_t(lip + 0.12), bed));
 			const real_t uu = u - 0.12 * v; // the joint's dip
 			const real_t hw = 0.62 * r + step;
 			const real_t sides = Math::abs(uu) - hw;
@@ -1526,7 +1526,7 @@ real_t CaveNetwork3D::_air(const FieldSource &p_src, const Vector3 &p_p, real_t 
 			// The banks beside the channel never dip under the fill's level (a dip there let the water stand above
 			// its banks as a slab with straight sides); the ripples and mud banks only rise.
 			floor_v = Math::lerp(MAX(floor_v, fill), floor_v, Math::smoothstep(real_t(1.3), real_t(2.5), Math::abs(x)));
-			floor_v = Math::lerp(floor_v, fill - cave_stream_cut(r) + 0.03 * (cave_fbm(p_p / 0.4f, uint32_t(seed) + 107u, 2) - 0.5f), w);
+			floor_v = Math::lerp(floor_v, real_t(fill - cave_stream_cut(r) + 0.03 * (cave_fbm(p_p / 0.4f, uint32_t(seed) + 107u, 2) - 0.5f)), w);
 		}
 		// Along a stream the fill meets the walls in a bank, not a crease: sediment and spalled chips heap against
 		// the wall's foot (a smooth maximum, about a third of the radius wide), so the washed floor never ends in a
@@ -2002,6 +2002,31 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 			}
 		}
 	}
+	// The cave's ground near the landscape's hole edge tucks 4 cm into the rock: the landscape (and over a beach the
+	// GroundSurface3D patch) draws the same heights over the overlap band, and the two, tessellated apart, would
+	// z-fight there. Inside the hole proper (2 m in from the patch's edge, past the landscape's half quad) it stays.
+	if (gen && !src.patches.is_empty()) {
+		for (uint32_t i = 0; i < verts.size(); i++) {
+			if (!vert_ground[i]) {
+				continue;
+			}
+			real_t e = -1e9;
+			for (uint32_t pi = 0; pi < src.patches.size(); pi++) {
+				const Vector3 d = verts[i] - src.patches[pi];
+				const Vector3 o = Vector3(src.patch_out[pi].x, 0, src.patch_out[pi].z).normalized();
+				const real_t along = d.x * o.x + d.z * o.z;
+				const real_t lat = Math::abs(-d.x * o.z + d.z * o.x);
+				e = MAX(e, MIN(MIN(along - src.patch_lo[pi], src.patch_hi[pi] - along), src.patch_r[pi] - lat));
+			}
+			if (e < -0.5 || e >= 2.0) {
+				continue;
+			}
+			const Vector3 &v = verts[i];
+			const real_t ge = 0.5;
+			const Vector3 gn = Vector3(gen->get_height(v - Vector3(ge, 0, 0)) - gen->get_height(v + Vector3(ge, 0, 0)), 2.0 * ge, gen->get_height(v - Vector3(0, 0, ge)) - gen->get_height(v + Vector3(0, 0, ge))).normalized();
+			verts[i] -= gn * (0.04 * (1.0 - Math::smoothstep(real_t(1.5), real_t(2.0), e)));
+		}
+	}
 	// Quads on the edges this chunk owns (start sample in 0..N-1 on all three axes; a refined chunk also the P - 1
 	// past each side, its overlap).
 	LocalVector<int> tris[2]; // 0 walls, 1 ground
@@ -2051,11 +2076,10 @@ void CaveNetwork3D::_mesh_chunk(const Vector3i &p_key, Chunk &r_chunk, real_t p_
 					bool is_ground = gq >= 2; // a mixed quad on the seam goes to the ground, so the seam has no wall-coloured teeth
 					if (is_ground) {
 						// The patch is a rectangle along the entrance's facing, the landscape's hole the same rectangle 1.5 m
-						// smaller, so the two overlap all round. The landscape drops each quad whose centre is in the hole,
-						// so its open edge can stand half a quad (more on its coarser levels) outside the hole, past where
-						// the cave's ground stopped when it was cut back to 0.5 m outside the hole: the cave's ground
-						// covers the whole patch.
-						const real_t band = 0.0;
+						// smaller. The landscape drops each quad whose centre is in the hole, so its edge stands within half
+						// a quad (1 m to 2 m in from the patch's edge, more on its coarser levels). The cave's ground draws
+						// from 0.5 m in, so the two overlap; where they do it is tucked under (the push above).
+						const real_t band = 0.5;
 						bool inside = false;
 						for (uint32_t pi = 0; pi < src.patches.size() && !inside; pi++) {
 							const Vector3 d = verts[vi[0]] - src.patches[pi];
@@ -3468,6 +3492,39 @@ void fragment() {
 	return spel_mesh[key];
 }
 
+// The landscape's material for the cave's ground, less its ground deform skirt. Under a GroundSurface3D (a beach's
+// sand) the landscape's vertices go down by the skirt (0.5 m) so the patch draws over them; the patch is cut over the
+// cave's hole like the landscape, so there the cave's ground is the only surface, and lowered with the rest it fell
+// half a metre off the cave's walls: the sky showed through between them, shards of a sea arch's edge standing free
+// against it. A copy with ground deform off keeps it where it was meshed (tucked 4 cm under the landscape and the
+// patch where they overlap, _mesh_chunk).
+Ref<Material> CaveNetwork3D::_cave_ground_material() {
+	if (cave_ground_material.is_null() && ground_material.is_valid()) {
+		bool has = false;
+		ground_material->get("ground_deform_enabled", &has);
+		Object *fresh = has ? ClassDB::instantiate(ground_material->get_class_name()) : nullptr;
+		if (Material *m = Object::cast_to<Material>(fresh)) {
+			// A fresh instance (it makes its own shader) with every stored property but the shader copied over: a
+			// duplicate() would share the source's shader, whose code keeps the skirt.
+			List<PropertyInfo> props;
+			ground_material->get_property_list(&props);
+			for (const PropertyInfo &pi : props) {
+				if ((pi.usage & PROPERTY_USAGE_STORAGE) && pi.name != "shader" && !pi.name.begins_with("resource_") && pi.name != "script") {
+					m->set(pi.name, ground_material->get(pi.name));
+				}
+			}
+			m->set("ground_deform_enabled", false);
+			cave_ground_material = Ref<Material>(m);
+		} else {
+			if (fresh) {
+				memdelete(fresh);
+			}
+			cave_ground_material = ground_material;
+		}
+	}
+	return cave_ground_material;
+}
+
 void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 	if (p_chunk.mesh.is_null()) {
 		return;
@@ -3481,7 +3538,7 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 	mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_DOUBLE_SIDED);
 	for (int sfc = 0; sfc < p_chunk.mesh->get_surface_count(); sfc++) {
 		const bool is_ground = p_chunk.mesh->surface_get_name(sfc) == "ground";
-		Ref<Material> gm = ground_material;
+		Ref<Material> gm = _cave_ground_material();
 		if (is_ground && OS::get_singleton()->has_environment("CAVE_GROUND_DEBUG")) {
 			// CAVE_GROUND_DEBUG: the network's own ground quads drawn flat red (to tell them from the landscape's).
 			Ref<StandardMaterial3D> red;
@@ -3510,7 +3567,7 @@ void CaveNetwork3D::_add_chunk(Chunk &p_chunk, const Ref<Material> &p_wall) {
 		}
 		// The sky's share falls off over the first tens of metres in (as the walls' COLOR.a does): the probe's
 		// ambient goes from a dim daylight bounce at the mouth to the dark of the deep cave.
-		const real_t sky = 1.0 - Math::smoothstep(real_t(6.0), real_t(40.0), MAX(near_sky - 0.5 * chunk_size, real_t(0.0)));
+		const real_t sky = 1.0 - Math::smoothstep(real_t(6.0), real_t(40.0), real_t(MAX(near_sky - 0.5 * chunk_size, real_t(0.0))));
 		if (near_sky > 0.6 * chunk_size) {
 			ReflectionProbe *probe = memnew(ReflectionProbe);
 			probe->set_name("Cave ambient");

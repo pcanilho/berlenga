@@ -35,9 +35,14 @@
 #include "physx_flow_emitter_3d.h"
 
 #include "core/object/class_db.h"
+#include "modules/modules_enabled.gen.h" // MODULE_WEATHER_ENABLED
 #include "modules/world/world_contracts.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/main/viewport.h"
+
+#ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_map_3d.h"
+#endif
 
 float PhysXDustDevils3D::_rand() {
 	rng = rng * 1664525u + 1013904223u;
@@ -288,6 +293,7 @@ void PhysXDustDevils3D::_step(float p_dt) {
 	const WorldWeather *w = WorldContracts::weather();
 	for (Devil &d : devils) {
 		if (!d.alive) {
+			_share_wind(d, 0.0f);
 			_draw(d);
 			continue;
 		}
@@ -311,6 +317,7 @@ void PhysXDustDevils3D::_step(float p_dt) {
 		if (d.age >= d.life || Vector2(d.position.x - c.x, d.position.z - c.z).length() > 2.0f * spawn_range) {
 			d.alive = false;
 		}
+		_share_wind(d, d.alive ? _devil_strength(d.age, d.life) : 0.0f);
 		_draw(d);
 	}
 }
@@ -364,8 +371,54 @@ void PhysXDustDevils3D::_draw(Devil &p_d) {
 	}
 }
 
+// The devil in the shared wind (docs/world-contracts.md, "Wind vortices"), so leaves, grass, dust, smoke and every
+// other gas feel it: its swirl and an updraft of 0.3 of it (Tratt et al. 2003: 2 to 3 m/s in a 5 to 10 m/s devil).
+// The Flow column forces its own, stronger updraft to carry the dust; this is the air the rest of the world reads.
+void PhysXDustDevils3D::_share_wind(Devil &p_d, float p_strength) {
+#ifdef MODULE_WEATHER_ENABLED
+	WeatherMap3D *wm = WeatherMap3D::get_active();
+	if (!wm || wm->get_instance_id() != vortex_map) {
+		for (Devil &d : devils) {
+			d.vortex_id = 0; // a new map (or none): the old ids mean nothing there
+		}
+		vortex_map = wm ? wm->get_instance_id() : ObjectID();
+	}
+	if (!wm) {
+		return;
+	}
+	if (p_strength <= 0.0f) {
+		if (p_d.vortex_id != 0) {
+			wm->remove_vortex(p_d.vortex_id);
+			p_d.vortex_id = 0;
+		}
+		return;
+	}
+	const float swirl = p_d.swirl * p_strength;
+	if (p_d.vortex_id == 0) {
+		p_d.vortex_id = wm->add_vortex(p_d.position, p_d.radius, swirl, 0.3f * swirl, p_d.spin);
+	} else {
+		wm->set_vortex(p_d.vortex_id, p_d.position, p_d.radius, swirl, 0.3f * swirl);
+	}
+#endif
+}
+
+void PhysXDustDevils3D::_clear_wind() {
+#ifdef MODULE_WEATHER_ENABLED
+	WeatherMap3D *wm = Object::cast_to<WeatherMap3D>(ObjectDB::get_instance(vortex_map));
+	for (Devil &d : devils) {
+		if (wm && d.vortex_id != 0) {
+			wm->remove_vortex(d.vortex_id);
+		}
+		d.vortex_id = 0;
+	}
+#endif
+}
+
 void PhysXDustDevils3D::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_EXIT_TREE: {
+			_clear_wind();
+		} break;
 		case NOTIFICATION_READY: {
 			rng = seed * 2654435761u + 1u;
 			_build();

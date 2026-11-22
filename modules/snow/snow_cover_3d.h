@@ -177,6 +177,22 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 	Vector<float> cell_hoar;
 	Vector<float> cell_cups; // m, suncup relief (ridge to hollow)
 	Vector<float> cell_wind_slab; // m of wind-packed snow in the pack (follow-up 45)
+	// The pack's layers (round 7, follow-up 49): up to PACK_LAYERS a cell, bottom first, each with its snow water
+	// (kg/m2), density, age (hours) and kind. The bulk fields stay the pack's total; the layers split it.
+	static constexpr int PACK_LAYERS = 6;
+	enum LayerKind : uint8_t {
+		LAYER_NEW, // fallen snow, unbonded
+		LAYER_WIND, // laid down by the wind (wind slab)
+		LAYER_OLD, // settled, rounded
+	};
+	Vector<float> layer_swe, layer_rho, layer_age;
+	Vector<uint8_t> layer_kind, layer_n;
+	bool layers_enabled = true;
+	void _layers_alloc();
+	void _layers_push(int p_i, float p_swe, float p_rho, uint8_t p_kind);
+	void _layers_take(int p_i, float p_swe);
+	void _layers_sync(int p_i, float p_dt_h, float p_air);
+	float _top_density(int p_i, float p_depth) const; // the live layers' mean density over the top p_depth m
 	Vector<float> cell_depth_hoar; // 0..1, the base's depth hoar share (follow-up 47)
 	Vector<float> cell_slab_cover; // m of soft snow over the wind slab (0: the slab is the surface)
 	Vector<float> cell_sas_x, cell_sas_z; // m: sastrugi relief times the direction of the wind that carved them (follow-up 46)
@@ -289,7 +305,12 @@ class SnowCover3D : public Node3D, public WorldSnowProvider {
 		Vector<float> cornice_x, cornice_z, cornice_crack;
 		Vector<float> ice, white_ice;
 		Vector<float> lap; // mg/m2 BC equivalent showing at the surface
+		Vector<float> layer_swe, layer_rho, layer_age;
+		Vector<uint8_t> layer_kind, layer_n;
 	} pub;
+	// The published layers' mean density over the top p_depth metres of cell p_i (the slab over a weak layer); the
+	// bulk density where there are none.
+	float pub_top_density(int p_i, float p_depth) const;
 	bool background_updates = true;
 	WorkerThreadPool::TaskID cover_task = WorkerThreadPool::INVALID_TASK_ID;
 	bool cover_task_world = false; // the task carries the world tier's turn
@@ -554,6 +575,10 @@ public:
 	void clear();
 	void add_snow(float p_swe_mm, float p_density = 100.0f, bool p_world = true);
 	void add_drift(const Vector3 &p_position, float p_radius, float p_depth, float p_density = 300.0f);
+	Array get_layers_at(const Vector3 &p_position) const;
+	void set_layers_enabled(bool p_enabled);
+	bool is_layers_enabled() const { return layers_enabled; }
+	static float layer_compaction(float p_density, float p_stress, float p_celsius, float p_hours);
 	void refresh_heights();
 
 	Rect2 get_map_rect() const;

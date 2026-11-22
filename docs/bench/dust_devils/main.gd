@@ -117,6 +117,15 @@ func _run_tests() -> void:
 	var d: Vector4 = dd.get_devil(0)
 	_check("it drifts downwind (+x) at about 0.7 of the wind", d.x > 20.0 and d.x < 90.0, "x %.1f m, z %.1f m after 20 s" % [d.x, d.y])
 	_check("it spins up over its first 15 s", d.w > 0.9 * 10.0, "swirl now %.1f m/s" % d.w)
+	# The shared wind (WeatherMap3D add_vortex): the swirl on the ring, the updraft on the axis, as every reader sees it.
+	var ring := Vector3(d.x + d.z, 0.0, d.y)
+	var vw: Vector3 = m.get_vortex_wind_at(ring, 2.0)
+	var ax: Vector3 = m.get_vortex_wind_at(Vector3(d.x, 0.0, d.y), 6.0)
+	var far: Vector3 = m.get_vortex_wind_at(Vector3(d.x + 8.0 * d.z, 0.0, d.y), 2.0)
+	_check("the devil is in the shared wind: its swirl on the ring", m.get_vortex_count() == 1 and abs(vw.z) > 0.8 * d.w and abs(vw.z) < 1.05 * d.w, "%d vortices, %.1f m/s across at R" % [m.get_vortex_count(), vw.z])
+	_check("an updraft on its axis, none 8 radii out", ax.y > 0.25 * d.w and far.length() < 0.01, "up %.1f m/s, %.2f m/s at 8 R" % [ax.y, far.length()])
+	var total: Vector3 = m.get_wind_at(ring, 2.0)
+	_check("get_wind_at carries it", abs(total.z) > 0.6 * d.w, "%s" % total)
 	# Spawning from the weather: a high rate over the disc, the cap holds and they stand apart.
 	dd.frequency = 1e6
 	t = 0.0
@@ -143,6 +152,7 @@ func _run_tests() -> void:
 		await get_tree().physics_frame
 		t += get_physics_process_delta_time()
 	_check("rain kills it within 25 s", dd.get_devil_count() == 0, "gone after %.1f s" % t)
+	_check("its vortex leaves the shared wind with it", m.get_vortex_count() == 0, "%d vortices" % m.get_vortex_count())
 	print("%d failed" % fails)
 
 

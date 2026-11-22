@@ -228,6 +228,21 @@ private:
 	Ref<Image> painted_image;
 
 	Vector<Storm> storms;
+	// WIND VORTICES (docs/world-contracts.md, "Wind vortices"): dust devils and lee whirls their owners place and move;
+	// get_wind_at adds a Rankine field round each (Tratt et al. 2003). Copy-on-write, so readers on other threads
+	// see a whole list.
+	struct Vortex {
+		int id = 0;
+		Vector3 position; // the foot, on the ground (m)
+		float radius = 3.0f; // core radius R (m)
+		float swirl = 10.0f; // peak tangential speed at R (m/s)
+		float updraft = 3.0f; // peak core updraft (m/s)
+		float spin = 1.0f; // +1 anticlockwise from above, -1 clockwise
+	};
+	Vector<Vortex> vortices;
+	int next_vortex_id = 1;
+	Vector3 _vortex_wind_at(const Vector3 &p_position, float p_height) const;
+	void _publish_vortices();
 	int next_storm_id = 1;
 
 	struct CellPass {
@@ -916,6 +931,11 @@ public:
 	void remove_storm(int p_id);
 	void clear_storms();
 	int get_storm_count() const { return storms.size(); }
+	int add_vortex(const Vector3 &p_position, float p_radius, float p_swirl, float p_updraft, float p_spin = 1.0f);
+	void set_vortex(int p_id, const Vector3 &p_position, float p_radius, float p_swirl, float p_updraft);
+	void remove_vortex(int p_id);
+	int get_vortex_count() const { return vortices.size(); }
+	Vector3 get_vortex_wind_at(const Vector3 &p_position, float p_height_above_ground = 10.0f) const;
 	// Smoke haze (docs/ideas/physx.md, "Smoke haze dims the sun").
 	void set_smoke_haze(bool p_enabled);
 	bool is_smoke_haze() const { return smoke_haze; }

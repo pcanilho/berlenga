@@ -65,6 +65,11 @@ class SnowBodies3D : public Node3D {
 		float load_mass = 0.0f; // kg
 		float cloth_base = -1.0f; // a cloth's own snow_load before ours (none: -1)
 		Vector4 sent = Vector4(-1.0f, -1.0f, -1.0f, -1.0f);
+		// A roof face (the snow_roof group, follow-up 50): the bed's dry friction angle (from its
+		// snow_roof_material meta) and the heat the building loses through it (snow_roof_heat meta, W/m2).
+		bool roof = false;
+		float roof_phi = 25.0f; // degrees
+		float roof_heat = 0.0f; // W/m2
 	};
 
 	HashMap<ObjectID, Body> bodies;
@@ -73,6 +78,11 @@ class SnowBodies3D : public Node3D {
 	float shake_shed_rate = 3.0f; // per second per g over the threshold
 	float wind_shed_rate = 0.08f; // per second per m/s over the threshold
 	float max_depth = 0.4f; // m
+	float roof_max_depth = 1.5f; // m on a roof face
+	bool roof_piles = true; // what slides off a roof lands in the snow cover below the eave
+	int roof_slides = 0;
+	float roof_landed = 0.0f; // kg landed in the cover from roofs
+	void _land_pile(const Body &r_body, Node3D *p_node, float p_depth_lost, const Vector3 &p_down, float p_slope);
 	bool auto_materials = true;
 	bool auto_track = true;
 	bool weight_enabled = true;
@@ -115,7 +125,15 @@ public:
 	float get_body_top_area(Node *p_node) const; // m2
 	int get_clumps_dropped() const { return clumps_dropped; }
 	int get_slabs_slid() const { return slabs_slid; }
-	static bool slab_slides(float p_depth, float p_density, float p_wetness, float p_slope, float p_cohesion);
+	int get_roof_slides() const { return roof_slides; }
+	float get_roof_landed() const { return roof_landed; }
+	void set_roof_piles(bool p_enable) { roof_piles = p_enable; }
+	bool is_roof_piles_enabled() const { return roof_piles; }
+	void set_roof_max_depth(float p_m) { roof_max_depth = MAX(p_m, 0.0f); }
+	float get_roof_max_depth() const { return roof_max_depth; }
+	static bool slab_slides(float p_depth, float p_density, float p_wetness, float p_slope, float p_cohesion, float p_friction_deg = 25.0f);
+	static float roof_shape(float p_slope); // Eurocode 1 (EN 1991-1-3) mu1: the share of the ground load a roof holds
+	static float roof_friction(const String &p_material); // degrees, dry
 
 	void set_update_rate(float p_rate);
 	float get_update_rate() const { return update_rate; }

@@ -1825,6 +1825,60 @@ SnowSlide's) after each blow. The shear is kept 5 minutes of weather, until the 
 - A per-substep slip face changed nothing (the smoothed shear is stable), so it runs once a blow.
 - Not yet: flow separation past a brink (the shear only falls to its clamp of 0); flux lag beyond the smoothing.
 
+## Follow-up 49: a layered snowpack (round 7, 22 Nov 2026)
+
+Research: Crocus (Vionnet et al. 2012, GMD) keeps up to 50 layers, a new one per snowfall, merges thin similar ones, and
+settles each by a viscosity eta = f1 f2 eta0 (rho / c_eta) exp(a_eta (Tfus - T) + b_eta rho) (eta0 7.62237e6 kg/m/s,
+a_eta 0.1 /K, b_eta 0.023 m3/kg, c_eta 250 kg/m3); SNOWPACK (Bartelt and Lehning 2002) keeps finite elements with
+grain type. On a 256 x 256 square a game can afford a handful a cell.
+
+Built: `SnowCover3D.layers_enabled` (on), `get_layers_at`, static `layer_compaction`.
+- Up to 6 layers a cell, bottom first: snow water, density, age, kind (new, wind, old). A snowfall is a layer (wind
+  when it drifts as it lands); a fall within 6 h of the top one of its kind joins it; past 6 the two thinnest adjacent
+  layers under the top merge. Wind deposits are wind layers; the wind's packing turns the packed top (split off the
+  layer under it) to wind slab at the packed density. New turns old after a week (the avalanche's bonding time).
+  add_snow at 200 kg/m3 or more is old snow; add_drift is wind slab.
+- Each update each row's layers settle under the weight above (Crocus, temperature from the air at the top to 0 C at
+  the base), then are matched to the bulk: what the bulk lost comes off the top (melt, erosion, slides, releases),
+  what it gained past them goes into the top, and the bulk's depth change goes to the layers by their pore space, so
+  fresh snow takes it and dense old snow little. The bulk (CLASS settling and all the processes) stays authoritative.
+- Uses: the avalanche weighs each slab (new snow, over a crust, over buried hoar, the trigger index) by the layers'
+  density over its depth, which fixes the round 6 quirk; the wind packs the top by its own density, so new snow on a
+  dense old pack drifts and packs.
+- `--test=layers`: a calm 40 mm storm on an old pack is [old 51 cm 296] [new 44 cm 91]; the layers add up to the bulk;
+  a gale packs the top 10 cm into a wind layer; three days at +8 C take the top and leave the old layer's 150 mm; 50 cm
+  of new snow on a dense old pack on 38 degrees reads S 1.31 by its own weight against 0.66 by the bulk density.
+- Cost: 16.3 against 13.8 ms an update on a 256 x 256 square (worker thread).
+- Not yet: a melt-freeze crust, buried hoar and depth hoar as layers of their own (their fields still carry them);
+  liquid water per layer; a cut-through view.
+
+## Follow-up 50: snow sliding off roofs (round 7, 22 Nov 2026)
+
+Research: Eurocode 1 (EN 1991-1-3) and ISO 4355 give the load a pitched roof keeps as a share mu1 of the ground's,
+0.8 up to 30 degrees, falling linearly to none at 60. Taylor (1985) and O'Rourke's roof surveys find slippery roofs
+(metal, glass) shed at lower pitches than rough ones, so the bed friction goes with the roofing. Heat lost through a
+roof melts the bed once it beats the snow's insulation, q > k (-T) / d (Tobiasson 1988, ice dams), which is why warm
+roofs shed and cold ones hold. A sliding slab leaves the eave at v = sqrt(2 g L (sin a - tan phi cos a)) and falls
+ballistically, so the debris lands 1-3 m out, further off steep or slippery roofs.
+
+Built (SnowBodies3D): a node in group `snow_roof` is a roof face.
+- It keeps `roof_shape(pitch) / 0.8` of the snowfall and of the ground's first-sight seeding, none past 60 degrees,
+  and holds up to `roof_max_depth` (1.5 m).
+- It slides by `slab_slides` with the roofing's friction, `roof_friction`: metal and glass 10 degrees, tile and
+  slate 20, otherwise 25 (meta `snow_roof_material`); wetness takes 10 off.
+- Meta `snow_roof_heat` (W/m2): when it beats the pack's insulation the bed melts and wets (wet at least 0.6), which
+  breaks the bond and lowers the friction.
+- `roof_piles` (on): the slab is thrown from the eave at the slide speed and lands as a bank of wind-packed cones
+  (add_drift, 1.5 m radius, spaced 0.75 m) along the eave, each cone's share and throw varied a little, mass kept.
+  `get_roof_slides`, `get_roof_landed`.
+- `--test=roofs`: Eurocode share; 80 cm slides off 35 degree metal and holds on shingles; after a storm metal 0.58 m,
+  shingles 1.09 m, warm shingles 0.26 m, 65 degrees none; 5 slides, 6589 kg landed, conserved; bank 2.03 m against
+  0.84 m of level snow.
+- `--view=roofs`: a shed with metal on one side and shingles on the other, shot the moment after the metal side lets
+  go (14th hour of a 4 mm/h snowfall at -6 C): metal bare, shingles 0.59 m, a 1.5 t bank past the metal eave.
+- Not yet: the slab as a falling body (PhysX) and its powder puff; ice dams and icicles at the eave from the same
+  heat (follow-up 13 has icicles from a heated roof already); snow guards; gutters.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
@@ -1981,3 +2035,16 @@ Research notes for Paulo's pick; nothing below is built yet.
 3. Snow sliding off roofs: snow on buildings and props (SnowBodies3D) slides off sloped roofs in a thaw or when
    loaded past the roof's friction (roof snow loads, Taylor 1985; ISO 4355), landing in a pile below (add_drift).
 
+
+## Next round (proposed 22 Nov 2026, round 8): water in the layers, roof slabs that fall, layers you can see
+
+1. Crusts, buried surface hoar and depth hoar as layers of their own, with liquid water per layer: water percolates
+   down (Colbeck 1972 gravity flow; Wever et al. 2014 Richards equation in SNOWPACK, simplified to a bucket per layer)
+   and ponds above fine-over-coarse boundaries (capillary barrier, Waldner et al. 2004), which is where wet slab
+   avalanches fail. The avalanche then reads the weak layer by its kind and wetness instead of the separate fields.
+2. Roof slabs that fall as bodies: the sliding slab becomes a PhysX rigid body (or Blast chunks) that breaks on the
+   eave and lands, with a Flow powder puff, so the bank forms where the pieces land; ice dams at the eave from the
+   same heat (Tobiasson 1988), feeding the icicles (follow-up 13).
+3. Layers you can see: ruts, shovel cuts and avalanche crowns show the stack on their walls, new snow bright and
+   fine, wind slab chalky, old snow coarse and grey, crusts as thin glazed lines (the crown face of a slab avalanche,
+   SnowRunner's trench walls), from the layer stack per cell through the surface's displacement.

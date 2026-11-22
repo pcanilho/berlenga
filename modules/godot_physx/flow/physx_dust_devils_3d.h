@@ -72,6 +72,7 @@ private:
 		float age = 0.0f;
 		float life = 180.0f;
 		float dust = 1.0f;
+		int vortex_id = 0; // in the shared wind (WeatherMap3D add_vortex), 0: none
 		PhysXFlowEmitter3D *foot[RING] = {};
 		PhysXFlowEmitter3D *upper[RING] = {};
 		PhysXFlowEmitter3D *core = nullptr;
@@ -81,6 +82,9 @@ private:
 	uint32_t rng = 1;
 	float favour = 0.0f;
 	int spawned = 0;
+	ObjectID vortex_map; // the WeatherMap3D the devils' vortices are in
+	void _share_wind(Devil &p_d, float p_strength);
+	void _clear_wind();
 
 	float _rand();
 	Node3D *_target() const;

@@ -394,7 +394,7 @@ void PlantGenerator::_build_river_moss() {
 	l.fold = 0.35f;
 	l.bend = 0.2f;
 	l.segments = 2;
-	const int from[SURFACE_MAX] = { builders[0].verts.size(), builders[1].verts.size(), builders[2].verts.size(), builders[3].verts.size() };
+	const int from[SURFACE_MAX] = { int(builders[0].verts.size()), int(builders[1].verts.size()), int(builders[2].verts.size()), int(builders[3].verts.size()) };
 	auto shoot = [&](const Transform3D &p_base, float p_length) {
 		const int segs = 6;
 		const float droop = _rand(0.1f, 0.35f) * (rng.randf() < 0.5f ? 1.0f : -0.4f); // Laid on the stone by the current, some tips lifting.

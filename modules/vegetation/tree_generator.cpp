@@ -101,7 +101,7 @@ static bool hedge_shrub(TreeGenerator::Preset p_preset) {
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
 	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
 	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest", "Coppice with Standards", "Wood Pasture", "Pollard Row",
-	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga", "Alder Carr", "Floodplain Willow", "Beaver Pond", "Deer Wood"
+	"Stone Pine Parkland", "Olive Grove", "Date Palm Oasis", "Spruce after Bark Beetle", "Spruce after Windthrow", "Old-growth Beech", "Boreal Taiga", "Alder Carr", "Floodplain Willow", "Beaver Pond", "Deer Wood", "Northern Hardwoods after Ice Storm"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -15285,6 +15285,266 @@ void TreeGenerator::_break_limbs() {
 	}
 }
 
+// Ice storm damage (trees.md 5be). Freezing rain loads a crown with many times its own weight in ice (25 mm of
+// radial ice on a twig is about 6 kg per metre of a 1 cm twig's length, mostly carried at the crown's top and ends),
+// and the damage follows the species and the tree's build more than the ice: Lemon 1961 and Hauer et al. 2006
+// (Ice storm damage to urban trees) rank susceptibility from decurrent, fine-twigged, brittle-wooded trees (birches,
+// lime, willow, poplar, the soft pines) through maples, ash and beech, to the resistant white oaks, spruce, fir and
+// hemlock; Irland 2000 and Rhoads et al. 2002 for the January 1998 storm in the northern hardwoods: the canopy trees
+// lost their tops and upper limbs, the slender paper birch bent over to the ground in arches, most of which stayed
+// bent. The bend is a Barr bend (Barr 1984, Global and local deformations of solid primitives) of the whole tree about
+// its foot toward mesh +X, the stem's tangent turning by psi(u) = theta (2u - u^2) along its height: a cantilever's
+// curve under a load at its tip, steepest at the top.
+void TreeGenerator::_ice_storm_damage() {
+	ice_damage = 0;
+	if (ice_storm_years < 0.0f || nodes.size() < 8) {
+		return;
+	}
+	float sus = 0.5f;
+	switch (preset) {
+		case PRESET_BIRCH:
+		case PRESET_PAPER_BIRCH:
+		case PRESET_LIME:
+		case PRESET_WHITE_WILLOW:
+		case PRESET_BLACK_ALDER:
+		case PRESET_SCOTS_PINE:
+		case PRESET_WHITE_PINE:
+		case PRESET_HORSE_CHESTNUT:
+			sus = 0.85f;
+			break;
+		case PRESET_OAK:
+		case PRESET_WHITE_OAK:
+		case PRESET_NORWAY_SPRUCE:
+		case PRESET_SILVER_FIR:
+		case PRESET_HEMLOCK:
+		case PRESET_YEW:
+		case PRESET_HOLLY:
+		case PRESET_BOX:
+			sus = 0.15f;
+			break;
+		default:
+			break;
+	}
+	RandomPCG ir;
+	ir.seed(uint64_t(seed) * 0x9e3779b1u + 0x69636521u);
+	const bool birch = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH;
+	int band = ice_band;
+	if (band == 0) {
+		// A single tree: the species' odds.
+		const float u = ir.randf();
+		if (birch && height < 14.0f && u < 0.5f) {
+			band = 1;
+		} else if (u < 0.35f * sus) {
+			band = 2;
+		} else if (u < sus) {
+			band = 3;
+		}
+	} else if (band == 1 && !birch) {
+		band = 3;
+	}
+	if (band == 0) {
+		return;
+	}
+	const float base_y = nodes[0].start.y;
+	// The main stem from the root: the thickest axis.
+	LocalVector<int> stem;
+	{
+		int k = -1;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (!nodes[i].removed && nodes[i].parent == 0 && (k < 0 || nodes[i].radius > nodes[k].radius)) {
+				k = i;
+			}
+		}
+		for (; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+			stem.push_back(k);
+		}
+	}
+	if (stem.size() < 3) {
+		return;
+	}
+	// Breaks a node's axis at its end: the laterals there and the axis beyond fall.
+	auto snap = [&](int p_k) {
+		const int next = nodes[p_k].main;
+		for (int l = nodes[p_k].first_lateral; l >= 0; l = nodes[l].next_sibling) {
+			nodes[l].removed = true;
+		}
+		nodes[p_k].first_lateral = -1;
+		nodes[p_k].main = -1;
+		nodes[p_k].leafy = false;
+		if (next >= 0) {
+			nodes[next].removed = true;
+		}
+		broken_ends.insert(p_k);
+	};
+	auto propagate = [&]() {
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (!nodes[i].removed && nodes[i].parent > 0 && nodes[nodes[i].parent].removed) {
+				nodes[i].removed = true;
+			}
+		}
+	};
+	if (band == 2) {
+		// The top snapped where the ice-laden crown's lever beat the wood: at half to four fifths of the height. In a
+		// decurrent crown (maples, oaks, birch) the leader has long since forked, so every axis through that level
+		// breaks, each a little higher or lower (a flat cut reads as topping, not ice), and the thin ones with them.
+		const float hb = Math::lerp(0.5f, 0.8f, ir.randf()) * height;
+		float low = 1e9f;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			Node &n = nodes[i];
+			if (!n.removed && n.parent > 0 && nodes[n.parent].removed) {
+				n.removed = true;
+			}
+			if (n.removed) {
+				continue;
+			}
+			const float hi = hb * (1.0f + 0.14f * (float(hash_murmur3_one_32(uint32_t(i), uint32_t(seed) * 2654435761u + 0x746f7021u) & 0xffff) / 65535.0f - 0.5f));
+			// The first node on each path past its level (parents come first): nothing above it survives.
+			if (n.end().y - base_y >= hi) {
+				if (n.radius >= 0.015f) {
+					snap(i);
+					low = MIN(low, n.end().y - base_y);
+				} else {
+					n.removed = true;
+				}
+			}
+		}
+		propagate();
+		if (low > 1e8f) {
+			band = 3;
+		} else {
+			ice_damage = 2;
+			if (ice_storm_years >= 1.0f) {
+				// The stem answers with sprouts from dormant buds under the breaks, from the next summer, and one of
+				// them turns up to take the lead within a few years (Hauer et al. 2006; Irland 2000).
+				veteran_stem = stem[0];
+				float top = 0.0f;
+				for (const int c : stem) {
+					if (!nodes[c].removed) {
+						top = nodes[c].end().y - base_y;
+					}
+				}
+				const float hs = MIN(low, top);
+				const int clusters = 3 + int(ir.randf() * 3.0f);
+				const float az0 = ir.randf() * float(Math::TAU);
+				for (int c = 0; c < clusters; c++) {
+					const float h = hs - Math::lerp(0.2f, MIN(2.5f, 0.3f * hs), ir.randf());
+					const float az = az0 + float(Math::TAU) * (c + 0.3f * (ir.randf() - 0.5f)) / clusters;
+					veteran_features.push_back({ VET_EPICORMIC, h, az, 0.0f, 0.0f, Math::lerp(2.0f, 3.0f, ir.randf()) * MIN(1.0f + 0.5f * ice_storm_years, 3.0f) });
+				}
+			}
+		}
+	}
+	if (band == 3 || band == 2) {
+		// The upper crown's limbs broken back where the ice hung heaviest, a quarter to three fifths along, and the fine
+		// twigs stripped (Rhoads et al. 2002: crown loss in the canopy trees was 25-75%). A broken-top tree
+		// lost limbs too.
+		const float strip = MIN((band == 3 ? Math::lerp(0.5f, 0.85f, ir.randf()) : 0.3f) * (0.5f + sus), 0.95f);
+		LocalVector<int> chain;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			Node &n = nodes[i];
+			if (!n.removed && n.parent > 0 && nodes[n.parent].removed) {
+				n.removed = true; // Below a break made earlier in this pass (parents come before their children).
+			}
+			if (n.removed || n.dead || n.parent <= 0 || nodes[n.parent].main == i || n.start.y - base_y < 0.45f * height) {
+				continue;
+			}
+			if (n.radius >= 0.015f) {
+				if (ir.randf() >= strip) {
+					continue;
+				}
+				chain.clear();
+				float arc = 0.0f;
+				for (int k = i; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+					chain.push_back(k);
+					arc += nodes[k].length;
+				}
+				const float target = arc * Math::lerp(0.25f, 0.6f, ir.randf());
+				float run = 0.0f;
+				for (int c = 0; c + 1 < int(chain.size()); c++) {
+					run += nodes[chain[c]].length;
+					if (run >= target) {
+						if (nodes[chain[c]].radius >= 0.01f) {
+							snap(chain[c]);
+						}
+						break;
+					}
+				}
+			} else if (ir.randf() < 0.5f * strip) {
+				n.removed = true;
+			}
+		}
+		propagate();
+		if (ice_damage == 0) {
+			ice_damage = 3;
+		}
+	}
+	if (band == 1) {
+		// Bent over: the whole tree turned about its foot (Barr bend, above). Paper birch bent past about 40 degrees for
+		// more than a few days stays bent (Frost's birches; Irland 2000); the arch goes past horizontal in the worst, its
+		// crown to the ground, but no lower: theta comes down until the crown clears it.
+		float top = 0.0f;
+		for (const Node &n : nodes) {
+			if (!n.removed) {
+				top = MAX(top, n.end().y - base_y);
+			}
+		}
+		if (top < 2.0f) {
+			return;
+		}
+		const Vector3 base = nodes[0].start;
+		constexpr int STEPS = 64;
+		Vector2 curve[STEPS + 1];
+		float theta = Math::deg_to_rad(Math::lerp(55.0f, 115.0f, ir.randf()));
+		auto build = [&](float p_theta) {
+			curve[0] = Vector2();
+			for (int i = 0; i < STEPS; i++) {
+				const float u = (i + 0.5f) / STEPS;
+				const float psi = p_theta * (2.0f * u - u * u);
+				curve[i + 1] = curve[i] + Vector2(Math::sin(psi), Math::cos(psi)) * (top / STEPS);
+			}
+		};
+		auto bend = [&](const Vector3 &p_p, float p_theta) {
+			const Vector3 rel = p_p - base;
+			if (rel.y <= 0.0f) {
+				return p_p;
+			}
+			const float u = MIN(rel.y / top, 1.0f);
+			const float fi = u * STEPS;
+			const int i = MIN(int(fi), STEPS - 1);
+			const Vector2 c = curve[i].lerp(curve[i + 1], fi - i);
+			const float psi = p_theta * (2.0f * u - u * u);
+			const float cs = Math::cos(psi), sn = Math::sin(psi);
+			const float beyond = MAX(rel.y - top, 0.0f);
+			return base + Vector3(c.x + rel.x * cs + beyond * sn, c.y - rel.x * sn + beyond * cs, rel.z);
+		};
+		for (int tries = 0; tries < 8; tries++) {
+			build(theta);
+			float low = 1e9f;
+			for (const Node &n : nodes) {
+				if (!n.removed && n.end().y - base_y > 1.0f) {
+					low = MIN(low, bend(n.end(), theta).y - base_y);
+				}
+			}
+			if (low > 0.25f || theta < Math::deg_to_rad(35.0f)) {
+				break;
+			}
+			theta -= Math::deg_to_rad(10.0f);
+		}
+		build(theta);
+		for (Node &n : nodes) {
+			const Vector3 a = bend(n.start, theta), b = bend(n.end(), theta);
+			const Vector3 d = b - a;
+			const float len = d.length();
+			n.start = a;
+			if (len > 1e-6f) {
+				n.dir = d / len;
+				n.length = len;
+			}
+		}
+		ice_damage = 1;
+	}
+}
+
 void TreeGenerator::_apply_veteran() {
 	RandomPCG vr;
 	vr.seed(uint64_t(seed) * 2654435761u + 0x7e7e7eu);
@@ -21090,6 +21350,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// Storm damage (trees.md 5am): years since the storm; thrown and leaning trees point along mesh +X.
 		mesh->set_meta(SNAME("tree_windthrow_years"), windthrow_years);
 	}
+	if (ice_damage > 0) {
+		// Ice storm damage (trees.md 5be): years since the storm, and 1 bent (along mesh +X), 2 top broken, 3 limbs broken.
+		mesh->set_meta(SNAME("tree_ice_storm"), Vector2(ice_storm_years, float(ice_damage)));
+	}
 	if (far_thinning && !near_build && decay_class == 0 && !fallen && !fallen_branch && height >= 5.0f) {
 		const Ref<ArrayMesh> hull = _crown_hull(mesh);
 		if (hull.is_valid()) {
@@ -22937,6 +23201,18 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		look.set_preset(p_preset);
 		params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.85f, 1.25f, tv));
 	}
+	if (ice_band > 0) {
+		// An ice storm stand's variants (trees.md 5be): one storm, so every tree is the same years since it; the bent
+		// birches are the slender poles of the stand (Frost's birches: paper birch bends over under the ice, the big
+		// ones break instead; Lemon 1961), the broken ones its canopy trees.
+		ice_storm_years = ice_storm;
+		if (ice_band == 1) {
+			const float tv = Math::fmod(float(p_variant) * 0.618034f + 0.41f, 1.0f);
+			TreeGenerator look;
+			look.set_preset(p_preset);
+			params[PARAM_YEARS] = Math::round(look.params[PARAM_YEARS] * Math::lerp(0.3f, 0.5f, tv));
+		}
+	}
 	if (old_growth_band > 0) {
 		// An old-growth stand's ages (trees.md 5an; Uholka, Brandli and Commarmot 2013: 435 living trees a hectare,
 		// about ten of 80 cm and more, beeches to nearly 500 years; three-layered). The generator's beech thins
@@ -23688,6 +23964,9 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	windthrow_storm = p_from.windthrow_storm;
 	windthrow_direction = p_from.windthrow_direction;
 	windthrow_band = p_from.windthrow_band;
+	ice_storm_years = p_from.ice_storm_years;
+	ice_storm = p_from.ice_storm;
+	ice_band = p_from.ice_band;
 	flood_height = p_from.flood_height;
 	glaze_mm = p_from.glaze_mm;
 	flood_years = p_from.flood_years;
@@ -23891,7 +24170,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			(wet_band > 0 ? int64_t(2000000000000LL) * wet_band : 0) +
 			(beaver_band > 0 ? int64_t(20000000000000LL) * beaver_band : 0) +
 			(browse_band > 0 ? int64_t(100000000000000LL) * browse_band : 0) +
-			(nurse_band > 0 ? int64_t(400000000000000LL) * nurse_band : 0);
+			(nurse_band > 0 ? int64_t(400000000000000LL) * nurse_band : 0) +
+			(ice_band > 0 ? int64_t(2000000000000000LL) * ice_band + int64_t(20000000000000000LL) * MIN(int(ice_storm * 2.0f), 60) : 0);
 	// Placed trees are alive unless a beetle stand grows its kill (single trees keep beetle_years).
 	struct BeetleYearsRestore {
 		float &value;
@@ -23905,6 +24185,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	BeetleYearsRestore windthrow_years_restore{ windthrow_years, windthrow_years };
 	if (windthrow_band == 0) {
 		windthrow_years = -1.0f;
+	}
+	BeetleYearsRestore ice_storm_years_restore{ ice_storm_years, ice_storm_years };
+	if (ice_band == 0) {
+		ice_storm_years = -1.0f;
 	}
 	const Habitat &h = HABITATS[p_preset];
 	if (!mesh_cache.has(key) || mesh_cache[key].size() < MAX(p_variants, 1)) {
@@ -25392,6 +25676,47 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			}
 			browse_band = 0;
 		} break;
+		case STAND_ICE_STORM: {
+			lead = PRESET_SUGAR_MAPLE;
+			// Northern hardwoods after an ice storm (trees.md 5be; Irland 2000, Ice storms and forest impacts; Rhoads et
+			// al. 2002 for the January 1998 storm): sugar maple, beech, yellow and red maple and birch with their tops and
+			// upper limbs broken off, the crowns thinned to stubs and the floor deep in broken wood; the slender paper
+			// birch bent over in arches; hemlock, which sheds ice off its drooping sprays, nearly whole.
+			stand_forest_shade = 0.4f; // The broken canopy lets the light in.
+			const float years = MAX(ice_storm, 0.0f);
+			auto damaged = [&](Preset p, int p_band, float p_density, bool p_first, const char *p_label) {
+				ice_band = p_band;
+				Ref<PlantSpecies> sp = canopy(p, p_density, 0.0f, 0.0f, false, p_first);
+				ice_band = 0;
+				sp->set_name(String(preset_names[p]) + p_label);
+				return sp;
+			};
+			damaged(PRESET_SUGAR_MAPLE, 3, 1.0f, true, " (ice-stripped crown)");
+			damaged(PRESET_SUGAR_MAPLE, 2, 0.35f, false, " (ice-broken top)");
+			damaged(PRESET_AMERICAN_BEECH, 3, 0.4f, false, " (ice-stripped crown)");
+			damaged(PRESET_YELLOW_BIRCH, 2, 0.3f, false, " (ice-broken top)");
+			damaged(PRESET_RED_MAPLE, 3, 0.3f, false, " (ice-stripped crown)");
+			Ref<PlantSpecies> hemlock = canopy(PRESET_HEMLOCK, 0.3f, 0.0f, 0.0f, false, false);
+			hemlock->set_name("Hemlock (ice storm)");
+			// Paper birch poles bent over, where the canopy's gaps let them grow.
+			ice_band = 1;
+			Ref<PlantSpecies> bent = _stand_species(PRESET_PAPER_BIRCH, true, p_variants, FORM_STAND);
+			ice_band = 0;
+			bent->set_name("Paper Birch (bent by ice)");
+			bent->set_density(0.45f);
+			bent->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.7f));
+			bent->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+			list.push_back(bent);
+			// The broken limbs and tops on the floor.
+			Ref<PlantSpecies> limbs = _stand_species(PRESET_SUGAR_MAPLE, true, p_variants, FORM_BRANCH);
+			limbs->set_name("Sugar Maple (ice-broken limbs)");
+			limbs->set_density(1.2f);
+			list.push_back(limbs);
+			for (int i = 0; i < list.size(); i++) {
+				Ref<PlantSpecies> sp = list[i];
+				sp->set_meta("stand_disturbance", Vector2(7.0f, years)); // WorldStand DISTURBANCE_ICE_STORM.
+			}
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -26326,8 +26651,10 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	}
 	plate.on = false;
 	hanger_bases.clear();
+	ice_damage = 0;
 	if (decay_class == 0 && !fallen && !fallen_branch && envelope.size == Vector3()) {
 		_break_limbs();
+		_ice_storm_damage();
 	}
 	beaver_axis.clear();
 	if (beaver_now == BEAVER_GNAWED && !nodes.is_empty()) {
@@ -26573,6 +26900,12 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_windthrow_years"), &TreeGenerator::get_windthrow_years);
 	ClassDB::bind_method(D_METHOD("set_far_thinning", "enabled"), &TreeGenerator::set_far_thinning);
 	ClassDB::bind_method(D_METHOD("get_far_thinning"), &TreeGenerator::get_far_thinning);
+	ClassDB::bind_method(D_METHOD("set_ice_storm_years", "years"), &TreeGenerator::set_ice_storm_years);
+	ClassDB::bind_method(D_METHOD("get_ice_storm_years"), &TreeGenerator::get_ice_storm_years);
+	ClassDB::bind_method(D_METHOD("set_ice_storm", "years"), &TreeGenerator::set_ice_storm);
+	ClassDB::bind_method(D_METHOD("set_ice_storm_damage", "kind"), &TreeGenerator::set_ice_storm_damage);
+	ClassDB::bind_method(D_METHOD("get_ice_storm_damage"), &TreeGenerator::get_ice_storm_damage);
+	ClassDB::bind_method(D_METHOD("get_ice_storm"), &TreeGenerator::get_ice_storm);
 	ClassDB::bind_method(D_METHOD("set_windthrow_storm", "years"), &TreeGenerator::set_windthrow_storm);
 	ClassDB::bind_method(D_METHOD("get_windthrow_storm"), &TreeGenerator::get_windthrow_storm);
 	ClassDB::bind_method(D_METHOD("set_windthrow_direction", "direction"), &TreeGenerator::set_windthrow_direction);
@@ -26755,6 +27088,9 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_thinning"), "set_far_thinning", "get_far_thinning");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "windthrow_years", PROPERTY_HINT_RANGE, "-1,60,0.1,suffix:yr"), "set_windthrow_years", "get_windthrow_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "windthrow_storm", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:yr"), "set_windthrow_storm", "get_windthrow_storm");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ice_storm_years", PROPERTY_HINT_RANGE, "-1,60,0.1,suffix:yr"), "set_ice_storm_years", "get_ice_storm_years");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ice_storm", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:yr"), "set_ice_storm", "get_ice_storm");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "ice_storm_damage", PROPERTY_HINT_ENUM, "Species Odds,Bent,Top Broken,Limbs Broken"), "set_ice_storm_damage", "get_ice_storm_damage");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "windthrow_direction"), "set_windthrow_direction", "get_windthrow_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cork_stripped_years", PROPERTY_HINT_RANGE, "-1,30,0.01"), "set_cork_stripped_years", "get_cork_stripped_years");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_wounds", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_bark_wounds", "get_bark_wounds");
@@ -26908,6 +27244,7 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_FLOODPLAIN_WILLOW);
 	BIND_ENUM_CONSTANT(STAND_BEAVER_POND);
 	BIND_ENUM_CONSTANT(STAND_DEER_WOOD);
+	BIND_ENUM_CONSTANT(STAND_ICE_STORM);
 	BIND_ENUM_CONSTANT(SUCCESSION_NONE);
 	BIND_ENUM_CONSTANT(SUCCESSION_FIRE);
 	BIND_ENUM_CONSTANT(SUCCESSION_WIND);

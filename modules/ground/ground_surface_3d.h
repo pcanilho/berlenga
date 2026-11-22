@@ -165,6 +165,11 @@ private:
 	bool trail_pugging = true; // round 21.2: hooves pock wet trails
 	uint32_t pug_ticks = 0;
 	int trail_pocks = 0;
+	// Wallows (round 22.3): hashed sites on wet trails that animals roll out into muddy hollows.
+	bool trail_wallows = true;
+	HashSet<Vector2i> wallow_sites;
+	int wallow_visits = 0;
+	void _trail_wallow_update(float p_delta);
 	void _trail_pug_update(float p_delta);
 	bool _wear_any() const { return !wear_cells.is_empty() || trails_on; }
 	// Hidden stones and roots (docs/ideas/mud.md, round 14.3): what lies in a mud layer, per 2 m cell, made on demand
@@ -1018,6 +1023,10 @@ public:
 	void set_trail_pugging(bool p_enabled) { trail_pugging = p_enabled; }
 	bool is_trail_pugging() const { return trail_pugging; }
 	int get_trail_pock_count() const { return trail_pocks; } // hoof prints pressed into wet trails since start
+	void set_trail_wallows(bool p_enabled) { trail_wallows = p_enabled; }
+	bool is_trail_wallows() const { return trail_wallows; }
+	int get_wallow_count() const { return wallow_sites.size(); } // wallow sites rolled out since start
+	int get_wallow_visits() const { return wallow_visits; }
 	float get_stone_scour_volume() const { return stone_scour_m3; } // m3 dug round loose stones by currents
 	float get_stone_silt_lifted() const { return stone_plume_kg; } // kg sent into the water by stones
 	bool is_tracked_mud() const { return tracked_mud; }

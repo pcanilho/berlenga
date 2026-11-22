@@ -1046,9 +1046,13 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   (a few kelvin: buoyancy and the shimmer, no glow, no fire light) lifts it. Flow carries the rest: the column leans
   and drifts in the weather's wind (its pull weakened to 0.25/s so the column keeps its own updraft), the dust swirls
   up the wall and fans out on top.
+- Shared wind (Paulo's connectivity rule): each devil is a vortex in WeatherMap3D (add_vortex / set_vortex /
+  remove_vortex, docs/ideas/world-contracts.md), swirl as it spins up and down and an updraft of 0.3 of it (Tratt
+  et al. 2003), so wind_at and the shaders' weather_wind carry it: leaves, grass, dust, smoke and other gases feel it.
 - Flow runs one 1/60 s step per frame (maxStepsPerSimulate 1): below 60 fps it runs slower than the game. The bench
   renders with --fixed-fps 60 so a second of devil is a second of gas.
-- Checks: docs/bench/dust_devils --test (headless: the gate, drift, spin-up, the weather's spawns under the cap,
-  rain stopping new ones and killing the old); the view renders one devil (--raster, --pair, --flow=prop:value).
+- Checks: docs/bench/dust_devils --test (headless: the gate, drift, spin-up, the vortex in the shared wind (swirl
+  on the ring, updraft on the axis, none 8 R out, gone with the devil), the weather's spawns under the cap, rain
+  stopping new ones and killing the old); the view renders one devil (--raster, --pair, --flow=prop:value).
 - Not yet: the swirl mark left on the ripples, GroundStreamers3D taking the grains at the foot, the PT cost on the
   PC queue.
