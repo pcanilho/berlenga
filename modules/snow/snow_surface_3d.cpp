@@ -455,7 +455,10 @@ vec2 snow_ripple_grad(vec2 p) {
 void vertex() {
 	vec2 p = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
 	vec2 duv = (p - deform_rect.xy) / max(deform_rect.zw, vec2(1e-4));
-	float e = (deform_rect.z > 0.0 && snow_inside(duv)) ? max(detail_step * 2.0, vertex_step) : coarse_step;
+	// The difference step eases from the field's fine one to the coarse one over the field's outer tenth, so the
+	// normals (and the light) carry no seam at the deformation field's edge.
+	float edge = max(abs(duv.x - 0.5), abs(duv.y - 0.5)) * 2.0;
+	float e = deform_rect.z > 0.0 ? mix(max(detail_step * 2.0, vertex_step), coarse_step, smoothstep(0.8, 1.0, edge)) : coarse_step;
 	vec3 hd = snow_height_diff(p, e, true);
 	float h = hd.x;
 	float hx = hd.y;
@@ -1226,9 +1229,10 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 		float over; // height over the critical height, 0..
 		float fail; // m under the top: the failing layer's bottom
 		int foot; // texels from the top to the face's foot
+		float block_c; // Pa: the cohesion of the snow that comes off
 	};
 	LocalVector<Cand> cands;
-	HashMap<int64_t, Vector2> strength; // per cover cell: (critical height, failing bottom)
+	HashMap<int64_t, Vector3> strength; // per cover cell: (critical height, failing bottom, the block's cohesion)
 	const float cell = MAX(cover->get_extent() / MAX(cover->get_resolution(), 1), 0.05f);
 	const int reach = MIN(int(Math::ceil(1.5f / t)), 128); // the deepest wall looked for: 1.5 m of drop
 	for (int tz = 0; tz < nt; tz++) {
@@ -1282,13 +1286,14 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 						}
 						const Vector3 at((field.origin.x + x + 0.5f) * t, 0.0f, (field.origin.y + z + 0.5f) * t);
 						const int64_t key = (int64_t(Math::floor(at.x / cell)) << 32) ^ int64_t(uint32_t(int(Math::floor(at.z / cell))));
-						Vector2 sv;
-						if (const Vector2 *c = strength.getptr(key)) {
+						Vector3 sv;
+						if (const Vector3 *c = strength.getptr(key)) {
 							sv = *c;
 						} else {
 							float bottom = 0.0f;
-							const float hc_cell = cover->cut_critical_height(at, bottom);
-							sv = Vector2(hc_cell, bottom);
+							float block_c = 0.0f;
+							const float hc_cell = cover->cut_critical_height(at, bottom, &block_c);
+							sv = Vector3(hc_cell, bottom, block_c);
 							strength.insert(key, sv);
 						}
 						// A fin (a drop behind as well as ahead: a sliver left between two fallen blocks) has no wall to lean
@@ -1298,7 +1303,7 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 						if (height <= hc) {
 							continue;
 						}
-						cands.push_back({ i, uint8_t(d), height, height / MAX(hc, 0.01f) - 1.0f, float(sv.y), foot_k });
+						cands.push_back({ i, uint8_t(d), height, height / MAX(hc, 0.01f) - 1.0f, float(sv.y), foot_k, float(sv.z) });
 						crumble_mark[i] = uint8_t(d + 1);
 						break;
 					}
@@ -1361,7 +1366,7 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 					break;
 				}
 				const int ik = zk * n + xk;
-				const float plane = base + (k + 0.5f) * t * block_tan + (vnoise(xk, zk, rough_cell) - 0.5f) * 0.04f;
+				const float plane = base + (k + 0.5f) * t * block_tan + (vnoise(xk, zk, rough_cell) - 0.5f) * 0.05f + (vnoise(xk, zk, rough_cell * 3) - 0.5f) * 0.08f;
 				const float cut = h(ik) - plane;
 				if (cut <= 0.0f) {
 					break;
@@ -1437,14 +1442,13 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 			fell++;
 		}
 		// The block breaks up as it lands: part of it lies on the toe as lumps (SnowClumps3D's debris), the larger the
-		// stronger the snow it broke from (cohesion from the cut's critical height: c = Hc rho g / 2.67).
+		// stronger the snow it broke from (the cohesion of the layers that came off).
 		if (clumps_node && block_volume > 0.0f) {
 			const Vector3 at((field.origin.x + x0 + DX[d] * toe_reach / t + 0.5f) * t, 0.0f, (field.origin.y + z0 + DZ[d] * toe_reach / t + 0.5f) * t);
 			// Lumps land in the rut only: below the top edge the block broke from (in world height).
 			const int behind = int(0.6f / t); // past the wedge, on the untouched top
 			const float field_top = _surface_at((field.origin.x + x0 - DX[d] * behind + 0.5f) * t, (field.origin.y + z0 - DZ[d] * behind + 0.5f) * t, cover);
-			const float hc = cd.height / (cd.over + 1.0f);
-			const float coh = hc * cover->get_density_at(at) * 9.81f / 2.67f;
+			const float coh = cd.block_c;
 			const float scale = CLAMP(0.8f + Math::log(MAX(coh, 1.0f) / 100.0f) * 0.4343f, 0.8f, 4.0f);
 			// Cold new powder mostly falls to dust; settled, sintered snow comes down as blocks.
 			const float share = 0.04f + 0.26f * CLAMP((scale - 0.8f) / 2.0f, 0.0f, 1.0f);

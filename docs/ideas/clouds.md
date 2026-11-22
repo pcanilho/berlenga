@@ -918,3 +918,6 @@ downwind as a fan with billowed edges; raster and PT match.
   full strength, a grey veil over a sunset sky; with the veil off over the sky raster matches PT (5th/50th/95th
   percentile 21/31/49 against 22/30/47). The game drives the light from SkyClock (reddened, dimmed), as the haboob
   view now does. PT has no froxels over the sky: it lacks that first 1.5 km of haze (small at a clear sky's 40 km).
+- Bench fix: the shafts view takes its sun from SkyClock under 10 degrees up (or with --sky-clock), as the game
+  does; the haboob view uses the same helper (_clock_sun). The sunset altocumulus now read peach over a violet sky,
+  raster and PT within a few levels (PT a little more contrast, without the near haze over the sky).

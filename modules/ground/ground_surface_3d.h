@@ -584,6 +584,8 @@ private:
 	LocalVector<float> ripple_sand_depth; // the generator's interdune floors over ripple_sand_rect (0..1, -1 none)
 	LocalVector<float> ripple_sand_share; // the ground's sand share there
 	LocalVector<float> ripple_sand_blown; // and the share the wind moves (dry, bare: granule ripples form there)
+	LocalVector<float> ripple_sand_scour; // and the share dust devils swept (their tracks' tone)
+	bool ripple_sand_scoured = false;
 	static constexpr int RIPPLE_DEPTH_N = 128;
 	static constexpr float RIPPLE_DEPTH_SIZE = 1024.0f; // m
 	LocalVector<float> ripple_far_depth; // the generator's interdune floors, RIPPLE_DEPTH_N squared over ripple_far_depth_rect

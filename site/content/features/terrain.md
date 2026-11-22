@@ -137,7 +137,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 ## Ground
 
-- **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). Rock faces weather by aspect, with lichen, moss and seep streaks on the shaded sides (`tm_face_weathering`, `tm_latitude`).
+- **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). Rock faces weather by aspect, with lichen rosettes in colonies, moss on shaded ledges and seep stripes down gullies (`tm_face_weathering`, `tm_latitude`).
 
   ![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach, raster vs path traced](media/terrain-ground.jpg)
 

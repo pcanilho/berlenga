@@ -96,6 +96,9 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "crop_ground_view", "vec4" },
 		{ "grass_graze_map", "sampler2D" }, // GrassField3D deer lawns: R grazed down, G torn by rooting.
 		{ "grass_graze_rect", "vec4" },
+		{ "grass_mow_map", "sampler2D" }, // GrassField3D hay meadows: R the meadow (index + 1).
+		{ "grass_mow_state", "sampler2D" }, // A texel a meadow: r days since mown, g the rows' angle.
+		{ "grass_mow_rect", "vec4" },
 		{ "grass_trample_map", "sampler2D" },
 		{ "grass_trample_rect", "vec4" },
 		// PhysXFireSpread3D's plant state (vegetation_fire.h); set only while a fire burns.
