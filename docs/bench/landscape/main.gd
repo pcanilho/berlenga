@@ -455,6 +455,56 @@ func _ready() -> void:
 		_log("river pick: %d reaches" % n_ok)
 		get_tree().quit(0)
 		return
+	if args.has("bank-pick"):
+		# --bank-pick: river cut banks fit for a close turf/roots shot (a 0.8-3 m rise within 2.5 m of the water's
+		# edge), each with a low oblique camera along the bank over the water; prints the steepest, then quits.
+		for _i in 30:
+			await get_tree().physics_frame
+		var best: Array = []
+		for k in rivers.size():
+			var cv: Curve3D = rivers[k].curve
+			if cv == null:
+				continue
+			for j in range(0, cv.point_count - 1, 3):
+				var p: Vector3 = rivers[k].global_transform * cv.get_point_position(j)
+				var d: float = rivers[k].sample_depth(p)
+				if d < 0.15:
+					continue
+				var t: Vector3 = (rivers[k].global_transform * cv.get_point_position(j + 1)) - p
+				t.y = 0.0
+				if t.length() < 0.01:
+					continue
+				t = t.normalized()
+				var surf := gen.get_height(p) + d
+				for sg in [-1.0, 1.0]:
+					var side: Vector3 = Vector3(-t.z, 0, t.x) * float(sg)
+					var e := Vector3.INF
+					for st in 40:
+						var q: Vector3 = p + side * (0.5 * st)
+						if gen.get_height(q) > surf:
+							e = q
+							break
+					if e == Vector3.INF:
+						continue
+					var rise := gen.get_height(e + side * 2.5) - surf
+					if rise < 0.8 or rise > 3.0:
+						continue
+					best.append([rise, e, side, t, surf])
+		best.sort_custom(func(a, b): return a[0] > b[0])
+		for i in mini(best.size(), 8):
+			var r: Array = best[i]
+			var e: Vector3 = r[1]
+			var cam: Vector3 = e - r[2] * 1.5 - r[3] * 7.0
+			cam.y = r[4] + 0.7
+			var lk: Vector3 = e + r[2] * 0.6 + r[3] * 2.0
+			lk.y = r[4] + 0.5 * r[0]
+			# y as height above the ground (negative, the --cam/--look convention), so it reads right at any altitude.
+			var ch := -maxf(cam.y - gen.get_height(cam), 0.05)
+			var lh := -maxf(lk.y - gen.get_height(lk), 0.05)
+			_log("bank pick: rise %.2f cam=%.1f,%.2f,%.1f look=%.1f,%.2f,%.1f" % [r[0], cam.x, ch, cam.z, lk.x, lh, lk.z])
+		_log("bank pick: %d banks" % best.size())
+		get_tree().quit(0)
+		return
 	if args.has("beaver-dam") and ClassDB.class_exists("WorldBeaverDam3D"):
 		# --beaver-dam[=Y]: a WorldBeaverDam3D (world-links 1f60b5c4) at --dam-at=x,z (else the --look point), pond
 		# --pond-radius (30) m; Y > 0 breaches it Y years ago, so the stand turns the pond to a beaver meadow of
