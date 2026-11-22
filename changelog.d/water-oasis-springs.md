@@ -1,2 +1,0 @@
-### Added
-- `OasisSprings3D`: a still pool at each desert spring (`springs`, x, level, z and discharge in L/s, or `spring_source` with `get_springs()`), sized by its water balance (area = discharge / (evaporation + seepage), evaporation from the climate by Hargreaves or set) with a noise outline unique to each spring, and sand boils at its vents whose floors heave with the flow while the surface above lifts and sheds rings.

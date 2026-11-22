@@ -960,6 +960,8 @@ func _run_roof_tests() -> void:
 	snow.drift_enabled = false
 	snow.wind_transport_enabled = false
 	var sb: SnowBodies3D = snow.get_bodies()
+	sb.roof_slab_bodies = false # follow-up 50's thrown bank; the falling pieces and the dams are checked below
+	sb.ice_dams = false
 	var metal := _roof_face(Vector3(-14, 5, -12), 35.0, "metal", 0.0)
 	var shingle := _roof_face(Vector3(-14, 5, 12), 35.0, "shingle", 0.0)
 	var warm := _roof_face(Vector3(10, 5, 12), 35.0, "shingle", 25.0)
@@ -999,6 +1001,86 @@ func _run_roof_tests() -> void:
 	weather.rain_rate = 0.0
 	weather.cloud_cover = 0.0
 	weather.snap_to_settings()
+	await _run_roof_body_tests()
+
+
+# Roof slabs that fall as bodies, and ice dams (follow-up 52).
+func _run_roof_body_tests() -> void:
+	print("Falling roof slabs and ice dams (follow-up 52):")
+	await _setup("flat", 64.0, 64, -6.0)
+	snow.drift_enabled = false
+	snow.wind_transport_enabled = false
+	var floor_body := StaticBody3D.new()
+	var floor_shape := CollisionShape3D.new()
+	floor_shape.shape = WorldBoundaryShape3D.new()
+	floor_body.add_child(floor_shape)
+	add_child(floor_body)
+	var sb: SnowBodies3D = snow.get_bodies()
+	var metal := _roof_face(Vector3(0, 5, 0), 35.0, "metal", 0.0)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	sb.step(1.0)
+	var land := Vector3(2.5, 0, 0)
+	var before := 0.0
+	for x in range(0, 10):
+		before = maxf(before, snow.get_depth_at(land + Vector3(x, 0, 0)))
+	sb.set_body_depth(metal, 0.8, 250.0)
+	var area := sb.get_body_top_area(metal)
+	var mass := 0.8 * 250.0 * area
+	var landed0 := sb.get_roof_landed()
+	sb.step(1.0)
+	var falling := sb.get_falling_chunks()
+	var frames := 0
+	while sb.get_falling_chunks() > 0 and frames < 1200:
+		await get_tree().physics_frame
+		frames += 1
+	var landed := sb.get_roof_landed() - landed0
+	var after := 0.0
+	var reach := 0.0
+	for x in range(0, 10):
+		var d := snow.get_depth_at(land + Vector3(x, 0, 0))
+		if d > after:
+			after = d
+			reach = x
+	print("  80 cm off a 35 degree metal roof: %d pieces leave the eave, %d with the breaks, all down after %.1f s; %.0f of %.0f kg in the cover, the bank %.2f m %.0f m past the eave" % [falling, sb.get_chunks_spawned(), frames / 60.0, landed, mass, after, reach])
+	_check("the slab leaves as pieces that break and come to rest as snow, its mass kept", falling >= 4 and sb.get_chunks_spawned() > falling and sb.get_falling_chunks() == 0 and absf(landed - mass) < 0.02 * mass, "%d pieces, %d after breaking, %.0f of %.0f kg" % [falling, sb.get_chunks_spawned(), landed, mass])
+	_check("where the pieces stop is a bank past the eave", after > before + 0.1, "%.2f m against %.2f m" % [after, before])
+	# Ice dams: a warm metal roof in the cold. Its bed melts, the water freezes at the eave, and the dam holds the
+	# snow that would slide off without it.
+	var held := []
+	var dams := []
+	for dam_on: bool in [true, false]:
+		await _setup("flat", 64.0, 64, -8.0)
+		snow.drift_enabled = false
+		snow.wind_transport_enabled = false
+		var sb2: SnowBodies3D = snow.get_bodies()
+		sb2.roof_slab_bodies = false
+		sb2.ice_dams = dam_on
+		var warm := _roof_face(Vector3(0, 5, 0), 35.0, "metal", 30.0)
+		await get_tree().physics_frame
+		await get_tree().physics_frame
+		weather.wind_speed = 1.0
+		weather.rain_rate = 2.0
+		weather.cloud_cover = 1.0
+		weather.temperature = -8.0
+		weather.snap_to_settings()
+		weather.advance(1.0)
+		var most := 0.0
+		for h in 36:
+			snow.advance(3600.0)
+			for k in 6:
+				sb2.step(600.0)
+			most = maxf(most, sb2.get_body_depth(warm))
+			if OS.get_cmdline_user_args().has("--verbose"):
+				print("    dams %s h%d depth %.2f dam %.3f slides %d" % [dam_on, h, sb2.get_body_depth(warm), sb2.get_ice_dam_height(warm), sb2.get_roof_slides()])
+		held.append(most)
+		dams.append(sb2.get_ice_dam_height(warm))
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.0
+	weather.snap_to_settings()
+	print("  a warm metal roof (30 W/m2) in 36 h of snow at -8 C: dam %.1f cm, held up to %.2f m; without dams %.2f m" % [dams[0] * 100.0, held[0], held[1]])
+	_check("melt water from a warm roof freezes into an ice dam at the eave", float(dams[0]) > 0.02 and float(dams[1]) == 0.0, "%.1f cm" % (float(dams[0]) * 100.0))
+	_check("the dam holds the snow a warm roof would shed", float(held[0]) > 1.5 * float(held[1]), "%.2f m with the dam, %.2f m without" % [held[0], held[1]])
 
 
 # Drift take-back (follow-up 48): a lone drift in a gale. The wind arrives carrying a full load off the open snow
@@ -3735,7 +3817,7 @@ func _build_roofs(cam: Camera3D) -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 60.0
 	sun.rotation_degrees = Vector3(-24.0, 200.0, 0.0)
-	_add_terrain(64.0, 128, Color(0.33, 0.31, 0.27), 6.0)
+	_add_terrain(64.0, 128, Color(0.33, 0.31, 0.27), 6.0, true) # colliding: the falling pieces land on it
 	var wall_mat := StandardMaterial3D.new()
 	wall_mat.albedo_color = Color(0.42, 0.3, 0.22)
 	var walls := MeshInstance3D.new()
@@ -3745,6 +3827,13 @@ func _build_roofs(cam: Camera3D) -> void:
 	walls.mesh = wb
 	walls.position = Vector3(0, 1.5, 0)
 	add_child(walls)
+	var wall_body := StaticBody3D.new()
+	var wall_shape := CollisionShape3D.new()
+	wall_shape.shape = BoxShape3D.new()
+	(wall_shape.shape as BoxShape3D).size = wb.size
+	wall_body.add_child(wall_shape)
+	wall_body.position = walls.position
+	add_child(wall_body)
 	var pitch := 35.0
 	var half := 3.0 / cos(deg_to_rad(pitch)) # the run of each face, eave to ridge
 	var roofs: Array[Node3D] = []
@@ -3797,16 +3886,22 @@ func _build_roofs(cam: Camera3D) -> void:
 	weather.cloud_cover = 0.2
 	weather.snap_to_settings()
 	weather.advance(1.0)
-	print("roofs: %d slides, %.0f kg landed; metal %.2f m, shingles %.2f m" % [sb.get_roof_slides(), sb.get_roof_landed(), sb.get_body_depth(roofs[0]), sb.get_body_depth(roofs[1])])
 	surface = SnowSurface3D.new()
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
 	add_child(surface)
+	# The pieces leave the eave as the shot starts: --fall=S seconds after the slide (0.45: in the air; 10: landed).
+	var fall_s := 0.45
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--fall="):
+			fall_s = float(a.substr(7))
+	for i in int(fall_s * 60.0):
+		await get_tree().physics_frame
+	print("roofs: %d slides, %d pieces in the air, %.0f kg landed; metal %.2f m, shingles %.2f m, ice dam %.1f cm" % [sb.get_roof_slides(), sb.get_falling_chunks(), sb.get_roof_landed(), sb.get_body_depth(roofs[0]), sb.get_body_depth(roofs[1]), sb.get_ice_dam_height(roofs[1]) * 100.0])
 	cam.position = Vector3(1.5, 11.0, 15.0) # high off the gable end: both faces and both eaves in view
 	cam.look_at(Vector3(1.0, 2.0, 0.0))
 	cam.fov = 50.0
-	for i in 8:
-		await get_tree().physics_frame
+	PhysicsServer3D.set_active(false) # the pieces hold still while the frame converges (raster and path traced alike)
 	await _save_frame("")
 	get_tree().quit()
 

@@ -1,1 +1,0 @@
-- Water: foam holes carved by every nearby cell with wandering, lobed edges; no more straight-edged seams or round holes in close views.

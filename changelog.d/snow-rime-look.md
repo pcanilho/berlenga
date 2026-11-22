@@ -1,1 +1,0 @@
-- Rime feathers are barbed, softly shaded vanes, thin twigs grow full rime whatever their slant, and wide faces catch rime from their own roughness.

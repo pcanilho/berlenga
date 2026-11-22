@@ -1,3 +1,0 @@
-### Added
-- `PhysXSeaCaveWater3D`: the sea inside sea caves, from `CaveNetwork3D`'s surge (level, width and current along the passage) with the river's surface, from the arch in. Short waves come in at the mouth and reflect off the walls and the back of the cave (Water Surface Wavelets, Jeschke et al. 2018), as real geometry; steep faces break white. `CaveNetwork3D.sea_water` (on) makes one.
-- `PhysXWaterSurface3D` water clipping: nodes in the `water_clippers` group give capsules where the sea cuts itself out and cross-fades to another surface, in raster and the path tracer. `CaveNetwork3D.get_water_clip_capsules()` cuts the sea along sea-cave passages; `get_sea_cave_water()` gains `along`, `covered_from` and `wave_rms`.

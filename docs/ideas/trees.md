@@ -3930,7 +3930,11 @@ Cottrell 2004; wild cherry: Russell 2003), Rackham 2006, Wood Handbook (green MO
 - In stands: hornbeam under the oaks of STAND_OAK_MIXED (0.4) and wild cherry among them (0.2); black poplar on the
   floodplain (0.35, follows the flow); aspen clones with the birch in the taiga's burns. Bench: stands --variants=4
   checks neighbours within 4 m share a clone.
-- Next: chestnut's spiral-twisted furrows, a chestnut coppice stand, aspen in make_woodland.
+- Chestnut spiral bark: the furrows twist round the bole with age, either hand, from 30-50 years
+  to 20-30 degrees on old trees (Mitchell 1974, A Field Guide to the Trees of Britain and Northern Europe). The bark
+  tile's u slides by height x tan(angle) / tile width (TreeGenerator `tube_spiral`, 30 x smoothstep(25, 110 years)), so
+  relief, texture and lichen all run up as helices; 13 degrees on the 60-year preset.
+- Next: a chestnut coppice stand, aspen in make_woodland.
 - Later: WorldWater.high_water_at (1276b430: peak height, days since, flow xz) can drive flood_height and
   flood_years (5av) instead of hand values.
 

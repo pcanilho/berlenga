@@ -57,6 +57,16 @@ void WeatherMap3D::_smoke_step(double p_weather_dt) {
 	}
 	const float cs = _cell_size();
 	const float dt = float(p_weather_dt);
+	// What a cold pool holds under its lid (smoke_in_pools) is not in the layer aloft: taken out for the layer's
+	// transport and put back after.
+	const bool pools = smoke_in_pools && cell_smoke_low.size() == n * n;
+	if (pools) {
+		float *t = cell_smoke.ptrw();
+		const float *lo = cell_smoke_low.ptr();
+		for (int i = 0; i < n * n; i++) {
+			t[i] = MAX(t[i] - lo[i], 0.0f);
+		}
+	}
 	// Carried by the wind in the layer (the log law up to about 1 km, as the clouds).
 	const float z0 = MAX(roughness_length, 1e-5f);
 	const Vector2 u = cur_wind_direction * cur_wind_speed * (Math::log(1000.0f / z0) / Math::log(10.0f / z0));
@@ -110,6 +120,16 @@ void WeatherMap3D::_smoke_step(double p_weather_dt) {
 			}
 		}
 	}
+	if (pools) {
+		_smoke_pool_step(dt); // may clear the field once nothing is held
+	}
+	if (pools && cell_smoke_low.size() == n * n) {
+		float *t = cell_smoke.ptrw();
+		const float *lo = cell_smoke_low.ptr();
+		for (int i = 0; i < n * n; i++) {
+			t[i] += lo[i];
+		}
+	}
 	// The fires' smoke, kg per second of their own (real) time: over the real time this step stands for.
 	const WorldFire *wf = WorldContracts::fire();
 	if (smoke_haze && (wf->has_provider() || wf->get_script_instance())) {
@@ -142,11 +162,21 @@ void WeatherMap3D::add_smoke(Vector3 p_position, float p_kg) {
 	if (x < 0 || z < 0 || x >= n || z >= n) {
 		return;
 	}
-	cell_smoke.write[z * n + x] += p_kg * 1000.0f / (cs * cs);
+	const float g = p_kg * 1000.0f / (cs * cs);
+	cell_smoke.write[z * n + x] += g;
+	// Under a cold pool the smoke stays under its lid.
+	if (smoke_in_pools && cold_pools && cell_pool.size() == n * n) {
+		if (cell_smoke_low.size() != n * n) {
+			cell_smoke_low.resize(n * n);
+			cell_smoke_low.fill(0.0f);
+		}
+		cell_smoke_low.write[z * n + x] += g * _pool_share(z * n + x);
+	}
 }
 
 void WeatherMap3D::clear_smoke() {
 	cell_smoke.fill(0.0f);
+	cell_smoke_low.clear();
 	applied_aerosol = aerosol_haze ? 0.0f : applied_aerosol;
 }
 
@@ -161,6 +191,95 @@ void WeatherMap3D::_smoke_shift(Vector2i p_delta) {
 			const int sx = x + p_delta.x, sz = z + p_delta.y;
 			cell_smoke.write[z * n + x] = (sx >= 0 && sz >= 0 && sx < n && sz < n) ? old[sz * n + sx] : 0.0f;
 		}
+	}
+	if (cell_smoke_low.size() == n * n) {
+		Vector<float> lo = cell_smoke_low;
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int sx = x + p_delta.x, sz = z + p_delta.y;
+				cell_smoke_low.write[z * n + x] = (sx >= 0 && sz >= 0 && sx < n && sz < n) ? lo[sz * n + sx] : 0.0f;
+			}
+		}
+	}
+}
+
+// Smoke in cold pools (docs/ideas/world-links.md, "Smoke in cold pools"): a night inversion caps the mixing, so smoke
+// let out under it stays within the pool's depth instead of the 2 km day layer, tens of times denser at the ground,
+// drains down the slopes into the valleys with the drainage wind and fills the hollows, and mixes up into the layer
+// as the pool breaks up after sunrise (Lavdas 1996; Achtemeier 2005). The pool's share of a cell: its deficit against
+// a few degrees.
+float WeatherMap3D::_pool_share(int p_cell) const {
+	if (cell_pool.size() != resolution * resolution) {
+		return 0.0f;
+	}
+	// The morning's convective layer grows up from the warming ground through the pool and mixes it out (the
+	// fumigation, an hour or two after sunrise; Whiteman 2000) before the pool's own deficit is gone.
+	const float day = sun_known ? Math::smoothstep(0.1f, 0.4f, cur_sun_sine) : 0.0f;
+	return Math::smoothstep(0.5f, 3.0f, cell_pool[p_cell]) * (1.0f - day);
+}
+
+void WeatherMap3D::_smoke_pool_step(float p_dt) {
+	const int n = resolution;
+	float *lo = cell_smoke_low.ptrw();
+	float *up = cell_smoke.ptrw(); // the layer aloft during the step
+	const float keep = Math::exp(-p_dt / MAX(smoke_lifetime, 60.0f));
+	const float mix = 1.0f - Math::exp(-p_dt / 1800.0f);
+	bool any = false;
+	for (int i = 0; i < n * n; i++) {
+		lo[i] *= keep;
+		// Released into the layer as the lid goes (half an hour), at the rate the pool's share has fallen below full.
+		const float out = lo[i] * (1.0f - _pool_share(i)) * mix;
+		lo[i] -= out;
+		up[i] += out;
+		any = any || lo[i] > 1e-6f;
+	}
+	if (!any) {
+		cell_smoke_low.clear();
+		return;
+	}
+	// Down the slopes with the drainage wind (its mean through the jet, about 0.6 of the peak), semi-Lagrangian, each
+	// cell traced back along its own flow.
+	if (cell_drain.size() == n * n * 3) {
+		const float cs = _cell_size();
+		Vector<float> old = cell_smoke_low;
+		const float *o = old.ptr();
+		const float *dr = cell_drain.ptr();
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				const float fx = x - 0.6f * dr[i * 3 + 0] * p_dt / cs, fz = z - 0.6f * dr[i * 3 + 1] * p_dt / cs;
+				const int x0 = int(Math::floor(fx)), z0 = int(Math::floor(fz));
+				const float tx = fx - x0, tz = fz - z0;
+				auto at = [&](int xx, int zz) { return (xx < 0 || zz < 0 || xx >= n || zz >= n) ? 0.0f : o[zz * n + xx]; };
+				lo[i] = Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), tx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
+			}
+		}
+	}
+}
+
+// g/m3 at the point: the layer's column mixed through its 2 km, plus what a cold pool holds through the pool's depth
+// where the point is under its top.
+float WeatherMap3D::get_smoke_concentration_at(Vector3 p_position) const {
+	const float total = get_smoke_at(p_position);
+	if (total <= 0.0f) {
+		return 0.0f;
+	}
+	const Vector2 xz(p_position.x, p_position.z);
+	const float low = cell_smoke_low.size() == resolution * resolution ? CLAMP(_sample(cell_smoke_low, xz), 0.0f, total) : 0.0f;
+	float c = (total - low) / SMOKE_LAYER;
+	if (low > 0.0f) {
+		const float depth = cell_pool_depth.size() == resolution * resolution ? MAX(_sample(cell_pool_depth, xz), 20.0f) : 50.0f;
+		const float g = cell_height.size() == resolution * resolution ? _sample(cell_height, xz) : NAN;
+		const float above = Math::is_finite(g) ? p_position.y - g : 0.0f;
+		c += low / depth * (1.0f - Math::smoothstep(0.8f * depth, depth, above));
+	}
+	return c;
+}
+
+void WeatherMap3D::set_smoke_in_pools(bool p_enabled) {
+	smoke_in_pools = p_enabled;
+	if (!p_enabled) {
+		cell_smoke_low.clear();
 	}
 }
 
@@ -199,7 +318,8 @@ float WeatherMap3D::_smoke_sigma() const {
 	if (!smoke_haze) {
 		return 0.0f;
 	}
-	return get_smoke_optical_depth_at(_follow_position()) / SMOKE_LAYER;
+	// The haze where the camera stands: under a cold pool's lid, the smoke it holds.
+	return SMOKE_MASS_EXTINCTION * get_smoke_concentration_at(_follow_position());
 }
 
 void WeatherMap3D::set_smoke_haze(bool p_enabled) {

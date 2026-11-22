@@ -44,6 +44,7 @@ contract returns with no provider.
 | `orographic_factor_at(pos)` | ratio | 1 | The terrain climate's factor `precipitation_at` already carries (WeatherMap3D `orographic_rain`); a reader with its own climate read divides it out |
 | `WorldContracts.climate_precipitation_factor_at(pos)` (static) | ratio of the region mean | 1 | The terrain climate slot (`WorldClimateProvider`, TerrainDataMap3D's baked precipitation); the first provider that covers the point answers |
 | `smoke_at(pos)` | g/m2 | 0 | Fires' smoke particulate in the column (the haze layer) |
+| `smoke_concentration_at(pos)` | g/m3 at the point | `smoke_at` / 2000 (a stub that only overrides smoke_at gets this) | The column over its mixing depth: the 2 km layer, or under a night's cold pool the smoke held there through the pool's depth (WeatherMap3D `smoke_in_pools`). Readers: the camera's haze, SnowCover3D's black carbon deposition |
 | `obstacle_height_at(pos)` | m | 0 | Wind-blocking obstacles (rocks, walls, buildings, vehicles) over the ground, on the provider's shelter grid |
 | `obstacle_lee_at(pos)` | 0..1 | 1 | Near-ground wind behind upwind obstacles over the open wind: 0.15 in the cavity, back to 1 by 25 H |
 | `washout_at(pos, coarse)`, static `washout_rate(rain, snow, coarse)` | 1/s | 0 | Below-cloud scavenging of particles, a R^b: fine smoke about 1e-5 at 1 mm/h, coarse dust about 3e-4, snow five times rain |

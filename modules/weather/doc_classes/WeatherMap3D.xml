@@ -405,6 +405,13 @@
 				Sea salt settling at [param position] now, g/m2/h: the coarse spray's salt (35 g per kg of sea water) and the fine aerosol.
 			</description>
 		</method>
+		<method name="get_sea_breeze_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The sea or lake breeze's share of the 10 m mean wind at [param position] (m/s, x and z): onshore by day, offshore (the land breeze) at night, strongest across the shore and fading some 20 km inland. Zero with [member sea_breezes] off or no water in the lake-effect square.
+			</description>
+		</method>
 		<method name="get_sea_spray_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -423,6 +430,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Smoke particulate in the column over [param position], g/m² (0 off the map).
+			</description>
+		</method>
+		<method name="get_smoke_concentration_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Smoke at [param position] (g/m3): the layer's column mixed through 2 km, plus what a cold pool holds through the pool's depth under its top ([member smoke_in_pools]). Answers [method WorldWeather.smoke_concentration_at]; the haze where the camera stands reads it.
 			</description>
 		</method>
 		<method name="get_smoke_optical_depth_at" qualifiers="const">
@@ -1086,6 +1100,9 @@
 		<member name="rime" type="bool" setter="set_rime" getter="is_rime_enabled" default="true">
 			Where the ground stands in supercooled cloud (fog water below 0 C) rime grows on twigs and edges into the wind; it sheds in a thaw, in sun and in rain. Kept per cell as mm along the way into the wind; the frost map's blue and alpha carry it to plants, rocks and steep terrain ([code]weather_rime_apply[/code]).
 		</member>
+		<member name="sea_breezes" type="bool" setter="set_sea_breezes" getter="is_sea_breezes_enabled" default="true">
+			Sea and lake breezes (Simpson 1994): the land's air against the water's temperature drives a shallow onshore wind by day, about 0.4 sqrt(g dT 500 m / T) (some 4 m/s for 7 K; Steyn 2003), and a land breeze of half that at night, faded by an ambient wind from 4 to 10 m/s. The coast comes from the lake-effect square's water (2 km cells, [method WorldWater.height_at]). In the mean wind, so [method get_wind_at], [method WorldWeather.wind_at] and the shaders' wind map carry it.
+		</member>
 		<member name="sea_spray" type="bool" setter="set_sea_spray" getter="is_sea_spray_enabled" default="true">
 			Sea spray on the shore: breaking waves ([method WorldWater.breaking_at]) make spray in proportion to the breaker height and the square of the wind past 2 m/s; the wind carries it inland over a square round the follow point. Coarse drops settle within tens of metres ([code]u (1 + H) / 1 m/s[/code]) and wet surfaces and the soil; rising ground catches them, so a cliff face takes the spray and its top stays drier. Fine salt aerosol reaches hundreds of metres ([code]50 s x u[/code]). The salt stays on surfaces until rain washes it off (all but a third by 5 mm) and is published with the spray's wetness as the [code]weather_spray_map[/code] global (R wetness, G [code]1 - exp(-salt / 10 g/m2)[/code]); grass browns at the tips from salt burn.
 		</member>
@@ -1094,6 +1111,9 @@
 		</member>
 		<member name="sea_spray_resolution" type="int" setter="set_sea_spray_resolution" getter="get_sea_spray_resolution" default="128">
 			Cells along each side of the sea spray square.
+		</member>
+		<member name="smoke_in_pools" type="bool" setter="set_smoke_in_pools" getter="is_smoke_in_pools_enabled" default="true">
+			Smoke let out under a night's cold pool stays under its lid (Lavdas 1996; Achtemeier 2005): tens of times denser near the ground than the 2 km day layer's mix, carried down the slopes into the valleys by the drainage wind, and mixed up into the layer as the morning's mixing layer breaks the pool. Needs [member cold_pools].
 		</member>
 		<member name="sun_drying" type="bool" setter="set_sun_drying" getter="get_sun_drying" default="true">
 			The sun dries wet surfaces: evaporation is Penman's combination of the net radiation (the sun's shortwave under the cloud shadow and the canopy, less the longwave loss; FAO-56) and the air's drying power, so puddles in sun go well before those in shade.

@@ -1,1 +1,0 @@
-- Snow: avalanches into lakes. Thick ice carries an avalanche, thin ice breaks under it, and snow going into open water pushes an impulse wave sized by Heller and Hager's impulse product (`SnowAvalanche3D.water_enabled`, on by default; `avalanche_entered_water`, `get_wave_height_at`).

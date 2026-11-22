@@ -1,1 +1,0 @@
-- Snow: spindrift plumes keep the wind's speed and run past 100 m (lower Flow vorticity, with the PhysX block corridor).

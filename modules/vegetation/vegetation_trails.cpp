@@ -121,7 +121,7 @@ bool route(const TrailGrid &g, const Vector2i &a, const Vector2i &b, float p_att
 	dist[ia] = 0.0f;
 	// The heuristic: straight distance times the cheapest a step can cost (well-worn trail on level ground).
 	const float hmin = 1.0f - p_attract;
-	auto heur = [&](int x, int z) { return Vector2(x - b.x, z - b.y).length() * g.cell * hmin; };
+	auto heur = [&](int x, int z) { return float(Vector2(x - b.x, z - b.y).length()) * g.cell * hmin; };
 	open.push_back({ heur(a.x, a.y), ia });
 	SortArray<OpenItem, OpenLess> heap;
 	static const int DX[8] = { 1, -1, 0, 0, 1, 1, -1, -1 };

@@ -305,6 +305,7 @@ func _ready() -> void:
 	await _orographic_tests()
 	await _cold_pool_tests()
 	await _drainage_tests()
+	await _breeze_tests()
 	await _rime_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
@@ -2135,6 +2136,21 @@ func _drainage_tests() -> void:
 	m.advance(60.0)
 	_check("drainage winds: a clear calm night runs the slope's air down the fall line in a jet a few metres up (Prandtl 1942; Horst and Doran 1986), none far above it or on the flat floor", jet.x < -0.8 and jet.length() < 3.5 and absf(jet.z) < 0.1 * jet.length() and jet_h >= 2.0 and jet_h <= 16.0 and high < 0.1 * jet.length() and floor_w < 0.1, "%.2f m/s toward (%.2f, %.2f) at %.0f m; %.2f m/s at 80 m; %.2f m/s on the floor" % [jet.length(), jet.x / maxf(jet.length(), 1e-4), jet.z / maxf(jet.length(), 1e-4), jet_h, high, floor_w])
 	_check("drainage winds: WorldWeather.wind_at carries it", seen.distance_to(jet) < 0.05 * jet.length() + 1e-3, "%.2f m/s of %.2f" % [seen.length(), jet.length()])
+	# Smoke let out on the valley floor under the night's pool stays under its lid (Lavdas 1996), and mixes up into the
+	# layer once the sun breaks the pool.
+	m.add_smoke(Vector3(0, 0, 0), 2000.0)
+	m.advance(600.0)
+	var col: float = w.smoke_at(Vector3(0, 0, 0))
+	var c_low: float = w.smoke_concentration_at(Vector3(0, 3, 0))
+	var c_high: float = w.smoke_concentration_at(Vector3(0, 400, 0))
+	_check("smoke in cold pools: smoke let out under the night's pool stays near the ground, tens of times the day layer's mix, clean above the lid", c_low > 10.0 * col / 2000.0 and c_high < 0.5 * col / 2000.0, "%.2f mg/m3 at 3 m, %.3f at 400 m; the 2 km mix would be %.3f" % [c_low * 1000.0, c_high * 1000.0, col / 2000.0 * 1000.0])
+	c.time_of_day = 11.0
+	m.snap_to_settings()
+	m.advance(3.0 * 3600.0)
+	var c_day: float = w.smoke_concentration_at(Vector3(0, 3, 0))
+	_check("smoke in cold pools: the morning's mixing layer takes it up through the layer (and the wind aloft away)", c_day < 0.01 * c_low, "%.3f mg/m3 at 3 m by 14:00 (%.1f at night)" % [c_day * 1000.0, c_low * 1000.0])
+	m.clear_smoke()
+	c.time_of_day = 1.0
 	m.cloud_cover = 1.0
 	m.snap_to_settings()
 	m.advance(2.0 * 3600.0)
@@ -2150,6 +2166,58 @@ func _drainage_tests() -> void:
 	m.queue_free()
 	c.queue_free()
 	valley.queue_free()
+	await get_tree().physics_frame
+
+
+# Sea breezes (docs/ideas/world-links.md, "Sea breezes"): a sea over x < 0, land beyond. A warm afternoon over a cooler
+# sea blows onshore near the coast and fades inland; a cool night blows a weaker land breeze off the shore.
+class BreezeSeaStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return 0.0 if p.x < 0.0 else -INF
+
+
+func _breeze_tests() -> void:
+	WorldContracts.clear_overrides()
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn -5.0 if p.x < 0.0 else 5.0\n"
+	vs.reload()
+	var land := Node3D.new()
+	land.set_script(vs)
+	add_child(land)
+	WorldContracts.set_water(BreezeSeaStub.new())
+	var m := _new_map()
+	m.terrain_source = m.get_path_to(land)
+	m.terrain_wind_enabled = false
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.lake_effect_snow = false
+	m.wind_speed = 1.0
+	m.wind_direction = Vector2(0, 1)
+	m.temperature = 24.0
+	m.water_temperature = 17.0
+	m.snap_to_settings()
+	for i in 20:
+		await get_tree().physics_frame
+	m.advance(4.0 * 3600.0)
+	var coast: Vector2 = m.get_sea_breeze_at(Vector3(3000, 0, 0))
+	var mid: Vector2 = m.get_sea_breeze_at(Vector3(15000, 0, 0))
+	var inland: Vector2 = m.get_sea_breeze_at(Vector3(60000, 0, 0))
+	var w: WorldWeather = WorldContracts.get_weather()
+	var seen: Vector3 = w.wind_at(Vector3(3000, 5, 0), 10.0)
+	_check("sea breeze: a warm afternoon over a cooler sea blows onshore at the coast (Simpson 1994), a few m/s, fading inland; the wind contract carries it", coast.x > 2.0 and coast.x < 6.0 and absf(coast.y) < 0.3 and mid.x > 0.2 * coast.x and inland.length() < 0.1 * coast.length() and seen.x > 1.5, "%.1f m/s onshore 3 km in, %.1f m/s 15 km in, %.1f m/s 60 km in; wind_at %.1f m/s east at 10 m" % [coast.x, mid.x, inland.length(), seen.x])
+	m.temperature = 11.0
+	m.snap_to_settings()
+	m.advance(4.0 * 3600.0)
+	var night: Vector2 = m.get_sea_breeze_at(Vector3(3000, 0, 0))
+	_check("sea breeze: a cool night turns it into a weaker land breeze off the shore", night.x < -0.5 and night.length() < coast.length(), "%.1f m/s" % night.x)
+	m.wind_speed = 12.0
+	m.snap_to_settings()
+	m.advance(4.0 * 3600.0)
+	_check("sea breeze: a strong wind sweeps it away; off, none", m.get_sea_breeze_at(Vector3(3000, 0, 0)).length() < 0.1, "%.2f m/s" % m.get_sea_breeze_at(Vector3(3000, 0, 0)).length())
+	m.sea_breezes = false
+	m.queue_free()
+	land.queue_free()
+	WorldContracts.clear_overrides()
 	await get_tree().physics_frame
 
 
@@ -2260,6 +2328,27 @@ func _relief_contract_tests() -> void:
 	var r: Vector2 = WorldContracts.get_ground().relief_at(Vector3(10, 0, 10))
 	WorldContracts.clear_overrides()
 	_check("relief contract: (0, 0) with no producer, a stub's relief with one", none == Vector2() and r.is_equal_approx(Vector2(0.25, 0.8)), "none %s, stub %s" % [none, r])
+	# Landscape3D answers it from its bank relief: a 45 degree soil bank between flats (terrain 57b253b5).
+	var img := Image.create(64, 64, false, Image.FORMAT_RF)
+	for j in 64:
+		for i in 64:
+			img.set_pixel(i, j, Color(clampf(float(i) * 2.0 - 40.0, 0.0, 40.0), 0, 0))
+	var land := Landscape3D.new()
+	land.height_image = img
+	land.spacing = 2.0
+	add_child(land)
+	land.rebuild()
+	land.load_all_heights()
+	var on_bank := 0.0
+	var share := 0.0
+	for k in 40:
+		var q := Vector3(48.0 + float(k % 8) * 3.1, 0.0, 20.0 + float(k / 8) * 9.7)
+		var rv: Vector2 = WorldContracts.get_ground().relief_at(q)
+		on_bank = maxf(on_bank, absf(rv.x))
+		share = maxf(share, rv.y)
+	var flat: Vector2 = WorldContracts.get_ground().relief_at(Vector3(110, 0, 60))
+	land.queue_free()
+	_check("relief contract: Landscape3D's bank relief answers on a 45 degree bank, none on the flat", on_bank > 0.05 and on_bank < 2.0 and share > 0.3 and flat == Vector2(), "up to %.2f m over the heightfield, share %.2f; flat %s" % [on_bank, share, flat])
 
 
 # Salt bloom on the terrain's sea cliffs: a rock wall (TerrainMaterial3D, steep faces are rock) under the spray's salt

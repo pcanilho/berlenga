@@ -2217,8 +2217,9 @@ void SnowCover3D::_refresh_lap() {
 				Vector3 pos = _cell_center(x, z);
 				pos.y = cell_ground[i];
 				if (smoke) {
-					// g/m2 over 2000 m, times 0.002 m/s, a tenth black carbon: mg/m2 per hour.
-					dep += MAX(wm->smoke_at(pos), 0.0f) / 2000.0f * 0.002f * 0.1f * 3.6e6f;
+					// The smoke at the snow (g/m3: the layer's 2 km mix, or a cold pool's lid holding it low), times
+					// 0.002 m/s, a tenth black carbon: mg/m2 per hour.
+					dep += MAX(wm->smoke_concentration_at(pos), 0.0f) * 0.002f * 0.1f * 3.6e6f;
 				}
 				if (burn) {
 					const float age = fire->burn_age_at(pos);

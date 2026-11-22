@@ -1,2 +1,0 @@
-### Added
-- Rivers and lakes carry suspended sediment from `WorldWater.add_sediment` (silt and clay, ash and char): rivers move it downstream at their speed, lakes mix it through their volume and let it settle (silt in about half a day, ash in about two). Silt browns and ash greys the water alike in raster and path tracing; raster turbid water now adds multiple scattering so it reads opaque and tan like the path-traced water.

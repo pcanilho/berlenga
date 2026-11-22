@@ -6,6 +6,339 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-f83759ed (2026-11-22)
+
+### Added
+- Ash blown off burnt ground settles downwind and darkens snow (WorldSnow impurity, as black carbon equivalent).
+- `PhysXDestructible3D.initial_linear_velocity` and `initial_angular_velocity`: a dynamic destructible can start moving, so swapping a falling object for one keeps its motion.
+- `PhysXBlastAsset.prepare_render()`: converts the chunks' render meshes ahead of time, from any thread.
+- `PhysXBlastAuthoring.build_prefractured` takes pieces with several materials (a Mesh or an Array of surfaces; `PhysXBlastAsset.materials` by slot) and an optional `health` per bond (`PhysXBlastAsset.bond_healths`, a multiple of the destructible's health), so a tree's limbs draw bark, wood and leaves and a twig joint breaks before a trunk joint. `PhysXDestructible3D.get_piece_chunks()` lists the chunks a piece carries.
+- Burning buildings drop their window glass as shards and their ceilings and roofs sag and fall in room by room. `PhysXBuildingFire3D.glass_panes`.
+- PhysXBuildingFire3D records its first catch: `get_ignition_time()`, `get_ignition_cause()` ("direct", "firebrand" or "heat") and the `ignited` signal.
+- `docs/bench/village_fire`: a wind-driven grass fire runs into a street of timber houses; prints which houses catch, when and by what; dry beds against the walls, lawns, buffer, gap and wind are options.
+- Burnt-out rooms smoulder: their debris glows for hours, smokes, sheds embers in wind and can rekindle. `PhysXBuildingFire3D.get_room_ember()`, signal `rekindled`.
+- Smoke runs ahead of building fires: rooms fill with a smoke layer from the ceiling that spills through doors into the next rooms and pours from windows and eaves minutes before flames; visibility inside is reported. `PhysXBuildingFire3D.get_visibility_at()`.
+- Water puts burning buildings out: a hose or fluid water in a room knocks its fire down below flashover and puts it out with steam pouring from the windows, and a weak stream only holds it back. `PhysXBuildingFire3D.apply_water()`.
+- Window flames of burning buildings run up the wall above as sheets instead of balls.
+- Wind drives building fires: it blows in through windward openings, flames leave by the leeward ones and hot gas is pushed through doors.
+- Burning wooden buildings: rooms grow to flashover, break their windows, throw flames out of them, burn through walls, floors and roofs into the next rooms and collapse; they catch from ground fires, radiation and firebrands, and throw firebrands and smoke. `PhysXBuildingFire3D`.
+- WorldBurnScar3D: author an old burn (a rectangle or polygon and its age in years); the fire contract reports how long ago the ground burnt (`WorldFire.burn_age_at`).
+- `PhysXBurnable3D`: wooden objects (crates, logs, debris) catch fire from a `PhysXFireSpread3D` once the heat they take in reaches the ignition dose, burn with a Flow flame, char from the ignition point with glowing alligator cracks, smoulder when rain puts them out, and throw embers that can start new fires where they land.
+- `PhysXCloth3D` `burnable` (on): cloth catches fire from ground fire, hot Flow gas and burning objects, chars with a glowing edge and burns into holes until it falls apart. `flame_spread`, `burn_through_time`, `ignite()`.
+- River current drags clothing: worn cloth under water loses most of its weight and is dragged by the current (any water with a flow: rivers, waves), pressing against the legs on the upstream side.
+- River current drags flags and sheets: `PhysXCloth3D` under water keeps about 30% of its weight and streams with the current from the world water contract (CPU solver).
+- Wading wets clothing: worn and free cloth that dips into any water (sea, lakes, rivers, pools) soaks up to a ragged tide line just above the surface, then dries; the wet band adds its weight and cling.
+- `PhysXCloth3D` `weather_wetting` (on): rain soaks cloth by how it faces the rain, and it dries in the air; wet cloth is heavier, limper and darker, clings to what it touches and needs its water boiled off before it burns. `wetness`, `water_capacity`.
+- `PhysXSkinnedCloth3D` `weather_wetting` (on): worn clothing soaks in rain and dries the same way; wet garments draw darker, swing less and cling to the body. `wetness`, `fabric_density`, `water_capacity`.
+- The ground contract reports how much of the ground pebbles and gravel cover, from the stone fields (`WorldGround.coarse_cover_at`, `RockField3D.get_coarse_cover_at`).
+- Post-fire debris flows carry boulders at their front and throw mud, in a train of surges that stop on their fan. `PhysXDebrisSurge3D`.
+- Smoke haze, burnt forest and settling dust darken snow and make it melt sooner; fresh snow buries the dirt and the thaw brings it back (`SnowCover3D.impurities_enabled`).
+- Waterfalls count as water for everything that touches them: bodies and clothes in a fall get wet and are pushed down by it.
+- Wind lifts ash after a fire: a strong wind over the cold burnt ground of a `PhysXFireSpread3D` lifts its ash as a low grey dust that drifts downwind in gusts until the ash is gone; wet ground holds it. `blowing_ash` (on by default), `get_ash_blown()`.
+- Rain washes the burn scar: a fire leaves burnt soil water-repellent for a year or two, so even light rain runs off it, and the runoff carries the ash away. `WorldFire.water_repellency_at()`, `PhysXFireSpread3D.get_water_repellency_at()`, `PhysXFireSpread3D.get_ash_washed()`; GroundSurface3D reads it (burnt litter gone, infiltration cut).
+- `PhysXFireSpread3D` burns the logs and fallen branches of its `vegetation_field` as large wood: they catch from the fire under them, flame for about three minutes per centimetre of diameter, then smoulder; bark chars and glows in its cracks. `get_heavy_fuel_at()` reads what is left.
+- `PhysXFireSpread3D` burns the plants over it: grass burns down to charred stubble with glowing tips in the burning band, small plants char under the flame and scorch brown above it, tree bark chars to the flame length and leaves brown up to the crown scorch height (Van Wagner 1973), in raster and path tracing, through a new `fire_state_map` global.
+- `PhysXFireSpread3D.fuel_patchiness` (on) makes fuel and moisture patchy, so a burn scar has ragged edges and unburnt islands; `fuel_map` takes moisture in its green channel, and `vegetation_field` makes worn paths bare and leaf litter burn.
+- Burnt trees fall later: a fire chars each stem's foot (`PhysXFireSpread3D.get_stem_char_at()`, `WorldFire.stem_char_at()`), and in a later storm `TreeWind3D` lets a charred tree snap at its foot and fall without its root plate. `get_storm_snap_count()`.
+- Fire clouds: a fire's plume that rises past the condensation level caps itself with a pyrocumulus, held over the bent-over plume while it burns and drifting off after; the largest fires tower into a pyrocumulonimbus with lightning and a gusty outflow. `WorldFire.plumes()`, `WeatherMap3D.fire_clouds`, `WeatherMap3D.get_fire_cloud_for()`, `PhysXFireSpread3D.get_plume_heat()`.
+- `fire_age_map` shader global: game years since each patch burnt, for plants that change in the years after a fire.
+- Burning buildings and props break apart: a `PhysXBurnable3D` on a `PhysXDestructible3D` loses strength as its timber chars, so a burning wall or shed breaks into pieces that fall and keep their char. `collapse_share`; `PhysXDestructible3D.set_material_remap()`, `set_instance_shader_parameter()`, `get_render_materials()`.
+- Burnt crowns lose their needles and leaves: a torched tree stands as bare black branches over a patch of grey ash, and burning twigs drop out of the crown while it burns.
+- `PhysXFireSpread3D` `crown_fire` (on): trees and shrubs catch fire from the ground fire under them by Van Wagner's crown fire initiation, flare up, light crowns their flames reach and throw far more embers. Crowns come from `vegetation_field` or `add_tree()`; `foliar_moisture`.
+- `VegetationField3D.get_crowns_in()`: the placed crowns over a rect, with their crown base heights.
+- Burning pieces keep their flames: once a burning `PhysXDestructible3D` breaks, its `PhysXBurnable3D` moves the flames, sparks and firebrands onto the burning pieces, which smoulder where they land. `PhysXDestructible3D.get_piece_rest_center()`, `get_piece_volume()`.
+- Firebrands that land on a `PhysXBurnable3D` pile up (on top faces, at the foot of walls) and heat it until it catches: a burning stand of trees upwind can set a wooden shed alight. `add_brand()`, `get_brand_pile_count()`.
+- Burnt grass shows its ash: dry grass and litter burn out to white-grey ash, damp fuel leaves black char, in patches; wind thins the ash and rain darkens it, and grass stubble carries the same flecks. `PhysXFireSpread3D.grass_ash` (on by default).
+- Ridge fire whirls follow the weather's terrain wind: lee-slope whirls form where the terrain wind has separated behind a crest, driven by the ridge's wind. `WorldWeather.terrain_lee_at()`.
+- Fire whirls behind ridges: on a steep lee slope in a strong wind, `PhysXFireSpread3D` whirls form in the ridge's eddy and run across the slope, lighting the fuel they pass, so the fire spreads sideways along the ridge. `get_lee_whirls_spawned()`.
+- Fire makes its own wind: a `PhysXFireSpread3D` draws air in toward its burning front, so grass and `PhysXCloth3D` nearby lean into it and fronts heading toward each other pull together. `fire_wind` (on by default), `get_fire_wind_at()`, `WorldFire.wind_at()`, shader globals `fire_wind_map` and `fire_wind_rect`.
+- `PhysXBurnable3D` throws firebrands while it burns (`embers`): lofted by its own plume, carried by the wind and able to start spot fires on the dry ground fuel of a `PhysXFireSpread3D`. `get_firebrand_count()`, `get_spot_fire_count()`.
+- Smoke haze: fires' smoke drifts and spreads on the wind as a smoke layer over the weather map; under it the air hazes, the day stays cooler, and the sun dims and turns orange, then red. `WeatherMap3D.smoke_haze`, `WeatherMap3D.get_smoke_optical_depth_at()`, `WorldFire.smoke_sources()`, `PhysXFireSpread3D.get_smoke_rate()`.
+- Smouldering ground fire: a passing fire lights the duff under it where it is dry enough, and it burns on for hours of game time with no flame, creeping a few centimetres an hour, glowing dull red in spots under a pale, low-lying smoke. Heavy rain or water puts it out; light rain does not; under unburnt grass it can flame again when the wind picks up. `PhysXFireSpread3D.smouldering`, `duff_depth`, `duff_moisture`, `duff_mineral`.
+- Fire-killed trees stand as snags: a fire kills a tree by how much of its crown it scorched against its bark, and over the game years the dead tree's limbs and roots rot, so storms strip it and it falls at its butt, leaving a stump. `WorldFire.crown_scorch_at()`, `TreeWind3D.get_snag_count()`.
+- `PhysXFireSpread3D.get_burn_age_at()`: how long ago each patch burnt, in the weather's game years (`WorldFire.burn_age_at()`).
+- `PhysXFireSpread3D` `spotting` (on): burning grass, litter and logs throw glowing firebrands that the plume lofts and the wind carries; where one lands on dry unburnt fuel it starts a spot fire ahead of the front. `spotting_scale`, `get_firebrand_count()`, `get_spot_fire_count()`.
+- `PhysXFireSpread3D`: fire that spreads over grass and leaf litter at Rothermel's rate (faster downwind and uphill, stopped by wet fuel), chars the ground, glows along the front and drives NVIDIA Flow flames and smoke; hot gas from another Flow (a campfire) can set it alight.
+- Water on fire makes steam: a white cloud billows up where water lands on burning or glowing ground or on a burning prop, and along a shore where a fire burns at the water's edge. `PhysXFireSpread3D.get_steam_mass()`.
+- A tree that snaps at a fire-charred foot leaves its stump: bark cut 0.3 to 0.9 m up with a short charred break on top, solid to bump into, and the trunk folds over the stump's edge.
+- Water puts fires out: `PhysXParticleFluid3D` water lying on a `PhysXFireSpread3D` grid soaks the grass and litter under it, putting out burning cells and stopping the front at wet ground; water on a `PhysXBurnable3D` damps and puts out its flames and drowns the embers on it. `PhysXFireSpread3D.get_doused_cells()`.
+- `PhysXFireSpread3D.use_weather_moisture` (on): fuel moisture follows the active `WeatherMap3D`, drying or damping towards the air's equilibrium moisture over `moisture_timelag`, and rain wets the fuel at once, slows the front and puts burning ground out; `get_moisture_at()` reads it.
+- Fire whirls: a strong flank of a `PhysXFireSpread3D` running along the wind can spin up a whirl of flame some three flame lengths tall that wanders downwind and lofts firebrands higher, most often when the wind is near the fire's own updraft speed. `fire_whirls` (on by default), `get_whirl_count()`, `get_whirls_spawned()`.
+- Rivers over their banks, lakes and any other water soak the ground they cover, and still floodwater leaves its silt and ash behind as fresh mud (`GroundSurface3D.flood_silt`).
+- Snow contract: `WorldSnow.avalanche_pressure_at` and `avalanche_peak_pressure_at`.
+- PhysXFlow3D `diffuse_transmission` (on by default): in raster, bright gas lets the scene behind it through, blurred, by multiple scattering (two-stream transmittance beyond the direct beam), as under the path tracer.
+- `PhysXFlow3D.fire_light`: a burning Flow emitter lights its surroundings with a soft-shadowed light that flickers at the flame's puffing frequency (raster and path traced; under the path tracer it stands in for the flame's glow as a light source, so the ground is lit without noise). `fire_light_energy` scales it.
+- `PhysXFlow3D.embers`: glowing blackbody embers rise from a fire as streaks along their flight, `ember_rate` per second.
+- PhysXFlow3D `ground_color` (white by default): the colour of the ground under the gas for the raster light scattering pass, scaled by `ground_albedo`. The light the ground sends up into a cloud's base takes it, as path-traced bounces take the ground's own colour.
+- PhysXGroundDust3D: tyre dust near the camera simulated in Flow. Every sliding or spinning wheel feeds it; the dust trails, rolls in the car's wake, is pushed by the ground wind, flows round the car body, rests on the ruts and shades the ground by its density. Farther dust stays with GroundDust3D.
+- GroundSurface3D `get_height`, so a PhysXFlow3D terrain floor can follow the deformed sand.
+- `PhysXFlow3D.ground_albedo`: the sunlit ground under Flow gas lights its underside in raster, as path tracing's ground bounces do; snow powder clouds use 0.8.
+- NVIDIA Flow gas now pushes what is in it: `PhysXFlow3D.push_bodies` (on) blows dynamic bodies such as debris and Blast pieces with drag from the gas velocity, `PhysXCloth3D.flow` lets a flag or tarp be blown by a Flow gas and stir it back, and `PhysXFlow3D.sample_velocity()` reads the gas velocity.
+- PhysXFlow3D `scattering_albedo` (default 0.9): how much light the gas keeps at each scatter, in both the path tracer and the raster renderer, so very white media such as snow powder (about 0.99) stay bright inside instead of turning grey.
+- The raster renderer adds the light of scattering orders past its three multiple-scattering octaves for gas whiter than the 0.9 default, so it brightens with `scattering_albedo` as the path tracer does.
+- PhysXFlow3D `terrain_floor` (on by default): the ground under the gas is a solid, laid as overlapping tiles tilted to the slope, so smoke and dust lie on and run down terrain instead of sinking into it. Heights come from `terrain_path` or a downward ray onto static bodies.
+- PhysXFlow3D `smoke_buoyancy` (Flow's buoyancy per smoke): below 0 the smoke is heavier than air, for dust and cold fog.
+- MPM fluid makes spray, foam and air bubbles (Ihmsen et al. 2012 diffuse particles; bubble drag and foam surface hold from Wretborn et al. 2022). On by default through `foam_enabled`.
+- Cloud sitting on wooded ground drips from the trees: leaves catch fog droplets into the canopy, which drips onto the ground and wets it (`WeatherMap3D.fog_drip`, `WorldWeather.fog_water_at`, `fog_drip_at`).
+- Hot air above fires bends light: the background shimmers through the plume, from the simulated temperature, in raster and path tracing (`PhysXFlow3D.heat_shimmer`).
+- Heavy bodies and vehicles break through lake ice too thin for their weight (white and thawing ice give first); the hole freezes over again.
+- Feet, wheels and other moving bodies kick up the fallen leaves they pass through.
+- Fallen leaves float and drift on ponds and rivers, lie on snow, get buried by fresh snow and reappear when it melts (`LeafFall3D.leeway`).
+- Snow drifts into the lee of rocks, walls, buildings and vehicles and blows off their tops (`SnowCover3D.drift_obstacles`); blown sand drops behind them (`GroundSurface3D.obstacle_lee`).
+- Boulders and vehicles block the wind (`RockField3D.wind_obstacles`, `PhysXVehicle3D.wind_obstacle`); any node in the `weather_shelter` group can list its own boxes with `get_wind_obstacles(rect)`.
+- Weather contract: `WorldWeather.obstacle_height_at` and `obstacle_lee_at`.
+- Feet and tyres leaving mud print it on the firm ground beyond, thinner with each step, and water washes it off (`WorldGround.track_mud`, `WeatherMap3D.get_body_mud`).
+- Shader built-in `RAY_FOOTPRINT` (fragment): the width of the path tracer's ray cone where it meets the surface, in world units; 0 in raster. Rivers use it to filter ripples finer than a pixel into roughness, as raster does.
+- Rain and snow wash smoke haze and dust out of the air (`WeatherMap3D.smoke_washout`, `PhysXFlow3D.rain_washout`).
+- `RainFall3D`: falling rain round the camera from the weather map, streaks slanting in the wind, splashes, rain haze, and drips from leaves and eaves that keep falling after the rain. `max_drops`, `splashes_enabled`, `drips_enabled`, `haze_enabled`, `shelter_enabled`.
+- Raindrop rings on the sea, lakes, pools, rivers, live water and the ground's puddles, raster and path traced; heavy rain dulls reflections (water shader uniform `rain_rings`).
+- `WeatherMap3D` rain on leaves: the canopy holds rain and drips after it stops (`canopy_water_enabled`, `canopy_storage`); rain and snow split by the air's temperature at each height (`get_rain_share_at`, `get_rainfall_at`, `get_snowfall_at`).
+- `BaseMaterial3D` `wetness_canopy`: leaves stay wet while the canopy holds water, with beads on their upper faces; on for trees and falling leaves, and ground plants.
+- `WeatherRunoff3D`: rain runs off the land over kilometres; ground with runoff over it stays wet.
+- `PhysXRiver3D` `rain_response` (on): rivers rise and run faster with the runoff; lakes with `level_from_flows` rise with it.
+- Two-layer refraction in Forward+ (`rendering/transparency/refraction_second_layer`, on): water and glass that read the screen texture (Transmission, refraction) now show the refracting surface behind them, such as the pool under a falling stream or a second pane of glass, instead of only the opaque scene. Depth peeling, one extra layer; only frames with such a surface in view pay.
+- Shrub and tree leaves near the sea brown one by one with the salt the spray leaves on them, as grass does (`weather_spray_map`).
+- Sea salt melts shore snow and lake ice below freezing, as much as its brine can hold, and meltwater carries it away (`SnowCover3D.salt_melt`).
+- `PhysXSeaCaveWater3D`: the sea inside sea caves, from `CaveNetwork3D`'s surge (level, width and current along the passage) with the river's surface, from the arch in. Short waves come in at the mouth and reflect off the walls and the back of the cave (Water Surface Wavelets, Jeschke et al. 2018), as real geometry; steep faces break white. `CaveNetwork3D.sea_water` (on) makes one.
+- `PhysXWaterSurface3D` water clipping: nodes in the `water_clippers` group give capsules where the sea cuts itself out and cross-fades to another surface, in raster and the path tracer. `CaveNetwork3D.get_water_clip_capsules()` cuts the sea along sea-cave passages; `get_sea_cave_water()` gains `along`, `covered_from` and `wave_rms`.
+- The sea surges into sea caves: waves run up the passage, growing as it narrows, with currents in and out, and storm swells drive air up blowholes (`CaveNetwork3D.sea_surge`, `get_sea_cave_water`, `get_blowhole_spout`, signal `blowhole_spout`).
+- Sea spray from breaking waves wets the shore downwind and leaves salt that rain washes off; cliff faces catch the spray, and salted grass browns at the tips (`WeatherMap3D.sea_spray`, `WorldWeather.sea_spray_at`, `salt_at`, `WorldWater.breaking_at`).
+- Lying snow lays grass, crops and plants down under its weight and buries short grass; soft stems give first.
+- The weather contract also answers day of year, season, cloud cover, water and surface temperature, ground height and time scale; ground, snow, vegetation and water now read the weather only through it.
+- Terrain generator: coastal dunes. The beaches feed wind-blown sand inland on a fine grid; marram builds foredunes along the plant line, and blowouts and parabolic dunes open where the cover fails (`dunes_enabled`; `get_dune_height()`, `get_dune_stability()`).
+- Terrain material: scree shows a gravel and fines matrix between its stones up close (`rock_detail_enabled`).
+- Sea cliffs grow a patchy white salt crust where the spray's salt dries on rock and scree, gone while the stone is wet (TerrainMaterial3D `salt_bloom`).
+- Terrain generator: desert sand seas. Transverse ridges, barchans, linear and star dunes grow over `sand_sea_rect` from the wind regime and the sand cover (`sand_seas_enabled`, `sand_sea_kind`, `sand_sea_depth`, `sand_sea_wind_angle`, `sand_sea_scale`; `get_sand_sea_height()`).
+- Avalanches break trees: `TreeWind3D.avalanche_enabled` reads `WorldSnow.avalanche_peak_pressure_at`; crowns snap from about 3 kPa, stems by diameter (10-20 kPa at 30-50 cm), falling downslope. Felled trees cut their leaf area out of the weather map's canopy.
+- Bark beetle kill: `TreeGenerator.beetle_years` grows a conifer from green attack (resin beads, boring dust) through red needles to a grey snag shedding its bark, then a broken top; mesh meta `tree_beetle_years`. Stand `STAND_BEETLE_SPRUCE` with grey snag spots, a red front at their edges and living spruce between, sized by `beetle_outbreak`.
+- `TreeGenerator.get_living_meshes()`: a species' meshes without its fire band variants.
+- Trees: beech and birch boles carry dark branch-scar chevrons below their shed limbs, a callus knob over the scar and two arms fading down round the stem, longer and flatter the older the scar (`bark_chevrons`).
+- Cork oak: `TreeGenerator.PRESET_CORK_OAK`, an evergreen oak whose short bole divides into a few thick spreading limbs under a broad crown, with small toothed leaves grey below and deep, spongy grey-buff cork bark.
+- Leader split for decurrent crowns: the stone pine and cork oak leaders stop at a set height and a few limbs take over, clear of side limbs until near the crown.
+- Cork harvest: `TreeGenerator.cork_stripped_years` strips the cork oak's bole and limb bases, bright orange when fresh, red-brown within weeks, near black within the year, then new cork growing back, with a step up to the virgin cork above. By default each tree picks a stage of the nine-year cycle.
+- Date palm: `TreeGenerator` preset `PRESET_DATE_PALM` with a trunk of cut leaf bases in their diamond lattice, arching feather fronds with V-set pinnae and basal spines, a dead-frond skirt and offshoots on wild palms, flowers and hanging date bunches by season; stand `STAND_DATE_OASIS` (tended rows, wild clumps, olives beneath).
+- Fire band variants: placed tree species carry one variant per fire band with mesh meta `tree_fire_years` and `tree_fire_band`, which `VegetationField3D` picks by burn age. `TreeGenerator.fire_variants`.
+- Desert shrubs: `TreeGenerator.PRESET_CALLIGONUM`, `PRESET_WHITE_BROOM` and `PRESET_SALTBUSH`, taken by `make_shrub_species` in every shrub form, for sand seas and their interdune flats.
+- Calligonum grows leafless jointed green twiglets and red bristly fruit in spring that dry to buff; white broom hangs silvery switches and flowers white from January to March; saltbush is a dense, matte silver-grey bush.
+- Shrubs carry an extra first level of detail a few metres out, so the full meshes cost a third to a half less in the middle distance.
+- Calligonum flowers white from February to April; saltbush carries pale fruiting panicles above its leaves from late summer into winter.
+- Dwarf fan palm: `TreeGenerator.PRESET_DWARF_FAN_PALM`, a clump of short shaggy, fibrous trunks or stemless crowns with plicate fan leaves on spiny green petioles and a skirt of dead leaves; spring flowers among the leaf bases and dates on female plants. In the five `make_shrub_species` forms.
+- Trees a fire killed outright redden over the first months and drop their whole crown over a year or two; the same mortality rule (`VegetationFire::tree_killed`) drives the leaf shader and `TreeWind3D`'s standing snags.
+- Trees regrow after fire: `TreeGenerator.fire_years` gives a charred snag with its species' response, epicormic shoots (cork oak), a basal clump (holm oak and most broadleaves) or seedlings on the ash bed (maritime pine, rockrose). `get_fire_response()`.
+- Trees: wind-flagged trees with limbs only on the lee side and krummholz mats at the tree line (`wind_exposure`, `krummholz`; flagged and krummholz forms in the subalpine stand).
+- Trees: trees on banks with roots running down the slope and exposed by erosion (`ground_slope`, `bank_erosion`).
+- Gorse and broom: `TreeGenerator.PRESET_GORSE` and `PRESET_BROOM`, with gorse spines and pea flowers and pods as geometry, green twigs, and flowering seasons (`TreeGenerator.get_bloom`, `get_leaf_season` "flowering"). `TreeGenerator.make_shrub_species` returns a placeable species in young, mature, old, thicket or wind-pruned cushion form.
+- Hedge shrubs: `TreeGenerator.PRESET_BLACKTHORN`, `PRESET_FIELD_MAPLE` and `PRESET_DOG_ROSE`, and `make_shrub_species` takes them with hawthorn and hazel.
+- Cut hedges: `TreeGenerator.SHRUB_HEDGE` grows a two-metre segment of flailed field hedge, A-shaped or boxed, leafy to the ground, for laying end to end along field edges.
+- Hedge seasons: hawthorn white in May with haws in autumn, blackthorn white on bare twigs in March and April with sloes, dog rose pink in June with scarlet hips.
+- Holm oak: `TreeGenerator.PRESET_HOLM_OAK`, an evergreen oak with a short bole under a dense, dark, rounded dome, small leaves grey below and dark grey cracked bark.
+- Ice storms load trees: a new weather contract reports glaze (clear ice from freezing rain), and wind-rigged trees carry its weight, bow and break under it, and stand up again after the thaw (`TreeWind3D.glaze_load_enabled`).
+- Freezing rain: a warm layer aloft (`WeatherMap3D.warm_nose_temperature`) turns rain over sub-zero ground into glaze, accreted by Jones' ice model and melted in a thaw (`get_glaze_at`).
+- Clear ice on surfaces glazed by freezing rain, raster and path traced (`BaseMaterial3D.glaze`, on for trees).
+- Glazed trees as geometry: a clear ice coat round twigs and limbs and icicles under them, seen alike by raster and the path tracer (`TreeGenerator.glaze_mm`).
+- Near trees in a vegetation field grow the weather's glaze as ice geometry, in bands, and swap as it builds or melts.
+- After an ice storm: broken tops, stripped crowns and birch bent over in arches, by species, and a northern hardwood stand after one (`TreeGenerator.ice_storm_years`, `STAND_ICE_STORM`).
+- Trees: deadwood meshes expose `tree_deadwood_features` (peel edges and drying checks, 8 floats each) for placing growth along them.
+- Wild olive: `TreeGenerator.PRESET_WILD_OLIVE`, a gnarled small tree of crooked stems under a dense, pale silver grey-green crown, narrow leaves silvery below.
+- Maritime pine: `TreeGenerator.PRESET_MARITIME_PINE`, a tall pine with a long clear bole, a dense irregular rounded crown, long stout needles and thick purplish plated bark.
+- Carob: `TreeGenerator.PRESET_CAROB`, an evergreen with a short trunk under a broad dense dome of glossy paired leaflets.
+- Needle cast after fire: needles and leaves a fire killed brown fall over the following year, most in the first months, read from the new `fire_age_map`.
+- Trees: roots draped over a generated boulder beside the stem (`root_stone`).
+- Trees: bank forms with slope variants for stream banks and gorge sides, in the riparian and beech stands.
+- Mediterranean scrub shrubs: `TreeGenerator.PRESET_GUM_ROCKROSE` (white blotched flowers, capsules, summer leaf fold), `PRESET_KERMES_OAK` (spiny-toothed leaves, acorns in spiny cups) and `PRESET_LENTISK` (paripinnate leaves, red to black drupes on female plants), in the five `make_shrub_species` forms.
+- Stone pine parkland: `TreeGenerator.STAND_STONE_PINE`, open-grown umbrella pines about 11 m apart with saplings, snags and logs.
+- Stone pine: `TreeGenerator.PRESET_STONE_PINE`, the umbrella pine. A dome when young, then a flat crown as wide as the tree is tall on a clear bole, with long needles in tufts, plated red-brown bark and cones of three ages on top of the crown.
+- Storms break and throw rigged trees: `TreeWind3D` checks each limb's wind moment against its wood (species MOR, knots) and each tree's against its root anchorage; broken limbs and thrown trees (with their root plate) fall as hinged PhysX bodies under the wind, and on landing become Blast destructibles that snap where they hit and settle under their own weight, a thrown tree lying propped on its plate standing on edge. `TreeWind3D.storm_*`, `TreeGenerator.storm_kit`, signal `storm_damage` with the root pit.
+- Vegetation: alpine and scree plants above the treeline: moss campion cushions, purple saxifrage, mountain avens, curved sedge, dwarf willow and alpine toadflax, in fellfield, grassland, snowbed and scree sets above the map's own treeline (growing-season temperature, `PlantSpecies.RULE_SEASON_TEMPERATURE`) and sorted by curvature, sun and talus (`PlantGenerator.make_alpine`).
+- Vegetation: bog and moor plants as real geometry: sphagnum hummocks, cotton grass with soft cotton heads, bog asphodel and sundew, sorted into hummocks and hollows on wet, level ground (`PlantGenerator.make_bog()` for blanket bog and valley mire).
+- Vegetation: cereal crops on `GrassField3D` (`crop`: wheat, barley, oats, rye). Each tiller is real geometry (stem, four leaves, the ear with awns, or the open oat panicle) in drill rows (`row_spacing`, `drill_angle`), one to three tillers to a plant, swaying in the same wind as the grass. `crop_stage` (BBCH) sets the look: leafy rows, stem elongation, heading, ears and straw ripening from green to gold with the leaves dying from the bottom, nodding barley, and stubble after harvest.
+- Vegetation: crop fields (`GrassField3D.fields`): polygons each with its own drill angle, fixed stage or sowing calendar (`sown_day`, `harvest_day` with a season source; `crop_calendar_stage`), tramlines (paired unsown wheel tracks) and a headland drilled round the edge. The ground under them shows the drilled soil and darker wheelings, and past the tillers the crop's colour and cover at its stage (`crop_canopy_look`), so fields read as a patchwork to the horizon.
+- Vegetation: dune plants follow the terrain generator's coastal dunes, embryo and mobile dune sets on moving sand and fixed dune sets where marram holds it (`PlantSpecies.dune_range`, `RULE_DUNE`).
+- Vegetation: dune plants as real geometry: marram, lyme grass and sea holly in embryo, mobile and fixed dune sets by distance to the water (`PlantGenerator.make_dunes()`). Placed plants now shelter blowing sand and trap it when their field is in a ground surface's `wind_shelters` (`VegetationField3D.sample_lateral_cover()`, `PlantSpecies.wind_frontal_area`).
+- Vegetation: plants past their range can be drawn as real volume instead of ground colour, a porous voxel shell of their leaf cover out to 150 m (`VegetationField3D.far_volume`, on by default; `far_volume_range`, `far_volume_cell`).
+- Vegetation: Atlantic heath: bell heather, cross-leaved heath and crowberry as real-needle dwarf shrubs, in dry, wet and maritime heath sets placed by rainfall, winter cold, wetness, shade and coast exposure (`PlantGenerator.make_heath`).
+- Vegetation: ground mist as a real gas in the near field, pooling in hollows, parting round walkers and burning off as the sun climbs (`VegetationMist3D`, needs Flow).
+- Vegetation: pollen puffs when bodies brush grasses and other wind-pollinated plants in flower (`VegetationPollen3D`, needs Flow; `PlantGenerator.get_pollen_release`).
+- Vegetation: salt marsh and shingle plants: glasswort, cord-grass, sea purslane, sea aster, sea lavender, sea kale, sea campion and yellow horned-poppy, zoned up the tidal frame in pioneer, mid and high marsh sets on sheltered, level coasts and a shingle set on the backshore (`PlantGenerator.make_saltmarsh`; `PlantSpecies.RULE_TIDE_HEIGHT`, `RULE_COAST_EXPOSURE`, `RULE_BEACH` from the terrain generator's sea).
+- Vegetation: Mediterranean scrub: rosemary, French lavender, thyme and sage-leaved rockrose as real-leaf dwarf shrubs, in garrigue and maquis sets placed by winter cold, rainfall, aridity and soil depth, with the rockrose's summer drought; `PlantGenerator.apply_scrub_rules` places other scrub shrubs in the same sets (`PlantGenerator.make_scrub`).
+- Vegetation: waterside and wet-stone plants as real geometry: marsh marigold, meadowsweet and butterbur placed by distance to water (`PlantGenerator.make_banks()` for streams, lakes and waterfall spray), aquatic moss trailing downstream on river stones and liverworts on wet tops (`PlantSpecies.stone_top_water`, `follow_flow`).
+- Vegetation: heath and scrub sets now include the woody shrubs: gorse and broom on dry heath, wind-clipped gorse cushions on cliff-top heath, lentisk, kermes oak, gum rockrose and dwarf fan palm in the maquis, kermes oak cushions, young fan palms and young gum rockrose in the garrigue, each in clumps under the set's rules (`PlantGenerator.make_heath`, `make_scrub`, `shrubs`).
+- Vegetation: worn paths: give `VegetationField3D` and `GrassField3D` a list of `paths` (centre line, width, walkers a year) and plants thin out and grow shorter by how well their growth form resists trampling, leaving bare trodden soil in the middle and tough rosettes and grasses at the edges (`PlantSpecies.trample_resistance`, `GrassField3D.trample_resistance`).
+- Characters print the ground, snow, sand and mud with their feet, step by step, not with their whole capsule; grass, plants and water still feel the body (`WorldContracts.describe_body` walker, meta `world_contact_feet`).
+- A river's current lays the grass and plants under it downstream, flat in a fast stream, from the water contract's surface and flow.
+- Fire melts the snow under it, whatever the air temperature (`WorldFire`).
+- Plants, hair, falling leaves, ash and embers, smoke and rock dust lean into or drift toward a nearby fire's indraft.
+- Tyres lose grip on lying snow (more on powder and slush, near ice on a hard crust) and on bare lake ice; chains and lugs win it back.
+- `PhysXWaterSurface3D.foam_shade` (0.8): whitecaps and shore foam shade the bed under them in raster through the caustics map (bubbles send most of the sun back up), as the path tracer already did from the foam itself.
+- `WorldWater.wave(position, direction, height, period, width)`: an impulse wave in metres and seconds from a landslide, avalanche, calving or rockfall entering the water. `PhysXWaterSurface3D.submit_wave` seeds it in the ripple solver as one crest and trough with its long-wave velocity, so it runs one way at sqrt(g h), runs up the shores and reflects; water without a solver takes a splash of the crest's height.
+- `OasisSprings3D`: a still pool at each desert spring (`springs`, x, level, z and discharge in L/s, or `spring_source` with `get_springs()`), sized by its water balance (area = discharge / (evaporation + seepage), evaporation from the climate by Hargreaves or set) with a noise outline unique to each spring, and sand boils at its vents whose floors heave with the flow while the surface above lifts and sheds rings.
+- Rivers carry a load entering by one bank as a plume along that bank, spreading across by turbulent mixing over tens of channel widths, instead of mixing it at once through the whole channel.
+- Rivers drop silt and ash where the water slackens (by the banks, in pools); `PhysXRiver3D.get_sediment_deposit_at()` and `WorldWater.sediment_deposit_at()` give what has settled, in kg/m².
+- `WorldWater.add_sediment_mass(position, mineral_kg, ash_kg)`: a load dropped into water at once (a debris flow's or landslide's fines), mixed through the river section or lake it lands in and capped at hyperconcentrated flow (1000 kg/m³). Debris-flow dumps through `add_sediment` were held as a rate for two seconds, doubling their mass, and a second dump into the same river section on a later frame replaced the first.
+- Rivers and lakes carry suspended sediment from `WorldWater.add_sediment` (silt and clay, ash and char): rivers move it downstream at their speed, lakes mix it through their volume and let it settle (silt in about half a day, ash in about two). Silt browns and ash greys the water alike in raster and path tracing; raster turbid water now adds multiple scattering so it reads opaque and tan like the path-traced water.
+- Cold air pools: on clear calm nights valleys and hollows fill with colder air, so frost and fog form there first while slopes above stay milder (WeatherMap3D `cold_pools`).
+- WeatherRunoff3D starts post-fire debris flows: burnt steep basins in intense rain (USGS M1 likelihood, Gartner volume) emit `debris_flow(event)` on the runoff and on `WorldGround`, with the outlet, volume, channel path, bankfull widths and burn severity. `debris_flows` (on by default), `debris_flow_threshold`.
+- Rime: ground standing in freezing cloud grows white rime on the windward side of plants, rocks and cliffs, thicker the longer it lasts, and sheds it in a thaw (WeatherMap3D `rime`).
+- WeatherRunoff3D answers the runoff contract (`WorldGround.add_runoff_load`): loose silt and ash put on the land move down the drainage with the water and enter rivers and lakes through `WorldWater.add_sediment`.
+- Bodies coming out of water, wet mud or puddles leave wet footprints and tyre tracks that fade along the way, drip where they stand, and dry with the weather (`WeatherMap3D.wet_tracks`, `get_body_water`).
+- Avalanche paths keep the forest young: where a dense avalanche breaks trunks the stand starts again, so tracks fill with pioneers (SnowAvalanche3D `stand_damage`).
+- A beaver dam node: when it fails, its drained pond becomes a beaver meadow that plants and trees grow into (`WorldBeaverDam3D`).
+- Ground standing at the low cloud's base fills with hill fog that wind and sun do not clear, and lightning starts at the local cloud base (`WorldWeather.cloud_base_at`).
+- Smoke and dust take the colour of the ground under them in the light it bounces up: terrain layers, wet ground and snow (`WorldGround.albedo_at`, `WorldSnow.albedo_at`, PhysXFlow3D `ground_from_world`, on by default).
+- The air follows the season and the time of day: coldest near dawn, warmest in the afternoon, humid at night (`air_follows_climate`, `air_daily_cycle`, `daily_temperature_range`), and cools with height.
+- The sun dries wet ground faster than shade or night (`sun_drying`).
+- Clear calm nights bring dew, and hoarfrost on terrain, grass, plants and rocks below freezing; the morning sun melts it (`dew_and_frost`).
+- Radiation mist comes sooner and thicker over wet ground, and steam fog rises off lakes and the sea when the air is much colder than the water (`WeatherMap3D.get_water_temperature`).
+- Fire dries the ground under it, and fuel lying on wet or dewy ground burns slower (`WorldFire`).
+- Lightning strikes tall things first and can start fires in dry fuel (`lightning_ignition`).
+- Tyres lose grip on wet, flooded and icy ground, and aquaplane at speed.
+- Every moving body bends grass, plants and branches, presses ground and snow and ripples water (`physics/3d/world_contact/auto_join`).
+- World contracts: weather, water and body contacts each behind one interface (`WorldContracts`), with script stand-ins for tests.
+- Weather rain follows the terrain climate: more on windward slopes, a rain shadow behind ridges, and rain or snow by each spot's own height, so summits snow while valleys rain (WeatherMap3D `orographic_rain`).
+- Tyres take their grip on snow from the snow itself where it keeps one: packed roads and snow polished to ice by traffic (`WorldSnow.grip_at`).
+- Drained beaver ponds are a stand disturbance, so meadows can grow where a dam failed (`WorldStand.DISTURBANCE_BEAVER`).
+- Deer browsing pressure over the stand, with how high the animals reach, so plants and young trees can show browsing (`WorldStand.browse_at`, `browse_reach_at`).
+- A stand-age contract gives the years since the last stand-replacing fire, windthrow or beetle kill at any point, for forests that age (`WorldContracts.get_stand`, `WorldStand.stand_age_at`).
+- Game trails are published once for every system to read along their tread, and boar rooting is a field-layer disturbance (`WorldStand.set_trails`, `trail_at`, `rooting_age_at`).
+- Lightning that strikes a tree crown is remembered by the stand, so forests can show the struck tree's scar for years after (`WorldStand.strike_age_at`, `WeatherLightning3D.record_tree_strikes`).
+
+### Changed
+- Destructible pieces are drawn as instances of per-chunk meshes built once per asset and shared, instead of a merged mesh rebuilt on every spawn and split: no more frame stall when a large asset such as a tree spawns or breaks.
+- `PhysXCloth3D`: wind gusts vary across the cloth so it ripples and billows instead of tilting as a plane; cloth no longer falls through thin colliders such as ropes and rails; new `move_pins()` hangs cloth from pegs set closer than it is wide, so it falls in swags.
+- Wet prints and drips read their contact wetness with a Catmull-Rom filter in raster and path tracing, so small prints keep a rounded shape instead of square texels.
+- PhysXDebrisSurge3D finds the scene's GroundDebrisFlow3D by itself and its lead surge rides the mud body's front; later surges run behind it.
+- Flow's default `heat_ramp` is a blackbody: flames have a bright core and sharp tongues, and cooler gas reads as smoke instead of an orange glow.
+- The path tracer honours a light's `light_volumetric_fog_energy` when it lights participating media.
+- PhysXFlow3D raster smoke lighting is on by default: `light_scattering`, `ambient_scattering`, `sun_scattering`, `cast_shadows` and `scattering_temporal` now default to true.
+- PhysXParticleFluid3D (MPM): `mpm_auto_colliders` is on by default and takes static bodies and every shape of a body, so a basin built from boxes holds the fluid without listing it. Scenes that relied on only the bodies in `mpm_colliders` (for example particles meant to fall through a ground body and be handed to a height field) should turn `mpm_auto_colliders` off.
+- MPM fluid spray is drawn as clear water drops; foam and bubbles stay white.
+- PhysXParticleFluid3D's default liquid is clear water: transmission with refraction (n 1.33), Fresnel reflection and depth tint, instead of a translucent blue tint.
+- MPM fluid surface is smooth: a wider surface kernel (three particle spacings) and normals continuous across grid cells, so it no longer shades as facets.
+- PhysXParticleFluid3D defaults to `render_mode` Isosurface (a real mesh that casts shadows and shows in reflections and path tracing) with `foam_enabled` on.
+- `GroundDust3D` and `CaveNetwork3D` follow the current camera when `follow_target` is empty, as the weather, the ground and the other world systems do. A cave network whose meshes were built with `build_meshes()` keeps them and does not stream.
+- PhysXGroundGrains3D: each thrown speck keeps at least about 1.3 pixels across, so the spray arc reads from several metres away.
+- PhysXHair3D.cards_enabled is on by default: far hair draws as thick strands per clump in raster.
+- Path tracing: transmissive surfaces pick reflection or transmission by the Fresnel at the view angle instead of the head-on reflectance, so water and glass seen at grazing angles show their sky reflection without the bright speckle (about a third of the noise at the same sample count).
+- PhysX: static bodies entering a space go into the scene together before the next step or query, through a pruning structure for large batches, so streaming in a region of static bodies costs less in its first frame. Adds `docs/bench/physx_openworld`.
+- PhysX: bodies with the same friction and bounce share one material instead of each making its own, so streaming a region no longer costs a step that grows with the world (5,000 statics: 3.5 to 8 ms less), and large worlds stay under PhysX's 65,535-material limit.
+- PhysX: a streamed region's static bodies enter the scene over a few steps (`physics/physx_3d/streaming/statics_per_step`, 1024), those near moving bodies and those a query reaches first, so nothing falls through or is missed; static removals go out in one batch. The first-step hitch of a region drops by up to a third with up to 10,000 statics loaded.
+- Terrain features are on by default: `dunes_enabled`, `glacial_enabled`, `glacial_converged`, `tile_erosion_enabled`, `strata_enabled`, `guide_preview`, `ice_worn_detail`, `deposition` 0.5, `moraine_age` 2000, `scree_age` 10000, `meander_age` 3000, `outwash_age` 10000 (TerrainGenerator3D); `cliff_relief` 0.6 m (Landscape3D); `rock_detail_enabled`, `cliff_self_shadow`, `far_blend_enabled`, `far_start_from_vegetation` (TerrainMaterial3D). Turn them off where a project needs a faster generate.
+- Terrain material: sand the generator laid (beaches, dunes) holds on slopes up to the cliff slope instead of turning to soil past 40 degrees.
+- Terrain material: scree stones stand out of the gravel bed in parallax, with their own sun shadows under the raster and the path tracer (`rock_detail_enabled`).
+- Terrain material: cliff faces break into irregular blocks with long bedding cracks and broken cross joints instead of a regular panel grid (`rock_detail_enabled`).
+- Terrain material: thin soil on talus shows as grey debris, and the layer blend widens with distance so far slopes do not shimmer.
+- Terrain generator: talus cones stay smooth, with no erosion gullies or ledges cut into them.
+- Trees build faster: bark and moss textures are made once and shared by every tree generator, so forest-grown trees build about a third faster with identical results.
+- Trees: smooth bark (beech) shows cross-stem creases, lenticel striations and a fine grain instead of soft blotches.
+- Far tree meshes leave out the displaced bark relief (drawn by the near mesh) and the centimetre fruit; far date palm pinnae are two triangles. A wild date palm clump far mesh is about half the triangles.
+- Trees: birch lenticels vary in length, thickness and spacing and gather in bands, instead of one dash per grid cell.
+- Trees: far meshes of every broadleaf start at the lighter leaf level, with full leaves only near (`far_lod1`, on).
+- Trees and shrubs: far meshes leave out leaf twigs under a millimetre, which only the near mesh draws (a mature lentisk's far bark 929k to 233k triangles).
+- Gorse gets a near mesh like the other shrubs; its far mesh starts at the lighter spine, flower and pod levels (2.5M to 1.2M triangles mature).
+- Trees grow about 15 % faster with identical meshes: leaf LODs, skin padding and needles fill their arrays in one pass, and the crown fire heights use selection instead of sorting every leaf vertex.
+- Trees: krummholz mats grow as low domed cushions on many layered stems, their limbs under a skin of short needled shoots, instead of a flat table on one stem.
+- Trees: the tree line follows the growing season's mean temperature (6.4 C), matching the alpine plants; flagged spruce sit just below it and krummholz mats just above.
+- Trees: drying checks on logs are real splits, the bark's edge where it peels is a step of its real thickness, and moss margins are ragged and thin.
+- Trees: full-leaf near meshes (`near_leaf_range` 60 m) and full-needle near meshes (`near_needle_range` 30 m) are on by default.
+- Cork oak: a denser, darker crown on four thick limbs clad in cork, and virgin cork as thick ridges broken into blocks by wide, deep, dark fissures; the bole sweeps into its four limbs as one surface, its bark running on unbroken.
+- Gorse and broom flowers and pods thin out with distance, as leaves do, with their colour kept: a mature gorse in summer draws about 70k crown-part triangles far off instead of 1.7M.
+- Stone pine: the leader splits at about 5 m into three limbs that divide again, under a darker, denser cushion crown; stouter bole, long offset grey-brown bark plates with red-brown fissures (`BARK_PINEA`), and full-size cones set behind the needle tufts.
+- Vegetation: the far colour that replaces plants past their range is matched live to the plants on screen, so the ground no longer lightens into a ring where the cover plants end (`VegetationField3D.far_match_view`, on by default).
+- Vegetation: floor plants keep clear of a stone a tree's roots grow over (mesh meta `tree_root_stone`).
+- Vegetation: fallen leaves and twigs no longer land on open ground far from any crowns (the litter rule's fade ran below zero litter).
+- Ground mist sets its emitters only when a cell's place, density or wind changes, instead of seven property writes per cell every frame; the mist is unchanged.
+- Ground mist reads wet ground, water and steam at each cell twice a second instead of every frame, and takes the ground height from the world's ground before casting physics rays.
+- Oasis pools hold clear spring water (near pure water's absorption, little scattering), in raster and path tracing alike.
+- An oasis spring whose ground is not hollowed below its level gets no pool or boils, with a warning; `TerrainGenerator3D.carve_oases()` carves it.
+- Sand boils vary in size from vent to vent, with darker throats.
+- Raster rivers mirror their banks where the screen shows them (screen-space reflections over the sky), instead of open sky everywhere; muddy water at grazing views keeps its brown instead of a blue-grey veil. Shallow turbid water shows its bed through the diffuse attenuation (Maritorena 1994).
+- Flood water reads brown like milky coffee rather than pale milk: silt scatters forward as measured (backscatter about 2%) and carries the humic matter washed off with it; raster calibrated against the path tracer at flood loads.
+- The contact wetness map dries and re-encodes only the area that is wet, and skips the GPU upload when nothing visible changed; the picture is unchanged.
+- Wet tracks check each walking body's own-mud parts only when its children change, not every frame.
+- Freezing rain reaches every reader of the rain share (cloth, hair, the snowpack, falling sleet), and a deep cold layer under the warm nose refreezes it to ice pellets instead (`WeatherMap3D.warm_nose_base`, Bourgouin 2000); `ice_storm_glaze` holds a glaze for tests.
+- The weather map's cloud cover noise takes its per-update constants once instead of per cell (16 % fewer instructions, identical cover), and its texture packing runs on worker threads instead of the main thread.
+- Ground cover reads for sand armour take the whole grid in one call under one lock, and stand-age lookups check one 64 m grid cell instead of every event; results are unchanged.
+
+### Fixed
+- `apply_radial_damage` on a scaled destructible: the point and radii are now in the asset's units.
+- Blast pieces no longer fly apart and through the ground when they break: `PhysXDestructible3D.max_depenetration_velocity` (3 m/s by default) caps how fast PhysX pushes touching pieces apart, so projects need not cap it globally.
+- Wet prints, drips and splashes stay drawn round the camera when the weather window follows a far-off anchor or vehicle.
+- Raster Flow gas tinted by its colour once where the path tracer tints every scatter: near-white gas such as snow powder drew grey and coloured gas too light and neutral. Each multiple-scattering order now takes the colour to its own power, and the octaves are refit to the path tracer.
+- The far side of a dense, bright Flow cloud lit from behind it no longer draws bright white in raster: its deep scattering orders fade by diffusion theory's transport coefficient.
+- Screen-space refraction in MPM fluid no longer shows objects in front of the liquid.
+- The foot of raster Flow gas lying on the ground drew dark: its sky and ground light now count the open side toward the camera, not only the gas straight above and below.
+- Raster shadows of bright, forward-scattering gas (snow powder, steam) on the scene were too dark: they now pass the forward-scattered light on (delta-Eddington scaling); dark smoke keeps its full shadow.
+- Flow gas lit from behind the camera drew mid grey with dark blotches in raster where path tracing shows it near white: multiply-scattered light now spreads evenly instead of leaning forward like single scattering.
+- PhysXFlow3D: vehicles (bodies whose shapes live on their own PhysX actor) are solids for the gas again, from their CollisionShape3D children; before, they were skipped with an error each step.
+- Path-traced smoke, dust and powder came out grey and see-through when the scene's bounce count was low: scattering inside gas now has its own budget instead of using up the surface bounces.
+- Thin edges of Flow gas in raster were as bright as thick gas; light scattered more than once now needs gas around it, so wisps stay see-through as under path tracing.
+- Raster Flow gas: a ground sample off the sun's shadow map no longer counts as fully sunlit and outvotes a shadowed one.
+- A dark seam along the base of raster Flow gas lying on sloped ground: the snow under the gas was lit as if it lay at the gas box's floor, under the slope, and gas cut by the ground showed unlit where the scattering march ended a step early.
+- Raster Flow gas: the scattering march's step budget counts only samples in gas, and the upsample no longer blends texels with no gas in as black.
+- A build with Flow support no longer crashes when libnvflow.so / libnvflowext.so (or nvflow.dll / nvflowext.dll) are missing or incomplete: it reports one error and the Flow nodes stay inert.
+- The lit face of large, thin-per-metre Flow gas (snow powder) drew grey in raster lit from the camera's side: multiple scattering now looks at the gas along the sun's whole line through the point, not only toward the sun.
+- Flow smoke and dust in the raster renderer were lit up to 1.75 times brighter than under path tracing, which flattened their self-shadowing; they now match.
+- Flow smoke and dust in the raster renderer now match the path tracer under a real sky: sunlit gas was too dark and sky-lit gas too bright (the earlier parity fix was measured against a background the path tracer does not light with).
+- Horizontal banding in tall, dense Flow clouds in raster: the sun and sky volumetric shadow maps now step once per gas cell.
+- Dense Flow gas (smoke above 1) drew no denser in raster than smoke 1; Flow's ray march now uses Beer-Lambert opacity, clamped at 2 as the path tracer does.
+- A dark, dotted rim around Flow gas in raster: the light pass now uses the opacity of Flow's own ray march (Flow patch 0011).
+- Raster Flow gas lacked the sky's blue: sky light is no longer halved or greyed by a whole-sphere average, and the ground under the gas is lit by the sky above it.
+- PhysXFlow3D light scattering at reduced resolution no longer steps along the smoke's edges over sloped floors, and smoke in front of the sky now blends over time and upsamples smoothly.
+- The ground under bright gas (snow powder, steam, white smoke) is no longer shadowed as darkly as under black smoke in raster: the gas's volume shadow passes the light it scatters many times (two-stream total transmittance), as under the path tracer.
+- Raster Flow gas's shadow on the ground no longer stair-steps into a hard dark outline at the gas's edge: the shadow map averages four columns per texel and has a texel per two gas cells.
+- The top of a deep, bright Flow cloud no longer draws dark under the sky: its sky light's scattering orders count the gas below the point as well as above, and in bright gas reach deeper by diffusion theory (bluer inside under a blue sky).
+- Flow gas in strong wind no longer fills `max_blocks` within seconds: blocks the wind moves fast stay allocated only while they hold some smoke, so empty air the wind blows through is freed.
+- Flow gas drifts on the weather wind again: the wind reserves the blocks along the plume's path, swept downwind from the sources for as long as the smoke lasts (gas lives only in allocated blocks, and Flow does not allocate ahead of it).
+- Flow gas keeps time below 60 frames a second: it catches up with up to eight steps a frame, as Godot's physics does (it took one, so at 30 frames a second it ran at half speed).
+- PhysXParticleFluid3D's isosurface casts shadows in the raster renderer (a shadow-only copy of the surface casts it).
+- A smooth MPM pour no longer fills with white specks: trapped air is measured against each particle's own velocity field, so only liquid striking liquid makes foam and bubbles.
+- `foam_size` set on an MPM fluid no longer rescales its foam spheres twice.
+- MPM fluid takes as many substeps as `mpm_stiffness` needs (up to 128) instead of quietly softening the water, which made it sag like a gel in layers at fine particle sizes.
+- Emitted fluid leaves at its rest spacing from a round emission sphere, so a high `emission_rate` pours a stream instead of a sheet or a burst.
+- PhysXParticleFluid3D's raster shadow copy is left out of the path tracer, where it turned the water black.
+- MPM fluid surface no longer shows bright cell outlines: closed air pockets inside the marched surface are smoothed out before meshing.
+- MPM fluid streams fall at full speed again: velocity damping is per second instead of per substep, so many substeps no longer hold a falling stream under 1 m/s. Pours now thin and break up as they accelerate.
+- PhysXGranular3D (and the sand grains a tyre throws) draws as particles again: the fluid's Isosurface default had turned the grains into a clear-water surface, so thrown sand was invisible.
+- Wind obstacles on raised terrain counted their height from the weather's flat ground height, so they cast a lee far too long.
+- A `PhysXDestructible3D` (dynamic, intact) moved by a script now goes there at rest instead of snapping back to its body; a `PhysXCloth3D` placed by a script before its first step is rebuilt there.
+- Path tracing honours `Environment.ambient_light_source = AMBIENT_SOURCE_DISABLED`: diffuse bounces that leave the scene no longer gather the sky (and a procedural sky's sun glow), so a scene lit only by its sun matches the rasterizer (a white Lambert plane under a 30 degree sun: 0.498 traced, 0.497 raster, 0.500 analytic; before, the sky added 7 to 17%).
+- Path traced fire and other glowing gas no longer breaks up into scattered bright specks at a few samples a pixel: the glow is gathered along the whole ray.
+- Path tracing: a bounce ray that leaves for the sky no longer adds the weather's traced aerosol haze on top of the sky. The radiance map already holds that aerosol along the whole ray, and with the ambient light off the sky lights nothing, as in raster. A sun-only scene under a hazy WeatherMap3D was 17% too bright at a 30 degree sun and 35% at 12 degrees; it now matches the analytic value (0.502 vs 0.500).
+- Path tracing: a mesh whose vertex() samples a texture now follows that texture when it is rewritten in place (`ImageTexture.update`, `texture_2d_update`, a 3D texture update, `texture_replace`), material or global; it kept the shape from before the change until something else moved it.
+- The weather contract now answers rainfall, snowfall, canopy water and ground water input from the weather map; snow and rain on bodies read none before.
+- Windows and macOS downloads build again after the caves, rocks, avalanche, ground, burnable and waterside changes (ambiguous math overloads and narrowing errors on MSVC and Apple clang).
+- Under a thick smoke plume the sky keeps a wide ruddy glow round the sun (the light the smoke scatters forward lights its own forward lobe), and `SkyClock`'s adapting exposure counts the smoke, so the land stays visible in brown light instead of near black.
+- Fires' smoke now dims and reddens the sky's sun disc and the sunlight its air scatters (the aureole round the sun, the sky under the smoke), by colour as it already did the sun light. Before, the disc stayed white under a thick plume. New `WeatherSkyMaterial.set_sun_smoke`; `set_aerosol` takes the smoke's share.
+- Forest edges no longer repeat one tree: edge trees get more variants and turn more freely. A deer wood's edge is browsed, with its mantle eaten down to hedged thorns. Forest-grown sycamore and horse chestnut now grow leafy crowns instead of dense balls of bare twigs.
+- Forest edge trees keep green limbs low on their open side.
+- Trees and shrubs: no more "index_count >= index_array_len" errors from LOD levels no smaller than their base.
+- Gorse and broom flowers read as flat ochre cards in raster: petals now fold along the midline, each flower turns its own way, golden yellow with a shaded throat, glowing against the light.
+- `TreeGenerator.make_woodland` and `make_stand` with one variant built four slope variants of each stream-bank tree (about 47M extra triangles in a European woodland); they now build one.
+- Tree crown parts (cones, berries, keys, catkins, flowers) were lit from behind in raster.
+- Smooth bark (beech, hornbeam) drew about 1.5 times too bright.
+- PhysX vehicles (car, motorcycle, tank) hold still at `Engine.time_scale` 0 instead of printing "timestep must be positive" every frame.
+- Path tracing: bands along the depth contours under flat water, where the outer caustics cascades took their photons from every other pixel row and column.
+- Path tracing: water surfaces (sea, lakes, pools, rivers) cast their shadows through the water, so sunlight reaching the bed is tinted by the depth it crossed on the way down as well as on the way back up; shallow beds no longer read pale and warm against raster.
+- `add_sediment` docs: it is a rate held for 2 seconds after each call; a one-off mass goes to `add_sediment_mass`.
+- SkyClock: with its clock held (a still), the sun now dims and reddens as fires' smoke is added or drifts over; it only followed the smoke while time moved. `get_smoke_transmittance()` is 1 with `smoke_haze` off.
+- Raster water: the light reaching the bed is cut by the surface's Fresnel transmission on the way in (direct sun at its angle, sky light by its hemispherical average), as path tracing does; clear shallow water no longer reads brighter and bluer in raster than in path tracing.
+- Silty and ashy water no longer path traces as glitter: the load enters the medium by the similarity relation (same reduced scattering, broader phase), so it converges. Silt now reads khaki-tan, the same hue in raster (multiple scattering calibrated against the path tracer) and path tracing. White water and falls in loaded rivers take the water's colour (beige in silt, grey in ash).
+- Silty water reads khaki to brown instead of pink-orange: the silt's absorption follows measured mineral particles (Babin et al. 2003), and white water on it takes a lighter beige.
+- Silty falls and white water: a fall's sheet on a loaded river scatters like the river (a tan curtain in raster and path tracing; path tracing drew dark brown glass), and white water on heavy loads is cream to beige.
+- Torn spray sheets on storm crests take the sun's shadow in raster (they ignored it), so a sheet under a cloud or in a cliff's shadow is dark. River and water-surface benches gain `--shadow-bar=Y`, a board whose shadow falls across the water mid-frame.
+- Surf foam no longer shows the shore wave grid as rows of short straight bars: PhysXWaterSurface3D reads its shore wave fields smoothly (cubic) and tears the roller's white water with wandering streaks; foam noise uses turned lattices, its holes cluster and its grain is patchy.
+- Path-traced open sea no longer turns black toward the horizon: wave detail is filtered by the pixel's footprint under the path tracer too.
+- `PhysXWaterSurface3D`: the sea no longer lifts its surface onto land more than a few metres above the still water (swash runs no higher). Land along the edge of its grid carried on outward through the clamped depth texture and stood in the sky over the horizon as thin dark posts.
+- Raster silty water matches path tracing (within about 2% at light and heavy loads); it read warm tan where path tracing showed grey-brown.
+- Wet prints and splashes ahead of a high or distant camera now show: the contact wetness square centres on the ground the camera looks at, not on the camera.
+- A cloud base authored below high ground stays there, so ridges in the cloud still get fog drip.
+- WeatherMap3D.advance() now sees canopies and walls added since the last frame.
+
+### Improved
+- Trees: beech and other smooth bark read mottled silver-grey up close, with smaller pale lichen crusts; smooth bark on dead wood stays grey; lying logs carry fewer crusts and their moss film lies in drifts; bare wood grain meanders and knots are larger.
+- Trees: lying logs show deep drying checks, grain that bends round knots and patchy staining on bare wood; moss shoots fade into the carpet edge; bark stories (`bark_wounds`) are on by default.
+- Trees: moss on logs and fallen limbs carries modelled shoots over its cushions; weathered bare wood shows ridges along the grain and a ragged torn bark edge; beech bark has softer folds and lenticels at 40 cm.
+
 ## build-f2ad55f2 (2026-11-16)
 
 ### Added

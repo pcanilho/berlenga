@@ -1,1 +1,0 @@
-- Water: distant foam (rock contact foam, whitecaps) under raster keeps its lace's mean cover instead of turning into flat white sheets.

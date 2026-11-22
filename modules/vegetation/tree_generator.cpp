@@ -3848,6 +3848,8 @@ static inline float tube_v_len(float p_girth, float p_repeats) {
 // the bark); displaced, the bole's ridges stood through the stems' furrows as teeth (docs, 18 Nov).
 static thread_local Vector3 tube_fade_c;
 static thread_local float tube_fade_r = 0.0f;
+// Sweet chestnut's spiral bark (trees.md 5bf): bark tiles slid round per metre of height; set by _build_mesh.
+static thread_local float tube_spiral = 0.0f;
 static thread_local float tube_fade_r0 = 0.0f; // No relief at all within this.
 // The swept crotch's height over a split, in bole radii.
 static constexpr float TREE_CROTCH_TOP = 1.1f;
@@ -4027,8 +4029,13 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 	// tile over a couple of metres, like a gentle spiral grain), so the copy a tile above or
 	// beside never lines up with this one. One value a ring keeps the seam closed; the crotch
 	// evaluates it at the same points (the bole's ring centre, the stem's axis).
+	// Sweet chestnut's furrows twist round the bole with age (trees.md 5bf; Mitchell 1974: the spiral, either hand,
+	// shows from 30-50 years and grows steeper, 20-30 degrees on old trees): the bark's tiles slide
+	// round the stem by the height times the tangent over a tile's width, so the ridges run up as helices, in relief and
+	// colour alike.
+	const float spiral = tube_spiral;
 	auto twist = [&](const Vector3 &p_p) -> float {
-		return 0.6f * (moss_noise(p_p * 0.45f + Vector3(2.7f, 0.0f, 6.1f), 0x74776973u) - 0.5f);
+		return 0.6f * (moss_noise(p_p * 0.45f + Vector3(2.7f, 0.0f, 6.1f), 0x74776973u) - 0.5f) + spiral * float(p_p.y);
 	};
 	auto relief_at = [&](float p_u, float p_v) -> float {
 		const float x = (p_u - Math::floor(p_u)) * hn - 0.5f, y = (p_v - Math::floor(p_v)) * hn - 0.5f;
@@ -17063,6 +17070,10 @@ void TreeGenerator::_bank_shear(Builder &r_b, bool p_drape) const {
 }
 
 Ref<ArrayMesh> TreeGenerator::_build_mesh() {
+	struct SpiralGuard {
+		~SpiralGuard() { tube_spiral = 0.0f; }
+	} spiral_guard;
+	tube_spiral = preset == PRESET_SWEET_CHESTNUT ? (((uint32_t(seed) * 2654435761u) >> 31) ? -1.0f : 1.0f) * Math::tan(Math::deg_to_rad(30.0f * Math::smoothstep(25.0f, 110.0f, params[PARAM_YEARS]))) / MAX(_bark_tile(), 0.05f) : 0.0f;
 	struct TileGuard {
 		~TileGuard() {
 			tube_tile = BARK_TILE;

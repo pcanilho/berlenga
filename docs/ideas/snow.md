@@ -1910,6 +1910,31 @@ Built (SnowCover3D, layers on by default):
 - Not yet: ponding that holds back the pack's drainage (it would change the weather's runoff contract); preferential
   flow fingers; a crust's own strength as a bridge.
 
+## Follow-up 52: roof slabs that fall as bodies; ice dams (round 8, 22 Nov 2026)
+
+Research: roof avalanches leave the eave as a slab that breaks into blocks on the eave and again on landing; the debris
+is a lumpy bank 1-3 m out (the same block fracture as slab avalanche debris; Bartelt and Lehning's slab blocks). Ice
+dams: CRREL's work on heated roofs (Tobiasson 1988; Buska and Tobiasson 2001) finds them where the building's heat
+melts the bed and the water refreezes over the cold eave, mostly with the air below about -4 C; they hold the snow
+and feed the icicles.
+
+Built (SnowBodies3D):
+- `roof_slab_bodies` (on): the slab leaves the eave row by row (a row a piece's length up the roof leaves that much
+  later), as rigid pieces about 1.2 m across of the slab's depth, irregular (vertices pushed by a hash of where they
+  lie and of the piece), with snow's friction (0.8 dry); a piece whose speed halves from over 3 m/s breaks in four,
+  a dry one throwing up a puff (its own SnowPowderCloud3D, where Flow is); each comes to rest as an add_drift cone
+  where it stops, mass kept. Off: follow-up 50's thrown bank. `get_falling_chunks`, `get_chunks_spawned`.
+- `ice_dams` (on): the warm roof's bed melt (heat loss over the snow's insulation) from the whole run reaches the eave
+  and freezes there, all of it from -4 C; the dam is a ridge twice as wide as high (`ice_dam_height`), drawn along
+  the eave as hazy ice with a height that wanders, melting back at ice's 0.3 mm an hour per degree. It holds the
+  snow while it stands a quarter of the snow's depth (a rule of thumb for the keyed toe, not a published figure).
+- Fix: `set_body_depth` capped roof faces at `max_depth` (0.4 m), not `roof_max_depth`.
+- `--test=roofs`: 80 cm off a 35 degree metal roof leaves as 20 pieces, 24 after breaks, all down in 8.4 s, 4984 of
+  4984 kg in the cover, a 0.52 m bank; a 30 W/m2 metal roof in 36 h of snow at -8 C grows a 24 cm dam and holds
+  0.77 m, 0.15 m without dams. `--view=roofs --fall=S` (0.45 in the air, 10 landed), physics paused for the frame.
+- Not yet: Blast fracture of the pieces; a dam view; the dam's water feeding SnowIcicles3D directly (it already
+  grows from the roof's heat_loss).
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

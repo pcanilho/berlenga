@@ -83,6 +83,8 @@ extends Node3D
 #   --no-tiles            with --world: TerrainGenerator3D.tile_erosion_enabled off (no droplet rills and gullies);
 #                         --gully-incision=x the gullies' extra cut (1; 0 for none, a before frame); --gully-spot
 #                         puts the view's spot on the nearest strong gully on soil
+#   --bank-relief=x       with --world: Landscape3D.bank_relief (0.8 m; 0 for a before frame); --bank-spot puts the
+#                         spot on a 42 to 52 degree soil bank
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -131,6 +133,7 @@ var cam: Camera3D
 var breaking := false
 var form_stone := {} # the stone --form framed
 var spot_pos := Vector3.ZERO # the view's spot (--roll)
+var bank_side := Vector3.ZERO # --bank-spot: along the bank's contour, for a raking view down its length
 
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -505,6 +508,10 @@ func _world() -> void:
 	var land := Landscape3D.new()
 	# Cliff relief is on by default (frames show the ground as the game draws it: without it a backlit cliff reads as
 	# smooth white spur flanks); the checks measure the bare heightfield, and --no-cliff-relief gives a before frame.
+	if args.has("bank-relief"):
+		land.bank_relief = float(args["bank-relief"])
+	if args.has("test"):
+		land.bank_relief = 0.0
 	if args.has("test") or args.has("no-cliff-relief"):
 		land.cliff_relief = 0.0
 	land.name = "Landscape"
@@ -702,6 +709,40 @@ func _world() -> void:
 					found_f = p
 		spot = found_f
 		print("frost spot ", spot, " (", tried, " points fully sorting)")
+	if args.has("bank-spot"):
+		# --bank-spot: a soil bank of 42 to 52 degrees (no rock exposure, not talus) 20 m or more long, for Landscape3D's
+		# bank relief; scored by how much of the bank 8 m either side along the contour is as steep.
+		var best_b := -INF
+		var found_b := spot
+		for zz in range(-800, 801, 6):
+			for xx in range(-800, 801, 6):
+				var p := Vector3(xx, 0, zz)
+				var h := gen.get_height(p)
+				if h < gen.sea_level + 8.0:
+					continue
+				var gx := gen.get_height(p + Vector3(2, 0, 0)) - gen.get_height(p - Vector3(2, 0, 0))
+				var gz := gen.get_height(p + Vector3(0, 0, 2)) - gen.get_height(p - Vector3(0, 0, 2))
+				var sl := rad_to_deg(atan(Vector2(gx, gz).length() / 4.0))
+				if sl < 42.0 or sl > 52.0:
+					continue
+				var g := gen.get_geology_at(p)
+				if g.r > 0.2 or gen.get_talus(p) > 0.1:
+					continue
+				var t := Vector3(-gz, 0, gx).normalized() * 8.0
+				var score := 0.0
+				for q in [p + t, p - t]:
+					var qx := gen.get_height(q + Vector3(2, 0, 0)) - gen.get_height(q - Vector3(2, 0, 0))
+					var qz := gen.get_height(q + Vector3(0, 0, 2)) - gen.get_height(q - Vector3(0, 0, 2))
+					score += 1.0 - absf(rad_to_deg(atan(Vector2(qx, qz).length() / 4.0)) - 47.0) / 20.0
+				score -= Vector2(xx, zz).length() / 4000.0
+				if score > best_b:
+					best_b = score
+					found_b = p
+		spot = found_b
+		var bx := gen.get_height(spot + Vector3(2, 0, 0)) - gen.get_height(spot - Vector3(2, 0, 0))
+		var bz := gen.get_height(spot + Vector3(0, 0, 2)) - gen.get_height(spot - Vector3(0, 0, 2))
+		bank_side = Vector3(-bz, 0, bx).normalized()
+		print("bank spot ", spot, " geology ", gen.get_geology_at(spot))
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
@@ -723,6 +764,11 @@ func _world() -> void:
 	if args.has("dist"):
 		dist = float(args["dist"])
 	cam.position = _view_from(spot, dist)
+	if bank_side != Vector3.ZERO:
+		# Down the bank's length from beside it, a little out from the face and above: the relief reads in silhouette.
+		var bout := Vector3(gen.get_height(spot - Vector3(2, 0, 0)) - gen.get_height(spot + Vector3(2, 0, 0)), 0, gen.get_height(spot - Vector3(0, 0, 2)) - gen.get_height(spot + Vector3(0, 0, 2))).normalized()
+		cam.position = spot + bank_side * dist + bout * dist * 0.35
+		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, spot.y + 2.0)
 	if view == "river" or view == "shore":
 		# Low ground under steep sides: look down on the bed from higher, over the walls round it.
 		cam.position.y = maxf(cam.position.y, spot.y + dist * 0.9)

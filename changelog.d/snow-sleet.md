@@ -1,1 +1,0 @@
-- Snow: sleet. Near 0 C falling snow clumps into large wet aggregates, and above it the flakes melt as they fall, shrinking, speeding up and turning grey, by the same rain-or-snow split the rain uses (`sleet_enabled`, on by default).

@@ -792,3 +792,16 @@ over the opaque scene; Hillaire's aerial perspective (2020) does the same for th
   tried and changed nothing, since the layer is near saturation everywhere and the lift alone sets the outline. The
   ridge now has summits some 16 km apart with saddles under half their height, as a range has; the lenses form over
   the summits, a few km long, and the bench view looks up the wind from downwind.
+
+## Review 14 (22 Nov 2026; docs: zebra iridescence, soft plate, serrated edge)
+
+- **Iridescence as zebra contours.** A single droplet size per point drew the Airy pattern's higher orders, whose
+  rings crowd as the size grows, so each small change of size was a new hard ring; and the size wandered 2.5 um over
+  700 m, so the rings ran across the edge. The tint now averages three sizes (8 % spread; Gedzelman and Lock 2003 need a
+  narrow but not single size), and the size follows the depth in from the edge, wandering 0.6 um over 2.5 km: pastel
+  pink and green bands along the outline.
+- **Soft plate.** The plate's water was uniform inside the lens. It now varies in fibres, the detail noise stretched
+  6:1 along the wind and flattened 3:1 in height (sigma x 0.3 to 1.7), read at the pixel footprint so far lenses keep
+  their mean. One more texture read per fine sample.
+- **Lake band veil.** The bench view moved 4 km further back and looks higher, so the veil meets the ground near the
+  horizon instead of standing over the near ground as a strip. The veil drawn over near ground is unchanged.

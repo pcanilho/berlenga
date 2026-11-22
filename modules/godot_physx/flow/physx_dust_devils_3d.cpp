@@ -90,7 +90,8 @@ float PhysXDustDevils3D::get_favour_at(const Vector3 &p_at) const {
 	}
 	const float heat = w->surface_temperature_at(p_at) - w->air_temperature_at(p_at);
 	float f = Math::smoothstep(min_heating, min_heating + 12.0f, heat);
-	const Vector3 wind = w->wind_at(p_at, 10.0f);
+	// The 10 m mean wind: not wind_at, which carries the gusts and the devils' own swirl (WeatherMap3D add_vortex).
+	const Vector3 wind = w->mean_wind_at(p_at);
 	f *= 1.0f - Math::smoothstep(6.0f, 11.0f, Vector2(wind.x, wind.z).length());
 	f *= 1.0f - Math::smoothstep(0.1f, 0.3f, w->surface_wetness_at(p_at));
 	f *= CLAMP(w->sun_visibility_at(p_at), 0.0f, 1.0f);
@@ -133,7 +134,7 @@ void PhysXDustDevils3D::_build() {
 	flow->set_buoyancy(2.0f);
 	flow->set_cooling_rate(0.3f);
 	flow->set_smoke_buoyancy(0.0f); // the fines ride the air
-	flow->set_smoke_fade(0.3f);
+	flow->set_smoke_fade(0.06f); // the fines hang for minutes: the column is as tall as the updraft carries them
 	flow->set_vorticity(3.0f);
 	flow->set_emission_strength(0.0f);
 	flow->set_smoke_density(0.8f);
@@ -178,8 +179,10 @@ void PhysXDustDevils3D::_pool() {
 			if (d.foot[k]) {
 				d.foot[k]->queue_free();
 			}
-			if (d.upper[k]) {
-				d.upper[k]->queue_free();
+			for (int l = 0; l < LEVELS; l++) {
+				if (d.upper[l][k]) {
+					d.upper[l][k]->queue_free();
+				}
 			}
 		}
 		if (d.core) {
@@ -196,7 +199,9 @@ void PhysXDustDevils3D::_pool() {
 		d = i < int(old.size()) ? old[i] : Devil();
 		for (int k = 0; k < RING; k++) {
 			d.foot[k] = make(vformat("Devil%dFoot%d", i, k));
-			d.upper[k] = make(vformat("Devil%dRing%d", i, k));
+			for (int l = 0; l < LEVELS; l++) {
+				d.upper[l][k] = make(vformat("Devil%dRing%d_%d", i, l, k));
+			}
 		}
 		d.core = make(vformat("Devil%dCore", i));
 		d.core->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
@@ -301,7 +306,7 @@ void PhysXDustDevils3D::_step(float p_dt) {
 		// They travel with the wind near the ground (about 0.7 of the 10 m wind) and wander a little.
 		Vector2 wind;
 		if (w && w->has_provider()) {
-			const Vector3 wv = w->wind_at(d.position, 10.0f);
+			const Vector3 wv = w->mean_wind_at(d.position); // not its own swirl
 			wind = Vector2(wv.x, wv.z) * 0.7f;
 		}
 		d.drift = d.drift.lerp(Vector2(_rand() - 0.5f, _rand() - 0.5f) * 3.0f, MIN(p_dt * 0.2f, 1.0f));
@@ -322,7 +327,7 @@ void PhysXDustDevils3D::_step(float p_dt) {
 	}
 }
 
-// The column in Flow: a ring of spinning, inflowing, dust-lifting spheres at the foot, a second spinning ring a few
+// The column in Flow: a ring of spinning, inflowing, dust-lifting spheres at the foot, three spinning rings up to six
 // radii up so the column keeps its spin as it rises, and a warm core that lifts it (Rankine's vortex: solid rotation
 // inside the ring, the swirl falling off outside it, which Flow's own advection gives round the forced ring).
 void PhysXDustDevils3D::_draw(Devil &p_d) {
@@ -335,12 +340,15 @@ void PhysXDustDevils3D::_draw(Devil &p_d) {
 	const Vector3 up(0.0f, 1.0f, 0.0f);
 	for (int k = 0; k < RING; k++) {
 		PhysXFlowEmitter3D *foot = p_d.foot[k];
-		PhysXFlowEmitter3D *upper = p_d.upper[k];
-		if (!foot || !upper) {
+		if (!foot) {
 			continue;
 		}
 		foot->set_enabled(on);
-		upper->set_enabled(on);
+		for (int l = 0; l < LEVELS; l++) {
+			if (p_d.upper[l][k]) {
+				p_d.upper[l][k]->set_enabled(on);
+			}
+		}
 		if (!on) {
 			continue;
 		}
@@ -350,20 +358,37 @@ void PhysXDustDevils3D::_draw(Devil &p_d) {
 		foot->set_radius(re);
 		foot->set_global_position(p_d.position + radial * R + up * (0.8f * re));
 		foot->set_velocity(tangent * V + up * (0.8f * w) - radial * (0.3f * V));
-		foot->set_smoke(0.6f * e * p_d.dust);
+		foot->set_smoke(0.5f * e * p_d.dust);
+		// The superheated surface layer the vortex feeds on (Sinclair 1969): warm at the foot too, so the dust it
+		// lifts rises with it instead of pooling on the ground.
+		foot->set_temperature(0.6f * e);
 		foot->set_couple_rate(8.0f);
-		upper->set_radius(re);
-		upper->set_global_position(p_d.position + radial * (1.2f * R) + up * (4.0f * R + re));
-		upper->set_velocity(tangent * (0.8f * V) + up * w);
-		upper->set_couple_rate(6.0f);
+		// Rings at 1.5, 3.5 and 6 radii keep the wall spinning up the column (the swirl holds the dust in the wall,
+		// the inflow below feeds it), each a little wider and slower than the last, as the funnel flares.
+		static const float level_h[LEVELS] = { 1.5f, 3.5f, 6.0f };
+		for (int l = 0; l < LEVELS; l++) {
+			PhysXFlowEmitter3D *upper = p_d.upper[l][k];
+			if (!upper) {
+				continue;
+			}
+			const float flare = 1.0f + 0.12f * level_h[l];
+			// Rotated half a step a level, so the rings interleave.
+			const float al = a + (l & 1 ? Math::PI / RING : 0.0f);
+			const Vector3 rl(Math::cos(al), 0.0f, Math::sin(al));
+			const Vector3 tl = Vector3(-rl.z, 0.0f, rl.x) * p_d.spin;
+			upper->set_radius(re);
+			upper->set_global_position(p_d.position + rl * (R * flare) + up * (level_h[l] * R));
+			upper->set_velocity(tl * (V / flare) + up * w);
+			upper->set_couple_rate(6.0f);
+		}
 	}
 	if (p_d.core) {
 		p_d.core->set_enabled(on);
 		if (on) {
 			// The rising core inside the wall, from the ground to the upper ring.
 			const float cw = MAX(1.4f * R, 2.0f * flow_cell_size);
-			p_d.core->set_size(Vector3(cw, 4.0f * R, cw));
-			p_d.core->set_global_position(p_d.position + up * (2.0f * R + 0.5f * re));
+			p_d.core->set_size(Vector3(cw, 6.0f * R, cw));
+			p_d.core->set_global_position(p_d.position + up * (3.0f * R + 0.5f * re));
 			p_d.core->set_velocity(up * (1.2f * w));
 			p_d.core->set_temperature(e);
 			p_d.core->set_couple_rate(6.0f);

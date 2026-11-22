@@ -776,10 +776,17 @@ float bessel_j1(float x) {
 	return sqrt(0.63661977 / x) * (cos(ph) - 0.375 / x * sin(ph));
 }
 
-vec3 iridescence_tint(float p_sin, float p_radius_um) {
+vec3 iridescence_airy(float p_sin, float p_radius_um) {
 	vec3 v = 6.2831853 * p_radius_um * p_sin / vec3(0.65, 0.55, 0.45);
 	vec3 j = vec3(bessel_j1(v.r), bessel_j1(v.g), bessel_j1(v.b));
-	vec3 airy = 4.0 * j * j / max(v * v, vec3(1e-4));
+	return 4.0 * j * j / max(v * v, vec3(1e-4));
+}
+
+vec3 iridescence_tint(float p_sin, float p_radius_um) {
+	// Over the droplets' spread of sizes (about 8 % at a lens's edge; Gedzelman and Lock 2003 find the colours
+	// need a narrow but not single size): three sizes, so the higher orders, whose rings crowd together as the size
+	// grows, average to pastel instead of drawing every small change of size as a new hard ring (zebra contours).
+	vec3 airy = 0.25 * iridescence_airy(p_sin, 0.92 * p_radius_um) + 0.5 * iridescence_airy(p_sin, p_radius_um) + 0.25 * iridescence_airy(p_sin, 1.08 * p_radius_um);
 	float lum = dot(airy, vec3(0.2126, 0.7152, 0.0722));
 	// Pastel in photographs, but the lens's depth along the ray mixes droplet sizes and greys them: the
 	// difference from white is raised by 2.2 (with the bands spread over the edge's first 15 % of depth, not its
@@ -880,6 +887,12 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 			if (sigma <= 0.0) {
 				continue;
 			}
+			// Fibres: the water in thin sheets tens of metres deep, drawn out along the wind (the lens's silky, striated
+			// look in photographs), as the detail noise stretched 6:1 along the wind and flattened 3:1 in height. Read at
+			// the pixel's footprint, so far lenses keep their mean and only near ones show the grain; without it a near
+			// lens was a soft blur.
+			float fib = textureLod(cloud_detail, vec3(aw.x / 3000.0, aw.y / 500.0, p.y / 170.0), max(log2(foot / (500.0 / 128.0)), 0.0)).g;
+			sigma *= mix(0.3, 1.7, fib);
 			float profile = clamp(x / 150.0, 0.0, 1.0);
 			float lr;
 			float dr;
@@ -889,13 +902,14 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 			float tau = wc_wave_extinction_d(p + sun_dir * 40.0, 0.0, dep, lr, dr) * 80.0 + wc_wave_extinction_d(p + sun_dir * 170.0, 0.0, dep, lr, dr) * 180.0 + wc_wave_extinction_d(p + sun_dir * 450.0, 0.0, dep, lr, dr) * 380.0;
 			// The forward-scattered sunlight carries the diffraction colours (the forward lobes, where single scattering
 			// by the droplets rules): droplets from 1 um where the air has just saturated to 6 um 150 m past it, on thin
-			// cloud only (many scatterings wash them out), 6 to 35 degrees from the sun. The sizes wander from patch to patch
-			// (a few hundred metres), so a thin sheet shows bands of colour rather than one cast.
+			// cloud only (many scatterings wash them out), 6 to 35 degrees from the sun. The size is set by the depth in from
+			// the edge, so the bands follow the outline; it wanders only a little over a few km (2.5 um over 700 m drew its
+			// contours across the edge as zebra bands).
 			vec3 irid = vec3(1.0);
 			if (cloud_iridescence > 0.0 && cos_theta > 0.82) {
 				float s_th = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
 				float w_ir = cloud_iridescence * smoothstep(0.76, 0.87, cos_theta) * smoothstep(0.0, 0.15, profile) * (1.0 - smoothstep(0.45, 0.95, profile)); // in from the very edge (the lens's last metres drew a hard fringe), out before the thick core
-				irid = mix(vec3(1.0), iridescence_tint(s_th, mix(1.5, 5.0, smoothstep(0.0, 150.0, x)) + 2.5 * wc_value_noise(p.xz / 700.0 + vec2(5.3, 1.7))), w_ir);
+				irid = mix(vec3(1.0), iridescence_tint(s_th, mix(1.5, 5.0, smoothstep(0.0, 150.0, x)) + 0.6 * wc_value_noise(p.xz / 2500.0 + vec2(5.3, 1.7))), w_ir);
 			}
 			vec3 light = sun_radiance * ((exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1) * irid + 0.25 * exp(-0.25 * tau) * phase2);
 			float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);

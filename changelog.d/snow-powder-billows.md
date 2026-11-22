@@ -1,1 +1,0 @@
-- Snow: the avalanche powder cloud billows tallest at the head and trails back up the track as its wake (`SnowAvalanche3D`).

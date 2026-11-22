@@ -1,1 +1,0 @@
-- Path tracing: the relative trace origin now snaps to the grid point nearest the camera (with hysteresis) instead of a cell corner, and the default `rendering/pathtracing/relative_origin_grid` is 64 m. Thin refractive objects (icicle cores, glass rods) near the camera no longer lose their interior from centimetre-sized ray offsets.

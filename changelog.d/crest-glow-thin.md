@@ -1,2 +1,0 @@
-- Water: crest glow kept to the thin top third of the high crests, scaled to the sea's own wave height (`crest_glow`).
-- Water: no dark holes in a low sun's glitter (masking and shadowing term), and no bright posts on distant crests (far mesh rings drop the waves they cannot carry).

@@ -1,1 +1,0 @@
-- Weather: the moon's disc with its real phase, terminator and earthshine from the sky clock (`moon_disc_enabled`, on); bright stars glare, so constellations read; far clouds near the horizon take more march steps, so their edges are no longer dithered.
