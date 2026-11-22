@@ -557,21 +557,34 @@ float tm_drip(vec3 p, vec3 n, float t, float fp, float seed, float C, float wmin
 	float b = k > 0.0 ? tm_drip_1d(p.z, p.y, t, fp, seed + 17.0, C, wmin, wmax) : 0.0;
 	return mix(a, b, k);
 }
-// Crustose lichen thalli as rosettes (map and rim lichens grow out radially from a centre into round, lobed patches
-// that meet and merge; Armstrong and Bradwell 2011): a cellular field (Worley 1996) in a plane, one rosette or none
-// per S cell, radius up to past the cell's half so neighbours coalesce, a lobed margin, the edge filtered over the
-// footprint. Colonies: the chance of a rosette in a cell follows a 2.5 m noise taken at the cell's centre (w3: the
-// coordinate out of the plane), more where shift is higher (shaded faces). x: cover, y: whether the thallus on top
-// is the yellow-green kind (per thallus; yellow_bias its share), z: the black prothallus line round each thallus.
+// Crustose lichen colonies (Desbenoit, Galin and Akkouche 2004, "Simulating and modeling lichen growth": thalli grow
+// out from a centre by aggregation, so the margin is fractal and lobed, never a regular polygon; neighbours meet and
+// fuse; the old centre weathers paler or dies back while the young rim is darker and denser, edged by the black
+// prothallus). Here a cellular field (Worley 1996) of thalli, one or none per S cell in a colony, each a disc of its
+// own size whose margin is pushed in and out by two octaves of noise in the plane (lobes 10 to 30 cm and 3 to 8 cm,
+// so no two share an outline), fused with their neighbours by a smooth minimum (Quilez's smin) instead of overlapping
+// as decals; the edge filtered over the footprint. Colonies: the chance of a thallus in a cell follows a 2.5 m noise
+// at the cell's centre (w3: the coordinate out of the plane), more where shift is higher (shaded faces).
+// x: cover 0..1, y: whether the nearest thallus is the yellow-green kind (yellow_bias its share), z: the young rim
+// band just inside the margin (0..1), w: tone (each thallus its own, the centre paler).
 float tm_ros_dens(vec2 c, float w3, float shift) {
-	return 0.95 * smoothstep(0.38 - shift, 0.68 - shift, 0.7 * tm_vn(vec3(c * 0.25, w3 * 0.25) + 13.0) + 0.3 * tm_vn(vec3(c * 0.7, w3 * 0.7) + 19.0));
+	// Colonies with edges of their own (a soft threshold scattered single thalli evenly over the whole face): dense
+	// inside, where thalli crowd and fuse, bare rock between.
+	return 0.97 * smoothstep(0.5 - shift, 0.58 - shift, 0.7 * tm_vn(vec3(c * 0.22, w3 * 0.22) + 13.0) + 0.3 * tm_vn(vec3(c * 0.8, w3 * 0.8) + 19.0));
 }
 vec4 tm_rosettes(vec2 q, float w3, float shift, float yellow_bias, float fp) {
-	const float S = 1.0;
+	const float S = 0.8;
 	vec2 g = q / S;
 	vec2 i = floor(g);
-	vec4 r = vec4(0.0, 0.0, 0.0, 1.0);
-	float aa = max(fp, 0.002) / S;
+	float aa = max(fp, 0.002);
+	// The margin's lobes, in metres: shared by every thallus (where two meet they fuse along it).
+	float close = 1.0 - smoothstep(0.03, 0.12, fp);
+	float lobe = (tm_vn(vec3(q * 7.0, w3 * 7.0) + 5.0) - 0.5) * 0.16 + (tm_vn(vec3(q * 22.0, w3 * 22.0) + 9.0) - 0.5) * 0.06 * close;
+	float e = 1e3; // signed distance to the fused margin, metres (negative inside)
+	float best = 1e3;
+	float yel = 0.0;
+	float tone = 1.0;
+	float rel = 1.0;
 	for (int j = -1; j <= 1; j++) {
 		for (int k = -1; k <= 1; k++) {
 			vec2 c = i + vec2(float(j), float(k));
@@ -580,28 +593,31 @@ vec4 tm_rosettes(vec2 q, float w3, float shift, float yellow_bias, float fp) {
 				float h1 = tm_vn_hash(vec3(c, 93.0));
 				float h2 = tm_vn_hash(vec3(c, 95.0));
 				float h3 = tm_vn_hash(vec3(c, 97.0));
-				vec2 d = g - (c + 0.2 + 0.6 * vec2(h1, h2));
-				// Sizes from a few centimetres to 1.5 m across, most small (thalli of every age).
-				float rad = 0.06 + 0.7 * h3 * h3;
-				float ang = atan(d.y, d.x);
-				rad *= 1.0 + 0.05 * sin(ang * 3.0 + h1 * 6.283) + 0.08 * sin(ang * 6.0 + h2 * 6.283) + 0.04 * sin(ang * 17.0 + h0 * 40.0);
-				float e = length(d * vec2(1.0, 0.85 + 0.3 * h0)) - rad;
-				float cov = 1.0 - smoothstep(-aa, aa, e);
-				if (cov > r.x) {
-					r.y = step(1.0 - yellow_bias, fract(h0 * 17.3 + h3)) * step(0.45, h3);
-					r.w = 0.8 + 0.35 * fract(h1 * 31.7 + h2);
+				vec2 d = (g - (c + 0.15 + 0.7 * vec2(h1, h2))) * S;
+				// Radii 4 cm to 0.6 m, most small (thalli of every age; diameter grows about linearly with age).
+				float rad = 0.05 + 0.6 * h3 * h3;
+				float ei = length(d) - rad + lobe * min(rad * 2.5, 1.0);
+				// Fuse (smooth minimum over 8 cm).
+				float hk = clamp(0.5 + 0.5 * (e - ei) / 0.08, 0.0, 1.0);
+				e = mix(e, ei, hk) - 0.08 * hk * (1.0 - hk);
+				if (ei < best) {
+					best = ei;
+					yel = step(1.0 - yellow_bias, fract(h0 * 17.3 + h3)) * step(0.35, h3);
+					tone = 0.82 + 0.3 * fract(h1 * 31.7 + h2);
+					rel = clamp(length(d) / max(rad, 1e-3), 0.0, 1.0);
 				}
-				r.x = max(r.x, cov);
-				r.z = max(r.z, 1.0 - smoothstep(0.0, 0.015 + aa, abs(e - 0.012)));
 			}
 		}
 	}
-	// The prothallus line is millimetres wide: only close up (drawn at a pixel's width further off it outlined every
-	// thallus like a sticker).
-	r.z *= (1.0 - r.x) * (1.0 - smoothstep(0.004, 0.015, fp));
-	// Past the cell's size the rosettes average out to their mean cover.
-	float far = smoothstep(0.1, 0.5, fp / S);
-	return far > 0.0 ? mix(r, vec4(0.3 * tm_ros_dens(q, w3, shift), yellow_bias, 0.0, 1.0), far) : r;
+	float cov = 1.0 - smoothstep(-aa, aa, e);
+	// The young rim: a band 1 to 4 cm inside the margin (a pixel's width further off, then faded with distance).
+	float band = (1.0 - smoothstep(0.0, max(0.03, 1.5 * aa), -e)) * cov * (1.0 - smoothstep(0.05, 0.2, fp));
+	// The old centre paler and thinner.
+	tone *= 1.0 + 0.18 * (1.0 - smoothstep(0.0, 0.7, rel));
+	vec4 r = vec4(cov, yel, band, tone);
+	// Past the cell's size the thalli average out to their mean cover.
+	float far = smoothstep(0.15, 0.6, fp / S);
+	return far > 0.0 ? mix(r, vec4(0.35 * tm_ros_dens(q, w3, shift), yellow_bias * 0.6, 0.0, 1.0), far) : r;
 }
 
 // Sand glitter (docs/ideas/terrain-material.md, "Sand glitter"): a few of the quartz grains (clean cleavage and
@@ -982,19 +998,19 @@ float tm_cl_beds(vec3 p, float p_steep, float p_relief, out int r_bed) {
 	float o = a0;
 	{
 		float d = a0 - a_dn;
-		float req = max(min(1.5, max(0.6, T_dn * 0.5)), max(1.2 * abs(d), 1.36 * steep * abs(d)));
+		float req = max(min(1.5, max(0.6, T_dn * 0.5)), max(1.2 * abs(d), 2.6 * steep * abs(d)));
 		float lo_dn = min(T_dn, req);
 		float up_dn = req - lo_dn;
 		if (up_dn > 0.0) {
 			float carry = a_dn + d * (lo_dn / req);
-			float lip_up = min(up_dn, T * 0.5);
+			float lip_up = min(up_dn, T * 0.9);
 			float tb = clamp(fy / lip_up, 0.0, 1.0);
 			o = mix(carry, a0, tb * tb * (3.0 - 2.0 * tb));
 		}
 	}
 	{
 		float d = a1 - a0;
-		float req = max(min(1.5, max(0.6, T * 0.5)), max(1.2 * abs(d), 1.36 * steep * abs(d)));
+		float req = max(min(1.5, max(0.6, T * 0.5)), max(1.2 * abs(d), 2.6 * steep * abs(d)));
 		float lip = min(T, req);
 		float target = req > lip ? a0 + d * (lip / req) : a1;
 		float ty = clamp((fy - (T - lip)) / lip, 0.0, 1.0);
@@ -1006,7 +1022,11 @@ float tm_cl_beds(vec3 p, float p_steep, float p_relief, out int r_bed) {
 float tm_cl_offset(vec3 p, float steep, float k) {
 	int bed;
 	float o = tm_cl_beds(p, steep, k, bed);
-	o += 0.5 * (tm_cl_noise(p * 0.7) - 0.5) + 0.2 * (tm_cl_noise(p * 2.1 + vec3(3.0, 1.0, 7.0)) - 0.5);
+	// Drawn out down the fall line on the steepest faces, as Landscape3D::_cliff_offset.
+	vec3 pf = vec3(p.x, p.y * 0.25, p.z);
+	float fl = smoothstep(0.25, 0.7, min(steep, 6.0 * max(k, 0.0)));
+	o += mix(0.5 * (tm_cl_noise(p * 0.7) - 0.5) + 0.2 * (tm_cl_noise(p * 2.1 + vec3(3.0, 1.0, 7.0)) - 0.5),
+			0.5 * (tm_cl_noise(pf * 0.7) - 0.5) + 0.2 * (tm_cl_noise(pf * 2.1 + vec3(3.0, 1.0, 7.0)) - 0.5), fl);
 	return o;
 }
 // Seep streaks below the beds' ledges (cyanobacterial ink streaks on limestone, Tintenstriche; desert varnish in dry
@@ -1071,9 +1091,10 @@ float tm_bk_offset(vec3 p) {
 	return o;
 }
 // Metres out of the face: k.x the cliff relief's scale, k.y the bank's.
-// tn: the face's tan(slope) (the lip rule's).
+// tn: the face's tan(slope) (the lip rule's, at the landscape's full relief scale as Landscape3D::_cliff_point; k
+// arrives eased by Landscape3D::_cliff_scale in CUSTOM0).
 float tm_cl_disp(vec3 p, vec2 k, float tn) {
-	return (k.x > 0.0 ? k.x * tm_cl_offset(p, k.x * tn, k.x) : 0.0) + (k.y > 0.0 ? k.y * tm_bk_offset(p) : 0.0);
+	return (k.x > 0.0 ? k.x * tm_cl_offset(p, terrain_cliff_relief.x * tn, terrain_cliff_relief.x) : 0.0) + (k.y > 0.0 ? k.y * tm_bk_offset(p) : 0.0);
 }
 // The relief's normal at the undisplaced point p (landscape space), differenced over e (the pixel's footprint, so
 // relief finer than a pixel fades instead of aliasing).
@@ -1102,11 +1123,11 @@ vec3 tm_cl_normal(vec3 p, vec3 nb, vec2 k, float e) {
 float tm_cl_offset_coarse(vec3 p, float steep, float k) {
 	int bed;
 	float o = tm_cl_beds(p, steep, k, bed);
-	o += 0.5 * (tm_cl_noise(p * 0.7) - 0.5);
+	o += mix(0.5 * (tm_cl_noise(p * 0.7) - 0.5), 0.5 * (tm_cl_noise(vec3(p.x, p.y * 0.25, p.z) * 0.7) - 0.5), smoothstep(0.25, 0.7, min(steep, 6.0 * max(k, 0.0))));
 	return o;
 }
 float tm_cl_disp_coarse(vec3 p, vec2 k, float tn) {
-	return (k.x > 0.0 ? k.x * tm_cl_offset_coarse(p, k.x * tn, k.x) : 0.0) + (k.y > 0.0 ? k.y * tm_bk_offset(p) : 0.0);
+	return (k.x > 0.0 ? k.x * tm_cl_offset_coarse(p, terrain_cliff_relief.x * tn, terrain_cliff_relief.x) : 0.0) + (k.y > 0.0 ? k.y * tm_bk_offset(p) : 0.0);
 }
 // The sun's visibility over the relief at the undisplaced point p (landscape space): l toward the sun, e the pixel's
 // footprint, j a 0-1 jitter for the steps.
@@ -1961,16 +1982,18 @@ void fragment() {
 				ros += tm_rosettes(fw_pr.uv1 + 7.31, wp[3 - fw_pr.axes1.x - fw_pr.axes1.y], fw_shift, fw_yb, tm_fp0) * fw_pr.w1;
 			}
 			float lc = ros.x * fw_face;
-			float rim = ros.z * fw_face;
 			float yellow = ros.y;
 			float fw_l = dot(albedo, vec3(0.3, 0.59, 0.11));
-			vec3 lcol = mix(vec3(0.88, 0.9, 0.82) * max(fw_l * 1.18, 0.2), vec3(0.36, 0.37, 0.16), yellow);
+			vec3 lcol = mix(vec3(0.86, 0.88, 0.8) * max(fw_l * 1.15, 0.2), vec3(0.38, 0.4, 0.17), yellow);
 			lcol *= ros.w * (0.9 + 0.2 * mix(0.5, tm_vn(wp * 9.0 + 5.0), fw_k));
 			// Close up a crust is a mosaic of areoles split by fine dark cracks (black between the map lichen's yellow ones).
 			float fw_ar = (1.0 - smoothstep(0.0, 0.07, abs(tm_vn(wp * 28.0 + 3.0) - 0.5))) * (1.0 - smoothstep(0.006, 0.02, tm_fp0));
 			lcol *= 1.0 - fw_ar * mix(0.25, 0.7, yellow);
-			albedo = mix(albedo, albedo * 0.4, rim * 0.5);
-			albedo = mix(albedo, lcol, lc * 0.42);
+			// The young rim darker and denser (the map lichen's black prothallus shows through at its edge).
+			lcol *= 1.0 - ros.z * mix(0.22, 0.5, yellow);
+			// A thin crust over the rock, not paint: its cover thins and thickens (the rock's tone and cracks show).
+			float fw_a = 0.5 * (0.7 + 0.6 * mix(0.5, tm_vn(wp * 3.3 + 21.0), fw_k));
+			albedo = mix(albedo, lcol, lc * fw_a * (0.75 + 0.35 * ros.z));
 			rough = mix(rough, max(rough, 0.9), lc);
 			// Moss on the shaded faces' treads and lips, where water and fines lodge: the relief's surface flatter than
 			// the face around it (the heightfield's normal).
