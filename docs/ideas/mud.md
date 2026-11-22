@@ -1365,6 +1365,30 @@ breaks. Plan: through the water contract's disturb() (owner-keyed moving disturb
 and speed, the bow's height from Fr, the wake washing banks through the ford's bank path (_ford()), and the
 water level at the intake (21.1) read with the bow's trough.
 
+#### Round 21 built (22 Nov)
+
+Picked 22 Nov: all three, in order.
+
+**21.1 Engines drown, cabs flood.** PhysXVehicle3D `air_intake_height` (-1: three quarters up the chassis box) and
+`snorkel` (the intake 0.25 m over the roof). Water over the intake stalls the engine (throttle cut); it starts again
+once the intake has been clear 5 s. The cab fills through `hull_leak_area` (0.01 m2) at Q = 0.6 A sqrt(2 g |dh|) under
+the head outside, its water adds weight and drains the same way on land. Getters is_engine_drowned(), get_cab_water().
+Bench --test=fordcar: through 0.05 m2 a floating car took 2.16 m3 in 40 s and settled 0.76 m, 1.25 m3 left 10 s
+after the water went; in 0.75 m of water a low intake stalled the car (0 m in 3 s, restarted 5 s after clearing),
+the snorkelled one drove 7.1 m.
+
+**21.2 Wet trails pug.** GroundSurface3D `trail_pugging` (on): every 2 s, trail cells from WorldStand.trail_at()
+within 15 m of the followed point whose soil is wet (moisture 0.55 or more, or mud) take hoof prints at 11 per m2 per
+pass, Poisson-drawn by hash (at most 64 a tick): a 6 x 8 cm hoof at 150 kPa, sunk by Bekker plate sinkage through
+press_box(). The wear's regrowth heals them as any print. Bench --test=trails: 320 prints in ten wet days, 2.7 cm
+deep; none on a dry trail.
+
+**21.3 Bow waves.** The hull pushes the water at three keel points through the water contract's disturb() (owner
+keyed, so the water's solver makes the moving wave and wake), strength 0.15 at rest rising to 1 at depth Froude
+number 0.8, times how much of the keel is wet; cleared once out of the water. get_bow_wave_strength(). Bench
+--test=fordcar: 0.07 at rest, 0.52 at 6.6 m/s in 0.75 m of water, cleared on leaving. Not built yet: the wake washing
+the banks (through the ford bank path) and the bow's trough lowering the water at the intake.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with
