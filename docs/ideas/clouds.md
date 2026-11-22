@@ -805,3 +805,16 @@ over the opaque scene; Hillaire's aerial perspective (2020) does the same for th
   their mean. One more texture read per fine sample.
 - **Lake band veil.** The bench view moved 4 km further back and looks higher, so the veil meets the ground near the
   horizon instead of standing over the near ground as a strip. The veil drawn over near ground is unchanged.
+
+## Review 15 (22 Nov 2026; docs: lake veil jagged and striped, smear columns in the band's base)
+
+- **Smear columns.** The band's field (wc_lake_effect) was read bilinearly over its coarse cells, so the band's edge
+  was a polygon of straight runs and the cumulus over it stood those up as flat vertical facets. Now a cubic B-spline
+  read (four bilinear reads, Sigg and Hadwiger 2005, as the wave field), on the CPU too.
+- **Stripes in the veil.** The curtains' finest octave was stretched along the view so its streaks would stand up;
+  that made the pattern follow the camera and each pixel column a ray down one long streak. Isotropic now: the
+  density is the same all the way down, so the sheets stand upright by themselves.
+- **Grain over the ground.** The pass over the scene has no temporal resolve, so its interleaved-gradient jitter
+  stood as a fixed diagonal grain. It now steps at mid-step with 32 steps (16 in the sky): each step's ends follow
+  the pixel's depth, which changes smoothly over the ground, so the veil is smooth. Path tracing has no
+  over-ground veil (the pass is raster only), as before.

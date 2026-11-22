@@ -82,6 +82,9 @@ public:
 		float fade = 1.0f;
 		float cloud_base = 0.0f; // m, its own cloud base (a fire cloud's plume LCL); <= 0: cloud_base_height
 		float fade_target = 0.0f;
+		// A cumulus over a ridge where the day's upslope winds meet (upslope_winds): eased by fade like a fire cloud,
+		// no rain or lightning.
+		bool ridge = false;
 	};
 
 private:
@@ -619,6 +622,10 @@ private:
 	// Night drainage (katabatic) winds: per cell the slope flow's jet (x, z m/s at its peak) and the jet's height (m).
 	bool drainage_winds = true;
 	float drain_level = 0.0f; // 0..1, the night's forcing relaxed over half an hour
+	bool upslope_winds = true;
+	float upslope_level = 0.0f; // 0..1, the day's forcing relaxed over an hour
+	Vector<float> cell_ridge; // m, the cell's height over the mean within COLD_POOL_RADIUS (a ridge's prominence)
+	void _update_ridge_clouds(double p_dt);
 	Vector<float> cell_drain;
 	void _update_drainage(float p_dt_h);
 	Vector3 _drainage_wind_at(const Vector3 &p_position, float p_height) const;
@@ -997,7 +1004,7 @@ public:
 	Vector3 get_fire_cloud_for(float p_heat) const;
 	// The storm cells, and how far each has grown (0..1, its rise and decay over its lifetime).
 	const Vector<Storm> &get_storms() const { return storms; }
-	float get_storm_strength(const Storm &p_storm) const { return _storm_weight(p_storm); }
+	float get_storm_strength(const Storm &p_storm) const { return p_storm.ridge ? 0.0f : _storm_weight(p_storm); }
 	// Haze from precipitation: each source (a SnowFall3D, rain) pushes its extinction (1/m), a height
 	// scale for a layer near the ground (<= 0: uniform), its albedo, and optionally a centre and radius.
 	// Sources add up. With drive_environment_fog, the uniform part goes into the environment's
@@ -1269,6 +1276,9 @@ public:
 	void set_sea_breezes(bool p_enabled);
 	bool is_sea_breezes_enabled() const { return sea_breezes; }
 	Vector2 get_sea_breeze_at(Vector3 p_position) const; // m/s at 10 m, the breeze's share of the mean wind
+	void set_upslope_winds(bool p_enabled);
+	bool is_upslope_winds_enabled() const { return upslope_winds; }
+	int get_ridge_cloud_count() const;
 	void set_drainage_winds(bool p_enabled);
 	bool is_drainage_winds_enabled() const { return drainage_winds; }
 	Vector3 get_drainage_wind_at(Vector3 p_position, float p_height_above_ground) const;

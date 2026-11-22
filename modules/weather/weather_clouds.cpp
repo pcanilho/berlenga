@@ -557,17 +557,35 @@ float lake_effect_at(const float *p_field, int p_n, Vector2 p_corner, float p_si
 	if (uv.x <= 0.0f || uv.y <= 0.0f || uv.x >= 1.0f || uv.y >= 1.0f) {
 		return 0.0f;
 	}
+	// Cubic B-spline across the cells, as the shader's wc_lake_effect() (bilinear drew the band's edge as straight runs).
 	const float fx = CLAMP(uv.x * p_n - 0.5f, 0.0f, float(p_n - 1));
 	const float fz = CLAMP(uv.y * p_n - 0.5f, 0.0f, float(p_n - 1));
-	const int x0 = MIN(int(fx), p_n - 2);
-	const int z0 = MIN(int(fz), p_n - 2);
+	const int x0 = int(Math::floor(fx));
+	const int z0 = int(Math::floor(fz));
 	const float tx = fx - x0;
 	const float tz = fz - z0;
-	float v[2];
-	for (int c = 0; c < 2; c++) {
-		const float a = Math::lerp(p_field[(z0 * p_n + x0) * 2 + c], p_field[(z0 * p_n + x0 + 1) * 2 + c], tx);
-		const float b = Math::lerp(p_field[((z0 + 1) * p_n + x0) * 2 + c], p_field[((z0 + 1) * p_n + x0 + 1) * 2 + c], tx);
-		v[c] = Math::lerp(a, b, tz);
+	float wx[4];
+	float wz[4];
+	const float t[2] = { tx, tz };
+	for (int a = 0; a < 2; a++) {
+		const float f = t[a];
+		const float f2 = f * f;
+		const float f3 = f2 * f;
+		float *w = a == 0 ? wx : wz;
+		w[0] = (1.0f - 3.0f * f + 3.0f * f2 - f3) / 6.0f;
+		w[1] = (4.0f - 6.0f * f2 + 3.0f * f3) / 6.0f;
+		w[2] = (1.0f + 3.0f * f + 3.0f * f2 - 3.0f * f3) / 6.0f;
+		w[3] = f3 / 6.0f;
+	}
+	float v[2] = { 0.0f, 0.0f };
+	for (int j = 0; j < 4; j++) {
+		const int z = CLAMP(z0 - 1 + j, 0, p_n - 1);
+		for (int i = 0; i < 4; i++) {
+			const int x = CLAMP(x0 - 1 + i, 0, p_n - 1);
+			const float w = wx[i] * wz[j];
+			v[0] += w * p_field[(z * p_n + x) * 2];
+			v[1] += w * p_field[(z * p_n + x) * 2 + 1];
+		}
 	}
 	const float grow = p_params.x * smoothstep(10.0f, 50.0f, v[0]);
 	if (grow <= 0.0f) {
@@ -1682,9 +1700,24 @@ float wc_lake_effect(vec2 xz) {
 	if (uv.x <= 0.0 || uv.y <= 0.0 || uv.x >= 1.0 || uv.y >= 1.0) {
 		return 0.0;
 	}
+	// Cubic B-spline across the field's cells (four bilinear reads; Sigg and Hadwiger 2005, as wc_wave_eta()): the band's
+	// edge is a contour of this field, and read bilinearly it was a polygon of straight runs, which the cumulus over it
+	// stood up as flat vertical facets (smear columns down the band's cloud base).
 	float n = cloud_lake_rect.w;
-	vec2 tc = (clamp(uv * n - 0.5, vec2(0.0), vec2(n - 1.0)) + 0.5) / n;
-	vec2 v = textureLod(cloud_lake_field, tc, 0.0).rg;
+	vec2 st = clamp(uv * n - 0.5, vec2(0.0), vec2(n - 1.0));
+	vec2 i0 = floor(st);
+	vec2 f = st - i0;
+	vec2 f2 = f * f;
+	vec2 f3 = f2 * f;
+	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+	vec2 w3 = f3 / 6.0;
+	vec2 g0 = w0 + w1;
+	vec2 g1 = w2 + w3;
+	vec2 c0 = (i0 - 1.0 + w1 / g0 + 0.5) / n;
+	vec2 c1 = (i0 + 1.0 + w3 / g1 + 0.5) / n;
+	vec2 v = (g0.y * (g0.x * textureLod(cloud_lake_field, c0, 0.0) + g1.x * textureLod(cloud_lake_field, vec2(c1.x, c0.y), 0.0)) + g1.y * (g0.x * textureLod(cloud_lake_field, vec2(c0.x, c1.y), 0.0) + g1.x * textureLod(cloud_lake_field, c1, 0.0))).rg;
 	float grow = cloud_lake.x * smoothstep(10.0, 50.0, v.x);
 	if (grow <= 0.0) {
 		return 0.0;
