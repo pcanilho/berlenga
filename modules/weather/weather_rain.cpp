@@ -376,6 +376,7 @@ void WeatherMap3D::_rain_upload() {
 	const Rect2 r = get_map_rect();
 	_set_global("weather_rain_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("weather_precip_phase", Vector4(cur_air_temperature, 0.0065f, cur_air_humidity, ground_height), RSE::GLOBAL_VAR_TYPE_VEC4);
+	_set_global("weather_warm_nose", Vector4(warm_nose_temperature, warm_nose_base, 0.0f, 0.0f), RSE::GLOBAL_VAR_TYPE_VEC4);
 }
 
 float WeatherMap3D::get_rain_share_at(Vector3 p_position) const {

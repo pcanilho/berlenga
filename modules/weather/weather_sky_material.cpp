@@ -1079,8 +1079,9 @@ vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 am
 	float e = -10.04 + 1.41 * cloud_air.x + 9.0 * cloud_air.y;
 	float snow = 1.0 / (1.0 + exp(clamp(e, -60.0, 60.0)));
 	vec2 slant = cloud_rain_slant * mix(1.0, 3.5, snow);
-	const int n = 16;
-	// Steps spread out with distance (the near ones matter most).
+	// Steps spread out with distance (the near ones matter most). Over the scene (p_t_min > 0) twice as many: that pass
+	// has no temporal resolve to average its jitter, so its noise stood as a fixed grain of stripes.
+	int n = p_t_min > 0.0 ? 32 : 16;
 	vec3 col = vec3(0.0);
 	float tr = 1.0;
 	float wsum = 0.0;
@@ -1107,11 +1108,11 @@ vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 am
 		if (lake < 0.02) {
 			continue;
 		}
-		// Curtains: three octaves (2.5 km, 800 m, 250 m), the finest stretched across the view so its streaks stand
-		// upright; thresholded so clearer gaps open between the heavier sheets (as the storms' shafts).
-		vec2 side = normalize(vec2(-rd.z, rd.x) + vec2(1e-5));
-		vec2 qf = vec2(dot(qn, side), dot(qn, vec2(-side.y, side.x)) * 0.25);
-		float curt = 0.5 * wc_value_noise(qn / 2500.0 + vec2(23.1, 4.7)) + 0.3 * wc_value_noise(qn / 800.0 + vec2(3.3, 17.9)) + 0.2 * wc_value_noise(qf / 250.0 + vec2(11.9, 6.2));
+		// Curtains: three octaves (2.5 km, 800 m, 250 m), thresholded so clearer gaps open between the heavier sheets (as
+		// the storms' shafts). The density is the same all the way down, so the sheets stand upright by themselves; the
+		// finest octave stretched along the view (to stand its streaks up) made the pattern follow the camera, and each
+		// pixel column a ray down one long streak: vertical smear columns and blocky stripes along the horizon.
+		float curt = 0.5 * wc_value_noise(qn / 2500.0 + vec2(23.1, 4.7)) + 0.3 * wc_value_noise(qn / 800.0 + vec2(3.3, 17.9)) + 0.2 * wc_value_noise(qn / 250.0 + vec2(11.9, 6.2));
 		// Under the base the snow starts thin (the flakes growing as they fall out of it): the base shows over the veil.
 		float r = 4.0 * lake * mix(0.0, 2.2, smoothstep(0.42, 0.68, curt)) * smoothstep(100.0, 700.0, base - p.y);
 		float sigma = mix(0.31e-3 * pow(r, 0.67), 0.00196 * pow(min(r, 5.0), 2.1), snow);

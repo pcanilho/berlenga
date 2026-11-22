@@ -306,6 +306,8 @@ func _ready() -> void:
 	await _cold_pool_tests()
 	await _drainage_tests()
 	await _breeze_tests()
+	await _high_water_tests()
+	await _late_frost_tests()
 	await _rime_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
@@ -2156,6 +2158,7 @@ func _drainage_tests() -> void:
 	m.advance(2.0 * 3600.0)
 	var overcast: float = m.get_drainage_wind_at(slope, jet_h).length()
 	m.cloud_cover = 0.0
+	m.upslope_winds = false # its own check below
 	c.time_of_day = 13.0
 	m.snap_to_settings()
 	m.advance(2.0 * 3600.0)
@@ -2163,6 +2166,55 @@ func _drainage_tests() -> void:
 	_check("drainage winds: none under an overcast sky or by day", overcast < 0.05 and day < 0.05, "%.2f m/s overcast, %.2f m/s at 13:00" % [overcast, day])
 	m.drainage_winds = false
 	_check("drainage winds: off, none", m.get_drainage_wind_at(slope, jet_h) == Vector3(), "")
+	# By day the sunlit slope's air runs up it (upslope_winds), deeper, and fair-weather cumulus gathers over the
+	# crests where the flanks' flows meet (Whiteman 2000; Banta 1990). The valley's shoulders (200 m over the floor)
+	# are its crests here.
+	m.upslope_winds = true
+	m.humidity = 0.7
+	m.temperature = 18.0
+	m.snap_to_settings()
+	m.advance(3.0 * 3600.0)
+	var up := Vector3()
+	var up_h := 0.0
+	for hh in [2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0]:
+		var d: Vector3 = m.get_drainage_wind_at(slope, hh)
+		if d.length() > up.length():
+			up = d
+			up_h = hh
+	_check("upslope winds: a sunny calm afternoon runs the slope's air up the fall line, deeper than the night's jet", up.x > 0.5 and up.length() < 4.0 and up_h > jet_h, "%.2f m/s toward (%.2f, %.2f) at %.0f m (the night's jet at %.0f m)" % [up.length(), up.x / maxf(up.length(), 1e-4), up.z / maxf(up.length(), 1e-4), up_h, jet_h])
+	m.upslope_winds = false
+	m.queue_free()
+	await get_tree().physics_frame
+	# A 250 m hill: the flanks' upslope flows meet over its top and the day's first cumulus sits there.
+	var rs := GDScript.new()
+	rs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 250.0 * exp(-(p.x * p.x + p.z * p.z) / (2.0 * 300.0 * 300.0))\n"
+	rs.reload()
+	var ridge := Node3D.new()
+	ridge.set_script(rs)
+	add_child(ridge)
+	m = _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(ridge)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.cloud_cover = 0.0
+	m.humidity = 0.7
+	m.temperature = 18.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	var crests: int = m.get_ridge_cloud_count()
+	var over: float = m.get_cloud_cover_at(Vector3(0, 250, 0))
+	var beside: float = m.get_cloud_cover_at(Vector3(1800, 0, 0))
+	_check("ridge cumulus: fair-weather cumulus gathers over the crest where the upslope flows meet (Banta 1990), not over the plain beside it", crests == 1 and over > beside + 0.2, "%d ridge cumulus; cover %.2f over the crest, %.2f 1.8 km off" % [crests, over, beside])
+	m.humidity = 0.2
+	m.snap_to_settings()
+	m.advance(3.0 * 3600.0)
+	_check("ridge cumulus: in dry air (the condensation level far above the crest) none forms", m.get_ridge_cloud_count() == 0, "%d" % m.get_ridge_cloud_count())
+	ridge.queue_free()
 	m.queue_free()
 	c.queue_free()
 	valley.queue_free()
@@ -2318,6 +2370,122 @@ func _rime_tests() -> void:
 
 # The drawn ground's relief over the heightfield (WorldGround.relief_at): nothing with no producer, a stub's answer
 # with one (Landscape3D fills it from its cliff and bank relief).
+
+
+# Late frost (WeatherMap3D.late_frost): a clear calm spring night pools air below -2 C on the valley floor; the new
+# leaves of the species already out there brown (TreeGenerator), those on the slopes above and those still in bud
+# do not, and the second flush replaces them over three to six weeks.
+func _late_frost_tests() -> void:
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 200.0 * (1.0 - exp(-p.x * p.x / (2.0 * 400.0 * 400.0)))\n"
+	vs.reload()
+	var valley := Node3D.new()
+	valley.set_script(vs)
+	add_child(valley)
+	var c := _new_clock(4, 2.0)
+	c.day = 5
+	var m := _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(valley)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.6
+	m.temperature = 2.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(4.0 * 3600.0)
+	var floor_p := Vector3(0, 0, 0)
+	var shoulder := Vector3(1500, 200, 0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var lf: Vector3 = m.get_leaf_frost_at(floor_p)
+	var s_floor: Dictionary = w.season_at(floor_p)
+	var s_top: Dictionary = w.season_at(shoulder)
+	var birch_floor: Dictionary = TreeGenerator.get_leaf_season(TreeGenerator.PRESET_BIRCH, s_floor)
+	var birch_top: Dictionary = TreeGenerator.get_leaf_season(TreeGenerator.PRESET_BIRCH, s_top)
+	var ash_floor: Dictionary = TreeGenerator.get_leaf_season(TreeGenerator.PRESET_ASH, s_floor)
+	print("late frost: air %.1f C floor, %.1f shoulder; event %s; forcing %.0f; birch out %.2f, ash out %.2f" % [m.get_air_temperature_at(floor_p), m.get_air_temperature_at(shoulder), lf, float(s_floor.get("forcing", 0.0)), float(birch_floor.leaf_out), float(ash_floor.leaf_out)])
+	_check("late frost: the night's pool kills the young birch leaves on the valley floor, none on the shoulder above it", float(birch_floor.frost_browned) > 0.5 and float(birch_top.frost_browned) == 0.0,
+			"%.2f browned on the floor (air %.1f C), %.2f on the shoulder (%.1f C)" % [birch_floor.frost_browned, m.get_air_temperature_at(floor_p), birch_top.frost_browned, m.get_air_temperature_at(shoulder)])
+	_check("late frost: ash, still in bud that night, comes through", float(ash_floor.frost_browned) == 0.0, "%.2f" % ash_floor.frost_browned)
+	m.temperature = 12.0
+	m.snap_to_settings()
+	m.advance(2.0 * 86400.0)
+	var s_later: Dictionary = w.season_at(floor_p)
+	var aged := s_later.duplicate()
+	aged["leaf_frost_days"] = 45.0
+	var later: Dictionary = TreeGenerator.get_leaf_season(TreeGenerator.PRESET_BIRCH, aged)
+	_check("late frost: the mark keeps through mild days, and the second flush has replaced the browned leaves six weeks on",
+			absf(float(s_later.get("leaf_frost_days", -1.0)) - 2.0) < 0.3 and float(TreeGenerator.get_leaf_season(TreeGenerator.PRESET_BIRCH, s_later).frost_browned) > 0.5 and float(later.frost_browned) == 0.0,
+			"%.1f days on; %.2f browned at 45 days" % [float(s_later.get("leaf_frost_days", -1.0)), later.frost_browned])
+	m.late_frost = false
+	_check("late frost: off, no mark", m.get_leaf_frost_at(floor_p).z < 0.0)
+	m.queue_free()
+	c.queue_free()
+	valley.queue_free()
+	await get_tree().physics_frame
+
+# The last flood's mark from its real producers (WorldWater.high_water_at): a river's sections and a lake fed over a
+# weir keep one, the sea none; the contract hands the river's on to a reader (GrassField3D's flood wash).
+func _high_water_tests() -> void:
+	if not ClassDB.class_exists("PhysXRiver3D") or not ClassDB.class_exists("GrassField3D"):
+		_skip("high-water marks", "needs the PhysX module and the vegetation")
+		return
+	var ground := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(600, 2, 400)
+	shape.shape = box
+	shape.position = Vector3(0, -1, 0)
+	ground.add_child(shape)
+	add_child(ground)
+	var r := PhysXRiver3D.new()
+	var c := Curve3D.new()
+	for k in 7:
+		c.add_point(Vector3(0, 0.0 - 0.1 * k, -60.0 + 20.0 * k))
+	r.curve = c
+	r.discharge = 5.0
+	r.step_length = 2.0
+	r.rain_response = false
+	add_child(r)
+	var lake := PhysXWaterSurface3D.new()
+	lake.domain_size = Vector2(40, 40)
+	lake.position = Vector3(150.0, 0.0, 0.0)
+	add_child(lake)
+	lake.set_outflow(1234, Vector3(170.0, 0.0, 0.0), Vector3(1, 0, 0), 4.0, 0.0, 1.0)
+	lake.catchment_inflow = 2.0
+	lake.level_from_flows = true
+	var sea := PhysXWaterSurface3D.new()
+	sea.domain_size = Vector2(60, 60)
+	sea.position = Vector3(-200.0, 0.0, 0.0)
+	add_child(sea)
+	for i in 5:
+		await get_tree().physics_frame
+	r.rebuild()
+	await get_tree().physics_frame
+	var water := WorldContracts.get_water()
+	var head := r.to_global(c.sample_baked(30.0))
+	var at_lake := Vector3(150.0, 0.0, 5.0)
+	var at_sea := Vector3(-200.0, 0.0, 5.0)
+	var hr: Vector4 = water.high_water_at(head)
+	var hl: Vector4 = water.high_water_at(at_lake)
+	var hs: Vector4 = water.high_water_at(at_sea)
+	_check("high-water marks: the river's sections and the lake keep the last flood's mark through WorldWater, the sea none",
+			hr.is_equal_approx(r.get_high_water_at(head)) and hr.x > r.sample_height(head) and hl.is_equal_approx(lake.get_high_water_at(at_lake)) and hl.x > lake.global_position.y + lake.water_level and is_inf(hs.x),
+			"river %.2f m over its surface, lake %.3f m over its level, sea %s" % [hr.x - r.sample_height(head), hl.x - lake.global_position.y - lake.water_level, hs])
+	var grass := GrassField3D.new()
+	var bank := Vector3(head.x + 3.0, hr.x - 0.05, head.z)
+	var wash: Vector3 = grass.get_flood_wash_at(bank)
+	var above: Vector3 = grass.get_flood_wash_at(Vector3(bank.x, hr.x + 0.5, bank.z))
+	_check("high-water marks: grass on the bank under the river's mark lies washed, none above it", wash.z >= 0.0 and above.z < 0.0,
+			"under: %s, above: %s" % [wash, above])
+	grass.free()
+	for n in [r, lake, sea, ground]:
+		n.queue_free()
+	await get_tree().physics_frame
+
 func _relief_contract_tests() -> void:
 	WorldContracts.clear_overrides()
 	var none: Vector2 = WorldContracts.get_ground().relief_at(Vector3(10, 0, 10))

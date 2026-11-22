@@ -7732,6 +7732,11 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_LAPSE] = phase.y;
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_HUMIDITY] = phase.z;
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_GROUND] = phase.w;
+				static const StringName warm_nose_name = "weather_warm_nose";
+				const Variant nose_var = ms->global_shader_parameter_get_internal(warm_nose_name);
+				const Vector4 nose = nose_var.get_type() == Variant::VECTOR4 ? Vector4(nose_var) : Vector4();
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_NOSE] = nose.x;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PRECIP_NOSE_BASE] = nose.y;
 				// Its rain map (weather_rain_map, same rect as the state map): the canopy's held water in green.
 				static const StringName rain_map_name = "weather_rain_map";
 				const Variant rain_var = ms->global_shader_parameter_get_internal(rain_map_name);

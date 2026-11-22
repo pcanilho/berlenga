@@ -3938,6 +3938,34 @@ Cottrell 2004; wild cherry: Russell 2003), Rackham 2006, Wood Handbook (green MO
 - Later: WorldWater.high_water_at (1276b430: peak height, days since, flow xz) can drive flood_height and
   flood_years (5av) instead of hand values.
 
+### 5bg. Trees on cliffs (22 Nov; third of three)
+
+Sources: Larson, Matthes and Kelly 2000 (*Cliff Ecology*; American Scientist 1999), Kelly and Larson 1997 (Thuja
+occidentalis on the Niagara Escarpment), Matthes, Larson and Kelly 2002 (sectored architecture), Pirk et al. 2012
+(*Plastic Trees*: a grown skeleton adapted after the fact), Ellenberg 1988 (rock pine woods, Erico-Pinion).
+- `cliff_angle` (radians, 0 none): the tree is rooted in a crevice of a face falling toward mesh +Z at that angle.
+  Grown upright, then two steps. `_cliff_bend` bends the skeleton back over the face (toward -Z) by the angle less
+  `cliff_lean`, along the stem from 2.5 stem radii up over 0.6-1.6 m: a skeletal bend, each limb carried with its stem
+  node and turned the full bend about its own base, so low limbs on the level run grew up as crown limbs did (a space
+  bend folded them). Wood that would run behind the face is pruned. `_cliff_turn` then turns every surface, the
+  skeleton and the wind rig (pivot, centroids, m2 from the inertia about the pivot) about the foot by the angle: the
+  level soil becomes the face, the collar and roots lie on it, and the crown is turned by the lean alone, so its
+  droop, leaf angles and moss stay true. The J or sabre form of cliff cedars.
+- Roots: bearings pulled to the face's joints (down, across, the diagonals; none up), 1.4-2.2x longer, straighter,
+  and run plastered over the rock to near their tips before they go in.
+- Sectored dieback (`cliff_dieback`, half width in radians): limbs on one side are dead grey wood without their
+  finest twigs, and the stem below carries an old strip of dead bark with rolled edges (the lightning strip's shape,
+  wide, 30-120 years old) twisting with the grain: a strip-bark stem.
+- FORM_CLIFF variants: faces of 69, 57, 86 and 77 degrees, lean 6-26 degrees, two in three with a dead sector,
+  internodes 0.42x and years 0.65-0.95x the preset's (cliff cedars: roots confined in crevices set the pace).
+  Mesh meta `tree_ground_slope` (angle, 0): placement turns +Z down the face and picks the nearest variant, as for
+  banks. Stands: cliff yew over the beech woods, Scots pine in the montane conifers, hemlock in the white
+  pine-hemlock; slopes 52-90 degrees, rock 0.25-1 (with geology), any soil depth, open light.
+- Bench: `--cliff=STAND` (each variant on a grey slab at its angle; a stand-in, bench only); stands --test checks
+  every cliff variant: slope meta, under 3% of the mesh behind the face, crown standing off it, under 16 m.
+- Open: the valley bench has no faces steep enough, so nothing is placed there; the landscape scene's cliffs are the
+  real test. Cliff variants of more species (juniper-like shrubs, holm oak) and thicker, ribbon-like roots in cracks.
+
 ## Next-round options (card 20 Nov evening)
 
 1. **Lightning-struck trees.** Old healed strike strips are in since 5p (WOUND_LIGHTNING, random on tall trees). Missing:

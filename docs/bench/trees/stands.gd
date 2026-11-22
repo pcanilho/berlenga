@@ -953,6 +953,39 @@ func _stand_checks(only := -1) -> void:
 							pairs += 1
 							same += 1 if pts[a][1] == pts[b][1] else 0
 				_check(pairs > 0 and same > pairs * 0.6, "%s: %s, %d of %d neighbour pairs within 4 m share a clone" % [STAND_NAMES[i], sps[s].resource_name, same, pairs])
+		# Cliff trees (trees.md 5bg): every variant carries its face's slope (placement as for banks), stands out of the
+		# face rather than into it (little of the mesh behind the face plane, which the roots and collar sink into), is
+		# far smaller than the open-grown tree, and its crown is over the open side, not over the rock.
+		for s in sps.size():
+			if not String(sps[s].resource_name).ends_with("(cliff)"):
+				continue
+			var bad := 0
+			var worst_behind := 0.0
+			var tops := []
+			for m in sps[s].meshes:
+				if m == null:
+					continue
+				var gs: Vector2 = m.get_meta("tree_ground_slope", Vector2())
+				if gs.x < 0.9:
+					bad += 1
+					continue
+				var nrm := Vector3(0, cos(gs.x), sin(gs.x))
+				var behind := 0
+				var total := 0
+				var top := Vector3(0, -1e9, 0)
+				for si in m.get_surface_count():
+					var vs: PackedVector3Array = m.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
+					for j in range(0, vs.size(), 7):
+						total += 1
+						if vs[j].dot(nrm) < -0.35:
+							behind += 1
+						if vs[j].y > top.y:
+							top = vs[j]
+				worst_behind = max(worst_behind, float(behind) / max(total, 1))
+				tops.append("%.1f m up, %.1f m off the face" % [top.y, top.dot(nrm)])
+				if float(behind) / max(total, 1) > 0.03 or top.dot(nrm) < 0.3 or top.y > 16.0:
+					bad += 1
+			_check(sps[s].meshes.size() >= 1 and bad == 0, "%s: %s, %d variants on faces, worst %.1f%% behind the face; tops %s" % [STAND_NAMES[i], sps[s].resource_name, sps[s].meshes.size(), worst_behind * 100.0, str(tops)])
 
 		if i == TreeGenerator.STAND_HEDGEROW:
 			_check(f.get_plant_count() > 0 and open_count == f.get_plant_count(), "hedgerow: shrubs and open-grown standards only (%d)" % open_count)

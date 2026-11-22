@@ -45,6 +45,7 @@ contract returns with no provider.
 | `WorldContracts.climate_precipitation_factor_at(pos)` (static) | ratio of the region mean | 1 | The terrain climate slot (`WorldClimateProvider`, TerrainDataMap3D's baked precipitation); the first provider that covers the point answers |
 | `smoke_at(pos)` | g/m2 | 0 | Fires' smoke particulate in the column (the haze layer) |
 | `smoke_concentration_at(pos)` | g/m3 at the point | `smoke_at` / 2000 (a stub that only overrides smoke_at gets this) | The column over its mixing depth: the 2 km layer, or under a night's cold pool the smoke held there through the pool's depth (WeatherMap3D `smoke_in_pools`). Readers: the camera's haze, SnowCover3D's black carbon deposition |
+| `dust_at(pos)`, `dust_top_at(pos)`, `dust_concentration_at(pos)` | g/m2; m above the ground; g/m3 | 0 | Mineral dust (WeatherMap3D `dust_storms`, 22 Nov): raised by dry wind over loose ground (WorldGround blown sand, else `dust_source_share`; Marticorena and Bergametti 1995), its own field beside the smoke, carried by the near-ground wind, settling 1.5 cm/s, washed out as coarse. A storm's outflow piles it at the gust front (the haboob): the top rises to 1.75 x `dust_layer_depth` on the leading edge. Concentration densest at the ground, scale a third of the top. Readers: sun transmittance, haze, the cloud march's dust wall |
 | `obstacle_height_at(pos)` | m | 0 | Wind-blocking obstacles (rocks, walls, buildings, vehicles) over the ground, on the provider's shelter grid |
 | `obstacle_lee_at(pos)` | 0..1 | 1 | Near-ground wind behind upwind obstacles over the open wind: 0.15 in the cavity, back to 1 by 25 H |
 | `washout_at(pos, coarse)`, static `washout_rate(rain, snow, coarse)` | 1/s | 0 | Below-cloud scavenging of particles, a R^b: fine smoke about 1e-5 at 1 mm/h, coarse dust about 3e-4, snow five times rain |
@@ -79,7 +80,10 @@ contract returns with no provider.
 
 Shader globals (the GPU side of the same contract): `weather_wind_map`, `weather_state_map`, `weather_map_rect`,
 `weather_contact_map`, `weather_shelter_map`, `weather_frost_map` (R frost mm, G surface cooling K),
-`weather_precip_phase`, `weather_vortex_0..3` (x, z, R, swirl x spin) and `weather_vortex_up` (their updrafts);
+`weather_precip_phase`, `weather_vortex_0..3` (x, z, R, swirl x spin) and `weather_vortex_up` (their updrafts),
+`weather_dust_map` (over `weather_map_rect`: R column g/m2, G top m above the ground, B front head share),
+`weather_dust_optics` (x mass extinction 0.6 m2/g at 550 nm, yzw relative optical depth R G B) and
+`weather_dust_albedo` (rgb single scattering albedo, w asymmetry g);
 formats in weather.md. Wind in shaders: `weather_wind(world_pos, height)`,
 `weather_height_above_ground(world_pos)`, `weather_terrain(xz)` from `WeatherMap3D.get_wind_shader_code()`; all
 globals are declared at start, so a shader compiles with no weather and has no wind.
@@ -184,7 +188,7 @@ below the sea's level reads its own water, and a body above the water reads the 
 | `sediment_at(pos)` | kg/m3 (x mineral, y ash and char) | (0, 0) | Suspended load of the water that answers; river and lake shading cloud and darken by it |
 | `breaking_at(pos)` | m | 0 | Height of the waves breaking: the broken waves in a surf zone (about 0.78 of the depth), whitecap cover times wave height on open water; the largest any producer reports |
 | `add_sediment(pos, mineral_kg_s, ash_kg_s)` | kg/s | dropped with no water | A load entering the water that answers there (runoff off burnt or bare ground, banks, slides); it carries it downstream |
-| `high_water_at(pos)` | Vector4: x the last flood's highest surface (m, world), y days since that peak, z w the peak flow's direction (unit x, z; 0 unknown) | (-INF, -1, 0, 0) | Producers keep their peak stage (Valence: rivers by section, lakes); the highest mark answers. Reader: vegetation wrack lines |
+| `high_water_at(pos)` | Vector4: x the last flood's highest surface (m, world), y days since that peak, z w the peak flow's direction (unit x, z; 0 unknown) | (-INF, -1, 0, 0) | Producers keep their peak stage: PhysXRiver3D per section and PhysXWaterSurface3D lakes (level_from_flows), the median annual flood (flood_peak_ratio x base flow, on flood_peak_day) or a higher storm in the last year (water.md "High-water marks"); the highest mark answers; the sea keeps none. Readers: vegetation wrack lines, GrassField3D flood wash |
 
 Tests: `WorldContracts.set_water(stub)` replaces the whole contract; `WorldContracts.add_water_stub(stub)` adds a
 script producer beside the real ones (a pool or a sea for a buoyancy bench without one).

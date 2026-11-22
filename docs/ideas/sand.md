@@ -1108,3 +1108,18 @@ nose and lobes and clefts along it, Simpson 1997).
   where the front crosses the camera's field, as the near tyre dust (PhysXGroundDust3D).
 - Ownership: the dust layer and its optics live in the weather module (Valence's); the wall in the cloud march
   (the clouds thread); the source law and Flow billows here.
+
+### Built, stage 1: the dust layer (22 Nov 2026)
+
+WeatherMap3D `dust_storms` (on), weather_dust.cpp, as designed above, with what the bench taught:
+- The source reads the erodible surface's own roughness (5e-4 m), not the map's, and a 0.35 m/s threshold (natural
+  desert surfaces, Gillette 1980): about 8.5 m/s at 10 m. `dust_clay` 8 %.
+- The outflow is a density current with a front (the shelf cloud's ring: 1.45 core radii plus 0.02 per m/s, lobed):
+  the dust's own wind drops the downburst profile's 1/r tail beyond it, and the transport is a forward,
+  mass-conserving splat, so the dust piles at the front (a backward trace cannot pile up where the wind converges).
+- Profile: densest at the ground, scale a third of the top (a uniform mix left 16 km visibility in the wall; now
+  under 1 km at 4 g/m2, as observed in haboobs).
+- docs/bench/haboob --test: source law (threshold, wetness, clay), a ring of 4 g/m2 round a 25 m/s outflow with its
+  head marked outside the peak, the nose at 1.7 x the depth, the profile, the sun at 7 % through it, the contract,
+  rain washing it out. `--map` prints the column.
+- Next: the wall in the cloud march (clouds thread, against weather_dust_map), near-field Flow billows here.

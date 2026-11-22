@@ -78,6 +78,10 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_sky_full", "vec4" },
 		{ "terrain_sky_full2", "vec4" },
 		{ "terrain_sky_full3", "float" },
+		// The far sun shadows' horizon map (TerrainGenerator3D.update_sun_horizon).
+		{ "terrain_sun_horizon_map", "sampler2D" },
+		{ "terrain_sun_horizon_frame", "vec4" },
+		{ "terrain_sun_horizon_size", "vec4" },
 		// The stand's worn trails and fresh rooting (Landscape3D publishes it).
 		{ "terrain_stand_map", "sampler2D" },
 		{ "terrain_stand_rect", "vec4" },

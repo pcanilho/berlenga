@@ -72,6 +72,14 @@
 				Wets from a grid of [param width] by [param height] values (0 to 1, row-major in z then x) laid over [param rect] in world XZ, e.g. the wet cells of a live water area. Kept where more than what is there.
 			</description>
 		</method>
+		<method name="add_dust">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="kg" type="float" />
+			<description>
+				Adds [param kg] of mineral dust to the column over [param position] (see [member dust_storms]).
+			</description>
+		</method>
 		<method name="add_shelter_box">
 			<return type="int" />
 			<param index="0" name="box" type="AABB" />
@@ -122,6 +130,12 @@
 			<param index="1" name="storage_mm" type="float" />
 			<description>
 				Rutter et al. (1975) drainage from a canopy holding [param held_mm] of water against its capacity [param storage_mm], in mm/h.
+			</description>
+		</method>
+		<method name="clear_dust">
+			<return type="void" />
+			<description>
+				Clears the dust layer.
 			</description>
 		</method>
 		<method name="clear_precipitation_extinction">
@@ -284,7 +298,51 @@
 			<param index="0" name="position" type="Vector3" />
 			<param index="1" name="height_above_ground" type="float" default="-1.0" />
 			<description>
-				The night's drainage (katabatic) wind at [param position], [param height_above_ground] metres up (negative: from the position's own height over the terrain): down the fall line, peaking a few metres up. Zero by day, overcast, in a wind, on flat ground or with [member drainage_winds] off. [method get_wind_at] includes it.
+				The night's drainage (katabatic) wind at [param position], [param height_above_ground] metres up (negative: from the position's own height over the terrain): down the fall line, peaking a few metres up; by day the upslope wind ([member upslope_winds]), up it. Zero overcast, in a wind, on flat ground or with [member drainage_winds] off. [method get_wind_at] includes it.
+			</description>
+		</method>
+		<method name="get_dust_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Mineral dust in the column over [param position], g/m². Strong dry wind over loose ground raises it (Marticorena and Bergametti 1995); a storm's outflow piles it at its gust front, the haboob.
+			</description>
+		</method>
+		<method name="get_dust_concentration_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Dust at [param position], g/m³: densest at the ground, falling off on a scale of a third of [method get_dust_top_at], none above it.
+			</description>
+		</method>
+		<method name="get_dust_flux_for" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wind10" type="float" />
+			<param index="1" name="loose" type="float" />
+			<param index="2" name="wetness" type="float" />
+			<description>
+				The source law: g/m² of dust raised a second by a [param wind10] m/s wind at 10 m over ground with [param loose] of its top loose and dry and [param wetness] of its surface wet. None under about 8.5 m/s or past half wet.
+			</description>
+		</method>
+		<method name="get_dust_head_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				0 to 1: how much [param position] lies on a dust front's leading edge, where the density current's nose stands high (the haboob's wall).
+			</description>
+		</method>
+		<method name="get_dust_optical_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The dust column's optical depth at 550 nm over [param position] (0.6 m²/g).
+			</description>
+		</method>
+		<method name="get_dust_top_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The dust layer's top over [param position], metres above the ground: [member dust_layer_depth], up to 1.75 times it on a front's leading edge; 0 with no dust.
 			</description>
 		</method>
 		<method name="get_fire_cloud_count" qualifiers="const">
@@ -335,6 +393,13 @@
 				The open water crossed upwind of [param position] (km), each kilometre weighted by exp(-s / 60 km) for its distance s back from the point, from the lake-effect square (128 km round the camera at 2 km, water a metre deep or more from [WorldWater]; water beyond its edge continues as the edge holds). 0 before the square is sampled.
 			</description>
 		</method>
+		<method name="get_leaf_frost_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The worst recent late frost at [param position] (see [member late_frost]): x its severity (0 at -1.5 C, 1 at -4.5 C air), y the season's forcing there that night (K days, to tell which species were in young leaf), z the days since; [code](0, 0, -1)[/code] for none. [method WorldWeather.season_at] carries it as [code]leaf_frost[/code], [code]leaf_frost_forcing[/code] and [code]leaf_frost_days[/code].
+			</description>
+		</method>
 		<method name="get_mid_cloud_cover_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -382,6 +447,12 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The terrain climate's precipitation factor applied to the rain at [param position]; 1 with [member orographic_rain] off or no climate.
+			</description>
+		</method>
+		<method name="get_ridge_cloud_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many ridge cumulus are showing (see [member upslope_winds]).
 			</description>
 		</method>
 		<method name="get_rime_at" qualifiers="const">
@@ -459,6 +530,34 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Hoarfrost on exposed surfaces at [param position], in mm of water: deposited on clear calm nights below 0 C at the surface (see [member dew_and_frost]), melted by the morning sun or mild air. Shaders read it from the global [code]weather_frost_map[/code] (R, mm; G, the surface's temperature less the air's, K) over [code]weather_map_rect[/code].
+			</description>
+		</method>
+		<method name="get_freezing_share_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the precipitation landing liquid on frozen surfaces at [param position] (freezing rain), 0 to 1: snow melted in the warm layer aloft ([member warm_nose_temperature]) that reaches air at or below 0 C without refreezing to ice pellets (Bourgouin 2000, see [member warm_nose_base]).
+			</description>
+		</method>
+		<method name="get_glaze_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The glaze at [param position]: mm of radial clear ice on an exposed twig or wire, from freezing rain (Jones 1998), melted in a thaw at 0.3 mm/h per K above 0 C. [code]WorldWeather.glaze_at[/code] reads it; shaders read it from the rain map's alpha ([code]weather_rain_map[/code]).
+			</description>
+		</method>
+		<method name="get_warm_nose_melt" qualifiers="const">
+			<return type="float" />
+			<description>
+				The share of the falling snow the warm layer aloft melts (0 to 1): none at a peak of +1 C or less, all of it from +3 C (Stewart and King 1987).
+			</description>
+		</method>
+		<method name="glaze_accretion_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="precip_mm_h" type="float" />
+			<param index="1" name="wind_m_s" type="float" />
+			<description>
+				Jones's (1998) simple ice accretion model: the radial ice (mm/h) a horizontal cylinder gains from [param precip_mm_h] of freezing rain in a [param wind_m_s] wind, [code]sqrt((P rho_w)^2 + (3.6 V W)^2) / (rho_i pi)[/code] with [code]W = 0.067 P^0.846[/code] g/m3.
 			</description>
 		</method>
 		<method name="get_season_on_day" qualifiers="const">
@@ -1067,6 +1166,21 @@
 		<member name="drainage_winds" type="bool" setter="set_drainage_winds" getter="is_drainage_winds_enabled" default="true">
 			Night drainage winds: on clear calm nights the air cooled against a slope runs down its fall line in a shallow jet (Prandtl 1942; Whiteman 2000), about 1 to 3 m/s a few metres up, from each cell's radiative cooling and slope. Builds over half an hour, gone by day, overcast or in a wind over about 4 m/s. In [method get_wind_at] (so [method WorldWeather.wind_at]) and the shaders' wind map.
 		</member>
+		<member name="dust_clay" type="float" setter="set_dust_clay" getter="get_dust_clay" default="8.0">
+			Percent of clay in the soil: more clay, more dust knocked loose per saltating grain (Marticorena and Bergametti 1995).
+		</member>
+		<member name="dust_emission_scale" type="float" setter="set_dust_emission_scale" getter="get_dust_emission_scale" default="1.0">
+			Scales the dust raised (art direction; 1 is the source law).
+		</member>
+		<member name="dust_layer_depth" type="float" setter="set_dust_layer_depth" getter="get_dust_layer_depth" default="1500.0">
+			The dust layer's depth in metres, raised up to 1.75 times at a front's nose.
+		</member>
+		<member name="dust_source_share" type="float" setter="set_dust_source_share" getter="get_dust_source_share" default="0.0">
+			Share of the ground that is loose, dry and open (desert, dry fields) where no ground producer answers (WorldGround blown sand). 0: no dust raised there.
+		</member>
+		<member name="dust_storms" type="bool" setter="set_dust_storms" getter="is_dust_storms" default="true">
+			Strong dry wind over loose ground raises mineral dust into its own layer: carried by the wind near the ground, settling at about 1.5 cm/s, washed out by rain, dimming the sun orange-brown and thickening the haze. A storm's downburst outflow piles it at its gust front into a haboob wall. Off clears it.
+		</member>
 		<member name="fog_drip" type="bool" setter="set_fog_drip" getter="is_fog_drip_enabled" default="true">
 			Fog drip: where the ground stands in the cloud, plants comb the cloud water out, deposition = LWC x wind x a capture efficiency (Lovett 1984), 0.003 over short plants up to 0.018 under a closed canopy ([method get_canopy_closure_at]; deposition velocities of about 2 to 9 cm/s in a 5 m/s wind, Gallagher et al. 1988, Katata et al. 2008). It enters the canopy's water balance with the rain, so it drips once the leaves hold their storage, wets the ground under the trees and feeds the runoff. In the cloud the air is saturated and the canopy does not dry.
 		</member>
@@ -1081,6 +1195,9 @@
 		</member>
 		<member name="lake_effect_snow" type="bool" setter="set_lake_effect_snow" getter="is_lake_effect_snow" default="true">
 			Lake-effect snow: bands of convective cloud and snow downwind of open water when cold air crosses it (see [method get_lake_effect_at]).
+		</member>
+		<member name="late_frost" type="bool" setter="set_late_frost" getter="is_late_frost_enabled" default="true">
+			Late frost on new leaves: each cell keeps its worst spring air frost (February to mid July) with the season's forcing that night, so leaves that were unfolding then brown ([method TreeGenerator.get_leaf_season]) while buds still closed survive (Augspurger 2009; Vitasse, Lenz and Koerner 2014). Cold pools bring it to hollows first. It fades as the second flush grows, three to six weeks on.
 		</member>
 		<member name="mid_cloud_cover" type="float" setter="set_mid_cloud_cover" getter="get_mid_cloud_cover" default="0.15">
 			The base cover of the mid cloud layer (altocumulus; a full cover is an altostratus sheet) at [member mid_cloud_height]. The weather drives what is drawn: dry air thins it to 0.2 of this, rain set in [member rain_rate] thickens it into a sheet, easing twice as fast as the rain (after the cirrus, before the rain). It follows the rain and never makes it: precipitation stays the main layer's. It stays out of [member cloud_cover] and [method get_cloud_cover_at]. It drifts with [method get_wind_aloft] at its height. See docs/ideas/clouds.md.
@@ -1343,11 +1460,23 @@
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="4.0">
 			How often the cells are refreshed, per second. Gusts are evaluated every frame regardless.
 		</member>
+		<member name="upslope_winds" type="bool" setter="set_upslope_winds" getter="is_upslope_winds_enabled" default="true">
+			Day upslope (anabatic) winds: on sunny calm days the air warmed against a slope runs up its fall line (Prandtl 1942; Whiteman 2000), about 1 to 2 m/s in a layer some tens of metres deep, weaker under cloud. Where they meet over a crest standing 60 m or more above the ground round it, fair-weather cumulus gathers over it at the condensation level when the air is moist enough (Banta 1990; Demko, Geerts and others 2009), counted by [method get_ridge_cloud_count]. In [method get_drainage_wind_at] and [method get_wind_at].
+		</member>
 		<member name="valley_fog" type="bool" setter="set_valley_fog" getter="is_valley_fog_enabled" default="true">
 			Fill saturated cold air pools with radiation fog (Whiteman 2000; Gultepe et al. 2007): it forms over about an hour on clear calm nights, sits flat at the basin's saturation level and lifts after sunrise or in a wind. Drawn as a [FogVolume] lit by the froxel fog plus its multiple scattering, so raster and path tracing match. Needs [member cold_pools].
 		</member>
 		<member name="valley_fog_density" type="float" setter="set_valley_fog_density" getter="get_valley_fog_density" default="0.02">
 			Extinction inside the valley fog (1/m); 0.02 gives about 150 m visibility, a moderate radiation fog.
+		</member>
+		<member name="ice_storm_glaze" type="float" setter="set_ice_storm_glaze" getter="get_ice_storm_glaze" default="0.0">
+			A test knob: every cell holds at least this glaze (mm of radial ice), whatever the weather; set it back to 0 and the glaze thaws as usual.
+		</member>
+		<member name="warm_nose_base" type="float" setter="set_warm_nose_base" getter="get_warm_nose_base" default="1000.0">
+			The base of the warm layer aloft, in m above the map's ground. Under it the air cools to the ground's: a deep, cold layer refreezes the melted drops to ice pellets (Bourgouin's 2000 energies), a shallow one lets them land as freezing rain. Ground at or above it is in the warm air: rain, no glaze.
+		</member>
+		<member name="warm_nose_temperature" type="float" setter="set_warm_nose_temperature" getter="get_warm_nose_temperature" default="0.0">
+			The peak temperature (C) of a warm layer aloft, 0 for none. It melts the snow falling through it (see [method get_warm_nose_melt]); over sub-zero air at the ground the drops arrive supercooled and freeze where they land (freezing rain, [method get_glaze_at]). Every reader of the rain share sees it: [method get_rain_share_at], [code]WorldWeather.rain_share_at[/code], the snowpack, the falling snow and the raindrop rings (raster and path traced).
 		</member>
 		<member name="water_temperature" type="float" setter="set_water_temperature" getter="get_water_temperature_setting" default="-100.0">
 			Open water's surface temperature (C) when set; below -99 [method get_water_temperature] follows the climate or the air.

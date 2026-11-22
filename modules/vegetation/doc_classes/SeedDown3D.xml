@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SeedDown3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Plumed seeds (dandelion clocks, thistledown, willowherb fluff) loosed by the wind and carried by it.
+	</brief_description>
+	<description>
+		Heads in seed near the camera (the scene's [VegetationField3D] species of [constant PlantGenerator.PRESET_DANDELION], [constant PlantGenerator.PRESET_THISTLE] and [constant PlantGenerator.PRESET_FIREWEED], found by their [code]plant_preset[/code] meta) loose seeds when a dry wind tugs them, in the season's share of heads in seed ([method PlantGenerator.get_bloom_shares]). Each seed rides the shared wind ([method WorldWeather.wind_at] at its height), falls at its falling speed (0.39 m/s for a dandelion, two to three times faster damp as the pappus closes) and is lifted and dropped by a random vertical gust (a Langevin model of the surface layer). Where it lands it is caught in the grass, lies on the ground or floats on water ([method WorldWater.flow_at] carries it), and a stronger gust lifts it again. Drawn as one [MultiMesh] of real geometry per kind, so the path tracer sees the same seeds.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<param index="1" name="release" type="bool" default="false" />
+			<description>
+				Advances the seeds [param seconds] in steps of 1/60 s without the scene (tests). With [param release], heads in seed loose seeds too.
+			</description>
+		</method>
+		<method name="clear_seeds">
+			<return type="void" />
+			<description>
+				Removes every seed and resets [method get_released_count].
+			</description>
+		</method>
+		<method name="get_aloft_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Seeds in the air.
+			</description>
+		</method>
+		<method name="get_fall_speed" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="kind" type="int" />
+			<description>
+				Falling speed of a dry seed of [param kind] in still air, m/s: 0.391 for the dandelion (measured, Cummins et al. 2018); the thistle's and willowherb's are estimates.
+			</description>
+		</method>
+		<method name="get_floating_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Seeds that landed on open water and float on it.
+			</description>
+		</method>
+		<method name="get_kind_for_preset" qualifiers="static">
+			<return type="int" />
+			<param index="0" name="preset" type="int" />
+			<description>
+				The seed kind of a [enum PlantGenerator.Preset] (dandelion, thistle, fireweed), -1 for plants without plumed seeds.
+			</description>
+		</method>
+		<method name="get_lying_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Seeds lying in the grass, on the ground or on water.
+			</description>
+		</method>
+		<method name="get_released_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Seeds loosed since the last [method clear_seeds].
+			</description>
+		</method>
+		<method name="get_seed_states" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<description>
+				Each live seed: x, y, z its position, w the seconds it has lain (negative aloft).
+			</description>
+		</method>
+		<method name="get_source_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Heads of plumed-seed plants within [member range] at the last look (every 2 s, or [method refresh_sources]).
+			</description>
+		</method>
+		<method name="refresh_sources">
+			<return type="void" />
+			<description>
+				Looks for the heads near the camera again now.
+			</description>
+		</method>
+		<method name="release_at">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="kind" type="int" />
+			<param index="2" name="count" type="int" />
+			<description>
+				Looses [param count] seeds of [param kind] at [param position] now.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			Seeds are loosed, stepped and drawn.
+		</member>
+		<member name="lie_time" type="float" setter="set_lie_time" getter="get_lie_time" default="90.0">
+			Seconds a seed lies before it is recycled (taken into the sward).
+		</member>
+		<member name="lift_speed" type="float" setter="set_lift_speed" getter="get_lift_speed" default="3.0">
+			Wind 10 cm up (m/s) that lifts a lying seed out of the grass again.
+		</member>
+		<member name="max_seeds" type="int" setter="set_max_seeds" getter="get_max_seeds" default="1500">
+			Seeds kept at once; the oldest slot is reused.
+		</member>
+		<member name="range" type="float" setter="set_range" getter="get_range" default="40.0">
+			Metres round the camera in which heads loose seeds; seeds past 1.5 times it are dropped.
+		</member>
+		<member name="release_rate" type="float" setter="set_release_rate" getter="get_release_rate" default="0.15">
+			Seeds a second one head in seed looses in a strong dry wind (an estimate); the season's share of heads in seed, the wind (from 2 to 10 m/s at the head), the surface wetness (half when wet) and rain (a tenth) scale it.
+		</member>
+		<member name="still_shot" type="bool" setter="set_still_shot" getter="is_still_shot" default="false">
+			Stills: the seeds stay where they are (drawn, not stepped).
+		</member>
+	</members>
+	<constants>
+		<constant name="KIND_DANDELION" value="0" enum="Kind">
+			A dandelion's 14 mm parachute of about 100 bristles on a long beak.
+		</constant>
+		<constant name="KIND_THISTLE" value="1" enum="Kind">
+			Thistledown: a larger, feathery pappus.
+		</constant>
+		<constant name="KIND_WILLOWHERB" value="2" enum="Kind">
+			Rosebay willowherb's tuft of silky hairs on a tiny seed.
+		</constant>
+		<constant name="KIND_MAX" value="3" enum="Kind">
+			Number of kinds.
+		</constant>
+	</constants>
+</class>
