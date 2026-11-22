@@ -3787,3 +3787,25 @@ Built (20 Nov, Paulo picked "also add wall-reflecting waves"):
   0.6 to 4 m with a Phillips k^-3 spectrum, deep-water dispersion over 4 m, unit variance), each direction offset by a
   fixed random phase. Drawn as geometry (rows every 0.25 m, 17 lanes), so the path tracer has the real waves; steep
   faces (slope > 0.35) break white.
+
+## High-water marks (22 Nov, coordinator: WorldWater.high_water_at for vegetation's wrack lines)
+
+Vegetation strings wrack lines (drift litter, silt, combed grass) along the last flood's highest water. Rivers and
+lakes answer `WorldWater.high_water_at` through `contract_water_high_water_at`.
+
+- **Stage at another flow.** At-a-station hydraulic geometry (Leopold and Maddock 1953, USGS PP 252): depth ~ Q^0.40,
+  width ~ Q^0.26, speed ~ Q^0.34. The fitted 0.40 folds in the spread over the banks, which a fixed-width Manning
+  channel (Q^0.6) leaves out, so each section's flood stage is its bed plus depth x (Q_flood / Q)^0.40.
+- **Which flood.** The season's mark is the median annual flood (QMED in the Flood Estimation Handbook, about the
+  bankfull flow, a 1.5 to 2 year return: Leopold, Wolman and Miller 1964). `flood_peak_ratio` (default 6) sets it as a
+  multiple of the base flow; real rivers range from a few times their mean flow to twenty and more for small steep
+  catchments. The default 6 is a judgement for mid-size temperate rivers. `flood_peak_day` (default 110, late April)
+  dates it: snowmelt in spring; set winter days for rain-fed rivers.
+- **Storms.** A storm that lifts a section (river) or the level (lake) above the season's mark leaves its own mark with
+  its time on the weather's clock (`time_scale`), kept for a year. The highest mark answers, as the contract says.
+- **Lakes.** A lake whose outlets set its level (`level_from_flows`) solves the same broad-crested weir for the flood
+  inflow (flood_peak_ratio times the rivers' base flow plus the catchment's). Still water: no direction. A lake at a
+  fixed level answers no mark. The mark answers over the lake's domain; past the shore the ground stands above it.
+- **Reach.** A river answers within three flood half-widths of its centre line, enough for any floodplain the
+  section's width implies; vegetation compares the ground with the mark, so higher ground takes none.
+- Not done: the sea (storm surge and spring-tide strandlines) answers none yet.

@@ -3822,7 +3822,8 @@ void main() {
 				vec2 gwuv = clamp((gfp.xz - grect.xy) / grect.zw, ght, 1.0 - ght);
 				float gprec = textureLod(sampler2D(bindless_textures[nonuniformEXT(gwmap)], SAMPLER_LINEAR_CLAMP), gwuv, 0.0).r;
 				float gair = get_rt_param(RT_PARAM_PRECIP_TEMPERATURE) - get_rt_param(RT_PARAM_PRECIP_LAPSE) * (gfp.y - get_rt_param(RT_PARAM_PRECIP_GROUND));
-				grate = max(gprec, 0.0) * rain_liquid_share(gair, get_rt_param(RT_PARAM_PRECIP_HUMIDITY));
+				grate = max(gprec, 0.0) * rain_liquid_share_nose(gair, get_rt_param(RT_PARAM_PRECIP_HUMIDITY), gfp.y - get_rt_param(RT_PARAM_PRECIP_GROUND),
+								get_rt_param(RT_PARAM_PRECIP_NOSE), get_rt_param(RT_PARAM_PRECIP_NOSE_BASE));
 			}
 			vec3 grr = grate > 0.0 ? rain_ripples(gfp.xz, scene_data_block.data.time, grate, gffp) : vec3(0.0);
 			gfs += grr.xy * grs;

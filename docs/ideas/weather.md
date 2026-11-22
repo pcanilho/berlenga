@@ -614,9 +614,12 @@ review added:
 - The glaze runs in its own pass, so it accretes and thaws with `canopy_water_enabled` off too.
 - `ice_storm_glaze` (mm): every cell holds at least that much, for tests and set pieces.
 - Checks: links bench `--test`, six `glaze:` checks.
-- Follow-ups: the GPU's rain share (raster `weather_rainfall_at`, PT rt_params 75 to 78) still uses the plain split, so
-  raindrop rings on water stop under freezing rain (needs the nose as two more params); the thaw could shed faster in
-  wind (observed shedding is sudden); a ground glaze (black ice) from the film freezing.
+- The GPU's rain share (the raindrop rings: raster `weather_rainfall_at`, the path tracer's ground rings) reads the
+  same split: `rain_liquid_share_nose()` in raytracing_rain_inc.glsl, fed by the global `weather_warm_nose` (peak C,
+  base m) and under PT by rt_params 85 and 86. Rain bench: `--view=pond --temp=-3 --warm-nose=4` keeps the rings
+  that `--temp=-3` alone (snow) stops.
+- Follow-ups: the thaw could shed faster in wind (observed shedding is sudden); a ground glaze (black ice) from the
+  film freezing.
 
 ## Sources
 

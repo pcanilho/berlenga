@@ -145,6 +145,8 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_HAZE_HEIGHT 82 // scale height (m)
 #define RT_PARAM_HAZE_BASE 83 // base height, relative to rt_origin
 #define RT_PARAM_HAZE_REACH 84 // how far rays that reach the sky carry it (the sky's own aerosol starts there)
+#define RT_PARAM_PRECIP_NOSE 85 // WeatherMap3D's warm layer aloft (weather_warm_nose): peak (C)
+#define RT_PARAM_PRECIP_NOSE_BASE 86 // and base (m above RT_PARAM_PRECIP_GROUND)
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)
