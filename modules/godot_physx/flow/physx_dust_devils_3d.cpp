@@ -35,11 +35,14 @@
 #include "physx_flow_emitter_3d.h"
 
 #include "core/object/class_db.h"
-#include "modules/modules_enabled.gen.h" // MODULE_WEATHER_ENABLED
+#include "modules/modules_enabled.gen.h" // MODULE_WEATHER_ENABLED, MODULE_GROUND_ENABLED
 #include "modules/world/world_contracts.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/main/viewport.h"
 
+#ifdef MODULE_GROUND_ENABLED
+#include "modules/ground/ground_surface_3d.h"
+#endif
 #ifdef MODULE_WEATHER_ENABLED
 #include "modules/weather/weather_map_3d.h"
 #endif
@@ -92,7 +95,7 @@ float PhysXDustDevils3D::get_favour_at(const Vector3 &p_at) const {
 	float f = Math::smoothstep(min_heating, min_heating + 12.0f, heat);
 	// The 10 m mean wind: not wind_at, which carries the gusts and the devils' own swirl (WeatherMap3D add_vortex).
 	const Vector3 wind = w->mean_wind_at(p_at);
-	f *= 1.0f - Math::smoothstep(6.0f, 11.0f, Vector2(wind.x, wind.z).length());
+	f *= 1.0f - Math::smoothstep(6.0f, 11.0f, float(Vector2(wind.x, wind.z).length()));
 	f *= 1.0f - Math::smoothstep(0.1f, 0.3f, w->surface_wetness_at(p_at));
 	f *= CLAMP(w->sun_visibility_at(p_at), 0.0f, 1.0f);
 	return f;
@@ -336,7 +339,16 @@ void PhysXDustDevils3D::_step(float p_dt) {
 		if (d.age >= d.life || Vector2(d.position.x - c.x, d.position.z - c.z).length() > 2.0f * spawn_range) {
 			d.alive = false;
 		}
-		_share_wind(d, d.alive ? _devil_strength(d.age, d.life) : 0.0f);
+		const float e = d.alive ? _devil_strength(d.age, d.life) : 0.0f;
+		_share_wind(d, e);
+#ifdef MODULE_GROUND_ENABLED
+		// Its track (Reiss et al. 2011): the foot sweeps the ripples off a band about its width as it passes, most
+		// of them in the second it takes to cross a spot.
+		GroundSurface3D *g = GroundSurface3D::get_active();
+		if (g && e > 0.0f) {
+			g->add_scour(d.position, 1.3f * d.radius, e * p_dt);
+		}
+#endif
 		_draw(d);
 	}
 }

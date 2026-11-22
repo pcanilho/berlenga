@@ -1083,7 +1083,16 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   (round the devil, in toward its wall) and flies only where that wind's u* passes the threshold, in the share of the
   budget its flux makes; the budget is set for the strongest wind over the patch (a 9 x 9 read of
   get_vortex_wind_at). Ground --test=wind: a 12 m/s devil in a 0 m/s wind lifts sand (peak 11.1 m/s, 8.8 g/m/s).
-- Not yet: the swirl mark left on the ripples, the PT cost on the PC queue.
+- Devil tracks (22 Nov). Research: dust devils leave tracks where the foot strips the fines and flattens the ripples
+  in a band about the devil's width (Reiss et al. 2011, Turpan; Balme and Greeley 2006); on Earth saltation fills
+  them within tens of minutes, in a calm they stay. GroundSurface3D `add_scour(position, radius, amount)` keeps the
+  share swept per 1 m world cell (each pass sweeps its share of what is left, fading over the disc's outer 30%), read
+  bilinearly; the ripples' show share (near ripples and the 32 m sand patch, so the far ripples too) is multiplied by
+  what is left. It heals only under saltation: rate = local flux / flux at 10 m/s / 600 s (the patch's own flux,
+  past it the open flux), on ripple_time_scale; cells under 0.01 or a kilometre off are dropped. PhysXDustDevils3D
+  scours 1.3 R round its foot at strength x dt per second. Ground --test=shelter checks it sweeps, refills under
+  12 m/s, holds in 3 m/s.
+- Not yet: the track's tone (a darker coarse lag where the fines went), the PT cost on the PC queue.
 
 ## Next sand candidates, round 2 (research, 22 Nov 2026; on a card)
 
