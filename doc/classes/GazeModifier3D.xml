@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GazeModifier3D" inherits="SkeletonModifier3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Turns the eyes, head, neck and upper back together to look at a target, with human gaze dynamics.
+	</brief_description>
+	<description>
+		A look at a target shared over a chain of bones, on top of whatever the animation does. It follows the head-eye coordination model of Andrist, Pejsa, Mutlu and Gleicher ("A Head-Eye Coordination Model for Animating Gaze Shifts of Virtual Characters", 2012) and the torso alignment of Pejsa et al. (2015): the eyes lead and carry what fits in their range, the head follows [member head_latency] later and carries the rest up to [member head_yaw_limit], and the upper back joins only for the part of the turn past [member spine_start_angle]. Each part moves with second-order dynamics (see [SecondOrderDynamics]), so gaze shifts start quickly, overshoot slightly and settle, and bigger shifts move faster. A faint quasi-periodic drift keeps a held look alive.
+		Angles are measured in the character's frame: [member reference_node]'s, whose +Z is forward and +Y up (the skeleton's own if it is empty), so rigs whose armature is turned under the character's node aim correctly. Each bone's forward is taken from the rest pose. Rigs without eye bones are fine: the head then carries the whole look from a point [member eye_offset] from the head bone.
+		Everything advances with the modifier's delta only, so a stopped clock holds the pose exactly (path-traced stills accumulate cleanly). Use [method reset] after a cut.
+		Unlike [LookAtModifier3D], which aims one bone with a tween, this distributes the look over the chain and moves it with springs.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="angles_to" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The yaw (left positive) and pitch (down positive) in radians of [param global_position] from the character's eyes, in the character's frame, as the skeleton's pose is now.
+			</description>
+		</method>
+		<method name="get_head_angles" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				Where the head ended up facing on the last modification: yaw (left positive) and pitch (down positive) in radians, in the character's frame.
+			</description>
+		</method>
+		<method name="get_look_weight" qualifiers="const">
+			<return type="float" />
+			<description>
+				How much of the look is applied, [code]0.0[/code] to [code]1.0[/code]: it fades in when a target is looked at and out when there is none or it is beyond [member ignore_angle].
+			</description>
+		</method>
+		<method name="get_target_angles" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				The angles of the target on the last modification, clamped to the limits: yaw and pitch in radians.
+			</description>
+		</method>
+		<method name="reset">
+			<return type="void" />
+			<description>
+				Snaps the gaze to the current target on the next modification, with no motion from the previous one. Call it after a camera cut or a teleport.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="drift_amplitude" type="float" setter="set_drift_amplitude" getter="get_drift_amplitude" default="0.013962634">
+			The amplitude of the slow drift added to the head's aim, so a held look is never perfectly still. [code]0.0[/code] turns it off.
+		</member>
+		<member name="drift_frequency" type="float" setter="set_drift_frequency" getter="get_drift_frequency" default="0.35">
+			The drift's base frequency in hertz.
+		</member>
+		<member name="drift_seed" type="int" setter="set_drift_seed" getter="get_drift_seed" default="0">
+			Varies the drift's phase, so characters do not drift in step.
+		</member>
+		<member name="eye_damping" type="float" setter="set_eye_damping" getter="get_eye_damping" default="0.9">
+			The eyes' damping ratio.
+		</member>
+		<member name="eye_down_limit" type="float" setter="set_eye_down_limit" getter="get_eye_down_limit" default="0.43633232">
+			How far the eyes turn down from the head's facing.
+		</member>
+		<member name="eye_frequency" type="float" setter="set_eye_frequency" getter="get_eye_frequency" default="4.5">
+			How fast the eyes respond, in hertz. Eyes are fast (saccades).
+		</member>
+		<member name="eye_offset" type="Vector3" setter="set_eye_offset" getter="get_eye_offset" default="Vector3(0, 0.09, 0.08)">
+			Where the eyes are from the head bone, in metres in the character's frame, for rigs without eye bones.
+		</member>
+		<member name="eye_response" type="float" setter="set_eye_response" getter="get_eye_response" default="0.0">
+			The eyes' initial response (see [member SecondOrderDynamics.response]).
+		</member>
+		<member name="eye_up_limit" type="float" setter="set_eye_up_limit" getter="get_eye_up_limit" default="0.34906584">
+			How far the eyes turn up from the head's facing.
+		</member>
+		<member name="eye_yaw_limit" type="float" setter="set_eye_yaw_limit" getter="get_eye_yaw_limit" default="0.5235988">
+			How far the eyes turn left or right from the head's facing.
+		</member>
+		<member name="fade_frequency" type="float" setter="set_fade_frequency" getter="get_fade_frequency" default="0.7">
+			How fast the look fades in and out, in hertz.
+		</member>
+		<member name="head_bone" type="String" setter="set_head_bone" getter="get_head_bone" default="&quot;&quot;">
+			The head bone. Required.
+		</member>
+		<member name="head_damping" type="float" setter="set_head_damping" getter="get_head_damping" default="0.72">
+			The head's damping ratio: below [code]1.0[/code] the head overshoots slightly and settles.
+		</member>
+		<member name="head_down_limit" type="float" setter="set_head_down_limit" getter="get_head_down_limit" default="0.7330383">
+			How far the head (with the neck) tips down.
+		</member>
+		<member name="head_frequency" type="float" setter="set_head_frequency" getter="get_head_frequency" default="1.3">
+			How fast the head responds, in hertz.
+		</member>
+		<member name="head_latency" type="float" setter="set_head_latency" getter="get_head_latency" default="0.15">
+			How long after the eyes the head starts to follow, in seconds.
+		</member>
+		<member name="head_response" type="float" setter="set_head_response" getter="get_head_response" default="-0.08">
+			The head's initial response; a small negative value gives a slight anticipation.
+		</member>
+		<member name="head_up_limit" type="float" setter="set_head_up_limit" getter="get_head_up_limit" default="0.5235988">
+			How far the head (with the neck) tips up.
+		</member>
+		<member name="head_yaw_limit" type="float" setter="set_head_yaw_limit" getter="get_head_yaw_limit" default="1.2217305">
+			How far the head (with the neck) turns left or right before the upper back has to help.
+		</member>
+		<member name="ignore_angle" type="float" setter="set_ignore_angle" getter="get_ignore_angle" default="2.0943952">
+			A target further round than this (behind the character) is not looked for; the look fades out.
+		</member>
+		<member name="left_eye_bone" type="String" setter="set_left_eye_bone" getter="get_left_eye_bone" default="&quot;&quot;">
+			The left eye bone, optional. With both eyes set, each also converges on a near target.
+		</member>
+		<member name="neck_bone" type="String" setter="set_neck_bone" getter="get_neck_bone" default="&quot;&quot;">
+			The neck bone, optional. It takes [member neck_share] of the head's turn.
+		</member>
+		<member name="neck_share" type="float" setter="set_neck_share" getter="get_neck_share" default="0.4">
+			The neck's share of the head's turn; the head bone takes the rest.
+		</member>
+		<member name="reference_node" type="NodePath" setter="set_reference_node" getter="get_reference_node" default="NodePath(&quot;&quot;)">
+			The character's node: its +Z is the character's forward and +Y its up. Empty uses the skeleton's frame.
+		</member>
+		<member name="right_eye_bone" type="String" setter="set_right_eye_bone" getter="get_right_eye_bone" default="&quot;&quot;">
+			The right eye bone, optional.
+		</member>
+		<member name="spine_bones" type="PackedStringArray" setter="set_spine_bones" getter="get_spine_bones" default="PackedStringArray()">
+			The upper back's bones, from the lowest, that share the part of the turn past [member spine_start_angle]. Optional.
+		</member>
+		<member name="spine_shares" type="PackedFloat32Array" setter="set_spine_shares" getter="get_spine_shares" default="PackedFloat32Array()">
+			Each spine bone's share of the back's turn; empty or short means equal shares.
+		</member>
+		<member name="spine_start_angle" type="float" setter="set_spine_start_angle" getter="get_spine_start_angle" default="0.87266463">
+			How far round the look goes before the upper back starts to turn with it.
+		</member>
+		<member name="spine_yaw_limit" type="float" setter="set_spine_yaw_limit" getter="get_spine_yaw_limit" default="0.38397244">
+			The most the upper back turns.
+		</member>
+		<member name="target_mode" type="int" setter="set_target_mode" getter="get_target_mode" enum="GazeModifier3D.TargetMode" default="1">
+			What the character looks at.
+		</member>
+		<member name="target_node" type="NodePath" setter="set_target_node" getter="get_target_node" default="NodePath(&quot;&quot;)">
+			The node looked at, when [member target_mode] is [constant TARGET_MODE_NODE].
+		</member>
+		<member name="target_position" type="Vector3" setter="set_target_position" getter="get_target_position" default="Vector3(0, 0, 0)">
+			The global position looked at, when [member target_mode] is [constant TARGET_MODE_POSITION].
+		</member>
+	</members>
+	<constants>
+		<constant name="TARGET_MODE_NONE" value="0" enum="TargetMode">
+			Looks at nothing: the look fades out to the animation's own head.
+		</constant>
+		<constant name="TARGET_MODE_NODE" value="1" enum="TargetMode">
+			Looks at [member target_node].
+		</constant>
+		<constant name="TARGET_MODE_POSITION" value="2" enum="TargetMode">
+			Looks at [member target_position].
+		</constant>
+	</constants>
+</class>

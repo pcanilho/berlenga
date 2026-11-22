@@ -44,6 +44,7 @@
 #include "scene/animation/animation_node_state_machine.h"
 #include "scene/animation/animation_player.h"
 #include "scene/animation/animation_tree.h"
+#include "scene/animation/second_order_dynamics.h"
 #include "scene/animation/tween.h"
 #include "scene/audio/audio_stream_player.h"
 #include "scene/debugger/scene_debugger.h"
@@ -249,6 +250,7 @@
 #include "scene/3d/lightmap_gi.h"
 #include "scene/3d/lightmap_probe.h"
 #include "scene/3d/limit_angular_velocity_modifier_3d.h"
+#include "scene/3d/gaze_modifier_3d.h"
 #include "scene/3d/look_at_modifier_3d.h"
 #include "scene/3d/marker_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
@@ -583,6 +585,7 @@ void register_scene_types() {
 
 	/* REGISTER ANIMATION */
 	GDREGISTER_CLASS(Tween);
+	GDREGISTER_CLASS(SecondOrderDynamics);
 	GDREGISTER_ABSTRACT_CLASS(Tweener);
 	GDREGISTER_CLASS(PropertyTweener);
 	GDREGISTER_CLASS(IntervalTweener);
@@ -732,6 +735,7 @@ void register_scene_types() {
 
 	GDREGISTER_CLASS(BoneAttachment3D);
 	GDREGISTER_CLASS(LookAtModifier3D);
+	GDREGISTER_CLASS(GazeModifier3D);
 #ifndef DISABLE_DEPRECATED
 	GDREGISTER_CLASS(SkeletonIK3D);
 #endif

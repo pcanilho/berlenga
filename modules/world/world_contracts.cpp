@@ -925,6 +925,14 @@ void WorldContracts::_clear_water_stubs() {
 		return provider ? provider->m_provider : m_default; \
 	}
 
+float WorldGround::known_height_at(const Vector3 &p_position) const {
+	float r = 0.0f;
+	if (GDVIRTUAL_CALL(_height_at, p_position, r)) {
+		return r;
+	}
+	return provider ? provider->contract_ground_height_at(p_position) : NAN;
+}
+
 float WorldGround::height_at(const Vector3 &p_position) const {
 	float r = 0.0f;
 	if (GDVIRTUAL_CALL(_height_at, p_position, r)) {
@@ -1136,6 +1144,7 @@ void WorldGround::_bind_methods() {
 	GDVIRTUAL_BIND(_track_mud, "position", "radius", "depth", "wet", "print");
 	ClassDB::bind_method(D_METHOD("has_provider"), &WorldGround::has_provider);
 	ClassDB::bind_method(D_METHOD("height_at", "position"), &WorldGround::height_at);
+	ClassDB::bind_method(D_METHOD("known_height_at", "position"), &WorldGround::known_height_at);
 	ClassDB::bind_method(D_METHOD("soil_at", "position"), &WorldGround::_soil_at_bind);
 	ClassDB::bind_method(D_METHOD("standing_water_at", "position"), &WorldGround::standing_water_at);
 	ClassDB::bind_method(D_METHOD("ice_at", "position"), &WorldGround::ice_at);

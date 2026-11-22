@@ -7,7 +7,10 @@ spring-like (second-order) follow for all of it, so nothing moves on a straight 
 first use case is a project that wrote this layer in script (about 900 lines over seven scripts); this
 note lists what it does, what Godot already ships, what the established techniques are, and the gaps.
 
-Status: research, 22 Nov. Nothing built yet; a card to Paulo picks the scope.
+Status, 22 Nov: Paulo picked all three gaps, in dependency order. Built: `SecondOrderDynamics` (scene/animation,
+with the C++ `SecondOrderSystem<T>` the nodes share), `GazeModifier3D` (scene/3d) and `FootPlacementModifier3D`
+(modules/world, since it reads the world contracts), each with unit tests. Contract additions:
+`WorldGround.known_height_at` and `WorldFootfalls` (world-contracts.md). Next: the first project moves onto them.
 
 ## What the first project does in script
 
