@@ -631,9 +631,14 @@ float high_cover_at(const State &p_state, Vector2 p_xz) {
 	}
 	for (int i = 0; i < p_state.storm_count; i++) {
 		const float *s = p_state.storms[i];
-		const Vector2 centre = Vector2(s[0], s[1]) + p_state.high_dir * (2.5f * s[2]);
-		const float x2 = (p_xz - centre).length_squared() / (9.0f * s[2] * s[2]);
-		c = 1.0f - (1.0f - c) * (1.0f - Math::exp(-x2) * s[3]);
+		// The anvil's cirrus beyond the anvil: the ice it sheds thins downwind into a shield (Lilly 1988), from where
+		// the anvil body ends (storm_body_at: 5 to 7 body radii) outward. Centred under the anvil it lay as a streaked
+		// sheet beneath it, a collar round the tower.
+		const float r = MAX(s[2], 0.3f * top_height(p_state, 1.0f) * s[3] * Math::lerp(0.45f, 1.0f, smoothstep(-10.0f, 20.0f, p_state.air_t0)));
+		const Vector2 d = p_xz - Vector2(s[0], s[1]);
+		const float a = d.dot(p_state.high_dir) / r;
+		const float x2 = (d - p_state.high_dir * (7.0f * r)).length_squared() / (16.0f * r * r);
+		c = 1.0f - (1.0f - c) * (1.0f - Math::exp(-x2) * smoothstep(4.0f, 6.5f, a) * s[3]);
 	}
 	return c;
 }
@@ -1817,9 +1822,12 @@ float wc_high_cover(vec2 xz) {
 	}
 	for (int i = 0; i < cloud_storm_count; i++) {
 		vec4 s = cloud_storms[i];
-		vec2 centre = s.xy + cloud_high_dir * (2.5 * s.z);
-		vec2 d = xz - centre;
-		c = 1.0 - (1.0 - c) * (1.0 - exp(-dot(d, d) / (9.0 * s.z * s.z)) * s.w);
+		// Past the anvil, from the body's radius (high_cover_at() on the CPU).
+		float r = max(s.z, 0.3 * wc_top_height(1.0) * s.w * mix(0.45, 1.0, smoothstep(-10.0, 20.0, cloud_air.x)));
+		vec2 d = xz - s.xy;
+		float a = dot(d, cloud_high_dir) / r;
+		vec2 e = d - cloud_high_dir * (7.0 * r);
+		c = 1.0 - (1.0 - c) * (1.0 - exp(-dot(e, e) / (16.0 * r * r)) * smoothstep(4.0, 6.5, a) * s.w);
 	}
 	return c;
 }

@@ -48,6 +48,8 @@
 // The ice runs on a grid of about 64 m (every k-th node of the bed grid); erosion goes back to the bed bilinearly.
 // Plain C++ in a fixed order, so a seed gives the same terrain everywhere.
 
+#include "terrain_dmath.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -244,7 +246,7 @@ private:
 			for (int pass = 0; pass < 2; pass++) {
 				for (int z = std::max(cz - r, 1); z <= std::min(cz + r, gz - 2); z++) {
 					for (int x = std::max(cx - r, 1); x <= std::min(cx + r, gx - 2); x++) {
-						const double w = std::exp(-0.125 * double((x - cx) * (x - cx) + (z - cz) * (z - cz)));
+						const double w = TerrainDMath::exp(-0.125 * double((x - cx) * (x - cx) + (z - cz) * (z - cz)));
 						if (pass == 0) {
 							ws += w;
 						} else {
@@ -822,7 +824,7 @@ private:
 				if ((bd - bed[i]) / d >= p.adverse * slope) {
 					continue; // supercooling: the water freezes on the adverse slope and the bed is not quarried
 				}
-				rate[i] = p.erodibility * std::pow(tmp[i], p.exponent);
+				rate[i] = p.erodibility * TerrainDMath::pow(tmp[i], p.exponent);
 			}
 		}
 		if (!edge_in.empty()) {
@@ -845,7 +847,7 @@ private:
 		std::vector<double> w(2 * r + 1);
 		double ws = 0.0;
 		for (int i = -r; i <= r; i++) {
-			w[i + r] = std::exp(-0.5 * i * i / (sigma * sigma));
+			w[i + r] = TerrainDMath::exp(-0.5 * i * i / (sigma * sigma));
 			ws += w[i + r];
 		}
 		for (double &v : w) {

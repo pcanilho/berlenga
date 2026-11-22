@@ -95,7 +95,7 @@ private:
 	void _ensure_draw();
 	void _free_draw();
 	void _scan(SnowSurface3D *p_surface, SnowCover3D *p_cover);
-	void _spawn(SnowSurface3D *p_surface, SnowCover3D *p_cover, const Vector3 &p_at, const Vector2 &p_out, float p_size);
+	bool _spawn(SnowSurface3D *p_surface, SnowCover3D *p_cover, const Vector3 &p_at, const Vector2 &p_out, float p_size, float p_ceiling = 1e30f);
 	void _crush(SnowSurface3D *p_surface);
 	void _restore(SnowSurface3D *p_surface);
 	void _age(SnowSurface3D *p_surface, SnowCover3D *p_cover);
@@ -128,7 +128,7 @@ public:
 	void update_now();
 	// Snow falling off something (a roof slab, a shaken vehicle, docs/ideas/snow.md follow-up 19): p_volume m3 breaks
 	// into clumps lying on the snow within p_radius of p_at, larger in wet snow; returns how many.
-	int drop(const Vector3 &p_at, float p_radius, float p_volume, float p_wetness, float p_size_scale = 1.0f);
+	int drop(const Vector3 &p_at, float p_radius, float p_volume, float p_wetness, float p_size_scale = 1.0f, float p_ceiling = 1e30f);
 	void clear();
 	int get_clump_count() const { return int(clumps.size()); }
 	int get_spawned_total() const { return spawned_total; }

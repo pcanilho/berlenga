@@ -1160,6 +1160,7 @@ void SnowSurface3D::_relax() {
 static constexpr float CRUMBLE_RATE = 5.0f; // Hz
 static constexpr float WALL_TAN = 2.75f; // a face steeper than 70 degrees (a 62 degree scarp left by a fall stands)
 static constexpr float RANKINE_TAN = 1.88f; // tan 62 degrees
+static constexpr float WALL_MEAN_TAN = 2.2f; // a face's mean steepness to count as a wall: 65.5 degrees
 static constexpr float TOE_TAN = 0.78f; // tan 38 degrees
 static constexpr float DEBRIS_BULKING = 1.25f;
 static constexpr float WORKED_FACTOR = 0.6f;
@@ -1233,7 +1234,13 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 	for (int tz = 0; tz < nt; tz++) {
 		for (int tx = 0; tx < nt; tx++) {
 			const int ti = tz * nt + tx;
-			if (!field.tile_active[ti]) {
+			// A cut's top edge can lie just over a tile seam, in an untouched tile: those beside an active tile count.
+			bool near_active = field.tile_active[ti] != 0;
+			for (int k = 0; k < 4 && !near_active; k++) {
+				const int ax = tx + DX[k], az = tz + DZ[k];
+				near_active = ax >= 0 && az >= 0 && ax < nt && az < nt && field.tile_active[az * nt + ax] != 0;
+			}
+			if (!near_active) {
 				continue;
 			}
 			const bool worked = p_gpu ? (int(gpu_host.tile_stamped.size()) == nt * nt && gpu_host.time - gpu_host.tile_stamped[ti] < 1.0) : (int(field.tile_settle.size()) == nt * nt && field.tile_settle[ti] > 0.0f);
@@ -1268,7 +1275,9 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 							foot_k++;
 						}
 						const float height = hi - foot;
-						if (height < 0.05f || rim[i] > 0.5f * height) {
+						// A wall stands steep over its whole height: a scarp left by a fall (52-64 degrees) with a steep
+					// step at its rough top is not one.
+					if (height < 0.05f || rim[i] > 0.5f * height || height < WALL_MEAN_TAN * foot_k * t) {
 							continue; // a debris face (mostly rim) is loose snow: the field's slump settles it
 						}
 						const Vector3 at((field.origin.x + x + 0.5f) * t, 0.0f, (field.origin.y + z + 0.5f) * t);
@@ -1282,7 +1291,10 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 							sv = Vector2(hc_cell, bottom);
 							strength.insert(key, sv);
 						}
-						const float hc = sv.x * (worked ? WORKED_FACTOR : 1.0f);
+						// A fin (a drop behind as well as ahead: a sliver left between two fallen blocks) has no wall to lean
+						// on and falls at any height over a few centimetres.
+						const bool fin = hi - h(zb * n + xb) > WALL_TAN * t;
+						const float hc = fin ? 0.03f : sv.x * (worked ? WORKED_FACTOR : 1.0f);
 						if (height <= hc) {
 							continue;
 						}
@@ -1320,9 +1332,9 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 		const int az = DX[d] != 0 ? 1 : 0;
 		const int half = MAX(int((0.25f + 0.45f * rnd()) * 0.5f / t), 1);
 		const int x0 = cd.i % n, z0 = cd.i / n;
-		// Each block breaks its own way: its plane between 56 and 68 degrees, its crack a little above the failing
+		// Each block breaks its own way: its plane between 52 and 64 degrees, its crack a little above the failing
 		// layer's bottom or at it, and the fracture face rough at a few centimetres.
-		const float block_tan = RANKINE_TAN * (0.8f + 0.45f * rnd());
+		const float block_tan = RANKINE_TAN * (0.68f + 0.41f * rnd());
 		const float block_depth = MIN(cd.height, MAX(cd.fail, 0.02f)) * (0.8f + 0.2f * rnd());
 		const int rough_cell = MAX(int(0.06f / t), 2);
 		const int lump_cell = MAX(int(0.14f / t), 2);
@@ -1341,6 +1353,8 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 			// The wedge off the top, down to the failing depth: the plane rises back from the face at 62 degrees.
 			const float base = h(i) - block_depth;
 			float removed = 0.0f;
+			float cuts[128];
+			int cut_n = 0;
 			for (int k = 0; k < 128; k++) {
 				const int xk = x - DX[d] * k, zk = z - DZ[d] * k;
 				if (xk < 0 || zk < 0 || xk >= n || zk >= n) {
@@ -1354,6 +1368,7 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 				}
 				take(ik, cut);
 				removed += cut * t;
+				cuts[cut_n++] = cut;
 			}
 			if (removed <= 0.0f) {
 				continue;
@@ -1377,7 +1392,9 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 				}
 				const int ik = zk * n + xk;
 				const float want = h0 - (k - cd.foot + 0.5f) * t * slope;
-				const float room = MIN(floor_h + want, base + h0) - h(ik);
+				// On the old floor's profile, or, where debris already lies (a narrow rut whose other wall fell first),
+				// on top of it as far as the scarp's base: a heap under the base, its top loose, is never a wall.
+				const float room = MAX(MIN(floor_h + want, base + h0), MIN(base, h(ik) + want)) - h(ik);
 				if (want <= 0.0f || room <= 0.0f) {
 					break;
 				}
@@ -1391,30 +1408,28 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 			if (left > 1e-6f) {
 				float room_sum = 0.0f;
 				for (int k = cd.foot; k < toe_end; k++) {
-					room_sum += MAX(floor_h + h0 - h((z + DZ[d] * k) * n + x + DX[d] * k), 0.0f) * t;
+					room_sum += MAX(MAX(floor_h + h0, base) - h((z + DZ[d] * k) * n + x + DX[d] * k), 0.0f) * t;
 				}
 				const float share = room_sum > 1e-6f ? MIN(left / room_sum, 1.0f) : 0.0f;
 				for (int k = cd.foot; k < toe_end && share > 0.0f; k++) {
 					const int ik = (z + DZ[d] * k) * n + x + DX[d] * k;
-					const float add = MAX(floor_h + h0 - h(ik), 0.0f) * share;
+					const float add = MAX(MAX(floor_h + h0, base) - h(ik), 0.0f) * share;
 					rim[ik] += add;
 					left -= add * t;
 				}
 			}
 			if (left > 1e-6f) {
-				// No room for all of it: put back what the toe cannot take, from the scarp's foot inward.
-				float back = left / DEBRIS_BULKING / t;
-				for (int k = 0; k < 128 && back > 1e-6f; k++) {
-					const int xk = x - DX[d] * k, zk = z - DZ[d] * k;
-					if (xk < 0 || zk < 0 || xk >= n || zk >= n) {
-						break;
-					}
-					const int ik = zk * n + xk;
-					const float give = MIN(back, MAX(dent[ik], 0.0f));
-					dent[ik] -= give;
-					back -= give;
+				// No room for all of it: what the toe cannot take stays on the wall, the cut scaled back evenly (a
+				// smaller wedge on the same plane, not a column left standing at the face).
+				const float frac = MIN(left / DEBRIS_BULKING / removed, 1.0f);
+				for (int k = 0; k < cut_n; k++) {
+					const int ik = (z - DZ[d] * k) * n + x - DX[d] * k;
+					const float give = cuts[k] * frac;
+					const float from_dent = MIN(give, MAX(dent[ik], 0.0f));
+					dent[ik] -= from_dent;
+					rim[ik] += give - from_dent;
 				}
-				removed -= left / DEBRIS_BULKING - back * t;
+				removed *= 1.0f - frac;
 			}
 			collapsed_volume += removed * t;
 			block_volume += removed * t;
@@ -1425,12 +1440,22 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 		// stronger the snow it broke from (cohesion from the cut's critical height: c = Hc rho g / 2.67).
 		if (clumps_node && block_volume > 0.0f) {
 			const Vector3 at((field.origin.x + x0 + DX[d] * toe_reach / t + 0.5f) * t, 0.0f, (field.origin.y + z0 + DZ[d] * toe_reach / t + 0.5f) * t);
+			// Lumps land in the rut only: below the top edge the block broke from (in world height).
+			const int behind = int(0.6f / t); // past the wedge, on the untouched top
+			const float field_top = _surface_at((field.origin.x + x0 - DX[d] * behind + 0.5f) * t, (field.origin.y + z0 - DZ[d] * behind + 0.5f) * t, cover);
 			const float hc = cd.height / (cd.over + 1.0f);
 			const float coh = hc * cover->get_density_at(at) * 9.81f / 2.67f;
 			const float scale = CLAMP(0.8f + Math::log(MAX(coh, 1.0f) / 100.0f) * 0.4343f, 0.8f, 4.0f);
 			// Cold new powder mostly falls to dust; settled, sintered snow comes down as blocks.
 			const float share = 0.04f + 0.26f * CLAMP((scale - 0.8f) / 2.0f, 0.0f, 1.0f);
-			clumps_node->drop(at, CLAMP(0.5f * (toe_reach - cd.foot * t), 0.05f, half * t), share * block_volume, cover->get_wetness_at(at), scale);
+			// Along the block's toe, in small scatters (a wide one would reach the far side's top in a narrow rut).
+			const float toe_half = MAX(0.5f * (toe_reach - cd.foot * t), 0.02f);
+			const int drops = CLAMP(int(Math::ceil((2 * half + 1) * t / 0.2f)), 1, 4);
+			for (int k = 0; k < drops; k++) {
+				const float along = ((k + 0.5f) / drops - 0.5f) * (2 * half + 1) * t;
+				const Vector3 ak = at + Vector3(ax * along, 0.0f, az * along);
+				clumps_node->drop(ak, MIN(0.4f * toe_half, 0.06f), share * block_volume / drops, cover->get_wetness_at(ak), scale, field_top - 0.05f);
+			}
 		}
 	}
 	if (fell == 0) {

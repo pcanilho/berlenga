@@ -49,7 +49,7 @@ class PhysXDustDevils3D : public Node3D {
 
 public:
 	static constexpr int RING = 8;
-	static constexpr int LEVELS = 3; // spinning rings up the column over the foot ring
+	static constexpr int LEVELS = 5; // spinning rings up the column over the foot ring
 
 private:
 	bool enabled = true;
@@ -59,7 +59,7 @@ private:
 	int max_devils = 2;
 	float frequency = 10.0f; // devils per km2 per hour at full favour
 	float min_heating = 8.0f; // K of surface over air below which none form
-	float flow_cell_size = 0.25f;
+	float flow_cell_size = 0.35f;
 	Color dust_color = Color(0.8, 0.7, 0.55);
 	uint32_t seed = 1;
 
@@ -77,6 +77,7 @@ private:
 		PhysXFlowEmitter3D *foot[RING] = {};
 		PhysXFlowEmitter3D *upper[LEVELS][RING] = {};
 		PhysXFlowEmitter3D *core = nullptr;
+		PhysXFlowEmitter3D *reserve = nullptr; // air only: keeps the column's blocks to above its top
 	};
 	LocalVector<Devil> devils;
 	PhysXFlow3D *flow = nullptr;

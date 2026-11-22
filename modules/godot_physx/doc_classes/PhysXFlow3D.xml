@@ -75,6 +75,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="allocation_smoke" type="float" setter="set_allocation_smoke" getter="get_allocation_smoke" default="0.02">
+			Flow frees a block of its grid where the smoke in it falls under this (and the gas there is read as still, empty air). Where the gas is thin and wide, a block freed at the default can still hold enough to see, and the gas then ends in steps along the blocks' faces: set it so the freed smoke is invisible across a block, about [code]0.01 / (smoke_density * block depth)[/code] (a block is 16 to 32 cells deep), at the cost of more blocks for the faint edges (see [member max_blocks]).
+		</member>
 		<member name="ambient_scattering" type="bool" setter="set_ambient_scattering" getter="is_ambient_scattering" default="true">
 			When enabled, the environment's ambient light lights the gas in raster, as it does Godot's volumetric fog: [member Environment.ambient_light_color] mixed with the sky's radiance by [member Environment.ambient_light_sky_contribution], scaled by [member Environment.ambient_light_energy]. Each point is dimmed by all the gas above it, read from a volumetric shadow map built looking straight down (with [member scattering_shadow_steps] at [code]0[/code], not at all), so the inside of a dense plume is darker than its edge. It replaces the flat grey floor Flow's own renderer gives the unlit side of the smoke. It shares the light scattering pass, at [member scattering_resolution]. The path tracer lights the gas with the sky and ambient on its own, so this only affects raster.
 		</member>

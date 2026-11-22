@@ -71,8 +71,8 @@
 		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
 			Off: no new devils, and the living ones die away within 25 seconds.
 		</member>
-		<member name="flow_cell_size" type="float" setter="set_flow_cell_size" getter="get_flow_cell_size" default="0.25">
-			The Flow grid's cell size in metres. Smaller cells show finer swirls at more GPU cost.
+		<member name="flow_cell_size" type="float" setter="set_flow_cell_size" getter="get_flow_cell_size" default="0.35">
+			The Flow grid's cell size in metres. Smaller cells show finer swirls at more GPU cost and fill the grid's block budget (2048) sooner: at 0.25 the column and its drifting trail asked for over 1,800 blocks within 8 s.
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			Centre of the area where devils form. Empty: the viewport's camera.

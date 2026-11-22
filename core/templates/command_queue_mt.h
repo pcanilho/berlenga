@@ -116,6 +116,11 @@ class CommandQueueMT {
 	uint32_t sync_tail = 0;
 	uint32_t sync_awaiters = 0;
 	WorkerThreadPool::TaskID pump_task_id = WorkerThreadPool::INVALID_TASK_ID;
+	// The pump has been woken since the queue was last emptied: it flushes until the queue is empty, so commands pushed
+	// meanwhile are run by that same flush and need no wake of their own. Waking it for every command made the render
+	// thread run one command per wake-up, and cost the pushing thread a futex syscall each (a skeleton's per-bone
+	// updates were hundreds a frame). Guarded by the mutex.
+	bool pump_notified = false;
 	uint64_t flush_read_ptr = 0;
 	std::atomic<bool> pending{ false };
 
@@ -138,7 +143,8 @@ class CommandQueueMT {
 		MutexLock mlock(mutex);
 		create_command<T>(std::forward<Args>(args)...);
 
-		if (pump_task_id != WorkerThreadPool::INVALID_TASK_ID) {
+		if (pump_task_id != WorkerThreadPool::INVALID_TASK_ID && !pump_notified) {
+			pump_notified = true;
 			WorkerThreadPool::get_singleton()->notify_yield_over(pump_task_id);
 		}
 
@@ -207,6 +213,7 @@ class CommandQueueMT {
 		command_mem.clear();
 		pending.store(false);
 		flush_read_ptr = 0;
+		pump_notified = false; // Empty again: the next command wakes the pump.
 
 		_prevent_sync_wraparound();
 

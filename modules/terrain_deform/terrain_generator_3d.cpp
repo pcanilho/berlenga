@@ -203,7 +203,7 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 					const real_t t = len2 > 0.0 ? CLAMP((p - a).dot(ab) / len2, real_t(0.0), real_t(1.0)) : real_t(0.0);
 					const real_t d = p.distance_to(a + ab * t) / w;
 					if (d < 1.0) {
-						const float v = float(strength * (0.5 + 0.5 * Math::cos(Math::PI * d)));
+						const float v = float(strength * (0.5 + 0.5 * TerrainDMath::cos(Math::PI * d)));
 						field[z * nx + x] = MAX(field[z * nx + x], v);
 					}
 				}
@@ -243,7 +243,7 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 				}
 				const real_t d = dmin / w;
 				if (d < 1.0) {
-					const real_t c = 0.5 + 0.5 * Math::cos(Math::PI * d);
+					const real_t c = 0.5 + 0.5 * TerrainDMath::cos(Math::PI * d);
 					field[z * nx + x] *= float(Math::lerp(real_t(1.0), share, c));
 				}
 			}
@@ -293,7 +293,7 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 						const real_t t = len2 > 0.0 ? CLAMP((q - a).dot(ab) / len2, real_t(0.0), real_t(1.0)) : real_t(0.0);
 						const real_t d = q.distance_to(a + ab * t) / w;
 						if (d < 1.0) {
-							near[z * nx + x] = MAX(near[z * nx + x], float(0.5 + 0.5 * Math::cos(Math::PI * d)));
+							near[z * nx + x] = MAX(near[z * nx + x], float(0.5 + 0.5 * TerrainDMath::cos(Math::PI * d)));
 						}
 					}
 				}
@@ -388,7 +388,7 @@ bool TerrainGenerator3D::generate() {
 	sp.p.diffusion = hillslope_diffusion;
 	sp.p.deposition = deposition;
 	result_deposition = deposition > 0.0;
-	sp.p.talus = critical_slope > 0.0 ? Math::tan(Math::deg_to_rad(double(critical_slope))) : 0.0;
+	sp.p.talus = critical_slope > 0.0 ? TerrainDMath::tan(Math::deg_to_rad(double(critical_slope))) : 0.0;
 	sp.p.base_level = sea_level;
 	sp.p.outlet_edges = outlet_edges;
 	sp.p.flow_exponent = flow_exponent;
@@ -450,8 +450,8 @@ bool TerrainGenerator3D::generate() {
 	// through a hard band it steps down over a cliff: a knickpoint, a waterfall where the band is thick enough.
 	LocalVector<double> strata_k, strata_talus, strata_offset, strata_depth, strata_creep;
 	double strata_time = 0.0;
-	const double soft_talus = critical_slope > 0.0 ? Math::tan(Math::deg_to_rad(double(critical_slope))) : 0.0;
-	const double hard_talus = Math::tan(Math::deg_to_rad(double(strata_cliff_angle)));
+	const double soft_talus = critical_slope > 0.0 ? TerrainDMath::tan(Math::deg_to_rad(double(critical_slope))) : 0.0;
+	const double hard_talus = TerrainDMath::tan(Math::deg_to_rad(double(strata_cliff_angle)));
 	auto strata_weight = [&](double q) -> double {
 		const double period = double(strata_spacing);
 		const double phase = Math::fposmod(q, period) / period;
@@ -471,9 +471,9 @@ bool TerrainGenerator3D::generate() {
 		strata_offset.resize(nn);
 		strata_depth.resize(nn);
 		strata_creep.resize(nn);
-		const double dip = Math::tan(Math::deg_to_rad(double(strata_dip)));
+		const double dip = TerrainDMath::tan(Math::deg_to_rad(double(strata_dip)));
 		const double dir = Math::deg_to_rad(double(strata_dip_direction));
-		const double ddx = Math::sin(dir), ddz = -Math::cos(dir);
+		const double ddx = TerrainDMath::sin(dir), ddz = -TerrainDMath::cos(dir);
 		for (int z = 0; z < p_ny; z++) {
 			for (int x = 0; x < p_nx; x++) {
 				const double px = result_rect.position.x + x * p_dx;
@@ -570,7 +570,7 @@ bool TerrainGenerator3D::generate() {
 				for (int x = 0; x < p_nx; x++) {
 					const double wx = result_rect.position.x + x * p_dx, wz = result_rect.position.y + z * p_dx;
 					const double v = 0.75 * _gen_value_noise(rs, wx, wz, L) + 0.35 * _gen_value_noise(rs + 1u, wx, wz, 0.43 * L);
-					rock_scale[size_t(z) * p_nx + x] = Math::exp(double(glacial_rock_variation) * v);
+					rock_scale[size_t(z) * p_nx + x] = TerrainDMath::exp(double(glacial_rock_variation) * v);
 				}
 			}
 		}
@@ -765,10 +765,10 @@ bool TerrainGenerator3D::generate() {
 			return;
 		}
 		const double c = double(cell_size);
-		const double cliff = Math::tan(Math::deg_to_rad(50.0)); // a rock wall, not a sharp crest between two slopes
+		const double cliff = TerrainDMath::tan(Math::deg_to_rad(50.0)); // a rock wall, not a sharp crest between two slopes
 		const double stream_area = 5.0e4; // m2: a perennial stream's head in these mountains
-		const double foot = Math::tan(Math::deg_to_rad(38.0));
-		const double repose = Math::tan(Math::deg_to_rad(double(talus_angle)));
+		const double foot = TerrainDMath::tan(Math::deg_to_rad(38.0));
+		const double repose = TerrainDMath::tan(Math::deg_to_rad(double(talus_angle)));
 		const double retreat = 0.0005;
 		LocalVector<double> load, dep;
 		load.resize(n);
@@ -869,7 +869,7 @@ bool TerrainGenerator3D::generate() {
 			ord[i] = i;
 		}
 		const double *hp = h.ptr();
-		std::sort(ord.ptr(), ord.ptr() + n, [hp](int32_t a, int32_t b) { return hp[a] > hp[b]; });
+		std::sort(ord.ptr(), ord.ptr() + n, [hp](int32_t a, int32_t b) { return hp[a] > hp[b] || (hp[a] == hp[b] && a < b); });
 		const uint8_t *fixed = sp.b.outlet;
 		for (int k = 0; k < n; k++) {
 			const int32_t i = ord[k];
@@ -926,7 +926,7 @@ bool TerrainGenerator3D::generate() {
 				continue;
 			}
 			last_scree_volume += dep[i];
-			const double t = Math::pow(6.0 * dep[i] * repose * repose / Math::PI, 1.0 / 3.0);
+			const double t = TerrainDMath::pow(6.0 * dep[i] * repose * repose / Math::PI, 1.0 / 3.0);
 			const double r = t / repose;
 			const int rc = int(Math::ceil(r / c)) + 1;
 			const int x = i % nx, z = i / nx;
@@ -1094,7 +1094,7 @@ bool TerrainGenerator3D::generate() {
 				const int i = path[k];
 				const double qm = MAX(acc[i] * 6.0e-8, 0.01);
 				const double S = k1 > k0 ? (h[path[k0]] - h[path[k1]]) / (dist[k1] - dist[k0]) : 1.0;
-				flats[k] = S < 0.012 * Math::pow(qm, -0.44) && sm / (k1 - k0 + 1) > 0.1 && fill[i] - h[i] < 0.5 && h[i] > double(sea_level) + 1.5; // above the tidal reach
+				flats[k] = S < 0.012 * TerrainDMath::pow(qm, -0.44) && sm / (k1 - k0 + 1) > 0.1 && fill[i] - h[i] < 0.5 && h[i] > double(sea_level) + 1.5; // above the tidal reach
 			}
 			// A short steeper or thinner stretch (up to four cells) inside a floodplain does not end the reach.
 			for (int k = 0, last = -1; k < pn; k++) {
@@ -1203,7 +1203,7 @@ bool TerrainGenerator3D::generate() {
 					const Vector2 d1 = b - a, d2 = e - b;
 					const double cr = double(d1.x) * d2.y - double(d1.y) * d2.x;
 					const double l1 = MAX(double(d1.length()), 1e-6), l2 = MAX(double(d2.length()), 1e-6);
-					const double ang = Math::atan2(cr, double(d1.dot(d2)));
+					const double ang = TerrainDMath::atan2(cr, double(d1.dot(d2)));
 					r0[k] = (k == 0 || k == m - 1) ? 0.0 : ang / (0.5 * (l1 + l2)) * w;
 					(void)l1;
 				}
@@ -1220,7 +1220,7 @@ bool TerrainGenerator3D::generate() {
 				for (int k = 0; k < m; k++) {
 					double sum = 0.0, wsum = 0.0, xi = 0.0;
 					for (int q = k; q >= 0 && xi < 6.0 / alpha; q--) {
-						const double g = Math::exp(-alpha * xi);
+						const double g = TerrainDMath::exp(-alpha * xi);
 						sum += r0[q] * g;
 						wsum += g;
 						if (q > 0) {
@@ -1318,7 +1318,7 @@ bool TerrainGenerator3D::generate() {
 				q = cv.pts;
 				for (uint32_t k = 1; k + 1 < cv.pts.size(); k++) {
 					const Vector2 d1 = cv.pts[k] - cv.pts[k - 1], d2 = cv.pts[k + 1] - cv.pts[k];
-					const double ang = Math::abs(Math::atan2(double(d1.x) * d2.y - double(d1.y) * d2.x, double(d1.dot(d2))));
+					const double ang = Math::abs(TerrainDMath::atan2(double(d1.x) * d2.y - double(d1.y) * d2.x, double(d1.dot(d2))));
 					const double L = 0.5 * double(d1.length() + d2.length());
 					if (ang > L / (1.5 * w)) {
 						q[k] = (cv.pts[k - 1] + cv.pts[k + 1]) * 0.5f;
@@ -1427,7 +1427,7 @@ bool TerrainGenerator3D::generate() {
 			// under 0.15 m.
 			for (uint32_t q = 0; q < cv.oxbows.size(); q++) {
 				const LocalVector<Vector2> &ox = cv.oxbows[q];
-				const double dep = 0.5 * depth * Math::exp(-(meander_age - cv.oxbow_t[q]) / 400.0);
+				const double dep = 0.5 * depth * TerrainDMath::exp(-(meander_age - cv.oxbow_t[q]) / 400.0);
 				if (dep < 0.15) {
 					continue;
 				}
@@ -1563,7 +1563,7 @@ bool TerrainGenerator3D::generate() {
 				// Meltwater rivers braid at their summer floods, several times the mean flow: the threshold on that (bankfull)
 				// discharge, taken as five times the mean for an ice-fed river.
 				const double qb = ice[i] >= 0.05 * acc[i] ? 5.0 * qm : qm;
-				flags[k] = acc[i] >= min_area && S >= 0.012 * Math::pow(qb, -0.44) && S < 0.05 && gravel && glacial_ice[i] < 1.0f && fill[i] - h[i] < 0.5 && h[i] > double(sea_level) + 1.5 && !meander_cell[i];
+				flags[k] = acc[i] >= min_area && S >= 0.012 * TerrainDMath::pow(qb, -0.44) && S < 0.05 && gravel && glacial_ice[i] < 1.0f && fill[i] - h[i] < 0.5 && h[i] > double(sea_level) + 1.5 && !meander_cell[i];
 			}
 			for (int k = 0, last = -1; k < pn; k++) {
 				if (flags[k]) {
@@ -1753,7 +1753,7 @@ bool TerrainGenerator3D::generate() {
 								continue;
 							}
 							const double qk = q * wgt[t] / sum;
-							const double qs = Math::pow(MAX(qk * s[t], 0.0), 2.5);
+							const double qs = TerrainDMath::pow(MAX(qk * s[t], 0.0), 2.5);
 							qsout[i] += qs;
 							if (r + 1 < R) {
 								Q[(r + 1) * C + nb[t]] += qk;
@@ -1904,14 +1904,14 @@ bool TerrainGenerator3D::generate() {
 		// rockfall until they are no steeper than strata_cliff_angle; the debris piles at their feet. One
 		// sweep from the highest cell down settles every pair, since each cell's higher neighbours are final first.
 		{
-			const double S = Math::tan(Math::deg_to_rad(double(strata_cliff_angle)));
+			const double S = TerrainDMath::tan(Math::deg_to_rad(double(strata_cliff_angle)));
 			LocalVector<int32_t> ord;
 			ord.resize(n);
 			for (int i = 0; i < n; i++) {
 				ord[i] = i;
 			}
 			const double *hp = h.ptr();
-			std::sort(ord.ptr(), ord.ptr() + n, [hp](int32_t a, int32_t b) { return hp[a] > hp[b]; });
+			std::sort(ord.ptr(), ord.ptr() + n, [hp](int32_t a, int32_t b) { return hp[a] > hp[b] || (hp[a] == hp[b] && a < b); });
 			const uint8_t *fixed = sp.b.outlet;
 			for (int k = 0; k < n; k++) {
 				const int32_t i = ord[k];
@@ -1941,8 +1941,8 @@ bool TerrainGenerator3D::generate() {
 		last_moraine_volume = 0.0;
 		if (moraine_age > 0.0) {
 			const double c = double(cell_size);
-			const double wall = Math::tan(Math::deg_to_rad(40.0));
-			const double repose = Math::tan(Math::deg_to_rad(34.0)); // fresh till's flanks
+			const double wall = TerrainDMath::tan(Math::deg_to_rad(40.0));
+			const double repose = TerrainDMath::tan(Math::deg_to_rad(34.0)); // fresh till's flanks
 			const double retreat = 0.001; // m/yr of headwall retreat (Hallet, Hunter and Bogen 1996: 0.1 to several mm/yr)
 			LocalVector<double> ice, s_top, debris, dep;
 			LocalVector<uint8_t> carried;
@@ -2035,7 +2035,7 @@ bool TerrainGenerator3D::generate() {
 				ord[i] = i;
 			}
 			const double *sp_top = s_top.ptr();
-			std::sort(ord.ptr(), ord.ptr() + n, [sp_top](int32_t a, int32_t b) { return sp_top[a] > sp_top[b]; });
+			std::sort(ord.ptr(), ord.ptr() + n, [sp_top](int32_t a, int32_t b) { return sp_top[a] > sp_top[b] || (sp_top[a] == sp_top[b] && a < b); });
 			for (int k = 0; k < n; k++) {
 				const int32_t i = ord[k];
 				if (debris[i] <= 0.0) {
@@ -2068,7 +2068,7 @@ bool TerrainGenerator3D::generate() {
 						const double g = (s_top[i] - s_top[j]) / L;
 						if (g > 0.0) {
 							nbs[cnt] = j;
-							wts[cnt] = Math::pow(g, 1.1) * (dx != 0 && dz != 0 ? 0.354 : 0.5); // contour length
+							wts[cnt] = TerrainDMath::pow(g, 1.1) * (dx != 0 && dz != 0 ? 0.354 : 0.5); // contour length
 							wsum += wts[cnt];
 							cnt++;
 						}
@@ -2121,7 +2121,7 @@ bool TerrainGenerator3D::generate() {
 					continue;
 				}
 				last_moraine_volume += dep[i];
-				const double t = Math::pow(3.0 * dep[i] * repose * repose / Math::PI, 1.0 / 3.0);
+				const double t = TerrainDMath::pow(3.0 * dep[i] * repose * repose / Math::PI, 1.0 / 3.0);
 				const int rc = int(Math::ceil(t / repose / c));
 				const int x = i % nx, z = i / nx;
 				for (int zz = MAX(z - rc, 0); zz <= MIN(z + rc, ny - 1); zz++) {
@@ -2327,7 +2327,7 @@ bool TerrainGenerator3D::generate() {
 					lo = MIN(lo, unfilled[q]);
 					hi = MAX(hi, h[q]);
 				}
-				const double budget = catchment * 0.0005 * Math::pow(catchment / 1.0e7, 0.3) * outwash_age;
+				const double budget = catchment * 0.0005 * TerrainDMath::pow(catchment / 1.0e7, 0.3) * outwash_age;
 				auto vol = [&](double L) {
 					double v = 0.0;
 					for (int32_t q : part) {
@@ -2396,7 +2396,7 @@ bool TerrainGenerator3D::generate() {
 	// of the critical gradient, as the geology fades soil (otherwise a 74 degree bar face read as 390 m of soil and
 	// grew grass and conifers).
 	if (critical_slope > 0.0) {
-		const double cs = Math::tan(Math::deg_to_rad(double(critical_slope)));
+		const double cs = TerrainDMath::tan(Math::deg_to_rad(double(critical_slope)));
 		LocalVector<float> keep;
 		keep.resize(n);
 		for (int z = 0; z < ny; z++) {
@@ -2523,7 +2523,7 @@ bool TerrainGenerator3D::generate() {
 	gp.soil_production = soil_production * 1.0e-3;
 	gp.soil_scale = soil_depth_scale;
 	gp.soil_max = max_soil_depth;
-	gp.repose = Math::tan(Math::deg_to_rad(double(talus_angle)));
+	gp.repose = TerrainDMath::tan(Math::deg_to_rad(double(talus_angle)));
 	gp.talus_reach = talus_reach;
 	double umax = 0.0;
 	for (int i = 0; i < n; i++) {
@@ -2866,7 +2866,7 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 			const double amp = double(detail_crest) * 2.0 * detail_depth / MAX(double(detail_gully_weight), 1e-3) * detail_wavelength;
 			// No octave finer than 8 m: a pinnacle a few metres across is all a 1 m grid holds (finer ones drew
 			// one-sample spikes along the crests).
-			const int crest_oct = MAX(1, MIN(MAX(detail_octaves, 1) + 2, 1 + int(Math::floor(Math::log2(MAX(detail_wavelength * 2.0 / 8.0, 1.0))))));
+			const int crest_oct = MAX(1, MIN(MAX(detail_octaves, 1) + 2, 1 + int(Math::floor(TerrainDMath::log2(MAX(detail_wavelength * 2.0 / 8.0, 1.0))))));
 			off += w * amp * TerrainErosionFilter::crest_noise(ep.seed ^ 0x5bd1e995u, p_x, p_z, detail_wavelength * 2.0, crest_oct);
 		}
 	}
@@ -2920,7 +2920,7 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 			// Beds of uneven thickness: the bed count runs on a monotonic warp of height (two incommensurate waves,
 			// slope stays positive), and each bed's ledge share is its own.
 			const double hw = (h0 + wob) / L;
-			const double q = hw + 0.22 * Math::sin(hw * 2.3999632) + 0.12 * Math::sin(hw * 0.9213 + 1.7);
+			const double q = hw + 0.22 * TerrainDMath::sin(hw * 2.3999632) + 0.12 * TerrainDMath::sin(hw * 0.9213 + 1.7);
 			const double fl = Math::floor(q);
 			const double f = q - fl;
 			const uint32_t bh = (uint32_t(int64_t(fl)) * 0x9E3779B1u) ^ (ls * 0x85EBCA6Bu);
@@ -2930,7 +2930,7 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 			double t = f < l ? 0.25 * f / l : 0.25 + 0.75 * (f - l) / (1.0 - l);
 			// Back from bed units to height: invert the warp locally (Newton step from q).
 			const double qt = fl + t;
-			const double dq = 1.0 + 0.22 * 2.3999632 * Math::cos(hw * 2.3999632) + 0.12 * 0.9213 * Math::cos(hw * 0.9213 + 1.7);
+			const double dq = 1.0 + 0.22 * 2.3999632 * TerrainDMath::cos(hw * 2.3999632) + 0.12 * 0.9213 * TerrainDMath::cos(hw * 0.9213 + 1.7);
 			const double ht = (hw + (qt - q) / dq) * L - wob;
 			off += w * (ht - h0);
 		}
@@ -2942,7 +2942,7 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	const double room = double(base) - floor_h;
 	if (has_sea && off < -0.25 * room && room > 0.0) {
 		const double q = 0.25 * room;
-		off = -(q + q * (1.0 - Math::exp((off + q) / q)));
+		off = -(q + q * (1.0 - TerrainDMath::exp((off + q) / q)));
 	}
 	return float(MAX(double(base) + off, MIN(double(base), floor_h)));
 }
@@ -3209,8 +3209,8 @@ void TerrainGenerator3D::_dune_tile(void *p_job, uint32_t p_tile) {
 	const double turn = Math::deg_to_rad(double(gen->dune_wind_angle));
 	const double ux = wx / wl, uz = wz / wl;
 	TerrainDunes d;
-	d.wind_x = ux * Math::cos(turn) - uz * Math::sin(turn);
-	d.wind_z = ux * Math::sin(turn) + uz * Math::cos(turn);
+	d.wind_x = ux * TerrainDMath::cos(turn) - uz * TerrainDMath::sin(turn);
+	d.wind_z = ux * TerrainDMath::sin(turn) + uz * TerrainDMath::cos(turn);
 	d.w = x1 - x0 + 1;
 	d.h = z1 - z0 + 1;
 	d.cell = job->dc;
@@ -3654,7 +3654,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 	const double turn = Math::deg_to_rad(double(sand_sea_wind_angle));
 	auto wind = [&](double p_deg, double p_speed, double p_share) {
 		const double a = turn + Math::deg_to_rad(p_deg);
-		return TerrainDuneSea::Wind{ p_speed * Math::cos(a), p_speed * Math::sin(a), p_share };
+		return TerrainDuneSea::Wind{ p_speed * TerrainDMath::cos(a), p_speed * TerrainDMath::sin(a), p_share };
 	};
 	const double depth = double(sand_sea_depth) / sc;
 	LocalVector<float> sea_core;
@@ -3668,7 +3668,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 		z ^= z >> 31;
 		return double(z >> 11) * (1.0 / 9007199254740992.0);
 	};
-	sea_brink_dir = (sand_sea_kind == SAND_SEA_BARCHAN || sand_sea_kind == SAND_SEA_TRANSVERSE) ? Vector2(Math::cos(turn), Math::sin(turn)) : Vector2();
+	sea_brink_dir = (sand_sea_kind == SAND_SEA_BARCHAN || sand_sea_kind == SAND_SEA_TRANSVERSE) ? Vector2(TerrainDMath::cos(turn), TerrainDMath::sin(turn)) : Vector2();
 	switch (sand_sea_kind) {
 		case SAND_SEA_BARCHAN:
 			sea.winds = { wind(0.0, 3.0, 1.0) };
@@ -4023,7 +4023,7 @@ void TerrainGenerator3D::_build_sand_sea() {
 		const bool wet = water_body.size() == uint32_t(n) && water_body[i] != 0;
 		sea_cover[i] = wet ? 0.0f : MAX(CLAMP(_sea_sample(px, pz) / 0.2f, 0.0f, 1.0f), float(k * flat));
 	}
-	neb_dir = Vector2(Math::cos(turn), Math::sin(turn));
+	neb_dir = Vector2(TerrainDMath::cos(turn), TerrainDMath::sin(turn));
 	_build_nebkhas();
 	Ref<Image> geo = get_geology_image();
 	if (geology_texture.is_valid() && geo.is_valid() && geology_texture->get_width() == nx && geology_texture->get_height() == ny) {
@@ -4133,7 +4133,7 @@ void TerrainGenerator3D::_build_nebkhas() {
 			// Heights skewed to the small, mean about 1.2 m, the rare largest 3.5 m (Tengger: means 1.1-1.2 m, most
 			// 3.6 m). The dome at least 2.4 heights in radius so its steepest flank stays under the repose (about
 			// 32 degrees; 28 on average in the field, Charbonneau et al. 2026); up to 8 m (some 200 m2).
-			real_t hgt = 0.3 + 3.2 * Math::pow(u, real_t(2.5));
+			real_t hgt = 0.3 + 3.2 * TerrainDMath::pow(u, real_t(2.5));
 			real_t rad = MAX(1.0 + 1.4 * hgt, 2.4 * hgt) * (1.0 + 0.3 * neb_unit(neb_hash(k, id, 4u)));
 			// A quarter are wearing down (the shrub dying back): lower and spread wider.
 			if (neb_unit(neb_hash(k, id, 6u)) < 0.25) {
@@ -4193,7 +4193,7 @@ float TerrainGenerator3D::_nebkha_sample(real_t p_x, real_t p_z) const {
 		if (d <= 0.0) {
 			const real_t q = (d * d + c * c) / (nb.radius * nb.radius);
 			if (q < 1.0) {
-				hgt = nb.height * Math::pow(real_t(1.0 - q), real_t(1.5));
+				hgt = nb.height * TerrainDMath::pow(real_t(1.0 - q), real_t(1.5));
 			}
 		} else if (d < nb.tail) {
 			// Along the tail the crest falls from the dome's top to nothing, convex near the plant (the sand drifts on
@@ -4205,8 +4205,8 @@ float TerrainGenerator3D::_nebkha_sample(real_t p_x, real_t p_z) const {
 			if (a * a < 1.0) {
 				// Near the plant the dome's round shape takes over (the tail starts at its full width).
 				const real_t q = (d * d + c * c) / (nb.radius * nb.radius);
-				const real_t dome = q < 1.0 ? nb.height * Math::pow(real_t(1.0 - q), real_t(1.5)) : 0.0;
-				hgt = MAX(dome, crest * Math::pow(real_t(1.0 - a * a), real_t(1.5)));
+				const real_t dome = q < 1.0 ? nb.height * TerrainDMath::pow(real_t(1.0 - q), real_t(1.5)) : 0.0;
+				hgt = MAX(dome, crest * TerrainDMath::pow(real_t(1.0 - a * a), real_t(1.5)));
 			}
 		}
 		best = MAX(best, float(hgt));
@@ -4251,7 +4251,7 @@ void TerrainGenerator3D::_place_springs() {
 			real_t ring = 0.0;
 			for (int k = 0; k < 8; k++) {
 				const real_t a = Math::TAU * k / 8.0;
-				ring += surf(x + 120.0 * Math::cos(a), z + 120.0 * Math::sin(a));
+				ring += surf(x + 120.0 * TerrainDMath::cos(a), z + 120.0 * TerrainDMath::sin(a));
 			}
 			const real_t depth = ring / 8.0 - h0;
 			if (depth > 1.0) {
@@ -4271,7 +4271,7 @@ void TerrainGenerator3D::_place_springs() {
 		real_t low = get_height(Vector3(st.p.x, 0.0, st.p.y));
 		for (int k = 0; k < 6; k++) {
 			const real_t a = Math::TAU * k / 6.0;
-			low = MIN(low, get_height(Vector3(st.p.x + 6.0 * Math::cos(a), 0.0, st.p.y + 6.0 * Math::sin(a))));
+			low = MIN(low, get_height(Vector3(st.p.x + 6.0 * TerrainDMath::cos(a), 0.0, st.p.y + 6.0 * TerrainDMath::sin(a))));
 		}
 		springs_found.push_back(Vector4(st.p.x, low - 0.6, st.p.y, 0.0));
 		if (int(springs_found.size()) >= oasis_count) {
@@ -4378,12 +4378,12 @@ void TerrainGenerator3D::_carve_oases() {
 		float rmax = 0.0f;
 		for (int a = 0; a < 128; a++) {
 			const real_t ang = Math::TAU * a / 128.0;
-			const Vector2 dir(Math::cos(ang), Math::sin(ang));
+			const Vector2 dir(TerrainDMath::cos(ang), TerrainDMath::sin(ang));
 			real_t rr = 0.0;
 			for (const Vector2 &q : outline) {
 				const Vector2 v = q - c;
 				const real_t along = v.dot(dir);
-				if (along > 0.0 && Math::abs(v.cross(dir)) < along * Math::tan(Math::TAU / 128.0)) {
+				if (along > 0.0 && Math::abs(v.cross(dir)) < along * TerrainDMath::tan(Math::TAU / 128.0)) {
 					rr = MAX(rr, v.length());
 				}
 			}
@@ -4399,7 +4399,7 @@ void TerrainGenerator3D::_carve_oases() {
 		for (int a = 0; a < 128; a++) {
 			real_t sum = 0.0, wsum = 0.0;
 			for (int k = -6; k <= 6; k++) {
-				const real_t w = 1.0 + Math::cos(Math::PI * k / 7.0);
+				const real_t w = 1.0 + TerrainDMath::cos(Math::PI * k / 7.0);
 				sum += w * o.radius[(a + k + 128) % 128];
 				wsum += w;
 			}
@@ -4426,7 +4426,7 @@ void TerrainGenerator3D::_carve_oases() {
 		real_t top = o.level;
 		for (int k = 0; k < 16; k++) {
 			const real_t ang = Math::TAU * k / 16.0;
-			top = MAX(top, get_height(Vector3(c.x + (rmax + 30.0) * Math::cos(ang), 0.0, c.y + (rmax + 30.0) * Math::sin(ang))));
+			top = MAX(top, get_height(Vector3(c.x + (rmax + 30.0) * TerrainDMath::cos(ang), 0.0, c.y + (rmax + 30.0) * TerrainDMath::sin(ang))));
 		}
 		if (node->has_method(SNAME("get_vents"))) {
 			o.vents = node->call(SNAME("get_vents"), i);
@@ -4449,14 +4449,14 @@ float TerrainGenerator3D::_oasis_height(real_t p_x, real_t p_z, float p_ground) 
 			continue;
 		}
 		const real_t dist = Math::sqrt(d2);
-		const real_t ang = Math::fposmod(Math::atan2(dz, dx), real_t(Math::TAU));
+		const real_t ang = Math::fposmod(TerrainDMath::atan2(dz, dx), real_t(Math::TAU));
 		const real_t t = ang / Math::TAU * 128.0;
 		const int i0 = int(t) % 128, i1 = (i0 + 1) % 128;
 		const real_t rad = Math::lerp(real_t(o.radius[i0]), real_t(o.radius[i1]), t - Math::floor(t));
 		const real_t shore = 0.92 * rad;
 		if (dist <= shore) {
 			const real_t d = dist / MAX(shore, real_t(0.1));
-			const real_t bowl = Math::pow(real_t(MAX(1.0 - d * d, 0.0)), real_t(1.2));
+			const real_t bowl = TerrainDMath::pow(real_t(MAX(1.0 - d * d, 0.0)), real_t(1.2));
 			const real_t depth = MIN(real_t(2.4), real_t(0.6) + real_t(0.35) * rad);
 			const real_t lumps = (neb_patch(o.seed, p_x / 1.6, p_z / 1.6) - 0.5) * 0.4 + (neb_patch(o.seed + 1u, p_x / 0.7, p_z / 0.7) - 0.5) * 0.15;
 			// Runnels: each a groove whose line wanders sideways with distance (low-frequency noise, a couple of
@@ -4472,7 +4472,7 @@ float TerrainGenerator3D::_oasis_height(real_t p_x, real_t p_z, float p_ground) 
 				const real_t lat = da * MAX(dist, real_t(0.5)) - wander;
 				const real_t along = Math::smoothstep(real_t(r.y), real_t(r.y) + real_t(0.2), d) * (1.0 - Math::smoothstep(real_t(0.85), real_t(1.0), d));
 				const real_t w = r.z * (0.5 + 0.5 * d);
-				runnel = MIN(runnel, -real_t(r.w) * along * Math::exp(-(lat * lat) / (w * w)));
+				runnel = MIN(runnel, -real_t(r.w) * along * TerrainDMath::exp(-(lat * lat) / (w * w)));
 			}
 			g = float(o.level - depth * bowl + (lumps + runnel) * Math::sqrt(bowl));
 			// A pit some 0.35 m deep and 0.7 m across under each vent: the throat the boil's sand is thrown from.
@@ -4531,7 +4531,7 @@ void TerrainGenerator3D::_erode_tile(void *p_job, uint32_t p_tile) {
 	hp.droplets_per_cell = gen->tile_erosion_droplets;
 	hp.max_depth = gen->tile_erosion_max_depth;
 	hp.rock_hardness = gen->tile_erosion_rock_hardness;
-	hp.repose = Math::tan(Math::deg_to_rad(double(gen->talus_angle)));
+	hp.repose = TerrainDMath::tan(Math::deg_to_rad(double(gen->talus_angle)));
 	const int n = hp.nx * hp.ny;
 	std::vector<float> in(n), cover(n), out(n), flow(n), dep(n);
 	for (int z = 0; z < hp.ny; z++) {
@@ -4994,7 +4994,7 @@ Array TerrainGenerator3D::get_waterfalls(real_t p_min_area, real_t p_min_height)
 				// Free fall: the jet leaving the brink at critical depth (v = (g q)^(1/3), q per metre of width) clears
 				// the face over the drop when it travels further out than the face recedes.
 				const real_t q = real_t(w["discharge"]) / MAX(widths[k], 0.5f);
-				const real_t v = Math::pow(9.81f * MAX(q, real_t(0.0)), real_t(1.0 / 3.0));
+				const real_t v = TerrainDMath::pow(9.81f * MAX(q, real_t(0.0)), real_t(1.0 / 3.0));
 				const real_t hgt = MAX(top.y - bottom.y, real_t(0.0));
 				const real_t throw_m = v * Math::sqrt(2.0f * hgt / 9.81f);
 				bool lipped = false;
@@ -5070,7 +5070,7 @@ void TerrainGenerator3D::_fall_contract(Dictionary &r_fall, const PackedVector3A
 	// is set by the river's width at the lip, so the deepest part of the brink carries most).
 	real_t lw = lw0;
 	// Water surface: the brink's lowest point plus the critical depth of the whole flow over the width.
-	const real_t yc = Math::pow(MAX(discharge, real_t(0.0)) / lw, real_t(2.0 / 3.0)) / Math::pow(real_t(9.81), real_t(1.0 / 3.0));
+	const real_t yc = TerrainDMath::pow(MAX(discharge, real_t(0.0)) / lw, real_t(2.0 / 3.0)) / TerrainDMath::pow(real_t(9.81), real_t(1.0 / 3.0));
 	const real_t surface = top.y + MAX(yc, real_t(0.02));
 	// The lip spans the wetted width only: from the channel out each way until the ground rises above the water
 	// (at most half the river's width), so no lip point climbs the slot's walls.
@@ -5101,7 +5101,7 @@ void TerrainGenerator3D::_fall_contract(Dictionary &r_fall, const PackedVector3A
 	real_t total = 0.0;
 	for (int i = 0; i < 8; i++) {
 		const real_t dpt = MAX(surface - lip[i].y, real_t(0.0));
-		const real_t sh = Math::pow(dpt, real_t(5.0 / 3.0));
+		const real_t sh = TerrainDMath::pow(dpt, real_t(5.0 / 3.0));
 		share.push_back(sh);
 		total += sh;
 	}
@@ -5197,13 +5197,13 @@ void TerrainGenerator3D::_fall_contract(Dictionary &r_fall, const PackedVector3A
 	// that it falls as drops and blobs that approach their terminal speed (about 9 m/s for drops of 3 mm and more,
 	// Gunn and Kinzer 1949) over a drag length v_t^2 / g. impact_speed_free is the drag-free sqrt(v0^2 + 2 g H).
 	const real_t qw = MAX(discharge / lw, real_t(1e-4));
-	const real_t lb = 6.0f * Math::pow(qw, real_t(0.32));
+	const real_t lb = 6.0f * TerrainDMath::pow(qw, real_t(0.32));
 	const real_t vfree = Math::sqrt(p_v0 * p_v0 + 2.0f * 9.81f * height);
 	const real_t vt = 9.0f;
 	real_t vimp = vfree;
 	if (height > lb) {
 		const real_t vb = Math::sqrt(p_v0 * p_v0 + 2.0f * 9.81f * lb);
-		vimp = vt + (MAX(vb, vt) - vt) * Math::exp(-(height - lb) / (vt * vt / 9.81f));
+		vimp = vt + (MAX(vb, vt) - vt) * TerrainDMath::exp(-(height - lb) / (vt * vt / 9.81f));
 	}
 	r_fall["breakup_length"] = lb;
 	r_fall["impact_speed"] = MIN(vimp, vfree);
@@ -5226,7 +5226,7 @@ void TerrainGenerator3D::_fall_contract(Dictionary &r_fall, const PackedVector3A
 				real_t crest = -1e30f;
 				for (int j = 0; j <= 8; j++) {
 					const real_t rr = pl.radius * (0.9f + (POOL_BAR - 0.9f) * real_t(j) / 8.0f);
-					const real_t gh = _ground(pl.center.x + Math::cos(an) * rr, pl.center.y + Math::sin(an) * rr);
+					const real_t gh = _ground(pl.center.x + TerrainDMath::cos(an) * rr, pl.center.y + TerrainDMath::sin(an) * rr);
 					if (Math::is_finite(gh)) {
 						crest = MAX(crest, gh);
 					}
@@ -5491,7 +5491,7 @@ real_t TerrainGenerator3D::get_discharge_at(const Vector3 &p_global_position, in
 
 Color TerrainGenerator3D::get_geology_at(const Vector3 &p_global_position) const {
 	const real_t a = _sample(drainage, p_global_position.x, p_global_position.z);
-	return Color(get_soil_depth(p_global_position), get_rock_exposure(p_global_position), get_talus(p_global_position), std::log10(double(MAX(a, real_t(1.0)))));
+	return Color(get_soil_depth(p_global_position), get_rock_exposure(p_global_position), get_talus(p_global_position), TerrainDMath::log10(double(MAX(a, real_t(1.0)))));
 }
 
 Color TerrainGenerator3D::get_material_geology_at(const Vector3 &p_global_position) const {
@@ -5509,7 +5509,7 @@ Color TerrainGenerator3D::get_material_geology_at(const Vector3 &p_global_positi
 	const float sand = MAX(MAX(opt(beach), opt(dune_cover)), opt(sea_cover));
 	const float till = CLAMP(opt(till_cover) / 2.0f, 0.0f, 1.0f);
 	const float t = opt(talus);
-	return Color(sand > 0.0f ? -sand : s, opt(rock), till > t ? -till : t, float(std::log10(MAX(double(opt(drainage)), 1.0))));
+	return Color(sand > 0.0f ? -sand : s, opt(rock), till > t ? -till : t, float(TerrainDMath::log10(MAX(double(opt(drainage)), 1.0))));
 }
 
 // RGBA float: soil depth (m), rock exposure, talus (or -1..0 moraine till), log10 drainage area (m^2).
@@ -5532,7 +5532,7 @@ Ref<Image> TerrainGenerator3D::get_geology_image() const {
 		// debris under a thin soil, which the material shows as soil with stones through it.
 		const float till = till_cover.size() == uint32_t(n) ? CLAMP(till_cover[i] / 2.0f, 0.0f, 1.0f) : 0.0f;
 		w[i * 4 + 2] = till > talus[i] ? -till : talus[i];
-		w[i * 4 + 3] = float(std::log10(MAX(double(drainage[i]), 1.0)));
+		w[i * 4 + 3] = float(TerrainDMath::log10(MAX(double(drainage[i]), 1.0)));
 	}
 	return Image::create_from_data(nx, ny, false, Image::FORMAT_RGBAF, bytes);
 }
@@ -5801,9 +5801,9 @@ PackedVector4Array TerrainGenerator3D::get_boulders(const Rect2 &p_rect, real_t 
 				const real_t u3 = boulder_unit(boulder_hash(uint32_t(seed), uint32_t(i), uint32_t(b) * 4u + 2u));
 				const real_t u4 = boulder_unit(boulder_hash(uint32_t(seed), uint32_t(i), uint32_t(b) * 4u + 3u));
 				// Pareto radius, alpha 2.5, 0.25 .. 3 m.
-				const real_t radius = MIN(real_t(0.25) * Math::pow(1.0f - u3 * 0.999f, real_t(-1.0 / 2.5)), real_t(3.0));
+				const real_t radius = MIN(real_t(0.25) * TerrainDMath::pow(1.0f - u3 * 0.999f, real_t(-1.0 / 2.5)), real_t(3.0));
 				const real_t shadow = Math::deg_to_rad(real_t(27.5) + real_t(6.0) * u4 - real_t(2.0) * (radius - 0.25f));
-				const real_t tan_shadow = Math::tan(MAX(shadow, Math::deg_to_rad(real_t(22.0))));
+				const real_t tan_shadow = TerrainDMath::tan(MAX(shadow, Math::deg_to_rad(real_t(22.0))));
 				const Vector3 c = _cell_position(i);
 				Vector2 p(c.x + (u1 - 0.5f) * result_cell, c.z + (u2 - 0.5f) * result_cell);
 				// The run-out follows the grid's surface (bilinear; the 1 m detail only steers a block locally), in 3 m
@@ -5892,8 +5892,8 @@ void TerrainGenerator3D::_bake_spray() {
 		const real_t h = MAX(real_t(w["height"]), real_t(0.0));
 		// Reach: 3 (Q H)^0.4 m, at least 4 m (a 20 m fall of 30 l/s wets a few metres; 3.6 m3/s over 330 m about
 		// 50 m; the Victoria Falls' 1000 m3/s over 108 m some 300 m, the rainforest's width).
-		const real_t reach = MAX(real_t(3.0) * Math::pow(q * h, real_t(0.4)), real_t(4.0));
-		const real_t peak = CLAMP(real_t(0.25) + real_t(0.25) * Math::log(1.0 + q * h) / Math::log(real_t(10.0)), real_t(0.25), real_t(1.0));
+		const real_t reach = MAX(real_t(3.0) * TerrainDMath::pow(q * h, real_t(0.4)), real_t(4.0));
+		const real_t peak = CLAMP(real_t(0.25) + real_t(0.25) * TerrainDMath::log(1.0 + q * h) / TerrainDMath::log(real_t(10.0)), real_t(0.25), real_t(1.0));
 		const real_t ext = reach * 1.5f;
 		const int x0 = CLAMP(int(Math::floor((MIN(top.x, impact.x) - ext - result_rect.position.x) / spray_cell)), 0, spray_nx - 1);
 		const int x1 = CLAMP(int(Math::ceil((MAX(top.x, impact.x) + ext - result_rect.position.x) / spray_cell)), 0, spray_nx - 1);
@@ -5917,7 +5917,7 @@ void TerrainGenerator3D::_bake_spray() {
 				const real_t above = MAX(p.y - MAX(top.y, impact.y), real_t(0.0));
 				const real_t down = CLAMP((top.y - p.y) / MAX(h, real_t(1.0)), real_t(0.0), real_t(1.0));
 				const real_t source = 0.35f + 0.65f * down * down;
-				const real_t v = peak * source * Math::exp(-2.0f * d / reach) * Math::exp(-above / (0.25f * reach + 2.0f));
+				const real_t v = peak * source * TerrainDMath::exp(-2.0f * d / reach) * TerrainDMath::exp(-above / (0.25f * reach + 2.0f));
 				float &o = spray[z * spray_nx + x];
 				o = 1.0f - (1.0f - o) * (1.0f - float(MIN(v, real_t(1.0)))); // several falls add like probabilities
 			}
@@ -6156,7 +6156,7 @@ bool TerrainGenerator3D::update_sun_horizon(const Vector3 &p_to_sun) {
 	if (d2.length() < 1e-4) {
 		return false; // the sun overhead: no shadows to cast
 	}
-	const real_t az = Math::atan2(d2.y, d2.x);
+	const real_t az = TerrainDMath::atan2(d2.y, d2.x);
 	if (Math::abs(Math::angle_difference(az, sun_azimuth_done)) < Math::deg_to_rad(real_t(0.25))) {
 		return false;
 	}
@@ -6483,7 +6483,7 @@ String TerrainGenerator3D::get_sand_shader_code() {
 String TerrainGenerator3D::get_detail_shader_code() const {
 	const uint32_t s0 = uint32_t(seed) * 0x2545F491u + 1u;
 	const double lac = 2.0;
-	const double start = detail_wavelength / Math::pow(lac, double(MAX(detail_octaves, 0)));
+	const double start = detail_wavelength / TerrainDMath::pow(lac, double(MAX(detail_octaves, 0)));
 	String c;
 	c += "// Erosion detail below the vertex spacing (TerrainGenerator3D.get_detail_shader_code()): the slope of the\n";
 	c += "// detail filter's next octaves, added to the surface normal. terrain_detail_normal(world_pos, world_normal,\n";
@@ -6804,18 +6804,18 @@ void TerrainGenerator3D::_build_sea_mask(LocalVector<uint8_t> &r_sea) const {
 				const double k = MAX(double(coast_distance) * 0.5, double(cell_size));
 				double sum = 0.0;
 				if (ocean_edges & OUTLET_NEGATIVE_X) {
-					sum += Math::exp(-px / k);
+					sum += TerrainDMath::exp(-px / k);
 				}
 				if (ocean_edges & OUTLET_POSITIVE_X) {
-					sum += Math::exp(-(w - px) / k);
+					sum += TerrainDMath::exp(-(w - px) / k);
 				}
 				if (ocean_edges & OUTLET_NEGATIVE_Z) {
-					sum += Math::exp(-pz / k);
+					sum += TerrainDMath::exp(-pz / k);
 				}
 				if (ocean_edges & OUTLET_POSITIVE_Z) {
-					sum += Math::exp(-(d - pz) / k);
+					sum += TerrainDMath::exp(-(d - pz) / k);
 				}
-				const double edge = sum > 0.0 ? -k * Math::log(sum) : 1e30;
+				const double edge = sum > 0.0 ? -k * TerrainDMath::log(sum) : 1e30;
 				const double wobble = TerrainErosionFilter::fbm(s, rect.position.x + px, rect.position.y + pz, coast_wavelength, 5);
 				if (edge < coast_distance + coast_roughness * wobble) {
 					r_sea[z * nx + x] = 1;
@@ -7016,7 +7016,7 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 		const double pz = result_rect.position.y + (i / nx) * cell_size;
 		if (p_sea[i]) {
 			const double x = to_land[i] < 1e29 ? MAX(to_land[i] - half, 0.25 * cell_size) : 1e9;
-			double depth = seabed_profile * Math::pow(x, 2.0 / 3.0) + shelf_slope * MAX(x - surf, 0.0);
+			double depth = seabed_profile * TerrainDMath::pow(x, 2.0 / 3.0) + shelf_slope * MAX(x - surf, 0.0);
 			depth *= 1.0 + 0.2 * TerrainErosionFilter::fbm(s, px, pz, 400.0, 3);
 			const double pl = plunge[i] > 0.0f ? double(plunge[i]) * (1.0 - CLAMP(beach_w(px, pz) * (1.0 - Math::smoothstep(0.0, 0.5, double(plunge[i]))) / 10.0, 0.0, 1.0)) : 0.0;
 			if (pl > 0.0 && x < PLUNGE_SEA) {
@@ -7083,12 +7083,12 @@ void TerrainGenerator3D::_coast_exposure_task(void *p_userdata, uint32_t p_index
 float TerrainGenerator3D::_coast_exposure_cell(const uint8_t *p_sea, int p_i) const {
 	constexpr int DIRS = 32;
 	const double step = 0.5 * cell_size;
-	const double norm = Math::log(1.0 + FETCH_MAX / 100.0);
+	const double norm = TerrainDMath::log(1.0 + FETCH_MAX / 100.0);
 	const double x0 = (p_i % nx) * cell_size, z0 = (p_i / nx) * cell_size;
 	double sum = 0.0;
 	for (int d = 0; d < DIRS; d++) {
 		const double a = (d + 0.5) * Math::TAU / DIRS;
-		const double dx = Math::cos(a) * step, dz = Math::sin(a) * step;
+		const double dx = TerrainDMath::cos(a) * step, dz = TerrainDMath::sin(a) * step;
 		double t = 0.0, fetch = 0.0;
 		bool wet = false;
 		double x = x0, z = z0;
@@ -7111,7 +7111,7 @@ float TerrainGenerator3D::_coast_exposure_cell(const uint8_t *p_sea, int p_i) co
 				break; // land again, or too far inland to see the sea this way
 			}
 		}
-		sum += Math::log(1.0 + MIN(fetch, FETCH_MAX) / 100.0) / norm;
+		sum += TerrainDMath::log(1.0 + MIN(fetch, FETCH_MAX) / 100.0) / norm;
 	}
 	return float(sum / DIRS);
 }
@@ -7306,15 +7306,15 @@ void TerrainGenerator3D::_bake_lips() {
 			const bool wet = water_body.size() == uint32_t(nx * ny) && water_body[v] != 0;
 			if (plunge_pools && !wet) {
 				const real_t q = MAX(real_t(_flow(u, river_month)) / real_t(widths[k] > 0.5f ? widths[k] : 0.5f), real_t(1e-4));
-				const real_t v0 = Math::pow(9.81f * q, real_t(1.0 / 3.0));
+				const real_t v0 = TerrainDMath::pow(9.81f * q, real_t(1.0 / 3.0));
 				const real_t throw_m = v0 * Math::sqrt(2.0f * MAX(h_top - h_foot, real_t(0.0)) / 9.81f);
 				const bool stepped = lipped && !(h_top - h_foot > NOTCH_DROP);
 				const real_t face_at = stepped ? 0.5f * run - 0.5f * LIP_FACE : 0.0f;
 				const real_t face_end = stepped ? 0.5f * run + 0.5f * LIP_FACE : run;
 				// Mason and Arumugam 1985: D + Y = 3.27 q^0.60 H^0.05 h^0.15 / (g^0.30 d^0.10); tailwater h at the
 				// critical depth, cobbles d = 0.3 m. At least 1.5 m (a fall of 4 m or more always leaves a hollow).
-				const real_t h = MAX(Math::pow(q * q / 9.81f, real_t(1.0 / 3.0)), real_t(0.2));
-				const real_t dy = 3.27f * Math::pow(q, real_t(0.60)) * Math::pow(MAX(h_top - h_foot, real_t(1.0)), real_t(0.05)) * Math::pow(h, real_t(0.15)) / (Math::pow(real_t(9.81), real_t(0.30)) * Math::pow(real_t(0.3), real_t(0.10)));
+				const real_t h = MAX(TerrainDMath::pow(q * q / 9.81f, real_t(1.0 / 3.0)), real_t(0.2));
+				const real_t dy = 3.27f * TerrainDMath::pow(q, real_t(0.60)) * TerrainDMath::pow(MAX(h_top - h_foot, real_t(1.0)), real_t(0.05)) * TerrainDMath::pow(h, real_t(0.15)) / (TerrainDMath::pow(real_t(9.81), real_t(0.30)) * TerrainDMath::pow(real_t(0.3), real_t(0.10)));
 				PlungePool pool;
 				pool.top = origin;
 				pool.depth = CLAMP(dy - h, real_t(1.5), real_t(15.0));
@@ -7474,7 +7474,7 @@ float TerrainGenerator3D::_apply_lips(real_t p_x, real_t p_z, float p_g) const {
 		const real_t ahead = d.dot(pl.dir) / MAX(d.length(), real_t(1e-3));
 		if (ahead > 0.0 && r > 0.8) {
 			const real_t x = (r - 0.8) / (POOL_BAR - 0.8);
-			const real_t bump = Math::sin(Math::PI * x);
+			const real_t bump = TerrainDMath::sin(Math::PI * x);
 			const real_t raise = CLAMP(pl.foot - real_t(g), real_t(0.0), pl.depth + 1.0f);
 			g += float(raise * bump * Math::sqrt(ahead));
 		}
@@ -9117,7 +9117,7 @@ PackedStringArray TerrainGenerator3D::get_configuration_warnings() const {
 	}
 	if (detail_enabled && detail_octaves > 0 && is_inside_tree()) {
 		TerrainDeformer3D::Grid grid;
-		const real_t smallest = detail_wavelength / Math::pow(real_t(2.0), real_t(detail_octaves - 1));
+		const real_t smallest = detail_wavelength / TerrainDMath::pow(real_t(2.0), real_t(detail_octaves - 1));
 		if (TerrainDeformer3D::open_grid(_get_terrain_node(), grid) && smallest < grid.spacing * 4.0) {
 			warnings.push_back(vformat(RTR("The smallest detail wavelength (%.1f m) is under 4 terrain vertices (%.1f m): it will alias into spikes. Use fewer detail octaves or a longer wavelength."), smallest, grid.spacing * 4.0));
 		}
