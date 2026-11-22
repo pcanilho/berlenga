@@ -2864,7 +2864,10 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 		const double w = fade * t * t * (3.0 - 2.0 * t);
 		if (w > 0.0) {
 			const double amp = double(detail_crest) * 2.0 * detail_depth / MAX(double(detail_gully_weight), 1e-3) * detail_wavelength;
-			off += w * amp * TerrainErosionFilter::crest_noise(ep.seed ^ 0x5bd1e995u, p_x, p_z, detail_wavelength * 2.0, MAX(detail_octaves, 1) + 2);
+			// No octave finer than 8 m: a pinnacle a few metres across is all a 1 m grid holds (finer ones drew
+			// one-sample spikes along the crests).
+			const int crest_oct = MAX(1, MIN(MAX(detail_octaves, 1) + 2, 1 + int(Math::floor(Math::log2(MAX(detail_wavelength * 2.0 / 8.0, 1.0))))));
+			off += w * amp * TerrainErosionFilter::crest_noise(ep.seed ^ 0x5bd1e995u, p_x, p_z, detail_wavelength * 2.0, crest_oct);
 		}
 	}
 	// Not under water (the seabed and lake beds stay smooth), and never down to the outlets: land the filter cuts

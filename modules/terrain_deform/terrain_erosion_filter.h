@@ -285,13 +285,17 @@ public:
 	// Ridged gradient-noise fBm (Musgrave's ridged multifractal family, Ebert et al. 2003): sum of (1/2 - |n|) over
 	// octaves, so it has sharp maxima (pinnacles) and rounded minima (cols), -1/2..1/2 per octave weight. Used on
 	// crests, where the gullies fade, so a crest keeps an irregular, jagged line instead of a straight one.
+	// The fold is a soft |n| (sqrt(n^2 + k^2) - k, k 0.06): an exact fold is a crease of no width at every pinnacle's
+	// tip, finer than any grid that samples it, and a 1 m heightfield drew each as a lone spike (a sawtooth of teeth
+	// along every arete's skyline).
 	static double crest_noise(uint32_t p_seed, double x, double z, double p_wavelength, int p_octaves) {
 		double sum = 0.0;
 		double amp = 1.0;
 		double norm = 0.0;
 		double f = 1.0 / p_wavelength;
 		for (int o = 0; o < p_octaves; o++) {
-			sum += amp * (0.5 - std::fabs(_gradient_noise(p_seed + uint32_t(o) * 0x632BE5ABu, x * f, z * f)));
+			const double n = _gradient_noise(p_seed + uint32_t(o) * 0x632BE5ABu, x * f, z * f);
+			sum += amp * (0.5 - (std::sqrt(n * n + 0.0036) - 0.06));
 			norm += amp;
 			amp *= 0.5;
 			f *= 2.0;

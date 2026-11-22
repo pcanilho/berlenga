@@ -286,6 +286,8 @@ vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
 		c += detail_code;
 	}
 	// The engine's weather lines, the same text BaseMaterial3D writes into its own shader.
+	// The engine's camera cut-out (the span between the camera and its subject, which the path tracer also skips).
+	c += BaseMaterial3D::get_camera_cutout_shader_code();
 	if (wetness_enabled) {
 		c += BaseMaterial3D::get_wetness_shader_code();
 	}
@@ -871,10 +873,11 @@ float tm_cl_beds(vec3 p, out int r_bed) {
 	int bed = unit * 8 + bi;
 	int bed_up = bi + 1 < nb ? bed + 1 : (unit + 1) * 8;
 	float fy = fu0 - lo;
-	float lip = min(T, min(1.5, max(0.6, T * 0.5)));
+	float a0 = tm_cl_proud(p, bed) + tm_cl_joint(p, bed), a1 = tm_cl_proud(p, bed_up) + tm_cl_joint(p, bed_up);
+	float lip = min(T, max(min(1.5, max(0.6, T * 0.5)), 1.2 * abs(a1 - a0)));
 	float ty = clamp((fy - (T - lip)) / lip, 0.0, 1.0);
 	r_bed = bed;
-	return mix(tm_cl_proud(p, bed) + tm_cl_joint(p, bed), tm_cl_proud(p, bed_up) + tm_cl_joint(p, bed_up), ty * ty * (3.0 - 2.0 * ty));
+	return mix(a0, a1, ty * ty * (3.0 - 2.0 * ty));
 }
 float tm_cl_offset(vec3 p) {
 	int bed;
@@ -1523,6 +1526,9 @@ float tm_rd_pom_shadow(vec3 q, float depth, vec3 n, vec3 l, float h, float e, fl
 	c += R"(
 void fragment() {
 	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard(wp, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)) {
+		discard;
+	}
 	vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	bool cliff = wn.y < tm_cliff_cos;
 	// The pixel's footprint on the ground for the layers' texture gradients, as a ray cone's ellipse (Akenine-Moller
@@ -1836,9 +1842,11 @@ void fragment() {
 			rough = mix(rough, max(rough, 0.9), lc);
 			// Moss on the shaded faces' treads and lips, where water and fines lodge: the relief's surface flatter than
 			// the face around it (the heightfield's normal).
-			float fw_tread = smoothstep(0.12, 0.35, tm_macro_n.y - tm_cn.y) + smoothstep(0.55, 0.8, tm_macro_n.y);
+			// Faded with the pixel's footprint: a tread is a strip under a metre wide, and drawn on its own at a distance
+			// it became a row of dark dashes under every ledge.
+			float fw_tread = smoothstep(0.12, 0.35, tm_macro_n.y - tm_cn.y) * fw_k + smoothstep(0.55, 0.8, tm_macro_n.y);
 			float moss = shade * shade * clamp(fw_tread, 0.0, 1.0) * smoothstep(0.35, 0.65, mix(0.55, 0.7 * tm_vn(wp * 0.5 + 51.0) + 0.3 * tm_vn(wp * 2.3 + 61.0), fw_k)) * fw_rock * tm_face_weathering;
-			albedo = mix(albedo, vec3(0.1, 0.12, 0.05) * (0.8 + 0.4 * mix(0.5, tm_vn(wp * 6.0 + 2.0), fw_k)), moss * 0.7);
+			albedo = mix(albedo, vec3(0.12, 0.14, 0.07) * (0.8 + 0.4 * mix(0.5, tm_vn(wp * 6.0 + 2.0), fw_k)), moss * 0.7);
 			rough = mix(rough, 0.95, moss);
 		}
 	}

@@ -13,7 +13,11 @@ extends Node3D
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --exposure=x          the tonemapper's exposure (1): more for a dark cave seen from inside
-#   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff)
+#   --gen-prop=name:value[,...]  any TerrainGenerator3D property before it generates (A/B one stage)
+#   --hide=Node[,Node...]  hide those children of the bench (A/B which object draws something)
+#   --lod-error=px        Landscape3D.lod_error
+#   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff);
+#                         --face-side=k moves the camera along the wall (k times --dist)
 #   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still); on by default
 #                         for raster stills, --no-taa for the single-sample frame
 #   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
@@ -482,6 +486,10 @@ func _world() -> void:
 	gen.detail_octaves = 5
 	gen.glacial_enabled = true
 	gen.glacial_ela = float(args.get("ela", "450"))
+	# --gen-prop=name:value[,name:value...]: any of the generator's properties (A/B one stage).
+	for kv in str(args.get("gen-prop", "")).split(",", false):
+		var p: PackedStringArray = kv.split(":")
+		gen.set(p[0], str_to_var(p[1]))
 	add_child(gen)
 	gen.generate()
 	print("world generated in %d ms" % (Time.get_ticks_msec() - t0))
@@ -510,6 +518,12 @@ func _world() -> void:
 	if args.get("ground-scans", "1") != "0" and not args.has("test"): # --ground-scans=0: plain ground layers
 		if _apply_ground_scans(tm, ProjectSettings.globalize_path("res://").path_join("../landscape/art/terrain_layers"), args.get("ground-scans", "1")) > 0:
 			tm.update_shader()
+	if args.has("hide"):
+		get_tree().process_frame.connect(func():
+			for nm in str(args["hide"]).split(","):
+				var nd = get_node_or_null(nm)
+				if nd:
+					nd.visible = false)
 	if args.has("face-weathering"):
 		tm.set_shader_parameter("tm_face_weathering", float(args["face-weathering"]))
 	var land := Landscape3D.new()
@@ -522,6 +536,8 @@ func _world() -> void:
 	if args.has("test") or args.has("no-cliff-relief"):
 		land.cliff_relief = 0.0
 	land.name = "Landscape"
+	if args.has("lod-error"):
+		land.lod_error = float(args["lod-error"])
 	add_child(land)
 	land.material = tm
 	land.source = land.get_path_to(gen)

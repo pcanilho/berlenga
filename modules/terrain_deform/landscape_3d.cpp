@@ -140,6 +140,77 @@ const LocalVector<int> &Landscape3D::_indices(int p_level, int p_mask) {
 	return r;
 }
 
+// The drawn chunk's indices: _indices()' blocks, but where a block's sides all meet neighbours of its own level, its
+// four quads are each cut along the diagonal whose ends differ least in height (the shorter diagonal in height,
+// as a TIN follows breaklines; Garland and Heckbert 1995): a sharp crest or gully running across the grid followed
+// the fan's fixed diagonals half the time and drew a sawtooth of 1 m teeth along every arete's skyline. Interior
+// diagonals never cross a block's sides, so the edges shared with neighbours, and the cliff refinement's splits of
+// them, are unchanged.
+void Landscape3D::_crease_indices(int p_cx, int p_cz, int p_level, int p_mask, LocalVector<int> &r) const {
+	const int n = chunk_quads >> p_level;
+	const int s = 1 << p_level;
+	const int row = n + 1;
+	const int nb = n / 2;
+	const int gx = p_cx * chunk_quads, gz = p_cz * chunk_quads;
+	r.clear();
+	r.reserve(n * n * 6);
+	auto hv = [&](int x, int z) { return _h(gx + x * s, gz + z * s); };
+	for (int b = 0; b < nb; b++) {
+		for (int a = 0; a < nb; a++) {
+			const int x = 2 * a;
+			const int z = 2 * b;
+			const bool edge = (b == 0 && (p_mask & 1)) || (a == nb - 1 && (p_mask & 2)) || (b == nb - 1 && (p_mask & 4)) || (a == 0 && (p_mask & 8));
+			if (!edge) {
+				for (int qz = z; qz < z + 2; qz++) {
+					for (int qx = x; qx < x + 2; qx++) {
+						const int v00 = qz * row + qx, v10 = v00 + 1, v01 = v00 + row, v11 = v01 + 1;
+						if (Math::abs(hv(qx, qz) - hv(qx + 1, qz + 1)) <= Math::abs(hv(qx + 1, qz) - hv(qx, qz + 1))) {
+							r.push_back(v00);
+							r.push_back(v10);
+							r.push_back(v11);
+							r.push_back(v01);
+							r.push_back(v00);
+							r.push_back(v11);
+						} else {
+							r.push_back(v00);
+							r.push_back(v10);
+							r.push_back(v01);
+							r.push_back(v10);
+							r.push_back(v11);
+							r.push_back(v01);
+						}
+					}
+				}
+				continue;
+			}
+			const int c = (z + 1) * row + x + 1;
+			int ring[8];
+			int k = 0;
+			ring[k++] = z * row + x;
+			if (!(b == 0 && (p_mask & 1))) {
+				ring[k++] = z * row + x + 1;
+			}
+			ring[k++] = z * row + x + 2;
+			if (!(a == nb - 1 && (p_mask & 2))) {
+				ring[k++] = (z + 1) * row + x + 2;
+			}
+			ring[k++] = (z + 2) * row + x + 2;
+			if (!(b == nb - 1 && (p_mask & 4))) {
+				ring[k++] = (z + 2) * row + x + 1;
+			}
+			ring[k++] = (z + 2) * row + x;
+			if (!(a == 0 && (p_mask & 8))) {
+				ring[k++] = (z + 1) * row + x;
+			}
+			for (int i = 0; i < k; i++) {
+				r.push_back(ring[i]);
+				r.push_back(ring[(i + 1) % k]);
+				r.push_back(c);
+			}
+		}
+	}
+}
+
 // Height range and, per level, the largest gap between that level's triangles and the level 0 heights under them,
 // for the (chunk_quads + 1)^2 heights at p_h, rows p_stride apart. Safe on worker threads.
 void Landscape3D::_measure(const float *p_h, int p_stride, float *r_error, float &r_min, float &r_max) const {
@@ -280,10 +351,6 @@ float Landscape3D::_cliff_offset(const Vector3 &p) const {
 	};
 	const float o0 = proud(bed);
 	const float o1 = proud(bed_up);
-	// No wider than the bed itself, so a thin bed's lip starts at its own foot and the offset stays continuous there.
-	const real_t lip = MIN(T, MIN(real_t(1.5), MAX(real_t(0.6), T * 0.5f)));
-	const real_t ty = CLAMP((fy - (T - lip)) / lip, real_t(0.0), real_t(1.0));
-	const float sy = float(ty * ty * (3.0f - 2.0f * ty));
 	// Joints across the beds, 4.5 m apart and staggered bed to bed, each block a little forward or back. Blended
 	// into the next bed's blocks over the same lip as the beds: switched at the bed's top, the blocks' 1.2 m steps
 	// cut a slit along every bed boundary.
@@ -295,7 +362,15 @@ float Landscape3D::_cliff_offset(const Vector3 &p) const {
 		const real_t tu = CLAMP((fu - 3.0f) / 1.5f, real_t(0.0), real_t(1.0));
 		return 1.2f * Math::lerp(j0, j1, float(tu * tu * (3.0f - 2.0f * tu)));
 	};
-	float o = Math::lerp(o0 + joint(bed), o1 + joint(bed_up), sy);
+	const float a0 = o0 + joint(bed), a1 = o1 + joint(bed_up);
+	// The lip at least 1.2 times as tall as the step out (in offset units; cliff_relief scales both up to 1), so the underside of a
+	// proud bed faces no more than about 40 degrees down: steeper, it was a sliver facing the ground under every
+	// ledge, a black slit from any distance. No wider than the bed itself, so a thin bed's lip starts at its own foot
+	// and the offset stays continuous there.
+	const real_t lip = MIN(T, MAX(MIN(real_t(1.5), MAX(real_t(0.6), T * 0.5f)), real_t(1.2f * Math::abs(a1 - a0))));
+	const real_t ty = CLAMP((fy - (T - lip)) / lip, real_t(0.0), real_t(1.0));
+	const float sy = float(ty * ty * (3.0f - 2.0f * ty));
+	float o = Math::lerp(a0, a1, sy);
 	// Roughness.
 	o += 0.5f * (_lc_noise(p * 0.7f) - 0.5f) + 0.2f * (_lc_noise(p * 2.1f + Vector3(3, 1, 7)) - 0.5f);
 	return o;
@@ -442,7 +517,8 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 		int a, b, c, depth;
 	};
 	LocalVector<T> stack;
-	const LocalVector<int> &idx = indices[0][r_job.mask & 15];
+	LocalVector<int> idx;
+	_crease_indices(cx, cz, 0, r_job.mask & 15, idx);
 	const LocalVector<uint8_t> *hl = chunk_holes.getptr(r_job.chunk);
 	for (uint32_t t = 0; t < idx.size(); t += 3) {
 		if (hl && _hole_tri(hl, 0, idx[t], idx[t + 1], idx[t + 2])) {
@@ -582,7 +658,8 @@ void Landscape3D::_build_surface(MeshJob &r_job) const {
 			nw[j * (n + 1) + i] = _normal(x, z);
 		}
 	}
-	const LocalVector<int> &idx = indices[r_job.level][r_job.mask & 15];
+	LocalVector<int> idx;
+	_crease_indices(cx, cz, r_job.level, r_job.mask & 15, idx);
 	PackedInt32Array ia;
 	const LocalVector<uint8_t> *hl = chunk_holes.getptr(r_job.chunk);
 	if (hl) {
