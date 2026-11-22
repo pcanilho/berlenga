@@ -3767,6 +3767,20 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Roof snow",
+   "settings": [
+    "snow_roof",
+    "SnowBodies3D.roof_piles",
+    "snow_roof_material",
+    "snow_roof_heat"
+   ],
+   "note": "",
+   "what": "roofs hold the share of snowfall building codes give them and shed it by roofing, metal sooner than shingles and heated roofs sooner still; what slides off lands as a bank past the eave.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Snow on materials",
    "settings": [
     "snow_enabled"
