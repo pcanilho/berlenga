@@ -2149,14 +2149,15 @@ void fragment() {
 		if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) {
 			vec3 fr = textureLod(terrain_frost_map, fuv, 0.0).rgb;
 			vec2 fe = min(fuv, 1.0 - fuv);
-			float fg = fr.r * smoothstep(0.0, 0.04, min(fe.x, fe.y)) * smoothstep(0.65, 0.85, wn.y);
+			float fg = fr.r * smoothstep(0.0, 0.15, min(fe.x, fe.y)) * smoothstep(0.65, 0.85, wn.y); // the map's last 10 m fade (the far cover maps carry the borders' stones on)
 			if (fg > 0.0) {
-				// Frost heave domes the centres (b, RockField3D's dome share) about 18 cm over the stone borders: the
-				// normal bends by its slope from the texels two either side.
-				float fdx = 2.0 / float(textureSize(terrain_frost_map, 0).x);
+				// Frost heave domes the centres (b, RockField3D's dome share) about 30 cm over the stone borders (the
+				// top of the 5 to 30 cm measured, so it reads at eye level): the normal bends by its slope from the
+				// texels three either side.
+				float fdx = 3.0 / float(textureSize(terrain_frost_map, 0).x);
 				vec2 fdh = vec2(textureLod(terrain_frost_map, fuv + vec2(fdx, 0.0), 0.0).b - textureLod(terrain_frost_map, fuv - vec2(fdx, 0.0), 0.0).b, textureLod(terrain_frost_map, fuv + vec2(0.0, fdx), 0.0).b - textureLod(terrain_frost_map, fuv - vec2(0.0, fdx), 0.0).b);
-				fdh *= 0.18 / (2.0 * fdx * terrain_frost_rect.z);
-				sn = normalize(sn - vec3(fdh.x, 0.0, fdh.y) * smoothstep(0.0, 0.04, min(fe.x, fe.y)));
+				fdh *= 0.3 / (2.0 * fdx * terrain_frost_rect.z);
+				sn = normalize(sn - vec3(fdh.x, 0.0, fdh.y) * smoothstep(0.0, 0.15, min(fe.x, fe.y)));
 				float fn = tm_vn(wp * 2.3 + 61.0);
 				float fm = tm_vn(wp * 0.9 + 23.0);
 				// Wide transitions: the fines thin out into the border over the share's whole range, as the sorting does.
@@ -2167,7 +2168,7 @@ void fragment() {
 				// in field photographs of sorted circles), drying out first in patches; a little of the ground's own colour stays (algal crusts, the last of the sward).
 				vec3 silt = vec3(0.15, 0.13, 0.105) * (0.88 + 0.24 * grain) * mix(0.6, 1.0, smoothstep(0.6, 0.85, fm));
 				// The crown drains and dries first; the margin against the stones stays wet and dark.
-				silt *= mix(0.75, 1.12, smoothstep(0.1, 0.8, fr.b));
+				silt *= mix(0.6, 1.25, smoothstep(0.1, 0.75, fr.b));
 				albedo = mix(albedo, silt, 0.85 * centre);
 				rough = mix(rough, mix(0.78, 0.92, smoothstep(0.6, 0.85, fm)), centre); // damp, not puddled: matte
 				vec3 lag = vec3(0.15, 0.145, 0.135) * (0.75 + 0.5 * grain);

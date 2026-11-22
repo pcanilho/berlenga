@@ -164,6 +164,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	Ref<ImageTexture> relief_texture;
 	Vector2 relief_origin = Vector2(1e30, 1e30);
 	uint64_t relief_key = 0;
+	void _relief_changed(const Rect2 &p_area); // WorldGround.relief_changed over it (world space)
 	bool relief_published = false;
 	bool relief_registered = false;
 	void _update_relief_map(const Vector3 &p_camera);

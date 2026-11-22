@@ -14,6 +14,10 @@ extends Node3D
 #             --clip=dir saves every frame after the warm-up; --turbulence=x overrides heat_shimmer_turbulence
 #   godot --path docs/bench/links -- --wall-rain=out.png [--rain-off] [--pt]   a block in a wind-driven downpour, its
 #             windward wall running with streaks and its lee wall drier, or the same block dry
+#   godot --path docs/bench/links -- --curtains=out.png [--curtains-off] [--pt]   a downpour's haze across a row of dark
+#             blocks, in curtains carried by the wind, or even (rain_curtains off)
+#   godot --path docs/bench/links -- --cutout=out.png [--cutout-off] [--pt]   a figure behind a wall and under a roof seen
+#             from a high camera, the camera cut-out opening a hole to it, or none
 #             after a clear night at -2 C (hoarfrost), or the same night with dew_and_frost off
 #
 # Links checked:
@@ -249,6 +253,14 @@ func _ready() -> void:
 			await _valley_fog_view(a.substr(13), OS.get_cmdline_user_args().has("--fog-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
 			return
+		if a.begins_with("--cutout="):
+			await _cutout_view(a.substr(9), OS.get_cmdline_user_args().has("--cutout-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
+		if a.begins_with("--curtains="):
+			await _curtain_view(a.substr(11), OS.get_cmdline_user_args().has("--curtains-off"), OS.get_cmdline_user_args().has("--pt"))
+			get_tree().quit()
+			return
 		if a.begins_with("--wall-rain="):
 			await _wall_rain_view(a.substr(12), OS.get_cmdline_user_args().has("--rain-off"), OS.get_cmdline_user_args().has("--pt"))
 			get_tree().quit()
@@ -320,6 +332,8 @@ func _ready() -> void:
 	await _rime_tests()
 	await _surface_rain_tests()
 	await _wall_rain_tests()
+	await _curtain_tests()
+	await _cutout_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
@@ -2960,6 +2974,224 @@ func _wall_rain_tests() -> void:
 	_check("wall rain: a windward wall runs dark with the driven rain, the lee wall stays far drier (BaseMaterial3D wetness)",
 			wind_drop < 0.8 and lee_drop > wind_drop + 0.1,
 			"windward keeps %.2f of its dry luminance, lee %.2f" % [wind_drop, lee_drop])
+
+
+# A heavy downpour's haze (visibility about 200 m) seen across a row of dark blocks 20 to 90 m away.
+func _curtain_scene(off: bool, pt: bool) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	# An overcast sky: the even haze takes its colour (aerial perspective).
+	env.environment.background_mode = Environment.BG_SKY
+	env.environment.sky = Sky.new()
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.42, 0.45, 0.5)
+	sky_mat.sky_horizon_color = Color(0.55, 0.57, 0.6)
+	sky_mat.ground_horizon_color = Color(0.55, 0.57, 0.6)
+	sky_mat.ground_bottom_color = Color(0.2, 0.2, 0.2)
+	env.environment.sky.sky_material = sky_mat
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	root.add_child(env)
+	root.set_meta("env", env)
+	var m := _new_map()
+	m.reparent(root)
+	m.wind_speed = 8.0
+	m.wind_direction = Vector2(1, 0)
+	m.rain_curtains = not off
+	m.snap_to_settings()
+	m.set_precipitation_extinction(root, 0.02, 0.0, 0.99, Vector3(), 0.0, 7.0)
+	# Lit by the overcast sky alone, as a downpour is; a lamp in the haze shows the curtains drifting through its light.
+	var lamp := OmniLight3D.new()
+	lamp.position = Vector3(6, 4, -8)
+	lamp.omni_range = 25.0
+	lamp.light_energy = 6.0
+	lamp.light_color = Color(1.0, 0.8, 0.55)
+	lamp.light_volumetric_fog_energy = 3.0
+	root.add_child(lamp)
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = Color(0.05, 0.05, 0.05)
+	var floor_mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(400, 400)
+	floor_mi.mesh = pm
+	floor_mi.material_override = dark
+	root.add_child(floor_mi)
+	for i in 8:
+		var b := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(14, 30, 2)
+		b.mesh = bm
+		b.material_override = dark
+		b.position = Vector3(-56 + 16 * i, 15, -20 - 10 * i)
+		root.add_child(b)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 3, 10)
+	cam.fov = 70.0
+	root.add_child(cam)
+	cam.make_current()
+	return root
+
+
+func _curtain_view(path: String, off: bool, pt: bool) -> void:
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var root := _curtain_scene(off, pt)
+	for i in 40:
+		await RenderingServer.frame_post_draw
+	if pt:
+		root.get_meta("env").environment.pathtracing_enabled = true
+		for i in 60:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+func _curtain_tests() -> void:
+	if DisplayServer.get_name() == "headless":
+		_skip("rain curtains", "needs a rendering device")
+		return
+	# The curtains ride the wind: two frames 3 s apart differ where the haze is in curtains, not where it is even;
+	# and the mean haze is the same.
+	var stats := []
+	for off in [true, false]:
+		var root := _curtain_scene(off, false)
+		for i in 30:
+			await RenderingServer.frame_post_draw
+		var a := get_viewport().get_texture().get_image()
+		await get_tree().create_timer(3.0).timeout
+		for i in 3:
+			await RenderingServer.frame_post_draw
+		var b := get_viewport().get_texture().get_image()
+		var mean := 0.0
+		var moved := 0.0
+		var n := 0
+		for y in range(int(a.get_height() * 0.2), int(a.get_height() * 0.8), 6):
+			for x in range(0, a.get_width(), 6):
+				var la := a.get_pixel(x, y).get_luminance()
+				mean += la
+				moved += absf(la - b.get_pixel(x, y).get_luminance())
+				n += 1
+		stats.append([mean / n, moved / n])
+		root.queue_free()
+		await get_tree().process_frame
+	_check("rain curtains: the downpour's haze moves through the view in curtains on the wind (rain_curtains), its mean that of the even haze",
+			stats[1][1] > 4.0 * stats[0][1] + 0.001 and absf(stats[1][0] / stats[0][0] - 1.0) < 0.1,
+			"change over 3 s %.4f even, %.4f in curtains; mean %.3f in curtains over the even" % [stats[0][1], stats[1][1], stats[1][0] / stats[0][0]])
+
+
+# A bright figure behind a wall and under a roof, seen from a high camera; the camera cut-out (BaseMaterial3D,
+# camera_cutout globals) opens a hole to it.
+func _cutout_scene(off: bool, pt: bool) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	var env := WorldEnvironment.new()
+	env.environment = Environment.new()
+	env.environment.background_mode = Environment.BG_COLOR
+	env.environment.background_color = Color(0.4, 0.45, 0.5)
+	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.environment.ambient_light_color = Color(0.6, 0.6, 0.6)
+	env.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	if pt:
+		env.environment.pathtracing_samples_per_pixel = 16
+		env.environment.pathtracing_max_bounces = 2
+	root.add_child(env)
+	root.set_meta("env", env)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-55, 30, 0)
+	sun.shadow_enabled = true
+	root.add_child(sun)
+	var grey := StandardMaterial3D.new()
+	grey.albedo_color = Color(0.45, 0.43, 0.4)
+	var floor_mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(30, 30)
+	floor_mi.mesh = pm
+	floor_mi.material_override = grey
+	root.add_child(floor_mi)
+	var wall := MeshInstance3D.new()
+	var wm := BoxMesh.new()
+	wm.size = Vector3(8, 3, 0.3)
+	wall.mesh = wm
+	wall.material_override = grey
+	wall.position = Vector3(0, 1.5, 1.5)
+	root.add_child(wall)
+	var roof := MeshInstance3D.new()
+	var rm := BoxMesh.new()
+	rm.size = Vector3(8, 0.2, 4)
+	roof.mesh = rm
+	roof.material_override = grey
+	roof.position = Vector3(0, 3.1, -0.3)
+	root.add_child(roof)
+	var figure := MeshInstance3D.new()
+	var cm := CapsuleMesh.new()
+	cm.radius = 0.3
+	cm.height = 1.8
+	figure.mesh = cm
+	var red := StandardMaterial3D.new()
+	red.albedo_color = Color(0.9, 0.1, 0.05)
+	figure.material_override = red
+	figure.position = Vector3(0, 0.9, 0)
+	root.add_child(figure)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 9, 9)
+	cam.rotation_degrees = Vector3(-40, 0, 0)
+	cam.fov = 50.0
+	root.add_child(cam)
+	cam.make_current()
+	root.set_meta("cam", cam)
+	RenderingServer.global_shader_parameter_set("camera_cutout", Vector4(0, 1.2, 0, 0.0 if off else 2.0))
+	RenderingServer.global_shader_parameter_set("camera_cutout_floor", 0.05)
+	return root
+
+
+func _cutout_view(path: String, off: bool, pt: bool) -> void:
+	get_viewport().size = Vector2i(640, 360) if pt else Vector2i(1280, 720)
+	var root := _cutout_scene(off, pt)
+	for i in 30:
+		await RenderingServer.frame_post_draw
+	if pt:
+		root.get_meta("env").environment.pathtracing_enabled = true
+		for i in 60:
+			await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(path)
+	print("saved ", path)
+
+
+func _red_share(img: Image, cam: Camera3D, at: Vector3) -> float:
+	var c := cam.unproject_position(at)
+	var sx := float(img.get_width()) / float(get_viewport().get_visible_rect().size.x)
+	var red := 0
+	var n := 0
+	for dy in range(-12, 13, 2):
+		for dx in range(-12, 13, 2):
+			var px := img.get_pixel(clampi(int(c.x * sx) + dx, 0, img.get_width() - 1), clampi(int(c.y * sx) + dy, 0, img.get_height() - 1))
+			if px.r > 2.0 * px.g and px.r > 0.2:
+				red += 1
+			n += 1
+	return float(red) / n
+
+
+func _cutout_tests() -> void:
+	if DisplayServer.get_name() == "headless":
+		_skip("camera cut-out", "needs a rendering device")
+		return
+	var shares := []
+	for off in [true, false]:
+		var root := _cutout_scene(off, false)
+		for i in 20:
+			await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		var cam: Camera3D = root.get_meta("cam")
+		shares.append([_red_share(img, cam, Vector3(0, 1.0, 0)), _centre_luminance(img)])
+		root.queue_free()
+		await get_tree().process_frame
+	RenderingServer.global_shader_parameter_set("camera_cutout", Vector4())
+	_check("camera cut-out: a figure hidden behind a wall and a roof shows through the hole (camera_cutout globals)",
+			shares[0][0] < 0.1 and shares[1][0] > 0.4,
+			"figure's share of its spot: %.2f without, %.2f with the cut-out" % [shares[0][0], shares[1][0]])
 
 
 func _centre_luminance(img: Image) -> float:

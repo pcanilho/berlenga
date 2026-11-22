@@ -7786,7 +7786,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			p_state->indirect_reuse_slot ^= 1u;
 			const uint32_t header[4] = { 0u, 0u, uint32_t(size.width), uint32_t(size.height) };
 			RD::get_singleton()->buffer_update(p_state->indirect_reuse_buffer, 0, sizeof(header), header);
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_INDIRECT_REUSE] = float(1u + p_state->indirect_reuse_slot + (p_state->indirect_reuse_history ? 2u : 0u));
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_INDIRECT_REUSE] = float(1u + p_state->indirect_reuse_slot + (p_state->indirect_reuse_history ? 2u : 0u) + (GLOBAL_GET_CACHED(bool, "rendering/pathtracing/indirect_reuse_enhanced") ? 4u : 0u));
 			p_state->indirect_reuse_history = true;
 		} else if (p_state) {
 			p_state->indirect_reuse_history = false;
@@ -7864,6 +7864,19 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				}
 				RID wind_rd = wind_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(wind_tex) : RID();
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WIND_MAP] = (has_weather && wind_rd.is_valid()) ? float(bindless_block->add_texture(wind_rd)) : 0.0f;
+			}
+			// The camera cut-out round the player (BaseMaterial3D camera_cutout): camera rays start past it.
+			{
+				static const StringName cutout_name = "camera_cutout";
+				static const StringName cutout_floor_name = "camera_cutout_floor";
+				const Variant cut_var = ms->global_shader_parameter_get_internal(cutout_name);
+				const Vector4 cut = cut_var.get_type() == Variant::VECTOR4 ? Vector4(cut_var) : Vector4();
+				const Variant floor_var = ms->global_shader_parameter_get_internal(cutout_floor_name);
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CUTOUT_X] = cut.x;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CUTOUT_Y] = cut.y;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CUTOUT_Z] = cut.z;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CUTOUT_RADIUS] = MAX(cut.w, 0.0f);
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CUTOUT_FLOOR] = floor_var.get_type() == Variant::FLOAT ? float(floor_var) : 0.0f;
 			}
 			// Its contact wetness (wet where water has been): weather_contact_map and weather_contact_rect.
 			static const StringName contact_map_name = "weather_contact_map";

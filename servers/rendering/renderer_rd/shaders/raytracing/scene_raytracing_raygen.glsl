@@ -861,6 +861,46 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 	}
 }
 
+// The camera cut-out round the player (material.cpp camera_cutout_weight(): the same lines). p_world and p_target in
+// the trace's space (world minus rt_origin).
+float rt_cutout_weight(vec3 p_world, vec3 p_target, vec3 p_axis, float p_radius, float p_floor) {
+	vec3 q = p_world - p_target;
+	float rel = dot(q, p_axis);
+	float d = length(q - p_axis * rel);
+	return (1.0 - smoothstep(0.7 * p_radius, p_radius, d)) * (1.0 - smoothstep(-1.5, -0.5, rel)) * smoothstep(p_floor, p_floor + 0.3, p_world.y);
+}
+
+// Where a camera ray leaves the cut. Along a camera ray the weight only falls (the ray leaves the axis, nears the
+// target, sinks toward the floor), so the cut is one span from the camera: the ray starts where the weight drops
+// under a random threshold, which over the samples is the raster's dithered edge.
+float rt_cutout_tmin(vec3 p_origin, vec3 p_dir, inout uint r_rng) {
+	float radius = get_rt_param(RT_PARAM_CUTOUT_RADIUS);
+	if (radius <= 0.0) {
+		return 0.001;
+	}
+	vec3 target = vec3(get_rt_param(RT_PARAM_CUTOUT_X), get_rt_param(RT_PARAM_CUTOUT_Y), get_rt_param(RT_PARAM_CUTOUT_Z)) - rt_origin.xyz;
+	float floor_y = get_rt_param(RT_PARAM_CUTOUT_FLOOR) - rt_origin.y;
+	bool ortho = scene_data_block.data.projection_matrix[3][3] == 1.0;
+	vec3 axis = ortho ? p_dir : normalize(target - p_origin);
+	float u = rand(r_rng);
+	if (rt_cutout_weight(p_origin, target, axis, radius, floor_y) <= u) {
+		return 0.001;
+	}
+	// Past the target (half a metre before it the weight is 0) the ray is out.
+	float along = max(dot(p_dir, axis), 0.05);
+	float lo = 0.0;
+	float hi = (max(-dot(p_origin - target, axis), 0.0) + 1.0) / along;
+	for (int i = 0; i < 20; i++) {
+		float mid = 0.5 * (lo + hi);
+		if (rt_cutout_weight(p_origin + p_dir * mid, target, axis, radius, floor_y) > u) {
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	return max(hi, 0.001);
+}
+
 void main() {
 #ifdef RT_TIMING_ENABLED
 	uvec2 start_clock = clockRealtime2x32EXT();
@@ -1040,10 +1080,12 @@ void main() {
 			path_pack(payload, ps);
 			payload_set_cone_width(payload, cone_width);
 			float t_far = (bounce == 0u) ? camera_t_far : 10000.0;
+			// The camera cut-out round the player: a camera ray starts past what it cuts (rt_cutout_tmin()).
+			float t_min = (bounce == 0u) ? rt_cutout_tmin(ray_origin, ray_dir, ps.rng_state) : 0.001;
 
 #ifdef USE_SER
 			hitObjectEXT hitObject;
-			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, t_far, 0);
+			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, t_min, ray_dir, t_far, 0);
 			// Coherence hint (NVIDIA SER whitepaper): reordering already groups threads by hit group, but most
 			// surfaces share the default material's, whose shading then branches on the material. Two bits for
 			// the costliest branches, light through the surface and hair fibres, sort those threads together.
@@ -1056,7 +1098,7 @@ void main() {
 			reorderThreadEXT(hitObject, ser_hint, 2u);
 			hitObjectExecuteShaderEXT(hitObject, 0);
 #else
-			traceRayEXT(tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, t_far, 0);
+			traceRayEXT(tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, t_min, ray_dir, t_far, 0);
 #endif
 
 			ps = path_unpack(payload);
@@ -1246,6 +1288,9 @@ void main() {
 				if (ir_has_x2) {
 					ir_x2 = ray_origin + ray_dir * ps.hit_t;
 					ir_n2 = ps.offset_normal;
+					if (ir_rough && rt_ir_enhanced()) {
+						ir_rough = rt_ir_reconnectable(origin.xyz, ir_x1, ir_x2, ir_n2);
+					}
 				}
 				ps.packed_bounces_flags &= ~RT_IR_DIFFUSE_FLAG;
 			}

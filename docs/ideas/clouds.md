@@ -887,3 +887,6 @@ What changed from the design above, and why:
   depth (3 g/m2 to full), not a share of the largest column: with sand's heavier head that share eroded the wake and
   the dust over the ground near the camera away, so the ground under the wall showed through bare (sand's scout: its
   shadowed ground near black). The overlay's sun no longer counts SkyClock's dust dimming twice (atmo_sun_smoke).
+- 22 Nov, round 2: the erosion fades inward (strength times 1 - 0.7 shape): eroded as deeply inside, the top read as
+  holes punched into the dust rather than lobes standing out. The checker grain along the edges in earlier stills was
+  the bench's 24 frames (each 4x4 sky cell drawn about once); at 192 frames it converges.
