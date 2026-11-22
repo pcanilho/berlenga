@@ -523,6 +523,9 @@ func _build_scene() -> void:
 	elif view in ["bole", "junction", "fork", "leaf", "veteran", "base"]:
 		# Close-ups: the cascades over 300 m blur the leaves' shadow flecks into blocky speckle.
 		sun.directional_shadow_max_distance = 40.0
+	if OS.has_environment("SHADOW_MAX"):
+		# env SHADOW_MAX=m: the sun's shadow distance (cascade reach) for this shot.
+		sun.directional_shadow_max_distance = float(OS.get_environment("SHADOW_MAX"))
 	add_child(sun)
 	var vet_az := 0.0
 	if view == "veteran":
