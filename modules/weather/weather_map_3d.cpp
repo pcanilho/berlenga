@@ -866,6 +866,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	_update_cold_pools(p_weather_dt);
 	_update_valley_fog(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
 	_update_drainage(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
+	_update_breeze(float(MAX(p_weather_dt, 0.0)) / 3600.0f);
 	c.pool = cold_pools && cell_pool.size() == resolution * resolution ? cell_pool.ptr() : nullptr;
 	const bool oro_ready = orographic_rain && cell_oro.size() == resolution * resolution;
 	c.oro = oro_ready ? cell_oro.ptr() : nullptr;
@@ -994,6 +995,9 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		// Rain falls from the thicker cloud: the base rate, spread where the cover is.
 		float r = cur_rain_rate * rain_scale * CLAMP(Math::smoothstep(0.3f, 0.7f, cover) / c.cover_gate, 0.0f, 2.5f);
 		Vector2 w = c.base_wind;
+		if (breeze_speed != 0.0f) {
+			w += _breeze_at(p) * breeze_speed;
+		}
 
 		for (const Storm &s : storms) {
 			const float env = _storm_weight(s);
@@ -2002,6 +2006,110 @@ void WeatherMap3D::_update_cold_pools(double p_weather_dt) {
 	}
 }
 
+// Sea and lake breezes (docs/ideas/world-links.md, "Sea breezes"): by day the land warms past the water and a
+// shallow onshore wind sets in a few hours after sunrise, reaching 10 to 40 km inland; at night a weaker land breeze
+// blows off the shore (Simpson 1994; Miller et al. 2003). Its speed scales as the gravity current's,
+// U = 0.4 sqrt(g dT h / T) over a 500 m breeze layer (Steyn 2003): about 3.7 m/s for 5 K. The land breeze is about half
+// (a shallower, weaker contrast). A strong ambient wind sweeps it away (Biggs and Graves 1962's lake breeze index):
+// faded from 4 to 10 m/s. The way onshore from the lake-effect square's water mask, blurred over about 25 km (two
+// box passes of 13 cells), reaching some 20 km inland as the blur fades.
+void WeatherMap3D::_derive_breeze() {
+	const WeatherLakeEffect &le = lake_effect;
+	const int n = le.resolution;
+	breeze_field.clear();
+	breeze_n = 0;
+	if (!le.water_valid || !le.any_water || le.water.size() != n * n) {
+		return;
+	}
+	Vector<float> b = le.water;
+	Vector<float> t;
+	t.resize(n * n);
+	const int r = 6;
+	for (int pass = 0; pass < 2; pass++) {
+		for (int axis = 0; axis < 2; axis++) {
+			const float *src = b.ptr();
+			float *dst = t.ptrw();
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					float sum = 0.0f;
+					for (int k = -r; k <= r; k++) {
+						const int xx = axis == 0 ? CLAMP(x + k, 0, n - 1) : x;
+						const int zz = axis == 1 ? CLAMP(z + k, 0, n - 1) : z;
+						sum += src[zz * n + xx];
+					}
+					dst[z * n + x] = sum / float(2 * r + 1);
+				}
+			}
+			b = t;
+		}
+	}
+	breeze_field.resize(n * n * 3);
+	float *f = breeze_field.ptrw();
+	const float *bb = b.ptr();
+	const float cs = le.cell_size();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float gx = (bb[z * n + MIN(x + 1, n - 1)] - bb[z * n + MAX(x - 1, 0)]) / (float(MIN(x + 1, n - 1) - MAX(x - 1, 0)) * cs);
+			const float gz = (bb[MIN(z + 1, n - 1) * n + x] - bb[MAX(z - 1, 0) * n + x]) / (float(MIN(z + 1, n - 1) - MAX(z - 1, 0)) * cs);
+			const float gl = Math::sqrt(gx * gx + gz * gz);
+			float *o = &f[i * 3];
+			o[0] = o[1] = o[2] = 0.0f;
+			if (gl < 1e-8f) {
+				continue;
+			}
+			o[0] = -gx / gl;
+			o[1] = -gz / gl;
+			// Strongest across the shore, reaching inland and offshore as the blurred water fades.
+			o[2] = Math::smoothstep(0.005f, 0.15f, bb[i]) * (1.0f - Math::smoothstep(0.8f, 0.98f, bb[i]));
+		}
+	}
+	breeze_corner = le.rect().position;
+	breeze_cell = cs;
+	breeze_n = n;
+}
+
+void WeatherMap3D::_update_breeze(float p_dt_h) {
+	if (!sea_breezes || breeze_n <= 0) {
+		breeze_speed = 0.0f;
+		return;
+	}
+	const float dt = cur_air_temperature - get_water_temperature();
+	const float tk = cur_air_temperature + 273.15f;
+	float u = 0.4f * Math::sqrt(9.81f * Math::abs(dt) * 500.0f / tk);
+	u = MIN(u, 6.0f) * (dt >= 0.0f ? 1.0f : -0.5f);
+	u *= 1.0f - Math::smoothstep(4.0f, 10.0f, cur_wind_speed);
+	if (p_dt_h > 0.0f) {
+		breeze_speed += (u - breeze_speed) * (1.0f - Math::exp(-p_dt_h / 1.0f));
+	}
+}
+
+Vector2 WeatherMap3D::_breeze_at(Vector2 p_xz) const {
+	const int n = breeze_n;
+	if (n <= 0 || breeze_field.size() != n * n * 3) {
+		return Vector2();
+	}
+	const float fx = (p_xz.x - breeze_corner.x) / breeze_cell - 0.5f;
+	const float fz = (p_xz.y - breeze_corner.y) / breeze_cell - 0.5f;
+	const int x0 = CLAMP(int(Math::floor(fx)), 0, n - 1), z0 = CLAMP(int(Math::floor(fz)), 0, n - 1);
+	const int x1 = MIN(x0 + 1, n - 1), z1 = MIN(z0 + 1, n - 1);
+	const float tx = CLAMP(fx - x0, 0.0f, 1.0f), tz = CLAMP(fz - z0, 0.0f, 1.0f);
+	const float *f = breeze_field.ptr();
+	auto v = [&](int x, int z) { const float *o = &f[(z * n + x) * 3]; return Vector2(o[0], o[1]) * o[2]; };
+	return v(x0, z0).lerp(v(x1, z0), tx).lerp(v(x0, z1).lerp(v(x1, z1), tx), tz);
+}
+
+Vector2 WeatherMap3D::get_sea_breeze_at(Vector3 p_position) const {
+	return breeze_speed != 0.0f ? _breeze_at(Vector2(p_position.x, p_position.z)) * breeze_speed : Vector2();
+}
+
+void WeatherMap3D::set_sea_breezes(bool p_enabled) {
+	sea_breezes = p_enabled;
+	if (!p_enabled) {
+		breeze_speed = 0.0f;
+	}
+}
+
 // Night drainage winds (docs/ideas/world-links.md, "Drainage winds"): on a clear calm night the air cooled against a
 // slope is denser than the air beside it at the same height and runs down the fall line in a shallow jet, the flow
 // that fills the cold pools (Prandtl 1942; Mahrt 1982; Whiteman 2000, ch. 13). Prandtl's steady slope flow in a
@@ -2347,7 +2455,7 @@ void WeatherMap3D::_apply_wave_field() {
 // convection reaches the inversion, higher the more unstable (1.5 to 3.5 km), its rolls 2.75 times that apart
 // (Kristovich 1993).
 void WeatherMap3D::_update_lake_effect(float p_dt) {
-	if (!lake_effect_snow) {
+	if (!lake_effect_snow && !sea_breezes) {
 		if (lake_params_now != Vector4()) {
 			lake_params_now = Vector4();
 			_push_sky();
@@ -2381,7 +2489,15 @@ void WeatherMap3D::_update_lake_effect(float p_dt) {
 		le.pending_row = end;
 		if (end >= n) {
 			le.finish_water();
+			_derive_breeze();
 		}
+	}
+	if (!lake_effect_snow) {
+		if (lake_params_now != Vector4()) {
+			lake_params_now = Vector4();
+			_push_sky();
+		}
+		return;
 	}
 	const Vector2 dir = cur_wind_direction.length_squared() > 1e-8f ? cur_wind_direction.normalized() : Vector2(1, 0);
 	if (le.needs_derive(dir)) {
@@ -4297,6 +4413,10 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cold_pool_strength"), &WeatherMap3D::get_cold_pool_strength);
 	ClassDB::bind_method(D_METHOD("get_cold_pool_at", "position"), &WeatherMap3D::get_cold_pool_at);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cold_pools"), "set_cold_pools", "is_cold_pools_enabled");
+	ClassDB::bind_method(D_METHOD("set_sea_breezes", "enabled"), &WeatherMap3D::set_sea_breezes);
+	ClassDB::bind_method(D_METHOD("is_sea_breezes_enabled"), &WeatherMap3D::is_sea_breezes_enabled);
+	ClassDB::bind_method(D_METHOD("get_sea_breeze_at", "position"), &WeatherMap3D::get_sea_breeze_at);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sea_breezes"), "set_sea_breezes", "is_sea_breezes_enabled");
 	ClassDB::bind_method(D_METHOD("set_drainage_winds", "enabled"), &WeatherMap3D::set_drainage_winds);
 	ClassDB::bind_method(D_METHOD("is_drainage_winds_enabled"), &WeatherMap3D::is_drainage_winds_enabled);
 	ClassDB::bind_method(D_METHOD("get_drainage_wind_at", "position", "height_above_ground"), &WeatherMap3D::get_drainage_wind_at, DEFVAL(-1.0f));

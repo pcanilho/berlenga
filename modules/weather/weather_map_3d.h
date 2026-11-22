@@ -403,6 +403,17 @@ private:
 	// what the air over it makes of it now (lake_effect_at()'s params).
 	WeatherLakeEffect lake_effect;
 	bool lake_effect_snow = true;
+	// Sea and lake breezes: from the lake-effect square's water (2 km cells), blurred over about 10 km: per cell the
+	// way onshore (x, z, unit) and the breeze's reach (0..1); the breeze's speed now (m/s, + onshore by day).
+	bool sea_breezes = true;
+	float breeze_speed = 0.0f;
+	Vector<float> breeze_field;
+	Vector2 breeze_corner;
+	float breeze_cell = 0.0f;
+	int breeze_n = 0;
+	void _derive_breeze();
+	void _update_breeze(float p_dt_h);
+	Vector2 _breeze_at(Vector2 p_xz) const;
 	Vector4 lake_params_now;
 	float lake_timer = 0.0f;
 	Ref<ImageTexture> lake_texture;
@@ -1254,6 +1265,9 @@ public:
 	void set_cold_pool_strength(float p_celsius) { cold_pool_strength = MAX(p_celsius, 0.0f); }
 	float get_cold_pool_strength() const { return cold_pool_strength; }
 	float get_cold_pool_at(Vector3 p_position) const;
+	void set_sea_breezes(bool p_enabled);
+	bool is_sea_breezes_enabled() const { return sea_breezes; }
+	Vector2 get_sea_breeze_at(Vector3 p_position) const; // m/s at 10 m, the breeze's share of the mean wind
 	void set_drainage_winds(bool p_enabled);
 	bool is_drainage_winds_enabled() const { return drainage_winds; }
 	Vector3 get_drainage_wind_at(Vector3 p_position, float p_height_above_ground) const;

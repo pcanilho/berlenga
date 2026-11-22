@@ -305,6 +305,7 @@ func _ready() -> void:
 	await _orographic_tests()
 	await _cold_pool_tests()
 	await _drainage_tests()
+	await _breeze_tests()
 	await _rime_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
@@ -2168,6 +2169,58 @@ func _drainage_tests() -> void:
 	await get_tree().physics_frame
 
 
+# Sea breezes (docs/ideas/world-links.md, "Sea breezes"): a sea over x < 0, land beyond. A warm afternoon over a cooler
+# sea blows onshore near the coast and fades inland; a cool night blows a weaker land breeze off the shore.
+class BreezeSeaStub extends WorldWater:
+	func _height_at(p: Vector3) -> float:
+		return 0.0 if p.x < 0.0 else -INF
+
+
+func _breeze_tests() -> void:
+	WorldContracts.clear_overrides()
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn -5.0 if p.x < 0.0 else 5.0\n"
+	vs.reload()
+	var land := Node3D.new()
+	land.set_script(vs)
+	add_child(land)
+	WorldContracts.set_water(BreezeSeaStub.new())
+	var m := _new_map()
+	m.terrain_source = m.get_path_to(land)
+	m.terrain_wind_enabled = false
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.lake_effect_snow = false
+	m.wind_speed = 1.0
+	m.wind_direction = Vector2(0, 1)
+	m.temperature = 24.0
+	m.water_temperature = 17.0
+	m.snap_to_settings()
+	for i in 20:
+		await get_tree().physics_frame
+	m.advance(4.0 * 3600.0)
+	var coast: Vector2 = m.get_sea_breeze_at(Vector3(3000, 0, 0))
+	var mid: Vector2 = m.get_sea_breeze_at(Vector3(15000, 0, 0))
+	var inland: Vector2 = m.get_sea_breeze_at(Vector3(60000, 0, 0))
+	var w: WorldWeather = WorldContracts.get_weather()
+	var seen: Vector3 = w.wind_at(Vector3(3000, 5, 0), 10.0)
+	_check("sea breeze: a warm afternoon over a cooler sea blows onshore at the coast (Simpson 1994), a few m/s, fading inland; the wind contract carries it", coast.x > 2.0 and coast.x < 6.0 and absf(coast.y) < 0.3 and mid.x > 0.2 * coast.x and inland.length() < 0.1 * coast.length() and seen.x > 1.5, "%.1f m/s onshore 3 km in, %.1f m/s 15 km in, %.1f m/s 60 km in; wind_at %.1f m/s east at 10 m" % [coast.x, mid.x, inland.length(), seen.x])
+	m.temperature = 11.0
+	m.snap_to_settings()
+	m.advance(4.0 * 3600.0)
+	var night: Vector2 = m.get_sea_breeze_at(Vector3(3000, 0, 0))
+	_check("sea breeze: a cool night turns it into a weaker land breeze off the shore", night.x < -0.5 and night.length() < coast.length(), "%.1f m/s" % night.x)
+	m.wind_speed = 12.0
+	m.snap_to_settings()
+	m.advance(4.0 * 3600.0)
+	_check("sea breeze: a strong wind sweeps it away; off, none", m.get_sea_breeze_at(Vector3(3000, 0, 0)).length() < 0.1, "%.2f m/s" % m.get_sea_breeze_at(Vector3(3000, 0, 0)).length())
+	m.sea_breezes = false
+	m.queue_free()
+	land.queue_free()
+	WorldContracts.clear_overrides()
+	await get_tree().physics_frame
+
+
 func _cold_pool_tests() -> void:
 	var vs := GDScript.new()
 	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 200.0 * (1.0 - exp(-p.x * p.x / (2.0 * 400.0 * 400.0)))\n"
@@ -2275,6 +2328,27 @@ func _relief_contract_tests() -> void:
 	var r: Vector2 = WorldContracts.get_ground().relief_at(Vector3(10, 0, 10))
 	WorldContracts.clear_overrides()
 	_check("relief contract: (0, 0) with no producer, a stub's relief with one", none == Vector2() and r.is_equal_approx(Vector2(0.25, 0.8)), "none %s, stub %s" % [none, r])
+	# Landscape3D answers it from its bank relief: a 45 degree soil bank between flats (terrain 57b253b5).
+	var img := Image.create(64, 64, false, Image.FORMAT_RF)
+	for j in 64:
+		for i in 64:
+			img.set_pixel(i, j, Color(clampf(float(i) * 2.0 - 40.0, 0.0, 40.0), 0, 0))
+	var land := Landscape3D.new()
+	land.height_image = img
+	land.spacing = 2.0
+	add_child(land)
+	land.rebuild()
+	land.load_all_heights()
+	var on_bank := 0.0
+	var share := 0.0
+	for k in 40:
+		var q := Vector3(48.0 + float(k % 8) * 3.1, 0.0, 20.0 + float(k / 8) * 9.7)
+		var rv: Vector2 = WorldContracts.get_ground().relief_at(q)
+		on_bank = maxf(on_bank, absf(rv.x))
+		share = maxf(share, rv.y)
+	var flat: Vector2 = WorldContracts.get_ground().relief_at(Vector3(110, 0, 60))
+	land.queue_free()
+	_check("relief contract: Landscape3D's bank relief answers on a 45 degree bank, none on the flat", on_bank > 0.05 and on_bank < 2.0 and share > 0.3 and flat == Vector2(), "up to %.2f m over the heightfield, share %.2f; flat %s" % [on_bank, share, flat])
 
 
 # Salt bloom on the terrain's sea cliffs: a rock wall (TerrainMaterial3D, steep faces are rock) under the spray's salt
