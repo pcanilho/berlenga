@@ -1724,6 +1724,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Runoff gravel",
+   "settings": [
+    "RockField3D.runoff_gravel"
+   ],
+   "note": "",
+   "what": "coarse lag gathers on gully floors and fine grains spread on the fans below.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Breakable stones",
    "settings": [
     "RockField3D.break_stone"
