@@ -1354,6 +1354,14 @@ private:
 		// Scratch buffer used by tracked builds, owned by the AS. Batched builds use acceleration_structure_scratch.
 		RDD::BufferID scratch_buffer;
 
+		// BLAS: built with ALLOW_COMPACTION, so it moves into compacted storage after its builds.
+		bool compactable = false;
+		// BLAS: lives in compacted storage now.
+		bool compacted = false;
+		// TLAS: acceleration_structure_compaction.relocation_serial when its instances last all pointed at current
+		// BLAS storage. Old storage stays alive until every TLAS has caught up with it.
+		uint64_t relocation_serial = 0;
+
 #ifdef DEV_ENABLED
 		// TLAS last built by acceleration_structure_build_batch(): the BLASes its instances reference.
 		LocalVector<RID> batch_blases;
@@ -1384,6 +1392,7 @@ private:
 			LocalVector<uint8_t> records; // By position.
 			LocalVector<uint32_t> touched; // Positions written by the build.
 			bool valid = false; // The buffer holds the records; false until the first keyed build.
+			uint64_t relocation_serial = 0; // Records written before a BLAS moved point at its old storage.
 		} keyed;
 	};
 
@@ -1405,6 +1414,55 @@ private:
 	AccelerationStructureScratch acceleration_structure_scratch;
 	AccelerationStructureBatch acceleration_structure_batch;
 	uint64_t acceleration_structure_build_serial = 0;
+
+public:
+	struct AccelerationStructureCompactionStats {
+		uint32_t compacted = 0; // BLASes moved into compacted storage, ever.
+		uint64_t bytes_before = 0; // Their storage before and after.
+		uint64_t bytes_after = 0;
+		uint32_t pending = 0; // Waiting for their size or their copy.
+		uint32_t retired = 0; // Old storage not freed yet.
+	};
+	AccelerationStructureCompactionStats acceleration_structure_get_compaction_stats() const;
+
+private:
+	// BLAS compaction (NVIDIA's recipe): a static BLAS is built with ALLOW_COMPACTION, its compacted size is queried
+	// after the build, read back once that frame is done, and a later batch copies it into storage of that size. The
+	// copy is the same tree, so traces are unchanged. The RID stays; the storage address changes, so TLASes rewrite
+	// their records and the old storage is freed once every TLAS has been rebuilt past it.
+	struct AccelerationStructureCompaction {
+		struct Query {
+			RID blas;
+			uint64_t build_serial = 0;
+		};
+		struct Pending {
+			RID blas;
+			uint64_t build_serial = 0;
+			uint64_t size = 0;
+		};
+		struct Retired {
+			RDD::AccelerationStructureID storage;
+			uint64_t relocation_serial = 0;
+		};
+		static constexpr uint32_t QUERIES_PER_FRAME = 8192;
+		static constexpr uint32_t COPIES_PER_BATCH = 1024;
+
+		bool enabled = false;
+		// RD_BLAS_COMPACTION_MOVE_ALL=1: also move BLASes whose compacted size is no smaller, so the copies run on
+		// drivers that don't compact (lavapipe) and tests can check the frames stay the same.
+		bool move_all = false;
+		LocalVector<Query> backlog; // Built, size not asked yet.
+		LocalVector<Pending> pending; // Size known, copy not recorded yet.
+		LocalVector<Retired> retired; // Old storage some TLAS may still point at.
+		HashSet<RID> tlases;
+		uint64_t relocation_serial = 0;
+		AccelerationStructureCompactionStats stats;
+	} acceleration_structure_compaction;
+
+	void _acceleration_structure_compaction_begin_frame();
+	void _acceleration_structure_compaction_record_copies(Span<RID> p_blas_builds);
+	void _acceleration_structure_compaction_record_queries();
+	void _blas_restore_full_storage(AccelerationStructure *p_blas);
 
 	bool _any_list_active() const;
 	Error _acceleration_structure_scratch_buffer_create(AccelerationStructure *p_acceleration_structure);
@@ -2010,6 +2068,10 @@ private:
 		};
 
 		RDD::QueryPoolID timestamp_pool;
+
+		// Compacted sizes of the BLASes built in this frame, read back when the frame comes round again.
+		RDD::QueryPoolID compaction_query_pool;
+		LocalVector<AccelerationStructureCompaction::Query> compaction_queries;
 
 		TightLocalVector<String> timestamp_names;
 		TightLocalVector<uint64_t> timestamp_cpu_values;

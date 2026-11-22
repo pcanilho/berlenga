@@ -234,13 +234,22 @@ void WeatherMap3D::_rain_update(double p_weather_dt) {
 	if (fog_drip && origin_valid) {
 		const WeatherClouds::State st = _cloud_state();
 		const float cs = _cell_size();
+		// The valley fog sea too (radiation fog, 0.05 to 0.3 g/m3; Gultepe et al. 2007): its extinction under its
+		// top, as its FogVolume draws it.
+		const float *vf = valley_fog && cell_valley_fog.size() == n * n ? cell_valley_fog.ptr() : nullptr;
 		for (int z = 0; z < n; z++) {
 			for (int x = 0; x < n; x++) {
 				Vector3 p((origin_cell.x + x + 0.5f) * cs, 0.0f, (origin_cell.y + z + 0.5f) * cs);
 				const float g = get_terrain_ground_at(p);
 				const float hc = get_canopy_height_at(p);
-				p.y = (Math::is_finite(g) ? g : ground_height) + MAX(0.7f * hc, 1.0f);
-				fg[z * n + x] = MIN(6.7f * WeatherClouds::extinction_at(st, p), 1.0f);
+				const float above = MAX(0.7f * hc, 1.0f);
+				p.y = (Math::is_finite(g) ? g : ground_height) + above;
+				float beta = WeatherClouds::extinction_at(st, p);
+				if (vf && vf[z * n + x] > 0.5f) {
+					const float d = vf[z * n + x];
+					beta = MAX(beta, valley_fog_density * Math::smoothstep(0.5f, 4.0f, d) * (1.0f - Math::smoothstep(d - 6.0f, d + 1.0f, above)));
+				}
+				fg[z * n + x] = MIN(6.7f * beta, 1.0f);
 			}
 		}
 	} else {

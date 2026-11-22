@@ -3921,10 +3921,16 @@ Cottrell 2004; wild cherry: Russell 2003), Rackham 2006, Wood Handbook (green MO
 - Hornbeam (Carpinus betulus): two-ranked fine twigs, dense dome, very shade tolerant (shade_max 0.75, opacity 0.85),
   smooth grey bark; leaves held late (long fall lag).
 - Sweet chestnut (Castanea sativa): broad dome on a massive bole, long lanceolate leaves (18 cm), late leaf-out.
-- Next (this pick): aspen clones (one bark tint, form and autumn date for a whole sucker patch: a clone id from
-  hashed cells in VegetationField3D, Mitton and Grant 1996), hornbeam's fluted stem (the pollard pole flutes),
-  chestnut's spiral-twisted furrows, cherry blossom before the leaves, and the new species in stands (oak-hornbeam,
-  chestnut coppice, aspen in the taiga and woodland, black poplar on floodplains).
+- Hornbeam flutes: veteran_deform mode 4 on every hornbeam chain from 4 cm (ridges a seventh of the radius, five to
+  eight round, wandering up the stem on the chain's frame, darker grooves). Wild cherry blossom: get_bloom days
+  98-128, umbels of 5-10 flowers 2.6-3.6 cm across, two a spur.
+- Aspen clones: species meta clone_scale (25 m) makes VegetationField3D give every stem in a jittered (Worley) cell one
+  variant; each aspen stand variant is a clone (TreeGenerator.phenology_shift: leaf-out up to 45 degree days and
+  autumn 70 senescence units either way; bark whiter, greener or tan; branch angle +-6 degrees; leaf size +-15%).
+- In stands: hornbeam under the oaks of STAND_OAK_MIXED (0.4) and wild cherry among them (0.2); black poplar on the
+  floodplain (0.35, follows the flow); aspen clones with the birch in the taiga's burns. Bench: stands --variants=4
+  checks neighbours within 4 m share a clone.
+- Next: chestnut's spiral-twisted furrows, a chestnut coppice stand, aspen in make_woodland.
 - Later: WorldWater.high_water_at (1276b430: peak height, days since, flow xz) can drive flood_height and
   flood_years (5av) instead of hand values.
 

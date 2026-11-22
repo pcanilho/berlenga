@@ -7,7 +7,7 @@ summary: "Trees and woody shrubs grown by light competition, 55 species in twent
 
 ## Growth
 
-- **Tree generator** (`TreeGenerator`: `preset`, `years`, `seed`): trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted and wild cherry flowers white in April.
+- **Tree generator** (`TreeGenerator`: `preset`, `years`, `seed`): trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 36 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`); aspen and poplar leaves tremble in the lightest air, hornbeam stems are fluted and wild cherry flowers white in April; aspen grows in clones whose stems share bark, form, leaf-out and autumn colour (species meta `clone_scale`), and stands place hornbeam and wild cherry under oaks, black poplar on floodplains and aspen in taiga burns.
 
   ![Seven tree species grown in the open, raster](media/trees-species.jpg)
 

@@ -1913,6 +1913,13 @@ class RenderRaytracing {
 	LocalVector<uint32_t> custom_material_slots_prev; // Same, for the frame before.
 	uint32_t material_frame = UINT32_MAX; // Frame _refresh_custom_shader_slots last ran in.
 	uint64_t material_slot_version = 0; // Bumped when a material's hit group slot changes; part of RTPlanKey::material_version.
+	// Whether a cached material can bound a medium (RT_MATERIAL_FEATURE_MEDIA): scanned again when a material changes or
+	// a cache entry is rebuilt.
+	uint64_t material_rebuild_serial = 0; // Bumped by every rebuild in process_material().
+	uint64_t media_scan_material_version = UINT64_MAX;
+	uint64_t media_scan_rebuild_serial = UINT64_MAX;
+	bool media_scan_found = true;
+	bool _materials_bound_media();
 	void _touch_material_entry(RTMaterialCacheEntry &r_entry, uint32_t p_slot, uint32_t p_frame);
 	bool _custom_shader_slot_current(RTMaterialCacheEntry &r_entry, RID p_material_rid, uint32_t p_frame);
 	void _refresh_custom_shader_slots();

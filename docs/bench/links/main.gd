@@ -304,6 +304,7 @@ func _ready() -> void:
 	await _spray_sand_tests()
 	await _orographic_tests()
 	await _cold_pool_tests()
+	await _drainage_tests()
 	await _rime_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
@@ -2091,6 +2092,67 @@ func _orographic_tests() -> void:
 
 
 # Cold air pools: a valley 200 m deep on a clear calm night fills with cold air; the shoulders above stay milder.
+# Night drainage winds (docs/ideas/world-links.md, "Drainage winds"): the same 200 m valley on a clear calm night; the
+# slope's air runs down the fall line in a jet a few metres up, none on the flat floor, none overcast, none by day.
+func _drainage_tests() -> void:
+	WorldContracts.clear_overrides()
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 200.0 * (1.0 - exp(-p.x * p.x / (2.0 * 400.0 * 400.0)))\n"
+	vs.reload()
+	var valley := Node3D.new()
+	valley.set_script(vs)
+	add_child(valley)
+	var c := _new_clock(10, 1.0)
+	var m := _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(valley)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.6
+	m.temperature = 6.0
+	m.cloud_cover = 0.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(2.0 * 3600.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var slope := Vector3(400, 0, 0) # about 14 degrees
+	var jet := Vector3()
+	var jet_h := 0.0
+	for hh in [1.0, 2.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0]:
+		var d: Vector3 = m.get_drainage_wind_at(slope, hh)
+		if d.length() > jet.length():
+			jet = d
+			jet_h = hh
+	var high: float = m.get_drainage_wind_at(slope, 80.0).length()
+	var floor_w: float = m.get_drainage_wind_at(Vector3(0, 0, 0), 5.0).length()
+	var with_drain: Vector3 = w.wind_at(slope, jet_h)
+	m.drainage_winds = false
+	var seen: Vector3 = with_drain - w.wind_at(slope, jet_h)
+	m.drainage_winds = true
+	m.advance(60.0)
+	_check("drainage winds: a clear calm night runs the slope's air down the fall line in a jet a few metres up (Prandtl 1942; Horst and Doran 1986), none far above it or on the flat floor", jet.x < -0.8 and jet.length() < 3.5 and absf(jet.z) < 0.1 * jet.length() and jet_h >= 2.0 and jet_h <= 16.0 and high < 0.1 * jet.length() and floor_w < 0.1, "%.2f m/s toward (%.2f, %.2f) at %.0f m; %.2f m/s at 80 m; %.2f m/s on the floor" % [jet.length(), jet.x / maxf(jet.length(), 1e-4), jet.z / maxf(jet.length(), 1e-4), jet_h, high, floor_w])
+	_check("drainage winds: WorldWeather.wind_at carries it", seen.distance_to(jet) < 0.05 * jet.length() + 1e-3, "%.2f m/s of %.2f" % [seen.length(), jet.length()])
+	m.cloud_cover = 1.0
+	m.snap_to_settings()
+	m.advance(2.0 * 3600.0)
+	var overcast: float = m.get_drainage_wind_at(slope, jet_h).length()
+	m.cloud_cover = 0.0
+	c.time_of_day = 13.0
+	m.snap_to_settings()
+	m.advance(2.0 * 3600.0)
+	var day: float = m.get_drainage_wind_at(slope, jet_h).length()
+	_check("drainage winds: none under an overcast sky or by day", overcast < 0.05 and day < 0.05, "%.2f m/s overcast, %.2f m/s at 13:00" % [overcast, day])
+	m.drainage_winds = false
+	_check("drainage winds: off, none", m.get_drainage_wind_at(slope, jet_h) == Vector3(), "")
+	m.queue_free()
+	c.queue_free()
+	valley.queue_free()
+	await get_tree().physics_frame
+
+
 func _cold_pool_tests() -> void:
 	var vs := GDScript.new()
 	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 200.0 * (1.0 - exp(-p.x * p.x / (2.0 * 400.0 * 400.0)))\n"
@@ -2132,6 +2194,9 @@ func _cold_pool_tests() -> void:
 	var fog_side: float = w.valley_fog_top_at(Vector3(150, 0, 0))
 	var fog_up: float = w.valley_fog_top_at(Vector3(300, 0, 0))
 	_check("valley fog: the saturated pool fills with fog, its top level across the valley; the slopes above it and the shoulders clear", fog_depth > 20.0 and fog_top < 200.0 and absf(fog_side - fog_top) < 3.0 and fog_up == -INF and w.valley_fog_top_at(shoulder) == -INF, "%.0f m deep on the floor, top at %.0f m there and %.0f m 150 m across (ground 14 m); clear at 300 m (ground 49 m) and on the shoulder" % [fog_depth, fog_top, fog_side])
+	var fw_floor: float = w.fog_water_at(floor_p)
+	var fw_shoulder: float = w.fog_water_at(shoulder)
+	_check("valley fog: what stands in it stands in cloud water (fog_water_at: the drip under trees, rime below 0 C), the shoulders above it none", fw_floor > 0.05 and fw_floor < 0.4 and fw_shoulder == 0.0, "%.2f g/m3 on the floor, %.2f on the shoulder" % [fw_floor, fw_shoulder])
 	m.wind_speed = 8.0
 	m.snap_to_settings()
 	m.advance(2.0 * 3600.0)

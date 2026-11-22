@@ -12,6 +12,7 @@ Target: tens of thousands of objects over kilometres, mostly static.
 - **Off-screen culling** (`rendering/pathtracing/cull_max_distance`, `cull_min_size`): small or distant unseen objects leave the trace.
 - **Opacity micromaps** (`rendering/pathtracing/opacity_micromaps`): cut-out foliage traced without any-hit shaders.
 - **Mesh LOD in the path tracer** (`rendering/pathtracing/mesh_lod`).
+- **Compacted ray tracing structures** (`rendering/rendering_device/acceleration_structure/compaction`): static acceleration structures shrink in video memory after they are built.
 
 Settings for a large world, in `project.godot`:
 

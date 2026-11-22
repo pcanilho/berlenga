@@ -279,6 +279,14 @@
 				Returns the ground's convective heating, 0 (a still night) to 1 (a clear afternoon): the day's warming (Parton and Logan) less under cloud. 1 without a SkyClock.
 			</description>
 		</method>
+		<method name="get_drainage_wind_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="height_above_ground" type="float" default="-1.0" />
+			<description>
+				The night's drainage (katabatic) wind at [param position], [param height_above_ground] metres up (negative: from the position's own height over the terrain): down the fall line, peaking a few metres up. Zero by day, overcast, in a wind, on flat ground or with [member drainage_winds] off. [method get_wind_at] includes it.
+			</description>
+		</method>
 		<method name="get_fire_cloud_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -1041,6 +1049,9 @@
 		</member>
 		<member name="dew_and_frost" type="bool" setter="set_dew_and_frost" getter="get_dew_and_frost" default="true">
 			On clear calm nights exposed surfaces lose more by radiation to the sky than the air's drying brings back, and the vapour condenses on them (Monteith 1957): dew joins the surface water film, and below 0 C at the surface it deposits as hoarfrost ([method get_frost_at]). Clouds and canopies return the longwave, so clouded and sheltered spots stay dry. Needs a sun light or a sky clock.
+		</member>
+		<member name="drainage_winds" type="bool" setter="set_drainage_winds" getter="is_drainage_winds_enabled" default="true">
+			Night drainage winds: on clear calm nights the air cooled against a slope runs down its fall line in a shallow jet (Prandtl 1942; Whiteman 2000), about 1 to 3 m/s a few metres up, from each cell's radiative cooling and slope. Builds over half an hour, gone by day, overcast or in a wind over about 4 m/s. In [method get_wind_at] (so [method WorldWeather.wind_at]) and the shaders' wind map.
 		</member>
 		<member name="fog_drip" type="bool" setter="set_fog_drip" getter="is_fog_drip_enabled" default="true">
 			Fog drip: where the ground stands in the cloud, plants comb the cloud water out, deposition = LWC x wind x a capture efficiency (Lovett 1984), 0.003 over short plants up to 0.018 under a closed canopy ([method get_canopy_closure_at]; deposition velocities of about 2 to 9 cm/s in a 5 m/s wind, Gallagher et al. 1988, Katata et al. 2008). It enters the canopy's water balance with the rain, so it drips once the leaves hold their storage, wets the ground under the trees and feeds the runoff. In the cloud the air is saturated and the canopy does not dry.

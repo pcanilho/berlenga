@@ -225,6 +225,7 @@ private:
 	int ground_detail_max_per_cell = 40000;
 	bool ground_detail_tiles = true; // tiles of piles: squares of settled grains drawn as reused tiles
 	uint64_t tile_stats[3] = {}; // tiles cut, placements, grains drawn by placements
+	mutable SafeNumeric<uint64_t> frost_stones; // ground detail placed by frost sorting
 	mutable SafeNumeric<uint64_t> wear_stones[3]; // ground detail placed by worn ground: trail armour, shoulders, rooting
 	mutable SafeNumeric<uint64_t> tile_skips[5]; // squares left single: few grains or a hole, coarse stones, bent ground, no match, total
 	static bool _is_detail(int p_layer) { return p_layer >= LAYER_DETAIL_PEBBLE && p_layer <= LAYER_DETAIL_FINE; }
@@ -255,6 +256,7 @@ private:
 	bool ground_cover = true;
 	bool detail_rivers = true; // ground detail on the river beds
 	bool ground_wear = true; // ground detail worn by game trails and turned by boar rooting (WorldStand)
+	bool frost_sorting = true; // frost-sorted circles and stripes of stones on cold, wet, gentle soil (WorldWeather climate)
 	Ref<ImageTexture> cover_tex[2];
 	Vector2 cover_origin[2];
 	bool cover_valid[2] = {};
@@ -361,9 +363,22 @@ private:
 		Vector3 max_in(const Rect2 &p_rect) const; // each component's largest over the rect
 	};
 	void _sample_wear(const Rect2 &p_rect, StandWear &r_wear) const;
+	// Frost-sorted patterned ground (docs/ideas/ground-detail.md, "Frost-sorted patterned ground"): the climate a
+	// detail job reads, from WorldWeather's season climate on the main thread.
+	struct FrostClimate {
+		bool on = false;
+		float maat = 99.0f; // mean annual air at the reference height, C
+		float lapse = 5.5f; // K/km, the year's mean
+		float reference = 0.0f; // m
+		float wet = 0.0f; // 0..1 from the year's precipitation
+		bool any = false; // the gate is open somewhere over the job's cell (its squares are not tiled)
+	};
+	void _frost_climate(const Rect2 &p_rect, FrostClimate &r_frost) const;
+	float _frost_gate(const TerrainGenerator3D *p_gen, const FrostClimate &p_frost, const Vector3 &p_at, Vector3 &r_normal) const;
 	struct DetailJob {
 		RockField3D *field = nullptr;
 		StandWear wear;
+		FrostClimate frost;
 		Vector3i key;
 		TerrainGenerator3D *gen = nullptr;
 		HashMap<uint32_t, Library *> libs;
@@ -796,6 +811,10 @@ public:
 	int get_loose_count() const { return int(loose.size()); }
 	Dictionary get_react_stats() const;
 	bool is_ground_detail_rivers() const { return detail_rivers; }
+	void set_frost_sorting(bool p_enabled);
+	bool is_frost_sorting() const { return frost_sorting; }
+	// How strongly the ground sorts at a point (0..1), and its stone share there (x: gate, y: share), for benches.
+	Vector2 get_frost_at(const Vector3 &p_position) const;
 	void set_ground_wear(bool p_enabled);
 	bool is_ground_wear() const { return ground_wear; }
 	void set_ground_detail_tiles(bool p_enabled);
