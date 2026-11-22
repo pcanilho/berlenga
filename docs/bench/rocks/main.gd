@@ -13,6 +13,7 @@ extends Node3D
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --exposure=x          the tonemapper's exposure (1): more for a dark cave seen from inside
+#   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff)
 #   --taa                 temporal antialiasing as in play (24 frames settle before a sea-cave still); on by default
 #                         for raster stills, --no-taa for the single-sample frame
 #   --world-size=m        with --world: its side (2048); smaller for path traced stills in less memory
@@ -752,6 +753,59 @@ func _world() -> void:
 		var bz := gen.get_height(spot + Vector3(0, 0, 2)) - gen.get_height(spot - Vector3(0, 0, 2))
 		bank_side = Vector3(-bz, 0, bx).normalized()
 		print("bank spot ", spot, " geology ", gen.get_geology_at(spot))
+	var face_out := Vector3.ZERO
+	if args.has("face-spot"):
+		# --face-spot=north|south: a rock wall of 60 degrees or more facing that way (outward within 30 degrees,
+		# north is -z) and 15 m high or more, the nearest; seen from its foot looking up with the sky over its top.
+		var want := Vector3(0, 0, -1) if args["face-spot"] == "north" else Vector3(0, 0, 1)
+		var best_w := INF
+		var found_w := spot
+		for zz in range(-900, 901, 6):
+			for xx in range(-900, 901, 6):
+				var p := Vector3(xx, 0, zz)
+				var h := gen.get_height(p)
+				if h < gen.sea_level + 6.0:
+					continue
+				var gx := gen.get_height(p + Vector3(2, 0, 0)) - gen.get_height(p - Vector3(2, 0, 0))
+				var gz := gen.get_height(p + Vector3(0, 0, 2)) - gen.get_height(p - Vector3(0, 0, 2))
+				if rad_to_deg(atan(Vector2(gx, gz).length() / 4.0)) < 60.0:
+					continue
+				var o := Vector3(-gx, 0, -gz).normalized()
+				if o.dot(want) < 0.87:
+					continue
+				if gen.get_height(p - o * 10.0) - gen.get_height(p + o * 10.0) < 25.0:
+					continue
+				# Open ground in front, lower than the wall's foot, for the camera.
+				var fd := float(args.get("dist", "60"))
+				if absf(xx) > 500 or absf(zz) > 500:
+					continue
+				# A wide wall: as steep 12 m either side along it.
+				var wide := true
+				for sd in [-12.0, 12.0]:
+					var q0: Vector3 = p + o.cross(Vector3.UP) * sd
+					var sx := gen.get_height(q0 + Vector3(2, 0, 0)) - gen.get_height(q0 - Vector3(2, 0, 0))
+					var sz := gen.get_height(q0 + Vector3(0, 0, 2)) - gen.get_height(q0 - Vector3(0, 0, 2))
+					if rad_to_deg(atan(Vector2(sx, sz).length() / 4.0)) < 52.0:
+						wide = false
+				if not wide:
+					continue
+				var open := true
+				for k in range(1, 11):
+					var q := p + (o + o.cross(Vector3.UP) * 0.25).normalized() * fd * k / 10.0
+					if gen.get_height(q) > h - 3.0 - 6.0 * k / 10.0:
+						open = false
+						break
+				if not open:
+					continue
+				var dd := Vector2(xx, zz).length()
+				if dd < best_w:
+					best_w = dd
+					found_w = p
+		spot = found_w
+		var fx := gen.get_height(spot + Vector3(2, 0, 0)) - gen.get_height(spot - Vector3(2, 0, 0))
+		var fz := gen.get_height(spot + Vector3(0, 0, 2)) - gen.get_height(spot - Vector3(0, 0, 2))
+		face_out = Vector3(-fx, 0, -fz).normalized()
+		print("face spot ", spot, " facing ", face_out)
 	spot.y = gen.get_height(spot)
 	focus.global_position = spot
 	spot_pos = spot
@@ -778,12 +832,19 @@ func _world() -> void:
 		var bout := Vector3(gen.get_height(spot - Vector3(2, 0, 0)) - gen.get_height(spot + Vector3(2, 0, 0)), 0, gen.get_height(spot - Vector3(0, 0, 2)) - gen.get_height(spot + Vector3(0, 0, 2))).normalized()
 		cam.position = spot + bank_side * dist + bout * dist * 0.35
 		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, spot.y + 2.0)
+	if face_out != Vector3.ZERO:
+		# Out from the wall's foot, a little to one side, looking up the face.
+		var fside := face_out.cross(Vector3.UP) * float(args.get("face-side", "0.25"))
+		cam.position = spot + (face_out + fside).normalized() * dist
+		cam.position.y = maxf(gen.get_height(cam.position) + 2.0, spot.y - dist * 0.2)
 	if view == "river" or view == "shore":
 		# Low ground under steep sides: look down on the bed from higher, over the walls round it.
 		cam.position.y = maxf(cam.position.y, spot.y + dist * 0.9)
 	if args.has("top"):
 		cam.position = spot + Vector3(0, float(args["top"]) if args["top"] != "1" else 30.0, 0.5)
 	var look := spot + Vector3(0, 0.3, 0)
+	if face_out != Vector3.ZERO:
+		look = spot + Vector3(0, dist * 0.05, 0)
 	if args.has("eye"):
 		# --eye=h: standing --dist m off, h m above the ground, looking across it past the spot (where each ground
 		# detail class stops drawing shows as a line across the frame).
