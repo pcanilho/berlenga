@@ -12,7 +12,8 @@ extends Node3D
 #                       (USGS M1 likelihood, Gartner volume) with a path; none unburnt, none again within a
 #                       day, none on ground burnt four years ago
 #                       falling rain: drops in the box, splashes, haze from the drop sizes
-#                       high-water marks: a river's annual flood stage (depth ~ Q^0.40), a lake's by its weir, the contract
+#                       high-water marks: a river's annual flood stage (depth ~ Q^0.40), a lake's by its weir, the contract,
+#                       the sea's strandline (Stockdon 2006 run-up)
 #   --view=pond       a pool in 10 mm/h rain under a wet tree and a shed: rings, streaks, splashes, drips,
 #                     beaded leaves (--close: down on the water and leaves for a 100% crop)
 #   --rate=R          rain rate mm/h (default 10)
@@ -453,6 +454,22 @@ func _high_water_checks(r: PhysXRiver3D, head: Vector3) -> void:
 	_check("lake flood mark: the weir passes the annual flood (head x ratio^(2/3))", absf(ratio - pow(lake.flood_peak_ratio, 2.0 / 3.0)) < 0.05 and is_inf(lake.get_high_water_at(Vector3(150.0, 0.0, 40.0)).x),
 			"head %.3f m now, %.3f m at the mark (x%.2f, want x%.2f)" % [h_now, lh.x, ratio, pow(lake.flood_peak_ratio, 2.0 / 3.0)])
 	lake.queue_free()
+	# The sea's strandline: Stockdon et al. (2006) run-up, R2 = 1.63 m for 2 m, 10 s waves on a 1 in 10 beach.
+	var r2: float = PhysXWaterSurface3D.wave_runup(2.0, 10.0, 0.1)
+	_check("sea strandline: Stockdon 2006 run-up", absf(r2 - 1.634) < 0.01 and PhysXWaterSurface3D.wave_runup(2.0, 10.0, 0.01) < r2, "%.3f m (want 1.634), %.3f m on a 1 in 100 beach" % [r2, PhysXWaterSurface3D.wave_runup(2.0, 10.0, 0.01)])
+	var sea := PhysXWaterSurface3D.new()
+	sea.domain_size = Vector2(40, 40)
+	sea.position = Vector3(-150.0, 0.0, 0.0)
+	add_child(sea)
+	for i in 3:
+		await get_tree().physics_frame
+	var sh: Vector4 = sea.get_high_water_at(Vector3(-150.0, 0.0, 10.0))
+	var top: float = PhysXWaterSurface3D.wave_runup(sea.shore_wave_height * sea.storm_wave_ratio, sea.shore_wave_period * sqrt(sea.storm_wave_ratio), 0.1)
+	var sea_age: int = posmod(WorldContracts.get_weather().day_of_year() - sea.storm_day, 365)
+	var rise: float = sh.x - (sea.global_position.y + sea.water_level)
+	_check("sea strandline: the year's storm run-up over the still level", rise > 0.05 and rise <= top + 0.01 and is_equal_approx(sh.y, float(sea_age)),
+			"%.2f m over the sea (at most %.2f), %d days since the storm (want %d)" % [rise, top, int(sh.y), sea_age])
+	sea.queue_free()
 
 
 func _on_debris_flow(ev: Dictionary) -> void:

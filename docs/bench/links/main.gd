@@ -2428,7 +2428,7 @@ func _late_frost_tests() -> void:
 	await get_tree().physics_frame
 
 # The last flood's mark from its real producers (WorldWater.high_water_at): a river's sections and a lake fed over a
-# weir keep one, the sea none; the contract hands the river's on to a reader (GrassField3D's flood wash).
+# weir keep one, the sea its storm strandline (Stockdon 2006 run-up); the contract hands the river's on to a reader (GrassField3D's flood wash).
 func _high_water_tests() -> void:
 	if not ClassDB.class_exists("PhysXRiver3D") or not ClassDB.class_exists("GrassField3D"):
 		_skip("high-water marks", "needs the PhysX module and the vegetation")
@@ -2472,8 +2472,8 @@ func _high_water_tests() -> void:
 	var hr: Vector4 = water.high_water_at(head)
 	var hl: Vector4 = water.high_water_at(at_lake)
 	var hs: Vector4 = water.high_water_at(at_sea)
-	_check("high-water marks: the river's sections and the lake keep the last flood's mark through WorldWater, the sea none",
-			hr.is_equal_approx(r.get_high_water_at(head)) and hr.x > r.sample_height(head) and hl.is_equal_approx(lake.get_high_water_at(at_lake)) and hl.x > lake.global_position.y + lake.water_level and is_inf(hs.x),
+	_check("high-water marks: the river's sections and the lake keep the last flood's mark through WorldWater, the sea its strandline",
+			hr.is_equal_approx(r.get_high_water_at(head)) and hr.x > r.sample_height(head) and hl.is_equal_approx(lake.get_high_water_at(at_lake)) and hl.x > lake.global_position.y + lake.water_level and hs.is_equal_approx(sea.get_high_water_at(at_sea)) and hs.x > sea.global_position.y + sea.water_level,
 			"river %.2f m over its surface, lake %.3f m over its level, sea %s" % [hr.x - r.sample_height(head), hl.x - lake.global_position.y - lake.water_level, hs])
 	var grass := GrassField3D.new()
 	var bank := Vector3(head.x + 3.0, hr.x - 0.05, head.z)

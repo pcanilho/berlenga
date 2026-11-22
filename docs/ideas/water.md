@@ -3808,4 +3808,14 @@ lakes answer `WorldWater.high_water_at` through `contract_water_high_water_at`.
   fixed level answers no mark. The mark answers over the lake's domain; past the shore the ground stands above it.
 - **Reach.** A river answers within three flood half-widths of its centre line, enough for any floodplain the
   section's width implies; vegetation compares the ground with the mark, so higher ground takes none.
-- Not done: the sea (storm surge and spring-tide strandlines) answers none yet.
+- **The sea's strandline (22 Nov).** Wrack on a beach lies where the storm's swash reaches: the 2% exceedance run-up
+  of Stockdon, Holman, Howd and Sallenger (2006, Coastal Engineering 53), R2 = 1.1 (0.35 b sqrt(H0 L0) + sqrt(H0 L0
+  (0.563 b^2 + 0.004)) / 2), L0 = g T^2 / 2 pi, b the foreshore slope (WorldGround's, read 2 m either side; 0.1 when
+  no ground answers); on dissipative beaches (Iribarren under 0.3) R2 = 0.043 sqrt(H0 L0). The year's storm waves are
+  `storm_wave_ratio` (default 4: annual-maximum over typical Hs on exposed Atlantic and North Sea coasts, about 6-10 m
+  over 1.5-2.5 m) times the waves the shore gets now (shore_wave_height, capped by the wind sea, so a lake's fetch
+  caps its own), on `storm_day` (default 15, mid-January); their period grows as the square root of the height (storm
+  seas keep a steepness near 1 in 25). Higher waves seen in the last year leave their own line. The direction is up
+  the beach (the swash's). Every water surface without outlets and with shore_waves answers this, so fixed-level lakes
+  get their wind-wave strandline too. No tides or surge in the sea yet: when they come, the still level becomes the
+  spring high tide plus the surge.
