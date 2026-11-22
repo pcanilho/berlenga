@@ -143,6 +143,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
+  ![Weathered rock faces under a clear sky, lichen patches and moss along the beds, raster](media/terrain-face-weathering.jpg)
+
+  *Face weathering: pale lichen on the open face, moss along the bedding ledges in the shade.*
+
   ![The same bare rock slope at 2 m without and with scanned detail, raster](media/terrain-ground-scan.jpg)
 
   *A bare slope at 2 m, left without scans, right with scanned joints, fractures and grit.*
