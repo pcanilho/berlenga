@@ -599,6 +599,18 @@ public:
 		return material && material->shader && material->shader->builtin_standard_3d;
 	}
 
+	// Whether the material's shader cuts itself round the player (BaseMaterial3D camera_cutout, or a shader that
+	// calls camera_cutout_discard()): the path tracer's camera rays pass it in the cut-out as raster discards it.
+	_FORCE_INLINE_ bool material_uses_camera_cutout(RID p_material) const {
+		Material *material = material_owner.get_or_null(p_material);
+		if (!material || !material->shader) {
+			return false;
+		}
+		const String &code = material->shader->code;
+		const int first = code.find("camera_cutout_discard(");
+		return first >= 0 && code.find("camera_cutout_discard(", first + 1) >= 0;
+	}
+
 	// Returns whether the material needs its generated shader evaluated outside HG0.
 	_FORCE_INLINE_ bool material_requires_custom_rt_hit_group(RID p_material) const {
 		Material *material = material_owner.get_or_null(p_material);
