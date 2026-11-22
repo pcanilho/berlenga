@@ -147,6 +147,15 @@ func _view() -> void:
 		if k % 120 == 0:
 			var fl = hf.get_flow()
 			print("t %.1f points %d first %s stats %s" % [t, hf.get_front_point_count(), hf.get_front_point(0), fl.call("get_stats") if fl else "none"])
+			if fl and "--probe" in OS.get_cmdline_user_args() and hf.get_front_point_count() > 0:
+				fl.cpu_readback = true
+				var fp: Vector3 = hf.get_front_point(hf.get_front_point_count() / 2)
+				var fw: Vector3 = hf.get_front_velocity(hf.get_front_point_count() / 2).normalized()
+				for back in [-20.0, 20.0, 60.0]:
+					var col := []
+					for hh in [5.0, 25.0, 50.0, 75.0, 100.0, 125.0, 150.0, 200.0]:
+						col.append(snappedf(fl.sample_smoke(fp - fw * back + Vector3(0, hh, 0)), 0.001))
+					print("  smoke %+.0f m behind the foot, 5..200 m up: %s" % [back, col])
 	if "--pair" in OS.get_cmdline_user_args() and not out.is_empty():
 		var pt_out := out
 		out = pt_out.get_basename() + "_raster.png"
@@ -228,6 +237,14 @@ func _run_tests() -> void:
 			for x in range(-8000, 8001, 1000):
 				row += "%5.1f" % m.get_dust_at(Vector3(x, 0, z))
 			print(row)
+		var prof := "  +x (m: g/m2 head):"
+		for r in range(0, 8001, 250):
+			prof += " %d: %.2f %.2f," % [r, m.get_dust_at(Vector3(r, 0, 0)), m.get_dust_head_at(Vector3(r, 0, 0))]
+		print(prof)
+		var wl := "  +x wind/rain:"
+		for r in range(0, 6001, 500):
+			wl += " %d: %.1f %.2f," % [r, m.get_wind_at(Vector3(r, 0, 0), 10.0).length(), m.get_rain_at(Vector3(r, 0, 0)) if m.has_method("get_rain_at") else -1.0]
+		print(wl)
 	var head := 0.0
 	var head_at := 0.0
 	for r in range(500, 11000, 250):

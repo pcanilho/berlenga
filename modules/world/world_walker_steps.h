@@ -33,11 +33,15 @@
 
 // Footfalls for a walker (docs/ideas/world-contracts.md, Contact bodies). A character's body shape is a capsule, not
 // two feet: the ground, snow, sand and mud press its soles one step at a time instead, left and right of its path,
-// unless its feet are in the world_contact group themselves (meta world_contact_feet). Each deformer keeps one of
-// these and asks it for the steps since its last update.
+// unless its feet print themselves (meta world_contact_feet). A rigged character whose FootPlacementModifier3D plants
+// its real feet publishes each footfall to WorldFootfalls, and the walker's steps are then those footfalls, where the
+// animation put the feet; with meta world_contact_feet and no published footfalls (feet that are contact bodies of
+// their own) the walker presses nothing. Each deformer keeps one of these and asks it for the steps since its last
+// update.
 
 #include "world_contracts.h"
 
+#include "core/os/mutex.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
@@ -53,9 +57,66 @@ struct WorldWalkerStep {
 	float load_share = 1.0f;
 };
 
+// Footfalls published by animated feet (FootPlacementModifier3D), per walker, for every deformer to read once.
+class WorldFootfalls {
+	struct Log {
+		LocalVector<WorldWalkerStep> steps;
+		LocalVector<uint64_t> serials;
+		uint64_t next = 1;
+	};
+	static inline Mutex mutex;
+	static inline HashMap<ObjectID, Log> logs;
+	static constexpr uint32_t KEEP = 16;
+
+public:
+	static void publish(ObjectID p_walker, const WorldWalkerStep &p_step) {
+		MutexLock lock(mutex);
+		Log &log = logs[p_walker];
+		log.steps.push_back(p_step);
+		log.serials.push_back(log.next++);
+		if (log.steps.size() > KEEP) {
+			log.steps.remove_at(0);
+			log.serials.remove_at(0);
+		}
+	}
+
+	// The serial of the latest footfall (0: none published), so a new reader starts after what is already there.
+	static uint64_t latest(ObjectID p_walker) {
+		MutexLock lock(mutex);
+		const Log *log = logs.getptr(p_walker);
+		return log ? log->next - 1 : 0;
+	}
+
+	static bool has(ObjectID p_walker) {
+		MutexLock lock(mutex);
+		return logs.has(p_walker);
+	}
+
+	// The footfalls after r_serial, appended to r_steps; r_serial moves to the latest.
+	static void read_since(ObjectID p_walker, uint64_t &r_serial, LocalVector<WorldWalkerStep> &r_steps) {
+		MutexLock lock(mutex);
+		const Log *log = logs.getptr(p_walker);
+		if (!log) {
+			return;
+		}
+		for (uint32_t i = 0; i < log->steps.size(); i++) {
+			if (log->serials[i] > r_serial) {
+				r_steps.push_back(log->steps[i]);
+				r_serial = log->serials[i];
+			}
+		}
+	}
+
+	static void remove(ObjectID p_walker) {
+		MutexLock lock(mutex);
+		logs.erase(p_walker);
+	}
+};
+
 class WorldWalkerSteps {
 	struct State {
 		Vector3 last;
+		uint64_t footfall = 0; // the last published footfall read (walkers whose feet print themselves)
 		Vector2 dir = Vector2(0, -1);
 		float travel = 0.0f;
 		int side = 0;
@@ -77,7 +138,19 @@ public:
 	// The footfalls of p_node (described as p_body) since the last call; nothing for a body that is not a walker or
 	// whose feet print themselves. A jump of more than 10 m (a teleport) starts over.
 	void step(const Node3D *p_node, const WorldContactBody &p_body, LocalVector<WorldWalkerStep> &r_steps) {
-		if (!p_node || !p_body.walker || p_body.feet) {
+		if (!p_node || !p_body.walker) {
+			return;
+		}
+		if (p_body.feet) {
+			// Feet that print themselves: their published footfalls, each once.
+			const ObjectID id = p_node->get_instance_id();
+			State *f = states.getptr(id);
+			if (!f) {
+				f = &states.insert(id, State())->value;
+				f->footfall = WorldFootfalls::latest(id);
+			}
+			f->seen = true;
+			WorldFootfalls::read_since(id, f->footfall, r_steps);
 			return;
 		}
 		const Vector3 under(p_body.center.x, p_body.center.y - p_body.half_height, p_body.center.z);

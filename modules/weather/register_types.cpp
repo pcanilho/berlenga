@@ -80,6 +80,7 @@ void initialize_weather_module(ModuleInitializationLevel p_level) {
 		{ "weather_dust_map", "sampler2D" },
 		{ "weather_dust_optics", "vec4" },
 		{ "weather_dust_albedo", "vec4" },
+		{ "weather_dust_near", "vec4" },
 	};
 	for (const auto &g : globals) {
 		Dictionary d;

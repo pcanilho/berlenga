@@ -164,6 +164,7 @@ void PhysXDustDevils3D::_build() {
 void PhysXDustDevils3D::_pool() {
 	auto make = [&](const String &p_name) {
 		PhysXFlowEmitter3D *e = memnew(PhysXFlowEmitter3D);
+		e->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 		e->set_name(p_name);
 		e->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
 		e->set_smoke(0.0f);

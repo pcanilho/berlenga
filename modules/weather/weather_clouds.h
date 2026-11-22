@@ -152,6 +152,10 @@ struct State {
 	float lake_size = 0.0f;
 	Vector4 lake_params;
 	Vector2 lake_dir = Vector2(1, 0);
+	// Mineral dust (WeatherMap3D's dust layer; the sky marches it from weather_dust_map): the highest top over the map
+	// (m above the ground, the head's nose included) and the largest column (g/m2); 0 when there is none.
+	float dust_top = 0.0f;
+	float dust_column = 0.0f;
 	float air_y0 = 0.0f;
 	float top_max = 0.0f; // highest top any column reaches now (m), set by update_top_max()
 	float base_min = 1500.0f; // lowest base any column has now (m), set by update_top_max()

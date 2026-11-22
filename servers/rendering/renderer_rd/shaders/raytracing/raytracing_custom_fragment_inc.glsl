@@ -71,8 +71,8 @@ color_interp = rt_color * fetch_instance_color(rt_geom, uint(RT_HIT_PRIMITIVE_ID
 // VIEW is view-space in the rasterizer; rotate the incoming ray to match.
 view = -normalize(mat3(rt_view_matrix) * gl_WorldRayDirectionEXT);
 rt_front_facing = rt_front_face;
-rt_screen_uv = vec2(gl_LaunchIDEXT.xy) / vec2(gl_LaunchSizeEXT.xy);
-rt_frag_coord = vec4(gl_LaunchIDEXT.xy, 0.0, 1.0);
+rt_screen_uv = vec2(RT_LAUNCH_ID.xy) / vec2(RT_LAUNCH_SIZE.xy);
+rt_frag_coord = vec4(RT_LAUNCH_ID.xy, 0.0, 1.0);
 // IN_SHADOW_PASS: true for every ray but the camera's.
 rt_in_shadow_pass = is_shadow_ray(payload.packed_bounces_flags) || get_total_bounces(payload.packed_bounces_flags) != 0u;
 

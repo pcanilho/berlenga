@@ -88,6 +88,8 @@ uniform float cup_tile_size = 3.2;
 uniform sampler2D sas_tex : filter_linear, repeat_disable; // SnowCover3D sastrugi: relief (m) times the carving wind's direction
 uniform bool has_sas = false;
 uniform sampler2D sas_tile : filter_linear_mipmap, repeat_enable;
+uniform sampler2D strata_tex : filter_nearest, repeat_disable; // SnowCover3D strata: two bands a channel, band * 4096 + next; band = (kind + 1 + 8 wet) * 256 + bottom (cm)
+uniform bool has_strata = false;
 uniform float sas_tile_size = 8.0;
 uniform vec4 mesh_rect;
 uniform float min_depth = 0.03;
@@ -194,6 +196,23 @@ vec3 snow_depth_smooth_grad(vec2 p) {
 // "Practical real-time hex-tiling"): each hex vertex takes the tile at its own turn and offset and the three
 // blend with sharpened weights, so no repeat lines up. Height about the pack's mean (hollows under, ridges
 // over) and its gradient (per metre).
+// Value noise in 3D (0..1), smooth: grains and tool marks in cut walls.
+float snow_vhash(vec3 c) {
+	uvec3 u = uvec3(ivec3(c) + ivec3(4096));
+	uint h = u.x * 73856093u ^ u.y * 19349663u ^ u.z * 83492791u;
+	h ^= h >> 13u;
+	h *= 1274126177u;
+	h ^= h >> 16u;
+	return float(h & 0xffffu) / 65535.0;
+}
+float snow_vnoise(vec3 x) {
+	vec3 i = floor(x);
+	vec3 f = x - i;
+	f = f * f * (3.0 - 2.0 * f);
+	float a = mix(mix(snow_vhash(i), snow_vhash(i + vec3(1, 0, 0)), f.x), mix(snow_vhash(i + vec3(0, 1, 0)), snow_vhash(i + vec3(1, 1, 0)), f.x), f.y);
+	float b = mix(mix(snow_vhash(i + vec3(0, 0, 1)), snow_vhash(i + vec3(1, 0, 1)), f.x), mix(snow_vhash(i + vec3(0, 1, 1)), snow_vhash(i + vec3(1, 1, 1)), f.x), f.y);
+	return mix(a, b, f.z);
+}
 uint snow_cup_hash(ivec2 v) {
 	uvec2 u = uvec2(v) * 1664525u + 1013904223u;
 	u.x += u.y * 1664525u;
@@ -486,6 +505,116 @@ void fragment() {
 	ALBEDO *= mix(vec3(1.0), vec3(0.86, 0.85, 0.83), packed) * mix(vec3(1.0), vec3(0.55, 0.6, 0.66), polish);
 	ROUGHNESS = mix(mix(clamp(mix(0.7, 0.35, wet) - 0.15 * compact, 0.05, 1.0), 0.08, slush), 0.02, pool);
 	ROUGHNESS = mix(mix(ROUGHNESS, 0.45, packed), 0.04, polish);
+	// The pack's layers in the walls of ruts and prints (follow-up 53): a steep face at depth d under the
+	// untouched surface shows the band the cover's layers put there, as a snow pit's wall is read (Fierz et al.
+	// 2009; SWAG): by colour, by grain and by relief. New snow bright, fine and soft; wind slab chalky and smooth;
+	// old rounded snow greyer and finer; a melt-freeze crust a glazed ledge standing out of the wall with a shadow
+	// line under it; buried surface hoar a dark recessed seam (it brushes out); depth hoar coarse, loose and dull
+	// at the base; wet bands darker and glossy. The wall itself carries the cut's tool marks, and the band edges
+	// wander a few millimetres.
+	float strata_wall = has_strata ? smoothstep(0.35, 0.75, 1.0 - nf.y) : 0.0;
+	if (strata_wall > 0.0) {
+		vec2 suv = (p - snow_rect.xy) / max(snow_rect.zw, vec2(1e-4));
+		float d = snow_ground(p) + pack.r - w_pos.y;
+		d += 0.006 * (snow_vnoise(vec3(p * 9.0, 0.0)) - 0.5) + 0.003 * (snow_vnoise(vec3(p * 31.0, 3.0)) - 0.5);
+		if (snow_inside(suv) && d > 0.02) {
+			vec4 st = textureLod(strata_tex, suv, 0.0);
+			float top_b = 0.0;
+			float code = 0.0;
+			float band_top = 0.0;
+			float band_bottom = 1e3;
+			float prev_kind = -1.0;
+			float above_kind = -1.0;
+			for (int c = 0; c < 8; c++) {
+				float pair = st[c / 2];
+				float hi_b = floor(pair / 4096.0);
+				float v = (c % 2 == 0) ? hi_b : pair - hi_b * 4096.0;
+				if (v < 1.0) {
+					break;
+				}
+				float k = floor(v / 256.0);
+				float bottom = (v - k * 256.0) * 0.01;
+				// A crust or a hoar seam is drawn at least 1.5 cm thick so it reads as a line.
+				float kk = mod(k - 1.0, 8.0);
+				bottom = (kk == 3.0 || kk == 4.0) ? max(bottom, top_b + 0.015) : max(bottom, top_b);
+				above_kind = prev_kind;
+				prev_kind = kk;
+				code = k;
+				band_top = top_b;
+				band_bottom = bottom;
+				top_b = bottom;
+				if (d < bottom) {
+					break;
+				}
+			}
+			if (code >= 1.0) {
+				float kind = mod(code - 1.0, 8.0);
+				bool band_wet = code > 8.5;
+				vec3 tint_b = vec3(1.0);
+				float rough_b = 0.75;
+				float grain = 0.004; // m, the size of the grains the wall shows
+				float bump = 0.25; // their relief
+				float shade = 1.0; // light the wall's relief keeps from the band (recess, ledge shadow)
+				if (kind == 1.0) { tint_b = vec3(0.9, 0.91, 0.93); rough_b = 0.88; grain = 0.0025; bump = 0.12; }
+				else if (kind == 2.0) { tint_b = vec3(0.8, 0.84, 0.9); rough_b = 0.8; grain = 0.006; bump = 0.3; }
+				else if (kind == 3.0) { tint_b = vec3(0.68, 0.79, 0.93); rough_b = 0.1; grain = 0.02; bump = 0.06; }
+				else if (kind == 4.0) { tint_b = vec3(0.4, 0.43, 0.5); rough_b = 0.95; grain = 0.003; bump = 0.5; shade = 0.55; }
+				else if (kind == 5.0) { tint_b = vec3(0.66, 0.65, 0.62); rough_b = 0.97; grain = 0.006; bump = 0.4; shade = 0.85; }
+				if (band_wet) {
+					tint_b *= vec3(0.72, 0.78, 0.86);
+					rough_b = 0.25;
+					bump *= 0.4;
+				}
+				// A crust stands out of the wall: its top edge catches the light, the snow just under it sits in its
+				// shadow. A hoar seam is brushed out: a recess, shadowed at its top.
+				float in_band = clamp((d - band_top) / max(band_bottom - band_top, 1e-3), 0.0, 1.0);
+				if (kind == 3.0) {
+					shade *= mix(1.15, 0.9, in_band);
+				}
+				if (above_kind == 3.0) {
+					shade *= mix(0.6, 1.0, smoothstep(0.0, 0.012, d - band_top));
+				}
+				if (kind == 4.0) {
+					shade *= mix(0.7, 1.0, in_band);
+				}
+				// Grains: value noise on the wall at the band's grain size (two octaves), plus the cut's tool marks
+				// (streaks down the wall), as a bumped normal.
+				// Grains under a pixel average out: in raster their relief fades as the pixel's footprint nears their
+				// size; the path tracer averages them itself over its jittered samples, so it keeps them.
+				float grain_seen = 1.0;
+				if (!IN_PATH_TRACER) {
+					float foot = (PROJECTION_MATRIX[3][3] != 0.0 ? 1.0 : distance(w_pos, INV_VIEW_MATRIX[3].xyz)) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+					grain_seen = clamp(0.7 * grain / max(foot, 1e-6) - 0.75, 0.0, 1.0);
+				}
+				vec3 q = w_pos / grain;
+				vec3 e3 = vec3(0.37, 0.0, 0.0);
+				float n0 = snow_vnoise(q) + 0.5 * snow_vnoise(q * 2.3 + 7.1);
+				float nx = snow_vnoise(q + e3.xyy) + 0.5 * snow_vnoise((q + e3.xyy) * 2.3 + 7.1);
+				float ny = snow_vnoise(q + e3.yxy) + 0.5 * snow_vnoise((q + e3.yxy) * 2.3 + 7.1);
+				float nz = snow_vnoise(q + e3.yyx) + 0.5 * snow_vnoise((q + e3.yyx) * 2.3 + 7.1);
+				vec3 gn = vec3(nx - n0, ny - n0, nz - n0) / 0.37;
+				if (kind == 5.0) {
+					// Depth hoar's cups and prisms: faceted, not rounded; the grain cell's own tilt instead of a smooth bump.
+					vec3 fc = floor(w_pos / grain) + 5.0;
+					gn = mix(gn, vec3(snow_vhash(fc) - 0.5, snow_vhash(fc + 1.7) - 0.5, snow_vhash(fc + 3.1) - 0.5) * 3.0, 0.6);
+				}
+				vec3 tq = vec3(w_pos.x * 7.0, w_pos.y * 0.6, w_pos.z * 7.0);
+				float tm0 = snow_vnoise(tq);
+				vec3 tg = vec3(snow_vnoise(tq + vec3(0.2, 0.0, 0.0)) - tm0, 0.0, snow_vnoise(tq + vec3(0.0, 0.0, 0.2)) - tm0) / 0.2;
+				vec3 pert = gn * bump * grain_seen + tg * 0.12;
+				vec3 nb = normalize(nf - (pert - nf * dot(pert, nf)) * strata_wall);
+				nf = nb;
+				tn = vec3(dot(nf, normalize(w_t)), dot(nf, normalize(w_b)), dot(nf, normalize(w_n)));
+				// Grains also break the colour up: each grain cell its own brightness (crystal faces turned to the
+				// light or into the shade), loose coarse grains most, the pores between them darker.
+				float speck = snow_vhash(floor(w_pos / (grain * 0.7)) + 11.0);
+				float loose = kind == 5.0 ? 1.0 : (kind == 2.0 ? 0.45 : 0.25);
+				float pores = mix(1.0, (0.86 + 0.14 * n0 / 1.5) * mix(0.82, 1.12, speck), clamp(bump * 2.0, 0.0, 1.0) * loose * grain_seen);
+				ALBEDO = mix(ALBEDO, ALBEDO * tint_b * shade * pores, strata_wall);
+				ROUGHNESS = mix(ROUGHNESS, rough_b, strata_wall);
+			}
+		}
+	}
 	compact = max(compact, 0.7 * packed + 0.3 * polish); // fewer whole grains to sparkle
 	SPECULAR = 0.335; // ice, F0 0.018
 	METALLIC = 0.0;
@@ -1260,6 +1389,8 @@ void SnowSurface3D::_update_material() {
 			sas_tile_texture = ImageTexture::create_from_image(sastrugi_tile());
 		}
 		material->set_shader_parameter("sas_tile", sas_tile_texture);
+		material->set_shader_parameter("strata_tex", cover->get_strata_texture());
+		material->set_shader_parameter("has_strata", cover->get_strata_texture().is_valid() && cover->is_layers_enabled());
 	} else {
 		material->set_shader_parameter("snow_rect", Vector4());
 	}
@@ -1392,7 +1523,7 @@ void SnowSurface3D::_notification(int p_what) {
 			}
 			// The cover's texture and rect move on its own schedule.
 			const SnowCover3D *cover = _cover();
-			if (cover && cover->get_snow_texture().is_valid() && material.is_valid() && (material->get_shader_parameter("snow_tex") != Variant(cover->get_snow_texture()) || material->get_shader_parameter("cups_tex") != Variant(cover->get_cups_texture()) || material->get_shader_parameter("sas_tex") != Variant(cover->get_sastrugi_texture()))) {
+			if (cover && cover->get_snow_texture().is_valid() && material.is_valid() && (material->get_shader_parameter("snow_tex") != Variant(cover->get_snow_texture()) || material->get_shader_parameter("cups_tex") != Variant(cover->get_cups_texture()) || material->get_shader_parameter("sas_tex") != Variant(cover->get_sastrugi_texture()) || material->get_shader_parameter("strata_tex") != Variant(cover->get_strata_texture()))) {
 				_update_material();
 			} else if (cover && material.is_valid()) {
 				const Rect2 r = cover->get_map_rect();

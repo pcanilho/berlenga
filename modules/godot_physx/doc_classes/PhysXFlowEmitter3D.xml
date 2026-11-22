@@ -22,6 +22,12 @@
 				This node's world-space velocity over the last physics step (what a solid pushes into the gas).
 			</description>
 		</method>
+		<method name="get_regional_smoke_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				The particulate this emitter hands to the weather's regional smoke (kg/s; see [member regional_smoke]).
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="burn" type="float" setter="set_burn" getter="get_burn" default="0.0">
@@ -48,6 +54,9 @@
 		</member>
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="0.5">
 			Sphere radius in meters.
+		</member>
+		<member name="regional_smoke" type="bool" setter="set_regional_smoke" getter="is_regional_smoke" default="true">
+			A hot emitter's smoke also goes to the weather's regional smoke field ([method WorldFire.smoke_sources]), so a campfire's or chimney's smoke drifts past the Flow box, pools in a valley on a calm night and hazes the sun. The rate is [member smoke] x 3 mg/m3 x the source's area x its exit speed (at least 0.5 m/s): about 5 mg/s for a 0.5 m campfire emitter at 2 m/s. Cold emitters ([member temperature] 0.05 or less: dust, mist, ash) and colliders add none. Systems that report their own smoke (fire spread, building fires, steam) turn it off on the emitters they make.
 		</member>
 		<member name="shape" type="int" setter="set_shape" getter="get_shape" enum="PhysXFlowEmitter3D.Shape" default="0">
 			The emitter's shape.

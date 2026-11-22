@@ -360,7 +360,26 @@ func _avalanche_check() -> void:
 		if int(sp.get_meta("succession_kind", -1)) == TreeGenerator.SUCCESSION_AVALANCHE:
 			keep.append(sp)
 	all.species = keep
-	_check(keep.size() == 5, "beech succession: %d avalanche legacy species" % keep.size())
+	_check(keep.size() == 8, "beech succession: %d avalanche legacy species" % keep.size())
+	# Part 2 (trees.md 5bh): survivors carry impact scars on the upslope face; green alder and the lead's young stems
+	# on the track are snow-bent (sabre stems), a variant per slope placed as bank trees are.
+	var scarred := 0
+	var survivors := 0
+	var sabre_ok := true
+	var sabre_species := 0
+	for sp in keep:
+		var nm := String(sp.resource_name)
+		if nm.contains("avalanche survivor"):
+			for m in sp.meshes:
+				survivors += 1
+				scarred += 1 if int(m.get_meta("tree_impact_scars", 0)) > 0 else 0
+		elif nm.contains("snow-bent"):
+			sabre_species += 1
+			for m in sp.meshes:
+				var gs: Vector2 = m.get_meta("tree_ground_slope", Vector2())
+				sabre_ok = sabre_ok and gs.x > 0.4 and gs.x < 0.8
+	_check(survivors > 0 and scarred >= survivors * 0.7, "avalanche survivors: %d of %d variants carry upslope impact scars" % [scarred, survivors])
+	_check(sabre_species == 2 and sabre_ok, "avalanche track: green alder and young lead snow-bent, every variant grown for a 26-45 degree slope")
 	var f := _field(all)
 	for k in 3:
 		await get_tree().process_frame

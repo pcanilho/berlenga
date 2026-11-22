@@ -1,3 +1,4 @@
 ### Added
 
-- After an avalanche: in mountain stands, trees thrown down the fall line, snapped stumps, and survivors leaning downslope with their uphill limbs stripped, placed where the world records an avalanche (`TreeGenerator.SUCCESSION_AVALANCHE`, species meta `fall_downhill`).
+- Green alder (`TreeGenerator.PRESET_GREEN_ALDER`), the many-stemmed scrub of avalanche tracks, and snow-bent stems on steep slopes whose feet lie downslope before they rise (`cliff_sweep`); both take young avalanche tracks.
+- Avalanche survivors carry impact scars on the upslope face of the stem (`avalanche_scars`).

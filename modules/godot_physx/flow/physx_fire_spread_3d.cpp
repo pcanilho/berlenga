@@ -1527,6 +1527,7 @@ void PhysXFireSpread3D::_update_whirls(float p_delta, const Vector3 &p_wind, con
 	}
 	while (whirl_emitters.size() < 8) {
 		PhysXFlowEmitter3D *em = memnew(PhysXFlowEmitter3D);
+		em->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 		em->set_name(vformat("Whirl%d", (int)whirl_emitters.size()));
 		em->set_enabled(false);
 		em->set_shape(PhysXFlowEmitter3D::SHAPE_SPHERE);
@@ -2004,6 +2005,7 @@ void PhysXFireSpread3D::_build_flow() {
 		own_flow = true;
 	}
 	air = memnew(PhysXFlowEmitter3D);
+	air->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 	air->set_name("FireWind");
 	air->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
 	air->set_smoke(0.0f);
@@ -2045,6 +2047,7 @@ void PhysXFireSpread3D::set_max_emitters(int p_v) {
 	}
 	while ((int)emitters.size() < max_emitters) {
 		PhysXFlowEmitter3D *em = memnew(PhysXFlowEmitter3D);
+		em->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 		em->set_name(vformat("Flame%d", (int)emitters.size()));
 		em->set_enabled(false);
 		flow->add_child(em);

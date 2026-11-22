@@ -620,6 +620,8 @@ void BaseMaterial3D::init_shaders() {
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_precip_phase", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 		// Its warm layer aloft (freezing rain): the nose's peak (C) and base (m above the ground).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_warm_nose", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Its 10 m wind (get_surface_rain_functions_code(); the weather module declares it too).
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_wind_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Its hoarfrost (R, mm of water) and the surface's cooling below the air (G, K), over weather_map_rect.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_frost_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// Its sea spray square (R: the spray's wetness, G: salt on surfaces as 1 - exp(-g/m2 / 10)).
@@ -984,6 +986,36 @@ float weather_canopy_drip_at(vec3 p_world_pos) {
 	return code;
 }
 
+// Rain on a face (docs/ideas/engine-gaps-from-game.md, A): rain_surface_catch() fed from the weather (its rain and
+// drip, the 10 m wind and the surface film), the inputs every rain-on-surface look reads (drops and runners on glass,
+// streaks on walls, puddles' fill). The path tracer reads the same maps (scene_raytracing_raygen.glsl,
+// pt_weather_surface_rain()). p_air is the surface's own motion through the air, negated (a vehicle's slipstream,
+// world m/s), added to the wind. Zero with no weather map.
+String BaseMaterial3D::get_surface_rain_functions_code(bool p_state_map_declared) {
+	String code = R"(
+global uniform sampler2D weather_wind_map; // 10 m wind (m/s, world xz), over weather_rain_rect
+)";
+	if (!p_state_map_declared) {
+		code += "global uniform sampler2D weather_state_map; // green: the surface film (0..1), over weather_rain_rect\n";
+	}
+	code += R"(
+vec4 weather_surface_rain(vec3 p_world_pos, vec3 p_world_normal, vec3 p_air) {
+	if (weather_rain_rect.z <= 0.0) {
+		return vec4(0.0);
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(weather_rain_map, 0));
+	vec2 uv = clamp((p_world_pos.xz - weather_rain_rect.xy) / weather_rain_rect.zw, half_texel, 1.0 - half_texel);
+	vec2 wind = textureLod(weather_wind_map, uv, 0.0).rg + p_air.xz;
+	float film = textureLod(weather_state_map, uv, 0.0).g;
+	return rain_surface_catch(p_world_normal, weather_rainfall_at(p_world_pos), weather_canopy_drip_at(p_world_pos), wind, film);
+}
+vec4 weather_surface_rain(vec3 p_world_pos, vec3 p_world_normal) {
+	return weather_surface_rain(p_world_pos, p_world_normal, vec3(0.0));
+}
+)";
+	return code;
+}
+
 // Glaze (docs/ideas/trees.md 5be): the clear ice freezing rain leaves over everything it wets, p_mm of radial ice
 // (WeatherMap3D's rain map, alpha). Lagarde 2013's accumulated water ("Water drop 3b"), frozen: a film forms within
 // the first millimetre; the surface is ice's (n 1.31, F0 0.018: specular 0.225), smooth but for frozen ripples; the
@@ -1275,6 +1307,10 @@ void snow_glint_apply_specular(vec3 p_world_pos, vec3 p_geo_normal, float p_foot
 
 String BaseMaterial3D::get_wetness_shader_code() {
 	return get_wetness_functions_code(true);
+}
+
+String BaseMaterial3D::get_surface_rain_shader_code() {
+	return get_rain_functions_code(true) + get_surface_rain_functions_code(false);
 }
 
 String BaseMaterial3D::get_snow_shader_code() {
@@ -6490,6 +6526,7 @@ Shader::Mode BaseMaterial3D::get_shader_mode() const {
 void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_wetness_shader_code"), &BaseMaterial3D::get_wetness_shader_code);
 	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_snow_shader_code"), &BaseMaterial3D::get_snow_shader_code);
+	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_surface_rain_shader_code"), &BaseMaterial3D::get_surface_rain_shader_code);
 	static_assert(sizeof(MaterialKey) == 16, "MaterialKey should be 16 bytes");
 
 	ClassDB::bind_method(D_METHOD("set_albedo", "albedo"), &BaseMaterial3D::set_albedo);

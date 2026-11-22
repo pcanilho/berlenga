@@ -187,6 +187,12 @@
    "title": "Open worlds"
   },
   {
+   "name": "rendering/pathtracing/ser_coherence_hints",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true` and `rendering/pathtracing/use_shader_execution_reordering` is in use, each path's hit is reordered with a hint from its material (light passing through it, hair fibres), so threads that shade alike run together."
+  },
+  {
    "name": "rendering/pathtracing/transmission",
    "type": "bool",
    "default": "true",
@@ -287,6 +293,14 @@
    "about": "If `true`, on a device with linear swept spheres (Vulkan `VK_NV_ray_tracing_linear_swept_spheres`, hardware hair primitives) the path tracer traces strand hair (`render_mode hair_strands` on a mesh of two crossed strips per strand point, as PhysXHair3D draws it) as round tubes between the strand points, one primitive per segment instead of four triangles, and shades each fibre from where the ray meets it across its width.",
    "page": "hair",
    "title": "Hair"
+  },
+  {
+   "name": "rendering/pathtracing/max_samples_per_dispatch",
+   "type": "int",
+   "default": "4194304",
+   "about": "The most pixel samples (pixels times `Environment.pathtracing_samples_per_pixel`) one path tracing dispatch traces.",
+   "page": "other",
+   "title": "Other"
   },
   {
    "name": "rendering/pathtracing/multimesh_merged_blas_max_triangles",
@@ -1037,7 +1051,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`).",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). Rock faces weather by aspect, with lichen, moss and seep streaks on the shaded sides (`tm_face_weathering`, `tm_latitude`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -3813,7 +3827,7 @@
     "SnowCover3D.layers_enabled"
    ],
    "note": "",
-   "what": "crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail.",
+   "what": "crusts, buried hoar and depth hoar keep their own layers, and rain and melt water seep down through them and pond on crusts and fine-over-coarse barriers, where wet slabs fail; the walls of ruts, prints and trenches show the layers with their own grain, from fine fresh snow and smooth wind slab to glazed crust ledges, dark buried hoar seams and coarse depth hoar at the base.",
    "page": "snow",
    "title": "Snow",
    "topic": "Snowpack"
@@ -4077,10 +4091,12 @@
    "settings": [
     "terrain_wind_enabled",
     "drainage_winds",
-    "upslope_winds"
+    "upslope_winds",
+    "valley_winds",
+    "foehn_winds"
    ],
    "note": "",
-   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests.",
+   "what": "faster over crests, calm in lees, turned along valleys and rising up slopes; on clear calm nights cold air runs down the slopes near the ground, and on sunny calm afternoons the air runs up them and, when moist, gathers fair-weather cumulus over the crests; valleys blow up-valley on sunny calm afternoons and down-valley on clear calm nights, carrying smoke and fog along them; wind across a range comes down the lee warmer and drier once the windward side has rained out, under a gap in the cloud.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -4225,14 +4241,26 @@
    "topic": ""
   },
   {
+   "name": "Dust storms",
+   "settings": [
+    "WeatherMap3D.dust_storms"
+   ],
+   "note": "",
+   "what": "strong dry wind over loose ground raises mineral dust that dims the sun orange-brown, settles out and washes out in rain, and a storm's outflow piles it into a haboob: a lobed, billowing wall lit tan by the sun, in raster and path tracing.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Smoke haze",
    "settings": [
     "WeatherMap3D.smoke_haze",
     "smoke_washout",
-    "PhysXFlow3D.rain_washout"
+    "PhysXFlow3D.rain_washout",
+    "PhysXFlowEmitter3D.regional_smoke"
    ],
    "note": "",
-   "what": "smoke from fires drifts on the wind as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.",
+   "what": "smoke from fires, campfires and chimneys drifts on the wind past the Flow box as a haze layer that dims and reddens the sun's disc and glow, turns the sky brown under a plume and cools the day; rain and snow wash smoke and dust out of the air.",
    "page": "weather",
    "title": "Weather",
    "topic": ""
@@ -5019,6 +5047,39 @@
    "topic": "Collision"
   },
   {
+   "name": "Gaze",
+   "settings": [
+    "GazeModifier3D"
+   ],
+   "note": "",
+   "what": "eyes, head, neck and upper back share one look, eyes leading, with spring motion.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
+   "name": "Foot placement",
+   "settings": [
+    "FootPlacementModifier3D"
+   ],
+   "note": "",
+   "what": "feet plant on deformed ground and snow, with pelvis drop and slope tilt, and prints land where the feet land.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
+   "name": "Spring followers",
+   "settings": [
+    "SecondOrderDynamics"
+   ],
+   "note": "",
+   "what": "a spring-damper follower for procedural motion.",
+   "page": "characters",
+   "title": "Characters",
+   "topic": ""
+  },
+  {
    "name": "Camera-relative tracing",
    "settings": [
     "rendering/pathtracing/relative_origin_grid"
@@ -5092,6 +5153,17 @@
    ],
    "note": "",
    "what": "path tracing draws a surface with the default material while its own shader compiles, instead of leaving it out.",
+   "page": "other",
+   "title": "Other",
+   "topic": ""
+  },
+  {
+   "name": "Long stills in bands",
+   "settings": [
+    "rendering/pathtracing/max_samples_per_dispatch"
+   ],
+   "note": "",
+   "what": "high-sample path traced stills trace in short bands, so the GPU never times out.",
    "page": "other",
    "title": "Other",
    "topic": ""

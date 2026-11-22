@@ -308,7 +308,11 @@ func _ready() -> void:
 	await _breeze_tests()
 	await _high_water_tests()
 	await _late_frost_tests()
+	await _foehn_tests()
+	await _valley_wind_tests()
+	await _flow_smoke_tests()
 	await _rime_tests()
+	await _surface_rain_tests()
 	_relief_contract_tests()
 	print("links: %d passed, %d failed, %d skipped" % [passes, fails, skips])
 	get_tree().quit(1 if fails > 0 else 0)
@@ -2427,6 +2431,174 @@ func _late_frost_tests() -> void:
 	valley.queue_free()
 	await get_tree().physics_frame
 
+
+# Foehn (WeatherMap3D.foehn_winds): a moist wind across a 1500 m range rains out on the windward side and comes
+# down the lee several K warmer and far drier under a gap in the cloud; a dry wind warms the lee by drawdown alone;
+# a light wind none.
+func _foehn_tests() -> void:
+	var rs := GDScript.new()
+	rs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 1500.0 * exp(-p.x * p.x / (2.0 * 3000.0 * 3000.0))\n"
+	rs.reload()
+	var ridge := Node3D.new()
+	ridge.set_script(rs)
+	add_child(ridge)
+	var c := _new_clock(3, 12.0)
+	var m := _new_map()
+	m.extent = 32768.0
+	m.terrain_source = m.get_path_to(ridge)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_direction = Vector2(1, 0)
+	m.wind_speed = 10.0
+	m.humidity = 0.95
+	m.temperature = 10.0
+	m.cloud_cover = 0.8
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(3.0 * 3600.0)
+	var lee := Vector3(8000, 0, 0)
+	var wind := Vector3(-8000, 0, 0)
+	lee.y = 1500.0 * exp(-lee.x * lee.x / (2.0 * 3000.0 * 3000.0))
+	wind.y = lee.y
+	var w: WorldWeather = WorldContracts.get_weather()
+	var t_lee: float = w.air_temperature_at(lee)
+	var t_wind: float = w.air_temperature_at(wind)
+	var rh_lee: float = w.air_humidity_at(lee)
+	var rh_wind: float = w.air_humidity_at(wind)
+	var cc_lee: float = m.get_cloud_cover_at(lee)
+	var cc_wind: float = m.get_cloud_cover_at(wind)
+	_check("foehn: a moist wind across the range comes down the lee warm and dry (Elvidge and Renfrew 2016), the contract carries it",
+			t_lee > t_wind + 5.0 and rh_lee < rh_wind - 0.35,
+			"lee %.1f C at %.0f%%, windward %.1f C at %.0f%% (same height %.0f m)" % [t_lee, rh_lee * 100.0, t_wind, rh_wind * 100.0, lee.y])
+	_check("foehn: a gap opens in the cloud over the lee", cc_lee < cc_wind - 0.3, "cover %.2f lee, %.2f windward" % [cc_lee, cc_wind])
+	m.humidity = 0.4
+	m.snap_to_settings()
+	m.advance(4.0 * 3600.0)
+	var dry: float = w.air_temperature_at(lee) - w.air_temperature_at(wind)
+	_check("foehn: dry air warms the lee by drawdown alone, about 3 K a km of descent", dry > 3.0 and dry < 6.0, "%.1f K over %.0f m of descent" % [dry, 1500.0 - lee.y])
+	m.wind_speed = 3.0
+	m.snap_to_settings()
+	m.advance(4.0 * 3600.0)
+	var calm: float = w.air_temperature_at(lee) - w.air_temperature_at(wind)
+	_check("foehn: a light wind brings none down", absf(calm) < 0.3, "%.2f K" % calm)
+	m.queue_free()
+	c.queue_free()
+	ridge.queue_free()
+	await get_tree().physics_frame
+
+
+# Along-valley winds (WeatherMap3D.valley_winds): a valley 250 m deep rising toward +x; a sunny calm afternoon blows
+# up it, a clear calm night down it, the plain beside none, a wind sweeps it away.
+func _valley_wind_tests() -> void:
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 0.02 * p.x + 250.0 * (1.0 - exp(-p.z * p.z / (2.0 * 600.0 * 600.0)))\n"
+	vs.reload()
+	var valley := Node3D.new()
+	valley.set_script(vs)
+	add_child(valley)
+	var c := _new_clock(7, 13.0)
+	var m := _new_map()
+	m.extent = 8192.0
+	m.terrain_source = m.get_path_to(valley)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.5
+	m.temperature = 22.0
+	m.snap_to_settings()
+	await get_tree().physics_frame
+	m.advance(6.0 * 3600.0)
+	var floor_p := Vector3(0, 0, 0)
+	var plain := Vector3(0, 250, 3000)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var day: Vector3 = m.get_valley_wind_at(floor_p)
+	var day_plain: Vector3 = m.get_valley_wind_at(plain)
+	var wind10: Vector3 = w.wind_at(floor_p + Vector3(0, 10, 0)) - m.get_wind_at(floor_p + Vector3(0, 10, 0)) # the contract is the map's
+	_check("valley winds: a sunny calm afternoon blows up the valley (Whiteman 2000), a few m/s, none over the plain beside it",
+			day.x > 2.0 and absf(day.z) < 0.5 and day_plain.length() < 0.2 and wind10.length() < 0.01,
+			"%.1f m/s toward (%.2f, %.2f) on the floor; %.2f m/s on the plain" % [day.length(), day.normalized().x, day.normalized().z, day_plain.length()])
+	var wind_floor: Vector3 = m.get_wind_at(floor_p + Vector3(0, 10, 0))
+	_check("valley winds: in the map's wind (smoke, fog and every wind reader take it)", wind_floor.x > 2.0, "wind at 10 m %s" % wind_floor)
+	c.time_of_day = 2.0
+	m.advance(6.0 * 3600.0)
+	var night: Vector3 = m.get_valley_wind_at(floor_p)
+	_check("valley winds: a clear calm night turns it down the valley", night.x < -1.5, "%.1f m/s toward x %.2f" % [night.length(), signf(night.x)])
+	m.wind_speed = 12.0
+	m.snap_to_settings()
+	m.advance(4.0 * 3600.0)
+	var windy: Vector3 = m.get_valley_wind_at(floor_p)
+	m.valley_winds = false
+	_check("valley winds: a strong wind sweeps them away; off, none", windy.length() < 0.3 and m.get_valley_wind_at(floor_p).length() == 0.0, "%.2f m/s in a 12 m/s wind" % windy.length())
+	m.queue_free()
+	c.queue_free()
+	valley.queue_free()
+	await get_tree().physics_frame
+
+
+# Flow emitters' smoke to the regional field (PhysXFlowEmitter3D.regional_smoke, WorldFire.smoke_sources): a
+# campfire on a valley floor on a clear calm night fills the cold pool with its smoke; a cold emitter (dust, mist)
+# and one whose owner reports its own smoke add none.
+func _flow_smoke_tests() -> void:
+	if not ClassDB.class_exists("PhysXFlowEmitter3D"):
+		_skip("flow smoke", "needs the PhysX module with Flow")
+		return
+	var vs := GDScript.new()
+	vs.source_code = "extends Node3D\nfunc get_height(p: Vector3) -> float:\n\treturn 200.0 * (1.0 - exp(-p.x * p.x / (2.0 * 400.0 * 400.0)))\n"
+	vs.reload()
+	var valley := Node3D.new()
+	valley.set_script(vs)
+	add_child(valley)
+	var c := _new_clock(10, 1.0)
+	var m := _new_map()
+	m.extent = 4096.0
+	m.terrain_source = m.get_path_to(valley)
+	m.terrain_wind_enabled = false
+	m.sky_clock = m.get_path_to(c)
+	m.air_daily_cycle = false
+	m.air_follows_climate = false
+	m.wind_speed = 1.0
+	m.humidity = 0.6
+	m.temperature = 6.0
+	m.snap_to_settings()
+	var fire: Node3D = ClassDB.instantiate("PhysXFlowEmitter3D")
+	fire.radius = 0.5
+	fire.velocity = Vector3(0, 2, 0)
+	fire.temperature = 1.0
+	fire.smoke = 1.0
+	add_child(fire)
+	fire.global_position = Vector3(0, 0.3, 0)
+	var dust: Node3D = ClassDB.instantiate("PhysXFlowEmitter3D")
+	dust.temperature = 0.0
+	dust.smoke = 2.0
+	add_child(dust)
+	dust.global_position = Vector3(30, 0.3, 0)
+	await get_tree().physics_frame
+	var srcs: PackedVector4Array = WorldContracts.get_fire().smoke_sources()
+	var rate: float = fire.get_regional_smoke_rate()
+	_check("flow smoke: a hot emitter's smoke goes on the fire contract at a campfire's rate (some mg/s), a cold one's not",
+			srcs.size() == 1 and absf(srcs[0].w - rate) < 1e-9 and rate > 2e-6 and rate < 2e-5 and dust.get_regional_smoke_rate() == 0.0,
+			"%d source(s), %.1f mg/s" % [srcs.size(), rate * 1e6])
+	m.advance(3.0 * 3600.0)
+	var w: WorldWeather = WorldContracts.get_weather()
+	var low: float = w.smoke_concentration_at(Vector3(0, 3, 0))
+	var high: float = w.smoke_concentration_at(Vector3(0, 400, 0))
+	_check("flow smoke: the campfire's smoke fills the night's cold pool on the valley floor, little above it",
+			low > 1e-6 and low > 20.0 * high,
+			"%.1f ug/m3 at 3 m, %.2f ug/m3 at 400 m" % [low * 1e6, high * 1e6])
+	fire.regional_smoke = false
+	_check("flow smoke: off on the emitter, none on the contract", WorldContracts.get_fire().smoke_sources().size() == 0)
+	fire.queue_free()
+	dust.queue_free()
+	m.queue_free()
+	c.queue_free()
+	valley.queue_free()
+	await get_tree().physics_frame
+	_check("flow smoke: the emitters' provider leaves with the last of them", not WorldContracts.get_fire().has_provider())
+
 # The last flood's mark from its real producers (WorldWater.high_water_at): a river's sections and a lake fed over a
 # weir keep one, the sea its storm strandline (Stockdon 2006 run-up); the contract hands the river's on to a reader (GrassField3D's flood wash).
 func _high_water_tests() -> void:
@@ -2587,6 +2759,68 @@ func _salt_bloom_tests() -> void:
 	root.queue_free()
 	await get_tree().process_frame
 	_check("salt bloom: the spray's salt crusts the sea cliff's dry rock white (terrain material), none without salt", salted > 1.2 * bare, "centre luminance %.3f salted, %.3f bare" % [salted, bare])
+
+
+# The rain a face catches (BaseMaterial3D.get_surface_rain_shader_code()): one quad split in four, each quarter read
+# with a fixed normal: a level roof, a wall facing into the wind, a wall facing away, a wall the wind runs along.
+func _surface_rain_tests() -> void:
+	if DisplayServer.get_name() == "headless":
+		_skip("surface rain", "needs a rendering device")
+		return
+	var m := _new_map()
+	m.wind_speed = 8.0
+	m.wind_direction = Vector2(1, 0)
+	m.temperature = 15.0
+	m.humidity = 0.9
+	m.rain_rate = 5.0
+	m.cloud_cover = 1.0
+	m.air_follows_climate = false
+	m.snap_to_settings()
+	m.advance(1.0)
+	var sh := Shader.new()
+	sh.code = "shader_type spatial;\nrender_mode unshaded;\n" + BaseMaterial3D.get_surface_rain_shader_code() + """
+void fragment() {
+	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	int q = int(SCREEN_UV.x * 4.0);
+	vec3 n = q == 0 ? vec3(0.0, 1.0, 0.0) : q == 1 ? vec3(-1.0, 0.0, 0.0) : q == 2 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+	vec4 r = weather_surface_rain(wp, n);
+	ALBEDO = vec3(r.x / 20.0, r.y, length(r.zw) / 3.0);
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	var quad := MeshInstance3D.new()
+	var qm := QuadMesh.new()
+	qm.size = Vector2(400, 400)
+	quad.mesh = qm
+	quad.material_override = mat
+	add_child(quad)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 0, 10)
+	cam.fov = 120.0
+	add_child(cam)
+	cam.make_current()
+	for i in 10:
+		await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	var vals: Array = []
+	for k in 4:
+		vals.append(img.get_pixel(int(img.get_width() * (k + 0.5) / 4.0), img.get_height() / 2).srgb_to_linear())
+	var w: WorldWeather = WorldContracts.get_weather()
+	var rain: float = w.rainfall_at(Vector3())
+	var wind: Vector3 = m.get_wind_at(Vector3(), 10.0)
+	var driven: float = 2.0 / 9.0 * wind.length() * pow(rain, 8.0 / 9.0)
+	var roof: float = vals[0].r * 20.0
+	var windward: float = vals[1].r * 20.0
+	var leeward: float = vals[2].r * 20.0
+	var side_push: float = vals[3].b * 3.0
+	_check("surface rain: a roof catches the rain, a wall into the wind the driven rain (ISO 15927-3), a lee wall none; the wind pushes drops along a wall it runs along",
+			absf(roof - rain) < 0.15 * rain + 0.1 and absf(windward - driven) < 0.3 * driven + 0.1 and leeward < 0.05 and windward > 1.0 and side_push > 0.3 and vals[1].b < 0.03,
+			"rain %.2f mm/h, roof %.2f, windward %.2f (ISO %.2f at %.1f m/s), leeward %.2f; push %.2f along the side wall, %.2f square to it" % [rain, roof, windward, driven, wind.length(), leeward, side_push, vals[1].b * 3.0])
+	quad.queue_free()
+	cam.queue_free()
+	m.queue_free()
+	await get_tree().process_frame
 
 
 func _centre_luminance(img: Image) -> float:

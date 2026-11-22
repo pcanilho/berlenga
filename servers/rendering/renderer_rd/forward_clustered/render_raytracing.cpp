@@ -6958,7 +6958,7 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 	ranges.sort();
 	float cell = ranges[ranges.size() / 2] * 0.75f;
 	Vector3 extent = bounds.size;
-	cell = MAX(cell, Math::pow(MAX(extent.x * extent.y * extent.z, 1e-3f) / float(RT_LIGHT_GRID_MAX_CELLS), 1.0f / 3.0f));
+	cell = MAX(cell, Math::pow(MAX(float(extent.x * extent.y * extent.z), 1e-3f) / float(RT_LIGHT_GRID_MAX_CELLS), 1.0f / 3.0f));
 	cell = MAX(cell, 0.25f);
 
 	const uint32_t list_base = RT_LIGHT_GRID_HEADER + global.size() + far.size();
@@ -7042,7 +7042,7 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 		r_grid[0] = dims[0];
 		r_grid[1] = dims[1];
 		r_grid[2] = dims[2];
-		float origin[3] = { bounds.position.x, bounds.position.y, bounds.position.z };
+		float origin[3] = { float(bounds.position.x), float(bounds.position.y), float(bounds.position.z) };
 		float inv_cell = 1.0f / cell;
 		memcpy(&r_grid[4], origin, sizeof(origin));
 		memcpy(&r_grid[7], &inv_cell, sizeof(float));
@@ -7604,7 +7604,8 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_REFRACTION : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/subsurface_scattering") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_SUBSURFACE : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/hair") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_HAIR : 0u) |
-				(scene_media ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_MEDIA : 0u));
+				(scene_media ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_MEDIA : 0u) |
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/ser_coherence_hints") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_SER_HINTS : 0u));
 		// Light reuse (ReSTIR DI, raytracing_lights_inc.glsl): two frames of per-pixel reservoirs,
 		// the slot written turning every frame, and a table renumbering last frame's lights.
 		if (light_reuse) {
@@ -7751,6 +7752,20 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				}
 				RID rain_rd = rain_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(rain_tex) : RID();
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RAIN_MAP] = (has_weather && rain_rd.is_valid()) ? float(bindless_block->add_texture(rain_rd)) : 0.0f;
+				// Its 10 m wind (weather_wind_map, same rect): the rain a face catches (pt_weather_surface_rain()).
+				static const StringName wind_map_name = "weather_wind_map";
+				const Variant wind_var = ms->global_shader_parameter_get_internal(wind_map_name);
+				RID wind_tex;
+				if (wind_var.get_type() == Variant::RID) {
+					wind_tex = wind_var;
+				} else if (wind_var.get_type() == Variant::OBJECT) {
+					Object *t = wind_var;
+					if (t) {
+						wind_tex = t->call(SNAME("get_rid"));
+					}
+				}
+				RID wind_rd = wind_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(wind_tex) : RID();
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WIND_MAP] = (has_weather && wind_rd.is_valid()) ? float(bindless_block->add_texture(wind_rd)) : 0.0f;
 			}
 			// Its contact wetness (wet where water has been): weather_contact_map and weather_contact_rect.
 			static const StringName contact_map_name = "weather_contact_map";
@@ -8282,7 +8297,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			Vector3 hi(-1e30f, -1e30f, -1e30f);
 			for (int i = 0; i < count; i++) {
 				const RTDenseBox &b = dense.boxes[i];
-				const float f[4] = { b.origin.x, b.origin.y, b.origin.z, b.cell };
+				const float f[4] = { float(b.origin.x), float(b.origin.y), float(b.origin.z), b.cell };
 				memcpy(&vp.level[i * 8], f, sizeof(f));
 				vp.level[i * 8 + 4] = uint32_t(b.size.x);
 				vp.level[i * 8 + 5] = uint32_t(b.size.y);

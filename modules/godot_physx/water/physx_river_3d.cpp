@@ -4401,6 +4401,7 @@ void PhysXRiver3D::_build_fall_effects() {
 			to_flow = is_inside_tree() && !get_tree()->get_root()->find_children("*", "PhysXFlow3D", true, false).is_empty();
 			if (to_flow) {
 				PhysXFlowEmitter3D *mist = memnew(PhysXFlowEmitter3D);
+				mist->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 				mist->set_name("FallMist");
 				Transform3D mxf = xf;
 				mxf.origin += Vector3(0, 0.6f, 0);

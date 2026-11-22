@@ -3,12 +3,12 @@
 # Usage: GITEA_LFS_TOKEN=... bash fetch_art.sh [commit]
 set -euo pipefail
 : "${GITEA_LFS_TOKEN:?GITEA_LFS_TOKEN is not set in this environment}"
-REV="${1:-e9c82fe}"
+REV="${1:-090ee35}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="${ART_CACHE:-/tmp/bench-art-src}"
 AUTH=(-c credential.helper= -c 'credential.https://gitea.canilho.net.helper=!f() { echo username=oauth2; echo "password=$GITEA_LFS_TOKEN"; }; f')
 # path in the art repository -> folder under art/
-PARTS=("vehicles/offroad_buggy/godot:offroad_buggy" "props/old_wooden_hut/godot:old_wooden_hut" "terrain/layers:terrain_layers")
+PARTS=("vehicles/offroad_buggy/godot:offroad_buggy" "props/old_wooden_hut/godot:old_wooden_hut" "terrain/layers:terrain_layers" "props/showcase:showcase")
 if [ ! -d "$SRC/.git" ]; then
 	GIT_LFS_SKIP_SMUDGE=1 git "${AUTH[@]}" clone -q --no-checkout https://gitea.canilho.net/gitea_admin/echoes-of-silence-lfs.git "$SRC"
 fi
@@ -29,6 +29,8 @@ for p in "${PARTS[@]}"; do
 done
 # The ground scans are read from their files by the benches (no import): keep Godot out of that folder.
 [ -d "$HERE/art/terrain_layers" ] && touch "$HERE/art/terrain_layers/.gdignore"
+# The showcase props (Tripo tier bakes) are loaded at run time with GLTFDocument, never imported.
+[ -d "$HERE/art/showcase" ] && touch "$HERE/art/showcase/.gdignore"
 # 8K textures import lossless (compress/mode=0: VRAM compression of 8K hangs the cloud import), capped at 4K.
 find "$HERE/art" -path "$HERE/art/terrain_layers" -prune -o -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) -print | while read -r t; do
 	[ -f "$t.import" ] && grep -q '^compress/mode=0' "$t.import" && continue

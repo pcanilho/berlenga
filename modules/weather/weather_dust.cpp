@@ -121,14 +121,33 @@ void WeatherMap3D::_dust_step(double p_weather_dt) {
 	// density current of cold air with a front (as weather_clouds' shelf cloud: 1.45 core radii plus 0.02 per m/s of
 	// outflow, lobed 0.25 radii in and out along it); the downburst profile's 1/r tail beyond it is the warm air
 	// ahead, which neither raises the cold pool's dust nor carries it on. So the dust piles at the front: the wall.
+	// Behind the front the 10 m wind raises the dust (u* is a surface stress), but the column it lifts into is
+	// carried at the current's bulk speed: the cold air runs forward in its lowest few hundred metres while the head
+	// mixes its fluid up and back over it aloft (Benjamin 1968; Simpson 1997), and the following flow gains on the
+	// head at only 0.1-0.2 of its speed (Simpson and Britter 1979). A column mixed over the layer's depth so moves
+	// at about a third of the surface outflow (DUST_BULK), and the cold pool keeps its dust behind the head instead of
+	// sweeping all of it into a thin ring.
+	static constexpr float DUST_BULK = 0.3f;
+	static constexpr float DUST_WAKE = 3000.0f; // m behind the front
 	Vector<float> dust_wind;
 	dust_wind.resize(n * n * 2);
+	Vector<float> raise_speed;
+	raise_speed.resize(n * n);
+	// How far back over the current the head's wake can lay its dust: to the rain core's edge of the storm whose
+	// outflow it is, at most DUST_WAKE.
+	Vector<float> wake_room;
+	wake_room.resize(n * n);
 	{
 		float *dw = dust_wind.ptrw();
+		float *rs = raise_speed.ptrw();
+		float *wr = wake_room.ptrw();
 		for (int z = 0; z < n; z++) {
 			for (int x = 0; x < n; x++) {
 				const int i = z * n + x;
 				Vector2 w(cell_wind[i * 2 + 0], cell_wind[i * 2 + 1]);
+				Vector2 carry = w;
+				float strongest = 0.0f;
+				wr[i] = 0.0f;
 				const Vector2 p((origin_cell.x + x + 0.5f) * cs, (origin_cell.y + z + 0.5f) * cs);
 				for (const Storm &st : storms) {
 					const float env = _storm_weight(st);
@@ -141,15 +160,20 @@ void WeatherMap3D::_dust_step(double p_weather_dt) {
 						continue;
 					}
 					const float front = st.radius * (1.45f + 0.02f * MIN(st.outflow, 15.0f) + 0.5f * (_dust_noise(d / 1500.0f + Vector2(41.7f, 13.9f)) - 0.5f));
-					if (rr <= front) {
-						continue;
-					}
 					const float x2 = (rr / st.radius) * (rr / st.radius);
 					const float vr = st.outflow * (st.radius / rr) * (1.0f - Math::exp(-x2)) / DOWNBURST_PEAK_D;
-					w -= d / rr * vr * env * Math::smoothstep(front, front + 0.6f * cs, rr);
+					const Vector2 out = d / rr * vr * env;
+					if (vr * env > strongest) {
+						strongest = vr * env;
+						wr[i] = CLAMP(rr - st.radius, 0.0f, DUST_WAKE);
+					}
+					const float beyond = Math::smoothstep(front, front + 0.6f * cs, rr);
+					w -= out * beyond;
+					carry -= out * (beyond + (1.0f - beyond) * (1.0f - DUST_BULK));
 				}
-				dw[i * 2 + 0] = w.x;
-				dw[i * 2 + 1] = w.y;
+				dw[i * 2 + 0] = carry.x;
+				dw[i * 2 + 1] = carry.y;
+				rs[i] = w.length();
 			}
 		}
 	}
@@ -162,7 +186,7 @@ void WeatherMap3D::_dust_step(double p_weather_dt) {
 		for (int z = 0; z < n; z++) {
 			for (int x = 0; x < n; x++) {
 				const int i = z * n + x;
-				const float speed = Vector2(dwind[i * 2 + 0], dwind[i * 2 + 1]).length();
+				const float speed = raise_speed[i];
 				if (speed > 6.0f && !(have_rain && cell_rain[i] > 0.1f)) {
 					const float wet = have_film ? (cell_puddle[i] > 0.0f ? 1.0f : MIN(cell_film[i] / storage, 1.0f)) : 0.0f;
 					const float gy = have_h && Math::is_finite(cell_height[i]) ? cell_height[i] : ground_height;
@@ -183,36 +207,81 @@ void WeatherMap3D::_dust_step(double p_weather_dt) {
 	// four cells round the landing point (a mass-conserving forward splat; a backward trace cannot pile the load up where
 	// the wind converges, at the front), settling and washed out on the way.
 	{
-		const float keep = Math::exp(-DUST_SETTLING * dt / depth);
 		const float snow_share = have_rain ? 1.0f - get_rain_share_at(_follow_position()) : 0.0f;
 		Vector<float> old = cell_dust;
 		const float *o = old.ptr();
-		cell_dust.fill(0.0f);
-		float *w = cell_dust.ptrw();
-		for (int z = 0; z < n; z++) {
-			for (int x = 0; x < n; x++) {
-				const int i = z * n + x;
-				if (o[i] <= 0.0f) {
-					continue;
-				}
-				float k = keep;
-				if (have_rain && cell_rain[i] > 0.0f) {
-					const float r = cell_rain[i];
-					k *= Math::exp(-dt * WorldWeather::washout_rate(r * (1.0f - snow_share), r * snow_share, true));
-				}
-				const float m = o[i] * k;
-				const float fx = x + dwind[i * 2 + 0] * dt / cs, fz = z + dwind[i * 2 + 1] * dt / cs;
-				const int x0 = int(Math::floor(fx)), z0 = int(Math::floor(fz));
-				const float tx = fx - x0, tz = fz - z0;
-				auto put = [&](int xx, int zz, float a) {
-					if (xx >= 0 && zz >= 0 && xx < n && zz < n) {
-						w[zz * n + xx] += a; // what leaves the map is gone
+		// Sub-steps so no load moves more than a cell in one (a longer jump crosses the front and piles beyond it).
+		float vmax = 0.0f;
+		for (int i = 0; i < n * n; i++) {
+			vmax = MAX(vmax, Vector2(dwind[i * 2 + 0], dwind[i * 2 + 1]).length());
+		}
+		const int steps = CLAMP(int(Math::ceil(vmax * dt / cs)), 1, 64);
+		const float sdt = dt / steps;
+		const float keep = Math::exp(-DUST_SETTLING * sdt / depth);
+		const bool have_head = cell_dust_head.size() == n * n;
+		const float *hd0 = have_head ? cell_dust_head.ptr() : nullptr;
+		static constexpr float DUST_HEAD_LENGTH = 1000.0f; // m
+		for (int step = 0; step < steps; step++) {
+			if (step > 0) {
+				old = cell_dust;
+				o = old.ptr();
+			}
+			cell_dust.fill(0.0f);
+			float *w = cell_dust.ptrw();
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					const int i = z * n + x;
+					if (o[i] <= 0.0f) {
+						continue;
 					}
-				};
-				put(x0, z0, m * (1.0f - tx) * (1.0f - tz));
-				put(x0 + 1, z0, m * tx * (1.0f - tz));
-				put(x0, z0 + 1, m * (1.0f - tx) * tz);
-				put(x0 + 1, z0 + 1, m * tx * tz);
+					float k = keep;
+					if (have_rain && cell_rain[i] > 0.0f) {
+						const float r = cell_rain[i];
+						k *= Math::exp(-sdt * WorldWeather::washout_rate(r * (1.0f - snow_share), r * snow_share, true));
+					}
+					const float m = o[i] * k;
+					auto put = [&](int xx, int zz, float a) {
+						if (xx >= 0 && zz >= 0 && xx < n && zz < n) {
+							w[zz * n + xx] += a; // what leaves the map is gone
+						}
+					};
+					auto splat = [&](float p_m, float p_sign) {
+						const float fx = x + p_sign * dwind[i * 2 + 0] * sdt / cs, fz = z + p_sign * dwind[i * 2 + 1] * sdt / cs;
+						const int x0 = int(Math::floor(fx)), z0 = int(Math::floor(fz));
+						const float tx = fx - x0, tz = fz - z0;
+						put(x0, z0, p_m * (1.0f - tx) * (1.0f - tz));
+						put(x0 + 1, z0, p_m * tx * (1.0f - tz));
+						put(x0, z0 + 1, p_m * (1.0f - tx) * tz);
+						put(x0 + 1, z0 + 1, p_m * tx * tz);
+					};
+					// The head's return: in a steady front the head passes on what flows into it, mixed up through its
+					// depth and carried back over the current aloft in its wake (Simpson 1997). Each step a share of the
+					// head's load (the inflow's rate over a head length, DUST_HEAD_LENGTH) is laid back along the wake,
+					// spread from a quarter of DUST_WAKE to all of it behind the front, where it mixes down into the body:
+					// the murk that follows a haboob's wall.
+					// The current's own push here (the full cell wind: past the front the dust's wind drops it), at its
+					// bulk speed.
+					const Vector2 cw(cell_wind[i * 2 + 0], cell_wind[i * 2 + 1]);
+					const float cv = cw.length() * DUST_BULK;
+					const float room = wake_room[i];
+					const float back = have_head && cv > 0.1f && room > cs ? hd0[i] * (1.0f - Math::exp(-sdt * cv / DUST_HEAD_LENGTH)) : 0.0f;
+					splat(m * (1.0f - back), 1.0f);
+					if (back > 0.0f) {
+						const float ux = -cw.x / cw.length(), uz = -cw.y / cw.length();
+						static constexpr int K = 8;
+						for (int kk = 0; kk < K; kk++) {
+							const float dist = room * (0.25f + 0.75f * (kk + 0.5f) / K) / cs;
+							const float fx = x + ux * dist, fz = z + uz * dist;
+							const int x0 = int(Math::floor(fx)), z0 = int(Math::floor(fz));
+							const float tx = fx - x0, tz = fz - z0;
+							const float a = m * back / K;
+							put(x0, z0, a * (1.0f - tx) * (1.0f - tz));
+							put(x0 + 1, z0, a * tx * (1.0f - tz));
+							put(x0, z0 + 1, a * (1.0f - tx) * tz);
+							put(x0 + 1, z0 + 1, a * tx * tz);
+						}
+					}
+				}
 			}
 		}
 		const float alpha = DUST_DIFFUSION * dt / (cs * cs);
@@ -223,7 +292,7 @@ void WeatherMap3D::_dust_step(double p_weather_dt) {
 		for (int it = 0; it < iters; it++) {
 			old = cell_dust;
 			o = old.ptr();
-			w = cell_dust.ptrw();
+			float *w = cell_dust.ptrw();
 			for (int z = 0; z < n; z++) {
 				for (int x = 0; x < n; x++) {
 					const int i = z * n + x;

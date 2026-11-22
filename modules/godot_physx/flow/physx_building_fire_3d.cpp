@@ -1399,6 +1399,7 @@ PhysXFlowEmitter3D *PhysXBuildingFire3D::_emitter(ObjectID &r_id, const String &
 	PhysXFlow3D *into = p_flow ? p_flow : flow;
 	if (!e && into) {
 		e = memnew(PhysXFlowEmitter3D);
+		e->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 		e->set_name(String(get_name()) + p_name);
 		into->add_child(e);
 		e->set_flow_path(e->get_path_to(into));

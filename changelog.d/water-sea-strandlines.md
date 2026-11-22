@@ -1,1 +1,0 @@
-- The sea and fixed-level lakes answer WorldWater.high_water_at with their strandline: the year's storm waves' 2% run-up on the beach's slope (`storm_wave_ratio`, `storm_day`; Stockdon 2006).

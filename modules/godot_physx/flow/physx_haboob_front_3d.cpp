@@ -39,6 +39,7 @@
 #include "modules/world/world_contracts.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/main/viewport.h"
+#include "servers/rendering/rendering_server.h"
 
 #ifdef MODULE_WEATHER_ENABLED
 #include "modules/weather/weather_map_3d.h"
@@ -68,6 +69,13 @@ void PhysXHaboobFront3D::set_dust_color(const Color &p_c) {
 	}
 }
 
+void PhysXHaboobFront3D::set_head_height(float p_v) {
+	head_height = CLAMP(p_v, 20.0f, 400.0f);
+	if (flow) {
+		flow->set_scattering_shadow_reach(0.5f * head_height);
+	}
+}
+
 void PhysXHaboobFront3D::_build() {
 	if (flow) {
 		return;
@@ -89,8 +97,18 @@ void PhysXHaboobFront3D::_build() {
 	flow->set_fire_light(false);
 	flow->set_embers(false);
 	flow->set_heat_shimmer_kelvin(0.0f);
-	flow->set_smoke_density(0.15f);
-	flow->set_scattering_strength(2.0f);
+	// Optics of the near field. Inside a haboob's wall visibility is tens to a hundred metres (extinction about
+	// 0.03-0.05 per m), so the billows are graded and see-through at their edges, not a hard puff: a hard edge
+	// shows the grid. The head mixes the foot's dust up through about ten times its volume (smoke about 0.1 there
+	// for 1 at the foot), so 0.25 per unit gives that inside the head and a dense foot. Mineral dust scatters with albedo about 0.92 and a strong forward lobe (asymmetry about 0.7 at
+	// 550 nm; Dubovik et al. 2002), and the light dims through tens of metres of it, so the shadow reach spans the
+	// head (a few metres lit every billow alike, flat and pale). Strength 1 keeps raster and the path tracer alike.
+	flow->set_smoke_density(0.25f);
+	flow->set_scattering_strength(1.0f);
+	flow->set_scattering_albedo(0.92f);
+	flow->set_scattering_anisotropy(0.6f);
+	flow->set_scattering_shadow_reach(0.5f * head_height);
+	flow->set_scattering_shadow_steps(12);
 	flow->set_smoke_color(dust_color);
 	flow->set_terrain_floor(true);
 	flow->set_weather_wind_coupling(0.5f);
@@ -103,6 +121,7 @@ void PhysXHaboobFront3D::_build() {
 	}
 	for (int i = 0; i < MAX_EMITTERS; i++) {
 		PhysXFlowEmitter3D *e = memnew(PhysXFlowEmitter3D);
+		e->set_regional_smoke(false); // its smoke is reported by its owner, or is not smoke
 		e->set_name(vformat("Foot%d", i));
 		e->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
 		e->set_smoke(0.0f);
@@ -112,6 +131,20 @@ void PhysXHaboobFront3D::_build() {
 		flow->add_child(e);
 		e->set_flow_path(e->get_path_to(flow));
 		emitters[i] = e;
+		for (int k = 0; k < 2; k++) {
+			PhysXFlowEmitter3D *a = memnew(PhysXFlowEmitter3D);
+			a->set_name(vformat(k ? "Reserve%d" : "Lid%d", i));
+			a->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+			a->set_smoke(0.0f);
+			a->set_temperature(0.0f);
+			a->set_fuel(0.0f);
+			a->set_velocity(Vector3());
+			a->set_couple_rate(k ? 0.0f : 1.0f);
+			a->set_enabled(false);
+			flow->add_child(a);
+			a->set_flow_path(a->get_path_to(flow));
+			(k ? reserves : lids)[i] = a;
+		}
 	}
 }
 
@@ -119,6 +152,10 @@ void PhysXHaboobFront3D::_build() {
 // get_dust_head_at) within near_range, the front's line across its travel there, and emitter_count points along it,
 // each slid along the travel onto the head's crest.
 void PhysXHaboobFront3D::_scan() {
+	LocalVector<FrontPoint> last;
+	for (const FrontPoint &f : front) {
+		last.push_back(f);
+	}
 	front.clear();
 #ifdef MODULE_WEATHER_ENABLED
 	const WeatherMap3D *wm = WeatherMap3D::get_active();
@@ -187,6 +224,26 @@ void PhysXHaboobFront3D::_scan() {
 		fp.load = wm->get_dust_at(p);
 		front.push_back(fp);
 	}
+	// The map's cells are a couple of hundred metres, so the crest found each scan steps back and forth by tens of
+	// metres; emitters jumping with it smear the head thin. The row eases only a quarter of
+	// the way toward each new find (a time constant of about two seconds at two scans a second).
+	if (last.size() == front.size()) {
+		for (uint32_t i = 0; i < front.size(); i++) {
+			FrontPoint &f = front[i];
+			const FrontPoint &o = last[i];
+			if (Vector2(f.position.x - o.position.x, f.position.z - o.position.z).length() > 0.5f * near_range) {
+				continue;
+			}
+			const float y = f.position.y;
+			f.position = o.position.lerp(f.position, 0.25f);
+			f.position.y = y;
+			f.forward = o.forward.lerp(f.forward, 0.25f).normalized();
+			f.speed = Math::lerp(o.speed, f.speed, 0.25f);
+			f.load = Math::lerp(o.load, f.load, 0.25f);
+			f.drift = (f.position - o.position) / scan_interval;
+			f.drift.y = 0.0f;
+		}
+	}
 #endif
 }
 
@@ -205,11 +262,17 @@ void PhysXHaboobFront3D::_draw() {
 		}
 		const bool on = i < int(front.size());
 		e->set_enabled(on);
+		if (lids[i]) {
+			lids[i]->set_enabled(on);
+		}
+		if (reserves[i]) {
+			reserves[i]->set_enabled(on);
+		}
 		if (!on) {
 			continue;
 		}
 		const FrontPoint &f = front[i];
-		const float h = 30.0f;
+		const float h = 0.3f * head_height;
 		const Vector3 fwd(f.forward.x, 0.0f, f.forward.y);
 		Basis b;
 		b.set_column(0, Vector3(-fwd.z, 0.0f, fwd.x));
@@ -220,6 +283,20 @@ void PhysXHaboobFront3D::_draw() {
 		e->set_velocity(fwd * (1.1f * f.speed) + Vector3(0.0f, 0.5f * f.speed, 0.0f));
 		e->set_smoke(CLAMP(f.load / 4.0f, 0.0f, 1.5f));
 		e->set_couple_rate(1.5f);
+		// The gravity current's head (Simpson and Britter 1979): the dense outflow runs forward under air that stays
+		// put, and the velocity jump across its top rolls Kelvin-Helmholtz billows that turn back over it. The lid holds
+		// the air above head_height still (the ambient, in the ground's frame), so the shear is there and the dust
+		// rises no higher; the reserve keeps the blocks from the ground to above the lid, from the foot to well
+		// behind it, so the head is never cut at a block's edge.
+		const Vector3 back = -fwd * 30.0f;
+		if (lids[i]) {
+			lids[i]->set_global_transform(Transform3D(b, f.position + back + Vector3(0.0f, 1.25f * head_height, 0.0f)));
+			lids[i]->set_size(Vector3(width * 1.1f, 0.5f * head_height, 120.0f));
+		}
+		if (reserves[i]) {
+			reserves[i]->set_global_transform(Transform3D(b, f.position + back + Vector3(0.0f, 0.75f * head_height, 0.0f)));
+			reserves[i]->set_size(Vector3(width * 1.3f, 1.5f * head_height, 140.0f));
+		}
 	}
 }
 
@@ -247,15 +324,45 @@ void PhysXHaboobFront3D::_notification(int p_what) {
 			if (scan_clock <= 0.0f) {
 				scan_clock = scan_interval;
 				_scan();
+				_publish_near();
 			} else {
-				// Between scans the row rides the front.
+				// Between scans the row moves as the front has been moving: the map's front, not its air (a steady
+				// storm's ring stands still while its outflow blows through it).
 				for (FrontPoint &f : front) {
-					f.position += Vector3(f.forward.x, 0.0f, f.forward.y) * (f.speed * dt);
+					f.position += f.drift * dt;
 				}
 			}
 			_draw();
 		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			_publish_near(true);
+		} break;
 	}
+}
+
+// Where the billows draw the front, for the far wall to step back: weather_dust_near = (x, z, radius, height), a
+// cylinder round the drawn stretch of the front up to the head's top, zero radius while none is drawn. The cloud
+// march fades its dust out inside it, so the near and far pieces do not stack.
+void PhysXHaboobFront3D::_publish_near(bool p_clear) {
+#ifdef MODULE_WEATHER_ENABLED
+	Vector4 v;
+	if (!p_clear && enabled && !front.is_empty()) {
+		Vector3 c;
+		for (const FrontPoint &f : front) {
+			c += f.position;
+		}
+		c /= float(front.size());
+		float r = 0.0f;
+		for (const FrontPoint &f : front) {
+			r = MAX(r, Vector2(f.position.x - c.x, f.position.z - c.z).length());
+		}
+		v = Vector4(c.x, c.z, r + 0.8f * near_range / MAX(emitter_count, 1) + 60.0f, head_height);
+	}
+	if (v != published_near) {
+		published_near = v;
+		RenderingServer::get_singleton()->global_shader_parameter_set("weather_dust_near", v);
+	}
+#endif
 }
 
 void PhysXHaboobFront3D::_bind_methods() {
@@ -271,6 +378,8 @@ void PhysXHaboobFront3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_emitter_count"), &PhysXHaboobFront3D::get_emitter_count);
 	ClassDB::bind_method(D_METHOD("set_flow_cell_size", "size"), &PhysXHaboobFront3D::set_flow_cell_size);
 	ClassDB::bind_method(D_METHOD("get_flow_cell_size"), &PhysXHaboobFront3D::get_flow_cell_size);
+	ClassDB::bind_method(D_METHOD("set_head_height", "height"), &PhysXHaboobFront3D::set_head_height);
+	ClassDB::bind_method(D_METHOD("get_head_height"), &PhysXHaboobFront3D::get_head_height);
 	ClassDB::bind_method(D_METHOD("set_dust_color", "color"), &PhysXHaboobFront3D::set_dust_color);
 	ClassDB::bind_method(D_METHOD("get_dust_color"), &PhysXHaboobFront3D::get_dust_color);
 	ClassDB::bind_method(D_METHOD("scan_now"), &PhysXHaboobFront3D::scan_now);
@@ -285,5 +394,6 @@ void PhysXHaboobFront3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_range", PROPERTY_HINT_RANGE, "50,2000,1,suffix:m"), "set_near_range", "get_near_range");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "emitter_count", PROPERTY_HINT_RANGE, "1,16,1"), "set_emitter_count", "get_emitter_count");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_cell_size", PROPERTY_HINT_RANGE, "0.25,8,0.05,suffix:m"), "set_flow_cell_size", "get_flow_cell_size");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "head_height", PROPERTY_HINT_RANGE, "20,400,1,suffix:m"), "set_head_height", "get_head_height");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "dust_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_dust_color", "get_dust_color");
 }

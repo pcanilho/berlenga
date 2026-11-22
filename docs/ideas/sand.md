@@ -1134,3 +1134,30 @@ them with the front between scans. Each is a wide box emitter pushing dust forwa
 at half of it; Flow's own vorticity confinement rolls the shear into billows, so no shape is authored. Its Flow:
 2 m cells, no buoyancy, slow fade, shimmer and fire light off. docs/bench/haboob --test: 10 points, all on the head,
 all travelling outward (about 11 m/s). Look: PC queue (Flow raster needs the GPU at this size).
+
+Round 2 (22 Nov), from the first raster scouts (a wall, but pale and cut flat in steps at the top):
+- The steps were Flow's blocks: gas carried up past the allocated blocks is read as still air there and lost. Each
+  front point now has an air-only reserve box (couple 0: allocates, pushes nothing) from the ground to 1.5 x
+  `head_height` (100 m) and 140 m back, and a lid of still air above `head_height` (couple 1): the gravity current's
+  head under ambient air at rest (Simpson and Britter 1979), so the shear there rolls the billows over and the dust
+  stops near 75 m (probe) instead of rising into unallocated blocks.
+- Pale: the puff was a hard, dense shell (0.15 per m per unit) lit with scattering strength 2 and a 4 m shadow reach,
+  so every billow was lit alike. Now dust optics (albedo 0.92, forward lobe 0.6, Dubovik et al. 2002), strength 1 (PT
+  parity), shadow reach half the head height, 12 steps; density 0.25 for the head's measured mix (smoke about 0.1
+  there for 1 at the foot).
+- The front points jumped tens of metres each scan (the map's ~190 m cells), smearing the head thin: now eased a
+  quarter of the way to each find and moved by the found front's own drift between scans (a steady storm's ring
+  stands still while its outflow blows through it).
+- `dust_color` is the far wall's tint (similarity relations over weather_dust_albedo, as the sky's dust_tint):
+  (1, 0.93, 0.62). `weather_dust_near` tells the sky's wall where the billows are.
+
+Dust field round 2 (clouds' note: dust only in a 1.5 km ring, nothing behind):
+- The transport jumped up to 8 cells a step (25 m/s x 60 s over 190 m cells) and crossed the front: now sub-stepped
+  to a cell a step.
+- The column rides the current's bulk speed (DUST_BULK 0.3 of the surface outflow; the 10 m wind still raises it):
+  the following flow gains on the head at only 0.1-0.2 of its speed (Simpson and Britter 1979).
+- The head passes on what flows in: its load returns at the inflow's rate over a head length (1 km), laid back over
+  the wake up to 3 km behind (not past the rain core). Bench storm: head 8.9 g/m2, 4.1 at 500 m behind, 2.3 at 1 km.
+- Emission check: 8.7 mg/m2/s at 30 m/s and 8 % clay, mid-range of measured strong-event fluxes (1-100); the
+  Marticorena-Bergametti clay factor is uncertain by about ten, so `dust_emission_scale` 10 for a Phoenix-class event
+  is within it.

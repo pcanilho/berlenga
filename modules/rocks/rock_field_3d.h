@@ -467,6 +467,9 @@ private:
 	ObjectID stand_watched; // the WorldStand whose stand_changed rebuilds the detail cells (trails, rooting)
 	void _watch_stand();
 	void _on_stand_changed(const Rect2 &p_rect);
+	Rect2 stand_dirty; // changes gathered over a frame, rebuilt once (_apply_stand_changes)
+	bool stand_queued = false;
+	void _apply_stand_changes();
 	Vector3 last_target;
 	bool have_target = false;
 	double last_build_msec = 0.0;
@@ -527,7 +530,7 @@ private:
 	void _sync_scree_blocks() const;
 	void _update_contact(bool p_force);
 	void _clear_contact();
-	// The frost-sorted ground for the terrain material: terrain_frost_map (RG8: r gate, g stone share) over
+	// The frost-sorted ground for the terrain material: terrain_frost_map (RGBA8: r gate, g stone share, b the fines' dome) over
 	// terrain_frost_rect, a FROST_MAP_SIZE square round the target.
 	static constexpr int FROST_MAP_RES = 512;
 	static constexpr real_t FROST_MAP_SIZE = 64.0;
