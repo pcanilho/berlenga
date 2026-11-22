@@ -292,7 +292,9 @@
    "name": "rendering/pathtracing/max_samples_per_dispatch",
    "type": "int",
    "default": "4194304",
-   "about": "The most pixel samples (pixels times `Environment.pathtracing_samples_per_pixel`) one path tracing dispatch traces."
+   "about": "The most pixel samples (pixels times `Environment.pathtracing_samples_per_pixel`) one path tracing dispatch traces.",
+   "page": "other",
+   "title": "Other"
   },
   {
    "name": "rendering/pathtracing/multimesh_merged_blas_max_triangles",
@@ -5101,6 +5103,17 @@
    ],
    "note": "",
    "what": "path tracing draws a surface with the default material while its own shader compiles, instead of leaving it out.",
+   "page": "other",
+   "title": "Other",
+   "topic": ""
+  },
+  {
+   "name": "Long stills in bands",
+   "settings": [
+    "rendering/pathtracing/max_samples_per_dispatch"
+   ],
+   "note": "",
+   "what": "high-sample path traced stills trace in short bands, so the GPU never times out.",
    "page": "other",
    "title": "Other",
    "topic": ""
