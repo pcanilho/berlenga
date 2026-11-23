@@ -57,6 +57,14 @@
 				Spider webs in open grassland as [PlantSpecies]: [constant PRESET_SHEET_WEB] over the sward and [constant PRESET_ORB_WEB] a few metres apart, in their season ([method get_presence]). The silk is drawn by the plant shader and shows only where dew or hoarfrost beads it ([WeatherMap3D] surface wetness and frost); a [code]"dew"[/code] key (0 to 1) in [param season] sets the dew instead, for scenes without a weather map.
 			</description>
 		</method>
+		<method name="make_hay_bale" qualifiers="static">
+			<return type="ArrayMesh" />
+			<param index="0" name="seed" type="int" default="0" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<description>
+				A round hay bale ([constant PRESET_HAY_BALE]) for the seed: 4 x 4, 4 x 5 or 5 x 5 ft, lying on its side with the axis along +X.
+			</description>
+		</method>
 		<method name="make_bank_roots" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="variants" type="int" default="6" />
@@ -755,7 +763,10 @@
 		<constant name="PRESET_BANK_ROOTS_WOODY" value="114" enum="Preset">
 			A tree's or shrub's roots bared on a cut bank: a few woody laterals coming out of the face, running along and down it and branching to fine ends.
 		</constant>
-		<constant name="PRESET_MAX" value="115" enum="Preset">
+		<constant name="PRESET_HAY_BALE" value="115" enum="Preset">
+			A round hay bale lying on its side, the axis along +X: 4 x 4 to 5 x 5 ft (UF/IFAS EDIS AN326), hay strands wound round the body, the ends domed with the wound layers' spiral, twine in bands, settled a little flat.
+		</constant>
+		<constant name="PRESET_MAX" value="116" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="GRAZE_CATTLE" value="0" enum="GrazeSet">

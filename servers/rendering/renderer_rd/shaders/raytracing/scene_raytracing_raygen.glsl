@@ -3696,6 +3696,20 @@ void main() {
 					m.albedo *= mix(vec3(1.0), gdt, gsa.y);
 					// Granule ripples on the interdune lag (material.cpp, the same lines).
 					vec4 m5 = ts.x >= 6 ? texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(5, ts.y - 1), 0) : vec4(0.0);
+					// Dust devil tracks (material.cpp ground_sand_scour_at() and ground_scour_tone(), the same lines): the
+					// share swept, from the tile rows' G over the sand block's rect.
+					if (m5.w > 0.5 && sn > 0 && rn >= sn && all(greaterThanEqual(su, vec2(-0.5))) && all(lessThanEqual(su, vec2(float(sn) - 0.5)))) {
+						ivec2 c0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
+						ivec2 c1 = clamp(c0 + 1, ivec2(0), ivec2(sn - 1));
+						vec2 cf = clamp(su - floor(su), 0.0, 1.0);
+						int cr = rn + sn;
+						float sc = mix(mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(c0.x, cr + c0.y), 0).g,
+											   texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(c1.x, cr + c0.y), 0).g, cf.x),
+								mix(texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(c0.x, cr + c1.y), 0).g,
+										texelFetch(sampler2D(bindless_textures[nonuniformEXT(rmap)], SAMPLER_NEAREST_CLAMP), ivec2(c1.x, cr + c1.y), 0).g, cf.x),
+								cf.y);
+						m.albedo *= mix(vec3(1.0), mix(vec3(1.0), vec3(0.9, 0.87, 0.82), clamp(sc, 0.0, 1.0)), gsa.y);
+					}
 					if (m5.z > 0.5) {
 						vec3 ggt;
 						vec2 ggs = ground_granule_ripples(p, gsa.y * gsa.z * gsa.w * ground_dune_lag(p, gny, gsa.x), m5.xy, rt_cone_width, ggt);

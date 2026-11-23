@@ -1500,6 +1500,33 @@ squares, 12 to 22 m across with wobbled edges. Peat is little sticky. peat_bogs,
 get_mat_tear_count(). Bench --test=peat: a 1.5 t car stayed on the mat at 10 cm; a 7 t truck tore it and dropped
 72 cm; a car's wheel in the torn rut sinks 57 cm against 9 cm on the mat.
 
+#### Round 25 built (22 Nov)
+
+Picked 22 Nov: both, in order.
+
+**25.1 Peat water fills torn ruts.** A bog's water table stands within a few centimetres of its surface (Rydin and
+Jeglum 2013, The Biology of Peatlands), held in the acrotelm, the loose living top layer whose hydraulic conductivity
+runs to about 1e-3 m/s against 1e-7 to 1e-5 in the humified catotelm below (Ingram's diplotelmic bog; Holden and Burt
+2003). A rut torn through the mat cuts that layer, so water runs in through its walls until it stands at the table,
+dark humic water that hides the rut's depth; water over the table drains back the same way. Each torn 25 cm cell moves
+toward the level 5 cm under the bog's surface with time constant L / K, L about half a rut (15 cm): 150 s of world
+time, capped at a twentieth of the difference per update since the level is read back from the GPU late. Water on a
+bog does not soak in (the peat is saturated): its infiltration is cut to a thousandth. peat_water,
+get_peat_water_seeped(). Bench --test=peat: the 7 t truck's ruts took 1.3 m3 and stood 63 cm deep, 3 cm under the
+table; 40 l poured in rose 13 cm over it and drained back to 1 cm. Water on the unbroken mat ponds.
+
+**25.2 Clay packs the wheel arches.** Sticky clay thrown off the tread sticks inside the arch (soil-to-steel
+adhesion, Fountaine 1954; the known trouble of mudguards and fender liners in clay, why farm and military vehicles run
+open or wide arches): about 60% of what the tread throws hits the arch, and the sticky share packs at the clay's
+density over the arch's inside, half a circle round the tyre by its width; only flung clay, from a couple of metres a
+second of tread speed (slower it drops off under the tyre). Once it (and the tyre's balled cake, 24.1)
+closes the gap of arch_clearance (8 cm by default) the tyre shears through it along the arc it cuts in,
+2 sqrt(2 R d) long for an interference d, at a stiff remoulded clay's 15 kPa: a torque against the wheel, added to its
+brake response each substep, while the tyre shaves the interference off in about half a turn. Standing water washes it
+out slowly, rain rinses it, and dried it cracks off with the body's mud. arch_clearance, get_wheel_arch_mud(),
+get_wheel_arch_drag(). Bench --test=arches: 10 s spinning in stiff clay packed 1.2 cm in a 12 cm arch; a 1 cm arch
+rubbed at up to 223 N m and the car got 1.12 m against 1.18 m; open wheels none.
+
 ### Look (any stage)
 
 Wet mud is dark and glossy with a thin water film (the Lagarde film we have); stiff mud matte, with

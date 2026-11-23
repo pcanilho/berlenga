@@ -980,6 +980,19 @@ func _field(biome: Biome) -> VegetationField3D:
 	return f
 
 func _biome(i: int) -> Biome:
+	var b := _biome_all(i)
+	if OS.get_environment("ONLY") != "":
+		# env ONLY="a|b": keep the species whose names contain one of these (a debugging switch).
+		var keep: Array[PlantSpecies] = []
+		for sp in b.species:
+			for part in OS.get_environment("ONLY").split("|"):
+				if String(sp.resource_name).contains(part):
+					keep.append(sp)
+					break
+		b.species = keep
+	return b
+
+func _biome_all(i: int) -> Biome:
 	if i == TreeGenerator.STAND_MAX:
 		return gen.make_woodland(variants)
 	if i == TreeGenerator.STAND_MAX + 1:

@@ -606,6 +606,32 @@ public:
 		return material && material->shader && material->shader->builtin_standard_3d;
 	}
 
+	// Whether every discard in a spatial shader is BaseMaterial3D's camera cut-out, which it guards with
+	// !IN_SHADOW_PASS. Such a shader still discards in the camera's colour and depth passes, but its shadow maps can
+	// use the shared shadow material, as before the cut-out. A `discard` anywhere else in the code says no.
+	static bool shader_discards_only_for_camera_cutout(const String &p_code) {
+		// Only BaseMaterial3D's own guarded form counts: a cut-out that skips shadow passes.
+		static const char *guarded = "if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard(";
+		int calls = 0;
+		for (int i = p_code.find(guarded); i >= 0; i = p_code.find(guarded, i + 1)) {
+			calls++;
+		}
+		if (calls == 0) {
+			return false;
+		}
+		int discards = 0;
+		const char32_t *c = p_code.get_data();
+		const int len = p_code.length();
+		for (int i = p_code.find("discard"); i >= 0; i = p_code.find("discard", i + 7)) {
+			const bool word_start = i == 0 || !is_ascii_identifier_char(c[i - 1]);
+			const bool word_end = i + 7 >= len || !is_ascii_identifier_char(c[i + 7]);
+			if (word_start && word_end) {
+				discards++;
+			}
+		}
+		return discards <= calls;
+	}
+
 	// Whether the material's shader cuts itself round the player (BaseMaterial3D camera_cutout, or a shader that
 	// calls camera_cutout_discard()): the path tracer's camera rays pass it in the cut-out as raster discards it.
 	_FORCE_INLINE_ bool material_uses_camera_cutout(RID p_material) const {

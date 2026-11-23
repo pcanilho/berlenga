@@ -216,6 +216,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	// The face weights for a heightfield normal: x the cliff's (cliff_relief), y the bank's (bank_relief), each 0..1.
 	static Vector2 _relief_weights(const Vector3 &p_normal);
 	real_t _relief_fold_scale(real_t p_x, real_t p_z) const; // grid units
+	real_t _cliff_scale(const Vector3 &p, real_t p_k, real_t p_tan) const;
 	Vector3 _cliff_point(const Vector3 &p_world, real_t p_weight_scale) const;
 	void _build_cliff_surface(MeshJob &r_job) const;
 	const LocalVector<int> &_indices(int p_level, int p_mask);

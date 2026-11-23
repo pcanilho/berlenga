@@ -91,6 +91,9 @@ func _ready() -> void:
 		elif a == "--test=blowing":
 			test = true
 			only_blowing = true
+		elif a == "--test=sod":
+			test = true
+			only_sod = true
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -310,6 +313,12 @@ func _physics_process(_d: float) -> void:
 	for s in mini(3, field.biome.species.size()):
 		counts.append(field.get_placements(s).size())
 	print("VEG_POPULATE err=%d plants=%d per_species=%s ms=%.1f" % [err, field.get_plant_count(), str(counts), field.get_populate_time_msec()])
+	if test and only_sod:
+		await _sod_fall_check()
+		await _sod_land_check()
+		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if test and only_blowing:
 		await _blowing_checks()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
@@ -325,6 +334,8 @@ func _physics_process(_d: float) -> void:
 		await _blowing_checks()
 		await _wrack_live_check()
 		await _sod_fall_check()
+		await _sod_land_check()
+		await _hay_bale_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -1205,8 +1216,11 @@ func _wrack_offsets(f: VegetationField3D, peak: float) -> Vector2:
 # is not placed again; water at the scarp's foot undercuts the rest within the hazard's time; a dry bank keeps them.
 class SodWaterStub extends WorldWater:
 	var level := -INF
+	var flow := Vector3.ZERO
 	func _height_at(_p: Vector3) -> float:
 		return level
+	func _flow_at(_p: Vector3) -> Vector3:
+		return flow
 
 func _sod_fall_check() -> void:
 	var stub := GDScript.new()
@@ -1265,6 +1279,94 @@ func _sod_fall_check() -> void:
 	f.free()
 	WorldContracts.clear_overrides()
 
+# Sod blocks breaking on landing (SodLipFall3D, round 9): a lip broken off the 1.2 m scarp lands hard on the floor
+# below and breaks into Blast pieces; in still water at the foot they stay; a 2 m/s flood flow along the bank rolls
+# them off downstream.
+func _sod_land_check() -> void:
+	if not ClassDB.class_exists("PhysXDestructible3D"):
+		_check("sod landing: no Blast in this build", true, [])
+		return
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nfunc _relief_at(p: Vector3) -> Vector2:\n\tvar t := clampf((p.x + 0.3) / 0.6, 0.0, 1.0)\n\treturn Vector2(1.2 * (1.0 - t * t * (3.0 - 2.0 * t)), 1.0)\n"
+	stub.reload()
+	WorldContracts.set_ground(stub.new())
+	var ws := SodWaterStub.new()
+	WorldContracts.add_water_stub(ws)
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.bark_detail = false
+	f.biome = Biome.new()
+	f.biome.species.assign(PlantGenerator.make_bank_turf(1, false))
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var lips: Array = f.get_instances_near(0, Vector3.ZERO, 200.0)
+	if lips.is_empty():
+		_check("sod landing: lips placed", false, [])
+		f.free()
+		WorldContracts.clear_overrides()
+		return
+	var xf: Transform3D = lips[0].transform
+	# The scarp's foot: a floor 1.2 m under the lip, out over the drop.
+	var floor_y := xf.origin.y - 1.2
+	var floor := StaticBody3D.new()
+	# A wet silt bed (friction an estimate; the game's beds take theirs from the ground).
+	floor.physics_material_override = PhysicsMaterial.new()
+	floor.physics_material_override.friction = 0.4
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(60, 1, 60)
+	cs.shape = box
+	floor.add_child(cs)
+	add_child(floor)
+	floor.global_position = Vector3(xf.origin.x, floor_y - 0.5, xf.origin.z)
+	var sod := SodLipFall3D.new()
+	sod.range = 200.0
+	sod.undercut_time = 100000.0
+	sod.soaked_time = 100000.0
+	add_child(sod)
+	sod.break_at(xf.origin)
+	for i in 150:
+		await get_tree().physics_frame
+	var blocks: Array = sod.get_blocks()
+	var node: Node = blocks[0] if blocks.size() > 0 else null
+	var broke := node != null and node.is_class("PhysXDestructible3D")
+	var n_pieces: int = node.get_piece_count() if broke else 0
+	var centres := func() -> Array:
+		var out := []
+		if broke and is_instance_valid(node):
+			for k in node.get_piece_count():
+				out.append(node.get_piece_center(k))
+		return out
+	# Still water at the foot, then the flow.
+	ws.level = floor_y + 0.45
+	var c0: Array = centres.call()
+	for i in 60:
+		await get_tree().physics_frame
+	var c1: Array = centres.call()
+	ws.flow = Vector3(0, 0, 2.0)
+	for i in 180:
+		await get_tree().physics_frame
+	var c2: Array = centres.call()
+	var still := 0.0
+	var carried := 0.0
+	var moved := 0
+	for k in mini(c0.size(), mini(c1.size(), c2.size())):
+		still = maxf(still, Vector2(c1[k].x - c0[k].x, c1[k].z - c0[k].z).length())
+		var dz: float = c2[k].z - c1[k].z
+		carried += dz
+		if dz > 0.3:
+			moved += 1
+	carried /= maxf(c2.size(), 1)
+	print("VEG_SOD_LAND pieces %d still %.2f carried %.2f moved %d breaks %d" % [n_pieces, still, carried, moved, sod.get_break_count()])
+	_check("sod landing: a lip falling 1.2 m breaks into Blast pieces on the floor; still water leaves them; a 2 m/s flood flow carries them downstream",
+			broke and n_pieces >= 2 and sod.get_break_count() == 1 and still < 0.3 and carried > 0.3 and moved >= 1,
+			[n_pieces, still, carried, moved])
+	sod.free()
+	floor.free()
+	f.free()
+	WorldContracts.clear_overrides()
+
 # Roots on bare scarps (make_bank_roots): the sward's fine roots along the scarp's top edge, each on the variant grown
 # nearest the face's angle (the stub's face falls 1.2 m over about 0.6 m, near 63 degrees); none without the scarp;
 # the woody roots none with no canopy near.
@@ -1307,8 +1409,8 @@ func _bank_roots_check() -> void:
 	_check("bank roots: fine roots along a scarp's top edge on the variant nearest the face, none without the scarp, no woody roots with no canopy",
 			res[0][0] > 20 and res[0][1] == 0 and res[0][2] == 0 and res[1] == [0, 0, 0] and face_ok, res)
 
-# Hay meadows (GrassField3D.hay_meadows, GrassField3D.mown_days_at): a tall herb is cut inside a meadow mown 2 days ago,
-# not outside it; mown 40 days ago it has grown back; a low herb under the stubble is not cut.
+# Hay meadows (GrassField3D.hay_meadows, GrassField3D.mown_days_at): a tall herb stands as cut stalks (its mesh cut at
+# the stubble) inside a meadow mown 2 days ago, whole outside it and by 40 days; a low herb under the stubble is kept.
 func _hay_check() -> void:
 	var grass := GrassField3D.new()
 	grass.radius = 0.0
@@ -1335,21 +1437,44 @@ func _hay_check() -> void:
 		add_child(f)
 		f.data_map = f.get_path_to(dm)
 		f.populate()
-		var row := []
-		for k in 2:
-			var inside := 0
-			var outside := 0
-			for q in f.get_placements(k):
-				if q.x > -20.0 and q.x < 0.0 and q.z > -20.0 and q.z < 20.0:
-					inside += 1
-				else:
-					outside += 1
-			row.append([inside, outside])
-		res.append(row)
+		var tall_in := 0
+		var cut_in := 0
+		var cut_out := 0
+		for d in f.get_instances_near(0, Vector3(-10, 0, 0), 60.0):
+			var q: Vector3 = (d.transform as Transform3D).origin
+			var top: float = (d.mesh as Mesh).get_aabb().end.y
+			var inside := q.x > -20.0 and q.x < 0.0 and q.z > -20.0 and q.z < 20.0
+			if inside:
+				tall_in += 1
+				cut_in += 1 if top < 0.1 else 0
+			elif top < 0.1:
+				cut_out += 1
+		var low_in := 0
+		for q in f.get_placements(1):
+			if q.x > -20.0 and q.x < 0.0 and q.z > -20.0 and q.z < 20.0:
+				low_in += 1
+		res.append([tall_in, cut_in, cut_out, low_in])
 		f.free()
 	grass.free()
-	_check("hay meadows: the tall herb cut in a meadow mown 2 days ago, not outside, back by 40 days; the low herb kept",
-			res[0][0][0] == 0 and res[0][0][1] > 20 and res[1][0][0] > 20 and res[0][1][0] > 20, res)
+	_check("hay meadows: the tall herb stands as cut stalks in a meadow mown 2 days ago, whole outside it and by 40 days; the low herb kept",
+			res[0][0] > 20 and res[0][1] == res[0][0] and res[0][2] == 0 and res[1][0] > 20 and res[1][1] == 0 and res[0][3] > 20, res)
+
+# Hay bales (GrassField3D, PlantGenerator.make_hay_bale): none while the windrows lie (day 3), dropped along the rows
+# once baled (day 4), on the ground; carted by day 6.
+func _hay_bale_check() -> void:
+	var grass := GrassField3D.new()
+	grass.radius = 0.0
+	add_child(grass)
+	grass.data_map = grass.get_path_to(dm)
+	var meadow := PackedVector2Array([Vector2(-100, -100), Vector2(100, -100), Vector2(100, 100), Vector2(-100, 100)])
+	var counts := []
+	for days in [3.0, 4.0, 6.0]:
+		grass.hay_meadows = [{"polygon": meadow, "row_angle": 0.4, "days": days}]
+		for i in 3:
+			await get_tree().process_frame
+		counts.append(grass.get_hay_bale_count())
+	grass.free()
+	_check("hay bales: none on the windrows' day, along the rows once baled, carted after", counts[0] == 0 and counts[1] > 20 and counts[2] == 0, counts)
 
 # Turf overhangs (make_bank_turf, RULE_BANK_EDGE): a stub's relief raises the ground 1.2 m west of a scarp at x = 0;
 # sod lips stand along its top edge, none on the open ground either side or without the scarp.
@@ -1815,6 +1940,7 @@ func _fairy_check() -> void:
 # Blowing leaves (LeafFall3D.creep_speed): lying leaves stay put in light air, slide downwind once the wind 10 cm up
 # passes the creep speed (2.5 m/s here, from 12 m/s at 10 m over short grass), and only a few lift below the lift speed.
 var only_blowing := false # --test=blowing: the blowing-leaves check alone
+var only_sod := false # --test=sod: the sod lip checks alone
 
 func _blowing_checks() -> void:
 	if not ClassDB.class_exists("LeafFall3D"):

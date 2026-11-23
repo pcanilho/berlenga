@@ -4131,15 +4131,15 @@ func _build_strata(cam: Camera3D) -> void:
 
 
 func _build_walls(cam: Camera3D) -> void:
-	# Cut walls that give way (follow-up 54): two deep tyre ruts across a level snowfield, a fresh fall on an old
-	# settled base. The new snow cannot hold a cut its depth: its walls shed blocks down to the old snow, which
-	# stands, and the debris lies along the rut floor as a toe. Low and oblique down the ruts, the sun behind the
-	# camera's right. --walls=0: the same ruts without collapse; --gpu: the GPU field, collapsing as it runs.
+	# Cut walls that give way (follow-up 54): one deep rut through a wind slab over a base gone to depth hoar, on a
+	# level snowfield with hills on the horizon. The hoar cannot hold a face: the walls are undercut and the slab
+	# comes off in blocks, a scalloped top above, a blocky toe along the rut floor. Low along the rut, the sun from
+	# the side. --walls=0: the same rut without collapse; --gpu: the GPU field, collapsing as it runs.
 	snow.drift_enabled = false
 	sun.visible = true
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 60.0
-	sun.rotation_degrees = Vector3(-42.0, 28.0, 0.0) # from behind the camera's right, along the ruts: no wall shades the floors
+	sun.rotation_degrees = Vector3(-32.0, 75.0, 0.0) # from the right, across the rut and a little behind the camera
 	_add_terrain(512.0, 256, Color(0.33, 0.31, 0.27), 6.0)
 	var target := Marker3D.new()
 	target.name = "Probe"
@@ -4152,14 +4152,23 @@ func _build_walls(cam: Camera3D) -> void:
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	var p := Vector3(0, 0, 0)
-	snow.add_snow(90.0, 300.0) # the old pack
+	snow.add_snow(110.0, 280.0) # the early-season base
 	for h in 48:
 		snow.advance(3600.0)
-	_precipitate(8.0, 5.0) # a 40 mm storm of new snow on top
+	snow.add_depth_hoar(0.9) # a cold spell turns it to depth hoar
+	snow.advance(3600.0)
+	weather.wind_speed = 12.0 # a storm in a gale lays a wind slab on it
+	_precipitate(10.0, 5.0)
+	for h in 24:
+		snow.advance(3600.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
 	print("walls: %s; %.0f cm" % [_layer_text(p), snow.get_depth_at(p) * 100.0])
 	surface = SnowSurface3D.new()
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
+	surface.extent = 640.0 # the snow surface out to the hills, so its edge is not in the view
 	surface.detail_spacing = 0.03125
 	surface.deform_resolution = 2048
 	surface.deform_extent = 40.0
@@ -4173,9 +4182,8 @@ func _build_walls(cam: Camera3D) -> void:
 	var g := snow.get_ground_height_at(p)
 	surface.rim_share = 0.0
 	surface.compacted_density = 900.0
-	# Two tyre ruts 0.6 m wide, 1.9 m apart, cut to the ground along z from behind the camera to 26 m ahead.
-	for x in [-0.95, 0.95]:
-		surface.press_box(Vector3(x, g, -10.0), Vector2(0.6, 30.0), 0.0, g + 0.01)
+	# One rut 0.9 m wide cut to the ground along z, from behind the camera to 26 m ahead.
+	surface.press_box(Vector3(0.0, g, -10.0), Vector2(0.9, 30.0), 0.0, g + 0.01)
 	for i in 3:
 		await get_tree().physics_frame
 	var hc: Vector2 = snow.get_cut_critical_height(p)
@@ -4184,27 +4192,28 @@ func _build_walls(cam: Camera3D) -> void:
 		for i in 600:
 			await get_tree().physics_frame
 		print("walls (GPU): critical %.2f m, fails to %.2f m; %d texels gave, %.3f m3" % [hc.x, hc.y, surface.get_walls_collapsed(), surface.get_collapsed_volume()])
-		surface.wall_collapse = false
 	elif not OS.get_cmdline_user_args().has("--walls=0"):
 		surface.wall_collapse = true
 		var fell := 0
 		for k in 40:
 			fell += surface.crumble(0.2)
 		print("walls: critical %.2f m, fails to %.2f m; %d texels gave, %.3f m3" % [hc.x, hc.y, fell, surface.get_collapsed_volume()])
-		surface.wall_collapse = false # the shot holds still
-		if OS.get_cmdline_user_args().has("--verbose"):
-			for zz in [-2.0, -5.0, -12.0]:
-				var pr := []
-				for xi in 33:
-					var q := Vector3(-1.6 + xi * 0.1, 0, zz)
-					pr.append("%.2f" % (surface.get_rim_at(q) - surface.get_dent_at(q)))
-				print("    z %.0f: %s" % [zz, " ".join(pr)])
-	for i in 30:
+	# The shot holds the snow still: raster's TAA hold and the path tracer's wait run different numbers of frames,
+	# and the field would keep settling through them.
+	for i in 3:
 		await get_tree().process_frame
+	surface.process_mode = Node.PROCESS_MODE_DISABLED
+	if OS.get_cmdline_user_args().has("--verbose"):
+		for zz in [-2.0, -5.0]:
+			var pr := []
+			for xi in 25:
+				var q := Vector3(-1.2 + xi * 0.1, 0, zz)
+				pr.append("%.2f" % (surface.get_rim_at(q) - surface.get_dent_at(q)))
+			print("    z %.0f: %s" % [zz, " ".join(pr)])
 	var top := g + snow.get_depth_at(p)
-	# Low over the left rut's right bank, looking down the ruts: the left rut's far wall and toe in the left third.
-	cam.position = Vector3(0.1, top + 0.95, 2.6)
-	cam.look_at(Vector3(-0.85, top - 0.45, -5.5))
+	# Low on the right bank, looking along the rut: its left wall, lit from the side, in the near third.
+	cam.position = Vector3(0.75, top + 0.45, 1.6)
+	cam.look_at(Vector3(-0.35, top - 0.35, -3.5))
 	cam.fov = 50.0
 	await _save_frame("")
 	get_tree().quit()

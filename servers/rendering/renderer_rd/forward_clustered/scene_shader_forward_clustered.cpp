@@ -244,6 +244,8 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 		ERR_FAIL_MSG("Shader compilation failed.");
 	}
 
+	discard_only_camera_cutout = uses_discard && RendererRD::MaterialStorage::shader_discards_only_for_camera_cutout(code);
+
 	if (version.is_null()) {
 		version = SceneShaderForwardClustered::singleton->shader.version_create(false);
 	}

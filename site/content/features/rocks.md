@@ -34,6 +34,7 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
   *Shingle shore: before, scattered pebbles on bare sand; after, a band of gravel and small pebbles runs along the shore below the cobbles.*
 
 - **Frost-sorted ground** (`RockField3D.frost_sorting`): on cold, wet, gentle soil, frost sorts the stones into circles round fine-soil centres, drawn out into stripes on slopes.
+- **Runoff gravel** (`RockField3D.runoff_gravel`): coarse lag gathers on gully floors and fine grains spread on the fans below.
 - **Breakable stones** (`RockField3D.break_stone`): stones split into pieces along rough rock breaks, and layered rock into slabs.
 
   ![A granite block about 3 m away, whole and broken where it lay, raster](media/rocks-break.jpg)

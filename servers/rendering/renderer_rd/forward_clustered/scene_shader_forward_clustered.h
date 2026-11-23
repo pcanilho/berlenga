@@ -288,6 +288,9 @@ public:
 		bool rt_force_transparent = false;
 		bool hair_strands = false; // render_mode hair_strands: the path tracer may trace it as swept spheres.
 		bool uses_discard = false;
+		// The only discards are BaseMaterial3D's camera cut-out, which never applies in shadow passes: shadows can
+		// use the shared shadow material, the camera's depth prepass keeps the material's own shader.
+		bool discard_only_camera_cutout = false;
 		bool uses_roughness = false;
 		bool uses_normal = false;
 		bool uses_tangent = false;
@@ -451,7 +454,7 @@ public:
 
 		_FORCE_INLINE_ bool uses_shared_shadow_material() const {
 			bool backface_culling = cull_mode == RSE::CULL_MODE_BACK;
-			return !uses_particle_trails && !writes_modelview_or_projection && !uses_vertex && !uses_position && !uses_discard && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && backface_culling && !uses_point_size && !uses_world_coordinates && !billboard.is_camera_dependent() && !wireframe && !uses_z_clip_scale && !stencil_enabled;
+			return !uses_particle_trails && !writes_modelview_or_projection && !uses_vertex && !uses_position && (!uses_discard || discard_only_camera_cutout) && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && backface_culling && !uses_point_size && !uses_world_coordinates && !billboard.is_camera_dependent() && !wireframe && !uses_z_clip_scale && !stencil_enabled;
 		}
 
 		virtual void set_code(const String &p_Code) override;

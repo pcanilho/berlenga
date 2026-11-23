@@ -1709,6 +1709,62 @@ void GroundSurface3D::tear_mat(Vector3 p_position, Vector2 p_size, float p_yaw) 
 	}
 }
 
+// Peat water (round 25.1). A bog's water table stands within a few centimetres of its surface (Rydin and Jeglum
+// 2013), held in the acrotelm, the living, loosely packed top layer whose hydraulic conductivity runs to 1e-3 m/s
+// (Ingram's diplotelmic bog; Holden and Burt 2003), against 1e-7 to 1e-5 in the humified catotelm under it. A rut torn
+// through the mat cuts that layer, so water runs in through its walls until it stands at the table: dark, humic water
+// that hides how deep the rut is. Water above the table (rain) drains back the same way. Each torn 25 cm cell moves
+// toward the level 5 cm under the bog's surface with time constant L / K, the flow path L about half a rut (15 cm)
+// over K 1e-3 m/s: 150 s of world time (runoff_time_scale), a few minutes. The water goes in (or out) at each torn
+// cell; the field's own water evens it along the rut.
+void GroundSurface3D::_peat_water_update(double p_delta) {
+	if (!peat_bogs || !peat_water || !standing_water || !field.valid || wear_cells.is_empty() || p_delta <= 0.0) {
+		return;
+	}
+	// At most a twentieth of the difference an update: the water level is read back from the GPU a few updates late,
+	// and a larger step would overfill the rut past the table before the read caught up.
+	// Draining it may take twice that: it can only take what stands there, and a level taken under the table
+	// fills again.
+	const float k_full = 1.0f - Math::exp(-float(p_delta) * MAX(runoff_time_scale, 0.0f) / 150.0f);
+	const float k = MIN(k_full, 0.05f);
+	const float k_drain = MIN(k_full, 0.1f);
+	if (k_full <= 0.0f) {
+		return;
+	}
+	const Rect2 r = field.rect().grow(-1.0f);
+	for (const KeyValue<Vector2i, Wear> &kv : wear_cells) {
+		if (kv.value.torn < 0.5f) {
+			continue;
+		}
+		const Vector3 q((kv.key.x + 0.5f) * WEAR_CELL, 0.0f, (kv.key.y + 0.5f) * WEAR_CELL);
+		if (!r.has_point(Vector2(q.x, q.z))) {
+			continue;
+		}
+		const Cell &c = _cell_at(q.x, q.z);
+		if (c.bog <= 0.05f || !c.deformable) {
+			continue;
+		}
+		const float level = _ground_at(q.x, q.z) - 0.05f;
+		const float floor = get_surface_height_at(q);
+		const float water = MAX(get_standing_water_at(q), 0.0f);
+		float d = level - (floor + water);
+		if (d < 0.0f) {
+			d = MAX(d, -water); // only what stands there drains
+		}
+		if (Math::abs(d) < 1e-4f) {
+			continue;
+		}
+		const float v = d * (d > 0.0f ? k : k_drain) * c.bog * WEAR_CELL * WEAR_CELL;
+		if (Math::abs(v) < 1e-7f) {
+			continue;
+		}
+		// Into the cell itself (in the rut, under the mat's surface), so none is spilled onto the mat round it. Peat
+		// water: tea-coloured with humic acids and fine peat, about as turbid as a light mud.
+		add_water(q, 0.6f * WEAR_CELL, v, v > 0.0f ? 2.0f : 0.0f);
+		peat_water_seeped += v;
+	}
+}
+
 void GroundSurface3D::_seal_add(const Vector3 &p_position, float p_radius, float p_amount) {
 	for (int z = int(Math::floor((p_position.z - p_radius) / WEAR_CELL)); z <= int(Math::floor((p_position.z + p_radius) / WEAR_CELL)); z++) {
 		for (int x = int(Math::floor((p_position.x - p_radius) / WEAR_CELL)); x <= int(Math::floor((p_position.x + p_radius) / WEAR_CELL)); x++) {
@@ -3023,6 +3079,9 @@ float GroundSurface3D::_water_conductivity(const CellInput &p_in) const {
 	// Burnt water-repellent soil sheds rain: infiltration down to about a tenth on a fresh severe burn (Robichaud 2000;
 	// Doerr et al. 2000).
 	k *= 1.0f - 0.9f * p_in.repel;
+	// A peat bog (round 24.2) is saturated to within a few centimetres of its surface: water standing on it or in its
+	// ruts has nowhere to soak to (the table, not the soil, sets its level: _peat_water_update()).
+	k *= 1.0f - 0.999f * CLAMP(p_in.bog, 0.0f, 1.0f);
 	// A packed wheel track takes in a fraction of the water the loose soil beside it does (Ankeny et al. 1990), so
 	// rain stands in worn tracks.
 	k *= 1.0f - 0.8f * p_in.compacted;
@@ -6328,6 +6387,8 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		ripple_sand_depth.resize(sn * sn);
 		ripple_sand_share.resize(sn * sn);
 		ripple_sand_blown.resize(sn * sn);
+		ripple_sand_scour.resize(sn * sn);
+		ripple_sand_scoured = false;
 		const TerrainGenerator3D *sgen = is_inside_tree() ? _height_query().generator : nullptr;
 		ripple_sand_wind = sgen ? sgen->get_sand_wind_direction() : Vector2();
 		for (int z = 0; z < sn; z++) {
@@ -6338,6 +6399,8 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) * (1.0f - _scour_at(px, pz)) : 0.0f;
 				ripple_sand_share[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
 				ripple_sand_blown[z * sn + x] = c.deformable ? c.blown : 0.0f;
+				ripple_sand_scour[z * sn + x] = c.deformable ? _scour_at(px, pz) : 0.0f;
+				ripple_sand_scoured = ripple_sand_scoured || ripple_sand_scour[z * sn + x] > 0.0f;
 				ripple_sand_depth[z * sn + x] = sgen ? float(sgen->get_sand_interdune_at(Vector3(px, 0.0f, pz))) : -1.0f;
 			}
 		}
@@ -6477,6 +6540,15 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				}
 			}
 		}
+		// Rows n+S..n+S+S-1 (G, over the sand block's rect, as its rows): the share dust devils swept, for their
+		// tracks' tone (the tile rows leave G free; the window is wider than the sand block).
+		if (sand && ripple_sand_scoured && n >= sn && (int)ripple_sand_scour.size() == sn * sn) {
+			for (int z = 0; z < sn; z++) {
+				for (int x = 0; x < sn; x++) {
+					d[((n + sn + z) * w + x) * 4 + 1] = ripple_sand_scour[z * sn + x];
+				}
+			}
+		}
 		// Rows n+S+n..n+S+n+D-1: the generator's interdune floors round the patch (R), for the dune tone past it.
 		if ((int)ripple_far_depth.size() == dn * dn) {
 			for (int z = 0; z < dn; z++) {
@@ -6511,6 +6583,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[20] = ripple_sand_wind.x; // the dune-building wind, for the granule ripples
 		meta[21] = ripple_sand_wind.y;
 		meta[22] = granule_ripples ? 1.0f : 0.0f;
+		meta[23] = sand && ripple_sand_scoured && n >= sn ? 1.0f : 0.0f; // dust devil tracks in the sand block's G rows
 		meta[24] = get_rain_pit_cover(); // the rain's marks (_rain_marks())
 		meta[25] = get_rain_crust();
 		meta[26] = rain_pit_seed;
@@ -6943,6 +7016,7 @@ void GroundSurface3D::_notification(int p_what) {
 				_wear_publish();
 				_buried_update();
 				_world_puddles_update(puddle_accum);
+				_peat_water_update(puddle_accum);
 				_silt_wind_update(float(puddle_accum));
 				puddle_accum = 0.0;
 			}
@@ -10621,6 +10695,10 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_peat_bog_at", "position"), &GroundSurface3D::get_peat_bog_at);
 	ClassDB::bind_method(D_METHOD("tear_mat", "position", "size", "yaw"), &GroundSurface3D::tear_mat);
 	ClassDB::bind_method(D_METHOD("get_mat_tear_count"), &GroundSurface3D::get_mat_tear_count);
+	ClassDB::bind_method(D_METHOD("set_peat_water", "enabled"), &GroundSurface3D::set_peat_water);
+	ClassDB::bind_method(D_METHOD("is_peat_water"), &GroundSurface3D::is_peat_water);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "peat_water"), "set_peat_water", "is_peat_water");
+	ClassDB::bind_method(D_METHOD("get_peat_water_seeped"), &GroundSurface3D::get_peat_water_seeped);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");

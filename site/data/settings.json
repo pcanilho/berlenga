@@ -1077,7 +1077,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). Rock faces weather by aspect, with lichen, moss and seep streaks on the shaded sides (`tm_face_weathering`, `tm_latitude`).",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). Rock faces weather by aspect, with lichen rosettes in colonies, moss on shaded ledges and seep stripes down gullies (`tm_face_weathering`, `tm_latitude`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1208,10 +1208,11 @@
   {
    "name": "Peat bogs",
    "settings": [
-    "GroundSurface3D.peat_bogs"
+    "GroundSurface3D.peat_bogs",
+    "peat_water"
    ],
    "note": "",
-   "what": "a root mat over soft peat bears light vehicles and tears under heavy ones, which drop in.",
+   "what": "a root mat over soft peat bears light vehicles and tears under heavy ones, which drop in; torn ruts fill with dark peat water up to the bog's water table.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1236,7 +1237,7 @@
     "PhysXVehicle3D.tyre_clogging"
    ],
    "note": "",
-   "what": "sticky clay packs the tread until it grips like a slick and balls up on the tyre, shedding in chunks; a lopsided tyre shakes the vehicle until spinning throws it clean.",
+   "what": "sticky clay packs the tread until it grips like a slick and balls up on the tyre, shedding in chunks; a lopsided tyre shakes the vehicle until spinning throws it clean, and clay building up inside the arches rubs the tyre once it closes the gap (`arch_clearance`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1719,6 +1720,17 @@
    ],
    "note": "",
    "what": "on cold, wet, gentle soil, frost sorts the stones into circles round fine-soil centres, drawn out into stripes on slopes.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Runoff gravel",
+   "settings": [
+    "RockField3D.runoff_gravel"
+   ],
+   "note": "",
+   "what": "coarse lag gathers on gully floors and fine grains spread on the fans below.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -2696,7 +2708,7 @@
     "make_bank_roots()"
    ],
    "note": "",
-   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking; roots of the sward and nearby trees show on bare bank faces, grown on each face's angle.",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking, break apart on landing and wash away in floods; roots of the sward and nearby trees show on bare bank faces, grown on each face's angle.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2721,7 +2733,7 @@
     "GrassField3D.hay_meadows"
    ],
    "note": "",
-   "what": "meadows are mown to stubble, the cut grass lying in swaths, then tedded, raked into windrows and carted off over the following days.",
+   "what": "meadows are mown to stubble, the cut grass lying in swaths, then tedded, raked into windrows, baled into round bales and carted off over the following days; tall herbs stand cut at the stubble and regrow, and the rows carry on as far ground detail past the grass blades.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -3195,6 +3207,17 @@
    ],
    "note": "",
    "what": "spruce, fir, larch, pine and hemlock keep their cone, with branches to the top.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Crown self-shading",
+   "settings": [
+    "TreeGenerator.crown_occlusion"
+   ],
+   "note": "",
+   "what": "in raster, the outer leaves of a crown shade its inner ones.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"

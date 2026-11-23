@@ -380,6 +380,9 @@ public:
 	Vector3 get_piece_linear_velocity(int p_index) const;
 	Vector3 get_piece_center(int p_index) const;
 	float get_piece_mass(int p_index) const;
+	// The piece's physics body, for effects that push debris (a river carrying it off). Invalid for an
+	// out-of-range index or a dead body.
+	RID get_piece_body(int p_index) const;
 	// Where a piece's chunks sat in the intact object (this node's local space, unscaled), and their volume (m3,
 	// scaled): what an effect that marked the intact object (a burning patch) needs to find its pieces again.
 	Vector3 get_piece_rest_center(int p_index) const;
