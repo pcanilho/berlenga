@@ -1373,6 +1373,7 @@ void RenderRaytracing::prepare_frame() {
 	_rt_prune_handle_map(shared_captured_mm_entries, shared_captured_mm_prune, merged_mm_pool);
 
 	_evict_dead_mesh_groups();
+	_evict_surfaces(current_frame);
 	_evict_surface_lods(current_frame);
 	_omm_process();
 
@@ -1492,6 +1493,39 @@ RTSurfaceData *RenderRaytracing::process_surface_lod(
 	entry->cached_rid_version = p_mesh_rid_version;
 	entry->last_used_frame = current_frame;
 	return entry->ptr;
+}
+
+// Frees the static surfaces no instance traced for a while (a captured surface's bare mesh once its capture lands,
+// a mesh that left the view, a freed mesh), a few chunks a frame. A surface traced again is rebuilt from the same
+// mesh, so it traces the same. Persistent slots keep tracing a BLAS without touching its entry, so those stay.
+void RenderRaytracing::_evict_surfaces(uint32_t p_frame) {
+	static const uint32_t SURFACE_TTL = 120; // Frames a surface stays after its last use.
+	static const uint32_t CHUNKS_PER_FRAME = 64;
+	const uint32_t chunk_count = surface_chunks.size();
+	if (chunk_count == 0) {
+		return;
+	}
+	for (uint32_t n = 0; n < MIN(CHUNKS_PER_FRAME, chunk_count); n++) {
+		if (surface_evict_cursor >= chunk_count) {
+			surface_evict_cursor = 0;
+		}
+		RTCacheEntry *chunk = surface_chunks[surface_evict_cursor++];
+		if (!chunk) {
+			continue;
+		}
+		for (uint32_t i = 0; i < RT_CACHE_CHUNK_SIZE; i++) {
+			RTCacheEntry &entry = chunk[i];
+			if (!entry.ptr || entry.last_used_frame == 0 || p_frame - entry.last_used_frame <= SURFACE_TTL) {
+				continue;
+			}
+			if (entry.ptr->blas.is_valid() && _persistent_blas_referenced(entry.ptr->blas)) {
+				continue;
+			}
+			_free_blas_resources(blas_transform_pool, entry.ptr->blas, &entry.ptr->blas_transform, 1);
+			memdelete(entry.ptr);
+			entry = RTCacheEntry();
+		}
+	}
 }
 
 // Frees the LOD levels no instance traced for a while.

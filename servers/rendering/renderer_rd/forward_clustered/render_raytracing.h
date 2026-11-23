@@ -1518,6 +1518,7 @@ class RenderRaytracing {
 	Vector<RTCacheEntry *> surface_chunks;
 	// Coarser levels of static surfaces, keyed (surface cache key << 8) | level; see process_surface_lod.
 	HashMap<uint64_t, RTCacheEntry> surface_lod_cache;
+	uint32_t surface_evict_cursor = 0; // Next surface_chunks chunk _evict_surfaces checks.
 	Vector<RTMaterialCacheEntry *> material_chunks;
 
 	// Texture streaming (TextureStreaming): the feedback index of each material table entry (UINT32_MAX: none),
@@ -1981,6 +1982,7 @@ class RenderRaytracing {
 			uint32_t p_lod,
 			LocalVector<RID> &r_dirty_blas_list);
 	void _evict_surface_lods(uint32_t p_frame);
+	void _evict_surfaces(uint32_t p_frame);
 	RTMaterialData *process_material(RID p_material_rid, uint16_t p_material_invalidation_counter);
 	bool _build_merged_mm_blas(
 			const RTInstanceSource &p_source,
