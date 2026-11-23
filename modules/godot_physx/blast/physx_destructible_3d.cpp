@@ -201,6 +201,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_piece_volume", "index"), &PhysXDestructible3D::get_piece_volume);
 	ClassDB::bind_method(D_METHOD("set_piece_lifetime", "seconds"), &PhysXDestructible3D::set_piece_lifetime);
 	ClassDB::bind_method(D_METHOD("get_piece_lifetime"), &PhysXDestructible3D::get_piece_lifetime);
+	ClassDB::bind_method(D_METHOD("dissolve_piece", "index", "seconds"), &PhysXDestructible3D::dissolve_piece);
 	ClassDB::bind_method(D_METHOD("set_piece_shrink_time", "seconds"), &PhysXDestructible3D::set_piece_shrink_time);
 	ClassDB::bind_method(D_METHOD("get_piece_shrink_time"), &PhysXDestructible3D::get_piece_shrink_time);
 	ClassDB::bind_method(D_METHOD("set_freeze_when_asleep", "freeze"), &PhysXDestructible3D::set_freeze_when_asleep);
@@ -1465,7 +1466,15 @@ void PhysXDestructible3D::_sync_transforms() {
 		// Only debris ages -- a chipped wall's static remainder stays put
 		// (a frozen or shrinking piece did move, so it still ages).
 		real_t shrink = 1.0;
-		if (piece_lifetime > 0.0f && (moving || piece.frozen || piece.shrinking)) {
+		if (piece.dissolve_len > 0.0f) {
+			// dissolve_piece(): this piece alone shrinks away over its own time (a clod washing out in a current).
+			const double left = piece.dissolve_end - piece_clock;
+			if (left <= 0.0) {
+				_retire_piece((uint32_t)i);
+				continue;
+			}
+			shrink = (real_t)MIN(left / piece.dissolve_len, 1.0);
+		} else if (piece_lifetime > 0.0f && (moving || piece.frozen || piece.shrinking)) {
 			const double age = piece_clock - piece.born;
 			if (age >= piece_lifetime) {
 				_retire_piece((uint32_t)i);
@@ -1718,6 +1727,20 @@ Vector3 PhysXDestructible3D::get_piece_rest_center(int p_index) const {
 		return Vector3();
 	}
 	return pieces[p_index].center_local;
+}
+
+bool PhysXDestructible3D::dissolve_piece(int p_index, float p_seconds) {
+	if (p_index < 0 || p_index >= (int)pieces.size() || !pieces[p_index].body.is_valid()) {
+		return false;
+	}
+	ChunkVisual &piece = pieces[p_index];
+	const float len = MAX(p_seconds, 0.01f);
+	if (piece.dissolve_len > 0.0f && piece.dissolve_end - piece_clock <= len) {
+		return true; // Already going at least as fast.
+	}
+	piece.dissolve_len = len;
+	piece.dissolve_end = piece_clock + len;
+	return true;
 }
 
 float PhysXDestructible3D::get_piece_volume(int p_index) const {

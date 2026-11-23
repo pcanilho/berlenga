@@ -1282,6 +1282,9 @@ class SodWaterStub extends WorldWater:
 		return level
 	func _flow_at(_p: Vector3) -> Vector3:
 		return flow
+	var silt := 0.0 # kg/s handed in, summed over the calls
+	func _add_sediment(_p: Vector3, mineral: float, _ash: float) -> void:
+		silt += mineral
 
 func _sod_fall_check() -> void:
 	var stub := GDScript.new()
@@ -1423,6 +1426,25 @@ func _sod_land_check() -> void:
 	_check("sod landing: a lip falling 1.2 m breaks into Blast pieces on the floor; still water leaves them; a 2 m/s flood flow carries them downstream",
 			broke and n_pieces >= 2 and sod.get_break_count() == 1 and still < 0.3 and carried > 0.3 and moved >= 1,
 			[n_pieces, still, carried, moved])
+	# Under water they slake (silt into the water), crumble and the crumbs wash out (times shortened for the check).
+	sod.slake_time = 2.0
+	sod.wash_time = 1.0
+	var p_before: int = node.get_piece_count() if broke and is_instance_valid(node) else 0
+	# Still water first: they slake but stay.
+	var flow_was: Vector3 = ws.flow
+	ws.flow = Vector3.ZERO
+	for i in 180:
+		await get_tree().physics_frame
+	var p_mid: int = node.get_piece_count() if broke and is_instance_valid(node) else 0
+	ws.flow = flow_was
+	sod.crumb_volume = 0.05 # this small lip's pieces wear away within the second
+	for i in 300:
+		await get_tree().physics_frame
+	var p_after: int = node.get_piece_count() if broke and is_instance_valid(node) else 0
+	print("VEG_SOD_SLAKE silt %.3f kg, water got %.3f, pieces %d -> %d -> %d" % [sod.get_silt_released(), ws.silt, p_before, p_mid, p_after])
+	_check("sod crumbling: pieces in the water slake silt into it; still water keeps them, a current wears them away",
+			broke and sod.get_silt_released() > 0.0 and ws.silt > 0.0 and p_mid == p_before and p_after < p_before,
+			[sod.get_silt_released(), ws.silt, p_before, p_after])
 	sod.free()
 	floor.free()
 	f.free()

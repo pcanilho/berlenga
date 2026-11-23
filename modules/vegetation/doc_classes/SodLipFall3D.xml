@@ -42,10 +42,19 @@
 				How many lips have broken.
 			</description>
 		</method>
+		<method name="get_silt_released" qualifiers="const">
+			<return type="float" />
+			<description>
+				The silt (kg) the blocks have shed into the water so far, slaking and washing out.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="break_speed" type="float" setter="set_break_speed" getter="get_break_speed" default="2.5">
 			How fast a landing must stop a block, in m/s, to break it (an estimate, about a 0.3 m drop).
+		</member>
+		<member name="crumb_volume" type="float" setter="set_crumb_volume" getter="get_crumb_volume" default="0.0015">
+			The piece size (m³) that wears away in [member wash_time]. A piece slaked through ([member slake_time]) in a current faster than 0.3 m/s shrinks away ([method PhysXDestructible3D.dissolve_piece]) over [member wash_time] times the cube root of its volume over this, and the rest of its soil goes into the water as silt.
 		</member>
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1500.0">
 			The block's density in kg/m³ (wet topsoil bound by roots; an estimate).
@@ -65,11 +74,20 @@
 		<member name="range" type="float" setter="set_range" getter="get_range" default="40.0">
 			How far from the camera lips are looked at, in metres.
 		</member>
+		<member name="slake_share" type="float" setter="set_slake_share" getter="get_slake_share" default="0.35">
+			The share of a piece's soil that slakes off as silt under water: the loose soil under the root mat (an estimate).
+		</member>
+		<member name="slake_time" type="float" setter="set_slake_time" getter="get_slake_time" default="90.0">
+			Seconds for a block or piece under water to slake: its loose soil goes into the water as silt ([method WorldWater.add_sediment]) at an even rate over this time. Dry soil aggregates wetted fast break down within minutes (Le Bissonnais 1996); the time is an estimate.
+		</member>
 		<member name="soaked_time" type="float" setter="set_soaked_time" getter="get_soaked_time" default="3600.0">
 			Mean seconds to fail when soaked in heavy rain (an estimate).
 		</member>
 		<member name="undercut_time" type="float" setter="set_undercut_time" getter="get_undercut_time" default="600.0">
 			Mean seconds to fail with water at the foot (an estimate).
+		</member>
+		<member name="wash_time" type="float" setter="set_wash_time" getter="get_wash_time" default="20.0">
+			Seconds a piece of [member crumb_volume] takes to wear away in a current; larger pieces take longer.
 		</member>
 	</members>
 </class>

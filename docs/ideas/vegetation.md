@@ -2039,3 +2039,20 @@ stub straw-tinged; full for five days, easing to 0.4 by day 21 (estimate); the r
 the pale share falls as the blades grow back (by day 30 the meadow is green). The far ground's mown colour already
 pales the stubble the same way. Check: grass bench --raster --hay=5 and --hay=30.
 
+## Sod crumbling in water (round 10, second pick)
+A turf block that falls into water does two things. The loose soil under its root mat slakes: dry aggregates wetted
+fast break down within minutes as the air in their pores is forced out (the fast-wetting test of aggregate stability,
+Le Bissonnais 1996, European Journal of Soil Science 47), clouding the water. In a current the rest wears away by the
+flow's excess shear stress on cohesive soil (erosion rate k (tau - tau_c); streambank ranges in the bank-erosion model
+tables of HESS 22, 3903, 2018: tau_c 0 to 21.9 Pa, k 0.0001 to 0.32 m3/N/day), the root mat holding longest.
+Built: SodLipFall3D under water (WorldWater.height_at, half under or more).
+- Slaking: over slake_time (90 s, estimate) slake_share (0.35, estimate) of each piece's soil mass (volume x density)
+  goes into the water at an even rate by WorldWater.add_sediment as mineral load, which the water producers carry
+  off as their suspended load (the river's and surface's own turbidity: the silt trail is the water's).
+- Wearing away: slaked through in a current over 0.3 m/s, a piece shrinks away (PhysXDestructible3D.dissolve_piece,
+  new: one piece's own shrink and removal) over wash_time (20 s) for a piece of crumb_volume (0.0015 m3), longer by the
+  cube root of its volume for larger ones (estimates: the rate above for a root-bound mat would take days; the game
+  keeps it to minutes); the rest of its soil goes into the water as it shrinks. Still water keeps the pieces.
+- The pieces are Blast's leaves (the lip is prefractured one level deep), so they wear as whole pieces, not crumbs.
+- get_silt_released() reports the kg shed. Check: vegetation --test=sod ("sod crumbling").
+

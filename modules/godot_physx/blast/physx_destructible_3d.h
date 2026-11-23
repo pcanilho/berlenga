@@ -387,6 +387,7 @@ public:
 	// scaled): what an effect that marked the intact object (a burning patch) needs to find its pieces again.
 	Vector3 get_piece_rest_center(int p_index) const;
 	float get_piece_volume(int p_index) const;
+	bool dissolve_piece(int p_index, float p_seconds);
 
 	PackedStringArray get_configuration_warnings() const override;
 
@@ -544,6 +545,9 @@ private:
 		// resting on another piece.
 		bool shrinking = false;
 		Vector3 shrink_pivot;
+		// dissolve_piece(): its own end (piece_clock) and shrink length, over the node's piece_lifetime; 0 none.
+		double dissolve_end = 0.0;
+		float dissolve_len = 0.0f;
 	};
 	void _set_piece_transform(const ChunkVisual &p_piece, const Transform3D &p_transform) const;
 	// Frees pieces[p_index] and retires its Blast actor (so a later hit can't
