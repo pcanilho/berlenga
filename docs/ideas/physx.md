@@ -2587,6 +2587,29 @@ the path tracer, by albedo (bright gas spreads light sideways over its
 diffusion length, which softens and shrinks its shadow's edge; dark smoke
 does not). Image: /mnt/project-files/fork/physx/powder-foot-shadow-edge-test.png.
 
+### Gas shadows on the ground checked against path tracing (23 Nov)
+
+Established approach first: the scene already shadows the ground through the gas with delta-Eddington
+scaling and the two-stream total transmittance (Meador and Weaver 1980); the further steps in the
+literature are beam spreading of the many-times-scattered light (Premože et al. 2004) and the sky the
+gas hides from the ground (Unreal's volumetric cloud sky AO). Measured before adding either.
+
+Test: three puffs floating 12 m up (or 4 m, "low"), a side sun at 35 degrees, a high camera on their
+shadows, raster and PT from one run. Darkening of the ground in the shadow, % of the open ground
+(raster vs PT): grey smoke 20.1 vs 21.3; dust 19.9 vs 21.0; white smoke 18.8 vs 18.1; snow powder
+(albedo 0.99) 14.2 vs 17.4; dense grey 34.7 vs 38.4; dense powder 32.8 vs 32.3; low grey 14.9 vs
+16.2; low dust 14.7 vs 15.8; low powder 10.2 vs 11.4. Shadow edges agree within 1%. Every gas type's
+shadow is within 1 to 4% of the path tracer (at most 8 levels in the thin powder's core, raster the
+lighter), so no change: the larger drift reported above for the smoke, dust and fire pairs came from a
+measurement box that took in gas as well as shadow.
+
+The avalanche foot after the refit, edge profile averaged over 61 columns (levels against the open
+snow, from 20 px inside the gas to 12 px out): raster -10 flat, -12 at the edge, then the snow; PT -9
+easing to -5 and -1 at the edge, then +1 to +3 (snow lit by the cloud beside it). Before the refit the
+raster edge reached -15. What is left is 2 to 5 levels on average, with local specks where the front
+meets the snow, and the path tracer's light from the cloud onto the snow beside it, which raster does
+not model (volume-to-surface bounce: a feature of its own).
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
