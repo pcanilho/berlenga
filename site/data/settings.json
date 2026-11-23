@@ -1208,10 +1208,11 @@
   {
    "name": "Peat bogs",
    "settings": [
-    "GroundSurface3D.peat_bogs"
+    "GroundSurface3D.peat_bogs",
+    "peat_water"
    ],
    "note": "",
-   "what": "a root mat over soft peat bears light vehicles and tears under heavy ones, which drop in.",
+   "what": "a root mat over soft peat bears light vehicles and tears under heavy ones, which drop in; torn ruts fill with dark peat water up to the bog's water table.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1236,7 +1237,7 @@
     "PhysXVehicle3D.tyre_clogging"
    ],
    "note": "",
-   "what": "sticky clay packs the tread until it grips like a slick and balls up on the tyre, shedding in chunks; a lopsided tyre shakes the vehicle until spinning throws it clean.",
+   "what": "sticky clay packs the tread until it grips like a slick and balls up on the tyre, shedding in chunks; a lopsided tyre shakes the vehicle until spinning throws it clean, and clay building up inside the arches rubs the tyre once it closes the gap (`arch_clearance`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
