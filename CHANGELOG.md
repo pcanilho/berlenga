@@ -6,6 +6,12 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-c2def7d8 (2026-11-23)
+
+### Added
+- RainFall3D body_collision: rain and eave drips land and splash on moving physics bodies near the camera (characters, vehicles, rigid props).
+- RoadRelief3D: street surface whose crown, gutters, wheel ruts, ISO 8608 roughness, sags, birdbaths, patches and potholes are real geometry (raster, path tracer, collider and water read one height via get_height_at). Built from world position, so it never repeats and joins without seams.
+
 ## build-4121c48d (2026-11-23)
 
 ### Changed
