@@ -22467,14 +22467,14 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		if (fire_s.x > 0.0) {
 			float fire_edge = texture(lichen_map, base_uv * vec2(1.3, 0.4) + vec2(0.57, 0.21)).r;
 			float reach = fire_s.z * (0.7 + 0.6 * fire_edge);
-			float charred = fire_s.x * (1.0 - smoothstep(0.8, 1.0, (fire_w.y - MODEL_MATRIX[3].y) / max(reach, 0.02)));
+			float charred = fire_s.x * (1.0 - smoothstep(0.8, 1.0, (fire_w.y - bark_tree_y) / max(reach, 0.02)));
 			float plates = texture(texture_roughness, base_uv).b;
 			ALBEDO = mix(ALBEDO, mix(ALBEDO * 0.25, vec3(0.03, 0.026, 0.023), smoothstep(0.3, 0.6, plates)), charred);
 			ROUGHNESS = mix(ROUGHNESS, 0.9, charred);
 			bark_bare *= 1.0 - charred;
 			// Burning and smouldering wood near the ground (logs, fallen branches, a stem's foot): the glow
 			// the fire map carries there shows in the char's cracks, the furrows between the plates.
-			float fire_low = 1.0 - smoothstep(0.15, 0.5, fire_w.y - MODEL_MATRIX[3].y);
+			float fire_low = 1.0 - smoothstep(0.15, 0.5, fire_w.y - bark_tree_y);
 			float fire_cracks = 1.0 - smoothstep(0.2, 0.45, plates);
 			fire_bark_emit = fire_glow_color(fire_s.y) * charred * fire_low * (0.15 + 0.85 * fire_cracks) * 3.0;
 		}
@@ -22516,7 +22516,10 @@ uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
 uniform float bark_stripped_age = -1.0;
 uniform float wood_spiral = 0.0;
 )";
-	code = code.insert(vx, uniforms + VegetationFire::SHADER_CODE + "\n");
+	// The tree's foot for the fire's heights, from the vertex stage: in the fragment stage MODEL_MATRIX is the node's,
+	// without a MultiMesh instance's own transform (every tree of a field read the field's origin).
+	code = code.insert(vx + String("void vertex() {").length(), "\n	bark_tree_y = MODEL_MATRIX[3].y;");
+	code = code.insert(vx, uniforms + "varying float bark_tree_y;\n" + VegetationFire::SHADER_CODE + "\n");
 	Ref<Shader> sh;
 	sh.instantiate();
 	sh->set_code(code);
@@ -22726,6 +22729,9 @@ vec3 plant_wind(vec3 wp, float h) {
 	const String body = R"(
 	// The crown's shade of the sky (TreeGenerator._crown_occlusion, trees.md 5bl): CUSTOM0.r.
 	crown_occ = CUSTOM0.r * crown_occlusion_on;
+	// The tree's foot and scale for the fire, from the vertex stage (a MultiMesh instance's transform is in
+	// MODEL_MATRIX only here).
+	leaf_tree = vec4(MODEL_MATRIX[3].xyz, pow(abs(determinant(mat3(MODEL_MATRIX))), 1.0 / 3.0));
 	// Per-tree crown tone (trees.md 5bm), hashed here because a MultiMesh instance's own transform is in
 	// MODEL_MATRIX only in the vertex stage.
 	crown_tone = vec3(1.0);
@@ -22805,7 +22811,7 @@ vec3 plant_wind(vec3 wp, float h) {
 			float fire_rough = 0.0;
 			vec3 fire_before = ALBEDO;
 			float fire_n = fract(dot(COLOR.rgb, vec3(53.17, 21.71, 7.13)));
-			float fire_burn = fire_foliage_apply(fire_s, fire_w.y - MODEL_MATRIX[3].y, fire_n, ALBEDO, fire_rough);
+			float fire_burn = fire_foliage_apply(fire_s, fire_w.y - leaf_tree.y, fire_n, ALBEDO, fire_rough);
 			// Burnt up: foliage the flame passed through is consumed once the crown (or the plant) has burnt,
 			// leaf by leaf with a ragged edge, leaving the bare black branches (a crown fire takes the foliage and the
 			// finest twigs, the crown fuel of Van Wagner 1977). Killed brown foliage above the flame stays.
@@ -22822,7 +22828,7 @@ vec3 plant_wind(vec3 wp, float h) {
 			// fire_age_map (PhysXFireSpread3D, game years).
 			float fire_age = fire_age_years(fire_w.xz);
 			if (fire_age >= 0.0) {
-				float fire_h = fire_w.y - MODEL_MATRIX[3].y;
+				float fire_h = fire_w.y - leaf_tree.y;
 				float fire_killed = fire_s.x * (1.0 - smoothstep(0.85, 1.15, fire_h / max(fire_s.w * (0.85 + 0.3 * fire_n), 0.02)));
 				float fire_cast = 1.0 - exp(-fire_age / 0.3);
 				if (fire_killed > fract(fire_n * 3.71 + 0.41) && fire_cast > fract(fire_n * 11.37 + 0.73)) {
@@ -22832,8 +22838,7 @@ vec3 plant_wind(vec3 wp, float h) {
 				// follow): the foliage the scorch spared dies with it, fading to red-brown over the first months and
 				// cast over the next year or two (the red stage of fire-killed conifers; snag classes, Everett et al.
 				// 1999), so a snag never keeps a green top.
-				float fire_scale = pow(abs(determinant(mat3(MODEL_MATRIX))), 1.0 / 3.0);
-				if (fire_killed < 0.5 && fire_tree_killed(MODEL_MATRIX[3].xyz, fire_scale)) {
+				if (fire_killed < 0.5 && fire_tree_killed(leaf_tree.xyz, leaf_tree.w)) {
 					float fire_lum = dot(ALBEDO, vec3(0.2126, 0.7152, 0.0722));
 					vec3 fire_red = vec3(0.34, 0.15, 0.05) * clamp(fire_lum * 5.0, 0.5, 1.4);
 					ALBEDO = mix(ALBEDO, fire_red, smoothstep(0.0, 0.25, fire_age + 0.06 * (fire_n - 0.5)));
@@ -22881,8 +22886,8 @@ vec3 plant_wind(vec3 wp, float h) {
 	if (al >= 0) {
 		// Tree to tree colour (trees.md 5bm): crowns of one species differ in tone and hue (genotype, age, soil and
 		// vigour; beech and oak stands show it plainly in summer, more in spring and autumn), so a stand of one
-		// species does not read as one green repeated. Keyed to the instance's ground position (MODEL_MATRIX, the
-		// same in raster and the path tracer): lightness 0.84-1.14 and a hue swing between a yellower and a bluer
+		// species does not read as one green repeated. Keyed to the instance's ground position (hashed in vertex(), the
+		// same in raster and the path tracer): lightness 0.72-1.18 and a hue swing between a yellower and a bluer
 		// green, as per-instance colour variation in foliage pipelines (SpeedTree's hue variation, Unreal's
 		// PerInstanceRandom). It scales the leaf's colour (the season's is in the vertex colour), after the fire and
 		// salt steps.
@@ -22930,7 +22935,7 @@ float fire_age_years(vec2 xz) {
 	return a > 0.0 ? a * 2.0 : -1.0;
 }
 )";
-	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\nuniform float leaf_dead_tint = 1.0;\nuniform float crown_occlusion_on = 0.0;\nuniform float crown_tint_variation = 1.0;\nvarying float crown_occ;\nvarying vec3 crown_tone;\n" + wind + VegetationFire::SHADER_CODE + VegetationFire::MORTALITY_CODE + FIRE_AGE_CODE + "\n");
+	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\nuniform float leaf_dead_tint = 1.0;\nuniform float crown_occlusion_on = 0.0;\nuniform float crown_tint_variation = 1.0;\nvarying float crown_occ;\nvarying vec3 crown_tone;\nvarying vec4 leaf_tree;\n" + wind + VegetationFire::SHADER_CODE + VegetationFire::MORTALITY_CODE + FIRE_AGE_CODE + "\n");
 	// The path tracer: flutter is a raster motion of millimetres; the traced leaves keep their
 	// shape and follow the bones. A static tree is traced from its rest mesh (no capture), a
 	// rigged one is captured only when its bones move (as the plain material was), never because
