@@ -504,3 +504,24 @@ payload for a further layer. A surface that opens in the cut answers with `hit_t
 `hit_t` in the payload as it is. Byte-identical: rt_memory and the links bench's cut-out path traced frame. The
 rest of what the raygen keeps across traces waits for the PC's Nsight "Ray Tracing Live State" table, since the
 driver may already recompute the values that come from the scene data (camera matrix and ray).
+
+## Setup time of the full landscape (all features on), and a world cache (proposed)
+
+Cloud profile of `docs/bench/landscape` at its defaults (main thread and every worker sampled with gdb): setup
+takes 6.3 min. Rocks placing all 1.17 M stones of the 4 km world as plant obstacles 148 s (half of it in the
+terrain's height query, `TerrainErosionFilter::offset`); terrain generation 85 s (hydraulic erosion); dunes 58 s
+(`TerrainDunes::_carry`, whose sand transport is order-dependent within a tile, and tiles already run in
+parallel); cover 37 s; snow climate 31 s. The steady frames there are bound by the software GPU, so their cost
+waits for a PC trace.
+
+A bit-exact speed-up of the erosion filter (sin and cos from one range reduction, skipping cells whose pivots are
+all out of reach) measured 0%: the compiler already shares the reduction, and the rest is the octaves' own
+arithmetic. The setup cost is the simulations themselves.
+
+The lossless lever is not to run them twice. Terrain tools bake their output once and load it (World Machine and
+Gaea export baked heightmaps; Unreal's World Partition and Houdini Engine cook procedural content at edit time and
+stream the result), and the generator here is already deterministic (TerrainDMath) so its outputs are a pure
+function of its inputs. A world cache would store each stage's outputs (heights and sediment after erosion, sand
+depth after dunes, snow climate, rock obstacle cells) under a hash of every input that stage reads (its
+properties, its inputs' hashes, the engine commit), load them when the hash matches and regenerate otherwise. The
+loaded data is the same bytes, so frames are unchanged; a second launch skips minutes.
