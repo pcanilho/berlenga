@@ -1232,3 +1232,12 @@ Dust field round 2 (clouds' note: dust only in a 1.5 km ring, nothing behind):
 - Emission check: 8.7 mg/m2/s at 30 m/s and 8 % clay, mid-range of measured strong-event fluxes (1-100); the
   Marticorena-Bergametti clay factor is uncertain by about ten, so `dust_emission_scale` 10 for a Phoenix-class event
   is within it.
+
+### Desert tails image, stale sand (23 Nov)
+- The crosshatch on the cloud's desert shots after the tent fix was the old run's sand, not new: the bench kept ruts
+  (user://ground_ruts) and loaded the 48 h run's egg-crate back. The desert sand now runs with keep_ruts off, so every
+  run starts fresh; a clean 12 h run shows no crosshatch and no cones.
+- The near ripple mask (what moves, what shows) is read at its 20 cm blocks' centres and filled bilinearly between
+  them, no longer held flat per block.
+- Haboob front: max_blocks 1024 to 2048. The PC ran at the cap (1024 of 1024) and the dust was cut flat where no block
+  was free. Cloud (lavapipe) Flow renders drop thin smoke in front of the ground and step its edges: judge dust on the PC.

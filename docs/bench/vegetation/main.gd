@@ -658,6 +658,12 @@ func _desert_sand(gen: TerrainGenerator3D, cam: Camera3D, plants: VegetationFiel
 	s.ground_type = GroundSurface3D.GROUND_SAND
 	s.moisture = 0.0
 	s.wind_ripples = true
+	# A fresh sand each run: kept ruts would bring back the last run's sand (and any fault it had).
+	s.keep_ruts = false
+	# VEG_DESERT_SAND_PROPS=name:value,...: the sand ground's properties, for an A/B.
+	for kv in OS.get_environment("VEG_DESERT_SAND_PROPS").split(",", false):
+		var pkv := kv.split(":", true, 1)
+		s.set(pkv[0], str_to_var(pkv[1]))
 	var m := StandardMaterial3D.new()
 	m.albedo_color = Color(0.72, 0.55, 0.36)
 	m.roughness = 0.95

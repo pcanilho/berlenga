@@ -85,7 +85,9 @@ void PhysXHaboobFront3D::_build() {
 	// the head), the dust riding the air, hanging for minutes, coarse cells over hundreds of metres, strong vorticity
 	// confinement for the billows, the weather's wind carrying what is left behind.
 	flow->set_cell_size(flow_cell_size);
-	flow->set_max_blocks(1024);
+	// The head's reserve (about 400 blocks of 32 m) and the dust it leaves hanging for minutes behind: 1024 filled up
+	// and the gas was cut flat where it found no free block (a level top on the wall's dense band).
+	flow->set_max_blocks(2048);
 	// Freed blocks invisible: under 0.01 of optical depth across a 16-cell block.
 	flow->set_allocation_smoke(0.01f / (0.3f * 16.0f * flow_cell_size));
 	flow->set_combustion(false);
