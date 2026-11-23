@@ -129,7 +129,7 @@ public:
 
 	// The light the gas scatters onto the surfaces around it (LightStorage::GasGlow), asked for with enabled: a
 	// mipmapped voxel grid over the gas (rgb: the light each voxel scatters times its opacity, a: its opacity), which
-	// the opaque pass cone-traces. run() fills texture and world_to_glow for LightStorage::directional_gas_glow_set.
+	// the opaque pass cone-traces. run() fills texture and world_to_glow for LightStorage::gas_glow_set.
 	struct GlowMap {
 		bool enabled = false;
 		int resolution = 64; // voxels along the gas box's longest side, at most

@@ -2682,6 +2682,15 @@ whole frame 19.0 -> 8.3, bottom third 31.4 -> 10.4, mean +5.0 -> -2.4. Night fir
 of it brighter. Left: the ground at the flame's foot is still
 a little less orange than traced (the grid's voxels are coarser than the plume's edge).
 
+### Gas glow without a sun (card pick 2, 23 Nov)
+
+The glow grid's mapping and medium used to ride on the sun's DirectionalLightData (and its albedo on the volume
+shadow's), so a night scene with no DirectionalLight3D had no surface glow and no light-through-gas. They now have
+their own uniform buffer (LightStorage::GasGlowData, set 0 binding 24: view space -> u, v, w and the medium's albedo
+and anisotropy), filled with the light buffers each frame; DirectionalLightData lost its three gas_glow rows. Night
+fire before a wall with no DirectionalLight3D at all: glow off -> on 82 -> 38 (8x8 block error against the path
+tracer); before, on equalled off.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

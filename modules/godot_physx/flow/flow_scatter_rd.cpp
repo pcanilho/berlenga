@@ -154,9 +154,6 @@ struct DirectionalLightData {
 	vec4 volume_shadow_u;
 	vec4 volume_shadow_v;
 	vec4 volume_shadow_w;
-	vec4 gas_glow_u;
-	vec4 gas_glow_v;
-	vec4 gas_glow_w;
 };
 layout(set = 0, binding = 8, std140) uniform DirectionalLights {
 	DirectionalLightData data[MAX_DIRECTIONAL_LIGHTS];

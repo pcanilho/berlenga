@@ -1360,20 +1360,17 @@ float gas_cone_depth(vec3 p_a, vec3 p_b, float p_end_m, vec4 p_gu, vec4 p_gv, ve
 // plume.
 #define GAS_LIGHT_TRANSMITTANCE
 float gas_light_transmittance(vec3 p_vertex, vec3 p_light, float p_radius) {
-	for (uint i = 0; i < scene_data_block.data.directional_light_count; i++) {
-		vec4 gu = directional_lights.data[i].gas_glow_u;
-		if (gu == vec4(0.0)) {
-			continue;
-		}
-		vec4 gv = directional_lights.data[i].gas_glow_v;
-		vec4 gw = directional_lights.data[i].gas_glow_w;
+	vec4 gu = gas_glow_data.data.u;
+	if (gu != vec4(0.0)) {
+		vec4 gv = gas_glow_data.data.v;
+		vec4 gw = gas_glow_data.data.w;
 		vec3 dims = vec3(textureSize(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), 0));
 		float lod_max = float(textureQueryLevels(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP)) - 1);
 		if (textureLod(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), vec3(0.5), lod_max).a < 1e-6) {
 			return 1.0;
 		}
-		float w = uintBitsToFloat(directional_lights.data[i].pad.x);
-		float g = uintBitsToFloat(directional_lights.data[i].pad.y);
+		float w = gas_glow_data.data.medium.x;
+		float g = gas_glow_data.data.medium.y;
 		vec3 to_light = p_light - p_vertex;
 		float rad = min(p_radius, 0.9 * length(to_light));
 		int n = rad > 0.01 ? 4 : 1;
@@ -1529,13 +1526,10 @@ float directional_volume_shadow(uint p_index, vec3 p_vertex) {
 // (view space). Returns the ambient light with the gas's: as the path tracer's surfaces see a sunlit cloud beside them
 // glow and dark smoke hide the sky.
 vec3 gas_glow(vec3 p_vertex, vec3 p_normal, uint p_directional_count, vec3 p_ambient, vec3 p_albedo, vec3 p_up) {
-	for (uint i = 0; i < p_directional_count; i++) {
-		vec4 gu = directional_lights.data[i].gas_glow_u;
-		if (gu == vec4(0.0)) {
-			continue;
-		}
-		vec4 gv = directional_lights.data[i].gas_glow_v;
-		vec4 gw = directional_lights.data[i].gas_glow_w;
+	vec4 gu = gas_glow_data.data.u;
+	if (gu != vec4(0.0)) {
+		vec4 gv = gas_glow_data.data.v;
+		vec4 gw = gas_glow_data.data.w;
 		mat3 to_uvw = transpose(mat3(gu.xyz, gv.xyz, gw.xyz));
 		vec3 uvw0 = to_uvw * p_vertex + vec3(gu.w, gv.w, gw.w);
 		ivec3 dims = textureSize(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), 0);
@@ -1558,13 +1552,16 @@ vec3 gas_glow(vec3 p_vertex, vec3 p_normal, uint p_directional_count, vec3 p_amb
 		vec3 b = cross(n, t);
 		// The medium's single-scattering albedo and anisotropy (the volume shadow's) and its reflectance: the similarity
 		// relation's albedo w' = (1 - g) w / (1 - g w), R = (1 - k) / (1 + k), k = sqrt(1 - w').
-		float wa = uintBitsToFloat(directional_lights.data[i].pad.x);
-		float ga = uintBitsToFloat(directional_lights.data[i].pad.y);
+		float wa = gas_glow_data.data.medium.x;
+		float ga = gas_glow_data.data.medium.y;
 		float ws = (1.0 - ga) * wa / max(1.0 - ga * wa, 1e-4);
 		float k = sqrt(max(1.0 - ws, 0.0));
 		float r_inf = (1.0 - k) / (1.0 + k);
 		// The light on the gas's side facing the surface: half the sky's, half the ground's around the surface.
-		vec3 sun_e = directional_lights.data[i].color * directional_lights.data[i].energy * max(dot(p_up, directional_lights.data[i].direction), 0.0);
+		vec3 sun_e = vec3(0.0); // the suns' light on open ground (none at night)
+		for (uint i = 0; i < p_directional_count; i++) {
+			sun_e += directional_lights.data[i].color * directional_lights.data[i].energy * max(dot(p_up, directional_lights.data[i].direction), 0.0);
+		}
 		vec3 side = 0.5 * (p_ambient + p_albedo * (sun_e * (1.0 / 3.14159265) + p_ambient));
 		vec3 glow = vec3(0.0);
 		float vis = 0.0;

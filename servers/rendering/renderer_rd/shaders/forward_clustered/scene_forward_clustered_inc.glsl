@@ -336,6 +336,9 @@ layout(set = 0, binding = 21) uniform texture2DArray volumetric_fog_noise;
 layout(set = 0, binding = 22) uniform texture3D volume_shadow_texture;
 // The light gas scatters onto the surfaces around it (see gas_glow in scene_forward_clustered.glsl).
 layout(set = 0, binding = 23) uniform texture3D gas_glow_texture;
+layout(set = 0, binding = 24, std140) uniform GasGlowDataBlock {
+	GasGlowData data;
+} gas_glow_data;
 /* Set 1: Render Pass (changes per render pass) */
 
 layout(set = 1, binding = 0, std140) uniform SceneDataBlock {

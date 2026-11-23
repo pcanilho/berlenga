@@ -521,14 +521,14 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 			shadow.to_light = shadow_to_light;
 		}
 		shadow.enabled = shadow_rid.is_valid();
-		// The gas's light onto the surfaces around it: its grid's mapping rides on the sun's light data, so it needs
-		// the sun's volume shadow light.
+		// The gas's light onto the surfaces around it (and point and spot lights through it), with or without a sun.
 		FlowScatterRD::GlowMap glow;
-		glow.enabled = surface_glow && shadow_rid.is_valid();
+		glow.enabled = surface_glow && p_first_view;
 		p_effect->get_scatter().run(p_rd, source, params, lights.ptr(), (int)lights.size(), p_depth, p_color, RID::from_uint64(out), atlas, p_size, &shadow, &glow);
 		if (glow.texture.is_valid()) {
 			// The opaque pass reads it from the next frame on (Forward+ only).
-			RendererRD::LightStorage::get_singleton()->directional_gas_glow_set(shadow_rid, glow.texture, glow.world_to_glow);
+			// The gas's single-scattering albedo, as the volume shadow's below.
+			RendererRD::LightStorage::get_singleton()->gas_glow_set(glow.texture, glow.world_to_glow, scattering_albedo * smoke_color.srgb_to_linear().get_luminance(), scattering_anisotropy);
 		}
 		if (shadow_casts && shadow.texture.is_valid()) {
 			// The opaque pass reads it from the next frame on (Forward+ only).
