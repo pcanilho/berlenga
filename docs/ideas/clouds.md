@@ -940,3 +940,16 @@ to 1.25 and 2.5:1; the rim jitter is 10 m of lift read at 4 by 2.4 km (25 m at f
 The rim is crisp from adiabatic droplets (Brenguier et al. 2000): the drops form on a fixed number of nuclei, so their
 radius grows as the cube root of the water (10 um at 150 m past saturation, from 3 um), and the extinction as its 2/3
 power, CPU and shader alike. Raster and PT agree; clouds tests pass.
+
+## Virga and fallstreaks (23 Nov)
+
+Ice crystals fall from the mid layer's thicker cloudlets at about 1 m/s (Heymsfield 1975, cirrus uncinus generating
+cells) and sublimate in the drier air below. In subsaturated air a crystal's radius squared shrinks linearly with the
+fall, so the trail's extinction tapers linearly to nothing at the fall length L = 330 m / (1 - s_ice), s_ice = 1.1 RH
+at half the base height (250 m to 3 km). The wind changes under the layer (the mid layer's wind against the low wind),
+so a crystal d metres down has drifted (du/dz) d^2 / 2v from its cell: the hooked trail (Marshall 1953, "Precipitation
+trajectories and patterns"). Each sample follows that parabola back up to its cell and takes that cloudlet's density
+(so the streaks keep the grouping and their fine streaks bend with the hook). Only glaciated layers shed much (base
+colder than about -10 C; 12 % at warmer bases), and some regions of cells, not all. `cloud_virga` (shader, default 1)
+scales it. Faint from the ground under a fair sky, as in photographs; best seen side on from high ground or at a low
+sun. Raster and PT agree; clouds tests pass. Not in the shadow bake (optically thin).

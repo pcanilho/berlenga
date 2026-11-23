@@ -777,6 +777,131 @@ vec4 march_altocumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 	return vec4(radiance * fade, mix(1.0, transmittance, fade));
 }
 
+// Virga and fallstreaks under the mid layer: ice crystals falling from its thicker cloudlets at about 1 m/s
+// (Heymsfield 1975, "Cirrus uncinus generating cells and the evolution of cirriform clouds", J. Atmos. Sci. 32) and
+// sublimating in the drier air below. A crystal's radius squared shrinks linearly with the fall in subsaturated air
+// (diffusional growth run backwards; Pruppacher and Klett), so the trail's extinction, carried by the radius squared,
+// tapers linearly to nothing at the fall length L, which grows as the air below nears saturation. The wind changes
+// with height under the layer, so a crystal that fell d metres has drifted (du/dz) d^2 / (2 v) from its cell:
+// a parabola, the hooked trail of Marshall (1953, "Precipitation trajectories and patterns", J. Meteor. 10).
+// Only glaciated layers shed much (colder than about -10 C at the base); the cell they fell from is found by
+// following that parabola back up, so the streaks keep the cloudlets' grouping and the fine streaks follow the hook.
+uniform float cloud_virga : hint_range(0, 3) = 1.0;
+
+vec3 virga_geometry() {
+	// x: the fall length L (m), y: the shed share (ice), z: the base height.
+	float y0 = cloud_mid_height - 0.5 * cloud_mid_thickness;
+	float tb = cloud_air.x - 0.0065 * (y0 - cloud_air.z);
+	float ice = mix(0.12, 1.0, 1.0 - smoothstep(-14.0, -5.0, tb));
+	float zm = 0.5 * y0;
+	float rh = clamp(cloud_air.y * (exp(-max(zm - cloud_air.z, 0.0) / 8000.0) - 0.02) / 0.98, 0.05, 0.97);
+	// Subsaturated over ice, not water (ice saturates at about 1.1 times lower vapour at -10 C).
+	float s_ice = min(1.1 * rh, 0.97);
+	float len = clamp(330.0 / (1.0 - s_ice), 250.0, 3000.0);
+	return vec3(min(len, y0 - 50.0), ice, y0);
+}
+
+vec4 march_virga(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, float jitter, float p_pixel, out float r_t) {
+	r_t = 0.0;
+	if (cloud_virga <= 0.0 || cloud_mid_cover <= 0.02) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec3 g = virga_geometry();
+	float len = g.x;
+	float y0 = g.z;
+	float y1 = y0 - len;
+	if (len < 100.0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec3 ro = vec3(0.0, PLANET_RADIUS + cam.y, 0.0);
+	vec2 hb = sphere_hits(ro, rd, PLANET_RADIUS + y1);
+	vec2 ht = sphere_hits(ro, rd, PLANET_RADIUS + y0);
+	float t0;
+	float t1;
+	if (cam.y < y1) {
+		if (sphere_hits(ro, rd, PLANET_RADIUS).x > 0.0) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = hb.y;
+		t1 = ht.y;
+	} else if (cam.y < y0) {
+		t0 = 0.0;
+		t1 = hb.x > 0.0 ? hb.x : ht.y;
+	} else {
+		if (ht.x < 0.0) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = ht.x;
+		t1 = hb.x > 0.0 ? hb.x : ht.y;
+	}
+#ifdef ATMO_SCATTERING
+	float far = 120000.0;
+#else
+	float far = cloud_far * 1.5;
+#endif
+	if (t0 > far || t1 <= t0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	t1 = min(t1, t0 + 12000.0);
+	const int n = 12;
+	float ds = (t1 - t0) / float(n);
+	// The wind at the base and below it: the mid layer's way (its speed about 1.6 times the low wind's plus 4 m/s,
+	// winds growing with height) against the low wind (the rain's slant over the drops' 7 m/s). Its change per metre
+	// over the depth from the base to the ground, and 1 m/s crystals: the drift is a d^2.
+	vec2 u_low = cloud_rain_slant * 7.0;
+	vec2 u_mid = cloud_mid_dir * (1.6 * length(u_low) + 4.0);
+	vec2 hook = (u_low - u_mid) / max(y0, 500.0) * 0.5;
+	float sigma_cell = cloud_mid_tau / (0.45 * cloud_mid_thickness);
+	float cos_theta = dot(rd, sun_dir);
+	float ph = 0.6 * henyey_greenstein(cos_theta, 0.7) + 0.4 / (4.0 * PI);
+	vec3 radiance = vec3(0.0);
+	float transmittance = 1.0;
+	float depth_sum = 0.0;
+	for (int i = 0; i < n; i++) {
+		float t = t0 + (float(i) + jitter) * ds;
+		vec3 pl = ro + rd * t;
+		vec3 p = vec3(cam.x + rd.x * t, length(pl) - PLANET_RADIUS, cam.z + rd.z * t);
+		float d = y0 - p.y;
+		if (d <= 0.0 || d >= len) {
+			continue;
+		}
+		// The cell these crystals fell from, up the parabola.
+		vec2 src = p.xz - hook * d * d;
+		// Which cells shed: patches of a few kilometres (fallstreaks come from some cloudlets, not all).
+		float shed = smoothstep(0.4, 0.7, wc_value_noise((src - cloud_mid_drift) / 3500.0 + vec2(19.3, 6.1)));
+		if (shed <= 0.0) {
+			continue;
+		}
+		float c = wc_mid_cover(src);
+		float foot = max(t * p_pixel, 0.25 * ds);
+		float prof;
+		float sg = wc_mid_density(vec3(src.x, y0 + 0.4 * cloud_mid_thickness, src.y), c, foot, prof);
+		if (sg <= 1e-6) {
+			continue;
+		}
+		// Thicker cloudlets shed; the trail tapers as the crystals sublimate (radius squared linear in the fall), with
+		// a short onset under the base where the crystals leave the cloud.
+		float taper = (1.0 - d / len) * smoothstep(0.0, 60.0, d);
+		// Streaks: the cells' own fine structure carried down the hook (a few tens of metres across, the trails of
+		// single generating turrets), read at the source so they bend with it.
+		vec2 sq = (src - cloud_mid_drift) / 140.0;
+		float fib = mix(0.45, 1.55, wc_value_noise(sq + vec2(3.3, 8.8)) * 0.65 + wc_value_noise(sq * 2.7 + vec2(1.9, 4.2)) * 0.35);
+		float sigma = cloud_virga * g.y * shed * sigma_cell * smoothstep(0.05, 0.45, prof) * taper * fib;
+		if (sigma <= 1e-7) {
+			continue;
+		}
+		// Thin: the sun reaches most of it; the layer above shades the sky light from above a little.
+		vec3 light = sun_radiance * ph + mix(ambient_bottom, ambient_top, 0.55) * 1.1;
+		float tr = exp(-sigma * ds);
+		radiance += transmittance * light * (1.0 - tr);
+		depth_sum += transmittance * (1.0 - tr) * t;
+		transmittance *= tr;
+	}
+	r_t = transmittance < 1.0 ? depth_sum / (1.0 - transmittance) : t0;
+	float fade = 1.0 - smoothstep(0.5 * far, far, t0);
+	return vec4(radiance * fade, mix(1.0, transmittance, fade));
+}
+
 // Wave clouds (lenticulars): the slab where mountain waves lift moist air past saturation, marched
 // (the field is fixed to the ground and smooth: 16 coarse steps over at most 8 km of path, refined in cloud). The lens is laminar: its
 // edge is where the lift meets saturation, roughened only by thin striations along the wind (the moist sheets the
@@ -1429,6 +1554,12 @@ vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3
 	vec4 low = march_cumulus(cam, rd, sun_dir, sun_low, ambient_top, ambient_bottom, steps, jitter, p_pixel, d_low);
 	float d_mid;
 	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
+	// The virga hangs under the mid layer: met before it from below, after it from above.
+	float d_vir;
+	vec4 vir = march_virga(cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_vir);
+	if (vir.a < 1.0) {
+		mid = cam.y < cloud_mid_height ? cloud_over(vir, d_vir, mid, d_mid, d_mid) : cloud_over(mid, d_mid, vir, d_vir, d_mid);
+	}
 	float d_high;
 	vec4 high = march_cirrus(cam, rd, sun_dir, sun_high, ambient_top, p_pixel, d_high);
 	// The two wave slabs, nearer first (the camera is under both but on a mountain top).
