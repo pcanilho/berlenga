@@ -436,3 +436,20 @@ Short curves (under 64 segments), curves with a zero-length interval and non-fin
 
 Proof: 24,000 queries over eight curves (open, closed, a straight line with ties, far from the origin, on
 baked points) hash the same as the previous build.
+
+## Sky light: the panorama read back without stalling the GPU
+
+The same meadow sample caught `TerrainGenerator3D::_sky_light_poll` waiting in `RenderingDevice::_stall_for_frame`:
+`RenderingServer.sky_bake_panorama` copies the radiance map out and reads it with `texture_get_data`, which flushes
+and waits for every frame in flight. The terrain asks for its 64 x 32 sky panorama every 2 s while it runs, so the
+game lost a frame's worth of GPU overlap each time (and the main thread waited on the render thread as well).
+
+`RenderingServer.sky_bake_panorama_async` does the same copy and reads it with `texture_get_data_async` (the
+staging-buffer readback Godot already uses for `RenderingDevice.texture_get_data_async`); the Image reaches the
+callback on the main thread a few frames later. The terrain keeps one request in flight and runs the same update
+when it lands. Renderers without that readback (Compatibility, dummy) bake at once and hand the Image over the
+same way. Proof: a sky baked both ways gives the same bytes, radiance and irradiance (3 to 4 frames later on
+the cloud's software GPU). The sky light reaches the terrain those few frames later; its interval stays 2 s.
+
+Two more periodic sync readbacks of the same kind remain in the water module (`water_raster_reflections.cpp`
+every few seconds, the underwater sky in `physx_water_surface_3d.cpp` every 240 frames).

@@ -319,6 +319,10 @@ public:
 		bool set_mode(RSE::SkyMode p_mode);
 		bool set_material(RID p_material);
 		Ref<Image> bake_panorama(float p_energy, int p_roughness_layers, const Size2i &p_size);
+		void bake_panorama_async(float p_energy, int p_roughness_layers, const Size2i &p_size, const Callable &p_callback);
+		RID _panorama_texture(int p_roughness_layers, const Size2i &p_size); // The panorama copied out, for the readback.
+		static Ref<Image> _panorama_image(const Vector<uint8_t> &p_data, const Size2i &p_size, float p_energy);
+		static void _panorama_ready(const Vector<uint8_t> &p_data, RID p_texture, Size2i p_size, float p_energy, const Callable &p_callback);
 	};
 
 	void _reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky *p_sky, SkyShaderData *p_shader_data, SkyMaterialData *p_material, double p_time, const Projection &p_projection, const Basis &p_orientation, float p_luminance_multiplier, float p_brightness_multiplier);
@@ -365,6 +369,7 @@ public:
 	void sky_set_mode(RID p_sky, RSE::SkyMode p_mode);
 	void sky_set_material(RID p_sky, RID p_material);
 	Ref<Image> sky_bake_panorama(RID p_sky, float p_energy, bool p_bake_irradiance, const Size2i &p_size);
+	void sky_bake_panorama_async(RID p_sky, float p_energy, bool p_bake_irradiance, const Size2i &p_size, const Callable &p_callback);
 	float sky_get_uv_border_size(RID p_sky);
 };
 

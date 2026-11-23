@@ -31,6 +31,7 @@
 #pragma once
 
 #include "core/math/projection.h"
+#include "core/object/message_queue.h"
 #include "core/templates/paged_array.h"
 #include "servers/rendering/renderer_geometry_instance.h"
 #include "servers/rendering/rendering_server_types.h"
@@ -82,6 +83,10 @@ public:
 	virtual void sky_set_mode(RID p_sky, RSE::SkyMode p_samples) = 0;
 	virtual void sky_set_material(RID p_sky, RID p_material) = 0;
 	virtual Ref<Image> sky_bake_panorama(RID p_sky, float p_energy, bool p_bake_irradiance, const Size2i &p_size) = 0;
+	// Renderers without an asynchronous readback bake at once and hand the Image over on the main thread.
+	virtual void sky_bake_panorama_async(RID p_sky, float p_energy, bool p_bake_irradiance, const Size2i &p_size, const Callable &p_callback) {
+		MessageQueue::get_main_singleton()->push_callable(p_callback, sky_bake_panorama(p_sky, p_energy, p_bake_irradiance, p_size));
+	}
 
 	/* COMPOSITOR EFFECT API */
 

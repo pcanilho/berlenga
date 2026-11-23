@@ -86,6 +86,10 @@ Ref<Image> RendererSceneRenderRD::sky_bake_panorama(RID p_sky, float p_energy, b
 	return sky.sky_bake_panorama(p_sky, p_energy, p_bake_irradiance, p_size);
 }
 
+void RendererSceneRenderRD::sky_bake_panorama_async(RID p_sky, float p_energy, bool p_bake_irradiance, const Size2i &p_size, const Callable &p_callback) {
+	sky.sky_bake_panorama_async(p_sky, p_energy, p_bake_irradiance, p_size, p_callback);
+}
+
 void RendererSceneRenderRD::environment_glow_set_use_bicubic_upscale(bool p_enable) {
 	glow_bicubic_upscale = p_enable;
 }

@@ -32,6 +32,8 @@
 
 #include "core/config/project_settings.h"
 #include "core/math/math_defs.h"
+#include "core/object/callable_mp.h"
+#include "core/object/message_queue.h"
 #include "servers/rendering/renderer_rd/effects/copy_effects.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
@@ -654,35 +656,60 @@ bool SkyRD::Sky::set_material(RID p_material) {
 	return true;
 }
 
+RID SkyRD::Sky::_panorama_texture(int p_roughness_layers, const Size2i &p_size) {
+	RendererRD::CopyEffects *copy_effects = RendererRD::CopyEffects::get_singleton();
+
+	RD::TextureFormat tf;
+	tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT; // Could be RGBA16
+	tf.width = p_size.width;
+	tf.height = p_size.height;
+	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+
+	RID rad_tex = RD::get_singleton()->texture_create(tf, RD::TextureView());
+	copy_effects->copy_octmap_to_panorama(radiance, rad_tex, p_size, p_roughness_layers, reflection.layers.size() > 1, Size2(uv_border_size, 1.0f - uv_border_size * 2.0));
+	return rad_tex;
+}
+
+Ref<Image> SkyRD::Sky::_panorama_image(const Vector<uint8_t> &p_data, const Size2i &p_size, float p_energy) {
+	if (p_data.size() != p_size.width * p_size.height * int(4 * sizeof(float))) {
+		return Ref<Image>();
+	}
+	Ref<Image> img = Image::create_from_data(p_size.width, p_size.height, false, Image::FORMAT_RGBAF, p_data);
+	for (int i = 0; i < p_size.width; i++) {
+		for (int j = 0; j < p_size.height; j++) {
+			Color c = img->get_pixel(i, j);
+			c.r *= p_energy;
+			c.g *= p_energy;
+			c.b *= p_energy;
+			img->set_pixel(i, j, c);
+		}
+	}
+	return img;
+}
+
 Ref<Image> SkyRD::Sky::bake_panorama(float p_energy, int p_roughness_layers, const Size2i &p_size) {
 	if (radiance.is_valid()) {
-		RendererRD::CopyEffects *copy_effects = RendererRD::CopyEffects::get_singleton();
-
-		RD::TextureFormat tf;
-		tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT; // Could be RGBA16
-		tf.width = p_size.width;
-		tf.height = p_size.height;
-		tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
-
-		RID rad_tex = RD::get_singleton()->texture_create(tf, RD::TextureView());
-		copy_effects->copy_octmap_to_panorama(radiance, rad_tex, p_size, p_roughness_layers, reflection.layers.size() > 1, Size2(uv_border_size, 1.0f - uv_border_size * 2.0));
+		RID rad_tex = _panorama_texture(p_roughness_layers, p_size);
 		Vector<uint8_t> data = RD::get_singleton()->texture_get_data(rad_tex, 0);
 		RD::get_singleton()->free_rid(rad_tex);
-
-		Ref<Image> img = Image::create_from_data(p_size.width, p_size.height, false, Image::FORMAT_RGBAF, data);
-		for (int i = 0; i < p_size.width; i++) {
-			for (int j = 0; j < p_size.height; j++) {
-				Color c = img->get_pixel(i, j);
-				c.r *= p_energy;
-				c.g *= p_energy;
-				c.b *= p_energy;
-				img->set_pixel(i, j, c);
-			}
-		}
-		return img;
+		return _panorama_image(data, p_size, p_energy);
 	}
 
 	return Ref<Image>();
+}
+
+void SkyRD::Sky::_panorama_ready(const Vector<uint8_t> &p_data, RID p_texture, Size2i p_size, float p_energy, const Callable &p_callback) {
+	RD::get_singleton()->free_rid(p_texture);
+	MessageQueue::get_main_singleton()->push_callable(p_callback, _panorama_image(p_data, p_size, p_energy));
+}
+
+void SkyRD::Sky::bake_panorama_async(float p_energy, int p_roughness_layers, const Size2i &p_size, const Callable &p_callback) {
+	if (radiance.is_null()) {
+		MessageQueue::get_main_singleton()->push_callable(p_callback, Ref<Image>());
+		return;
+	}
+	RID rad_tex = _panorama_texture(p_roughness_layers, p_size);
+	RD::get_singleton()->texture_get_data_async(rad_tex, 0, callable_mp_static(&SkyRD::Sky::_panorama_ready).bind(rad_tex, p_size, p_energy, p_callback));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1877,6 +1904,18 @@ Ref<Image> SkyRD::sky_bake_panorama(RID p_sky, float p_energy, bool p_bake_irrad
 	update_dirty_skys();
 
 	return sky->bake_panorama(p_energy, p_bake_irradiance ? roughness_layers : 0, p_size);
+}
+
+void SkyRD::sky_bake_panorama_async(RID p_sky, float p_energy, bool p_bake_irradiance, const Size2i &p_size, const Callable &p_callback) {
+	Sky *sky = get_sky(p_sky);
+	if (!sky) {
+		MessageQueue::get_main_singleton()->push_callable(p_callback, Ref<Image>());
+		ERR_FAIL_MSG("Invalid sky.");
+	}
+
+	update_dirty_skys();
+
+	sky->bake_panorama_async(p_energy, p_bake_irradiance ? roughness_layers : 0, p_size, p_callback);
 }
 
 RID SkyRD::sky_get_radiance_texture_rd(RID p_sky) const {

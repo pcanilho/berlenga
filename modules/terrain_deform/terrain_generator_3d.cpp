@@ -6092,8 +6092,21 @@ void TerrainGenerator3D::_sky_light_poll(double p_delta) {
 	if (env.is_null() || env->get_sky().is_null()) {
 		return;
 	}
-	// A small panorama is enough for light this broad (the bins are 22.5 by 11.25 degrees).
-	Ref<Image> pano = RenderingServer::get_singleton()->sky_bake_panorama(env->get_sky()->get_rid(), 1.0, false, Size2i(64, 32));
+	if (sky_light_pending) {
+		return;
+	}
+	// A small panorama is enough for light this broad (the bins are 22.5 by 11.25 degrees). Read back without
+	// stalling the GPU: the panorama arrives a few frames later (_sky_light_ready()).
+	sky_light_pending = true;
+	RenderingServer::get_singleton()->sky_bake_panorama_async(env->get_sky()->get_rid(), 1.0, false, Size2i(64, 32), callable_mp(this, &TerrainGenerator3D::_sky_light_ready));
+}
+
+void TerrainGenerator3D::_sky_light_ready(const Ref<Image> &p_pano) {
+	sky_light_pending = false;
+	if (sky_nx < 2 || sky_light_source.is_empty()) {
+		return;
+	}
+	Ref<Image> pano = p_pano;
 	if (pano.is_null() || pano->is_empty()) {
 		return;
 	}
