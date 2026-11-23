@@ -2623,6 +2623,48 @@ inject emissive volumes), then the scene's opaque pass adds that irradiance to i
 grid covers it, shadowed by the gas's own volume shadow toward each cell. Checked against same-run
 path-traced pairs: snow beside a powder cloud, a wall beside a smoke plume, the ground under fire smoke.
 
+### Gas light onto nearby surfaces: built (23 Nov)
+
+Picked on the card above. Research: voxel cone tracing (Crassin et al. 2011, "Interactive indirect illumination
+using voxel cone tracing") rather than the light propagation volumes the card named: the gas already is a volume,
+so a mipmapped grid of it is all the propagation needs, and cones also tell how much of the sky the gas hides.
+Two-stream theory (Meador and Weaver 1980, with the similarity relations) gives how a scattering gas passes and
+reflects diffuse light.
+
+Built (PhysXFlow3D `surface_glow`, on; Forward+ only; the path tracer has it natively):
+- A glow pass after the scattering pass fills a world-aligned grid over the gas box (at most 66 voxels a side,
+  voxel a power of two times 1/16 m so it does not crawl as the box grows; RGBA16F, mipmapped): per voxel the
+  sun's and the lights' light it scatters (the view march's lighting, isotropic phase) times its opacity, and its
+  opacity. Its mapping rides on the sun's DirectionalLightData (gas_glow_u/v/w, beside the volume shadow's), the
+  texture on set 0 binding 23.
+- The opaque pass traces six 60-degree cones over each surface's hemisphere through the mips and replaces its
+  ambient light with: the ambient times the gas's two-stream total transmittance along each cone (a bright gas
+  passes the sky on by scattering, a grey one hides it), plus the gas's semi-infinite two-stream reflectance of the
+  light on its side facing the surface (half the sky's, half the ground's around the surface, taken as like the
+  surface and lit by the unshadowed sun: what lights a white cloud's underside over sunlit snow), plus the gas's
+  own scattered light composited along each cone. Faded out between one and two grid sizes from the grid.
+- First tries, kept for the record: cones that hid the sky as if the gas were opaque left the ground under a white
+  cloud 16 levels darker than the path tracer; letting the sky through by the two-stream transmittance alone left it
+  7 darker, since the path tracer's cloud underside is lit by the sunlit snow around it.
+
+Checked against same-run raster/path-traced pairs (8x8 block error against the path tracer, glow off -> on):
+- Grey smoke puffs: whole frame 5.3 -> 3.9, the ground around them 8.3 -> 5.5, the gas 7.9 -> 4.5 (the ground seen
+  through it).
+- Dust puffs: whole frame 5.1 -> 4.4, the ground 7.1 -> 5.5, the gas 8.9 -> 6.0.
+- Dense white puffs before a wall: the ground under them within about 2 levels of the path tracer (3 to 7 without);
+  the wall in their shade 10 levels brighter, toward the path tracer's (still darker: no ground bounce in raster).
+- Low white gas (shadow test) and the fire plume: unchanged within 0.2.
+- Snow's powder foot (avalanche bench, --glow-off-too): the dark line along the foot is gone (edge against the gas
+  above it -4.6 -> +1.1 levels, the path tracer's +1.2), and the open snow around the cloud is 2 to 5 levels
+  brighter, each patch toward the path tracer's (169 -> 174 against 176, 188 -> 191 against 192).
+
+Cost: one small compute pass a frame over at most 66^3 voxels (only voxels with gas are lit) and its mips, and in
+the opaque pass up to 6 x 16 trilinear fetches per pixel within two grid sizes of the gas, none elsewhere. GPU time
+goes on the PC queue.
+Gap left: the path tracer's walls beside gas are also lit by the sunlit ground's bounce, which raster has nowhere
+(no GI in these scenes); the fire test's orange ground light from the fire is wider in raster than traced, an older
+gap of the fire's own light, not this change.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

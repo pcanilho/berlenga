@@ -65,7 +65,8 @@ class BodySnowStub extends WorldSnow:
 #                     loaded face before it goes); --test=avalanche for the checks
 #                     --powder [--at=S]: the run in real time, shot S s after release (default 9) with its
 #                     powder cloud (PhysX Flow; traced, it also saves the raster frame of the same cloud as
-#                     <out>_raster.png; --no-gas: without the cloud, quick); --crown: the crown wall from
+#                     <out>_raster.png, with --glow-off-too also <out>_raster_noglow.png (raster: <out>_noglow.png);
+#                     --no-gas: without the cloud, quick); --crown: the crown wall from
 #                     14 m down the bed (--crown-far: from 40 m); --wet: a thaw first, then a wet slide (--triggered: the
 #                     same release, dry); --test=triggers, --test=powder, --test=forest, --test=wet for
 #                     triggers, the cloud, forests (holding, braking, pressure on trees) and wet snow;
@@ -4725,13 +4726,28 @@ func _build_avalanche(cam: Camera3D) -> void:
 		sun.rotation_degrees = Vector3(-40.0, 40.0, 0.0)
 		if OS.get_cmdline_user_args().has("--crown"):
 			_crown_camera(cam)
+		pflow = av.get_powder_cloud().get_flow() # made once the cloud first lifts snow
 		if traced:
 			# The raster frame of the same cloud first (_raster.png beside --out): Flow is not bit-for-bit the
 			# same from run to run, so a raster run and a traced run do not show one cloud.
 			await _save_frame("_raster")
 			process_mode = Node.PROCESS_MODE_ALWAYS
 			get_tree().paused = true
+			if pflow != null and OS.get_cmdline_user_args().has("--glow-off-too"):
+				# --glow-off-too: also the raster frame without the cloud's light on the snow (surface_glow off), of
+				# the frozen cloud (_raster_noglow.png), then _raster.png again of it, for before/after/traced triples.
+				pflow.set("surface_glow", false)
+				await _save_frame("_raster_noglow")
+				pflow.set("surface_glow", true)
+				await _save_frame("_raster")
 			wenv.pathtracing_enabled = true
+		elif pflow != null and OS.get_cmdline_user_args().has("--glow-off-too"):
+			# Raster: the frozen cloud without its light on the snow (_noglow.png beside --out), then with it.
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			pflow.set("surface_glow", false)
+			await _save_frame("_noglow")
+			pflow.set("surface_glow", true)
 		await _save_frame("")
 		return
 	var t := 0.0

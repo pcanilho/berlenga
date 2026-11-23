@@ -441,6 +441,23 @@ void LightStorage::directional_volume_shadow_set(RID p_light, RID p_texture, con
 	volume_shadow.frame = RSG::rasterizer->get_frame_number();
 }
 
+void LightStorage::directional_gas_glow_set(RID p_light, RID p_texture, const Transform3D &p_world_to_glow) {
+	gas_glow.light = p_light;
+	gas_glow.texture = p_texture;
+	gas_glow.world_to_glow = p_world_to_glow;
+	gas_glow.frame = RSG::rasterizer->get_frame_number();
+}
+
+RID LightStorage::directional_gas_glow_get_texture() {
+	if (gas_glow.texture.is_valid() && RD::get_singleton()->texture_is_valid(gas_glow.texture)) {
+		return gas_glow.texture;
+	}
+	if (!volume_shadow_empty.is_valid()) {
+		volume_shadow_empty = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK);
+	}
+	return volume_shadow_empty;
+}
+
 RID LightStorage::directional_volume_shadow_get_texture() {
 	if (volume_shadow.texture.is_valid() && RD::get_singleton()->texture_is_valid(volume_shadow.texture)) {
 		return volume_shadow.texture;
@@ -948,6 +965,22 @@ void LightStorage::update_light_buffers(RenderDataRD *p_render_data, const Paged
 					}
 					memcpy(&light_data.pad[0], &volume_shadow.albedo, sizeof(float));
 					memcpy(&light_data.pad[1], &volume_shadow.anisotropy, sizeof(float));
+				}
+				// Gas glow: view space -> (u, v, w) of the glow grid, while it is current.
+				for (int k = 0; k < 4; k++) {
+					light_data.gas_glow_u[k] = 0.0;
+					light_data.gas_glow_v[k] = 0.0;
+					light_data.gas_glow_w[k] = 0.0;
+				}
+				if (gas_glow.texture.is_valid() && gas_glow.light == light_instance->light && RSG::rasterizer->get_frame_number() - gas_glow.frame <= 2) {
+					const Transform3D view_to_glow = gas_glow.world_to_glow * p_camera_transform;
+					float *rows[3] = { light_data.gas_glow_u, light_data.gas_glow_v, light_data.gas_glow_w };
+					for (int r = 0; r < 3; r++) {
+						rows[r][0] = view_to_glow.basis.rows[r].x;
+						rows[r][1] = view_to_glow.basis.rows[r].y;
+						rows[r][2] = view_to_glow.basis.rows[r].z;
+						rows[r][3] = view_to_glow.origin[r];
+					}
 				}
 
 				if (light_data.shadow_opacity > 0.001) {

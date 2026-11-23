@@ -218,6 +218,9 @@ private:
 	// The gas shadows the scene from the first directional light: a volumetric shadow map over the grid
 	// (see FlowScatterRD::ShadowMap), read by the Forward+ opaque pass a frame later.
 	bool cast_shadows = true;
+	// The gas's light onto the surfaces around it, and the sky it hides from them: a voxel grid of the light it
+	// scatters (see FlowScatterRD::GlowMap), cone-traced by the Forward+ opaque pass a frame later.
+	bool surface_glow = true;
 	bool diffuse_transmission = true;
 	// The scattering pass blends each frame with the last ones (see FlowScatterRD::Params::temporal).
 	bool scattering_temporal = true;
@@ -400,6 +403,8 @@ public:
 	float get_heat_shimmer_turbulence() const { return heat_shimmer_turbulence; }
 	void set_cast_shadows(bool p_v) { cast_shadows = p_v; }
 	bool is_cast_shadows() const { return cast_shadows; }
+	void set_surface_glow(bool p_v) { surface_glow = p_v; }
+	bool is_surface_glow() const { return surface_glow; }
 	void set_diffuse_transmission(bool p_v) { diffuse_transmission = p_v; }
 	bool is_diffuse_transmission() const { return diffuse_transmission; }
 	void set_scattering_temporal(bool p_v) { scattering_temporal = p_v; }

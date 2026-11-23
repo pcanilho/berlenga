@@ -197,6 +197,7 @@ protected:
 	uint64_t lightmap_texture_array_version = 0xFFFFFFFF;
 
 	RID volume_shadow_texture_bound; // the volume shadow texture render_base_uniform_set holds
+	RID gas_glow_texture_bound; // the gas glow texture render_base_uniform_set holds
 
 	void _update_render_base_uniform_set();
 	RID _setup_sdfgi_render_pass_uniform_set(RID p_albedo_texture, RID p_emission_texture, RID p_emission_aniso_texture, RID p_geom_facing_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index);

@@ -3640,7 +3640,7 @@ void RenderForwardClustered::base_uniforms_changed() {
 void RenderForwardClustered::_update_render_base_uniform_set() {
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 
-	if (render_base_uniform_set.is_null() || !RD::get_singleton()->uniform_set_is_valid(render_base_uniform_set) || (lightmap_texture_array_version != light_storage->lightmap_array_get_version()) || volume_shadow_texture_bound != light_storage->directional_volume_shadow_get_texture()) {
+	if (render_base_uniform_set.is_null() || !RD::get_singleton()->uniform_set_is_valid(render_base_uniform_set) || (lightmap_texture_array_version != light_storage->lightmap_array_get_version()) || volume_shadow_texture_bound != light_storage->directional_volume_shadow_get_texture() || gas_glow_texture_bound != light_storage->directional_gas_glow_get_texture()) {
 		if (render_base_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(render_base_uniform_set)) {
 			RD::get_singleton()->free_rid(render_base_uniform_set);
 		}
@@ -3839,6 +3839,15 @@ void RenderForwardClustered::_update_render_base_uniform_set() {
 			u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
 			volume_shadow_texture_bound = light_storage->directional_volume_shadow_get_texture();
 			u.append_id(volume_shadow_texture_bound);
+			uniforms.push_back(u);
+		}
+
+		{
+			RD::Uniform u;
+			u.binding = 23;
+			u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+			gas_glow_texture_bound = light_storage->directional_gas_glow_get_texture();
+			u.append_id(gas_glow_texture_bound);
 			uniforms.push_back(u);
 		}
 

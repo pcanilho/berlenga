@@ -154,6 +154,9 @@ struct DirectionalLightData {
 	vec4 volume_shadow_u;
 	vec4 volume_shadow_v;
 	vec4 volume_shadow_w;
+	vec4 gas_glow_u;
+	vec4 gas_glow_v;
+	vec4 gas_glow_w;
 };
 layout(set = 0, binding = 8, std140) uniform DirectionalLights {
 	DirectionalLightData data[MAX_DIRECTIONAL_LIGHTS];
@@ -443,6 +446,238 @@ float ign(vec2 px) {
 	return fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715))));
 }
 
+// The ambient light reaching the gas from all around, as Godot's volumetric fog has it:
+// the ambient color mixed with the sky (one isotropic tap up, one along the scattering
+// direction, weighed by the anisotropy) by the sky contribution.
+// ambient_down: the light from below (the sky's lower half: the ground it stands for, often bright snow), which
+// lights the underside of the gas as the path tracer's bounces off the ground do.
+bool gas_ambient(out vec3 ambient, out vec3 ambient_down) {
+	bool ambient_on = p.sky.w > 0.5;
+	ambient = vec3(0.0);
+	ambient_down = vec3(0.0);
+	if (ambient_on) {
+		ambient = p.ambient.rgb;
+		ambient_down = p.ambient.rgb;
+		if (p.ambient.w > 0.0) {
+			float sky_energy = p.sky.w - 1.0;
+			vec3 isotropic = sky_hemisphere(1.0);
+			vec3 isotropic_down = sky_hemisphere(-1.0);
+			// Each half evenly (no tap along the view for the anisotropy: most of the light is scattered many
+			// times, which spreads it evenly, and a tap toward the horizon greyed the sky's blue).
+			ambient = mix(ambient, isotropic * sky_energy, p.ambient.w);
+			ambient_down = mix(ambient_down, isotropic_down * sky_energy, p.ambient.w);
+		}
+	}
+	return ambient_on;
+}
+
+// The light a point of gas at pos (Flow units) scatters toward -dir (dir: from the eye toward the point), per
+// unit of its opacity: the lights, the sun and the sky around it. transmittance: how much of the gas between it
+// and the eye lets the view through (the march's), g: the anisotropy its phase functions take.
+vec3 gas_in_light(vec3 pos, vec3 dir, float transmittance, float g, bool ambient_on, vec3 ambient, vec3 ambient_down, vec3 cell_inv, inout Accessor light_acc) {
+	float upm = p.camera.w;
+	float sigma = p.misc.x / upm; // per Flow unit, per unit smoke
+	int light_count = p.counts.y;
+	int shadow_steps = p.counts.z;
+	vec3 in_light = vec3(0.0);
+	vec3 pos_m = pos / upm;
+	// The light the ground below sends up: the sun on it (in the gas's shadow), added in the sun loop, and
+	// the sky's lower half.
+	// With a ground albedo the ground is lit by the sky above (its own lower half is a stand-in ground,
+	// often a dull brown, where a real snowfield under a blue sky is blue-white).
+	vec3 ground_light = p.sky_map.y > 0.0 ? ambient * (p.sky_map.y * p.ground.rgb) : ambient_down;
+	// The gas above and below the point, from the sky's map (-1: not known).
+	float od_above = -1.0;
+	float od_below = -1.0;
+	float gas_floor_y = p.world_min.y / upm; // the ground under the point: the box's floor unless the sky's map knows better
+#ifndef SHADOW_PASS
+	if (ambient_on && p.sky_map.w > 0.5) {
+		vec4 pm = vec4(pos_m, 1.0);
+		vec3 sky_uvw = vec3(dot(p.sky_map_xform[0], pm), dot(p.sky_map_xform[1], pm), dot(p.sky_map_xform[2], pm));
+		if (all(greaterThanEqual(sky_uvw, vec3(0.0))) && all(lessThanEqual(sky_uvw, vec3(1.0)))) {
+			// All the gas above in one fetch; below, the whole column's depth less what lies above.
+			od_above = textureLod(sky_map_tex, sky_uvw, 0.0).r;
+			float od_column = textureLod(sky_map_tex, vec3(sky_uvw.xy, 1.0), 0.0).r;
+			od_below = max(od_column - od_above, 0.0);
+			// The bottom of the gas under the point (where the column stops gaining depth), found by bisection:
+			// gas lying on the ground ends at the ground, so that is where the ground below it is lit.
+			float lo = sky_uvw.z;
+			float hi = 1.0;
+			for (int k = 0; k < 6; k++) {
+				float mid = 0.5 * (lo + hi);
+				if (textureLod(sky_map_tex, vec3(sky_uvw.xy, mid), 0.0).r < od_column - 0.01) {
+					lo = mid;
+				} else {
+					hi = mid;
+				}
+			}
+			gas_floor_y = pos_m.y + (hi - sky_uvw.z) / p.sky_map_xform[2].y;
+		}
+	}
+#endif
+	for (int l = 0; l < light_count; l++) {
+		Light L = lights[l];
+		vec3 to_light = L.position_range.xyz - pos_m;
+		float d = length(to_light);
+		float range = L.position_range.w;
+		if (d >= range || d <= 0.0) {
+			continue;
+		}
+		vec3 ldir = to_light / d;
+		// Godot's own omni falloff (light_functions / scene_forward).
+		float nd = d / range;
+		nd *= nd;
+		nd *= nd;
+		nd = max(1.0 - nd, 0.0);
+		float atten = nd * nd * pow(max(d, 0.0001), -L.color_decay.w);
+		if (L.direction_cutoff.w > -1.5) {
+			float cutoff = L.direction_cutoff.w;
+			float scos = max(dot(-ldir, L.direction_cutoff.xyz), cutoff);
+			float rim = max(0.0001, (1.0 - scos) / (1.0 - cutoff));
+			atten *= 1.0 - pow(rim, L.spot.x);
+		}
+		if (atten <= 0.0) {
+			continue;
+		}
+		if (p.misc.w > 0.5) {
+			// Scene objects between the light and the point.
+			atten *= light_shadow(L, pos_m);
+			if (atten <= 0.0) {
+				continue;
+			}
+		}
+		// Gas between the point and the light.
+		float light_tau = 0.0;
+		if (shadow_steps > 0) {
+			float reach = min(d, p.misc.z) * upm;
+			float ds = reach / float(shadow_steps);
+			float od = 0.0;
+			for (int s = 0; s < shadow_steps; s++) {
+				float ls;
+				smoke_at(pos + ldir * (ds * (float(s) + 0.5)), cell_inv, light_acc, ls);
+				od += min(ls, SMOKE_MAX);
+			}
+			light_tau = od * sigma * ds;
+		}
+		in_light += L.color_decay.rgb * (atten * ms_light(light_tau, light_tau, dot(dir, ldir), g));
+	}
+	if (p.sun.x > 0) {
+		vec3 vpos = (p.world_to_view * vec4(pos_m, 1.0)).xyz;
+		for (int i = 0; i < p.sun.x; i++) {
+			float fog_energy = directional_lights.data[i].volumetric_fog_energy;
+			if (fog_energy <= 0.001) {
+				continue;
+			}
+			vec3 ldir = normalize(mat3(p.view_to_world) * directional_lights.data[i].direction);
+#ifndef SHADOW_PASS
+			if (ambient_on && p.sky_map.y > 0.0 && ldir.y > 0.0) {
+				// The sunlit ground below the point, in the gas's own shadow. On a slope the box's floor lies under
+				// the snow, deep in the cloud's shadow, which darkened the gas toward its base.
+				// The ground lies somewhere at or below both, and is not known here: of the box's floor (right
+				// under gas floating above flat ground) and the gas's bottom (right for gas lying on a slope), the
+				// better lit.
+				float ground_sun_t = 1.0;
+				float front_sun_t = 1.0;
+				if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
+					// A sample off the sun's map (it is fitted to the gas, not to the box) tells nothing: it is
+					// skipped; with both off it, the ground is out of the gas's shadow. (Taking an off-map sample as
+					// lit let it outvote a shadowed one at the map's side.)
+					float best = -1.0;
+					for (int k = 0; k < 2; k++) {
+						vec4 gm = vec4(pos_m.x, k == 0 ? p.world_min.y / upm : max(gas_floor_y, p.world_min.y / upm), pos_m.z, 1.0);
+						vec3 g_uvw = vec3(dot(p.sun_map_xform[0], gm), dot(p.sun_map_xform[1], gm), dot(p.sun_map_xform[2], gm));
+						if (all(greaterThanEqual(g_uvw.xy, vec2(0.0))) && all(lessThanEqual(g_uvw.xy, vec2(1.0)))) {
+							// Below the map's last slice: all of its column lies toward the sun.
+							best = max(best, exp(-textureLod(sun_map_tex, vec3(g_uvw.xy, clamp(g_uvw.z, 0.0, 1.0)), 0.0).r));
+						}
+					}
+					ground_sun_t = best >= 0.0 ? best : 1.0;
+					// The ground the point sees toward the camera, past its foot (two heights out): sunlit when the sun
+					// is behind the camera, in the gas's own shadow when the sun is behind the gas. Taking it as always
+					// lit gave the shaded foot of a back-lit cloud the sunlit snow's glow, 30 to 50 levels over the
+					// path tracer.
+					float gy = max(gas_floor_y, p.world_min.y / upm);
+					vec2 hz = -dir.xz;
+					hz = dot(hz, hz) > 1e-8 ? normalize(hz) : vec2(0.0);
+					vec2 gxz = pos_m.xz + hz * (max(pos_m.y - gy, 1.0) * 2.0);
+					vec4 fm = vec4(gxz.x, gy, gxz.y, 1.0);
+					vec3 f_uvw = vec3(dot(p.sun_map_xform[0], fm), dot(p.sun_map_xform[1], fm), dot(p.sun_map_xform[2], fm));
+					if (all(greaterThanEqual(f_uvw.xy, vec2(0.0))) && all(lessThanEqual(f_uvw.xy, vec2(1.0)))) {
+						front_sun_t = exp(-textureLod(sun_map_tex, vec3(f_uvw.xy, clamp(f_uvw.z, 0.0, 1.0)), 0.0).r);
+					}
+				}
+				// Of the ground the point sees, the part toward the camera (as far as the gas between them lets it see)
+				// is that ground, the rest the ground below it.
+				ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * mix(ground_sun_t, front_sun_t, transmittance) * p.sky_map.y) * p.ground.rgb;
+			}
+#endif
+			float atten = sun_shadow(uint(i), vpos);
+			if (atten <= 0.0) {
+				continue;
+			}
+			float light_tau = 0.0;
+			// The gas on along the sun's line past the point (the sun map's whole column less the gas
+			// toward the sun): with it, how much gas surrounds the point to scatter light on.
+			float tau_beyond = 0.0;
+			vec3 map_uvw = vec3(-1.0);
+#ifndef SHADOW_PASS
+			if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
+				vec4 pm = vec4(pos_m, 1.0);
+				map_uvw = vec3(dot(p.sun_map_xform[0], pm), dot(p.sun_map_xform[1], pm), dot(p.sun_map_xform[2], pm));
+			}
+			if (all(greaterThanEqual(map_uvw, vec3(0.0))) && all(lessThanEqual(map_uvw, vec3(1.0)))) {
+				// All the gas toward the sun in one fetch (Frostbite's volumetric shadow maps).
+				light_tau = textureLod(sun_map_tex, map_uvw, 0.0).r;
+				tau_beyond = max(textureLod(sun_map_tex, vec3(map_uvw.xy, 1.0), 0.0).r - light_tau, 0.0);
+			} else
+#endif
+			if (shadow_steps > 0) {
+				float ds = p.misc.z * upm / float(shadow_steps);
+				float od = 0.0;
+				for (int s = 0; s < shadow_steps; s++) {
+					float ls;
+					smoke_at(pos + ldir * (ds * (float(s) + 0.5)), cell_inv, light_acc, ls);
+					od += min(ls, SMOKE_MAX);
+				}
+				light_tau = od * sigma * ds;
+			}
+			in_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * atten * ms_light(light_tau, light_tau + tau_beyond, dot(dir, ldir), g));
+		}
+	}
+	if (ambient_on) {
+		// How much of the sky the point sees: the gas straight above it (a short march up).
+		vec3 sky_t = ms_ambient(0.0, 0.0);
+		vec3 ground_t = sky_t;
+		if (od_above >= 0.0) {
+			// Straight up is not the only way out: a point near the face toward the camera also sees the sky past
+			// it, over about half its hemisphere, as far as the gas between it and the camera lets through.
+			// The orders past the first scatter in the gas all along the vertical through the point (both ways, as
+			// the sun's take the gas along its line): the top of a deep cloud glows with the light its body sends
+			// back up, where judged by the gas above alone it drew single scattering only, dark.
+			float od_around = (od_above + od_below) * SKY_OCCLUSION;
+			sky_t = ms_ambient(od_above * SKY_OCCLUSION * (1.0 - SKY_OPENING * transmittance), od_around);
+			ground_t = ms_ambient(od_below * SKY_OCCLUSION, od_around);
+		} else
+		if (shadow_steps > 0) {
+			float ds = p.misc.z * upm / float(shadow_steps);
+			float od = 0.0;
+			for (int s = 0; s < shadow_steps; s++) {
+				float ls;
+				smoke_at(pos + vec3(0.0, ds * (float(s) + 0.5), 0.0), cell_inv, light_acc, ls);
+				od += min(ls, SMOKE_MAX);
+			}
+			// Multiple scattering, approximated as in Wrenninge et al. 2013 ("Oz: the great and
+			// volumetric") and Hillaire 2016 (Frostbite sky and clouds): octaves of ever weaker,
+			// ever less attenuated light, so dense smoke isn't black inside as single scattering
+			// makes it.
+			sky_t = ms_ambient(od * sigma * ds, od * sigma * ds);
+		}
+		// Each half of the sphere around the point: the sky above, the ground below.
+		in_light += (ambient * (sky_t * SKY_GAIN) + ground_light * ground_t) * 0.5;
+	}
+	return in_light;
+}
+
 vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 	float upm = p.camera.w;
 	vec2 uv = (vec2(frame_px) + 0.5) / vec2(p.size.xy);
@@ -478,8 +713,6 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 	float step_len = min(min(cell.x, cell.y), cell.z) * p.block_size.w;
 	float sigma = p.misc.x / upm; // per Flow unit, per unit smoke
 	float g = p.misc.y;
-	int light_count = p.counts.y;
-	int shadow_steps = p.counts.z;
 
 	Accessor view_acc;
 	view_acc.location = ivec4(0x40000000);
@@ -488,27 +721,9 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 	light_acc.location = ivec4(0x40000000);
 	light_acc.valid = false;
 
-	// The ambient light reaching the gas from all around, as Godot's volumetric fog has it:
-	// the ambient color mixed with the sky (one isotropic tap up, one along the scattering
-	// direction, weighed by the anisotropy) by the sky contribution.
-	bool ambient_on = p.sky.w > 0.5;
-	vec3 ambient = vec3(0.0);
-	// The light from below (the sky's lower half: the ground it stands for, often bright snow), which lights the
-	// underside of the gas as the path tracer's bounces off the ground do.
-	vec3 ambient_down = vec3(0.0);
-	if (ambient_on) {
-		ambient = p.ambient.rgb;
-		ambient_down = p.ambient.rgb;
-		if (p.ambient.w > 0.0) {
-			float sky_energy = p.sky.w - 1.0;
-			vec3 isotropic = sky_hemisphere(1.0);
-			vec3 isotropic_down = sky_hemisphere(-1.0);
-			// Each half evenly (no tap along the view for the anisotropy: most of the light is scattered many
-			// times, which spreads it evenly, and a tap toward the horizon greyed the sky's blue).
-			ambient = mix(ambient, isotropic * sky_energy, p.ambient.w);
-			ambient_down = mix(ambient_down, isotropic_down * sky_energy, p.ambient.w);
-		}
-	}
+	vec3 ambient;
+	vec3 ambient_down;
+	bool ambient_on = gas_ambient(ambient, ambient_down);
 
 	float transmittance = 1.0;
 	vec3 sum = vec3(0.0);
@@ -541,202 +756,7 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 		if (smoke > 0.001) {
 			lit_steps++;
 			float alpha = 1.0 - exp(-min(smoke, SMOKE_MAX) * sigma * dt);
-			vec3 in_light = vec3(0.0);
-			vec3 pos_m = pos / upm;
-			// The light the ground below sends up: the sun on it (in the gas's shadow), added in the sun loop, and
-			// the sky's lower half.
-			// With a ground albedo the ground is lit by the sky above (its own lower half is a stand-in ground,
-			// often a dull brown, where a real snowfield under a blue sky is blue-white).
-			vec3 ground_light = p.sky_map.y > 0.0 ? ambient * (p.sky_map.y * p.ground.rgb) : ambient_down;
-			// The gas above and below the point, from the sky's map (-1: not known).
-			float od_above = -1.0;
-			float od_below = -1.0;
-			float gas_floor_y = p.world_min.y / upm; // the ground under the point: the box's floor unless the sky's map knows better
-#ifndef SHADOW_PASS
-			if (ambient_on && p.sky_map.w > 0.5) {
-				vec4 pm = vec4(pos_m, 1.0);
-				vec3 sky_uvw = vec3(dot(p.sky_map_xform[0], pm), dot(p.sky_map_xform[1], pm), dot(p.sky_map_xform[2], pm));
-				if (all(greaterThanEqual(sky_uvw, vec3(0.0))) && all(lessThanEqual(sky_uvw, vec3(1.0)))) {
-					// All the gas above in one fetch; below, the whole column's depth less what lies above.
-					od_above = textureLod(sky_map_tex, sky_uvw, 0.0).r;
-					float od_column = textureLod(sky_map_tex, vec3(sky_uvw.xy, 1.0), 0.0).r;
-					od_below = max(od_column - od_above, 0.0);
-					// The bottom of the gas under the point (where the column stops gaining depth), found by bisection:
-					// gas lying on the ground ends at the ground, so that is where the ground below it is lit.
-					float lo = sky_uvw.z;
-					float hi = 1.0;
-					for (int k = 0; k < 6; k++) {
-						float mid = 0.5 * (lo + hi);
-						if (textureLod(sky_map_tex, vec3(sky_uvw.xy, mid), 0.0).r < od_column - 0.01) {
-							lo = mid;
-						} else {
-							hi = mid;
-						}
-					}
-					gas_floor_y = pos_m.y + (hi - sky_uvw.z) / p.sky_map_xform[2].y;
-				}
-			}
-#endif
-			for (int l = 0; l < light_count; l++) {
-				Light L = lights[l];
-				vec3 to_light = L.position_range.xyz - pos_m;
-				float d = length(to_light);
-				float range = L.position_range.w;
-				if (d >= range || d <= 0.0) {
-					continue;
-				}
-				vec3 ldir = to_light / d;
-				// Godot's own omni falloff (light_functions / scene_forward).
-				float nd = d / range;
-				nd *= nd;
-				nd *= nd;
-				nd = max(1.0 - nd, 0.0);
-				float atten = nd * nd * pow(max(d, 0.0001), -L.color_decay.w);
-				if (L.direction_cutoff.w > -1.5) {
-					float cutoff = L.direction_cutoff.w;
-					float scos = max(dot(-ldir, L.direction_cutoff.xyz), cutoff);
-					float rim = max(0.0001, (1.0 - scos) / (1.0 - cutoff));
-					atten *= 1.0 - pow(rim, L.spot.x);
-				}
-				if (atten <= 0.0) {
-					continue;
-				}
-				if (p.misc.w > 0.5) {
-					// Scene objects between the light and the point.
-					atten *= light_shadow(L, pos_m);
-					if (atten <= 0.0) {
-						continue;
-					}
-				}
-				// Gas between the point and the light.
-				float light_tau = 0.0;
-				if (shadow_steps > 0) {
-					float reach = min(d, p.misc.z) * upm;
-					float ds = reach / float(shadow_steps);
-					float od = 0.0;
-					for (int s = 0; s < shadow_steps; s++) {
-						float ls;
-						smoke_at(pos + ldir * (ds * (float(s) + 0.5)), cell_inv, light_acc, ls);
-						od += min(ls, SMOKE_MAX);
-					}
-					light_tau = od * sigma * ds;
-				}
-				in_light += L.color_decay.rgb * (atten * ms_light(light_tau, light_tau, dot(dir, ldir), g));
-			}
-			if (p.sun.x > 0) {
-				vec3 vpos = (p.world_to_view * vec4(pos_m, 1.0)).xyz;
-				for (int i = 0; i < p.sun.x; i++) {
-					float fog_energy = directional_lights.data[i].volumetric_fog_energy;
-					if (fog_energy <= 0.001) {
-						continue;
-					}
-					vec3 ldir = normalize(mat3(p.view_to_world) * directional_lights.data[i].direction);
-#ifndef SHADOW_PASS
-					if (ambient_on && p.sky_map.y > 0.0 && ldir.y > 0.0) {
-						// The sunlit ground below the point, in the gas's own shadow. On a slope the box's floor lies under
-						// the snow, deep in the cloud's shadow, which darkened the gas toward its base.
-						// The ground lies somewhere at or below both, and is not known here: of the box's floor (right
-						// under gas floating above flat ground) and the gas's bottom (right for gas lying on a slope), the
-						// better lit.
-						float ground_sun_t = 1.0;
-						float front_sun_t = 1.0;
-						if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
-							// A sample off the sun's map (it is fitted to the gas, not to the box) tells nothing: it is
-							// skipped; with both off it, the ground is out of the gas's shadow. (Taking an off-map sample as
-							// lit let it outvote a shadowed one at the map's side.)
-							float best = -1.0;
-							for (int k = 0; k < 2; k++) {
-								vec4 gm = vec4(pos_m.x, k == 0 ? p.world_min.y / upm : max(gas_floor_y, p.world_min.y / upm), pos_m.z, 1.0);
-								vec3 g_uvw = vec3(dot(p.sun_map_xform[0], gm), dot(p.sun_map_xform[1], gm), dot(p.sun_map_xform[2], gm));
-								if (all(greaterThanEqual(g_uvw.xy, vec2(0.0))) && all(lessThanEqual(g_uvw.xy, vec2(1.0)))) {
-									// Below the map's last slice: all of its column lies toward the sun.
-									best = max(best, exp(-textureLod(sun_map_tex, vec3(g_uvw.xy, clamp(g_uvw.z, 0.0, 1.0)), 0.0).r));
-								}
-							}
-							ground_sun_t = best >= 0.0 ? best : 1.0;
-							// The ground the point sees toward the camera, past its foot (two heights out): sunlit when the sun
-							// is behind the camera, in the gas's own shadow when the sun is behind the gas. Taking it as always
-							// lit gave the shaded foot of a back-lit cloud the sunlit snow's glow, 30 to 50 levels over the
-							// path tracer.
-							float gy = max(gas_floor_y, p.world_min.y / upm);
-							vec2 hz = -dir.xz;
-							hz = dot(hz, hz) > 1e-8 ? normalize(hz) : vec2(0.0);
-							vec2 gxz = pos_m.xz + hz * (max(pos_m.y - gy, 1.0) * 2.0);
-							vec4 fm = vec4(gxz.x, gy, gxz.y, 1.0);
-							vec3 f_uvw = vec3(dot(p.sun_map_xform[0], fm), dot(p.sun_map_xform[1], fm), dot(p.sun_map_xform[2], fm));
-							if (all(greaterThanEqual(f_uvw.xy, vec2(0.0))) && all(lessThanEqual(f_uvw.xy, vec2(1.0)))) {
-								front_sun_t = exp(-textureLod(sun_map_tex, vec3(f_uvw.xy, clamp(f_uvw.z, 0.0, 1.0)), 0.0).r);
-							}
-						}
-						// Of the ground the point sees, the part toward the camera (as far as the gas between them lets it see)
-						// is that ground, the rest the ground below it.
-						ground_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * ldir.y * mix(ground_sun_t, front_sun_t, transmittance) * p.sky_map.y) * p.ground.rgb;
-					}
-#endif
-					float atten = sun_shadow(uint(i), vpos);
-					if (atten <= 0.0) {
-						continue;
-					}
-					float light_tau = 0.0;
-					// The gas on along the sun's line past the point (the sun map's whole column less the gas
-					// toward the sun): with it, how much gas surrounds the point to scatter light on.
-					float tau_beyond = 0.0;
-					vec3 map_uvw = vec3(-1.0);
-#ifndef SHADOW_PASS
-					if (p.sun_map.w > 0.5 && dot(ldir, p.sun_map.xyz) > 0.9999) {
-						vec4 pm = vec4(pos_m, 1.0);
-						map_uvw = vec3(dot(p.sun_map_xform[0], pm), dot(p.sun_map_xform[1], pm), dot(p.sun_map_xform[2], pm));
-					}
-					if (all(greaterThanEqual(map_uvw, vec3(0.0))) && all(lessThanEqual(map_uvw, vec3(1.0)))) {
-						// All the gas toward the sun in one fetch (Frostbite's volumetric shadow maps).
-						light_tau = textureLod(sun_map_tex, map_uvw, 0.0).r;
-						tau_beyond = max(textureLod(sun_map_tex, vec3(map_uvw.xy, 1.0), 0.0).r - light_tau, 0.0);
-					} else
-#endif
-					if (shadow_steps > 0) {
-						float ds = p.misc.z * upm / float(shadow_steps);
-						float od = 0.0;
-						for (int s = 0; s < shadow_steps; s++) {
-							float ls;
-							smoke_at(pos + ldir * (ds * (float(s) + 0.5)), cell_inv, light_acc, ls);
-							od += min(ls, SMOKE_MAX);
-						}
-						light_tau = od * sigma * ds;
-					}
-					in_light += directional_lights.data[i].color * (directional_lights.data[i].energy * fog_energy * atten * ms_light(light_tau, light_tau + tau_beyond, dot(dir, ldir), g));
-				}
-			}
-			if (ambient_on) {
-				// How much of the sky the point sees: the gas straight above it (a short march up).
-				vec3 sky_t = ms_ambient(0.0, 0.0);
-				vec3 ground_t = sky_t;
-				if (od_above >= 0.0) {
-					// Straight up is not the only way out: a point near the face toward the camera also sees the sky past
-					// it, over about half its hemisphere, as far as the gas between it and the camera lets through.
-					// The orders past the first scatter in the gas all along the vertical through the point (both ways, as
-					// the sun's take the gas along its line): the top of a deep cloud glows with the light its body sends
-					// back up, where judged by the gas above alone it drew single scattering only, dark.
-					float od_around = (od_above + od_below) * SKY_OCCLUSION;
-					sky_t = ms_ambient(od_above * SKY_OCCLUSION * (1.0 - SKY_OPENING * transmittance), od_around);
-					ground_t = ms_ambient(od_below * SKY_OCCLUSION, od_around);
-				} else
-				if (shadow_steps > 0) {
-					float ds = p.misc.z * upm / float(shadow_steps);
-					float od = 0.0;
-					for (int s = 0; s < shadow_steps; s++) {
-						float ls;
-						smoke_at(pos + vec3(0.0, ds * (float(s) + 0.5), 0.0), cell_inv, light_acc, ls);
-						od += min(ls, SMOKE_MAX);
-					}
-					// Multiple scattering, approximated as in Wrenninge et al. 2013 ("Oz: the great and
-					// volumetric") and Hillaire 2016 (Frostbite sky and clouds): octaves of ever weaker,
-					// ever less attenuated light, so dense smoke isn't black inside as single scattering
-					// makes it.
-					sky_t = ms_ambient(od * sigma * ds, od * sigma * ds);
-				}
-				// Each half of the sphere around the point: the sky above, the ground below.
-				in_light += (ambient * (sky_t * SKY_GAIN) + ground_light * ground_t) * 0.5;
-			}
+			vec3 in_light = gas_in_light(pos, dir, transmittance, g, ambient_on, ambient, ambient_down, cell_inv, light_acc);
 			sum += transmittance * alpha * in_light;
 			transmittance *= 1.0 - alpha;
 			if (transmittance < 0.01) {
@@ -821,6 +841,52 @@ void main() {
 		imageStore(shadow_img, ivec3(px, k), vec4(-log(max(trans[k], 1e-6))));
 	}
 }
+#elif defined(GLOW_PASS)
+// The gas glow grid (LightStorage::GasGlow): per voxel over the gas, the sun's and the lights' light it scatters (as the
+// view march lights the gas, but evenly all around: phase isotropic, seen from below) times its opacity, and its
+// opacity. The mips are
+// built after; the opaque pass cone-traces them for the light the gas sends onto the surfaces around it.
+layout(set = 0, binding = 13, std140) uniform GlowBox {
+	vec4 origin; // meters: the grid's low corner; w: its voxel size (meters)
+	ivec4 dims; // xyz: voxels
+} glow_box;
+layout(set = 0, binding = 14, rgba16f) uniform restrict writeonly image3D glow_img;
+
+void main() {
+	ivec3 v = ivec3(gl_GlobalInvocationID.xyz);
+	if (any(greaterThanEqual(v, glow_box.dims.xyz))) {
+		return;
+	}
+	float upm = p.camera.w;
+	vec3 cell_inv = vec3(p.level[0].xyz + 1u) / p.block_size.xyz;
+	float vox = glow_box.origin.w;
+	vec3 center = (glow_box.origin.xyz + (vec3(v) + 0.5) * vox) * upm;
+	// The voxel's mean smoke, from eight samples over it (a voxel spans several of Flow's cells).
+	Accessor a;
+	a.location = ivec4(0x40000000);
+	a.valid = false;
+	float smoke = 0.0;
+	for (int k = 0; k < 8; k++) {
+		vec3 o = vec3((k & 1) != 0 ? 0.25 : -0.25, (k & 2) != 0 ? 0.25 : -0.25, (k & 4) != 0 ? 0.25 : -0.25);
+		float s;
+		smoke_at(center + o * (vox * upm), cell_inv, a, s);
+		smoke += min(s, SMOKE_MAX);
+	}
+	smoke *= 0.125;
+	if (smoke <= 0.001) {
+		imageStore(glow_img, v, vec4(0.0));
+		return;
+	}
+	float alpha = 1.0 - exp(-smoke * p.misc.x * vox);
+	// The sun's and the lights' light only: the sky's passes through the gas by scattering, and the gas reflects the
+	// light around it (the sunlit ground's), both of which the opaque pass takes from the gas's optical depth (see
+	// gas_glow in scene_forward_clustered.glsl).
+	Accessor la;
+	la.location = ivec4(0x40000000);
+	la.valid = false;
+	vec3 light = gas_in_light(center, vec3(0.0, -1.0, 0.0), 1.0, 0.0, false, vec3(0.0), vec3(0.0), cell_inv, la);
+	imageStore(glow_img, v, vec4(light * (alpha * p.albedo.w), alpha));
+}
 #else
 void main() {
 	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
@@ -839,6 +905,29 @@ void main() {
 // Temporal blending of the scattered light at the scattering resolution (as Frostbite's and Godot's
 // volumetric fog keep a history): this frame's texel over its reprojected history, the history clamped
 // to this frame's 3x3 neighbourhood (Karis 2014) and dropped where the scene distance moved.
+// The gas glow grid's next mip: each voxel the mean of the eight below it.
+const char *GLOW_MIP_SHADER = R"(
+#[compute]
+#version 450
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+layout(set = 0, binding = 0, rgba16f) uniform restrict readonly image3D src_img;
+layout(set = 0, binding = 1, rgba16f) uniform restrict writeonly image3D dst_img;
+
+void main() {
+	ivec3 d = ivec3(gl_GlobalInvocationID.xyz);
+	if (any(greaterThanEqual(d, imageSize(dst_img)))) {
+		return;
+	}
+	ivec3 last = imageSize(src_img) - 1;
+	vec4 sum = vec4(0.0);
+	for (int k = 0; k < 8; k++) {
+		sum += imageLoad(src_img, min(d * 2 + ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1), last));
+	}
+	imageStore(dst_img, d, sum * 0.125);
+}
+)";
+
 const char *TEMPORAL_SHADER = R"(
 #[compute]
 #version 450
@@ -1047,11 +1136,11 @@ void main() {
 )";
 
 // sizeof(LightStorage::DirectionalLightData) (private there): the std140 struct in the shader above.
-constexpr uint32_t DIRECTIONAL_LIGHT_DATA_SIZE = 560;
+constexpr uint32_t DIRECTIONAL_LIGHT_DATA_SIZE = 608;
 
 constexpr uint32_t PARAMS_WORDS = 16 + 4 + 40 + 4 * 8 + 4 * 5 + 16 * 2 + 4 + 16 + 16 + 16 + 4;
 
-RID compile(RenderingDevice *p_rd, const char *p_source, const char *p_name, bool p_sky_array = false, bool p_shadow_pass = false) {
+RID compile(RenderingDevice *p_rd, const char *p_source, const char *p_name, bool p_sky_array = false, const char *p_pass_define = nullptr) {
 	Ref<RDShaderFile> file;
 	file.instantiate();
 	String source = String(p_source).replace("@PARAMS_BLOCK@", PARAMS_BLOCK);
@@ -1059,8 +1148,8 @@ RID compile(RenderingDevice *p_rd, const char *p_source, const char *p_name, boo
 	if (p_sky_array) {
 		defines += "#define SKY_ARRAY\n";
 	}
-	if (p_shadow_pass) {
-		defines += "#define SHADOW_PASS\n";
+	if (p_pass_define != nullptr) {
+		defines += vformat("#define %s\n", p_pass_define);
 	}
 	source = source.replace("#version 450\n", "#version 450\n" + defines);
 	ERR_FAIL_COND_V_MSG(file->parse_versions_from_text(source) != OK, RID(), vformat("PhysXFlow3D: light scattering %s shader failed to compile.", p_name));
@@ -1086,10 +1175,18 @@ bool FlowScatterRD::_ensure(RenderingDevice *p_rd) {
 	ERR_FAIL_COND_V(!shader.is_valid(), false);
 	pipeline = p_rd->compute_pipeline_create(shader);
 	ERR_FAIL_COND_V(!pipeline.is_valid(), false);
-	shadow_shader = compile(p_rd, SCATTER_SHADER, "shadow map", sky_array, true);
+	shadow_shader = compile(p_rd, SCATTER_SHADER, "shadow map", sky_array, "SHADOW_PASS");
 	ERR_FAIL_COND_V(!shadow_shader.is_valid(), false);
 	shadow_pipeline = p_rd->compute_pipeline_create(shadow_shader);
 	ERR_FAIL_COND_V(!shadow_pipeline.is_valid(), false);
+	glow_shader = compile(p_rd, SCATTER_SHADER, "gas glow", sky_array, "GLOW_PASS");
+	ERR_FAIL_COND_V(!glow_shader.is_valid(), false);
+	glow_pipeline = p_rd->compute_pipeline_create(glow_shader);
+	ERR_FAIL_COND_V(!glow_pipeline.is_valid(), false);
+	glow_mip_shader = compile(p_rd, GLOW_MIP_SHADER, "gas glow mips");
+	ERR_FAIL_COND_V(!glow_mip_shader.is_valid(), false);
+	glow_mip_pipeline = p_rd->compute_pipeline_create(glow_mip_shader);
+	ERR_FAIL_COND_V(!glow_mip_pipeline.is_valid(), false);
 	temporal_shader = compile(p_rd, TEMPORAL_SHADER, "temporal");
 	ERR_FAIL_COND_V(!temporal_shader.is_valid(), false);
 	temporal_pipeline = p_rd->compute_pipeline_create(temporal_shader);
@@ -1125,7 +1222,7 @@ bool FlowScatterRD::_ensure(RenderingDevice *p_rd) {
 	return true;
 }
 
-void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const Params &p_params, const Light *p_lights, int p_light_count, const RID &p_depth, const RID &p_color, const RID &p_coverage, const RID &p_shadow_atlas, const Size2i &p_size, ShadowMap *r_shadow) {
+void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const Params &p_params, const Light *p_lights, int p_light_count, const RID &p_depth, const RID &p_color, const RID &p_coverage, const RID &p_shadow_atlas, const Size2i &p_size, ShadowMap *r_shadow, GlowMap *r_glow) {
 	const bool scatter = p_light_count > 0 || p_params.ambient || p_params.directional_count > 0;
 	if (!p_source.valid || (!scatter && (r_shadow == nullptr || !r_shadow->enabled)) || p_size.x <= 0 || p_size.y <= 0 || !_ensure(p_rd)) {
 		return;
@@ -1343,6 +1440,9 @@ void FlowScatterRD::run(RenderingDevice *p_rd, const FlowBackend::ScatterSource 
 	if (!scatter) {
 		return;
 	}
+	if (r_glow != nullptr && r_glow->enabled) {
+		_run_glow(p_rd, p_source, uniforms, *r_glow);
+	}
 	const RID set = p_rd->uniform_set_create(uniforms, shader, 0);
 	ERR_FAIL_COND(!set.is_valid());
 	RID resolved = scatter_texture;
@@ -1516,9 +1616,116 @@ void FlowScatterRD::_run_shadow(RenderingDevice *p_rd, const LocalVector<RD::Uni
 	r_shadow.texture = r_slot.texture;
 }
 
+void FlowScatterRD::_run_glow(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const LocalVector<RD::Uniform> &p_uniforms, GlowMap &r_glow) {
+	r_glow.texture = RID();
+	const float inv = 1.0f / FlowBackend::UNITS_PER_METER;
+	const Vector3 lo = Vector3(p_source.world_min[0], p_source.world_min[1], p_source.world_min[2]) * inv;
+	const Vector3 hi = Vector3(p_source.world_max[0], p_source.world_max[1], p_source.world_max[2]) * inv;
+	const Vector3 size = (hi - lo).maxf(0.01f);
+	const int res = CLAMP(r_glow.resolution, 8, 128);
+	// Voxels of a power of two times 1/16 m on a world-aligned lattice: the grid neither crawls nor shimmers as the
+	// gas's box grows and moves, only stepping to the next voxel size when the box outgrows the grid.
+	const float raw = MAX(size.x, MAX(size.y, size.z)) / float(res);
+	const float vox = 0.0625f * Math::pow(2.0f, Math::ceil(Math::log2(MAX(raw / 0.0625f, 1.0f))));
+	const Vector3 origin = (lo / vox).floor() * vox;
+	const Vector3i dims(
+			CLAMP((int)Math::ceil((hi.x - origin.x) / vox), 1, res + 2),
+			CLAMP((int)Math::ceil((hi.y - origin.y) / vox), 1, res + 2),
+			CLAMP((int)Math::ceil((hi.z - origin.z) / vox), 1, res + 2));
+	const int largest = MAX(dims.x, MAX(dims.y, dims.z));
+	const uint32_t levels = 1 + (uint32_t)Math::floor(Math::log2((float)largest));
+	if (!glow_texture.is_valid() || glow_dims != dims) {
+		for (const RID &m : glow_mips) {
+			if (m.is_valid()) {
+				p_rd->free_rid(m);
+			}
+		}
+		glow_mips.clear();
+		if (glow_texture.is_valid()) {
+			p_rd->free_rid(glow_texture);
+		}
+		RD::TextureFormat tf;
+		tf.texture_type = RD::TEXTURE_TYPE_3D;
+		tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+		tf.width = dims.x;
+		tf.height = dims.y;
+		tf.depth = dims.z;
+		tf.mipmaps = levels;
+		tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+		glow_texture = p_rd->texture_create(tf, RD::TextureView());
+		ERR_FAIL_COND(!glow_texture.is_valid());
+		for (uint32_t l = 0; l < levels; l++) {
+			glow_mips.push_back(p_rd->texture_create_shared_from_slice(RD::TextureView(), glow_texture, 0, l, 1, RD::TEXTURE_SLICE_3D));
+			ERR_FAIL_COND(!glow_mips[l].is_valid());
+		}
+		glow_dims = dims;
+	}
+	if (!glow_box_buffer.is_valid()) {
+		glow_box_buffer = p_rd->uniform_buffer_create(8 * sizeof(float));
+	}
+	float box[8] = { (float)origin.x, (float)origin.y, (float)origin.z, vox };
+	int32_t *bi = reinterpret_cast<int32_t *>(box + 4);
+	bi[0] = dims.x;
+	bi[1] = dims.y;
+	bi[2] = dims.z;
+	bi[3] = 0;
+	p_rd->buffer_update(glow_box_buffer, 0, sizeof(box), box);
+
+	LocalVector<RD::Uniform> uniforms;
+	for (const RD::Uniform &u : p_uniforms) {
+		uniforms.push_back(u);
+	}
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 13, glow_box_buffer));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 14, glow_mips[0]));
+	const RID set = p_rd->uniform_set_create(uniforms, glow_shader, 0);
+	ERR_FAIL_COND(!set.is_valid());
+	RD::ComputeListID list = p_rd->compute_list_begin();
+	p_rd->compute_list_bind_compute_pipeline(list, glow_pipeline);
+	p_rd->compute_list_bind_uniform_set(list, set, 0);
+	p_rd->compute_list_dispatch(list, (dims.x + 7) / 8, (dims.y + 7) / 8, dims.z);
+	p_rd->compute_list_end();
+	p_rd->free_rid(set);
+	Vector3i d = dims;
+	for (uint32_t l = 1; l < levels; l++) {
+		d = Vector3i(MAX(d.x / 2, 1), MAX(d.y / 2, 1), MAX(d.z / 2, 1));
+		LocalVector<RD::Uniform> mu;
+		mu.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 0, glow_mips[l - 1]));
+		mu.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, glow_mips[l]));
+		const RID mset = p_rd->uniform_set_create(mu, glow_mip_shader, 0);
+		ERR_FAIL_COND(!mset.is_valid());
+		list = p_rd->compute_list_begin();
+		p_rd->compute_list_bind_compute_pipeline(list, glow_mip_pipeline);
+		p_rd->compute_list_bind_uniform_set(list, mset, 0);
+		p_rd->compute_list_dispatch(list, (d.x + 3) / 4, (d.y + 3) / 4, (d.z + 3) / 4);
+		p_rd->compute_list_end();
+		p_rd->free_rid(mset);
+	}
+
+	// World -> (u, v, w) in 0..1.
+	const Vector3 extent = Vector3(dims) * vox;
+	Transform3D xf;
+	xf.basis = Basis::from_scale(Vector3(1.0f / extent.x, 1.0f / extent.y, 1.0f / extent.z));
+	xf.origin = Vector3(-origin.x / extent.x, -origin.y / extent.y, -origin.z / extent.z);
+	r_glow.texture = glow_texture;
+	r_glow.world_to_glow = xf;
+}
+
 void FlowScatterRD::free(RenderingDevice *p_rd) {
 	if (p_rd == nullptr) {
 		return;
+	}
+	for (RID &m : glow_mips) {
+		if (m.is_valid()) {
+			p_rd->free_rid(m);
+		}
+	}
+	glow_mips.clear();
+	glow_dims = Vector3i();
+	for (RID *r : { &glow_pipeline, &glow_shader, &glow_mip_pipeline, &glow_mip_shader, &glow_texture, &glow_box_buffer }) {
+		if (r->is_valid()) {
+			p_rd->free_rid(*r);
+			*r = RID();
+		}
 	}
 	for (RID *r : { &pipeline, &shader, &upsample_pipeline, &upsample_shader, &scatter_texture, &linear_sampler, &point_sampler, &shadow_sampler, &sky_sampler, &params_buffer, &lights_buffer, &directional_dummy, &shadow_pipeline, &shadow_shader, &sun_slot.box_buffer, &sun_slot.texture, &sky_slot.box_buffer, &sky_slot.texture, &temporal_pipeline, &temporal_shader, &history[0], &history[1], &background_copy }) {
 		if (r->is_valid()) {

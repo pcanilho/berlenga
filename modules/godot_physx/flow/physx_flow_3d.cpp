@@ -521,7 +521,15 @@ void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_
 			shadow.to_light = shadow_to_light;
 		}
 		shadow.enabled = shadow_rid.is_valid();
-		p_effect->get_scatter().run(p_rd, source, params, lights.ptr(), (int)lights.size(), p_depth, p_color, RID::from_uint64(out), atlas, p_size, &shadow);
+		// The gas's light onto the surfaces around it: its grid's mapping rides on the sun's light data, so it needs
+		// the sun's volume shadow light.
+		FlowScatterRD::GlowMap glow;
+		glow.enabled = surface_glow && shadow_rid.is_valid();
+		p_effect->get_scatter().run(p_rd, source, params, lights.ptr(), (int)lights.size(), p_depth, p_color, RID::from_uint64(out), atlas, p_size, &shadow, &glow);
+		if (glow.texture.is_valid()) {
+			// The opaque pass reads it from the next frame on (Forward+ only).
+			RendererRD::LightStorage::get_singleton()->directional_gas_glow_set(shadow_rid, glow.texture, glow.world_to_glow);
+		}
 		if (shadow_casts && shadow.texture.is_valid()) {
 			// The opaque pass reads it from the next frame on (Forward+ only).
 			// The gas's single-scattering albedo for the ground's light through it: its scattering albedo times its
@@ -1102,7 +1110,7 @@ void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, const AABB &p_sourc
 		if (fires) {
 			// Another fire's indraft draws smoke and dust beside it in (near the ground, fading over a few metres);
 			// over a fire's own Flow it converges on the box's middle and nets out.
-			w += fire->wind_at(p_at) * (1.0f - Math::smoothstep(2.0f, 6.0f, p_at.y - p_floor));
+			w += fire->wind_at(p_at) * (1.0f - Math::smoothstep(2.0f, 6.0f, (float)(p_at.y - p_floor)));
 		}
 		return w;
 	};
@@ -1847,6 +1855,8 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_heat_shimmer_turbulence"), &PhysXFlow3D::get_heat_shimmer_turbulence);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enabled"), &PhysXFlow3D::set_cast_shadows);
 	ClassDB::bind_method(D_METHOD("is_cast_shadows"), &PhysXFlow3D::is_cast_shadows);
+	ClassDB::bind_method(D_METHOD("set_surface_glow", "enabled"), &PhysXFlow3D::set_surface_glow);
+	ClassDB::bind_method(D_METHOD("is_surface_glow"), &PhysXFlow3D::is_surface_glow);
 	ClassDB::bind_method(D_METHOD("set_diffuse_transmission", "enabled"), &PhysXFlow3D::set_diffuse_transmission);
 	ClassDB::bind_method(D_METHOD("is_diffuse_transmission"), &PhysXFlow3D::is_diffuse_transmission);
 	ClassDB::bind_method(D_METHOD("set_scattering_temporal", "enabled"), &PhysXFlow3D::set_scattering_temporal);
@@ -1934,6 +1944,7 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ambient_scattering"), "set_ambient_scattering", "is_ambient_scattering");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sun_scattering"), "set_sun_scattering", "is_sun_scattering");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_shadows"), "set_cast_shadows", "is_cast_shadows");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "surface_glow"), "set_surface_glow", "is_surface_glow");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "diffuse_transmission"), "set_diffuse_transmission", "is_diffuse_transmission");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_max_lights", PROPERTY_HINT_RANGE, vformat("1,%d,1", FlowScatterRD::MAX_LIGHTS)), "set_scattering_max_lights", "get_scattering_max_lights");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_strength", PROPERTY_HINT_RANGE, "0,8,0.01,or_greater"), "set_scattering_strength", "get_scattering_strength");
