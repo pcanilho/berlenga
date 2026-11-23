@@ -1176,15 +1176,19 @@ vec3 tm_cl_normal(vec3 p, vec3 nb, vec3 k, float e) {
 	float tn = length(nb.xz) / max(nb.y, 1e-3);
 	vec3 du = (a + m * tm_cl_disp(a, k, tn)) - (b + m * tm_cl_disp(b, k, tn));
 	vec3 dv = (c + m * tm_cl_disp(c, k, tn)) - (d + m * tm_cl_disp(d, k, tn));
-	vec3 nn = cross(dv, du);
-	nn = dot(nn, nb) < 0.0 ? -nn : nn;
-	nn = dot(nn, nn) > 1e-12 ? normalize(nn) : nb;
+	vec3 nn = cross(dv, du); // faces along nb while the displaced frame keeps its orientation
+	float l2 = dot(nn, nn);
+	if (l2 <= 1e-12) {
+		return nb;
+	}
+	nn *= inversesqrt(l2);
 	// The relief's finest noise changes faster than the scale k (set per vertex over 0.4 m steps) allows for: where its
 	// slope across the face folds the field within e, the differences turn the normal past the face's edge, a black
-	// fleck under the sun with a white one beside it. Held within some 70 degrees of the heightfield's normal (a
-	// shading normal may not face away from its surface; Schussler et al. 2017).
+	// fleck under the sun with a white one beside it. A shading normal may not face away from its surface (Schussler
+	// et al. 2017): past some 70 degrees from the heightfield's normal it hands over to that, wholly by the fold
+	// itself (the frame turned over, nn against nb: the back of a fold, whose mirror image lit a dark streak).
 	float cn = dot(nn, nb);
-	return cn < 0.35 ? normalize(nn + nb * (0.35 - cn) * 2.0) : nn;
+	return cn < 0.35 ? normalize(mix(nb, nn, smoothstep(0.0, 0.35, cn))) : nn;
 }
 )";
 	if (cliff_self_shadow) {

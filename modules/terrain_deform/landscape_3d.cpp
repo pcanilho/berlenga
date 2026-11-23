@@ -894,23 +894,29 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	// Folds left over. The scale k (_cliff_scale) eases the relief where its offset changes fast, but it changes fast
 	// itself where a bed's step comes into its reach, and k o then falls by more than the distance across the face in
 	// a few centimetres: the displaced triangle turns over in plan (the surface folds through itself, black dashes
-	// along a cliff's foot). Such a triangle's free vertices are drawn back toward the heightfield until none turns
-	// over (the relief is horizontal, so a triangle folds exactly when its plan projection changes orientation). The
-	// chunk's sides are left alone, so neighbours still agree on them.
+	// along a cliff's foot). Such a triangle's free vertices are moved until none turns over (the relief is
+	// horizontal, so a triangle folds exactly when its plan projection changes orientation). The chunk's sides are
+	// left alone, so neighbours still agree on them.
 	{
 		const real_t x0 = corner.x, x1 = corner.x + n * spacing, z0 = corner.z, z1 = corner.z + n * spacing;
 		const real_t eb = spacing * 1e-3f;
 		auto on_side = [&](const Vector3 &q) {
 			return Math::abs(q.x - x0) < eb || Math::abs(q.x - x1) < eb || Math::abs(q.z - z0) < eb || Math::abs(q.z - z1) < eb;
 		};
-		LocalVector<real_t> shrink;
-		shrink.resize(base.size());
-		for (uint32_t i = 0; i < base.size(); i++) {
-			shrink[i] = 1.0;
-		}
+		// First relaxed: each turned triangle's free vertices take their neighbours' mean displacement (Laplacian
+		// smoothing of the offset, as displacement-mapping pipelines repair foldovers), which spreads a too-steep
+		// fall over the cells around it. Drawn back toward the heightfield instead, as a last resort, they left a pit
+		// in the relief up to its full depth across, whose walls caught the sun's shadow: small dark nicks on lit faces.
+		LocalVector<uint8_t> moved;
+		moved.resize(base.size());
+		memset(moved.ptr(), 0, moved.size());
 		LocalVector<uint8_t> mark;
 		mark.resize(base.size());
-		for (int it = 0; it < 8; it++) {
+		LocalVector<Vector3> sum_d;
+		LocalVector<Vector4> sum_c;
+		LocalVector<real_t> cnt;
+		const int RELAX = 12;
+		for (int it = 0; it < RELAX + 8; it++) {
 			memset(mark.ptr(), 0, mark.size());
 			bool any = false;
 			for (uint32_t t = 0; t + 2 < tris.size(); t += 3) {
@@ -923,27 +929,94 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 				const Vector3 pa = vp[a] + corner, pb = vp[b] + corner, pc = vp[c] + corner;
 				const real_t area1 = (pb.x - pa.x) * (pc.z - pa.z) - (pb.z - pa.z) * (pc.x - pa.x);
 				if (area1 / area0 < 0.05f) {
-					mark[a] = mark[b] = mark[c] = 1;
-				}
-			}
-			for (uint32_t i = 0; i < base.size(); i++) {
-				if (mark[i] && keep[i] > 0.0 && !on_side(base[i])) {
-					vp[i] = (base[i] - corner) + (vp[i] - (base[i] - corner)) * 0.6f;
-					c0[i * 4 + 3] *= 0.6f;
-					c1[i * 4 + 3] *= 0.6f;
-					c2[i] *= 0.6f;
-					shrink[i] *= 0.6f;
-					any = true;
+					for (int v : { a, b, c }) {
+						if (keep[v] > 0.0 && !on_side(base[v])) {
+							mark[v] = 1;
+							any = true;
+						}
+					}
 				}
 			}
 			if (!any) {
 				break;
 			}
+			if (it < RELAX) {
+				if (sum_d.is_empty()) {
+					sum_d.resize(base.size());
+					sum_c.resize(base.size());
+					cnt.resize(base.size());
+				}
+				for (uint32_t i = 0; i < base.size(); i++) {
+					if (mark[i]) {
+						sum_d[i] = Vector3();
+						sum_c[i] = Vector4();
+						cnt[i] = 0.0;
+					}
+				}
+				for (uint32_t t = 0; t + 2 < tris.size(); t += 3) {
+					for (int e = 0; e < 3; e++) {
+						const int v = tris[t + e];
+						if (!mark[v]) {
+							continue;
+						}
+						for (int f = 1; f < 3; f++) {
+							const int u = tris[t + (e + f) % 3];
+							sum_d[v] += vp[u] - (base[u] - corner);
+							sum_c[v] += Vector4(c0[u * 4 + 3], c1[u * 4 + 3], c2[u], 0.0f);
+							cnt[v] += 1.0;
+						}
+					}
+				}
+				for (uint32_t i = 0; i < base.size(); i++) {
+					if (mark[i] && cnt[i] > 0.0) {
+						vp[i] = (base[i] - corner) + sum_d[i] / cnt[i];
+						const Vector4 cc = sum_c[i] / cnt[i];
+						c0[i * 4 + 3] = cc.x;
+						c1[i * 4 + 3] = cc.y;
+						c2[i] = cc.z;
+						moved[i] = 1;
+					}
+				}
+			} else {
+				for (uint32_t i = 0; i < base.size(); i++) {
+					if (mark[i]) {
+						vp[i] = (base[i] - corner) + (vp[i] - (base[i] - corner)) * 0.6f;
+						c0[i * 4 + 3] *= 0.6f;
+						c1[i * 4 + 3] *= 0.6f;
+						c2[i] *= 0.6f;
+						moved[i] = 1;
+					}
+				}
+			}
 		}
-		for (uint32_t i = 0; i < base.size(); i++) {
-			if (shrink[i] < 1.0) {
-				const Vector3 nb = _normal_at((base[i].x - origin.x) / spacing, (base[i].z - origin.y) / spacing);
-				nw[i] = nb.lerp(nw[i], shrink[i]).normalized();
+		// The moved vertices' normals from the triangles round them as they now stand (area weighted).
+		bool any_moved = false;
+		for (uint32_t i = 0; i < base.size() && !any_moved; i++) {
+			any_moved = moved[i];
+		}
+		if (any_moved) {
+			LocalVector<Vector3> acc;
+			acc.resize(base.size());
+			for (uint32_t t = 0; t + 2 < tris.size(); t += 3) {
+				const int a = tris[t], b = tris[t + 1], c = tris[t + 2];
+				if (!moved[a] && !moved[b] && !moved[c]) {
+					continue;
+				}
+				Vector3 fn = (vp[b] - vp[a]).cross(vp[c] - vp[a]);
+				const Vector3 nb = _normal_at((base[a].x - origin.x) / spacing, (base[a].z - origin.y) / spacing);
+				if (fn.dot(nb) < 0.0) {
+					fn = -fn;
+				}
+				for (int v : { a, b, c }) {
+					if (moved[v]) {
+						acc[v] += fn;
+					}
+				}
+			}
+			for (uint32_t i = 0; i < base.size(); i++) {
+				if (moved[i] && acc[i].length_squared() > 1e-12f) {
+					nw[i] = acc[i].normalized();
+				}
 			}
 		}
 	}
