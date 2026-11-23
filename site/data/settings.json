@@ -2705,10 +2705,12 @@
     "PlantGenerator.make_bank_turf()",
     "PRESET_TURF_LIP",
     "SodLipFall3D",
+    "slake_time",
+    "wash_time",
     "make_bank_roots()"
    ],
    "note": "",
-   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking, break apart on landing and wash away in floods; roots of the sward and nearby trees show on bare bank faces, grown on each face's angle.",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking and break apart on landing; under water their loose soil slakes off as silt that the water carries away, and in a current the pieces wear away; roots of the sward and nearby trees show on bare bank faces, grown on each face's angle.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2733,7 +2735,7 @@
     "GrassField3D.hay_meadows"
    ],
    "note": "",
-   "what": "meadows are mown to stubble, the cut grass lying in swaths, then tedded, raked into windrows, baled into round bales and carted off over the following days; tall herbs stand cut at the stubble and regrow, and the rows carry on as far ground detail past the grass blades.",
+   "what": "meadows are mown to stubble, the cut grass lying in swaths, then tedded, raked into windrows, baled into round bales and carted off over the following days; fresh stubble shows its pale stem bases and straw-tinged cut ends, greening as it grows back; tall herbs stand cut at the stubble and regrow, and the rows carry on as far ground detail past the grass blades.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
