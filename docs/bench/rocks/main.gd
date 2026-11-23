@@ -51,6 +51,7 @@ extends Node3D
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
+#   --no-close-up         the near stones keep their base shape (RockField3D.close_up_enabled off; an A/B)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
 #   --salt=k              with --rock: a stand-in sea salt index (0..1) for the salt bloom; --no-salt-bloom: off
@@ -607,6 +608,7 @@ func _world() -> void:
 		rocks.ground_blend = not args.has("no-ground-blend")
 		rocks.ground_contact = not args.has("no-ground-contact")
 		rocks.moss_cushions = not args.has("no-moss")
+		rocks.close_up_enabled = not args.has("no-close-up")
 		rocks.rockfall_dust = not args.has("no-dust")
 		if args.has("moss"):
 			rocks.moss_cover = float(args["moss"])
