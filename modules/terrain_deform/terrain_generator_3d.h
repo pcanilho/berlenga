@@ -534,7 +534,14 @@ private:
 	void _build_nebkhas();
 	float _nebkha_sample(real_t p_x, real_t p_z) const;
 	real_t _sea_cubic(real_t p_gx, real_t p_gz) const;
-	float _ground_detail(real_t p_x, real_t p_z) const;
+	// The cliff ledges' state at a point (get_ledge_lips): bed coordinate q (bed units), the bed's boundaries b0 <= q <
+	// b1, the mean spacing (m), the bed's hardness and the ledges' weight there (0..1), the gradient the ledges read.
+	struct LedgeProbe {
+		bool valid = false;
+		double q = 0.0, b0 = 0.0, b1 = 0.0, spacing = 0.0, hard = 0.0, weight = 0.0, gx = 0.0, gz = 0.0;
+	};
+	float _ground_detail(real_t p_x, real_t p_z, LedgeProbe *r_ledge = nullptr) const;
+	LedgeProbe _ledge_probe(real_t p_x, real_t p_z) const;
 	bool result_deposition = false; // the last generate() deposited (alluvium smooths the detail)
 	Rect2 result_rect; // where the last generate() ran; the result stays there if the node moves
 	real_t result_cell = 1.0;
@@ -900,6 +907,21 @@ public:
 	// Where the last generate() ran: the rect the result's heights cover. Safe from worker threads (the node's
 	// global transform is not); get_world_rect() before the first generate().
 	Rect2 get_result_rect() const { return result_rect.has_area() ? result_rect : get_world_rect(); }
+	// Cliff ledge lips (the contract in docs/ideas/terrain-generation.md, "Ledge lips"): the outer edges of the
+	// benches cliff_ledge_spacing steps into faces, where a hard bed caps the riser below it. Read-only and safe from
+	// worker threads (as get_height). Points along each lip about p_step metres apart inside p_rect (world xz).
+	struct LedgeLip {
+		Vector3 position; // on the drawn heightfield at the lip's edge (world, m)
+		Vector3 out; // horizontal unit vector out of the face (downhill), the way a slab overhangs
+		Vector3 face_normal; // unit normal of the riser under the lip (the face a slab overhangs)
+		float bed_thickness = 0.0f; // m: height of the bed under the lip (the riser down to the bench below)
+		float cap_thickness = 0.0f; // m: the hard cap's thickness at the lip (a slab's)
+		float overhang = 0.0f; // m: how far the cap may stand out past the riser (cantilever limit times hardness)
+		float hardness = 0.0f; // 0..1: the bed's hardness (0 weathers back flush, no slab)
+		float weight = 0.0f; // 0..1: the ledges' share there (steepness, water and scree fades)
+	};
+	void get_ledge_lips(const Rect2 &p_rect, real_t p_step, LocalVector<LedgeLip> &r_lips) const;
+	TypedArray<Dictionary> get_ledge_lips_bind(const Rect2 &p_rect, real_t p_step) const;
 	Vector2i get_grid_size() const { return Vector2i(nx, ny); }
 
 	// Runs the simulation. Returns false when nothing could run (empty size).
