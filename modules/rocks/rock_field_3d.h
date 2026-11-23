@@ -476,6 +476,7 @@ private:
 	ObjectID generator_id;
 	LocalVector<River> rivers;
 	bool rivers_ready = false;
+	Mutex rivers_lock; // _prepare_rivers: workers may ask for the list at once
 	HashMap<uint32_t, Library> libraries;
 	HashMap<int, Ref<ShaderMaterial>> materials; // per rock type, with this field's lichen and moss
 	HashMap<Vector3i, Cell> cells; // (layer, cell x, cell z)
