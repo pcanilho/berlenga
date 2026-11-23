@@ -32,6 +32,7 @@
 
 
 #include "snow_surface_3d.h"
+#include "snow_bodies_3d.h"
 #include "snow_clumps_3d.h"
 
 #include "snow_cover_3d.h"
@@ -1441,6 +1442,29 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 			toe_reach = MAX(toe_reach, 0.5f * (cd.foot + toe_end) * t);
 			fell++;
 		}
+		// A cohesive slab comes off as blocks (follow-up 55): one to three angular pieces of the wedge's top tip off the
+		// edge into the rut as rigid bodies (SnowBodies3D), settle on the toe and sink into it as they break up. Their
+		// snow is already in the toe, so they add none.
+		const float block_scale = CLAMP(0.8f + Math::log(MAX(cd.block_c, 1.0f) / 100.0f) * 0.4343f, 0.8f, 4.0f);
+		SnowBodies3D *bodies = cover->get_bodies();
+		if (bodies && block_volume > 0.0f && block_scale >= 1.8f && bodies->get_falling_chunks() < 256) {
+			const float wedge = block_depth / block_tan; // m: the wedge's width at the top
+			// Most of a slab wall breaks small as it lands; about half the blocks keep a piece or two whole.
+			const int pieces = rnd() < 0.5f ? 0 : CLAMP(int((2 * half + 1) * t / 0.35f), 1, 2);
+			for (int k = 0; k < pieces; k++) {
+				const float along = ((k + 0.5f) / pieces - 0.5f) * (2 * half + 1) * t;
+				const Vector3 size(CLAMP((2 * half + 1) * t / pieces * (0.7f + 0.3f * rnd()), 0.08f, 0.45f), CLAMP(block_depth * (0.3f + 0.25f * rnd()), 0.05f, 0.4f), CLAMP(wedge * (0.5f + 0.3f * rnd()), 0.05f, 0.35f));
+				const float wx = (field.origin.x + x0 + 0.5f) * t + ax * along - DX[d] * 0.5f * size.z;
+				const float wz = (field.origin.y + z0 + 0.5f) * t + az * along - DZ[d] * 0.5f * size.z;
+				const float top_y = _surface_at(wx - DX[d] * 0.6f, wz - DZ[d] * 0.6f, cover);
+				// Its long side along the face (local x), its depth across it (local z), tipping out over the edge.
+				const Vector3 out_dir(float(DX[d]), 0.0f, float(DZ[d]));
+				const Basis yaw(Vector3(0, 1, 0), Math::atan2(-float(az), float(ax)) + (rnd() - 0.5f) * 0.3f);
+				const Transform3D xf(yaw, Vector3(wx, top_y - 0.5f * size.y + 0.02f, wz) + out_dir * 0.03f);
+				const Vector3 spin = Vector3(0, 1, 0).cross(out_dir) * (2.0f + 2.0f * rnd()) + Vector3(0, (rnd() - 0.5f) * 0.6f, 0);
+				bodies->throw_block(xf, size, out_dir * (0.4f + 0.4f * rnd()), spin, cover->get_density_at(Vector3(wx, 0, wz)), false);
+			}
+		}
 		// The block breaks up as it lands: part of it lies on the toe as lumps (SnowClumps3D's debris), the larger the
 		// stronger the snow it broke from (the cohesion of the layers that came off).
 		if (clumps_node && block_volume > 0.0f) {
@@ -1449,7 +1473,8 @@ int SnowSurface3D::_crumble(double p_delta, bool p_gpu) {
 			const int behind = int(0.6f / t); // past the wedge, on the untouched top
 			const float field_top = _surface_at((field.origin.x + x0 - DX[d] * behind + 0.5f) * t, (field.origin.y + z0 - DZ[d] * behind + 0.5f) * t, cover);
 			const float coh = cd.block_c;
-			const float scale = CLAMP(0.8f + Math::log(MAX(coh, 1.0f) / 100.0f) * 0.4343f, 0.8f, 4.0f);
+			// The big pieces of a cohesive slab are the thrown blocks above: the lumps stay fist-sized and smaller.
+			const float scale = MIN(CLAMP(0.8f + Math::log(MAX(coh, 1.0f) / 100.0f) * 0.4343f, 0.8f, 4.0f), 1.8f);
 			// Cold new powder mostly falls to dust; settled, sintered snow comes down as blocks.
 			const float share = 0.04f + 0.26f * CLAMP((scale - 0.8f) / 2.0f, 0.0f, 1.0f);
 			// Along the block's toe, in small scatters (a wide one would reach the far side's top in a narrow rut).

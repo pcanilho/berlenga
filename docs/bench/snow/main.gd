@@ -1050,6 +1050,7 @@ func _run_wall_tests() -> void:
 		var before: Vector2 = sf.get_moved_volume()
 		var hc: Vector2 = snow.get_cut_critical_height(p)
 		sf.wall_collapse = true
+		var thrown0: int = snow.get_bodies().get_blocks_thrown()
 		var fell := 0
 		for k in 30:
 			fell += sf.crumble(0.2)
@@ -1067,7 +1068,7 @@ func _run_wall_tests() -> void:
 				prof2.append("%.2f" % (sf.get_rim_at(q) - sf.get_dent_at(q)))
 			print("    after:  ", " ".join(prof2))
 		var toe := sf.get_rim_at(Vector3(0.45, 0, 0.0)) # just inside the trench by its x wall
-		results[case_name] = [deep, hc.x, hc.y, fell, sf.get_collapsed_volume(), after - before, toe, _layer_text(p), stood]
+		results[case_name] = [deep, hc.x, hc.y, fell, sf.get_collapsed_volume(), after - before, toe, _layer_text(p), stood, snow.get_bodies().get_blocks_thrown() - thrown0]
 		print("  %s: %s; trench %.2f m, critical %.2f m (fails to %.2f m); %d texels gave, %.4f m3 off the walls, dent %+.4f rim %+.4f m3, toe %.2f m" % [case_name, _layer_text(p), deep, hc.x, hc.y, fell, sf.get_collapsed_volume(), (after - before).x, (after - before).y, toe])
 		sf.queue_free()
 		target.queue_free()
@@ -1079,6 +1080,7 @@ func _run_wall_tests() -> void:
 	_check("the debris is the wall's snow, bulked by a quarter as broken blocks", absf(f[5].y - 1.25 * f[4]) < 0.05 * f[4] + 1e-4, "%.4f m3 of rim for %.4f m3 off the walls" % [f[5].y, f[4]])
 	_check("a trench in old settled snow stands", o[3] == 0 and o[1] > o[0], "%d texels; trench %.2f m, critical %.2f m" % [o[3], o[0], o[1]])
 	_check("a wall over depth hoar is undercut and falls to the hoar's bottom", u[3] > 0 and u[1] < o[1], "%d texels; critical %.2f m, fails to %.2f m" % [u[3], u[1], u[2]])
+	_check("a slab over depth hoar comes off in blocks thrown as bodies; new powder falls as loose debris", u[9] > 0 and f[9] == 0, "%d blocks from the slab, %d from the powder" % [u[9], f[9]])
 	_check("a 20 cm rut in new powder stands until a body works along it, then its walls come in", w[8] == 0 and w[3] > 0 and w[0] < w[1] and w[0] > 0.6 * w[1], "rut %.2f m, critical %.2f m (%.2f worked): %d texels left alone, %d worked" % [w[0], w[1], 0.6 * w[1], w[8], w[3]])
 
 
@@ -4198,6 +4200,11 @@ func _build_walls(cam: Camera3D) -> void:
 		for k in 40:
 			fell += surface.crumble(0.2)
 		print("walls: critical %.2f m, fails to %.2f m; %d texels gave, %.3f m3" % [hc.x, hc.y, fell, surface.get_collapsed_volume()])
+	# The slab's blocks fall into the rut and settle (eight seconds).
+	for i in 480:
+		await get_tree().physics_frame
+	var sbw: SnowBodies3D = snow.get_bodies()
+	print("walls: %d blocks thrown, %d still falling" % [sbw.get_blocks_thrown(), sbw.get_falling_chunks()])
 	# The shot holds the snow still: raster's TAA hold and the path tracer's wait run different numbers of frames,
 	# and the field would keep settling through them.
 	for i in 3:

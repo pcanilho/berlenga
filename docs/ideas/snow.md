@@ -2039,6 +2039,24 @@ Built:
 - Not yet: blocks as falling rigid pieces (as the roof slabs, follow-up 52) for the largest failures; the cover's own
   cell steps (avalanche crowns) crumbling.
 
+## Follow-up 55: slab blocks that fall as bodies (round 10 start, 23 Nov 2026)
+
+Research: a cut or crown in cohesive slab breaks along fractures into angular blocks, flat-faced with sharp edges
+(slab avalanche debris and cornice falls: blocks first, rounding into granules only as they tumble far; Bartelt and
+McArdell 2009), while new powder disintegrates. The docs review read the wall debris as pebbles.
+
+Built:
+- SnowBodies3D `throw_block(transform, size, velocity, spin, density, deposit)`: an angular piece (an irregular
+  hexahedron: the box's eight corners each moved up to a fifth of its size, flat-shaded) on the roof slab pieces' path
+  (follow-up 52): a PhysX rigid body on collision layer 20, it falls, settles, freezes and sinks out of sight; with
+  `deposit` false its snow is not added to the cover again (a wall's block is already in the toe).
+- Cut walls (follow-up 54): where the snow that comes off is cohesive (block lump scale 1.8 and up, sintered or
+  wind-packed slab), about half the fallen blocks keep one or two pieces whole: up to 0.45 m along the face, a third
+  to a half of the block's depth high, half its wedge deep, tipped out over the edge with a small push and spin.
+  At most 256 pieces in the air at once. The SnowClumps3D lumps stay at most fist-sized.
+- Fix: resting pieces only sank while something else was falling.
+- `--test=walls`: a slab over depth hoar throws blocks, new powder none.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

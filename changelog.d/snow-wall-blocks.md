@@ -1,0 +1,1 @@
+- Snow: cohesive rut and trench walls drop angular slab blocks that fall as rigid bodies and settle in the rut (`SnowBodies3D.throw_block`).

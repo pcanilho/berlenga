@@ -11,6 +11,12 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_blocks_thrown" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many blocks [method throw_block] has thrown so far.
+			</description>
+		</method>
 		<method name="get_body_density" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="node" type="Node" />
@@ -162,6 +168,18 @@
 			<param index="0" name="delta" type="float" />
 			<description>
 				Runs one update of [param delta] seconds now (tests, scripted scenes).
+			</description>
+		</method>
+		<method name="throw_block">
+			<return type="void" />
+			<param index="0" name="transform" type="Transform3D" />
+			<param index="1" name="size" type="Vector3" />
+			<param index="2" name="velocity" type="Vector3" />
+			<param index="3" name="spin" type="Vector3" />
+			<param index="4" name="density" type="float" />
+			<param index="5" name="deposit" type="bool" />
+			<description>
+				Throws an angular block of slab ([param size] m, [param density] kg/m³) as a rigid body: flat-faced, it falls, settles, and sinks out of sight like a roof piece. With [param deposit], its snow joins the cover where it stops; without, it is already counted (a cut wall's block, whose snow is in the toe).
 			</description>
 		</method>
 		<method name="track">

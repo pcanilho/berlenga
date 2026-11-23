@@ -709,9 +709,11 @@ void SnowBodies3D::_spawn_chunk(const PendingChunk &p_chunk, float p_size_along)
 	Ref<BoxMesh> bm;
 	bm.instantiate();
 	bm->set_size(p_chunk.size);
-	bm->set_subdivide_width(3);
-	bm->set_subdivide_height(1);
-	bm->set_subdivide_depth(3);
+	// A clean-broken slab block keeps flat faces: only its eight corners move (an irregular hexahedron, as a block
+	// split along fractures is); a roof piece is knocked about, its faces bumpy and its corners rounded off.
+	bm->set_subdivide_width(p_chunk.angular ? 0 : 3);
+	bm->set_subdivide_height(p_chunk.angular ? 0 : 1);
+	bm->set_subdivide_depth(p_chunk.angular ? 0 : 3);
 	Array arrays = bm->surface_get_arrays(0);
 	PackedVector3Array verts = arrays[Mesh::ARRAY_VERTEX];
 	const uint32_t piece = hash_murmur3_one_32(uint32_t(chunks_spawned) * 2654435761u);
@@ -723,6 +725,14 @@ void SnowBodies3D::_spawn_chunk(const PendingChunk &p_chunk, float p_size_along)
 		const Vector3 out = Vector3(q.x / MAX(p_chunk.size.x, 0.01f), q.y / MAX(p_chunk.size.y, 0.01f), q.z / MAX(p_chunk.size.z, 0.01f));
 		// Corners and edges knocked off: the further out along two or three axes, the more a point is pulled in.
 		const float corner = 4.0f * Math::abs(out.x * out.z) * (0.5f + Math::abs(out.y));
+		if (p_chunk.angular) {
+			// Each corner its own way along all three axes (a hash per axis), up to a fifth of the block's size.
+			const uint32_t h2 = hash_murmur3_one_32(h);
+			const uint32_t h3 = hash_murmur3_one_32(h2);
+			const Vector3 j(float(h & 0xffff) / 65535.0f - 0.5f, float(h2 & 0xffff) / 65535.0f - 0.5f, float(h3 & 0xffff) / 65535.0f - 0.5f);
+			verts.set(v, q + j * p_chunk.size * 0.4f);
+			continue;
+		}
 		verts.set(v, q * (1.0f - 0.22f * corner) + out.normalized() * amp * r);
 	}
 	arrays[Mesh::ARRAY_VERTEX] = verts;
@@ -731,6 +741,18 @@ void SnowBodies3D::_spawn_chunk(const PendingChunk &p_chunk, float p_size_along)
 	Ref<SurfaceTool> st;
 	st.instantiate();
 	st->create_from_arrays(arrays);
+	if (p_chunk.angular) {
+		// Each triangle its own vertices and a flat smooth group: flat facets, sharp edges.
+		st->deindex();
+		const Array flat = st->commit_to_arrays();
+		const PackedVector3Array fv = flat[Mesh::ARRAY_VERTEX];
+		st.instantiate();
+		st->begin(Mesh::PRIMITIVE_TRIANGLES);
+		st->set_smooth_group(UINT32_MAX);
+		for (int v = 0; v < fv.size(); v++) {
+			st->add_vertex(fv[v]);
+		}
+	}
 	st->generate_normals();
 	Ref<ArrayMesh> am = st->commit();
 	am->surface_set_material(0, chunk_material);
@@ -748,8 +770,24 @@ void SnowBodies3D::_spawn_chunk(const PendingChunk &p_chunk, float p_size_along)
 	c.size = p_size_along;
 	c.last_velocity = p_chunk.velocity;
 	c.dry = p_chunk.dry;
+	c.deposit = p_chunk.deposit;
 	chunks.push_back(c);
 	chunks_spawned++;
+}
+
+void SnowBodies3D::throw_block(const Transform3D &p_xform, const Vector3 &p_size, const Vector3 &p_velocity, const Vector3 &p_spin, float p_density, bool p_deposit) {
+	PendingChunk pc;
+	pc.xform = p_xform;
+	pc.size = p_size.max(Vector3(0.03f, 0.03f, 0.03f));
+	pc.velocity = p_velocity;
+	pc.spin = p_spin;
+	pc.density = MAX(p_density, 50.0f);
+	pc.mass = pc.size.x * pc.size.y * pc.size.z * pc.density;
+	pc.deposit = p_deposit;
+	pc.angular = true;
+	pc.wait = 0.0f;
+	pending_chunks.push_back(pc);
+	blocks_thrown++;
 }
 
 void SnowBodies3D::_deposit_chunk(const Chunk &p_chunk, const Vector3 &p_at) {
@@ -822,7 +860,9 @@ void SnowBodies3D::_chunks_step(float p_dt) {
 		c.rest = v.length() < 0.3f ? c.rest + p_dt : 0.0f;
 		c.last_velocity = v;
 		if (c.rest > 0.4f || c.age > 8.0f || at.y < -1000.0f) {
-			_deposit_chunk(c, at);
+			if (c.deposit) {
+				_deposit_chunk(c, at);
+			}
 			// Its snow is in the cover now, as a heap under it; the block itself stays in sight a while, still and
 			// no longer solid, sinking into that heap as broken debris settles (BLOCK_SINK_TIME), then goes.
 			const CollisionShape3D *cs = rb->get_child_count() > 0 ? Object::cast_to<CollisionShape3D>(rb->get_child(0)) : nullptr;
@@ -1001,7 +1041,7 @@ void SnowBodies3D::_notification(int p_what) {
 			if (weight_enabled) {
 				_apply_weight();
 			}
-			if (!chunks.is_empty() || !pending_chunks.is_empty() || !puffs.is_empty()) {
+			if (!chunks.is_empty() || !pending_chunks.is_empty() || !puffs.is_empty() || !resting.is_empty()) {
 				_chunks_step(float(get_physics_process_delta_time()));
 			}
 			accum += get_physics_process_delta_time();
@@ -1055,6 +1095,8 @@ void SnowBodies3D::_bind_methods() {
 	ClassDB::bind_static_method("SnowBodies3D", D_METHOD("ice_dam_height", "kg_per_m"), &SnowBodies3D::ice_dam_height);
 	ClassDB::bind_method(D_METHOD("get_ice_dam_height", "node"), &SnowBodies3D::get_ice_dam_height);
 	ClassDB::bind_method(D_METHOD("get_falling_chunks"), &SnowBodies3D::get_falling_chunks);
+	ClassDB::bind_method(D_METHOD("throw_block", "transform", "size", "velocity", "spin", "density", "deposit"), &SnowBodies3D::throw_block);
+	ClassDB::bind_method(D_METHOD("get_blocks_thrown"), &SnowBodies3D::get_blocks_thrown);
 	ClassDB::bind_method(D_METHOD("get_chunks_spawned"), &SnowBodies3D::get_chunks_spawned);
 	ClassDB::bind_method(D_METHOD("set_roof_slab_bodies", "enable"), &SnowBodies3D::set_roof_slab_bodies);
 	ClassDB::bind_method(D_METHOD("is_roof_slab_bodies_enabled"), &SnowBodies3D::is_roof_slab_bodies_enabled);
