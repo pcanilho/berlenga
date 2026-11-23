@@ -50,7 +50,7 @@ void PlantGenerator::_build_hay_bale() {
 	const float layer = _rand(0.025f, 0.04f); // The spiral's pitch on the ends.
 	// Radius of the body at angle a round the axis (0 at the top) and x along it: lumpy, flatter at the bottom.
 	auto body_r = [&](float p_a, float p_x) {
-		const float lump = 0.012f * Math::sin(p_a * 7.0f + ph) + 0.008f * Math::sin(p_a * 17.0f - p_x * 9.0f) + 0.006f * Math::sin(p_x * 23.0f + p_a * 3.0f);
+		const float lump = 0.006f * Math::sin(p_a * 7.0f + ph) + 0.004f * Math::sin(p_a * 17.0f - p_x * 9.0f) + 0.003f * Math::sin(p_x * 23.0f + p_a * 3.0f);
 		return r0 + lump;
 	};
 	auto to_world = [&](float p_a, float p_x, float p_r) {
@@ -61,8 +61,10 @@ void PlantGenerator::_build_hay_bale() {
 		return v;
 	};
 	Builder &cb = builders[SURFACE_CENTRE];
-	const int na = 96;
-	const int nx = 24;
+	const int na = 144;
+	// The body in rings about 9 mm apart across its width: each ring a wound band of hay of its own shade and a hair
+	// proud or sunk, so the surface carries the fine circumferential grain of the layers (geometry, not a texture).
+	const int nx = 140;
 	const int first = int(cb.verts.size());
 	// The body and its rounded edges as one lathe: along u from one end's centre over the edge, the body, the other
 	// edge to the other end's centre; round a.
@@ -93,12 +95,30 @@ void PlantGenerator::_build_hay_bale() {
 		prof.push_back(Vector2(hw + dome, (r0 - edge) * t));
 	}
 	const int np = int(prof.size());
+	// Bands: a hash of the band a point across the width falls in, about 9 mm wide (an estimate of a wound layer's
+	// visible strands), smoothed into its neighbours.
+	const uint32_t band_seed = uint32_t(rng.rand());
+	auto band_hash = [&](int p_i) {
+		return float(hash_murmur3_one_32(uint32_t(p_i) + band_seed) & 0xFFFF) / 65535.0f;
+	};
+	auto band_shade = [&](float p_x) {
+		const float u = p_x / 0.009f;
+		const int i = int(Math::floor(u));
+		const float f = u - float(i);
+		const float b = Math::lerp(band_hash(i), band_hash(i + 1), Math::smoothstep(0.3f, 0.7f, f));
+		return 0.74f + 0.38f * b;
+	};
+	auto band_lift = [&](float p_x) {
+		const float u = p_x / 0.009f;
+		const int i = int(Math::floor(u));
+		return (band_hash(i * 7 + 3) - 0.5f) * 0.006f;
+	};
 	for (int j = 0; j < np; j++) {
 		const Vector2 pr = prof[j];
 		const bool end_face = j <= ne || j >= np - 1 - ne;
 		for (int i = 0; i <= na; i++) {
 			const float a = Math::TAU * float(i) / na;
-			const float rr = pr.y >= r0 - 1e-4f ? body_r(a, pr.x) : pr.y * body_r(a, pr.x) / r0;
+			const float rr = pr.y >= r0 - 1e-4f ? body_r(a, pr.x) + band_lift(pr.x) : pr.y * body_r(a, pr.x) / r0;
 			cb.verts.push_back(to_world(a, pr.x, rr));
 			cb.uvs.push_back(Vector2(float(i) / na, float(j) / (np - 1)));
 			cb.uv2s.push_back(Vector2(0.0f, 0.0f));
@@ -109,7 +129,9 @@ void PlantGenerator::_build_hay_bale() {
 				const float band = Math::abs(Math::fmod(s, 1.0f) - 0.5f) * 2.0f;
 				n = 0.72f + 0.3f * Math::smoothstep(0.15f, 0.6f, band) + 0.06f * Math::sin(a * 31.0f + pr.y * 50.0f);
 			} else {
-				n = 0.85f + 0.2f * Math::sin(a * 41.0f + pr.x * 13.0f) * Math::sin(a * 11.0f - pr.x * 29.0f);
+				// The ring's band, drifting a little round the body as the strands cross over.
+				const float rb = band_shade(pr.x + 0.006f * Math::sin(a * 5.0f + pr.x * 40.0f));
+				n = rb * (0.94f + 0.06f * Math::sin(a * 23.0f + pr.x * 310.0f));
 			}
 			cb.colors.push_back(Color(n, n, n));
 		}

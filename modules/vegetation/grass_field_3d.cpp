@@ -1558,7 +1558,7 @@ void fragment() {
 	// bright"; bleached hay is weathered: FAO), each blade a little its own shade; the cut ends pale.
 	if (v_hay >= 0.0) {
 		vec3 wilted = mix(c, vec3(dot(c, vec3(0.3, 0.59, 0.11))) * vec3(0.92, 1.06, 0.78), 0.3);
-		vec3 hay_c = vec3(0.4, 0.42, 0.23) * (0.8 + 0.4 * fract(v_dry * 23.0));
+		vec3 hay_c = vec3(0.42, 0.4, 0.17) * (0.8 + 0.4 * fract(v_dry * 23.0)); // Green-gold, not grey (PC pair 23 Nov).
 		c = mix(wilted, hay_c, smoothstep(0.3, 3.0, v_hay) * 0.85);
 	}
 	// Prefiltered with distance (Bruneton and Neyret 2012, non-linear pre-filtering): once blades are a pixel or
@@ -1623,8 +1623,13 @@ void fragment() {
 	ALBEDO = c * mix(1.0, wet_factor, wet_c);
 	ROUGHNESS = mix(mix(mix(mix(0.55, 0.75, v_trod) * mix(1.0, wet_factor, 0.5 * wet_c) * mix(1.0, 0.4, wet_c), 0.85, mud_c), 0.95, smoothstep(0.0, 0.5, v_burn)), 0.85, frost_c);
 	ROUGHNESS = mix(ROUGHNESS, 0.7, v_snow);
+	// Cut hay lying face up: dry and matt, so it does not mirror the sky into a grey-white sheet (the windrows of the
+	// 23 Nov PC pair read pale grey in both raster and path tracing).
+	float hay_dry = v_hay >= 0.0 ? smoothstep(0.3, 2.0, v_hay) : 0.0;
+	ROUGHNESS = mix(ROUGHNESS, max(ROUGHNESS, 0.8), hay_dry);
 	// Fibre shading: the strand sheen; wet, frosted, muddy or snow-covered blades lose it (a film or a crust over the fibres).
 	float fib = fibre_shading * (1.0 - max(wet_c, max(frost_c, max(mud_c, v_snow))));
+	fib *= 1.0 - 0.6 * hay_dry;
 	// Prefiltered, as the path tracer's many samples a pixel do: once a blade is under a few pixels wide its strand
 	// highlight averages back to the round lobe (full from about 3 pixels wide, gone by 1.25: fwidth(UV.x)), and the lobe
 	// takes the normal's spread across the pixel as extra roughness (Tokuyoshi and Kaplanyan 2019, "Improved Geometric
@@ -1642,7 +1647,7 @@ void fragment() {
 	}
 	// The burning band: the stubs' tips glow as the ground's embers do (the char decal's glow energy).
 	EMISSION = fire_glow_color(v_glow) * 4.0 * smoothstep(0.4, 1.0, v_t) * step(1e-3, v_burn);
-	SPECULAR = mix(0.35, 0.2, v_trod);
+	SPECULAR = mix(mix(0.35, 0.2, v_trod), 0.2, hay_dry);
 	// The highlight drawn out along the blade (ANISOTROPY_FLOW onto BINORMAL), so lit blades carry it as streaks down
 	// their length, the fibre look; across the blade it only dulled the sward's sheen (docs/ideas/grass.md). Only the
 	// lobe's shape changes, not its energy: raster and the path tracer agree on that, where a smoother, shinier blade
@@ -6444,7 +6449,7 @@ vec3 grass_mow_ground(vec3 world_pos, vec3 turf) {
 			float across = abs(u - uc) / half_w;
 			lie = 1.0 - smoothstep(0.7, 1.05, across);
 		}
-		vec3 cured = vec3(0.4, 0.42, 0.23) * (0.9 + 0.2 * grass_noise(world_pos.xz * 2.1));
+		vec3 cured = vec3(0.42, 0.4, 0.17) * (0.9 + 0.2 * grass_noise(world_pos.xz * 2.1));
 		vec3 hay = mix(turf * vec3(0.95, 1.02, 0.8), cured, smoothstep(0.3, 3.0, md) * 0.85);
 		turf = mix(turf, hay, lie * 0.9);
 	}

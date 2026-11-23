@@ -6650,8 +6650,8 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.34f, 0.3f, 0.23f); // The matted fines and silt under it.
 			break;
 		case PRESET_HAY_BALE:
-			leaf_color = Color(0.64f, 0.6f, 0.37f); // Cured hay, green-gold.
-			centre_color = Color(0.56f, 0.52f, 0.32f); // The wound layers, a little darker in their own shade.
+			leaf_color = Color(0.74f, 0.66f, 0.42f); // Cured hay, green-gold to straw.
+			centre_color = Color(0.68f, 0.6f, 0.38f); // The wound layers (an olive body read as a mossy stone: PC pair 23 Nov).
 			stem_color = Color(0.72f, 0.64f, 0.46f); // Sisal twine.
 			break;
 		case PRESET_BANK_ROOTS:

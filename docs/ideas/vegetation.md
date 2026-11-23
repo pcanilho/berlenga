@@ -2017,3 +2017,8 @@ array, for the path tracer's material slot), so the days pass without a rebuild.
   at the stream radius.
 - GrassField3D.far_bake (on): off skips the far colour bake (hand-matched far colour kept), for software-rendered
   scouts where the bake's three SubViewports take hours. Docs stills keep it on.
+- Hay look from the PC pairs (23 Nov): the bale read as an olive, lumpy mass (a mossy stone), so its body now carries
+  the wound layers as geometry (rings about 9 mm apart across the width, each its own shade and a few mm proud or sunk;
+  the layer width an estimate), smaller lumps and a warmer hay colour (about 113k triangles with LODs). The windrows
+  read grey-white in raster and path tracing: cut hay lying face up mirrored the sky. Dry hay is now matt (roughness at
+  least 0.8, less strand sheen, specular 0.2) and green-gold, near and on the far ground.
