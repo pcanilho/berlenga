@@ -4148,8 +4148,9 @@ old growth reading as a plantation). Fixed at source:
   third as much and let dormant buds wait twice as long. The shade layer grows the broad, level crown of shade-tolerant
   saplings (Horn 1971 monolayer; Canham 1988): branch angle 68 degrees, slight negative gravitropism.
 
-Found, not fixed here: the fire code in the leaf and bark shaders reads the tree's base from MODEL_MATRIX in the
-fragment stage, which for MultiMesh trees is the field's origin, not the tree's (char height, fire_tree_killed).
+Fixed with it: the fire code in the leaf and bark shaders read the tree's base from MODEL_MATRIX in the fragment
+stage, which for MultiMesh trees is the field's origin, not the tree's (char height, fire_tree_killed). Both now take it
+from vertex() as a varying.
 
 ### Research for the likely picks (21 Nov, card pending)
 
