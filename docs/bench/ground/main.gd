@@ -4033,9 +4033,19 @@ func _run_shelter_tests() -> void:
 	print("  after %.1f h: %.1f mm deposited at the edge, the surface %.1f mm higher; %.1f mm upwind" % [6.0 * 1200.0 / 3600.0, dep * 1000.0, rise * 1000.0, surface.get_sand_deposit_at(up) * 1000.0])
 	_check("a mound builds round the grass (nebkha)", dep > 0.005 and rise > 0.5 * dep, "%.1f mm deposited, %.1f mm risen" % [dep * 1000.0, rise * 1000.0])
 	_check("open sand gets none", surface.get_sand_deposit_at(up) == 0.0, "%.1f mm" % (surface.get_sand_deposit_at(up) * 1000.0))
+	# Its tail (plant_wake): the wind's shadow behind it recovers over some six plant heights (Okin 2008), and the sand
+	# passing either side spreads into it and drops, a tail tapering downwind (Hesp 1981).
+	var t1 := surface.get_sand_deposit_at(Vector3(2.0, 0, 0))
+	var t2 := surface.get_sand_deposit_at(Vector3(5.0, 0, 0))
+	var t3 := surface.get_sand_deposit_at(Vector3(12.0, 0, 0))
+	var side := surface.get_sand_deposit_at(Vector3(3.0, 0, 5.0))
+	print("  tail: %.1f mm 1 m behind the tuft, %.1f mm at 4 m, %.1f mm at 11 m; %.1f mm 5 m to the side" % [t1 * 1000.0, t2 * 1000.0, t3 * 1000.0, side * 1000.0])
+	_check("a sand tail forms in the tuft's lee and tapers downwind (shadow dune)", t1 > 0.002 and t1 > t2 and t2 > t3, "%.1f, %.1f, %.1f mm at 1, 4 and 11 m behind" % [t1 * 1000.0, t2 * 1000.0, t3 * 1000.0])
+	_check("none beside it, out of the wake", side == 0.0, "%.1f mm" % (side * 1000.0))
 	_check("the wind step is cheap", surface.get_wind_step_usec() < 3000.0, "%.2f ms twice a second" % (surface.get_wind_step_usec() / 1000.0))
 	# A 1 m wall across the wind at x = 5 (a stand-in for the weather's obstacle lee, WorldWeather.obstacle_lee_at):
 	# the cavity behind it to 2 heights, recovering over 6. The sand slows and drops in its lee (a shadow dune).
+	surface.plant_wake = false # the wall alone (it stands 5 m behind the tuft, in its wake)
 	WorldContracts.set_weather(WallLeeStub.new())
 	for i in 70:
 		await get_tree().physics_frame
@@ -4054,6 +4064,7 @@ func _run_shelter_tests() -> void:
 	await get_tree().create_timer(0.6).timeout
 	_check("the lee switches off with obstacle_lee", surface.get_sand_flux_at(lee).length() > 0.8 * q_open, "%.4f kg/m/s" % surface.get_sand_flux_at(lee).length())
 	surface.obstacle_lee = true
+	surface.plant_wake = true
 	WorldContracts.clear_overrides()
 	# A pebble lag over x < -6 (a stand-in for the stone fields' WorldGround.coarse_cover_at): the sand among the
 	# stones neither blows nor shows ripples.

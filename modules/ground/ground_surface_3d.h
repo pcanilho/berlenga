@@ -820,6 +820,8 @@ private:
 	// (Raupach 1993 drag partition), the saltation flux falls among them and the sand it carried lands there.
 	TypedArray<NodePath> wind_shelters;
 	bool obstacle_lee = true; // blown sand reads WorldWeather.obstacle_lee_at
+	bool plant_wake = true; // the wind's shadow behind the wind_shelters' plants (Okin 2008), and the sand's spread into it
+	float plant_wake_height = 1.0f; // m, the plants' typical height (the wake's length scale)
 	LocalVector<float> shelter_ratio; // the surface's friction speed over the open ground's, per lattice cell
 	LocalVector<float> shelter_flux; // the flux factor, Q(u* ratio) / Q(u*), 0..1 (1 with no plants)
 	LocalVector<float> sand_flux; // kg/m/s, along the wind
@@ -1368,6 +1370,10 @@ public:
 	TypedArray<NodePath> get_wind_shelters() const { return wind_shelters; }
 	void set_obstacle_lee(bool p_enabled) { obstacle_lee = p_enabled; }
 	bool is_obstacle_lee_enabled() const { return obstacle_lee; }
+	void set_plant_wake(bool p_enabled) { plant_wake = p_enabled; }
+	bool is_plant_wake() const { return plant_wake; }
+	void set_plant_wake_height(float p_height) { plant_wake_height = MAX(p_height, 0.05f); }
+	float get_plant_wake_height() const { return plant_wake_height; }
 	// Raupach (1993): the surface's share of the friction speed among roughness elements of frontal area index
 	// p_lambda (clamped to 0.5).
 	static float shelter_ratio_for(float p_lambda);

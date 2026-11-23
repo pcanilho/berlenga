@@ -1100,6 +1100,23 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   sand block (dune_tone on, the default). Raster scout: the band about 4% darker, its ripples gone.
 - Not yet: the PT cost on the PC queue.
 
+## Nebkha tails (GroundSurface3D `plant_wake`, on; 23 Nov 2026)
+
+The last of the round-2 candidates. Shrubs and grass tufts trap blown sand into mounds with tails downwind (shadow
+dunes, nebkhas: Hesp 1981; Tengberg 1995; Lancaster and Baas 1998). The mound under the crown was already built
+(the drag partition, "Dune grass"); the tail was missing because the plants sheltered only the ground under them.
+- Technique: Okin's (2008) lee model as Li et al. (2013) give it: behind a plant the surface's friction speed is
+  u*s/u* = r0 + (1 - r0)(1 - exp(-x / (C h))), r0 0.3, C 6 (their fits 0.28 to 0.32 and 5.6 to 6.2), the nearest
+  plant upwind setting it. Each 1 m cell of the shelter grid looks back along the wind three e-folding lengths;
+  a plant is lambda over 0.02 to 0.3 (not a few stems). h is `plant_wake_height` (1 m), since the vegetation gives
+  frontal area, not height.
+- The sand reaches the shadow by spreading sideways: the flux carried downwind diffuses across the wind (0.2 m per
+  metre run, as a difference across 0.5 m, a modelling choice so the clouds from either side of a 2 m plant meet within its wake; mass kept), only
+  with a wake present, so open-sand transport is unchanged. Where the wake slows it the sand drops (the same Exner
+  deposit), so the tail grows from both sides and tapers as the wind recovers.
+- Ground --test=shelter: the tail's deposit after two scaled hours at 1, 4 and 11 m behind a 2 m tuft, and none
+  5 m to the side.
+
 ## Next sand candidates, round 2 (research, 22 Nov 2026; on a card)
 
 - **Haboob dust walls** (recommended). A thunderstorm's cold outflow (the gust front) spreads along the ground and
