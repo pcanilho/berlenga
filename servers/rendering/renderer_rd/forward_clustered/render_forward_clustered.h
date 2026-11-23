@@ -672,6 +672,9 @@ protected:
 		GeometryInstanceSurfaceDataCache *surface_caches = nullptr;
 		TransformStatus transform_status = TransformStatus::MOVED;
 		Transform3D prev_transform;
+		// Whether the camera cut-out can reach this instance this frame (its bounds meet the cut): only then does the
+		// camera's depth prepass draw a cut-out material with its own shader (_fill_render_list).
+		bool in_camera_cutout = true;
 
 		// lightmap
 		RID lightmap_instance;
