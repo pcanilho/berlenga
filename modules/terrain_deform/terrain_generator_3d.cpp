@@ -31,6 +31,8 @@
 
 #include "terrain_generator_3d.h"
 
+#include "world_cache.h"
+
 #include "core/os/thread.h"
 
 #include "terrain_brush_3d.h"
@@ -3485,7 +3487,21 @@ void TerrainGenerator3D::_dune_tile(void *p_job, uint32_t p_tile) {
 			c.plant_ok[k] = d.plant_ok[j];
 		}
 	}
-	c.run(gen->dune_steps);
+	// The tile's sand and plants, from the world cache when this tile's inputs ran before (world_cache.h).
+	WorldCacheKey key("dunes");
+	c.hash_inputs(gen->dune_steps, [&](const void *p_data, size_t p_size) { key.bytes(p_data, p_size); });
+	const String name = key.finish();
+	LocalVector<float> packed;
+	packed.resize(cm * 2);
+	if (WorldCache::load("dunes", name, reinterpret_cast<uint8_t *>(packed.ptr()), sizeof(float) * cm * 2)) {
+		c.sand.assign(packed.ptr(), packed.ptr() + cm);
+		c.plants.assign(packed.ptr() + cm, packed.ptr() + cm * 2);
+	} else {
+		c.run(gen->dune_steps);
+		memcpy(packed.ptr(), c.sand.data(), sizeof(float) * cm);
+		memcpy(packed.ptr() + cm, c.plants.data(), sizeof(float) * cm);
+		WorldCache::store("dunes", name, reinterpret_cast<const uint8_t *>(packed.ptr()), sizeof(float) * cm * 2);
+	}
 	LocalVector<float> &out = (*job->results)[p_tile];
 	out.resize(m * 2);
 	memset(out.ptr(), 0, sizeof(float) * m * 2);
@@ -3644,7 +3660,7 @@ void TerrainGenerator3D::_build_dunes() {
 	last_dune_volume = vol;
 	last_dune_max = mx;
 	last_dune_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
-	print_verbose(vformat("TerrainGenerator3D: dunes on %dx%d at %.1f m in %d tiles, %.0f m3, highest %.1f m, %.0f ms.", w, h, dc, tiles_x * tiles_z, vol, mx, last_dune_msec));
+	print_verbose(vformat("TerrainGenerator3D: dunes on %dx%d at %.1f m in %d tiles, %.0f m3, highest %.1f m, %.0f ms (world cache: %d pieces loaded, %d stored so far).", w, h, dc, tiles_x * tiles_z, vol, mx, last_dune_msec, int64_t(WorldCache::get_loaded()), int64_t(WorldCache::get_stored())));
 }
 
 // Desert sand seas: TerrainDuneSea (Paris et al. 2019, with the wind's shear over the dunes after Kroy 2002) over
@@ -4728,7 +4744,24 @@ void TerrainGenerator3D::_erode_tile(void *p_job, uint32_t p_tile) {
 			cover[z * hp.nx + x] = MAX(gen->_sample(gen->soil, wx, wz), 0.0f) + MAX(gen->_sample(gen->talus, wx, wz), 0.0f);
 		}
 	}
-	TerrainHydraulic::run(hp, in.data(), cover.data(), out.data(), flow.data(), dep.data());
+	// The tile's eroded ground, from the world cache when these inputs ran before (world_cache.h).
+	WorldCacheKey key("erosion");
+	hp.hash_into([&](const void *p_data, size_t p_size) { key.bytes(p_data, p_size); });
+	key.array(in.data(), in.size());
+	key.array(cover.data(), cover.size());
+	const String name = key.finish();
+	std::vector<float> packed(size_t(n) * 3);
+	if (WorldCache::load("erosion", name, reinterpret_cast<uint8_t *>(packed.data()), sizeof(float) * packed.size())) {
+		memcpy(out.data(), packed.data(), sizeof(float) * n);
+		memcpy(flow.data(), packed.data() + n, sizeof(float) * n);
+		memcpy(dep.data(), packed.data() + 2 * n, sizeof(float) * n);
+	} else {
+		TerrainHydraulic::run(hp, in.data(), cover.data(), out.data(), flow.data(), dep.data());
+		memcpy(packed.data(), out.data(), sizeof(float) * n);
+		memcpy(packed.data() + n, flow.data(), sizeof(float) * n);
+		memcpy(packed.data() + 2 * n, dep.data(), sizeof(float) * n);
+		WorldCache::store("erosion", name, reinterpret_cast<const uint8_t *>(packed.data()), sizeof(float) * packed.size());
+	}
 	LocalVector<float> &r = (*job->results)[p_tile];
 	r.resize(n * 3);
 	for (int i = 0; i < n; i++) {

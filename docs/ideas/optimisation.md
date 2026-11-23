@@ -505,7 +505,7 @@ payload for a further layer. A surface that opens in the cut answers with `hit_t
 rest of what the raygen keeps across traces waits for the PC's Nsight "Ray Tracing Live State" table, since the
 driver may already recompute the values that come from the scene data (camera matrix and ray).
 
-## Setup time of the full landscape (all features on), and a world cache (proposed)
+## Setup time of the full landscape (all features on), and a world cache
 
 Cloud profile of `docs/bench/landscape` at its defaults (main thread and every worker sampled with gdb): setup
 takes 6.3 min. Rocks placing all 1.17 M stones of the 4 km world as plant obstacles 148 s (half of it in the
@@ -525,3 +525,17 @@ function of its inputs. A world cache would store each stage's outputs (heights 
 depth after dunes, snow climate, rock obstacle cells) under a hash of every input that stage reads (its
 properties, its inputs' hashes, the engine commit), load them when the hash matches and regenerate otherwise. The
 loaded data is the same bytes, so frames are unchanged; a second launch skips minutes.
+
+Built (terrain stage). `modules/terrain_deform/world_cache.{h,cpp}` keeps each piece on disk, zstd-packed, under
+the first 16 bytes of a SHA-256 of everything that piece reads plus the stage name and the engine binary's
+modified time and size (so any rebuild starts clean). Pieces are per tile within each stage: an erosion tile's key
+is its `TerrainHydraulic::Params`, input heights and cover; a dune tile's is `TerrainDunes::hash_inputs` (params,
+winds, base, masks, supply, initial sand, steps). A stale or short file is ignored and recomputed; writes go to a
+temporary name and are renamed in place. Settings: `world/cache/enabled` (on) and `world/cache/path` (empty: the
+user cache folder, `berlenga/world`).
+
+Proof on the landscape bench, empty cache then a second launch: the erosion outputs (delta, flow, deposit) and the
+dune outputs (sand, plants) hash the same both times, as do the logged sand volume and height change. 82 pieces,
+57 MB. Generation 79.6 s to 13.5 s, dunes 53.3 s to 1.3 s: about 2 min off each launch after the first.
+
+Next: rock obstacle cells (148 s) and the snow climate (31 s).
