@@ -146,6 +146,10 @@ int PhysXRockDust3D::get_active_sources() const {
 void PhysXRockDust3D::_step(float p_delta) {
 	RockField3D *field = _field();
 	if (!field || !flow || !enabled) {
+		if (field) {
+			LocalVector<RockField3D::Dust> dropped;
+			field->take_rockfall_dust(dropped); // off: the field's events are not kept for later
+		}
 		for (Source &s : sources) {
 			s.left = 0.0f;
 			s.emitter->set_enabled(false);

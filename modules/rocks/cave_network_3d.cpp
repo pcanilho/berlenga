@@ -1130,8 +1130,10 @@ void CaveNetwork3D::_surge_update(double p_delta) {
 			sg.head = (sg.head + 1) % hn;
 			sg.history[sg.head] = eta;
 		}
-		const float prev_chamber = sg.chamber >= 0 ? sg.level[sg.chamber] : 0.0f;
+		LocalVector<float> prev_level;
+		prev_level = sg.level;
 		bool sealed = false;
+		int seal = -1;
 		for (int i = 0; i < int(sg.axis.size()); i++) {
 			// The wave as it was at the mouth lag seconds ago (the newest sample is now).
 			const float back = sg.lag[i] / SURGE_HISTORY_STEP;
@@ -1148,16 +1150,35 @@ void CaveNetwork3D::_surge_update(double p_delta) {
 			const float mean_depth = MAX(sg.mean - sg.floor[i], 0.5f);
 			const float cap = Math::sqrt(9.81f * MAX(depth, 0.0f));
 			sg.flow[i] = depth > 0.05f ? CLAMP(e * Math::sqrt(9.81f / mean_depth), -cap, cap) : 0.0f;
-			if (i != sg.chamber && lv >= sg.roof[i]) {
+			// Sealed where the water meets the roof under the rock (out in the open the "roof" is sky).
+			if (i != sg.chamber && lv >= sg.roof[i] && sg.along[i] >= sg.covered && seal < 0) {
 				sealed = true;
+				seal = i;
 			}
 		}
 		sg.sealed = sealed;
 		float spout = 0.0f;
-		if (sg.chamber >= 0 && sg.shaft_area > 0.0f) {
-			const float rise = (sg.level[sg.chamber] - prev_chamber) / float(p_delta);
-			if (sealed && rise > 0.0f && sg.level[sg.chamber] > sg.floor[sg.chamber]) {
-				spout = MIN(rise * sg.chamber_area / sg.shaft_area, 60.0f);
+		if (sealed && sg.chamber >= 0 && sg.shaft_area > 0.0f) {
+			// The air pocket behind the seal (the inner passage and the chamber) can only leave up the shaft: the air
+			// speed there is the rate the water fills the pocket over the shaft's area (air taken as incompressible at
+			// these speeds; the oscillating-water-column model of blowholes and wave-energy columns).
+			const int n = int(sg.axis.size());
+			auto wet = [&](const LocalVector<float> &p_level) {
+				float v = 0.0f;
+				for (int i = seal + 1; i < n; i++) {
+					const float d = CLAMP(p_level[i] - sg.floor[i], 0.0f, MAX(sg.roof[i] - sg.floor[i], 0.0f));
+					if (i == sg.chamber) {
+						v += d * sg.chamber_area;
+					} else {
+						const float dl = 0.5f * (sg.along[MIN(i + 1, sg.chamber >= 0 ? sg.chamber - 1 : n - 1)] - sg.along[i - 1]);
+						v += d * 2.0f * sg.half_width[i] * MAX(dl, 0.0f);
+					}
+				}
+				return v;
+			};
+			const float fill = (wet(sg.level) - wet(prev_level)) / float(p_delta);
+			if (fill > 0.0f) {
+				spout = MIN(fill / sg.shaft_area, 60.0f);
 			}
 		}
 		if (spout > 5.0f && sg.spout <= 5.0f) {

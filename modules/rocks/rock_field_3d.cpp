@@ -6629,8 +6629,9 @@ void RockField3D::_update_dust(double p_delta) {
 	if (!rockfall_dust || p_delta <= 0.0) {
 		return;
 	}
-	if (!get_rockfall_dust_node()) {
-		dust_events.clear(); // no Flow to take them: keep only the totals
+	const Node *dn = get_rockfall_dust_node();
+	if (!dn || !dn->can_process()) {
+		dust_events.clear(); // no Flow to take them (or it is paused): keep only the totals
 	}
 	dust_tick++;
 	const float dt = float(p_delta);
@@ -8383,6 +8384,22 @@ void RockField3D::_notification(int p_what) {
 				_update_contact(false);
 			}
 			_update_frost_map();
+		} break;
+		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+			if (rockfall_dust) {
+				_update_dust(get_physics_process_delta_time());
+			}
+			_update_react(get_physics_process_delta_time());
+		} break;
+		case NOTIFICATION_VISIBILITY_CHANGED: {
+			const bool vis = is_visible_in_tree();
+			for (KeyValue<Vector3i, Cell> &kv : cells) {
+				for (TilePlacement &tp : kv.value.tiles) {
+					for (const RID &r : tp.instances) {
+						RS::get_singleton()->instance_set_visible(r, vis);
+					}
+				}
+			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			WorldContracts::unregister_cover(this);
