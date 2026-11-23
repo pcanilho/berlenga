@@ -133,6 +133,7 @@ var lightning: WeatherLightning3D
 var probe: Node3D
 var data_map: TerrainDataMap3D
 var veg: VegetationField3D
+var _phys_steps := 8
 var _tree_gen: Object
 var grass: GrassField3D
 var sward: Array = [] # the grass layers (tall, undercoat, turf)
@@ -167,6 +168,11 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
+	# One physics tick a frame through the whole setup until the capture: frames take seconds to minutes on a CPU
+	# renderer, and catching up 8 ticks of GPU sims (water, ground deformation, Flow) a frame spirals.
+	_phys_steps = Engine.max_physics_steps_per_frame
+	if not (args.has("test") or args.has("checks")):
+		Engine.max_physics_steps_per_frame = 1
 	if args.get("shadow-filter", "high") == "high":
 		# Stills have no TAA: soft-low shadow filtering leaves dithered penumbras in one frame; soft high does not.
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
@@ -729,7 +735,6 @@ func _ready() -> void:
 	# The checks draw (their probes read drawn frames); otherwise the main view stays undrawn through the cave and
 	# rock builds and the waits below until the capture (SubViewport bakes still render; ~24 s a frame on lavapipe).
 	get_viewport().disable_3d = false
-	var phys_steps := Engine.max_physics_steps_per_frame
 	if not (args.has("test") or args.has("checks")):
 		get_viewport().disable_3d = true
 		# Undrawn frames still take long on lavapipe, and up to 8 physics ticks of GPU sims (water solvers, ground
@@ -913,7 +918,7 @@ func _ready() -> void:
 		await get_tree().process_frame
 		waited += 1
 	get_viewport().disable_3d = false
-	Engine.max_physics_steps_per_frame = phys_steps
+	Engine.max_physics_steps_per_frame = _phys_steps
 	if landscape != null:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
@@ -1348,8 +1353,8 @@ func _frame_bracken() -> void:
 	c3.look_at(best + Vector3.UP * 0.4)
 	_log("bracken cam %.1f,%.1f,%.1f look %.1f,%.1f,%.1f" % [cp.x, cp.y, cp.z, best.x, best.y + 0.4, best.z])
 	n = 0
-	await get_tree().process_frame
 	get_viewport().disable_3d = true # placing only: a drawn frame with real trees takes minutes here
+	await get_tree().process_frame
 	while not cover.is_stream_idle() and n < 600:
 		await get_tree().process_frame
 		n += 1
@@ -1431,8 +1436,8 @@ func _frame_log() -> void:
 	c3.global_position = cp
 	c3.look_at(mid)
 	var n := 0
-	await get_tree().process_frame
 	get_viewport().disable_3d = true # placing only: a drawn frame with real trees takes minutes here
+	await get_tree().process_frame
 	while not cover.is_stream_idle() and n < 600:
 		await get_tree().process_frame
 		n += 1
