@@ -959,3 +959,38 @@ dipping upstream 8 to 25 degrees, Rust 1972), while the other sources' gravel an
 washed-out fraction). A fan gets a spread of the fine end lying flat and half sunk (cover 0/0.04/0.12) over the
 coarser ground it buries. No tiles over a channel or fan. Bench: `--world --gully-spot --dist=8 --sun=72,150` (the spot falls back to an incised gully when the world has no open one), before frame
 `--no-runoff-gravel`.
+
+## Rain splash pedestals (research, 23 Nov; card: rain pedestals, stones through snow)
+
+What it is. On bare soil, raindrop impact detaches grains and splash and sheet wash carry them off; wherever a stone
+(or a leaf or twig) shields the soil under it, the soil stays. After a season of storms each stone stands on a
+little column of soil, its cap, with the ground lowered all round: an erosion pedestal (also "soil pedestal",
+"pedestalled stone"). Field surveys read erosion depth straight off pedestal heights (the height under the cap is
+the soil lost since the surface was last disturbed): rangeland and forest-road studies (Journal of Range
+Management; Journal of Forestry Research 2023, s11676-023-01694-3) find millimetres to a few centimetres after one
+wet season on bare, crusting soils, up to 5 to 10 cm on badly eroding slopes and tracks. Pedestals are steepest under
+flat caps; the column is narrower than the cap (splash undercuts it) and its sides are the soil's own colour,
+fresher than the surface, which a raindrop crust and fine wash film darken and smooth. Sand pedestals are elegant
+but short-lived (UC Davis note "Erosional Pedestals: an elegant product of water, sand and physics"): loose sand
+slumps them in hours once dry; silty and clayey soils keep them for weeks to months. Trampling, frost heave, tillage
+and fresh deposits reset them; grass cover stops them forming (no bare soil, no splash).
+
+Rule (per detail stone on bare soil, ground detail cells; the game's stones are 1 to 8 cm, the right size).
+- Height of the soil lost round it since the last reset: h = k_e * E * (1 - cover) * f(slope), where E is the
+  rain erosivity the place has had (the climate's yearly rainfall on WeatherMap3D, as the RUSLE R factor grows with
+  rain depth and intensity, plus the live storms' rainfall as it falls, read through the WorldContracts weather
+  rain), cover is the ground's vegetation and litter share (the vegetation cover the far cover maps already read),
+  and f rises with slope (splash travels downhill). k_e from the soil (sand fast but slumps; silt highest; clay
+  low), capped at 0.6 of the stone's short axis so a pebble is never perched on a stick.
+- Reset: ground_wear (trails, rooting), frost sorting churn and fresh fan deposits (runoff gravel) zero it; the
+  stand's disturbance age grows it back.
+- Drawing: the stone rises by h on a soil column (a small frustum mesh shared per stone size class, the column's top
+  the stone's footprint, flaring 1.3x at the base, coloured as the fresh subsoil), and the ground round it keeps its
+  height (no heightfield change: the column is the difference). Columns count as stones for PT (same instancing),
+  so the PT check is the column's shading against raster.
+- Live: storms raise h a little while it rains (WeatherMap3D rainfall), dry sand pedestals slump back.
+
+Contracts read: WorldContracts weather (rainfall_at, climate precipitation), vegetation cover (existing far cover
+inputs), WorldStand disturbance and ground_wear (existing), soil type from the generator's geology. No new
+contract. Bench plan: `--world --rain-years=N` (bare slope spot, before `--no-rain-pedestals`), PT and raster at
+100% crop.
