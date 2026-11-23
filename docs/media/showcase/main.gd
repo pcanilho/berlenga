@@ -1,6 +1,6 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|plaza|room|textures|glass|far|night|physx|fluid|tearing|campfire --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|plaza|room|textures|glass|far|night|physx|fluid|tearing|campfire|smokewall --spp=N --rr --out=path.png --frames=N --far=N --raster
 # --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
 # --bounces=N (path tracing bounces after the shot sets its own; 0: direct light only)
 # --flow=property:value (a PhysXFlow3D property in the physx shot, or a PhysXParticleFluid3D one in the fluid shot)
@@ -8,6 +8,8 @@ extends Node3D
 # --sun=pitch,yaw (the physx shot's sun, in degrees)
 # --freeze=N (raster until N frames before the end, then time stops and the path tracer accumulates)
 # --gloss=R (the room shot's floor roughness, default 0.7: a polished floor for glossy reuse)
+# --pair (with --freeze: also save the raster frame of the same frozen scene as <out>_raster.png, and with the gas's
+#   surface glow off as <out>_raster_noglow.png, before the path tracer starts) --taa (raster with TAA)
 var shot := "lights"
 var spp := 16
 var out := "out.png"
@@ -21,6 +23,9 @@ var sky := false
 var sun_rotation := Vector3.INF # --sun=pitch,yaw (degrees): the physx shot's sun
 var freeze := 0
 var gloss := 0.7
+var pair := false
+var capturing := false
+var gas: Node = null # the shot's PhysXFlow3D, for --pair's glow-off frame
 var n := 0
 var env := Environment.new()
 
@@ -43,6 +48,8 @@ func _ready() -> void:
 			sun_rotation = Vector3(float(sv[0]), float(sv[1]), 0)
 		elif a.begins_with("--freeze="): freeze = int(a.substr(9))
 		elif a.begins_with("--gloss="): gloss = float(a.substr(8))
+		elif a == "--pair": pair = true
+		elif a == "--taa": get_viewport().use_taa = true
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
 			ProjectSettings.set_setting(kv[0], float(kv[1]))
@@ -912,6 +919,60 @@ func shot_fluid() -> void:
 		fluid.material_override = mat(Color(0.9, 0.9, 0.9), 0.5)
 	add_child(fluid)
 
+# Dust rising in front of a plastered wall on tiles, the sun low behind the wall: the cloud's sunlit top lights the
+# shaded wall face and the tiles around it, and the cloud hides part of their sky (PhysXFlow3D surface_glow).
+# Needs the CC0 Poly Haven assets fetch_ext.sh downloads into ext/.
+func shot_smokewall() -> void:
+	if not ClassDB.class_exists("PhysXFlow3D"):
+		push_error("This build has no PhysX module.")
+		get_tree().quit(1)
+		return
+	if not FileAccess.file_exists("res://ext/plastered_stone_wall/Diffuse.jpg"):
+		push_error("Run fetch_ext.sh first: the smokewall shot uses CC0 Poly Haven assets.")
+		get_tree().quit(1)
+		return
+	var s := Sky.new()
+	s.sky_material = ProceduralSkyMaterial.new()
+	env.sky = s
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-38, 235, 0) if sun_rotation == Vector3.INF else sun_rotation
+	sun.light_energy = 1.6
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 80.0
+	add_child(sun)
+	var tiles := plane(Vector2(60, 60), ext_material("large_grey_tiles", 0.5))
+	tiles.name = "Floor"
+	var plaster := ext_material("plastered_stone_wall", 0.4)
+	plaster.albedo_color = Color(3.0, 3.0, 3.0) # the scan's limewash reads near black (albedo ~0.05); whitewashed
+	box(Vector3(14, 4.5, 0.4), Vector3(0, 2.25, -3.0), plaster)
+	camera(Vector3(3.5, 2.0, 8.5), Vector3(-0.5, 2.2, -2.5), 55)
+	gas = ClassDB.instantiate("PhysXFlow3D")
+	gas.cell_size = 0.12
+	gas.max_blocks = 2048
+	gas.combustion = false
+	gas.buoyancy = 0.0
+	gas.smoke_buoyancy = 0.4
+	gas.smoke_fade = 0.0
+	gas.vorticity = 3.0
+	gas.scattering_strength = 1.0
+	gas.smoke_color = Color(0.78, 0.71, 0.6)
+	gas.set("ground_albedo", 0.35)
+	for k in flow_props:
+		gas.set(k, flow_props[k])
+	add_child(gas)
+	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
+	em.shape = 1 # box
+	em.size = Vector3(2.4, 0.6, 1.4)
+	em.position = Vector3(-1.8, 0.3, -1.4)
+	em.smoke = 1.0
+	em.temperature = 0.0
+	em.fuel = 0.0
+	em.velocity = Vector3(0.3, 3.0, 0.4)
+	em.couple_rate = 8.0
+	gas.add_child(em)
+
 func shot_far() -> void:
 	env.background_color = Color(0.25, 0.3, 0.4)
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
@@ -992,10 +1053,27 @@ func shot_night() -> void:
 			add_child(l)
 	camera(Vector3(0, 1.7, 6), Vector3(0, 2.5, -30), 60)
 
+func _save_raster(suffix: String) -> void:
+	for k in 24: # TAA settles on the frozen scene
+		await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(out.get_basename() + suffix + ".png")
+
 func _process(_d: float) -> void:
+	if capturing:
+		return
 	n += 1
 	if freeze > 0 and n == frames - freeze:
 		Engine.time_scale = 0.0
+		if pair:
+			# The raster frames of the frozen scene the path tracer then traces (Flow is not the same run to run).
+			capturing = true
+			if gas != null:
+				gas.process_mode = Node.PROCESS_MODE_DISABLED
+				gas.set("surface_glow", false)
+				await _save_raster("_raster_noglow")
+				gas.set("surface_glow", true)
+			await _save_raster("_raster")
+			capturing = false
 		env.pathtracing_enabled = true
 	if n == frames:
 		await RenderingServer.frame_post_draw
