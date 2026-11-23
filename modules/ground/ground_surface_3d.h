@@ -188,6 +188,10 @@ private:
 	int mat_tears = 0;
 	float _peat_bog_at(const Vector3 &p_position, float p_moisture, const Node *p_data_map) const;
 	float _mat_torn_at(const Vector3 &p_position) const;
+	// Peat water (round 25.1): torn ruts in a bog fill from its water table and drain back to it.
+	bool peat_water = true;
+	double peat_water_seeped = 0.0; // m3 in, net, since start
+	void _peat_water_update(double p_delta);
 	void _trail_pug_update(float p_delta);
 	bool _wear_any() const { return !wear_cells.is_empty() || trails_on; }
 	// Hidden stones and roots (docs/ideas/mud.md, round 14.3): what lies in a mud layer, per 2 m cell, made on demand
@@ -1057,6 +1061,9 @@ public:
 	// A load tore the root mat over this print (round 24.2): the peat under it bears from now on.
 	void tear_mat(Vector3 p_position, Vector2 p_size, float p_yaw);
 	int get_mat_tear_count() const { return mat_tears; }
+	void set_peat_water(bool p_enabled) { peat_water = p_enabled; }
+	bool is_peat_water() const { return peat_water; }
+	float get_peat_water_seeped() const { return float(peat_water_seeped); } // m3 seeped into torn ruts, net
 	float get_stone_scour_volume() const { return stone_scour_m3; } // m3 dug round loose stones by currents
 	float get_stone_silt_lifted() const { return stone_plume_kg; } // kg sent into the water by stones
 	bool is_tracked_mud() const { return tracked_mud; }

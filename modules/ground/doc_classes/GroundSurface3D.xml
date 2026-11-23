@@ -870,6 +870,12 @@
 				A peat bog at the point (see [member peat_bogs]): x its share of the ground there, 0 to 1; y how far its root mat has been torn, 0 to 1.
 			</description>
 		</method>
+		<method name="get_peat_water_seeped" qualifiers="const">
+			<return type="float" />
+			<description>
+				Peat water that has seeped into torn bog ruts since start, net of what drained back, m3 (see [member peat_water]).
+			</description>
+		</method>
 		<method name="get_seal_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -1144,6 +1150,9 @@
 		</member>
 		<member name="stream_fords" type="bool" setter="set_stream_fords" getter="is_stream_fords" default="true">
 			Wheels in running water from the water contract scour the bed: a share of the rut (rising with the current's shear past the remoulded soil's 0.5 Pa) and most of its rims leave as fines dropped into the water ([method WorldWater.add_sediment_mass]), a plume the stream carries on. A wheel on a bank over water tests the bank as an infinite-slope slab 0.5 m deep (Skempton and DeLory 1957) under its load, carried undrained by the pore water where the slab lies below the water table (the stream's level plus a 0.3 m fringe); under a factor of safety of 1 the slab slumps to the toe as fresh mud and half its fines go into the water.
+		</member>
+		<member name="peat_water" type="bool" setter="set_peat_water" getter="is_peat_water" default="true">
+			Ruts torn through a peat bog's root mat fill with dark peat water from the bog's water table, 5 cm under its surface, through the loose living peat in a few minutes of world time ([member runoff_time_scale]); water standing over the table drains back down to it. Water on a bog does not soak in: the peat under it is saturated. Needs [member peat_bogs] and [member standing_water].
 		</member>
 		<member name="peat_bogs" type="bool" setter="set_peat_bogs" getter="is_peat_bogs" default="true">
 			Peat bogs where water gathers on flat ground (a high wetness index on the terrain's data map and under a few degrees of slope; without a map, waterlogged ground): hashed patches 12 to 22 m across with irregular edges. A fibrous root mat over soft peat (Wong's muskeg model): the mat bears a light vehicle at under 12 cm, but a heavy truck's wheels press it past that and tear it, or a tyre spinning hard shreds it, and the wheel drops into the peat, up to 80 cm. Torn, it stays torn for the next vehicle (see [method tear_mat]). Peat is little sticky.

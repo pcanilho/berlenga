@@ -204,6 +204,10 @@ public:
 	void set_parked_settling(bool p_enabled);
 	bool is_parked_settling() const { return parked_settling; }
 	real_t get_wheel_creep(int p_wheel) const;
+	void set_arch_clearance(real_t p_clearance);
+	real_t get_arch_clearance() const { return arch_clearance; }
+	real_t get_wheel_arch_mud(int p_wheel) const; // m of clay packed inside its arch (round 25.2)
+	real_t get_wheel_arch_drag(int p_wheel) const; // N m the packed arch rubs against the tyre
 	real_t get_wheel_cake(int p_wheel) const; // m of clay balled up on the tyre past its tread (round 24.1)
 	real_t get_wheel_shudder(int p_wheel) const; // N, the lopsided cake's out-of-balance force
 	real_t get_wheel_clods_thrown(int p_wheel) const; // kg of soil its tread has cut and flung (round 23.3)
@@ -294,6 +298,7 @@ private:
 	bool soft_soil = true;
 	bool tyre_clogging = true;
 	bool parked_settling = true; // round 22.2
+	real_t arch_clearance = 0.08; // round 25.2: m between tyre and arch; 0 open wheels
 	bool belly_drag = true;
 	bool river_forces = true; // mud round 20.1: the water contract's buoyancy and current on the chassis and tyres
 	real_t hull_seal = 0.5f; // share of the chassis box that keeps water out
