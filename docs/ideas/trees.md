@@ -2563,6 +2563,22 @@ canopy tree's crown. Hobi et al. 2015, gaps from satellite: 98% under 200 m2, fe
   stand's shade so some crowns spread wide (radius to 9 m), placed 1.1-1.3x; poles 0.45-0.75x; canopy 1.2-2.0x.
   The stand-grown beech stops changing shape past about 60 years (canopy and giants at the stand's shade came out
   identical), hence the light and the scale.
+- Read as old growth (23 Nov; docs declined the plot frame as even-aged poles with tufted crowns and sky between them):
+  - The band setups ran once per variant on one generator and scaled in place (`forest_spacing *= 1.8`, the shedding
+    `*= 0.33`), so variants compounded: the third veteran grew with three times the crown room and a twentieth of the
+    shedding, and no two variants were what the band said. Fixed for every band: `_stand_species()` and the near task
+    set each variant up from the same start (params, spacing, shade). The taiga fire survivors and the succession
+    veterans were hit the same way.
+  - The compounded variants had been the leafy ones: once per variant the canopy was thinner than before. Beech's
+    old-growth crowns now shed at 0.15 of the preset's ratio and keep idle buds four times as long, and the canopy's
+    late apical control is 0.03 lower so the old crowns round into domes. Looking up from inside (bench, `--inside
+    --deep --look-y=1.1`), the crowns read as full domes; the sky left is between crown tops and over the gaps.
+  - Girth by layer (`stem_girth`, a factor on the trunk's pipe-model radius, not handed down the stem): Uholka has a
+    quadratic mean of 33 cm (435 a hectare on 36.6 m2), about ten a hectare of 80 cm and more, the biggest beech
+    140 cm. The full crowns gave every canopy and giant bole about a metre or more, so giants and canopy looked alike:
+    canopy 0.55 (0.6-0.8 m placed), giants 1.05-1.15 (1.3-1.45 m placed at their 1.1-1.3 scale), broken and fallen
+    giants 1.35 (1.2-1.35 m).
+  - Fallen giants: two in three lie with the root plate up (was one in three), so a gap shows how its giant fell.
 
 ### 5ao. Old trunks up close (20 Nov; Paulo's pick)
 

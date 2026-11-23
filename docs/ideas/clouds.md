@@ -963,3 +963,18 @@ the cumulonimbus body (round 9) took every storm in that list as deep convection
 tower with an anvil and cirrus shield. Storms now carry a deep share (Storm::deep, State::storm_deep,
 cloud_storm_deep): 1 for add_storm(), 0 for ridge cumulus, a fire cloud's pyroCb share for fire clouds. Only the deep
 share has a tower, anvil, tall column and shield; the cover raise is unchanged.
+
+## Contrails (23 Nov, Paulo: virga, contrails, sun dogs in that order)
+
+Formation by the Schmidt-Appleman criterion (Schumann 1996): a trail forms below T_LM = -46.46 + 9.43 ln(G - 0.053) +
+0.72 ln^2(G - 0.053) C (G about 1.5 Pa/K at 250 hPa, scaled by pressure), raised a little with humidity; the air's
+temperature from the weather's lapse rate with the tropopause's -56.5 C floor, so a warm summer airmass gets fewer.
+Humidity over ice at cruise level: a mean of 0.5 + 0.4 RH(ground) with a 60 km noise of +-0.4 (ice-supersaturated
+regions over roughly a sixth of the sky; Gierens et al. 1999), raised in the high layer's moist patches. Subsaturated
+over ice: the trail sublimates in 10 s to 5 min (a short line behind the aircraft); supersaturated: it persists up to
+40 min, spreading about 1 m/s (shear, turbulence) with its ice growing (optical depth 0.1 to 0.5; Schumann 2005,
+Heymsfield 2010), drifting with the wind at 10.5 km (State::contrail_wind). Flights are procedural: 12 slots round
+the camera's 40 km cell, each flown every 20 minutes on a hashed straight track at 9.5 to 12 km, 240 m/s;
+cloud_contrail_traffic scales how many slots fly (0 for a world without aircraft). Each pixel evaluates 36 tracks
+analytically (no march): the age where the ray meets the track's level, the lateral offset after the drift, a
+Gaussian column blurred to the pixel's footprint. Lit as the cirrus. Raster and PT agree; clouds tests pass.

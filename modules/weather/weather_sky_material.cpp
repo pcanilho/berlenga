@@ -632,6 +632,129 @@ vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	return vec4(light * (1.0 - tr) * fade, mix(1.0, tr, fade));
 }
 
+// Contrails (aircraft condensation trails). An engine's exhaust mixes with the cold air along a straight line in
+// vapour pressure against temperature; a trail forms where that line crosses saturation over water, the
+// Schmidt-Appleman criterion (Schumann 1996, "On conditions for contrail formation from aircraft exhausts", Meteorol.
+// Z. 5): below about -40 C at cruise levels, from his fit T_LM = -46.46 + 9.43 ln(G - 0.053) + 0.72 ln^2(G - 0.053)
+// (C; G the mixing line's slope, about 1.5 Pa/K at 250 hPa, scaling with the pressure). In air subsaturated over ice
+// the trail sublimates within seconds to a minute: a short white line behind the aircraft. In ice-supersaturated air
+// (the moist layers where cirrus forms, the high layer's humidity here) it persists for hours, spreading by shear
+// and turbulence to kilometres wide while its ice grows, into contrail cirrus (Schumann 2005; Heymsfield et al. 2010:
+// optical depth 0.1 to 0.5, widths of 1 to 3 km after half an hour). The flights are procedural: cloud_contrail_traffic
+// lanes of straight tracks crossing the sky at 9.5 to 12 km and 240 m/s, each slot flown every 20 minutes, and each
+// trail drifts with the wind at its height.
+uniform float cloud_contrail_traffic : hint_range(0, 4) = 1.0;
+uniform vec2 cloud_contrail_wind = vec2(0.0);
+uniform float cloud_clock = 0.0;
+
+float contrail_hash(float a, float b) {
+	return fract(sin(a * 127.1 + b * 311.7) * 43758.5453);
+}
+
+vec4 march_contrails(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, float p_pixel, out float r_t) {
+	r_t = 0.0;
+	if (cloud_contrail_traffic <= 0.0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec3 ro = vec3(0.0, PLANET_RADIUS + cam.y, 0.0);
+	if (cam.y < 9000.0 && sphere_hits(ro, rd, PLANET_RADIUS).x > 0.0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	// The tracks pass near the camera's 40 km cell, so the sky round it always has its traffic.
+	vec2 cell = floor(cam.xz / 40000.0);
+	vec2 centre = (cell + 0.5) * 40000.0;
+	float tau_sum = 0.0;
+	float t_sum = 0.0;
+	float cos_theta = dot(rd, sun_dir);
+	const float T = 1200.0;
+	const float V = 240.0;
+	for (int k = 0; k < 12; k++) {
+		float fk = float(k) + 17.0 * cell.x + 131.0 * cell.y;
+		if (contrail_hash(fk, 3.7) > 0.6 * cloud_contrail_traffic) {
+			continue;
+		}
+		// Three flights of the slot: the current and the two before (their persistent trails still in the sky).
+		float phase = contrail_hash(fk, 9.1) * T;
+		float jn = floor((cloud_clock + phase) / T);
+		for (int m = 0; m < 3; m++) {
+			float j = jn - float(m);
+			float h = 9500.0 + 2500.0 * contrail_hash(fk + j, 1.3);
+			float th = 6.2831853 * contrail_hash(fk + j, 2.9);
+			vec2 dir = vec2(cos(th), sin(th));
+			vec2 perp = vec2(-dir.y, dir.x);
+			vec2 o = centre + perp * ((contrail_hash(fk + j, 4.1) - 0.5) * 60000.0) + dir * ((contrail_hash(fk + j, 5.3) - 0.5) * 40000.0);
+			float t_c = j * T - phase + contrail_hash(fk + j, 6.7) * T; // when it passes o
+			// The air there (the weather's lapse rate, the tropopause's -56.5 C floor) and its humidity: the dry upper
+			// troposphere, moist where the high layer's humidity is (wc_wave_depression's high branch).
+			float tc = max(cloud_air.x - 0.0065 * (h - cloud_air.z), -56.5);
+			float p_pa = 101325.0 * exp(-h / 8000.0);
+			float g = 1.5 * p_pa / 25000.0;
+			float lg = log(max(g - 0.053, 0.05));
+			float t_lm = -46.46 + 9.43 * lg + 0.72 * lg * lg;
+			// Where the ray crosses this flight's level.
+			vec2 hits = sphere_hits(ro, rd, PLANET_RADIUS + h);
+			float t = cam.y < h ? hits.y : hits.x;
+			if (t <= 0.0 || t > 150000.0) {
+				continue;
+			}
+			vec3 pl = ro + rd * t;
+			float mu = abs(dot(rd, normalize(pl)));
+			vec2 x = vec2(cam.x + rd.x * t, cam.z + rd.z * t);
+			// The trail's age at x: the aircraft flew past x - u a seconds ago (u the wind at its height).
+			vec2 u = cloud_contrail_wind;
+			float along = dot(x - o, dir);
+			float a = (V * (cloud_clock - t_c) - along) / max(V - dot(u, dir), 1.0);
+			if (a < 1.0) {
+				continue;
+			}
+			// Over ice: e_w / e_i grows about 1 % per degree below 0 C.
+			float ice_w = exp(0.0097 * max(-tc, 0.0));
+			// The humidity over ice at cruise levels: about 60 to 70 % on average, with ice-supersaturated regions some
+			// hundreds of kilometres across over about 15 % of the sky (Gierens et al. 1999, MOZAIC; Spichtinger et al.
+			// 2003): a 60 km noise round a mean that the ground's humidity raises, and the high layer's moist patches
+			// (wc_wave_depression's high branch) where its cirrus forms.
+			float n_r = wc_value_noise((x - cloud_high_drift) / 60000.0 + vec2(2.1, 7.3));
+			float rh_i = 0.5 + 0.4 * cloud_air.y + 0.8 * (n_r - 0.5);
+			if (cloud_high_cover > 0.001) {
+				float n = wc_cover_noise_at(x + vec2(9137.0, 3301.0) - (cloud_high_drift - cloud_drift), cloud_high_scale);
+				float rh_l = wc_wave_layer_rh(n, cloud_high_cover, wc_layer_cover_n(n, cloud_high_cover, x, true)) * ice_w;
+				float d = (h - cloud_high_height) / 2500.0;
+				rh_i = mix(rh_i, max(rh_i, rh_l), exp(-d * d) * min(1.0, 4.0 * cloud_high_cover));
+			}
+			if (tc > t_lm + 2.0 * min(rh_i / ice_w, 1.0)) {
+				continue; // too warm for a trail
+			}
+			float persist = smoothstep(0.98, 1.05, rh_i);
+			float life = mix(clamp(10.0 / max(1.0 - rh_i, 0.03), 10.0, 300.0), 2.0 * T, persist);
+			if (a > life) {
+				continue;
+			}
+			float lat = dot(x - o - u * a, perp);
+			// Spreading: tens of metres young, about 1 m/s wider in supersaturated air (shear and turbulence).
+			float sig = sqrt(25.0 * 25.0 + pow(mix(0.15, 1.0, persist) * a, 2.0));
+			// Each pixel's footprint widens the line (a far trail stays a thin line, not a vanishing one).
+			float foot = t * p_pixel;
+			float sig_v = sqrt(sig * sig + foot * foot);
+			float tau_c = 0.3 * (25.0 / sig) * (1.0 + persist * min(a / 900.0, 3.0)) * (1.0 - smoothstep(0.7 * life, life, a));
+			// Column optical depth across the line, kept as the footprint blurs it (spread, not lost).
+			float tau = tau_c * (sig / sig_v) * exp(-0.5 * lat * lat / (sig_v * sig_v)) / max(mu, 0.08);
+			if (tau > 1e-4) {
+				tau_sum += tau;
+				t_sum += tau * t;
+			}
+		}
+	}
+	if (tau_sum <= 1e-4) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	r_t = t_sum / tau_sum;
+	// Lit as the cirrus: ice, forward scattering, a diffuse share, the sky's light.
+	float tau_s = 0.3 / max(sun_dir.y, 0.05);
+	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * cirrus_phase(cos_theta, 0.0) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
+	float tr = exp(-tau_sum);
+	return vec4(light * (1.0 - tr), tr);
+}
+
 // The mid layer's density (1/m) at p in its slab: cloudlets from the detail noise's billows (inverted Worley,
 // cells of a few hundred metres) in rows across the wind (altocumulus forms in rolls across the shear, Ludlam's
 // cellular convection), thresholded by the cover so a thin cover is scattered cloudlets and a full cover a
@@ -1562,6 +1685,12 @@ vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3
 	}
 	float d_high;
 	vec4 high = march_cirrus(cam, rd, sun_dir, sun_high, ambient_top, p_pixel, d_high);
+	// Contrails fly above the cirrus layer (9.5 to 12 km): behind it from below, in front of it from above.
+	float d_con;
+	vec4 con = march_contrails(cam, rd, sun_dir, sun_high, ambient_top, p_pixel, d_con);
+	if (con.a < 1.0) {
+		high = cam.y < cloud_high_height ? cloud_over(high, d_high, con, d_con, d_high) : cloud_over(con, d_con, high, d_high, d_high);
+	}
 	// The two wave slabs, nearer first (the camera is under both but on a mountain top).
 	float d_wa;
 	vec4 wa = march_wave(cloud_wave_slab.xy, cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_wa);
@@ -2055,6 +2184,8 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_high_tau", p_state.high_tau);
 	rs->material_set_param(m, "cloud_high_scale", p_state.high_scale);
 	rs->material_set_param(m, "cloud_high_drift", p_state.high_drift);
+	rs->material_set_param(m, "cloud_contrail_wind", p_state.contrail_wind);
+	rs->material_set_param(m, "cloud_clock", p_state.clock);
 	rs->material_set_param(m, "cloud_high_dir", p_state.high_dir);
 	rs->material_set_param(m, "cloud_high_cc", p_state.high_cc);
 	rs->material_set_param(m, "cloud_cell_size", p_state.cell_size);

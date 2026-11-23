@@ -3819,6 +3819,8 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	st.high_height = high_cloud_height;
 	st.high_tau = high_cloud_optical_depth;
 	st.high_drift = high_cloud_drift;
+	st.contrail_wind = get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), 10500.0f);
+	st.clock = float(Math::fmod(cloud_time, 86400.0));
 	st.mid_cover = cur_mid_cloud_cover;
 	st.mid_height = mid_cloud_height;
 	st.mid_thickness = mid_cloud_thickness;
