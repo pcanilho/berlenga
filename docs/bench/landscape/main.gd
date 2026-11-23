@@ -3817,8 +3817,8 @@ func _generated_forest(clearing: bool) -> Biome:
 	_tree_gen = tg # the species build their near leaves from it on demand: kept alive
 	tg.rigged = args.get("rigged", "1") != "0" # --rigged=0: static trees (memory checks)
 	if args.get("tree-still", "1") != "0":
-		# A still (trees.md 8e): static, far meshes light, near meshes built one at a time with leaves to 25 m and no
-		# near needles; --tree-still=0 for the full rig. Fits a stand in about 6 GB instead of dying at first draw.
+		# A still (trees.md 8e): static, far meshes light, near meshes built one at a time with leaves to 25 m and
+		# needles to 30 m; --tree-still=0 for the full rig. Fits a stand in about 6 GB instead of dying at first draw.
 		tg.rigged = args.get("rigged", "0") != "0"
 		if "light_far_meshes" in tg:
 			tg.light_far_meshes = args.get("light-far", "1") != "0" # --light-far=0 on PT olive shots (greys their crowns)
@@ -3827,7 +3827,7 @@ func _generated_forest(clearing: bool) -> Biome:
 		if not args.has("near-leaf-range"):
 			args["near-leaf-range"] = "25"
 		if not args.has("near-needle-range"):
-			args["near-needle-range"] = "0"
+			args["near-needle-range"] = "30" # the normal range: far needles alone read as wires near the camera
 	if "near_leaf_range" in tg:
 		tg.near_leaf_range = float(args.get("near-leaf-range", "60"))
 	if "near_needle_range" in tg:
