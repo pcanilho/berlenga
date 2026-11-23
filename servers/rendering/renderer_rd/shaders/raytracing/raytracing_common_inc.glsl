@@ -32,6 +32,10 @@ rt_launch_band;
 #define RT_FLAG_SCENE_NO_SNOW (1u << 11)
 #define RT_FLAG_SCENE_NO_GLAZE (1u << 12)
 #define RT_FLAG_SCENE_NO_GROUND (1u << 13)
+#define RT_FLAG_SCENE_NO_MUD (1u << 14)
+#define RT_FLAG_SCENE_NO_CANOPY_WET (1u << 15)
+#define RT_FLAG_SCENE_NO_MOVING_WET (1u << 16)
+#define RT_FLAG_SCENE_NO_HAIR (1u << 17)
 #define RT_SCENE_ELIDES(m_flag) ((RT_FLAGS & (m_flag)) != 0u)
 
 // Unified TLAS masks: bit 0 = opaque camera lane, bit 1 = transparent camera

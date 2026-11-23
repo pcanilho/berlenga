@@ -253,6 +253,9 @@ vec4 rt_material_wetness(MaterialData p_mat) {
 
 // BaseMaterial3D wetness_canopy: a leaf's intercepted water (the rain map's green) and its beads.
 bool rt_material_wetness_canopy(MaterialData p_mat) {
+	if (RT_SCENE_ELIDES(RT_FLAG_SCENE_NO_CANOPY_WET)) {
+		return false;
+	}
 	return ((p_mat.subsurface_texture >> 24u) & 1u) != 0u;
 }
 
@@ -282,11 +285,17 @@ bool rt_material_ground_terrain(MaterialData p_mat) {
 
 // BaseMaterial3D Mud: a vehicle's body mud from the instance uniforms (docs/ideas/mud.md, stage 3b).
 bool rt_material_mud(MaterialData p_mat) {
+	if (RT_SCENE_ELIDES(RT_FLAG_SCENE_NO_MUD)) {
+		return false;
+	}
 	return (p_mat.subsurface >> 31u) != 0u;
 }
 
 // BaseMaterial3D wetness_moving: a moving surface's slipstream and wiper, instance uniform slots 13 and 14.
 bool rt_material_wetness_moving(MaterialData p_mat) {
+	if (RT_SCENE_ELIDES(RT_FLAG_SCENE_NO_MOVING_WET)) {
+		return false;
+	}
 	return ((p_mat.subsurface_texture >> 27u) & 1u) != 0u;
 }
 

@@ -392,7 +392,12 @@ step 3 of "path tracer cost that no setting removes", for the three blocks the b
   use, the full one is kept built, so a snowy area streamed in later is traced at once.
 - `rendering/pathtracing/scene_feature_elision` (default on) turns it off, for A/B timing on the same build.
 
-Not elided: wetness (rain is on in most scenes), hair, subsurface, clear coat and the base specular's own
+Stage 2 adds four more bits on the same rules (bits 14 to 17): `RT_FLAG_SCENE_NO_MUD` (a vehicle's body mud),
+`_NO_CANOPY_WET` (a leaf's intercepted water and beads), `_NO_MOVING_WET` (slipstream and wiper) and `_NO_HAIR`
+(BaseMaterial3D Hair, its mask, melanin and strand frame; a custom shader's `HAIR` keeps the fibre lobe). The
+Nsight trace backs the method: occupancy is set by the register file (76% allocated, 14 to 15 of 48 warps).
+
+Not elided: wetness itself (rain is on in most scenes), subsurface, clear coat and the base specular's own
 normal (`SPECULAR_NORMAL`, which custom shaders can write). Each is a candidate once the PC trace shows its cost.
 
 Proof on the cloud's software GPU, against the build before it: the memory scene (radiance cache off) traces the
