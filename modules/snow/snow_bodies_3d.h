@@ -87,6 +87,7 @@ class SnowBodies3D : public Node3D {
 		Vector3 last_velocity;
 		bool broken = false;
 		bool dry = true;
+		bool deposit = true; // its snow joins the cover where it stops (false: already counted, e.g. a wall's toe)
 	};
 	struct PendingChunk { // a row of the slab still on the roof, leaving the eave at its time
 		float wait = 0.0f; // s
@@ -97,6 +98,8 @@ class SnowBodies3D : public Node3D {
 		float mass = 0.0f;
 		float density = 300.0f;
 		bool dry = true;
+		bool deposit = true;
+		bool angular = false; // a slab block broken clean (cut walls): flat faces, sharp edges
 	};
 	struct Puff {
 		Vector3 position;
@@ -122,6 +125,7 @@ class SnowBodies3D : public Node3D {
 	float slab_chunk_size = 1.2f; // m, a falling piece's edge
 	bool ice_dams = true;
 	int chunks_spawned = 0;
+	int blocks_thrown = 0;
 	bool _roof_extent(const Body &r_body, const Vector3 &p_down, float p_slope, Vector3 &r_eave, Vector3 &r_across, float &r_half_len, float &r_run) const;
 	void _spawn_chunk(const PendingChunk &p_chunk, float p_size_along);
 	void _chunks_step(float p_dt);
@@ -193,6 +197,10 @@ public:
 	static float ice_dam_height(float p_kg_per_m); // m, a ridge twice as wide as high
 	float get_ice_dam_height(Node *p_node) const;
 	int get_falling_chunks() const { return int(chunks.size() + pending_chunks.size()); }
+	// A block of slab thrown as a rigid body (a cut wall's block, follow-up 55): angular, it falls, settles, and
+	// sinks out of sight; with p_deposit its snow joins the cover where it stops.
+	void throw_block(const Transform3D &p_xform, const Vector3 &p_size, const Vector3 &p_velocity, const Vector3 &p_spin, float p_density, bool p_deposit);
+	int get_blocks_thrown() const { return blocks_thrown; }
 	int get_chunks_spawned() const { return chunks_spawned; }
 	void set_roof_slab_bodies(bool p_enable) { roof_slab_bodies = p_enable; }
 	bool is_roof_slab_bodies_enabled() const { return roof_slab_bodies; }

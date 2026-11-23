@@ -538,6 +538,10 @@ func _ready() -> void:
 		var skm := float(args["storm-approach"]) if String(args["storm-approach"]) != "" else 17.0
 		var sp := Vector2(sc.global_position.x, sc.global_position.z) + sf2 * skm * 1000.0
 		weather.wind_direction = -sf2
+		if args.has("storm-wind-turn"):
+			# --storm-wind-turn=DEG: the wind turned DEG from toward the camera (90: across the view, a side-on tower
+			# with its anvil and cirrus shield spreading sideways).
+			weather.wind_direction = (-sf2).rotated(deg_to_rad(float(args["storm-wind-turn"])))
 		weather.add_storm(sp, float(args.get("storm-radius", "2500")), float(args.get("storm-rain", "40")), float(args.get("storm-outflow", "15")), 0.0)
 		weather.advance(float(args.get("storm-grow", "900")))
 		_log("storm approach: cell at %s, %.1f km ahead, wind toward the camera %s" % [str(sp.round()), skm, str(-sf2)])
@@ -4814,6 +4818,10 @@ func _build_camera() -> void:
 		var hf := -cam.global_basis.z
 		hf.y = 0.0
 		hf = hf.normalized()
+		if args.has("heading"):
+			# --heading=DEG: the compass heading instead (0 north = -Z, 90 east = +X, 270 west), e.g. into a sunset.
+			var hd := deg_to_rad(float(args["heading"]))
+			hf = Vector3(sin(hd), 0.0, -cos(hd))
 		var pr := deg_to_rad(float(args["pitch"]))
 		cam.look_at(cam.global_position + hf * cos(pr) + Vector3.UP * sin(pr))
 	for g in sward:

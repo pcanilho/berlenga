@@ -917,6 +917,18 @@ uint32_t SceneShaderRaytracing::compute_scene_elision_flags() {
 	if (!used.ground_deform_patch && !used.ground_deform_terrain) {
 		flags |= RT_FLAG_SCENE_NO_GROUND;
 	}
+	if (!used.mud) {
+		flags |= RT_FLAG_SCENE_NO_MUD;
+	}
+	if (!used.wetness_canopy) {
+		flags |= RT_FLAG_SCENE_NO_CANOPY_WET;
+	}
+	if (!used.wetness_moving) {
+		flags |= RT_FLAG_SCENE_NO_MOVING_WET;
+	}
+	if (!used.hair) {
+		flags |= RT_FLAG_SCENE_NO_HAIR;
+	}
 	return flags;
 }
 

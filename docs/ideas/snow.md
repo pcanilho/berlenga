@@ -2039,6 +2039,30 @@ Built:
 - Not yet: blocks as falling rigid pieces (as the roof slabs, follow-up 52) for the largest failures; the cover's own
   cell steps (avalanche crowns) crumbling.
 
+## Follow-up 55: slab blocks that fall as bodies (round 10 start, 23 Nov 2026)
+
+Research: a cut or crown in cohesive slab breaks along fractures into angular blocks, flat-faced with sharp edges
+(slab avalanche debris and cornice falls: blocks first, rounding into granules only as they tumble far; Bartelt and
+McArdell 2009), while new powder disintegrates. The docs review read the wall debris as pebbles.
+
+Built:
+- SnowBodies3D `throw_block(transform, size, velocity, spin, density, deposit)`: an angular piece (an irregular
+  hexahedron: the box's eight corners each moved up to a fifth of its size, flat-shaded) on the roof slab pieces' path
+  (follow-up 52): a PhysX rigid body on collision layer 20, it falls, settles, freezes and sinks out of sight; with
+  `deposit` false its snow is not added to the cover again (a wall's block is already in the toe).
+- Cut walls (follow-up 54): where the snow that comes off is cohesive (block lump scale 1.8 and up, sintered or
+  wind-packed slab), about half the fallen blocks keep one or two pieces whole: up to 0.45 m along the face, a third
+  to a half of the block's depth high, half its wedge deep, tipped out over the edge with a small push and spin.
+  At most 256 pieces in the air at once. The SnowClumps3D lumps stay at most fist-sized.
+- Fix: resting pieces only sank while something else was falling.
+- Avalanche crowns: as the crown wall is built, every 0.8-1.4 m where the wall faces down the fall line and stands
+  over 15 cm, one piece of the slab's depth (0.4-0.9 m wide, 0.3-0.6 m deep) lies just below it and slides off down
+  the bed with the flow's direction. At most 60 per slide. Their snow is already in the flow (no deposit).
+  They land on whatever collides there: the ground, and the snow surface's collision within its `collision_extent`
+  of the follow target (the bench's `--view=avalanche --triggered --crown` moves it to the crown). Out past that
+  they sink to the ground under the snow, out of sight.
+- `--test=walls`: a slab over depth hoar throws blocks, new powder none. `--test=avalanche`: the crown throws blocks.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

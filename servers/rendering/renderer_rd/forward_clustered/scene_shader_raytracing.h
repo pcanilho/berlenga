@@ -95,7 +95,12 @@ public:
 		RT_FLAG_SCENE_NO_SNOW = (1 << 11), // Snow (and snow_on_body).
 		RT_FLAG_SCENE_NO_GLAZE = (1 << 12), // Glaze.
 		RT_FLAG_SCENE_NO_GROUND = (1 << 13), // Ground Deform (patch and terrain), with its sand grain glints.
-		RT_FLAG_SCENE_ELISION_MASK = RT_FLAG_SCENE_NO_SNOW | RT_FLAG_SCENE_NO_GLAZE | RT_FLAG_SCENE_NO_GROUND,
+		RT_FLAG_SCENE_NO_MUD = (1 << 14), // Mud (a vehicle's body mud).
+		RT_FLAG_SCENE_NO_CANOPY_WET = (1 << 15), // wetness_canopy (a leaf's intercepted water and beads).
+		RT_FLAG_SCENE_NO_MOVING_WET = (1 << 16), // wetness_moving (slipstream and wiper).
+		RT_FLAG_SCENE_NO_HAIR = (1 << 17), // BaseMaterial3D Hair (shader HAIR is not elided).
+		RT_FLAG_SCENE_ELISION_MASK = RT_FLAG_SCENE_NO_SNOW | RT_FLAG_SCENE_NO_GLAZE | RT_FLAG_SCENE_NO_GROUND |
+				RT_FLAG_SCENE_NO_MUD | RT_FLAG_SCENE_NO_CANOPY_WET | RT_FLAG_SCENE_NO_MOVING_WET | RT_FLAG_SCENE_NO_HAIR,
 	};
 
 	// Sample count encoding (must match shader RT_SAMPLE_MODE_* defines).
@@ -117,7 +122,7 @@ public:
 
 	static_assert(RT_SAMPLE_MODE_SHIFT + 2 == RT_MAX_BOUNCES_SHIFT && RT_MAX_BOUNCES_SHIFT + 4 == 32, "Sample mode and bounces occupy the top 6 bits.");
 	static_assert(RT_MAX_BOUNCES_LIMIT <= RT_MAX_BOUNCES_MASK, "Bounce limit must fit the bounce field.");
-	static_assert(uint32_t(RT_FLAG_SCENE_NO_GROUND) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
+	static_assert(uint32_t(RT_FLAG_SCENE_NO_HAIR) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
 
 	// RT pipeline limits (must match GLSL payload/hit attribute struct sizes).
 	// 1: primary/bounce from raygen

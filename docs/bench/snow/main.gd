@@ -1050,6 +1050,7 @@ func _run_wall_tests() -> void:
 		var before: Vector2 = sf.get_moved_volume()
 		var hc: Vector2 = snow.get_cut_critical_height(p)
 		sf.wall_collapse = true
+		var thrown0: int = snow.get_bodies().get_blocks_thrown()
 		var fell := 0
 		for k in 30:
 			fell += sf.crumble(0.2)
@@ -1067,7 +1068,7 @@ func _run_wall_tests() -> void:
 				prof2.append("%.2f" % (sf.get_rim_at(q) - sf.get_dent_at(q)))
 			print("    after:  ", " ".join(prof2))
 		var toe := sf.get_rim_at(Vector3(0.45, 0, 0.0)) # just inside the trench by its x wall
-		results[case_name] = [deep, hc.x, hc.y, fell, sf.get_collapsed_volume(), after - before, toe, _layer_text(p), stood]
+		results[case_name] = [deep, hc.x, hc.y, fell, sf.get_collapsed_volume(), after - before, toe, _layer_text(p), stood, snow.get_bodies().get_blocks_thrown() - thrown0]
 		print("  %s: %s; trench %.2f m, critical %.2f m (fails to %.2f m); %d texels gave, %.4f m3 off the walls, dent %+.4f rim %+.4f m3, toe %.2f m" % [case_name, _layer_text(p), deep, hc.x, hc.y, fell, sf.get_collapsed_volume(), (after - before).x, (after - before).y, toe])
 		sf.queue_free()
 		target.queue_free()
@@ -1079,6 +1080,7 @@ func _run_wall_tests() -> void:
 	_check("the debris is the wall's snow, bulked by a quarter as broken blocks", absf(f[5].y - 1.25 * f[4]) < 0.05 * f[4] + 1e-4, "%.4f m3 of rim for %.4f m3 off the walls" % [f[5].y, f[4]])
 	_check("a trench in old settled snow stands", o[3] == 0 and o[1] > o[0], "%d texels; trench %.2f m, critical %.2f m" % [o[3], o[0], o[1]])
 	_check("a wall over depth hoar is undercut and falls to the hoar's bottom", u[3] > 0 and u[1] < o[1], "%d texels; critical %.2f m, fails to %.2f m" % [u[3], u[1], u[2]])
+	_check("a slab over depth hoar comes off in blocks thrown as bodies; new powder falls as loose debris", u[9] > 0 and f[9] == 0, "%d blocks from the slab, %d from the powder" % [u[9], f[9]])
 	_check("a 20 cm rut in new powder stands until a body works along it, then its walls come in", w[8] == 0 and w[3] > 0 and w[0] < w[1] and w[0] > 0.6 * w[1], "rut %.2f m, critical %.2f m (%.2f worked): %d texels left alone, %d worked" % [w[0], w[1], 0.6 * w[1], w[8], w[3]])
 
 
@@ -2455,9 +2457,11 @@ func _run_avalanche_tests() -> void:
 	# A storm: another metre of light snow.
 	snow.add_snow(90.0, 90.0)
 	var water0 := snow.get_total_water()
+	var blocks0: int = snow.get_bodies().get_blocks_thrown() if snow.get_bodies() else 0
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	var released := av.get_release_count() - calm
+	var crown_blocks: int = (snow.get_bodies().get_blocks_thrown() if snow.get_bodies() else 0) - blocks0
 	var t := 0.0
 	while av.is_running() and t < 200.0:
 		av.step(0.25)
@@ -2469,6 +2473,7 @@ func _run_avalanche_tests() -> void:
 	_check("it runs out past the toe and stops (Voellmy mu 0.2, xi 1500)", not av.is_running() and av.get_run_out() > 60.0 and av.get_max_speed() > 10.0 and av.get_max_speed() < 70.0, "%.0f m run-out, %.1f m/s at most, %.0f s" % [av.get_run_out(), av.get_max_speed(), t])
 	_check("it runs at Voellmy's steady speed for its depth, within 20% (second-order HLL transport)", av.get_max_speed() > 0.8 * av.get_max_speed_terminal() and av.get_max_speed() < 1.2 * av.get_max_speed_terminal(), "%.1f m/s against %.1f m/s" % [av.get_max_speed(), av.get_max_speed_terminal()])
 	_check("the snow moves, none is made or lost", av.get_released_volume() > 1000.0 and absf(water1 - water0) < 0.005 * water0, "%.0f m3 released, %.0f m3 entrained, water %.0f -> %.0f t" % [av.get_released_volume(), av.get_entrained_volume(), water0 / 1000.0, water1 / 1000.0])
+	_check("the slab breaks at its crown into angular blocks thrown as bodies (follow-up 55)", crown_blocks >= 4, "%d crown blocks" % crown_blocks)
 	_check("debris piles at the toe; the face keeps its old snow", toe > 1.3 and face < 1.0, "%.2f m at the toe (40 m out), %.2f m on the face" % [toe, face])
 	# A trigger (a skier, a cornice drop) releases what natural release left.
 	av.natural_release = false
@@ -4198,6 +4203,11 @@ func _build_walls(cam: Camera3D) -> void:
 		for k in 40:
 			fell += surface.crumble(0.2)
 		print("walls: critical %.2f m, fails to %.2f m; %d texels gave, %.3f m3" % [hc.x, hc.y, fell, surface.get_collapsed_volume()])
+	# The slab's blocks fall into the rut and settle (eight seconds).
+	for i in 480:
+		await get_tree().physics_frame
+	var sbw: SnowBodies3D = snow.get_bodies()
+	print("walls: %d blocks thrown, %d still falling" % [sbw.get_blocks_thrown(), sbw.get_falling_chunks()])
 	# The shot holds the snow still: raster's TAA hold and the path tracer's wait run different numbers of frames,
 	# and the field would keep settling through them.
 	for i in 3:
@@ -4616,7 +4626,7 @@ func _build_avalanche(cam: Camera3D) -> void:
 	sun.visible = true
 	sun.shadow_enabled = true
 	sun.rotation_degrees = Vector3(-30.0, -60.0, 0.0)
-	_add_terrain(snow.extent, int(snow.extent / 2.0), Color(0.33, 0.31, 0.27), 16.0)
+	_add_terrain(snow.extent, int(snow.extent / 2.0), Color(0.33, 0.31, 0.27), 16.0, true)
 	# The deposit near the camera as geometry (the deep-snow surface), its blocks as clumps.
 	var probe := Marker3D.new()
 	probe.name = "Probe"
@@ -4628,6 +4638,10 @@ func _build_avalanche(cam: Camera3D) -> void:
 	surface.extent = 200.0 # the release and the whole run-out as deep-snow geometry
 	surface.deform_extent = 96.0 # and the debris granules over the whole deposit (they live in the print field)
 	add_child(surface)
+	if OS.get_cmdline_user_args().has("--crown"):
+		# The crown's blocks (follow-up 55) land on the snow there: the surface's collision follows the crown.
+		probe.position = Vector3(-45.0, 0.0, 0.0)
+		surface.collision_extent = 48.0
 	await get_tree().physics_frame
 	var av: SnowAvalanche3D = snow.get_avalanches()
 	var wet := OS.get_cmdline_user_args().has("--wet")
@@ -4725,6 +4739,17 @@ func _build_avalanche(cam: Camera3D) -> void:
 		av.step(0.25)
 		t += 0.25
 	print("avalanche: %d released, %.0f m3, run-out %.0f m, %.1f m/s, toe %.2f m" % [av.get_release_count(), av.get_released_volume(), av.get_run_out(), av.get_max_speed(), snow.get_depth_at(Vector3(40, 0, 0))])
+	# The crown's blocks (follow-up 55) fall and settle as bodies on the bed below it.
+	var sba: SnowBodies3D = snow.get_bodies()
+	if sba:
+		var bf := 0
+		while sba.get_falling_chunks() > 0 and bf < 600:
+			await get_tree().physics_frame
+			bf += 1
+		print("crown blocks: %d thrown, %d still falling after %d frames" % [sba.get_blocks_thrown(), sba.get_falling_chunks(), bf])
+		if OS.get_cmdline_user_args().has("--verbose"):
+			for n in sba.get_parent().find_children("*", "RigidBody3D", false, false):
+				print("  block at %s" % (n as Node3D).global_position)
 	# Shot with the sun 55 degrees up from behind the ridge (the slide ran under 30 degrees, which melts the same
 	# but left the whole 38 degree face in shade): it rakes the face, the crown wall stands in its own shade and
 	# throws a band of shadow down the bed.

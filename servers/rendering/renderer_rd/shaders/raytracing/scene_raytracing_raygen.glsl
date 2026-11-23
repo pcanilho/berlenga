@@ -3434,7 +3434,7 @@ void main() {
 
 	// Hair (BaseMaterial3D): fibre scattering where the mask is set, strands along hair_direction.
 	material_result_no_hair(m);
-	if ((mat.flags & RT_MAT_FLAG_HAIR) != 0u) {
+	if (!RT_SCENE_ELIDES(RT_FLAG_SCENE_NO_HAIR) && (mat.flags & RT_MAT_FLAG_HAIR) != 0u) {
 		float hair_mask = clamp(material_texture_channel(material_uv_sample(mat.hair_mask_texture, muv, mat.flags), mat.hair_mask_texture), 0.0, 1.0);
 		vec3 hp = rt_material_hair(mat);
 		vec3 hair_color = m.albedo;
