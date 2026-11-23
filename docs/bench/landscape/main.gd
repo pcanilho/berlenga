@@ -4304,6 +4304,13 @@ func _build_camera() -> void:
 			var cz := ez + 60.0
 			cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, cz) + 1.7, cz)
 			cam.look_at(Vector3(ex, height_at(ex, ez) + 4.0, ez))
+			if args.has("meadow-eye") and not args.has("hay"):
+				# A stand from the clearing (trees' plot views): --meadow-eye m (5) up, --meadow-back m (50) out from the
+				# edge, looking at --meadow-look-h m (8) up the edge so the crowns fill the frame over the grass.
+				var mb := float(args.get("meadow-back", "50"))
+				var mz := ez + mb
+				cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, mz) + float(args.get("meadow-eye", "5")), mz)
+				cam.look_at(Vector3(ex, height_at(ex, ez) + float(args.get("meadow-look-h", "8")), ez))
 			if args.has("hay"):
 				# Over the hay fields (_hay_list): raised to --hay-eye (5) m, looking down across the rows to the edge.
 				cam.position.y += float(args.get("hay-eye", "5")) - 1.7
