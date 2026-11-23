@@ -217,6 +217,7 @@ private:
 	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0, 900.0, 20.0, 10.0, 5.0 };
 	// Ground detail (docs/ideas/ground-detail.md): opt-in, an experiment.
 	bool far_thinning = true; // scatter layers thin out over the outer half of their radius (_update_thinning)
+	bool rt_instanced_cells = false; // cell stone groups path traced as instances of their shape, not a merged BLAS
 	bool far_widen = true; // thinning's survivors grow (to 1.6x) to keep the stone cover of the records dropped
 	// Far tier (docs/ideas/rocks.md, "Far rocks"): past a layer's radius its big stones and the landmarks are drawn on
 	// to far_radius, from blocks of FAR_BLOCK x FAR_BLOCK cells placed exactly as the near cells would be.
@@ -820,6 +821,9 @@ public:
 	void set_layer_density(int p_layer, real_t p_density);
 	real_t get_layer_density(int p_layer) const;
 	void set_far_thinning(bool p_enabled) { far_thinning = p_enabled; }
+	void set_rt_instanced_cells(bool p_enabled);
+	bool is_rt_instanced_cells() const { return rt_instanced_cells; }
+	Dictionary get_rt_stats() const;
 	void set_far_widen(bool p_enabled) { far_widen = p_enabled; }
 	Ref<Texture2D> get_far_cover_texture() const { return far_cover_texture; }
 	bool is_far_widen() const { return far_widen; }

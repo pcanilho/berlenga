@@ -51,6 +51,7 @@ extends Node3D
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
+#   --rt-instanced        RockField3D.rt_instanced_cells on: cell stones path traced as instances (memory A/B)
 #   --no-close-up         the near stones keep their base shape (RockField3D.close_up_enabled off; an A/B)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
@@ -609,6 +610,7 @@ func _world() -> void:
 		rocks.ground_contact = not args.has("no-ground-contact")
 		rocks.moss_cushions = not args.has("no-moss")
 		rocks.close_up_enabled = not args.has("no-close-up")
+		rocks.rt_instanced_cells = args.has("rt-instanced") # cell stones path traced as instances (memory A/B)
 		rocks.rockfall_dust = not args.has("no-dust")
 		if args.has("moss"):
 			rocks.moss_cover = float(args["moss"])
@@ -3003,6 +3005,8 @@ func _render_later() -> void:
 				for k in range(0, pts.size(), 4):
 					print("  station %d at %.1f m: %s, half width %.2f" % [k, al[k] if k < al.size() else 0.0, str(pts[k]), hws[k] if k < hws.size() else 0.0])
 			print("sea cave water: %d stations over %.1f m, arch from %.1f m, level at the mouth %s, %d drawn, %d sea clip capsules" % [pts.size(), al[al.size() - 1] if al.size() > 0 else 0.0, w.get("covered_from", 0.0), str(pts[0]) if pts.size() > 0 else "-", sw.get_ribbon_count() if sw else -1, (c as CaveNetwork3D).get_water_clip_capsules().size() / 8])
+	if rocks:
+		print("rocks rt: %s (rt_instanced_cells %s)" % [str(rocks.get_rt_stats()), str(rocks.rt_instanced_cells)])
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)

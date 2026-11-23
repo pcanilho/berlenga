@@ -1162,6 +1162,8 @@ func _ready() -> void:
 		get_tree().quit(0)
 		return
 	if out != "":
+		if rocks and rocks.has_method("get_rt_stats"):
+			_log("rocks rt: %s (rt_instanced_cells %s)" % [str(rocks.get_rt_stats()), str(rocks.rt_instanced_cells)])
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved %s (%d primitives in the frame)" % [out, int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))])
 		if args.has("pt-pair") and not env.pathtracing_enabled:

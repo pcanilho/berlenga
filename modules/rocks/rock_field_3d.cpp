@@ -37,6 +37,7 @@
 #include "modules/world/world_walker_steps.h"
 
 #include "core/config/engine.h"
+#include "core/config/project_settings.h"
 #include "core/math/convex_hull.h"
 #include "core/math/random_pcg.h"
 #include "core/object/callable_mp.h"
@@ -4484,6 +4485,11 @@ void RockField3D::_coarse_commit(const Vector3i &p_key, LocalVector<Stone> &ston
 		mm->set_use_custom_data(true);
 		mm->set_mesh(lib->meshes[cg.variant]);
 		mm->set_instance_count(n);
+		if (rt_instanced_cells) {
+			// One shared BLAS per shape and a TLAS entry per stone in the path tracer, not a merged BLAS that bakes a
+			// copy of every stone's triangles (set first: it keeps a CPU copy of the buffer).
+			RS::get_singleton()->multimesh_set_rt_instanced(mm->get_rid(), true);
+		}
 		RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), cg.buffer);
 		Group grp;
 		grp.library = cg.library;
@@ -8251,6 +8257,53 @@ void RockField3D::set_ground_detail_tiles(bool p_enabled) {
 	}
 }
 
+void RockField3D::set_rt_instanced_cells(bool p_enabled) {
+	if (rt_instanced_cells == p_enabled) {
+		return;
+	}
+	rt_instanced_cells = p_enabled;
+	if (is_inside_tree()) {
+		rebuild();
+	}
+}
+
+// What the cell stones cost the path tracer: groups at or under the merged BLAS cap bake a copy of each stone's
+// triangles (unless rt_instanced_cells), larger ones and instanced ones share their shape's BLAS.
+Dictionary RockField3D::get_rt_stats() const {
+	static const int64_t cap = int64_t(GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"));
+	int64_t merged_tris = 0, merged_groups = 0, merged_stones = 0, inst_stones = 0, inst_groups = 0, all_tris = 0;
+	for (const KeyValue<Vector3i, Cell> &kv : cells) {
+		for (const Group &g : kv.value.groups) {
+			if (g.multimesh.is_null()) {
+				continue;
+			}
+			const Ref<Mesh> m = g.multimesh->get_mesh();
+			if (m.is_null() || m->get_surface_count() == 0) {
+				continue;
+			}
+			const int64_t n = g.multimesh->get_instance_count();
+			const int64_t t = n * int64_t(m->surface_get_array_index_len(0) / 3);
+			all_tris += t;
+			if (!RS::get_singleton()->multimesh_is_rt_instanced(g.multimesh->get_rid()) && t <= cap) {
+				merged_tris += t;
+				merged_groups++;
+				merged_stones += n;
+			} else {
+				inst_groups++;
+				inst_stones += n;
+			}
+		}
+	}
+	Dictionary d;
+	d["merged_triangles"] = merged_tris;
+	d["merged_groups"] = merged_groups;
+	d["merged_stones"] = merged_stones;
+	d["instanced_groups"] = inst_groups;
+	d["instanced_stones"] = inst_stones;
+	d["cell_triangles"] = all_tris; // every cell stone's triangles, as drawn
+	return d;
+}
+
 Dictionary RockField3D::get_ground_detail_tile_stats() const {
 	Dictionary d;
 	d["tiles"] = int64_t(tile_stats[0]);
@@ -8535,6 +8588,9 @@ void RockField3D::_notification(int p_what) {
 void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_coarse_cover_at", "position"), &RockField3D::get_coarse_cover_at);
 	ClassDB::bind_method(D_METHOD("set_far_thinning", "enabled"), &RockField3D::set_far_thinning);
+	ClassDB::bind_method(D_METHOD("set_rt_instanced_cells", "enabled"), &RockField3D::set_rt_instanced_cells);
+	ClassDB::bind_method(D_METHOD("is_rt_instanced_cells"), &RockField3D::is_rt_instanced_cells);
+	ClassDB::bind_method(D_METHOD("get_rt_stats"), &RockField3D::get_rt_stats);
 	ClassDB::bind_method(D_METHOD("set_far_widen", "enabled"), &RockField3D::set_far_widen);
 	ClassDB::bind_method(D_METHOD("is_far_widen"), &RockField3D::is_far_widen);
 	ClassDB::bind_method(D_METHOD("get_far_cover_texture"), &RockField3D::get_far_cover_texture);
@@ -8739,6 +8795,7 @@ void RockField3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_thinning"), "set_far_thinning", "is_far_thinning");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_widen"), "set_far_widen", "is_far_widen");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rt_instanced_cells"), "set_rt_instanced_cells", "is_rt_instanced_cells");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_radius", PROPERTY_HINT_RANGE, "0,8000,10,suffix:m"), "set_far_radius", "get_far_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_min_size", PROPERTY_HINT_RANGE, "0.5,10,0.1,suffix:m"), "set_far_min_size", "get_far_min_size");
 	ADD_GROUP("Ground Detail", "ground_detail_");
