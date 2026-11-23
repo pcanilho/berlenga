@@ -4329,6 +4329,7 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 		float height;
 		Color color;
 		float cover; // At most.
+		float reach; // m: where its own plants end (its range, else the field's stream radius).
 	};
 	LocalVector<Kind> kinds;
 	for (const PlaceSpecies &ps : su.species) {
@@ -4370,7 +4371,7 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			const float k = MIN(la, 1.3f * lf) / la;
 			tone = Color(ps.far_albedo.r * k, ps.far_albedo.g * k, ps.far_albedo.b * k, 1.0f);
 		}
-		kinds.push_back({ sp, h, tone, cover });
+		kinds.push_back({ sp, h, tone, cover, ps.range > 0.0f ? ps.range : stream_radius });
 		if (OS::get_singleton()->get_environment("VEG_FAR_SHELL_DEBUG") == "1" && p_key == Vector3i(0, 0, 0)) {
 			print_line(vformat("far shell kind h %.2f cover %.2f spacing %.2f density %.2f", h, cover, sp->get_spacing(), sp->get_density()));
 		}
@@ -4411,8 +4412,13 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			float sum = 0.0f;
 			float hs = 0.0f;
 			Color cs(0, 0, 0, 0);
+			const float dq = q.distance_to(p_centre);
 			for (const Kind &k : kinds) {
-				const float c = k.cover * CLAMP(k.sp->get_suitability(map, at), 0.0f, 1.0f);
+				// Each kind takes over from its own plants only where they end (the last 15% of their range): inside
+				// it the solid shell showed between airy plants as a flat wall of peaks (landscape meadow view, 23 Nov,
+				// a 2.3 m tall grass drawn to 60 m under a shell from 48 m).
+				const float handover = Math::smoothstep(0.85f * k.reach, k.reach, dq);
+				const float c = handover > 0.0f ? k.cover * handover * CLAMP(k.sp->get_suitability(map, at), 0.0f, 1.0f) : 0.0f;
 				if (c <= 0.0f) {
 					continue;
 				}

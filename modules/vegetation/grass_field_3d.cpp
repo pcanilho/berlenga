@@ -5127,6 +5127,16 @@ constexpr int FAR_BAKE_AZIMUTHS = 4; // Sun behind, beside and facing the view: 
 constexpr int FAR_BAKE_FRAMES = 3; // Frames each view renders before it is read (shadows, sky).
 } // namespace
 
+void GrassField3D::set_far_bake(bool p_enabled) {
+	if (far_bake == p_enabled) {
+		return;
+	}
+	far_bake = p_enabled;
+	if (!far_bake) {
+		_far_bake_free(); // Stays queued: turned on again, it bakes.
+	}
+}
+
 void GrassField3D::_queue_far_bake() {
 	far_bake_queued = true;
 	_far_bake_free(); // A bake under way is of the old look: start again.
@@ -7244,7 +7254,7 @@ void GrassField3D::_notification(int p_what) {
 			_season_step();
 			if (far_bake_vp) {
 				_far_bake_step();
-			} else if (far_bake_queued) {
+			} else if (far_bake_queued && far_bake) {
 				_far_bake_start();
 			}
 		} break;
@@ -7690,6 +7700,8 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_rules, get_rules, "rules")
 	ClassDB::bind_method(D_METHOD("get_far_color"), &GrassField3D::get_far_color);
 	ClassDB::bind_method(D_METHOD("is_far_color_baked"), &GrassField3D::is_far_color_baked);
+	ClassDB::bind_method(D_METHOD("set_far_bake", "enabled"), &GrassField3D::set_far_bake);
+	ClassDB::bind_method(D_METHOD("is_far_bake"), &GrassField3D::is_far_bake);
 	ClassDB::bind_method(D_METHOD("get_far_color_lobes"), &GrassField3D::get_far_color_lobes);
 	ClassDB::bind_method(D_METHOD("get_far_published"), &GrassField3D::get_far_published);
 	ClassDB::bind_method(D_METHOD("set_far_match_view", "enabled"), &GrassField3D::set_far_match_view);
@@ -7850,6 +7862,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_rings"), "set_far_rings", "is_far_rings");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_ring_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_far_ring_range", "get_far_ring_range");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_shell"), "set_far_shell", "is_far_shell");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_bake"), "set_far_bake", "is_far_bake");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_shell_range", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_far_shell_range", "get_far_shell_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burn_recovery", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:yr"), "set_burn_recovery", "get_burn_recovery");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "graze_height", PROPERTY_HINT_RANGE, "0,0.2,0.005,suffix:m"), "set_graze_height", "get_graze_height");

@@ -524,6 +524,7 @@ private:
 	float far_bake_sun_energy = 1.0f; // The scene sun's energy the far colour was baked under.
 	bool far_bake_queued = false;
 	bool far_baked = false;
+	bool far_bake = true; // Off: no bake, the far ground keeps the hand-matched colour (slow software-rendered scouts).
 	// Mean of each view, per sun elevation: sward at the four sun azimuths, white, black at the four.
 	static constexpr int FAR_ELEVATIONS = 4;
 	static constexpr int FAR_REF_ELEVATION = 1; // 30 degrees: get_far_color() and the cover map's colour.
@@ -652,6 +653,8 @@ public:
 	float get_lean() const { return lean; }
 	Color get_far_color() const;
 	bool is_far_color_baked() const { return far_baked; }
+	void set_far_bake(bool p_enabled);
+	bool is_far_bake() const { return far_bake; }
 	PackedColorArray get_far_color_lobes() const;
 	Dictionary get_far_published() const;
 	void set_far_match_view(bool p_enabled);

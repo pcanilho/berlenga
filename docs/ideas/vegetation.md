@@ -2011,3 +2011,9 @@ array, for the path tracer's material slot), so the days pass without a rebuild.
   half 41/52/28 against 32/40/21), so the dark read is the bench's light, not the stubble's material. One fault fixed:
   the blades' ambient darkening (Monsi and Saeki leaf area, in AO) took the whole sward's leaf area over the stubble;
   it now takes the stubble's (about the height left). Paler cut tips are a round 10 option, not built.
+- Far shell handover fix (23 Nov): in the landscape meadow view the far shell started at 0.6 of the stream reach
+  (48 m) under a 2.3 m tall grass drawn to 60 m, so the solid shell showed between the airy plants as a flat olive wall
+  of peaks. Each species now feeds the shell only over the last 15% of its own range (its plants' end), unranged ones
+  at the stream radius.
+- GrassField3D.far_bake (on): off skips the far colour bake (hand-matched far colour kept), for software-rendered
+  scouts where the bake's three SubViewports take hours. Docs stills keep it on.
