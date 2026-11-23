@@ -106,6 +106,56 @@ uniform sampler2D source_tex : filter_nearest, repeat_disable; // x, y, z, cumul
 uniform int source_count = 0;
 uniform float drip_d = 4.5; // mm
 uniform float drip_idle = 1e6; // s, mean wait between a drip particle's drops
+// Moving bodies (RainFall3D::_update_bodies), four vec4 each: a capsule (a.xyz, radius; b.xyz, 0) or a box
+// (centre.xyz, -1; then its three axes times their half extents, w 1).
+uniform int body_count = 0;
+uniform vec4 body_data[64];
+
+// Whether p is inside a moving body; if so the point on its surface out from p and the surface's normal.
+bool rain_hit_body(vec3 p, out vec3 q, out vec3 n) {
+	q = p;
+	n = vec3(0.0, 1.0, 0.0);
+	for (int i = 0; i < 16; i++) {
+		if (i >= body_count) {
+			break;
+		}
+		vec4 a = body_data[i * 4];
+		vec4 b = body_data[i * 4 + 1];
+		if (a.w >= 0.0) {
+			vec3 ab = b.xyz - a.xyz;
+			float t = clamp(dot(p - a.xyz, ab) / max(dot(ab, ab), 1e-8), 0.0, 1.0);
+			vec3 c = a.xyz + ab * t;
+			vec3 d = p - c;
+			float l = length(d);
+			if (l < a.w) {
+				n = l > 1e-5 ? d / l : vec3(0.0, 1.0, 0.0);
+				q = c + n * a.w;
+				return true;
+			}
+		} else {
+			vec3 rel = p - a.xyz;
+			vec3 u0 = b.xyz;
+			vec3 u1 = body_data[i * 4 + 2].xyz;
+			vec3 u2 = body_data[i * 4 + 3].xyz;
+			vec3 l = vec3(dot(rel, u0) / max(dot(u0, u0), 1e-8), dot(rel, u1) / max(dot(u1, u1), 1e-8), dot(rel, u2) / max(dot(u2, u2), 1e-8));
+			if (all(lessThan(abs(l), vec3(1.0)))) {
+				vec3 al = abs(l);
+				if (al.x >= al.y && al.x >= al.z) {
+					q = p + u0 * (sign(l.x) - l.x);
+					n = normalize(u0) * sign(l.x);
+				} else if (al.y >= al.z) {
+					q = p + u1 * (sign(l.y) - l.y);
+					n = normalize(u1) * sign(l.y);
+				} else {
+					q = p + u2 * (sign(l.z) - l.z);
+					n = normalize(u2) * sign(l.z);
+				}
+				return true;
+			}
+		}
+	}
+	return false;
+}
 
 // The stop height (snow or water) and whether it is water there (the alpha channel).
 vec2 rain_ground(vec2 p) {
@@ -276,11 +326,18 @@ void rain_step(inout vec4 o_custom, inout mat4 o_xf, inout vec3 o_vel, inout vec
 	v = target + (v - target) * exp(-i_dt / tau);
 	p += v * i_dt;
 	vec3 rel = p - box_center;
-	bool landed = i_collided || p.y < gr.x;
+	vec3 body_q;
+	vec3 body_n;
+	bool on_body = body_count > 0 && rain_hit_body(p, body_q, body_n);
+	bool landed = i_collided || p.y < gr.x || on_body;
 	if (landed) {
 		if (p.y < gr.x) {
 			p.y = gr.x;
 			on_water = gr.y > 0.5;
+		} else if (on_body) {
+			// On a person, a car: at its surface (the splash's quad stands on it).
+			p = body_q + body_n * 0.002;
+			on_water = false;
 		} else {
 			p += i_cn * i_cd;
 			on_water = false;
@@ -887,11 +944,122 @@ void RainFall3D::_update(double p_delta) {
 	if (drips_enabled) {
 		_update_sources(center, p_delta);
 	}
+	_update_bodies(center);
 	const float fall_time = 1.5f;
 	drip_process->set_shader_parameter("ratio", 1.0f);
 	drip_process->set_shader_parameter("drip_d", drip_size);
 	drip_process->set_shader_parameter("drip_idle", drip_rate > 1e-4f ? MAX(float(max_drips) / drip_rate - fall_time, 0.05f) : 1e6f);
 	_push_haze();
+}
+
+void RainFall3D::_update_bodies(Vector3 p_center) {
+	// The physics space's own broadphase finds the bodies round the camera (PhysX's scene query where PhysX is the
+	// physics server); static ones are left to the shelter heightfield.
+	PackedVector4Array data;
+	data.resize(MAX_BODIES * 4);
+	data.fill(Vector4());
+	int count = 0;
+	PhysicsDirectSpaceState3D *space = body_collision && is_inside_tree() && get_world_3d().is_valid() ? get_world_3d()->get_direct_space_state() : nullptr;
+	if (space) {
+		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+		const float reach = 0.5f * MAX(MAX(fall_extent.x, fall_extent.z), drip_extent);
+		RID box = ps->box_shape_create();
+		ps->shape_set_data(box, Vector3(reach, 0.5f * MAX(fall_extent.y, 20.0f), reach));
+		PhysicsDirectSpaceState3D::ShapeParameters sp;
+		sp.shape_rid = box;
+		sp.transform = Transform3D(Basis(), p_center);
+		sp.collision_mask = body_collision_mask;
+		sp.collide_with_areas = false;
+		PhysicsDirectSpaceState3D::ShapeResult results[64];
+		const int hits = space->intersect_shape(sp, results, 64);
+		ps->free_rid(box);
+		struct Found {
+			RID body;
+			int shape;
+			float dist;
+		};
+		LocalVector<Found> found;
+		for (int i = 0; i < hits; i++) {
+			if (ps->body_get_mode(results[i].rid) == PhysicsServer3D::BODY_MODE_STATIC) {
+				continue;
+			}
+			const Transform3D bx = ps->body_get_state(results[i].rid, PhysicsServer3D::BODY_STATE_TRANSFORM);
+			found.push_back({ results[i].rid, results[i].shape, float(bx.origin.distance_squared_to(p_center)) });
+		}
+		struct Nearest {
+			bool operator()(const Found &a, const Found &b) const { return a.dist < b.dist; }
+		};
+		found.sort_custom<Nearest>();
+		for (const Found &f : found) {
+			if (count >= MAX_BODIES) {
+				break;
+			}
+			const RID shape = ps->body_get_shape(f.body, f.shape);
+			const Transform3D xf = Transform3D(ps->body_get_state(f.body, PhysicsServer3D::BODY_STATE_TRANSFORM)) * ps->body_get_shape_transform(f.body, f.shape);
+			const Variant d = ps->shape_get_data(shape);
+			Vector4 *w = data.ptrw() + count * 4;
+			switch (ps->shape_get_type(shape)) {
+				case PhysicsServer3D::SHAPE_SPHERE: {
+					const float r = float(d) * xf.basis.get_scale().x;
+					w[0] = Vector4(xf.origin.x, xf.origin.y, xf.origin.z, r);
+					w[1] = Vector4(xf.origin.x, xf.origin.y, xf.origin.z, 0.0f);
+					count++;
+				} break;
+				case PhysicsServer3D::SHAPE_CAPSULE:
+				case PhysicsServer3D::SHAPE_CYLINDER: {
+					// Capsules and cylinders lie along their local Y (a cylinder as the capsule round it).
+					const Dictionary c = d;
+					const float r = float(c.get("radius", 0.5f)) * xf.basis.get_scale().x;
+					const float h = c.get("height", 2.0f);
+					const float half = ps->shape_get_type(shape) == PhysicsServer3D::SHAPE_CAPSULE ? MAX(0.5f * h - float(c.get("radius", 0.5f)), 0.0f) : 0.5f * h;
+					const Vector3 a = xf.xform(Vector3(0, -half, 0));
+					const Vector3 b = xf.xform(Vector3(0, half, 0));
+					w[0] = Vector4(a.x, a.y, a.z, r);
+					w[1] = Vector4(b.x, b.y, b.z, 0.0f);
+					count++;
+				} break;
+				case PhysicsServer3D::SHAPE_BOX: {
+					const Vector3 he = d;
+					const Vector3 u0 = xf.basis.get_column(0) * he.x;
+					const Vector3 u1 = xf.basis.get_column(1) * he.y;
+					const Vector3 u2 = xf.basis.get_column(2) * he.z;
+					w[0] = Vector4(xf.origin.x, xf.origin.y, xf.origin.z, -1.0f);
+					w[1] = Vector4(u0.x, u0.y, u0.z, 1.0f);
+					w[2] = Vector4(u1.x, u1.y, u1.z, 1.0f);
+					w[3] = Vector4(u2.x, u2.y, u2.z, 1.0f);
+					count++;
+				} break;
+				case PhysicsServer3D::SHAPE_CONVEX_POLYGON: {
+					// A hull (a car's body) as the box round its points.
+					const PackedVector3Array pts = d;
+					if (pts.is_empty()) {
+						break;
+					}
+					AABB bb(pts[0], Vector3());
+					for (const Vector3 &q : pts) {
+						bb.expand_to(q);
+					}
+					const Vector3 c = xf.xform(bb.get_center());
+					const Vector3 he = bb.size * 0.5f;
+					const Vector3 u0 = xf.basis.get_column(0) * he.x;
+					const Vector3 u1 = xf.basis.get_column(1) * he.y;
+					const Vector3 u2 = xf.basis.get_column(2) * he.z;
+					w[0] = Vector4(c.x, c.y, c.z, -1.0f);
+					w[1] = Vector4(u0.x, u0.y, u0.z, 1.0f);
+					w[2] = Vector4(u1.x, u1.y, u1.z, 1.0f);
+					w[3] = Vector4(u2.x, u2.y, u2.z, 1.0f);
+					count++;
+				} break;
+				default:
+					break; // concave meshes and height maps are static in practice (the shelter's)
+			}
+		}
+	}
+	body_count = count;
+	for (Ref<ShaderMaterial> m : { fall_process, drip_process }) {
+		m->set_shader_parameter("body_count", body_count);
+		m->set_shader_parameter("body_data", data);
+	}
 }
 
 void RainFall3D::_push_haze() {
@@ -1040,6 +1208,11 @@ void RainFall3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_roof_drain_time"), &RainFall3D::get_roof_drain_time);
 	ClassDB::bind_method(D_METHOD("set_drip_collision_mask", "mask"), &RainFall3D::set_drip_collision_mask);
 	ClassDB::bind_method(D_METHOD("get_drip_collision_mask"), &RainFall3D::get_drip_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_body_collision", "enabled"), &RainFall3D::set_body_collision);
+	ClassDB::bind_method(D_METHOD("is_body_collision"), &RainFall3D::is_body_collision);
+	ClassDB::bind_method(D_METHOD("set_body_collision_mask", "mask"), &RainFall3D::set_body_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_body_collision_mask"), &RainFall3D::get_body_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_body_count"), &RainFall3D::get_body_count);
 	ClassDB::bind_method(D_METHOD("get_rainfall_rate"), &RainFall3D::get_rainfall_rate);
 	ClassDB::bind_method(D_METHOD("get_rain_share"), &RainFall3D::get_rain_share);
 	ClassDB::bind_method(D_METHOD("get_visible_drops"), &RainFall3D::get_visible_drops);
@@ -1081,6 +1254,9 @@ void RainFall3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roof_depth", PROPERTY_HINT_RANGE, "0,20,0.1,suffix:m"), "set_roof_depth", "get_roof_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roof_drain_time", PROPERTY_HINT_RANGE, "1,3600,1,suffix:s"), "set_roof_drain_time", "get_roof_drain_time");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "drip_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_drip_collision_mask", "get_drip_collision_mask");
+	ADD_GROUP("Moving Bodies", "body_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "body_collision"), "set_body_collision", "is_body_collision");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "body_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_body_collision_mask", "get_body_collision_mask");
 }
 
 RainFall3D::RainFall3D() {
