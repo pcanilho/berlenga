@@ -894,6 +894,9 @@ public:
 
 	// World XZ rectangle the generator covers (centred on the node), position.x = X, position.y = Z.
 	Rect2 get_world_rect() const;
+	// Where the last generate() ran: the rect the result's heights cover. Safe from worker threads (the node's
+	// global transform is not); get_world_rect() before the first generate().
+	Rect2 get_result_rect() const { return result_rect.has_area() ? result_rect : get_world_rect(); }
 	Vector2i get_grid_size() const { return Vector2i(nx, ny); }
 
 	// Runs the simulation. Returns false when nothing could run (empty size).

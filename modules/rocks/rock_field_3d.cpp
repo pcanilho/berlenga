@@ -288,7 +288,7 @@ void fracture_job(void *p_userdata) {
 // stone near the edge looks round it for metres (its slope, fall line and run-out), which drew thousands of
 // non-finite normals round a spot 30 m from the edge. The ground just past the edge reads as the edge's own.
 static real_t rf_height(const TerrainGenerator3D *p_gen, const Vector3 &p) {
-	const Rect2 w = p_gen->get_world_rect();
+	const Rect2 w = p_gen->get_result_rect(); // also from the detail jobs' worker threads
 	return p_gen->get_height(Vector3(CLAMP(p.x, w.position.x, w.get_end().x), p.y, CLAMP(p.z, w.position.y, w.get_end().y)));
 }
 
@@ -934,7 +934,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 		return;
 	}
 	// Stones only on the world (past its edge the generator has no ground; rf_height holds their neighbourhood in it).
-	const Rect2 p_rect = gen->get_world_rect().intersection(p_cell_rect);
+	const Rect2 p_rect = gen->get_result_rect().intersection(p_cell_rect);
 	if (p_rect.size.x <= 0.0 || p_rect.size.y <= 0.0) {
 		return;
 	}
