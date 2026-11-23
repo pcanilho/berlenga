@@ -978,3 +978,24 @@ the camera's 40 km cell, each flown every 20 minutes on a hashed straight track 
 cloud_contrail_traffic scales how many slots fly (0 for a world without aircraft). Each pixel evaluates 36 tracks
 analytically (no march): the age where the ray meets the track's level, the lateral offset after the drift, a
 Gaussian column blurred to the pixel's footprint. Lit as the cirrus. Raster and PT agree; clouds tests pass.
+
+## Sun dogs and tangent arcs (oriented ice crystals)
+
+Technique: the minimum deviation of a 60 degree prism in the Bravais effective index (Bravais 1847, Tape 1994
+"Atmospheric Halos", Greenler 1980 "Rainbows, Halos and Glories"). A crystal whose axis is fixed in space bends
+light as a prism of index n' = sqrt(n^2 - sin^2 b) / cos b, b the ray's angle to the axis, so the bright edge sits
+at D_min = 2 asin(n'/2) - 60 deg measured in the plane normal to the axis.
+
+- Plates float with their c axis near vertical (wobble about 1.6 deg): their minimum lies at the sun's height,
+  22 deg out at a low sun and further as it climbs, so the sun dogs (parhelia). They vanish past about 61 deg sun,
+  where n' passes 2.
+- Columns float with their c axis horizontal, every bearing: at each view the axis normal to the sun-view plane
+  matches, weighted by the density of bearings that give it; the upper and lower tangent arcs, the gull wing over
+  the 22 deg halo at a low sun.
+- Dispersion from ice's index for red, green and blue (1.307, 1.311, 1.317): a sharp red inner edge, a bright core
+  falling off outward and a faint white tail.
+- Added to the cirrus sheet's single scattering beside the random 22 and 46 deg halos, scaled with them; the
+  strength is cloud_parhelia_strength (0.03 of the beam for plates, three times that for columns).
+
+Bench: weather --view=shafts --sun-up=12 --cover=0.02 --high-cover=0.7 --fov=100 (the tangent arc: add
+--cam=0,60,0,0,637,-1000). Raster and path traced agree.
