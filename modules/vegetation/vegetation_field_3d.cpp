@@ -1633,7 +1633,6 @@ float VegetationField3D::get_species_range(int p_species) const {
 void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<PlantSpecies> &p_sp, real_t pixel) {
 	PlaceSpecies &ps = r_setup.species[s];
 	ps.sp = p_sp;
-	TerrainDataMap3D *map = r_setup.map;
 	if (ps.sp.is_null()) {
 		return;
 	}

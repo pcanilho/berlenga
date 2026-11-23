@@ -1869,7 +1869,10 @@ Built: PollenCloud3D (pollen_cloud_3d.*), the landscape scale beside VegetationP
   the weather gives no season).
 - Sources: the nearest needle-leaved crowns of the scene's VegetationField3Ds within range (get_crowns_near now
   reports "conifer"), each at its crown's middle with the wind there; sward points on a 6 m lattice within 30 m
-  where a GrassField3D's rules grow grass.
+  where a GrassField3D's rules grow grass. The sward's sources are faint and small (1 m, a tenth of the first rate):
+  grass pollen in open air is invisible (high counts are 50 to 150 grains a cubic metre, Waudby et al. 2022; an
+  extinction near 1e-7 a metre, an estimate), so it shows only at the panicles in strong wind. The first rate filled
+  the air round a camera in a June meadow with a sepia cast (landscape, 23 Nov).
 - Drawn: one PhysXFlow3D of its own, 0.5 m cells, smoke density 0.35, a little heavy (-0.03), slow fade (0.05),
   sulphur yellow, scattering albedo 0.85 (estimate), the weather's wind; sphere emitters with the wind's velocity.
 - Check: vegetation --test "pollen clouds" (10 crowns shed in dry wind, none damp, calm or in winter; nearest first).

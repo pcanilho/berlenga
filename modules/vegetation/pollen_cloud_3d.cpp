@@ -239,8 +239,13 @@ void PollenCloud3D::update_sources() {
 					Cand cd;
 					cd.s.position = at;
 					cd.s.velocity = w;
-					cd.s.radius = 2.5f;
-					cd.s.rate = k * 0.5f; // a sward sheds less per emitter volume than a pine's crown (estimate)
+					// Faint and local: a meadow's pollen in the open air is far too thin to see (high counts are about 50
+					// to 150 grains a cubic metre, Waudby et al. 2022; at 30 um a grain that is an extinction near 1e-7 a
+					// metre, an estimate), so the sward only smokes at its panicles in a strong wind, never as a haze over
+					// the scene (landscape meadow, 23 Nov: a 6 m lattice of 2.5 m sources fading at 0.05 a second filled the
+					// air round the camera into a sepia cast). Gust clouds come from the conifers' crowns.
+					cd.s.radius = 1.0f;
+					cd.s.rate = k * 0.05f;
 					cd.d2 = d2;
 					sward.push_back(cd);
 				}
