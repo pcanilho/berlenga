@@ -2174,6 +2174,7 @@ void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_
 		cp.normal = cp.normal.length_squared() > 1e-4f ? cp.normal.normalized() : segs[kv.value[0]].normal;
 		corner_point[kv.key] = cp;
 	}
+	int crown_blocks = 0;
 	LocalVector<LocalVector<P>> lines;
 	auto walk = [&](uint32_t p_start, Vector2i p_from) {
 		LocalVector<P> line;
@@ -2265,6 +2266,29 @@ void SnowAvalanche3D::_build_crown(SnowCover3D *p_cover, const Vector<float> &p_
 			e.albedo = p.albedo;
 			e.height = hgt;
 			ws.push_back(e);
+		}
+		// The slab breaks along its crown into blocks (follow-up 55): every metre or so where the wall faces down the
+		// fall line and stands over 15 cm, an angular piece of the slab's depth lies just below it, sliding off down
+		// the bed after the rest. Their snow is in the flow already (SnowBodies3D.throw_block, not deposited).
+		if (SnowBodies3D *bodies = p_cover->get_bodies()) {
+			float run = 0.0f;
+			for (uint32_t q = 1; q < ws.size() && crown_blocks < 60; q++) {
+				const W &e = ws[q];
+				run += ws[q].top.distance_to(ws[q - 1].top);
+				const Vector2 nn(e.normal.x, e.normal.z);
+				if (run < 0.8f + 0.6f * _patch_noise(int(e.top.x * 3.0f), int(e.top.z * 3.0f)) || e.height < 0.15f || nn.dot(down) < 0.4f) {
+					continue;
+				}
+				run = 0.0f;
+				const float r = _patch_noise(int(e.top.x * 7.0f), int(e.top.z * 7.0f));
+				const Vector3 size(0.4f + 0.5f * r, CLAMP(e.height * (0.6f + 0.3f * r), 0.1f, 0.9f), 0.3f + 0.3f * (1.0f - r));
+				const Vector3 dn(down.x, 0.0f, down.y);
+				const Basis yaw(Vector3(0, 1, 0), Math::atan2(-dn.x, -dn.z) + (r - 0.5f) * 0.5f);
+				const Vector3 at = e.bottom + e.normal * (0.25f + 0.5f * size.z) + Vector3(0.0f, 0.5f * size.y + 0.05f, 0.0f);
+				const float rho = p_cover->get_density_at(at);
+				bodies->throw_block(Transform3D(yaw, at), size, dn * (1.0f + r), yaw.get_column(0) * (r - 0.5f), rho, false);
+				crown_blocks++;
+			}
 		}
 		for (uint32_t q = 0; q + 1 < ws.size(); q++) {
 			const W &e0 = ws[q];

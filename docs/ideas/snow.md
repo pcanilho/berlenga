@@ -2055,7 +2055,13 @@ Built:
   to a half of the block's depth high, half its wedge deep, tipped out over the edge with a small push and spin.
   At most 256 pieces in the air at once. The SnowClumps3D lumps stay at most fist-sized.
 - Fix: resting pieces only sank while something else was falling.
-- `--test=walls`: a slab over depth hoar throws blocks, new powder none.
+- Avalanche crowns: as the crown wall is built, every 0.8-1.4 m where the wall faces down the fall line and stands
+  over 15 cm, one piece of the slab's depth (0.4-0.9 m wide, 0.3-0.6 m deep) lies just below it and slides off down
+  the bed with the flow's direction. At most 60 per slide. Their snow is already in the flow (no deposit).
+  They land on whatever collides there: the ground, and the snow surface's collision within its `collision_extent`
+  of the follow target (the bench's `--view=avalanche --triggered --crown` moves it to the crown). Out past that
+  they sink to the ground under the snow, out of sight.
+- `--test=walls`: a slab over depth hoar throws blocks, new powder none. `--test=avalanche`: the crown throws blocks.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
