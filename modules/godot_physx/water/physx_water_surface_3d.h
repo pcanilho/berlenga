@@ -934,6 +934,7 @@ private:
 	RID underwater_sky_baked;
 	int underwater_sky_rebake = 0;
 	Color underwater_sky_radiance;
+	Ref<WaterSkyReadback> underwater_sky_readback;
 	void _update_water_light(const Camera3D *p_camera);
 	void _update_underwater();
 	void _set_underwater_shown(bool p_shown);

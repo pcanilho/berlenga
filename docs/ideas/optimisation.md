@@ -451,8 +451,12 @@ when it lands. Renderers without that readback (Compatibility, dummy) bake at on
 same way. Proof: a sky baked both ways gives the same bytes, radiance and irradiance (3 to 4 frames later on
 the cloud's software GPU). The sky light reaches the terrain those few frames later; its interval stays 2 s.
 
-Two more periodic sync readbacks of the same kind remain in the water module (`water_raster_reflections.cpp`
-every few seconds, the underwater sky in `physx_water_surface_3d.cpp` every 240 frames).
+The water module's two periodic sync readbacks of the same kind (the raster reflections' 128 x 64 sky panorama
+and the underwater sky radiance, each every 240 frames per water body) now go through the same call:
+`WaterSkyReadback` keeps one request in flight and the owner runs the same update when it lands. The water
+surface bench (raster, beach, 60 frames at a fixed 30 fps) looks the same; its frames differ from run to run
+by the simulation alone (0.06% of pixels between two runs of the old build, 0.12% against the new one, all
+foam and floating boxes).
 
 ## Memory: static surface BLASes were never freed
 

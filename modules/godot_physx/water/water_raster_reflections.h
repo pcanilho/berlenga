@@ -32,6 +32,7 @@
 #pragma once
 
 #include "core/object/object_id.h"
+#include "core/io/image.h"
 #include "core/object/ref_counted.h"
 #include "core/templates/rid.h"
 #include "core/object/object.h"
@@ -660,6 +661,23 @@ inline Ref<Shader> water_shared_shader(const String &p_code) {
 	return shader;
 }
 
+// A sky panorama read back without stalling the GPU (RenderingServer::sky_bake_panorama_async): request() asks
+// for one, and the owner takes it with take() once it lands, a few frames later. The callback targets this object,
+// so a readback that lands after its owner is gone is dropped.
+class WaterSkyReadback : public RefCounted {
+	bool landed = false;
+	Ref<Image> image;
+
+	void _ready(const Ref<Image> &p_image);
+
+public:
+	bool pending = false;
+
+	void request(RID p_sky, bool p_bake_irradiance, const Size2i &p_size);
+	// True once a requested panorama landed; r_image is it (null when the bake failed).
+	bool take(Ref<Image> &r_image);
+};
+
 // The CPU side: finds the sun and bakes the sky panorama, and sets the uniforms above on a material.
 // Call update() once a frame.
 class WaterRasterReflections {
@@ -667,6 +685,7 @@ class WaterRasterReflections {
 	int sun_search = 0;
 	RID sky_baked;
 	int sky_rebake = 0;
+	Ref<WaterSkyReadback> sky_readback;
 	Ref<ImageTexture> sky_texture;
 	float sky_energy = 0.0f;
 	Vector3 sky_irradiance; // the baked sky's irradiance on a level surface
