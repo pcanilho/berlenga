@@ -101,6 +101,8 @@ struct State {
 	float high_scale = 24000.0f; // m, its patches
 	Vector2 high_drift; // m
 	Vector2 high_dir = Vector2(1, 0); // unit, the wind aloft
+	Vector2 contrail_wind; // m/s, the wind at the contrails' height (about 10.5 km)
+	float clock = 0.0f; // s, the weather's time of day for the flights (cloud_time wrapped to a day)
 	// Cirrocumulus share (round 7): how unstable the shear at the high layer leaves it, 0 (smooth cirrus) to 1
 	// (rippled cirrocumulus in patches); from the gradient Richardson number (WeatherMap3D).
 	float high_cc = 0.0f;
