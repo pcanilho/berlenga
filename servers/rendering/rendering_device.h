@@ -2172,7 +2172,8 @@ public:
 	enum MemoryType {
 		MEMORY_TEXTURES,
 		MEMORY_BUFFERS,
-		MEMORY_TOTAL
+		MEMORY_TOTAL,
+		MEMORY_ACCELERATION_STRUCTURES, // Storage of every BLAS and TLAS alive (not their scratch or instance buffers).
 	};
 
 	uint64_t get_memory_usage(MemoryType p_type) const;

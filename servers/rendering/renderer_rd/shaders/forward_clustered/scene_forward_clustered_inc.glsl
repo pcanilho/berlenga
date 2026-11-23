@@ -160,6 +160,11 @@ bool sc_material_feedback() {
 	return ((sc_packed_1() >> 13) & 1U) != 0;
 }
 
+// The camera cut-out cannot reach this draw: CAMERA_CUTOUT_REACH is false and its discard compiles out.
+bool sc_camera_cutout_off() {
+	return ((sc_packed_1() >> 14) & 1U) != 0;
+}
+
 float sc_luminance_multiplier() {
 	// Not used in clustered renderer but we share some code with the mobile renderer that requires this.
 	return 1.0;

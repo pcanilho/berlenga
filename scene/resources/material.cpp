@@ -1348,8 +1348,10 @@ float camera_cutout_weight(vec3 p_world, vec3 p_target, vec3 p_axis, float p_rad
 }
 
 bool camera_cutout_discard(vec3 p_world, mat4 p_inv_view, mat4 p_projection, vec2 p_frag) {
-	if (IN_PATH_TRACER) {
-		return false; // the path tracer's camera rays start past the cut (raygen); its hit shaders never cut
+	if (IN_PATH_TRACER || !CAMERA_CUTOUT_REACH) {
+		// The path tracer's camera rays start past the cut (raygen), its hit shaders never cut; and a draw the cut
+		// cannot reach compiles the discard out (CAMERA_CUTOUT_REACH, a pipeline constant), keeping early depth tests.
+		return false;
 	}
 	vec3 target = camera_cutout.xyz;
 	vec3 axis = p_projection[3][3] == 1.0 ? -p_inv_view[2].xyz : normalize(target - p_inv_view[3].xyz);

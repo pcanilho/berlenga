@@ -726,7 +726,11 @@ func _ready() -> void:
 	get_viewport().disable_3d = not (args.has("test") or args.has("checks")) # settling frames, not drawn
 	for i in 30:
 		await get_tree().process_frame
+	# The checks draw (their probes read drawn frames); otherwise the main view stays undrawn through the cave and
+	# rock builds and the waits below until the capture (SubViewport bakes still render; ~24 s a frame on lavapipe).
 	get_viewport().disable_3d = false
+	if not (args.has("test") or args.has("checks")):
+		get_viewport().disable_3d = true
 	# The checks move probes, press prints and step the weather: a picture only runs them when asked (--checks),
 	# and under path tracing each of their frames is a full traced frame.
 	if args.has("test") or args.has("checks"):
@@ -895,9 +899,11 @@ func _ready() -> void:
 		_log("cover: %d plants in %d tiles after %d frames, %s" % [cover.get_plant_count(), cover.get_stream_tile_count(), sw, str(cover.get_stream_stats())])
 	# The snowpack updates on a worker thread: the picture waits for the last update to land.
 	var waited := 0
+	get_viewport().disable_3d = true # waiting only: the frames draw nothing
 	while snow != null and snow.has_method("is_updating") and snow.is_updating() and waited < 600:
 		await get_tree().process_frame
 		waited += 1
+	get_viewport().disable_3d = false
 	if landscape != null:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
