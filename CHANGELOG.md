@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-1ab80137 (2026-11-23)
+
+### Added
+- Raster gas lights the surfaces around it and hides the sky from them, as under path tracing: snow beside a sunlit cloud picks up its light, and the ground around dark smoke sees less sky (PhysXFlow3D `surface_glow`, on).
+
 ## build-56347589 (2026-11-23)
 
 ### Added
