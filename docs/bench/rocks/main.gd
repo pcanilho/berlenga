@@ -51,6 +51,7 @@ extends Node3D
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
+#   --no-close-up         the near stones keep their base shape (RockField3D.close_up_enabled off; an A/B)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
 #   --salt=k              with --rock: a stand-in sea salt index (0..1) for the salt bloom; --no-salt-bloom: off
@@ -607,6 +608,7 @@ func _world() -> void:
 		rocks.ground_blend = not args.has("no-ground-blend")
 		rocks.ground_contact = not args.has("no-ground-contact")
 		rocks.moss_cushions = not args.has("no-moss")
+		rocks.close_up_enabled = not args.has("no-close-up")
 		rocks.rockfall_dust = not args.has("no-dust")
 		if args.has("moss"):
 			rocks.moss_cover = float(args["moss"])
@@ -799,10 +801,13 @@ func _world() -> void:
 			for xx in range(-900, 901, 6):
 				var p := Vector3(xx, 0, zz)
 				var h := gen.get_height(p)
-				if h < gen.sea_level + 6.0:
+				if not is_finite(h) or h < gen.sea_level + 6.0:
 					continue
 				var gx := gen.get_height(p + Vector3(2, 0, 0)) - gen.get_height(p - Vector3(2, 0, 0))
 				var gz := gen.get_height(p + Vector3(0, 0, 2)) - gen.get_height(p - Vector3(0, 0, 2))
+				# Past the world's edge the heights are not numbers (the search runs over a 1800 m square).
+				if not is_finite(gx) or not is_finite(gz):
+					continue
 				if rad_to_deg(atan(Vector2(gx, gz).length() / 4.0)) < 60.0:
 					continue
 				var o := Vector3(-gx, 0, -gz).normalized()
@@ -1810,6 +1815,12 @@ func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool, p_
 	# --fall-dust keeps drawing while it falls: the Flow dust steps with the frames, drawn small (a full-size frame
 	# of the world takes half a minute in the cloud) and full size again for the shot.
 	RenderingServer.render_loop_enabled = args.has("fall-dust")
+	# Undrawn, the Flow plume is not stepped either (its grid on a software GPU in the cloud takes seconds a tick); the
+	# field still counts the fines and the impacts.
+	var dust_node: Node = rocks.get_rockfall_dust_node()
+	var dust_mode := dust_node.process_mode if dust_node else Node.PROCESS_MODE_INHERIT
+	if dust_node and not args.has("fall-dust"):
+		dust_node.process_mode = Node.PROCESS_MODE_DISABLED
 	var full_size := get_window().size
 	if args.has("fall-dust"):
 		get_window().size = Vector2i(maxi(full_size.x / 4, 64), maxi(full_size.y / 4, 36))
@@ -1831,9 +1842,13 @@ func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool, p_
 			below += 1
 	# p_dust_ticks more ticks for the dust alone (a block that slides down the face lands after the fall is measured).
 	for i in p_dust_ticks:
+		if rocks.get_rockfall_dust_impacts() > hits0:
+			break
 		await get_tree().physics_frame
 	RenderingServer.render_loop_enabled = true
 	get_window().size = full_size
+	if dust_node:
+		dust_node.process_mode = dust_mode
 	var r := {"node": node, "start": start, "end": last, "drop": top - last.y, "travel": Vector2(last.x - start.x, last.z - start.z).length(), "pieces": node.get_piece_count(), "fractured": node.is_fractured(), "fired": fired.size(), "ms": ms, "max_speed": max_speed, "below": below}
 	r["dust"] = rocks.get_rockfall_dust_total() - dust0
 	r["hits"] = rocks.get_rockfall_dust_impacts() - hits0

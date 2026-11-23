@@ -921,3 +921,12 @@ downwind as a fan with billowed edges; raster and PT match.
 - Bench fix: the shafts view takes its sun from SkyClock under 10 degrees up (or with --sky-clock), as the game
   does; the haboob view uses the same helper (_clock_sun). The sunset altocumulus now read peach over a violet sky,
   raster and PT within a few levels (PT a little more contrast, without the near haze over the sky).
+
+## Altocumulus in rows (23 Nov 2026, Paulo: "aligned rows")
+
+The cloudlets came from one tile of the detail texture (2.4 by 3.6 km), and over a full sky the repeats lined up into
+rows; Worley cells are also evenly spaced and alike, a lattice even without the repeat. Fixed with the standard
+anti-tiling and clustering: the read warped (up to 450 m over 5 km) with each region on its own slice of the 3D
+texture (Quilez, "texture repetition"), and the cover modulated by a two-octave noise (1.8 km, 700 m) so cloudlets
+gather in groups with clear gaps, their fine-octave share varying by region (large rounded in one group, small ragged
+in the next). Raster and PT agree; midday look kept.

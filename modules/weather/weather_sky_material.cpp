@@ -648,7 +648,14 @@ float wc_mid_density(vec3 p, float c, float p_foot, out float r_profile) {
 	vec2 aw = vec2(dot(q, dir), dot(q, vec2(-dir.y, dir.x)));
 	// 128 texels over 2.4 km along the wind, 3.6 km across: the billows' 8-cell octave gives cloudlets about
 	// 300 by 450 m, the rolls lying across the wind.
-	vec3 fq = vec3(aw.x / 2400.0, aw.y / 3600.0, 0.61 + 0.17 * h + cloud_churn.z * 0.2);
+	// The texture tiles every 2.4 by 3.6 km, and over a full sky of cloudlets the repeats lined up into rows and columns
+	// (a grid, seen most at a low sun). Broken up as Quilez's texture-repetition fixes do: the read warped by up to
+	// 450 m over 5 km, and each region reading its own depth of the 3D texture (a slice chosen by a 7 km noise), so no
+	// two tiles show the same cloudlets in the same place.
+	vec2 wq = aw / 5200.0;
+	vec2 warp = (vec2(wc_value_noise(wq + vec2(13.1, 4.7)), wc_value_noise(wq + vec2(2.9, 17.3))) - 0.5) * 900.0;
+	float zs = wc_value_noise(aw / 7000.0 + vec2(31.3, 8.1));
+	vec3 fq = vec3((aw.x + warp.x) / 2400.0, (aw.y + warp.y) / 3600.0, 0.61 + 0.17 * h + cloud_churn.z * 0.2 + 0.9 * zs);
 	float lod = max(log2(p_foot / (2400.0 / 128.0)), 0.0);
 	// Near, the texels (20 to 30 m) are a cloudlet's size or more of it, and a thin cover keeps only the billows' peaks:
 	// linear filtering's kinks at the texel borders cut them into boxes. Smoothed between texels (Quilez, "improved
@@ -658,7 +665,14 @@ float wc_mid_density(vec3 p, float c, float p_foot, out float r_profile) {
 	vec3 xf = xs - xi;
 	vec3 fq_s = (xi + xf * xf * (3.0 - 2.0 * xf) - 0.5) / 128.0;
 	vec4 dn = textureLod(cloud_detail, mix(fq_s, fq, smoothstep(0.0, 1.0, lod)), lod);
-	float n = mix(dn.b, dn.a, 0.3);
+	// Worley cells are evenly spaced and alike, so a field of them still read as a lattice. Real altocumulus come in
+	// groups and gaps, large and small together: the cover read through a two-octave noise of 1.8 km and 700 m (the
+	// cloudlets thicken into clusters and thin out between them), and the mix of the billows' fine octave varies with
+	// it (big rounded cloudlets in one group, small ragged ones in the next).
+	float g = 0.65 * wc_value_noise(aw / 1800.0 + vec2(5.1, 23.7)) + 0.35 * wc_value_noise(aw / 700.0 + vec2(17.9, 3.3));
+	float g2 = wc_value_noise(aw / 2600.0 + vec2(41.3, 9.9));
+	float n = mix(dn.b, dn.a, mix(0.1, 0.6, g2));
+	c = clamp(c * mix(0.1, 1.5, smoothstep(0.25, 0.75, g)), 0.0, 1.0);
 	float prof = 4.0 * h * (1.0 - h);
 	// A thin cover thins the cloudlets and no longer shrinks them to the billows' highest peaks: those peaks are
 	// the fine octaves' cells, a few texels (20 to 30 m each) across, and drew blocks shaped like letters.

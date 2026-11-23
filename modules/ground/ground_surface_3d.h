@@ -188,6 +188,10 @@ private:
 	int mat_tears = 0;
 	float _peat_bog_at(const Vector3 &p_position, float p_moisture, const Node *p_data_map) const;
 	float _mat_torn_at(const Vector3 &p_position) const;
+	// Peat water (round 25.1): torn ruts in a bog fill from its water table and drain back to it.
+	bool peat_water = true;
+	double peat_water_seeped = 0.0; // m3 in, net, since start
+	void _peat_water_update(double p_delta);
 	void _trail_pug_update(float p_delta);
 	bool _wear_any() const { return !wear_cells.is_empty() || trails_on; }
 	// Hidden stones and roots (docs/ideas/mud.md, round 14.3): what lies in a mud layer, per 2 m cell, made on demand
@@ -816,6 +820,8 @@ private:
 	// (Raupach 1993 drag partition), the saltation flux falls among them and the sand it carried lands there.
 	TypedArray<NodePath> wind_shelters;
 	bool obstacle_lee = true; // blown sand reads WorldWeather.obstacle_lee_at
+	bool plant_wake = true; // the wind's shadow behind the wind_shelters' plants (Okin 2008), and the sand's spread into it
+	float plant_wake_height = 1.0f; // m, the plants' typical height (the wake's length scale)
 	LocalVector<float> shelter_ratio; // the surface's friction speed over the open ground's, per lattice cell
 	LocalVector<float> shelter_flux; // the flux factor, Q(u* ratio) / Q(u*), 0..1 (1 with no plants)
 	LocalVector<float> sand_flux; // kg/m/s, along the wind
@@ -1057,6 +1063,9 @@ public:
 	// A load tore the root mat over this print (round 24.2): the peat under it bears from now on.
 	void tear_mat(Vector3 p_position, Vector2 p_size, float p_yaw);
 	int get_mat_tear_count() const { return mat_tears; }
+	void set_peat_water(bool p_enabled) { peat_water = p_enabled; }
+	bool is_peat_water() const { return peat_water; }
+	float get_peat_water_seeped() const { return float(peat_water_seeped); } // m3 seeped into torn ruts, net
 	float get_stone_scour_volume() const { return stone_scour_m3; } // m3 dug round loose stones by currents
 	float get_stone_silt_lifted() const { return stone_plume_kg; } // kg sent into the water by stones
 	bool is_tracked_mud() const { return tracked_mud; }
@@ -1361,6 +1370,10 @@ public:
 	TypedArray<NodePath> get_wind_shelters() const { return wind_shelters; }
 	void set_obstacle_lee(bool p_enabled) { obstacle_lee = p_enabled; }
 	bool is_obstacle_lee_enabled() const { return obstacle_lee; }
+	void set_plant_wake(bool p_enabled) { plant_wake = p_enabled; }
+	bool is_plant_wake() const { return plant_wake; }
+	void set_plant_wake_height(float p_height) { plant_wake_height = MAX(p_height, 0.05f); }
+	float get_plant_wake_height() const { return plant_wake_height; }
 	// Raupach (1993): the surface's share of the friction speed among roughness elements of frontal area index
 	// p_lambda (clamped to 0.5).
 	static float shelter_ratio_for(float p_lambda);

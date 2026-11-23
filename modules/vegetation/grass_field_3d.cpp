@@ -1113,6 +1113,7 @@ varying float v_dry;
 varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
 varying float v_graze; // Grazed down to a lawn (graze_map).
 varying float v_hay; // Cut hay lying in the meadow: days since mown; below 0 none.
+varying float v_lai; // The sward's leaf area left over this blade's ground (1 uncut; a mown meadow's stubble less).
 varying float v_fairy_dead; // A blade browned in a fairy ring's dead band.
 varying vec3 v_melt; // After the snow: x pale and matted, y snow mould, z days since the melt.
 varying vec2 v_wash; // Under the last flood's mark: x combed flat, y silted.
@@ -1182,6 +1183,7 @@ void vertex() {
 	// cure: UNH; rarely under three in the UK: FAO, Grassland Fodder Conservation); then carted. The gathering moves each
 	// blade across its row, so a windrow holds the grass of its whole strip.
 	v_hay = -1.0;
+	v_lai = 1.0;
 	vec3 hay_shift = vec3(0.0);
 	float hay_lift = 0.0;
 	vec2 hay_lay = vec2(0.0);
@@ -1195,6 +1197,10 @@ void vertex() {
 				if (md >= 0.0) {
 					float stub = 0.075 + 0.025 * fract(rnd * 29.3);
 					float regrown = min(h, stub + max(h - stub, 0.0) * smoothstep(4.0, 42.0, md));
+					// The canopy over the ground is the stubble's now, not the sward's: the sky reaches down into it,
+					// so the ambient darkening (AO below) takes the leaf area left, about the height left (the
+					// regrowth's leaves fill out its height).
+					v_lai = clamp(regrown / max(h, 1e-3), 0.0, 1.0);
 					if (fract(rnd * 13.7) >= 0.6 || md >= 3.5) {
 						h = regrown;
 					} else {
@@ -1650,7 +1656,7 @@ void fragment() {
 	// raster's ambient takes it: its shadow maps already darken the sun there, and the path
 	// tracer sees the blades themselves (it used to take this darkening in the albedo too).
 	float scatter = clamp(dot(ALBEDO, vec3(0.3, 0.59, 0.11)) * 1.7, 0.0, 0.95);
-	AO = exp(-0.8 * sqrt(1.0 - scatter) * sward_lai * (1.0 - v_t));
+	AO = exp(-0.8 * sqrt(1.0 - scatter) * sward_lai * v_lai * (1.0 - v_t));
 }
 
 )";

@@ -687,7 +687,8 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	bool detected_alpha_clip = false;
 	actions.usage_flag_pointers["ALPHA_SCISSOR_THRESHOLD"] = &detected_alpha_clip;
 	actions.usage_flag_pointers["ALPHA_HASH_SCALE"] = &detected_alpha_clip;
-	actions.usage_flag_pointers["DISCARD"] = &detected_alpha_clip;
+	bool detected_discard = false;
+	actions.usage_flag_pointers["DISCARD"] = &detected_discard;
 	actions.discard_replacement = "{ alpha = 0.0; return; }";
 
 	// Blend transparents need the per-HG any-hit for exact peel/accumulation.
@@ -732,7 +733,9 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	}
 
 	r_entry.is_procedural = p_is_procedural;
-	r_entry.uses_alpha_clip = detected_alpha_clip;
+	// The camera cut-out's discard is raygen's to do (camera rays start past the cut, rt_cutout_tmin()): a shader whose
+	// only discards are that cut-out stays opaque, with no any-hit, as its shadow maps keep the shared material.
+	r_entry.uses_alpha_clip = detected_alpha_clip || (detected_discard && !RendererRD::MaterialStorage::shader_discards_only_for_camera_cutout(code));
 	r_entry.casts_transmitted_shadow = !p_is_procedural && (uses_transmission || uses_backlight);
 	r_entry.bounds_medium = !p_is_procedural && uses_transmission && uses_ior;
 	r_entry.may_refract = uses_transmission && uses_ior;

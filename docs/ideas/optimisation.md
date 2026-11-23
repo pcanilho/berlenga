@@ -401,3 +401,16 @@ it with snow from the start (only glaze and ground left out), with all three fea
 with snow switched on mid-run (six frames saved across the switch, traced at once with the full variant) all
 match byte for byte. The snow bench's own frame is not repeatable between two runs of one build, so it is not a
 check; its `--test` passes.
+
+## Memory: re-spirv kept a parsed copy of every material shader
+
+A heap profile (heaptrack) of the landscape bench's farm still put 3.3 GB of its 8.5 GB heap peak in
+`RenderingDeviceDriverVulkan::shader_create_from_container`. For every shader with specialization constants (2,353
+material shader variants in that scene), the driver kept a parsed `respv::Shader` per stage. That parsed copy holds
+the SPIR-V plus its instruction, block, result and decoration tables, about 1.4 MB a shader. It exists so that
+re-spirv (upstream Godot 4.5) can specialize the SPIR-V when a pipeline is made.
+
+The driver now keeps only the SPIR-V bytes. It parses them again when a pipeline is made, keeping the last parsed
+stage per thread (a shader's variants are made one after another). The parse is deterministic, so the
+specialized SPIR-V and the pipelines are the same: the memory scene's raster and path traced frames match byte for
+byte. Farm still, resident after `load_all_heights`, same session: 7.8 GB, from 10.6 GB.

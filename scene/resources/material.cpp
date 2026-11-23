@@ -1348,6 +1348,9 @@ float camera_cutout_weight(vec3 p_world, vec3 p_target, vec3 p_axis, float p_rad
 }
 
 bool camera_cutout_discard(vec3 p_world, mat4 p_inv_view, mat4 p_projection, vec2 p_frag) {
+	if (IN_PATH_TRACER) {
+		return false; // the path tracer's camera rays start past the cut (raygen); its hit shaders never cut
+	}
 	vec3 target = camera_cutout.xyz;
 	vec3 axis = p_projection[3][3] == 1.0 ? -p_inv_view[2].xyz : normalize(target - p_inv_view[3].xyz);
 	float w = camera_cutout_weight(p_world, target, normalize(axis), camera_cutout.w, camera_cutout_floor);

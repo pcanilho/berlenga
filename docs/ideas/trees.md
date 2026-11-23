@@ -4125,6 +4125,33 @@ debug views. Bake: under 0.1 s for a 2.5M-triangle birch. Sky-only raster leaves
 
 Rule for all foliage shaders: hide with discard, never with ALPHA, unless the surface is really see-through.
 
+### 5bm. Stand frames docs declined (22-23 Nov)
+
+Docs declined the old-growth and taiga re-shoots (same green crowns, flat-disc root plates, wires in the taiga,
+old growth reading as a plantation). Fixed at source:
+
+- Crown tone per tree (`crown_tint_variation` on the leaf shader, default 1): stands of one species varied in form only,
+  so a canopy read as one green repeated. Each tree's leaves are scaled by a tone hashed from its ground position:
+  lightness 0.72-1.18 and a swing from a yellower to a bluer green (per-instance colour variation, as SpeedTree's hue
+  variation and Unreal's PerInstanceRandom). Hashed in the vertex stage: in the fragment stage a MultiMesh instance's
+  own transform is not in MODEL_MATRIX, which is why a first try left every tree in a stand the same.
+- Taiga wires: mostly the bench (near needles off, so bare lateral rods showed inside the stand). In the generator,
+  boreal spruce laterals sag under their weight (gravity bending 0.35, the comb habit) and a kept dead branch is a stub
+  of 0.4-1.6 m, not a whole bare limb.
+- Root plates: the rim is lobed along the structural laterals (the root-soil plate is the soil they bind, Coutts 1986;
+  between them it crumbles off the torn edge); superficial laterals run out of the stem's foot over the old surface,
+  banked in litter, before they dive (flat and heart root systems of spruce and beech, Kostler, Bruckner and
+  Bibelriether 1968); and the old surface carries a leaf-litter mat as geometry (a cupped four-triangle lens a leaf,
+  about 650 a square metre, browns from this year's fall to last year's, fewer on moss and on old plates).
+- Old-growth beech: canopy crowns read as tufts on the ends of bare upright limbs. Beech leafs on short shoots along
+  the last years' wood and keeps shaded limbs long, so the old-growth bands keep leaves on five years of shoots, shed a
+  third as much and let dormant buds wait twice as long. The shade layer grows the broad, level crown of shade-tolerant
+  saplings (Horn 1971 monolayer; Canham 1988): branch angle 68 degrees, slight negative gravitropism.
+
+Fixed with it: the fire code in the leaf and bark shaders read the tree's base from MODEL_MATRIX in the fragment
+stage, which for MultiMesh trees is the field's origin, not the tree's (char height, fire_tree_killed). Both now take it
+from vertex() as a varying.
+
 ### Research for the likely picks (21 Nov, card pending)
 
 **Ice storms.**

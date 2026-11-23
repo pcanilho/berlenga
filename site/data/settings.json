@@ -1208,10 +1208,11 @@
   {
    "name": "Peat bogs",
    "settings": [
-    "GroundSurface3D.peat_bogs"
+    "GroundSurface3D.peat_bogs",
+    "peat_water"
    ],
    "note": "",
-   "what": "a root mat over soft peat bears light vehicles and tears under heavy ones, which drop in.",
+   "what": "a root mat over soft peat bears light vehicles and tears under heavy ones, which drop in; torn ruts fill with dark peat water up to the bog's water table.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1236,7 +1237,7 @@
     "PhysXVehicle3D.tyre_clogging"
    ],
    "note": "",
-   "what": "sticky clay packs the tread until it grips like a slick and balls up on the tyre, shedding in chunks; a lopsided tyre shakes the vehicle until spinning throws it clean.",
+   "what": "sticky clay packs the tread until it grips like a slick and balls up on the tyre, shedding in chunks; a lopsided tyre shakes the vehicle until spinning throws it clean, and clay building up inside the arches rubs the tyre once it closes the gap (`arch_clearance`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1488,7 +1489,7 @@
     "ripple_extent"
    ],
    "note": "",
-   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again, and passing dust devils (`PhysXDustDevils3D`) sweep a band clean that blowing sand fills in again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
+   "what": "the wind grows ripples about 11 cm apart on dry sand, as geometry in raster and path tracing near the camera and as surface detail beyond it that varies in warp and height with no repeating tile, fading in and out over fields some 16 m across with smooth sand between; heavy minerals gather as dark lines in the troughs under paler coarse crests (`ripple_sorting`); on dry interdune flats, long low granule ripples with coarse crests run across the dune-building wind (TerrainMaterial3D `sand_granule_ripples`, GroundSurface3D `granule_ripples`); past that, the ripples carry on as shading over all sand terrain, leaving steep slip faces bare (`far_ripples`); prints wipe them and they form again, and passing dust devils (`PhysXDustDevils3D`) sweep a band clean that blowing sand fills in again; the calm lee behind obstacles stays smooth (`lee_calm_ripples`), blown sand settles in a tapering tail downwind of shrubs and grass tufts (`plant_wake`), and pebbles and gravel stop sand blowing and rippling (`coarse_armour`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -4571,7 +4572,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms tower into a leaning cumulonimbus with a flat anvil downwind and mammatus beneath, and hang rain shafts under their base, slanted by the low wind, as dense as the rain is heavy and drawn in front of far terrain (`WeatherMap3D.distant_shafts`), or in cold storms snow shafts that trail long soft veils downwind, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; lenticular clouds stack in plates whose thin edges near the sun show iridescence (`cloud_iridescence`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms (`WeatherMap3D.add_storm()`) tower into a leaning cumulonimbus about as wide as it is tall, with a flat anvil spreading downwind, a thin cirrus shield beyond it and mammatus beneath, and hang rain shafts under their base, slanted by the low wind, as dense as the rain is heavy and drawn in front of far terrain (`WeatherMap3D.distant_shafts`), or in cold storms snow shafts that trail long soft veils downwind, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; sunlight through gaps in a broken mid layer reaches the ground and the clouds below, and each layer takes the sun's colour at its own height, so high clouds stay lit after sunset; lenticular clouds stack in plates whose thin edges near the sun show iridescence (`cloud_iridescence`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""
@@ -4580,7 +4581,7 @@
    "name": "Clouds that never repeat",
    "settings": [],
    "note": "always on",
-   "what": "shape noise read at two scales with an irrational ratio.",
+   "what": "shape noise read at two scales with an irrational ratio; mid-level cloudlets are warped and gathered into groups of varied size, so they never line up in rows.",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""

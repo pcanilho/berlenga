@@ -18,7 +18,7 @@ extends Node3D
 #   --far-blend [--far-start=M]   TerrainMaterial3D's far blend over a test plant cover map
 #   --lake-pick=high  the lake views and checks use the highest lake (default the biggest)
 #   --cam=x,y,z --look=x,y,z  a fixed camera (a negative y: that height above the ground)
-#   --view=wide|lake|lakewater|valley|fall|beach|peak|alpine|treeline|meadow   camera (default wide; lakewater: low over the lake;
+#   --view=wide|lake|lakewater|valley|fall|beach|peak|alpine|treeline|meadow|gully   camera (default wide; lakewater: low over the lake;
 #                         valley: from behind the high lake down to the clearing; treeline: the clearing's edge)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
@@ -3817,8 +3817,8 @@ func _generated_forest(clearing: bool) -> Biome:
 	_tree_gen = tg # the species build their near leaves from it on demand: kept alive
 	tg.rigged = args.get("rigged", "1") != "0" # --rigged=0: static trees (memory checks)
 	if args.get("tree-still", "1") != "0":
-		# A still (trees.md 8e): static, far meshes light, near meshes built one at a time with leaves to 25 m and no
-		# near needles; --tree-still=0 for the full rig. Fits a stand in about 6 GB instead of dying at first draw.
+		# A still (trees.md 8e): static, far meshes light, near meshes built one at a time with leaves to 25 m and
+		# needles to 30 m; --tree-still=0 for the full rig. Fits a stand in about 6 GB instead of dying at first draw.
 		tg.rigged = args.get("rigged", "0") != "0"
 		if "light_far_meshes" in tg:
 			tg.light_far_meshes = args.get("light-far", "1") != "0" # --light-far=0 on PT olive shots (greys their crowns)
@@ -3827,7 +3827,7 @@ func _generated_forest(clearing: bool) -> Biome:
 		if not args.has("near-leaf-range"):
 			args["near-leaf-range"] = "25"
 		if not args.has("near-needle-range"):
-			args["near-needle-range"] = "0"
+			args["near-needle-range"] = "30" # the normal range: far needles alone read as wires near the camera
 	if "near_leaf_range" in tg:
 		tg.near_leaf_range = float(args.get("near-leaf-range", "60"))
 	if "near_needle_range" in tg:
@@ -4250,6 +4250,45 @@ func _build_camera() -> void:
 			cam.position = ce
 			cam.look_at(la)
 			_log("woodedge camera at %s, litter %.2f at the rim, %.2f under the camera" % [str(ce), veg.get_litter_at(pick + pdir * 3.0), veg.get_litter_at(ce)])
+		"gully":
+			# A raised oblique down a real gully onto its fan (RockField3D.runoff_gravel: a coarse lag on the floor,
+			# fine grains on the fan). The strongest open gully on soil (TerrainGenerator3D.get_gully_at, as the rocks
+			# bench's --gully-spot: 15-35 deg over 16 m, banks under 4 m) within --gully-search (900) m; the camera
+			# --gully-back (14) m up the fall line and --gully-up (20) m over the ground, looking --gully-ahead (22) m
+			# down it. Needs the droplet tiles (--tiles=1).
+			var gbest := -INF
+			var gp := Vector3.ZERO
+			var gdown := Vector3.FORWARD
+			var gr := int(args.get("gully-search", "900"))
+			for zz in range(-gr, gr + 1, 6):
+				for xx in range(-gr, gr + 1, 6):
+					var p := Vector3(xx, 0, zz)
+					var h := gen.get_height(p)
+					if gen.get_geology_at(p).g > 0.05 or h < gen.sea_level + 10.0:
+						continue
+					var gx := gen.get_height(p + Vector3(8, 0, 0)) - gen.get_height(p - Vector3(8, 0, 0))
+					var gz := gen.get_height(p + Vector3(0, 0, 8)) - gen.get_height(p - Vector3(0, 0, 8))
+					var ny := Vector3(-gx, 16.0, -gz).normalized().y
+					if ny < cos(deg_to_rad(35.0)) or ny > cos(deg_to_rad(15.0)):
+						continue
+					var gl: Vector2 = gen.get_gully_at(p, ny)
+					if gl.x < 0.5 or gl.y > 0.3:
+						continue
+					var tt := Vector3(-gz, 0, gx).normalized() * 10.0
+					var bank := maxf(gen.get_height(p + tt), gen.get_height(p - tt)) - h
+					if bank > 4.0:
+						continue
+					var score := gl.x - bank * 0.1
+					if score > gbest:
+						gbest = score
+						gp = p
+						gdown = Vector3(-gx, 0, -gz).normalized()
+			_log("gully view: spot (%.0f, %.1f, %.0f) score %.2f, down (%.2f, %.2f)" % [gp.x, gen.get_height(gp), gp.z, gbest, gdown.x, gdown.z])
+			cam.fov = 50.0
+			var gc := gp - gdown * float(args.get("gully-back", "14"))
+			cam.position = Vector3(gc.x, height_at(gc.x, gc.z) + float(args.get("gully-up", "20")), gc.z)
+			var gl2 := gp + gdown * float(args.get("gully-ahead", "22"))
+			cam.look_at(Vector3(gl2.x, height_at(gl2.x, gl2.z), gl2.z))
 		"meadow":
 			# Standing in the clearing at eye height, 60 m short of the forest edge (the treeline view's edge), looking
 			# across the herbs and grass at it.
