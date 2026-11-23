@@ -2610,6 +2610,19 @@ raster edge reached -15. What is left is 2 to 5 levels on average, with local sp
 meets the snow, and the path tracer's light from the cloud onto the snow beside it, which raster does
 not model (volume-to-surface bounce: a feature of its own).
 
+### Gas light onto nearby surfaces (card, 23 Nov)
+
+The last raster vs path tracing gap at snow's powder foot: the path tracer's snow beside the cloud is 2 to
+3 levels brighter than open snow, lit by the cloud's own scattered light, and the thin foot shows that
+snow through it; raster lights the gas but never the surfaces around it. The same mechanism makes fire
+smoke glow orange onto walls and the ground, and steam brighten a wet street.
+Plan, if picked: the scatter pass already holds each gas texel's light per unit of opacity; inject it,
+weighed by the gas's opacity, into a coarse grid over the gas box and spread it a few cells (light
+propagation volumes, Kaplanyan and Dachsbacher 2010; as Unreal's and Frostbite's particle lighting
+inject emissive volumes), then the scene's opaque pass adds that irradiance to its ambient where the
+grid covers it, shadowed by the gas's own volume shadow toward each cell. Checked against same-run
+path-traced pairs: snow beside a powder cloud, a wall beside a smoke plume, the ground under fire smoke.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
