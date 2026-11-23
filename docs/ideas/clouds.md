@@ -953,3 +953,13 @@ trajectories and patterns"). Each sample follows that parabola back up to its ce
 colder than about -10 C; 12 % at warmer bases), and some regions of cells, not all. `cloud_virga` (shader, default 1)
 scales it. Faint from the ground under a fair sky, as in photographs; best seen side on from high ground or at a low
 sun. Raster and PT agree; clouds tests pass. Not in the shadow bake (optically thin).
+
+## Ridge cumulus drawn as a thunderstorm (23 Nov)
+
+A docs still with clear weather (landscape --weather=clear, June, 10:30) showed a dark grey tower with a round top
+over the trees. The ridge cumulus (WeatherMap3D._update_ridge_clouds: fair-weather cumulus over crests where the
+morning upslope winds meet, Banta 1990) and young fire clouds ride the storm list to raise the cover round them, and
+the cumulonimbus body (round 9) took every storm in that list as deep convection: a 0.6 cover ridge cloud grew a 7 km
+tower with an anvil and cirrus shield. Storms now carry a deep share (Storm::deep, State::storm_deep,
+cloud_storm_deep): 1 for add_storm(), 0 for ridge cumulus, a fire cloud's pyroCb share for fire clouds. Only the deep
+share has a tower, anvil, tall column and shield; the cover raise is unchanged.

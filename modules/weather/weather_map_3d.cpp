@@ -2435,6 +2435,7 @@ void WeatherMap3D::_update_ridge_clouds(double p_dt) {
 			Storm s;
 			s.id = next_storm_id++;
 			s.ridge = true;
+			s.deep = 0.0f;
 			s.fade = 0.0f;
 			s.lifetime = 0.0f;
 			s.rain_rate = 0.0f;
@@ -3256,6 +3257,7 @@ void WeatherMap3D::_update_fire_clouds(double p_weather_dt) {
 		s.cloud_base = MAX(p.y + cloud.y, 1.0f);
 		s.outflow = 10.0f * deep;
 		s.rain_rate = 2.0f * deep;
+		s.deep = deep;
 		s.fade_target = MAX(s.fade_target, MIN(cloud.z, 1.0f));
 	}
 	// Grows over about five minutes of weather time while the plume feeds it; once it stops, the cap drifts off
@@ -3929,6 +3931,7 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		st.storm_base[st.storm_count - 1] = s.cloud_base;
 		st.storm_rain[st.storm_count - 1] = s.rain_rate * env;
 		st.storm_outflow[st.storm_count - 1] = s.fire ? 0.0f : s.outflow;
+		st.storm_deep[st.storm_count - 1] = s.deep;
 		// The weather's one rain/snow split (rain_fraction of the air's temperature and humidity), at the ground under it.
 		const float share = get_rain_share_at(Vector3(s.position.x, ground_height, s.position.y));
 		st.storm_snow[st.storm_count - 1] = Math::is_finite(share) ? CLAMP(1.0f - share, 0.0f, 1.0f) : 0.0f;

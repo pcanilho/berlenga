@@ -85,6 +85,9 @@ public:
 		// A cumulus over a ridge where the day's upslope winds meet (upslope_winds): eased by fade like a fire cloud,
 		// no rain or lightning.
 		bool ridge = false;
+		// How far it has gone deep (0 to 1): a cumulonimbus with its tower, anvil and cirrus shield. A ridge cumulus
+		// never does; a fire cloud once it becomes a pyrocumulonimbus; storms added with add_storm() are.
+		float deep = 1.0f;
 	};
 
 private:
