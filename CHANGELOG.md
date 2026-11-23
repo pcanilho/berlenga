@@ -6,6 +6,12 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-8c7d4c79 (2026-11-23)
+
+### Fixed
+- Path tracing: a blended (alpha) layer's own bounce light is no longer lost at some alpha values, which left blended surfaces near black where only sky and bounce light reach them (#321).
+- Path tracing: the medium scratch image starts cleared, so a stray read can't pick up another surface's leftover colours (#400).
+
 ## build-57e5524c (2026-11-23)
 
 ### Changed
