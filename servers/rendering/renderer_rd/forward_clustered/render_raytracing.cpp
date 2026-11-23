@@ -756,9 +756,14 @@ void RenderRaytracing::rt_ensure_textures(RenderSceneBuffersRD *p_render_buffers
 	if (!p_render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_DEPTH)) {
 		p_render_buffers->create_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_DEPTH, RD::DATA_FORMAT_R32_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1);
 	}
-	// A shader medium's scattering, handed from the hit that entered it to raygen (one uint a pixel).
+	// A shader medium's scattering, handed from the hit that entered it to raygen (one uint a pixel). Cleared once:
+	// raygen reads it only after a hit wrote it, but a read before any write must find nothing, not recycled memory.
 	if (!p_render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_MEDIUM)) {
-		p_render_buffers->create_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_MEDIUM, RD::DATA_FORMAT_R32_UINT, RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1);
+		const RID medium = p_render_buffers->create_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_MEDIUM, RD::DATA_FORMAT_R32_UINT,
+				RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1);
+		if (medium.is_valid()) {
+			RD::get_singleton()->texture_clear(medium, Color(0, 0, 0, 0), 0, 1, 0, 1);
+		}
 	}
 }
 

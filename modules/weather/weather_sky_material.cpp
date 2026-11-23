@@ -110,6 +110,9 @@ uniform float cloud_droplet_size : hint_range(5, 50) = 15.0;
 uniform float cloud_back_scatter : hint_range(0, 1) = 0.5;
 // The share of the cirrus' single scattering in the 22 degree ice halo (the 46 degree ring takes a fifth as much).
 uniform float cloud_halo_strength : hint_range(0, 0.5) = 0.08;
+// The share of the cirrus' single scattering in sun dogs (plates) and, at 0.6 of it, tangent arcs (columns), within the
+// halo patches (oriented_halos()).
+uniform float cloud_parhelia_strength : hint_range(0, 0.3) = 0.03;
 // How much the billows toward the sun shade the scattered light (times their optical depth).
 uniform float cloud_surface_occlusion : hint_range(0, 2) = 1.0;
 // Short steps inside cloud as a share of the long ones (1: no refinement).
@@ -532,6 +535,71 @@ float halo_ring(float theta, float peak, float width) {
 	return f / (2.0 * PI * sin(peak) * width * 1.28);
 }
 
+// Halos of oriented crystals (Tape 1994; Greenler; Bravais' effective index): plates fall with their c-axes near
+// vertical, columns with theirs near horizontal. Refraction through their 60 degree prism faces then keeps the ray's
+// component along the axis, so a ray tilted beta to the plane across the axis sees the prism with the effective index
+// n' = sqrt(n^2 - sin^2 beta) / cos beta, and its minimum deviation D' = 2 asin(n' / 2) - 60 degrees in that plane.
+// Plates (axis vertical, beta the sun's altitude): the sun dogs (parhelia), at the sun's altitude D' to either side of
+// it, 22 degrees at the horizon and further out as the sun climbs, gone above about 61 degrees; red toward the sun,
+// a white tail away. Columns (axis horizontal at every bearing): the upper and lower tangent arcs, touching the 22
+// degree ring above and below the sun, their wings lifting as it climbs. For a view ray v, the one horizontal axis
+// that keeps the component (along it) of v and of the sun equal is perpendicular to their difference, so the arc is
+// one evaluation, weighted by how fast that component turns with the bearing (the density of axes there).
+// Per channel n 1.307 (red) to 1.317 (blue), as the rings.
+float min_dev(float n, float sb) {
+	float cb2 = max(1.0 - sb * sb, 1e-4);
+	float np = sqrt(max(n * n - sb * sb, 0.0) / cb2);
+	float x = 0.5 * np;
+	return x >= 1.0 ? -1.0 : 2.0 * asin(x) - PI / 3.0;
+}
+
+float oriented_lobe(vec3 v, vec3 s, vec3 a, float n) {
+	float sb = dot(s, a);
+	float dv = min_dev(n, sb);
+	if (dv < 0.0) {
+		return 0.0;
+	}
+	vec3 sp = s - a * sb;
+	vec3 vp = v - a * dot(v, a);
+	float l = length(sp) * length(vp);
+	if (l < 1e-4) {
+		return 0.0;
+	}
+	float ang = acos(clamp(dot(sp, vp) / l, -1.0, 1.0));
+	const float W = 0.9 * PI / 180.0;
+	float x = ang - dv;
+	// A sharp red inner edge, the bright core falling off outward, and a faint white tail (the crystals tilted
+	// further, Greenler 1980) that fades into the parhelic circle's start.
+	return x < 0.0 ? exp(-x * x / (0.1 * W * W)) : 0.85 * exp(-x / W) + 0.15 * exp(-x / (8.0 * W));
+}
+
+vec3 oriented_halos(vec3 v, vec3 s, float p_plates, float p_columns) {
+	vec3 o = vec3(0.0);
+	const vec3 N = vec3(1.307, 1.311, 1.317);
+	const float W = 0.9 * PI / 180.0;
+	if (p_plates > 0.0) {
+		// Plates wobble a degree or two off horizontal: the dogs' height spread.
+		const float WOB = 1.6 * PI / 180.0;
+		float db = asin(clamp(v.y, -1.0, 1.0)) - asin(clamp(s.y, -1.0, 1.0));
+		float wb = exp(-db * db / (WOB * WOB));
+		if (wb > 1e-3) {
+			vec3 up = vec3(0.0, 1.0, 0.0);
+			o += p_plates * wb * vec3(oriented_lobe(v, s, up, N.r), oriented_lobe(v, s, up, N.g), oriented_lobe(v, s, up, N.b)) / (W * 1.28 * WOB * 1.77);
+		}
+	}
+	if (p_columns > 0.0) {
+		vec2 w = v.xz - s.xz;
+		float lw = length(w);
+		if (lw > 1e-3) {
+			vec3 a = vec3(-w.y, 0.0, w.x) / lw;
+			// The density of axes giving that match: 1 / (pi |d(component)/d bearing|), capped at the arc's top.
+			float dens = 1.0 / (PI * max(lw, 0.03));
+			o += p_columns * dens * vec3(oriented_lobe(v, s, a, N.r), oriented_lobe(v, s, a, N.g), oriented_lobe(v, s, a, N.b)) / (W * 1.28 * 2.0 * PI);
+		}
+	}
+	return o;
+}
+
 vec3 cirrus_phase(float cos_theta, float p_halo) {
 	float base = max(henyey_greenstein(cos_theta, 0.75), cloud_back_scatter / (4.0 * PI));
 	if (p_halo <= 0.0) {
@@ -619,7 +687,10 @@ vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	// Halos where the ice is columns falling at random: patches of sheet tens of kilometres across, so a ring shows
 	// as arcs across some of the sky and not everywhere.
 	float halo = cloud_halo_strength * mix(0.7, 1.4, cs) * smoothstep(0.35, 0.65, wc_value_noise((xz - cloud_high_drift) / 25000.0 + vec2(13.1, 71.7)));
-	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * cirrus_phase(cos_theta, halo) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
+	// Sun dogs and tangent arcs where the halo patches are (plates and columns falling steadily: thin, calm cirrus and
+	// cirrostratus), cloud_parhelia_strength of the single scattering for the plates and 3 of it for the columns (fewer, but the arc gathers every axis in its plane).
+	vec3 orient = cloud_parhelia_strength > 0.0 && halo > 0.0 ? oriented_halos(rd, sun_dir, cloud_parhelia_strength * halo / max(cloud_halo_strength, 1e-3), 3.0 * cloud_parhelia_strength * halo / max(cloud_halo_strength, 1e-3)) : vec3(0.0);
+	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * (cirrus_phase(cos_theta, halo) + orient) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
 	float tr = exp(-tau_v);
 	r_t = t;
 	// Far sheets fade into the air as the low clouds do.

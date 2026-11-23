@@ -616,8 +616,9 @@ void debug_dynamic_geometry_peel(inout PathState r_ps, vec3 p_color, float p_alp
 	float opacity = clamp(p_alpha, RT_DYNAMIC_GEOMETRY_MIN_OPACITY, RT_DYNAMIC_GEOMETRY_MAX_OPACITY);
 	r_ps.hit_t = gl_HitTEXT;
 	r_ps.radiance += r_ps.throughput * opacity * p_color;
-	r_ps.packed_bounces_flags = set_peel_alpha(r_ps.packed_bounces_flags, opacity) & ~PEEL_HAS_CONTINUATION_FLAG;
+	r_ps.packed_bounces_flags &= ~PEEL_HAS_CONTINUATION_FLAG;
 	path_pack(payload, r_ps);
+	payload_set_peel_alpha(payload, opacity);
 }
 
 // Debug inputs of a closest hit. p_tangent_space_normal is the unpacked normal map sample.
@@ -1708,7 +1709,6 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 			}
 #endif
 		}
-		ps.packed_bounces_flags = set_peel_alpha(ps.packed_bounces_flags, peel_alpha);
 		if (depth_barrier) {
 			ps.packed_bounces_flags |= PEEL_DEPTH_BARRIER_HIT_FLAG;
 		}
@@ -1719,6 +1719,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 			ps.packed_bounces_flags |= PEEL_HAS_CONTINUATION_FLAG;
 		}
 		path_pack(payload, ps);
+		payload_set_peel_alpha(payload, peel_alpha);
 		return;
 	}
 

@@ -169,7 +169,7 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 
 struct PathPayload {
 	uint packed_rt[3]; // 12 bytes - radiance+throughput interleaved as fp16
-	uint packed_bounces_flags; //  4 bytes - [flags:8][peel_alpha:8][non_singular:1][reserved:7][peel_scene_depth:1][diffuse:3][total:4]
+	uint packed_bounces_flags; //  4 bytes - flag bits 7-31 (below), [diffuse:3][total:4]
 	uint rng_state; //  4 bytes - RNG state for PCG
 	float hit_t; //  4 bytes - surface distance, even on termination; -1 on a scene miss
 	uint oct_offset_nrm; //  4 bytes - packUnorm2x16(vec3_to_oct(offset normal))
@@ -382,11 +382,16 @@ bool is_primary_miss(uint packed) {
 }
 
 // Peel traces store per-layer alpha in the spare byte (bits 16-23).
-float get_peel_alpha(uint packed) {
-	return float((packed >> 16u) & 0xFFu) / 255.0;
+// A peel hit's alpha, reported after its last path_pack(). It rides in the payload's rng_state, marked with
+// PEEL_SCENE_DEPTH_FLAG (an input flag that path_pack() clears): the flags have no byte to spare, and bits 16-23
+// belong to flags a layer's continuation carries on (MEDIUM_CHANGE_FLAG, CAUSTIC_PHOTON_FLAG, SSS_ENTER_FLAG...).
+// Raygen draws the next layer's random numbers from a stream of its own.
+void payload_set_peel_alpha(inout PathPayload p, float p_alpha) {
+	p.rng_state = floatBitsToUint(clamp(p_alpha, 0.0, 1.0));
+	p.packed_bounces_flags |= PEEL_SCENE_DEPTH_FLAG;
 }
-uint set_peel_alpha(uint packed, float a) {
-	return (packed & ~0x00FF0000u) | (uint(clamp(a, 0.0, 1.0) * 255.0 + 0.5) << 16u);
+float payload_peel_alpha(PathPayload p) {
+	return (p.packed_bounces_flags & PEEL_SCENE_DEPTH_FLAG) != 0u ? uintBitsToFloat(p.rng_state) : 0.0;
 }
 
 const uint PATH_TERMINATED_FLAG = (1u << 26);
