@@ -4818,6 +4818,10 @@ func _build_camera() -> void:
 		var hf := -cam.global_basis.z
 		hf.y = 0.0
 		hf = hf.normalized()
+		if args.has("heading"):
+			# --heading=DEG: the compass heading instead (0 north = -Z, 90 east = +X, 270 west), e.g. into a sunset.
+			var hd := deg_to_rad(float(args["heading"]))
+			hf = Vector3(sin(hd), 0.0, -cos(hd))
 		var pr := deg_to_rad(float(args["pitch"]))
 		cam.look_at(cam.global_position + hf * cos(pr) + Vector3.UP * sin(pr))
 	for g in sward:
