@@ -4,4 +4,4 @@
 
 ### Changed
 
-- Path-traced sea: its any-hit pass reads only the shoreline cut-out and the light it lets through to shadows, not the whole surface, so every ray crossing the water costs far less.
+- Path-traced sea, rivers and sea-cave water: their any-hit pass reads only the shoreline cut-out and the light it lets through to shadows, not the whole surface, so every ray crossing the water costs far less.
