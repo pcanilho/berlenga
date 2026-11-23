@@ -1407,7 +1407,10 @@ void main() {
 					if (ps.hit_t < 0.0) {
 						break;
 					}
-					continuation_rng = ps.rng_state;
+					float layer_alpha = payload_peel_alpha(payload);
+					ps.packed_bounces_flags &= ~PEEL_SCENE_DEPTH_FLAG;
+					// The hit returned its alpha in place of its random state: the next layer takes a fresh stream.
+					continuation_rng = pcg_hash(continuation_rng ^ 0x9E3779B9u);
 					float layer_weight = 1.0;
 					if (range_limited && indirect_fade > 0.0) {
 						layer_weight = 1.0 - smoothstep(indirect_range - indirect_fade, indirect_range, ps.hit_t);
@@ -1420,7 +1423,7 @@ void main() {
 						layer_continuation.throughput *= layer_weight;
 						continuation_reservoir_add(continuation, layer_continuation, continuation_rng);
 					}
-					float a = get_peel_alpha(ps.packed_bounces_flags) * layer_weight;
+					float a = layer_alpha * layer_weight;
 					T_total *= (1.0 - a);
 					peel_hits++;
 					// Advance by one representable positive float to avoid
