@@ -509,7 +509,10 @@ private:
 		VkShaderStageFlags vk_push_constant_stages = 0;
 		TightLocalVector<VkPipelineShaderStageCreateInfo> vk_stages_create_info;
 		TightLocalVector<VkDescriptorSetLayout> vk_descriptor_set_layouts;
-		TightLocalVector<respv::Shader> respv_stage_shaders;
+		// Each stage's SPIR-V for re-spirv, parsed again when a pipeline is made: a parsed respv::Shader is many times
+		// its SPIR-V, and keeping one per shader held gigabytes in scenes with many materials. Empty: no re-spirv.
+		TightLocalVector<Vector<uint8_t>> respv_stage_spirv;
+		uint64_t respv_serial = 0; // tells the pipeline threads' parse caches apart from a freed shader's
 		TightLocalVector<Vector<uint8_t>> spirv_stage_bytes;
 		TightLocalVector<uint64_t> original_stage_size;
 		VkPipelineLayout vk_pipeline_layout = VK_NULL_HANDLE;

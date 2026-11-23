@@ -51,6 +51,7 @@ extends Node3D
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
+#   --no-close-up         the near stones keep their base shape (RockField3D.close_up_enabled off; an A/B)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
 #   --salt=k              with --rock: a stand-in sea salt index (0..1) for the salt bloom; --no-salt-bloom: off
@@ -77,6 +78,7 @@ extends Node3D
 #                         keeps the stones but not the material's silt centres and gravel lag (a before frame)
 #   --trail[=passes]      with --world: a game trail across the spot, 1.5 m before it (WorldStand.set_trails, 0.8 m wide,
 #                         400 passes a year); --rooting[=years] a boar rooting 2 m behind it, that old; --no-wear ignores both
+#   --repetition          with --world: per layer, how often a stone stands next to the same shape, and next to a twin
 #   --streaming           with --world: RockField3D streams after the build, so far thinning runs as in play
 #   --focus=camera        with --world: RockField3D follows the camera instead of the spot (far thinning as a player sees it)
 #   --no-far-widen        with --world: thinned cells draw their survivors at their own size (RockField3D.far_widen off)
@@ -95,7 +97,7 @@ extends Node3D
 #                         puts the view's spot on the nearest strong gully on soil
 #   --face-weathering=x   with --world: the ground material's rock-face lichen, moss and seep streaks (1; 0 before)
 #   --bank-relief=x       with --world: Landscape3D.bank_relief (0.8 m; 0 for a before frame); --bank-spot puts the
-#                         spot on a 42 to 52 degree soil bank
+#                         spot on a 42 to 52 degree soil bank; --spot=x,z puts the spot at a world point
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -606,6 +608,7 @@ func _world() -> void:
 		rocks.ground_blend = not args.has("no-ground-blend")
 		rocks.ground_contact = not args.has("no-ground-contact")
 		rocks.moss_cushions = not args.has("no-moss")
+		rocks.close_up_enabled = not args.has("no-close-up")
 		rocks.rockfall_dust = not args.has("no-dust")
 		if args.has("moss"):
 			rocks.moss_cover = float(args["moss"])
@@ -667,6 +670,8 @@ func _world() -> void:
 		# 15 to 35 degrees over 16 m, banks under 4 m high 10 m either side so not a ravine), for close frames.
 		var best := -INF
 		var found := spot
+		var best_ravine := -INF
+		var ravine := spot
 		for zz in range(-1000, 1001, 6):
 			for xx in range(-1000, 1001, 6):
 				var p := Vector3(xx, 0, zz)
@@ -684,14 +689,25 @@ func _world() -> void:
 					continue
 				var t := Vector3(-gz, 0, gx).normalized() * 10.0
 				var bank := maxf(gen.get_height(p + t), gen.get_height(p - t)) - h
-				if bank > 4.0:
-					continue
 				var score := gl.x - bank * 0.1 - absf(h - gen.sea_level - 80.0) / 400.0
+				if bank > 4.0:
+					# A ravine: kept only for a world whose strong gullies are all incised deeper than that.
+					if score > best_ravine:
+						best_ravine = score
+						ravine = p
+					continue
 				if score > best:
 					best = score
 					found = p
+		if best == -INF and best_ravine > -INF:
+			found = ravine
 		spot = found
 		print("gully spot ", spot, " channel ", gen.get_gully_at(spot, 0.85))
+	if args.has("spot"):
+		# --spot=x,z: the view's spot at that world point (the ground streams and detail builds round it), for a
+		# fixed --cam/--look shot of a place another search found.
+		var sp: PackedStringArray = args["spot"].split(",")
+		spot = Vector3(float(sp[0]), 0, float(sp[1]))
 	# --frost[=C]: a cold, wet climate (mean annual air C at sea level, -4 by default; 700 mm a year) on a
 	# WeatherMap3D, so the ground sorts into stone circles and stripes (RockField3D.frost_sorting; --no-frost off).
 	if args.has("frost"):
@@ -785,10 +801,13 @@ func _world() -> void:
 			for xx in range(-900, 901, 6):
 				var p := Vector3(xx, 0, zz)
 				var h := gen.get_height(p)
-				if h < gen.sea_level + 6.0:
+				if not is_finite(h) or h < gen.sea_level + 6.0:
 					continue
 				var gx := gen.get_height(p + Vector3(2, 0, 0)) - gen.get_height(p - Vector3(2, 0, 0))
 				var gz := gen.get_height(p + Vector3(0, 0, 2)) - gen.get_height(p - Vector3(0, 0, 2))
+				# Past the world's edge the heights are not numbers (the search runs over a 1800 m square).
+				if not is_finite(gx) or not is_finite(gz):
+					continue
 				if rad_to_deg(atan(Vector2(gx, gz).length() / 4.0)) < 60.0:
 					continue
 				var o := Vector3(-gx, 0, -gz).normalized()
@@ -970,6 +989,7 @@ func _world() -> void:
 		# --trail[=passes]: a game trail (0.8 m, 400 passes a year) across the spot along x, 1.5 m before it;
 		# --rooting[=years]: a boar rooting 1.5 m across, 2 m behind the spot, that age (0: fresh). WorldStand.
 		rocks.frost_sorting = not args.has("no-frost")
+		rocks.runoff_gravel = not args.has("no-runoff-gravel") # --no-runoff-gravel: the rills and gullies without their lag (a before frame)
 		if args.has("frost"):
 			var fr := ""
 			for dz in [-6, -3, 0, 3, 6]:
@@ -991,6 +1011,8 @@ func _world() -> void:
 		if args.has("streaming"):
 			rocks.streaming = true # --streaming: the field streams and thins every frame as in play (stills draw every cell whole)
 		print("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - tb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
+		if args.has("repetition"):
+			_repetition_audit(Rect2(spot.x - 120, spot.z - 120, 240, 240))
 		if rocks.far_radius > 0.0:
 			# The far tier: big stones and landmarks past each layer's radius, to far_radius (streaming is off here).
 			var tfar := Time.get_ticks_msec()
@@ -1770,7 +1792,7 @@ func _live_falls(spot: Vector3, land: Landscape3D) -> void:
 
 
 # One fall: loose a block within p_radius of p_at, run p_ticks physics ticks, and report where its pieces went.
-func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool) -> Dictionary:
+func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool, p_dust_ticks: int = 0) -> Dictionary:
 	var fired := []
 	var cb := func(pos: Vector3, mass: float) -> void: fired.append([pos, mass])
 	rocks.rockfall.connect(cb)
@@ -1793,6 +1815,12 @@ func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool) ->
 	# --fall-dust keeps drawing while it falls: the Flow dust steps with the frames, drawn small (a full-size frame
 	# of the world takes half a minute in the cloud) and full size again for the shot.
 	RenderingServer.render_loop_enabled = args.has("fall-dust")
+	# Undrawn, the Flow plume is not stepped either (its grid on a software GPU in the cloud takes seconds a tick); the
+	# field still counts the fines and the impacts.
+	var dust_node: Node = rocks.get_rockfall_dust_node()
+	var dust_mode := dust_node.process_mode if dust_node else Node.PROCESS_MODE_INHERIT
+	if dust_node and not args.has("fall-dust"):
+		dust_node.process_mode = Node.PROCESS_MODE_DISABLED
 	var full_size := get_window().size
 	if args.has("fall-dust"):
 		get_window().size = Vector2i(maxi(full_size.x / 4, 64), maxi(full_size.y / 4, 36))
@@ -1807,13 +1835,20 @@ func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool) ->
 				print("  broke at tick %d, %.1f m below the start, into %d pieces" % [i, top - c.y, node.get_piece_count()])
 		if p_log and i % 60 == 59:
 			print("  tick %d: %d pieces, centre %s, %.1f m below the start, ground there %.1f" % [i + 1, node.get_piece_count(), c, top - c.y, gen.get_height(c)])
-	RenderingServer.render_loop_enabled = true
-	get_window().size = full_size
 	var below := 0
 	for i in node.get_piece_count():
 		var o: Vector3 = node.get_piece_transform(i).origin
 		if o.y < gen.get_height(o) - 1.0:
 			below += 1
+	# p_dust_ticks more ticks for the dust alone (a block that slides down the face lands after the fall is measured).
+	for i in p_dust_ticks:
+		if rocks.get_rockfall_dust_impacts() > hits0:
+			break
+		await get_tree().physics_frame
+	RenderingServer.render_loop_enabled = true
+	get_window().size = full_size
+	if dust_node:
+		dust_node.process_mode = dust_mode
 	var r := {"node": node, "start": start, "end": last, "drop": top - last.y, "travel": Vector2(last.x - start.x, last.z - start.z).length(), "pieces": node.get_piece_count(), "fractured": node.is_fractured(), "fired": fired.size(), "ms": ms, "max_speed": max_speed, "below": below}
 	r["dust"] = rocks.get_rockfall_dust_total() - dust0
 	r["hits"] = rocks.get_rockfall_dust_impacts() - hits0
@@ -2339,8 +2374,18 @@ func _test() -> void:
 			WorldContracts.add_water_stub(swell)
 			var water: WorldWater = WorldContracts.get_water()
 			net.step_sea_surge(0.05)
-			var pts0: PackedVector3Array = net.get_sea_cave_water(sid)["points"]
-			var inside: Vector3 = pts0[mini(3, pts0.size() - 1)]
+			var sw0: Dictionary = net.get_sea_cave_water(sid)
+			var pts0: PackedVector3Array = sw0["points"]
+			# A point a few along, where the still water is over a metre deep if there is one. Over a beach-level
+			# floor the water cannot fall below the floor in the trough: there the surge need only fill half the
+			# swell's reach above the floor (the 2 m swell's crest at sea + 1).
+			var dps0: Array = Array(sw0.get("depths", []))
+			var ins_k := mini(3, pts0.size() - 1)
+			for k in range(3, mini(pts0.size(), dps0.size())):
+				if float(dps0[k]) > 1.2 and gen.get_height(pts0[k]) > sea_y + 2.0:
+					ins_k = k
+					break
+			var inside: Vector3 = pts0[ins_k]
 			var lo := INF
 			var hi := -INF
 			var flow_in := 0.0
@@ -2355,7 +2400,7 @@ func _test() -> void:
 						hi = maxf(hi, hgt)
 					flow_in = maxf(flow_in, water.flow_at(Vector3(inside.x, sea_y - 0.5, inside.z)).length())
 					spout = maxf(spout, float(net.get_blowhole_spout(sid).get("speed", 0.0)))
-			check(is_finite(lo) and hi - lo > 1.0 and absf((hi + lo) * 0.5 - sea_y) < 0.6 and flow_in > 0.3 and gen.get_height(inside) > hi, "sea caves: the sea surges into the passage under the cliff: %.1f to %.1f m (still sea %.1f m), currents to %.1f m/s; the blowhole's air up to %.0f m/s" % [lo, hi, sea_y, flow_in, spout])
+			check(is_finite(lo) and hi - lo > minf(1.0, 0.5 * (sea_y + 1.0 - maxf(lo, sea_y - 1.0))) and absf((hi + lo) * 0.5 - sea_y) < 0.6 and flow_in > 0.3 and gen.get_height(inside) > hi, "sea caves: the sea surges into the passage under the cliff: %.1f to %.1f m (still sea %.1f m, point %d along), currents to %.1f m/s; the blowhole's air up to %.0f m/s" % [lo, hi, sea_y, ins_k, flow_in, spout])
 			# A storm swell (4 m) seals the passage and drives the air in the back chamber up its blowhole.
 			var bh := -1
 			for se in sea_ents:
@@ -2535,11 +2580,12 @@ func _test() -> void:
 			rocks.rebuild()
 			rocks.build_area(Rect2(bp.x - 60, bp.z - 60, 120, 120))
 			var before := rocks.get_broken_count()
-			var r := await _rockfall_run(bp, 1.0, 120, true)
+			var r := await _rockfall_run(bp, 1.0, 120, true, 180)
 			check(not r.is_empty() and r["fired"] == 1 and rocks.get_broken_count() == before + 1, "trigger_rockfall: a block loosed (signal %d, broken %d), %.1f ms" % [r.get("fired", 0), rocks.get_broken_count() - before, r.get("ms", 0.0)])
 			if not r.is_empty():
 				check(r["drop"] > 0.5 and r["below"] == 0, "the fall: %.1f m down, %.1f m out, top speed %.1f m/s, %d pieces, none under the ground" % [r["drop"], r["travel"], r["max_speed"], r["pieces"]])
-				check(r["hits"] > 0 and r["dust"] > 0.1, "rockfall dust: %.1f kg of fines from %d impacts" % [r["dust"], r["hits"]])
+				# The dust over 5 s: a block that slides down the face first lands after the 2 s the fall is checked over.
+				check(r["hits"] > 0 and r["dust"] > 0.1, "rockfall dust: %.1f kg of fines from %d impacts in 5 s" % [r["dust"], r["hits"]])
 			# Live: with the rate turned right up, blocks come loose by themselves (fracture on a worker first).
 			var live := [0]
 			var cb := func(_p: Vector3, _m: float) -> void: live[0] += 1
@@ -3032,3 +3078,54 @@ func _height_check() -> void:
 		var same: bool = ", ".join(got) == ", ".join(HEIGHT_REF["points"]) and sha == HEIGHT_REF["sha256"]
 		print("height check: %s" % ("PASS" if same else "FAIL (reference %s, sha256 %s)" % [", ".join(HEIGHT_REF["points"]), HEIGHT_REF["sha256"]]))
 	get_tree().quit()
+
+
+# --repetition: how often a stone stands next to its twin (NO VISIBLE REPETITION, 18 Nov). For each layer in the rect:
+# the share of stones whose nearest neighbour (within 4 footprints) is the same shape (library and variant), and the
+# share whose neighbour is also within 15 % of its size and 25 degrees of its yaw and tilt (a twin the eye catches).
+func _repetition_audit(p_rect: Rect2) -> void:
+	for lay in RockField3D.LAYER_MAX:
+		var sts: Array = rocks.get_stones(lay, p_rect)
+		if sts.size() < 2:
+			continue
+		var grid := {}
+		for i in sts.size():
+			var p: Vector3 = sts[i]["position"]
+			var key := Vector2i(floori(p.x / 4.0), floori(p.z / 4.0))
+			if not grid.has(key):
+				grid[key] = []
+			grid[key].append(i)
+		var same := 0
+		var twins := 0
+		var with_nb := 0
+		for i in sts.size():
+			var a: Dictionary = sts[i]
+			var pa: Vector3 = a["position"]
+			var reach := 4.0 * maxf(float(a["footprint"]), 0.05)
+			var best := -1
+			var best_d := INF
+			var ka := Vector2i(floori(pa.x / 4.0), floori(pa.z / 4.0))
+			var rc := int(ceil(reach / 4.0))
+			for dz in range(-rc, rc + 1):
+				for dx in range(-rc, rc + 1):
+					for j in grid.get(ka + Vector2i(dx, dz), []):
+						if j == i:
+							continue
+						var dd := pa.distance_to(sts[j]["position"])
+						if dd < reach and dd < best_d:
+							best_d = dd
+							best = j
+			if best < 0:
+				continue
+			with_nb += 1
+			var b: Dictionary = sts[best]
+			if a["rock_type"] != b["rock_type"] or a["family"] != b["family"] or a["bin"] != b["bin"] or a["variant"] != b["variant"]:
+				continue
+			same += 1
+			var ba: Basis = (a["basis"] as Basis).orthonormalized()
+			var bb: Basis = (b["basis"] as Basis).orthonormalized()
+			var rel := ba.inverse() * bb
+			var ang := rad_to_deg(rel.get_rotation_quaternion().get_angle())
+			if absf(float(a["scale"]) / float(b["scale"]) - 1.0) < 0.15 and ang < 25.0:
+				twins += 1
+		print("repetition: layer %d, %d stones, %d with a neighbour; same shape %.1f %%, twins %.1f %%" % [lay, sts.size(), with_nb, 100.0 * same / maxf(with_nb, 1), 100.0 * twins / maxf(with_nb, 1)])

@@ -102,7 +102,12 @@ struct PhysXVehicleSoilWheel {
 	float moved = 0.0f; // m rolled since it last stood
 	float bite_owed = 0.0f;
 	bool tearing = false; // its load tears a peat bog's root mat (round 24.2)
-	float tear_hold = 0.0f; // s its load has been past the mat's tearing depth // m3 of soil the tread's links have cut and not yet thrown (round 23.3)
+	float tear_hold = 0.0f; // s its load has been past the mat's tearing depth
+	// Clay packed inside the wheel arch (round 25.2): its thickness (m), the rub torque it puts on the tyre (N m, the
+	// last substep's) and the brake response the step's commands gave, which the rub adds to each substep.
+	float arch = 0.0f;
+	float arch_drag = 0.0f;
+	float base_brake = 0.0f; // m3 of soil the tread's links have cut and not yet thrown (round 23.3)
 	// Clay balled up on the tyre past its full tread (round 24.1): the cake's thickness (m), how lopsided it is
 	// (0 even .. 0.25, a quarter of it out of balance), the tyre's own radius, and the shake it gives (N, the last substep's).
 	float cake = 0.0f;
@@ -304,6 +309,9 @@ public:
 	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
 		Vehicle4W &v = *vehicle;
 		GroundSurface3D *ground = GroundSurface3D::get_active();
+		for (PxU32 i = 0; i < 4; i++) {
+			wheels[i].base_brake = v.brakeCommandResponseStates[i];
+		}
 		if (base_slip_denominator < 0.0f) {
 			base_slip_denominator = context->tireSlipParams.minActiveLongSlipDenominator;
 			base_passive_denominator = context->tireSlipParams.minPassiveLongSlipDenominator;
@@ -610,6 +618,7 @@ public:
 	PhysXVehicleSoilWheel *wheels = nullptr;
 	bool adhesion = true;
 	bool parked = true;
+	float arch_clearance = 0.08f; // round 25.2; 0: open wheels, no arches
 
 	virtual bool update(const PxReal p_dt, const PxVehicleSimulationContext &p_context) override {
 		Vehicle4W &v = *vehicle;
@@ -617,6 +626,24 @@ public:
 			PhysXVehicleSoilWheel &sw = wheels[i];
 			sw.spin_sum += v.wheelRigidBody1dStates[i].rotationSpeed;
 			sw.spin_n++;
+			// Clay packed in the arch (round 25.2) closing the gap to the tyre (and its own balled cake, 24.1): the
+			// tyre rubs through it. The packed clay shears along the arc the tyre cuts into it, length 2 sqrt(2 R d)
+			// for an interference d, at the packed clay's undrained strength (some 15 kPa for a stiff, remoulded clay),
+			// a torque against the wheel's turning; and it shaves the interference off in about half a turn.
+			sw.arch_drag = 0.0f;
+			v.brakeCommandResponseStates[i] = sw.base_brake;
+			if (arch_clearance > 0.0f && sw.arch > 0.0f) {
+				const float d = sw.arch + MAX(sw.cake, 0.0f) - arch_clearance;
+				if (d > 0.0f) {
+					const float r = v.wheelParams[i].radius; // the tyre with its cake
+					const float arc = 2.0f * Math::sqrt(2.0f * (r + arch_clearance) * d);
+					sw.arch_drag = 15000.0f * 2.0f * v.wheelParams[i].halfWidth * arc * r;
+					v.brakeCommandResponseStates[i] = sw.base_brake + sw.arch_drag;
+					const float revs = Math::abs(v.wheelRigidBody1dStates[i].rotationSpeed) / (float)Math::TAU;
+					const float cut = MIN(d, sw.arch) * MIN(2.0f * revs * p_dt, 1.0f);
+					sw.arch -= cut;
+				}
+			}
 			// An aired-down tyre's carcass flexes more as it rolls: the rolling resistance past the one at road
 			// pressure (Gillespie 1992, a hard-surface relation), at the axle against the travel on firm ground (on soft
 			// soil the soil's own compaction and bulldozing are the resistance), eased in over 0.3 m/s.
@@ -936,6 +963,7 @@ bool PhysXVehicle3D::_build() {
 	impl->soil_road.clogging = tyre_clogging;
 	impl->soil_road.parked = parked_settling;
 	impl->soil_tire.parked = parked_settling;
+	impl->soil_tire.arch_clearance = (float)arch_clearance;
 	impl->vehicle.soil_road_component = soft_soil ? &impl->soil_road : nullptr;
 	impl->vehicle.soil_tire_component = soft_soil ? &impl->soil_tire : nullptr;
 #endif
@@ -1164,6 +1192,21 @@ void PhysXVehicle3D::set_parked_settling(bool p_enabled) {
 	parked_settling = p_enabled;
 	impl->soil_road.parked = p_enabled;
 	impl->soil_tire.parked = p_enabled;
+}
+
+void PhysXVehicle3D::set_arch_clearance(real_t p_clearance) {
+	arch_clearance = MAX(p_clearance, (real_t)0.0);
+	impl->soil_tire.arch_clearance = (float)arch_clearance;
+}
+
+real_t PhysXVehicle3D::get_wheel_arch_mud(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].arch;
+}
+
+real_t PhysXVehicle3D::get_wheel_arch_drag(int p_wheel) const {
+	const int i = _soil_slot(p_wheel);
+	return i < 0 ? 0.0 : (real_t)impl->soil_wheels[i].arch_drag;
 }
 
 real_t PhysXVehicle3D::get_wheel_cake(int p_wheel) const {
@@ -2047,6 +2090,33 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 		}
 #endif
 		spray = CLAMP(spray, 0.0f, 1.0f);
+		// Arch packing (round 25.2). Clay a tyre throws off sticks inside its arch where it is sticky (soil to steel
+		// adhesion, Fountaine 1954) and builds up there: the known trouble of mudguards and fender liners in sticky
+		// clay (agricultural and military vehicles run open or wide arches for it). About 60% of what the tread throws
+		// hits the arch over it; what sticks packs at the clay's density over the arch's inside, half a circle round
+		// the tyre by its width. Water soaks and washes it out slowly; it dries and cracks off with the body's mud.
+		if (arch_clearance > 0.0f) {
+			PhysXVehicleSoilWheel &aw = impl->soil_wheels[i];
+#ifdef MODULE_GROUND_ENABLED
+			const float out = flung;
+#else
+			const float out = thrown;
+#endif
+			// Thrown up, not dropped: clay leaving a slow tread falls off under it (round 3), and the arch only takes what
+			// the tread flings, from a couple of metres a second of tread speed.
+			const float fling_v = Math::abs(v.wheelRigidBody1dStates[i].rotationSpeed) * v.wheelParams[i].radius;
+			const float stick = Math::smoothstep(0.2f, 0.6f, aw.soil.stickiness) * Math::smoothstep(1.0f, 3.0f, fling_v);
+			if (out > 0.0f && stick > 0.0f) {
+				const float r0 = aw.base_radius > 0.0f ? aw.base_radius : v.wheelParams[i].radius;
+				const float area = (float)Math::PI * (r0 + (float)arch_clearance) * 2.0f * v.wheelParams[i].halfWidth;
+				aw.arch = MIN(aw.arch + 0.6f * stick * out / (1700.0f * area), (float)arch_clearance + 0.03f);
+			}
+			if (water_body > 0.02f) {
+				aw.arch -= aw.arch * MIN(MIN(water_body / 0.3f, 1.0f) * 0.05f * (float)p_delta, 1.0f);
+			}
+		} else {
+			impl->soil_wheels[i].arch = 0.0f;
+		}
 		// A packed tread keeps the body wet only while it turns in the clay (round 11: parked, it dries).
 		fresh = fresh || spray > before + 1e-5f || (sw.mud > 0.05f && sw.soft && Math::abs(v.wheelRigidBody1dStates[i].rotationSpeed) * v.wheelParams[i].radius > 0.1f);
 	}
@@ -2103,6 +2173,7 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 		impl->mud_line -= impl->mud_line * k;
 		for (uint32_t i = 0; i < 4; i++) {
 			impl->mud_spray[i] -= impl->mud_spray[i] * k;
+			impl->soil_wheels[i].arch -= impl->soil_wheels[i].arch * 0.3f * k; // packed, it rinses slower
 		}
 		for (int k2 = 0; k2 < impl->splat_count; k2++) {
 			impl->splat_b[k2].w -= impl->splat_b[k2].w * k;
@@ -2135,6 +2206,7 @@ void PhysXVehicle3D::_body_mud_step(float p_delta) {
 			impl->mud_line -= impl->mud_line * 0.3f * rate;
 			for (uint32_t i = 0; i < 4; i++) {
 				impl->mud_spray[i] -= impl->mud_spray[i] * 0.3f * rate;
+				impl->soil_wheels[i].arch -= impl->soil_wheels[i].arch * 0.3f * rate; // dried, it cracks off in plates
 			}
 			for (int k = impl->splat_count - 1; k >= 0; k--) {
 				impl->flake_seed = impl->flake_seed * 1664525u + 1013904223u;
@@ -2637,6 +2709,11 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wheel_creep", "wheel"), &PhysXVehicle3D::get_wheel_creep);
 	ClassDB::bind_method(D_METHOD("get_wheel_clods_thrown", "wheel"), &PhysXVehicle3D::get_wheel_clods_thrown);
 	ClassDB::bind_method(D_METHOD("get_wheel_cake", "wheel"), &PhysXVehicle3D::get_wheel_cake);
+	ClassDB::bind_method(D_METHOD("set_arch_clearance", "clearance"), &PhysXVehicle3D::set_arch_clearance);
+	ClassDB::bind_method(D_METHOD("get_arch_clearance"), &PhysXVehicle3D::get_arch_clearance);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "arch_clearance", PROPERTY_HINT_RANGE, "0,0.3,0.005,suffix:m"), "set_arch_clearance", "get_arch_clearance");
+	ClassDB::bind_method(D_METHOD("get_wheel_arch_mud", "wheel"), &PhysXVehicle3D::get_wheel_arch_mud);
+	ClassDB::bind_method(D_METHOD("get_wheel_arch_drag", "wheel"), &PhysXVehicle3D::get_wheel_arch_drag);
 	ClassDB::bind_method(D_METHOD("get_wheel_shudder", "wheel"), &PhysXVehicle3D::get_wheel_shudder);
 	ClassDB::bind_method(D_METHOD("get_wheel_suction", "wheel"), &PhysXVehicle3D::get_wheel_suction);
 	ClassDB::bind_method(D_METHOD("set_belly_drag", "enabled"), &PhysXVehicle3D::set_belly_drag);

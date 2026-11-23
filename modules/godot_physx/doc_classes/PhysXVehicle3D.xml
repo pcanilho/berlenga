@@ -126,6 +126,20 @@
 				How much lower the water stands at the engine's air intake than the still surface, m, at the last step: about the stagnation head v^2 / 2g at a wading pace (the bow's trough), turning negative past a depth Froude number of 0.7 as the bow wave stands up and climbs over the bonnet. The intake (see [member air_intake_height]) reads the water at this level.
 			</description>
 		</method>
+		<method name="get_wheel_arch_drag" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				The torque the clay packed in the wheel's arch rubs against the tyre, N m (see [method get_wheel_arch_mud]): once the packed clay (and the tyre's balled cake) closes the gap of [member arch_clearance], the tyre shears through it along the arc it cuts in, at a stiff clay's strength, and shaves it back over about half a turn.
+			</description>
+		</method>
+		<method name="get_wheel_arch_mud" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				Sticky clay packed inside the wheel's arch, m thick. About 60% of the clay the tread throws hits the arch, and what is sticky stays, packing over the arch's inside. Standing water washes it out slowly, rain rinses it, and once dry it cracks off with the body's mud. None with [member arch_clearance] at 0.
+			</description>
+		</method>
 		<method name="get_wheel_cake" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="wheel" type="int" />
@@ -374,6 +388,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="arch_clearance" type="float" setter="set_arch_clearance" getter="get_arch_clearance" default="0.08">
+			The gap between each tyre and its wheel arch, m. Thrown sticky clay packs inside the arch (see [method get_wheel_arch_mud]); once it closes this gap the tyre rubs through it (see [method get_wheel_arch_drag]). 0: open wheels, no arches to pack.
+		</member>
 		<member name="ackermann_strength" type="float" setter="set_ackermann_strength" getter="get_ackermann_strength" default="1.0">
 			How much Ackermann steering correction to apply to the front (steering) axle, from [code]0[/code] (both front wheels always turn by the same angle, like [VehicleWheel3D]) to [code]1[/code] (full correction: the inside wheel of a turn steers more sharply than the outside wheel, matching how a real front axle is geometrically linked).
 		</member>

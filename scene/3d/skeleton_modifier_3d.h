@@ -101,6 +101,10 @@ protected:
 	GDVIRTUAL2(_skeleton_changed, Skeleton3D *, Skeleton3D *);
 	GDVIRTUAL0(_validate_bone_names);
 
+	// Berlenga: the skeleton runs its modifiers again after a spell unseen (Skeleton3D.modifier_update_mode).
+	virtual void _skeleton_resumed();
+	GDVIRTUAL0(_skeleton_resumed);
+
 	void _notification(int p_what);
 	static void _bind_methods();
 
@@ -121,6 +125,8 @@ public:
 
 	void set_active(bool p_active);
 	bool is_active() const;
+
+	void notify_skeleton_resumed();
 
 	void set_influence(real_t p_influence);
 	real_t get_influence() const;

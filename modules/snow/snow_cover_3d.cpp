@@ -1608,8 +1608,11 @@ float SnowCover3D::cut_cohesion(int p_kind, float p_density, float p_age_hours, 
 // Within layer j (z_top..z_bot under the surface) a cut fails once taller than max(z_top, 2.67 c_j / (rho g)), rho
 // the mean density above; a layer too strong within itself passes the question to the next. r_fail_bottom: the
 // bottom of the layer that gives, so a wall over a weak base falls down to the base's bottom.
-float SnowCover3D::cut_critical_height(const Vector3 &p_position, float &r_fail_bottom) const {
+float SnowCover3D::cut_critical_height(const Vector3 &p_position, float &r_fail_bottom, float *r_block_cohesion) const {
 	r_fail_bottom = 1e6f;
+	if (r_block_cohesion) {
+		*r_block_cohesion = 0.0f;
+	}
 	const int n = resolution;
 	if (!origin_valid || pub.swe.size() != n * n) {
 		return 1e6f;
@@ -1627,6 +1630,9 @@ float SnowCover3D::cut_critical_height(const Vector3 &p_position, float &r_fail_
 	if (!layered) {
 		const float c = cut_cohesion(LAYER_OLD, pub.density[i], 24.0f, 0.0f, 0.0f);
 		r_fail_bottom = depth;
+		if (r_block_cohesion) {
+			*r_block_cohesion = c;
+		}
 		return 2.67f * c / (MAX(pub.density[i], 30.0f) * 9.81f);
 	}
 	const int k0 = i * PACK_LAYERS;
@@ -1637,6 +1643,7 @@ float SnowCover3D::cut_critical_height(const Vector3 &p_position, float &r_fail_
 	const float scale = total > 0.0f ? depth / total : 1.0f;
 	float z_top = 0.0f;
 	float mass = 0.0f; // kg/m2 above
+	float c_sum = 0.0f; // cohesion x thickness of the layers above
 	for (int j = pub.layer_n[i] - 1; j >= 0; j--) {
 		const int k = k0 + j;
 		const float t = pub.layer_swe[k] / MAX(pub.layer_rho[k], 30.0f) * scale;
@@ -1651,8 +1658,14 @@ float SnowCover3D::cut_critical_height(const Vector3 &p_position, float &r_fail_
 		const float cand = MAX(z_top, hc);
 		if (cand <= z_bot) {
 			r_fail_bottom = z_bot;
+			if (r_block_cohesion) {
+				// The block is the snow above the failing layer (a slab over depth hoar comes off as slab), or
+				// the failing layer itself when it is the top one.
+				*r_block_cohesion = z_top > 0.0f ? c_sum / z_top : c;
+			}
 			return cand;
 		}
+		c_sum += c * t;
 		mass += pub.layer_swe[k] * scale;
 		z_top = z_bot;
 	}

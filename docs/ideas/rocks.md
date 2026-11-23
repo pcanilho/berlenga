@@ -1092,6 +1092,8 @@ Added 20 Nov (ground detail thread, Paulo's pick "thinning plus 4 km rock colour
     with it taken out the pair still matches. Camera rays forced opaque change nothing either, so the any-hit path
     is clear. Some change between 986d3581 and 6f33ff9f removed it (or moved the far groups off the line); stills may
     thin again once a PC check of a thinned build_area still in PT agrees.
+  - 22 Nov: build_area thins again (`_update_thinning` at the target), so stills show the field as play does. The
+    next PC PT still of a --world view is the confirmation.
 - The far cover map takes coarse river beds (45% stone over the bed where the median is drawn near). In the bench
   world only narrow boulder streams qualify, so it adds 67 faint texels; it matters where big rivers carry boulders.
   Shore stones are left out: the shingle band is a few metres wide, under a tenth of a 32 m texel.
@@ -1298,3 +1300,26 @@ relief (centre, normal, footprint ring and underside), so stones on a relief-dra
 hollows nor sink into its lobes. Cliff blocks and coast forms still read the heightfield (they are the bedrock the
 relief is drawn over). Test: "stones on relief-drawn ground" (seated within 2 cm of the drawn surface).
 
+
+## No twins in packed beds (23 Nov)
+
+Audit (`--repetition`, middle 240 m round the scree view): for each stone, its nearest neighbour within four
+footprints; "same shape" is the same library and variant, "twins" also within 15% of the scale and 25 degrees of
+the rotation. Before: scree 8.2% same shape (0.3% twins), river cobbles 10.6% (1.5% twins: their yaw only spread
+17 degrees round the imbrication bearing). Two changes:
+
+- Packed beds (scree, river, shore, detail) pick each stone's variant away from its neighbours: a variant that a
+  stone of the same library within four sizes already has is drawn again, up to three times (greedy colouring, as
+  tile sets avoid two equal neighbours). A 1 m bin grid over the cell, lists through the placed stones.
+- River cobbles: the a axis is a line, so either end points to the left bank, and the bearing spreads 26 degrees
+  either way (a-axis fabrics of imbricated gravel are broad).
+
+After: scree 3.0% same shape (0.1% twins), river 0.6% (0.1%). Rockfall 3.7% (no twins), unchanged.
+
+## Camera cut-out and the path tracer (23 Nov)
+
+Custom shaders that adopted the camera cut-out discard were flagged alpha-clipped, and the path tracer's any-hit
+dropped them: near rocks went missing in path traced frames while raster drew them (a tor at 4 m: base and close-up
+shapes both gone; with the cut-out line removed they came back). camera_cutout_discard() now returns false in path
+tracer shaders (raygen starts camera rays past the cut), and a shader whose only discards are the guarded cut-out
+stays opaque with no any-hit (12b84872).

@@ -148,14 +148,30 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			rt_flags &= ~uint32_t(SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED);
 		}
 
+		// Scene-feature elision: the BaseMaterial3D features no material holds compile out of the hit shaders.
+		const uint32_t full_rt_flags = rt_flags;
+		rt_flags |= SceneShaderRaytracing::compute_scene_elision_flags();
+
 		// A variant's first build runs on a worker thread instead of stalling this
-		// frame (seconds on a desktop GPU). Meanwhile keep tracing with the last
-		// variant when it still fits this view, otherwise draw this frame raster.
+		// frame (seconds on a desktop GPU). Meanwhile trace with the variant that
+		// leaves nothing out when it is ready, else with the last variant when it
+		// still fits this view (and leaves out no feature the scene now holds),
+		// otherwise draw this frame raster.
 		SceneShaderRaytracing *rt_shader = raytracing->get_shader();
-		if (!rt_shader->request_pipeline_bundle(rt_flags)) {
+		if (rt_shader->request_pipeline_bundle(rt_flags)) {
+			if (rt_flags != full_rt_flags) {
+				// Keep the variant that leaves nothing out built, so a material that brings a left-out feature
+				// back (a snowy area streamed in) is traced with it at once, not drawn raster while it builds.
+				rt_shader->request_pipeline_bundle(full_rt_flags);
+			}
+		} else {
+			const uint32_t elision_mask = SceneShaderRaytracing::RT_FLAG_SCENE_ELISION_MASK;
 			const bool last_fits = last_traced_rt_flags != UINT32_MAX && rt_shader->is_pipeline_bundle_ready(last_traced_rt_flags) &&
-					(!(last_traced_rt_flags & SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED) || scale_is_dlss);
-			if (last_fits) {
+					(!(last_traced_rt_flags & SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED) || scale_is_dlss) &&
+					(last_traced_rt_flags & elision_mask & ~rt_flags) == 0;
+			if (full_rt_flags != rt_flags && rt_shader->is_pipeline_bundle_ready(full_rt_flags)) {
+				rt_flags = full_rt_flags;
+			} else if (last_fits) {
 				rt_flags = last_traced_rt_flags;
 			} else {
 				use_rt = false;

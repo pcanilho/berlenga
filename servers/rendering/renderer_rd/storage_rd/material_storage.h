@@ -320,6 +320,7 @@ private:
 		SelfList<Material> update_element;
 
 		uint16_t rt_invalidation_counter = 0; // Bump on param changes for RT cache invalidation.
+		int64_t rt_state_bits = 0; // Its RTBaseMaterialState parameter, counted in rt_state_bit_users.
 
 		Dependency dependency;
 
@@ -336,6 +337,11 @@ private:
 
 	uint64_t material_rt_version = 0;
 	void _material_rt_invalidate(Material *p_material);
+	// How many materials hold each bit of RTBaseMaterialState (BaseMaterial3D's packed switches), and the bits
+	// at least one holds: the path tracer compiles out the features none holds.
+	uint32_t rt_state_bit_users[64] = {};
+	uint64_t rt_state_bits_in_use = 0;
+	void _material_set_rt_state_bits(Material *p_material, int64_t p_bits);
 
 	static void _material_uniform_set_erased(void *p_material);
 
@@ -579,6 +585,7 @@ public:
 
 	// Advances whenever any material's rt_invalidation_counter changes.
 	uint64_t material_get_rt_version() const { return material_rt_version; }
+	uint64_t material_get_rt_state_bits_in_use() const { return rt_state_bits_in_use; }
 
 	// CPU copy of the global uniform buffer, four floats per element; instance uniforms start at their shader_uniforms_offset.
 	_FORCE_INLINE_ Span<const float> global_shader_uniforms_get_values() const {
@@ -597,6 +604,32 @@ public:
 	_FORCE_INLINE_ bool material_is_builtin_standard_3d(RID p_material) const {
 		Material *material = material_owner.get_or_null(p_material);
 		return material && material->shader && material->shader->builtin_standard_3d;
+	}
+
+	// Whether every discard in a spatial shader is BaseMaterial3D's camera cut-out, which it guards with
+	// !IN_SHADOW_PASS. Such a shader still discards in the camera's colour and depth passes, but its shadow maps can
+	// use the shared shadow material, as before the cut-out. A `discard` anywhere else in the code says no.
+	static bool shader_discards_only_for_camera_cutout(const String &p_code) {
+		// Only BaseMaterial3D's own guarded form counts: a cut-out that skips shadow passes.
+		static const char *guarded = "if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard(";
+		int calls = 0;
+		for (int i = p_code.find(guarded); i >= 0; i = p_code.find(guarded, i + 1)) {
+			calls++;
+		}
+		if (calls == 0) {
+			return false;
+		}
+		int discards = 0;
+		const char32_t *c = p_code.get_data();
+		const int len = p_code.length();
+		for (int i = p_code.find("discard"); i >= 0; i = p_code.find("discard", i + 7)) {
+			const bool word_start = i == 0 || !is_ascii_identifier_char(c[i - 1]);
+			const bool word_end = i + 7 >= len || !is_ascii_identifier_char(c[i + 7]);
+			if (word_start && word_end) {
+				discards++;
+			}
+		}
+		return discards <= calls;
 	}
 
 	// Whether the material's shader cuts itself round the player (BaseMaterial3D camera_cutout, or a shader that

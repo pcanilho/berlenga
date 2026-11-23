@@ -284,10 +284,18 @@ void fracture_job(void *p_userdata) {
 	job->volume = float(job->meta.get("rock_volume", 0.0));
 }
 
+// The generator's height with the point held inside its world: past the edge its heights are not numbers, and a
+// stone near the edge looks round it for metres (its slope, fall line and run-out), which drew thousands of
+// non-finite normals round a spot 30 m from the edge. The ground just past the edge reads as the edge's own.
+static real_t rf_height(const TerrainGenerator3D *p_gen, const Vector3 &p) {
+	const Rect2 w = p_gen->get_result_rect(); // also from the detail jobs' worker threads
+	return p_gen->get_height(Vector3(CLAMP(p.x, w.position.x, w.get_end().x), p.y, CLAMP(p.z, w.position.y, w.get_end().y)));
+}
+
 // Ground normal from the generator's height, by central differences.
 Vector3 ground_normal(const TerrainGenerator3D *p_gen, real_t p_x, real_t p_z, real_t p_e) {
-	const real_t hx = p_gen->get_height(Vector3(p_x + p_e, 0, p_z)) - p_gen->get_height(Vector3(p_x - p_e, 0, p_z));
-	const real_t hz = p_gen->get_height(Vector3(p_x, 0, p_z + p_e)) - p_gen->get_height(Vector3(p_x, 0, p_z - p_e));
+	const real_t hx = rf_height(p_gen, Vector3(p_x + p_e, 0, p_z)) - rf_height(p_gen, Vector3(p_x - p_e, 0, p_z));
+	const real_t hz = rf_height(p_gen, Vector3(p_x, 0, p_z + p_e)) - rf_height(p_gen, Vector3(p_x, 0, p_z - p_e));
 	const Vector3 n(-hx / (2.0f * p_e), 1.0f, -hz / (2.0f * p_e));
 	return Math::is_finite(n.x) && Math::is_finite(n.z) ? n.normalized() : Vector3(0, 1, 0);
 }
@@ -833,7 +841,7 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 	// on a relief-drawn bank or face rests on the surface drawn there, not on the heightfield under or over it.
 	const WorldGround *wg = WorldContracts::ground();
 	auto H = [&](real_t p_x, real_t p_z) -> real_t {
-		real_t h = p_gen->get_height(Vector3(p_x, 0, p_z));
+		real_t h = rf_height(p_gen, Vector3(p_x, 0, p_z));
 		if (wg) {
 			const Vector2 r = wg->relief_at(Vector3(p_x, h, p_z));
 			if (r.y > 0.0f && Math::is_finite(r.x)) {
@@ -920,9 +928,14 @@ void RockField3D::_rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const L
 	r_stone.footprint = MAX(axes.x, axes.z) * s * 0.85f;
 }
 
-void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones, const HashMap<uint32_t, Library *> *p_libs, const LocalVector<DetailSeed> *p_seeds) {
+void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_seed, LocalVector<Stone> &r_stones, const HashMap<uint32_t, Library *> *p_libs, const LocalVector<DetailSeed> *p_seeds) {
 	TerrainGenerator3D *gen = _get_generator();
 	if (!gen || !_layer_on(p_layer) || layer_density[p_layer] <= 0.0) {
+		return;
+	}
+	// Stones only on the world (past its edge the generator has no ground; rf_height holds their neighbourhood in it).
+	const Rect2 p_rect = gen->get_result_rect().intersection(p_cell_rect);
+	if (p_rect.size.x <= 0.0 || p_rect.size.y <= 0.0) {
 		return;
 	}
 	RandomPCG rng(p_seed);
@@ -1178,8 +1191,8 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				// to 38 degrees; past 42 a block would slide or the ground is the cliff itself, Statham 1976).
 				{
 					const real_t e = MAX(real_t(0.6), real_t(r));
-					const real_t gx = (gen->get_height(tr.xz + Vector3(e, 0, 0)) - gen->get_height(tr.xz - Vector3(e, 0, 0))) / (2.0 * e);
-					const real_t gz = (gen->get_height(tr.xz + Vector3(0, 0, e)) - gen->get_height(tr.xz - Vector3(0, 0, e))) / (2.0 * e);
+					const real_t gx = (rf_height(gen, tr.xz + Vector3(e, 0, 0)) - rf_height(gen, tr.xz - Vector3(e, 0, 0))) / (2.0 * e);
+					const real_t gz = (rf_height(gen, tr.xz + Vector3(0, 0, e)) - rf_height(gen, tr.xz - Vector3(0, 0, e))) / (2.0 * e);
 					if (gx * gx + gz * gz > 0.9 * 0.9) {
 						continue;
 					}
@@ -1256,8 +1269,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						pd.size = MIN(d, 1.5f);
 						const RockGenerator::RockType type = rng.randf() < 0.7f ? rv.head_type : _type_at(gen, pd.xz);
 						pd.key = _library_key(type, RockGenerator::FAMILY_COBBLE, bin);
-						// Imbrication: long axis across the flow, the stone dipping upstream (15 to 30 degrees).
-						pd.yaw = Math::atan2(-f.x, -f.y) + (rng.randf() - 0.5f) * 0.6f;
+						// Imbrication: long axis across the flow, the stone dipping upstream (15 to 30 degrees). The a axis
+						// is a line, so either end may point to the left bank (half are turned round), and its bearing
+						// spreads some 25 degrees either way (imbricated gravels' a-axis fabrics are broad); neighbours of
+						// one shape no longer lie as twins.
+						pd.yaw = Math::atan2(-f.x, -f.y) + (rng.randf() - 0.5f) * 0.9f + (rng.randf() < 0.5f ? float(Math::PI) : 0.0f);
 						pd.tilt_axis = Vector3(side.x, 0, side.y);
 						pd.tilt = Math::deg_to_rad(15.0f + 15.0f * rng.randf());
 						pd.sink = 0.25f + 0.1f * rng.randf();
@@ -1305,7 +1321,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					if (level < -1e29) {
 						continue;
 					}
-					sc.e = float(gen->get_height(c) - level);
+					sc.e = float(rf_height(gen, c) - level);
 					if (sc.e < -0.6f || sc.e > 2.5f) {
 						continue;
 					}
@@ -1437,9 +1453,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					if (rock < 0.5f) {
 						continue;
 					}
-					const real_t hc = gen->get_height(c);
+					const real_t hc = rf_height(gen, c);
 					const real_t e = 1.0;
-					const Vector2 grad((gen->get_height(c + Vector3(e, 0, 0)) - gen->get_height(c - Vector3(e, 0, 0))) / (2.0 * e), (gen->get_height(c + Vector3(0, 0, e)) - gen->get_height(c - Vector3(0, 0, e))) / (2.0 * e));
+					const Vector2 grad((rf_height(gen, c + Vector3(e, 0, 0)) - rf_height(gen, c - Vector3(e, 0, 0))) / (2.0 * e), (rf_height(gen, c + Vector3(0, 0, e)) - rf_height(gen, c - Vector3(0, 0, e))) / (2.0 * e));
 					const float gl = grad.length();
 					if (!(gl >= min_tan && gl <= max_tan) || !Math::is_finite(hc)) {
 						continue; // also off the generated world, where the heights are NaN
@@ -1451,7 +1467,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					// the one float in front of the other.
 					{
 						const Vector3 u(up_dir.x * gen_cell, 0, up_dir.y * gen_cell);
-						const real_t bend = gen->get_height(c + u) + gen->get_height(c - u) - 2.0 * hc;
+						const real_t bend = rf_height(gen, c + u) + rf_height(gen, c - u) - 2.0 * hc;
 						if (!(Math::abs(bend) <= course * 0.5f)) {
 							continue;
 						}
@@ -1514,7 +1530,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						const Vector3 centre = surface - n * (axes.z * st.scale * (0.86f + 0.12f * rng.randf()));
 						// The centre must lie inside the rock (under the terrain at its own plan position), or the block
 						// stands out of a bend in the face rather than being set into it.
-						if (gen->get_height(centre) < centre.y + 0.1f * course) {
+						if (rf_height(gen, centre) < centre.y + 0.1f * course) {
 							continue;
 						}
 						// And the face is where the cell's plane put it: at the crossing and at both ends of the block
@@ -1526,7 +1542,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							const real_t ext = axes.x * st.scale * 0.9;
 							for (int e = -1; e <= 1 && !out; e++) {
 								const Vector3 q = surface + x_axis * (ext * e);
-								const real_t gap = (q.y - gen->get_height(q)) * n.y; // + where the face lies under the block's face
+								const real_t gap = (q.y - rf_height(gen, q)) * n.y; // + where the face lies under the block's face
 								out = gap > 0.2f * course;
 							}
 							if (out) {
@@ -1563,11 +1579,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					if (gen->get_water_depth(c) > 0.0) {
 						continue;
 					}
-					const real_t h = gen->get_height(c);
+					const real_t h = rf_height(gen, c);
 					real_t ring = 0.0;
 					for (int k = 0; k < 6; k++) {
 						const real_t a = real_t(k) * Math::TAU / 6.0;
-						ring += gen->get_height(c + Vector3(Math::cos(a) * 15.0, 0, Math::sin(a) * 15.0));
+						ring += rf_height(gen, c + Vector3(Math::cos(a) * 15.0, 0, Math::sin(a) * 15.0));
 					}
 					const float convex = float(h - ring / 6.0);
 					const Vector3 n = ground_normal(gen, c.x, c.z, 3.0);
@@ -1621,15 +1637,15 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							// lowest ground under its ends and sides (set a little into it, as the middle one is).
 							const Vector3 side_dir(-along.z, 0, along.x);
 							const real_t ha = ax.x * st.scale * 0.8, hs = ax.z * st.scale * 0.8;
-							real_t gmin = gen->get_height(xz);
-							gmin = MIN(gmin, gen->get_height(xz + along * ha));
-							gmin = MIN(gmin, gen->get_height(xz - along * ha));
-							gmin = MIN(gmin, gen->get_height(xz + side_dir * hs));
-							gmin = MIN(gmin, gen->get_height(xz - side_dir * hs));
+							real_t gmin = rf_height(gen, xz);
+							gmin = MIN(gmin, rf_height(gen, xz + along * ha));
+							gmin = MIN(gmin, rf_height(gen, xz - along * ha));
+							gmin = MIN(gmin, rf_height(gen, xz + side_dir * hs));
+							gmin = MIN(gmin, rf_height(gen, xz - side_dir * hs));
 							base_y = MIN(y, gmin - 0.1 * ax.y * st.scale);
 						}
 						st.position = Vector3(xz.x, base_y + bottom, xz.z);
-						st.ground = p_sea ? y - 50.0 : gen->get_height(xz);
+						st.ground = p_sea ? y - 50.0 : rf_height(gen, xz);
 						st.footprint = t == 0 && !p_sea ? MAX(ax.x, ax.z) * st.scale * 0.85f : 0.0f;
 						tier_top = MAX(tier_top, st.position.y + ax.y * st.scale);
 						r_stones.push_back(st);
@@ -1649,13 +1665,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				}
 				const RockGenerator::RockType type = _type_at(gen, cr.p);
 				const uint32_t key = _library_key(type, RockGenerator::FAMILY_CORESTONE, 0);
-				const real_t ground = gen->get_height(cr.p);
+				const real_t ground = rf_height(gen, cr.p);
 				// A tor needs a summit broad enough for its base (a knife ridge sheds its blocks): the ground a few metres
 				// out from the top falls no more than a third of the way down.
 				real_t fall = 0.0;
 				for (int k = 0; k < 6; k++) {
 					const real_t a = real_t(k) * Math::TAU / 6.0;
-					fall = MAX(fall, ground - gen->get_height(cr.p + Vector3(Math::cos(a) * 4.0, 0, Math::sin(a) * 4.0)));
+					fall = MAX(fall, ground - rf_height(gen, cr.p + Vector3(Math::cos(a) * 4.0, 0, Math::sin(a) * 4.0)));
 				}
 				if (i == 0 && rng.randf() < tor_rate[type] * float(density) * Math::smoothstep(0.6f, 3.0f, cr.score) && fall < 1.4) {
 					// The tor: base blocks 3 to 7 m, set a quarter of their thickness into the bedrock below.
@@ -1706,7 +1722,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						const real_t a = real_t(k) * Math::TAU / 8.0;
 						const Vector3 d(Math::cos(a), 0, Math::sin(a));
 						for (real_t r = 15.0; r <= 50.0; r += 17.5) {
-							const float rise = float(gen->get_height(c + d * r) - level);
+							const float rise = float(rf_height(gen, c + d * r) - level);
 							if (rise > best_rise) {
 								best_rise = rise;
 								best_dir = d;
@@ -1742,7 +1758,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			const real_t yaw = Math::atan2(sp.to_land.z, sp.to_land.x);
 			const Vector3 strike(-sp.to_land.z, 0, sp.to_land.x);
 			// Each form is one shape of its own family (RockGenerator FAMILY_SEA_*): one mass of bedrock, not a pile.
-			const real_t bed = gen->get_height(sp.p);
+			const real_t bed = rf_height(gen, sp.p);
 			if (rng.randf() < 0.3f) {
 				// An arch, 14 to 26 m along the coast, its opening facing the sea, its feet sunk in the bed.
 				const uint32_t ak = _library_key(type, RockGenerator::FAMILY_SEA_ARCH, 0);
@@ -1801,7 +1817,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				Vector3 foot = sp.p;
 				for (real_t r = 0.0; r < 60.0; r += 1.0) {
 					foot = sp.p + sp.to_land * r;
-					if (gen->get_height(foot) > level + 1.0) {
+					if (rf_height(gen, foot) > level + 1.0) {
 						break;
 					}
 				}
@@ -1816,9 +1832,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				const Vector3 at = foot - sp.to_land * (ax.z * st.scale * 0.75f);
 				// Where a beach stands over the platform's level the sand buries it (a platform shows only where the waves
 				// keep it bare): a slab there only pokes through the sand in jagged edges, so none is laid.
-				const real_t over = MAX(gen->get_height(at), gen->get_height(foot - sp.to_land * 3.0)) - (level + 0.6);
+				const real_t over = MAX(rf_height(gen, at), rf_height(gen, foot - sp.to_land * 3.0)) - (level + 0.6);
 				st.position = Vector3(at.x, level + 0.6 - ax.y * st.scale, at.z); // above mean sea level: bare at low tide
-				st.ground = gen->get_height(at);
+				st.ground = rf_height(gen, at);
 				st.film = 0.6f;
 				if (over <= 0.2) {
 					r_stones.push_back(st);
@@ -1841,22 +1857,22 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			for (real_t z = p_rect.position.y + sub * 0.5; z < p_rect.get_end().y; z += sub) {
 				for (real_t x = p_rect.position.x + sub * 0.5; x < p_rect.get_end().x; x += sub) {
 					const Vector3 c(x + (rng.randf() - 0.5f) * sub * 0.6f, 0, z + (rng.randf() - 0.5f) * sub * 0.6f);
-					if (gen->get_water_depth(c) > 0.0 || gen->get_height(c) < shore_top) {
+					if (gen->get_water_depth(c) > 0.0 || rf_height(gen, c) < shore_top) {
 						continue;
 					}
-					const RockGenerator::RockType type = _type_at(gen, Vector3(c.x, gen->get_height(c), c.z));
+					const RockGenerator::RockType type = _type_at(gen, Vector3(c.x, rf_height(gen, c), c.z));
 					const Vector3 n = ground_normal(gen, c.x, c.z, 4.0);
 					const float exposure = float(gen->get_rock_exposure(c));
 					const float thin = 1.0f - Math::smoothstep(0.2f, 0.8f, float(gen->get_soil_depth(c)));
 					const float bare = MAX(exposure, thin);
 					if (type == RockGenerator::ROCK_LIMESTONE && n.y > 0.94f && bare > 0.35f) { // up to 20 degrees: stepped pavements (Malham, the Burren) follow gentle slopes
 						// A bench, not a knoll or a col: the ground within 8 m stays on the plane through the centre.
-						const real_t h0 = gen->get_height(c);
+						const real_t h0 = rf_height(gen, c);
 						const real_t sx = -n.x / MAX(n.y, real_t(0.1)), sz = -n.z / MAX(n.y, real_t(0.1));
 						float off = 0.0f;
 						for (int j = 0; j < 8; j++) {
 							const Vector3 d = Vector3(Math::cos(j * Math::TAU / 8.0), 0, Math::sin(j * Math::TAU / 8.0)) * 8.0;
-							off = MAX(off, float(Math::abs(gen->get_height(c + d) - (h0 + sx * d.x + sz * d.z))));
+							off = MAX(off, float(Math::abs(rf_height(gen, c + d) - (h0 + sx * d.x + sz * d.z))));
 						}
 						if (off < 0.8f) {
 							sites.push_back({ c, bare * (1.0f + rng.randf() * 0.3f), 0 });
@@ -1868,8 +1884,8 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						const Vector2 down = Vector2(n.x, n.z).normalized(); // a ground normal leans downhill
 						const Vector3 foot = c + Vector3(down.x, 0, down.y) * 10.0;
 						// A real foot: level ground over 8 m in front, and the wall behind rising at least 8 m within 12 m.
-						const real_t hf = gen->get_height(foot);
-						const bool wall = gen->get_height(foot - Vector3(down.x, 0, down.y) * 12.0) > hf + 8.0;
+						const real_t hf = rf_height(gen, foot);
+						const bool wall = rf_height(gen, foot - Vector3(down.x, 0, down.y) * 12.0) > hf + 8.0;
 						if (wall && ground_normal(gen, foot.x + down.x * 4.0, foot.z + down.y * 4.0, 8.0).y > 0.93f && gen->get_water_depth(foot) <= 0.0) {
 							sites.push_back({ foot, bare * (0.7f + rng.randf() * 0.3f), 4 });
 						}
@@ -1921,14 +1937,14 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						continue;
 					}
 					const Vector3 at(at2.x, 0, at2.y);
-					if (gen->get_height(at) < shore_top || gen->get_water_depth(at) > 0.5) {
+					if (rf_height(gen, at) < shore_top || gen->get_water_depth(at) > 0.5) {
 						continue; // the delta and the lake: sediment, not a scoured bed
 					}
 					if (gen->get_rock_exposure(at) < 0.3 && slope < 0.08f) {
 						continue; // a gravel bed: the bedrock is under it
 					}
 					run = -40.0 * rng.randf();
-					const RockGenerator::RockType type = _type_at(gen, Vector3(at.x, gen->get_height(at), at.z));
+					const RockGenerator::RockType type = _type_at(gen, Vector3(at.x, rf_height(gen, at), at.z));
 					const uint32_t key = _library_key(type, RockGenerator::FAMILY_POTHOLE, 0);
 					Library *lib = _ensure_library(key);
 					if (!lib) {
@@ -1947,13 +1963,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					st.basis = Basis(fxx, n, fz).scaled_local(Vector3(st.scale, st.scale, st.scale));
 					// A bed wide and level enough across to hold the slab flush: a V-shaped gully (or a terrain grid too
 					// coarse to carve the channel) would bury its sides or leave it standing proud.
-					const real_t g = gen->get_height(at);
+					const real_t g = rf_height(gen, at);
 					const real_t half_l = real_t(box.size.x) * st.scale * 0.4, half_w = real_t(box.size.z) * st.scale * 0.4;
 					real_t worst = 0.0, above = 0.0;
 					for (int ia = -1; ia <= 1; ia++) {
 						for (int ic = -1; ic <= 1; ic++) {
 							const Vector3 o = fxx * (real_t(ia) * half_l) + fz * (real_t(ic) * half_w);
-							const real_t r = gen->get_height(at + Vector3(o.x, 0, o.z)) - (g + o.y);
+							const real_t r = rf_height(gen, at + Vector3(o.x, 0, o.z)) - (g + o.y);
 							worst = MAX(worst, Math::abs(r));
 							above = MAX(above, r);
 						}
@@ -2012,7 +2028,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				}
 				used.push_back(s.p);
 				made++;
-				const RockGenerator::RockType type = _type_at(gen, Vector3(s.p.x, gen->get_height(s.p), s.p.z));
+				const RockGenerator::RockType type = _type_at(gen, Vector3(s.p.x, rf_height(gen, s.p), s.p.z));
 				if (s.kind == 4) {
 					if (cave_made) {
 						continue;
@@ -2036,10 +2052,10 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					const Vector3 out(o2.x, 0, o2.y), up(0, 1, 0);
 					const Vector3 strike(-o2.y, 0, o2.x); // so that strike x out = up
 					// Where the wall rises from the foot: the first point back toward it 1 m above the foot.
-					real_t g = gen->get_height(s.p);
+					real_t g = rf_height(gen, s.p);
 					real_t back = -1.0;
 					for (real_t t = 0.0; t <= 14.0; t += 0.5) {
-						if (gen->get_height(s.p - out * t) > g + 1.0) {
+						if (rf_height(gen, s.p - out * t) > g + 1.0) {
 							back = MAX(t - 1.0, real_t(0.0));
 							break;
 						}
@@ -2049,7 +2065,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 					}
 					const Vector3 base = s.p - out * back;
 					for (int j = -2; j <= 2; j++) {
-						g = MIN(g, gen->get_height(base + strike * real_t(j) * 1.5));
+						g = MIN(g, rf_height(gen, base + strike * real_t(j) * 1.5));
 					}
 					// The wall's own normal a few metres up; the block leans back with it (up to 25 degrees), so its front
 					// lies along the face and its sides and top go into the hill, the passage running down into it.
@@ -2080,7 +2096,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							for (int iv = 1; iv <= 4; iv++) {
 								const Vector3 p = mouth + strike * (hw * real_t(iu) * 0.45) + up_t * (hh * real_t(iv) * 0.24);
 								real_t t = 0.0;
-								while (t < 12.0 && gen->get_height(p + out * t) > p.y) {
+								while (t < 12.0 && rf_height(gen, p + out * t) > p.y) {
 									t += 0.25;
 								}
 								push = MAX(push, t);
@@ -2112,7 +2128,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						const real_t size = 0.5 + 1.2 * rng.randf() * rng.randf();
 						bs.scale = size * 0.5;
 						bs.basis = Basis(up, rng.randf() * Math::TAU).scaled(Vector3(bs.scale, bs.scale, bs.scale));
-						const real_t gb = gen->get_height(at);
+						const real_t gb = rf_height(gen, at);
 						bs.position = Vector3(at.x, gb - blib->bottom[bs.variant] * bs.scale - 0.12 * size, at.z);
 						bs.ground = gb;
 						r_stones.push_back(bs);
@@ -2142,12 +2158,12 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						st.scale = height / MAX(real_t(box.size.x), real_t(0.3));
 						st.basis = (Basis(Vector3(0, 1, 0), rng.randf() * Math::TAU) * Basis(Vector3(0, 0, 1), Math::PI * 0.5)).scaled(Vector3(st.scale, st.scale, st.scale));
 						const real_t r = real_t(box.size.y) * st.scale * 0.5;
-						real_t g = gen->get_height(at);
+						real_t g = rf_height(gen, at);
 						for (int j = 0; j < 6; j++) {
-							g = MIN(g, gen->get_height(at + Vector3(Math::cos(j * Math::TAU / 6.0), 0, Math::sin(j * Math::TAU / 6.0)) * r));
+							g = MIN(g, rf_height(gen, at + Vector3(Math::cos(j * Math::TAU / 6.0), 0, Math::sin(j * Math::TAU / 6.0)) * r));
 						}
 						st.position = Vector3(at.x, g - 0.06 * height - box.position.x * st.scale, at.z);
-						st.ground = gen->get_height(at);
+						st.ground = rf_height(gen, at);
 						r_stones.push_back(st);
 					}
 					continue;
@@ -2182,15 +2198,15 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						const real_t jy = (rng.randf() - 0.5f) * 0.15f; // the joints wander a little from fin to fin
 						const Vector3 al = Basis(up, jy).xform(along), ac = Basis(up, jy).xform(across);
 						st.basis = Basis(al, ac, up).scaled_local(Vector3(st.scale, st.scale, st.scale));
-						real_t g = gen->get_height(at);
+						real_t g = rf_height(gen, at);
 						for (int j = -2; j <= 2; j++) {
 							for (int sd = -1; sd <= 1; sd += 2) {
-								g = MIN(g, gen->get_height(at + al * (real_t(j) * 0.22 * length) + ac * (real_t(sd) * real_t(box.size.y) * st.scale * 0.5)));
+								g = MIN(g, rf_height(gen, at + al * (real_t(j) * 0.22 * length) + ac * (real_t(sd) * real_t(box.size.y) * st.scale * 0.5)));
 							}
 						}
 						const real_t height = real_t(box.size.z) * st.scale;
 						st.position = Vector3(at.x, g - 0.04 * height - box.position.z * st.scale, at.z);
-						st.ground = gen->get_height(at);
+						st.ground = rf_height(gen, at);
 						r_stones.push_back(st);
 					}
 					continue;
@@ -2216,7 +2232,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						b = Basis(axis.normalized(), Math::acos(CLAMP(n.y, real_t(-1.0), real_t(1.0)))) * b;
 					}
 					st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
-					const real_t g = gen->get_height(s.p);
+					const real_t g = rf_height(gen, s.p);
 					st.position = Vector3(s.p.x, g + 0.15 - ax.y * st.scale, s.p.z);
 					st.ground = g - 0.4; // bedrock at the surface: the ground-blend band only at its buried edges
 					r_stones.push_back(st);
@@ -2263,12 +2279,12 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						st.basis = b.scaled(Vector3(st.scale, st.scale, st.scale));
 						// The lowest ground under its foot, so no side hangs over the slope.
 						const real_t r = real_t(box.size.y) * st.scale * 0.5;
-						real_t g = gen->get_height(p_at);
+						real_t g = rf_height(gen, p_at);
 						for (int j = 0; j < 6; j++) {
-							g = MIN(g, gen->get_height(p_at + Vector3(Math::cos(j * Math::TAU / 6.0), 0, Math::sin(j * Math::TAU / 6.0)) * r));
+							g = MIN(g, rf_height(gen, p_at + Vector3(Math::cos(j * Math::TAU / 6.0), 0, Math::sin(j * Math::TAU / 6.0)) * r));
 						}
 						st.position = Vector3(p_at.x, g - 0.12 * height, p_at.z) - b.xform(Vector3(box.position.x, 0, 0)) * st.scale;
-						st.ground = gen->get_height(p_at);
+						st.ground = rf_height(gen, p_at);
 						r_stones.push_back(st);
 					}
 				}
@@ -2311,7 +2327,16 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			// The share of the ground each class covers in the stone domains (the borders are clast-supported: Washburn
 			// 1956; Hallet 2013); stones of the coarse end, frost-heaved.
 			const float *frost_cover = rf_frost_cover;
-			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on && !frost_on) {
+			// Storm runoff's gravel (docs/ideas/ground-detail.md, "Gravel sorted by storm runoff"): the rills and gullies
+			// the terrain's droplet erosion cut (TerrainGenerator3D.get_gully_at, the rule its material draws their gravel
+			// by) keep a lag of the coarse grains in their floors, the fines washed out (Poesen et al. 2003), and drop
+			// their load as a spread of fine grains on the fans where the slope eases.
+			const bool runoff_on = runoff_gravel && sd2 > sd1 * 1.01f;
+			// The share of the ground each class covers on a channel floor (clast-supported where the flow ran
+			// strongest) and on a fan.
+			static const float lag_cover[3] = { 0.35f, 0.25f, 0.06f };
+			static const float fan_cover[3] = { 0.0f, 0.04f, 0.12f };
+			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on && !frost_on && !runoff_on) {
 				break;
 			}
 			// Each class's cover (count x mean footprint) is held under about half the ground: past that the
@@ -2327,6 +2352,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 				float e = 0.0f; // height above the water line
 				float river = 0.0f; // and from a river bed's log-normal
 				RiverBed bed;
+				float gully = 0.0f; // a rill or gully floor's share (as the terrain material's), 0..1
+				float fan = 0.0f; // the fan below it, 0..1
+				Vector2 flow; // downhill
 			};
 			LocalVector<DetailCorner> corners;
 			corners.resize((nx + 1) * (nz + 1));
@@ -2343,7 +2371,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							}
 						}
 						if (level > -1e29) {
-							const float e = float(gen->get_height(c) - level);
+							const float e = float(rf_height(gen, c) - level);
 							if (e >= -0.6f && e <= 2.5f) {
 								// As the shore layer: the median size from the beach slope (Bujan et al. 2019), boulders under rock.
 								const Vector3 n = ground_normal(gen, c.x, c.z, 1.0);
@@ -2374,6 +2402,19 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							// law's count between d1 and d2 follows from it.
 							const float n_min = 0.3f * t / (float(Math::PI) * 1.25f * scree_dmin * scree_dmin);
 							dc.scree = MIN(n_min * (Math::pow(pd1 / scree_dmin, -2.5f) - Math::pow(pd2 / scree_dmin, -2.5f)), cap_scree);
+						}
+					}
+					if (runoff_on) {
+						// As the terrain material: the channel floor where the slope-area index and the flow's concentration
+						// are high (not on bare rock), the fan where the deposit lies on easing ground.
+						const Vector3 n = ground_normal(gen, c.x, c.z, 1.0);
+						const Vector2 gl = gen->get_gully_at(c, n.y);
+						if (gl.x > 0.0f || gl.y > 0.0f) {
+							const float rk = CLAMP(float(gen->get_rock_exposure(c)), 0.0f, 1.0f);
+							dc.gully = CLAMP(float(gl.x) * (1.0f - rk), 0.0f, 1.0f);
+							dc.fan = Math::smoothstep(0.15f, 0.8f, float(gl.y)) * Math::smoothstep(0.85f, 0.93f, float(n.y));
+							const Vector2 f(n.x, n.z);
+							dc.flow = f.length() > 1e-4f ? f.normalized() : Vector2(0, 1);
 						}
 					}
 				}
@@ -2418,6 +2459,14 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						// Circles or stripes by the hillside's slope over a few metres (hummocks do not turn circles into stripes).
 						fslope = Math::rad_to_deg(Math::acos(CLAMP(float(fn.y), -1.0f, 1.0f)));
 						rate_max += MIN(frost_cover[cls] * per_cover * fgate, cap_shore);
+					}
+					if (runoff_on) {
+						float gm = 0.0f, fm = 0.0f;
+						for (const DetailCorner *k : cc) {
+							gm = MAX(gm, k->gully);
+							fm = MAX(fm, k->fan);
+						}
+						rate_max += MIN(lag_cover[cls] * per_cover * gm, cap_shore) + MIN(fan_cover[cls] * per_cover * fm, cap_shore);
 					}
 					Vector3 wmax;
 					float stony = 0.0f;
@@ -2480,8 +2529,33 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 							shore *= keep;
 							scree *= keep;
 						}
+						float lag = 0.0f, spread = 0.0f;
+						Vector2 flow;
+						if (runoff_on) {
+							float gully = 0.0f, fan = 0.0f;
+							for (int q = 0; q < 4; q++) {
+								gully += w[q] * cc[q]->gully;
+								fan += w[q] * cc[q]->fan;
+								flow += w[q] * cc[q]->flow;
+							}
+							flow = flow.length() > 1e-4f ? flow.normalized() : Vector2(0, 1);
+							if (gully > 0.0f) {
+								// The floor: its coarse lag; the gravel half washed out, the fines mostly.
+								lag = MIN(lag_cover[cls] * per_cover * gully, cap_shore);
+								static const float washed[3] = { 0.0f, 0.4f, 0.8f };
+								shore *= 1.0f - washed[cls] * gully;
+								scree *= 1.0f - washed[cls] * gully;
+							}
+							if (fan > 0.0f) {
+								// The fan: fine grains spread over it, burying some of the coarser ground under it.
+								spread = MIN(fan_cover[cls] * per_cover * fan, cap_shore);
+								const float buried = cls == 0 ? 0.6f : 0.3f;
+								shore *= 1.0f - buried * fan;
+								scree *= 1.0f - buried * fan;
+							}
+						}
 						const float base = shore + scree + river;
-						const float total = base + worn + kick + root + sorted;
+						const float total = base + worn + kick + root + sorted + lag + spread;
 						if (total <= 0.0f || rng.randf() * rate_max > total) {
 							continue;
 						}
@@ -2490,7 +2564,30 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 						pd.xz = Vector3(x + fx * sub, 0, z + fz * sub);
 						pd.yaw = rng.randf() * Math::TAU;
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
-						if (pick >= base + worn + kick + root) {
+						if (pick >= base + worn + kick + root + sorted) {
+							if (pick < base + worn + kick + root + sorted + lag) {
+								// The lag: the coarse end of the class, subangular to a little rounded by the short run, imbricated
+								// across the flow (long axis across it, dipping upstream, as a stream's gravel: Rust 1972).
+								pd.key = _library_key(type, rng.randf() < 0.35f ? RockGenerator::FAMILY_PEBBLE : RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
+								pd.size = sd1 * Math::pow(sd2 / sd1, Math::sqrt(rng.randf()));
+								pd.yaw = Math::atan2(-flow.x, -flow.y) + (rng.randf() - 0.5f) * 0.8f;
+								pd.tilt_axis = Vector3(-flow.y, 0, flow.x);
+								pd.tilt = Math::deg_to_rad(8.0f + 17.0f * rng.randf());
+								pd.sink = 0.2f + 0.1f * rng.randf();
+								pd.follow = 0.7f;
+								pd.film = 0.0f;
+								runoff_stones[0].increment();
+							} else {
+								// The fan's spread: the fine end, lying flat, half in the silt laid round it.
+								pd.key = _library_key(type, rng.randf() < 0.5f ? RockGenerator::FAMILY_PEBBLE : RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
+								pd.size = Math::pow(ka - rng.randf() * (ka - kb), -1.0f / 2.5f);
+								pd.tilt = Math::deg_to_rad(10.0f) * rng.randf();
+								pd.sink = 0.25f + 0.1f * rng.randf();
+								pd.follow = 0.9f;
+								pd.film = 0.0f;
+								runoff_stones[1].increment();
+							}
+						} else if (pick >= base + worn + kick + root) {
 							// Frost-sorted: blocky frost-shattered stones (the rockfall family's fresh joint blocks, not the
 							// talus's chips), piled clast on clast into a border standing over the soil, some heaved up on
 							// edge with the long axis tilted up (Washburn 1956; Hallet 2013).
@@ -2622,6 +2719,43 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 			coarse.add(sd.xz, sd.centre, sd.r);
 		}
 	}
+	// Neighbours of one shape are told apart: a variant that a stone of the same library within a few sizes already
+	// has is drawn again (up to three times), so a packed bed shows no side-by-side twins (no visible repetition; the
+	// greedy colouring tile games use so no two neighbours share a tile).
+	struct Placed {
+		Vector2 p;
+		uint32_t key;
+		int next; // the next stone in its grid bin, or -1
+		uint16_t variant;
+	};
+	LocalVector<Placed> placed;
+	// 1 m bins over the cell, each the head of a list through Placed::next (no allocation per bin).
+	const real_t bin_m = 1.0;
+	const int gw = MAX(1, int(Math::ceil(p_rect.size.x / bin_m))), gh = MAX(1, int(Math::ceil(p_rect.size.y / bin_m)));
+	LocalVector<int> bin_head;
+	auto bin_of = [&](const Vector2 &p_at) {
+		const int bx = CLAMP(int(Math::floor((p_at.x - p_rect.position.x) / bin_m)), 0, gw - 1);
+		const int bz = CLAMP(int(Math::floor((p_at.y - p_rect.position.y) / bin_m)), 0, gh - 1);
+		return Vector2i(bx, bz);
+	};
+	auto shared_near = [&](const Vector2 &p_at, uint32_t p_key, uint16_t p_variant, real_t p_reach) {
+		if (bin_head.is_empty()) {
+			return false;
+		}
+		const int rc = int(Math::ceil(p_reach / bin_m));
+		const Vector2i c = bin_of(p_at);
+		for (int bz = MAX(c.y - rc, 0); bz <= MIN(c.y + rc, gh - 1); bz++) {
+			for (int bx = MAX(c.x - rc, 0); bx <= MIN(c.x + rc, gw - 1); bx++) {
+				for (int id = bin_head[bz * gw + bx]; id >= 0; id = placed[id].next) {
+					const Placed &o = placed[id];
+					if (o.key == p_key && o.variant == p_variant && o.p.distance_to(p_at) < p_reach) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	};
 	for (const Pending &pd : pending) {
 		if (int(r_stones.size()) >= cap) {
 			break;
@@ -2649,6 +2783,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 		st.layer = p_layer;
 		st.library = pd.key;
 		st.variant = pick_variant(lib);
+		const Vector2 at2(pd.xz.x, pd.xz.z);
+		const real_t reach = MAX(real_t(4.0 * pd.size), real_t(0.3));
+		for (int t = 0; t < 3 && lib->meshes.size() > 1 && shared_near(at2, pd.key, st.variant, reach); t++) {
+			st.variant = pick_variant(lib);
+		}
 		st.scale = pd.size * 0.5f;
 		st.film = pd.film;
 		_rest(gen, st, *lib, pd.xz, pd.yaw, pd.sink, pd.tilt_axis, pd.tilt, pd.follow);
@@ -2668,6 +2807,15 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, Lo
 		}
 		st.position.y += rise;
 		dep.add(Vector2(pd.xz.x, pd.xz.z), float(st.position.y), r);
+		if (bin_head.is_empty()) {
+			bin_head.resize(gw * gh);
+			for (int &h : bin_head) {
+				h = -1;
+			}
+		}
+		const Vector2i bc = bin_of(at2);
+		placed.push_back({ at2, pd.key, bin_head[bc.y * gw + bc.x], st.variant });
+		bin_head[bc.y * gw + bc.x] = int(placed.size()) - 1;
 		r_stones.push_back(st);
 	}
 }
@@ -2955,7 +3103,7 @@ float RockField3D::_frost_gate(const TerrainGenerator3D *p_gen, const FrostClima
 	if (!p_frost.on || p_frost.wet <= 0.0f) {
 		return 0.0f;
 	}
-	const float h = float(p_gen->get_height(p_at));
+	const float h = float(rf_height(p_gen, p_at));
 	const float maat = p_frost.maat - p_frost.lapse * (h - p_frost.reference) / 1000.0f;
 	const float cold = Math::smoothstep(1.0f, -2.0f, maat);
 	if (cold <= 0.0f) {
@@ -3040,6 +3188,24 @@ float RockField3D::ReliefGrid::max_in(const Rect2 &p_rect) const {
 		}
 	}
 	return m;
+}
+
+void RockField3D::set_runoff_gravel(bool p_enabled) {
+	if (runoff_gravel == p_enabled) {
+		return;
+	}
+	runoff_gravel = p_enabled;
+	_detail_cancel();
+	LocalVector<Vector3i> drop;
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		if (_is_detail(kv.key.x)) {
+			_free_cell(kv.value);
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		cells.erase(k);
+	}
 }
 
 void RockField3D::set_frost_sorting(bool p_enabled) {
@@ -3186,8 +3352,8 @@ Color RockField3D::_stone_custom(const TerrainGenerator3D *p_gen, const Stone &p
 	if (p_gen && p_stone.ground > p_stone.position.y - 30.0) {
 		const real_t r = CLAMP(p_stone.scale * MAX(p_axes.x, p_axes.z) * 0.6, 0.2, 4.0);
 		const Vector3 o = p_stone.position;
-		slope.x = (p_gen->get_height(o + Vector3(r, 0, 0)) - p_gen->get_height(o - Vector3(r, 0, 0))) / (2.0 * r);
-		slope.y = (p_gen->get_height(o + Vector3(0, 0, r)) - p_gen->get_height(o - Vector3(0, 0, r))) / (2.0 * r);
+		slope.x = (rf_height(p_gen, o + Vector3(r, 0, 0)) - rf_height(p_gen, o - Vector3(r, 0, 0))) / (2.0 * r);
+		slope.y = (rf_height(p_gen, o + Vector3(0, 0, r)) - rf_height(p_gen, o - Vector3(0, 0, r))) / (2.0 * r);
 	}
 	const int qx = CLAMP(int(Math::round((slope.x + 2.0f) / 4.0f * 255.0f)), 0, 255);
 	const int qz = CLAMP(int(Math::round((slope.y + 2.0f) / 4.0f * 255.0f)), 0, 255);
@@ -3506,7 +3672,7 @@ void RockField3D::_tile_squares(const TerrainGenerator3D *p_gen, int p_layer, co
 		for (int j = 0; j < 5; j++) {
 			for (int i = 0; i < 5; i++) {
 				const real_t u = (i - 2) * ts * 0.25, v = (j - 2) * ts * 0.25;
-				h[j * 5 + i] = p_gen->get_height(Vector3(c.x + u, 0, c.y + v));
+				h[j * 5 + i] = rf_height(p_gen, Vector3(c.x + u, 0, c.y + v));
 				mean += h[j * 5 + i];
 				sx += h[j * 5 + i] * u;
 				sz += h[j * 5 + i] * v;
@@ -3666,7 +3832,17 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 		_tile_squares(gen, key.x, rect, N, r_stones, r_job.seeds, top);
 		for (int q = 0; q < N * N; q++) {
 			const Vector3 worn = r_job.wear.max_in(top[q].rect);
-			if (top[q].ok && (MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any || (r_job.relief.any && r_job.relief.max_in(top[q].rect) > 0.01f))) {
+			bool channel = false;
+			if (top[q].ok && runoff_gravel) {
+				// No tile over a rill, gully or fan: its grains lie by the flow.
+				for (int c = 0; c < 5 && !channel; c++) {
+					const Vector2 p = c == 4 ? top[q].rect.get_center() : top[q].rect.position + top[q].rect.size * Vector2(c & 1, c >> 1);
+					const Vector3 n = ground_normal(gen, p.x, p.y, 1.0);
+					const Vector2 gl = gen->get_gully_at(Vector3(p.x, 0, p.y), n.y);
+					channel = gl.x > 0.02f || gl.y > 0.15f;
+				}
+			}
+			if (top[q].ok && (channel || MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any || (r_job.relief.any && r_job.relief.max_in(top[q].rect) > 0.01f))) {
 				top[q].ok = false; // worn ground (a trail, a rooting) keeps its own grains: no tile is cut from it
 				top[q].fail = 4;
 			}
@@ -4966,7 +5142,7 @@ void RockField3D::_update_streaming(bool p_all) {
 	_watch_ground();
 	TerrainGenerator3D *gen = _get_generator();
 	const Vector3 tp = _target_position();
-	if (!gen || !Math::is_finite(gen->get_height(tp))) {
+	if (!gen || !Math::is_finite(rf_height(gen, tp))) {
 		return;
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
@@ -5738,10 +5914,10 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 		if (TerrainGenerator3D *gen = _get_generator()) {
 			const Vector3 c = xf.origin;
 			const real_t e = 1.0;
-			const real_t gx = (gen->get_height(c + Vector3(e, 0, 0)) - gen->get_height(c - Vector3(e, 0, 0))) / (2.0 * e);
-			const real_t gz = (gen->get_height(c + Vector3(0, 0, e)) - gen->get_height(c - Vector3(0, 0, e))) / (2.0 * e);
+			const real_t gx = (rf_height(gen, c + Vector3(e, 0, 0)) - rf_height(gen, c - Vector3(e, 0, 0))) / (2.0 * e);
+			const real_t gz = (rf_height(gen, c + Vector3(0, 0, e)) - rf_height(gen, c - Vector3(0, 0, e))) / (2.0 * e);
 			out = Vector3(-gx, 1, -gz).normalized();
-			node->set("kill_y", gen->get_height(c) - 400.0);
+			node->set("kill_y", rf_height(gen, c) - 400.0);
 		}
 		xf.origin += out * (p_grp.reach[p_k] * 1.05f + 0.05f); // clear of the face plane: reach is its farthest surface point
 		node->set("dynamic", true);
@@ -5822,7 +5998,7 @@ void RockField3D::_terrain3d_hole(const Transform3D &p_box) {
 				return h;
 			}
 		}
-		return gen->get_height(Vector3(p_x, 0, p_z));
+		return rf_height(gen, Vector3(p_x, 0, p_z));
 	};
 	int written = 0;
 	const Transform3D inv = p_box.affine_inverse();
@@ -6080,7 +6256,7 @@ void RockField3D::_update_react(double p_delta) {
 		bool done = sleeping || l.idle > 0.4f || l.age > 8.0f;
 		if (gen) {
 			// Through the ground (no collision there, or tunnelled): back on it, at rest.
-			const float ground = float(gen->get_height(bt.origin));
+			const float ground = float(rf_height(gen, bt.origin));
 			if (bt.origin.y < ground - 0.5f * l.reach) {
 				bt.origin.y = ground + 0.3f * l.reach;
 				done = true;
@@ -6190,7 +6366,7 @@ void RockField3D::_update_react(double p_delta) {
 		const Vector3 centre = pr.center;
 		const bool wheel = pr.wheel;
 		const float foot_min = oval ? MIN(hu, hw) : foot;
-		if (gen && bottom > float(gen->get_height(centre)) + 0.25f) {
+		if (gen && bottom > float(rf_height(gen, centre)) + 0.25f) {
 			continue; // off the ground
 		}
 		WorldGround *wg = WorldContracts::ground();
@@ -6264,7 +6440,7 @@ void RockField3D::_update_react(double p_delta) {
 							// or the sole). Picked per stone (a hash, so a stone gets the same answer on every frame it is under).
 							const uint32_t hs = hash_murmur3_one_32(uint32_t(k) * 2654435761u ^ hash_murmur3_one_32(uint32_t(key.y) * 73856093u ^ uint32_t(key.z) * 19349663u ^ gi));
 							const float pick = float(hs & 0xffffu) / 65536.0f;
-							const float ground_gen = gen ? float(gen->get_height(o)) : o.y - r;
+							const float ground_gen = gen ? float(rf_height(gen, o)) : o.y - r;
 							float ground_here = ground_gen;
 							if (dented) {
 								// A deformable ground under the stones (GroundSurface3D's sand or mud): the print it took.
@@ -6368,7 +6544,7 @@ void RockField3D::_update_react(double p_delta) {
 								to += (to - c2).normalized() * (extra * 2.0f * r);
 								float y = o.y + (0.3f + 0.5f * (1.0f - extra)) * r;
 								if (gen) {
-									y += float(gen->get_height(Vector3(to.x, 0, to.y)) - gen->get_height(o));
+									y += float(rf_height(gen, Vector3(to.x, 0, to.y)) - rf_height(gen, o));
 								}
 								if (dented) {
 									// On top of the rim the ground itself pushed up (the stones cover it, the sand does not).
@@ -6520,8 +6696,9 @@ void RockField3D::_update_dust(double p_delta) {
 	if (!rockfall_dust || p_delta <= 0.0) {
 		return;
 	}
-	if (!get_rockfall_dust_node()) {
-		dust_events.clear(); // no Flow to take them: keep only the totals
+	const Node *dn = get_rockfall_dust_node();
+	if (!dn || !dn->can_process()) {
+		dust_events.clear(); // no Flow to take them (or it is paused): keep only the totals
 	}
 	dust_tick++;
 	const float dt = float(p_delta);
@@ -6579,7 +6756,7 @@ void RockField3D::_update_dust(double p_delta) {
 						_add_dust(under, pt->velocity, lost * float(dust_per_joule) * wet, r);
 						dust_impacts++;
 					}
-				} else if (gen && v.length() > 0.8f && gen->get_height(c) > c.y - r * 1.4f) {
+				} else if (gen && v.length() > 0.8f && rf_height(gen, c) > c.y - r * 1.4f) {
 					_add_dust(under, v, m * 2e-6f * v.length() * dt * wet, r);
 				}
 			}
@@ -6701,8 +6878,9 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 		}
 	}
 	last_build_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
-	// (Stills are not thinned here: thinning ~1,000 far MultiMeshes left the near grains wrong in the path-traced still
-	// though raster was unchanged, docs/ideas/rocks.md "Far rocks"; streaming still thins them in play.)
+	// Stills thin as play does (the path-traced pits once seen with thinning here no longer reproduce, 22 Nov,
+	// docs/ideas/rocks.md "Far rocks").
+	_update_thinning(_target_position());
 	// Close-up shapes too, waiting for them (stills and benches want the finished picture): two passes, the first
 	// starts the builds, the second places them.
 	if (close_up_enabled) {
@@ -6726,7 +6904,85 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 	return built;
 }
 
+void RockField3D::_obstacle_place_job(void *p_job, uint32_t p_index) {
+	CoarseJob &job = static_cast<CoarseJob *>(p_job)[p_index];
+	const real_t cs = job.field->_cell_size(Layer(job.key.x));
+	rf_job_generator = job.gen;
+	rf_coarse_job = &job;
+	job.field->_place(Layer(job.key.x), Rect2(job.key.y * cs, job.key.z * cs, cs, cs), rf_hash3(job.key.x, job.key.y, job.key.z, uint32_t(job.field->seed) * 2654435761u), job.stones);
+	rf_coarse_job = nullptr;
+	rf_job_generator = nullptr;
+}
+
 PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_size) {
+	// The cells not cached yet: placed on the worker threads in batches (a whole-world query places thousands).
+	LocalVector<Vector3i> missing;
+	for (int l = 0; l < LAYER_MAX; l++) {
+		if (!layer_enabled[l] || l == LAYER_CLIFF || _is_detail(l)) {
+			continue;
+		}
+		const real_t cs = _cell_size(Layer(l));
+		const int x0 = int(Math::floor(p_rect.position.x / cs)), x1 = int(Math::floor(p_rect.get_end().x / cs));
+		const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector3i key(l, x, z);
+				if (!obstacle_cache.has(key)) {
+					missing.push_back(key);
+				}
+			}
+		}
+	}
+	const uint32_t BATCH = 512;
+	TerrainGenerator3D *gen = _get_generator();
+	LocalVector<CoarseJob> placed;
+	for (uint32_t b0 = 0; b0 < missing.size(); b0 += BATCH) {
+		const uint32_t n = MIN(BATCH, missing.size() - b0);
+		placed.clear();
+		placed.resize(n);
+		for (uint32_t i = 0; i < n; i++) {
+			placed[i].field = this;
+			placed[i].key = missing[b0 + i];
+			placed[i].gen = gen;
+		}
+		if (gen && n > 1) {
+			WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&RockField3D::_obstacle_place_job, placed.ptr(), int(n), -1, true, SNAME("RockField3D obstacles"));
+			WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+		}
+		for (uint32_t i = 0; i < n; i++) {
+			CoarseJob &pj = placed[i];
+			if (!gen || n == 1 || !pj.missing.is_empty()) {
+				// Not placed on a worker, or it wanted a shape library not built yet: place it here, where the
+				// library is built or asked for as before.
+				pj.stones.clear();
+				const real_t cs = _cell_size(Layer(pj.key.x));
+				_place(Layer(pj.key.x), Rect2(pj.key.y * cs, pj.key.z * cs, cs, cs), rf_hash3(pj.key.x, pj.key.y, pj.key.z, uint32_t(seed) * 2654435761u), pj.stones);
+			}
+		}
+		for (uint32_t i = 0; i < n; i++) {
+			ObstacleCell cell;
+			for (const Stone &st : placed[i].stones) {
+				if (st.footprint > 0.0f) {
+					cell.obstacles.push_back(Vector4(st.position.x, st.ground, st.position.z, st.footprint));
+					cell.sizes.push_back(2.0f * st.scale);
+					// Its top: the hull's support straight up when the shape is built (as get_stones), else
+					// about 0.7 b (the c axis) over the origin, where the mesh's base sits.
+					real_t top = st.position.y + 1.4f * st.scale;
+					const Library *lib = libraries.getptr(st.library);
+					if (lib && st.variant < lib->hulls.size() && !lib->hulls[st.variant].is_empty()) {
+						const PackedVector3Array &hull = lib->hulls[st.variant];
+						real_t best = -1e20;
+						for (int h = 0; h < hull.size(); h++) {
+							best = MAX(best, st.basis.rows[1].dot(hull[h]));
+						}
+						top = st.position.y + best;
+					}
+					cell.heights.push_back(MAX(float(top - st.ground), 0.0f));
+				}
+			}
+			obstacle_cache.insert(missing[b0 + i], std::move(cell));
+		}
+	}
 	PackedVector4Array out;
 	for (int l = 0; l < LAYER_MAX; l++) {
 		if (!layer_enabled[l] || l == LAYER_CLIFF || _is_detail(l)) {
@@ -6737,34 +6993,7 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 		const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
 		for (int z = z0; z <= z1; z++) {
 			for (int x = x0; x <= x1; x++) {
-				// Placement is deterministic per cell, so each cell is placed once and its obstacles kept.
-				const Vector3i key(l, x, z);
-				ObstacleCell *oc = obstacle_cache.getptr(key);
-				if (!oc) {
-					LocalVector<Stone> stones;
-					_place(Layer(l), Rect2(x * cs, z * cs, cs, cs), rf_hash3(l, x, z, uint32_t(seed) * 2654435761u), stones);
-					ObstacleCell cell;
-					for (const Stone &st : stones) {
-						if (st.footprint > 0.0f) {
-							cell.obstacles.push_back(Vector4(st.position.x, st.ground, st.position.z, st.footprint));
-							cell.sizes.push_back(2.0f * st.scale);
-							// Its top: the hull's support straight up when the shape is built (as get_stones), else
-							// about 0.7 b (the c axis) over the origin, where the mesh's base sits.
-							real_t top = st.position.y + 1.4f * st.scale;
-							const Library *lib = libraries.getptr(st.library);
-							if (lib && st.variant < lib->hulls.size() && !lib->hulls[st.variant].is_empty()) {
-								const PackedVector3Array &hull = lib->hulls[st.variant];
-								real_t best = -1e20;
-								for (int h = 0; h < hull.size(); h++) {
-									best = MAX(best, st.basis.rows[1].dot(hull[h]));
-								}
-								top = st.position.y + best;
-							}
-							cell.heights.push_back(MAX(float(top - st.ground), 0.0f));
-						}
-					}
-					oc = &obstacle_cache.insert(key, std::move(cell))->value;
-				}
+				const ObstacleCell *oc = obstacle_cache.getptr(Vector3i(l, x, z));
 				for (uint32_t k = 0; k < oc->obstacles.size(); k++) {
 					const Vector4 &o = oc->obstacles[k];
 					if (oc->sizes[k] >= p_min_size && p_rect.has_point(Vector2(o.x, o.z))) {
@@ -7340,7 +7569,7 @@ void RockField3D::_update_contact(bool p_force) {
 		real_t slope = 0.0;
 		if (gen) {
 			const real_t e = MAX(real_t(0.5), real_t(o.w));
-			up = Vector2(gen->get_height(Vector3(o.x + e, 0, o.z)) - gen->get_height(Vector3(o.x - e, 0, o.z)), gen->get_height(Vector3(o.x, 0, o.z + e)) - gen->get_height(Vector3(o.x, 0, o.z - e))) / (2.0 * e);
+			up = Vector2(rf_height(gen, Vector3(o.x + e, 0, o.z)) - rf_height(gen, Vector3(o.x - e, 0, o.z)), rf_height(gen, Vector3(o.x, 0, o.z + e)) - rf_height(gen, Vector3(o.x, 0, o.z - e))) / (2.0 * e);
 			slope = up.length();
 			up = slope > 1e-4 ? up / slope : Vector2();
 		}
@@ -7706,7 +7935,7 @@ void RockField3D::_cover_fill(CoverJob *p_job) {
 						level = MAX(level, l);
 					}
 				}
-				const float e = level > -1e29 ? float(gen->get_height(c) - level) : 1e9f;
+				const float e = level > -1e29 ? float(rf_height(gen, c) - level) : 1e9f;
 				if (e >= -0.6f && e <= 2.5f) {
 					const Vector3 nn = ground_normal(gen, c.x, c.z, MAX(1.0f, 0.5f * p_job->texel));
 					const float tanb = Math::sqrt(MAX(1.0f / (nn.y * nn.y) - 1.0f, 0.0f));
@@ -8122,6 +8351,8 @@ Dictionary RockField3D::get_ground_detail_tile_stats() const {
 	d["skip_bent"] = int64_t(tile_skips[2].get());
 	d["skip_unmatched"] = int64_t(tile_skips[3].get());
 	d["frost_sorted"] = int64_t(frost_stones.get());
+	d["runoff_lag"] = int64_t(runoff_stones[0].get());
+	d["runoff_fan"] = int64_t(runoff_stones[1].get());
 	d["wear_armour"] = int64_t(wear_stones[0].get());
 	d["wear_shoulder"] = int64_t(wear_stones[1].get());
 	d["wear_rooting"] = int64_t(wear_stones[2].get());
@@ -8271,6 +8502,22 @@ void RockField3D::_notification(int p_what) {
 				_update_contact(false);
 			}
 			_update_frost_map();
+		} break;
+		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+			if (rockfall_dust) {
+				_update_dust(get_physics_process_delta_time());
+			}
+			_update_react(get_physics_process_delta_time());
+		} break;
+		case NOTIFICATION_VISIBILITY_CHANGED: {
+			const bool vis = is_visible_in_tree();
+			for (KeyValue<Vector3i, Cell> &kv : cells) {
+				for (TilePlacement &tp : kv.value.tiles) {
+					for (const RID &r : tp.instances) {
+						RS::get_singleton()->instance_set_visible(r, vis);
+					}
+				}
+			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			WorldContracts::unregister_cover(this);
@@ -8424,6 +8671,8 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_react_stats"), &RockField3D::get_react_stats);
 	ClassDB::bind_method(D_METHOD("is_ground_detail_rivers"), &RockField3D::is_ground_detail_rivers);
 	ClassDB::bind_method(D_METHOD("set_ground_wear", "enabled"), &RockField3D::set_ground_wear);
+	ClassDB::bind_method(D_METHOD("set_runoff_gravel", "enabled"), &RockField3D::set_runoff_gravel);
+	ClassDB::bind_method(D_METHOD("is_runoff_gravel"), &RockField3D::is_runoff_gravel);
 	ClassDB::bind_method(D_METHOD("set_frost_sorting", "enabled"), &RockField3D::set_frost_sorting);
 	ClassDB::bind_method(D_METHOD("is_frost_sorting"), &RockField3D::is_frost_sorting);
 	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &RockField3D::get_frost_at);
@@ -8504,6 +8753,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_rivers"), "set_ground_detail_rivers", "is_ground_detail_rivers");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_wear"), "set_ground_wear", "is_ground_wear");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "frost_sorting"), "set_frost_sorting", "is_frost_sorting");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_gravel"), "set_runoff_gravel", "is_runoff_gravel");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_tiles"), "set_ground_detail_tiles", "is_ground_detail_tiles");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stones_react"), "set_stones_react", "is_stones_react");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "react_max_bodies", PROPERTY_HINT_RANGE, "0,256,1"), "set_react_max_bodies", "get_react_max_bodies");

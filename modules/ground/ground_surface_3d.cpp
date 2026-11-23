@@ -1709,6 +1709,62 @@ void GroundSurface3D::tear_mat(Vector3 p_position, Vector2 p_size, float p_yaw) 
 	}
 }
 
+// Peat water (round 25.1). A bog's water table stands within a few centimetres of its surface (Rydin and Jeglum
+// 2013), held in the acrotelm, the living, loosely packed top layer whose hydraulic conductivity runs to 1e-3 m/s
+// (Ingram's diplotelmic bog; Holden and Burt 2003), against 1e-7 to 1e-5 in the humified catotelm under it. A rut torn
+// through the mat cuts that layer, so water runs in through its walls until it stands at the table: dark, humic water
+// that hides how deep the rut is. Water above the table (rain) drains back the same way. Each torn 25 cm cell moves
+// toward the level 5 cm under the bog's surface with time constant L / K, the flow path L about half a rut (15 cm)
+// over K 1e-3 m/s: 150 s of world time (runoff_time_scale), a few minutes. The water goes in (or out) at each torn
+// cell; the field's own water evens it along the rut.
+void GroundSurface3D::_peat_water_update(double p_delta) {
+	if (!peat_bogs || !peat_water || !standing_water || !field.valid || wear_cells.is_empty() || p_delta <= 0.0) {
+		return;
+	}
+	// At most a twentieth of the difference an update: the water level is read back from the GPU a few updates late,
+	// and a larger step would overfill the rut past the table before the read caught up.
+	// Draining it may take twice that: it can only take what stands there, and a level taken under the table
+	// fills again.
+	const float k_full = 1.0f - Math::exp(-float(p_delta) * MAX(runoff_time_scale, 0.0f) / 150.0f);
+	const float k = MIN(k_full, 0.05f);
+	const float k_drain = MIN(k_full, 0.1f);
+	if (k_full <= 0.0f) {
+		return;
+	}
+	const Rect2 r = field.rect().grow(-1.0f);
+	for (const KeyValue<Vector2i, Wear> &kv : wear_cells) {
+		if (kv.value.torn < 0.5f) {
+			continue;
+		}
+		const Vector3 q((kv.key.x + 0.5f) * WEAR_CELL, 0.0f, (kv.key.y + 0.5f) * WEAR_CELL);
+		if (!r.has_point(Vector2(q.x, q.z))) {
+			continue;
+		}
+		const Cell &c = _cell_at(q.x, q.z);
+		if (c.bog <= 0.05f || !c.deformable) {
+			continue;
+		}
+		const float level = _ground_at(q.x, q.z) - 0.05f;
+		const float floor = get_surface_height_at(q);
+		const float water = MAX(get_standing_water_at(q), 0.0f);
+		float d = level - (floor + water);
+		if (d < 0.0f) {
+			d = MAX(d, -water); // only what stands there drains
+		}
+		if (Math::abs(d) < 1e-4f) {
+			continue;
+		}
+		const float v = d * (d > 0.0f ? k : k_drain) * c.bog * WEAR_CELL * WEAR_CELL;
+		if (Math::abs(v) < 1e-7f) {
+			continue;
+		}
+		// Into the cell itself (in the rut, under the mat's surface), so none is spilled onto the mat round it. Peat
+		// water: tea-coloured with humic acids and fine peat, about as turbid as a light mud.
+		add_water(q, 0.6f * WEAR_CELL, v, v > 0.0f ? 2.0f : 0.0f);
+		peat_water_seeped += v;
+	}
+}
+
 void GroundSurface3D::_seal_add(const Vector3 &p_position, float p_radius, float p_amount) {
 	for (int z = int(Math::floor((p_position.z - p_radius) / WEAR_CELL)); z <= int(Math::floor((p_position.z + p_radius) / WEAR_CELL)); z++) {
 		for (int x = int(Math::floor((p_position.x - p_radius) / WEAR_CELL)); x <= int(Math::floor((p_position.x + p_radius) / WEAR_CELL)); x++) {
@@ -3023,6 +3079,9 @@ float GroundSurface3D::_water_conductivity(const CellInput &p_in) const {
 	// Burnt water-repellent soil sheds rain: infiltration down to about a tenth on a fresh severe burn (Robichaud 2000;
 	// Doerr et al. 2000).
 	k *= 1.0f - 0.9f * p_in.repel;
+	// A peat bog (round 24.2) is saturated to within a few centimetres of its surface: water standing on it or in its
+	// ruts has nowhere to soak to (the table, not the soil, sets its level: _peat_water_update()).
+	k *= 1.0f - 0.999f * CLAMP(p_in.bog, 0.0f, 1.0f);
 	// A packed wheel track takes in a fraction of the water the loose soil beside it does (Ankeny et al. 1990), so
 	// rain stands in worn tracks.
 	k *= 1.0f - 0.8f * p_in.compacted;
@@ -5121,7 +5180,79 @@ float GroundSurface3D::get_salt_crust_at(const Vector3 &p_position) const {
 
 float GroundSurface3D::get_ripple_show_at(const Vector3 &p_position) const {
 	const Cell &c = _cell_at(p_position.x, p_position.z);
-	return c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(p_position.x, p_position.z) : 0.0f;
+	return c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(p_position.x, p_position.z) * (1.0f - _scour_at(p_position.x, p_position.z)) : 0.0f;
+}
+
+void GroundSurface3D::add_scour(const Vector3 &p_position, float p_radius, float p_amount) {
+	if (p_radius <= 0.0f || p_amount <= 0.0f) {
+		return;
+	}
+	const int x0 = int(Math::floor(p_position.x - p_radius));
+	const int x1 = int(Math::floor(p_position.x + p_radius));
+	const int z0 = int(Math::floor(p_position.z - p_radius));
+	const int z1 = int(Math::floor(p_position.z + p_radius));
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const float r = Vector2(x + 0.5f - p_position.x, z + 0.5f - p_position.z).length() / p_radius;
+			const float a = MIN(p_amount, 1.0f) * (1.0f - Math::smoothstep(0.7f, 1.0f, r));
+			if (a <= 0.0f) {
+				continue;
+			}
+			float &v = scours[Vector2i(x, z)];
+			v = 1.0f - (1.0f - v) * (1.0f - a); // each pass sweeps its share of what is left
+		}
+	}
+}
+
+float GroundSurface3D::_scour_at(float p_x, float p_z) const {
+	if (scours.is_empty()) {
+		return 0.0f;
+	}
+	// Bilinear between the 1 m cells' middles.
+	const float fx = p_x - 0.5f;
+	const float fz = p_z - 0.5f;
+	const int x0 = int(Math::floor(fx));
+	const int z0 = int(Math::floor(fz));
+	const float ax = fx - x0;
+	const float az = fz - z0;
+	float v[4];
+	for (int k = 0; k < 4; k++) {
+		const float *e = scours.getptr(Vector2i(x0 + (k & 1), z0 + (k >> 1)));
+		v[k] = e ? *e : 0.0f;
+	}
+	return Math::lerp(Math::lerp(v[0], v[1], ax), Math::lerp(v[2], v[3], ax), az);
+}
+
+void GroundSurface3D::_scours_heal(float p_dt, float p_wind) {
+	if (scours.is_empty() || p_dt <= 0.0f) {
+		return;
+	}
+	// The ripples grow back as fast as saltation moves the sand: some ten minutes of a 10 m/s wind's flux. On the
+	// patch the ground's own flux (shelter, supply, crusts); past it the open flux of the wind.
+	const float q_ref = GroundRipples::saltation_flux(GroundRipples::friction_speed(10.0f));
+	const float q_open = GroundRipples::saltation_flux(GroundRipples::friction_speed(p_wind));
+	const int n = ground_n;
+	const bool lattice = ground_valid && (int)sand_flux.size() == n * n && n > 0;
+	const Vector2 center = Vector2(ground_origin.x + 0.5f * n, ground_origin.y + 0.5f * n) * ground_spacing;
+	LocalVector<Vector2i> gone;
+	for (KeyValue<Vector2i, float> &kv : scours) {
+		float q = q_open;
+		if (lattice) {
+			const int x = int(Math::round((kv.key.x + 0.5f) / ground_spacing)) - ground_origin.x;
+			const int z = int(Math::round((kv.key.y + 0.5f) / ground_spacing)) - ground_origin.y;
+			if (x >= 0 && z >= 0 && x < n && z < n) {
+				q = sand_flux[z * n + x];
+			}
+		}
+		kv.value *= Math::exp(-p_dt * q / (q_ref * 600.0f));
+		// Healed, or far past anywhere it could be seen.
+		if (kv.value < 0.01f || (lattice && Vector2(kv.key).distance_squared_to(center) > 1.0e6f)) {
+			gone.push_back(kv.key);
+		}
+	}
+	for (const Vector2i &k : gone) {
+		scours.erase(k);
+	}
 }
 
 float GroundSurface3D::_lattice_value(const LocalVector<float> &p_values, const Vector3 &p_position) const {
@@ -5956,6 +6087,44 @@ void GroundSurface3D::_wind_update(double p_delta) {
 	const float speed = wind.length();
 	const float ustar = GroundRipples::friction_speed(speed);
 	const float q_open = GroundRipples::saltation_flux(ustar);
+	// The plants' wake (docs/ideas/sand.md, "Nebkha tails"): behind each plant the surface's friction speed drops to
+	// about 0.3 of the open one and recovers over some six plant heights, u*s/u* = r0 + (1 - r0)(1 - exp(-x / (C h)))
+	// (Okin 2008; Li et al. 2013: r0 0.28 to 0.32, C 5.6 to 6.2); the nearest plant upwind sets it. Each 1 m cell
+	// looks back along the wind to three e-folding lengths.
+	LocalVector<float> g_wake;
+	if (plant_wake && !sources.is_empty() && speed > 0.1f) {
+		const float r0 = 0.3f;
+		const float lc = 6.0f * plant_wake_height;
+		const float gs = step * ground_spacing;
+		const Vector2 wd = wind / speed;
+		const int reach = MIN((int)Math::ceil(3.0f * lc / gs), 40);
+		g_wake.resize(gn * gn);
+		bool any = false;
+		for (int gz = 0; gz < gn; gz++) {
+			for (int gx = 0; gx < gn; gx++) {
+				float w = 1.0f;
+				for (int d = 1; d <= reach; d++) {
+					const float fx = gx - wd.x * d;
+					const float fz = gz - wd.y * d;
+					if (fx < 0.0f || fz < 0.0f || fx > gn - 1 || fz > gn - 1) {
+						break;
+					}
+					const int x0 = MIN((int)fx, gn - 2);
+					const int z0 = MIN((int)fz, gn - 2);
+					const float tx = fx - x0;
+					const float tz = fz - z0;
+					const float lam = Math::lerp(Math::lerp(g_lambda[z0 * gn + x0], g_lambda[z0 * gn + x0 + 1], tx), Math::lerp(g_lambda[(z0 + 1) * gn + x0], g_lambda[(z0 + 1) * gn + x0 + 1], tx), tz);
+					const float plant = Math::smoothstep(0.02f, 0.3f, lam); // a plant standing there, not a few stems
+					w = MIN(w, 1.0f - plant * (1.0f - r0) * Math::exp(-d * gs / lc));
+				}
+				g_wake[gz * gn + gx] = w;
+				any = any || w < 0.999f;
+			}
+		}
+		if (!any) {
+			g_wake.clear();
+		}
+	}
 	bool shelter_changed = false;
 	LocalVector<float> armour; // the sand's share left open among the stones, per texel
 	if (!g_armour.is_empty()) {
@@ -5975,6 +6144,9 @@ void GroundSurface3D::_wind_update(double p_delta) {
 			if (!g_lee.is_empty()) {
 				// u* scales with the wind at a fixed height over the same roughness: the plants' ratio times the lee.
 				r *= Math::lerp(Math::lerp(g_lee[z0 * gn + x0], g_lee[z0 * gn + x0 + 1], tx), Math::lerp(g_lee[(z0 + 1) * gn + x0], g_lee[(z0 + 1) * gn + x0 + 1], tx), tz);
+			}
+			if (!g_wake.is_empty()) {
+				r *= Math::lerp(Math::lerp(g_wake[z0 * gn + x0], g_wake[z0 * gn + x0 + 1], tx), Math::lerp(g_wake[(z0 + 1) * gn + x0], g_wake[(z0 + 1) * gn + x0 + 1], tx), tz);
 			}
 			// The flux factor at a reference gale (u* 0.5 m/s), so the share does not jump with the wind.
 			float f = GroundRipples::saltation_flux(0.5f * r) / GroundRipples::saltation_flux(0.5f);
@@ -6026,6 +6198,11 @@ void GroundSurface3D::_wind_update(double p_delta) {
 	const float relax = Math::exp(-ground_spacing / l_sat);
 	const float rho = 1600.0f; // kg/m3, dry sand's bulk density
 	const float dt = float(p_delta) * ripple_time_scale;
+	// The sideways spread: a lateral diffusivity of 0.2 m per metre run (the cloud widens by about 1.5 m over six
+	// metres, so the sand from either side of a 2 m plant meets within its wake; a modelling choice, not a measured
+	// value), as a difference across 0.5 m. With no plant wake the transport stays one-dimensional along the wind.
+	const float side = 0.5f / ground_spacing; // cells
+	const float spread = g_wake.is_empty() ? 0.0f : MIN(0.2f * ground_spacing / 0.25f, 0.45f);
 	for (int k = 0; k < nn; k++) {
 		const int i = wind_order[k];
 		const int x = i % n;
@@ -6036,15 +6213,21 @@ void GroundSurface3D::_wind_update(double p_delta) {
 		// The flux arriving: from one cell upwind, or saturated over open sand of this kind at the patch's edge.
 		const float ux = x - dir.x;
 		const float uz = z - dir.y;
-		float q_up;
-		if (ux < 0.0f || uz < 0.0f || ux > n - 1 || uz > n - 1) {
-			q_up = q_open * supply;
-		} else {
-			const int ax = MIN((int)ux, n - 2);
-			const int az = MIN((int)uz, n - 2);
-			const float bx = ux - ax;
-			const float bz = uz - az;
-			q_up = Math::lerp(Math::lerp(sand_flux[az * n + ax], sand_flux[az * n + ax + 1], bx), Math::lerp(sand_flux[(az + 1) * n + ax], sand_flux[(az + 1) * n + ax + 1], bx), bz);
+		auto flux_at = [&](float p_x, float p_z) {
+			if (p_x < 0.0f || p_z < 0.0f || p_x > n - 1 || p_z > n - 1) {
+				return q_open * supply;
+			}
+			const int ax = MIN((int)p_x, n - 2);
+			const int az = MIN((int)p_z, n - 2);
+			const float bx = p_x - ax;
+			const float bz = p_z - az;
+			return Math::lerp(Math::lerp(sand_flux[az * n + ax], sand_flux[az * n + ax + 1], bx), Math::lerp(sand_flux[(az + 1) * n + ax], sand_flux[(az + 1) * n + ax + 1], bx), bz);
+		};
+		float q_up = flux_at(ux, uz);
+		if (spread > 0.0f) {
+			// The saltation cloud spreads sideways as it goes (turbulent, and the flow closing in behind a plant), so
+			// the sand passing either side of a plant fills its lee: a diffusion across the wind, conserving the sand.
+			q_up += spread * (flux_at(ux - dir.y * side, uz + dir.x * side) + flux_at(ux + dir.y * side, uz - dir.x * side) - 2.0f * q_up);
 		}
 		const float q = cap + (q_up - cap) * relax;
 		sand_flux[i] = q;
@@ -6237,7 +6420,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				const float z = (ripples.origin.y + bz + 0.5f * b) * ripples.cell;
 				const Cell &c = _cell_at(x, z);
 				const float m = c.deformable ? c.blown * _shelter_flux_at(x, z) * (1.0f - get_rain_crust()) : 0.0f; // a rain crust holds
-				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(x, z) : 0.0f;
+				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(x, z) * (1.0f - _scour_at(x, z)) : 0.0f;
 				for (int z2 = bz; z2 < MIN(bz + b, ripples.n); z2++) {
 					for (int x2 = bx; x2 < MIN(bx + b, ripples.n); x2++) {
 						ripples.mask[z2 * ripples.n + x2] = m;
@@ -6256,6 +6439,8 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		ripple_sand_depth.resize(sn * sn);
 		ripple_sand_share.resize(sn * sn);
 		ripple_sand_blown.resize(sn * sn);
+		ripple_sand_scour.resize(sn * sn);
+		ripple_sand_scoured = false;
 		const TerrainGenerator3D *sgen = is_inside_tree() ? _height_query().generator : nullptr;
 		ripple_sand_wind = sgen ? sgen->get_sand_wind_direction() : Vector2();
 		for (int z = 0; z < sn; z++) {
@@ -6263,9 +6448,11 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				const float px = ripple_sand_rect.position.x + (x + 0.5f) * st;
 				const float pz = ripple_sand_rect.position.y + (z + 0.5f) * st;
 				const Cell &c = _cell_at(px, pz);
-				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) : 0.0f;
+				ripple_sand[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(px, pz) * (1.0f - _scour_at(px, pz)) : 0.0f;
 				ripple_sand_share[z * sn + x] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) : 0.0f;
 				ripple_sand_blown[z * sn + x] = c.deformable ? c.blown : 0.0f;
+				ripple_sand_scour[z * sn + x] = c.deformable ? _scour_at(px, pz) : 0.0f;
+				ripple_sand_scoured = ripple_sand_scoured || ripple_sand_scour[z * sn + x] > 0.0f;
 				ripple_sand_depth[z * sn + x] = sgen ? float(sgen->get_sand_interdune_at(Vector3(px, 0.0f, pz))) : -1.0f;
 			}
 		}
@@ -6405,6 +6592,15 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 				}
 			}
 		}
+		// Rows n+S..n+S+S-1 (G, over the sand block's rect, as its rows): the share dust devils swept, for their
+		// tracks' tone (the tile rows leave G free; the window is wider than the sand block).
+		if (sand && ripple_sand_scoured && n >= sn && (int)ripple_sand_scour.size() == sn * sn) {
+			for (int z = 0; z < sn; z++) {
+				for (int x = 0; x < sn; x++) {
+					d[((n + sn + z) * w + x) * 4 + 1] = ripple_sand_scour[z * sn + x];
+				}
+			}
+		}
 		// Rows n+S+n..n+S+n+D-1: the generator's interdune floors round the patch (R), for the dune tone past it.
 		if ((int)ripple_far_depth.size() == dn * dn) {
 			for (int z = 0; z < dn; z++) {
@@ -6439,6 +6635,7 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 		meta[20] = ripple_sand_wind.x; // the dune-building wind, for the granule ripples
 		meta[21] = ripple_sand_wind.y;
 		meta[22] = granule_ripples ? 1.0f : 0.0f;
+		meta[23] = sand && ripple_sand_scoured && n >= sn ? 1.0f : 0.0f; // dust devil tracks in the sand block's G rows
 		meta[24] = get_rain_pit_cover(); // the rain's marks (_rain_marks())
 		meta[25] = get_rain_crust();
 		meta[26] = rain_pit_seed;
@@ -6871,6 +7068,7 @@ void GroundSurface3D::_notification(int p_what) {
 				_wear_publish();
 				_buried_update();
 				_world_puddles_update(puddle_accum);
+				_peat_water_update(puddle_accum);
 				_silt_wind_update(float(puddle_accum));
 				puddle_accum = 0.0;
 			}
@@ -6900,6 +7098,7 @@ void GroundSurface3D::_notification(int p_what) {
 			wind_accum += delta;
 			if (wind_accum >= 0.5) {
 				_wind_update(wind_accum);
+				_scours_heal(float(wind_accum) * ripple_time_scale, _wind_10m().length());
 				wind_accum = 0.0;
 			}
 			if (swash_marks) {
@@ -10370,6 +10569,10 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_sand_glints"), &GroundSurface3D::is_sand_glints);
 	ClassDB::bind_method(D_METHOD("set_wind_shelters", "shelters"), &GroundSurface3D::set_wind_shelters);
 	ClassDB::bind_method(D_METHOD("set_obstacle_lee", "enabled"), &GroundSurface3D::set_obstacle_lee);
+	ClassDB::bind_method(D_METHOD("set_plant_wake", "enabled"), &GroundSurface3D::set_plant_wake);
+	ClassDB::bind_method(D_METHOD("is_plant_wake"), &GroundSurface3D::is_plant_wake);
+	ClassDB::bind_method(D_METHOD("set_plant_wake_height", "height"), &GroundSurface3D::set_plant_wake_height);
+	ClassDB::bind_method(D_METHOD("get_plant_wake_height"), &GroundSurface3D::get_plant_wake_height);
 	ClassDB::bind_method(D_METHOD("is_obstacle_lee_enabled"), &GroundSurface3D::is_obstacle_lee_enabled);
 	ClassDB::bind_method(D_METHOD("get_wind_shelters"), &GroundSurface3D::get_wind_shelters);
 	ClassDB::bind_static_method("GroundSurface3D", D_METHOD("shelter_ratio_for", "lambda"), &GroundSurface3D::shelter_ratio_for);
@@ -10407,6 +10610,9 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_lee_calm_ripples", "enabled"), &GroundSurface3D::set_lee_calm_ripples);
 	ClassDB::bind_method(D_METHOD("is_lee_calm_ripples"), &GroundSurface3D::is_lee_calm_ripples);
 	ClassDB::bind_method(D_METHOD("get_ripple_show_at", "position"), &GroundSurface3D::get_ripple_show_at);
+	ClassDB::bind_method(D_METHOD("add_scour", "position", "radius", "amount"), &GroundSurface3D::add_scour);
+	ClassDB::bind_method(D_METHOD("get_scour_at", "position"), &GroundSurface3D::get_scour_at);
+	ClassDB::bind_method(D_METHOD("clear_scours"), &GroundSurface3D::clear_scours);
 	ClassDB::bind_method(D_METHOD("is_wind_fills_prints"), &GroundSurface3D::is_wind_fills_prints);
 	ClassDB::bind_method(D_METHOD("get_sand_drift_rate"), &GroundSurface3D::get_sand_drift_rate);
 	ClassDB::bind_method(D_METHOD("set_rain_smoothing", "rate"), &GroundSurface3D::set_rain_smoothing);
@@ -10545,6 +10751,10 @@ void GroundSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_peat_bog_at", "position"), &GroundSurface3D::get_peat_bog_at);
 	ClassDB::bind_method(D_METHOD("tear_mat", "position", "size", "yaw"), &GroundSurface3D::tear_mat);
 	ClassDB::bind_method(D_METHOD("get_mat_tear_count"), &GroundSurface3D::get_mat_tear_count);
+	ClassDB::bind_method(D_METHOD("set_peat_water", "enabled"), &GroundSurface3D::set_peat_water);
+	ClassDB::bind_method(D_METHOD("is_peat_water"), &GroundSurface3D::is_peat_water);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "peat_water"), "set_peat_water", "is_peat_water");
+	ClassDB::bind_method(D_METHOD("get_peat_water_seeped"), &GroundSurface3D::get_peat_water_seeped);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clods"), "set_clods", "is_clods");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "keep_ruts"), "set_keep_ruts", "is_keeping_ruts");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "ruts_path"), "set_ruts_path", "get_ruts_path");
@@ -10560,6 +10770,8 @@ void GroundSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "world_puddle_density", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_world_puddle_density", "get_world_puddle_density");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "wind_shelters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_wind_shelters", "get_wind_shelters");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "obstacle_lee"), "set_obstacle_lee", "is_obstacle_lee_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plant_wake"), "set_plant_wake", "is_plant_wake");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "plant_wake_height", PROPERTY_HINT_RANGE, "0.05,10,0.05,suffix:m"), "set_plant_wake_height", "get_plant_wake_height");
 	ADD_GROUP("Drawing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_spacing", PROPERTY_HINT_RANGE, "0.01,1,0.005,suffix:m"), "set_detail_spacing", "get_detail_spacing");

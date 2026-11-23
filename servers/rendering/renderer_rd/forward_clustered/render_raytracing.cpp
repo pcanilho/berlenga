@@ -3571,10 +3571,11 @@ void RenderRaytracing::_update_streaming_feedback() {
 		any = true;
 		// Alpha-tested and blended surfaces are read by any-hit (shadow and visibility rays) at the base level,
 		// with no ray cone; keep them whole while they are traced.
-		// (Alpha scissor is a surface flag in the TLAS, so ask the shader.)
+		// (Alpha scissor is a surface flag in the TLAS, so ask the shader the way _rt_uses_alpha_scissor() does. A
+		// bare discard does not make a surface any-hit: every BaseMaterial3D has one for the camera cut-out.)
 		const SceneShaderForwardClustered::ShaderData *shader_data = static_cast<const SceneShaderForwardClustered::MaterialData *>(data)->shader_data;
 		const bool any_hit = entry->ptr->is_custom_shader || (entry->ptr->data.flags & RT_MAT_FLAG_TRANSPARENT) ||
-				(shader_data && (shader_data->uses_alpha_clip || shader_data->uses_alpha_antialiasing || shader_data->uses_alpha || shader_data->uses_discard));
+				(shader_data && (shader_data->uses_alpha_clip || shader_data->uses_alpha_antialiasing));
 		if (entry->last_used_frame + 2 >= frame && any_hit) {
 			streaming->feedback_report_material(data->material_feedback_rid, 0.0f);
 		}

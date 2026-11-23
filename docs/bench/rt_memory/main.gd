@@ -5,6 +5,7 @@
 #   --out=path.png    save the frame (path traced unless --raster)
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 4)
+#   --no-elision      rendering/pathtracing/scene_feature_elision off (the frame must not change)
 #   --frames=N        frames drawn after nothing is pending, before the saved one (default 30)
 #   --copies=N        copies of each mesh in a row (default 6)
 #   --persistent      rendering/pathtracing/persistent_instances on (keyed TLAS builds)
@@ -42,6 +43,8 @@ func _ready() -> void:
 			ProjectSettings.set_setting("rendering/pathtracing/caustics", false)
 		elif a == "--no-radiance-cache":
 			ProjectSettings.set_setting("rendering/pathtracing/radiance_cache", false)
+		elif a == "--no-elision":
+			ProjectSettings.set_setting("rendering/pathtracing/scene_feature_elision", false)
 		elif a == "--persistent":
 			ProjectSettings.set_setting("rendering/pathtracing/persistent_instances", true)
 	_build()

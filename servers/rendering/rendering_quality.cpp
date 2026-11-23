@@ -34,6 +34,7 @@
 #include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "servers/rendering/rendering_server.h"
 
 RenderingQuality *RenderingQuality::singleton = nullptr;
 
@@ -89,6 +90,44 @@ void RenderingQuality::_register_engine_rows() {
 
 	// Reflections: probes set to update always refresh fewer faces a frame.
 	row(GROUP_REFLECTIONS, "rendering/reflections/reflection_probes/update_always_faces_per_frame", 1, 2, keep, keep);
+
+	// Volumetrics: a coarser froxel grid, and no traced fog shadows at Low (the shadow maps still shade it).
+	row(GROUP_VOLUMETRICS, "rendering/environment/volumetric_fog/volume_size", 32, 48, keep, keep);
+	row(GROUP_VOLUMETRICS, "rendering/environment/volumetric_fog/volume_depth", 32, 48, keep, keep);
+	row(GROUP_VOLUMETRICS, "rendering/pathtracing/volumetric_fog_shadows", false, keep, keep, keep);
+
+	// Effects: the screen-space passes (raster) at lower quality presets.
+	row(GROUP_EFFECTS, "rendering/environment/ssao/quality", 0, 1, keep, keep);
+	row(GROUP_EFFECTS, "rendering/environment/ssil/quality", 0, 1, keep, keep);
+	row(GROUP_EFFECTS, "rendering/environment/subsurface_scattering/subsurface_scattering_quality", 1, keep, keep, keep);
+
+	// Post-processing: glow upscaled linearly at Low.
+	row(GROUP_POST_PROCESS, "rendering/environment/glow/upscale_mode", 0, keep, keep, keep);
+
+	// Vegetation has no engine rows: the systems that scatter it register theirs or follow group_changed.
+}
+
+// Settings the renderer reads only at startup; the ladder hands them over through the server's own setters.
+void RenderingQuality::_push_startup_settings(Group p_group) {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (!rs) {
+		return;
+	}
+	switch (p_group) {
+		case GROUP_VOLUMETRICS:
+			rs->environment_set_volumetric_fog_volume_size(GLOBAL_GET("rendering/environment/volumetric_fog/volume_size"), GLOBAL_GET("rendering/environment/volumetric_fog/volume_depth"));
+			break;
+		case GROUP_EFFECTS:
+			rs->environment_set_ssao_quality(RSE::EnvironmentSSAOQuality(int(GLOBAL_GET("rendering/environment/ssao/quality"))), GLOBAL_GET("rendering/environment/ssao/half_size"), GLOBAL_GET("rendering/environment/ssao/adaptive_target"), GLOBAL_GET("rendering/environment/ssao/blur_passes"), GLOBAL_GET("rendering/environment/ssao/fadeout_from"), GLOBAL_GET("rendering/environment/ssao/fadeout_to"));
+			rs->environment_set_ssil_quality(RSE::EnvironmentSSILQuality(int(GLOBAL_GET("rendering/environment/ssil/quality"))), GLOBAL_GET("rendering/environment/ssil/half_size"), GLOBAL_GET("rendering/environment/ssil/adaptive_target"), GLOBAL_GET("rendering/environment/ssil/blur_passes"), GLOBAL_GET("rendering/environment/ssil/fadeout_from"), GLOBAL_GET("rendering/environment/ssil/fadeout_to"));
+			rs->sub_surface_scattering_set_quality(RSE::SubSurfaceScatteringQuality(int(GLOBAL_GET("rendering/environment/subsurface_scattering/subsurface_scattering_quality"))));
+			break;
+		case GROUP_POST_PROCESS:
+			rs->environment_glow_set_use_bicubic_upscale(int(GLOBAL_GET("rendering/environment/glow/upscale_mode")) > 0);
+			break;
+		default:
+			break;
+	}
 }
 
 void RenderingQuality::_apply_group(Group p_group) {
@@ -98,6 +137,7 @@ void RenderingQuality::_apply_group(Group p_group) {
 	ProjectSettings *ps = ProjectSettings::get_singleton();
 	const Level group_level = get_effective_group_level(p_group);
 	applying = true;
+	bool changed = false;
 	for (const Row &r : rows) {
 		if (r.group != p_group || !ps->has_setting(r.setting)) {
 			continue;
@@ -108,9 +148,13 @@ void RenderingQuality::_apply_group(Group p_group) {
 		const Variant &wanted = r.values[group_level].get_type() == Variant::NIL ? project_values[r.setting] : r.values[group_level];
 		if (ps->get_setting(r.setting) != wanted) {
 			ps->set_setting(r.setting, wanted);
+			changed = true;
 		}
 	}
 	applying = false;
+	if (changed) {
+		_push_startup_settings(p_group);
+	}
 	emit_signal(SNAME("group_changed"), p_group, group_level);
 }
 
@@ -164,6 +208,7 @@ void RenderingQuality::unregister_setting(const String &p_setting) {
 				ProjectSettings::get_singleton()->set_setting(p_setting, project_values[p_setting]);
 				applying = false;
 				project_values.erase(p_setting);
+				_push_startup_settings(rows[i].group);
 			}
 			rows.remove_at(i);
 			return;

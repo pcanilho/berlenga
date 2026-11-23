@@ -2028,6 +2028,14 @@ Built:
   the face); a sliver with a drop on both sides falls at any height (spikes); a face counts as a wall only when its
   mean steepness is over 65.5 degrees, so a fallen scarp (now 52-64 degrees) does not keep failing back into the
   field; lumps never land above the rut's top edge (SnowClumps3D.drop's ceiling).
+- Second review (22 Nov): the collapse did not read and raster and path traced disagreed on a wall. The mismatch was
+  time, not light: the field kept settling during the shot's hold, and raster's TAA hold runs more frames than the
+  path tracer's wait, so the two showed different rut depths; the view now holds the surface still for the shot. A
+  hard line where the plain met the hills was the snow normals' step switching from the field's fine one to the
+  coarse one at the deformation field's edge; it now eases over the field's outer tenth. The lumps' size now
+  comes from the cohesion of the layers that come off (`cut_critical_height`'s block cohesion: a slab over depth hoar
+  falls as slab blocks), not from the failing layer's, and the fracture faces are rough at 6 and 18 cm. The view is
+  one rut through a wind slab on a base gone to depth hoar, lit from the side.
 - Not yet: blocks as falling rigid pieces (as the roof slabs, follow-up 52) for the largest failures; the cover's own
   cell steps (avalanche crowns) crumbling.
 

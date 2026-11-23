@@ -648,7 +648,14 @@ float wc_mid_density(vec3 p, float c, float p_foot, out float r_profile) {
 	vec2 aw = vec2(dot(q, dir), dot(q, vec2(-dir.y, dir.x)));
 	// 128 texels over 2.4 km along the wind, 3.6 km across: the billows' 8-cell octave gives cloudlets about
 	// 300 by 450 m, the rolls lying across the wind.
-	vec3 fq = vec3(aw.x / 2400.0, aw.y / 3600.0, 0.61 + 0.17 * h + cloud_churn.z * 0.2);
+	// The texture tiles every 2.4 by 3.6 km, and over a full sky of cloudlets the repeats lined up into rows and columns
+	// (a grid, seen most at a low sun). Broken up as Quilez's texture-repetition fixes do: the read warped by up to
+	// 450 m over 5 km, and each region reading its own depth of the 3D texture (a slice chosen by a 7 km noise), so no
+	// two tiles show the same cloudlets in the same place.
+	vec2 wq = aw / 5200.0;
+	vec2 warp = (vec2(wc_value_noise(wq + vec2(13.1, 4.7)), wc_value_noise(wq + vec2(2.9, 17.3))) - 0.5) * 900.0;
+	float zs = wc_value_noise(aw / 7000.0 + vec2(31.3, 8.1));
+	vec3 fq = vec3((aw.x + warp.x) / 2400.0, (aw.y + warp.y) / 3600.0, 0.61 + 0.17 * h + cloud_churn.z * 0.2 + 0.9 * zs);
 	float lod = max(log2(p_foot / (2400.0 / 128.0)), 0.0);
 	// Near, the texels (20 to 30 m) are a cloudlet's size or more of it, and a thin cover keeps only the billows' peaks:
 	// linear filtering's kinks at the texel borders cut them into boxes. Smoothed between texels (Quilez, "improved
@@ -658,7 +665,14 @@ float wc_mid_density(vec3 p, float c, float p_foot, out float r_profile) {
 	vec3 xf = xs - xi;
 	vec3 fq_s = (xi + xf * xf * (3.0 - 2.0 * xf) - 0.5) / 128.0;
 	vec4 dn = textureLod(cloud_detail, mix(fq_s, fq, smoothstep(0.0, 1.0, lod)), lod);
-	float n = mix(dn.b, dn.a, 0.3);
+	// Worley cells are evenly spaced and alike, so a field of them still read as a lattice. Real altocumulus come in
+	// groups and gaps, large and small together: the cover read through a two-octave noise of 1.8 km and 700 m (the
+	// cloudlets thicken into clusters and thin out between them), and the mix of the billows' fine octave varies with
+	// it (big rounded cloudlets in one group, small ragged ones in the next).
+	float g = 0.65 * wc_value_noise(aw / 1800.0 + vec2(5.1, 23.7)) + 0.35 * wc_value_noise(aw / 700.0 + vec2(17.9, 3.3));
+	float g2 = wc_value_noise(aw / 2600.0 + vec2(41.3, 9.9));
+	float n = mix(dn.b, dn.a, mix(0.1, 0.6, g2));
+	c = clamp(c * mix(0.1, 1.5, smoothstep(0.25, 0.75, g)), 0.0, 1.0);
 	float prof = 4.0 * h * (1.0 - h);
 	// A thin cover thins the cloudlets and no longer shrinks them to the billows' highest peaks: those peaks are
 	// the fine octaves' cells, a few texels (20 to 30 m each) across, and drew blocks shaped like letters.
@@ -736,9 +750,15 @@ vec4 march_altocumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 		}
 		float pr;
 		float tau = wc_mid_density(p + sun_dir * 30.0, c, foot, pr) * 60.0 + wc_mid_density(p + sun_dir * 110.0, c, foot, pr) * 100.0;
-		// The rest of the way out of the slab toward the sun, at the cloudlets' mean density.
+		// The rest of the way out of the slab toward the sun, past the neighbouring cloudlets. A broken layer is not a
+		// uniform medium: the light threads the gaps, so over each cloudlet spacing (about 700 m) it passes with
+		// 1 - c + c exp(-tau_cell), raised to the number of spacings (the binary-mixture result for a broken layer;
+		// Pomraning 1991, Barker and Davies 1992). At their mean density instead, a low sun's 7 km slant through the slab
+		// left every cloudlet in a sunset sky dark grey, where photographs show them lit gold and pink, the nearer
+		// side of each brightest.
 		float rest = max((y1 - p.y) / sun_up - 160.0, 0.0);
-		tau += rest * 0.5 * c * cloud_mid_tau / (0.45 * cloud_mid_thickness);
+		float tau_cell = 700.0 * cloud_mid_tau / (0.45 * cloud_mid_thickness);
+		tau += -(rest / 700.0) * log(max(1.0 - c + c * exp(-tau_cell), 1e-6));
 		vec3 light = sun_radiance * (exp(-tau) * phase0 + 0.5 * exp(-0.5 * tau) * phase1 + 0.25 * exp(-0.25 * tau) * phase2);
 		float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau * 2.0);
 		light += sun_radiance * diffuse * mix(0.25, 1.0, smoothstep(0.0, 0.6, profile)) * exp(-cloud_surface_occlusion * min(tau, 4.0)) * (2.0 / (4.0 * PI));
@@ -1379,6 +1399,17 @@ vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3
 	// pixel, where the view ray crosses the middle of the cumulus layer (at most 30 km out), followed up the sun
 	// to the sheet. Two-stream transmission, as the bake: most of the light comes through scattered, not cut.
 	vec3 sun_low = sun_radiance;
+	// The sun reaching each layer through the air above its own height (Bruneton's transmittance table): the sun
+	// handed in is the low base's. At a low sun the mid sheet at 4.5 km sees half the air mass the base does, so at
+	// sunset it was lit as dim and red as the base and stood barely brighter than the sky, where photographs show
+	// altocumulus lit gold over a darkening sky.
+	vec3 sun_mid = sun_radiance;
+	vec3 sun_high = sun_radiance;
+#ifdef ATMO_SCATTERING
+	vec3 t_base = max(atmo_light_transmittance(atmo_radii.x + cloud_base_height, sun_dir.y), vec3(1e-4));
+	sun_mid = sun_radiance * min(atmo_light_transmittance(atmo_radii.x + cloud_mid_height, sun_dir.y) / t_base, vec3(20.0));
+	sun_high = sun_radiance * min(atmo_light_transmittance(atmo_radii.x + cloud_high_height, sun_dir.y) / t_base, vec3(20.0));
+#endif
 	if (cloud_mid_cover > 0.001 || cloud_storm_count > 0) {
 		float y_mid_low = cloud_base_height + 0.5 * cloud_thickness;
 		float t_l = rd.y > 0.01 ? (y_mid_low - cam.y) / rd.y : 30000.0;
@@ -1392,14 +1423,14 @@ vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3
 	float d_low;
 	vec4 low = march_cumulus(cam, rd, sun_dir, sun_low, ambient_top, ambient_bottom, steps, jitter, p_pixel, d_low);
 	float d_mid;
-	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
+	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
 	float d_high;
-	vec4 high = march_cirrus(cam, rd, sun_dir, sun_radiance, ambient_top, p_pixel, d_high);
+	vec4 high = march_cirrus(cam, rd, sun_dir, sun_high, ambient_top, p_pixel, d_high);
 	// The two wave slabs, nearer first (the camera is under both but on a mountain top).
 	float d_wa;
-	vec4 wa = march_wave(cloud_wave_slab.xy, cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_wa);
+	vec4 wa = march_wave(cloud_wave_slab.xy, cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_wa);
 	float d_wb;
-	vec4 wb = march_wave(cloud_wave_slab.zw, cam, rd, sun_dir, sun_radiance, ambient_top, ambient_bottom, jitter, p_pixel, d_wb);
+	vec4 wb = march_wave(cloud_wave_slab.zw, cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_wb);
 	float d_wave;
 	vec4 wave = cam.y < cloud_wave_slab.z ? cloud_over(wa, d_wa, wb, d_wb, d_wave) : cloud_over(wb, d_wb, wa, d_wa, d_wave);
 	float d;

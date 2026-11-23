@@ -2317,7 +2317,7 @@ void TreeGenerator::_shed(int p_year) {
 		}
 		lift = (top - nodes[0].start.y) * lift_share * Math::smoothstep(8.0f, 35.0f, float(p_year));
 	}
-	LocalVector<int> stack;
+	LocalVector<Pair<int, float>> dead_stack;
 	for (int i = 1; i < int(nodes.size()); i++) {
 		Node &n = nodes[i];
 		if (n.removed || n.dead || n.parent <= 0 || nodes[n.parent].main == i || n.born > p_year - 2) {
@@ -2338,23 +2338,29 @@ void TreeGenerator::_shed(int p_year) {
 		}
 		const bool keep = rng.randf() < params[PARAM_DEAD_BRANCH_KEEP];
 		shed_count++;
-		stack.clear();
-		stack.push_back(i);
-		while (!stack.is_empty()) {
-			const int j = stack[stack.size() - 1];
-			stack.resize(stack.size() - 1);
-			Node &m = nodes[j];
-			if (keep) {
+		// A kept dead branch loses its fine outer parts first: the twigs and thin ends snap off within a few years,
+		// leaving a stub of 0.4-1.6 m (by the branch's own hash, so the generator's random stream is untouched). Long
+		// dead branches kept whole, bare and straight, read inside a stand as wires strung between the stems (docs,
+		// 22 Nov; trees.md 5bm).
+		const float stub = Math::lerp(0.4f, 1.6f, float(hash_murmur3_one_32(uint32_t(i), uint32_t(p_year) * 2654435761u) & 0xffff) / 65535.0f);
+		dead_stack.clear();
+		dead_stack.push_back(Pair<int, float>(i, 0.0f));
+		while (!dead_stack.is_empty()) {
+			const Pair<int, float> top = dead_stack[dead_stack.size() - 1];
+			dead_stack.resize(dead_stack.size() - 1);
+			Node &m = nodes[top.first];
+			const float along = top.second + m.length;
+			if (keep && top.second < stub) {
 				m.dead = true;
 				m.leafy = false;
 			} else {
 				m.removed = true;
 			}
 			if (m.main >= 0) {
-				stack.push_back(m.main);
+				dead_stack.push_back(Pair<int, float>(m.main, along));
 			}
 			for (int c = m.first_lateral; c >= 0; c = nodes[c].next_sibling) {
-				stack.push_back(c);
+				dead_stack.push_back(Pair<int, float>(c, along));
 			}
 		}
 	}
@@ -7793,12 +7799,34 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 	const float rotten = CLAMP(float(decay_class - 1) / 2.0f, 0.0f, 1.0f);
 	const uint32_t salt = uint32_t(seed) * 2654435761u;
 	const int sectors = 128;
-	// The rim: torn ragged, lobed where the big roots held more soil.
+	// The structural laterals, chosen first: the plate is the soil they bind (the root-soil plate,
+	// Coutts 1986), so its rim reaches out along each and falls back between them, where the soil
+	// crumbled off the torn edge (docs, 22 Nov: a plate with an even rim reads as a flat disc).
+	const int laterals = 8 + int(pr.rand() % 6);
+	float lat_a[16], lat_lobe[16], lat_top[16];
+	for (int l = 0; l < laterals; l++) {
+		lat_a[l] = float(Math::TAU) * (l + 0.3f * (pr.randf() - 0.5f)) / laterals;
+		lat_lobe[l] = Math::lerp(0.5f, 1.0f, pr.randf());
+		// How far out the lateral runs on the old surface before it dives (superficial roots: the
+		// flat and heart root systems of spruce and beech run their laterals in the top few
+		// decimetres and flare out of the stem's foot above the litter; Kostler, Bruckner and
+		// Bibelriether 1968, Die Wurzeln der Waldbaume). Some stay under the litter.
+		lat_top[l] = pr.randf() < 0.8f ? Math::lerp(0.4f, 0.8f, pr.randf()) : 0.0f;
+	}
+	auto ang_dist = [](float p_a, float p_b) {
+		return Math::abs(Math::wrapf(p_a - p_b, -float(Math::PI), float(Math::PI)));
+	};
+	// The rim: torn ragged, lobed along the laterals.
 	float rim[sectors];
 	for (int k = 0; k < sectors; k++) {
 		const float a = float(Math::TAU) * k / sectors;
 		const Vector3 q(Math::cos(a) * 1.7f, 0.0f, Math::sin(a) * 1.7f);
-		rim[k] = R * (0.82f + 0.3f * moss_noise(q + Vector3(3.1f, 0, 0), salt + 1u) + 0.06f * (moss_noise(q * 6.0f, salt + 18u) - 0.5f));
+		float lobe = 0.0f;
+		for (int l = 0; l < laterals; l++) {
+			const float da = ang_dist(a, lat_a[l]) / 0.2f;
+			lobe = MAX(lobe, lat_lobe[l] * Math::exp(-da * da));
+		}
+		rim[k] = R * (0.68f + 0.2f * moss_noise(q + Vector3(3.1f, 0, 0), salt + 1u) + 0.3f * lobe + 0.07f * (moss_noise(q * 6.0f, salt + 18u) - 0.5f));
 	}
 	auto rim_at = [&](float p_a) {
 		const float f = p_a / float(Math::TAU) * sectors;
@@ -7818,9 +7846,31 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 		const float fine = Math::abs(moss_noise(p_q * 14.0f, salt + 16u) - 0.5f) + 0.5f * (moss_noise(p_q * 30.0f, salt + 17u) - 0.5f);
 		return -T * (0.2f + 0.8f * Math::pow(MAX(1.0f - p_rho * p_rho, 0.0f), 0.6f)) * (1.0f - 0.25f * rotten) + T * 0.45f * lump + 0.05f * clod - 0.09f * (0.25f - blocks) * (1.0f - 0.4f * rotten) - 0.035f * (0.25f - fine);
 	};
+	// A superficial lateral's girth where it runs on the old surface, rho of the way to the rim (0 past its
+	// dive).
+	auto top_root_r = [&](int p_l, float p_rho) {
+		if (lat_top[p_l] <= 0.0f) {
+			return 0.0f;
+		}
+		const float f = CLAMP((p_rho * R - tr) / MAX(lat_top[p_l] * R - tr, 0.05f), 0.0f, 1.0f);
+		return tr * 0.32f * Math::lerp(1.0f, 0.25f, f) * (1.0f - Math::smoothstep(0.75f, 1.0f, f));
+	};
 	auto top = [&](const Vector3 &p_q) {
 		// The old forest floor: hummocks of litter and moss, small lumps of humus.
-		return 0.03f + 0.07f * (moss_noise(p_q * 3.0f, salt + 4u) - 0.5f) + 0.03f * (moss_noise(p_q * 9.0f, salt + 14u) - 0.5f);
+		float y = 0.03f + 0.09f * (moss_noise(p_q * 3.0f, salt + 4u) - 0.5f) + 0.035f * (moss_noise(p_q * 9.0f, salt + 14u) - 0.5f);
+		// Banked up along the superficial laterals: soil and litter heaped over a root's flanks.
+		const float rq = Vector2(p_q.x, p_q.z).length();
+		if (rq > 1e-4f) {
+			const float aq = Math::atan2(p_q.z, p_q.x);
+			for (int l = 0; l < laterals; l++) {
+				const float rr = top_root_r(l, rq / R);
+				if (rr > 0.0f) {
+					const float d = rq * Math::sin(MIN(ang_dist(aq, lat_a[l]), float(Math::PI) * 0.5f)) / (2.2f * rr + 0.03f);
+					y = MAX(y, 0.02f + 0.55f * rr * Math::exp(-d * d));
+				}
+			}
+		}
+		return y;
 	};
 	const Color litter = Color(0.31f, 0.23f, 0.14f).srgb_to_linear();
 	const Color moss_c = Color(0.25f, 0.3f, 0.12f).srgb_to_linear();
@@ -7880,6 +7930,8 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 			q.y = top(q);
 			const float mz = moss_noise(q * 1.6f, salt + 6u);
 			Color c = litter.lerp(moss_c, Math::smoothstep(0.45f, 0.7f, mz) * (1.0f - 0.6f * rotten)) * (0.85f + 0.3f * moss_noise(q * 7.0f, salt + 7u));
+			// Damp, darker litter in the hollows and patches of bare humus where it was scuffed off.
+			c = c.lerp(humus * 1.4f, 0.55f * Math::smoothstep(0.6f, 0.8f, moss_noise(q * 2.2f + Vector3(5.7f, 0, 1.3f), salt + 19u)));
 			c.a = 1.0f;
 			return push(q, Vector3(0, 1, 0), c, Vector2(q.x, q.z));
 		});
@@ -8007,6 +8059,59 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 		const Vector3 sc(sz * Math::lerp(0.8f, 1.3f, pr.randf()), sz * Math::lerp(0.6f, 0.9f, pr.randf()), sz * Math::lerp(0.8f, 1.2f, pr.randf()));
 		lump(c, b, sc, 0.5f, soil_colour(c, top(c) - c.y + 0.03f * pr.randf()), 2.0f, 3);
 	}
+	// Leaf litter on the old surface: the forest floor the plate tore up is a mat of whole and broken
+	// leaves, a few centimetres each, curled, laid every way, held by the moss and fine roots as the
+	// plate stood up (docs, 22 Nov: a smooth vertex-coloured face read as a flat brown disc). Real
+	// geometry, as the litter round a tree's foot: a lens of four triangles a leaf, cupped along its
+	// midrib, in the browns of a year's fall to the near-black of last year's; fewer over the moss and
+	// on an old plate whose litter has washed off.
+	{
+		const float area = float(Math::PI) * R * R * 0.85f;
+		const int leaves = int(area * 650.0f * (1.0f - 0.6f * rotten));
+		for (int k = 0; k < leaves; k++) {
+			const float a = pr.randf() * float(Math::TAU);
+			const float rho = Math::sqrt(pr.randf()) * 0.96f;
+			const Vector3 d(Math::cos(a), 0.0f, Math::sin(a));
+			Vector3 c = d * (rim_at(a) * rho);
+			if (Vector2(c.x, c.z).length() < tr * 1.05f) {
+				continue;
+			}
+			const float mz = moss_noise(c * 1.6f, salt + 6u);
+			if (pr.randf() < Math::smoothstep(0.45f, 0.7f, mz) * 0.9f) {
+				continue;
+			}
+			c.y = top(c) + 0.003f + 0.006f * pr.randf();
+			const float len = Math::lerp(0.045f, 0.09f, pr.randf()), wid = len * Math::lerp(0.4f, 0.6f, pr.randf());
+			const float yaw = pr.randf() * float(Math::TAU);
+			const Vector3 ax(Math::cos(yaw), 0.0f, Math::sin(yaw));
+			const Vector3 sd(-ax.z, 0.0f, ax.x);
+			// Lying on the hummocks: tilted with the surface under it, and a little either way.
+			const float sx = (top(c + ax * 0.03f) - top(c - ax * 0.03f)) / 0.06f + 0.25f * (pr.randf() - 0.5f);
+			const float sz = (top(c + sd * 0.03f) - top(c - sd * 0.03f)) / 0.06f + 0.25f * (pr.randf() - 0.5f);
+			const float cup = wid * Math::lerp(0.1f, 0.45f, pr.randf()) * (pr.randf() < 0.7f ? 1.0f : -0.6f);
+			const float age = pr.randf();
+			Color lc = Color(0.44f, 0.3f, 0.18f).srgb_to_linear().lerp(Color(0.2f, 0.14f, 0.09f).srgb_to_linear(), age);
+			lc = lc.lerp(Color(0.42f, 0.38f, 0.31f).srgb_to_linear(), pr.randf() < 0.12f ? 0.6f : 0.0f); // Bleached skeletons.
+			const float tn = Math::lerp(0.8f, 1.15f, pr.randf());
+			lc = Color(lc.r * tn, lc.g * tn, lc.b * tn);
+			auto at = [&](float p_u, float p_v, float p_lift) {
+				Vector3 q = c + ax * p_u + sd * p_v;
+				q.y += sx * p_u + sz * p_v + p_lift;
+				return q;
+			};
+			const Vector3 up = Vector3(-sx, 1.0f, -sz).normalized();
+			const Color dark(lc.r * 0.8f, lc.g * 0.8f, lc.b * 0.8f);
+			const int i_base = push(at(-0.5f * len, 0.0f, 0.0f), up, dark, Vector2(c.x, c.z));
+			const int i_tip = push(at(0.5f * len, 0.0f, 0.002f), up, lc, Vector2(c.x, c.z));
+			const int i_mid = push(at(0.0f, 0.0f, 0.0f), up, dark, Vector2(c.x, c.z));
+			const int i_l = push(at(-0.05f * len, 0.5f * wid, cup), up, lc, Vector2(c.x, c.z));
+			const int i_r = push(at(-0.05f * len, -0.5f * wid, cup), up, lc, Vector2(c.x, c.z));
+			tri(i_base, i_mid, i_l);
+			tri(i_mid, i_tip, i_l);
+			tri(i_base, i_r, i_mid);
+			tri(i_mid, i_r, i_tip);
+		}
+	}
 	// Normals from the faces (smooth over the soil; the stones' corners share none).
 	{
 		Vector3 *nw = w.normals.ptrw();
@@ -8066,9 +8171,25 @@ void TreeGenerator::_root_plate(Builder &r_bark) {
 	};
 	LocalVector<Vector3> lp;
 	LocalVector<float> lr;
-	const int laterals = 8 + int(pr.rand() % 6);
 	for (int l = 0; l < laterals; l++) {
-		const float a0 = float(Math::TAU) * (l + 0.3f * (pr.randf() - 0.5f)) / laterals;
+		const float a0 = lat_a[l];
+		// Its run over the old surface from the stem's foot, half proud of the litter it is banked in.
+		if (lat_top[l] > 0.0f) {
+			lp.clear();
+			lr.clear();
+			const Vector3 d(Math::cos(a0), 0.0f, Math::sin(a0));
+			for (int i = 0; i <= 8; i++) {
+				const float rho = Math::lerp(tr * 0.7f / R, lat_top[l] * 1.02f, float(i) / 8.0f);
+				const float rr = MAX(top_root_r(l, MAX(rho, tr / R)), 0.012f);
+				Vector3 q = d * (rho * R);
+				q.y = top(q) - 0.15f * rr - 0.02f;
+				// Diving at its end, into the litter.
+				q.y -= 1.2f * rr * Math::smoothstep(0.75f, 1.0f, float(i) / 8.0f);
+				lp.push_back(q);
+				lr.push_back(rr);
+			}
+			root(lp, lr, false);
+		}
 		const float r0 = tr * Math::lerp(0.3f, 0.48f, pr.randf());
 		const float reach = Math::lerp(1.0f, 1.25f, pr.randf());
 		lp.clear();
@@ -21397,6 +21518,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		if (b.indices.is_empty()) {
 			continue;
 		}
+		bool crown_occ_surface = false;
 		if (s == 0 || s == 2 || s == 7 || s == 9) {
 			// The bark, moss, soil and resin builders wind their triangles counter-clockwise seen from outside;
 			// Godot's front faces wind clockwise (as PlantGenerator flips its builders). Unflipped,
@@ -21682,6 +21804,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
 		arrays[Mesh::ARRAY_COLOR] = b.colors;
 		arrays[Mesh::ARRAY_INDEX] = b.indices;
+		uint64_t surface_flags = compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0;
+		if (s == 1 && crown_occlusion > 0.0f && leaf_flutter > 0.0f && !fallen && !fallen_branch) {
+			// The crown's own shade of the sky, for raster (trees.md 5bl): CUSTOM0.r, read by the leaf shader as AO.
+			const PackedByteArray occ = _crown_occlusion(b);
+			if (occ.size() == b.verts.size() * 4) {
+				arrays[Mesh::ARRAY_CUSTOM0] = occ;
+				surface_flags |= uint64_t(Mesh::ARRAY_CUSTOM_RGBA8_UNORM) << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT;
+				crown_occ_surface = true;
+			}
+		}
 		if (b.use_tangents && b.tangents.size() == b.verts.size() * 4) {
 			arrays[Mesh::ARRAY_TANGENT] = b.tangents;
 		}
@@ -21689,7 +21821,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			arrays[Mesh::ARRAY_BONES] = b.bones;
 			arrays[Mesh::ARRAY_WEIGHTS] = b.weights;
 		}
-		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0);
+		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, surface_flags);
 		if (s == 0 && glaze_mm > 0.0f) {
 			_glaze_build(b, glaze_ice);
 		}
@@ -21886,7 +22018,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			mesh->surface_set_name(mesh->get_surface_count() - 1, needles ? "needles" : "leaves");
 		}
 		if ((s == 1 && !needles) || s == 3) {
-			mesh->surface_set_material(mesh->get_surface_count() - 1, _flutter_material(m, s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]));
+			const Ref<Material> lm = _flutter_material(m, s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]);
+			if (s == 1 && crown_occ_surface && Ref<ShaderMaterial>(lm).is_valid()) {
+				Ref<ShaderMaterial>(lm)->set_shader_parameter("crown_occlusion_on", 1.0f);
+			}
+			mesh->surface_set_material(mesh->get_surface_count() - 1, lm);
 			if (rigged) {
 				static_materials.push_back(_flutter_material(twin(m), s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]));
 			}
@@ -21900,6 +22036,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					sm->set_shader_parameter("flutter_amount", 0.0f);
 					sm->set_shader_parameter("leaf_underside", 0.0f);
 					sm->set_shader_parameter("leaf_dead_tint", 0.0f);
+					sm->set_shader_parameter("crown_occlusion_on", crown_occ_surface ? 1.0f : 0.0f);
 				}
 				return fm;
 			};
@@ -22330,14 +22467,14 @@ Ref<Material> TreeGenerator::_lichen_material(const Ref<StandardMaterial3D> &p_b
 		if (fire_s.x > 0.0) {
 			float fire_edge = texture(lichen_map, base_uv * vec2(1.3, 0.4) + vec2(0.57, 0.21)).r;
 			float reach = fire_s.z * (0.7 + 0.6 * fire_edge);
-			float charred = fire_s.x * (1.0 - smoothstep(0.8, 1.0, (fire_w.y - MODEL_MATRIX[3].y) / max(reach, 0.02)));
+			float charred = fire_s.x * (1.0 - smoothstep(0.8, 1.0, (fire_w.y - bark_tree_y) / max(reach, 0.02)));
 			float plates = texture(texture_roughness, base_uv).b;
 			ALBEDO = mix(ALBEDO, mix(ALBEDO * 0.25, vec3(0.03, 0.026, 0.023), smoothstep(0.3, 0.6, plates)), charred);
 			ROUGHNESS = mix(ROUGHNESS, 0.9, charred);
 			bark_bare *= 1.0 - charred;
 			// Burning and smouldering wood near the ground (logs, fallen branches, a stem's foot): the glow
 			// the fire map carries there shows in the char's cracks, the furrows between the plates.
-			float fire_low = 1.0 - smoothstep(0.15, 0.5, fire_w.y - MODEL_MATRIX[3].y);
+			float fire_low = 1.0 - smoothstep(0.15, 0.5, fire_w.y - bark_tree_y);
 			float fire_cracks = 1.0 - smoothstep(0.2, 0.45, plates);
 			fire_bark_emit = fire_glow_color(fire_s.y) * charred * fire_low * (0.15 + 0.85 * fire_cracks) * 3.0;
 		}
@@ -22379,7 +22516,10 @@ uniform vec3 bark_wood_color : source_color = vec3(0.55, 0.53, 0.49);
 uniform float bark_stripped_age = -1.0;
 uniform float wood_spiral = 0.0;
 )";
-	code = code.insert(vx, uniforms + VegetationFire::SHADER_CODE + "\n");
+	// The tree's foot for the fire's heights, from the vertex stage: in the fragment stage MODEL_MATRIX is the node's,
+	// without a MultiMesh instance's own transform (every tree of a field read the field's origin).
+	code = code.insert(vx + String("void vertex() {").length(), "\n	bark_tree_y = MODEL_MATRIX[3].y;");
+	code = code.insert(vx, uniforms + "varying float bark_tree_y;\n" + VegetationFire::SHADER_CODE + "\n");
 	Ref<Shader> sh;
 	sh.instantiate();
 	sh->set_code(code);
@@ -22431,6 +22571,118 @@ uniform float wood_spiral = 0.0;
 	return m;
 }
 
+// The crown's shade of the sky at each leaf, for raster's ambient light (trees.md 5bl). Raster lights every leaf with
+// the whole sky (SSAO reaches a few decimetres), so a crown's inner and lower leaves drew as bright as its outer ones,
+// brighter than the path tracer, which traces the crown's shade (PT about 0.55 of raster on a birch crown from below,
+// trees.md 5bj). Baked per vertex as SpeedTree and other foliage pipelines bake their vertex AO, from the crown taken
+// as a turbid medium (Monsi and Saeki 1953): the leaf area of the LOD 0 leaves gathered into a grid of cells (leaf area
+// density, m2 of one side per m3), then from each cell the sky seen along 13 directions over the upper hemisphere,
+// each weighted by its cosine, through exp(-k LAD s). k = G x sqrt(1 - sigma): G = 0.5 for a spherical leaf angle
+// distribution (Ross 1981), and sqrt(1 - sigma) with a leaf scattering coefficient sigma of 0.2 for visible light
+// (Goudriaan 1977) lets in the light the leaves pass on by reflection and transmission. A vertex reads its cell grid
+// trilinearly. CUSTOM0.r = (1 - visibility) x crown_occlusion, so a mesh without it (0) is unshaded.
+PackedByteArray TreeGenerator::_crown_occlusion(const Builder &p_b) const {
+	PackedByteArray out;
+	const int nv = p_b.verts.size();
+	const int ni = p_b.indices.size();
+	if (nv == 0 || ni < 3) {
+		return out;
+	}
+	const Vector3 *v = p_b.verts.ptr();
+	AABB box(v[0], Vector3());
+	for (int i = 1; i < nv; i++) {
+		box.expand_to(v[i]);
+	}
+	const float ext = MAX(MAX(box.size.x, box.size.y), box.size.z);
+	if (ext < 0.2f) {
+		return out;
+	}
+	// Cells of about a thirtieth of the crown, at least 12 cm (a twig's leaf cluster); a cell's border of empty sky.
+	const float cell = MAX(ext / 30.0f, 0.12f);
+	const Vector3 org = box.position - Vector3(cell, cell, cell);
+	const int dx = int(Math::ceil(box.size.x / cell)) + 3, dy = int(Math::ceil(box.size.y / cell)) + 3, dz = int(Math::ceil(box.size.z / cell)) + 3;
+	LocalVector<float> lad;
+	lad.resize(dx * dy * dz);
+	for (float &f : lad) {
+		f = 0.0f;
+	}
+	const int32_t *ix = p_b.indices.ptr();
+	const float inv_vol = 1.0f / (cell * cell * cell);
+	for (int t = 0; t + 2 < ni; t += 3) {
+		const Vector3 &a = v[ix[t]], &bb = v[ix[t + 1]], &c = v[ix[t + 2]];
+		const float area = 0.5f * (bb - a).cross(c - a).length();
+		const Vector3 q = ((a + bb + c) / 3.0f - org) / cell;
+		const int x = CLAMP(int(q.x), 0, dx - 1), y = CLAMP(int(q.y), 0, dy - 1), z = CLAMP(int(q.z), 0, dz - 1);
+		lad[(z * dy + y) * dx + x] += area * inv_vol;
+	}
+	// 13 directions: the zenith and three rings of four (elevations 70, 45 and 20 degrees), each ring turned 45 degrees
+	// from the last; weights cos(zenith) x the ring's solid angle share.
+	Vector3 dirs[13];
+	float wts[13];
+	int nd = 0;
+	dirs[nd] = Vector3(0, 1, 0);
+	wts[nd++] = 1.0f * 0.12f;
+	const float elev[3] = { 70.0f, 45.0f, 20.0f };
+	const float ring_w[3] = { 0.26f, 0.34f, 0.28f };
+	for (int r = 0; r < 3; r++) {
+		const float e = Math::deg_to_rad(elev[r]);
+		for (int k = 0; k < 4; k++) {
+			const float az = Math::TAU * (float(k) + 0.5f * float(r & 1)) / 4.0f;
+			dirs[nd] = Vector3(Math::cos(e) * Math::cos(az), Math::sin(e), Math::cos(e) * Math::sin(az));
+			wts[nd++] = Math::sin(e) * ring_w[r] / 4.0f;
+		}
+	}
+	float wsum = 0.0f;
+	for (int d = 0; d < nd; d++) {
+		wsum += wts[d];
+	}
+	const float k_ext = 0.5f * Math::sqrt(1.0f - 0.2f);
+	LocalVector<float> vis;
+	vis.resize(lad.size());
+	for (int z = 0; z < dz; z++) {
+		for (int y = 0; y < dy; y++) {
+			for (int x = 0; x < dx; x++) {
+				float sum = 0.0f;
+				for (int d = 0; d < nd; d++) {
+					// March from the cell's centre at half-cell steps, the cell itself counted half (a leaf sits
+					// on average mid-cell), out of the grid.
+					float tau = 0.5f * lad[(z * dy + y) * dx + x] * 0.5f * cell;
+					Vector3 p(x + 0.5f, y + 0.5f, z + 0.5f);
+					for (int st = 0; st < 4 * (dx + dy + dz); st++) {
+						p += dirs[d] * 0.5f;
+						const int cx = int(Math::floor(p.x)), cy = int(Math::floor(p.y)), cz = int(Math::floor(p.z));
+						if (cx < 0 || cy < 0 || cz < 0 || cx >= dx || cy >= dy || cz >= dz) {
+							break;
+						}
+						tau += lad[(cz * dy + cy) * dx + cx] * 0.5f * cell;
+					}
+					sum += wts[d] * Math::exp(-k_ext * tau);
+				}
+				vis[(z * dy + y) * dx + x] = sum / wsum;
+			}
+		}
+	}
+	out.resize(nv * 4);
+	uint8_t *o = out.ptrw();
+	for (int i = 0; i < nv; i++) {
+		const Vector3 q = (v[i] - org) / cell - Vector3(0.5f, 0.5f, 0.5f);
+		const int x0 = CLAMP(int(Math::floor(q.x)), 0, dx - 2), y0 = CLAMP(int(Math::floor(q.y)), 0, dy - 2), z0 = CLAMP(int(Math::floor(q.z)), 0, dz - 2);
+		const float fx = CLAMP(q.x - x0, 0.0f, 1.0f), fy = CLAMP(q.y - y0, 0.0f, 1.0f), fz = CLAMP(q.z - z0, 0.0f, 1.0f);
+		auto at = [&](int x, int y, int z) { return vis[(z * dy + y) * dx + x]; };
+		const float c00 = Math::lerp(at(x0, y0, z0), at(x0 + 1, y0, z0), fx);
+		const float c10 = Math::lerp(at(x0, y0 + 1, z0), at(x0 + 1, y0 + 1, z0), fx);
+		const float c01 = Math::lerp(at(x0, y0, z0 + 1), at(x0 + 1, y0, z0 + 1), fx);
+		const float c11 = Math::lerp(at(x0, y0 + 1, z0 + 1), at(x0 + 1, y0 + 1, z0 + 1), fx);
+		const float vv = Math::lerp(Math::lerp(c00, c10, fy), Math::lerp(c01, c11, fy), fz);
+		const float occ = CLAMP((1.0f - vv) * crown_occlusion, 0.0f, 1.0f);
+		o[i * 4 + 0] = uint8_t(Math::round(occ * 255.0f));
+		o[i * 4 + 1] = 0;
+		o[i * 4 + 2] = 0;
+		o[i * 4 + 3] = 255;
+	}
+	return out;
+}
+
 Ref<Material> TreeGenerator::_flutter_material(const Ref<StandardMaterial3D> &p_base, float p_leaf_size) const {
 	if (leaf_flutter <= 0.0f || p_base.is_null() || RenderingServer::get_singleton() == nullptr) {
 		return p_base;
@@ -22475,6 +22727,24 @@ vec3 plant_wind(vec3 wp, float h) {
 	}
 	const String uniforms = "uniform float flutter_amount = 1.0;\nuniform float flutter_size = 0.1;\n";
 	const String body = R"(
+	// The crown's shade of the sky (TreeGenerator._crown_occlusion, trees.md 5bl): CUSTOM0.r.
+	crown_occ = CUSTOM0.r * crown_occlusion_on;
+	// The tree's foot and scale for the fire, from the vertex stage (a MultiMesh instance's transform is in
+	// MODEL_MATRIX only here).
+	leaf_tree = vec4(MODEL_MATRIX[3].xyz, pow(abs(determinant(mat3(MODEL_MATRIX))), 1.0 / 3.0));
+	// Per-tree crown tone (trees.md 5bm), hashed here because a MultiMesh instance's own transform is in
+	// MODEL_MATRIX only in the vertex stage.
+	crown_tone = vec3(1.0);
+	if (crown_tint_variation > 0.0) {
+		uvec2 crown_q = uvec2(ivec2(floor(MODEL_MATRIX[3].xz * 4.0)) + ivec2(1 << 20));
+		uint crown_h = crown_q.x * 1597334677u ^ crown_q.y * 3812015801u;
+		crown_h = (crown_h ^ (crown_h >> 15u)) * 2246822519u;
+		crown_h ^= crown_h >> 13u;
+		float crown_v = float(crown_h & 1023u) / 1023.0;
+		float crown_u = float((crown_h >> 10u) & 1023u) / 1023.0;
+		vec3 tone = mix(vec3(1.12, 1.03, 0.72), vec3(0.82, 0.95, 1.16), crown_u) * mix(0.72, 1.18, crown_v);
+		crown_tone = mix(vec3(1.0), tone, crown_tint_variation);
+	}
 	{
 		// Leaf flutter (TreeGenerator::_flutter_material).
 		vec3 fw = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -22541,12 +22811,15 @@ vec3 plant_wind(vec3 wp, float h) {
 			float fire_rough = 0.0;
 			vec3 fire_before = ALBEDO;
 			float fire_n = fract(dot(COLOR.rgb, vec3(53.17, 21.71, 7.13)));
-			float fire_burn = fire_foliage_apply(fire_s, fire_w.y - MODEL_MATRIX[3].y, fire_n, ALBEDO, fire_rough);
+			float fire_burn = fire_foliage_apply(fire_s, fire_w.y - leaf_tree.y, fire_n, ALBEDO, fire_rough);
 			// Burnt up: foliage the flame passed through is consumed once the crown (or the plant) has burnt,
 			// leaf by leaf with a ragged edge, leaving the bare black branches (a crown fire takes the foliage and the
 			// finest twigs, the crown fuel of Van Wagner 1977). Killed brown foliage above the flame stays.
+			// Hidden with discard, not ALPHA = 0: a shader that writes ALPHA is drawn as a transparent (raster's
+			// transparent pass; the path tracer's blend class, which lit the leaves with no sky light at all, trees.md
+			// 5bl). discard keeps the leaves opaque and alpha-tested where they burn.
 			if (fire_burn * smoothstep(0.35, 0.8, fire_s.x) > fract(fire_n * 7.31 + 0.137)) {
-				ALPHA = 0.0;
+				discard;
 			}
 			// Needle cast: foliage the fire killed (browned up to the scorch height) is shed through the first
 			// year, leaf by leaf, most of it in the first months (Pannkuk and Robichaud 2003; Cram et al. 2015 on
@@ -22555,24 +22828,23 @@ vec3 plant_wind(vec3 wp, float h) {
 			// fire_age_map (PhysXFireSpread3D, game years).
 			float fire_age = fire_age_years(fire_w.xz);
 			if (fire_age >= 0.0) {
-				float fire_h = fire_w.y - MODEL_MATRIX[3].y;
+				float fire_h = fire_w.y - leaf_tree.y;
 				float fire_killed = fire_s.x * (1.0 - smoothstep(0.85, 1.15, fire_h / max(fire_s.w * (0.85 + 0.3 * fire_n), 0.02)));
 				float fire_cast = 1.0 - exp(-fire_age / 0.3);
 				if (fire_killed > fract(fire_n * 3.71 + 0.41) && fire_cast > fract(fire_n * 11.37 + 0.73)) {
-					ALPHA = 0.0;
+					discard;
 				}
 				// A tree the fire killed outright (VegetationFire::tree_killed, the same rule TreeWind3D's snags
 				// follow): the foliage the scorch spared dies with it, fading to red-brown over the first months and
 				// cast over the next year or two (the red stage of fire-killed conifers; snag classes, Everett et al.
 				// 1999), so a snag never keeps a green top.
-				float fire_scale = pow(abs(determinant(mat3(MODEL_MATRIX))), 1.0 / 3.0);
-				if (fire_killed < 0.5 && fire_tree_killed(MODEL_MATRIX[3].xyz, fire_scale)) {
+				if (fire_killed < 0.5 && fire_tree_killed(leaf_tree.xyz, leaf_tree.w)) {
 					float fire_lum = dot(ALBEDO, vec3(0.2126, 0.7152, 0.0722));
 					vec3 fire_red = vec3(0.34, 0.15, 0.05) * clamp(fire_lum * 5.0, 0.5, 1.4);
 					ALBEDO = mix(ALBEDO, fire_red, smoothstep(0.0, 0.25, fire_age + 0.06 * (fire_n - 0.5)));
 					float fire_drop = 1.0 - exp(-max(fire_age - 0.25, 0.0) / 0.5);
 					if (fire_drop > fract(fire_n * 5.13 + 0.29)) {
-						ALPHA = 0.0;
+						discard;
 					}
 				}
 			}
@@ -22612,6 +22884,24 @@ vec3 plant_wind(vec3 wp, float h) {
 	})");
 	}
 	if (al >= 0) {
+		// Tree to tree colour (trees.md 5bm): crowns of one species differ in tone and hue (genotype, age, soil and
+		// vigour; beech and oak stands show it plainly in summer, more in spring and autumn), so a stand of one
+		// species does not read as one green repeated. Keyed to the instance's ground position (hashed in vertex(), the
+		// same in raster and the path tracer): lightness 0.72-1.18 and a hue swing between a yellower and a bluer
+		// green, as per-instance colour variation in foliage pipelines (SpeedTree's hue variation, Unreal's
+		// PerInstanceRandom). It scales the leaf's colour (the season's is in the vertex colour), after the fire and
+		// salt steps.
+		code = code.insert(al + albedo_line.length(), R"(
+	ALBEDO *= crown_tone;)");
+	}
+	if (al >= 0) {
+		// The crown's own shade of the sky for raster's ambient light (trees.md 5bl): the path tracer traces it and
+		// shows AO only in its debug views.
+		code = code.insert(al + albedo_line.length(), R"(
+	AO = 1.0 - crown_occ;
+	AO_LIGHT_AFFECT = 0.0;)");
+	}
+	if (al >= 0) {
 		// Light through a dead leaf (trees.md 5bj): BACKLIGHT is a green leaf's transmittance over reflectance; a leaf
 		// without its chlorophyll (frost-killed, browned, turned) passes a flatter, browner spectrum, less of the green
 		// (Jacquemoud and Ustin 2019: senescent and dry leaves). Told by its colour, the vertex colour the season gave
@@ -22645,7 +22935,7 @@ float fire_age_years(vec2 xz) {
 	return a > 0.0 ? a * 2.0 : -1.0;
 }
 )";
-	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\nuniform float leaf_dead_tint = 1.0;\n" + wind + VegetationFire::SHADER_CODE + VegetationFire::MORTALITY_CODE + FIRE_AGE_CODE + "\n");
+	code = code.insert(vx, uniforms + "uniform float leaf_underside = 0.0;\nuniform float leaf_dead_tint = 1.0;\nuniform float crown_occlusion_on = 0.0;\nuniform float crown_tint_variation = 1.0;\nvarying float crown_occ;\nvarying vec3 crown_tone;\nvarying vec4 leaf_tree;\n" + wind + VegetationFire::SHADER_CODE + VegetationFire::MORTALITY_CODE + FIRE_AGE_CODE + "\n");
 	// The path tracer: flutter is a raster motion of millimetres; the traced leaves keep their
 	// shape and follow the bones. A static tree is traced from its rest mesh (no capture), a
 	// rigged one is captured only when its bones move (as the plain material was), never because
@@ -23925,6 +24215,16 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 		TreeGenerator look;
 		look.set_preset(p_preset);
 		const float y0 = look.params[PARAM_YEARS];
+		if (old_growth_band != 3) {
+			// Leafy all through the outer crown, not tufts on the ends of bare limbs (docs, 22 Nov: the old-growth
+			// trees read as poles with top tufts, a plantation). Beech carries most of its leaves on short shoots that
+			// leaf again each spring for years along the last years' wood, and keeps shaded limbs longer than any
+			// other European tree: leaves on the last five years' shoots, a third of the shedding, and dormant buds
+			// that wait twice as long to break inside the crown.
+			params[PARAM_LEAF_YEARS] = 5;
+			params[PARAM_SHED_RATIO] *= 0.33f;
+			params[PARAM_BUD_IDLE_YEARS] *= 2.0f;
+		}
 		if (old_growth_band == 1) {
 			params[PARAM_YEARS] = Math::round(MIN(y0 * Math::lerp(2.6f, 3.6f, tv), 180.0f));
 			veteran = Math::lerp(0.6f, 1.0f, tv);
@@ -23936,6 +24236,11 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			// The middle layer: beech waiting in the canopy's shade for decades.
 			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(0.45f, 0.75f, tv));
 			veteran = 0.0f;
+			// In the shade a beech's crown is a broad, flat layer of level limbs (the monolayer of shade-tolerant
+			// trees, Horn 1971, The Adaptive Geometry of Trees; Canham 1988 on beech and sugar maple saplings under a
+			// closed canopy): wide-angled, level laterals.
+			params[PARAM_BRANCH_ANGLE] = 68.0f;
+			params[PARAM_GRAVITROPISM] = -0.02f;
 		} else if (old_growth_band == 3) {
 			// The fallen and the broken giants (snags 2-4, logs 2-4 over the variants).
 			params[PARAM_YEARS] = Math::round(MIN(y0 * Math::lerp(2.2f, 3.4f, tv), 180.0f));
@@ -24060,6 +24365,10 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(0.4f, 0.95f, tv)); // (Northern spruce tops out near 30 m.)
 			params[PARAM_CROWN_CONE] = look.params[PARAM_CROWN_CONE] * 0.6f;
 			params[PARAM_TWIG_DROOP] = look.params[PARAM_TWIG_DROOP] * 1.35f;
+			// Laterals that sag under their own weight and their snow, the tips turned up (the comb habit of northern
+			// spruce): long straight level branches, needled only at their tips, read inside the stand
+			// as wires strung between the stems (docs, 22 Nov; trees.md 5bm).
+			params[PARAM_GRAVITY_BENDING] = 0.35f;
 			// Open-structured taiga: the spires keep green branches most of the way down (crown ratios of 0.7 and
 			// more in old northern spruce; masts with a top tuft read as a plantation).
 			forest_shade *= 0.55f;
@@ -24654,6 +24963,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	season = p_from.season.duplicate(true);
 	climber_plant_leaves = p_from.climber_plant_leaves;
 	leaf_flutter = p_from.leaf_flutter;
+	crown_occlusion = p_from.crown_occlusion;
 	moss_cover = p_from.moss_cover;
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
@@ -27862,6 +28172,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_junction_weld", "enabled"), &TreeGenerator::set_junction_weld);
 	ClassDB::bind_method(D_METHOD("set_climber_plant_leaves", "enabled"), &TreeGenerator::set_climber_plant_leaves);
 	ClassDB::bind_method(D_METHOD("set_leaf_flutter", "amount"), &TreeGenerator::set_leaf_flutter);
+	ClassDB::bind_method(D_METHOD("set_crown_occlusion", "amount"), &TreeGenerator::set_crown_occlusion);
+	ClassDB::bind_method(D_METHOD("get_crown_occlusion"), &TreeGenerator::get_crown_occlusion);
 	ClassDB::bind_method(D_METHOD("set_veteran", "amount"), &TreeGenerator::set_veteran);
 	ClassDB::bind_method(D_METHOD("get_veteran"), &TreeGenerator::get_veteran);
 	ClassDB::bind_method(D_METHOD("set_fire_scars", "count"), &TreeGenerator::set_fire_scars);
@@ -27935,6 +28247,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "junction_weld"), "set_junction_weld", "get_junction_weld");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "climber_plant_leaves"), "set_climber_plant_leaves", "get_climber_plant_leaves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leaf_flutter", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_leaf_flutter", "get_leaf_flutter");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "crown_occlusion", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_crown_occlusion", "get_crown_occlusion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "veteran", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_veteran", "get_veteran");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "fire_scars", PROPERTY_HINT_RANGE, "0,4,1"), "set_fire_scars", "get_fire_scars");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "kelo"), "set_kelo", "get_kelo");

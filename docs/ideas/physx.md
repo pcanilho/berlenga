@@ -2514,6 +2514,115 @@ With no wind nothing changes.
 Checked in raster, same runs with and without: spindrift at vorticity 2 in its gale stays a plume (no boiling) and
 drifts a little wispier; smoke, fire and dust in an 8 m/s wind look the same. Snow keeps 0.5 for now; it can raise it.
 
+### High-albedo gas: raster refit (22 Nov)
+
+Raster matching path tracing is the standing bar, and snow's powder foot
+showed it did not hold for bright, thick gas. A dedicated test puff (one
+dense box of gas over a pale ground, real sky, raster and PT from one run)
+at albedo 0.99 and 0.9, lit from in front and from behind, scored down the
+gas column (raster minus PT, body / foot, in 8-bit levels):
+- Before: 0.99 back-lit +27 / +57; 0.99 front-lit +9 / -3; 0.9 back-lit
+  +25 / +70; 0.9 front-lit +20 / +17.
+- After: -1 / -7; +3 / -9; -8 / +6; +1 / -3.
+
+What was wrong, each light on its own:
+- The octaves (Wrenninge et al. 2013) fade at 0.5, 0.25 and 1/8 of the
+  optical depth, a slab's numbers: in a finite cloud the many-times
+  scattered light leaks out of the sides, so the far side of thick gas got
+  20 to 30 levels of light from inside that the path tracer does not see.
+  Octave 1 now fades as fast as single scattering, octave 2 at 0.6, the
+  tail at three times the diffusion transport coefficient (never under
+  1/2). SUN_MS_GAIN 0.7 to 1.0 and the tail's kept share 0.68 to 0.8 hold
+  the sunlit face where it was.
+- The sky's share of the octave light (SKY_MS_SHARE) 0.19 to 0.08: the
+  sky-only puff was 11 levels too bright.
+- The foot took the ground toward the camera as always sunlit (SKY_OPENING
+  for the ground). It now reads that ground's sun from the gas's own sun
+  map, two heights out from the point toward the camera: sunlit when the
+  sun is behind the camera, in the cloud's shadow when the sun is behind
+  the cloud (the back-lit foot was 30 to 50 levels too bright).
+
+Gate, smoke, dust and fire, each a raster/PT pair from one run, before and
+after (gas box mean, raster minus PT): grey smoke puffs +11 to +1, dust
+puffs +13 to 0, fire plume +23 to -6.
+
+Snow's avalanche powder (640x360, raster before, after, and the PT still):
+the body is bluer and darker against the snow, as under path tracing (gas
+minus ground: before -4, after -12, PT -10 levels). The dark line at the
+foot is gone on the left half; on the right it is still 15 to 20 levels
+under the ground where PT's foot is a few levels over it. That line is not
+the transport (it holds at near zero light per unit of opacity whichever
+light is on); next suspect is how the gas at the very edge reads the snow
+under it.
+
+Images: /mnt/project-files/fork/physx/flow-refit-test-puffs.png (rows:
+0.99 back, 0.99 front, 0.9 back, 0.9 front; columns PT, before, after),
+flow-refit-fire-regression.png, powder-foot-refit-before-after-pt.png.
+
+### Powder foot line: what it is (23 Nov)
+
+After the refit, measured along the avalanche foot (61 columns, darkest
+point of the lower edge band minus the gas just above it): median -3
+levels (PT +1), 6 to 14 columns per run still dipping 9 to 18 levels as
+dark specks where the front meets the snow.
+
+Per-pixel debug views on snow's bench ruled out the gas side: the gas's
+own light per unit of opacity is higher at the foot than in the body, and
+Flow's draw darkens the frame by exactly its coverage. The dark is the snow
+behind the thin foot, seen through it: it lies in the cloud's raster shadow,
+whose edge sits right behind the foot. Not the cause: diffuse transmission,
+the sun cascades on the gas, a stronger snow bounce into the gas.
+
+Tried: the snow reading the most lit of its volume-shadow texel and the
+four diagonal ones (the map's texels average a few gas columns, so the
+snow under a thin edge reads the dense columns beside it). The foot line
+went to 6 dipping columns, median -1.5, edge against snow -12.4 (PT -11),
+but the gate's ground shadows moved away from PT: smoke +6.5 to +14.5,
+dust +4 to +12, fire +12 to +27 levels (raster minus PT). Not kept.
+
+The gate also shows raster ground shadows of smoke, dust and fire already
+4 to 12 levels lighter than PT, while the powder's is darker than PT's
+right behind its foot: the scene's gas shadow needs its own fit against
+the path tracer, by albedo (bright gas spreads light sideways over its
+diffusion length, which softens and shrinks its shadow's edge; dark smoke
+does not). Image: /mnt/project-files/fork/physx/powder-foot-shadow-edge-test.png.
+
+### Gas shadows on the ground checked against path tracing (23 Nov)
+
+Established approach first: the scene already shadows the ground through the gas with delta-Eddington
+scaling and the two-stream total transmittance (Meador and Weaver 1980); the further steps in the
+literature are beam spreading of the many-times-scattered light (Premože et al. 2004) and the sky the
+gas hides from the ground (Unreal's volumetric cloud sky AO). Measured before adding either.
+
+Test: three puffs floating 12 m up (or 4 m, "low"), a side sun at 35 degrees, a high camera on their
+shadows, raster and PT from one run. Darkening of the ground in the shadow, % of the open ground
+(raster vs PT): grey smoke 20.1 vs 21.3; dust 19.9 vs 21.0; white smoke 18.8 vs 18.1; snow powder
+(albedo 0.99) 14.2 vs 17.4; dense grey 34.7 vs 38.4; dense powder 32.8 vs 32.3; low grey 14.9 vs
+16.2; low dust 14.7 vs 15.8; low powder 10.2 vs 11.4. Shadow edges agree within 1%. Every gas type's
+shadow is within 1 to 4% of the path tracer (at most 8 levels in the thin powder's core, raster the
+lighter), so no change: the larger drift reported above for the smoke, dust and fire pairs came from a
+measurement box that took in gas as well as shadow.
+
+The avalanche foot after the refit, edge profile averaged over 61 columns (levels against the open
+snow, from 20 px inside the gas to 12 px out): raster -10 flat, -12 at the edge, then the snow; PT -9
+easing to -5 and -1 at the edge, then +1 to +3 (snow lit by the cloud beside it). Before the refit the
+raster edge reached -15. What is left is 2 to 5 levels on average, with local specks where the front
+meets the snow, and the path tracer's light from the cloud onto the snow beside it, which raster does
+not model (volume-to-surface bounce: a feature of its own).
+
+### Gas light onto nearby surfaces (card, 23 Nov)
+
+The last raster vs path tracing gap at snow's powder foot: the path tracer's snow beside the cloud is 2 to
+3 levels brighter than open snow, lit by the cloud's own scattered light, and the thin foot shows that
+snow through it; raster lights the gas but never the surfaces around it. The same mechanism makes fire
+smoke glow orange onto walls and the ground, and steam brighten a wet street.
+Plan, if picked: the scatter pass already holds each gas texel's light per unit of opacity; inject it,
+weighed by the gas's opacity, into a coarse grid over the gas box and spread it a few cells (light
+propagation volumes, Kaplanyan and Dachsbacher 2010; as Unreal's and Frostbite's particle lighting
+inject emissive volumes), then the scene's opaque pass adds that irradiance to its ambient where the
+grid covers it, shadowed by the gas's own volume shadow toward each cell. Checked against same-run
+path-traced pairs: snow beside a powder cloud, a wall beside a smoke plume, the ground under fire smoke.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

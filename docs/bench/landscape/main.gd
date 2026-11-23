@@ -18,7 +18,7 @@ extends Node3D
 #   --far-blend [--far-start=M]   TerrainMaterial3D's far blend over a test plant cover map
 #   --lake-pick=high  the lake views and checks use the highest lake (default the biggest)
 #   --cam=x,y,z --look=x,y,z  a fixed camera (a negative y: that height above the ground)
-#   --view=wide|lake|lakewater|valley|fall|beach|peak|alpine|treeline|meadow   camera (default wide; lakewater: low over the lake;
+#   --view=wide|lake|lakewater|valley|fall|beach|peak|alpine|treeline|meadow|gully   camera (default wide; lakewater: low over the lake;
 #                         valley: from behind the high lake down to the clearing; treeline: the clearing's edge)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
@@ -3683,6 +3683,8 @@ func _build_vegetation() -> void:
 		# No sward in the desert: the meadow rules know soil, rock and scree, not the erg's loose sand.
 		grass.ground_tint_enabled = false
 		grass.radius = 0.0
+	if args.has("hay") and "hay_meadows" in grass:
+		grass.hay_meadows = _hay_list()
 	add_child(grass)
 	grass.data_map = grass.get_path_to(data_map)
 	if args.get("plants", "1") != "0" and not desert:
@@ -3708,6 +3710,8 @@ func _build_vegetation() -> void:
 		under.tip_color = Color(0.38, 0.52, 0.16)
 		under.dryness = 0.35
 		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
+		if args.has("hay") and "hay_meadows" in under:
+			under.hay_meadows = _hay_list()
 		add_child(under)
 		under.data_map = under.get_path_to(data_map)
 		var turf := GrassField3D.new()
@@ -3725,6 +3729,8 @@ func _build_vegetation() -> void:
 		turf.tip_color = Color(0.3, 0.42, 0.12)
 		turf.dryness = 0.35
 		turf.ground_tint_enabled = false
+		if args.has("hay") and "hay_meadows" in turf:
+			turf.hay_meadows = _hay_list()
 		add_child(turf)
 		turf.data_map = turf.get_path_to(data_map)
 		sward = [grass, under, turf]
@@ -3811,8 +3817,8 @@ func _generated_forest(clearing: bool) -> Biome:
 	_tree_gen = tg # the species build their near leaves from it on demand: kept alive
 	tg.rigged = args.get("rigged", "1") != "0" # --rigged=0: static trees (memory checks)
 	if args.get("tree-still", "1") != "0":
-		# A still (trees.md 8e): static, far meshes light, near meshes built one at a time with leaves to 25 m and no
-		# near needles; --tree-still=0 for the full rig. Fits a stand in about 6 GB instead of dying at first draw.
+		# A still (trees.md 8e): static, far meshes light, near meshes built one at a time with leaves to 25 m and
+		# needles to 30 m; --tree-still=0 for the full rig. Fits a stand in about 6 GB instead of dying at first draw.
 		tg.rigged = args.get("rigged", "0") != "0"
 		if "light_far_meshes" in tg:
 			tg.light_far_meshes = args.get("light-far", "1") != "0" # --light-far=0 on PT olive shots (greys their crowns)
@@ -3821,7 +3827,7 @@ func _generated_forest(clearing: bool) -> Biome:
 		if not args.has("near-leaf-range"):
 			args["near-leaf-range"] = "25"
 		if not args.has("near-needle-range"):
-			args["near-needle-range"] = "0"
+			args["near-needle-range"] = "30" # the normal range: far needles alone read as wires near the camera
 	if "near_leaf_range" in tg:
 		tg.near_leaf_range = float(args.get("near-leaf-range", "60"))
 	if "near_needle_range" in tg:
@@ -4244,6 +4250,45 @@ func _build_camera() -> void:
 			cam.position = ce
 			cam.look_at(la)
 			_log("woodedge camera at %s, litter %.2f at the rim, %.2f under the camera" % [str(ce), veg.get_litter_at(pick + pdir * 3.0), veg.get_litter_at(ce)])
+		"gully":
+			# A raised oblique down a real gully onto its fan (RockField3D.runoff_gravel: a coarse lag on the floor,
+			# fine grains on the fan). The strongest open gully on soil (TerrainGenerator3D.get_gully_at, as the rocks
+			# bench's --gully-spot: 15-35 deg over 16 m, banks under 4 m) within --gully-search (900) m; the camera
+			# --gully-back (14) m up the fall line and --gully-up (20) m over the ground, looking --gully-ahead (22) m
+			# down it. Needs the droplet tiles (--tiles=1).
+			var gbest := -INF
+			var gp := Vector3.ZERO
+			var gdown := Vector3.FORWARD
+			var gr := int(args.get("gully-search", "900"))
+			for zz in range(-gr, gr + 1, 6):
+				for xx in range(-gr, gr + 1, 6):
+					var p := Vector3(xx, 0, zz)
+					var h := gen.get_height(p)
+					if gen.get_geology_at(p).g > 0.05 or h < gen.sea_level + 10.0:
+						continue
+					var gx := gen.get_height(p + Vector3(8, 0, 0)) - gen.get_height(p - Vector3(8, 0, 0))
+					var gz := gen.get_height(p + Vector3(0, 0, 8)) - gen.get_height(p - Vector3(0, 0, 8))
+					var ny := Vector3(-gx, 16.0, -gz).normalized().y
+					if ny < cos(deg_to_rad(35.0)) or ny > cos(deg_to_rad(15.0)):
+						continue
+					var gl: Vector2 = gen.get_gully_at(p, ny)
+					if gl.x < 0.5 or gl.y > 0.3:
+						continue
+					var tt := Vector3(-gz, 0, gx).normalized() * 10.0
+					var bank := maxf(gen.get_height(p + tt), gen.get_height(p - tt)) - h
+					if bank > 4.0:
+						continue
+					var score := gl.x - bank * 0.1
+					if score > gbest:
+						gbest = score
+						gp = p
+						gdown = Vector3(-gx, 0, -gz).normalized()
+			_log("gully view: spot (%.0f, %.1f, %.0f) score %.2f, down (%.2f, %.2f)" % [gp.x, gen.get_height(gp), gp.z, gbest, gdown.x, gdown.z])
+			cam.fov = 50.0
+			var gc := gp - gdown * float(args.get("gully-back", "14"))
+			cam.position = Vector3(gc.x, height_at(gc.x, gc.z) + float(args.get("gully-up", "20")), gc.z)
+			var gl2 := gp + gdown * float(args.get("gully-ahead", "22"))
+			cam.look_at(Vector3(gl2.x, height_at(gl2.x, gl2.z), gl2.z))
 		"meadow":
 			# Standing in the clearing at eye height, 60 m short of the forest edge (the treeline view's edge), looking
 			# across the herbs and grass at it.
@@ -4255,6 +4300,10 @@ func _build_camera() -> void:
 			var cz := ez + 60.0
 			cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, cz) + 1.7, cz)
 			cam.look_at(Vector3(ex, height_at(ex, ez) + 4.0, ez))
+			if args.has("hay"):
+				# Over the hay fields (_hay_list): raised to --hay-eye (5) m, looking down across the rows to the edge.
+				cam.position.y += float(args.get("hay-eye", "5")) - 1.7
+				cam.look_at(Vector3(ex - 10.0, height_at(ex - 10.0, ez + 12.0) + 1.0, ez + 12.0))
 		"lakewater":
 			# Low over the water at one end of the lake, looking along it to the mountains behind: the water cell
 			# farthest from the water's centroid, pulled a little back over the water.
@@ -7079,6 +7128,41 @@ func _frost_sorted_cam() -> void:
 # footfall the snow, mud and sand print (meta world_contact_feet); GazeModifier3D turns its head and eyes to `look`.
 # The rig has no walk: walk_cycle.gd builds one from published gait data (--walker-anim, walk; run plays the rig's
 # run at --walker-anim-speed, 0.5). Moved by _walk_to.
+# --hay[=x,z]: a meadow mid-harvest (GrassField3D.hay_meadows, vegetation da9145ba) on every sward layer, three
+# fields side by side across x round x,z (else the meadow view's clearing, else --look), each --hay-w (40; 22 in the
+# meadow view) m wide and --hay-l (140; 56) m deep: mown today (swaths), raked on day 3 (windrows), carted on day 5 (stubble); rows at --hay-row (0.35 rad).
+# VegetationField3D leaves the tall herbs out there on its own.
+func _hay_list() -> Array:
+	var at := String(args.get("hay", ""))
+	var w := float(args.get("hay-w", "40"))
+	var l := float(args.get("hay-l", "140"))
+	var cx := 0.0
+	var cz := 0.0
+	if at == "" and args.get("view", "wide") == "meadow" and gen != null:
+		# The meadow view's clearing: between the camera and the forest edge it looks at (as _place_camera).
+		var ex := float(args.get("treeline-x", "300"))
+		var ez := 400.0
+		while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
+			ez -= 16.0
+		w = float(args.get("hay-w", "22"))
+		l = float(args.get("hay-l", "56"))
+		cx = ex - 10.0
+		cz = ez + 4.0 + 0.5 * l
+	else:
+		if at == "":
+			at = String(args.get("look", "0,0,0"))
+		var hp := at.split(",")
+		cx = float(hp[0])
+		cz = float(hp[2] if hp.size() > 2 else (hp[1] if hp.size() > 1 else "0"))
+	var out: Array = []
+	var days := [0.0, 3.0, 5.0]
+	for i in 3:
+		var x0 := cx + (float(i) - 1.5) * w
+		var poly := PackedVector2Array([Vector2(x0, cz - 0.5 * l), Vector2(x0 + w, cz - 0.5 * l), Vector2(x0 + w, cz + 0.5 * l), Vector2(x0, cz + 0.5 * l)])
+		out.append({"polygon": poly, "row_angle": float(args.get("hay-row", "0.35")), "days": days[i]})
+	return out
+
+
 func _make_walker(look: Node3D = null) -> CharacterBody3D:
 	var src := _gltf_node("res://ext/mannequin/mannequiny-0.3.0.glb")
 	if src == null:

@@ -35,6 +35,7 @@ extends Node3D
 #                         and treads (mud round 10): mud tyres and chains clog less and get further than road tyres
 #   --test=balling      sticky clay balls up on spinning tyres, sheds when floored, the lopsided rest shakes (round 24.1)
 #   --test=peat         peat bogs (round 24.2): the root mat holds a car, a heavy truck tears it and drops into the peat
+#   --test=arches       clay packs the wheel arches until it rubs the tyre (round 25.2)
 #   --test=treads       each tread's lugs or chain links in its rut floor (mud round 10); --view=ruts --tread=N drives
 #                         the car on PhysXVehicleWheel3D.Tread N
 #   --test=gullies      rain on a 6 degree slope cuts a gully down a wheel rut in soil and lays a fan below it; the
@@ -68,6 +69,7 @@ extends Node3D
 #   --adhesion  --view=fringe: wind over the damp margin until adhesion warts grow (--wind=m/s)
 #   --no-nmap  the bench material without its stand-in noise normal map; --taa: TAA on; --sun-alt=deg (ripples view, 9)
 #   --rain-pits=mm  --view=ripples: then a still shower of that much rain (120 mm/h), pitting the sand
+#   --scour=x,z,r   --view=ripples: then a dust devil's track (GroundSurface3D.add_scour) of radius r at (x, z)
 #   --water=mm   --view=ruts: then rain that much (20 mm/h, sped up) and let it stand an hour (mud stage 2)
 #   --dry        --view=ruts with --water: then days of sun, so the soaked ruts dry and crack (stage 2b);
 #                  --dry=frames for part of it (600 is all), --dry=0 until the deepest pool starts to crust
@@ -142,6 +144,7 @@ var infill_test := false
 var fringe_test := false
 var rain_test := false
 var rain_pits_mm := 0.0
+var scour_arg := PackedFloat32Array()
 var no_nmap := false
 var adhesion := false
 var taa := false
@@ -151,6 +154,7 @@ var near_test := false
 var mud_test := false
 var clog_test := false
 var balling_test := false
+var arches_test := false
 var treads_test := false
 var slides_test := false
 var gullies_test := false
@@ -232,6 +236,7 @@ func _ready() -> void:
 		elif a == "--test=fringe": fringe_test = true
 		elif a == "--test=rain": rain_test = true
 		elif a.begins_with("--rain-pits="): rain_pits_mm = float(a.substr(12))
+		elif a.begins_with("--scour="): scour_arg = PackedFloat32Array(Array(a.substr(8).split(",")).map(func(v): return float(v)))
 		elif a == "--no-nmap": no_nmap = true
 		elif a == "--adhesion": adhesion = true
 		elif a == "--taa": taa = true
@@ -241,6 +246,7 @@ func _ready() -> void:
 		elif a == "--test=mud": mud_test = true
 		elif a == "--test=clog": clog_test = true
 		elif a == "--test=balling": balling_test = true
+		elif a == "--test=arches": arches_test = true
 		elif a == "--test=treads": treads_test = true
 		elif a == "--test=slides": slides_test = true
 		elif a == "--test=gullies": gullies_test = true
@@ -342,11 +348,13 @@ func _ready() -> void:
 		print("RESULT: %d failed" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test or stream_test or fordcar_test or trails_test or parked_test or relief_test or balling_test or peat_test:
+	if clog_test or treads_test or slides_test or gullies_test or winch_test or flakes_test or pressure_test or subsoil_test or mats_test or debris_test or fans_test or fords_test or camber_test or mudwave_test or wear_test or buried_test or silt_test or offpatch_test or carry_test or trackdust_test or stream_test or fordcar_test or trails_test or parked_test or relief_test or balling_test or peat_test or arches_test:
 		if clog_test:
 			await _run_clog_tests()
 		if balling_test or clog_test:
 			await _run_balling_tests()
+		if arches_test:
+			await _run_arch_tests()
 		if treads_test:
 			await _run_tread_rut_tests()
 		if slides_test:
@@ -2371,6 +2379,39 @@ func _run_clog_tests() -> void:
 	_check("chains slide on dry road and bite on ice", g_dry < 0.8 and g_ice > 2.5, "%.2f dry, %.2f on ice" % [g_dry, g_ice])
 
 
+# Round 25.2: thrown sticky clay packs inside the arches; once it closes the gap it rubs the tyre and drags it.
+func _run_arch_tests() -> void:
+	if not ClassDB.class_exists("PhysXVehicle3D"):
+		return
+	var res := {}
+	for k in [0.0, 0.01, 0.12]:
+		await _soil_scene("soil")
+		await _paint_mud(0.8, STIFF_MUD)
+		var car := _make_car(1500.0, 700.0, Vector3(0, 0.9, 0))
+		car.belly_drag = false
+		car.arch_clearance = k
+		surface.follow_target = surface.get_path_to(car)
+		var drag := 0.0
+		for i in 30:
+			await get_tree().physics_frame
+		var start := car.global_position
+		car.throttle = 0.5
+		for i in 600:
+			await get_tree().physics_frame
+			for w in 4:
+				drag = maxf(drag, car.get_wheel_arch_drag(w))
+		car.throttle = 0.0
+		var packed := 0.0
+		for w in 4:
+			packed += car.get_wheel_arch_mud(w) / 4.0
+		res[k] = [packed, drag, (car.global_position - start).length()]
+		print("  arch gap %.0f cm: %.1f cm packed, rub up to %.0f N m, %.2f m in 10 s" % [k * 100.0, packed * 100.0, drag, res[k][2]])
+	_check("thrown sticky clay packs inside the arches; open wheels have none", res[0.12][0] > 0.01 and res[0.0][0] == 0.0,
+			"%.1f cm in a roomy arch" % (res[0.12][0] * 100.0))
+	_check("packed past a tight arch's gap it rubs the tyre; a roomy arch does not", res[0.01][1] > 20.0 and res[0.12][1] == 0.0 and res[0.01][2] < res[0.12][2],
+			"up to %.0f N m in the tight arch, %.2f m against %.2f m" % [res[0.01][1], res[0.01][2], res[0.12][2]])
+
+
 # Round 24.1, alone as --test=balling.
 func _run_balling_tests() -> void:
 	if not ClassDB.class_exists("PhysXVehicle3D"):
@@ -3992,9 +4033,19 @@ func _run_shelter_tests() -> void:
 	print("  after %.1f h: %.1f mm deposited at the edge, the surface %.1f mm higher; %.1f mm upwind" % [6.0 * 1200.0 / 3600.0, dep * 1000.0, rise * 1000.0, surface.get_sand_deposit_at(up) * 1000.0])
 	_check("a mound builds round the grass (nebkha)", dep > 0.005 and rise > 0.5 * dep, "%.1f mm deposited, %.1f mm risen" % [dep * 1000.0, rise * 1000.0])
 	_check("open sand gets none", surface.get_sand_deposit_at(up) == 0.0, "%.1f mm" % (surface.get_sand_deposit_at(up) * 1000.0))
+	# Its tail (plant_wake): the wind's shadow behind it recovers over some six plant heights (Okin 2008), and the sand
+	# passing either side spreads into it and drops, a tail tapering downwind (Hesp 1981).
+	var t1 := surface.get_sand_deposit_at(Vector3(2.0, 0, 0))
+	var t2 := surface.get_sand_deposit_at(Vector3(5.0, 0, 0))
+	var t3 := surface.get_sand_deposit_at(Vector3(12.0, 0, 0))
+	var side := surface.get_sand_deposit_at(Vector3(3.0, 0, 5.0))
+	print("  tail: %.1f mm 1 m behind the tuft, %.1f mm at 4 m, %.1f mm at 11 m; %.1f mm 5 m to the side" % [t1 * 1000.0, t2 * 1000.0, t3 * 1000.0, side * 1000.0])
+	_check("a sand tail forms in the tuft's lee and tapers downwind (shadow dune)", t1 > 0.002 and t1 > t2 and t2 > t3, "%.1f, %.1f, %.1f mm at 1, 4 and 11 m behind" % [t1 * 1000.0, t2 * 1000.0, t3 * 1000.0])
+	_check("none beside it, out of the wake", side == 0.0, "%.1f mm" % (side * 1000.0))
 	_check("the wind step is cheap", surface.get_wind_step_usec() < 3000.0, "%.2f ms twice a second" % (surface.get_wind_step_usec() / 1000.0))
 	# A 1 m wall across the wind at x = 5 (a stand-in for the weather's obstacle lee, WorldWeather.obstacle_lee_at):
 	# the cavity behind it to 2 heights, recovering over 6. The sand slows and drops in its lee (a shadow dune).
+	surface.plant_wake = false # the wall alone (it stands 5 m behind the tuft, in its wake)
 	WorldContracts.set_weather(WallLeeStub.new())
 	for i in 70:
 		await get_tree().physics_frame
@@ -4013,6 +4064,7 @@ func _run_shelter_tests() -> void:
 	await get_tree().create_timer(0.6).timeout
 	_check("the lee switches off with obstacle_lee", surface.get_sand_flux_at(lee).length() > 0.8 * q_open, "%.4f kg/m/s" % surface.get_sand_flux_at(lee).length())
 	surface.obstacle_lee = true
+	surface.plant_wake = true
 	WorldContracts.clear_overrides()
 	# A pebble lag over x < -6 (a stand-in for the stone fields' WorldGround.coarse_cover_at): the sand among the
 	# stones neither blows nor shows ripples.
@@ -4024,6 +4076,31 @@ func _run_shelter_tests() -> void:
 	var s_lag := surface.get_ripple_show_at(lag)
 	_check("a pebble lag armours the sand: no blowing, no ripples (Bagnold 1941)", q_lag < 0.05 * q_open and s_lag < 0.05 and surface.get_ripple_show_at(up) > 0.9, "%.4f kg/m/s among the pebbles against %.4f open; ripple share %.2f" % [q_lag, q_open, s_lag])
 	WorldContracts.clear_overrides()
+	for i in 70:
+		await get_tree().physics_frame
+	# A dust devil's track (PhysXDustDevils3D calls add_scour as its foot passes): the ripples swept off a band, back
+	# as the wind's saltation rebuilds them, kept in a calm (Reiss et al. 2011).
+	var trk := Vector3(-4.0, 0, -3.0)
+	var off := Vector3(-4.0, 0, 3.0)
+	surface.clear_scours()
+	surface.add_scour(trk, 2.0, 1.0)
+	_check("a devil's foot sweeps the ripples off its track", surface.get_ripple_show_at(trk) < 0.05 and surface.get_ripple_show_at(off) > 0.9 and surface.get_scour_at(trk + Vector3(1.0, 0, 0)) > 0.8 and surface.get_scour_at(trk + Vector3(2.5, 0, 0)) == 0.0, "ripple share %.2f on it, %.2f 6 m off; swept %.2f 1 m from its middle, %.2f at 2.5 m" % [surface.get_ripple_show_at(trk), surface.get_ripple_show_at(off), surface.get_scour_at(trk + Vector3(1.0, 0, 0)), surface.get_scour_at(trk + Vector3(2.5, 0, 0))])
+	surface.ripple_time_scale = 60.0
+	for i in 120:
+		await get_tree().physics_frame
+	surface.ripple_time_scale = 1.0
+	var healed := surface.get_scour_at(trk)
+	_check("the track fills in under a 12 m/s wind (some ten minutes of saltation)", healed > 0.4 and healed < 0.85, "%.2f still swept after about two minutes" % healed)
+	surface.wind_override = Vector2(3.0, 0.0)
+	for i in 70:
+		await get_tree().physics_frame
+	var calm0 := surface.get_scour_at(trk)
+	surface.ripple_time_scale = 60.0
+	for i in 120:
+		await get_tree().physics_frame
+	surface.ripple_time_scale = 1.0
+	_check("and stays in a light wind below the threshold", absf(surface.get_scour_at(trk) - calm0) < 0.01, "%.3f to %.3f" % [calm0, surface.get_scour_at(trk)])
+	surface.clear_scours()
 	surface.wind_override = Vector2.ZERO
 
 
@@ -4258,6 +4335,35 @@ func _run_streamer_tests() -> void:
 	await RenderingServer.frame_post_draw
 	var calm := get_viewport().get_texture().get_image()
 	_check("no grains under the threshold", st.get_flux() == 0.0, "flux %.4f kg/m/s at 4 m/s" % st.get_flux())
+	# A dust devil in the shared wind (WeatherMap3D add_vortex) in front of the camera: its swirl lifts the sand at its
+	# foot though the wind round it is under the threshold, and the grains run round it.
+	if ClassDB.class_exists("WeatherMap3D"):
+		var wm: Node3D = ClassDB.instantiate("WeatherMap3D")
+		wm.extent = 512.0
+		wm.resolution = 32
+		wm.wind_speed = 0.0
+		wm.cloud_cover = 0.0
+		wm.transition_time = 0.0
+		add_child(wm)
+		var vid: int = wm.add_vortex(Vector3(0.0, 0.0, -3.0), 1.5, 12.0, 3.0)
+		for i in 90:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var swirl := get_viewport().get_texture().get_image()
+		var vdiff := 0.0
+		var vn := 0
+		for y in range(int(swirl.get_height() * 0.4), int(swirl.get_height() * 0.6), 2):
+			for x in range(0, swirl.get_width(), 2):
+				vdiff += absf(swirl.get_pixel(x, y).get_luminance() - calm.get_pixel(x, y).get_luminance())
+				vn += 1
+		vdiff /= maxf(vn, 1)
+		if OS.has_environment("STREAMER_DUMP"):
+			swirl.save_png(OS.get_environment("STREAMER_DUMP") + "_devil.png")
+		_check("a dust devil's swirl lifts the sand in a light wind", st.get_peak_wind() > 10.0 and st.get_flux() > 0.0 and vdiff > 0.001, "peak wind %.1f m/s, flux %.4f kg/m/s, mean change %.4f round the horizon" % [st.get_peak_wind(), st.get_flux(), vdiff])
+		wm.remove_vortex(vid)
+		wm.queue_free()
+		for i in 5:
+			await get_tree().process_frame
 	surface.wind_override = Vector2(12.0, 0.0)
 	for i in 180:
 		await get_tree().process_frame
@@ -5422,6 +5528,14 @@ func _build_ripples() -> void:
 		for i in 30:
 			await get_tree().physics_frame
 		print("rain pits: cover %.2f, crust %.2f" % [surface.get_rain_pit_cover(), surface.get_rain_crust()])
+	if scour_arg.size() == 3:
+		# --scour=x,z,r: a devil's track across the grown ripples (a line of its foot's discs).
+		for k in 9:
+			surface.add_scour(Vector3(scour_arg[0] + (k - 4) * 0.5 * scour_arg[2], 0.0, scour_arg[1]), scour_arg[2], 1.0)
+		for i in 150:
+			await get_tree().physics_frame
+		var sp := Vector3(scour_arg[0], 0.0, scour_arg[1])
+		print("scour: %.2f at the track's middle; ripple share %.2f there, %.2f %.1f m off; dune tone %s" % [surface.get_scour_at(sp), surface.get_ripple_show_at(sp), surface.get_ripple_show_at(sp + Vector3(0, 0, 2.0 * scour_arg[2])), 2.0 * scour_arg[2], surface.dune_tone])
 	print("ripples: %d steps, streamers %.1f g/m/s, coverage %.2f" % [surface.get_ripple_steps(), st.get_flux() * 1000.0, st.get_coverage()])
 	env.pathtracing_enabled = not raster
 	await _save_frame()
@@ -7898,6 +8012,38 @@ func _run_peat_tests() -> void:
 		var torn_soil: Dictionary = surface.get_wheel_soil(spot, 3700.0, 0.35, 0.26)
 		_check("a car following in the torn ruts sinks into the peat", torn_soil["static_sinkage"] > 2.0 * light["static_sinkage"],
 				"%.1f cm against %.1f cm on the mat" % [torn_soil["static_sinkage"] * 100.0, light["static_sinkage"] * 100.0])
+	# Round 25.1: the torn ruts fill with peat water from the bog's table, 5 cm under its surface, and water poured in
+	# over that drains back down to it.
+	if spot == Vector3.INF:
+		return
+	surface.standing_water = true
+	var seep0: float = surface.get_peat_water_seeped()
+	surface.runoff_time_scale = 60.0
+	for i in 2100:
+		await get_tree().physics_frame
+	var seeped: float = surface.get_peat_water_seeped() - seep0
+	var deepest := 0.0
+	var deep_at := spot
+	for z in range(-12, 13):
+		for x in range(-12, 13):
+			var q := at + Vector3(x * 0.25, 0, z * 0.25)
+			if surface.get_peat_bog_at(q).y > 0.5 and surface.get_standing_water_at(q) > deepest:
+				deepest = surface.get_standing_water_at(q)
+				deep_at = q
+	var top := surface.get_surface_height_at(deep_at) + deepest
+	var level := surface.get_ground_height_at(deep_at) - 0.05
+	print("  peat water: %.0f l seeped in, %.1f cm deep in the rut, its top %.1f cm off the table" % [seeped * 1000.0, deepest * 100.0, (top - level) * 100.0])
+	_check("torn ruts fill with peat water up to the bog's table", seeped > 0.02 and deepest > 0.1 and absf(top - level) < 0.05,
+			"%.0f l, %.1f cm deep, %.1f cm off the table" % [seeped * 1000.0, deepest * 100.0, (top - level) * 100.0])
+	surface.add_water(deep_at, 0.4, 0.04, 0.0)
+	var peak := -10.0
+	for i in 900:
+		await get_tree().physics_frame
+		peak = maxf(peak, surface.get_surface_height_at(deep_at) + surface.get_standing_water_at(deep_at) - level)
+	var after := surface.get_surface_height_at(deep_at) + surface.get_standing_water_at(deep_at) - level
+	surface.runoff_time_scale = 1.0
+	_check("water poured over the table drains back down to it", peak > after + 0.01 and absf(after) < 0.03,
+			"rose to %.1f cm over the table, back to %.1f cm" % [peak * 100.0, after * 100.0])
 
 
 func _run_parked_tests() -> void:

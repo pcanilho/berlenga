@@ -189,6 +189,7 @@ public:
 		PRESET_TURF_LIP, // The sod's lip over a cut bank or scarp: a root-bound turf slab overhanging the undercut soil, grass hanging over its edge, roots trailing from its underside.
 		PRESET_BANK_ROOTS, // Fine roots of the sward and herbs bared on a cut bank or scarp face: a fibrous mat close under the top, thinning with depth, strands hanging off the undercut.
 		PRESET_BANK_ROOTS_WOODY, // A tree's or shrub's roots bared on a cut bank near its crown: a few woody laterals out of the face, along and down it, branching to fine ends.
+		PRESET_HAY_BALE, // A round hay bale lying on its side, 4 x 4 to 5 x 5 ft, the axis along +X: wound hay strands, spiral ends, twine bands (GrassField3D drops them along the windrows).
 		PRESET_MAX,
 	};
 
@@ -340,6 +341,7 @@ private:
 	void _build_flood_wrack();
 	void _build_turf_lip();
 	void _build_bank_roots(bool p_woody);
+	void _build_hay_bale();
 	void _add_root_path(const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, const LocalVector<float> &p_wind);
 	void _build_horse_dung();
 	void _build_deer_pellets();
@@ -583,6 +585,12 @@ public:
 	static float get_presence(Preset p_preset, const Dictionary &p_season);
 	static float _mushroom_presence(Preset p_preset, const Dictionary &p_season);
 	static bool is_silk(Preset p_preset) { return p_preset == PRESET_SHEET_WEB || p_preset == PRESET_ORB_WEB; }
+	// Ground features, not herbs: a mower passes over or round them (mounds, dung, sod, wrack, webs, bales).
+	static bool is_ground_feature(int p_preset) {
+		return p_preset == PRESET_ANTHILL || p_preset == PRESET_WOOD_ANT_NEST || p_preset == PRESET_MOLEHILL || p_preset == PRESET_ROOTED_SOD || p_preset == PRESET_LEAF_BANK || p_preset == PRESET_FLOOD_WRACK || p_preset == PRESET_TURF_LIP || p_preset == PRESET_BANK_ROOTS || p_preset == PRESET_BANK_ROOTS_WOODY || p_preset == PRESET_COW_PAT || p_preset == PRESET_HORSE_DUNG || p_preset == PRESET_DEER_PELLETS || p_preset == PRESET_HAY_BALE || is_silk(Preset(p_preset));
+	}
+	// Whether the mesh is a generated plant (its first surface drawn with the plant shader).
+	static bool is_plant_mesh(const Ref<Mesh> &p_mesh);
 	static bool is_mushroom(Preset p_preset) { return (p_preset >= PRESET_FLY_AGARIC && p_preset <= PRESET_HONEY_FUNGUS) || p_preset == PRESET_FAIRY_RING_MUSHROOM; }
 	float get_leaf_wear() const { return leaf_wear; }
 	int get_texture_size() const { return texture_size; }
@@ -707,6 +715,7 @@ public:
 	// Turf overhangs (docs/ideas/vegetation.md, "Turf overhangs on cut banks"): the sod's lip over the top edge of a
 	// cut bank or scarp (PlantSpecies.RULE_BANK_EDGE), overhanging the drop (the field turns mesh +X over it).
 	static TypedArray<Resource> make_bank_turf(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	static Ref<ArrayMesh> make_hay_bale(int p_seed = 0, bool p_textures = true);
 	static TypedArray<Resource> make_bank_roots(int p_variants = 6, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	static TypedArray<Resource> make_grazing(GrazeSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 

@@ -4062,7 +4062,7 @@ raster's brightness under PT (birch crop, leaf pixels, linear). PT is the refere
 leaves with unshadowed sky ambient (SSAO only reaches a few decimetres) and its cascade shadows of small leaves
 soften at 300 m max distance, so inner leaves catch sun they should not. A fix belongs in raster: crown occlusion for
 ambient (a per-instance crown AO term, or bent-normal / visibility baked per leaf from the crown's density) and
-tighter leaf shadows near the camera.
+tighter leaf shadows near the camera. Done 22 Nov, and most of the gap was a PT sky bug from the leaves' ALPHA writes: see 5bl.
 
 ## Next-round options (card 20 Nov evening)
 
@@ -4101,6 +4101,56 @@ tighter leaf shadows near the camera.
   GrassField3D::add_camera_cutout(). Shadows keep the cut geometry; the path tracer starts camera rays past the same span.
 - Bench: env `CUTOUT="x,y,z,r[,floor]"` on main.gd shots. A hazel cut through the crown shows the same hole raster and
   PT (/mnt/project-files/fork/trees/cutout/).
+
+### 5bl. Crown light: sky in the path tracer, crown shade in raster (22 Nov)
+
+Found while working the 5bj parity item (PT crowns at 0.55-0.6 of raster). With the sun off, PT drew every leaf black
+while bark and ground took the sky. Cause: the fire's burn-up and needle cast (88aaa04d, 18 Nov) hid leaves with
+`ALPHA = 0.0`. A shader that writes ALPHA is a transparent: raster drew all leaves in its transparent pass (no depth
+prepass or SSAO, sorted per object, brighter), and the path tracer put them in its blend class, which on this path took
+no sky light at all (a single sky-lit quad with the leaf shader: 0 in PT; the same shader without the ALPHA writes: as
+raster). Fixed with `discard`, which keeps leaves opaque and alpha-tested where they burn (every material already
+discards for the camera cut-out, so no new any-hit cost). Birch crop, day 135, leaf pixels (linear green): raster
+0.351 to 0.277, PT 0.215 to 0.268, so PT is now 0.97 of raster (was 0.61).
+
+Crown shade for raster (`crown_occlusion`, default 1): raster lights each leaf with the whole sky (SSAO reaches a few
+decimetres), so inner and lower leaves drew as bright as outer ones. Baked per vertex, as SpeedTree's vertex AO and other
+foliage pipelines do, with the crown taken as a turbid medium (Monsi and Saeki 1953): LOD 0 leaf area into a grid of
+cells about a thirtieth of the crown (at least 12 cm) as leaf area density; from each cell the sky along 13 directions
+over the upper hemisphere, cosine weighted, through exp(-k LAD s); k = G sqrt(1 - sigma), G = 0.5 for a spherical leaf
+angle distribution (Ross 1981), sigma = 0.2 the leaves' visible scattering (Goudriaan 1977). Vertices read the grid
+trilinearly. Stored as CUSTOM0.r (RGBA8, 4 bytes a leaf vertex) = (1 - visibility) x crown_occlusion; the leaf shader
+writes AO = 1 - that with AO_LIGHT_AFFECT 0 (ambient only). The path tracer traces the shade itself and shows AO only in
+debug views. Bake: under 0.1 s for a 2.5M-triangle birch. Sky-only raster leaves 0.041 to 0.026 green.
+
+Rule for all foliage shaders: hide with discard, never with ALPHA, unless the surface is really see-through.
+
+### 5bm. Stand frames docs declined (22-23 Nov)
+
+Docs declined the old-growth and taiga re-shoots (same green crowns, flat-disc root plates, wires in the taiga,
+old growth reading as a plantation). Fixed at source:
+
+- Crown tone per tree (`crown_tint_variation` on the leaf shader, default 1): stands of one species varied in form only,
+  so a canopy read as one green repeated. Each tree's leaves are scaled by a tone hashed from its ground position:
+  lightness 0.72-1.18 and a swing from a yellower to a bluer green (per-instance colour variation, as SpeedTree's hue
+  variation and Unreal's PerInstanceRandom). Hashed in the vertex stage: in the fragment stage a MultiMesh instance's
+  own transform is not in MODEL_MATRIX, which is why a first try left every tree in a stand the same.
+- Taiga wires: mostly the bench (near needles off, so bare lateral rods showed inside the stand). In the generator,
+  boreal spruce laterals sag under their weight (gravity bending 0.35, the comb habit) and a kept dead branch is a stub
+  of 0.4-1.6 m, not a whole bare limb.
+- Root plates: the rim is lobed along the structural laterals (the root-soil plate is the soil they bind, Coutts 1986;
+  between them it crumbles off the torn edge); superficial laterals run out of the stem's foot over the old surface,
+  banked in litter, before they dive (flat and heart root systems of spruce and beech, Kostler, Bruckner and
+  Bibelriether 1968); and the old surface carries a leaf-litter mat as geometry (a cupped four-triangle lens a leaf,
+  about 650 a square metre, browns from this year's fall to last year's, fewer on moss and on old plates).
+- Old-growth beech: canopy crowns read as tufts on the ends of bare upright limbs. Beech leafs on short shoots along
+  the last years' wood and keeps shaded limbs long, so the old-growth bands keep leaves on five years of shoots, shed a
+  third as much and let dormant buds wait twice as long. The shade layer grows the broad, level crown of shade-tolerant
+  saplings (Horn 1971 monolayer; Canham 1988): branch angle 68 degrees, slight negative gravitropism.
+
+Fixed with it: the fire code in the leaf and bark shaders read the tree's base from MODEL_MATRIX in the fragment
+stage, which for MultiMesh trees is the field's origin, not the tree's (char height, fire_tree_killed). Both now take it
+from vertex() as a varying.
 
 ### Research for the likely picks (21 Nov, card pending)
 

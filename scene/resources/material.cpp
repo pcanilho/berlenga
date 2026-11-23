@@ -1348,6 +1348,9 @@ float camera_cutout_weight(vec3 p_world, vec3 p_target, vec3 p_axis, float p_rad
 }
 
 bool camera_cutout_discard(vec3 p_world, mat4 p_inv_view, mat4 p_projection, vec2 p_frag) {
+	if (IN_PATH_TRACER) {
+		return false; // the path tracer's camera rays start past the cut (raygen); its hit shaders never cut
+	}
 	vec3 target = camera_cutout.xyz;
 	vec3 axis = p_projection[3][3] == 1.0 ? -p_inv_view[2].xyz : normalize(target - p_inv_view[3].xyz);
 	float w = camera_cutout_weight(p_world, target, normalize(axis), camera_cutout.w, camera_cutout_floor);
@@ -3376,6 +3379,8 @@ void fragment() {)";
 				float gny = (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y;
 				vec3 gdt = mix(ground_dune_tone(gwp.xz, gny, -1.0), ground_dune_tone(gwp.xz, gny, gsa.x), gsa.z);
 				ALBEDO *= mix(vec3(1.0), gdt, gsa.y);
+				// Dust devil tracks (GroundSurface3D add_scour): the darker sand where the fines went.
+				ALBEDO *= mix(vec3(1.0), ground_scour_tone(ground_sand_scour_at(gwp.xz)), gsa.y);
 				// Granule ripples on the interdune lag (GroundSurface3D granule_ripples), across the dune-building wind.
 				vec4 gm5 = ground_sand_meta5();
 				if (gm5.z > 0.5) {
@@ -3458,6 +3463,8 @@ void fragment() {)";
 				float gny = (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y;
 				vec3 gdt = mix(ground_dune_tone(gwp.xz, gny, -1.0), ground_dune_tone(gwp.xz, gny, gsa.x), gsa.z);
 				ALBEDO *= mix(vec3(1.0), gdt, gsa.y);
+				// Dust devil tracks (GroundSurface3D add_scour): the darker sand where the fines went.
+				ALBEDO *= mix(vec3(1.0), ground_scour_tone(ground_sand_scour_at(gwp.xz)), gsa.y);
 				// Granule ripples on the interdune lag (GroundSurface3D granule_ripples), across the dune-building wind.
 				vec4 gm5 = ground_sand_meta5();
 				if (gm5.z > 0.5) {
@@ -5416,6 +5423,34 @@ vec4 ground_sand_meta7() {
 vec4 ground_sand_meta5() {
 	ivec2 ts = textureSize(ground_ripple_map, 0);
 	return ground_ripple_rect.z > 0.0 && ts.x >= 6 ? texelFetch(ground_ripple_map, ivec2(5, ts.y - 1), 0) : vec4(0.0);
+}
+// Dust devil tracks (GroundSurface3D add_scour; docs/ideas/sand.md, "Devil tracks"): the foot lifts the bright fine
+// grains off the surface and leaves the coarser, darker sand under them, a band about its width (Reiss et al. 2011;
+// Balme and Greeley 2006). The share swept, from the tile rows' G over the sand block's rect (the sixth meta texel's w
+// says there is any).
+float ground_sand_scour_at(vec2 p_xz) {
+	if (ground_sand_meta5().w < 0.5) {
+		return 0.0;
+	}
+	vec4 m1 = texelFetch(ground_ripple_map, ivec2(1, textureSize(ground_ripple_map, 0).y - 1), 0);
+	vec4 m2 = texelFetch(ground_ripple_map, ivec2(2, textureSize(ground_ripple_map, 0).y - 1), 0);
+	int n = int(m2.y + 0.5);
+	int sn = int(m2.z + 0.5);
+	vec2 su = (p_xz - m1.xy) / max(m1.z, 1e-4) * float(sn) - 0.5;
+	if (sn <= 0 || any(lessThan(su, vec2(-0.5))) || any(greaterThan(su, vec2(float(sn) - 0.5)))) {
+		return 0.0;
+	}
+	ivec2 s0 = clamp(ivec2(floor(su)), ivec2(0), ivec2(sn - 1));
+	ivec2 s1 = clamp(s0 + 1, ivec2(0), ivec2(sn - 1));
+	vec2 sf = clamp(su - floor(su), 0.0, 1.0);
+	int r0 = n + sn;
+	return mix(mix(texelFetch(ground_ripple_map, ivec2(s0.x, r0 + s0.y), 0).g, texelFetch(ground_ripple_map, ivec2(s1.x, r0 + s0.y), 0).g, sf.x),
+			mix(texelFetch(ground_ripple_map, ivec2(s0.x, r0 + s1.y), 0).g, texelFetch(ground_ripple_map, ivec2(s1.x, r0 + s1.y), 0).g, sf.x), sf.y);
+}
+// The tracks' tone: a little darker and warmer where the fines went (the interdune lag's hue, much weaker: only the
+// surface skin is gone).
+vec3 ground_scour_tone(float p_scour) {
+	return mix(vec3(1.0), vec3(0.9, 0.87, 0.82), clamp(p_scour, 0.0, 1.0));
 }
 vec4 ground_sand_at(vec2 p_xz) {
 	if (ground_ripple_rect.z <= 0.0) {

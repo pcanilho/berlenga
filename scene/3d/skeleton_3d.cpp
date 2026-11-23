@@ -32,11 +32,14 @@
 #include "skeleton_3d.compat.inc"
 
 #include "core/object/callable_mp.h"
+#include "core/config/engine.h"
 #include "core/object/class_db.h"
+#include "core/os/os.h"
 #include "scene/3d/skeleton_modifier_3d.h"
 #if !defined(DISABLE_DEPRECATED) && !defined(PHYSICS_3D_DISABLED)
 #include "scene/3d/physics/physical_bone_simulator_3d.h"
 #endif // _DISABLE_DEPRECATED && PHYSICS_3D_DISABLED
+#include "scene/resources/3d/world_3d.h"
 #include "servers/rendering/rendering_server.h"
 
 void SkinReference::_skin_changed() {
@@ -296,6 +299,18 @@ void Skeleton3D::_notification(int p_what) {
 			setup_simulator();
 #endif // _DISABLE_DEPRECATED && PHYSICS_3D_DISABLED
 		} break;
+		case NOTIFICATION_ENTER_WORLD:
+		case NOTIFICATION_VISIBILITY_CHANGED: {
+			_update_visibility_instance();
+		} break;
+		case NOTIFICATION_EXIT_WORLD: {
+			_free_visibility_instance();
+		} break;
+		case NOTIFICATION_TRANSFORM_CHANGED: {
+			if (visibility_instance.is_valid()) {
+				RS::get_singleton()->instance_set_transform(visibility_instance, get_global_transform());
+			}
+		} break;
 		case NOTIFICATION_POST_ENTER_TREE: {
 			_make_dirty();
 			_make_modifiers_dirty();
@@ -336,7 +351,13 @@ void Skeleton3D::_notification(int p_what) {
 				bone_global_pose_dirty_backup = bone_global_pose_dirty;
 
 				if (update_flags & UPDATE_FLAG_MODIFIER) {
-					_process_modifiers();
+					if (_modifiers_culled()) {
+						// Unseen: the clip's pose stands, and no time piles up for the return.
+						modifiers_resuming = true;
+						update_delta = 0;
+					} else {
+						_process_modifiers();
+					}
 				}
 			}
 
@@ -445,6 +466,132 @@ void Skeleton3D::set_modifier_callback_mode_process(Skeleton3D::ModifierCallback
 
 Skeleton3D::ModifierCallbackModeProcess Skeleton3D::get_modifier_callback_mode_process() const {
 	return modifier_callback_mode_process;
+}
+
+void Skeleton3D::set_modifier_update_mode(ModifierUpdateMode p_mode) {
+	if (modifier_update_mode == p_mode) {
+		return;
+	}
+	modifier_update_mode = p_mode;
+	_update_visibility_instance();
+}
+
+Skeleton3D::ModifierUpdateMode Skeleton3D::get_modifier_update_mode() const {
+	return modifier_update_mode;
+}
+
+void Skeleton3D::set_modifier_visibility_margin(real_t p_margin) {
+	modifier_visibility_margin = MAX(p_margin, (real_t)0.0);
+	visibility_aabb = AABB();
+	_update_visibility_aabb();
+}
+
+real_t Skeleton3D::get_modifier_visibility_margin() const {
+	return modifier_visibility_margin;
+}
+
+bool Skeleton3D::are_modifiers_running() const {
+	return !_modifiers_culled();
+}
+
+bool Skeleton3D::_modifiers_culled() const {
+	if (modifier_update_mode == MODIFIER_UPDATE_MODE_ALWAYS || Engine::get_singleton()->is_editor_hint()) {
+		return false;
+	}
+	if (!is_inside_tree() || !is_visible_in_tree()) {
+		return true; // Hidden skeletons are never drawn, nor traced.
+	}
+	if (modifier_update_mode == MODIFIER_UPDATE_MODE_WHEN_SHOWN) {
+		return false;
+	}
+	if (!visibility_instance.is_valid() || OS::get_singleton()->get_current_rendering_method() == "dummy") {
+		return false; // No culling to tell us (headless): keep running.
+	}
+	if (!visibility_heard && Engine::get_singleton()->get_process_frames() > visibility_since_frame + 2) {
+		return true; // Never reported seen since it started: unseen.
+	}
+	return !modifiers_seen;
+}
+
+void Skeleton3D::_update_visibility_instance() {
+	const bool want = modifier_update_mode == MODIFIER_UPDATE_MODE_WHEN_ON_SCREEN && is_inside_tree() && !Engine::get_singleton()->is_editor_hint() && get_world_3d().is_valid();
+	if (!want) {
+		_free_visibility_instance();
+		return;
+	}
+	RenderingServer *rs = RS::get_singleton();
+	if (!visibility_instance.is_valid()) {
+		visibility_notifier = rs->visibility_notifier_create();
+		rs->visibility_notifier_set_callbacks(visibility_notifier, callable_mp(this, &Skeleton3D::_visibility_enter), callable_mp(this, &Skeleton3D::_visibility_exit));
+		visibility_instance = rs->instance_create();
+		rs->instance_set_base(visibility_instance, visibility_notifier);
+		rs->instance_set_scenario(visibility_instance, get_world_3d()->get_scenario());
+		set_notify_transform(true);
+		visibility_aabb = AABB();
+		_update_visibility_aabb();
+		visibility_shown = false;
+	}
+	const bool shown = is_visible_in_tree();
+	if (shown && !visibility_shown) {
+		// Until the renderer reports it, it counts as seen (no frame of the bare clip if it is in view);
+		// if it is not reported within two frames, it is unseen.
+		modifiers_seen = true;
+		visibility_heard = false;
+		visibility_since_frame = Engine::get_singleton()->get_process_frames();
+	}
+	visibility_shown = shown;
+	rs->instance_set_transform(visibility_instance, get_global_transform());
+	rs->instance_set_visible(visibility_instance, shown);
+}
+
+void Skeleton3D::_free_visibility_instance() {
+	if (visibility_instance.is_valid()) {
+		RS::get_singleton()->free_rid(visibility_instance);
+		visibility_instance = RID();
+	}
+	if (visibility_notifier.is_valid()) {
+		RS::get_singleton()->free_rid(visibility_notifier);
+		visibility_notifier = RID();
+	}
+	modifiers_seen = true;
+}
+
+void Skeleton3D::_update_visibility_aabb() {
+	if (!visibility_notifier.is_valid()) {
+		return;
+	}
+	// The bones' bounds in the skeleton's space, grown by the margin; it only grows while the modifiers run.
+	AABB bones_box;
+	const int len = bones.size();
+	for (int i = 0; i < len; i++) {
+		const Vector3 p = get_bone_global_pose(i).origin;
+		if (i == 0) {
+			bones_box = AABB(p, Vector3());
+		} else {
+			bones_box.expand_to(p);
+		}
+	}
+	if (len == 0) {
+		bones_box = AABB(Vector3(), Vector3());
+	}
+	if (visibility_aabb.has_volume() && visibility_aabb.encloses(bones_box)) {
+		return;
+	}
+	visibility_aabb = bones_box.grow(modifier_visibility_margin).merge(visibility_aabb.has_volume() ? visibility_aabb : bones_box.grow(modifier_visibility_margin));
+	RS::get_singleton()->visibility_notifier_set_aabb(visibility_notifier, visibility_aabb);
+}
+
+void Skeleton3D::_visibility_enter() {
+	visibility_heard = true;
+	modifiers_seen = true;
+}
+
+void Skeleton3D::_visibility_exit() {
+	if (!visibility_heard && Engine::get_singleton()->get_process_frames() <= visibility_since_frame + 2) {
+		return; // A late report from before it was shown again.
+	}
+	visibility_heard = true;
+	modifiers_seen = false;
 }
 
 void Skeleton3D::_process_changed() {
@@ -1175,6 +1322,16 @@ void Skeleton3D::_find_modifiers() {
 }
 
 void Skeleton3D::_process_modifiers() {
+	if (modifiers_resuming) {
+		// Back in view: each modifier starts from the pose now, not from where it stopped.
+		modifiers_resuming = false;
+		for (const ObjectID &oid : modifiers) {
+			SkeletonModifier3D *mod = Object::cast_to<SkeletonModifier3D>(ObjectDB::get_instance(oid));
+			if (mod) {
+				mod->notify_skeleton_resumed();
+			}
+		}
+	}
 	for (const ObjectID &oid : modifiers) {
 		Object *t_obj = ObjectDB::get_instance(oid);
 		if (!t_obj) {
@@ -1212,6 +1369,7 @@ void Skeleton3D::_process_modifiers() {
 	}
 	// Reset accumulated delta.
 	update_delta = 0;
+	_update_visibility_aabb();
 }
 
 void Skeleton3D::add_child_notify(Node *p_child) {
@@ -1298,6 +1456,11 @@ void Skeleton3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_modifier_callback_mode_process", "mode"), &Skeleton3D::set_modifier_callback_mode_process);
 	ClassDB::bind_method(D_METHOD("get_modifier_callback_mode_process"), &Skeleton3D::get_modifier_callback_mode_process);
+	ClassDB::bind_method(D_METHOD("set_modifier_update_mode", "mode"), &Skeleton3D::set_modifier_update_mode);
+	ClassDB::bind_method(D_METHOD("get_modifier_update_mode"), &Skeleton3D::get_modifier_update_mode);
+	ClassDB::bind_method(D_METHOD("set_modifier_visibility_margin", "margin"), &Skeleton3D::set_modifier_visibility_margin);
+	ClassDB::bind_method(D_METHOD("get_modifier_visibility_margin"), &Skeleton3D::get_modifier_visibility_margin);
+	ClassDB::bind_method(D_METHOD("are_modifiers_running"), &Skeleton3D::are_modifiers_running);
 
 	ClassDB::bind_method(D_METHOD("advance", "delta"), &Skeleton3D::advance);
 
@@ -1306,6 +1469,8 @@ void Skeleton3D::_bind_methods() {
 
 	ADD_GROUP("Modifier", "modifier_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "modifier_callback_mode_process", PROPERTY_HINT_ENUM, "Physics,Idle,Manual"), "set_modifier_callback_mode_process", "get_modifier_callback_mode_process");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "modifier_update_mode", PROPERTY_HINT_ENUM, "Always,When Shown,When On Screen"), "set_modifier_update_mode", "get_modifier_update_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "modifier_visibility_margin", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater,suffix:m"), "set_modifier_visibility_margin", "get_modifier_visibility_margin");
 
 	ADD_SIGNAL(MethodInfo("rest_updated"));
 	ADD_SIGNAL(MethodInfo("pose_updated"));
@@ -1318,6 +1483,9 @@ void Skeleton3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(MODIFIER_CALLBACK_MODE_PROCESS_PHYSICS);
 	BIND_ENUM_CONSTANT(MODIFIER_CALLBACK_MODE_PROCESS_IDLE);
 	BIND_ENUM_CONSTANT(MODIFIER_CALLBACK_MODE_PROCESS_MANUAL);
+	BIND_ENUM_CONSTANT(MODIFIER_UPDATE_MODE_ALWAYS);
+	BIND_ENUM_CONSTANT(MODIFIER_UPDATE_MODE_WHEN_SHOWN);
+	BIND_ENUM_CONSTANT(MODIFIER_UPDATE_MODE_WHEN_ON_SCREEN);
 
 #ifndef DISABLE_DEPRECATED
 	ClassDB::bind_method(D_METHOD("clear_bones_global_pose_override"), &Skeleton3D::clear_bones_global_pose_override);
@@ -1430,6 +1598,7 @@ Skeleton3D::Skeleton3D() {
 }
 
 Skeleton3D::~Skeleton3D() {
+	_free_visibility_instance();
 	// Some skins may remain bound.
 	for (SkinReference *E : skin_bindings) {
 		E->skeleton_node = nullptr;

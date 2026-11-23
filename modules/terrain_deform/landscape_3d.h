@@ -33,6 +33,7 @@
 #pragma once
 
 #include "core/object/worker_thread_pool.h"
+#include "core/os/rw_lock.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "modules/world/world_contracts.h"
@@ -121,6 +122,10 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 
 	// The grid: gw x gh heights from origin, spacing apart (chunks x chunk_quads + 1 a side).
 	LocalVector<float> heights;
+	// The grid's size and heights change together under heights_lock (write); the contracts other systems read from
+	// their own threads (relief_at from plant and stone placement) hold it to read, so they never see one without the
+	// other (a grid size ahead of its heights read past their end).
+	mutable RWLock heights_lock;
 	int gw = 0;
 	int gh = 0;
 	int vw = 0; // valid points from the source; the grid repeats the last row and column past them
@@ -211,10 +216,15 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	float _h(int p_x, int p_z) const;
 	Vector3 _normal(int p_x, int p_z) const;
 	Vector3 _normal_at(real_t p_x, real_t p_z) const; // bilinear, in grid units
-	float _cliff_offset(const Vector3 &p_world) const;
+	float _cliff_offset(const Vector3 &p_world, real_t p_steep, real_t p_relief, bool p_joints = true) const; // p_steep: relief scale times the face's tan(slope)
+	static float _joint_offset(const Vector3 &p, real_t p_steep);
 	float _bank_offset(const Vector3 &p_world) const;
 	// The face weights for a heightfield normal: x the cliff's (cliff_relief), y the bank's (bank_relief), each 0..1.
 	static Vector2 _relief_weights(const Vector3 &p_normal);
+	Vector2 _relief_weights_at(real_t p_fx, real_t p_fz) const;
+	real_t _relief_fold_scale(real_t p_x, real_t p_z) const; // grid units
+	real_t _cliff_scale(const Vector3 &p, real_t p_k, real_t p_tan) const;
+	real_t _bank_scale(const Vector3 &p, real_t p_k, real_t p_tan) const;
 	Vector3 _cliff_point(const Vector3 &p_world, real_t p_weight_scale) const;
 	void _build_cliff_surface(MeshJob &r_job) const;
 	const LocalVector<int> &_indices(int p_level, int p_mask);

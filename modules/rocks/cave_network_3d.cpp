@@ -1130,8 +1130,10 @@ void CaveNetwork3D::_surge_update(double p_delta) {
 			sg.head = (sg.head + 1) % hn;
 			sg.history[sg.head] = eta;
 		}
-		const float prev_chamber = sg.chamber >= 0 ? sg.level[sg.chamber] : 0.0f;
+		LocalVector<float> prev_level;
+		prev_level = sg.level;
 		bool sealed = false;
+		int seal = -1;
 		for (int i = 0; i < int(sg.axis.size()); i++) {
 			// The wave as it was at the mouth lag seconds ago (the newest sample is now).
 			const float back = sg.lag[i] / SURGE_HISTORY_STEP;
@@ -1148,16 +1150,35 @@ void CaveNetwork3D::_surge_update(double p_delta) {
 			const float mean_depth = MAX(sg.mean - sg.floor[i], 0.5f);
 			const float cap = Math::sqrt(9.81f * MAX(depth, 0.0f));
 			sg.flow[i] = depth > 0.05f ? CLAMP(e * Math::sqrt(9.81f / mean_depth), -cap, cap) : 0.0f;
-			if (i != sg.chamber && lv >= sg.roof[i]) {
+			// Sealed where the water meets the roof under the rock (out in the open the "roof" is sky).
+			if (i != sg.chamber && lv >= sg.roof[i] && sg.along[i] >= sg.covered && seal < 0) {
 				sealed = true;
+				seal = i;
 			}
 		}
 		sg.sealed = sealed;
 		float spout = 0.0f;
-		if (sg.chamber >= 0 && sg.shaft_area > 0.0f) {
-			const float rise = (sg.level[sg.chamber] - prev_chamber) / float(p_delta);
-			if (sealed && rise > 0.0f && sg.level[sg.chamber] > sg.floor[sg.chamber]) {
-				spout = MIN(rise * sg.chamber_area / sg.shaft_area, 60.0f);
+		if (sealed && sg.chamber >= 0 && sg.shaft_area > 0.0f) {
+			// The air pocket behind the seal (the inner passage and the chamber) can only leave up the shaft: the air
+			// speed there is the rate the water fills the pocket over the shaft's area (air taken as incompressible at
+			// these speeds; the oscillating-water-column model of blowholes and wave-energy columns).
+			const int n = int(sg.axis.size());
+			auto wet = [&](const LocalVector<float> &p_level) {
+				float v = 0.0f;
+				for (int i = seal + 1; i < n; i++) {
+					const float d = CLAMP(p_level[i] - sg.floor[i], 0.0f, MAX(sg.roof[i] - sg.floor[i], 0.0f));
+					if (i == sg.chamber) {
+						v += d * sg.chamber_area;
+					} else {
+						const float dl = 0.5f * (sg.along[MIN(i + 1, sg.chamber >= 0 ? sg.chamber - 1 : n - 1)] - sg.along[i - 1]);
+						v += d * 2.0f * sg.half_width[i] * MAX(dl, 0.0f);
+					}
+				}
+				return v;
+			};
+			const float fill = (wet(sg.level) - wet(prev_level)) / float(p_delta);
+			if (fill > 0.0f) {
+				spout = MIN(fill / sg.shaft_area, 60.0f);
 			}
 		}
 		if (spout > 5.0f && sg.spout <= 5.0f) {
@@ -2972,6 +2993,7 @@ Ref<Material> CaveNetwork3D::_wall_material() {
 	sh.instantiate();
 	sh->set_code(R"(shader_type spatial;
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+)" + BaseMaterial3D::get_camera_cutout_shader_code() + R"(
 uniform vec3 rock_color = vec3(0.30, 0.29, 0.26);
 uniform vec3 sediment_color = vec3(0.13, 0.10, 0.07);
 uniform vec3 sand_color = vec3(0.4, 0.3, 0.17);
@@ -2988,12 +3010,6 @@ float vn(vec3 p) {
 			mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
 float fbm(vec3 p) { return 0.5 * vn(p) + 0.25 * vn(p * 2.03 + 7.0) + 0.125 * vn(p * 4.1 + 3.0) + 0.0625 * vn(p * 8.3 + 1.0); }
-float mgour(vec3 p) {
-	// Contours of a smooth field, cut as a sawtooth: each contour a rim (a steep lip on the uphill side of a step, a
-	// gentle back), sinuous and nested like the real scale-like sheets, 3 to 8 cm apart.
-	float t = fract(12.0 * fbm(vec3(p.x * 3.2, p.y * 0.7, p.z * 3.2) + 91.0) + 0.6 * vn(p * 9.0));
-	return 0.006 * smoothstep(0.0, 0.3, t) * (1.0 - t);
-}
 void vertex() {
 	w_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	w_nrm = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
@@ -3047,6 +3063,17 @@ vec3 wor(vec3 p, out vec3 r_id) {
 	}
 	return vec3(sqrt(f1), sqrt(f2), 0.0);
 }
+// Microgours: rimstone at the thin sheet's scale, a scale-like net of small cells 3 to 8 cm across with a crenulate
+// rim round each (Hill and Forti 1997, "Cave Minerals of the World"). Worley cells in plan, their borders the rims (F2 -
+// F1 small), the plan warped so the rims wander; a sharp crest falling off to each side.
+float mgour(vec3 p) {
+	vec3 q = vec3(p.x, 0.0, p.z) * 18.0;
+	q.xz += 1.2 * vec2(fbm(p * 1.3 + 41.0), fbm(p * 1.3 + 77.0));
+	vec3 id;
+	vec3 w = wor(q, id);
+	float edge = w.y - w.x;
+	return 0.003 * (1.0 - smoothstep(0.0, 0.3, edge)) * (0.6 + 0.4 * h3(id));
+}
 // Scallops (Curl 1966, 1974; Blumberg and Curl 1974): dish hollows dissolved by the flow, a few centimetres to a
 // couple of decimetres long (shorter where the water ran faster), longer along the flow than up the wall, sharp-rimmed
 // where two meet. The walls' flow ran along the passage, so near enough horizontal: cells 15 cm along, 9 cm up.
@@ -3096,6 +3123,10 @@ float relief(vec3 p, vec3 p_n, float p_joint, float p_near, float p_wall, float 
 	return h;
 }
 void fragment() {
+	// The camera cut-out (world-links, 904b8caf): the hole through whatever stands between the camera and the player.
+	if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)) {
+		discard;
+	}
 	float m = fbm(w_pos * 0.45);
 	float fine = fbm(w_pos * 3.1);
 	// Limestone grain: a micritic matrix speckled with paler shell fragments and darker grains (2 cm to 1 mm).
@@ -3139,7 +3170,7 @@ void fragment() {
 	// as sediment rather than a haze.
 	// Flowstone (the mesher's red: round formations, the rimstone pools and the sheet they stand in) is a smooth calcite
 	// coat over the fill, so no grit and no pits show through it.
-	float flow_c = smoothstep(0.15, 0.6, clamp(COLOR.r, 0.0, 1.0) + 0.3 * (fbm(w_pos * 5.0 + 17.0) - 0.5)); // a wandering edge, not the triangles'
+	float flow_c = smoothstep(0.15, 0.6, clamp(COLOR.r, 0.0, 1.0));
 	float grit_w = fill_w * on_floor * (1.0 - smoothstep(1.5, 4.5, length(VERTEX))) * (1.0 - clamp(COLOR.g, 0.0, 1.0)) * (1.0 - flow_c);
 	if (grit_w > 0.01) {
 		vec3 gid;
@@ -3510,6 +3541,7 @@ Ref<ArrayMesh> CaveNetwork3D::_spel_mesh(int p_kind, int p_variant) {
 		sh.instantiate();
 		sh->set_code(R"(shader_type spatial;
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+)" + BaseMaterial3D::get_camera_cutout_shader_code() + R"(
 uniform vec3 calcite = vec3(0.58, 0.49, 0.37);
 uniform vec3 amber = vec3(0.45, 0.30, 0.17);
 uniform vec3 mud = vec3(0.16, 0.12, 0.09);
@@ -3528,6 +3560,10 @@ void vertex() {
 	up = (MODEL_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).y; // < 0 never; the kind comes from the base height below
 }
 void fragment() {
+	// The camera cut-out (world-links, 904b8caf): the hole through whatever stands between the camera and the player.
+	if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)) {
+		discard;
+	}
 	float t = UV.y;
 	float m = fbm(w_pos * 6.0);
 	vec3 col = mix(calcite, amber, 0.25 + 0.5 * fbm(w_pos * 1.3 + 4.0));
@@ -4310,6 +4346,7 @@ Ref<Material> CaveNetwork3D::_rim_material() {
 	sh.instantiate();
 	sh->set_code(R"(shader_type spatial;
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+)" + BaseMaterial3D::get_camera_cutout_shader_code() + R"(
 uniform vec3 calcite = vec3(0.52, 0.45, 0.35);
 uniform vec3 amber = vec3(0.36, 0.24, 0.13);
 uniform vec3 floor_tint = vec3(0.46, 0.38, 0.28); // the flowstone floor round the pools (the wall shader's), which the apron's thin edge takes on
@@ -4330,6 +4367,10 @@ float relief(vec3 p) {
 	return 0.5 * sin(p.y * 900.0 + 6.0 * vn(p * 30.0)) * 0.15 + 0.6 * vn(p * 70.0) + 0.3 * vn(p * 180.0);
 }
 void fragment() {
+	// The camera cut-out (world-links, 904b8caf): the hole through whatever stands between the camera and the player.
+	if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)) {
+		discard;
+	}
 	float m = fbm(w_pos * 8.0);
 	vec3 col = mix(calcite, amber, 0.2 + 0.55 * fbm(w_pos * 1.7 + 4.0));
 	col *= 0.85 + 0.3 * m;
