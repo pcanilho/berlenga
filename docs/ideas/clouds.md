@@ -930,3 +930,13 @@ anti-tiling and clustering: the read warped (up to 450 m over 5 km) with each re
 texture (Quilez, "texture repetition"), and the cover modulated by a two-octave noise (1.8 km, 700 m) so cloudlets
 gather in groups with clear gaps, their fine-octave share varying by region (large rounded in one group, small ragged
 in the next). Raster and PT agree; midday look kept.
+
+## Lenticulars: smooth lens, crisp rim (23 Nov)
+
+Docs declined a landscape frame where a near lens looked combed (streaks through the whole sheet) and stacked plates
+showed as comb teeth. Lenticulars are laminar: smooth and glassy in photographs, striations only faint at the thin rim
+(Ludlam 1980; Houze 2014). The fibre grain (0.3 to 1.7, stretched 6:1 along the wind) now acts only in the rim, at 0.75
+to 1.25 and 2.5:1; the rim jitter is 10 m of lift read at 4 by 2.4 km (25 m at fine scale cut plate ends into teeth).
+The rim is crisp from adiabatic droplets (Brenguier et al. 2000): the drops form on a fixed number of nuclei, so their
+radius grows as the cube root of the water (10 um at 150 m past saturation, from 3 um), and the extinction as its 2/3
+power, CPU and shader alike. Raster and PT agree; clouds tests pass.

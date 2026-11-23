@@ -982,7 +982,10 @@ float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
 	const float rho_air = 1.225f * Math::exp(-p_pos.y / 8500.0f);
 	const float water = rho_air * rate * x; // kg/m^3
 	const float ice = CLAMP((-20.0f - tc) / 10.0f, 0.0f, 1.0f);
-	return 1.5f * water / Math::lerp(1000.0f * 10e-6f, 917.0f * 30e-6f, ice);
+	// Adiabatic droplets (as wc_wave_sigma()): the drops condense on a fixed number of nuclei, so their radius grows as
+	// the cube root of the water, 10 um 150 m past saturation; just past it they are small and many.
+	const float r_liq = 10e-6f * MAX(Math::pow(MIN(x / 150.0f, 1.0f), 1.0f / 3.0f), 0.3f);
+	return 1.5f * water / Math::lerp(1000.0f * r_liq, 917.0f * 30e-6f, ice);
 }
 
 Vector4 wave_slab(const State &p_state, const float *p_eta_max) {
@@ -1991,7 +1994,12 @@ float wc_wave_sigma(vec3 p, float eta, float x) {
 	float rate = 2.0e-6 * exp(0.06 * max(tc, -40.0));
 	float rho_air = 1.225 * exp(-p.y / 8500.0);
 	float ice = clamp((-20.0 - tc) / 10.0, 0.0, 1.0);
-	return 1.5 * rho_air * rate * x / mix(0.01, 917.0 * 30e-6, ice);
+	// Adiabatic droplets (Brenguier et al. 2000, "Radiative properties of boundary layer clouds"): the drops form on a
+	// fixed number of nuclei, so the radius grows as the cube root of the water and the extinction as its 2/3 power,
+	// not linearly. A lens is optically crisp from its first metres (a glassy rim in photographs); with 10 um drops
+	// everywhere the rim was a soft gradient tens of metres of lift deep.
+	float r_liq = 10e-6 * max(pow(min(x / 150.0, 1.0), 1.0 / 3.0), 0.3);
+	return 1.5 * rho_air * rate * x / mix(1000.0 * r_liq, 917.0 * 30e-6, ice);
 }
 
 // Pile of plates: the drier sheets' extra dew point depression (wave_plate_depression() on the CPU), read at each

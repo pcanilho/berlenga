@@ -897,9 +897,11 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 			vec2 aw = vec2(dot(p.xz, wdir), dot(p.xz, vec2(-wdir.y, wdir.x)));
 			float foot = max(t * p_pixel, 0.03125 * ds);
 			float lod = max(log2(foot / (2400.0 / 128.0)), 0.0);
-			float st = textureLod(cloud_detail, vec3(aw.x / 6000.0, aw.y / 2400.0, p.y / 1200.0), lod).b; // stretched 7:1 along the wind it drew the thin end as brush strokes
+			// Read at 4 km by 2.4 km: the rim wanders smoothly by a few metres of lift. Finer or more stretched, the thin
+			// ends of the plates were cut into comb teeth along the wind.
+			float st = textureLod(cloud_detail, vec3(aw.x / 4000.0, aw.y / 2400.0, p.y / 1200.0), max(lod - 1.5, 0.0)).b;
 			float eta = wc_wave_eta(p);
-			float x = wc_plate_x(eta - 125.0 * dep, p) + 25.0 * (st - 0.5);
+			float x = wc_plate_x(eta - 125.0 * dep, p) + 10.0 * (st - 0.5);
 			if (x <= 0.0) {
 				continue;
 			}
@@ -908,12 +910,15 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 				continue;
 			}
 			// Fibres: the water in thin sheets tens of metres deep, drawn out along the wind (the lens's silky, striated
-			// look in photographs), as the detail noise stretched 6:1 along the wind and flattened 3:1 in height. Read at
+			// look in photographs), as the detail noise stretched 2.5:1 along the wind and flattened 3:1 in height. Read at
 			// the pixel's footprint, so far lenses keep their mean and only near ones show the grain; without it a near
 			// lens was a soft blur.
-			float fib = textureLod(cloud_detail, vec3(aw.x / 3000.0, aw.y / 500.0, p.y / 170.0), max(log2(foot / (500.0 / 128.0)), 0.0)).g;
-			sigma *= mix(0.3, 1.7, fib);
+			float fib = textureLod(cloud_detail, vec3(aw.x / 3000.0, aw.y / 1200.0, p.y / 170.0), max(log2(foot / (1200.0 / 128.0)), 0.0)).g;
 			float profile = clamp(x / 150.0, 0.0, 1.0);
+			// Only in the thin rim, and gently: the lens is laminar (smooth, glassy in photographs; Ludlam 1980, Houze
+			// 2014), its striations faint where the cloud is a few optical depths thin. A 0.3 to 1.7 grain stretched 6:1
+			// through the whole sheet drew it combed, like brushed hair, seen from under a near lens.
+			sigma *= mix(1.0, mix(0.75, 1.25, fib), 1.0 - smoothstep(0.1, 0.5, profile));
 			float lr;
 			float dr;
 			// The sun's light at each sample (once a coarse step held a plate's end at one value for 60 m and stepped
