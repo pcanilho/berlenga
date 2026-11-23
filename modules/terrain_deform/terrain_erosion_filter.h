@@ -65,6 +65,11 @@ public:
 		double valley_height = 0.0; // heights mapped to the fade target -1 ...
 		double peak_height = 1000.0; // ... and +1
 		double crest_keep = 0.4; // share of the gullies kept where coherence is 0 (crests, valley floors)
+		// The fade target's share (1 = all). Where the gullies fade on a crest the result falls to the target, by
+		// up to depth / gully_weight times the octaves' wavelengths over the flanks' mean (some 40 m for 128 m
+		// gullies); on a pointed summit only its last few metres have a crest's low coherence, and that much
+		// raised over them stood as a needle. A caller scales the target down there.
+		double fade_scale = 1.0;
 	};
 
 	// Returns the height offset to add at world (x, z), given the input height and its gradient there. coherence
@@ -79,7 +84,7 @@ public:
 		// Steering slope: the input's direction at an assumed constant steepness.
 		double sx = gx / slope * p.assumed_slope;
 		double sz = gz / slope * p.assumed_slope;
-		double fade = _clamp((h - p.valley_height) / (p.peak_height - p.valley_height + 1e-9), 0.0, 1.0) * 2.0 - 1.0;
+		double fade = (_clamp((h - p.valley_height) / (p.peak_height - p.valley_height + 1e-9), 0.0, 1.0) * 2.0 - 1.0) * p.fade_scale;
 		double mask = _ease_out(slope / p.slope_fade) * (p.crest_keep + (1.0 - p.crest_keep) * _smooth(coherence));
 		double total = 0.0;
 		double lambda = p.wavelength;
@@ -164,7 +169,7 @@ public:
 		// Steering slope: the input's direction at an assumed constant steepness.
 		double sx = gx / slope * p.assumed_slope;
 		double sz = gz / slope * p.assumed_slope;
-		double fade = _clamp((h - p.valley_height) / (p.peak_height - p.valley_height + 1e-9), 0.0, 1.0) * 2.0 - 1.0;
+		double fade = (_clamp((h - p.valley_height) / (p.peak_height - p.valley_height + 1e-9), 0.0, 1.0) * 2.0 - 1.0) * p.fade_scale;
 		double mask = _ease_out(slope / p.slope_fade) * (p.crest_keep + (1.0 - p.crest_keep) * _smooth(coherence));
 		double lambda = p.wavelength;
 		const double gw = p.gully_weight > 1e-3 ? p.gully_weight : 1e-3;

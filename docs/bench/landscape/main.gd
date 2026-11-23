@@ -2770,7 +2770,8 @@ func _build_ground() -> void:
 		add_child(landscape)
 		landscape.material = ground_mat
 		landscape.lod_error = float(args.get("lod-error", "2"))
-		landscape.cliff_relief = float(args.get("cliff-relief", "0")) # --cliff-relief=M: rock ledges built into steep faces
+		if args.has("cliff-relief"):
+			landscape.cliff_relief = float(args["cliff-relief"]) # --cliff-relief=M: rock ledges built into steep faces (the engine default, 0.6 m, otherwise; 0 off)
 		landscape.source = landscape.get_path_to(gen)
 		var own_body := ground_body == null
 		landscape.collision_enabled = own_body
