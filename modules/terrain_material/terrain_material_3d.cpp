@@ -847,54 +847,11 @@ vec2 tm_hex_hash(ivec2 v) {
 			float sk = tm_drip(p, n, below / (3.0 + 7.0 * tm_vn_hash(vec3(band, 61.0, 0.0))), fp, band * 1.7 + 71.0, 2.0, 0.1, 0.8);
 			sk *= smoothstep(0.3, 0.55, tm_vn(vec3(p.x / 6.0, band * 3.1, p.z / 6.0) + 17.0));
 			float bed = tm_vn(vec3(p.x / 40.0, p.y / 0.9, p.z / 40.0) + 5.0);
+			// The scan (rock seen from above) drew soft wrinkles that read as draped cloth on a face: half its tone and
+			// most of its bump give way there, the face's relief (Landscape3D cliff relief and its joint steps) shapes it.
+			albedo = mix(albedo, tm_rock_color.rgb, 0.5 * face);
 			albedo *= mix(1.0, (1.1 - 0.5 * sk) * (0.86 + 0.28 * bed) * (0.85 + 0.3 * tm_vn(p / 18.0 + 3.0)), face);
-			// Fracture facets. A rock face breaks along joints into flat planes with sharp edges: two steep joint
-			// sets near right angles and the bedding (Priest 1993, discontinuity sets with spacings of metres and
-			// traces that run on for a while and stop, their persistence). The scan, of rock seen from above, drew
-			// soft wrinkles that read as draped cloth on a face; there its relief and half its tone yield to blocks
-			// cut by the three sets of planes, each block a plane of its own tilt and shade (hard edges where the
-			// tilt changes), and a crisp dark trace where a joint is open. Smaller breaks split some blocks once
-			// more. Filtered over the footprint: the traces widen to it and the blocks fade to their mean when a
-			// pixel spans one.
-			float kf = 1.0 - smoothstep(0.08, 0.35, fp);
-			if (kf > 0.0) {
-				// Joint normals: two steep sets, struck by a slow noise so they swing across a face, and the beds.
-				float strike = 6.2832 * tm_vn(vec3(p.x / 90.0, 0.0, p.z / 90.0) + 23.0);
-				vec3 j1 = vec3(cos(strike), 0.12, sin(strike));
-				vec3 j2 = vec3(-sin(strike), -0.18, cos(strike));
-				vec3 j3 = vec3(0.06, 1.0, -0.04);
-				vec3 sp = vec3(1.9, 2.6, 1.4); // spacings, metres
-				vec3 sd = vec3(dot(p, normalize(j1)), dot(p, normalize(j2)), dot(p, normalize(j3))) / sp;
-				sd += vec3(0.25, 0.25, 0.45) * (vec3(tm_vn(p / 7.0 + 1.0), tm_vn(p / 7.0 + 5.0), tm_vn(p / 7.0 + 9.0)) - 0.5); // planes not perfectly straight, the beds least (even beds read as tiling)
-				vec3 cell = floor(sd);
-				vec3 fr = sd - cell;
-				vec3 dpl = min(fr, 1.0 - fr) * sp; // metres to the nearest plane of each set
-				// Spacings are not even (they scatter about their mean, Priest 1993; planes at one spacing drew a
-				// lattice of stripes): about half the gaps of each joint set hold one more plane at a place of their own.
-				vec3 hb = vec3(tm_vn_hash(vec3(cell.x, 3.0, 1.0)), tm_vn_hash(vec3(cell.y, 5.0, 1.0)), tm_vn_hash(vec3(cell.z, 7.0, 1.0)));
-				vec3 hs = vec3(tm_vn_hash(vec3(cell.x, 3.0, 2.0)), tm_vn_hash(vec3(cell.y, 5.0, 2.0)), tm_vn_hash(vec3(cell.z, 7.0, 2.0)));
-				vec3 bm = 0.25 + 0.5 * hb;
-				vec3 split = step(0.5, hs) * vec3(1.0, 1.0, 0.0); // not the beds: a second bedding plane drew brickwork
-				dpl = min(dpl, mix(sp * 9.0, abs(fr - bm) * sp, split));
-				vec3 bid = cell * 2.0 + split * step(bm, fr);
-				vec3 tilt = vec3(tm_vn_hash(bid + 31.1), tm_vn_hash(bid + 37.9), tm_vn_hash(bid + 41.3)) - 0.5;
-				tilt -= n * dot(tilt, n);
-				// Open traces: each plane's trace runs for a few metres and stops.
-				float open1 = step(0.45, tm_vn(vec3(cell.x * 5.3, p.y / 3.0, (p.x + p.z) / 3.0)));
-				float open2 = step(0.5, tm_vn(vec3(cell.y * 4.1, p.y / 3.0, (p.x - p.z) / 3.0) + 7.0));
-				float open3 = step(0.55, tm_vn(vec3(p.x / 4.0, cell.z * 3.7, p.z / 4.0) + 11.0));
-				float w = 0.008 + 0.5 * fp;
-				float brk = max(max(open1 * (1.0 - smoothstep(0.0, w, dpl.x)), open2 * (1.0 - smoothstep(0.0, w, dpl.y))), open3 * (1.0 - smoothstep(0.0, w * 0.8, dpl.z)));
-				float kfa = kf * face;
-				// Half the scan's tone toward the layer's colour, each block its own shade.
-				albedo = mix(albedo, (0.4 * albedo + 0.6 * tm_rock_color.rgb) * (0.76 + 0.48 * tm_vn_hash(bid + 3.1)), 0.85 * kfa);
-				// A fresh break shows a pale lip on the block's upper edge above the dark open trace.
-				float lip = open3 * (1.0 - smoothstep(w, 3.0 * w, abs(fr.z * sp.z - 1.5 * w))) * (1.0 - brk);
-				albedo *= 1.0 - 0.7 * brk * kfa;
-				albedo *= 1.0 + 0.15 * lip * kfa;
-				dn = mix(dn, tilt * 0.9, 0.9 * kfa);
-			}
-			dn *= 1.0 - 0.4 * face;
+			dn *= 1.0 - 0.85 * face;
 		}
 	}
 )";
@@ -959,6 +916,7 @@ vec3 tm_grain_n(vec2 x) {
 	c += R"(
 varying vec4 tm_cl_p; // the undisplaced point (landscape space), w the cliff relief's scale
 varying vec4 tm_cl_n; // the heightfield normal, w the bank relief's scale
+varying float tm_cl_kj; // the joint steps' scale (CUSTOM2.x)
 float tm_cl_hash(int a, int b, int c) {
 	uint h = uint(a) * 0x8DA6B343u ^ uint(b) * 0xD8163841u ^ uint(c) * 0xCB1AB31Fu;
 	h ^= h >> 13u;
@@ -1072,7 +1030,40 @@ float tm_cl_beds(vec3 p, float p_steep, float p_relief, out int r_bed) {
 	r_bed = bed;
 	return o;
 }
-float tm_cl_offset(vec3 p, float steep, float k) {
+// The joint steps (Landscape3D::_joint_offset): a dipping set stacks blocks down the face, each lip standing out and
+// its face leaning back under it; a steep set struck at 37 degrees changes the step from block to block.
+float tm_cl_joint_amp(int blk, int col) {
+	float h = tm_cl_hash(blk, col, 71);
+	float on = tm_cl_hash(blk, col, 73) > 0.3 ? 1.0 : 0.25;
+	return (0.25 + 0.6 * h * h) * on;
+}
+float tm_cl_joints(vec3 p, float steep) {
+	const float SD = 2.4, SJ = 2.6;
+	float sd = (p.y + 0.1 * p.x - 0.07 * p.z) / SD + 0.35 * (tm_cl_noise(p * 0.15 + vec3(4.0, 4.0, 4.0)) - 0.5);
+	float sj = (0.799 * p.x + 0.602 * p.z) / SJ + 0.3 * (tm_cl_noise(p * 0.2 + vec3(9.0, 2.0, 6.0)) - 0.5);
+	int cd = int(floor(sd));
+	float fr = sd - float(cd);
+	float b = 0.3 + 0.4 * tm_cl_hash(cd, 61, 5);
+	int blk = cd * 2;
+	float f = fr, T = SD;
+	if (tm_cl_hash(cd, 67, 5) > 0.45) {
+		if (fr < b) {
+			f = fr / b;
+			T = b * SD;
+		} else {
+			f = (fr - b) / (1.0 - b);
+			T = (1.0 - b) * SD;
+			blk += 1;
+		}
+	}
+	int cj = int(floor(sj));
+	float gj = sj - float(cj);
+	float dist = min(gj, 1.0 - gj) * SJ;
+	float a = mix(tm_cl_joint_amp(blk, cj), tm_cl_joint_amp(blk, gj < 0.5 ? cj - 1 : cj + 1), 0.5 * (1.0 - smoothstep(0.0, 0.25, dist)));
+	return min(a, 0.75 * T / max(steep, 0.05)) * (f - 0.5);
+}
+// Without the joint steps (the overhang scale leaves them out, as Landscape3D::_cliff_scale).
+float tm_cl_offset_nj(vec3 p, float steep, float k) {
 	int bed;
 	float o = tm_cl_beds(p, steep, k, bed);
 	// Drawn out down the fall line on the steepest faces, as Landscape3D::_cliff_offset.
@@ -1081,6 +1072,9 @@ float tm_cl_offset(vec3 p, float steep, float k) {
 	o += mix(0.5 * (tm_cl_noise(p * 0.7) - 0.5) + 0.2 * (tm_cl_noise(p * 2.1 + vec3(3.0, 1.0, 7.0)) - 0.5),
 			0.5 * (tm_cl_noise(pf * 0.7) - 0.5) + 0.2 * (tm_cl_noise(pf * 2.1 + vec3(3.0, 1.0, 7.0)) - 0.5), fl);
 	return o;
+}
+float tm_cl_offset(vec3 p, float steep, float k) {
+	return tm_cl_offset_nj(p, steep, k) + tm_cl_joints(p, steep);
 }
 // Seep streaks below the beds' ledges (cyanobacterial ink streaks on limestone, Tintenstriche; desert varnish in dry
 // climates; Viles 1995, Dorn and Oberlander 1981): water runs off a proud bed's lip and down the face of the softer
@@ -1154,10 +1148,10 @@ vec2 tm_cl_scale(vec3 p, vec2 k, float tn, vec3 m) {
 	vec2 g = vec2(0.0);
 	for (int i = -5; i <= 5; i++) {
 		vec3 q = p + st * float(i);
-		float oc = k.x > 0.0 ? tm_cl_offset(q, terrain_cliff_relief.x * tn, terrain_cliff_relief.x) : 0.0;
+		float oc = k.x > 0.0 ? tm_cl_offset_nj(q, terrain_cliff_relief.x * tn, terrain_cliff_relief.x) : 0.0;
 		float ob = k.y > 0.0 ? tm_bk_offset(q) : 0.0;
 		if (i > -5) {
-			g = max(g, abs(vec2(oc - pc, ob - pb)) / 0.4 * (1.0 - abs(float(i) - 0.5) / 5.5));
+			g = max(g, max(vec2(pc - oc, pb - ob), vec2(0.0)) / 0.4 * (1.0 - abs(float(i) - 0.5) / 5.5)); // only a fall folds
 		}
 		pc = oc;
 		pb = ob;
@@ -1167,12 +1161,13 @@ vec2 tm_cl_scale(vec3 p, vec2 k, float tn, vec3 m) {
 // Metres out of the face: k.x the cliff relief's scale, k.y the bank's.
 // tn: the face's tan(slope) (the lip rule's, at the landscape's full relief scale as Landscape3D::_cliff_point; k
 // arrives eased by Landscape3D::_cliff_scale in CUSTOM0).
-float tm_cl_disp(vec3 p, vec2 k, float tn) {
-	return (k.x > 0.0 ? k.x * tm_cl_offset(p, terrain_cliff_relief.x * tn, terrain_cliff_relief.x) : 0.0) + (k.y > 0.0 ? k.y * tm_bk_offset(p) : 0.0);
+// k.z the joint steps' (the cliff's scale without its overhang easing: the steps never overhang, Landscape3D::_joint_offset).
+float tm_cl_disp(vec3 p, vec3 k, float tn) {
+	return (k.x > 0.0 ? k.x * tm_cl_offset_nj(p, terrain_cliff_relief.x * tn, terrain_cliff_relief.x) : 0.0) + (k.y > 0.0 ? k.y * tm_bk_offset(p) : 0.0) + (k.z > 0.0 ? k.z * tm_cl_joints(p, terrain_cliff_relief.x * tn) : 0.0);
 }
 // The relief's normal at the undisplaced point p (landscape space), differenced over e (the pixel's footprint, so
 // relief finer than a pixel fades instead of aliasing).
-vec3 tm_cl_normal(vec3 p, vec3 nb, vec2 k, float e) {
+vec3 tm_cl_normal(vec3 p, vec3 nb, vec3 k, float e) {
 	vec3 m = normalize(vec3(nb.x, 0.0, nb.z));
 	vec3 t1 = cross(nb, vec3(0.0, 1.0, 0.0));
 	t1 = dot(t1, t1) > 1e-8 ? normalize(t1) : vec3(1.0, 0.0, 0.0);
@@ -1206,12 +1201,12 @@ float tm_cl_offset_coarse(vec3 p, float steep, float k) {
 	o += mix(0.5 * (tm_cl_noise(p * 0.7) - 0.5), 0.5 * (tm_cl_noise(vec3(p.x, p.y * 0.25, p.z) * 0.7) - 0.5), smoothstep(0.25, 0.7, min(steep, 6.0 * max(k, 0.0))));
 	return o;
 }
-float tm_cl_disp_coarse(vec3 p, vec2 k, float tn) {
-	return (k.x > 0.0 ? k.x * tm_cl_offset_coarse(p, terrain_cliff_relief.x * tn, terrain_cliff_relief.x) : 0.0) + (k.y > 0.0 ? k.y * tm_bk_offset(p) : 0.0);
+float tm_cl_disp_coarse(vec3 p, vec3 k, float tn) {
+	return (k.x > 0.0 ? k.x * tm_cl_offset_coarse(p, terrain_cliff_relief.x * tn, terrain_cliff_relief.x) : 0.0) + (k.y > 0.0 ? k.y * tm_bk_offset(p) : 0.0) + (k.z > 0.0 ? k.z * tm_cl_joints(p, terrain_cliff_relief.x * tn) : 0.0); // the joints' ledges cast shadows
 }
 // The sun's visibility over the relief at the undisplaced point p (landscape space): l toward the sun, e the pixel's
 // footprint, j a 0-1 jitter for the steps.
-float tm_cl_shadow(vec3 p, vec3 nb, vec2 k, vec3 l, float e, float j) {
+float tm_cl_shadow(vec3 p, vec3 nb, vec3 k, vec3 l, float e, float j) {
 	vec3 m = normalize(vec3(nb.x, 0.0, nb.z));
 	float mn = max(dot(m, nb), 0.3);
 	float rise = dot(l, nb) / mn; // metres out of the face per metre along the ray
@@ -1221,7 +1216,7 @@ float tm_cl_shadow(vec3 p, vec3 nb, vec2 k, vec3 l, float e, float j) {
 	float tn = length(nb.xz) / max(nb.y, 1e-3);
 	vec3 s0 = p + m * tm_cl_disp_coarse(p, k, tn);
 	// Long enough to clear the relief's whole range (about 4 k) at that rise.
-	float t_max = clamp(4.0 * (k.x + k.y) / rise, 1.0, 16.0);
+	float t_max = clamp(4.0 * (k.x + k.y + k.z) / rise, 1.0, 16.0);
 	float vis = 1.0;
 	const int STEPS = 12;
 	for (int i = 0; i < STEPS; i++) {
@@ -1286,17 +1281,17 @@ vec2 tm_cl_weights_at(vec2 xz) {
 		return tm_cl_weights(tm_cl_land_n(xz));
 	}
 	vec2 w = vec2(0.0);
-	for (int j = 0; j < 5; j++) {
-		for (int i = 0; i < 5; i++) {
-			float t = (3.0 - abs(float(i) - 2.0)) * (3.0 - abs(float(j) - 2.0));
-			w += tm_cl_weights(tm_cl_land_n(xz + vec2(float(i) - 2.0, float(j) - 2.0) * r)) * t;
+	for (int j = 0; j < 3; j++) {
+		for (int i = 0; i < 3; i++) {
+			float t = (2.0 - abs(float(i) - 1.0)) * (2.0 - abs(float(j) - 1.0));
+			w += tm_cl_weights(tm_cl_land_n(xz + vec2(float(i) - 1.0, float(j) - 1.0) * 2.0 * r)) * t;
 		}
 	}
-	return w / 81.0;
+	return w / 16.0;
 }
 )";
 	}
-	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1;\n";
+	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1;\n\ttm_cl_kj = CUSTOM2.x;\n";
 	if (ground_deform_enabled) {
 		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
 		// with a copy of this material, takes the printed surface.
@@ -1331,9 +1326,10 @@ vec2 tm_cl_weights_at(vec2 xz) {
 		if (cl_ml > 1e-4 && (cl_wt > 0.0 || (cl_wb > 0.0 && terrain_bank_relief.x > 0.0))) {
 			vec3 cl_p = cl_w;
 			vec3 cl_m = vec3(cl_nw.x, 0.0, cl_nw.z) / cl_ml;
-			vec2 cl_k = tm_cl_scale(cl_p, vec2(terrain_cliff_relief.x * cl_wt, terrain_bank_relief.x * cl_wb), cl_ml / max(cl_nw.y, 1e-3), cl_m);
+			vec3 cl_k = vec3(tm_cl_scale(cl_p, vec2(terrain_cliff_relief.x * cl_wt, terrain_bank_relief.x * cl_wb), cl_ml / max(cl_nw.y, 1e-3), cl_m), terrain_cliff_relief.x * cl_wt);
 			tm_cl_p = vec4(cl_p, cl_k.x);
 			tm_cl_n = vec4(cl_nw, cl_k.y);
+			tm_cl_kj = cl_k.z;
 			mat4 cl_inv = inverse(MODEL_MATRIX);
 			VERTEX = (cl_inv * vec4(cl_w + cl_m * tm_cl_disp(cl_p, cl_k, cl_ml / max(cl_nw.y, 1e-3)), 1.0)).xyz;
 			// The vertex normal from the displaced surface around it, as the landscape's (the shadow map's normal
@@ -2023,10 +2019,10 @@ void fragment() {
 	porosity /= total;
 	vec3 sn = normalize(wn + dn);
 	vec3 tm_macro_n = wn; // the surface's own normal, without the layers' fine bump
-	if (tm_cl_p.w > 0.0 || tm_cl_n.w > 0.0) {
+	if (tm_cl_p.w > 0.0 || tm_cl_n.w > 0.0 || tm_cl_kj > 0.0) {
 		// Cliff and bank relief: the face's normal per pixel (see tm_cl_normal), with the layers' own detail on top.
 		float cl_fp = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
-		vec3 cl_n = tm_cl_normal(tm_cl_p.xyz, normalize(tm_cl_n.xyz), vec2(tm_cl_p.w, tm_cl_n.w), max(0.15, cl_fp));
+		vec3 cl_n = tm_cl_normal(tm_cl_p.xyz, normalize(tm_cl_n.xyz), vec3(tm_cl_p.w, tm_cl_n.w, tm_cl_kj), max(0.15, cl_fp));
 		cl_n = normalize(mat3(MODEL_MATRIX) * cl_n);
 		sn = normalize(cl_n + dn);
 		tm_macro_n = cl_n;
@@ -2035,11 +2031,11 @@ void fragment() {
 		// Where the relief is still wider than a pixel and the pixel faces the sun. sun_direction() is zero under
 		// the path tracer, which traces the displaced faces' own shadows.
 		c += R"(		vec3 cl_l = sun_direction();
-		float cl_k = tm_cl_p.w + tm_cl_n.w;
+		float cl_k = tm_cl_p.w + tm_cl_n.w + tm_cl_kj;
 		if (dot(cl_l, cl_l) > 0.5 && dot(sn, cl_l) > 0.0 && cl_k > 0.5 * cl_fp) {
 			vec3 cl_ll = normalize(inverse(mat3(MODEL_MATRIX)) * cl_l);
 			float cl_j = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
-			float cl_v = tm_cl_shadow(tm_cl_p.xyz, normalize(tm_cl_n.xyz), vec2(tm_cl_p.w, tm_cl_n.w), cl_ll, cl_fp, cl_j);
+			float cl_v = tm_cl_shadow(tm_cl_p.xyz, normalize(tm_cl_n.xyz), vec3(tm_cl_p.w, tm_cl_n.w, tm_cl_kj), cl_ll, cl_fp, cl_j);
 			SUN_SHADOW = mix(1.0, cl_v, smoothstep(0.5 * cl_fp, cl_fp, cl_k));
 		}
 )";
