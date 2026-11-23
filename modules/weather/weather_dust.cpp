@@ -68,6 +68,11 @@ static float _dust_noise(Vector2 p_p) {
 	return Math::lerp(Math::lerp(_dust_hash(x, y), _dust_hash(x + 1, y), sx), Math::lerp(_dust_hash(x, y + 1), _dust_hash(x + 1, y + 1), sx), sy);
 }
 static const Vector3 DUST_SPECTRUM(0.97f, 1.0f, 1.04f); // (lambda / 550)^-0.2 at 610, 550 and 465 nm
+static const Vector4 DUST_ALBEDO(0.93f, 0.92f, 0.85f, 0.75f); // per scatter, rgb; w: asymmetry g
+
+Vector4 WeatherMap3D::get_dust_albedo() {
+	return DUST_ALBEDO;
+}
 
 float WeatherMap3D::dust_flux(float p_ustar, float p_ustar_threshold, float p_clay_percent) {
 	if (p_ustar <= p_ustar_threshold || p_ustar <= 0.0f) {
@@ -372,7 +377,7 @@ void WeatherMap3D::_dust_upload() {
 	if (!dust_global_added) {
 		_set_global("weather_dust_map", dust_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 		_set_global("weather_dust_optics", Vector4(DUST_MASS_EXTINCTION, DUST_SPECTRUM.x, DUST_SPECTRUM.y, DUST_SPECTRUM.z), RSE::GLOBAL_VAR_TYPE_VEC4);
-		_set_global("weather_dust_albedo", Vector4(0.93f, 0.92f, 0.85f, 0.75f), RSE::GLOBAL_VAR_TYPE_VEC4);
+		_set_global("weather_dust_albedo", DUST_ALBEDO, RSE::GLOBAL_VAR_TYPE_VEC4);
 		dust_global_added = true;
 	}
 }

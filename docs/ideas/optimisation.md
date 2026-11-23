@@ -451,5 +451,34 @@ when it lands. Renderers without that readback (Compatibility, dummy) bake at on
 same way. Proof: a sky baked both ways gives the same bytes, radiance and irradiance (3 to 4 frames later on
 the cloud's software GPU). The sky light reaches the terrain those few frames later; its interval stays 2 s.
 
-Two more periodic sync readbacks of the same kind remain in the water module (`water_raster_reflections.cpp`
-every few seconds, the underwater sky in `physx_water_surface_3d.cpp` every 240 frames).
+The water module's two periodic sync readbacks of the same kind (the raster reflections' 128 x 64 sky panorama
+and the underwater sky radiance, each every 240 frames per water body) now go through the same call:
+`WaterSkyReadback` keeps one request in flight and the owner runs the same update when it lands. The water
+surface bench (raster, beach, 60 frames at a fixed 30 fps) looks the same; its frames differ from run to run
+by the simulation alone (0.06% of pixels between two runs of the old build, 0.12% against the new one, all
+foam and floating boxes).
+
+## Memory: static surface BLASes were never freed
+
+A path traced still of the rocks world (gully, 640 x 360, cloud) peaked at 13.5 GB resident, 9.1 GB of it GPU
+memory, and 6.1 GB of that acceleration structures (`RenderingDevice.get_memory_usage(MEMORY_ACCELERATION_STRUCTURES)`,
+new for this; `docs/bench/rocks --mem-report` prints it). One 1.08 M triangle mesh was there twice: once plain, once
+deformed. A captured surface traces its bare mesh until its first capture lands, and the bare mesh's BLAS then
+stayed for the rest of the session. The static surface cache had no eviction at all (the deformed, MultiMesh and
+mesh LOD caches already free what goes unused), so the same held for meshes that left the view or were freed.
+
+`RenderRaytracing::_evict_surfaces` now frees a static surface no instance traced for 120 frames, as
+`_evict_surface_lods` does for LOD levels, checking 64 cache chunks a frame. A surface traced again is built again
+from the same mesh, in the frame it comes back. BLASes that persistent instance slots still trace (they skip the
+cache while a slot is unchanged) stay.
+
+Proof: `docs/bench/rt_memory --evict` hides every mesh for 150 frames, then shows them again. The new build frees
+their acceleration structures (12.7 MB to 0) and the saved frame matches the previous build byte for byte, with
+and without `--persistent`; so do the plain frame and a 200 frame `--persistent` run.
+
+That alone left the gully still as it was (it is saved well within 120 frames of the captures landing). So a
+surface traced through a capture also records its cache key, and the sweep frees its bare BLAS as soon as no
+instance traced it in the last frame (one that still traces the bare mesh, or a persistent slot holding it, keeps
+it). Gully still, same view: acceleration structures 6,080 to 4,505 MB, GPU memory 8,866 to 7,291 MB, peak
+resident 12.9 to 12.1 GB. That still is not bit-repeatable between runs (wind, capture timing), so its proof is
+the rt_memory runs above plus a side by side look; the freed and rebuilt path is the same one.

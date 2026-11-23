@@ -108,7 +108,7 @@ private:
 	real_t detail_gully_weight = 0.5;
 	real_t detail_assumed_slope = 0.6;
 	real_t detail_crest = 1.0; // ridged noise on crests, times the gully amplitude
-	real_t cliff_ledge_spacing = 0.0; // m between rock beds stepped into faces steeper than 40 degrees; 0 = off
+	real_t cliff_ledge_spacing = 0.0; // mean m between rock beds (thicknesses vary) stepped into faces steeper than 40 degrees; 0 = off
 	real_t cliff_ledge_strength = 1.0;
 
 	// Tile erosion (stage 4): droplet hydraulic plus thermal erosion on a fine grid, in overlapping tiles.

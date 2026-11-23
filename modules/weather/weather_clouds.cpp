@@ -448,10 +448,10 @@ void State::update_top_max() {
 	base_min = base_height - (scud > 0.0f ? SCUD_DEPTH : BASE_SAG);
 	top_max = base_height + top_height(*this, t);
 	for (int i = 0; i < storm_count; i++) {
-		t = MAX(t, storms[i][3]); // the cumulonimbus body's height (storm_body_at)
+		t = MAX(t, storms[i][3] * storm_deep[i]); // the cumulonimbus body's height (storm_body_at)
 		if (storm_base[i] > 0.0f) {
 			base_min = MIN(base_min, storm_base[i] - BASE_SAG);
-			top_max = MAX(top_max, storm_base[i] + top_height(*this, MAX(type, storms[i][3])));
+			top_max = MAX(top_max, storm_base[i] + top_height(*this, MAX(type, storms[i][3] * storm_deep[i])));
 		}
 		if (storm_outflow[i] > 0.0f) {
 			base_min = MIN(base_min, (storm_base[i] > 0.0f ? storm_base[i] : base_height) - SHELF_DROP);
@@ -612,10 +612,14 @@ float storm_column_type(const State &p_state, Vector2 p_xz) {
 	float t = 0.0f;
 	for (int i = 0; i < p_state.storm_count; i++) {
 		const float *s = p_state.storms[i];
+		const float g = s[3] * p_state.storm_deep[i];
+		if (g <= 0.01f) {
+			continue;
+		}
 		// The body's radius as storm_body_at() takes it, so the anvil's whole reach is in the tall column.
-		const float r = MAX(s[2], 0.3f * top_height(p_state, 1.0f) * s[3] * Math::lerp(0.45f, 1.0f, smoothstep(-10.0f, 20.0f, p_state.air_t0)));
+		const float r = MAX(s[2], 0.3f * top_height(p_state, 1.0f) * g * Math::lerp(0.45f, 1.0f, smoothstep(-10.0f, 20.0f, p_state.air_t0)));
 		const Vector2 ac = Vector2(s[0], s[1]) + p_state.high_dir * (3.2f * r);
-		t = MAX(t, s[3] * (1.0f - smoothstep(5.0f, 5.6f, (p_xz - ac).length() / r)));
+		t = MAX(t, g * (1.0f - smoothstep(5.0f, 5.6f, (p_xz - ac).length() / r)));
 	}
 	return t;
 }
@@ -634,11 +638,15 @@ float high_cover_at(const State &p_state, Vector2 p_xz) {
 		// The anvil's cirrus beyond the anvil: the ice it sheds thins downwind into a shield (Lilly 1988), from where
 		// the anvil body ends (storm_body_at: 5 to 7 body radii) outward. Centred under the anvil it lay as a streaked
 		// sheet beneath it, a collar round the tower.
-		const float r = MAX(s[2], 0.3f * top_height(p_state, 1.0f) * s[3] * Math::lerp(0.45f, 1.0f, smoothstep(-10.0f, 20.0f, p_state.air_t0)));
+		const float g = s[3] * p_state.storm_deep[i];
+		if (g <= 0.01f) {
+			continue;
+		}
+		const float r = MAX(s[2], 0.3f * top_height(p_state, 1.0f) * g * Math::lerp(0.45f, 1.0f, smoothstep(-10.0f, 20.0f, p_state.air_t0)));
 		const Vector2 d = p_xz - Vector2(s[0], s[1]);
 		const float a = d.dot(p_state.high_dir) / r;
 		const float x2 = (d - p_state.high_dir * (7.0f * r)).length_squared() / (16.0f * r * r);
-		c = 1.0f - (1.0f - c) * (1.0f - Math::exp(-x2) * smoothstep(4.0f, 6.5f, a) * s[3]);
+		c = 1.0f - (1.0f - c) * (1.0f - Math::exp(-x2) * smoothstep(4.0f, 6.5f, a) * g);
 	}
 	return c;
 }
@@ -1157,14 +1165,16 @@ float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, fl
 	const Vector2 dir = p_state.high_dir;
 	for (int i = 0; i < p_state.storm_count; i++) {
 		const float *s = p_state.storms[i];
-		if (s[3] <= 0.01f) {
+		// Deep convection only (State::storm_deep): a ridge cumulus is a cumulus, not a tower with an anvil.
+		const float g = s[3] * p_state.storm_deep[i];
+		if (g <= 0.01f) {
 			continue;
 		}
 		// Shallower in cold air: a winter storm (thundersnow, lake-effect convection) tops out at 3 to 5 km against a
 		// summer cumulonimbus' 10 to 15 (Market et al. 2002; Niziol et al. 1995), the cold air holding less water and
 		// its tropopause lower: from 45% of the full height at -10 C to all of it at 20 C.
 		const float cold = Math::lerp(0.45f, 1.0f, smoothstep(-10.0f, 20.0f, p_state.air_t0));
-		const float hgt = top_height(p_state, 1.0f) * s[3] * cold;
+		const float hgt = top_height(p_state, 1.0f) * g * cold;
 		// The body's radius: the storm's core radius (its rain and outflow), but no less than 0.3 of its height. A
 		// mature cumulonimbus is about as wide as it is tall (5 to 15 km; Houze 2014, ch. 8); a small core under a full
 		// 12 km column stood as a thin stem under a round cap, a mushroom cloud.
@@ -1177,7 +1187,7 @@ float storm_body_at(const State &p_state, const Vector3 &p_pos, float p_base, fl
 		const float ax = (d - dir * (r * 0.3f * hh * hh)).length() / r;
 		// The single cells give way over the whole updraft region and its inflow (about three radii), so the tower
 		// stands alone above its flanking cloud instead of hidden in a crowd of congestus as tall as itself.
-		near = MAX(near, (1.0f - smoothstep(2.6f, 3.8f, ax)) * s[3]);
+		near = MAX(near, (1.0f - smoothstep(2.6f, 3.8f, ax)) * g);
 		float e = 0.0f;
 		float k = 1.0f;
 		if (hh > 0.0f && hh < 1.0f && ax < 2.4f) {
@@ -1437,6 +1447,7 @@ uniform vec4 cloud_storms[8];
 uniform float cloud_storm_base[8];
 uniform float cloud_storm_rain[8]; // peak mm/h times growth (round 8)
 uniform float cloud_storm_outflow[8]; // m/s
+uniform float cloud_storm_deep[8]; // State::storm_deep: only deep convection has a body, anvil and shield
 uniform float cloud_storm_snow[8]; // share falling as snow
 uniform vec2 cloud_storm_dir = vec2(1.0, 0.0); // the way the storms move
 uniform vec3 cloud_air = vec3(15.0, 0.6, 0.0); // ground temperature (C), relative humidity, its height (m)
@@ -1638,6 +1649,7 @@ float wc_storm_body(vec3 p, float b, float n, float p_step, out float r_near, ou
 			break;
 		}
 		vec4 s = cloud_storms[i];
+		s.w *= cloud_storm_deep[i]; // deep convection only (storm_body_at() on the CPU)
 		if (s.w <= 0.01) {
 			continue;
 		}
@@ -1787,6 +1799,7 @@ float wc_storm_column(vec2 xz) {
 			break;
 		}
 		vec4 s = cloud_storms[i];
+		s.w *= cloud_storm_deep[i];
 		float r = max(s.z, 0.3 * wc_top_height(1.0) * s.w * mix(0.45, 1.0, smoothstep(-10.0, 20.0, cloud_air.x))); // as wc_storm_body()
 		t = max(t, s.w * (1.0 - smoothstep(5.0, 5.6, length(xz - s.xy - cloud_high_dir * (3.2 * r)) / r)));
 	}
@@ -1825,6 +1838,7 @@ float wc_high_cover(vec2 xz) {
 	}
 	for (int i = 0; i < cloud_storm_count; i++) {
 		vec4 s = cloud_storms[i];
+		s.w *= cloud_storm_deep[i];
 		// Past the anvil, from the body's radius (high_cover_at() on the CPU).
 		float r = max(s.z, 0.3 * wc_top_height(1.0) * s.w * mix(0.45, 1.0, smoothstep(-10.0, 20.0, cloud_air.x)));
 		vec2 d = xz - s.xy;

@@ -723,13 +723,16 @@ RockGenerator::RockType RockField3D::_type_at(const TerrainGenerator3D *p_gen, c
 }
 
 void RockField3D::_prepare_rivers() {
+	// Workers placing cells call this too (each of get_obstacles' batch): one builds the list under the lock while the
+	// others wait, and the flag is set only once the list is whole, so no worker reads it half built.
+	MutexLock lock(rivers_lock);
 	if (rivers_ready) {
 		return;
 	}
 	rivers.clear();
-	rivers_ready = true;
 	const TerrainGenerator3D *gen = _get_generator();
 	if (!gen) {
+		rivers_ready = true;
 		return;
 	}
 	const Array rs = gen->get_rivers(river_min_area);
@@ -757,6 +760,7 @@ void RockField3D::_prepare_rivers() {
 		rv.head_type = _type_at(gen, pts[0]);
 		rivers.push_back(rv);
 	}
+	rivers_ready = true;
 }
 
 // The river layer's segments that reach into p_rect, with the bed's median size as the river layer sets it (what the
@@ -5137,6 +5141,7 @@ void RockField3D::_update_far(const Vector3 &p_target, bool p_all) {
 			far_last_cells = -1; // the rest next time
 			break;
 		}
+		_prepare_rivers(); // read by the workers
 		job->task = WorkerThreadPool::get_singleton()->add_native_task(&RockField3D::_far_job, job, false, "RockField3D far blocks");
 		far_jobs.insert(w.key, job);
 	}
@@ -6824,7 +6829,10 @@ void RockField3D::rebuild() {
 	restore_broken();
 	fractures.clear();
 	obstacle_cache.clear();
-	rivers_ready = false;
+	{
+		MutexLock lock(rivers_lock);
+		rivers_ready = false;
+	}
 	if (is_inside_tree() && (streaming || live_rockfall)) {
 		_update_process();
 	}
@@ -6941,6 +6949,9 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 	}
 	const uint32_t BATCH = 512;
 	TerrainGenerator3D *gen = _get_generator();
+	if (!missing.is_empty()) {
+		_prepare_rivers(); // read by the workers: built here, on the main thread, before any of them start
+	}
 	LocalVector<CoarseJob> placed;
 	for (uint32_t b0 = 0; b0 < missing.size(); b0 += BATCH) {
 		const uint32_t n = MIN(BATCH, missing.size() - b0);

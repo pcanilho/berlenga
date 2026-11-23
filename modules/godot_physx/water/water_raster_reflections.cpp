@@ -31,6 +31,7 @@
 
 #include "water_raster_reflections.h"
 
+#include "core/object/callable_mp.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
 #include "scene/main/scene_tree.h"
@@ -41,6 +42,27 @@
 #include "scene/resources/material.h"
 #include "scene/resources/sky.h"
 #include "servers/rendering/rendering_server.h"
+
+void WaterSkyReadback::request(RID p_sky, bool p_bake_irradiance, const Size2i &p_size) {
+	pending = true;
+	RS::get_singleton()->sky_bake_panorama_async(p_sky, 1.0, p_bake_irradiance, p_size, callable_mp(this, &WaterSkyReadback::_ready));
+}
+
+void WaterSkyReadback::_ready(const Ref<Image> &p_image) {
+	pending = false;
+	landed = true;
+	image = p_image;
+}
+
+bool WaterSkyReadback::take(Ref<Image> &r_image) {
+	if (!landed) {
+		return false;
+	}
+	landed = false;
+	r_image = image;
+	image.unref();
+	return true;
+}
 
 DirectionalLight3D *WaterRasterReflections::find_sun(Node3D *p_node) {
 	DirectionalLight3D *s = ObjectDB::get_instance<DirectionalLight3D>(sun);
@@ -92,9 +114,15 @@ void WaterRasterReflections::update(Node3D *p_node, const Ref<ShaderMaterial> &p
 		const RID sky_rid = env->get_sky()->get_rid();
 		// Again every few seconds (a sky that changes with the time of day), and until the sky has been drawn
 		// once (before that the bake comes back black).
-		if (sky_rid != sky_baked || --sky_rebake <= 0) {
+		if (sky_readback.is_null()) {
+			sky_readback.instantiate();
+		}
+		if ((sky_rid != sky_baked || --sky_rebake <= 0) && !sky_readback->pending) {
 			sky_baked = sky_rid;
-			Ref<Image> pano = RS::get_singleton()->sky_bake_panorama(sky_rid, 1.0, false, Size2i(128, 64));
+			sky_readback->request(sky_rid, false, Size2i(128, 64));
+		}
+		Ref<Image> pano;
+		if (sky_readback->take(pano)) {
 			bool lit = false;
 			if (pano.is_valid() && !pano->is_empty()) {
 				lit = pano->get_pixel(pano->get_width() / 2, pano->get_height() / 4).get_luminance() > 0.0f;

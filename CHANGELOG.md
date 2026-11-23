@@ -6,6 +6,16 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-40d110e1 (2026-11-23)
+
+### Changed
+- Camera cut-out: draws the cut cannot reach compile its discard out (`CAMERA_CUTOUT_REACH` in spatial shaders), keeping early depth tests (no setting).
+
+## build-a0f91e0f (2026-11-23)
+
+### Changed
+- Camera cut-out: draws the cut cannot reach compile its discard out (`CAMERA_CUTOUT_REACH` in spatial shaders), keeping early depth tests (no setting).
+
 ## build-1ab80137 (2026-11-23)
 
 ### Added

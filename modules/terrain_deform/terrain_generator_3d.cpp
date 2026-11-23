@@ -2857,21 +2857,32 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	ep.assumed_slope = detail_assumed_slope;
 	ep.valley_height = result_min;
 	ep.peak_height = MAX(result_max, result_min + 1.0f);
-	double off = TerrainErosionFilter::offset(ep, p_x, p_z, base, gx, gz, coherence);
-	// Crests: where the gullies fade (low coherence) on convex ground, an irregular ridged noise takes over, so a
-	// crest line keeps pinnacles and cols of varied size instead of turning straight (or a regular comb).
-	if (detail_crest > 0.0) {
-		const double convex = -(hs[1][0] + hs[1][2] + hs[0][1] + hs[2][1] - 4.0 * hs[1][1]) / (4.0 * e);
+	// Crests: where the gullies fade (low coherence) on convex ground. There the filter's own result would fall to
+	// its fade target, raised over the flanks' mean by tens of metres in the few metres round a pointed summit
+	// (needle spires on a range's tops): the target fades out with the crest's weight, so a crest meets its flanks,
+	// and the ridged noise below gives it its broken line instead.
+	const double convex = -(hs[1][0] + hs[1][2] + hs[0][1] + hs[2][1] - 4.0 * hs[1][1]) / (4.0 * e);
+	double w = 0.0;
+	{
 		const double c = CLAMP(coherence, 0.0, 1.0);
 		const double fade = 1.0 - c * c * (3.0 - 2.0 * c);
 		const double t = CLAMP(convex / 0.05, 0.0, 1.0);
-		const double w = fade * t * t * (3.0 - 2.0 * t);
+		w = fade * t * t * (3.0 - 2.0 * t);
+	}
+	ep.fade_scale = 1.0 - w;
+	double off = TerrainErosionFilter::offset(ep, p_x, p_z, base, gx, gz, coherence);
+	// An irregular ridged noise on the crests, so a crest line keeps pinnacles and cols of varied size instead of
+	// turning straight (or a regular comb).
+	if (detail_crest > 0.0) {
 		if (w > 0.0) {
 			const double amp = double(detail_crest) * 2.0 * detail_depth / MAX(double(detail_gully_weight), 1e-3) * detail_wavelength;
 			// No octave finer than 8 m: a pinnacle a few metres across is all a 1 m grid holds (finer ones drew
 			// one-sample spikes along the crests).
 			const int crest_oct = MAX(1, MIN(MAX(detail_octaves, 1) + 2, 1 + int(Math::floor(TerrainDMath::log2(MAX(detail_wavelength * 2.0 / 8.0, 1.0))))));
-			off += w * amp * TerrainErosionFilter::crest_noise(ep.seed ^ 0x5bd1e995u, p_x, p_z, detail_wavelength * 2.0, crest_oct);
+			// About its mean (0.36): the noise is 0.07 to 0.5, so as it was it raised the whole crest band by some
+			// 15 m, and on a pointed summit, where that band is the last few metres round the top, the raise stood
+			// as a needle spire. Centred, it only breaks the crest line into pinnacles and cols.
+			off += w * amp * (TerrainErosionFilter::crest_noise(ep.seed ^ 0x5bd1e995u, p_x, p_z, detail_wavelength * 2.0, crest_oct) - 0.36);
 		}
 	}
 	// Not under water (the seabed and lake beds stay smooth), and never down to the outlets: land the filter cuts
@@ -2909,7 +2920,7 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	}
 	// Ledges on cliffs (row 11 of the waterfall gap list): steep faces of bedded rock weather into steps, each harder
 	// bed a ledge over a softer recess (differential erosion of interbedded strata, Forte et al. 2016; the layered
-	// subsurface of Cordonnier et al. 2018, "Sculpting mountains"). Beds every cliff_ledge_spacing metres, their
+	// subsurface of Cordonnier et al. 2018, "Sculpting mountains"). Beds about every cliff_ledge_spacing metres, their
 	// heights wandering by most of a bed over a few hundred metres; each bed is a near-flat ledge for 60% of its
 	// height and a riser for the rest, faded in from 40 to 55 degrees so soil slopes stay as they were.
 	if (cliff_ledge_spacing > 0.0) {
@@ -2925,15 +2936,42 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 			// slope stays positive), and each bed's ledge share is its own.
 			const double hw = (h0 + wob) / L;
 			const double q = hw + 0.22 * TerrainDMath::sin(hw * 2.3999632) + 0.12 * TerrainDMath::sin(hw * 0.9213 + 1.7);
-			const double fl = Math::floor(q);
-			const double f = q - fl;
-			const uint32_t bh = (uint32_t(int64_t(fl)) * 0x9E3779B1u) ^ (ls * 0x85EBCA6Bu);
+			// Bed boundaries in bed units: each unit holds none (a quarter of them), one or two (three in ten) at a
+			// random place, so bed thickness runs from a tenth of the spacing to near three times it with no rhythm,
+			// as bed thicknesses in a stratal column do (log-normal to exponential frequencies; Drummond and
+			// Wilkinson 1996, "Stratal thickness frequencies and the prevalence of orderedness in stratigraphic
+			// sequences"). Beds are harder or softer: a soft bed weathers back as a plain slope with no ledge.
+			const int64_t fu = int64_t(Math::floor(q));
+			double b0 = double(fu - 3);
+			double b1 = double(fu + 4);
+			uint32_t b0h = 0u;
+			for (int64_t c = fu - 3; c <= fu + 3; c++) {
+				const uint32_t ch = uint32_t(_gen_hash01(uint32_t(c) * 0x9E3779B1u ^ ls, 0x27d4eb2fu) * 4294967295.0);
+				const double u0 = double(ch & 0xFFFFu) / 65535.0;
+				const int n = u0 < 0.25 ? 0 : (u0 < 0.7 ? 1 : 2);
+				for (int k = 0; k < n; k++) {
+					const uint32_t kh = uint32_t(_gen_hash01(ch, uint32_t(k) + 11u) * 4294967295.0);
+					const double bp = double(c) + (double(k) + 0.1 + 0.8 * double(kh & 0xFFFFu) / 65535.0) / double(n);
+					if (bp <= q && bp > b0) {
+						b0 = bp;
+						b0h = kh;
+					} else if (bp > q && bp < b1) {
+						b1 = bp;
+					}
+				}
+			}
+			const double f = (q - b0) / MAX(b1 - b0, 1e-6);
 			// Each bed: a narrow ledge (20 to 35 percent of the bed, rising a quarter of its height, so it still sheds
-			// water and scree) and the riser above it.
-			const double l = 0.2 + 0.15 * double((bh >> 8) & 0xFFFF) / 65535.0;
-			double t = f < l ? 0.25 * f / l : 0.25 + 0.75 * (f - l) / (1.0 - l);
+			// water and scree) and the riser above it; how much of that step a bed holds is its hardness (none for a
+			// fifth of them), which also wanders along the face over a couple of hundred metres (beds pinch out).
+			const double l = 0.2 + 0.15 * double((b0h >> 8) & 0xFFFF) / 65535.0;
+			const double hard_u = double(b0h >> 24) / 255.0;
+			double hard = CLAMP((hard_u - 0.2) / 0.3, 0.0, 1.0);
+			hard *= CLAMP(0.75 + 0.5 * _gen_value_noise(ls + 2u + uint32_t(b0h & 0xFFu), p_x, p_z, 180.0), 0.0, 1.0);
+			const double step = f < l ? 0.25 * f / l : 0.25 + 0.75 * (f - l) / (1.0 - l);
+			const double t = b0 + (b1 - b0) * (f + (step - f) * hard);
 			// Back from bed units to height: invert the warp locally (Newton step from q).
-			const double qt = fl + t;
+			const double qt = t;
 			const double dq = 1.0 + 0.22 * 2.3999632 * TerrainDMath::cos(hw * 2.3999632) + 0.12 * 0.9213 * TerrainDMath::cos(hw * 0.9213 + 1.7);
 			const double ht = (hw + (qt - q) / dq) * L - wob;
 			off += w * (ht - h0);
@@ -6542,7 +6580,7 @@ float td_ease_out(float t) {
 	return 1.0 - v * v;
 }
 
-vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footprint) {
+vec2 td_gradient(vec2 p, float h, vec2 g, int octaves, float footprint, float lambda0) {
 	vec2 r = vec2(0.0);
 	float slope = length(g);
 	if (slope < 1e-6) {
@@ -6551,7 +6589,7 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 	vec2 st = g / slope * TD_ASSUMED;
 	float fade = clamp((h - TD_VALLEY) / (TD_PEAK - TD_VALLEY), 0.0, 1.0) * 2.0 - 1.0;
 	float mask = td_ease_out(slope / 0.5);
-	float lambda = TD_WAVELENGTH;
+	float lambda = lambda0;
 	vec2 fd = vec2(0.0);
 	vec2 md = vec2(0.0);
 	for (int o = 0; o < octaves; o++) {
@@ -6636,21 +6674,48 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 	return r;
 }
 
+vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footprint) {
+	return td_gradient(p, h, g, octaves, footprint, TD_WAVELENGTH);
+}
+
 vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float footprint) {
 	// The detail is a heightfield's (gullies on slopes, looked up by x and z): on faces past about 60 degrees a
 	// lookup by x and z runs down the face as vertical streaks, so it fades out there (the material's own rock
 	// texture, projected on the face, carries the detail).
 	float face = smoothstep(0.35, 0.55, world_normal.y);
-	if (face <= 0.0) {
-		return world_normal;
-	}
-	vec2 g = -world_normal.xz / max(world_normal.y, 1e-3);
 	vec2 size = vec2(textureSize(terrain_detail_keep_map, 0));
 	vec2 u = clamp((world_pos.xz - TD_RECT.xy) / TD_RECT.zw, 0.0, 1.0);
 	float keep = clamp(textureLod(terrain_detail_keep_map, (u * (size - 1.0) + 0.5) / size, 0.0).r, 0.0, 1.0);
-	if (keep <= 0.0) {
-		return world_normal;
+	// Steep faces far off: the same gully detail drawn in the face's own plane (triplanar projection, the planes
+	// facing x and z blended by the normal; Golus 2017, "Normal Mapping for a Triplanar Shader"), so its gullies run
+	// down the fall line as couloirs and ribs do on real rock walls. A heightfield's vertices stretch down a steep
+	// face and the rock texture is under a pixel there, so without it a far wall drew as smooth, streaked plaster.
+	// Near, the rock texture and the cliff relief carry the face, so it fades in from a footprint of 3 cm.
+	float wall = (1.0 - face) * keep * smoothstep(0.03, 0.25, footprint);
+	vec3 wall_n = world_normal;
+	if (wall > 0.0) {
+		vec2 an = world_normal.xz * world_normal.xz;
+		an *= an;
+		an /= max(an.x + an.y, 1e-6);
+		vec3 dn = vec3(0.0);
+		for (int a = 0; a < 2; a++) {
+			float wa = a == 0 ? an.x : an.y;
+			if (wa < 0.02) {
+				continue;
+			}
+			// Plane coordinates (across, up): the gullies follow the plane's up axis, couloirs from 32 times the
+			// detail's first wavelength down (about 250 m, as wide as couloirs on big walls).
+			vec2 q = a == 0 ? vec2(world_pos.z, world_pos.y) : vec2(world_pos.x, world_pos.y);
+			vec2 d = td_gradient(q, world_pos.y, vec2(0.0, 1.0), octaves + 5, footprint, TD_WAVELENGTH * 32.0);
+			d *= inversesqrt(1.0 + dot(d, d) / 0.1225);
+			dn += wa * (a == 0 ? vec3(0.0, -d.y, -d.x) : vec3(-d.x, -d.y, 0.0));
+		}
+		wall_n = normalize(world_normal + wall * dn);
 	}
+	if (face <= 0.0 || keep <= 0.0) {
+		return wall_n;
+	}
+	vec2 g = -world_normal.xz / max(world_normal.y, 1e-3);
 	vec2 d = face * keep * terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
 	// The octaves below the vertex spacing keep the geometry's depth ratio, so their slopes add up (0.5 an octave):
 	// 30 to 50 degrees of tilt on gentle ground, faces turned from a 30 degree sun as dark blotches. Rills and
@@ -6678,7 +6743,8 @@ vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float
 			d += fp * (0.06 * wear * aa * face * keep * cos(ph));
 		}
 	}
-	return normalize(vec3(-(g.x + d.x), 1.0, -(g.y + d.y)));
+	vec3 flat_n = normalize(vec3(-(g.x + d.x), 1.0, -(g.y + d.y)));
+	return face < 1.0 ? normalize(flat_n + wall_n - world_normal) : flat_n;
 }
 )GLSL";
 	return c;

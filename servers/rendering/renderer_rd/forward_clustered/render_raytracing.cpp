@@ -1006,6 +1006,7 @@ void RenderRaytracing::cleanup_caches() {
 		}
 	}
 	surface_chunks.clear();
+	captured_surface_keys.clear();
 
 	for (KeyValue<uint64_t, RTCacheEntry> &kv : surface_lod_cache) {
 		if (kv.value.ptr) {
@@ -1123,6 +1124,12 @@ RTCacheEntry *RenderRaytracing::get_surface_cache_entry(uint32_t p_index) {
 	}
 
 	return &surface_chunks[chunk_idx][entry_idx];
+}
+
+// The entry at p_index, or nullptr when its chunk was never made.
+RTCacheEntry *RenderRaytracing::_find_surface_cache_entry(uint32_t p_index) const {
+	const uint32_t chunk_idx = p_index >> RT_CACHE_CHUNK_SHIFT;
+	return chunk_idx < surface_chunks.size() && surface_chunks[chunk_idx] ? &surface_chunks[chunk_idx][p_index & RT_CACHE_CHUNK_MASK] : nullptr;
 }
 
 RTMaterialCacheEntry *RenderRaytracing::get_material_cache_entry(uint32_t p_index) {
@@ -1373,6 +1380,7 @@ void RenderRaytracing::prepare_frame() {
 	_rt_prune_handle_map(shared_captured_mm_entries, shared_captured_mm_prune, merged_mm_pool);
 
 	_evict_dead_mesh_groups();
+	_evict_surfaces(current_frame);
 	_evict_surface_lods(current_frame);
 	_omm_process();
 
@@ -1492,6 +1500,59 @@ RTSurfaceData *RenderRaytracing::process_surface_lod(
 	entry->cached_rid_version = p_mesh_rid_version;
 	entry->last_used_frame = current_frame;
 	return entry->ptr;
+}
+
+// Frees the static surfaces no instance traced for a while (a captured surface's bare mesh once its capture lands,
+// a mesh that left the view, a freed mesh), a few chunks a frame. A surface traced again is rebuilt from the same
+// mesh, so it traces the same. Persistent slots keep tracing a BLAS without touching its entry, so those stay.
+void RenderRaytracing::_evict_surfaces(uint32_t p_frame) {
+	static const uint32_t SURFACE_TTL = 120; // Frames a surface stays after its last use.
+	static const uint32_t CHUNKS_PER_FRAME = 64;
+	// A captured surface traced its bare mesh until the capture landed: free that BLAS as soon as no instance traced
+	// it in the last frame, instead of after the TTL.
+	LocalVector<uint32_t> settled;
+	for (const uint32_t key : captured_surface_keys) {
+		RTCacheEntry *entry = _find_surface_cache_entry(key);
+		if (!entry || !entry->ptr) {
+			settled.push_back(key);
+			continue;
+		}
+		if (p_frame - entry->last_used_frame < 2 || (entry->ptr->blas.is_valid() && _persistent_blas_referenced(entry->ptr->blas))) {
+			continue; // Traced bare by another instance, or held by a persistent slot.
+		}
+		_free_blas_resources(blas_transform_pool, entry->ptr->blas, &entry->ptr->blas_transform, 1);
+		memdelete(entry->ptr);
+		*entry = RTCacheEntry();
+		settled.push_back(key);
+	}
+	for (const uint32_t key : settled) {
+		captured_surface_keys.erase(key);
+	}
+	const uint32_t chunk_count = surface_chunks.size();
+	if (chunk_count == 0) {
+		return;
+	}
+	for (uint32_t n = 0; n < MIN(CHUNKS_PER_FRAME, chunk_count); n++) {
+		if (surface_evict_cursor >= chunk_count) {
+			surface_evict_cursor = 0;
+		}
+		RTCacheEntry *chunk = surface_chunks[surface_evict_cursor++];
+		if (!chunk) {
+			continue;
+		}
+		for (uint32_t i = 0; i < RT_CACHE_CHUNK_SIZE; i++) {
+			RTCacheEntry &entry = chunk[i];
+			if (!entry.ptr || entry.last_used_frame == 0 || p_frame - entry.last_used_frame <= SURFACE_TTL) {
+				continue;
+			}
+			if (entry.ptr->blas.is_valid() && _persistent_blas_referenced(entry.ptr->blas)) {
+				continue;
+			}
+			_free_blas_resources(blas_transform_pool, entry.ptr->blas, &entry.ptr->blas_transform, 1);
+			memdelete(entry.ptr);
+			entry = RTCacheEntry();
+		}
+	}
 }
 
 // Frees the LOD levels no instance traced for a while.
@@ -6255,6 +6316,12 @@ RTSurfaceData *RTTlasBuilder::_process_plan_surface(const Instance &p_inst, cons
 		}
 	}
 	if (surf_data) {
+		if (p_surface.deformed_kind == RT_PLAN_DEFORMED_CAPTURED) {
+			const RTCacheEntry *bare = rt._find_surface_cache_entry(p_surface.cache_key);
+			if (bare && bare->ptr) {
+				rt.captured_surface_keys.insert(p_surface.cache_key);
+			}
+		}
 		return surf_data;
 	}
 	if (p_lod != 0) {

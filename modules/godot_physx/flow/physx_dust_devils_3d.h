@@ -60,7 +60,7 @@ private:
 	float frequency = 10.0f; // devils per km2 per hour at full favour
 	float min_heating = 8.0f; // K of surface over air below which none form
 	float flow_cell_size = 0.35f;
-	Color dust_color = Color(0.8, 0.7, 0.55);
+	Color dust_color = Color(1, 1, 1); // a tint over the weather's dust albedo (physx_apply_dust_optics)
 	uint32_t seed = 1;
 
 	struct Devil {

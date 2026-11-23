@@ -745,6 +745,11 @@ void light_process_omni(uint idx, vec3 vertex, hvec3 eye_vec, hvec3 normal, vec3
 	}
 
 	vec3 light_rel_vec_norm = light_rel_vec / light_length;
+#ifdef GAS_LIGHT_TRANSMITTANCE
+	if (omni_attenuation > HALF_FLT_MIN) {
+		shadow *= half(gas_light_transmittance(vertex, omni_lights.data[idx].position));
+	}
+#endif
 	light_compute(normal, hvec3(light_rel_vec_norm), eye_vec, size, hvec3(color), false, omni_attenuation * shadow, f0, roughness, metallic, half(omni_lights.data[idx].specular_amount), albedo, alpha, screen_uv, energy_compensation,
 #ifdef LIGHT_BACKLIGHT_USED
 			backlight,
@@ -948,6 +953,11 @@ void light_process_spot(uint idx, vec3 vertex, hvec3 eye_vec, hvec3 normal, vec3
 		}
 	}
 
+#ifdef GAS_LIGHT_TRANSMITTANCE
+	if (spot_attenuation > HALF_FLT_MIN) {
+		shadow *= half(gas_light_transmittance(vertex, spot_lights.data[idx].position));
+	}
+#endif
 	light_compute(normal, hvec3(light_rel_vec_norm), eye_vec, size, hvec3(color), false, spot_attenuation * shadow, f0, roughness, metallic, half(spot_lights.data[idx].specular_amount), albedo, alpha, screen_uv, energy_compensation,
 #ifdef LIGHT_BACKLIGHT_USED
 			backlight,

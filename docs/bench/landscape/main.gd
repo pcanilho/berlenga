@@ -729,8 +729,12 @@ func _ready() -> void:
 	# The checks draw (their probes read drawn frames); otherwise the main view stays undrawn through the cave and
 	# rock builds and the waits below until the capture (SubViewport bakes still render; ~24 s a frame on lavapipe).
 	get_viewport().disable_3d = false
+	var phys_steps := Engine.max_physics_steps_per_frame
 	if not (args.has("test") or args.has("checks")):
 		get_viewport().disable_3d = true
+		# Undrawn frames still take long on lavapipe, and up to 8 physics ticks of GPU sims (water solvers, ground
+		# deformation, Flow) would run per frame to catch up: one tick a frame until the capture.
+		Engine.max_physics_steps_per_frame = 1
 	# The checks move probes, press prints and step the weather: a picture only runs them when asked (--checks),
 	# and under path tracing each of their frames is a full traced frame.
 	if args.has("test") or args.has("checks"):
@@ -865,9 +869,12 @@ func _ready() -> void:
 	# The streamed ground cover settles round the camera before the picture.
 	var sw := 0
 	get_viewport().disable_3d = true # placing only: the frames draw nothing
+	var tw := Time.get_ticks_msec()
 	while cover != null and not cover.is_stream_idle() and sw < 1200:
 		await get_tree().process_frame
 		sw += 1
+		if sw % 100 == 0:
+			_log("cover settle: %d frames, %d s, %s" % [sw, (Time.get_ticks_msec() - tw) / 1000, str(cover.get_stream_stats())])
 	get_viewport().disable_3d = false
 	# Every capture waits for the grass far colours to bake (a SubViewport render, ~30 frames, restarted by any data
 	# map change) and for the cover to settle again, not for a fixed frame count.
@@ -888,6 +895,8 @@ func _ready() -> void:
 			break
 		await get_tree().process_frame
 		bw += 1
+		if bw % 100 == 0:
+			_log("far bake wait: %d frames, %d s" % [bw, (Time.get_ticks_msec() - tw) / 1000])
 	get_viewport().disable_3d = false
 	_log("grass far colours baked and cover idle after %d frames" % bw)
 	_mem_log("after first frames")
@@ -904,6 +913,7 @@ func _ready() -> void:
 		await get_tree().process_frame
 		waited += 1
 	get_viewport().disable_3d = false
+	Engine.max_physics_steps_per_frame = phys_steps
 	if landscape != null:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
@@ -2765,7 +2775,8 @@ func _build_ground() -> void:
 		add_child(landscape)
 		landscape.material = ground_mat
 		landscape.lod_error = float(args.get("lod-error", "2"))
-		landscape.cliff_relief = float(args.get("cliff-relief", "0")) # --cliff-relief=M: rock ledges built into steep faces
+		if args.has("cliff-relief"):
+			landscape.cliff_relief = float(args["cliff-relief"]) # --cliff-relief=M: rock ledges built into steep faces (the engine default, 0.6 m, otherwise; 0 off)
 		landscape.source = landscape.get_path_to(gen)
 		var own_body := ground_body == null
 		landscape.collision_enabled = own_body

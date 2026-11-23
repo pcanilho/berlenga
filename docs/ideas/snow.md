@@ -2063,6 +2063,22 @@ Built:
   they sink to the ground under the snow, out of sight.
 - `--test=walls`: a slab over depth hoar throws blocks, new powder none. `--test=avalanche`: the crown throws blocks.
 
+## Follow-up 56: thin snow on rock faces in patches, not ledge stripes (23 Nov 2026)
+
+Docs review: on a range in late May the snow lay in even white stripes across every face, one per cliff ledge
+(terrain `cliff_ledge_spacing`, 16 m), read as banding. Cause: snow takes the flattest facets first
+(`snow_cover_weight`), every ledge tread is one, and the treads are in the mesh, so every ledge filled end to end.
+Real thin snow on steep rock lies in broken patches: wind scours exposed lips and loads the lee, a ledge holds it
+only where it is broad enough (Mott et al. 2010; Sommer et al. 2015).
+
+Built: `snow_cover_weight(cover, max_slope, geo, normal, pos, face_normal)`: on steep faces (the face normal, here
+TerrainMaterial3D's heightfield normal `tm_cn`, past 23 degrees) a value noise stretched along the face (6 m
+across, 2.5 m up, plus a 2 m octave) keeps the snow where it is over 1.05 - 0.6 cover: a few patches at half cover,
+about two thirds of each ledge under a full cover (the frame's peaks were fully covered: the slide-off rule alone
+drew the lines, so the patches hold at any depth). Gentle ground is as before. The face normal matters: the
+ledges are in the mesh, whose normal on a tread is near level. Checked on the docs frame's own command (landscape
+bench `--layout=range --lens-cam=3000`). The even 16 m rhythm of the rows is terrain's ledge spacing (routed).
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

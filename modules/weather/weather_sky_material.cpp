@@ -1995,6 +1995,8 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 		PackedFloat32Array rain;
 		PackedFloat32Array outflow;
 		PackedFloat32Array snow;
+		PackedFloat32Array deep;
+		deep.resize(WeatherClouds::MAX_STORMS);
 		rain.resize(WeatherClouds::MAX_STORMS);
 		outflow.resize(WeatherClouds::MAX_STORMS);
 		snow.resize(WeatherClouds::MAX_STORMS);
@@ -2002,7 +2004,9 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 			rain.write[i] = i < p_state.storm_count ? p_state.storm_rain[i] : 0.0f;
 			outflow.write[i] = i < p_state.storm_count ? p_state.storm_outflow[i] : 0.0f;
 			snow.write[i] = i < p_state.storm_count ? p_state.storm_snow[i] : 0.0f;
+			deep.write[i] = i < p_state.storm_count ? p_state.storm_deep[i] : 0.0f;
 		}
+		rs->material_set_param(m, "cloud_storm_deep", deep);
 		rs->material_set_param(m, "cloud_storm_rain", rain);
 		rs->material_set_param(m, "cloud_storm_outflow", outflow);
 		rs->material_set_param(m, "cloud_storm_snow", snow);

@@ -57,7 +57,7 @@ private:
 	float flow_cell_size = 2.0f;
 	// The far wall's colour (weather_dust_albedo 0.93/0.92/0.85, g 0.75, through the similarity relations over many
 	// scatterings, as the cloud march's dust tint), red-normalised: a thick billow and the wall behind it read alike.
-	Color dust_color = Color(1.0, 0.93, 0.62);
+	Color dust_color = Color(1, 1, 1); // a tint over the weather's dust albedo (physx_apply_dust_optics)
 	float head_height = 100.0f; // m, the drawn head's top
 	Vector4 published_near;
 	float scan_interval = 0.5f; // s

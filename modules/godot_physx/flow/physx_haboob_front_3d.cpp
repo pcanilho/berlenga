@@ -32,6 +32,7 @@
 #include "physx_haboob_front_3d.h"
 
 #include "physx_flow_3d.h"
+#include "physx_dust_optics.h"
 #include "physx_flow_emitter_3d.h"
 
 #include "core/object/class_db.h"
@@ -64,9 +65,7 @@ void PhysXHaboobFront3D::set_terrain_path(const NodePath &p_path) {
 
 void PhysXHaboobFront3D::set_dust_color(const Color &p_c) {
 	dust_color = p_c;
-	if (flow) {
-		flow->set_smoke_color(dust_color);
-	}
+	physx_apply_dust_optics(flow, dust_color);
 }
 
 void PhysXHaboobFront3D::set_head_height(float p_v) {
@@ -104,16 +103,17 @@ void PhysXHaboobFront3D::_build() {
 	// shows the grid. The head mixes the foot's dust up through about ten times its volume (smoke about 0.1 there
 	// for 1 at the foot), so 0.3 per unit gives that inside the head and a dense foot (0.3 read best on the PC, 0.08
 	// too faint). Mineral dust scatters with albedo about 0.92 and a strong forward lobe (asymmetry about 0.7 at
-	// 550 nm; Dubovik et al. 2002), and the light dims through tens of metres of it, so the shadow reach spans the
+	// 550 nm; Dubovik et al. 2002; the weather's value, below), and the light dims through tens of metres of it, so the shadow reach spans the
 	// head (a few metres lit every billow alike, flat and pale). Strength 1 keeps raster and the path tracer alike.
 	// Vorticity confinement 4 keeps the rolls' edges (2 and 1 blurred them into streaks on the PC).
 	flow->set_smoke_density(0.3f);
 	flow->set_scattering_strength(1.0f);
-	flow->set_scattering_albedo(0.92f);
-	flow->set_scattering_anisotropy(0.6f);
+	// The weather's one dust albedo and asymmetry per scatter (physx_apply_dust_optics): Flow weighs each scatter by
+	// the colour, so the bulk look the sky's wall shows ((1, 0.93, 0.62), its dust_tint) is what the scatters build,
+	// not a colour to set; set as a colour it took a third of the blue each scatter (the PC's orange-brown smear).
+	physx_apply_dust_optics(flow, dust_color);
 	flow->set_scattering_shadow_reach(0.5f * head_height);
 	flow->set_scattering_shadow_steps(12);
-	flow->set_smoke_color(dust_color);
 	flow->set_terrain_floor(true);
 	flow->set_weather_wind_coupling(0.5f);
 	add_child(flow, false, INTERNAL_MODE_FRONT);

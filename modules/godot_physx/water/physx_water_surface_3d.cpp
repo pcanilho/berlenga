@@ -6774,10 +6774,17 @@ void PhysXWaterSurface3D::_update_water_light(const Camera3D *cam) {
 			const RID sky_rid = env->get_sky()->get_rid();
 			// Again every few seconds (a sky that changes with the time of day), and until the sky has
 			// been drawn once (before that the bake comes back black).
-			if (sky_rid != underwater_sky_baked || --underwater_sky_rebake <= 0) {
+			// Read back without stalling the GPU: the radiance lands a few frames later.
+			if (underwater_sky_readback.is_null()) {
+				underwater_sky_readback.instantiate();
+			}
+			if ((sky_rid != underwater_sky_baked || --underwater_sky_rebake <= 0) && !underwater_sky_readback->pending) {
 				underwater_sky_baked = sky_rid;
+				underwater_sky_readback->request(sky_rid, true, Size2i(32, 16));
+			}
+			Ref<Image> pano;
+			if (underwater_sky_readback->take(pano)) {
 				underwater_sky_radiance = Color(0, 0, 0);
-				Ref<Image> pano = RS::get_singleton()->sky_bake_panorama(sky_rid, 1.0, true, Size2i(32, 16));
 				if (pano.is_valid() && !pano->is_empty()) {
 					Color sum;
 					for (int x = 0; x < pano->get_width(); x++) {

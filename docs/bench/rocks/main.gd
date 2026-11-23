@@ -2879,6 +2879,15 @@ func _render_later() -> void:
 			await RenderingServer.frame_post_draw
 			waited += 1
 		print("rt pending surfaces cleared after %d frames" % waited)
+		if args.has("wait-held"):
+			# --wait-held=N: up to N more frames while the path tracer holds budget-limited geometry back.
+			var held_wait := 0
+			while held_wait < int(args["wait-held"]) and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_DYNAMIC_HELD) > 0:
+				await RenderingServer.frame_post_draw
+				held_wait += 1
+				if held_wait % 20 == 0:
+					print("  held %d, TLAS %d" % [get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_DYNAMIC_HELD), get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_TLAS_INSTANCES)])
+			print("rt held cleared after %d more frames" % held_wait)
 	if args.has("fov"):
 		get_viewport().get_camera_3d().fov = float(args["fov"]) # --fov=deg: vertical field of view (27: a 50 mm lens)
 	var frames := (8 if raster else 12) + int(args.get("settle", "0")) # --settle=N: N more frames (lazily built near plants)
