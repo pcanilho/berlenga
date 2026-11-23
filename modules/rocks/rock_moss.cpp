@@ -460,8 +460,11 @@ void fragment() {
 	// Lobes and bays a few centimetres across break the outline at the scale it reads from a metre.
 	float rag = mn(m_pos * 90.0) * 0.6 + mn(m_pos * 260.0) * 0.4;
 	float lobe = mn(m_pos * 24.0 + 13.0) * 0.65 + mn(m_pos * 9.0 + 7.0) * 0.35;
-	ALPHA = COLOR.a + (rag - 0.5) * 0.7 + (lobe - 0.5) * 0.7;
-	ALPHA_SCISSOR_THRESHOLD = 0.5;
+	// Cut with discard (an opaque cushion: writing ALPHA would make it transparent, and the path tracer drops sky light
+	// on transparent surfaces).
+	if (COLOR.a + (rag - 0.5) * 0.7 + (lobe - 0.5) * 0.7 < 0.5) {
+		discard;
+	}
 	ROUGHNESS = 0.82 + 0.1 * (1.0 - u);
 	SPECULAR = 0.3;
 	// The tufts as relief: tops up, gaps down (bump from the same field, 2 mm steps).
