@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-4121c48d (2026-11-23)
+
+### Changed
+- PhysXFlow3D surface_glow (and lights dimmed through the gas) works without a DirectionalLight3D, e.g. a fire at night.
+
 ## build-bf7f03d5 (2026-11-23)
 
 ### Fixed
