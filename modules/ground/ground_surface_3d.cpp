@@ -6237,11 +6237,14 @@ void GroundSurface3D::_wind_update(double p_delta) {
 			sand_dep_pending[i] += rate * dt;
 		}
 		if (sand_dep_pending[i] >= 0.002f && field.valid) {
-			// The cell's volume, over a disc a little wider than the cell so the steps blend (a tent on the near field).
+			// The cell's volume as a bilinear tent a lattice step wide (as the frost needles write theirs), so equal
+			// deposits over neighbouring cells rise flat. A disc 0.6 of a step wide left the cells' corners bare,
+			// and hours of sand landing built an egg-crate of bumps a step apart (a crosshatch on the PC's dunes).
 			const float d = sand_dep_pending[i];
-			const float rad = 0.6f * ground_spacing;
 			const Vector3 at((ground_origin.x + x) * ground_spacing, ground[i], (ground_origin.y + z) * ground_spacing);
-			_amount(at, rad, -d * ground_spacing * ground_spacing / (Math::PI * rad * rad), ground_spacing);
+			field.amount_tent = true;
+			_amount(at, ground_spacing, -d, ground_spacing);
+			field.amount_tent = false;
 			sand_dep[i] += d;
 			sand_dep_pending[i] = 0.0f;
 		}

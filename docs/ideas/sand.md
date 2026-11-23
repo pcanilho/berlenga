@@ -1124,6 +1124,12 @@ dunes, nebkhas: Hesp 1981; Tengberg 1995; Lancaster and Baas 1998). The mound un
   deposit), so the tail grows from both sides and tapers as the wind recovers.
 - Ground --test=shelter: the tail's deposit after two scaled hours at 1, 4 and 11 m behind a 2 m tuft, and none
   5 m to the side.
+- PC frame (23 Nov, vegetation --desert with VEG_DESERT_SAND=120): a crosshatch over the dunes where sand had landed.
+  The landing sand went to the field as discs 0.6 of a lattice step wide, one per cell, which left each cell's
+  corners bare; over hours of sand they built an egg-crate of bumps a step apart. Now each cell's share is a bilinear
+  tent a step wide (as the frost needles write theirs), so equal deposits rise flat (the tuft's mound now rises by
+  exactly what landed, 35.4 mm for 35.2). Tails did not read in that frame; the plants' floor patches there count
+  as plants too (lambda over 0.02), so many small wakes overlap.
 
 ## Next sand candidates, round 2 (research, 22 Nov 2026; on a card)
 
