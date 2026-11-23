@@ -729,8 +729,12 @@ func _ready() -> void:
 	# The checks draw (their probes read drawn frames); otherwise the main view stays undrawn through the cave and
 	# rock builds and the waits below until the capture (SubViewport bakes still render; ~24 s a frame on lavapipe).
 	get_viewport().disable_3d = false
+	var phys_steps := Engine.max_physics_steps_per_frame
 	if not (args.has("test") or args.has("checks")):
 		get_viewport().disable_3d = true
+		# Undrawn frames still take long on lavapipe, and up to 8 physics ticks of GPU sims (water solvers, ground
+		# deformation, Flow) would run per frame to catch up: one tick a frame until the capture.
+		Engine.max_physics_steps_per_frame = 1
 	# The checks move probes, press prints and step the weather: a picture only runs them when asked (--checks),
 	# and under path tracing each of their frames is a full traced frame.
 	if args.has("test") or args.has("checks"):
@@ -909,6 +913,7 @@ func _ready() -> void:
 		await get_tree().process_frame
 		waited += 1
 	get_viewport().disable_3d = false
+	Engine.max_physics_steps_per_frame = phys_steps
 	if landscape != null:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
