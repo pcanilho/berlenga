@@ -3689,6 +3689,8 @@ func _build_vegetation() -> void:
 		# No sward in the desert: the meadow rules know soil, rock and scree, not the erg's loose sand.
 		grass.ground_tint_enabled = false
 		grass.radius = 0.0
+	if "far_bake" in grass:
+		grass.far_bake = args.get("far-bake", "1") != "0" # --far-bake=0: no far-colour bake (scouts, close frames)
 	if args.has("hay") and "hay_meadows" in grass:
 		grass.hay_meadows = _hay_list()
 	add_child(grass)
@@ -3716,6 +3718,8 @@ func _build_vegetation() -> void:
 		under.tip_color = Color(0.38, 0.52, 0.16)
 		under.dryness = 0.35
 		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
+		if "far_bake" in under:
+			under.far_bake = args.get("far-bake", "1") != "0" # --far-bake=0: no far-colour bake (scouts, close frames)
 		if args.has("hay") and "hay_meadows" in under:
 			under.hay_meadows = _hay_list()
 		add_child(under)
@@ -3735,6 +3739,8 @@ func _build_vegetation() -> void:
 		turf.tip_color = Color(0.3, 0.42, 0.12)
 		turf.dryness = 0.35
 		turf.ground_tint_enabled = false
+		if "far_bake" in turf:
+			turf.far_bake = args.get("far-bake", "1") != "0" # --far-bake=0: no far-colour bake (scouts, close frames)
 		if args.has("hay") and "hay_meadows" in turf:
 			turf.hay_meadows = _hay_list()
 		add_child(turf)
