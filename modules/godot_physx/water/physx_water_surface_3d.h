@@ -549,7 +549,7 @@ public:
 
 private:
 	WaterSolver solver;
-	StepMode step_mode = STEP_MODE_PER_TICK;
+	StepMode step_mode = STEP_MODE_PER_FRAME; // one GPU step per drawn frame (docs/ideas/optimisation.md)
 	float ripple_rest_threshold = 0.0f;
 	bool water_time_dirty = false; // per-frame mode: water_time advanced since the material last got it
 	// NOT cached from immediately after configure() -- configure() dispatches

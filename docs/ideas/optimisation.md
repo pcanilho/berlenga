@@ -482,3 +482,25 @@ instance traced it in the last frame (one that still traces the bare mesh, or a 
 it). Gully still, same view: acceleration structures 6,080 to 4,505 MB, GPU memory 8,866 to 7,291 MB, peak
 resident 12.9 to 12.1 GB. That still is not bit-repeatable between runs (wind, capture timing), so its proof is
 the rt_memory runs above plus a side by side look; the freed and rebuilt path is the same one.
+
+## Water: one GPU step per drawn frame by default
+
+A slow frame runs several physics ticks (up to `physics/common/max_physics_steps_per_frame`, 8), and with
+`PhysXWaterSurface3D.step_mode` per tick every tick ran the surface's whole GPU step. The late-frost meadow had 20
+water solvers (surfaces and their cascades): 160 steps and about 1,860 compute passes a frame, which made the frame
+slower still (on the cloud's software GPU, frames of 100 s that kept the tick count at 8).
+
+`STEP_MODE_PER_FRAME` (already in the module) records each tick and runs them in one step per frame: the ripple
+layer still takes one sub-step per tick with that tick's bodies, while the FFT ocean (evaluated at the summed
+time), foam, swash, blits and readbacks run once. It is now the default. Where a frame holds one tick (a game at or
+above its physics rate) nothing changes; frames with several ticks now cost one step. Look test: the water surface
+bench, beach and surf views (raster, fixed 30 fps, two ticks a frame), per tick against per frame: the same water,
+differing only by the run-to-run simulation noise.
+
+## Path tracing live state: the cut-out retry's copy of the path state
+
+The camera cut-out loop kept a copy of the whole `PathState` (60 bytes) across every bounce's trace, to repack the
+payload for a further layer. A surface that opens in the cut answers with `hit_t` alone, so the retry now resets
+`hit_t` in the payload as it is. Byte-identical: rt_memory and the links bench's cut-out path traced frame. The
+rest of what the raygen keeps across traces waits for the PC's Nsight "Ray Tracing Live State" table, since the
+driver may already recompute the values that come from the scene data (camera matrix and ray).
