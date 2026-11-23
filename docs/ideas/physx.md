@@ -2559,6 +2559,34 @@ Images: /mnt/project-files/fork/physx/flow-refit-test-puffs.png (rows:
 0.99 back, 0.99 front, 0.9 back, 0.9 front; columns PT, before, after),
 flow-refit-fire-regression.png, powder-foot-refit-before-after-pt.png.
 
+### Powder foot line: what it is (23 Nov)
+
+After the refit, measured along the avalanche foot (61 columns, darkest
+point of the lower edge band minus the gas just above it): median -3
+levels (PT +1), 6 to 14 columns per run still dipping 9 to 18 levels as
+dark specks where the front meets the snow.
+
+Per-pixel debug views on snow's bench ruled out the gas side: the gas's
+own light per unit of opacity is higher at the foot than in the body, and
+Flow's draw darkens the frame by exactly its coverage. The dark is the snow
+behind the thin foot, seen through it: it lies in the cloud's raster shadow,
+whose edge sits right behind the foot. Not the cause: diffuse transmission,
+the sun cascades on the gas, a stronger snow bounce into the gas.
+
+Tried: the snow reading the most lit of its volume-shadow texel and the
+four diagonal ones (the map's texels average a few gas columns, so the
+snow under a thin edge reads the dense columns beside it). The foot line
+went to 6 dipping columns, median -1.5, edge against snow -12.4 (PT -11),
+but the gate's ground shadows moved away from PT: smoke +6.5 to +14.5,
+dust +4 to +12, fire +12 to +27 levels (raster minus PT). Not kept.
+
+The gate also shows raster ground shadows of smoke, dust and fire already
+4 to 12 levels lighter than PT, while the powder's is darker than PT's
+right behind its foot: the scene's gas shadow needs its own fit against
+the path tracer, by albedo (bright gas spreads light sideways over its
+diffusion length, which softens and shrinks its shadow's edge; dark smoke
+does not). Image: /mnt/project-files/fork/physx/powder-foot-shadow-edge-test.png.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
