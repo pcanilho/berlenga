@@ -2056,3 +2056,15 @@ Built: SodLipFall3D under water (WorldWater.height_at, half under or more).
 - The pieces are Blast's leaves (the lip is prefractured one level deep), so they wear as whole pieces, not crumbs.
 - get_silt_released() reports the kg shed. Check: vegetation --test=sod ("sod crumbling").
 
+## Hay curing colour (round 10, third pick)
+Cut grass cures from fresh green to a green-gold over its drying days (already drawn: "Mowing and hay rows"). Rain on
+it while it lies does the damage: "prolonged exposure to sun and rain reduces green color" and wet hay "supports mold
+growth and nutrient degradation" (Manitoba Agriculture, How Rain Affects Hay Quality); re-wetting restarts the plants'
+respiration until they dry below 30% moisture (same page).
+Built: GrassField3D adds up the weather's rainfall (WorldWeather.rainfall_at over each meadow's middle, in the
+weather's own time via WorldWeather.time_scale) while the cut grass lies (days 0 to 4), reset when it is mown again;
+a meadow's "rain" key fixes it. mow_state's b channel carries the mm to the blades (v_cut.z on a lying blade: the
+shader is at its varying limit) and to the far ground (grass_mow_ground). From about 2 mm to fully at 25 mm (estimates)
+the hay goes to a dull brown-tan (its luminance x (0.95, 0.85, 0.62), three quarters of the way); a lighter grey first
+read as white. Check: grass bench --raster --hay=3 --hay-rain=30 against --hay-rain=0.
+

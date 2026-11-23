@@ -542,7 +542,7 @@ void GrassField3D::_build_material() {
 	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
 	// Deer lawns (graze_height): r = how far the sward is grazed down, 0 none to 1 to graze_height; rect z 0: none.
 	code += "uniform sampler2D graze_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 graze_rect;\nuniform float graze_height = 0.04;\n";
-	// Hay meadows (hay_meadows): r = the meadow (index + 1, 0 none) at each texel; mow_state a texel a meadow (r days since mown, below 0 not; g the rows' angle); rect z 0: none.
+	// Hay meadows (hay_meadows): r = the meadow (index + 1, 0 none) at each texel; mow_state a texel a meadow (r days since mown, below 0 not; g the rows' angle; b mm of rain on the cut grass); rect z 0: none.
 	code += "uniform sampler2D mow_map : filter_nearest, repeat_disable, hint_default_black;\nuniform sampler2D mow_state : filter_nearest, repeat_disable, hint_default_black;\nuniform vec4 mow_rect;\n";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\nglobal uniform sampler2D weather_spray_map;\nglobal uniform vec4 weather_spray_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
@@ -1236,6 +1236,8 @@ void vertex() {
 						hay_lay = length(ll) > 1e-4 ? normalize(ll) : vec2(0.0, 1.0);
 						w *= pitch > 0.0 ? 1.0 : 1.4;
 						v_hay = md;
+						// Rain on it while it lay (mow_state b, mm): v_cut.z carries the dulling (no stub on a lying blade).
+						v_cut.z = smoothstep(2.0, 25.0, ms.b);
 					}
 				}
 			}
@@ -1577,6 +1579,8 @@ void fragment() {
 		vec3 wilted = mix(c, vec3(dot(c, vec3(0.3, 0.59, 0.11))) * vec3(0.92, 1.06, 0.78), 0.3);
 		vec3 hay_c = vec3(0.42, 0.4, 0.17) * (0.8 + 0.4 * fract(v_dry * 23.0)); // Green-gold, not grey (PC pair 23 Nov).
 		c = mix(wilted, hay_c, smoothstep(0.3, 3.0, v_hay) * 0.85);
+		// Rained on while curing: leached and bleached, the green gone to a dull brown-tan (a lighter grey first read as white).
+		c = mix(c, vec3(dot(c, vec3(0.3, 0.59, 0.11))) * vec3(0.95, 0.85, 0.62), v_cut.z * 0.75);
 	}
 	// Prefiltered with distance (Bruneton and Neyret 2012, non-linear pre-filtering): once blades are a pixel or
 	// two wide, each blade's own base-to-tip ramp and its dry or dead odd one out alias into grit; their mean over
@@ -1877,6 +1881,8 @@ void GrassField3D::set_hay_meadows(const Array &p_meadows) {
 		m.row_angle = f.get("row_angle", 0.0f);
 		m.mow_day = f.get("mow_day", -1);
 		m.days = f.get("days", -1.0f);
+		m.rain_fixed = f.get("rain", -1.0f);
+		m.rain = MAX(m.rain_fixed, 0.0f);
 		meadows.push_back(m);
 		if (meadows.size() >= uint32_t(MAX_HAY_MEADOWS)) {
 			WARN_PRINT(vformat("GrassField3D \"%s\": only the first %d hay meadows are mown.", get_name(), MAX_HAY_MEADOWS));
@@ -1889,6 +1895,28 @@ void GrassField3D::set_hay_meadows(const Array &p_meadows) {
 	_hay_register();
 	if (had != !meadows.is_empty()) {
 		rebuild(); // The tiles' culling boxes take the rows' reach.
+	}
+}
+
+// Rain on the cut grass while it lies curing (swaths, tedded, windrows: up to the carting on day 4): the weather's
+// rainfall over each meadow's middle, added up in the weather's own time. Rain leaches the cut grass and, with the sun,
+// bleaches its green ("prolonged exposure to sun and rain reduces green color": Manitoba Agriculture, How Rain Affects
+// Hay Quality); the shaders dull the hay by it.
+void GrassField3D::_hay_rain_step() {
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	const double real_s = hay_rain_usec > 0 ? double(now - hay_rain_usec) * 1e-6 : 0.0;
+	hay_rain_usec = now;
+	const WorldWeather *wm = WorldContracts::weather();
+	if (real_s <= 0.0 || real_s > 30.0 || !wm->has_provider()) {
+		return;
+	}
+	const double hours = real_s * wm->time_scale() / 3600.0;
+	for (HayMeadow &m : meadows) {
+		if (m.rain_fixed >= 0.0f || m.current < 0.0f || m.current >= 4.0f) {
+			continue;
+		}
+		const Vector2 c = m.bounds.get_center();
+		m.rain += float(MAX(wm->rainfall_at(Vector3(c.x, get_global_position().y, c.y)), 0.0f) * hours); // Polygons are world xz.
 	}
 }
 
@@ -1919,7 +1947,11 @@ void GrassField3D::_update_mow_state(int p_day) {
 		if (was != meadows[i].current && hay_nodes.has(this)) {
 			hay_generation++;
 		}
-		img->set_pixel(int(i), 0, Color(meadows[i].current, meadows[i].row_angle, 0.0f, 1.0f));
+		if (meadows[i].rain_fixed < 0.0f && (meadows[i].current < 0.0f || meadows[i].current < was)) {
+			meadows[i].rain = 0.0f; // Not lying cut, or mown again: no rain on it yet.
+		}
+		meadows[i].rain_sent = meadows[i].rain;
+		img->set_pixel(int(i), 0, Color(meadows[i].current, meadows[i].row_angle, meadows[i].rain, 1.0f));
 	}
 	if (mow_state_texture.is_valid()) {
 		mow_state_texture->update(img);
@@ -6334,7 +6366,7 @@ global uniform vec4 grass_ground_view; // xyz: the camera.
 global uniform sampler2D grass_graze_map : hint_default_black, filter_linear, repeat_disable; // R: grazed to a lawn, G: torn by rooting.
 global uniform vec4 grass_graze_rect; // z 0: none.
 global uniform sampler2D grass_mow_map : hint_default_black, filter_nearest, repeat_disable; // Hay meadows: R the meadow (index + 1, 0 none).
-global uniform sampler2D grass_mow_state : hint_default_black, filter_nearest, repeat_disable; // A texel a meadow: r days since mown (below 0 not), g the rows' angle.
+global uniform sampler2D grass_mow_state : hint_default_black, filter_nearest, repeat_disable; // A texel a meadow: r days since mown (below 0 not), g the rows' angle, b mm of rain on the cut grass.
 global uniform vec4 grass_mow_rect; // z 0: none.
 global uniform sampler2D crop_ground_map : filter_linear; // GrassField3D.fields: r the field's slot, g the wheelings.
 global uniform sampler2D crop_ground_plots : filter_nearest; // A texel a field (crop_ground()).
@@ -6468,6 +6500,7 @@ vec3 grass_mow_ground(vec3 world_pos, vec3 turf) {
 		}
 		vec3 cured = vec3(0.42, 0.4, 0.17) * (0.9 + 0.2 * grass_noise(world_pos.xz * 2.1));
 		vec3 hay = mix(turf * vec3(0.95, 1.02, 0.8), cured, smoothstep(0.3, 3.0, md) * 0.85);
+		hay = mix(hay, vec3(dot(hay, vec3(0.3, 0.59, 0.11))) * vec3(0.95, 0.85, 0.62), smoothstep(2.0, 25.0, ms.b) * 0.75); // Rained on (as the blades)
 		turf = mix(turf, hay, lie * 0.9);
 	}
 	return turf;
@@ -7655,7 +7688,12 @@ void GrassField3D::_season_step() {
 	_update_snowmelt(season_now);
 	if (!meadows.is_empty()) {
 		const int day = int(season_now.get("day_of_year", -1));
-		if (day != hay_day) {
+		_hay_rain_step();
+		bool rained = false;
+		for (const HayMeadow &m : meadows) {
+			rained = rained || Math::abs(m.rain - m.rain_sent) > 0.25f;
+		}
+		if (day != hay_day || rained) {
 			_update_mow_state(day);
 		}
 	}

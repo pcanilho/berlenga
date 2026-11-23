@@ -462,7 +462,12 @@ private:
 		int mow_day = -1; // Day of the year mown; with a season_source the days since follow the calendar.
 		float days = -1.0f; // Fixed days since mown (>= 0); below 0 the calendar.
 		float current = -1.0f; // Days since mown now; below 0 not mown (or long grown back).
+		float rain = 0.0f; // mm of rain on the cut grass while it lay (from WorldWeather.rainfall_at; a fixed "rain" key)
+		float rain_fixed = -1.0f; // The meadow's own "rain" (mm, >= 0) instead of the weather's
+		float rain_sent = 0.0f; // rain as last written to mow_state
 	};
+	uint64_t hay_rain_usec = 0; // When the rain on the hay was last added up
+	void _hay_rain_step();
 	static constexpr int MAX_HAY_MEADOWS = 64;
 	static constexpr float HAY_REACH = 3.2f; // m a cut blade can be gathered sideways into its row (half the widest pitch).
 	Array hay_meadows;
