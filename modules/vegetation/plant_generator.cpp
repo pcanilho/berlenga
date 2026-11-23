@@ -7053,7 +7053,9 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.5f, 0.47f, 0.4f); // The palest of its lichens; each fleck's tint darkens it.
 			// The skin's rim: a little darker than the sand it binds; its vertex colours darken the middle to the
 			// cyanobacteria's brown (light crust some 0.75 of it, mature dark crust 0.5), so its edge fades into the sand.
-			stem_color = Color(0.6f, 0.48f, 0.34f);
+			// Same hue as the iron-oxide sand it binds (sRGB 0.72, 0.55, 0.36, the dune sand of the desert scenes): a greyer
+			// rim (0.6, 0.48, 0.34) read as grey-brown blotches on the dunes (desert scene, 23 Nov).
+			stem_color = Color(0.68f, 0.52f, 0.35f);
 			break;
 		case PRESET_MARRAM:
 			leaf_color = Color(0.33f, 0.37f, 0.26f); // Grey-green, the rolled leaf's waxy outer side.

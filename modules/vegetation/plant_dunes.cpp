@@ -437,8 +437,10 @@ void PlantGenerator::_build_soil_crust() {
 	// The skin on the stem surface (stem_color: the crust's brown-black); lichen, moss and pinnacles on the centre
 	// surface (centre_color: the palest, darkened by each one's tint).
 	Builder &b = builders[SURFACE_STEM];
-	// How dark the crust has grown: light cyanobacterial crust to mature dark crust (Belnap and Lange 2003).
-	const float dark = _rand(0.45f, 0.75f);
+	// How dark the crust has grown: light cyanobacterial crust to mature dark crust (Belnap and Lange 2003). On a sand
+	// sea's interdunes the crust is mostly light (dark lichen and moss crust needs decades of stable, finer ground), so
+	// about seven in ten patches are light (0.75 to 0.9 of the sand), the rest dark (0.5 to 0.65); shares: estimates.
+	const float dark = _rand(0.0f, 1.0f) < 0.7f ? _rand(0.75f, 0.9f) : _rand(0.5f, 0.65f);
 	const int rings = 14;
 	const int sectors = 44;
 	const int first = b.verts.size();
