@@ -999,3 +999,23 @@ at D_min = 2 asin(n'/2) - 60 deg measured in the plane normal to the axis.
 
 Bench: weather --view=shafts --sun-up=12 --cover=0.02 --high-cover=0.7 --fov=100 (the tangent arc: add
 --cam=0,60,0,0,637,-1000). Raster and path traced agree.
+
+## Storm towers: silver rim and turret relief (23 Nov)
+
+Two faults on a storm tower seen against the sun or on its shaded side (r28): a flat dark cut-out with no rim, and
+no relief between its turrets.
+
+- Silver rim. The tower's edge went from nothing to its full 0.1 per metre in a few metres, so the zone at an
+  optical depth near 1, where forward scattering makes a silver lining (Bouthors et al. 2008), was far under a pixel.
+  Real cloud edges carry a transition zone of evaporating droplets in entrained air (the "twilight zone", Koren et al.
+  2007; the subsiding shell, Heus and Jonker 2008). The tower and each turret now have a tenuous shell
+  (cloud_storm_shell 120 m deep, cloud_storm_shell_density 0.0015 per metre, torn into wisps by the shape noise):
+  seen edge-on it is near optical depth 1, so near the sun it glows. Wider (300 m) blurred the outline into a haze.
+- Turret relief. The ambient light read the cloud 100 m straight up, so a tower's whole wall, under more tower, took
+  one flat tone. Sky visibility now comes from four density probes over the upper hemisphere at
+  cloud_sky_occlusion_reach (250 m): up, and 35 degrees up toward the camera and either side (ambient occlusion from
+  a few density probes, as production volume rendering and Nubis Cubed estimate it). Crests see sky, creases do not.
+  It helps every cumulus too: brighter crests over darker bottoms in the towers view, raster and path traced alike.
+
+Bench: weather --view=shafts --sun-up=18 --cover=0.15 --high-cover=0 --wind=1 --storm=-3000,-20000,2500,30,10
+--fov=70 (backlit), --view=towers (relief); A/B with --sky-params=cloud_sky_occlusion_reach:0,cloud_storm_shell_density:0.

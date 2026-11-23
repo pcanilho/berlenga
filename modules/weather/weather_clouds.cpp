@@ -1464,6 +1464,8 @@ uniform vec4 cloud_lights[8];
 uniform vec3 cloud_light_colors[8];
 // Nubis Cubed's sharpening exponent at a cloud's thin edge (1: none).
 uniform float cloud_edge_sharpness = 0.45;
+uniform float cloud_storm_shell = 120.0; // m, the storm tower's tenuous edge shell (wc_storm_tower)
+uniform float cloud_storm_shell_density = 0.0015; // 1/m in it
 // How deep the detail noise erodes the shape (Nubis's erosion), on its base depth.
 uniform float cloud_detail_strength = 1.5;
 // How deep the turrets cut into each cumulus: billows at the cloud's own scale over its top half and down its sides
@@ -1621,11 +1623,18 @@ float wc_mammatus_depth(vec2 xz) {
 }
 
 // A storm's tower (storm_tower() on the CPU, which explains it).
-float wc_storm_tower(vec2 d, float y, float r, float h, float n, int seed) {
+float wc_storm_tower(vec2 d, float y, float r, float h, float n, int seed, out float r_shell) {
 	float hh = y / h;
 	float jitter = 0.15 * (n - 0.45);
 	float rc = 0.75 + 0.45 * smoothstep(0.0, 0.85, hh);
-	float e = 1.0 - smoothstep(0.85, 1.0, length(d) / (r * rc) - jitter);
+	// The edge transition zone (the cloud's "twilight zone", Koren et al. 2007; the subsiding shell of entrained air
+	// round a cumulus, Heus and Jonker 2008): a tenuous shell a few hundred metres deep, of evaporating droplets, round
+	// the dense body. Seen against the sun it is what glows (the silver lining: forward scattering through an
+	// optical depth near 1, Bouthors et al. 2008); without it the body's edge is metres thick and its rim sub-pixel.
+	float sh = cloud_storm_shell / (r * rc);
+	float x0 = length(d) / (r * rc) - jitter;
+	float e = 1.0 - smoothstep(0.85, 1.0, x0);
+	r_shell = 1.0 - smoothstep(0.9, 1.0 + sh, x0);
 	for (int k = 0; k < 13; k++) {
 		int ks = seed * 17 + k;
 		float hk = k < 12 ? 0.1 + 0.068 * float(k) : 0.8;
@@ -1634,15 +1643,18 @@ float wc_storm_tower(vec2 d, float y, float r, float h, float n, int seed) {
 		float rk = k < 12 ? (0.35 + 0.2 * wc_hash2(ks, 3301)) * (0.8 + 0.9 * hk) : 0.6;
 		rk = min(rk, (0.99 - hk) * h / r);
 		vec3 q = vec3(d.x / r - o * cos(th), (y - hk * h) / r, d.y / r - o * sin(th));
-		e = max(e, 1.0 - smoothstep(0.82, 1.0, length(q) / rk - jitter));
+		float xk = length(q) / rk - jitter;
+		e = max(e, 1.0 - smoothstep(0.82, 1.0, xk));
+		r_shell = max(r_shell, 1.0 - smoothstep(0.88, 1.0 + cloud_storm_shell / (r * rk), xk));
 	}
 	return e;
 }
 
-float wc_storm_body(vec3 p, float b, float n, float p_step, out float r_near, out float r_thin) {
+float wc_storm_body(vec3 p, float b, float n, float p_step, out float r_near, out float r_thin, out float r_shell) {
 	float best = 0.0;
 	r_near = 0.0;
 	r_thin = 1.0;
+	r_shell = 0.0;
 	vec2 dir = cloud_high_dir;
 	for (int i = 0; i < 8; i++) {
 		if (i >= cloud_storm_count) {
@@ -1665,7 +1677,9 @@ float wc_storm_body(vec3 p, float b, float n, float p_step, out float r_near, ou
 		float e = 0.0;
 		float k = 1.0;
 		if (hh > 0.0 && hh < 1.0 && ax < 2.4) {
-			e = wc_storm_tower(d - dir * (r * 0.3 * hh * hh), p.y - b, r, hgt, n, i);
+			float shell_i;
+			e = wc_storm_tower(d - dir * (r * 0.3 * hh * hh), p.y - b, r, hgt, n, i, shell_i);
+			r_shell = max(r_shell, shell_i * s.w * smoothstep(0.0, 0.03, hh) * (1.0 - smoothstep(0.9, 1.0, hh)));
 		}
 		float a_s = a / cold;
 		if (a > -2.0 && a_s < 7.5) {
@@ -2215,7 +2229,8 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 	}
 	float near_body = 0.0;
 	float thin = 1.0;
-	float body = cloud_storm_count > 0 ? wc_storm_body(p_unsheared, b0, n, p_step, near_body, thin) : 0.0; // storm_body_at() on the CPU
+	float shell = 0.0;
+	float body = cloud_storm_count > 0 ? wc_storm_body(p_unsheared, b0, n, p_step, near_body, thin, shell) : 0.0; // storm_body_at() on the CPU
 	float lay = 1.0 - smoothstep(0.22, 0.36, ct.y); // layered_share() on the CPU
 	float cells = max(n - (1.0 - env), 0.0) / max(env, 0.001) * (1.0 - lay) * own; // base softness in env (wc_cells)
 	float sc = wc_sc_share(ct.y);
@@ -2313,8 +2328,10 @@ float wc_extinction_p(vec3 p, vec2 ct, bool p_detail, float p_step, out float r_
 		// long fade, more where the cloud is thin.
 		shape = pow(shape, mix(cloud_edge_sharpness, 1.0, r_profile));
 	}
-	// Times the cover after the erosion (Schneider 2015; wc_extinction on the CPU).
-	return shape * (storm_body ? 0.1 * thin : mix(0.4, 1.0, ct.x) * mix(0.04, 0.1, ct.y)) * cloud_density;
+	// Times the cover after the erosion (Schneider 2015; wc_extinction on the CPU). The tower's edge shell added on top,
+	// torn by the shape noise into wisps (an optical depth near 1 across it seen edge-on, so it glows against the sun).
+	float shell_sigma = shell > 0.0 ? cloud_storm_shell_density * shell * smoothstep(0.25, 0.75, n) : 0.0;
+	return (shape * (storm_body ? 0.1 * thin : mix(0.4, 1.0, ct.x) * mix(0.04, 0.1, ct.y)) + shell_sigma) * cloud_density;
 }
 
 float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {

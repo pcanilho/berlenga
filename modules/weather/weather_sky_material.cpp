@@ -115,6 +115,7 @@ uniform float cloud_halo_strength : hint_range(0, 0.5) = 0.08;
 uniform float cloud_parhelia_strength : hint_range(0, 0.3) = 0.03;
 // How much the billows toward the sun shade the scattered light (times their optical depth).
 uniform float cloud_surface_occlusion : hint_range(0, 2) = 1.0;
+uniform float cloud_sky_occlusion_reach : hint_range(0, 1000) = 250.0;
 // Short steps inside cloud as a share of the long ones (1: no refinement).
 uniform float cloud_refine : hint_range(0.1, 1) = 0.33;
 // Iridescence on thin, newly formed wave cloud near the sun (diffraction by small uniform droplets): its strength.
@@ -464,7 +465,27 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		// density toward the sky; SunshineClouds2 reads the density one step up): one coarse read 100 m above,
 		// so undersides and the lee of towers darken while the tops stay open to the sky.
 		float up_tau = transmittance > 0.15 ? wc_extinction(p + vec3(0.0, 100.0, 0.0), ct, false, 100.0) * 100.0 : 2.0 * (1.0 - hf);
-		light += mix(ambient_bottom, ambient_top, mix(0.4, 1.0, hf)) * mix(0.5, 1.0, sqrt(1.0 - profile)) * mix(0.5, 1.0, exp(-up_tau)) * 1.4;
+		float sky_vis = mix(0.5, 1.0, exp(-up_tau));
+		// Sky visibility over a turret's reach (cloud_sky_occlusion_reach, 250 m): the transmittance toward four points
+		// of the upper hemisphere (up, and 35 degrees up toward the camera and either side), as ambient occlusion is
+		// estimated from a few density probes in production volume rendering (Wrenninge 2012; Nubis Cubed's ambient
+		// from the summed density toward the sky). A crest sees open sky and stays bright, a crease between turrets sees
+		// cloud on every side and darkens: the turrets stand in relief on a face the sun does not reach, where one read
+		// straight up left a storm tower's shaded wall a single flat tone.
+		if (cloud_sky_occlusion_reach > 0.0 && transmittance > 0.15) {
+			float L = cloud_sky_occlusion_reach;
+			vec3 hv = normalize(vec3(-rd.x, 0.0, -rd.z) + vec3(1e-4, 0.0, 0.0));
+			vec3 sv = vec3(-hv.z, 0.0, hv.x);
+			vec3 d1 = normalize(hv + vec3(0.0, 0.7, 0.0));
+			vec3 d2 = normalize(sv + vec3(0.0, 0.7, 0.0));
+			vec3 d3 = normalize(-sv + vec3(0.0, 0.7, 0.0));
+			float v = 0.4 * exp(-wc_extinction(p + vec3(0.0, L, 0.0), ct, false, L) * L);
+			v += 0.2 * exp(-wc_extinction(p + d1 * L, wc_cover_type((p + d1 * L).xz), false, L) * L);
+			v += 0.2 * exp(-wc_extinction(p + d2 * L, wc_cover_type((p + d2 * L).xz), false, L) * L);
+			v += 0.2 * exp(-wc_extinction(p + d3 * L, wc_cover_type((p + d3 * L).xz), false, L) * L);
+			sky_vis = mix(0.15, 1.0, v);
+		}
+		light += mix(ambient_bottom, ambient_top, mix(0.4, 1.0, hf)) * mix(0.5, 1.0, sqrt(1.0 - profile)) * sky_vis * 1.4;
 		// Light bounced off the sunlit clouds round the point (cloud-to-cloud interreflection): the light grid's green
 		// is the sunlit share of the cloud within about 600 m (blurred on the CPU, as voxel cone tracing prefilters
 		// its voxels, Crassin 2011), reflected at a cumulus' albedo-weighted 0.7 and spread like the diffuse term. It
