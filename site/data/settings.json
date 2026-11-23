@@ -401,8 +401,8 @@
    "type": "bool",
    "default": "true",
    "about": "If `true`, transparent surfaces and particles (rain, splashes, smoke, glass) are lit by the path tracer while it is on: a camera-aligned grid of cells (the internal size over 8 across, 64 slices from `rendering/pathtracing/transparent_lighting/near` to `rendering/pathtracing/transparent_lighting/far`) is refreshed by the trace every frame, each cell taking one omni or spot light from the light grid, picked by its contribution, and every directional light, each through a shadow ray, and the sky and one bounce (see `rendering/pathtracing/transparent_lighting/bounce`), blended over the frames.",
-   "page": "open-worlds",
-   "title": "Open worlds"
+   "page": "terrain",
+   "title": "Terrain"
   },
   {
    "name": "rendering/pathtracing/transparent_lighting/far",
@@ -739,6 +739,18 @@
    ],
    "note": "",
    "what": "raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; on crests gullies keep part of their depth and a ridged noise adds irregular pinnacles; the same for a seed; writes into Terrain3D or a HeightMapShape3D.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "World cache",
+   "settings": [
+    "world/cache/enabled",
+    "world/cache/path"
+   ],
+   "note": "",
+   "what": "generated terrain and dunes are stored by their inputs and reloaded on the next launch.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
