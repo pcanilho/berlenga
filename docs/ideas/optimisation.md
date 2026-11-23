@@ -419,3 +419,20 @@ The driver now keeps only the SPIR-V bytes. It parses them again when a pipeline
 stage per thread (a shader's variants are made one after another). The parse is deterministic, so the
 specialized SPIR-V and the pipelines are the same: the memory scene's raster and path traced frames match byte for
 byte. Farm still, resident after `load_all_heights`, same session: 7.8 GB, from 10.6 GB.
+
+## Curve3D.get_closest_offset: bounded blocks instead of every segment
+
+A main-thread sample of the landscape meadow view (lavapipe, plants on) spent about 40% of its time in
+`Curve3D::get_closest_offset`, called from `PhysXRiver3D` for `WorldWater.high_water_at` (each grass layer's
+flood map, 64 x 64 points every 5 s) and `WorldWater.height_at` (weather spray sources). Godot's version tests
+every baked segment; a 4 km river baked at 0.2 m has about 43,000. One flood map took 0.94 s of CPU; it now takes 29 ms (33 times less) in the same micro-bench.
+
+This is the bounding volume hierarchy method for nearest-point queries (two levels here): the bake also keeps
+the bounds of each run of 16 segments and of each 16 runs. A query tests the run nearest in bounds first, then
+only the runs whose bounds come within the best distance found, plus a margin far above float rounding
+(1e-4 of the coordinate scale). Each segment is tested with the same arithmetic as before, and equal distances
+go to the lowest segment, as the old loop's first strict minimum did, so the offset is the same to the bit.
+Short curves (under 64 segments), curves with a zero-length interval and non-finite points keep the old loop.
+
+Proof: 24,000 queries over eight curves (open, closed, a straight line with ties, far from the origin, on
+baked points) hash the same as the previous build.
