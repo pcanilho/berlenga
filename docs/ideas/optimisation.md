@@ -472,6 +472,9 @@ Proof: `docs/bench/rt_memory --evict` hides every mesh for 150 frames, then show
 their acceleration structures (12.7 MB to 0) and the saved frame matches the previous build byte for byte, with
 and without `--persistent`; so do the plain frame and a 200 frame `--persistent` run.
 
-The gully still itself does not change (AS 6,080 MB, peak 12.9 GB): it is saved well within 120 frames of the
-captures landing, so the bare meshes are still in their TTL. That needs the bare BLAS released when its capture
-lands and nothing else traces it, which is the next step here.
+That alone left the gully still as it was (it is saved well within 120 frames of the captures landing). So a
+surface traced through a capture also records its cache key, and the sweep frees its bare BLAS as soon as no
+instance traced it in the last frame (one that still traces the bare mesh, or a persistent slot holding it, keeps
+it). Gully still, same view: acceleration structures 6,080 to 4,505 MB, GPU memory 8,866 to 7,291 MB, peak
+resident 12.9 to 12.1 GB. That still is not bit-repeatable between runs (wind, capture timing), so its proof is
+the rt_memory runs above plus a side by side look; the freed and rebuilt path is the same one.
