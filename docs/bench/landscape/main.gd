@@ -538,6 +538,10 @@ func _ready() -> void:
 		var skm := float(args["storm-approach"]) if String(args["storm-approach"]) != "" else 17.0
 		var sp := Vector2(sc.global_position.x, sc.global_position.z) + sf2 * skm * 1000.0
 		weather.wind_direction = -sf2
+		if args.has("storm-wind-turn"):
+			# --storm-wind-turn=DEG: the wind turned DEG from toward the camera (90: across the view, a side-on tower
+			# with its anvil and cirrus shield spreading sideways).
+			weather.wind_direction = (-sf2).rotated(deg_to_rad(float(args["storm-wind-turn"])))
 		weather.add_storm(sp, float(args.get("storm-radius", "2500")), float(args.get("storm-rain", "40")), float(args.get("storm-outflow", "15")), 0.0)
 		weather.advance(float(args.get("storm-grow", "900")))
 		_log("storm approach: cell at %s, %.1f km ahead, wind toward the camera %s" % [str(sp.round()), skm, str(-sf2)])
