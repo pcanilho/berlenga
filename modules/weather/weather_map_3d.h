@@ -1009,6 +1009,9 @@ public:
 	Ref<Texture2D> get_shelter_texture() const { return shelter.texture; }
 	Rect2 get_shelter_rect() const { return shelter.rect(); }
 	static String get_wind_shader_code();
+	// The mineral dust's single-scattering albedo per scatter (rgb at 610, 550, 465 nm) and its asymmetry (w): the one
+	// value the sky, haze and every dust volume use (the weather_dust_albedo global).
+	static Vector4 get_dust_albedo();
 
 	// Jump the eased state to the settings (no transition), e.g. when a scene loads.
 	void snap_to_settings();

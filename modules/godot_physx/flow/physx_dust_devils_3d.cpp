@@ -32,6 +32,7 @@
 #include "physx_dust_devils_3d.h"
 
 #include "physx_flow_3d.h"
+#include "physx_dust_optics.h"
 #include "physx_flow_emitter_3d.h"
 
 #include "core/object/class_db.h"
@@ -111,9 +112,7 @@ void PhysXDustDevils3D::set_terrain_path(const NodePath &p_path) {
 
 void PhysXDustDevils3D::set_dust_color(const Color &p_c) {
 	dust_color = p_c;
-	if (flow) {
-		flow->set_smoke_color(dust_color);
-	}
+	physx_apply_dust_optics(flow, dust_color);
 }
 
 void PhysXDustDevils3D::set_max_devils(int p_v) {
@@ -154,14 +153,11 @@ void PhysXDustDevils3D::_build() {
 	// updraft and spin and still lean and drift with the wind (the devil itself moves with it, see _step).
 	flow->set_weather_wind_coupling(0.25f);
 	// Fine mineral dust scatters strongly and forward (a bright, tan column against the sky, Sinclair 1969's photographs).
-	// Flow weighs every scatter by the colour times the albedo, so the colour is the per-scatter albedo's tint, not the
-	// column's look: desert dust's single-scattering albedo is about 0.97 in the red, 0.93 green, 0.86 blue (Dubovik
-	// et al. 2002), asymmetry about 0.7. The tan comes from the many scatters inside the column; the old tan colour
+	// Flow weighs every scatter by the colour times the albedo, so these are the per-scatter values, the weather's one
+	// dust albedo (physx_apply_dust_optics); the tan comes from the many scatters inside the column. The old tan colour
 	// (0.8, 0.7, 0.55) at albedo 0.9 kept only half the blue each scatter and turned the dense foot dark brown on the PC.
 	flow->set_scattering_strength(1.0f); // 1 keeps raster and the path tracer alike
-	flow->set_scattering_albedo(0.97f);
-	flow->set_scattering_anisotropy(0.6f);
-	flow->set_smoke_color(dust_color);
+	physx_apply_dust_optics(flow, dust_color);
 	flow->set_terrain_floor(true);
 	add_child(flow, false, INTERNAL_MODE_FRONT);
 	flow->set_as_top_level(true);

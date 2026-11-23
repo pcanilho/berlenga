@@ -43,8 +43,8 @@
 		</method>
 	</methods>
 	<members>
-		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(1, 0.93, 0.62, 1)">
-			The dust's colour in the billows, scattering on top of [member PhysXFlow3D.scattering_albedo]. The default is the far wall's: the weather's dust albedo (0.93, 0.92, 0.85, asymmetry 0.75) carried through many scatterings by the similarity relations, as the sky's dust wall is tinted, so the billows and the wall behind them meet in one colour.
+		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(1, 1, 1, 1)">
+			A tint over the weather's one mineral dust albedo ([method WeatherMap3D.get_dust_albedo], the weather_dust_albedo global the sky and haze use), per scatter: Flow weighs every scatter by it, so the dust's tan comes from the many scatters inside the gas. White keeps the weather's dust; a darker tint darkens dense dust fast.
 		</member>
 		<member name="emitter_count" type="int" setter="set_emitter_count" getter="get_emitter_count" default="10">
 			How many emitters line the front, up to 16.

@@ -4749,6 +4749,7 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_sun_drying", "enabled"), &WeatherMap3D::set_sun_drying);
 	ClassDB::bind_method(D_METHOD("get_sun_drying"), &WeatherMap3D::get_sun_drying);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("diurnal_shape", "solar_hour", "day_length"), &WeatherMap3D::diurnal_shape);
+	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("get_dust_albedo"), &WeatherMap3D::get_dust_albedo);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("penman_evaporation", "net_radiation", "wind_2m", "celsius", "humidity"), &WeatherMap3D::penman_evaporation);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("rain_fraction", "celsius", "humidity"), &WeatherMap3D::rain_fraction);
 	ClassDB::bind_method(D_METHOD("get_canopy_height_at", "position"), &WeatherMap3D::get_canopy_height_at);

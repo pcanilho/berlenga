@@ -1082,9 +1082,9 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   step; 0.25 m cells hit the 2048-block cap). The frames read dark grey-brown and stringy: the dense foot at about half
   the sunlit sand's brightness, the column separate strands. Cause of the dark: Flow weighs every scatter by the gas's
   colour times its albedo (the octaves of flow_scatter_rd), so the old tan colour (0.8, 0.7, 0.55) at 0.9 was a
-  per-scatter albedo of 0.5 in the blue, and the many scatters in the foot took the light out. Now albedo 0.97 and
-  colour (1, 0.96, 0.88), so (0.97, 0.93, 0.85) a scatter, desert dust's (Dubovik et al. 2002), asymmetry 0.6: the
-  tan comes from the scatters themselves. Strands: the eight foot spheres (0.35 R) left gaps and 25% of the lift
+  per-scatter albedo of 0.5 in the blue, and the many scatters in the foot took the light out. Now the weather's one
+  dust albedo per scatter and its asymmetry (WeatherMap3D.get_dust_albedo(), shared with the sky, haze and billows;
+  Dubovik et al. 2002's desert dust): the tan comes from the scatters themselves. Strands: the eight foot spheres (0.35 R) left gaps and 25% of the lift
   all round; now 0.45 R (they overlap) and half all round, the rest in the arms.
 - GroundStreamers3D takes the grains at the foot (22 Nov): its particle shader adds the shared wind's vortices
   (WeatherMap3D's own shader field, weather_vortices) to the patch's wind, so each grain runs with its local wind
@@ -1211,8 +1211,10 @@ Round 2 (22 Nov), from the first raster scouts (a wall, but pale and cut flat in
 - The front points jumped tens of metres each scan (the map's ~190 m cells), smearing the head thin: now eased a
   quarter of the way to each find and moved by the found front's own drift between scans (a steady storm's ring
   stands still while its outflow blows through it).
-- `dust_color` is the far wall's tint (similarity relations over weather_dust_albedo, as the sky's dust_tint):
-  (1, 0.93, 0.62). `weather_dust_near` tells the sky's wall where the billows are.
+- Optics (23 Nov): the billows read the weather's one dust albedo per scatter (WeatherMap3D.get_dust_albedo(), the
+  weather_dust_albedo global, through physx_apply_dust_optics, as the devils do); `dust_color` is now a tint over it
+  (white). The wall's look (1, 0.93, 0.62, the sky's dust_tint) is what the scatters build: set as Flow's colour it
+  was a per-scatter albedo and took a third of the blue each scatter (the PC's orange-brown smear). `weather_dust_near` tells the sky's wall where the billows are.
 
 Dust field round 2 (clouds' note: dust only in a 1.5 km ring, nothing behind):
 - The transport jumped up to 8 cells a step (25 m/s x 60 s over 190 m cells) and crossed the front: now sub-stepped
