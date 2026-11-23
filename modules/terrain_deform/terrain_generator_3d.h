@@ -67,6 +67,7 @@ public:
 	};
 
 private:
+	Vector3 world_centre; // the global position, kept on the main thread for get_world_rect on workers
 	// Where.
 	Vector2 size = Vector2(4096, 4096);
 	real_t cell_size = 16.0;

@@ -31,6 +31,8 @@
 
 #include "terrain_generator_3d.h"
 
+#include "core/os/thread.h"
+
 #include "terrain_brush_3d.h"
 #include "terrain_coast.h"
 #include "terrain_deformer_3d.h"
@@ -111,7 +113,9 @@ void TerrainGenerator3D::set_cell_size(real_t p_size) {
 }
 
 Rect2 TerrainGenerator3D::get_world_rect() const {
-	const Vector3 c = is_inside_tree() ? get_global_position() : get_position();
+	// Worker threads (rock and plant placement) read the centre the main thread kept: a node's global transform is
+	// main-thread only.
+	const Vector3 c = !is_inside_tree() ? get_position() : (Thread::is_main_thread() ? get_global_position() : world_centre);
 	return Rect2(c.x - size.x * 0.5, c.z - size.y * 0.5, size.x, size.y);
 }
 
@@ -6275,6 +6279,11 @@ void TerrainGenerator3D::_notification(int p_what) {
 		case NOTIFICATION_READY:
 		case NOTIFICATION_ENTER_TREE: {
 			set_process_internal(!sky_light_source.is_empty() || sun_shadows);
+			set_notify_transform(true);
+			world_centre = get_global_position();
+		} break;
+		case NOTIFICATION_TRANSFORM_CHANGED: {
+			world_centre = get_global_position();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (sun_shadows) {
