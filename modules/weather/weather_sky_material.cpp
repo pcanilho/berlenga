@@ -1291,7 +1291,7 @@ vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 am
 // Hs = top / 3, none above the top. At the head (B) the top is a density current's (Simpson 1997, "Gravity
 // Currents"): lobes and clefts along the front about a head height or two apart, Kelvin-Helmholtz billows rolling
 // on its top, the nose lifted a little off the ground by friction. Mass extinction and albedo from
-// weather_dust_optics and weather_dust_albedo (0.6 m2/g; 0.93/0.92/0.85, g 0.75): the march returns grey light weights
+// weather_dust_optics and weather_dust_albedo (0.6 m2/g; 0.95/0.89/0.75, g 0.75): the march returns grey light weights
 // for the green albedo, and dust_tint() turns them brown by the albedo's colour over the scattering orders.
 global uniform sampler2D weather_dust_map;
 global uniform vec4 weather_dust_near; // where PhysX's Flow billows draw the head near the camera: x, z, radius (0: none), height

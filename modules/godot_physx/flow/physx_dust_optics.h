@@ -49,7 +49,7 @@ inline void physx_apply_dust_optics(PhysXFlow3D *p_flow, const Color &p_tint) {
 #ifdef MODULE_WEATHER_ENABLED
 	const Vector4 a = WeatherMap3D::get_dust_albedo();
 #else
-	const Vector4 a(0.93f, 0.92f, 0.85f, 0.75f);
+	const Vector4 a(0.95f, 0.89f, 0.75f, 0.75f);
 #endif
 	const float m = MAX(MAX(a.x, a.y), MAX(a.z, 1e-3f));
 	p_flow->set_scattering_albedo(m);
