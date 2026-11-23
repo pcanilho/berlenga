@@ -52,6 +52,7 @@ extends Node3D
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
 #   --rt-instanced        RockField3D.rt_instanced_cells on: cell stones path traced as instances (memory A/B)
+#   --mem-report          video memory at the saved frame (with the engine flag --extra-gpu-memory-tracking: by Vulkan object type)
 #   --no-close-up         the near stones keep their base shape (RockField3D.close_up_enabled off; an A/B)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
@@ -3007,6 +3008,15 @@ func _render_later() -> void:
 			print("sea cave water: %d stations over %.1f m, arch from %.1f m, level at the mouth %s, %d drawn, %d sea clip capsules" % [pts.size(), al[al.size() - 1] if al.size() > 0 else 0.0, w.get("covered_from", 0.0), str(pts[0]) if pts.size() > 0 else "-", sw.get_ribbon_count() if sw else -1, (c as CaveNetwork3D).get_water_clip_capsules().size() / 8])
 	if rocks:
 		print("rocks rt: %s (rt_instanced_cells %s)" % [str(rocks.get_rt_stats()), str(rocks.rt_instanced_cells)])
+	if args.has("mem-report"):
+		# --mem-report: video memory at the saved frame; with the engine's --extra-gpu-memory-tracking also the
+		# driver's memory by Vulkan object type (buffers, images, acceleration structures).
+		print("video memory: total %d MB, textures %d MB, buffers %d MB" % [RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) >> 20,
+				RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED) >> 20, RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20])
+		var rd := RenderingServer.get_rendering_device()
+		if rd:
+			print("acceleration structures: %d MB" % [rd.get_memory_usage(RenderingDevice.MEMORY_ACCELERATION_STRUCTURES) >> 20])
+			print(rd.get_driver_and_device_memory_report())
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)
