@@ -602,8 +602,21 @@ func _desert_view() -> void:
 	var total := 0.0
 	for v in ms:
 		total += v
+	# VEG_DESERT_SAND=hours: a GroundSurface3D of dry sand on the dunes, sheltered by the plants (wind_shelters), under
+	# a gale along the dunes' wind for that many hours (time scaled), seen from 2.5 m up across the wind: the sand
+	# tails in the plants' lee (plant_wake). VEG_DESERT_TAA=1: TAA on.
+	var sand_hours := float(OS.get_environment("VEG_DESERT_SAND")) if OS.get_environment("VEG_DESERT_SAND") != "" else 0.0
+	var sand: GroundSurface3D = null
+	if sand_hours > 0.0:
+		sand = await _desert_sand(gen, cam, ground, sand_hours)
+	get_viewport().use_taa = OS.get_environment("VEG_DESERT_TAA") == "1"
 	get_viewport().disable_3d = false
 	_desert_scene(gen, cam)
+	if sand:
+		# The dunes beyond the patch in the patch's own material, so its edge is no seam.
+		for c in get_children():
+			if c is MeshInstance3D and c.get_parent() == self and c.material_override is ShaderMaterial:
+				c.material_override = sand.material
 	for i in 30:
 		await get_tree().process_frame
 	for i in 6:
@@ -628,6 +641,48 @@ func _desert_view() -> void:
 		get_tree().quit(1 if fails > 0 else 0)
 	else:
 		_render_later()
+
+func _desert_sand(gen: TerrainGenerator3D, cam: Camera3D, plants: VegetationField3D, hours: float) -> GroundSurface3D:
+	var wd := Vector2.from_angle(deg_to_rad(gen.sand_sea_wind_angle))
+	var across := Vector3(-wd.y, 0.0, wd.x)
+	var probe := Marker3D.new()
+	probe.name = "SandProbe"
+	add_child(probe)
+	probe.position = cam.position + across * 12.0
+	cam.position.y = gen.get_height(cam.position) + 2.5
+	var look := cam.position + across * 25.0
+	look.y = gen.get_height(look)
+	cam.look_at(look)
+	var s := GroundSurface3D.new()
+	s.name = "DesertSand"
+	s.ground_type = GroundSurface3D.GROUND_SAND
+	s.moisture = 0.0
+	s.wind_ripples = true
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.72, 0.55, 0.36)
+	m.roughness = 0.95
+	s.material = m
+	add_child(s)
+	s.height_source = s.get_path_to(gen)
+	s.follow_target = s.get_path_to(probe)
+	s.wind_shelters = [s.get_path_to(plants)]
+	s.wind_override = wd * 13.0
+	for i in 120:
+		await get_tree().physics_frame
+	var scale := 3600.0
+	s.ripple_time_scale = scale
+	var frames := int(ceil(hours * 3600.0 / scale * 60.0))
+	var t0 := Time.get_ticks_msec()
+	for i in frames:
+		await get_tree().physics_frame
+		if i % 300 == 0:
+			print("VEG_DESERT sand frame %d of %d, %.0f s" % [i, frames, (Time.get_ticks_msec() - t0) / 1000.0])
+	s.ripple_time_scale = 1.0
+	s.sync_deformation()
+	for i in 60:
+		await get_tree().physics_frame
+	print("VEG_DESERT sand %.0f h of a 13 m/s wind: wind step %.2f ms" % [hours, s.get_wind_step_usec() / 1000.0])
+	return s
 
 # The sand's mobility as VegetationField3D works it out (_read_sand_mobility): the depth's place between its low and
 # high within 12 cells, 0 under thin sand, -1 off the sand. Returns [grid, nx, ny, rect].
