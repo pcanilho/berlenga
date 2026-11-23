@@ -99,6 +99,27 @@ their drip rate and from eaves it finds by casting down a grid round the camera 
 above and drop below), the eaves draining a roof store over `roof_drain_time`. The drips keep falling
 after the rain stops, as under real trees.
 
+## Step 4b: drips through PhysX (plan, 23 Nov; Paulo: build, then measure on the PC)
+
+Gap: the GPU drips land on a height map of the topmost surface, cast every two seconds round the camera, so a drip
+off an eave falls through a person or a car standing under it, and a moving body never stops one.
+Published methods: PhysX 5's position-based particles (PxPBDParticleSystem; Macklin et al. 2014, "Unified particle
+physics for real-time applications", the Flex solver) collide particles with every rigid shape in the scene,
+moving ones included, on the GPU; drops that need no fluid forces run as plain particles (no fluid phase, no
+self-collision), the cheapest case. Engines keep the far rain as cheap GPU particles and only the near field
+physical (Flex demos, Frostbite rain): the same split here.
+Plan (RainFall3D `physx_drips`, on where PhysX runs on the GPU):
+- The same drip sources and rates (eaves and canopy, Tate's 4.5 mm). Sources within `physx_drip_radius` (12 m) of
+  the camera emit into a PBD particle system (up to 4096 drops), the rest stay GPU drips: one source table, so the
+  rate and look do not change across the line, and no drop is counted twice.
+- Contact: particle radius the drop's, rest offset half of it; a drop whose speed falls by more than half in a step
+  has landed (read back asynchronously, a frame late), is removed and handed to the splash: the GPU drips' splash
+  (Yarin and Weiss crown past K = 2100) at its contact point, a ring and a disturbance where it met water
+  (rain_ripples(), and the street water's when that lands).
+- Drawn as the GPU drips are (camera streaks, Garg and Nayar; transmissive under the path tracer).
+- Without CUDA (or with it off): exactly today's GPU drips.
+Check: a person and a car under an eave, raster and path traced; a moving car through drips; GPU time on the PC.
+
 ## Step 5: wet plants
 
 Leaves stay wet while the canopy holds water, after the ground has begun to dry, and the water
