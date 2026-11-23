@@ -642,7 +642,7 @@ func _ready() -> void:
 	if veg != null and veg.streaming:
 		# A streamed forest settles round the camera; the views on its trees are framed again on what it placed.
 		await _forest_settle()
-		if args.get("view", "wide") in ["forestfloor", "woodedge"]:
+		if args.get("view", "wide") in ["forestfloor", "woodedge"] or args.has("stand-in"):
 			cam.queue_free()
 			_build_camera()
 			cam.make_current()
@@ -4350,7 +4350,9 @@ func _build_camera() -> void:
 				var sz := ez - float(args.get("stand-in", "30"))
 				var sx := ex
 				var steps := 0
-				while steps < 15 and veg != null and veg.get_stand_shade_at(Vector3(sx, 0, sz)) < 0.6:
+				# Before the streamed stand has placed its shade reads 0 everywhere: no walk then (framed again after).
+				var known := veg != null and veg.get_stand_shade_at(Vector3(sx, 0, sz)) > 0.0
+				while known and steps < 15 and veg.get_stand_shade_at(Vector3(sx, 0, sz)) < 0.6:
 					sz -= 4.0
 					steps += 1
 				cam.fov = 60.0

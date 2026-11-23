@@ -2812,7 +2812,7 @@ constexpr real_t NOTCH_DROP = 25.0; // m: taller falls keep their face and get a
 constexpr real_t LIP_END = 8.0; // m before the lip and past the foot over which it fades
 } // namespace
 
-float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
+float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z, LedgeProbe *r_ledge) const {
 	const float base = _sample(heights, p_x, p_z);
 	if (!detail_enabled || detail_octaves <= 0 || detail_depth <= 0.0 || Math::is_nan(base)) {
 		return base;
@@ -2921,8 +2921,8 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	// Ledges on cliffs (row 11 of the waterfall gap list): steep faces of bedded rock weather into steps, each harder
 	// bed a ledge over a softer recess (differential erosion of interbedded strata, Forte et al. 2016; the layered
 	// subsurface of Cordonnier et al. 2018, "Sculpting mountains"). Beds about every cliff_ledge_spacing metres, their
-	// heights wandering by most of a bed over a few hundred metres; each bed is a near-flat ledge for 60% of its
-	// height and a riser for the rest, faded in from 40 to 55 degrees so soil slopes stay as they were.
+	// heights wandering by most of a bed over a few hundred metres; each bed is a bench at its foot and a riser above,
+	// faded in from 40 to 55 degrees so soil slopes stay as they were.
 	if (cliff_ledge_spacing > 0.0) {
 		const double slope = Math::sqrt(gx * gx + gz * gz);
 		const double tw = CLAMP((slope - 0.84) / (1.43 - 0.84), 0.0, 1.0);
@@ -2961,8 +2961,9 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 				}
 			}
 			const double f = (q - b0) / MAX(b1 - b0, 1e-6);
-			// Each bed: a narrow ledge (20 to 35 percent of the bed, rising a quarter of its height, so it still sheds
-			// water and scree) and the riser above it; how much of that step a bed holds is its hardness (none for a
+			// Each bed: a narrow bench (20 to 35 percent of the bed, rising a quarter of its height, so it still sheds
+			// water and scree; rising a tenth, every bench held snow and the face read as regular white stripes) and the
+			// riser above it; how much of that step a bed holds is its hardness (none for a
 			// fifth of them), which also wanders along the face over a couple of hundred metres (beds pinch out).
 			const double l = 0.2 + 0.15 * double((b0h >> 8) & 0xFFFF) / 65535.0;
 			const double hard_u = double(b0h >> 24) / 255.0;
@@ -2975,6 +2976,17 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 			const double dq = 1.0 + 0.22 * 2.3999632 * TerrainDMath::cos(hw * 2.3999632) + 0.12 * 0.9213 * TerrainDMath::cos(hw * 0.9213 + 1.7);
 			const double ht = (hw + (qt - q) / dq) * L - wob;
 			off += w * (ht - h0);
+			if (r_ledge) {
+				r_ledge->valid = true;
+				r_ledge->q = q;
+				r_ledge->b0 = b0;
+				r_ledge->b1 = b1;
+				r_ledge->spacing = L;
+				r_ledge->hard = hard;
+				r_ledge->weight = w;
+				r_ledge->gx = gx;
+				r_ledge->gz = gz;
+			}
 		}
 	}
 	// With a sea, a cut deeper than a quarter of the ground's height above that floor is compressed smoothly (exponentially, same
@@ -2987,6 +2999,138 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 		off = -(q + q * (1.0 - TerrainDMath::exp((off + q) / q)));
 	}
 	return float(MAX(double(base) + off, MIN(double(base), floor_h)));
+}
+
+TerrainGenerator3D::LedgeProbe TerrainGenerator3D::_ledge_probe(real_t p_x, real_t p_z) const {
+	LedgeProbe pr;
+	_ground_detail(p_x, p_z, &pr);
+	return pr;
+}
+
+// Ledge lips (docs/ideas/terrain-generation.md, "Ledge lips"). A bench's outer edge is where the bed coordinate q
+// crosses a bed's lower boundary: found on a grid p_step apart (each node's edge along its steeper axis, so a lip is
+// met once per row), then by bisection on q. The cap a slab can make there is bounded as a cantilever: a beam of
+// thickness t breaks in bending at an overhang of sqrt(sigma_t t / (3 rho g)) (Young and Young 1992, "Sandstone
+// Landforms"; tensile strength of weathered sedimentary rock about 1 MPa, rho g 25 kN/m3), and the joints cut it into
+// blocks a couple of metres long, so it stands out no more than 1.2 m and no more than one and a half times its
+// thickness, scaled by the bed's hardness.
+void TerrainGenerator3D::get_ledge_lips(const Rect2 &p_rect, real_t p_step, LocalVector<LedgeLip> &r_lips) const {
+	r_lips.clear();
+	if (cliff_ledge_spacing <= 0.0 || heights.is_empty() || p_step <= 0.0) {
+		return;
+	}
+	const Rect2 r = p_rect.intersection(get_result_rect());
+	if (!r.has_area()) {
+		return;
+	}
+	const int gx_n = MIN(int(Math::ceil(r.size.x / p_step)) + 1, 4096);
+	const int gz_n = MIN(int(Math::ceil(r.size.y / p_step)) + 1, 4096);
+	LocalVector<LedgeProbe> grid;
+	grid.resize(uint32_t(gx_n * gz_n));
+	for (int j = 0; j < gz_n; j++) {
+		for (int i = 0; i < gx_n; i++) {
+			grid[j * gx_n + i] = _ledge_probe(r.position.x + i * p_step, r.position.y + j * p_step);
+		}
+	}
+	const Rect2 rr = get_result_rect();
+	auto h_at = [&](real_t p_x, real_t p_z) {
+		return real_t(_ground(CLAMP(p_x, rr.position.x, rr.get_end().x), CLAMP(p_z, rr.position.y, rr.get_end().y)));
+	};
+	for (int j = 0; j < gz_n; j++) {
+		for (int i = 0; i < gx_n; i++) {
+			const LedgeProbe &a = grid[j * gx_n + i];
+			if (!a.valid) {
+				continue;
+			}
+			const bool along_x = Math::abs(a.gx) >= Math::abs(a.gz);
+			const int i2 = along_x ? i + 1 : i, j2 = along_x ? j : j + 1;
+			if (i2 >= gx_n || j2 >= gz_n) {
+				continue;
+			}
+			const LedgeProbe &c = grid[j2 * gx_n + i2];
+			if (!c.valid) {
+				continue;
+			}
+			const LedgeProbe *lo = a.q <= c.q ? &a : &c;
+			const LedgeProbe *hi = a.q <= c.q ? &c : &a;
+			const double B = hi->b0;
+			if (!(lo->q < B && hi->q >= B)) {
+				continue;
+			}
+			// Bisection on q from the low point to the high point.
+			Vector2 p_lo(r.position.x + i * p_step, r.position.y + j * p_step);
+			Vector2 p_hi(r.position.x + i2 * p_step, r.position.y + j2 * p_step);
+			if (lo != &a) {
+				SWAP(p_lo, p_hi);
+			}
+			LedgeProbe up = *hi, dn = *lo;
+			for (int it = 0; it < 10; it++) {
+				const Vector2 m = (p_lo + p_hi) * 0.5;
+				const LedgeProbe pm = _ledge_probe(m.x, m.y);
+				if (!pm.valid) {
+					break;
+				}
+				if (pm.q < B) {
+					p_lo = m;
+					dn = pm;
+				} else {
+					p_hi = m;
+					up = pm;
+				}
+			}
+			const double g = Math::sqrt(up.gx * up.gx + up.gz * up.gz);
+			// Only where the bench is drawn: the ledges' weight (steep enough, not under water or scree) and the bed's
+			// hardness both hold most of the step.
+			if (g < 1e-4 || up.weight < 0.25 || up.weight * up.hard < 0.15) {
+				continue;
+			}
+			LedgeLip lip;
+			lip.out = Vector3(real_t(-up.gx / g), 0, real_t(-up.gz / g));
+			lip.position = Vector3(p_hi.x, h_at(p_hi.x, p_hi.y), p_hi.y);
+			lip.bed_thickness = float(MAX(B - dn.b0, 0.05) * up.spacing);
+			lip.cap_thickness = CLAMP(0.3f * lip.bed_thickness, 0.3f, 1.5f);
+			lip.hardness = float(up.hard);
+			lip.weight = float(up.weight);
+			const float cant = Math::sqrt(1.0e6f * lip.cap_thickness / (3.0f * 25000.0f));
+			lip.overhang = lip.hardness * MIN(cant, MIN(1.2f, 1.5f * lip.cap_thickness));
+			// A real break in slope only: the bench over the first metre in flatter than the riser over the first metre
+			// out (where the bed's own bench is steep, or the tile erosion cut across it, there is no lip to cap).
+			{
+				const real_t in_y = h_at(lip.position.x - lip.out.x, lip.position.z - lip.out.z) - lip.position.y;
+				const real_t out_y = lip.position.y - h_at(lip.position.x + lip.out.x, lip.position.z + lip.out.z);
+				if (!(in_y < 0.8 * out_y)) {
+					continue;
+				}
+			}
+			// The riser's normal halfway down the bed under the lip.
+			const real_t d = real_t(0.5 * lip.bed_thickness / g);
+			const Vector3 q = lip.position + lip.out * d;
+			const real_t e = 0.5;
+			const real_t hx = h_at(q.x + e, q.z) - h_at(q.x - e, q.z);
+			const real_t hz = h_at(q.x, q.z + e) - h_at(q.x, q.z - e);
+			lip.face_normal = Vector3(-hx, 2.0 * e, -hz).normalized();
+			r_lips.push_back(lip);
+		}
+	}
+}
+
+TypedArray<Dictionary> TerrainGenerator3D::get_ledge_lips_bind(const Rect2 &p_rect, real_t p_step) const {
+	LocalVector<LedgeLip> lips;
+	get_ledge_lips(p_rect, p_step, lips);
+	TypedArray<Dictionary> out;
+	for (const LedgeLip &l : lips) {
+		Dictionary d;
+		d["position"] = l.position;
+		d["out"] = l.out;
+		d["face_normal"] = l.face_normal;
+		d["bed_thickness"] = l.bed_thickness;
+		d["cap_thickness"] = l.cap_thickness;
+		d["overhang"] = l.overhang;
+		d["hardness"] = l.hardness;
+		d["weight"] = l.weight;
+		out.push_back(d);
+	}
+	return out;
 }
 
 float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
@@ -9332,6 +9476,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_geology_at", "global_position"), &TerrainGenerator3D::get_geology_at);
 	ClassDB::bind_method(D_METHOD("get_material_geology_at", "global_position"), &TerrainGenerator3D::get_material_geology_at);
 	ClassDB::bind_method(D_METHOD("set_cliff_ledge_spacing", "value"), &TerrainGenerator3D::set_cliff_ledge_spacing);
+	ClassDB::bind_method(D_METHOD("get_ledge_lips", "rect", "step"), &TerrainGenerator3D::get_ledge_lips_bind);
 	ClassDB::bind_method(D_METHOD("get_cliff_ledge_spacing"), &TerrainGenerator3D::get_cliff_ledge_spacing);
 	ClassDB::bind_method(D_METHOD("set_cliff_ledge_strength", "value"), &TerrainGenerator3D::set_cliff_ledge_strength);
 	ClassDB::bind_method(D_METHOD("get_cliff_ledge_strength"), &TerrainGenerator3D::get_cliff_ledge_strength);

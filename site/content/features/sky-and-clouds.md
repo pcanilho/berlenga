@@ -25,9 +25,9 @@ summary: "Sun and moon set by date, time and place; a scattering atmosphere with
 
   *Fair weather cumulus of mixed sizes over a meadow, raster.*
 
-  ![A lenticular plate near the sun with pastel colours along its thin edge, raster](media/sky-cloud-iridescence.jpg)
+  ![A smooth lenticular cloud over a mountain ridge, pastel colours along its edge near the sun and thin plates stacked downwind, raster](media/sky-lenticular.jpg)
 
-  *Cloud iridescence: pastel pink and green bands along a lenticular's thin edge near the sun, raster.*
+  *Lenticular cloud: a smooth lens over the ridge, iridescent along its thin edge near the sun, with stacked plates downwind.*
 
 - **Clouds that never repeat** (always on): shape noise read at two scales with an irrational ratio; mid-level cloudlets are warped and gathered into groups of varied size, so they never line up in rows.
 

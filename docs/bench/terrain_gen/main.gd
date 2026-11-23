@@ -66,6 +66,34 @@ func _ready() -> void:
 		print("%d checks, %d failed" % [checks, failures])
 		print("PASS" if failures == 0 else "FAIL")
 		get_tree().quit(1 if failures else 0)
+	elif args.has("lips"):
+		# --lips: TerrainGenerator3D.get_ledge_lips over the world (cliff ledges at --ledges m, 16; --max-height, 1500 m): count, time, and
+		# the bench above each lip flatter than the riser under it.
+		gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
+		gen.max_height = float(args.get("max-height", "1500")) # steep faces to hold ledges
+		gen.generate()
+		var r: Rect2 = gen.get_world_rect()
+		var t := Time.get_ticks_usec()
+		var lips: Array = gen.get_ledge_lips(r, 2.0)
+		print("lips: %d in %.0f ms" % [lips.size(), (Time.get_ticks_usec() - t) / 1000.0])
+		var flatter := 0
+		var buckets := [0, 0, 0, 0, 0, 0, 0, 0] # by hardness x weight quarter: lips, flatter
+		for l in lips:
+			var p: Vector3 = l["position"]
+			var o: Vector3 = l["out"]
+			var bench: float = (gen.get_height(p - o * 0.75) - p.y) / 0.75 # rise going in, over the bench
+			var riser: float = (p.y - gen.get_height(p + o * 0.75)) / 0.75 # drop going out, down the riser
+			var sb := int(clampf(float(l["hardness"]) * float(l["weight"]) * 4.0, 0.0, 3.0))
+			buckets[sb * 2] += 1
+			if bench < riser:
+				flatter += 1
+				buckets[sb * 2 + 1] += 1
+		print("by strength quarter (lips, bench flatter): ", buckets)
+		check(lips.size() > 0, "lips found")
+		check(lips.is_empty() or flatter > lips.size() * 0.95, "bench flatter than riser at %d of %d lips" % [flatter, lips.size()])
+		for i in range(0, lips.size(), maxi(1, lips.size() / 6)):
+			print("  ", lips[i])
+		get_tree().quit()
 	elif args.has("sample-prof"):
 		gen.generate()
 		var r: Rect2 = gen.get_world_rect()

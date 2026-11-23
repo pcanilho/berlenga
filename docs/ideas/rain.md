@@ -99,6 +99,24 @@ their drip rate and from eaves it finds by casting down a grid round the camera 
 above and drop below), the eaves draining a roof store over `roof_drain_time`. The drips keep falling
 after the rain stops, as under real trees.
 
+## Step 4b: rain and drips on moving bodies (built 23 Nov; Paulo: PhysX for rain)
+
+Gap: drops land on the shelter heightfield (the topmost surface, rendered once round the camera) and a height map
+of snow and water, so rain and eave drips fell through a person or a car under them, and a moving car kept the
+dry patch where it stood.
+Published methods: GPU particle systems collide drops with analytic shapes (sphere, capsule, box) sent each frame
+next to the scene's depth or distance field (Godot's GPUParticlesCollision nodes, Unreal Niagara's analytic and
+scene-depth collision); a physics engine's broadphase picks the bodies near the camera. PhysX's own GPU particles
+(PxPBDParticleSystem, Macklin et al. 2014) would need CUDA and a read-back for every drop; a drop needs no fluid
+forces, so the analytic shapes do the same work on every GPU.
+Built (RainFall3D `body_collision`, on): each frame the physics space's broadphase (PhysX's scene query where
+PhysX is the physics server) returns the bodies round the camera; the 16 nearest that are not static send their
+sphere, capsule, cylinder, box and convex (as its box) shapes to the rain and drip particles, which land on them
+with the same splash as on the ground (Yarin and Weiss crown past K = 2100). Test (scratch rainbody): an invisible
+60 m roof 2 m up, camera under it: rain gone under it with the bodies on, falling through with them off; a car
+and a person in rain.
+Left: the drops' run-off along a body (a car roof's streams), drips off moving bodies, the same for snow.
+
 ## Step 5: wet plants
 
 Leaves stay wet while the canopy holds water, after the ground has begun to dry, and the water

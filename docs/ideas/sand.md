@@ -1124,6 +1124,12 @@ dunes, nebkhas: Hesp 1981; Tengberg 1995; Lancaster and Baas 1998). The mound un
   deposit), so the tail grows from both sides and tapers as the wind recovers.
 - Ground --test=shelter: the tail's deposit after two scaled hours at 1, 4 and 11 m behind a 2 m tuft, and none
   5 m to the side.
+- PC frame (23 Nov, vegetation --desert with VEG_DESERT_SAND=120): a crosshatch over the dunes where sand had landed.
+  The landing sand went to the field as discs 0.6 of a lattice step wide, one per cell, which left each cell's
+  corners bare; over hours of sand they built an egg-crate of bumps a step apart. Now each cell's share is a bilinear
+  tent a step wide (as the frost needles write theirs), so equal deposits rise flat (the tuft's mound now rises by
+  exactly what landed, 35.4 mm for 35.2). Tails did not read in that frame; the plants' floor patches there count
+  as plants too (lambda over 0.02), so many small wakes overlap.
 
 ## Next sand candidates, round 2 (research, 22 Nov 2026; on a card)
 
@@ -1226,3 +1232,12 @@ Dust field round 2 (clouds' note: dust only in a 1.5 km ring, nothing behind):
 - Emission check: 8.7 mg/m2/s at 30 m/s and 8 % clay, mid-range of measured strong-event fluxes (1-100); the
   Marticorena-Bergametti clay factor is uncertain by about ten, so `dust_emission_scale` 10 for a Phoenix-class event
   is within it.
+
+### Desert tails image, stale sand (23 Nov)
+- The crosshatch on the cloud's desert shots after the tent fix was the old run's sand, not new: the bench kept ruts
+  (user://ground_ruts) and loaded the 48 h run's egg-crate back. The desert sand now runs with keep_ruts off, so every
+  run starts fresh; a clean 12 h run shows no crosshatch and no cones.
+- The near ripple mask (what moves, what shows) is read at its 20 cm blocks' centres and filled bilinearly between
+  them, no longer held flat per block.
+- Haboob front: max_blocks 1024 to 2048. The PC ran at the cap (1024 of 1024) and the dust was cut flat where no block
+  was free. Cloud (lavapipe) Flow renders drop thin smoke in front of the ground and step its edges: judge dust on the PC.

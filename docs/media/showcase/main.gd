@@ -10,6 +10,8 @@ extends Node3D
 # --gloss=R (the room shot's floor roughness, default 0.7: a polished floor for glossy reuse)
 # --pair (with --freeze: also save the raster frame of the same frozen scene as <out>_raster.png, and with the gas's
 #   surface glow off as <out>_raster_noglow.png, before the path tracer starts) --taa (raster with TAA)
+# --time-glow (raster, with a gas shot such as smokelamp: after --frames, alternates the gas's surface glow off and on
+#   in blocks of 60 frames for 8 blocks and prints the GPU frame time of each state, then quits)
 var shot := "lights"
 var spp := 16
 var out := "out.png"
@@ -26,6 +28,7 @@ var gloss := 0.7
 var pair := false
 var capturing := false
 var gas: Node = null # the shot's PhysXFlow3D, for --pair's glow-off frame
+var time_glow := false
 var n := 0
 var env := Environment.new()
 
@@ -49,6 +52,7 @@ func _ready() -> void:
 		elif a.begins_with("--freeze="): freeze = int(a.substr(9))
 		elif a.begins_with("--gloss="): gloss = float(a.substr(8))
 		elif a == "--pair": pair = true
+		elif a == "--time-glow": time_glow = true
 		elif a == "--taa": get_viewport().use_taa = true
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
@@ -1119,10 +1123,35 @@ func _process(_d: float) -> void:
 			await _save_raster("_raster")
 			capturing = false
 		env.pathtracing_enabled = true
+	if n == frames and time_glow and gas != null:
+		capturing = true
+		await _time_glow()
+		get_tree().quit()
+		return
 	if n == frames:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
 		get_tree().quit()
+
+
+# --time-glow: the GPU frame time with the gas's surface glow off and on, in alternating blocks (the first frames of
+# each block dropped while the change settles).
+func _time_glow() -> void:
+	var vp := get_viewport().get_viewport_rid()
+	RenderingServer.viewport_set_measure_render_time(vp, true)
+	var sums := { false: 0.0, true: 0.0 }
+	var counts := { false: 0, true: 0 }
+	for block in 8:
+		var on := block % 2 == 1
+		gas.set("surface_glow", on)
+		for k in 60:
+			await RenderingServer.frame_post_draw
+			if k >= 10:
+				sums[on] += RenderingServer.viewport_get_measured_render_time_gpu(vp)
+				counts[on] += 1
+	var off_ms: float = sums[false] / maxi(counts[false], 1)
+	var on_ms: float = sums[true] / maxi(counts[true], 1)
+	print("[time-glow] %dx%d gpu ms: glow off %.3f, on %.3f, cost %.3f" % [get_viewport().get_visible_rect().size.x, get_viewport().get_visible_rect().size.y, off_ms, on_ms, on_ms - off_ms])
 
 
 # Strain tearing (PhysXCloth3D.tear_factor): nothing is cut by script. A striped ribbon tied between

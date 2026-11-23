@@ -101,7 +101,7 @@ extends Node3D
 #   --prop=name:value   set one of the surface's properties (repeatable)
 #   --defaults          keep every shipped setting on (otherwise each check or view turns on only its own)
 #   --raster            raster only (default path traced)
-#   --pair              --view=bodymud, ruts and wade: save the raster frame as <out>_raster.png, then the path traced one, from one run
+#   --pair              --view=bodymud, ruts, wade and ripples: save the raster frame as <out>_raster.png, then the path traced one, from one run
 #   --view=wade         a 4x4 drives along two ruts brimming with ground water (mud stage 4c): the bow wave and wake;
 #                         --cam=x,y,z,tx,ty,tz in the world
 #   --out=path.png      save the frame and quit
@@ -4042,7 +4042,15 @@ func _run_shelter_tests() -> void:
 	print("  tail: %.1f mm 1 m behind the tuft, %.1f mm at 4 m, %.1f mm at 11 m; %.1f mm 5 m to the side" % [t1 * 1000.0, t2 * 1000.0, t3 * 1000.0, side * 1000.0])
 	_check("a sand tail forms in the tuft's lee and tapers downwind (shadow dune)", t1 > 0.002 and t1 > t2 and t2 > t3, "%.1f, %.1f, %.1f mm at 1, 4 and 11 m behind" % [t1 * 1000.0, t2 * 1000.0, t3 * 1000.0])
 	_check("none beside it, out of the wake", side == 0.0, "%.1f mm" % (side * 1000.0))
-	_check("the wind step is cheap", surface.get_wind_step_usec() < 3000.0, "%.2f ms twice a second" % (surface.get_wind_step_usec() / 1000.0))
+	# The median of seven steps: one step can carry a burst of the sand landing written to the field (on the CPU here;
+	# the GPU stamps it in a game).
+	var steps: Array[float] = []
+	for k in 7:
+		for i in 30:
+			await get_tree().physics_frame
+		steps.append(surface.get_wind_step_usec())
+	steps.sort()
+	_check("the wind step is cheap", steps[3] < 3000.0, "%.2f ms twice a second (median of seven; %.2f to %.2f)" % [steps[3] / 1000.0, steps[0] / 1000.0, steps[6] / 1000.0])
 	# A 1 m wall across the wind at x = 5 (a stand-in for the weather's obstacle lee, WorldWeather.obstacle_lee_at):
 	# the cavity behind it to 2 heights, recovering over 6. The sand slows and drops in its lee (a shadow dune).
 	surface.plant_wake = false # the wall alone (it stands 5 m behind the tuft, in its wake)
@@ -5537,8 +5545,7 @@ func _build_ripples() -> void:
 		var sp := Vector3(scour_arg[0], 0.0, scour_arg[1])
 		print("scour: %.2f at the track's middle; ripple share %.2f there, %.2f %.1f m off; dune tone %s" % [surface.get_scour_at(sp), surface.get_ripple_show_at(sp), surface.get_ripple_show_at(sp + Vector3(0, 0, 2.0 * scour_arg[2])), 2.0 * scour_arg[2], surface.dune_tone])
 	print("ripples: %d steps, streamers %.1f g/m/s, coverage %.2f" % [surface.get_ripple_steps(), st.get_flux() * 1000.0, st.get_coverage()])
-	env.pathtracing_enabled = not raster
-	await _save_frame()
+	await _save_view(env)
 	get_tree().quit()
 
 

@@ -6237,11 +6237,14 @@ void GroundSurface3D::_wind_update(double p_delta) {
 			sand_dep_pending[i] += rate * dt;
 		}
 		if (sand_dep_pending[i] >= 0.002f && field.valid) {
-			// The cell's volume, over a disc a little wider than the cell so the steps blend (a tent on the near field).
+			// The cell's volume as a bilinear tent a lattice step wide (as the frost needles write theirs), so equal
+			// deposits over neighbouring cells rise flat. A disc 0.6 of a step wide left the cells' corners bare,
+			// and hours of sand landing built an egg-crate of bumps a step apart (a crosshatch on the PC's dunes).
 			const float d = sand_dep_pending[i];
-			const float rad = 0.6f * ground_spacing;
 			const Vector3 at((ground_origin.x + x) * ground_spacing, ground[i], (ground_origin.y + z) * ground_spacing);
-			_amount(at, rad, -d * ground_spacing * ground_spacing / (Math::PI * rad * rad), ground_spacing);
+			field.amount_tent = true;
+			_amount(at, ground_spacing, -d, ground_spacing);
+			field.amount_tent = false;
 			sand_dep[i] += d;
 			sand_dep_pending[i] = 0.0f;
 		}
@@ -6413,20 +6416,38 @@ void GroundSurface3D::_ripples_update(double p_delta) {
 	if (ripple_mask_accum >= 2.0) {
 		ripple_mask_accum = 0.0;
 		ripple_show.resize(ripples.n * ripples.n);
+		// Read at the blocks' centres and filled between them bilinearly: block values held flat over each block
+		// drew the edge of a sheltered (smooth) patch as 20 cm stair steps across the rippled sand.
 		const int b = 16;
-		for (int bz = 0; bz < ripples.n; bz += b) {
-			for (int bx = 0; bx < ripples.n; bx += b) {
-				const float x = (ripples.origin.x + bx + 0.5f * b) * ripples.cell;
-				const float z = (ripples.origin.y + bz + 0.5f * b) * ripples.cell;
+		const int nb = (ripples.n + b - 1) / b;
+		LocalVector<float> bm;
+		LocalVector<float> bs;
+		bm.resize(nb * nb);
+		bs.resize(nb * nb);
+		for (int kz = 0; kz < nb; kz++) {
+			for (int kx = 0; kx < nb; kx++) {
+				const float x = (ripples.origin.x + kx * b + 0.5f * b) * ripples.cell;
+				const float z = (ripples.origin.y + kz * b + 0.5f * b) * ripples.cell;
 				const Cell &c = _cell_at(x, z);
-				const float m = c.deformable ? c.blown * _shelter_flux_at(x, z) * (1.0f - get_rain_crust()) : 0.0f; // a rain crust holds
-				const float show = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(x, z) * (1.0f - _scour_at(x, z)) : 0.0f;
-				for (int z2 = bz; z2 < MIN(bz + b, ripples.n); z2++) {
-					for (int x2 = bx; x2 < MIN(bx + b, ripples.n); x2++) {
-						ripples.mask[z2 * ripples.n + x2] = m;
-						ripple_show[z2 * ripples.n + x2] = show;
-					}
-				}
+				bm[kz * nb + kx] = c.deformable ? c.blown * _shelter_flux_at(x, z) * (1.0f - get_rain_crust()) : 0.0f; // a rain crust holds
+				bs[kz * nb + kx] = c.deformable ? c.sand * (1.0f - MIN(c.litter / 0.02f, 1.0f)) * _ripple_calm_at(x, z) * (1.0f - _scour_at(x, z)) : 0.0f;
+			}
+		}
+		for (int z2 = 0; z2 < ripples.n; z2++) {
+			const float fz = CLAMP((z2 + 0.5f) / b - 0.5f, 0.0f, float(nb - 1));
+			const int z0 = MIN((int)fz, MAX(nb - 2, 0));
+			const int z1 = MIN(z0 + 1, nb - 1);
+			const float tz = fz - z0;
+			for (int x2 = 0; x2 < ripples.n; x2++) {
+				const float fx = CLAMP((x2 + 0.5f) / b - 0.5f, 0.0f, float(nb - 1));
+				const int x0 = MIN((int)fx, MAX(nb - 2, 0));
+				const int x1 = MIN(x0 + 1, nb - 1);
+				const float tx = fx - x0;
+				auto lerp2 = [&](const LocalVector<float> &v) {
+					return Math::lerp(Math::lerp(v[z0 * nb + x0], v[z0 * nb + x1], tx), Math::lerp(v[z1 * nb + x0], v[z1 * nb + x1], tx), tz);
+				};
+				ripples.mask[z2 * ripples.n + x2] = lerp2(bm);
+				ripple_show[z2 * ripples.n + x2] = lerp2(bs);
 			}
 		}
 		// The sand share over the patch for the far ripples, in 25 cm texels (at 32 m).

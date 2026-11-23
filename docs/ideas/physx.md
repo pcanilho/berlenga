@@ -2691,6 +2691,35 @@ and anisotropy), filled with the light buffers each frame; DirectionalLightData 
 fire before a wall with no DirectionalLight3D at all: glow off -> on 82 -> 38 (8x8 block error against the path
 tracer); before, on equalled off.
 
+### Cheaper gas glow (card pick 3, 23 Nov): research and design
+
+Cost now, all in the opaque pass for each pixel within two grid sizes of the gas: six cones of up to 16 trilinear
+fetches (the ambient), plus four cones of 8 per point or spot light the gas dims. It scales with resolution: a
+quarter of the pixels at 4K cost what 1080p costs whole. Measured: cloud lavapipe smokelamp 960x540 315 -> 552 ms
+(CPU rendering, only a sign it is heavy); the PC number (showcase --time-glow, 95b3ddb6) decides how far to go.
+
+How others do it:
+- Crassin et al. 2011 trace the diffuse cones at reduced resolution and upsample; Hong (DigiPen thesis, "Temporal
+  voxel cone tracing with interleaved sample patterns") spreads a pixel's cones over frames in an interleaved pattern
+  and accumulates them with reprojection, the cost of one or two cones a frame.
+- Godot's own SSAO/SSIL run at half resolution with a depth/normal-aware upsample; Lumen's screen probes and
+  DDGI's irradiance fields go further (a probe per 16x16 pixels, or a world grid), for light that varies slowly.
+Gas glow is that kind of light: smooth, world-anchored, slow; its detail comes from the surface's albedo and normal,
+which stay full resolution.
+
+Design (no visual loss: checked by same-run raster/path-traced pairs and a full-resolution reference):
+1. A gas glow resolve compute pass after the depth prepass (which then writes normals when the glow is current), at
+   half resolution: per pixel the six cones' glow (rgb), sky visibility and reflectance weight, and the
+   transmittance toward the (up to four) point and spot lights the gas dims most. Two small images.
+2. Temporal: each frame traces two of the six cones in a pixel's 2x2-interleaved rotation (Hong), the rest come
+   from the previous frame reprojected by the previous camera (world-anchored), rejected where depth or normal
+   disagree (disocclusion) or the gas grid changed a lot; the light transmittance the same way.
+3. The opaque pass reads them with a 4-tap depth- and normal-weighted upsample and applies them exactly as now
+   (ambient * vis + side * refl + glow; the light's shadow times its transmittance).
+Expected: per pixel at full resolution 4 fetches instead of up to 96 + 32 per light; the trace itself a quarter
+of the pixels and a third of the cones. Options: a full-resolution fallback setting for A/B and for scenes without
+TAA where the reuse's lag would show.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide
