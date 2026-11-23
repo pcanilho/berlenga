@@ -1379,6 +1379,9 @@ func _frame_log() -> void:
 		for tp in veg.get_placements(i):
 			if tp.distance_to(c3.global_position) > float(args.get("log-radius", "70")):
 				continue
+			# Inside views (--stand-in): only logs under the closed stand, never at the meadow's rim.
+			if args.has("stand-in") and veg.get_stand_shade_at(tp) < 0.5:
+				continue
 			# The axis: the heading along which the ground stays under the log (get_deadwood_at side < 0).
 			var dir := Vector3.ZERO
 			var low := INF
@@ -1422,7 +1425,7 @@ func _frame_log() -> void:
 	if Vector2(side.x, side.z).dot(sun_flat) < 0.0:
 		side = -side
 	var cp := best_a.lerp(best_b, float(args.get("log-from", "0.15"))) + side * float(args.get("log-side", "1.3"))
-	cp.y = height_at(cp.x, cp.z) + float(args.get("log-height", "1.2"))
+	cp.y = height_at(cp.x, cp.z) + float(args.get("log-height", "1.7" if args.has("stand-in") else "1.2"))
 	var mid := best_a.lerp(best_b, float(args.get("log-at", "0.55")))
 	mid.y = height_at(mid.x, mid.z) + 0.1
 	c3.global_position = cp
@@ -1502,7 +1505,8 @@ func _frame_mushrooms() -> void:
 	c3.near = 0.15
 	c3.global_position = eye
 	c3.look_at(look)
-	env.tonemap_exposure = float(args.get("exposure", "1.4"))
+	# Inside a stand (--stand-in) only a few percent of daylight reaches the floor: exposed up so it reads.
+	env.tonemap_exposure = float(args.get("exposure", "2.6" if args.has("stand-in") else "1.4"))
 	# The birch and its fly agarics, behind the tuft along the view.
 	var tg := TreeGenerator.new()
 	tg.preset = TreeGenerator.PRESET_BIRCH
@@ -3070,7 +3074,9 @@ func _build_weather() -> void:
 	clock.utc_offset = 0.0
 	clock.month = int(args.get("month", "4")) + 1
 	clock.day = int(args.get("day", "15"))
-	clock.time_of_day = float(args.get("time", "16.5"))
+	# Stand views (--meadow-eye plot, --stand-in inside) default to midday: the 16.5 default is dusk in late autumn.
+	var stand_view := args.has("stand-in") or (args.has("meadow-eye") and not args.has("hay"))
+	clock.time_of_day = float(args.get("time", "12.5" if stand_view else "16.5"))
 	clock.sun_light = clock.get_path_to(sun)
 	weather = WeatherMap3D.new()
 	weather.name = "Weather"
@@ -4336,6 +4342,21 @@ func _build_camera() -> void:
 				var mz := ez + mb
 				cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, mz) + float(args.get("meadow-eye", "5")), mz)
 				cam.look_at(Vector3(ex, height_at(ex, ez) + float(args.get("meadow-look-h", "8")), ez))
+			if args.has("stand-in"):
+				# Inside the stand on its floor (trees' inside views): --stand-in m (30) past the edge, walked further in
+				# until the crowns close (stand shade 0.6, up to 60 m more), at eye height, looking deeper in and up
+				# --stand-look-h m (5) so the boles rise to the canopy. No meadow grass in the frame. With --log the
+				# log framing then keeps to logs under the closed stand (see _frame_log).
+				var sz := ez - float(args.get("stand-in", "30"))
+				var sx := ex
+				var steps := 0
+				while steps < 15 and veg != null and veg.get_stand_shade_at(Vector3(sx, 0, sz)) < 0.6:
+					sz -= 4.0
+					steps += 1
+				cam.fov = 60.0
+				cam.position = Vector3(sx, height_at(sx, sz) + 1.7, sz)
+				cam.look_at(Vector3(sx, height_at(sx, sz - 25.0) + float(args.get("stand-look-h", "5")), sz - 25.0))
+				_log("stand inside: camera %s, %.0f m past the edge, stand shade %.2f" % [str(cam.position.round()), ez - sz, veg.get_stand_shade_at(cam.position) if veg != null else -1.0])
 			if args.has("hay"):
 				# Over the hay fields (_hay_list): raised to --hay-eye (5) m, looking down across the rows to the edge.
 				cam.position.y += float(args.get("hay-eye", "5")) - 1.7
