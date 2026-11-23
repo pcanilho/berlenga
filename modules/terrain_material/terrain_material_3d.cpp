@@ -540,12 +540,19 @@ float tm_drip_1d(float u, float y, float t, float fp, float seed, float C, float
 	float h2 = tm_vn_hash(vec3(ci, seed, 5.0));
 	float h3 = tm_vn_hash(vec3(ci, seed, 7.0));
 	float h4 = tm_vn_hash(vec3(ci, seed, 11.0));
-	float tt = t / (0.35 + 0.65 * h4);
+	// Thin trickles run out soon and stain less; only the broad stripes run the full length (a thin dark line ruled
+	// metres down a face read as a scratch).
+	float tt = t / (0.25 + 0.75 * mix(h4, h3, 0.7));
 	float present = step(0.4, h1) * step(tt, 1.0);
-	float w = mix(wmin, wmax, h3 * h3) * (1.0 - 0.7 * smoothstep(0.3, 1.0, tt));
-	float centre = (ci + 0.15 + 0.7 * h2) * C;
-	float aa = max(fp, 0.002);
-	float cov = present * (1.0 - smoothstep(-aa, aa, abs(u - centre) - 0.5 * w));
+	// Water stains swell and pinch down their run and wander a little (a stripe of one width ruled straight down read
+	// as a scratch or a stretched texture).
+	float w = mix(wmin, wmax, h3 * h3) * (1.0 - 0.7 * smoothstep(0.3, 1.0, tt)) * (0.6 + 0.8 * tm_vn(vec3(ci * 3.1, y / 0.9, seed + 2.0)));
+	float centre = (ci + 0.15 + 0.7 * h2) * C + 0.4 * C * (tm_vn(vec3(ci * 5.7, y / 1.8, seed + 4.0)) - 0.5);
+	float aa = max(max(0.5 * fp, 0.15 * w), 0.002); // half the footprint, or a stain's feathered edge
+	// The stripe's share of the footprint (a pulse box-filtered exactly, Apodaca and Gritz 2000): a stripe narrower than
+	// the pixel fades with its width. Each fades down its run as its water spreads and dries. Edged by smoothstep over the footprint, a 5 cm trickle drew as a half-dark line a
+	// whole pixel wide down metres of face, a scratch.
+	float cov = present * (0.55 + 0.45 * h3) * (1.0 - 0.7 * smoothstep(0.0, 1.0, tt)) * max(min(centre + 0.5 * w, u + aa) - max(centre - 0.5 * w, u - aa), 0.0) / (2.0 * aa);
 	float mean = 0.6 * 0.5 * (wmin + wmax) / C * (1.0 - smoothstep(0.35, 1.0, t));
 	return mix(cov, mean, smoothstep(0.3 * C, C, fp));
 }
@@ -841,6 +848,52 @@ vec2 tm_hex_hash(ivec2 v) {
 			sk *= smoothstep(0.3, 0.55, tm_vn(vec3(p.x / 6.0, band * 3.1, p.z / 6.0) + 17.0));
 			float bed = tm_vn(vec3(p.x / 40.0, p.y / 0.9, p.z / 40.0) + 5.0);
 			albedo *= mix(1.0, (1.1 - 0.5 * sk) * (0.86 + 0.28 * bed) * (0.85 + 0.3 * tm_vn(p / 18.0 + 3.0)), face);
+			// Fracture facets. A rock face breaks along joints into flat planes with sharp edges: two steep joint
+			// sets near right angles and the bedding (Priest 1993, discontinuity sets with spacings of metres and
+			// traces that run on for a while and stop, their persistence). The scan, of rock seen from above, drew
+			// soft wrinkles that read as draped cloth on a face; there its relief and half its tone yield to blocks
+			// cut by the three sets of planes, each block a plane of its own tilt and shade (hard edges where the
+			// tilt changes), and a crisp dark trace where a joint is open. Smaller breaks split some blocks once
+			// more. Filtered over the footprint: the traces widen to it and the blocks fade to their mean when a
+			// pixel spans one.
+			float kf = 1.0 - smoothstep(0.08, 0.35, fp);
+			if (kf > 0.0) {
+				// Joint normals: two steep sets, struck by a slow noise so they swing across a face, and the beds.
+				float strike = 6.2832 * tm_vn(vec3(p.x / 90.0, 0.0, p.z / 90.0) + 23.0);
+				vec3 j1 = vec3(cos(strike), 0.12, sin(strike));
+				vec3 j2 = vec3(-sin(strike), -0.18, cos(strike));
+				vec3 j3 = vec3(0.06, 1.0, -0.04);
+				vec3 sp = vec3(1.9, 2.6, 1.4); // spacings, metres
+				vec3 sd = vec3(dot(p, normalize(j1)), dot(p, normalize(j2)), dot(p, normalize(j3))) / sp;
+				sd += vec3(0.25, 0.25, 0.45) * (vec3(tm_vn(p / 7.0 + 1.0), tm_vn(p / 7.0 + 5.0), tm_vn(p / 7.0 + 9.0)) - 0.5); // planes not perfectly straight, the beds least (even beds read as tiling)
+				vec3 cell = floor(sd);
+				vec3 fr = sd - cell;
+				vec3 dpl = min(fr, 1.0 - fr) * sp; // metres to the nearest plane of each set
+				// Spacings are not even (they scatter about their mean, Priest 1993; planes at one spacing drew a
+				// lattice of stripes): about half the gaps of each joint set hold one more plane at a place of their own.
+				vec3 hb = vec3(tm_vn_hash(vec3(cell.x, 3.0, 1.0)), tm_vn_hash(vec3(cell.y, 5.0, 1.0)), tm_vn_hash(vec3(cell.z, 7.0, 1.0)));
+				vec3 hs = vec3(tm_vn_hash(vec3(cell.x, 3.0, 2.0)), tm_vn_hash(vec3(cell.y, 5.0, 2.0)), tm_vn_hash(vec3(cell.z, 7.0, 2.0)));
+				vec3 bm = 0.25 + 0.5 * hb;
+				vec3 split = step(0.5, hs) * vec3(1.0, 1.0, 0.0); // not the beds: a second bedding plane drew brickwork
+				dpl = min(dpl, mix(sp * 9.0, abs(fr - bm) * sp, split));
+				vec3 bid = cell * 2.0 + split * step(bm, fr);
+				vec3 tilt = vec3(tm_vn_hash(bid + 31.1), tm_vn_hash(bid + 37.9), tm_vn_hash(bid + 41.3)) - 0.5;
+				tilt -= n * dot(tilt, n);
+				// Open traces: each plane's trace runs for a few metres and stops.
+				float open1 = step(0.45, tm_vn(vec3(cell.x * 5.3, p.y / 3.0, (p.x + p.z) / 3.0)));
+				float open2 = step(0.5, tm_vn(vec3(cell.y * 4.1, p.y / 3.0, (p.x - p.z) / 3.0) + 7.0));
+				float open3 = step(0.55, tm_vn(vec3(p.x / 4.0, cell.z * 3.7, p.z / 4.0) + 11.0));
+				float w = 0.008 + 0.5 * fp;
+				float brk = max(max(open1 * (1.0 - smoothstep(0.0, w, dpl.x)), open2 * (1.0 - smoothstep(0.0, w, dpl.y))), open3 * (1.0 - smoothstep(0.0, w * 0.8, dpl.z)));
+				float kfa = kf * face;
+				// Half the scan's tone toward the layer's colour, each block its own shade.
+				albedo = mix(albedo, (0.4 * albedo + 0.6 * tm_rock_color.rgb) * (0.76 + 0.48 * tm_vn_hash(bid + 3.1)), 0.85 * kfa);
+				// A fresh break shows a pale lip on the block's upper edge above the dark open trace.
+				float lip = open3 * (1.0 - smoothstep(w, 3.0 * w, abs(fr.z * sp.z - 1.5 * w))) * (1.0 - brk);
+				albedo *= 1.0 - 0.7 * brk * kfa;
+				albedo *= 1.0 + 0.15 * lip * kfa;
+				dn = mix(dn, tilt * 0.9, 0.9 * kfa);
+			}
 			dn *= 1.0 - 0.4 * face;
 		}
 	}
@@ -1068,11 +1121,11 @@ float tm_cl_seep(vec3 p, vec3 n, float fp) {
 	float ledge = 0.35 + 0.65 * clamp(1.5 * (tm_cl_proud(p, bed_up) - tm_cl_proud(p, bed)), 0.0, 1.0);
 	// Wetter beds (joints feeding them) seep further.
 	float L = 3.0 + 9.0 * tm_cl_hash(bed, 41, 3);
-	// Drip lines from the lip: crisp stripes 2 to 18 cm wide, each running out at its own length, in groups along
+	// Drip lines from the lip: crisp stripes 5 to 22 cm wide, each running out at its own length, in groups along
 	// the bed (a drip line feeds where the lip sheds); darkest at the lip.
 	float t = below / L;
 	float group = tm_cl_noise(vec3(p.x * 0.2, float(bed) * 0.53, p.z * 0.2));
-	float lines = tm_drip(p, n, t, fp, float(bed) * 0.37 + 5.0, 0.9, 0.02, 0.18);
+	float lines = tm_drip(p, n, t, fp, float(bed) * 0.37 + 5.0, 0.9, 0.05, 0.22);
 	return ledge * smoothstep(0.0, 0.15, below) * (0.55 + 0.45 * exp(-2.0 * t)) * lines * smoothstep(0.45, 0.7, group);
 }
 // The banks' slumps (Landscape3D::_bank_offset): scarps and toe lobes in 6 m units along the contour, hummocks.
@@ -1089,6 +1142,27 @@ float tm_bk_offset(vec3 p) {
 	float o = amp * (0.9 * exp(-tl * tl) - exp(-ts * ts)) * ends;
 	o += 0.35 * (tm_cl_noise(p * 0.35 + vec3(2.0, 9.0, 4.0)) - 0.5) + 0.15 * (tm_cl_noise(p * 1.1 + vec3(7.0, 2.0, 8.0)) - 0.5);
 	return o;
+}
+// The relief's scales k (cliff, bank) eased where the offset changes too fast with height for the face to stay a
+// heightfield (Landscape3D::_cliff_scale and _bank_scale), for meshes that displace on their own (the ground
+// deformation patch); the landscape's chunks hand theirs in CUSTOM0 and CUSTOM1.
+// m: the slope's unit horizontal normal; sampled down the surface's fall line as the landscape's.
+vec2 tm_cl_scale(vec3 p, vec2 k, float tn, vec3 m) {
+	tn = min(tn, 6.0);
+	vec3 st = m * (0.4 / max(tn, 0.1)) - vec3(0.0, 0.4, 0.0);
+	float pc = 0.0, pb = 0.0;
+	vec2 g = vec2(0.0);
+	for (int i = -5; i <= 5; i++) {
+		vec3 q = p + st * float(i);
+		float oc = k.x > 0.0 ? tm_cl_offset(q, terrain_cliff_relief.x * tn, terrain_cliff_relief.x) : 0.0;
+		float ob = k.y > 0.0 ? tm_bk_offset(q) : 0.0;
+		if (i > -5) {
+			g = max(g, abs(vec2(oc - pc, ob - pb)) / 0.4 * (1.0 - abs(float(i) - 0.5) / 5.5));
+		}
+		pc = oc;
+		pb = ob;
+	}
+	return min(k, vec2(0.8, 0.6) / max(tn * g, vec2(1e-4)));
 }
 // Metres out of the face: k.x the cliff relief's scale, k.y the bank's.
 // tn: the face's tan(slope) (the lip rule's, at the landscape's full relief scale as Landscape3D::_cliff_point; k
@@ -1109,7 +1183,13 @@ vec3 tm_cl_normal(vec3 p, vec3 nb, vec2 k, float e) {
 	vec3 dv = (c + m * tm_cl_disp(c, k, tn)) - (d + m * tm_cl_disp(d, k, tn));
 	vec3 nn = cross(dv, du);
 	nn = dot(nn, nb) < 0.0 ? -nn : nn;
-	return dot(nn, nn) > 1e-12 ? normalize(nn) : nb;
+	nn = dot(nn, nn) > 1e-12 ? normalize(nn) : nb;
+	// The relief's finest noise changes faster than the scale k (set per vertex over 0.4 m steps) allows for: where its
+	// slope across the face folds the field within e, the differences turn the normal past the face's edge, a black
+	// fleck under the sun with a white one beside it. Held within some 70 degrees of the heightfield's normal (a
+	// shading normal may not face away from its surface; Schussler et al. 2017).
+	float cn = dot(nn, nb);
+	return cn < 0.35 ? normalize(nn + nb * (0.35 - cn) * 2.0) : nn;
 }
 )";
 	if (cliff_self_shadow) {
@@ -1190,6 +1270,30 @@ vec3 tm_cl_land_n(vec2 xz) {
 	vec2 u = f - g;
 	return normalize(mix(mix(tm_cl_node_n(g), tm_cl_node_n(g + vec2(1.0, 0.0)), u.x), mix(tm_cl_node_n(g + vec2(0.0, 1.0)), tm_cl_node_n(g + vec2(1.0, 1.0)), u.x), u.y));
 }
+// The face weights (Landscape3D::_relief_weights): cliffs from about 50 degrees, banks from about 40.
+vec2 tm_cl_weights(vec3 n) {
+	float wt = 1.0 - clamp((n.y - 0.47) / (0.64 - 0.47), 0.0, 1.0);
+	float wb = 1.0 - clamp((n.y - 0.643) / (0.766 - 0.643), 0.0, 1.0);
+	wt = wt * wt * (3.0 - 2.0 * wt);
+	wb = wb * wb * (3.0 - 2.0 * wb) * (1.0 - wt);
+	return vec2(wt, wb);
+}
+// Tent-filtered over 1.5 times the relief's reach either way, as Landscape3D::_relief_weights_at (a fade within one
+// cell at a sharp cliff foot folded the surface).
+vec2 tm_cl_weights_at(vec2 xz) {
+	float r = 2.625 * max(terrain_cliff_relief.x, terrain_bank_relief.x);
+	if (r < 0.25 * terrain_cliff_relief.y) {
+		return tm_cl_weights(tm_cl_land_n(xz));
+	}
+	vec2 w = vec2(0.0);
+	for (int j = 0; j < 5; j++) {
+		for (int i = 0; i < 5; i++) {
+			float t = (3.0 - abs(float(i) - 2.0)) * (3.0 - abs(float(j) - 2.0));
+			w += tm_cl_weights(tm_cl_land_n(xz + vec2(float(i) - 2.0, float(j) - 2.0) * r)) * t;
+		}
+	}
+	return w / 81.0;
+}
 )";
 	}
 	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1;\n";
@@ -1221,17 +1325,15 @@ vec3 tm_cl_land_n(vec2 xz) {
 		// steeper next to a cliff's top and foot, so it put relief on faces the landscape leaves plain.
 		vec3 cl_nw = terrain_cliff_relief.y > 0.0 ? tm_cl_land_n(cl_w.xz) : vec3(0.0, 1.0, 0.0);
 		float cl_ml = length(cl_nw.xz);
-		// The face weights (Landscape3D::_relief_weights): cliffs from about 50 degrees, banks from about 40.
-		float cl_wt = 1.0 - clamp((cl_nw.y - 0.47) / (0.64 - 0.47), 0.0, 1.0);
-		float cl_wb = 1.0 - clamp((cl_nw.y - 0.643) / (0.766 - 0.643), 0.0, 1.0);
-		cl_wt = cl_wt * cl_wt * (3.0 - 2.0 * cl_wt);
-		cl_wb = cl_wb * cl_wb * (3.0 - 2.0 * cl_wb) * (1.0 - cl_wt);
+		vec2 cl_wts = terrain_cliff_relief.y > 0.0 ? tm_cl_weights_at(cl_w.xz) : vec2(0.0);
+		float cl_wt = cl_wts.x;
+		float cl_wb = cl_wts.y;
 		if (cl_ml > 1e-4 && (cl_wt > 0.0 || (cl_wb > 0.0 && terrain_bank_relief.x > 0.0))) {
 			vec3 cl_p = cl_w;
-			vec2 cl_k = vec2(terrain_cliff_relief.x * cl_wt, terrain_bank_relief.x * cl_wb);
+			vec3 cl_m = vec3(cl_nw.x, 0.0, cl_nw.z) / cl_ml;
+			vec2 cl_k = tm_cl_scale(cl_p, vec2(terrain_cliff_relief.x * cl_wt, terrain_bank_relief.x * cl_wb), cl_ml / max(cl_nw.y, 1e-3), cl_m);
 			tm_cl_p = vec4(cl_p, cl_k.x);
 			tm_cl_n = vec4(cl_nw, cl_k.y);
-			vec3 cl_m = vec3(cl_nw.x, 0.0, cl_nw.z) / cl_ml;
 			mat4 cl_inv = inverse(MODEL_MATRIX);
 			VERTEX = (cl_inv * vec4(cl_w + cl_m * tm_cl_disp(cl_p, cl_k, cl_ml / max(cl_nw.y, 1e-3)), 1.0)).xyz;
 			// The vertex normal from the displaced surface around it, as the landscape's (the shadow map's normal
@@ -1967,7 +2069,7 @@ void fragment() {
 			vec3 fw_p = tm_cl_p.w > 0.0 ? tm_cl_p.xyz : wp;
 			float seep = tm_cl_seep(fw_p, wn, tm_fp0) * (1.0 - smoothstep(0.55, 0.8, tm_macro_n.y)) * fw_rock * tm_face_weathering;
 			seep = mix(0.5 * seep, seep, fw_k);
-			albedo = mix(albedo, albedo * vec3(0.55, 0.54, 0.52), seep * (0.45 + 0.3 * shade));
+			albedo = mix(albedo, albedo * vec3(0.62, 0.61, 0.59), seep * (0.45 + 0.3 * shade));
 			// Crustose lichen in colonies of rosettes: pale grey-white crusts (Lecanora, Aspicilia) on most faces, the
 			// yellow-green map lichen (Rhizocarpon) on the sunnier ones, each thallus edged by its black prothallus
 			// line. Colonies 3 m across hold rosettes 0.3 to 0.8 m; cover grows with shade.
