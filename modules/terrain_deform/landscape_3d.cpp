@@ -582,6 +582,7 @@ Vector3 Landscape3D::_cliff_point(const Vector3 &p, real_t p_weight_scale) const
 Vector3 Landscape3D::get_cliff_point(const Vector3 &p_global_position) const {
 	// Where the drawn surface is over a point of the heightfield surface (global space): the point itself unless
 	// cliff_relief pushes it out of or into a steep face. For water laid on a face (falls, sheets).
+	RWLockRead hl(heights_lock);
 	if ((cliff_relief <= 0.0 && bank_relief <= 0.0) || heights.is_empty()) {
 		return p_global_position;
 	}
@@ -1817,7 +1818,11 @@ void Landscape3D::clear() {
 	_free_all_collision();
 	_evict(true);
 	chunks.clear();
-	heights.clear();
+	{
+		RWLockWrite hl(heights_lock);
+		heights.clear();
+		gw = gh = 0;
+	}
 	need.clear();
 	target_lod.clear();
 	target_mask.clear();
@@ -1970,9 +1975,14 @@ bool Landscape3D::rebuild() {
 	ERR_FAIL_COND_V_MSG(vw < 2 || vh < 2, false, "Landscape3D: no heights (set source to a TerrainGenerator3D, or height_image).");
 	cw = MAX(1, (vw - 2) / chunk_quads + 1);
 	ch = MAX(1, (vh - 2) / chunk_quads + 1);
-	gw = cw * chunk_quads + 1;
-	gh = ch * chunk_quads + 1;
-	ERR_FAIL_COND_V_MSG(int64_t(gw) * gh > 256 * 1024 * 1024, false, "Landscape3D: grid too large; raise spacing.");
+	const int new_gw = cw * chunk_quads + 1, new_gh = ch * chunk_quads + 1;
+	ERR_FAIL_COND_V_MSG(int64_t(new_gw) * new_gh > 256 * 1024 * 1024, false, "Landscape3D: grid too large; raise spacing.");
+	{
+		RWLockWrite hl(heights_lock);
+		gw = new_gw;
+		gh = new_gh;
+		heights.resize(gw * gh);
+	}
 	int max_levels = 1;
 	while ((chunk_quads >> max_levels) >= 2 && max_levels < 8) {
 		max_levels++;
@@ -1984,7 +1994,6 @@ bool Landscape3D::rebuild() {
 		}
 	}
 	chunks.resize(cw * ch);
-	heights.resize(gw * gh);
 	TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(src);
 	const bool streaming = stream_heights && gen && levels > COARSE + 1;
 	WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
@@ -2139,6 +2148,7 @@ PackedVector3Array Landscape3D::get_chunk_triangles(const Vector2i &p_chunk) con
 
 // Level 0 ground under a global point, bilinear between the grid heights.
 real_t Landscape3D::get_height(const Vector3 &p_position) const {
+	RWLockRead hl(heights_lock);
 	if (heights.is_empty()) {
 		return 0.0;
 	}
@@ -2388,6 +2398,7 @@ Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
 }
 
 Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position) const {
+	RWLockRead hl(heights_lock);
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
 	return _relief_at_local(xf.affine_inverse().xform(p_position));
 }

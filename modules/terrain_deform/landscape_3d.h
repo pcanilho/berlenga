@@ -33,6 +33,7 @@
 #pragma once
 
 #include "core/object/worker_thread_pool.h"
+#include "core/os/rw_lock.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "modules/world/world_contracts.h"
@@ -121,6 +122,10 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 
 	// The grid: gw x gh heights from origin, spacing apart (chunks x chunk_quads + 1 a side).
 	LocalVector<float> heights;
+	// The grid's size and heights change together under heights_lock (write); the contracts other systems read from
+	// their own threads (relief_at from plant and stone placement) hold it to read, so they never see one without the
+	// other (a grid size ahead of its heights read past their end).
+	mutable RWLock heights_lock;
 	int gw = 0;
 	int gh = 0;
 	int vw = 0; // valid points from the source; the grid repeats the last row and column past them
