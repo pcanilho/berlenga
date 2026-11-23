@@ -164,6 +164,16 @@ game with its own wind field gets the wind twice. `weather_wind` and `weather_we
 Proposal: when a script sets `wind` (or a `wind_source` enum: weather, manual, both), the weather's stops
 adding unless asked; document the contract in world-links. Every project that ports its own wind gains.
 
+### M. Moving gust fronts on the weather map (generic: yes)
+
+The game's wind (StormWind, read by 14 of its scripts: rain, props, tape, coats, haze) has authored local
+events the map cannot hold: a squall's gust front sweeping the roof after a near strike, and a train's
+slipstream running along the track. The map has mean wind, Kaimal gusts, gust patches, downburst outflow
+(add_storm) and vortices, but no moving front. Proposal: `WeatherMap3D.add_gust_front(origin, direction,
+peak, half_width, reach, speed, rise, decay)`, read by get_wind_at and the wind texture, so a game's wind
+can be the map's and every reader (cloth, trees, rain, snow, dust) gets one wind. Squall lines, vehicle
+slipstreams and blast waves all fit it.
+
 ### K. Camera cut-out opt-in by default for a project (generic: yes, small)
 
 Every BaseMaterial3D takes part in the cut-out, so a game must reach every material built before its own
