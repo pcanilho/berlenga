@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="RoadRelief3D" inherits="MeshInstance3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		A used asphalt street's relief as real geometry that holds puddles.
+	</brief_description>
+	<description>
+		Builds a street surface whose ruts, sags and hollows are geometry, so raster, the path tracer and water all see the same bed. The road lies in the node's frame: X along it from 0 to [member length], Z across it from -[member width]/2 to [member width]/2, Y up. Its relief is the sum of a crown (or one cross slope) with gutter pans at the kerbs, two wheel-path ruts per lane with low shoulders (shear rutting's W profile) deepening with [member traffic], ISO 8608 road roughness of [member roughness_class], long settlement sags, birdbath depressions, utility patches and potholes. Every part is a function of world position (cosines with seeded phases, hashed gradient noise, features placed per world cell), so no two streets, or two ends of one, repeat, and pieces laid end to end join without a seam. Moving the node gives a different stretch of street. The mesh is a grid of [member cell] metres with UV and UV2 in metres along and across the road (from the -Z kerb); give it a material with [member GeometryInstance3D.material_override].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="contains" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
+				Whether a world point lies over the road.
+			</description>
+		</method>
+		<method name="get_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
+				The height (world Y) of the road surface above or below [param world_position], or -INF where the point is not over the road. Water, props and characters read the same surface the mesh shows.
+			</description>
+		</method>
+		<method name="local_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="x" type="float" />
+			<param index="1" name="z" type="float" />
+			<description>
+				The relief at a point of the road's frame ([param x] along, [param z] across, metres), as a height in the node's frame. Points past the road are clamped to its edge.
+			</description>
+		</method>
+		<method name="rebuild">
+			<return type="void" />
+			<description>
+				Rebuilds the mesh and collider now (otherwise they are rebuilt on the next idle frame after any property or transform change).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="cell" type="float" setter="set_cell" getter="get_cell" default="0.08">
+			The mesh grid's spacing (metres). The ruts and hollows are geometry at this scale; finer texture belongs in the material.
+		</member>
+		<member name="collision" type="bool" setter="set_collision" getter="has_collision" default="true">
+			When enabled, a static body with the same surface (a trimesh) is built under the node.
+		</member>
+		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
+			The collision layers of the static body.
+		</member>
+		<member name="cross_slope" type="float" setter="set_cross_slope" getter="get_cross_slope" default="0.02">
+			The fall from the crown to each kerb, as rise over run (AASHTO: 1.5 to 2 % on paved streets).
+		</member>
+		<member name="depression_density" type="float" setter="set_depression_density" getter="get_depression_density" default="1.5">
+			Birdbath depressions (local settlement where water stands after rain) per 100 m², placed by a hash of world cells.
+		</member>
+		<member name="depression_depth" type="float" setter="set_depression_depth" getter="get_depression_depth" default="0.015">
+			The deepest birdbath depression (metres).
+		</member>
+		<member name="gutter_drop" type="float" setter="set_gutter_drop" getter="get_gutter_drop" default="0.025">
+			How far the gutter pan falls below the cross slope at the kerb (metres).
+		</member>
+		<member name="gutter_width" type="float" setter="set_gutter_width" getter="get_gutter_width" default="0.3">
+			The gutter pan's width along each kerb (metres).
+		</member>
+		<member name="lanes" type="int" setter="set_lanes" getter="get_lanes" default="2">
+			Lanes across the road; each has two wheel-path ruts.
+		</member>
+		<member name="length" type="float" setter="set_length" getter="get_length" default="20.0">
+			The road's length along its X axis (metres).
+		</member>
+		<member name="one_way" type="bool" setter="set_one_way" getter="is_one_way" default="false">
+			When enabled, the road falls one way, toward +Z, instead of from a crown to both kerbs.
+		</member>
+		<member name="patch_density" type="float" setter="set_patch_density" getter="get_patch_density" default="0.15">
+			Utility patches per 100 m²: rectangles cut square to the street, a few millimetres proud or sunk with a stepped edge.
+		</member>
+		<member name="pothole_density" type="float" setter="set_pothole_density" getter="get_pothole_density" default="0.02">
+			Potholes per 100 m²: ragged, steep-walled hollows.
+		</member>
+		<member name="pothole_depth" type="float" setter="set_pothole_depth" getter="get_pothole_depth" default="0.045">
+			The deepest pothole (metres).
+		</member>
+		<member name="roughness_class" type="int" setter="set_roughness_class" getter="get_roughness_class" enum="RoadRelief3D.RoughnessClass" default="1">
+			The ISO 8608 roughness class of the surface: its displacement spectrum Gd(n) = Gd(n0) (n / n0)^-2 over wavelengths 0.12 to 3 m.
+		</member>
+		<member name="rut_depth" type="float" setter="set_rut_depth" getter="get_rut_depth" default="0.018">
+			Rut depth (metres) at full [member traffic].
+		</member>
+		<member name="sag_depth" type="float" setter="set_sag_depth" getter="get_sag_depth" default="0.008">
+			The long settlement sags' amplitude (metres), over 9 and 24 m.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Varies every part of the relief; the relief also follows world position, so the same seed differs from place to place.
+		</member>
+		<member name="track" type="float" setter="set_track" getter="get_track" default="1.8">
+			The distance between a lane's two wheel paths (metres).
+		</member>
+		<member name="traffic" type="float" setter="set_traffic" getter="get_traffic" default="0.5">
+			How worn the wheel paths are: 0 a quiet lane, 1 a bus route. The ruts deepen and fade along the street around this.
+		</member>
+		<member name="width" type="float" setter="set_width" getter="get_width" default="7.0">
+			The road's width kerb to kerb (metres).
+		</member>
+	</members>
+	<constants>
+		<constant name="ROUGHNESS_A" value="0" enum="RoughnessClass">
+			ISO 8608 class A, very good: Gd(n0) = 16e-6 m³.
+		</constant>
+		<constant name="ROUGHNESS_B" value="1" enum="RoughnessClass">
+			ISO 8608 class B, good: 64e-6 m³.
+		</constant>
+		<constant name="ROUGHNESS_C" value="2" enum="RoughnessClass">
+			ISO 8608 class C, average: 256e-6 m³.
+		</constant>
+	</constants>
+</class>
