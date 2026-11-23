@@ -865,9 +865,12 @@ func _ready() -> void:
 	# The streamed ground cover settles round the camera before the picture.
 	var sw := 0
 	get_viewport().disable_3d = true # placing only: the frames draw nothing
+	var tw := Time.get_ticks_msec()
 	while cover != null and not cover.is_stream_idle() and sw < 1200:
 		await get_tree().process_frame
 		sw += 1
+		if sw % 100 == 0:
+			_log("cover settle: %d frames, %d s, %s" % [sw, (Time.get_ticks_msec() - tw) / 1000, str(cover.get_stream_stats())])
 	get_viewport().disable_3d = false
 	# Every capture waits for the grass far colours to bake (a SubViewport render, ~30 frames, restarted by any data
 	# map change) and for the cover to settle again, not for a fixed frame count.
@@ -888,6 +891,8 @@ func _ready() -> void:
 			break
 		await get_tree().process_frame
 		bw += 1
+		if bw % 100 == 0:
+			_log("far bake wait: %d frames, %d s" % [bw, (Time.get_ticks_msec() - tw) / 1000])
 	get_viewport().disable_3d = false
 	_log("grass far colours baked and cover idle after %d frames" % bw)
 	_mem_log("after first frames")
