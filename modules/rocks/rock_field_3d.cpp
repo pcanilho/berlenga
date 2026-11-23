@@ -1269,8 +1269,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						pd.size = MIN(d, 1.5f);
 						const RockGenerator::RockType type = rng.randf() < 0.7f ? rv.head_type : _type_at(gen, pd.xz);
 						pd.key = _library_key(type, RockGenerator::FAMILY_COBBLE, bin);
-						// Imbrication: long axis across the flow, the stone dipping upstream (15 to 30 degrees).
-						pd.yaw = Math::atan2(-f.x, -f.y) + (rng.randf() - 0.5f) * 0.6f;
+						// Imbrication: long axis across the flow, the stone dipping upstream (15 to 30 degrees). The a axis
+						// is a line, so either end may point to the left bank (half are turned round), and its bearing
+						// spreads some 25 degrees either way (imbricated gravels' a-axis fabrics are broad); neighbours of
+						// one shape no longer lie as twins.
+						pd.yaw = Math::atan2(-f.x, -f.y) + (rng.randf() - 0.5f) * 0.9f + (rng.randf() < 0.5f ? float(Math::PI) : 0.0f);
 						pd.tilt_axis = Vector3(side.x, 0, side.y);
 						pd.tilt = Math::deg_to_rad(15.0f + 15.0f * rng.randf());
 						pd.sink = 0.25f + 0.1f * rng.randf();
@@ -2716,6 +2719,43 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			coarse.add(sd.xz, sd.centre, sd.r);
 		}
 	}
+	// Neighbours of one shape are told apart: a variant that a stone of the same library within a few sizes already
+	// has is drawn again (up to three times), so a packed bed shows no side-by-side twins (no visible repetition; the
+	// greedy colouring tile games use so no two neighbours share a tile).
+	struct Placed {
+		Vector2 p;
+		uint32_t key;
+		int next; // the next stone in its grid bin, or -1
+		uint16_t variant;
+	};
+	LocalVector<Placed> placed;
+	// 1 m bins over the cell, each the head of a list through Placed::next (no allocation per bin).
+	const real_t bin_m = 1.0;
+	const int gw = MAX(1, int(Math::ceil(p_rect.size.x / bin_m))), gh = MAX(1, int(Math::ceil(p_rect.size.y / bin_m)));
+	LocalVector<int> bin_head;
+	auto bin_of = [&](const Vector2 &p_at) {
+		const int bx = CLAMP(int(Math::floor((p_at.x - p_rect.position.x) / bin_m)), 0, gw - 1);
+		const int bz = CLAMP(int(Math::floor((p_at.y - p_rect.position.y) / bin_m)), 0, gh - 1);
+		return Vector2i(bx, bz);
+	};
+	auto shared_near = [&](const Vector2 &p_at, uint32_t p_key, uint16_t p_variant, real_t p_reach) {
+		if (bin_head.is_empty()) {
+			return false;
+		}
+		const int rc = int(Math::ceil(p_reach / bin_m));
+		const Vector2i c = bin_of(p_at);
+		for (int bz = MAX(c.y - rc, 0); bz <= MIN(c.y + rc, gh - 1); bz++) {
+			for (int bx = MAX(c.x - rc, 0); bx <= MIN(c.x + rc, gw - 1); bx++) {
+				for (int id = bin_head[bz * gw + bx]; id >= 0; id = placed[id].next) {
+					const Placed &o = placed[id];
+					if (o.key == p_key && o.variant == p_variant && o.p.distance_to(p_at) < p_reach) {
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	};
 	for (const Pending &pd : pending) {
 		if (int(r_stones.size()) >= cap) {
 			break;
@@ -2743,6 +2783,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 		st.layer = p_layer;
 		st.library = pd.key;
 		st.variant = pick_variant(lib);
+		const Vector2 at2(pd.xz.x, pd.xz.z);
+		const real_t reach = MAX(real_t(4.0 * pd.size), real_t(0.3));
+		for (int t = 0; t < 3 && lib->meshes.size() > 1 && shared_near(at2, pd.key, st.variant, reach); t++) {
+			st.variant = pick_variant(lib);
+		}
 		st.scale = pd.size * 0.5f;
 		st.film = pd.film;
 		_rest(gen, st, *lib, pd.xz, pd.yaw, pd.sink, pd.tilt_axis, pd.tilt, pd.follow);
@@ -2762,6 +2807,15 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 		}
 		st.position.y += rise;
 		dep.add(Vector2(pd.xz.x, pd.xz.z), float(st.position.y), r);
+		if (bin_head.is_empty()) {
+			bin_head.resize(gw * gh);
+			for (int &h : bin_head) {
+				h = -1;
+			}
+		}
+		const Vector2i bc = bin_of(at2);
+		placed.push_back({ at2, pd.key, bin_head[bc.y * gw + bc.x], st.variant });
+		bin_head[bc.y * gw + bc.x] = int(placed.size()) - 1;
 		r_stones.push_back(st);
 	}
 }
