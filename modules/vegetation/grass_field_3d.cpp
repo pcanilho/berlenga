@@ -1113,7 +1113,9 @@ varying float v_dry;
 varying float v_flush; // Regrowth on burnt ground (burn_flush_map).
 varying float v_graze; // Grazed down to a lawn (graze_map).
 varying float v_hay; // Cut hay lying in the meadow: days since mown; below 0 none.
-varying float v_lai; // The sward's leaf area left over this blade's ground (1 uncut; a mown meadow's stubble less).
+// A mown meadow (one varying: the shader is at the 32 limit): x the sward's leaf area left over this blade's ground
+// (1 uncut; the stubble less), y the cut stub's share of a stubble blade's height now, z how fresh the cut (1 just cut).
+varying vec3 v_cut;
 varying float v_fairy_dead; // A blade browned in a fairy ring's dead band.
 varying vec3 v_melt; // After the snow: x pale and matted, y snow mould, z days since the melt.
 varying vec2 v_wash; // Under the last flood's mark: x combed flat, y silted.
@@ -1183,7 +1185,7 @@ void vertex() {
 	// cure: UNH; rarely under three in the UK: FAO, Grassland Fodder Conservation); then carted. The gathering moves each
 	// blade across its row, so a windrow holds the grass of its whole strip.
 	v_hay = -1.0;
-	v_lai = 1.0;
+	v_cut = vec3(1.0, 0.0, 0.0);
 	vec3 hay_shift = vec3(0.0);
 	float hay_lift = 0.0;
 	vec2 hay_lay = vec2(0.0);
@@ -1200,9 +1202,14 @@ void vertex() {
 					// The canopy over the ground is the stubble's now, not the sward's: the sky reaches down into it,
 					// so the ambient darkening (AO below) takes the leaf area left, about the height left (the
 					// regrowth's leaves fill out its height).
-					v_lai = clamp(regrown / max(h, 1e-3), 0.0, 1.0);
+					v_cut.x = clamp(regrown / max(h, 1e-3), 0.0, 1.0);
 					if (fract(rnd * 13.7) >= 0.6 || md >= 3.5) {
 						h = regrown;
+						// The cut stub keeps the pale of the stem bases and sheaths the cut lays open (turf cut low "turns
+						// yellow or brown", "the stem tissue is exposed": UC IPM, Scalping; K-State, Scalping Turf), under
+						// the green leaves growing back from the base; the stub itself greens a little in the light over
+						// a couple of weeks (an estimate).
+						v_cut.yz = vec2(clamp(stub / max(regrown, 1e-3), 0.0, 1.0), 1.0 - 0.6 * smoothstep(5.0, 21.0, md));
 					} else {
 						vec2 rd = vec2(cos(ms.g), sin(ms.g));
 						vec2 rn = vec2(-rd.y, rd.x);
@@ -1556,6 +1563,16 @@ void fragment() {
 	}
 	// Cut grass curing: it wilts duller within the day, then cures to a bright green-gold hay (well-made hay "looks
 	// bright"; bleached hay is weathered: FAO), each blade a little its own shade; the cut ends pale.
+	// Fresh stubble: below the cut the stem bases and sheaths are pale yellow-green (grown in the sward's shade), the
+	// cut ends paler and straw-tinged; the regrowth above the stub keeps the blade's own green.
+	if (v_cut.y > 0.0) {
+		// Yellow-green, not grey: the sheaths hold less chlorophyll, not none (a first try, desaturated to the
+		// blade's brightness, read as a grey-white field).
+		vec3 sheath = mix(c * vec3(1.3, 1.15, 0.55), straw, 0.2);
+		float below = 1.0 - smoothstep(v_cut.y - 0.04, v_cut.y + 0.01, v_t);
+		float cut_end = smoothstep(v_cut.y - 0.12, v_cut.y - 0.02, v_t) * below;
+		c = mix(c, mix(sheath, straw * 1.15, 0.5 * cut_end), below * v_cut.z * 0.65);
+	}
 	if (v_hay >= 0.0) {
 		vec3 wilted = mix(c, vec3(dot(c, vec3(0.3, 0.59, 0.11))) * vec3(0.92, 1.06, 0.78), 0.3);
 		vec3 hay_c = vec3(0.42, 0.4, 0.17) * (0.8 + 0.4 * fract(v_dry * 23.0)); // Green-gold, not grey (PC pair 23 Nov).
@@ -1661,7 +1678,7 @@ void fragment() {
 	// raster's ambient takes it: its shadow maps already darken the sun there, and the path
 	// tracer sees the blades themselves (it used to take this darkening in the albedo too).
 	float scatter = clamp(dot(ALBEDO, vec3(0.3, 0.59, 0.11)) * 1.7, 0.0, 0.95);
-	AO = exp(-0.8 * sqrt(1.0 - scatter) * sward_lai * v_lai * (1.0 - v_t));
+	AO = exp(-0.8 * sqrt(1.0 - scatter) * sward_lai * v_cut.x * (1.0 - v_t));
 }
 
 )";

@@ -2025,3 +2025,17 @@ array, for the path tracer's material slot), so the days pass without a rebuild.
   the layer width an estimate), smaller lumps and a warmer hay colour (about 113k triangles with LODs). The windrows
   read grey-white in raster and path tracing: cut hay lying face up mirrored the sky. Dry hay is now matt (roughness at
   least 0.8, less strand sheen, specular 0.2) and green-gold, near and on the far ground.
+
+## Pale fresh stubble (round 10, first pick)
+A meadow cut for hay lays open the stem bases and leaf sheaths that grew in the sward's shade: turf cut low "turns
+yellow or brown" where "the stem tissue is exposed" (UC IPM, Scalping, ipm.ucanr.edu/TOOLS/TURF/PESTS/abioscalp.html),
+the "brown, stemmy" look that takes "probably several weeks" to recover in summer (K-State, Scalping Turf). A hay
+stubble of 7.5 to 10 cm shows the same in a milder form: pale yellow-green stubs, straw-tinged cut ends, the green
+leaves regrowing from the base over the following weeks.
+Built: the grass blade shader's mown branch (GrassField3D.hay_meadows) passes the cut stub's share of each stubble
+blade and how fresh the cut is (one vec3 varying with the leaf area left: the shader is at the 32-varying limit).
+Below the cut the blade takes a yellow-green (its colour x (1.3, 1.15, 0.55), a fifth straw), the top tenth of the
+stub straw-tinged; full for five days, easing to 0.4 by day 21 (estimate); the regrowth above keeps its green, so
+the pale share falls as the blades grow back (by day 30 the meadow is green). The far ground's mown colour already
+pales the stubble the same way. Check: grass bench --raster --hay=5 and --hay=30.
+
