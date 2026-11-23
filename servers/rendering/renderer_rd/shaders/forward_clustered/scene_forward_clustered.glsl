@@ -1319,6 +1319,68 @@ layout(location = 2) out vec4 motion_vector;
 
 #include "../material_inputs_inc.glsl"
 #include "../scene_forward_gi_inc.glsl"
+
+// The share of a point or spot light at view-space p_light that reaches view-space p_vertex through gas: the optical
+// depth along the segment, marched through the gas glow grid (LightStorage::GasGlow, whose alpha is each voxel's
+// opacity; the mip as long as a step, prefiltered), passed through by the two-stream total transmittance as the
+// sun's volume shadow is (see directional_volume_shadow). The path tracer's shadow rays track the gas; without this a
+// fire's light, standing in its smoke, lit the ground far round it straight through the plume.
+#define GAS_LIGHT_TRANSMITTANCE
+float gas_light_transmittance(vec3 p_vertex, vec3 p_light) {
+	for (uint i = 0; i < scene_data_block.data.directional_light_count; i++) {
+		vec4 gu = directional_lights.data[i].gas_glow_u;
+		if (gu == vec4(0.0)) {
+			continue;
+		}
+		vec4 gv = directional_lights.data[i].gas_glow_v;
+		vec4 gw = directional_lights.data[i].gas_glow_w;
+		vec3 a = vec3(dot(vec4(p_vertex, 1.0), gu), dot(vec4(p_vertex, 1.0), gv), dot(vec4(p_vertex, 1.0), gw));
+		vec3 b = vec3(dot(vec4(p_light, 1.0), gu), dot(vec4(p_light, 1.0), gv), dot(vec4(p_light, 1.0), gw));
+		// The part of the segment inside the grid.
+		vec3 d = b - a;
+		vec3 inv = 1.0 / (abs(d) + 1e-8) * sign(d + 1e-12);
+		vec3 t0 = (vec3(0.0) - a) * inv;
+		vec3 t1 = (vec3(1.0) - a) * inv;
+		float tn = max(max(max(min(t0.x, t1.x), min(t0.y, t1.y)), min(t0.z, t1.z)), 0.0);
+		float tf = min(min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z)), 1.0);
+		if (tf <= tn) {
+			return 1.0;
+		}
+		ivec3 dims = textureSize(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), 0);
+		float lod_max = float(textureQueryLevels(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP)) - 1);
+		if (textureLod(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), vec3(0.5), lod_max).a < 1e-6) {
+			return 1.0;
+		}
+		// The light stands for the glowing gas round it, so the voxel it sits in does not shade it (a fire's light
+		// in its own plume would otherwise be dimmed by the plume's densest voxel, and the ground at the flame's foot
+		// went unlit where the path tracer lights it); nor does the surface's own voxel, whose filtered opacity
+		// bleeds the gas beside it onto the surface.
+		float vox_t = 1.0 / max(length(d * vec3(dims)), 1e-6); // one voxel along the segment, in t
+		tn = max(tn, 0.5 * vox_t);
+		tf = min(tf, 1.0 - vox_t);
+		if (tf <= tn) {
+			return 1.0;
+		}
+		const int STEPS = 12;
+		float seg_vox = length(d * vec3(dims)) * (tf - tn); // the inside part's length, in voxels
+		float step_vox = seg_vox / float(STEPS);
+		float lod = clamp(log2(max(step_vox, 1.0)), 0.0, lod_max);
+		float k = step_vox / exp2(lod); // this step through voxels exp2(lod) across
+		float tau = 0.0;
+		for (int s = 0; s < STEPS; s++) {
+			vec3 q = a + d * mix(tn, tf, (float(s) + 0.5) / float(STEPS));
+			float o = textureLod(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), q, lod).a;
+			tau -= k * log(max(1.0 - min(o, 0.999), 1e-3));
+		}
+		float w = uintBitsToFloat(directional_lights.data[i].pad.x);
+		float g = uintBitsToFloat(directional_lights.data[i].pad.y);
+		float tau_s = (1.0 - g) * w * tau;
+		float tau_a = (1.0 - w) * tau;
+		return max(exp(-tau * (1.0 - w * g * g)), exp(-sqrt(3.0 * tau_a * (tau_a + tau_s))) / (1.0 + 0.75 * tau_s));
+	}
+	return 1.0;
+}
+
 #include "../scene_forward_lights_inc.glsl"
 
 #endif //!defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)

@@ -2662,8 +2662,19 @@ Cost: one small compute pass a frame over at most 66^3 voxels (only voxels with 
 the opaque pass up to 6 x 16 trilinear fetches per pixel within two grid sizes of the gas, none elsewhere. GPU time
 goes on the PC queue.
 Gap left: the path tracer's walls beside gas are also lit by the sunlit ground's bounce, which raster has nowhere
-(no GI in these scenes); the fire test's orange ground light from the fire is wider in raster than traced, an older
-gap of the fire's own light, not this change.
+(no GI in these scenes).
+
+### Point and spot lights through gas (bug, 23 Nov)
+
+The fire test's orange ground light spread far wider in raster than traced: the fire's light stands in its own
+smoke, and raster lit the ground straight through the plume, where the path tracer's shadow rays track the gas
+(ratio tracking). Fix (Forward+, with surface_glow): each point and spot light's share at a surface is multiplied by
+the gas's transmittance along the segment to the light, marched through the same glow grid (12 steps, the mip as
+long as a step, the two-stream total transmittance as for the sun's volume shadow). The voxel the light sits in and
+the surface's own voxel are skipped: the light stands for the glowing gas round it, and the surface's filtered
+voxel bleeds the gas beside it. Same-run pair (fire, 480x270, error against the path tracer, before -> after):
+whole frame 19.0 -> 8.3, bottom third 31.4 -> 10.4, mean +5.0 -> -2.4. Left: the ground at the flame's foot is still
+a little less orange than traced (the grid's voxels are coarser than the plume's edge).
 
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
