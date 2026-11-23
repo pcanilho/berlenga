@@ -143,6 +143,10 @@ private:
 		LocalVector<float> heights; // m over the ground, about the stone's top
 	};
 	HashMap<Vector3i, ObstacleCell> obstacle_cache;
+	// get_obstacles places the cells it has not cached on the worker threads (p_job: an array of CoarseJob, placed
+	// as the coarse tier places); a cell that asks for a shape library not built yet is placed again on the main
+	// thread, as before, so the result is the same.
+	static void _obstacle_place_job(void *p_job, uint32_t p_index);
 
 	struct Group {
 		uint32_t library = 0;

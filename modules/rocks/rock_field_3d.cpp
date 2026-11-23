@@ -6904,7 +6904,85 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 	return built;
 }
 
+void RockField3D::_obstacle_place_job(void *p_job, uint32_t p_index) {
+	CoarseJob &job = static_cast<CoarseJob *>(p_job)[p_index];
+	const real_t cs = job.field->_cell_size(Layer(job.key.x));
+	rf_job_generator = job.gen;
+	rf_coarse_job = &job;
+	job.field->_place(Layer(job.key.x), Rect2(job.key.y * cs, job.key.z * cs, cs, cs), rf_hash3(job.key.x, job.key.y, job.key.z, uint32_t(job.field->seed) * 2654435761u), job.stones);
+	rf_coarse_job = nullptr;
+	rf_job_generator = nullptr;
+}
+
 PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_size) {
+	// The cells not cached yet: placed on the worker threads in batches (a whole-world query places thousands).
+	LocalVector<Vector3i> missing;
+	for (int l = 0; l < LAYER_MAX; l++) {
+		if (!layer_enabled[l] || l == LAYER_CLIFF || _is_detail(l)) {
+			continue;
+		}
+		const real_t cs = _cell_size(Layer(l));
+		const int x0 = int(Math::floor(p_rect.position.x / cs)), x1 = int(Math::floor(p_rect.get_end().x / cs));
+		const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector3i key(l, x, z);
+				if (!obstacle_cache.has(key)) {
+					missing.push_back(key);
+				}
+			}
+		}
+	}
+	const uint32_t BATCH = 512;
+	TerrainGenerator3D *gen = _get_generator();
+	LocalVector<CoarseJob> placed;
+	for (uint32_t b0 = 0; b0 < missing.size(); b0 += BATCH) {
+		const uint32_t n = MIN(BATCH, missing.size() - b0);
+		placed.clear();
+		placed.resize(n);
+		for (uint32_t i = 0; i < n; i++) {
+			placed[i].field = this;
+			placed[i].key = missing[b0 + i];
+			placed[i].gen = gen;
+		}
+		if (gen && n > 1) {
+			WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&RockField3D::_obstacle_place_job, placed.ptr(), int(n), -1, true, SNAME("RockField3D obstacles"));
+			WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+		}
+		for (uint32_t i = 0; i < n; i++) {
+			CoarseJob &pj = placed[i];
+			if (!gen || n == 1 || !pj.missing.is_empty()) {
+				// Not placed on a worker, or it wanted a shape library not built yet: place it here, where the
+				// library is built or asked for as before.
+				pj.stones.clear();
+				const real_t cs = _cell_size(Layer(pj.key.x));
+				_place(Layer(pj.key.x), Rect2(pj.key.y * cs, pj.key.z * cs, cs, cs), rf_hash3(pj.key.x, pj.key.y, pj.key.z, uint32_t(seed) * 2654435761u), pj.stones);
+			}
+		}
+		for (uint32_t i = 0; i < n; i++) {
+			ObstacleCell cell;
+			for (const Stone &st : placed[i].stones) {
+				if (st.footprint > 0.0f) {
+					cell.obstacles.push_back(Vector4(st.position.x, st.ground, st.position.z, st.footprint));
+					cell.sizes.push_back(2.0f * st.scale);
+					// Its top: the hull's support straight up when the shape is built (as get_stones), else
+					// about 0.7 b (the c axis) over the origin, where the mesh's base sits.
+					real_t top = st.position.y + 1.4f * st.scale;
+					const Library *lib = libraries.getptr(st.library);
+					if (lib && st.variant < lib->hulls.size() && !lib->hulls[st.variant].is_empty()) {
+						const PackedVector3Array &hull = lib->hulls[st.variant];
+						real_t best = -1e20;
+						for (int h = 0; h < hull.size(); h++) {
+							best = MAX(best, st.basis.rows[1].dot(hull[h]));
+						}
+						top = st.position.y + best;
+					}
+					cell.heights.push_back(MAX(float(top - st.ground), 0.0f));
+				}
+			}
+			obstacle_cache.insert(missing[b0 + i], std::move(cell));
+		}
+	}
 	PackedVector4Array out;
 	for (int l = 0; l < LAYER_MAX; l++) {
 		if (!layer_enabled[l] || l == LAYER_CLIFF || _is_detail(l)) {
@@ -6915,34 +6993,7 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 		const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
 		for (int z = z0; z <= z1; z++) {
 			for (int x = x0; x <= x1; x++) {
-				// Placement is deterministic per cell, so each cell is placed once and its obstacles kept.
-				const Vector3i key(l, x, z);
-				ObstacleCell *oc = obstacle_cache.getptr(key);
-				if (!oc) {
-					LocalVector<Stone> stones;
-					_place(Layer(l), Rect2(x * cs, z * cs, cs, cs), rf_hash3(l, x, z, uint32_t(seed) * 2654435761u), stones);
-					ObstacleCell cell;
-					for (const Stone &st : stones) {
-						if (st.footprint > 0.0f) {
-							cell.obstacles.push_back(Vector4(st.position.x, st.ground, st.position.z, st.footprint));
-							cell.sizes.push_back(2.0f * st.scale);
-							// Its top: the hull's support straight up when the shape is built (as get_stones), else
-							// about 0.7 b (the c axis) over the origin, where the mesh's base sits.
-							real_t top = st.position.y + 1.4f * st.scale;
-							const Library *lib = libraries.getptr(st.library);
-							if (lib && st.variant < lib->hulls.size() && !lib->hulls[st.variant].is_empty()) {
-								const PackedVector3Array &hull = lib->hulls[st.variant];
-								real_t best = -1e20;
-								for (int h = 0; h < hull.size(); h++) {
-									best = MAX(best, st.basis.rows[1].dot(hull[h]));
-								}
-								top = st.position.y + best;
-							}
-							cell.heights.push_back(MAX(float(top - st.ground), 0.0f));
-						}
-					}
-					oc = &obstacle_cache.insert(key, std::move(cell))->value;
-				}
+				const ObstacleCell *oc = obstacle_cache.getptr(Vector3i(l, x, z));
 				for (uint32_t k = 0; k < oc->obstacles.size(); k++) {
 					const Vector4 &o = oc->obstacles[k];
 					if (oc->sizes[k] >= p_min_size && p_rect.has_point(Vector2(o.x, o.z))) {
