@@ -1,6 +1,6 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|plaza|room|textures|glass|far|night|physx|fluid|tearing|campfire|smokewall --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|plaza|room|textures|glass|far|night|physx|fluid|tearing|campfire|smokewall|smokelamp --spp=N --rr --out=path.png --frames=N --far=N --raster
 # --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
 # --bounces=N (path tracing bounces after the shot sets its own; 0: direct light only)
 # --flow=property:value (a PhysXFlow3D property in the physx shot, or a PhysXParticleFluid3D one in the fluid shot)
@@ -919,9 +919,10 @@ func shot_fluid() -> void:
 		fluid.material_override = mat(Color(0.9, 0.9, 0.9), 0.5)
 	add_child(fluid)
 
-# Dust rising in front of a plastered wall on tiles, the sun low behind the wall: the cloud's sunlit top lights the
-# shaded wall face and the tiles around it, and the cloud hides part of their sky (PhysXFlow3D surface_glow).
-# Needs the CC0 Poly Haven assets fetch_ext.sh downloads into ext/.
+# Steam rising out of a courtyard in the shade of its walls, an evening sun low over the left wall: the plume's top climbs
+# into the sun and lights the shaded walls and floor below it, while its shaded body hides part of their sky
+# (PhysXFlow3D surface_glow). Walls all round but the camera's side leave the courtyard little sky, so the gas's light
+# counts for more there, as in a street canyon. Needs the CC0 Poly Haven assets fetch_ext.sh downloads into ext/.
 func shot_smokewall() -> void:
 	if not ClassDB.class_exists("PhysXFlow3D"):
 		push_error("This build has no PhysX module.")
@@ -937,7 +938,7 @@ func shot_smokewall() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-38, 235, 0) if sun_rotation == Vector3.INF else sun_rotation
+	sun.rotation_degrees = Vector3(-15, -80, 0) if sun_rotation == Vector3.INF else sun_rotation
 	sun.light_energy = 1.6
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 80.0
@@ -946,32 +947,75 @@ func shot_smokewall() -> void:
 	tiles.name = "Floor"
 	var plaster := ext_material("plastered_stone_wall", 0.4)
 	plaster.albedo_color = Color(3.0, 3.0, 3.0) # the scan's limewash reads near black (albedo ~0.05); whitewashed
-	box(Vector3(14, 4.5, 0.4), Vector3(0, 2.25, -3.0), plaster)
-	camera(Vector3(3.5, 2.0, 8.5), Vector3(-0.5, 2.2, -2.5), 55)
+	box(Vector3(10.8, 6.0, 0.4), Vector3(0, 3.0, -4.2), plaster) # back
+	box(Vector3(0.4, 6.0, 8.0), Vector3(-5.2, 3.0, -0.4), plaster) # left
+	box(Vector3(0.4, 6.0, 8.0), Vector3(5.2, 3.0, -0.4), plaster) # right
+	camera(Vector3(1.6, 3.0, 13.0), Vector3(0.0, 5.0, -2.0), 58)
 	gas = ClassDB.instantiate("PhysXFlow3D")
-	gas.cell_size = 0.12
+	gas.cell_size = 0.15
 	gas.max_blocks = 2048
 	gas.combustion = false
 	gas.buoyancy = 0.0
-	gas.smoke_buoyancy = 0.4
+	gas.smoke_buoyancy = 2.0
 	gas.smoke_fade = 0.0
 	gas.vorticity = 3.0
 	gas.scattering_strength = 1.0
-	gas.smoke_color = Color(0.78, 0.71, 0.6)
+	gas.smoke_color = Color(0.93, 0.94, 0.96)
 	gas.set("ground_albedo", 0.35)
 	for k in flow_props:
 		gas.set(k, flow_props[k])
 	add_child(gas)
 	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
 	em.shape = 1 # box
-	em.size = Vector3(2.4, 0.6, 1.4)
-	em.position = Vector3(-1.8, 0.3, -1.4)
-	em.smoke = 1.0
+	em.size = Vector3(1.6, 0.5, 1.6)
+	em.position = Vector3(-0.5, 0.25, -1.6)
+	em.smoke = 1.2
 	em.temperature = 0.0
 	em.fuel = 0.0
-	em.velocity = Vector3(0.3, 3.0, 0.4)
+	em.velocity = Vector3(0.0, 5.0, 0.3)
 	em.couple_rate = 8.0
 	gas.add_child(em)
+
+# Night in the same courtyard: smoke drifting round a wall lamp that shines out and down, away from its wall, under a
+# faint moon. The wall behind the lamp and the side walls get no direct light from it; they are lit by the light the
+# smoke in its beam scatters back onto them (PhysXFlow3D surface_glow), as under path tracing.
+func shot_smokelamp() -> void:
+	shot_smokewall()
+	if gas == null:
+		return
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.01, 0.012, 0.02)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.02, 0.025, 0.04)
+	env.sky = null
+	for c in get_children():
+		if c is DirectionalLight3D:
+			# Moonlight (the gas's glow grid rides on the first shadow-casting directional light's data).
+			c.rotation_degrees = Vector3(-50, -30, 0) if sun_rotation == Vector3.INF else sun_rotation
+			c.light_energy = 0.04
+			c.light_color = Color(0.7, 0.8, 1.0)
+		elif c is Camera3D:
+			c.position = Vector3(2.0, 2.2, 10.5)
+			c.look_at(Vector3(-0.5, 2.6, -3.0))
+	var lamp := SpotLight3D.new()
+	lamp.position = Vector3(-1.0, 3.6, -3.55)
+	lamp.rotation_degrees = Vector3(-50, 180, 0) # out of the back wall and down
+	lamp.light_color = Color(1.0, 0.78, 0.5)
+	lamp.light_energy = 40.0
+	lamp.spot_range = 14.0
+	lamp.spot_angle = 30.0
+	lamp.shadow_enabled = true
+	add_child(lamp)
+	box(Vector3(0.3, 0.15, 0.4), Vector3(-1.0, 3.72, -3.8), mat(Color(0.12, 0.12, 0.13), 0.5)) # its housing
+	gas.smoke_buoyancy = 0.25
+	gas.smoke_color = Color(0.8, 0.8, 0.82)
+	for k in flow_props:
+		gas.set(k, flow_props[k])
+	for e in gas.get_children():
+		e.size = Vector3(3.0, 0.5, 2.0)
+		e.position = Vector3(-1.0, 0.25, -1.5)
+		e.velocity = Vector3(0.0, 2.5, 0.4)
+		e.smoke = 0.8
 
 func shot_far() -> void:
 	env.background_color = Color(0.25, 0.3, 0.4)
