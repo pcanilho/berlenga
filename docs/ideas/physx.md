@@ -2669,11 +2669,17 @@ Gap left: the path tracer's walls beside gas are also lit by the sunlit ground's
 The fire test's orange ground light spread far wider in raster than traced: the fire's light stands in its own
 smoke, and raster lit the ground straight through the plume, where the path tracer's shadow rays track the gas
 (ratio tracking). Fix (Forward+, with surface_glow): each point and spot light's share at a surface is multiplied by
-the gas's transmittance along the segment to the light, marched through the same glow grid (12 steps, the mip as
-long as a step, the two-stream total transmittance as for the sun's volume shadow). The voxel the light sits in and
-the surface's own voxel are skipped: the light stands for the glowing gas round it, and the surface's filtered
-voxel bleeds the gas beside it. Same-run pair (fire, 480x270, error against the path tracer, before -> after):
-whole frame 19.0 -> 8.3, bottom third 31.4 -> 10.4, mean +5.0 -> -2.4. Left: the ground at the flame's foot is still
+the gas's two-stream total transmittance toward the light (as for the sun's volume shadow), traced through the
+same glow grid. The path tracer samples a light's sphere (a fire's light is 0.6 of its base wide, PARAM_SIZE), so
+raster averages four cones, one to each quarter of the sphere's face toward the surface, each as wide as its quarter
+(voxel cone traced soft shadows, Crassin et al. 2011), 8 steps each, the mip as wide as the cone or as long as a
+step. Tried first: a single ray to the centre (a fire's light behind its own dense core: the ground went black at
+night where the path tracer still lights it a quarter); one wide cone (averages a clumped plume's opacity before the
+log: 2 to 3 times too bright); four rays (four hard shadow lobes). The surface's own voxel is skipped (its filtered
+opacity bleeds the gas beside it). Same-run pair (fire, 480x270, error against the path tracer, before -> after):
+whole frame 19.0 -> 8.3, bottom third 31.4 -> 10.4, mean +5.0 -> -2.4. Night fire before a wall (no sun, the fire's light only;
+8x8 block error): 76 -> 26, mean +49 -> +0.5; the wall right of the plume still darker than traced, the ground left
+of it brighter. Left: the ground at the flame's foot is still
 a little less orange than traced (the grid's voxels are coarser than the plume's edge).
 
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)

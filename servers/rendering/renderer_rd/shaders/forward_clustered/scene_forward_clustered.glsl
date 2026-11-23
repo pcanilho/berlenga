@@ -1320,13 +1320,46 @@ layout(location = 2) out vec4 motion_vector;
 #include "../material_inputs_inc.glsl"
 #include "../scene_forward_gi_inc.glsl"
 
-// The share of a point or spot light at view-space p_light that reaches view-space p_vertex through gas: the optical
-// depth along the segment, marched through the gas glow grid (LightStorage::GasGlow, whose alpha is each voxel's
-// opacity; the mip as long as a step, prefiltered), passed through by the two-stream total transmittance as the
-// sun's volume shadow is (see directional_volume_shadow). The path tracer's shadow rays track the gas; without this a
-// fire's light, standing in its smoke, lit the ground far round it straight through the plume.
+// The optical depth of the gas along a cone from view-space p_a to p_b, p_end_vox voxels wide at p_b, through the gas
+// glow grid (LightStorage::GasGlow, alpha each voxel's opacity), the mip as wide as the cone or as long as a step,
+// whichever is more (voxel cone tracing, Crassin et al. 2011). The surface's own voxel (at p_a) is skipped: its
+// filtered opacity bleeds the gas beside the surface onto it.
+float gas_cone_depth(vec3 p_a, vec3 p_b, float p_end_m, vec4 p_gu, vec4 p_gv, vec4 p_gw, vec3 p_dims, float p_lod_max) {
+	vec3 a = vec3(dot(vec4(p_a, 1.0), p_gu), dot(vec4(p_a, 1.0), p_gv), dot(vec4(p_a, 1.0), p_gw));
+	vec3 b = vec3(dot(vec4(p_b, 1.0), p_gu), dot(vec4(p_b, 1.0), p_gv), dot(vec4(p_b, 1.0), p_gw));
+	vec3 d = b - a;
+	vec3 inv = 1.0 / (abs(d) + 1e-8) * sign(d + 1e-12);
+	vec3 t0 = (vec3(0.0) - a) * inv;
+	vec3 t1 = (vec3(1.0) - a) * inv;
+	float len_vox = length(d * p_dims);
+	float end_vox = p_end_m * len_vox / max(length(p_b - p_a), 1e-6);
+	float tn = max(max(max(min(t0.x, t1.x), min(t0.y, t1.y)), min(t0.z, t1.z)), 0.5 / max(len_vox, 1e-6));
+	float tf = min(min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z)), 1.0);
+	if (tf <= tn) {
+		return 0.0;
+	}
+	const int STEPS = 8;
+	float step_vox = len_vox * (tf - tn) / float(STEPS);
+	float tau = 0.0;
+	for (int s = 0; s < STEPS; s++) {
+		float t = mix(tn, tf, (float(s) + 0.5) / float(STEPS));
+		float lod = clamp(log2(max(max(step_vox, end_vox * t), 1.0)), 0.0, p_lod_max);
+		float o = textureLod(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), a + d * t, lod).a;
+		tau -= step_vox / exp2(lod) * log(max(1.0 - min(o, 0.999), 1e-3));
+	}
+	return tau;
+}
+
+// The share of a point or spot light (view-space p_light, radius p_radius) that reaches view-space p_vertex through
+// gas, as the path tracer's shadow rays find it tracking the gas to points sampled over the light's sphere: the
+// two-stream total transmittance (as the sun's volume shadow, directional_volume_shadow) averaged over four cones to
+// the sphere's face toward the surface, each to a quarter of it (centres at 0.7 of its radius across and 0.71 of it
+// out toward the surface, each cone as wide as its quarter). One wide cone averages the opacity of a clumped plume
+// before taking the log and lets far too much through; four narrow rays cast four hard shadows. A fire's light is a
+// ball as wide as its flames: without this, standing in its smoke, it lit the ground round it straight through the
+// plume.
 #define GAS_LIGHT_TRANSMITTANCE
-float gas_light_transmittance(vec3 p_vertex, vec3 p_light) {
+float gas_light_transmittance(vec3 p_vertex, vec3 p_light, float p_radius) {
 	for (uint i = 0; i < scene_data_block.data.directional_light_count; i++) {
 		vec4 gu = directional_lights.data[i].gas_glow_u;
 		if (gu == vec4(0.0)) {
@@ -1334,49 +1367,28 @@ float gas_light_transmittance(vec3 p_vertex, vec3 p_light) {
 		}
 		vec4 gv = directional_lights.data[i].gas_glow_v;
 		vec4 gw = directional_lights.data[i].gas_glow_w;
-		vec3 a = vec3(dot(vec4(p_vertex, 1.0), gu), dot(vec4(p_vertex, 1.0), gv), dot(vec4(p_vertex, 1.0), gw));
-		vec3 b = vec3(dot(vec4(p_light, 1.0), gu), dot(vec4(p_light, 1.0), gv), dot(vec4(p_light, 1.0), gw));
-		// The part of the segment inside the grid.
-		vec3 d = b - a;
-		vec3 inv = 1.0 / (abs(d) + 1e-8) * sign(d + 1e-12);
-		vec3 t0 = (vec3(0.0) - a) * inv;
-		vec3 t1 = (vec3(1.0) - a) * inv;
-		float tn = max(max(max(min(t0.x, t1.x), min(t0.y, t1.y)), min(t0.z, t1.z)), 0.0);
-		float tf = min(min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z)), 1.0);
-		if (tf <= tn) {
-			return 1.0;
-		}
-		ivec3 dims = textureSize(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), 0);
+		vec3 dims = vec3(textureSize(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), 0));
 		float lod_max = float(textureQueryLevels(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP)) - 1);
 		if (textureLod(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), vec3(0.5), lod_max).a < 1e-6) {
 			return 1.0;
 		}
-		// The light stands for the glowing gas round it, so the voxel it sits in does not shade it (a fire's light
-		// in its own plume would otherwise be dimmed by the plume's densest voxel, and the ground at the flame's foot
-		// went unlit where the path tracer lights it); nor does the surface's own voxel, whose filtered opacity
-		// bleeds the gas beside it onto the surface.
-		float vox_t = 1.0 / max(length(d * vec3(dims)), 1e-6); // one voxel along the segment, in t
-		tn = max(tn, 0.5 * vox_t);
-		tf = min(tf, 1.0 - vox_t);
-		if (tf <= tn) {
-			return 1.0;
-		}
-		const int STEPS = 12;
-		float seg_vox = length(d * vec3(dims)) * (tf - tn); // the inside part's length, in voxels
-		float step_vox = seg_vox / float(STEPS);
-		float lod = clamp(log2(max(step_vox, 1.0)), 0.0, lod_max);
-		float k = step_vox / exp2(lod); // this step through voxels exp2(lod) across
-		float tau = 0.0;
-		for (int s = 0; s < STEPS; s++) {
-			vec3 q = a + d * mix(tn, tf, (float(s) + 0.5) / float(STEPS));
-			float o = textureLod(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), q, lod).a;
-			tau -= k * log(max(1.0 - min(o, 0.999), 1e-3));
-		}
 		float w = uintBitsToFloat(directional_lights.data[i].pad.x);
 		float g = uintBitsToFloat(directional_lights.data[i].pad.y);
-		float tau_s = (1.0 - g) * w * tau;
-		float tau_a = (1.0 - w) * tau;
-		return max(exp(-tau * (1.0 - w * g * g)), exp(-sqrt(3.0 * tau_a * (tau_a + tau_s))) / (1.0 + 0.75 * tau_s));
+		vec3 to_light = p_light - p_vertex;
+		float rad = min(p_radius, 0.9 * length(to_light));
+		int n = rad > 0.01 ? 4 : 1;
+		vec3 axis = normalize(to_light + vec3(1e-6));
+		vec3 t1 = normalize(cross(axis, abs(axis.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+		vec3 t2 = cross(axis, t1);
+		float sum = 0.0;
+		for (int j = 0; j < n; j++) {
+			vec3 off = n == 1 ? vec3(0.0) : (j == 0 ? t1 : (j == 1 ? -t1 : (j == 2 ? t2 : -t2))) * (0.7 * rad) - axis * (0.71 * rad);
+			float tau = gas_cone_depth(p_vertex, p_light + off, rad, gu, gv, gw, dims, lod_max);
+			float tau_s = (1.0 - g) * w * tau;
+			float tau_a = (1.0 - w) * tau;
+			sum += max(exp(-tau * (1.0 - w * g * g)), exp(-sqrt(3.0 * tau_a * (tau_a + tau_s))) / (1.0 + 0.75 * tau_s));
+		}
+		return sum / float(n);
 	}
 	return 1.0;
 }
