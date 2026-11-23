@@ -1078,6 +1078,14 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   Cloud scouts: a taller column widening upward; at 320-400 px lavapipe draws a pale haze cut in steps round it
   that the PC's 1080p frames never showed (it stays with heat shimmer, light and ambient scattering all off). PC
   runs judge the look.
+- Devils round 3 (23 Nov, from the PC frames on build-1ab80137: 14 checks pass; 962 blocks at 0.35 m cells, 1.48 ms a
+  step; 0.25 m cells hit the 2048-block cap). The frames read dark grey-brown and stringy: the dense foot at about half
+  the sunlit sand's brightness, the column separate strands. Cause of the dark: Flow weighs every scatter by the gas's
+  colour times its albedo (the octaves of flow_scatter_rd), so the old tan colour (0.8, 0.7, 0.55) at 0.9 was a
+  per-scatter albedo of 0.5 in the blue, and the many scatters in the foot took the light out. Now albedo 0.97 and
+  colour (1, 0.96, 0.88), so (0.97, 0.93, 0.85) a scatter, desert dust's (Dubovik et al. 2002), asymmetry 0.6: the
+  tan comes from the scatters themselves. Strands: the eight foot spheres (0.35 R) left gaps and 25% of the lift
+  all round; now 0.45 R (they overlap) and half all round, the rest in the arms.
 - GroundStreamers3D takes the grains at the foot (22 Nov): its particle shader adds the shared wind's vortices
   (WeatherMap3D's own shader field, weather_vortices) to the patch's wind, so each grain runs with its local wind
   (round the devil, in toward its wall) and flies only where that wind's u* passes the threshold, in the share of the

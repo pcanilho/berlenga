@@ -65,8 +65,8 @@
 		</method>
 	</methods>
 	<members>
-		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(0.8, 0.7, 0.55, 1)">
-			Colour of the dust.
+		<member name="dust_color" type="Color" setter="set_dust_color" getter="get_dust_color" default="Color(1, 0.96, 0.88, 1)">
+			The dust's per-scatter tint: Flow weighs each scatter by this colour times the scattering albedo (0.97), so the column's tan comes from many scatters inside it. Desert dust: about 0.97 red, 0.93 green, 0.86 blue (Dubovik et al. 2002). A darker colour darkens the dense foot fast.
 		</member>
 		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
 			Off: no new devils, and the living ones die away within 25 seconds.

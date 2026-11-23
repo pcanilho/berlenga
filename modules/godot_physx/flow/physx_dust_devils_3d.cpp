@@ -154,7 +154,13 @@ void PhysXDustDevils3D::_build() {
 	// updraft and spin and still lean and drift with the wind (the devil itself moves with it, see _step).
 	flow->set_weather_wind_coupling(0.25f);
 	// Fine mineral dust scatters strongly and forward (a bright, tan column against the sky, Sinclair 1969's photographs).
+	// Flow weighs every scatter by the colour times the albedo, so the colour is the per-scatter albedo's tint, not the
+	// column's look: desert dust's single-scattering albedo is about 0.97 in the red, 0.93 green, 0.86 blue (Dubovik
+	// et al. 2002), asymmetry about 0.7. The tan comes from the many scatters inside the column; the old tan colour
+	// (0.8, 0.7, 0.55) at albedo 0.9 kept only half the blue each scatter and turned the dense foot dark brown on the PC.
 	flow->set_scattering_strength(1.0f); // 1 keeps raster and the path tracer alike
+	flow->set_scattering_albedo(0.97f);
+	flow->set_scattering_anisotropy(0.6f);
 	flow->set_smoke_color(dust_color);
 	flow->set_terrain_floor(true);
 	add_child(flow, false, INTERNAL_MODE_FRONT);
@@ -368,7 +374,9 @@ void PhysXDustDevils3D::_draw(Devil &p_d) {
 	// streaks converge, not evenly round the ring, and the turning arms wind it into the spiral bands seen on
 	// devils' skirts and walls (Balme and Greeley 2006).
 	const float arm_phase = p_d.spin * 0.5f * (p_d.swirl / MAX(R, 0.1f)) * p_d.age;
-	const float re = MAX(0.35f * R, 2.0f * flow_cell_size);
+	// Each sphere a little wider than its share of the ring, so the eight overlap into one sheath (0.35 left gaps the
+	// vorticity drew out into separate strands on the PC).
+	const float re = MAX(0.45f * R, 2.0f * flow_cell_size);
 	const Vector3 up(0.0f, 1.0f, 0.0f);
 	for (int k = 0; k < RING; k++) {
 		PhysXFlowEmitter3D *foot = p_d.foot[k];
@@ -393,7 +401,9 @@ void PhysXDustDevils3D::_draw(Devil &p_d) {
 		foot->set_global_position(p_d.position + radial * R + up * (0.5f * re));
 		foot->set_velocity(tangent * V + up * (0.3f * w) - radial * (0.5f * V));
 		const float arm = Math::pow(MAX(Math::cos(2.0f * (a - arm_phase)), 0.0f), 4.0f);
-		foot->set_smoke(0.5f * e * p_d.dust * (0.25f + 1.5f * arm));
+		// Banded, not split: half the lift all round the ring, the rest in the arms (the PC's frames read as separate
+		// strands with 0.25 all round).
+		foot->set_smoke(0.5f * e * p_d.dust * (0.5f + 1.0f * arm));
 		// The superheated surface layer the vortex feeds on (Sinclair 1969): warm at the foot too, so the dust it
 		// lifts rises with it instead of pooling on the ground.
 		foot->set_temperature(0.6f * e);
