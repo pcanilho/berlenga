@@ -799,10 +799,13 @@ func _world() -> void:
 			for xx in range(-900, 901, 6):
 				var p := Vector3(xx, 0, zz)
 				var h := gen.get_height(p)
-				if h < gen.sea_level + 6.0:
+				if not is_finite(h) or h < gen.sea_level + 6.0:
 					continue
 				var gx := gen.get_height(p + Vector3(2, 0, 0)) - gen.get_height(p - Vector3(2, 0, 0))
 				var gz := gen.get_height(p + Vector3(0, 0, 2)) - gen.get_height(p - Vector3(0, 0, 2))
+				# Past the world's edge the heights are not numbers (the search runs over a 1800 m square).
+				if not is_finite(gx) or not is_finite(gz):
+					continue
 				if rad_to_deg(atan(Vector2(gx, gz).length() / 4.0)) < 60.0:
 					continue
 				var o := Vector3(-gx, 0, -gz).normalized()
