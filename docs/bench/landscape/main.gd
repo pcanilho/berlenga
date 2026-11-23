@@ -1162,6 +1162,8 @@ func _ready() -> void:
 		get_tree().quit(0)
 		return
 	if out != "":
+		if rocks and rocks.has_method("get_rt_stats"):
+			_log("rocks rt: %s (rt_instanced_cells %s)" % [str(rocks.get_rt_stats()), str(rocks.rt_instanced_cells)])
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved %s (%d primitives in the frame)" % [out, int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))])
 		if args.has("pt-pair") and not env.pathtracing_enabled:
@@ -3687,6 +3689,8 @@ func _build_vegetation() -> void:
 		# No sward in the desert: the meadow rules know soil, rock and scree, not the erg's loose sand.
 		grass.ground_tint_enabled = false
 		grass.radius = 0.0
+	if "far_bake" in grass:
+		grass.far_bake = args.get("far-bake", "1") != "0" # --far-bake=0: no far-colour bake (scouts, close frames)
 	if args.has("hay") and "hay_meadows" in grass:
 		grass.hay_meadows = _hay_list()
 	add_child(grass)
@@ -3714,6 +3718,8 @@ func _build_vegetation() -> void:
 		under.tip_color = Color(0.38, 0.52, 0.16)
 		under.dryness = 0.35
 		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
+		if "far_bake" in under:
+			under.far_bake = args.get("far-bake", "1") != "0" # --far-bake=0: no far-colour bake (scouts, close frames)
 		if args.has("hay") and "hay_meadows" in under:
 			under.hay_meadows = _hay_list()
 		add_child(under)
@@ -3733,6 +3739,8 @@ func _build_vegetation() -> void:
 		turf.tip_color = Color(0.3, 0.42, 0.12)
 		turf.dryness = 0.35
 		turf.ground_tint_enabled = false
+		if "far_bake" in turf:
+			turf.far_bake = args.get("far-bake", "1") != "0" # --far-bake=0: no far-colour bake (scouts, close frames)
 		if args.has("hay") and "hay_meadows" in turf:
 			turf.hay_meadows = _hay_list()
 		add_child(turf)
@@ -4304,6 +4312,13 @@ func _build_camera() -> void:
 			var cz := ez + 60.0
 			cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, cz) + 1.7, cz)
 			cam.look_at(Vector3(ex, height_at(ex, ez) + 4.0, ez))
+			if args.has("meadow-eye") and not args.has("hay"):
+				# A stand from the clearing (trees' plot views): --meadow-eye m (5) up, --meadow-back m (50) out from the
+				# edge, looking at --meadow-look-h m (8) up the edge so the crowns fill the frame over the grass.
+				var mb := float(args.get("meadow-back", "50"))
+				var mz := ez + mb
+				cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, mz) + float(args.get("meadow-eye", "5")), mz)
+				cam.look_at(Vector3(ex, height_at(ex, ez) + float(args.get("meadow-look-h", "8")), ez))
 			if args.has("hay"):
 				# Over the hay fields (_hay_list): raised to --hay-eye (5) m, looking down across the rows to the edge.
 				cam.position.y += float(args.get("hay-eye", "5")) - 1.7

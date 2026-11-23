@@ -141,6 +141,7 @@ public:
 	virtual void sky_set_mode(RID p_sky, RSE::SkyMode p_samples) = 0;
 	virtual void sky_set_material(RID p_sky, RID p_material) = 0;
 	virtual Ref<Image> sky_bake_panorama(RID p_sky, float p_energy, bool p_bake_irradiance, const Size2i &p_size) = 0;
+	virtual void sky_bake_panorama_async(RID p_sky, float p_energy, bool p_bake_irradiance, const Size2i &p_size, const Callable &p_callback) = 0;
 
 	/* COMPOSITOR EFFECT API */
 

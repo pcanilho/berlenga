@@ -204,6 +204,7 @@ public:
 	virtual void sky_set_mode(RID p_sky, RSE::SkyMode p_mode) override;
 	virtual void sky_set_material(RID p_sky, RID p_material) override;
 	virtual Ref<Image> sky_bake_panorama(RID p_sky, float p_energy, bool p_bake_irradiance, const Size2i &p_size) override;
+	virtual void sky_bake_panorama_async(RID p_sky, float p_energy, bool p_bake_irradiance, const Size2i &p_size, const Callable &p_callback) override;
 
 	/* ENVIRONMENT API */
 

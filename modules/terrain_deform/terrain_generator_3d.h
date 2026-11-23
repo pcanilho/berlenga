@@ -436,12 +436,14 @@ private:
 	double last_preview_msec = 0.0;
 	real_t sky_light_interval = 2.0;
 	double sky_light_wait = 0.0;
+	bool sky_light_pending = false; // A panorama readback is under way (_sky_light_ready()).
 	PackedFloat32Array sky_light_last; // the last panorama used, to skip updates when the sky has not changed
 	void _bake_sky();
 	void _upload_sky();
 	static void _sky_light_row(void *p_job, uint32_t p_row);
 	void _sky_light(const void *p_bins);
 	void _sky_light_poll(double p_delta);
+	void _sky_light_ready(const Ref<Image> &p_pano);
 	void _bake_spray();
 	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).
 	int tile_nx = 0;
