@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-bf7f03d5 (2026-11-23)
+
+### Fixed
+- A point or spot light inside or behind PhysXFlow3D gas (a fire's own light) no longer lights surfaces straight through the gas in Forward+ (with surface_glow on).
+
 ## build-40d110e1 (2026-11-23)
 
 ### Changed
