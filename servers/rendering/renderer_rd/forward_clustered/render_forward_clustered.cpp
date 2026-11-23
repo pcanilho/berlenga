@@ -31,6 +31,7 @@
 #include "render_forward_clustered.h"
 
 #include "core/config/project_settings.h"
+#include "core/os/os.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
@@ -1183,6 +1184,10 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 	// The camera cut-out (BaseMaterial3D camera_cutout, global camera_cutout): the span it can open, as the shader's
 	// camera_cutout_weight() draws it, a half-line from the target toward the camera. An instance whose bounds stay
 	// clear of it draws its depth prepass with the shared depth material (no discard, early depth test kept).
+	// Bench A/B in one build (BERLENGA_CUTOUT_REACH, read once): 1 (default) tests each draw's reach; 0 keeps every
+	// cut-out draw on its discard (as before the reach test); 2 compiles the discard out of every draw (no cut at
+	// all: the cost floor without the cut-out, for measuring only).
+	static const int cutout_reach_mode = OS::get_singleton()->has_environment("BERLENGA_CUTOUT_REACH") ? OS::get_singleton()->get_environment("BERLENGA_CUTOUT_REACH").to_int() : 1;
 	bool cutout_on = false;
 	Vector3 cutout_target;
 	Vector3 cutout_axis;
@@ -1209,17 +1214,22 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 			}
 		}
 	}
-	// Other lists (and views) keep every cut-out material on its own shader.
-	const bool cutout_test = p_render_list == RENDER_LIST_OPAQUE && !p_append && p_render_data->scene_data->view_count == 1;
+	// Only the camera's own opaque list sets the reach: the shadow lists are filled after it and before its depth
+	// prepass (_pre_opaque_render), and must leave it as it is. Several views keep every cut-out on its own shader.
+	const bool cutout_fill = p_render_list == RENDER_LIST_OPAQUE && !p_append;
+	const bool cutout_test = cutout_fill && p_render_data->scene_data->view_count == 1;
+	uint32_t cutout_out_of_reach = 0;
 
 	//fill list
 
 	for (int i = 0; i < (int)p_render_data->instances->size(); i++) {
 		GeometryInstanceForwardClustered *inst = static_cast<GeometryInstanceForwardClustered *>((*p_render_data->instances)[i]);
 
-		if (!cutout_test) {
+		if (!cutout_fill) {
+			// (another list: the camera's reach stays)
+		} else if (!cutout_test || cutout_reach_mode == 0) {
 			inst->in_camera_cutout = true;
-		} else if (!cutout_on) {
+		} else if (!cutout_on || cutout_reach_mode == 2) {
 			inst->in_camera_cutout = false;
 		} else {
 			// Its bounding sphere (with 0.5 m for vertex motion) against the cut: within the radius of the axis, on the
@@ -1230,6 +1240,7 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 			const float rel = q.dot(cutout_axis);
 			const float d = (q - cutout_axis * rel).length();
 			inst->in_camera_cutout = d < cutout_radius + s && rel - s < -0.5f && ab.get_end().y + 0.5f > cutout_floor;
+			cutout_out_of_reach += inst->in_camera_cutout ? 0 : 1;
 		}
 
 		Vector3 center = inst->transform.origin;
@@ -1510,6 +1521,15 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 
 	if (p_render_list == RENDER_LIST_OPAQUE && lightmap_captures_used) {
 		RD::get_singleton()->buffer_update(scene_state.lightmap_capture_buffer, 0, sizeof(LightmapCaptureData) * lightmap_captures_used, scene_state.lightmap_captures);
+	}
+
+	// Once a run (and every 600 frames with --verbose): how many draws the camera cut-out reaches, for benches.
+	if (cutout_on) {
+		static uint64_t cutout_reports = 0;
+		if (cutout_reports == 0 || (OS::get_singleton()->is_stdout_verbose() && cutout_reports % 600 == 0)) {
+			print_line(vformat("Camera cut-out (BERLENGA_CUTOUT_REACH=%d): %d of %d instances out of reach, their cut-out discard compiled out (CAMERA_CUTOUT_REACH false).", cutout_reach_mode, cutout_reach_mode == 2 ? (int)p_render_data->instances->size() : (int)cutout_out_of_reach, (int)p_render_data->instances->size()));
+		}
+		cutout_reports++;
 	}
 }
 
