@@ -944,6 +944,12 @@ void main() {
 	// Sample count from specialization constant (or uniform in dynamic mode), frame index from uniform
 	const uint samples_per_pixel = RT_GET_SAMPLE_COUNT();
 	uint frame_index = uint(get_rt_param(RT_PARAM_FRAME_INDEX));
+	// This dispatch's run of samples (RTLaunchBand): the pixel's own work before the samples goes with the first run,
+	// after them with the last.
+	const uint sample_begin = rt_launch_band.sample_end == 0u ? 0u : min(rt_launch_band.sample_begin, samples_per_pixel);
+	const uint sample_end = rt_launch_band.sample_end == 0u ? samples_per_pixel : min(rt_launch_band.sample_end, samples_per_pixel);
+	const bool first_run = sample_begin == 0u;
+	const bool last_run = sample_end == samples_per_pixel;
 
 	// Accumulate multiple samples per pixel
 	vec3 total_radiance = vec3(0.0);
@@ -953,7 +959,7 @@ void main() {
 	uint debug_tlayers = 0u; // VIS 23: primary-segment transparency hits
 #endif
 
-	if (rt_caustics_enabled()) {
+	if (first_run && rt_caustics_enabled()) {
 		rt_caustics_photon(pixel, frame_index, inv_view[3].xyz, normalize(-inv_view[2].xyz));
 	}
 
@@ -975,7 +981,7 @@ void main() {
 	}
 
 	const uint max_bounces = RT_GET_MAX_BOUNCES();
-	if (rt_rc_enabled()) {
+	if (first_run && rt_rc_enabled()) {
 		rt_rc_resolve(pixel.y * RT_LAUNCH_SIZE.x + pixel.x, RT_LAUNCH_SIZE.x * RT_LAUNCH_SIZE.y);
 	}
 
@@ -993,7 +999,7 @@ void main() {
 	// TODO: when we have a spp > 0 the first raycast is always identical,
 	// we should move it out of the loop
 
-	[[dont_unroll]] for (uint sample_idx = 0u; sample_idx < samples_per_pixel; sample_idx++) {
+	[[dont_unroll]] for (uint sample_idx = sample_begin; sample_idx < sample_end; sample_idx++) {
 		// Every field must be defined: path_pack branches on the octahedral encodes,
 		// and branching on an undefined value lets the driver drop the whole path.
 		PathState ps;
@@ -1603,9 +1609,16 @@ void main() {
 	}
 
 	vec3 final_radiance = total_radiance / float(samples_per_pixel);
+	if (!first_run) {
+		// A later run of samples: the earlier runs' mean, weighed by their count, plus this run's sum.
+		vec3 earlier = imageLoad(image, ivec2(pixel)).rgb;
+		final_radiance = (earlier * float(sample_begin) + total_radiance) / float(sample_end);
+	} else if (!last_run) {
+		final_radiance = total_radiance / float(sample_end);
+	}
 	imageStore(image, ivec2(pixel), vec4(final_radiance, 1.0));
 
-	if (get_rt_param(RT_PARAM_PLIGHT_ENABLED) > 0.5) {
+	if (last_run && get_rt_param(RT_PARAM_PLIGHT_ENABLED) > 0.5) {
 		plight_update(pixel, inv_view, frame_index);
 	}
 #ifdef RT_TIMING_ENABLED
