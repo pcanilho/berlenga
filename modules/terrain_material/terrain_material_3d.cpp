@@ -2582,12 +2582,12 @@ void fragment() {
 	}
 	if (snow_enabled) {
 		// The snowpack over everything: slides off past its slope, settles first on the flattest facets of the
-		// detail normal, then buries it.
+		// detail normal, then buries it; on steep faces (the heightfield's slope, tm_cn) in broken patches.
 		c += R"(	float snow = 0.0;
 	float snow_wet = 0.0;
 	{
 		vec4 snow_s = snow_cover_at(wp);
-		snow = snow_cover_weight(snow_s.x * tm_snow, tm_snow_max_slope, wn, sn);
+		snow = snow_cover_weight(snow_s.x * tm_snow, tm_snow_max_slope, wn, sn, wp, tm_cn);
 		snow_wet = snow_s.z;
 		snow_cover_apply(snow, snow_s.y, snow_wet, albedo, rough, metallic, specular);
 		sn = normalize(mix(sn, wn, snow));

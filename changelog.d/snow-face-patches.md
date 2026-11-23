@@ -1,0 +1,1 @@
+- Snow: snow on steep rock faces lies in broken patches instead of lining every ledge.
