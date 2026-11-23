@@ -1,2 +1,0 @@
-- Snow: cohesive rut and trench walls drop angular slab blocks that fall as rigid bodies and settle in the rut (`SnowBodies3D.throw_block`).
-- Snow: avalanche crowns break into angular slab blocks that slide off down the bed as rigid bodies.
