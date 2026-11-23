@@ -1204,6 +1204,10 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			break;
 		case PRESET_MAX:
 			break;
+		default:
+			// The North American presets: set_preset() grows them from their European relative
+			// (european_relative()) and returns before this switch.
+			break;
 	}
 	emit_changed();
 	notify_property_list_changed();
