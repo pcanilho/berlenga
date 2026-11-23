@@ -1059,8 +1059,29 @@ float tm_cl_joints(vec3 p, float steep) {
 	int cj = int(floor(sj));
 	float gj = sj - float(cj);
 	float dist = min(gj, 1.0 - gj) * SJ;
-	float a = mix(tm_cl_joint_amp(blk, cj), tm_cl_joint_amp(blk, gj < 0.5 ? cj - 1 : cj + 1), 0.5 * (1.0 - smoothstep(0.0, 0.25, dist)));
-	return min(a, 0.75 * T / max(steep, 0.05)) * (f - 0.5);
+	float seam = 0.5 * (1.0 - smoothstep(0.0, 0.6, dist));
+	int cn = gj < 0.5 ? cj - 1 : cj + 1;
+	float st = max(steep, 0.05);
+	float A = min(mix(tm_cl_joint_amp(blk, cj), tm_cl_joint_amp(blk, cn), seam), 0.75 * T / st);
+	// The step at the joint above over a lip of 0.6 m or more, as Landscape3D::_joint_offset.
+	int blk_up;
+	float T_up;
+	if (blk == cd * 2 && tm_cl_hash(cd, 67, 5) > 0.45) {
+		blk_up = blk + 1;
+		T_up = (1.0 - b) * SD;
+	} else {
+		float b_up = 0.3 + 0.4 * tm_cl_hash(cd + 1, 61, 5);
+		blk_up = (cd + 1) * 2;
+		T_up = tm_cl_hash(cd + 1, 67, 5) > 0.45 ? b_up * SD : SD;
+	}
+	float A_up = min(mix(tm_cl_joint_amp(blk_up, cj), tm_cl_joint_amp(blk_up, cn), seam), 0.75 * T_up / st);
+	float r = min(max(0.6, 0.6 * (A + A_up)), 0.45 * T);
+	float u = f * T;
+	if (u <= T - r) {
+		return A * (f - 0.5);
+	}
+	float t = (u - (T - r)) / r;
+	return mix(A * ((T - r) / T - 0.5), -0.5 * A_up, t * t * (3.0 - 2.0 * t));
 }
 // Without the joint steps (the overhang scale leaves them out, as Landscape3D::_cliff_scale).
 float tm_cl_offset_nj(vec3 p, float steep, float k) {
