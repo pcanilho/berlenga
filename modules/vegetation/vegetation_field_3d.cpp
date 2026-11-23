@@ -4344,7 +4344,11 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 		}
 		// A species whose own far form takes over past its plants (meta "far_shell" false: the trees module's crown
 		// hulls and skyline trees) stays out of the shell.
-		if (!bool(sp->get_meta(SNAME("far_shell"), true))) {
+		// Trees (a crown that shades the field, or a far tail of their own, meta far_widen) never: their own far forms
+		// carry them (drawn tails, crown hulls, skyline trees), and the shell drew their mass from their habitat rules
+		// alone, without the stand's patches, clearings or extent, as olive mounds metres tall over open hillsides
+		// (landscape valley, 23 Nov: a 60 m forest raised a "forest" of shell over every slope to the skyline).
+		if (!bool(sp->get_meta(SNAME("far_shell"), true)) || sp->get_canopy_radius() > 0.0f || bool(sp->get_meta(SNAME("far_widen"), false))) {
 			continue;
 		}
 		const Vector2 sr = sp->get_scale_range();
