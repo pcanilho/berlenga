@@ -953,6 +953,14 @@ public:
 	static float bare_share_for_precipitation(float p_mm);
 	// At a point: the season climate's precipitation times the climate's factor there; -1 with no weather climate.
 	static float climate_bare_share_at(const Vector3 &p_position);
+	// The share of the plant cover on soil that is cured (dry, straw-coloured) through the dry season (0..1): annual and
+	// perennial grasses of semi-arid and Mediterranean climates senesce in the summer drought and stand as straw until
+	// the rains (grassland curing; summer-dry grasslands under about 500 mm a year cure fully, humid ones over about 1000
+	// mm stay green), so 1 at 500 mm and below, 0 from 1000 mm. The terrain material's soil and alluvium cover colour
+	// (its shader mirrors it: wc_climate_cured).
+	static float cured_share_for_precipitation(float p_mm);
+	// At a point, as climate_bare_share_at; -1 with no weather climate.
+	static float climate_cured_share_at(const Vector3 &p_position);
 	// Where on the ground the bare share falls (1 bare soil, 0 plant cover): drylands' cover is patchy, not thin, with
 	// clumps and bare soil between them metres across (Rietkerk et al. 2004). Bare where a two-octave value noise (4 m and
 	// 1.3 m; mean 0.5, sd 0.16) falls under the share's quantile, so the bare area is the share. The terrain material's

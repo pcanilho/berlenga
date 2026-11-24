@@ -1309,6 +1309,19 @@ float WorldContracts::climate_bare_share_at(const Vector3 &p_position) {
 	return bare_share_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
 }
 
+float WorldContracts::cured_share_for_precipitation(float p_mm) {
+	return 1.0f - Math::smoothstep(500.0f, 1000.0f, p_mm);
+}
+
+float WorldContracts::climate_cured_share_at(const Vector3 &p_position) {
+	WeatherSeason::Climate cl;
+	const WorldWeather *w = weather();
+	if (!w || !w->season_climate(cl)) {
+		return -1.0f;
+	}
+	return cured_share_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
+}
+
 // The terrain shader's value noise (tm_vn), bit for bit: an integer hash at the lattice, smoothstep between.
 static float wc_vn_hash(const Vector3 &p_p) {
 	const uint32_t qx = uint32_t(int32_t(p_p.x));
@@ -1407,9 +1420,9 @@ float wc_vn(vec3 p) {
 	return mix(mix(mix(wc_vn_hash(i), wc_vn_hash(i + vec3(1, 0, 0)), f.x), mix(wc_vn_hash(i + vec3(0, 1, 0)), wc_vn_hash(i + vec3(1, 1, 0)), f.x), f.y),
 			mix(mix(wc_vn_hash(i + vec3(0, 0, 1)), wc_vn_hash(i + vec3(1, 0, 1)), f.x), mix(wc_vn_hash(i + vec3(0, 1, 1)), wc_vn_hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
-// WorldContracts::bare_share_for_precipitation at p: TerrainDataMap3D's climate map (g, m a year) where it reaches,
-// else the weather's season climate (x mm a year, w 1 when set); 0 with neither.
-float wc_climate_bare(vec3 p) {
+// The year's precipitation at p, mm: TerrainDataMap3D's climate map (g, m a year) where it reaches, else the weather's
+// season climate (x mm a year, w 1 when set); -1 with neither.
+float wc_climate_mm(vec3 p) {
 	float mm = -1.0;
 	if (terrain_climate_rect.z > 0.0) {
 		vec2 uv = (p.xz - terrain_climate_rect.xy) / terrain_climate_rect.zw;
@@ -1420,7 +1433,17 @@ float wc_climate_bare(vec3 p) {
 	if (mm < 0.0 && weather_climate.w > 0.0) {
 		mm = weather_climate.x;
 	}
+	return mm;
+}
+// WorldContracts::bare_share_for_precipitation at p (0 with no climate).
+float wc_climate_bare(vec3 p) {
+	float mm = wc_climate_mm(p);
 	return mm < 0.0 ? 0.0 : 0.9 * (1.0 - smoothstep(200.0, 700.0, mm));
+}
+// WorldContracts::cured_share_for_precipitation at p, from the same climate (0 with none).
+float wc_climate_cured(vec3 p) {
+	float mm = wc_climate_mm(p);
+	return mm < 0.0 ? 0.0 : 1.0 - smoothstep(500.0, 1000.0, mm);
 }
 // WorldContracts::bare_patch: 1 bare soil, 0 cover.
 float wc_bare_patch(vec3 p, float bare, float fp) {

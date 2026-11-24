@@ -580,7 +580,7 @@ float tm_ros_dens(vec2 c, float w3, float shift) {
 	return 0.97 * smoothstep(0.5 - shift, 0.58 - shift, 0.7 * tm_vn(vec3(c * 0.22, w3 * 0.22) + 13.0) + 0.3 * tm_vn(vec3(c * 0.8, w3 * 0.8) + 19.0));
 }
 vec4 tm_rosettes(vec2 q, float w3, float shift, float yellow_bias, float fp) {
-	const float S = 0.8;
+	const float S = 0.4; // one thallus a cell at most (the small thalli crowd closer than the old 0.6 m ones)
 	vec2 g = q / S;
 	vec2 i = floor(g);
 	float aa = max(fp, 0.002);
@@ -601,8 +601,10 @@ vec4 tm_rosettes(vec2 q, float w3, float shift, float yellow_bias, float fp) {
 				float h2 = tm_vn_hash(vec3(c, 95.0));
 				float h3 = tm_vn_hash(vec3(c, 97.0));
 				vec2 d = (g - (c + 0.15 + 0.7 * vec2(h1, h2))) * S;
-				// Radii 4 cm to 0.6 m, most small (thalli of every age; diameter grows about linearly with age).
-				float rad = 0.05 + 0.6 * h3 * h3;
+				// Radii 2.5 cm to 0.22 m, most under 6 cm (thalli of every age; diameter grows about linearly with age, a
+				// fraction of a millimetre a year, so even centuries-old thalli of map lichen stay within 10 to 30 cm across;
+				// Innes 1985, "Lichenometry"). Up to 0.6 m they read as flat painted discs across a face.
+				float rad = 0.025 + 0.2 * h3 * h3 * h3;
 				float ei = length(d) - rad + lobe * min(rad * 2.5, 1.0);
 				// Fuse (smooth minimum over 8 cm).
 				float hk = clamp(0.5 + 0.5 * (e - ei) / 0.08, 0.0, 1.0);
@@ -729,6 +731,7 @@ global uniform vec4 weather_climate; // WeatherMap3D's season climate: x precipi
 uniform bool tm_bare_on = true;
 uniform vec4 tm_bare_soil_color : source_color = vec4(0.49, 0.40, 0.33, 1.0);
 uniform vec4 tm_bare_alluvium_color : source_color = vec4(0.60, 0.55, 0.49, 1.0);
+uniform vec4 tm_cured_cover_color : source_color = vec4(0.52, 0.45, 0.30, 1.0);
 )";
 	// The shared bare-soil rule and patches (WorldContracts::climate_bare_shader_code(): wc_climate_bare, wc_bare_patch),
 	// the same the grass fields thin their blades by.
@@ -737,6 +740,10 @@ uniform vec4 tm_bare_alluvium_color : source_color = vec4(0.60, 0.55, 0.49, 1.0)
 // The share of the soil bare at p, 0 with no climate (the shared rule, wc_climate_bare above).
 float tm_climate_bare(vec3 p) {
 	return tm_bare_on ? wc_climate_bare(p) : 0.0;
+}
+// The share of the soil's plant cover cured to straw by the dry season (wc_climate_cured above).
+float tm_climate_cured(vec3 p) {
+	return tm_bare_on ? wc_climate_cured(p) : 0.0;
 }
 )";
 	// Godot passes a sampler to a function only with one filter/repeat/hint setting per function, so the hex sampler
@@ -2007,13 +2014,16 @@ void fragment() {
 	float tm_bare_k = w[2] + w[3] > 1e-3 ? wc_bare_patch(wp, tm_climate_bare(wp), tm_fp0) : 0.0;
 	// The bare share of this pixel's ground, for the turf tint and far plant colour below: none over bare soil.
 	float tm_bare_g = tm_bare_k * clamp(w[2] + w[3], 0.0, 1.0);
+	// The cover between the bare patches: the soil layer's colour is a green vegetated topsoil, which in a summer-dry
+	// climate is straw through the dry season (the grasses cure), not the olive of a humid sward.
+	float tm_cured = w[2] + w[3] > 1e-3 ? tm_climate_cured(wp) : 0.0;
 	if (w[2] > 1e-3) {
 		vec3 a;
 		float r;
 		vec3 d;
 		float h;
 		tm_soil(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
-		a *= mix(vec3(1.0), tm_bare_soil_color.rgb / max(tm_soil_color.rgb, vec3(1e-3)), tm_bare_k);
+		a *= mix(mix(tm_soil_color.rgb, tm_cured_cover_color.rgb, tm_cured), tm_bare_soil_color.rgb, tm_bare_k) / max(tm_soil_color.rgb, vec3(1e-3));
 		alb[2] = a;
 		rgh[2] = r;
 		dns[2] = d;
@@ -2025,7 +2035,7 @@ void fragment() {
 		vec3 d;
 		float h;
 		tm_alluvium(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
-		a *= mix(vec3(1.0), tm_bare_alluvium_color.rgb / max(tm_alluvium_color.rgb, vec3(1e-3)), tm_bare_k);
+		a *= mix(mix(tm_alluvium_color.rgb, tm_cured_cover_color.rgb, 0.8 * tm_cured), tm_bare_alluvium_color.rgb, tm_bare_k) / max(tm_alluvium_color.rgb, vec3(1e-3));
 		alb[3] = a;
 		rgh[3] = r;
 		dns[3] = d;
@@ -2163,7 +2173,7 @@ void fragment() {
 			// The young rim darker and denser (the map lichen's black prothallus shows through at its edge).
 			lcol *= 1.0 - ros.z * mix(0.22, 0.5, yellow);
 			// A thin crust over the rock, not paint: its cover thins and thickens (the rock's tone and cracks show).
-			float fw_a = 0.5 * (0.7 + 0.6 * mix(0.5, tm_vn(wp * 3.3 + 21.0), fw_k));
+			float fw_a = 0.4 * (0.7 + 0.6 * mix(0.5, tm_vn(wp * 3.3 + 21.0), fw_k));
 			albedo = mix(albedo, lcol, lc * fw_a * (0.75 + 0.35 * ros.z));
 			rough = mix(rough, max(rough, 0.9), lc);
 			// Moss on the shaded faces' treads and lips, where water and fines lodge: the relief's surface flatter than
@@ -2837,6 +2847,7 @@ void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_bare_on", climate_bare_soil);
 	set_shader_parameter("tm_bare_soil_color", bare_soil_color);
 	set_shader_parameter("tm_bare_alluvium_color", bare_alluvium_color);
+	set_shader_parameter("tm_cured_cover_color", cured_cover_color);
 	if (sky_occlusion_enabled) {
 		set_shader_parameter("tm_sky_occlusion", sky_occlusion);
 		set_shader_parameter("tm_far_shadow_start", far_shadow_start);
@@ -2936,6 +2947,7 @@ MAT_SETTER(float, snow_max_slope, CLAMP(p_value, 0.0f, 90.0f))
 MAT_SETTER(bool, climate_bare_soil, p_value)
 MAT_SETTER(const Color &, bare_soil_color, p_value)
 MAT_SETTER(const Color &, bare_alluvium_color, p_value)
+MAT_SETTER(const Color &, cured_cover_color, p_value)
 MAT_SETTER_CODE(const String &, detail_code)
 MAT_SETTER_CODE(bool, grass_tint_enabled)
 // RockField3D's ground detail cover (see the shader's tm_gc_cover): null maps turn it off.
@@ -3055,6 +3067,7 @@ Color TerrainMaterial3D::contract_ground_albedo_at(const Vector3 &p_position) co
 	}
 	w[LAYER_SAND] = sand;
 	const float bare = climate_bare_soil ? MAX(WorldContracts::climate_bare_share_at(p_position), 0.0f) : 0.0f;
+	const float cured = climate_bare_soil ? MAX(WorldContracts::climate_cured_share_at(p_position), 0.0f) : 0.0f;
 	Color c(0, 0, 0, 0);
 	float total = 0.0f;
 	for (int i = 0; i < LAYER_MAX; i++) {
@@ -3063,6 +3076,9 @@ Color TerrainMaterial3D::contract_ground_albedo_at(const Vector3 &p_position) co
 		}
 		const Ref<TerrainMaterialLayer> &l = layers[i];
 		Color lc = (l.is_valid() ? l->get_color() : LAYER_DEFAULT_COLORS[i]).srgb_to_linear();
+		if (cured > 0.0f && (i == LAYER_SOIL || i == LAYER_ALLUVIUM)) {
+			lc = lc.lerp(cured_cover_color.srgb_to_linear(), i == LAYER_SOIL ? cured : 0.8f * cured); // the cover cured to straw
+		}
 		if (bare > 0.0f && (i == LAYER_SOIL || i == LAYER_ALLUVIUM)) {
 			lc = lc.lerp((i == LAYER_SOIL ? bare_soil_color : bare_alluvium_color).srgb_to_linear(), bare); // the patches' mean, as the shader from afar
 		}
@@ -3117,6 +3133,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::BOOL, climate_bare_soil, is_climate_bare_soil, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::COLOR, bare_soil_color, get_bare_soil_color, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::COLOR, bare_alluvium_color, get_bare_alluvium_color, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::COLOR, cured_cover_color, get_cured_cover_color, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, ground_deform_enabled, is_ground_deform_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, sky_occlusion_enabled, is_sky_occlusion_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, sky_occlusion, get_sky_occlusion, PROPERTY_HINT_RANGE, "0,1,0.01")

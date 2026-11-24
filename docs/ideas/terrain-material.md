@@ -427,6 +427,20 @@ grey-brown silt 10YR 6/2.
   detail kept. Grass fields and far plant cover still draw over it.
 - CPU: `contract_albedo_at` mixes the same share (the patches' mean). Setting: `TerrainMaterial3D.climate_bare_soil`.
 
+### Cured cover in summer-dry climates (24 Nov, the bare-soil scout read green)
+
+The scout at 320 mm and a 26 C July still read green between the bare patches: the cover between them took the soil
+layer's olive, a humid sward. The aridity there (P/PET 0.32) is right: semi-arid on the UNEP scale (0.2 to 0.5),
+De Martonne 320 / (17 + 10) = 12, also semi-arid. Where summers are dry, grasslands cure: annual and perennial grasses
+senesce in the drought and stand as straw until the rains (grassland curing, as fire danger rating tracks it); under
+about 500 mm a year they cure fully, humid ones over about 1000 mm stay green.
+- One rule: `WorldContracts::cured_share_for_precipitation(mm)` (1 at 500 mm, 0 from 1000 mm) and
+  `climate_cured_share_at(p)`; GLSL `wc_climate_cured(p)` from the same precipitation (`wc_climate_mm`).
+- The soil's cover takes `cured_cover_color` (senescent grassland, Munsell 2.5Y 5/4) by the share, the alluvium's by
+  0.8 of it; bare patches still take the bare colours. Same on the CPU (`contract_albedo_at`).
+- Not covered: the season. The cover stays straw all year in a dry climate (in a Mediterranean one it greens up in the
+  winter rains); the grass fields' own blades follow their season_source (vegetation).
+
 ## Next round candidates (21 Nov, card posted)
 
 ### Rills and gullies as geometry (recommended)

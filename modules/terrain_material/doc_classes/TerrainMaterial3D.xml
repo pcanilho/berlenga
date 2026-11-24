@@ -87,6 +87,9 @@
 		<member name="climate_bare_soil" type="bool" setter="set_climate_bare_soil" getter="is_climate_bare_soil" default="true">
 			Soil and alluvium break into bare soil and plant cover by the climate's dryness: the share of bare soil falls from 0.9 at 200 mm of rain a year to none at 700 mm (WorldContracts' one rule, also used by the stones' rain splash pedestals), from the [TerrainDataMap3D] climate map or else the weather's season climate. Near, in patches a few metres across; from afar, their mean. No climate: the layers' own colours.
 		</member>
+		<member name="cured_cover_color" type="Color" setter="set_cured_cover_color" getter="get_cured_cover_color" default="Color(0.52, 0.45, 0.3, 1)">
+			Colour (sRGB) of the plant cover on soil and alluvium where the climate cures it through the dry season: summer-dry grasses stand as straw, fully under about 500 mm a year, none from 1000 mm (WorldContracts.cured_share_for_precipitation). Under [member climate_bare_soil].
+		</member>
 		<member name="cliff_slope" type="float" setter="set_cliff_slope" getter="get_cliff_slope" default="50.0">
 			Slope in degrees past which textures are mapped biplanar.
 		</member>

@@ -134,6 +134,9 @@ private:
 	bool climate_bare_soil = true;
 	Color bare_soil_color = Color(0.49, 0.40, 0.33);
 	Color bare_alluvium_color = Color(0.60, 0.55, 0.49);
+	// The plant cover on soil and alluvium through the dry season where the climate cures it (WorldContracts::
+	// cured_share_for_precipitation): senescent grassland, Munsell 2.5Y 5/4.
+	Color cured_cover_color = Color(0.52, 0.45, 0.30);
 	bool far_blend_enabled = true;
 	float far_start = 300.0;
 	bool far_start_from_vegetation = true;
@@ -225,6 +228,8 @@ public:
 	Color get_bare_soil_color() const { return bare_soil_color; }
 	void set_bare_alluvium_color(const Color &p_color);
 	Color get_bare_alluvium_color() const { return bare_alluvium_color; }
+	void set_cured_cover_color(const Color &p_color);
+	Color get_cured_cover_color() const { return cured_cover_color; }
 	void set_ground_deform_enabled(bool p_enabled);
 	bool is_ground_deform_enabled() const { return ground_deform_enabled; }
 
