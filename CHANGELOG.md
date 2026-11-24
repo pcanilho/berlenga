@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-63852a4d (2026-11-24)
+
+### Added
+- StreetWater3D.frame_path, prefill and get_depth_at; RoadRelief3D.relief_frame, storm-drain inlets (inlet_spacing, inlets) and get_pond_depth_at: water that rides a sliding street, puddles already filled as it comes into view, gutters that drain.
+
 ## build-1dd038a4 (2026-11-24)
 
 ### Added
