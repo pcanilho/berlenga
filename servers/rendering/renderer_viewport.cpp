@@ -865,9 +865,9 @@ DisplayServerEnums::WindowID RendererViewport::_get_containing_window(Viewport *
 	return DisplayServerEnums::INVALID_WINDOW_ID;
 }
 
-bool RendererViewport::has_3d_viewport() const {
+bool RendererViewport::has_3d_viewport(RID p_scenario) const {
 	for (const Viewport *vp : active_viewports) {
-		if (vp->update_mode != RSE::VIEWPORT_UPDATE_DISABLED && vp->render_target.is_valid() && !vp->disable_3d && vp->scenario.is_valid() && RSG::scene->is_camera(vp->camera)) {
+		if (vp->update_mode != RSE::VIEWPORT_UPDATE_DISABLED && vp->render_target.is_valid() && !vp->disable_3d && vp->scenario.is_valid() && (p_scenario.is_null() || vp->scenario == p_scenario) && RSG::scene->is_camera(vp->camera)) {
 			return true;
 		}
 	}

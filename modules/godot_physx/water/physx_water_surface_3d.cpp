@@ -7355,7 +7355,8 @@ void PhysXWaterSurface3D::_render_caustics() {
 		const Vector3 sun_travel = water_light_sun_travel.is_zero_approx() ? caustics_sun_direction : water_light_sun_travel;
 		const Vector3 origin(grid_center.x, get_global_position().y, grid_center.y);
 		solver.set_caustics_foam_shade(foam_shade);
-		solver.render_caustics(origin, sun_travel, caustics_reference_depth, 1.333f, _open_beyond());
+		const Ref<World3D> world = is_inside_tree() ? get_world_3d() : Ref<World3D>();
+		solver.render_caustics(origin, sun_travel, caustics_reference_depth, 1.333f, _open_beyond(), world.is_valid() ? world->get_scenario() : RID());
 		if (water_material.is_valid() && caustics_texture.is_valid()) {
 			water_material->set_shader_parameter("caustics_on", true);
 			water_material->set_shader_parameter("caustics_tex", caustics_texture);

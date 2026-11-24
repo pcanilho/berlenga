@@ -562,3 +562,8 @@ that draws (before the particles update), and `WaterSolverGPU::rt_render_caustic
 surface asks for again on the next frame without a water tick. Every drawn frame runs exactly as before. Undrawn
 frames there went from about 15 s of GPU work to under 1.5 s.
 
+The check is per world: a viewport counts only when it draws the collider's or the water's scenario. The far grass
+colour bake draws its own world in a SubViewport for about 117 frames while the main view waits undrawn; those
+frames no longer run the landscape's caustics and collider. The bake wait on the landscape bench went from 474 s at
+100 frames to 258 s.
+
