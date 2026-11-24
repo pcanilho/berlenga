@@ -1405,3 +1405,15 @@ free part's middle: the relief draws the soffit's undercut for the eye but no he
 part starts inside the one-sided surface and falls through it. A slab now falls only where its free part's middle
 starts in the air (on the bench world the 8 biggest are refused, the 9th is loosed); live rockfall leaves ledges out. Falling
 ledges need collision for the undercut (for example a soffit collision strip along the lips from the terrain side).
+
+## Close-up shapes get LODs (24 Nov)
+
+A 480 px raster frame over a talus field drew 238M primitives on the rocks bench (658M in the showcase scene). The
+`--no-close-up` A/B drew 9.2M: the close-up shapes (millimetre fabric, within close_up_radius of the follow target)
+were built without LODs, so every stone near the player drew its full grid in the main pass and in every shadow
+cascade, however small it was on screen. They now get mesh LODs like the base shapes (the renderer's 1 px rule, so
+full detail wherever a pixel shows it), and every rock MultiMesh takes its biggest stone's scale as its lod_bias
+(the shapes are built a unit across and the renderer does not see the instance scale). Same bench frame: 11.2M
+primitives, image difference at the run-to-run noise (4.6% of pixels over 8/255 against 4.2% between two runs of
+the old build). The path tracer keeps full meshes (rendering/pathtracing/mesh_lod off). Tried and dropped: splitting
+heavy cell groups into 8 m clusters (no gain, twice the draw calls). `--prim-report` lists the heaviest MultiMeshes.

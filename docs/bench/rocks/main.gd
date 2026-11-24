@@ -54,6 +54,7 @@ extends Node3D
 #   --rt-instanced        RockField3D.rt_instanced_cells on: cell stones path traced as instances (memory A/B)
 #   --mem-report          video memory at the saved frame (with the engine flag --extra-gpu-memory-tracking: by Vulkan object type)
 #   --no-close-up         the near stones keep their base shape (RockField3D.close_up_enabled off; an A/B)
+#   --prim-report         with --out: the rock MultiMeshes ranked by the triangles they draw at their LODs (perf hunts)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
 #   --salt=k              with --rock: a stand-in sea salt index (0..1) for the salt bloom; --no-salt-bloom: off
@@ -3319,6 +3320,11 @@ func _render_later() -> void:
 			print("sea cave water: %d stations over %.1f m, arch from %.1f m, level at the mouth %s, %d drawn, %d sea clip capsules" % [pts.size(), al[al.size() - 1] if al.size() > 0 else 0.0, w.get("covered_from", 0.0), str(pts[0]) if pts.size() > 0 else "-", sw.get_ribbon_count() if sw else -1, (c as CaveNetwork3D).get_water_clip_capsules().size() / 8])
 	if rocks:
 		print("rocks rt: %s (rt_instanced_cells %s)" % [str(rocks.get_rt_stats()), str(rocks.rt_instanced_cells)])
+		print("frame primitives: %d in %d draw calls" % [RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME), RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)])
+		var vp := get_viewport()
+		print("  visible pass %d primitives, %d objects; shadow passes %d primitives, %d objects" % [vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_PRIMITIVES_IN_FRAME), vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_OBJECTS_IN_FRAME), vp.get_render_info(Viewport.RENDER_INFO_TYPE_SHADOW, Viewport.RENDER_INFO_PRIMITIVES_IN_FRAME), vp.get_render_info(Viewport.RENDER_INFO_TYPE_SHADOW, Viewport.RENDER_INFO_OBJECTS_IN_FRAME)])
+		if args.has("prim-report"):
+			_prim_report(rocks)
 	if args.has("mem-report"):
 		# --mem-report: video memory at the saved frame; with the engine's --extra-gpu-memory-tracking also the
 		# driver's memory by Vulkan object type (buffers, images, acceleration structures).
@@ -3454,3 +3460,61 @@ func _repetition_audit(p_rect: Rect2) -> void:
 			if absf(float(a["scale"]) / float(b["scale"]) - 1.0) < 0.15 and ang < 25.0:
 				twins += 1
 		print("repetition: layer %d, %d stones, %d with a neighbour; same shape %.1f %%, twins %.1f %%" % [lay, sts.size(), with_nb, 100.0 * same / maxf(with_nb, 1), 100.0 * twins / maxf(with_nb, 1)])
+
+
+# --prim-report: the rock MultiMeshInstance3D nodes ranked by the triangles they draw, with the LOD each one gets by
+# the renderer's rule (nearest point of the instance's AABB to the camera, model scale * lod_bias, 1 px threshold).
+func _prim_report(rocks: Node) -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var cp := cam.global_position
+	var th: float = get_viewport().mesh_lod_threshold / float(get_viewport().size.x)
+	var lodmul: float = 2.0 / cam.get_camera_projection().x.x
+	var rows := []
+	var lod_cache := {}
+	var stack: Array = [rocks]
+	while stack.size() > 0:
+		var n: Node = stack.pop_back()
+		stack.append_array(n.get_children(true))
+		if not (n is MultiMeshInstance3D) or not (n as MultiMeshInstance3D).is_visible_in_tree():
+			continue
+		var mi := n as MultiMeshInstance3D
+		var mm := mi.multimesh
+		if mm == null or mm.mesh == null:
+			continue
+		var cnt := mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count
+		var ab := mi.get_aabb()
+		ab = mi.global_transform * ab
+		var d := Vector3.ZERO.max(ab.position - cp).max(cp - ab.end).length()
+		var tris := 0
+		var lods := ""
+		var scale: float = mi.global_transform.basis.get_scale().abs().x * mi.lod_bias
+		for si in mm.mesh.get_surface_count():
+			var key := str(mm.mesh.get_rid()) + ":" + str(si)
+			if not lod_cache.has(key):
+				var sd: Dictionary = RenderingServer.mesh_get_surface(mm.mesh.get_rid(), si)
+				var ls := []
+				for l in sd.get("lods", []):
+					ls.append([l["edge_length"], (l["index_data"] as PackedByteArray).size() / (4 if sd.get("vertex_count", 0) > 65535 else 2) / 3])
+				lod_cache[key] = [sd.get("index_count", 0) / 3, ls]
+			var c: Array = lod_cache[key]
+			var t: int = c[0]
+			var li := 0
+			for k in (c[1] as Array).size():
+				var l: Array = c[1][k]
+				if l[0] * scale / max(d * lodmul, 0.0001) > th:
+					break
+				t = l[1]
+				li = k + 1
+			tris += t
+			lods += "%d/%d " % [li, (c[1] as Array).size()]
+		rows.append([tris * cnt, cnt, tris, d, lods, str(mi.name), ab.size])
+	rows.sort_custom(func(a, b): return a[0] > b[0])
+	var tot := 0
+	for r in rows:
+		tot += r[0]
+	print("prim report: %d rock instances nodes, %d triangles at their LODs (all, not culled)" % [rows.size(), tot])
+	for i in min(20, rows.size()):
+		var r: Array = rows[i]
+		print("  %12d = %6d x %7d tris, dist %.1f m, lod %s, %s, aabb %s" % r)

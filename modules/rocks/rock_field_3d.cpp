@@ -186,7 +186,10 @@ void library_job(void *p_userdata, uint32_t p_index) {
 	g->set_transport_distance(job.transport);
 	g->set_detail(job.detail);
 	g->set_close_up(job.close_up);
-	g->set_lods(!job.close_up && job.fracture == 0); // a close-up shape only draws within close_up_radius
+	// Close-up shapes get LODs too: they draw within close_up_radius of the follow target, which a far or high camera
+	// sees at a few pixels a stone; full detail wherever a pixel can show it (the renderer's 1 px rule), the coarser
+	// levels only below that, in the main and the shadow passes alike.
+	g->set_lods(job.fracture == 0);
 	g->set_fracture_pieces(job.fracture);
 	g->set_marks_scale(job.marks_scale);
 	// The world cache (world_cache.h): a library shape is the same bytes from the same inputs (and the same
@@ -5195,8 +5198,18 @@ void RockField3D::_coarse_commit(const Vector3i &p_key, LocalVector<Stone> &ston
 			grp.shapes[k] = nullptr;
 			where[cg.members[k]] = Vector2i(int(cell.groups.size()), k);
 		}
+		// The LOD by each stone's own size: the shapes are built a unit across and each stone's scale lives in its
+		// instance record, which the renderer's LOD choice does not see (it judges the mesh at its built size). The
+		// group's biggest stone as the model scale: it gets exactly the LOD its true size calls for, and no stone a
+		// coarser one than that (the smaller ones in the group stay at least as fine as they need).
+		real_t lod_scale = 0.0;
+		for (const Transform3D &xf : grp.xforms) {
+			lod_scale = MAX(lod_scale, xf.basis.get_scale_abs().x);
+		}
 		cell.groups.push_back(grp);
-		cell.instances.push_back(_add_group_instance(mm, cg.library, vis, cs * 0.5));
+		MultiMeshInstance3D *gi = _add_group_instance(mm, cg.library, vis, cs * 0.5);
+		gi->set_lod_bias(MAX(lod_scale, real_t(0.001)));
+		cell.instances.push_back(gi);
 	}
 	// Collision for the stones big enough to stand on or trip over, near the target.
 	const Vector3 tp = _target_position();
@@ -6159,10 +6172,13 @@ void RockField3D::_update_close_up(bool p_wait) {
 		Ref<MultiMesh> mm = mmi->get_multimesh();
 		const LocalVector<Color> &cd = near_cd[kv.key];
 		mm->set_instance_count(int(kv.value.size()));
+		real_t lod_scale = 0.0;
 		for (uint32_t k = 0; k < kv.value.size(); k++) {
 			mm->set_instance_transform(int(k), kv.value[k]);
 			mm->set_instance_custom_data(int(k), cd[k]);
+			lod_scale = MAX(lod_scale, kv.value[k].basis.get_scale_abs().x);
 		}
+		mmi->set_lod_bias(MAX(lod_scale, real_t(0.001))); // the LOD by the biggest stone's true size, as the cells
 	}
 	if (moss_cushions) {
 		_update_moss(near_xf, near_cd, p_wait);
