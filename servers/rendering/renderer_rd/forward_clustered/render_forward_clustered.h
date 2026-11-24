@@ -198,6 +198,12 @@ protected:
 
 	RID volume_shadow_texture_bound; // the volume shadow texture render_base_uniform_set holds
 	RID gas_glow_texture_bound; // the gas glow texture render_base_uniform_set holds
+	// The clouds' sky visibility (the weather_cloud_sky_map and weather_cloud_sky_rect shader globals, set 0 bindings
+	// 25 and 26): the surfaces' sky light dims under thick cloud. White and off without them.
+	RID cloud_sky_texture_bound;
+	RID cloud_sky_buffer;
+	float cloud_sky_data[8] = {};
+	RID _cloud_sky_texture(float r_data[8]);
 
 	void _update_render_base_uniform_set();
 	RID _setup_sdfgi_render_pass_uniform_set(RID p_albedo_texture, RID p_emission_texture, RID p_emission_aniso_texture, RID p_geom_facing_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index);

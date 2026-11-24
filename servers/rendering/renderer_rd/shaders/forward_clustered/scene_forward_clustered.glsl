@@ -1525,6 +1525,28 @@ float directional_volume_shadow(uint p_index, vec3 p_vertex) {
 // p_ambient: the surface's ambient light (a mean radiance over its hemisphere), p_albedo its albedo, p_up the world's up
 // (view space). Returns the ambient light with the gas's: as the path tracer's surfaces see a sunlit cloud beside them
 // glow and dark smoke hide the sky.
+// The share of the clear sky's diffuse light reaching p_world through the clouds (WeatherMap3D's cloud sky map, a
+// cloud ambient occlusion map): its hemisphere visibility, eased to 1 from the height it is for up to the clouds'.
+float cloud_sky_visibility(vec3 p_world) {
+	vec2 uv = (p_world.xz - cloud_sky_data.rect.xy) * cloud_sky_data.rect.z;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return 1.0;
+	}
+	vec4 m = textureLod(sampler2D(cloud_sky_texture, SAMPLER_LINEAR_CLAMP), uv, 0.0);
+	return mix(1.0, m.r, clamp((m.b - p_world.y) / max(m.b - cloud_sky_data.rect.w, 1.0), 0.0, 1.0));
+}
+
+// The sky light's factor at p_world: the radiance map is the sky the camera sees, with the clouds over the camera
+// already in it, so a surface takes its own visibility against the camera's (at most 1: a clear spot seen from under a
+// cloud keeps the map's light). Under a cluster that the camera sees from the sun, the ground loses the blue sky light
+// the cloud hides, as its sun is cut by the cloud shadow.
+float cloud_sky_light(vec3 p_world, vec3 p_cam) {
+	if (cloud_sky_data.info.x < 0.5) {
+		return 1.0;
+	}
+	return min(cloud_sky_visibility(p_world) / max(cloud_sky_visibility(p_cam), 0.02), 1.0);
+}
+
 vec3 gas_glow(vec3 p_vertex, vec3 p_normal, uint p_directional_count, vec3 p_ambient, vec3 p_albedo, vec3 p_up) {
 	vec4 gu = gas_glow_data.data.u;
 	if (gu != vec4(0.0)) {
@@ -2203,6 +2225,10 @@ void fragment_shader(in SceneData scene_data) {
 	vec3 indirect_normal = normal;
 #endif
 
+	// The sky's light through the clouds over this point (cloud_sky_light()).
+	float sky_light_clouds = cloud_sky_light(vec3(dot(scene_data.inv_view_matrix[0], vec4(vertex, 1.0)), dot(scene_data.inv_view_matrix[1], vec4(vertex, 1.0)), dot(scene_data.inv_view_matrix[2], vec4(vertex, 1.0))),
+			vec3(scene_data.inv_view_matrix[0].w, scene_data.inv_view_matrix[1].w, scene_data.inv_view_matrix[2].w));
+
 	if (bool(scene_data.flags & SCENE_DATA_FLAGS_USE_REFLECTION_CUBEMAP)) {
 #ifdef LIGHT_ANISOTROPY_USED
 		// https://google.github.io/filament/Filament.html#lighting/imagebasedlights/anisotropy
@@ -2241,6 +2267,7 @@ void fragment_shader(in SceneData scene_data) {
 		indirect_specular_light *= scene_data.IBL_exposure_normalization;
 		indirect_specular_light *= horizon * horizon;
 		indirect_specular_light *= scene_data.ambient_light_color_energy.a;
+		indirect_specular_light *= sky_light_clouds;
 	}
 
 #if defined(CUSTOM_RADIANCE_USED)
@@ -2263,7 +2290,7 @@ void fragment_shader(in SceneData scene_data) {
 			vec2 ambient_uv = vec3_to_oct_with_border(ambient_dir, vec2(scene_data_block.data.radiance_border_size, 1.0 - scene_data_block.data.radiance_border_size * 2.0));
 			vec3 cubemap_ambient = textureLod(sampler2D(radiance_octmap, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), ambient_uv, roughness_lod).rgb;
 #endif //USE_RADIANCE_OCTMAP_ARRAY
-			cubemap_ambient *= scene_data.IBL_exposure_normalization;
+			cubemap_ambient *= scene_data.IBL_exposure_normalization * sky_light_clouds;
 			ambient_light = mix(ambient_light, cubemap_ambient * scene_data.ambient_light_color_energy.a, scene_data.ambient_color_sky_mix);
 		}
 	}

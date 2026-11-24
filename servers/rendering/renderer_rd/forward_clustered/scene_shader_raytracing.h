@@ -281,6 +281,11 @@ public:
 	static constexpr int RT_PARAM_CUTOUT_Z = 94;
 	static constexpr int RT_PARAM_CUTOUT_RADIUS = 95;
 	static constexpr int RT_PARAM_CUTOUT_FLOOR = 96;
+	// WeatherMap3D's cloud sky map (weather_cloud_sky_map, weather_cloud_sky_rect): a bounce's sky through the clouds.
+	// 0 = none. Its corner (world x, z); it spans RT_CLOUD_SKY_EXTENT (raytracing_inc.glsl).
+	static constexpr int RT_PARAM_CLOUD_SKY_MAP = 97;
+	static constexpr int RT_PARAM_CLOUD_SKY_X = 98;
+	static constexpr int RT_PARAM_CLOUD_SKY_Z = 99;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

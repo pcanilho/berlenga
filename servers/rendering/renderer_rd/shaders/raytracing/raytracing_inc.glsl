@@ -154,6 +154,10 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_CUTOUT_RADIUS 95
 #define RT_PARAM_CUTOUT_FLOOR 96
 #define RT_PARAM_WIND_MAP 89 // WeatherMap3D's 10 m wind (weather_wind_map, m/s in rg) over the wetness rect; 0 none
+#define RT_PARAM_CLOUD_SKY_MAP 97 // WeatherMap3D's cloud sky map (weather_cloud_sky_map); 0 none
+#define RT_PARAM_CLOUD_SKY_X 98 // its corner (world x, z); it spans RT_CLOUD_SKY_EXTENT
+#define RT_PARAM_CLOUD_SKY_Z 99
+#define RT_CLOUD_SKY_EXTENT 32768.0 // m, WeatherMap3D::kLightGridExtent
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)
