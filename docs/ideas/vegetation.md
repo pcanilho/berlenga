@@ -2193,3 +2193,17 @@ and Mediterranean perennial grasses go summer-dormant, dead to the crown, once t
   browns it to straw and lays the dormant blades over. One weather for every system.
 - VegetationField3D cover map (climate_bare): the far sward and cover plants take (1 - bare share) of their cover,
   so past the blades the ground shows the patchwork's mean, as the terrain material does at a distance.
+
+## Terracettes (GrassField3D.terracettes)
+Steep grazed hillsides carry sub-parallel steps along the contours (Wikipedia, "Terracette"). A grazing model
+(Seleb, Chatterjee and Bhamla 2025, arXiv 2504.17496) forms them from stock walking cross-slope routes and treads
+to save vertical work and grazing the risers between; the bands grow regular with slope (coherence 0.75 at 20
+degrees, 0.92 at 40) at a mean spacing of about 3.38 m (their model, not field measurements); adjacent steps are
+joined by short ramps. Tread width and riser height are not given there (Howard and Higgins 1987 has field
+dimensions; not read).
+- Built in the blade shader from the data map's heights: from about 25 degrees, gone past about 50; bands by
+  height, 3.4 m apart along the slope, wandering a few decimetres and fading out in places (paths end, stock cut
+  across). Each tread (a fifth of the step, an estimate) loses seven in ten blades, the rest short turf; the risers
+  stand a little taller. The ground under the treads keeps the turf tint (a worn-ground tint there would be the
+  ground material's). The steps' relief is the terrain's (not built here).
+- View: grass `--steep` (GRASS_TERRACETTES=0 the before frame).

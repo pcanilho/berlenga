@@ -436,6 +436,7 @@ private:
 	bool lodging = true;
 	bool fairy_rings = true; // Meadow fairy rings (fairy_rings.h) in the blades; crops never.
 	bool deer_beds = true; // Deer beds (deer_beds.h) in the blades; crops never.
+	bool terracettes = true; // Worn treads across steep slopes in the blades; crops never.
 	float deer_bed_day = 180.0f; // The season's day the beds' ages count from (set by the season step).
 	bool snowmelt = true; // The sward after a long snow lie: matted, pale, snow mould patches (the season's snowpack by height).
 	int melt_day = -2; // The day the band table was made for.
@@ -825,6 +826,8 @@ public:
 	void update_flood_map(const Vector3 &p_center) { _flood_step(p_center, true); } // Read the mark again now.
 	void set_fairy_rings(bool p_on);
 	bool is_fairy_rings() const { return fairy_rings; }
+	void set_terracettes(bool p_on);
+	bool is_terracettes() const { return terracettes; }
 	void set_deer_beds(bool p_on);
 	bool is_deer_beds() const { return deer_beds; }
 	void set_deer_bed_day(float p_day);

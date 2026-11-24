@@ -538,6 +538,8 @@ void GrassField3D::_build_material() {
 	// then (> 50 unknown), a 1 where known; flood_rect z 0: none.
 	code += "uniform sampler2D flood_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 flood_rect;\n";
 	code += FairyRings::GLSL;
+	// Terracettes on steep slopes (1 on, 0 off).
+	code += "uniform float terracettes = 1.0;\n";
 	// Deer beds (deer_beds.h): 1 on, 0 off; deer_bed_day the season's day (the beds' ages).
 	code += "uniform float deer_beds = 1.0;\nuniform float deer_bed_day = 180.0;\n";
 	code += DeerBeds::GLSL;
@@ -1277,6 +1279,42 @@ void vertex() {
 			v_fairy_dead = step(fract(rnd * 19.1), 0.9 * fairy.y);
 		}
 	}
+	// Terracettes (docs/ideas/vegetation.md, "Terracettes"): on steep grazed hillsides the stock walk the slope across,
+	// along the contours, and their paths settle into regularly spaced steps; they walk the flat treads and graze the
+	// risers between (Seleb, Chatterjee and Bhamla 2025: bands parallel to the contours from about 30 degrees, regular
+	// by 40, about 3.4 m apart in their model). The steps themselves are the ground's; here the sward: a worn, short,
+	// thinned band on each tread, combed along it, and the grass on the risers left a little taller. Bands follow the
+	// height with a wander of a few decimetres, so they keep to the contours and drift as real ones do.
+	if (terracettes > 0.0 && ground_data_rect.z > 0.0 && v_hay < 0.0) {
+		vec2 tts = vec2(textureSize(ground_data_map, 0));
+		vec2 tuv = (base_w.xz - ground_data_rect.xy) / ground_data_rect.zw;
+		vec2 tdu = vec2(1.0 / tts.x, 0.0);
+		vec2 tdv = vec2(0.0, 1.0 / tts.y);
+		vec2 tcell = 2.0 * ground_data_rect.zw / tts;
+		vec2 grad = vec2(textureLod(ground_data_map, tuv + tdu, 0.0).r - textureLod(ground_data_map, tuv - tdu, 0.0).r, textureLod(ground_data_map, tuv + tdv, 0.0).r - textureLod(ground_data_map, tuv - tdv, 0.0).r) / tcell;
+		float steep = length(grad); // tan of the slope
+		float form = smoothstep(0.47, 0.7, steep) * (1.0 - smoothstep(1.0, 1.25, steep)); // About 25 to 35 degrees in, out past 45 to 51.
+		if (form > 0.0) {
+			float sin_s = steep / sqrt(1.0 + steep * steep);
+			float rise = 3.4 * sin_s; // The steps' height apart: 3.4 m along the slope.
+			float wander = (grass_noise(base_w.xz * 0.09 + 41.0) - 0.5) * 0.9 + (grass_noise(base_w.xz * 0.37 + 7.0) - 0.5) * 0.25;
+			float ph = fract(base_w.y / rise + wander * sin_s / rise);
+			// The tread: about a fifth of each step (0.6 to 0.7 m along the slope; an estimate), soft at its edges; it fades
+			// out here and there, where the path ends or the stock cut across.
+			float tread = smoothstep(0.0, 0.05, ph) * (1.0 - smoothstep(0.15, 0.22, ph));
+			tread *= form * smoothstep(0.25, 0.45, grass_noise(base_w.xz * 0.05 + 13.0));
+			if (tread > 0.0) {
+				// Trodden: most tillers gone, the rest short turf (an estimate, as on a worn path).
+				if (fract(rnd * 33.1) < 0.7 * tread) {
+					h = 0.0;
+					w = 0.0;
+				}
+				h *= mix(1.0, 0.3, tread);
+			} else {
+				h *= 1.0 + 0.15 * form;
+			}
+		}
+	}
 	// A far ring blade (negative width; GrassField3D::_build_ring_tile()): one of a set thinned with the square of
 	// the distance from the field's centre, each blade dropping at its own rank (w's integer part: -log2 of it, in
 	// 1/1024ths) and the ones left widened, so coverage holds and no ring shows (Ghost of Tsushima, Wohllaib GDC
@@ -1740,6 +1778,7 @@ void fragment() {
 	material->set_shader_parameter("fairy_rings", fairy_rings && crop == CROP_NONE ? 1.0f : 0.0f);
 	material->set_shader_parameter("deer_beds", deer_beds && crop == CROP_NONE ? 1.0f : 0.0f);
 	material->set_shader_parameter("deer_bed_day", deer_bed_day);
+	material->set_shader_parameter("terracettes", terracettes && crop == CROP_NONE ? 1.0f : 0.0f);
 	// A sown crop covers its field whatever the patches of wild cover round it.
 	material->set_shader_parameter("climate_bare", climate_bare && crop == CROP_NONE);
 	melt_day = -2; // A new material: the snowmelt bands again on the next season step.
@@ -4932,6 +4971,13 @@ void GrassField3D::set_snowmelt(bool p_on) {
 	}
 }
 
+void GrassField3D::set_terracettes(bool p_on) {
+	terracettes = p_on;
+	if (material.is_valid()) {
+		material->set_shader_parameter("terracettes", terracettes && crop == CROP_NONE ? 1.0f : 0.0f);
+	}
+}
+
 void GrassField3D::set_deer_beds(bool p_on) {
 	deer_beds = p_on;
 	if (material.is_valid()) {
@@ -8011,6 +8057,8 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_flood_wash"), &GrassField3D::is_flood_wash);
 	ClassDB::bind_method(D_METHOD("get_flood_wash_at", "position"), &GrassField3D::get_flood_wash_at);
 	ClassDB::bind_method(D_METHOD("update_flood_map", "center"), &GrassField3D::update_flood_map);
+	ClassDB::bind_method(D_METHOD("set_terracettes", "enabled"), &GrassField3D::set_terracettes);
+	ClassDB::bind_method(D_METHOD("is_terracettes"), &GrassField3D::is_terracettes);
 	ClassDB::bind_method(D_METHOD("set_deer_beds", "enabled"), &GrassField3D::set_deer_beds);
 	ClassDB::bind_method(D_METHOD("is_deer_beds"), &GrassField3D::is_deer_beds);
 	ClassDB::bind_method(D_METHOD("set_deer_bed_day", "day"), &GrassField3D::set_deer_bed_day);
@@ -8086,6 +8134,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lodging"), "set_lodging", "is_lodging");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fairy_rings"), "set_fairy_rings", "is_fairy_rings");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deer_beds"), "set_deer_beds", "is_deer_beds");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "terracettes"), "set_terracettes", "is_terracettes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deer_bed_day", PROPERTY_HINT_RANGE, "0,366,0.01"), "set_deer_bed_day", "get_deer_bed_day");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snowmelt"), "set_snowmelt", "is_snowmelt");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flood_wash"), "set_flood_wash", "is_flood_wash");

@@ -419,6 +419,9 @@
 		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
 			Path to the [DirectionalLight3D] whose heading turns the far grass colour (see [method get_far_color_lobes]). Empty: the first visible [DirectionalLight3D] in the field's world. The widest field publishes it with the camera position as [code]grass_ground_sun[/code] and [code]grass_ground_view[/code]; the effect lessens as the sun climbs and is off with the sun down.
 		</member>
+		<member name="terracettes" type="bool" setter="set_terracettes" getter="is_terracettes" default="true">
+			Terracettes' sward on steep slopes (about 25 to 50 degrees, read from the [member data_map]'s heights): bands along the contours about 3.4 m apart along the slope (Seleb, Chatterjee and Bhamla 2025, a grazing model), each with a worn tread where the stock walk, its blades short and thinned, and the risers between a little taller. The steps' relief is the ground's. Not in mown meadows or crop fields.
+		</member>
 		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="8.0">
 			Edge of a tile, in metres.
 		</member>
