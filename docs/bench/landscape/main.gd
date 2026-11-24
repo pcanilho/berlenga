@@ -4321,6 +4321,8 @@ func _build_camera() -> void:
 				_log("ledge view: no overhanging lips within %.0f m (%d lips)" % [lr, lips.size()])
 			else:
 				var lpos: Vector3 = lpick["position"]
+				var lip_y := lpos.y
+				lpos.y = height_at(lpos.x, lpos.z) # the ground at the lip (the lip's own y is logged beside it)
 				var lout: Vector3 = lpick["out"]
 				lout.y = 0.0
 				lout = lout.normalized()
@@ -4334,7 +4336,7 @@ func _build_camera() -> void:
 				cam.fov = 55.0
 				cam.position = lc
 				cam.look_at(lpos)
-				_log("ledge view: %d lips, pick %s overhang %.2f m cap %.2f m, score %.1f, camera %s" % [lips.size(), str(lpos.round()), float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round())])
+				_log("ledge view: %d lips, pick %s (lip y %.1f) overhang %.2f m cap %.2f m, score %.1f, camera %s, ground out %.1f / in %.1f" % [lips.size(), str(lpos.round()), lip_y, float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round()), height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk), height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk)])
 		"gully":
 			# A raised oblique down a real gully onto its fan (RockField3D.runoff_gravel: a coarse lag on the floor,
 			# fine grains on the fan). The strongest open gully on soil (TerrainGenerator3D.get_gully_at, as the rocks
