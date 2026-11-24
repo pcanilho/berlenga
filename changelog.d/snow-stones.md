@@ -1,1 +1,0 @@
-- Snow: stones standing out of the snow get melt moats on their sunny side, windward scour and lee tails (`SnowSurface3D.stone_relief`).
