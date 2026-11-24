@@ -6506,6 +6506,11 @@ bool RockField3D::_pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max
 			continue;
 		}
 		for (const Group &grp : kv.value.groups) {
+			// Ledge slabs stay: half of each lies under the bench, and loosed like a wall block it would start inside
+			// the ground (their own toppling over the lip is not modelled yet).
+			if (key_family(grp.library) == RockGenerator::FAMILY_LEDGE) {
+				continue;
+			}
 			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
 				if (grp.broken[k]) {
 					continue;
@@ -7402,9 +7407,17 @@ void RockField3D::_place_ledges(const TerrainGenerator3D *p_gen, Layer p_layer, 
 			if (off) {
 				continue; // would overlap its neighbour
 			}
-			for (int e = -1; e <= 1 && !off; e++) {
-				const Vector3 q = centre + x_axis * (len * e) - z_axis * (axes.z * st.scale * 0.6) + y_axis * (axes.y * st.scale);
-				off = !(H(q.x, q.z) >= q.y - lp.cap_thickness * 0.5f);
+			// (From just behind the most a slab hangs out to near its back, across its length: the drawn bench stands
+			// within a quarter of the cap under the slab's top, and the heightfield alone, which relief can sit over,
+			// over its middle.)
+			// Every quarter metre back: a riser behind can rise and fall within a metre.
+			const int depth_n = MAX(4, int(Math::ceil(0.8 * axes.z * st.scale / 0.25)));
+			for (int e = -2; e <= 2 && !off; e++) {
+				for (int r = 0; r <= depth_n && !off; r++) {
+					const Vector3 mid = centre + x_axis * (len * 0.5 * e) - z_axis * (axes.z * st.scale * (0.1 + 0.8 * r / depth_n));
+					const Vector3 q = mid + y_axis * (axes.y * st.scale);
+					off = !(H(q.x, q.z) >= q.y - lp.cap_thickness * 0.25f && rf_height(p_gen, mid) >= mid.y);
+				}
 			}
 			if (off) {
 				continue;
