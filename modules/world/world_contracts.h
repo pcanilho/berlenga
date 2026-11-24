@@ -646,6 +646,9 @@ public:
 			r_cover[i] = contract_cover_at(Vector3(p_points[i].x, 0.0f, p_points[i].y));
 		}
 	}
+	// The stones standing above the ground in a world xz rect, appended as 7 floats each: x, z, ground_y, top_y, the
+	// footprint's half axes x and z (world metres) and its yaw (radians, about +y). Only stones whose top stands above their ground. Main thread.
+	virtual void contract_stones_near(const Rect2 &p_rect, LocalVector<float> &r_out) const {}
 	virtual ~WorldCoverProvider() {}
 };
 
@@ -720,6 +723,7 @@ protected:
 	GDVIRTUAL3(_add_runoff_load, Vector3, float, float)
 	GDVIRTUAL5R(float, _track_mud, Vector3, float, float, float, Vector4)
 	GDVIRTUAL1RC(Vector3, _coarse_cover_at, Vector3)
+	GDVIRTUAL1RC(PackedFloat32Array, _stones_near, Rect2)
 	GDVIRTUAL1RC(Color, _albedo_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _relief_at, Vector3)
 
@@ -756,6 +760,10 @@ public:
 	Vector3 coarse_cover_at(const Vector3 &p_position) const;
 	// coarse_cover_at at many points (world xz) in one call (a script stub answers point by point).
 	void coarse_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const;
+	// The stones standing above the ground in a world xz rect, 7 floats each: x, z, ground_y, top_y, footprint half axes
+	// x and z (world metres), yaw (radians), from every stone field (RockField3D). For readers that shape what lies round them (the snowpack's
+	// moats and lee tails, SnowSurface3D). Empty with no stone field. Main thread.
+	PackedFloat32Array stones_near(const Rect2 &p_rect) const;
 	// The ground's albedo as drawn (linear rgb, a few metres' mean): the terrain material's colour, darkened by the
 	// weather's surface wetness by its porosity, the plant cover over it (grass and plants, by the share they hide),
 	// under the snowpack's cover and albedo. a: how much of that is known

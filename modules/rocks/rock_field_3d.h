@@ -191,6 +191,8 @@ private:
 		bool tile_set = false;
 		StaticBody3D *body = nullptr;
 		int stones = 0;
+		float snow = -1.0f; // the pack's mean depth over the cell when it was laid (m), -1 not read
+		LocalVector<float> standing; // its stones standing above the ground: x, z, ground, top, half axes x and z, yaw (WorldGround.stones_near)
 	};
 
 	NodePath generator_path;
@@ -272,6 +274,15 @@ private:
 		bool any = false;
 		float burn_at(float p_x, float p_z) const;
 	};
+	// The snowpack over a detail cell (docs/ideas/ground-detail.md, "Stones through snow"): the WorldSnow depth read on
+	// the main thread on a 5 x 5 grid (corners, quarters, middle), for the workers.
+	struct SnowPack {
+		float depth[25] = {}; // m
+		Rect2 rect;
+		float mean = 0.0f;
+		bool any = false; // snow somewhere over the cell
+		float at(float p_x, float p_z) const;
+	};
 	struct CoverJob {
 		const RockField3D *field = nullptr;
 		const TerrainGenerator3D *gen = nullptr;
@@ -295,6 +306,11 @@ private:
 	bool ground_wear = true; // ground detail worn by game trails and turned by boar rooting (WorldStand)
 	bool frost_sorting = true; // frost-sorted circles and stripes of stones on cold, wet, gentle soil (WorldWeather climate)
 	bool runoff_gravel = true; // a coarse lag in the terrain's rill and gully floors, fine grains on their fans
+	bool snow_burial = true; // stones under the snowpack are left out of the ground detail
+	float snow_check = 0.0f; // s to the next look at the pack over the laid cells
+	mutable SafeNumeric<uint64_t> snow_buried; // detail stones left under the snow
+	void _snow_pack(const Rect2 &p_rect, SnowPack &r_snow) const;
+	void _update_snow_cells(double p_delta);
 	bool rain_pedestals = true; // stones on bare soil stand on columns the rain splash left round them
 	void _rain_climate(const Rect2 &p_rect, RainClimate &r_rain) const;
 	// Any thread: the bare, erodible soil's share at a point (0..1: the stones lying on it), and the soil the splash
@@ -429,6 +445,8 @@ private:
 		StandWear wear;
 		FrostClimate frost;
 		RainClimate rain;
+		SnowPack snow;
+		LocalVector<float> standing; // the cell's stones above the ground, 7 floats each (Cell.standing)
 		LocalVector<float> pedestals[RF_PEDESTAL_SHAPES]; // soil columns per shape: 12 floats each (MultiMesh 3D)
 		ReliefGrid relief;
 		Vector3i key;
@@ -902,6 +920,8 @@ public:
 	void set_frost_sorting(bool p_enabled);
 	void set_runoff_gravel(bool p_enabled);
 	bool is_runoff_gravel() const { return runoff_gravel; }
+	void set_snow_burial(bool p_enabled);
+	bool is_snow_burial() const { return snow_burial; }
 	void set_rain_pedestals(bool p_enabled);
 	bool is_rain_pedestals() const { return rain_pedestals; }
 	// (bare soil's stone share 0..1, soil lost round the stones m) at a point: where the rain leaves pedestals.
@@ -984,6 +1004,8 @@ public:
 	// where it reaches, else the far one; 0 outside both.
 	Vector3 contract_cover_at(const Vector3 &p_position) const override;
 	void contract_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const override;
+	void contract_stones_near(const Rect2 &p_rect, LocalVector<float> &r_out) const override;
+	static void _standing_append(const Stone &p_stone, const Library *p_lib, LocalVector<float> &r_out);
 	Vector3 _cover_sample(const Vector2 &p_xz) const; // under cover_data_mutex
 	Vector3 get_coarse_cover_at(const Vector3 &p_position) const { return contract_cover_at(p_position); }
 	void set_wind_obstacles(bool p_enabled);

@@ -1034,6 +1034,26 @@ Vector3 WorldGround::coarse_cover_at(const Vector3 &p_position) const {
 	return r;
 }
 
+PackedFloat32Array WorldGround::stones_near(const Rect2 &p_rect) const {
+	PackedFloat32Array r;
+	if (GDVIRTUAL_CALL(_stones_near, p_rect, r)) {
+		return r;
+	}
+	const LocalVector<WorldCoverProvider *> *list = WorldContracts::cover_providers_list();
+	if (!list) {
+		return r;
+	}
+	LocalVector<float> all;
+	for (const WorldCoverProvider *c : *list) {
+		c->contract_stones_near(p_rect, all);
+	}
+	r.resize(all.size());
+	if (!all.is_empty()) {
+		memcpy(r.ptrw(), all.ptr(), sizeof(float) * all.size());
+	}
+	return r;
+}
+
 void WorldGround::coarse_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const {
 	if (p_count <= 0) {
 		return;
@@ -1131,6 +1151,8 @@ Color WorldGround::albedo_at(const Vector3 &p_position) const {
 void WorldGround::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("coarse_cover_at", "position"), &WorldGround::coarse_cover_at);
 	GDVIRTUAL_BIND(_coarse_cover_at, "position");
+	ClassDB::bind_method(D_METHOD("stones_near", "rect"), &WorldGround::stones_near);
+	GDVIRTUAL_BIND(_stones_near, "rect");
 	ClassDB::bind_method(D_METHOD("albedo_at", "position"), &WorldGround::albedo_at);
 	GDVIRTUAL_BIND(_albedo_at, "position");
 	ClassDB::bind_method(D_METHOD("relief_at", "position"), &WorldGround::relief_at);

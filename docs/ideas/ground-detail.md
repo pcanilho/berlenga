@@ -1006,4 +1006,39 @@ coloured (B horizon browns, patchy) with splash rills. The bare share is WorldCo
 (the terrain material's soil colour reads the same rule). Trails, rooting, frost churn, gullies and fans level them; tiles skip pedestalled
 squares; the far cover counts the stones. Bench: `--world --rain-climate[=P] --pedestal-spot` (finds a bare
 slope), `--no-rain-pedestals` for the before. The live storm growth and the dry sand slump are not built.
-Gap: the terrain material stays grass coloured where the climate leaves the soil bare (terrain material owner).
+Bare soil colour: TerrainMaterial3D.climate_bare_soil (terrain material, 6c0fc3de) reads the same rule.
+
+## Stones through snow (research, 24 Nov; card: rain pedestals, stones through snow)
+
+What a stony slope does under a thin to moderate pack (field observation and the processes behind it):
+
+- Burial by size. A stone shows while its top stands above the pack; the pack's depth sorts what is seen: the fine
+  grains go first, then pebbles, and early-winter snow of a few centimetres leaves the coarse lag dotted through it.
+  Deep snow (SnowSurface3D, above its min_depth of 3 cm) is geometry, so it hides a buried stone in raster and PT;
+  thin snow (under 3 cm) is a material on the terrain and hides nothing, so a buried pebble lies drawn on top of it.
+- Melt moats round protruding stones. Rock (albedo 0.1 to 0.3) absorbs four or five times the shortwave that snow
+  (0.6 to 0.9) does, warms above freezing on a sunny day even in frost, and melts the snow touching it; a moat opens
+  round each stone, widest and deepest on the sun's side, growing with the days of sun since the last snowfall and
+  absent in fresh snow, overcast or deep cold (the same mechanism as tree wells and the melt of debris-covered snow
+  where the debris is thin: Ostrem 1959; dark-object melt of seasonal snow, e.g. Baraer et al. 2025 on rock outcrops).
+- Wind round an obstacle. Flow over a cube scours a horseshoe round its windward foot and lays a tail of drift in its
+  lee two to five protrusion heights long, with a small notch right behind it (wind tunnel and CFD of snowdrift round
+  cubes: Thiis 2000; Beyers and Waechter 2008, Beyers 2004). A stone of 10 cm protrusion gets a tail of 20 to 50 cm.
+- Caps. Snow stays on a stone's top faces under about 50 degrees and slides off steeper ones; the rock material
+  already draws it (RockGenerator material: snow_cover by slope, snow_max_slope 55), so caps come from the snow map.
+
+Split by owner (contracts first, no private copies):
+
+1. RockField3D (this thread): the ground detail reads the pack depth (WorldSnow depth, sampled per detail cell on the
+   main thread as the rain climate is) and leaves out stones whose top is under the pack (they cost nothing in PT
+   and do not show through thin snow); stones half in it sink into it visually as the deep snow surface covers
+   their foot. Cells rebuild when the cell's depth changes by more than a centimetre (RockField3D.snow_burial).
+   The contract for the snow: WorldGround.stones_near(rect) -> PackedFloat32Array, 7 floats a stone (x, z, ground_y,
+   top_y, half axes x and z, yaw: SnowSurface3D.set_stone_list's layout), every laid cell's stones whose top stands a centimetre or more over their ground, from
+   every stone field (WorldCoverProvider.contract_stones_near). Main thread.
+2. SnowSurface3D (snow thread, 03cc07fb stone_relief): moats and lee tails stamped into the surface's own depth from that query (moat depth
+   from the sun days since snowfall and the stone's protrusion, tail by the weather's wind), thin snow's coverage
+   cleared in the moat (the terrain material's snow, the same field).
+
+Bench: rocks `--world --snow=DEPTH_CM [--sun-days=N]` (a SnowCover3D with the pack laid evenly, SnowSurface3D round
+the camera), `--no-snow-stones` for the before; raster and PT at 100% crop.

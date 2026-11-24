@@ -596,6 +596,9 @@
 		<member name="shore_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="100.0">
 			How far round the follow target shore stones are built.
 		</member>
+		<member name="snow_burial" type="bool" setter="set_snow_burial" getter="is_snow_burial" default="true">
+			Stones of the ground detail whose top is under the snowpack ([WorldContracts] snow depth, read per detail cell) are left out: deep snow ([SnowSurface3D]) would hide them, and thin snow, drawn as a material on the ground, would show them lying on it. What shows through a thin pack is the coarse lag. Cells are laid again when their snow changes by about a centimetre.
+		</member>
 		<member name="soft_rock_type" type="int" setter="set_soft_rock_type" getter="get_soft_rock_type" enum="RockGenerator.RockType" default="1">
 			Rock type of the soft beds when [member use_strata] is on.
 		</member>
