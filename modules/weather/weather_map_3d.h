@@ -40,6 +40,7 @@
 #include "weather_shelter.h"
 #include "weather_terrain_wind.h"
 
+#include "core/os/spin_lock.h"
 #include "core/io/image.h"
 #include "core/object/object_id.h"
 #include "core/object/worker_thread_pool.h"
@@ -581,6 +582,14 @@ private:
 	void _publish_globals();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	Vector3 _follow_position() const;
+	// The follow position as the main thread last found it: a contract read from a worker thread (snow, vegetation,
+	// rocks laying out cells) must not touch the scene tree, so it takes this.
+	mutable SpinLock follow_lock;
+	mutable Vector3 follow_cache;
+	mutable Vector3 self_cache;
+	mutable ObjectID sky_clock_id;
+	Vector3 _self_position() const;
+	const Node *_sky_clock_node() const;
 	Vector3 _contact_center() const; // the contact square's centre: the active camera, else the follow position
 
 	float _cell_size() const { return extent / resolution; }
