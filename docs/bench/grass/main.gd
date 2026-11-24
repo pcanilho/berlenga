@@ -70,6 +70,8 @@ extends Node3D
 #   --storm[=H]      a wet 12 m/s gale from +x for H hours (default 1) before the shot, with the wind still blowing:
 #                    the meadow lodged in swirled patches (GrassField3D.lodging, docs/ideas/vegetation.md "Storm lodging")
 #   --fairy          looks at the meadow fairy ring nearest the default view (GrassField3D.fairy_rings)
+#   --deer-bed       looks at the freshest deer bed near the default view (GrassField3D.deer_beds), from 3 m off and 1.6 m up
+#                    (the bed's day: --day's, else 180; GRASS_DEER_DAY=D another)
 #   --fog            flowering Yorkshire fog in drifts through the meadow (PlantGenerator.make_flowering_grasses, by the
 #                    season of --day: heads from late May, seed heads into August)
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
@@ -121,6 +123,7 @@ var wind := Vector2(3, 1)
 var weather := false
 var storm_hours := 0.0
 var fairy := false
+var deer_bed := false # --deer-bed: GrassField3D.deer_beds
 var frames := 20
 var out := ""
 var clip := ""
@@ -271,6 +274,7 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a == "--weather": weather = true
 		elif a == "--fairy": fairy = true
+		elif a == "--deer-bed": deer_bed = true
 		elif a.begins_with("--storm"): storm_hours = float(a.get_slice("=", 1)) if a.contains("=") else 1.0
 		elif a == "--trample": trample = true
 		elif a == "--layers=0": layers = false
@@ -909,6 +913,50 @@ void fragment() {
 		cam.position = Vector3(eye.x, height(eye.x, eye.y) + 4.5, eye.y)
 		cam.look_at(Vector3(best.x - away.x * 3.0, height(best.x, best.y), best.y - away.y * 3.0))
 		print("GRASS_FAIRY ring front at ", best)
+	if deer_bed:
+		# The freshest deer bed near the default view (GrassField3D.deer_beds) over the next fortnight from the bench's
+		# day (--day's, else 180; GRASS_DEER_DAY=D that day only), seen from 2.4 m off and 1.6 m up.
+		var day0 := 180.0
+		var days := 15
+		if OS.get_environment("GRASS_DEER_DAY") != "":
+			day0 = float(OS.get_environment("GRASS_DEER_DAY"))
+			days = 1
+		elif season_day > 0:
+			day0 = float(season_day) + 0.5
+		var best := Vector2(6, 20)
+		var day := day0
+		var score := -1e9
+		for k in days:
+			for zi in range(-80, 81):
+				for xi in range(-80, 81):
+					var x := 6.0 + xi * 0.5
+					var z := 20.0 + zi * 0.5
+					var b: Vector4 = GrassField3D.get_deer_bed_at(Vector3(x, 0, z), day0 + k)
+					var sc := b.x * 100.0 - Vector2(x, z).distance_to(Vector2(6, 20)) - 2.0 * k
+					if b.x > 0.6 and sc > score and height(x, z) > -0.3:
+						score = sc
+						best = Vector2(x, z)
+						day = day0 + k
+		# The bed's middle: the point of it most pressed, on a fine grid round the hit.
+		var top := -1.0
+		var mid := best
+		for zi in range(-8, 9):
+			for xi in range(-8, 9):
+				var q := best + Vector2(xi, zi) * 0.1
+				var pq: float = GrassField3D.get_deer_bed_at(Vector3(q.x, 0, q.y), day).x
+				if pq > top:
+					top = pq
+					mid = q
+		best = mid
+		grass.deer_bed_day = day
+		if turf:
+			turf.deer_bed_day = day
+		var away := (Vector2(6, 20) - best).normalized() if best.distance_to(Vector2(6, 20)) > 0.5 else Vector2(0, 1)
+		var off_m := float(OS.get_environment("GRASS_DEER_OFF")) if OS.get_environment("GRASS_DEER_OFF") != "" else 2.4
+		var eye := best + away * off_m
+		cam.position = Vector3(eye.x, height(eye.x, eye.y) + 1.6, eye.y)
+		cam.look_at(Vector3(best.x - away.x * 0.3, height(best.x, best.y), best.y - away.y * 0.3))
+		print("GRASS_DEER_BED at ", best, " day ", day, " ", GrassField3D.get_deer_bed_at(Vector3(best.x, 0, best.y), day))
 
 # A closed wood (no tree patches) and, with the mask, an irregular clearing about 22 m across:
 # the trees read the mask's red channel, so they stay out where it is 0, and the meadow, the

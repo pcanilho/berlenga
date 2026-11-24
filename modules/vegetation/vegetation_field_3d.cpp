@@ -5082,12 +5082,22 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 			grass += Vector3(fr, fg, fb) * (gl * bare);
 			bare *= 1.0f - gl;
 		}
-		const float g = 1.0f - bare;
+		float g = 1.0f - bare;
 		if (g > 0.0f) {
 			grass /= g;
 		}
-		const float ground_a = 1.0f - (1.0f - g) * (1.0f - a_plants);
-		Vector3 ground = ground_a > 0.0f ? (grass * (g * (1.0f - a_plants)) + plants * a_plants) / ground_a : Vector3();
+		// Drylands (climate_bare, WorldContracts::bare_patch): the sward and cover plants keep to their clumps, so from
+		// afar the ground shows the bare share between them (the patches' mean, as the terrain material draws it).
+		float a_cover = a_plants;
+		if (job.climate_bare) {
+			const float share = WorldContracts::climate_bare_share_at(p);
+			if (share > 0.0f) {
+				g *= 1.0f - share;
+				a_cover *= 1.0f - share;
+			}
+		}
+		const float ground_a = 1.0f - (1.0f - g) * (1.0f - a_cover);
+		Vector3 ground = ground_a > 0.0f ? (grass * (g * (1.0f - a_cover)) + plants * a_cover) / ground_a : Vector3();
 		const float a = 1.0f - (1.0f - ground_a) * (1.0f - closure);
 		const Vector3 col = a > 0.0f ? (ground * (ground_a * (1.0f - closure)) + crown * closure) / a : Vector3();
 		uint8_t *o = job.out + (int64_t(p_row) * job.w + x) * 4;
@@ -5108,6 +5118,7 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 	// The plants' share carries the far match's darkening (vegetation_far_shade), as vegetation_far()
 	// gives it to the same plants nearer: the grass and crowns have their own far colours.
 	job.plant_shade = far_shade;
+	job.climate_bare = climate_bare;
 	cover_shade = far_shade;
 	job.rect = p_setup.rect;
 	job.w = CLAMP(int(Math::ceil(job.rect.size.x / cover_cell)), 1, 4096);

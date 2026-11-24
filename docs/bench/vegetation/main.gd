@@ -102,6 +102,9 @@ func _ready() -> void:
 		elif a == "--test=bare":
 			test = true
 			only_bare = true
+		elif a == "--test=deer":
+			test = true
+			only_deer = true
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -331,8 +334,14 @@ func _physics_process(_d: float) -> void:
 		await _grass_walk()
 		get_tree().quit(0)
 		return
+	if test and only_deer:
+		_deer_bed_check()
+		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if test and only_bare:
 		await _climate_bare_check()
+		_deer_bed_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -2050,6 +2059,7 @@ var only_blowing := false # --test=blowing: the blowing-leaves check alone
 var only_sod := false # --test=sod: the sod lip checks alone
 var only_rocks := false # --test=rocks: the rock_field check alone
 var only_bare := false # --test=bare: the climate_bare check alone
+var only_deer := false # --test=deer: the deer bed check alone
 var grass_walk := 0.0 # --grass-walk[=M]: main-thread cost of a GrassField3D (defaults) walked M metres a frame
 
 # --grass-walk[=M] (0.05 m a frame by default: a walk at 174 frames a second is 0.008): the main-thread time of
@@ -2114,6 +2124,36 @@ func _grass_blades(g: GrassField3D) -> Array:
 
 # rock_field (VegetationField3D, GrassField3D): the stones fetched round each tile as it is placed give exactly the
 # placements of the world-wide obstacles array: populated, streamed, and the sward's near and far ring blades.
+# Deer beds (GrassField3D.deer_beds, deer_beds.h): roe-sized (about 1 m) and red-sized (about 1.5 m) ovals, a few
+# square metres of flattened grass a hectare; a fresh bed is standing up again three days on.
+func _deer_bed_check() -> void:
+	var area := 0.0
+	var lengths := {}
+	var fresh := 0
+	var lower := 0
+	var step := 0.5
+	for k in 2:
+		var day := 190.0 + 3.0 * k
+		for zi in 512:
+			for xi in 512:
+				var p := Vector3(xi * step - 128.0, 0.0, zi * step - 128.0)
+				var b: Vector4 = GrassField3D.get_deer_bed_at(p, day)
+				if b.x <= 0.0:
+					continue
+				if k == 0:
+					area += step * step * b.x
+					lengths[snappedf(b.w, 0.01)] = true
+				if b.x > 0.9:
+					fresh += 1
+					if GrassField3D.get_deer_bed_at(p, day + 3.0).x < b.x - 0.1:
+						lower += 1
+	var per_ha := area / 6.5536
+	var ls: Array = lengths.keys()
+	ls.sort()
+	_check("deer beds: a few square metres of flattened grass a hectare", per_ha > 0.5 and per_ha < 15.0, per_ha)
+	_check("deer beds: 0.9 to 1.7 m long (roe and red deer)", not ls.is_empty() and ls[0] >= 0.89 and ls[-1] <= 1.71, ls)
+	_check("deer beds: a fresh bed stands up again over the next days (unless another bed overlaps it)", fresh > 0 and lower >= fresh * 0.9, [fresh, lower])
+
 # Drylands (VegetationField3D.climate_bare, WorldContracts::bare_patch): under a 300 mm climate the cover plants keep to
 # the clumps, about the share the rain leaves covered (0.9 * (1 - smoothstep(200, 700, 300)) = 0.81 bare); trees stay;
 # a 900 mm climate leaves the placements as they were; climate_bare off, as without a climate.

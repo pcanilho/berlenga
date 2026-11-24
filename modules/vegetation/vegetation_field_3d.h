@@ -533,6 +533,7 @@ private:
 	Ref<Texture2D> cover_texture;
 	struct CoverJob {
 		const PlaceSetup *setup = nullptr;
+		bool climate_bare = false; // VegetationField3D.climate_bare: the climate's bare share thins the far sward and cover plants.
 		// The grass layers, top down (cover_grass, then cover_grass_layers): rules and far colour (linear).
 		LocalVector<Ref<PlantSpecies>> grass;
 		LocalVector<Color> grass_far;

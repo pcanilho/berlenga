@@ -2165,3 +2165,31 @@ own patches (`tm_bare_patch`, Rietkerk et al. 2004) bit for bit, the share from 
 - Check: vegetation `--test=bare` (300 mm keeps about 0.17 of the cover plants, trees unchanged; 900 mm unchanged).
 - Still on the terrain side: its `grass_ground()` tint and `vegetation_far()` draw over its own bare patches; the
   terrain material can skip them by its `tm_bare_k` and switch to the shared GLSL.
+
+## Deer beds (GrassField3D.deer_beds, deer_beds.h)
+Where deer lie up in tall grass they leave ovals of flattened grass, roe about 1 m long, red about 1.5 m, in hay
+meadows and field edges, often several together (Discover Wildlife); water deer beds average 60 x 40 cm (Wildlife
+Online; not modelled). Built like the fairy rings: one world layout in C++ and GLSL, so the blades, tests and any
+other system agree with no textures or rebuilds.
+- Layout: a bedding site in four in ten 32 m cells (about 3.9 a hectare, an estimate), 1 to 3 beds within 2.6 m
+  of its centre; roe-sized beds (0.9 to 1.2 m) at most sites, red-sized (1.3 to 1.7 m) at three in ten. Beds are
+  ovals 0.62 as wide as long.
+- Time: each bed is lain in again every 6 to 14 days (its own period and phase) and stands up over about ten days
+  (an estimate), by the season's day and hour (GrassField3D sets deer_bed_day in its season step).
+- Blades: inside the oval most lie flat (the rest half up), swirled the way the deer turned and pressed out from the
+  middle, a little shorter; the share and lean fade as the bed recovers. Not in mown meadows, lawns under 12 cm or
+  crops.
+- Not yet: placement by deer presence (WorldStand browse, trails, cover edges) and pellet piles at one end; the
+  layout is the same everywhere a meadow grows.
+- Checks: vegetation `--test=deer` (size, area a hectare, recovery). View: grass `--deer-bed` (GRASS_DEER_DAY=D).
+
+## Dry climates: dormant straw and open cover (follow_weather, cover map)
+The scene's 320 mm, 26 C July landscape still read as closed green turf. Semi-arid grassland is open and, in a dry
+summer, dormant: perennial cover follows the year's rain (Le Houerou 1984: the contract's bare share, 0.77 at 320 mm)
+and Mediterranean perennial grasses go summer-dormant, dead to the crown, once the soil dries (Volaire and Norton
+2006, already the sward's dormancy rule: greenness from the season's Thornthwaite-Mather soil moisture).
+- GrassField3D.follow_weather (default on): the world's weather turns the sward through the year without a
+  season_source too (before, a scene had to set one; the landscape did only with --summer-dry), so a dry summer
+  browns it to straw and lays the dormant blades over. One weather for every system.
+- VegetationField3D cover map (climate_bare): the far sward and cover plants take (1 - bare share) of their cover,
+  so past the blades the ground shows the patchwork's mean, as the terrain material does at a distance.

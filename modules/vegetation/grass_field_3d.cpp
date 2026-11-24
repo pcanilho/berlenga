@@ -35,6 +35,7 @@
 #include "modules/world/world_contracts.h"
 #include "tree_generator.h"
 #include "vegetation_voxel_lod.h"
+#include "deer_beds.h"
 #include "fairy_rings.h"
 #include "vegetation_fire.h"
 #include "vegetation_light.h"
@@ -537,6 +538,9 @@ void GrassField3D::_build_material() {
 	// then (> 50 unknown), a 1 where known; flood_rect z 0: none.
 	code += "uniform sampler2D flood_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 flood_rect;\n";
 	code += FairyRings::GLSL;
+	// Deer beds (deer_beds.h): 1 on, 0 off; deer_bed_day the season's day (the beds' ages).
+	code += "uniform float deer_beds = 1.0;\nuniform float deer_bed_day = 180.0;\n";
+	code += DeerBeds::GLSL;
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
 	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
@@ -1381,6 +1385,28 @@ void vertex() {
 			}
 		}
 	}
+	// Deer beds (deer_beds.h): where a deer lay up, the tall grass lies flat in an oval, swirled the way it turned
+	// before lying and pressed out from the middle, standing up again over about ten days. Not in a mown meadow or a
+	// lawn too short to show it.
+	float bed_face_up = 0.0;
+	if (deer_beds > 0.0 && v_hay < 0.0 && h > 0.12) {
+		vec3 bed = deer_bed(base_w.xz, deer_bed_day);
+		if (bed.x > 0.0) {
+			float bj = (fract(rnd * 23.9) - 0.5) * 0.5;
+			vec2 bd = mat2(vec2(cos(bj), sin(bj)), vec2(-sin(bj), cos(bj))) * bed.yz;
+			vec2 bdl = (to_local * vec3(bd.x, 0.0, bd.y)).xz;
+			bdl = length(bdl) > 1e-4 ? normalize(bdl) : vec2(0.0, 1.0);
+			// Most blades flat under the body; the rest, and all of them as it recovers, half up.
+			float flat_k = fract(rnd * 41.3) < 0.8 ? bed.x : 0.5 * bed.x;
+			off = mix(off, bdl * (1.2 + 0.25 * fract(rnd * 3.7)), flat_k);
+			h *= mix(1.0, 0.85, bed.x);
+			// Each drawn blade stands for several tillers: standing, they hide the soil seen from the side; lying, only
+			// their own width covers it, so the pressed ones widen to the mat the tillers make together.
+			w *= mix(1.0, 2.8, flat_k);
+			// A body pressed them flat: they lie face up in a mat over the soil, not on edge.
+			bed_face_up = step(0.5, flat_k);
+		}
+	}
 	// Under the last flood's mark (WorldWater.high_water_at): the current combed the blades flat downstream and left
 	// them grey with silt, with a sharp line at the crest (USGS, Koenig et al. 2016: folded-grass wash lines); they
 	// stand again over weeks, the silt washes off over months.
@@ -1426,7 +1452,7 @@ void vertex() {
 	vec3 mid = vec3(0.0, h * 0.62 * cos(ang * 0.35), 0.0) + vec3(dir.x, 0.0, dir.y) * h * 0.18 * sin(ang);
 	vec3 p = 2.0 * t * (1.0 - t) * mid + t * t * tip;
 	vec3 tangent = normalize(2.0 * (1.0 - t) * mid + 2.0 * t * (tip - mid) + vec3(0.0, 1e-4, 0.0));
-	vec3 across = vec3(1.0, 0.0, 0.0);
+	vec3 across = bed_face_up > 0.5 ? vec3(dir.y, 0.0, -dir.x) : vec3(1.0, 0.0, 0.0);
 	// Nearly parallel edges, then a short taper to the tip, as a real leaf blade.
 	float taper = 1.0 - 0.9 * t * t;
 	p += across * side * w * taper;
@@ -1712,6 +1738,8 @@ void fragment() {
 	material->set_shader(shader);
 	lodge_dirty = true; // A new material: the lodging map goes to it at the next sweep.
 	material->set_shader_parameter("fairy_rings", fairy_rings && crop == CROP_NONE ? 1.0f : 0.0f);
+	material->set_shader_parameter("deer_beds", deer_beds && crop == CROP_NONE ? 1.0f : 0.0f);
+	material->set_shader_parameter("deer_bed_day", deer_bed_day);
 	// A sown crop covers its field whatever the patches of wild cover round it.
 	material->set_shader_parameter("climate_bare", climate_bare && crop == CROP_NONE);
 	melt_day = -2; // A new material: the snowmelt bands again on the next season step.
@@ -2276,7 +2304,7 @@ void GrassField3D::_build_hedges() {
 	}
 	Dictionary season;
 	// season_source set: the season from the weather contract at the field.
-	if (!season_source.is_empty() && WorldContracts::weather()->has_provider()) {
+	if (_follows_season() && WorldContracts::weather()->has_provider()) {
 		season = WorldContracts::weather()->season_at(is_inside_tree() ? get_global_position() : Vector3());
 	} else if (crop_day >= 0) {
 		season["day_of_year"] = crop_day;
@@ -4902,6 +4930,25 @@ void GrassField3D::set_snowmelt(bool p_on) {
 	if (material.is_valid() && !snowmelt) {
 		material->set_shader_parameter("snowmelt", 0.0f);
 	}
+}
+
+void GrassField3D::set_deer_beds(bool p_on) {
+	deer_beds = p_on;
+	if (material.is_valid()) {
+		material->set_shader_parameter("deer_beds", deer_beds && crop == CROP_NONE ? 1.0f : 0.0f);
+	}
+}
+
+void GrassField3D::set_deer_bed_day(float p_day) {
+	deer_bed_day = p_day;
+	if (material.is_valid()) {
+		material->set_shader_parameter("deer_bed_day", deer_bed_day);
+	}
+}
+
+Vector4 GrassField3D::get_deer_bed_at(const Vector3 &p_global_position, float p_day) {
+	const DeerBeds::Hit hit = DeerBeds::at(Vector2(p_global_position.x, p_global_position.z), p_day);
+	return Vector4(hit.press, hit.lie.x, hit.lie.y, hit.length);
 }
 
 void GrassField3D::set_fairy_rings(bool p_on) {
@@ -7723,7 +7770,16 @@ void GrassField3D::set_dryness(float p_dryness) {
 void GrassField3D::set_season_source(const NodePath &p_path) {
 	season_source = p_path;
 	season_wait = 0;
-	if (p_path.is_empty()) {
+	if (!_follows_season()) {
+		season_green = 1.0f;
+		set_dryness(dryness);
+	}
+}
+
+void GrassField3D::set_follow_weather(bool p_on) {
+	follow_weather = p_on;
+	season_wait = 0;
+	if (!_follows_season()) {
 		season_green = 1.0f;
 		set_dryness(dryness);
 	}
@@ -7754,7 +7810,7 @@ float GrassField3D::season_greenness(const Dictionary &p_season) {
 // Once a second: the season's greenness into the blades' and the ground's dryness, and a new far
 // colour bake when the look has moved enough to show.
 void GrassField3D::_season_step() {
-	if (season_source.is_empty() || season_wait-- > 0) {
+	if (!_follows_season() || season_wait-- > 0) {
 		return;
 	}
 	season_wait = 60;
@@ -7764,6 +7820,11 @@ void GrassField3D::_season_step() {
 	}
 	const Dictionary season_now = wm->season_at(get_global_position());
 	_update_snowmelt(season_now);
+	if (material.is_valid() && season_now.has("day_of_year")) {
+		// The deer beds' ages (deer_beds.h) by the season's day; the hour in, so they recover through the day.
+		deer_bed_day = float(int(season_now.get("day_of_year", 180))) + float(season_now.get("hour", 12.0f)) / 24.0f;
+		material->set_shader_parameter("deer_bed_day", deer_bed_day);
+	}
 	if (!meadows.is_empty()) {
 		const int day = int(season_now.get("day_of_year", -1));
 		_hay_rain_step();
@@ -7887,6 +7948,8 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_dry_color, get_dry_color, "color")
 	GRASS_BIND(set_dryness, get_dryness, "dryness")
 	GRASS_BIND(set_season_source, get_season_source, "path")
+	ClassDB::bind_method(D_METHOD("set_follow_weather", "enabled"), &GrassField3D::set_follow_weather);
+	ClassDB::bind_method(D_METHOD("is_follow_weather"), &GrassField3D::is_follow_weather);
 	GRASS_BIND(set_season_response, get_season_response, "response")
 	ClassDB::bind_method(D_METHOD("get_season_green"), &GrassField3D::get_season_green);
 	ClassDB::bind_method(D_METHOD("get_effective_dryness"), &GrassField3D::get_effective_dryness);
@@ -7948,6 +8011,11 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_flood_wash"), &GrassField3D::is_flood_wash);
 	ClassDB::bind_method(D_METHOD("get_flood_wash_at", "position"), &GrassField3D::get_flood_wash_at);
 	ClassDB::bind_method(D_METHOD("update_flood_map", "center"), &GrassField3D::update_flood_map);
+	ClassDB::bind_method(D_METHOD("set_deer_beds", "enabled"), &GrassField3D::set_deer_beds);
+	ClassDB::bind_method(D_METHOD("is_deer_beds"), &GrassField3D::is_deer_beds);
+	ClassDB::bind_method(D_METHOD("set_deer_bed_day", "day"), &GrassField3D::set_deer_bed_day);
+	ClassDB::bind_method(D_METHOD("get_deer_bed_day"), &GrassField3D::get_deer_bed_day);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("get_deer_bed_at", "global_position", "day"), &GrassField3D::get_deer_bed_at);
 	ClassDB::bind_method(D_METHOD("set_fairy_rings", "enabled"), &GrassField3D::set_fairy_rings);
 	ClassDB::bind_method(D_METHOD("is_fairy_rings"), &GrassField3D::is_fairy_rings);
 	ClassDB::bind_static_method("GrassField3D", D_METHOD("get_fairy_ring_at", "global_position"), &GrassField3D::get_fairy_ring_at);
@@ -7999,6 +8067,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "dry_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_dry_color", "get_dry_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dryness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_dryness", "get_dryness");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "season_source", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_season_source", "get_season_source");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "follow_weather"), "set_follow_weather", "is_follow_weather");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "season_response", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_season_response", "get_season_response");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "color_variation", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_color_variation", "get_color_variation");
 	ADD_GROUP("Ground", "ground_");
@@ -8016,6 +8085,8 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "climate_bare"), "set_climate_bare", "is_climate_bare");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lodging"), "set_lodging", "is_lodging");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fairy_rings"), "set_fairy_rings", "is_fairy_rings");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deer_beds"), "set_deer_beds", "is_deer_beds");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deer_bed_day", PROPERTY_HINT_RANGE, "0,366,0.01"), "set_deer_bed_day", "get_deer_bed_day");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snowmelt"), "set_snowmelt", "is_snowmelt");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flood_wash"), "set_flood_wash", "is_flood_wash");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");
