@@ -646,6 +646,9 @@ public:
 			r_cover[i] = contract_cover_at(Vector3(p_points[i].x, 0.0f, p_points[i].y));
 		}
 	}
+	// The stones standing above the ground in a world xz rect, appended as 7 floats each: x, z, ground_y, top_y, the
+	// footprint's half axes x and z (world metres) and its yaw (radians, about +y). Only stones whose top stands above their ground. Main thread.
+	virtual void contract_stones_near(const Rect2 &p_rect, LocalVector<float> &r_out) const {}
 	virtual ~WorldCoverProvider() {}
 };
 
@@ -720,6 +723,7 @@ protected:
 	GDVIRTUAL3(_add_runoff_load, Vector3, float, float)
 	GDVIRTUAL5R(float, _track_mud, Vector3, float, float, float, Vector4)
 	GDVIRTUAL1RC(Vector3, _coarse_cover_at, Vector3)
+	GDVIRTUAL1RC(PackedFloat32Array, _stones_near, Rect2)
 	GDVIRTUAL1RC(Color, _albedo_at, Vector3)
 	GDVIRTUAL1RC(Vector2, _relief_at, Vector3)
 
@@ -756,6 +760,10 @@ public:
 	Vector3 coarse_cover_at(const Vector3 &p_position) const;
 	// coarse_cover_at at many points (world xz) in one call (a script stub answers point by point).
 	void coarse_cover_points(const Vector2 *p_points, int p_count, Vector3 *r_cover) const;
+	// The stones standing above the ground in a world xz rect, 7 floats each: x, z, ground_y, top_y, footprint half axes
+	// x and z (world metres), yaw (radians), from every stone field (RockField3D). For readers that shape what lies round them (the snowpack's
+	// moats and lee tails, SnowSurface3D). Empty with no stone field. Main thread.
+	PackedFloat32Array stones_near(const Rect2 &p_rect) const;
 	// The ground's albedo as drawn (linear rgb, a few metres' mean): the terrain material's colour, darkened by the
 	// weather's surface wetness by its porosity, the plant cover over it (grass and plants, by the share they hide),
 	// under the snowpack's cover and albedo. a: how much of that is known
@@ -945,6 +953,17 @@ public:
 	static float bare_share_for_precipitation(float p_mm);
 	// At a point: the season climate's precipitation times the climate's factor there; -1 with no weather climate.
 	static float climate_bare_share_at(const Vector3 &p_position);
+	// Where on the ground the bare share falls (1 bare soil, 0 plant cover): drylands' cover is patchy, not thin, with
+	// clumps and bare soil between them metres across (Rietkerk et al. 2004). Bare where a two-octave value noise (4 m and
+	// 1.3 m; mean 0.5, sd 0.16) falls under the share's quantile, so the bare area is the share. The terrain material's
+	// bare soil patches (TerrainMaterial3D.climate_bare_soil, tm_bare_patch) and every plant layer read this one pattern:
+	// the CPU here, shaders through climate_bare_shader_code(). 0 with no climate.
+	static float bare_patch(const Vector3 &p_position, float p_share, float p_footprint = 0.0f);
+	static float climate_bare_patch_at(const Vector3 &p_position);
+	// GLSL of the same: wc_climate_bare(vec3 p) the share (0 with no climate; reads the globals terrain_climate_map,
+	// terrain_climate_rect and weather_climate, which the including shader declares) and wc_bare_patch(vec3 p, float
+	// share, float footprint_m) the pattern, fading to the share past a footprint of about half a metre.
+	static String climate_bare_shader_code();
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);
 	static void register_relief(WorldReliefProvider *p_provider); // any number: the first that knows the point answers

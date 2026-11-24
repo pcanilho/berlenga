@@ -139,6 +139,13 @@
 				A stub's [method standing_water_at].
 			</description>
 		</method>
+		<method name="_stones_near" qualifiers="virtual const">
+			<return type="PackedFloat32Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				Override in a stub to replace [method stones_near].
+			</description>
+		</method>
 		<method name="_track_mud" qualifiers="virtual">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -304,6 +311,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Water standing on the ground (ruts, prints, puddles), in metres. Default 0.
+			</description>
+		</method>
+		<method name="stones_near" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				The stones standing above the ground in the world xz [param rect], 7 floats each: x, z, ground height, top height, the footprint's half axes x and z (world metres) and its yaw (radians about +y, as SnowSurface3D.set_stone_list takes them), from every stone field ([RockField3D]: its laid cells, the ground detail included). Only stones whose top stands above their ground, for readers that shape what lies round them (the snowpack's melt moats and lee drifts). Empty with no stone field.
 			</description>
 		</method>
 		<method name="track_mud">

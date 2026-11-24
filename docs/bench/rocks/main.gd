@@ -102,6 +102,8 @@ extends Node3D
 #                         spot on a 42 to 52 degree soil bank; --spot=x,z puts the spot at a world point
 #   --rain-climate[=P]    with --world: a mild climate of P mm a year (350) for RockField3D.rain_pedestals (stones on rain
 #                         splash pedestals on bare soil); --pedestal-spot the tallest near the centre; --no-rain-pedestals off
+#   --snow[=CM]           with --world: an even settled pack of CM cm (8) round the spot with its deep snow surface, for
+#                         RockField3D.snow_burial (stones under the pack left out); --no-snow-burial off
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -307,6 +309,7 @@ func _environment() -> void:
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
+	sun.name = "Sun"
 	sun.rotation_degrees = Vector3(-32, -50, 0)
 	sun.light_energy = 2.2
 	sun.shadow_enabled = args.get("sun-shadow", "1") != "0" # --sun-shadow=0: no raster sun shadow map (A/B)
@@ -1005,6 +1008,43 @@ func _world() -> void:
 		var l: PackedStringArray = args.get("look", "0,0,0").split(",")
 		cam.position = Vector3(float(c[0]), float(c[1]), float(c[2]))
 		cam.look_at(Vector3(float(l[0]), float(l[1]), float(l[2])))
+	# --snow=CM: an even, settled pack of CM centimetres (8) over the ground round the spot (a cold WeatherMap3D, a
+	# SnowCover3D and its deep snow surface round the camera), for RockField3D.snow_burial (--no-snow-burial off).
+	if args.has("snow"):
+		var cm := 8.0 if args["snow"] == "1" else float(args["snow"])
+		var sw = get_node_or_null("SnowWeather")
+		if sw == null:
+			sw = WeatherMap3D.new()
+			sw.name = "SnowWeather"
+			sw.extent = 512.0
+			sw.resolution = 32
+			sw.temperature = -4.0
+			sw.humidity = 0.8
+			sw.cloud_cover = 0.0
+			sw.cloud_variation = 0.0
+			sw.wind_speed = 2.0
+			sw.rain_rate = 0.0
+			add_child(sw)
+			sw.snap_to_settings()
+		var sc := SnowCover3D.new()
+		sc.name = "SnowCover3D"
+		sc.extent = 256.0
+		sc.resolution = 256
+		add_child(sc)
+		sc.global_position = Vector3(cam.position.x, 0, cam.position.z)
+		sc.height_source = sc.get_path_to(gen)
+		sc.sun_light = sc.get_path_to(get_node("Sun"))
+		sc.update_rate = 0.0001
+		sc.refresh_heights()
+		sc.add_snow(cm * 0.01 * 250.0, 250.0) # settled: 250 kg/m3
+		sc.advance(1.0) # (publishes the pack: snow_map for the materials, the cells for the deep snow surface)
+		print("snow: %.3f m under the camera" % sc.get_depth_at(cam.position))
+	if has_node("SnowCover3D"):
+		var ss := SnowSurface3D.new()
+		ss.name = "SnowSurface"
+		ss.snow_cover = NodePath("../SnowCover3D")
+		add_child(ss)
+		ss.follow_target = ss.get_path_to(cam)
 	if args.get("focus", "") == "camera":
 		focus.global_position = cam.position # --focus=camera: the field streams and thins round the camera, not the spot
 	print("spot %s, camera %s" % [spot, cam.position])
@@ -1045,6 +1085,7 @@ func _world() -> void:
 		rocks.frost_sorting = not args.has("no-frost")
 		rocks.runoff_gravel = not args.has("no-runoff-gravel") # --no-runoff-gravel: the rills and gullies without their lag (a before frame)
 		rocks.rain_pedestals = not args.has("no-rain-pedestals") # --no-rain-pedestals: bare soil without its stones and pedestals (a before frame)
+		rocks.snow_burial = not args.has("no-snow-burial") # --no-snow-burial: every stone drawn, under the snow too (a before frame)
 		if args.has("frost"):
 			var fr := ""
 			for dz in [-6, -3, 0, 3, 6]:
@@ -3042,6 +3083,8 @@ func _render_later() -> void:
 					sum += pv
 					tall = maxf(tall, pv)
 			print("pedestals: %d of %d pebble grains within 3 m on pedestals, mean %.3f m, tallest %.3f m" % [ped, all, sum / maxf(ped, 1), tall])
+	if rocks and has_node("SnowCover3D"):
+		print("snow burial: %d detail stones under the snow so far, %.3f m of snow at the spot" % [int(rocks.get_ground_detail_tile_stats().get("snow_buried", 0)), get_node("SnowCover3D").get_depth_at(spot_pos)])
 	if rocks and rocks.moss_cushions:
 		print("moss: %d shells, %d triangles, %d building" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), rocks.get_moss_pending()])
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():

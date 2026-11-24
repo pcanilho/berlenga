@@ -28,7 +28,8 @@ extends Node3D
 #   --litter-wind=x,z  downwind lean of the leaf drift (VegetationField3D.litter_wind), e.g. 0.6,0
 #   --day=D          the season of day D from a WeatherMap3D: the sward's greenness, flowering,
 #                    ferns (docs/ideas/vegetation-seasons.md)
-#   --drought        with --day: a dry climate (300 mm a year, falling in winter), for a summer drought
+#   --drought        with --day: a dry climate (300 mm a year, falling in winter), for a summer drought; the sward and
+#                    plants keep off the climate's bare soil patches (climate_bare; env GRASS_BARE=0: they don't)
 #   --frost          with --day: a dry continental climate (January -8 C, July 18 C, little snow), for a hard frost
 #   --pollen-cloud   a meadow in flower shedding pollen in a dry 10 m/s wind (PollenCloud3D; use --day=165, --frames)
 #   --river          river scout: a PhysXRiver3D down a valley with a floodplain; its flood mark
@@ -69,6 +70,8 @@ extends Node3D
 #   --storm[=H]      a wet 12 m/s gale from +x for H hours (default 1) before the shot, with the wind still blowing:
 #                    the meadow lodged in swirled patches (GrassField3D.lodging, docs/ideas/vegetation.md "Storm lodging")
 #   --fairy          looks at the meadow fairy ring nearest the default view (GrassField3D.fairy_rings)
+#   --fog            flowering Yorkshire fog in drifts through the meadow (PlantGenerator.make_flowering_grasses, by the
+#                    season of --day: heads from late May, seed heads into August)
 #   --grazed         the tall grass grazed short (5 to 14 cm), as on upland pasture
 #   --path[=P]       a worn path winding away from the camera, P passes a year (default 3000, a busy footpath; GrassField3D.paths,
 #                    VegetationField3D.paths): the sward and plants thin and shorten towards its line
@@ -135,6 +138,7 @@ var hay_rain := 0.0 # --hay-rain=MM: rain on the cut grass while it lay
 var flood := Vector2(-1, 10) # --flood: metres over the pond, days since
 var season_map: WeatherMap3D
 var bench_season := {}
+var fog := false # --fog: PlantGenerator.make_flowering_grasses in the meadow.
 var cam: Camera3D
 var fails := 0
 var trample := false
@@ -255,6 +259,11 @@ static func height(x: float, z: float) -> float:
 	return 0.6 * sin(x * 0.08) * cos(z * 0.06) + 0.4 * sin((x + z) * 0.05) + 0.02 * (x * x + (z + 12.0) * (z + 12.0)) / 40.0 - 0.6
 
 func _ready() -> void:
+	if OS.get_environment("GRASS_BARE") == "0":
+		# The before frame for drylands: the fields ignore the climate's bare soil patches (climate_bare).
+		get_tree().node_added.connect(func(n: Node) -> void:
+			if n is GrassField3D or n is VegetationField3D:
+				n.climate_bare = false)
 	for a in OS.get_cmdline_user_args():
 		if a == "--test":
 			test = true
@@ -304,6 +313,7 @@ func _ready() -> void:
 		elif a == "--no-margin": no_margin = true
 		elif a == "--undergrowth-edge": ug_edge = true
 		elif a == "--grazed": grazed = true
+		elif a == "--fog": fog = true
 		elif a == "--path": path_passes = 3000.0
 		elif a.begins_with("--path="): path_passes = float(a.get_slice("=", 1))
 		elif a.begins_with("--burn="): burn_age = float(a.get_slice("=", 1))
@@ -1479,6 +1489,9 @@ func _cover_biome() -> Biome:
 	b.species = [flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry, tall, tall_dry]
 	if OS.get_environment("GRASS_DIAG").contains("notall"):
 		b.species = b.species.slice(0, 10)
+	if fog:
+		# Ahead of the bench's own tall grass, so the drifts claim their room first.
+		b.species = b.species.slice(0, 10) + Array(PlantGenerator.make_flowering_grasses(3, not notex, bench_season)) + b.species.slice(10)
 	if graze >= 0.0:
 		# Deer grazing (PlantSpecies.RULE_BROWSE, as make_floor's sets): the tall grasses and palatable herbs go where
 		# the pressure is high; rosettes (plantain, clover, sedge) and the unpalatable nettle, dock and thistle stay.

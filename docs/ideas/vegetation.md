@@ -2115,3 +2115,53 @@ same deadlock trees.md 5bc met).
 Proof: the cover's 38 sets fingerprinted (every mesh's arrays, every material's parameters, every texture's pixels,
 every species' properties and metas) are identical made one after another and in parallel, over four parallel runs;
 `docs/bench/plants --test` checks a smaller mix. Cloud (4 cores, 3 lanes): 25.0 s to 11.5 s. The PC's cores give more.
+
+## Round 11 (Paulo: all three, heads first, 24 Nov)
+- Flowering grass heads in the sward: from May the meadow blades send up flowering stems, giving the early summer
+  meadow its tinted haze. Yorkshire fog flowers May to August, heads "tinged with purple to red", 20 to 100 cm
+  ([Woodland Trust](https://www.woodlandtrust.org.uk/trees-woods-and-wildlife/plants/grasses-and-sedges/yorkshire-fog-grass/);
+  [Nature's Calendar](https://naturescalendar.woodlandtrust.org.uk/blog/2021/how-to-identify-common-uk-grasses/)).
+  Cocksfoot and timothy flower June to September, meadow foxtail April to June (Nature's Calendar). Built as a share
+  of GrassField3D blades drawn as heads (real geometry, varied per blade by hash), timed by WorldWeather's season,
+  gone where mown; the far colour takes the tint.
+- Deer beds: oval flattened patches in tall grass where deer lay up, roe about 1 m long, red about 1.5 m, in hay
+  fields and at field edges under trees, sometimes several together
+  ([Discover Wildlife](https://www.discoverwildlife.com/how-to/identify-wildlife/how-to-identify-wildlife-paths-and-beds));
+  water deer beds average 60 x 40 cm, often with a pellet pile at one end
+  ([Wildlife Online](https://www.wildlifeonline.me.uk/animals/article/water-deer-field-signs)). Built as lodged
+  ovals in the sward's lodge map near the game trails, a few per hectare, the blades springing back over days.
+- Terracettes: regularly spaced steps on steep grazed hillsides ([Wikipedia](https://en.wikipedia.org/wiki/Terracette));
+  a grazing model gives a mean tread spacing of about 3.4 m, regular bands by 40 degree slopes, animals walking the
+  flatter treads and grazing the risers ([arXiv 2504.17496](https://arxiv.org/html/2504.17496v2)). The sward side
+  (worn treads, taller grass on risers) is vegetation; the steps themselves are ground relief, for the terrain thread.
+
+## Flowering grass heads (PlantGenerator.make_flowering_grasses, PRESET_YORKSHIRE_FOG)
+Yorkshire fog (Holcus lanatus) built as its own species, not as a share of GrassField3D's blades: a head is a
+panicle of hundreds of spikelets on branches, which the blade shader's strips cannot draw, while the plant generator
+already has culms, the bloom timing (`_bloom`, by degree days) and the far tint.
+- Sources: Woodland Trust (May to August; heads tinged purple to red, seed heads grey to pink; 20 to 100 cm). The
+  panicle's size (5 to 14 cm), the spikelet scales (3.4 to 4.6 mm), the onset (280 degree days) and the end
+  (1450) are estimates fitted to those months.
+- Geometry: a soft tuft; 3 to 8 culms 30 to 90 cm, each heading in its turn; whorls of 2 to 4 hair-thin branches with
+  2 to 9 spikelets each, every spikelet a pair of keeled glumes face to face. Each culm takes its own tint (white-pink
+  to purple-red in flower, grey-pink in seed). The branches open in flower and close in seed. No heads before
+  heading or after the end: the tuft alone.
+- Set: drifts (patch 7 m, cover 0.6) through open grassland; the far colour takes the heads' tint by the share in head
+  (`get_bloom_shares`), none outside the season. Hay meadows cut it with the other herbs (it is a plant mesh).
+  Wiring: put the set ahead of a field's own tall grass (earlier species claim their room).
+- Checks: plants `--test` (heads in June and August, none in March; size; set tagged and tinted only while headed).
+  Views: plants `--close=116 --season=700,175 [--head]`, grass `--day=175 --fog`.
+
+## Bare soil patches in the sward (climate_bare)
+The scene found knee-high sward on ground the rocks' pedestals and the terrain called eroded bare soil (a 380 mm
+climate). One pattern now: `WorldContracts::bare_patch(p, share, footprint)` (CPU) and
+`WorldContracts::climate_bare_shader_code()` (GLSL `wc_climate_bare`, `wc_bare_patch`), the terrain material's
+own patches (`tm_bare_patch`, Rietkerk et al. 2004) bit for bit, the share from `bare_share_for_precipitation`.
+- GrassField3D.climate_bare (default on): blades (near, rings) collapse on the bare patches in the vertex shader, the
+  far shell discards there; no rebuild. Off for crop fields.
+- VegetationField3D.climate_bare (default on): cover plants (PlantGenerator herbs, grasses, shrubs) are not placed on
+  the patches; trees, ground features, PRESET_SOIL_CRUST, PRESET_DESERT_ANNUALS and species with meta `bare_ground`
+  are. The share is read on 32 m cells, the patch at each plant.
+- Check: vegetation `--test=bare` (300 mm keeps about 0.17 of the cover plants, trees unchanged; 900 mm unchanged).
+- Still on the terrain side: its `grass_ground()` tint and `vegetation_far()` draw over its own bare patches; the
+  terrain material can skip them by its `tm_bare_k` and switch to the shared GLSL.

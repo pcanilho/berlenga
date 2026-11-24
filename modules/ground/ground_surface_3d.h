@@ -714,6 +714,9 @@ private:
 	Vector2i ground_origin;
 	bool ground_valid = false;
 	LocalVector<float> ground;
+	// Of each ground height, the drawn ground's relief (WorldGround.relief_at, in it since mud round 23): a terrain
+	// material's patch adds that relief in its own vertex(), so it gets the heights without it (_ground_changed()).
+	LocalVector<float> ground_relief;
 	LocalVector<Cell> cells;
 	// Each cell's inputs, so water can redo one cell without the type map and weather lookups.
 	struct CellInput {

@@ -51,6 +51,7 @@
 #include "scene/3d/physics/static_body_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/box_shape_3d.h"
 #include "scene/resources/3d/capsule_shape_3d.h"
 #include "scene/resources/3d/cylinder_shape_3d.h"
@@ -93,6 +94,8 @@ uniform sampler2D strata_tex : filter_nearest, repeat_disable; // SnowCover3D st
 uniform bool has_strata = false;
 uniform float sas_tile_size = 8.0;
 uniform vec4 mesh_rect;
+uniform sampler2D stone_tex : filter_linear, repeat_disable; // follow-up 57: moats, scour (under) and lee tails (over), m
+uniform vec4 stone_rect;
 uniform float min_depth = 0.03;
 uniform float edge_fade = 8.0;
 uniform float detail_step = 0.0625;
@@ -131,6 +134,13 @@ vec2 snow_deform(vec2 p) {
 	}
 	vec2 uv = (p - deform_rect.xy) / deform_rect.zw;
 	return snow_inside(uv) ? textureLod(deform_tex, uv, 0.0).rg : vec2(0.0);
+}
+float snow_stone(vec2 p) {
+	if (stone_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (p - stone_rect.xy) / stone_rect.zw;
+	return snow_inside(uv) ? textureLod(stone_tex, uv, 0.0).r : 0.0;
 }
 float snow_fade(vec2 p) {
 	vec2 d = min(p - mesh_rect.xy, mesh_rect.xy + mesh_rect.zw - p);
@@ -318,8 +328,11 @@ vec3 snow_height_diff(vec2 p, float e, bool p_vertex) {
 	vec2 rz1 = p_vertex ? snow_deform_vertex(p + ez) : snow_deform(p + ez);
 	vec2 ddr = vec2((rx1.y - rx1.x) - (rx0.y - rx0.x), (rz1.y - rz1.x) - (rz0.y - rz0.x));
 	vec3 cups = (snow_cups(p, e) + snow_sastrugi(p, e)) * fade;
-	float d = dg.x * fade - dr.x + dr.y + cups.x;
-	vec2 dd = dg.yz * fade * 2.0 * e + dg.x * dfade + ddr + cups.yz * 2.0 * e;
+	// Stones through snow (follow-up 57): the moats, scour and tails round the stones that stand out of the pack.
+	float st = snow_stone(p);
+	vec2 dst = vec2(snow_stone(p + ex) - snow_stone(p - ex), snow_stone(p + ez) - snow_stone(p - ez));
+	float d = dg.x * fade - dr.x + dr.y + cups.x + st;
+	vec2 dd = dg.yz * fade * 2.0 * e + dg.x * dfade + ddr + cups.yz * 2.0 * e + dst;
 	// Under min_depth the snow is the ground material's; the surface tucks 5 cm under the ground.
 	float lift = d >= min_depth ? d : mix(-0.05, min_depth, max(d, 0.0) / min_depth);
 	vec2 dlift = d >= min_depth ? dd : (d > 0.0 ? dd * (min_depth + 0.05) / max(min_depth, 1e-4) : vec2(0.0));
@@ -983,6 +996,7 @@ float SnowSurface3D::_surface_at(float p_x, float p_z, const SnowCover3D *p_cove
 	if (deform_enabled && field.valid) {
 		d += field.rim_at(p_x, p_z) - field.dent_at(p_x, p_z);
 	}
+	d += _stone_relief_at(p_x, p_z);
 	return d >= min_depth ? g + d : g;
 }
 
@@ -1781,6 +1795,13 @@ void SnowSurface3D::_update_material() {
 	} else {
 		material->set_shader_parameter("deform_rect", Vector4());
 	}
+	if (stone_relief && stone.valid && stone.texture.is_valid()) {
+		const float side = stone.texel * stone.n;
+		material->set_shader_parameter("stone_tex", stone.texture);
+		material->set_shader_parameter("stone_rect", Vector4(stone.origin.x, stone.origin.y, side, side));
+	} else {
+		material->set_shader_parameter("stone_rect", Vector4());
+	}
 	const float half = extent * 0.5f;
 	material->set_shader_parameter("mesh_rect", Vector4(mesh_center.x - half, mesh_center.y - half, extent, extent));
 	material->set_shader_parameter("min_depth", min_depth);
@@ -1913,9 +1934,245 @@ void SnowSurface3D::_notification(int p_what) {
 				collision_dirty = true;
 			}
 			_crust_plates_step(delta);
+			_stone_relief_step(delta);
 			step_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 		} break;
 	}
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Stones through snow (docs/ideas/snow.md, follow-up 57)
+//
+// A stone standing out of the pack shapes the snow round it three ways, each in the snow's own record:
+// - A melt moat. The dark rock takes most of the sun (shortwave absorptance about 0.8 against fresh snow's 0.1-0.2)
+//   and gives it to the snow against it by longwave and conduction, so a ring melts round it, deepest on its sunny
+//   side and growing with each sunny day since the last snowfall (rock and tree wells; Pomeroy et al. 2003 on
+//   exposed vegetation and rock heating the pack; Liston 1995, local advection of energy from bare patches). A
+//   quarter of what the rock takes goes to the ring here, melting rho-weighted depth M = 0.25 * 0.8 * E / (L_f rho),
+//   E the cover's shortwave dose since the last snowfall (SnowCover3D.get_sun_dose_at): a clear day (some 5 kWh/m2)
+//   digs about 3 cm in 300 kg/m3 snow. Its width grows with the stone's height out of the snow and with the dose.
+// - Windward scour: the flow speeding round the stone's front and sides digs a horseshoe at its base (the scour
+//   round a cube in a snow wind tunnel and in CFD: Beyers et al. 2004, Tominaga et al. 2011), down to a third of the
+//   protrusion, out about one protrusion from the face.
+// - A lee tail: the eddy behind it drops the drifting snow in a ridge two to five protrusions long, tapering away
+//   (snow tails; Kind 1981, Tabler 1994 on snow shadows behind obstacles), highest against the stone.
+// Scour and tails grow with the drift the square has seen (SnowCover3D.get_drift_dose, m/s h over the drift
+// threshold, fading over three days) and point with it. Where a moat or scour reaches the ground the thin snow is
+// gone (the surface drops under its min_depth there and the ground shows). The relief is a signed height over a
+// square round the follow target, rebuilt when the target leaves it or the cover updates; the stones come from the
+// rock fields (RockField3D.get_stones, every layer but the two finest detail classes, the ones on), read through
+// _read_stones so a ground contract query can take its place.
+
+void SnowSurface3D::_read_stones(const Rect2 &p_rect) {
+	stone.stones.clear();
+	stone.shape.clear();
+	stone.query = p_rect;
+	if (!stone.given.is_empty()) {
+		// Stones handed in (a scene's own, or a test's): x, z, ground, top, half axes x and z, yaw each.
+		const float *g = stone.given.ptr();
+		for (int i = 0; i + 6 < stone.given.size(); i += 7) {
+			if (p_rect.has_point(Vector2(g[i], g[i + 1])) && g[i + 3] - g[i + 2] >= 0.03f && MIN(g[i + 4], g[i + 5]) >= 0.01f) {
+				stone.stones.push_back(Vector4(g[i], g[i + 1], g[i + 2], g[i + 3]));
+				stone.shape.push_back(Vector3(g[i + 4], g[i + 5], g[i + 6]));
+			}
+		}
+		return;
+	}
+	if (!is_inside_tree()) {
+		return;
+	}
+	TypedArray<Node> fields = get_tree()->get_root()->find_children("*", "RockField3D", true, false);
+	for (int f = 0; f < fields.size(); f++) {
+		Object *rf = fields[f];
+		if (!rf) {
+			continue;
+		}
+		// Rockfall to landform (0-8) and the detail pebbles (9): gravel and fines (10, 11) never stand out of a pack.
+		for (int layer = 0; layer <= 9; layer++) {
+			if (!bool(rf->call("is_layer_enabled", layer))) {
+				continue;
+			}
+			if (layer == 9 && !bool(rf->call("is_ground_detail"))) {
+				continue;
+			}
+			Array list = rf->call("get_stones", layer, p_rect);
+			for (int i = 0; i < list.size(); i++) {
+				const Dictionary d = list[i];
+				const Vector3 pos = d.get("position", Vector3());
+				const float ground = d.get("ground", pos.y);
+				const float top = d.get("top", pos.y);
+				float r = d.get("footprint", 0.0f);
+				if (r <= 0.0f) {
+					r = 0.6f * float(d.get("scale", 0.1f));
+				}
+				if (top - ground < 0.03f || r < 0.01f) {
+					continue;
+				}
+				stone.stones.push_back(Vector4(pos.x, pos.z, ground, top));
+				stone.shape.push_back(Vector3(r, r, 0.0f));
+			}
+		}
+	}
+}
+
+void SnowSurface3D::_build_stone_relief() {
+	const SnowCover3D *cover = _cover();
+	const int n = MAX(int(Math::round(stone_relief_extent / stone.texel)), 8);
+	const Vector2 c = mesh_center;
+	stone.n = n;
+	stone.origin = Vector2(Math::floor(c.x / stone.texel) * stone.texel, Math::floor(c.y / stone.texel) * stone.texel) - Vector2(0.5f, 0.5f) * (n * stone.texel);
+	stone.h.resize(n * n);
+	LocalVector<float> cut, fill;
+	cut.resize(n * n);
+	fill.resize(n * n);
+	for (int i = 0; i < n * n; i++) {
+		cut[i] = 0.0f;
+		fill[i] = 0.0f;
+	}
+	stone.drawn = 0;
+	const Vector2 side = cover ? cover->get_sun_side() : Vector2();
+	const Vector2 sun_dir = side.length_squared() > 1e-8f ? side.normalized() : Vector2();
+	const Vector2 drift = cover ? cover->get_drift_dose() : Vector2();
+	const float wind = 1.0f - Math::exp(-drift.length() / 20.0f); // 0..1: how much drifting has shaped them
+	const Vector2 down = drift.length_squared() > 1e-8f ? drift.normalized() : Vector2();
+	const float inv = 1.0f / stone.texel;
+	for (uint32_t k = 0; cover && k < stone.stones.size(); k++) {
+		const Vector4 sv = stone.stones[k];
+		const Vector2 at(sv.x, sv.y);
+		const Vector3 shp = stone.shape[k];
+		const float r0 = Math::sqrt(shp.x * shp.y); // its mean footprint radius
+		if (at.x < stone.origin.x || at.y < stone.origin.y || at.x >= stone.origin.x + n * stone.texel || at.y >= stone.origin.y + n * stone.texel) {
+			continue;
+		}
+		// The pack just off the stone.
+		const Vector3 wp(at.x, 0.0f, at.y);
+		const float depth = cover->get_surface_depth_at(wp);
+		const float hp = sv.w - (sv.z + depth); // how far it stands out of the snow
+		if (depth < min_depth || hp < 0.02f) {
+			continue;
+		}
+		stone.drawn++;
+		const float rho = MAX(cover->get_density_at(wp), 50.0f);
+		const float dose = cover->get_sun_dose_at(wp);
+		const float moat = MIN(depth, 0.25f * 0.8f * dose * 3.6e6f / (334000.0f * rho) * CLAMP(hp / (2.0f * r0), 0.3f, 1.0f));
+		const float moat_w = CLAMP(0.04f + 0.3f * hp, 0.04f, 0.4f) * (0.5f + 0.5f * MIN(dose / 10.0f, 1.0f));
+		const float scour = MIN(depth, 0.33f * hp) * wind;
+		const float scour_w = 0.05f + 0.8f * hp;
+		const float tail_l = hp * (2.0f + 3.0f * wind);
+		const float tail_h = 0.7f * hp * wind;
+		// The footprint as a rounded box (a superellipse of power 4) in the stone's own frame: the distance out from
+		// its outline along the ray from its centre, and its reach along a direction (where a tail leaves it).
+		const float cy = Math::cos(shp.z), sy = Math::sin(shp.z);
+		auto local = [&](const Vector2 &w) { return Vector2(w.x * cy - w.y * sy, w.x * sy + w.y * cy); };
+		auto norm4 = [&](const Vector2 &l) {
+			const float qx = l.x / MAX(shp.x, 1e-3f), qz = l.y / MAX(shp.y, 1e-3f);
+			return Math::sqrt(Math::sqrt(qx * qx * qx * qx + qz * qz * qz * qz));
+		};
+		const Vector2 down_l = local(down);
+		const Vector2 side_l = local(Vector2(-down.y, down.x));
+		const float reach_down = down == Vector2() ? r0 : 1.0f / MAX(norm4(down_l), 1e-4f);
+		const float reach_side = down == Vector2() ? r0 : 1.0f / MAX(norm4(side_l), 1e-4f);
+		const float big = MAX(shp.x, shp.y);
+		const float reach = big + MAX(MAX(moat_w * 1.2f, 2.0f * scour_w), tail_l);
+		const int x0 = MAX(int((at.x - reach - stone.origin.x) * inv), 0), x1 = MIN(int((at.x + reach - stone.origin.x) * inv) + 1, n - 1);
+		const int z0 = MAX(int((at.y - reach - stone.origin.y) * inv), 0), z1 = MIN(int((at.y + reach - stone.origin.y) * inv) + 1, n - 1);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector2 p = stone.origin + Vector2(x + 0.5f, z + 0.5f) * stone.texel;
+				const Vector2 v = p - at;
+				const float r = v.length();
+				const Vector2 dir = r > 1e-5f ? v / r : Vector2();
+				const float q = norm4(local(v));
+				const float out = q > 1.0f ? r * (1.0f - 1.0f / q) : 0.0f;
+				const int i = z * n + x;
+				float c = 0.0f;
+				if (moat > 0.0f) {
+					// Deepest and widest toward the sun's mean side; a thin ring on the shaded side.
+					const float sunny = sun_dir == Vector2() ? 0.5f : MAX(dir.dot(sun_dir), 0.0f);
+					const float w = moat_w * (0.5f + 0.7f * sunny);
+					c = MAX(c, moat * (0.3f + 0.7f * sunny) * (1.0f - Math::smoothstep(0.0f, w, out)));
+				}
+				if (scour > 0.0f) {
+					// The horseshoe: full in front, half at the sides, none in the lee.
+					const float front = 0.5f + 0.5f * (-dir.dot(down));
+					const float qs = out / scour_w;
+					c = MAX(c, scour * front * front * Math::exp(-qs * qs));
+				}
+				cut[i] = MAX(cut[i], c);
+				if (tail_h > 0.0f) {
+					const float a = v.dot(down) - 0.7f * reach_down; // along the tail, from the stone's lee face
+					const float b = Math::abs(v.x * down.y - v.y * down.x); // across it
+					if (a > -0.3f * reach_down && a < tail_l) {
+						// A rounded ridge: it rises off the lee face, crests near the stone and tapers away.
+						const float t = CLAMP(a / tail_l, 0.0f, 1.0f);
+						const float half = 1.2f * reach_side * (1.0f - 0.6f * t);
+						const float across = 1.0f - Math::smoothstep(0.0f, half, b);
+						const float rise = Math::smoothstep(-0.3f * reach_down, 0.2f * tail_l, a);
+						fill[i] = MAX(fill[i], tail_h * Math::pow(1.0f - t, 1.5f) * rise * across);
+					}
+				}
+			}
+		}
+	}
+	for (int i = 0; i < n * n; i++) {
+		stone.h[i] = fill[i] - cut[i] * (1.0f - MIN(fill[i] / 0.02f, 1.0f));
+	}
+	if (stone.image.is_null() || stone.image->get_width() != n) {
+		stone.image = Image::create_empty(n, n, false, Image::FORMAT_RF);
+		stone.texture.unref();
+	}
+	{
+		Vector<uint8_t> bytes;
+		bytes.resize(n * n * sizeof(float));
+		memcpy(bytes.ptrw(), stone.h.ptr(), n * n * sizeof(float));
+		stone.image->set_data(n, n, false, Image::FORMAT_RF, bytes);
+	}
+	if (stone.texture.is_valid() && stone.texture->get_width() == n) {
+		stone.texture->update(stone.image);
+	} else {
+		stone.texture = ImageTexture::create_from_image(stone.image);
+	}
+	stone.valid = true;
+	stone.cover_update = cover ? cover->get_update_count() : 0;
+	collision_dirty = true;
+	_update_material();
+}
+
+void SnowSurface3D::_stone_relief_step(double p_delta) {
+	if (!stone_relief) {
+		return;
+	}
+	stone.wait -= p_delta;
+	const SnowCover3D *cover = _cover();
+	const float side = stone_relief_extent;
+	const Rect2 want(mesh_center - Vector2(side, side) * 0.5f, Vector2(side, side));
+	// Re-read the stones when the target has gone a quarter of the square from where they were read.
+	const bool moved = stone.query.size.x <= 0.0f || (stone.query.get_center() - want.get_center()).length() > side * 0.25f;
+	const bool updated = cover && cover->get_update_count() != stone.cover_update;
+	if (!moved && (!updated || stone.wait > 0.0)) {
+		return;
+	}
+	if (moved) {
+		_read_stones(want.grow(side * 0.25f));
+	}
+	stone.wait = 2.0; // at most every two seconds for the cover's updates
+	_build_stone_relief();
+}
+
+float SnowSurface3D::_stone_relief_at(float p_x, float p_z) const {
+	if (!stone_relief || !stone.valid || stone.n <= 0) {
+		return 0.0f;
+	}
+	const float fx = (p_x - stone.origin.x) / stone.texel - 0.5f;
+	const float fz = (p_z - stone.origin.y) / stone.texel - 0.5f;
+	if (fx < 0.0f || fz < 0.0f || fx > stone.n - 1 || fz > stone.n - 1) {
+		return 0.0f;
+	}
+	const int x = MIN(int(fx), stone.n - 2), z = MIN(int(fz), stone.n - 2);
+	const float tx = fx - x, tz = fz - z;
+	const float *h = stone.h.ptr();
+	const int n = stone.n;
+	return Math::lerp(Math::lerp(h[z * n + x], h[z * n + x + 1], tx), Math::lerp(h[(z + 1) * n + x], h[(z + 1) * n + x + 1], tx), tz);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -2096,6 +2353,35 @@ void SnowSurface3D::_build_plates() {
 	Ref<ArrayMesh> mesh = st->commit();
 	mesh->surface_set_material(0, plates_material);
 	plates_instance->set_mesh(mesh);
+}
+
+void SnowSurface3D::set_stone_relief(bool p_enabled) {
+	stone_relief = p_enabled;
+	if (!stone_relief) {
+		stone.valid = false;
+		stone.query = Rect2();
+		stone.drawn = 0;
+	}
+	collision_dirty = true;
+	_update_material();
+}
+
+void SnowSurface3D::set_stone_relief_extent(float p_extent) {
+	stone_relief_extent = CLAMP(p_extent, 4.0f, 256.0f);
+	stone.query = Rect2();
+	stone.valid = false;
+}
+
+void SnowSurface3D::set_stone_list(const PackedFloat32Array &p_stones) {
+	stone.given = p_stones;
+	stone.query = Rect2();
+	stone.wait = 0.0;
+}
+
+void SnowSurface3D::rebuild_stone_relief() {
+	stone.query = Rect2();
+	stone.wait = 0.0;
+	_stone_relief_step(0.0);
 }
 
 void SnowSurface3D::set_crust_plates(bool p_enabled) {
@@ -2355,6 +2641,18 @@ void SnowSurface3D::_gpu_take() {
 		const int w = cells + 1;
 		if (heights.size() == w * w && center == mesh_center) {
 			const float sp = _texel() * 2.0f;
+			if (stone_relief && stone.valid) {
+				// The GPU field knows nothing of the stones' moats and tails (follow-up 57): added here.
+				float *hw = heights.ptrw();
+				for (int z = 0; z < w; z++) {
+					for (int x = 0; x < w; x++) {
+						const float r = _stone_relief_at(center.x + (x - cells * 0.5f) * sp, center.y + (z - cells * 0.5f) * sp);
+						if (r != 0.0f) {
+							hw[z * w + x] += r / sp;
+						}
+					}
+				}
+			}
 			collision_node->set_scale(Vector3(sp, sp, sp));
 			if (collision_shape->get_map_width() != w || collision_shape->get_map_depth() != w) {
 				collision_shape->set_map_width(w);
@@ -2577,6 +2875,15 @@ void SnowSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_dent_at", "position"), &SnowSurface3D::get_dent_at);
 	ClassDB::bind_method(D_METHOD("get_rim_at", "position"), &SnowSurface3D::get_rim_at);
 	ClassDB::bind_method(D_METHOD("get_moved_volume"), &SnowSurface3D::get_moved_volume);
+	ClassDB::bind_method(D_METHOD("set_stone_relief", "enabled"), &SnowSurface3D::set_stone_relief);
+	ClassDB::bind_method(D_METHOD("get_stone_relief"), &SnowSurface3D::get_stone_relief);
+	ClassDB::bind_method(D_METHOD("set_stone_relief_extent", "extent"), &SnowSurface3D::set_stone_relief_extent);
+	ClassDB::bind_method(D_METHOD("get_stone_relief_extent"), &SnowSurface3D::get_stone_relief_extent);
+	ClassDB::bind_method(D_METHOD("get_stone_relief_count"), &SnowSurface3D::get_stone_relief_count);
+	ClassDB::bind_method(D_METHOD("get_stone_relief_at", "position"), &SnowSurface3D::get_stone_relief_at);
+	ClassDB::bind_method(D_METHOD("rebuild_stone_relief"), &SnowSurface3D::rebuild_stone_relief);
+	ClassDB::bind_method(D_METHOD("set_stone_list", "stones"), &SnowSurface3D::set_stone_list);
+	ClassDB::bind_method(D_METHOD("get_stone_list"), &SnowSurface3D::get_stone_list);
 	ClassDB::bind_method(D_METHOD("set_crust_plates", "enabled"), &SnowSurface3D::set_crust_plates);
 	ClassDB::bind_method(D_METHOD("get_crust_plates"), &SnowSurface3D::get_crust_plates);
 	ClassDB::bind_method(D_METHOD("get_crust_plate_count"), &SnowSurface3D::get_crust_plate_count);
@@ -2602,6 +2909,8 @@ void SnowSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deform_enabled"), "set_deform_enabled", "is_deform_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clumps"), "set_clumps", "is_clumps");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crust_plates"), "set_crust_plates", "get_crust_plates");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stone_relief"), "set_stone_relief", "get_stone_relief");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stone_relief_extent", PROPERTY_HINT_RANGE, "4,256,1,suffix:m"), "set_stone_relief_extent", "get_stone_relief_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deform_extent", PROPERTY_HINT_RANGE, "4,512,1,suffix:m"), "set_deform_extent", "get_deform_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "deform_resolution", PROPERTY_HINT_RANGE, "128,4096,64"), "set_deform_resolution", "get_deform_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_STRING_ARRAY, "deform_groups"), "set_deform_groups", "get_deform_groups");

@@ -56,6 +56,7 @@ using namespace RendererRD;
 #define RB_REPROJECT_NEW SNAME("reproject_new")
 #define RB_REPROJECT_OUT SNAME("reproject_out")
 #define RB_REPROJECT_HISTORY SNAME("reproject_history")
+#define RB_REPROJECT_ACC SNAME("reproject_acc")
 #define RB_REPROJECT_STATE SNAME("sky_reproject")
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1242,6 +1243,7 @@ void SkyRD::setup_sky(const RenderDataRD *p_render_data, const Size2i p_screen_s
 	Projection correction;
 	correction.set_depth_correction(p_render_data->scene_data->flip_y, true);
 	correction.add_jitter_offset(p_render_data->scene_data->taa_jitter);
+	sky_scene_state.taa_jitter = p_render_data->scene_data->taa_jitter;
 
 	Projection projection = p_render_data->scene_data->cam_projection;
 
@@ -1451,6 +1453,12 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 		return;
 	}
 	const Size2i low_size((size.x + 3) / 4, (size.y + 3) / 4);
+	// The TAA jitter taken out (it is in P[2][0] and P[2][1] as minus its NDC offset): the accumulation is kept in the
+	// unjittered view and resampled at the jitter once, on output (sky_reproject.glsl, its resample pass).
+	const Vector2 jitter = sky_scene_state.taa_jitter;
+	Projection unjittered = p_projection;
+	unjittered.columns[2][0] += jitter.x;
+	unjittered.columns[2][1] += jitter.y;
 
 	Ref<SkyReprojectState> state;
 	if (p_render_buffers->has_custom_data(RB_REPROJECT_STATE)) {
@@ -1465,7 +1473,8 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 	}
 
 	RID new_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_NEW, texture_format, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT, RD::TEXTURE_SAMPLES_1, low_size);
-	RID out_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_OUT, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT, RD::TEXTURE_SAMPLES_1, size);
+	RID out_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_OUT, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, size);
+	RID acc_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_ACC, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT, RD::TEXTURE_SAMPLES_1, size);
 	RID history_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, size);
 
 	// The frame number the sky shader reads as REPROJECTION_FRAME, so a shader knows which of its pixels it draws
@@ -1484,16 +1493,16 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 	// The pass's pixel (i, j) draws full resolution pixel (4i + offset.x, 4j + offset.y): its
 	// direction comes from the projection, so the projection takes the scale and shift.
 	// sky.glsl: view.x = (ndc.x + P[2][0]) / P[0][0], same in y.
-	Projection jittered = p_projection;
+	Projection jittered = unjittered;
 	{
 		const float sx = 4.0f * low_size.x / size.x;
 		const float tx = -1.0f + sx + (2.0f * offset.x - 3.0f) / size.x;
 		const float sy = 4.0f * low_size.y / size.y;
 		const float ty = -1.0f + sy + (2.0f * offset.y - 3.0f) / size.y;
-		jittered.columns[2][0] = (tx + p_projection.columns[2][0]) / sx;
-		jittered.columns[0][0] = p_projection.columns[0][0] / sx;
-		jittered.columns[2][1] = (ty + p_projection.columns[2][1]) / sy;
-		jittered.columns[1][1] = p_projection.columns[1][1] / sy;
+		jittered.columns[2][0] = (tx + unjittered.columns[2][0]) / sx;
+		jittered.columns[0][0] = unjittered.columns[0][0] / sx;
+		jittered.columns[2][1] = (ty + unjittered.columns[2][1]) / sy;
+		jittered.columns[1][1] = unjittered.columns[1][1] / sy;
 	}
 
 	{
@@ -1515,7 +1524,8 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 		uint32_t history_valid;
 		uint32_t drawn;
 		float history_scale; // this frame's pre-exposure over the history's
-		float pad[3];
+		float resample;
+		float jitter_uv[2];
 	} pc;
 	static_assert(sizeof(PushConstant) == 128);
 	auto store_columns = [](const Basis &p_basis, float *r_dst) {
@@ -1535,8 +1545,8 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 	};
 	// The sky is at infinity: last frame's view of a direction is its rotation alone.
 	store_columns(state->valid ? state->prev_orientation.inverse() * p_orientation : Basis(), pc.to_prev_view);
-	store_projection(p_projection, pc.projection);
-	store_projection(state->valid ? state->prev_projection : p_projection, pc.prev_projection);
+	store_projection(unjittered, pc.projection);
+	store_projection(state->valid ? state->prev_projection : unjittered, pc.prev_projection);
 	pc.size[0] = size.x;
 	pc.size[1] = size.y;
 	pc.offset[0] = offset.x;
@@ -1549,13 +1559,14 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 	// changes every frame while it adapts: the history is rescaled to this frame's, or the pixels drawn
 	// this frame stand apart from the rest as a 4x4 lattice.
 	pc.history_scale = (state->valid && state->prev_luminance > 0.0f) ? p_luminance_multiplier / state->prev_luminance : 1.0f;
-	pc.pad[0] = pc.pad[1] = pc.pad[2] = 0.0f;
+	pc.resample = 0.0f;
+	pc.jitter_uv[0] = pc.jitter_uv[1] = 0.0f;
 
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 	RID sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
 	RD::Uniform u_new(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ sampler, new_tex }));
 	RD::Uniform u_history(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ sampler, history_tex }));
-	RD::Uniform u_dest(RD::UNIFORM_TYPE_IMAGE, 2, out_tex);
+	RD::Uniform u_dest(RD::UNIFORM_TYPE_IMAGE, 2, acc_tex);
 	RID uniform_set = UniformSetCacheRD::get_singleton()->get_cache(sky_reproject.shader_rd, 0, u_new, u_history, u_dest);
 
 	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
@@ -1565,10 +1576,35 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 	RD::get_singleton()->compute_list_dispatch_threads(compute_list, size.x, size.y, 1);
 	RD::get_singleton()->compute_list_end();
 
-	RD::get_singleton()->texture_copy(out_tex, history_tex, Vector3(), Vector3(), Vector3(size.x, size.y, 1), 0, 0, 0, 0);
+	RD::get_singleton()->texture_copy(acc_tex, history_tex, Vector3(), Vector3(), Vector3(size.x, size.y, 1), 0, 0, 0, 0);
+
+	// The output. A temporal upscaler (FSR2, MetalFX temporal, DLSS) is told the jitter and takes its input as
+	// jittered, so for it the accumulation is read at this frame's jitter: the jittered view sees at NDC x what the
+	// unjittered one sees at x - jitter.x (sky.glsl: view.x = (ndc.x + P[2][0]) / P[0][0]), half that in uv; y
+	// likewise. The TAA resolve (taa_resolve.glsl) keeps jittered frames as they are, so under it the sky goes out
+	// unjittered: the same image every frame, as sharp as without TAA (read at the jitter, TAA averaged the shifts
+	// into a blur of its own).
+	const RSE::ViewportScaling3DMode scaling = p_render_buffers->get_scaling_3d_mode();
+	const bool upscaler = scaling == RSE::VIEWPORT_SCALING_3D_MODE_FSR2 || scaling == RSE::VIEWPORT_SCALING_3D_MODE_METALFX_TEMPORAL || scaling == RSE::VIEWPORT_SCALING_3D_MODE_DLSS;
+	if (jitter == Vector2() || !upscaler) {
+		RD::get_singleton()->texture_copy(acc_tex, out_tex, Vector3(), Vector3(), Vector3(size.x, size.y, 1), 0, 0, 0, 0);
+	} else {
+		pc.resample = 1.0f;
+		pc.jitter_uv[0] = -0.5f * jitter.x;
+		pc.jitter_uv[1] = -0.5f * jitter.y;
+		RD::Uniform u_acc(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ sampler, history_tex }));
+		RD::Uniform u_out(RD::UNIFORM_TYPE_IMAGE, 2, out_tex);
+		RID resample_set = UniformSetCacheRD::get_singleton()->get_cache(sky_reproject.shader_rd, 0, u_new, u_acc, u_out);
+		RD::ComputeListID resample_list = RD::get_singleton()->compute_list_begin();
+		RD::get_singleton()->compute_list_bind_compute_pipeline(resample_list, sky_reproject.pipeline);
+		RD::get_singleton()->compute_list_bind_uniform_set(resample_list, resample_set, 0);
+		RD::get_singleton()->compute_list_set_push_constant(resample_list, &pc, sizeof(PushConstant));
+		RD::get_singleton()->compute_list_dispatch_threads(resample_list, size.x, size.y, 1);
+		RD::get_singleton()->compute_list_end();
+	}
 
 	state->prev_orientation = p_orientation;
-	state->prev_projection = p_projection;
+	state->prev_projection = unjittered;
 	state->prev_luminance = p_luminance_multiplier;
 	state->valid = true;
 }

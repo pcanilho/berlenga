@@ -1725,6 +1725,9 @@ void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<Pla
 			mound = mound || (m.is_valid() && m->has_meta(SNAME("sward_mound")));
 		}
 		ps.hay_cut = herb && !mound && p_sp->get_canopy_radius() <= 0.0f && !p_sp->uses_bank_edge() && top > 0.12f;
+		// Bare-ground species (crusts, desert annuals, those tagged bare_ground) live between the clumps; the rest are
+		// the clumps.
+		ps.bare_cover = herb && !mound && p_sp->get_canopy_radius() <= 0.0f && preset != PlantGenerator::PRESET_SOIL_CRUST && preset != PlantGenerator::PRESET_DESERT_ANNUALS && !bool(p_sp->get_meta(SNAME("bare_ground"), false));
 		ps.base_variants = int(ps.meshes.size());
 		if (ps.hay_cut) {
 			// Always, so a meadow mown later needs no new setup. The same plants cut at the stubble (7.5 to 10 cm; GrassField3D.hay_meadows): their stalks stand in the
@@ -2382,6 +2385,9 @@ void VegetationField3D::_publish_deadwood(const LocalVector<const LocalVector<De
 
 void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles, const VegetationObstacles *p_rocks) const {
 	const VegetationObstacles &rocks = p_rocks ? *p_rocks : p_setup.obstacles;
+	// The climate's bare share (WorldContracts::climate_bare_share_at) on 32 m cells: it follows the climate map's
+	// slow change, the patches themselves come from bare_patch at each plant.
+	HashMap<Vector2i, float> bare_cells;
 	const int species_count = p_setup.species.size();
 	const float ts = p_setup.tile_size;
 	const Rect2 &rect = p_setup.rect;
@@ -2771,6 +2777,15 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (suit > 0.0f && bank_dir != Vector2()) {
 							xz += bank_dir * bank_ahead;
 							p3 = Vector3(xz.x, 0.0f, xz.y);
+						}
+					}
+					if (ps.bare_cover && climate_bare && suit > 0.0f) {
+						// Drylands: the climate's bare soil patches (WorldContracts::bare_patch), as the ground and sward.
+						const Vector2i bc(int(Math::floor(xz.x / 32.0f)), int(Math::floor(xz.y / 32.0f)));
+						const float *bp = bare_cells.getptr(bc);
+						const float bare_share = bp ? *bp : bare_cells.insert(bc, WorldContracts::climate_bare_share_at(Vector3((bc.x + 0.5f) * 32.0f, 0.0f, (bc.y + 0.5f) * 32.0f)))->value;
+						if (bare_share > 0.0f && WorldContracts::bare_patch(p3, bare_share) > 0.5f) {
+							continue;
 						}
 					}
 					bool hay_stalk = false;
@@ -7255,6 +7270,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_rock_field", "path"), &VegetationField3D::set_rock_field);
 	ClassDB::bind_method(D_METHOD("get_rock_field"), &VegetationField3D::get_rock_field);
 	ClassDB::bind_method(D_METHOD("set_rock_obstacle_min", "size"), &VegetationField3D::set_rock_obstacle_min);
+	ClassDB::bind_method(D_METHOD("set_climate_bare", "enabled"), &VegetationField3D::set_climate_bare);
+	ClassDB::bind_method(D_METHOD("is_climate_bare"), &VegetationField3D::is_climate_bare);
 	ClassDB::bind_method(D_METHOD("get_rock_obstacle_min"), &VegetationField3D::get_rock_obstacle_min);
 	ClassDB::bind_method(D_METHOD("set_rock_footprint_max", "radius"), &VegetationField3D::set_rock_footprint_max);
 	ClassDB::bind_method(D_METHOD("get_rock_footprint_max"), &VegetationField3D::get_rock_footprint_max);
@@ -7386,6 +7403,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "obstacles"), "set_obstacles", "get_obstacles");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "rock_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "RockField3D"), "set_rock_field", "get_rock_field");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_obstacle_min", PROPERTY_HINT_RANGE, "0,4,0.05,suffix:m"), "set_rock_obstacle_min", "get_rock_obstacle_min");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "climate_bare"), "set_climate_bare", "is_climate_bare");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_footprint_max", PROPERTY_HINT_RANGE, "0,128,0.5,suffix:m"), "set_rock_footprint_max", "get_rock_footprint_max");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "paths", PROPERTY_HINT_ARRAY_TYPE, "Dictionary"), "set_paths", "get_paths");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "stone_tops"), "set_stone_tops", "get_stone_tops");

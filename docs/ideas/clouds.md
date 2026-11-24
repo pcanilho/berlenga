@@ -1047,3 +1047,31 @@ iridescence shows); edge-on, along kilometres of lens, it is opaque at once and 
 moist layer (exp(-d^8)) and smooth rounded plate sheets 350 m apart; neither sharpened the rim, and the plates read
 worse. A crisper rim from below needs a steeper lift at the outline or more water than the lift gives, which the
 physics here does not support without an artistic edge term.
+
+## Lenticular rim: the moisture rides the streamlines (24 Nov; Paulo: steeper wave crests)
+
+The cause of the soft rim above was the moisture, not the lift. Long's model (Long 1953; Durran 1986, "Mountain waves",
+in Mesoscale Meteorology and Forecasting) has each streamline carry its upstream properties: air at height z, displaced
+by eta, came from z0 = z - eta. The dew point depression was read at z itself, so the moist layer stood still while the
+wave lifted the air through it, and the lens saturated level by level from its outline (the kilometre-wide translucent
+taper). Now it is read at z0 (wave_extinction_at() on the CPU, wc_wave_extinction_l() and march_wave() on the GPU): the
+moist layer is lifted with the air, so the whole layer saturates together where the lift first exceeds its deficit,
+the lens reaches its full depth within metres of its edge (a crisp rim from below as well as edge-on), and its top and
+bottom follow the streamlines (the smooth, almond outline of photographs). The plates' sheets are read at z0 too, so
+they bend with the wave instead of cutting it at fixed heights.
+
+Cost: the layers' cover noise is not read per sample. The layers vary over kilometres, so their moisture is read once a coarse step at its xz (wc_wave_layers()) and only the height part
+(the layer weights and the temperature at z0, wc_wave_depression_l()) per sample; the sun and sky probes reuse the
+step's read. Bench lens 102 s against 107 s before (lavapipe, 48 frames): no extra cost.
+
+## Sky under TAA and temporal upscalers: accumulate unjittered (24 Nov)
+
+The reprojected sky (sky_reproject.glsl) kept its history in the jittered view, so with TAA, FSR2 or DLSS on every frame
+resampled the whole history by the jitter's step: a sub-pixel shift that even the Catmull-Rom read softens, compounding
+over the 192 frames the accumulation runs. Under TAA the clouds lost their edges and billows (horizontal gradient energy
+1.13 without TAA, 0.78 with it). Now the accumulation is in the unjittered view (the jitter taken back out of P[2][0]
+and P[2][1]), so a still camera reads its history at the same pixel centres, untouched. The output goes out unjittered
+under the TAA resolve (which keeps jittered frames as they are: an unjittered sky is the same image every frame,
+1.04) and, for a temporal upscaler that is told the jitter (FSR2, MetalFX temporal, DLSS), is read once at this
+frame's jitter in a second pass (the sign checked: the other sign measured softer under FSR2). The 4-pixel checker in
+the PC stills (DLSS on) is likely this; to be confirmed on the PC. Path traced (no jitter) is unchanged.

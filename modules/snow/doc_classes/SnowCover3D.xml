@@ -340,6 +340,12 @@
 				Returns the depth of snow at [param position], in metres. Outside the near square it reads the world tier when [member climate] has been baked (as do [method get_swe_at], [method get_density_at], [method get_albedo_at] and [method get_wetness_at]).
 			</description>
 		</method>
+		<method name="get_drift_dose" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				The drifting wind the square has seen: m/s h of wind over [member drift_threshold_wind] times the direction (x, z) it blew toward, fading over three days. It shapes the scour and lee tails round stones ([member SnowSurface3D.stone_relief]).
+			</description>
+		</method>
 		<method name="get_drift_factor" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -506,6 +512,19 @@
 				The plume sources, strongest first: dictionaries of [code]position[/code] (past the crest lip), [code]velocity[/code] (the near-surface wind over the crest) and [code]rate[/code] (kg/s).
 			</description>
 		</method>
+		<method name="get_sun_dose_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The shortwave on level ground (kWh/m², through the clouds) at [param position] since the last snowfall of a centimetre or more, whatever the air: what warms a stone standing out of the pack and melts a moat round it ([member SnowSurface3D.stone_relief]).
+			</description>
+		</method>
+		<method name="get_sun_side" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				The sun's mean side over the square: toward the sun (x, z), its length the shortwave behind it (kWh/m²), fading over five days.
+			</description>
+		</method>
 		<method name="get_suncup_relief_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -518,6 +537,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The depth, m, as [SnowSurface3D] draws it and collides with it: Catmull-Rom between the cells (no creases along their edges), held within the four nearest cells' range. [method get_depth_at] is bilinear.
+			</description>
+		</method>
+		<method name="get_surface_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The pack's depth (m) at [param position] as the snow surface draws it: Catmull-Rom between the cells.
 			</description>
 		</method>
 		<method name="get_swe_at" qualifiers="const">

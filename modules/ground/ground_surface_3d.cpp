@@ -415,9 +415,13 @@ float GroundSurface3D::_edge_distance(float p_x, float p_z) const {
 
 void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 	const GroundHeightQuery q = _height_query();
+	const WorldGround *wg = q.relief ? WorldContracts::ground() : nullptr;
 	LocalVector<float> next;
+	LocalVector<float> next_relief;
 	next.resize(p_n * p_n);
+	next_relief.resize(p_n * p_n);
 	const bool keep = ground_valid && ground_n == p_n;
+	const bool keep_relief = keep && (int)ground_relief.size() == p_n * p_n;
 	const Vector2i d = p_origin - ground_origin;
 	const float fallback = q.y0;
 	for (int z = 0; z < p_n; z++) {
@@ -425,18 +429,25 @@ void GroundSurface3D::_sample_ground(Vector2i p_origin, int p_n) {
 			const int sx = x + d.x;
 			const int sz = z + d.y;
 			float h;
+			float rl = 0.0f;
 			if (keep && sx >= 0 && sz >= 0 && sx < p_n && sz < p_n) {
 				h = ground[sz * p_n + sx];
+				rl = keep_relief ? ground_relief[sz * p_n + sx] : 0.0f;
 			} else {
-				h = q.height(Vector3((p_origin.x + x) * ground_spacing, 0.0f, (p_origin.y + z) * ground_spacing));
+				const Vector3 at((p_origin.x + x) * ground_spacing, 0.0f, (p_origin.y + z) * ground_spacing);
+				h = q.height(at);
 				if (!Math::is_finite(h)) {
 					h = fallback;
+				} else if (wg) {
+					rl = (float)wg->relief_at(at).x;
 				}
 			}
 			next[z * p_n + x] = h;
+			next_relief[z * p_n + x] = rl;
 		}
 	}
 	ground = next;
+	ground_relief = next_relief;
 	// The deposits the kept cells carry move with them; new cells take theirs below (_apply_deposits).
 	if (keep && (int)ground_dep.size() == p_n * p_n) {
 		_shift_lattice(ground_dep, ground_origin, p_origin, p_n, 1);
@@ -540,6 +551,15 @@ void GroundSurface3D::_ground_changed() {
 	Vector<uint8_t> bytes;
 	bytes.resize(p_n * p_n * 4);
 	memcpy(bytes.ptrw(), ground.ptr(), p_n * p_n * 4);
+	// The patch's heights for the shaders. The lattice holds the drawn ground, its relief included, for everything
+	// that touches it; a terrain material's patch pushes its vertices out by that relief itself (as the landscape
+	// does), so it reads the heights without it, or it stood a relief's height over the landscape near the camera.
+	if (material.is_valid() && material->is_class("TerrainMaterial3D") && (int)ground_relief.size() == p_n * p_n) {
+		float *hp = reinterpret_cast<float *>(bytes.ptrw());
+		for (int i = 0; i < p_n * p_n; i++) {
+			hp[i] -= ground_relief[i];
+		}
+	}
 	if (height_image.is_null() || height_image->get_width() != p_n) {
 		height_image = Image::create_from_data(p_n, p_n, false, Image::FORMAT_RF, bytes);
 		height_texture = ImageTexture::create_from_image(height_image);

@@ -43,6 +43,7 @@ extends Node3D
 #                         (--sand-sea defaults to it; Namib-like: the dunes run down to the beach)
 #   --buggy=x,z[,deg]|beach the offroad buggy from art/ (fetch_art.sh); --buggy-drive=throttle,s[,steer], --buggy-grains, --buggy-dust,
 #                         --buggy-cam=dist,height[,side], --buggy-sun-cam=dist,height,off, --buggy-hold, --buggy-flow
+#   --snow-stats          after the winter bake: snow depth by slope and height, and the deepest gentle spots; quits
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
@@ -3449,6 +3450,42 @@ func _bake_snow_winter() -> void:
 	_log("climate swe max %.1f mm, %d of %d cells with snow, cornice max %.2f m, has_world %s" % [mx, nz, sw.size(), cx, snow.has_world()])
 
 
+func _snow_stats() -> void:
+	# --snow-stats: the baked winter's snow by slope and height (16 m cells over the bake), and the deepest gentle
+	# spots (under 8 degrees), then quit.
+	var bins := {}
+	var gentle := []
+	for z in range(-2040, 2048, 16):
+		for x in range(-2040, 2048, 16):
+			var h := height_at(x, z)
+			if h <= gen.get_sea_level() + 1.0:
+				continue
+			var gx := (height_at(x + 8, z) - height_at(x - 8, z)) / 16.0
+			var gz := (height_at(x, z + 8) - height_at(x, z - 8)) / 16.0
+			var slope := rad_to_deg(atan(Vector2(gx, gz).length()))
+			var d := float(snow.get_world_depth_at(Vector3(x, h, z)))
+			var sb := 0 if slope < 8.0 else (1 if slope < 20.0 else (2 if slope < 35.0 else 3))
+			var hb := int(h / 250.0)
+			var key := Vector2i(sb, hb)
+			if not bins.has(key):
+				bins[key] = [0, 0.0, 0]
+			bins[key][0] += 1
+			bins[key][1] += d
+			if d > 0.3:
+				bins[key][2] += 1
+			if slope < 8.0:
+				gentle.append([d, x, z, h, slope])
+	var keys := bins.keys()
+	keys.sort_custom(func(a, b): return a.y * 10 + a.x < b.y * 10 + b.x)
+	for k in keys:
+		var v: Array = bins[k]
+		_log("snow-stats: height %d-%d m, slope %s: %d cells, mean depth %.2f m, %d over 0.3 m" % [k.y * 250, k.y * 250 + 250, ["<8", "8-20", "20-35", ">35"][k.x], v[0], v[1] / v[0], v[2]])
+	gentle.sort_custom(func(a, b): return a[0] > b[0])
+	for i in mini(8, gentle.size()):
+		var g: Array = gentle[i]
+		_log("snow-stats: gentle spot (%d, %.0f, %d) slope %.1f: %.2f m" % [g[1], g[3], g[2], g[4], g[0]])
+
+
 func _weather_settings() -> void:
 	# One weather state drives all of it. Storm: cold wet air, a storm cell over the hills, strong wind from the sea.
 	var storm: bool = args.get("weather", "storm") == "storm"
@@ -3587,6 +3624,10 @@ func _build_vegetation() -> void:
 		data_map.bake_climate()
 	_log("data map bake %d ms" % (Time.get_ticks_msec() - t))
 	_bake_snow_winter()
+	if args.has("snow-stats"):
+		_snow_stats()
+		get_tree().quit(0)
+		return
 	t = Time.get_ticks_msec()
 	# STAND-IN trees: tree generation is not built yet, so cones and balls mark where the forest grows.
 	var conifer := PlantSpecies.new()
@@ -4293,6 +4334,35 @@ func _build_camera() -> void:
 			cam.position = ce
 			cam.look_at(la)
 			_log("woodedge camera at %s, litter %.2f at the rim, %.2f under the camera" % [str(ce), veg.get_litter_at(pick + pdir * 3.0), veg.get_litter_at(ce)])
+		"pedestals":
+			# Rain splash pedestals (RockField3D.rain_pedestals): low and close over the bare soil where the rain has
+			# taken the most soil from round the stones (get_pedestal_at: stone share x soil lost), within
+			# --ped-search (600) m on gentle ground; the camera --ped-back (3.5) m off at --ped-up (1.3) m, side-lit.
+			var pr := float(args.get("ped-search", "600"))
+			var pbest := 0.0
+			var pp := Vector3.INF
+			if rocks != null and rocks.has_method("get_pedestal_at"):
+				for zz in range(-int(pr), int(pr) + 1, 8):
+					for xx in range(-int(pr), int(pr) + 1, 8):
+						var q := Vector3(xx, height_at(xx, zz), zz)
+						if rad_to_deg(data_map.get_slope_at(q)) > 15.0:
+							continue
+						var pv: Vector2 = rocks.get_pedestal_at(q)
+						if pv.x * pv.y > pbest:
+							pbest = pv.x * pv.y
+							pp = q
+			if pp == Vector3.INF:
+				_log("pedestals view: no bare soil losing soil round stones within %.0f m" % pr)
+			else:
+				var to_sun := sun.global_basis.z
+				var sd := Vector3(to_sun.x, 0, to_sun.z).normalized().cross(Vector3.UP).normalized()
+				var pc := pp + sd * float(args.get("ped-back", "3.5"))
+				pc.y = height_at(pc.x, pc.z) + float(args.get("ped-up", "1.3"))
+				cam.fov = 50.0
+				cam.position = pc
+				cam.look_at(pp + Vector3.UP * 0.1)
+				var pv2: Vector2 = rocks.get_pedestal_at(pp)
+				_log("pedestals view: spot %s stone share %.2f soil lost %.3f m, camera %s" % [str(pp.round()), pv2.x, pv2.y, str(pc.round())])
 		"ledge":
 			# A stepped hard-bed bench with its caprock slabs (RockField3D.ledge_slabs) from --ledge-back (22) m out:
 			# the 16 m cell within --ledge-search (1000) m holding the most overhanging lip (TerrainGenerator3D
@@ -4305,6 +4375,18 @@ func _build_camera() -> void:
 				if float(l["overhang"]) <= 0.05:
 					continue
 				var lp: Vector3 = l["position"]
+				# A lip high on an open, sunlit face: the ground 22 m out (either way) at least 8 m below it, and the
+				# face turned to the sun.
+				var lo: Vector3 = l["out"]
+				lo.y = 0.0
+				lo = lo.normalized()
+				var ga := height_at(lp.x + lo.x * 22.0, lp.z + lo.z * 22.0)
+				var gb := height_at(lp.x - lo.x * 22.0, lp.z - lo.z * 22.0)
+				if gb < ga:
+					lo = -lo
+				var sun_flat := Vector3(sun.global_basis.z.x, 0, sun.global_basis.z.z).normalized()
+				if height_at(lp.x, lp.z) - minf(ga, gb) < 8.0 or lo.dot(sun_flat) < 0.3:
+					continue
 				var key := Vector2i(int(floor(lp.x / 16.0)), int(floor(lp.z / 16.0)))
 				var c: Array = cells.get(key, [0.0, l])
 				c[0] = float(c[0]) + float(l["overhang"]) * float(l["weight"])
@@ -7261,20 +7343,23 @@ func _frost_sorted_cam() -> void:
 	var bp := Vector3.ZERO
 	var bu := Vector3.ZERO
 	var upd := float(args.get("fs-up", "25"))
+	var gmax := 0.0
+	var fmin := float(args.get("fs-min", "0.6")) # --fs-min: the sorting strength a spot and its ring need
 	var xx := wr.position.x + 100.0
 	while xx < wr.end.x - 100.0:
 		var zz := wr.position.y + 100.0
 		while zz < wr.end.y - 100.0:
 			var p := Vector3(xx, 0, zz)
 			var g0: Vector2 = rocks.call("get_frost_at", p)
-			if g0.x > 0.6 and rad_to_deg(atan(_slip_grad(p).length())) < 2.0:
+			gmax = maxf(gmax, g0.x)
+			if g0.x > fmin and rad_to_deg(atan(_slip_grad(p).length())) < float(args.get("fs-flat", "2")):
 				var ok := true
 				var lo := 1.0
 				for k in 8:
 					var q := p + Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0)) * 15.0
 					var gq: Vector2 = rocks.call("get_frost_at", q)
 					lo = minf(lo, gq.x)
-				if lo > 0.6:
+				if lo > fmin:
 					# upslope: the steepest rise within 40 m
 					var up := Vector3.ZERO
 					var rise := -INF
@@ -7297,7 +7382,7 @@ func _frost_sorted_cam() -> void:
 			zz += 16.0
 		xx += 16.0
 	if best < 0.0:
-		_log("frost sorted: no sorted ground found")
+		_log("frost sorted: no sorted ground found (strongest sorting anywhere %.2f, needs %.2f)" % [gmax, fmin])
 		return
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var dir := bu.rotated(Vector3.UP, deg_to_rad(float(args.get("fs-yaw", "0"))))

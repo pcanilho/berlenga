@@ -40,6 +40,7 @@
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/math/convex_hull.h"
+#include "core/io/marshalls.h"
 #include "core/math/random_pcg.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -188,7 +189,63 @@ void library_job(void *p_userdata, uint32_t p_index) {
 	g->set_lods(!job.close_up && job.fracture == 0); // a close-up shape only draws within close_up_radius
 	g->set_fracture_pieces(job.fracture);
 	g->set_marks_scale(job.marks_scale);
+	// The world cache (world_cache.h): a library shape is the same bytes from the same inputs (and the same
+	// executable, in the key), so a later launch loads it instead of building it again. Not close-ups or fracture
+	// pieces, built on demand and carrying more than the mesh.
+	const bool cacheable = !job.close_up && job.fracture == 0 && WorldCache::is_enabled();
+	String name;
+	if (cacheable) {
+		WorldCacheKey key("rock_shape");
+		key.value(int32_t(job.type));
+		key.value(int32_t(job.family));
+		key.value(int32_t(job.seed));
+		key.value(job.transport);
+		key.value(job.detail);
+		key.value(job.marks_scale);
+		name = key.finish();
+		Vector<uint8_t> data;
+		if (WorldCache::load_any("rock_shape", name, data)) {
+			Variant v;
+			int len = 0;
+			if (decode_variant(v, data.ptr(), data.size(), &len, false) == OK && len == data.size() && v.get_type() == Variant::ARRAY) {
+				const Array a = v;
+				if (a.size() == 2 && a[0].get_type() == Variant::DICTIONARY && a[1].get_type() == Variant::DICTIONARY) {
+					Ref<ImporterMesh> im;
+					im.instantiate();
+					im->set("_data", a[0]);
+					if (im->get_surface_count() > 0) {
+						for (int i = 0; i < im->get_surface_count(); i++) {
+							im->set_surface_material(i, RockGenerator::get_material(job.type));
+						}
+						job.mesh = im;
+						job.meta = a[1];
+						return;
+					}
+				}
+			}
+		}
+	}
 	job.mesh = g->build_importer_mesh(job.meta);
+	if (cacheable && job.mesh.is_valid()) {
+		// The surfaces without their material (the rock type's, set again on load).
+		Dictionary d = Dictionary(job.mesh->get("_data")).duplicate(true);
+		Array surfaces = d.get("surfaces", Array());
+		for (int i = 0; i < surfaces.size(); i++) {
+			Dictionary sd = surfaces[i];
+			sd.erase("material");
+		}
+		Array a;
+		a.push_back(d);
+		a.push_back(job.meta);
+		int len = 0;
+		if (encode_variant(a, nullptr, len, false) == OK && len > 0) {
+			Vector<uint8_t> data;
+			data.resize(len);
+			if (encode_variant(a, data.ptrw(), len, false) == OK) {
+				WorldCache::store("rock_shape", name, data.ptr(), data.size());
+			}
+		}
+	}
 }
 
 void close_job(void *p_userdata) {
@@ -3198,6 +3255,87 @@ void RockField3D::_rain_climate(const Rect2 &p_rect, RainClimate &r_rain) const 
 	r_rain.any = r_rain.bare > 0.0f || burnt;
 }
 
+float RockField3D::SnowPack::at(float p_x, float p_z) const {
+	if (!any || rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
+		return 0.0f;
+	}
+	const float u = CLAMP((p_x - rect.position.x) / rect.size.x * 4.0f, 0.0f, 4.0f);
+	const float v = CLAMP((p_z - rect.position.y) / rect.size.y * 4.0f, 0.0f, 4.0f);
+	const int i = MIN(int(u), 3), j = MIN(int(v), 3);
+	const float fu = u - i, fv = v - j;
+	const float a = Math::lerp(depth[j * 5 + i], depth[j * 5 + i + 1], fu);
+	const float b = Math::lerp(depth[(j + 1) * 5 + i], depth[(j + 1) * 5 + i + 1], fu);
+	return Math::lerp(a, b, fv);
+}
+
+// Main thread: the snowpack's depth over a detail cell (docs/ideas/ground-detail.md, "Stones through snow"), from the
+// snow contract (SnowCover3D). A stone whose top is under it is left out: deep snow (SnowSurface3D's geometry) would
+// hide it anyway, and thin snow (a material on the ground) would show it lying on top.
+void RockField3D::_snow_pack(const Rect2 &p_rect, SnowPack &r_snow) const {
+	r_snow = SnowPack();
+	const WorldSnow *snow = WorldContracts::snow();
+	if (!snow_burial || !snow || !snow->has_provider()) {
+		return;
+	}
+	r_snow.rect = p_rect;
+	float sum = 0.0f;
+	for (int k = 0; k < 25; k++) {
+		const Vector3 p(p_rect.position.x + (k % 5) * 0.25f * p_rect.size.x, 0, p_rect.position.y + (k / 5) * 0.25f * p_rect.size.y);
+		r_snow.depth[k] = MAX(snow->depth_at(p), 0.0f);
+		sum += r_snow.depth[k];
+		r_snow.any = r_snow.any || r_snow.depth[k] > 0.002f;
+	}
+	r_snow.mean = sum / 25.0f;
+}
+
+void RockField3D::set_snow_burial(bool p_enabled) {
+	if (snow_burial == p_enabled) {
+		return;
+	}
+	snow_burial = p_enabled;
+	_detail_cancel();
+	LocalVector<Vector3i> drop;
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		if (_is_detail(kv.key.x)) {
+			_free_cell(kv.value);
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		cells.erase(k);
+	}
+}
+
+// Main thread, every two seconds: the laid detail cells whose snowpack has changed by a centimetre or more (snowfall,
+// melt, drift) are laid again (as for a changed relief).
+void RockField3D::_update_snow_cells(double p_delta) {
+	snow_check -= float(p_delta);
+	if (snow_check > 0.0f || !snow_burial || !ground_detail) {
+		return;
+	}
+	snow_check = 2.0f;
+	const WorldSnow *snow = WorldContracts::snow();
+	if (!snow || !snow->has_provider()) {
+		return;
+	}
+	for (const KeyValue<Vector3i, Cell> &kv : cells) {
+		if (!_is_detail(kv.key.x) || kv.value.snow < 0.0f) {
+			continue;
+		}
+		const real_t ks = _cell_size(Layer(kv.key.x));
+		const Rect2 r(kv.key.y * ks, kv.key.z * ks, ks, ks);
+		float sum = 0.0f;
+		for (int k = 0; k < 5; k++) {
+			const Vector2 q = k == 4 ? r.get_center() : r.position + r.size * Vector2(0.25f + 0.5f * (k % 2), 0.25f + 0.5f * (k / 2));
+			sum += MAX(snow->depth_at(Vector3(q.x, 0, q.y)), 0.0f);
+		}
+		// (Five points against the 25 it was laid with: a margin over the centimetre.)
+		if (Math::abs(sum / 5.0f - kv.value.snow) > 0.015f) {
+			_on_relief_changed(r);
+		}
+	}
+}
+
 float RockField3D::RainClimate::burn_at(float p_x, float p_z) const {
 	if (rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
 		return burn[4];
@@ -3735,6 +3873,7 @@ void RockField3D::_detail_prepare(DetailJob &r_job) {
 	const RockGenerator::Family families[3] = { RockGenerator::FAMILY_PEBBLE, RockGenerator::FAMILY_SCREE, RockGenerator::FAMILY_ROCKFALL };
 	_frost_climate(rect, r_job.frost);
 	_rain_climate(rect, r_job.rain);
+	_snow_pack(rect, r_job.snow);
 	LocalVector<uint32_t> keys, missing;
 	for (int t = 0; t < (use_strata ? 2 : 1); t++) {
 		for (int fi = 0; fi < (r_job.frost.any ? 3 : 2); fi++) {
@@ -3850,6 +3989,28 @@ void RockField3D::_detail_compute(DetailJob &r_job) {
 			}
 		}
 	}
+	if (r_job.snow.any) {
+		// Under the snow: a stone whose top is under the pack's surface is left out (the finest first: what shows
+		// through a thin pack is the coarse lag). Its top over the ground from its shape's bottom and half height.
+		uint64_t buried = 0;
+		for (int i = int(stones.size()) - 1; i >= 0; i--) {
+			const Stone &st = stones[i];
+			const float d = r_job.snow.at(float(st.position.x), float(st.position.z));
+			if (d <= 0.002f) {
+				continue;
+			}
+			Library *const *lp = r_job.libs.getptr(st.library);
+			if (!lp || !*lp || st.variant >= (*lp)->axes.size()) {
+				continue;
+			}
+			const float top = float(st.position.y) + ((*lp)->bottom[st.variant] + 2.0f * (*lp)->axes[st.variant].y) * st.scale;
+			if (top - st.ground < d) {
+				stones.remove_at(i);
+				buried++;
+			}
+		}
+		snow_buried.add(buried);
+	}
 	// Tiles of piles: some squares of the cell drawn as placements of tiles cut from its own grains (their grains
 	// replaced by the tile's, so what is drawn is what the finer layers and the contacts see).
 	LocalVector<int> place;
@@ -3931,6 +4092,11 @@ void RockField3D::_detail_compute(DetailJob &r_job) {
 	// The soil columns under the pedestalled stones: one of the unit columns (_pedestal_resources) scaled to the stone's
 	// underside and the soil lost round it, turned, squashed and leaning a little each (no two alike), from just under
 	// the lowered ground into the stone's base. A toppled stone's column stands beside it, empty and rounding off.
+	r_job.standing.clear();
+	for (const Stone &st : stones) {
+		Library *const *lp = r_job.libs.getptr(st.library);
+		_standing_append(st, lp ? *lp : nullptr, r_job.standing);
+	}
 	for (int k = 0; k < RF_PEDESTAL_SHAPES; k++) {
 		r_job.pedestals[k].clear();
 	}
@@ -4259,7 +4425,7 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 					}
 				}
 			}
-			if (top[q].ok && (channel || pedestalled || MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any || (r_job.relief.any && r_job.relief.max_in(top[q].rect) > 0.01f))) {
+			if (top[q].ok && (channel || pedestalled || MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any || r_job.snow.any || (r_job.relief.any && r_job.relief.max_in(top[q].rect) > 0.01f))) {
 				top[q].ok = false; // worn ground (a trail, a rooting) keeps its own grains: no tile is cut from it
 				top[q].fail = 4;
 			}
@@ -4457,6 +4623,8 @@ void RockField3D::_detail_commit(DetailJob &r_job) {
 	const real_t vis = layer_radius[layer] + cs;
 	Cell cell;
 	cell.stones = r_job.stones;
+	cell.standing = r_job.standing;
+	cell.snow = snow_burial ? r_job.snow.mean : -1.0f; // (0 with no snow yet: a pack arriving later lays it again)
 	stone_count += cell.stones;
 	// The tiles: one MultiMesh per shape of each (not instanced per grain in the path tracer: the merged BLAS of its
 	// grains, which every placement shares), and per placement one RenderingServer instance per shape.
@@ -4910,6 +5078,10 @@ void RockField3D::_coarse_commit(const Vector3i &p_key, LocalVector<Stone> &ston
 		_coarse_pack(p_key, stones, p_groups);
 	}
 	Cell cell;
+	for (const Stone &st : stones) {
+		const Library *sl = libraries.getptr(st.library);
+		_standing_append(st, sl, cell.standing);
+	}
 	cell.stones = int(stones.size());
 	stone_count += cell.stones;
 	// One MultiMesh per shape, its records in one upload.
@@ -8952,6 +9124,47 @@ Vector3 RockField3D::_cover_sample(const Vector2 &p_xz) const {
 	return Vector3();
 }
 
+// A stone's record for WorldGround.stones_near: x, z, ground, top (its shape's bottom and twice its half height over the
+// origin), its footprint's half axes x and z and its yaw, when its top stands a centimetre or more over its ground.
+void RockField3D::_standing_append(const Stone &p_stone, const Library *p_lib, LocalVector<float> &r_out) {
+	if (!p_lib || p_stone.variant >= p_lib->axes.size() || p_stone.ground < p_stone.position.y - 30.0) {
+		return;
+	}
+	const Vector3 ax = p_lib->axes[p_stone.variant];
+	const float top = float(p_stone.position.y) + (p_lib->bottom[p_stone.variant] + 2.0f * ax.y) * p_stone.scale;
+	if (top - p_stone.ground < 0.01f) {
+		return;
+	}
+	const Vector3 bx = p_stone.basis.get_column(0);
+	const uint32_t o = r_out.size();
+	r_out.resize(o + 7);
+	r_out[o + 0] = float(p_stone.position.x);
+	r_out[o + 1] = float(p_stone.position.z);
+	r_out[o + 2] = p_stone.ground;
+	r_out[o + 3] = top;
+	r_out[o + 4] = p_stone.scale * ax.x;
+	r_out[o + 5] = p_stone.scale * ax.z;
+	r_out[o + 6] = float(Math::atan2(-bx.z, bx.x)); // (Basis(Y, yaw)'s x axis is (cos, 0, -sin))
+}
+
+// WorldGround.stones_near: the laid cells' standing stones in the rect (main thread).
+void RockField3D::contract_stones_near(const Rect2 &p_rect, LocalVector<float> &r_out) const {
+	for (const KeyValue<Vector3i, Cell> &kv : cells) {
+		const real_t ks = _cell_size(Layer(kv.key.x));
+		if (kv.value.standing.is_empty() || !Rect2(kv.key.y * ks, kv.key.z * ks, ks, ks).grow(4.0).intersects(p_rect)) {
+			continue;
+		}
+		const LocalVector<float> &sv = kv.value.standing;
+		for (uint32_t i = 0; i + 6 < sv.size(); i += 7) {
+			if (p_rect.has_point(Vector2(sv[i], sv[i + 1]))) {
+				const uint32_t o = r_out.size();
+				r_out.resize(o + 7);
+				memcpy(r_out.ptr() + o, sv.ptr() + i, sizeof(float) * 7);
+			}
+		}
+	}
+}
+
 Vector3 RockField3D::contract_cover_at(const Vector3 &p_position) const {
 	MutexLock lock(cover_data_mutex);
 	return _cover_sample(Vector2(p_position.x, p_position.z));
@@ -9187,6 +9400,7 @@ Dictionary RockField3D::get_ground_detail_tile_stats() const {
 	d["pedestals"] = int64_t(pedestal_stones[0].get());
 	d["pedestals_toppled"] = int64_t(pedestal_stones[1].get());
 	d["pedestal_columns"] = int64_t(pedestal_stones[2].get());
+	d["snow_buried"] = int64_t(snow_buried.get());
 	d["wear_armour"] = int64_t(wear_stones[0].get());
 	d["wear_shoulder"] = int64_t(wear_stones[1].get());
 	d["wear_rooting"] = int64_t(wear_stones[2].get());
@@ -9336,6 +9550,7 @@ void RockField3D::_notification(int p_what) {
 				_update_contact(false);
 			}
 			_update_frost_map();
+			_update_snow_cells(get_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			if (rockfall_dust) {
@@ -9512,6 +9727,8 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_ground_wear", "enabled"), &RockField3D::set_ground_wear);
 	ClassDB::bind_method(D_METHOD("set_runoff_gravel", "enabled"), &RockField3D::set_runoff_gravel);
 	ClassDB::bind_method(D_METHOD("is_runoff_gravel"), &RockField3D::is_runoff_gravel);
+	ClassDB::bind_method(D_METHOD("set_snow_burial", "enabled"), &RockField3D::set_snow_burial);
+	ClassDB::bind_method(D_METHOD("is_snow_burial"), &RockField3D::is_snow_burial);
 	ClassDB::bind_method(D_METHOD("set_rain_pedestals", "enabled"), &RockField3D::set_rain_pedestals);
 	ClassDB::bind_method(D_METHOD("is_rain_pedestals"), &RockField3D::is_rain_pedestals);
 	ClassDB::bind_method(D_METHOD("get_pedestal_at", "position"), &RockField3D::get_pedestal_at);
@@ -9599,6 +9816,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "frost_sorting"), "set_frost_sorting", "is_frost_sorting");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_gravel"), "set_runoff_gravel", "is_runoff_gravel");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_pedestals"), "set_rain_pedestals", "is_rain_pedestals");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_burial"), "set_snow_burial", "is_snow_burial");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_tiles"), "set_ground_detail_tiles", "is_ground_detail_tiles");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stones_react"), "set_stones_react", "is_stones_react");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "react_max_bodies", PROPERTY_HINT_RANGE, "0,256,1"), "set_react_max_bodies", "get_react_max_bodies");

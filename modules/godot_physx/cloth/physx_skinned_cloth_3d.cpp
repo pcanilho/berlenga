@@ -33,6 +33,8 @@
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/math/face3.h"
+#include "core/math/geometry_3d.h"
 #include "core/templates/hash_map.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
@@ -227,6 +229,11 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_collision_radius_scale"), &PhysXSkinnedCloth3D::get_collision_radius_scale);
 	ClassDB::bind_method(D_METHOD("set_simulating", "simulating"), &PhysXSkinnedCloth3D::set_simulating);
 	ClassDB::bind_method(D_METHOD("is_simulating"), &PhysXSkinnedCloth3D::is_simulating);
+	ClassDB::bind_method(D_METHOD("set_followers", "followers"), &PhysXSkinnedCloth3D::set_followers);
+	ClassDB::bind_method(D_METHOD("get_followers"), &PhysXSkinnedCloth3D::get_followers);
+	ClassDB::bind_method(D_METHOD("set_auto_followers", "enabled"), &PhysXSkinnedCloth3D::set_auto_followers);
+	ClassDB::bind_method(D_METHOD("get_auto_followers"), &PhysXSkinnedCloth3D::get_auto_followers);
+	ClassDB::bind_method(D_METHOD("get_follower_instances"), &PhysXSkinnedCloth3D::get_follower_instances);
 	ClassDB::bind_method(D_METHOD("rebuild"), &PhysXSkinnedCloth3D::rebuild);
 	ClassDB::bind_method(D_METHOD("reset"), &PhysXSkinnedCloth3D::reset);
 	ClassDB::bind_method(D_METHOD("get_particle_count"), &PhysXSkinnedCloth3D::get_particle_count);
@@ -237,6 +244,8 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "mesh_instance_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_mesh_instance_path", "get_mesh_instance_path");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "surface", PROPERTY_HINT_RANGE, "0,16,1"), "set_surface", "get_surface");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "render_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_render_material", "get_render_material");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "followers", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_followers", "get_followers");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_followers"), "set_auto_followers", "get_auto_followers");
 	ADD_GROUP("Painting", "");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "max_distances"), "set_max_distances", "get_max_distances");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "pin_height", PROPERTY_HINT_RANGE, "-5,5,0.01,or_greater,or_less,suffix:m"), "set_pin_height", "get_pin_height");
@@ -307,10 +316,50 @@ void PhysXSkinnedCloth3D::_notification(int p_what) {
 
 Ref<ShaderMaterial> PhysXSkinnedCloth3D::hide_material;
 Ref<Shader> PhysXSkinnedCloth3D::render_shader;
+Ref<Shader> PhysXSkinnedCloth3D::follower_shader;
+
+// A follower's vertex: its triangle's particles (CUSTOM0.xyz), the offset along the interpolated normal (CUSTOM0.w), the
+// second and third barycentrics (CUSTOM1.xy), its normal (CUSTOM1.zw, CUSTOM2.x) and tangent (CUSTOM2.yzw) in the
+// triangle's frame (normal, the first edge made orthogonal to it, their cross product). The rest as the render copy.
+static const char *FOLLOWER_VERTEX = R"(
+vec3 cloth_p(int i) {
+	return texelFetch(cloth_positions, ivec2(i % texture_width, i / texture_width), 0).xyz;
+}
+vec3 cloth_n(int i) {
+	return texelFetch(cloth_normals, ivec2(i % texture_width, i / texture_width), 0).xyz * normal_sign;
+}
+void vertex() {
+	float handedness = dot(cross(NORMAL, TANGENT), BINORMAL) < 0.0 ? -1.0 : 1.0;
+	int i0 = int(CUSTOM0.x + 0.5);
+	int i1 = int(CUSTOM0.y + 0.5);
+	int i2 = int(CUSTOM0.z + 0.5);
+	float b1 = CUSTOM1.x;
+	float b2 = CUSTOM1.y;
+	float b0 = 1.0 - b1 - b2;
+	vec3 p0 = cloth_p(i0);
+	vec3 p1 = cloth_p(i1);
+	vec3 p2 = cloth_p(i2);
+	vec3 n = b0 * cloth_n(i0) + b1 * cloth_n(i1) + b2 * cloth_n(i2);
+	n = dot(n, n) > 1e-12 ? normalize(n) : vec3(0.0, 1.0, 0.0);
+	vec3 t = p1 - p0;
+	t -= n * dot(n, t);
+	t = dot(t, t) > 1e-12 ? normalize(t) : normalize(cross(n, abs(n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0)));
+	vec3 b = cross(n, t);
+	VERTEX = b0 * p0 + b1 * p1 + b2 * p2 + n * CUSTOM0.w;
+	NORMAL = normalize(t * CUSTOM1.z + b * CUSTOM1.w + n * CUSTOM2.x);
+	vec3 tangent = t * CUSTOM2.y + b * CUSTOM2.z + n * CUSTOM2.w;
+	tangent -= NORMAL * dot(NORMAL, tangent);
+	if (dot(tangent, tangent) > 1e-8) {
+		TANGENT = normalize(tangent);
+		BINORMAL = cross(NORMAL, TANGENT) * handedness;
+	}
+}
+)";
 
 void PhysXSkinnedCloth3D::free_shared() {
 	hide_material.unref();
 	render_shader.unref();
+	follower_shader.unref();
 	SkinnedClothSolverGPU::free_shared();
 }
 
@@ -408,6 +457,7 @@ void PhysXSkinnedCloth3D::_clear() {
 	}
 	render_instance = nullptr;
 	render_instance_id = ObjectID();
+	_clear_followers();
 	MeshInstance3D *source = ObjectDB::get_instance<MeshInstance3D>(source_id);
 	if (source != nullptr) {
 		_unhide_source(source);
@@ -889,7 +939,7 @@ void PhysXSkinnedCloth3D::_try_build() {
 		if (particle_max[a] <= 0.0f && particle_max[b] <= 0.0f) {
 			return; // both follow the animation
 		}
-		cons.push_back({ a, b, particle_pos(a).distance_to(particle_pos(b)), k });
+		cons.push_back({ a, b, float(particle_pos(a).distance_to(particle_pos(b))), k });
 	};
 	for (const KeyValue<uint64_t, EdgeInfo> &kv : edges) {
 		add_con((int)(kv.key >> 32), (int)(kv.key & 0xffffffffu), 1.0f);
@@ -1079,6 +1129,7 @@ void PhysXSkinnedCloth3D::_try_build() {
 	render_instance->set_custom_aabb(source->get_aabb().grow(largest + 0.25f));
 	render_instance_id = render_instance->get_instance_id();
 	_hide_source(source);
+	_build_followers(source, verts, normals, indices, vertex_particle);
 
 	source_id = source->get_instance_id();
 	skeleton_id = skeleton->get_instance_id();
@@ -1465,7 +1516,7 @@ void PhysXSkinnedCloth3D::set_self_collision_thickness(float p_thickness) {
 void PhysXSkinnedCloth3D::set_wetness(float p_wetness) {
 	wet.wetness = CLAMP(p_wetness, 0.0f, 1.0f);
 	if (copy_material.is_valid()) {
-		copy_material->set_shader_parameter("cloth_wetness", wet.wetness);
+		_set_cloth_param("cloth_wetness", wet.wetness);
 		wet_applied = wet.wetness;
 	}
 }
@@ -1492,12 +1543,12 @@ void PhysXSkinnedCloth3D::_update_wetness(float p_delta) {
 		wet.rain_catch = 0.15f + 0.85f * slant / Math::PI;
 	}
 	if (copy_material.is_valid() && (Math::abs(wet.wetness - wet_applied) > 0.01f || (wet.wetness == 0.0f && wet_applied != 0.0f))) {
-		copy_material->set_shader_parameter("cloth_wetness", wet.wetness);
+		_set_cloth_param("cloth_wetness", wet.wetness);
 		wet_applied = wet.wetness;
 	}
 	if (copy_material.is_valid() && (wet.wade_wet > 0.0f || wade_applied > 0.0f)) {
-		copy_material->set_shader_parameter("cloth_wade_line", wet.wade_line);
-		copy_material->set_shader_parameter("cloth_wade_wet", wet.wade_wet);
+		_set_cloth_param("cloth_wade_line", wet.wade_line);
+		_set_cloth_param("cloth_wade_wet", wet.wade_wet);
 		wade_applied = wet.wade_wet;
 	}
 }
@@ -1559,6 +1610,324 @@ void PhysXSkinnedCloth3D::set_body_capsules(const Array &p_capsules) {
 		s.radius_a = d.get("radius_a", r);
 		s.radius_b = d.get("radius_b", r);
 		script_capsules.push_back(s);
+	}
+}
+
+void PhysXSkinnedCloth3D::_set_cloth_param(const StringName &p_name, const Variant &p_value) {
+	if (copy_material.is_valid()) {
+		copy_material->set_shader_parameter(p_name, p_value);
+	}
+	for (Follower &f : follower_copies) {
+		for (Ref<ShaderMaterial> &m : f.materials) {
+			m->set_shader_parameter(p_name, p_value);
+		}
+	}
+}
+
+void PhysXSkinnedCloth3D::set_followers(const TypedArray<NodePath> &p_followers) {
+	followers = p_followers;
+	rebuild();
+}
+
+void PhysXSkinnedCloth3D::set_auto_followers(bool p_enabled) {
+	auto_followers = p_enabled;
+	rebuild();
+}
+
+TypedArray<MeshInstance3D> PhysXSkinnedCloth3D::get_follower_instances() const {
+	TypedArray<MeshInstance3D> out;
+	for (const Follower &f : follower_copies) {
+		if (MeshInstance3D *mi = ObjectDB::get_instance<MeshInstance3D>(f.instance_id)) {
+			out.push_back(mi);
+		}
+	}
+	return out;
+}
+
+// What follows: the followers listed, and (auto_followers) every MeshInstance3D under the source's parent whose
+// metadata says it follows the source by name: meta "follow", or "follow" in its glTF extras (meta "extras").
+Vector<MeshInstance3D *> PhysXSkinnedCloth3D::_find_followers(MeshInstance3D *p_source) const {
+	Vector<MeshInstance3D *> out;
+	for (int i = 0; i < followers.size(); i++) {
+		MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(get_node_or_null(followers[i]));
+		if (mi && mi != p_source && !out.has(mi)) {
+			out.push_back(mi);
+		}
+	}
+	if (auto_followers && p_source->get_parent()) {
+		const String name = p_source->get_name();
+		Vector<Node *> stack;
+		stack.push_back(p_source->get_parent());
+		while (!stack.is_empty()) {
+			Node *n = stack[stack.size() - 1];
+			stack.remove_at(stack.size() - 1);
+			for (int i = 0; i < n->get_child_count(false); i++) {
+				stack.push_back(n->get_child(i, false));
+			}
+			MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(n);
+			if (!mi || mi == p_source || out.has(mi)) {
+				continue;
+			}
+			String follow;
+			if (mi->has_meta("follow")) {
+				follow = mi->get_meta("follow");
+			} else if (mi->has_meta("extras")) {
+				const Dictionary extras = mi->get_meta("extras");
+				follow = extras.get("follow", String());
+			}
+			if (!follow.is_empty() && follow == name) {
+				out.push_back(mi);
+			}
+		}
+	}
+	return out;
+}
+
+void PhysXSkinnedCloth3D::_clear_followers() {
+	for (Follower &f : follower_copies) {
+		for (Ref<ShaderMaterial> &m : f.materials) {
+			m->set_shader_parameter("cloth_positions", Variant());
+			m->set_shader_parameter("cloth_normals", Variant());
+		}
+		if (MeshInstance3D *mi = ObjectDB::get_instance<MeshInstance3D>(f.instance_id)) {
+			mi->queue_free();
+		}
+		if (MeshInstance3D *src = ObjectDB::get_instance<MeshInstance3D>(f.source_id)) {
+			src->set_visible(f.was_visible);
+		}
+	}
+	follower_copies.clear();
+}
+
+// Mesh-to-mesh skinning (NVIDIA APEX Clothing's render meshes skinned to the simulation mesh; Unreal's Chaos Cloth
+// skins its render sections the same way): each follower vertex bound once, at build, to the nearest triangle of the
+// simulated surface in its rest pose, then placed every frame on the GPU from the particles (FOLLOWER_VERTEX), so it
+// moves with the fabric however the fabric moves. The nearest triangle is found through a uniform grid over the
+// triangles' bounds, searched in growing rings.
+void PhysXSkinnedCloth3D::_build_followers(MeshInstance3D *p_source, const PackedVector3Array &p_verts, const PackedVector3Array &p_normals,
+		const PackedInt32Array &p_indices, const Vector<int> &p_vertex_particle) {
+	_clear_followers();
+	const Vector<MeshInstance3D *> list = _find_followers(p_source);
+	const int tri_count = p_indices.size() / 3;
+	if (list.is_empty() || tri_count == 0) {
+		return;
+	}
+	// The grid: cells about twice the mean edge.
+	float edge = 0.0f;
+	AABB bounds(p_verts[p_indices[0]], Vector3());
+	for (int t = 0; t < tri_count; t++) {
+		const Vector3 &a = p_verts[p_indices[t * 3]];
+		const Vector3 &b = p_verts[p_indices[t * 3 + 1]];
+		const Vector3 &c = p_verts[p_indices[t * 3 + 2]];
+		edge += float(a.distance_to(b) + b.distance_to(c) + c.distance_to(a)) / 3.0f;
+		bounds.expand_to(a);
+		bounds.expand_to(b);
+		bounds.expand_to(c);
+	}
+	const float cell = MAX(2.0f * edge / float(tri_count), 0.01f);
+	HashMap<Vector3i, LocalVector<int>> grid;
+	auto cell_of = [&](const Vector3 &p) {
+		return Vector3i(int(Math::floor(p.x / cell)), int(Math::floor(p.y / cell)), int(Math::floor(p.z / cell)));
+	};
+	for (int t = 0; t < tri_count; t++) {
+		AABB box(p_verts[p_indices[t * 3]], Vector3());
+		box.expand_to(p_verts[p_indices[t * 3 + 1]]);
+		box.expand_to(p_verts[p_indices[t * 3 + 2]]);
+		const Vector3i lo = cell_of(box.position);
+		const Vector3i hi = cell_of(box.position + box.size);
+		for (int z = lo.z; z <= hi.z; z++) {
+			for (int y = lo.y; y <= hi.y; y++) {
+				for (int x = lo.x; x <= hi.x; x++) {
+					grid[Vector3i(x, y, z)].push_back(t);
+				}
+			}
+		}
+	}
+	const int max_ring = int(Math::ceil(bounds.get_longest_axis_size() / cell)) + 2;
+	const bool has_normals = p_normals.size() == p_verts.size();
+
+	if (follower_shader.is_null()) {
+		String code = CLOTH_RENDER_SHADER;
+		const int v0 = code.find("void vertex()");
+		const int v1 = code.find("void fragment()");
+		code = code.substr(0, v0) + String(FOLLOWER_VERTEX).trim_prefix("\n") + "\n" + code.substr(v1);
+		follower_shader.instantiate();
+		follower_shader->set_code(code);
+	}
+	const Transform3D to_source_inv = p_source->get_global_transform().affine_inverse();
+
+	for (MeshInstance3D *src : list) {
+		Ref<Mesh> fm = src->get_mesh();
+		if (fm.is_null()) {
+			continue;
+		}
+		// The follower's rest vertices in the source mesh's space.
+		const Transform3D to_src = to_source_inv * src->get_global_transform();
+		const Basis nrm_basis = to_src.basis.inverse().transposed();
+		Ref<ArrayMesh> out_mesh;
+		out_mesh.instantiate();
+		Follower f;
+		for (int si = 0; si < fm->get_surface_count(); si++) {
+			const Array arrays = fm->surface_get_arrays(si);
+			const PackedVector3Array fv = arrays[Mesh::ARRAY_VERTEX];
+			const PackedVector3Array fn = arrays[Mesh::ARRAY_NORMAL];
+			const PackedFloat32Array ft = arrays[Mesh::ARRAY_TANGENT];
+			const int vc = fv.size();
+			if (vc == 0) {
+				continue;
+			}
+			PackedFloat32Array c0, c1, c2;
+			c0.resize(vc * 4);
+			c1.resize(vc * 4);
+			c2.resize(vc * 4);
+			PackedVector3Array out_v;
+			PackedVector3Array out_n;
+			PackedFloat32Array out_t;
+			out_v.resize(vc);
+			out_n.resize(vc);
+			if (ft.size() == vc * 4) {
+				out_t.resize(vc * 4);
+			}
+			for (int i = 0; i < vc; i++) {
+				const Vector3 p = to_src.xform(fv[i]);
+				// Nearest triangle: rings of cells until the best found is nearer than the ring.
+				int best = -1;
+				real_t best_d2 = Math::INF;
+				Vector3 best_q;
+				const Vector3i c = cell_of(p);
+				for (int r = 0; r <= max_ring; r++) {
+					if (best >= 0 && (r - 1) * cell > Math::sqrt(best_d2)) {
+						break;
+					}
+					for (int z = -r; z <= r; z++) {
+						for (int y = -r; y <= r; y++) {
+							for (int x = -r; x <= r; x++) {
+								if (MAX(Math::abs(x), MAX(Math::abs(y), Math::abs(z))) != r) {
+									continue;
+								}
+								const LocalVector<int> *ts = grid.getptr(c + Vector3i(x, y, z));
+								if (!ts) {
+									continue;
+								}
+								for (int t : *ts) {
+									const Face3 face(p_verts[p_indices[t * 3]], p_verts[p_indices[t * 3 + 1]], p_verts[p_indices[t * 3 + 2]]);
+									const Vector3 q = face.get_closest_point_to(p);
+									const real_t d2 = q.distance_squared_to(p);
+									if (d2 < best_d2) {
+										best_d2 = d2;
+										best = t;
+										best_q = q;
+									}
+								}
+							}
+						}
+					}
+				}
+				if (best < 0) {
+					best = 0;
+					best_q = p_verts[p_indices[0]];
+				}
+				const int ia = p_indices[best * 3], ib = p_indices[best * 3 + 1], ic = p_indices[best * 3 + 2];
+				const Vector3 &a = p_verts[ia];
+				const Vector3 &b = p_verts[ib];
+				const Vector3 &cc = p_verts[ic];
+				const Vector3 bc = Geometry3D::triangle_get_barycentric_coords(a, b, cc, best_q);
+				// The frame as the shader builds it: the interpolated normal, the first edge made orthogonal to it.
+				Vector3 n;
+				if (has_normals) {
+					n = p_normals[ia] * bc.x + p_normals[ib] * bc.y + p_normals[ic] * bc.z;
+				}
+				if (n.length_squared() < 1e-12f) {
+					n = (b - a).cross(cc - a) * normal_sign;
+				}
+				n = n.length_squared() > 1e-12f ? n.normalized() : Vector3(0, 1, 0);
+				Vector3 tt = (b - a) - n * n.dot(b - a);
+				tt = tt.length_squared() > 1e-12f ? tt.normalized() : n.cross(Math::abs(n.x) < 0.9f ? Vector3(1, 0, 0) : Vector3(0, 0, 1)).normalized();
+				const Vector3 bt = n.cross(tt);
+				const Vector3 base = a * bc.x + b * bc.y + cc * bc.z;
+				const float off = float(n.dot(p - base));
+				// What the offset along the normal leaves (a vertex beyond the triangle's edge) goes into the
+				// barycentrics' plane: the nearest point is on the triangle, so the rest is along the normal.
+				const Vector3 vn = fn.size() == vc ? (nrm_basis.xform(fn[i])).normalized() : n;
+				Vector3 vt = tt;
+				if (out_t.size()) {
+					vt = to_src.basis.xform(Vector3(ft[i * 4], ft[i * 4 + 1], ft[i * 4 + 2])).normalized();
+				}
+				const int pa = p_vertex_particle[ia], pb = p_vertex_particle[ib], pc = p_vertex_particle[ic];
+				c0.set(i * 4 + 0, float(pa));
+				c0.set(i * 4 + 1, float(pb));
+				c0.set(i * 4 + 2, float(pc));
+				c0.set(i * 4 + 3, off);
+				c1.set(i * 4 + 0, float(bc.y));
+				c1.set(i * 4 + 1, float(bc.z));
+				c1.set(i * 4 + 2, float(vn.dot(tt)));
+				c1.set(i * 4 + 3, float(vn.dot(bt)));
+				c2.set(i * 4 + 0, float(vn.dot(n)));
+				c2.set(i * 4 + 1, float(vt.dot(tt)));
+				c2.set(i * 4 + 2, float(vt.dot(bt)));
+				c2.set(i * 4 + 3, float(vt.dot(n)));
+				out_v.set(i, p);
+				out_n.set(i, vn);
+				if (out_t.size()) {
+					out_t.set(i * 4 + 0, vt.x);
+					out_t.set(i * 4 + 1, vt.y);
+					out_t.set(i * 4 + 2, vt.z);
+					out_t.set(i * 4 + 3, ft[i * 4 + 3]);
+				}
+			}
+			Array ra;
+			ra.resize(Mesh::ARRAY_MAX);
+			ra[Mesh::ARRAY_VERTEX] = out_v;
+			ra[Mesh::ARRAY_NORMAL] = out_n;
+			if (out_t.size()) {
+				ra[Mesh::ARRAY_TANGENT] = out_t;
+			}
+			ra[Mesh::ARRAY_TEX_UV] = arrays[Mesh::ARRAY_TEX_UV];
+			ra[Mesh::ARRAY_TEX_UV2] = arrays[Mesh::ARRAY_TEX_UV2];
+			ra[Mesh::ARRAY_COLOR] = arrays[Mesh::ARRAY_COLOR];
+			ra[Mesh::ARRAY_INDEX] = arrays[Mesh::ARRAY_INDEX];
+			ra[Mesh::ARRAY_CUSTOM0] = c0;
+			ra[Mesh::ARRAY_CUSTOM1] = c1;
+			ra[Mesh::ARRAY_CUSTOM2] = c2;
+			const uint64_t fmt = ((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT) |
+					((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM1_SHIFT) |
+					((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM2_SHIFT);
+			out_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, ra, Array(), Dictionary(), fmt);
+			// Its look: the built-in cloth look from the follower's own material (as the render copy's).
+			Ref<ShaderMaterial> m;
+			m.instantiate();
+			m->set_shader(follower_shader);
+			Ref<BaseMaterial3D> sm = src->get_active_material(si);
+			if (sm.is_valid()) {
+				m->set_shader_parameter("albedo_texture", sm->get_texture(BaseMaterial3D::TEXTURE_ALBEDO));
+				m->set_shader_parameter("albedo_color", sm->get_albedo());
+				m->set_shader_parameter("roughness", sm->get_roughness());
+			}
+			m->set_shader_parameter("cloth_positions", pos_texture);
+			m->set_shader_parameter("cloth_normals", nrm_texture);
+			m->set_shader_parameter("texture_width", solver ? solver->get_texture_width() : 1);
+			m->set_shader_parameter("normal_sign", normal_sign);
+			m->set_shader_parameter("cloth_wetness", MAX(wet.wetness, 0.0f));
+			f.materials.push_back(m);
+		}
+		if (out_mesh->get_surface_count() == 0) {
+			continue;
+		}
+		MeshInstance3D *mi = memnew(MeshInstance3D);
+		mi->set_mesh(out_mesh);
+		for (int k = 0; k < f.materials.size(); k++) {
+			mi->set_surface_override_material(k, f.materials[k]);
+		}
+		mi->set_cast_shadows_setting(src->get_cast_shadows_setting());
+		// Beside the render copy, in the source's space (where the particles are).
+		p_source->get_parent()->add_child(mi, false, INTERNAL_MODE_BACK);
+		mi->set_transform(p_source->get_transform());
+		mi->set_custom_aabb(render_instance ? render_instance->get_custom_aabb() : p_source->get_aabb());
+		f.instance_id = mi->get_instance_id();
+		f.source_id = src->get_instance_id();
+		f.was_visible = src->is_visible();
+		src->set_visible(false);
+		follower_copies.push_back(f);
 	}
 }
 

@@ -1,6 +1,6 @@
 ---
 title: "Berlenga"
-description: "A Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for large open worlds."
+description: "A Godot 4 fork with Vulkan path tracing, DLSS Ray Reconstruction and a procedural natural world of linked terrain, weather, water, vegetation and snow, built for large open worlds."
 ---
 
 <section class="hero">

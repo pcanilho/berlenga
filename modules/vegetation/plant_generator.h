@@ -190,6 +190,7 @@ public:
 		PRESET_BANK_ROOTS, // Fine roots of the sward and herbs bared on a cut bank or scarp face: a fibrous mat close under the top, thinning with depth, strands hanging off the undercut.
 		PRESET_BANK_ROOTS_WOODY, // A tree's or shrub's roots bared on a cut bank near its crown: a few woody laterals out of the face, along and down it, branching to fine ends.
 		PRESET_HAY_BALE, // A round hay bale lying on its side, 4 x 4 to 5 x 5 ft, the axis along +X: wound hay strands, spiral ends, twine bands (GrassField3D drops them along the windrows).
+		PRESET_YORKSHIRE_FOG, // Holcus lanatus in flower: a soft grey-green tuft and culms 20 to 100 cm with dense panicles tinged purple to red, grey to pink in seed (by the season's forcing).
 		PRESET_MAX,
 	};
 
@@ -318,6 +319,7 @@ private:
 	void _build_dock();
 	void _build_cocksfoot();
 	void _build_timothy();
+	void _build_yorkshire_fog();
 	void _build_dry_grass();
 	void _build_leaf_litter();
 	void _build_ground_ivy();
@@ -702,6 +704,9 @@ public:
 		MOUNDS_WOOD, // Woodland: wood ant nests at sunny conifer gaps and edges, a few molehills under broadleaves.
 		MOUNDS_MAX,
 	};
+	// The meadow's flowering grasses (Yorkshire fog): culms and heads standing over the sward from May to August, gone
+	// out of season; the far ground takes the heads' tint while they flower.
+	static TypedArray<Resource> make_flowering_grasses(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	static TypedArray<Resource> make_mounds(MoundSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	// Grazing roughs and dung (docs/ideas/vegetation.md, "Grazing roughs and dung").
 	enum GrazeSet {

@@ -209,6 +209,13 @@ private:
 	Vector<float> cell_depth_hoar; // 0..1, the base's depth hoar share (follow-up 47)
 	Vector<float> cell_slab_cover; // m of soft snow over the wind slab (0: the slab is the surface)
 	Vector<float> cell_sas_x, cell_sas_z; // m: sastrugi relief times the direction of the wind that carved them (follow-up 46)
+	// Stones through snow (follow-up 57): the shortwave on level ground since the last snowfall (kWh/m2) per cell,
+	// what warms a stone standing out of the pack; and over the square, the sun's mean side (shortwave-weighted,
+	// horizontal, toward the sun, fading over 5 days) and the drifting wind's dose (m/s h over the drift threshold
+	// times the direction it blows to, fading over 3 days).
+	Vector<float> cell_sun_dose;
+	Vector2 sun_side;
+	Vector2 drift_dose;
 	Vector<float> cell_packed; // 0..1, the share of the cell traffic has packed hard (follow-up 43)
 	Vector<float> cell_glaze; // mm of ice glaze polished on it by slipping wheels
 	Vector<float> cell_slush; // mm of water ponded in the pack's pores over frozen ground (not in cell_swe)
@@ -314,6 +321,7 @@ private:
 		Vector<float> hoar, hoar_layer, hoar_burial, hoar_age;
 		Vector<float> cups;
 		Vector<float> sas_x, sas_z;
+		Vector<float> sun_dose;
 		Vector<float> depth_hoar;
 		Vector<float> slush; // mm
 		Vector<float> packed, glaze;
@@ -498,6 +506,9 @@ public:
 	void set_sastrugi_enabled(bool p_enabled) { sastrugi_enabled = p_enabled; }
 	bool is_sastrugi_enabled() const { return sastrugi_enabled; }
 	Vector2 get_sastrugi_at(Vector3 p_position) const; // relief (m) times the carving wind's direction
+	float get_sun_dose_at(Vector3 p_position) const; // kWh/m2 of shortwave on level ground since the last snowfall
+	Vector2 get_sun_side() const { return sun_side; } // toward the sun's mean side, length the dose behind it (kWh/m2)
+	Vector2 get_drift_dose() const { return drift_dose; } // m/s h of drifting wind, toward where it blew
 	Ref<Texture2D> get_sastrugi_texture() const { return sastrugi_texture; }
 	Ref<Texture2D> get_strata_texture() const { return strata_texture; }
 	// Round 9 (follow-up 54): how tall a vertical cut in the pack here stands (m), and the depth of the bottom of

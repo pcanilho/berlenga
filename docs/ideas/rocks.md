@@ -1355,3 +1355,11 @@ Niagara's and the Colorado Plateau's ledges). The overhang is limited by the cap
   only its ledge slabs (the wall blocks stand in faces too steep for plants). Each slab is a row of discs a depth
   apart along the lip, as wide as the slab is deep, at the top's height, with obstacle height 0 (so not a wind
   obstacle). Test: "ledge slabs as plant obstacles".
+
+## Shape libraries in the world cache (24 Nov)
+
+Library shapes are a pure function of (type, family, seed, transport, detail, marks_scale) and the
+engine build, so each built shape (ImporterMesh surface data plus its meta, materials stripped) is
+stored in the world cache (`rock_shape_*`) and reloaded with the shared rock material. Close-ups and
+fracture pieces are not cached. Same bench view, cold vs warm: shape libraries 10.8 s to 0.6 s, frames
+byte-identical. Turning the world cache off restores the old path.

@@ -5,8 +5,8 @@ disableKinds = ["taxonomy", "term", "RSS"]
 enableRobotsTXT = true
 
 [params]
-description = "A Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for large open worlds."
-tagline = "Path tracing for large open worlds"
+description = "A Godot 4 fork with Vulkan path tracing, DLSS Ray Reconstruction and a procedural natural world of linked terrain, weather, water, vegetation and snow, built for large open worlds."
+tagline = "Path tracing and procedural natural worlds"
 repo = "https://github.com/pcanilho/berlenga"
 
 [markup.goldmark.renderer]

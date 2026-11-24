@@ -282,6 +282,9 @@
 		<member name="canopy_field" type="NodePath" setter="set_canopy_field" getter="get_canopy_field" default="NodePath(&quot;&quot;)">
 			Path to a [VegetationField3D] whose canopy species shade the ground (see [method VegetationField3D.get_shade_at]). When [member rules] narrows [member PlantSpecies.shade_range], blades and the ground tint follow that shade: for example [code]Vector2(0, 0.4)[/code] keeps a meadow sward out from under the trees. Call [method rebuild] after the field is populated again.
 		</member>
+		<member name="climate_bare" type="bool" setter="set_climate_bare" getter="is_climate_bare" default="true">
+			Drylands: no blades (near tiles, far rings or far shell) on the climate's bare soil patches, the same pattern the terrain material draws its bare soil from ([member TerrainMaterial3D.climate_bare_soil]): bare where a two-octave value noise falls under the quantile of the bare share the year's rain gives (0.9 at 200 mm to 0 at 700 mm). In the shaders, so it costs no rebuild. Off for crop fields. No climate: no effect.
+		</member>
 		<member name="clump_size" type="float" setter="set_clump_size" getter="get_clump_size" default="1.2">
 			Size of a clump, in metres. Blades in a clump share height, facing, lean and dryness.
 		</member>

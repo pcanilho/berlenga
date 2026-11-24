@@ -151,6 +151,9 @@ private:
 	// A RockField3D whose stones the plants keep out of, fetched round each tile as it is placed (get_obstacles), in
 	// place of (or as well as) the obstacles array: no world-wide list of every stone.
 	NodePath rock_field;
+	// Drylands (WorldContracts::bare_patch): no cover plants on the climate's bare soil patches, which the terrain
+	// material and GrassField3D draw from the same pattern. Read when a tile is placed.
+	bool climate_bare = true;
 	float rock_obstacle_min = 0.25f; // The smallest stone (its size) the plants keep out of.
 	float rock_footprint_max = 32.0f; // The widest stone footprint expected: tiles fetch rocks this far past their reach.
 	VegetationRockCache rock_cache;
@@ -253,6 +256,7 @@ private:
 		float far_top = 0.0f; // Trees (far_widen): the first mesh's top, for the skyline test (trees.md 9c).
 		bool far_widen = false; // Meta "far_widen" (trees, trees.md 9a): the far tail's survivors widened in their transforms per tile.
 		float clone_scale = 0.0f; // Meta "clone_scale" (m; aspen, trees.md 5bf): one variant per clone, clones as jittered cells this wide.
+		bool bare_cover = false; // A plant of the cover (herb, grass, shrub; not a tree, not a bare-ground species): none on the climate's bare soil.
 		bool hay_cut = false; // A herb taller than a hay meadow's stubble (PlantGenerator species over 12 cm): cut when mown.
 		int base_variants = 0; // hay_cut: meshes [0, base_variants) as grown, [base_variants, 2 base_variants) cut at the stubble.
 		LocalVector<float> face_slopes; // Per variant, mesh meta "bank_face_slope" (radians; bank roots); empty: none.
@@ -765,6 +769,8 @@ public:
 	NodePath get_rock_field() const { return rock_field; }
 	void set_rock_obstacle_min(float p_size);
 	float get_rock_obstacle_min() const { return rock_obstacle_min; }
+	void set_climate_bare(bool p_on) { climate_bare = p_on; }
+	bool is_climate_bare() const { return climate_bare; }
 	void set_rock_footprint_max(float p_radius);
 	float get_rock_footprint_max() const { return rock_footprint_max; }
 	int get_rock_chunk_count() const { return rock_cache.chunks.size(); }

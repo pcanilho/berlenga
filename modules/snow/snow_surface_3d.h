@@ -209,6 +209,30 @@ class SnowSurface3D : public Node3D {
 	float _press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, Vector2 p_velocity = Vector2());
 	void _press_movers(double p_delta);
 	void _relax();
+	// Stones through snow (follow-up 57): melt moats round the stones standing out of the pack, windward scour and
+	// lee tails, as a signed height (m) over a square round the follow target (see the .cpp).
+	bool stone_relief = true;
+	float stone_relief_extent = 32.0f;
+	struct StoneRelief {
+		bool valid = false;
+		Vector2 origin; // the square's corner (x, z)
+		float texel = 0.0625f;
+		int n = 0;
+		LocalVector<float> h; // m, n * n
+		Ref<Image> image;
+		Ref<ImageTexture> texture;
+		Rect2 query; // the rect the stones were read for
+		LocalVector<Vector4> stones; // x, z, ground, top
+		LocalVector<Vector3> shape; // the footprint: half axes (m) along its own x and z, and its yaw (rad)
+		uint64_t cover_update = UINT64_MAX;
+		double wait = 0.0;
+		int drawn = 0; // stones standing out of the pack in the last build
+		PackedFloat32Array given; // set_stone_list: x, z, ground, top, half axis x, half axis z, yaw per stone (7 floats)
+	} stone;
+	void _stone_relief_step(double p_delta);
+	void _read_stones(const Rect2 &p_rect);
+	void _build_stone_relief();
+	float _stone_relief_at(float p_x, float p_z) const;
 	// Round 9 (follow-up 54): rut and trench walls that give way (see the .cpp).
 	bool wall_collapse = true;
 	double crumble_accum = 0.0;
@@ -326,6 +350,15 @@ public:
 	static Ref<Image> sastrugi_tile(); // the periodic sastrugi relief along +x (R) and its gradient (GB), made once
 	double get_step_time_msec() const { return step_msec; }
 	void set_crust_plates(bool p_enabled);
+	void set_stone_relief(bool p_enabled);
+	bool get_stone_relief() const { return stone_relief; }
+	void set_stone_relief_extent(float p_extent);
+	float get_stone_relief_extent() const { return stone_relief_extent; }
+	int get_stone_relief_count() const { return stone.drawn; }
+	float get_stone_relief_at(Vector3 p_position) const { return _stone_relief_at(p_position.x, p_position.z); }
+	void rebuild_stone_relief();
+	void set_stone_list(const PackedFloat32Array &p_stones);
+	PackedFloat32Array get_stone_list() const { return stone.given; }
 	void set_wall_collapse(bool p_enabled) { wall_collapse = p_enabled; }
 	bool is_wall_collapse() const { return wall_collapse; }
 	int get_walls_collapsed() const { return walls_collapsed; }
