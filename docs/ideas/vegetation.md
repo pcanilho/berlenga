@@ -2115,3 +2115,22 @@ same deadlock trees.md 5bc met).
 Proof: the cover's 38 sets fingerprinted (every mesh's arrays, every material's parameters, every texture's pixels,
 every species' properties and metas) are identical made one after another and in parallel, over four parallel runs;
 `docs/bench/plants --test` checks a smaller mix. Cloud (4 cores, 3 lanes): 25.0 s to 11.5 s. The PC's cores give more.
+
+## Round 11 candidates (research, not built; waiting on a pick)
+- Flowering grass heads in the sward: from May the meadow blades send up flowering stems, giving the early summer
+  meadow its tinted haze. Yorkshire fog flowers May to August, heads "tinged with purple to red", 20 to 100 cm
+  ([Woodland Trust](https://www.woodlandtrust.org.uk/trees-woods-and-wildlife/plants/grasses-and-sedges/yorkshire-fog-grass/);
+  [Nature's Calendar](https://naturescalendar.woodlandtrust.org.uk/blog/2021/how-to-identify-common-uk-grasses/)).
+  Cocksfoot and timothy flower June to September, meadow foxtail April to June (Nature's Calendar). Built as a share
+  of GrassField3D blades drawn as heads (real geometry, varied per blade by hash), timed by WorldWeather's season,
+  gone where mown; the far colour takes the tint.
+- Deer beds: oval flattened patches in tall grass where deer lay up, roe about 1 m long, red about 1.5 m, in hay
+  fields and at field edges under trees, sometimes several together
+  ([Discover Wildlife](https://www.discoverwildlife.com/how-to/identify-wildlife/how-to-identify-wildlife-paths-and-beds));
+  water deer beds average 60 x 40 cm, often with a pellet pile at one end
+  ([Wildlife Online](https://www.wildlifeonline.me.uk/animals/article/water-deer-field-signs)). Built as lodged
+  ovals in the sward's lodge map near the game trails, a few per hectare, the blades springing back over days.
+- Terracettes: regularly spaced steps on steep grazed hillsides ([Wikipedia](https://en.wikipedia.org/wiki/Terracette));
+  a grazing model gives a mean tread spacing of about 3.4 m, regular bands by 40 degree slopes, animals walking the
+  flatter treads and grazing the risers ([arXiv 2504.17496](https://arxiv.org/html/2504.17496v2)). The sward side
+  (worn treads, taller grass on risers) is vegetation; the steps themselves are ground relief, for the terrain thread.
