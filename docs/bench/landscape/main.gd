@@ -3300,6 +3300,23 @@ func _docs_links_setup() -> void:
 				str(data_map.call("get_water_depth_at", pq)) if data_map.has_method("get_water_depth_at") else "n/a",
 				str(snow.call("get_ice_thickness_at", pq)) if snow.has_method("get_ice_thickness_at") else "n/a",
 				str(snow.call("get_water_level_at", pq)) if snow.has_method("get_water_level_at") else "n/a"])
+		if args.has("snow-probe-grid"):
+			# --snow-probe-grid=x0,z0,size,step: snow depth (mm) over a square, rows of z, as a map.
+			var g := String(args["snow-probe-grid"]).split(",")
+			var x0 := float(g[0])
+			var z0 := float(g[1])
+			var sz := float(g[2])
+			var st := float(g[3])
+			var zz := z0
+			while zz <= z0 + sz:
+				var row := "snow grid z %6.1f:" % zz
+				var xx := x0
+				while xx <= x0 + sz:
+					var gq := Vector3(xx, height_at(xx, zz), zz)
+					row += " %3d" % int(round(snow.get_depth_at(gq) * 1000.0))
+					xx += st
+				_log(row)
+				zz += st
 	if args.has("snow-days") and snow != null:
 		var days := float(args["snow-days"])
 		var t := Time.get_ticks_msec()
