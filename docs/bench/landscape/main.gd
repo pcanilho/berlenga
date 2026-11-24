@@ -3270,6 +3270,14 @@ func _docs_links_setup() -> void:
 		var cq: Camera3D = get_viewport().get_camera_3d()
 		var fq := cq.global_position if cq != null else Vector3.ZERO
 		_log("snow fall: %.3f m deep at the camera after %.1f h (%d ms)" % [snow.get_depth_at(fq), hrs, Time.get_ticks_msec() - tf])
+		if args.has("probe-at"):
+			# --probe-at=X,Z: water and ice reads at a point after the fall (a bare patch under fresh snow).
+			var pz := _vec2_arg(args["probe-at"])
+			var pq := Vector3(pz.x, height_at(pz.x, pz.y), pz.y)
+			_log("probe %s: snow %.3f m, water depth %s, ice %s, water level %s" % [str(pq.round()), snow.get_depth_at(pq),
+				str(data_map.call("get_water_depth_at", pq)) if data_map.has_method("get_water_depth_at") else "n/a",
+				str(snow.call("get_ice_thickness_at", pq)) if snow.has_method("get_ice_thickness_at") else "n/a",
+				str(snow.call("get_water_level_at", pq)) if snow.has_method("get_water_level_at") else "n/a"])
 	if args.has("snow-days") and snow != null:
 		var days := float(args["snow-days"])
 		var t := Time.get_ticks_msec()
