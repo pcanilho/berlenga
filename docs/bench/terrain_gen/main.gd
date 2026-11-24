@@ -71,6 +71,7 @@ func _ready() -> void:
 		# the bench above each lip flatter than the riser under it.
 		gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
 		gen.max_height = float(args.get("max-height", "1500")) # steep faces to hold ledges
+		gen.cliff_ledge_armour = float(args.get("armour", str(gen.cliff_ledge_armour))) # --armour=k: caprock armour (0: gullies kept)
 		gen.generate()
 		var r: Rect2 = gen.get_world_rect()
 		var t := Time.get_ticks_usec()
@@ -89,6 +90,52 @@ func _ready() -> void:
 				flatter += 1
 				buckets[sb * 2 + 1] += 1
 		print("by strength quarter (lips, bench flatter): ", buckets)
+		# Level along the lip: the ground's fall over a metre along the lip (out turned a quarter), and runs: lips
+		# chained to a neighbour within 3 m at the same height (0.5 m), as the rock slabs seat them.
+		var steep_along := 0
+		var cells := {}
+		for k in lips.size():
+			var p: Vector3 = lips[k]["position"]
+			var o: Vector3 = lips[k]["out"]
+			var tg := Vector3(-o.z, 0.0, o.x)
+			if absf(gen.get_height(p + tg) - gen.get_height(p - tg)) * 0.5 > 1.0:
+				steep_along += 1
+			var key := Vector2i(floori(p.x / 3.0), floori(p.z / 3.0))
+			if not cells.has(key):
+				cells[key] = []
+			cells[key].append(k)
+		var seen := PackedByteArray()
+		seen.resize(lips.size())
+		var runs: Array[int] = []
+		for k in lips.size():
+			if seen[k]:
+				continue
+			seen[k] = 1
+			var stack := [k]
+			var n := 0
+			while not stack.is_empty():
+				var a: int = stack.pop_back()
+				n += 1
+				var pa: Vector3 = lips[a]["position"]
+				var ka := Vector2i(floori(pa.x / 3.0), floori(pa.z / 3.0))
+				for dz in range(-1, 2):
+					for dx in range(-1, 2):
+						for b in cells.get(ka + Vector2i(dx, dz), []):
+							if seen[b]:
+								continue
+							var pb: Vector3 = lips[b]["position"]
+							if Vector2(pb.x - pa.x, pb.z - pa.z).length() < 3.0 and absf(pb.y - pa.y) < 0.5:
+								seen[b] = 1
+								stack.append(b)
+			runs.append(n)
+		runs.sort()
+		var long_runs := 0
+		var in_long := 0
+		for n in runs:
+			if n >= 8:
+				long_runs += 1
+				in_long += n
+		print("along the lip: %d of %d fall over 1 m per m; runs %d, median %d, max %d, %d runs of 8+ holding %d lips" % [steep_along, lips.size(), runs.size(), runs[runs.size() / 2] if runs.size() > 0 else 0, runs.back() if runs.size() > 0 else 0, long_runs, in_long])
 		check(lips.size() > 0, "lips found")
 		check(lips.is_empty() or flatter > lips.size() * 0.95, "bench flatter than riser at %d of %d lips" % [flatter, lips.size()])
 		for i in range(0, lips.size(), maxi(1, lips.size() / 6)):

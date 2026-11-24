@@ -4212,9 +4212,9 @@ void main() {
 				}
 			}
 			if (have) {
-				// Niu and Yang (2007) snow-covered fraction.
+				// Niu and Yang (2007) snow-covered fraction, z0 the pixel's ground roughness (as snow_cover_at()).
 				float snow_amt = snow_cover;
-				snow_cover *= tanh(max(s.r, 0.0) * snow_subgrid(spos) / (0.025 * max(s.a * 10.0, 0.5))) * (1.0 - snow_under);
+				snow_cover *= tanh(max(s.r, 0.0) * snow_subgrid(spos) / (0.01 * max(s.a * 10.0, 0.5))) * (1.0 - snow_under);
 				snow_cover = mix(snow_cover, snow_amt * min(snow_crown_load * 2.0, 1.0), snow_crown);
 				snow_albedo = s.g;
 				snow_wet = clamp(s.b, 0.0, 1.0);

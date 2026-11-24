@@ -2140,6 +2140,16 @@ Where the pack is deep the covered share saturates and the fine field does not s
 The field is 3D value noise of the world position, not of x and z: read on the map's plane it was drawn out down
 steep banks into rows of dark slashes (seen in the ground-detail snow frames).
 
+Thin packs (same day, rocks bench `--world --view=scree --snow=2`): rows of grey and tan slivers on a 2 cm pack,
+and white streaks down one-cell walls. Both were SnowSurface3D under its min_depth: its tuck ramp left it hovering
+millimetres over the ground as the cover knows it (1 m cells), so the ground's own triangles poked through it in
+slivers and over a step it hung down the wall. Now the surface fragment is discarded once it sinks below half its
+min_depth, and thin snow is the ground material's alone. To match the surface where it starts, the materials'
+covered share takes the pixel's ground roughness (z0 0.004 m, grains and clods) instead of Niu and Yang's model
+cell (0.01 m), since the cell's spread of depths is now drawn by `snow_subgrid`: 2 cm of settled snow covers some
+two thirds of a pixel's facets, not a third. The terrain material holds and sheds its snow by its projection
+normal (`tm_pn`, the heightfield's central difference), so a one-cell wall sheds it too.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

@@ -1,0 +1,1 @@
+- Snow: thin snow (under the snow surface's min depth) is drawn by the ground alone, with no slivers or streaks down steps, and covers more of the ground.

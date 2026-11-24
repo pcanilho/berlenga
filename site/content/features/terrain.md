@@ -63,7 +63,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Material detail: rills finer than the 4 m mesh, drawn by the material.*
 
-- **Rock layers and waterfalls** (`strata_enabled`, `get_waterfalls()`): hard and soft bands that rivers cut into caprock waterfalls.
+- **Rock layers and waterfalls** (`strata_enabled`, `get_waterfalls()`, `cliff_ledge_armour`): hard and soft bands that rivers cut into caprock waterfalls; cliff ledges run long and level along their beds, with gullies notching them only here and there.
 
   ![Rivers and waterfalls on a layered range, and river long profiles before and after](media/terrain-waterfalls.jpg)
 

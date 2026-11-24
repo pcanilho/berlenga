@@ -110,6 +110,7 @@ private:
 	real_t detail_crest = 1.0; // ridged noise on crests, times the gully amplitude
 	real_t cliff_ledge_spacing = 0.0; // mean m between rock beds (thicknesses vary) stepped into faces steeper than 40 degrees; 0 = off
 	real_t cliff_ledge_strength = 1.0;
+	real_t cliff_ledge_armour = 0.6;
 
 	// Tile erosion (stage 4): droplet hydraulic plus thermal erosion on a fine grid, in overlapping tiles.
 	bool tile_erosion_enabled = true;
@@ -731,6 +732,8 @@ public:
 	real_t get_cliff_ledge_spacing() const { return cliff_ledge_spacing; }
 	void set_cliff_ledge_strength(real_t p_value) { cliff_ledge_strength = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
 	real_t get_cliff_ledge_strength() const { return cliff_ledge_strength; }
+	void set_cliff_ledge_armour(real_t p_value) { cliff_ledge_armour = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
+	real_t get_cliff_ledge_armour() const { return cliff_ledge_armour; }
 	void set_detail_crest(real_t p_value) { detail_crest = MAX(p_value, real_t(0.0)); }
 	real_t get_detail_crest() const { return detail_crest; }
 	void set_detail_assumed_slope(real_t p_value) { detail_assumed_slope = MAX(p_value, real_t(0.01)); }

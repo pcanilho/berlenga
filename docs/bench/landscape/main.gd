@@ -4402,7 +4402,8 @@ func _build_camera() -> void:
 				# gentle ground.
 				for sp4 in rocks.get_pedestal_spots(Rect2(-pr, -pr, 2.0 * pr, 2.0 * pr), float(args.get("ped-step", "2")), 64):
 					var q := Vector3(sp4.x, sp4.y, sp4.z)
-					if rad_to_deg(data_map.get_slope_at(q)) <= 15.0:
+					var sdeg := rad_to_deg(data_map.get_slope_at(q))
+					if sdeg >= float(args.get("ped-min-slope", "0")) and sdeg <= float(args.get("ped-max-slope", "25")):
 						pp = q
 						pbest = sp4.w
 						break
@@ -4465,11 +4466,14 @@ func _build_camera() -> void:
 					c /= brun.size()
 					o.y = 0.0
 					o = o.normalized()
+					# Out from the face: the side where the ground falls away.
+					if height_at(c.x + o.x * 12.0, c.z + o.z * 12.0) > height_at(c.x - o.x * 12.0, c.z - o.z * 12.0):
+						o = -o
 					var al: Vector3 = brun[0]["along"]
 					al.y = 0.0
 					al = al.normalized()
 					var rl := float(brun[0]["run_length"])
-					var lc := c + o * float(args.get("ledge-front", "10")) + al * (rl * 0.5 + float(args.get("ledge-side", "9")))
+					var lc := c + o * float(args.get("ledge-front", "18")) + al * (rl * 0.5 + float(args.get("ledge-side", "9")))
 					lc.y = maxf(height_at(lc.x, lc.z) + 1.7, c.y + float(args.get("ledge-up", "-1")))
 					cam.fov = 55.0
 					cam.position = lc

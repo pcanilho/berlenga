@@ -830,10 +830,11 @@
    "name": "Rock layers and waterfalls",
    "settings": [
     "strata_enabled",
-    "get_waterfalls()"
+    "get_waterfalls()",
+    "cliff_ledge_armour"
    ],
    "note": "",
-   "what": "hard and soft bands that rivers cut into caprock waterfalls.",
+   "what": "hard and soft bands that rivers cut into caprock waterfalls; cliff ledges run long and level along their beds, with gullies notching them only here and there.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
