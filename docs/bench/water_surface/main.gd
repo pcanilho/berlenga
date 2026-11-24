@@ -77,7 +77,7 @@ extends Node3D
 #   --sun-energy=E  the sun's energy (default 1; 0 = in shade, lit by the sky only)
 #   --dump-shader=path  write the water material's shader code to a file
 #   --shader-file=path  replace the water material's shader with this file (try a shader change without a rebuild)
-#   --perf          print the mean process and physics time per frame (after frame 60) and the cost of sample_height()
+#   --perf          print the mean process, physics and GPU time per frame (after frame 60) and the cost of sample_height()
 #   --lip-debug     draw the breaking lips opaque red (to see their shape)
 #   --breakers      print the breaking lips' size and cost each frame (crest points, vertices, spray rate, CPU ms)
 #   --splash=Z[,S]  drop a mound of water at (-4..4, Z) every 2 s, to watch it run up the sand (--view=runup --splash=6)
@@ -145,6 +145,7 @@ var breaker_peak := {}
 var perf_proc := 0.0
 var perf_phys := 0.0
 var perf_n := 0
+var perf_gpu := 0.0 # ms, the viewport's measured GPU render time
 var boat_speed := 0.0
 var splash_strength := 1.0
 var splash_z := 1e9 # --splash=Z: a mound of water dropped at (0, Z) every 2 s (run-up onto the sand)
@@ -240,7 +241,9 @@ func _ready() -> void:
 			var wkv2 := a.substr(7).split(":", true, 1)
 			wake_params[wkv2[0]] = str_to_var(wkv2[1])
 		elif a == "--profile": profile = true
-		elif a == "--perf": perf = true
+		elif a == "--perf":
+			perf = true
+			RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
 		elif a == "--breakers": breakers = true
 		elif a == "--lip-debug": lip_debug = true
 		elif a == "--hide-lips": hide_lips = true
@@ -885,13 +888,14 @@ func _process(_delta: float) -> void:
 	if perf and n > 60 and n < frames - 1:
 		perf_proc += Performance.get_monitor(Performance.TIME_PROCESS)
 		perf_phys += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
+		perf_gpu += RenderingServer.viewport_get_measured_render_time_gpu(get_viewport().get_viewport_rid())
 		perf_n += 1
 	if perf and n == frames - 1:
 		var t0 := Time.get_ticks_usec()
 		for i in 2000:
 			water.call("sample_height", Vector3(-10.0 + 0.01 * i, 0.0, -5.0 + 0.005 * i))
 		var per_call := float(Time.get_ticks_usec() - t0) / 2000.0
-		print("PERF process %.3f ms, physics %.3f ms per frame, sample_height %.2f us per call" % [1000.0 * perf_proc / maxi(perf_n, 1), 1000.0 * perf_phys / maxi(perf_n, 1), per_call])
+		print("PERF process %.3f ms, physics %.3f ms per frame, sample_height %.2f us per call, gpu %.3f ms per frame" % [1000.0 * perf_proc / maxi(perf_n, 1), 1000.0 * perf_phys / maxi(perf_n, 1), per_call, perf_gpu / maxi(perf_n, 1)])
 	if splash_z < 1e8 and n % 60 == 10:
 		for sx in [-4.0, 0.0, 4.0]:
 			water.call("submit_impulse", Vector3(sx, 0.0, splash_z), 2.0, splash_strength)
