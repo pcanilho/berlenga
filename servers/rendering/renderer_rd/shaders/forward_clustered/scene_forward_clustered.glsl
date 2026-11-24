@@ -1115,6 +1115,61 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 /* clang-format on */
 #endif
 
+// The sun through the clouds past the cloud shadow map (WeatherMap3D bakes that map over 6 km round the camera; past
+// it the ground lay in full sun under any overcast): from the cloud sky map's columns (32 km, the clouds' optical
+// depth straight up in green and its height in blue), the column where the sun's ray from p_world reaches the
+// clouds' height, its slant depth tau / sun.y, and the cloud's diffuse transmission 1 / (1 + 3/4 (1 - g) tau)
+// (two-stream, g 0.85) as the near map stores it. A coarse far cloud shadow, as engines extend a cloud shadow map
+// over a large extent at a low resolution. p_to_sun: world, toward the sun.
+float cloud_far_sun(vec3 p_world, vec3 p_to_sun) {
+	if (cloud_sky_data.info.x < 0.5 || p_to_sun.y < 0.02) {
+		return 1.0;
+	}
+	vec2 uv = (p_world.xz - cloud_sky_data.rect.xy) * cloud_sky_data.rect.z;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		// Past the map (16 km out): the clouds' mean, from the map's last level (its alpha, the transmission straight
+		// up, averaged; the depth averaged would darken scattered cloud as a deck).
+		int last = textureQueryLevels(sampler2D(cloud_sky_texture, SAMPLER_LINEAR_CLAMP)) - 1;
+		float t_up = texelFetch(sampler2D(cloud_sky_texture, SAMPLER_LINEAR_CLAMP), ivec2(0), last).a;
+		return 1.0 / (1.0 + (1.0 / max(t_up, 1e-3) - 1.0) / p_to_sun.y);
+	}
+	float h = textureLod(sampler2D(cloud_sky_texture, SAMPLER_LINEAR_CLAMP), uv, 0.0).b;
+	if (p_world.y >= h) {
+		return 1.0;
+	}
+	vec2 q = (p_world.xz + p_to_sun.xz / p_to_sun.y * (h - p_world.y) - cloud_sky_data.rect.xy) * cloud_sky_data.rect.z;
+	float tau = textureLod(sampler2D(cloud_sky_texture, SAMPLER_LINEAR_CLAMP), clamp(q, vec2(0.0), vec2(1.0)), 0.0).g;
+	return 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau / p_to_sun.y);
+}
+
+// A directional light's projector at the view-space point p_vertex (directional_projector_color()), and for the
+// weather's cloud map (alpha 254) the far cloud shadow past it: blended over the map's outer tenth, so the near
+// map's detail holds where it reaches and no seam rings the camera.
+vec3 directional_cloud_projector(uint p_index, vec3 p_vertex) {
+	vec4 rect = directional_lights.data[p_index].projector_rect;
+	if (rect == vec4(0.0)) {
+		return vec3(1.0);
+	}
+	vec2 uv = vec2(dot(vec4(p_vertex, 1.0), directional_lights.data[p_index].projector_u), dot(vec4(p_vertex, 1.0), directional_lights.data[p_index].projector_v));
+	// Clamped a little inside the rect: at its very edge the filter reads the atlas's neighbouring texels.
+	vec4 proj = textureLod(sampler2D(decal_atlas_srgb, light_projector_sampler), clamp(uv, vec2(0.005), vec2(0.995)) * rect.zw + rect.xy, 0.0);
+	bool inside = all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+	if (abs(proj.a * 255.0 - 254.0) >= 0.25) {
+		return inside ? proj.rgb * proj.a : vec3(1.0); // not a cloud map
+	}
+	vec2 e = abs(uv * 2.0 - 1.0);
+	float far_w = inside ? smoothstep(0.8, 1.0, max(e.x, e.y)) : 1.0;
+	vec3 near = proj.rgb * proj.a;
+	if (far_w <= 0.0) {
+		return near;
+	}
+	vec4 v = vec4(p_vertex, 1.0);
+	vec3 world = vec3(dot(scene_data_block.data.inv_view_matrix[0], v), dot(scene_data_block.data.inv_view_matrix[1], v), dot(scene_data_block.data.inv_view_matrix[2], v));
+	vec3 d = directional_lights.data[p_index].direction;
+	vec3 to_sun = normalize(vec3(dot(scene_data_block.data.inv_view_matrix[0].xyz, d), dot(scene_data_block.data.inv_view_matrix[1].xyz, d), dot(scene_data_block.data.inv_view_matrix[2].xyz, d)));
+	return mix(near, vec3(cloud_far_sun(world, to_sun) * proj.a), far_w);
+}
+
 // sun_visibility(world_position) (spatial fragment and light): the first directional light's shadow,
 // with its projector (the cloud shadow), at any world position. One hardware PCF tap from the cascade
 // that covers the point; callers that march through a medium jitter their steps instead.
@@ -1145,16 +1200,7 @@ vec3 sun_visibility(vec3 p_world) {
 			shadow = mix(1.0, shadow, directional_lights.data[0].shadow_opacity);
 		}
 	}
-	vec3 projector = vec3(1.0);
-	vec4 rect = directional_lights.data[0].projector_rect;
-	if (rect != vec4(0.0)) {
-		vec2 uv = vec2(dot(vec4(vertex, 1.0), directional_lights.data[0].projector_u), dot(vec4(vertex, 1.0), directional_lights.data[0].projector_v));
-		if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
-			vec4 proj = textureLod(sampler2D(decal_atlas_srgb, light_projector_sampler), uv * rect.zw + rect.xy, 0.0);
-			projector = proj.rgb * proj.a;
-		}
-	}
-	return shadow * projector;
+	return shadow * directional_cloud_projector(0u, vertex);
 }
 
 // sun_direction() (spatial fragment and light): the first directional light's direction, toward the light, in
@@ -1526,14 +1572,15 @@ float directional_volume_shadow(uint p_index, vec3 p_vertex) {
 // (view space). Returns the ambient light with the gas's: as the path tracer's surfaces see a sunlit cloud beside them
 // glow and dark smoke hide the sky.
 // The share of the clear sky's diffuse light reaching p_world through the clouds (WeatherMap3D's cloud sky map, a
-// cloud ambient occlusion map): its hemisphere visibility, eased to 1 from the height it is for up to the clouds'.
-float cloud_sky_visibility(vec3 p_world) {
+// cloud ambient occlusion map): its hemisphere visibility, eased to 1 from p_ground (the height it is for: the
+// camera's, as the path tracer takes it) up to the clouds'.
+float cloud_sky_visibility(vec3 p_world, float p_ground) {
 	vec2 uv = (p_world.xz - cloud_sky_data.rect.xy) * cloud_sky_data.rect.z;
 	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
 		return 1.0;
 	}
 	vec4 m = textureLod(sampler2D(cloud_sky_texture, SAMPLER_LINEAR_CLAMP), uv, 0.0);
-	return mix(1.0, m.r, clamp((m.b - p_world.y) / max(m.b - cloud_sky_data.rect.w, 1.0), 0.0, 1.0));
+	return mix(1.0, m.r, clamp((m.b - p_world.y) / max(m.b - p_ground, 1.0), 0.0, 1.0));
 }
 
 // The sky light's factor at p_world: the radiance map is the sky the camera sees, with the clouds over the camera
@@ -1544,7 +1591,7 @@ float cloud_sky_light(vec3 p_world, vec3 p_cam) {
 	if (cloud_sky_data.info.x < 0.5) {
 		return 1.0;
 	}
-	return min(cloud_sky_visibility(p_world) / max(cloud_sky_visibility(p_cam), 0.02), 1.0);
+	return min(cloud_sky_visibility(p_world, p_cam.y) / max(cloud_sky_visibility(p_cam, p_cam.y), 0.02), 1.0);
 }
 
 vec3 gas_glow(vec3 p_vertex, vec3 p_normal, uint p_directional_count, vec3 p_ambient, vec3 p_albedo, vec3 p_up) {
@@ -3218,9 +3265,9 @@ void fragment_shader(in SceneData scene_data) {
 
 			light_compute(normal, directional_lights.data[i].direction, normalize(view), size_A,
 #ifndef DEBUG_DRAW_PSSM_SPLITS
-					directional_lights.data[i].color * directional_lights.data[i].energy * directional_projector_color(i, vertex) * directional_volume_shadow(i, vertex),
+					directional_lights.data[i].color * directional_lights.data[i].energy * directional_cloud_projector(i, vertex) * directional_volume_shadow(i, vertex),
 #else
-					directional_lights.data[i].color * directional_lights.data[i].energy * tint * directional_projector_color(i, vertex) * directional_volume_shadow(i, vertex),
+					directional_lights.data[i].color * directional_lights.data[i].energy * tint * directional_cloud_projector(i, vertex) * directional_volume_shadow(i, vertex),
 #endif
 					true, shadow, f0, roughness, metallic, directional_lights.data[i].specular, albedo, alpha, screen_uv, energy_compensation,
 #ifdef LIGHT_BACKLIGHT_USED
