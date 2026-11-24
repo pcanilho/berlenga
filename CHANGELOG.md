@@ -6,6 +6,12 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-56f7ff98 (2026-11-24)
+
+### Added
+- StreetWater3D.frame_path, prefill and get_depth_at; RoadRelief3D.relief_frame, storm-drain inlets (inlet_spacing, inlets) and get_pond_depth_at: water that rides a sliding street, puddles already filled as it comes into view, gutters that drain.
+- RoadRelief3D.height_map and roughness class None: a street's own relief (its potholes, manholes, gutter grades) under the mesh, the ponding and the water. StreetWater3D.height_group: streets streamed in and out are found by group.
+
 ## build-63852a4d (2026-11-24)
 
 ### Added
