@@ -711,6 +711,8 @@ func _run_spindrift_tests() -> void:
 	_check("stronger wind, far more snow (flux about u^4)", storm[0] > 2.5 * gale[0], "%.1f kg/s at 26 m/s against %.1f at 18" % [storm[0], gale[0]])
 	var cloud: SnowPowderCloud3D = snow.get_spindrift()
 	_check("the plume is a Flow gas fed from the crest", cloud != null and (not ClassDB.class_exists("PhysXFlow3D") or (cloud.has_flow() and cloud.get_active_sources() == (storm[1] as Array).size())), "%s, %d emitters" % ["flow" if cloud and cloud.has_flow() else "no flow", cloud.get_active_sources() if cloud else 0])
+	var blocks := int(cloud.get_flow().get("max_blocks")) if cloud != null and cloud.has_flow() else 0
+	_check("the plume's Flow grid is bounded (memory cannot run away)", not ClassDB.class_exists("PhysXFlow3D") or (blocks > 0 and blocks <= 1024), "%d max blocks" % blocks)
 	_check("drier air thins it sooner (sublimation)", SnowCover3D.spindrift_fade(0.4) > 2.0 * SnowCover3D.spindrift_fade(0.95), "%.3f /s at 40%%, %.3f at 95%%" % [SnowCover3D.spindrift_fade(0.4), SnowCover3D.spindrift_fade(0.95)])
 	var wet: Array = await _spindrift_at(26.0, 2.0)
 	_check("no plume from wet snow", wet[0] == 0.0, "%.2f kg/s at +2 C" % wet[0])
