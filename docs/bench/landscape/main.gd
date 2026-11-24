@@ -3254,7 +3254,7 @@ func _docs_links_setup() -> void:
 		weather.air_follows_climate = false
 		weather.cloud_cover = 1.0 # the rain (snow) falls where the cover is
 		weather.temperature = minf(weather.temperature, -4.0)
-		weather.rain_rate = float(args["snow-fall"]) * float(args.get("snow-fall-density", "100")) / 1000.0 / hrs
+		weather.rain_rate = float(args["snow-fall"]) * float(args.get("snow-fall-density", "200")) / 100.0 / hrs # cm x kg/m3 / 100 = mm of water
 		weather.snap_to_settings()
 		var tf := Time.get_ticks_msec()
 		snow.advance(hrs * 3600.0)
