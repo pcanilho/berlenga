@@ -720,6 +720,48 @@ vec2 tm_hex_hash(ivec2 v) {
 	return vec2(float(h & 0xFFFFu), float(h >> 16u)) / 65535.0;
 }
 )";
+	// Soil bare of plants by the climate's dryness (WorldContracts::bare_share_for_precipitation, mirrored): the soil
+	// and alluvium layers' colours are a vegetated topsoil (olive); in a dry climate most of it is bare soil.
+	c += R"(
+global uniform sampler2D terrain_climate_map : hint_default_black, filter_linear; // TerrainDataMap3D: g precipitation m a year
+global uniform vec4 terrain_climate_rect;
+global uniform vec4 weather_climate; // WeatherMap3D's season climate: x precipitation mm a year, w 1 when set
+uniform bool tm_bare_on = true;
+uniform vec4 tm_bare_soil_color : source_color = vec4(0.49, 0.40, 0.33, 1.0);
+uniform vec4 tm_bare_alluvium_color : source_color = vec4(0.60, 0.55, 0.49, 1.0);
+// The share of the soil bare at p, 0 with no climate.
+float tm_climate_bare(vec3 p) {
+	if (!tm_bare_on) {
+		return 0.0;
+	}
+	float mm = -1.0;
+	if (terrain_climate_rect.z > 0.0) {
+		vec2 uv = (p.xz - terrain_climate_rect.xy) / terrain_climate_rect.zw;
+		if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
+			mm = textureLod(terrain_climate_map, uv, 0.0).g * 1000.0;
+		}
+	}
+	if (mm < 0.0 && weather_climate.w > 0.0) {
+		mm = weather_climate.x;
+	}
+	return mm < 0.0 ? 0.0 : 0.9 * (1.0 - smoothstep(200.0, 700.0, mm));
+}
+// Drylands' cover is patchy, not thin: clumps of grass and shrub with bare soil between, patches of metres
+// (self-organised patchiness of semi-arid vegetation, Rietkerk et al. 2004). Bare where a two-octave noise (4 m and
+// 1.3 m, mean 0.5, sd 0.16) falls under the share's quantile (a logistic probit), so the bare area is the share; past
+// a pixel of about half a metre the patches fade to the share itself.
+float tm_bare_patch(vec3 p, float bare, float fp) {
+	if (bare <= 0.0) {
+		return 0.0;
+	}
+	float v = 0.65 * tm_vn(vec3(p.x / 4.0, 3.7, p.z / 4.0)) + 0.35 * tm_vn(vec3(p.x / 1.3, 8.1, p.z / 1.3));
+	float b = clamp(bare, 0.01, 0.99);
+	float t = 0.5 + 0.16 * log(b / (1.0 - b)) / 1.7;
+	float e = max(0.03, fp * 0.2);
+	float px = 1.0 - smoothstep(t - e, t + e, v);
+	return mix(px, bare, smoothstep(0.15, 0.6, fp));
+}
+)";
 	// Godot passes a sampler to a function only with one filter/repeat/hint setting per function, so the hex sampler
 	// is written once per kind of map: albedo (source_color), normal, roughness and height.
 	{
@@ -1961,12 +2003,14 @@ void fragment() {
 		dns[1] = d;
 		hb[1] = w[1] + h * tm_blend_depth * 2.0;
 	}
+	float tm_bare_k = w[2] + w[3] > 1e-3 ? tm_bare_patch(wp, tm_climate_bare(wp), tm_fp0) : 0.0;
 	if (w[2] > 1e-3) {
 		vec3 a;
 		float r;
 		vec3 d;
 		float h;
 		tm_soil(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		a *= mix(vec3(1.0), tm_bare_soil_color.rgb / max(tm_soil_color.rgb, vec3(1e-3)), tm_bare_k);
 		alb[2] = a;
 		rgh[2] = r;
 		dns[2] = d;
@@ -1978,6 +2022,7 @@ void fragment() {
 		vec3 d;
 		float h;
 		tm_alluvium(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		a *= mix(vec3(1.0), tm_bare_alluvium_color.rgb / max(tm_alluvium_color.rgb, vec3(1e-3)), tm_bare_k);
 		alb[3] = a;
 		rgh[3] = r;
 		dns[3] = d;
@@ -2783,6 +2828,9 @@ void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_blend_depth", blend_depth);
 	set_shader_parameter("tm_detail_octaves", detail_octaves);
 	set_shader_parameter("tm_snow_max_slope", snow_max_slope);
+	set_shader_parameter("tm_bare_on", climate_bare_soil);
+	set_shader_parameter("tm_bare_soil_color", bare_soil_color);
+	set_shader_parameter("tm_bare_alluvium_color", bare_alluvium_color);
 	if (sky_occlusion_enabled) {
 		set_shader_parameter("tm_sky_occlusion", sky_occlusion);
 		set_shader_parameter("tm_far_shadow_start", far_shadow_start);
@@ -2879,6 +2927,9 @@ MAT_SETTER(float, alluvium_area, p_value)
 MAT_SETTER(float, blend_depth, MAX(p_value, 0.001f))
 MAT_SETTER(int, detail_octaves, CLAMP(p_value, 0, 8))
 MAT_SETTER(float, snow_max_slope, CLAMP(p_value, 0.0f, 90.0f))
+MAT_SETTER(bool, climate_bare_soil, p_value)
+MAT_SETTER(const Color &, bare_soil_color, p_value)
+MAT_SETTER(const Color &, bare_alluvium_color, p_value)
 MAT_SETTER_CODE(const String &, detail_code)
 MAT_SETTER_CODE(bool, grass_tint_enabled)
 // RockField3D's ground detail cover (see the shader's tm_gc_cover): null maps turn it off.
@@ -2997,6 +3048,7 @@ Color TerrainMaterial3D::contract_ground_albedo_at(const Vector3 &p_position) co
 		w[i] *= 1.0f - sand;
 	}
 	w[LAYER_SAND] = sand;
+	const float bare = climate_bare_soil ? MAX(WorldContracts::climate_bare_share_at(p_position), 0.0f) : 0.0f;
 	Color c(0, 0, 0, 0);
 	float total = 0.0f;
 	for (int i = 0; i < LAYER_MAX; i++) {
@@ -3004,7 +3056,10 @@ Color TerrainMaterial3D::contract_ground_albedo_at(const Vector3 &p_position) co
 			continue;
 		}
 		const Ref<TerrainMaterialLayer> &l = layers[i];
-		const Color lc = (l.is_valid() ? l->get_color() : LAYER_DEFAULT_COLORS[i]).srgb_to_linear();
+		Color lc = (l.is_valid() ? l->get_color() : LAYER_DEFAULT_COLORS[i]).srgb_to_linear();
+		if (bare > 0.0f && (i == LAYER_SOIL || i == LAYER_ALLUVIUM)) {
+			lc = lc.lerp((i == LAYER_SOIL ? bare_soil_color : bare_alluvium_color).srgb_to_linear(), bare); // the patches' mean, as the shader from afar
+		}
 		const float por = l.is_valid() ? l->get_porosity() : 0.7f;
 		c.r += lc.r * w[i];
 		c.g += lc.g * w[i];
@@ -3053,6 +3108,9 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::BOOL, salt_bloom, is_salt_bloom, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, snow_enabled, is_snow_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, snow_max_slope, get_snow_max_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")
+	BIND_PROP(Variant::BOOL, climate_bare_soil, is_climate_bare_soil, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::COLOR, bare_soil_color, get_bare_soil_color, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::COLOR, bare_alluvium_color, get_bare_alluvium_color, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, ground_deform_enabled, is_ground_deform_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, sky_occlusion_enabled, is_sky_occlusion_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, sky_occlusion, get_sky_occlusion, PROPERTY_HINT_RANGE, "0,1,0.01")

@@ -72,11 +72,20 @@
 		<member name="alluvium_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			River sediment along valley floors.
 		</member>
+		<member name="bare_alluvium_color" type="Color" setter="set_bare_alluvium_color" getter="get_bare_alluvium_color" default="Color(0.6, 0.55, 0.49, 1)">
+			Colour of bare, dry alluvium (sRGB) where the climate leaves it bare of plants (see [member climate_bare_soil]).
+		</member>
+		<member name="bare_soil_color" type="Color" setter="set_bare_soil_color" getter="get_bare_soil_color" default="Color(0.49, 0.4, 0.33, 1)">
+			Colour of bare, dry soil (sRGB) where the climate leaves it bare of plants (see [member climate_bare_soil]).
+		</member>
 		<member name="beach_height" type="float" setter="set_beach_height" getter="get_beach_height" default="2.5">
 			Height above [member sea_level] that sand reaches when there is no generator geology. With [member geology_enabled] and a [TerrainGenerator3D], sand follows the generator's beaches instead (and covers ground under the sea), so a low coastal plain behind a beach keeps its soil.
 		</member>
 		<member name="blend_depth" type="float" setter="set_blend_depth" getter="get_blend_depth" default="0.2">
 			Height-blend transition depth. Smaller gives sharper borders between layers.
+		</member>
+		<member name="climate_bare_soil" type="bool" setter="set_climate_bare_soil" getter="is_climate_bare_soil" default="true">
+			Soil and alluvium break into bare soil and plant cover by the climate's dryness: the share of bare soil falls from 0.9 at 200 mm of rain a year to none at 700 mm (WorldContracts' one rule, also used by the stones' rain splash pedestals), from the [TerrainDataMap3D] climate map or else the weather's season climate. Near, in patches a few metres across; from afar, their mean. No climate: the layers' own colours.
 		</member>
 		<member name="cliff_slope" type="float" setter="set_cliff_slope" getter="get_cliff_slope" default="50.0">
 			Slope in degrees past which textures are mapped biplanar.

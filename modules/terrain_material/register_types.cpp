@@ -98,6 +98,11 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_cliff_rect", "vec4" },
 		// Landscape3D's bank relief for the same patch (x metres).
 		{ "terrain_bank_relief", "vec4" },
+		// The climate for bare soil: TerrainDataMap3D's climate map (G precipitation m a year), else the weather's
+		// season climate (x precipitation mm a year, w 1 when set).
+		{ "terrain_climate_map", "sampler2D" },
+		{ "terrain_climate_rect", "vec4" },
+		{ "weather_climate", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {
