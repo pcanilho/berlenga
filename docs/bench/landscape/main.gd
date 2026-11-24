@@ -4225,9 +4225,7 @@ func _build_camera() -> void:
 			# Where the clearing's mask meets the forest: walk north up the valley from the plain until the sediment
 			# thins out, then look at that edge from the grass.
 			var ex := float(args.get("treeline-x", "300"))
-			var ez := 400.0
-			while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
-				ez -= 16.0
+			var ez := _meadow_edge(ex)
 			cam.fov = 50.0
 			var cz := ez + 220.0
 			cam.position = Vector3(ex - 60.0, height_at(ex - 60.0, cz) + 14.0, cz)
@@ -4376,9 +4374,7 @@ func _build_camera() -> void:
 			# Standing in the clearing at eye height, 60 m short of the forest edge (the treeline view's edge), looking
 			# across the herbs and grass at it.
 			var ex := float(args.get("treeline-x", "300"))
-			var ez := 400.0
-			while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
-				ez -= 16.0
+			var ez := _meadow_edge(ex)
 			cam.fov = 55.0
 			var cz := ez + 60.0
 			cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, cz) + 1.7, cz)
@@ -5134,6 +5130,17 @@ func _build_cover() -> void:
 		if "undergrowth_field" in g:
 			g.undergrowth_field = g.get_path_to(cover) # the sward thins under bracken and bramble stands
 	_log("cover: %d species streaming round the camera, set up in %d ms" % [b.species.size(), Time.get_ticks_msec() - t])
+
+
+# The meadow's forest edge along x = ex: walking down z from 400, past any wood first (the floodplain meadow need
+# not reach z = 400 in every world), across the meadow (sediment over 0.4) to where the wood starts again.
+func _meadow_edge(ex: float) -> float:
+	var ez := 400.0
+	while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) <= 0.4:
+		ez -= 16.0
+	while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
+		ez -= 16.0
+	return ez if ez > -1500.0 else 400.0
 
 
 func _has_prop(cls: String, prop: String) -> bool:
@@ -7308,9 +7315,7 @@ func _hay_list() -> Array:
 	if at == "" and args.get("view", "wide") == "meadow" and gen != null:
 		# The meadow view's clearing: between the camera and the forest edge it looks at (as _place_camera).
 		var ex := float(args.get("treeline-x", "300"))
-		var ez := 400.0
-		while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
-			ez -= 16.0
+		var ez := _meadow_edge(ex)
 		w = float(args.get("hay-w", "22"))
 		l = float(args.get("hay-l", "56"))
 		cx = ex - 10.0
