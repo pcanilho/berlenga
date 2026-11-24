@@ -544,6 +544,10 @@ void GrassField3D::_build_material() {
 	code += "uniform sampler2D graze_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 graze_rect;\nuniform float graze_height = 0.04;\n";
 	// Hay meadows (hay_meadows): r = the meadow (index + 1, 0 none) at each texel; mow_state a texel a meadow (r days since mown, below 0 not; g the rows' angle; b mm of rain on the cut grass); rect z 0: none.
 	code += "uniform sampler2D mow_map : filter_nearest, repeat_disable, hint_default_black;\nuniform sampler2D mow_state : filter_nearest, repeat_disable, hint_default_black;\nuniform vec4 mow_rect;\n";
+	// Bare soil by the climate's dryness (WorldContracts::bare_patch, the terrain material's patches): no sward there.
+	// The terrain material module registers these globals.
+	code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
+	code += WorldContracts::climate_bare_shader_code();
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\nglobal uniform sampler2D weather_spray_map;\nglobal uniform vec4 weather_spray_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	// Sea salt on the blades (WeatherMap3D sea_spray, G: 1 - exp(-salt / 10 g/m2)): salt spray burns leaf tips brown
@@ -1177,6 +1181,16 @@ void vertex() {
 			w *= 1.0 - 0.35 * v_graze * (0.4 + fract(rnd * 9.13));
 		}
 	}
+	// Drylands (climate_bare, WorldContracts::bare_patch): the sward grows in the clumps of cover, none on the bare soil
+	// between them, which the terrain material draws from the same pattern. The patch's edge is a few centimetres of
+	// the noise, so its blades thin out across it rather than stop on a line.
+	if (climate_bare) {
+		float cb = wc_climate_bare(base_w);
+		if (cb > 0.0 && fract(rnd * 23.17) < wc_bare_patch(base_w, cb, 0.0)) {
+			h = 0.0;
+			w = 0.0;
+		}
+	}
 	// Hay meadows (docs/ideas/vegetation.md, "Mowing and hay rows"): mown to a stubble of 7.5 to 10 cm (UNH Extension,
 	// "Haymaking": 3 to 4 inches for quick regrowth), which grows back over about six weeks (an estimate). Most blades
 	// are the cut grass: on the day, lying in the mower's swath (passes 3 m apart, the swath gathered to 1.6 m: FAO,
@@ -1698,6 +1712,8 @@ void fragment() {
 	material->set_shader(shader);
 	lodge_dirty = true; // A new material: the lodging map goes to it at the next sweep.
 	material->set_shader_parameter("fairy_rings", fairy_rings && crop == CROP_NONE ? 1.0f : 0.0f);
+	// A sown crop covers its field whatever the patches of wild cover round it.
+	material->set_shader_parameter("climate_bare", climate_bare && crop == CROP_NONE);
 	melt_day = -2; // A new material: the snowmelt bands again on the next season step.
 	flood_usec = 0; // And the flood map.
 	material->set_shader_parameter("base_color", base_color);
@@ -4148,6 +4164,8 @@ void GrassField3D::_update_shell(const Vector2 &p_center, TerrainDataMap3D *p_ma
 		code += "// GrassField3D far shell (docs/ideas/grass.md, \"Far grass\"): the sward as voxel columns on the ground.\n";
 		code += "uniform vec2 shell_center;\nuniform vec4 shell_band; // x: where it is fully up, y: the band it rises over, z: where it is gone, w: the band it sinks over.\n";
 		code += get_ground_shader_code();
+		code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
+		code += WorldContracts::climate_bare_shader_code();
 		code += R"(
 varying vec3 v_wp;
 void vertex() {
@@ -4163,6 +4181,13 @@ void vertex() {
 void fragment() {
 	// The far ground's colour here (the blades seen from afar, with their patches and the sun's lobes), darker down
 	// the columns' sides into the sward.
+	// Drylands: no sward on the bare soil between the clumps (WorldContracts::bare_patch, as the blades).
+	if (climate_bare) {
+		float cb = wc_climate_bare(v_wp);
+		if (cb > 0.0 && wc_bare_patch(v_wp, cb, 0.0) > 0.5) {
+			discard;
+		}
+	}
 	ALBEDO = grass_ground(v_wp, vec3(0.2, 0.16, 0.1)) * COLOR.r;
 	ROUGHNESS = 0.95;
 	// The ground's own sheen under the sward (little): a plain 0.5 lit the columns' tops grey with the sky at grazing.
@@ -4172,6 +4197,7 @@ void fragment() {
 		sh->set_code(add_camera_cutout(code));
 		shell_material.instantiate();
 		shell_material->set_shader(sh);
+		shell_material->set_shader_parameter("climate_bare", climate_bare);
 	}
 	shell_material->set_shader_parameter("shell_center", p_center);
 	shell_material->set_shader_parameter("shell_band", Vector4(in_end, in_band, out_end, out_band));
@@ -4479,6 +4505,16 @@ void GrassField3D::_publish_graze() {
 		rs->global_shader_parameter_set("grass_graze_map", graze_texture->get_rid());
 		rs->global_shader_parameter_set("grass_graze_rect", rect);
 		graze_published = true;
+	}
+}
+
+void GrassField3D::set_climate_bare(bool p_on) {
+	climate_bare = p_on;
+	if (material.is_valid()) {
+		material->set_shader_parameter("climate_bare", climate_bare && crop == CROP_NONE);
+	}
+	if (shell_material.is_valid()) {
+		shell_material->set_shader_parameter("climate_bare", climate_bare);
 	}
 }
 
@@ -7898,6 +7934,8 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_far_shell_range"), &GrassField3D::get_far_shell_range);
 	ClassDB::bind_method(D_METHOD("set_burn_recovery", "years"), &GrassField3D::set_burn_recovery);
 	ClassDB::bind_method(D_METHOD("set_graze_height", "height"), &GrassField3D::set_graze_height);
+	ClassDB::bind_method(D_METHOD("set_climate_bare", "enabled"), &GrassField3D::set_climate_bare);
+	ClassDB::bind_method(D_METHOD("is_climate_bare"), &GrassField3D::is_climate_bare);
 	ClassDB::bind_method(D_METHOD("get_graze_height"), &GrassField3D::get_graze_height);
 	ClassDB::bind_method(D_METHOD("set_lodging", "enabled"), &GrassField3D::set_lodging);
 	ClassDB::bind_method(D_METHOD("is_lodging"), &GrassField3D::is_lodging);
@@ -7975,6 +8013,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_shell_range", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_far_shell_range", "get_far_shell_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "burn_recovery", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:yr"), "set_burn_recovery", "get_burn_recovery");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "graze_height", PROPERTY_HINT_RANGE, "0,0.2,0.005,suffix:m"), "set_graze_height", "get_graze_height");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "climate_bare"), "set_climate_bare", "is_climate_bare");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lodging"), "set_lodging", "is_lodging");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fairy_rings"), "set_fairy_rings", "is_fairy_rings");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snowmelt"), "set_snowmelt", "is_snowmelt");

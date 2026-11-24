@@ -945,6 +945,17 @@ public:
 	static float bare_share_for_precipitation(float p_mm);
 	// At a point: the season climate's precipitation times the climate's factor there; -1 with no weather climate.
 	static float climate_bare_share_at(const Vector3 &p_position);
+	// Where on the ground the bare share falls (1 bare soil, 0 plant cover): drylands' cover is patchy, not thin, with
+	// clumps and bare soil between them metres across (Rietkerk et al. 2004). Bare where a two-octave value noise (4 m and
+	// 1.3 m; mean 0.5, sd 0.16) falls under the share's quantile, so the bare area is the share. The terrain material's
+	// bare soil patches (TerrainMaterial3D.climate_bare_soil, tm_bare_patch) and every plant layer read this one pattern:
+	// the CPU here, shaders through climate_bare_shader_code(). 0 with no climate.
+	static float bare_patch(const Vector3 &p_position, float p_share, float p_footprint = 0.0f);
+	static float climate_bare_patch_at(const Vector3 &p_position);
+	// GLSL of the same: wc_climate_bare(vec3 p) the share (0 with no climate; reads the globals terrain_climate_map,
+	// terrain_climate_rect and weather_climate, which the including shader declares) and wc_bare_patch(vec3 p, float
+	// share, float footprint_m) the pattern, fading to the share past a footprint of about half a metre.
+	static String climate_bare_shader_code();
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);
 	static void register_relief(WorldReliefProvider *p_provider); // any number: the first that knows the point answers

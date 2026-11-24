@@ -89,6 +89,15 @@
 				Turf overhangs as one [PlantSpecies] of [constant PRESET_TURF_LIP]: sod lips along the top edge of cut banks and scarps where the drawn ground drops 0.35 m or more past a steep edge ([constant PlantSpecies.RULE_BANK_EDGE]; the field stands each on the edge, mesh +X over the drop), on grassy ground under 35 degrees.
 			</description>
 		</method>
+		<method name="make_flowering_grasses" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				Flowering meadow grass for a sward: Yorkshire fog ([constant PRESET_YORKSHIRE_FOG]) in loose drifts through open grassland, its heads by the [param season] (as [member season]): none before heading, purple-pink in flower, grey-pink in seed. The species' far colour takes the heads' tint while they stand (none outside the season). Species carry the meta [code]flowering_grass[/code]. Place them ahead of a field's own tall grass so the drifts claim their room.
+			</description>
+		</method>
 		<method name="make_flood_wrack" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="variants" type="int" default="3" />
@@ -789,7 +798,10 @@
 		<constant name="PRESET_HAY_BALE" value="115" enum="Preset">
 			A round hay bale lying on its side, the axis along +X: 4 x 4 to 5 x 5 ft (UF/IFAS EDIS AN326), hay strands wound round the body, the ends domed with the wound layers' spiral, twine in bands, settled a little flat.
 		</constant>
-		<constant name="PRESET_MAX" value="116" enum="Preset">
+		<constant name="PRESET_YORKSHIRE_FOG" value="116" enum="Preset">
+			Yorkshire fog (Holcus lanatus): a soft grey-green tuft with culms 30 to 90 cm, flowering May to August (Woodland Trust). Each culm heads by the season's forcing: a dense panicle of paired spikelet scales on hair-thin branches, opening in flower, closing and paling in seed, each culm its own tint from white-pink to purple-red.
+		</constant>
+		<constant name="PRESET_MAX" value="117" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="GRAZE_CATTLE" value="0" enum="GrazeSet">

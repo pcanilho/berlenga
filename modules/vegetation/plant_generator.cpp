@@ -396,6 +396,11 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_SORREL:
 			r_phenology = { 300.0f, 750.0f, 500.0f, true }; // Rust-red panicles stand into late summer.
 			return true;
+		case PRESET_YORKSHIRE_FOG:
+			// May to August (Woodland Trust): degree days fitted to that window, as the sorrel's; the grey-pink seed
+			// heads stand a few weeks before they shatter (an estimate).
+			r_phenology = { 280.0f, 1450.0f, 300.0f, true };
+			return true;
 		case PRESET_CLOVER:
 			r_phenology = { 450.0f, 1600.0f, 150.0f, false };
 			return true;
@@ -681,6 +686,7 @@ float PlantGenerator::get_pollen_amount(Preset p_preset) {
 			return 1.0f;
 		case PRESET_COCKSFOOT:
 		case PRESET_TIMOTHY:
+		case PRESET_YORKSHIRE_FOG:
 			return 0.9f;
 		case PRESET_REED:
 		case PRESET_NETTLE:
@@ -768,6 +774,7 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_CORD_GRASS:
 			return 300.0f;
 		case PRESET_TIMOTHY:
+		case PRESET_YORKSHIRE_FOG:
 		case PRESET_RUSH:
 		case PRESET_LEAF_LITTER:
 		case PRESET_NEEDLE_LITTER:
@@ -942,6 +949,7 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_COCKSFOOT:
 		case PRESET_GRAZED_LAWN:
 		case PRESET_TIMOTHY:
+		case PRESET_YORKSHIRE_FOG:
 		case PRESET_DRY_GRASS:
 		case PRESET_REED:
 		case PRESET_CATTAIL:
@@ -1980,6 +1988,78 @@ void PlantGenerator::_build_timothy() {
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.38f, 1.54f));
 		const Transform3D top = _add_stem(base, _rand(0.45f, 0.8f), 0.0016f, 0.0012f, _rand(-0.15f, 0.15f), 9, 0.0f);
 		(void)_add_stem(top, _rand(0.05f, 0.1f), 0.0032f, 0.0026f, 0.0f, 3, 1.0f, SURFACE_CENTRE);
+	}
+}
+
+// Yorkshire fog (Holcus lanatus): a soft grey-green tuft, 20 to 100 cm, flowering May to August with flower heads
+// tinged purple to red, the seed heads grey to pink (Woodland Trust). Each culm flowers in its turn by the season's
+// forcing (_bloom): none before heading, a dense oblong panicle opening to spread its branches in flower, closing
+// again and paling in seed. The panicle's spikelets are tiny paired scales (about 4 mm), each its own tint, so a
+// stand reads as a soft pink-purple haze, not a flat colour.
+void PlantGenerator::_build_yorkshire_fog() {
+	_add_grass_tuft(int(_rand(8.0f, 14.0f)), 0.1f, 0.24f, 0.004f, 0.007f, 0.03f);
+	Leaf spk;
+	spk.shape = LEAF_LANCEOLATE;
+	spk.length = 0.004f;
+	spk.width = 0.0016f;
+	spk.fold = 0.7f;
+	spk.bend = 0.15f;
+	spk.segments = 2;
+	const int culms = int(_rand(3.0f, 8.99f));
+	const float spin = _rand(0.0f, Math::TAU);
+	for (int c = 0; c < culms; c++) {
+		float progress = -1.0f;
+		float dead = 0.0f;
+		const Bloom bloom = _bloom(rng.randf() < 0.3f, &progress, &dead);
+		if (bloom == BLOOM_NONE) {
+			continue; // Not headed yet, or the head has shattered: the tuft alone.
+		}
+		const Wither wither(this, dead);
+		const bool seed = bloom == BLOOM_SEED;
+		// Open in flower (the branches spread at anthesis), contracted before and after.
+		const float open = seed ? 0.25f : (progress < 0.0f ? 0.8f : Math::lerp(0.35f, 1.0f, Math::sin(float(Math::PI) * CLAMP(progress, 0.0f, 1.0f))));
+		const Transform3D base = stem_base(spin + c * GOLDEN_ANGLE + _rand(-0.3f, 0.3f), _rand(1.38f, 1.54f));
+		const float len = _rand(0.3f, 0.9f); // Culms 20 to 100 cm with the head (Woodland Trust), standing over the leafy sward.
+		const float bend = _rand(-0.15f, 0.2f);
+		const Transform3D top = _add_stem(base, len, 0.0016f, 0.001f, bend, 9, 0.0f);
+		const float plen = _rand(0.05f, 0.14f) * Math::lerp(0.7f, 1.0f, len / 0.9f); // Panicle length: an estimate.
+		const float pbend = _rand(0.05f, 0.25f);
+		const LocalVector<Transform3D> pf = _stem_frames(top, plen, pbend, 6);
+		(void)_add_stem(top, plen, 0.0009f, 0.0004f, pbend, 6, 1.0f);
+		// This culm's tint: white-green flushed pink to purple-red in flower, grey to pink in seed.
+		const float flush = _rand(0.0f, 1.0f);
+		const Color head = seed ? Color(0.86f, 0.8f, 0.8f).lerp(Color(0.95f, 0.78f, 0.8f), flush) : Color(1.0f, 0.95f, 0.95f).lerp(Color(1.1f, 0.7f, 0.95f), flush).lerp(Color(1.2f, 0.66f, 0.66f), 0.35f * _rand(0.0f, 1.0f));
+		const int whorls = int(plen * 160.0f) + 4;
+		for (int w = 0; w < whorls; w++) {
+			const float s = (float(w) + _rand(0.1f, 0.9f)) / whorls;
+			const Transform3D at = _frame_at(pf, s);
+			const float taper = 1.0f - 0.65f * s; // The panicle narrows to its tip.
+			const int branches = int(_rand(2.0f, 4.99f));
+			const float a0 = _rand(0.0f, Math::TAU);
+			for (int b = 0; b < branches; b++) {
+				const float a = a0 + b * Math::TAU / branches + _rand(-0.4f, 0.4f);
+				const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
+				const Vector3 dir = (at.basis.get_column(2) * Math::lerp(1.0f, 0.55f, open) + radial * Math::lerp(0.25f, 0.9f, open)).normalized();
+				const float blen = _rand(0.006f, 0.018f) * taper * Math::lerp(0.6f, 1.0f, open);
+				// The branch itself: a hair-thin stalk from the rachis, so no spikelet hangs in the air.
+				(void)_add_stem(Transform3D(organ_frame(dir, radial), at.origin), blen, 0.00028f, 0.00016f, 0.0f, 2, 1.0f);
+				const int n = int(_rand(4.0f, 8.99f) * taper) + 2;
+				for (int k = 0; k < n; k++) {
+					const float t = (float(k) + 0.6f) / (float(n) + 0.1f);
+					const Vector3 o = at.origin + dir * blen * t;
+					// Spikelets lie close along the branch toward its tip; each is a pair of keeled glumes face to face,
+					// which gives the head its soft, lumpy volume instead of loose scales.
+					const Vector3 sd = (dir * 0.6f + at.basis.get_column(2) * 0.8f + Vector3(_rand(-0.15f, 0.15f), _rand(-0.15f, 0.15f), _rand(-0.15f, 0.15f))).normalized();
+					Leaf f = spk;
+					f.length = _rand(0.0034f, 0.0046f);
+					const float k_t = _rand(0.85f, 1.1f);
+					const Color tint(head.r * k_t, head.g * k_t, head.b * k_t);
+					const Basis gb = organ_frame(sd, radial);
+					_add_leaf(SURFACE_PETAL, Transform3D(gb, o), f, 1.0f, 1.0f, tint);
+					_add_leaf(SURFACE_PETAL, Transform3D(Basis(-gb.get_column(0), -gb.get_column(1), gb.get_column(2)), o), f, 1.0f, 1.0f, Color(tint.r * 0.94f, tint.g * 0.94f, tint.b * 0.94f));
+				}
+			}
+		}
 	}
 }
 
@@ -4816,6 +4896,7 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			break;
 		case PRESET_COCKSFOOT:
 		case PRESET_TIMOTHY:
+		case PRESET_YORKSHIRE_FOG:
 		case PRESET_GRAZED_LAWN:
 		case PRESET_TURF_LIP:
 		case PRESET_HAY_BALE:
@@ -6754,6 +6835,11 @@ void PlantGenerator::apply_preset_colors() {
 			stem_color = Color(0.3f, 0.36f, 0.16f);
 			petal_color = Color(0.36f, 0.38f, 0.2f);
 			break;
+		case PRESET_YORKSHIRE_FOG:
+			leaf_color = Color(0.2f, 0.29f, 0.17f); // Soft, downy grey-green.
+			stem_color = Color(0.36f, 0.38f, 0.24f);
+			petal_color = Color(0.66f, 0.56f, 0.58f); // Pale spikelets; each tinted purple to red in flower.
+			break;
 		case PRESET_TIMOTHY:
 			leaf_color = Color(0.15f, 0.3f, 0.08f);
 			stem_color = Color(0.3f, 0.37f, 0.15f);
@@ -7352,6 +7438,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_TIMOTHY:
 			_build_timothy();
+			break;
+		case PRESET_YORKSHIRE_FOG:
+			_build_yorkshire_fog();
 			break;
 		case PRESET_DRY_GRASS:
 			_build_dry_grass();
@@ -8033,6 +8122,50 @@ Array PlantGenerator::stand_litter_leaves(FloorStand p_stand, const Dictionary &
 		d["share"] = m.share;
 		out.push_back(d);
 	}
+	return out;
+}
+
+TypedArray<Resource> PlantGenerator::make_flowering_grasses(int p_variants, bool p_textures, const Dictionary &p_season) {
+	TypedArray<Resource> out;
+	Ref<PlantGenerator> gen;
+	gen.instantiate();
+	gen->set_textures(p_textures);
+	gen->set_preset(PRESET_YORKSHIRE_FOG);
+	gen->apply_preset_colors();
+	gen->set_seed(4711);
+	gen->set_season(p_season);
+	Ref<PlantSpecies> sp;
+	sp.instantiate();
+	TypedArray<Mesh> meshes;
+	const TypedArray<ArrayMesh> v = gen->generate_variants(MAX(p_variants, 1));
+	for (int i = 0; i < v.size(); i++) {
+		meshes.push_back(v[i]);
+	}
+	sp->set_meshes(meshes);
+	sp->set_spacing(0.22f);
+	sp->set_footprint(0.04f);
+	sp->set_density(0.85f);
+	sp->set_scale_range(Vector2(0.75f, 1.25f));
+	// Fog grows in loose drifts through the sward: a patch of it, then little.
+	sp->set_patch_scale(7.0f);
+	sp->set_patch_cover(0.6f);
+	sp->set_patch_seed(4713);
+	sp->set_visibility_range(45.0f);
+	// Open grassland, damp or dry, not in shade.
+	sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.45f));
+	sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.15f);
+	sp->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 35.0f));
+	sp->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
+	// The far ground takes the heads' tint while they stand: the share of culms headed, as get_bloom_shares gives it.
+	const Vector3 shares = get_bloom_shares(PRESET_YORKSHIRE_FOG, p_season);
+	const float headed = shares.y + shares.z;
+	const Color fl = Color(0.5f, 0.36f, 0.42f).lerp(Color(0.52f, 0.46f, 0.45f), headed > 0.0f ? shares.z / headed : 0.0f);
+	const Color green = gen->get_leaf_color() * 0.8f;
+	const Color far = green.lerp(fl, 0.6f * headed);
+	sp->set_far_color(Color(far.r, far.g, far.b, headed > 0.01f ? CLAMP(0.25f + 0.5f * headed, 0.2f, 0.75f) : 0.0f));
+	sp->set_meta("flowering_grass", true);
+	tag_species(sp, PRESET_YORKSHIRE_FOG);
+	out.push_back(sp);
 	return out;
 }
 
@@ -8945,7 +9078,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_BANK_ROOTS);
 	BIND_ENUM_CONSTANT(PRESET_BANK_ROOTS_WOODY);
 	BIND_ENUM_CONSTANT(PRESET_HAY_BALE);
+	BIND_ENUM_CONSTANT(PRESET_YORKSHIRE_FOG);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_sets", "calls"), &PlantGenerator::make_sets);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_flowering_grasses", "variants", "textures", "season"), &PlantGenerator::make_flowering_grasses, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("set_parallel_sets", "enable"), &PlantGenerator::set_parallel_sets);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("is_parallel_sets"), &PlantGenerator::is_parallel_sets);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));

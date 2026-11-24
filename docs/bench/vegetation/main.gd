@@ -99,6 +99,9 @@ func _ready() -> void:
 		elif a == "--test=rocks":
 			test = true
 			only_rocks = true
+		elif a == "--test=bare":
+			test = true
+			only_bare = true
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -328,6 +331,11 @@ func _physics_process(_d: float) -> void:
 		await _grass_walk()
 		get_tree().quit(0)
 		return
+	if test and only_bare:
+		await _climate_bare_check()
+		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if test and only_rocks:
 		await _rock_field_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
@@ -342,6 +350,7 @@ func _physics_process(_d: float) -> void:
 		_checks()
 		await _stream_checks()
 		await _rock_field_check()
+		await _climate_bare_check()
 		await _lazy_near_checks()
 		_deadwood_checks()
 		await _place_form_checks()
@@ -2040,6 +2049,7 @@ func _fairy_check() -> void:
 var only_blowing := false # --test=blowing: the blowing-leaves check alone
 var only_sod := false # --test=sod: the sod lip checks alone
 var only_rocks := false # --test=rocks: the rock_field check alone
+var only_bare := false # --test=bare: the climate_bare check alone
 var grass_walk := 0.0 # --grass-walk[=M]: main-thread cost of a GrassField3D (defaults) walked M metres a frame
 
 # --grass-walk[=M] (0.05 m a frame by default: a walk at 174 frames a second is 0.008): the main-thread time of
@@ -2104,6 +2114,50 @@ func _grass_blades(g: GrassField3D) -> Array:
 
 # rock_field (VegetationField3D, GrassField3D): the stones fetched round each tile as it is placed give exactly the
 # placements of the world-wide obstacles array: populated, streamed, and the sward's near and far ring blades.
+# Drylands (VegetationField3D.climate_bare, WorldContracts::bare_patch): under a 300 mm climate the cover plants keep to
+# the clumps, about the share the rain leaves covered (0.9 * (1 - smoothstep(200, 700, 300)) = 0.81 bare); trees stay;
+# a 900 mm climate leaves the placements as they were; climate_bare off, as without a climate.
+func _climate_bare_check() -> void:
+	var counts := {}
+	var b := Biome.new()
+	var tree: PlantSpecies = (field.biome.species[0] as PlantSpecies).duplicate()
+	tree.canopy_radius = 3.0
+	b.species.assign([tree] + Array(PlantGenerator.make_flowering_grasses(1, false)))
+	for mm in [300.0, 900.0]:
+		var wm := WeatherMap3D.new()
+		var rc := ClimateRecipe.new()
+		rc.precipitation = mm
+		wm.climate = rc
+		add_child(wm)
+		await get_tree().process_frame
+		for on in [true, false]:
+			var f := VegetationField3D.new()
+			f.far_volume = false
+			f.populate_on_ready = false
+			f.bark_detail = false
+			f.biome = b
+			f.climate_bare = on
+			add_child(f)
+			f.data_map = f.get_path_to(dm)
+			f.populate()
+			var cover := 0
+			var trees := 0
+			for s in f.biome.species.size():
+				var n: int = f.get_placements(s).size()
+				if (f.biome.species[s] as PlantSpecies).canopy_radius > 0.0:
+					trees += n
+				else:
+					cover += n
+			counts["%d_%s" % [int(mm), "on" if on else "off"]] = [cover, trees]
+			f.free()
+		wm.free()
+		await get_tree().process_frame
+	var dry_on: Array = counts["300_on"]
+	var dry_off: Array = counts["300_off"]
+	var kept := float(dry_on[0]) / maxf(float(dry_off[0]), 1.0)
+	_check("climate_bare: a 300 mm climate keeps the cover plants to the clumps (about 0.19 of them), trees stay", kept > 0.08 and kept < 0.4 and dry_on[1] == dry_off[1], [kept, counts])
+	_check("climate_bare: a 900 mm climate leaves them as they were", counts["900_on"] == counts["900_off"], counts)
+
 func _rock_field_check() -> void:
 	var rocks := MockRocks.new()
 	rocks.name = "MockRocks"

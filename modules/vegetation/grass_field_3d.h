@@ -404,6 +404,9 @@ private:
 	// grazed to graze_height (0: off), in the shader from a grid of the pressure over the map (graze_map), so near
 	// tiles, rings and the path tracer agree without a rebuild. Followed when the stand changes.
 	float graze_height = 0.04f;
+	// Drylands (WorldContracts::bare_patch): no sward on the climate's bare soil patches, which the terrain material
+	// draws from the same pattern. In the shaders, so it costs no rebuild.
+	bool climate_bare = true;
 	Ref<ImageTexture> graze_texture;
 	Rect2 graze_rect;
 	int graze_nx = 0;
@@ -796,6 +799,8 @@ public:
 	float get_far_shell_range() const { return far_shell_range; }
 	void set_burn_recovery(float p_years);
 	void set_graze_height(float p_m);
+	void set_climate_bare(bool p_on);
+	bool is_climate_bare() const { return climate_bare; }
 	void set_lodging(bool p_on);
 	void set_snowmelt(bool p_on);
 	bool is_snowmelt() const { return snowmelt; }

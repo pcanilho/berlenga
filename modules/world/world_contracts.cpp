@@ -1287,6 +1287,96 @@ float WorldContracts::climate_bare_share_at(const Vector3 &p_position) {
 	return bare_share_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
 }
 
+// The terrain shader's value noise (tm_vn), bit for bit: an integer hash at the lattice, smoothstep between.
+static float wc_vn_hash(const Vector3 &p_p) {
+	const uint32_t qx = uint32_t(int32_t(p_p.x));
+	const uint32_t qy = uint32_t(int32_t(p_p.y));
+	const uint32_t qz = uint32_t(int32_t(p_p.z));
+	uint32_t h = (qx * 1597334677u) ^ (qy * 3812015801u) ^ (qz * 2741598763u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h >> 8u) * (1.0f / 16777216.0f);
+}
+
+static float wc_vn(const Vector3 &p_p) {
+	const Vector3 i(Math::floor(p_p.x), Math::floor(p_p.y), Math::floor(p_p.z));
+	Vector3 f = p_p - i;
+	f = f * f * (Vector3(3, 3, 3) - 2.0f * f);
+	auto h = [&](float dx, float dy, float dz) { return wc_vn_hash(i + Vector3(dx, dy, dz)); };
+	const float fx = float(f.x), fy = float(f.y), fz = float(f.z);
+	const float a = Math::lerp(Math::lerp(h(0, 0, 0), h(1, 0, 0), fx), Math::lerp(h(0, 1, 0), h(1, 1, 0), fx), fy);
+	const float b = Math::lerp(Math::lerp(h(0, 0, 1), h(1, 0, 1), fx), Math::lerp(h(0, 1, 1), h(1, 1, 1), fx), fy);
+	return Math::lerp(a, b, fz);
+}
+
+float WorldContracts::bare_patch(const Vector3 &p_position, float p_share, float p_footprint) {
+	if (p_share <= 0.0f) {
+		return 0.0f;
+	}
+	const float v = 0.65f * wc_vn(Vector3(p_position.x / 4.0f, 3.7f, p_position.z / 4.0f)) + 0.35f * wc_vn(Vector3(p_position.x / 1.3f, 8.1f, p_position.z / 1.3f));
+	const float b = CLAMP(p_share, 0.01f, 0.99f);
+	const float t = 0.5f + 0.16f * Math::log(b / (1.0f - b)) / 1.7f;
+	const float e = MAX(0.03f, p_footprint * 0.2f);
+	const float px = 1.0f - Math::smoothstep(t - e, t + e, v);
+	return Math::lerp(px, p_share, Math::smoothstep(0.15f, 0.6f, p_footprint));
+}
+
+float WorldContracts::climate_bare_patch_at(const Vector3 &p_position) {
+	return bare_patch(p_position, climate_bare_share_at(p_position), 0.0f);
+}
+
+String WorldContracts::climate_bare_shader_code() {
+	return R"(
+float wc_vn_hash(vec3 p) {
+	uvec3 q = uvec3(ivec3(p));
+	uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u) ^ (q.z * 2741598763u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	return float(h >> 8u) * (1.0 / 16777216.0);
+}
+float wc_vn(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(wc_vn_hash(i), wc_vn_hash(i + vec3(1, 0, 0)), f.x), mix(wc_vn_hash(i + vec3(0, 1, 0)), wc_vn_hash(i + vec3(1, 1, 0)), f.x), f.y),
+			mix(mix(wc_vn_hash(i + vec3(0, 0, 1)), wc_vn_hash(i + vec3(1, 0, 1)), f.x), mix(wc_vn_hash(i + vec3(0, 1, 1)), wc_vn_hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+// WorldContracts::bare_share_for_precipitation at p: TerrainDataMap3D's climate map (g, m a year) where it reaches,
+// else the weather's season climate (x mm a year, w 1 when set); 0 with neither.
+float wc_climate_bare(vec3 p) {
+	float mm = -1.0;
+	if (terrain_climate_rect.z > 0.0) {
+		vec2 uv = (p.xz - terrain_climate_rect.xy) / terrain_climate_rect.zw;
+		if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
+			mm = textureLod(terrain_climate_map, uv, 0.0).g * 1000.0;
+		}
+	}
+	if (mm < 0.0 && weather_climate.w > 0.0) {
+		mm = weather_climate.x;
+	}
+	return mm < 0.0 ? 0.0 : 0.9 * (1.0 - smoothstep(200.0, 700.0, mm));
+}
+// WorldContracts::bare_patch: 1 bare soil, 0 cover.
+float wc_bare_patch(vec3 p, float bare, float fp) {
+	if (bare <= 0.0) {
+		return 0.0;
+	}
+	float v = 0.65 * wc_vn(vec3(p.x / 4.0, 3.7, p.z / 4.0)) + 0.35 * wc_vn(vec3(p.x / 1.3, 8.1, p.z / 1.3));
+	float b = clamp(bare, 0.01, 0.99);
+	float t = 0.5 + 0.16 * log(b / (1.0 - b)) / 1.7;
+	float e = max(0.03, fp * 0.2);
+	float px = 1.0 - smoothstep(t - e, t + e, v);
+	return mix(px, bare, smoothstep(0.15, 0.6, fp));
+}
+)";
+}
+
 void WorldContracts::register_ground_color(WorldGroundColorProvider *p_provider) {
 	if (singleton && p_provider && singleton->ground_color_providers.find(p_provider) < 0) {
 		singleton->ground_color_providers.push_back(p_provider);

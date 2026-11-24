@@ -33,7 +33,7 @@ extends Node3D
 #   --dew=D          dew 0..1 on the spider webs (season dew), in place of a WeatherMap3D's
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn", "rooted_sod", "anthill", "wood_ant_nest", "molehill", "leaf_bank", "cow_pat", "horse_dung", "deer_pellets", "dung_rough", "fairy_ring_mushroom", "sheet_web", "orb_web", "flood_wrack", "turf_lip", "bank_roots", "bank_roots_woody", "hay_bale"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus", "parsley_fern", "spleenwort", "stonecrop", "saxifrage", "thrift", "marsh_marigold", "meadowsweet", "butterbur", "river_moss", "liverwort", "sphagnum", "cottongrass", "bog_asphodel", "sundew", "marram", "lyme_grass", "sea_holly", "moss_campion", "purple_saxifrage", "mountain_avens", "alpine_sedge", "dwarf_willow", "alpine_toadflax", "glasswort", "cord_grass", "sea_purslane", "sea_aster", "sea_lavender", "sea_kale", "sea_campion", "horned_poppy", "bell_heather", "cross_leaved_heath", "crowberry", "rosemary", "french_lavender", "thyme", "sage_rockrose", "corn_poppy", "cornflower", "mayweed", "cow_parsley", "pincushion_moss", "ground_ivy", "drinn", "desert_annuals", "soil_crust", "fireweed", "fire_moss", "charred_stems", "burnt_tussock", "reindeer_lichen", "raspberry", "grazed_lawn", "rooted_sod", "anthill", "wood_ant_nest", "molehill", "leaf_bank", "cow_pat", "horse_dung", "deer_pellets", "dung_rough", "fairy_ring_mushroom", "sheet_web", "orb_web", "flood_wrack", "turf_lip", "bank_roots", "bank_roots_woody", "hay_bale", "yorkshire_fog"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -450,6 +450,7 @@ func _checks() -> void:
 	_scrub_checks()
 	_bloom_checks()
 	_make_sets_check()
+	_flowering_grass_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
 # Plants between stones (docs/ideas/vegetation.md): sizes from the floras, and the stand sets keep
@@ -496,6 +497,39 @@ func _fp(v) -> String:
 			a.append(str(k) + ":" + _fp(v[k]))
 		return "{" + ",".join(a) + "}"
 	return var_to_str(v).md5_text()
+
+# Flowering grass heads (docs/ideas/vegetation.md, "Flowering grass heads"): Yorkshire fog in a soft
+# purple-pink head from late May, grey-pink seed heads in August, leaf tufts only in March and none
+# after the end of the season; the meadow set tints the far shell only while heads stand.
+func _flowering_grass_checks() -> void:
+	var P := PlantGenerator
+	var g := PlantGenerator.new()
+	g.preset = P.PRESET_YORKSHIRE_FOG
+	g.apply_preset_colors()
+	var stages := {"march": {"forcing": 120.0, "day_of_year": 80}, "june": {"forcing": 700.0, "day_of_year": 175}, "august": {"forcing": 1500.0, "day_of_year": 230}}
+	var petals := {}
+	var ok := true
+	var info := []
+	for k in stages:
+		var sum := 0
+		for sd in 6:
+			g.seed = sd
+			var st: Dictionary = stages[k].duplicate()
+			st["senescence"] = 0.0
+			g.season = st
+			var m := g.generate()
+			var bb := m.get_aabb()
+			sum += _surface_tris(m, "petal")
+			ok = ok and bb.end.y < 1.15 and _tris(m) < 40000
+			info.append([k, snappedf(bb.end.y, 0.01), _tris(m)])
+		petals[k] = sum
+	_check("yorkshire_fog: under 1.1 m, under 40k triangles", ok, info)
+	_check("yorkshire_fog: heads in June and August, none in March", petals["june"] > 2000 and petals["august"] > 500 and petals["march"] == 0, petals)
+	var set := P.make_flowering_grasses(2, false, {"forcing": 700.0, "day_of_year": 175, "senescence": 0.0})
+	var bare := P.make_flowering_grasses(2, false, {"forcing": 120.0, "day_of_year": 80, "senescence": 0.0})
+	var s0 := set[0] as PlantSpecies
+	var b0 := bare[0] as PlantSpecies
+	_check("flowering grass set: tagged, far tint while headed, none in March", set.size() >= 1 and s0.has_meta("flowering_grass") and s0.far_color.a > 0.0 and b0.far_color.a == 0.0, [set.size(), s0.far_color, b0.far_color])
 
 func _make_sets_check() -> void:
 	if not ClassDB.class_has_method("PlantGenerator", "make_sets"):
