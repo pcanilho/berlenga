@@ -3203,17 +3203,36 @@ func _run_climate_tests() -> void:
 	east /= maxf(east_n, 1)
 	west /= maxf(west_n, 1)
 	_check("the lee (east) gains against the windward (west)", east > west * 1.1, "%.0f mm against %.0f mm at 300-600 m" % [east, west])
-	# The near square starts from the world tier where it arrives.
+	# The near square starts from the world tier where it arrives (the world as it was: advance steps it too, and
+	# takes the near square's cells back into it).
+	var seed_pts := [Vector3(100, 0, 100), Vector3(-150, 0, 60), Vector3(40, 0, -200)]
+	var seed_w := []
+	for q in seed_pts:
+		seed_w.append(snow.get_world_swe_at(q))
 	snow.advance(1.0)
 	var ok_seed := true
 	var worst := 0.0
-	for q in [Vector3(100, 0, 100), Vector3(-150, 0, 60), Vector3(40, 0, -200)]:
+	for k in seed_pts.size():
+		var q: Vector3 = seed_pts[k]
 		var a := snow.get_swe_at(q)
-		var w := snow.get_world_swe_at(q)
+		var w: float = seed_w[k]
 		worst = maxf(worst, absf(a - w) / maxf(w, 1.0))
 		if absf(a - w) > 0.1 * maxf(w, 10.0):
 			ok_seed = false
 	_check("the near square starts from the world tier", ok_seed, "largest difference %.1f%%" % (worst * 100.0))
+	# A fall stepped with advance() lands on the world tier too (the hills past the near square), not only near.
+	var fall_q := Vector3(1500, 0, 1500)
+	var far0 := snow.get_world_swe_at(fall_q)
+	weather.temperature = -8.0
+	weather.cloud_cover = 1.0
+	weather.rain_rate = 3.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(3600.0)
+	weather.rain_rate = 0.0
+	weather.snap_to_settings()
+	var far1 := snow.get_world_swe_at(fall_q)
+	_check("a fall stepped with advance() reaches the world tier", far1 > far0 + 0.5, "%.1f -> %.1f mm at %s, outside the near square %s" % [far0, far1, str(fall_q), str(snow.get_map_rect())])
 	_check("the world tier is up for materials", snow.has_world() and snow.get_world_texture() != null and snow.get_world_rect().size.x >= 4096.0, "world rect %s" % str(snow.get_world_rect()))
 	# Two-way: what the square does goes back to the world tier under it (fresh snow here), and not beyond.
 	var fq := snow.global_position + Vector3(37.0, 0, -51.0)
@@ -3313,8 +3332,7 @@ func _run_melt_runoff_tests() -> void:
 	weather.temperature = 14.0
 	weather.snap_to_settings()
 	for h in 4:
-		snow.advance(3600.0)
-		snow.advance_world(3600.0)
+		snow.advance(3600.0) # (the world tier with it)
 	weather.advance(60.0)
 	var cs := weather.extent / weather.resolution
 	var best := Vector3.ZERO

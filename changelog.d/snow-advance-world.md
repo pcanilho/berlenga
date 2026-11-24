@@ -1,0 +1,1 @@
+- Snow: `SnowCover3D.advance` steps the world tier too, so a fall stepped there reaches the hills past the near square.

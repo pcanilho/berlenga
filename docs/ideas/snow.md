@@ -2251,6 +2251,10 @@ Research notes for Paulo's pick; nothing below is built yet.
   whole square took some 5 GB as the gas spread and ran out of memory; at 1024 the gale view's plume still
   runs its full length without a cut-off warning.
 
+**advance() and the world tier (24 Nov 2026).** A scene's fresh fall stepped with `advance` whitened only the near
+square: the hills past it (the world tier) never got it. `advance` now steps the world tier by the same time
+(`advance_world` stays for the world alone). Climate check: a fall stepped with `advance` reaches a point 2 km out.
+
 **Packed-snow roads.**
 - Traffic packs snow into a hard layer that polishes to ice where tyres spin or brake (Wallman and Astrom 2001,
   road friction: packed snow mu 0.2-0.3, ice 0.05-0.15, wet ice lower). Ruts form where wheels run; slush where

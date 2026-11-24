@@ -2995,6 +2995,11 @@ void SnowCover3D::advance(float p_seconds) {
 		left -= step;
 	}
 	_upload();
+	// The weather falls on the whole terrain: the world tier (the hills past the near square) takes the same time,
+	// or a fresh fall stepped here would whiten only the square round the camera.
+	if (world && !owner && !driven) {
+		advance_world(p_seconds);
+	}
 }
 
 void SnowCover3D::advance_world(float p_seconds) {

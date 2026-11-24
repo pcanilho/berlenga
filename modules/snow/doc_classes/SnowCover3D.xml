@@ -105,14 +105,14 @@
 			<return type="void" />
 			<param index="0" name="seconds" type="float" />
 			<description>
-				Advances the snowpack by [param seconds] of weather time at once, in steps of up to 10 minutes, then publishes the snow map. Wind-drift data is baked first if it is missing, so the result does not depend on frame timing.
+				Advances the snowpack by [param seconds] of weather time at once, in steps of up to 10 minutes, then publishes the snow map. Wind-drift data is baked first if it is missing, so the result does not depend on frame timing. With a world tier, it advances that by the same time too ([method advance_world]).
 			</description>
 		</method>
 		<method name="advance_world">
 			<return type="void" />
 			<param index="0" name="seconds" type="float" />
 			<description>
-				Runs the world tier forward [param seconds] of weather time now (it otherwise advances every [member world_update_every] updates).
+				Runs the world tier alone forward [param seconds] of weather time now (it otherwise advances every [member world_update_every] updates, and with [method advance]).
 			</description>
 		</method>
 		<method name="bake_climate">
