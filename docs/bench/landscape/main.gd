@@ -4334,6 +4334,18 @@ func _build_camera() -> void:
 				if float(l["overhang"]) <= 0.05:
 					continue
 				var lp: Vector3 = l["position"]
+				# A lip high on an open, sunlit face: the ground 22 m out (either way) at least 8 m below it, and the
+				# face turned to the sun.
+				var lo: Vector3 = l["out"]
+				lo.y = 0.0
+				lo = lo.normalized()
+				var ga := height_at(lp.x + lo.x * 22.0, lp.z + lo.z * 22.0)
+				var gb := height_at(lp.x - lo.x * 22.0, lp.z - lo.z * 22.0)
+				if gb < ga:
+					lo = -lo
+				var sun_flat := Vector3(sun.global_basis.z.x, 0, sun.global_basis.z.z).normalized()
+				if height_at(lp.x, lp.z) - minf(ga, gb) < 8.0 or lo.dot(sun_flat) < 0.3:
+					continue
 				var key := Vector2i(int(floor(lp.x / 16.0)), int(floor(lp.z / 16.0)))
 				var c: Array = cells.get(key, [0.0, l])
 				c[0] = float(c[0]) + float(l["overhang"]) * float(l["weight"])
