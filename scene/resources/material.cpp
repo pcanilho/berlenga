@@ -1159,8 +1159,10 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 		return vec4(0.0, 0.85, 0.0, 0.0);
 	}
 	// Snow-covered fraction from depth and density, Niu and Yang (2007):
-	// tanh(depth / (2.5 z0 (rho / rho_new)^m)), z0 0.01 m, rho_new 100 kg/m3, m 1.
-	float cover = tanh(max(s.r, 0.0) * snow_subgrid(p_world_pos) / (0.025 * max(s.a * 10.0, 0.5))) * (1.0 - under);
+	// tanh(depth / (2.5 z0 (rho / rho_new)^m)), rho_new 100 kg/m3, m 1. Their z0 of 0.01 m is a model cell's: it
+	// holds the cell's spread of depths. Here that spread is drawn (snow_subgrid), so what is left is the ground's
+	// own roughness under the pixel (grains, clods, small stones): z0 0.004 m.
+	float cover = tanh(max(s.r, 0.0) * snow_subgrid(p_world_pos) / (0.01 * max(s.a * 10.0, 0.5))) * (1.0 - under);
 	// A crown shows its load: half its capacity whitens the upward needles.
 	cover = mix(cover, min(crown_load * 2.0, 1.0), crown);
 	return vec4(cover, s.g, clamp(s.b, 0.0, 1.0), 1.0);

@@ -2656,7 +2656,10 @@ void fragment() {
 	float snow_wet = 0.0;
 	{
 		vec4 snow_s = snow_cover_at(wp);
-		snow = snow_cover_weight(snow_s.x * tm_snow, tm_snow_max_slope, wn, sn, wp, tm_cn);
+		// Held or shed by the projection's normal (tm_pn): on a wall one cell across the vertex normal is flat at
+		// both rows and held snow down the wall's height in white smears.
+		vec3 snow_face = tm_pn.y < tm_cn.y ? tm_pn : tm_cn;
+		snow = snow_cover_weight(snow_s.x * tm_snow, tm_snow_max_slope, tm_pn, sn, wp, snow_face);
 		snow_wet = snow_s.z;
 		snow_cover_apply(snow, snow_s.y, snow_wet, albedo, rough, metallic, specular);
 		sn = normalize(mix(sn, wn, snow));

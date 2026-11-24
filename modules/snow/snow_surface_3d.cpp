@@ -498,6 +498,12 @@ void fragment() {
 	float compact = clamp(dr.x / max(pack.r, 0.01), 0.0, 1.0);
 	float e = detail_step;
 	vec3 hd = snow_height_diff(p, e, false);
+	// Under min_depth the snow is the ground material's: where the surface sinks toward its tuck it is cut away, not
+	// left hovering millimetres over a ground it only knows at the cover's cell size (the ground's own triangles
+	// poked through it in rows of slivers, and over a step it hung down the wall in white streaks).
+	if (hd.x - snow_ground(p) < 0.5 * min_depth) {
+		discard;
+	}
 	float hx = hd.y;
 	float hz = hd.z;
 	vec2 rg = snow_ripple_grad(p) * 2.0 * e;
