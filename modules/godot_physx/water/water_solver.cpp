@@ -51,7 +51,9 @@
 #include "servers/display/display_server.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_device_binds.h"
+#include "servers/rendering/renderer_viewport.h"
 #include "servers/rendering/rendering_server.h"
+#include "servers/rendering/rendering_server_globals.h"
 
 namespace {
 constexpr int PARAMS_BYTES = 80; // 5 * vec4, std140 -- see water_inc.glsl's Params
@@ -1603,6 +1605,11 @@ void WaterSolverGPU::rt_on_ocean_dz(const PackedByteArray &p_data, Ref<WaterSolv
 
 void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior, bool p_open_beyond) {
 	if (rd == nullptr || !shaders_ok || uset_caustics.is_null() || caustics_framebuffer.is_null()) {
+		return;
+	}
+	if (!local && !RSG::viewport->has_3d_viewport()) {
+		// No viewport draws 3D this frame, so nothing shows the map: it waits for the first frame that draws.
+		caustics_deferred.set();
 		return;
 	}
 

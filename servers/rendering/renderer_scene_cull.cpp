@@ -4441,6 +4441,12 @@ void RendererSceneCull::render_probes() {
 }
 
 void RendererSceneCull::render_particle_colliders() {
+	// A heightfield collider is a render of the geometry under it, read by the particles it stops. While no viewport
+	// draws 3D no particle is seen, so the render waits (the collider stays in the list) and runs on the first frame
+	// that draws, before the particles update.
+	if (heightfield_particle_colliders_update_list.begin() && !RSG::viewport->has_3d_viewport()) {
+		return;
+	}
 	while (heightfield_particle_colliders_update_list.begin()) {
 		Instance *hfpc = *heightfield_particle_colliders_update_list.begin();
 

@@ -56,6 +56,9 @@ class WaterSolverGPU : public RefCounted {
 public:
 	RenderingDevice *rd = nullptr;
 	bool local = false; // headless fallback: a private device, driven synchronously
+	// Set when rt_render_caustics waited because no viewport drew 3D (the map is only seen in a drawn frame); the
+	// surface asks for it again (WaterSolver::take_caustics_deferred).
+	SafeFlag caustics_deferred;
 	SafeFlag built;
 
 	static constexpr int MAX_SPHERES = 48;
@@ -484,6 +487,14 @@ public:
 	void queue_tick(double p_delta);
 	void flush_ticks();
 	bool has_queued_ticks() const { return !queued_deltas.is_empty(); }
+	// True once after a caustics render waited for a drawn frame; clears it.
+	bool take_caustics_deferred() {
+		if (gpu.is_valid() && gpu->caustics_deferred.is_set()) {
+			gpu->caustics_deferred.clear();
+			return true;
+		}
+		return false;
+	}
 	// Ripple rest: with a threshold > 0, once the ripple layer has stayed below it (peak |height| in m) for a few
 	// readbacks with no body sphere (strength != 0) or impulse submitted, its solve is skipped until the next
 	// disturbance. 0 = always solve (the default).
