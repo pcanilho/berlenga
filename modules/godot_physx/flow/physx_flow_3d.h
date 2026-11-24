@@ -124,7 +124,11 @@ private:
 	// from a chimney or a campfire leans and drifts with the weather. weather_wind_coupling: per second.
 	bool weather_wind = true;
 	float weather_wind_coupling = 1.0f;
-	void _gather_weather_wind(const AABB &p_region, const AABB &p_source, LocalVector<FlowBackend::Emitter> &r_emitters) const;
+	void _gather_weather_wind(const AABB &p_region, const LocalVector<AABB> &p_sources, LocalVector<FlowBackend::Emitter> &r_emitters) const;
+	// The sources' regions, nearby ones merged: each gets its own downwind corridor (_gather_weather_wind).
+	static void _cluster_sources(const LocalVector<FlowBackend::Emitter> &p_emitters, float p_grow, LocalVector<AABB> &r_clusters);
+	// How many downwind corridors the last step reserved, one per source cluster (get_stats "corridors").
+	mutable int corridor_clusters = 0;
 	// The GROUND COLOUR from the world (WorldGround.albedo_at under the gas): its linear albedo and how much of it is
 	// known (a), re-read every half second or when the gas moves 4 m; render_rd blends ground_albedo x ground_color
 	// toward it (under scatter_mutex).

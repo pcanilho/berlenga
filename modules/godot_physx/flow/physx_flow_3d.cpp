@@ -1095,7 +1095,51 @@ float PhysXFlow3D::_terrain_height_at(const Vector2i &p_node, float p_spacing, f
 // The AMBIENT WIND: the weather's wind (the world contract's wind_at) laid over the region as air-only boxes in
 // layers, so smoke from every emitter leans and drifts with the same air as the grass and trees. They reserve
 // no blocks: they only couple the velocity where the gas already is.
-void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, const AABB &p_source, LocalVector<FlowBackend::Emitter> &r_emitters) const {
+// Each source's region (its origin grown by p_grow), merged with those it overlaps, so sources spread over a valley
+// keep one corridor each instead of one swept from the box round them all (sources 200 m apart reserved every block
+// between them). At most MAX_CLUSTERS: past that, the pair whose merged box grows least is merged first.
+void PhysXFlow3D::_cluster_sources(const LocalVector<FlowBackend::Emitter> &p_emitters, float p_grow, LocalVector<AABB> &r_clusters) {
+	constexpr int MAX_CLUSTERS = 32;
+	r_clusters.clear();
+	for (const FlowBackend::Emitter &e : p_emitters) {
+		if (e.collision) {
+			continue; // a solid: no gas of its own to carry
+		}
+		AABB box = AABB(Vector3(e.origin[0], e.origin[1], e.origin[2]), Vector3()).grow(p_grow);
+		// Swallow every cluster it touches, until none does.
+		bool merged = true;
+		while (merged) {
+			merged = false;
+			for (uint32_t i = 0; i < r_clusters.size(); i++) {
+				if (r_clusters[i].intersects(box)) {
+					box = box.merge(r_clusters[i]);
+					r_clusters.remove_at_unordered(i);
+					merged = true;
+					break;
+				}
+			}
+		}
+		r_clusters.push_back(box);
+	}
+	while (r_clusters.size() > MAX_CLUSTERS) {
+		uint32_t ba = 0, bb = 1;
+		real_t best = Math::INF;
+		for (uint32_t i = 0; i < r_clusters.size(); i++) {
+			for (uint32_t j = i + 1; j < r_clusters.size(); j++) {
+				const real_t grow = r_clusters[i].merge(r_clusters[j]).get_volume() - r_clusters[i].get_volume() - r_clusters[j].get_volume();
+				if (grow < best) {
+					best = grow;
+					ba = i;
+					bb = j;
+				}
+			}
+		}
+		r_clusters[ba] = r_clusters[ba].merge(r_clusters[bb]);
+		r_clusters.remove_at_unordered(bb);
+	}
+}
+
+void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, const LocalVector<AABB> &p_sources, LocalVector<FlowBackend::Emitter> &r_emitters) const {
 	if (!weather_wind || weather_wind_coupling <= 0.0f || !p_region.has_volume()) {
 		return;
 	}
@@ -1146,15 +1190,22 @@ void PhysXFlow3D::_gather_weather_wind(const AABB &p_region, const AABB &p_sourc
 	// does not run ahead of the smoke. So the wind reserves the blocks along the plume's path: the sources' region
 	// swept downwind for as long as the smoke lasts (down to 5% at smoke_fade, at most WIND_LEAD_MAX). It is swept
 	// from the sources, never from the gas, so it cannot run away downwind.
-	if (p_source.has_volume()) {
-		const float WIND_LEAD_MAX = 12.0f; // s
-		const float lead = smoke_fade > 0.0f ? MIN(3.0f / smoke_fade, WIND_LEAD_MAX) : WIND_LEAD_MAX;
-		const Vector3 sweep = wind_at(p_source.get_center(), p_source.position.y) * lead;
+	// One corridor per source cluster (_cluster_sources), each swept by the wind at its own centre: the same corridor
+	// as before for one source or a tight group, none over the empty ground between groups far apart.
+	const float WIND_LEAD_MAX = 12.0f; // s
+	const float lead = smoke_fade > 0.0f ? MIN(3.0f / smoke_fade, WIND_LEAD_MAX) : WIND_LEAD_MAX;
+	corridor_clusters = 0;
+	for (const AABB &src : p_sources) {
+		if (!src.has_volume()) {
+			continue;
+		}
+		const Vector3 sweep = wind_at(src.get_center(), src.position.y) * lead;
 		if (sweep.length() > cell_size) {
-			const AABB corridor = p_source.merge(AABB(p_source.position + sweep, p_source.size));
+			const AABB corridor = src.merge(AABB(src.position + sweep, src.size));
 			r = r.merge(corridor.grow(2.0f));
 			// Reserves the blocks only: the wind itself comes from the layers over the whole box below.
 			add_layers(corridor, 1e-4f, true);
+			corridor_clusters++;
 		}
 	}
 	add_layers(r, weather_wind_coupling, false);
@@ -1303,7 +1354,8 @@ void PhysXFlow3D::_step(double p_delta) {
 	// Solids near where the gas comes from -- and where it has spread to,
 	// when it's read back.
 	AABB region = emitters.is_empty() ? AABB() : emitter_bounds.grow(collision_range);
-	const AABB source_region = region; // the sources alone, before the gas they made
+	LocalVector<AABB> source_regions; // the sources alone, before the gas they made, near ones merged
+	_cluster_sources(emitters, collision_range, source_regions);
 	AABB gas;
 	bool full = false;
 	{
@@ -1320,7 +1372,7 @@ void PhysXFlow3D::_step(double p_delta) {
 	}
 	transient_solids.clear();
 	_gather_terrain_floor(region, emitters);
-	_gather_weather_wind(region, source_region, emitters);
+	_gather_weather_wind(region, source_regions, emitters);
 	_update_world_ground(region, p_delta);
 	_gather_scatter_lights();
 	if (floor_enabled) {
@@ -1547,6 +1599,7 @@ Dictionary PhysXFlow3D::get_stats() const {
 		d["frame_completed"] = completed;
 		d["active_blocks"] = FlowBackend::grid_active_blocks(grid);
 	}
+	d["corridors"] = corridor_clusters;
 	return d;
 }
 
