@@ -37,6 +37,12 @@
 				The max distances the cloth will be built with, one per vertex of [member surface]: [member max_distances] if it has one value per vertex, otherwise the vertex colors if [member use_vertex_color] is on and the mesh has them, otherwise [method compute_height_ramp]. Empty if the source mesh can't be found.
 			</description>
 		</method>
+		<method name="get_follower_instances" qualifiers="const">
+			<return type="MeshInstance3D[]" />
+			<description>
+				The drawn copies of the followers (see [member followers]), built with the cloth.
+			</description>
+		</method>
 		<method name="get_particle_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -87,6 +93,9 @@
 		<member name="animation_drive" type="float" setter="set_animation_drive" getter="get_animation_drive" default="0.0">
 			How strongly free cloth is pulled back toward its animated shape: the fraction of the way back per 1/60 s, [code]0..1[/code]. [code]0[/code] lets the cloth move freely within its max distances; around [code]0.1[/code]-[code]0.2[/code] keeps a long robe or skirt close to its authored shape (instead of collapsing into folds between the legs) while it still swings. [code]1[/code] follows the animation exactly.
 		</member>
+		<member name="auto_followers" type="bool" setter="set_auto_followers" getter="get_auto_followers" default="true">
+			Also carry every [MeshInstance3D] under the source mesh's parent whose metadata [code]follow[/code] (or [code]follow[/code] in its glTF extras, metadata [code]extras[/code]) is the source mesh's node name. See [member followers].
+		</member>
 		<member name="backstop" type="float" setter="set_backstop" getter="get_backstop" default="0.02">
 			How far (meters) the cloth may sink inward past its animated position, measured along the animated surface's normal. Keeps clothing on the outside of the body even where the body capsules don't quite fit. A negative value turns it off.
 		</member>
@@ -110,6 +119,9 @@
 		</member>
 		<member name="fabric_density" type="float" setter="set_fabric_density" getter="get_fabric_density" default="0.2">
 			The dry fabric's weight per area, kg/m². With [member water_capacity] it sets how much water the garment holds when soaked.
+		</member>
+		<member name="followers" type="NodePath[]" setter="set_followers" getter="get_followers" default="[]">
+			Meshes the cloth carries (mesh-to-mesh skinning, as render meshes are skinned to a simulation mesh): trims, flaps, straps, buttons. At build each vertex of a follower is bound to the nearest triangle of the simulated surface in the rest pose (its barycentric coordinates, its offset along the interpolated normal, and its normal and tangent in the triangle's frame); every frame the vertex shader places it from the simulated particles, so it stays on the fabric however it moves. The follower is hidden and drawn by a copy with the built-in cloth look from its own material (albedo, roughness), wetting with the cloth. Its rest pose must match the source's (the same skeleton, as exported together).
 		</member>
 		<member name="fixed_gravity" type="Vector3" setter="set_fixed_gravity" getter="get_fixed_gravity" default="Vector3(0, -9.8, 0)">
 			The gravity the cloth uses when [member use_world_gravity] is off, in m/s².

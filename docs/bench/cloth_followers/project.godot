@@ -1,0 +1,10 @@
+config_version=5
+
+[application]
+
+config/name="cloth_followers"
+run/main_scene="res://main.tscn"
+
+[rendering]
+
+renderer/rendering_method="forward_plus"

@@ -114,6 +114,25 @@ class PhysXSkinnedCloth3D : public Node3D {
 	// The render copy's shader, shared by every cloth: a new one each build was compiled again (~17 ms a build).
 	static Ref<Shader> render_shader;
 	PackedInt32Array vertex_particles; // render copy vertex -> particle (its CUSTOM0.x), as built
+	// Followers (mesh-to-mesh skinning, as render meshes skinned to the simulation mesh): meshes carried by the cloth,
+	// each vertex bound at build to its nearest simulated triangle (barycentrics, an offset along the interpolated
+	// normal, its normal and tangent in the triangle's frame) and placed from the simulated particles in its vertex
+	// shader, so trims, flaps and buttons stay on the moving fabric.
+	TypedArray<NodePath> followers;
+	bool auto_followers = true;
+	struct Follower {
+		ObjectID source_id; // the follower node, hidden while the cloth carries it
+		ObjectID instance_id; // its drawn copy
+		bool was_visible = true;
+		Vector<Ref<ShaderMaterial>> materials;
+	};
+	Vector<Follower> follower_copies;
+	static Ref<Shader> follower_shader;
+	void _build_followers(MeshInstance3D *p_source, const PackedVector3Array &p_verts, const PackedVector3Array &p_normals,
+			const PackedInt32Array &p_indices, const Vector<int> &p_vertex_particle);
+	void _clear_followers();
+	Vector<MeshInstance3D *> _find_followers(MeshInstance3D *p_source) const;
+	void _set_cloth_param(const StringName &p_name, const Variant &p_value);
 	void _hide_source(MeshInstance3D *p_source);
 	void _unhide_source(MeshInstance3D *p_source);
 	void _make_copy_material(MeshInstance3D *p_source);
@@ -258,6 +277,12 @@ public:
 	void set_body_capsules(const Array &p_capsules);
 	void set_simulating(bool p_simulating);
 	bool is_simulating() const { return simulating; }
+	void set_followers(const TypedArray<NodePath> &p_followers);
+	TypedArray<NodePath> get_followers() const { return followers; }
+	void set_auto_followers(bool p_enabled);
+	bool get_auto_followers() const { return auto_followers; }
+	// The drawn copies of the followers (built), in follower order.
+	TypedArray<MeshInstance3D> get_follower_instances() const;
 
 	void rebuild();
 	void reset();
