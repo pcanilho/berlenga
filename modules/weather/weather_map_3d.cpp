@@ -3828,6 +3828,11 @@ void WeatherMap3D::set_cloud_shadow_resolution(int p_resolution) {
 	cloud_shadow_resolution = CLAMP(p_resolution, 16, 2048);
 }
 
+void WeatherMap3D::set_cloud_sky_occlusion(bool p_enabled) {
+	cloud_sky_occlusion = p_enabled;
+	_apply_light_grid();
+}
+
 void WeatherMap3D::set_cloud_shadow_interval(float p_seconds) {
 	cloud_shadow_interval = MAX(p_seconds, 0.0f);
 }
@@ -4268,6 +4273,41 @@ void WeatherMap3D::LightGridBake::row(uint32_t p_row, void *) {
 		tau_w[(level * n + int(p_row)) * n + xi] = t;
 		const float sigma = WeatherClouds::extinction_at(state, p);
 		lit_w[(level * n + int(p_row)) * n + xi] = (1.0f - Math::exp(-sigma * texel)) / (1.0f + 0.75f * (1.0f - 0.85f) * t);
+		sigma_w[(level * n + int(p_row)) * n + xi] = sigma;
+		if (level == 0) {
+			// The sheets and wave clouds over the column, straight up (as the cloud shadow adds them). The high
+			// sheet's ice scatters less forward (g 0.75 against 0.85): its depth counts 0.1875 / 0.1125 times in
+			// the two-stream term, so it is stored as that much water cloud.
+			const Vector2 xz(p.x, p.z);
+			float tau = 0.0f;
+			float moment = 0.0f;
+			if (state.mid_cover > 0.001f || state.storm_count > 0) {
+				const float tm = WeatherClouds::mid_tau_at(state, xz);
+				tau += tm;
+				moment += tm * state.mid_height;
+			}
+			if (state.high_cover > 0.001f || state.storm_count > 0) {
+				const float th = WeatherClouds::high_tau_at(state, xz) * (0.1875f / 0.1125f);
+				tau += th;
+				moment += th * state.high_height;
+			}
+			for (int sl = 0; sl < 2; sl++) {
+				const float ya = sl == 0 ? state.wave_y0 : state.wave_y2;
+				const float yb = sl == 0 ? state.wave_y1 : state.wave_y3;
+				if (yb <= ya) {
+					continue;
+				}
+				const float dw = (yb - ya) / 6.0f;
+				for (int i = 0; i < 6; i++) {
+					const float yw = ya + (i + 0.5f) * dw;
+					const float tw = WeatherClouds::wave_extinction_at(state, Vector3(p.x, yw, p.z)) * dw;
+					tau += tw;
+					moment += tw * yw;
+				}
+			}
+			sheets_w[(int(p_row) * n + xi) * 2 + 0] = tau;
+			sheets_w[(int(p_row) * n + xi) * 2 + 1] = moment;
+		}
 	}
 }
 
@@ -4297,6 +4337,11 @@ void WeatherMap3D::_start_light_grid_bake() {
 	lb.tau_w = lb.tau.ptrw();
 	lb.lit.resize(kLightGridResolution * kLightGridResolution * kLightGridLevels);
 	lb.lit_w = lb.lit.ptrw();
+	lb.sigma.resize(kLightGridResolution * kLightGridResolution * kLightGridLevels);
+	lb.sigma_w = lb.sigma.ptrw();
+	lb.sheets.resize(kLightGridResolution * kLightGridResolution * 2);
+	lb.sheets_w = lb.sheets.ptrw();
+	lb.ground_y = c.y;
 	lb.level = kLightGridLevels - 1;
 	_launch_light_grid_level();
 }
@@ -4463,7 +4508,83 @@ void WeatherMap3D::_build_light_grid_texture() {
 	light_grid_drift = lb.state.drift;
 	light_grid_y0 = lb.y0;
 	light_grid_y1 = lb.y1;
+	_build_cloud_sky_map();
 	_apply_light_grid();
+}
+
+// The clouds' sky visibility, the share of the clear sky's diffuse light that reaches the ground through them: a
+// cloud ambient occlusion map (as Unreal Engine's sky light Cloud Ambient Occlusion), top-down over the light grid's
+// box. Each column's optical depth (the grid's extinction summed up, plus the sheets and wave clouds) and its height
+// (the depth's mean) give, for a direction from the ground, where it meets the cloud and the slant depth there,
+// tau / cos(theta); the light through it is the cloud's diffuse transmission, 1 / (1 + 3/4 (1 - g) tau) (two-stream,
+// g 0.85, as the cloud shadow), and the visibility its cosine-weighted mean over the hemisphere (32 directions, 4
+// rings by 8). Red: that visibility at the followed point's height; green: the column's depth; blue: its height;
+// alpha: the followed point's height. The surfaces dim their sky light by it against the camera's own (the sky they
+// read is the one the camera sees, clouds and all).
+void WeatherMap3D::_build_cloud_sky_map() {
+	const LightGridBake &lb = *light_grid_bake;
+	const int n = kLightGridResolution;
+	const int nl = kLightGridLevels;
+	const float dy = (lb.y1 - lb.y0) / nl;
+	Vector<float> col;
+	col.resize(n * n * 2);
+	float *cw = col.ptrw();
+	const float *sg = lb.sigma.ptr();
+	const float *sh = lb.sheets.ptr();
+	for (int i = 0; i < n * n; i++) {
+		float tau = sh[i * 2 + 0];
+		float moment = sh[i * 2 + 1];
+		for (int l = 0; l < nl; l++) {
+			const float t = sg[l * n * n + i] * dy;
+			tau += t;
+			moment += t * (lb.y0 + (l + 0.5f) * dy);
+		}
+		cw[i * 2 + 0] = tau;
+		cw[i * 2 + 1] = tau > 1e-4f ? moment / tau : 0.5f * (lb.y0 + lb.y1);
+	}
+	auto tau_at = [&](float p_x, float p_z) {
+		const float fx = CLAMP(p_x / lb.texel - 0.5f, 0.0f, float(n - 1));
+		const float fz = CLAMP(p_z / lb.texel - 0.5f, 0.0f, float(n - 1));
+		const int x0 = MIN(int(fx), n - 2);
+		const int z0 = MIN(int(fz), n - 2);
+		const float ax = fx - x0;
+		const float az = fz - z0;
+		const float a = Math::lerp(cw[(z0 * n + x0) * 2], cw[(z0 * n + x0 + 1) * 2], ax);
+		const float b = Math::lerp(cw[((z0 + 1) * n + x0) * 2], cw[((z0 + 1) * n + x0 + 1) * 2], ax);
+		return Math::lerp(a, b, az);
+	};
+	Vector<uint8_t> bytes;
+	bytes.resize(n * n * 16);
+	float *o = reinterpret_cast<float *>(bytes.ptrw());
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float rise = MAX(cw[i * 2 + 1] - lb.ground_y, 0.0f);
+			float v = 0.0f;
+			for (int ring = 0; ring < 4; ring++) {
+				const float u = (ring + 0.5f) / 4.0f; // cosine-weighted: sin^2(theta) uniform
+				const float sin_t = Math::sqrt(u);
+				const float cos_t = Math::sqrt(1.0f - u);
+				for (int k = 0; k < 8; k++) {
+					const float phi = float(Math::TAU) * (k + 0.5f * (ring & 1) + 0.25f) / 8.0f;
+					const float reach = rise * sin_t / cos_t;
+					const float tau = tau_at((x + 0.5f) * lb.texel + reach * Math::cos(phi), (z + 0.5f) * lb.texel + reach * Math::sin(phi));
+					v += 1.0f / (1.0f + 0.75f * (1.0f - 0.85f) * tau / cos_t);
+				}
+			}
+			o[i * 4 + 0] = v / 32.0f;
+			o[i * 4 + 1] = cw[i * 2 + 0];
+			o[i * 4 + 2] = cw[i * 2 + 1];
+			o[i * 4 + 3] = lb.ground_y;
+		}
+	}
+	const Ref<Image> image = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, bytes);
+	if (cloud_sky_texture.is_null()) {
+		cloud_sky_texture = ImageTexture::create_from_image(image);
+	} else {
+		cloud_sky_texture->update(image);
+	}
+	cloud_sky_ground_y = lb.ground_y;
 }
 
 void WeatherMap3D::_apply_light_grid() {
@@ -4476,6 +4597,11 @@ void WeatherMap3D::_apply_light_grid() {
 	}
 	// Between bakes the grid slides with the clouds.
 	sky_material->set_cloud_light_grid(light_grid_texture, light_grid_corner + (cloud_drift - light_grid_drift), kLightGridExtent, light_grid_y0, light_grid_y1);
+	if (cloud_sky_texture.is_valid() && publish_shader_globals) {
+		const Vector2 corner = light_grid_corner + (cloud_drift - light_grid_drift);
+		_set_global("weather_cloud_sky_map", cloud_sky_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		_set_global("weather_cloud_sky_rect", Vector4(corner.x, corner.y, cloud_sky_occlusion ? kLightGridExtent : 0.0f, cloud_sky_ground_y), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
 }
 
 void WeatherMap3D::_apply_shadow() {
@@ -5095,6 +5221,8 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cloud_shadow_resolution", "resolution"), &WeatherMap3D::set_cloud_shadow_resolution);
 	ClassDB::bind_method(D_METHOD("get_cloud_shadow_resolution"), &WeatherMap3D::get_cloud_shadow_resolution);
 	ClassDB::bind_method(D_METHOD("set_cloud_shadow_interval", "seconds"), &WeatherMap3D::set_cloud_shadow_interval);
+	ClassDB::bind_method(D_METHOD("set_cloud_sky_occlusion", "enabled"), &WeatherMap3D::set_cloud_sky_occlusion);
+	ClassDB::bind_method(D_METHOD("get_cloud_sky_occlusion"), &WeatherMap3D::get_cloud_sky_occlusion);
 	ClassDB::bind_method(D_METHOD("get_cloud_shadow_interval"), &WeatherMap3D::get_cloud_shadow_interval);
 	ClassDB::bind_method(D_METHOD("get_cloud_density_at", "position"), &WeatherMap3D::get_cloud_density_at);
 	ClassDB::bind_method(D_METHOD("get_sun_visibility_at", "position"), &WeatherMap3D::get_sun_visibility_at);
@@ -5191,6 +5319,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shadow_extent", PROPERTY_HINT_RANGE, "16,100000,1,or_greater,suffix:m"), "set_cloud_shadow_extent", "get_cloud_shadow_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cloud_shadow_resolution", PROPERTY_HINT_RANGE, "16,2048,1"), "set_cloud_shadow_resolution", "get_cloud_shadow_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_shadow_interval", PROPERTY_HINT_RANGE, "0,60,0.01,suffix:s"), "set_cloud_shadow_interval", "get_cloud_shadow_interval");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cloud_sky_occlusion"), "set_cloud_sky_occlusion", "get_cloud_sky_occlusion");
 	ADD_GROUP("Air and Surfaces", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "temperature", PROPERTY_HINT_RANGE, "-60,60,0.1,suffix:C"), "set_temperature", "get_temperature");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "humidity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_humidity", "get_humidity");

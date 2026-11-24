@@ -7940,6 +7940,28 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				RID wind_rd = wind_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(wind_tex) : RID();
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WIND_MAP] = (has_weather && wind_rd.is_valid()) ? float(bindless_block->add_texture(wind_rd)) : 0.0f;
 			}
+			// The clouds' sky map (weather_cloud_sky_map over weather_cloud_sky_rect): a bounce's sky through the clouds.
+			{
+				static const StringName sky_map_name = "weather_cloud_sky_map";
+				static const StringName sky_rect_name = "weather_cloud_sky_rect";
+				const Variant sky_rect_var = ms->global_shader_parameter_get_internal(sky_rect_name);
+				const Vector4 sky_rect = sky_rect_var.get_type() == Variant::VECTOR4 ? Vector4(sky_rect_var) : Vector4();
+				const Variant sky_var = ms->global_shader_parameter_get_internal(sky_map_name);
+				RID sky_tex;
+				if (sky_var.get_type() == Variant::RID) {
+					sky_tex = sky_var;
+				} else if (sky_var.get_type() == Variant::OBJECT) {
+					Object *t = sky_var;
+					if (t) {
+						sky_tex = t->call(SNAME("get_rid"));
+					}
+				}
+				RID sky_rd = sky_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(sky_tex) : RID();
+				const bool has_sky = sky_rd.is_valid() && sky_rect.z > 0.0f;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CLOUD_SKY_MAP] = has_sky ? float(bindless_block->add_texture(sky_rd)) : 0.0f;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CLOUD_SKY_X] = sky_rect.x;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CLOUD_SKY_Z] = sky_rect.y;
+			}
 			// The camera cut-out round the player (BaseMaterial3D camera_cutout): camera rays start past it.
 			{
 				static const StringName cutout_name = "camera_cutout";

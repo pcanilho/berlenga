@@ -63,6 +63,8 @@ void initialize_weather_module(ModuleInitializationLevel p_level) {
 		const char *type;
 	} globals[] = {
 		{ "weather_wind_map", "sampler2D" },
+		{ "weather_cloud_sky_map", "sampler2D" },
+		{ "weather_cloud_sky_rect", "vec4" },
 		{ "weather_gusts", "sampler2D" },
 		{ "weather_shelter_map", "sampler2D" },
 		{ "weather_wind_info", "vec4" },

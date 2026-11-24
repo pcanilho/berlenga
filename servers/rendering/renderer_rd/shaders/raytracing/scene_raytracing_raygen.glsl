@@ -1624,6 +1624,7 @@ void main() {
 
 #pragma shader_stage(miss)
 #extension GL_EXT_ray_tracing : enable
+#extension GL_EXT_nonuniform_qualifier : require
 
 #define GLSL 1
 #define RT_STAGE_MISS 1
@@ -1641,6 +1642,22 @@ layout(location = 0) rayPayloadInEXT PathPayload payload;
 
 layout(set = 0, binding = 29) uniform texture2D prepass_depth_texture;
 layout(set = 0, binding = 33) uniform texture2D sky_screen_texture;
+
+layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+
+// The share of the clear sky's diffuse light reaching p (relative to rt_origin) through the clouds, from WeatherMap3D's
+// cloud sky map (a cloud ambient occlusion map: red its hemisphere visibility, blue the clouds' height, alpha the
+// height the visibility is for), eased to 1
+// from the height it is for up to the clouds' (raster's cloud_sky_visibility()).
+float rt_cloud_sky_visibility(uint p_map, vec3 p) {
+	vec3 w = p + rt_origin.xyz;
+	vec2 uv = (w.xz - vec2(get_rt_param(RT_PARAM_CLOUD_SKY_X), get_rt_param(RT_PARAM_CLOUD_SKY_Z))) / RT_CLOUD_SKY_EXTENT;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return 1.0;
+	}
+	vec4 m = textureLod(sampler2D(bindless_textures[p_map], SAMPLER_LINEAR_CLAMP), uv, 0.0);
+	return mix(1.0, m.r, clamp((m.b - w.y) / max(m.b - m.a, 1.0), 0.0, 1.0));
+}
 
 #ifdef USE_RADIANCE_OCTMAP_ARRAY
 
@@ -1770,6 +1787,17 @@ void main() {
 		if (get_total_bounces(ps.packed_bounces_flags) == 0u && rt_volumetric_fog_enabled()) {
 			vec3 far_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * 10000.0;
 			sky_color = rt_volumetric_fog_apply_sky(sky_color, project_uv(far_world, curr_vp_unjittered));
+		}
+
+		// A bounce's sky through the clouds over its start: the radiance map is the sky the camera sees, clouds and
+		// all, so the ray takes its start's visibility against the camera's (at most 1: a clear spot seen from under a
+		// cloud keeps the map's light), as raster's cloud_sky_light(). Per direction (the cloud along the ray against
+		// the camera's) the capped ratio biased the mean dark, and uncapped it lit single rays by the map's bright
+		// cloud fifty times over.
+		uint cloud_sky_map = uint(get_rt_param(RT_PARAM_CLOUD_SKY_MAP));
+		if (get_total_bounces(ps.packed_bounces_flags) > 0u && cloud_sky_map != 0u) {
+			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w, scene_data_block.data.inv_view_matrix[2].w);
+			sky_color *= min(rt_cloud_sky_visibility(cloud_sky_map, gl_WorldRayOriginEXT) / max(rt_cloud_sky_visibility(cloud_sky_map, cam), 0.02), 1.0);
 		}
 
 		// The environment's ambient light switched off (ambient_light_source DISABLED): raster's ambient term is
