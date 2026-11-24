@@ -5253,6 +5253,9 @@ func _build_cover() -> void:
 			for st in [PlantGenerator.SCRUB_GARRIGUE, PlantGenerator.SCRUB_MAQUIS]:
 				calls.append(["make_scrub", [st, 3, true, season, woody]])
 				keys.append("make_scrub:%d" % st)
+		if args.get("dry-tussocks", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_dry_tussocks"):
+			calls.append(["make_dry_tussocks", [3, true, season]])
+			keys.append("make_dry_tussocks:0")
 		calls.append(["make_floor", [floor_set, 3, true, 15.0, season]])
 		keys.append("make_floor:%d" % floor_set)
 		if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
@@ -5369,6 +5372,14 @@ func _build_cover() -> void:
 			for sp in (pre["make_scrub:%d" % st] if pre.has("make_scrub:%d" % st) else PlantGenerator.make_scrub(st, 3, true, season, woody)):
 				sp.set_meta("own_rules", true)
 				b.species.append(sp)
+	if args.get("dry-tussocks", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_dry_tussocks"):
+		# Dry tussocks over the cured cover (esparto 150-470 mm of rain, thatching grass 320-850 mm; vegetation
+		# d9dfa4a8): only under 1000 mm, off rock, shade and bare patches, curing with the season, by their own rules.
+		var tus: Array = pre["make_dry_tussocks:0"] if pre.has("make_dry_tussocks:0") else ClassDB.class_call_static("PlantGenerator", "make_dry_tussocks", 3, true, season)
+		for sp in tus:
+			sp.set_meta("own_rules", true)
+			b.species.append(sp)
+		_log("dry tussocks: %d species" % tus.size())
 	if args.get("marsh-plants", "1") != "0":
 		# Salt marsh zoned by height in the tidal frame and the shingle backshore above it (the data map's
 		# geology source is the generator with its sea), each set by its own tide, exposure and beach rules.
