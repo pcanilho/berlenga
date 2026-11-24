@@ -1016,6 +1016,11 @@ What a stony slope does under a thin to moderate pack (field observation and the
   grains go first, then pebbles, and early-winter snow of a few centimetres leaves the coarse lag dotted through it.
   Deep snow (SnowSurface3D, above its min_depth of 3 cm) is geometry, so it hides a buried stone in raster and PT;
   thin snow (under 3 cm) is a material on the terrain and hides nothing, so a buried pebble lies drawn on top of it.
+- Uneven at the stones' scale. A shallow pack is not even under the metre: its depth varies about the mean with a
+  coefficient of variation of 0.3 or more (Clark et al. 2011, WRR; Lopez-Moreno et al. 2011, The Cryosphere 5, 617;
+  the shallowest packs vary the most), and less stays on a stone's convex top than in the gaps. A uniform depth would
+  take every stone a little proud of it at once (a 1.6 cm fall cleared the mid-size gravel in the scene scout), so
+  each stone is tested against the mean scaled by 0.4 to 1.3 from a hash of its position (mean 0.85, CV about 0.3).
 - Melt moats round protruding stones. Rock (albedo 0.1 to 0.3) absorbs four or five times the shortwave that snow
   (0.6 to 0.9) does, warms above freezing on a sunny day even in frost, and melts the snow touching it; a moat opens
   round each stone, widest and deepest on the sun's side, growing with the days of sun since the last snowfall and

@@ -356,14 +356,30 @@ void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uin
 			float h = _query_ground(q, at);
 			// With a height source, roofs and other overhead colliders on shelter_collision_mask catch the snow
 			// over the ground below them (the pack lies on top; materials under them stay bare).
+			// The cover stands for the whole cell only where it spans it: the centre and at least three of the four
+			// quarter points hit it. A boulder hit at the centre of a coarse cell (16 m on a whole-map square) took
+			// the cell's ground up to its top and left a cell-wide bare patch round it.
 			if (shelter_collision_mask && q.space && q.has_source()) {
 				PhysicsDirectSpaceState3D::RayParameters rp;
-				rp.from = Vector3(at.x, q.y0 + 10000.0f, at.z);
-				rp.to = Vector3(at.x, q.y0 - 10000.0f, at.z);
 				rp.collision_mask = shelter_collision_mask;
 				PhysicsDirectSpaceState3D::RayResult rr;
+				rp.from = Vector3(at.x, q.y0 + 10000.0f, at.z);
+				rp.to = Vector3(at.x, q.y0 - 10000.0f, at.z);
 				if (q.space->intersect_ray(rp, rr) && (!Math::is_finite(h) || rr.position.y > h + 0.3f)) {
-					h = rr.position.y;
+					const float top = rr.position.y;
+					int spans = 0;
+					for (int k = 0; k < 4; k++) {
+						const Vector3 o = at + Vector3((k & 1) ? 0.25f * cs : -0.25f * cs, 0.0f, (k & 2) ? 0.25f * cs : -0.25f * cs);
+						rp.from = Vector3(o.x, q.y0 + 10000.0f, o.z);
+						rp.to = Vector3(o.x, q.y0 - 10000.0f, o.z);
+						const float hk = _query_ground(q, o);
+						if (q.space->intersect_ray(rp, rr) && (!Math::is_finite(hk) || rr.position.y > hk + 0.3f)) {
+							spans++;
+						}
+					}
+					if (spans >= 3) {
+						h = top;
+					}
 				}
 			}
 			cell_height_valid.write[i] = Math::is_finite(h) ? 1 : 0;
