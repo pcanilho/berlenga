@@ -10,6 +10,7 @@ extends Node3D
 #   --test            run the link checks, print PASS/FAIL/GAP, quit
 #   --out=path.png    render a view (path traced unless --raster)
 #   --raster          raster only (TAA + SMAA; --aa=0 without)
+#   --prim-report     with --out: every mesh and MultiMesh ranked by the triangles it draws at its LOD (perf hunts)
 #   --spp=N           path tracing samples (default 16)
 #   --boulders=D     rockfall blocks below cliffs at density D (default 1, 0 none), grey stand-ins
 #   --no-far         no rock far tier (big stones and landmarks to 4 km), the before frame
@@ -814,6 +815,25 @@ func _ready() -> void:
 			get_tree().quit()
 			return
 		var built := rocks.build_area(Rect2(rc.x - ra * 0.5, rc.z - ra * 0.5, ra, ra))
+		if args.has("dump-stones"):
+			# --dump-stones=x,z,r: every stone over 0.4 m within r m of (x, z), by layer, then quit (placement checks).
+			var dz := String(args["dump-stones"]).split(",")
+			var dc := Vector2(float(dz[0]), float(dz[1]))
+			var dr := float(dz[2])
+			var big := []
+			for li in 12:
+				var ls: Array = rocks.get_stones(li, Rect2(dc.x - dr, dc.y - dr, 2.0 * dr, 2.0 * dr))
+				_log("  layer %d: %d stones" % [li, ls.size()])
+				for st in ls:
+					var q: Vector3 = st.get("position", Vector3.INF)
+					if is_finite(q.x) and Vector2(q.x, q.z).distance_to(dc) < dr:
+						var sc: Variant = st.get("scale", 1.0)
+						big.append([sc.x if sc is Vector3 else float(sc), li, q, st.get("family", -1), st.get("rock_type", -1), st.get("variant", -1), (st.get("basis", Basis()) as Basis).get_euler()])
+			big.sort_custom(func(a, b): return a[0] > b[0])
+			for k in mini(40, big.size()):
+				_log("  scale %.2f layer %d at %s family %s type %s variant %s euler %s" % big[k])
+			get_tree().quit()
+			return
 		_log("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - rb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
 		# The far tier (modules/rocks): stones over 2 m and landmarks past each layer's radius, to far_radius (4 km).
 		# --no-far: off (the before frame); --far-thin=0: far_thinning off.
@@ -1188,6 +1208,8 @@ func _ready() -> void:
 			_log("rocks rt: %s (rt_instanced_cells %s)" % [str(rocks.get_rt_stats()), str(rocks.rt_instanced_cells)])
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved %s (%d primitives in the frame)" % [out, int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))])
+		if args.has("prim-report"):
+			_prim_report()
 		if args.has("pt-pair") and not env.pathtracing_enabled:
 			# --pt-pair=PATH (with --raster): the same moment path traced, from this run (Flow is not repeatable run to
 			# run): the scene paused, path tracing on, TAA off, --spp-frames more frames once the tracer is ready.
@@ -1204,6 +1226,26 @@ func _ready() -> void:
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(args["pt-pair"])
 			_log("saved %s (path traced pair, paused)" % args["pt-pair"])
+		if args.has("rock-pair") and rocks != null:
+			# --rock-pair=PATH --rock-pair-prop=name:value[;...]: the same moment with RockField3D properties changed
+			# (a docs on/off pair from one run): the scene paused, the rocks rebuilt, --rock-pair-frames (90) more frames.
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			rocks.process_mode = Node.PROCESS_MODE_ALWAYS
+			for kv in String(args.get("rock-pair-prop", "")).split(";", false):
+				var pv := kv.split(":")
+				rocks.set(pv[0], str_to_var(pv[1]))
+			for i in int(args.get("rock-pair-frames", "90")):
+				await get_tree().process_frame
+			var rpw := 0
+			while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and rpw < 1200:
+				await get_tree().process_frame
+				rpw += 1
+			for i in 8:
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["rock-pair"])
+			_log("saved %s (rocks %s, paused)" % [args["rock-pair"], args.get("rock-pair-prop", "")])
 		if data_map != null and data_map.has_method("get_aridity_at"):
 			var cq: Camera3D = get_viewport().get_camera_3d()
 			var gq := cq.global_position - cq.global_basis.z * 6.0
@@ -3226,6 +3268,38 @@ func _docs_links_setup() -> void:
 		scar.age_years = float(b[3]) if b.size() > 3 else 1.0
 		await get_tree().process_frame
 		_log("burn scar at %s, %s m, %.1f years" % [str(scar.global_position), str(scar.size), scar.age_years])
+	if args.has("snow-fall") and snow != null:
+		# --snow-fall=CM: a fresh fall of about CM over the whole snowpack before the frame (a cold storm's snowfall
+		# for --snow-fall-hours, 1, then the weather set above again): thin, even snow for ground-detail pairs.
+		var hrs := float(args.get("snow-fall-hours", "1"))
+		var keep := [weather.rain_rate, weather.temperature, weather.air_follows_climate, weather.cloud_cover]
+		weather.air_follows_climate = false
+		weather.cloud_cover = 1.0 # the rain (snow) falls where the cover is
+		weather.temperature = minf(weather.temperature, -4.0)
+		weather.rain_rate = float(args["snow-fall"]) * float(args.get("snow-fall-density", "200")) / 100.0 / hrs # cm x kg/m3 / 100 = mm of water
+		weather.snap_to_settings()
+		var tf := Time.get_ticks_msec()
+		snow.advance(hrs * 3600.0)
+		var wf := 0
+		while snow.is_updating() and wf < 600:
+			await get_tree().process_frame
+			wf += 1
+		weather.rain_rate = keep[0]
+		weather.temperature = keep[1]
+		weather.air_follows_climate = keep[2]
+		weather.cloud_cover = keep[3]
+		weather.snap_to_settings()
+		var cq: Camera3D = get_viewport().get_camera_3d()
+		var fq := cq.global_position if cq != null else Vector3.ZERO
+		_log("snow fall: %.3f m deep at the camera after %.1f h (%d ms)" % [snow.get_depth_at(fq), hrs, Time.get_ticks_msec() - tf])
+		if args.has("probe-at"):
+			# --probe-at=X,Z: water and ice reads at a point after the fall (a bare patch under fresh snow).
+			var pz := _vec2_arg(args["probe-at"])
+			var pq := Vector3(pz.x, height_at(pz.x, pz.y), pz.y)
+			_log("probe %s: snow %.3f m, water depth %s, ice %s, water level %s" % [str(pq.round()), snow.get_depth_at(pq),
+				str(data_map.call("get_water_depth_at", pq)) if data_map.has_method("get_water_depth_at") else "n/a",
+				str(snow.call("get_ice_thickness_at", pq)) if snow.has_method("get_ice_thickness_at") else "n/a",
+				str(snow.call("get_water_level_at", pq)) if snow.has_method("get_water_level_at") else "n/a"])
 	if args.has("snow-days") and snow != null:
 		var days := float(args["snow-days"])
 		var t := Time.get_ticks_msec()
@@ -4159,6 +4233,18 @@ func _build_camera() -> void:
 					tcells[tk] = int(tcells.get(tk, 0)) + 1
 			var keys := tcells.keys()
 			keys.sort_custom(func(x, y): return tcells[x] > tcells[y])
+			if args.has("talus-gentle"):
+				# --talus-gentle=DEG: only cells whose ground within 20 m rises less than DEG (a river bed, not a cone).
+				var gmax := tan(deg_to_rad(float(args["talus-gentle"]))) * 20.0
+				keys = keys.filter(func(k):
+					var cx: float = k.x * 40.0 + 20.0
+					var cz: float = k.y * 40.0 + 20.0
+					var h0 := height_at(cx, cz)
+					for j in 8:
+						var dj := Vector2(cos(TAU * j / 8.0), sin(TAU * j / 8.0)) * 20.0
+						if absf(height_at(cx + dj.x, cz + dj.y) - h0) > gmax:
+							return false
+					return h0 > 2.0)
 			var pick := mini(int(args.get("talus-pick", "0")), maxi(keys.size() - 1, 0))
 			var ts := boulder_spot
 			if keys.size() > 0:
@@ -4187,7 +4273,7 @@ func _build_camera() -> void:
 					break
 			cam.near = float(args.get("near", "0.5")) # stalks right at the lens stay out
 			var cp := foot - upd * float(args.get("talus-dist", "25"))
-			if args.get("rock-layer", "") == "tor":
+			if args.get("rock-layer", "") == "tor" or args.has("talus-level"):
 				# A tor on a crest: stand on the crest beside it (the heading whose ground stays nearest the tor's level),
 				# the sun behind the camera's shoulder.
 				var td := float(args.get("talus-dist", "30"))
@@ -4341,7 +4427,25 @@ func _build_camera() -> void:
 			var pr := float(args.get("ped-search", "600"))
 			var pbest := 0.0
 			var pp := Vector3.INF
-			if rocks != null and rocks.has_method("get_pedestal_at"):
+			if rocks != null and rocks.has_method("get_pedestal_spots"):
+				# Rocks 3589ba9f: the pedestals' own spots (bare patches only), deepest splash first; the first on
+				# gentle ground.
+				var spots: PackedVector4Array = rocks.get_pedestal_spots(Rect2(-pr, -pr, 2.0 * pr, 2.0 * pr), float(args.get("ped-step", "2")), int(args.get("ped-count", "1024")))
+				var smax := 0.0
+				for sp4 in spots:
+					var q := Vector3(sp4.x, sp4.y, sp4.z)
+					var sdeg := rad_to_deg(data_map.get_slope_at(q))
+					smax = maxf(smax, sdeg)
+					if sdeg >= float(args.get("ped-min-slope", "0")) and sdeg <= float(args.get("ped-max-slope", "25")):
+						pp = q
+						pbest = sp4.w
+						break
+				if pp == Vector3.INF and not spots.is_empty():
+					# None in the slope band: the deepest spot, logged.
+					pp = Vector3(spots[0].x, spots[0].y, spots[0].z)
+					pbest = spots[0].w
+				_log("pedestal spots: %d, steepest %.1f deg" % [spots.size(), smax])
+			elif rocks != null and rocks.has_method("get_pedestal_at"):
 				for zz in range(-int(pr), int(pr) + 1, 8):
 					for xx in range(-int(pr), int(pr) + 1, 8):
 						var q := Vector3(xx, height_at(xx, zz), zz)
@@ -4362,73 +4466,126 @@ func _build_camera() -> void:
 				cam.position = pc
 				cam.look_at(pp + Vector3.UP * 0.1)
 				var pv2: Vector2 = rocks.get_pedestal_at(pp)
-				_log("pedestals view: spot %s stone share %.2f soil lost %.3f m, camera %s" % [str(pp.round()), pv2.x, pv2.y, str(pc.round())])
+				_log("pedestals view: spot %s (spot depth %.3f m) stone share %.2f soil lost %.3f m, camera %s" % [str(pp.round()), pbest, pv2.x, pv2.y, str(pc.round())])
 		"ledge":
 			# A stepped hard-bed bench with its caprock slabs (RockField3D.ledge_slabs) from --ledge-back (22) m out:
 			# the 16 m cell within --ledge-search (1000) m holding the most overhanging lip (TerrainGenerator3D
 			# get_ledge_lips), the camera out from the face and --ledge-side (9) m along it so the run of slabs
 			# recedes, at --ledge-up (-2) m from the lip (below it: the overhangs read against the sky).
+			# Rocks 3589ba9f: the slabs themselves (get_ledge_slabs), the run with the most slabs (sunlit, longer
+			# first), seen along the run from in front of it at --ledge-front (10) m out and --ledge-side (9) m past its end.
+			var ldone := false
 			var lr := float(args.get("ledge-search", "1000"))
-			var lips: Array = gen.get_ledge_lips(Rect2(-lr, -lr, 2.0 * lr, 2.0 * lr), 4.0)
-			var cells := {}
-			for l in lips:
-				if float(l["overhang"]) <= 0.05:
-					continue
-				var lp: Vector3 = l["position"]
-				# A lip high on an open, sunlit face: the ground 22 m out (either way) at least 8 m below it, and the
-				# face turned to the sun.
-				var lo: Vector3 = l["out"]
-				lo.y = 0.0
-				lo = lo.normalized()
-				var ga := height_at(lp.x + lo.x * 22.0, lp.z + lo.z * 22.0)
-				var gb := height_at(lp.x - lo.x * 22.0, lp.z - lo.z * 22.0)
-				if gb < ga:
-					lo = -lo
+			if rocks != null and rocks.has_method("get_ledge_slabs"):
+				var runs := {}
+				for s in rocks.get_ledge_slabs(Rect2(-lr, -lr, 2.0 * lr, 2.0 * lr)):
+					var r := int(s["run"])
+					if not runs.has(r):
+						runs[r] = []
+					runs[r].append(s)
 				var sun_flat := Vector3(sun.global_basis.z.x, 0, sun.global_basis.z.z).normalized()
-				if height_at(lp.x, lp.z) - minf(ga, gb) < 8.0 or lo.dot(sun_flat) < 0.3:
-					continue
-				var key := Vector2i(int(floor(lp.x / 16.0)), int(floor(lp.z / 16.0)))
-				var c: Array = cells.get(key, [0.0, l])
-				c[0] = float(c[0]) + float(l["overhang"]) * float(l["weight"])
-				if float(l["overhang"]) > float((c[1] as Dictionary)["overhang"]):
-					c[1] = l
-				cells[key] = c
-			var lbest := -1.0
-			var lpick := {}
-			for key in cells:
-				if float(cells[key][0]) > lbest:
-					lbest = float(cells[key][0])
-					lpick = cells[key][1]
-			if lpick.is_empty():
-				_log("ledge view: no overhanging lips within %.0f m (%d lips)" % [lr, lips.size()])
-			else:
-				var lpos: Vector3 = lpick["position"]
-				var lip_y := lpos.y
-				lpos.y = height_at(lpos.x, lpos.z) # the ground at the lip (the lip's own y is logged beside it)
-				var lout: Vector3 = lpick["out"]
-				lout.y = 0.0
-				lout = lout.normalized()
-				# Out from the face: the side where the ground falls away (below the lip), not into the hill.
-				var lbk := float(args.get("ledge-back", "22"))
-				if height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk) > height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk):
-					lout = -lout
-				var along := lout.cross(Vector3.UP).normalized()
-				# Steep ground: try both sides and a few distances, keeping the spot whose ground sits furthest under the lip.
-				var lsd := float(args.get("ledge-side", "9"))
-				var lc := lpos + lout * lbk + along * lsd
-				var lgb := INF
-				for bk in [lbk, lbk * 0.7, lbk * 1.4]:
-					for sd in [lsd, -lsd, 0.0]:
-						var q: Vector3 = lpos + lout * float(bk) + along * float(sd)
-						var qh := height_at(q.x, q.z)
-						if qh < lgb:
-							lgb = qh
-							lc = q
-				lc.y = maxf(height_at(lc.x, lc.z) + 1.7, lpos.y + float(args.get("ledge-up", "-2")))
-				cam.fov = 55.0
-				cam.position = lc
-				cam.look_at(lpos)
-				_log("ledge view: %d lips, pick %s (lip y %.1f) overhang %.2f m cap %.2f m, score %.1f, camera %s, ground out %.1f / in %.1f" % [lips.size(), str(lpos.round()), lip_y, float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round()), height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk), height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk)])
+				var brun: Array = []
+				var bsc := -INF
+				var most := 0
+				for r in runs.values():
+					most = maxi(most, r.size())
+				# The light bonus only among runs near the longest (--ledge-min-slabs, else the longest less 2).
+				var min_sl := int(args.get("ledge-min-slabs", str(maxi(most - 2, 1))))
+				for r in runs.values():
+					if r.size() < min_sl:
+						continue
+					var ro := Vector3()
+					for s in r:
+						ro += s["out"]
+					ro.y = 0.0
+					var sc := float(r.size()) * 100.0 + float(r[0]["run_length"]) + (10000.0 if ro.normalized().dot(sun_flat) > float(args.get("ledge-sun", "0.0")) and absf(Vector3(r[0]["along"]).normalized().dot(sun_flat)) > float(args.get("ledge-rake", "0.6")) else 0.0)
+					if sc > bsc:
+						bsc = sc
+						brun = r
+				if not brun.is_empty():
+					var c := Vector3()
+					var o := Vector3()
+					for s in brun:
+						c += s["front"]
+						o += s["out"]
+					c /= brun.size()
+					o.y = 0.0
+					o = o.normalized()
+					# Out from the face: the side where the ground falls away.
+					if height_at(c.x + o.x * 12.0, c.z + o.z * 12.0) > height_at(c.x - o.x * 12.0, c.z - o.z * 12.0):
+						o = -o
+					var al: Vector3 = brun[0]["along"]
+					al.y = 0.0
+					al = al.normalized()
+					var rl := float(brun[0]["run_length"])
+					var lc := c + o * float(args.get("ledge-front", "18")) + al * (rl * 0.5 + float(args.get("ledge-side", "9")))
+					lc.y = maxf(height_at(lc.x, lc.z) + 1.7, c.y + float(args.get("ledge-up", "-1")))
+					cam.fov = 55.0
+					cam.position = lc
+					cam.look_at(c - al * rl * 0.25)
+					ldone = true
+					_log("ledge view: %d runs, pick %d slabs %.1f m at %s, camera %s" % [runs.size(), brun.size(), rl, str(c.round()), str(lc.round())])
+			if not ldone:
+				var lips: Array = gen.get_ledge_lips(Rect2(-lr, -lr, 2.0 * lr, 2.0 * lr), 4.0)
+				var cells := {}
+				for l in lips:
+					if float(l["overhang"]) <= 0.05:
+						continue
+					var lp: Vector3 = l["position"]
+					# A lip high on an open, sunlit face: the ground 22 m out (either way) at least 8 m below it, and the
+					# face turned to the sun.
+					var lo: Vector3 = l["out"]
+					lo.y = 0.0
+					lo = lo.normalized()
+					var ga := height_at(lp.x + lo.x * 22.0, lp.z + lo.z * 22.0)
+					var gb := height_at(lp.x - lo.x * 22.0, lp.z - lo.z * 22.0)
+					if gb < ga:
+						lo = -lo
+					var sun_flat := Vector3(sun.global_basis.z.x, 0, sun.global_basis.z.z).normalized()
+					if height_at(lp.x, lp.z) - minf(ga, gb) < 8.0 or lo.dot(sun_flat) < 0.3:
+						continue
+					var key := Vector2i(int(floor(lp.x / 16.0)), int(floor(lp.z / 16.0)))
+					var c: Array = cells.get(key, [0.0, l])
+					c[0] = float(c[0]) + float(l["overhang"]) * float(l["weight"])
+					if float(l["overhang"]) > float((c[1] as Dictionary)["overhang"]):
+						c[1] = l
+					cells[key] = c
+				var lbest := -1.0
+				var lpick := {}
+				for key in cells:
+					if float(cells[key][0]) > lbest:
+						lbest = float(cells[key][0])
+						lpick = cells[key][1]
+				if lpick.is_empty():
+					_log("ledge view: no overhanging lips within %.0f m (%d lips)" % [lr, lips.size()])
+				else:
+					var lpos: Vector3 = lpick["position"]
+					var lip_y := lpos.y
+					lpos.y = height_at(lpos.x, lpos.z) # the ground at the lip (the lip's own y is logged beside it)
+					var lout: Vector3 = lpick["out"]
+					lout.y = 0.0
+					lout = lout.normalized()
+					# Out from the face: the side where the ground falls away (below the lip), not into the hill.
+					var lbk := float(args.get("ledge-back", "22"))
+					if height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk) > height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk):
+						lout = -lout
+					var along := lout.cross(Vector3.UP).normalized()
+					# Steep ground: try both sides and a few distances, keeping the spot whose ground sits furthest under the lip.
+					var lsd := float(args.get("ledge-side", "9"))
+					var lc := lpos + lout * lbk + along * lsd
+					var lgb := INF
+					for bk in [lbk, lbk * 0.7, lbk * 1.4]:
+						for sd in [lsd, -lsd, 0.0]:
+							var q: Vector3 = lpos + lout * float(bk) + along * float(sd)
+							var qh := height_at(q.x, q.z)
+							if qh < lgb:
+								lgb = qh
+								lc = q
+					lc.y = maxf(height_at(lc.x, lc.z) + 1.7, lpos.y + float(args.get("ledge-up", "-2")))
+					cam.fov = 55.0
+					cam.position = lc
+					cam.look_at(lpos)
+					_log("ledge view: %d lips, pick %s (lip y %.1f) overhang %.2f m cap %.2f m, score %.1f, camera %s, ground out %.1f / in %.1f" % [lips.size(), str(lpos.round()), lip_y, float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round()), height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk), height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk)])
 		"gully":
 			# A raised oblique down a real gully onto its fan (RockField3D.runoff_gravel: a coarse lag on the floor,
 			# fine grains on the fan). The strongest open gully on soil (TerrainGenerator3D.get_gully_at, as the rocks
@@ -9118,3 +9275,83 @@ func _frame_struck() -> void:
 	if veg.streaming:
 		await _forest_settle()
 	_log("lightning cam %.1f,%.1f,%.1f at the struck spruce %s" % [cp.x, cp.y, cp.z, str(best.round())])
+
+
+# --prim-report (with --out): every mesh and MultiMesh in the scene ranked by the triangles it draws at the LOD the
+# renderer picks for it (the camera pass; each shadow cascade draws its casters again), and the totals per system.
+# For perf hunts: a big count with no LODs, or LOD 0 far away, is the pattern to look for. Not culled by the frustum.
+func _prim_report() -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var cp := cam.global_position
+	var th: float = get_viewport().mesh_lod_threshold / float(get_viewport().size.x)
+	var lodmul: float = 2.0 / cam.get_camera_projection().x.x
+	var rows := []
+	var per := {}
+	var lod_cache := {}
+	var stack: Array = [get_tree().root]
+	while stack.size() > 0:
+		var n: Node = stack.pop_back()
+		stack.append_array(n.get_children(true))
+		var mesh: Mesh = null
+		var cnt := 1
+		if n is MultiMeshInstance3D:
+			var mm := (n as MultiMeshInstance3D).multimesh
+			if mm == null:
+				continue
+			mesh = mm.mesh
+			cnt = mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count
+		elif n is MeshInstance3D:
+			mesh = (n as MeshInstance3D).mesh
+		if mesh == null or cnt <= 0 or not (n as GeometryInstance3D).is_visible_in_tree():
+			continue
+		var gi := n as GeometryInstance3D
+		var ab := gi.global_transform * gi.get_aabb()
+		var d := Vector3.ZERO.max(ab.position - cp).max(cp - ab.end).length()
+		var dc := (cp - ab.get_center()).length() # the renderer's visibility range distance: to the box's centre
+		if gi.visibility_range_end > 0.0 and dc > gi.visibility_range_end + gi.visibility_range_end_margin:
+			continue
+		if gi.visibility_range_begin > 0.0 and dc < gi.visibility_range_begin - gi.visibility_range_begin_margin:
+			continue
+		var scale: float = gi.global_transform.basis.get_scale().abs().x * gi.lod_bias
+		var tris := 0
+		var lods := ""
+		for si in mesh.get_surface_count():
+			var key := str(mesh.get_rid()) + ":" + str(si)
+			if not lod_cache.has(key):
+				var sd: Dictionary = RenderingServer.mesh_get_surface(mesh.get_rid(), si)
+				var ls := []
+				for l in sd.get("lods", []):
+					ls.append([l["edge_length"], (l["index_data"] as PackedByteArray).size() / (4 if sd.get("vertex_count", 0) > 65535 else 2) / 3])
+				var ic: int = sd.get("index_count", 0)
+				lod_cache[key] = [ic / 3 if ic > 0 else int(sd.get("vertex_count", 0)) / 3, ls]
+			var c: Array = lod_cache[key]
+			var t: int = c[0]
+			var li := 0
+			for k in (c[1] as Array).size():
+				var l: Array = c[1][k]
+				if l[0] * scale / max(d * lodmul, 0.0001) > th:
+					break
+				t = l[1]
+				li = k + 1
+			tris += t
+			lods += "%d/%d " % [li, (c[1] as Array).size()]
+		var path := str(n.get_path()).trim_prefix("/root/Main/")
+		var sys := path.get_slice("/", 0)
+		per[sys] = int(per.get(sys, 0)) + tris * cnt
+		rows.append([tris * cnt, cnt, tris, d, lods, path.left(90), gi.lod_bias])
+	rows.sort_custom(func(a, b): return a[0] > b[0])
+	var tot := 0
+	for r in rows:
+		tot += r[0]
+	_log("prim report: %d drawables, %d triangles at their LODs (camera pass, not frustum culled)" % [rows.size(), tot])
+	var sl := []
+	for k in per:
+		sl.append([per[k], k])
+	sl.sort_custom(func(a, b): return a[0] > b[0])
+	for i in min(15, sl.size()):
+		_log("  system %12d %s" % sl[i])
+	for i in min(30, rows.size()):
+		_log("  %12d = %6d x %7d tris, dist %.1f m, lod %s, %s (lod_bias %.2f)" % rows[i])
+

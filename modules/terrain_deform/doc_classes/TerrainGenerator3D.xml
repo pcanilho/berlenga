@@ -682,6 +682,15 @@
 		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="16.0">
 			Metres between grid nodes. Coarse on purpose: this stage shapes ranges and valleys, finer detail is added on top.
 		</member>
+		<member name="cliff_ledge_armour" type="float" setter="set_cliff_ledge_armour" getter="get_cliff_ledge_armour" default="0.6">
+			Caprock armour (0..1): the share by which the detail filter's bedrock gullies fade on ledged faces (wandering over about 300 m), as hard beds shield a caprock wall so its benches run level and long, notched by gullies only here and there. 0 keeps the gullies as without ledges.
+		</member>
+		<member name="cliff_ledge_spacing" type="float" setter="set_cliff_ledge_spacing" getter="get_cliff_ledge_spacing" default="0.0">
+			Mean bed thickness of the cliff ledges, m (beds of uneven thickness, a tenth to about three times this). Steep faces (40 to 55 degrees and over) weather into a bench at each bed's foot and a riser above. 0: no ledges.
+		</member>
+		<member name="cliff_ledge_strength" type="float" setter="set_cliff_ledge_strength" getter="get_cliff_ledge_strength" default="1.0">
+			How much of each bed's step the ledges draw (0..1).
+		</member>
 		<member name="climate_recipe" type="ClimateRecipe" setter="set_climate_recipe" getter="get_climate_recipe">
 			With a recipe, [method generate] bakes its climate on the result (precipitation with the rain shadow, temperature by month and height, sunshine with horizons; the sea and lakes as water, cells of about its [member ClimateRecipe.sun_cell]) and feeds the rivers from a monthly water balance: [method get_runoff_at], [method get_snow_water_at], [method get_discharge_at] and the discharges of [method get_rivers] and [method get_waterfalls]. Snowmelt floods come in spring, summer evaporation lowers the rivers, lee slopes give less. Without one, every river carries [member river_runoff]. Costs about a tenth of the generation.
 		</member>

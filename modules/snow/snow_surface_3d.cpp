@@ -38,6 +38,8 @@
 #include "snow_cover_3d.h"
 #include "snow_lake_ice_3d.h"
 
+#include "modules/world/world_contracts.h"
+
 #include "core/config/engine.h"
 #include "core/math/random_pcg.h"
 #include "core/object/class_db.h"
@@ -51,7 +53,6 @@
 #include "scene/3d/physics/static_body_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
-#include "scene/main/window.h"
 #include "scene/resources/3d/box_shape_3d.h"
 #include "scene/resources/3d/capsule_shape_3d.h"
 #include "scene/resources/3d/cylinder_shape_3d.h"
@@ -497,6 +498,12 @@ void fragment() {
 	float compact = clamp(dr.x / max(pack.r, 0.01), 0.0, 1.0);
 	float e = detail_step;
 	vec3 hd = snow_height_diff(p, e, false);
+	// Under min_depth the snow is the ground material's: where the surface sinks toward its tuck it is cut away, not
+	// left hovering millimetres over a ground it only knows at the cover's cell size (the ground's own triangles
+	// poked through it in rows of slivers, and over a step it hung down the wall in white streaks).
+	if (hd.x - snow_ground(p) < 0.5 * min_depth) {
+		discard;
+	}
 	float hx = hd.y;
 	float hz = hd.z;
 	vec2 rg = snow_ripple_grad(p) * 2.0 * e;
@@ -1960,57 +1967,29 @@ void SnowSurface3D::_notification(int p_what) {
 // threshold, fading over three days) and point with it. Where a moat or scour reaches the ground the thin snow is
 // gone (the surface drops under its min_depth there and the ground shows). The relief is a signed height over a
 // square round the follow target, rebuilt when the target leaves it or the cover updates; the stones come from the
-// rock fields (RockField3D.get_stones, every layer but the two finest detail classes, the ones on), read through
-// _read_stones so a ground contract query can take its place.
+// ground contract (WorldGround.stones_near, the rock fields' stones standing out of the ground) unless a list is
+// handed in (set_stone_list).
 
 void SnowSurface3D::_read_stones(const Rect2 &p_rect) {
 	stone.stones.clear();
 	stone.shape.clear();
 	stone.query = p_rect;
-	if (!stone.given.is_empty()) {
-		// Stones handed in (a scene's own, or a test's): x, z, ground, top, half axes x and z, yaw each.
-		const float *g = stone.given.ptr();
-		for (int i = 0; i + 6 < stone.given.size(); i += 7) {
-			if (p_rect.has_point(Vector2(g[i], g[i + 1])) && g[i + 3] - g[i + 2] >= 0.03f && MIN(g[i + 4], g[i + 5]) >= 0.01f) {
-				stone.stones.push_back(Vector4(g[i], g[i + 1], g[i + 2], g[i + 3]));
-				stone.shape.push_back(Vector3(g[i + 4], g[i + 5], g[i + 6]));
-			}
+	// Stones handed in (a scene's own, or a test's), else the ground contract's (WorldGround.stones_near: the rock
+	// fields' stones standing out of the ground). Both: x, z, ground, top, half axes x and z, yaw each.
+	PackedFloat32Array from_ground;
+	if (stone.given.is_empty()) {
+		WorldGround *wg = WorldContracts::ground();
+		if (!wg) {
+			return;
 		}
-		return;
+		from_ground = wg->stones_near(p_rect);
 	}
-	if (!is_inside_tree()) {
-		return;
-	}
-	TypedArray<Node> fields = get_tree()->get_root()->find_children("*", "RockField3D", true, false);
-	for (int f = 0; f < fields.size(); f++) {
-		Object *rf = fields[f];
-		if (!rf) {
-			continue;
-		}
-		// Rockfall to landform (0-8) and the detail pebbles (9): gravel and fines (10, 11) never stand out of a pack.
-		for (int layer = 0; layer <= 9; layer++) {
-			if (!bool(rf->call("is_layer_enabled", layer))) {
-				continue;
-			}
-			if (layer == 9 && !bool(rf->call("is_ground_detail"))) {
-				continue;
-			}
-			Array list = rf->call("get_stones", layer, p_rect);
-			for (int i = 0; i < list.size(); i++) {
-				const Dictionary d = list[i];
-				const Vector3 pos = d.get("position", Vector3());
-				const float ground = d.get("ground", pos.y);
-				const float top = d.get("top", pos.y);
-				float r = d.get("footprint", 0.0f);
-				if (r <= 0.0f) {
-					r = 0.6f * float(d.get("scale", 0.1f));
-				}
-				if (top - ground < 0.03f || r < 0.01f) {
-					continue;
-				}
-				stone.stones.push_back(Vector4(pos.x, pos.z, ground, top));
-				stone.shape.push_back(Vector3(r, r, 0.0f));
-			}
+	const PackedFloat32Array &list = stone.given.is_empty() ? from_ground : stone.given;
+	const float *g = list.ptr();
+	for (int i = 0; i + 6 < list.size(); i += 7) {
+		if (p_rect.has_point(Vector2(g[i], g[i + 1])) && g[i + 3] - g[i + 2] >= 0.03f && MIN(g[i + 4], g[i + 5]) >= 0.01f) {
+			stone.stones.push_back(Vector4(g[i], g[i + 1], g[i + 2], g[i + 3]));
+			stone.shape.push_back(Vector3(g[i + 4], g[i + 5], g[i + 6]));
 		}
 	}
 }

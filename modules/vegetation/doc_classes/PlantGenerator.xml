@@ -25,6 +25,14 @@
 				The shares of a preset's flowering stems on the day of [param season] ([member season]): [code]x[/code] none (leaves only), [code]y[/code] in flower, [code]z[/code] in seed. Use it to tell when a species' look has moved enough to generate its meshes again. Presets without a flowering window, and a season without [code]forcing[/code], give [code]Vector3(0, 1, 0)[/code].
 			</description>
 		</method>
+		<method name="get_drought_cure" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
+			<param index="1" name="season" type="Dictionary" />
+			<description>
+				The dead-tissue share summer drought gives a preset's leaves and stems on [param season] (its [code]soil_moisture[/code] and [code]temperature[/code]), the same soil-water ramp as [method GrassField3D.season_greenness]: open-ground grasses cure to straw, shallow-rooted forbs brown, deep-rooted forbs only yellow. [code]0[/code] for the evergreen shrubs, plants of wet ground, shade and the coast, in a frozen winter, and for a season without [code]soil_moisture[/code]. [method generate] applies it per plant.
+			</description>
+		</method>
 		<method name="get_pollen_amount" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />

@@ -63,7 +63,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Material detail: rills finer than the 4 m mesh, drawn by the material.*
 
-- **Rock layers and waterfalls** (`strata_enabled`, `get_waterfalls()`): hard and soft bands that rivers cut into caprock waterfalls.
+- **Rock layers and waterfalls** (`strata_enabled`, `get_waterfalls()`, `cliff_ledge_armour`): hard and soft bands that rivers cut into caprock waterfalls; cliff ledges run long and level along their beds, with gullies notching them only here and there.
 
   ![Rivers and waterfalls on a layered range, and river long profiles before and after](media/terrain-waterfalls.jpg)
 
@@ -139,7 +139,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 ## Ground
 
-- **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). In dry climates the ground breaks into patches of bare soil and plant cover by the year's rain (`climate_bare_soil`). Rock faces weather by aspect, with lichen rosettes in colonies, moss on shaded ledges and seep stripes down gullies (`tm_face_weathering`, `tm_latitude`).
+- **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). In dry climates the ground breaks into patches of bare soil and plant cover by the year's rain, and in summer-dry climates the cover cures to straw (`climate_bare_soil`, `cured_cover_color`). Rock faces weather by aspect, with lichen rosettes in colonies, moss on shaded ledges and seep stripes down gullies (`tm_face_weathering`, `tm_latitude`).
 
   ![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach, raster vs path traced](media/terrain-ground.jpg)
 

@@ -2995,6 +2995,11 @@ void SnowCover3D::advance(float p_seconds) {
 		left -= step;
 	}
 	_upload();
+	// The weather falls on the whole terrain: the world tier (the hills past the near square) takes the same time,
+	// or a fresh fall stepped here would whiten only the square round the camera.
+	if (world && !owner && !driven) {
+		advance_world(p_seconds);
+	}
 }
 
 void SnowCover3D::advance_world(float p_seconds) {
@@ -3857,7 +3862,10 @@ void SnowCover3D::_feed_spindrift() {
 		spindrift_node->set_smoke_per_kg(0.1f);
 		spindrift_node->set_max_sources(max_spindrift);
 		spindrift_node->set_divergence(0.0f);
-		spindrift_node->set_grid(2.0f, 4096); // plumes hundreds of metres long: coarser than the powder cloud's 0.75 m
+		// Plumes hundreds of metres long: coarser cells than the powder cloud's 0.75 m. At most 1024 blocks (the
+		// rockfall dust's bound): 4096 let a square full of crest plumes take some 5 GB as the gas spread, and Flow
+		// cuts a plume off at its bound rather than growing.
+		spindrift_node->set_grid(2.0f, 1024);
 		add_child(spindrift_node, false, INTERNAL_MODE_FRONT);
 	}
 	spindrift_node->feed(spindrift_sources);

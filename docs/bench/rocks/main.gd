@@ -30,7 +30,7 @@ extends Node3D
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
 #   --cell=m              with --world: the generator's cell size (8; 4 for close shore and cliff shots)
-#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=ledge with --view=cliff: the ledge slabs; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
+#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=ledge with --view=cliff: the ledge slabs; --form=ledge-run: their longest run along a lip; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
 #   --no-ground-contact   no damp ring or banked fines on the ground round the stones (for a before frame)
@@ -54,6 +54,7 @@ extends Node3D
 #   --rt-instanced        RockField3D.rt_instanced_cells on: cell stones path traced as instances (memory A/B)
 #   --mem-report          video memory at the saved frame (with the engine flag --extra-gpu-memory-tracking: by Vulkan object type)
 #   --no-close-up         the near stones keep their base shape (RockField3D.close_up_enabled off; an A/B)
+#   --prim-report         with --out: the rock MultiMeshes ranked by the triangles they draw at their LODs (perf hunts)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
 #   --salt=k              with --rock: a stand-in sea salt index (0..1) for the salt bloom; --no-salt-bloom: off
@@ -491,7 +492,7 @@ func _world() -> void:
 	gen.coast_distance = 300.0
 	gen.lake_count = 1
 	gen.strata_enabled = true
-	gen.cliff_ledge_spacing = 16.0
+	gen.cliff_ledge_spacing = float(args.get("ledge-spacing", "16"))
 	gen.scree_age = float(args.get("scree-age", "6000"))
 	gen.moraine_age = float(args.get("moraine-age", "8000"))
 	gen.detail_octaves = 5
@@ -803,6 +804,8 @@ func _world() -> void:
 					found_p = p
 		spot = found_p
 		print("pedestal spot ", spot, " ", rocks.get_pedestal_at(spot))
+		var ps := rocks.get_pedestal_spots(Rect2(spot.x - 40, spot.z - 40, 80, 80), 1.0, 2000)
+		print("pedestal spots (bare, deepest first) within 40 m: %d, first %s" % [ps.size(), ps[0] if ps.size() > 0 else Vector4()])
 	if args.has("bank-spot"):
 		# --bank-spot: a soil bank of 42 to 52 degrees (no rock exposure, not talus) 20 m or more long, for Landscape3D's
 		# bank relief; scored by how much of the bank 8 m either side along the contour is as steep.
@@ -991,6 +994,15 @@ func _world() -> void:
 		cam.position = mouth + best_dir * d
 		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, mouth.y + float(args.get("cam-up", "1.6")))
 		look = mouth + Vector3(0, float(args.get("look-height", "3")), 0)
+	if form_stone.has("run_centre") and not args.has("cam"):
+		# A run of ledge slabs raked along its lip from out in front: the slabs' fronts and the joints between them.
+		var c: Vector3 = form_stone["run_centre"]
+		var o: Vector3 = form_stone["run_out"]
+		var a: Vector3 = form_stone["run_along"]
+		var d := float(args.get("dist", str(maxf(10.0, float(form_stone["run_length"]) * 0.8))))
+		cam.position = c + (o + a * float(args.get("side", "0.7"))).normalized() * d
+		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, c.y + float(args.get("cam-up", "1.0")))
+		look = c
 	if form_stone.has("basis") and args.get("form", "") == "ledge" and not args.has("cam"):
 		# A ledge slab from out over its lip and to one side, a little under its top: the overhang and its soffit.
 		var lb: Basis = form_stone["basis"]
@@ -1146,6 +1158,8 @@ func _world() -> void:
 			_break_near(spot, land)
 		if args.has("fall"):
 			_fall_near(spot, land)
+		if args.has("ledge-fall"):
+			await _ledge_fall(rocks.get_stones(RockField3D.LAYER_CLIFF, Rect2(-800, -800, 1600, 1600)))
 		if args.has("live"):
 			_live_falls(spot, land)
 	if args.has("caves"):
@@ -1955,6 +1969,82 @@ func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool, p_
 	return r
 
 
+
+# A ledge slab fails as a cantilever (the test, and --ledge-fall with --world): the biggest slab that can fall.
+func _ledge_fall(cliff: Array) -> void:
+	# A ledge slab fails as a cantilever: cut at its root over the bench's edge, its back stays under the bench and
+	# the part out over the lip falls.
+	# (The biggest slabs first: one whose free part would start in the ground is refused, and the next is tried.)
+	var slabs := []
+	for st in cliff:
+		if int(st["family"]) == RockGenerator.FAMILY_LEDGE:
+			slabs.append(st)
+	slabs.sort_custom(func(a, b): return float(a["scale"]) > float(b["scale"]))
+	var slab: Dictionary = {}
+	var refused := 0
+	for st in slabs.slice(0, 40):
+		var p: Vector3 = st["position"]
+		var land0: Landscape3D = get_node("Landscape")
+		cam.position = p + Vector3(0, 20, 30)
+		land0.collision_enabled = true
+		land0.rebuild()
+		land0.load_all_heights()
+		rocks.collision_enabled = true
+		rocks.rebuild()
+		rocks.build_area(Rect2(p.x - 60, p.z - 60, 120, 120))
+		if rocks.trigger_rockfall(p, 0.3) != null:
+			rocks.restore_broken()
+			slab = st
+			break
+		refused += 1
+	print("ledge fall: %d of the biggest slabs refused (their free part would start in the ground)" % refused)
+	if not slab.is_empty():
+		var sp: Vector3 = slab["position"]
+		var land: Landscape3D = get_node("Landscape")
+		cam.position = sp + Vector3(0, 20, 30)
+		land.collision_enabled = true
+		land.rebuild()
+		land.load_all_heights()
+		rocks.collision_enabled = true
+		rocks.rebuild()
+		rocks.build_area(Rect2(sp.x - 60, sp.z - 60, 120, 120))
+		await get_tree().physics_frame
+		var sb: Basis = slab["basis"]
+		var fz := Vector3(sb.z.x, 0, sb.z.z).normalized()
+		for k in 4:
+			var q := sp + fz * (0.5 * k)
+			var hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(q + Vector3(0, 40, 0), q - Vector3(0, 60, 0)))
+			var land_h: float = (get_node("Landscape") as Landscape3D).get_height(q)
+			print("  ledge ground %.1f m out: collision %s, heightfield %.2f, landscape %.2f, slab centre y %.2f" % [0.5 * k, ("%.2f" % hit["position"].y) if hit else "none", gen.get_height(q), land_h, sp.y])
+		var r := await _rockfall_run(sp, 0.3, 180, true, 180)
+		check(not r.is_empty(), "ledge fall: the slab at %s loosed" % sp)
+		if not r.is_empty():
+			var node: Node3D = r["node"]
+			var held := 0
+			var fell := 0
+			var under := 0
+			var drop := 0.0
+			for i in node.get_piece_count():
+				var c: Vector3 = node.get_piece_center(i)
+				var d := sp.y - c.y
+				if node.get_piece_linear_velocity(i).length() < 0.01 and absf(d) < 2.0 * float(slab["scale"]):
+					held += 1
+					continue
+				fell += 1
+				drop = maxf(drop, d)
+				# Under the ground: below the lowest ground 3 m round (beside a cliff the height at the very spot
+				# can be the face's top).
+				var low := gen.get_height(c)
+				for k in 8:
+					low = minf(low, gen.get_height(c + Vector3(cos(k * PI / 4.0), 0, sin(k * PI / 4.0)) * 3.0))
+				if c.y < low - 1.0:
+					under += 1
+				print("  fallen piece at %s, ground there %.1f, lowest 3 m round %.1f" % [c, gen.get_height(c), low])
+			print("ledge fall: %d pieces held under the bench, %d fell, deepest %.1f m down, %d under the ground" % [held, fell, drop, under])
+			# (Known, so live rockfall leaves ledges out: the falling part drops through the collision ground.)
+			check(held > 0 and fell > 0, "ledge fall: cracked at the root, %d held, %d fell" % [held, fell])
+			print("KNOWN ledge fall: %.1f m down, %d under the ground (should be 0)" % [drop, under])
+
 func _pieces_centre(node: Node) -> Vector3:
 	var c := Vector3.ZERO
 	var n: int = node.get_piece_count()
@@ -2142,6 +2232,51 @@ func _densest(layer: int) -> Vector3:
 			print("%s at %s" % [args["form"], best["position"]])
 			form_stone = best
 			return best["position"]
+	if layer == RockField3D.LAYER_CLIFF and args.get("form", "") == "ledge-run":
+		# --view=cliff --form=ledge-run: the longest run of slabs along one lip (get_ledge_slabs), sunlit first.
+		var runs := {}
+		for s in rocks.get_ledge_slabs(Rect2(-800, -800, 1600, 1600)):
+			var r := int(s["run"])
+			if not runs.has(r):
+				runs[r] = []
+			runs[r].append(s)
+		var hist := [0, 0, 0, 0]
+		var n_sl := 0
+		for r in runs.values():
+			hist[mini(r.size(), 4) - 1] += 1
+			n_sl += r.size()
+		print("ledge slabs: %d in %d runs (1/2/3/4+ slabs: %s)" % [n_sl, runs.size(), hist])
+		if args.has("ledge-dump"):
+			var all := rocks.get_ledge_slabs(Rect2(-800, -800, 1600, 1600))
+			for s in all:
+				var nn := 1e9
+				var who := {}
+				for t in all:
+					if t != s and (t["top"] - s["top"]).length() < nn:
+						nn = (t["top"] - s["top"]).length()
+						who = t
+				print("slab %s len %.1f depth %.1f thick %.1f hang %.1f | nearest %.1f m, along-dot %.2f out-dot %.2f dy %.1f" % [s["top"], s["length"], s["depth"], s["thickness"], s["overhang"], nn, absf((who["top"] - s["top"]).normalized().dot(s["along"])), s["out"].dot(who["out"]), who["top"].y - s["top"].y])
+		var best_r := []
+		var best_sc := -1.0
+		for r in runs.values():
+			var c := Vector3()
+			for s in r:
+				c += s["top"]
+			c /= r.size()
+			var sc := float(r[0]["run_length"]) + (1000.0 if _sunlit(c + Vector3(0, 1, 0)) else 0.0)
+			if sc > best_sc:
+				best_sc = sc
+				best_r = r
+		if not best_r.is_empty():
+			var c := Vector3()
+			var o := Vector3()
+			for s in best_r:
+				c += s["front"]
+				o += s["out"]
+			c /= best_r.size()
+			form_stone = {"run_centre": c, "run_out": o.normalized(), "run_along": best_r[0]["along"], "run_length": float(best_r[0]["run_length"])}
+			print("ledge run: %d slabs, %.1f m, at %s" % [best_r.size(), best_r[0]["run_length"], c])
+			return c
 	if layer == RockField3D.LAYER_CLIFF and args.get("form", "") == "ledge":
 		# --view=cliff --form=ledge: where the ledge slabs stand thickest.
 		var ledges := []
@@ -2347,6 +2482,19 @@ func _test() -> void:
 						covered += 1
 						break
 			check(ledges > 0 and covered == mini(ledges, 40), "ledge slabs as plant obstacles: %d of %d checked have a disc over their top" % [covered, mini(ledges, 40)])
+			# get_ledge_slabs: the same slabs, grouped into runs along their lips.
+			var t1 := Time.get_ticks_msec()
+			var ls := rocks.get_ledge_slabs(wr)
+			var runs := {}
+			var longest := 0
+			for s in ls:
+				runs[int(s["run"])] = int(s["run_slabs"])
+				longest = maxi(longest, int(s["run_slabs"]))
+			var hist := [0, 0, 0, 0]
+			for r in runs.values():
+				hist[mini(int(r), 4) - 1] += 1
+			print("  ledge runs: %d slabs in %d runs (1/2/3/4+ slabs: %s), longest %d slabs" % [ls.size(), runs.size(), hist, longest])
+			check(ls.size() == ledges and longest >= 2, "get_ledge_slabs: %d slabs (get_stones %d) in %d runs, longest %d, in %d ms" % [ls.size(), ledges, runs.size(), longest, Time.get_ticks_msec() - t1])
 		check(floating == 0 and buried == 0, "%s: none floating (%d) or buried (%d)" % [LAYERS[l], floating, buried])
 	# Ground contact: the damp ring and banked fines round the stones, drawn into the map the terrain reads.
 	rocks.ground_contact = true
@@ -2741,6 +2889,7 @@ func _test() -> void:
 			rocks.live_rockfall = false
 			rocks.rockfall.disconnect(cb)
 			check(live[0] > 0, "live_rockfall: %d falls by themselves in 6 frames" % live[0])
+		await _ledge_fall(cliff)
 	# 6. Ground detail (on by default; off above for speed): every size class on the shingle beach, placed on workers
 	# while streaming as on the main thread.
 	var shore_at := _densest(RockField3D.LAYER_SHORE)
@@ -3171,6 +3320,11 @@ func _render_later() -> void:
 			print("sea cave water: %d stations over %.1f m, arch from %.1f m, level at the mouth %s, %d drawn, %d sea clip capsules" % [pts.size(), al[al.size() - 1] if al.size() > 0 else 0.0, w.get("covered_from", 0.0), str(pts[0]) if pts.size() > 0 else "-", sw.get_ribbon_count() if sw else -1, (c as CaveNetwork3D).get_water_clip_capsules().size() / 8])
 	if rocks:
 		print("rocks rt: %s (rt_instanced_cells %s)" % [str(rocks.get_rt_stats()), str(rocks.rt_instanced_cells)])
+		print("frame primitives: %d in %d draw calls" % [RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME), RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)])
+		var vp := get_viewport()
+		print("  visible pass %d primitives, %d objects; shadow passes %d primitives, %d objects" % [vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_PRIMITIVES_IN_FRAME), vp.get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_OBJECTS_IN_FRAME), vp.get_render_info(Viewport.RENDER_INFO_TYPE_SHADOW, Viewport.RENDER_INFO_PRIMITIVES_IN_FRAME), vp.get_render_info(Viewport.RENDER_INFO_TYPE_SHADOW, Viewport.RENDER_INFO_OBJECTS_IN_FRAME)])
+		if args.has("prim-report"):
+			_prim_report(rocks)
 	if args.has("mem-report"):
 		# --mem-report: video memory at the saved frame; with the engine's --extra-gpu-memory-tracking also the
 		# driver's memory by Vulkan object type (buffers, images, acceleration structures).
@@ -3306,3 +3460,61 @@ func _repetition_audit(p_rect: Rect2) -> void:
 			if absf(float(a["scale"]) / float(b["scale"]) - 1.0) < 0.15 and ang < 25.0:
 				twins += 1
 		print("repetition: layer %d, %d stones, %d with a neighbour; same shape %.1f %%, twins %.1f %%" % [lay, sts.size(), with_nb, 100.0 * same / maxf(with_nb, 1), 100.0 * twins / maxf(with_nb, 1)])
+
+
+# --prim-report: the rock MultiMeshInstance3D nodes ranked by the triangles they draw, with the LOD each one gets by
+# the renderer's rule (nearest point of the instance's AABB to the camera, model scale * lod_bias, 1 px threshold).
+func _prim_report(rocks: Node) -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var cp := cam.global_position
+	var th: float = get_viewport().mesh_lod_threshold / float(get_viewport().size.x)
+	var lodmul: float = 2.0 / cam.get_camera_projection().x.x
+	var rows := []
+	var lod_cache := {}
+	var stack: Array = [rocks]
+	while stack.size() > 0:
+		var n: Node = stack.pop_back()
+		stack.append_array(n.get_children(true))
+		if not (n is MultiMeshInstance3D) or not (n as MultiMeshInstance3D).is_visible_in_tree():
+			continue
+		var mi := n as MultiMeshInstance3D
+		var mm := mi.multimesh
+		if mm == null or mm.mesh == null:
+			continue
+		var cnt := mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count
+		var ab := mi.get_aabb()
+		ab = mi.global_transform * ab
+		var d := Vector3.ZERO.max(ab.position - cp).max(cp - ab.end).length()
+		var tris := 0
+		var lods := ""
+		var scale: float = mi.global_transform.basis.get_scale().abs().x * mi.lod_bias
+		for si in mm.mesh.get_surface_count():
+			var key := str(mm.mesh.get_rid()) + ":" + str(si)
+			if not lod_cache.has(key):
+				var sd: Dictionary = RenderingServer.mesh_get_surface(mm.mesh.get_rid(), si)
+				var ls := []
+				for l in sd.get("lods", []):
+					ls.append([l["edge_length"], (l["index_data"] as PackedByteArray).size() / (4 if sd.get("vertex_count", 0) > 65535 else 2) / 3])
+				lod_cache[key] = [sd.get("index_count", 0) / 3, ls]
+			var c: Array = lod_cache[key]
+			var t: int = c[0]
+			var li := 0
+			for k in (c[1] as Array).size():
+				var l: Array = c[1][k]
+				if l[0] * scale / max(d * lodmul, 0.0001) > th:
+					break
+				t = l[1]
+				li = k + 1
+			tris += t
+			lods += "%d/%d " % [li, (c[1] as Array).size()]
+		rows.append([tris * cnt, cnt, tris, d, lods, str(mi.name), ab.size])
+	rows.sort_custom(func(a, b): return a[0] > b[0])
+	var tot := 0
+	for r in rows:
+		tot += r[0]
+	print("prim report: %d rock instances nodes, %d triangles at their LODs (all, not culled)" % [rows.size(), tot])
+	for i in min(20, rows.size()):
+		var r: Array = rows[i]
+		print("  %12d = %6d x %7d tris, dist %.1f m, lod %s, %s, aabb %s" % r)

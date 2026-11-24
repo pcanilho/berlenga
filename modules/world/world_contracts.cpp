@@ -1309,6 +1309,19 @@ float WorldContracts::climate_bare_share_at(const Vector3 &p_position) {
 	return bare_share_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
 }
 
+float WorldContracts::cured_share_for_precipitation(float p_mm) {
+	return 1.0f - Math::smoothstep(500.0f, 1000.0f, p_mm);
+}
+
+float WorldContracts::climate_cured_share_at(const Vector3 &p_position) {
+	WeatherSeason::Climate cl;
+	const WorldWeather *w = weather();
+	if (!w || !w->season_climate(cl)) {
+		return -1.0f;
+	}
+	return cured_share_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
+}
+
 // The terrain shader's value noise (tm_vn), bit for bit: an integer hash at the lattice, smoothstep between.
 static float wc_vn_hash(const Vector3 &p_p) {
 	const uint32_t qx = uint32_t(int32_t(p_p.x));
@@ -1350,8 +1363,48 @@ float WorldContracts::climate_bare_patch_at(const Vector3 &p_position) {
 	return bare_patch(p_position, climate_bare_share_at(p_position), 0.0f);
 }
 
-String WorldContracts::climate_bare_shader_code() {
+Vector3 WorldContracts::terracette_at(const Vector3 &p_position, const Vector2 &p_gradient) {
+	const float steep = p_gradient.length();
+	const float form = Math::smoothstep(0.47f, 0.7f, steep) * (1.0f - Math::smoothstep(1.0f, 1.25f, steep));
+	if (form <= 0.0f) {
+		return Vector3();
+	}
+	const float x = p_position.x;
+	const float z = p_position.z;
+	const float sin_s = steep / Math::sqrt(1.0f + steep * steep);
+	const float rise = TERRACETTE_SPACING * sin_s;
+	const float wander = (wc_vn(Vector3(x * 0.09f + 41.0f, 5.3f, z * 0.09f)) - 0.5f) * 0.9f + (wc_vn(Vector3(x * 0.37f + 7.0f, 9.1f, z * 0.37f)) - 0.5f) * 0.25f;
+	const float v = float(p_position.y) / rise + wander * sin_s / rise;
+	const float ph = v - Math::floor(v);
+	float tread = Math::smoothstep(0.0f, 0.05f, ph) * (1.0f - Math::smoothstep(0.15f, 0.22f, ph));
+	tread *= form * Math::smoothstep(0.25f, 0.45f, wc_vn(Vector3(x * 0.05f + 13.0f, 2.9f, z * 0.05f)));
+	return Vector3(tread, ph, form);
+}
+
+String WorldContracts::terracette_shader_code() {
 	return R"(
+// WorldContracts::terracette_at: x the tread, y the phase up the step, z the slope's forming.
+vec3 wc_terracette(vec3 p, vec2 grad) {
+	float steep = length(grad);
+	float form = smoothstep(0.47, 0.7, steep) * (1.0 - smoothstep(1.0, 1.25, steep));
+	if (form <= 0.0) {
+		return vec3(0.0);
+	}
+	float sin_s = steep / sqrt(1.0 + steep * steep);
+	float rise = 3.4 * sin_s;
+	float wander = (wc_vn(vec3(p.x * 0.09 + 41.0, 5.3, p.z * 0.09)) - 0.5) * 0.9 + (wc_vn(vec3(p.x * 0.37 + 7.0, 9.1, p.z * 0.37)) - 0.5) * 0.25;
+	float ph = fract(p.y / rise + wander * sin_s / rise);
+	float tread = smoothstep(0.0, 0.05, ph) * (1.0 - smoothstep(0.15, 0.22, ph));
+	tread *= form * smoothstep(0.25, 0.45, wc_vn(vec3(p.x * 0.05 + 13.0, 2.9, p.z * 0.05)));
+	return vec3(tread, ph, form);
+}
+)";
+}
+
+String WorldContracts::climate_bare_shader_code() {
+	// WC_CLIMATE_CODE: code included before or after this (GrassField3D's turf) can tell whether these are declared yet.
+	return R"(
+#define WC_CLIMATE_CODE
 float wc_vn_hash(vec3 p) {
 	uvec3 q = uvec3(ivec3(p));
 	uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u) ^ (q.z * 2741598763u);
@@ -1369,9 +1422,9 @@ float wc_vn(vec3 p) {
 	return mix(mix(mix(wc_vn_hash(i), wc_vn_hash(i + vec3(1, 0, 0)), f.x), mix(wc_vn_hash(i + vec3(0, 1, 0)), wc_vn_hash(i + vec3(1, 1, 0)), f.x), f.y),
 			mix(mix(wc_vn_hash(i + vec3(0, 0, 1)), wc_vn_hash(i + vec3(1, 0, 1)), f.x), mix(wc_vn_hash(i + vec3(0, 1, 1)), wc_vn_hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
-// WorldContracts::bare_share_for_precipitation at p: TerrainDataMap3D's climate map (g, m a year) where it reaches,
-// else the weather's season climate (x mm a year, w 1 when set); 0 with neither.
-float wc_climate_bare(vec3 p) {
+// The year's precipitation at p, mm: TerrainDataMap3D's climate map (g, m a year) where it reaches, else the weather's
+// season climate (x mm a year, w 1 when set); -1 with neither.
+float wc_climate_mm(vec3 p) {
 	float mm = -1.0;
 	if (terrain_climate_rect.z > 0.0) {
 		vec2 uv = (p.xz - terrain_climate_rect.xy) / terrain_climate_rect.zw;
@@ -1382,7 +1435,17 @@ float wc_climate_bare(vec3 p) {
 	if (mm < 0.0 && weather_climate.w > 0.0) {
 		mm = weather_climate.x;
 	}
+	return mm;
+}
+// WorldContracts::bare_share_for_precipitation at p (0 with no climate).
+float wc_climate_bare(vec3 p) {
+	float mm = wc_climate_mm(p);
 	return mm < 0.0 ? 0.0 : 0.9 * (1.0 - smoothstep(200.0, 700.0, mm));
+}
+// WorldContracts::cured_share_for_precipitation at p, from the same climate (0 with none).
+float wc_climate_cured(vec3 p) {
+	float mm = wc_climate_mm(p);
+	return mm < 0.0 ? 0.0 : 1.0 - smoothstep(500.0, 1000.0, mm);
 }
 // WorldContracts::bare_patch: 1 bare soil, 0 cover.
 float wc_bare_patch(vec3 p, float bare, float fp) {

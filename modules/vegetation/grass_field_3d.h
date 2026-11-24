@@ -205,7 +205,12 @@ private:
 	// Summer dormancy and winter kill take whole blades down to the crown (Volaire and Norton 2006),
 	// not only their tips: the share of blades dead from the root.
 	float _dormant() const { return CLAMP((1.0f - season_green) * season_response, 0.0f, 1.0f); }
+	// The world's weather turns the sward through the year (WorldContracts::weather), with a season_source or, by
+	// default, without one (follow_weather): one weather for every system.
+	bool follow_weather = true;
+	bool _follows_season() const { return !season_source.is_empty() || follow_weather; }
 	void _season_step();
+	void _fit_tile_size(int p_cap, int p_tris);
 	float sun_mean = 0.0f; // VegetationLight::sun_mean() of the data map.
 	float color_variation = 0.5f;
 	float radius = 40.0f;
@@ -431,6 +436,9 @@ private:
 	static constexpr int LODGE_ROWS_PER_FRAME = 8;
 	bool lodging = true;
 	bool fairy_rings = true; // Meadow fairy rings (fairy_rings.h) in the blades; crops never.
+	bool deer_beds = true; // Deer beds (deer_beds.h) in the blades; crops never.
+	bool terracettes = true; // Worn treads across steep slopes in the blades; crops never.
+	float deer_bed_day = 180.0f; // The season's day the beds' ages count from (set by the season step).
 	bool snowmelt = true; // The sward after a long snow lie: matted, pale, snow mould patches (the season's snowpack by height).
 	int melt_day = -2; // The day the band table was made for.
 	float melt_h0 = 0.0f; // m, the first band's height
@@ -694,6 +702,8 @@ public:
 	float get_dryness() const { return dryness; }
 	void set_season_source(const NodePath &p_path);
 	NodePath get_season_source() const { return season_source; }
+	void set_follow_weather(bool p_on);
+	bool is_follow_weather() const { return follow_weather; }
 	void set_season_response(float p_response);
 	float get_season_response() const { return season_response; }
 	float get_season_green() const { return season_green; }
@@ -817,6 +827,17 @@ public:
 	void update_flood_map(const Vector3 &p_center) { _flood_step(p_center, true); } // Read the mark again now.
 	void set_fairy_rings(bool p_on);
 	bool is_fairy_rings() const { return fairy_rings; }
+	// WorldContracts::terracette_at, for scripts and tests: x the tread, y the phase up the step, z the slope's forming.
+	static Vector3 get_terracette_at(const Vector3 &p_global_position, const Vector2 &p_gradient);
+	void set_terracettes(bool p_on);
+	bool is_terracettes() const { return terracettes; }
+	void set_deer_beds(bool p_on);
+	bool is_deer_beds() const { return deer_beds; }
+	void set_deer_bed_day(float p_day);
+	float get_deer_bed_day() const { return deer_bed_day; }
+	// The deer bed at a point on day p_day (deer_beds.h): x how flat the grass lies (0 none), yz the way it lies, w the
+	// bed's length (m).
+	static Vector4 get_deer_bed_at(const Vector3 &p_global_position, float p_day);
 	// The fairy ring bands at a point (fairy_rings.h): x the dark front, y the dead band, z the inner dark band.
 	static Vector3 get_fairy_ring_at(const Vector3 &p_global_position);
 	bool is_lodging() const { return lodging; }

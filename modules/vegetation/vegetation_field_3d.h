@@ -533,9 +533,12 @@ private:
 	Ref<Texture2D> cover_texture;
 	struct CoverJob {
 		const PlaceSetup *setup = nullptr;
+		bool climate_bare = false; // VegetationField3D.climate_bare: the climate's bare share thins the far sward and cover plants.
 		// The grass layers, top down (cover_grass, then cover_grass_layers): rules and far colour (linear).
 		LocalVector<Ref<PlantSpecies>> grass;
 		LocalVector<Color> grass_far;
+		float dry_season = 0.0f; // 0 to 1: how far the first grass field's season is dry (its effective dryness).
+		Vector3 cured = Vector3(0.24f, 0.18f, 0.06f); // Linear: the far sward cured to straw (the first grass field's dry_color, shaded).
 		Rect2 rect;
 		int w = 0;
 		int h = 0;
@@ -642,6 +645,7 @@ private:
 	bool has_near_swap = false; // Some cells swap to near meshes (their margins follow path tracing).
 	void _set_swap_margins(bool p_traced);
 	void _lazy_near_update(const Vector3 &p_camera);
+	static real_t _lod_scale(const LocalVector<Transform3D> &p_xforms); // A plant cell's lod_bias: its biggest plant's scale.
 	void _lazy_near_drop(MultiMeshInstance3D *p_far);
 	void _lazy_near_free(LazyNear &p_cell);
 	static void _fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &p_mesh, const LocalVector<Transform3D> &p_xforms, const LocalVector<Color> &p_customs);

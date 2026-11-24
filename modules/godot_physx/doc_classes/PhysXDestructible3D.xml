@@ -13,6 +13,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="apply_plane_cut">
+			<return type="int" />
+			<param index="0" name="world_plane" type="Plane" />
+			<description>
+				Opens a crack along [param world_plane] (world space): every bond between two chunks whose centroids lie on opposite sides of the plane breaks, and no other bond or chunk is damaged. The pieces left then split as with [method apply_radial_damage], and a static node's [member anchor] decides which of them stay and which fall. For a joint or a crack that fails, such as a cantilever breaking at its root. Returns the number of pieces spawned (0 when no bond crosses the plane).
+			</description>
+		</method>
 		<method name="apply_radial_damage">
 			<return type="int" />
 			<param index="0" name="world_position" type="Vector3" />
@@ -118,7 +125,7 @@
 	</methods>
 	<members>
 		<member name="anchor" type="int" setter="set_anchor" getter="get_anchor" enum="PhysXDestructible3D.Anchor" default="0">
-			Only used when [member dynamic] is [code]false[/code]: which of the remaining pieces stay in place once the object breaks. Single-chunk debris always falls. A piece counts as held when one of its chunks touches a held outer face of the intact mesh's bounds, in the node's local axes (left/right is -X/+X, bottom/top is -Y/+Y; the front and back faces never hold). A piece that loses every held face falls, keeping its pose and velocity. See [enum Anchor].
+			Only used when [member dynamic] is [code]false[/code]: which of the remaining pieces stay in place once the object breaks. Single-chunk debris always falls. A piece counts as held when one of its chunks touches a held outer face of the intact mesh's bounds, in the node's local axes (left/right is -X/+X, bottom/top is -Y/+Y, back is -Z; the front never holds, the back only with [constant ANCHOR_BACK]). A piece that loses every held face falls, keeping its pose and velocity. See [enum Anchor].
 		</member>
 		<member name="asset_path" type="String" setter="set_asset_path" getter="get_asset_path" default="&quot;&quot;">
 			Legacy loading path: a [code].asset[/code] file (raw [code]NvBlastAsset[/code] bytes), paired with [member chunks_path]. Prefer [member blast_asset] for anything authored through the in-editor fracture dialog; this remains only for assets authored before [PhysXBlastAsset] existed as a real [Resource] type.
@@ -261,6 +268,9 @@
 		</constant>
 		<constant name="VISIBILITY_RANGE_FADE_DEPENDENCIES" value="2" enum="VisibilityRangeFadeMode">
 			Pieces this object is visually linked to (via a shared LOD group) fade together instead of independently.
+		</constant>
+		<constant name="ANCHOR_BACK" value="3" enum="Anchor">
+			Only pieces still touching the back (-Z) face stay in place. For a cantilever built into what is behind it: a balcony, a beam end, a rock ledge whose back lies under a bench. Cut through at its root, the part in front falls.
 		</constant>
 		<constant name="ANCHOR_FRAMED" value="0" enum="Anchor">
 			Pieces still touching the bottom, top, left or right edge stay in place; a piece cut free of all four falls. For a wall that is part of a building, a door, a window or a panel in a frame: its upper part can hang from the frame, but a chunk punched out of the middle drops.

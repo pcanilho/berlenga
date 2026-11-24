@@ -823,9 +823,11 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		// A ledge slab: the hard caprock bed over a weaker one that weathers back faster, left standing out as a
 		// cantilever until it breaks off along its joints (differential erosion; Lamb and Dietrich 2009 for the
 		// toppling of the joint blocks). x: along the lip, between two cross joints; y: the bed's thickness; z: out
-		// over the lip (+z), the back half under the bench. As thick as a fifth to two fifths of its depth.
-		a = 1.5f + 1.1f * rng.randf();
-		c = 0.17f + 0.23f * rng.randf();
+		// over the lip (+z), the back half under the bench. The joints of a bed, both sets, stand about one to three
+		// bed thicknesses apart (joint spacing scales with bed thickness: Ladeira and Price 1981, Narr and Suppe
+		// 1991): a lip reads as a run of joint blocks, not one long beam, each as deep as a narrow bench holds.
+		c = 0.33f + 0.37f * rng.randf();
+		a = MAX(0.55f, c * (1.4f + 1.6f * rng.randf()));
 	}
 	const bool landform = family == FAMILY_HOODOO || family == FAMILY_PAVEMENT || family == FAMILY_FIN || family == FAMILY_POTHOLE || family == FAMILY_GOBLIN || family == FAMILY_CAVE_MOUTH;
 	const bool upright = family == FAMILY_SEA_STACK || family == FAMILY_HOODOO || family == FAMILY_GOBLIN; // stood on end in the field: beds cross x

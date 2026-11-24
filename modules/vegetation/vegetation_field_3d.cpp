@@ -3535,6 +3535,18 @@ void VegetationField3D::_fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &
 // Near meshes on demand. Within 1.2 x near_range a far cell asks its source for the near mesh
 // every frame until it has it, then gets its near cell with the same crossfade as eager near
 // meshes; beyond 1.5 x the near cell is freed (and the source may free the mesh).
+// A cell's lod_bias: its biggest plant's scale. The renderer picks a MultiMesh's mesh LOD by the node's own scale
+// only, not the instances' (a plant scaled 2.2 took the LOD of one at 1, coarser than its size on screen needs);
+// by the biggest, no plant in the cell gets a coarser one than its size calls for (as the rock cells do).
+real_t VegetationField3D::_lod_scale(const LocalVector<Transform3D> &p_xforms) {
+	real_t s = 0.0;
+	for (const Transform3D &x : p_xforms) {
+		const Vector3 k = x.basis.get_scale_abs();
+		s = MAX(s, MAX(k.x, MAX(k.y, k.z)));
+	}
+	return MAX(s, real_t(0.001));
+}
+
 void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 	// Ice storms (trees.md 5be): the glaze over each near cell (WorldWeather.glaze_at, read twice a second), in bands; a
 	// near mesh grows its band's ice as geometry, and a cell whose band changes gets a new near cell once it is built
@@ -3560,6 +3572,7 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 		_fill_cell(mm, p_mesh, c.xforms, c.customs);
 		const float margin = impostors_traced ? 0.0f : MAX(c.range * 0.1f, 1.0f);
 		c.near = memnew(MultiMeshInstance3D);
+		c.near->set_lod_bias(_lod_scale(c.xforms));
 		c.near->set_name(String(c.far->get_name()) + "_Near");
 		c.near->set_multimesh(mm);
 		c.near->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
@@ -3786,6 +3799,7 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 					VegetationDetail::trace_instanced(mm);
 				}
 				MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+				mmi->set_lod_bias(_lod_scale(bx));
 				mmi->set_name(cells > 1 || hull_pass ? vformat("Plants%s_%d_%d_%d_%d_%d", near_pass ? "Near" : (hull_pass ? "Hull" : ""), s, v, tx, tz, b) : vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
 				mmi->set_multimesh(mm);
 				if (near_mesh.is_valid() && !hull_pass) {
@@ -5082,12 +5096,30 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 			grass += Vector3(fr, fg, fb) * (gl * bare);
 			bare *= 1.0f - gl;
 		}
-		const float g = 1.0f - bare;
+		float g = 1.0f - bare;
 		if (g > 0.0f) {
 			grass /= g;
 		}
-		const float ground_a = 1.0f - (1.0f - g) * (1.0f - a_plants);
-		Vector3 ground = ground_a > 0.0f ? (grass * (g * (1.0f - a_plants)) + plants * a_plants) / ground_a : Vector3();
+		// Drylands (climate_bare, WorldContracts::bare_patch): the sward and cover plants keep to their clumps, so from
+		// afar the ground shows the bare share between them (the patches' mean, as the terrain material draws it).
+		float a_cover = a_plants;
+		if (job.climate_bare) {
+			const float share = WorldContracts::climate_bare_share_at(p);
+			if (share > 0.0f) {
+				g *= 1.0f - share;
+				a_cover *= 1.0f - share;
+			}
+			// The climate's dry-season cured share (WorldContracts::climate_cured_share_at, the terrain's cured soil
+			// cover and GrassField3D's turf) in the dry season: the far sward straw, the cover plants partly (the evergreen
+			// shrubs among them keep green). The grass fields' far colours carry the season's own dryness already.
+			const float cured = WorldContracts::climate_cured_share_at(p) * job.dry_season;
+			if (cured > 0.0f) {
+				grass = grass.lerp(job.cured, 0.9f * cured);
+				plants = plants.lerp(job.cured * job.plant_shade, 0.5f * cured);
+			}
+		}
+		const float ground_a = 1.0f - (1.0f - g) * (1.0f - a_cover);
+		Vector3 ground = ground_a > 0.0f ? (grass * (g * (1.0f - a_cover)) + plants * a_cover) / ground_a : Vector3();
 		const float a = 1.0f - (1.0f - ground_a) * (1.0f - closure);
 		const Vector3 col = a > 0.0f ? (ground * (ground_a * (1.0f - closure)) + crown * closure) / a : Vector3();
 		uint8_t *o = job.out + (int64_t(p_row) * job.w + x) * 4;
@@ -5108,6 +5140,7 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 	// The plants' share carries the far match's darkening (vegetation_far_shade), as vegetation_far()
 	// gives it to the same plants nearer: the grass and crowns have their own far colours.
 	job.plant_shade = far_shade;
+	job.climate_bare = climate_bare;
 	cover_shade = far_shade;
 	job.rect = p_setup.rect;
 	job.w = CLAMP(int(Math::ceil(job.rect.size.x / cover_cell)), 1, 4096);
@@ -5130,6 +5163,12 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 		}
 		job.grass.push_back(rules);
 		job.grass_far.push_back(grass->get_far_color());
+		if (job.grass_far.size() == 1) {
+			const Color d = grass->get_dry_color().srgb_to_linear() * 0.8f;
+			job.cured = Vector3(d.r, d.g, d.b);
+			// The dry season by the sward's own dryness (its turf's gate, get_ground_shader_code()).
+			job.dry_season = Math::smoothstep(0.3f, 0.7f, grass->get_effective_dryness());
+		}
 		// The grass measures its far colour from a render a few frames in: the map follows it.
 		const Callable on_far = callable_mp(this, &VegetationField3D::_on_grass_far_color);
 		if (!grass->is_connected(SNAME("far_color_changed"), on_far)) {

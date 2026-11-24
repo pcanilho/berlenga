@@ -1363,3 +1363,65 @@ engine build, so each built shape (ImporterMesh surface data plus its meta, mate
 stored in the world cache (`rock_shape_*`) and reloaded with the shared rock material. Close-ups and
 fracture pieces are not cached. Same bench view, cold vs warm: shape libraries 10.8 s to 0.6 s, frames
 byte-identical. Turning the world cache off restores the old path.
+
+## Ledge slab runs and get_ledge_slabs (24 Nov)
+
+Slabs were beams up to 15 bed thicknesses long and 6 deep, so a lip held one, and benches narrower than its depth
+held none. Joint spacing scales with bed thickness, about one to three thicknesses for both sets (Ladeira and Price
+1981, Narr and Suppe 1991), so the slab family now has both its length and depth in that range. A slab also tilts
+with the bench's fall along the lip, is drawn back from the lip a third of its hang at a time where the bench bends,
+and tries the shortest joint block before giving up. About half the lip points the terrain reports still seat none:
+there the ground falls a metre or more per metre along the "lip" (a steep face, not a bench), so the slab is left out.
+RockField3D.get_ledge_slabs(rect) lists the placed slabs with their top, front edge, along/out directions, size and
+run (slabs end to end along one lip); the bench's `--view=cliff --form=ledge-run` frames the longest run.
+
+## Pedestals on the shared bare patches (24 Nov)
+
+_rain_soil spread the climate's bare share evenly, so stones stood on pedestals in meadow that the plants and the
+terrain material drew as sward. It now reads the shared pattern (WorldContracts::bare_patch with the share at the
+point, the same as climate_bare_patch_at): a pedestal only on bare soil patches, each soil stone checked at its own
+spot. get_pedestal_spots(rect, step, max) lists bare spots, deepest splash first, for framing.
+
+## Falling ledges (24 Nov)
+
+Technique: cantilever failure. An undercut caprock slab fails at its root over the bench's edge, where the bending
+moment is greatest, along a joint or the stress-release crack behind the lip, and the part out over the lip topples
+and falls (Young and Ashford 2008 for notched sea cliffs; Stock et al. 2012 for Yosemite's slab and cantilever
+failures; Lamb and Dietrich 2009 for toppling joint blocks). Ledge slabs now join live rockfall. A failing slab is
+swapped for its Blast pieces as a static destructible held at its back face (PhysXDestructible3D ANCHOR_BACK, new),
+and a crack is opened across it over the bench's edge (PhysXDestructible3D.apply_plane_cut, new: exactly the bonds
+between chunks on opposite sides of the plane break). The back stays under the bench; the front is cut free, falls
+under PhysX as one piece, breaks where it lands by the usual impact rule and raises the rockfall dust. Where its
+underside starts in the face below the lip it eases out (max depenetration 1 m/s) rather than leaping.
+
+Later the same day: slabs need a real edge (the ground in front of the lip a cap's thickness down, past the most a
+slab hangs), slide along the lip to abut a neighbour instead of being dropped, and a run follows the bed's dip. A
+slab whose free part would start in the ground is never loosed. The rain-pedestal bare check reads the climate's
+precipitation captured on the main thread (the weather provider is a node; workers read only the factor map).
+
+Open (24 Nov, evening): measured with the bench's `--ledge-fall` probe, the ground under a slab's free part is the
+face below the lip at about 60 degrees, and its collision (the landscape, heightfield plus relief) stands over the
+free part's middle: the relief draws the soffit's undercut for the eye but no heightfield can hold it, so the freed
+part starts inside the one-sided surface and falls through it. A slab now falls only where its free part's middle
+starts in the air (on the bench world the 8 biggest are refused, the 9th is loosed); live rockfall leaves ledges out. Falling
+ledges need collision for the undercut (for example a soffit collision strip along the lips from the terrain side).
+
+## Close-up shapes get LODs (24 Nov)
+
+A 480 px raster frame over a talus field drew 238M primitives on the rocks bench (658M in the showcase scene). The
+`--no-close-up` A/B drew 9.2M: the close-up shapes (millimetre fabric, within close_up_radius of the follow target)
+were built without LODs, so every stone near the player drew its full grid in the main pass and in every shadow
+cascade, however small it was on screen. They now get mesh LODs like the base shapes (the renderer's 1 px rule, so
+full detail wherever a pixel shows it), and every rock MultiMesh takes its biggest stone's scale as its lod_bias
+(the shapes are built a unit across and the renderer does not see the instance scale). Same bench frame: 11.2M
+primitives, image difference at the run-to-run noise (4.6% of pixels over 8/255 against 4.2% between two runs of
+the old build). The path tracer keeps full meshes (rendering/pathtracing/mesh_lod off). Tried and dropped: splitting
+heavy cell groups into 8 m clusters (no gain, twice the draw calls). `--prim-report` lists the heaviest MultiMeshes.
+
+## River bed stones off the line (24 Nov)
+
+A narrow steep rill (well under a metre wide, cobbles of 20 to 30 cm) laid its coarse stones in a band 0.6 of its width
+either side of the line, so they ran single file and evenly spaced along each straight polyline segment, like stepping
+stones. Now the band is at least three medians wide (the bed's coarse grains sit side by side), the stones keep to the
+riffles (the detail bed's riffle phase, about six widths apart; pools between hold few) and gather about a thalweg
+that swings from bank to bank at twice the riffle spacing (alternate bars). Same count per segment on average.

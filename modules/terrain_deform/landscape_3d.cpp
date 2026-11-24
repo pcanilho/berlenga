@@ -304,6 +304,18 @@ static inline float _lc_noise(const Vector3 &p) {
 	return Math::lerp(a, b, float(f.z));
 }
 
+Vector3 Landscape3D::_normal_central(int p_x, int p_z) const {
+	const real_t sx = 0.5f * (_h(p_x + 1, p_z) - _h(p_x - 1, p_z));
+	const real_t sz = 0.5f * (_h(p_x, p_z + 1) - _h(p_x, p_z - 1));
+	return Vector3(-sx, spacing, -sz).normalized();
+}
+
+Vector3 Landscape3D::_normal_central_at(real_t p_x, real_t p_z) const {
+	const int x = int(Math::floor(p_x)), z = int(Math::floor(p_z));
+	const real_t u = p_x - x, v = p_z - z;
+	return (_normal_central(x, z) * (1 - u) * (1 - v) + _normal_central(x + 1, z) * u * (1 - v) + _normal_central(x, z + 1) * (1 - u) * v + _normal_central(x + 1, z + 1) * u * v).normalized();
+}
+
 Vector3 Landscape3D::_normal_at(real_t p_x, real_t p_z) const {
 	const int x = int(Math::floor(p_x)), z = int(Math::floor(p_z));
 	const real_t u = p_x - x, v = p_z - z;
@@ -876,8 +888,12 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	norms.resize(base.size());
 	cus0.resize(base.size() * 4);
 	cus1.resize(base.size() * 4);
-	PackedFloat32Array cus2; // CUSTOM2.x: the joint steps' scale (_joint_offset)
-	cus2.resize(base.size());
+	// CUSTOM2.x: the joint steps' scale (_joint_offset); .yzw: the heightfield's central-difference normal, for the
+	// material's texture projection only. The ENO normals (_normal) take the flatter side at a kink, so on a wall one
+	// cell across both its rows get flat normals and the material projected its textures from above down the whole
+	// face (long vertical smears); the central difference sees the wall.
+	PackedFloat32Array cus2;
+	cus2.resize(base.size() * 4);
 	Vector3 *vp = verts.ptrw();
 	Vector3 *nw = norms.ptrw();
 	float *c0 = cus0.ptrw();
@@ -899,7 +915,11 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 			c1[i * 4 + 1] = nb.y;
 			c1[i * 4 + 2] = nb.z;
 			c1[i * 4 + 3] = ml < 1e-4f ? 0.0f : float(_bank_scale(p, bank_relief * w.y * keep[i], ml / MAX(nb.y, real_t(1e-3))));
-			c2[i] = ml < 1e-4f ? 0.0f : float(cliff_relief * w.x * keep[i]);
+			c2[i * 4 + 0] = ml < 1e-4f ? 0.0f : float(cliff_relief * w.x * keep[i]);
+			const Vector3 np = _normal_central_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
+			c2[i * 4 + 1] = np.x;
+			c2[i * 4 + 2] = np.y;
+			c2[i * 4 + 3] = np.z;
 		}
 		if ((w.x <= 0.0 && w.y <= 0.0) || keep[i] <= 0.0) { // the weights reach past 40 degrees now (_relief_weights_at)
 			nw[i] = nb;
@@ -987,7 +1007,7 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 						for (int f = 1; f < 3; f++) {
 							const int u = tris[t + (e + f) % 3];
 							sum_d[v] += vp[u] - (base[u] - corner);
-							sum_c[v] += Vector4(c0[u * 4 + 3], c1[u * 4 + 3], c2[u], 0.0f);
+							sum_c[v] += Vector4(c0[u * 4 + 3], c1[u * 4 + 3], c2[u * 4], 0.0f);
 							cnt[v] += 1.0;
 						}
 					}
@@ -998,7 +1018,7 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 						const Vector4 cc = sum_c[i] / cnt[i];
 						c0[i * 4 + 3] = cc.x;
 						c1[i * 4 + 3] = cc.y;
-						c2[i] = cc.z;
+						c2[i * 4] = cc.z;
 						moved[i] = 1;
 					}
 				}
@@ -1008,7 +1028,7 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 						vp[i] = (base[i] - corner) + (vp[i] - (base[i] - corner)) * 0.6f;
 						c0[i * 4 + 3] *= 0.6f;
 						c1[i * 4 + 3] *= 0.6f;
-						c2[i] *= 0.6f;
+						c2[i * 4] *= 0.6f;
 						moved[i] = 1;
 					}
 				}
@@ -1056,7 +1076,7 @@ void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
 	arrays[RSE::ARRAY_CUSTOM1] = cus1;
 	arrays[RSE::ARRAY_CUSTOM2] = cus2;
 	arrays[RSE::ARRAY_INDEX] = ia;
-	const uint64_t cflags = (uint64_t(RSE::ARRAY_CUSTOM_RGBA_FLOAT) << RSE::ARRAY_FORMAT_CUSTOM0_SHIFT) | (uint64_t(RSE::ARRAY_CUSTOM_RGBA_FLOAT) << RSE::ARRAY_FORMAT_CUSTOM1_SHIFT) | (uint64_t(RSE::ARRAY_CUSTOM_R_FLOAT) << RSE::ARRAY_FORMAT_CUSTOM2_SHIFT);
+	const uint64_t cflags = (uint64_t(RSE::ARRAY_CUSTOM_RGBA_FLOAT) << RSE::ARRAY_FORMAT_CUSTOM0_SHIFT) | (uint64_t(RSE::ARRAY_CUSTOM_RGBA_FLOAT) << RSE::ARRAY_FORMAT_CUSTOM1_SHIFT) | (uint64_t(RSE::ARRAY_CUSTOM_RGBA_FLOAT) << RSE::ARRAY_FORMAT_CUSTOM2_SHIFT);
 	RS::get_singleton()->mesh_create_surface_data_from_arrays(&r_job.surface, RSE::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), cflags);
 	r_job.triangles = int(tris.size() / 3);
 }

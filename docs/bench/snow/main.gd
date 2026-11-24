@@ -711,6 +711,8 @@ func _run_spindrift_tests() -> void:
 	_check("stronger wind, far more snow (flux about u^4)", storm[0] > 2.5 * gale[0], "%.1f kg/s at 26 m/s against %.1f at 18" % [storm[0], gale[0]])
 	var cloud: SnowPowderCloud3D = snow.get_spindrift()
 	_check("the plume is a Flow gas fed from the crest", cloud != null and (not ClassDB.class_exists("PhysXFlow3D") or (cloud.has_flow() and cloud.get_active_sources() == (storm[1] as Array).size())), "%s, %d emitters" % ["flow" if cloud and cloud.has_flow() else "no flow", cloud.get_active_sources() if cloud else 0])
+	var blocks := int(cloud.get_flow().get("max_blocks")) if cloud != null and cloud.has_flow() else 0
+	_check("the plume's Flow grid is bounded (memory cannot run away)", not ClassDB.class_exists("PhysXFlow3D") or (blocks > 0 and blocks <= 1024), "%d max blocks" % blocks)
 	_check("drier air thins it sooner (sublimation)", SnowCover3D.spindrift_fade(0.4) > 2.0 * SnowCover3D.spindrift_fade(0.95), "%.3f /s at 40%%, %.3f at 95%%" % [SnowCover3D.spindrift_fade(0.4), SnowCover3D.spindrift_fade(0.95)])
 	var wet: Array = await _spindrift_at(26.0, 2.0)
 	_check("no plume from wet snow", wet[0] == 0.0, "%.2f kg/s at +2 C" % wet[0])
@@ -1051,6 +1053,19 @@ func _run_stone_tests() -> void:
 	snow.advance(60.0)
 	surface.rebuild_stone_relief()
 	_check("a fresh snowfall resets the sun's dose", snow.get_sun_dose_at(at) < 0.5, "%.2f kWh/m2 after 5 cm" % snow.get_sun_dose_at(at))
+	# With no list handed in the stones come from the ground contract (WorldGround.stones_near).
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nvar list := PackedFloat32Array()\nfunc _stones_near(r: Rect2) -> PackedFloat32Array:\n\treturn list\n"
+	stub.reload()
+	var wg: WorldGround = stub.new()
+	var g3 := snow.get_ground_height_at(at)
+	wg.set("list", PackedFloat32Array([at.x, at.z, g3, g3 + 0.8, 0.45, 0.3, 0.4]))
+	WorldContracts.set_ground(wg)
+	surface.set_stone_list(PackedFloat32Array())
+	surface.rebuild_stone_relief()
+	var from_contract := surface.get_stone_relief_count()
+	WorldContracts.clear_overrides()
+	_check("with no list given, the stones come from the ground contract", from_contract == 1, "%d stones from WorldGround.stones_near" % from_contract)
 
 
 func _run_wall_tests() -> void:
@@ -3188,17 +3203,36 @@ func _run_climate_tests() -> void:
 	east /= maxf(east_n, 1)
 	west /= maxf(west_n, 1)
 	_check("the lee (east) gains against the windward (west)", east > west * 1.1, "%.0f mm against %.0f mm at 300-600 m" % [east, west])
-	# The near square starts from the world tier where it arrives.
+	# The near square starts from the world tier where it arrives (the world as it was: advance steps it too, and
+	# takes the near square's cells back into it).
+	var seed_pts := [Vector3(100, 0, 100), Vector3(-150, 0, 60), Vector3(40, 0, -200)]
+	var seed_w := []
+	for q in seed_pts:
+		seed_w.append(snow.get_world_swe_at(q))
 	snow.advance(1.0)
 	var ok_seed := true
 	var worst := 0.0
-	for q in [Vector3(100, 0, 100), Vector3(-150, 0, 60), Vector3(40, 0, -200)]:
+	for k in seed_pts.size():
+		var q: Vector3 = seed_pts[k]
 		var a := snow.get_swe_at(q)
-		var w := snow.get_world_swe_at(q)
+		var w: float = seed_w[k]
 		worst = maxf(worst, absf(a - w) / maxf(w, 1.0))
 		if absf(a - w) > 0.1 * maxf(w, 10.0):
 			ok_seed = false
 	_check("the near square starts from the world tier", ok_seed, "largest difference %.1f%%" % (worst * 100.0))
+	# A fall stepped with advance() lands on the world tier too (the hills past the near square), not only near.
+	var fall_q := Vector3(1500, 0, 1500)
+	var far0 := snow.get_world_swe_at(fall_q)
+	weather.temperature = -8.0
+	weather.cloud_cover = 1.0
+	weather.rain_rate = 3.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(3600.0)
+	weather.rain_rate = 0.0
+	weather.snap_to_settings()
+	var far1 := snow.get_world_swe_at(fall_q)
+	_check("a fall stepped with advance() reaches the world tier", far1 > far0 + 0.5, "%.1f -> %.1f mm at %s, outside the near square %s" % [far0, far1, str(fall_q), str(snow.get_map_rect())])
 	_check("the world tier is up for materials", snow.has_world() and snow.get_world_texture() != null and snow.get_world_rect().size.x >= 4096.0, "world rect %s" % str(snow.get_world_rect()))
 	# Two-way: what the square does goes back to the world tier under it (fresh snow here), and not beyond.
 	var fq := snow.global_position + Vector3(37.0, 0, -51.0)
@@ -3298,8 +3332,7 @@ func _run_melt_runoff_tests() -> void:
 	weather.temperature = 14.0
 	weather.snap_to_settings()
 	for h in 4:
-		snow.advance(3600.0)
-		snow.advance_world(3600.0)
+		snow.advance(3600.0) # (the world tier with it)
 	weather.advance(60.0)
 	var cs := weather.extent / weather.resolution
 	var best := Vector3.ZERO

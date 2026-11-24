@@ -2165,3 +2165,86 @@ own patches (`tm_bare_patch`, Rietkerk et al. 2004) bit for bit, the share from 
 - Check: vegetation `--test=bare` (300 mm keeps about 0.17 of the cover plants, trees unchanged; 900 mm unchanged).
 - Still on the terrain side: its `grass_ground()` tint and `vegetation_far()` draw over its own bare patches; the
   terrain material can skip them by its `tm_bare_k` and switch to the shared GLSL.
+
+## Deer beds (GrassField3D.deer_beds, deer_beds.h)
+Where deer lie up in tall grass they leave ovals of flattened grass, roe about 1 m long, red about 1.5 m, in hay
+meadows and field edges, often several together (Discover Wildlife); water deer beds average 60 x 40 cm (Wildlife
+Online; not modelled). Built like the fairy rings: one world layout in C++ and GLSL, so the blades, tests and any
+other system agree with no textures or rebuilds.
+- Layout: a bedding site in four in ten 32 m cells (about 3.9 a hectare, an estimate), 1 to 3 beds within 2.6 m
+  of its centre; roe-sized beds (0.9 to 1.2 m) at most sites, red-sized (1.3 to 1.7 m) at three in ten. Beds are
+  ovals 0.62 as wide as long.
+- Time: each bed is lain in again every 6 to 14 days (its own period and phase) and stands up over about ten days
+  (an estimate), by the season's day and hour (GrassField3D sets deer_bed_day in its season step).
+- Blades: inside the oval most lie flat (the rest half up), swirled the way the deer turned and pressed out from the
+  middle, a little shorter; the share and lean fade as the bed recovers. Not in mown meadows, lawns under 12 cm or
+  crops.
+- Not yet: placement by deer presence (WorldStand browse, trails, cover edges) and pellet piles at one end; the
+  layout is the same everywhere a meadow grows.
+- Checks: vegetation `--test=deer` (size, area a hectare, recovery). View: grass `--deer-bed` (GRASS_DEER_DAY=D).
+
+## Dry climates: dormant straw and open cover (follow_weather, cover map)
+The scene's 320 mm, 26 C July landscape still read as closed green turf. Semi-arid grassland is open and, in a dry
+summer, dormant: perennial cover follows the year's rain (Le Houerou 1984: the contract's bare share, 0.77 at 320 mm)
+and Mediterranean perennial grasses go summer-dormant, dead to the crown, once the soil dries (Volaire and Norton
+2006, already the sward's dormancy rule: greenness from the season's Thornthwaite-Mather soil moisture).
+- GrassField3D.follow_weather (default on): the world's weather turns the sward through the year without a
+  season_source too (before, a scene had to set one; the landscape did only with --summer-dry), so a dry summer
+  browns it to straw and lays the dormant blades over. One weather for every system.
+- VegetationField3D cover map (climate_bare): the far sward and cover plants take (1 - bare share) of their cover,
+  so past the blades the ground shows the patchwork's mean, as the terrain material does at a distance.
+
+## Drought curing of the cover plants (PlantGenerator.get_drought_cure)
+The landscape's dry gully (320 mm, 26 C July, soil moisture 0.007) still showed green clumps among the straw: the
+sward followed the weather, but the cover species (VegetationField3D, made by PlantGenerator with the weather's season)
+had no drought response at all, only flowering and autumn senescence. In a dry summer the open-ground grasses go
+summer-dormant and cure to straw (Volaire and Norton 2006), shallow-rooted forbs wilt and brown, deep-rooted forbs
+(taproots) stay green longest; the degree of curing is what grassfire danger rates on (Cheney and Sullivan,
+Grassfires, CSIRO 2008). Evergreen sclerophyll shrubs (rosemary, lavender, thyme, heaths) hold their leaves through
+drought, Cistus only sheds to smaller greyer summer leaves; plants of wet ground keep their local water.
+- Cure share = reach x (1 - smoothstep(0.1, 0.4, soil moisture)) x smoothstep(2, 8, temperature): the sward's own
+  soil-water ramp, so clumps and sward cure together; a frozen soil's low water is winter, not drought.
+- Reach (the shader's dead tissue, vertex alpha): grasses 0.62 (straw), shallow-rooted forbs and bracken 0.75
+  (browning), deep-rooted forbs 0.45 (yellowing), sage-leaved rock-rose 0.2; each plant x0.75 to x1.2 (soil depth).
+  Everything else 0. Estimates, tuned to read as straw in the shader's yellow-to-brown ramp.
+- GrassField3D applies the season on its first frame (it was one frame late; fields built at the end of a scene's
+  setup showed green in a shot taken that frame).
+
+## Grass tiles fit the path tracer's merged BLAS cap
+A GrassField3D tile over rendering/pathtracing/multimesh_merged_blas_max_triangles traces as one TLAS record per
+blade. The field now cuts its tiles smaller to fit (to the half metre under sqrt(cap / (density x tris))), the same
+blades in more tiles: the landscape's 220 blades/m2, 7-triangle "Grass" goes from 8 m (98,560 triangles) to 6.5 m
+(65,065). It was a warning asking the scene to set tile_size.
+
+## Cured turf and far cover (the shared cured contract)
+Terrain's cured cover (WorldContracts::cured_share_for_precipitation, GLSL wc_climate_cured: 1 below 500 mm a year,
+0 above 1000) turned the soil straw in dry climates, but where the sward and the cover plants grow they drew green
+over it: the turf under the blades (GrassField3D.get_ground_shader_code(), grass_turf) and the far cover map
+(VegetationField3D) had no cure.
+- Turf: cured share = max(the field's season dryness, smoothstep 0.45 to 0.95 of the blades' dryness, so turf and
+  blades cure together; the climate's cured share at the point). The turf goes to the blades' dry_color (to linear),
+  shaded at the base, in drifts; a deer lawn keeps more green. Past the blades the far bake already carries the
+  season's dryness; the climate's share is laid over it and the undercoat's far colour.
+- The climate share is used where the shared climate code is declared before the turf code (WC_CLIMATE_CODE, set by
+  WorldContracts::climate_bare_shader_code()): the grass far shell now includes it first. The terrain material
+  includes the turf code before the contract code, so there the turf cures by the season only until that order flips.
+- Far cover map: the sward's colour 0.9 x and the cover plants' 0.5 x (the evergreen shrubs among them keep green)
+  towards the first grass field's dry_color by the climate's share. Floor plants' far colours carry their drought cure
+  (PlantGenerator.get_drought_cure, the shader's yellow-to-brown ramp mirrored on the CPU).
+
+## Terracettes (GrassField3D.terracettes)
+Steep grazed hillsides carry sub-parallel steps along the contours (Wikipedia, "Terracette"). A grazing model
+(Seleb, Chatterjee and Bhamla 2025, arXiv 2504.17496) forms them from stock walking cross-slope routes and treads
+to save vertical work and grazing the risers between; the bands grow regular with slope (coherence 0.75 at 20
+degrees, 0.92 at 40) at a mean spacing of about 3.38 m (their model, not field measurements); adjacent steps are
+joined by short ramps. Tread width and riser height are not given there (Howard and Higgins 1987 has field
+dimensions; not read).
+- Built in the blade shader from the data map's heights: from about 25 degrees, gone past about 50; bands by
+  height, 3.4 m apart along the slope, wandering a few decimetres and fading out in places (paths end, stock cut
+  across). Each tread (a fifth of the step, an estimate) loses seven in ten blades, the rest short turf; the risers
+  stand a little taller. The ground under the treads keeps the turf tint (a worn-ground tint there would be the
+  ground material's). The steps' relief is the terrain's (not built here).
+- One layout for sward and ground: `WorldContracts::terracette_at(p, gradient)` (CPU) and `terracette_shader_code()`
+  (GLSL `wc_terracette`, after `climate_bare_shader_code()`): x tread, y phase up the step, z the slope's forming.
+  GrassField3D.get_terracette_at exposes it. Check: vegetation `--test=deer` (none at 15 degrees, 3.4 m at 35).
+- View: grass `--steep` (GRASS_TERRACETTES=0 the before frame).

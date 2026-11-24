@@ -186,7 +186,10 @@ void library_job(void *p_userdata, uint32_t p_index) {
 	g->set_transport_distance(job.transport);
 	g->set_detail(job.detail);
 	g->set_close_up(job.close_up);
-	g->set_lods(!job.close_up && job.fracture == 0); // a close-up shape only draws within close_up_radius
+	// Close-up shapes get LODs too: they draw within close_up_radius of the follow target, which a far or high camera
+	// sees at a few pixels a stone; full detail wherever a pixel can show it (the renderer's 1 px rule), the coarser
+	// levels only below that, in the main and the shadow passes alike.
+	g->set_lods(job.fracture == 0);
 	g->set_fracture_pieces(job.fracture);
 	g->set_marks_scale(job.marks_scale);
 	// The world cache (world_cache.h): a library shape is the same bytes from the same inputs (and the same
@@ -1280,10 +1283,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 		} break;
 		case LAYER_RIVER: {
 			_prepare_rivers();
-			for (const River &rv : rivers) {
+			for (uint32_t r = 0; r < rivers.size(); r++) {
+				const River &rv = rivers[r];
 				if (!rv.bounds.grow(20.0).intersects(p_rect)) {
 					continue;
 				}
+				// The riffles' phase along this river, as _river_segments gives the detail bed.
+				const float phase = float(hash_murmur3_one_32(r * 7919u + 17u) & 0xffffu) / 65536.0f * float(Math::TAU);
 				const float labr = RockGenerator::get_lithology(rv.head_type).abrasion_length;
 				for (uint32_t i = 0; i + 1 < rv.points.size(); i++) {
 					const Vector3 a = rv.points[i], b = rv.points[i + 1];
@@ -1315,12 +1321,28 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 					const float round = 1.0f - Math::exp(-(dist + 300.0f) / labr);
 					const int bin = round < 0.4f ? 0 : (round < 0.8f ? 1 : 2);
 					const float area = len * w * 1.2f;
+					// The count over the bed's real width; laid over a bed at least three medians wide, so a rill
+					// narrower than its stones does not string them out single file along its line (a bed's
+					// coarse grains sit side by side across it).
+					const float we = MAX(w, 3.0f * d50);
+					// Two tries per stone kept: the riffles keep the coarse ones, the pools between them about six
+					// widths apart hold few (Leopold, Wolman and Miller 1964; the detail bed's riffles, same phase),
+					// so the stones come in clusters, not at an even spacing.
 					const float want = 0.45f * area * float(density) / (float(Math::PI) * 0.25f * d50 * d50 * 1.4f);
-					const int count = MIN(int(want), max_stones_per_cell);
+					const int count = MIN(int(2.0f * want), 2 * max_stones_per_cell);
+					const float riffle_len = 6.0f * MAX(w, 1.0f);
 					for (int k = 0; k < count; k++) {
 						const float t = rng.randf();
-						const float u = (rng.randf() - 0.5f) * 1.2f;
-						const Vector2 p = Vector2(a.x, a.z).lerp(Vector2(b.x, b.z), t) + side * (u * w);
+						const float s_at = rv.distance[i] + t * len;
+						const float riffle = 0.5f + 0.5f * Math::cos(float(Math::TAU) * s_at / riffle_len + phase);
+						if (rng.randf() > 0.1f + 0.9f * riffle * riffle) {
+							continue;
+						}
+						// The thalweg swings from bank to bank between riffles (alternate bars, twice the riffle
+						// spacing), and the coarse stones gather about it: no straight row along the line.
+						const float swing = 0.3f * Math::sin(float(Math::TAU) * s_at / (2.0f * riffle_len) + 1.7f * phase);
+						const float u = CLAMP(swing + (rng.randf() + rng.randf() - 1.0f) * 0.6f, -0.6f, 0.6f);
+						const Vector2 p = Vector2(a.x, a.z).lerp(Vector2(b.x, b.z), t) + side * (u * we);
 						if (!p_rect.has_point(p)) {
 							continue;
 						}
@@ -2182,9 +2204,14 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 					r_stones.push_back(st);
 					if (has_cave) {
 						const Transform3D hb = Transform3D(st.basis, st.position) * cave;
-						if (gen->add_hole(hb)) {
-							hole_rects.push_back(Rect2(hb.origin.x, hb.origin.z, 0, 0).grow(hb.basis.get_scale().length()));
-							_terrain3d_hole(hb);
+						if (rf_coarse_job) {
+							// On a worker: the generator's holes, their signal and the Terrain3D are the main thread's;
+							// the job carries the hole there (_apply_holes).
+							static_cast<CoarseJob *>(rf_coarse_job)->holes.push_back(hb);
+						} else {
+							LocalVector<Transform3D> one;
+							one.push_back(hb);
+							_apply_holes(one);
 						}
 					}
 					const Vector3 front = mouth;
@@ -2659,7 +2686,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						if (pick >= base + worn + kick + root + sorted + lag + spread) {
 							// A stone of the soil, angular or a little weathered round, of any size in the class; most stand on
 							// their pedestals (a flat cap, the column under it), some have toppled off theirs and lie tilted on
-							// the lowered ground beside it.
+							// the lowered ground beside it. Only where its own spot is bare (the bare patches are finer than
+							// the square the rate was read for).
+							float own_depth = 0.0f;
+							if (_rain_soil(gen, *rain, pd.xz, own_depth) <= 0.0f) {
+								continue;
+							}
+							sdepth = own_depth;
 							pd.key = _library_key(type, rng.randf() < 0.3f ? RockGenerator::FAMILY_PEBBLE : RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
 							pd.size = sd1 * Math::pow(sd2 / sd1, rng.randf());
 							pd.film = 0.0f;
@@ -3239,6 +3272,7 @@ void RockField3D::_rain_climate(const Rect2 &p_rect, RainClimate &r_rain) const 
 	r_rain.rect = p_rect;
 	const Vector3 mid(p_rect.get_center().x, 0, p_rect.get_center().y);
 	const float f = WorldContracts::climate_precipitation_factor_at(mid);
+	r_rain.climate_precip = cl.precipitation;
 	r_rain.precip = cl.precipitation * (f >= 0.0f ? f : 1.0f);
 	r_rain.bare = WorldContracts::bare_share_for_precipitation(r_rain.precip); // (the shared rule: terrain colour reads it too)
 	bool burnt = false;
@@ -3359,12 +3393,20 @@ float RockField3D::_rain_soil(const TerrainGenerator3D *p_gen, const RainClimate
 		return 0.0f;
 	}
 	const float fire = p_rain.burn_at(float(p_at.x), float(p_at.z));
-	const float bare = MAX(p_rain.bare, fire);
+	// Where the dry climate's bare share falls: the shared patch pattern (WorldContracts::bare_patch) that the terrain
+	// material's bare soil and every plant layer read, so stones stand on pedestals only where the ground shows bare
+	// soil and no sward grows; the share's own value at the point, as theirs.
+	const float h = float(rf_height(p_gen, p_at));
+	const Vector3 at(p_at.x, h, p_at.z);
+	// (The climate's precipitation was read on the main thread into p_rain: the weather provider is a node. The
+	// orographic factor map is plain data, safe here.)
+	const float f_here = WorldContracts::climate_precipitation_factor_at(at);
+	const float share_here = WorldContracts::bare_share_for_precipitation(p_rain.climate_precip * (f_here >= 0.0f ? f_here : 1.0f));
+	const float dry_bare = WorldContracts::bare_patch(at, share_here, 0.0f);
+	const float bare = MAX(dry_bare, fire);
 	if (bare <= 0.0f) {
 		return 0.0f;
 	}
-	const float h = float(rf_height(p_gen, p_at));
-	const Vector3 at(p_at.x, h, p_at.z);
 	if (p_gen->get_water_depth(at) > 0.03 || p_gen->get_talus(at) > 0.25 || p_gen->get_sand_depth_at(at) > 0.05) {
 		return 0.0f;
 	}
@@ -3381,7 +3423,7 @@ float RockField3D::_rain_soil(const TerrainGenerator3D *p_gen, const RainClimate
 	}
 	// The soil lost since the surface was last disturbed: a dryland's few millimetres a year over years, a burnt
 	// slope's centimetres in its first wet seasons; more with the rain and on steeper ground (splash goes downhill).
-	const float dry = 0.035f * p_rain.bare * CLAMP(p_rain.precip / 400.0f, 0.5f, 1.5f);
+	const float dry = 0.035f * dry_bare * CLAMP(p_rain.precip / 400.0f, 0.5f, 1.5f);
 	const float burn = 0.05f * fire * CLAMP(p_rain.precip / 600.0f, 0.5f, 2.0f);
 	r_depth = MAX(dry, burn) * (0.6f + 0.8f * Math::smoothstep(2.0f, 20.0f, slope)) * gate;
 	// Stones on the surface: more where the bedrock is near.
@@ -3671,6 +3713,40 @@ Vector2 RockField3D::get_pedestal_at(const Vector3 &p_position) const {
 	float depth;
 	const float share = _rain_soil(gen, rc, p_position, depth);
 	return Vector2(share, rain_pedestals ? depth : 0.0f);
+}
+
+PackedVector4Array RockField3D::get_pedestal_spots(const Rect2 &p_rect, real_t p_step, int p_max_count) const {
+	PackedVector4Array out;
+	const TerrainGenerator3D *gen = _get_generator();
+	RainClimate rc;
+	_rain_climate(p_rect, rc);
+	if (!gen || !rc.any || !rain_pedestals || p_step <= 0.0) {
+		return out;
+	}
+	// Every step over the rect: the points on bare soil (the shared bare patches or a burn), deepest splash first.
+	struct Spot {
+		Vector4 v;
+		bool operator<(const Spot &p_o) const { return v.w > p_o.v.w; }
+	};
+	LocalVector<Spot> spots;
+	const int nx = MIN(1024, int(Math::ceil(p_rect.size.x / p_step))), nz = MIN(1024, int(Math::ceil(p_rect.size.y / p_step)));
+	for (int j = 0; j < nz; j++) {
+		for (int i = 0; i < nx; i++) {
+			const Vector3 p(p_rect.position.x + (i + 0.5) * p_step, 0, p_rect.position.y + (j + 0.5) * p_step);
+			float depth = 0.0f;
+			const float share = _rain_soil(gen, rc, p, depth);
+			if (share >= 0.5f && depth > 0.0f) {
+				spots.push_back({ Vector4(p.x, rf_height(gen, p), p.z, depth) });
+			}
+		}
+	}
+	spots.sort();
+	const int n = MIN(int(spots.size()), MAX(p_max_count, 0));
+	out.resize(n);
+	for (int k = 0; k < n; k++) {
+		out.set(k, spots[k].v);
+	}
+	return out;
 }
 
 void RockField3D::set_rain_pedestals(bool p_enabled) {
@@ -3991,11 +4067,19 @@ void RockField3D::_detail_compute(DetailJob &r_job) {
 	}
 	if (r_job.snow.any) {
 		// Under the snow: a stone whose top is under the pack's surface is left out (the finest first: what shows
-		// through a thin pack is the coarse lag). Its top over the ground from its shape's bottom and half height.
+		// through a thin pack is the coarse lag). Its top over the ground from its shape's bottom and half height,
+		// tested stone by stone against the pack's depth at that stone. The pack read here is smooth over metres, but
+		// a shallow pack is not even at the scale of the stones: its depth varies about the mean by a coefficient of
+		// variation of 0.3 or more (Clark et al. 2011; Lopez-Moreno et al. 2011, shallower packs varying the most),
+		// and less of it stays on a stone's convex, sun-warmed top than in the gaps. Each stone's own depth is the mean
+		// scaled by 0.4 to 1.3 (a hash of its position, the mean 0.85, a CV of about 0.3), so through thin snow the
+		// stones a little proud of the mean still show here and there instead of all going at one depth.
 		uint64_t buried = 0;
 		for (int i = int(stones.size()) - 1; i >= 0; i--) {
 			const Stone &st = stones[i];
-			const float d = r_job.snow.at(float(st.position.x), float(st.position.z));
+			const float mean = r_job.snow.at(float(st.position.x), float(st.position.z));
+			const uint32_t hs = hash_murmur3_one_32(uint32_t(int32_t(Math::floor(st.position.z * 512.0))), hash_murmur3_one_32(uint32_t(int32_t(Math::floor(st.position.x * 512.0))), 0x5e0a7u));
+			const float d = mean * (0.4f + 0.9f * float(hash_fmix32(hs) & 0xffffu) / 65535.0f);
 			if (d <= 0.002f) {
 				continue;
 			}
@@ -4870,6 +4954,7 @@ void RockField3D::_coarse_finish(bool p_wait, real_t p_budget_msec) {
 				}
 			}
 		} else if (_layer_on(layer) && !cells.has(kv.key) && c.distance_to(Vector2(tp.x, tp.z)) <= layer_radius[layer] + cs * 1.5f) {
+			_apply_holes(job->holes);
 			_coarse_commit(kv.key, job->stones, job->groups);
 		}
 		memdelete(job);
@@ -5021,6 +5106,20 @@ void RockField3D::_coarse_pack(const Vector3i &p_key, const LocalVector<Stone> &
 	}
 }
 
+// Main thread: cave holes a placement made (on a worker they wait in its job), cut into the generator and a Terrain3D.
+void RockField3D::_apply_holes(const LocalVector<Transform3D> &p_holes) {
+	TerrainGenerator3D *gen = _get_generator();
+	if (!gen) {
+		return;
+	}
+	for (const Transform3D &hb : p_holes) {
+		if (gen->add_hole(hb)) {
+			hole_rects.push_back(Rect2(hb.origin.x, hb.origin.z, 0, 0).grow(hb.basis.get_scale().length()));
+			_terrain3d_hole(hb);
+		}
+	}
+}
+
 // Worker: places a coarse cell and packs it; false when it asked for a shape library not built yet.
 bool RockField3D::_coarse_place(CoarseJob &r_job) {
 	const Vector3i key = r_job.key;
@@ -5126,8 +5225,18 @@ void RockField3D::_coarse_commit(const Vector3i &p_key, LocalVector<Stone> &ston
 			grp.shapes[k] = nullptr;
 			where[cg.members[k]] = Vector2i(int(cell.groups.size()), k);
 		}
+		// The LOD by each stone's own size: the shapes are built a unit across and each stone's scale lives in its
+		// instance record, which the renderer's LOD choice does not see (it judges the mesh at its built size). The
+		// group's biggest stone as the model scale: it gets exactly the LOD its true size calls for, and no stone a
+		// coarser one than that (the smaller ones in the group stay at least as fine as they need).
+		real_t lod_scale = 0.0;
+		for (const Transform3D &xf : grp.xforms) {
+			lod_scale = MAX(lod_scale, xf.basis.get_scale_abs().x);
+		}
 		cell.groups.push_back(grp);
-		cell.instances.push_back(_add_group_instance(mm, cg.library, vis, cs * 0.5));
+		MultiMeshInstance3D *gi = _add_group_instance(mm, cg.library, vis, cs * 0.5);
+		gi->set_lod_bias(MAX(lod_scale, real_t(0.001)));
+		cell.instances.push_back(gi);
 	}
 	// Collision for the stones big enough to stand on or trip over, near the target.
 	const Vector3 tp = _target_position();
@@ -5509,6 +5618,7 @@ void RockField3D::_far_place(FarJob &r_job) {
 	}
 	rf_far = false;
 	r_job.missing = probe.missing;
+	r_job.holes = probe.holes;
 	if (worker) {
 		rf_coarse_job = nullptr;
 		rf_job_generator = nullptr;
@@ -5536,6 +5646,7 @@ void RockField3D::_far_commit(FarJob &r_job) {
 		_free_far(*old);
 		far_blocks.erase(r_job.key);
 	}
+	_apply_holes(r_job.holes);
 	FarBlock fb;
 	fb.sig = r_job.sig;
 	const real_t cs = _cell_size(Layer(r_job.key.x));
@@ -6088,10 +6199,13 @@ void RockField3D::_update_close_up(bool p_wait) {
 		Ref<MultiMesh> mm = mmi->get_multimesh();
 		const LocalVector<Color> &cd = near_cd[kv.key];
 		mm->set_instance_count(int(kv.value.size()));
+		real_t lod_scale = 0.0;
 		for (uint32_t k = 0; k < kv.value.size(); k++) {
 			mm->set_instance_transform(int(k), kv.value[k]);
 			mm->set_instance_custom_data(int(k), cd[k]);
+			lod_scale = MAX(lod_scale, kv.value[k].basis.get_scale_abs().x);
 		}
+		mmi->set_lod_bias(MAX(lod_scale, real_t(0.001))); // the LOD by the biggest stone's true size, as the cells
 	}
 	if (moss_cushions) {
 		_update_moss(near_xf, near_cd, p_wait);
@@ -6528,7 +6642,77 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 	node->set("material_override", mat);
 	node->set("auto_mass", false);
 	node->set("mass", mass);
-	if (p_fall) {
+	// A ledge slab that fails: a cantilever breaks at its root, where the bending moment is greatest, along the joint
+	// or stress-release crack over the bench's edge (cantilever failure of undercut caprock and notched cliffs: Young
+	// and Ashford 2008, Stock et al. 2012; toppling of the joint blocks, Lamb and Dietrich 2009). Its back stays held
+	// under the bench (ANCHOR_BACK), the root is cut through, and the part out over the lip falls as one piece,
+	// pivoting off the bench's edge, and breaks where it lands.
+	const bool ledge_fall = p_fall && key_family(p_grp.library) == RockGenerator::FAMILY_LEDGE;
+	Vector3 root;
+	real_t root_thick = 0.0;
+	Vector3 root_out;
+	if (ledge_fall) {
+		const Library *lib = libraries.getptr(p_grp.library);
+		TerrainGenerator3D *gen = _get_generator();
+		if (!lib || p_grp.variant >= lib->axes.size() || !gen) {
+			node->queue_free();
+			return nullptr;
+		}
+		const Vector3 ax = lib->axes[p_grp.variant];
+		const Vector3 ya = xf.basis.get_column(1).normalized(), za = xf.basis.get_column(2).normalized();
+		root_thick = 2.0 * ax.y * s;
+		root_out = za;
+		const Vector3 front = xf.origin + ya * (ax.y * s) + za * (ax.z * s);
+		// The drawn ground, heightfield plus the landscape's relief: what the slab was seated on and the collision
+		// follows.
+		const WorldGround *wg = WorldContracts::ground();
+		auto drawn = [&](const Vector3 &p_at) -> real_t {
+			real_t g = rf_height(gen, p_at);
+			if (wg) {
+				const Vector2 rl = wg->relief_at(Vector3(p_at.x, g, p_at.z));
+				if (rl.y > 0.0f && Math::is_finite(rl.x)) {
+					g += rl.x;
+				}
+			}
+			return g;
+		};
+		// The bench's edge: back from the front, just under the slab's top, the first point the ground stands at.
+		real_t t = 0.0;
+		const real_t depth = 2.0 * ax.z * s;
+		for (; t < depth * 0.8; t += 0.05) {
+			const Vector3 q = front - za * t - ya * (root_thick * 0.3);
+			if (drawn(q) >= q.y) {
+				break;
+			}
+		}
+		if (t >= depth * 0.8) {
+			node->queue_free();
+			return nullptr; // no bench under it to break off from
+		}
+		// (A slab whose front stands on the bench all along still breaks a fifth of the way in: its joint.)
+		t = CLAMP(t, depth * 0.2, depth * 0.6);
+		root = front - za * t - ya * (root_thick * 0.5);
+		// The part that falls must start out over the face below the lip, not in the ground: its middle in the air.
+		// (A convex body whose middle starts under the collision's one-sided surface falls through it.)
+		// (The drawn ground, heightfield plus the landscape's relief: what the collision follows.)
+		const Vector3 free_mid = front - za * (t * 0.5) - ya * (root_thick * 0.5);
+		// (Clear of the heightfield as well: the collision may follow it without the relief's undercut.)
+		if (MAX(drawn(free_mid), rf_height(gen, free_mid)) > free_mid.y) {
+			node->queue_free();
+			return nullptr;
+		}
+		node->set("dynamic", false);
+		node->set("anchor", 3); // ANCHOR_BACK
+		node->set("kill_y", rf_height(gen, xf.origin) - 400.0);
+		node->set("impact_strength", mass * 3.0);
+		node->set("impact_damage_scale", 1.0 / mass);
+		node->set("impact_radius", MAX(p_grp.reach[p_k] * 1.5f, real_t(0.5)));
+		node->set("shatter_speed", 0.6); // the crack's own spall: a few chips, not a blast
+		node->set("freeze_when_asleep", true);
+		// Where its underside starts in the face below the lip (the heightfield has no undercut), the contact pushes
+		// it out faster than gravity draws it in (at 1 m/s it sank through), yet without a leap.
+		node->set("max_depenetration_velocity", 4.0);
+	} else if (p_fall) {
 		// A block loosed from the wall: a rigid body from the start, moved out of the face by its reach so it does
 		// not start inside the heightfield. It breaks where it hits hard: one contact taking the impulse of a 3 m/s
 		// change of its whole speed (an impact shares itself over several contacts; sliding on the face a contact
@@ -6574,6 +6758,10 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 	}
 	broken_stones.insert(Vector3i((orig.origin * 100.0f).round()));
 	close_dirty = true;
+	if (ledge_fall) {
+		// The crack through the root: a plane across the slab over the bench's edge, facing out.
+		node->call("apply_plane_cut", Plane(root_out, root));
+	}
 	if (p_fall) {
 		falls.push_back(node->get_instance_id());
 		while (int(falls.size()) > rockfall_max) {
@@ -6742,7 +6930,7 @@ bool RockField3D::_find_stone(const Vector3 &p_origin, Cell *&r_cell, int &r_gro
 }
 
 // A random intact cliff block between p_min and p_max metres from p_center (reservoir sampling); false if none.
-bool RockField3D::_pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max, Vector3 &r_origin, uint64_t &r_key) {
+bool RockField3D::_pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max, Vector3 &r_origin, uint64_t &r_key, bool p_ledges) {
 	int seen = 0;
 	for (KeyValue<Vector3i, Cell> &kv : cells) {
 		if (kv.key.x != LAYER_CLIFF) {
@@ -6755,9 +6943,9 @@ bool RockField3D::_pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max
 			continue;
 		}
 		for (const Group &grp : kv.value.groups) {
-			// Ledge slabs stay: half of each lies under the bench, and loosed like a wall block it would start inside
-			// the ground (their own toppling over the lip is not modelled yet).
-			if (key_family(grp.library) == RockGenerator::FAMILY_LEDGE) {
+			// Ledge slabs only by trigger_rockfall for now: in the bench the falling part still drops through the
+			// collision ground (docs/ideas/rocks.md, "Falling ledges").
+			if (!p_ledges && key_family(grp.library) == RockGenerator::FAMILY_LEDGE) {
 				continue;
 			}
 			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
@@ -6827,7 +7015,7 @@ Node *RockField3D::trigger_rockfall(const Vector3 &p_position, real_t p_radius) 
 	ERR_FAIL_COND_V(!is_inside_tree(), nullptr);
 	Vector3 origin;
 	uint64_t key = 0;
-	if (!_pick_fall(p_position, 0.0, p_radius, origin, key)) {
+	if (!_pick_fall(p_position, 0.0, p_radius, origin, key, true)) {
 		return nullptr;
 	}
 	_start_fracture(key);
@@ -7611,66 +7799,118 @@ void RockField3D::_place_ledges(const TerrainGenerator3D *p_gen, Layer p_layer, 
 		Stone st;
 		st.layer = p_layer;
 		st.library = key;
-		real_t scale = 0.0, hang = 0.0;
-		for (int t = 0; t < 4; t++) {
-			const uint16_t v = uint16_t(rng.rand() % lib->meshes.size());
-			const Vector3 ax = lib->axes[v];
-			const real_t sc = lp.cap_thickness * (0.92f + 0.16f * rng.randf()) / MAX(2.0f * ax.y, 0.02f);
-			const real_t depth = 2.0 * ax.z * sc;
-			const real_t h = MIN(real_t(lp.overhang), depth * 0.45);
-			if (t == 0 || h > hang + 0.05) {
-				st.variant = v;
-				scale = sc;
-				hang = h;
-			}
-			if (h >= lp.overhang - 0.05f) {
-				break;
-			}
-		}
-		const Vector3 axes = lib->axes[st.variant];
-		st.scale = scale;
-		// The slab follows the bench it caps: its top along the drawn bench behind the lip (the benches rise back a
-		// share of a bed), its z out over the lip, x along it.
-		const real_t back_d = MAX(real_t(1.0), axes.z * st.scale * 1.2);
-		const real_t h_lip = H(pos.x, pos.z);
-		const real_t h_back = H(pos.x - out.x * back_d, pos.z - out.z * back_d);
-		const real_t rise = CLAMP(h_back - h_lip, real_t(-0.1) * back_d, real_t(0.5) * back_d);
-		Vector3 z_axis = (out * back_d - Vector3(0, rise, 0)).normalized();
-		const Vector3 x_axis = Vector3(0, 1, 0).cross(z_axis).normalized();
-		const Vector3 y_axis = z_axis.cross(x_axis).normalized();
+		Vector3 centre, axes;
 		Basis b;
-		b.set_column(0, x_axis);
-		b.set_column(1, y_axis);
-		b.set_column(2, z_axis);
-		b = Basis(y_axis, (rng.randf() - 0.5f) * 0.12f) * b; // the cross joints wander a little off square to the lip
-		// The top a few centimetres under the drawn bench's edge (flush, never a shelf on it); the front at the
-		// overhang.
-		const real_t top = h_lip - lp.cap_thickness * 0.04;
-		const Vector3 lip_top(pos.x, top, pos.z);
-		const Vector3 centre = lip_top - y_axis * (axes.y * st.scale) + z_axis * (hang - axes.z * st.scale);
-		// The back half must lie under the bench, and both ends of the slab on it: where the bench falls away behind
-		// or beside (a spur, a gully's corner) the slab would hang in the air.
-		{
-			const real_t len = axes.x * st.scale * 0.9;
-			bool off = claimed(centre + x_axis * len) || claimed(centre - x_axis * len);
-			if (off) {
-				continue; // would overlap its neighbour
-			}
-			// (From just behind the most a slab hangs out to near its back, across its length: the drawn bench stands
-			// within a quarter of the cap under the slab's top, and the heightfield alone, which relief can sit over,
-			// over its middle.)
-			// Every quarter metre back: a riser behind can rise and fall within a metre.
-			const int depth_n = MAX(4, int(Math::ceil(0.8 * axes.z * st.scale / 0.25)));
-			for (int e = -2; e <= 2 && !off; e++) {
-				for (int r = 0; r <= depth_n && !off; r++) {
-					const Vector3 mid = centre + x_axis * (len * 0.5 * e) - z_axis * (axes.z * st.scale * (0.1 + 0.8 * r / depth_n));
-					const Vector3 q = mid + y_axis * (axes.y * st.scale);
-					off = !(H(q.x, q.z) >= q.y - lp.cap_thickness * 0.25f && rf_height(p_gen, mid) >= mid.y);
+		real_t top = 0.0;
+		bool placed = false, overlap = false;
+		for (int pass = 0; pass < 2 && !placed && !overlap; pass++) {
+			real_t scale = 0.0, hang = 0.0;
+			for (int t = 0; t < (pass == 0 ? 4 : 1); t++) {
+				uint16_t v = uint16_t(rng.rand() % lib->meshes.size());
+				if (pass == 1) {
+					// The second try, where the bench bends or narrows under the first: the shortest joint block.
+					for (int k = 0; k < int(lib->axes.size()); k++) {
+						if (lib->axes[k].x < lib->axes[v].x) {
+							v = uint16_t(k);
+						}
+					}
+				}
+				const Vector3 ax = lib->axes[v];
+				const real_t sc = lp.cap_thickness * (0.92f + 0.16f * rng.randf()) / MAX(2.0f * ax.y, 0.02f);
+				const real_t depth = 2.0 * ax.z * sc;
+				const real_t h = MIN(real_t(lp.overhang), depth * 0.45);
+				if (t == 0 || h > hang + 0.05) {
+					st.variant = v;
+					scale = sc;
+					hang = h;
+				}
+				if (h >= lp.overhang - 0.05f) {
+					break;
 				}
 			}
-			if (off) {
-				continue;
+			axes = lib->axes[st.variant];
+			st.scale = scale;
+			// The slab follows the bench it caps: its top along the drawn bench behind the lip (the benches rise back a
+			// share of a bed), its z out over the lip, x along it.
+			const real_t back_d = MAX(real_t(1.0), axes.z * st.scale * 1.2);
+			const real_t h_lip = H(pos.x, pos.z);
+			const real_t h_back = H(pos.x - out.x * back_d, pos.z - out.z * back_d);
+			const real_t rise = CLAMP(h_back - h_lip, real_t(-0.1) * back_d, real_t(0.5) * back_d);
+			Vector3 z_axis = (out * back_d - Vector3(0, rise, 0)).normalized();
+			Vector3 x_axis = Vector3(0, 1, 0).cross(z_axis).normalized();
+			// And the bench's fall along the lip (the beds dip, and a lip on a dipping bed falls with it): measured a
+			// little behind the lip, over the slab's length.
+			{
+				const real_t l = MAX(real_t(1.0), axes.x * st.scale);
+				const Vector3 bk = pos - out * MIN(back_d * 0.5, real_t(axes.z * st.scale));
+				const real_t fall = CLAMP((H(bk.x + x_axis.x * l, bk.z + x_axis.z * l) - H(bk.x - x_axis.x * l, bk.z - x_axis.z * l)) / (2.0 * l), real_t(-0.35), real_t(0.35));
+				x_axis = (x_axis + Vector3(0, fall, 0)).normalized();
 			}
+			const Vector3 y_axis = z_axis.cross(x_axis).normalized();
+			z_axis = x_axis.cross(y_axis).normalized();
+			b = Basis();
+			b.set_column(0, x_axis);
+			b.set_column(1, y_axis);
+			b.set_column(2, z_axis);
+			b = Basis(y_axis, (rng.randf() - 0.5f) * 0.12f) * b; // the cross joints wander a little off square to the lip
+			// The top a few centimetres under the drawn bench's edge (flush, never a shelf on it); the front at the
+			// overhang.
+			top = h_lip - lp.cap_thickness * 0.04;
+			const Vector3 lip_top(pos.x, top, pos.z);
+			// A real edge: in front of the lip, past the most a slab can hang, the ground has fallen a cap's thickness
+			// (on a smooth face or where the lip's out runs along the slope there is no bench to cap).
+			{
+				const real_t ahead = MAX(real_t(1.0), hang + 0.5);
+				if (H(pos.x + out.x * ahead, pos.z + out.z * ahead) > top - lp.cap_thickness) {
+					break;
+				}
+			}
+			// The back half must lie under the bench, and both ends of the slab on it: where the bench falls away behind
+			// or beside (a spur, a gully's corner, a lip that bends) the slab would hang in the air. A slab that would
+			// is drawn back from the lip, a third of its hang at a time, before it gives up.
+			const real_t len = axes.x * st.scale * 0.9;
+			// (From just behind the most a slab hangs out to near its back, across its length: the drawn bench stands
+			// within a quarter of the cap under the slab's top, and the heightfield alone, which relief can sit over,
+			// over its middle. Every quarter metre back: a riser behind can rise and fall within a metre.)
+			const int depth_n = MAX(4, int(Math::ceil(0.8 * axes.z * st.scale / 0.25)));
+			auto seats = [&](const Vector3 &p_centre) {
+				for (int e = -2; e <= 2; e++) {
+					for (int r = 0; r <= depth_n; r++) {
+						const Vector3 mid = p_centre + x_axis * (len * 0.5 * e) - z_axis * (axes.z * st.scale * (0.1 + 0.8 * r / depth_n));
+						const Vector3 q = mid + y_axis * (axes.y * st.scale);
+						if (!(H(q.x, q.z) >= q.y - lp.cap_thickness * 0.25f && rf_height(p_gen, mid) >= mid.y)) {
+							return false;
+						}
+					}
+				}
+				return true;
+			};
+			for (int k = 0; k < 3 && !placed; k++) {
+				const real_t hk = hang * real_t(3 - k) / 3.0;
+				if (k > 0 && hk < 0.1) {
+					break;
+				}
+				// Slid along the lip to abut a neighbour where it would overlap one: a bed's joint blocks stand end to
+				// end, a joint apart, so a lip carries a run of them rather than slabs spaced by the lip points' grid.
+				const Vector3 c0 = lip_top - y_axis * (axes.y * st.scale) + z_axis * (hk - axes.z * st.scale);
+				bool any_free = false;
+				for (int sh = 0; sh < 9 && !placed; sh++) {
+					const real_t off = (sh == 0 ? 0.0 : ((sh & 1) ? 1.0 : -1.0) * real_t((sh + 1) / 2) * 0.25) * len;
+					centre = c0 + x_axis * off;
+					if (claimed(centre + x_axis * len) || claimed(centre - x_axis * len) || claimed(centre)) {
+						continue;
+					}
+					any_free = true;
+					placed = seats(centre);
+				}
+				if (!any_free) {
+					overlap = true;
+					break; // no room between its neighbours
+				}
+			}
+		}
+		if (!placed) {
+			continue;
 		}
 		st.basis = b * Basis().scaled(Vector3(st.scale, st.scale, st.scale));
 		st.position = centre;
@@ -7678,7 +7918,7 @@ void RockField3D::_place_ledges(const TerrainGenerator3D *p_gen, Layer p_layer, 
 		st.footprint = 0.0f;
 		r_stones.push_back(st);
 		// Its stretch of lip, give or take: joints open a little or close up.
-		claims.push_back({ Vector3(centre.x, pos.y, centre.z), x_axis, z_axis, real_t(axes.x * st.scale * (0.9f + 0.1f * rng.randf())), real_t(axes.z * st.scale + step) });
+		claims.push_back({ Vector3(centre.x, pos.y, centre.z), b.get_column(0), b.get_column(2), real_t(axes.x * st.scale * (0.9f + 0.1f * rng.randf())), real_t(axes.z * st.scale + step) });
 	}
 }
 
@@ -7844,6 +8084,7 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 			}
 		}
 		for (uint32_t i = 0; i < n; i++) {
+			_apply_holes(placed[i].holes);
 			ObstacleCell cell;
 			for (const Stone &st : placed[i].stones) {
 				if (key_family(st.library) == RockGenerator::FAMILY_LEDGE) {
@@ -7973,6 +8214,128 @@ void RockField3D::set_wind_obstacles(bool p_enabled) {
 	} else if (is_in_group(SNAME("weather_shelter"))) {
 		remove_from_group(SNAME("weather_shelter"));
 	}
+}
+
+Array RockField3D::get_ledge_slabs(const Rect2 &p_rect) {
+	Array out;
+	TerrainGenerator3D *gen = _get_generator();
+	if (!gen || !ledge_slabs || !layer_enabled[LAYER_CLIFF]) {
+		return out;
+	}
+	struct Slab {
+		Vector3 top, along, out;
+		real_t half_len = 0, half_depth = 0, thick = 0;
+		Dictionary d;
+	};
+	LocalVector<Slab> slabs;
+	const real_t cs = _cell_size(LAYER_CLIFF);
+	const int x0 = int(Math::floor(p_rect.position.x / cs)), x1 = int(Math::floor(p_rect.get_end().x / cs));
+	const int z0 = int(Math::floor(p_rect.position.y / cs)), z1 = int(Math::floor(p_rect.get_end().y / cs));
+	_prepare_rivers();
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			// The cell's slabs as the cell draws them (the same seed); its blocks are skipped as for get_obstacles.
+			LocalVector<Stone> stones;
+			rf_ledges_only = true;
+			_place(LAYER_CLIFF, Rect2(x * cs, z * cs, cs, cs), rf_hash3(LAYER_CLIFF, x, z, uint32_t(seed) * 2654435761u), stones);
+			rf_ledges_only = false;
+			for (const Stone &st : stones) {
+				if (key_family(st.library) != RockGenerator::FAMILY_LEDGE || !p_rect.has_point(Vector2(st.position.x, st.position.z))) {
+					continue;
+				}
+				const Library *lib = libraries.getptr(st.library);
+				if (!lib || st.variant >= lib->axes.size()) {
+					continue;
+				}
+				const Vector3 ax = lib->axes[st.variant];
+				Slab s;
+				s.along = st.basis.get_column(0).normalized();
+				const Vector3 ya = st.basis.get_column(1).normalized();
+				const Vector3 za = st.basis.get_column(2).normalized();
+				s.out = Vector3(za.x, 0, za.z).normalized();
+				s.half_len = ax.x * st.scale;
+				s.half_depth = ax.z * st.scale;
+				s.thick = 2.0 * ax.y * st.scale;
+				s.top = st.position + ya * (ax.y * st.scale);
+				// How far it hangs past the bench's edge: back from its front until the heightfield stands under its
+				// base, a tenth of a metre at a time.
+				const Vector3 front = s.top + za * s.half_depth;
+				const Vector3 base_front = front - ya * s.thick;
+				real_t hang = 0;
+				for (real_t t = 0; t < 2.0 * s.half_depth; t += 0.1) {
+					const Vector3 q = base_front - za * t;
+					if (rf_height(gen, q) >= q.y - 0.05) {
+						break;
+					}
+					hang = t + 0.1;
+				}
+				s.d["overhang"] = MIN(hang, real_t(2.0 * s.half_depth));
+				s.d["position"] = st.position;
+				s.d["basis"] = st.basis;
+				s.d["top"] = s.top;
+				s.d["front"] = front;
+				s.d["along"] = s.along;
+				s.d["out"] = s.out;
+				s.d["length"] = 2.0 * s.half_len;
+				s.d["depth"] = 2.0 * s.half_depth;
+				s.d["thickness"] = s.thick;
+				s.d["rock_type"] = int(key_type(st.library));
+				s.d["variant"] = int(st.variant);
+				slabs.push_back(s);
+			}
+		}
+	}
+	// Runs: slabs end to end along one lip (ends within a slab's depth, facing within 35 degrees, tops on one bed),
+	// joined by union-find.
+	LocalVector<uint32_t> parent;
+	parent.resize(slabs.size());
+	for (uint32_t i = 0; i < slabs.size(); i++) {
+		parent[i] = i;
+	}
+	auto find = [&](uint32_t a) {
+		while (parent[a] != a) {
+			parent[a] = parent[parent[a]];
+			a = parent[a];
+		}
+		return a;
+	};
+	for (uint32_t i = 0; i < slabs.size(); i++) {
+		for (uint32_t j = i + 1; j < slabs.size(); j++) {
+			const Slab &a = slabs[i], &b = slabs[j];
+			const Vector3 d = Vector3(b.top.x - a.top.x, 0, b.top.z - a.top.z);
+			// (Along a dipping bed the tops fall with the dip: up to 0.4 m a metre.)
+			if (a.out.dot(b.out) < 0.82 || Math::abs(a.top.y - b.top.y) > 0.5 + 0.4 * d.length()) {
+				continue;
+			}
+			const real_t gap = Math::abs(d.dot(a.along)) - a.half_len - b.half_len;
+			const real_t side = Math::abs(d.dot(a.out));
+			if (gap < MAX(a.half_depth, b.half_depth) * 2.0 + 1.0 && side < MAX(a.half_depth, b.half_depth) * 1.5) {
+				parent[find(i)] = find(j);
+			}
+		}
+	}
+	HashMap<uint32_t, int> run_id;
+	LocalVector<int> run_count;
+	LocalVector<real_t> run_len;
+	for (uint32_t i = 0; i < slabs.size(); i++) {
+		const uint32_t r = find(i);
+		if (!run_id.has(r)) {
+			run_id[r] = int(run_count.size());
+			run_count.push_back(0);
+			run_len.push_back(0);
+		}
+		run_count[run_id[r]]++;
+		run_len[run_id[r]] += 2.0 * slabs[i].half_len;
+	}
+	for (uint32_t i = 0; i < slabs.size(); i++) {
+		const int r = run_id[find(i)];
+		Dictionary d = slabs[i].d;
+		d["run"] = r;
+		d["run_slabs"] = run_count[r];
+		d["run_length"] = run_len[r];
+		out.push_back(d);
+	}
+	return out;
 }
 
 Array RockField3D::get_stones(int p_layer, const Rect2 &p_rect) {
@@ -9732,6 +10095,7 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_rain_pedestals", "enabled"), &RockField3D::set_rain_pedestals);
 	ClassDB::bind_method(D_METHOD("is_rain_pedestals"), &RockField3D::is_rain_pedestals);
 	ClassDB::bind_method(D_METHOD("get_pedestal_at", "position"), &RockField3D::get_pedestal_at);
+	ClassDB::bind_method(D_METHOD("get_pedestal_spots", "rect", "step", "max_count"), &RockField3D::get_pedestal_spots, DEFVAL(2.0), DEFVAL(64));
 	ClassDB::bind_method(D_METHOD("set_frost_sorting", "enabled"), &RockField3D::set_frost_sorting);
 	ClassDB::bind_method(D_METHOD("is_frost_sorting"), &RockField3D::is_frost_sorting);
 	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &RockField3D::get_frost_at);
@@ -9757,6 +10121,7 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_contact_texture"), &RockField3D::get_contact_texture);
 	ClassDB::bind_method(D_METHOD("get_last_contact_usec"), &RockField3D::get_last_contact_usec);
 	ClassDB::bind_method(D_METHOD("get_stones", "layer", "rect"), &RockField3D::get_stones);
+	ClassDB::bind_method(D_METHOD("get_ledge_slabs", "rect"), &RockField3D::get_ledge_slabs);
 	ClassDB::bind_method(D_METHOD("get_stone_caps", "layer", "rect", "tolerance"), &RockField3D::get_stone_caps, DEFVAL(0.03));
 	ClassDB::bind_method(D_METHOD("get_stone_count"), &RockField3D::get_stone_count);
 	ClassDB::bind_method(D_METHOD("get_cell_count"), &RockField3D::get_cell_count);

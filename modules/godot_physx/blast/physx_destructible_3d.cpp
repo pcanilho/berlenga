@@ -137,6 +137,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_kill_y", "y"), &PhysXDestructible3D::set_kill_y);
 	ClassDB::bind_method(D_METHOD("get_kill_y"), &PhysXDestructible3D::get_kill_y);
 	ClassDB::bind_method(D_METHOD("apply_radial_damage", "world_position", "damage", "min_radius", "max_radius"), &PhysXDestructible3D::apply_radial_damage);
+	ClassDB::bind_method(D_METHOD("apply_plane_cut", "world_plane"), &PhysXDestructible3D::apply_plane_cut);
 	ClassDB::bind_method(D_METHOD("get_render_materials"), &PhysXDestructible3D::get_render_materials);
 	ClassDB::bind_method(D_METHOD("set_material_remap", "from", "to"), &PhysXDestructible3D::set_material_remap);
 	ClassDB::bind_method(D_METHOD("set_instance_shader_parameter", "name", "value"), &PhysXDestructible3D::set_instance_shader_parameter);
@@ -187,7 +188,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dynamic"), "set_dynamic", "get_dynamic");
 	ClassDB::bind_method(D_METHOD("set_anchor", "anchor"), &PhysXDestructible3D::set_anchor);
 	ClassDB::bind_method(D_METHOD("get_anchor"), &PhysXDestructible3D::get_anchor);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "anchor", PROPERTY_HINT_ENUM, "Framed,Grounded,None"), "set_anchor", "get_anchor");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "anchor", PROPERTY_HINT_ENUM, "Framed,Grounded,None,Back"), "set_anchor", "get_anchor");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "health", PROPERTY_HINT_RANGE, "0.01,20,0.01"), "set_health", "get_health");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_strength", PROPERTY_HINT_RANGE, "0,200,0.1"), "set_impact_strength", "get_impact_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_damage_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_impact_damage_scale", "get_impact_damage_scale");
@@ -230,6 +231,7 @@ void PhysXDestructible3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(ANCHOR_FRAMED);
 	BIND_ENUM_CONSTANT(ANCHOR_GROUNDED);
 	BIND_ENUM_CONSTANT(ANCHOR_NONE);
+	BIND_ENUM_CONSTANT(ANCHOR_BACK);
 }
 
 PhysXDestructible3D::PhysXDestructible3D() {
@@ -787,6 +789,9 @@ void PhysXDestructible3D::_compute_chunk_faces() {
 		if (box.get_end().y >= hi.y - tol.y) {
 			faces |= ANCHOR_FACE_TOP;
 		}
+		if (box.position.z <= lo.z + tol.z) {
+			faces |= ANCHOR_FACE_BACK;
+		}
 		chunk_faces[c] = faces;
 	}
 }
@@ -802,6 +807,9 @@ bool PhysXDestructible3D::_island_anchored(const LocalVector<uint32_t> &p_chunks
 			break;
 		case ANCHOR_NONE:
 			return false;
+		case ANCHOR_BACK:
+			wanted = ANCHOR_FACE_BACK;
+			break;
 	}
 	for (uint32_t c : p_chunks) {
 		if (c < chunk_faces.size() && (chunk_faces[c] & wanted)) {
@@ -1822,6 +1830,16 @@ void PhysXDestructible3D::set_instance_shader_parameter(const StringName &p_name
 }
 
 int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius) {
+	return _apply_damage(p_world_position, p_damage, p_min_radius, p_max_radius, nullptr);
+}
+
+int PhysXDestructible3D::apply_plane_cut(const Plane &p_world_plane) {
+	// The kick origin for any single-chunk debris the cut frees: the plane's point nearest the node, with a small reach.
+	const Vector3 at = p_world_plane.project(get_global_transform().origin);
+	return _apply_damage(at, 0.0f, 0.0f, 0.5f, &p_world_plane);
+}
+
+int PhysXDestructible3D::_apply_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius, const Plane *p_cut) {
 	ERR_FAIL_NULL_V_MSG(family, 0, "PhysXDestructible3D: node not loaded (missing/invalid asset_path or chunks_path?).");
 
 	// NOTE: the damage point is mapped into ASSET space per actor below --
@@ -1914,7 +1932,44 @@ int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, fl
 		commands.bondFractures = bond_buf.ptr();
 		commands.chunkFractures = chunk_buf.ptr();
 
-		NvBlastActorGenerateFracture(&commands, actor, program, &program_params, blast_log, nullptr);
+		if (p_cut) {
+			// A crack along a plane: every bond of this actor between two chunks whose centroids lie on opposite
+			// sides of it breaks outright, and nothing else is touched (a joint or a stress-release crack opening,
+			// not a blow).
+			const NvBlastAsset *blast_asset = reinterpret_cast<const NvBlastAsset *>(asset_mem);
+			const NvBlastSupportGraph graph = NvBlastAssetGetSupportGraph(blast_asset, blast_log);
+			LocalVector<uint32_t> nodes;
+			nodes.resize(NvBlastActorGetGraphNodeCount(actor, blast_log));
+			const uint32_t node_count = nodes.is_empty() ? 0 : NvBlastActorGetGraphNodeIndices(nodes.ptr(), nodes.size(), actor, blast_log);
+			LocalVector<int8_t> side;
+			side.resize(graph.nodeCount);
+			for (uint32_t i = 0; i < graph.nodeCount; i++) {
+				side[i] = 0;
+			}
+			for (uint32_t k = 0; k < node_count; k++) {
+				const uint32_t n = nodes[k];
+				if (n < graph.nodeCount && graph.chunkIndices[n] < asset_chunk_count) {
+					side[n] = p_cut->is_point_over(damage_from_asset.xform(_chunk_centroid_local(graph.chunkIndices[n]))) ? 1 : -1;
+				}
+			}
+			uint32_t bonds = 0;
+			for (uint32_t k = 0; k < node_count; k++) {
+				const uint32_t n = nodes[k];
+				if (n >= graph.nodeCount || side[n] == 0) {
+					continue;
+				}
+				for (uint32_t a = graph.adjacencyPartition[n]; a < graph.adjacencyPartition[n + 1]; a++) {
+					const uint32_t m = graph.adjacentNodeIndices[a];
+					if (m > n && m < graph.nodeCount && side[m] != 0 && side[m] != side[n] && bonds < bond_buf.size()) {
+						bond_buf[bonds++] = { 0, n, m, 1.0e30f };
+					}
+				}
+			}
+			commands.bondFractureCount = bonds;
+			commands.chunkFractureCount = 0;
+		} else {
+			NvBlastActorGenerateFracture(&commands, actor, program, &program_params, blast_log, nullptr);
+		}
 		NvBlastActorApplyFracture(&commands, actor, &commands, blast_log, nullptr);
 
 		if (!NvBlastActorCanFracture(actor, blast_log)) {

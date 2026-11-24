@@ -35,6 +35,7 @@
 #include "modules/world/world_contracts.h"
 #include "tree_generator.h"
 #include "vegetation_voxel_lod.h"
+#include "deer_beds.h"
 #include "fairy_rings.h"
 #include "vegetation_fire.h"
 #include "vegetation_light.h"
@@ -319,6 +320,23 @@ vec3 grass_patch_tint(vec2 xz, float blade, float value, float variation) {
 }
 )";
 
+// The path tracer merges a MultiMesh into one BLAS only under a triangle cap; above it every blade becomes its own
+// TLAS record, far slower to build and trace (grass.md, stage 3). A full tile over the cap: the tiles shrink to fit
+// (the same blades, only cut into more tiles), to the half metre under the fit.
+void GrassField3D::_fit_tile_size(int p_cap, int p_tris) {
+	const float fit = Math::sqrt(float(p_cap) / MAX(density * float(p_tris), 1e-3f));
+	const float fitted = MAX(Math::floor(fit * 2.0f) * 0.5f, 1.0f);
+	if (fitted < tile_size) {
+		print_verbose(vformat("GrassField3D \"%s\": a full %.1f m tile holds about %d triangles, over the path tracer's merged BLAS cap (%d); tiles of %.1f m instead.", get_name(), tile_size, int(density * tile_size * tile_size * p_tris), p_cap, fitted));
+		tile_size = fitted;
+		// Tiles cut at the old size would overlap the new ones: dropped, rebuilt nearest first.
+		for (KeyValue<Vector2i, Tile> &kv : tiles) {
+			_free_tile(kv.value);
+		}
+		tiles.clear();
+	}
+}
+
 void GrassField3D::_ensure_resources() {
 	if (blade_mesh.is_null() && crop != CROP_NONE) {
 		blade_mesh = _make_crop_mesh(false);
@@ -327,7 +345,7 @@ void GrassField3D::_ensure_resources() {
 		const int cap = int(GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"));
 		const float tile_tris = density * tile_size * tile_size * tris;
 		if (cap > 0 && tile_tris > cap) {
-			WARN_PRINT(vformat("GrassField3D \"%s\": a full crop tile holds about %d triangles, over the path tracer's merged BLAS cap (%d); lower tile_size to %.1f m or less.", get_name(), int(tile_tris), cap, Math::sqrt(float(cap) / (density * tris))));
+			_fit_tile_size(cap, tris);
 		}
 	}
 	if (blade_mesh.is_null()) {
@@ -371,7 +389,7 @@ void GrassField3D::_ensure_resources() {
 		const int cap = int(GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"));
 		const float tile_tris = density * tile_size * tile_size * tris;
 		if (cap > 0 && tile_tris > cap) {
-			WARN_PRINT(vformat("GrassField3D \"%s\": a full tile holds about %d triangles, over the path tracer's merged BLAS cap (%d); lower tile_size to %.1f m or less.", get_name(), int(tile_tris), cap, Math::sqrt(float(cap) / (density * tris))));
+			_fit_tile_size(cap, tris);
 		}
 	}
 	if (material.is_null()) {
@@ -537,6 +555,11 @@ void GrassField3D::_build_material() {
 	// then (> 50 unknown), a 1 where known; flood_rect z 0: none.
 	code += "uniform sampler2D flood_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 flood_rect;\n";
 	code += FairyRings::GLSL;
+	// Terracettes on steep slopes (1 on, 0 off).
+	code += "uniform float terracettes = 1.0;\n";
+	// Deer beds (deer_beds.h): 1 on, 0 off; deer_bed_day the season's day (the beds' ages).
+	code += "uniform float deer_beds = 1.0;\nuniform float deer_bed_day = 180.0;\n";
+	code += DeerBeds::GLSL;
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	// Regrowth flush on burnt ground (burn_recovery): 1 on a fresh burn, 0 by a year and a half; rect z 0: none.
 	code += "uniform sampler2D burn_flush_map : filter_linear, repeat_disable, hint_default_black;\nuniform vec4 burn_flush_rect;\n";
@@ -548,6 +571,7 @@ void GrassField3D::_build_material() {
 	// The terrain material module registers these globals.
 	code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
 	code += WorldContracts::climate_bare_shader_code();
+	code += WorldContracts::terracette_shader_code();
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\nglobal uniform sampler2D weather_spray_map;\nglobal uniform vec4 weather_spray_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	// Sea salt on the blades (WeatherMap3D sea_spray, G: 1 - exp(-salt / 10 g/m2)): salt spray burns leaf tips brown
@@ -1273,6 +1297,35 @@ void vertex() {
 			v_fairy_dead = step(fract(rnd * 19.1), 0.9 * fairy.y);
 		}
 	}
+	// Terracettes (docs/ideas/vegetation.md, "Terracettes"): on steep grazed hillsides the stock walk the slope across,
+	// along the contours, and their paths settle into regularly spaced steps; they walk the flat treads and graze the
+	// risers between (Seleb, Chatterjee and Bhamla 2025: bands parallel to the contours from about 30 degrees, regular
+	// by 40, about 3.4 m apart in their model). The steps themselves are the ground's; here the sward: a worn, short,
+	// thinned band on each tread, combed along it, and the grass on the risers left a little taller. Bands follow the
+	// height with a wander of a few decimetres, so they keep to the contours and drift as real ones do.
+	if (terracettes > 0.0 && ground_data_rect.z > 0.0 && v_hay < 0.0) {
+		vec2 tts = vec2(textureSize(ground_data_map, 0));
+		vec2 tuv = (base_w.xz - ground_data_rect.xy) / ground_data_rect.zw;
+		vec2 tdu = vec2(1.0 / tts.x, 0.0);
+		vec2 tdv = vec2(0.0, 1.0 / tts.y);
+		vec2 tcell = 2.0 * ground_data_rect.zw / tts;
+		vec2 grad = vec2(textureLod(ground_data_map, tuv + tdu, 0.0).r - textureLod(ground_data_map, tuv - tdu, 0.0).r, textureLod(ground_data_map, tuv + tdv, 0.0).r - textureLod(ground_data_map, tuv - tdv, 0.0).r) / tcell;
+		vec3 terr = wc_terracette(base_w, grad); // WorldContracts::terracette_at: the ground's steps read the same
+		float form = terr.z;
+		if (form > 0.0) {
+			float tread = terr.x;
+			if (tread > 0.0) {
+				// Trodden: most tillers gone, the rest short turf (an estimate, as on a worn path).
+				if (fract(rnd * 33.1) < 0.7 * tread) {
+					h = 0.0;
+					w = 0.0;
+				}
+				h *= mix(1.0, 0.3, tread);
+			} else {
+				h *= 1.0 + 0.15 * form;
+			}
+		}
+	}
 	// A far ring blade (negative width; GrassField3D::_build_ring_tile()): one of a set thinned with the square of
 	// the distance from the field's centre, each blade dropping at its own rank (w's integer part: -log2 of it, in
 	// 1/1024ths) and the ones left widened, so coverage holds and no ring shows (Ghost of Tsushima, Wohllaib GDC
@@ -1381,6 +1434,28 @@ void vertex() {
 			}
 		}
 	}
+	// Deer beds (deer_beds.h): where a deer lay up, the tall grass lies flat in an oval, swirled the way it turned
+	// before lying and pressed out from the middle, standing up again over about ten days. Not in a mown meadow or a
+	// lawn too short to show it.
+	float bed_face_up = 0.0;
+	if (deer_beds > 0.0 && v_hay < 0.0 && h > 0.12) {
+		vec3 bed = deer_bed(base_w.xz, deer_bed_day);
+		if (bed.x > 0.0) {
+			float bj = (fract(rnd * 23.9) - 0.5) * 0.5;
+			vec2 bd = mat2(vec2(cos(bj), sin(bj)), vec2(-sin(bj), cos(bj))) * bed.yz;
+			vec2 bdl = (to_local * vec3(bd.x, 0.0, bd.y)).xz;
+			bdl = length(bdl) > 1e-4 ? normalize(bdl) : vec2(0.0, 1.0);
+			// Most blades flat under the body; the rest, and all of them as it recovers, half up.
+			float flat_k = fract(rnd * 41.3) < 0.8 ? bed.x : 0.5 * bed.x;
+			off = mix(off, bdl * (1.2 + 0.25 * fract(rnd * 3.7)), flat_k);
+			h *= mix(1.0, 0.85, bed.x);
+			// Each drawn blade stands for several tillers: standing, they hide the soil seen from the side; lying, only
+			// their own width covers it, so the pressed ones widen to the mat the tillers make together.
+			w *= mix(1.0, 2.8, flat_k);
+			// A body pressed them flat: they lie face up in a mat over the soil, not on edge.
+			bed_face_up = step(0.5, flat_k);
+		}
+	}
 	// Under the last flood's mark (WorldWater.high_water_at): the current combed the blades flat downstream and left
 	// them grey with silt, with a sharp line at the crest (USGS, Koenig et al. 2016: folded-grass wash lines); they
 	// stand again over weeks, the silt washes off over months.
@@ -1426,7 +1501,7 @@ void vertex() {
 	vec3 mid = vec3(0.0, h * 0.62 * cos(ang * 0.35), 0.0) + vec3(dir.x, 0.0, dir.y) * h * 0.18 * sin(ang);
 	vec3 p = 2.0 * t * (1.0 - t) * mid + t * t * tip;
 	vec3 tangent = normalize(2.0 * (1.0 - t) * mid + 2.0 * t * (tip - mid) + vec3(0.0, 1e-4, 0.0));
-	vec3 across = vec3(1.0, 0.0, 0.0);
+	vec3 across = bed_face_up > 0.5 ? vec3(dir.y, 0.0, -dir.x) : vec3(1.0, 0.0, 0.0);
 	// Nearly parallel edges, then a short taper to the tip, as a real leaf blade.
 	float taper = 1.0 - 0.9 * t * t;
 	p += across * side * w * taper;
@@ -1712,6 +1787,9 @@ void fragment() {
 	material->set_shader(shader);
 	lodge_dirty = true; // A new material: the lodging map goes to it at the next sweep.
 	material->set_shader_parameter("fairy_rings", fairy_rings && crop == CROP_NONE ? 1.0f : 0.0f);
+	material->set_shader_parameter("deer_beds", deer_beds && crop == CROP_NONE ? 1.0f : 0.0f);
+	material->set_shader_parameter("deer_bed_day", deer_bed_day);
+	material->set_shader_parameter("terracettes", terracettes && crop == CROP_NONE ? 1.0f : 0.0f);
 	// A sown crop covers its field whatever the patches of wild cover round it.
 	material->set_shader_parameter("climate_bare", climate_bare && crop == CROP_NONE);
 	melt_day = -2; // A new material: the snowmelt bands again on the next season step.
@@ -2276,7 +2354,7 @@ void GrassField3D::_build_hedges() {
 	}
 	Dictionary season;
 	// season_source set: the season from the weather contract at the field.
-	if (!season_source.is_empty() && WorldContracts::weather()->has_provider()) {
+	if (_follows_season() && WorldContracts::weather()->has_provider()) {
 		season = WorldContracts::weather()->season_at(is_inside_tree() ? get_global_position() : Vector3());
 	} else if (crop_day >= 0) {
 		season["day_of_year"] = crop_day;
@@ -4163,9 +4241,10 @@ void GrassField3D::_update_shell(const Vector2 &p_center, TerrainDataMap3D *p_ma
 		String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
 		code += "// GrassField3D far shell (docs/ideas/grass.md, \"Far grass\"): the sward as voxel columns on the ground.\n";
 		code += "uniform vec2 shell_center;\nuniform vec4 shell_band; // x: where it is fully up, y: the band it rises over, z: where it is gone, w: the band it sinks over.\n";
-		code += get_ground_shader_code();
+		// The climate code first: the turf (get_ground_shader_code()) cures by its wc_climate_cured.
 		code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
 		code += WorldContracts::climate_bare_shader_code();
+		code += get_ground_shader_code();
 		code += R"(
 varying vec3 v_wp;
 void vertex() {
@@ -4904,6 +4983,36 @@ void GrassField3D::set_snowmelt(bool p_on) {
 	}
 }
 
+Vector3 GrassField3D::get_terracette_at(const Vector3 &p_global_position, const Vector2 &p_gradient) {
+	return WorldContracts::terracette_at(p_global_position, p_gradient);
+}
+
+void GrassField3D::set_terracettes(bool p_on) {
+	terracettes = p_on;
+	if (material.is_valid()) {
+		material->set_shader_parameter("terracettes", terracettes && crop == CROP_NONE ? 1.0f : 0.0f);
+	}
+}
+
+void GrassField3D::set_deer_beds(bool p_on) {
+	deer_beds = p_on;
+	if (material.is_valid()) {
+		material->set_shader_parameter("deer_beds", deer_beds && crop == CROP_NONE ? 1.0f : 0.0f);
+	}
+}
+
+void GrassField3D::set_deer_bed_day(float p_day) {
+	deer_bed_day = p_day;
+	if (material.is_valid()) {
+		material->set_shader_parameter("deer_bed_day", deer_bed_day);
+	}
+}
+
+Vector4 GrassField3D::get_deer_bed_at(const Vector3 &p_global_position, float p_day) {
+	const DeerBeds::Hit hit = DeerBeds::at(Vector2(p_global_position.x, p_global_position.z), p_day);
+	return Vector4(hit.press, hit.lie.x, hit.lie.y, hit.length);
+}
+
 void GrassField3D::set_fairy_rings(bool p_on) {
 	fairy_rings = p_on;
 	if (material.is_valid()) {
@@ -5197,7 +5306,10 @@ Color GrassField3D::_far_color_hand() const {
 	const Color b = base_color.srgb_to_linear();
 	const Color t = tip_color.srgb_to_linear();
 	const Color d = dry_color.srgb_to_linear();
-	const Color far = b.lerp(t, 0.65f).lerp(d, _dryness() * 0.35f) * 0.355f;
+	// A dormant sward (dryness towards 1: drought or winter) is dead blades over its few green ones, so the dry share
+	// rises to 0.9 there; a living sward's dryness is only its dry tips.
+	const float dry = _dryness();
+	const Color far = b.lerp(t, 0.65f).lerp(d, MIN(dry * 0.35f + 0.55f * Math::smoothstep(0.4f, 1.0f, dry), 0.9f)) * 0.355f;
 	return Color(far.r, far.g, far.b, 1.0f);
 }
 
@@ -6545,8 +6657,8 @@ vec3 grass_mow_ground(vec3 world_pos, vec3 turf) {
 	return turf;
 }
 
-// The turf colour at a point: blades' root colour, patch tint, streaks, thatch.
-vec3 grass_turf(vec3 world_pos) {
+// The living turf's colour at a point: blades' root colour, patch tint, streaks, thatch.
+vec3 grass_turf_green(vec3 world_pos) {
 	vec2 xz = world_pos.xz;
 	// Streaks: fine noise stretched along a direction that turns slowly, like matted blades.
 	float streak = grass_streaks(xz, 0.6, 0.0, vec2(9.0, 70.0), vec2(4.0, 31.0), 7.1);
@@ -6561,6 +6673,34 @@ vec3 grass_turf(vec3 world_pos) {
 	// The lawn's young leaves, brighter and yellower than a lax sward's (the blades' tint).
 	c *= mix(vec3(1.0), vec3(1.06, 1.16, 0.88), lawn);
 	return c;
+}
+
+// Cured sward (docs/ideas/vegetation.md, "Cured turf"): the share of the turf gone to straw. The field's own season
+// dryness (follow_weather: the blades' dryness, so turf and blades cure together) and, where the shared climate code
+// is declared before this, the climate's dry-season cured share (the WorldContracts cured contract, wc_climate_cured:
+// the terrain's cured soil cover) while the season is dry, the larger of the two. r_climate: the climate's share
+// alone (the far bake already carries the season's).
+float grass_turf_cured(vec3 world_pos, out float r_climate) {
+	r_climate = 0.0;
+#ifdef WC_CLIMATE_CODE
+	// In the dry season only: the field's season dryness says when (a semi-arid sward is green after the rains).
+	r_climate = wc_climate_cured(world_pos) * smoothstep(0.3, 0.7, grass_ground_dry.a);
+#endif
+	return max(smoothstep(0.45, 0.95, grass_ground_dry.a), r_climate);
+}
+
+// The cured turf: the blades' dry colour, shaded at the sward's base, in drifts. A deer lawn keeps more green.
+vec3 grass_turf_cure(vec3 world_pos, vec3 c, float cured) {
+	vec2 xz = world_pos.xz;
+	// grass_ground_dry carries the sRGB dry_color (the blades take it as source_color): to linear.
+	vec3 straw = pow(grass_ground_dry.rgb, vec3(2.2)) * (0.65 + 0.25 * grass_noise(xz * 1.7 + 5.1)) * (0.9 + 0.2 * grass_noise(xz * 0.7 + 3.3));
+	return mix(c, straw, cured * 0.9 * (1.0 - 0.6 * grass_graze_at(world_pos).r));
+}
+
+// The turf colour at a point, cured as the season and the climate say.
+vec3 grass_turf(vec3 world_pos) {
+	float climate;
+	return grass_turf_cure(world_pos, grass_turf_green(world_pos), grass_turf_cured(world_pos, climate));
 }
 
 // Within the blades, partial cover (a rule's fade: scree, rock, shade) as patches of turf and gaps
@@ -6907,7 +7047,10 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 	if (grass_ground_under.w > 0.0 && grass_ground_under_far.a > 0.0) {
 		gone_u = 1.0 - clamp((grass_ground_under.z - length(world_pos.xz - grass_ground_under.xy)) / grass_ground_under.w, 0.0, 1.0);
 	}
-	vec3 turf = grass_turf(world_pos);
+	vec3 turf_green = grass_turf_green(world_pos);
+	float cured_climate;
+	float cured = grass_turf_cured(world_pos, cured_climate);
+	vec3 turf = grass_turf_cure(world_pos, turf_green, cured);
 	if (gone > 0.0 || gone_u > 0.0) {
 		vec2 xz = world_pos.xz;
 		vec3 tint = grass_patch_tint(xz, grass_noise(xz * 3.0), 0.5, grass_ground_params.x);
@@ -6921,8 +7064,8 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 			lobe = max(1.0 + grass_ground_sun.z * (grass_ground_far_lobe1.rgb * c1 + grass_ground_far_lobe2.rgb * (2.0 * c1 * c1 - 1.0)), vec3(0.1));
 		}
 		// Keep the turf's streaks and thatch as brightness, so the far sward is not flat.
-		float lum = clamp(dot(turf, vec3(0.3, 0.59, 0.11)) / max(dot(grass_ground_color.rgb, vec3(0.3, 0.59, 0.11)), 1e-3), 0.5, 1.5);
-		vec3 under = grass_ground_under_far.rgb * tint * lobe;
+		float lum = clamp(dot(turf_green, vec3(0.3, 0.59, 0.11)) / max(dot(grass_ground_color.rgb, vec3(0.3, 0.59, 0.11)), 1e-3), 0.5, 1.5);
+		vec3 under = mix(grass_ground_under_far.rgb, pow(grass_ground_dry.rgb, vec3(2.2)) * 0.8, cured_climate * 0.9) * tint * lobe;
 		if (gone_u > 0.0) {
 			turf = mix(turf, under * lum, gone_u);
 		}
@@ -6931,6 +7074,8 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 			if (grass_ground_under_far.a > 0.0) {
 				far = mix(under, far, grass_ground_far.a); // The tall patches over the undercoat.
 			}
+			// The bake carries the season's dryness; the climate's cured share over it, as on the turf.
+			far = mix(far, pow(grass_ground_dry.rgb, vec3(2.2)) * 0.8 * tint * lobe, cured_climate * 0.9);
 			turf = mix(turf, far * lum, gone);
 		}
 		// Hay meadows: what the far blades would show of the stubble and the rows.
@@ -7256,6 +7401,7 @@ void GrassField3D::_notification(int p_what) {
 		case NOTIFICATION_READY: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_process_internal(true);
+				_season_step(); // The season's look from the first frame, not a frame later.
 				_queue_far_bake();
 			}
 		} break;
@@ -7723,7 +7869,16 @@ void GrassField3D::set_dryness(float p_dryness) {
 void GrassField3D::set_season_source(const NodePath &p_path) {
 	season_source = p_path;
 	season_wait = 0;
-	if (p_path.is_empty()) {
+	if (!_follows_season()) {
+		season_green = 1.0f;
+		set_dryness(dryness);
+	}
+}
+
+void GrassField3D::set_follow_weather(bool p_on) {
+	follow_weather = p_on;
+	season_wait = 0;
+	if (!_follows_season()) {
 		season_green = 1.0f;
 		set_dryness(dryness);
 	}
@@ -7754,7 +7909,7 @@ float GrassField3D::season_greenness(const Dictionary &p_season) {
 // Once a second: the season's greenness into the blades' and the ground's dryness, and a new far
 // colour bake when the look has moved enough to show.
 void GrassField3D::_season_step() {
-	if (season_source.is_empty() || season_wait-- > 0) {
+	if (!_follows_season() || season_wait-- > 0) {
 		return;
 	}
 	season_wait = 60;
@@ -7764,6 +7919,11 @@ void GrassField3D::_season_step() {
 	}
 	const Dictionary season_now = wm->season_at(get_global_position());
 	_update_snowmelt(season_now);
+	if (material.is_valid() && season_now.has("day_of_year")) {
+		// The deer beds' ages (deer_beds.h) by the season's day; the hour in, so they recover through the day.
+		deer_bed_day = float(int(season_now.get("day_of_year", 180))) + float(season_now.get("hour", 12.0f)) / 24.0f;
+		material->set_shader_parameter("deer_bed_day", deer_bed_day);
+	}
 	if (!meadows.is_empty()) {
 		const int day = int(season_now.get("day_of_year", -1));
 		_hay_rain_step();
@@ -7800,6 +7960,9 @@ void GrassField3D::_season_step() {
 	if (season_baked_dryness < 0.0f || Math::abs(d - season_baked_dryness) > 0.05f) {
 		season_baked_dryness = d;
 		_queue_far_bake();
+		if (!far_bake && is_inside_tree()) {
+			emit_signal(SNAME("far_color_changed")); // No bake to wait for: the hand-matched colour and the cover map follow now.
+		}
 	}
 }
 void GrassField3D::set_fallback_wind(const Vector2 &p_wind) {
@@ -7887,6 +8050,8 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_dry_color, get_dry_color, "color")
 	GRASS_BIND(set_dryness, get_dryness, "dryness")
 	GRASS_BIND(set_season_source, get_season_source, "path")
+	ClassDB::bind_method(D_METHOD("set_follow_weather", "enabled"), &GrassField3D::set_follow_weather);
+	ClassDB::bind_method(D_METHOD("is_follow_weather"), &GrassField3D::is_follow_weather);
 	GRASS_BIND(set_season_response, get_season_response, "response")
 	ClassDB::bind_method(D_METHOD("get_season_green"), &GrassField3D::get_season_green);
 	ClassDB::bind_method(D_METHOD("get_effective_dryness"), &GrassField3D::get_effective_dryness);
@@ -7948,6 +8113,14 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_flood_wash"), &GrassField3D::is_flood_wash);
 	ClassDB::bind_method(D_METHOD("get_flood_wash_at", "position"), &GrassField3D::get_flood_wash_at);
 	ClassDB::bind_method(D_METHOD("update_flood_map", "center"), &GrassField3D::update_flood_map);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("get_terracette_at", "global_position", "gradient"), &GrassField3D::get_terracette_at);
+	ClassDB::bind_method(D_METHOD("set_terracettes", "enabled"), &GrassField3D::set_terracettes);
+	ClassDB::bind_method(D_METHOD("is_terracettes"), &GrassField3D::is_terracettes);
+	ClassDB::bind_method(D_METHOD("set_deer_beds", "enabled"), &GrassField3D::set_deer_beds);
+	ClassDB::bind_method(D_METHOD("is_deer_beds"), &GrassField3D::is_deer_beds);
+	ClassDB::bind_method(D_METHOD("set_deer_bed_day", "day"), &GrassField3D::set_deer_bed_day);
+	ClassDB::bind_method(D_METHOD("get_deer_bed_day"), &GrassField3D::get_deer_bed_day);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("get_deer_bed_at", "global_position", "day"), &GrassField3D::get_deer_bed_at);
 	ClassDB::bind_method(D_METHOD("set_fairy_rings", "enabled"), &GrassField3D::set_fairy_rings);
 	ClassDB::bind_method(D_METHOD("is_fairy_rings"), &GrassField3D::is_fairy_rings);
 	ClassDB::bind_static_method("GrassField3D", D_METHOD("get_fairy_ring_at", "global_position"), &GrassField3D::get_fairy_ring_at);
@@ -7999,6 +8172,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "dry_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_dry_color", "get_dry_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dryness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_dryness", "get_dryness");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "season_source", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_season_source", "get_season_source");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "follow_weather"), "set_follow_weather", "is_follow_weather");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "season_response", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_season_response", "get_season_response");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "color_variation", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_color_variation", "get_color_variation");
 	ADD_GROUP("Ground", "ground_");
@@ -8016,6 +8190,9 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "climate_bare"), "set_climate_bare", "is_climate_bare");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lodging"), "set_lodging", "is_lodging");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fairy_rings"), "set_fairy_rings", "is_fairy_rings");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deer_beds"), "set_deer_beds", "is_deer_beds");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "terracettes"), "set_terracettes", "is_terracettes");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deer_bed_day", PROPERTY_HINT_RANGE, "0,366,0.01"), "set_deer_bed_day", "get_deer_bed_day");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snowmelt"), "set_snowmelt", "is_snowmelt");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flood_wash"), "set_flood_wash", "is_flood_wash");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_match_view"), "set_far_match_view", "is_far_match_view");

@@ -2109,9 +2109,9 @@ Built:
     the sides, out about one hp;
   - a lee tail 0.7 hp high at the stone, (2 + 3 x weight) hp long, a rounded ridge tapering away.
   Rebuilt when the target goes a quarter of the square, and on the cover's updates at most every 2 s.
-- Stones: `set_stone_list` (x, z, ground, top, half axis x, half axis z, yaw; 7 floats each), else every rock
-  field's `get_stones` (all layers on but the two finest detail classes; footprint radius as both half axes). The
-  agreed ground contract query will replace the rock field read.
+- Stones: `set_stone_list` (x, z, ground, top, half axis x, half axis z, yaw; 7 floats each), else
+  the ground contract's `WorldGround.stones_near(rect)` (the same 7 floats; stones standing 1 cm or more over the
+  ground; main thread). The private rock field read is gone (24 Nov 2026).
 - `--test=stones`, `--view=stones` (generated rocks on a snowfield after a drifting day and two days of the bench's
   still sun; `--no-stones` without).
 
@@ -2137,6 +2137,18 @@ Thinning fringe (same day, from the docs review): the edges were still a clean s
 second, fine lognormal field (1.1 m and 0.45 m, the scale of stones and tussocks under the last centimetres)
 multiplies the depth too, so near the melt-out line the snow breaks into specks and islands over a metre or so.
 Where the pack is deep the covered share saturates and the fine field does not show.
+The field is 3D value noise of the world position, not of x and z: read on the map's plane it was drawn out down
+steep banks into rows of dark slashes (seen in the ground-detail snow frames).
+
+Thin packs (same day, rocks bench `--world --view=scree --snow=2`): rows of grey and tan slivers on a 2 cm pack,
+and white streaks down one-cell walls. Both were SnowSurface3D under its min_depth: its tuck ramp left it hovering
+millimetres over the ground as the cover knows it (1 m cells), so the ground's own triangles poked through it in
+slivers and over a step it hung down the wall. Now the surface fragment is discarded once it sinks below half its
+min_depth, and thin snow is the ground material's alone. To match the surface where it starts, the materials'
+covered share takes the pixel's ground roughness (z0 0.004 m, grains and clods) instead of Niu and Yang's model
+cell (0.01 m), since the cell's spread of depths is now drawn by `snow_subgrid`: 2 cm of settled snow covers some
+two thirds of a pixel's facets, not a third. The terrain material holds and sheds its snow by its projection
+normal (`tm_pn`, the heightfield's central difference), so a one-cell wall sheds it too.
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
@@ -2235,6 +2247,13 @@ Research notes for Paulo's pick; nothing below is built yet.
   none at +2 C. `--view=spindrift`. Open: in a gale Flow's block allocation fills (speed-threshold
   allocation with no minimum smoke: the wind alone allocates), so the plume is cut off; asked of the PhysX
   owner (summaryAllocate.speedThresholdMinSmoke).
+  24 Nov 2026: the plume's grid is bounded at 1024 blocks (was 4096). A scene with crest plumes spread over the
+  whole square took some 5 GB as the gas spread and ran out of memory; at 1024 the gale view's plume still
+  runs its full length without a cut-off warning.
+
+**advance() and the world tier (24 Nov 2026).** A scene's fresh fall stepped with `advance` whitened only the near
+square: the hills past it (the world tier) never got it. `advance` now steps the world tier by the same time
+(`advance_world` stays for the world alone). Climate check: a fall stepped with `advance` reaches a point 2 km out.
 
 **Packed-snow roads.**
 - Traffic packs snow into a hard layer that polishes to ice where tyres spin or brake (Wallman and Astrom 2001,

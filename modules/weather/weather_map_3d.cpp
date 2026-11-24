@@ -157,6 +157,9 @@ float WeatherMap3D::_patch_at(Vector2 p_xz, float p_height) const {
 // Wind over terrain (docs/ideas/wind.md)
 
 void WeatherMap3D::_find_terrain_source() {
+	if (!Thread::is_main_thread()) {
+		return; // the scene tree is the main thread's: a worker keeps the source last found
+	}
 	terrain_height_object = ObjectID();
 	terrain_height_by_data = false;
 	if (!is_inside_tree()) {
@@ -226,8 +229,8 @@ float WeatherMap3D::_terrain_height(Vector2 p_xz) const {
 			}
 		}
 	}
-	if (!is_inside_tree() || get_world_3d().is_null()) {
-		return Math::NaN;
+	if (!Thread::is_main_thread() || !is_inside_tree() || get_world_3d().is_null()) {
+		return Math::NaN; // a worker can't raycast the scene: unknown, as without a terrain
 	}
 	PhysicsDirectSpaceState3D *space = get_world_3d()->get_direct_space_state();
 	if (space == nullptr) {
@@ -626,7 +629,7 @@ void WeatherMap3D::_update_air() {
 	cur_heating = 1.0f;
 	cur_sun_sine = 0.0f;
 	sun_known = false;
-	const Node *clock = (is_inside_tree() && has_node(sky_clock)) ? get_node(sky_clock) : nullptr;
+	const Node *clock = _sky_clock_node();
 	// The sun: the weather's light (as the cloud shadows use), else the clock's.
 	const DirectionalLight3D *sun = (is_inside_tree() && !sun_light.is_empty()) ? Object::cast_to<DirectionalLight3D>(get_node_or_null(sun_light)) : nullptr;
 	if (sun && sun->is_visible_in_tree()) {
@@ -736,7 +739,7 @@ float WeatherMap3D::penman_evaporation(float p_net_radiation, float p_wind_2m, f
 // square shifts along the view to where the view ray meets the ground, by at most 35 % of its side, keeping the
 // camera's own ground inside it.
 Vector3 WeatherMap3D::_contact_center() const {
-	if (is_inside_tree() && get_viewport()) {
+	if (Thread::is_main_thread() && is_inside_tree() && get_viewport()) {
 		if (const Camera3D *cam = get_viewport()->get_camera_3d()) {
 			const Vector3 c = cam->get_global_position();
 			const Vector3 f = -cam->get_global_basis().get_column(2).normalized();
@@ -756,20 +759,58 @@ Vector3 WeatherMap3D::_contact_center() const {
 	return _follow_position();
 }
 
+// The map's own position and its SkyClock as the main thread last found them: contracts are read from worker threads
+// (snow, vegetation and rocks laying out cells), which must not touch the scene tree.
+Vector3 WeatherMap3D::_self_position() const {
+	if (!Thread::is_main_thread()) {
+		follow_lock.lock();
+		const Vector3 c = self_cache;
+		follow_lock.unlock();
+		return c;
+	}
+	const Vector3 c = is_inside_tree() ? get_global_position() : Vector3();
+	follow_lock.lock();
+	self_cache = c;
+	follow_lock.unlock();
+	return c;
+}
+
+const Node *WeatherMap3D::_sky_clock_node() const {
+	if (!Thread::is_main_thread()) {
+		return Object::cast_to<Node>(ObjectDB::get_instance(sky_clock_id));
+	}
+	const Node *clock = (is_inside_tree() && has_node(sky_clock)) ? get_node(sky_clock) : nullptr;
+	sky_clock_id = clock ? clock->get_instance_id() : ObjectID();
+	return clock;
+}
+
 Vector3 WeatherMap3D::_follow_position() const {
+	if (!Thread::is_main_thread()) {
+		// A worker (a contract read while cells are laid out): the scene tree is the main thread's.
+		follow_lock.lock();
+		const Vector3 c = follow_cache;
+		follow_lock.unlock();
+		return c;
+	}
+	Vector3 c = _self_position();
+	bool found = false;
 	if (!follow_target.is_empty()) {
 		const Node3D *n = Object::cast_to<Node3D>(get_node_or_null(follow_target));
 		if (n && n->is_inside_tree()) {
-			return n->get_global_position();
+			c = n->get_global_position();
+			found = true;
 		}
 	}
-	if (is_inside_tree() && get_viewport()) {
+	if (!found && is_inside_tree() && get_viewport()) {
 		const Camera3D *cam = get_viewport()->get_camera_3d();
 		if (cam) {
-			return cam->get_global_position();
+			c = cam->get_global_position();
 		}
 	}
-	return is_inside_tree() ? get_global_position() : Vector3();
+	follow_lock.lock();
+	follow_cache = c;
+	follow_lock.unlock();
+	return c;
 }
 
 void WeatherMap3D::_shift(Vector2i p_new_origin) {
@@ -1193,8 +1234,8 @@ void WeatherMap3D::_advance(double p_weather_dt, double p_real_dt) {
 	const Vector2 steer = cur_wind_direction * cur_wind_speed * aloft;
 	cloud_drift += steer * float(p_weather_dt);
 	// The high sheet rides the wind at its own height (get_wind_aloft: shear above the boundary layer).
-	high_cloud_drift += get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), high_cloud_height) * float(p_weather_dt);
-	mid_cloud_drift += get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), mid_cloud_height) * float(p_weather_dt);
+	high_cloud_drift += get_wind_aloft(_self_position(), high_cloud_height) * float(p_weather_dt);
+	mid_cloud_drift += get_wind_aloft(_self_position(), mid_cloud_height) * float(p_weather_dt);
 	cloud_time += p_weather_dt;
 	for (int i = storms.size() - 1; i >= 0; i--) {
 		Storm &s = storms.write[i];
@@ -1403,7 +1444,7 @@ void WeatherMap3D::_publish_globals() {
 // Season (docs/ideas/weather.md, "Season state").
 WeatherSeason::Climate WeatherMap3D::_season_climate() const {
 	WeatherSeason::Climate c;
-	const Node *clock = has_node(sky_clock) ? get_node(sky_clock) : nullptr;
+	const Node *clock = _sky_clock_node();
 	if (clock != nullptr) {
 		c.latitude = float(clock->get("latitude"));
 	}
@@ -1436,7 +1477,7 @@ WeatherSeason::Climate WeatherMap3D::_season_climate() const {
 }
 
 int WeatherMap3D::get_day_of_year() const {
-	const Node *clock = has_node(sky_clock) ? get_node(sky_clock) : nullptr;
+	const Node *clock = _sky_clock_node();
 	if (clock == nullptr) {
 		return CLAMP(season_day, 1, 365);
 	}
@@ -1643,7 +1684,7 @@ Vector2 WeatherMap3D::get_wind_aloft(Vector3 p_position, float p_altitude) const
 	// Ekman veer: more over rough ground (z0 0.0002 m, the sea: 20 degrees; 0.02 m and up, land: 30 degrees).
 	const float veer_top = Math::deg_to_rad(20.0f + 10.0f * CLAMP((Math::log(z0 / 0.0002f) / Math::log(10.0f)) / 2.0f, 0.0f, 1.0f));
 	float latitude = 45.0f;
-	const Node *clock = has_node(sky_clock) ? get_node(sky_clock) : nullptr;
+	const Node *clock = _sky_clock_node();
 	if (clock != nullptr) {
 		latitude = float(clock->get("latitude"));
 	}
@@ -3674,7 +3715,7 @@ float WeatherMap3D::get_cloud_base_now() const {
 // local 0.25, so the ramp is 20 to 2). N from the environment's 6.5 K/km lapse at the layer's temperature, S the
 // wind aloft's change between the mid and high layers.
 float WeatherMap3D::get_cirrocumulus_share() const {
-	const Vector3 at = is_inside_tree() ? get_global_position() : Vector3();
+	const Vector3 at = _self_position();
 	const float dz = MAX(high_cloud_height - mid_cloud_height, 500.0f);
 	const float s = (get_wind_aloft(at, high_cloud_height) - get_wind_aloft(at, mid_cloud_height)).length() / dz;
 	const float t_k = MAX(cur_air_temperature - 0.0065f * MAX(high_cloud_height - ground_height, 0.0f), -80.0f) + 273.15f;
@@ -3811,7 +3852,7 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		// Tissue rising at an updraft w of about 3 m/s is carried s z^2 / (2 w) downwind of the base by
 		// height z, so at one thickness the lean is s H^2 / 6: kept under 0.6 H (sheared towers lean, they
 		// do not lie down).
-		const Vector3 at = is_inside_tree() ? get_global_position() : Vector3();
+		const Vector3 at = _self_position();
 		const float h = MAX(cloud_thickness, 1.0f);
 		const Vector2 shear = (get_wind_aloft(at, st.base_height + h) - get_wind_aloft(at, st.base_height)) / h;
 		const float s = shear.length();
@@ -3825,7 +3866,7 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	st.high_height = high_cloud_height;
 	st.high_tau = high_cloud_optical_depth;
 	st.high_drift = high_cloud_drift;
-	st.contrail_wind = get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), 10500.0f);
+	st.contrail_wind = get_wind_aloft(_self_position(), 10500.0f);
 	st.clock = float(Math::fmod(cloud_time, 86400.0));
 	st.mid_cover = cur_mid_cloud_cover;
 	st.mid_height = mid_cloud_height;
@@ -3833,11 +3874,11 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	st.mid_tau = mid_cloud_optical_depth;
 	st.mid_drift = mid_cloud_drift;
 	{
-		const Vector2 w = get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), mid_cloud_height);
+		const Vector2 w = get_wind_aloft(_self_position(), mid_cloud_height);
 		st.mid_dir = w.length_squared() > 1e-6f ? w.normalized() : Vector2(1, 0);
 	}
 	{
-		const Vector2 w = get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), high_cloud_height);
+		const Vector2 w = get_wind_aloft(_self_position(), high_cloud_height);
 		st.high_dir = w.length_squared() > 1e-6f ? w.normalized() : Vector2(1, 0);
 	}
 	st.high_cc = get_cirrocumulus_share();

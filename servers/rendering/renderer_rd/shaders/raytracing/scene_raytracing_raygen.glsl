@@ -3182,24 +3182,30 @@ vec4 snow_map_bspline(uint p_map, vec2 p_uv) {
 			g1.y * (g0.x * textureLod(sampler2D(bindless_textures[nonuniformEXT(p_map)], SAMPLER_LINEAR_CLAMP), vec2(t0.x, t1.y), 0.0) + g1.x * textureLod(sampler2D(bindless_textures[nonuniformEXT(p_map)], SAMPLER_LINEAR_CLAMP), t1, 0.0));
 }
 
-float snow_value_noise(vec2 p_p) {
-	vec2 i = floor(p_p);
-	vec2 f = fract(p_p);
+// Value noise in 3D: the field lies in space, not on the map, so on a steep bank it is not drawn out downhill.
+float snow_value_noise(vec3 p_p) {
+	vec3 i = floor(p_p);
+	vec3 f = fract(p_p);
 	f = f * f * (3.0 - 2.0 * f);
-	float a = fract(sin(dot(i, vec2(127.1, 311.7))) * 43758.5453);
-	float b = fract(sin(dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453);
-	float c = fract(sin(dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
-	float d = fract(sin(dot(i + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
-	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+	vec2 o = vec2(0.0, 1.0);
+	float a = fract(sin(dot(i, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+	float b = fract(sin(dot(i + o.yxx, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+	float c = fract(sin(dot(i + o.xyx, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+	float d = fract(sin(dot(i + o.yyx, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+	float e = fract(sin(dot(i + o.xxy, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+	float g = fract(sin(dot(i + o.yxy, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+	float k = fract(sin(dot(i + o.xyy, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+	float l = fract(sin(dot(i + o.yyy, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+	return mix(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), mix(mix(e, g, f.x), mix(k, l, f.x), f.y), f.z);
 }
 
 // Depth within a cell over the cell's mean, lognormal (CV 0.5, Liston 2004): as snow_subgrid() in raster.
-float snow_subgrid(vec2 p_xz) {
-	float n = 0.55 * snow_value_noise(p_xz / 9.0) + 0.3 * snow_value_noise(p_xz / 3.5 + 17.0) + 0.15 * snow_value_noise(p_xz / 1.3 + 5.0);
+float snow_subgrid(vec3 p_pos) {
+	float n = 0.55 * snow_value_noise(p_pos / 9.0) + 0.3 * snow_value_noise(p_pos / 3.5 + 17.0) + 0.15 * snow_value_noise(p_pos / 1.3 + 5.0);
 	float z = clamp((n - 0.5) / 0.15, -3.0, 3.0);
 	// The thinning fringe: near the melt-out line the last centimetres break up at the scale of stones and
 	// tussocks under them, so the edge goes over a metre or so of speckle, not at once.
-	float m = 0.6 * snow_value_noise(p_xz / 1.1 + 3.0) + 0.4 * snow_value_noise(p_xz / 0.45 + 9.0);
+	float m = 0.6 * snow_value_noise(p_pos / 1.1 + 3.0) + 0.4 * snow_value_noise(p_pos / 0.45 + 9.0);
 	float zf = clamp((m - 0.5) / 0.17, -3.0, 3.0);
 	return exp(0.47 * z + 0.5 * zf - 0.235);
 }
@@ -4206,9 +4212,9 @@ void main() {
 				}
 			}
 			if (have) {
-				// Niu and Yang (2007) snow-covered fraction.
+				// Niu and Yang (2007) snow-covered fraction, z0 the pixel's ground roughness (as snow_cover_at()).
 				float snow_amt = snow_cover;
-				snow_cover *= tanh(max(s.r, 0.0) * snow_subgrid(spos.xz) / (0.025 * max(s.a * 10.0, 0.5))) * (1.0 - snow_under);
+				snow_cover *= tanh(max(s.r, 0.0) * snow_subgrid(spos) / (0.01 * max(s.a * 10.0, 0.5))) * (1.0 - snow_under);
 				snow_cover = mix(snow_cover, snow_amt * min(snow_crown_load * 2.0, 1.0), snow_crown);
 				snow_albedo = s.g;
 				snow_wet = clamp(s.b, 0.0, 1.0);

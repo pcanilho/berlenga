@@ -268,6 +268,7 @@ private:
 	struct RainClimate {
 		bool on = false;
 		float precip = 0.0f; // mm a year at the cell (the climate's times the orographic factor)
+		float climate_precip = 0.0f; // the climate's own mm a year (read on the main thread)
 		float bare = 0.0f; // 0..1 of the soil bare of plants from the climate's dryness
 		float burn[9] = {}; // 0..1 bare from a recent fire, on a 3 x 3 grid over the cell (corners and middles)
 		Rect2 rect;
@@ -490,9 +491,11 @@ private:
 		LocalVector<Stone> stones;
 		LocalVector<CoarseGroup> groups;
 		LocalVector<uint32_t> missing; // shape libraries the placement asked for that are not built
+		LocalVector<Transform3D> holes; // cave holes the placement made, cut on the main thread (_apply_holes)
 		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
 	};
 	HashMap<Vector3i, CoarseJob *> coarse_jobs;
+	void _apply_holes(const LocalVector<Transform3D> &p_holes);
 	bool cell_threads = true;
 	Mutex library_lock; // libraries: workers look shapes up, the main thread adds them
 	bool _coarse_place(CoarseJob &r_job);
@@ -637,7 +640,7 @@ private:
 	RandomPCG fall_rng;
 	real_t _rockfall_air(const Vector3 &p_pos) const;
 	bool _find_stone(const Vector3 &p_origin, Cell *&r_cell, int &r_group, int &r_k);
-	bool _pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max, Vector3 &r_origin, uint64_t &r_key);
+	bool _pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max, Vector3 &r_origin, uint64_t &r_key, bool p_ledges = false);
 	void _update_rockfall(double p_delta);
 	void _update_process();
 
@@ -772,6 +775,7 @@ private:
 		TerrainGenerator3D *gen = nullptr;
 		HashMap<uint64_t, Vector<float>> records; // (library << 16 | variant) -> MultiMesh records
 		LocalVector<uint32_t> missing;
+		LocalVector<Transform3D> holes; // (as CoarseJob.holes)
 		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
 	};
 	HashMap<Vector3i, FarBlock> far_blocks;
@@ -926,6 +930,7 @@ public:
 	bool is_rain_pedestals() const { return rain_pedestals; }
 	// (bare soil's stone share 0..1, soil lost round the stones m) at a point: where the rain leaves pedestals.
 	Vector2 get_pedestal_at(const Vector3 &p_position) const;
+	PackedVector4Array get_pedestal_spots(const Rect2 &p_rect, real_t p_step = 2.0, int p_max_count = 64) const;
 	bool is_frost_sorting() const { return frost_sorting; }
 	// How strongly the ground sorts at a point (0..1), and its stone share there (x: gate, y: share), for benches.
 	Vector2 get_frost_at(const Vector3 &p_position) const;
@@ -1013,6 +1018,7 @@ public:
 	// The stones of one layer in p_rect, each a Dictionary (position, basis, scale, footprint, film, rock_type,
 	// family, variant): what the layer would place, for tests.
 	Array get_stones(int p_layer, const Rect2 &p_rect);
+	Array get_ledge_slabs(const Rect2 &p_rect);
 	Array get_stone_caps(int p_layer, const Rect2 &p_rect, real_t p_tolerance = 0.03);
 	int get_stone_count() const { return stone_count; }
 	int get_cell_count() const { return cells.size(); }

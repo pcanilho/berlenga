@@ -150,7 +150,7 @@
 			<return type="void" />
 			<param index="0" name="stones" type="PackedFloat32Array" />
 			<description>
-				Stones to shape the snow round instead of the rock fields': seven floats each, x, z, ground height, top height, the footprint's half axes along its own x and z (m) and its yaw (rad). Empty: the rock fields' ([method RockField3D.get_stones]).
+				Stones to shape the snow round instead of the ground's: seven floats each, x, z, ground height, top height, the footprint's half axes along its own x and z (m) and its yaw (rad). Empty: the ground contract's ([method WorldGround.stones_near]).
 			</description>
 		</method>
 		<method name="sync_deformation">
