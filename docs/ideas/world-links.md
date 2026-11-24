@@ -79,6 +79,8 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Smoke, burnt forest, dust → dirty snow | linked (19 Nov) | WorldWeather `smoke_at` (haze), WorldFire `burn_age_at`, WorldSnow `add_impurity` (GroundDust3D settling, PhysX blown ash 3862f22e, rockfall dust) | SnowCover3D keeps light-absorbing particles as mg/m2 black carbon equivalent: albedo drop 0.35 (1 - e^(-L/15)), fresh snow buries them, the melt brings them back up; shows grey and melts sooner (Warren and Wiscombe 1980; Painter et al. 2007; Gleason et al. 2013). Blowing ash and rockfall fines add theirs through `add_impurity` |
 | Vehicles → snow ruts | linked (18 Nov) | world_contact | snow checks the wheel stamp |
 | Bodies → snow prints | linked | `snow_deform`, `grass_trample` groups | |
+| Stones → snow round them | linked (24 Nov, 3d025184) | new `WorldGround.stones_near(rect)` (RockField3D via `WorldCoverProvider.contract_stones_near`) | SnowSurface3D `set_stone_list`: 7 floats a stone (x, z, ground_y, top_y, half x, half z, yaw); main thread only |
+| Snow depth → stones buried | linked (24 Nov, 3d025184) | snow cover depth | RockField3D `snow_burial`: stones sink under the snow, cells re-laid on a change of about 1 cm |
 
 ### Vegetation (grass, shrubs, crops) and trees
 
