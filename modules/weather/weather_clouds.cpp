@@ -948,7 +948,7 @@ float wave_dew_depression_at(const State &p_state, const Vector3 &p_pos) {
 
 // Pile of plates (altocumulus lenticularis duplicatus, "pile d'assiettes"): where the moist layer is stratified in
 // thin sheets (the radiosonde's stepped humidity), moister and drier sheets alternate about 220 m apart (a lens is 200 to 800 m deep): the moist
-// ones 0.8 K nearer saturation, the dry ones 3 K further (375 m more lift), so the dry sheets stay clear as gaps between
+// ones 0.8 K nearer saturation, the dry ones 5 K further (625 m more lift), so the dry sheets stay clear as gaps between
 // plates unless the wave is very strong (a 1.6 K swing only embossed grooves into one thick lens), so each lens's edge splits into plates of different widths stacked one over
 // another, merging where the lift is largest (WMO International Cloud Atlas, Ac len duplicatus). In patches some
 // 10 km across; the sheets keep their heights over neighbouring lenses (moist layers run for tens of km), tilting a
@@ -979,8 +979,15 @@ float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
 		return 0.0f;
 	}
 	// wave_dew_depression_at() adds the plates' sheets; their dry gaps close where the lift is large (wc_plate_x()).
-	const float pd = wave_plate_depression(p_state, p_pos);
-	const float x0 = eta - 125.0f * (wave_dew_depression_at(p_state, p_pos) - pd);
+	// The moisture the air brought from upstream: read at the height it came from, p - eta (Long's model: streamlines
+	// carry their upstream properties, z0 = z - delta). Read at the point itself, the moist layer stood still while the
+	// wave lifted the air through it, so a lens saturated level by level and thickened slowly from its outline (a
+	// translucent taper a kilometre wide from below). Carried with the air, the whole layer between its bounding
+	// streamlines saturates together where the lift first exceeds its deficit: the lens is its full depth within metres
+	// of its edge, with a crisp rim, and its top and bottom follow the streamlines.
+	const Vector3 origin(p_pos.x, p_pos.y - eta, p_pos.z);
+	const float pd = wave_plate_depression(p_state, origin);
+	const float x0 = eta - 125.0f * (wave_dew_depression_at(p_state, origin) - pd);
 	const float x = x0 - 125.0f * (pd > 0.0f ? pd * (1.0f - smoothstep(900.0f, 2000.0f, x0)) : pd);
 	if (x <= 0.0f) {
 		return 0.0f;
@@ -1991,27 +1998,44 @@ float wc_layer_cover_n(float n, float cover, vec2 xz, bool high) {
 	return c;
 }
 
-float wc_wave_depression(vec3 p) {
-	float dz = p.y - cloud_air.z;
-	float t = cloud_air.x - 0.0065 * dz;
-	float tk = t + 273.15;
-	float rh = clamp(cloud_air.y * (exp(-max(dz, 0.0) / 8000.0) - 0.02) / 0.98, 0.01, 1.0);
-	float dep = -log(rh) * tk * tk / 5423.0;
+// The mid and high layers' moisture at xz, as -ln(rh) (0 where a layer is off). The layers vary over kilometres, so
+// the march reads this once a coarse step and only the height part (wc_wave_depression_l()) at each sample.
+vec2 wc_wave_layers(vec2 xz) {
+	vec2 l = vec2(0.0);
 	if (cloud_mid_cover > 0.001) {
-		float n = wc_cover_noise_at(p.xz + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), 3.0 * cloud_mid_scale); // wave_dew_depression_at(): broad moisture
-		float rh = wc_wave_layer_rh(n, cloud_mid_cover, 0.0);
-		float d = (p.y - cloud_mid_height) / (0.75 * cloud_mid_thickness + 150.0);
-		float w = exp(-d * d * d * d) * min(1.0, 4.0 * cloud_mid_cover); // wave_dew_depression_at(): flat-topped
-		dep = mix(dep, min(dep, -log(rh) * tk * tk / 5423.0), w);
+		float n = wc_cover_noise_at(xz + vec2(4721.0, 8363.0) - (cloud_mid_drift - cloud_drift), 3.0 * cloud_mid_scale); // wave_dew_depression_at(): broad moisture
+		l.x = -log(wc_wave_layer_rh(n, cloud_mid_cover, 0.0));
 	}
 	if (cloud_high_cover > 0.001) {
-		float n = wc_cover_noise_at(p.xz + vec2(9137.0, 3301.0) - (cloud_high_drift - cloud_drift), cloud_high_scale);
-		float rh = wc_wave_layer_rh(n, cloud_high_cover, wc_layer_cover_n(n, cloud_high_cover, p.xz, true));
-		float d = (p.y - cloud_high_height) / 800.0;
+		float n = wc_cover_noise_at(xz + vec2(9137.0, 3301.0) - (cloud_high_drift - cloud_drift), cloud_high_scale);
+		l.y = -log(wc_wave_layer_rh(n, cloud_high_cover, wc_layer_cover_n(n, cloud_high_cover, xz, true)));
+	}
+	return l;
+}
+
+// The dew point depression at height y, from the layers' moisture (wc_wave_layers()) there.
+float wc_wave_depression_l(float y, vec2 l) {
+	float dz = y - cloud_air.z;
+	float t = cloud_air.x - 0.0065 * dz;
+	float tk = t + 273.15;
+	float k = tk * tk / 5423.0;
+	float rh = clamp(cloud_air.y * (exp(-max(dz, 0.0) / 8000.0) - 0.02) / 0.98, 0.01, 1.0);
+	float dep = -log(rh) * k;
+	if (cloud_mid_cover > 0.001) {
+		float d = (y - cloud_mid_height) / (0.75 * cloud_mid_thickness + 150.0);
+		float w = exp(-d * d * d * d) * min(1.0, 4.0 * cloud_mid_cover); // wave_dew_depression_at(): flat-topped
+		dep = mix(dep, min(dep, l.x * k), w);
+	}
+	if (cloud_high_cover > 0.001) {
+		float d = (y - cloud_high_height) / 800.0;
 		float w = exp(-d * d) * min(1.0, 4.0 * cloud_high_cover);
-		dep = mix(dep, min(dep, -log(rh) * tk * tk / 5423.0), w);
+		dep = mix(dep, min(dep, l.y * k), w);
 	}
 	return dep;
+}
+
+float wc_wave_depression(vec3 p) {
+	return wc_wave_depression_l(p.y, wc_wave_layers(p.xz));
 }
 
 // r_lift: metres past saturation (the lens's depth there, for the lighting's profile). p_jitter (m) roughens the
@@ -2051,17 +2075,18 @@ float wc_plate_dep(vec3 p) {
 
 // The lift left after the plates: the dry sheets' gaps close where the lift is large (inside the lens the plates merge,
 // as wave_plate_x() on the CPU), so the plates show at the lens's edges and no level cut rings its middle.
-float wc_plate_x(float x0, vec3 p) {
-	float pd = wc_plate_dep(p);
+float wc_plate_x(float x0, vec3 p, float eta) {
+	float pd = wc_plate_dep(p - vec3(0.0, eta, 0.0)); // at the air's upstream height (wave_extinction_at() on the CPU)
 	pd = pd > 0.0 ? pd * (1.0 - smoothstep(900.0, 2000.0, x0)) : pd;
 	return x0 - 125.0 * pd;
 }
 
-// p_dep >= 0: the dew point depression already read nearby (the sun samples reuse the step's; the moist layers
-// vary over kilometres, so 40 to 160 m toward the sun changes it little).
-float wc_wave_extinction_d(vec3 p, float p_jitter, float p_dep, out float r_lift, out float r_dep) {
+// p_layers.x >= 0: the layers' moisture already read nearby (wc_wave_layers(); the sun and sky probes reuse the step's,
+// as the layers vary over kilometres). The dew point depression is read at the air's upstream height, p.y - eta:
+// in Long's model the streamlines carry the upstream air's properties, so the moist layer is lifted with the wave
+// and the lens ends where its top and bottom do (wave_extinction_at() on the CPU).
+float wc_wave_extinction_l(vec3 p, float p_jitter, vec2 p_layers, out float r_lift) {
 	r_lift = 0.0;
-	r_dep = p_dep;
 	bool in_a = cloud_wave_slab.y > cloud_wave_slab.x && p.y >= cloud_wave_slab.x && p.y <= cloud_wave_slab.y;
 	bool in_b = cloud_wave_slab.w > cloud_wave_slab.z && p.y >= cloud_wave_slab.z && p.y <= cloud_wave_slab.w;
 	if (!in_a && !in_b) {
@@ -2071,10 +2096,8 @@ float wc_wave_extinction_d(vec3 p, float p_jitter, float p_dep, out float r_lift
 	if (eta <= 0.0) {
 		return 0.0;
 	}
-	if (r_dep < 0.0) {
-		r_dep = wc_wave_depression(p);
-	}
-	float x = wc_plate_x(eta - 125.0 * r_dep, p) + p_jitter;
+	vec2 l = p_layers.x >= 0.0 ? p_layers : wc_wave_layers(p.xz);
+	float x = wc_plate_x(eta - 125.0 * wc_wave_depression_l(p.y - eta, l), p, eta) + p_jitter;
 	if (x <= 0.0) {
 		return 0.0;
 	}
@@ -2083,8 +2106,7 @@ float wc_wave_extinction_d(vec3 p, float p_jitter, float p_dep, out float r_lift
 }
 
 float wc_wave_extinction(vec3 p, float p_jitter, out float r_lift) {
-	float dep;
-	return wc_wave_extinction_d(p, p_jitter, -1.0, r_lift, dep);
+	return wc_wave_extinction_l(p, p_jitter, vec2(-1.0), r_lift);
 }
 
 // Extinction (1/m) at p. p_detail erodes the edges with the detail noise (Nubis); the shadow bake

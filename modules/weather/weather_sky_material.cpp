@@ -1219,7 +1219,9 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 		if (eta_c <= -200.0) {
 			continue;
 		}
-		float dep = wc_wave_depression(pc);
+		// The layers' moisture once a coarse step; each sample reads the depression at its own upstream height.
+		vec2 layers = wc_wave_layers(pc.xz);
+		float dep = wc_wave_depression_l(pc.y - eta_c, layers); // at the air's upstream height (wave_extinction_at())
 		if (eta_c - 125.0 * dep < -200.0) {
 			continue;
 		}
@@ -1251,7 +1253,9 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 			// ends of the plates were cut into comb teeth along the wind.
 			float st = textureLod(cloud_detail, vec3(aw.x / 4000.0, aw.y / 2400.0, p.y / 1200.0), max(lod - 1.5, 0.0)).b;
 			float eta = wc_wave_eta(p);
-			float x = wc_plate_x(eta - 125.0 * dep, p) + 10.0 * (st - 0.5);
+			// The moisture at this sample's upstream height (the coarse step's read only culls): carried along the
+			// streamlines, the moist layer's top and bottom are where the lens ends in height.
+			float x = wc_plate_x(eta - 125.0 * wc_wave_depression_l(p.y - eta, layers), p, eta) + 10.0 * (st - 0.5);
 			if (x <= 0.0) {
 				if (have_prev && x_prev > 0.0) {
 					// Leaving the cloud: the share of the interval before the crossing, lit as the last sample inside.
@@ -1280,11 +1284,10 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 			// through the whole sheet drew it combed, like brushed hair, seen from under a near lens.
 			sigma *= mix(1.0, mix(0.75, 1.25, fib), 1.0 - smoothstep(0.1, 0.5, profile));
 			float lr;
-			float dr;
 			// The sun's light at each sample (once a coarse step held a plate's end at one value for 60 m and stepped
 			// it): through the whole lens toward the sun (a lens is 200 to 800 m deep: three reads to 700 m), so a belly
 			// under a high sun is shaded by the cloud over it and a crown is lit.
-			float tau = wc_wave_extinction_d(p + sun_dir * 40.0, 0.0, dep, lr, dr) * 80.0 + wc_wave_extinction_d(p + sun_dir * 170.0, 0.0, dep, lr, dr) * 180.0 + wc_wave_extinction_d(p + sun_dir * 450.0, 0.0, dep, lr, dr) * 380.0;
+			float tau = wc_wave_extinction_l(p + sun_dir * 40.0, 0.0, layers, lr) * 80.0 + wc_wave_extinction_l(p + sun_dir * 170.0, 0.0, layers, lr) * 180.0 + wc_wave_extinction_l(p + sun_dir * 450.0, 0.0, layers, lr) * 380.0;
 			// The forward-scattered sunlight carries the diffraction colours (the forward lobes, where single scattering
 			// by the droplets rules): droplets from 1 um where the air has just saturated to 6 um 150 m past it, on thin
 			// cloud only (many scatterings wash them out), 6 to 35 degrees from the sun. The size is set by the depth in from
@@ -1302,7 +1305,7 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 			if (!ambient_done) {
 				// The sky's light, once a coarse step: from above through the cloud over the point, from below off the
 				// ground (as the cumulus' hemisphere reads, Nubis's ambient through the density above).
-				float tau_up = wc_wave_extinction_d(p + vec3(0.0, 80.0, 0.0), 0.0, dep, lr, dr) * 160.0 + wc_wave_extinction_d(p + vec3(0.0, 300.0, 0.0), 0.0, dep, lr, dr) * 280.0;
+				float tau_up = wc_wave_extinction_l(p + vec3(0.0, 80.0, 0.0), 0.0, layers, lr) * 160.0 + wc_wave_extinction_l(p + vec3(0.0, 300.0, 0.0), 0.0, layers, lr) * 280.0;
 				ambient_lens = ambient_top * (1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau_up * 2.0)) + ambient_bottom * 0.5;
 				ambient_done = true;
 			}

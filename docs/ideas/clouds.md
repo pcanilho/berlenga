@@ -1048,6 +1048,22 @@ moist layer (exp(-d^8)) and smooth rounded plate sheets 350 m apart; neither sha
 worse. A crisper rim from below needs a steeper lift at the outline or more water than the lift gives, which the
 physics here does not support without an artistic edge term.
 
+## Lenticular rim: the moisture rides the streamlines (24 Nov; Paulo: steeper wave crests)
+
+The cause of the soft rim above was the moisture, not the lift. Long's model (Long 1953; Durran 1986, "Mountain waves",
+in Mesoscale Meteorology and Forecasting) has each streamline carry its upstream properties: air at height z, displaced
+by eta, came from z0 = z - eta. The dew point depression was read at z itself, so the moist layer stood still while the
+wave lifted the air through it, and the lens saturated level by level from its outline (the kilometre-wide translucent
+taper). Now it is read at z0 (wave_extinction_at() on the CPU, wc_wave_extinction_l() and march_wave() on the GPU): the
+moist layer is lifted with the air, so the whole layer saturates together where the lift first exceeds its deficit,
+the lens reaches its full depth within metres of its edge (a crisp rim from below as well as edge-on), and its top and
+bottom follow the streamlines (the smooth, almond outline of photographs). The plates' sheets are read at z0 too, so
+they bend with the wave instead of cutting it at fixed heights.
+
+Cost: the layers' cover noise is not read per sample. The layers vary over kilometres, so their moisture is read once a coarse step at its xz (wc_wave_layers()) and only the height part
+(the layer weights and the temperature at z0, wc_wave_depression_l()) per sample; the sun and sky probes reuse the
+step's read. Bench lens 102 s against 107 s before (lavapipe, 48 frames): no extra cost.
+
 ## Sky under TAA and temporal upscalers: accumulate unjittered (24 Nov)
 
 The reprojected sky (sky_reproject.glsl) kept its history in the jittered view, so with TAA, FSR2 or DLSS on every frame
