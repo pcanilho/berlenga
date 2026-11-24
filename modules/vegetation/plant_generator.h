@@ -191,6 +191,9 @@ public:
 		PRESET_BANK_ROOTS_WOODY, // A tree's or shrub's roots bared on a cut bank near its crown: a few woody laterals out of the face, along and down it, branching to fine ends.
 		PRESET_HAY_BALE, // A round hay bale lying on its side, 4 x 4 to 5 x 5 ft, the axis along +X: wound hay strands, spiral ends, twine bands (GrassField3D drops them along the windrows).
 		PRESET_YORKSHIRE_FOG, // Holcus lanatus in flower: a soft grey-green tuft and culms 20 to 100 cm with dense panicles tinged purple to red, grey to pink in seed (by the season's forcing).
+		PRESET_FALSE_OAT_GRASS, // Arrhenatherum elatius: the tall meadow's grass, culms 60 to 150 cm with a loose nodding shining panicle of large awned spikelets (June to September).
+		PRESET_MEADOW_FOXTAIL, // Alopecurus pratensis: culms 30 to 90 cm with a soft cylindrical spike, grey-green then purple with anthers (April to June).
+		PRESET_TUFTED_HAIR_GRASS, // Deschampsia cespitosa: a dense dark tussock under culms 50 to 150 cm with a wide airy panicle, silvery purple then golden straw into winter (damp ground).
 		PRESET_MAX,
 	};
 
@@ -320,6 +323,11 @@ private:
 	void _build_cocksfoot();
 	void _build_timothy();
 	void _build_yorkshire_fog();
+	void _build_false_oat_grass();
+	void _build_meadow_foxtail();
+	void _build_tufted_hair_grass();
+	bool _heading() const;
+	void _add_spikelet(const Vector3 &p_at, const Vector3 &p_dir, const Vector3 &p_side, float p_length, float p_width, const Color &p_tint);
 	void _build_dry_grass();
 	void _build_leaf_litter();
 	void _build_ground_ivy();

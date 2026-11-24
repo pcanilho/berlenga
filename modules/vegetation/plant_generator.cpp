@@ -401,6 +401,18 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 			// heads stand a few weeks before they shatter (an estimate).
 			r_phenology = { 280.0f, 1450.0f, 300.0f, true };
 			return true;
+		case PRESET_FALSE_OAT_GRASS:
+			// June to September (Stace): degree days fitted to that window as the fog's; the straw heads stand a month.
+			r_phenology = { 600.0f, 2000.0f, 450.0f, true };
+			return true;
+		case PRESET_MEADOW_FOXTAIL:
+			// April to June, the first meadow grass in head; the spikes brown and break up by midsummer (an estimate).
+			r_phenology = { 160.0f, 750.0f, 350.0f, true };
+			return true;
+		case PRESET_TUFTED_HAIR_GRASS:
+			// June to August; the bleached panicles stand through winter.
+			r_phenology = { 600.0f, 1500.0f, -1.0f, true };
+			return true;
 		case PRESET_CLOVER:
 			r_phenology = { 450.0f, 1600.0f, 150.0f, false };
 			return true;
@@ -687,6 +699,9 @@ float PlantGenerator::get_pollen_amount(Preset p_preset) {
 		case PRESET_COCKSFOOT:
 		case PRESET_TIMOTHY:
 		case PRESET_YORKSHIRE_FOG:
+		case PRESET_FALSE_OAT_GRASS:
+		case PRESET_MEADOW_FOXTAIL:
+		case PRESET_TUFTED_HAIR_GRASS:
 			return 0.9f;
 		case PRESET_REED:
 		case PRESET_NETTLE:
@@ -775,6 +790,9 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 			return 300.0f;
 		case PRESET_TIMOTHY:
 		case PRESET_YORKSHIRE_FOG:
+		case PRESET_FALSE_OAT_GRASS:
+		case PRESET_MEADOW_FOXTAIL:
+		case PRESET_TUFTED_HAIR_GRASS:
 		case PRESET_RUSH:
 		case PRESET_LEAF_LITTER:
 		case PRESET_NEEDLE_LITTER:
@@ -950,6 +968,9 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_GRAZED_LAWN:
 		case PRESET_TIMOTHY:
 		case PRESET_YORKSHIRE_FOG:
+		case PRESET_FALSE_OAT_GRASS:
+		case PRESET_MEADOW_FOXTAIL:
+		case PRESET_TUFTED_HAIR_GRASS:
 		case PRESET_DRY_GRASS:
 		case PRESET_REED:
 		case PRESET_CATTAIL:
@@ -2057,6 +2078,210 @@ void PlantGenerator::_build_yorkshire_fog() {
 					const Basis gb = organ_frame(sd, radial);
 					_add_leaf(SURFACE_PETAL, Transform3D(gb, o), f, 1.0f, 1.0f, tint);
 					_add_leaf(SURFACE_PETAL, Transform3D(Basis(-gb.get_column(0), -gb.get_column(1), gb.get_column(2)), o), f, 1.0f, 1.0f, Color(tint.r * 0.94f, tint.g * 0.94f, tint.b * 0.94f));
+				}
+			}
+		}
+	}
+}
+
+// The tall meadow grasses (docs/ideas/vegetation.md, "Tall meadow heads"): a lowland hay meadow in early summer stands
+// waist high in seed heads over its leafy sward (NVC MG1, false oat-grass grassland; Rodwell 1992). Heights and head
+// sizes from Stace, New Flora of the British Isles (3rd ed. 2010); stages by the season's degree days (_phenology).
+
+// A glume pair (a spikelet, closed): two keeled scales face to face at p_at along p_dir.
+// A tall grass's culms stand headed some weeks before their flowers open (heading to anthesis, about 250 degree
+// days: an estimate from the meadow grasses' two to four weeks), so the meadow is in head before it is in flower.
+bool PlantGenerator::_heading() const {
+	Phenology ph;
+	if (bloom_forcing < 0.0f || !_phenology(preset, ph)) {
+		return false;
+	}
+	// Up to the last culm's opening (a flush opens its heads over 0.55 of the window), so a culm that has shed its head
+	// is not drawn headed again (each tall grass holds its heads longer than that tenth of the window).
+	// No more than half the warmth to the first flowers ahead of them (an early grass heads in spring, not in winter).
+	return bloom_forcing >= MAX(ph.onset - 250.0f, 0.5f * ph.onset) && bloom_forcing < ph.onset + 0.55f * (ph.end - ph.onset);
+}
+
+void PlantGenerator::_add_spikelet(const Vector3 &p_at, const Vector3 &p_dir, const Vector3 &p_side, float p_length, float p_width, const Color &p_tint) {
+	Leaf f;
+	f.shape = LEAF_LANCEOLATE;
+	f.length = p_length;
+	f.width = p_width;
+	f.fold = 0.7f;
+	f.bend = 0.15f;
+	f.segments = 2;
+	const Basis gb = organ_frame(p_dir, p_side);
+	_add_leaf(SURFACE_PETAL, Transform3D(gb, p_at), f, 1.0f, 1.0f, p_tint);
+	_add_leaf(SURFACE_PETAL, Transform3D(Basis(-gb.get_column(0), -gb.get_column(1), gb.get_column(2)), p_at), f, 1.0f, 1.0f, Color(p_tint.r * 0.94f, p_tint.g * 0.94f, p_tint.b * 0.94f));
+}
+
+// False oat-grass (Arrhenatherum elatius): a loose tuft, culms to 180 cm (mostly 60 to 150) with a loose, nodding,
+// shining panicle 10 to 30 cm long; whorls of slender branches, each with a few large (7 to 11 mm) two-flowered
+// spikelets near its tip, the lower floret with a long bent awn from its back. Green to purple-flushed in flower,
+// straw in seed. June to September.
+void PlantGenerator::_build_false_oat_grass() {
+	_add_grass_tuft(int(_rand(10.0f, 16.0f)), 0.15f, 0.4f, 0.005f, 0.009f, 0.04f);
+	const int culms = int(_rand(3.0f, 6.99f));
+	const float spin = _rand(0.0f, Math::TAU);
+	for (int c = 0; c < culms; c++) {
+		float progress = -1.0f;
+		float dead = 0.0f;
+		Bloom bloom = _bloom(rng.randf() < 0.3f, &progress, &dead);
+		if (bloom == BLOOM_NONE) {
+			if (!_heading()) {
+				continue;
+			}
+			bloom = BLOOM_FLOWER; // Headed, not yet open: the head stands closed on the culm.
+			progress = -0.5f;
+		}
+		const Wither wither(this, dead);
+		const bool seed = bloom == BLOOM_SEED;
+		const float open = seed ? 0.45f : (progress <= -0.5f ? 0.15f : (progress < 0.0f ? 0.8f : Math::lerp(0.5f, 1.0f, Math::sin(float(Math::PI) * CLAMP(progress, 0.0f, 1.0f)))));
+		Transform3D base = stem_base(spin + c * GOLDEN_ANGLE + _rand(-0.3f, 0.3f), _rand(1.4f, 1.53f));
+		base.origin = Vector3(_rand(-0.025f, 0.025f), 0.0f, _rand(-0.025f, 0.025f));
+		const float len = _rand(0.55f, 1.15f);
+		const float bend = _rand(-0.1f, 0.15f);
+		const Transform3D top = _add_stem(base, len, 0.0022f, 0.0014f, bend, 10, 0.0f);
+		const float plen = _rand(0.1f, 0.26f) * Math::lerp(0.75f, 1.0f, len / 1.15f);
+		const float pbend = _rand(0.3f, 0.6f); // Nodding.
+		const LocalVector<Transform3D> pf = _stem_frames(top, plen, pbend, 8);
+		(void)_add_stem(top, plen, 0.0011f, 0.0005f, pbend, 8, 1.0f);
+		const float flush = _rand(0.0f, 1.0f);
+		const Color head = seed ? Color(1.25f, 1.12f, 0.8f).lerp(Color(1.15f, 1.0f, 0.78f), flush) : Color(0.95f, 1.05f, 0.85f).lerp(Color(1.05f, 0.85f, 0.95f), 0.6f * flush);
+		const int whorls = int(_rand(7.0f, 10.99f));
+		for (int w = 0; w < whorls; w++) {
+			const float s = (float(w) + _rand(0.2f, 0.8f)) / whorls;
+			const Transform3D at = _frame_at(pf, s);
+			const float taper = 1.0f - 0.6f * s;
+			const int branches = int(_rand(3.0f, 6.99f) * taper) + 1;
+			const float a0 = _rand(0.0f, Math::TAU);
+			for (int b = 0; b < branches; b++) {
+				const float a = a0 + b * Math::TAU / branches + _rand(-0.4f, 0.4f);
+				const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
+				const Vector3 dir = (at.basis.get_column(2) * Math::lerp(1.0f, 0.6f, open) + radial * Math::lerp(0.2f, 0.75f, open)).normalized();
+				const float blen = _rand(0.025f, 0.08f) * taper + 0.01f;
+				const float bb = _rand(0.2f, 0.5f); // The branches arch, the spikelets hang.
+				const LocalVector<Transform3D> bf = _stem_frames(Transform3D(organ_frame(dir, radial), at.origin), blen, bb, 3);
+				(void)_add_stem(Transform3D(organ_frame(dir, radial), at.origin), blen, 0.0003f, 0.00018f, bb, 3, 1.0f);
+				const int n = int(_rand(2.0f, 5.99f));
+				for (int k = 0; k < n; k++) {
+					const Transform3D sf = _frame_at(bf, 1.0f - 0.6f * float(k) / float(n));
+					const Vector3 sd = (sf.basis.get_column(2) * 0.5f + Vector3(0, -0.6f, 0) + Vector3(_rand(-0.2f, 0.2f), _rand(-0.1f, 0.1f), _rand(-0.2f, 0.2f))).normalized();
+					const float k_t = _rand(0.88f, 1.1f);
+					const Color tint(head.r * k_t, head.g * k_t, head.b * k_t);
+					const float sl = _rand(0.008f, 0.011f);
+					_add_spikelet(sf.origin, sd, radial, sl, 0.0032f, tint);
+					// The awn: a bent bristle twice the spikelet's length from its back.
+					const Vector3 aw = (sd * 0.3f + radial * 0.7f + Vector3(0, 0.3f, 0)).normalized();
+					(void)_add_stem(Transform3D(organ_frame(aw, sd), sf.origin + sd * sl * 0.35f), sl * 1.6f, 0.00014f, 0.00008f, 0.35f, 2, 1.0f, SURFACE_PETAL);
+				}
+			}
+		}
+	}
+}
+
+// Meadow foxtail (Alopecurus pratensis): a leafy tuft, culms to 110 cm (mostly 30 to 90) each with a dense, soft,
+// cylindrical spike-like panicle 3 to 13 cm long and 6 to 10 mm thick, its small spikelets (4 to 6 mm) packed all
+// round with short awns: grey-green, then purple with the hanging anthers in flower, pale straw-brown in seed. The
+// earliest meadow grass: April to June.
+void PlantGenerator::_build_meadow_foxtail() {
+	_add_grass_tuft(int(_rand(10.0f, 16.0f)), 0.12f, 0.32f, 0.004f, 0.008f, 0.035f);
+	const int culms = int(_rand(3.0f, 7.99f));
+	const float spin = _rand(0.0f, Math::TAU);
+	for (int c = 0; c < culms; c++) {
+		float progress = -1.0f;
+		float dead = 0.0f;
+		Bloom bloom = _bloom(rng.randf() < 0.3f, &progress, &dead);
+		if (bloom == BLOOM_NONE) {
+			if (!_heading()) {
+				continue;
+			}
+			bloom = BLOOM_FLOWER; // Headed, not yet open: the head stands closed on the culm.
+			progress = -0.5f;
+		}
+		const Wither wither(this, dead);
+		const bool seed = bloom == BLOOM_SEED;
+		Transform3D base = stem_base(spin + c * GOLDEN_ANGLE + _rand(-0.3f, 0.3f), _rand(1.4f, 1.54f));
+		base.origin = Vector3(_rand(-0.02f, 0.02f), 0.0f, _rand(-0.02f, 0.02f));
+		const float len = _rand(0.35f, 0.85f);
+		const Transform3D top = _add_stem(base, len, 0.0018f, 0.0012f, _rand(-0.1f, 0.18f), 9, 0.0f);
+		const float plen = _rand(0.035f, 0.1f) * Math::lerp(0.7f, 1.0f, len / 0.85f);
+		const float radius = _rand(0.003f, 0.0045f);
+		const LocalVector<Transform3D> pf = _stem_frames(top, plen, _rand(0.0f, 0.1f), 5);
+		(void)_add_stem(top, plen, 0.0012f, 0.0008f, 0.05f, 5, 1.0f);
+		const float anthers = seed ? 0.0f : (progress <= -0.5f ? 0.0f : (progress < 0.0f ? 0.6f : Math::sin(float(Math::PI) * CLAMP(progress, 0.0f, 1.0f))));
+		const Color head = seed ? Color(1.15f, 1.0f, 0.82f) : Color(0.9f, 1.0f, 0.92f).lerp(Color(1.0f, 0.78f, 1.0f), 0.65f * anthers);
+		const int rings = int(plen / 0.0022f) + 3;
+		const int around = 7;
+		for (int r = 0; r < rings; r++) {
+			const float s = (float(r) + 0.5f) / rings;
+			const Transform3D at = _frame_at(pf, s);
+			const float rr = radius * (1.0f - 0.6f * Math::pow(Math::abs(2.0f * s - 1.0f), 4.0f)); // Rounded ends.
+			const float a0 = r * 0.45f + _rand(-0.2f, 0.2f);
+			for (int k = 0; k < around; k++) {
+				const float a = a0 + k * Math::TAU / around;
+				const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
+				const Vector3 sd = (at.basis.get_column(2) * 0.75f + radial * 0.65f).normalized();
+				const float k_t = _rand(0.88f, 1.1f);
+				_add_spikelet(at.origin + radial * rr * 0.45f, sd, radial, _rand(0.0042f, 0.0056f), 0.0018f, Color(head.r * k_t, head.g * k_t, head.b * k_t));
+			}
+		}
+	}
+}
+
+// Tufted hair-grass (Deschampsia cespitosa): a dense tussock of narrow, rough, dark leaves, culms to 200 cm (mostly
+// 50 to 150) with a wide, very open panicle 10 to 50 cm long of hair-thin branches in whorls, the tiny spikelets
+// (3 to 5 mm) near their tips: a silvery purple haze in flower, golden then straw in seed, standing into winter. Damp
+// meadows and wet hollows. June to August.
+void PlantGenerator::_build_tufted_hair_grass() {
+	_add_grass_tuft(int(_rand(28.0f, 44.0f)), 0.15f, 0.45f, 0.002f, 0.004f, 0.07f);
+	const int culms = int(_rand(5.0f, 10.99f));
+	const float spin = _rand(0.0f, Math::TAU);
+	for (int c = 0; c < culms; c++) {
+		float progress = -1.0f;
+		float dead = 0.0f;
+		Bloom bloom = _bloom(rng.randf() < 0.3f, &progress, &dead);
+		if (bloom == BLOOM_NONE) {
+			if (!_heading()) {
+				continue;
+			}
+			bloom = BLOOM_FLOWER; // Headed, not yet open: the head stands closed on the culm.
+			progress = -0.5f;
+		}
+		const Wither wither(this, MIN(dead, 0.75f)); // Bleached, not rotten: the heads stand through winter.
+		const bool seed = bloom == BLOOM_SEED;
+		Transform3D base = stem_base(spin + c * GOLDEN_ANGLE + _rand(-0.3f, 0.3f), _rand(1.25f, 1.5f)); // Splaying from the tussock.
+		base.origin = Vector3(_rand(-0.05f, 0.05f), 0.0f, _rand(-0.05f, 0.05f));
+		const float len = _rand(0.45f, 1.05f);
+		const Transform3D top = _add_stem(base, len, 0.0016f, 0.001f, _rand(0.0f, 0.25f), 10, 0.0f);
+		const float plen = _rand(0.12f, 0.35f) * Math::lerp(0.7f, 1.0f, len / 1.05f);
+		const float pbend = _rand(0.1f, 0.35f);
+		const LocalVector<Transform3D> pf = _stem_frames(top, plen, pbend, 8);
+		(void)_add_stem(top, plen, 0.0008f, 0.0003f, pbend, 8, 1.0f);
+		const float flush = _rand(0.0f, 1.0f);
+		const Color head = seed ? Color(1.35f, 1.2f, 0.78f).lerp(Color(1.2f, 1.1f, 0.85f), flush) : Color(1.0f, 0.95f, 1.05f).lerp(Color(1.15f, 0.8f, 1.15f), flush);
+		const int whorls = int(_rand(6.0f, 9.99f));
+		for (int w = 0; w < whorls; w++) {
+			const float s = (float(w) + _rand(0.2f, 0.8f)) / whorls;
+			const Transform3D at = _frame_at(pf, s);
+			const float taper = 1.0f - 0.75f * s; // A wide pyramid.
+			const int branches = int(_rand(3.0f, 5.99f));
+			const float a0 = _rand(0.0f, Math::TAU);
+			for (int b = 0; b < branches; b++) {
+				const float a = a0 + b * Math::TAU / branches + _rand(-0.4f, 0.4f);
+				const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
+				const Vector3 dir = (at.basis.get_column(2) * (seed ? 0.8f : (progress <= -0.5f ? 3.0f : 0.5f)) + radial).normalized(); // Contracted before it opens.
+				const float blen = _rand(0.03f, 0.12f) * taper + 0.015f;
+				const Transform3D bt(organ_frame(dir, radial), at.origin);
+				const LocalVector<Transform3D> bf = _stem_frames(bt, blen, 0.15f, 3);
+				(void)_add_stem(bt, blen, 0.00022f, 0.00012f, 0.15f, 3, 1.0f);
+				// The spikelets on the outer half of the branch, a few on short side stalks.
+				const int n = int(_rand(9.0f, 15.99f));
+				for (int k = 0; k < n; k++) {
+					const Transform3D sf = _frame_at(bf, _rand(0.35f, 1.0f));
+					const Vector3 sd = (sf.basis.get_column(2) + Vector3(_rand(-0.4f, 0.4f), _rand(-0.2f, 0.3f), _rand(-0.4f, 0.4f))).normalized();
+					const float k_t = _rand(0.85f, 1.12f);
+					_add_spikelet(sf.origin + sd * 0.002f, sd, radial, _rand(0.0035f, 0.005f), 0.0017f, Color(head.r * k_t, head.g * k_t, head.b * k_t));
 				}
 			}
 		}
@@ -4897,6 +5122,9 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 		case PRESET_COCKSFOOT:
 		case PRESET_TIMOTHY:
 		case PRESET_YORKSHIRE_FOG:
+		case PRESET_FALSE_OAT_GRASS:
+		case PRESET_MEADOW_FOXTAIL:
+		case PRESET_TUFTED_HAIR_GRASS:
 		case PRESET_GRAZED_LAWN:
 		case PRESET_TURF_LIP:
 		case PRESET_HAY_BALE:
@@ -6835,6 +7063,21 @@ void PlantGenerator::apply_preset_colors() {
 			stem_color = Color(0.3f, 0.36f, 0.16f);
 			petal_color = Color(0.36f, 0.38f, 0.2f);
 			break;
+		case PRESET_FALSE_OAT_GRASS:
+			leaf_color = Color(0.17f, 0.3f, 0.1f); // Mid green, broad and flat.
+			stem_color = Color(0.32f, 0.38f, 0.18f);
+			petal_color = Color(0.5f, 0.56f, 0.36f); // Shining green spikelets, purple-flushed.
+			break;
+		case PRESET_MEADOW_FOXTAIL:
+			leaf_color = Color(0.15f, 0.29f, 0.09f);
+			stem_color = Color(0.3f, 0.37f, 0.17f);
+			petal_color = Color(0.5f, 0.55f, 0.46f); // Soft grey-green, silky with the awns.
+			break;
+		case PRESET_TUFTED_HAIR_GRASS:
+			leaf_color = Color(0.12f, 0.22f, 0.08f); // Dark, rough, ridged.
+			stem_color = Color(0.4f, 0.4f, 0.26f);
+			petal_color = Color(0.56f, 0.5f, 0.56f); // Silvery purple.
+			break;
 		case PRESET_YORKSHIRE_FOG:
 			leaf_color = Color(0.2f, 0.29f, 0.17f); // Soft, downy grey-green.
 			stem_color = Color(0.36f, 0.38f, 0.24f);
@@ -7409,6 +7652,9 @@ float PlantGenerator::get_drought_cure(Preset p_preset, const Dictionary &p_seas
 		case PRESET_GRAZED_LAWN:
 		case PRESET_DUNG_ROUGH:
 		case PRESET_YORKSHIRE_FOG:
+		case PRESET_FALSE_OAT_GRASS:
+		case PRESET_MEADOW_FOXTAIL:
+		case PRESET_TUFTED_HAIR_GRASS:
 		case PRESET_DRY_GRASS:
 			reach = 0.62f; // Grasses: straw.
 			break;
@@ -7536,6 +7782,15 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_YORKSHIRE_FOG:
 			_build_yorkshire_fog();
+			break;
+		case PRESET_FALSE_OAT_GRASS:
+			_build_false_oat_grass();
+			break;
+		case PRESET_MEADOW_FOXTAIL:
+			_build_meadow_foxtail();
+			break;
+		case PRESET_TUFTED_HAIR_GRASS:
+			_build_tufted_hair_grass();
 			break;
 		case PRESET_DRY_GRASS:
 			_build_dry_grass();
@@ -8262,6 +8517,62 @@ TypedArray<Resource> PlantGenerator::make_flowering_grasses(int p_variants, bool
 	sp->set_meta("flowering_grass", true);
 	tag_species(sp, PRESET_YORKSHIRE_FOG);
 	out.push_back(sp);
+	// The tall meadow grasses over it (docs/ideas/vegetation.md, "Tall meadow heads"): waist-high seed heads in
+	// drifts, each species on its own ground, so the meadow is a layered sea of heads, not one even height.
+	struct Tall {
+		Preset preset;
+		uint32_t seed;
+		float spacing, density, patch_scale, patch_cover, visibility;
+		float wet_min, wet_max; // Topographic wetness index: foxtail and hair-grass on the damper ground.
+		Color flower, seeded; // The heads' far tint in flower and in seed.
+	};
+	const Tall talls[3] = {
+		{ PRESET_FALSE_OAT_GRASS, 5101, 0.42f, 0.8f, 11.0f, 0.55f, 60.0f, -1000.0f, 1000.0f, Color(0.42f, 0.44f, 0.32f), Color(0.6f, 0.53f, 0.36f) },
+		{ PRESET_MEADOW_FOXTAIL, 5203, 0.3f, 0.8f, 7.0f, 0.45f, 50.0f, 6.0f, 1000.0f, Color(0.42f, 0.36f, 0.44f), Color(0.55f, 0.47f, 0.36f) },
+		{ PRESET_TUFTED_HAIR_GRASS, 5309, 0.9f, 0.75f, 9.0f, 0.5f, 70.0f, 7.5f, 1000.0f, Color(0.5f, 0.44f, 0.52f), Color(0.66f, 0.58f, 0.4f) },
+	};
+	for (const Tall &t : talls) {
+		Ref<PlantGenerator> g;
+		g.instantiate();
+		g->set_textures(p_textures);
+		g->set_preset(t.preset);
+		g->apply_preset_colors();
+		g->set_seed(int(t.seed));
+		g->set_season(p_season);
+		Ref<PlantSpecies> ts;
+		ts.instantiate();
+		TypedArray<Mesh> tm;
+		const TypedArray<ArrayMesh> tv = g->generate_variants(MAX(p_variants, 1));
+		for (int i = 0; i < tv.size(); i++) {
+			tm.push_back(tv[i]);
+		}
+		ts->set_meshes(tm);
+		ts->set_spacing(t.spacing);
+		ts->set_footprint(t.preset == PRESET_TUFTED_HAIR_GRASS ? 0.12f : 0.05f);
+		ts->set_density(t.density);
+		ts->set_scale_range(Vector2(0.8f, 1.2f));
+		ts->set_patch_scale(t.patch_scale);
+		ts->set_patch_cover(t.patch_cover);
+		ts->set_patch_seed(int(t.seed) + 2);
+		ts->set_visibility_range(t.visibility);
+		ts->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.4f));
+		ts->set_rule_fade(PlantSpecies::RULE_SHADE, 0.15f);
+		ts->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, 30.0f));
+		ts->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
+		if (t.wet_min > -1000.0f) {
+			ts->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(t.wet_min, t.wet_max));
+			ts->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.5f);
+		}
+		const Vector3 sh = get_bloom_shares(t.preset, p_season);
+		const float hd = sh.y + sh.z;
+		const Color hc = t.flower.lerp(t.seeded, hd > 0.0f ? sh.z / hd : 0.0f);
+		const Color gr = _cured_leaf_color(g->get_leaf_color(), get_drought_cure(t.preset, p_season)) * 0.8f;
+		const Color fc = gr.lerp(hc, 0.65f * hd);
+		ts->set_far_color(Color(fc.r, fc.g, fc.b, hd > 0.01f ? CLAMP(0.3f + 0.5f * hd, 0.25f, 0.8f) : 0.0f));
+		ts->set_meta("flowering_grass", true);
+		tag_species(ts, t.preset);
+		out.push_back(ts);
+	}
 	return out;
 }
 
@@ -9177,6 +9488,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_BANK_ROOTS_WOODY);
 	BIND_ENUM_CONSTANT(PRESET_HAY_BALE);
 	BIND_ENUM_CONSTANT(PRESET_YORKSHIRE_FOG);
+	BIND_ENUM_CONSTANT(PRESET_FALSE_OAT_GRASS);
+	BIND_ENUM_CONSTANT(PRESET_MEADOW_FOXTAIL);
+	BIND_ENUM_CONSTANT(PRESET_TUFTED_HAIR_GRASS);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_sets", "calls"), &PlantGenerator::make_sets);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_flowering_grasses", "variants", "textures", "season"), &PlantGenerator::make_flowering_grasses, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("set_parallel_sets", "enable"), &PlantGenerator::set_parallel_sets);

@@ -103,7 +103,7 @@
 			<param index="1" name="textures" type="bool" default="true" />
 			<param index="2" name="season" type="Dictionary" default="{}" />
 			<description>
-				Flowering meadow grass for a sward: Yorkshire fog ([constant PRESET_YORKSHIRE_FOG]) in loose drifts through open grassland, its heads by the [param season] (as [member season]): none before heading, purple-pink in flower, grey-pink in seed. The species' far colour takes the heads' tint while they stand (none outside the season). Species carry the meta [code]flowering_grass[/code]. Place them ahead of a field's own tall grass so the drifts claim their room.
+				Flowering meadow grasses for a sward: Yorkshire fog ([constant PRESET_YORKSHIRE_FOG]) in loose drifts through open grassland, and over it the waist-high heads of the tall meadow in their own drifts: false oat-grass ([constant PRESET_FALSE_OAT_GRASS]), and meadow foxtail ([constant PRESET_MEADOW_FOXTAIL]) and tufted hair-grass ([constant PRESET_TUFTED_HAIR_GRASS]) on the damper ground (RULE_WETNESS), its heads by the [param season] (as [member season]): none before heading, purple-pink in flower, grey-pink in seed. The species' far colour takes the heads' tint while they stand (none outside the season). Species carry the meta [code]flowering_grass[/code]. Place them ahead of a field's own tall grass so the drifts claim their room.
 			</description>
 		</method>
 		<method name="make_flood_wrack" qualifiers="static">
@@ -809,7 +809,16 @@
 		<constant name="PRESET_YORKSHIRE_FOG" value="116" enum="Preset">
 			Yorkshire fog (Holcus lanatus): a soft grey-green tuft with culms 30 to 90 cm, flowering May to August (Woodland Trust). Each culm heads by the season's forcing: a dense panicle of paired spikelet scales on hair-thin branches, opening in flower, closing and paling in seed, each culm its own tint from white-pink to purple-red.
 		</constant>
-		<constant name="PRESET_MAX" value="117" enum="Preset">
+		<constant name="PRESET_FALSE_OAT_GRASS" value="117" enum="Preset">
+			False oat-grass (Arrhenatherum elatius), the tall hay meadow's grass: culms 60 to 150 cm with a loose, nodding, shining panicle 10 to 30 cm long of large awned spikelets (Stace), June to September. Headed for some weeks before the flowers open, straw in seed.
+		</constant>
+		<constant name="PRESET_MEADOW_FOXTAIL" value="118" enum="Preset">
+			Meadow foxtail (Alopecurus pratensis): culms 30 to 90 cm with a soft cylindrical spike 3 to 13 cm long, grey-green, then purple with its anthers, April to June; the earliest meadow grass in head.
+		</constant>
+		<constant name="PRESET_TUFTED_HAIR_GRASS" value="119" enum="Preset">
+			Tufted hair-grass (Deschampsia cespitosa): a dense dark tussock under culms 50 to 150 cm with a wide airy panicle of hair-thin branches, a silvery purple haze in flower, golden then straw in seed, standing through winter. Damp ground.
+		</constant>
+		<constant name="PRESET_MAX" value="120" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="GRAZE_CATTLE" value="0" enum="GrazeSet">

@@ -2232,6 +2232,22 @@ over it: the turf under the blades (GrassField3D.get_ground_shader_code(), grass
   towards the first grass field's dry_color by the climate's share. Floor plants' far colours carry their drought cure
   (PlantGenerator.get_drought_cure, the shader's yellow-to-brown ramp mirrored on the CPU).
 
+## Tall meadow heads (Paulo, 24 Nov: "at least waist high vegetation like the flower heads")
+Star Citizen's Nyx 1 meadows read as a deep layer of seed heads over the sward; no talk or article gives its
+technique, so the model is the real thing: a lowland hay meadow in early summer (NVC MG1, false oat-grass grassland;
+Rodwell 1992) stands 0.8 to 1.5 m in heads over a leafy sward 20 to 40 cm deep. Three grasses, sizes from Stace, New
+Flora of the British Isles (3rd ed. 2010), added to make_flowering_grasses after the fog, each in its own drifts:
+- False oat-grass (PRESET_FALSE_OAT_GRASS): culms 60 to 150 cm, loose nodding shining panicle 10 to 30 cm, large
+  spikelets (7 to 11 mm) with a bent awn; June to September. Open ground, patch 11 m.
+- Meadow foxtail (PRESET_MEADOW_FOXTAIL): culms 30 to 90 cm, soft cylindrical spike 3 to 13 cm by 6 to 10 mm; April to
+  June. Damper ground (wetness index over 6).
+- Tufted hair-grass (PRESET_TUFTED_HAIR_GRASS): dark tussock, culms 50 to 150 cm, airy panicle 10 to 50 cm of hair-thin
+  branches, silvery purple then golden; heads stand into winter. Wet hollows (index over 7.5), tussocks 0.9 m apart.
+- Heading: culms stand headed (closed, green) from about 250 degree days before their flowers (an estimate of the
+  two to four weeks from heading to anthesis), no earlier than half the warmth to flowering.
+- Cost: 8 to 25k triangles a plant (spikelets as glume pairs, the fog's technique); plants bench checks heights, stages
+  and the 60k cap.
+
 ## Terracettes (GrassField3D.terracettes)
 Steep grazed hillsides carry sub-parallel steps along the contours (Wikipedia, "Terracette"). A grazing model
 (Seleb, Chatterjee and Bhamla 2025, arXiv 2504.17496) forms them from stock walking cross-slope routes and treads
