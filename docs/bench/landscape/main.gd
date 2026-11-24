@@ -2358,9 +2358,11 @@ func _generate() -> void:
 			rocks.generator = rocks.get_path_to(gen)
 			if "close_up_enabled" in rocks:
 				rocks.close_up_enabled = args.get("rock-closeup", "1") != "0" # real close-up detail near the camera
-			var to := Time.get_ticks_msec()
-			boulder_obstacles = rocks.get_obstacles(Rect2(-2048, -2048, 4096, 4096), float(args.get("rock-obstacle-min", "0.25")))
-			_log("rocks: %d stones as plant obstacles in %d ms" % [boulder_obstacles.size(), Time.get_ticks_msec() - to])
+			if not _has_prop("VegetationField3D", "rock_field"):
+				# Older binaries: every stone in the world as one obstacle array (the plant fields now fetch per tile).
+				var to := Time.get_ticks_msec()
+				boulder_obstacles = rocks.get_obstacles(Rect2(-2048, -2048, 4096, 4096), float(args.get("rock-obstacle-min", "0.25")))
+				_log("rocks: %d stones as plant obstacles in %d ms" % [boulder_obstacles.size(), Time.get_ticks_msec() - to])
 			bl = PackedVector4Array() # no stand-ins
 		if bl.size() > 0:
 			# Stand-ins: flattened low spheres, a third sunk into the ground, until real rock meshes come.
@@ -3638,6 +3640,7 @@ func _build_vegetation() -> void:
 	add_child(veg)
 	if "obstacles" in veg and not boulder_obstacles.is_empty():
 		veg.obstacles = boulder_obstacles # no trees through the boulders
+	_link_rocks(veg)
 	if args.get("trees", "cones") == "none":
 		veg.visible = false # --trees=none: placed (the other systems still read it) but not drawn, for views with no stand-ins
 
@@ -5047,10 +5050,27 @@ func _build_cover() -> void:
 	for f in sward + [cover]:
 		if f != null and "obstacles" in f and not boulder_obstacles.is_empty():
 			f.obstacles = boulder_obstacles # nothing grows through the boulders
+		_link_rocks(f)
 	for g in sward:
 		if "undergrowth_field" in g:
 			g.undergrowth_field = g.get_path_to(cover) # the sward thins under bracken and bramble stands
 	_log("cover: %d species streaming round the camera, set up in %d ms" % [b.species.size(), Time.get_ticks_msec() - t])
+
+
+func _has_prop(cls: String, prop: String) -> bool:
+	for pr in ClassDB.class_get_property_list(cls):
+		if pr["name"] == prop:
+			return true
+	return false
+
+
+# The plant fields fetch the rock field's stones per tile just before placing it (32 m chunks round the tile):
+# placements match the old world-wide obstacle array without placing every stone in the world up front.
+func _link_rocks(f: Node) -> void:
+	if f == null or rocks == null or not "rock_field" in f:
+		return
+	f.rock_obstacle_min = float(args.get("rock-obstacle-min", "0.25"))
+	f.rock_field = f.get_path_to(rocks)
 
 
 func _variants(preset: int, count: int) -> Array:
