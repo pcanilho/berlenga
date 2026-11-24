@@ -4293,6 +4293,44 @@ func _build_camera() -> void:
 			cam.position = ce
 			cam.look_at(la)
 			_log("woodedge camera at %s, litter %.2f at the rim, %.2f under the camera" % [str(ce), veg.get_litter_at(pick + pdir * 3.0), veg.get_litter_at(ce)])
+		"ledge":
+			# A stepped hard-bed bench with its caprock slabs (RockField3D.ledge_slabs) from --ledge-back (22) m out:
+			# the 16 m cell within --ledge-search (1000) m holding the most overhanging lip (TerrainGenerator3D
+			# get_ledge_lips), the camera out from the face and --ledge-side (9) m along it so the run of slabs
+			# recedes, at --ledge-up (-2) m from the lip (below it: the overhangs read against the sky).
+			var lr := float(args.get("ledge-search", "1000"))
+			var lips: Array = gen.get_ledge_lips(Rect2(-lr, -lr, 2.0 * lr, 2.0 * lr), 4.0)
+			var cells := {}
+			for l in lips:
+				if float(l["overhang"]) <= 0.05:
+					continue
+				var lp: Vector3 = l["position"]
+				var key := Vector2i(int(floor(lp.x / 16.0)), int(floor(lp.z / 16.0)))
+				var c: Array = cells.get(key, [0.0, l])
+				c[0] = float(c[0]) + float(l["overhang"]) * float(l["weight"])
+				if float(l["overhang"]) > float((c[1] as Dictionary)["overhang"]):
+					c[1] = l
+				cells[key] = c
+			var lbest := -1.0
+			var lpick := {}
+			for key in cells:
+				if float(cells[key][0]) > lbest:
+					lbest = float(cells[key][0])
+					lpick = cells[key][1]
+			if lpick.is_empty():
+				_log("ledge view: no overhanging lips within %.0f m (%d lips)" % [lr, lips.size()])
+			else:
+				var lpos: Vector3 = lpick["position"]
+				var lout: Vector3 = lpick["out"]
+				lout.y = 0.0
+				lout = lout.normalized()
+				var along := lout.cross(Vector3.UP).normalized()
+				var lc := lpos + lout * float(args.get("ledge-back", "22")) + along * float(args.get("ledge-side", "9"))
+				lc.y = maxf(height_at(lc.x, lc.z) + 1.7, lpos.y + float(args.get("ledge-up", "-2")))
+				cam.fov = 55.0
+				cam.position = lc
+				cam.look_at(lpos)
+				_log("ledge view: %d lips, pick %s overhang %.2f m cap %.2f m, score %.1f, camera %s" % [lips.size(), str(lpos.round()), float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round())])
 		"gully":
 			# A raised oblique down a real gully onto its fan (RockField3D.runoff_gravel: a coarse lag on the floor,
 			# fine grains on the fan). The strongest open gully on soil (TerrainGenerator3D.get_gully_at, as the rocks
