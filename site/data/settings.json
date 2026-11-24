@@ -1810,6 +1810,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Ledge slabs",
+   "settings": [
+    "RockField3D.ledge_slabs"
+   ],
+   "note": "",
+   "what": "caprock slabs overhang the lips of hard-bed benches, broken along their joints.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Caves",
    "settings": [
     "CaveNetwork3D.build_meshes()",
