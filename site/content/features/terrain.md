@@ -139,7 +139,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 ## Ground
 
-- **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). In dry climates the ground breaks into patches of bare soil and plant cover by the year's rain, and in summer-dry climates the cover cures to straw (`climate_bare_soil`, `cured_cover_color`). Rock faces weather by aspect, with lichen rosettes in colonies, moss on shaded ledges and seep stripes down gullies (`tm_face_weathering`, `tm_latitude`).
+- **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). In dry climates the ground breaks into patches of bare soil and plant cover by the year's rain, and that cover cures to straw in the dry season and greens again in the wet one, by the weather's soil moisture (`climate_bare_soil`, `cured_cover_color`). Rock faces weather by aspect, with lichen rosettes in colonies, moss on shaded ledges and seep stripes down gullies (`tm_face_weathering`, `tm_latitude`).
 
   ![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach, raster vs path traced](media/terrain-ground.jpg)
 
@@ -159,6 +159,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Rock detail** (`rock_detail_enabled`): steep rock shows bedding planes and breaks into irregular jointed blocks, and scree and till show loose stones that stand out of the gravel in parallax with their own shadows, also path traced; no textures and no stretching on any face.
 
+- **Terracettes** (`Landscape3D.terracette_relief`): grazed slopes step into terracettes, with level treads and short risers.
 - **Cliff relief** (Landscape3D `cliff_relief`, metres, 0.6 m by default): steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too. In raster, ledges shadow each other per pixel where the shadow map is too coarse (TerrainMaterial3D `cliff_self_shadow`).
 
   ![A cliff face in raking sun, smooth and with cliff relief, raster](media/terrain-cliff-relief.jpg)
