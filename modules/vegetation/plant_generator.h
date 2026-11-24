@@ -525,6 +525,7 @@ private:
 		float old_share = 0.0f; // Last year's dead fronds still lying there, as a share of the fronds.
 		float old_lodge = 1.0f;
 	};
+	void _drought_cure(); // Summer drought: the open-ground herbs cure (vertex alpha) by the season's soil water.
 	FrondSeason _frond_season(float p_emerge, float p_unroll, float p_onset, float p_span) const;
 	// A flowering stem's stage. Without a season the builder's own draw decides (in seed or in flower).
 	// r_dead: how far a stem in seed has died back (0 green, 1 a standing dead stalk).
@@ -577,6 +578,7 @@ public:
 	void set_season(const Dictionary &p_season);
 	Dictionary get_season() const { return season; }
 	static Vector3 get_bloom_shares(Preset p_preset, const Dictionary &p_season);
+	static float get_drought_cure(Preset p_preset, const Dictionary &p_season); // The dead share summer drought gives the preset (0 for those that keep green).
 	// Wind pollination (docs/ideas/vegetation.md, "Ground mist and pollen"): how much pollen a brushed
 	// plant of the preset sheds at full flower (0 for insect-pollinated plants), and the share of it
 	// shedding on the season's day.

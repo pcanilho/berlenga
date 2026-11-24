@@ -2194,6 +2194,28 @@ and Mediterranean perennial grasses go summer-dormant, dead to the crown, once t
 - VegetationField3D cover map (climate_bare): the far sward and cover plants take (1 - bare share) of their cover,
   so past the blades the ground shows the patchwork's mean, as the terrain material does at a distance.
 
+## Drought curing of the cover plants (PlantGenerator.get_drought_cure)
+The landscape's dry gully (320 mm, 26 C July, soil moisture 0.007) still showed green clumps among the straw: the
+sward followed the weather, but the cover species (VegetationField3D, made by PlantGenerator with the weather's season)
+had no drought response at all, only flowering and autumn senescence. In a dry summer the open-ground grasses go
+summer-dormant and cure to straw (Volaire and Norton 2006), shallow-rooted forbs wilt and brown, deep-rooted forbs
+(taproots) stay green longest; the degree of curing is what grassfire danger rates on (Cheney and Sullivan,
+Grassfires, CSIRO 2008). Evergreen sclerophyll shrubs (rosemary, lavender, thyme, heaths) hold their leaves through
+drought, Cistus only sheds to smaller greyer summer leaves; plants of wet ground keep their local water.
+- Cure share = reach x (1 - smoothstep(0.1, 0.4, soil moisture)) x smoothstep(2, 8, temperature): the sward's own
+  soil-water ramp, so clumps and sward cure together; a frozen soil's low water is winter, not drought.
+- Reach (the shader's dead tissue, vertex alpha): grasses 0.62 (straw), shallow-rooted forbs and bracken 0.75
+  (browning), deep-rooted forbs 0.45 (yellowing), sage-leaved rock-rose 0.2; each plant x0.75 to x1.2 (soil depth).
+  Everything else 0. Estimates, tuned to read as straw in the shader's yellow-to-brown ramp.
+- GrassField3D applies the season on its first frame (it was one frame late; fields built at the end of a scene's
+  setup showed green in a shot taken that frame).
+
+## Grass tiles fit the path tracer's merged BLAS cap
+A GrassField3D tile over rendering/pathtracing/multimesh_merged_blas_max_triangles traces as one TLAS record per
+blade. The field now cuts its tiles smaller to fit (to the half metre under sqrt(cap / (density x tris))), the same
+blades in more tiles: the landscape's 220 blades/m2, 7-triangle "Grass" goes from 8 m (98,560 triangles) to 6.5 m
+(65,065). It was a warning asking the scene to set tile_size.
+
 ## Terracettes (GrassField3D.terracettes)
 Steep grazed hillsides carry sub-parallel steps along the contours (Wikipedia, "Terracette"). A grazing model
 (Seleb, Chatterjee and Bhamla 2025, arXiv 2504.17496) forms them from stock walking cross-slope routes and treads

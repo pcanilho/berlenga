@@ -320,6 +320,23 @@ vec3 grass_patch_tint(vec2 xz, float blade, float value, float variation) {
 }
 )";
 
+// The path tracer merges a MultiMesh into one BLAS only under a triangle cap; above it every blade becomes its own
+// TLAS record, far slower to build and trace (grass.md, stage 3). A full tile over the cap: the tiles shrink to fit
+// (the same blades, only cut into more tiles), to the half metre under the fit.
+void GrassField3D::_fit_tile_size(int p_cap, int p_tris) {
+	const float fit = Math::sqrt(float(p_cap) / MAX(density * float(p_tris), 1e-3f));
+	const float fitted = MAX(Math::floor(fit * 2.0f) * 0.5f, 1.0f);
+	if (fitted < tile_size) {
+		print_verbose(vformat("GrassField3D \"%s\": a full %.1f m tile holds about %d triangles, over the path tracer's merged BLAS cap (%d); tiles of %.1f m instead.", get_name(), tile_size, int(density * tile_size * tile_size * p_tris), p_cap, fitted));
+		tile_size = fitted;
+		// Tiles cut at the old size would overlap the new ones: dropped, rebuilt nearest first.
+		for (KeyValue<Vector2i, Tile> &kv : tiles) {
+			_free_tile(kv.value);
+		}
+		tiles.clear();
+	}
+}
+
 void GrassField3D::_ensure_resources() {
 	if (blade_mesh.is_null() && crop != CROP_NONE) {
 		blade_mesh = _make_crop_mesh(false);
@@ -328,7 +345,7 @@ void GrassField3D::_ensure_resources() {
 		const int cap = int(GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"));
 		const float tile_tris = density * tile_size * tile_size * tris;
 		if (cap > 0 && tile_tris > cap) {
-			WARN_PRINT(vformat("GrassField3D \"%s\": a full crop tile holds about %d triangles, over the path tracer's merged BLAS cap (%d); lower tile_size to %.1f m or less.", get_name(), int(tile_tris), cap, Math::sqrt(float(cap) / (density * tris))));
+			_fit_tile_size(cap, tris);
 		}
 	}
 	if (blade_mesh.is_null()) {
@@ -372,7 +389,7 @@ void GrassField3D::_ensure_resources() {
 		const int cap = int(GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"));
 		const float tile_tris = density * tile_size * tile_size * tris;
 		if (cap > 0 && tile_tris > cap) {
-			WARN_PRINT(vformat("GrassField3D \"%s\": a full tile holds about %d triangles, over the path tracer's merged BLAS cap (%d); lower tile_size to %.1f m or less.", get_name(), int(tile_tris), cap, Math::sqrt(float(cap) / (density * tris))));
+			_fit_tile_size(cap, tris);
 		}
 	}
 	if (material.is_null()) {
@@ -7347,6 +7364,7 @@ void GrassField3D::_notification(int p_what) {
 		case NOTIFICATION_READY: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_process_internal(true);
+				_season_step(); // The season's look from the first frame, not a frame later.
 				_queue_far_bake();
 			}
 		} break;

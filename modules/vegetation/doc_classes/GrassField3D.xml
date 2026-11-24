@@ -431,7 +431,7 @@
 			Terracettes' sward on steep slopes (about 25 to 50 degrees, read from the [member data_map]'s heights): bands along the contours about 3.4 m apart along the slope (Seleb, Chatterjee and Bhamla 2025, a grazing model), each with a worn tread where the stock walk, its blades short and thinned, and the risers between a little taller. The steps' relief is the ground's. Not in mown meadows or crop fields.
 		</member>
 		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="8.0">
-			Edge of a tile, in metres.
+			Edge of a tile, in metres. A tile over the path tracer's merged BLAS cap ([code]rendering/pathtracing/multimesh_merged_blas_max_triangles[/code]) is cut smaller to fit when the field builds its blades, the same blades in more tiles.
 		</member>
 		<member name="tip_color" type="Color" setter="set_tip_color" getter="get_tip_color" default="Color(0.36, 0.44, 0.2, 1)">
 			Blade colour at the tip.

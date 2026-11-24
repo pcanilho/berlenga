@@ -210,6 +210,7 @@ private:
 	bool follow_weather = true;
 	bool _follows_season() const { return !season_source.is_empty() || follow_weather; }
 	void _season_step();
+	void _fit_tile_size(int p_cap, int p_tris);
 	float sun_mean = 0.0f; // VegetationLight::sun_mean() of the data map.
 	float color_variation = 0.5f;
 	float radius = 40.0f;

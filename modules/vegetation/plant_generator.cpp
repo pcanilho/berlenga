@@ -7389,6 +7389,84 @@ void PlantGenerator::apply_preset_colors() {
 	emit_changed();
 }
 
+// Summer drought curing (docs/ideas/vegetation.md, "Drought curing"): as the soil dries below about
+// 40% of capacity the open-ground grasses go summer-dormant and cure to straw, the shallow-rooted
+// forbs wilt and brown, while deep-rooted forbs (taproots: dock, knapweed, carrot) keep green longest
+// (Volaire and Norton 2006, Ann. Bot. 98, on summer dormancy; the degree of curing, Cheney and Sullivan,
+// Grassfires, CSIRO 2008). The same soil-water ramp as the sward's (GrassField3D.season_greenness),
+// so the clumps cure with the sward they stand in. Plants of wet ground (reed, rush, bog and marsh), woodland shade, salt marsh and
+// dunes, and the evergreen dwarf shrubs keep their colour: their water is local or they hold their
+// leaves through drought (the scrub's rock-rose only greys a little, its summer leaves smaller).
+// The vertex alpha is the shader's dead tissue: straw at about 0.6, brown towards 1.
+float PlantGenerator::get_drought_cure(Preset p_preset, const Dictionary &p_season) {
+	if (!p_season.has("soil_moisture")) {
+		return 0.0f;
+	}
+	float reach = 0.0f; // The dead share a fully cured plant reaches.
+	switch (p_preset) {
+		case PRESET_COCKSFOOT:
+		case PRESET_TIMOTHY:
+		case PRESET_GRAZED_LAWN:
+		case PRESET_DUNG_ROUGH:
+		case PRESET_YORKSHIRE_FOG:
+		case PRESET_DRY_GRASS:
+			reach = 0.62f; // Grasses: straw.
+			break;
+		case PRESET_DANDELION:
+		case PRESET_PLANTAIN:
+		case PRESET_CLOVER:
+		case PRESET_DAISY:
+		case PRESET_BUTTERCUP:
+		case PRESET_SORREL:
+		case PRESET_SCABIOUS:
+		case PRESET_CORN_POPPY:
+		case PRESET_CORNFLOWER:
+		case PRESET_MAYWEED:
+		case PRESET_COW_PARSLEY:
+		case PRESET_FOXGLOVE:
+		case PRESET_GROUND_IVY:
+		case PRESET_BRACKEN:
+			reach = 0.75f; // Shallow-rooted forbs and bracken: wilted, browning.
+			break;
+		case PRESET_THISTLE:
+		case PRESET_YARROW:
+		case PRESET_DOCK:
+		case PRESET_KNAPWEED:
+		case PRESET_WILD_CARROT:
+		case PRESET_NETTLE:
+		case PRESET_FIREWEED:
+			reach = 0.45f; // Deep roots: yellowing, still partly green.
+			break;
+		case PRESET_SAGE_ROCKROSE:
+			reach = 0.2f;
+			break;
+		default:
+			return 0.0f;
+	}
+	const float moisture = float(p_season["soil_moisture"]);
+	const float temperature = float(p_season.get("temperature", 10.0f));
+	// Dry and warm: a frozen soil's low water is winter, not drought.
+	const float dry = (1.0f - smoothstep_f(0.1f, 0.4f, moisture)) * smoothstep_f(2.0f, 8.0f, temperature);
+	return reach * dry;
+}
+
+void PlantGenerator::_drought_cure() {
+	const float cure = get_drought_cure(preset, season);
+	if (cure <= 0.0f) {
+		return;
+	}
+	// Each plant its own: some on deeper soil or in a hollow cure later.
+	const uint32_t h = hash_murmur3_one_32(uint32_t(seed) * 2654435761u + uint32_t(preset), 0xD5ACu);
+	const float own = CLAMP(cure * (0.75f + 0.45f * float(h & 0xFFFFu) / 65535.0f), 0.0f, 1.0f);
+	for (int i = SURFACE_LEAF; i <= SURFACE_STEM; i++) {
+		PackedColorArray &c = builders[i].colors;
+		Color *w = c.ptrw();
+		for (int k = 0; k < c.size(); k++) {
+			w[k].a = MIN(w[k].a, 1.0f - own);
+		}
+	}
+}
+
 Ref<ArrayMesh> PlantGenerator::generate() {
 	for (Builder &b : builders) {
 		b = Builder();
@@ -7742,6 +7820,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_MAX:
 			break;
 	}
+	_drought_cure();
 	// Each vertex carries its organ's base in UV2.y: whole steps the heading from the plant's
 	// origin (1024 to a turn), the fraction the distance over 2 m. 0 is the origin itself.
 	for (Builder &b : builders) {
@@ -8951,6 +9030,7 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_season"), &PlantGenerator::get_season);
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_bloom_shares", "preset", "season"), &PlantGenerator::get_bloom_shares);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_drought_cure", "preset", "season"), &PlantGenerator::get_drought_cure);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_pollen_amount", "preset"), &PlantGenerator::get_pollen_amount);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_pollen_release", "preset", "season"), &PlantGenerator::get_pollen_release);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_presence", "preset", "season"), &PlantGenerator::get_presence);

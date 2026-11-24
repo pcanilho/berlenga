@@ -451,6 +451,7 @@ func _checks() -> void:
 	_bloom_checks()
 	_make_sets_check()
 	_flowering_grass_checks()
+	_drought_cure_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
 # Plants between stones (docs/ideas/vegetation.md): sizes from the floras, and the stand sets keep
@@ -501,6 +502,34 @@ func _fp(v) -> String:
 # Flowering grass heads (docs/ideas/vegetation.md, "Flowering grass heads"): Yorkshire fog in a soft
 # purple-pink head from late May, grey-pink seed heads in August, leaf tufts only in March and none
 # after the end of the season; the meadow set tints the far shell only while heads stand.
+# Summer drought curing (docs/ideas/vegetation.md, "Drought curing"): open-ground grasses cure to straw
+# and forbs brown as the soil dries; wet soil, a frozen winter and the evergreen shrubs stay green; the
+# generated grass's leaves carry the cure in their vertex alpha (the shader's dead tissue).
+func _drought_cure_checks() -> void:
+	var P := PlantGenerator
+	var dry := {"soil_moisture": 0.01, "temperature": 24.0, "day_of_year": 201, "forcing": 1500.0}
+	var wet := {"soil_moisture": 0.6, "temperature": 18.0, "day_of_year": 201, "forcing": 1500.0}
+	var frozen := {"soil_moisture": 0.05, "temperature": -6.0, "day_of_year": 20, "forcing": 0.0}
+	var grass_dry: float = P.get_drought_cure(P.PRESET_COCKSFOOT, dry)
+	var forb_dry: float = P.get_drought_cure(P.PRESET_DANDELION, dry)
+	var deep_dry: float = P.get_drought_cure(P.PRESET_DOCK, dry)
+	_check("drought: grass cures to straw, forbs brown, deep roots least", grass_dry > 0.5 and grass_dry < 0.7 and forb_dry > grass_dry and deep_dry < grass_dry and deep_dry > 0.2, [grass_dry, forb_dry, deep_dry])
+	var keep := [P.get_drought_cure(P.PRESET_COCKSFOOT, wet), P.get_drought_cure(P.PRESET_COCKSFOOT, frozen), P.get_drought_cure(P.PRESET_ROSEMARY, dry), P.get_drought_cure(P.PRESET_REED, dry), P.get_drought_cure(P.PRESET_COCKSFOOT, {})]
+	_check("drought: wet soil, frozen winter, evergreen shrubs, wet-ground plants and no season stay green", keep.max() == 0.0, keep)
+	var alphas := []
+	for season in [wet, dry]:
+		var g := PlantGenerator.new()
+		g.preset = P.PRESET_COCKSFOOT
+		g.apply_preset_colors()
+		g.set_season(season)
+		var m := g.generate()
+		var cols: PackedColorArray = m.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+		var a := 0.0
+		for c in cols:
+			a += c.a
+		alphas.append(a / max(cols.size(), 1))
+	_check("drought: the cured grass's leaves carry it (mean leaf alpha wet vs dry)", alphas[1] < alphas[0] - 0.3, alphas)
+
 func _flowering_grass_checks() -> void:
 	var P := PlantGenerator
 	var g := PlantGenerator.new()
