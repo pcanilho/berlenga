@@ -63,6 +63,7 @@ class StreetWater3D : public Node3D {
 	void _rt_on_readback(const PackedByteArray &p_data, int p_n, Vector2i p_origin, float p_cell);
 	Transform3D _frame_xform() const;
 	TypedArray<NodePath> height_sources;
+	StringName height_group; // every node in it is a height source too (streets streamed in and out)
 	float rain_rate = 0.0f; // mm/h
 	bool rain_from_weather = true;
 	float soak_rate = 0.0f; // mm/h
@@ -148,6 +149,8 @@ public:
 	float get_depth_at(const Vector3 &p_world_position) const;
 	void set_height_sources(const TypedArray<NodePath> &p_v);
 	TypedArray<NodePath> get_height_sources() const { return height_sources; }
+	void set_height_group(const StringName &p_v) { height_group = p_v; }
+	StringName get_height_group() const { return height_group; }
 	void set_rain_rate(float p_v) { rain_rate = MAX(p_v, 0.0f); }
 	float get_rain_rate() const { return rain_rate; }
 	void set_rain_from_weather(bool p_v) { rain_from_weather = p_v; }

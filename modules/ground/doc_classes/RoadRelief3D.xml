@@ -84,6 +84,9 @@
 		<member name="gutter_width" type="float" setter="set_gutter_width" getter="get_gutter_width" default="0.3">
 			The gutter pan's width along each kerb (metres).
 		</member>
+		<member name="height_map" type="Image" setter="set_height_map" getter="get_height_map">
+			Heights (metres, converted to [constant Image.FORMAT_RF]) added over the whole road, stretched over it: x along from 0 to [member length], y across from the -Z kerb to the +Z kerb. A street's own relief from elsewhere (its own potholes, manholes, gutter grades): set the procedural terms you do not want to 0 and [member roughness_class] to [constant ROUGHNESS_NONE] to use it alone. The mesh, the collider, the ponding and [StreetWater3D]'s bed all see it.
+		</member>
 		<member name="inlet_spacing" type="float" setter="set_inlet_spacing" getter="get_inlet_spacing" default="30.0">
 			Storm drains: an inlet every this many metres along each gutter (along the low kerb only on a one-way street), at places hashed from the world (or [member relief_frame]), each a grate 0.9 m long set 3 cm into the gutter pan with a short apron round it (a depressed curb inlet, FHWA HEC-22). Water reaching one leaves the street. 0: none.
 		</member>
@@ -142,6 +145,9 @@
 		</constant>
 		<constant name="ROUGHNESS_C" value="2" enum="RoughnessClass">
 			ISO 8608 class C, average: 256e-6 m³.
+		</constant>
+		<constant name="ROUGHNESS_NONE" value="3" enum="RoughnessClass">
+			No roughness (a [member height_map] that has its own).
 		</constant>
 	</constants>
 </class>

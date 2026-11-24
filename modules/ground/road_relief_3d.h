@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "core/io/image.h"
 #include "scene/3d/mesh_instance_3d.h"
 
 class StaticBody3D;
@@ -49,6 +50,7 @@ public:
 		ROUGHNESS_A, // very good, Gd(n0) = 16e-6 m3
 		ROUGHNESS_B, // good, 64e-6
 		ROUGHNESS_C, // average, 256e-6
+		ROUGHNESS_NONE, // none (a height_map that has its own)
 	};
 
 private:
@@ -81,6 +83,13 @@ private:
 	Transform3D built_xform;
 	Transform3D _relief_xform() const;
 	PackedVector2Array inlets;
+	// Heights (m) a caller adds over the whole road, x along 0..length over its width, y across from the -Z kerb to the
+	// +Z one over its height: a street's own relief from elsewhere (its own potholes, manholes, gutter grades).
+	Ref<Image> height_map;
+	LocalVector<float> hm;
+	int hm_w = 0;
+	int hm_h = 0;
+	float _height_map_at(float p_x, float p_z) const;
 	LocalVector<Vector2> inlet_at; // resolved: x along, y side
 	void _resolve_inlets();
 	float _inlet_dip(float p_x, float p_z) const;
@@ -185,6 +194,8 @@ public:
 	NodePath get_relief_frame() const { return relief_frame; }
 	void set_inlets(const PackedVector2Array &p_v);
 	PackedVector2Array get_inlets() const { return inlets; }
+	void set_height_map(const Ref<Image> &p_v);
+	Ref<Image> get_height_map() const { return height_map; }
 };
 
 VARIANT_ENUM_CAST(RoadRelief3D::RoughnessClass);

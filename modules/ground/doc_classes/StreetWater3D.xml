@@ -91,6 +91,9 @@
 		<member name="frame_path" type="NodePath" setter="set_frame_path" getter="get_frame_path" default="NodePath(&quot;&quot;)">
 			The space the water lives in. Empty: the world. A node (a city strip sliding past a train): the window, the beds, the bodies and their velocities are in its space, so the water moves with the street under it. The materials get [code]street_water_frame[/code] (the world to that space) with the map.
 		</member>
+		<member name="height_group" type="StringName" setter="set_height_group" getter="get_height_group" default="&amp;&quot;&quot;">
+			A group whose nodes are height sources too, as [member height_sources]: streets streamed in and out join and leave by their group. Each cell entering the window asks only the sources whose bounds lie over it.
+		</member>
 		<member name="height_sources" type="NodePath[]" setter="set_height_sources" getter="get_height_sources" default="[]">
 			Nodes giving the bed: [RoadRelief3D] (read from its mesh with [method RoadRelief3D.get_surface_height_at]) or anything with [code]get_height_at(world_position)[/code] returning a world height or -INF. The highest wins; cells with none are walls the water never enters.
 		</member>

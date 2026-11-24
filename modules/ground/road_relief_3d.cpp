@@ -87,6 +87,9 @@ void RoadRelief3D::_build_waves() {
 	// four random directions each, so a line across the surface in any direction carries about the class's
 	// displacement spectrum Gd(n) = Gd(n0) (n / n0)^-2, n0 = 0.1 cycles/m.
 	waves.clear();
+	if (roughness_class == ROUGHNESS_NONE) {
+		return;
+	}
 	const float gd0 = roughness_class == ROUGHNESS_A ? 16e-6f : (roughness_class == ROUGHNESS_B ? 64e-6f : 256e-6f);
 	const int bands = 16;
 	const int dirs = 4;
@@ -282,7 +285,46 @@ float RoadRelief3D::local_height(float p_x, float p_z) const {
 	h += _sag(wx, wz);
 	h += _features(wx, wz, xf.basis.inverse());
 	h -= _inlet_dip(x, z);
+	h += _height_map_at(x, z);
 	return h;
+}
+
+float RoadRelief3D::_height_map_at(float p_x, float p_z) const {
+	if (hm_w < 2 || hm_h < 2) {
+		return 0.0f;
+	}
+	const float u = CLAMP(p_x / length, 0.0f, 1.0f) * float(hm_w - 1);
+	const float v = CLAMP((p_z + 0.5f * width) / width, 0.0f, 1.0f) * float(hm_h - 1);
+	const int i = MIN(int(u), hm_w - 2);
+	const int j = MIN(int(v), hm_h - 2);
+	const float fx = u - i;
+	const float fz = v - j;
+	const float *r0 = &hm[j * hm_w + i];
+	const float *r1 = r0 + hm_w;
+	return Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
+}
+
+void RoadRelief3D::set_height_map(const Ref<Image> &p_v) {
+	height_map = p_v;
+	hm.clear();
+	hm_w = 0;
+	hm_h = 0;
+	if (p_v.is_valid() && !p_v->is_empty()) {
+		Ref<Image> img = p_v;
+		if (img->is_compressed() || img->get_format() != Image::FORMAT_RF) {
+			img = p_v->duplicate();
+			if (img->is_compressed()) {
+				img->decompress();
+			}
+			img->convert(Image::FORMAT_RF);
+		}
+		hm_w = img->get_width();
+		hm_h = img->get_height();
+		hm.resize(hm_w * hm_h);
+		const PackedByteArray data = img->get_data();
+		memcpy(hm.ptr(), data.ptr(), sizeof(float) * hm.size());
+	}
+	_queue_build();
 }
 
 // A storm-drain inlet: a curb-and-grate inlet's grate, 0.9 m along and the gutter's width across, set 3 cm into the
@@ -768,6 +810,8 @@ void RoadRelief3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_inlet_at", "world_position"), &RoadRelief3D::is_inlet_at);
 	ClassDB::bind_method(D_METHOD("contains", "world_position"), &RoadRelief3D::contains);
 	ClassDB::bind_method(D_METHOD("rebuild"), &RoadRelief3D::rebuild);
+	ClassDB::bind_method(D_METHOD("set_height_map", "image"), &RoadRelief3D::set_height_map);
+	ClassDB::bind_method(D_METHOD("get_height_map"), &RoadRelief3D::get_height_map);
 
 #define RR_BIND(m_name, m_get, m_type, m_hint, m_hint_str)                                                   \
 	ClassDB::bind_method(D_METHOD("set_" #m_name, "value"), &RoadRelief3D::set_##m_name);                   \
@@ -786,7 +830,7 @@ void RoadRelief3D::_bind_methods() {
 	RR_BIND(traffic, get_traffic, FLOAT, PROPERTY_HINT_RANGE, "0,1,0.01")
 	RR_BIND(rut_depth, get_rut_depth, FLOAT, PROPERTY_HINT_RANGE, "0,0.05,0.001,suffix:m")
 	RR_BIND(track, get_track, FLOAT, PROPERTY_HINT_RANGE, "1,2.5,0.01,suffix:m")
-	RR_BIND(roughness_class, get_roughness_class, INT, PROPERTY_HINT_ENUM, "A (Very Good),B (Good),C (Average)")
+	RR_BIND(roughness_class, get_roughness_class, INT, PROPERTY_HINT_ENUM, "A (Very Good),B (Good),C (Average),None")
 	RR_BIND(sag_depth, get_sag_depth, FLOAT, PROPERTY_HINT_RANGE, "0,0.05,0.001,suffix:m")
 	RR_BIND(depression_density, get_depression_density, FLOAT, PROPERTY_HINT_RANGE, "0,4,0.01")
 	RR_BIND(depression_depth, get_depression_depth, FLOAT, PROPERTY_HINT_RANGE, "0,0.05,0.001,suffix:m")
@@ -794,6 +838,7 @@ void RoadRelief3D::_bind_methods() {
 	RR_BIND(pothole_density, get_pothole_density, FLOAT, PROPERTY_HINT_RANGE, "0,0.44,0.01")
 	RR_BIND(pothole_depth, get_pothole_depth, FLOAT, PROPERTY_HINT_RANGE, "0,0.12,0.001,suffix:m")
 	RR_BIND(seed, get_seed, INT, PROPERTY_HINT_NONE, "")
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "height_map", PROPERTY_HINT_RESOURCE_TYPE, "Image"), "set_height_map", "get_height_map");
 	ADD_GROUP("Drainage", "");
 	RR_BIND(inlet_spacing, get_inlet_spacing, FLOAT, PROPERTY_HINT_RANGE, "0,500,0.1,suffix:m")
 	RR_BIND(inlets, get_inlets, PACKED_VECTOR2_ARRAY, PROPERTY_HINT_NONE, "")
@@ -807,4 +852,5 @@ void RoadRelief3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(ROUGHNESS_A);
 	BIND_ENUM_CONSTANT(ROUGHNESS_B);
 	BIND_ENUM_CONSTANT(ROUGHNESS_C);
+	BIND_ENUM_CONSTANT(ROUGHNESS_NONE);
 }

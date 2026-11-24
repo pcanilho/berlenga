@@ -40,6 +40,7 @@
 #include "core/os/os.h"
 #include "modules/world/world_contracts.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/material.h"
 #include "servers/rendering/rendering_device.h"
@@ -249,6 +250,14 @@ void StreetWater3D::_frame(double p_delta) {
 			sources.push_back(s);
 		}
 	}
+	if (height_group != StringName() && is_inside_tree()) {
+		const Vector<Node *> grouped = get_tree()->get_nodes_in_group(height_group);
+		for (Node *s : grouped) {
+			if (!sources.has(s)) {
+				sources.push_back(s);
+			}
+		}
+	}
 	// Water space: frame_path's (a street sliding past keeps its water), else the world's. Window cells are whole cells
 	// of it; beds and bodies come into it from the world.
 	const Transform3D fx = _frame_xform();
@@ -286,17 +295,41 @@ void StreetWater3D::_frame(double p_delta) {
 
 	PackedByteArray records;
 	PackedFloat32Array loads;
+	LocalVector<Node *> near;
 	for (const Rect &r : rects) {
 		const int off = loads.size();
 		loads.resize(off + 2 * r.w * r.h);
 		float *w = loads.ptrw() + off;
+		// Only the sources over this rectangle (a city's streets: each cell asks a few, not all of them).
+		AABB box;
+		for (int c = 0; c < 4; c++) {
+			const Vector3 l(corner_x + (r.x0 + (c & 1 ? r.w : 0)) * cell, center.y, corner_z + (r.z0 + (c & 2 ? r.h : 0)) * cell);
+			const Vector3 p = fx.xform(l);
+			if (c == 0) {
+				box = AABB(p, Vector3());
+			} else {
+				box.expand_to(p);
+			}
+		}
+		near.clear();
+		for (Node *s : sources) {
+			const VisualInstance3D *vi = Object::cast_to<VisualInstance3D>(s);
+			if (vi && vi->is_inside_tree()) {
+				const AABB b = vi->get_global_transform().xform(vi->get_aabb());
+				if (b.position.x > box.position.x + box.size.x || b.position.x + b.size.x < box.position.x ||
+						b.position.z > box.position.z + box.size.z || b.position.z + b.size.z < box.position.z) {
+					continue;
+				}
+			}
+			near.push_back(s);
+		}
 		for (int z = 0; z < r.h; z++) {
 			for (int x = 0; x < r.w; x++) {
 				const Vector3 l(corner_x + (r.x0 + x + 0.5f) * cell, center.y, corner_z + (r.z0 + z + 0.5f) * cell);
 				const Vector3 p = fx.xform(l);
 				float pond;
 				bool inlet;
-				const float h = _bed_at(p, sources, pond, inlet);
+				const float h = _bed_at(p, near, pond, inlet);
 				const int k = 2 * (z * r.w + x);
 				if (Math::is_finite(h)) {
 					w[k] = float(fx_inv.xform(Vector3(p.x, h, p.z)).y - ref_y);
@@ -626,6 +659,8 @@ void StreetWater3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_follow_path"), &StreetWater3D::get_follow_path);
 	ClassDB::bind_method(D_METHOD("set_height_sources", "sources"), &StreetWater3D::set_height_sources);
 	ClassDB::bind_method(D_METHOD("get_height_sources"), &StreetWater3D::get_height_sources);
+	ClassDB::bind_method(D_METHOD("set_height_group", "group"), &StreetWater3D::set_height_group);
+	ClassDB::bind_method(D_METHOD("get_height_group"), &StreetWater3D::get_height_group);
 	ClassDB::bind_method(D_METHOD("set_rain_rate", "rate"), &StreetWater3D::set_rain_rate);
 	ClassDB::bind_method(D_METHOD("get_rain_rate"), &StreetWater3D::get_rain_rate);
 	ClassDB::bind_method(D_METHOD("set_rain_from_weather", "enabled"), &StreetWater3D::set_rain_from_weather);
@@ -660,6 +695,7 @@ void StreetWater3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "follow_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_follow_path", "get_follow_path");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "frame_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_frame_path", "get_frame_path");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "height_sources", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_height_sources", "get_height_sources");
+	ADD_PROPERTY(PropertyInfo(Variant::STRING_NAME, "height_group"), "set_height_group", "get_height_group");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "prefill", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_prefill", "get_prefill");
 	ADD_GROUP("Water", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rain_rate", PROPERTY_HINT_RANGE, "0,200,0.1,suffix:mm/h"), "set_rain_rate", "get_rain_rate");

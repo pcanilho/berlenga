@@ -99,3 +99,8 @@ fronts, the shallow water equations:
   depressed curb inlet (FHWA HEC-22, 2013): a grate 3 cm down with an apron; water reaching it leaves the street, so a
   long gutter does not fill end to end.
 - get_depth_at(): the map read back a few times a second, for footsteps, splashes and spray.
+- A street's own relief: a game that already lays out its potholes, manholes and gutter grades (and draws their marks
+  and grates) hands RoadRelief3D that heightmap (height_map, added over the road; roughness_class NONE and the
+  procedural terms at 0 to use it alone), so the mesh, the ponding and the water sit exactly under its marks.
+- Streets streamed in and out: StreetWater3D.height_group takes every node in a group as a bed source, and each cell
+  entering the window asks only the sources whose bounds lie over it (a city's dozens of streets cost a few each).
