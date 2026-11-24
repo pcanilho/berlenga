@@ -64,19 +64,29 @@ bool WaterSkyReadback::take(Ref<Image> &r_image) {
 	return true;
 }
 
+// The brightest shown directional light: the sun by day, the moon at night (a sky clock hides the body below the
+// horizon, so the first light found, the sun, stayed chosen all night and the water lost the moon's glitter path and
+// its light in the water). Searched again every second, and four times as often while the chosen one is hidden.
 DirectionalLight3D *WaterRasterReflections::find_sun(Node3D *p_node) {
 	DirectionalLight3D *s = ObjectDB::get_instance<DirectionalLight3D>(sun);
-	if ((s == nullptr || !s->is_inside_tree()) && sun_search-- <= 0) {
-		sun_search = 60;
+	const bool stale = s == nullptr || !s->is_inside_tree() || !s->is_visible_in_tree();
+	if (sun_search-- <= 0) {
+		sun_search = stale ? 15 : 60;
 		sun = ObjectID();
 		s = nullptr;
+		float best = -1.0f;
 		TypedArray<Node> lights = p_node->get_tree()->get_root()->find_children("*", "DirectionalLight3D", true, false);
 		for (int i = 0; i < lights.size(); i++) {
 			DirectionalLight3D *l = Object::cast_to<DirectionalLight3D>(lights[i]);
-			if (l != nullptr && l->is_visible_in_tree() && l->get_sky_mode() != DirectionalLight3D::SKY_MODE_SKY_ONLY) {
+			if (l == nullptr || !l->is_visible_in_tree() || l->get_sky_mode() == DirectionalLight3D::SKY_MODE_SKY_ONLY) {
+				continue;
+			}
+			const Color c = l->get_color().srgb_to_linear();
+			const float e = l->get_param(Light3D::PARAM_ENERGY) * MAX(MAX(c.r, c.g), c.b);
+			if (e > best) {
+				best = e;
 				sun = l->get_instance_id();
 				s = l;
-				break;
 			}
 		}
 	}
@@ -89,6 +99,7 @@ void WaterRasterReflections::update(Node3D *p_node, const Ref<ShaderMaterial> &p
 	}
 	p_material->set_shader_parameter("raster_reflections", p_enabled);
 	if (!p_enabled) {
+		p_material->set_shader_parameter("raster_lamp_count", 0);
 		return;
 	}
 	DirectionalLight3D *s = find_sun(p_node);
@@ -157,4 +168,75 @@ void WaterRasterReflections::update(Node3D *p_node, const Ref<ShaderMaterial> &p
 	}
 	p_material->set_shader_parameter("raster_sky_energy", energy);
 	p_material->set_shader_parameter("raster_sky_irradiance", sky_irradiance);
+	_update_lamps(p_node, cam, p_material);
+}
+
+// The omni and spot lights whose light reaches nearest the camera (at most four, looked up again about twice a
+// second), for the clear water's lamp beams and bed (water_lamp_beams, water_lamp_bed). Their values every frame,
+// so a moving torch or a swinging spot follows at once.
+void WaterRasterReflections::_update_lamps(Node3D *p_node, const Camera3D *p_camera, const Ref<ShaderMaterial> &p_material) {
+	if (p_camera == nullptr) {
+		p_material->set_shader_parameter("raster_lamp_count", 0);
+		return;
+	}
+	const Vector3 cp = p_camera->get_global_position();
+	if (lamp_scan-- <= 0) {
+		lamp_scan = 30;
+		lamps.clear();
+		struct Found {
+			ObjectID id;
+			float dist;
+			bool operator<(const Found &p_other) const { return dist < p_other.dist; }
+		};
+		LocalVector<Found> found;
+		for (const char *type : { "OmniLight3D", "SpotLight3D" }) {
+			TypedArray<Node> lights = p_node->get_tree()->get_root()->find_children("*", type, true, false);
+			for (int i = 0; i < lights.size(); i++) {
+				Light3D *l = Object::cast_to<Light3D>(lights[i]);
+				if (l == nullptr || !l->is_visible_in_tree() || l->get_param(Light3D::PARAM_ENERGY) <= 0.0f) {
+					continue;
+				}
+				// How near the camera its lit sphere comes; a lamp far beyond the water seen nearby is left out.
+				const float reach = l->get_global_position().distance_to(cp) - l->get_param(Light3D::PARAM_RANGE);
+				if (reach < 150.0f) {
+					found.push_back({ l->get_instance_id(), reach });
+				}
+			}
+		}
+		found.sort();
+		for (uint32_t i = 0; i < MIN(found.size(), 4u); i++) {
+			lamps.push_back(found[i].id);
+		}
+	}
+	PackedVector4Array pos;
+	PackedVector4Array dir;
+	PackedVector4Array color;
+	PackedFloat32Array rim;
+	pos.resize(4);
+	dir.resize(4);
+	color.resize(4);
+	rim.resize(4);
+	int count = 0;
+	for (const ObjectID &id : lamps) {
+		Light3D *light = ObjectDB::get_instance<Light3D>(id);
+		if (light == nullptr || !light->is_inside_tree() || !light->is_visible_in_tree() || count >= 4) {
+			continue;
+		}
+		const Transform3D xf = light->get_global_transform();
+		pos.set(count, Vector4(xf.origin.x, xf.origin.y, xf.origin.z, MAX(light->get_param(Light3D::PARAM_RANGE), 1e-3f)));
+		const Vector3 travel = -xf.basis.get_column(2).normalized();
+		const bool spot = Object::cast_to<SpotLight3D>(light) != nullptr;
+		const float cutoff = spot ? Math::cos(Math::deg_to_rad(light->get_param(Light3D::PARAM_SPOT_ANGLE))) : -2.0f;
+		dir.set(count, Vector4(travel.x, travel.y, travel.z, cutoff));
+		// Raster lights are pi x energy in irradiance at unit distance.
+		const Color c = light->get_color().srgb_to_linear() * light->get_param(Light3D::PARAM_ENERGY) * Math::PI;
+		color.set(count, Vector4(c.r, c.g, c.b, light->get_param(Light3D::PARAM_ATTENUATION)));
+		rim.set(count, spot ? light->get_param(Light3D::PARAM_SPOT_ATTENUATION) : 1.0f);
+		count++;
+	}
+	p_material->set_shader_parameter("raster_lamp_count", count);
+	p_material->set_shader_parameter("raster_lamp_pos", pos);
+	p_material->set_shader_parameter("raster_lamp_dir", dir);
+	p_material->set_shader_parameter("raster_lamp_color", color);
+	p_material->set_shader_parameter("raster_lamp_rim", rim);
 }

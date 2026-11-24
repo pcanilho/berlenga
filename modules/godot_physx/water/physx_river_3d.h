@@ -385,6 +385,10 @@ public:
 	float get_wall_friction() const { return wall_friction; }
 	void set_flow_foam(float p_strength);
 	float get_flow_foam() const { return flow_foam; }
+	// White water where a body breaks the surface fast for its width (Froude-gated; slow wading makes none), carried
+	// with the live flow: per second at full churn, 0 = none. docs/ideas/water.md "White water round bodies in the water".
+	void set_body_foam(float p_rate);
+	float get_body_foam() const { return body_contacts.foam_rate; }
 	void set_flow_foam_persistence(float p_seconds);
 	float get_flow_foam_persistence() const { return flow_foam_persistence; }
 	void set_flow_foam_impact(bool p_enabled);

@@ -645,7 +645,17 @@ void fragment() {
 		vec3 seen;
 		vec3 bed_p;
 		float sun_share;
-		base_rgb = water_clear_through_ex(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption + sed_abs, med_sca, med_g, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, true, seen, bed_p, sun_share);
+		vec3 amb;
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption + sed_abs, med_sca, med_g, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, true, seen, bed_p, sun_share, amb);
+		if (raster_lamp_count > 0) {
+			// Lamps above or in the stream: their light on the bed put right, and their beams in the water.
+			vec3 st_w = pathtraced_absorption + sed_abs + med_sca;
+			base_rgb += seen * water_lamp_bed(bed_p, v_world.y, st_w, amb);
+			vec3 t_w = refract(normalize(v_world - CAMERA_POSITION_WORLD), world_normal, 1.0 / 1.33);
+			if (dot(t_w, t_w) > 1e-6) {
+				base_rgb += water_lamp_beams(v_world, t_w, distance(v_world, bed_p), v_world.y, st_w, med_sca, med_g, water_jitter(FRAGCOORD.xy, TIME));
+			}
+		}
 		if (caustics_strength > 0.0 && sun_share > 0.0 && sun_dir.y < -0.05) {
 			// Back up the refracted sun ray from the bed to the surface it came through.
 			float z = max(v_world.y - bed_p.y, 0.0);
@@ -691,7 +701,7 @@ void fragment() {
 	if (screen_reflections) {
 		if (raster_reflections) {
 			// The banks in the mirror where the screen holds them, the sky elsewhere.
-			refl = water_screen_over_sky(clear_screen, clear_depth, refl, sky_part, sky_f, n, VERTEX, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
+			refl = water_screen_over_sky(clear_screen, clear_depth, refl, sky_part, sky_f, n, VERTEX, water_jitter(FRAGCOORD.xy, TIME), 24.0, PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
 		} else {
 			refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, edge * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
 		}
@@ -964,6 +974,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_live_grid_resolution"), &PhysXRiver3D::get_live_grid_resolution);
 	ClassDB::bind_method(D_METHOD("set_wall_friction", "friction"), &PhysXRiver3D::set_wall_friction);
 	ClassDB::bind_method(D_METHOD("get_wall_friction"), &PhysXRiver3D::get_wall_friction);
+	ClassDB::bind_method(D_METHOD("set_body_foam", "rate"), &PhysXRiver3D::set_body_foam);
+	ClassDB::bind_method(D_METHOD("get_body_foam"), &PhysXRiver3D::get_body_foam);
 	ClassDB::bind_method(D_METHOD("set_flow_foam", "strength"), &PhysXRiver3D::set_flow_foam);
 	ClassDB::bind_method(D_METHOD("get_flow_foam"), &PhysXRiver3D::get_flow_foam);
 	ClassDB::bind_method(D_METHOD("set_flow_foam_persistence", "seconds"), &PhysXRiver3D::set_flow_foam_persistence);
@@ -1054,6 +1066,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "live_grid_resolution", PROPERTY_HINT_RANGE, "32,512,1"), "set_live_grid_resolution", "get_live_grid_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,suffix:1/s"), "set_wall_friction", "get_wall_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam", PROPERTY_HINT_RANGE, "0,4,0.05"), "set_flow_foam", "get_flow_foam");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "body_foam", PROPERTY_HINT_RANGE, "0,4,0.05,or_greater"), "set_body_foam", "get_body_foam");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam_persistence", PROPERTY_HINT_RANGE, "0.1,60,0.1,suffix:s"), "set_flow_foam_persistence", "get_flow_foam_persistence");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "flow_foam_impact"), "set_flow_foam_impact", "get_flow_foam_impact");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_advected_ripples"), "set_live_advected_ripples", "get_live_advected_ripples");
@@ -1359,6 +1372,10 @@ void PhysXRiver3D::set_live_damping(float p_damping) {
 void PhysXRiver3D::set_wall_friction(float p_friction) {
 	wall_friction = MAX(p_friction, 0.0f);
 	live_fields_dirty = true;
+}
+
+void PhysXRiver3D::set_body_foam(float p_rate) {
+	body_contacts.foam_rate = MAX(p_rate, 0.0f);
 }
 
 void PhysXRiver3D::set_flow_foam(float p_strength) {
@@ -1914,9 +1931,16 @@ void PhysXRiver3D::_notification(int p_what) {
 						get_tree(), get_physics_process_delta_time(),
 						[this](const Vector3 &p) { return sample_height(p); },
 						[this](const Vector3 &p) { return sample_flow(p); },
+						[](const Vector3 &) { return 0.0f; }, // (the river's surface barely rises and falls)
 						[this](int o, const Vector3 &p, float r, float s) { submit_sphere(o, p, r, s); },
 						[this](int o) { clear_sphere(o); },
-						[this](const Vector3 &p, float r, float s) { submit_sphere(int(uint64_t(get_instance_id()) ^ 0x5a5a), p, r, s); });
+						[this](const Vector3 &p, float r, float s) { submit_sphere(int(uint64_t(get_instance_id()) ^ 0x5a5a), p, r, s); },
+						// Into the live window's flow foam, carried downstream with the current (the sphere's disk).
+						[this](int o, const Vector3 &, float, float rate) {
+							if (live_configured) {
+								live_solver.set_sphere_foam((uint64_t)o, rate);
+							}
+						});
 			}
 			_rain_response_update(get_physics_process_delta_time());
 			_sediment_update(get_physics_process_delta_time());

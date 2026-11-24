@@ -35,6 +35,7 @@
 #include "water_contact_map.h"
 #include "water_raster_reflections.h"
 #include "water_solver.h"
+#include "water_wake_solver.h"
 
 #include "core/math/random_pcg.h"
 #include "core/templates/local_vector.h"
@@ -84,6 +85,17 @@ class PhysXWaterSurface3D : public Node3D, public WorldWaterProvider {
 	GDCLASS(PhysXWaterSurface3D, Node3D);
 
 	WaterBodyContacts body_contacts; // world_contact bodies push the ripples (docs/ideas/world-links.md)
+	// White water round bodies breaking the surface (docs/ideas/water.md "White water round bodies in the water"):
+	// a fine foam-only grid round the camera (the wake solver), fed by body_contacts, fading over foam_persistence.
+	static constexpr float BODY_FOAM_SIZE = 48.0f;
+	static constexpr int BODY_FOAM_CELLS = 192;
+	float body_foam = 1.0f;
+	WaterWakeSolver *body_foam_solver = nullptr;
+	Ref<Texture2DRD> body_foam_texture;
+	HashMap<int, WaterWakeSolver::Source> body_foam_sources;
+	float body_foam_idle = 1e6f; // seconds since a body last churned foam in
+	void _update_body_foam(double p_delta);
+	void _clear_body_foam();
 
 protected:
 	static void _bind_methods();
@@ -223,6 +235,19 @@ public:
 	// Spray torn off breaking crests by the wind (spume, Andreas 1998): droplets leave the open sea's crests
 	// where the surface folds (the whitecap test) once the wind passes about 9 m/s, more with the wind, and
 	// fly downwind. Drawn like the surf's spray, near the camera. crest_spray_amount: droplets alive at most.
+	// Waves reflected off steep faces (method of images, up to this reflection coefficient on a vertical face; 0 =
+	// none) and sheltered behind them (Sommerfeld half-plane diffraction, Penney and Price 1952), near the camera over
+	// the rock contact map. docs/ideas/water.md "Waves reflected off cliffs, sheltered behind stacks".
+	void set_wave_reflection(float p_coefficient);
+	float get_wave_reflection() const { return wave_reflection; }
+	void set_wave_shelter(bool p_enabled);
+	bool get_wave_shelter() const { return wave_shelter; }
+	void set_impact_spray(bool p_enabled);
+	bool get_impact_spray() const { return impact_spray; }
+	void set_impact_spray_amount(int p_amount);
+	int get_impact_spray_amount() const { return impact_spray_amount; }
+	// Droplets a second thrown up the faces at the last update (for tests and profiling).
+	float get_impact_spray_rate() const { return impact_spray_rate; }
 	void set_crest_spray(bool p_enabled);
 	bool get_crest_spray() const { return crest_spray; }
 	void set_crest_spray_amount(int p_amount);
@@ -249,6 +274,16 @@ public:
 	// otherwise.
 	void set_wave_spreading(WaveSpreading p_spreading);
 	WaveSpreading get_wave_spreading() const { return wave_spreading; }
+	// Remote swell (docs/ideas/water.md "Remote swell"): long waves from a distant storm on top of the local wind sea,
+	// with their own significant height (m, 0 = none), peak period (s) and the direction they travel (world xz, not
+	// tied to the wind), so open seas carry two crossing wave systems. Open sea only: enclosed water (a surface_mesh)
+	// gets none.
+	void set_swell_height(float p_height);
+	float get_swell_height() const { return swell_height; }
+	void set_swell_period(float p_period);
+	float get_swell_period() const { return swell_period; }
+	void set_swell_direction(Vector2 p_direction);
+	Vector2 get_swell_direction() const { return swell_direction; }
 	void set_swell(float p_swell);
 	float get_swell() const { return swell; }
 	void set_fetch(float p_fetch);
@@ -525,6 +560,10 @@ public:
 	void set_flow_foam_persistence(float p_seconds);
 	float get_flow_foam_persistence() const { return flow_foam_persistence; }
 	// Also where the live water runs into things: convergence, and the pillow on a rock's upstream face.
+	// White water where a body breaks the surface fast for its width (Froude-gated; slow wading makes none):
+	// per second at full churn, 0 = none. docs/ideas/water.md "White water round bodies in the water".
+	void set_body_foam(float p_rate);
+	float get_body_foam() const { return body_foam; }
 	void set_flow_foam_impact(bool p_enabled);
 	bool get_flow_foam_impact() const { return flow_foam_impact; }
 	// The live window's waves and foam carried along the flow's real paths (advected coordinates), not straight
@@ -625,6 +664,44 @@ private:
 	void _hide_breakers();
 	void _update_breaker_spray(const LocalVector<Vector3> &p_points, const LocalVector<Vector3> &p_dirs, const LocalVector<float> &p_weights, float p_rate, float p_speed);
 	static Ref<Mesh> _spray_droplet_mesh();
+	// Wave impact spray (docs/ideas/water.md "Wave impact spray on rocks and cliffs"): where an arriving crest meets a
+	// steep face from the rock contact map, breaking or nearly so, the up-rush is thrown up the face as a jet that breaks
+	// into drops and a white cloud (Peregrine 2003). impact_spray_amount: droplets alive at most.
+	bool impact_spray = true;
+	int impact_spray_amount = 8000;
+	float impact_spray_rate = 0.0f;
+	uint32_t impact_spray_tick = 0;
+	struct ImpactSite {
+		Vector2 xz; // world, at the face's foot on the water side
+		Vector2 away; // horizontal, out of the face into the water
+	};
+	LocalVector<ImpactSite> impact_sites;
+	// Waves meeting cliffs and stacks (docs/ideas/water.md "Waves reflected off cliffs, sheltered behind stacks"): the
+	// contact map's pixels with the lee's wave-height factor in alpha (the CPU twin of contact_foam_tex), for the
+	// direction and wavelength it was built for.
+	float wave_reflection = 0.8f;
+	bool wave_shelter = true;
+	Vector<uint8_t> obstacle_pixels;
+	int obstacle_res = 0;
+	Vector2 obstacle_center;
+	float obstacle_extent = 0.0f;
+	Vector2 obstacle_travel;
+	float obstacle_lambda = 0.0f;
+	Vector2 _wave_travel(float *r_lambda) const;
+	void _build_wave_obstacles();
+	bool _obstacle_texel(float p_wx, float p_wz, Color &r_c) const;
+	float _obstacle_lee_at(float p_wx, float p_wz) const;
+	float _obstacle_reflect_at(float p_wx, float p_wz, Vector2 &r_mirror) const;
+	RandomPCG impact_rng;
+	GPUParticles3D *impact_spray_node = nullptr;
+	Ref<ParticleProcessMaterial> impact_spray_material;
+	GPUParticles3D *impact_cloud_node = nullptr;
+	Ref<ParticleProcessMaterial> impact_cloud_material;
+	Ref<ImageTexture> impact_points_tex;
+	Ref<ImageTexture> impact_normals_tex;
+	void _build_impact_sites();
+	void _update_impact_spray();
+	void _impact_spray_off();
 	bool crest_spray = true;
 	int crest_spray_amount = 6000;
 	float crest_spray_rate = 0.0f;
@@ -705,6 +782,13 @@ private:
 	float fetch = 0.0f;
 	WaveSpreading wave_spreading = WAVE_SPREADING_DONELAN_BANNER;
 	float swell = 0.0f;
+	// A moderate North Atlantic swell (Hs 1-2 m at 10-12 s is the common case: Young 1999, Semedo et al. 2011),
+	// crossing the default wind at about 37 degrees.
+	float swell_height = 1.2f;
+	float swell_period = 11.0f;
+	Vector2 swell_direction = Vector2(0.8f, 0.6f);
+	Vector4 _remote_swell() const;
+	void _apply_remote_swell();
 	float render_extent = 0.0f;
 	int mesh_detail = 1;
 	float near_mesh_step = 0.0f;

@@ -37,12 +37,14 @@
 #include "core/templates/rid.h"
 #include "core/object/object.h"
 #include "core/templates/hash_map.h"
+#include "core/templates/local_vector.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/shader.h"
 
 class Node3D;
 class ShaderMaterial;
 class DirectionalLight3D;
+class Camera3D;
 
 // Raster water seen from above (PhysXWaterSurface3D, PhysXRiver3D): the sky mirrored by the exact Fresnel
 // term, from a small panorama of the environment's sky, and the sun's glitter: a GGX lobe (Bruneton,
@@ -263,6 +265,174 @@ float water_jitter(vec2 p_frag, float p_time) {
 }
 
 #if !defined(RT)
+// Lamps lighting the water from above or within (docs/ideas/water.md "Lamps above the water"): up to four omni or
+// spot lights near the camera (WaterRasterReflections). Position and range; the spot's direction of travel and the
+// cosine of its cone (-2 for an omni light); pi x energy x colour and Godot's falloff exponent; the spot's rim exponent.
+uniform int raster_lamp_count = 0;
+uniform vec4 raster_lamp_pos[4];
+uniform vec4 raster_lamp_dir[4];
+uniform vec4 raster_lamp_color[4];
+uniform float raster_lamp_rim[4];
+
+// Godot's own falloff (get_omni_attenuation): a window to the range times distance^-decay, the decay applied to
+// the ray tube's squared spread p_e2 (the squared distance in a uniform medium).
+float water_lamp_falloff(float p_path, float p_e2, int i) {
+	float nd = p_path / raster_lamp_pos[i].w;
+	nd *= nd;
+	nd *= nd;
+	nd = max(1.0 - nd, 0.0);
+	return nd * nd * pow(max(p_e2, 1e-8), -0.5 * raster_lamp_color[i].w);
+}
+
+// The spot's cone and rim, as Godot's light_process_spot; l is the direction the light leaves the lamp.
+float water_lamp_cone(int i, vec3 l) {
+	float cutoff = raster_lamp_dir[i].w;
+	if (cutoff < -1.5) {
+		return 1.0;
+	}
+	float scos = dot(l, raster_lamp_dir[i].xyz);
+	if (scos <= cutoff) {
+		return 0.0;
+	}
+	float rim = max(1e-4, (1.0 - scos) / max(1.0 - cutoff, 1e-4));
+	return max(1.0 - pow(rim, raster_lamp_rim[i]), 0.0);
+}
+
+// Lamp i's light at x under a level surface at p_level (per unit of its colour, on a plane facing the light, before
+// the water's extinction). A lamp above the surface reaches x along the one ray that bends at the surface (Snell,
+// 1.33: the refraction point by Newton's method on sin(i) = n sin(t), started from the paraxial point), less the
+// Fresnel reflection there; its tube of rays is squeezed toward the vertical, so it spreads as from a lamp at
+// a + b/n straight overhead (the small-angle limit) and more slowly off to the side. A lamp under the water shines
+// straight. r_dir is the light's direction of travel at x, r_water its path through the water.
+float water_lamp_at(int i, vec3 x, float p_level, out vec3 r_dir, out float r_water) {
+	vec3 c = raster_lamp_pos[i].xyz;
+	float a = c.y - p_level;
+	if (a <= 0.0) {
+		vec3 l = x - c;
+		float r = max(length(l), 1e-3);
+		r_dir = l / r;
+		r_water = r;
+		return water_lamp_falloff(r, r * r, i) * water_lamp_cone(i, r_dir);
+	}
+	const float n = 1.33;
+	float b = max(p_level - x.y, 1e-3);
+	vec2 h = x.xz - c.xz;
+	float rho = length(h);
+	vec2 u = rho > 1e-6 ? h / rho : vec2(1.0, 0.0);
+	float s = rho * a / (a + b / n);
+	for (int k = 0; k < 4; k++) {
+		float ra = sqrt(a * a + s * s);
+		float rb = sqrt(b * b + (rho - s) * (rho - s));
+		float f = s / ra - n * (rho - s) / rb;
+		float df = a * a / (ra * ra * ra) + n * b * b / (rb * rb * rb);
+		s = clamp(s - f / df, 0.0, rho);
+	}
+	float ra = sqrt(a * a + s * s);
+	float rb = sqrt(b * b + (rho - s) * (rho - s));
+	float ci = a / ra;
+	float si = s / ra;
+	float ct = b / rb;
+	float stt = (rho - s) / rb;
+	float rs = (ci - n * ct) / (ci + n * ct);
+	float rp = (n * ci - ct) / (n * ci + ct);
+	float tr = 1.0 - 0.5 * (rs * rs + rp * rp);
+	// The tube's cross-section facing the ray, per solid angle at the lamp: rho (d rho / d theta_i) cos(t) / sin(i).
+	float e2 = (a + b / n) * (a + b / n);
+	if (si > 1e-4) {
+		float dr = a / (ci * ci) + b / (ct * ct) * ci / (n * ct);
+		e2 = rho * dr * ct / si;
+	}
+	r_dir = vec3(u.x * stt, -ct, u.y * stt);
+	r_water = rb;
+	return tr * water_lamp_falloff(ra + rb, e2, i) * water_lamp_cone(i, vec3(u.x * si, -ci, u.y * si));
+}
+
+// The lamps' light scattered toward the eye along the refracted view ray in the water (single scattering, as the
+// sun's): from p_s along t for p_len, 12 jittered steps over the stretch inside each lamp's range, the phase
+// (Henyey-Greenstein, p_g) and the water's extinction p_st on both legs; p_sc the scattering per metre. No shadows:
+// a spatial shader cannot read a lamp's shadow map (the path tracer draws the shafts).
+vec3 water_lamp_beams(vec3 p_s, vec3 t, float p_len, float p_level, vec3 p_st, vec3 p_sc, float p_g, float p_jitter) {
+	vec3 total = vec3(0.0);
+	float g2 = p_g * p_g;
+	float len = min(p_len, 6.0 / max(dot(p_st, vec3(1.0 / 3.0)), 1e-3));
+	for (int i = 0; i < min(raster_lamp_count, 4); i++) {
+		vec3 oc = p_s - raster_lamp_pos[i].xyz;
+		float range = raster_lamp_pos[i].w;
+		float bq = dot(oc, t);
+		float disc = bq * bq - (dot(oc, oc) - range * range);
+		if (disc <= 0.0) {
+			continue;
+		}
+		float sq = sqrt(disc);
+		float t0 = max(-bq - sq, 0.0);
+		float t1 = min(-bq + sq, len);
+		if (t1 <= t0) {
+			continue;
+		}
+		const int STEPS = 12;
+		float dt = (t1 - t0) / float(STEPS);
+		vec3 sum = vec3(0.0);
+		for (int k = 0; k < STEPS; k++) {
+			float tt = t0 + (float(k) + p_jitter) * dt;
+			vec3 dir;
+			float rw;
+			float e = water_lamp_at(i, p_s + t * tt, p_level, dir, rw);
+			if (e <= 0.0) {
+				continue;
+			}
+			float hg = (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * p_g * dot(dir, -t), 1e-4), 1.5));
+			sum += e * hg * exp(-p_st * (rw + tt)) * dt;
+		}
+		total += raster_lamp_color[i].rgb * sum;
+	}
+	return max(p_sc, vec3(0.0)) * total;
+}
+
+// The bed seen through clear water was lit on the screen by each lamp as if in air: straight, undimmed. Its lamp
+// light is put right: the bent ray's spread, the surface's Fresnel loss and the water on the way down, as a factor
+// on that lamp's share of the bed's light (its irradiance on a level bed against the sun's and sky's, the bed's
+// own colour cancelling). p_amb is what the clear path already applied to all of it (the sun and sky's way in and
+// down), r_mult the change to add as seen * r_mult.
+vec3 water_lamp_bed(vec3 p_bed, float p_level, vec3 p_st, vec3 p_amb) {
+	if (raster_lamp_count <= 0) {
+		return vec3(0.0);
+	}
+	vec3 raw[4];
+	vec3 fix[4];
+	vec3 lit = vec3(0.0);
+	if (water_raster_lit()) {
+		lit = raster_sun_irradiance * max(-normalize(raster_sun_travel).y, 0.0) + raster_sky_irradiance * raster_sky_energy;
+	}
+	float sum = dot(lit, vec3(1.0 / 3.0));
+	for (int i = 0; i < 4; i++) {
+		raw[i] = vec3(0.0);
+		fix[i] = vec3(0.0);
+		if (i >= raster_lamp_count) {
+			continue;
+		}
+		vec3 l = p_bed - raster_lamp_pos[i].xyz;
+		float d = max(length(l), 1e-3);
+		float up = max(-l.y / d, 0.0);
+		float e_raw = water_lamp_falloff(d, d * d, i) * water_lamp_cone(i, l / d) * up;
+		vec3 dir;
+		float rw;
+		float e_true = water_lamp_at(i, p_bed, p_level, dir, rw) * max(-dir.y, 0.0);
+		raw[i] = raster_lamp_color[i].rgb * e_raw;
+		fix[i] = raster_lamp_color[i].rgb * e_true * exp(-p_st * rw);
+		sum += dot(raw[i], vec3(1.0 / 3.0));
+	}
+	vec3 mult = vec3(0.0);
+	if (sum > 1e-6) {
+		for (int i = 0; i < min(raster_lamp_count, 4); i++) {
+			float share = dot(raw[i], vec3(1.0 / 3.0)) / sum;
+			if (share > 1e-5) {
+				mult += share * (fix[i] / max(raw[i], vec3(1e-6)) / max(p_amb, vec3(1e-4)) - 1.0);
+			}
+		}
+	}
+	return max(mult, vec3(-1.0));
+}
+
 // Clear water seen from above (docs/ideas/water.md "Clear water you can see into"): the light coming up
 // through the surface at p_s toward the eye, before the surface's own Fresnel reflection. The view ray v
 // refracts into the water along n (Snell). Where the straight ray meets the bed at depth z0 (z_bed, the
@@ -274,10 +444,12 @@ float water_jitter(vec2 p_frag, float p_time) {
 // (Henyey-Greenstein, as far as sun_visibility lets the sun reach the surface) and sky along the path. The
 // medium is the path tracer's: absorption p_ab and scattering p_sc per metre, anisotropy p_g.
 // r_seen is the bed's share of the result, r_bed the point seen there and r_sun_share the part of the bed's light
-// that came from the sun (the rest from the sky), for caustics.
+// that came from the sun (the rest from the sky), for caustics; r_amb the factor the sun and sky's way in and down
+// put on the bed's light (water_lamp_bed).
 vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v, vec3 n, vec2 uv, float z_bed,
 		vec3 p_ab, vec3 p_sc, float p_g, vec3 p_sun_dir, vec3 p_sun_irr, vec3 p_sky, float p_jitter, mat4 proj,
-		mat4 view, mat4 inv_proj, mat4 inv_view, bool p_march, out vec3 r_seen, out vec3 r_bed, out float r_sun_share) {
+		mat4 view, mat4 inv_proj, mat4 inv_view, bool p_march, out vec3 r_seen, out vec3 r_bed, out float r_sun_share,
+		out vec3 r_amb) {
 	vec3 t = refract(v, n, 1.0 / 1.33);
 	if (dot(t, t) < 1e-6) {
 		t = v;
@@ -450,6 +622,7 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 	}
 	vec3 seen = scr * into * down * exp(-st * len);
 	r_seen = seen;
+	r_amb = into * down;
 	r_bed = p_s + t * min(len, 1e3);
 	{
 		vec3 s_sun = w_sun * exp(-st * z_b / mu);
@@ -530,12 +703,12 @@ vec3 water_clear_through_ex(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec
 // halvings between the last two steps. Its Fresnel share (exact, air into water) blended over p_refl as
 // water_raster_reflect() does (written for blend_mix); a miss or the screen's edge fades to the dark around.
 // The march alone: whether mirror ray r from p_vtx (view space) meets the screen's depth, the colour there and how
-// much of it to trust (faded at the screen's edge and at the march's range).
-bool water_screen_march(sampler2D p_screen, sampler2D p_depth, vec3 p_vtx, vec3 r, float p_jitter, mat4 proj, mat4 inv_proj, out vec3 r_seen, out float r_fade) {
+// much of it to trust (faded at the screen's edge and at the march's range, p_max_d metres).
+bool water_screen_march(sampler2D p_screen, sampler2D p_depth, vec3 p_vtx, vec3 r, float p_jitter, float p_max_d, mat4 proj, mat4 inv_proj, out vec3 r_seen, out float r_fade) {
 	r_seen = vec3(0.0);
 	r_fade = 0.0;
 	const int N = 24;
-	const float MAX_D = 24.0;
+	float MAX_D = p_max_d;
 	float t_prev = 0.0;
 	float t_hit = -1.0;
 	for (int i = 0; i < N; i++) {
@@ -597,7 +770,7 @@ vec4 water_screen_reflect(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, ve
 	}
 	vec3 seen;
 	float fade;
-	if (!water_screen_march(p_screen, p_depth, p_vtx, r, p_jitter, proj, inv_proj, seen, fade)) {
+	if (!water_screen_march(p_screen, p_depth, p_vtx, r, p_jitter, 24.0, proj, inv_proj, seen, fade)) {
 		vec3 dark = p_refl.rgb * p_refl.a * (1.0 - f);
 		float a_d = 1.0 - (1.0 - p_refl.a) * (1.0 - f);
 		return vec4(dark / max(a_d, 1e-4), a_d);
@@ -612,7 +785,7 @@ vec4 water_screen_reflect(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, ve
 // banks stand (a blue-grey sheen over brown flood water at grazing views, where the path tracer mirrors the
 // banks). Screen-space reflections over the environment as their fallback, as engines layer them (Frostbite,
 // Unreal: SSR, then probes and sky).
-vec4 water_screen_over_sky(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, vec3 p_sky, float p_f, vec3 p_n, vec3 p_vtx, float p_jitter, mat4 proj, mat4 inv_proj) {
+vec4 water_screen_over_sky(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, vec3 p_sky, float p_f, vec3 p_n, vec3 p_vtx, float p_jitter, float p_max_d, mat4 proj, mat4 inv_proj) {
 	if (p_f <= 0.0) {
 		return p_refl;
 	}
@@ -621,7 +794,7 @@ vec4 water_screen_over_sky(sampler2D p_screen, sampler2D p_depth, vec4 p_refl, v
 	vec3 r = reflect(v, n);
 	vec3 seen;
 	float fade;
-	if (!water_screen_march(p_screen, p_depth, p_vtx, r, p_jitter, proj, inv_proj, seen, fade)) {
+	if (!water_screen_march(p_screen, p_depth, p_vtx, r, p_jitter, p_max_d, proj, inv_proj, seen, fade)) {
 		return p_refl;
 	}
 	vec3 pre = p_refl.rgb * p_refl.a + (seen * p_f - p_sky) * fade;
@@ -635,8 +808,9 @@ vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v
 	vec3 seen;
 	vec3 bed;
 	float share;
+	vec3 amb;
 	return water_clear_through_ex(p_screen, p_depth, p_s, v, n, uv, z_bed, p_ab, p_sc, p_g, p_sun_dir, p_sun_irr, p_sky,
-			p_jitter, proj, view, inv_proj, inv_view, true, seen, bed, share);
+			p_jitter, proj, view, inv_proj, inv_view, true, seen, bed, share, amb);
 }
 #endif
 )";
@@ -689,6 +863,9 @@ class WaterRasterReflections {
 	Ref<ImageTexture> sky_texture;
 	float sky_energy = 0.0f;
 	Vector3 sky_irradiance; // the baked sky's irradiance on a level surface
+	LocalVector<ObjectID> lamps; // the omni and spot lights nearest the camera, at most four
+	int lamp_scan = 0;
+	void _update_lamps(Node3D *p_node, const Camera3D *p_camera, const Ref<ShaderMaterial> &p_material);
 
 public:
 	// The first visible directional light (not sky-only), looked up again now and then.

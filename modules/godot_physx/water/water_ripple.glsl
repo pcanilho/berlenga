@@ -370,13 +370,15 @@ void height_pass(ivec2 c, int idx) {
 	vec2 xz = (vec2(c) + 0.5) / float(GRID_N) * DOMAIN * 2.0 - DOMAIN;
 	float target = 0.0;
 	float weight = 0.0;
+	float body_foam = 0.0; // white water the spheres churn in (per second; WaterBodyContacts, Froude-gated)
 	for (int i = 0; i < NUM_SPHERES; i++) {
-		vec4 s = spheres[i];
+		vec4 s = spheres[i * 2];
 		float t = length(xz - s.xy) / max(s.z, 1e-4);
 		if (t < 1.6) {
 			float w = exp(-pow(t * 1.1, 6.0)) * s.w;
 			target -= s.z * w;
 			weight = max(weight, w);
+			body_foam = max(body_foam, spheres[i * 2 + 1].x * exp(-pow(t * 1.1, 6.0)));
 		}
 	}
 	float wave = 0.0;
@@ -410,6 +412,7 @@ void height_pass(ivec2 c, int idx) {
 	if (FLOW_FOAM > 0.0) {
 		foam += FLOW_FOAM * flow_foam_source(c, v_old) * DT * 2.0; // (full in about half a second)
 	}
+	foam += body_foam * DT;
 	foam = clamp(foam * exp(-DT / max(FLOW_FOAM_PERSISTENCE, 0.05)), 0.0, 1.0);
 
 	bool dry = cell_depth(c) + hn <= DRY_DEPTH;

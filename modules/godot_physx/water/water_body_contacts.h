@@ -50,6 +50,7 @@ class WaterBodyContacts {
 	struct Seen {
 		Vector3 position;
 		bool submitted = false;
+		bool foamed = false;
 	};
 	HashMap<ObjectID, Seen> seen;
 
@@ -74,10 +75,29 @@ public:
 	static constexpr float REFERENCE_SPEED = 2.0f; // m/s through the water for a full-strength wake
 	static constexpr float REST_STRENGTH = 0.1f;
 
+	// White water churned in where a body breaks the surface (docs/ideas/water.md "White water round bodies in the
+	// water"): air is entrained once the water runs past the body fast for its width, the Froude number
+	// Fr = U / sqrt(g D) past FOAM_FR_ONSET (bow wave spilling, lee cavity ventilating; Ageorges, Peixinho and Perret
+	// 2019 see the regime change at Fr about 1.2), full by FOAM_FR_FULL. Slow wading makes none.
+	static constexpr float FOAM_FR_ONSET = 0.8f;
+	static constexpr float FOAM_FR_FULL = 2.0f;
+	float foam_rate = 1.0f; // foam per second at full churn (1 = fully white in a second); 0 = none
+
+	// The foam rate (per second) and patch radius (m) for a body of radius p_radius with the water passing it at
+	// p_speed (m/s): zero below the onset.
+	static Vector2 foam_for(float p_speed, float p_radius, float p_gravity, float p_rate) {
+		const float fr = p_speed / Math::sqrt(MAX(p_gravity * 2.0f * MAX(p_radius, 0.02f), 1e-4f));
+		const float churn = Math::smoothstep(FOAM_FR_ONSET, FOAM_FR_FULL, fr);
+		// The run-up and lee cavity grow as Fr^2 (Chaplin and Teigen 2003): the patch from the body's radius to twice it.
+		return Vector2(p_rate * churn, p_radius * (1.0f + churn));
+	}
+
 	// p_height(pos) -> the surface height (NaN where there is none); p_flow(pos) -> the water's velocity;
-	// p_submit(owner, pos, radius, strength), p_clear(owner), p_impulse(pos, radius, strength).
-	template <typename H, typename F, typename S, typename C, typename I>
-	void update(SceneTree *p_tree, double p_delta, const H &p_height, const F &p_flow, const S &p_submit, const C &p_clear, const I &p_impulse) {
+	// p_rise(pos) -> the surface's vertical speed (m/s);
+	// p_submit(owner, pos, radius, strength), p_clear(owner), p_impulse(pos, radius, strength);
+	// p_foam(owner, pos, radius, per_second): white water this step (per_second 0 = none now).
+	template <typename H, typename F, typename R, typename S, typename C, typename I, typename W>
+	void update(SceneTree *p_tree, double p_delta, const H &p_height, const F &p_flow, const R &p_rise, const S &p_submit, const C &p_clear, const I &p_impulse, const W &p_foam) {
 		if (!p_tree || p_delta <= 0.0) {
 			return;
 		}
@@ -112,13 +132,38 @@ public:
 					p_submit(owner, Vector3(pos.x, surface, pos.z), ext.x, strength);
 					s.submitted = true;
 					// Falling in: its underside crossed the surface going down this step.
-					if (last && vel.y < -1.0f && last->position.y - ext.y > surface && below <= 0.0f) {
+					const bool entering = last && vel.y < -1.0f && last->position.y - ext.y > surface && below <= 0.0f;
+					if (entering) {
 						p_impulse(Vector3(pos.x, surface, pos.z), ext.x, CLAMP(-vel.y / 5.0f, 0.0f, 1.0f));
+					}
+					// White water: only while the surface lies across the body (it breaks against it), on the water's
+					// speed past it, horizontally against the flow and vertically against the surface's rise.
+					float foam_per_second = 0.0f;
+					float foam_radius = ext.x;
+					if (foam_rate > 0.0f && below <= 0.0f && above <= 0.0f) {
+						const float rise = p_rise(pos);
+						const float u = Math::sqrt(rel.x * rel.x + rel.z * rel.z + (vel.y - rise) * (vel.y - rise));
+						const Vector2 f = foam_for(u, ext.x, 9.81f, foam_rate);
+						foam_per_second = f.x;
+						foam_radius = f.y;
+					}
+					// Falling in: the impact crown and cavity entrain air once, on the entry speed (over this step).
+					if (foam_rate > 0.0f && entering) {
+						const Vector2 f = foam_for(-vel.y, ext.x, 9.81f, foam_rate);
+						foam_per_second = MAX(foam_per_second, f.x / MAX(float(p_delta), 1e-3f) * 0.5f);
+						foam_radius = MAX(foam_radius, f.y);
+					}
+					if (foam_per_second > 0.0f) {
+						p_foam(owner, Vector3(pos.x, surface, pos.z), foam_radius, foam_per_second);
+						s.foamed = true;
 					}
 				}
 			}
 			if (!s.submitted && last && last->submitted) {
 				p_clear(owner);
+			}
+			if (!s.foamed && last && last->foamed) {
+				p_foam(owner, pos, 0.0f, 0.0f);
 			}
 			next.insert(id, s);
 		}
@@ -126,6 +171,9 @@ public:
 		for (const KeyValue<ObjectID, Seen> &kv : seen) {
 			if (kv.value.submitted && !next.has(kv.key)) {
 				p_clear(int(uint64_t(kv.key)));
+			}
+			if (kv.value.foamed && !next.has(kv.key)) {
+				p_foam(int(uint64_t(kv.key)), kv.value.position, 0.0f, 0.0f);
 			}
 		}
 		seen = next;
