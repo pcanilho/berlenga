@@ -230,6 +230,8 @@ func _ready() -> void:
 			await _run_roof_tests()
 		elif only == "walls":
 			await _run_wall_tests()
+		elif only == "stones":
+			await _run_stone_tests()
 		elif only == "drift":
 			await _run_drift_tests()
 		elif only == "windslab":
@@ -973,6 +975,82 @@ func _roof_face(at: Vector3, pitch_deg: float, material: String, heat: float) ->
 	r.global_position = at
 	r.rotation_degrees = Vector3(0, 0, -pitch_deg) # falls toward +x
 	return r
+
+
+func _stone_setup(at: Vector3, top_over: float, radius: float, at2: Vector3, top2_over: float) -> void:
+	# Stones through snow (follow-up 57): a level snowfield, a sun from the south-east 40 degrees up, 30 cm of
+	# settled snow; one stone standing well out of it and one under it (handed to the surface as a stone list).
+	await _setup("snowfield", 256.0, 128, -6.0)
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.rotation_degrees = Vector3(-40.0, 135.0, 0.0) # toward the sun: +x, +z (south-east in the bench's frame)
+	var probe := Marker3D.new()
+	probe.name = "Probe"
+	probe.position = at
+	add_child(probe)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.add_snow(30.0, 150.0)
+	snow.advance(3600.0)
+	surface = SnowSurface3D.new()
+	surface.snow_cover = NodePath("../SnowCover3D")
+	surface.follow_target = NodePath("../Probe")
+	surface.extent = 64.0
+	surface.deform_extent = 16.0
+	surface.deform_resolution = 256
+	add_child(surface)
+	var g1 := snow.get_ground_height_at(at)
+	var g2 := snow.get_ground_height_at(at2)
+	surface.set_stone_list(PackedFloat32Array([at.x, at.z, g1, g1 + top_over, radius, radius, 0.0, at2.x, at2.z, g2, g2 + top2_over, 0.2, 0.2, 0.0]))
+	await get_tree().physics_frame
+
+
+func _run_stone_tests() -> void:
+	print("Stones through snow (follow-up 57)")
+	var at := Vector3(0.0, 0.0, -8.0)
+	var at2 := Vector3(3.0, 0.0, -8.0)
+	await _stone_setup(at, 0.8, 0.45, at2, 0.15)
+	surface.rebuild_stone_relief()
+	var dose0 := snow.get_sun_dose_at(at)
+	var start := surface.get_stone_relief_at(at + Vector3(0.5, 0, 0.5))
+	# Three clear, cold days (the air under freezing: the pack itself does not melt).
+	for h in 72:
+		snow.advance(3600.0)
+	surface.rebuild_stone_relief()
+	var dose := snow.get_sun_dose_at(at)
+	var side := snow.get_sun_side().normalized()
+	var r_sun := surface.get_stone_relief_at(at + Vector3(side.x, 0, side.y) * 0.52)
+	var r_shade := surface.get_stone_relief_at(at - Vector3(side.x, 0, side.y) * 0.52)
+	var r_far := surface.get_stone_relief_at(at + Vector3(side.x, 0, side.y) * 1.5)
+	_check("sunny days since the snowfall dig a moat round a stone standing out, deepest on its sunny side", dose > dose0 + 5.0 and r_sun < -0.03 and r_sun < 2.0 * r_shade - 0.005 and absf(r_far) < 0.005 and absf(start) < 0.01, "dose %.1f -> %.1f kWh/m2; %.1f cm sunny side, %.1f cm shaded, %.1f cm 1 m out; %d stones out" % [dose0, dose, r_sun * 100.0, r_shade * 100.0, r_far * 100.0, surface.get_stone_relief_count()])
+	var r_buried := surface.get_stone_relief_at(at2 + Vector3(0.3, 0, 0.0))
+	_check("a stone under the pack leaves the snow alone", absf(r_buried) < 0.002 and surface.get_stone_relief_count() == 1, "%.2f cm beside the buried one" % (r_buried * 100.0))
+	var depth: float = snow.get_surface_depth_at(at + Vector3(side.x, 0, side.y) * 0.47)
+	var low := surface.get_surface_height_at(at + Vector3(side.x, 0, side.y) * 0.47)
+	_check("the moat's floor stays on or over the ground (snow 30 cm deep)", low >= snow.get_ground_height_at(at) - 0.001, "%.2f m over the ground under %.2f m of snow" % [low - snow.get_ground_height_at(at), depth])
+	# A day of drifting wind (14 m/s toward +x).
+	weather.wind_speed = 14.0
+	weather.wind_direction = Vector2(1.0, 0.0)
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	for h in 12:
+		snow.advance(3600.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	surface.rebuild_stone_relief()
+	var drift := snow.get_drift_dose()
+	var hp: float = 0.8 - snow.get_surface_depth_at(at)
+	var front := surface.get_stone_relief_at(at - Vector3(0.45 + 0.3 * hp, 0, 0))
+	var tail_near := surface.get_stone_relief_at(at + Vector3(0.45 + 1.0 * hp, 0, 0))
+	var tail_far := surface.get_stone_relief_at(at + Vector3(0.45 + 6.0 * hp, 0, 0))
+	_check("a drifting wind scours the stone's windward base and lays a tail in its lee, 2 to 5 protrusions long", front < -0.03 and tail_near > 0.05 and absf(tail_far) < 0.005, "drift %.0f m/s h toward (%.1f, %.1f); %.1f cm in front, tail %.1f cm at one protrusion, %.1f cm at six (protrusion %.2f m)" % [drift.length(), drift.normalized().x, drift.normalized().y, front * 100.0, tail_near * 100.0, tail_far * 100.0, hp])
+	# Fresh snow: the moats start again.
+	snow.add_snow(5.0, 100.0)
+	snow.advance(60.0)
+	surface.rebuild_stone_relief()
+	_check("a fresh snowfall resets the sun's dose", snow.get_sun_dose_at(at) < 0.5, "%.2f kWh/m2 after 5 cm" % snow.get_sun_dose_at(at))
 
 
 func _run_wall_tests() -> void:
@@ -3488,6 +3566,8 @@ func _build_view() -> void:
 		await _setup("flat", 32.0, 128, -6.0)
 	elif view == "walls":
 		await _setup("snowfield", 512.0, 256, -8.0)
+	elif view == "stones":
+		await _setup("snowfield", 256.0, 128, -6.0)
 	else:
 		await _setup("flat", 32.0, 128, -4.0)
 	var env := Environment.new()
@@ -3562,6 +3642,9 @@ func _build_view() -> void:
 		return
 	elif view == "walls":
 		await _build_walls(cam)
+		return
+	elif view == "stones":
+		await _build_stones(cam)
 		return
 	elif view == "spindrift":
 		await _build_spindrift(cam)
@@ -4785,6 +4868,82 @@ func _build_avalanche(cam: Camera3D) -> void:
 		cam.look_at(Vector3(5.0, 0.0, 0.0))
 		cam.fov = 50.0
 	cam.far = 1000.0
+	await _save_frame("")
+
+
+func _build_stones(cam: Camera3D) -> void:
+	# Stones through snow (follow-up 57): rocks standing out of 25 cm of settled snow on a level snowfield, after
+	# a day of drifting wind toward +x and then sunny days with the sun to the south-east: moats round them, deepest
+	# on the sunny side, windward scour and lee tails. --no-stones: the same without the stones' relief.
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 40.0
+	sun.rotation_degrees = Vector3(-28.0, -35.0, 0.0) # toward the sun: the camera side and right, so the sunny sides face it
+	_add_terrain(256.0, 128, Color(0.33, 0.31, 0.27), 6.0)
+	var probe := Marker3D.new()
+	probe.name = "Probe"
+	probe.position = Vector3(0.0, 0.0, -6.0)
+	add_child(probe)
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.add_snow(25.0, 160.0)
+	snow.advance(3600.0)
+	weather.wind_speed = 13.0
+	weather.wind_direction = Vector2(1.0, 0.0)
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	for h in 8:
+		snow.advance(3600.0)
+	weather.wind_speed = 1.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	for h in 48: # the bench's sun stands still: two days of it are some five clear days of sunshine
+		snow.advance(3600.0)
+	sun.rotation_degrees = Vector3(-16.0, -70.0, 0.0) # shot in a low sun from the right, so the relief round the stones reads
+	# Rocks: RockGenerator meshes, set a fifth of their height into the ground.
+	var list := PackedFloat32Array()
+	var spots := [Vector3(-1.2, 0, -5.0), Vector3(0.9, 0, -6.6), Vector3(-0.2, 0, -8.6), Vector3(2.4, 0, -9.4), Vector3(-2.8, 0, -10.2), Vector3(1.1, 0, -12.5), Vector3(-1.4, 0, -14.0)]
+	var sizes := [0.55, 0.9, 0.4, 0.7, 1.1, 0.5, 0.8]
+	for k in spots.size():
+		var rg := RockGenerator.new()
+		rg.seed = 11 + k * 7
+		var rock := MeshInstance3D.new()
+		rock.mesh = rg.generate()
+		var box: AABB = rock.mesh.get_aabb()
+		# Sized by height (the generator's blocks lie low): sizes[k] tall, at most 1.6 m across.
+		var sc: float = minf(sizes[k] / box.size.y, 1.6 / maxf(box.size.x, box.size.z))
+		rock.scale = Vector3.ONE * sc
+		rock.rotation.y = k * 1.3
+		var p: Vector3 = spots[k]
+		var g := snow.get_ground_height_at(p)
+		var y := g - box.position.y * sc - 0.2 * box.size.y * sc
+		rock.position = Vector3(p.x, y, p.z)
+		add_child(rock)
+		var mid: Vector3 = rock.position + Basis(Vector3.UP, rock.rotation.y) * (Vector3(box.get_center().x, 0.0, box.get_center().z) * sc)
+		list.append_array([mid.x, mid.z, g, y + box.end.y * sc, 0.5 * sc * box.size.x, 0.5 * sc * box.size.z, rock.rotation.y])
+	surface = SnowSurface3D.new()
+	surface.snow_cover = NodePath("../SnowCover3D")
+	surface.follow_target = NodePath("../Probe")
+	surface.extent = 192.0
+	surface.detail_spacing = 0.03125
+	surface.deform_extent = 24.0
+	surface.deform_resolution = 768
+	surface.stone_relief = not OS.get_cmdline_user_args().has("--no-stones")
+	add_child(surface)
+	surface.set_stone_list(list)
+	await get_tree().physics_frame
+	surface.rebuild_stone_relief()
+	surface.process_mode = Node.PROCESS_MODE_DISABLED
+	print("stones: %d out of the snow, sun dose %.1f kWh/m2, drift %.0f m/s h, %.0f cm of snow" % [surface.get_stone_relief_count(), snow.get_sun_dose_at(probe.position), snow.get_drift_dose().length(), snow.get_depth_at(probe.position) * 100.0])
+	# Low, from the south-west, across the tails toward the sun's side of the stones.
+	var gc := snow.get_ground_height_at(Vector3(-2.6, 0, -2.0))
+	cam.position = Vector3(-2.6, gc + 1.3, -2.0)
+	cam.look_at(Vector3(0.2, gc + 0.05, -8.0))
+	cam.fov = 55.0
 	await _save_frame("")
 
 

@@ -71,6 +71,25 @@
 				Returns the CPU time of the last physics step (presses, refill, collision and upload), in milliseconds.
 			</description>
 		</method>
+		<method name="get_stone_list" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<description>
+				The stones handed in with [method set_stone_list].
+			</description>
+		</method>
+		<method name="get_stone_relief_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The stones' relief at [param position] (m): under for a moat or scour, over for a lee tail.
+			</description>
+		</method>
+		<method name="get_stone_relief_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many stones stood out of the pack at the last build of [member stone_relief].
+			</description>
+		</method>
 		<method name="get_surface_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -114,11 +133,24 @@
 				Like [method press], with a flat rectangular print [param size] wide (x) and long (y), turned by [param yaw] radians about up: a boot, a runner, a crate.
 			</description>
 		</method>
+		<method name="rebuild_stone_relief">
+			<return type="void" />
+			<description>
+				Reads the stones and builds [member stone_relief] now.
+			</description>
+		</method>
 		<method name="rotten_share" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="wetness" type="float" />
 			<description>
 				The share of its bearing (pressure-sinkage moduli) a pack keeps at liquid saturation [param wetness] (0 to 1): 1 dry, 0.15 soaked. Wet snow loses its bonds (Yamanoi and Endo 2002), so boots and wheels posthole in a rotten spring pack; it also packs denser under the load and throws more aside.
+			</description>
+		</method>
+		<method name="set_stone_list">
+			<return type="void" />
+			<param index="0" name="stones" type="PackedFloat32Array" />
+			<description>
+				Stones to shape the snow round instead of the rock fields': seven floats each, x, z, ground height, top height, the footprint's half axes along its own x and z (m) and its yaw (rad). Empty: the rock fields' ([method RockField3D.get_stones]).
 			</description>
 		</method>
 		<method name="sync_deformation">
@@ -243,6 +275,12 @@
 		</member>
 		<member name="snow_cover" type="NodePath" setter="set_snow_cover" getter="get_snow_cover" default="NodePath(&quot;&quot;)">
 			The [SnowCover3D] giving the pack depth, albedo and wetness. Empty: the active one.
+		</member>
+		<member name="stone_relief" type="bool" setter="set_stone_relief" getter="get_stone_relief" default="true">
+			The snow round stones standing out of it: a melt moat, deepest on the sunny side and growing with the sun since the last snowfall ([method SnowCover3D.get_sun_dose_at]); windward scour and a lee tail two to five protrusions long, shaped by the drifting wind ([method SnowCover3D.get_drift_dose]). Where a moat reaches the ground the thin snow there is gone. Drawn and collided.
+		</member>
+		<member name="stone_relief_extent" type="float" setter="set_stone_relief_extent" getter="get_stone_relief_extent" default="32.0">
+			The side (m) of the square round the follow target where [member stone_relief] shapes the snow.
 		</member>
 		<member name="tint" type="Color" setter="set_tint" getter="get_tint" default="Color(1, 1, 1, 1)">
 			A tint on the snow albedo.

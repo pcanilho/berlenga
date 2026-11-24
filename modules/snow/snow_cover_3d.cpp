@@ -264,7 +264,7 @@ void SnowCover3D::_allocate() {
 	cell_canopy.fill(0.0f);
 	cell_canopy_load.resize(nn);
 	cell_canopy_load.fill(0.0f);
-	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_wind_slab, &cell_slab_cover, &cell_depth_hoar, &cell_sas_x, &cell_sas_z, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
+	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_wind_slab, &cell_slab_cover, &cell_depth_hoar, &cell_sas_x, &cell_sas_z, &cell_sun_dose, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in }) {
 		f->resize(nn);
 		f->fill(0.0f);
 	}
@@ -405,7 +405,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_wind_slab, &cell_slab_cover, &cell_depth_hoar, &cell_sas_x, &cell_sas_z, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_hoar, &cell_hoar_layer, &cell_hoar_burial, &cell_hoar_age, &cell_cups, &cell_seal, &cell_slush, &cell_packed, &cell_glaze, &cell_wind_slab, &cell_slab_cover, &cell_depth_hoar, &cell_sas_x, &cell_sas_z, &cell_sun_dose, &cell_climate_precip, &cell_water, &cell_ice, &cell_white_ice, &cell_lap, &cell_lap_deep, &cell_lap_cover, &cell_lap_in, &cell_salt_pack, &cell_salt_seen };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -624,6 +624,19 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 	// The flat-ground wind: the cover applies its own terrain terms (Liston curvature, Winstral Sx) on it.
 	last_wind = driven ? driven_wind : (in.weather ? in.weather->get_mean_wind_at(center, false) : Vector2());
 	in.wind_speed = last_wind.length();
+	// Stones through snow (follow-up 57): the square's sun side and drift dose, fading as the days pass.
+	if (in.dt_h > 0.0f) {
+		const Vector2 sh(in.sun_dir.x, in.sun_dir.z);
+		sun_side *= Math::exp(-in.dt_h / 120.0f);
+		if (in.direct_normal > 0.0f && in.sun_dir.y > 0.0f && sh.length_squared() > 1e-8f) {
+			sun_side += sh.normalized() * (in.direct_normal * in.sun_dir.y * in.dt_h / 1000.0f);
+		}
+		drift_dose *= Math::exp(-in.dt_h / 72.0f);
+		const float over = in.wind_speed - MAX(drift_threshold_wind, 0.1f);
+		if (over > 0.0f) {
+			drift_dose += last_wind.normalized() * (over * in.dt_h);
+		}
+	}
 	if (drift_enabled && (in.weather || driven)) {
 		const Vector2 wind = last_wind;
 		const float u = wind.length();
@@ -1047,6 +1060,19 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			const float depth = swe > SWE_MIN ? swe / MAX(rho, 30.0f) : 0.0f;
 			const float gradient = depth > 0.05f ? MAX(-MIN(t, 0.0f), 0.0f) / depth : 0.0f;
 			cell_depth_hoar.write[i] = depth_hoar_enabled && depth > 0.0f ? depth_hoar_step(cell_depth_hoar[i], gradient, in.dt_h, swe > SWE_MIN ? liq / swe : 0.0f) : 0.0f;
+		}
+		if (cell_sun_dose.size() == n * n) {
+			// The shortwave on level ground (direct through the clouds, and the diffuse share) since the last
+			// snowfall of a centimetre or more, whatever the air: a stone standing out of the pack warms in any sun.
+			float gl = 0.0f;
+			if (in.direct_normal > 0.0f && in.sun_dir.y > 0.0f) {
+				float vis = 1.0f;
+				if (in.wx.valid) {
+					vis = in.wx.has_sun ? in.wx.sun_visibility_at(pos) : 1.0f - 0.75f * Math::pow(in.wx.cloud_cover_at(pos), 3.4f);
+				}
+				gl = in.direct_normal * in.sun_dir.y * (vis + DIFFUSE_SHARE);
+			}
+			cell_sun_dose.write[i] = swe <= SWE_MIN || snow / rho_fall > 0.01f ? 0.0f : cell_sun_dose[i] + gl * in.dt_h / 1000.0f;
 		}
 		if (cell_cups.size() == n * n) {
 			cell_cups.write[i] = suncups_enabled && swe > SWE_MIN ? suncup_step(cell_cups[i], sun_melt, air_melt, rain, snow / rho_fall, lap_on ? lap : 0.0f, swe / MAX(rho, 30.0f)) : 0.0f;
@@ -2547,6 +2573,7 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	cell_depth_hoar.ptrw();
 	cell_sas_x.ptrw();
 	cell_sas_z.ptrw();
+	cell_sun_dose.ptrw(); // published as pub.sun_dose
 	cell_slush.ptrw(); // published as pub.slush
 	cell_glaze.ptrw(); // published as pub.glaze
 	cell_packed.ptrw(); // published as pub.packed
@@ -2691,6 +2718,7 @@ void SnowCover3D::_publish_cells() {
 	pub.cups = cell_cups;
 	pub.wind_slab = cell_wind_slab;
 	pub.sas_x = cell_sas_x;
+	pub.sun_dose = cell_sun_dose;
 	pub.depth_hoar = cell_depth_hoar;
 	pub.layer_swe = layer_swe;
 	pub.layer_rho = layer_rho;
@@ -4286,6 +4314,9 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density, bool p_world) {
 		if (cell_cups.size() == cell_swe.size()) {
 			cell_cups.write[i] = MAX(cell_cups[i] - MAX(p_swe_mm, 0.0f) / rho_new, 0.0f); // new snow fills the hollows
 		}
+		if (cell_sun_dose.size() == cell_swe.size() && p_swe_mm / rho_new > 0.01f) {
+			cell_sun_dose.write[i] = 0.0f; // fresh snow round the stones: the moats start again
+		}
 		if (cell_crust.size() == cell_swe.size() && cell_crust[i] > 0.0f) {
 			cell_crust_burial.write[i] += MAX(p_swe_mm, 0.0f) / rho_new;
 		}
@@ -4558,6 +4589,13 @@ float SnowCover3D::get_hoar_at(Vector3 p_position) const {
 		return world->get_hoar_at(p_position);
 	}
 	return pub.hoar.is_empty() ? 0.0f : _sample(pub.hoar, Vector2(p_position.x, p_position.z));
+}
+
+float SnowCover3D::get_sun_dose_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_sun_dose_at(p_position);
+	}
+	return pub.sun_dose.is_empty() ? 0.0f : _sample(pub.sun_dose, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_buried_hoar_at(Vector3 p_position) const {
@@ -5500,6 +5538,10 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_sastrugi_enabled"), &SnowCover3D::is_sastrugi_enabled);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sastrugi_enabled"), "set_sastrugi_enabled", "is_sastrugi_enabled");
 	ClassDB::bind_method(D_METHOD("get_sastrugi_at", "position"), &SnowCover3D::get_sastrugi_at);
+	ClassDB::bind_method(D_METHOD("get_sun_dose_at", "position"), &SnowCover3D::get_sun_dose_at);
+	ClassDB::bind_method(D_METHOD("get_surface_depth_at", "position"), &SnowCover3D::get_surface_depth_at);
+	ClassDB::bind_method(D_METHOD("get_sun_side"), &SnowCover3D::get_sun_side);
+	ClassDB::bind_method(D_METHOD("get_drift_dose"), &SnowCover3D::get_drift_dose);
 	ClassDB::bind_method(D_METHOD("get_sastrugi_texture"), &SnowCover3D::get_sastrugi_texture);
 	ClassDB::bind_method(D_METHOD("get_strata_texture"), &SnowCover3D::get_strata_texture);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("cut_cohesion", "kind", "density", "age_hours", "saturation", "crystal_mm"), &SnowCover3D::cut_cohesion);

@@ -2079,6 +2079,42 @@ drew the lines, so the patches hold at any depth). Gentle ground is as before. T
 ledges are in the mesh, whose normal on a tread is near level. Checked on the docs frame's own command (landscape
 bench `--layout=range --lens-cam=3000`). The even 16 m rhythm of the rows is terrain's ledge spacing (routed).
 
+## Follow-up 57: stones through snow, the pack's side (24 Nov 2026)
+
+With ground detail (docs/ideas/ground-detail.md, "Stones through snow": RockField3D.snow_burial leaves out the
+detail stones under the pack). Here, the snow round the stones that stand out of it.
+
+Research:
+- Melt moats (rock wells): dark rock absorbs most of the sun (shortwave absorptance about 0.8 against 0.1-0.2 for
+  snow) and gives it to the snow against it by longwave and conduction, so a ring melts round it, deepest on the
+  sunny side, growing with each clear day since the last snowfall, even in air under freezing (Pomeroy et al. 2003
+  on exposed shrubs and rock heating the pack; Liston 1995, local advection from bare patches).
+- Windward scour: the flow speeding round an obstacle's front and sides digs a horseshoe at its base (snow wind
+  tunnel and CFD round a cube: Beyers et al. 2004; Tominaga et al. 2011), down to a third of its height.
+- Lee tails: the wake drops drifting snow in a ridge behind it, two to five heights long (snow tails and snow
+  shadows: Kind 1981; Tabler 1994).
+
+Built:
+- SnowCover3D: `get_sun_dose_at` (kWh/m2 of shortwave on level ground since the last snowfall of 1 cm or more, per
+  cell, through the clouds), `get_sun_side` (the sun's mean side over the square, fading over 5 days),
+  `get_drift_dose` (m/s h of wind over the drift threshold, toward where it blew, fading over 3 days).
+  `get_surface_depth_at` is now bound.
+- SnowSurface3D `stone_relief` (on) over `stone_relief_extent` (32 m) round the follow target: a signed height
+  (6 cm texels) added to the drawn surface and its collision (CPU and GPU paths). Per stone standing out of the
+  pack by protrusion hp (its top over the snow surface), footprint a rounded box (half axes and yaw):
+  - moat depth min(depth, 0.25 x 0.8 x dose / (L_f rho) x clamp(hp / 2r, 0.3, 1)), width 4-40 cm growing with hp
+    and the dose, 30% of it on the shaded side, full toward the sun's side; where it reaches the ground the thin
+    snow is gone (the surface drops under min_depth);
+  - windward scour min(depth, hp / 3) times the drift's weight 1 - exp(-dose / 20 m/s h), full in front, half at
+    the sides, out about one hp;
+  - a lee tail 0.7 hp high at the stone, (2 + 3 x weight) hp long, a rounded ridge tapering away.
+  Rebuilt when the target goes a quarter of the square, and on the cover's updates at most every 2 s.
+- Stones: `set_stone_list` (x, z, ground, top, half axis x, half axis z, yaw; 7 floats each), else every rock
+  field's `get_stones` (all layers on but the two finest detail classes; footprint radius as both half axes). The
+  agreed ground contract query will replace the rock field read.
+- `--test=stones`, `--view=stones` (generated rocks on a snowfield after a drifting day and two days of the bench's
+  still sun; `--no-stones` without).
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
