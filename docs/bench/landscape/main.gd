@@ -4331,7 +4331,17 @@ func _build_camera() -> void:
 				if height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk) > height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk):
 					lout = -lout
 				var along := lout.cross(Vector3.UP).normalized()
-				var lc := lpos + lout * float(args.get("ledge-back", "22")) + along * float(args.get("ledge-side", "9"))
+				# Steep ground: try both sides and a few distances, keeping the spot whose ground sits furthest under the lip.
+				var lsd := float(args.get("ledge-side", "9"))
+				var lc := lpos + lout * lbk + along * lsd
+				var lgb := INF
+				for bk in [lbk, lbk * 0.7, lbk * 1.4]:
+					for sd in [lsd, -lsd, 0.0]:
+						var q: Vector3 = lpos + lout * float(bk) + along * float(sd)
+						var qh := height_at(q.x, q.z)
+						if qh < lgb:
+							lgb = qh
+							lc = q
 				lc.y = maxf(height_at(lc.x, lc.z) + 1.7, lpos.y + float(args.get("ledge-up", "-2")))
 				cam.fov = 55.0
 				cam.position = lc
