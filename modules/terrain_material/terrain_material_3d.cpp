@@ -720,7 +720,7 @@ vec2 tm_hex_hash(ivec2 v) {
 	return vec2(float(h & 0xFFFFu), float(h >> 16u)) / 65535.0;
 }
 )";
-	// Soil bare of plants by the climate's dryness (WorldContracts::bare_share_for_precipitation, mirrored): the soil
+	// Soil bare of plants by the climate's dryness (WorldContracts::bare_share_for_precipitation, shared below): the soil
 	// and alluvium layers' colours are a vegetated topsoil (olive); in a dry climate most of it is bare soil.
 	c += R"(
 global uniform sampler2D terrain_climate_map : hint_default_black, filter_linear; // TerrainDataMap3D: g precipitation m a year
@@ -729,37 +729,14 @@ global uniform vec4 weather_climate; // WeatherMap3D's season climate: x precipi
 uniform bool tm_bare_on = true;
 uniform vec4 tm_bare_soil_color : source_color = vec4(0.49, 0.40, 0.33, 1.0);
 uniform vec4 tm_bare_alluvium_color : source_color = vec4(0.60, 0.55, 0.49, 1.0);
-// The share of the soil bare at p, 0 with no climate.
+)";
+	// The shared bare-soil rule and patches (WorldContracts::climate_bare_shader_code(): wc_climate_bare, wc_bare_patch),
+	// the same the grass fields thin their blades by.
+	c += WorldContracts::climate_bare_shader_code();
+	c += R"(
+// The share of the soil bare at p, 0 with no climate (the shared rule, wc_climate_bare above).
 float tm_climate_bare(vec3 p) {
-	if (!tm_bare_on) {
-		return 0.0;
-	}
-	float mm = -1.0;
-	if (terrain_climate_rect.z > 0.0) {
-		vec2 uv = (p.xz - terrain_climate_rect.xy) / terrain_climate_rect.zw;
-		if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
-			mm = textureLod(terrain_climate_map, uv, 0.0).g * 1000.0;
-		}
-	}
-	if (mm < 0.0 && weather_climate.w > 0.0) {
-		mm = weather_climate.x;
-	}
-	return mm < 0.0 ? 0.0 : 0.9 * (1.0 - smoothstep(200.0, 700.0, mm));
-}
-// Drylands' cover is patchy, not thin: clumps of grass and shrub with bare soil between, patches of metres
-// (self-organised patchiness of semi-arid vegetation, Rietkerk et al. 2004). Bare where a two-octave noise (4 m and
-// 1.3 m, mean 0.5, sd 0.16) falls under the share's quantile (a logistic probit), so the bare area is the share; past
-// a pixel of about half a metre the patches fade to the share itself.
-float tm_bare_patch(vec3 p, float bare, float fp) {
-	if (bare <= 0.0) {
-		return 0.0;
-	}
-	float v = 0.65 * tm_vn(vec3(p.x / 4.0, 3.7, p.z / 4.0)) + 0.35 * tm_vn(vec3(p.x / 1.3, 8.1, p.z / 1.3));
-	float b = clamp(bare, 0.01, 0.99);
-	float t = 0.5 + 0.16 * log(b / (1.0 - b)) / 1.7;
-	float e = max(0.03, fp * 0.2);
-	float px = 1.0 - smoothstep(t - e, t + e, v);
-	return mix(px, bare, smoothstep(0.15, 0.6, fp));
+	return tm_bare_on ? wc_climate_bare(p) : 0.0;
 }
 )";
 	// Godot passes a sampler to a function only with one filter/repeat/hint setting per function, so the hex sampler
@@ -2003,7 +1980,9 @@ void fragment() {
 		dns[1] = d;
 		hb[1] = w[1] + h * tm_blend_depth * 2.0;
 	}
-	float tm_bare_k = w[2] + w[3] > 1e-3 ? tm_bare_patch(wp, tm_climate_bare(wp), tm_fp0) : 0.0;
+	float tm_bare_k = w[2] + w[3] > 1e-3 ? wc_bare_patch(wp, tm_climate_bare(wp), tm_fp0) : 0.0;
+	// The bare share of this pixel's ground, for the turf tint and far plant colour below: none over bare soil.
+	float tm_bare_g = tm_bare_k * clamp(w[2] + w[3], 0.0, 1.0);
 	if (w[2] > 1e-3) {
 		vec3 a;
 		float r;
@@ -2323,14 +2302,14 @@ void fragment() {
 	// The bare ground under the cover, for the stand's trails and rooting (below).
 	c += "\tvec3 tm_stand_bare = albedo;\n";
 	if (grass_tint_enabled) {
-		c += "\talbedo = grass_ground(wp, albedo);\n";
+		c += "\talbedo = mix(grass_ground(wp, albedo), albedo, tm_bare_g);\n"; // no turf on the bare patches (the blades skip them too)
 		// Moraine till keeps its stones above the turf: the scree layer's tallest blocks stand out of the sward
 		// (a grassed moraine is soil and grass with boulders through it, not a meadow).
 		// Without a scree height map there are no blocks to pick out: the till keeps the stones' share as a tint.
 		const bool stone_h = layers[LAYER_SCREE].is_valid() && layers[LAYER_SCREE]->get_height_texture().is_valid();
 		c += vformat("\tif (tm_till > 0.0) {\n\t\talbedo = mix(albedo, alb[1], tm_till * %s);\n\t}\n", stone_h ? "smoothstep(0.5, 0.7, tm_stone_h)" : "0.45");
 		// Plants thinned away by distance leave their colour on the ground (VegetationField3D).
-		c += "\talbedo = vegetation_far(wp, albedo, CAMERA_POSITION_WORLD);\n";
+		c += "\talbedo = mix(vegetation_far(wp, albedo, CAMERA_POSITION_WORLD), albedo, tm_bare_g);\n";
 	}
 	if (far_blend_enabled) {
 		// Far ground: the bare ground under the plant cover's colour by its cover share, taking over from the near
@@ -2582,7 +2561,7 @@ void fragment() {
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5 * tm_gc_spec;\n";
 	if (grass_tint_enabled) {
 		// The sward hides the soil's sheen (GrassField3D): without it the meadow past the blades reads pale grey.
-		c += "\tspecular = grass_ground_specular(wp, specular);\n";
+		c += "\tspecular = mix(grass_ground_specular(wp, specular), specular, tm_bare_g);\n";
 	}
 	if (far_blend_enabled) {
 		// Past far_start the cover map hides the sheen by its cover share, as the sward does near.
