@@ -7939,11 +7939,8 @@ float GrassField3D::season_greenness(const Dictionary &p_season) {
 	if (p_season.is_empty()) {
 		return 1.0f;
 	}
-	const float moisture = float(p_season.get("soil_moisture", 1.0f));
-	const float temperature = float(p_season.get("temperature", 10.0f));
-	const float wet = Math::smoothstep(0.1f, 0.4f, moisture);
-	const float warm = Math::smoothstep(-8.0f, 2.0f, temperature);
-	return CLAMP(wet * warm, 0.0f, 1.0f);
+	// The shared rule (WorldContracts::greenness_for_season): the terrain's cured cover follows the same.
+	return WorldContracts::greenness_for_season(float(p_season.get("soil_moisture", 1.0f)), float(p_season.get("temperature", 10.0f)));
 }
 
 // Once a second: the season's greenness into the blades' and the ground's dryness, and a new far

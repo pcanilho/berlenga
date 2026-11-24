@@ -253,7 +253,7 @@
 			<return type="float" />
 			<param index="0" name="season" type="Dictionary" />
 			<description>
-				How green a temperate sward is for a season state ([method WeatherMap3D.get_season]), 0 to 1: grassland greenness follows soil water and temperature (PhenoGrass, Hufkens et al. 2016; the Growing Season Index of Jolly et al. 2005 without its day-length term, as a temperate sward stays green through short days). [code]smoothstep(0.1, 0.4, soil_moisture) * smoothstep(-8, 2, temperature)[/code]: a summer drought browns it, a hard winter leaves it tan, a mild wet winter keeps it green. 1 for an empty state.
+				How green a temperate sward is for a season state ([method WeatherMap3D.get_season]), 0 to 1: grassland greenness follows soil water and temperature (PhenoGrass, Hufkens et al. 2016; the Growing Season Index of Jolly et al. 2005 without its day-length term, as a temperate sward stays green through short days), the shared rule [code]WorldContracts::greenness_for_season[/code]: [code]smoothstep(0.1, 0.4, soil_moisture) * smoothstep(-8, 2, temperature)[/code]: a summer drought browns it, a hard winter leaves it tan, a mild wet winter keeps it green. 1 for an empty state.
 			</description>
 		</method>
 		<method name="get_field_stage" qualifiers="const">
