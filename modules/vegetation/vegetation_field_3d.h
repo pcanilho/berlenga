@@ -537,6 +537,8 @@ private:
 		// The grass layers, top down (cover_grass, then cover_grass_layers): rules and far colour (linear).
 		LocalVector<Ref<PlantSpecies>> grass;
 		LocalVector<Color> grass_far;
+		float dry_season = 0.0f; // 0 to 1: how far the first grass field's season is dry (its effective dryness).
+		Vector3 cured = Vector3(0.24f, 0.18f, 0.06f); // Linear: the far sward cured to straw (the first grass field's dry_color, shaded).
 		Rect2 rect;
 		int w = 0;
 		int h = 0;

@@ -186,7 +186,10 @@ void library_job(void *p_userdata, uint32_t p_index) {
 	g->set_transport_distance(job.transport);
 	g->set_detail(job.detail);
 	g->set_close_up(job.close_up);
-	g->set_lods(!job.close_up && job.fracture == 0); // a close-up shape only draws within close_up_radius
+	// Close-up shapes get LODs too: they draw within close_up_radius of the follow target, which a far or high camera
+	// sees at a few pixels a stone; full detail wherever a pixel can show it (the renderer's 1 px rule), the coarser
+	// levels only below that, in the main and the shadow passes alike.
+	g->set_lods(job.fracture == 0);
 	g->set_fracture_pieces(job.fracture);
 	g->set_marks_scale(job.marks_scale);
 	// The world cache (world_cache.h): a library shape is the same bytes from the same inputs (and the same
@@ -5195,8 +5198,18 @@ void RockField3D::_coarse_commit(const Vector3i &p_key, LocalVector<Stone> &ston
 			grp.shapes[k] = nullptr;
 			where[cg.members[k]] = Vector2i(int(cell.groups.size()), k);
 		}
+		// The LOD by each stone's own size: the shapes are built a unit across and each stone's scale lives in its
+		// instance record, which the renderer's LOD choice does not see (it judges the mesh at its built size). The
+		// group's biggest stone as the model scale: it gets exactly the LOD its true size calls for, and no stone a
+		// coarser one than that (the smaller ones in the group stay at least as fine as they need).
+		real_t lod_scale = 0.0;
+		for (const Transform3D &xf : grp.xforms) {
+			lod_scale = MAX(lod_scale, xf.basis.get_scale_abs().x);
+		}
 		cell.groups.push_back(grp);
-		cell.instances.push_back(_add_group_instance(mm, cg.library, vis, cs * 0.5));
+		MultiMeshInstance3D *gi = _add_group_instance(mm, cg.library, vis, cs * 0.5);
+		gi->set_lod_bias(MAX(lod_scale, real_t(0.001)));
+		cell.instances.push_back(gi);
 	}
 	// Collision for the stones big enough to stand on or trip over, near the target.
 	const Vector3 tp = _target_position();
@@ -6159,10 +6172,13 @@ void RockField3D::_update_close_up(bool p_wait) {
 		Ref<MultiMesh> mm = mmi->get_multimesh();
 		const LocalVector<Color> &cd = near_cd[kv.key];
 		mm->set_instance_count(int(kv.value.size()));
+		real_t lod_scale = 0.0;
 		for (uint32_t k = 0; k < kv.value.size(); k++) {
 			mm->set_instance_transform(int(k), kv.value[k]);
 			mm->set_instance_custom_data(int(k), cd[k]);
+			lod_scale = MAX(lod_scale, kv.value[k].basis.get_scale_abs().x);
 		}
+		mmi->set_lod_bias(MAX(lod_scale, real_t(0.001))); // the LOD by the biggest stone's true size, as the cells
 	}
 	if (moss_cushions) {
 		_update_moss(near_xf, near_cd, p_wait);
@@ -6649,10 +6665,10 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 		// (A slab whose front stands on the bench all along still breaks a fifth of the way in: its joint.)
 		t = CLAMP(t, depth * 0.2, depth * 0.6);
 		root = front - za * t - ya * (root_thick * 0.5);
-		// The part that falls must start out over the face below the lip, not in the ground: its upper middle in the
-		// air (its underside may start in the face, which the heightfield draws without the undercut; it eases out).
+		// The part that falls must start out over the face below the lip, not in the ground: its middle in the air.
+		// (A convex body whose middle starts under the collision's one-sided surface falls through it.)
 		// (The drawn ground, heightfield plus the landscape's relief: what the collision follows.)
-		const Vector3 free_mid = front - za * (t * 0.5) - ya * (root_thick * 0.25);
+		const Vector3 free_mid = front - za * (t * 0.5) - ya * (root_thick * 0.5);
 		// (Clear of the heightfield as well: the collision may follow it without the relief's undercut.)
 		if (MAX(drawn(free_mid), rf_height(gen, free_mid)) > free_mid.y) {
 			node->queue_free();
@@ -6666,8 +6682,9 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 		node->set("impact_radius", MAX(p_grp.reach[p_k] * 1.5f, real_t(0.5)));
 		node->set("shatter_speed", 0.6); // the crack's own spall: a few chips, not a blast
 		node->set("freeze_when_asleep", true);
-		// Where its underside starts in the face below the lip, it eases out rather than leaping.
-		node->set("max_depenetration_velocity", 1.0);
+		// Where its underside starts in the face below the lip (the heightfield has no undercut), the contact pushes
+		// it out faster than gravity draws it in (at 1 m/s it sank through), yet without a leap.
+		node->set("max_depenetration_velocity", 4.0);
 	} else if (p_fall) {
 		// A block loosed from the wall: a rigid body from the start, moved out of the face by its reach so it does
 		// not start inside the heightfield. It breaks where it hits hard: one contact taking the impulse of a 3 m/s

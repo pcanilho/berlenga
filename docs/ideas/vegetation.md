@@ -2216,6 +2216,22 @@ blade. The field now cuts its tiles smaller to fit (to the half metre under sqrt
 blades in more tiles: the landscape's 220 blades/m2, 7-triangle "Grass" goes from 8 m (98,560 triangles) to 6.5 m
 (65,065). It was a warning asking the scene to set tile_size.
 
+## Cured turf and far cover (the shared cured contract)
+Terrain's cured cover (WorldContracts::cured_share_for_precipitation, GLSL wc_climate_cured: 1 below 500 mm a year,
+0 above 1000) turned the soil straw in dry climates, but where the sward and the cover plants grow they drew green
+over it: the turf under the blades (GrassField3D.get_ground_shader_code(), grass_turf) and the far cover map
+(VegetationField3D) had no cure.
+- Turf: cured share = max(the field's season dryness, smoothstep 0.45 to 0.95 of the blades' dryness, so turf and
+  blades cure together; the climate's cured share at the point). The turf goes to the blades' dry_color (to linear),
+  shaded at the base, in drifts; a deer lawn keeps more green. Past the blades the far bake already carries the
+  season's dryness; the climate's share is laid over it and the undercoat's far colour.
+- The climate share is used where the shared climate code is declared before the turf code (WC_CLIMATE_CODE, set by
+  WorldContracts::climate_bare_shader_code()): the grass far shell now includes it first. The terrain material
+  includes the turf code before the contract code, so there the turf cures by the season only until that order flips.
+- Far cover map: the sward's colour 0.9 x and the cover plants' 0.5 x (the evergreen shrubs among them keep green)
+  towards the first grass field's dry_color by the climate's share. Floor plants' far colours carry their drought cure
+  (PlantGenerator.get_drought_cure, the shader's yellow-to-brown ramp mirrored on the CPU).
+
 ## Terracettes (GrassField3D.terracettes)
 Steep grazed hillsides carry sub-parallel steps along the contours (Wikipedia, "Terracette"). A grazing model
 (Seleb, Chatterjee and Bhamla 2025, arXiv 2504.17496) forms them from stock walking cross-slope routes and treads
