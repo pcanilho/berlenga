@@ -1363,3 +1363,21 @@ engine build, so each built shape (ImporterMesh surface data plus its meta, mate
 stored in the world cache (`rock_shape_*`) and reloaded with the shared rock material. Close-ups and
 fracture pieces are not cached. Same bench view, cold vs warm: shape libraries 10.8 s to 0.6 s, frames
 byte-identical. Turning the world cache off restores the old path.
+
+## Ledge slab runs and get_ledge_slabs (24 Nov)
+
+Slabs were beams up to 15 bed thicknesses long and 6 deep, so a lip held one, and benches narrower than its depth
+held none. Joint spacing scales with bed thickness, about one to three thicknesses for both sets (Ladeira and Price
+1981, Narr and Suppe 1991), so the slab family now has both its length and depth in that range. A slab also tilts
+with the bench's fall along the lip, is drawn back from the lip a third of its hang at a time where the bench bends,
+and tries the shortest joint block before giving up. About half the lip points the terrain reports still seat none:
+there the ground falls a metre or more per metre along the "lip" (a steep face, not a bench), so the slab is left out.
+RockField3D.get_ledge_slabs(rect) lists the placed slabs with their top, front edge, along/out directions, size and
+run (slabs end to end along one lip); the bench's `--view=cliff --form=ledge-run` frames the longest run.
+
+## Pedestals on the shared bare patches (24 Nov)
+
+_rain_soil spread the climate's bare share evenly, so stones stood on pedestals in meadow that the plants and the
+terrain material drew as sward. It now reads the shared pattern (WorldContracts::bare_patch with the share at the
+point, the same as climate_bare_patch_at): a pedestal only on bare soil patches, each soil stone checked at its own
+spot. get_pedestal_spots(rect, step, max) lists bare spots, deepest splash first, for framing.

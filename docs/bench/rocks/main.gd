@@ -30,7 +30,7 @@ extends Node3D
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
 #   --cell=m              with --world: the generator's cell size (8; 4 for close shore and cliff shots)
-#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=ledge with --view=cliff: the ledge slabs; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
+#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=ledge with --view=cliff: the ledge slabs; --form=ledge-run: their longest run along a lip; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
 #   --no-ground-contact   no damp ring or banked fines on the ground round the stones (for a before frame)
@@ -491,7 +491,7 @@ func _world() -> void:
 	gen.coast_distance = 300.0
 	gen.lake_count = 1
 	gen.strata_enabled = true
-	gen.cliff_ledge_spacing = 16.0
+	gen.cliff_ledge_spacing = float(args.get("ledge-spacing", "16"))
 	gen.scree_age = float(args.get("scree-age", "6000"))
 	gen.moraine_age = float(args.get("moraine-age", "8000"))
 	gen.detail_octaves = 5
@@ -803,6 +803,8 @@ func _world() -> void:
 					found_p = p
 		spot = found_p
 		print("pedestal spot ", spot, " ", rocks.get_pedestal_at(spot))
+		var ps := rocks.get_pedestal_spots(Rect2(spot.x - 40, spot.z - 40, 80, 80), 1.0, 2000)
+		print("pedestal spots (bare, deepest first) within 40 m: %d, first %s" % [ps.size(), ps[0] if ps.size() > 0 else Vector4()])
 	if args.has("bank-spot"):
 		# --bank-spot: a soil bank of 42 to 52 degrees (no rock exposure, not talus) 20 m or more long, for Landscape3D's
 		# bank relief; scored by how much of the bank 8 m either side along the contour is as steep.
@@ -991,6 +993,15 @@ func _world() -> void:
 		cam.position = mouth + best_dir * d
 		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, mouth.y + float(args.get("cam-up", "1.6")))
 		look = mouth + Vector3(0, float(args.get("look-height", "3")), 0)
+	if form_stone.has("run_centre") and not args.has("cam"):
+		# A run of ledge slabs raked along its lip from out in front: the slabs' fronts and the joints between them.
+		var c: Vector3 = form_stone["run_centre"]
+		var o: Vector3 = form_stone["run_out"]
+		var a: Vector3 = form_stone["run_along"]
+		var d := float(args.get("dist", str(maxf(10.0, float(form_stone["run_length"]) * 0.8))))
+		cam.position = c + (o + a * float(args.get("side", "0.7"))).normalized() * d
+		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, c.y + float(args.get("cam-up", "1.0")))
+		look = c
 	if form_stone.has("basis") and args.get("form", "") == "ledge" and not args.has("cam"):
 		# A ledge slab from out over its lip and to one side, a little under its top: the overhang and its soffit.
 		var lb: Basis = form_stone["basis"]
@@ -2142,6 +2153,51 @@ func _densest(layer: int) -> Vector3:
 			print("%s at %s" % [args["form"], best["position"]])
 			form_stone = best
 			return best["position"]
+	if layer == RockField3D.LAYER_CLIFF and args.get("form", "") == "ledge-run":
+		# --view=cliff --form=ledge-run: the longest run of slabs along one lip (get_ledge_slabs), sunlit first.
+		var runs := {}
+		for s in rocks.get_ledge_slabs(Rect2(-800, -800, 1600, 1600)):
+			var r := int(s["run"])
+			if not runs.has(r):
+				runs[r] = []
+			runs[r].append(s)
+		var hist := [0, 0, 0, 0]
+		var n_sl := 0
+		for r in runs.values():
+			hist[mini(r.size(), 4) - 1] += 1
+			n_sl += r.size()
+		print("ledge slabs: %d in %d runs (1/2/3/4+ slabs: %s)" % [n_sl, runs.size(), hist])
+		if args.has("ledge-dump"):
+			var all := rocks.get_ledge_slabs(Rect2(-800, -800, 1600, 1600))
+			for s in all:
+				var nn := 1e9
+				var who := {}
+				for t in all:
+					if t != s and (t["top"] - s["top"]).length() < nn:
+						nn = (t["top"] - s["top"]).length()
+						who = t
+				print("slab %s len %.1f depth %.1f thick %.1f hang %.1f | nearest %.1f m, along-dot %.2f out-dot %.2f dy %.1f" % [s["top"], s["length"], s["depth"], s["thickness"], s["overhang"], nn, absf((who["top"] - s["top"]).normalized().dot(s["along"])), s["out"].dot(who["out"]), who["top"].y - s["top"].y])
+		var best_r := []
+		var best_sc := -1.0
+		for r in runs.values():
+			var c := Vector3()
+			for s in r:
+				c += s["top"]
+			c /= r.size()
+			var sc := float(r[0]["run_length"]) + (1000.0 if _sunlit(c + Vector3(0, 1, 0)) else 0.0)
+			if sc > best_sc:
+				best_sc = sc
+				best_r = r
+		if not best_r.is_empty():
+			var c := Vector3()
+			var o := Vector3()
+			for s in best_r:
+				c += s["front"]
+				o += s["out"]
+			c /= best_r.size()
+			form_stone = {"run_centre": c, "run_out": o.normalized(), "run_along": best_r[0]["along"], "run_length": float(best_r[0]["run_length"])}
+			print("ledge run: %d slabs, %.1f m, at %s" % [best_r.size(), best_r[0]["run_length"], c])
+			return c
 	if layer == RockField3D.LAYER_CLIFF and args.get("form", "") == "ledge":
 		# --view=cliff --form=ledge: where the ledge slabs stand thickest.
 		var ledges := []
@@ -2347,6 +2403,19 @@ func _test() -> void:
 						covered += 1
 						break
 			check(ledges > 0 and covered == mini(ledges, 40), "ledge slabs as plant obstacles: %d of %d checked have a disc over their top" % [covered, mini(ledges, 40)])
+			# get_ledge_slabs: the same slabs, grouped into runs along their lips.
+			var t1 := Time.get_ticks_msec()
+			var ls := rocks.get_ledge_slabs(wr)
+			var runs := {}
+			var longest := 0
+			for s in ls:
+				runs[int(s["run"])] = int(s["run_slabs"])
+				longest = maxi(longest, int(s["run_slabs"]))
+			var hist := [0, 0, 0, 0]
+			for r in runs.values():
+				hist[mini(int(r), 4) - 1] += 1
+			print("  ledge runs: %d slabs in %d runs (1/2/3/4+ slabs: %s), longest %d slabs" % [ls.size(), runs.size(), hist, longest])
+			check(ls.size() == ledges and longest >= 2, "get_ledge_slabs: %d slabs (get_stones %d) in %d runs, longest %d, in %d ms" % [ls.size(), ledges, runs.size(), longest, Time.get_ticks_msec() - t1])
 		check(floating == 0 and buried == 0, "%s: none floating (%d) or buried (%d)" % [LAYERS[l], floating, buried])
 	# Ground contact: the damp ring and banked fines round the stones, drawn into the map the terrain reads.
 	rocks.ground_contact = true

@@ -926,6 +926,7 @@ public:
 	bool is_rain_pedestals() const { return rain_pedestals; }
 	// (bare soil's stone share 0..1, soil lost round the stones m) at a point: where the rain leaves pedestals.
 	Vector2 get_pedestal_at(const Vector3 &p_position) const;
+	PackedVector4Array get_pedestal_spots(const Rect2 &p_rect, real_t p_step = 2.0, int p_max_count = 64) const;
 	bool is_frost_sorting() const { return frost_sorting; }
 	// How strongly the ground sorts at a point (0..1), and its stone share there (x: gate, y: share), for benches.
 	Vector2 get_frost_at(const Vector3 &p_position) const;
@@ -1013,6 +1014,7 @@ public:
 	// The stones of one layer in p_rect, each a Dictionary (position, basis, scale, footprint, film, rock_type,
 	// family, variant): what the layer would place, for tests.
 	Array get_stones(int p_layer, const Rect2 &p_rect);
+	Array get_ledge_slabs(const Rect2 &p_rect);
 	Array get_stone_caps(int p_layer, const Rect2 &p_rect, real_t p_tolerance = 0.03);
 	int get_stone_count() const { return stone_count; }
 	int get_cell_count() const { return cells.size(); }

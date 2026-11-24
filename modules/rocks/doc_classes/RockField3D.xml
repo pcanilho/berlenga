@@ -80,7 +80,16 @@
 			<return type="Vector2" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				Rain splash pedestals at a world position: x is the share of the ground's stones lying on bare, erodible soil there (0 to 1: bare from a dry climate or a recent burn, times the soil, slope and stoniness gates of [member rain_pedestals]), y the soil the rain has taken off round them in metres. y is 0 with [member rain_pedestals] off, (0, 0) with no climate.
+				Rain splash pedestals at a world position: x is the share of the ground's stones lying on bare, erodible soil there (0 to 1: bare from a dry climate where its shared bare patches fall (the shared bare-soil pattern, the same soil the terrain shows bare and plants leave open) or a recent burn, times the soil, slope and stoniness gates of [member rain_pedestals]), y the soil the rain has taken off round them in metres. y is 0 with [member rain_pedestals] off, (0, 0) with no climate.
+			</description>
+		</method>
+		<method name="get_pedestal_spots" qualifiers="const">
+			<return type="PackedVector4Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<param index="1" name="step" type="float" default="2.0" />
+			<param index="2" name="max_count" type="int" default="64" />
+			<description>
+				Where rain splash pedestals show, for framing them: every [param step] metres over [param rect] (world XZ), the points whose ground is bare (the share of [method get_pedestal_at] at least 0.5, so on the shared bare soil patches, never under the sward), as (x, ground height, z, soil taken off in metres), deepest first, at most [param max_count]. Empty with [member rain_pedestals] off or no dry or burnt ground.
 			</description>
 		</method>
 		<method name="get_ground_detail_count" qualifiers="const">
@@ -152,6 +161,13 @@
 			<param index="0" name="layer" type="int" />
 			<description>
 				Radius round the follow target out to which a layer is built.
+			</description>
+		</method>
+		<method name="get_ledge_slabs">
+			<return type="Array" />
+			<param index="0" name="rect" type="Rect2" />
+			<description>
+				The caprock slabs placed along the cliff benches' lips (see [member ledge_slabs]) whose centres lie in [param rect] (world XZ), as the cliff cells draw them, one [Dictionary] per slab: [code]position[/code] and [code]basis[/code] (the instance, as [method get_stones]), [code]top[/code] (Vector3, the middle of its top face), [code]front[/code] (Vector3, the middle of its top front edge), [code]along[/code] (Vector3, along the lip), [code]out[/code] (Vector3, level, out over the lip), [code]length[/code], [code]depth[/code] and [code]thickness[/code] (metres), [code]overhang[/code] (metres its base hangs past the heightfield), [code]rock_type[/code], [code]variant[/code], and its run: [code]run[/code] (an index shared by slabs end to end along one lip), [code]run_slabs[/code] and [code]run_length[/code] (metres of slab in that run). A camera framing a long run picks the run with the most slabs and looks along [code]along[/code] from in front of [code]front[/code]. Empty when [member ledge_slabs] or the cliff layer is off.
 			</description>
 		</method>
 		<method name="get_library_triangle_count" qualifiers="const">
