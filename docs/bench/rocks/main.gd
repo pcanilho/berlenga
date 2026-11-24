@@ -2288,6 +2288,24 @@ func _test() -> void:
 				floating += 1
 		var want_some := true
 		check(not want_some or st.size() > 0, "%s: %d stones over the world in %d ms" % [LAYERS[l], st.size(), Time.get_ticks_msec() - t0])
+		if l == RockField3D.LAYER_CLIFF:
+			# Plants keep off the ledge slabs' tops: get_obstacles has a disc over every slab.
+			var ledges := 0
+			var covered := 0
+			for s in st:
+				if int(s["family"]) != RockGenerator.FAMILY_LEDGE:
+					continue
+				ledges += 1
+				if ledges > 40:
+					continue
+				var lp: Vector3 = s["position"]
+				var lb: Basis = s["basis"]
+				var top := lp + lb.y * 0.25
+				for o in rocks.get_obstacles(Rect2(lp.x - 4, lp.z - 4, 8, 8), 0.0):
+					if Vector2(o.x - top.x, o.z - top.z).length() < o.w and absf(o.y - top.y) < 1.0:
+						covered += 1
+						break
+			check(ledges > 0 and covered == mini(ledges, 40), "ledge slabs as plant obstacles: %d of %d checked have a disc over their top" % [covered, mini(ledges, 40)])
 		check(floating == 0 and buried == 0, "%s: none floating (%d) or buried (%d)" % [LAYERS[l], floating, buried])
 	# Ground contact: the damp ring and banked fines round the stones, drawn into the map the terrain reads.
 	rocks.ground_contact = true

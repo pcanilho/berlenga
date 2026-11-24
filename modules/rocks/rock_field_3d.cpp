@@ -473,6 +473,7 @@ static float rf_frost_share(const TerrainGenerator3D *p_gen, float p_x, float p_
 	}
 	return Math::smoothstep(-0.25f, 0.35f, c);
 }
+static thread_local bool rf_ledges_only = false; // get_obstacles: of the cliff layer only the ledge slabs (plants stand on their benches)
 static thread_local bool rf_far = false; // _far_place: only the stones the far tier keeps need placing
 
 TerrainGenerator3D *RockField3D::_get_generator() const {
@@ -1457,6 +1458,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			const real_t gen_cell = gen->get_cell_size();
 			if (ledge_slabs) {
 				_place_ledges(gen, p_layer, p_rect, p_seed, r_stones);
+			}
+			if (rf_ledges_only) {
+				break; // the wall blocks stand in faces too steep for plants: no obstacles
 			}
 			for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += sub) {
 				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
@@ -7438,7 +7442,9 @@ void RockField3D::_obstacle_place_job(void *p_job, uint32_t p_index) {
 	const real_t cs = job.field->_cell_size(Layer(job.key.x));
 	rf_job_generator = job.gen;
 	rf_coarse_job = &job;
+	rf_ledges_only = job.key.x == LAYER_CLIFF;
 	job.field->_place(Layer(job.key.x), Rect2(job.key.y * cs, job.key.z * cs, cs, cs), rf_hash3(job.key.x, job.key.y, job.key.z, uint32_t(job.field->seed) * 2654435761u), job.stones);
+	rf_ledges_only = false;
 	rf_coarse_job = nullptr;
 	rf_job_generator = nullptr;
 }
@@ -7482,7 +7488,7 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 	// The cells not cached yet: placed on the worker threads in batches (a whole-world query places thousands).
 	LocalVector<Vector3i> missing;
 	for (int l = 0; l < LAYER_MAX; l++) {
-		if (!layer_enabled[l] || l == LAYER_CLIFF || _is_detail(l)) {
+		if (!layer_enabled[l] || (l == LAYER_CLIFF && !ledge_slabs) || _is_detail(l)) {
 			continue;
 		}
 		const real_t cs = _cell_size(Layer(l));
@@ -7587,12 +7593,35 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 				// library is built or asked for as before.
 				pj.stones.clear();
 				const real_t cs = _cell_size(Layer(pj.key.x));
+				rf_ledges_only = pj.key.x == LAYER_CLIFF;
 				_place(Layer(pj.key.x), Rect2(pj.key.y * cs, pj.key.z * cs, cs, cs), rf_hash3(pj.key.x, pj.key.y, pj.key.z, uint32_t(seed) * 2654435761u), pj.stones);
+				rf_ledges_only = false;
 			}
 		}
 		for (uint32_t i = 0; i < n; i++) {
 			ObstacleCell cell;
 			for (const Stone &st : placed[i].stones) {
+				if (key_family(st.library) == RockGenerator::FAMILY_LEDGE) {
+					// A ledge slab: its plan (long along the lip) as a row of circles a depth apart, each as wide as
+					// the slab is deep, at the bench's height; its top lies flush with the bench (height 0).
+					const Library *lib = libraries.getptr(st.library);
+					if (!lib || st.variant >= lib->axes.size()) {
+						continue;
+					}
+					const Vector3 ax = lib->axes[st.variant];
+					const Vector3 xa = st.basis.get_column(0).normalized(), ya = st.basis.get_column(1).normalized();
+					const real_t half_len = ax.x * st.scale, half_depth = ax.z * st.scale;
+					const Vector3 top_c = st.position + ya * (ax.y * st.scale);
+					const int n_c = MAX(1, int(Math::ceil(half_len / half_depth)));
+					for (int k = 0; k < n_c; k++) {
+						const real_t t = n_c == 1 ? 0.0 : (real_t(k) / real_t(n_c - 1) * 2.0 - 1.0) * (half_len - half_depth);
+						const Vector3 c = top_c + xa * t;
+						cell.obstacles.push_back(Vector4(c.x, c.y, c.z, half_depth));
+						cell.sizes.push_back(2.0f * half_depth);
+						cell.heights.push_back(0.0f);
+					}
+					continue;
+				}
 				if (st.footprint > 0.0f) {
 					cell.obstacles.push_back(Vector4(st.position.x, st.ground, st.position.z, st.footprint));
 					cell.sizes.push_back(2.0f * st.scale);
@@ -7634,7 +7663,7 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 	}
 	PackedVector4Array out;
 	for (int l = 0; l < LAYER_MAX; l++) {
-		if (!layer_enabled[l] || l == LAYER_CLIFF || _is_detail(l)) {
+		if (!layer_enabled[l] || (l == LAYER_CLIFF && !ledge_slabs) || _is_detail(l)) {
 			continue;
 		}
 		const real_t cs = _cell_size(Layer(l));
@@ -7663,7 +7692,7 @@ Array RockField3D::get_wind_obstacles(const Rect2 &p_rect) {
 	const PackedVector4Array obs = get_obstacles(p_rect, 0.7);
 	// get_obstacles fills the cache for the rect; read the heights back from it.
 	for (int l = 0; l < LAYER_MAX; l++) {
-		if (!layer_enabled[l] || l == LAYER_CLIFF || _is_detail(l)) {
+		if (!layer_enabled[l] || (l == LAYER_CLIFF && !ledge_slabs) || _is_detail(l)) {
 			continue;
 		}
 		const real_t cs = _cell_size(Layer(l));
