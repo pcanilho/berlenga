@@ -4400,7 +4400,7 @@ func _build_camera() -> void:
 			if rocks != null and rocks.has_method("get_pedestal_spots"):
 				# Rocks 3589ba9f: the pedestals' own spots (bare patches only), deepest splash first; the first on
 				# gentle ground.
-				for sp4 in rocks.get_pedestal_spots(Rect2(-pr, -pr, 2.0 * pr, 2.0 * pr), float(args.get("ped-step", "2")), 64):
+				for sp4 in rocks.get_pedestal_spots(Rect2(-pr, -pr, 2.0 * pr, 2.0 * pr), float(args.get("ped-step", "2")), int(args.get("ped-count", "1024"))):
 					var q := Vector3(sp4.x, sp4.y, sp4.z)
 					var sdeg := rad_to_deg(data_map.get_slope_at(q))
 					if sdeg >= float(args.get("ped-min-slope", "0")) and sdeg <= float(args.get("ped-max-slope", "25")):
