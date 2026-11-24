@@ -4358,7 +4358,8 @@ func _build_camera() -> void:
 					var ny := Vector3(-gx, 16.0, -gz).normalized().y
 					if ny < cos(deg_to_rad(35.0)) or ny > cos(deg_to_rad(15.0)):
 						continue
-					var gl: Vector2 = gen.get_gully_at(p, ny)
+					# --gully-any: any open soil slope in the range (bare-soil and slope views), not only gullies.
+					var gl: Vector2 = Vector2(1.0, 0.0) if args.has("gully-any") else gen.get_gully_at(p, ny)
 					if gl.x < 0.5 or gl.y > 0.3:
 						continue
 					var tt := Vector3(-gz, 0, gx).normalized() * 10.0
