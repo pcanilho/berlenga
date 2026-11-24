@@ -3535,6 +3535,18 @@ void VegetationField3D::_fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &
 // Near meshes on demand. Within 1.2 x near_range a far cell asks its source for the near mesh
 // every frame until it has it, then gets its near cell with the same crossfade as eager near
 // meshes; beyond 1.5 x the near cell is freed (and the source may free the mesh).
+// A cell's lod_bias: its biggest plant's scale. The renderer picks a MultiMesh's mesh LOD by the node's own scale
+// only, not the instances' (a plant scaled 2.2 took the LOD of one at 1, coarser than its size on screen needs);
+// by the biggest, no plant in the cell gets a coarser one than its size calls for (as the rock cells do).
+real_t VegetationField3D::_lod_scale(const LocalVector<Transform3D> &p_xforms) {
+	real_t s = 0.0;
+	for (const Transform3D &x : p_xforms) {
+		const Vector3 k = x.basis.get_scale_abs();
+		s = MAX(s, MAX(k.x, MAX(k.y, k.z)));
+	}
+	return MAX(s, real_t(0.001));
+}
+
 void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 	// Ice storms (trees.md 5be): the glaze over each near cell (WorldWeather.glaze_at, read twice a second), in bands; a
 	// near mesh grows its band's ice as geometry, and a cell whose band changes gets a new near cell once it is built
@@ -3560,6 +3572,7 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 		_fill_cell(mm, p_mesh, c.xforms, c.customs);
 		const float margin = impostors_traced ? 0.0f : MAX(c.range * 0.1f, 1.0f);
 		c.near = memnew(MultiMeshInstance3D);
+		c.near->set_lod_bias(_lod_scale(c.xforms));
 		c.near->set_name(String(c.far->get_name()) + "_Near");
 		c.near->set_multimesh(mm);
 		c.near->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
@@ -3786,6 +3799,7 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 					VegetationDetail::trace_instanced(mm);
 				}
 				MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+				mmi->set_lod_bias(_lod_scale(bx));
 				mmi->set_name(cells > 1 || hull_pass ? vformat("Plants%s_%d_%d_%d_%d_%d", near_pass ? "Near" : (hull_pass ? "Hull" : ""), s, v, tx, tz, b) : vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
 				mmi->set_multimesh(mm);
 				if (near_mesh.is_valid() && !hull_pass) {
