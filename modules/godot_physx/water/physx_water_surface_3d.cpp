@@ -7334,6 +7334,9 @@ void PhysXWaterSurface3D::_frame_update() {
 		}
 	}
 	if (!solver.has_queued_ticks()) {
+		if (caustics_enabled && solver.take_caustics_deferred()) {
+			_render_caustics(); // the last step's caustics waited for a frame that draws 3D
+		}
 		return; // no physics tick since the last frame: nothing moved
 	}
 	solver.flush_ticks();
@@ -7346,17 +7349,7 @@ void PhysXWaterSurface3D::_frame_update() {
 	_after_step();
 }
 
-void PhysXWaterSurface3D::_after_step() {
-	_steer_whitecaps();
-	if (solver.is_available()) {
-		bool cascades_ready = true;
-		for (WaveCascade *c : extra_cascades) {
-			cascades_ready = cascades_ready && c->solver.is_available();
-		}
-		if (!textures_bound && cascades_ready) {
-			_bind_textures();
-		}
-	}
+void PhysXWaterSurface3D::_render_caustics() {
 	if (solver.is_available() && caustics_enabled) {
 		// The scene's sun when there is one up (the light the water is drawn with), else caustics_sun_direction.
 		const Vector3 sun_travel = water_light_sun_travel.is_zero_approx() ? caustics_sun_direction : water_light_sun_travel;
@@ -7376,6 +7369,21 @@ void PhysXWaterSurface3D::_after_step() {
 	} else if (water_material.is_valid()) {
 		water_material->set_shader_parameter("caustics_on", false);
 	}
+}
+
+void PhysXWaterSurface3D::_after_step() {
+	_steer_whitecaps();
+	if (solver.is_available()) {
+		bool cascades_ready = true;
+		for (WaveCascade *c : extra_cascades) {
+			cascades_ready = cascades_ready && c->solver.is_available();
+		}
+		if (!textures_bound && cascades_ready) {
+			_bind_textures();
+		}
+	}
+	solver.take_caustics_deferred(); // drawn now, with this step's water
+	_render_caustics();
 	frames_since_refresh++;
 	if (frames_since_refresh >= REFRESH_EVERY_FRAMES) {
 		frames_since_refresh = 0;

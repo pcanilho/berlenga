@@ -865,6 +865,15 @@ DisplayServerEnums::WindowID RendererViewport::_get_containing_window(Viewport *
 	return DisplayServerEnums::INVALID_WINDOW_ID;
 }
 
+bool RendererViewport::has_3d_viewport() const {
+	for (const Viewport *vp : active_viewports) {
+		if (vp->update_mode != RSE::VIEWPORT_UPDATE_DISABLED && vp->render_target.is_valid() && !vp->disable_3d && vp->scenario.is_valid() && RSG::scene->is_camera(vp->camera)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void RendererViewport::draw_viewports(bool p_swap_buffers) {
 	GodotProfileZoneGroupedFirst(_profile_zone, "prepare viewports");
 	timestamp_vp_map.clear();

@@ -2068,3 +2068,30 @@ shader is at its varying limit) and to the far ground (grass_mow_ground). From a
 the hay goes to a dull brown-tan (its luminance x (0.95, 0.85, 0.62), three quarters of the way); a lighter grey first
 read as white. Check: grass bench --raster --hay=3 --hay-rain=30 against --hay-rain=0.
 
+
+## Rocks fetched per tile (rock_field)
+
+The showcase built one world-wide obstacles array of every RockField3D stone (1.17 M) before any plant was placed:
+148 s of setup on the cloud profile (optimisation.md). Placement that reads another layer only near the tiles being
+placed is the standard shape of run-time procedural placement (Jaap van Muijden, "GPU-Based Run-Time Procedural
+Placement in Horizon: Zero Dawn", GDC 2017: tiles round the camera, each layer evaluated only where needed).
+
+`VegetationField3D.rock_field` and `GrassField3D.rock_field` point at a RockField3D. On the main thread, just before
+a tile (a streamed tile, a populate, a sward tile or a far ring tile) is placed, the field asks
+`RockField3D.get_obstacles` for the 32 m chunks within the tile's reach not fetched yet (one call over the span of
+the missing chunks, so the rock field places their cells on its workers together) and keeps them. A stone belongs to
+the chunk its centre is in, which is how `get_obstacles` filters, so the chunks hold exactly the world query's
+stones, each once. The reach is the placement halo plus the widest rock query of `_place` (rock foot shelter, stone
+gap, stem, log and leaf clearance, leaf drift cell) plus `rock_footprint_max` (32 m, a warning if a wider stone is
+fetched). A streamed VegetationField tile gets its own small obstacle grid, built before its worker starts; the sward
+builds on the main thread and adds the new stones to its one grid. The obstacles array still works, alone or with a
+rock field.
+
+To make the answer independent of which stones a grid holds, `VegetationObstacles.clearance` and
+`second_clearance` now ignore an edge past the asked reach (before, a stone a little past it could count when the
+grid's widest stone made the search wider). Every caller already treated a result past its reach as none, except the
+leaf drift's lee tail between 1.6 and 2.6 m, which now stops at 1.6 m.
+
+Proof: `docs/bench/vegetation --test=rocks` compares fields reading the rock field with fields reading the same
+stones as one array: populated, streamed round a point, the leaf drift, and the sward's near and far ring blades
+are identical, and a field with no rocks differs.

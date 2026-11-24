@@ -549,3 +549,16 @@ drawn cells ask for), which only saves time and memory.
 
 Snow climate (31 s): not cached. Its bake reads the fire, frozen ground, obstacle lee and salt contracts at every
 step, so a sound key would need every one of those systems' state.
+
+## Undrawn frames (viewport disable_3d)
+
+The landscape bench places forests and cover over frames with the main viewport's 3D off. A GPU profile
+(`--gpu-profile`) of those frames on the software device showed two passes whose only output is a drawn 3D frame:
+the water caustics map (about 5 s a frame there) and the rain and snow shelter heightfield collider (about 9 s:
+`RainFall3D` and `SnowFall3D` set the collider's size each frame, which re-renders the geometry under it).
+`RendererViewport::has_3d_viewport()` says whether any active viewport draws 3D. While none does,
+`RendererSceneCull::render_particle_colliders` keeps the colliders in its list and renders them on the first frame
+that draws (before the particles update), and `WaterSolverGPU::rt_render_caustics` defers the map, which the
+surface asks for again on the next frame without a water tick. Every drawn frame runs exactly as before. Undrawn
+frames there went from about 15 s of GPU work to under 1.5 s.
+

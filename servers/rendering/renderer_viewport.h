@@ -321,6 +321,9 @@ public:
 	void handle_timestamp(String p_timestamp, uint64_t p_cpu_time, uint64_t p_gpu_time);
 
 	void draw_viewports(bool p_swap_buffers);
+	// True while some active viewport draws 3D (a camera, a scenario, 3D not disabled, updating). Work whose only
+	// output is a drawn 3D frame can wait while this is false: nothing shows it.
+	bool has_3d_viewport() const;
 
 	bool free(RID p_rid);
 

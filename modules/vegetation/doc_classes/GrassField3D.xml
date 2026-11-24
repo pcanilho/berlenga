@@ -117,6 +117,12 @@
 				Returns the number of far ring tiles.
 			</description>
 		</method>
+		<method name="get_rock_chunk_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The chunks (32 m squares) of the [member rock_field]'s stones fetched so far.
+			</description>
+		</method>
 		<method name="get_season_green" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -359,6 +365,15 @@
 		</member>
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="40.0">
 			Distance from the camera, in metres, to which tiles are grown. 0 draws no blades at all (no near tiles, far rings or shell), for a field kept only for its rules or ground tint.
+		</member>
+		<member name="rock_field" type="NodePath" setter="set_rock_field" getter="get_rock_field" default="NodePath(&quot;&quot;)">
+			A [RockField3D] whose stones the blades (near tiles and far ring tiles) keep out of, as [member obstacles] does, fetched with [method RockField3D.get_obstacles] round each tile just before it is placed and kept in 32 m chunks: no world-wide list of every stone is made, and only the rock cells near the tiles are placed. The placements are the same as with that rock field's stones given as [member obstacles]. Both can be set: the blades keep out of both. Setting it fetches the stones again.
+		</member>
+		<member name="rock_footprint_max" type="float" setter="set_rock_footprint_max" getter="get_rock_footprint_max" default="32.0">
+			The widest stone footprint (radius at the soil, metres) the [member rock_field] is expected to have: each tile fetches the stones this far past the reach of its plants. A warning is printed if a wider stone is fetched.
+		</member>
+		<member name="rock_obstacle_min" type="float" setter="set_rock_obstacle_min" getter="get_rock_obstacle_min" default="0.25">
+			The smallest stone (its size, metres) of the [member rock_field] the plants keep out of, the [code]min_size[/code] of [method RockField3D.get_obstacles].
 		</member>
 		<member name="row_spacing" type="float" setter="set_row_spacing" getter="get_row_spacing" default="0.125">
 			The distance between the crop's drill rows, in metres (12 to 15 cm for cereals).
