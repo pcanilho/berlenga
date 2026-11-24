@@ -1217,6 +1217,10 @@ vec3 lights_evaluate_positional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V,
 
 	vec3 shadow_transmittance = lights_shadow_transmittance(light, hit_pos, L, shadow_dist, p_receiver_shadow_mask, rng_state);
 	r_visible = max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.5 ? 1.0 : 0.0;
+	if (max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.0 && rt_caustics_enabled()) {
+		// Under water, a lamp's light bent at the surface and gathered by its waves (raytracing_caustics_inc.glsl).
+		shadow_transmittance *= rt_caustics_lamp_ratio(light, hit_pos);
+	}
 
 	// Evaluate BRDF (diffuse incl. backlight, specular separately for specular_amount control).
 	vec3 brdf_diffuse, brdf_specular;

@@ -804,6 +804,63 @@ void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uve
 	}
 }
 
+// One photon from the lamp over the map's tangent square, and its straight twin (raytracing_caustics_inc.glsl, lamp
+// caustics). p_sub of p_count stratifies the pixel's photons, as the sun's. Dry surfaces within
+// RT_CAUSTICS_LAMP_FIXTURE of the lamp (its housing, its glass) are passed, as its shadow rays see the lamp past them.
+void rt_caustics_lamp_photon(RTLightData p_light, CausticsLampFrame f, uint p_write, uvec2 p_pixel, uint p_sub, uint p_count, inout uint rng) {
+	vec2 j = rand2(rng);
+	j.x = (float(p_sub) + j.x) / float(p_count);
+	vec2 uv = (vec2(p_pixel) + j) / vec2(RT_LAUNCH_SIZE.xy);
+	vec2 t = (uv * 2.0 - 1.0) * f.ext;
+	vec3 dir = normalize(f.axis + t.x * f.r + t.y * f.u);
+	float c = dot(dir, f.axis);
+	// The lamp's intensity that way (the spot's cone and rim, as lights_evaluate_positional) and the solid angle of
+	// an even step over the tangent plane (cos^3).
+	float weight = c * c * c;
+	if (p_light.type == RT_LIGHT_TYPE_SPOT) {
+		float one_minus_scos = 1.0 - c;
+		if (one_minus_scos >= p_light.one_minus_cos_spot) {
+			return;
+		}
+		weight *= 1.0 - pow(max(1e-4, one_minus_scos / p_light.one_minus_cos_spot), p_light.inv_spot_attenuation);
+	}
+	if (weight * RT_CAUSTICS_WEIGHT < 0.5) {
+		return;
+	}
+	vec3 o = f.apex;
+	vec3 hit = o;
+	float travelled = 0.0;
+	PathState ps;
+	for (uint i = 0u; i < 3u; i++) {
+		if (!rt_caustics_trace(o, dir, 0.0, rng, ps)) {
+			return;
+		}
+		hit = o + dir * ps.hit_t;
+		if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) != 0u || travelled + ps.hit_t > RT_CAUSTICS_LAMP_FIXTURE || i == 2u) {
+			break;
+		}
+		travelled += ps.hit_t;
+		o = offset_ray_origin(hit, dot(ps.offset_normal, dir) > 0.0 ? ps.offset_normal : -ps.offset_normal, ps.hit_t);
+	}
+	if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u) {
+		rt_caustics_lamp_deposit(f, p_write, hit, 0u, weight);
+		rt_caustics_lamp_deposit(f, p_write, hit, 1u, weight);
+		return;
+	}
+	if (ps.bsdf_pdf < 0.5) {
+		return;
+	}
+	atomicAdd(rt_caustics.data[RT_CAUSTICS_LAMP_HEADER + p_write * 4u + 3u], 1u);
+	vec3 oo = offset_ray_origin(hit, ps.offset_normal, ps.hit_t);
+	vec3 p;
+	if (rt_caustics_land(oo, ps.next_ray_dir, 0.0, rng, p)) {
+		rt_caustics_lamp_deposit(f, p_write, p, 0u, weight);
+	}
+	if (rt_caustics_land(oo, dir, 0.0, rng, p)) {
+		rt_caustics_lamp_deposit(f, p_write, p, 1u, weight);
+	}
+}
+
 // This pixel's share of the caustics map (raytracing_caustics_inc.glsl): clear part of the slot
 // the next frame writes, then trace one photon from the sun. The square is centred where the
 // camera looked last frame, at least half its width ahead; the centre pixel measures that
@@ -823,6 +880,20 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 			if (i < slot_uints) {
 				rt_caustics.data[base + i] = 0u;
 			}
+		}
+	}
+	{
+		// The lamp map's slot, and its count of photons into water.
+		uint base = RT_CAUSTICS_LAMP_BASE + clear * RT_CAUSTICS_SLOT_UINTS;
+		uint share = (RT_CAUSTICS_SLOT_UINTS + threads - 1u) / threads;
+		for (uint k = 0u; k < share; k++) {
+			uint i = tid * share + k;
+			if (i < RT_CAUSTICS_SLOT_UINTS) {
+				rt_caustics.data[base + i] = 0u;
+			}
+		}
+		if (tid == 0u) {
+			rt_caustics.data[RT_CAUSTICS_LAMP_HEADER + clear * 4u + 3u] = 0u;
 		}
 	}
 
@@ -858,6 +929,32 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 		for (uint k = 0u; k < n1; k++) {
 			rt_caustics_photon_cascade(center, quarter, write, p_pixel, 2u, k, n1, rng);
 		}
+	}
+
+	// The lamp map: the lamp reaching nearest the area's centre. While its photons last frame met no water, one pixel
+	// in sixteen probes for it (a lamp over dry ground costs a sixteenth).
+	RTLightData lamp;
+	CausticsLampFrame lf;
+	uint lh = RT_CAUSTICS_LAMP_HEADER + write * 4u;
+	if (rt_caustics_pick_lamp(center, lamp) && rt_caustics_lamp_frame(lamp, lf)) {
+		if (all(equal(p_pixel, uvec2(0u)))) {
+			rt_caustics.data[lh] = floatBitsToUint(lamp.position.x);
+			rt_caustics.data[lh + 1u] = floatBitsToUint(lamp.position.y);
+			rt_caustics.data[lh + 2u] = floatBitsToUint(lamp.position.z);
+		}
+		uint lh_last = RT_CAUSTICS_LAMP_HEADER + last * 4u;
+		bool wet_last = rt_caustics_history() && rt_caustics.data[lh_last + 3u] > 0u &&
+				all(equal(vec3(uintBitsToFloat(rt_caustics.data[lh_last]), uintBitsToFloat(rt_caustics.data[lh_last + 1u]), uintBitsToFloat(rt_caustics.data[lh_last + 2u])), lamp.position));
+		if (wet_last || ((tid ^ p_frame) & 15u) == 0u) {
+			uint nl = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_RES * RT_CAUSTICS_RES + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
+			for (uint k = 0u; k < nl; k++) {
+				rt_caustics_lamp_photon(lamp, lf, write, p_pixel, k, nl, rng);
+			}
+		}
+	} else if (all(equal(p_pixel, uvec2(0u)))) {
+		rt_caustics.data[lh] = floatBitsToUint(1e30);
+		rt_caustics.data[lh + 1u] = floatBitsToUint(1e30);
+		rt_caustics.data[lh + 2u] = floatBitsToUint(1e30);
 	}
 }
 
