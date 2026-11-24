@@ -1051,6 +1051,19 @@ func _run_stone_tests() -> void:
 	snow.advance(60.0)
 	surface.rebuild_stone_relief()
 	_check("a fresh snowfall resets the sun's dose", snow.get_sun_dose_at(at) < 0.5, "%.2f kWh/m2 after 5 cm" % snow.get_sun_dose_at(at))
+	# With no list handed in the stones come from the ground contract (WorldGround.stones_near).
+	var stub := GDScript.new()
+	stub.source_code = "extends WorldGround\nvar list := PackedFloat32Array()\nfunc _stones_near(r: Rect2) -> PackedFloat32Array:\n\treturn list\n"
+	stub.reload()
+	var wg: WorldGround = stub.new()
+	var g3 := snow.get_ground_height_at(at)
+	wg.set("list", PackedFloat32Array([at.x, at.z, g3, g3 + 0.8, 0.45, 0.3, 0.4]))
+	WorldContracts.set_ground(wg)
+	surface.set_stone_list(PackedFloat32Array())
+	surface.rebuild_stone_relief()
+	var from_contract := surface.get_stone_relief_count()
+	WorldContracts.clear_overrides()
+	_check("with no list given, the stones come from the ground contract", from_contract == 1, "%d stones from WorldGround.stones_near" % from_contract)
 
 
 func _run_wall_tests() -> void:

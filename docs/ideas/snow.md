@@ -2109,9 +2109,9 @@ Built:
     the sides, out about one hp;
   - a lee tail 0.7 hp high at the stone, (2 + 3 x weight) hp long, a rounded ridge tapering away.
   Rebuilt when the target goes a quarter of the square, and on the cover's updates at most every 2 s.
-- Stones: `set_stone_list` (x, z, ground, top, half axis x, half axis z, yaw; 7 floats each), else every rock
-  field's `get_stones` (all layers on but the two finest detail classes; footprint radius as both half axes). The
-  agreed ground contract query will replace the rock field read.
+- Stones: `set_stone_list` (x, z, ground, top, half axis x, half axis z, yaw; 7 floats each), else
+  the ground contract's `WorldGround.stones_near(rect)` (the same 7 floats; stones standing 1 cm or more over the
+  ground; main thread). The private rock field read is gone (24 Nov 2026).
 - `--test=stones`, `--view=stones` (generated rocks on a snowfield after a drifting day and two days of the bench's
   still sun; `--no-stones` without).
 

@@ -1,0 +1,1 @@
+- Snow: stones standing out of the snow now come from the ground contract (`WorldGround.stones_near`).
