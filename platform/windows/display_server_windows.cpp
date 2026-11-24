@@ -847,7 +847,7 @@ Error DisplayServerWindows::_file_dialog_with_options_show(const String &p_title
 
 	String appname;
 	if (Engine::get_singleton()->is_editor_hint()) {
-		appname = "Godot.GodotEditor." + String(GODOT_VERSION_BRANCH);
+		appname = "Berlenga.BerlengaEditor." + String(GODOT_VERSION_BRANCH);
 	} else {
 		String name = GLOBAL_GET("application/config/name");
 		String version = GLOBAL_GET("application/config/version");
@@ -7215,7 +7215,7 @@ Error DisplayServerWindows::_create_window(DisplayServerEnums::WindowID p_window
 			PROPVARIANT val;
 			String appname;
 			if (Engine::get_singleton()->is_editor_hint()) {
-				appname = "Godot.GodotEditor." + String(GODOT_VERSION_FULL_CONFIG);
+				appname = "Berlenga.BerlengaEditor." + String(GODOT_VERSION_FULL_CONFIG);
 			} else {
 				String name = GLOBAL_GET("application/config/name");
 				String version = GLOBAL_GET("application/config/version");
@@ -7807,7 +7807,7 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 
 	String appname;
 	if (Engine::get_singleton()->is_editor_hint()) {
-		appname = "Godot.GodotEditor." + String(GODOT_VERSION_FULL_CONFIG);
+		appname = "Berlenga.BerlengaEditor." + String(GODOT_VERSION_FULL_CONFIG);
 	} else {
 		String name = GLOBAL_GET("application/config/name");
 		String version = GLOBAL_GET("application/config/version");
