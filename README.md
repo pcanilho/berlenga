@@ -2,7 +2,7 @@
 
 [![Release](https://github.com/pcanilho/berlenga/actions/workflows/release.yml/badge.svg)](https://github.com/pcanilho/berlenga/actions/workflows/release.yml) [![CodeQL](https://github.com/pcanilho/berlenga/actions/workflows/codeql.yml/badge.svg)](https://github.com/pcanilho/berlenga/actions/workflows/codeql.yml) [![Latest release](https://img.shields.io/github/v/release/pcanilho/berlenga?label=latest)](https://github.com/pcanilho/berlenga/releases/latest)
 
-Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for large open worlds. Based on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot).
+Berlenga is a Godot 4 fork with Vulkan path tracing, DLSS Ray Reconstruction and a procedural natural world of linked terrain, weather, water, vegetation and snow, built for large open worlds. Based on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot).
 
 **[Download](https://github.com/pcanilho/berlenga/releases/latest):** Windows (Ray Reconstruction: add NVIDIA's DLSS, Streamline and Reflex DLLs next to the exe), Linux x86_64/arm64 (no Ray Reconstruction), macOS (raster only, no PhysX); export templates for Windows and Linux with PhysX (install the `.tpz` from Manage Export Templates). **Docs:** [berlenga.canilho.net](https://berlenga.canilho.net/). **Changes:** [CHANGELOG.md](CHANGELOG.md).
 
