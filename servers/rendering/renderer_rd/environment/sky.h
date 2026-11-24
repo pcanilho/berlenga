@@ -173,6 +173,7 @@ public:
 		uint32_t view_count = 1;
 		Transform3D cam_transform;
 		Projection cam_projection;
+		Vector2 taa_jitter; // in cam_projection (its NDC offset), taken back out for the reprojection's accumulation
 
 		SkyDirectionalLightData *directional_lights = nullptr;
 		SkyDirectionalLightData *last_frame_directional_lights = nullptr;

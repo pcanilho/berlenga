@@ -28,9 +28,8 @@ layout(push_constant, std430) uniform Params {
 	uint history_valid;
 	uint drawn; // samples this frame's pixel has had since the history was reset, this one included
 	float history_scale; // this frame's pre-exposure over the history's
-	float pad0;
-	float pad1;
-	float pad2;
+	float resample; // 1: the second pass, the accumulated (unjittered) image resampled at this frame's TAA jitter
+	vec2 jitter_uv; // that jitter in uv
 }
 params;
 
@@ -129,6 +128,15 @@ vec4 clamp_history(ivec2 px, vec4 p_prev) {
 void main() {
 	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
 	if (any(greaterThanEqual(px, params.size))) {
+		return;
+	}
+	if (params.resample > 0.5) {
+		// The accumulation is kept unjittered (a still camera reads its history at the same pixel centres, untouched);
+		// each frame's output is that image read once at the TAA jitter, so the temporal AA downstream sees the sky
+		// where it expects it. Accumulating in jittered space resampled the whole history by the jitter's step every
+		// frame, a sub-pixel shift that even the Catmull-Rom read softens, and the softening compounded: under TAA or
+		// DLSS the clouds lost their crisp edges and fine billows within a second.
+		imageStore(dest, px, sample_history((vec2(px) + 0.5) / vec2(params.size) + params.jitter_uv));
 		return;
 	}
 	ivec2 q = px >> 2;
