@@ -554,6 +554,7 @@ void GrassField3D::_build_material() {
 	// The terrain material module registers these globals.
 	code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
 	code += WorldContracts::climate_bare_shader_code();
+	code += WorldContracts::terracette_shader_code();
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\nglobal uniform sampler2D weather_spray_map;\nglobal uniform vec4 weather_spray_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	// Sea salt on the blades (WeatherMap3D sea_spray, G: 1 - exp(-salt / 10 g/m2)): salt spray burns leaf tips brown
@@ -1292,17 +1293,10 @@ void vertex() {
 		vec2 tdv = vec2(0.0, 1.0 / tts.y);
 		vec2 tcell = 2.0 * ground_data_rect.zw / tts;
 		vec2 grad = vec2(textureLod(ground_data_map, tuv + tdu, 0.0).r - textureLod(ground_data_map, tuv - tdu, 0.0).r, textureLod(ground_data_map, tuv + tdv, 0.0).r - textureLod(ground_data_map, tuv - tdv, 0.0).r) / tcell;
-		float steep = length(grad); // tan of the slope
-		float form = smoothstep(0.47, 0.7, steep) * (1.0 - smoothstep(1.0, 1.25, steep)); // About 25 to 35 degrees in, out past 45 to 51.
+		vec3 terr = wc_terracette(base_w, grad); // WorldContracts::terracette_at: the ground's steps read the same
+		float form = terr.z;
 		if (form > 0.0) {
-			float sin_s = steep / sqrt(1.0 + steep * steep);
-			float rise = 3.4 * sin_s; // The steps' height apart: 3.4 m along the slope.
-			float wander = (grass_noise(base_w.xz * 0.09 + 41.0) - 0.5) * 0.9 + (grass_noise(base_w.xz * 0.37 + 7.0) - 0.5) * 0.25;
-			float ph = fract(base_w.y / rise + wander * sin_s / rise);
-			// The tread: about a fifth of each step (0.6 to 0.7 m along the slope; an estimate), soft at its edges; it fades
-			// out here and there, where the path ends or the stock cut across.
-			float tread = smoothstep(0.0, 0.05, ph) * (1.0 - smoothstep(0.15, 0.22, ph));
-			tread *= form * smoothstep(0.25, 0.45, grass_noise(base_w.xz * 0.05 + 13.0));
+			float tread = terr.x;
 			if (tread > 0.0) {
 				// Trodden: most tillers gone, the rest short turf (an estimate, as on a worn path).
 				if (fract(rnd * 33.1) < 0.7 * tread) {
@@ -4971,6 +4965,10 @@ void GrassField3D::set_snowmelt(bool p_on) {
 	}
 }
 
+Vector3 GrassField3D::get_terracette_at(const Vector3 &p_global_position, const Vector2 &p_gradient) {
+	return WorldContracts::terracette_at(p_global_position, p_gradient);
+}
+
 void GrassField3D::set_terracettes(bool p_on) {
 	terracettes = p_on;
 	if (material.is_valid()) {
@@ -8057,6 +8055,7 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_flood_wash"), &GrassField3D::is_flood_wash);
 	ClassDB::bind_method(D_METHOD("get_flood_wash_at", "position"), &GrassField3D::get_flood_wash_at);
 	ClassDB::bind_method(D_METHOD("update_flood_map", "center"), &GrassField3D::update_flood_map);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("get_terracette_at", "global_position", "gradient"), &GrassField3D::get_terracette_at);
 	ClassDB::bind_method(D_METHOD("set_terracettes", "enabled"), &GrassField3D::set_terracettes);
 	ClassDB::bind_method(D_METHOD("is_terracettes"), &GrassField3D::is_terracettes);
 	ClassDB::bind_method(D_METHOD("set_deer_beds", "enabled"), &GrassField3D::set_deer_beds);

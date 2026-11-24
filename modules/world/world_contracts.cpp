@@ -1350,6 +1350,44 @@ float WorldContracts::climate_bare_patch_at(const Vector3 &p_position) {
 	return bare_patch(p_position, climate_bare_share_at(p_position), 0.0f);
 }
 
+Vector3 WorldContracts::terracette_at(const Vector3 &p_position, const Vector2 &p_gradient) {
+	const float steep = p_gradient.length();
+	const float form = Math::smoothstep(0.47f, 0.7f, steep) * (1.0f - Math::smoothstep(1.0f, 1.25f, steep));
+	if (form <= 0.0f) {
+		return Vector3();
+	}
+	const float x = p_position.x;
+	const float z = p_position.z;
+	const float sin_s = steep / Math::sqrt(1.0f + steep * steep);
+	const float rise = TERRACETTE_SPACING * sin_s;
+	const float wander = (wc_vn(Vector3(x * 0.09f + 41.0f, 5.3f, z * 0.09f)) - 0.5f) * 0.9f + (wc_vn(Vector3(x * 0.37f + 7.0f, 9.1f, z * 0.37f)) - 0.5f) * 0.25f;
+	const float v = float(p_position.y) / rise + wander * sin_s / rise;
+	const float ph = v - Math::floor(v);
+	float tread = Math::smoothstep(0.0f, 0.05f, ph) * (1.0f - Math::smoothstep(0.15f, 0.22f, ph));
+	tread *= form * Math::smoothstep(0.25f, 0.45f, wc_vn(Vector3(x * 0.05f + 13.0f, 2.9f, z * 0.05f)));
+	return Vector3(tread, ph, form);
+}
+
+String WorldContracts::terracette_shader_code() {
+	return R"(
+// WorldContracts::terracette_at: x the tread, y the phase up the step, z the slope's forming.
+vec3 wc_terracette(vec3 p, vec2 grad) {
+	float steep = length(grad);
+	float form = smoothstep(0.47, 0.7, steep) * (1.0 - smoothstep(1.0, 1.25, steep));
+	if (form <= 0.0) {
+		return vec3(0.0);
+	}
+	float sin_s = steep / sqrt(1.0 + steep * steep);
+	float rise = 3.4 * sin_s;
+	float wander = (wc_vn(vec3(p.x * 0.09 + 41.0, 5.3, p.z * 0.09)) - 0.5) * 0.9 + (wc_vn(vec3(p.x * 0.37 + 7.0, 9.1, p.z * 0.37)) - 0.5) * 0.25;
+	float ph = fract(p.y / rise + wander * sin_s / rise);
+	float tread = smoothstep(0.0, 0.05, ph) * (1.0 - smoothstep(0.15, 0.22, ph));
+	tread *= form * smoothstep(0.25, 0.45, wc_vn(vec3(p.x * 0.05 + 13.0, 2.9, p.z * 0.05)));
+	return vec3(tread, ph, form);
+}
+)";
+}
+
 String WorldContracts::climate_bare_shader_code() {
 	return R"(
 float wc_vn_hash(vec3 p) {

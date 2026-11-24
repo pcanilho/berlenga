@@ -270,6 +270,14 @@
 				Builds and frees tiles around [param center] now, as the node does each frame around the camera. Useful without a camera or in tests.
 			</description>
 		</method>
+		<method name="get_terracette_at" qualifiers="static">
+			<return type="Vector3" />
+			<param index="0" name="global_position" type="Vector3" />
+			<param index="1" name="gradient" type="Vector2" />
+			<description>
+				The terracettes' layout ([member terracettes]) at a point of the ground (its height in y) of slope [param gradient] (dh/dx, dh/dz): x the tread (0 to 1), y the phase up the step (the tread from 0 to about 0.2, then the riser), z how strongly the slope forms them. The same layout the ground's steps read (WorldContracts).
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="base_color" type="Color" setter="set_base_color" getter="get_base_color" default="Color(0.1, 0.2, 0.05, 1)">

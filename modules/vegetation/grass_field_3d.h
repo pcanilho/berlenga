@@ -826,6 +826,8 @@ public:
 	void update_flood_map(const Vector3 &p_center) { _flood_step(p_center, true); } // Read the mark again now.
 	void set_fairy_rings(bool p_on);
 	bool is_fairy_rings() const { return fairy_rings; }
+	// WorldContracts::terracette_at, for scripts and tests: x the tread, y the phase up the step, z the slope's forming.
+	static Vector3 get_terracette_at(const Vector3 &p_global_position, const Vector2 &p_gradient);
 	void set_terracettes(bool p_on);
 	bool is_terracettes() const { return terracettes; }
 	void set_deer_beds(bool p_on);

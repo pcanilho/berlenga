@@ -964,6 +964,17 @@ public:
 	// terrain_climate_rect and weather_climate, which the including shader declares) and wc_bare_patch(vec3 p, float
 	// share, float footprint_m) the pattern, fading to the share past a footprint of about half a metre.
 	static String climate_bare_shader_code();
+	// Terracettes: on steep grazed hillsides stock walk the slope across along the contours, and their paths settle into
+	// regularly spaced steps, flat treads they walk and risers they graze between (Seleb, Chatterjee and Bhamla 2025,
+	// a grazing model: bands parallel to the contours, regular by 40 degrees, about 3.4 m apart). One layout for the
+	// sward (GrassField3D.terracettes) and the ground's step relief: at p (world, its height in y) on ground of
+	// gradient p_gradient (dh/dx, dh/dz), x the tread (0..1: 1 on a tread's middle), y the phase up the step (0..1,
+	// the tread from 0 to about 0.2, then the riser), z how strongly the slope forms them (0 under about 25 degrees,
+	// 1 from 35 to 45, 0 past about 51). Bands follow the height, wandering a few decimetres, and fade out in places.
+	static constexpr float TERRACETTE_SPACING = 3.4f; // Along the slope, m.
+	static Vector3 terracette_at(const Vector3 &p_position, const Vector2 &p_gradient);
+	// GLSL of the same: vec3 wc_terracette(vec3 p, vec2 gradient). Needs climate_bare_shader_code() (wc_vn) first.
+	static String terracette_shader_code();
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);
 	static void register_relief(WorldReliefProvider *p_provider); // any number: the first that knows the point answers

@@ -2206,4 +2206,7 @@ dimensions; not read).
   across). Each tread (a fifth of the step, an estimate) loses seven in ten blades, the rest short turf; the risers
   stand a little taller. The ground under the treads keeps the turf tint (a worn-ground tint there would be the
   ground material's). The steps' relief is the terrain's (not built here).
+- One layout for sward and ground: `WorldContracts::terracette_at(p, gradient)` (CPU) and `terracette_shader_code()`
+  (GLSL `wc_terracette`, after `climate_bare_shader_code()`): x tread, y phase up the step, z the slope's forming.
+  GrassField3D.get_terracette_at exposes it. Check: vegetation `--test=deer` (none at 15 degrees, 3.4 m at 35).
 - View: grass `--steep` (GRASS_TERRACETTES=0 the before frame).

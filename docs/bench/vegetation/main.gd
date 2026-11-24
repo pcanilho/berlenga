@@ -336,12 +336,12 @@ func _physics_process(_d: float) -> void:
 		return
 	if test and only_deer:
 		_deer_bed_check()
+		_terracette_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	if test and only_bare:
 		await _climate_bare_check()
-		_deer_bed_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -360,6 +360,8 @@ func _physics_process(_d: float) -> void:
 		await _stream_checks()
 		await _rock_field_check()
 		await _climate_bare_check()
+		_deer_bed_check()
+		_terracette_check()
 		await _lazy_near_checks()
 		_deadwood_checks()
 		await _place_form_checks()
@@ -2153,6 +2155,42 @@ func _deer_bed_check() -> void:
 	_check("deer beds: a few square metres of flattened grass a hectare", per_ha > 0.5 and per_ha < 15.0, per_ha)
 	_check("deer beds: 0.9 to 1.7 m long (roe and red deer)", not ls.is_empty() and ls[0] >= 0.89 and ls[-1] <= 1.71, ls)
 	_check("deer beds: a fresh bed stands up again over the next days (unless another bed overlaps it)", fresh > 0 and lower >= fresh * 0.9, [fresh, lower])
+
+# Terracettes (WorldContracts::terracette_at through GrassField3D.get_terracette_at): none on a 15 degree slope; on 35
+# degrees, treads about 3.4 m apart along the slope (counted down a fall line), each a fifth of the step or so.
+func _terracette_check() -> void:
+	var gentle := 0
+	for i in 400:
+		var z := i * 0.1
+		if GrassField3D.get_terracette_at(Vector3(3.0, z * tan(deg_to_rad(15.0)), z), Vector2(0, tan(deg_to_rad(15.0)))).x > 0.0:
+			gentle += 1
+	var g := Vector2(0, tan(deg_to_rad(35.0)))
+	var spacings := []
+	var tread_len := 0.0
+	var steps := 0
+	for xi in 6:
+		var x := 30.0 * xi + 7.0
+		var last := -1e9
+		var inside := false
+		for i in 4000:
+			var s := i * 0.02 # along the slope, m
+			var p := Vector3(x, s * sin(deg_to_rad(35.0)), s * cos(deg_to_rad(35.0)))
+			var t: Vector3 = GrassField3D.get_terracette_at(p, g)
+			if t.y < 0.1 and t.z > 0.0 and not inside:
+				inside = true
+				if last > -1e8:
+					spacings.append(s - last)
+				last = s
+				steps += 1
+			elif t.y > 0.5:
+				inside = false
+			if t.x > 0.5:
+				tread_len += 0.02
+	spacings.sort()
+	var med: float = spacings[spacings.size() / 2] if not spacings.is_empty() else 0.0
+	_check("terracettes: none on a 15 degree slope", gentle == 0, gentle)
+	_check("terracettes: steps about 3.4 m apart along a 35 degree slope", med > 3.0 and med < 3.8, [med, spacings.size()])
+	_check("terracettes: treads a fifth of the step or so (where they show)", steps > 0 and tread_len / steps > 0.2 and tread_len / steps < 0.9, tread_len / maxf(steps, 1))
 
 # Drylands (VegetationField3D.climate_bare, WorldContracts::bare_patch): under a 300 mm climate the cover plants keep to
 # the clumps, about the share the rain leaves covered (0.9 * (1 - smoothstep(200, 700, 300)) = 0.81 bare); trees stay;
