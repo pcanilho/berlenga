@@ -48,6 +48,12 @@
 				The share of a preset's plants above ground on the day of [param season]: wood anemone, a spring plant, comes up in late winter and dies down by early summer; spider webs from spring (sheets) or late July (orbs) to late autumn, most in autumn; the mushrooms fruit from late summer to the first frost, more after rain (soil moisture) and most in autumn; every other preset is 1. [method make_floor] scales its densities by it.
 			</description>
 		</method>
+		<method name="is_parallel_sets" qualifiers="static">
+			<return type="bool" />
+			<description>
+				Whether [method make_sets] runs its calls on the worker threads ([method set_parallel_sets]).
+			</description>
+		</method>
 		<method name="make_dew_webs" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="variants" type="int" default="3" />
@@ -186,6 +192,16 @@
 				With [param shrubs], TreeGenerator's lentisk, kermes oak, gum rockrose and dwarf fan palm lead the maquis, and kermes oak cushions, young fan palms and young gum rockrose the garrigue (the palm only where January averages 7 C or more) ([method make_woody_shrub]).
 			</description>
 		</method>
+		<method name="make_sets" qualifiers="static">
+			<return type="Array" />
+			<param index="0" name="calls" type="Array" />
+			<description>
+				Makes several species sets at once on the worker threads and returns their results in the calls' order, the same, resource for resource, as making them one after another. Each call is [code][method, args][/code], [code]method[/code] one of the static [code]make_*[/code] methods and [code]args[/code] its arguments as an [Array] (the ones left out take their defaults), or [code]["variants", preset, count][/code] for [method generate_variants] of a generator with that preset and its preset colours. The calls run on all workers but one (the main thread's rendering work needs one free); the slowest calls are best listed first. Call it from the main thread; [method set_parallel_sets] turns the threads off.
+				[codeblock]
+				var sets := PlantGenerator.make_sets([["make_heath", [PlantGenerator.HEATH_DRY, 3, true, season]], ["make_floor", [PlantGenerator.FLOOR_BEECH]], ["variants", PlantGenerator.PRESET_DAISY, 3]])
+				[/codeblock]
+			</description>
+		</method>
 		<method name="make_stones" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.StoneStand" />
@@ -194,6 +210,13 @@
 			<param index="3" name="season" type="Dictionary" default="{}" />
 			<description>
 				Returns the plants between stones for scree, river gravel or shingle as [PlantSpecies]. The crevice plants keep to the gaps between the field's obstacles ([member PlantSpecies.stone_gap] 1), so they grow only where a [VegetationField3D] has stones in [member VegetationField3D.obstacles]; on river gravel moss, sedges and rushes gather at the stones' feet ([member PlantSpecies.rock_foot]), and on scree and river stones moss cushions grow on the stones' tops ([member PlantSpecies.stone_top], from [member VegetationField3D.stone_tops]): green ones on the low, shaded, north-tilted tops, smaller yellow-olive ones on the high, sunlit tops ([member PlantSpecies.stone_top_damp]). River stones sort by their tops' height over the water ([member PlantSpecies.stone_top_water]): aquatic moss trailing downstream on those under and just over the surface, liverworts on damp tops in the splash band, land mosses above the flood line. They do not colour the far ground. Each species has the meta [code]stones[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering and the ferns' year.
+			</description>
+		</method>
+		<method name="set_parallel_sets" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="enable" type="bool" />
+			<description>
+				Whether [method make_sets] runs its calls on the worker threads (on by default) or one after another.
 			</description>
 		</method>
 		<method name="stand_litter_leaves" qualifiers="static">

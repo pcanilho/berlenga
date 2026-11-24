@@ -1603,12 +1603,13 @@ void WaterSolverGPU::rt_on_ocean_dz(const PackedByteArray &p_data, Ref<WaterSolv
 	}
 }
 
-void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior, bool p_open_beyond) {
+void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior, bool p_open_beyond, RID p_scenario) {
 	if (rd == nullptr || !shaders_ok || uset_caustics.is_null() || caustics_framebuffer.is_null()) {
 		return;
 	}
-	if (!local && !RSG::viewport->has_3d_viewport()) {
-		// No viewport draws 3D this frame, so nothing shows the map: it waits for the first frame that draws.
+	if (!local && !RSG::viewport->has_3d_viewport(p_scenario)) {
+		// No viewport draws the surface's world in 3D this frame, so nothing shows the map: it waits for the first
+		// frame that draws it.
 		caustics_deferred.set();
 		return;
 	}
@@ -2158,7 +2159,7 @@ bool WaterSolver::submit_wave(const Vector3 &p_world_pos, const Vector2 &p_direc
 	return true;
 }
 
-void WaterSolver::render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_direction, float p_reference_depth, float p_ior, bool p_open_beyond) {
+void WaterSolver::render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_direction, float p_reference_depth, float p_ior, bool p_open_beyond, RID p_scenario) {
 	if (!settings.caustics_enabled || !is_available()) {
 		return;
 	}
@@ -2173,7 +2174,7 @@ void WaterSolver::render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_
 	p_reference_depth = MAX(p_reference_depth, 0.1f);
 	p_ior = MAX(p_ior, 1.001f);
 	caustics_half_extent = MAX(settings.ocean_domain_size.x, settings.ocean_domain_size.y) * 0.5f * WaterSolverGPU::CAUSTICS_TILE_MARGIN + p_reference_depth * 0.75f;
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_render_caustics).bind(gpu, sun_direction, caustics_light_right, caustics_light_up, caustics_origin, caustics_half_extent, p_reference_depth, p_ior, p_open_beyond));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_render_caustics).bind(gpu, sun_direction, caustics_light_right, caustics_light_up, caustics_origin, caustics_half_extent, p_reference_depth, p_ior, p_open_beyond, p_scenario));
 }
 
 RID WaterSolver::get_ripple_height_texture_rd_rid() const {

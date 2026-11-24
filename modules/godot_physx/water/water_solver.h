@@ -293,7 +293,7 @@ public:
 	// from rt_step() itself so caustics-specific state doesn't have to route
 	// through that function's already-large signature; no-ops if the caustics
 	// pipeline was never built (caustics_enabled false at configure() time).
-	void rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior, bool p_open_beyond);
+	void rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior, bool p_open_beyond, RID p_scenario);
 	void rt_free(Ref<WaterSolverGPU> p_self);
 	void rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow);
 	void rt_set_swash(Ref<WaterSolverGPU> p_self, float p_run_up, float p_drain_speed, float p_dry_time);
@@ -586,7 +586,8 @@ public:
 	// no-ops if caustics_enabled was false at configure() time.
 	// p_open_beyond: the water carries on past the simulated grid (it's
 	// rendered out there), so light past the grid still enters water.
-	void render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_direction, float p_reference_depth = 2.5f, float p_ior = 1.333f, bool p_open_beyond = false);
+	// p_scenario: the world the surface is drawn in; the map waits while no viewport draws it in 3D (null: any).
+	void render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_direction, float p_reference_depth = 2.5f, float p_ior = 1.333f, bool p_open_beyond = false, RID p_scenario = RID());
 	// Zero-copy RD texture RID (R8_UNORM intensity), same convention as
 	// get_ripple_height_texture_rd_rid(). The light-space basis/extent used
 	// to produce it, needed by any receiver's own lookup shader code.

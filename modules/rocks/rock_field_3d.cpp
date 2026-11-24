@@ -105,15 +105,15 @@ static bool rf_tile_like(uint32_t p_sig_a, int p_n_a, float p_ls_a, float p_sd_a
 	return Math::abs(p_ls_a - p_ls_b) < tl;
 }
 
-// Library keys: rock type, family, roundness bin.
+// Library keys: rock type (4 bits), family (5), roundness bin (4).
 inline RockGenerator::RockType key_type(uint32_t p_key) {
 	return RockGenerator::RockType(p_key & 0xF);
 }
 inline RockGenerator::Family key_family(uint32_t p_key) {
-	return RockGenerator::Family((p_key >> 4) & 0xF);
+	return RockGenerator::Family((p_key >> 4) & 0x1F);
 }
 inline int key_bin(uint32_t p_key) {
-	return int((p_key >> 8) & 0xF);
+	return int((p_key >> 9) & 0xF);
 }
 
 // Close-up shapes per variant: one per octave of stone size round the family's typical size (odd count).
@@ -532,7 +532,7 @@ int RockField3D::_variant_count(uint32_t p_key) const {
 }
 
 uint32_t RockField3D::_library_key(RockGenerator::RockType p_type, RockGenerator::Family p_family, int p_bin) const {
-	return uint32_t(p_type) | (uint32_t(p_family) << 4) | (uint32_t(p_bin) << 8);
+	return uint32_t(p_type) | (uint32_t(p_family) << 4) | (uint32_t(p_bin) << 9);
 }
 
 // Shape libraries are built on workers: _ensure_libraries waits for them; while streaming, _ensure_library starts them
@@ -1452,6 +1452,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			// Steeper than this a heightfield face is a stretched step, not a wall with courses in it.
 			const float max_tan = Math::tan(Math::deg_to_rad(76.0f));
 			const real_t gen_cell = gen->get_cell_size();
+			if (ledge_slabs) {
+				_place_ledges(gen, p_layer, p_rect, p_seed, r_stones);
+			}
 			for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += sub) {
 				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
 					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
@@ -6919,6 +6922,140 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 	return built;
 }
 
+// Ledge slabs (docs/ideas/rocks.md, "Ledge slabs"): the hard caprock of each bench left standing out over the weaker
+// bed under it (differential erosion), along the lips the terrain finds (TerrainGenerator3D.get_ledge_lips). One slab
+// between two cross joints after another along each lip, its front at the lip's overhang, its back half under the
+// bench (a cantilever holds only while as much of it is held as hangs out); now and then a gap where a block fell.
+void RockField3D::_place_ledges(const TerrainGenerator3D *p_gen, Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones) {
+	const real_t step = 2.0;
+	LocalVector<TerrainGenerator3D::LedgeLip> lips;
+	p_gen->get_ledge_lips(p_rect, step, lips);
+	if (lips.is_empty()) {
+		return;
+	}
+	RandomPCG rng(uint64_t(p_seed) * 0x9E3779B97F4A7C15ull + 0x1ed6eull); // its own: the cliff blocks' draws stay as they were
+	// The drawn ground (as _rest): the heightfield plus the landscape's relief, which the lips' heights leave out.
+	const WorldGround *wg = WorldContracts::ground();
+	auto H = [&](real_t p_x, real_t p_z) -> real_t {
+		real_t h = rf_height(p_gen, Vector3(p_x, 0, p_z));
+		if (wg) {
+			const Vector2 r = wg->relief_at(Vector3(p_x, h, p_z));
+			if (r.y > 0.0f && Math::is_finite(r.x)) {
+				h += r.x;
+			}
+		}
+		return h;
+	};
+	// The lip points come in no order along the lips: each slab (or gap where one fell) claims the stretch of lip it
+	// covers, and a point inside a claimed stretch places nothing.
+	struct Claim {
+		Vector3 c, x, z;
+		real_t half_len, half_depth;
+	};
+	LocalVector<Claim> claims;
+	auto claimed = [&](const Vector3 &p_at) {
+		for (const Claim &cl : claims) {
+			const Vector3 d = p_at - cl.c;
+			if (Math::abs(d.dot(cl.x)) < cl.half_len && Math::abs(d.dot(cl.z)) < cl.half_depth && Math::abs(d.y) < 4.0f) {
+				return true;
+			}
+		}
+		return false;
+	};
+	for (uint32_t i = 0; i < lips.size(); i++) {
+		const TerrainGenerator3D::LedgeLip &lp = lips[i];
+		if (lp.overhang < 0.1f || lp.cap_thickness <= 0.0f || claimed(lp.position)) {
+			continue;
+		}
+		if (int(r_stones.size()) >= max_stones_per_cell) {
+			return;
+		}
+		Vector3 out0 = Vector3(lp.out.x, 0, lp.out.z);
+		if (out0.length_squared() < 1e-6f) {
+			continue;
+		}
+		out0.normalize();
+		if (rng.randf() > lp.weight) {
+			// A gap where a block fell: the lip shows the bench's own edge for a slab's length or so.
+			const Vector3 x0(-out0.z, 0, out0.x);
+			claims.push_back({ lp.position, x0, out0, real_t(lp.cap_thickness * (2.0f + 3.0f * rng.randf())), real_t(step) });
+			continue;
+		}
+		const Vector3 pos = lp.position;
+		const RockGenerator::RockType type = _type_at(p_gen, pos - Vector3(0, lp.cap_thickness * 0.5f, 0));
+		const uint32_t key = _library_key(type, RockGenerator::FAMILY_LEDGE, 0);
+		Library *lib = _ensure_library(key);
+		if (!lib) {
+			continue;
+		}
+		const Vector3 out = out0;
+		// The variant: as thick as the cap, deep enough that at least as much lies under the bench as hangs out.
+		Stone st;
+		st.layer = p_layer;
+		st.library = key;
+		real_t scale = 0.0, hang = 0.0;
+		for (int t = 0; t < 4; t++) {
+			const uint16_t v = uint16_t(rng.rand() % lib->meshes.size());
+			const Vector3 ax = lib->axes[v];
+			const real_t sc = lp.cap_thickness * (0.92f + 0.16f * rng.randf()) / MAX(2.0f * ax.y, 0.02f);
+			const real_t depth = 2.0 * ax.z * sc;
+			const real_t h = MIN(real_t(lp.overhang), depth * 0.45);
+			if (t == 0 || h > hang + 0.05) {
+				st.variant = v;
+				scale = sc;
+				hang = h;
+			}
+			if (h >= lp.overhang - 0.05f) {
+				break;
+			}
+		}
+		const Vector3 axes = lib->axes[st.variant];
+		st.scale = scale;
+		// The slab follows the bench it caps: its top along the drawn bench behind the lip (the benches rise back a
+		// share of a bed), its z out over the lip, x along it.
+		const real_t back_d = MAX(real_t(1.0), axes.z * st.scale * 1.2);
+		const real_t h_lip = H(pos.x, pos.z);
+		const real_t h_back = H(pos.x - out.x * back_d, pos.z - out.z * back_d);
+		const real_t rise = CLAMP(h_back - h_lip, real_t(-0.1) * back_d, real_t(0.5) * back_d);
+		Vector3 z_axis = (out * back_d - Vector3(0, rise, 0)).normalized();
+		const Vector3 x_axis = Vector3(0, 1, 0).cross(z_axis).normalized();
+		const Vector3 y_axis = z_axis.cross(x_axis).normalized();
+		Basis b;
+		b.set_column(0, x_axis);
+		b.set_column(1, y_axis);
+		b.set_column(2, z_axis);
+		b = Basis(y_axis, (rng.randf() - 0.5f) * 0.12f) * b; // the cross joints wander a little off square to the lip
+		// The top a few centimetres under the drawn bench's edge (flush, never a shelf on it); the front at the
+		// overhang.
+		const real_t top = h_lip - lp.cap_thickness * 0.04;
+		const Vector3 lip_top(pos.x, top, pos.z);
+		const Vector3 centre = lip_top - y_axis * (axes.y * st.scale) + z_axis * (hang - axes.z * st.scale);
+		// The back half must lie under the bench, and both ends of the slab on it: where the bench falls away behind
+		// or beside (a spur, a gully's corner) the slab would hang in the air.
+		{
+			const real_t len = axes.x * st.scale * 0.9;
+			bool off = claimed(centre + x_axis * len) || claimed(centre - x_axis * len);
+			if (off) {
+				continue; // would overlap its neighbour
+			}
+			for (int e = -1; e <= 1 && !off; e++) {
+				const Vector3 q = centre + x_axis * (len * e) - z_axis * (axes.z * st.scale * 0.6) + y_axis * (axes.y * st.scale);
+				off = !(H(q.x, q.z) >= q.y - lp.cap_thickness * 0.5f);
+			}
+			if (off) {
+				continue;
+			}
+		}
+		st.basis = b * Basis().scaled(Vector3(st.scale, st.scale, st.scale));
+		st.position = centre;
+		st.ground = top - 50.0f; // no contact band: a bed of the bench, not a stone lying on it
+		st.footprint = 0.0f;
+		r_stones.push_back(st);
+		// Its stretch of lip, give or take: joints open a little or close up.
+		claims.push_back({ Vector3(centre.x, pos.y, centre.z), x_axis, z_axis, real_t(axes.x * st.scale * (0.9f + 0.1f * rng.randf())), real_t(axes.z * st.scale + step) });
+	}
+}
+
 void RockField3D::_obstacle_place_job(void *p_job, uint32_t p_index) {
 	CoarseJob &job = static_cast<CoarseJob *>(p_job)[p_index];
 	const real_t cs = job.field->_cell_size(Layer(job.key.x));
@@ -8386,6 +8523,16 @@ void RockField3D::set_ground_detail_tiles(bool p_enabled) {
 	}
 }
 
+void RockField3D::set_ledge_slabs(bool p_enabled) {
+	if (ledge_slabs == p_enabled) {
+		return;
+	}
+	ledge_slabs = p_enabled;
+	if (is_inside_tree()) {
+		rebuild();
+	}
+}
+
 void RockField3D::set_rt_instanced_cells(bool p_enabled) {
 	if (rt_instanced_cells == p_enabled) {
 		return;
@@ -8717,6 +8864,8 @@ void RockField3D::_notification(int p_what) {
 void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_coarse_cover_at", "position"), &RockField3D::get_coarse_cover_at);
 	ClassDB::bind_method(D_METHOD("set_far_thinning", "enabled"), &RockField3D::set_far_thinning);
+	ClassDB::bind_method(D_METHOD("set_ledge_slabs", "enabled"), &RockField3D::set_ledge_slabs);
+	ClassDB::bind_method(D_METHOD("is_ledge_slabs"), &RockField3D::is_ledge_slabs);
 	ClassDB::bind_method(D_METHOD("set_rt_instanced_cells", "enabled"), &RockField3D::set_rt_instanced_cells);
 	ClassDB::bind_method(D_METHOD("is_rt_instanced_cells"), &RockField3D::is_rt_instanced_cells);
 	ClassDB::bind_method(D_METHOD("get_rt_stats"), &RockField3D::get_rt_stats);
@@ -8925,6 +9074,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_thinning"), "set_far_thinning", "is_far_thinning");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_widen"), "set_far_widen", "is_far_widen");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rt_instanced_cells"), "set_rt_instanced_cells", "is_rt_instanced_cells");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ledge_slabs"), "set_ledge_slabs", "is_ledge_slabs");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_radius", PROPERTY_HINT_RANGE, "0,8000,10,suffix:m"), "set_far_radius", "get_far_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_min_size", PROPERTY_HINT_RANGE, "0.5,10,0.1,suffix:m"), "set_far_min_size", "get_far_min_size");
 	ADD_GROUP("Ground Detail", "ground_detail_");

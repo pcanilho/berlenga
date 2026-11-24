@@ -168,7 +168,10 @@
 		<constant name="FAMILY_CAVE_MOUTH" value="15" enum="Family">
 			A cave mouth: a limestone outcrop (x along the cliff, z up, the front face +y) with a passage opening into it along a bed or a joint, its roof bedding-flat or arched, narrowing and turning as it goes in to a blind end.
 		</constant>
-		<constant name="FAMILY_MAX" value="16" enum="Family">
+		<constant name="FAMILY_LEDGE" value="16" enum="Family">
+			A ledge slab: the hard caprock bed of a bench standing out over the weaker bed under it (x along the lip, y the bed's thickness, z out over the lip), its lip broken along slanted joints, its soffit's front edge bevelled up, sometimes a stress-release crack open behind the lip.
+		</constant>
+		<constant name="FAMILY_MAX" value="17" enum="Family">
 			Number of families.
 		</constant>
 	</constants>

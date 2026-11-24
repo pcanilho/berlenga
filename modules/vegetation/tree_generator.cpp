@@ -14834,13 +14834,17 @@ Array TreeGenerator::_plant_climber_leaves(int p_climber) {
 	if (p_climber <= CLIMBER_NONE || p_climber > CLIMBER_MAX) {
 		return Array();
 	}
+	// Plant sets and near meshes grow on worker threads (PlantGenerator.make_sets): one fills a slot at a time, and
+	// the slot's leaves are published only with their shapes, so a reader never sees the one without the other.
+	static BinaryMutex fill_lock;
+	MutexLock ml(fill_lock);
 	if (cache[p_climber].is_empty()) {
 		const int kind = p_climber == CLIMBER_MAX ? PlantGenerator::CLIMBER_IVY_ADULT : (p_climber == CLIMBER_IVY ? PlantGenerator::CLIMBER_IVY : (p_climber == CLIMBER_LIANA ? PlantGenerator::CLIMBER_CLEMATIS : PlantGenerator::CLIMBER_HONEYSUCKLE));
-		cache[p_climber] = PlantGenerator::make_climber_leaves(kind, 4);
+		const Array leaves = PlantGenerator::make_climber_leaves(kind, 4);
 		LocalVector<ClimberLeafShape> &shapes = plant_climber_shapes[p_climber];
 		shapes.clear();
-		for (int i = 0; i < cache[p_climber].size(); i++) {
-			const Ref<ArrayMesh> m = cache[p_climber][i];
+		for (int i = 0; i < leaves.size(); i++) {
+			const Ref<ArrayMesh> m = leaves[i];
 			const Array a = m->surface_get_arrays(0);
 			ClimberLeafShape sh;
 			sh.verts = a[Mesh::ARRAY_VERTEX];
@@ -14849,6 +14853,7 @@ Array TreeGenerator::_plant_climber_leaves(int p_climber) {
 			sh.indices = a[Mesh::ARRAY_INDEX];
 			shapes.push_back(sh);
 		}
+		cache[p_climber] = leaves;
 	}
 	return cache[p_climber];
 }

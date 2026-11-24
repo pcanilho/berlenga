@@ -4442,13 +4442,16 @@ void RendererSceneCull::render_probes() {
 
 void RendererSceneCull::render_particle_colliders() {
 	// A heightfield collider is a render of the geometry under it, read by the particles it stops. While no viewport
-	// draws 3D no particle is seen, so the render waits (the collider stays in the list) and runs on the first frame
-	// that draws, before the particles update.
-	if (heightfield_particle_colliders_update_list.begin() && !RSG::viewport->has_3d_viewport()) {
-		return;
-	}
+	// draws its world in 3D no particle there is seen, so the render waits (the collider stays in the list) and runs
+	// on the first frame that draws it, before the particles update.
+	LocalVector<Instance *> waiting;
 	while (heightfield_particle_colliders_update_list.begin()) {
 		Instance *hfpc = *heightfield_particle_colliders_update_list.begin();
+		if (hfpc->scenario && !RSG::viewport->has_3d_viewport(hfpc->scenario->self)) {
+			waiting.push_back(hfpc);
+			heightfield_particle_colliders_update_list.remove(heightfield_particle_colliders_update_list.begin());
+			continue;
+		}
 
 		if (hfpc->scenario && hfpc->base_type == RSE::INSTANCE_PARTICLES_COLLISION && RSG::particles_storage->particles_collision_is_heightfield(hfpc->base)) {
 			//update heightfield
@@ -4486,6 +4489,9 @@ void RendererSceneCull::render_particle_colliders() {
 			scene_render->render_particle_collider_heightfield(hfpc->base, hfpc->transform, scene_cull_result.geometry_instances);
 		}
 		heightfield_particle_colliders_update_list.remove(heightfield_particle_colliders_update_list.begin());
+	}
+	for (Instance *hfpc : waiting) {
+		heightfield_particle_colliders_update_list.insert(hfpc);
 	}
 }
 

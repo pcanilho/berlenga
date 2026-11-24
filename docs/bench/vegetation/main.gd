@@ -94,6 +94,8 @@ func _ready() -> void:
 		elif a == "--test=sod":
 			test = true
 			only_sod = true
+		elif a.begins_with("--grass-walk"):
+			grass_walk = float(a.substr(13)) if a.length() > 13 else 0.05
 		elif a == "--test=rocks":
 			test = true
 			only_rocks = true
@@ -321,6 +323,10 @@ func _physics_process(_d: float) -> void:
 		await _sod_land_check()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
+		return
+	if grass_walk > 0.0:
+		await _grass_walk()
+		get_tree().quit(0)
 		return
 	if test and only_rocks:
 		await _rock_field_check()
@@ -2034,6 +2040,33 @@ func _fairy_check() -> void:
 var only_blowing := false # --test=blowing: the blowing-leaves check alone
 var only_sod := false # --test=sod: the sod lip checks alone
 var only_rocks := false # --test=rocks: the rock_field check alone
+var grass_walk := 0.0 # --grass-walk[=M]: main-thread cost of a GrassField3D (defaults) walked M metres a frame
+
+# --grass-walk[=M] (0.05 m a frame by default: a walk at 174 frames a second is 0.008): the main-thread time of
+# GrassField3D.update_at each frame (its near tiles and far ring tiles are built there), over 600 frames.
+# --grass-cpu: the CPU fill path; --grass-norings: no far rings.
+func _grass_walk() -> void:
+	var user := OS.get_cmdline_user_args()
+	var g := GrassField3D.new()
+	g.rules = PlantSpecies.new()
+	g.gpu_fill = not user.has("--grass-cpu")
+	g.far_rings = not user.has("--grass-norings")
+	add_child(g)
+	g.data_map = g.get_path_to(dm)
+	var times := []
+	for i in 600:
+		var q := Vector3(-100.0 + i * grass_walk, 0, -20)
+		var t := Time.get_ticks_usec()
+		g.update_at(q)
+		times.append((Time.get_ticks_usec() - t) / 1000.0)
+		await get_tree().process_frame
+	var tt: Array = times.slice(1)
+	tt.sort()
+	var sum := 0.0
+	for x in tt:
+		sum += x
+	var n := tt.size()
+	print("GRASS_WALK %.3f m/frame: first %.1f ms, then mean %.2f, p50 %.2f, p95 %.2f, p99 %.2f, max %.2f ms; over 2 ms %d frames, over 5.7 ms %d; tiles %d, ring tiles %d" % [grass_walk, times[0], sum / n, tt[n / 2], tt[n * 95 / 100], tt[n * 99 / 100], tt[n - 1], tt.filter(func(x): return x > 2.0).size(), tt.filter(func(x): return x > 5.7).size(), g.get_tile_count(), g.get_ring_tile_count()])
 
 # A stand-in for RockField3D.get_obstacles(): the stones whose centre is in the rect (half-open, as Rect2.has_point),
 # of the size or more. Counts the calls and the widest rect asked for.

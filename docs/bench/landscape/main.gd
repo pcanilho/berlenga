@@ -4293,6 +4293,44 @@ func _build_camera() -> void:
 			cam.position = ce
 			cam.look_at(la)
 			_log("woodedge camera at %s, litter %.2f at the rim, %.2f under the camera" % [str(ce), veg.get_litter_at(pick + pdir * 3.0), veg.get_litter_at(ce)])
+		"ledge":
+			# A stepped hard-bed bench with its caprock slabs (RockField3D.ledge_slabs) from --ledge-back (22) m out:
+			# the 16 m cell within --ledge-search (1000) m holding the most overhanging lip (TerrainGenerator3D
+			# get_ledge_lips), the camera out from the face and --ledge-side (9) m along it so the run of slabs
+			# recedes, at --ledge-up (-2) m from the lip (below it: the overhangs read against the sky).
+			var lr := float(args.get("ledge-search", "1000"))
+			var lips: Array = gen.get_ledge_lips(Rect2(-lr, -lr, 2.0 * lr, 2.0 * lr), 4.0)
+			var cells := {}
+			for l in lips:
+				if float(l["overhang"]) <= 0.05:
+					continue
+				var lp: Vector3 = l["position"]
+				var key := Vector2i(int(floor(lp.x / 16.0)), int(floor(lp.z / 16.0)))
+				var c: Array = cells.get(key, [0.0, l])
+				c[0] = float(c[0]) + float(l["overhang"]) * float(l["weight"])
+				if float(l["overhang"]) > float((c[1] as Dictionary)["overhang"]):
+					c[1] = l
+				cells[key] = c
+			var lbest := -1.0
+			var lpick := {}
+			for key in cells:
+				if float(cells[key][0]) > lbest:
+					lbest = float(cells[key][0])
+					lpick = cells[key][1]
+			if lpick.is_empty():
+				_log("ledge view: no overhanging lips within %.0f m (%d lips)" % [lr, lips.size()])
+			else:
+				var lpos: Vector3 = lpick["position"]
+				var lout: Vector3 = lpick["out"]
+				lout.y = 0.0
+				lout = lout.normalized()
+				var along := lout.cross(Vector3.UP).normalized()
+				var lc := lpos + lout * float(args.get("ledge-back", "22")) + along * float(args.get("ledge-side", "9"))
+				lc.y = maxf(height_at(lc.x, lc.z) + 1.7, lpos.y + float(args.get("ledge-up", "-2")))
+				cam.fov = 55.0
+				cam.position = lc
+				cam.look_at(lpos)
+				_log("ledge view: %d lips, pick %s overhang %.2f m cap %.2f m, score %.1f, camera %s" % [lips.size(), str(lpos.round()), float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round())])
 		"gully":
 			# A raised oblique down a real gully onto its fan (RockField3D.runoff_gravel: a coarse lag on the floor,
 			# fine grains on the fan). The strongest open gully on soil (TerrainGenerator3D.get_gully_at, as the rocks
@@ -4911,7 +4949,46 @@ func _build_cover() -> void:
 			"mediterranean": 10, "taiga": 11} # FLOOR_MEDITERRANEAN, FLOOR_BOREAL_TAIGA (montado: cistus, grasses, thistles; by value for older binaries)
 	# The floor plants follow the weather's season (flowering, bracken croziers in spring, russet in autumn): --day=N.
 	var season: Dictionary = weather.get_season() if weather != null and weather.has_method("get_season") else {}
-	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "taiga" if args.get("tree-stand", "") == "taiga" else "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3, true, 15.0, season)
+	var floor_set: int = floors.get(args.get("floor", "taiga" if args.get("tree-stand", "") == "taiga" else "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER)
+	var woody: bool = args.get("woody-shrubs", "1") != "0"
+	# Every species set built at once on the worker threads (PlantGenerator.make_sets, identical output), slowest
+	# first; the sites below take theirs by "method:set". Older binaries build each set where it is used.
+	var pre := {}
+	if ClassDB.class_has_method("PlantGenerator", "make_sets"):
+		var calls: Array = []
+		var keys: Array = []
+		if args.get("heath-plants", "1") != "0":
+			for st in [PlantGenerator.HEATH_DRY, PlantGenerator.HEATH_MARITIME, PlantGenerator.HEATH_WET]:
+				calls.append(["make_heath", [st, 3, true, season, woody]])
+				keys.append("make_heath:%d" % st)
+		if args.get("scrub-plants", "1") != "0":
+			for st in [PlantGenerator.SCRUB_GARRIGUE, PlantGenerator.SCRUB_MAQUIS]:
+				calls.append(["make_scrub", [st, 3, true, season, woody]])
+				keys.append("make_scrub:%d" % st)
+		calls.append(["make_floor", [floor_set, 3, true, 15.0, season]])
+		keys.append("make_floor:%d" % floor_set)
+		if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
+			for st in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:
+				calls.append(["make_dunes", [st, 3, true, season]])
+				keys.append("make_dunes:%d" % st)
+		if args.get("alpine-plants", "1") != "0":
+			for st in [PlantGenerator.ALPINE_FELLFIELD, PlantGenerator.ALPINE_GRASSLAND, PlantGenerator.ALPINE_SNOWBED, PlantGenerator.ALPINE_SCREE]:
+				calls.append(["make_alpine", [st, 3, true, season]])
+				keys.append("make_alpine:%d" % st)
+		if args.get("marsh-plants", "1") != "0":
+			for st in [PlantGenerator.SALTMARSH_PIONEER, PlantGenerator.SALTMARSH_MID, PlantGenerator.SALTMARSH_HIGH, PlantGenerator.SALTMARSH_SHINGLE]:
+				calls.append(["make_saltmarsh", [st, 3, true, season]])
+				keys.append("make_saltmarsh:%d" % st)
+		if rocks != null and args.get("stone-plants", "1") != "0":
+			for st in [PlantGenerator.STONES_SCREE, PlantGenerator.STONES_RIVER, PlantGenerator.STONES_SHORE]:
+				calls.append(["make_stones", [st, 3, true, season]])
+				keys.append("make_stones:%d" % st)
+		var tp := Time.get_ticks_msec()
+		var sets: Array = ClassDB.class_call_static("PlantGenerator", "make_sets", calls)
+		for k in mini(keys.size(), sets.size()):
+			pre[keys[k]] = sets[k]
+		_log("cover: %d species sets built in parallel in %d ms" % [sets.size(), Time.get_ticks_msec() - tp])
+	var floor_sp: Array = pre["make_floor:%d" % floor_set] if pre.has("make_floor:%d" % floor_set) else PlantGenerator.make_floor(floor_set, 3, true, 15.0, season)
 	if OS.get_environment("VEG_DW_OFF") != "":
 		# The deadwood pair's before frame (as the vegetation bench): the floor blind to the logs.
 		for sp in floor_sp:
@@ -4983,32 +5060,32 @@ func _build_cover() -> void:
 	if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
 		# The dunes' own plants (marram, lyme grass, sea holly), placed by distance to the water on the sand.
 		for st in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:
-			b.species += PlantGenerator.make_dunes(st, 3, true, season)
+			b.species += pre["make_dunes:%d" % st] if pre.has("make_dunes:%d" % st) else PlantGenerator.make_dunes(st, 3, true, season)
 	if args.get("alpine-plants", "1") != "0":
 		# Above the treeline (the data map's mean annual temperature): fellfield cushions on the ridges, the sedge
 		# sward, dwarf willow in the snowbeds and the scree set on the talus, each by its own rules.
 		for st in [PlantGenerator.ALPINE_FELLFIELD, PlantGenerator.ALPINE_GRASSLAND, PlantGenerator.ALPINE_SNOWBED, PlantGenerator.ALPINE_SCREE]:
-			for sp in PlantGenerator.make_alpine(st, 3, true, season):
+			for sp in (pre["make_alpine:%d" % st] if pre.has("make_alpine:%d" % st) else PlantGenerator.make_alpine(st, 3, true, season)):
 				sp.set_meta("alpine", true)
 				b.species.append(sp)
 	if args.get("heath-plants", "1") != "0":
 		# Atlantic heath (bell heather, cross-leaved heath, crowberry) by rain, winter cold and wetness.
 		for st in [PlantGenerator.HEATH_DRY, PlantGenerator.HEATH_WET, PlantGenerator.HEATH_MARITIME]:
-			for sp in PlantGenerator.make_heath(st, 3, true, season, args.get("woody-shrubs", "1") != "0"):
+			for sp in (pre["make_heath:%d" % st] if pre.has("make_heath:%d" % st) else PlantGenerator.make_heath(st, 3, true, season, woody)):
 				sp.set_meta("own_rules", true)
 				b.species.append(sp)
 	if args.get("scrub-plants", "1") != "0":
 		# Mediterranean scrub (rosemary, French lavender, thyme, rockrose): garrigue on thin soil, maquis on deeper,
 		# only in a warm dry climate (--jan=10 --jul=24 --precip=650); none in the default one.
 		for st in [PlantGenerator.SCRUB_GARRIGUE, PlantGenerator.SCRUB_MAQUIS]:
-			for sp in PlantGenerator.make_scrub(st, 3, true, season, args.get("woody-shrubs", "1") != "0"):
+			for sp in (pre["make_scrub:%d" % st] if pre.has("make_scrub:%d" % st) else PlantGenerator.make_scrub(st, 3, true, season, woody)):
 				sp.set_meta("own_rules", true)
 				b.species.append(sp)
 	if args.get("marsh-plants", "1") != "0":
 		# Salt marsh zoned by height in the tidal frame and the shingle backshore above it (the data map's
 		# geology source is the generator with its sea), each set by its own tide, exposure and beach rules.
 		for st in [PlantGenerator.SALTMARSH_PIONEER, PlantGenerator.SALTMARSH_MID, PlantGenerator.SALTMARSH_HIGH, PlantGenerator.SALTMARSH_SHINGLE]:
-			for sp in PlantGenerator.make_saltmarsh(st, 3, true, season):
+			for sp in (pre["make_saltmarsh:%d" % st] if pre.has("make_saltmarsh:%d" % st) else PlantGenerator.make_saltmarsh(st, 3, true, season)):
 				sp.set_meta("own_rules", true)
 				b.species.append(sp)
 	for sp in b.species:
@@ -5028,7 +5105,7 @@ func _build_cover() -> void:
 		# The plants between the stones (scree, river gravel, shingle): they keep to the gaps between the obstacles.
 		var stone_sp: Array = []
 		for st in [PlantGenerator.STONES_SCREE, PlantGenerator.STONES_RIVER, PlantGenerator.STONES_SHORE]:
-			stone_sp.append_array(PlantGenerator.make_stones(st, 3, true, season))
+			stone_sp.append_array(pre["make_stones:%d" % st] if pre.has("make_stones:%d" % st) else PlantGenerator.make_stones(st, 3, true, season))
 		b.species = b.species + stone_sp
 		_log("cover: %d stone-crevice species" % stone_sp.size())
 	cover = VegetationField3D.new()

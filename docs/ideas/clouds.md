@@ -1035,3 +1035,15 @@ Bench: weather --view=shafts --sun-up=18 --cover=0.15 --high-cover=0 --wind=1 --
 
 Bench: weather --view=lenticular (far), --cam=9000,300,11570,5000,4800,11570 (under a near lens),
 --cam=17000,3600,11570,3150,4000,11570 (the pile from its own height).
+
+## Lenticular rim from below: measured (24 Nov; docs: rim still soft, plates combed)
+
+A column through the bench lens (WeatherMap3D.get_wave_cloud_density_at, z = 8000, every 250 m): the optical depth
+straight up rises from 0 at the outline to 4 about 1 km in (0.4, 1.2, 1.9, 3.1, 4.0), peaking near 5.7 in the middle;
+the lens is about 500 m deep, its extinction up to 0.027 per metre (0.25 g/m3 at 150 droplets per cm^3). The lift past
+saturation grows about 0.15 m per metre inward, so the water and the depth both grow from zero over that kilometre.
+Seen from below the edge is therefore optically thin for about a kilometre, a translucent taper (where the
+iridescence shows); edge-on, along kilometres of lens, it is opaque at once and crisp. Tried and dropped: a sharper
+moist layer (exp(-d^8)) and smooth rounded plate sheets 350 m apart; neither sharpened the rim, and the plates read
+worse. A crisper rim from below needs a steeper lift at the outline or more water than the lift gives, which the
+physics here does not support without an artistic edge term.
