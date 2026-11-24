@@ -215,6 +215,8 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 
 	float _h(int p_x, int p_z) const;
 	Vector3 _normal(int p_x, int p_z) const;
+	Vector3 _normal_central(int p_x, int p_z) const;
+	Vector3 _normal_central_at(real_t p_x, real_t p_z) const;
 	Vector3 _normal_at(real_t p_x, real_t p_z) const; // bilinear, in grid units
 	float _cliff_offset(const Vector3 &p_world, real_t p_steep, real_t p_relief, bool p_joints = true) const; // p_steep: relief scale times the face's tan(slope)
 	static float _joint_offset(const Vector3 &p, real_t p_steep);

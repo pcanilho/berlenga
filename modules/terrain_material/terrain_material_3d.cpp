@@ -936,6 +936,7 @@ vec3 tm_grain_n(vec2 x) {
 varying vec4 tm_cl_p; // the undisplaced point (landscape space), w the cliff relief's scale
 varying vec4 tm_cl_n; // the heightfield normal, w the bank relief's scale
 varying float tm_cl_kj; // the joint steps' scale (CUSTOM2.x)
+varying vec3 tm_proj_n; // the heightfield's central-difference normal (CUSTOM2.yzw), for the texture projection
 float tm_cl_hash(int a, int b, int c) {
 	uint h = uint(a) * 0x8DA6B343u ^ uint(b) * 0xD8163841u ^ uint(c) * 0xCB1AB31Fu;
 	h ^= h >> 13u;
@@ -1309,6 +1310,17 @@ vec3 tm_cl_land_n(vec2 xz) {
 	vec2 u = f - g;
 	return normalize(mix(mix(tm_cl_node_n(g), tm_cl_node_n(g + vec2(1.0, 0.0)), u.x), mix(tm_cl_node_n(g + vec2(0.0, 1.0)), tm_cl_node_n(g + vec2(1.0, 1.0)), u.x), u.y));
 }
+// Its central-difference normal (Landscape3D::_normal_central_at), for the texture projection on the patch.
+vec3 tm_cl_node_cn(vec2 g) {
+	float s = terrain_cliff_relief.y;
+	return normalize(vec3(-0.5 * (tm_cl_h(g + vec2(1.0, 0.0)) - tm_cl_h(g - vec2(1.0, 0.0))), s, -0.5 * (tm_cl_h(g + vec2(0.0, 1.0)) - tm_cl_h(g - vec2(0.0, 1.0)))));
+}
+vec3 tm_cl_land_cn(vec2 xz) {
+	vec2 f = (xz - terrain_cliff_relief.zw) / terrain_cliff_relief.y;
+	vec2 g = floor(f);
+	vec2 u = f - g;
+	return normalize(mix(mix(tm_cl_node_cn(g), tm_cl_node_cn(g + vec2(1.0, 0.0)), u.x), mix(tm_cl_node_cn(g + vec2(0.0, 1.0)), tm_cl_node_cn(g + vec2(1.0, 1.0)), u.x), u.y));
+}
 // The face weights (Landscape3D::_relief_weights): cliffs from about 50 degrees, banks from about 40.
 vec2 tm_cl_weights(vec3 n) {
 	float wt = 1.0 - clamp((n.y - 0.47) / (0.64 - 0.47), 0.0, 1.0);
@@ -1335,7 +1347,7 @@ vec2 tm_cl_weights_at(vec2 xz) {
 }
 )";
 	}
-	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1;\n\ttm_cl_kj = CUSTOM2.x;\n";
+	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1;\n\ttm_cl_kj = CUSTOM2.x;\n\ttm_proj_n = CUSTOM2.yzw;\n";
 	if (ground_deform_enabled) {
 		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
 		// with a copy of this material, takes the printed surface.
@@ -1360,6 +1372,9 @@ vec2 tm_cl_weights_at(vec2 xz) {
 )";
 		c += R"(	if (ground_deform_patch && terrain_cliff_relief.x > 0.0 && ground_deform_rect.z > 0.0) {
 		vec3 cl_w = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		if (terrain_cliff_relief.y > 0.0) {
+			tm_proj_n = inverse(mat3(MODEL_MATRIX)) * tm_cl_land_cn(cl_w.xz);
+		}
 		// The landscape's own heightfield normal (its grid's ENO normals): the patch's over one field texel is
 		// steeper next to a cliff's top and foot, so it put relief on faces the landscape leaves plain.
 		vec3 cl_nw = terrain_cliff_relief.y > 0.0 ? tm_cl_land_n(cl_w.xz) : vec3(0.0, 1.0, 0.0);
@@ -1818,7 +1833,16 @@ void fragment() {
 		discard;
 	}
 	vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
-	bool cliff = wn.y < tm_cliff_cos;
+	// The texture projection's normal. Landscape3D's vertex normals are one-sided at a kink (ENO), so a wall one cell
+	// across gets flat normals at both its rows and was textured from above down its whole height (long vertical
+	// smears). Its central-difference normal (CUSTOM2.yzw) sees the wall; where it is steeper than the pixel's
+	// normal the projection turns to it. Meshes without it (zero) keep the pixel's normal.
+	vec3 tm_pn = wn;
+	if (dot(tm_proj_n, tm_proj_n) > 0.25) {
+		vec3 pn = normalize(mat3(MODEL_MATRIX) * tm_proj_n);
+		tm_pn = normalize(mix(wn, pn, smoothstep(0.0, 0.15, wn.y - pn.y)));
+	}
+	bool cliff = tm_pn.y < tm_cliff_cos;
 	// The pixel's footprint on the ground for the layers' texture gradients, as a ray cone's ellipse (Akenine-Moller
 	// et al. 2019), as the rock detail takes it: the path tracer has no screen derivatives.
 	vec3 tm_dpx, tm_dpy;
@@ -1826,10 +1850,10 @@ void fragment() {
 		vec3 v = wp - CAMERA_POSITION_WORLD;
 		float cone = length(v) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 		v = normalize(v);
-		vec3 t1 = cross(v, wn);
-		t1 = dot(t1, t1) > 1e-8 ? normalize(t1) : normalize(cross(wn, vec3(1.0, 0.0, 0.0) + vec3(0.0, 0.0, 1.0) * step(0.9, abs(wn.x))));
+		vec3 t1 = cross(v, tm_pn);
+		t1 = dot(t1, t1) > 1e-8 ? normalize(t1) : normalize(cross(tm_pn, vec3(1.0, 0.0, 0.0) + vec3(0.0, 0.0, 1.0) * step(0.9, abs(tm_pn.x))));
 		tm_dpx = t1 * cone;
-		tm_dpy = cross(wn, t1) * cone / max(abs(dot(v, wn)), 0.05);
+		tm_dpy = cross(tm_pn, t1) * cone / max(abs(dot(v, tm_pn)), 0.05);
 	}
 	// Layer weights. Geology from the generator: bare rock, scree on it, the rest soil, alluvium where much water
 	// drains; without it, rock past the rock slope and soil elsewhere. Sand on the beach band above the sea.
@@ -1956,7 +1980,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_rock(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		tm_rock(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		alb[0] = a;
 		rgh[0] = r;
 		dns[0] = d;
@@ -1967,7 +1991,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_scree(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		tm_scree(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		// Patches of fresher and older, lichened blocks: a tone that varies by about a fifth over 10 to 30 m (mean
 		// kept), so a talus slope is not one flat colour at a distance (world coordinates, unrotated, as above).
 		{
@@ -1988,7 +2012,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_soil(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		tm_soil(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		a *= mix(vec3(1.0), tm_bare_soil_color.rgb / max(tm_soil_color.rgb, vec3(1e-3)), tm_bare_k);
 		alb[2] = a;
 		rgh[2] = r;
@@ -2000,7 +2024,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_alluvium(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		tm_alluvium(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		a *= mix(vec3(1.0), tm_bare_alluvium_color.rgb / max(tm_alluvium_color.rgb, vec3(1e-3)), tm_bare_k);
 		alb[3] = a;
 		rgh[3] = r;
@@ -2012,7 +2036,7 @@ void fragment() {
 		float r;
 		vec3 d;
 		float h;
-		tm_sand(wp, wn, cliff, tm_dpx, tm_dpy, a, r, d, h);
+		tm_sand(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
 		d += tm_sand_grain(wp, tm_fp0, a);
 		// The dune field's colour at this scale: redder old sand, coarse dark interdune flats, pale slip faces.
 		float tm_sdepth = terrain_sand_interdune(wp);
@@ -2121,7 +2145,7 @@ void fragment() {
 			// Rosettes with crisp, filtered edges (value noise thresholded drew blocky blots); in the face's two
 			// dominant planes like its textures. The crusts tint the rock toward their own colour rather than paint
 			// over it, so its tone and cracks still show.
-			TmProj fw_pr = tm_projection(wp, wn, 1.0, true);
+			TmProj fw_pr = tm_projection(wp, tm_pn, 1.0, true);
 			float fw_shift = 0.2 * shade;
 			float fw_yb = 0.3 * (1.0 - shade) * smoothstep(0.45, 0.65, tm_vn(wp * 0.21 + 77.0));
 			vec4 ros = tm_rosettes(fw_pr.uv0, wp[3 - fw_pr.axes0.x - fw_pr.axes0.y], fw_shift, fw_yb, tm_fp0) * fw_pr.w0;
