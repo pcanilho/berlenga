@@ -1047,3 +1047,15 @@ iridescence shows); edge-on, along kilometres of lens, it is opaque at once and 
 moist layer (exp(-d^8)) and smooth rounded plate sheets 350 m apart; neither sharpened the rim, and the plates read
 worse. A crisper rim from below needs a steeper lift at the outline or more water than the lift gives, which the
 physics here does not support without an artistic edge term.
+
+## Sky under TAA and temporal upscalers: accumulate unjittered (24 Nov)
+
+The reprojected sky (sky_reproject.glsl) kept its history in the jittered view, so with TAA, FSR2 or DLSS on every frame
+resampled the whole history by the jitter's step: a sub-pixel shift that even the Catmull-Rom read softens, compounding
+over the 192 frames the accumulation runs. Under TAA the clouds lost their edges and billows (horizontal gradient energy
+1.13 without TAA, 0.78 with it). Now the accumulation is in the unjittered view (the jitter taken back out of P[2][0]
+and P[2][1]), so a still camera reads its history at the same pixel centres, untouched. The output goes out unjittered
+under the TAA resolve (which keeps jittered frames as they are: an unjittered sky is the same image every frame,
+1.04) and, for a temporal upscaler that is told the jitter (FSR2, MetalFX temporal, DLSS), is read once at this
+frame's jitter in a second pass (the sign checked: the other sign measured softer under FSR2). The 4-pixel checker in
+the PC stills (DLSS on) is likely this; to be confirmed on the PC. Path traced (no jitter) is unchanged.
