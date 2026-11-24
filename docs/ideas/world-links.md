@@ -62,7 +62,8 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Ground → dust (Flow) | linked | Flow | |
 | Tyres, wind → dust off dry silt and sand | linked (20 Nov, mud a4571642) | `GroundSurface3D.add_dust(position, velocity, strength)` (strength = width x speed) | dry silt skins and dry sand answer; wind lifts dust off dry silt |
 | Terrain → runoff, rivers | linked | terrain runoff (monthly) | storm runoff to rivers: rain work |
-| Climate → bare soil between plants | linked (24 Nov, 6c0fc3de) | `WorldContracts::bare_share_for_precipitation(mm)` (0.9 at 200 mm to 0 at 700 mm a year), `climate_bare_share_at(p)`; shaders `terrain_climate_map` (g) else `weather_climate` | TerrainMaterial3D `climate_bare_soil`: soil and alluvium break into bare patches by the share (two-octave noise under its quantile, Rietkerk et al. 2004), `bare_soil_color` / `bare_alluvium_color`; `contract_albedo_at` mixes the mean. No climate: unchanged. Note: terrain-material.md, "Bare soil from the climate" |
+| Climate → bare soil between plants | linked (24 Nov, 6c0fc3de, f0f7455a, 6b0b311f, 3589ba9f) | `WorldContracts::bare_share_for_precipitation(mm)` (0.9 at 200 mm to 0 at 700 mm a year), `climate_bare_share_at(p)`, the patches `bare_patch(p, share, footprint)` / `climate_bare_patch_at(p)`; GLSL `climate_bare_shader_code()` (`wc_climate_bare`, `wc_bare_patch`); shaders read `terrain_climate_map` (g) else `weather_climate` | One field, so every reader leaves the same patches bare: TerrainMaterial3D `climate_bare_soil` (soil and alluvium bare by the share, Rietkerk et al. 2004; `contract_albedo_at` mixes the mean), GrassField3D and VegetationField3D `climate_bare` (no blades or plants in the bare patches), RockField3D rain splash pedestals. No climate: unchanged. Note: terrain-material.md, "Bare soil from the climate" |
+| Slope, grazing → terracettes | linked (24 Nov, e8365c6c) | `WorldContracts::terracette_at(p, gradient)` (bands along the contour, `TERRACETTE_SPACING` 3.4 m along the slope, starting at about 25 degrees, full from 35 to 45, gone past about 51; a grazing model, Seleb, Chatterjee and Bhamla 2025); GLSL `terracette_shader_code()` (`wc_terracette`, needs `climate_bare_shader_code()` first) | GrassField3D `terracettes`: the sward follows the steps. Terrain relief to read the same bands (coming) |
 
 ### Snow
 
@@ -235,7 +236,6 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 ## Private copies of shared state
 
 - `VegetationField3D` placement skew reads the wind setting: placement time only, harmless.
-- `RockField3D` rain splash pedestals keep their own bare-share copy until the rocks work reads `climate_bare_share_at` (24 Nov).
 
 ## Techniques for the planned links
 
