@@ -100,6 +100,8 @@ extends Node3D
 #   --face-weathering=x   with --world: the ground material's rock-face lichen, moss and seep streaks (1; 0 before)
 #   --bank-relief=x       with --world: Landscape3D.bank_relief (0.8 m; 0 for a before frame); --bank-spot puts the
 #                         spot on a 42 to 52 degree soil bank; --spot=x,z puts the spot at a world point
+#   --rain-climate[=P]    with --world: a mild climate of P mm a year (350) for RockField3D.rain_pedestals (stones on rain
+#                         splash pedestals on bare soil); --pedestal-spot the tallest near the centre; --no-rain-pedestals off
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -759,6 +761,45 @@ func _world() -> void:
 					found_f = p
 		spot = found_f
 		print("frost spot ", spot, " (", tried, " points fully sorting)")
+	# --rain-climate=P: a mild climate of P mm a year (350 by default: dry, half-bare soil) on a WeatherMap3D, so bare soil
+	# carries stones on rain splash pedestals (RockField3D.rain_pedestals; --no-rain-pedestals off).
+	if args.has("rain-climate") and not args.has("frost"):
+		var rc = ClassDB.instantiate("ClimateRecipe")
+		rc.temperature_january = 6.0
+		rc.temperature_july = 24.0
+		rc.precipitation = 350.0 if args["rain-climate"] == "1" else float(args["rain-climate"])
+		var rw = ClassDB.instantiate("WeatherMap3D")
+		rw.extent = 256.0
+		rw.resolution = 32
+		rw.climate = rc
+		rw.season_day = 200
+		add_child(rw)
+	if args.has("pedestal-spot"):
+		# --pedestal-spot: open, stony bare soil of 6 to 20 degrees where the pedestals stand tallest (with
+		# --rain-climate).
+		var best_p := -INF
+		var found_p := spot
+		for zz in range(-800, 801, 8):
+			for xx in range(-800, 801, 8):
+				var p := Vector3(xx, 0, zz)
+				var pa: Vector2 = rocks.get_pedestal_at(p)
+				if pa.x < 0.3:
+					continue
+				var sl := rad_to_deg(atan(Vector2(gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0)), gen.get_height(p + Vector3(0, 0, 4)) - gen.get_height(p - Vector3(0, 0, 4))).length() / 8.0))
+				if sl < 6.0 or sl > 20.0:
+					continue
+				# Open ground (the less bank or crag over it 10 m round, the better), so the light reaches it.
+				var hp := gen.get_height(p)
+				var rise := 0.0
+				for k in 8:
+					var q := p + Vector3(cos(k * PI / 4.0), 0, sin(k * PI / 4.0)) * 10.0
+					rise = maxf(rise, gen.get_height(q) - hp)
+				var score := pa.x + pa.y * 20.0 - maxf(rise - 2.0, 0.0) * 0.15 - Vector2(xx, zz).length() / 4000.0
+				if score > best_p:
+					best_p = score
+					found_p = p
+		spot = found_p
+		print("pedestal spot ", spot, " ", rocks.get_pedestal_at(spot))
 	if args.has("bank-spot"):
 		# --bank-spot: a soil bank of 42 to 52 degrees (no rock exposure, not talus) 20 m or more long, for Landscape3D's
 		# bank relief; scored by how much of the bank 8 m either side along the contour is as steep.
@@ -1003,6 +1044,7 @@ func _world() -> void:
 		# --rooting[=years]: a boar rooting 1.5 m across, 2 m behind the spot, that age (0: fresh). WorldStand.
 		rocks.frost_sorting = not args.has("no-frost")
 		rocks.runoff_gravel = not args.has("no-runoff-gravel") # --no-runoff-gravel: the rills and gullies without their lag (a before frame)
+		rocks.rain_pedestals = not args.has("no-rain-pedestals") # --no-rain-pedestals: bare soil without its stones and pedestals (a before frame)
 		if args.has("frost"):
 			var fr := ""
 			for dz in [-6, -3, 0, 3, 6]:
@@ -2959,6 +3001,20 @@ func _render_later() -> void:
 				if o < 0.05:
 					on_it += 1
 		print("relief: %d pebble grains on drawn relief (%d within 5 cm), ground off it by %.3f m at most %s" % [on_relief, on_it, off, worst])
+		if rocks.rain_pedestals and args.has("rain-climate"):
+			# The grains on rain splash pedestals round the spot: how many, and their columns' mean and tallest.
+			var ped := 0
+			var all := 0
+			var tall := 0.0
+			var sum := 0.0
+			for st in rocks.get_stones(RockField3D.LAYER_DETAIL_PEBBLE, Rect2(spot_pos.x - 3, spot_pos.z - 3, 6, 6)):
+				all += 1
+				var pv := float(st.get("pedestal", 0.0))
+				if pv > 0.0:
+					ped += 1
+					sum += pv
+					tall = maxf(tall, pv)
+			print("pedestals: %d of %d pebble grains within 3 m on pedestals, mean %.3f m, tallest %.3f m" % [ped, all, sum / maxf(ped, 1), tall])
 	if rocks and rocks.moss_cushions:
 		print("moss: %d shells, %d triangles, %d building" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), rocks.get_moss_pending()])
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():
