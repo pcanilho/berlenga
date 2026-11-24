@@ -2783,7 +2783,12 @@ void fragment() {
 		// Held or shed by the projection's normal (tm_pn): on a wall one cell across the vertex normal is flat at
 		// both rows and held snow down the wall's height in white smears.
 		vec3 snow_face = tm_pn.y < tm_cn.y ? tm_pn : tm_cn;
-		snow = snow_cover_weight(snow_s.x * tm_snow, tm_snow_max_slope, tm_pn, sn, wp, snow_face);
+		// Bare soil's relief is millimetres to a couple of centimetres (crumbs, crust, raindrop pits), finer than its
+		// scan's detail normal draws it at this scale, so a fresh pack of a centimetre or two buries it about as soon
+		// as it buries a sward: the thin pack's flattest-facets rule took the scan's normal for bare relief and left
+		// bare patches brown under 1.6 cm of fresh snow while the turf round them was white. Taken by the bare share.
+		vec3 snow_n = normalize(mix(sn, wn, 0.75 * tm_bare_g));
+		snow = snow_cover_weight(snow_s.x * tm_snow, tm_snow_max_slope, tm_pn, snow_n, wp, snow_face);
 		snow_wet = snow_s.z;
 		snow_cover_apply(snow, snow_s.y, snow_wet, albedo, rough, metallic, specular);
 		sn = normalize(mix(sn, wn, snow));

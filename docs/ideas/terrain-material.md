@@ -430,6 +430,10 @@ grey-brown silt 10YR 6/2.
   a metre the patches fade to the share. Bare patches take `bare_soil_color` / `bare_alluvium_color` with the scans'
   detail kept. Grass fields and far plant cover still draw over it.
 - CPU: `contract_albedo_at` mixes the same share (the patches' mean). Setting: `TerrainMaterial3D.climate_bare_soil`.
+- (24 Nov) Snow on the bare patches: a thin fresh pack settles on the flattest facets of the detail normal first, and
+  the soil scan's normal drew bare ground as rough, so a 15 m bare patch stayed brown under 1.6 cm of fresh snow while
+  the turf round it was white. Bare soil's relief is millimetres to a couple of centimetres, buried by the first
+  centimetre or two, so the snow's hold takes a normal flattened toward the surface's by the bare share.
 
 ### Cured cover in summer-dry climates (24 Nov, the bare-soil scout read green)
 
