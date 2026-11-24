@@ -2137,6 +2137,8 @@ Thinning fringe (same day, from the docs review): the edges were still a clean s
 second, fine lognormal field (1.1 m and 0.45 m, the scale of stones and tussocks under the last centimetres)
 multiplies the depth too, so near the melt-out line the snow breaks into specks and islands over a metre or so.
 Where the pack is deep the covered share saturates and the fine field does not show.
+The field is 3D value noise of the world position, not of x and z: read on the map's plane it was drawn out down
+steep banks into rows of dark slashes (seen in the ground-detail snow frames).
 
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
