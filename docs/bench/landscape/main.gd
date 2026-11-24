@@ -1935,40 +1935,16 @@ func _forest_settle() -> void:
 # Real ground scans (Poly Haven CC0, art repository terrain/layers, fetched by docs/bench/landscape/fetch_art.sh into
 # docs/bench/landscape/art/terrain_layers). Each layer keeps the geology's colour (detail_only: the scan adds detail
 # only, to colour and roughness) and tiles at the scan's real size. Loaded from the files directly (the folder is .gdignore'd, no import step).
-const GROUND_SCANS := {"rock": ["dark_rock_02", 2.0], "scree": ["rocks_ground_02", 2.0], "soil": ["forest_ground_06", 2.11], "alluvium": ["gravelly_sand", 2.48], "sand": ["sand_03", 2.0]}
-
-func _ground_scan_tex(path: String, normal := false) -> Texture2D:
-	var img := Image.load_from_file(path)
-	if img == null or img.is_empty():
-		return null
-	img.generate_mipmaps(normal)
-	return ImageTexture.create_from_image(img)
-
 func _apply_ground_scans(tm: TerrainMaterial3D, dir: String, only := "1") -> int:
-	var n := 0
-	for layer_name in GROUND_SCANS:
-		if only != "1" and not (layer_name in only.split(",")):
-			continue # --ground-scans=rock,scree: those layers only
-		var scan: String = GROUND_SCANS[layer_name][0]
-		var base := dir.path_join(scan).path_join(scan)
-		if not FileAccess.file_exists(base + "_albedo.jpg"):
-			continue
-		var l := TerrainMaterialLayer.new()
-		var maps: String = args.get("scan-maps", "anrh") # --scan-maps=an: only the albedo and normal maps (A/B)
-		if "a" in maps:
-			l.albedo_texture = _ground_scan_tex(base + "_albedo.jpg")
-		if "n" in maps:
-			l.normal_texture = _ground_scan_tex(base + "_normal.jpg", true)
-		if "r" in maps:
-			l.roughness_texture = _ground_scan_tex(base + "_roughness.jpg")
-		if "h" in maps:
-			l.height_texture = _ground_scan_tex(base + "_height.jpg")
-		l.tile_size = GROUND_SCANS[layer_name][1]
-		var c: Color = tm.get_shader_parameter("tm_%s_color" % layer_name) if tm.get_shader_parameter("tm_%s_color" % layer_name) is Color else Color.WHITE
-		l.color = c # the geology's colour: the scan's mean is divided out (detail_only)
-		tm.set("%s_layer" % layer_name, l)
-		n += 1
-	return n
+	# The whole scan set (layers and overlay scans) from the art folder's scans.cfg (TerrainMaterial3D.load_scan_set).
+	# --ground-scans=rock,scree: scans on those slots only; --overlay-scans=0: the five layers' scans only (A/B);
+	# --scan-maps=an: only the albedo and normal maps.
+	var slots := PackedStringArray()
+	if only != "1":
+		slots = only.split(",")
+	elif args.get("overlay-scans", "1") == "0":
+		slots = PackedStringArray(["rock", "scree", "soil", "alluvium", "sand"])
+	return tm.load_scan_set(dir, slots, args.get("scan-maps", ""))
 
 func _log(s: String) -> void:
 	print("[landscape] ", s)

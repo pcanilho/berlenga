@@ -23,6 +23,13 @@
 				Returns the layer for a surface, or [code]null[/code] for the default.
 			</description>
 		</method>
+		<method name="get_overlay" qualifiers="const">
+			<return type="TerrainMaterialLayer" />
+			<param index="0" name="overlay" type="int" enum="TerrainMaterial3D.Overlay" />
+			<description>
+				Returns the overlay scan for a slot, or [code]null[/code] if none.
+			</description>
+		</method>
 		<method name="get_shader_code" qualifiers="const">
 			<return type="String" />
 			<description>
@@ -43,12 +50,29 @@
 				Small stones drawn as part of the ground past where real ones stop (set by [RockField3D], see [member RockField3D.ground_detail_cover]). [param near] and [param far] are cover maps over [param near_rect] and [param far_rect] (world X and Z, in metres); [param reach], [param band] and [param size] are the pebbles', gravel's and fine gravel's reach from the camera, the band they hand over in and their mean size; [param colors] the rock types' linear albedo. Single grains are drawn while a pixel covers under about a third of one, their mean once it covers more than one. [code]null[/code] maps turn it off.
 			</description>
 		</method>
+		<method name="load_scan_set">
+			<return type="int" />
+			<param index="0" name="dir" type="String" />
+			<param index="1" name="slots" type="PackedStringArray" default="PackedStringArray()" />
+			<param index="2" name="maps" type="String" default="&quot;&quot;" />
+			<description>
+				Fills the layers and overlay scans from a folder of scans described by its [code]scans.cfg[/code]: one section per slot (a layer name such as [code]rock[/code], or an overlay name such as [code]cliff[/code]) with [code]scan[/code] (the scan's folder and file prefix: [code]&lt;scan&gt;/&lt;scan&gt;_albedo.jpg[/code], [code]_normal.jpg[/code] (OpenGL), [code]_roughness.jpg[/code], [code]_height.jpg[/code]), [code]tile[/code] (metres one repeat covers), and optionally [code]maps[/code] (which of [code]anrh[/code] to load), [code]grey[/code] (keep only the albedo's luminance) and [code]normal[/code] (strength). The files are read directly, with mipmaps, no import. [param slots] limits it to those sections; [param maps] overrides every section's maps. Returns how many slots took a scan; warns when the folder or its manifest is missing, since every layer is then drawn without scans.
+			</description>
+		</method>
 		<method name="set_layer">
 			<return type="void" />
 			<param index="0" name="layer" type="int" enum="TerrainMaterial3D.Layer" />
 			<param index="1" name="value" type="TerrainMaterialLayer" />
 			<description>
 				Sets the layer for a surface. [code]null[/code] uses a plain default.
+			</description>
+		</method>
+		<method name="set_overlay">
+			<return type="void" />
+			<param index="0" name="overlay" type="int" enum="TerrainMaterial3D.Overlay" />
+			<param index="1" name="value" type="TerrainMaterialLayer" />
+			<description>
+				Sets an overlay scan: its textures replace the parent layer's detail where the overlay's mask says, height blended at the edge. Only its textures, tile size and normal strength are used: the parent layer keeps its colour and roughness. [code]null[/code] removes it.
 			</description>
 		</method>
 		<method name="update_shader">
@@ -75,11 +99,20 @@
 		<member name="bare_alluvium_color" type="Color" setter="set_bare_alluvium_color" getter="get_bare_alluvium_color" default="Color(0.6, 0.55, 0.49, 1)">
 			Colour of bare, dry alluvium (sRGB) where the climate leaves it bare of plants (see [member climate_bare_soil]).
 		</member>
+		<member name="bare_alluvium_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			The alluvium layer's bare patches (the climate's bare share): a cracked silt crust.
+		</member>
 		<member name="bare_soil_color" type="Color" setter="set_bare_soil_color" getter="get_bare_soil_color" default="Color(0.49, 0.4, 0.33, 1)">
 			Colour of bare, dry soil (sRGB) where the climate leaves it bare of plants (see [member climate_bare_soil]).
 		</member>
+		<member name="bare_soil_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			The soil layer's bare patches (the climate's bare share): dry crusted soil.
+		</member>
 		<member name="beach_height" type="float" setter="set_beach_height" getter="get_beach_height" default="2.5">
 			Height above [member sea_level] that sand reaches when there is no generator geology. With [member geology_enabled] and a [TerrainGenerator3D], sand follows the generator's beaches instead (and covers ground under the sea), so a low coastal plain behind a beach keeps its soil.
+		</member>
+		<member name="beach_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			The sand layer within a few metres of the sea (swash, berm, seabed); dunes inland keep the sand layer's own scan.
 		</member>
 		<member name="blend_depth" type="float" setter="set_blend_depth" getter="get_blend_depth" default="0.2">
 			Height-blend transition depth. Smaller gives sharper borders between layers.
@@ -92,6 +125,9 @@
 		</member>
 		<member name="cliff_slope" type="float" setter="set_cliff_slope" getter="get_cliff_slope" default="50.0">
 			Slope in degrees past which textures are mapped biplanar.
+		</member>
+		<member name="cured_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			The soil and alluvium cover cured to straw in summer-dry climates (the cured share), usually a grass scan loaded grey so the cured colour stays.
 		</member>
 		<member name="detail_code" type="String" setter="set_detail_code" getter="get_detail_code" default="&quot;&quot;">
 			Shader code that defines [code]terrain_detail_normal()[/code], usually [method TerrainGenerator3D.get_detail_shader_code]. Empty: no erosion detail.
@@ -114,6 +150,9 @@
 		<member name="far_start_from_vegetation" type="bool" setter="set_far_start_from_vegetation" getter="is_far_start_from_vegetation" default="true">
 			If [code]true[/code], the far blend ends where a streaming [VegetationField3D]'s placed plants end (the global shader parameter [code]vegetation_near_radius[/code]): it starts at that radius less [member far_fade]. With no field streaming it uses [member far_start].
 		</member>
+		<member name="cliff_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			The rock layer on faces past about 45 degrees: a face scan (beds and joints) instead of the ground scan seen from above.
+		</member>
 		<member name="cliff_self_shadow" type="bool" setter="set_cliff_self_shadow" getter="is_cliff_self_shadow" default="true">
 			If [code]true[/code], ledges of a [Landscape3D]'s [member Landscape3D.cliff_relief] shadow each other per pixel under the first directional light: a short march toward the sun through the same relief that bends the faces' normals. The shadow map holds the ledges only near the camera and too coarsely for half-metre steps; the march keeps their shadow lines sharp at any distance where the relief is wider than a pixel. Forward+ and Mobile; the path tracer traces the real shadows instead.
 		</member>
@@ -126,6 +165,9 @@
 		<member name="ground_deform_enabled" type="bool" setter="set_ground_deform_enabled" getter="is_ground_deform_enabled" default="true">
 			Take prints from a [GroundSurface3D] whose [member GroundSurface3D.material] is this material: the terrain sinks under the printed patch and freshly turned ground darkens (see [method BaseMaterial3D.get_ground_deform_shader_code]).
 		</member>
+		<member name="mud_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			Soil and alluvium turned by ruts, digs and prints ([method BaseMaterial3D.get_ground_deform_shader_code] exposed ground), with [member ground_deform_enabled].
+		</member>
 		<member name="rock_detail_enabled" type="bool" setter="set_rock_detail_enabled" getter="is_rock_detail_enabled" default="true">
 			If [code]true[/code], steep faces and scree get rock detail without textures: a height from 3D noise (joints, beds, pits) and scree stones over a gravel and fines matrix, turned into a normal by its surface gradient and filtered by the pixel's footprint so it does not alias. [member rock_detail_scale] sets its size.
 		</member>
@@ -134,6 +176,9 @@
 		</member>
 		<member name="rock_slope" type="float" setter="set_rock_slope" getter="get_rock_slope" default="40.0">
 			Slope in degrees past which rock shows when there is no geology. With the generator's geology, rock follows its maps, and faces past [member cliff_slope] are bare too.
+		</member>
+		<member name="rock_variant_scan" type="TerrainMaterialLayer" setter="set_overlay" getter="get_overlay">
+			A second rock scan in patches some 25 m across, so one scan does not repeat over a whole hillside.
 		</member>
 		<member name="salt_bloom" type="bool" setter="set_salt_bloom" getter="is_salt_bloom" default="true">
 			The sea spray's salt (WeatherMap3D [member WeatherMap3D.sea_spray]) dries to a white halite crust on the rock and scree of sea cliffs: patchy and grainy, kept on steep faces, washed off tops, and gone while the stone is wet.
@@ -193,6 +238,30 @@
 		</constant>
 		<constant name="LAYER_MAX" value="5" enum="Layer">
 			Number of layers.
+		</constant>
+		<constant name="OVERLAY_CLIFF" value="0" enum="Overlay">
+			Rock faces.
+		</constant>
+		<constant name="OVERLAY_ROCK_VARIANT" value="1" enum="Overlay">
+			A second rock scan in patches.
+		</constant>
+		<constant name="OVERLAY_CURED" value="2" enum="Overlay">
+			Cured (straw) cover on soil and alluvium.
+		</constant>
+		<constant name="OVERLAY_BARE_SOIL" value="3" enum="Overlay">
+			Bare soil patches.
+		</constant>
+		<constant name="OVERLAY_BARE_ALLUVIUM" value="4" enum="Overlay">
+			Bare alluvium patches.
+		</constant>
+		<constant name="OVERLAY_BEACH" value="5" enum="Overlay">
+			Beach sand.
+		</constant>
+		<constant name="OVERLAY_MUD" value="6" enum="Overlay">
+			Turned, muddy soil.
+		</constant>
+		<constant name="OVERLAY_MAX" value="7" enum="Overlay">
+			Number of overlay slots.
 		</constant>
 	</constants>
 </class>

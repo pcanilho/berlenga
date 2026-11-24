@@ -102,9 +102,22 @@ public:
 		LAYER_SAND,
 		LAYER_MAX,
 	};
+	// Scans laid over a layer's own where the shader's masks say (docs/ideas/scan-textures.md): the parent layer keeps
+	// its colour and roughness (the scan is detail only), only the detail changes.
+	enum Overlay {
+		OVERLAY_CLIFF, // rock faces past about 45 degrees: a face scan (beds, joints) for the ground scan seen from above
+		OVERLAY_ROCK_VARIANT, // a second rock scan in 25 m patches, so one scan does not repeat over a whole hillside
+		OVERLAY_CURED, // soil and alluvium cover cured to straw in summer-dry climates
+		OVERLAY_BARE_SOIL, // the climate's bare soil patches
+		OVERLAY_BARE_ALLUVIUM, // the climate's bare alluvium patches (silt crusts and cracks)
+		OVERLAY_BEACH, // sand the generator laid as beach, and the seabed
+		OVERLAY_MUD, // ground turned by ruts, digs and prints (GroundSurface3D's exposed soil)
+		OVERLAY_MAX,
+	};
 
 private:
 	Ref<TerrainMaterialLayer> layers[LAYER_MAX];
+	Ref<TerrainMaterialLayer> overlays[OVERLAY_MAX];
 	bool geology_enabled = true;
 	bool sand_granule_ripples = true; // granule ripples on the interdune lag
 	bool sand_dune_tone = true; // the sand's dune-scale colour (redder old sand, dark interdune flats, pale slip faces)
@@ -165,6 +178,12 @@ public:
 
 	void set_layer(Layer p_layer, const Ref<TerrainMaterialLayer> &p_value);
 	Ref<TerrainMaterialLayer> get_layer(Layer p_layer) const;
+	void set_overlay(Overlay p_overlay, const Ref<TerrainMaterialLayer> &p_value);
+	Ref<TerrainMaterialLayer> get_overlay(Overlay p_overlay) const;
+	// Fills layers and overlays from a folder of scans described by its scans.cfg (one section per slot: scan, tile,
+	// maps, grey, normal); returns how many slots took a scan, and warns when the folder or its manifest is missing.
+	// p_slots: only those sections (all when empty); p_maps: which maps to load ("anrh", the manifest's when empty).
+	int load_scan_set(const String &p_dir, const PackedStringArray &p_slots = PackedStringArray(), const String &p_maps = String());
 
 	void set_geology_enabled(bool p_enabled);
 	bool is_geology_enabled() const { return geology_enabled; }
@@ -243,3 +262,4 @@ public:
 };
 
 VARIANT_ENUM_CAST(TerrainMaterial3D::Layer);
+VARIANT_ENUM_CAST(TerrainMaterial3D::Overlay);
