@@ -268,6 +268,7 @@ private:
 	struct RainClimate {
 		bool on = false;
 		float precip = 0.0f; // mm a year at the cell (the climate's times the orographic factor)
+		float climate_precip = 0.0f; // the climate's own mm a year (read on the main thread)
 		float bare = 0.0f; // 0..1 of the soil bare of plants from the climate's dryness
 		float burn[9] = {}; // 0..1 bare from a recent fire, on a 3 x 3 grid over the cell (corners and middles)
 		Rect2 rect;
@@ -490,9 +491,11 @@ private:
 		LocalVector<Stone> stones;
 		LocalVector<CoarseGroup> groups;
 		LocalVector<uint32_t> missing; // shape libraries the placement asked for that are not built
+		LocalVector<Transform3D> holes; // cave holes the placement made, cut on the main thread (_apply_holes)
 		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
 	};
 	HashMap<Vector3i, CoarseJob *> coarse_jobs;
+	void _apply_holes(const LocalVector<Transform3D> &p_holes);
 	bool cell_threads = true;
 	Mutex library_lock; // libraries: workers look shapes up, the main thread adds them
 	bool _coarse_place(CoarseJob &r_job);
@@ -637,7 +640,7 @@ private:
 	RandomPCG fall_rng;
 	real_t _rockfall_air(const Vector3 &p_pos) const;
 	bool _find_stone(const Vector3 &p_origin, Cell *&r_cell, int &r_group, int &r_k);
-	bool _pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max, Vector3 &r_origin, uint64_t &r_key);
+	bool _pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max, Vector3 &r_origin, uint64_t &r_key, bool p_ledges = false);
 	void _update_rockfall(double p_delta);
 	void _update_process();
 
@@ -772,6 +775,7 @@ private:
 		TerrainGenerator3D *gen = nullptr;
 		HashMap<uint64_t, Vector<float>> records; // (library << 16 | variant) -> MultiMesh records
 		LocalVector<uint32_t> missing;
+		LocalVector<Transform3D> holes; // (as CoarseJob.holes)
 		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
 	};
 	HashMap<Vector3i, FarBlock> far_blocks;

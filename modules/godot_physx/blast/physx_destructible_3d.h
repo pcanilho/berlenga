@@ -272,11 +272,12 @@ public:
 	// breaks. Leaf debris always falls. An island is "anchored" when one of its
 	// chunks touches an anchored outer face of the intact mesh's bounds (local
 	// axes: left/right = -X/+X, bottom/top = -Y/+Y; the faces of the thickness,
-	// +-Z, never anchor).
+	// +-Z, anchor only with ANCHOR_BACK, which holds the -Z face).
 	enum Anchor {
 		ANCHOR_FRAMED, // held at the bottom, top, left or right edge: walls in a building, doors, windows
 		ANCHOR_GROUNDED, // held at the bottom only: freestanding walls, pillars, statues
 		ANCHOR_NONE, // static until the first break, then every island falls
+		ANCHOR_BACK, // held at the back (-Z) face only: cantilevers, balconies, rock ledges built into a wall or a bench
 	};
 	void set_anchor(Anchor p_anchor) { anchor = p_anchor; }
 	Anchor get_anchor() const { return anchor; }
@@ -347,6 +348,9 @@ public:
 	// just computed here so it's intrinsic to fracturing, not a separate
 	// demo-script concern layered on top.
 	int apply_radial_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius);
+	// Breaks every bond between chunks on opposite sides of a world plane (a crack or joint opening along it), then
+	// splits as apply_radial_damage does. Returns the pieces spawned.
+	int apply_plane_cut(const Plane &p_world_plane);
 
 	// For effects that restyle every piece, live and future (PhysXBurnable3D's char): the materials its chunks draw
 	// with (the asset's by slot, or material_override), a stand-in for one of them, and instance shader parameters.
@@ -481,6 +485,7 @@ private:
 	static constexpr uint8_t ANCHOR_FACE_RIGHT = 1 << 1; // +X
 	static constexpr uint8_t ANCHOR_FACE_BOTTOM = 1 << 2; // -Y
 	static constexpr uint8_t ANCHOR_FACE_TOP = 1 << 3; // +Y
+	static constexpr uint8_t ANCHOR_FACE_BACK = 1 << 4; // -Z
 	void _compute_chunk_faces();
 	// Per-chunk collision shapes, cooked once on first use and shared by every
 	// piece carrying that chunk -- hull points are in the asset frame, so one
@@ -627,6 +632,7 @@ private:
 	// shared so none of them has to repeat the other four.
 	void _apply_visibility_range(RenderingServer *p_rs, RID p_instance) const;
 	Vector3 _chunk_centroid_local(uint32_t p_chunk_index) const;
+	int _apply_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius, const Plane *p_cut);
 	void _free_all_pieces();
 	void _sync_transforms();
 	// dynamic-only, called every physics tick while still intact: reads the

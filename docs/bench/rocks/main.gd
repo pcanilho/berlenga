@@ -1157,6 +1157,8 @@ func _world() -> void:
 			_break_near(spot, land)
 		if args.has("fall"):
 			_fall_near(spot, land)
+		if args.has("ledge-fall"):
+			await _ledge_fall(rocks.get_stones(RockField3D.LAYER_CLIFF, Rect2(-800, -800, 1600, 1600)))
 		if args.has("live"):
 			_live_falls(spot, land)
 	if args.has("caves"):
@@ -1965,6 +1967,82 @@ func _rockfall_run(p_at: Vector3, p_radius: float, p_ticks: int, p_log: bool, p_
 		print("dust: %.1f kg of fines from %d impacts; Flow node %s, %.1f kg taken, %d bursts running" % [r["dust"], r["hits"], "yes" if dn else "none (engine without Flow)", dn.get_total_dust() if dn else 0.0, dn.get_active_sources() if dn else 0])
 	return r
 
+
+
+# A ledge slab fails as a cantilever (the test, and --ledge-fall with --world): the biggest slab that can fall.
+func _ledge_fall(cliff: Array) -> void:
+	# A ledge slab fails as a cantilever: cut at its root over the bench's edge, its back stays under the bench and
+	# the part out over the lip falls.
+	# (The biggest slabs first: one whose free part would start in the ground is refused, and the next is tried.)
+	var slabs := []
+	for st in cliff:
+		if int(st["family"]) == RockGenerator.FAMILY_LEDGE:
+			slabs.append(st)
+	slabs.sort_custom(func(a, b): return float(a["scale"]) > float(b["scale"]))
+	var slab: Dictionary = {}
+	var refused := 0
+	for st in slabs.slice(0, 40):
+		var p: Vector3 = st["position"]
+		var land0: Landscape3D = get_node("Landscape")
+		cam.position = p + Vector3(0, 20, 30)
+		land0.collision_enabled = true
+		land0.rebuild()
+		land0.load_all_heights()
+		rocks.collision_enabled = true
+		rocks.rebuild()
+		rocks.build_area(Rect2(p.x - 60, p.z - 60, 120, 120))
+		if rocks.trigger_rockfall(p, 0.3) != null:
+			rocks.restore_broken()
+			slab = st
+			break
+		refused += 1
+	print("ledge fall: %d of the biggest slabs refused (their free part would start in the ground)" % refused)
+	if not slab.is_empty():
+		var sp: Vector3 = slab["position"]
+		var land: Landscape3D = get_node("Landscape")
+		cam.position = sp + Vector3(0, 20, 30)
+		land.collision_enabled = true
+		land.rebuild()
+		land.load_all_heights()
+		rocks.collision_enabled = true
+		rocks.rebuild()
+		rocks.build_area(Rect2(sp.x - 60, sp.z - 60, 120, 120))
+		await get_tree().physics_frame
+		var sb: Basis = slab["basis"]
+		var fz := Vector3(sb.z.x, 0, sb.z.z).normalized()
+		for k in 4:
+			var q := sp + fz * (0.5 * k)
+			var hit := get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(q + Vector3(0, 40, 0), q - Vector3(0, 60, 0)))
+			var land_h: float = (get_node("Landscape") as Landscape3D).get_height(q)
+			print("  ledge ground %.1f m out: collision %s, heightfield %.2f, landscape %.2f, slab centre y %.2f" % [0.5 * k, ("%.2f" % hit["position"].y) if hit else "none", gen.get_height(q), land_h, sp.y])
+		var r := await _rockfall_run(sp, 0.3, 180, true, 180)
+		check(not r.is_empty(), "ledge fall: the slab at %s loosed" % sp)
+		if not r.is_empty():
+			var node: Node3D = r["node"]
+			var held := 0
+			var fell := 0
+			var under := 0
+			var drop := 0.0
+			for i in node.get_piece_count():
+				var c: Vector3 = node.get_piece_center(i)
+				var d := sp.y - c.y
+				if node.get_piece_linear_velocity(i).length() < 0.01 and absf(d) < 2.0 * float(slab["scale"]):
+					held += 1
+					continue
+				fell += 1
+				drop = maxf(drop, d)
+				# Under the ground: below the lowest ground 3 m round (beside a cliff the height at the very spot
+				# can be the face's top).
+				var low := gen.get_height(c)
+				for k in 8:
+					low = minf(low, gen.get_height(c + Vector3(cos(k * PI / 4.0), 0, sin(k * PI / 4.0)) * 3.0))
+				if c.y < low - 1.0:
+					under += 1
+				print("  fallen piece at %s, ground there %.1f, lowest 3 m round %.1f" % [c, gen.get_height(c), low])
+			print("ledge fall: %d pieces held under the bench, %d fell, deepest %.1f m down, %d under the ground" % [held, fell, drop, under])
+			# (Known, so live rockfall leaves ledges out: the falling part drops through the collision ground.)
+			check(held > 0 and fell > 0, "ledge fall: cracked at the root, %d held, %d fell" % [held, fell])
+			print("KNOWN ledge fall: %.1f m down, %d under the ground (should be 0)" % [drop, under])
 
 func _pieces_centre(node: Node) -> Vector3:
 	var c := Vector3.ZERO
@@ -2810,6 +2888,7 @@ func _test() -> void:
 			rocks.live_rockfall = false
 			rocks.rockfall.disconnect(cb)
 			check(live[0] > 0, "live_rockfall: %d falls by themselves in 6 frames" % live[0])
+		await _ledge_fall(cliff)
 	# 6. Ground detail (on by default; off above for speed): every size class on the shingle beach, placed on workers
 	# while streaming as on the main thread.
 	var shore_at := _densest(RockField3D.LAYER_SHORE)
