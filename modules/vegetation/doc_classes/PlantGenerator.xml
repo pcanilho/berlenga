@@ -103,7 +103,7 @@
 			<param index="1" name="textures" type="bool" default="true" />
 			<param index="2" name="season" type="Dictionary" default="{}" />
 			<description>
-				Flowering meadow grasses for a sward: Yorkshire fog ([constant PRESET_YORKSHIRE_FOG]) in loose drifts through open grassland, and over it the waist-high heads of the tall meadow in their own drifts: false oat-grass ([constant PRESET_FALSE_OAT_GRASS]), and meadow foxtail ([constant PRESET_MEADOW_FOXTAIL]) and tufted hair-grass ([constant PRESET_TUFTED_HAIR_GRASS]) on the damper ground (RULE_WETNESS), its heads by the [param season] (as [member season]): none before heading, purple-pink in flower, grey-pink in seed. The species' far colour takes the heads' tint while they stand (none outside the season). Species carry the meta [code]flowering_grass[/code]. Place them ahead of a field's own tall grass so the drifts claim their room.
+				Flowering meadow grasses for a sward: Yorkshire fog ([constant PRESET_YORKSHIRE_FOG]) in loose drifts through open grassland, and over it the waist-high heads of the tall meadow in their own drifts: false oat-grass ([constant PRESET_FALSE_OAT_GRASS]), and meadow foxtail ([constant PRESET_MEADOW_FOXTAIL]) and tufted hair-grass ([constant PRESET_TUFTED_HAIR_GRASS]) on the damper ground (RULE_WETNESS), and the tall flowers in their own drifts: ox-eye daisy ([constant PRESET_OX_EYE_DAISY]), meadow cranesbill ([constant PRESET_MEADOW_CRANESBILL]) and red campion ([constant PRESET_RED_CAMPION], also under part shade); heads by the [param season] (as [member season]): grasses none before heading, tinted in flower, straw in seed; flowers open by their own warmth. The species' far colour takes the heads' tint while they stand (none outside the season). Species carry the meta [code]flowering_grass[/code]. Place them ahead of a field's own tall grass so the drifts claim their room.
 			</description>
 		</method>
 		<method name="make_flood_wrack" qualifiers="static">
@@ -818,7 +818,16 @@
 		<constant name="PRESET_TUFTED_HAIR_GRASS" value="119" enum="Preset">
 			Tufted hair-grass (Deschampsia cespitosa): a dense dark tussock under culms 50 to 150 cm with a wide airy panicle of hair-thin branches, a silvery purple haze in flower, golden then straw in seed, standing through winter. Damp ground.
 		</constant>
-		<constant name="PRESET_MAX" value="120" enum="Preset">
+		<constant name="PRESET_OX_EYE_DAISY" value="120" enum="Preset">
+			Ox-eye daisy (Leucanthemum vulgare): stems 20 to 70 cm, single heads 25 to 50 mm of white rays round a yellow disc, May to September; heads turn out and up from the plant.
+		</constant>
+		<constant name="PRESET_MEADOW_CRANESBILL" value="121" enum="Preset">
+			Meadow cranesbill (Geranium pratense): stems 30 to 80 cm over deeply cut palmate leaves, pairs of violet-blue five-petalled saucers 25 to 40 mm, then beaked fruits, June to September.
+		</constant>
+		<constant name="PRESET_RED_CAMPION" value="122" enum="Preset">
+			Red campion (Silene dioica): stems 30 to 90 cm, loose forked clusters of rose-pink flowers 18 to 25 mm with five notched petals on dark reddish calyces, May to June. Tolerates part shade.
+		</constant>
+		<constant name="PRESET_MAX" value="123" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="GRAZE_CATTLE" value="0" enum="GrazeSet">

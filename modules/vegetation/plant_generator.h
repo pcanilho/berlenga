@@ -194,6 +194,9 @@ public:
 		PRESET_FALSE_OAT_GRASS, // Arrhenatherum elatius: the tall meadow's grass, culms 60 to 150 cm with a loose nodding shining panicle of large awned spikelets (June to September).
 		PRESET_MEADOW_FOXTAIL, // Alopecurus pratensis: culms 30 to 90 cm with a soft cylindrical spike, grey-green then purple with anthers (April to June).
 		PRESET_TUFTED_HAIR_GRASS, // Deschampsia cespitosa: a dense dark tussock under culms 50 to 150 cm with a wide airy panicle, silvery purple then golden straw into winter (damp ground).
+		PRESET_OX_EYE_DAISY, // Leucanthemum vulgare: stems 20 to 70 cm, single white-rayed heads 25 to 50 mm on a yellow disc (May to September).
+		PRESET_MEADOW_CRANESBILL, // Geranium pratense: stems 30 to 80 cm, pairs of violet-blue saucers 25 to 40 mm over palmate leaves; beaked fruits (June to September).
+		PRESET_RED_CAMPION, // Silene dioica: stems 30 to 90 cm, loose clusters of rose-pink notched flowers 18 to 25 mm on reddish calyces (May to June).
 		PRESET_MAX,
 	};
 
@@ -327,6 +330,10 @@ private:
 	void _build_meadow_foxtail();
 	void _build_tufted_hair_grass();
 	bool _heading() const;
+	void _build_ox_eye_daisy();
+	void _build_meadow_cranesbill();
+	void _build_red_campion();
+	LocalVector<Transform3D> _tall_herb_stem(const Transform3D &p_base, float p_len, float p_r0, int p_leaves, bool p_opposite, const Leaf &p_leaf, int p_heads, float p_stalk);
 	void _add_spikelet(const Vector3 &p_at, const Vector3 &p_dir, const Vector3 &p_side, float p_length, float p_width, const Color &p_tint);
 	void _build_dry_grass();
 	void _build_leaf_litter();

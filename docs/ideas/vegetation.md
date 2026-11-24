@@ -2248,6 +2248,19 @@ Flora of the British Isles (3rd ed. 2010), added to make_flowering_grasses after
 - Cost: 8 to 25k triangles a plant (spikelets as glume pairs, the fog's technique); plants bench checks heights, stages
   and the 60k cap.
 
+## Tall meadow flowers (same ask; Paulo picked "grasses first, then tall forbs")
+The same MG1 hay meadow carries its colour in a few tall forbs standing among the heads (Rodwell 1992). Three, sizes
+from Stace (2010), added to make_flowering_grasses after the grasses, each in its own drifts:
+- Ox-eye daisy (PRESET_OX_EYE_DAISY): stems 20 to 70 cm, single heads 25 to 50 mm, 15 to 25 white rays on a yellow
+  disc; May to September. Open, drier ground.
+- Meadow cranesbill (PRESET_MEADOW_CRANESBILL): stems 30 to 80 cm, palmate leaves, paired violet-blue saucers 25 to
+  40 mm, beaked fruits after; June to September.
+- Red campion (PRESET_RED_CAMPION): stems 30 to 90 cm, forked clusters of rose-pink notched flowers 18 to 25 mm on
+  dark calyces; May to June. Takes part shade (hedge and wood edges), so its drifts run to shade 0.65.
+- Flowers face outward and up from the plant (heliotropic faces of meadow herbs read from the side, not edge-on).
+- Drought: ox-eye and cranesbill brown at 0.45 of the grass cure, campion 0.75 (shallower roots; an estimate).
+- Cost: 2 to 9k triangles a plant; plants bench checks height, flowering month, March bare and the 40k cap.
+
 ## Thin snow on the sward (GrassField3D.get_snow_sward_shader_code)
 The scene's burial scout (valley, 10 Jan, about 1.6 cm of fresh snow) left the far hills green: the terrain laid its
 snow, but the blades and the far shell drew the green sward over it, and the blades only whitened below the snow's
