@@ -32,6 +32,7 @@
 
 #include "modules/terrain_deform/landscape_3d.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
+#include "modules/terrain_deform/world_cache.h"
 #include "modules/weather/weather_map_3d.h"
 #include "modules/world/world_contracts.h"
 #include "modules/world/world_walker_steps.h"
@@ -6928,6 +6929,41 @@ void RockField3D::_obstacle_place_job(void *p_job, uint32_t p_index) {
 	rf_job_generator = nullptr;
 }
 
+static void rf_key_add(void *p_user, const void *p_data, size_t p_size) {
+	static_cast<WorldCacheKey *>(p_user)->bytes(p_data, p_size);
+}
+
+bool RockField3D::_obstacle_cache_base(const TerrainGenerator3D *p_gen, String &r_base) const {
+	const WorldGround *wg = WorldContracts::ground();
+	if (!p_gen || (wg && wg->get_script_instance())) {
+		return false; // a script stub answers relief_at: nothing to key it by
+	}
+	WorldCacheKey key("rocks_base");
+	if (!key.object(this) || !key.object(p_gen)) {
+		return false;
+	}
+	p_gen->hash_result([&](const void *p_data, size_t p_size) { key.bytes(p_data, p_size); });
+	if (const LocalVector<WorldReliefProvider *> *rel = WorldContracts::relief_providers_list()) {
+		key.value(uint64_t(rel->size()));
+		for (const WorldReliefProvider *rp : *rel) {
+			const Object *o = rp->contract_relief_object();
+			if (!o || !key.object(o)) {
+				return false;
+			}
+			rp->contract_relief_state(&rf_key_add, &key);
+		}
+	}
+	r_base = key.finish();
+	return true;
+}
+
+// A zone of obstacle cells in the world cache: 512 m square per layer.
+static Vector3i rf_obstacle_zone(const Vector3i &p_cell, real_t p_cell_size) {
+	const int per = MAX(1, int(Math::round(512.0 / p_cell_size)));
+	auto fdiv = [per](int a) { return a >= 0 ? a / per : -((-a + per - 1) / per); };
+	return Vector3i(p_cell.x, fdiv(p_cell.y), fdiv(p_cell.z));
+}
+
 PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_size) {
 	// The cells not cached yet: placed on the worker threads in batches (a whole-world query places thousands).
 	LocalVector<Vector3i> missing;
@@ -6949,6 +6985,70 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 	}
 	const uint32_t BATCH = 512;
 	TerrainGenerator3D *gen = _get_generator();
+	// The world cache (world_cache.h): each 512 m zone's missing cells, loaded when the same cells were placed from
+	// the same inputs before (the same bytes), else placed below and stored.
+	String cache_base;
+	HashMap<Vector3i, LocalVector<Vector3i>> zones; // zone: its missing cells, in order
+	HashMap<Vector3i, String> zone_names;
+	if (!missing.is_empty() && WorldCache::is_enabled() && _obstacle_cache_base(gen, cache_base)) {
+		for (const Vector3i &k : missing) {
+			zones[rf_obstacle_zone(k, _cell_size(Layer(k.x)))].push_back(k);
+		}
+		LocalVector<Vector3i> rest;
+		for (const KeyValue<Vector3i, LocalVector<Vector3i>> &z : zones) {
+			WorldCacheKey key("rocks");
+			const CharString b = cache_base.utf8();
+			key.bytes(b.get_data(), b.length());
+			key.value(z.key);
+			key.array(z.value.ptr(), z.value.size());
+			const String name = key.finish();
+			Vector<uint8_t> data;
+			bool ok = WorldCache::load_any("rocks", name, data);
+			LocalVector<ObstacleCell> got;
+			if (ok) {
+				// Per cell: count, then the obstacles, sizes and heights.
+				const uint8_t *r = data.ptr();
+				const uint8_t *end = r + data.size();
+				for (uint32_t c = 0; c < z.value.size() && ok; c++) {
+					uint32_t n = 0;
+					if (end - r < int64_t(sizeof(n))) {
+						ok = false;
+						break;
+					}
+					memcpy(&n, r, sizeof(n));
+					r += sizeof(n);
+					const size_t need = size_t(n) * (sizeof(Vector4) + 2 * sizeof(float));
+					if (size_t(end - r) < need) {
+						ok = false;
+						break;
+					}
+					ObstacleCell cell;
+					cell.obstacles.resize(n);
+					cell.sizes.resize(n);
+					cell.heights.resize(n);
+					memcpy(cell.obstacles.ptr(), r, sizeof(Vector4) * n);
+					r += sizeof(Vector4) * n;
+					memcpy(cell.sizes.ptr(), r, sizeof(float) * n);
+					r += sizeof(float) * n;
+					memcpy(cell.heights.ptr(), r, sizeof(float) * n);
+					r += sizeof(float) * n;
+					got.push_back(std::move(cell));
+				}
+				ok = ok && r == end;
+			}
+			if (ok) {
+				for (uint32_t c = 0; c < z.value.size(); c++) {
+					obstacle_cache.insert(z.value[c], std::move(got[c]));
+				}
+			} else {
+				zone_names.insert(z.key, name);
+				for (const Vector3i &k : z.value) {
+					rest.push_back(k);
+				}
+			}
+		}
+		missing = std::move(rest);
+	}
 	if (!missing.is_empty()) {
 		_prepare_rivers(); // read by the workers: built here, on the main thread, before any of them start
 	}
@@ -6999,6 +7099,24 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 			}
 			obstacle_cache.insert(missing[b0 + i], std::move(cell));
 		}
+	}
+	for (const KeyValue<Vector3i, String> &zn : zone_names) {
+		Vector<uint8_t> data;
+		for (const Vector3i &k : zones[zn.key]) {
+			const ObstacleCell &cell = obstacle_cache[k];
+			const uint32_t n = cell.obstacles.size();
+			const int64_t at = data.size();
+			data.resize(at + sizeof(n) + size_t(n) * (sizeof(Vector4) + 2 * sizeof(float)));
+			uint8_t *w = data.ptrw() + at;
+			memcpy(w, &n, sizeof(n));
+			w += sizeof(n);
+			memcpy(w, cell.obstacles.ptr(), sizeof(Vector4) * n);
+			w += sizeof(Vector4) * n;
+			memcpy(w, cell.sizes.ptr(), sizeof(float) * n);
+			w += sizeof(float) * n;
+			memcpy(w, cell.heights.ptr(), sizeof(float) * n);
+		}
+		WorldCache::store("rocks", zn.value, data.ptr(), data.size());
 	}
 	PackedVector4Array out;
 	for (int l = 0; l < LAYER_MAX; l++) {

@@ -42,6 +42,7 @@
 
 #include "core/string/ustring.h"
 #include "core/templates/local_vector.h"
+#include "core/templates/vector.h"
 
 #include <cstdint>
 
@@ -62,6 +63,9 @@ public:
 		value(uint64_t(p_count));
 		bytes(p_data, sizeof(T) * p_count);
 	}
+	// Every stored property of p_object, its resources' too (marshalled as a scene file stores them). False when they
+	// cannot be marshalled: the caller then computes and does not cache.
+	bool object(const class Object *p_object);
 	// The stage's file name for everything added so far. Call once.
 	String finish();
 
@@ -73,6 +77,8 @@ public:
 	static bool is_enabled();
 	// The bytes stored under p_name for p_stage, when they are there and exactly p_size long.
 	static bool load(const char *p_stage, const String &p_name, uint8_t *r_data, size_t p_size);
+	// The same for a piece of any length.
+	static bool load_any(const char *p_stage, const String &p_name, Vector<uint8_t> &r_data);
 	static void store(const char *p_stage, const String &p_name, const uint8_t *p_data, size_t p_size);
 	// Counters for the log: pieces loaded and stored since the start.
 	static uint64_t get_loaded();

@@ -597,6 +597,70 @@ protected:
 	static void _bind_methods();
 
 public:
+	// The result as stages after the generator read it, for a cache key (world_cache.h): p_add(data, bytes) is called
+	// for each piece in order. The result is a function of the stored properties (hashed by the caller) and the nodes
+	// they point at; those nodes act through the ground, water and rivers, and runtime edits (touch-ups, holes) through
+	// the ground and the hole list, so all of those go in too.
+	template <typename F>
+	void hash_result(const F &p_add) const {
+		const int32_t dims[] = { nx, ny };
+		p_add(dims, sizeof(dims));
+		const Rect2 rr = get_result_rect();
+		const double place[] = { double(rr.position.x), double(rr.position.y), double(rr.size.x), double(rr.size.y), double(cell_size) };
+		p_add(place, sizeof(place));
+		auto grid = [&](const auto &p_v) {
+			const uint64_t n = p_v.size();
+			p_add(&n, sizeof(n));
+			p_add(p_v.ptr(), sizeof(p_v[0]) * n);
+		};
+		grid(heights);
+		grid(heights_generated);
+		grid(drainage);
+		grid(sediment);
+		grid(alluvium_reach);
+		grid(soil);
+		grid(rock);
+		grid(talus);
+		grid(scree_sorting);
+		grid(beach);
+		grid(coast_exposure);
+		grid(hardness);
+		grid(receivers);
+		grid(channel_area);
+		grid(water_body);
+		grid(water_depth);
+		grid(lake_rim);
+		grid(lake_rim_weight);
+		grid(scree_cover);
+		grid(till_cover);
+		grid(channel_of_cell);
+		grid(glacial_ice);
+		grid(touch_mask);
+		grid(touch_flat);
+		grid(tile_delta);
+		grid(tile_flow);
+		grid(tile_deposit);
+		grid(dune_sand);
+		grid(dune_plants);
+		grid(dune_cover);
+		grid(sea_sand);
+		grid(sea_cover);
+		for (const Channel &c : channels) {
+			grid(c.points);
+			grid(c.bed);
+			grid(c.dep);
+			grid(c.braid);
+			grid(c.stage);
+		}
+		for (const FallLip &l : lips) {
+			const real_t v[] = { l.origin.x, l.origin.y, l.top.x, l.top.y, l.run, l.h_top, l.h_bottom, l.half_width, real_t(l.notch ? 1 : 0) };
+			p_add(v, sizeof(v));
+		}
+		for (const Hole &h : holes) {
+			p_add(&h.box, sizeof(h.box));
+		}
+	}
+
 	void set_size(const Vector2 &p_size);
 	Vector2 get_size() const { return size; }
 	void set_cell_size(real_t p_size);

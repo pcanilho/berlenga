@@ -286,6 +286,8 @@ public:
 	void set_bank_relief(real_t p_metres);
 	real_t get_bank_relief() const { return bank_relief; }
 	Vector2 contract_relief_at(const Vector3 &p_position) const override;
+	const Object *contract_relief_object() const override { return this; }
+	void contract_relief_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const override;
 	Vector3 get_cliff_point(const Vector3 &p_global_position) const;
 	void set_material(const Ref<Material> &p_material);
 	Ref<Material> get_material() const { return material; }

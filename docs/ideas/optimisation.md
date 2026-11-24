@@ -538,4 +538,14 @@ Proof on the landscape bench, empty cache then a second launch: the erosion outp
 dune outputs (sand, plants) hash the same both times, as do the logged sand volume and height change. 82 pieces,
 57 MB. Generation 79.6 s to 13.5 s, dunes 53.3 s to 1.3 s: about 2 min off each launch after the first.
 
-Next: rock obstacle cells (148 s) and the snow climate (31 s).
+Rock obstacle cells (built): `RockField3D.get_obstacles` keeps its cells by 512 m zone per layer. The key holds
+this field's and the generator's stored properties (marshalled as a scene stores them), the generator's result
+(`TerrainGenerator3D::hash_result`: ground, water, rivers, sediment, sand, touch-up masks, holes) and each relief
+provider's properties and heights (`WorldReliefProvider::contract_relief_object/state`, Landscape3D). A script ground
+stub or a relief provider without a key turns the cache off for that query. A terrain change misses every rock zone,
+since stones sample the ground everywhere. Proof: the obstacles' hash (1,167,958 stones) and the rest of the scene's
+log match cold and warm; 129 s to 0.5 s. The warm run builds fewer shape libraries during setup (only those the
+drawn cells ask for), which only saves time and memory.
+
+Snow climate (31 s): not cached. Its bake reads the fire, frozen ground, obstacle lee and salt contracts at every
+step, so a sound key would need every one of those systems' state.

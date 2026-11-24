@@ -36,6 +36,8 @@
 #include "core/io/compression.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
+#include "core/io/marshalls.h"
+#include "core/object/object.h"
 #include "core/os/mutex.h"
 #include "core/os/os.h"
 #include "core/os/thread.h"
@@ -109,6 +111,25 @@ void WorldCacheKey::bytes(const void *p_data, size_t p_size) {
 	}
 }
 
+bool WorldCacheKey::object(const Object *p_object) {
+	if (!p_object) {
+		value(uint8_t(0));
+		return true;
+	}
+	const Variant v(const_cast<Object *>(p_object));
+	int len = 0;
+	if (encode_variant(v, nullptr, len, true) != OK || len <= 0) {
+		return false;
+	}
+	Vector<uint8_t> buf;
+	buf.resize(len);
+	if (encode_variant(v, buf.ptrw(), len, true) != OK) {
+		return false;
+	}
+	array(buf.ptr(), buf.size());
+	return true;
+}
+
 String WorldCacheKey::finish() {
 	unsigned char hash[32];
 	static_cast<CryptoCore::SHA256Context *>(ctx)->finish(hash);
@@ -120,30 +141,53 @@ bool WorldCache::is_enabled() {
 	return enabled;
 }
 
-bool WorldCache::load(const char *p_stage, const String &p_name, uint8_t *r_data, size_t p_size) {
-	if (!is_enabled()) {
-		return false;
-	}
+namespace {
+
+// The piece's header and packed bytes; false when it is missing, foreign or short.
+bool read_piece(const char *p_stage, const String &p_name, uint64_t &r_raw, Vector<uint8_t> &r_packed) {
 	Ref<FileAccess> f = FileAccess::open(piece_path(p_stage, p_name), FileAccess::READ);
 	if (f.is_null() || f->get_length() < HEADER_SIZE || f->get_32() != FILE_MAGIC) {
 		return false;
 	}
-	const uint64_t raw = f->get_64();
+	r_raw = f->get_64();
 	const uint32_t packed = f->get_32();
-	if (raw != p_size || packed != f->get_length() - HEADER_SIZE) {
+	if (packed != f->get_length() - HEADER_SIZE || (packed == 0) != (r_raw == 0)) {
 		return false;
 	}
 	f->get_32(); // reserved
-	Vector<uint8_t> src;
-	src.resize(packed);
-	if (f->get_buffer(src.ptrw(), packed) != packed) {
+	r_packed.resize(packed);
+	return f->get_buffer(r_packed.ptrw(), packed) == packed;
+}
+
+} // namespace
+
+bool WorldCache::load(const char *p_stage, const String &p_name, uint8_t *r_data, size_t p_size) {
+	if (!is_enabled()) {
 		return false;
 	}
-	if (p_size == 0) {
-		loaded_count.increment();
-		return true;
+	uint64_t raw = 0;
+	Vector<uint8_t> src;
+	if (!read_piece(p_stage, p_name, raw, src) || raw != p_size) {
+		return false;
 	}
-	if (Compression::decompress(r_data, int64_t(p_size), src.ptr(), packed, Compression::MODE_ZSTD) != int64_t(p_size)) {
+	if (p_size > 0 && Compression::decompress(r_data, int64_t(p_size), src.ptr(), src.size(), Compression::MODE_ZSTD) != int64_t(p_size)) {
+		return false;
+	}
+	loaded_count.increment();
+	return true;
+}
+
+bool WorldCache::load_any(const char *p_stage, const String &p_name, Vector<uint8_t> &r_data) {
+	if (!is_enabled()) {
+		return false;
+	}
+	uint64_t raw = 0;
+	Vector<uint8_t> src;
+	if (!read_piece(p_stage, p_name, raw, src) || raw > (uint64_t(1) << 31)) {
+		return false;
+	}
+	r_data.resize(int64_t(raw));
+	if (raw > 0 && Compression::decompress(r_data.ptrw(), int64_t(raw), src.ptr(), src.size(), Compression::MODE_ZSTD) != int64_t(raw)) {
 		return false;
 	}
 	loaded_count.increment();
