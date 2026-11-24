@@ -4324,6 +4324,10 @@ func _build_camera() -> void:
 				var lout: Vector3 = lpick["out"]
 				lout.y = 0.0
 				lout = lout.normalized()
+				# Out from the face: the side where the ground falls away (below the lip), not into the hill.
+				var lbk := float(args.get("ledge-back", "22"))
+				if height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk) > height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk):
+					lout = -lout
 				var along := lout.cross(Vector3.UP).normalized()
 				var lc := lpos + lout * float(args.get("ledge-back", "22")) + along * float(args.get("ledge-side", "9"))
 				lc.y = maxf(height_at(lc.x, lc.z) + 1.7, lpos.y + float(args.get("ledge-up", "-2")))
