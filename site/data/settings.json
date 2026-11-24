@@ -4672,6 +4672,17 @@
    "topic": ""
   },
   {
+   "name": "Sky light under clouds",
+   "settings": [
+    "WeatherMap3D.cloud_sky_occlusion"
+   ],
+   "note": "",
+   "what": "surfaces under thick cloud lose the sky light the cloud hides, matching in raster and path tracing.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
    "name": "Sun projector",
    "settings": [
     "light_projector",
