@@ -147,6 +147,7 @@ public:
 				uint32_t material_debug_mode : 5; // See material_debug_mode_from_environment().
 				uint32_t volumetric_fog_sampling : 2; // RSE::EnvironmentVolumetricFogSampling.
 				uint32_t material_feedback : 1; // Texture streaming: write the sampled mips (TextureStreaming).
+				uint32_t camera_cutout_off : 1; // The camera cut-out cannot reach this draw (CAMERA_CUTOUT_REACH false).
 			};
 		};
 
@@ -291,6 +292,8 @@ public:
 		// The only discards are BaseMaterial3D's camera cut-out, which never applies in shadow passes: shadows can
 		// use the shared shadow material, the camera's depth prepass keeps the material's own shader.
 		bool discard_only_camera_cutout = false;
+		// The shader has the camera cut-out (BaseMaterial3D camera_cutout, get_camera_cutout_functions_code()).
+		bool has_camera_cutout = false;
 		bool uses_roughness = false;
 		bool uses_normal = false;
 		bool uses_tangent = false;

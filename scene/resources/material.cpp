@@ -1182,6 +1182,40 @@ float snow_cover_weight(float p_cover, float p_max_slope, vec3 p_geo_normal, vec
 	return hold * max(smoothstep(1.0 - 1.2 * cover, 1.2 - 1.2 * cover, flat_share), smoothstep(0.9, 1.0, cover));
 }
 
+// The same at a point (p_pos, world) on a face whose large-scale normal is p_face_normal (world: the heightfield's
+// own, where relief displaced the mesh into ledges and the mesh normal is a tread's). On steep ground (rock faces, whose ledges and bed tops are the flattest facets)
+// thin snow does not line every ledge end to end: wind scours the exposed lips and loads the lee, and a ledge holds
+// it only where it is broad enough, so it lies in broken patches a few metres long that differ from bed to bed
+// (Mott et al. 2010, small-scale snow on steep rock; Sommer et al. 2015, snow on steep alpine faces). A value noise
+// stretched along the face (6 m across, 2.5 m up) sets which patches hold; they fill as the cover grows. Gentle ground (the face normal within 23 degrees of up) is as before.
+float snow_patch_noise(vec3 p_p) {
+	vec3 i = floor(p_p);
+	vec3 f = fract(p_p);
+	f = f * f * (3.0 - 2.0 * f);
+	float r[8];
+	for (int k = 0; k < 8; k++) {
+		vec3 c = i + vec3(float(k & 1), float((k >> 1) & 1), float((k >> 2) & 1));
+		r[k] = fract(sin(dot(c, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+	}
+	return mix(mix(mix(r[0], r[1], f.x), mix(r[2], r[3], f.x), f.y), mix(mix(r[4], r[5], f.x), mix(r[6], r[7], f.x), f.y), f.z);
+}
+
+float snow_cover_weight(float p_cover, float p_max_slope, vec3 p_geo_normal, vec3 p_normal, vec3 p_pos, vec3 p_face_normal) {
+	float w = snow_cover_weight(p_cover, p_max_slope, p_geo_normal, p_normal);
+	float steep = 1.0 - smoothstep(0.8, 0.92, p_face_normal.y);
+	if (steep <= 0.0 || w <= 0.0) {
+		return w;
+	}
+	float cover = clamp(p_cover, 0.0, 1.0);
+	float v = 0.65 * snow_patch_noise(vec3(p_pos.x / 6.0, p_pos.y / 2.5, p_pos.z / 6.0)) + 0.35 * snow_patch_noise(vec3(p_pos.x / 2.0, p_pos.y / 1.2, p_pos.z / 2.0) + 31.0);
+	// Held where the noise is over 1.05 - 0.6 cover: a few patches at half cover, about two thirds of the ledges'
+	// length under a full cover (the snow that slides off a face is what loads its ledges, but the wind scours the
+	// lips of a face whatever the season: a bedded face under deep snow is lined, not ruled).
+	float bare = 1.05 - 0.6 * cover;
+	float patch = smoothstep(bare - 0.05, bare + 0.05, v);
+	return w * mix(1.0, patch, steep);
+}
+
 // Snow over a surface: albedo from the pack's age, ice F0 0.018 (specular 0.335, as F0 = 0.16 specular squared),
 // rough when dry and smoother wet.
 void snow_cover_apply(float p_snow, float p_albedo, float p_wet, inout vec3 r_albedo, inout float r_roughness, inout float r_metallic, inout float r_specular) {
@@ -1348,8 +1382,10 @@ float camera_cutout_weight(vec3 p_world, vec3 p_target, vec3 p_axis, float p_rad
 }
 
 bool camera_cutout_discard(vec3 p_world, mat4 p_inv_view, mat4 p_projection, vec2 p_frag) {
-	if (IN_PATH_TRACER) {
-		return false; // the path tracer's camera rays start past the cut (raygen); its hit shaders never cut
+	if (IN_PATH_TRACER || !CAMERA_CUTOUT_REACH) {
+		// The path tracer's camera rays start past the cut (raygen), its hit shaders never cut; and a draw the cut
+		// cannot reach compiles the discard out (CAMERA_CUTOUT_REACH, a pipeline constant), keeping early depth tests.
+		return false;
 	}
 	vec3 target = camera_cutout.xyz;
 	vec3 axis = p_projection[3][3] == 1.0 ? -p_inv_view[2].xyz : normalize(target - p_inv_view[3].xyz);

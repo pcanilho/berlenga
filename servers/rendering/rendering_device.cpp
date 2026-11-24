@@ -9203,6 +9203,18 @@ uint64_t RenderingDevice::get_memory_usage(MemoryType p_type) const {
 		case MEMORY_TOTAL: {
 			return driver->get_total_memory_used();
 		}
+		case MEMORY_ACCELERATION_STRUCTURES: {
+			// Summed on demand: a report, not a per-frame counter.
+			const LocalVector<RID> owned = acceleration_structure_owner.get_owned_list();
+			uint64_t total = 0;
+			for (const RID &rid : owned) {
+				const AccelerationStructure *as = const_cast<RenderingDevice *>(this)->acceleration_structure_owner.get_or_null(rid);
+				if (as && as->driver_id) {
+					total += driver->acceleration_structure_get_size_bytes(as->driver_id);
+				}
+			}
+			return total;
+		}
 		default: {
 			DEV_ASSERT(false);
 			return 0;
@@ -11065,6 +11077,7 @@ void RenderingDevice::_bind_methods() {
 	BIND_ENUM_CONSTANT(MEMORY_TEXTURES);
 	BIND_ENUM_CONSTANT(MEMORY_BUFFERS);
 	BIND_ENUM_CONSTANT(MEMORY_TOTAL);
+	BIND_ENUM_CONSTANT(MEMORY_ACCELERATION_STRUCTURES);
 
 	BIND_CONSTANT(INVALID_ID);
 	BIND_CONSTANT(INVALID_FORMAT_ID);

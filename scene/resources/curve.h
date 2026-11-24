@@ -298,11 +298,18 @@ class Curve3D : public Resource {
 	mutable PackedVector3Array baked_forward_vector_cache;
 	mutable Vector<real_t> baked_dist_cache;
 	mutable real_t baked_max_ofs = 0.0;
+	// Bounds of each run of CLOSEST_BLOCK baked segments, so get_closest_offset() skips the runs that cannot hold the
+	// nearest point. Empty when the curve is short or a baked interval is not positive (the plain loop runs).
+	static constexpr int CLOSEST_BLOCK = 16;
+	mutable Vector<AABB> baked_block_aabb;
+	mutable Vector<AABB> baked_super_aabb; // Bounds of each CLOSEST_BLOCK blocks.
+	mutable real_t baked_block_extent = 0.0; // Largest absolute baked coordinate, for the rounding margin.
 
 	void mark_dirty();
 
 	static Vector3 _calculate_tangent(const Vector3 &p_begin, const Vector3 &p_control_1, const Vector3 &p_control_2, const Vector3 &p_end, const real_t p_t);
 	void _bake() const;
+	void _bake_closest_blocks() const;
 
 	struct Interval {
 		int idx;

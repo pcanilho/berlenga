@@ -40,6 +40,10 @@
 #include "modules/weather/weather_map_3d.h"
 
 #include "core/object/class_db.h"
+#include "core/object/worker_thread_pool.h"
+#include "core/templates/safe_refcount.h"
+#include "core/os/os.h"
+#include "servers/rendering/rendering_server.h"
 #include "scene/resources/3d/importer_mesh.h"
 
 static const float GOLDEN_ANGLE = 2.39996323f; // 137.5 degrees, Vogel (1979).
@@ -1365,7 +1369,7 @@ void PlantGenerator::_build_fern() {
 				p += f.get_column(2) * (length / segs);
 			}
 		}
-		_add_stem(start, length, 0.002f, 0.0008f, arch, segs, 0.0f);
+		(void)_add_stem(start, length, 0.002f, 0.0008f, arch, segs, 0.0f);
 		const int pinnae = int(_rand(14.0f, 22.0f));
 		const float pinna_grow = p_unfurl * Math::sqrt(p_unfurl);
 		for (int k = 0; k < pinnae; k++) {
@@ -1648,7 +1652,7 @@ void PlantGenerator::_build_nettle() {
 		const float len = _rand(0.4f, 0.85f);
 		const float bend = _rand(-0.2f, 0.2f);
 		const LocalVector<Transform3D> frames = _stem_frames(base, len, bend, 10);
-		_add_stem(base, len, 0.0032f, 0.0016f, bend, 10, 0.0f);
+		(void)_add_stem(base, len, 0.0032f, 0.0016f, bend, 10, 0.0f);
 		const int nodes = int(_rand(6.0f, 10.0f));
 		float spin = _rand(0.0f, Math::TAU);
 		for (int k = 0; k < nodes; k++) {
@@ -1791,7 +1795,7 @@ void PlantGenerator::_build_yarrow() {
 	auto feather = [&](const Transform3D &p_base, float p_length, float p_wind, float p_droop) {
 		const int segs = 6;
 		const LocalVector<Transform3D> fr = _stem_frames(p_base, p_length, p_droop, segs);
-		_add_stem(p_base, p_length, 0.0009f, 0.0004f, p_droop, segs, p_wind);
+		(void)_add_stem(p_base, p_length, 0.0009f, 0.0004f, p_droop, segs, p_wind);
 		const int pinnae = int(p_length / 0.005f);
 		for (int k = 0; k < pinnae; k++) {
 			const float s = 0.1f + 0.88f * float(k) / MAX(pinnae - 1, 1);
@@ -1890,7 +1894,7 @@ void PlantGenerator::_build_dock() {
 	const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.45f, 1.56f));
 	const float len = _rand(0.5f, 0.8f);
 	const LocalVector<Transform3D> frames = _stem_frames(base, len, 0.0f, 10);
-	_add_stem(base, len, 0.0045f, 0.002f, 0.0f, 10, 0.0f, SURFACE_CENTRE);
+	(void)_add_stem(base, len, 0.0045f, 0.002f, 0.0f, 10, 0.0f, SURFACE_CENTRE);
 	Leaf seed;
 	seed.shape = LEAF_ROUND;
 	seed.length = 0.004f;
@@ -1926,7 +1930,7 @@ void PlantGenerator::_build_dock() {
 		at.basis = organ_frame(at.basis.get_column(2) + radial * 0.5f, Vector3(0, 1, 0));
 		const float bl = _rand(0.1f, 0.2f);
 		const LocalVector<Transform3D> bf = _stem_frames(at, bl, -0.2f, 4);
-		_add_stem(at, bl, 0.0018f, 0.0012f, -0.2f, 4, 0.6f, SURFACE_CENTRE);
+		(void)_add_stem(at, bl, 0.0018f, 0.0012f, -0.2f, 4, 0.6f, SURFACE_CENTRE);
 		whorls(bf, 0.15f, 1.0f, 0.8f);
 	}
 }
@@ -1975,7 +1979,7 @@ void PlantGenerator::_build_timothy() {
 	for (int c = 0; c < culms; c++) {
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.38f, 1.54f));
 		const Transform3D top = _add_stem(base, _rand(0.45f, 0.8f), 0.0016f, 0.0012f, _rand(-0.15f, 0.15f), 9, 0.0f);
-		_add_stem(top, _rand(0.05f, 0.1f), 0.0032f, 0.0026f, 0.0f, 3, 1.0f, SURFACE_CENTRE);
+		(void)_add_stem(top, _rand(0.05f, 0.1f), 0.0032f, 0.0026f, 0.0f, 3, 1.0f, SURFACE_CENTRE);
 	}
 }
 
@@ -2050,7 +2054,7 @@ void PlantGenerator::_build_leaf_litter() {
 		const Transform3D e = _add_stem(b, _rand(0.06f, 0.18f), 0.0025f, 0.0012f, _rand(-0.3f, 0.3f), 3, 0.05f);
 		if (rng.randf() < 0.6f) {
 			Transform3D side(organ_frame(e.basis.get_column(2) + e.basis.get_column(0) * 0.7f, Vector3(0, 1, 0)), b.origin.lerp(e.origin, 0.6f));
-			_add_stem(side, _rand(0.03f, 0.06f), 0.0012f, 0.0007f, 0.0f, 2, 0.05f);
+			(void)_add_stem(side, _rand(0.03f, 0.06f), 0.0012f, 0.0007f, 0.0f, 2, 0.05f);
 		}
 	}
 	// The near-camera card (litter_deposit > 1; docs/ideas/ground-detail-vegetation.md, item 3): the dead-leaves
@@ -2078,7 +2082,7 @@ void PlantGenerator::_add_twig_ends(int p_count, float p_lift) {
 		if (rng.randf() < 0.3f) {
 			// A bud or a short fork at the tip.
 			Transform3D side(organ_frame(e.basis.get_column(2) + e.basis.get_column(0) * 0.8f, Vector3(0, 1, 0)), e.origin);
-			_add_stem(side, _rand(0.008f, 0.02f), 0.0009f, 0.0005f, 0.0f, 2, 0.05f);
+			(void)_add_stem(side, _rand(0.008f, 0.02f), 0.0009f, 0.0005f, 0.0f, 2, 0.05f);
 		}
 	}
 }
@@ -2421,7 +2425,7 @@ void PlantGenerator::_build_bilberry() {
 	auto branch = [&](const Transform3D &p_base, float p_len, float p_r, int p_depth, float p_wind) -> void {
 		const float bend = _rand(-0.4f, 0.4f);
 		const LocalVector<Transform3D> fr = _stem_frames(p_base, p_len, bend, 4);
-		_add_stem(p_base, p_len, p_r, p_r * 0.6f, bend, 4, p_wind);
+		(void)_add_stem(p_base, p_len, p_r, p_r * 0.6f, bend, 4, p_wind);
 		const int leaves = int(p_len / 0.007f);
 		float a = _rand(0.0f, Math::TAU);
 		for (int k = 0; k < leaves; k++) {
@@ -2519,7 +2523,7 @@ void PlantGenerator::_build_bracken() {
 				// A pinna lying on the ground stays on it (no droop into the soil).
 				const float pbend = at.origin.y < 0.08f ? 0.0f : 0.25f;
 				const LocalVector<Transform3D> pf = _stem_frames(pb, plen, pbend, 4);
-				_add_stem(pb, plen, 0.0012f, 0.0005f, pbend, 4, Math::lerp(0.4f, 1.0f, s));
+				(void)_add_stem(pb, plen, 0.0012f, 0.0005f, pbend, 4, Math::lerp(0.4f, 1.0f, s));
 				// Pinnules crowded along the pinna, overlapping at their bases, so the blade reads as
 				// one lamina and not as a comb of separate teeth (bracken pinnules are confluent).
 				const int pinnules = int(Math::lerp(11.0f, 20.0f, plen / (blade * 0.52f)));
@@ -2566,7 +2570,7 @@ void PlantGenerator::_build_bramble() {
 		Transform3D pb(organ_frame(out, Vector3(0, 1, 0)), p_at.origin);
 		if (browse > 0.0f && rng.randf() < 0.25f * browse) {
 			// Eaten whole: a stalk stub, torn.
-			_add_stem(pb, _rand(0.01f, 0.03f), 0.0015f, 0.0013f, 0.1f, 1, p_s * 0.6f);
+			(void)_add_stem(pb, _rand(0.01f, 0.03f), 0.0015f, 0.0013f, 0.1f, 1, p_s * 0.6f);
 			return;
 		}
 		const Transform3D tip = _add_stem(pb, _rand(0.035f, 0.07f), 0.0015f, 0.0012f, 0.3f, 2, p_s * 0.6f);
@@ -2637,7 +2641,7 @@ void PlantGenerator::_build_bramble() {
 				Transform3D sb(organ_frame(d, Vector3(0, 1, 0)), at.origin);
 				const float slen = _rand(0.05f, 0.14f);
 				const LocalVector<Transform3D> sf = _stem_frames(sb, slen, 0.3f, 3);
-				_add_stem(sb, slen, 0.0022f, 0.0012f, 0.3f, 3, 0.8f);
+				(void)_add_stem(sb, slen, 0.0022f, 0.0012f, 0.3f, 3, 0.8f);
 				const Transform3D st = _frame_at(sf, 1.0f);
 				compound(st, st.basis.get_column(0), 0.95f, 0.55f);
 			}
@@ -2659,7 +2663,7 @@ void PlantGenerator::_build_bramble() {
 				Transform3D lb(organ_frame((radial + Vector3(0, 0.9f, 0)).normalized(), Vector3(0, 1, 0)), at.origin);
 				const float llen = _rand(0.12f, 0.3f);
 				const LocalVector<Transform3D> lf = _stem_frames(lb, llen, 0.4f, 4);
-				_add_stem(lb, llen, 0.002f, 0.001f, 0.4f, 4, s);
+				(void)_add_stem(lb, llen, 0.002f, 0.001f, 0.4f, 4, s);
 				const int ln = int(_rand(2.0f, 5.0f));
 				for (int q = 0; q < ln; q++) {
 					const float u = (q + 0.8f) / ln;
@@ -2743,7 +2747,7 @@ void PlantGenerator::_build_raspberry() {
 			nod *= 0.3f; // No soft tip left to nod.
 		}
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, nod, 12);
-		_add_stem(base, len, 0.0055f, 0.0025f, nod, 12, 0.0f);
+		(void)_add_stem(base, len, 0.0055f, 0.0025f, nod, 12, 0.0f);
 		if (bitten) {
 			// Two or three buds below the bite push side shoots: a bushy, flat-topped cane.
 			const int shoots = int(_rand(2.0f, 4.0f));
@@ -2754,7 +2758,7 @@ void PlantGenerator::_build_raspberry() {
 				Transform3D sb(organ_frame(d, Vector3(0, 1, 0)), at.origin);
 				const float slen = _rand(0.08f, 0.22f) * (1.0f - 0.4f * browse);
 				const LocalVector<Transform3D> sf = _stem_frames(sb, slen, 0.4f, 4);
-				_add_stem(sb, slen, 0.0025f, 0.0013f, 0.4f, 4, 0.8f);
+				(void)_add_stem(sb, slen, 0.0025f, 0.0013f, 0.4f, 4, 0.8f);
 				for (int w = 0; w < 2; w++) {
 					const Transform3D sa = _frame_at(sf, w == 0 ? 0.55f : 1.0f);
 					const float c = b + w * GOLDEN_ANGLE;
@@ -2778,7 +2782,7 @@ void PlantGenerator::_build_raspberry() {
 				Transform3D lb(organ_frame((radial + Vector3(0, 0.6f, 0)).normalized(), Vector3(0, 1, 0)), at.origin);
 				const float llen = _rand(0.1f, 0.22f);
 				const LocalVector<Transform3D> lf = _stem_frames(lb, llen, 0.6f, 4);
-				_add_stem(lb, llen, 0.0018f, 0.001f, 0.6f, 4, s);
+				(void)_add_stem(lb, llen, 0.0018f, 0.001f, 0.6f, 4, s);
 				const int ln = int(_rand(2.0f, 4.0f));
 				for (int q = 0; q < ln; q++) {
 					const float u = (q + 0.8f) / ln;
@@ -2833,7 +2837,7 @@ void PlantGenerator::_build_foxglove() {
 	const float len = _rand(0.6f, 1.2f);
 	const float bend = _rand(-0.12f, 0.12f);
 	const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 12);
-	_add_stem(base, len, 0.006f, 0.0025f, bend, 12, 0.0f);
+	(void)_add_stem(base, len, 0.006f, 0.0025f, bend, 12, 0.0f);
 	// Stem leaves, smaller up the stem.
 	for (int k = 0; k < 7; k++) {
 		const float s = 0.08f + 0.06f * k;
@@ -2872,7 +2876,7 @@ void PlantGenerator::_build_foxglove() {
 		const float tube = Math::lerp(0.012f, 0.045f, open);
 		// Short pedicel, then the bell hangs out and down.
 		Transform3D fb(organ_frame((side * 0.8f + Vector3(0, -0.6f, 0)).normalized(), Vector3(0, 1, 0)), at.origin + side * 0.008f);
-		_add_stem(fb, tube, 0.003f, Math::lerp(0.004f, 0.012f, open), -0.25f, 3, s, SURFACE_PETAL);
+		(void)_add_stem(fb, tube, 0.003f, Math::lerp(0.004f, 0.012f, open), -0.25f, 3, s, SURFACE_PETAL);
 	}
 }
 
@@ -2944,7 +2948,7 @@ void PlantGenerator::_build_needle_litter() {
 		const float len = _rand(0.04f, 0.12f);
 		Transform3D cb(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.1f, 0.1f)), Vector3(0, 1, 0)), Vector3(_rand(-radius, radius) * 0.7f, len * 0.16f, _rand(-radius, radius) * 0.7f));
 		const Transform3D mid = _add_stem(cb, len * 0.6f, len * 0.12f, len * 0.16f, 0.0f, 3, 0.0f, SURFACE_PETAL);
-		_add_stem(mid, len * 0.4f, len * 0.16f, len * 0.03f, 0.0f, 3, 0.0f, SURFACE_PETAL);
+		(void)_add_stem(mid, len * 0.4f, len * 0.16f, len * 0.03f, 0.0f, 3, 0.0f, SURFACE_PETAL);
 	}
 	// The near-camera card (litter_deposit > 1): more needles fallen over these, and twig ends.
 	if (litter_deposit > 1.0f) {
@@ -2976,14 +2980,14 @@ void PlantGenerator::_build_twigs() {
 		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.03f, 0.05f)), Vector3(0, 1, 0)), Vector3(_rand(-0.25f, 0.25f), r0 * 0.6f, _rand(-0.25f, 0.25f)));
 		const float bend = _rand(-0.35f, 0.35f);
 		const LocalVector<Transform3D> fr = _stem_frames(b, len, bend, 4);
-		_add_stem(b, len, r0, r0 * _rand(0.45f, 0.8f), bend, 4, 0.0f);
+		(void)_add_stem(b, len, r0, r0 * _rand(0.45f, 0.8f), bend, 4, 0.0f);
 		// Longer pieces keep a side twig or two; short ones are broken bits.
 		const int sides = len > 0.15f ? int(_rand(0.0f, 3.0f)) : 0;
 		for (int k = 0; k < sides; k++) {
 			const Transform3D at = _frame_at(fr, _rand(0.25f, 0.85f));
 			const float sgn = rng.randf() < 0.5f ? -1.0f : 1.0f;
 			const Vector3 d = (at.basis.get_column(2) + at.basis.get_column(0) * sgn * _rand(0.6f, 1.2f) + Vector3(0, _rand(-0.05f, 0.2f), 0)).normalized();
-			_add_stem(Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), len * _rand(0.15f, 0.4f), r0 * 0.5f, r0 * 0.25f, _rand(-0.4f, 0.4f), 2, 0.0f);
+			(void)_add_stem(Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), len * _rand(0.15f, 0.4f), r0 * 0.5f, r0 * 0.25f, _rand(-0.4f, 0.4f), 2, 0.0f);
 		}
 	}
 }
@@ -3259,7 +3263,7 @@ void PlantGenerator::_build_woodruff() {
 		const float len = _rand(0.12f, 0.28f);
 		const float bend = _rand(-0.2f, 0.2f);
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 5);
-		_add_stem(base, len, 0.0011f, 0.0008f, bend, 5, 0.0f);
+		(void)_add_stem(base, len, 0.0011f, 0.0008f, bend, 5, 0.0f);
 		const int whorls = MAX(2, int(len / 0.04f));
 		float spin = _rand(0.0f, Math::TAU);
 		for (int k = 0; k < whorls; k++) {
@@ -3454,7 +3458,7 @@ void PlantGenerator::_build_ground_ivy() {
 		const float len = _rand(0.12f, 0.3f);
 		const float bend = 0.0f; // Rooting at the nodes, the runner stays down.
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 6);
-		_add_stem(base, len, 0.0011f, 0.0008f, bend, 6, 0.0f);
+		(void)_add_stem(base, len, 0.0011f, 0.0008f, bend, 6, 0.0f);
 		const int nodes = MAX(int(len / _rand(0.03f, 0.045f)), 3);
 		for (int n = 1; n <= nodes; n++) {
 			const float s = float(n) / nodes;
@@ -3479,7 +3483,7 @@ void PlantGenerator::_build_ground_ivy() {
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.25f, 1.5f));
 		const float len = _rand(0.05f, 0.14f);
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, _rand(0.0f, 0.3f), 4);
-		_add_stem(base, len, 0.001f, 0.0007f, 0.0f, 4, 0.0f);
+		(void)_add_stem(base, len, 0.001f, 0.0007f, 0.0f, 4, 0.0f);
 		const int pairs = int(_rand(2.0f, 4.0f));
 		for (int k = 1; k <= pairs; k++) {
 			const float s = float(k) / pairs;
@@ -3551,7 +3555,7 @@ void PlantGenerator::_build_herb_robert() {
 		if (bloom == BLOOM_SEED) {
 			// The crane's bill: the fruit's long beak, pointing up.
 			const Vector3 up = (top.basis.get_column(2) + Vector3(0, 1.2f, 0)).normalized();
-			_add_stem(Transform3D(organ_frame(up, Vector3(1, 0, 0)), top.origin), _rand(0.015f, 0.022f), 0.0011f, 0.0003f, 0.0f, 2, 1.0f);
+			(void)_add_stem(Transform3D(organ_frame(up, Vector3(1, 0, 0)), top.origin), _rand(0.015f, 0.022f), 0.0011f, 0.0003f, 0.0f, 2, 1.0f);
 		} else if (bloom == BLOOM_FLOWER) {
 			const Vector3 face = (top.basis.get_column(2) + Vector3(0, 0.6f, 0)).normalized();
 			const Basis fb = organ_frame(face, Vector3(0, 1, 0));
@@ -3759,7 +3763,7 @@ void PlantGenerator::_build_wild_carrot() {
 	auto feather = [&](const Transform3D &p_base, float p_length, float p_wind, float p_droop) {
 		const int segs = 6;
 		const LocalVector<Transform3D> fr = _stem_frames(p_base, p_length, p_droop, segs);
-		_add_stem(p_base, p_length, 0.0012f, 0.0005f, p_droop, segs, p_wind);
+		(void)_add_stem(p_base, p_length, 0.0012f, 0.0005f, p_droop, segs, p_wind);
 		const int pinnae = int(p_length / 0.012f);
 		for (int k = 0; k < pinnae; k++) {
 			const float s = 0.15f + 0.83f * float(k) / MAX(pinnae - 1, 1);
@@ -3821,7 +3825,7 @@ void PlantGenerator::_build_wild_carrot() {
 					: c + radial * p_radius * u + z * p_radius * (0.45f - 0.2f * u * u);
 			const Vector3 d = tip - c;
 			const Transform3D ray_base(organ_frame(d, Vector3(1, 0, 0)), c);
-			_add_stem(ray_base, d.length(), 0.0005f, 0.0004f, in_seed ? 0.4f * u : 0.0f, in_seed ? 2 : 1, 0.85f);
+			(void)_add_stem(ray_base, d.length(), 0.0005f, 0.0004f, in_seed ? 0.4f * u : 0.0f, in_seed ? 2 : 1, 0.85f);
 			// The umbellet: a little cluster of florets facing up.
 			const int florets = 7;
 			const float ur = p_radius * 0.13f;
@@ -3935,7 +3939,7 @@ void PlantGenerator::_build_sorrel() {
 		const float len = _rand(0.35f, 0.8f);
 		const float bend = _rand(-0.15f, 0.15f);
 		const LocalVector<Transform3D> frames = _stem_frames(base, len, bend, 10);
-		_add_stem(base, len, 0.0024f, 0.0011f, bend, 10, 0.0f);
+		(void)_add_stem(base, len, 0.0024f, 0.0011f, bend, 10, 0.0f);
 		for (int k = 0; k < 3; k++) {
 			const Transform3D at = _frame_at(frames, 0.15f + 0.15f * k);
 			const float a = spin + k * GOLDEN_ANGLE;
@@ -3958,7 +3962,7 @@ void PlantGenerator::_build_sorrel() {
 			at.basis = organ_frame(at.basis.get_column(2) + radial * 0.35f, Vector3(0, 1, 0));
 			const float bl = _rand(0.04f, 0.12f);
 			const LocalVector<Transform3D> bf = _stem_frames(at, bl, 0.0f, 3);
-			_add_stem(at, bl, 0.0009f, 0.0007f, 0.0f, 3, 0.7f, SURFACE_CENTRE);
+			(void)_add_stem(at, bl, 0.0009f, 0.0007f, 0.0f, 3, 0.7f, SURFACE_CENTRE);
 			whorls(bf, 0.2f, 1.0f, 0.85f);
 		}
 	}
@@ -4000,7 +4004,7 @@ void PlantGenerator::_build_parsley_fern() {
 				p += f.get_column(2) * (length / segs);
 			}
 		}
-		_add_stem(start, length, 0.0014f, 0.0006f, arch, segs, 0.0f);
+		(void)_add_stem(start, length, 0.0014f, 0.0006f, arch, segs, 0.0f);
 		// The blade: a triangle of pinnae, longest at its base, each a deeply lobed segment.
 		const int pinnae = int(_rand(8.0f, 12.0f));
 		const float pinna_grow = p_unfurl * Math::sqrt(p_unfurl);
@@ -4059,7 +4063,7 @@ void PlantGenerator::_build_spleenwort() {
 		const Transform3D base(organ_frame(polar_dir(spin + i * GOLDEN_ANGLE, _rand(0.5f, 1.0f)), Vector3(0, 1, 0)), Vector3(0, 0.003f, 0));
 		const int segs = 8;
 		const LocalVector<Transform3D> fr = _stem_frames(base, length, arch, segs);
-		_add_stem(base, length, 0.0009f, 0.0004f, arch, segs, 0.0f);
+		(void)_add_stem(base, length, 0.0009f, 0.0004f, arch, segs, 0.0f);
 		// Old fronds keep a few withered pinnae near the tip.
 		const float keep_from = old ? _rand(0.6f, 1.0f) : 0.08f;
 		const Wither wither(this, old ? 0.8f : 0.0f);
@@ -4103,7 +4107,7 @@ void PlantGenerator::_build_stonecrop() {
 		const Transform3D base(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(0.35f, 0.9f)), Vector3(0, 1, 0)), at);
 		const int segs = 4;
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, segs);
-		_add_stem(base, len, 0.0012f, 0.001f, bend, segs, 0.0f);
+		(void)_add_stem(base, len, 0.0012f, 0.001f, bend, segs, 0.0f);
 		const int leaves = int(_rand(8.0f, 12.0f));
 		for (int k = 0; k < leaves; k++) {
 			const float s = Math::lerp(0.15f, 1.0f, float(k) / float(leaves - 1));
@@ -4164,7 +4168,7 @@ void PlantGenerator::_build_saxifrage() {
 		const Vector3 foot(at.x * 0.6f, 0.0f, at.z * 0.6f);
 		const Vector3 rise = at - foot;
 		if (rise.length() > 0.005f) {
-			_add_stem(Transform3D(organ_frame(rise, Vector3(1, 0, 0)), foot), rise.length(), 0.0012f, 0.001f, 0.0f, 2, 0.0f);
+			(void)_add_stem(Transform3D(organ_frame(rise, Vector3(1, 0, 0)), foot), rise.length(), 0.0012f, 0.001f, 0.0f, 2, 0.0f);
 		}
 		const Basis nb = organ_frame(up, Vector3(1, 0, 0));
 		const int leaves = int(_rand(6.0f, 10.0f));
@@ -4289,7 +4293,7 @@ void PlantGenerator::_build_ivy() {
 			const Vector3 fwd(Math::cos(dir), 0.0f, Math::sin(dir));
 			const float seg = len / nodes;
 			// Runners hug the ground: each segment starts low, so the pivot packing sees them as organs.
-			_add_stem(Transform3D(organ_frame(fwd, Vector3(0, 1, 0)), at), seg, 0.0018f, 0.0016f, 0.0f, 1, 0.0f);
+			(void)_add_stem(Transform3D(organ_frame(fwd, Vector3(0, 1, 0)), at), seg, 0.0018f, 0.0016f, 0.0f, 1, 0.0f);
 			at += fwd * seg;
 			// A leaf at each node on a stalk rising to the light, alternately left and right.
 			const float side = (k % 2 == 0) ? 1.0f : -1.0f;
@@ -4333,7 +4337,7 @@ void PlantGenerator::_build_heather() {
 	auto shoot = [&](const Transform3D &p_base, float p_len, float p_r, float p_wind) -> void {
 		const float bend = _rand(-0.3f, 0.3f);
 		const LocalVector<Transform3D> fr = _stem_frames(p_base, p_len, bend, 3);
-		_add_stem(p_base, p_len, p_r, p_r * 0.5f, bend, 3, p_wind);
+		(void)_add_stem(p_base, p_len, p_r, p_r * 0.5f, bend, 3, p_wind);
 		const int scales = int(p_len / 0.0055f);
 		const float spike = bloom != BLOOM_NONE ? 0.35f : 0.0f; // Top share of the shoot in flower.
 		for (int k = 0; k < scales; k++) {
@@ -4356,7 +4360,7 @@ void PlantGenerator::_build_heather() {
 		const float len = _rand(0.1f, 0.24f);
 		const float bend = _rand(-0.5f, 0.0f);
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 4);
-		_add_stem(base, len, 0.002f, 0.0012f, bend, 4, 0.0f);
+		(void)_add_stem(base, len, 0.002f, 0.0012f, bend, 4, 0.0f);
 		const int subs = int(_rand(7.0f, 12.0f));
 		for (int k = 0; k < subs; k++) {
 			Transform3D at = _frame_at(fr, _rand(0.4f, 1.0f));
@@ -4422,7 +4426,7 @@ void PlantGenerator::_build_reed() {
 			Transform3D pb(organ_frame((top.basis.get_column(2) + lean * 0.5f).normalized(), Vector3(0, 1, 0)), top.origin);
 			const float plen = _rand(0.22f, 0.4f);
 			const LocalVector<Transform3D> pf = _stem_frames(pb, plen, 0.5f, 6);
-			_add_stem(pb, plen, 0.0018f, 0.0006f, 0.5f, 6, 1.0f);
+			(void)_add_stem(pb, plen, 0.0018f, 0.0006f, 0.5f, 6, 1.0f);
 			const int branches = int(_rand(10.0f, 16.0f));
 			for (int b = 0; b < branches; b++) {
 				const float u = float(b) / branches;
@@ -4433,7 +4437,7 @@ void PlantGenerator::_build_reed() {
 				const float blen = plen * (0.55f - 0.35f * u);
 				const Transform3D bt(organ_frame(d, Vector3(0, 1, 0)), at.origin);
 				const LocalVector<Transform3D> bf = _stem_frames(bt, blen, 0.4f, 3);
-				_add_stem(bt, blen, 0.0006f, 0.0003f, 0.4f, 3, 1.0f);
+				(void)_add_stem(bt, blen, 0.0006f, 0.0003f, 0.4f, 3, 1.0f);
 				for (int k = 0; k < 5; k++) {
 					const Transform3D sa = _frame_at(bf, 0.2f + 0.18f * k);
 					const Vector3 sd = (sa.basis.get_column(2) + sa.basis.get_column(0) * _rand(-0.5f, 0.5f)).normalized();
@@ -4475,7 +4479,7 @@ void PlantGenerator::_build_cattail() {
 			const float spike = _rand(0.14f, 0.22f);
 			const Transform3D female = _add_stem(top, spike, 0.013f, 0.012f, 0.0f, 4, 1.0f, SURFACE_CENTRE);
 			_add_head(SURFACE_CENTRE, female, 0.012f, 0.008f);
-			_add_stem(female, _rand(0.1f, 0.16f), 0.004f, 0.002f, 0.0f, 3, 1.0f, SURFACE_PETAL);
+			(void)_add_stem(female, _rand(0.1f, 0.16f), 0.004f, 0.002f, 0.0f, 3, 1.0f, SURFACE_PETAL);
 		}
 	}
 }
@@ -4500,7 +4504,7 @@ void PlantGenerator::_build_rush() {
 		const float len = _rand(0.45f, 1.0f) * (1.0f - 0.3f * r);
 		const float bend = _rand(0.1f, 0.5f) * (0.5f + r);
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 6);
-		_add_stem(base, len, 0.0016f, 0.0004f, bend, 6, 0.0f);
+		(void)_add_stem(base, len, 0.0016f, 0.0004f, bend, 6, 0.0f);
 		if (_rand(0.0f, 1.0f) < 0.4f) {
 			const Transform3D at = _frame_at(fr, _rand(0.6f, 0.75f));
 			const int n = int(_rand(8.0f, 16.0f));
@@ -5973,6 +5977,121 @@ vec3 plant_wind(vec3 wp, float h) {
 
 Ref<Shader> PlantGenerator::shaders[3];
 
+bool PlantGenerator::parallel_sets = true;
+
+namespace {
+struct MakeSetJob {
+	StringName method;
+	Array args; // For "variants": preset, count.
+	Variant result;
+	String error;
+};
+} // namespace
+
+void PlantGenerator::_make_set_job(void *p_jobs, uint32_t p_index) {
+	MakeSetJob &job = static_cast<MakeSetJob *>(p_jobs)[p_index];
+	if (job.method == SNAME("variants")) {
+		Ref<PlantGenerator> pg;
+		pg.instantiate();
+		pg->set_preset(Preset(int(job.args[0])));
+		pg->apply_preset_colors();
+		job.result = pg->generate_variants(int(job.args[1]));
+		return;
+	}
+	MethodBind *mb = ClassDB::get_method(SNAME("PlantGenerator"), job.method);
+	LocalVector<const Variant *> argp;
+	for (int i = 0; i < job.args.size(); i++) {
+		argp.push_back(&job.args[i]);
+	}
+	Callable::CallError ce;
+	job.result = mb->call(nullptr, argp.ptr(), argp.size(), ce);
+	if (ce.error != Callable::CallError::CALL_OK) {
+		job.error = Variant::get_call_error_text(job.method, argp.ptr(), argp.size(), ce);
+		job.result = Variant();
+	}
+}
+
+// Job-system parallelism over independent tasks (as engines split level loading and procedural
+// content into jobs, e.g. Gyrling, "Parallelizing the Naughty Dog Engine Using Fibers", GDC 2015):
+// each call is a task of its own, its result written to its own slot. The generators draw from
+// their own seeded hashes (no global random state), so the results do not depend on the order the
+// tasks run in. A worker's rendering calls that wait for an answer (a mesh's arrays, a texture read
+// back) are queued for the main thread: the main thread runs that queue while it waits.
+Array PlantGenerator::make_sets(const Array &p_calls) {
+	LocalVector<MakeSetJob> jobs;
+	jobs.resize(p_calls.size());
+	for (int i = 0; i < p_calls.size(); i++) {
+		const Array c = p_calls[i];
+		ERR_FAIL_COND_V_MSG(c.is_empty(), Array(), vformat("PlantGenerator.make_sets: call %d is empty.", i));
+		MakeSetJob &job = jobs[i];
+		job.method = StringName(String(c[0]));
+		if (job.method == SNAME("variants")) {
+			ERR_FAIL_COND_V_MSG(c.size() < 3, Array(), "PlantGenerator.make_sets: [\"variants\", preset, count].");
+			job.args.push_back(c[1]);
+			job.args.push_back(c[2]);
+			continue;
+		}
+		ERR_FAIL_COND_V_MSG(!String(job.method).begins_with("make_"), Array(), vformat("PlantGenerator.make_sets: %s is not a make_ method.", job.method));
+		MethodBind *mb = ClassDB::get_method(SNAME("PlantGenerator"), job.method);
+		ERR_FAIL_COND_V_MSG(!mb || !mb->is_static(), Array(), vformat("PlantGenerator.make_sets: no static method %s.", job.method));
+		if (c.size() > 1) {
+			job.args = c[1];
+		}
+		// The defaults the binding has for the arguments left out.
+		const int given = job.args.size();
+		const int total = mb->get_argument_count();
+		ERR_FAIL_COND_V_MSG(given > total || given < total - mb->get_default_argument_count(), Array(), vformat("PlantGenerator.make_sets: %s takes %d arguments, %d given.", job.method, total, given));
+		for (int a = given; a < total; a++) {
+			job.args.push_back(mb->get_default_argument(a));
+		}
+	}
+	// The shared shaders are made lazily, once: here, before any worker asks for them.
+	_plant_shader(false);
+	_plant_shader(true);
+	_plant_shader(false, true);
+	_impostor_shader();
+	WorkerThreadPool *wtp = WorkerThreadPool::get_singleton();
+	if (!parallel_sets || jobs.size() < 2 || wtp->get_thread_count() < 2 || !Thread::is_main_thread()) {
+		for (uint32_t i = 0; i < jobs.size(); i++) {
+			_make_set_job(jobs.ptr(), i);
+		}
+	} else {
+		// Lanes that take the calls in turn, one worker fewer than the pool: the main thread's flush of their rendering
+		// calls compiles shaders on the workers, so a worker must stay free for it (with every worker waiting on the
+		// main thread and the main thread on a worker, neither would go on: trees.md 5bc).
+		struct Lanes {
+			MakeSetJob *jobs = nullptr;
+			uint32_t count = 0;
+			SafeNumeric<uint32_t> next;
+			static void run(void *p_lanes, uint32_t) {
+				Lanes *l = static_cast<Lanes *>(p_lanes);
+				for (uint32_t i = l->next.postincrement(); i < l->count; i = l->next.postincrement()) {
+					_make_set_job(l->jobs, i);
+				}
+			}
+		} lanes;
+		lanes.jobs = jobs.ptr();
+		lanes.count = jobs.size();
+		const int lane_count = MIN(int(jobs.size()), MAX(1, wtp->get_thread_count() - 1));
+		const WorkerThreadPool::GroupID g = wtp->add_native_group_task(&Lanes::run, &lanes, lane_count, lane_count, true, SNAME("PlantGenerator sets"));
+		RenderingServer *rs = RenderingServer::get_singleton();
+		while (!wtp->is_group_task_completed(g)) {
+			rs->sync(); // The workers' queued rendering calls, some of them waiting on an answer.
+			OS::get_singleton()->delay_usec(200);
+		}
+		wtp->wait_for_group_task_completion(g);
+		rs->sync();
+	}
+	Array out;
+	for (const MakeSetJob &job : jobs) {
+		if (!job.error.is_empty()) {
+			ERR_PRINT("PlantGenerator.make_sets: " + job.error);
+		}
+		out.push_back(job.result);
+	}
+	return out;
+}
+
 Ref<Shader> PlantGenerator::_plant_shader(bool p_textured, bool p_silk) {
 	Ref<Shader> &sh = shaders[p_silk ? 2 : (p_textured ? 1 : 0)];
 	if (sh.is_valid()) {
@@ -6650,8 +6769,8 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.34f, 0.3f, 0.23f); // The matted fines and silt under it.
 			break;
 		case PRESET_HAY_BALE:
-			leaf_color = Color(0.64f, 0.6f, 0.37f); // Cured hay, green-gold.
-			centre_color = Color(0.56f, 0.52f, 0.32f); // The wound layers, a little darker in their own shade.
+			leaf_color = Color(0.74f, 0.66f, 0.42f); // Cured hay, green-gold to straw.
+			centre_color = Color(0.68f, 0.6f, 0.38f); // The wound layers (an olive body read as a mossy stone: PC pair 23 Nov).
 			stem_color = Color(0.72f, 0.64f, 0.46f); // Sisal twine.
 			break;
 		case PRESET_BANK_ROOTS:
@@ -7053,7 +7172,9 @@ void PlantGenerator::apply_preset_colors() {
 			centre_color = Color(0.5f, 0.47f, 0.4f); // The palest of its lichens; each fleck's tint darkens it.
 			// The skin's rim: a little darker than the sand it binds; its vertex colours darken the middle to the
 			// cyanobacteria's brown (light crust some 0.75 of it, mature dark crust 0.5), so its edge fades into the sand.
-			stem_color = Color(0.6f, 0.48f, 0.34f);
+			// Same hue as the iron-oxide sand it binds (sRGB 0.72, 0.55, 0.36, the dune sand of the desert scenes): a greyer
+			// rim (0.6, 0.48, 0.34) read as grey-brown blotches on the dunes (desert scene, 23 Nov).
+			stem_color = Color(0.68f, 0.52f, 0.35f);
 			break;
 		case PRESET_MARRAM:
 			leaf_color = Color(0.33f, 0.37f, 0.26f); // Grey-green, the rolled leaf's waxy outer side.
@@ -8824,6 +8945,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_BANK_ROOTS);
 	BIND_ENUM_CONSTANT(PRESET_BANK_ROOTS_WOODY);
 	BIND_ENUM_CONSTANT(PRESET_HAY_BALE);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_sets", "calls"), &PlantGenerator::make_sets);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("set_parallel_sets", "enable"), &PlantGenerator::set_parallel_sets);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("is_parallel_sets"), &PlantGenerator::is_parallel_sets);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));

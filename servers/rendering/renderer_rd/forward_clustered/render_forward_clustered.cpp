@@ -31,6 +31,7 @@
 #include "render_forward_clustered.h"
 
 #include "core/config/project_settings.h"
+#include "core/os/os.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
@@ -439,8 +440,9 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		RID material_uniform_set;
 		void *mesh_surface;
 
-		// A camera cut-out material shares the shadow material but discards in the camera's own depth prepass.
-		if ((shadow_pass || (p_pass_mode == PASS_MODE_DEPTH && !surf->shader->discard_only_camera_cutout)) && !peel_front_pass) { //regular depth pass can use these too
+		// A camera cut-out material shares the shadow material, but discards in the camera's own depth prepass where the
+		// cut can reach it (in_camera_cutout).
+		if ((shadow_pass || (p_pass_mode == PASS_MODE_DEPTH && !(surf->shader->discard_only_camera_cutout && surf->owner->in_camera_cutout))) && !peel_front_pass) { //regular depth pass can use these too
 			material_uniform_set = surf->material_uniform_set_shadow;
 			shader = surf->shader_shadow;
 			mesh_surface = surf->surface_shadow;
@@ -506,6 +508,8 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		pipeline_specialization.multimesh_has_color = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_HAS_COLOR);
 		pipeline_specialization.multimesh_has_custom_data = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_HAS_CUSTOM_DATA);
 		pipeline_specialization.material_feedback = p_params->use_material_feedback && surf->material->material_feedback_rid.is_valid();
+		// Out of the camera cut-out's reach (_fill_render_list): its discard compiles out, early depth tests stay.
+		pipeline_specialization.camera_cutout_off = shader->has_camera_cutout && !surf->owner->in_camera_cutout;
 
 		if constexpr (p_pass_mode == PASS_MODE_COLOR) {
 			pipeline_specialization.use_light_soft_shadows = element_info.uses_softshadow;
@@ -1177,10 +1181,67 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 		}
 	}
 
+	// The camera cut-out (BaseMaterial3D camera_cutout, global camera_cutout): the span it can open, as the shader's
+	// camera_cutout_weight() draws it, a half-line from the target toward the camera. An instance whose bounds stay
+	// clear of it draws its depth prepass with the shared depth material (no discard, early depth test kept).
+	// Bench A/B in one build (BERLENGA_CUTOUT_REACH, read once): 1 (default) tests each draw's reach; 0 keeps every
+	// cut-out draw on its discard (as before the reach test); 2 compiles the discard out of every draw (no cut at
+	// all: the cost floor without the cut-out, for measuring only).
+	static const int cutout_reach_mode = OS::get_singleton()->has_environment("BERLENGA_CUTOUT_REACH") ? OS::get_singleton()->get_environment("BERLENGA_CUTOUT_REACH").to_int() : 1;
+	bool cutout_on = false;
+	Vector3 cutout_target;
+	Vector3 cutout_axis;
+	float cutout_radius = 0.0;
+	float cutout_floor = 0.0;
+	if (p_render_list == RENDER_LIST_OPAQUE && !p_append && p_render_data->scene_data->view_count == 1) {
+		static const StringName cutout_name = "camera_cutout";
+		static const StringName cutout_floor_name = "camera_cutout_floor";
+		RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
+		const Variant cv = ms->global_shader_parameter_get_internal(cutout_name);
+		if (cv.get_type() == Variant::VECTOR4) {
+			const Vector4 c = cv;
+			if (c.w > 0.0) {
+				cutout_target = Vector3(c.x, c.y, c.z);
+				cutout_radius = c.w;
+				const Transform3D &ct = p_render_data->scene_data->cam_transform;
+				cutout_axis = p_render_data->scene_data->cam_orthogonal ? -ct.basis.get_column(Vector3::AXIS_Z) : cutout_target - ct.origin;
+				if (cutout_axis.length_squared() > 1e-8) {
+					cutout_axis.normalize();
+					cutout_on = true;
+					const Variant fv = ms->global_shader_parameter_get_internal(cutout_floor_name);
+					cutout_floor = fv.get_type() == Variant::FLOAT ? float(fv) : 0.0f;
+				}
+			}
+		}
+	}
+	// Only the camera's own opaque list sets the reach: the shadow lists are filled after it and before its depth
+	// prepass (_pre_opaque_render), and must leave it as it is. Several views keep every cut-out on its own shader.
+	const bool cutout_fill = p_render_list == RENDER_LIST_OPAQUE && !p_append;
+	const bool cutout_test = cutout_fill && p_render_data->scene_data->view_count == 1;
+	uint32_t cutout_out_of_reach = 0;
+
 	//fill list
 
 	for (int i = 0; i < (int)p_render_data->instances->size(); i++) {
 		GeometryInstanceForwardClustered *inst = static_cast<GeometryInstanceForwardClustered *>((*p_render_data->instances)[i]);
+
+		if (!cutout_fill) {
+			// (another list: the camera's reach stays)
+		} else if (!cutout_test || cutout_reach_mode == 0) {
+			inst->in_camera_cutout = true;
+		} else if (!cutout_on || cutout_reach_mode == 2) {
+			inst->in_camera_cutout = false;
+		} else {
+			// Its bounding sphere (with 0.5 m for vertex motion) against the cut: within the radius of the axis, on the
+			// camera's side of the target's 0.5 m, above the floor.
+			const AABB &ab = inst->transformed_aabb;
+			const Vector3 q = ab.get_center() - cutout_target;
+			const float s = ab.size.length() * 0.5f + 0.5f;
+			const float rel = q.dot(cutout_axis);
+			const float d = (q - cutout_axis * rel).length();
+			inst->in_camera_cutout = d < cutout_radius + s && rel - s < -0.5f && ab.get_end().y + 0.5f > cutout_floor;
+			cutout_out_of_reach += inst->in_camera_cutout ? 0 : 1;
+		}
 
 		Vector3 center = inst->transform.origin;
 		if (p_render_data->scene_data->cam_orthogonal) {
@@ -1460,6 +1521,15 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 
 	if (p_render_list == RENDER_LIST_OPAQUE && lightmap_captures_used) {
 		RD::get_singleton()->buffer_update(scene_state.lightmap_capture_buffer, 0, sizeof(LightmapCaptureData) * lightmap_captures_used, scene_state.lightmap_captures);
+	}
+
+	// Once a run (and every 600 frames with --verbose): how many draws the camera cut-out reaches, for benches.
+	if (cutout_on) {
+		static uint64_t cutout_reports = 0;
+		if (cutout_reports == 0 || (OS::get_singleton()->is_stdout_verbose() && cutout_reports % 600 == 0)) {
+			print_line(vformat("Camera cut-out (BERLENGA_CUTOUT_REACH=%d): %d of %d instances out of reach, their cut-out discard compiled out (CAMERA_CUTOUT_REACH false).", cutout_reach_mode, cutout_reach_mode == 2 ? (int)p_render_data->instances->size() : (int)cutout_out_of_reach, (int)p_render_data->instances->size()));
+		}
+		cutout_reports++;
 	}
 }
 
@@ -3640,7 +3710,7 @@ void RenderForwardClustered::base_uniforms_changed() {
 void RenderForwardClustered::_update_render_base_uniform_set() {
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 
-	if (render_base_uniform_set.is_null() || !RD::get_singleton()->uniform_set_is_valid(render_base_uniform_set) || (lightmap_texture_array_version != light_storage->lightmap_array_get_version()) || volume_shadow_texture_bound != light_storage->directional_volume_shadow_get_texture()) {
+	if (render_base_uniform_set.is_null() || !RD::get_singleton()->uniform_set_is_valid(render_base_uniform_set) || (lightmap_texture_array_version != light_storage->lightmap_array_get_version()) || volume_shadow_texture_bound != light_storage->directional_volume_shadow_get_texture() || gas_glow_texture_bound != light_storage->gas_glow_get_texture()) {
 		if (render_base_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(render_base_uniform_set)) {
 			RD::get_singleton()->free_rid(render_base_uniform_set);
 		}
@@ -3839,6 +3909,23 @@ void RenderForwardClustered::_update_render_base_uniform_set() {
 			u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
 			volume_shadow_texture_bound = light_storage->directional_volume_shadow_get_texture();
 			u.append_id(volume_shadow_texture_bound);
+			uniforms.push_back(u);
+		}
+
+		{
+			RD::Uniform u;
+			u.binding = 23;
+			u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+			gas_glow_texture_bound = light_storage->gas_glow_get_texture();
+			u.append_id(gas_glow_texture_bound);
+			uniforms.push_back(u);
+		}
+
+		{
+			RD::Uniform u;
+			u.binding = 24;
+			u.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
+			u.append_id(light_storage->gas_glow_get_buffer());
 			uniforms.push_back(u);
 		}
 

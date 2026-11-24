@@ -56,6 +56,9 @@ class WaterSolverGPU : public RefCounted {
 public:
 	RenderingDevice *rd = nullptr;
 	bool local = false; // headless fallback: a private device, driven synchronously
+	// Set when rt_render_caustics waited because no viewport drew 3D (the map is only seen in a drawn frame); the
+	// surface asks for it again (WaterSolver::take_caustics_deferred).
+	SafeFlag caustics_deferred;
 	SafeFlag built;
 
 	static constexpr int MAX_SPHERES = 48;
@@ -290,7 +293,7 @@ public:
 	// from rt_step() itself so caustics-specific state doesn't have to route
 	// through that function's already-large signature; no-ops if the caustics
 	// pipeline was never built (caustics_enabled false at configure() time).
-	void rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior, bool p_open_beyond);
+	void rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior, bool p_open_beyond, RID p_scenario);
 	void rt_free(Ref<WaterSolverGPU> p_self);
 	void rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow);
 	void rt_set_swash(Ref<WaterSolverGPU> p_self, float p_run_up, float p_drain_speed, float p_dry_time);
@@ -484,6 +487,14 @@ public:
 	void queue_tick(double p_delta);
 	void flush_ticks();
 	bool has_queued_ticks() const { return !queued_deltas.is_empty(); }
+	// True once after a caustics render waited for a drawn frame; clears it.
+	bool take_caustics_deferred() {
+		if (gpu.is_valid() && gpu->caustics_deferred.is_set()) {
+			gpu->caustics_deferred.clear();
+			return true;
+		}
+		return false;
+	}
 	// Ripple rest: with a threshold > 0, once the ripple layer has stayed below it (peak |height| in m) for a few
 	// readbacks with no body sphere (strength != 0) or impulse submitted, its solve is skipped until the next
 	// disturbance. 0 = always solve (the default).
@@ -575,7 +586,8 @@ public:
 	// no-ops if caustics_enabled was false at configure() time.
 	// p_open_beyond: the water carries on past the simulated grid (it's
 	// rendered out there), so light past the grid still enters water.
-	void render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_direction, float p_reference_depth = 2.5f, float p_ior = 1.333f, bool p_open_beyond = false);
+	// p_scenario: the world the surface is drawn in; the map waits while no viewport draws it in 3D (null: any).
+	void render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_direction, float p_reference_depth = 2.5f, float p_ior = 1.333f, bool p_open_beyond = false, RID p_scenario = RID());
 	// Zero-copy RD texture RID (R8_UNORM intensity), same convention as
 	// get_ripple_height_texture_rd_rid(). The light-space basis/extent used
 	// to produce it, needed by any receiver's own lookup shader code.

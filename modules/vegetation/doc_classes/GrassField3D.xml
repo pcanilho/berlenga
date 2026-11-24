@@ -117,6 +117,12 @@
 				Returns the number of far ring tiles.
 			</description>
 		</method>
+		<method name="get_rock_chunk_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The chunks (32 m squares) of the [member rock_field]'s stones fetched so far.
+			</description>
+		</method>
 		<method name="get_season_green" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -303,6 +309,9 @@
 		<member name="dryness" type="float" setter="set_dryness" getter="get_dryness" default="0.2">
 			Fraction of blades with dry tips. A third of those are dead from the root (thatch).
 		</member>
+		<member name="far_bake" type="bool" setter="set_far_bake" getter="is_far_bake" default="true">
+			If [code]true[/code], the far ground's colour is baked from these blades under the scene's light ([method is_far_color_baked]). Off, the far ground keeps its hand-matched colour: for scouts on a software renderer, where the bake takes very long.
+		</member>
 		<member name="far_match_view" type="bool" setter="set_far_match_view" getter="is_far_match_view" default="true">
 			If [code]true[/code], the widest field checks its far colour against the frame: once the far colour is baked, and again when the sun's elevation moves more than 8 degrees or the camera travels more than [member radius], it reads the frame back asynchronously and compares pairs of ground points in the same direction from the camera, one where the blades stand full and one just past the fade band, then scales the published far colour's brightness (and [code]grass_ground_far_scale[/code]) until they agree within 3% (at most five rounds, factor 0.5 to 1.5; pixels that read as sky, haze or water are left out). This takes up lighting the bake's plain ground plane does not reproduce, so the field ends without a lighter or darker ring.
 		</member>
@@ -325,7 +334,7 @@
 			The blades' specular as fibres: ANISOTROPY spreading the highlight across each blade (its normals vary across its width, not along it), so a sward reads as a mass of fine fibres with a sheen running over it, as hair does. Raster and the path tracer shade it alike. Wet, frosted, muddy or snowy blades lose it. 0 turns it off.
 		</member>
 		<member name="hay_meadows" type="Dictionary[]" setter="set_hay_meadows" getter="get_hay_meadows" default="[]">
-			Hay meadows mown in the sward, each a Dictionary: [code]polygon[/code] ([PackedVector2Array], world xz), [code]row_angle[/code] (radians, the mower's passes and the rows along world [code](cos, sin)[/code] in xz), and either [code]mow_day[/code] (the day of the year it is mown, read from [member season_source]) or [code]days[/code] (fixed days since mown). The sward is cut to a 7.5 to 10 cm stubble that grows back over about six weeks; the cut grass lies in the mower's swaths on the day, is tedded flat over the next two, raked into windrows on the third, baled on the fourth (round bales of [method PlantGenerator.make_hay_bale] dropped along the rows, a bale's hay apart, from the first layer that holds the meadow) and carted from the fifth, curing from green to a green-gold hay. [VegetationField3D] herbs over 12 cm stand as their stalks cut at the stubble for 28 days. All in the shader: the days pass without a rebuild. Set the same meadows on every layer of a sward (undercoat, turf).
+			Hay meadows mown in the sward, each a Dictionary: [code]polygon[/code] ([PackedVector2Array], world xz), [code]row_angle[/code] (radians, the mower's passes and the rows along world [code](cos, sin)[/code] in xz), and either [code]mow_day[/code] (the day of the year it is mown, read from [member season_source]) or [code]days[/code] (fixed days since mown), and optionally [code]rain[/code] (mm of rain on the cut grass, fixed; without it the weather's rainfall over the meadow is added up while the cut grass lies, in the weather's time). The stubble shows its pale stem bases and cut ends for the first days. The cut grass cures from green to green-gold over three days, and rain on it leaches and bleaches it to a dull brown-tan (from about 2 mm, fully by 25 mm). The sward is cut to a 7.5 to 10 cm stubble that grows back over about six weeks; the cut grass lies in the mower's swaths on the day, is tedded flat over the next two, raked into windrows on the third, baled on the fourth (round bales of [method PlantGenerator.make_hay_bale] dropped along the rows, a bale's hay apart, from the first layer that holds the meadow) and carted from the fifth, curing from green to a green-gold hay. [VegetationField3D] herbs over 12 cm stand as their stalks cut at the stubble for 28 days. All in the shader: the days pass without a rebuild. Set the same meadows on every layer of a sward (undercoat, turf).
 		</member>
 		<member name="fields" type="Dictionary[]" setter="set_fields" getter="get_fields" default="[]">
 			With a [member crop]: the fields it grows in, each a [Dictionary]. [code]polygon[/code] ([PackedVector2Array], world XZ) is required; optional [code]drill_angle[/code] and [code]row_spacing[/code] (default the node's), [code]stage[/code] (a fixed BBCH stage; default the node's [member crop_stage]), [code]sown_day[/code] and [code]harvest_day[/code] (days of the year: with a [member season_source] the stage follows a sowing calendar, autumn sowing from day 200 over-wintering, spring sowing through in five months, stubble from harvest to the next sowing), [code]tramline_spacing[/code] (default 24 m; 0 none: paired unsown wheel tracks [code]tramline_gauge[/code] apart, default 1.8 m) and [code]headland[/code] (default 12 m; 0 none: rows run round the edge where the drill turned). Outside the fields nothing grows. Up to 63 fields a node. The ground shader ([method get_ground_shader_code]) draws the drilled soil and darker wheelings under every crop node's fields and, past the tillers, the crop's own colour and cover at its stage ([method crop_canopy_look]). Harvested fields (99) carry the combine's straw swaths, one down each pass (a third of [code]tramline_spacing[/code], or 7.5 m), as lying straw near and paler stripes far off. Grass fields without a crop and [VegetationField3D] plants keep out of every crop node's fields.
@@ -356,6 +365,15 @@
 		</member>
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="40.0">
 			Distance from the camera, in metres, to which tiles are grown. 0 draws no blades at all (no near tiles, far rings or shell), for a field kept only for its rules or ground tint.
+		</member>
+		<member name="rock_field" type="NodePath" setter="set_rock_field" getter="get_rock_field" default="NodePath(&quot;&quot;)">
+			A [RockField3D] whose stones the blades (near tiles and far ring tiles) keep out of, as [member obstacles] does, fetched with [method RockField3D.get_obstacles] round each tile just before it is placed and kept in 32 m chunks: no world-wide list of every stone is made, and only the rock cells near the tiles are placed. The placements are the same as with that rock field's stones given as [member obstacles]. Both can be set: the blades keep out of both. Setting it fetches the stones again.
+		</member>
+		<member name="rock_footprint_max" type="float" setter="set_rock_footprint_max" getter="get_rock_footprint_max" default="32.0">
+			The widest stone footprint (radius at the soil, metres) the [member rock_field] is expected to have: each tile fetches the stones this far past the reach of its plants. A warning is printed if a wider stone is fetched.
+		</member>
+		<member name="rock_obstacle_min" type="float" setter="set_rock_obstacle_min" getter="get_rock_obstacle_min" default="0.25">
+			The smallest stone (its size, metres) of the [member rock_field] the plants keep out of, the [code]min_size[/code] of [method RockField3D.get_obstacles].
 		</member>
 		<member name="row_spacing" type="float" setter="set_row_spacing" getter="get_row_spacing" default="0.125">
 			The distance between the crop's drill rows, in metres (12 to 15 cm for cereals).

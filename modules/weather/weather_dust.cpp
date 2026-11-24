@@ -68,6 +68,15 @@ static float _dust_noise(Vector2 p_p) {
 	return Math::lerp(Math::lerp(_dust_hash(x, y), _dust_hash(x + 1, y), sx), Math::lerp(_dust_hash(x, y + 1), _dust_hash(x + 1, y + 1), sx), sy);
 }
 static const Vector3 DUST_SPECTRUM(0.97f, 1.0f, 1.04f); // (lambda / 550)^-0.2 at 610, 550 and 465 nm
+// Per scatter at 610, 550 and 465 nm (rgb), w the asymmetry g: freshly lifted, coarse dust near its source (Ryder et
+// al. 2013, Fennec: single scattering albedo about 0.86 to 0.9 at 550 nm, lower than AERONET's aged column dust, Dubovik
+// et al. 2002), falling into the blue as the iron oxides absorb below 550 nm. A thick wall's diffuse reflectance is then
+// about 1 : 0.8 : 0.6, ochre; 0.93/0.92/0.85 gave 1 : 0.93 : 0.62, khaki that read olive in shade under a blue sky.
+static const Vector4 DUST_ALBEDO(0.95f, 0.89f, 0.75f, 0.75f);
+
+Vector4 WeatherMap3D::get_dust_albedo() {
+	return DUST_ALBEDO;
+}
 
 float WeatherMap3D::dust_flux(float p_ustar, float p_ustar_threshold, float p_clay_percent) {
 	if (p_ustar <= p_ustar_threshold || p_ustar <= 0.0f) {
@@ -372,7 +381,7 @@ void WeatherMap3D::_dust_upload() {
 	if (!dust_global_added) {
 		_set_global("weather_dust_map", dust_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 		_set_global("weather_dust_optics", Vector4(DUST_MASS_EXTINCTION, DUST_SPECTRUM.x, DUST_SPECTRUM.y, DUST_SPECTRUM.z), RSE::GLOBAL_VAR_TYPE_VEC4);
-		_set_global("weather_dust_albedo", Vector4(0.93f, 0.92f, 0.85f, 0.75f), RSE::GLOBAL_VAR_TYPE_VEC4);
+		_set_global("weather_dust_albedo", DUST_ALBEDO, RSE::GLOBAL_VAR_TYPE_VEC4);
 		dust_global_added = true;
 	}
 }

@@ -76,6 +76,13 @@
 				The frost sorting at a world position: x is how strongly the ground there sorts (0 to 1, from the climate, wetness, slope, soil and water gates of [member frost_sorting]), y the stone share of the pattern there (1 on a stony border or stripe, 0 in a fine centre). (0, 0) with [member frost_sorting] off or no [WeatherMap3D].
 			</description>
 		</method>
+		<method name="get_pedestal_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Rain splash pedestals at a world position: x is the share of the ground's stones lying on bare, erodible soil there (0 to 1: bare from a dry climate or a recent burn, times the soil, slope and stoniness gates of [member rain_pedestals]), y the soil the rain has taken off round them in metres. y is 0 with [member rain_pedestals] off, (0, 0) with no climate.
+			</description>
+		</method>
 		<method name="get_ground_detail_count" qualifiers="const">
 			<return type="int" />
 			<param index="0" name="layer" type="int" default="-1" />
@@ -195,6 +202,12 @@
 			<return type="int" />
 			<description>
 				How many stones are rigid bodies now (see [member stones_react]).
+			</description>
+		</method>
+		<method name="get_rt_stats" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				What the cells' stones cost the path tracer now: [code]merged_triangles[/code], [code]merged_groups[/code] and [code]merged_stones[/code] (groups at or under [member ProjectSettings.rendering/pathtracing/multimesh_merged_blas_max_triangles], whose merged structure holds a copy of each stone's triangles), [code]instanced_groups[/code] and [code]instanced_stones[/code] (sharing their shape's structure), and [code]cell_triangles[/code], every cell stone's triangles. See [member rt_instanced_cells].
 			</description>
 		</method>
 		<method name="get_react_stats" qualifiers="const">
@@ -415,6 +428,9 @@
 		<member name="erratic_rock_type" type="int" setter="set_erratic_rock_type" getter="get_erratic_rock_type" enum="RockGenerator.RockType" default="0">
 			Rock type of glacial erratics, carried from elsewhere.
 		</member>
+		<member name="rt_instanced_cells" type="bool" setter="set_rt_instanced_cells" getter="is_rt_instanced_cells" default="false">
+			The path tracer draws the cells' stones as instances of their shapes (one shared acceleration structure per shape, one entry per stone) instead of a merged structure per group that holds a copy of every stone's triangles. The same image; less memory only where many groups would be merged (where most are already over the cap, the CPU copies of the records cost more than the merged copies saved), and more instances to trace. See [method get_rt_stats].
+		</member>
 		<member name="far_widen" type="bool" setter="set_far_widen" getter="is_far_widen" default="true">
 			While [member far_thinning] thins a cell, the stones it still draws grow (up to 1.6 times) so the field keeps the stone cover of the records it dropped, as the ground's far stones take over. The far tier's big stones are never widened, so they meet their far copies.
 		</member>
@@ -457,6 +473,9 @@
 		<member name="runoff_gravel" type="bool" setter="set_runoff_gravel" getter="is_runoff_gravel" default="true">
 			Gravel sorted by storm runoff in the ground detail: the floors of the terrain's rills and gullies ([method TerrainGenerator3D.get_gully_at], the same rule the terrain material draws their gravel by) keep a lag of the coarse grains, a little rounded and imbricated across the flow, their gravel and fines washed out; the fans below them, where the slope eases, take a spread of fine grains over the coarser ground. Tiles of piles are not cut over a channel or fan.
 		</member>
+		<member name="rain_pedestals" type="bool" setter="set_rain_pedestals" getter="is_rain_pedestals" default="true">
+			Rain splash pedestals in the ground detail: where plants leave the soil bare (a dry climate from the [WorldContracts] weather's yearly precipitation times the terrain's precipitation pattern, or a burn scar from [WorldFire] in its first years), stones of the soil lie on it, and each stands on a column of the soil it shielded from the raindrops' splash while the ground round it was lowered (up to about a third of the stone's width); some have toppled off theirs. Trails, rooting, frost churn and storm runoff level them. Drawn as soil columns of fresh subsoil under the stones; counted in the far cover map. Tiles of piles are not cut over them. Off, the same stones lie on the soil without their columns.
+		</member>
 		<member name="frost_sorting" type="bool" setter="set_frost_sorting" getter="is_frost_sorting" default="true">
 			Frost-sorted patterned ground in the ground detail: where the mean annual air from the active [WeatherMap3D] climate (cooled by its lapse rate with height) is below about -1 C, the year's precipitation is over about 300 mm, the ground slopes under 10 degrees and has soil over bare rock, away from water, sand and talus, freeze and thaw sort the stones from the fines. Flat ground shows circles 1 to 3 m across, stony borders round bare fine centres; from 2 to 5 degrees the borders draw out into stripes down the fall line. The pattern comes from a phase separation run once per kind (Cahn-Hilliard, after Kessler and Werner 2003), tiled with warp and rotation per block so it does not repeat. The border stones are blocky and coarse, piled over the soil, some heaved up on edge. Tiles of piles are not used where the pattern is. Past the drawn stones the far cover maps ([member ground_detail_cover]) carry the borders' stones by the pattern's mean share. The gate and stone share are also published round the target as the global terrain_frost_map (r gate, g stone share, b dome) over terrain_frost_rect, so [TerrainMaterial3D] shades the fine centres as bare wet silt domed by frost heave (b: the dome's height share) and the borders with a gravel lag. See [method get_frost_at].
 		</member>
@@ -489,6 +508,9 @@
 		</member>
 		<member name="landform_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="900.0">
 			How far round the follow target landforms are built.
+		</member>
+		<member name="ledge_slabs" type="bool" setter="set_ledge_slabs" getter="is_ledge_slabs" default="true">
+			Caprock slabs along the lips of the terrain's benches ([method TerrainGenerator3D.get_ledge_lips]): one slab between two cross joints after another, each as thick as the lip's cap, hanging out by its overhang, its back under the bench; a gap now and then where a block fell.
 		</member>
 		<member name="lichen_cover" type="float" setter="set_lichen_cover" getter="get_lichen_cover" default="0.5">
 			Lichen crust on upper faces, from 0 to 1.

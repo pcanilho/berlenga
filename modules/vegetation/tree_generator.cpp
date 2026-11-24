@@ -1204,6 +1204,10 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			break;
 		case PRESET_MAX:
 			break;
+		default:
+			// The North American presets: set_preset() grows them from their European relative
+			// (european_relative()) and returns before this switch.
+			break;
 	}
 	emit_changed();
 	notify_property_list_changed();
@@ -3292,10 +3296,12 @@ void TreeGenerator::_compute_radii() {
 				// Its rings stay narrow, 1-2 mm a year (suppressed, browsed regeneration), whatever twigs it carries.
 				r = MIN(r, tip + 0.0018f * float(MAX(now - n.born, 0)));
 			}
-			n.radius = MAX(n.radius, MAX(tip, r));
+			// The stem's own girth over its crown's pipes (stem_girth): applied to the trunk only, and handed down the
+			// stem as the plain pipe, so it does not compound node by node or call by call.
+			n.radius = MAX(n.radius, MAX(tip, r) * (n.order == 0 ? stem_girth : 1.0f));
 		}
 		if (n.parent >= 0) {
-			acc[n.parent] += Math::pow(n.radius, e);
+			acc[n.parent] += Math::pow(n.order == 0 && !n.dead ? n.radius / stem_girth : n.radius, e);
 		}
 	}
 }
@@ -14828,13 +14834,17 @@ Array TreeGenerator::_plant_climber_leaves(int p_climber) {
 	if (p_climber <= CLIMBER_NONE || p_climber > CLIMBER_MAX) {
 		return Array();
 	}
+	// Plant sets and near meshes grow on worker threads (PlantGenerator.make_sets): one fills a slot at a time, and
+	// the slot's leaves are published only with their shapes, so a reader never sees the one without the other.
+	static BinaryMutex fill_lock;
+	MutexLock ml(fill_lock);
 	if (cache[p_climber].is_empty()) {
 		const int kind = p_climber == CLIMBER_MAX ? PlantGenerator::CLIMBER_IVY_ADULT : (p_climber == CLIMBER_IVY ? PlantGenerator::CLIMBER_IVY : (p_climber == CLIMBER_LIANA ? PlantGenerator::CLIMBER_CLEMATIS : PlantGenerator::CLIMBER_HONEYSUCKLE));
-		cache[p_climber] = PlantGenerator::make_climber_leaves(kind, 4);
+		const Array leaves = PlantGenerator::make_climber_leaves(kind, 4);
 		LocalVector<ClimberLeafShape> &shapes = plant_climber_shapes[p_climber];
 		shapes.clear();
-		for (int i = 0; i < cache[p_climber].size(); i++) {
-			const Ref<ArrayMesh> m = cache[p_climber][i];
+		for (int i = 0; i < leaves.size(); i++) {
+			const Ref<ArrayMesh> m = leaves[i];
 			const Array a = m->surface_get_arrays(0);
 			ClimberLeafShape sh;
 			sh.verts = a[Mesh::ARRAY_VERTEX];
@@ -14843,6 +14853,7 @@ Array TreeGenerator::_plant_climber_leaves(int p_climber) {
 			sh.indices = a[Mesh::ARRAY_INDEX];
 			shapes.push_back(sh);
 		}
+		cache[p_climber] = leaves;
 	}
 	return cache[p_climber];
 }
@@ -24222,9 +24233,17 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			// other European tree: leaves on the last five years' shoots, a third of the shedding, and dormant buds
 			// that wait twice as long to break inside the crown.
 			params[PARAM_LEAF_YEARS] = 5;
-			params[PARAM_SHED_RATIO] *= 0.33f;
-			params[PARAM_BUD_IDLE_YEARS] *= 2.0f;
+			// (Applied once per variant: before 23 Nov they compounded over the variants, and the later variants'
+			// fuller crowns, from a sixth to a twentieth of the shedding, were the ones that closed the roof.)
+			params[PARAM_SHED_RATIO] = look.params[PARAM_SHED_RATIO] * 0.15f;
+			params[PARAM_BUD_IDLE_YEARS] = look.params[PARAM_BUD_IDLE_YEARS] * 4.0f;
 		}
+		// Girth by layer (docs, 23 Nov: the stand read as even-aged poles, veterans no thicker than the rest). Uholka
+		// (WSL inventory 2013): 435 living trees a hectare on 36.6 m2 of basal area, a quadratic mean of 33 cm; ten a
+		// hectare of 80 cm and more, the largest beech 140 cm. The pipe model gives every full crown here a bole of
+		// about a metre or more: the canopy trees take a little over half of it (0.55-0.75 m placed), the giants
+		// 1.3-1.45 m placed (their species is scaled up a fifth) and their deadwood 1.2-1.35 m.
+		stem_girth = old_growth_band == 1 ? Math::lerp(1.05f, 1.15f, tv) : (old_growth_band == 3 ? 1.35f : (old_growth_band == 4 ? 0.55f : 1.0f));
 		if (old_growth_band == 1) {
 			params[PARAM_YEARS] = Math::round(MIN(y0 * Math::lerp(2.6f, 3.6f, tv), 180.0f));
 			veteran = Math::lerp(0.6f, 1.0f, tv);
@@ -24245,11 +24264,22 @@ void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, 
 			// The fallen and the broken giants (snags 2-4, logs 2-4 over the variants).
 			params[PARAM_YEARS] = Math::round(MIN(y0 * Math::lerp(2.2f, 3.4f, tv), 180.0f));
 			veteran = 0.5f;
+			// The gap's giant shows how it came down (docs, 23 Nov: a slim pole with a small plate did not read as one):
+			// two in three lie with their root plate torn up and standing, soil in its roots.
+			if (fallen) {
+				uprooted = p_variant % 3 != 2;
+			}
 		} else {
 			// The canopy: of many ages, a third of them habitat trees (WSL 2013: 150 a hectare, 35% of the living).
 			params[PARAM_YEARS] = Math::round(y0 * Math::lerp(1.2f, 2.0f, tv));
 			veteran = p_variant % 3 == 0 ? Math::lerp(0.3f, 0.6f, tv) : 0.0f;
 			limb_breakage = 1.3f;
+			// A closed roof (docs, 23 Nov: crowns read as tufts with sky between them): in primeval beech the gaps are
+			// mostly no larger than one canopy crown (Hobi et al. 2015), so between them the crowns close. Their room
+			// is already the stand's (a quarter of the top height, Hart-Becking); what was thin is the foliage on it.
+			// An old beech's crown loses its leader's control and spreads into a dome; the roof is domes meeting, not
+			// cones with sky between their tops.
+			params[PARAM_APICAL_DOMINANCE_OLD] = look.params[PARAM_APICAL_DOMINANCE_OLD] - 0.03f;
 		}
 	}
 	if (wet_band > 0) {
@@ -25019,6 +25049,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	mistletoe = p_from.mistletoe;
 	witches_brooms = p_from.witches_brooms;
 	limb_breakage = p_from.limb_breakage;
+	stem_girth = p_from.stem_girth;
 	uprooted = p_from.uprooted;
 	cut_height = p_from.cut_height;
 	cut_cycle = p_from.cut_cycle;
@@ -25054,6 +25085,12 @@ void TreeGenerator::_near_task(void *p_self) {
 	self->near_task_variant = code % NEAR_GLAZE_STRIDE;
 	const float saved_glaze = self->glaze_mm;
 	self->glaze_mm = glaze_band_mm((code % NEAR_SEASON_STRIDE) / NEAR_GLAZE_STRIDE);
+	// The variant set up from the copied start, as _stand_species set up the far one (the band setups scale in place).
+	float near_params[PARAM_MAX];
+	memcpy(near_params, self->params, sizeof(near_params));
+	const float near_spacing = self->forest_spacing;
+	const float near_shade = self->forest_shade;
+	const float near_girth = self->stem_girth;
 	const int season_band = code / NEAR_SEASON_STRIDE;
 	if (season_band > 0) {
 		const int sc = season_band - 1;
@@ -25099,6 +25136,10 @@ void TreeGenerator::_near_task(void *p_self) {
 	self->near_build = false;
 	self->material_source.unref();
 	self->glaze_mm = saved_glaze;
+	memcpy(self->params, near_params, sizeof(near_params));
+	self->forest_spacing = near_spacing;
+	self->forest_shade = near_shade;
+	self->stem_girth = near_girth;
 	self->leaf_season_forced = false;
 	self->near_task_variant = code;
 	// Keep the copy small between requests: the growth state is only needed while growing.
@@ -25274,6 +25315,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const int saved_cut_since = cut_since;
 		const float saved_veteran = veteran;
 		const float saved_breakage = limb_breakage;
+		const float saved_girth = stem_girth;
 		const float saved_exposure = wind_exposure;
 		const float saved_krummholz = krummholz;
 		const float saved_slope = ground_slope;
@@ -25333,7 +25375,18 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			near_sources.erase(key);
 		}
 		far_leaves = near_split;
+		// Each variant is set up from the same start: the band setups scale the stand's spacing, shade and some
+		// growth parameters, and run once per variant on this one generator (scaled in place, the variants
+		// compounded: a third veteran grew with three times the crown room and a twentieth of the shedding).
+		float variant_params[PARAM_MAX];
+		memcpy(variant_params, params, sizeof(params));
+		const float variant_spacing = forest_spacing;
+		const float variant_shade = forest_shade;
 		for (int v = 0; v < n; v++) {
+			memcpy(params, variant_params, sizeof(params));
+			forest_spacing = variant_spacing;
+			forest_shade = variant_shade;
+			stem_girth = saved_girth;
 			_setup_variant(p_preset, p_form, v, saved_seed, saved_climber_cover);
 			Ref<ArrayMesh> mesh = generate();
 			crown += crown_radius;
@@ -25423,6 +25476,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		cut_since = saved_cut_since;
 		veteran = saved_veteran;
 		limb_breakage = saved_breakage;
+		stem_girth = saved_girth;
 		wind_exposure = saved_exposure;
 		krummholz = saved_krummholz;
 		envelope = saved_envelope;

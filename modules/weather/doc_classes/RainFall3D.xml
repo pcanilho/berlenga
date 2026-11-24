@@ -33,6 +33,12 @@
 				Marshall and Palmer's slope (per mm) of the drop sizes at [param rate_mm_h] mm/h: 4.1 R^-0.21.
 			</description>
 		</method>
+		<method name="get_body_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The moving bodies the drops meet this frame (see [member body_collision]).
+			</description>
+		</method>
 		<method name="get_drip_rate" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -114,6 +120,12 @@
 		</method>
 	</methods>
 	<members>
+		<member name="body_collision" type="bool" setter="set_body_collision" getter="is_body_collision" default="true">
+			When enabled, rain and drips land on moving bodies near the camera (characters, vehicles, rigid props: every body in the physics space that is not static), splashing on them as on the ground: the physics space's broadphase finds up to 16 nearest each frame, and their sphere, capsule, cylinder, box and convex shapes (a convex hull as its box) go to the particles as analytic colliders. Static surfaces are left to the shelter heightfield.
+		</member>
+		<member name="body_collision_mask" type="int" setter="set_body_collision_mask" getter="get_body_collision_mask" default="4294967295">
+			Physics layers of the moving bodies rain and drips land on.
+		</member>
 		<member name="density_scale" type="float" setter="set_density_scale" getter="get_density_scale" default="1.0">
 			Scales the number of drops drawn.
 		</member>

@@ -2435,6 +2435,7 @@ void WeatherMap3D::_update_ridge_clouds(double p_dt) {
 			Storm s;
 			s.id = next_storm_id++;
 			s.ridge = true;
+			s.deep = 0.0f;
 			s.fade = 0.0f;
 			s.lifetime = 0.0f;
 			s.rain_rate = 0.0f;
@@ -3256,6 +3257,7 @@ void WeatherMap3D::_update_fire_clouds(double p_weather_dt) {
 		s.cloud_base = MAX(p.y + cloud.y, 1.0f);
 		s.outflow = 10.0f * deep;
 		s.rain_rate = 2.0f * deep;
+		s.deep = deep;
 		s.fade_target = MAX(s.fade_target, MIN(cloud.z, 1.0f));
 	}
 	// Grows over about five minutes of weather time while the plume feeds it; once it stops, the cap drifts off
@@ -3817,6 +3819,8 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	st.high_height = high_cloud_height;
 	st.high_tau = high_cloud_optical_depth;
 	st.high_drift = high_cloud_drift;
+	st.contrail_wind = get_wind_aloft(is_inside_tree() ? get_global_position() : Vector3(), 10500.0f);
+	st.clock = float(Math::fmod(cloud_time, 86400.0));
 	st.mid_cover = cur_mid_cloud_cover;
 	st.mid_height = mid_cloud_height;
 	st.mid_thickness = mid_cloud_thickness;
@@ -3929,6 +3933,7 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 		st.storm_base[st.storm_count - 1] = s.cloud_base;
 		st.storm_rain[st.storm_count - 1] = s.rain_rate * env;
 		st.storm_outflow[st.storm_count - 1] = s.fire ? 0.0f : s.outflow;
+		st.storm_deep[st.storm_count - 1] = s.deep;
 		// The weather's one rain/snow split (rain_fraction of the air's temperature and humidity), at the ground under it.
 		const float share = get_rain_share_at(Vector3(s.position.x, ground_height, s.position.y));
 		st.storm_snow[st.storm_count - 1] = Math::is_finite(share) ? CLAMP(1.0f - share, 0.0f, 1.0f) : 0.0f;
@@ -4749,6 +4754,7 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_sun_drying", "enabled"), &WeatherMap3D::set_sun_drying);
 	ClassDB::bind_method(D_METHOD("get_sun_drying"), &WeatherMap3D::get_sun_drying);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("diurnal_shape", "solar_hour", "day_length"), &WeatherMap3D::diurnal_shape);
+	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("get_dust_albedo"), &WeatherMap3D::get_dust_albedo);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("penman_evaporation", "net_radiation", "wind_2m", "celsius", "humidity"), &WeatherMap3D::penman_evaporation);
 	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("rain_fraction", "celsius", "humidity"), &WeatherMap3D::rain_fraction);
 	ClassDB::bind_method(D_METHOD("get_canopy_height_at", "position"), &WeatherMap3D::get_canopy_height_at);

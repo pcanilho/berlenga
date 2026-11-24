@@ -1877,6 +1877,9 @@ func _render_plot(i: int, args: Dictionary) -> void:
 			# Among the canopy trees, away from the stream, looking into the closed stand.
 			eye = Vector3(-40, 0, 30)
 			look = Vector3(-1, 0.22, -0.6)
+		if args.has("look-y"):
+			# --look-y=Y: tilt the inside view (1.2: up into the canopy).
+			look.y = float(args["look-y"])
 		eye.y = valley.get_height(eye) + 1.7
 		cam.position = eye
 		cam.look_at(eye + look)

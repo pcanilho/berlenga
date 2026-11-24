@@ -19,6 +19,10 @@ on:
         description: Build and keep the zips as workflow artifacts, publish no release
         type: boolean
         default: false
+      skip_macos:
+        description: Leave the macOS build out (for when hosted macOS runners are unavailable)
+        type: boolean
+        default: false
   schedule:
     - cron: "0 6 * * 1"
 
@@ -160,7 +164,7 @@ jobs:
     permissions:
       contents: read
     needs: check
-    if: needs.check.outputs.publish == 'true'
+    if: needs.check.outputs.publish == 'true' && !inputs.skip_macos
     runs-on: macos-26
     timeout-minutes: 340
     env:

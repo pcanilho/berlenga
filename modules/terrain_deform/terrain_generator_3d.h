@@ -108,7 +108,7 @@ private:
 	real_t detail_gully_weight = 0.5;
 	real_t detail_assumed_slope = 0.6;
 	real_t detail_crest = 1.0; // ridged noise on crests, times the gully amplitude
-	real_t cliff_ledge_spacing = 0.0; // m between rock beds stepped into faces steeper than 40 degrees; 0 = off
+	real_t cliff_ledge_spacing = 0.0; // mean m between rock beds (thicknesses vary) stepped into faces steeper than 40 degrees; 0 = off
 	real_t cliff_ledge_strength = 1.0;
 
 	// Tile erosion (stage 4): droplet hydraulic plus thermal erosion on a fine grid, in overlapping tiles.
@@ -436,12 +436,14 @@ private:
 	double last_preview_msec = 0.0;
 	real_t sky_light_interval = 2.0;
 	double sky_light_wait = 0.0;
+	bool sky_light_pending = false; // A panorama readback is under way (_sky_light_ready()).
 	PackedFloat32Array sky_light_last; // the last panorama used, to skip updates when the sky has not changed
 	void _bake_sky();
 	void _upload_sky();
 	static void _sky_light_row(void *p_job, uint32_t p_row);
 	void _sky_light(const void *p_bins);
 	void _sky_light_poll(double p_delta);
+	void _sky_light_ready(const Ref<Image> &p_pano);
 	void _bake_spray();
 	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).
 	int tile_nx = 0;
@@ -532,7 +534,14 @@ private:
 	void _build_nebkhas();
 	float _nebkha_sample(real_t p_x, real_t p_z) const;
 	real_t _sea_cubic(real_t p_gx, real_t p_gz) const;
-	float _ground_detail(real_t p_x, real_t p_z) const;
+	// The cliff ledges' state at a point (get_ledge_lips): bed coordinate q (bed units), the bed's boundaries b0 <= q <
+	// b1, the mean spacing (m), the bed's hardness and the ledges' weight there (0..1), the gradient the ledges read.
+	struct LedgeProbe {
+		bool valid = false;
+		double q = 0.0, b0 = 0.0, b1 = 0.0, spacing = 0.0, hard = 0.0, weight = 0.0, gx = 0.0, gz = 0.0;
+	};
+	float _ground_detail(real_t p_x, real_t p_z, LedgeProbe *r_ledge = nullptr) const;
+	LedgeProbe _ledge_probe(real_t p_x, real_t p_z) const;
 	bool result_deposition = false; // the last generate() deposited (alluvium smooths the detail)
 	Rect2 result_rect; // where the last generate() ran; the result stays there if the node moves
 	real_t result_cell = 1.0;
@@ -588,6 +597,70 @@ protected:
 	static void _bind_methods();
 
 public:
+	// The result as stages after the generator read it, for a cache key (world_cache.h): p_add(data, bytes) is called
+	// for each piece in order. The result is a function of the stored properties (hashed by the caller) and the nodes
+	// they point at; those nodes act through the ground, water and rivers, and runtime edits (touch-ups, holes) through
+	// the ground and the hole list, so all of those go in too.
+	template <typename F>
+	void hash_result(const F &p_add) const {
+		const int32_t dims[] = { nx, ny };
+		p_add(dims, sizeof(dims));
+		const Rect2 rr = get_result_rect();
+		const double place[] = { double(rr.position.x), double(rr.position.y), double(rr.size.x), double(rr.size.y), double(cell_size) };
+		p_add(place, sizeof(place));
+		auto grid = [&](const auto &p_v) {
+			const uint64_t n = p_v.size();
+			p_add(&n, sizeof(n));
+			p_add(p_v.ptr(), sizeof(p_v[0]) * n);
+		};
+		grid(heights);
+		grid(heights_generated);
+		grid(drainage);
+		grid(sediment);
+		grid(alluvium_reach);
+		grid(soil);
+		grid(rock);
+		grid(talus);
+		grid(scree_sorting);
+		grid(beach);
+		grid(coast_exposure);
+		grid(hardness);
+		grid(receivers);
+		grid(channel_area);
+		grid(water_body);
+		grid(water_depth);
+		grid(lake_rim);
+		grid(lake_rim_weight);
+		grid(scree_cover);
+		grid(till_cover);
+		grid(channel_of_cell);
+		grid(glacial_ice);
+		grid(touch_mask);
+		grid(touch_flat);
+		grid(tile_delta);
+		grid(tile_flow);
+		grid(tile_deposit);
+		grid(dune_sand);
+		grid(dune_plants);
+		grid(dune_cover);
+		grid(sea_sand);
+		grid(sea_cover);
+		for (const Channel &c : channels) {
+			grid(c.points);
+			grid(c.bed);
+			grid(c.dep);
+			grid(c.braid);
+			grid(c.stage);
+		}
+		for (const FallLip &l : lips) {
+			const real_t v[] = { l.origin.x, l.origin.y, l.top.x, l.top.y, l.run, l.h_top, l.h_bottom, l.half_width, real_t(l.notch ? 1 : 0) };
+			p_add(v, sizeof(v));
+		}
+		for (const Hole &h : holes) {
+			p_add(&h.box, sizeof(h.box));
+		}
+	}
+
 	void set_size(const Vector2 &p_size);
 	Vector2 get_size() const { return size; }
 	void set_cell_size(real_t p_size);
@@ -898,6 +971,21 @@ public:
 	// Where the last generate() ran: the rect the result's heights cover. Safe from worker threads (the node's
 	// global transform is not); get_world_rect() before the first generate().
 	Rect2 get_result_rect() const { return result_rect.has_area() ? result_rect : get_world_rect(); }
+	// Cliff ledge lips (the contract in docs/ideas/terrain-generation.md, "Ledge lips"): the outer edges of the
+	// benches cliff_ledge_spacing steps into faces, where a hard bed caps the riser below it. Read-only and safe from
+	// worker threads (as get_height). Points along each lip about p_step metres apart inside p_rect (world xz).
+	struct LedgeLip {
+		Vector3 position; // on the drawn heightfield at the lip's edge (world, m)
+		Vector3 out; // horizontal unit vector out of the face (downhill), the way a slab overhangs
+		Vector3 face_normal; // unit normal of the riser under the lip (the face a slab overhangs)
+		float bed_thickness = 0.0f; // m: height of the bed under the lip (the riser down to the bench below)
+		float cap_thickness = 0.0f; // m: the hard cap's thickness at the lip (a slab's)
+		float overhang = 0.0f; // m: how far the cap may stand out past the riser (cantilever limit times hardness)
+		float hardness = 0.0f; // 0..1: the bed's hardness (0 weathers back flush, no slab)
+		float weight = 0.0f; // 0..1: the ledges' share there (steepness, water and scree fades)
+	};
+	void get_ledge_lips(const Rect2 &p_rect, real_t p_step, LocalVector<LedgeLip> &r_lips) const;
+	TypedArray<Dictionary> get_ledge_lips_bind(const Rect2 &p_rect, real_t p_step) const;
 	Vector2i get_grid_size() const { return Vector2i(nx, ny); }
 
 	// Runs the simulation. Returns false when nothing could run (empty size).

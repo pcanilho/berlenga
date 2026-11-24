@@ -87,6 +87,13 @@ class RainFall3D : public Node3D {
 	float roof_depth = 2.0f; // m of roof draining to each metre of eave
 	float roof_drain_time = 300.0f; // s, how long a roof keeps draining after the rain
 	uint32_t drip_collision_mask = 0xFFFFFFFF;
+	// Moving bodies (characters, vehicles, props: everything not static in the physics space) near the camera, as
+	// analytic colliders the drops meet: the shelter heightfield is the topmost static surface, cast once.
+	bool body_collision = true;
+	uint32_t body_collision_mask = 0xFFFFFFFF;
+	static constexpr int MAX_BODIES = 16;
+	int body_count = 0;
+	void _update_bodies(Vector3 p_center);
 
 	GPUParticles3D *fall = nullptr;
 	GPUParticles3D *drip = nullptr;
@@ -187,6 +194,11 @@ public:
 	void set_roof_drain_time(float p_s) { roof_drain_time = MAX(p_s, 1.0f); }
 	float get_roof_drain_time() const { return roof_drain_time; }
 	void set_drip_collision_mask(uint32_t p_mask) { drip_collision_mask = p_mask; }
+	void set_body_collision(bool p_enabled) { body_collision = p_enabled; }
+	bool is_body_collision() const { return body_collision; }
+	void set_body_collision_mask(uint32_t p_mask) { body_collision_mask = p_mask; }
+	uint32_t get_body_collision_mask() const { return body_collision_mask; }
+	int get_body_count() const { return body_count; } // moving bodies the drops meet this frame
 	uint32_t get_drip_collision_mask() const { return drip_collision_mask; }
 
 	float get_rainfall_rate() const { return cur_rate; } // mm/h liquid at the camera

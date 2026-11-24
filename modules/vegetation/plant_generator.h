@@ -615,6 +615,14 @@ public:
 		FLOOR_MAX,
 	};
 	static Array stand_litter_leaves(FloorStand p_stand, const Dictionary &p_season = Dictionary());
+	// Several species sets made at once on the worker threads (each call alone is serial): calls are
+	// [method, args] of PlantGenerator's static make_* methods, or ["variants", preset, count]; the
+	// results come back in the calls' order, the same as made one after another.
+	static Array make_sets(const Array &p_calls);
+	static void set_parallel_sets(bool p_enable) { parallel_sets = p_enable; }
+	static bool is_parallel_sets() { return parallel_sets; }
+	static bool parallel_sets;
+	static void _make_set_job(void *p_jobs, uint32_t p_index);
 	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true, float p_impostor_range = 15.0f, const Dictionary &p_season = Dictionary());
 
 	// Plants between stones (docs/ideas/vegetation.md, "Plants between stones").

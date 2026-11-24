@@ -24,6 +24,14 @@
 				Each newly detached piece gets a real outward velocity -- radial direction from [param world_position] to that piece's own centroid, scaled by [member shatter_speed] and the same distance falloff the damage itself used, plus a slight upward bias.
 			</description>
 		</method>
+		<method name="dissolve_piece">
+			<return type="bool" />
+			<param index="0" name="index" type="int" />
+			<param index="1" name="seconds" type="float" />
+			<description>
+				Shrinks piece [param index] away over [param seconds] and then removes it, on its own clock, whatever [member piece_lifetime] is: a clod washing out in a current, a lump of ash crumbling. As with [member piece_shrink_time] it stops simulating and colliding at once and shrinks toward the ground straight below it. Calling it again can only make it go sooner. Returns [code]false[/code] for an index out of range.
+			</description>
+		</method>
 		<method name="get_piece_body" qualifiers="const">
 			<return type="RID" />
 			<param index="0" name="index" type="int" />

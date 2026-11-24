@@ -441,6 +441,32 @@ void LightStorage::directional_volume_shadow_set(RID p_light, RID p_texture, con
 	volume_shadow.frame = RSG::rasterizer->get_frame_number();
 }
 
+void LightStorage::gas_glow_set(RID p_texture, const Transform3D &p_world_to_glow, float p_albedo, float p_anisotropy) {
+	gas_glow.texture = p_texture;
+	gas_glow.world_to_glow = p_world_to_glow;
+	gas_glow.albedo = CLAMP(p_albedo, 0.0f, 0.999f);
+	gas_glow.anisotropy = CLAMP(p_anisotropy, -0.95f, 0.95f);
+	gas_glow.frame = RSG::rasterizer->get_frame_number();
+}
+
+RID LightStorage::gas_glow_get_buffer() {
+	if (!gas_glow_buffer.is_valid()) {
+		GasGlowData empty = {};
+		gas_glow_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(GasGlowData), Span<uint8_t>((const uint8_t *)&empty, sizeof(GasGlowData)));
+	}
+	return gas_glow_buffer;
+}
+
+RID LightStorage::gas_glow_get_texture() {
+	if (gas_glow.texture.is_valid() && RD::get_singleton()->texture_is_valid(gas_glow.texture)) {
+		return gas_glow.texture;
+	}
+	if (!volume_shadow_empty.is_valid()) {
+		volume_shadow_empty = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK);
+	}
+	return volume_shadow_empty;
+}
+
 RID LightStorage::directional_volume_shadow_get_texture() {
 	if (volume_shadow.texture.is_valid() && RD::get_singleton()->texture_is_valid(volume_shadow.texture)) {
 		return volume_shadow.texture;
@@ -732,6 +758,10 @@ void LightStorage::light_instance_mark_visible(RID p_light_instance) {
 /* LIGHT DATA */
 
 void LightStorage::free_light_data() {
+	if (gas_glow_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(gas_glow_buffer);
+		gas_glow_buffer = RID();
+	}
 	if (directional_light_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(directional_light_buffer);
 		directional_light_buffer = RID();
@@ -1414,6 +1444,24 @@ void LightStorage::update_light_buffers(RenderDataRD *p_render_data, const Paged
 
 	if (r_directional_light_count) {
 		RD::get_singleton()->buffer_update(directional_light_buffer, 0, sizeof(DirectionalLightData) * r_directional_light_count, directional_lights);
+	}
+
+	// Gas glow: view space -> (u, v, w) of the glow grid and its medium, while it is current; all zero otherwise.
+	{
+		GasGlowData glow_data = {};
+		if (gas_glow.texture.is_valid() && RSG::rasterizer->get_frame_number() - gas_glow.frame <= 2) {
+			const Transform3D view_to_glow = gas_glow.world_to_glow * p_camera_transform;
+			float *rows[3] = { glow_data.u, glow_data.v, glow_data.w };
+			for (int r = 0; r < 3; r++) {
+				rows[r][0] = view_to_glow.basis.rows[r].x;
+				rows[r][1] = view_to_glow.basis.rows[r].y;
+				rows[r][2] = view_to_glow.basis.rows[r].z;
+				rows[r][3] = view_to_glow.origin[r];
+			}
+			glow_data.medium[0] = gas_glow.albedo;
+			glow_data.medium[1] = gas_glow.anisotropy;
+		}
+		RD::get_singleton()->buffer_update(gas_glow_get_buffer(), 0, sizeof(GasGlowData), &glow_data);
 	}
 }
 

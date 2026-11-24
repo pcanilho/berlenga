@@ -748,6 +748,7 @@ public:
 	float mistletoe = 1.0f; // Chance and amount of mistletoe on host species (section 5n); 0 none.
 	float witches_brooms = 1.0f; // Chance and amount of witches' brooms (birches; section 5n).
 	float limb_breakage = 1.0f; // Storm-snapped and hanging limbs on living trees (section 5j); 0 none.
+	float stem_girth = 1.0f; // Trunk radius over the pipe model's (old-growth giants and canopy, trees.md 5an); 1 none.
 	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
 	float fire_years = -1.0f; // Years since a fire killed the crown (trees.md 5ah), -1 unburnt: the tree as it stands and regrows.
 	// Placed species carry one variant per fire band (0-1, 1-3, 3-6, 6-10, 10-20 years, grown at 0.5, 2, 4.5, 8

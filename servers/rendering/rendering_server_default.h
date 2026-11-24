@@ -892,6 +892,7 @@ public:
 	FUNC2(sky_set_mode, RID, RSE::SkyMode)
 	FUNC2(sky_set_material, RID, RID)
 	FUNC4R(Ref<Image>, sky_bake_panorama, RID, float, bool, const Size2i &)
+	FUNC5(sky_bake_panorama_async, RID, float, bool, const Size2i &, const Callable &)
 
 	/* ENVIRONMENT */
 

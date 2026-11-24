@@ -110,8 +110,12 @@ uniform float cloud_droplet_size : hint_range(5, 50) = 15.0;
 uniform float cloud_back_scatter : hint_range(0, 1) = 0.5;
 // The share of the cirrus' single scattering in the 22 degree ice halo (the 46 degree ring takes a fifth as much).
 uniform float cloud_halo_strength : hint_range(0, 0.5) = 0.08;
+// The share of the cirrus' single scattering in sun dogs (plates) and, at 0.6 of it, tangent arcs (columns), within the
+// halo patches (oriented_halos()).
+uniform float cloud_parhelia_strength : hint_range(0, 0.3) = 0.03;
 // How much the billows toward the sun shade the scattered light (times their optical depth).
 uniform float cloud_surface_occlusion : hint_range(0, 2) = 1.0;
+uniform float cloud_sky_occlusion_reach : hint_range(0, 1000) = 250.0;
 // Short steps inside cloud as a share of the long ones (1: no refinement).
 uniform float cloud_refine : hint_range(0.1, 1) = 0.33;
 // Iridescence on thin, newly formed wave cloud near the sun (diffraction by small uniform droplets): its strength.
@@ -461,7 +465,27 @@ vec4 march_cumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambi
 		// density toward the sky; SunshineClouds2 reads the density one step up): one coarse read 100 m above,
 		// so undersides and the lee of towers darken while the tops stay open to the sky.
 		float up_tau = transmittance > 0.15 ? wc_extinction(p + vec3(0.0, 100.0, 0.0), ct, false, 100.0) * 100.0 : 2.0 * (1.0 - hf);
-		light += mix(ambient_bottom, ambient_top, mix(0.4, 1.0, hf)) * mix(0.5, 1.0, sqrt(1.0 - profile)) * mix(0.5, 1.0, exp(-up_tau)) * 1.4;
+		float sky_vis = mix(0.5, 1.0, exp(-up_tau));
+		// Sky visibility over a turret's reach (cloud_sky_occlusion_reach, 250 m): the transmittance toward four points
+		// of the upper hemisphere (up, and 35 degrees up toward the camera and either side), as ambient occlusion is
+		// estimated from a few density probes in production volume rendering (Wrenninge 2012; Nubis Cubed's ambient
+		// from the summed density toward the sky). A crest sees open sky and stays bright, a crease between turrets sees
+		// cloud on every side and darkens: the turrets stand in relief on a face the sun does not reach, where one read
+		// straight up left a storm tower's shaded wall a single flat tone.
+		if (cloud_sky_occlusion_reach > 0.0 && transmittance > 0.15) {
+			float L = cloud_sky_occlusion_reach;
+			vec3 hv = normalize(vec3(-rd.x, 0.0, -rd.z) + vec3(1e-4, 0.0, 0.0));
+			vec3 sv = vec3(-hv.z, 0.0, hv.x);
+			vec3 d1 = normalize(hv + vec3(0.0, 0.7, 0.0));
+			vec3 d2 = normalize(sv + vec3(0.0, 0.7, 0.0));
+			vec3 d3 = normalize(-sv + vec3(0.0, 0.7, 0.0));
+			float v = 0.4 * exp(-wc_extinction(p + vec3(0.0, L, 0.0), ct, false, L) * L);
+			v += 0.2 * exp(-wc_extinction(p + d1 * L, wc_cover_type((p + d1 * L).xz), false, L) * L);
+			v += 0.2 * exp(-wc_extinction(p + d2 * L, wc_cover_type((p + d2 * L).xz), false, L) * L);
+			v += 0.2 * exp(-wc_extinction(p + d3 * L, wc_cover_type((p + d3 * L).xz), false, L) * L);
+			sky_vis = mix(0.15, 1.0, v);
+		}
+		light += mix(ambient_bottom, ambient_top, mix(0.4, 1.0, hf)) * mix(0.5, 1.0, sqrt(1.0 - profile)) * sky_vis * 1.4;
 		// Light bounced off the sunlit clouds round the point (cloud-to-cloud interreflection): the light grid's green
 		// is the sunlit share of the cloud within about 600 m (blurred on the CPU, as voxel cone tracing prefilters
 		// its voxels, Crassin 2011), reflected at a cumulus' albedo-weighted 0.7 and spread like the diffuse term. It
@@ -530,6 +554,71 @@ float halo_ring(float theta, float peak, float width) {
 	float x = theta - peak;
 	float f = x < 0.0 ? exp(-x * x / (0.1 * width * width)) : exp(-x / width);
 	return f / (2.0 * PI * sin(peak) * width * 1.28);
+}
+
+// Halos of oriented crystals (Tape 1994; Greenler; Bravais' effective index): plates fall with their c-axes near
+// vertical, columns with theirs near horizontal. Refraction through their 60 degree prism faces then keeps the ray's
+// component along the axis, so a ray tilted beta to the plane across the axis sees the prism with the effective index
+// n' = sqrt(n^2 - sin^2 beta) / cos beta, and its minimum deviation D' = 2 asin(n' / 2) - 60 degrees in that plane.
+// Plates (axis vertical, beta the sun's altitude): the sun dogs (parhelia), at the sun's altitude D' to either side of
+// it, 22 degrees at the horizon and further out as the sun climbs, gone above about 61 degrees; red toward the sun,
+// a white tail away. Columns (axis horizontal at every bearing): the upper and lower tangent arcs, touching the 22
+// degree ring above and below the sun, their wings lifting as it climbs. For a view ray v, the one horizontal axis
+// that keeps the component (along it) of v and of the sun equal is perpendicular to their difference, so the arc is
+// one evaluation, weighted by how fast that component turns with the bearing (the density of axes there).
+// Per channel n 1.307 (red) to 1.317 (blue), as the rings.
+float min_dev(float n, float sb) {
+	float cb2 = max(1.0 - sb * sb, 1e-4);
+	float np = sqrt(max(n * n - sb * sb, 0.0) / cb2);
+	float x = 0.5 * np;
+	return x >= 1.0 ? -1.0 : 2.0 * asin(x) - PI / 3.0;
+}
+
+float oriented_lobe(vec3 v, vec3 s, vec3 a, float n) {
+	float sb = dot(s, a);
+	float dv = min_dev(n, sb);
+	if (dv < 0.0) {
+		return 0.0;
+	}
+	vec3 sp = s - a * sb;
+	vec3 vp = v - a * dot(v, a);
+	float l = length(sp) * length(vp);
+	if (l < 1e-4) {
+		return 0.0;
+	}
+	float ang = acos(clamp(dot(sp, vp) / l, -1.0, 1.0));
+	const float W = 0.9 * PI / 180.0;
+	float x = ang - dv;
+	// A sharp red inner edge, the bright core falling off outward, and a faint white tail (the crystals tilted
+	// further, Greenler 1980) that fades into the parhelic circle's start.
+	return x < 0.0 ? exp(-x * x / (0.1 * W * W)) : 0.85 * exp(-x / W) + 0.15 * exp(-x / (8.0 * W));
+}
+
+vec3 oriented_halos(vec3 v, vec3 s, float p_plates, float p_columns) {
+	vec3 o = vec3(0.0);
+	const vec3 N = vec3(1.307, 1.311, 1.317);
+	const float W = 0.9 * PI / 180.0;
+	if (p_plates > 0.0) {
+		// Plates wobble a degree or two off horizontal: the dogs' height spread.
+		const float WOB = 1.6 * PI / 180.0;
+		float db = asin(clamp(v.y, -1.0, 1.0)) - asin(clamp(s.y, -1.0, 1.0));
+		float wb = exp(-db * db / (WOB * WOB));
+		if (wb > 1e-3) {
+			vec3 up = vec3(0.0, 1.0, 0.0);
+			o += p_plates * wb * vec3(oriented_lobe(v, s, up, N.r), oriented_lobe(v, s, up, N.g), oriented_lobe(v, s, up, N.b)) / (W * 1.28 * WOB * 1.77);
+		}
+	}
+	if (p_columns > 0.0) {
+		vec2 w = v.xz - s.xz;
+		float lw = length(w);
+		if (lw > 1e-3) {
+			vec3 a = vec3(-w.y, 0.0, w.x) / lw;
+			// The density of axes giving that match: 1 / (pi |d(component)/d bearing|), capped at the arc's top.
+			float dens = 1.0 / (PI * max(lw, 0.03));
+			o += p_columns * dens * vec3(oriented_lobe(v, s, a, N.r), oriented_lobe(v, s, a, N.g), oriented_lobe(v, s, a, N.b)) / (W * 1.28 * 2.0 * PI);
+		}
+	}
+	return o;
 }
 
 vec3 cirrus_phase(float cos_theta, float p_halo) {
@@ -619,7 +708,10 @@ vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	// Halos where the ice is columns falling at random: patches of sheet tens of kilometres across, so a ring shows
 	// as arcs across some of the sky and not everywhere.
 	float halo = cloud_halo_strength * mix(0.7, 1.4, cs) * smoothstep(0.35, 0.65, wc_value_noise((xz - cloud_high_drift) / 25000.0 + vec2(13.1, 71.7)));
-	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * cirrus_phase(cos_theta, halo) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
+	// Sun dogs and tangent arcs where the halo patches are (plates and columns falling steadily: thin, calm cirrus and
+	// cirrostratus), cloud_parhelia_strength of the single scattering for the plates and 3 of it for the columns (fewer, but the arc gathers every axis in its plane).
+	vec3 orient = cloud_parhelia_strength > 0.0 && halo > 0.0 ? oriented_halos(rd, sun_dir, cloud_parhelia_strength * halo / max(cloud_halo_strength, 1e-3), 3.0 * cloud_parhelia_strength * halo / max(cloud_halo_strength, 1e-3)) : vec3(0.0);
+	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * (cirrus_phase(cos_theta, halo) + orient) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
 	float tr = exp(-tau_v);
 	r_t = t;
 	// Far sheets fade into the air as the low clouds do.
@@ -630,6 +722,129 @@ vec4 march_cirrus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 #endif
 	float fade = 1.0 - smoothstep(0.5 * far, far, t);
 	return vec4(light * (1.0 - tr) * fade, mix(1.0, tr, fade));
+}
+
+// Contrails (aircraft condensation trails). An engine's exhaust mixes with the cold air along a straight line in
+// vapour pressure against temperature; a trail forms where that line crosses saturation over water, the
+// Schmidt-Appleman criterion (Schumann 1996, "On conditions for contrail formation from aircraft exhausts", Meteorol.
+// Z. 5): below about -40 C at cruise levels, from his fit T_LM = -46.46 + 9.43 ln(G - 0.053) + 0.72 ln^2(G - 0.053)
+// (C; G the mixing line's slope, about 1.5 Pa/K at 250 hPa, scaling with the pressure). In air subsaturated over ice
+// the trail sublimates within seconds to a minute: a short white line behind the aircraft. In ice-supersaturated air
+// (the moist layers where cirrus forms, the high layer's humidity here) it persists for hours, spreading by shear
+// and turbulence to kilometres wide while its ice grows, into contrail cirrus (Schumann 2005; Heymsfield et al. 2010:
+// optical depth 0.1 to 0.5, widths of 1 to 3 km after half an hour). The flights are procedural: cloud_contrail_traffic
+// lanes of straight tracks crossing the sky at 9.5 to 12 km and 240 m/s, each slot flown every 20 minutes, and each
+// trail drifts with the wind at its height.
+uniform float cloud_contrail_traffic : hint_range(0, 4) = 1.0;
+uniform vec2 cloud_contrail_wind = vec2(0.0);
+uniform float cloud_clock = 0.0;
+
+float contrail_hash(float a, float b) {
+	return fract(sin(a * 127.1 + b * 311.7) * 43758.5453);
+}
+
+vec4 march_contrails(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, float p_pixel, out float r_t) {
+	r_t = 0.0;
+	if (cloud_contrail_traffic <= 0.0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec3 ro = vec3(0.0, PLANET_RADIUS + cam.y, 0.0);
+	if (cam.y < 9000.0 && sphere_hits(ro, rd, PLANET_RADIUS).x > 0.0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	// The tracks pass near the camera's 40 km cell, so the sky round it always has its traffic.
+	vec2 cell = floor(cam.xz / 40000.0);
+	vec2 centre = (cell + 0.5) * 40000.0;
+	float tau_sum = 0.0;
+	float t_sum = 0.0;
+	float cos_theta = dot(rd, sun_dir);
+	const float T = 1200.0;
+	const float V = 240.0;
+	for (int k = 0; k < 12; k++) {
+		float fk = float(k) + 17.0 * cell.x + 131.0 * cell.y;
+		if (contrail_hash(fk, 3.7) > 0.6 * cloud_contrail_traffic) {
+			continue;
+		}
+		// Three flights of the slot: the current and the two before (their persistent trails still in the sky).
+		float phase = contrail_hash(fk, 9.1) * T;
+		float jn = floor((cloud_clock + phase) / T);
+		for (int m = 0; m < 3; m++) {
+			float j = jn - float(m);
+			float h = 9500.0 + 2500.0 * contrail_hash(fk + j, 1.3);
+			float th = 6.2831853 * contrail_hash(fk + j, 2.9);
+			vec2 dir = vec2(cos(th), sin(th));
+			vec2 perp = vec2(-dir.y, dir.x);
+			vec2 o = centre + perp * ((contrail_hash(fk + j, 4.1) - 0.5) * 60000.0) + dir * ((contrail_hash(fk + j, 5.3) - 0.5) * 40000.0);
+			float t_c = j * T - phase + contrail_hash(fk + j, 6.7) * T; // when it passes o
+			// The air there (the weather's lapse rate, the tropopause's -56.5 C floor) and its humidity: the dry upper
+			// troposphere, moist where the high layer's humidity is (wc_wave_depression's high branch).
+			float tc = max(cloud_air.x - 0.0065 * (h - cloud_air.z), -56.5);
+			float p_pa = 101325.0 * exp(-h / 8000.0);
+			float g = 1.5 * p_pa / 25000.0;
+			float lg = log(max(g - 0.053, 0.05));
+			float t_lm = -46.46 + 9.43 * lg + 0.72 * lg * lg;
+			// Where the ray crosses this flight's level.
+			vec2 hits = sphere_hits(ro, rd, PLANET_RADIUS + h);
+			float t = cam.y < h ? hits.y : hits.x;
+			if (t <= 0.0 || t > 150000.0) {
+				continue;
+			}
+			vec3 pl = ro + rd * t;
+			float mu = abs(dot(rd, normalize(pl)));
+			vec2 x = vec2(cam.x + rd.x * t, cam.z + rd.z * t);
+			// The trail's age at x: the aircraft flew past x - u a seconds ago (u the wind at its height).
+			vec2 u = cloud_contrail_wind;
+			float along = dot(x - o, dir);
+			float a = (V * (cloud_clock - t_c) - along) / max(V - dot(u, dir), 1.0);
+			if (a < 1.0) {
+				continue;
+			}
+			// Over ice: e_w / e_i grows about 1 % per degree below 0 C.
+			float ice_w = exp(0.0097 * max(-tc, 0.0));
+			// The humidity over ice at cruise levels: about 60 to 70 % on average, with ice-supersaturated regions some
+			// hundreds of kilometres across over about 15 % of the sky (Gierens et al. 1999, MOZAIC; Spichtinger et al.
+			// 2003): a 60 km noise round a mean that the ground's humidity raises, and the high layer's moist patches
+			// (wc_wave_depression's high branch) where its cirrus forms.
+			float n_r = wc_value_noise((x - cloud_high_drift) / 60000.0 + vec2(2.1, 7.3));
+			float rh_i = 0.5 + 0.4 * cloud_air.y + 0.8 * (n_r - 0.5);
+			if (cloud_high_cover > 0.001) {
+				float n = wc_cover_noise_at(x + vec2(9137.0, 3301.0) - (cloud_high_drift - cloud_drift), cloud_high_scale);
+				float rh_l = wc_wave_layer_rh(n, cloud_high_cover, wc_layer_cover_n(n, cloud_high_cover, x, true)) * ice_w;
+				float d = (h - cloud_high_height) / 2500.0;
+				rh_i = mix(rh_i, max(rh_i, rh_l), exp(-d * d) * min(1.0, 4.0 * cloud_high_cover));
+			}
+			if (tc > t_lm + 2.0 * min(rh_i / ice_w, 1.0)) {
+				continue; // too warm for a trail
+			}
+			float persist = smoothstep(0.98, 1.05, rh_i);
+			float life = mix(clamp(10.0 / max(1.0 - rh_i, 0.03), 10.0, 300.0), 2.0 * T, persist);
+			if (a > life) {
+				continue;
+			}
+			float lat = dot(x - o - u * a, perp);
+			// Spreading: tens of metres young, about 1 m/s wider in supersaturated air (shear and turbulence).
+			float sig = sqrt(25.0 * 25.0 + pow(mix(0.15, 1.0, persist) * a, 2.0));
+			// Each pixel's footprint widens the line (a far trail stays a thin line, not a vanishing one).
+			float foot = t * p_pixel;
+			float sig_v = sqrt(sig * sig + foot * foot);
+			float tau_c = 0.3 * (25.0 / sig) * (1.0 + persist * min(a / 900.0, 3.0)) * (1.0 - smoothstep(0.7 * life, life, a));
+			// Column optical depth across the line, kept as the footprint blurs it (spread, not lost).
+			float tau = tau_c * (sig / sig_v) * exp(-0.5 * lat * lat / (sig_v * sig_v)) / max(mu, 0.08);
+			if (tau > 1e-4) {
+				tau_sum += tau;
+				t_sum += tau * t;
+			}
+		}
+	}
+	if (tau_sum <= 1e-4) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	r_t = t_sum / tau_sum;
+	// Lit as the cirrus: ice, forward scattering, a diffuse share, the sky's light.
+	float tau_s = 0.3 / max(sun_dir.y, 0.05);
+	vec3 light = sun_radiance * (exp(-0.5 * tau_s) * cirrus_phase(cos_theta, 0.0) + (1.0 - exp(-0.5 * tau_s)) * (2.0 / (4.0 * PI))) + ambient_top;
+	float tr = exp(-tau_sum);
+	return vec4(light * (1.0 - tr), tr);
 }
 
 // The mid layer's density (1/m) at p in its slab: cloudlets from the detail noise's billows (inverted Worley,
@@ -777,6 +992,131 @@ vec4 march_altocumulus(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 
 	return vec4(radiance * fade, mix(1.0, transmittance, fade));
 }
 
+// Virga and fallstreaks under the mid layer: ice crystals falling from its thicker cloudlets at about 1 m/s
+// (Heymsfield 1975, "Cirrus uncinus generating cells and the evolution of cirriform clouds", J. Atmos. Sci. 32) and
+// sublimating in the drier air below. A crystal's radius squared shrinks linearly with the fall in subsaturated air
+// (diffusional growth run backwards; Pruppacher and Klett), so the trail's extinction, carried by the radius squared,
+// tapers linearly to nothing at the fall length L, which grows as the air below nears saturation. The wind changes
+// with height under the layer, so a crystal that fell d metres has drifted (du/dz) d^2 / (2 v) from its cell:
+// a parabola, the hooked trail of Marshall (1953, "Precipitation trajectories and patterns", J. Meteor. 10).
+// Only glaciated layers shed much (colder than about -10 C at the base); the cell they fell from is found by
+// following that parabola back up, so the streaks keep the cloudlets' grouping and the fine streaks follow the hook.
+uniform float cloud_virga : hint_range(0, 3) = 1.0;
+
+vec3 virga_geometry() {
+	// x: the fall length L (m), y: the shed share (ice), z: the base height.
+	float y0 = cloud_mid_height - 0.5 * cloud_mid_thickness;
+	float tb = cloud_air.x - 0.0065 * (y0 - cloud_air.z);
+	float ice = mix(0.12, 1.0, 1.0 - smoothstep(-14.0, -5.0, tb));
+	float zm = 0.5 * y0;
+	float rh = clamp(cloud_air.y * (exp(-max(zm - cloud_air.z, 0.0) / 8000.0) - 0.02) / 0.98, 0.05, 0.97);
+	// Subsaturated over ice, not water (ice saturates at about 1.1 times lower vapour at -10 C).
+	float s_ice = min(1.1 * rh, 0.97);
+	float len = clamp(330.0 / (1.0 - s_ice), 250.0, 3000.0);
+	return vec3(min(len, y0 - 50.0), ice, y0);
+}
+
+vec4 march_virga(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, float jitter, float p_pixel, out float r_t) {
+	r_t = 0.0;
+	if (cloud_virga <= 0.0 || cloud_mid_cover <= 0.02) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec3 g = virga_geometry();
+	float len = g.x;
+	float y0 = g.z;
+	float y1 = y0 - len;
+	if (len < 100.0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	vec3 ro = vec3(0.0, PLANET_RADIUS + cam.y, 0.0);
+	vec2 hb = sphere_hits(ro, rd, PLANET_RADIUS + y1);
+	vec2 ht = sphere_hits(ro, rd, PLANET_RADIUS + y0);
+	float t0;
+	float t1;
+	if (cam.y < y1) {
+		if (sphere_hits(ro, rd, PLANET_RADIUS).x > 0.0) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = hb.y;
+		t1 = ht.y;
+	} else if (cam.y < y0) {
+		t0 = 0.0;
+		t1 = hb.x > 0.0 ? hb.x : ht.y;
+	} else {
+		if (ht.x < 0.0) {
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+		t0 = ht.x;
+		t1 = hb.x > 0.0 ? hb.x : ht.y;
+	}
+#ifdef ATMO_SCATTERING
+	float far = 120000.0;
+#else
+	float far = cloud_far * 1.5;
+#endif
+	if (t0 > far || t1 <= t0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+	t1 = min(t1, t0 + 12000.0);
+	const int n = 12;
+	float ds = (t1 - t0) / float(n);
+	// The wind at the base and below it: the mid layer's way (its speed about 1.6 times the low wind's plus 4 m/s,
+	// winds growing with height) against the low wind (the rain's slant over the drops' 7 m/s). Its change per metre
+	// over the depth from the base to the ground, and 1 m/s crystals: the drift is a d^2.
+	vec2 u_low = cloud_rain_slant * 7.0;
+	vec2 u_mid = cloud_mid_dir * (1.6 * length(u_low) + 4.0);
+	vec2 hook = (u_low - u_mid) / max(y0, 500.0) * 0.5;
+	float sigma_cell = cloud_mid_tau / (0.45 * cloud_mid_thickness);
+	float cos_theta = dot(rd, sun_dir);
+	float ph = 0.6 * henyey_greenstein(cos_theta, 0.7) + 0.4 / (4.0 * PI);
+	vec3 radiance = vec3(0.0);
+	float transmittance = 1.0;
+	float depth_sum = 0.0;
+	for (int i = 0; i < n; i++) {
+		float t = t0 + (float(i) + jitter) * ds;
+		vec3 pl = ro + rd * t;
+		vec3 p = vec3(cam.x + rd.x * t, length(pl) - PLANET_RADIUS, cam.z + rd.z * t);
+		float d = y0 - p.y;
+		if (d <= 0.0 || d >= len) {
+			continue;
+		}
+		// The cell these crystals fell from, up the parabola.
+		vec2 src = p.xz - hook * d * d;
+		// Which cells shed: patches of a few kilometres (fallstreaks come from some cloudlets, not all).
+		float shed = smoothstep(0.4, 0.7, wc_value_noise((src - cloud_mid_drift) / 3500.0 + vec2(19.3, 6.1)));
+		if (shed <= 0.0) {
+			continue;
+		}
+		float c = wc_mid_cover(src);
+		float foot = max(t * p_pixel, 0.25 * ds);
+		float prof;
+		float sg = wc_mid_density(vec3(src.x, y0 + 0.4 * cloud_mid_thickness, src.y), c, foot, prof);
+		if (sg <= 1e-6) {
+			continue;
+		}
+		// Thicker cloudlets shed; the trail tapers as the crystals sublimate (radius squared linear in the fall), with
+		// a short onset under the base where the crystals leave the cloud.
+		float taper = (1.0 - d / len) * smoothstep(0.0, 60.0, d);
+		// Streaks: the cells' own fine structure carried down the hook (a few tens of metres across, the trails of
+		// single generating turrets), read at the source so they bend with it.
+		vec2 sq = (src - cloud_mid_drift) / 140.0;
+		float fib = mix(0.45, 1.55, wc_value_noise(sq + vec2(3.3, 8.8)) * 0.65 + wc_value_noise(sq * 2.7 + vec2(1.9, 4.2)) * 0.35);
+		float sigma = cloud_virga * g.y * shed * sigma_cell * smoothstep(0.05, 0.45, prof) * taper * fib;
+		if (sigma <= 1e-7) {
+			continue;
+		}
+		// Thin: the sun reaches most of it; the layer above shades the sky light from above a little.
+		vec3 light = sun_radiance * ph + mix(ambient_bottom, ambient_top, 0.55) * 1.1;
+		float tr = exp(-sigma * ds);
+		radiance += transmittance * light * (1.0 - tr);
+		depth_sum += transmittance * (1.0 - tr) * t;
+		transmittance *= tr;
+	}
+	r_t = transmittance < 1.0 ? depth_sum / (1.0 - transmittance) : t0;
+	float fade = 1.0 - smoothstep(0.5 * far, far, t0);
+	return vec4(radiance * fade, mix(1.0, transmittance, fade));
+}
+
 // Wave clouds (lenticulars): the slab where mountain waves lift moist air past saturation, marched
 // (the field is fixed to the ground and smooth: 16 coarse steps over at most 8 km of path, refined in cloud). The lens is laminar: its
 // edge is where the lift meets saturation, roughened only by thin striations along the wind (the moist sheets the
@@ -885,35 +1225,60 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 		}
 		bool ambient_done = false;
 		vec3 ambient_lens = vec3(0.0);
+		// The lens's edge placed between samples (as an analytic coverage): the lift past saturation x is smooth along the
+		// ray, so where it changes sign between two samples the cloud starts (or ends) at the linear crossing, and only that
+		// share of the interval is cloud. A whole interval either way drew the rim as a dithered gradient one fine step
+		// (tens of metres) deep, which under a near lens spread over many pixels.
+		bool have_prev = false;
+		float x_prev = 0.0;
+		float sig_prev = 0.0;
+		vec3 l_prev = vec3(0.0);
+		float h = 0.125 * ds;
 		// Eight fine samples, jittered per revisit (the reprojection's R1 sequence averages them over 12 revisits): four
 		// fixed ones stepped a plate's end and a pile's 100 m gaps into stairs and dots.
 		for (int k = 0; k < 8; k++) {
 			float t = t0 + (float(i) + (float(k) + jitter) * 0.125) * ds;
 			vec3 p = vec3(cam.x + rd.x * t, length(ro + rd * t) - PLANET_RADIUS, cam.z + rd.z * t);
 			if (p.y < y0 || p.y > y1) {
+				have_prev = false;
 				continue;
 			}
 			// Striations: the detail noise stretched along the wind, a few tens of metres on the saturation level.
 			vec2 aw = vec2(dot(p.xz, wdir), dot(p.xz, vec2(-wdir.y, wdir.x)));
 			float foot = max(t * p_pixel, 0.03125 * ds);
 			float lod = max(log2(foot / (2400.0 / 128.0)), 0.0);
-			float st = textureLod(cloud_detail, vec3(aw.x / 6000.0, aw.y / 2400.0, p.y / 1200.0), lod).b; // stretched 7:1 along the wind it drew the thin end as brush strokes
+			// Read at 4 km by 2.4 km: the rim wanders smoothly by a few metres of lift. Finer or more stretched, the thin
+			// ends of the plates were cut into comb teeth along the wind.
+			float st = textureLod(cloud_detail, vec3(aw.x / 4000.0, aw.y / 2400.0, p.y / 1200.0), max(lod - 1.5, 0.0)).b;
 			float eta = wc_wave_eta(p);
-			float x = wc_plate_x(eta - 125.0 * dep, p) + 25.0 * (st - 0.5);
+			float x = wc_plate_x(eta - 125.0 * dep, p) + 10.0 * (st - 0.5);
 			if (x <= 0.0) {
+				if (have_prev && x_prev > 0.0) {
+					// Leaving the cloud: the share of the interval before the crossing, lit as the last sample inside.
+					float tr_x = exp(-sig_prev * h * x_prev / (x_prev - x));
+					radiance += transmittance * l_prev * (1.0 - tr_x);
+					depth_sum += transmittance * (1.0 - tr_x) * t;
+					transmittance *= tr_x;
+				}
+				have_prev = true;
+				x_prev = x;
 				continue;
 			}
 			float sigma = wc_wave_sigma(p, eta, x);
 			if (sigma <= 0.0) {
+				have_prev = false;
 				continue;
 			}
 			// Fibres: the water in thin sheets tens of metres deep, drawn out along the wind (the lens's silky, striated
-			// look in photographs), as the detail noise stretched 6:1 along the wind and flattened 3:1 in height. Read at
+			// look in photographs), as the detail noise stretched 2.5:1 along the wind and flattened 3:1 in height. Read at
 			// the pixel's footprint, so far lenses keep their mean and only near ones show the grain; without it a near
 			// lens was a soft blur.
-			float fib = textureLod(cloud_detail, vec3(aw.x / 3000.0, aw.y / 500.0, p.y / 170.0), max(log2(foot / (500.0 / 128.0)), 0.0)).g;
-			sigma *= mix(0.3, 1.7, fib);
+			float fib = textureLod(cloud_detail, vec3(aw.x / 3000.0, aw.y / 1200.0, p.y / 170.0), max(log2(foot / (1200.0 / 128.0)), 0.0)).g;
 			float profile = clamp(x / 150.0, 0.0, 1.0);
+			// Only in the thin rim, and gently: the lens is laminar (smooth, glassy in photographs; Ludlam 1980, Houze
+			// 2014), its striations faint where the cloud is a few optical depths thin. A 0.3 to 1.7 grain stretched 6:1
+			// through the whole sheet drew it combed, like brushed hair, seen from under a near lens.
+			sigma *= mix(1.0, mix(0.75, 1.25, fib), 1.0 - smoothstep(0.1, 0.5, profile));
 			float lr;
 			float dr;
 			// The sun's light at each sample (once a coarse step held a plate's end at one value for 60 m and stepped
@@ -942,7 +1307,12 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 				ambient_done = true;
 			}
 			vec3 l = light + ambient_lens * mix(0.35, 1.0, sqrt(1.0 - profile)) * 1.4;
-			float tr = exp(-sigma * 0.125 * ds);
+			float cover = have_prev && x_prev <= 0.0 ? x / (x - x_prev) : 1.0; // entering: from the crossing on
+			float tr = exp(-sigma * h * cover);
+			have_prev = true;
+			x_prev = x;
+			sig_prev = sigma;
+			l_prev = l;
 			radiance += transmittance * l * (1.0 - tr);
 			depth_sum += transmittance * (1.0 - tr) * t;
 			transmittance *= tr;
@@ -1161,7 +1531,7 @@ vec4 march_lake_snow(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 am
 // Hs = top / 3, none above the top. At the head (B) the top is a density current's (Simpson 1997, "Gravity
 // Currents"): lobes and clefts along the front about a head height or two apart, Kelvin-Helmholtz billows rolling
 // on its top, the nose lifted a little off the ground by friction. Mass extinction and albedo from
-// weather_dust_optics and weather_dust_albedo (0.6 m2/g; 0.93/0.92/0.85, g 0.75): the march returns grey light weights
+// weather_dust_optics and weather_dust_albedo (0.6 m2/g; 0.95/0.89/0.75, g 0.75): the march returns grey light weights
 // for the green albedo, and dust_tint() turns them brown by the albedo's colour over the scattering orders.
 global uniform sampler2D weather_dust_map;
 global uniform vec4 weather_dust_near; // where PhysX's Flow billows draw the head near the camera: x, z, radius (0: none), height
@@ -1424,8 +1794,20 @@ vec4 march_cloud_layers(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3
 	vec4 low = march_cumulus(cam, rd, sun_dir, sun_low, ambient_top, ambient_bottom, steps, jitter, p_pixel, d_low);
 	float d_mid;
 	vec4 mid = march_altocumulus(cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_mid);
+	// The virga hangs under the mid layer: met before it from below, after it from above.
+	float d_vir;
+	vec4 vir = march_virga(cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_vir);
+	if (vir.a < 1.0) {
+		mid = cam.y < cloud_mid_height ? cloud_over(vir, d_vir, mid, d_mid, d_mid) : cloud_over(mid, d_mid, vir, d_vir, d_mid);
+	}
 	float d_high;
 	vec4 high = march_cirrus(cam, rd, sun_dir, sun_high, ambient_top, p_pixel, d_high);
+	// Contrails fly above the cirrus layer (9.5 to 12 km): behind it from below, in front of it from above.
+	float d_con;
+	vec4 con = march_contrails(cam, rd, sun_dir, sun_high, ambient_top, p_pixel, d_con);
+	if (con.a < 1.0) {
+		high = cam.y < cloud_high_height ? cloud_over(high, d_high, con, d_con, d_high) : cloud_over(con, d_con, high, d_high, d_high);
+	}
 	// The two wave slabs, nearer first (the camera is under both but on a mountain top).
 	float d_wa;
 	vec4 wa = march_wave(cloud_wave_slab.xy, cam, rd, sun_dir, sun_mid, ambient_top, ambient_bottom, jitter, p_pixel, d_wa);
@@ -1859,6 +2241,8 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 		PackedFloat32Array rain;
 		PackedFloat32Array outflow;
 		PackedFloat32Array snow;
+		PackedFloat32Array deep;
+		deep.resize(WeatherClouds::MAX_STORMS);
 		rain.resize(WeatherClouds::MAX_STORMS);
 		outflow.resize(WeatherClouds::MAX_STORMS);
 		snow.resize(WeatherClouds::MAX_STORMS);
@@ -1866,7 +2250,9 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 			rain.write[i] = i < p_state.storm_count ? p_state.storm_rain[i] : 0.0f;
 			outflow.write[i] = i < p_state.storm_count ? p_state.storm_outflow[i] : 0.0f;
 			snow.write[i] = i < p_state.storm_count ? p_state.storm_snow[i] : 0.0f;
+			deep.write[i] = i < p_state.storm_count ? p_state.storm_deep[i] : 0.0f;
 		}
+		rs->material_set_param(m, "cloud_storm_deep", deep);
 		rs->material_set_param(m, "cloud_storm_rain", rain);
 		rs->material_set_param(m, "cloud_storm_outflow", outflow);
 		rs->material_set_param(m, "cloud_storm_snow", snow);
@@ -1915,6 +2301,8 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_high_tau", p_state.high_tau);
 	rs->material_set_param(m, "cloud_high_scale", p_state.high_scale);
 	rs->material_set_param(m, "cloud_high_drift", p_state.high_drift);
+	rs->material_set_param(m, "cloud_contrail_wind", p_state.contrail_wind);
+	rs->material_set_param(m, "cloud_clock", p_state.clock);
 	rs->material_set_param(m, "cloud_high_dir", p_state.high_dir);
 	rs->material_set_param(m, "cloud_high_cc", p_state.high_cc);
 	rs->material_set_param(m, "cloud_cell_size", p_state.cell_size);

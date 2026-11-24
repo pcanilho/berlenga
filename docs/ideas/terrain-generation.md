@@ -1553,6 +1553,45 @@ bench's cliff views: the gain is small (near the camera the shadow map already d
 adds thin lines under small ledges; farther faces carry no relief yet), so it stays off by default (Paulo: ship it,
 off). It grows in value once far faces get shader relief.
 
+## Ledge lips (23 Nov; Paulo picked "Ledge slabs from rock system")
+
+Cliff ledges (`cliff_ledge_spacing`) are benches at the foot of each bed with a riser above. On real bedded walls the
+bench's outer edge is a hard bed's top: it weathers back slower than the softer bed under it, so it stands out as a cap
+over an undercut (differential weathering of interbedded strata; rock shelters under sandstone over shale, Young and
+Young 1992, "Sandstone Landforms"). A heightfield cannot overhang, so the caps come from the rock system as slabs laid
+along the lips; the terrain only says where the lips are.
+
+A bench rises a quarter of its bed, so only about two lips in three are a real break in slope; the query reports
+those (the first metre of bench rises less than 0.8 of the first metre of riser falls). Flatter benches (a tenth) made
+every lip one, but every bench then held snow and the range read as regular white stripes, so they stay as they were.
+
+### Contract: `TerrainGenerator3D.get_ledge_lips(rect, step)`
+
+- Provider: TerrainGenerator3D (C++: `get_ledge_lips(Rect2, real_t, LocalVector<LedgeLip> &)`; script: an Array of
+  Dictionaries with the same fields). Read-only, safe from worker threads as `get_height` (call it with
+  `get_result_rect()`, never `get_world_rect()`, off the main thread).
+- Readers: RockField3D (ledge slabs, owned by the rocks system: their mesh family, placement, path tracing, cut-out,
+  moss).
+- Input: `rect` in world xz (m), clipped to the result rect; `step` (m) the grid the lips are found on, so points along
+  a lip are about `step` apart. Cost: about 4 microseconds a grid point (2 m step: about 1 ms per 1000 m2).
+- Each point:
+  - `position` (world, m): on the generator's surface (`get_height`) at the bench's outer edge.
+  - `out`: horizontal unit vector out of the face (downhill), the way a cap overhangs.
+  - `face_normal`: unit normal of the riser half way down the bed under the lip (the face a cap overhangs).
+  - `bed_thickness` (m): height of the bed under the lip, down to the bench below.
+  - `cap_thickness` (m): the hard cap's thickness, 0.3 of the bed, 0.3 to 1.5 m.
+  - `overhang` (m): how far the cap may stand out past the riser: a cantilever breaks in bending at
+    sqrt(sigma_t t / (3 rho g)) (weathered sedimentary rock about 1 MPa in tension, 25 kN/m3), the joints cut it into
+    blocks a couple of metres long, so at most 1.2 m and 1.5 times its thickness, times the hardness.
+  - `hardness` (0..1): the bed's hardness, wandering along the face over about 180 m (beds pinch out).
+  - `weight` (0..1): the ledges' share (steepness from 40 to 55 degrees, water and scree fades).
+- Only lips that hold their step are reported: weight at least 0.25, weight times hardness at least 0.15, and a real
+  break in slope there.
+  Empty with `cliff_ledge_spacing` 0 or before `generate()`.
+- Units: metres, world space. Defaults: none; the reader chooses its own density along the lips.
+- Not covered: Landscape3D's finer cliff relief (beds of 3 m and joint steps on the drawn surface) has its own lips;
+  slabs seat on the generator's surface plus `WorldGround.relief_at`.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

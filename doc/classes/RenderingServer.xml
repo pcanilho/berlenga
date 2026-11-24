@@ -3941,6 +3941,17 @@
 				[b]Note:[/b] [param size] should be a 2:1 aspect ratio for the generated panorama to have square pixels. For radiance maps, there is no point in using a height greater than [member Sky.radiance_size], as it won't increase detail. Irradiance maps only contain low-frequency data, so there is usually no point in going past a size of 128×64 pixels when saving an irradiance map.
 			</description>
 		</method>
+		<method name="sky_bake_panorama_async">
+			<return type="void" />
+			<param index="0" name="sky" type="RID" />
+			<param index="1" name="energy" type="float" />
+			<param index="2" name="bake_irradiance" type="bool" />
+			<param index="3" name="size" type="Vector2i" />
+			<param index="4" name="callback" type="Callable" />
+			<description>
+				As [method sky_bake_panorama], without making the CPU wait for the GPU: [param callback] is called on the main thread, a few frames later, with the [Image] (empty if the sky has no radiance map yet). Use it for panoramas read while the game runs, where the wait of [method sky_bake_panorama] would cost a frame.
+			</description>
+		</method>
 		<method name="sky_create">
 			<return type="RID" />
 			<description>

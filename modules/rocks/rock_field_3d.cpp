@@ -32,11 +32,13 @@
 
 #include "modules/terrain_deform/landscape_3d.h"
 #include "modules/terrain_deform/terrain_generator_3d.h"
+#include "modules/terrain_deform/world_cache.h"
 #include "modules/weather/weather_map_3d.h"
 #include "modules/world/world_contracts.h"
 #include "modules/world/world_walker_steps.h"
 
 #include "core/config/engine.h"
+#include "core/config/project_settings.h"
 #include "core/math/convex_hull.h"
 #include "core/math/random_pcg.h"
 #include "core/object/callable_mp.h"
@@ -63,6 +65,7 @@
 #include "scene/resources/3d/convex_polygon_shape_3d.h"
 #include "scene/resources/3d/importer_mesh.h"
 #include "scene/resources/multimesh.h"
+#include "scene/resources/surface_tool.h"
 #include "servers/rendering/rendering_server.h"
 
 namespace {
@@ -103,15 +106,15 @@ static bool rf_tile_like(uint32_t p_sig_a, int p_n_a, float p_ls_a, float p_sd_a
 	return Math::abs(p_ls_a - p_ls_b) < tl;
 }
 
-// Library keys: rock type, family, roundness bin.
+// Library keys: rock type (4 bits), family (5), roundness bin (4).
 inline RockGenerator::RockType key_type(uint32_t p_key) {
 	return RockGenerator::RockType(p_key & 0xF);
 }
 inline RockGenerator::Family key_family(uint32_t p_key) {
-	return RockGenerator::Family((p_key >> 4) & 0xF);
+	return RockGenerator::Family((p_key >> 4) & 0x1F);
 }
 inline int key_bin(uint32_t p_key) {
-	return int((p_key >> 8) & 0xF);
+	return int((p_key >> 9) & 0xF);
 }
 
 // Close-up shapes per variant: one per octave of stone size round the family's typical size (odd count).
@@ -356,6 +359,7 @@ static thread_local TerrainGenerator3D *rf_job_generator = nullptr;
 static thread_local void *rf_coarse_job = nullptr;
 static thread_local const void *rf_job_wear = nullptr; // the detail job's StandWear while _place runs for it
 static thread_local const void *rf_job_frost = nullptr; // and its FrostClimate
+static thread_local const void *rf_job_rain = nullptr; // and its RainClimate
 
 // Frost-sorted patterned ground (docs/ideas/ground-detail.md, "Frost-sorted patterned ground"). Freeze-thaw sorting
 // is a self-organising phase separation of stones from fines (Kessler and Werner 2003: stones move toward stone-rich
@@ -530,7 +534,7 @@ int RockField3D::_variant_count(uint32_t p_key) const {
 }
 
 uint32_t RockField3D::_library_key(RockGenerator::RockType p_type, RockGenerator::Family p_family, int p_bin) const {
-	return uint32_t(p_type) | (uint32_t(p_family) << 4) | (uint32_t(p_bin) << 8);
+	return uint32_t(p_type) | (uint32_t(p_family) << 4) | (uint32_t(p_bin) << 9);
 }
 
 // Shape libraries are built on workers: _ensure_libraries waits for them; while streaming, _ensure_library starts them
@@ -722,13 +726,16 @@ RockGenerator::RockType RockField3D::_type_at(const TerrainGenerator3D *p_gen, c
 }
 
 void RockField3D::_prepare_rivers() {
+	// Workers placing cells call this too (each of get_obstacles' batch): one builds the list under the lock while the
+	// others wait, and the flag is set only once the list is whole, so no worker reads it half built.
+	MutexLock lock(rivers_lock);
 	if (rivers_ready) {
 		return;
 	}
 	rivers.clear();
-	rivers_ready = true;
 	const TerrainGenerator3D *gen = _get_generator();
 	if (!gen) {
+		rivers_ready = true;
 		return;
 	}
 	const Array rs = gen->get_rivers(river_min_area);
@@ -756,6 +763,7 @@ void RockField3D::_prepare_rivers() {
 		rv.head_type = _type_at(gen, pts[0]);
 		rivers.push_back(rv);
 	}
+	rivers_ready = true;
 }
 
 // The river layer's segments that reach into p_rect, with the bed's median size as the river layer sets it (what the
@@ -949,6 +957,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 		uint32_t key;
 		float yaw, tilt, sink, follow, film;
 		Vector3 tilt_axis;
+		float pedestal = 0.0f; // m of soil column under it (rain splash)
 	};
 	LocalVector<Pending> pending;
 	// A debris skirt round a big block: flakes and fragments it shed as it weathered (granular disintegration and
@@ -1446,6 +1455,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			// Steeper than this a heightfield face is a stretched step, not a wall with courses in it.
 			const float max_tan = Math::tan(Math::deg_to_rad(76.0f));
 			const real_t gen_cell = gen->get_cell_size();
+			if (ledge_slabs) {
+				_place_ledges(gen, p_layer, p_rect, p_seed, r_stones);
+			}
 			for (real_t z = p_rect.position.y; z < p_rect.get_end().y; z += sub) {
 				for (real_t x = p_rect.position.x; x < p_rect.get_end().x; x += sub) {
 					const Vector3 c(x + sub * 0.5f, 0, z + sub * 0.5f);
@@ -2336,7 +2348,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			// strongest) and on a fan.
 			static const float lag_cover[3] = { 0.35f, 0.25f, 0.06f };
 			static const float fan_cover[3] = { 0.0f, 0.04f, 0.12f };
-			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on && !frost_on && !runoff_on) {
+			// Stones on bare soil under rain (docs/ideas/ground-detail.md, "Rain splash pedestals"): the soil's own coarse
+			// fraction lying on it where plants leave it bare (a dry climate, a recent burn), each on the column of soil
+			// it shielded from the splash. The share of the ground each class covers at full bareness.
+			const RainClimate *rain = static_cast<const RainClimate *>(rf_job_rain);
+			const bool rain_on = rain && rain->any && sd2 > sd1 * 1.01f;
+			static const float soil_cover[3] = { 0.10f, 0.06f, 0.03f };
+			if (!shore_on && !scree_on && rsegs.is_empty() && !wear_on && !frost_on && !runoff_on && !rain_on) {
 				break;
 			}
 			// Each class's cover (count x mean footprint) is held under about half the ground: past that the
@@ -2468,6 +2486,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						}
 						rate_max += MIN(lag_cover[cls] * per_cover * gm, cap_shore) + MIN(fan_cover[cls] * per_cover * fm, cap_shore);
 					}
+					float rsoil = 0.0f, rdepth = 0.0f;
+					if (rain_on) {
+						rsoil = MIN(soil_cover[cls] * per_cover * _rain_soil(gen, *rain, Vector3(p_rect.position.x + (i + 0.5f) * sub, 0, p_rect.position.y + (j + 0.5f) * sub), rdepth), cap_shore);
+						rate_max += rsoil;
+					}
 					Vector3 wmax;
 					float stony = 0.0f;
 					if (wear_on) {
@@ -2490,6 +2513,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						float shore = 0.0f, scree = 0.0f, river = 0.0f, d50 = 0.0f, e = 0.0f, ws = 0.0f;
 						float rd50 = 0.0f, silt = 0.0f, wr = 0.0f;
 						float worn = 0.0f, kick = 0.0f, root = 0.0f;
+						float soil = rsoil, sdepth = rdepth;
 						const RiverBed *bed = nullptr;
 						for (int q = 0; q < 4; q++) {
 							shore += w[q] * cc[q]->shore;
@@ -2516,6 +2540,9 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 							shore *= thin;
 							scree *= thin;
 							river *= thin;
+							soil *= thin;
+							// Trampling and rooting break the pedestals down (the soil starts again from level).
+							sdepth *= 1.0f - CLAMP(float(MAX(wv.x, wv.z)), 0.0f, 1.0f);
 							worn = MIN(armour_cover[cls] * stony * float(wv.x), cap_shore);
 							kick = MIN(kick_cover[cls] * stony * float(wv.y), cap_shore);
 							root = MIN(root_cover[cls] * stony * float(wv.z), cap_shore);
@@ -2528,6 +2555,8 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 							const float keep = 1.0f - fgate * (1.0f - share);
 							shore *= keep;
 							scree *= keep;
+							soil *= keep;
+							sdepth *= 1.0f - fgate; // frost churn levels them
 						}
 						float lag = 0.0f, spread = 0.0f;
 						Vector2 flow;
@@ -2539,6 +2568,8 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 								flow += w[q] * cc[q]->flow;
 							}
 							flow = flow.length() > 1e-4f ? flow.normalized() : Vector2(0, 1);
+							// Flowing water and fresh deposits take the place of the splash pedestals.
+							soil *= (1.0f - gully) * (1.0f - fan);
 							if (gully > 0.0f) {
 								// The floor: its coarse lag; the gravel half washed out, the fines mostly.
 								lag = MIN(lag_cover[cls] * per_cover * gully, cap_shore);
@@ -2555,7 +2586,7 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 							}
 						}
 						const float base = shore + scree + river;
-						const float total = base + worn + kick + root + sorted + lag + spread;
+						const float total = base + worn + kick + root + sorted + lag + spread + soil;
 						if (total <= 0.0f || rng.randf() * rate_max > total) {
 							continue;
 						}
@@ -2564,7 +2595,31 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 						pd.xz = Vector3(x + fx * sub, 0, z + fz * sub);
 						pd.yaw = rng.randf() * Math::TAU;
 						pd.tilt_axis = Vector3(rng.randf() - 0.5f, 0, rng.randf() - 0.5f);
-						if (pick >= base + worn + kick + root + sorted) {
+						if (pick >= base + worn + kick + root + sorted + lag + spread) {
+							// A stone of the soil, angular or a little weathered round, of any size in the class; most stand on
+							// their pedestals (a flat cap, the column under it), some have toppled off theirs and lie tilted on
+							// the lowered ground beside it.
+							pd.key = _library_key(type, rng.randf() < 0.3f ? RockGenerator::FAMILY_PEBBLE : RockGenerator::FAMILY_SCREE, RF_DETAIL_BIN + cls);
+							pd.size = sd1 * Math::pow(sd2 / sd1, rng.randf());
+							pd.film = 0.0f;
+							if (sdepth > 0.002f && rng.randf() >= 0.15f) {
+								pd.tilt = Math::deg_to_rad(8.0f) * rng.randf();
+								pd.sink = 0.03f + 0.04f * rng.randf();
+								pd.follow = 0.3f; // the cap lies as the column top, not the slope
+								// Up to about a third of the cap's width (a taller, narrower column topples it).
+								const float ph = MIN(sdepth, 0.35f * pd.size) * (0.6f + 0.4f * rng.randf());
+								// (Off: the same stones lie on the soil without their columns.)
+								if (rain_pedestals) {
+									pd.pedestal = ph;
+									pedestal_stones[0].increment();
+								}
+							} else {
+								pd.tilt = Math::deg_to_rad(20.0f + 40.0f * rng.randf());
+								pd.sink = 0.05f + 0.05f * rng.randf();
+								pd.follow = 0.5f;
+								pedestal_stones[1].increment();
+							}
+						} else if (pick >= base + worn + kick + root + sorted) {
 							if (pick < base + worn + kick + root + sorted + lag) {
 								// The lag: the coarse end of the class, subangular to a little rounded by the short run, imbricated
 								// across the flow (long axis across it, dipping upstream, as a stream's gravel: Rust 1972).
@@ -2806,6 +2861,11 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 			rise = MAX(rise, on_coarse);
 		}
 		st.position.y += rise;
+		if (pd.pedestal > 0.0f && rise < 0.1f * r) {
+			// On its soil column (resting on another stone it has none).
+			st.position.y += pd.pedestal;
+			st.pedestal = pd.pedestal;
+		}
 		dep.add(Vector2(pd.xz.x, pd.xz.z), float(st.position.y), r);
 		if (bin_head.is_empty()) {
 			bin_head.resize(gw * gh);
@@ -3095,6 +3155,91 @@ void RockField3D::_frost_climate(const Rect2 &p_rect, FrostClimate &r_frost) con
 	}
 }
 
+// Main thread: the rain's climate over a detail cell (docs/ideas/ground-detail.md, "Rain splash pedestals"). Plant
+// cover on soil follows the year's rain: in drylands a perennial cover of grass and shrubs of about a tenth at 200 mm
+// to most of the ground by 700 mm (the rain-use curves of semi-arid rangelands; Le Houerou 1984), so the bare share
+// falls from about 0.9 to 0 over 200 to 700 mm. A fire bares the soil for its first years (the regrowth closes it
+// over about three: the burnt area erosion studies, Shakesby and Doerr 2006).
+void RockField3D::_rain_climate(const Rect2 &p_rect, RainClimate &r_rain) const {
+	r_rain = RainClimate();
+	const TerrainGenerator3D *gen = _get_generator();
+	WeatherSeason::Climate cl;
+	if (!gen || !WorldContracts::weather()->season_climate(cl)) {
+		return;
+	}
+	r_rain.on = true;
+	r_rain.rect = p_rect;
+	const Vector3 mid(p_rect.get_center().x, 0, p_rect.get_center().y);
+	const float f = WorldContracts::climate_precipitation_factor_at(mid);
+	r_rain.precip = cl.precipitation * (f >= 0.0f ? f : 1.0f);
+	r_rain.bare = 0.9f * (1.0f - Math::smoothstep(200.0f, 700.0f, r_rain.precip));
+	bool burnt = false;
+	if (const WorldFire *fire = WorldContracts::fire()) {
+		for (int k = 0; k < 9; k++) {
+			const Vector3 p(p_rect.position.x + (k % 3) * 0.5f * p_rect.size.x, 0, p_rect.position.y + (k / 3) * 0.5f * p_rect.size.y);
+			const float age = fire->burn_age_at(p);
+			if (age >= 0.0f) {
+				r_rain.burn[k] = CLAMP(fire->burnt_at(p), 0.0f, 1.0f) * (1.0f - Math::smoothstep(0.5f, 3.0f, age));
+				burnt = burnt || r_rain.burn[k] > 0.0f;
+			}
+		}
+	}
+	r_rain.any = r_rain.bare > 0.0f || burnt;
+}
+
+float RockField3D::RainClimate::burn_at(float p_x, float p_z) const {
+	if (rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
+		return burn[4];
+	}
+	const float u = CLAMP((p_x - rect.position.x) / rect.size.x * 2.0f, 0.0f, 2.0f);
+	const float v = CLAMP((p_z - rect.position.y) / rect.size.y * 2.0f, 0.0f, 2.0f);
+	const int i = MIN(int(u), 1), j = MIN(int(v), 1);
+	const float fu = u - i, fv = v - j;
+	const float a = Math::lerp(burn[j * 3 + i], burn[j * 3 + i + 1], fu);
+	const float b = Math::lerp(burn[(j + 1) * 3 + i], burn[(j + 1) * 3 + i + 1], fu);
+	return Math::lerp(a, b, fv);
+}
+
+// Any thread: stones lie on bare soil (the soil's own coarse fraction, more where the bedrock is near), and each rain
+// splashes the soil away round them while the stone shields its own spot: an erosion pedestal (Ellison 1944; field
+// pedestals read soil loss directly: millimetres to centimetres over a wet season on bare soil, most on steeper, bare,
+// silty ground). Not on water, talus, sand (it slumps), bare rock, thin soil or steep slopes.
+float RockField3D::_rain_soil(const TerrainGenerator3D *p_gen, const RainClimate &p_rain, const Vector3 &p_at, float &r_depth) const {
+	r_depth = 0.0f;
+	if (!p_rain.on) {
+		return 0.0f;
+	}
+	const float fire = p_rain.burn_at(float(p_at.x), float(p_at.z));
+	const float bare = MAX(p_rain.bare, fire);
+	if (bare <= 0.0f) {
+		return 0.0f;
+	}
+	const float h = float(rf_height(p_gen, p_at));
+	const Vector3 at(p_at.x, h, p_at.z);
+	if (p_gen->get_water_depth(at) > 0.03 || p_gen->get_talus(at) > 0.25 || p_gen->get_sand_depth_at(at) > 0.05) {
+		return 0.0f;
+	}
+	if (p_gen->has_sea_result() && h < float(p_gen->get_sea_level()) + 2.5f) {
+		return 0.0f;
+	}
+	const float soil = Math::smoothstep(0.05f, 0.2f, float(p_gen->get_soil_depth(at)));
+	const float rock = float(p_gen->get_rock_exposure(at));
+	const Vector3 n = ground_normal(p_gen, p_at.x, p_at.z, 2.0);
+	const float slope = Math::rad_to_deg(Math::acos(CLAMP(float(n.y), -1.0f, 1.0f)));
+	const float gate = soil * (1.0f - Math::smoothstep(0.4f, 0.7f, rock)) * (1.0f - Math::smoothstep(28.0f, 35.0f, slope));
+	if (gate <= 0.0f) {
+		return 0.0f;
+	}
+	// The soil lost since the surface was last disturbed: a dryland's few millimetres a year over years, a burnt
+	// slope's centimetres in its first wet seasons; more with the rain and on steeper ground (splash goes downhill).
+	const float dry = 0.035f * p_rain.bare * CLAMP(p_rain.precip / 400.0f, 0.5f, 1.5f);
+	const float burn = 0.05f * fire * CLAMP(p_rain.precip / 600.0f, 0.5f, 2.0f);
+	r_depth = MAX(dry, burn) * (0.6f + 0.8f * Math::smoothstep(2.0f, 20.0f, slope)) * gate;
+	// Stones on the surface: more where the bedrock is near.
+	const float stony = 0.4f + 0.6f * Math::smoothstep(0.0f, 0.4f, rock);
+	return bare * gate * stony;
+}
+
 // Any thread: how strongly the ground sorts at a point, 0..1. Active sorting where the mean annual air is below
 // about -1 C (permafrost or deep seasonal frost; Washburn 1979, Ballantyne 2018), on soil (not bare rock, talus,
 // water or the beach), flat to about 10 degrees (stripes on 3 to 10, none past 15).
@@ -3195,6 +3340,154 @@ void RockField3D::set_runoff_gravel(bool p_enabled) {
 		return;
 	}
 	runoff_gravel = p_enabled;
+	_detail_cancel();
+	LocalVector<Vector3i> drop;
+	for (KeyValue<Vector3i, Cell> &kv : cells) {
+		if (_is_detail(kv.key.x)) {
+			_free_cell(kv.value);
+			drop.push_back(kv.key);
+		}
+	}
+	for (const Vector3i &k : drop) {
+		cells.erase(k);
+	}
+}
+
+// The unit soil column (1 high, radius 0.9 at the top, flaring to 1.3 where it meets the ground, its sides a little
+// lumpy) and its material: fresh subsoil, paler than the surface's crusted, darker skin, with splash rills down it.
+void RockField3D::_pedestal_resources() {
+	if (pedestal_mesh.is_valid() && pedestal_material.is_valid()) {
+		return;
+	}
+	const int SEG = 14;
+	static const float ys[6] = { 0.0f, 0.08f, 0.22f, 0.5f, 0.8f, 1.0f };
+	static const float rs[6] = { 1.3f, 1.12f, 0.98f, 0.9f, 0.88f, 0.9f };
+	Ref<SurfaceTool> st;
+	st.instantiate();
+	st->begin(Mesh::PRIMITIVE_TRIANGLES);
+	auto at = [&](int p_ring, int p_seg) {
+		const float a = Math::TAU * float(p_seg % SEG) / SEG;
+		// Lumps: a few low harmonics, fixed (every column also turns and squashes on its own).
+		const float lump = 1.0f + 0.07f * Math::sin(3.0f * a + 1.3f * p_ring) + 0.05f * Math::sin(5.0f * a + 0.7f) + 0.03f * Math::sin(7.0f * a + 2.1f * p_ring);
+		const float r = rs[p_ring] * lump;
+		return Vector3(Math::cos(a) * r, ys[p_ring], Math::sin(a) * r);
+	};
+	for (int k = 0; k < 5; k++) {
+		for (int g = 0; g < SEG; g++) {
+			const Vector3 a = at(k, g), b = at(k, g + 1), c2 = at(k + 1, g + 1), d = at(k + 1, g);
+			const float u0 = float(g) / SEG, u1 = float(g + 1) / SEG;
+			// (Clockwise seen from outside: Godot's front faces, so the generated normals point out.)
+			st->set_uv(Vector2(u0, ys[k]));
+			st->add_vertex(a);
+			st->set_uv(Vector2(u1, ys[k]));
+			st->add_vertex(b);
+			st->set_uv(Vector2(u1, ys[k + 1]));
+			st->add_vertex(c2);
+			st->set_uv(Vector2(u0, ys[k]));
+			st->add_vertex(a);
+			st->set_uv(Vector2(u1, ys[k + 1]));
+			st->add_vertex(c2);
+			st->set_uv(Vector2(u0, ys[k + 1]));
+			st->add_vertex(d);
+		}
+	}
+	st->index();
+	st->generate_normals();
+	st->generate_tangents();
+	pedestal_mesh = st->commit();
+	Ref<Shader> sh;
+	sh.instantiate();
+	String code = R"(shader_type spatial;
+render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
+)" + BaseMaterial3D::get_camera_cutout_shader_code() +
+			TerrainGenerator3D::get_geology_shader_code() + R"(
+// Rain splash pedestals' soil columns (RockField3D.rain_pedestals; docs/ideas/ground-detail.md): the soil the stone
+// shielded, its sides fresh subsoil (paler and warmer than the surface's humus-dark, crusted skin) cut by splash into
+// fine vertical rills, grit standing out of them; the foot blends into the ground's own colour.
+uniform vec3 ground_rock = vec3(0.107, 0.1, 0.089);
+uniform vec3 ground_scree = vec3(0.141, 0.133, 0.114);
+uniform vec3 ground_soil = vec3(0.033, 0.04, 0.01);
+uniform vec3 ground_alluvium = vec3(0.064, 0.06, 0.022);
+uniform vec3 ground_sand = vec3(0.448, 0.342, 0.181);
+uniform float ground_alluvium_area = 5.5;
+uniform float ground_blend = 1.0;
+uniform float ground_blend_height = 0.3;
+uniform bool mineral_glints = false;
+varying vec3 v_world;
+varying float v_h;
+
+float pd_hash(vec3 p) {
+	p = fract(p * 0.3183099 + 0.1);
+	p *= 17.0;
+	return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float pd_noise(vec3 x) {
+	vec3 i = floor(x);
+	vec3 f = fract(x);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(pd_hash(i), pd_hash(i + vec3(1, 0, 0)), f.x), mix(pd_hash(i + vec3(0, 1, 0)), pd_hash(i + vec3(1, 1, 0)), f.x), f.y),
+			mix(mix(pd_hash(i + vec3(0, 0, 1)), pd_hash(i + vec3(1, 0, 1)), f.x), mix(pd_hash(i + vec3(0, 1, 1)), pd_hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+
+void vertex() {
+	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	v_h = VERTEX.y;
+}
+
+void fragment() {
+	if (!IN_SHADOW_PASS && camera_cutout.w > 0.0 && camera_cutout_discard((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, INV_VIEW_MATRIX, PROJECTION_MATRIX, FRAGCOORD.xy)) {
+		discard;
+	}
+	vec3 soil = ground_soil;
+	if (terrain_geology_rect.z > 0.0) {
+		vec4 g = terrain_geology(v_world);
+		float alluv = smoothstep(ground_alluvium_area, ground_alluvium_area + 1.0, g.w);
+		soil = mix(ground_soil, ground_alluvium, alluv);
+		soil = mix(soil, ground_sand, clamp(-g.x, 0.0, 1.0));
+	}
+	// Fresh subsoil: less humus, so paler than the surface and iron brown (the B horizon's yellowish to reddish browns,
+	// about 10YR 5/4), keeping the soil's own lightness.
+	float lum = dot(soil, vec3(0.2126, 0.7152, 0.0722));
+	vec3 sub = lum * vec3(2.9, 2.2, 1.5) + vec3(0.01, 0.007, 0.004);
+	// Splash rills: fine vertical grooves (stretched noise), darker in their bottoms.
+	float rill = pd_noise(vec3(v_world.x * 520.0, v_world.y * 70.0, v_world.z * 520.0));
+	float fine = pd_noise(v_world * 900.0);
+	vec3 col = sub * (0.8 + 0.35 * rill) * (0.9 + 0.2 * fine);
+	// Grit and small chips standing out of the column (paler and darker grains).
+	float grit = pd_noise(v_world * 1500.0 + 7.0);
+	col *= grit > 0.8 ? 1.45 : (grit < 0.15 ? 0.65 : 1.0);
+	// The foot: into the ground's own (crusted) colour.
+	col = mix(soil, col, smoothstep(0.02, 0.22, v_h));
+	ALBEDO = col;
+	ROUGHNESS = 0.93 - 0.06 * rill;
+	SPECULAR = 0.35;
+	// (No screen derivatives: the path tracer's hit shaders have none. The grooves are under a millimetre, so their
+	// shading stays in the albedo.)
+}
+)";
+	sh->set_code(code);
+	pedestal_material.instantiate();
+	pedestal_material->set_shader(sh);
+	_apply_ground(pedestal_material);
+}
+
+Vector2 RockField3D::get_pedestal_at(const Vector3 &p_position) const {
+	const TerrainGenerator3D *gen = _get_generator();
+	RainClimate rc;
+	_rain_climate(Rect2(p_position.x - 1.0f, p_position.z - 1.0f, 2.0f, 2.0f), rc);
+	if (!gen || !rc.any) {
+		return Vector2();
+	}
+	float depth;
+	const float share = _rain_soil(gen, rc, p_position, depth);
+	return Vector2(share, rain_pedestals ? depth : 0.0f);
+}
+
+void RockField3D::set_rain_pedestals(bool p_enabled) {
+	if (rain_pedestals == p_enabled) {
+		return;
+	}
+	rain_pedestals = p_enabled;
 	_detail_cancel();
 	LocalVector<Vector3i> drop;
 	for (KeyValue<Vector3i, Cell> &kv : cells) {
@@ -3389,6 +3682,7 @@ void RockField3D::_detail_prepare(DetailJob &r_job) {
 	// Pebbles (shore, river beds), scree (talus, worn ground) and fresh joint blocks (frost-sorted borders).
 	const RockGenerator::Family families[3] = { RockGenerator::FAMILY_PEBBLE, RockGenerator::FAMILY_SCREE, RockGenerator::FAMILY_ROCKFALL };
 	_frost_climate(rect, r_job.frost);
+	_rain_climate(rect, r_job.rain);
 	LocalVector<uint32_t> keys, missing;
 	for (int t = 0; t < (use_strata ? 2 : 1); t++) {
 		for (int fi = 0; fi < (r_job.frost.any ? 3 : 2); fi++) {
@@ -3491,9 +3785,11 @@ void RockField3D::_detail_compute(DetailJob &r_job) {
 	rf_job_generator = r_job.gen;
 	rf_job_wear = &r_job.wear;
 	rf_job_frost = &r_job.frost;
+	rf_job_rain = &r_job.rain;
 	_place(layer, rect, rf_hash3(key.x, key.y, key.z, uint32_t(seed) * 2654435761u), stones, &r_job.libs, &r_job.seeds);
 	rf_job_wear = nullptr; // (the shared tiles below are cut from unworn ground: they stand for the block's ground)
 	rf_job_frost = nullptr;
+	rf_job_rain = nullptr;
 	rf_job_generator = nullptr;
 	if (gen->has_holes_in(rect.grow(8.0))) {
 		for (int i = int(stones.size()) - 1; i >= 0; i--) {
@@ -3580,6 +3876,43 @@ void RockField3D::_detail_compute(DetailJob &r_job) {
 		_detail_tiles(r_job, stones, place);
 	}
 	r_job.stones = int(stones.size());
+	// The soil columns under the pedestalled stones: the unit column (_pedestal_resources) scaled to the stone's
+	// underside and the soil lost round it, turned and squashed a little each (no two alike), from just under the
+	// lowered ground into the stone's base.
+	r_job.pedestals.clear();
+	for (uint32_t i = 0; i < stones.size(); i++) {
+		const Stone &st = stones[i];
+		if (st.pedestal <= 0.0f) {
+			continue;
+		}
+		Library *const *lp = r_job.libs.getptr(st.library);
+		if (!lp || !*lp || st.variant >= (*lp)->axes.size()) {
+			continue;
+		}
+		const Vector3 ax = (*lp)->axes[st.variant];
+		const uint32_t hsh = rf_hash3(int(Math::floor(st.position.x * 997.0)), int(Math::floor(st.position.z * 991.0)), 0x9edu, uint32_t(seed));
+		const float u0 = float(hsh & 0xffffu) / 65535.0f, u1 = float(hsh >> 16) / 65535.0f;
+		// Narrower than the cap (the splash undercuts it): about 0.85 of the stone's half-width on the ground.
+		const float r = 0.85f * st.scale * Math::sqrt(MAX(ax.x * ax.z, 1e-4f));
+		const float rx = r * (0.85f + 0.3f * u0), rz = r * (1.15f - 0.3f * u0);
+		// (The ground keeps its height: the column is the soil it lost round it. Its foot goes a few centimetres in, so
+		// no terrain mesh, coarser or finer, shows under it.)
+		const float base = st.ground - 0.04f;
+		const float top = float(st.position.y) - 0.3f * st.scale * ax.y; // into the stone's lower part
+		const float hgt = MAX(top - base, 0.005f);
+		const Basis b = Basis(Vector3(0, 1, 0), u1 * Math::TAU).scaled_local(Vector3(rx, hgt, rz));
+		const uint32_t o = r_job.pedestals.size();
+		r_job.pedestals.resize(o + 12);
+		float *rec = r_job.pedestals.ptr() + o;
+		for (int row = 0; row < 3; row++) {
+			rec[row * 4 + 0] = b.rows[row][0];
+			rec[row * 4 + 1] = b.rows[row][1];
+			rec[row * 4 + 2] = b.rows[row][2];
+		}
+		rec[3] = st.position.x;
+		rec[7] = base;
+		rec[11] = st.position.z;
+	}
 	// As _build_cell: one MultiMesh per shape (and its tiled grains apart), the same randoms in the same order.
 	HashMap<uint64_t, LocalVector<uint32_t>> groups;
 	for (uint32_t i = 0; i < stones.size(); i++) {
@@ -3842,7 +4175,17 @@ void RockField3D::_detail_tiles(DetailJob &r_job, LocalVector<Stone> &r_stones, 
 					channel = gl.x > 0.02f || gl.y > 0.15f;
 				}
 			}
-			if (top[q].ok && (channel || MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any || (r_job.relief.any && r_job.relief.max_in(top[q].rect) > 0.01f))) {
+			bool pedestalled = false;
+			if (top[q].ok && r_job.rain.any) {
+				// Nor over stones on their pedestals: a tile's grains lie on the plane.
+				for (uint32_t si : top[q].idx) {
+					if (r_stones[si].pedestal > 0.0f) {
+						pedestalled = true;
+						break;
+					}
+				}
+			}
+			if (top[q].ok && (channel || pedestalled || MAX(worn.x, MAX(worn.y, worn.z)) > 0.02f || r_job.frost.any || (r_job.relief.any && r_job.relief.max_in(top[q].rect) > 0.01f))) {
 				top[q].ok = false; // worn ground (a trail, a rooting) keeps its own grains: no tile is cut from it
 				top[q].fail = 4;
 			}
@@ -4187,6 +4530,33 @@ void RockField3D::_detail_commit(DetailJob &r_job) {
 	for (uint32_t ti : single) {
 		_split_tile(cell, ti, true, vis, cs * 0.5);
 	}
+	if (!r_job.pedestals.is_empty()) {
+		// The rain splash pedestals' soil columns: one MultiMesh for the cell, instanced per column in the path tracer
+		// as the grains are.
+		_pedestal_resources();
+		const int n = int(r_job.pedestals.size() / 12);
+		Vector<float> buf;
+		buf.resize(n * 12);
+		memcpy(buf.ptrw(), r_job.pedestals.ptr(), sizeof(float) * n * 12);
+		Ref<MultiMesh> mm;
+		mm.instantiate();
+		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+		mm->set_mesh(pedestal_mesh);
+		mm->set_instance_count(n);
+		RS::get_singleton()->multimesh_set_rt_instanced(mm->get_rid(), true);
+		RS::get_singleton()->multimesh_set_rt_offscreen_cull(mm->get_rid(), RF_DETAIL_RT_CULL_DEG);
+		RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), buf);
+		MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+		mmi->set_multimesh(mm);
+		mmi->set_material_override(pedestal_material);
+		mmi->set_visibility_range_end(vis);
+		mmi->set_visibility_range_end_margin(cs * 0.5);
+		add_child(mmi, false, INTERNAL_MODE_BACK);
+		mmi->set_as_top_level(true);
+		mmi->set_global_transform(Transform3D());
+		cell.instances.push_back(mmi);
+		pedestal_stones[2].add(uint64_t(n));
+	}
 	cells.insert(r_job.key, cell);
 }
 
@@ -4484,6 +4854,11 @@ void RockField3D::_coarse_commit(const Vector3i &p_key, LocalVector<Stone> &ston
 		mm->set_use_custom_data(true);
 		mm->set_mesh(lib->meshes[cg.variant]);
 		mm->set_instance_count(n);
+		if (rt_instanced_cells) {
+			// One shared BLAS per shape and a TLAS entry per stone in the path tracer, not a merged BLAS that bakes a
+			// copy of every stone's triangles (set first: it keeps a CPU copy of the buffer).
+			RS::get_singleton()->multimesh_set_rt_instanced(mm->get_rid(), true);
+		}
 		RS::get_singleton()->multimesh_set_buffer(mm->get_rid(), cg.buffer);
 		Group grp;
 		grp.library = cg.library;
@@ -5131,6 +5506,7 @@ void RockField3D::_update_far(const Vector3 &p_target, bool p_all) {
 			far_last_cells = -1; // the rest next time
 			break;
 		}
+		_prepare_rivers(); // read by the workers
 		job->task = WorkerThreadPool::get_singleton()->add_native_task(&RockField3D::_far_job, job, false, "RockField3D far blocks");
 		far_jobs.insert(w.key, job);
 	}
@@ -6814,11 +7190,17 @@ void RockField3D::rebuild() {
 		for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
 			_apply_ground(kv.value);
 		}
+		if (pedestal_material.is_valid()) {
+			_apply_ground(pedestal_material);
+		}
 	}
 	restore_broken();
 	fractures.clear();
 	obstacle_cache.clear();
-	rivers_ready = false;
+	{
+		MutexLock lock(rivers_lock);
+		rivers_ready = false;
+	}
 	if (is_inside_tree() && (streaming || live_rockfall)) {
 		_update_process();
 	}
@@ -6904,6 +7286,140 @@ int RockField3D::build_area(const Rect2 &p_rect) {
 	return built;
 }
 
+// Ledge slabs (docs/ideas/rocks.md, "Ledge slabs"): the hard caprock of each bench left standing out over the weaker
+// bed under it (differential erosion), along the lips the terrain finds (TerrainGenerator3D.get_ledge_lips). One slab
+// between two cross joints after another along each lip, its front at the lip's overhang, its back half under the
+// bench (a cantilever holds only while as much of it is held as hangs out); now and then a gap where a block fell.
+void RockField3D::_place_ledges(const TerrainGenerator3D *p_gen, Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones) {
+	const real_t step = 2.0;
+	LocalVector<TerrainGenerator3D::LedgeLip> lips;
+	p_gen->get_ledge_lips(p_rect, step, lips);
+	if (lips.is_empty()) {
+		return;
+	}
+	RandomPCG rng(uint64_t(p_seed) * 0x9E3779B97F4A7C15ull + 0x1ed6eull); // its own: the cliff blocks' draws stay as they were
+	// The drawn ground (as _rest): the heightfield plus the landscape's relief, which the lips' heights leave out.
+	const WorldGround *wg = WorldContracts::ground();
+	auto H = [&](real_t p_x, real_t p_z) -> real_t {
+		real_t h = rf_height(p_gen, Vector3(p_x, 0, p_z));
+		if (wg) {
+			const Vector2 r = wg->relief_at(Vector3(p_x, h, p_z));
+			if (r.y > 0.0f && Math::is_finite(r.x)) {
+				h += r.x;
+			}
+		}
+		return h;
+	};
+	// The lip points come in no order along the lips: each slab (or gap where one fell) claims the stretch of lip it
+	// covers, and a point inside a claimed stretch places nothing.
+	struct Claim {
+		Vector3 c, x, z;
+		real_t half_len, half_depth;
+	};
+	LocalVector<Claim> claims;
+	auto claimed = [&](const Vector3 &p_at) {
+		for (const Claim &cl : claims) {
+			const Vector3 d = p_at - cl.c;
+			if (Math::abs(d.dot(cl.x)) < cl.half_len && Math::abs(d.dot(cl.z)) < cl.half_depth && Math::abs(d.y) < 4.0f) {
+				return true;
+			}
+		}
+		return false;
+	};
+	for (uint32_t i = 0; i < lips.size(); i++) {
+		const TerrainGenerator3D::LedgeLip &lp = lips[i];
+		if (lp.overhang < 0.1f || lp.cap_thickness <= 0.0f || claimed(lp.position)) {
+			continue;
+		}
+		if (int(r_stones.size()) >= max_stones_per_cell) {
+			return;
+		}
+		Vector3 out0 = Vector3(lp.out.x, 0, lp.out.z);
+		if (out0.length_squared() < 1e-6f) {
+			continue;
+		}
+		out0.normalize();
+		if (rng.randf() > lp.weight) {
+			// A gap where a block fell: the lip shows the bench's own edge for a slab's length or so.
+			const Vector3 x0(-out0.z, 0, out0.x);
+			claims.push_back({ lp.position, x0, out0, real_t(lp.cap_thickness * (2.0f + 3.0f * rng.randf())), real_t(step) });
+			continue;
+		}
+		const Vector3 pos = lp.position;
+		const RockGenerator::RockType type = _type_at(p_gen, pos - Vector3(0, lp.cap_thickness * 0.5f, 0));
+		const uint32_t key = _library_key(type, RockGenerator::FAMILY_LEDGE, 0);
+		Library *lib = _ensure_library(key);
+		if (!lib) {
+			continue;
+		}
+		const Vector3 out = out0;
+		// The variant: as thick as the cap, deep enough that at least as much lies under the bench as hangs out.
+		Stone st;
+		st.layer = p_layer;
+		st.library = key;
+		real_t scale = 0.0, hang = 0.0;
+		for (int t = 0; t < 4; t++) {
+			const uint16_t v = uint16_t(rng.rand() % lib->meshes.size());
+			const Vector3 ax = lib->axes[v];
+			const real_t sc = lp.cap_thickness * (0.92f + 0.16f * rng.randf()) / MAX(2.0f * ax.y, 0.02f);
+			const real_t depth = 2.0 * ax.z * sc;
+			const real_t h = MIN(real_t(lp.overhang), depth * 0.45);
+			if (t == 0 || h > hang + 0.05) {
+				st.variant = v;
+				scale = sc;
+				hang = h;
+			}
+			if (h >= lp.overhang - 0.05f) {
+				break;
+			}
+		}
+		const Vector3 axes = lib->axes[st.variant];
+		st.scale = scale;
+		// The slab follows the bench it caps: its top along the drawn bench behind the lip (the benches rise back a
+		// share of a bed), its z out over the lip, x along it.
+		const real_t back_d = MAX(real_t(1.0), axes.z * st.scale * 1.2);
+		const real_t h_lip = H(pos.x, pos.z);
+		const real_t h_back = H(pos.x - out.x * back_d, pos.z - out.z * back_d);
+		const real_t rise = CLAMP(h_back - h_lip, real_t(-0.1) * back_d, real_t(0.5) * back_d);
+		Vector3 z_axis = (out * back_d - Vector3(0, rise, 0)).normalized();
+		const Vector3 x_axis = Vector3(0, 1, 0).cross(z_axis).normalized();
+		const Vector3 y_axis = z_axis.cross(x_axis).normalized();
+		Basis b;
+		b.set_column(0, x_axis);
+		b.set_column(1, y_axis);
+		b.set_column(2, z_axis);
+		b = Basis(y_axis, (rng.randf() - 0.5f) * 0.12f) * b; // the cross joints wander a little off square to the lip
+		// The top a few centimetres under the drawn bench's edge (flush, never a shelf on it); the front at the
+		// overhang.
+		const real_t top = h_lip - lp.cap_thickness * 0.04;
+		const Vector3 lip_top(pos.x, top, pos.z);
+		const Vector3 centre = lip_top - y_axis * (axes.y * st.scale) + z_axis * (hang - axes.z * st.scale);
+		// The back half must lie under the bench, and both ends of the slab on it: where the bench falls away behind
+		// or beside (a spur, a gully's corner) the slab would hang in the air.
+		{
+			const real_t len = axes.x * st.scale * 0.9;
+			bool off = claimed(centre + x_axis * len) || claimed(centre - x_axis * len);
+			if (off) {
+				continue; // would overlap its neighbour
+			}
+			for (int e = -1; e <= 1 && !off; e++) {
+				const Vector3 q = centre + x_axis * (len * e) - z_axis * (axes.z * st.scale * 0.6) + y_axis * (axes.y * st.scale);
+				off = !(H(q.x, q.z) >= q.y - lp.cap_thickness * 0.5f);
+			}
+			if (off) {
+				continue;
+			}
+		}
+		st.basis = b * Basis().scaled(Vector3(st.scale, st.scale, st.scale));
+		st.position = centre;
+		st.ground = top - 50.0f; // no contact band: a bed of the bench, not a stone lying on it
+		st.footprint = 0.0f;
+		r_stones.push_back(st);
+		// Its stretch of lip, give or take: joints open a little or close up.
+		claims.push_back({ Vector3(centre.x, pos.y, centre.z), x_axis, z_axis, real_t(axes.x * st.scale * (0.9f + 0.1f * rng.randf())), real_t(axes.z * st.scale + step) });
+	}
+}
+
 void RockField3D::_obstacle_place_job(void *p_job, uint32_t p_index) {
 	CoarseJob &job = static_cast<CoarseJob *>(p_job)[p_index];
 	const real_t cs = job.field->_cell_size(Layer(job.key.x));
@@ -6912,6 +7428,41 @@ void RockField3D::_obstacle_place_job(void *p_job, uint32_t p_index) {
 	job.field->_place(Layer(job.key.x), Rect2(job.key.y * cs, job.key.z * cs, cs, cs), rf_hash3(job.key.x, job.key.y, job.key.z, uint32_t(job.field->seed) * 2654435761u), job.stones);
 	rf_coarse_job = nullptr;
 	rf_job_generator = nullptr;
+}
+
+static void rf_key_add(void *p_user, const void *p_data, size_t p_size) {
+	static_cast<WorldCacheKey *>(p_user)->bytes(p_data, p_size);
+}
+
+bool RockField3D::_obstacle_cache_base(const TerrainGenerator3D *p_gen, String &r_base) const {
+	const WorldGround *wg = WorldContracts::ground();
+	if (!p_gen || (wg && wg->get_script_instance())) {
+		return false; // a script stub answers relief_at: nothing to key it by
+	}
+	WorldCacheKey key("rocks_base");
+	if (!key.object(this) || !key.object(p_gen)) {
+		return false;
+	}
+	p_gen->hash_result([&](const void *p_data, size_t p_size) { key.bytes(p_data, p_size); });
+	if (const LocalVector<WorldReliefProvider *> *rel = WorldContracts::relief_providers_list()) {
+		key.value(uint64_t(rel->size()));
+		for (const WorldReliefProvider *rp : *rel) {
+			const Object *o = rp->contract_relief_object();
+			if (!o || !key.object(o)) {
+				return false;
+			}
+			rp->contract_relief_state(&rf_key_add, &key);
+		}
+	}
+	r_base = key.finish();
+	return true;
+}
+
+// A zone of obstacle cells in the world cache: 512 m square per layer.
+static Vector3i rf_obstacle_zone(const Vector3i &p_cell, real_t p_cell_size) {
+	const int per = MAX(1, int(Math::round(512.0 / p_cell_size)));
+	auto fdiv = [per](int a) { return a >= 0 ? a / per : -((-a + per - 1) / per); };
+	return Vector3i(p_cell.x, fdiv(p_cell.y), fdiv(p_cell.z));
 }
 
 PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_size) {
@@ -6935,6 +7486,73 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 	}
 	const uint32_t BATCH = 512;
 	TerrainGenerator3D *gen = _get_generator();
+	// The world cache (world_cache.h): each 512 m zone's missing cells, loaded when the same cells were placed from
+	// the same inputs before (the same bytes), else placed below and stored.
+	String cache_base;
+	HashMap<Vector3i, LocalVector<Vector3i>> zones; // zone: its missing cells, in order
+	HashMap<Vector3i, String> zone_names;
+	if (!missing.is_empty() && WorldCache::is_enabled() && _obstacle_cache_base(gen, cache_base)) {
+		for (const Vector3i &k : missing) {
+			zones[rf_obstacle_zone(k, _cell_size(Layer(k.x)))].push_back(k);
+		}
+		LocalVector<Vector3i> rest;
+		for (const KeyValue<Vector3i, LocalVector<Vector3i>> &z : zones) {
+			WorldCacheKey key("rocks");
+			const CharString b = cache_base.utf8();
+			key.bytes(b.get_data(), b.length());
+			key.value(z.key);
+			key.array(z.value.ptr(), z.value.size());
+			const String name = key.finish();
+			Vector<uint8_t> data;
+			bool ok = WorldCache::load_any("rocks", name, data);
+			LocalVector<ObstacleCell> got;
+			if (ok) {
+				// Per cell: count, then the obstacles, sizes and heights.
+				const uint8_t *r = data.ptr();
+				const uint8_t *end = r + data.size();
+				for (uint32_t c = 0; c < z.value.size() && ok; c++) {
+					uint32_t n = 0;
+					if (end - r < int64_t(sizeof(n))) {
+						ok = false;
+						break;
+					}
+					memcpy(&n, r, sizeof(n));
+					r += sizeof(n);
+					const size_t need = size_t(n) * (sizeof(Vector4) + 2 * sizeof(float));
+					if (size_t(end - r) < need) {
+						ok = false;
+						break;
+					}
+					ObstacleCell cell;
+					cell.obstacles.resize(n);
+					cell.sizes.resize(n);
+					cell.heights.resize(n);
+					memcpy(cell.obstacles.ptr(), r, sizeof(Vector4) * n);
+					r += sizeof(Vector4) * n;
+					memcpy(cell.sizes.ptr(), r, sizeof(float) * n);
+					r += sizeof(float) * n;
+					memcpy(cell.heights.ptr(), r, sizeof(float) * n);
+					r += sizeof(float) * n;
+					got.push_back(std::move(cell));
+				}
+				ok = ok && r == end;
+			}
+			if (ok) {
+				for (uint32_t c = 0; c < z.value.size(); c++) {
+					obstacle_cache.insert(z.value[c], std::move(got[c]));
+				}
+			} else {
+				zone_names.insert(z.key, name);
+				for (const Vector3i &k : z.value) {
+					rest.push_back(k);
+				}
+			}
+		}
+		missing = std::move(rest);
+	}
+	if (!missing.is_empty()) {
+		_prepare_rivers(); // read by the workers: built here, on the main thread, before any of them start
+	}
 	LocalVector<CoarseJob> placed;
 	for (uint32_t b0 = 0; b0 < missing.size(); b0 += BATCH) {
 		const uint32_t n = MIN(BATCH, missing.size() - b0);
@@ -6982,6 +7600,24 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 			}
 			obstacle_cache.insert(missing[b0 + i], std::move(cell));
 		}
+	}
+	for (const KeyValue<Vector3i, String> &zn : zone_names) {
+		Vector<uint8_t> data;
+		for (const Vector3i &k : zones[zn.key]) {
+			const ObstacleCell &cell = obstacle_cache[k];
+			const uint32_t n = cell.obstacles.size();
+			const int64_t at = data.size();
+			data.resize(at + sizeof(n) + size_t(n) * (sizeof(Vector4) + 2 * sizeof(float)));
+			uint8_t *w = data.ptrw() + at;
+			memcpy(w, &n, sizeof(n));
+			w += sizeof(n);
+			memcpy(w, cell.obstacles.ptr(), sizeof(Vector4) * n);
+			w += sizeof(Vector4) * n;
+			memcpy(w, cell.sizes.ptr(), sizeof(float) * n);
+			w += sizeof(float) * n;
+			memcpy(w, cell.heights.ptr(), sizeof(float) * n);
+		}
+		WorldCache::store("rocks", zn.value, data.ptr(), data.size());
 	}
 	PackedVector4Array out;
 	for (int l = 0; l < LAYER_MAX; l++) {
@@ -7066,15 +7702,19 @@ Array RockField3D::get_stones(int p_layer, const Rect2 &p_rect) {
 			// cells draw.
 			StandWear wear;
 			FrostClimate frost;
+			RainClimate rain;
 			if (_is_detail(Layer(p_layer))) {
 				_sample_wear(crect.grow(1.0), wear);
 				_frost_climate(crect, frost);
+				_rain_climate(crect, rain);
 				rf_job_wear = &wear;
 				rf_job_frost = &frost;
+				rf_job_rain = &rain;
 			}
 			_place(Layer(p_layer), crect, rf_hash3(p_layer, x, z, uint32_t(seed) * 2654435761u), stones);
 			rf_job_wear = nullptr;
 			rf_job_frost = nullptr;
+			rf_job_rain = nullptr;
 			for (const Stone &st : stones) {
 				if (!p_rect.has_point(Vector2(st.position.x, st.position.z))) {
 					continue;
@@ -7085,6 +7725,7 @@ Array RockField3D::get_stones(int p_layer, const Rect2 &p_rect) {
 				d["scale"] = st.scale;
 				d["ground"] = st.ground;
 				d["footprint"] = st.footprint;
+				d["pedestal"] = st.pedestal;
 				d["film"] = st.film;
 				d["rock_type"] = int(key_type(st.library));
 				d["family"] = int(key_family(st.library));
@@ -7467,6 +8108,9 @@ void RockField3D::set_ground_material(const Ref<ShaderMaterial> &p_material) {
 	_sync_scree_blocks();
 	for (KeyValue<int, Ref<ShaderMaterial>> &kv : materials) {
 		_apply_ground(kv.value);
+	}
+	if (pedestal_material.is_valid()) {
+		_apply_ground(pedestal_material);
 	}
 }
 
@@ -8002,6 +8646,20 @@ void RockField3D::_cover_fill(CoverJob *p_job) {
 					}
 				}
 			}
+			if (p_job->rain.any) {
+				// Stones on bare soil under rain (as the detail cells; their pedestals are below the far texels).
+				float depth;
+				const float soil = p_job->field->_rain_soil(gen, p_job->rain, c, depth);
+				if (soil > 0.0f) {
+					static const float soil_cover[3] = { 0.10f, 0.06f, 0.03f };
+					for (int k = 0; k < 3; k++) {
+						if (p_job->sizes[k][1] > p_job->sizes[k][0] * 1.01f) {
+							cover[k] += MIN(soil_cover[k] * soil, 0.45f);
+							any = true;
+						}
+					}
+				}
+			}
 			if (!any) {
 				continue;
 			}
@@ -8085,6 +8743,7 @@ void RockField3D::_update_cover(bool p_wait) {
 			_detail_sizes(Layer(LAYER_DETAIL_PEBBLE + k), job->scree_dmin, job->scree_sizes[k][0], job->scree_sizes[k][1]);
 		}
 		_frost_climate(Rect2(job->origin, Vector2(span, span)), job->frost);
+		_rain_climate(Rect2(job->origin, Vector2(span, span)), job->rain);
 		cover_job = job;
 		if (p_wait || !detail_threads) {
 			_cover_fill(job);
@@ -8251,6 +8910,63 @@ void RockField3D::set_ground_detail_tiles(bool p_enabled) {
 	}
 }
 
+void RockField3D::set_ledge_slabs(bool p_enabled) {
+	if (ledge_slabs == p_enabled) {
+		return;
+	}
+	ledge_slabs = p_enabled;
+	if (is_inside_tree()) {
+		rebuild();
+	}
+}
+
+void RockField3D::set_rt_instanced_cells(bool p_enabled) {
+	if (rt_instanced_cells == p_enabled) {
+		return;
+	}
+	rt_instanced_cells = p_enabled;
+	if (is_inside_tree()) {
+		rebuild();
+	}
+}
+
+// What the cell stones cost the path tracer: groups at or under the merged BLAS cap bake a copy of each stone's
+// triangles (unless rt_instanced_cells), larger ones and instanced ones share their shape's BLAS.
+Dictionary RockField3D::get_rt_stats() const {
+	static const int64_t cap = int64_t(GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"));
+	int64_t merged_tris = 0, merged_groups = 0, merged_stones = 0, inst_stones = 0, inst_groups = 0, all_tris = 0;
+	for (const KeyValue<Vector3i, Cell> &kv : cells) {
+		for (const Group &g : kv.value.groups) {
+			if (g.multimesh.is_null()) {
+				continue;
+			}
+			const Ref<Mesh> m = g.multimesh->get_mesh();
+			if (m.is_null() || m->get_surface_count() == 0) {
+				continue;
+			}
+			const int64_t n = g.multimesh->get_instance_count();
+			const int64_t t = n * int64_t(m->surface_get_array_index_len(0) / 3);
+			all_tris += t;
+			if (!RS::get_singleton()->multimesh_is_rt_instanced(g.multimesh->get_rid()) && t <= cap) {
+				merged_tris += t;
+				merged_groups++;
+				merged_stones += n;
+			} else {
+				inst_groups++;
+				inst_stones += n;
+			}
+		}
+	}
+	Dictionary d;
+	d["merged_triangles"] = merged_tris;
+	d["merged_groups"] = merged_groups;
+	d["merged_stones"] = merged_stones;
+	d["instanced_groups"] = inst_groups;
+	d["instanced_stones"] = inst_stones;
+	d["cell_triangles"] = all_tris; // every cell stone's triangles, as drawn
+	return d;
+}
+
 Dictionary RockField3D::get_ground_detail_tile_stats() const {
 	Dictionary d;
 	d["tiles"] = int64_t(tile_stats[0]);
@@ -8353,6 +9069,9 @@ Dictionary RockField3D::get_ground_detail_tile_stats() const {
 	d["frost_sorted"] = int64_t(frost_stones.get());
 	d["runoff_lag"] = int64_t(runoff_stones[0].get());
 	d["runoff_fan"] = int64_t(runoff_stones[1].get());
+	d["pedestals"] = int64_t(pedestal_stones[0].get());
+	d["pedestals_toppled"] = int64_t(pedestal_stones[1].get());
+	d["pedestal_columns"] = int64_t(pedestal_stones[2].get());
 	d["wear_armour"] = int64_t(wear_stones[0].get());
 	d["wear_shoulder"] = int64_t(wear_stones[1].get());
 	d["wear_rooting"] = int64_t(wear_stones[2].get());
@@ -8535,6 +9254,11 @@ void RockField3D::_notification(int p_what) {
 void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_coarse_cover_at", "position"), &RockField3D::get_coarse_cover_at);
 	ClassDB::bind_method(D_METHOD("set_far_thinning", "enabled"), &RockField3D::set_far_thinning);
+	ClassDB::bind_method(D_METHOD("set_ledge_slabs", "enabled"), &RockField3D::set_ledge_slabs);
+	ClassDB::bind_method(D_METHOD("is_ledge_slabs"), &RockField3D::is_ledge_slabs);
+	ClassDB::bind_method(D_METHOD("set_rt_instanced_cells", "enabled"), &RockField3D::set_rt_instanced_cells);
+	ClassDB::bind_method(D_METHOD("is_rt_instanced_cells"), &RockField3D::is_rt_instanced_cells);
+	ClassDB::bind_method(D_METHOD("get_rt_stats"), &RockField3D::get_rt_stats);
 	ClassDB::bind_method(D_METHOD("set_far_widen", "enabled"), &RockField3D::set_far_widen);
 	ClassDB::bind_method(D_METHOD("is_far_widen"), &RockField3D::is_far_widen);
 	ClassDB::bind_method(D_METHOD("get_far_cover_texture"), &RockField3D::get_far_cover_texture);
@@ -8673,6 +9397,9 @@ void RockField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_ground_wear", "enabled"), &RockField3D::set_ground_wear);
 	ClassDB::bind_method(D_METHOD("set_runoff_gravel", "enabled"), &RockField3D::set_runoff_gravel);
 	ClassDB::bind_method(D_METHOD("is_runoff_gravel"), &RockField3D::is_runoff_gravel);
+	ClassDB::bind_method(D_METHOD("set_rain_pedestals", "enabled"), &RockField3D::set_rain_pedestals);
+	ClassDB::bind_method(D_METHOD("is_rain_pedestals"), &RockField3D::is_rain_pedestals);
+	ClassDB::bind_method(D_METHOD("get_pedestal_at", "position"), &RockField3D::get_pedestal_at);
 	ClassDB::bind_method(D_METHOD("set_frost_sorting", "enabled"), &RockField3D::set_frost_sorting);
 	ClassDB::bind_method(D_METHOD("is_frost_sorting"), &RockField3D::is_frost_sorting);
 	ClassDB::bind_method(D_METHOD("get_frost_at", "position"), &RockField3D::get_frost_at);
@@ -8739,6 +9466,8 @@ void RockField3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_thinning"), "set_far_thinning", "is_far_thinning");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "far_widen"), "set_far_widen", "is_far_widen");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rt_instanced_cells"), "set_rt_instanced_cells", "is_rt_instanced_cells");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ledge_slabs"), "set_ledge_slabs", "is_ledge_slabs");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_radius", PROPERTY_HINT_RANGE, "0,8000,10,suffix:m"), "set_far_radius", "get_far_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "far_min_size", PROPERTY_HINT_RANGE, "0.5,10,0.1,suffix:m"), "set_far_min_size", "get_far_min_size");
 	ADD_GROUP("Ground Detail", "ground_detail_");
@@ -8754,6 +9483,7 @@ void RockField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_wear"), "set_ground_wear", "is_ground_wear");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "frost_sorting"), "set_frost_sorting", "is_frost_sorting");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "runoff_gravel"), "set_runoff_gravel", "is_runoff_gravel");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_pedestals"), "set_rain_pedestals", "is_rain_pedestals");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_detail_tiles"), "set_ground_detail_tiles", "is_ground_detail_tiles");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stones_react"), "set_stones_react", "is_stones_react");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "react_max_bodies", PROPERTY_HINT_RANGE, "0,256,1"), "set_react_max_bodies", "get_react_max_bodies");

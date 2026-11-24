@@ -245,6 +245,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	}
 
 	discard_only_camera_cutout = uses_discard && RendererRD::MaterialStorage::shader_discards_only_for_camera_cutout(code);
+	has_camera_cutout = code.contains("bool camera_cutout_discard(");
 
 	if (version.is_null()) {
 		version = SceneShaderForwardClustered::singleton->shader.version_create(false);
@@ -1064,6 +1065,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["PREVIOUS_FRAME"] = "global_previous_frame";
 		// True while the path tracer captures the geometry (vertex() run for its BLAS).
 		actions.renames["IN_PATH_TRACER"] = "SHADER_IN_PATH_TRACER";
+		actions.renames["CAMERA_CUTOUT_REACH"] = "(!sc_camera_cutout_off())";
 		actions.renames["VIEWPORT_SIZE"] = "read_viewport_size";
 
 		actions.renames["FRAGCOORD"] = "gl_FragCoord";

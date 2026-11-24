@@ -1633,7 +1633,6 @@ float VegetationField3D::get_species_range(int p_species) const {
 void VegetationField3D::_setup_species(PlaceSetup &r_setup, int s, const Ref<PlantSpecies> &p_sp, real_t pixel) {
 	PlaceSpecies &ps = r_setup.species[s];
 	ps.sp = p_sp;
-	TerrainDataMap3D *map = r_setup.map;
 	if (ps.sp.is_null()) {
 		return;
 	}
@@ -1901,6 +1900,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		r_setup.mask_rect = density_mask_rect;
 	}
 	r_setup.obstacles = obstacle_grid;
+	r_setup.rocks_any = !obstacle_grid.is_empty() || _get_rock_field() != nullptr;
 	r_setup.paths = path_grid;
 	r_setup.crop_fields = GrassField3D::get_crop_field_mask();
 	_follow_holes(map);
@@ -2033,6 +2033,29 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			ps.desert_shrub = true;
 		}
 	}
+	// How far past a tile's edge its placements read the rocks: the halo they are placed in, and the widest rock query
+	// of _place() (a rock foot's shelter, the gap between stones, a stem or log's clearance, a ground plant's leaves,
+	// the leaf drift at a drift cell's centre).
+	float nebkha_h = 0.0f;
+	for (int i = 0; i < r_setup.nebkhas.size(); i++) {
+		nebkha_h = MAX(nebkha_h, float(r_setup.nebkhas[i].w));
+	}
+	for (const PlaceSpecies &ps : r_setup.species) {
+		if (ps.sp.is_null()) {
+			continue;
+		}
+		const float smax = MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
+		float q = MAX(4.0f * PlantSpecies::ROCK_FOOT_REACH, 6.0f * PlantSpecies::STONE_GAP_REACH);
+		q = MAX(q, DRIFT_CELL * float(Math::SQRT2) + 1.6f);
+		q = MAX(q, ps.deadwood_reach + OBSTACLE_MARGIN);
+		q = MAX(q, ps.stem_foot * smax + OBSTACLE_MARGIN);
+		q = MAX(q, ps.spread * smax);
+		if (ps.nebkha_slot >= 0) {
+			q = MAX(q, NEBKHA_CROWN * NEBKHA_RADIUS * nebkha_h * 1.1f); // A mound's shrub, scaled to its crown.
+		}
+		r_setup.rock_reach = MAX(r_setup.rock_reach, ps.halo + q);
+	}
+	r_setup.rock_reach += 1.0f;
 	_read_forest_edge(r_setup);
 	return true;
 }
@@ -2357,7 +2380,8 @@ void VegetationField3D::_publish_deadwood(const LocalVector<const LocalVector<De
 	}
 }
 
-void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const {
+void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles, const VegetationObstacles *p_rocks) const {
+	const VegetationObstacles &rocks = p_rocks ? *p_rocks : p_setup.obstacles;
 	const int species_count = p_setup.species.size();
 	const float ts = p_setup.tile_size;
 	const Rect2 &rect = p_setup.rect;
@@ -2387,7 +2411,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 			return *c;
 		}
 		const Vector2 at((k.x + 0.5f) * DRIFT_CELL, (k.y + 0.5f) * DRIFT_CELL);
-		const float d = _litter_drift(map, p_setup.obstacles, local_crown_grid, local_crowns, local_deadwood_grid, local_deadwood, p_setup.other, at, p_setup.wind_dir);
+		const float d = _litter_drift(map, rocks, local_crown_grid, local_crowns, local_deadwood_grid, local_deadwood, p_setup.other, at, p_setup.wind_dir);
 		drift_cache.insert(k, d);
 		return d;
 	};
@@ -2469,7 +2493,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const float range = ps.range;
 		const bool is_log = ps.deadwood_reach > 0.0f;
 		// The most a point can keep: the density, raised at rock feet (rock_foot).
-		const float max_keep = sp->get_density() * (p_setup.obstacles.is_empty() ? 1.0f : sp->rock_foot_weight(0.0f));
+		const float max_keep = sp->get_density() * (!p_setup.rocks_any ? 1.0f : sp->rock_foot_weight(0.0f));
 		const PlantSpecies::DeadwoodRule dw_rule = is_log ? PlantSpecies::DEADWOOD_IGNORE : sp->get_deadwood_rule();
 		const bool dw_near = dw_rule == PlantSpecies::DEADWOOD_ON || dw_rule == PlantSpecies::DEADWOOD_BESIDE;
 		const float dw_band = sp->get_deadwood_band();
@@ -2605,9 +2629,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					float rock_boost = 1.0f;
 					if (suit > 0.0f && sp->get_patch_scale() > 0.0f) {
 						float pw = sp->get_patch_weight(p3);
-						if (pw < 1.0f && sp->get_rock_foot() > 0.0f && !p_setup.obstacles.is_empty()) {
+						if (pw < 1.0f && sp->get_rock_foot() > 0.0f && !rocks.is_empty()) {
 							const float reach = 4.0f * PlantSpecies::ROCK_FOOT_REACH;
-							const float c = p_setup.obstacles.clearance(xz, reach);
+							const float c = rocks.clearance(xz, reach);
 							if (c < reach) {
 								const float fall = Math::exp(-MAX(c, 0.0f) / PlantSpecies::ROCK_FOOT_REACH);
 								pw = MAX(pw, 1.0f - Math::exp(-sp->get_rock_foot() * fall));
@@ -2615,9 +2639,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 						}
 						suit *= pw;
-					} else if (suit > 0.0f && sp->get_rock_foot() > 0.0f && !p_setup.obstacles.is_empty()) {
+					} else if (suit > 0.0f && sp->get_rock_foot() > 0.0f && !rocks.is_empty()) {
 						const float reach = 4.0f * PlantSpecies::ROCK_FOOT_REACH;
-						const float c = p_setup.obstacles.clearance(xz, reach);
+						const float c = rocks.clearance(xz, reach);
 						if (c < reach) {
 							rock_boost = sp->rock_foot_weight(c);
 						}
@@ -2918,7 +2942,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (suit > 0.0f && sp->get_stone_gap() > 0.0f) {
 						const float gap_reach = 6.0f * PlantSpecies::STONE_GAP_REACH;
 						float first = 1e6f;
-						const float second = p_setup.obstacles.is_empty() ? 1e6f : p_setup.obstacles.second_clearance(xz, gap_reach, &first);
+						const float second = rocks.is_empty() ? 1e6f : rocks.second_clearance(xz, gap_reach, &first);
 						suit *= sp->stone_gap_weight(first, second);
 					}
 					// Worn paths: the plants thin out towards the trodden line by their resistance
@@ -2947,9 +2971,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					// Rocks: no stem inside one. A tree's trunk foot clears it, a log its whole
 					// length, a ground plant its stem; leaves may lean over the rock.
-					if (!p_setup.obstacles.is_empty() && !on_top) {
+					if (!rocks.is_empty() && !on_top) {
 						const float om = is_log ? ps.deadwood_reach : (canopy_r > 0.0f ? ps.stem_foot * MAX(scale_range.x, scale_range.y) : 0.0f) + OBSTACLE_MARGIN;
-						if (p_setup.obstacles.blocks(xz, om)) {
+						if (rocks.blocks(xz, om)) {
 							continue;
 						}
 					}
@@ -3002,9 +3026,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// grows smaller and leans away, as plants pressed against a boulder do.
 					float rock_fit = 1.0f;
 					Vector2 rock_away;
-					if (canopy_r <= 0.0f && !is_log && !on_log && !on_top && ps.spread > 0.0f && !p_setup.obstacles.is_empty()) {
+					if (canopy_r <= 0.0f && !is_log && !on_log && !on_top && ps.spread > 0.0f && !rocks.is_empty()) {
 						const float reach = ps.spread * scale;
-						const float c = p_setup.obstacles.clearance(xz, reach, &rock_away);
+						const float c = rocks.clearance(xz, reach, &rock_away);
 						// Crevice plants arch their leaves out over the stones they root between.
 						const float overhang = ROCK_OVERHANG + CREVICE_OVERHANG * sp->get_stone_gap();
 						if (c + overhang < reach) {
@@ -4329,6 +4353,7 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 		float height;
 		Color color;
 		float cover; // At most.
+		float reach; // m: where its own plants end (its range, else the field's stream radius).
 	};
 	LocalVector<Kind> kinds;
 	for (const PlaceSpecies &ps : su.species) {
@@ -4343,7 +4368,11 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 		}
 		// A species whose own far form takes over past its plants (meta "far_shell" false: the trees module's crown
 		// hulls and skyline trees) stays out of the shell.
-		if (!bool(sp->get_meta(SNAME("far_shell"), true))) {
+		// Trees (a crown that shades the field, or a far tail of their own, meta far_widen) never: their own far forms
+		// carry them (drawn tails, crown hulls, skyline trees), and the shell drew their mass from their habitat rules
+		// alone, without the stand's patches, clearings or extent, as olive mounds metres tall over open hillsides
+		// (landscape valley, 23 Nov: a 60 m forest raised a "forest" of shell over every slope to the skyline).
+		if (!bool(sp->get_meta(SNAME("far_shell"), true)) || sp->get_canopy_radius() > 0.0f || bool(sp->get_meta(SNAME("far_widen"), false))) {
 			continue;
 		}
 		const Vector2 sr = sp->get_scale_range();
@@ -4370,7 +4399,7 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			const float k = MIN(la, 1.3f * lf) / la;
 			tone = Color(ps.far_albedo.r * k, ps.far_albedo.g * k, ps.far_albedo.b * k, 1.0f);
 		}
-		kinds.push_back({ sp, h, tone, cover });
+		kinds.push_back({ sp, h, tone, cover, ps.range > 0.0f ? ps.range : stream_radius });
 		if (OS::get_singleton()->get_environment("VEG_FAR_SHELL_DEBUG") == "1" && p_key == Vector3i(0, 0, 0)) {
 			print_line(vformat("far shell kind h %.2f cover %.2f spacing %.2f density %.2f", h, cover, sp->get_spacing(), sp->get_density()));
 		}
@@ -4411,8 +4440,13 @@ MeshInstance3D *VegetationField3D::_build_far_shell_tile(const Vector3i &p_key, 
 			float sum = 0.0f;
 			float hs = 0.0f;
 			Color cs(0, 0, 0, 0);
+			const float dq = q.distance_to(p_centre);
 			for (const Kind &k : kinds) {
-				const float c = k.cover * CLAMP(k.sp->get_suitability(map, at), 0.0f, 1.0f);
+				// Each kind takes over from its own plants only where they end (the last 15% of their range): inside
+				// it the solid shell showed between airy plants as a flat wall of peaks (landscape meadow view, 23 Nov,
+				// a 2.3 m tall grass drawn to 60 m under a shell from 48 m).
+				const float handover = Math::smoothstep(0.85f * k.reach, k.reach, dq);
+				const float c = handover > 0.0f ? k.cover * handover * CLAMP(k.sp->get_suitability(map, at), 0.0f, 1.0f) : 0.0f;
 				if (c <= 0.0f) {
 					continue;
 				}
@@ -5275,6 +5309,8 @@ Error VegetationField3D::populate() {
 	const Rect2i tiles(Vector2i(int(Math::floor(rect.position.x / tile_size)), int(Math::floor(rect.position.y / tile_size))),
 			Vector2i(int(Math::ceil((rect.position.x + rect.size.x) / tile_size)) - int(Math::floor(rect.position.x / tile_size)),
 					int(Math::ceil((rect.position.y + rect.size.y) / tile_size)) - int(Math::floor(rect.position.y / tile_size))));
+	// A rock_field: its stones over the whole map (the field places it all at once).
+	_rocks_for(setup, rect, setup.obstacles);
 	LocalVector<TileOut> outs;
 	_place(setup, tiles, false, outs);
 	const int species_count = setup.species.size();
@@ -5487,6 +5523,67 @@ float VegetationField3D::sample_lateral_cover(const Vector3 &p_position) const {
 void VegetationField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 	obstacles = p_obstacles;
 	obstacle_grid.build(obstacles);
+	RWLockWrite guard(rock_lock);
+	rock_grid.build(obstacles);
+	PackedVector4Array fetched;
+	rock_cache.gather_all(fetched);
+	rock_grid.add(fetched);
+}
+
+// The rock field's stones are fetched again from scratch (changed after streaming started: the tiles placed from
+// now on read them).
+void VegetationField3D::set_rock_field(const NodePath &p_path) {
+	rock_field = p_path;
+	rock_cache.clear();
+	RWLockWrite guard(rock_lock);
+	rock_grid.build(obstacles);
+}
+
+void VegetationField3D::set_rock_obstacle_min(float p_size) {
+	rock_obstacle_min = MAX(p_size, 0.0f);
+	set_rock_field(rock_field);
+}
+
+void VegetationField3D::set_rock_footprint_max(float p_radius) {
+	rock_footprint_max = MAX(p_radius, 0.0f);
+}
+
+Object *VegetationField3D::_get_rock_field() const {
+	if (rock_field.is_empty() || !is_inside_tree()) {
+		return nullptr;
+	}
+	Node *n = get_node_or_null(rock_field);
+	return n && n->has_method(SNAME("get_obstacles")) ? n : nullptr;
+}
+
+bool VegetationField3D::_rocks_for(const PlaceSetup &p_setup, const Rect2 &p_core, VegetationObstacles &r_grid) {
+	Object *rf = _get_rock_field();
+	if (!rf) {
+		return false;
+	}
+	// Every stone whose footprint a placement in p_core can reach: its centre within the reach plus the widest footprint.
+	const Rect2 want = p_core.grow(p_setup.rock_reach + rock_footprint_max);
+	PackedVector4Array fresh;
+	if (rock_cache.fetch(rf, want, rock_obstacle_min, &fresh)) {
+		if (rock_cache.max_radius > rock_footprint_max) {
+			WARN_PRINT_ONCE(vformat("VegetationField3D: a stone %.1f m wide at its foot, wider than rock_footprint_max (%.1f m): raise it.", rock_cache.max_radius, rock_footprint_max));
+		}
+		RWLockWrite guard(rock_lock);
+		if (rock_grid.is_empty()) {
+			rock_grid.build(obstacles);
+		}
+		rock_grid.add(fresh);
+	}
+	PackedVector4Array near;
+	for (int i = 0; i < obstacles.size(); i++) {
+		const Vector4 o = obstacles[i];
+		if (want.has_point(Vector2(o.x, o.z))) {
+			near.push_back(o);
+		}
+	}
+	rock_cache.gather(want, near);
+	r_grid.build(near);
+	return true;
 }
 
 void VegetationField3D::set_paths(const Array &p_paths) {
@@ -6032,6 +6129,10 @@ float VegetationField3D::get_litter_drift_at(const Vector3 &p_global_position) c
 	}
 	const TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 	const Vector2 wind = litter_skew.length_squared() > 1e-8f ? litter_skew.normalized() : Vector2();
+	if (!rock_field.is_empty()) {
+		RWLockRead rocks_guard(rock_lock); // The rocks fetched so far, round the placed tiles.
+		return _litter_drift(map, rock_grid, crown_grid, crowns, deadwood_grid, deadwood, other, xz, wind);
+	}
 	return _litter_drift(map, obstacle_grid, crown_grid, crowns, deadwood_grid, deadwood, other, xz, wind);
 }
 
@@ -6172,7 +6273,7 @@ Array VegetationField3D::get_trunks_near(const Vector3 &p_center, float p_radius
 
 void VegetationField3D::_stream_job(void *p_job) {
 	StreamJob *job = static_cast<StreamJob *>(p_job);
-	job->field->_place(job->field->stream_setup, Rect2i(job->tile, Vector2i(1, 1)), true, job->out);
+	job->field->_place(job->field->stream_setup, Rect2i(job->tile, Vector2i(1, 1)), true, job->out, job->own_rocks ? &job->rocks : nullptr);
 	job->done.set();
 }
 
@@ -6569,6 +6670,8 @@ void VegetationField3D::_stream_update(double p_delta) {
 			StreamJob *job = memnew(StreamJob);
 			job->field = this;
 			job->tile = missing[i].tile;
+			// A rock_field's stones round the tile, fetched here on the main thread (RockField3D places its cells here).
+			job->own_rocks = _rocks_for(stream_setup, Rect2(Vector2(job->tile) * ts, Vector2(ts, ts)), job->rocks);
 			job->task = WorkerThreadPool::get_singleton()->add_native_task(&VegetationField3D::_stream_job, job, false, "VegetationField3D tile");
 			stream_jobs.push_back(job);
 		}
@@ -7149,6 +7252,13 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_density_mask_rect", "rect"), &VegetationField3D::set_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("set_obstacles", "obstacles"), &VegetationField3D::set_obstacles);
+	ClassDB::bind_method(D_METHOD("set_rock_field", "path"), &VegetationField3D::set_rock_field);
+	ClassDB::bind_method(D_METHOD("get_rock_field"), &VegetationField3D::get_rock_field);
+	ClassDB::bind_method(D_METHOD("set_rock_obstacle_min", "size"), &VegetationField3D::set_rock_obstacle_min);
+	ClassDB::bind_method(D_METHOD("get_rock_obstacle_min"), &VegetationField3D::get_rock_obstacle_min);
+	ClassDB::bind_method(D_METHOD("set_rock_footprint_max", "radius"), &VegetationField3D::set_rock_footprint_max);
+	ClassDB::bind_method(D_METHOD("get_rock_footprint_max"), &VegetationField3D::get_rock_footprint_max);
+	ClassDB::bind_method(D_METHOD("get_rock_chunk_count"), &VegetationField3D::get_rock_chunk_count);
 	ClassDB::bind_method(D_METHOD("set_paths", "paths"), &VegetationField3D::set_paths);
 	ClassDB::bind_method(D_METHOD("get_paths"), &VegetationField3D::get_paths);
 	ClassDB::bind_method(D_METHOD("get_path_passes_at", "position"), &VegetationField3D::get_path_passes_at);
@@ -7274,6 +7384,9 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "density_mask", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_density_mask", "get_density_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "density_mask_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_density_mask_rect", "get_density_mask_rect");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "obstacles"), "set_obstacles", "get_obstacles");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "rock_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "RockField3D"), "set_rock_field", "get_rock_field");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_obstacle_min", PROPERTY_HINT_RANGE, "0,4,0.05,suffix:m"), "set_rock_obstacle_min", "get_rock_obstacle_min");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_footprint_max", PROPERTY_HINT_RANGE, "0,128,0.5,suffix:m"), "set_rock_footprint_max", "get_rock_footprint_max");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "paths", PROPERTY_HINT_ARRAY_TYPE, "Dictionary"), "set_paths", "get_paths");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "stone_tops"), "set_stone_tops", "get_stone_tops");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "stone_top_normals"), "set_stone_top_normals", "get_stone_top_normals");

@@ -136,3 +136,53 @@ F gets its own thread.
 - E: positional shadows by importance, `max_shadowed_lights` budget.
 - G: `Light3D.flicker_mode` (pattern or failing, seeded), with `flicker_material` following.
 - F: with the quality presets thread.
+
+## Gaps found porting the game onto these (23 Nov)
+
+The PC side-by-side of the game's port (its PR #104) showed where the engine's features stop short of what
+the game needed. Each is listed with whether it looks generic enough to build; none is started.
+
+### H. Shadow budget around a subject (generic: yes)
+
+`max_shadowed_lights` ranks lights by energy times screen size. A game with a fixed camera and one player
+wants the lights nearest the player kept, so the shadows where the action is never drop (the game ranks by
+distance to the player, and the engine's ranking picked other lamps: a brighter, leakier street). Proposal:
+an optional focus point (a viewport or camera property, or a global) whose distance weighs the importance,
+with the same hysteresis. Third-person and isometric games, and any streamed open world with a hero, gain.
+
+### I. Rain curtains lit by local lights (generic: yes)
+
+`WeatherMap3D.rain_curtains` darkens the air but local lights do not scatter in it, so a work light or a
+street lamp has no glow in the rain; the game's fog-volume haze does. Proposal: feed the curtains into the
+volumetric fog froxels (or a FogVolume) so they take the clustered lights' in-scattering in raster, as the
+path tracer's medium already does. Any night rain scene gains.
+
+### J. Externally driven cloth and the weather (generic: yes, small)
+
+PhysXCloth3D adds the weather map's wind and wetting on top of a script that already sets its `wind`, so a
+game with its own wind field gets the wind twice. `weather_wind` and `weather_wetting` exist but default on.
+Proposal: when a script sets `wind` (or a `wind_source` enum: weather, manual, both), the weather's stops
+adding unless asked; document the contract in world-links. Every project that ports its own wind gains.
+
+### M. Moving gust fronts on the weather map (generic: yes)
+
+The game's wind (StormWind, read by 14 of its scripts: rain, props, tape, coats, haze) has authored local
+events the map cannot hold: a squall's gust front sweeping the roof after a near strike, and a train's
+slipstream running along the track. The map has mean wind, Kaimal gusts, gust patches, downburst outflow
+(add_storm) and vortices, but no moving front. Proposal: `WeatherMap3D.add_gust_front(origin, direction,
+peak, half_width, reach, speed, rise, decay)`, read by get_wind_at and the wind texture, so a game's wind
+can be the map's and every reader (cloth, trees, rain, snow, dust) gets one wind. Squall lines, vehicle
+slipstreams and blast waves all fit it.
+
+### K. Camera cut-out opt-in by default for a project (generic: yes, small)
+
+Every BaseMaterial3D takes part in the cut-out, so a game must reach every material built before its own
+hook to keep it out (the roof's water tank vanished). Proposal: a project setting for the default
+(`rendering/camera_cutout/default_enabled`), and a per-GeometryInstance3D `camera_cutout` override, so a
+game opts in what may open (buildings, roofs) instead of opting everything else out.
+
+### L. Puddles in real road relief (generic: yes; in progress)
+
+The game's street water simulation (iWave) stands in for puddles that sit in actual dips. Owned by the
+PhysX thread: a road-relief node (ruts, crown, camber, a world-anchored depression field, potholes) feeding
+a street-puddle water mode.

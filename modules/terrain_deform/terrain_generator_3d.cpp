@@ -31,6 +31,8 @@
 
 #include "terrain_generator_3d.h"
 
+#include "world_cache.h"
+
 #include "core/os/thread.h"
 
 #include "terrain_brush_3d.h"
@@ -2812,7 +2814,7 @@ constexpr real_t NOTCH_DROP = 25.0; // m: taller falls keep their face and get a
 constexpr real_t LIP_END = 8.0; // m before the lip and past the foot over which it fades
 } // namespace
 
-float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
+float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z, LedgeProbe *r_ledge) const {
 	const float base = _sample(heights, p_x, p_z);
 	if (!detail_enabled || detail_octaves <= 0 || detail_depth <= 0.0 || Math::is_nan(base)) {
 		return base;
@@ -2857,21 +2859,32 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	ep.assumed_slope = detail_assumed_slope;
 	ep.valley_height = result_min;
 	ep.peak_height = MAX(result_max, result_min + 1.0f);
-	double off = TerrainErosionFilter::offset(ep, p_x, p_z, base, gx, gz, coherence);
-	// Crests: where the gullies fade (low coherence) on convex ground, an irregular ridged noise takes over, so a
-	// crest line keeps pinnacles and cols of varied size instead of turning straight (or a regular comb).
-	if (detail_crest > 0.0) {
-		const double convex = -(hs[1][0] + hs[1][2] + hs[0][1] + hs[2][1] - 4.0 * hs[1][1]) / (4.0 * e);
+	// Crests: where the gullies fade (low coherence) on convex ground. There the filter's own result would fall to
+	// its fade target, raised over the flanks' mean by tens of metres in the few metres round a pointed summit
+	// (needle spires on a range's tops): the target fades out with the crest's weight, so a crest meets its flanks,
+	// and the ridged noise below gives it its broken line instead.
+	const double convex = -(hs[1][0] + hs[1][2] + hs[0][1] + hs[2][1] - 4.0 * hs[1][1]) / (4.0 * e);
+	double w = 0.0;
+	{
 		const double c = CLAMP(coherence, 0.0, 1.0);
 		const double fade = 1.0 - c * c * (3.0 - 2.0 * c);
 		const double t = CLAMP(convex / 0.05, 0.0, 1.0);
-		const double w = fade * t * t * (3.0 - 2.0 * t);
+		w = fade * t * t * (3.0 - 2.0 * t);
+	}
+	ep.fade_scale = 1.0 - w;
+	double off = TerrainErosionFilter::offset(ep, p_x, p_z, base, gx, gz, coherence);
+	// An irregular ridged noise on the crests, so a crest line keeps pinnacles and cols of varied size instead of
+	// turning straight (or a regular comb).
+	if (detail_crest > 0.0) {
 		if (w > 0.0) {
 			const double amp = double(detail_crest) * 2.0 * detail_depth / MAX(double(detail_gully_weight), 1e-3) * detail_wavelength;
 			// No octave finer than 8 m: a pinnacle a few metres across is all a 1 m grid holds (finer ones drew
 			// one-sample spikes along the crests).
 			const int crest_oct = MAX(1, MIN(MAX(detail_octaves, 1) + 2, 1 + int(Math::floor(TerrainDMath::log2(MAX(detail_wavelength * 2.0 / 8.0, 1.0))))));
-			off += w * amp * TerrainErosionFilter::crest_noise(ep.seed ^ 0x5bd1e995u, p_x, p_z, detail_wavelength * 2.0, crest_oct);
+			// About its mean (0.36): the noise is 0.07 to 0.5, so as it was it raised the whole crest band by some
+			// 15 m, and on a pointed summit, where that band is the last few metres round the top, the raise stood
+			// as a needle spire. Centred, it only breaks the crest line into pinnacles and cols.
+			off += w * amp * (TerrainErosionFilter::crest_noise(ep.seed ^ 0x5bd1e995u, p_x, p_z, detail_wavelength * 2.0, crest_oct) - 0.36);
 		}
 	}
 	// Not under water (the seabed and lake beds stay smooth), and never down to the outlets: land the filter cuts
@@ -2909,9 +2922,9 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	}
 	// Ledges on cliffs (row 11 of the waterfall gap list): steep faces of bedded rock weather into steps, each harder
 	// bed a ledge over a softer recess (differential erosion of interbedded strata, Forte et al. 2016; the layered
-	// subsurface of Cordonnier et al. 2018, "Sculpting mountains"). Beds every cliff_ledge_spacing metres, their
-	// heights wandering by most of a bed over a few hundred metres; each bed is a near-flat ledge for 60% of its
-	// height and a riser for the rest, faded in from 40 to 55 degrees so soil slopes stay as they were.
+	// subsurface of Cordonnier et al. 2018, "Sculpting mountains"). Beds about every cliff_ledge_spacing metres, their
+	// heights wandering by most of a bed over a few hundred metres; each bed is a bench at its foot and a riser above,
+	// faded in from 40 to 55 degrees so soil slopes stay as they were.
 	if (cliff_ledge_spacing > 0.0) {
 		const double slope = Math::sqrt(gx * gx + gz * gz);
 		const double tw = CLAMP((slope - 0.84) / (1.43 - 0.84), 0.0, 1.0);
@@ -2925,18 +2938,57 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 			// slope stays positive), and each bed's ledge share is its own.
 			const double hw = (h0 + wob) / L;
 			const double q = hw + 0.22 * TerrainDMath::sin(hw * 2.3999632) + 0.12 * TerrainDMath::sin(hw * 0.9213 + 1.7);
-			const double fl = Math::floor(q);
-			const double f = q - fl;
-			const uint32_t bh = (uint32_t(int64_t(fl)) * 0x9E3779B1u) ^ (ls * 0x85EBCA6Bu);
-			// Each bed: a narrow ledge (20 to 35 percent of the bed, rising a quarter of its height, so it still sheds
-			// water and scree) and the riser above it.
-			const double l = 0.2 + 0.15 * double((bh >> 8) & 0xFFFF) / 65535.0;
-			double t = f < l ? 0.25 * f / l : 0.25 + 0.75 * (f - l) / (1.0 - l);
+			// Bed boundaries in bed units: each unit holds none (a quarter of them), one or two (three in ten) at a
+			// random place, so bed thickness runs from a tenth of the spacing to near three times it with no rhythm,
+			// as bed thicknesses in a stratal column do (log-normal to exponential frequencies; Drummond and
+			// Wilkinson 1996, "Stratal thickness frequencies and the prevalence of orderedness in stratigraphic
+			// sequences"). Beds are harder or softer: a soft bed weathers back as a plain slope with no ledge.
+			const int64_t fu = int64_t(Math::floor(q));
+			double b0 = double(fu - 3);
+			double b1 = double(fu + 4);
+			uint32_t b0h = 0u;
+			for (int64_t c = fu - 3; c <= fu + 3; c++) {
+				const uint32_t ch = uint32_t(_gen_hash01(uint32_t(c) * 0x9E3779B1u ^ ls, 0x27d4eb2fu) * 4294967295.0);
+				const double u0 = double(ch & 0xFFFFu) / 65535.0;
+				const int n = u0 < 0.25 ? 0 : (u0 < 0.7 ? 1 : 2);
+				for (int k = 0; k < n; k++) {
+					const uint32_t kh = uint32_t(_gen_hash01(ch, uint32_t(k) + 11u) * 4294967295.0);
+					const double bp = double(c) + (double(k) + 0.1 + 0.8 * double(kh & 0xFFFFu) / 65535.0) / double(n);
+					if (bp <= q && bp > b0) {
+						b0 = bp;
+						b0h = kh;
+					} else if (bp > q && bp < b1) {
+						b1 = bp;
+					}
+				}
+			}
+			const double f = (q - b0) / MAX(b1 - b0, 1e-6);
+			// Each bed: a narrow bench (20 to 35 percent of the bed, rising a quarter of its height, so it still sheds
+			// water and scree; rising a tenth, every bench held snow and the face read as regular white stripes) and the
+			// riser above it; how much of that step a bed holds is its hardness (none for a
+			// fifth of them), which also wanders along the face over a couple of hundred metres (beds pinch out).
+			const double l = 0.2 + 0.15 * double((b0h >> 8) & 0xFFFF) / 65535.0;
+			const double hard_u = double(b0h >> 24) / 255.0;
+			double hard = CLAMP((hard_u - 0.2) / 0.3, 0.0, 1.0);
+			hard *= CLAMP(0.75 + 0.5 * _gen_value_noise(ls + 2u + uint32_t(b0h & 0xFFu), p_x, p_z, 180.0), 0.0, 1.0);
+			const double step = f < l ? 0.25 * f / l : 0.25 + 0.75 * (f - l) / (1.0 - l);
+			const double t = b0 + (b1 - b0) * (f + (step - f) * hard);
 			// Back from bed units to height: invert the warp locally (Newton step from q).
-			const double qt = fl + t;
+			const double qt = t;
 			const double dq = 1.0 + 0.22 * 2.3999632 * TerrainDMath::cos(hw * 2.3999632) + 0.12 * 0.9213 * TerrainDMath::cos(hw * 0.9213 + 1.7);
 			const double ht = (hw + (qt - q) / dq) * L - wob;
 			off += w * (ht - h0);
+			if (r_ledge) {
+				r_ledge->valid = true;
+				r_ledge->q = q;
+				r_ledge->b0 = b0;
+				r_ledge->b1 = b1;
+				r_ledge->spacing = L;
+				r_ledge->hard = hard;
+				r_ledge->weight = w;
+				r_ledge->gx = gx;
+				r_ledge->gz = gz;
+			}
 		}
 	}
 	// With a sea, a cut deeper than a quarter of the ground's height above that floor is compressed smoothly (exponentially, same
@@ -2949,6 +3001,138 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 		off = -(q + q * (1.0 - TerrainDMath::exp((off + q) / q)));
 	}
 	return float(MAX(double(base) + off, MIN(double(base), floor_h)));
+}
+
+TerrainGenerator3D::LedgeProbe TerrainGenerator3D::_ledge_probe(real_t p_x, real_t p_z) const {
+	LedgeProbe pr;
+	_ground_detail(p_x, p_z, &pr);
+	return pr;
+}
+
+// Ledge lips (docs/ideas/terrain-generation.md, "Ledge lips"). A bench's outer edge is where the bed coordinate q
+// crosses a bed's lower boundary: found on a grid p_step apart (each node's edge along its steeper axis, so a lip is
+// met once per row), then by bisection on q. The cap a slab can make there is bounded as a cantilever: a beam of
+// thickness t breaks in bending at an overhang of sqrt(sigma_t t / (3 rho g)) (Young and Young 1992, "Sandstone
+// Landforms"; tensile strength of weathered sedimentary rock about 1 MPa, rho g 25 kN/m3), and the joints cut it into
+// blocks a couple of metres long, so it stands out no more than 1.2 m and no more than one and a half times its
+// thickness, scaled by the bed's hardness.
+void TerrainGenerator3D::get_ledge_lips(const Rect2 &p_rect, real_t p_step, LocalVector<LedgeLip> &r_lips) const {
+	r_lips.clear();
+	if (cliff_ledge_spacing <= 0.0 || heights.is_empty() || p_step <= 0.0) {
+		return;
+	}
+	const Rect2 r = p_rect.intersection(get_result_rect());
+	if (!r.has_area()) {
+		return;
+	}
+	const int gx_n = MIN(int(Math::ceil(r.size.x / p_step)) + 1, 4096);
+	const int gz_n = MIN(int(Math::ceil(r.size.y / p_step)) + 1, 4096);
+	LocalVector<LedgeProbe> grid;
+	grid.resize(uint32_t(gx_n * gz_n));
+	for (int j = 0; j < gz_n; j++) {
+		for (int i = 0; i < gx_n; i++) {
+			grid[j * gx_n + i] = _ledge_probe(r.position.x + i * p_step, r.position.y + j * p_step);
+		}
+	}
+	const Rect2 rr = get_result_rect();
+	auto h_at = [&](real_t p_x, real_t p_z) {
+		return real_t(_ground(CLAMP(p_x, rr.position.x, rr.get_end().x), CLAMP(p_z, rr.position.y, rr.get_end().y)));
+	};
+	for (int j = 0; j < gz_n; j++) {
+		for (int i = 0; i < gx_n; i++) {
+			const LedgeProbe &a = grid[j * gx_n + i];
+			if (!a.valid) {
+				continue;
+			}
+			const bool along_x = Math::abs(a.gx) >= Math::abs(a.gz);
+			const int i2 = along_x ? i + 1 : i, j2 = along_x ? j : j + 1;
+			if (i2 >= gx_n || j2 >= gz_n) {
+				continue;
+			}
+			const LedgeProbe &c = grid[j2 * gx_n + i2];
+			if (!c.valid) {
+				continue;
+			}
+			const LedgeProbe *lo = a.q <= c.q ? &a : &c;
+			const LedgeProbe *hi = a.q <= c.q ? &c : &a;
+			const double B = hi->b0;
+			if (!(lo->q < B && hi->q >= B)) {
+				continue;
+			}
+			// Bisection on q from the low point to the high point.
+			Vector2 p_lo(r.position.x + i * p_step, r.position.y + j * p_step);
+			Vector2 p_hi(r.position.x + i2 * p_step, r.position.y + j2 * p_step);
+			if (lo != &a) {
+				SWAP(p_lo, p_hi);
+			}
+			LedgeProbe up = *hi, dn = *lo;
+			for (int it = 0; it < 10; it++) {
+				const Vector2 m = (p_lo + p_hi) * 0.5;
+				const LedgeProbe pm = _ledge_probe(m.x, m.y);
+				if (!pm.valid) {
+					break;
+				}
+				if (pm.q < B) {
+					p_lo = m;
+					dn = pm;
+				} else {
+					p_hi = m;
+					up = pm;
+				}
+			}
+			const double g = Math::sqrt(up.gx * up.gx + up.gz * up.gz);
+			// Only where the bench is drawn: the ledges' weight (steep enough, not under water or scree) and the bed's
+			// hardness both hold most of the step.
+			if (g < 1e-4 || up.weight < 0.25 || up.weight * up.hard < 0.15) {
+				continue;
+			}
+			LedgeLip lip;
+			lip.out = Vector3(real_t(-up.gx / g), 0, real_t(-up.gz / g));
+			lip.position = Vector3(p_hi.x, h_at(p_hi.x, p_hi.y), p_hi.y);
+			lip.bed_thickness = float(MAX(B - dn.b0, 0.05) * up.spacing);
+			lip.cap_thickness = CLAMP(0.3f * lip.bed_thickness, 0.3f, 1.5f);
+			lip.hardness = float(up.hard);
+			lip.weight = float(up.weight);
+			const float cant = Math::sqrt(1.0e6f * lip.cap_thickness / (3.0f * 25000.0f));
+			lip.overhang = lip.hardness * MIN(cant, MIN(1.2f, 1.5f * lip.cap_thickness));
+			// A real break in slope only: the bench over the first metre in flatter than the riser over the first metre
+			// out (where the bed's own bench is steep, or the tile erosion cut across it, there is no lip to cap).
+			{
+				const real_t in_y = h_at(lip.position.x - lip.out.x, lip.position.z - lip.out.z) - lip.position.y;
+				const real_t out_y = lip.position.y - h_at(lip.position.x + lip.out.x, lip.position.z + lip.out.z);
+				if (!(in_y < 0.8 * out_y)) {
+					continue;
+				}
+			}
+			// The riser's normal halfway down the bed under the lip.
+			const real_t d = real_t(0.5 * lip.bed_thickness / g);
+			const Vector3 q = lip.position + lip.out * d;
+			const real_t e = 0.5;
+			const real_t hx = h_at(q.x + e, q.z) - h_at(q.x - e, q.z);
+			const real_t hz = h_at(q.x, q.z + e) - h_at(q.x, q.z - e);
+			lip.face_normal = Vector3(-hx, 2.0 * e, -hz).normalized();
+			r_lips.push_back(lip);
+		}
+	}
+}
+
+TypedArray<Dictionary> TerrainGenerator3D::get_ledge_lips_bind(const Rect2 &p_rect, real_t p_step) const {
+	LocalVector<LedgeLip> lips;
+	get_ledge_lips(p_rect, p_step, lips);
+	TypedArray<Dictionary> out;
+	for (const LedgeLip &l : lips) {
+		Dictionary d;
+		d["position"] = l.position;
+		d["out"] = l.out;
+		d["face_normal"] = l.face_normal;
+		d["bed_thickness"] = l.bed_thickness;
+		d["cap_thickness"] = l.cap_thickness;
+		d["overhang"] = l.overhang;
+		d["hardness"] = l.hardness;
+		d["weight"] = l.weight;
+		out.push_back(d);
+	}
+	return out;
 }
 
 float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
@@ -3303,7 +3487,21 @@ void TerrainGenerator3D::_dune_tile(void *p_job, uint32_t p_tile) {
 			c.plant_ok[k] = d.plant_ok[j];
 		}
 	}
-	c.run(gen->dune_steps);
+	// The tile's sand and plants, from the world cache when this tile's inputs ran before (world_cache.h).
+	WorldCacheKey key("dunes");
+	c.hash_inputs(gen->dune_steps, [&](const void *p_data, size_t p_size) { key.bytes(p_data, p_size); });
+	const String name = key.finish();
+	LocalVector<float> packed;
+	packed.resize(cm * 2);
+	if (WorldCache::load("dunes", name, reinterpret_cast<uint8_t *>(packed.ptr()), sizeof(float) * cm * 2)) {
+		c.sand.assign(packed.ptr(), packed.ptr() + cm);
+		c.plants.assign(packed.ptr() + cm, packed.ptr() + cm * 2);
+	} else {
+		c.run(gen->dune_steps);
+		memcpy(packed.ptr(), c.sand.data(), sizeof(float) * cm);
+		memcpy(packed.ptr() + cm, c.plants.data(), sizeof(float) * cm);
+		WorldCache::store("dunes", name, reinterpret_cast<const uint8_t *>(packed.ptr()), sizeof(float) * cm * 2);
+	}
 	LocalVector<float> &out = (*job->results)[p_tile];
 	out.resize(m * 2);
 	memset(out.ptr(), 0, sizeof(float) * m * 2);
@@ -3462,7 +3660,7 @@ void TerrainGenerator3D::_build_dunes() {
 	last_dune_volume = vol;
 	last_dune_max = mx;
 	last_dune_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
-	print_verbose(vformat("TerrainGenerator3D: dunes on %dx%d at %.1f m in %d tiles, %.0f m3, highest %.1f m, %.0f ms.", w, h, dc, tiles_x * tiles_z, vol, mx, last_dune_msec));
+	print_verbose(vformat("TerrainGenerator3D: dunes on %dx%d at %.1f m in %d tiles, %.0f m3, highest %.1f m, %.0f ms (world cache: %d pieces loaded, %d stored so far).", w, h, dc, tiles_x * tiles_z, vol, mx, last_dune_msec, int64_t(WorldCache::get_loaded()), int64_t(WorldCache::get_stored())));
 }
 
 // Desert sand seas: TerrainDuneSea (Paris et al. 2019, with the wind's shear over the dunes after Kroy 2002) over
@@ -4546,7 +4744,24 @@ void TerrainGenerator3D::_erode_tile(void *p_job, uint32_t p_tile) {
 			cover[z * hp.nx + x] = MAX(gen->_sample(gen->soil, wx, wz), 0.0f) + MAX(gen->_sample(gen->talus, wx, wz), 0.0f);
 		}
 	}
-	TerrainHydraulic::run(hp, in.data(), cover.data(), out.data(), flow.data(), dep.data());
+	// The tile's eroded ground, from the world cache when these inputs ran before (world_cache.h).
+	WorldCacheKey key("erosion");
+	hp.hash_into([&](const void *p_data, size_t p_size) { key.bytes(p_data, p_size); });
+	key.array(in.data(), in.size());
+	key.array(cover.data(), cover.size());
+	const String name = key.finish();
+	std::vector<float> packed(size_t(n) * 3);
+	if (WorldCache::load("erosion", name, reinterpret_cast<uint8_t *>(packed.data()), sizeof(float) * packed.size())) {
+		memcpy(out.data(), packed.data(), sizeof(float) * n);
+		memcpy(flow.data(), packed.data() + n, sizeof(float) * n);
+		memcpy(dep.data(), packed.data() + 2 * n, sizeof(float) * n);
+	} else {
+		TerrainHydraulic::run(hp, in.data(), cover.data(), out.data(), flow.data(), dep.data());
+		memcpy(packed.data(), out.data(), sizeof(float) * n);
+		memcpy(packed.data() + n, flow.data(), sizeof(float) * n);
+		memcpy(packed.data() + 2 * n, dep.data(), sizeof(float) * n);
+		WorldCache::store("erosion", name, reinterpret_cast<const uint8_t *>(packed.data()), sizeof(float) * packed.size());
+	}
 	LocalVector<float> &r = (*job->results)[p_tile];
 	r.resize(n * 3);
 	for (int i = 0; i < n; i++) {
@@ -6092,8 +6307,21 @@ void TerrainGenerator3D::_sky_light_poll(double p_delta) {
 	if (env.is_null() || env->get_sky().is_null()) {
 		return;
 	}
-	// A small panorama is enough for light this broad (the bins are 22.5 by 11.25 degrees).
-	Ref<Image> pano = RenderingServer::get_singleton()->sky_bake_panorama(env->get_sky()->get_rid(), 1.0, false, Size2i(64, 32));
+	if (sky_light_pending) {
+		return;
+	}
+	// A small panorama is enough for light this broad (the bins are 22.5 by 11.25 degrees). Read back without
+	// stalling the GPU: the panorama arrives a few frames later (_sky_light_ready()).
+	sky_light_pending = true;
+	RenderingServer::get_singleton()->sky_bake_panorama_async(env->get_sky()->get_rid(), 1.0, false, Size2i(64, 32), callable_mp(this, &TerrainGenerator3D::_sky_light_ready));
+}
+
+void TerrainGenerator3D::_sky_light_ready(const Ref<Image> &p_pano) {
+	sky_light_pending = false;
+	if (sky_nx < 2 || sky_light_source.is_empty()) {
+		return;
+	}
+	Ref<Image> pano = p_pano;
 	if (pano.is_null() || pano->is_empty()) {
 		return;
 	}
@@ -6529,7 +6757,7 @@ float td_ease_out(float t) {
 	return 1.0 - v * v;
 }
 
-vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footprint) {
+vec2 td_gradient(vec2 p, float h, vec2 g, int octaves, float footprint, float lambda0) {
 	vec2 r = vec2(0.0);
 	float slope = length(g);
 	if (slope < 1e-6) {
@@ -6538,7 +6766,7 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 	vec2 st = g / slope * TD_ASSUMED;
 	float fade = clamp((h - TD_VALLEY) / (TD_PEAK - TD_VALLEY), 0.0, 1.0) * 2.0 - 1.0;
 	float mask = td_ease_out(slope / 0.5);
-	float lambda = TD_WAVELENGTH;
+	float lambda = lambda0;
 	vec2 fd = vec2(0.0);
 	vec2 md = vec2(0.0);
 	for (int o = 0; o < octaves; o++) {
@@ -6623,21 +6851,48 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 	return r;
 }
 
+vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footprint) {
+	return td_gradient(p, h, g, octaves, footprint, TD_WAVELENGTH);
+}
+
 vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float footprint) {
 	// The detail is a heightfield's (gullies on slopes, looked up by x and z): on faces past about 60 degrees a
 	// lookup by x and z runs down the face as vertical streaks, so it fades out there (the material's own rock
 	// texture, projected on the face, carries the detail).
 	float face = smoothstep(0.35, 0.55, world_normal.y);
-	if (face <= 0.0) {
-		return world_normal;
-	}
-	vec2 g = -world_normal.xz / max(world_normal.y, 1e-3);
 	vec2 size = vec2(textureSize(terrain_detail_keep_map, 0));
 	vec2 u = clamp((world_pos.xz - TD_RECT.xy) / TD_RECT.zw, 0.0, 1.0);
 	float keep = clamp(textureLod(terrain_detail_keep_map, (u * (size - 1.0) + 0.5) / size, 0.0).r, 0.0, 1.0);
-	if (keep <= 0.0) {
-		return world_normal;
+	// Steep faces far off: the same gully detail drawn in the face's own plane (triplanar projection, the planes
+	// facing x and z blended by the normal; Golus 2017, "Normal Mapping for a Triplanar Shader"), so its gullies run
+	// down the fall line as couloirs and ribs do on real rock walls. A heightfield's vertices stretch down a steep
+	// face and the rock texture is under a pixel there, so without it a far wall drew as smooth, streaked plaster.
+	// Near, the rock texture and the cliff relief carry the face, so it fades in from a footprint of 3 cm.
+	float wall = (1.0 - face) * keep * smoothstep(0.03, 0.25, footprint);
+	vec3 wall_n = world_normal;
+	if (wall > 0.0) {
+		vec2 an = world_normal.xz * world_normal.xz;
+		an *= an;
+		an /= max(an.x + an.y, 1e-6);
+		vec3 dn = vec3(0.0);
+		for (int a = 0; a < 2; a++) {
+			float wa = a == 0 ? an.x : an.y;
+			if (wa < 0.02) {
+				continue;
+			}
+			// Plane coordinates (across, up): the gullies follow the plane's up axis, couloirs from 32 times the
+			// detail's first wavelength down (about 250 m, as wide as couloirs on big walls).
+			vec2 q = a == 0 ? vec2(world_pos.z, world_pos.y) : vec2(world_pos.x, world_pos.y);
+			vec2 d = td_gradient(q, world_pos.y, vec2(0.0, 1.0), octaves + 5, footprint, TD_WAVELENGTH * 32.0);
+			d *= inversesqrt(1.0 + dot(d, d) / 0.1225);
+			dn += wa * (a == 0 ? vec3(0.0, -d.y, -d.x) : vec3(-d.x, -d.y, 0.0));
+		}
+		wall_n = normalize(world_normal + wall * dn);
 	}
+	if (face <= 0.0 || keep <= 0.0) {
+		return wall_n;
+	}
+	vec2 g = -world_normal.xz / max(world_normal.y, 1e-3);
 	vec2 d = face * keep * terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
 	// The octaves below the vertex spacing keep the geometry's depth ratio, so their slopes add up (0.5 an octave):
 	// 30 to 50 degrees of tilt on gentle ground, faces turned from a 30 degree sun as dark blotches. Rills and
@@ -6665,7 +6920,8 @@ vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float
 			d += fp * (0.06 * wear * aa * face * keep * cos(ph));
 		}
 	}
-	return normalize(vec3(-(g.x + d.x), 1.0, -(g.y + d.y)));
+	vec3 flat_n = normalize(vec3(-(g.x + d.x), 1.0, -(g.y + d.y)));
+	return face < 1.0 ? normalize(flat_n + wall_n - world_normal) : flat_n;
 }
 )GLSL";
 	return c;
@@ -9253,6 +9509,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_geology_at", "global_position"), &TerrainGenerator3D::get_geology_at);
 	ClassDB::bind_method(D_METHOD("get_material_geology_at", "global_position"), &TerrainGenerator3D::get_material_geology_at);
 	ClassDB::bind_method(D_METHOD("set_cliff_ledge_spacing", "value"), &TerrainGenerator3D::set_cliff_ledge_spacing);
+	ClassDB::bind_method(D_METHOD("get_ledge_lips", "rect", "step"), &TerrainGenerator3D::get_ledge_lips_bind);
 	ClassDB::bind_method(D_METHOD("get_cliff_ledge_spacing"), &TerrainGenerator3D::get_cliff_ledge_spacing);
 	ClassDB::bind_method(D_METHOD("set_cliff_ledge_strength", "value"), &TerrainGenerator3D::set_cliff_ledge_strength);
 	ClassDB::bind_method(D_METHOD("get_cliff_ledge_strength"), &TerrainGenerator3D::get_cliff_ledge_strength);

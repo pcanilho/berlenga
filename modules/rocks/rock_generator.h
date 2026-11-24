@@ -75,6 +75,7 @@ public:
 		FAMILY_POTHOLE, // a slab of river bedrock drilled with potholes in a line down the flow, polished and fluted
 		FAMILY_GOBLIN, // a sandstone knob (Goblin Valley): a bulbous head on a narrow neck, rounded all over
 		FAMILY_CAVE_MOUTH, // a limestone outcrop at a cliff foot with a passage opening into it (x along, z up, y out)
+		FAMILY_LEDGE, // a ledge slab: the caprock bed standing out over the lip of a bench (x along the lip, y up, z out)
 		FAMILY_MAX,
 	};
 

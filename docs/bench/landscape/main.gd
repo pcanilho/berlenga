@@ -133,6 +133,7 @@ var lightning: WeatherLightning3D
 var probe: Node3D
 var data_map: TerrainDataMap3D
 var veg: VegetationField3D
+var _phys_steps := 8
 var _tree_gen: Object
 var grass: GrassField3D
 var sward: Array = [] # the grass layers (tall, undercoat, turf)
@@ -167,6 +168,11 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
+	# One physics tick a frame through the whole setup until the capture: frames take seconds to minutes on a CPU
+	# renderer, and catching up 8 ticks of GPU sims (water, ground deformation, Flow) a frame spirals.
+	_phys_steps = Engine.max_physics_steps_per_frame
+	if not (args.has("test") or args.has("checks")):
+		Engine.max_physics_steps_per_frame = 1
 	if args.get("shadow-filter", "high") == "high":
 		# Stills have no TAA: soft-low shadow filtering leaves dithered penumbras in one frame; soft high does not.
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH)
@@ -642,7 +648,7 @@ func _ready() -> void:
 	if veg != null and veg.streaming:
 		# A streamed forest settles round the camera; the views on its trees are framed again on what it placed.
 		await _forest_settle()
-		if args.get("view", "wide") in ["forestfloor", "woodedge"]:
+		if args.get("view", "wide") in ["forestfloor", "woodedge"] or args.has("stand-in"):
 			cam.queue_free()
 			_build_camera()
 			cam.make_current()
@@ -726,7 +732,14 @@ func _ready() -> void:
 	get_viewport().disable_3d = not (args.has("test") or args.has("checks")) # settling frames, not drawn
 	for i in 30:
 		await get_tree().process_frame
+	# The checks draw (their probes read drawn frames); otherwise the main view stays undrawn through the cave and
+	# rock builds and the waits below until the capture (SubViewport bakes still render; ~24 s a frame on lavapipe).
 	get_viewport().disable_3d = false
+	if not (args.has("test") or args.has("checks")):
+		get_viewport().disable_3d = true
+		# Undrawn frames still take long on lavapipe, and up to 8 physics ticks of GPU sims (water solvers, ground
+		# deformation, Flow) would run per frame to catch up: one tick a frame until the capture.
+		Engine.max_physics_steps_per_frame = 1
 	# The checks move probes, press prints and step the weather: a picture only runs them when asked (--checks),
 	# and under path tracing each of their frames is a full traced frame.
 	if args.has("test") or args.has("checks"):
@@ -861,9 +874,12 @@ func _ready() -> void:
 	# The streamed ground cover settles round the camera before the picture.
 	var sw := 0
 	get_viewport().disable_3d = true # placing only: the frames draw nothing
+	var tw := Time.get_ticks_msec()
 	while cover != null and not cover.is_stream_idle() and sw < 1200:
 		await get_tree().process_frame
 		sw += 1
+		if sw % 10 == 0:
+			_log("cover settle: %d frames, %d s, %s" % [sw, (Time.get_ticks_msec() - tw) / 1000, str(cover.get_stream_stats())])
 	get_viewport().disable_3d = false
 	# Every capture waits for the grass far colours to bake (a SubViewport render, ~30 frames, restarted by any data
 	# map change) and for the cover to settle again, not for a fixed frame count.
@@ -884,6 +900,8 @@ func _ready() -> void:
 			break
 		await get_tree().process_frame
 		bw += 1
+		if bw % 10 == 0:
+			_log("far bake wait: %d frames, %d s" % [bw, (Time.get_ticks_msec() - tw) / 1000])
 	get_viewport().disable_3d = false
 	_log("grass far colours baked and cover idle after %d frames" % bw)
 	_mem_log("after first frames")
@@ -895,9 +913,12 @@ func _ready() -> void:
 		_log("cover: %d plants in %d tiles after %d frames, %s" % [cover.get_plant_count(), cover.get_stream_tile_count(), sw, str(cover.get_stream_stats())])
 	# The snowpack updates on a worker thread: the picture waits for the last update to land.
 	var waited := 0
+	get_viewport().disable_3d = true # waiting only: the frames draw nothing
 	while snow != null and snow.has_method("is_updating") and snow.is_updating() and waited < 600:
 		await get_tree().process_frame
 		waited += 1
+	get_viewport().disable_3d = false
+	Engine.max_physics_steps_per_frame = _phys_steps
 	if landscape != null:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
@@ -1162,6 +1183,8 @@ func _ready() -> void:
 		get_tree().quit(0)
 		return
 	if out != "":
+		if rocks and rocks.has_method("get_rt_stats"):
+			_log("rocks rt: %s (rt_instanced_cells %s)" % [str(rocks.get_rt_stats()), str(rocks.rt_instanced_cells)])
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved %s (%d primitives in the frame)" % [out, int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))])
 		if args.has("pt-pair") and not env.pathtracing_enabled:
@@ -1330,8 +1353,8 @@ func _frame_bracken() -> void:
 	c3.look_at(best + Vector3.UP * 0.4)
 	_log("bracken cam %.1f,%.1f,%.1f look %.1f,%.1f,%.1f" % [cp.x, cp.y, cp.z, best.x, best.y + 0.4, best.z])
 	n = 0
-	await get_tree().process_frame
 	get_viewport().disable_3d = true # placing only: a drawn frame with real trees takes minutes here
+	await get_tree().process_frame
 	while not cover.is_stream_idle() and n < 600:
 		await get_tree().process_frame
 		n += 1
@@ -1360,6 +1383,9 @@ func _frame_log() -> void:
 			continue
 		for tp in veg.get_placements(i):
 			if tp.distance_to(c3.global_position) > float(args.get("log-radius", "70")):
+				continue
+			# Inside views (--stand-in): only logs under the closed stand, never at the meadow's rim.
+			if args.has("stand-in") and veg.get_stand_shade_at(tp) < 0.5:
 				continue
 			# The axis: the heading along which the ground stays under the log (get_deadwood_at side < 0).
 			var dir := Vector3.ZERO
@@ -1404,14 +1430,14 @@ func _frame_log() -> void:
 	if Vector2(side.x, side.z).dot(sun_flat) < 0.0:
 		side = -side
 	var cp := best_a.lerp(best_b, float(args.get("log-from", "0.15"))) + side * float(args.get("log-side", "1.3"))
-	cp.y = height_at(cp.x, cp.z) + float(args.get("log-height", "1.2"))
+	cp.y = height_at(cp.x, cp.z) + float(args.get("log-height", "1.7" if args.has("stand-in") else "1.2"))
 	var mid := best_a.lerp(best_b, float(args.get("log-at", "0.55")))
 	mid.y = height_at(mid.x, mid.z) + 0.1
 	c3.global_position = cp
 	c3.look_at(mid)
 	var n := 0
-	await get_tree().process_frame
 	get_viewport().disable_3d = true # placing only: a drawn frame with real trees takes minutes here
+	await get_tree().process_frame
 	while not cover.is_stream_idle() and n < 600:
 		await get_tree().process_frame
 		n += 1
@@ -1484,7 +1510,8 @@ func _frame_mushrooms() -> void:
 	c3.near = 0.15
 	c3.global_position = eye
 	c3.look_at(look)
-	env.tonemap_exposure = float(args.get("exposure", "1.4"))
+	# Inside a stand (--stand-in) only a few percent of daylight reaches the floor: exposed up so it reads.
+	env.tonemap_exposure = float(args.get("exposure", "2.6" if args.has("stand-in") else "1.4"))
 	# The birch and its fly agarics, behind the tuft along the view.
 	var tg := TreeGenerator.new()
 	tg.preset = TreeGenerator.PRESET_BIRCH
@@ -2331,9 +2358,11 @@ func _generate() -> void:
 			rocks.generator = rocks.get_path_to(gen)
 			if "close_up_enabled" in rocks:
 				rocks.close_up_enabled = args.get("rock-closeup", "1") != "0" # real close-up detail near the camera
-			var to := Time.get_ticks_msec()
-			boulder_obstacles = rocks.get_obstacles(Rect2(-2048, -2048, 4096, 4096), float(args.get("rock-obstacle-min", "0.25")))
-			_log("rocks: %d stones as plant obstacles in %d ms" % [boulder_obstacles.size(), Time.get_ticks_msec() - to])
+			if not _has_prop("VegetationField3D", "rock_field"):
+				# Older binaries: every stone in the world as one obstacle array (the plant fields now fetch per tile).
+				var to := Time.get_ticks_msec()
+				boulder_obstacles = rocks.get_obstacles(Rect2(-2048, -2048, 4096, 4096), float(args.get("rock-obstacle-min", "0.25")))
+				_log("rocks: %d stones as plant obstacles in %d ms" % [boulder_obstacles.size(), Time.get_ticks_msec() - to])
 			bl = PackedVector4Array() # no stand-ins
 		if bl.size() > 0:
 			# Stand-ins: flattened low spheres, a third sunk into the ground, until real rock meshes come.
@@ -2757,7 +2786,8 @@ func _build_ground() -> void:
 		add_child(landscape)
 		landscape.material = ground_mat
 		landscape.lod_error = float(args.get("lod-error", "2"))
-		landscape.cliff_relief = float(args.get("cliff-relief", "0")) # --cliff-relief=M: rock ledges built into steep faces
+		if args.has("cliff-relief"):
+			landscape.cliff_relief = float(args["cliff-relief"]) # --cliff-relief=M: rock ledges built into steep faces (the engine default, 0.6 m, otherwise; 0 off)
 		landscape.source = landscape.get_path_to(gen)
 		var own_body := ground_body == null
 		landscape.collision_enabled = own_body
@@ -3051,7 +3081,9 @@ func _build_weather() -> void:
 	clock.utc_offset = 0.0
 	clock.month = int(args.get("month", "4")) + 1
 	clock.day = int(args.get("day", "15"))
-	clock.time_of_day = float(args.get("time", "16.5"))
+	# Stand views (--meadow-eye plot, --stand-in inside) default to midday: the 16.5 default is dusk in late autumn.
+	var stand_view := args.has("stand-in") or (args.has("meadow-eye") and not args.has("hay"))
+	clock.time_of_day = float(args.get("time", "12.5" if stand_view else "16.5"))
 	clock.sun_light = clock.get_path_to(sun)
 	weather = WeatherMap3D.new()
 	weather.name = "Weather"
@@ -3608,6 +3640,7 @@ func _build_vegetation() -> void:
 	add_child(veg)
 	if "obstacles" in veg and not boulder_obstacles.is_empty():
 		veg.obstacles = boulder_obstacles # no trees through the boulders
+	_link_rocks(veg)
 	if args.get("trees", "cones") == "none":
 		veg.visible = false # --trees=none: placed (the other systems still read it) but not drawn, for views with no stand-ins
 
@@ -3687,6 +3720,8 @@ func _build_vegetation() -> void:
 		# No sward in the desert: the meadow rules know soil, rock and scree, not the erg's loose sand.
 		grass.ground_tint_enabled = false
 		grass.radius = 0.0
+	if "far_bake" in grass:
+		grass.far_bake = args.get("far-bake", "1") != "0" # --far-bake=0: no far-colour bake (scouts, close frames)
 	if args.has("hay") and "hay_meadows" in grass:
 		grass.hay_meadows = _hay_list()
 	add_child(grass)
@@ -3714,6 +3749,8 @@ func _build_vegetation() -> void:
 		under.tip_color = Color(0.38, 0.52, 0.16)
 		under.dryness = 0.35
 		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
+		if "far_bake" in under:
+			under.far_bake = args.get("far-bake", "1") != "0" # --far-bake=0: no far-colour bake (scouts, close frames)
 		if args.has("hay") and "hay_meadows" in under:
 			under.hay_meadows = _hay_list()
 		add_child(under)
@@ -3733,6 +3770,8 @@ func _build_vegetation() -> void:
 		turf.tip_color = Color(0.3, 0.42, 0.12)
 		turf.dryness = 0.35
 		turf.ground_tint_enabled = false
+		if "far_bake" in turf:
+			turf.far_bake = args.get("far-bake", "1") != "0" # --far-bake=0: no far-colour bake (scouts, close frames)
 		if args.has("hay") and "hay_meadows" in turf:
 			turf.hay_meadows = _hay_list()
 		add_child(turf)
@@ -4254,6 +4293,44 @@ func _build_camera() -> void:
 			cam.position = ce
 			cam.look_at(la)
 			_log("woodedge camera at %s, litter %.2f at the rim, %.2f under the camera" % [str(ce), veg.get_litter_at(pick + pdir * 3.0), veg.get_litter_at(ce)])
+		"ledge":
+			# A stepped hard-bed bench with its caprock slabs (RockField3D.ledge_slabs) from --ledge-back (22) m out:
+			# the 16 m cell within --ledge-search (1000) m holding the most overhanging lip (TerrainGenerator3D
+			# get_ledge_lips), the camera out from the face and --ledge-side (9) m along it so the run of slabs
+			# recedes, at --ledge-up (-2) m from the lip (below it: the overhangs read against the sky).
+			var lr := float(args.get("ledge-search", "1000"))
+			var lips: Array = gen.get_ledge_lips(Rect2(-lr, -lr, 2.0 * lr, 2.0 * lr), 4.0)
+			var cells := {}
+			for l in lips:
+				if float(l["overhang"]) <= 0.05:
+					continue
+				var lp: Vector3 = l["position"]
+				var key := Vector2i(int(floor(lp.x / 16.0)), int(floor(lp.z / 16.0)))
+				var c: Array = cells.get(key, [0.0, l])
+				c[0] = float(c[0]) + float(l["overhang"]) * float(l["weight"])
+				if float(l["overhang"]) > float((c[1] as Dictionary)["overhang"]):
+					c[1] = l
+				cells[key] = c
+			var lbest := -1.0
+			var lpick := {}
+			for key in cells:
+				if float(cells[key][0]) > lbest:
+					lbest = float(cells[key][0])
+					lpick = cells[key][1]
+			if lpick.is_empty():
+				_log("ledge view: no overhanging lips within %.0f m (%d lips)" % [lr, lips.size()])
+			else:
+				var lpos: Vector3 = lpick["position"]
+				var lout: Vector3 = lpick["out"]
+				lout.y = 0.0
+				lout = lout.normalized()
+				var along := lout.cross(Vector3.UP).normalized()
+				var lc := lpos + lout * float(args.get("ledge-back", "22")) + along * float(args.get("ledge-side", "9"))
+				lc.y = maxf(height_at(lc.x, lc.z) + 1.7, lpos.y + float(args.get("ledge-up", "-2")))
+				cam.fov = 55.0
+				cam.position = lc
+				cam.look_at(lpos)
+				_log("ledge view: %d lips, pick %s overhang %.2f m cap %.2f m, score %.1f, camera %s" % [lips.size(), str(lpos.round()), float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round())])
 		"gully":
 			# A raised oblique down a real gully onto its fan (RockField3D.runoff_gravel: a coarse lag on the floor,
 			# fine grains on the fan). The strongest open gully on soil (TerrainGenerator3D.get_gully_at, as the rocks
@@ -4304,6 +4381,30 @@ func _build_camera() -> void:
 			var cz := ez + 60.0
 			cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, cz) + 1.7, cz)
 			cam.look_at(Vector3(ex, height_at(ex, ez) + 4.0, ez))
+			if args.has("meadow-eye") and not args.has("hay"):
+				# A stand from the clearing (trees' plot views): --meadow-eye m (5) up, --meadow-back m (50) out from the
+				# edge, looking at --meadow-look-h m (8) up the edge so the crowns fill the frame over the grass.
+				var mb := float(args.get("meadow-back", "50"))
+				var mz := ez + mb
+				cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, mz) + float(args.get("meadow-eye", "5")), mz)
+				cam.look_at(Vector3(ex, height_at(ex, ez) + float(args.get("meadow-look-h", "8")), ez))
+			if args.has("stand-in"):
+				# Inside the stand on its floor (trees' inside views): --stand-in m (30) past the edge, walked further in
+				# until the crowns close (stand shade 0.6, up to 60 m more), at eye height, looking deeper in and up
+				# --stand-look-h m (5) so the boles rise to the canopy. No meadow grass in the frame. With --log the
+				# log framing then keeps to logs under the closed stand (see _frame_log).
+				var sz := ez - float(args.get("stand-in", "30"))
+				var sx := ex
+				var steps := 0
+				# Before the streamed stand has placed its shade reads 0 everywhere: no walk then (framed again after).
+				var known := veg != null and veg.get_stand_shade_at(Vector3(sx, 0, sz)) > 0.0
+				while known and steps < 15 and veg.get_stand_shade_at(Vector3(sx, 0, sz)) < 0.6:
+					sz -= 4.0
+					steps += 1
+				cam.fov = 60.0
+				cam.position = Vector3(sx, height_at(sx, sz) + 1.7, sz)
+				cam.look_at(Vector3(sx, height_at(sx, sz - 25.0) + float(args.get("stand-look-h", "5")), sz - 25.0))
+				_log("stand inside: camera %s, %.0f m past the edge, stand shade %.2f" % [str(cam.position.round()), ez - sz, veg.get_stand_shade_at(cam.position) if veg != null else -1.0])
 			if args.has("hay"):
 				# Over the hay fields (_hay_list): raised to --hay-eye (5) m, looking down across the rows to the edge.
 				cam.position.y += float(args.get("hay-eye", "5")) - 1.7
@@ -4848,7 +4949,46 @@ func _build_cover() -> void:
 			"mediterranean": 10, "taiga": 11} # FLOOR_MEDITERRANEAN, FLOOR_BOREAL_TAIGA (montado: cistus, grasses, thistles; by value for older binaries)
 	# The floor plants follow the weather's season (flowering, bracken croziers in spring, russet in autumn): --day=N.
 	var season: Dictionary = weather.get_season() if weather != null and weather.has_method("get_season") else {}
-	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "taiga" if args.get("tree-stand", "") == "taiga" else "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3, true, 15.0, season)
+	var floor_set: int = floors.get(args.get("floor", "taiga" if args.get("tree-stand", "") == "taiga" else "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER)
+	var woody: bool = args.get("woody-shrubs", "1") != "0"
+	# Every species set built at once on the worker threads (PlantGenerator.make_sets, identical output), slowest
+	# first; the sites below take theirs by "method:set". Older binaries build each set where it is used.
+	var pre := {}
+	if ClassDB.class_has_method("PlantGenerator", "make_sets"):
+		var calls: Array = []
+		var keys: Array = []
+		if args.get("heath-plants", "1") != "0":
+			for st in [PlantGenerator.HEATH_DRY, PlantGenerator.HEATH_MARITIME, PlantGenerator.HEATH_WET]:
+				calls.append(["make_heath", [st, 3, true, season, woody]])
+				keys.append("make_heath:%d" % st)
+		if args.get("scrub-plants", "1") != "0":
+			for st in [PlantGenerator.SCRUB_GARRIGUE, PlantGenerator.SCRUB_MAQUIS]:
+				calls.append(["make_scrub", [st, 3, true, season, woody]])
+				keys.append("make_scrub:%d" % st)
+		calls.append(["make_floor", [floor_set, 3, true, 15.0, season]])
+		keys.append("make_floor:%d" % floor_set)
+		if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
+			for st in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:
+				calls.append(["make_dunes", [st, 3, true, season]])
+				keys.append("make_dunes:%d" % st)
+		if args.get("alpine-plants", "1") != "0":
+			for st in [PlantGenerator.ALPINE_FELLFIELD, PlantGenerator.ALPINE_GRASSLAND, PlantGenerator.ALPINE_SNOWBED, PlantGenerator.ALPINE_SCREE]:
+				calls.append(["make_alpine", [st, 3, true, season]])
+				keys.append("make_alpine:%d" % st)
+		if args.get("marsh-plants", "1") != "0":
+			for st in [PlantGenerator.SALTMARSH_PIONEER, PlantGenerator.SALTMARSH_MID, PlantGenerator.SALTMARSH_HIGH, PlantGenerator.SALTMARSH_SHINGLE]:
+				calls.append(["make_saltmarsh", [st, 3, true, season]])
+				keys.append("make_saltmarsh:%d" % st)
+		if rocks != null and args.get("stone-plants", "1") != "0":
+			for st in [PlantGenerator.STONES_SCREE, PlantGenerator.STONES_RIVER, PlantGenerator.STONES_SHORE]:
+				calls.append(["make_stones", [st, 3, true, season]])
+				keys.append("make_stones:%d" % st)
+		var tp := Time.get_ticks_msec()
+		var sets: Array = ClassDB.class_call_static("PlantGenerator", "make_sets", calls)
+		for k in mini(keys.size(), sets.size()):
+			pre[keys[k]] = sets[k]
+		_log("cover: %d species sets built in parallel in %d ms" % [sets.size(), Time.get_ticks_msec() - tp])
+	var floor_sp: Array = pre["make_floor:%d" % floor_set] if pre.has("make_floor:%d" % floor_set) else PlantGenerator.make_floor(floor_set, 3, true, 15.0, season)
 	if OS.get_environment("VEG_DW_OFF") != "":
 		# The deadwood pair's before frame (as the vegetation bench): the floor blind to the logs.
 		for sp in floor_sp:
@@ -4920,32 +5060,32 @@ func _build_cover() -> void:
 	if gen.dunes_enabled and args.get("dune-plants", "1") != "0":
 		# The dunes' own plants (marram, lyme grass, sea holly), placed by distance to the water on the sand.
 		for st in [PlantGenerator.DUNES_EMBRYO, PlantGenerator.DUNES_MOBILE, PlantGenerator.DUNES_FIXED]:
-			b.species += PlantGenerator.make_dunes(st, 3, true, season)
+			b.species += pre["make_dunes:%d" % st] if pre.has("make_dunes:%d" % st) else PlantGenerator.make_dunes(st, 3, true, season)
 	if args.get("alpine-plants", "1") != "0":
 		# Above the treeline (the data map's mean annual temperature): fellfield cushions on the ridges, the sedge
 		# sward, dwarf willow in the snowbeds and the scree set on the talus, each by its own rules.
 		for st in [PlantGenerator.ALPINE_FELLFIELD, PlantGenerator.ALPINE_GRASSLAND, PlantGenerator.ALPINE_SNOWBED, PlantGenerator.ALPINE_SCREE]:
-			for sp in PlantGenerator.make_alpine(st, 3, true, season):
+			for sp in (pre["make_alpine:%d" % st] if pre.has("make_alpine:%d" % st) else PlantGenerator.make_alpine(st, 3, true, season)):
 				sp.set_meta("alpine", true)
 				b.species.append(sp)
 	if args.get("heath-plants", "1") != "0":
 		# Atlantic heath (bell heather, cross-leaved heath, crowberry) by rain, winter cold and wetness.
 		for st in [PlantGenerator.HEATH_DRY, PlantGenerator.HEATH_WET, PlantGenerator.HEATH_MARITIME]:
-			for sp in PlantGenerator.make_heath(st, 3, true, season, args.get("woody-shrubs", "1") != "0"):
+			for sp in (pre["make_heath:%d" % st] if pre.has("make_heath:%d" % st) else PlantGenerator.make_heath(st, 3, true, season, woody)):
 				sp.set_meta("own_rules", true)
 				b.species.append(sp)
 	if args.get("scrub-plants", "1") != "0":
 		# Mediterranean scrub (rosemary, French lavender, thyme, rockrose): garrigue on thin soil, maquis on deeper,
 		# only in a warm dry climate (--jan=10 --jul=24 --precip=650); none in the default one.
 		for st in [PlantGenerator.SCRUB_GARRIGUE, PlantGenerator.SCRUB_MAQUIS]:
-			for sp in PlantGenerator.make_scrub(st, 3, true, season, args.get("woody-shrubs", "1") != "0"):
+			for sp in (pre["make_scrub:%d" % st] if pre.has("make_scrub:%d" % st) else PlantGenerator.make_scrub(st, 3, true, season, woody)):
 				sp.set_meta("own_rules", true)
 				b.species.append(sp)
 	if args.get("marsh-plants", "1") != "0":
 		# Salt marsh zoned by height in the tidal frame and the shingle backshore above it (the data map's
 		# geology source is the generator with its sea), each set by its own tide, exposure and beach rules.
 		for st in [PlantGenerator.SALTMARSH_PIONEER, PlantGenerator.SALTMARSH_MID, PlantGenerator.SALTMARSH_HIGH, PlantGenerator.SALTMARSH_SHINGLE]:
-			for sp in PlantGenerator.make_saltmarsh(st, 3, true, season):
+			for sp in (pre["make_saltmarsh:%d" % st] if pre.has("make_saltmarsh:%d" % st) else PlantGenerator.make_saltmarsh(st, 3, true, season)):
 				sp.set_meta("own_rules", true)
 				b.species.append(sp)
 	for sp in b.species:
@@ -4965,7 +5105,7 @@ func _build_cover() -> void:
 		# The plants between the stones (scree, river gravel, shingle): they keep to the gaps between the obstacles.
 		var stone_sp: Array = []
 		for st in [PlantGenerator.STONES_SCREE, PlantGenerator.STONES_RIVER, PlantGenerator.STONES_SHORE]:
-			stone_sp.append_array(PlantGenerator.make_stones(st, 3, true, season))
+			stone_sp.append_array(pre["make_stones:%d" % st] if pre.has("make_stones:%d" % st) else PlantGenerator.make_stones(st, 3, true, season))
 		b.species = b.species + stone_sp
 		_log("cover: %d stone-crevice species" % stone_sp.size())
 	cover = VegetationField3D.new()
@@ -4987,10 +5127,27 @@ func _build_cover() -> void:
 	for f in sward + [cover]:
 		if f != null and "obstacles" in f and not boulder_obstacles.is_empty():
 			f.obstacles = boulder_obstacles # nothing grows through the boulders
+		_link_rocks(f)
 	for g in sward:
 		if "undergrowth_field" in g:
 			g.undergrowth_field = g.get_path_to(cover) # the sward thins under bracken and bramble stands
 	_log("cover: %d species streaming round the camera, set up in %d ms" % [b.species.size(), Time.get_ticks_msec() - t])
+
+
+func _has_prop(cls: String, prop: String) -> bool:
+	for pr in ClassDB.class_get_property_list(cls):
+		if pr["name"] == prop:
+			return true
+	return false
+
+
+# The plant fields fetch the rock field's stones per tile just before placing it (32 m chunks round the tile):
+# placements match the old world-wide obstacle array without placing every stone in the world up front.
+func _link_rocks(f: Node) -> void:
+	if f == null or rocks == null or not "rock_field" in f:
+		return
+	f.rock_obstacle_min = float(args.get("rock-obstacle-min", "0.25"))
+	f.rock_field = f.get_path_to(rocks)
 
 
 func _variants(preset: int, count: int) -> Array:

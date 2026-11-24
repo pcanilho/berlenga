@@ -1,6 +1,6 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|plaza|room|textures|glass|far|night|physx|fluid|tearing|campfire --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|plaza|room|textures|glass|far|night|physx|fluid|tearing|campfire|smokewall|smokelamp --spp=N --rr --out=path.png --frames=N --far=N --raster
 # --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
 # --bounces=N (path tracing bounces after the shot sets its own; 0: direct light only)
 # --flow=property:value (a PhysXFlow3D property in the physx shot, or a PhysXParticleFluid3D one in the fluid shot)
@@ -8,6 +8,10 @@ extends Node3D
 # --sun=pitch,yaw (the physx shot's sun, in degrees)
 # --freeze=N (raster until N frames before the end, then time stops and the path tracer accumulates)
 # --gloss=R (the room shot's floor roughness, default 0.7: a polished floor for glossy reuse)
+# --pair (with --freeze: also save the raster frame of the same frozen scene as <out>_raster.png, and with the gas's
+#   surface glow off as <out>_raster_noglow.png, before the path tracer starts) --taa (raster with TAA)
+# --time-glow (raster, with a gas shot such as smokelamp: after --frames, alternates the gas's surface glow off and on
+#   in blocks of 60 frames for 8 blocks and prints the GPU frame time of each state, then quits)
 var shot := "lights"
 var spp := 16
 var out := "out.png"
@@ -21,6 +25,10 @@ var sky := false
 var sun_rotation := Vector3.INF # --sun=pitch,yaw (degrees): the physx shot's sun
 var freeze := 0
 var gloss := 0.7
+var pair := false
+var capturing := false
+var gas: Node = null # the shot's PhysXFlow3D, for --pair's glow-off frame
+var time_glow := false
 var n := 0
 var env := Environment.new()
 
@@ -43,6 +51,9 @@ func _ready() -> void:
 			sun_rotation = Vector3(float(sv[0]), float(sv[1]), 0)
 		elif a.begins_with("--freeze="): freeze = int(a.substr(9))
 		elif a.begins_with("--gloss="): gloss = float(a.substr(8))
+		elif a == "--pair": pair = true
+		elif a == "--time-glow": time_glow = true
+		elif a == "--taa": get_viewport().use_taa = true
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
 			ProjectSettings.set_setting(kv[0], float(kv[1]))
@@ -912,6 +923,104 @@ func shot_fluid() -> void:
 		fluid.material_override = mat(Color(0.9, 0.9, 0.9), 0.5)
 	add_child(fluid)
 
+# Steam rising out of a courtyard in the shade of its walls, an evening sun low over the left wall: the plume's top climbs
+# into the sun and lights the shaded walls and floor below it, while its shaded body hides part of their sky
+# (PhysXFlow3D surface_glow). Walls all round but the camera's side leave the courtyard little sky, so the gas's light
+# counts for more there, as in a street canyon. Needs the CC0 Poly Haven assets fetch_ext.sh downloads into ext/.
+func shot_smokewall() -> void:
+	if not ClassDB.class_exists("PhysXFlow3D"):
+		push_error("This build has no PhysX module.")
+		get_tree().quit(1)
+		return
+	if not FileAccess.file_exists("res://ext/plastered_stone_wall/Diffuse.jpg"):
+		push_error("Run fetch_ext.sh first: the smokewall shot uses CC0 Poly Haven assets.")
+		get_tree().quit(1)
+		return
+	var s := Sky.new()
+	s.sky_material = ProceduralSkyMaterial.new()
+	env.sky = s
+	env.background_mode = Environment.BG_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-15, -80, 0) if sun_rotation == Vector3.INF else sun_rotation
+	sun.light_energy = 1.6
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 80.0
+	add_child(sun)
+	var tiles := plane(Vector2(60, 60), ext_material("large_grey_tiles", 0.5))
+	tiles.name = "Floor"
+	var plaster := ext_material("plastered_stone_wall", 0.4)
+	plaster.albedo_color = Color(3.0, 3.0, 3.0) # the scan's limewash reads near black (albedo ~0.05); whitewashed
+	box(Vector3(10.8, 6.0, 0.4), Vector3(0, 3.0, -4.2), plaster) # back
+	box(Vector3(0.4, 6.0, 8.0), Vector3(-5.2, 3.0, -0.4), plaster) # left
+	box(Vector3(0.4, 6.0, 8.0), Vector3(5.2, 3.0, -0.4), plaster) # right
+	camera(Vector3(1.6, 3.0, 13.0), Vector3(0.0, 5.0, -2.0), 58)
+	gas = ClassDB.instantiate("PhysXFlow3D")
+	gas.cell_size = 0.15
+	gas.max_blocks = 2048
+	gas.combustion = false
+	gas.buoyancy = 0.0
+	gas.smoke_buoyancy = 2.0
+	gas.smoke_fade = 0.0
+	gas.vorticity = 3.0
+	gas.scattering_strength = 1.0
+	gas.smoke_color = Color(0.93, 0.94, 0.96)
+	gas.set("ground_albedo", 0.35)
+	for k in flow_props:
+		gas.set(k, flow_props[k])
+	add_child(gas)
+	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
+	em.shape = 1 # box
+	em.size = Vector3(1.6, 0.5, 1.6)
+	em.position = Vector3(-0.5, 0.25, -1.6)
+	em.smoke = 1.2
+	em.temperature = 0.0
+	em.fuel = 0.0
+	em.velocity = Vector3(0.0, 5.0, 0.3)
+	em.couple_rate = 8.0
+	gas.add_child(em)
+
+# Night in the same courtyard: smoke drifting round a wall lamp that shines out and down, away from its wall, under a
+# faint moon. The wall behind the lamp and the side walls get no direct light from it; they are lit by the light the
+# smoke in its beam scatters back onto them (PhysXFlow3D surface_glow), as under path tracing.
+func shot_smokelamp() -> void:
+	shot_smokewall()
+	if gas == null:
+		return
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.01, 0.012, 0.02)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.02, 0.025, 0.04)
+	env.sky = null
+	for c in get_children():
+		if c is DirectionalLight3D:
+			# Moonlight (the gas's glow grid rides on the first shadow-casting directional light's data).
+			c.rotation_degrees = Vector3(-50, -30, 0) if sun_rotation == Vector3.INF else sun_rotation
+			c.light_energy = 0.04
+			c.light_color = Color(0.7, 0.8, 1.0)
+		elif c is Camera3D:
+			c.position = Vector3(2.0, 2.2, 10.5)
+			c.look_at(Vector3(-0.5, 2.6, -3.0))
+	var lamp := SpotLight3D.new()
+	lamp.position = Vector3(-1.0, 3.6, -3.55)
+	lamp.rotation_degrees = Vector3(-50, 180, 0) # out of the back wall and down
+	lamp.light_color = Color(1.0, 0.78, 0.5)
+	lamp.light_energy = 40.0
+	lamp.spot_range = 14.0
+	lamp.spot_angle = 30.0
+	lamp.shadow_enabled = true
+	add_child(lamp)
+	box(Vector3(0.3, 0.15, 0.4), Vector3(-1.0, 3.72, -3.8), mat(Color(0.12, 0.12, 0.13), 0.5)) # its housing
+	gas.smoke_buoyancy = 0.25
+	gas.smoke_color = Color(0.8, 0.8, 0.82)
+	for k in flow_props:
+		gas.set(k, flow_props[k])
+	for e in gas.get_children():
+		e.size = Vector3(3.0, 0.5, 2.0)
+		e.position = Vector3(-1.0, 0.25, -1.5)
+		e.velocity = Vector3(0.0, 2.5, 0.4)
+		e.smoke = 0.8
+
 func shot_far() -> void:
 	env.background_color = Color(0.25, 0.3, 0.4)
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
@@ -992,15 +1101,57 @@ func shot_night() -> void:
 			add_child(l)
 	camera(Vector3(0, 1.7, 6), Vector3(0, 2.5, -30), 60)
 
+func _save_raster(suffix: String) -> void:
+	for k in 24: # TAA settles on the frozen scene
+		await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(out.get_basename() + suffix + ".png")
+
 func _process(_d: float) -> void:
+	if capturing:
+		return
 	n += 1
 	if freeze > 0 and n == frames - freeze:
 		Engine.time_scale = 0.0
+		if pair:
+			# The raster frames of the frozen scene the path tracer then traces (Flow is not the same run to run).
+			capturing = true
+			if gas != null:
+				gas.process_mode = Node.PROCESS_MODE_DISABLED
+				gas.set("surface_glow", false)
+				await _save_raster("_raster_noglow")
+				gas.set("surface_glow", true)
+			await _save_raster("_raster")
+			capturing = false
 		env.pathtracing_enabled = true
+	if n == frames and time_glow and gas != null:
+		capturing = true
+		await _time_glow()
+		get_tree().quit()
+		return
 	if n == frames:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
 		get_tree().quit()
+
+
+# --time-glow: the GPU frame time with the gas's surface glow off and on, in alternating blocks (the first frames of
+# each block dropped while the change settles).
+func _time_glow() -> void:
+	var vp := get_viewport().get_viewport_rid()
+	RenderingServer.viewport_set_measure_render_time(vp, true)
+	var sums := { false: 0.0, true: 0.0 }
+	var counts := { false: 0, true: 0 }
+	for block in 8:
+		var on := block % 2 == 1
+		gas.set("surface_glow", on)
+		for k in 60:
+			await RenderingServer.frame_post_draw
+			if k >= 10:
+				sums[on] += RenderingServer.viewport_get_measured_render_time_gpu(vp)
+				counts[on] += 1
+	var off_ms: float = sums[false] / maxi(counts[false], 1)
+	var on_ms: float = sums[true] / maxi(counts[true], 1)
+	print("[time-glow] %dx%d gpu ms: glow off %.3f, on %.3f, cost %.3f" % [get_viewport().get_visible_rect().size.x, get_viewport().get_visible_rect().size.y, off_ms, on_ms, on_ms - off_ms])
 
 
 # Strain tearing (PhysXCloth3D.tear_factor): nothing is cut by script. A striped ribbon tied between

@@ -178,6 +178,14 @@
 				Rills and gullies at a world position, as the shaders' [code]terrain_gully()[/code] gives them: x the channel floor share 0..1 (the slope-area index A S^2, Montgomery and Dietrich 1988, on the droplets' flow, where the flow is concentrated), y the deposit depth in metres. [param normal_y] is the ground normal's y. Zero when [member tile_erosion_enabled] is off.
 			</description>
 		</method>
+		<method name="get_ledge_lips" qualifiers="const">
+			<return type="Dictionary[]" />
+			<param index="0" name="rect" type="Rect2" />
+			<param index="1" name="step" type="float" />
+			<description>
+				Points along the lips of the cliff ledges ([member cliff_ledge_spacing]) inside [param rect] (world XZ), about [param step] metres apart: the outer edges of the benches, where a hard bed caps the riser below. Each is a [Dictionary] with [code]position[/code] (on the heightfield, m), [code]out[/code] (horizontal unit vector out of the face), [code]face_normal[/code] (the riser's normal under the lip), [code]bed_thickness[/code] (m, the riser's height), [code]cap_thickness[/code] (m), [code]overhang[/code] (m, how far a cap may stand out: a cantilever limit times hardness), [code]hardness[/code] and [code]weight[/code] (0..1). Empty with no ledges. Safe from worker threads, as [method get_height].
+			</description>
+		</method>
 		<method name="get_height" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />

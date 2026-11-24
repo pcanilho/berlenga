@@ -1084,14 +1084,14 @@ void main() {
 			float t_min = 0.001;
 			float t_cut = (bounce == 0u) ? rt_cutout_tmin(ray_origin, ray_dir, ps.rng_state) : 0.001;
 			bool cut_probe = t_cut > 0.0011;
-			PathState ps_in = ps;
+			// A miss must not retain the previous segment's hit distance; the probe passes how far the cut reaches.
+			ps.hit_t = cut_probe ? -(t_cut + CUTOUT_PROBE_BASE) : -1.0;
+			path_pack(payload, ps);
+			payload_set_cone_width(payload, cone_width);
+			// The path state goes across the trace in the payload only: a surface that opens in the cut answers with
+			// hit_t alone (closest hit), so a further layer reuses the payload as it is, and no copy of the state stays
+			// live across the trace (it was spilled to the ray tracing stack at every bounce).
 			for (uint cut_layer = 0u;; cut_layer++) {
-				ps = ps_in;
-				// A miss must not retain the previous segment's hit distance; the probe passes how far the cut reaches.
-				ps.hit_t = cut_probe ? -(t_cut + CUTOUT_PROBE_BASE) : -1.0;
-				path_pack(payload, ps);
-				payload_set_cone_width(payload, cone_width);
-
 #ifdef USE_SER
 				hitObjectEXT hitObject;
 				hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, t_min, ray_dir, t_far, 0);
@@ -1118,6 +1118,7 @@ void main() {
 					t_min = max(t_min, t_cut);
 					cut_probe = false;
 				}
+				payload.hit_t = cut_probe ? -(t_cut + CUTOUT_PROBE_BASE) : -1.0;
 			}
 
 			ps = path_unpack(payload);
@@ -1406,7 +1407,10 @@ void main() {
 					if (ps.hit_t < 0.0) {
 						break;
 					}
-					continuation_rng = ps.rng_state;
+					float layer_alpha = payload_peel_alpha(payload);
+					ps.packed_bounces_flags &= ~PEEL_SCENE_DEPTH_FLAG;
+					// The hit returned its alpha in place of its random state: the next layer takes a fresh stream.
+					continuation_rng = pcg_hash(continuation_rng ^ 0x9E3779B9u);
 					float layer_weight = 1.0;
 					if (range_limited && indirect_fade > 0.0) {
 						layer_weight = 1.0 - smoothstep(indirect_range - indirect_fade, indirect_range, ps.hit_t);
@@ -1419,7 +1423,7 @@ void main() {
 						layer_continuation.throughput *= layer_weight;
 						continuation_reservoir_add(continuation, layer_continuation, continuation_rng);
 					}
-					float a = get_peel_alpha(ps.packed_bounces_flags) * layer_weight;
+					float a = layer_alpha * layer_weight;
 					T_total *= (1.0 - a);
 					peel_hits++;
 					// Advance by one representable positive float to avoid

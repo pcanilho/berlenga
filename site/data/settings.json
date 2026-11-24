@@ -196,7 +196,7 @@
    "name": "rendering/pathtracing/scene_feature_elision",
    "type": "bool",
    "default": "true",
-   "about": "Compiles the path tracer's code for a BaseMaterial3D feature (snow, glaze, ground deform) out of its hit shaders while no material holds that feature."
+   "about": "Compiles the path tracer's code for a BaseMaterial3D feature (snow, glaze, ground deform, mud, canopy and moving wetness, hair) out of its hit shaders while no material holds that feature."
   },
   {
    "name": "rendering/pathtracing/ser_coherence_hints",
@@ -401,8 +401,8 @@
    "type": "bool",
    "default": "true",
    "about": "If `true`, transparent surfaces and particles (rain, splashes, smoke, glass) are lit by the path tracer while it is on: a camera-aligned grid of cells (the internal size over 8 across, 64 slices from `rendering/pathtracing/transparent_lighting/near` to `rendering/pathtracing/transparent_lighting/far`) is refreshed by the trace every frame, each cell taking one omni or spot light from the light grid, picked by its contribution, and every directional light, each through a shadow ray, and the sky and one bounce (see `rendering/pathtracing/transparent_lighting/bounce`), blended over the frames.",
-   "page": "open-worlds",
-   "title": "Open worlds"
+   "page": "terrain",
+   "title": "Terrain"
   },
   {
    "name": "rendering/pathtracing/transparent_lighting/far",
@@ -739,6 +739,18 @@
    ],
    "note": "",
    "what": "raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; on crests gullies keep part of their depth and a ridged noise adds irregular pinnacles; the same for a seed; writes into Terrain3D or a HeightMapShape3D.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "World cache",
+   "settings": [
+    "world/cache/enabled",
+    "world/cache/path"
+   ],
+   "note": "",
+   "what": "generated terrain and dunes are stored by their inputs and reloaded on the next launch.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -1798,6 +1810,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Ledge slabs",
+   "settings": [
+    "RockField3D.ledge_slabs"
+   ],
+   "note": "",
+   "what": "caprock slabs overhang the lips of hard-bed benches, broken along their joints.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Caves",
    "settings": [
     "CaveNetwork3D.build_meshes()",
@@ -2455,10 +2478,11 @@
    "name": "Clear of boulders",
    "settings": [
     "VegetationField3D.obstacles",
-    "GrassField3D.obstacles"
+    "GrassField3D.obstacles",
+    "rock_field"
    ],
    "note": "",
-   "what": "grass, ground plants, tree feet and fallen logs keep out of boulders.",
+   "what": "grass, ground plants, tree feet and fallen logs keep out of boulders; with a rock field set, each tile fetches only the stones round it as it is placed.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Placement"
@@ -2705,10 +2729,12 @@
     "PlantGenerator.make_bank_turf()",
     "PRESET_TURF_LIP",
     "SodLipFall3D",
+    "slake_time",
+    "wash_time",
     "make_bank_roots()"
    ],
    "note": "",
-   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking, break apart on landing and wash away in floods; roots of the sward and nearby trees show on bare bank faces, grown on each face's angle.",
+   "what": "cut banks and scarps carry sod lips with hanging grass and roots, which break off under a step, an undercutting river or a soaking and break apart on landing; under water their loose soil slakes off as silt that the water carries away, and in a current the pieces wear away; roots of the sward and nearby trees show on bare bank faces, grown on each face's angle.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2733,7 +2759,7 @@
     "GrassField3D.hay_meadows"
    ],
    "note": "",
-   "what": "meadows are mown to stubble, the cut grass lying in swaths, then tedded, raked into windrows, baled into round bales and carted off over the following days; tall herbs stand cut at the stubble and regrow, and the rows carry on as far ground detail past the grass blades.",
+   "what": "meadows are mown to stubble, the cut grass lying in swaths, then tedded, raked into windrows, baled into round bales and carted off over the following days; fresh stubble shows its pale stem bases and straw-tinged cut ends, greening as it grows back; the cut grass cures from green to green-gold, and rain on it while it lies dulls it to a weathered brown-tan; tall herbs stand cut at the stubble and regrow, and the rows carry on as far ground detail past the grass blades.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -4572,7 +4598,7 @@
     "cloud_density"
    ],
    "note": "",
-   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms (`WeatherMap3D.add_storm()`) tower into a leaning cumulonimbus about as wide as it is tall, with a flat anvil spreading downwind, a thin cirrus shield beyond it and mammatus beneath, and hang rain shafts under their base, slanted by the low wind, as dense as the rain is heavy and drawn in front of far terrain (`WeatherMap3D.distant_shafts`), or in cold storms snow shafts that trail long soft veils downwind, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos; sunlight through gaps in a broken mid layer reaches the ground and the clouds below, and each layer takes the sun's colour at its own height, so high clouds stay lit after sunset; lenticular clouds stack in plates whose thin edges near the sun show iridescence (`cloud_iridescence`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "what": "shaped from the weather map's cover, cloud type and storms, with fair skies carrying fewer, thinner clouds as density and patchiness follow `cloud_cover`; cumulus sit on flat bases, come in mixed sizes with uneven gaps at the same cover (`cloud_size_mix`), fray into wisps and fade into the horizon haze, and lean with the wind shear as their tops drift downwind and veer with height (`cloud_shear`; `WeatherMap3D.wind_shear_aloft`, `get_wind_aloft()`); low stratus and stratocumulus follow the day's heating, wind, humidity and rain, with their base at the condensation level (`WeatherMap3D.cloud_regime_from_weather`); storms (`WeatherMap3D.add_storm()`) tower into a leaning cumulonimbus about as wide as it is tall, with a flat anvil spreading downwind, a thin cirrus shield beyond it and mammatus beneath, a tenuous edge shell that glows as a silver rim against the sun (`cloud_storm_shell`, `cloud_storm_shell_density`) and turret relief that reads in shade from how much sky each part sees (`cloud_sky_occlusion_reach`), and hang rain shafts under their base, slanted by the low wind, as dense as the rain is heavy and drawn in front of far terrain (`WeatherMap3D.distant_shafts`), or in cold storms snow shafts that trail long soft veils downwind, and a moving storm drops a shelf cloud along its gust front; high up, shear aloft breaks the cirrus into cirrocumulus grains and a spreading high sheet merges into a cirrostratus veil that carries halos, and its oriented ice crystals throw sun dogs and tangent arcs (`cloud_parhelia_strength`); sunlight through gaps in a broken mid layer reaches the ground and the clouds below, and each layer takes the sun's colour at its own height, so high clouds stay lit after sunset; lenticular clouds have a crisp rim and stack in plates with sky between them, and their thin edges near the sun show iridescence (`cloud_iridescence`); drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
    "page": "sky-and-clouds",
    "title": "Sky and clouds",
    "topic": ""
@@ -4655,10 +4681,11 @@
     "scattering_temporal",
     "ground_albedo",
     "ground_color",
-    "diffuse_transmission"
+    "diffuse_transmission",
+    "surface_glow"
    ],
    "note": "",
-   "what": "smoke takes sky and ambient light, the sun through scene shadows and light bounced up from sunlit ground in the ground's colour, and shadows the scene; bright clouds show the scene behind them blurred, as under path tracing, and dense clouds lit from behind glow on their shaded side; `scattering_temporal` removes step banding at its edges.",
+   "what": "smoke takes sky and ambient light, the sun through scene shadows and light bounced up from sunlit ground in the ground's colour, and shadows the scene, lighting the ground and walls near it and hiding the sky from them; bright clouds show the scene behind them blurred, as under path tracing, and dense clouds lit from behind glow on their shaded side; `scattering_temporal` removes step banding at its edges.",
    "page": "physics",
    "title": "Physics (PhysX 5)",
    "topic": ""

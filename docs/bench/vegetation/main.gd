@@ -94,6 +94,11 @@ func _ready() -> void:
 		elif a == "--test=sod":
 			test = true
 			only_sod = true
+		elif a.begins_with("--grass-walk"):
+			grass_walk = float(a.substr(13)) if a.length() > 13 else 0.05
+		elif a == "--test=rocks":
+			test = true
+			only_rocks = true
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -319,6 +324,15 @@ func _physics_process(_d: float) -> void:
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
+	if grass_walk > 0.0:
+		await _grass_walk()
+		get_tree().quit(0)
+		return
+	if test and only_rocks:
+		await _rock_field_check()
+		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	if test and only_blowing:
 		await _blowing_checks()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
@@ -327,6 +341,7 @@ func _physics_process(_d: float) -> void:
 	if test:
 		_checks()
 		await _stream_checks()
+		await _rock_field_check()
 		await _lazy_near_checks()
 		_deadwood_checks()
 		await _place_form_checks()
@@ -658,6 +673,12 @@ func _desert_sand(gen: TerrainGenerator3D, cam: Camera3D, plants: VegetationFiel
 	s.ground_type = GroundSurface3D.GROUND_SAND
 	s.moisture = 0.0
 	s.wind_ripples = true
+	# A fresh sand each run: kept ruts would bring back the last run's sand (and any fault it had).
+	s.keep_ruts = false
+	# VEG_DESERT_SAND_PROPS=name:value,...: the sand ground's properties, for an A/B.
+	for kv in OS.get_environment("VEG_DESERT_SAND_PROPS").split(",", false):
+		var pkv := kv.split(":", true, 1)
+		s.set(pkv[0], str_to_var(pkv[1]))
 	var m := StandardMaterial3D.new()
 	m.albedo_color = Color(0.72, 0.55, 0.36)
 	m.roughness = 0.95
@@ -1276,6 +1297,9 @@ class SodWaterStub extends WorldWater:
 		return level
 	func _flow_at(_p: Vector3) -> Vector3:
 		return flow
+	var silt := 0.0 # kg/s handed in, summed over the calls
+	func _add_sediment(_p: Vector3, mineral: float, _ash: float) -> void:
+		silt += mineral
 
 func _sod_fall_check() -> void:
 	var stub := GDScript.new()
@@ -1417,6 +1441,25 @@ func _sod_land_check() -> void:
 	_check("sod landing: a lip falling 1.2 m breaks into Blast pieces on the floor; still water leaves them; a 2 m/s flood flow carries them downstream",
 			broke and n_pieces >= 2 and sod.get_break_count() == 1 and still < 0.3 and carried > 0.3 and moved >= 1,
 			[n_pieces, still, carried, moved])
+	# Under water they slake (silt into the water), crumble and the crumbs wash out (times shortened for the check).
+	sod.slake_time = 2.0
+	sod.wash_time = 1.0
+	var p_before: int = node.get_piece_count() if broke and is_instance_valid(node) else 0
+	# Still water first: they slake but stay.
+	var flow_was: Vector3 = ws.flow
+	ws.flow = Vector3.ZERO
+	for i in 180:
+		await get_tree().physics_frame
+	var p_mid: int = node.get_piece_count() if broke and is_instance_valid(node) else 0
+	ws.flow = flow_was
+	sod.crumb_volume = 0.05 # this small lip's pieces wear away within the second
+	for i in 300:
+		await get_tree().physics_frame
+	var p_after: int = node.get_piece_count() if broke and is_instance_valid(node) else 0
+	print("VEG_SOD_SLAKE silt %.3f kg, water got %.3f, pieces %d -> %d -> %d" % [sod.get_silt_released(), ws.silt, p_before, p_mid, p_after])
+	_check("sod crumbling: pieces in the water slake silt into it; still water keeps them, a current wears them away",
+			broke and sod.get_silt_released() > 0.0 and ws.silt > 0.0 and p_mid == p_before and p_after < p_before,
+			[sod.get_silt_released(), ws.silt, p_before, p_after])
 	sod.free()
 	floor.free()
 	f.free()
@@ -1996,6 +2039,196 @@ func _fairy_check() -> void:
 # passes the creep speed (2.5 m/s here, from 12 m/s at 10 m over short grass), and only a few lift below the lift speed.
 var only_blowing := false # --test=blowing: the blowing-leaves check alone
 var only_sod := false # --test=sod: the sod lip checks alone
+var only_rocks := false # --test=rocks: the rock_field check alone
+var grass_walk := 0.0 # --grass-walk[=M]: main-thread cost of a GrassField3D (defaults) walked M metres a frame
+
+# --grass-walk[=M] (0.05 m a frame by default: a walk at 174 frames a second is 0.008): the main-thread time of
+# GrassField3D.update_at each frame (its near tiles and far ring tiles are built there), over 600 frames.
+# --grass-cpu: the CPU fill path; --grass-norings: no far rings.
+func _grass_walk() -> void:
+	var user := OS.get_cmdline_user_args()
+	var g := GrassField3D.new()
+	g.rules = PlantSpecies.new()
+	g.gpu_fill = not user.has("--grass-cpu")
+	g.far_rings = not user.has("--grass-norings")
+	add_child(g)
+	g.data_map = g.get_path_to(dm)
+	var times := []
+	for i in 600:
+		var q := Vector3(-100.0 + i * grass_walk, 0, -20)
+		var t := Time.get_ticks_usec()
+		g.update_at(q)
+		times.append((Time.get_ticks_usec() - t) / 1000.0)
+		await get_tree().process_frame
+	var tt: Array = times.slice(1)
+	tt.sort()
+	var sum := 0.0
+	for x in tt:
+		sum += x
+	var n := tt.size()
+	print("GRASS_WALK %.3f m/frame: first %.1f ms, then mean %.2f, p50 %.2f, p95 %.2f, p99 %.2f, max %.2f ms; over 2 ms %d frames, over 5.7 ms %d; tiles %d, ring tiles %d" % [grass_walk, times[0], sum / n, tt[n / 2], tt[n * 95 / 100], tt[n * 99 / 100], tt[n - 1], tt.filter(func(x): return x > 2.0).size(), tt.filter(func(x): return x > 5.7).size(), g.get_tile_count(), g.get_ring_tile_count()])
+
+# A stand-in for RockField3D.get_obstacles(): the stones whose centre is in the rect (half-open, as Rect2.has_point),
+# of the size or more. Counts the calls and the widest rect asked for.
+class MockRocks extends Node3D:
+	var stones := PackedVector4Array()
+	var sizes := PackedFloat32Array()
+	var calls := 0
+	var widest := 0.0
+	func get_obstacles(rect: Rect2, min_size: float = 0.25) -> PackedVector4Array:
+		calls += 1
+		widest = maxf(widest, maxf(rect.size.x, rect.size.y))
+		var got := PackedVector4Array()
+		for i in stones.size():
+			var o := stones[i]
+			if sizes[i] >= min_size and rect.has_point(Vector2(o.x, o.z)):
+				got.append(o)
+		return got
+
+func _sorted(a: PackedVector3Array) -> Array:
+	var l := Array(a)
+	l.sort_custom(func(p: Vector3, q: Vector3) -> bool: return p.x < q.x or (p.x == q.x and (p.z < q.z or (p.z == q.z and p.y < q.y))))
+	return l
+
+func _grass_blades(g: GrassField3D) -> Array:
+	var l := []
+	for ch in g.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh:
+			var buf := RenderingServer.multimesh_get_buffer(ch.multimesh.get_rid())
+			var stride := 12 + (4 if ch.multimesh.use_colors else 0) + (4 if ch.multimesh.use_custom_data else 0)
+			for b in range(0, buf.size(), stride):
+				if not (buf[b] == 0.0 and buf[b + 2] == 0.0):
+					l.append(Vector3(buf[b + 3], buf[b + 7], buf[b + 11]))
+	l.sort_custom(func(p: Vector3, q: Vector3) -> bool: return p.x < q.x or (p.x == q.x and (p.z < q.z or (p.z == q.z and p.y < q.y))))
+	return l
+
+# rock_field (VegetationField3D, GrassField3D): the stones fetched round each tile as it is placed give exactly the
+# placements of the world-wide obstacles array: populated, streamed, and the sward's near and far ring blades.
+func _rock_field_check() -> void:
+	var rocks := MockRocks.new()
+	rocks.name = "MockRocks"
+	add_child(rocks)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 41
+	var half := size * 0.5
+	for i in 2500:
+		var x := rng.randf_range(-half, half)
+		var z := rng.randf_range(-half, half)
+		var big := rng.randf() < 0.02
+		var r := rng.randf_range(3.0, 9.0) if big else rng.randf_range(0.1, 1.4)
+		rocks.stones.append(Vector4(x, dm.get_height_at(Vector3(x, 0, z)), z, r))
+		rocks.sizes.append(r * 1.6)
+	var everything: PackedVector4Array = rocks.get_obstacles(Rect2(-4096, -4096, 8192, 8192), 0.25)
+	var b := Biome.new()
+	var list: Array = field.biome.species.duplicate()
+	list.append_array(PlantGenerator.make_stones(PlantGenerator.STONES_SCREE, 2, false))
+	b.species.assign(list)
+	var res := []
+	var ok := true
+	# Populated: one field reads the array, the other the rock field.
+	var fs := []
+	for mode in 2:
+		var f := VegetationField3D.new()
+		f.far_volume = false
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = b
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		if mode == 0:
+			f.obstacles = everything
+		else:
+			f.rock_field = f.get_path_to(rocks)
+		f.populate()
+		fs.append(f)
+	var placed := 0
+	var bare := VegetationField3D.new() # No rocks: the rocks must change the placements, or the check proves nothing.
+	bare.far_volume = false
+	bare.populate_on_ready = false
+	bare.bark_detail = false
+	bare.biome = b
+	add_child(bare)
+	bare.data_map = bare.get_path_to(dm)
+	bare.populate()
+	var differs := false
+	for s in b.species.size():
+		var pa: Array = _sorted(fs[0].get_placements(s))
+		var pb: Array = _sorted(fs[1].get_placements(s))
+		placed += pa.size()
+		ok = ok and pa == pb
+		differs = differs or pa != _sorted(bare.get_placements(s))
+	bare.free()
+	ok = ok and differs
+	res.append(["populate", placed, ok, differs])
+	for f in fs:
+		f.free()
+	# Streamed round a point: the tiles fetch only the rocks round them.
+	var target := Node3D.new()
+	add_child(target)
+	target.global_position = Vector3(30, 0, -20)
+	fs = []
+	rocks.calls = 0
+	rocks.widest = 0.0
+	for mode in 2:
+		var f := VegetationField3D.new()
+		f.far_volume = false
+		f.populate_on_ready = false
+		f.bark_detail = false
+		f.biome = b
+		add_child(f)
+		f.data_map = f.get_path_to(dm)
+		if mode == 0:
+			f.obstacles = everything
+		else:
+			f.rock_field = f.get_path_to(rocks)
+		f.stream_target = f.get_path_to(target)
+		f.stream_radius = 40.0
+		f.streaming = true
+		fs.append(f)
+	var frames := [await _stream_wait(fs[0]), await _stream_wait(fs[1])]
+	var same_stream: bool = frames[0] >= 0 and frames[1] >= 0
+	placed = 0
+	for s in b.species.size():
+		var pa: Array = _sorted(fs[0].get_placements(s))
+		var pb: Array = _sorted(fs[1].get_placements(s))
+		placed += pa.size()
+		same_stream = same_stream and pa == pb
+	var drift_same := true
+	for i in 30:
+		var q := Vector3(30 + rng.randf_range(-20, 20), 0, -20 + rng.randf_range(-20, 20))
+		drift_same = drift_same and absf(fs[0].get_litter_drift_at(q) - fs[1].get_litter_drift_at(q)) < 1e-6
+	res.append(["stream", placed, same_stream, drift_same, rocks.calls, rocks.widest, fs[1].get_rock_chunk_count()])
+	ok = ok and same_stream and drift_same and rocks.widest < size
+	for f in fs:
+		f.free()
+	target.free()
+	# The sward: near tiles and far ring tiles.
+	var gs := []
+	rocks.calls = 0
+	for mode in 2:
+		var g := GrassField3D.new()
+		g.radius = 16.0
+		g.far_shell = false
+		g.rules = PlantSpecies.new()
+		add_child(g)
+		g.data_map = g.get_path_to(dm)
+		if mode == 0:
+			g.obstacles = everything
+		else:
+			g.rock_field = g.get_path_to(rocks)
+		for i in 6:
+			g.update_at(Vector3(-20, 0, 25))
+			await get_tree().process_frame
+		gs.append(g)
+	var ga: Array = _grass_blades(gs[0])
+	var gb: Array = _grass_blades(gs[1])
+	var grass_same: bool = ga.size() > 1000 and ga == gb and gs[0].get_ring_blade_count() == gs[1].get_ring_blade_count()
+	res.append(["grass", ga.size(), gs[0].get_ring_blade_count(), grass_same, rocks.calls])
+	ok = ok and grass_same
+	for g in gs:
+		g.free()
+	rocks.free()
+	_check("rock_field: rocks fetched round each tile place exactly as the world-wide obstacles array (populated, streamed, litter drift, sward near and far rings)", ok, res)
 
 func _blowing_checks() -> void:
 	if not ClassDB.class_exists("LeafFall3D"):

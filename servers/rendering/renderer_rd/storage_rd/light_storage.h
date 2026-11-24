@@ -260,6 +260,26 @@ private:
 		uint64_t frame = 0;
 	} volume_shadow;
 	RID volume_shadow_empty;
+	// The light the medium of the volume shadow scatters onto the surfaces around it: a mipmapped 3D texture over it
+	// (rgb: the light it scatters times its opacity, a: its opacity), which the opaque pass cone-traces for the
+	// light reaching a surface from the medium and how much of the sky the medium hides, and how much of a point or
+	// spot light reaches a surface through it. Fed each frame by whoever renders the medium; it lapses unless
+	// renewed. Needs no sun: its mapping and medium ride on their own uniform buffer (GasGlowData, set 0 binding 24).
+	struct GasGlow {
+		RID texture; // 3D, RGBA16F, mipmapped
+		Transform3D world_to_glow; // world -> (u, v, w) in 0..1
+		float albedo = 0.0f; // the medium's single-scattering albedo
+		float anisotropy = 0.0f;
+		uint64_t frame = 0;
+	} gas_glow;
+	// GasGlowData in light_data_inc.glsl.
+	struct GasGlowData {
+		float u[4]; // view space -> the grid's u: dot(vec4(vertex, 1.0), u); all zero without a current grid
+		float v[4];
+		float w[4];
+		float medium[4]; // albedo, anisotropy
+	};
+	RID gas_glow_buffer;
 	DirectionalLightData *directional_lights = nullptr;
 	RID directional_light_buffer;
 
@@ -1256,6 +1276,9 @@ public:
 	void directional_volume_shadow_set(RID p_light, RID p_texture, const Transform3D &p_world_to_shadow, float p_albedo = 0.0f, float p_anisotropy = 0.0f);
 	// The volume shadow texture the scene shaders bind (a white 1x1 without one).
 	RID directional_volume_shadow_get_texture();
+	void gas_glow_set(RID p_texture, const Transform3D &p_world_to_glow, float p_albedo, float p_anisotropy);
+	RID gas_glow_get_texture();
+	RID gas_glow_get_buffer();
 
 	_FORCE_INLINE_ RID directional_shadow_get_texture() {
 		return directional_shadow.depth;

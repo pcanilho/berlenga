@@ -2623,6 +2623,103 @@ inject emissive volumes), then the scene's opaque pass adds that irradiance to i
 grid covers it, shadowed by the gas's own volume shadow toward each cell. Checked against same-run
 path-traced pairs: snow beside a powder cloud, a wall beside a smoke plume, the ground under fire smoke.
 
+### Gas light onto nearby surfaces: built (23 Nov)
+
+Picked on the card above. Research: voxel cone tracing (Crassin et al. 2011, "Interactive indirect illumination
+using voxel cone tracing") rather than the light propagation volumes the card named: the gas already is a volume,
+so a mipmapped grid of it is all the propagation needs, and cones also tell how much of the sky the gas hides.
+Two-stream theory (Meador and Weaver 1980, with the similarity relations) gives how a scattering gas passes and
+reflects diffuse light.
+
+Built (PhysXFlow3D `surface_glow`, on; Forward+ only; the path tracer has it natively):
+- A glow pass after the scattering pass fills a world-aligned grid over the gas box (at most 66 voxels a side,
+  voxel a power of two times 1/16 m so it does not crawl as the box grows; RGBA16F, mipmapped): per voxel the
+  sun's and the lights' light it scatters (the view march's lighting, isotropic phase) times its opacity, and its
+  opacity. Its mapping rides on the sun's DirectionalLightData (gas_glow_u/v/w, beside the volume shadow's), the
+  texture on set 0 binding 23.
+- The opaque pass traces six 60-degree cones over each surface's hemisphere through the mips and replaces its
+  ambient light with: the ambient times the gas's two-stream total transmittance along each cone (a bright gas
+  passes the sky on by scattering, a grey one hides it), plus the gas's semi-infinite two-stream reflectance of the
+  light on its side facing the surface (half the sky's, half the ground's around the surface, taken as like the
+  surface and lit by the unshadowed sun: what lights a white cloud's underside over sunlit snow), plus the gas's
+  own scattered light composited along each cone. Faded out between one and two grid sizes from the grid.
+- First tries, kept for the record: cones that hid the sky as if the gas were opaque left the ground under a white
+  cloud 16 levels darker than the path tracer; letting the sky through by the two-stream transmittance alone left it
+  7 darker, since the path tracer's cloud underside is lit by the sunlit snow around it.
+
+Checked against same-run raster/path-traced pairs (8x8 block error against the path tracer, glow off -> on):
+- Grey smoke puffs: whole frame 5.3 -> 3.9, the ground around them 8.3 -> 5.5, the gas 7.9 -> 4.5 (the ground seen
+  through it).
+- Dust puffs: whole frame 5.1 -> 4.4, the ground 7.1 -> 5.5, the gas 8.9 -> 6.0.
+- Dense white puffs before a wall: the ground under them within about 2 levels of the path tracer (3 to 7 without);
+  the wall in their shade 10 levels brighter, toward the path tracer's (still darker: no ground bounce in raster).
+- Low white gas (shadow test) and the fire plume: unchanged within 0.2.
+- Snow's powder foot (avalanche bench, --glow-off-too): the dark line along the foot is gone (edge against the gas
+  above it -4.6 -> +1.1 levels, the path tracer's +1.2), and the open snow around the cloud is 2 to 5 levels
+  brighter, each patch toward the path tracer's (169 -> 174 against 176, 188 -> 191 against 192).
+
+Cost: one small compute pass a frame over at most 66^3 voxels (only voxels with gas are lit) and its mips, and in
+the opaque pass up to 6 x 16 trilinear fetches per pixel within two grid sizes of the gas, none elsewhere. GPU time
+goes on the PC queue.
+Gap left: the path tracer's walls beside gas are also lit by the sunlit ground's bounce, which raster has nowhere
+(no GI in these scenes).
+
+### Point and spot lights through gas (bug, 23 Nov)
+
+The fire test's orange ground light spread far wider in raster than traced: the fire's light stands in its own
+smoke, and raster lit the ground straight through the plume, where the path tracer's shadow rays track the gas
+(ratio tracking). Fix (Forward+, with surface_glow): each point and spot light's share at a surface is multiplied by
+the gas's two-stream total transmittance toward the light (as for the sun's volume shadow), traced through the
+same glow grid. The path tracer samples a light's sphere (a fire's light is 0.6 of its base wide, PARAM_SIZE), so
+raster averages four cones, one to each quarter of the sphere's face toward the surface, each as wide as its quarter
+(voxel cone traced soft shadows, Crassin et al. 2011), 8 steps each, the mip as wide as the cone or as long as a
+step. Tried first: a single ray to the centre (a fire's light behind its own dense core: the ground went black at
+night where the path tracer still lights it a quarter); one wide cone (averages a clumped plume's opacity before the
+log: 2 to 3 times too bright); four rays (four hard shadow lobes). The surface's own voxel is skipped (its filtered
+opacity bleeds the gas beside it). Same-run pair (fire, 480x270, error against the path tracer, before -> after):
+whole frame 19.0 -> 8.3, bottom third 31.4 -> 10.4, mean +5.0 -> -2.4. Night fire before a wall (no sun, the fire's light only;
+8x8 block error): 76 -> 26, mean +49 -> +0.5; the wall right of the plume still darker than traced, the ground left
+of it brighter. Left: the ground at the flame's foot is still
+a little less orange than traced (the grid's voxels are coarser than the plume's edge).
+
+### Gas glow without a sun (card pick 2, 23 Nov)
+
+The glow grid's mapping and medium used to ride on the sun's DirectionalLightData (and its albedo on the volume
+shadow's), so a night scene with no DirectionalLight3D had no surface glow and no light-through-gas. They now have
+their own uniform buffer (LightStorage::GasGlowData, set 0 binding 24: view space -> u, v, w and the medium's albedo
+and anisotropy), filled with the light buffers each frame; DirectionalLightData lost its three gas_glow rows. Night
+fire before a wall with no DirectionalLight3D at all: glow off -> on 82 -> 38 (8x8 block error against the path
+tracer); before, on equalled off.
+
+### Cheaper gas glow (card pick 3, 23 Nov): research and design
+
+Cost now, all in the opaque pass for each pixel within two grid sizes of the gas: six cones of up to 16 trilinear
+fetches (the ambient), plus four cones of 8 per point or spot light the gas dims. It scales with resolution: a
+quarter of the pixels at 4K cost what 1080p costs whole. Measured: cloud lavapipe smokelamp 960x540 315 -> 552 ms
+(CPU rendering, only a sign it is heavy); the PC number (showcase --time-glow, 95b3ddb6) decides how far to go.
+
+How others do it:
+- Crassin et al. 2011 trace the diffuse cones at reduced resolution and upsample; Hong (DigiPen thesis, "Temporal
+  voxel cone tracing with interleaved sample patterns") spreads a pixel's cones over frames in an interleaved pattern
+  and accumulates them with reprojection, the cost of one or two cones a frame.
+- Godot's own SSAO/SSIL run at half resolution with a depth/normal-aware upsample; Lumen's screen probes and
+  DDGI's irradiance fields go further (a probe per 16x16 pixels, or a world grid), for light that varies slowly.
+Gas glow is that kind of light: smooth, world-anchored, slow; its detail comes from the surface's albedo and normal,
+which stay full resolution.
+
+Design (no visual loss: checked by same-run raster/path-traced pairs and a full-resolution reference):
+1. A gas glow resolve compute pass after the depth prepass (which then writes normals when the glow is current), at
+   half resolution: per pixel the six cones' glow (rgb), sky visibility and reflectance weight, and the
+   transmittance toward the (up to four) point and spot lights the gas dims most. Two small images.
+2. Temporal: each frame traces two of the six cones in a pixel's 2x2-interleaved rotation (Hong), the rest come
+   from the previous frame reprojected by the previous camera (world-anchored), rejected where depth or normal
+   disagree (disocclusion) or the gas grid changed a lot; the light transmittance the same way.
+3. The opaque pass reads them with a 4-tap depth- and normal-weighted upsample and applies them exactly as now
+   (ambient * vis + side * refl + glow; the light's shadow times its transmittance).
+Expected: per pixel at full resolution 4 fetches instead of up to 96 + 32 per light; the trace itself a quarter
+of the pixels and a third of the cones. Options: a full-resolution fallback setting for A/B and for scenes without
+TAA where the reuse's lag would show.
+
 ### Window flames as tongues (picked 19 Nov afternoon, first of three)
 
 Research: EN 1991-1-2 Annex B and Law (1978) give a window plume as wide

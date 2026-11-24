@@ -1319,6 +1319,77 @@ layout(location = 2) out vec4 motion_vector;
 
 #include "../material_inputs_inc.glsl"
 #include "../scene_forward_gi_inc.glsl"
+
+// The optical depth of the gas along a cone from view-space p_a to p_b, p_end_vox voxels wide at p_b, through the gas
+// glow grid (LightStorage::GasGlow, alpha each voxel's opacity), the mip as wide as the cone or as long as a step,
+// whichever is more (voxel cone tracing, Crassin et al. 2011). The surface's own voxel (at p_a) is skipped: its
+// filtered opacity bleeds the gas beside the surface onto it.
+float gas_cone_depth(vec3 p_a, vec3 p_b, float p_end_m, vec4 p_gu, vec4 p_gv, vec4 p_gw, vec3 p_dims, float p_lod_max) {
+	vec3 a = vec3(dot(vec4(p_a, 1.0), p_gu), dot(vec4(p_a, 1.0), p_gv), dot(vec4(p_a, 1.0), p_gw));
+	vec3 b = vec3(dot(vec4(p_b, 1.0), p_gu), dot(vec4(p_b, 1.0), p_gv), dot(vec4(p_b, 1.0), p_gw));
+	vec3 d = b - a;
+	vec3 inv = 1.0 / (abs(d) + 1e-8) * sign(d + 1e-12);
+	vec3 t0 = (vec3(0.0) - a) * inv;
+	vec3 t1 = (vec3(1.0) - a) * inv;
+	float len_vox = length(d * p_dims);
+	float end_vox = p_end_m * len_vox / max(length(p_b - p_a), 1e-6);
+	float tn = max(max(max(min(t0.x, t1.x), min(t0.y, t1.y)), min(t0.z, t1.z)), 0.5 / max(len_vox, 1e-6));
+	float tf = min(min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z)), 1.0);
+	if (tf <= tn) {
+		return 0.0;
+	}
+	const int STEPS = 8;
+	float step_vox = len_vox * (tf - tn) / float(STEPS);
+	float tau = 0.0;
+	for (int s = 0; s < STEPS; s++) {
+		float t = mix(tn, tf, (float(s) + 0.5) / float(STEPS));
+		float lod = clamp(log2(max(max(step_vox, end_vox * t), 1.0)), 0.0, p_lod_max);
+		float o = textureLod(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), a + d * t, lod).a;
+		tau -= step_vox / exp2(lod) * log(max(1.0 - min(o, 0.999), 1e-3));
+	}
+	return tau;
+}
+
+// The share of a point or spot light (view-space p_light, radius p_radius) that reaches view-space p_vertex through
+// gas, as the path tracer's shadow rays find it tracking the gas to points sampled over the light's sphere: the
+// two-stream total transmittance (as the sun's volume shadow, directional_volume_shadow) averaged over four cones to
+// the sphere's face toward the surface, each to a quarter of it (centres at 0.7 of its radius across and 0.71 of it
+// out toward the surface, each cone as wide as its quarter). One wide cone averages the opacity of a clumped plume
+// before taking the log and lets far too much through; four narrow rays cast four hard shadows. A fire's light is a
+// ball as wide as its flames: without this, standing in its smoke, it lit the ground round it straight through the
+// plume.
+#define GAS_LIGHT_TRANSMITTANCE
+float gas_light_transmittance(vec3 p_vertex, vec3 p_light, float p_radius) {
+	vec4 gu = gas_glow_data.data.u;
+	if (gu != vec4(0.0)) {
+		vec4 gv = gas_glow_data.data.v;
+		vec4 gw = gas_glow_data.data.w;
+		vec3 dims = vec3(textureSize(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), 0));
+		float lod_max = float(textureQueryLevels(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP)) - 1);
+		if (textureLod(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), vec3(0.5), lod_max).a < 1e-6) {
+			return 1.0;
+		}
+		float w = gas_glow_data.data.medium.x;
+		float g = gas_glow_data.data.medium.y;
+		vec3 to_light = p_light - p_vertex;
+		float rad = min(p_radius, 0.9 * length(to_light));
+		int n = rad > 0.01 ? 4 : 1;
+		vec3 axis = normalize(to_light + vec3(1e-6));
+		vec3 t1 = normalize(cross(axis, abs(axis.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+		vec3 t2 = cross(axis, t1);
+		float sum = 0.0;
+		for (int j = 0; j < n; j++) {
+			vec3 off = n == 1 ? vec3(0.0) : (j == 0 ? t1 : (j == 1 ? -t1 : (j == 2 ? t2 : -t2))) * (0.7 * rad) - axis * (0.71 * rad);
+			float tau = gas_cone_depth(p_vertex, p_light + off, rad, gu, gv, gw, dims, lod_max);
+			float tau_s = (1.0 - g) * w * tau;
+			float tau_a = (1.0 - w) * tau;
+			sum += max(exp(-tau * (1.0 - w * g * g)), exp(-sqrt(3.0 * tau_a * (tau_a + tau_s))) / (1.0 + 0.75 * tau_s));
+		}
+		return sum / float(n);
+	}
+	return 1.0;
+}
+
 #include "../scene_forward_lights_inc.glsl"
 
 #endif //!defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
@@ -1437,6 +1508,102 @@ float directional_volume_shadow(uint p_index, vec3 p_vertex) {
 	float tau_a = (1.0 - w) * optical_depth;
 	float total = exp(-sqrt(3.0 * tau_a * (tau_a + tau_s))) / (1.0 + 0.75 * tau_s);
 	return max(direct, total);
+}
+
+// The light gas scatters onto a surface at view-space p_vertex with normal p_normal, and how much of the light from
+// around (the sky) still reaches it through the gas: voxel cone tracing (Crassin et al. 2011, "Interactive indirect
+// illumination using voxel cone tracing") through the gas glow grid (LightStorage::GasGlow), a mipmapped voxel grid
+// over the gas of the sun's and the lights' light each voxel scatters times its opacity (rgb) and its opacity (a).
+// Six 60-degree cones cover the hemisphere around the normal (one along it, weight 1/4, five around at 60 degrees,
+// 3/20 each: the cosine-weighted split of Crassin's diffuse cones); each marches front to back from half a voxel out,
+// reading the mip as wide as the cone, stepping half its width. The sky's light is not in the grid: a bright gas
+// passes it on by scattering, so each cone lets through the two-stream total transmittance of the gas it crossed (as
+// the volume shadow lets the sun through, see directional_volume_shadow), and the gas sends back its semi-infinite
+// two-stream reflectance of the light on its side facing the surface: half the sky's, half the ground's around the
+// surface (taken as like the surface: its albedo, lit by the sun unshadowed and the sky), the light a white cloud's
+// underside takes from the sunlit snow around it. A white cloud hides little of the sky, a grey smoke most of it.
+// p_ambient: the surface's ambient light (a mean radiance over its hemisphere), p_albedo its albedo, p_up the world's up
+// (view space). Returns the ambient light with the gas's: as the path tracer's surfaces see a sunlit cloud beside them
+// glow and dark smoke hide the sky.
+vec3 gas_glow(vec3 p_vertex, vec3 p_normal, uint p_directional_count, vec3 p_ambient, vec3 p_albedo, vec3 p_up) {
+	vec4 gu = gas_glow_data.data.u;
+	if (gu != vec4(0.0)) {
+		vec4 gv = gas_glow_data.data.v;
+		vec4 gw = gas_glow_data.data.w;
+		mat3 to_uvw = transpose(mat3(gu.xyz, gv.xyz, gw.xyz));
+		vec3 uvw0 = to_uvw * p_vertex + vec3(gu.w, gv.w, gw.w);
+		ivec3 dims = textureSize(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), 0);
+		float lod_max = float(textureQueryLevels(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP)) - 1);
+		// No gas in the grid at all: its last mip (the whole grid's mean) is empty.
+		if (textureLod(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), vec3(0.5), lod_max).a < 1e-6) {
+			return p_ambient;
+		}
+		vec3 vdims = vec3(dims);
+		float vox = 1.0 / (length(gu.xyz) * vdims.x); // meters per voxel (they are cubes)
+		// Farther out than the grid's size, the gas fills ever less of a surface's sky: faded out over a second size.
+		float reach = max(vdims.x, max(vdims.y, vdims.z));
+		float out_vox = length(max(max(-uvw0, uvw0 - 1.0), 0.0) * vdims);
+		if (out_vox >= 2.0 * reach) {
+			return p_ambient;
+		}
+		float fade = 1.0 - smoothstep(reach, 2.0 * reach, out_vox);
+		vec3 n = p_normal;
+		vec3 t = normalize(cross(abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), n));
+		vec3 b = cross(n, t);
+		// The medium's single-scattering albedo and anisotropy (the volume shadow's) and its reflectance: the similarity
+		// relation's albedo w' = (1 - g) w / (1 - g w), R = (1 - k) / (1 + k), k = sqrt(1 - w').
+		float wa = gas_glow_data.data.medium.x;
+		float ga = gas_glow_data.data.medium.y;
+		float ws = (1.0 - ga) * wa / max(1.0 - ga * wa, 1e-4);
+		float k = sqrt(max(1.0 - ws, 0.0));
+		float r_inf = (1.0 - k) / (1.0 + k);
+		// The light on the gas's side facing the surface: half the sky's, half the ground's around the surface.
+		vec3 sun_e = vec3(0.0); // the suns' light on open ground (none at night)
+		for (uint i = 0; i < p_directional_count; i++) {
+			sun_e += directional_lights.data[i].color * directional_lights.data[i].energy * max(dot(p_up, directional_lights.data[i].direction), 0.0);
+		}
+		vec3 side = 0.5 * (p_ambient + p_albedo * (sun_e * (1.0 / 3.14159265) + p_ambient));
+		vec3 glow = vec3(0.0);
+		float vis = 0.0;
+		float refl = 0.0;
+		for (int c = 0; c < 6; c++) {
+			float ang = float(c - 1) * (6.28318531 / 5.0);
+			vec3 d = c == 0 ? n : n * 0.5 + (t * cos(ang) + b * sin(ang)) * 0.8660254;
+			float w = c == 0 ? 0.25 : 0.15;
+			vec3 duvw = to_uvw * d; // per meter along the cone
+			vec3 acc = vec3(0.0);
+			float tau = 0.0;
+			float dist = 0.5 * vox;
+			for (int s = 0; s < 16 && tau < 20.0; s++) {
+				float dia = max(1.1547005 * dist, vox); // 2 tan(30 degrees) dist
+				float lod = min(log2(dia / vox), lod_max);
+				vec3 q = uvw0 + duvw * dist;
+				// Past the grid by more than the cone's half width: nothing there (the clamped edge would smear the grid's
+				// border voxels outward).
+				vec3 past = max(max(-q, q - 1.0), 0.0) * vdims;
+				if (all(lessThanEqual(past, vec3(0.5 * dia / vox)))) {
+					vec4 sm = textureLod(sampler3D(gas_glow_texture, DEFAULT_SAMPLER_LINEAR_WITH_MIPMAPS_CLAMP), q, lod);
+					if (sm.a > 1e-5) {
+						// The opacity over this step (half the cone's width) through voxels exp2(lod) across.
+						float a = 1.0 - pow(max(1.0 - min(sm.a, 0.999), 1e-3), 0.5 * dia / (vox * exp2(lod)));
+						acc += exp(-tau) * sm.rgb * (a / sm.a);
+						tau -= log(max(1.0 - a, 1e-4));
+					}
+				} else if (dist * length(duvw) > 3.0) {
+					break; // out of the grid and on past it
+				}
+				dist += 0.5 * dia;
+			}
+			glow += w * acc;
+			float tau_s = (1.0 - ga) * wa * tau;
+			float tau_a = (1.0 - wa) * tau;
+			float total = max(exp(-tau * (1.0 - wa * ga * ga)), exp(-sqrt(3.0 * tau_a * (tau_a + tau_s))) / (1.0 + 0.75 * tau_s));
+			vis += w * total;
+			refl += w * r_inf * (1.0 - total);
+		}
+		return mix(p_ambient, p_ambient * vis + side * refl + glow, fade);
+	}
+	return p_ambient;
 }
 
 void fragment_shader(in SceneData scene_data) {
@@ -2479,6 +2646,14 @@ void fragment_shader(in SceneData scene_data) {
 		}
 #endif
 	}
+
+#ifndef AMBIENT_LIGHT_DISABLED
+	if (!pt_lit) {
+		// Gas nearby: the light it scatters onto the surface, and the sky it hides (the path tracer has both).
+		vec3 up = vec3(scene_data.view_matrix[0].y, scene_data.view_matrix[1].y, scene_data.view_matrix[2].y);
+		ambient_light = gas_glow(vertex, normal, scene_data.directional_light_count, ambient_light, albedo, up);
+	}
+#endif
 
 	if (pt_lit) {
 		ambient_light = pt_ambient;

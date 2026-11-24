@@ -160,6 +160,28 @@ public:
 
 	double height(int i) const { return double(base[i]) + double(sand[i]); }
 
+	// Everything run() reads, for a cache key (world_cache.h): p_add(data, bytes) is called for each piece in order.
+	template <typename F>
+	void hash_inputs(int p_steps, const F &p_add) const {
+		const double pd[] = { p.slab, p.hop, p.settle_sand, p.settle_bare, p.settle_plants, p.shadow_tan, p.repose_tan,
+			p.repose_tan_plants, p.plant_growth, p.plant_burial_ok, p.plant_hold, p.venturi, cell, wind_x, wind_z };
+		const int32_t pi[] = { p.max_hops, p.shadow_every, w, h, wind_period, periodic ? 1 : 0, p_steps, int32_t(winds.size()) };
+		p_add(pd, sizeof(pd));
+		p_add(pi, sizeof(pi));
+		for (const Wind &wd : winds) {
+			const double v[3] = { wd.x, wd.z, wd.share };
+			p_add(v, sizeof(v));
+		}
+		const uint64_t sizes[] = { base.size(), inside.size(), water.size(), supply.size(), plant_ok.size(), initial.size() };
+		p_add(sizes, sizeof(sizes));
+		p_add(base.data(), base.size() * sizeof(float));
+		p_add(inside.data(), inside.size());
+		p_add(water.data(), water.size());
+		p_add(supply.data(), supply.size() * sizeof(float));
+		p_add(plant_ok.data(), plant_ok.size() * sizeof(float));
+		p_add(initial.data(), initial.size() * sizeof(float));
+	}
+
 private:
 	double _bilinear_h(double fx, double fz) const {
 		if (periodic) {

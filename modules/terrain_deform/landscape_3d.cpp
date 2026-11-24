@@ -348,9 +348,34 @@ float Landscape3D::_joint_offset(const Vector3 &p, real_t p_steep) {
 	const int32_t cj = int32_t(Math::floor(sj));
 	const float gj = sj - float(cj);
 	const float dist = MIN(gj, 1.0f - gj) * SJ;
-	const float a = Math::lerp(_lc_joint_amp(blk, cj), _lc_joint_amp(blk, gj < 0.5f ? cj - 1 : cj + 1), 0.5f * (1.0f - Math::smoothstep(0.0f, 0.25f, dist)));
-	const float A = MIN(a, 0.75f * T / MAX(float(p_steep), 0.05f));
-	return A * (f - 0.5f);
+	const float seam = 0.5f * (1.0f - Math::smoothstep(0.0f, 0.6f, dist));
+	const float steep = MAX(float(p_steep), 0.05f);
+	auto amp = [&](int32_t p_b, float p_t) {
+		return MIN(Math::lerp(_lc_joint_amp(p_b, cj), _lc_joint_amp(p_b, gj < 0.5f ? cj - 1 : cj + 1), seam), 0.75f * p_t / steep);
+	};
+	const float A = amp(blk, T);
+	// The block above and its step. The step at a joint is drawn over a lip at least 0.6 m tall (two of the finest
+	// vertex rows, as the beds' lips): a step cut sharp was sampled by the vertex grid where the dipping planes cross
+	// its rows, so the mesh stood as a comb of teeth along a face (aliasing of a discontinuous displacement), dark
+	// spikes under the path tracer's exact shadows.
+	int32_t blk_up;
+	float T_up;
+	if (blk == cd * 2 && _lc_hash(cd, 67, 5) > 0.45f) {
+		blk_up = blk + 1;
+		T_up = (1.0f - b) * SD;
+	} else {
+		const float b_up = 0.3f + 0.4f * _lc_hash(cd + 1, 61, 5);
+		blk_up = (cd + 1) * 2;
+		T_up = _lc_hash(cd + 1, 67, 5) > 0.45f ? b_up * SD : SD;
+	}
+	const float A_up = amp(blk_up, T_up);
+	const float r = MIN(MAX(0.6f, 1.2f * 0.5f * (A + A_up)), 0.45f * T);
+	const float u = f * T;
+	if (u <= T - r) {
+		return A * (f - 0.5f);
+	}
+	const float t = (u - (T - r)) / r;
+	return Math::lerp(A * ((T - r) / T - 0.5f), -0.5f * A_up, t * t * (3.0f - 2.0f * t));
 }
 
 float Landscape3D::_cliff_offset(const Vector3 &p, real_t p_steep, real_t p_relief, bool p_joints) const {
@@ -2533,6 +2558,18 @@ Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position) const {
 	RWLockRead hl(heights_lock);
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
 	return _relief_at_local(xf.affine_inverse().xform(p_position));
+}
+
+// What contract_relief_at reads besides the stored properties: the placement, the grid and its heights as read so far.
+void Landscape3D::contract_relief_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const {
+	RWLockRead hl(heights_lock);
+	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
+	p_add(p_user, &xf, sizeof(xf));
+	const real_t grid[] = { origin.x, origin.y, spacing, cliff_relief, bank_relief };
+	p_add(p_user, grid, sizeof(grid));
+	const int32_t dims[] = { gw, gh };
+	p_add(p_user, dims, sizeof(dims));
+	p_add(p_user, heights.ptr(), sizeof(float) * heights.size());
 }
 
 void Landscape3D::_update_relief_map(const Vector3 &p_camera) {

@@ -516,36 +516,61 @@ void SodLipFall3D::_land(Fallen &r_f, float p_speed_change) {
 // Blocks and pieces in water: buoyancy and the flow's drag (0.5 rho Cd A |u - v| (u - v), A the side of a cube of
 // the same volume), as impulses each step; the bed's friction (the engine's contacts) holds the heavy ones.
 void SodLipFall3D::_carry(double p_delta) {
-	const WorldWater *water = WorldContracts::water();
+	WorldWater *water = WorldContracts::water();
 	if (!water) {
 		return;
 	}
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 	const float rho_w = 1000.0f;
 	const float g = 9.81f;
-	auto push = [&](RID p_body, const Vector3 &p_centre, const Vector3 &p_velocity, float p_volume, float p_height) {
+	const float dt = float(p_delta);
+	// Returns the share of the piece under water (0 out of it) and the flow's speed past it.
+	auto push = [&](RID p_body, const Vector3 &p_centre, const Vector3 &p_velocity, float p_volume, float p_height, float *r_rel = nullptr) -> float {
 		if (!p_body.is_valid() || p_volume <= 0.0f) {
-			return;
+			return 0.0f;
 		}
 		const float wy = water->height_at(p_centre);
 		if (!Math::is_finite(wy)) {
-			return;
+			return 0.0f;
 		}
 		const float sub = CLAMP((wy - (p_centre.y - 0.5f * p_height)) / MAX(p_height, 0.01f), 0.0f, 1.0f);
 		if (sub <= 0.0f) {
-			return;
+			return 0.0f;
 		}
 		const Vector3 rel = water->flow_at(p_centre) - p_velocity;
+		if (r_rel) {
+			*r_rel = water->flow_at(p_centre).length();
+		}
 		const float area = Math::pow(p_volume, 2.0f / 3.0f);
 		const Vector3 force = Vector3(0.0f, rho_w * g * p_volume * sub, 0.0f) + rel * (0.5f * rho_w * drag_coefficient * area * sub * rel.length());
 		ps->body_apply_central_impulse(p_body, force * float(p_delta));
 		if (rel.length_squared() > 0.0025f) {
 			ps->body_set_state(p_body, PhysicsServer3D::BODY_STATE_SLEEPING, false);
 		}
+		return sub;
+	};
+	// Slaking: dry soil aggregates wetted fast break down within minutes as the air in their pores is forced out (the
+	// fast-wetting test of aggregate stability, Le Bissonnais 1996); the loose soil under the root mat goes first and
+	// clouds the water as silt (WorldWater.add_sediment, which the water carries off as its suspended load). A wet
+	// topsoil of `density`; the root-bound mat stays.
+	auto slake = [&](uint64_t p_key, const Vector3 &p_centre, float p_volume, float p_sub) -> Soak * {
+		if (p_sub < 0.5f) {
+			return nullptr;
+		}
+		Soak &sk = soaks[p_key];
+		const float before = sk.time;
+		sk.time += dt;
+		if (before < slake_time) {
+			const float rate = slake_share * p_volume * density / slake_time;
+			water->add_sediment(p_centre, rate, 0.0f);
+			silt_released += rate * MIN(dt, slake_time - before);
+		}
+		return &sk;
 	};
 	for (Fallen &f : fallen) {
 		if (f.body) {
-			push(f.body->get_rid(), f.body->get_global_position(), f.body->get_linear_velocity(), f.volume, f.height);
+			const float sub = push(f.body->get_rid(), f.body->get_global_position(), f.body->get_linear_velocity(), f.volume, f.height);
+			slake(f.body->get_rid().get_id(), f.body->get_global_position(), f.volume, sub);
 			continue;
 		}
 		Node *node = Object::cast_to<Node>(ObjectDB::get_instance(f.pieces));
@@ -556,7 +581,30 @@ void SodLipFall3D::_carry(double p_delta) {
 		for (int i = 0; i < count; i++) {
 			const RID rid = node->call("get_piece_body", i);
 			const float vol = node->call("get_piece_volume", i);
-			push(rid, node->call("get_piece_center", i), node->call("get_piece_linear_velocity", i), vol, Math::pow(MAX(vol, 1e-6f), 1.0f / 3.0f));
+			const Vector3 centre = node->call("get_piece_center", i);
+			float speed = 0.0f;
+			const float sub = push(rid, centre, node->call("get_piece_linear_velocity", i), vol, Math::pow(MAX(vol, 1e-6f), 1.0f / 3.0f), &speed);
+			Soak *sk = slake(rid.get_id(), centre, vol, sub);
+			if (!sk) {
+				continue;
+			}
+			if (sk->washing > 0.0f) {
+				// Washing out: the rest of its soil goes into the water as it shrinks.
+				water->add_sediment(centre, sk->wash_rate, 0.0f);
+				silt_released += sk->wash_rate * MIN(dt, sk->washing);
+				sk->washing -= dt;
+				continue;
+			}
+			if (sk->time >= slake_time && speed > 0.3f) {
+				// Slaked through in a current: the flow picks it apart and carries it off as silt, over wash_time for a
+				// piece of crumb_volume, longer for a larger one (by its size, the cube root of its volume; estimate).
+				// The pieces are Blast's leaves (no finer chunks to break into), so it wears away as one shrinking piece.
+				const float t = wash_time * Math::pow(MAX(vol, 1e-6f) / MAX(crumb_volume, 1e-6f), 1.0f / 3.0f);
+				if (bool(node->call("dissolve_piece", i, t))) {
+					sk->washing = t;
+					sk->wash_rate = (1.0f - slake_share) * vol * density / t;
+				}
+			}
 		}
 	}
 }
@@ -581,6 +629,9 @@ void SodLipFall3D::_process_fallen(double p_delta) {
 		}
 	}
 	_carry(p_delta);
+	if (fallen.is_empty()) {
+		soaks.clear();
+	}
 	// Carried off out of range, or gone: dropped.
 	const Vector3 eye = _camera_position();
 	for (int i = int(fallen.size()) - 1; i >= 0; i--) {
@@ -866,6 +917,15 @@ void SodLipFall3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_break_speed"), &SodLipFall3D::get_break_speed);
 	ClassDB::bind_method(D_METHOD("set_drag_coefficient", "coefficient"), &SodLipFall3D::set_drag_coefficient);
 	ClassDB::bind_method(D_METHOD("get_drag_coefficient"), &SodLipFall3D::get_drag_coefficient);
+	ClassDB::bind_method(D_METHOD("set_slake_time", "seconds"), &SodLipFall3D::set_slake_time);
+	ClassDB::bind_method(D_METHOD("get_slake_time"), &SodLipFall3D::get_slake_time);
+	ClassDB::bind_method(D_METHOD("set_slake_share", "share"), &SodLipFall3D::set_slake_share);
+	ClassDB::bind_method(D_METHOD("get_slake_share"), &SodLipFall3D::get_slake_share);
+	ClassDB::bind_method(D_METHOD("set_crumb_volume", "volume"), &SodLipFall3D::set_crumb_volume);
+	ClassDB::bind_method(D_METHOD("get_crumb_volume"), &SodLipFall3D::get_crumb_volume);
+	ClassDB::bind_method(D_METHOD("set_wash_time", "seconds"), &SodLipFall3D::set_wash_time);
+	ClassDB::bind_method(D_METHOD("get_wash_time"), &SodLipFall3D::get_wash_time);
+	ClassDB::bind_method(D_METHOD("get_silt_released"), &SodLipFall3D::get_silt_released);
 	ClassDB::bind_method(D_METHOD("set_enabled", "enabled"), &SodLipFall3D::set_enabled);
 	ClassDB::bind_method(D_METHOD("is_enabled"), &SodLipFall3D::is_enabled);
 	ClassDB::bind_method(D_METHOD("set_range", "range"), &SodLipFall3D::set_range);
@@ -890,4 +950,8 @@ void SodLipFall3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_blocks", PROPERTY_HINT_RANGE, "1,256,1"), "set_max_blocks", "get_max_blocks");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "break_speed", PROPERTY_HINT_RANGE, "0.1,20,0.1,suffix:m/s"), "set_break_speed", "get_break_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drag_coefficient", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_drag_coefficient", "get_drag_coefficient");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slake_time", PROPERTY_HINT_RANGE, "0.1,1000,0.1,suffix:s"), "set_slake_time", "get_slake_time");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slake_share", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_slake_share", "get_slake_share");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "crumb_volume", PROPERTY_HINT_RANGE, "0,0.05,0.0001,suffix:m³"), "set_crumb_volume", "get_crumb_volume");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wash_time", PROPERTY_HINT_RANGE, "0.1,600,0.1,suffix:s"), "set_wash_time", "get_wash_time");
 }

@@ -1078,6 +1078,14 @@ solid rotation inside the core radius and the swirl falling off outside it (Rank
   Cloud scouts: a taller column widening upward; at 320-400 px lavapipe draws a pale haze cut in steps round it
   that the PC's 1080p frames never showed (it stays with heat shimmer, light and ambient scattering all off). PC
   runs judge the look.
+- Devils round 3 (23 Nov, from the PC frames on build-1ab80137: 14 checks pass; 962 blocks at 0.35 m cells, 1.48 ms a
+  step; 0.25 m cells hit the 2048-block cap). The frames read dark grey-brown and stringy: the dense foot at about half
+  the sunlit sand's brightness, the column separate strands. Cause of the dark: Flow weighs every scatter by the gas's
+  colour times its albedo (the octaves of flow_scatter_rd), so the old tan colour (0.8, 0.7, 0.55) at 0.9 was a
+  per-scatter albedo of 0.5 in the blue, and the many scatters in the foot took the light out. Now the weather's one
+  dust albedo per scatter and its asymmetry (WeatherMap3D.get_dust_albedo(), shared with the sky, haze and billows;
+  Dubovik et al. 2002's desert dust): the tan comes from the scatters themselves. Strands: the eight foot spheres (0.35 R) left gaps and 25% of the lift
+  all round; now 0.45 R (they overlap) and half all round, the rest in the arms.
 - GroundStreamers3D takes the grains at the foot (22 Nov): its particle shader adds the shared wind's vortices
   (WeatherMap3D's own shader field, weather_vortices) to the patch's wind, so each grain runs with its local wind
   (round the devil, in toward its wall) and flies only where that wind's u* passes the threshold, in the share of the
@@ -1116,6 +1124,12 @@ dunes, nebkhas: Hesp 1981; Tengberg 1995; Lancaster and Baas 1998). The mound un
   deposit), so the tail grows from both sides and tapers as the wind recovers.
 - Ground --test=shelter: the tail's deposit after two scaled hours at 1, 4 and 11 m behind a 2 m tuft, and none
   5 m to the side.
+- PC frame (23 Nov, vegetation --desert with VEG_DESERT_SAND=120): a crosshatch over the dunes where sand had landed.
+  The landing sand went to the field as discs 0.6 of a lattice step wide, one per cell, which left each cell's
+  corners bare; over hours of sand they built an egg-crate of bumps a step apart. Now each cell's share is a bilinear
+  tent a step wide (as the frost needles write theirs), so equal deposits rise flat (the tuft's mound now rises by
+  exactly what landed, 35.4 mm for 35.2). Tails did not read in that frame; the plants' floor patches there count
+  as plants too (lambda over 0.02), so many small wakes overlap.
 
 ## Next sand candidates, round 2 (research, 22 Nov 2026; on a card)
 
@@ -1203,8 +1217,10 @@ Round 2 (22 Nov), from the first raster scouts (a wall, but pale and cut flat in
 - The front points jumped tens of metres each scan (the map's ~190 m cells), smearing the head thin: now eased a
   quarter of the way to each find and moved by the found front's own drift between scans (a steady storm's ring
   stands still while its outflow blows through it).
-- `dust_color` is the far wall's tint (similarity relations over weather_dust_albedo, as the sky's dust_tint):
-  (1, 0.93, 0.62). `weather_dust_near` tells the sky's wall where the billows are.
+- Optics (23 Nov): the billows read the weather's one dust albedo per scatter (WeatherMap3D.get_dust_albedo(), the
+  weather_dust_albedo global, through physx_apply_dust_optics, as the devils do); `dust_color` is now a tint over it
+  (white). The wall's look (1, 0.93, 0.62, the sky's dust_tint) is what the scatters build: set as Flow's colour it
+  was a per-scatter albedo and took a third of the blue each scatter (the PC's orange-brown smear). `weather_dust_near` tells the sky's wall where the billows are.
 
 Dust field round 2 (clouds' note: dust only in a 1.5 km ring, nothing behind):
 - The transport jumped up to 8 cells a step (25 m/s x 60 s over 190 m cells) and crossed the front: now sub-stepped
@@ -1216,3 +1232,12 @@ Dust field round 2 (clouds' note: dust only in a 1.5 km ring, nothing behind):
 - Emission check: 8.7 mg/m2/s at 30 m/s and 8 % clay, mid-range of measured strong-event fluxes (1-100); the
   Marticorena-Bergametti clay factor is uncertain by about ten, so `dust_emission_scale` 10 for a Phoenix-class event
   is within it.
+
+### Desert tails image, stale sand (23 Nov)
+- The crosshatch on the cloud's desert shots after the tent fix was the old run's sand, not new: the bench kept ruts
+  (user://ground_ruts) and loaded the 48 h run's egg-crate back. The desert sand now runs with keep_ruts off, so every
+  run starts fresh; a clean 12 h run shows no crosshatch and no cones.
+- The near ripple mask (what moves, what shows) is read at its 20 cm blocks' centres and filled bilinearly between
+  them, no longer held flat per block.
+- Haboob front: max_blocks 1024 to 2048. The PC ran at the cap (1024 of 1024) and the dust was cut flat where no block
+  was free. Cloud (lavapipe) Flow renders drop thin smoke in front of the ground and step its edges: judge dust on the PC.

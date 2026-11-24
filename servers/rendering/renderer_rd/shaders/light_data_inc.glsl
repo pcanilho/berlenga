@@ -97,3 +97,12 @@ struct DirectionalLightData {
 	vec4 volume_shadow_v;
 	vec4 volume_shadow_w;
 };
+
+// The gas's light onto the surfaces around it (a mipmapped voxel grid of the light it scatters and its opacity, see
+// LightStorage::GasGlow): view space -> its u, v and w, and its medium.
+struct GasGlowData {
+	vec4 u; // all zero without one
+	vec4 v;
+	vec4 w;
+	vec4 medium; // x: single-scattering albedo, y: anisotropy
+};

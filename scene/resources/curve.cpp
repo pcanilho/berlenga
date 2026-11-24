@@ -1583,6 +1583,11 @@ void Curve3D::_bake() const {
 
 	baked_max_ofs = 0;
 	baked_cache_dirty = false;
+	// Every way out of the bake rebuilds the closest-offset bounds from the new cache.
+	struct ClosestBlocks {
+		const Curve3D *curve;
+		~ClosestBlocks() { curve->_bake_closest_blocks(); }
+	} closest_blocks{ this };
 
 	if (points.is_empty()) {
 #ifdef TOOLS_ENABLED
@@ -2097,9 +2102,48 @@ PackedVector3Array Curve3D::get_points() const {
 	return _get_data()["points"];
 }
 
-real_t Curve3D::get_closest_offset(const Vector3 &p_to_point) const {
-	// Brute force method.
+void Curve3D::_bake_closest_blocks() const {
+	baked_block_aabb.clear();
+	baked_super_aabb.clear();
+	baked_block_extent = 0.0;
+	const int pc = baked_point_cache.size();
+	if (pc - 1 < CLOSEST_BLOCK * 4 || baked_dist_cache.size() != pc) {
+		return;
+	}
+	const Vector3 *r = baked_point_cache.ptr();
+	const real_t *dist = baked_dist_cache.ptr();
+	real_t extent = 0.0;
+	for (int i = 0; i < pc; i++) {
+		if (!r[i].is_finite() || (i + 1 < pc && !(dist[i + 1] - dist[i] > 0.0f))) {
+			return; // A zero or broken interval: the plain loop keeps its exact handling of it.
+		}
+		extent = MAX(extent, MAX(Math::abs(r[i].x), MAX(Math::abs(r[i].y), Math::abs(r[i].z))));
+	}
+	const int segments = pc - 1;
+	baked_block_aabb.resize((segments + CLOSEST_BLOCK - 1) / CLOSEST_BLOCK);
+	AABB *blocks = baked_block_aabb.ptrw();
+	for (int b = 0; b < baked_block_aabb.size(); b++) {
+		const int first = b * CLOSEST_BLOCK;
+		const int last = MIN(first + CLOSEST_BLOCK, segments); // The end point of the block's last segment.
+		AABB box(r[first], Vector3());
+		for (int i = first + 1; i <= last; i++) {
+			box.expand_to(r[i]);
+		}
+		blocks[b] = box;
+	}
+	baked_super_aabb.resize((baked_block_aabb.size() + CLOSEST_BLOCK - 1) / CLOSEST_BLOCK);
+	AABB *supers = baked_super_aabb.ptrw();
+	for (int g = 0; g < baked_super_aabb.size(); g++) {
+		AABB box = blocks[g * CLOSEST_BLOCK];
+		for (int b = g * CLOSEST_BLOCK + 1; b < MIN((g + 1) * CLOSEST_BLOCK, baked_block_aabb.size()); b++) {
+			box.merge_with(blocks[b]);
+		}
+		supers[g] = box;
+	}
+	baked_block_extent = extent;
+}
 
+real_t Curve3D::get_closest_offset(const Vector3 &p_to_point) const {
 	if (baked_cache_dirty) {
 		_bake();
 	}
@@ -2113,6 +2157,82 @@ real_t Curve3D::get_closest_offset(const Vector3 &p_to_point) const {
 	}
 
 	const Vector3 *r = baked_point_cache.ptr();
+
+	const int nb = baked_block_aabb.size();
+	if (nb > 0 && p_to_point.is_finite()) {
+		// The same segment test as the loop below, run only on the blocks whose bounds come within the best distance
+		// found (plus a rounding margin far above float error). Ties go to the lowest segment, as the loop's first
+		// strict minimum does, so the result is the loop's to the bit.
+		const AABB *blocks = baked_block_aabb.ptr();
+		const real_t *dist_cache = baked_dist_cache.ptr();
+		const real_t margin = real_t(1e-4) * (real_t(1.0) + baked_block_extent +
+										  MAX(Math::abs(p_to_point.x), MAX(Math::abs(p_to_point.y), Math::abs(p_to_point.z))));
+		auto box_dist = [&](const AABB &p_box) -> real_t {
+			const Vector3 lo = p_box.position;
+			const Vector3 hi = p_box.position + p_box.size;
+			const Vector3 d = Vector3(MAX(MAX(lo.x - p_to_point.x, p_to_point.x - hi.x), real_t(0.0)),
+					MAX(MAX(lo.y - p_to_point.y, p_to_point.y - hi.y), real_t(0.0)),
+					MAX(MAX(lo.z - p_to_point.z, p_to_point.z - hi.z), real_t(0.0)));
+			return d.length();
+		};
+		real_t nearest = 0.0f;
+		real_t nearest_dist = -1.0f;
+		int nearest_i = pc;
+		auto run_block = [&](int p_block) {
+			const int first = p_block * CLOSEST_BLOCK;
+			const int last = MIN(first + CLOSEST_BLOCK, pc - 1);
+			for (int i = first; i < last; i++) {
+				const real_t offset = dist_cache[i];
+				const real_t interval = dist_cache[i + 1] - dist_cache[i];
+				Vector3 origin = r[i];
+				Vector3 direction = (r[i + 1] - origin) / interval;
+				real_t d = CLAMP((p_to_point - origin).dot(direction), 0.0f, interval);
+				Vector3 proj = origin + direction * d;
+				real_t dist = proj.distance_squared_to(p_to_point);
+				if (nearest_dist < 0.0f || dist < nearest_dist || (dist == nearest_dist && i < nearest_i)) {
+					nearest = offset + d;
+					nearest_dist = dist;
+					nearest_i = i;
+				}
+			}
+		};
+		// Seed with the block nearest in bounds (in the group nearest in bounds), then visit every block that could
+		// beat or tie the best found so far (the best only shrinks, so a block skipped stays beaten).
+		const AABB *supers = baked_super_aabb.ptr();
+		const int ng = baked_super_aabb.size();
+		int seed_group = 0;
+		real_t seed_dist = box_dist(supers[0]);
+		for (int g = 1; g < ng; g++) {
+			const real_t gd = box_dist(supers[g]);
+			if (gd < seed_dist) {
+				seed_dist = gd;
+				seed_group = g;
+			}
+		}
+		int seed = seed_group * CLOSEST_BLOCK;
+		seed_dist = box_dist(blocks[seed]);
+		for (int b = seed + 1; b < MIN((seed_group + 1) * CLOSEST_BLOCK, nb); b++) {
+			const real_t bd = box_dist(blocks[b]);
+			if (bd < seed_dist) {
+				seed_dist = bd;
+				seed = b;
+			}
+		}
+		run_block(seed);
+		for (int g = 0; g < ng; g++) {
+			if (box_dist(supers[g]) > Math::sqrt(nearest_dist) + margin) {
+				continue;
+			}
+			for (int b = g * CLOSEST_BLOCK; b < MIN((g + 1) * CLOSEST_BLOCK, nb); b++) {
+				if (b != seed && box_dist(blocks[b]) <= Math::sqrt(nearest_dist) + margin) {
+					run_block(b);
+				}
+			}
+		}
+		return nearest;
+	}
+
+	// Brute force method.
 
 	real_t nearest = 0.0f;
 	real_t nearest_dist = -1.0f;

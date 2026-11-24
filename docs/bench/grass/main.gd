@@ -40,7 +40,7 @@ extends Node3D
 #   --snowy          with --day: a snowy winter (January -6 C, July 18 C, 1100 mm): a long lie, then the sward after
 #                    the melt (GrassField3D.snowmelt); prints GRASS_MELT (days lain, days since the melt, matting)
 #   --hay=D          the meadow round the camera mown D days ago (GrassField3D.hay_meadows): 0 swaths, 1-2 tedded,
-#                    3 windrows, 4 and on stubble growing back
+#                    3 windrows, 4 and on stubble growing back; --hay-rain=MM: rained on while it lay (dull, bleached)
 #   --out=path.png   save the last frame
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
@@ -131,6 +131,7 @@ var snowy := false
 var seed_down := false
 var pollen_cloud := false
 var hay_days := -1.0
+var hay_rain := 0.0 # --hay-rain=MM: rain on the cut grass while it lay
 var flood := Vector2(-1, 10) # --flood: metres over the pond, days since
 var season_map: WeatherMap3D
 var bench_season := {}
@@ -365,6 +366,7 @@ func _ready() -> void:
 		elif a == "--seed-down": seed_down = true
 		elif a == "--pollen-cloud": pollen_cloud = true
 		elif a.begins_with("--hay="): hay_days = float(a.get_slice("=", 1))
+		elif a.begins_with("--hay-rain="): hay_rain = float(a.get_slice("=", 1))
 		elif a == "--river": river = true
 		elif a.begins_with("--flood="):
 			var fp := a.substr(8).split(",")
@@ -440,7 +442,7 @@ func _ready() -> void:
 		grass.still_shot = true
 	grass.name = "Grass"
 	if hay_days >= 0.0:
-		grass.hay_meadows = [{"polygon": PackedVector2Array([Vector2(-90, -90), Vector2(90, -90), Vector2(90, 90), Vector2(-90, 90)]), "row_angle": 0.35, "days": hay_days}]
+		grass.hay_meadows = [{"polygon": PackedVector2Array([Vector2(-90, -90), Vector2(90, -90), Vector2(90, 90), Vector2(-90, 90)]), "row_angle": 0.35, "days": hay_days, "rain": hay_rain}]
 	grass.fallback_wind = wind
 	grass.far_match_view = OS.get_environment("GRASS_VIEW_MATCH") != "0" # 0: without the live-view far match.
 	if OS.get_environment("GRASS_RADIUS") != "":

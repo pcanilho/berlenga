@@ -59,6 +59,19 @@ class SodLipFall3D : public Node3D {
 	int max_blocks = 24; // Blocks still simulated; older ones are frozen where they lie.
 	float break_speed = 2.5f; // m/s: a landing that stops the block this fast breaks it (estimate; about a 0.3 m drop)
 	float drag_coefficient = 1.05f; // A cube's face-on (the usual textbook value)
+	// Under water (docs/ideas/vegetation.md, "Sod crumbling in water"): the loose soil under the root mat slakes off as
+	// silt, then in a current the pieces wear away (shrinking) and their soil goes into the water.
+	float slake_time = 90.0f; // s for a piece's loose soil to slake once under water (estimate)
+	float slake_share = 0.35f; // Share of a piece's soil that slakes off (the loose soil under the mat; estimate)
+	float crumb_volume = 0.0015f; // m3: the piece size that wears away in wash_time
+	float wash_time = 20.0f; // s for a piece of crumb_volume to wear away in a current
+	struct Soak {
+		float time = 0.0f; // s under water
+		float washing = 0.0f; // s left washing out
+		float wash_rate = 0.0f; // kg/s of silt while it washes out
+	};
+	HashMap<uint64_t, Soak> soaks; // By piece body RID.
+	double silt_released = 0.0; // kg
 
 	double check_left = 0.0;
 	struct Fallen {
@@ -113,6 +126,8 @@ public:
 	int get_fall_count() const { return falls; }
 	// Blocks that broke on landing so far.
 	int get_break_count() const { return breaks; }
+	// Silt the blocks have shed into the water so far (WorldWater.add_sediment), kg.
+	float get_silt_released() const { return float(silt_released); }
 	// The falling or lying blocks (RigidBody3D) and the broken ones (PhysXDestructible3D).
 	Array get_blocks() const;
 	~SodLipFall3D();
@@ -135,4 +150,12 @@ public:
 	float get_break_speed() const { return break_speed; }
 	void set_drag_coefficient(float p_v) { drag_coefficient = MAX(p_v, 0.0f); }
 	float get_drag_coefficient() const { return drag_coefficient; }
+	void set_slake_time(float p_v) { slake_time = MAX(p_v, 0.1f); }
+	float get_slake_time() const { return slake_time; }
+	void set_slake_share(float p_v) { slake_share = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_slake_share() const { return slake_share; }
+	void set_crumb_volume(float p_v) { crumb_volume = MAX(p_v, 0.0f); }
+	float get_crumb_volume() const { return crumb_volume; }
+	void set_wash_time(float p_v) { wash_time = MAX(p_v, 0.1f); }
+	float get_wash_time() const { return wash_time; }
 };

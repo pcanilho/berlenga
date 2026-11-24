@@ -30,7 +30,7 @@ extends Node3D
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
 #   --cell=m              with --world: the generator's cell size (8; 4 for close shore and cliff shots)
-#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
+#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=ledge with --view=cliff: the ledge slabs; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
 #   --no-ground-contact   no damp ring or banked fines on the ground round the stones (for a before frame)
@@ -51,6 +51,8 @@ extends Node3D
 #   --no-sea-mist         with --sea-caves --cave-mesh: no mist breathed out of the mouths; --mist-period=s its swell
 #                         period (run with --fixed-fps 60 and --settle=N for N frames of mist)
 #   --no-moss             no moss shells on the close-up stones (the shader's moss tint only; a before frame)
+#   --rt-instanced        RockField3D.rt_instanced_cells on: cell stones path traced as instances (memory A/B)
+#   --mem-report          video memory at the saved frame (with the engine flag --extra-gpu-memory-tracking: by Vulkan object type)
 #   --no-close-up         the near stones keep their base shape (RockField3D.close_up_enabled off; an A/B)
 #   --rain=mm/h           with --rock: rain on the stone for --rain-hours=h (0.5), then --dry-hours=h of drying;
 #                         --no-rivulets for a before frame; --film=f the water film of a stream bed's stones
@@ -98,6 +100,8 @@ extends Node3D
 #   --face-weathering=x   with --world: the ground material's rock-face lichen, moss and seep streaks (1; 0 before)
 #   --bank-relief=x       with --world: Landscape3D.bank_relief (0.8 m; 0 for a before frame); --bank-spot puts the
 #                         spot on a 42 to 52 degree soil bank; --spot=x,z puts the spot at a world point
+#   --rain-climate[=P]    with --world: a mild climate of P mm a year (350) for RockField3D.rain_pedestals (stones on rain
+#                         splash pedestals on bare soil); --pedestal-spot the tallest near the centre; --no-rain-pedestals off
 #   --no-cliff-relief     with --world: Landscape3D.cliff_relief off (the bare heightfield faces; a before frame)
 #   --no-patch-relief     with --world: the beach GroundSurface3D patch without the landscape's cliff relief (a before
 #                         frame; the landscape keeps it)
@@ -128,7 +132,7 @@ class SwellStub extends WorldWater:
 
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
-const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth"]
+const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth", "ledge"]
 const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform"]
 var WORLD := 2048.0 # --world-size=m (a smaller world for path traced stills that would not fit the memory)
 
@@ -609,6 +613,7 @@ func _world() -> void:
 		rocks.ground_contact = not args.has("no-ground-contact")
 		rocks.moss_cushions = not args.has("no-moss")
 		rocks.close_up_enabled = not args.has("no-close-up")
+		rocks.rt_instanced_cells = args.has("rt-instanced") # cell stones path traced as instances (memory A/B)
 		rocks.rockfall_dust = not args.has("no-dust")
 		if args.has("moss"):
 			rocks.moss_cover = float(args["moss"])
@@ -756,6 +761,45 @@ func _world() -> void:
 					found_f = p
 		spot = found_f
 		print("frost spot ", spot, " (", tried, " points fully sorting)")
+	# --rain-climate=P: a mild climate of P mm a year (350 by default: dry, half-bare soil) on a WeatherMap3D, so bare soil
+	# carries stones on rain splash pedestals (RockField3D.rain_pedestals; --no-rain-pedestals off).
+	if args.has("rain-climate") and not args.has("frost"):
+		var rc = ClassDB.instantiate("ClimateRecipe")
+		rc.temperature_january = 6.0
+		rc.temperature_july = 24.0
+		rc.precipitation = 350.0 if args["rain-climate"] == "1" else float(args["rain-climate"])
+		var rw = ClassDB.instantiate("WeatherMap3D")
+		rw.extent = 256.0
+		rw.resolution = 32
+		rw.climate = rc
+		rw.season_day = 200
+		add_child(rw)
+	if args.has("pedestal-spot"):
+		# --pedestal-spot: open, stony bare soil of 6 to 20 degrees where the pedestals stand tallest (with
+		# --rain-climate).
+		var best_p := -INF
+		var found_p := spot
+		for zz in range(-800, 801, 8):
+			for xx in range(-800, 801, 8):
+				var p := Vector3(xx, 0, zz)
+				var pa: Vector2 = rocks.get_pedestal_at(p)
+				if pa.x < 0.3:
+					continue
+				var sl := rad_to_deg(atan(Vector2(gen.get_height(p + Vector3(4, 0, 0)) - gen.get_height(p - Vector3(4, 0, 0)), gen.get_height(p + Vector3(0, 0, 4)) - gen.get_height(p - Vector3(0, 0, 4))).length() / 8.0))
+				if sl < 6.0 or sl > 20.0:
+					continue
+				# Open ground (the less bank or crag over it 10 m round, the better), so the light reaches it.
+				var hp := gen.get_height(p)
+				var rise := 0.0
+				for k in 8:
+					var q := p + Vector3(cos(k * PI / 4.0), 0, sin(k * PI / 4.0)) * 10.0
+					rise = maxf(rise, gen.get_height(q) - hp)
+				var score := pa.x + pa.y * 20.0 - maxf(rise - 2.0, 0.0) * 0.15 - Vector2(xx, zz).length() / 4000.0
+				if score > best_p:
+					best_p = score
+					found_p = p
+		spot = found_p
+		print("pedestal spot ", spot, " ", rocks.get_pedestal_at(spot))
 	if args.has("bank-spot"):
 		# --bank-spot: a soil bank of 42 to 52 degrees (no rock exposure, not talus) 20 m or more long, for Landscape3D's
 		# bank relief; scored by how much of the bank 8 m either side along the contour is as steep.
@@ -944,6 +988,16 @@ func _world() -> void:
 		cam.position = mouth + best_dir * d
 		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, mouth.y + float(args.get("cam-up", "1.6")))
 		look = mouth + Vector3(0, float(args.get("look-height", "3")), 0)
+	if form_stone.has("basis") and args.get("form", "") == "ledge" and not args.has("cam"):
+		# A ledge slab from out over its lip and to one side, a little under its top: the overhang and its soffit.
+		var lb: Basis = form_stone["basis"]
+		var o := Vector3(lb.z.x, 0, lb.z.z).normalized()
+		var sd := Vector3(-o.z, 0, o.x)
+		var lip: Vector3 = form_stone["position"] + lb.z * 0.8
+		var d := float(args.get("dist", "9"))
+		cam.position = lip + (o + sd * float(args.get("side", "0.9"))).normalized() * d
+		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, lip.y + float(args.get("cam-up", "0.5")))
+		look = lip
 	cam.look_at(look)
 	if args.has("cam"):
 		# --cam/--look win over the view's camera (a fixed shot of a spot in the world).
@@ -990,6 +1044,7 @@ func _world() -> void:
 		# --rooting[=years]: a boar rooting 1.5 m across, 2 m behind the spot, that age (0: fresh). WorldStand.
 		rocks.frost_sorting = not args.has("no-frost")
 		rocks.runoff_gravel = not args.has("no-runoff-gravel") # --no-runoff-gravel: the rills and gullies without their lag (a before frame)
+		rocks.rain_pedestals = not args.has("no-rain-pedestals") # --no-rain-pedestals: bare soil without its stones and pedestals (a before frame)
 		if args.has("frost"):
 			var fr := ""
 			for dz in [-6, -3, 0, 3, 6]:
@@ -2046,6 +2101,24 @@ func _densest(layer: int) -> Vector3:
 			print("%s at %s" % [args["form"], best["position"]])
 			form_stone = best
 			return best["position"]
+	if layer == RockField3D.LAYER_CLIFF and args.get("form", "") == "ledge":
+		# --view=cliff --form=ledge: where the ledge slabs stand thickest.
+		var ledges := []
+		for s in stones:
+			if int(s["family"]) == RockGenerator.FAMILY_LEDGE:
+				ledges.append(s)
+		print("ledge slabs in view range: %d" % ledges.size())
+		# The biggest in the sun, framed from out and to one side (the ledge view below).
+		var best := {}
+		for s in ledges:
+			var sc := float(s["scale"]) + (100.0 if _sunlit(s["position"] + Vector3(0, 1, 0)) else 0.0)
+			if best.is_empty() or sc > float(best["score"]):
+				best = s.duplicate()
+				best["score"] = sc
+		if not best.is_empty():
+			print("ledge slab at %s (scale %.2f)" % [best["position"], best["scale"]])
+			form_stone = best
+			return best["position"]
 	var cells := {}
 	var sums := {}
 	for s in stones:
@@ -2876,6 +2949,15 @@ func _render_later() -> void:
 			await RenderingServer.frame_post_draw
 			waited += 1
 		print("rt pending surfaces cleared after %d frames" % waited)
+		if args.has("wait-held"):
+			# --wait-held=N: up to N more frames while the path tracer holds budget-limited geometry back.
+			var held_wait := 0
+			while held_wait < int(args["wait-held"]) and get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_DYNAMIC_HELD) > 0:
+				await RenderingServer.frame_post_draw
+				held_wait += 1
+				if held_wait % 20 == 0:
+					print("  held %d, TLAS %d" % [get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_DYNAMIC_HELD), get_viewport().get_render_info(Viewport.RENDER_INFO_TYPE_VISIBLE, Viewport.RENDER_INFO_RT_TLAS_INSTANCES)])
+			print("rt held cleared after %d more frames" % held_wait)
 	if args.has("fov"):
 		get_viewport().get_camera_3d().fov = float(args["fov"]) # --fov=deg: vertical field of view (27: a 50 mm lens)
 	var frames := (8 if raster else 12) + int(args.get("settle", "0")) # --settle=N: N more frames (lazily built near plants)
@@ -2919,6 +3001,20 @@ func _render_later() -> void:
 				if o < 0.05:
 					on_it += 1
 		print("relief: %d pebble grains on drawn relief (%d within 5 cm), ground off it by %.3f m at most %s" % [on_relief, on_it, off, worst])
+		if rocks.rain_pedestals and args.has("rain-climate"):
+			# The grains on rain splash pedestals round the spot: how many, and their columns' mean and tallest.
+			var ped := 0
+			var all := 0
+			var tall := 0.0
+			var sum := 0.0
+			for st in rocks.get_stones(RockField3D.LAYER_DETAIL_PEBBLE, Rect2(spot_pos.x - 3, spot_pos.z - 3, 6, 6)):
+				all += 1
+				var pv := float(st.get("pedestal", 0.0))
+				if pv > 0.0:
+					ped += 1
+					sum += pv
+					tall = maxf(tall, pv)
+			print("pedestals: %d of %d pebble grains within 3 m on pedestals, mean %.3f m, tallest %.3f m" % [ped, all, sum / maxf(ped, 1), tall])
 	if rocks and rocks.moss_cushions:
 		print("moss: %d shells, %d triangles, %d building" % [rocks.get_moss_shell_count(), rocks.get_moss_triangle_count(), rocks.get_moss_pending()])
 	if rocks and rocks.ground_contact and rocks.get_contact_texture():
@@ -3003,6 +3099,17 @@ func _render_later() -> void:
 				for k in range(0, pts.size(), 4):
 					print("  station %d at %.1f m: %s, half width %.2f" % [k, al[k] if k < al.size() else 0.0, str(pts[k]), hws[k] if k < hws.size() else 0.0])
 			print("sea cave water: %d stations over %.1f m, arch from %.1f m, level at the mouth %s, %d drawn, %d sea clip capsules" % [pts.size(), al[al.size() - 1] if al.size() > 0 else 0.0, w.get("covered_from", 0.0), str(pts[0]) if pts.size() > 0 else "-", sw.get_ribbon_count() if sw else -1, (c as CaveNetwork3D).get_water_clip_capsules().size() / 8])
+	if rocks:
+		print("rocks rt: %s (rt_instanced_cells %s)" % [str(rocks.get_rt_stats()), str(rocks.rt_instanced_cells)])
+	if args.has("mem-report"):
+		# --mem-report: video memory at the saved frame; with the engine's --extra-gpu-memory-tracking also the
+		# driver's memory by Vulkan object type (buffers, images, acceleration structures).
+		print("video memory: total %d MB, textures %d MB, buffers %d MB" % [RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) >> 20,
+				RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED) >> 20, RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) >> 20])
+		var rd := RenderingServer.get_rendering_device()
+		if rd:
+			print("acceleration structures: %d MB" % [rd.get_memory_usage(RenderingDevice.MEMORY_ACCELERATION_STRUCTURES) >> 20])
+			print(rd.get_driver_and_device_memory_report())
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(0)

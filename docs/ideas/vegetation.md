@@ -1869,7 +1869,10 @@ Built: PollenCloud3D (pollen_cloud_3d.*), the landscape scale beside VegetationP
   the weather gives no season).
 - Sources: the nearest needle-leaved crowns of the scene's VegetationField3Ds within range (get_crowns_near now
   reports "conifer"), each at its crown's middle with the wind there; sward points on a 6 m lattice within 30 m
-  where a GrassField3D's rules grow grass.
+  where a GrassField3D's rules grow grass. The sward's sources are faint and small (1 m, a tenth of the first rate):
+  grass pollen in open air is invisible (high counts are 50 to 150 grains a cubic metre, Waudby et al. 2022; an
+  extinction near 1e-7 a metre, an estimate), so it shows only at the panicles in strong wind. The first rate filled
+  the air round a camera in a June meadow with a sepia cast (landscape, 23 Nov).
 - Drawn: one PhysXFlow3D of its own, 0.5 m cells, smoke density 0.35, a little heavy (-0.03), slow fade (0.05),
   sulphur yellow, scattering albedo 0.85 (estimate), the weather's wind; sphere emitters with the wind's velocity.
 - Check: vegetation --test "pollen clouds" (10 crowns shed in dry wind, none damp, calm or in winter; nearest first).
@@ -2011,3 +2014,104 @@ array, for the path tracer's material slot), so the days pass without a rebuild.
   half 41/52/28 against 32/40/21), so the dark read is the bench's light, not the stubble's material. One fault fixed:
   the blades' ambient darkening (Monsi and Saeki leaf area, in AO) took the whole sward's leaf area over the stubble;
   it now takes the stubble's (about the height left). Paler cut tips are a round 10 option, not built.
+- Far shell handover fix (23 Nov): in the landscape meadow view the far shell started at 0.6 of the stream reach
+  (48 m) under a 2.3 m tall grass drawn to 60 m, so the solid shell showed between the airy plants as a flat olive wall
+  of peaks. Each species now feeds the shell only over the last 15% of its own range (its plants' end), unranged ones
+  at the stream radius.
+- GrassField3D.far_bake (on): off skips the far colour bake (hand-matched far colour kept), for software-rendered
+  scouts where the bake's three SubViewports take hours. Docs stills keep it on.
+- Hay look from the PC pairs (23 Nov): the bale read as an olive, lumpy mass (a mossy stone), so its body now carries
+  the wound layers as geometry (rings about 9 mm apart across the width, each its own shade and a few mm proud or sunk;
+  the layer width an estimate), smaller lumps and a warmer hay colour (about 113k triangles with LODs). The windrows
+  read grey-white in raster and path tracing: cut hay lying face up mirrored the sky. Dry hay is now matt (roughness at
+  least 0.8, less strand sheen, specular 0.2) and green-gold, near and on the far ground.
+
+## Pale fresh stubble (round 10, first pick)
+A meadow cut for hay lays open the stem bases and leaf sheaths that grew in the sward's shade: turf cut low "turns
+yellow or brown" where "the stem tissue is exposed" (UC IPM, Scalping, ipm.ucanr.edu/TOOLS/TURF/PESTS/abioscalp.html),
+the "brown, stemmy" look that takes "probably several weeks" to recover in summer (K-State, Scalping Turf). A hay
+stubble of 7.5 to 10 cm shows the same in a milder form: pale yellow-green stubs, straw-tinged cut ends, the green
+leaves regrowing from the base over the following weeks.
+Built: the grass blade shader's mown branch (GrassField3D.hay_meadows) passes the cut stub's share of each stubble
+blade and how fresh the cut is (one vec3 varying with the leaf area left: the shader is at the 32-varying limit).
+Below the cut the blade takes a yellow-green (its colour x (1.3, 1.15, 0.55), a fifth straw), the top tenth of the
+stub straw-tinged; full for five days, easing to 0.4 by day 21 (estimate); the regrowth above keeps its green, so
+the pale share falls as the blades grow back (by day 30 the meadow is green). The far ground's mown colour already
+pales the stubble the same way. Check: grass bench --raster --hay=5 and --hay=30.
+
+## Sod crumbling in water (round 10, second pick)
+A turf block that falls into water does two things. The loose soil under its root mat slakes: dry aggregates wetted
+fast break down within minutes as the air in their pores is forced out (the fast-wetting test of aggregate stability,
+Le Bissonnais 1996, European Journal of Soil Science 47), clouding the water. In a current the rest wears away by the
+flow's excess shear stress on cohesive soil (erosion rate k (tau - tau_c); streambank ranges in the bank-erosion model
+tables of HESS 22, 3903, 2018: tau_c 0 to 21.9 Pa, k 0.0001 to 0.32 m3/N/day), the root mat holding longest.
+Built: SodLipFall3D under water (WorldWater.height_at, half under or more).
+- Slaking: over slake_time (90 s, estimate) slake_share (0.35, estimate) of each piece's soil mass (volume x density)
+  goes into the water at an even rate by WorldWater.add_sediment as mineral load, which the water producers carry
+  off as their suspended load (the river's and surface's own turbidity: the silt trail is the water's).
+- Wearing away: slaked through in a current over 0.3 m/s, a piece shrinks away (PhysXDestructible3D.dissolve_piece,
+  new: one piece's own shrink and removal) over wash_time (20 s) for a piece of crumb_volume (0.0015 m3), longer by the
+  cube root of its volume for larger ones (estimates: the rate above for a root-bound mat would take days; the game
+  keeps it to minutes); the rest of its soil goes into the water as it shrinks. Still water keeps the pieces.
+- The pieces are Blast's leaves (the lip is prefractured one level deep), so they wear as whole pieces, not crumbs.
+- get_silt_released() reports the kg shed. Check: vegetation --test=sod ("sod crumbling").
+
+## Hay curing colour (round 10, third pick)
+Cut grass cures from fresh green to a green-gold over its drying days (already drawn: "Mowing and hay rows"). Rain on
+it while it lies does the damage: "prolonged exposure to sun and rain reduces green color" and wet hay "supports mold
+growth and nutrient degradation" (Manitoba Agriculture, How Rain Affects Hay Quality); re-wetting restarts the plants'
+respiration until they dry below 30% moisture (same page).
+Built: GrassField3D adds up the weather's rainfall (WorldWeather.rainfall_at over each meadow's middle, in the
+weather's own time via WorldWeather.time_scale) while the cut grass lies (days 0 to 4), reset when it is mown again;
+a meadow's "rain" key fixes it. mow_state's b channel carries the mm to the blades (v_cut.z on a lying blade: the
+shader is at its varying limit) and to the far ground (grass_mow_ground). From about 2 mm to fully at 25 mm (estimates)
+the hay goes to a dull brown-tan (its luminance x (0.95, 0.85, 0.62), three quarters of the way); a lighter grey first
+read as white. Check: grass bench --raster --hay=3 --hay-rain=30 against --hay-rain=0.
+
+
+## Rocks fetched per tile (rock_field)
+
+The showcase built one world-wide obstacles array of every RockField3D stone (1.17 M) before any plant was placed:
+148 s of setup on the cloud profile (optimisation.md). Placement that reads another layer only near the tiles being
+placed is the standard shape of run-time procedural placement (Jaap van Muijden, "GPU-Based Run-Time Procedural
+Placement in Horizon: Zero Dawn", GDC 2017: tiles round the camera, each layer evaluated only where needed).
+
+`VegetationField3D.rock_field` and `GrassField3D.rock_field` point at a RockField3D. On the main thread, just before
+a tile (a streamed tile, a populate, a sward tile or a far ring tile) is placed, the field asks
+`RockField3D.get_obstacles` for the 32 m chunks within the tile's reach not fetched yet (one call over the span of
+the missing chunks, so the rock field places their cells on its workers together) and keeps them. A stone belongs to
+the chunk its centre is in, which is how `get_obstacles` filters, so the chunks hold exactly the world query's
+stones, each once. The reach is the placement halo plus the widest rock query of `_place` (rock foot shelter, stone
+gap, stem, log and leaf clearance, leaf drift cell) plus `rock_footprint_max` (32 m, a warning if a wider stone is
+fetched). A streamed VegetationField tile gets its own small obstacle grid, built before its worker starts; the sward
+builds on the main thread and adds the new stones to its one grid. The obstacles array still works, alone or with a
+rock field.
+
+To make the answer independent of which stones a grid holds, `VegetationObstacles.clearance` and
+`second_clearance` now ignore an edge past the asked reach (before, a stone a little past it could count when the
+grid's widest stone made the search wider). Every caller already treated a result past its reach as none, except the
+leaf drift's lee tail between 1.6 and 2.6 m, which now stops at 1.6 m.
+
+Proof: `docs/bench/vegetation --test=rocks` compares fields reading the rock field with fields reading the same
+stones as one array: populated, streamed round a point, the leaf drift, and the sward's near and far ring blades
+are identical, and a field with no rocks differs.
+
+## Species sets made in parallel (PlantGenerator.make_sets)
+
+After the world cache, the showcase's cover setup (26 s every launch) was its plant species being generated one after
+another: the forest floor 5.2 s, the heaths 8 s and the scrub 6.5 s (their woody shrubs), the rest small. Each set
+is independent, so they run as jobs on the worker threads (Christian Gyrling, "Parallelizing the Naughty Dog Engine
+Using Fibers", GDC 2015: independent work split into jobs a pool runs). `PlantGenerator.make_sets(calls)` takes
+`[method, args]` for the static `make_*` methods (or `["variants", preset, count]`) and returns their results in
+order.
+
+The generators draw from their own seeded hashes (no global random state), so a job's result does not depend on the
+order the jobs run in. The lazily made shared shaders are made on the main thread first. A worker's rendering calls
+that wait for an answer (a mesh's arrays, a texture read back for a hull colour) are queued for the main thread, which
+flushes that queue while it waits. The flush itself compiles shaders on the workers, so the jobs run on all workers
+but one: with every worker waiting on the main thread and the main thread waiting on a worker, neither went on (the
+same deadlock trees.md 5bc met).
+
+Proof: the cover's 38 sets fingerprinted (every mesh's arrays, every material's parameters, every texture's pixels,
+every species' properties and metas) are identical made one after another and in parallel, over four parallel runs;
+`docs/bench/plants --test` checks a smaller mix. Cloud (4 cores, 3 lanes): 25.0 s to 11.5 s. The PC's cores give more.

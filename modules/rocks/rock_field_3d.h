@@ -94,6 +94,7 @@ public:
 		float ground = 0.0f; // ground height under it
 		float film = 0.0f; // water film 0..1
 		float footprint = 0.0f; // radius where it meets the ground
+		float pedestal = 0.0f; // m of soil column it stands on (rain splash pedestals), 0 none
 		uint32_t library = 0; // library key
 		uint16_t variant = 0;
 		uint16_t layer = 0;
@@ -147,6 +148,10 @@ private:
 	// as the coarse tier places); a cell that asks for a shape library not built yet is placed again on the main
 	// thread, as before, so the result is the same.
 	static void _obstacle_place_job(void *p_job, uint32_t p_index);
+	// The world cache's key for everything the obstacle cells read (world_cache.h): this field's and the generator's
+	// stored properties, the generator's result and the drawn relief. False when some of it cannot be keyed (a script
+	// ground stub, a relief provider without a key): then the cells are placed as before and not cached.
+	bool _obstacle_cache_base(const TerrainGenerator3D *p_gen, String &r_base) const;
 
 	struct Group {
 		uint32_t library = 0;
@@ -217,6 +222,7 @@ private:
 	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0, 900.0, 20.0, 10.0, 5.0 };
 	// Ground detail (docs/ideas/ground-detail.md): opt-in, an experiment.
 	bool far_thinning = true; // scatter layers thin out over the outer half of their radius (_update_thinning)
+	bool rt_instanced_cells = false; // cell stone groups path traced as instances of their shape, not a merged BLAS
 	bool far_widen = true; // thinning's survivors grow (to 1.6x) to keep the stone cover of the records dropped
 	// Far tier (docs/ideas/rocks.md, "Far rocks"): past a layer's radius its big stones and the landmarks are drawn on
 	// to far_radius, from blocks of FAR_BLOCK x FAR_BLOCK cells placed exactly as the near cells would be.
@@ -231,6 +237,7 @@ private:
 	uint64_t tile_stats[3] = {}; // tiles cut, placements, grains drawn by placements
 	mutable SafeNumeric<uint64_t> frost_stones; // ground detail placed by frost sorting
 	mutable SafeNumeric<uint64_t> runoff_stones[2]; // ground detail placed by storm runoff: channel lag, fan spread
+	mutable SafeNumeric<uint64_t> pedestal_stones[3]; // stones on bare soil under rain: on a pedestal, toppled off one; columns drawn
 	mutable SafeNumeric<uint64_t> wear_stones[3]; // ground detail placed by worn ground: trail armour, shoulders, rooting
 	mutable SafeNumeric<uint64_t> tile_skips[5]; // squares left single: few grains or a hole, coarse stones, bent ground, no match, total
 	static bool _is_detail(int p_layer) { return p_layer >= LAYER_DETAIL_PEBBLE && p_layer <= LAYER_DETAIL_FINE; }
@@ -250,6 +257,17 @@ private:
 		float wet = 0.0f; // 0..1 from the year's precipitation
 		bool any = false; // the gate is open somewhere over the job's cell (its squares are not tiled)
 	};
+	// Bare soil under rain (docs/ideas/ground-detail.md, "Rain splash pedestals"): read on the main thread for a
+	// detail job from the weather's climate, the terrain's precipitation pattern and the burn scars.
+	struct RainClimate {
+		bool on = false;
+		float precip = 0.0f; // mm a year at the cell (the climate's times the orographic factor)
+		float bare = 0.0f; // 0..1 of the soil bare of plants from the climate's dryness
+		float burn[9] = {}; // 0..1 bare from a recent fire, on a 3 x 3 grid over the cell (corners and middles)
+		Rect2 rect;
+		bool any = false;
+		float burn_at(float p_x, float p_z) const;
+	};
 	struct CoverJob {
 		const RockField3D *field = nullptr;
 		const TerrainGenerator3D *gen = nullptr;
@@ -264,6 +282,7 @@ private:
 		bool river = true;
 		LocalVector<RiverSeg> river_segs; // the river beds under the map
 		FrostClimate frost; // frost-sorted ground's borders
+		RainClimate rain; // stones on bare soil
 		PackedByteArray data; // RGBA8: pebble, gravel and fine cover (0..0.5 as 0..255), rock type (x 32)
 		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
 	};
@@ -272,6 +291,14 @@ private:
 	bool ground_wear = true; // ground detail worn by game trails and turned by boar rooting (WorldStand)
 	bool frost_sorting = true; // frost-sorted circles and stripes of stones on cold, wet, gentle soil (WorldWeather climate)
 	bool runoff_gravel = true; // a coarse lag in the terrain's rill and gully floors, fine grains on their fans
+	bool rain_pedestals = true; // stones on bare soil stand on columns the rain splash left round them
+	void _rain_climate(const Rect2 &p_rect, RainClimate &r_rain) const;
+	// Any thread: the bare, erodible soil's share at a point (0..1: the stones lying on it), and the soil the splash
+	// has taken off round them (m, r_depth).
+	float _rain_soil(const TerrainGenerator3D *p_gen, const RainClimate &p_rain, const Vector3 &p_at, float &r_depth) const;
+	Ref<ArrayMesh> pedestal_mesh;
+	Ref<ShaderMaterial> pedestal_material;
+	void _pedestal_resources();
 	Ref<ImageTexture> cover_tex[2];
 	Vector2 cover_origin[2];
 	bool cover_valid[2] = {};
@@ -397,6 +424,8 @@ private:
 		RockField3D *field = nullptr;
 		StandWear wear;
 		FrostClimate frost;
+		RainClimate rain;
+		LocalVector<float> pedestals; // soil columns under the pedestalled stones: 12 floats each (MultiMesh 3D)
 		ReliefGrid relief;
 		Vector3i key;
 		TerrainGenerator3D *gen = nullptr;
@@ -475,6 +504,8 @@ private:
 	ObjectID generator_id;
 	LocalVector<River> rivers;
 	bool rivers_ready = false;
+	bool ledge_slabs = true; // the caprock slabs along the benches' lips (TerrainGenerator3D.get_ledge_lips)
+	Mutex rivers_lock; // _prepare_rivers: workers may ask for the list at once
 	HashMap<uint32_t, Library> libraries;
 	HashMap<int, Ref<ShaderMaterial>> materials; // per rock type, with this field's lichen and moss
 	HashMap<Vector3i, Cell> cells; // (layer, cell x, cell z)
@@ -694,6 +725,7 @@ private:
 
 private:
 	// p_libs and p_seeds: the ground detail's snapshot (DetailJob) when placing off the main thread.
+	void _place_ledges(const TerrainGenerator3D *p_gen, Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones);
 	void _place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones, const HashMap<uint32_t, Library *> *p_libs = nullptr, const LocalVector<DetailSeed> *p_seeds = nullptr);
 	void _rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const Library &p_lib, const Vector3 &p_xz, real_t p_yaw, real_t p_sink, const Vector3 &p_tilt_axis, real_t p_tilt, real_t p_follow_ground) const;
 	Ref<ShaderMaterial> _material(RockGenerator::RockType p_type, RockGenerator::Family p_family = RockGenerator::FAMILY_ROCKFALL, bool p_detail = false);
@@ -820,6 +852,11 @@ public:
 	void set_layer_density(int p_layer, real_t p_density);
 	real_t get_layer_density(int p_layer) const;
 	void set_far_thinning(bool p_enabled) { far_thinning = p_enabled; }
+	void set_ledge_slabs(bool p_enabled);
+	bool is_ledge_slabs() const { return ledge_slabs; }
+	void set_rt_instanced_cells(bool p_enabled);
+	bool is_rt_instanced_cells() const { return rt_instanced_cells; }
+	Dictionary get_rt_stats() const;
 	void set_far_widen(bool p_enabled) { far_widen = p_enabled; }
 	Ref<Texture2D> get_far_cover_texture() const { return far_cover_texture; }
 	bool is_far_widen() const { return far_widen; }
@@ -861,6 +898,10 @@ public:
 	void set_frost_sorting(bool p_enabled);
 	void set_runoff_gravel(bool p_enabled);
 	bool is_runoff_gravel() const { return runoff_gravel; }
+	void set_rain_pedestals(bool p_enabled);
+	bool is_rain_pedestals() const { return rain_pedestals; }
+	// (bare soil's stone share 0..1, soil lost round the stones m) at a point: where the rain leaves pedestals.
+	Vector2 get_pedestal_at(const Vector3 &p_position) const;
 	bool is_frost_sorting() const { return frost_sorting; }
 	// How strongly the ground sorts at a point (0..1), and its stone share there (x: gate, y: share), for benches.
 	Vector2 get_frost_at(const Vector3 &p_position) const;

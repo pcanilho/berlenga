@@ -6,6 +6,67 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-63852a4d (2026-11-24)
+
+### Added
+- StreetWater3D.frame_path, prefill and get_depth_at; RoadRelief3D.relief_frame, storm-drain inlets (inlet_spacing, inlets) and get_pond_depth_at: water that rides a sliding street, puddles already filled as it comes into view, gutters that drain.
+
+## build-1dd038a4 (2026-11-24)
+
+### Added
+- StreetWater3D: GPU shallow water over a street's relief in a camera-following window (2.5 cm cells). Rain runs off as a film into ruts, hollows and gutters; tyres and feet (submit_sphere) push the water aside into bow waves and V wakes and it runs onto dry road; soaking, evaporation and damp that dries. The road material draws it from one map (get_shader_include), so raster and path tracing match.
+- RoadRelief3D.get_surface_height_at: the built mesh's height, cheap enough for many samples.
+
+## build-8c7d4c79 (2026-11-23)
+
+### Fixed
+- Path tracing: a blended (alpha) layer's own bounce light is no longer lost at some alpha values, which left blended surfaces near black where only sky and bounce light reach them (#321).
+- Path tracing: the medium scratch image starts cleared, so a stray read can't pick up another surface's leftover colours (#400).
+
+## build-57e5524c (2026-11-23)
+
+### Changed
+- Old-growth beech stands: veteran giants grow visibly thicker than the canopy, canopy crowns are fuller and domed, and most fallen giants lie with their root plate up.
+
+### Fixed
+- Stand variants no longer compound each other's band settings (crown room, shade, shedding), so every variant of an old-growth, succession or taiga species is grown as its band intends.
+
+## build-c2def7d8 (2026-11-23)
+
+### Added
+- RainFall3D body_collision: rain and eave drips land and splash on moving physics bodies near the camera (characters, vehicles, rigid props).
+- RoadRelief3D: street surface whose crown, gutters, wheel ruts, ISO 8608 roughness, sags, birdbaths, patches and potholes are real geometry (raster, path tracer, collider and water read one height via get_height_at). Built from world position, so it never repeats and joins without seams.
+
+## build-4121c48d (2026-11-23)
+
+### Changed
+- PhysXFlow3D surface_glow (and lights dimmed through the gas) works without a DirectionalLight3D, e.g. a fire at night.
+
+## build-bf7f03d5 (2026-11-23)
+
+### Fixed
+- A point or spot light inside or behind PhysXFlow3D gas (a fire's own light) no longer lights surfaces straight through the gas in Forward+ (with surface_glow on).
+
+## build-40d110e1 (2026-11-23)
+
+### Changed
+- Camera cut-out: draws the cut cannot reach compile its discard out (`CAMERA_CUTOUT_REACH` in spatial shaders), keeping early depth tests (no setting).
+
+## build-a0f91e0f (2026-11-23)
+
+### Changed
+- Camera cut-out: draws the cut cannot reach compile its discard out (`CAMERA_CUTOUT_REACH` in spatial shaders), keeping early depth tests (no setting).
+
+## build-1ab80137 (2026-11-23)
+
+### Added
+- Raster gas lights the surfaces around it and hides the sky from them, as under path tracing: snow beside a sunlit cloud picks up its light, and the ground around dark smoke sees less sky (PhysXFlow3D `surface_glow`, on).
+
+## build-56347589 (2026-11-23)
+
+### Added
+- Raster gas lights the surfaces around it and hides the sky from them, as under path tracing: snow beside a sunlit cloud picks up its light, and the ground around dark smoke sees less sky (PhysXFlow3D `surface_glow`, on).
+
 ## build-12b84872 (2026-11-23)
 
 ### Changed

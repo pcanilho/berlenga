@@ -930,3 +930,120 @@ anti-tiling and clustering: the read warped (up to 450 m over 5 km) with each re
 texture (Quilez, "texture repetition"), and the cover modulated by a two-octave noise (1.8 km, 700 m) so cloudlets
 gather in groups with clear gaps, their fine-octave share varying by region (large rounded in one group, small ragged
 in the next). Raster and PT agree; midday look kept.
+
+## Lenticulars: smooth lens, crisp rim (23 Nov)
+
+Docs declined a landscape frame where a near lens looked combed (streaks through the whole sheet) and stacked plates
+showed as comb teeth. Lenticulars are laminar: smooth and glassy in photographs, striations only faint at the thin rim
+(Ludlam 1980; Houze 2014). The fibre grain (0.3 to 1.7, stretched 6:1 along the wind) now acts only in the rim, at 0.75
+to 1.25 and 2.5:1; the rim jitter is 10 m of lift read at 4 by 2.4 km (25 m at fine scale cut plate ends into teeth).
+The rim is crisp from adiabatic droplets (Brenguier et al. 2000): the drops form on a fixed number of nuclei, so their
+radius grows as the cube root of the water (10 um at 150 m past saturation, from 3 um), and the extinction as its 2/3
+power, CPU and shader alike. Raster and PT agree; clouds tests pass.
+
+## Virga and fallstreaks (23 Nov)
+
+Ice crystals fall from the mid layer's thicker cloudlets at about 1 m/s (Heymsfield 1975, cirrus uncinus generating
+cells) and sublimate in the drier air below. In subsaturated air a crystal's radius squared shrinks linearly with the
+fall, so the trail's extinction tapers linearly to nothing at the fall length L = 330 m / (1 - s_ice), s_ice = 1.1 RH
+at half the base height (250 m to 3 km). The wind changes under the layer (the mid layer's wind against the low wind),
+so a crystal d metres down has drifted (du/dz) d^2 / 2v from its cell: the hooked trail (Marshall 1953, "Precipitation
+trajectories and patterns"). Each sample follows that parabola back up to its cell and takes that cloudlet's density
+(so the streaks keep the grouping and their fine streaks bend with the hook). Only glaciated layers shed much (base
+colder than about -10 C; 12 % at warmer bases), and some regions of cells, not all. `cloud_virga` (shader, default 1)
+scales it. Faint from the ground under a fair sky, as in photographs; best seen side on from high ground or at a low
+sun. Raster and PT agree; clouds tests pass. Not in the shadow bake (optically thin).
+
+## Ridge cumulus drawn as a thunderstorm (23 Nov)
+
+A docs still with clear weather (landscape --weather=clear, June, 10:30) showed a dark grey tower with a round top
+over the trees. The ridge cumulus (WeatherMap3D._update_ridge_clouds: fair-weather cumulus over crests where the
+morning upslope winds meet, Banta 1990) and young fire clouds ride the storm list to raise the cover round them, and
+the cumulonimbus body (round 9) took every storm in that list as deep convection: a 0.6 cover ridge cloud grew a 7 km
+tower with an anvil and cirrus shield. Storms now carry a deep share (Storm::deep, State::storm_deep,
+cloud_storm_deep): 1 for add_storm(), 0 for ridge cumulus, a fire cloud's pyroCb share for fire clouds. Only the deep
+share has a tower, anvil, tall column and shield; the cover raise is unchanged.
+
+## Contrails (23 Nov, Paulo: virga, contrails, sun dogs in that order)
+
+Formation by the Schmidt-Appleman criterion (Schumann 1996): a trail forms below T_LM = -46.46 + 9.43 ln(G - 0.053) +
+0.72 ln^2(G - 0.053) C (G about 1.5 Pa/K at 250 hPa, scaled by pressure), raised a little with humidity; the air's
+temperature from the weather's lapse rate with the tropopause's -56.5 C floor, so a warm summer airmass gets fewer.
+Humidity over ice at cruise level: a mean of 0.5 + 0.4 RH(ground) with a 60 km noise of +-0.4 (ice-supersaturated
+regions over roughly a sixth of the sky; Gierens et al. 1999), raised in the high layer's moist patches. Subsaturated
+over ice: the trail sublimates in 10 s to 5 min (a short line behind the aircraft); supersaturated: it persists up to
+40 min, spreading about 1 m/s (shear, turbulence) with its ice growing (optical depth 0.1 to 0.5; Schumann 2005,
+Heymsfield 2010), drifting with the wind at 10.5 km (State::contrail_wind). Flights are procedural: 12 slots round
+the camera's 40 km cell, each flown every 20 minutes on a hashed straight track at 9.5 to 12 km, 240 m/s;
+cloud_contrail_traffic scales how many slots fly (0 for a world without aircraft). Each pixel evaluates 36 tracks
+analytically (no march): the age where the ray meets the track's level, the lateral offset after the drift, a
+Gaussian column blurred to the pixel's footprint. Lit as the cirrus. Raster and PT agree; clouds tests pass.
+
+## Sun dogs and tangent arcs (oriented ice crystals)
+
+Technique: the minimum deviation of a 60 degree prism in the Bravais effective index (Bravais 1847, Tape 1994
+"Atmospheric Halos", Greenler 1980 "Rainbows, Halos and Glories"). A crystal whose axis is fixed in space bends
+light as a prism of index n' = sqrt(n^2 - sin^2 b) / cos b, b the ray's angle to the axis, so the bright edge sits
+at D_min = 2 asin(n'/2) - 60 deg measured in the plane normal to the axis.
+
+- Plates float with their c axis near vertical (wobble about 1.6 deg): their minimum lies at the sun's height,
+  22 deg out at a low sun and further as it climbs, so the sun dogs (parhelia). They vanish past about 61 deg sun,
+  where n' passes 2.
+- Columns float with their c axis horizontal, every bearing: at each view the axis normal to the sun-view plane
+  matches, weighted by the density of bearings that give it; the upper and lower tangent arcs, the gull wing over
+  the 22 deg halo at a low sun.
+- Dispersion from ice's index for red, green and blue (1.307, 1.311, 1.317): a sharp red inner edge, a bright core
+  falling off outward and a faint white tail.
+- Added to the cirrus sheet's single scattering beside the random 22 and 46 deg halos, scaled with them; the
+  strength is cloud_parhelia_strength (0.03 of the beam for plates, three times that for columns).
+
+Bench: weather --view=shafts --sun-up=12 --cover=0.02 --high-cover=0.7 --fov=100 (the tangent arc: add
+--cam=0,60,0,0,637,-1000). Raster and path traced agree.
+
+## Storm towers: silver rim and turret relief (23 Nov)
+
+Two faults on a storm tower seen against the sun or on its shaded side (r28): a flat dark cut-out with no rim, and
+no relief between its turrets.
+
+- Silver rim. The tower's edge went from nothing to its full 0.1 per metre in a few metres, so the zone at an
+  optical depth near 1, where forward scattering makes a silver lining (Bouthors et al. 2008), was far under a pixel.
+  Real cloud edges carry a transition zone of evaporating droplets in entrained air (the "twilight zone", Koren et al.
+  2007; the subsiding shell, Heus and Jonker 2008). The tower and each turret now have a tenuous shell
+  (cloud_storm_shell 120 m deep, cloud_storm_shell_density 0.0015 per metre, torn into wisps by the shape noise):
+  seen edge-on it is near optical depth 1, so near the sun it glows. Wider (300 m) blurred the outline into a haze.
+- Turret relief. The ambient light read the cloud 100 m straight up, so a tower's whole wall, under more tower, took
+  one flat tone. Sky visibility now comes from four density probes over the upper hemisphere at
+  cloud_sky_occlusion_reach (250 m): up, and 35 degrees up toward the camera and either side (ambient occlusion from
+  a few density probes, as production volume rendering and Nubis Cubed estimate it). Crests see sky, creases do not.
+  It helps every cumulus too: brighter crests over darker bottoms in the towers view, raster and path traced alike.
+
+Bench: weather --view=shafts --sun-up=18 --cover=0.15 --high-cover=0 --wind=1 --storm=-3000,-20000,2500,30,10
+--fov=70 (backlit), --view=towers (relief); A/B with --sky-params=cloud_sky_occlusion_reach:0,cloud_storm_shell_density:0.
+
+## Lenticulars: crisp rim, separate plates (24 Nov; docs: soft near rim, plates without sky between)
+
+- **Droplet count.** The lens's droplets were a fixed 10 um at 150 m of lift, which at its water is some 30 per cm^3.
+  Wave clouds carry 100 to 300 (Heymsfield and Miloshevich 1993), so the radius now comes from the water over a fixed
+  150 per cm^3 (adiabatic: r^3 = LWC / (4/3 pi rho_w N)), about 6 um inside and 2 um at the edge. The extinction nearly
+  doubles and the lens turns opaque within metres of its edge: a near lens has a defined rim, not a soft fade
+  (wc_wave_sigma(), wave_extinction_at() on the CPU).
+- **Analytic edge.** The lens march places the edge between samples, at the linear crossing of the lift past
+  saturation, and counts only that share of the interval (an analytic coverage instead of a whole fine step).
+- **Plates.** The dry sheets of a pile are 5 K drier (was 3) and their gaps stay open through the lens up to 900 m
+  of lift (closed from 120 m before), so a pile reads as plates with sky between them, each with its own ends. Seen
+  from below they overlap; from the lens's height they separate.
+
+Bench: weather --view=lenticular (far), --cam=9000,300,11570,5000,4800,11570 (under a near lens),
+--cam=17000,3600,11570,3150,4000,11570 (the pile from its own height).
+
+## Lenticular rim from below: measured (24 Nov; docs: rim still soft, plates combed)
+
+A column through the bench lens (WeatherMap3D.get_wave_cloud_density_at, z = 8000, every 250 m): the optical depth
+straight up rises from 0 at the outline to 4 about 1 km in (0.4, 1.2, 1.9, 3.1, 4.0), peaking near 5.7 in the middle;
+the lens is about 500 m deep, its extinction up to 0.027 per metre (0.25 g/m3 at 150 droplets per cm^3). The lift past
+saturation grows about 0.15 m per metre inward, so the water and the depth both grow from zero over that kilometre.
+Seen from below the edge is therefore optically thin for about a kilometre, a translucent taper (where the
+iridescence shows); edge-on, along kilometres of lens, it is opaque at once and crisp. Tried and dropped: a sharper
+moist layer (exp(-d^8)) and smooth rounded plate sheets 350 m apart; neither sharpened the rim, and the plates read
+worse. A crisper rim from below needs a steeper lift at the outline or more water than the lift gives, which the
+physics here does not support without an artistic edge term.

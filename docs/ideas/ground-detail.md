@@ -994,3 +994,13 @@ Contracts read: WorldContracts weather (rainfall_at, climate precipitation), veg
 inputs), WorldStand disturbance and ground_wear (existing), soil type from the generator's geology. No new
 contract. Bench plan: `--world --rain-years=N` (bare slope spot, before `--no-rain-pedestals`), PT and raster at
 100% crop.
+
+Built (23 Nov): RockField3D.rain_pedestals (on). Bare share from the year's precipitation (Le Houerou curve, 0.9 bare
+at 200 mm to none at 700 mm, times the terrain's precipitation pattern) or a recent burn (WorldFire, first three
+years); soil, rock, slope, water, sand and talus gates; depth up to a few centimetres, capped at 0.35 of the stone.
+Stones of the soil are placed there whether or not the setting is on; on, 85% stand on their columns, the rest lie
+toppled. Columns: one MultiMesh per detail cell (rt instanced, offscreen cull), a lumpy flared unit column, subsoil
+coloured with splash rills. Trails, rooting, frost churn, gullies and fans level them; tiles skip pedestalled
+squares; the far cover counts the stones. Bench: `--world --rain-climate[=P] --pedestal-spot` (finds a bare
+slope), `--no-rain-pedestals` for the before. The live storm growth and the dry sand slump are not built.
+Gap: the terrain material stays grass coloured where the climate leaves the soil bare (terrain material owner).

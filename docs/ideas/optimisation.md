@@ -419,3 +419,151 @@ The driver now keeps only the SPIR-V bytes. It parses them again when a pipeline
 stage per thread (a shader's variants are made one after another). The parse is deterministic, so the
 specialized SPIR-V and the pipelines are the same: the memory scene's raster and path traced frames match byte for
 byte. Farm still, resident after `load_all_heights`, same session: 7.8 GB, from 10.6 GB.
+
+## Curve3D.get_closest_offset: bounded blocks instead of every segment
+
+A main-thread sample of the landscape meadow view (lavapipe, plants on) spent about 40% of its time in
+`Curve3D::get_closest_offset`, called from `PhysXRiver3D` for `WorldWater.high_water_at` (each grass layer's
+flood map, 64 x 64 points every 5 s) and `WorldWater.height_at` (weather spray sources). Godot's version tests
+every baked segment; a 4 km river baked at 0.2 m has about 43,000. One flood map took 0.94 s of CPU; it now takes 29 ms (33 times less) in the same micro-bench.
+
+This is the bounding volume hierarchy method for nearest-point queries (two levels here): the bake also keeps
+the bounds of each run of 16 segments and of each 16 runs. A query tests the run nearest in bounds first, then
+only the runs whose bounds come within the best distance found, plus a margin far above float rounding
+(1e-4 of the coordinate scale). Each segment is tested with the same arithmetic as before, and equal distances
+go to the lowest segment, as the old loop's first strict minimum did, so the offset is the same to the bit.
+Short curves (under 64 segments), curves with a zero-length interval and non-finite points keep the old loop.
+
+Proof: 24,000 queries over eight curves (open, closed, a straight line with ties, far from the origin, on
+baked points) hash the same as the previous build.
+
+## Sky light: the panorama read back without stalling the GPU
+
+The same meadow sample caught `TerrainGenerator3D::_sky_light_poll` waiting in `RenderingDevice::_stall_for_frame`:
+`RenderingServer.sky_bake_panorama` copies the radiance map out and reads it with `texture_get_data`, which flushes
+and waits for every frame in flight. The terrain asks for its 64 x 32 sky panorama every 2 s while it runs, so the
+game lost a frame's worth of GPU overlap each time (and the main thread waited on the render thread as well).
+
+`RenderingServer.sky_bake_panorama_async` does the same copy and reads it with `texture_get_data_async` (the
+staging-buffer readback Godot already uses for `RenderingDevice.texture_get_data_async`); the Image reaches the
+callback on the main thread a few frames later. The terrain keeps one request in flight and runs the same update
+when it lands. Renderers without that readback (Compatibility, dummy) bake at once and hand the Image over the
+same way. Proof: a sky baked both ways gives the same bytes, radiance and irradiance (3 to 4 frames later on
+the cloud's software GPU). The sky light reaches the terrain those few frames later; its interval stays 2 s.
+
+The water module's two periodic sync readbacks of the same kind (the raster reflections' 128 x 64 sky panorama
+and the underwater sky radiance, each every 240 frames per water body) now go through the same call:
+`WaterSkyReadback` keeps one request in flight and the owner runs the same update when it lands. The water
+surface bench (raster, beach, 60 frames at a fixed 30 fps) looks the same; its frames differ from run to run
+by the simulation alone (0.06% of pixels between two runs of the old build, 0.12% against the new one, all
+foam and floating boxes).
+
+## Memory: static surface BLASes were never freed
+
+A path traced still of the rocks world (gully, 640 x 360, cloud) peaked at 13.5 GB resident, 9.1 GB of it GPU
+memory, and 6.1 GB of that acceleration structures (`RenderingDevice.get_memory_usage(MEMORY_ACCELERATION_STRUCTURES)`,
+new for this; `docs/bench/rocks --mem-report` prints it). One 1.08 M triangle mesh was there twice: once plain, once
+deformed. A captured surface traces its bare mesh until its first capture lands, and the bare mesh's BLAS then
+stayed for the rest of the session. The static surface cache had no eviction at all (the deformed, MultiMesh and
+mesh LOD caches already free what goes unused), so the same held for meshes that left the view or were freed.
+
+`RenderRaytracing::_evict_surfaces` now frees a static surface no instance traced for 120 frames, as
+`_evict_surface_lods` does for LOD levels, checking 64 cache chunks a frame. A surface traced again is built again
+from the same mesh, in the frame it comes back. BLASes that persistent instance slots still trace (they skip the
+cache while a slot is unchanged) stay.
+
+Proof: `docs/bench/rt_memory --evict` hides every mesh for 150 frames, then shows them again. The new build frees
+their acceleration structures (12.7 MB to 0) and the saved frame matches the previous build byte for byte, with
+and without `--persistent`; so do the plain frame and a 200 frame `--persistent` run.
+
+That alone left the gully still as it was (it is saved well within 120 frames of the captures landing). So a
+surface traced through a capture also records its cache key, and the sweep frees its bare BLAS as soon as no
+instance traced it in the last frame (one that still traces the bare mesh, or a persistent slot holding it, keeps
+it). Gully still, same view: acceleration structures 6,080 to 4,505 MB, GPU memory 8,866 to 7,291 MB, peak
+resident 12.9 to 12.1 GB. That still is not bit-repeatable between runs (wind, capture timing), so its proof is
+the rt_memory runs above plus a side by side look; the freed and rebuilt path is the same one.
+
+## Water: one GPU step per drawn frame by default
+
+A slow frame runs several physics ticks (up to `physics/common/max_physics_steps_per_frame`, 8), and with
+`PhysXWaterSurface3D.step_mode` per tick every tick ran the surface's whole GPU step. The late-frost meadow had 20
+water solvers (surfaces and their cascades): 160 steps and about 1,860 compute passes a frame, which made the frame
+slower still (on the cloud's software GPU, frames of 100 s that kept the tick count at 8).
+
+`STEP_MODE_PER_FRAME` (already in the module) records each tick and runs them in one step per frame: the ripple
+layer still takes one sub-step per tick with that tick's bodies, while the FFT ocean (evaluated at the summed
+time), foam, swash, blits and readbacks run once. It is now the default. Where a frame holds one tick (a game at or
+above its physics rate) nothing changes; frames with several ticks now cost one step. Look test: the water surface
+bench, beach and surf views (raster, fixed 30 fps, two ticks a frame), per tick against per frame: the same water,
+differing only by the run-to-run simulation noise.
+
+## Path tracing live state: the cut-out retry's copy of the path state
+
+The camera cut-out loop kept a copy of the whole `PathState` (60 bytes) across every bounce's trace, to repack the
+payload for a further layer. A surface that opens in the cut answers with `hit_t` alone, so the retry now resets
+`hit_t` in the payload as it is. Byte-identical: rt_memory and the links bench's cut-out path traced frame. The
+rest of what the raygen keeps across traces waits for the PC's Nsight "Ray Tracing Live State" table, since the
+driver may already recompute the values that come from the scene data (camera matrix and ray).
+
+## Setup time of the full landscape (all features on), and a world cache
+
+Cloud profile of `docs/bench/landscape` at its defaults (main thread and every worker sampled with gdb): setup
+takes 6.3 min. Rocks placing all 1.17 M stones of the 4 km world as plant obstacles 148 s (half of it in the
+terrain's height query, `TerrainErosionFilter::offset`); terrain generation 85 s (hydraulic erosion); dunes 58 s
+(`TerrainDunes::_carry`, whose sand transport is order-dependent within a tile, and tiles already run in
+parallel); cover 37 s; snow climate 31 s. The steady frames there are bound by the software GPU, so their cost
+waits for a PC trace.
+
+A bit-exact speed-up of the erosion filter (sin and cos from one range reduction, skipping cells whose pivots are
+all out of reach) measured 0%: the compiler already shares the reduction, and the rest is the octaves' own
+arithmetic. The setup cost is the simulations themselves.
+
+The lossless lever is not to run them twice. Terrain tools bake their output once and load it (World Machine and
+Gaea export baked heightmaps; Unreal's World Partition and Houdini Engine cook procedural content at edit time and
+stream the result), and the generator here is already deterministic (TerrainDMath) so its outputs are a pure
+function of its inputs. A world cache would store each stage's outputs (heights and sediment after erosion, sand
+depth after dunes, snow climate, rock obstacle cells) under a hash of every input that stage reads (its
+properties, its inputs' hashes, the engine commit), load them when the hash matches and regenerate otherwise. The
+loaded data is the same bytes, so frames are unchanged; a second launch skips minutes.
+
+Built (terrain stage). `modules/terrain_deform/world_cache.{h,cpp}` keeps each piece on disk, zstd-packed, under
+the first 16 bytes of a SHA-256 of everything that piece reads plus the stage name and the engine binary's
+modified time and size (so any rebuild starts clean). Pieces are per tile within each stage: an erosion tile's key
+is its `TerrainHydraulic::Params`, input heights and cover; a dune tile's is `TerrainDunes::hash_inputs` (params,
+winds, base, masks, supply, initial sand, steps). A stale or short file is ignored and recomputed; writes go to a
+temporary name and are renamed in place. Settings: `world/cache/enabled` (on) and `world/cache/path` (empty: the
+user cache folder, `berlenga/world`).
+
+Proof on the landscape bench, empty cache then a second launch: the erosion outputs (delta, flow, deposit) and the
+dune outputs (sand, plants) hash the same both times, as do the logged sand volume and height change. 82 pieces,
+57 MB. Generation 79.6 s to 13.5 s, dunes 53.3 s to 1.3 s: about 2 min off each launch after the first.
+
+Rock obstacle cells (built): `RockField3D.get_obstacles` keeps its cells by 512 m zone per layer. The key holds
+this field's and the generator's stored properties (marshalled as a scene stores them), the generator's result
+(`TerrainGenerator3D::hash_result`: ground, water, rivers, sediment, sand, touch-up masks, holes) and each relief
+provider's properties and heights (`WorldReliefProvider::contract_relief_object/state`, Landscape3D). A script ground
+stub or a relief provider without a key turns the cache off for that query. A terrain change misses every rock zone,
+since stones sample the ground everywhere. Proof: the obstacles' hash (1,167,958 stones) and the rest of the scene's
+log match cold and warm; 129 s to 0.5 s. The warm run builds fewer shape libraries during setup (only those the
+drawn cells ask for), which only saves time and memory.
+
+Snow climate (31 s): not cached. Its bake reads the fire, frozen ground, obstacle lee and salt contracts at every
+step, so a sound key would need every one of those systems' state.
+
+## Undrawn frames (viewport disable_3d)
+
+The landscape bench places forests and cover over frames with the main viewport's 3D off. A GPU profile
+(`--gpu-profile`) of those frames on the software device showed two passes whose only output is a drawn 3D frame:
+the water caustics map (about 5 s a frame there) and the rain and snow shelter heightfield collider (about 9 s:
+`RainFall3D` and `SnowFall3D` set the collider's size each frame, which re-renders the geometry under it).
+`RendererViewport::has_3d_viewport()` says whether any active viewport draws 3D. While none does,
+`RendererSceneCull::render_particle_colliders` keeps the colliders in its list and renders them on the first frame
+that draws (before the particles update), and `WaterSolverGPU::rt_render_caustics` defers the map, which the
+surface asks for again on the next frame without a water tick. Every drawn frame runs exactly as before. Undrawn
+frames there went from about 15 s of GPU work to under 1.5 s.
+
+The check is per world: a viewport counts only when it draws the collider's or the water's scenario. The far grass
+colour bake draws its own world in a SubViewport for about 117 frames while the main view waits undrawn; those
+frames no longer run the landscape's caustics and collider. The bake wait on the landscape bench went from 474 s at
+100 frames to 258 s.
+

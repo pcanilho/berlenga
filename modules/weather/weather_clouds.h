@@ -85,6 +85,9 @@ struct State {
 	// shafts under the base.
 	float storm_rain[MAX_STORMS] = {};
 	float storm_outflow[MAX_STORMS] = {};
+	// Each storm's deep share (WeatherMap3D::Storm::deep): only deep convection has a cumulonimbus body, anvil and
+	// shield (times its growth, storms[i][3]); a ridge cumulus or a young fire cloud only raises the cover round it.
+	float storm_deep[MAX_STORMS] = {};
 	float storm_snow[MAX_STORMS] = {}; // share of the storm's precipitation falling as snow at the ground (rain_fraction)
 	Vector2 storm_dir = Vector2(1, 0); // unit, the way the storms move (the steering wind)
 	Vector2 rain_slant; // horizontal m per m of fall: the low wind over the drops' fall speed (about 7 m/s)
@@ -98,6 +101,8 @@ struct State {
 	float high_scale = 24000.0f; // m, its patches
 	Vector2 high_drift; // m
 	Vector2 high_dir = Vector2(1, 0); // unit, the wind aloft
+	Vector2 contrail_wind; // m/s, the wind at the contrails' height (about 10.5 km)
+	float clock = 0.0f; // s, the weather's time of day for the flights (cloud_time wrapped to a day)
 	// Cirrocumulus share (round 7): how unstable the shear at the high layer leaves it, 0 (smooth cirrus) to 1
 	// (rippled cirrocumulus in patches); from the gradient Richardson number (WeatherMap3D).
 	float high_cc = 0.0f;

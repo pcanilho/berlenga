@@ -3007,6 +3007,9 @@
 		<constant name="MEMORY_TOTAL" value="2" enum="MemoryType">
 			Total memory taken. This is greater than the sum of [constant MEMORY_TEXTURES] and [constant MEMORY_BUFFERS], as it also includes miscellaneous memory usage.
 		</constant>
+		<constant name="MEMORY_ACCELERATION_STRUCTURES" value="3" enum="MemoryType">
+			Memory taken by the storage of every bottom- and top-level acceleration structure alive, summed when asked (not their build scratch or instance buffers). Part of [constant MEMORY_TOTAL], not of [constant MEMORY_BUFFERS].
+		</constant>
 		<constant name="INVALID_ID" value="-1">
 			Returned by functions that return an ID if a value is invalid.
 		</constant>

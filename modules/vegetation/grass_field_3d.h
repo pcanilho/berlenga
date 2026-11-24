@@ -159,7 +159,15 @@ private:
 	NodePath data_map;
 	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
 	PackedVector4Array obstacles; // Rocks, (x, ground y, z, radius at the soil): no blade grows inside one.
-	VegetationObstacles obstacle_grid;
+	VegetationObstacles obstacle_grid; // obstacles, the mounds and the rock_field's stones fetched so far.
+	// A RockField3D whose stones the blades keep out of, fetched round each tile and far ring tile before it is built
+	// (get_obstacles), in place of (or as well as) the obstacles array.
+	NodePath rock_field;
+	float rock_obstacle_min = 0.25f;
+	float rock_footprint_max = 32.0f;
+	VegetationRockCache rock_cache;
+	void _rebuild_obstacle_grid();
+	void _rocks_for(const Rect2 &p_rect); // Main thread: fetches the rock_field's stones that reach into p_rect.
 	Array paths; // Worn paths (VegetationPaths): the sward thins and shortens towards the trodden line.
 	VegetationPaths path_grid;
 	float trample_resistance = 300.0f; // Passes a year that halve the sward's cover (Cole 1995: grasses resist).
@@ -462,7 +470,12 @@ private:
 		int mow_day = -1; // Day of the year mown; with a season_source the days since follow the calendar.
 		float days = -1.0f; // Fixed days since mown (>= 0); below 0 the calendar.
 		float current = -1.0f; // Days since mown now; below 0 not mown (or long grown back).
+		float rain = 0.0f; // mm of rain on the cut grass while it lay (from WorldWeather.rainfall_at; a fixed "rain" key)
+		float rain_fixed = -1.0f; // The meadow's own "rain" (mm, >= 0) instead of the weather's
+		float rain_sent = 0.0f; // rain as last written to mow_state
 	};
+	uint64_t hay_rain_usec = 0; // When the rain on the hay was last added up
+	void _hay_rain_step();
 	static constexpr int MAX_HAY_MEADOWS = 64;
 	static constexpr float HAY_REACH = 3.2f; // m a cut blade can be gathered sideways into its row (half the widest pitch).
 	Array hay_meadows;
@@ -524,6 +537,7 @@ private:
 	float far_bake_sun_energy = 1.0f; // The scene sun's energy the far colour was baked under.
 	bool far_bake_queued = false;
 	bool far_baked = false;
+	bool far_bake = true; // Off: no bake, the far ground keeps the hand-matched colour (slow software-rendered scouts).
 	// Mean of each view, per sun elevation: sward at the four sun azimuths, white, black at the four.
 	static constexpr int FAR_ELEVATIONS = 4;
 	static constexpr int FAR_REF_ELEVATION = 1; // 30 degrees: get_far_color() and the cover map's colour.
@@ -638,6 +652,13 @@ public:
 	float get_trample_resistance() const { return trample_resistance; }
 	static constexpr float OBSTACLE_MARGIN = 0.02f; // Blades root this far off a rock's foot.
 	PackedVector4Array get_obstacles() const { return obstacles; }
+	void set_rock_field(const NodePath &p_path);
+	NodePath get_rock_field() const { return rock_field; }
+	void set_rock_obstacle_min(float p_size);
+	float get_rock_obstacle_min() const { return rock_obstacle_min; }
+	void set_rock_footprint_max(float p_radius);
+	float get_rock_footprint_max() const { return rock_footprint_max; }
+	int get_rock_chunk_count() const { return rock_cache.chunks.size(); }
 	void set_rules(const Ref<PlantSpecies> &p_rules);
 	Ref<PlantSpecies> get_rules() const { return rules; }
 	void set_density(float p_density);
@@ -652,6 +673,8 @@ public:
 	float get_lean() const { return lean; }
 	Color get_far_color() const;
 	bool is_far_color_baked() const { return far_baked; }
+	void set_far_bake(bool p_enabled);
+	bool is_far_bake() const { return far_bake; }
 	PackedColorArray get_far_color_lobes() const;
 	Dictionary get_far_published() const;
 	void set_far_match_view(bool p_enabled);

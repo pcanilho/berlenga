@@ -85,6 +85,9 @@ public:
 		// A cumulus over a ridge where the day's upslope winds meet (upslope_winds): eased by fade like a fire cloud,
 		// no rain or lightning.
 		bool ridge = false;
+		// How far it has gone deep (0 to 1): a cumulonimbus with its tower, anvil and cirrus shield. A ridge cumulus
+		// never does; a fire cloud once it becomes a pyrocumulonimbus; storms added with add_storm() are.
+		float deep = 1.0f;
 	};
 
 private:
@@ -1009,6 +1012,9 @@ public:
 	Ref<Texture2D> get_shelter_texture() const { return shelter.texture; }
 	Rect2 get_shelter_rect() const { return shelter.rect(); }
 	static String get_wind_shader_code();
+	// The mineral dust's single-scattering albedo per scatter (rgb at 610, 550, 465 nm) and its asymmetry (w): the one
+	// value the sky, haze and every dust volume use (the weather_dust_albedo global).
+	static Vector4 get_dust_albedo();
 
 	// Jump the eased state to the settings (no transition), e.g. when a scene loads.
 	void snap_to_settings();

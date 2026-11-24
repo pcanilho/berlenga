@@ -37,6 +37,7 @@
 #include "core/math/transform_3d.h"
 #include "core/math/vector2i.h"
 #include "core/math/vector3.h"
+#include "core/math/vector3i.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/rid.h"
 #include "servers/rendering/rendering_device.h"
@@ -126,6 +127,16 @@ public:
 		Transform3D world_to_shadow;
 	};
 
+	// The light the gas scatters onto the surfaces around it (LightStorage::GasGlow), asked for with enabled: a
+	// mipmapped voxel grid over the gas (rgb: the light each voxel scatters times its opacity, a: its opacity), which
+	// the opaque pass cone-traces. run() fills texture and world_to_glow for LightStorage::gas_glow_set.
+	struct GlowMap {
+		bool enabled = false;
+		int resolution = 64; // voxels along the gas box's longest side, at most
+		RID texture;
+		Transform3D world_to_glow;
+	};
+
 private:
 	RID shader;
 	RID shadow_shader;
@@ -140,6 +151,14 @@ private:
 	};
 	MapSlot sun_slot;
 	MapSlot sky_slot;
+	RID glow_shader;
+	RID glow_pipeline;
+	RID glow_mip_shader;
+	RID glow_mip_pipeline;
+	RID glow_texture;
+	LocalVector<RID> glow_mips; // a storage view of each of glow_texture's mips
+	Vector3i glow_dims;
+	RID glow_box_buffer;
 	RID pipeline;
 	RID upsample_shader;
 	RID upsample_pipeline;
@@ -170,6 +189,7 @@ private:
 	bool _ensure(RenderingDevice *p_rd);
 	bool _fit_shadow(const FlowBackend::ScatterSource &p_source, ShadowMap &r_shadow, MapSlot &r_slot);
 	void _run_shadow(RenderingDevice *p_rd, const LocalVector<RD::Uniform> &p_uniforms, ShadowMap &r_shadow, MapSlot &r_slot);
+	void _run_glow(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const LocalVector<RD::Uniform> &p_uniforms, GlowMap &r_glow);
 
 public:
 	// After Flow composited into p_color (rgba16f, storage); p_depth is the
@@ -178,6 +198,6 @@ public:
 	// then glow unshadowed).
 	// A texture the size of the frame for the frame behind the gas (Params::background), kept from frame to frame.
 	RID get_background_copy(RenderingDevice *p_rd, const Size2i &p_size);
-	void run(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const Params &p_params, const Light *p_lights, int p_light_count, const RID &p_depth, const RID &p_color, const RID &p_coverage, const RID &p_shadow_atlas, const Size2i &p_size, ShadowMap *r_shadow = nullptr);
+	void run(RenderingDevice *p_rd, const FlowBackend::ScatterSource &p_source, const Params &p_params, const Light *p_lights, int p_light_count, const RID &p_depth, const RID &p_color, const RID &p_coverage, const RID &p_shadow_atlas, const Size2i &p_size, ShadowMap *r_shadow = nullptr, GlowMap *r_glow = nullptr);
 	void free(RenderingDevice *p_rd);
 };
