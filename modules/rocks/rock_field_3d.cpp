@@ -4067,11 +4067,19 @@ void RockField3D::_detail_compute(DetailJob &r_job) {
 	}
 	if (r_job.snow.any) {
 		// Under the snow: a stone whose top is under the pack's surface is left out (the finest first: what shows
-		// through a thin pack is the coarse lag). Its top over the ground from its shape's bottom and half height.
+		// through a thin pack is the coarse lag). Its top over the ground from its shape's bottom and half height,
+		// tested stone by stone against the pack's depth at that stone. The pack read here is smooth over metres, but
+		// a shallow pack is not even at the scale of the stones: its depth varies about the mean by a coefficient of
+		// variation of 0.3 or more (Clark et al. 2011; Lopez-Moreno et al. 2011, shallower packs varying the most),
+		// and less of it stays on a stone's convex, sun-warmed top than in the gaps. Each stone's own depth is the mean
+		// scaled by 0.4 to 1.3 (a hash of its position, the mean 0.85, a CV of about 0.3), so through thin snow the
+		// stones a little proud of the mean still show here and there instead of all going at one depth.
 		uint64_t buried = 0;
 		for (int i = int(stones.size()) - 1; i >= 0; i--) {
 			const Stone &st = stones[i];
-			const float d = r_job.snow.at(float(st.position.x), float(st.position.z));
+			const float mean = r_job.snow.at(float(st.position.x), float(st.position.z));
+			const uint32_t hs = hash_murmur3_one_32(uint32_t(int32_t(Math::floor(st.position.z * 512.0))), hash_murmur3_one_32(uint32_t(int32_t(Math::floor(st.position.x * 512.0))), 0x5e0a7u));
+			const float d = mean * (0.4f + 0.9f * float(hash_fmix32(hs) & 0xffffu) / 65535.0f);
 			if (d <= 0.002f) {
 				continue;
 			}
