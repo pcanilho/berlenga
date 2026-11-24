@@ -40,6 +40,10 @@
 #include "modules/weather/weather_map_3d.h"
 
 #include "core/object/class_db.h"
+#include "core/object/worker_thread_pool.h"
+#include "core/templates/safe_refcount.h"
+#include "core/os/os.h"
+#include "servers/rendering/rendering_server.h"
 #include "scene/resources/3d/importer_mesh.h"
 
 static const float GOLDEN_ANGLE = 2.39996323f; // 137.5 degrees, Vogel (1979).
@@ -5973,6 +5977,121 @@ vec3 plant_wind(vec3 wp, float h) {
 
 Ref<Shader> PlantGenerator::shaders[3];
 
+bool PlantGenerator::parallel_sets = true;
+
+namespace {
+struct MakeSetJob {
+	StringName method;
+	Array args; // For "variants": preset, count.
+	Variant result;
+	String error;
+};
+} // namespace
+
+void PlantGenerator::_make_set_job(void *p_jobs, uint32_t p_index) {
+	MakeSetJob &job = static_cast<MakeSetJob *>(p_jobs)[p_index];
+	if (job.method == SNAME("variants")) {
+		Ref<PlantGenerator> pg;
+		pg.instantiate();
+		pg->set_preset(Preset(int(job.args[0])));
+		pg->apply_preset_colors();
+		job.result = pg->generate_variants(int(job.args[1]));
+		return;
+	}
+	MethodBind *mb = ClassDB::get_method(SNAME("PlantGenerator"), job.method);
+	LocalVector<const Variant *> argp;
+	for (int i = 0; i < job.args.size(); i++) {
+		argp.push_back(&job.args[i]);
+	}
+	Callable::CallError ce;
+	job.result = mb->call(nullptr, argp.ptr(), argp.size(), ce);
+	if (ce.error != Callable::CallError::CALL_OK) {
+		job.error = Variant::get_call_error_text(job.method, argp.ptr(), argp.size(), ce);
+		job.result = Variant();
+	}
+}
+
+// Job-system parallelism over independent tasks (as engines split level loading and procedural
+// content into jobs, e.g. Gyrling, "Parallelizing the Naughty Dog Engine Using Fibers", GDC 2015):
+// each call is a task of its own, its result written to its own slot. The generators draw from
+// their own seeded hashes (no global random state), so the results do not depend on the order the
+// tasks run in. A worker's rendering calls that wait for an answer (a mesh's arrays, a texture read
+// back) are queued for the main thread: the main thread runs that queue while it waits.
+Array PlantGenerator::make_sets(const Array &p_calls) {
+	LocalVector<MakeSetJob> jobs;
+	jobs.resize(p_calls.size());
+	for (int i = 0; i < p_calls.size(); i++) {
+		const Array c = p_calls[i];
+		ERR_FAIL_COND_V_MSG(c.is_empty(), Array(), vformat("PlantGenerator.make_sets: call %d is empty.", i));
+		MakeSetJob &job = jobs[i];
+		job.method = StringName(String(c[0]));
+		if (job.method == SNAME("variants")) {
+			ERR_FAIL_COND_V_MSG(c.size() < 3, Array(), "PlantGenerator.make_sets: [\"variants\", preset, count].");
+			job.args.push_back(c[1]);
+			job.args.push_back(c[2]);
+			continue;
+		}
+		ERR_FAIL_COND_V_MSG(!String(job.method).begins_with("make_"), Array(), vformat("PlantGenerator.make_sets: %s is not a make_ method.", job.method));
+		MethodBind *mb = ClassDB::get_method(SNAME("PlantGenerator"), job.method);
+		ERR_FAIL_COND_V_MSG(!mb || !mb->is_static(), Array(), vformat("PlantGenerator.make_sets: no static method %s.", job.method));
+		if (c.size() > 1) {
+			job.args = c[1];
+		}
+		// The defaults the binding has for the arguments left out.
+		const int given = job.args.size();
+		const int total = mb->get_argument_count();
+		ERR_FAIL_COND_V_MSG(given > total || given < total - mb->get_default_argument_count(), Array(), vformat("PlantGenerator.make_sets: %s takes %d arguments, %d given.", job.method, total, given));
+		for (int a = given; a < total; a++) {
+			job.args.push_back(mb->get_default_argument(a));
+		}
+	}
+	// The shared shaders are made lazily, once: here, before any worker asks for them.
+	_plant_shader(false);
+	_plant_shader(true);
+	_plant_shader(false, true);
+	_impostor_shader();
+	WorkerThreadPool *wtp = WorkerThreadPool::get_singleton();
+	if (!parallel_sets || jobs.size() < 2 || wtp->get_thread_count() < 2 || !Thread::is_main_thread()) {
+		for (uint32_t i = 0; i < jobs.size(); i++) {
+			_make_set_job(jobs.ptr(), i);
+		}
+	} else {
+		// Lanes that take the calls in turn, one worker fewer than the pool: the main thread's flush of their rendering
+		// calls compiles shaders on the workers, so a worker must stay free for it (with every worker waiting on the
+		// main thread and the main thread on a worker, neither would go on: trees.md 5bc).
+		struct Lanes {
+			MakeSetJob *jobs = nullptr;
+			uint32_t count = 0;
+			SafeNumeric<uint32_t> next;
+			static void run(void *p_lanes, uint32_t) {
+				Lanes *l = static_cast<Lanes *>(p_lanes);
+				for (uint32_t i = l->next.postincrement(); i < l->count; i = l->next.postincrement()) {
+					_make_set_job(l->jobs, i);
+				}
+			}
+		} lanes;
+		lanes.jobs = jobs.ptr();
+		lanes.count = jobs.size();
+		const int lane_count = MIN(int(jobs.size()), MAX(1, wtp->get_thread_count() - 1));
+		const WorkerThreadPool::GroupID g = wtp->add_native_group_task(&Lanes::run, &lanes, lane_count, lane_count, true, SNAME("PlantGenerator sets"));
+		RenderingServer *rs = RenderingServer::get_singleton();
+		while (!wtp->is_group_task_completed(g)) {
+			rs->sync(); // The workers' queued rendering calls, some of them waiting on an answer.
+			OS::get_singleton()->delay_usec(200);
+		}
+		wtp->wait_for_group_task_completion(g);
+		rs->sync();
+	}
+	Array out;
+	for (const MakeSetJob &job : jobs) {
+		if (!job.error.is_empty()) {
+			ERR_PRINT("PlantGenerator.make_sets: " + job.error);
+		}
+		out.push_back(job.result);
+	}
+	return out;
+}
+
 Ref<Shader> PlantGenerator::_plant_shader(bool p_textured, bool p_silk) {
 	Ref<Shader> &sh = shaders[p_silk ? 2 : (p_textured ? 1 : 0)];
 	if (sh.is_valid()) {
@@ -8826,6 +8945,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_BANK_ROOTS);
 	BIND_ENUM_CONSTANT(PRESET_BANK_ROOTS_WOODY);
 	BIND_ENUM_CONSTANT(PRESET_HAY_BALE);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_sets", "calls"), &PlantGenerator::make_sets);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("set_parallel_sets", "enable"), &PlantGenerator::set_parallel_sets);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("is_parallel_sets"), &PlantGenerator::is_parallel_sets);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_stones", "stand", "variants", "textures", "season"), &PlantGenerator::make_stones, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_bog", "stand", "variants", "textures", "season"), &PlantGenerator::make_bog, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));

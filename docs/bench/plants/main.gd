@@ -449,10 +449,72 @@ func _checks() -> void:
 	_heath_checks()
 	_scrub_checks()
 	_bloom_checks()
+	_make_sets_check()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
 # Plants between stones (docs/ideas/vegetation.md): sizes from the floras, and the stand sets keep
 # their crevice plants to the gaps.
+# PlantGenerator.make_sets: species sets made at once on the worker threads are the same, resource for resource
+# (mesh arrays, materials' parameters, textures' pixels, species' properties and metas), as made one after another.
+var _fp_seen := {}
+func _fp(v) -> String:
+	if v is Object:
+		if v == null:
+			return "null"
+		if _fp_seen.has(v):
+			return "@" + str(_fp_seen[v])
+		_fp_seen[v] = _fp_seen.size()
+		var o: Object = v
+		var parts := [o.get_class()]
+		if o is Texture2D:
+			var img: Image = (o as Texture2D).get_image()
+			parts.append("none" if img == null else str(img.get_size()) + ":" + str(img.get_format()) + ":" + img.get_data().hex_encode().md5_text())
+			return "|".join(parts)
+		if o is Shader:
+			return "Shader|" + (o as Shader).code.md5_text()
+		if o is ArrayMesh:
+			for s in (o as ArrayMesh).get_surface_count():
+				parts.append(var_to_bytes((o as ArrayMesh).surface_get_arrays(s)).hex_encode().md5_text())
+				parts.append(_fp((o as ArrayMesh).surface_get_material(s)))
+		if o is ShaderMaterial and (o as ShaderMaterial).shader:
+			for u in (o as ShaderMaterial).shader.get_shader_uniform_list():
+				parts.append(u["name"] + "=" + _fp((o as ShaderMaterial).get_shader_parameter(u["name"])))
+		for p in o.get_property_list():
+			if p["usage"] & PROPERTY_USAGE_STORAGE and p["name"] != "script":
+				parts.append(p["name"] + "=" + _fp(o.get(p["name"])))
+		for k in o.get_meta_list():
+			parts.append("meta:" + k + "=" + _fp(o.get_meta(k)))
+		return "|".join(parts).md5_text()
+	if v is Array:
+		var a := []
+		for e in v:
+			a.append(_fp(e))
+		return "[" + ",".join(a) + "]"
+	if v is Dictionary:
+		var a := []
+		for k in v:
+			a.append(str(k) + ":" + _fp(v[k]))
+		return "{" + ",".join(a) + "}"
+	return var_to_str(v).md5_text()
+
+func _make_sets_check() -> void:
+	if not ClassDB.class_has_method("PlantGenerator", "make_sets"):
+		return
+	var calls := [["variants", PlantGenerator.PRESET_DAISY, 3], ["make_heath", [PlantGenerator.HEATH_DRY, 2]],
+			["make_scrub", [PlantGenerator.SCRUB_GARRIGUE, 2]], ["make_stones", [PlantGenerator.STONES_SCREE, 2]],
+			["make_floor", [PlantGenerator.FLOOR_BEECH, 2]]]
+	var res := []
+	var ms := []
+	for parallel in [false, true]:
+		PlantGenerator.set_parallel_sets(parallel)
+		var t := Time.get_ticks_msec()
+		var got: Array = PlantGenerator.make_sets(calls)
+		ms.append(Time.get_ticks_msec() - t)
+		_fp_seen.clear()
+		res.append(_fp(got))
+	PlantGenerator.set_parallel_sets(true)
+	_check("make_sets: species sets made at once on the workers are the same as one after another (ms serial, parallel)", res[0] == res[1] and res[0].length() > 100, ms)
+
 func _stone_checks() -> void:
 	var P := PlantGenerator
 	# Height range and the most width.

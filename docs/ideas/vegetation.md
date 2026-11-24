@@ -2095,3 +2095,23 @@ leaf drift's lee tail between 1.6 and 2.6 m, which now stops at 1.6 m.
 Proof: `docs/bench/vegetation --test=rocks` compares fields reading the rock field with fields reading the same
 stones as one array: populated, streamed round a point, the leaf drift, and the sward's near and far ring blades
 are identical, and a field with no rocks differs.
+
+## Species sets made in parallel (PlantGenerator.make_sets)
+
+After the world cache, the showcase's cover setup (26 s every launch) was its plant species being generated one after
+another: the forest floor 5.2 s, the heaths 8 s and the scrub 6.5 s (their woody shrubs), the rest small. Each set
+is independent, so they run as jobs on the worker threads (Christian Gyrling, "Parallelizing the Naughty Dog Engine
+Using Fibers", GDC 2015: independent work split into jobs a pool runs). `PlantGenerator.make_sets(calls)` takes
+`[method, args]` for the static `make_*` methods (or `["variants", preset, count]`) and returns their results in
+order.
+
+The generators draw from their own seeded hashes (no global random state), so a job's result does not depend on the
+order the jobs run in. The lazily made shared shaders are made on the main thread first. A worker's rendering calls
+that wait for an answer (a mesh's arrays, a texture read back for a hull colour) are queued for the main thread, which
+flushes that queue while it waits. The flush itself compiles shaders on the workers, so the jobs run on all workers
+but one: with every worker waiting on the main thread and the main thread waiting on a worker, neither went on (the
+same deadlock trees.md 5bc met).
+
+Proof: the cover's 38 sets fingerprinted (every mesh's arrays, every material's parameters, every texture's pixels,
+every species' properties and metas) are identical made one after another and in parallel, over four parallel runs;
+`docs/bench/plants --test` checks a smaller mix. Cloud (4 cores, 3 lanes): 25.0 s to 11.5 s. The PC's cores give more.
