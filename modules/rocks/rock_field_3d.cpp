@@ -2182,9 +2182,14 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 					r_stones.push_back(st);
 					if (has_cave) {
 						const Transform3D hb = Transform3D(st.basis, st.position) * cave;
-						if (gen->add_hole(hb)) {
-							hole_rects.push_back(Rect2(hb.origin.x, hb.origin.z, 0, 0).grow(hb.basis.get_scale().length()));
-							_terrain3d_hole(hb);
+						if (rf_coarse_job) {
+							// On a worker: the generator's holes, their signal and the Terrain3D are the main thread's;
+							// the job carries the hole there (_apply_holes).
+							static_cast<CoarseJob *>(rf_coarse_job)->holes.push_back(hb);
+						} else {
+							LocalVector<Transform3D> one;
+							one.push_back(hb);
+							_apply_holes(one);
 						}
 					}
 					const Vector3 front = mouth;
@@ -3245,6 +3250,7 @@ void RockField3D::_rain_climate(const Rect2 &p_rect, RainClimate &r_rain) const 
 	r_rain.rect = p_rect;
 	const Vector3 mid(p_rect.get_center().x, 0, p_rect.get_center().y);
 	const float f = WorldContracts::climate_precipitation_factor_at(mid);
+	r_rain.climate_precip = cl.precipitation;
 	r_rain.precip = cl.precipitation * (f >= 0.0f ? f : 1.0f);
 	r_rain.bare = WorldContracts::bare_share_for_precipitation(r_rain.precip); // (the shared rule: terrain colour reads it too)
 	bool burnt = false;
@@ -3370,8 +3376,11 @@ float RockField3D::_rain_soil(const TerrainGenerator3D *p_gen, const RainClimate
 	// soil and no sward grows; the share's own value at the point, as theirs.
 	const float h = float(rf_height(p_gen, p_at));
 	const Vector3 at(p_at.x, h, p_at.z);
-	const float share_here = WorldContracts::climate_bare_share_at(at);
-	const float dry_bare = WorldContracts::bare_patch(at, share_here >= 0.0f ? share_here : p_rain.bare, 0.0f);
+	// (The climate's precipitation was read on the main thread into p_rain: the weather provider is a node. The
+	// orographic factor map is plain data, safe here.)
+	const float f_here = WorldContracts::climate_precipitation_factor_at(at);
+	const float share_here = WorldContracts::bare_share_for_precipitation(p_rain.climate_precip * (f_here >= 0.0f ? f_here : 1.0f));
+	const float dry_bare = WorldContracts::bare_patch(at, share_here, 0.0f);
 	const float bare = MAX(dry_bare, fire);
 	if (bare <= 0.0f) {
 		return 0.0f;
@@ -4915,6 +4924,7 @@ void RockField3D::_coarse_finish(bool p_wait, real_t p_budget_msec) {
 				}
 			}
 		} else if (_layer_on(layer) && !cells.has(kv.key) && c.distance_to(Vector2(tp.x, tp.z)) <= layer_radius[layer] + cs * 1.5f) {
+			_apply_holes(job->holes);
 			_coarse_commit(kv.key, job->stones, job->groups);
 		}
 		memdelete(job);
@@ -5063,6 +5073,20 @@ void RockField3D::_coarse_pack(const Vector3i &p_key, const LocalVector<Stone> &
 			cg.reach[k] = st.scale * MAX(ax.x, MAX(ax.y, ax.z));
 		}
 		r_groups.push_back(std::move(cg));
+	}
+}
+
+// Main thread: cave holes a placement made (on a worker they wait in its job), cut into the generator and a Terrain3D.
+void RockField3D::_apply_holes(const LocalVector<Transform3D> &p_holes) {
+	TerrainGenerator3D *gen = _get_generator();
+	if (!gen) {
+		return;
+	}
+	for (const Transform3D &hb : p_holes) {
+		if (gen->add_hole(hb)) {
+			hole_rects.push_back(Rect2(hb.origin.x, hb.origin.z, 0, 0).grow(hb.basis.get_scale().length()));
+			_terrain3d_hole(hb);
+		}
 	}
 }
 
@@ -5554,6 +5578,7 @@ void RockField3D::_far_place(FarJob &r_job) {
 	}
 	rf_far = false;
 	r_job.missing = probe.missing;
+	r_job.holes = probe.holes;
 	if (worker) {
 		rf_coarse_job = nullptr;
 		rf_job_generator = nullptr;
@@ -5581,6 +5606,7 @@ void RockField3D::_far_commit(FarJob &r_job) {
 		_free_far(*old);
 		far_blocks.erase(r_job.key);
 	}
+	_apply_holes(r_job.holes);
 	FarBlock fb;
 	fb.sig = r_job.sig;
 	const real_t cs = _cell_size(Layer(r_job.key.x));
@@ -6573,7 +6599,77 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 	node->set("material_override", mat);
 	node->set("auto_mass", false);
 	node->set("mass", mass);
-	if (p_fall) {
+	// A ledge slab that fails: a cantilever breaks at its root, where the bending moment is greatest, along the joint
+	// or stress-release crack over the bench's edge (cantilever failure of undercut caprock and notched cliffs: Young
+	// and Ashford 2008, Stock et al. 2012; toppling of the joint blocks, Lamb and Dietrich 2009). Its back stays held
+	// under the bench (ANCHOR_BACK), the root is cut through, and the part out over the lip falls as one piece,
+	// pivoting off the bench's edge, and breaks where it lands.
+	const bool ledge_fall = p_fall && key_family(p_grp.library) == RockGenerator::FAMILY_LEDGE;
+	Vector3 root;
+	real_t root_thick = 0.0;
+	Vector3 root_out;
+	if (ledge_fall) {
+		const Library *lib = libraries.getptr(p_grp.library);
+		TerrainGenerator3D *gen = _get_generator();
+		if (!lib || p_grp.variant >= lib->axes.size() || !gen) {
+			node->queue_free();
+			return nullptr;
+		}
+		const Vector3 ax = lib->axes[p_grp.variant];
+		const Vector3 ya = xf.basis.get_column(1).normalized(), za = xf.basis.get_column(2).normalized();
+		root_thick = 2.0 * ax.y * s;
+		root_out = za;
+		const Vector3 front = xf.origin + ya * (ax.y * s) + za * (ax.z * s);
+		// The drawn ground, heightfield plus the landscape's relief: what the slab was seated on and the collision
+		// follows.
+		const WorldGround *wg = WorldContracts::ground();
+		auto drawn = [&](const Vector3 &p_at) -> real_t {
+			real_t g = rf_height(gen, p_at);
+			if (wg) {
+				const Vector2 rl = wg->relief_at(Vector3(p_at.x, g, p_at.z));
+				if (rl.y > 0.0f && Math::is_finite(rl.x)) {
+					g += rl.x;
+				}
+			}
+			return g;
+		};
+		// The bench's edge: back from the front, just under the slab's top, the first point the ground stands at.
+		real_t t = 0.0;
+		const real_t depth = 2.0 * ax.z * s;
+		for (; t < depth * 0.8; t += 0.05) {
+			const Vector3 q = front - za * t - ya * (root_thick * 0.3);
+			if (drawn(q) >= q.y) {
+				break;
+			}
+		}
+		if (t >= depth * 0.8) {
+			node->queue_free();
+			return nullptr; // no bench under it to break off from
+		}
+		// (A slab whose front stands on the bench all along still breaks a fifth of the way in: its joint.)
+		t = CLAMP(t, depth * 0.2, depth * 0.6);
+		root = front - za * t - ya * (root_thick * 0.5);
+		// The part that falls must start out over the face below the lip, not in the ground: its middle in the air.
+		// (A convex body whose middle starts under the collision's one-sided surface falls through it.)
+		// (The drawn ground, heightfield plus the landscape's relief: what the collision follows.)
+		const Vector3 free_mid = front - za * (t * 0.5) - ya * (root_thick * 0.5);
+		// (Clear of the heightfield as well: the collision may follow it without the relief's undercut.)
+		if (MAX(drawn(free_mid), rf_height(gen, free_mid)) > free_mid.y) {
+			node->queue_free();
+			return nullptr;
+		}
+		node->set("dynamic", false);
+		node->set("anchor", 3); // ANCHOR_BACK
+		node->set("kill_y", rf_height(gen, xf.origin) - 400.0);
+		node->set("impact_strength", mass * 3.0);
+		node->set("impact_damage_scale", 1.0 / mass);
+		node->set("impact_radius", MAX(p_grp.reach[p_k] * 1.5f, real_t(0.5)));
+		node->set("shatter_speed", 0.6); // the crack's own spall: a few chips, not a blast
+		node->set("freeze_when_asleep", true);
+		// Where its underside starts in the face below the lip (the heightfield has no undercut), the contact pushes
+		// it out faster than gravity draws it in (at 1 m/s it sank through), yet without a leap.
+		node->set("max_depenetration_velocity", 4.0);
+	} else if (p_fall) {
 		// A block loosed from the wall: a rigid body from the start, moved out of the face by its reach so it does
 		// not start inside the heightfield. It breaks where it hits hard: one contact taking the impulse of a 3 m/s
 		// change of its whole speed (an impact shares itself over several contacts; sliding on the face a contact
@@ -6619,6 +6715,10 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 	}
 	broken_stones.insert(Vector3i((orig.origin * 100.0f).round()));
 	close_dirty = true;
+	if (ledge_fall) {
+		// The crack through the root: a plane across the slab over the bench's edge, facing out.
+		node->call("apply_plane_cut", Plane(root_out, root));
+	}
 	if (p_fall) {
 		falls.push_back(node->get_instance_id());
 		while (int(falls.size()) > rockfall_max) {
@@ -6787,7 +6887,7 @@ bool RockField3D::_find_stone(const Vector3 &p_origin, Cell *&r_cell, int &r_gro
 }
 
 // A random intact cliff block between p_min and p_max metres from p_center (reservoir sampling); false if none.
-bool RockField3D::_pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max, Vector3 &r_origin, uint64_t &r_key) {
+bool RockField3D::_pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max, Vector3 &r_origin, uint64_t &r_key, bool p_ledges) {
 	int seen = 0;
 	for (KeyValue<Vector3i, Cell> &kv : cells) {
 		if (kv.key.x != LAYER_CLIFF) {
@@ -6800,9 +6900,9 @@ bool RockField3D::_pick_fall(const Vector3 &p_center, real_t p_min, real_t p_max
 			continue;
 		}
 		for (const Group &grp : kv.value.groups) {
-			// Ledge slabs stay: half of each lies under the bench, and loosed like a wall block it would start inside
-			// the ground (their own toppling over the lip is not modelled yet).
-			if (key_family(grp.library) == RockGenerator::FAMILY_LEDGE) {
+			// Ledge slabs only by trigger_rockfall for now: in the bench the falling part still drops through the
+			// collision ground (docs/ideas/rocks.md, "Falling ledges").
+			if (!p_ledges && key_family(grp.library) == RockGenerator::FAMILY_LEDGE) {
 				continue;
 			}
 			for (uint32_t k = 0; k < grp.xforms.size(); k++) {
@@ -6872,7 +6972,7 @@ Node *RockField3D::trigger_rockfall(const Vector3 &p_position, real_t p_radius) 
 	ERR_FAIL_COND_V(!is_inside_tree(), nullptr);
 	Vector3 origin;
 	uint64_t key = 0;
-	if (!_pick_fall(p_position, 0.0, p_radius, origin, key)) {
+	if (!_pick_fall(p_position, 0.0, p_radius, origin, key, true)) {
 		return nullptr;
 	}
 	_start_fracture(key);
@@ -7714,6 +7814,14 @@ void RockField3D::_place_ledges(const TerrainGenerator3D *p_gen, Layer p_layer, 
 			// overhang.
 			top = h_lip - lp.cap_thickness * 0.04;
 			const Vector3 lip_top(pos.x, top, pos.z);
+			// A real edge: in front of the lip, past the most a slab can hang, the ground has fallen a cap's thickness
+			// (on a smooth face or where the lip's out runs along the slope there is no bench to cap).
+			{
+				const real_t ahead = MAX(real_t(1.0), hang + 0.5);
+				if (H(pos.x + out.x * ahead, pos.z + out.z * ahead) > top - lp.cap_thickness) {
+					break;
+				}
+			}
 			// The back half must lie under the bench, and both ends of the slab on it: where the bench falls away behind
 			// or beside (a spur, a gully's corner, a lip that bends) the slab would hang in the air. A slab that would
 			// is drawn back from the lip, a third of its hang at a time, before it gives up.
@@ -7739,12 +7847,23 @@ void RockField3D::_place_ledges(const TerrainGenerator3D *p_gen, Layer p_layer, 
 				if (k > 0 && hk < 0.1) {
 					break;
 				}
-				centre = lip_top - y_axis * (axes.y * st.scale) + z_axis * (hk - axes.z * st.scale);
-				if (claimed(centre + x_axis * len) || claimed(centre - x_axis * len)) {
-					overlap = true;
-					break; // would overlap its neighbour
+				// Slid along the lip to abut a neighbour where it would overlap one: a bed's joint blocks stand end to
+				// end, a joint apart, so a lip carries a run of them rather than slabs spaced by the lip points' grid.
+				const Vector3 c0 = lip_top - y_axis * (axes.y * st.scale) + z_axis * (hk - axes.z * st.scale);
+				bool any_free = false;
+				for (int sh = 0; sh < 9 && !placed; sh++) {
+					const real_t off = (sh == 0 ? 0.0 : ((sh & 1) ? 1.0 : -1.0) * real_t((sh + 1) / 2) * 0.25) * len;
+					centre = c0 + x_axis * off;
+					if (claimed(centre + x_axis * len) || claimed(centre - x_axis * len) || claimed(centre)) {
+						continue;
+					}
+					any_free = true;
+					placed = seats(centre);
 				}
-				placed = seats(centre);
+				if (!any_free) {
+					overlap = true;
+					break; // no room between its neighbours
+				}
 			}
 		}
 		if (!placed) {
@@ -7922,6 +8041,7 @@ PackedVector4Array RockField3D::get_obstacles(const Rect2 &p_rect, real_t p_min_
 			}
 		}
 		for (uint32_t i = 0; i < n; i++) {
+			_apply_holes(placed[i].holes);
 			ObstacleCell cell;
 			for (const Stone &st : placed[i].stones) {
 				if (key_family(st.library) == RockGenerator::FAMILY_LEDGE) {
@@ -8122,8 +8242,8 @@ Array RockField3D::get_ledge_slabs(const Rect2 &p_rect) {
 			}
 		}
 	}
-	// Runs: slabs end to end along one lip (ends within a slab's depth, facing within 35 degrees, tops within a
-	// metre), joined by union-find.
+	// Runs: slabs end to end along one lip (ends within a slab's depth, facing within 35 degrees, tops on one bed),
+	// joined by union-find.
 	LocalVector<uint32_t> parent;
 	parent.resize(slabs.size());
 	for (uint32_t i = 0; i < slabs.size(); i++) {
@@ -8139,10 +8259,11 @@ Array RockField3D::get_ledge_slabs(const Rect2 &p_rect) {
 	for (uint32_t i = 0; i < slabs.size(); i++) {
 		for (uint32_t j = i + 1; j < slabs.size(); j++) {
 			const Slab &a = slabs[i], &b = slabs[j];
-			if (a.out.dot(b.out) < 0.82 || Math::abs(a.top.y - b.top.y) > 1.0) {
+			const Vector3 d = Vector3(b.top.x - a.top.x, 0, b.top.z - a.top.z);
+			// (Along a dipping bed the tops fall with the dip: up to 0.4 m a metre.)
+			if (a.out.dot(b.out) < 0.82 || Math::abs(a.top.y - b.top.y) > 0.5 + 0.4 * d.length()) {
 				continue;
 			}
-			const Vector3 d = Vector3(b.top.x - a.top.x, 0, b.top.z - a.top.z);
 			const real_t gap = Math::abs(d.dot(a.along)) - a.half_len - b.half_len;
 			const real_t side = Math::abs(d.dot(a.out));
 			if (gap < MAX(a.half_depth, b.half_depth) * 2.0 + 1.0 && side < MAX(a.half_depth, b.half_depth) * 1.5) {

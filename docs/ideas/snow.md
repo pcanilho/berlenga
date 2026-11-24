@@ -2247,6 +2247,9 @@ Research notes for Paulo's pick; nothing below is built yet.
   none at +2 C. `--view=spindrift`. Open: in a gale Flow's block allocation fills (speed-threshold
   allocation with no minimum smoke: the wind alone allocates), so the plume is cut off; asked of the PhysX
   owner (summaryAllocate.speedThresholdMinSmoke).
+  24 Nov 2026: the plume's grid is bounded at 1024 blocks (was 4096). A scene with crest plumes spread over the
+  whole square took some 5 GB as the gas spread and ran out of memory; at 1024 the gale view's plume still
+  runs its full length without a cut-off warning.
 
 **Packed-snow roads.**
 - Traffic packs snow into a hard layer that polishes to ice where tyres spin or brake (Wallman and Astrom 2001,

@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-b75e4f6c (2026-11-24)
+
+### Fixed
+- Windows: the editor uses its own taskbar ID (`Berlenga.BerlengaEditor.<version>`), so the taskbar shows it as Berlenga and never groups it with a stock Godot editor.
+
 ## build-3be3e65d (2026-11-24)
 
 ### Added

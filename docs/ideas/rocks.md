@@ -1381,3 +1381,27 @@ _rain_soil spread the climate's bare share evenly, so stones stood on pedestals 
 terrain material drew as sward. It now reads the shared pattern (WorldContracts::bare_patch with the share at the
 point, the same as climate_bare_patch_at): a pedestal only on bare soil patches, each soil stone checked at its own
 spot. get_pedestal_spots(rect, step, max) lists bare spots, deepest splash first, for framing.
+
+## Falling ledges (24 Nov)
+
+Technique: cantilever failure. An undercut caprock slab fails at its root over the bench's edge, where the bending
+moment is greatest, along a joint or the stress-release crack behind the lip, and the part out over the lip topples
+and falls (Young and Ashford 2008 for notched sea cliffs; Stock et al. 2012 for Yosemite's slab and cantilever
+failures; Lamb and Dietrich 2009 for toppling joint blocks). Ledge slabs now join live rockfall. A failing slab is
+swapped for its Blast pieces as a static destructible held at its back face (PhysXDestructible3D ANCHOR_BACK, new),
+and a crack is opened across it over the bench's edge (PhysXDestructible3D.apply_plane_cut, new: exactly the bonds
+between chunks on opposite sides of the plane break). The back stays under the bench; the front is cut free, falls
+under PhysX as one piece, breaks where it lands by the usual impact rule and raises the rockfall dust. Where its
+underside starts in the face below the lip it eases out (max depenetration 1 m/s) rather than leaping.
+
+Later the same day: slabs need a real edge (the ground in front of the lip a cap's thickness down, past the most a
+slab hangs), slide along the lip to abut a neighbour instead of being dropped, and a run follows the bed's dip. A
+slab whose free part would start in the ground is never loosed. The rain-pedestal bare check reads the climate's
+precipitation captured on the main thread (the weather provider is a node; workers read only the factor map).
+
+Open (24 Nov, evening): measured with the bench's `--ledge-fall` probe, the ground under a slab's free part is the
+face below the lip at about 60 degrees, and its collision (the landscape, heightfield plus relief) stands over the
+free part's middle: the relief draws the soffit's undercut for the eye but no heightfield can hold it, so the freed
+part starts inside the one-sided surface and falls through it. A slab now falls only where its free part's middle
+starts in the air (on the bench world the 8 biggest are refused, the 9th is loosed); live rockfall leaves ledges out. Falling
+ledges need collision for the undercut (for example a soffit collision strip along the lips from the terrain side).
