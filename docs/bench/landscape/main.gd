@@ -3250,8 +3250,9 @@ func _docs_links_setup() -> void:
 		# --snow-fall=CM: a fresh fall of about CM over the whole snowpack before the frame (a cold storm's snowfall
 		# for --snow-fall-hours, 1, then the weather set above again): thin, even snow for ground-detail pairs.
 		var hrs := float(args.get("snow-fall-hours", "1"))
-		var keep := [weather.rain_rate, weather.temperature, weather.air_follows_climate]
+		var keep := [weather.rain_rate, weather.temperature, weather.air_follows_climate, weather.cloud_cover]
 		weather.air_follows_climate = false
+		weather.cloud_cover = 1.0 # the rain (snow) falls where the cover is
 		weather.temperature = minf(weather.temperature, -4.0)
 		weather.rain_rate = float(args["snow-fall"]) * float(args.get("snow-fall-density", "100")) / 1000.0 / hrs
 		weather.snap_to_settings()
@@ -3264,6 +3265,7 @@ func _docs_links_setup() -> void:
 		weather.rain_rate = keep[0]
 		weather.temperature = keep[1]
 		weather.air_follows_climate = keep[2]
+		weather.cloud_cover = keep[3]
 		weather.snap_to_settings()
 		var cq: Camera3D = get_viewport().get_camera_3d()
 		var fq := cq.global_position if cq != null else Vector3.ZERO
@@ -4201,6 +4203,18 @@ func _build_camera() -> void:
 					tcells[tk] = int(tcells.get(tk, 0)) + 1
 			var keys := tcells.keys()
 			keys.sort_custom(func(x, y): return tcells[x] > tcells[y])
+			if args.has("talus-gentle"):
+				# --talus-gentle=DEG: only cells whose ground within 20 m rises less than DEG (a river bed, not a cone).
+				var gmax := tan(deg_to_rad(float(args["talus-gentle"]))) * 20.0
+				keys = keys.filter(func(k):
+					var cx: float = k.x * 40.0 + 20.0
+					var cz: float = k.y * 40.0 + 20.0
+					var h0 := height_at(cx, cz)
+					for j in 8:
+						var dj := Vector2(cos(TAU * j / 8.0), sin(TAU * j / 8.0)) * 20.0
+						if absf(height_at(cx + dj.x, cz + dj.y) - h0) > gmax:
+							return false
+					return h0 > 2.0)
 			var pick := mini(int(args.get("talus-pick", "0")), maxi(keys.size() - 1, 0))
 			var ts := boulder_spot
 			if keys.size() > 0:
@@ -4229,7 +4243,7 @@ func _build_camera() -> void:
 					break
 			cam.near = float(args.get("near", "0.5")) # stalks right at the lens stay out
 			var cp := foot - upd * float(args.get("talus-dist", "25"))
-			if args.get("rock-layer", "") == "tor":
+			if args.get("rock-layer", "") == "tor" or args.has("talus-level"):
 				# A tor on a crest: stand on the crest beside it (the heading whose ground stays nearest the tor's level),
 				# the sun behind the camera's shoulder.
 				var td := float(args.get("talus-dist", "30"))
