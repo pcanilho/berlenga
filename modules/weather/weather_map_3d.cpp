@@ -1412,9 +1412,8 @@ void WeatherMap3D::_publish_globals() {
 	_set_global("weather_map_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("weather_wind_info", Vector4(cur_wind_direction.x, cur_wind_direction.y, gust_sigma_scale, z0), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("weather_ground_height", ground_height, RSE::GLOBAL_VAR_TYPE_FLOAT);
-	// The season climate for ground shaders (x precipitation mm a year, w 1 while published): the terrain material's
-	// bare soil where no TerrainDataMap3D climate map reaches (WorldContracts::bare_share_for_precipitation).
-	_set_global("weather_climate", Vector4(_season_climate().precipitation, 0.0f, 0.0f, 1.0f), RSE::GLOBAL_VAR_TYPE_VEC4);
+	climate_published = Vector4();
+	_publish_season_global();
 	// Vortices added before this map was active (a dust devil spawned on ready) reach the shaders here.
 	if (vortices_unpublished) {
 		_publish_vortices();
@@ -1485,6 +1484,20 @@ int WeatherMap3D::get_day_of_year() const {
 	const int month = CLAMP(int(clock->get("month")), 1, 12);
 	const int day = CLAMP(int(clock->get("day")), 1, 31);
 	return CLAMP(START[month - 1] + day, 1, 365); // 29 February counts as 1 March
+}
+
+// The season climate for ground shaders, weather_climate: x precipitation mm a year (the terrain material's bare soil
+// where no TerrainDataMap3D climate map reaches, WorldContracts::bare_share_for_precipitation), y the season's soil
+// moisture and z its day's mean temperature at the ground (the cured share, WorldContracts::cured_share_for_season), w
+// 1 while published. Set again when the day (or the live anomaly) moves the season.
+void WeatherMap3D::_publish_season_global() {
+	const Dictionary s = get_season();
+	const Vector4 v(_season_climate().precipitation, float(s.get("soil_moisture", 1.0f)), float(s.get("temperature", 10.0f)), 1.0f);
+	if (v.is_equal_approx(climate_published)) {
+		return;
+	}
+	climate_published = v;
+	_set_global("weather_climate", v, RSE::GLOBAL_VAR_TYPE_VEC4);
 }
 
 Dictionary WeatherMap3D::get_season() {
@@ -1601,6 +1614,9 @@ void WeatherMap3D::_notification(int p_what) {
 				const WeatherSeason::Climate c = _season_climate();
 				const float clim = WeatherSeason::day_temperature(c, ground_height, float(get_day_of_year()));
 				season_anomaly += (cur_temperature - clim - season_anomaly) * float(1.0 - Math::exp(-wdt / (30.0 * 86400.0)));
+			}
+			if (globals_added) {
+				_publish_season_global(); // the season's soil moisture and warmth for the ground shaders (cached by day)
 			}
 			update_accum += wdt;
 			const double period = time_scale / MAX(update_rate, 0.01f);

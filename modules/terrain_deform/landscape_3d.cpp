@@ -1959,6 +1959,52 @@ void Landscape3D::set_bank_relief(real_t p_metres) {
 	_relief_changed(Rect2());
 }
 
+void Landscape3D::set_terracette_relief(real_t p_share) {
+	p_share = CLAMP(p_share, real_t(0.0), real_t(1.0));
+	if (Math::is_equal_approx(terracette_relief, p_share)) {
+		return;
+	}
+	terracette_relief = p_share;
+	_publish_cliff_relief(!is_inside_tree());
+	_relief_changed(Rect2());
+}
+
+// Terracettes (docs/ideas/terrain-generation.md, "Terracette steps"): the shared layout (WorldContracts::terracette_at)
+// gives the phase up each step; the ground takes a flat tread over its first TC_TREAD and a riser through the rest.
+// The profile o (in units of the step's rise R, WorldContracts::TERRACETTE_RISE) is -ph on the tread and climbs back to
+// 0 over the riser, less its mean, so the ground keeps its height on average and its treads stand level: steps of T R
+// (0.37 m) scaled by the layout's strength. Box-filtered over the given width (the integral of o
+// is closed form), so a mesh or pixel coarser than a tread gets the steps' mean, not an alias of them.
+static constexpr real_t TC_TREAD = 0.185;
+static real_t _tc_o(real_t p_ph) {
+	const real_t ph = p_ph - Math::floor(p_ph);
+	return (ph < TC_TREAD ? -ph : -TC_TREAD * (1.0 - ph) / (1.0 - TC_TREAD)) + 0.5 * TC_TREAD;
+}
+static real_t _tc_int(real_t p_x) {
+	const real_t ph = p_x - Math::floor(p_x);
+	const real_t t = TC_TREAD;
+	return ph < t ? -0.5 * ph * ph + 0.5 * t * ph : t / (2.0 * (1.0 - t)) * ((1.0 - ph) * (1.0 - ph) - (1.0 - t) * (1.0 - t)) + 0.5 * t * (ph - t);
+}
+
+real_t Landscape3D::terracette_offset(const Vector3 &p_position, const Vector2 &p_gradient, real_t p_width, real_t p_share) {
+	if (p_share <= 0.0) {
+		return 0.0;
+	}
+	const Vector3 t = WorldContracts::terracette_at(p_position, p_gradient);
+	if (t.z <= 0.0f) {
+		return 0.0;
+	}
+	const real_t steep = p_gradient.length();
+	const real_t rise = WorldContracts::TERRACETTE_RISE;
+	// The step's strength: the layout's tread at the middle of this step's tread (its fade along the slope included).
+	const real_t k = WorldContracts::terracette_at(Vector3(p_position.x, p_position.y - (t.y - 0.1f) * rise, p_position.z), p_gradient).x * p_share;
+	const real_t d = MAX(0.5 * p_width * steep / MAX(rise, real_t(1e-3)), real_t(0.004));
+	if (k <= 0.0 || d >= 0.5) {
+		return 0.0;
+	}
+	return rise * k * (_tc_int(t.y + d) - _tc_int(t.y - d)) / (2.0 * d);
+}
+
 // The relief over a rect (landscape space; empty: all of it) changed: WorldGround.relief_changed in world space.
 void Landscape3D::_relief_changed(const Rect2 &p_area) {
 	if (!is_inside_tree() || heights.is_empty()) {
@@ -2540,7 +2586,7 @@ void Landscape3D::_clear_stand_map() {
 // d tan(slope) higher (outward is downhill). The full field: the stitch weight on sides next to coarser chunks and the
 // finest-chunk-only drawing are left out (both are under a pixel by design).
 Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
-	if (heights.is_empty() || (cliff_relief <= 0.0 && bank_relief <= 0.0)) {
+	if (heights.is_empty() || (cliff_relief <= 0.0 && bank_relief <= 0.0 && terracette_relief <= 0.0)) {
 		return Vector2(0.0, 0.0);
 	}
 	const real_t fx = (p.x - origin.x) / spacing, fz = (p.z - origin.y) / spacing;
@@ -2552,14 +2598,25 @@ Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
 	if (ml < 1e-4f || n.y < 1e-3f) {
 		return Vector2(0.0, 0.0);
 	}
-	const Vector2 w = _relief_weights_at(fx, fz);
-	if (w.x <= 0.0 && w.y <= 0.0) {
-		return Vector2(0.0, 0.0);
-	}
-	const real_t fold = _relief_fold_scale(fx, fz);
 	const int ix = int(Math::floor(fx)), iz = int(Math::floor(fz));
 	const real_t u = fx - ix, v = fz - iz;
 	const real_t h = Math::lerp(Math::lerp(real_t(_h(ix, iz)), real_t(_h(ix + 1, iz)), u), Math::lerp(real_t(_h(ix, iz + 1)), real_t(_h(ix + 1, iz + 1)), u), v);
+	// The terracettes' steps as the near ground draws them (half a metre's filter, twice the near patch's grid).
+	real_t tc_share = terracette_relief;
+	if (tc_share > 0.0) {
+		// On open soil only, as TerrainMaterial3D's: none on sand, thin soil, or near rock, talus or till.
+		const TerrainGenerator3D *gen = _stream_generator();
+		if (gen) {
+			const Color g = gen->get_material_geology_at(Vector3(p.x, h, p.z));
+			tc_share *= Math::is_nan(g.r) ? 0.0f : Math::smoothstep(0.05f, 0.2f, g.r) * (1.0f - Math::smoothstep(0.02f, 0.2f, MAX(CLAMP(g.g, 0.0f, 1.0f), Math::abs(g.b))));
+		}
+	}
+	const real_t tc = terracette_offset(Vector3(p.x, h, p.z), Vector2(-n.x, -n.z) / n.y, 0.5, tc_share);
+	const Vector2 w = _relief_weights_at(fx, fz);
+	if (w.x <= 0.0 && w.y <= 0.0) {
+		return Vector2(tc, 0.0);
+	}
+	const real_t fold = _relief_fold_scale(fx, fz);
 	const Vector3 q(p.x, h, p.z);
 	real_t d = 0.0;
 	if (w.x > 0.0 && cliff_relief > 0.0) {
@@ -2571,7 +2628,7 @@ Vector2 Landscape3D::_relief_at_local(const Vector3 &p) const {
 	if (w.y > 0.0 && bank_relief > 0.0) {
 		d += _bank_scale(q, bank_relief * w.y * fold, ml / MAX(n.y, real_t(1e-3))) * _bank_offset(q);
 	}
-	return Vector2(d * ml / n.y, MIN(w.x + w.y, real_t(1.0)));
+	return Vector2(d * ml / n.y + tc, MIN(w.x + w.y, real_t(1.0)));
 }
 
 Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position) const {
@@ -2708,10 +2765,10 @@ void Landscape3D::_clear_relief_map() {
 
 void Landscape3D::_publish_cliff_relief(bool p_clear) {
 	const Vector4 v = p_clear || heights.is_empty() ? Vector4() : Vector4(cliff_relief, spacing, origin.x, origin.y);
-	const real_t b = p_clear || heights.is_empty() ? 0.0 : bank_relief;
+	const Vector2 b = p_clear || heights.is_empty() ? Vector2() : Vector2(bank_relief, terracette_relief);
 	if (b != bank_published) {
 		bank_published = b;
-		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_bank_relief", Vector4(b, 0, 0, 0));
+		RenderingServer::get_singleton()->global_shader_parameter_set("terrain_bank_relief", Vector4(b.x, b.y, 0, 0));
 	}
 	if (v == cliff_published) {
 		return;
@@ -2831,6 +2888,8 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cliff_relief", "metres"), &Landscape3D::set_cliff_relief);
 	ClassDB::bind_method(D_METHOD("get_cliff_relief"), &Landscape3D::get_cliff_relief);
 	ClassDB::bind_method(D_METHOD("set_bank_relief", "metres"), &Landscape3D::set_bank_relief);
+	ClassDB::bind_method(D_METHOD("set_terracette_relief", "share"), &Landscape3D::set_terracette_relief);
+	ClassDB::bind_method(D_METHOD("get_terracette_relief"), &Landscape3D::get_terracette_relief);
 	ClassDB::bind_method(D_METHOD("get_bank_relief"), &Landscape3D::get_bank_relief);
 	ClassDB::bind_method(D_METHOD("get_cliff_point", "global_position"), &Landscape3D::get_cliff_point);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enable"), &Landscape3D::set_cast_shadows);
@@ -2885,6 +2944,7 @@ void Landscape3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_relief", PROPERTY_HINT_RANGE, "0,2,0.05,or_greater,suffix:m"), "set_cliff_relief", "get_cliff_relief");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_relief", PROPERTY_HINT_RANGE, "0,2,0.05,or_greater,suffix:m"), "set_bank_relief", "get_bank_relief");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "terracette_relief", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_terracette_relief", "get_terracette_relief");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_shadows"), "set_cast_shadows", "is_casting_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_heights"), "set_stream_heights", "is_streaming_heights");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "camera", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Camera3D"), "set_camera", "get_camera");

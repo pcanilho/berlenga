@@ -164,6 +164,8 @@ private:
 	int season_cache_day = 0;
 	float season_cache_anomaly = 0.0f;
 	WeatherSeason::State season_cache;
+	Vector4 climate_published; // weather_climate as last set (_publish_season_global)
+	void _publish_season_global();
 	float humidity = 0.7f; // relative, 0..1
 	float surface_storage = 0.5f; // mm a surface holds before water pools
 	float puddle_max_depth = 20.0f; // mm

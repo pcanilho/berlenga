@@ -959,7 +959,17 @@ public:
 	// mm stay green), so 1 at 500 mm and below, 0 from 1000 mm. The terrain material's soil and alluvium cover colour
 	// (its shader mirrors it: wc_climate_cured).
 	static float cured_share_for_precipitation(float p_mm);
-	// At a point, as climate_bare_share_at; -1 with no weather climate.
+	// How green grassland is for a season state, 0..1: greenness follows soil water and temperature (PhenoGrass,
+	// Hufkens et al. 2016; the Growing Season Index of Jolly et al. 2005 without its day-length term): drought cures it
+	// as the soil dries below about 40% of capacity, and a hard winter (daily means well below freezing) leaves it tan.
+	// One rule for the sward (GrassField3D's season greenness) and the ground's cover.
+	static float greenness_for_season(float p_soil_moisture, float p_temperature);
+	// The cured share for a season state: 1 - greenness_for_season. A dry climate's cover cures through its summer
+	// drought and greens in the wet season; a humid one stays green.
+	static float cured_share_for_season(float p_soil_moisture, float p_temperature);
+	// At a point: from the weather's season there (WorldWeather.season_at: soil_moisture, temperature), else from the
+	// year's precipitation (cured_share_for_precipitation); -1 with no weather. GLSL wc_climate_cured(p) the same, from
+	// the weather_climate global's y and z (WeatherMap3D publishes them), else the precipitation.
 	static float climate_cured_share_at(const Vector3 &p_position);
 	// Where on the ground the bare share falls (1 bare soil, 0 plant cover): drylands' cover is patchy, not thin, with
 	// clumps and bare soil between them metres across (Rietkerk et al. 2004). Bare where a two-octave value noise (4 m and
@@ -979,7 +989,11 @@ public:
 	// gradient p_gradient (dh/dx, dh/dz), x the tread (0..1: 1 on a tread's middle), y the phase up the step (0..1,
 	// the tread from 0 to about 0.2, then the riser), z how strongly the slope forms them (0 under about 25 degrees,
 	// 1 from 35 to 45, 0 past about 51). Bands follow the height, wandering a few decimetres, and fade out in places.
-	static constexpr float TERRACETTE_SPACING = 3.4f; // Along the slope, m.
+	// The phase goes by height over a fixed rise (TERRACETTE_RISE), so a band keeps to one contour: a rise taken from the
+	// local slope (spacing times its sine) moved the phase by a whole step for a few hundredths of a metre's change in
+	// rise 100 m up, the bands a scribble of short dashes wherever the slope varied.
+	static constexpr float TERRACETTE_SPACING = 3.4f; // Along a 36 degree slope, m (closer on steeper ground).
+	static constexpr float TERRACETTE_RISE = 2.0f; // Height from one tread to the next, m.
 	static Vector3 terracette_at(const Vector3 &p_position, const Vector2 &p_gradient);
 	// GLSL of the same: vec3 wc_terracette(vec3 p, vec2 gradient). Needs climate_bare_shader_code() (wc_vn) first.
 	static String terracette_shader_code();

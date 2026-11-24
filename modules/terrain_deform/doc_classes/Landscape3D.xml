@@ -211,5 +211,8 @@
 		<member name="stream_heights" type="bool" setter="set_stream_heights" getter="is_streaming_heights" default="true">
 			With a [TerrainGenerator3D] as [member source] (and [member lod_levels] above 3), read a 4 m grid first and the rest per chunk as the camera needs it, on worker threads. Off: [method rebuild] reads everything first. Reading stops (keeping what was read) when the generator starts a new [method TerrainGenerator3D.generate].
 		</member>
+		<member name="terracette_relief" type="float" setter="set_terracette_relief" getter="get_terracette_relief" default="1.0">
+			Share of the grazing terracettes' steps built into the ground (0..1): on grazed slopes of about 25 to 51 degrees, level treads over the first fifth of each step and a riser through the rest, steps of about 0.4 m, laid out by [code]WorldContracts::terracette_at[/code] (the same bands as the sward's, [member GrassField3D.terracettes]). Drawn by [TerrainMaterial3D] in its vertex stage (the near patch at its own grid, the landscape filtered to its vertex spacing) and per pixel, in both renderers; placers read it through [method WorldGround.relief_at]. Published in the terrain_bank_relief global's y. 0 turns it off.
+		</member>
 	</members>
 </class>

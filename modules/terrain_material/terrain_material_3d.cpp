@@ -278,6 +278,21 @@ vec3 tm_dune_tone(vec2 p_xz, float p_normal_y, float p_interdune) {
 	return t;
 }
 )";
+	// Soil bare of plants by the climate's dryness (WorldContracts::bare_share_for_precipitation, shared below): the soil
+	// and alluvium layers' colours are a vegetated topsoil (olive); in a dry climate most of it is bare soil.
+	c += R"(
+global uniform sampler2D terrain_climate_map : hint_default_black, filter_linear; // TerrainDataMap3D: g precipitation m a year
+global uniform vec4 terrain_climate_rect;
+global uniform vec4 weather_climate; // WeatherMap3D's season climate: x precipitation mm a year, y soil moisture, z air temperature C, w 1 when set
+uniform bool tm_bare_on = true;
+uniform vec4 tm_bare_soil_color : source_color = vec4(0.49, 0.40, 0.33, 1.0);
+uniform vec4 tm_bare_alluvium_color : source_color = vec4(0.60, 0.55, 0.49, 1.0);
+uniform vec4 tm_cured_cover_color : source_color = vec4(0.52, 0.45, 0.30, 1.0);
+)";
+	// The shared bare-soil rule and patches (WorldContracts::climate_bare_shader_code(): wc_climate_bare, wc_bare_patch,
+	// wc_climate_cured), the same the grass fields thin their blades by; before the grass ground code, whose turf cures
+	// by wc_climate_cured (it checks WC_CLIMATE_CODE).
+	c += WorldContracts::climate_bare_shader_code();
 	if (grass_tint_enabled) {
 		c += GrassField3D::get_ground_shader_code();
 	}
@@ -312,7 +327,7 @@ global uniform vec4 rock_contact_rect;
 global uniform sampler2D terrain_stand_map : hint_default_black, filter_linear; // Landscape3D: r trail wear, g fresh rooting
 global uniform vec4 terrain_stand_rect;
 global uniform vec4 terrain_cliff_relief; // Landscape3D: cliff_relief (m), grid spacing (m), grid origin (x, z); x 0 = none
-global uniform vec4 terrain_bank_relief; // Landscape3D: bank_relief (m) in x; 0 = none
+global uniform vec4 terrain_bank_relief; // Landscape3D: bank_relief (m) in x (0 = none), terracette_relief (share) in y
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
 )";
@@ -722,20 +737,6 @@ vec2 tm_hex_hash(ivec2 v) {
 	return vec2(float(h & 0xFFFFu), float(h >> 16u)) / 65535.0;
 }
 )";
-	// Soil bare of plants by the climate's dryness (WorldContracts::bare_share_for_precipitation, shared below): the soil
-	// and alluvium layers' colours are a vegetated topsoil (olive); in a dry climate most of it is bare soil.
-	c += R"(
-global uniform sampler2D terrain_climate_map : hint_default_black, filter_linear; // TerrainDataMap3D: g precipitation m a year
-global uniform vec4 terrain_climate_rect;
-global uniform vec4 weather_climate; // WeatherMap3D's season climate: x precipitation mm a year, w 1 when set
-uniform bool tm_bare_on = true;
-uniform vec4 tm_bare_soil_color : source_color = vec4(0.49, 0.40, 0.33, 1.0);
-uniform vec4 tm_bare_alluvium_color : source_color = vec4(0.60, 0.55, 0.49, 1.0);
-uniform vec4 tm_cured_cover_color : source_color = vec4(0.52, 0.45, 0.30, 1.0);
-)";
-	// The shared bare-soil rule and patches (WorldContracts::climate_bare_shader_code(): wc_climate_bare, wc_bare_patch),
-	// the same the grass fields thin their blades by.
-	c += WorldContracts::climate_bare_shader_code();
 	c += R"(
 // The share of the soil bare at p, 0 with no climate (the shared rule, wc_climate_bare above).
 float tm_climate_bare(vec3 p) {
@@ -744,6 +745,74 @@ float tm_climate_bare(vec3 p) {
 // The share of the soil's plant cover cured to straw by the dry season (wc_climate_cured above).
 float tm_climate_cured(vec3 p) {
 	return tm_bare_on ? wc_climate_cured(p) : 0.0;
+}
+// The cured cover's colour at p (its mean tm_cured_cover_color): a dry sward is not one straw tone but standing straw,
+// grey weathered litter (dead grass greys within a season as it weathers) and soil between the tussocks, a quarter of
+// the ground or so in a semi-arid sward. Tussocks about 0.35 m, blades and gaps under them at 0.1 m, fresher and greyer
+// patches over 1.4 m; each scale fades to its mean once a pixel covers it.
+vec3 tm_cured_cover(vec3 p, float fp, vec3 soil) {
+	float t1 = tm_vn(p * 2.8 + 71.0);
+	float t2 = tm_vn(p * 9.0 + 83.0);
+	float t3 = tm_vn(p * 0.7 + 97.0);
+	float t4 = tm_vn(p * 0.3 + 113.0);
+	// Each octave fades to its mean once a pixel spans a quarter of its size (a 0.36 m tussock by 0.14 m pixels): faded
+	// at a pixel's size, as before, it aliased into smooth bands under the temporal filter from 30 m on.
+	float n1 = 1.0 - smoothstep(0.04, 0.14, fp);
+	float n2 = 1.0 - smoothstep(0.012, 0.045, fp);
+	float n3 = 1.0 - smoothstep(0.15, 0.5, fp);
+	vec3 straw = tm_cured_cover_color.rgb * vec3(1.16, 1.14, 1.04);
+	vec3 litter = tm_cured_cover_color.rgb * vec3(0.8, 0.88, 1.08);
+	vec3 c = mix(straw, litter, clamp(0.4 + (t3 - 0.5) * 1.6 * n3 + (t2 - 0.5) * 0.7 * n2, 0.0, 1.0));
+	// Clumps and swales a few metres across, fuller and sparser, what a dry sward shows from afar where the tussocks
+	// have faded to their mean (one flat colour there read as paint).
+	c *= 0.72 + 0.56 * t4;
+	// Each tussock lit on top and shaded at its base (the clump's own self-shadow, the grain of a bunchgrass sward from
+	// a few metres), the bare ground between them showing through: at 0.28 the cover read as flat mustard blobs.
+	float tuft = 1.0 - smoothstep(0.36, 0.66, t1);
+	c *= mix(0.96, 0.62 + 0.68 * tuft, n1) * mix(1.0, 0.75 + 0.5 * t2, n2);
+	float gap = mix(0.32 + 0.4 * (0.5 - t4), smoothstep(0.48, 0.6, t1 + (t2 - 0.5) * 0.3 * n2), n1);
+	return mix(c, soil, gap * 0.95);
+}
+)";
+	// Terracettes as relief (Landscape3D::terracette_offset, which this mirrors; the layout is the shared contract's).
+	c += WorldContracts::terracette_shader_code();
+	c += R"(
+const float TM_TC_T = 0.185; // the tread's share of each step
+float tm_tc_o(float x) {
+	float ph = fract(x);
+	return (ph < TM_TC_T ? -ph : -TM_TC_T * (1.0 - ph) / (1.0 - TM_TC_T)) + 0.5 * TM_TC_T;
+}
+float tm_tc_int(float x) {
+	float ph = fract(x);
+	float t = TM_TC_T;
+	return ph < t ? -0.5 * ph * ph + 0.5 * t * ph : t / (2.0 * (1.0 - t)) * ((1.0 - ph) * (1.0 - ph) - (1.0 - t) * (1.0 - t)) + 0.5 * t * (ph - t);
+}
+// At p (world, the undisplaced ground's height in y) on ground of gradient grad: x the steps' height over the ground
+// (m), y the change of the slope's steepness (the surface's gradient is grad times 1 + y), both box-filtered over
+// width metres along the fall line. Its share is terrain_bank_relief.y (Landscape3D.terracette_relief).
+vec2 tm_terracette(vec3 p, vec2 grad, float width) {
+	if (terrain_bank_relief.y <= 0.0) {
+		return vec2(0.0);
+	}
+	vec3 t = wc_terracette(p, grad);
+	if (t.z <= 0.0) {
+		return vec2(0.0);
+	}
+	float steep = length(grad);
+	float rise = 2.0; // WorldContracts::TERRACETTE_RISE
+	float k = wc_terracette(vec3(p.x, p.y - (t.y - 0.1) * rise, p.z), grad).x * terrain_bank_relief.y;
+	// On open soil only, as the layer mix's steep slopes: none on sand, thin soil, or in a cell with any rock, talus or
+	// till (a steep slope beside them is bare debris there; the generator's geology; Landscape3D gates the same).
+	if (k > 0.0 && tm_geology && terrain_geology_rect.z > 0.0) {
+		vec4 g = terrain_geology(p);
+		k *= smoothstep(0.05, 0.2, g.x) * (1.0 - smoothstep(0.02, 0.2, max(clamp(g.y, 0.0, 1.0), abs(g.z))));
+	}
+	float d = max(0.5 * width * steep / max(rise, 1e-3), 0.004);
+	if (k <= 0.0 || d >= 0.5) {
+		return vec2(0.0);
+	}
+	float f = 1.0 - smoothstep(0.3, 0.5, d); // the last of it fades rather than stops
+	return vec2(rise * k * (tm_tc_int(t.y + d) - tm_tc_int(t.y - d)) / (2.0 * d), k * (tm_tc_o(t.y + d) - tm_tc_o(t.y - d)) / (2.0 * d)) * f;
 }
 )";
 	// Godot passes a sampler to a function only with one filter/repeat/hint setting per function, so the hex sampler
@@ -944,6 +1013,8 @@ varying vec4 tm_cl_p; // the undisplaced point (landscape space), w the cliff re
 varying vec4 tm_cl_n; // the heightfield normal, w the bank relief's scale
 varying float tm_cl_kj; // the joint steps' scale (CUSTOM2.x)
 varying vec3 tm_proj_n; // the heightfield's central-difference normal (CUSTOM2.yzw), for the texture projection
+varying vec4 tm_tc_p; // the terracettes: xyz the undisplaced ground (world), w 1 where they are drawn
+varying vec2 tm_tc_g; // and the heightfield's gradient there
 float tm_cl_hash(int a, int b, int c) {
 	uint h = uint(a) * 0x8DA6B343u ^ uint(b) * 0xD8163841u ^ uint(c) * 0xCB1AB31Fu;
 	h ^= h >> 13u;
@@ -1355,6 +1426,22 @@ vec2 tm_cl_weights_at(vec2 xz) {
 )";
 	}
 	c += "\nvoid vertex() {\n\ttm_cl_p = CUSTOM0;\n\ttm_cl_n = CUSTOM1;\n\ttm_cl_kj = CUSTOM2.x;\n\ttm_proj_n = CUSTOM2.yzw;\n";
+	// Terracettes on the landscape's mesh (CUSTOM0 its undisplaced point, CUSTOM1 the heightfield normal), filtered to
+	// twice its vertex spacing (and wider with distance, where coarser levels draw): narrower, a grid of a metre or so
+	// sampled each 3 m step at two or three vertices and drew them as a sawtooth along contours across its diagonals.
+	c += R"(	tm_tc_p = vec4(0.0);
+	tm_tc_g = vec2(0.0);
+	if (terrain_bank_relief.y > 0.0 && dot(CUSTOM1.xyz, CUSTOM1.xyz) > 0.5) {
+		vec3 tc_p = (MODEL_MATRIX * vec4(CUSTOM0.xyz, 1.0)).xyz;
+		vec3 tc_n = normalize(mat3(MODEL_MATRIX) * CUSTOM1.xyz);
+		vec2 tc_g = -tc_n.xz / max(tc_n.y, 0.05);
+		tm_tc_p = vec4(tc_p, 1.0);
+		tm_tc_g = tc_g;
+		float tc_w = 2.0 * max(terrain_cliff_relief.y > 0.0 ? terrain_cliff_relief.y : 1.0, distance(tc_p, CAMERA_POSITION_WORLD) / 64.0);
+		float tc_o = tm_terracette(tc_p, tc_g, tc_w).x;
+		VERTEX += inverse(mat3(MODEL_MATRIX)) * vec3(0.0, tc_o, 0.0);
+	}
+)";
 	if (ground_deform_enabled) {
 		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
 		// with a copy of this material, takes the printed surface.
@@ -1362,6 +1449,18 @@ vec2 tm_cl_weights_at(vec2 xz) {
 		// Read, so the path tracer counts the parameter among what its capture depends on (GroundSurface3D bumps it
 		// when the field's texture is rewritten in place, which alone recaptures nothing).
 		c += "\tVERTEX.y += 0.0 * ground_deform_serial;\n";
+		// The near patch takes the terracettes at its own grid, from the landscape's heightfield normal as the
+		// landscape does (the patch's own follows prints).
+		c += R"(	if (ground_deform_patch && terrain_bank_relief.y > 0.0 && terrain_cliff_relief.y > 0.0 && ground_deform_rect.z > 0.0) {
+		vec3 tc_p = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec3 tc_n = tm_cl_land_n(tc_p.xz);
+		vec2 tc_g = -tc_n.xz / max(tc_n.y, 0.05);
+		tm_tc_p = vec4(tc_p, 1.0);
+		tm_tc_g = tc_g;
+		float tc_o = tm_terracette(tc_p, tc_g, 2.0 * max(ground_deform_rect.w, 0.05)).x;
+		VERTEX += inverse(mat3(MODEL_MATRIX)) * vec3(0.0, tc_o, 0.0);
+	}
+)";
 		// The patch carries no relief data of its own, so it takes the landscape's here: the same face weight, scale
 		// and offset as Landscape3D::_cliff_point, its vertices pushed out as the landscape's are, and CUSTOM0 /
 		// CUSTOM1's data for the pixel normal and ledge shadows. Without it the patch drew smooth faces near the camera over relief cliffs.
@@ -1932,7 +2031,10 @@ void fragment() {
 			scree += rest * wall;
 			rest *= 1.0 - wall;
 		}
-		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.88, 0.95, tm_cn.y);
+		// Fines settle only where the gradient falls off: floodplains and fan surfaces of a few degrees (fluvial fans
+		// mostly under 5 degrees, debris-flow fans to about 15; Blair and McPherson 1994). Taken to 32 degrees, slopes
+		// of 25 drew flat pale slabs of bare alluvium with hard edges on dry hillsides. The edge noise breaks the rim.
+		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w) * smoothstep(0.92, 0.97, tm_cn.y + tm_edge_n * 0.15);
 		// Rills and gullies (the droplet erosion's channels): the flow strips a channel's floor of its fines and soil
 		// to a gravel lag (Poesen et al. 2003), the scree layer's stones and grit; below the slope break its load
 		// settles as a fan of fresh fines (the alluvium layer). Rock floors stay rock.
@@ -1941,7 +2043,7 @@ void fragment() {
 		tm_gully = clamp(tm_gully, 0.0, 1.0);
 		scree += rest * tm_gully;
 		rest *= 1.0 - tm_gully;
-		alluvium = max(alluvium, smoothstep(0.15, 0.8, tm_gl.y) * smoothstep(0.85, 0.93, tm_cn.y));
+		alluvium = max(alluvium, smoothstep(0.15, 0.8, tm_gl.y) * smoothstep(0.95, 0.985, tm_cn.y + tm_edge_n * 0.15));
 		w[0] = rock;
 		w[1] = scree;
 		w[2] = rest * (1.0 - alluvium);
@@ -2023,7 +2125,7 @@ void fragment() {
 		vec3 d;
 		float h;
 		tm_soil(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
-		a *= mix(mix(tm_soil_color.rgb, tm_cured_cover_color.rgb, tm_cured), tm_bare_soil_color.rgb, tm_bare_k) / max(tm_soil_color.rgb, vec3(1e-3));
+		a *= mix(mix(tm_soil_color.rgb, tm_cured_cover(wp, tm_fp0, tm_bare_soil_color.rgb), tm_cured), tm_bare_soil_color.rgb, tm_bare_k) / max(tm_soil_color.rgb, vec3(1e-3));
 		alb[2] = a;
 		rgh[2] = r;
 		dns[2] = d;
@@ -2035,7 +2137,7 @@ void fragment() {
 		vec3 d;
 		float h;
 		tm_alluvium(wp, tm_pn, cliff, tm_dpx, tm_dpy, a, r, d, h);
-		a *= mix(mix(tm_alluvium_color.rgb, tm_cured_cover_color.rgb, 0.8 * tm_cured), tm_bare_alluvium_color.rgb, tm_bare_k) / max(tm_alluvium_color.rgb, vec3(1e-3));
+		a *= mix(mix(tm_alluvium_color.rgb, tm_cured_cover(wp, tm_fp0, tm_bare_alluvium_color.rgb), 0.8 * tm_cured), tm_bare_alluvium_color.rgb, tm_bare_k) / max(tm_alluvium_color.rgb, vec3(1e-3));
 		alb[3] = a;
 		rgh[3] = r;
 		dns[3] = d;
@@ -2124,6 +2226,18 @@ void fragment() {
 )";
 	}
 	c += R"(	}
+)";
+	// Terracettes per pixel: the steps' slope, filtered over the pixel's footprint (the geometry carries them as far as
+	// its vertices resolve; this draws the tread edges finer and fades them out where a pixel covers a step).
+	c += R"(	if (tm_tc_p.w > 0.5) {
+		vec2 tc = tm_terracette(tm_tc_p.xyz, tm_tc_g, tm_fp0);
+		if (tc.y != 0.0) {
+			vec3 tc_n0 = normalize(vec3(-tm_tc_g.x, 1.0, -tm_tc_g.y));
+			vec3 tc_n1 = normalize(vec3(-tm_tc_g.x * (1.0 + tc.y), 1.0, -tm_tc_g.y * (1.0 + tc.y)));
+			sn = normalize(sn + tc_n1 - tc_n0);
+			tm_macro_n = normalize(tm_macro_n + tc_n1 - tc_n0);
+		}
+	}
 )";
 	// Rock faces weathered by aspect (docs/ideas/terrain-material.md, "Rock faces weather by aspect"): lichen and moss
 	// cover follows how little sun a face gets over the year, the heat load index's idea (McCune and Keon 2002: a
@@ -3044,13 +3158,13 @@ Color TerrainMaterial3D::contract_ground_albedo_at(const Vector3 &p_position) co
 		const float bare_near = steep * MAX(Math::smoothstep(0.02f, 0.2f, CLAMP(g.g, 0.0f, 1.0f)), Math::smoothstep(0.02f, 0.2f, sg));
 		scree += rest * bare_near;
 		rest *= 1.0f - bare_near;
-		float alluvium = Math::smoothstep(alluvium_area, alluvium_area + 1.0f, g.a) * Math::smoothstep(0.88f, 0.95f, ny);
+		float alluvium = Math::smoothstep(alluvium_area, alluvium_area + 1.0f, g.a) * Math::smoothstep(0.92f, 0.97f, ny);
 		// Rill and gully floors (as the shader, without its noise): gravel lag, fans of fines below.
 		const Vector2 gl = gen->get_gully_at(p_position, ny);
 		const float gully = gl.x * (1.0f - rock);
 		scree += rest * gully;
 		rest *= 1.0f - gully;
-		alluvium = MAX(alluvium, float(Math::smoothstep(0.15f, 0.8f, float(gl.y)) * Math::smoothstep(0.85f, 0.93f, ny)));
+		alluvium = MAX(alluvium, float(Math::smoothstep(0.15f, 0.8f, float(gl.y)) * Math::smoothstep(0.95f, 0.985f, ny)));
 		w[LAYER_ROCK] = rock;
 		w[LAYER_SCREE] = scree;
 		w[LAYER_SOIL] = rest * (1.0f - alluvium);

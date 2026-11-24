@@ -13,9 +13,11 @@ extends Node3D
 #                         hoodoo or stack stood on end, side on)
 #   --clouds[=C]          the weather sky (clouds of cover C, atmosphere) instead of the plain gradient
 #   --shader-scree        the ground shader's parallax scree blocks under the real stones too (before frames)
+#   --terracette-spot     with --world: a 31-40 degree soil slope along its contour; --terracettes=k Landscape3D.terracette_relief
 #   --talus-slope         with --view=scree: the fullest talus on a 25-38 degree slope above the beaches
 #   --exposure=x          the tonemapper's exposure (1): more for a dark cave seen from inside
 #   --gen-prop=name:value[,...]  any TerrainGenerator3D property before it generates (A/B one stage)
+#   --mat-prop=name:value[;...]  any TerrainMaterial3D property or tm_ shader uniform (tm_sand_color:Color(1,0,1) marks a layer)
 #   --hide=Node[,Node...]  hide those children of the bench (A/B which object draws something)
 #   --lod-error=px        Landscape3D.lod_error
 #   --face-spot=north|south  a rock wall facing that way, from its foot with the sky over it (--view=cliff);
@@ -525,6 +527,11 @@ func _world() -> void:
 	tm.use_generator(gen)
 	tm.rock_detail_enabled = args.get("rock-detail", "1") != "0" # --rock-detail=0: the ground without its joints and stones
 	tm.cliff_self_shadow = args.get("ledge-shadow", "1") != "0" # --ledge-shadow=0: cliff relief ledges without their per-pixel shadows
+	# --mat-prop=name:value[;...]: any TerrainMaterial3D property (A/B one feature, or a layer's colour as a marker).
+	for kv in str(args.get("mat-prop", "")).split(";", false):
+		var mp: PackedStringArray = kv.split(":")
+		if not mp[0].begins_with("tm_"):
+			tm.set(mp[0], str_to_var(mp[1]))
 	if args.has("detail-octaves"):
 		tm.detail_octaves = int(args["detail-octaves"]) # --detail-octaves=N: erosion detail octaves in the normal (0: none, A/B)
 	if args.get("far-shadows", "1") == "0":
@@ -546,6 +553,8 @@ func _world() -> void:
 	# smooth white spur flanks); the checks measure the bare heightfield, and --no-cliff-relief gives a before frame.
 	if args.has("bank-relief"):
 		land.bank_relief = float(args["bank-relief"])
+	if args.has("terracettes"):
+		land.terracette_relief = float(args["terracettes"]) # --terracettes=0: no terracette steps (a before frame)
 	if args.has("test"):
 		land.bank_relief = 0.0
 	if args.has("test") or args.has("no-cliff-relief"):
@@ -840,6 +849,43 @@ func _world() -> void:
 		var bz := gen.get_height(spot + Vector3(0, 0, 2)) - gen.get_height(spot - Vector3(0, 0, 2))
 		bank_side = Vector3(-bz, 0, bx).normalized()
 		print("bank spot ", spot, " geology ", gen.get_geology_at(spot))
+	if args.has("terracette-spot"):
+		# --terracette-spot: a soil slope of 33 to 42 degrees (no rock exposure, not talus), where the grazing terracettes
+		# form most (WorldContracts::terracette_at; Landscape3D.terracette_relief), seen along its contour as --bank-spot.
+		var best_t := -INF
+		var found_t := spot
+		for zz in range(-800, 801, 6):
+			for xx in range(-800, 801, 6):
+				var p := Vector3(xx, 0, zz)
+				if gen.get_height(p) < gen.sea_level + 8.0:
+					continue
+				# The slope over 3 m and over 1 m (the near ground's own, which the steps go by) both in the band.
+				var gx := gen.get_height(p + Vector3(3, 0, 0)) - gen.get_height(p - Vector3(3, 0, 0))
+				var gz := gen.get_height(p + Vector3(0, 0, 3)) - gen.get_height(p - Vector3(0, 0, 3))
+				var sl := rad_to_deg(atan(Vector2(gx, gz).length() / 6.0))
+				if sl < 31.0 or sl > 40.0:
+					continue
+				var fx := gen.get_height(p + Vector3(1, 0, 0)) - gen.get_height(p - Vector3(1, 0, 0))
+				var fz := gen.get_height(p + Vector3(0, 0, 1)) - gen.get_height(p - Vector3(0, 0, 1))
+				var fsl := rad_to_deg(atan(Vector2(fx, fz).length() / 2.0))
+				if fsl < 31.0 or fsl > 40.0:
+					continue
+				var g := gen.get_material_geology_at(p)
+				if g.r < 0.25 or g.g > 0.0 or absf(g.b) > 0.0:
+					continue
+				# Facing the sun's side (south, +z; north is -z) so the treads catch the light.
+				var down := Vector2(-gx, -gz).normalized()
+				if down.y < 0.5:
+					continue
+				var score := -absf(fsl - 35.0) / 10.0 + down.y * 0.5 - Vector2(xx, zz).length() / 4000.0
+				if score > best_t:
+					best_t = score
+					found_t = p
+		spot = found_t
+		var tx := gen.get_height(spot + Vector3(2, 0, 0)) - gen.get_height(spot - Vector3(2, 0, 0))
+		var tz := gen.get_height(spot + Vector3(0, 0, 2)) - gen.get_height(spot - Vector3(0, 0, 2))
+		bank_side = Vector3(-tz, 0, tx).normalized()
+		print("terracette spot ", spot, " geology ", gen.get_material_geology_at(spot))
 	var face_out := Vector3.ZERO
 	if args.has("face-spot"):
 		# --face-spot=north|south: a rock wall of 60 degrees or more facing that way (outward within 30 degrees,
@@ -1060,7 +1106,25 @@ func _world() -> void:
 	if args.get("focus", "") == "camera":
 		focus.global_position = cam.position # --focus=camera: the field streams and thins round the camera, not the spot
 	print("spot %s, camera %s" % [spot, cam.position])
+	if args.has("rain-climate"):
+		# The season the cured cover reads (WorldContracts::cured_share_for_season): soil moisture and temperature.
+		var ss: Dictionary = WorldContracts.get_weather().season_at(spot)
+		print("season at the spot: soil_moisture %s, temperature %s, cured %.2f" % [ss.get("soil_moisture"), ss.get("temperature"), 1.0 - clampf(smoothstep(0.1, 0.4, float(ss.get("soil_moisture", 0.0))) * smoothstep(-8.0, 2.0, float(ss.get("temperature", 0.0))), 0.0, 1.0)])
+	# --mat-prop's shader uniforms (tm_sand_color:Color(1,0,1), a layer marked), set last so the material's own setup
+	# does not overwrite them.
+	for kv in str(args.get("mat-prop", "")).split(";", false):
+		var mu: PackedStringArray = kv.split(":")
+		if mu[0].begins_with("tm_"):
+			land.material.set_shader_parameter(mu[0], str_to_var(mu[1]))
 	print("ground at the spot: generator %.2f, landscape %.2f; camera %s" % [gen.get_height(spot), land.get_height(spot), cam.position])
+	if args.has("terracette-spot"):
+		# The steps' relief down the fall line from the spot (WorldGround.relief_at, x the offset) every 0.5 m.
+		var fall := Vector3(gen.get_height(spot - Vector3(2, 0, 0)) - gen.get_height(spot + Vector3(2, 0, 0)), 0, gen.get_height(spot - Vector3(0, 0, 2)) - gen.get_height(spot + Vector3(0, 0, 2))).normalized()
+		var steps := PackedStringArray()
+		for i in range(0, 24):
+			var q := spot + fall * (float(i) * 0.5)
+			steps.append("%.2f" % WorldContracts.get_ground().relief_at(q).x)
+		print("terracette relief down the fall line: ", ", ".join(steps))
 	if rocks:
 		if args.has("only-layer"):
 			for i in LAYERS.size():

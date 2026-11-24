@@ -1313,11 +1313,23 @@ float WorldContracts::cured_share_for_precipitation(float p_mm) {
 	return 1.0f - Math::smoothstep(500.0f, 1000.0f, p_mm);
 }
 
+float WorldContracts::greenness_for_season(float p_soil_moisture, float p_temperature) {
+	return CLAMP(Math::smoothstep(0.1f, 0.4f, p_soil_moisture) * Math::smoothstep(-8.0f, 2.0f, p_temperature), 0.0f, 1.0f);
+}
+
+float WorldContracts::cured_share_for_season(float p_soil_moisture, float p_temperature) {
+	return 1.0f - greenness_for_season(p_soil_moisture, p_temperature);
+}
+
 float WorldContracts::climate_cured_share_at(const Vector3 &p_position) {
 	WeatherSeason::Climate cl;
 	const WorldWeather *w = weather();
 	if (!w || !w->season_climate(cl)) {
 		return -1.0f;
+	}
+	const Dictionary s = w->season_at(p_position);
+	if (s.has("soil_moisture")) {
+		return cured_share_for_season(float(s["soil_moisture"]), float(s.get("temperature", 10.0f)));
 	}
 	return cured_share_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
 }
@@ -1372,7 +1384,7 @@ Vector3 WorldContracts::terracette_at(const Vector3 &p_position, const Vector2 &
 	const float x = p_position.x;
 	const float z = p_position.z;
 	const float sin_s = steep / Math::sqrt(1.0f + steep * steep);
-	const float rise = TERRACETTE_SPACING * sin_s;
+	const float rise = TERRACETTE_RISE;
 	const float wander = (wc_vn(Vector3(x * 0.09f + 41.0f, 5.3f, z * 0.09f)) - 0.5f) * 0.9f + (wc_vn(Vector3(x * 0.37f + 7.0f, 9.1f, z * 0.37f)) - 0.5f) * 0.25f;
 	const float v = float(p_position.y) / rise + wander * sin_s / rise;
 	const float ph = v - Math::floor(v);
@@ -1391,7 +1403,7 @@ vec3 wc_terracette(vec3 p, vec2 grad) {
 		return vec3(0.0);
 	}
 	float sin_s = steep / sqrt(1.0 + steep * steep);
-	float rise = 3.4 * sin_s;
+	float rise = 2.0; // WorldContracts::TERRACETTE_RISE
 	float wander = (wc_vn(vec3(p.x * 0.09 + 41.0, 5.3, p.z * 0.09)) - 0.5) * 0.9 + (wc_vn(vec3(p.x * 0.37 + 7.0, 9.1, p.z * 0.37)) - 0.5) * 0.25;
 	float ph = fract(p.y / rise + wander * sin_s / rise);
 	float tread = smoothstep(0.0, 0.05, ph) * (1.0 - smoothstep(0.15, 0.22, ph));
@@ -1442,8 +1454,12 @@ float wc_climate_bare(vec3 p) {
 	float mm = wc_climate_mm(p);
 	return mm < 0.0 ? 0.0 : 0.9 * (1.0 - smoothstep(200.0, 700.0, mm));
 }
-// WorldContracts::cured_share_for_precipitation at p, from the same climate (0 with none).
+// WorldContracts::cured_share_for_season from the weather's season (weather_climate y soil moisture, z temperature),
+// else cured_share_for_precipitation from the climate map (0 with neither).
 float wc_climate_cured(vec3 p) {
+	if (weather_climate.w > 0.0) {
+		return 1.0 - clamp(smoothstep(0.1, 0.4, weather_climate.y) * smoothstep(-8.0, 2.0, weather_climate.z), 0.0, 1.0);
+	}
 	float mm = wc_climate_mm(p);
 	return mm < 0.0 ? 0.0 : 1.0 - smoothstep(500.0, 1000.0, mm);
 }

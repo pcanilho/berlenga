@@ -106,6 +106,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	int lod_levels = 5;
 	real_t lod_error = 1.0;
 	real_t cliff_relief = 0.6; // m, rock ledges built into faces steeper than about 50 degrees at the finest level (0 = off)
+	real_t terracette_relief = 1.0; // share of the grazing terracettes' steps drawn (WorldContracts::terracette_at; 0 = off)
 	real_t bank_relief = 0.8; // m, slump scarps and lobes on banks of about 40 to 55 degrees at the finest level (0 = off)
 	Ref<Material> material;
 	bool cast_shadows = true;
@@ -189,7 +190,7 @@ class Landscape3D : public Node3D, public WorldReliefProvider {
 	// data of their own (GroundSurface3D's patch): global terrain_cliff_relief = (metres, grid spacing, grid origin),
 	// read in world space as the stand map is (the landscape is not moved).
 	Vector4 cliff_published;
-	real_t bank_published = -1.0;
+	Vector2 bank_published = Vector2(-1.0, -1.0); // terrain_bank_relief.xy: the bank relief, the terracettes' share
 	void _publish_cliff_relief(bool p_clear = false);
 
 	// Streaming.
@@ -287,6 +288,11 @@ public:
 	real_t get_cliff_relief() const { return cliff_relief; }
 	void set_bank_relief(real_t p_metres);
 	real_t get_bank_relief() const { return bank_relief; }
+	void set_terracette_relief(real_t p_share);
+	real_t get_terracette_relief() const { return terracette_relief; }
+	// The terracettes' step relief at p (world height in y) on ground of gradient p_gradient: metres over the
+	// heightfield, box-filtered over p_width metres along the fall line (TerrainMaterial3D's tm_terracette mirrors it).
+	static real_t terracette_offset(const Vector3 &p_position, const Vector2 &p_gradient, real_t p_width, real_t p_share);
 	Vector2 contract_relief_at(const Vector3 &p_position) const override;
 	const Object *contract_relief_object() const override { return this; }
 	void contract_relief_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const override;
