@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-3be3e65d (2026-11-24)
+
+### Added
+- PhysXSkinnedCloth3D.followers and auto_followers: trims, flaps and buttons carried by the simulated cloth (mesh-to-mesh skinning), so separate meshes stay on the moving fabric.
+
 ## build-2d0a3bbe (2026-11-24)
 
 ### Fixed
