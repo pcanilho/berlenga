@@ -1385,7 +1385,7 @@ func _frame_log() -> void:
 			if tp.distance_to(c3.global_position) > float(args.get("log-radius", "70")):
 				continue
 			# Inside views (--stand-in): only logs under the closed stand, never at the meadow's rim.
-			if args.has("stand-in") and veg.get_stand_shade_at(tp) < 0.5:
+			if args.has("stand-in") and veg.get_stand_shade_at(tp) < 0.75:
 				continue
 			# The axis: the heading along which the ground stays under the log (get_deadwood_at side < 0).
 			var dir := Vector3.ZERO
@@ -1429,10 +1429,12 @@ func _frame_log() -> void:
 	var side := axis.cross(Vector3.UP).normalized()
 	if Vector2(side.x, side.z).dot(sun_flat) < 0.0:
 		side = -side
-	var cp := best_a.lerp(best_b, float(args.get("log-from", "0.15"))) + side * float(args.get("log-side", "1.3"))
+	# Inside views (--stand-in) stand back so the log fills the near third with the boles rising behind it.
+	var inside := args.has("stand-in")
+	var cp := best_a.lerp(best_b, float(args.get("log-from", "0.15"))) + side * float(args.get("log-side", "5" if inside else "1.3"))
 	cp.y = height_at(cp.x, cp.z) + float(args.get("log-height", "1.7" if args.has("stand-in") else "1.2"))
 	var mid := best_a.lerp(best_b, float(args.get("log-at", "0.55")))
-	mid.y = height_at(mid.x, mid.z) + 0.1
+	mid.y = height_at(mid.x, mid.z) + float(args.get("log-look-h", "2.2" if inside else "0.1"))
 	c3.global_position = cp
 	c3.look_at(mid)
 	var n := 0
