@@ -33,11 +33,15 @@
 #define RT_CAUSTICS_SLOT_UINTS (RT_CAUSTICS_RES * RT_CAUSTICS_RES * 3u)
 #define RT_CAUSTICS_SLOT_UINTS_OUTER (RT_CAUSTICS_RES_OUTER * RT_CAUSTICS_RES_OUTER * 3u)
 #define RT_CAUSTICS_HEADER (3u * RT_CAUSTICS_SLOT_UINTS + 3u * (RT_CAUSTICS_CASCADES - 1u) * RT_CAUSTICS_SLOT_UINTS_OUTER) // 4 uints a slot: look distance, centre xyz
-// The lamp map (below): three slots of RT_CAUSTICS_RES texels after the sun's header, then a header per slot: the
-// lamp's position and how many of its photons entered water.
+// The lamp maps (below): three slots after the sun's header, each holding RT_CAUSTICS_LAMPS maps of
+// RT_CAUSTICS_LAMP_RES texels, then a header per slot: each lamp's position and how many of its photons entered water.
+#define RT_CAUSTICS_LAMPS 4u
+#define RT_CAUSTICS_LAMP_RES 256u
+#define RT_CAUSTICS_LAMP_MAP_UINTS (RT_CAUSTICS_LAMP_RES * RT_CAUSTICS_LAMP_RES * 3u)
+#define RT_CAUSTICS_LAMP_SLOT_UINTS (RT_CAUSTICS_LAMPS * RT_CAUSTICS_LAMP_MAP_UINTS)
 #define RT_CAUSTICS_LAMP_BASE (RT_CAUSTICS_HEADER + 12u)
-#define RT_CAUSTICS_LAMP_HEADER (RT_CAUSTICS_LAMP_BASE + 3u * RT_CAUSTICS_SLOT_UINTS)
-#define RT_CAUSTICS_UINTS (RT_CAUSTICS_LAMP_HEADER + 12u) // must match RT_CAUSTICS_UINTS (render_raytracing.h)
+#define RT_CAUSTICS_LAMP_HEADER (RT_CAUSTICS_LAMP_BASE + 3u * RT_CAUSTICS_LAMP_SLOT_UINTS)
+#define RT_CAUSTICS_UINTS (RT_CAUSTICS_LAMP_HEADER + 3u * RT_CAUSTICS_LAMPS * 4u) // must match RT_CAUSTICS_UINTS (render_raytracing.h)
 #define RT_CAUSTICS_WEIGHT 64.0 // fixed-point steps of one photon
 #define RT_CAUSTICS_DEPTH_SCALE 100.0 // depth sum steps per metre
 #define RT_CAUSTICS_DEPTH_BIAS 50000.0 // depths are stored from -500 m to 500 m around the area's centre
@@ -254,14 +258,15 @@ bool rt_caustics_covers(vec3 p) {
 
 
 // Lamp caustics (docs/ideas/water.md "Lamps above the water", path tracer): the same bent-over-straight ratio as the
-// sun's, for the one omni or spot light that reaches nearest the area's centre, so a torch or a spot shone into water
+// sun's, for the four omni or spot lights that reach brightest round the area's centre, so a torch or a spot shone into water
 // lights the bed through the bent surface: gathered toward the vertical under flat water (a lamp at height a over a
 // bed b deep lights it as one at a + b/n would), and into moving lines under waves. The map is the lamp's perspective
 // view (texel = the direction from the lamp, over the tangent plane of its axis), depth = the distance from the lamp.
 // Photons go out evenly over that plane, each weighted by the lamp's intensity in its direction (the spot's cone) and
 // the solid angle of its texel (cos^3 off the axis), so a bent photon landing in another texel brings its own power.
 // The shadow ray already crosses the surface straight (Fresnel and absorption): lights_evaluate_positional multiplies
-// by the ratio at the point. One lamp: the brightest by the inverse square of its distance to the area's centre.
+// by the ratio at the point. Four lamps, the brightest by the inverse square of their distance to the area's centre,
+// each its own map of RT_CAUSTICS_LAMP_RES texels.
 
 struct CausticsLampFrame {
 	vec3 apex;
@@ -288,34 +293,44 @@ bool rt_caustics_lamp_frame(RTLightData p_light, out CausticsLampFrame f) {
 	return true;
 }
 
-// The lamp chosen for the map, or false: the same for every thread (it reads only the light buffer).
-bool rt_caustics_pick_lamp(vec3 p_center, out RTLightData r_light) {
+// The lamps chosen for the maps (r_count of them, brightest first): the same for every thread (it reads only the light
+// buffer).
+uint rt_caustics_pick_lamps(vec3 p_center, out uint r_idx[RT_CAUSTICS_LAMPS]) {
 	uint count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 	uint first = 0u;
 	while (first < count && lights_get_type(first) == RT_LIGHT_TYPE_DIRECTIONAL) {
 		first++;
 	}
 	float half_size = 0.5 * max(get_rt_param(RT_PARAM_CAUSTICS_SIZE), 0.01);
-	float best = 0.0;
-	uint pick = 0xFFFFFFFFu;
+	float score[RT_CAUSTICS_LAMPS];
+	for (uint k = 0u; k < RT_CAUSTICS_LAMPS; k++) {
+		score[k] = 0.0;
+		r_idx[k] = 0xFFFFFFFFu;
+	}
+	uint n = 0u;
 	for (uint i = first; i < min(count, first + RT_CAUSTICS_LAMP_SCAN); i++) {
 		RTLightData l = lights_get(i);
 		float range = l.max_range_squared > 0.0 ? sqrt(l.max_range_squared) : 1e4;
 		float d = distance(l.position, p_center);
-		if (d - range > half_size || l.shadow_opacity <= 0.001) {
+		if (d - range > half_size || l.shadow_opacity <= 0.001 || (l.type != RT_LIGHT_TYPE_OMNI && l.type != RT_LIGHT_TYPE_SPOT)) {
 			continue;
 		}
-		float score = max(l.emission.r, max(l.emission.g, l.emission.b)) / max(d * d, 1.0);
-		if (score > best) {
-			best = score;
-			pick = i;
+		float sc = max(l.emission.r, max(l.emission.g, l.emission.b)) / max(d * d, 1.0);
+		if (!(sc > score[RT_CAUSTICS_LAMPS - 1u])) {
+			continue;
 		}
+		// Insert, keeping the list sorted brightest first.
+		uint k = RT_CAUSTICS_LAMPS - 1u;
+		while (k > 0u && sc > score[k - 1u]) {
+			score[k] = score[k - 1u];
+			r_idx[k] = r_idx[k - 1u];
+			k--;
+		}
+		score[k] = sc;
+		r_idx[k] = i;
+		n = min(n + 1u, RT_CAUSTICS_LAMPS);
 	}
-	if (pick == 0xFFFFFFFFu) {
-		return false;
-	}
-	r_light = lights_get(pick);
-	return true;
+	return n;
 }
 
 // Texel position (centres at .5) of p in the lamp's map; false behind the lamp or off the map.
@@ -327,7 +342,7 @@ bool rt_caustics_lamp_texel(CausticsLampFrame f, vec3 p, out vec2 r_st) {
 		return false;
 	}
 	vec2 t = vec2(dot(q, f.r), dot(q, f.u)) / (z * f.ext);
-	r_st = (t * 0.5 + 0.5) * float(RT_CAUSTICS_RES);
+	r_st = (t * 0.5 + 0.5) * float(RT_CAUSTICS_LAMP_RES);
 	return all(greaterThanEqual(t, vec2(-1.0))) && all(lessThanEqual(t, vec2(1.0)));
 }
 
@@ -336,7 +351,7 @@ float rt_caustics_lamp_depth(CausticsLampFrame f, vec3 p) {
 }
 
 // Channel 0 bent, 1 straight with its depth sum in 2, as the sun's; p_weight in photons (0..1).
-void rt_caustics_lamp_deposit(CausticsLampFrame f, uint p_slot, vec3 p, uint p_channel, float p_weight) {
+void rt_caustics_lamp_deposit(CausticsLampFrame f, uint p_slot, uint p_lamp, vec3 p, uint p_channel, float p_weight) {
 	vec2 st;
 	if (!rt_caustics_lamp_texel(f, p, st)) {
 		return;
@@ -345,11 +360,11 @@ void rt_caustics_lamp_deposit(CausticsLampFrame f, uint p_slot, vec3 p, uint p_c
 	ivec2 i0 = ivec2(floor(st));
 	vec2 fr = st - vec2(i0);
 	uint depth = uint(rt_caustics_lamp_depth(f, p));
-	uint base = RT_CAUSTICS_LAMP_BASE + p_slot * RT_CAUSTICS_SLOT_UINTS;
+	uint base = RT_CAUSTICS_LAMP_BASE + p_slot * RT_CAUSTICS_LAMP_SLOT_UINTS + p_lamp * RT_CAUSTICS_LAMP_MAP_UINTS;
 	for (int k = 0; k < 4; k++) {
 		ivec2 o = ivec2(k & 1, k >> 1);
 		ivec2 t = i0 + o;
-		if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, ivec2(RT_CAUSTICS_RES)))) {
+		if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, ivec2(RT_CAUSTICS_LAMP_RES)))) {
 			continue;
 		}
 		vec2 w2 = mix(1.0 - fr, fr, vec2(o));
@@ -357,7 +372,7 @@ void rt_caustics_lamp_deposit(CausticsLampFrame f, uint p_slot, vec3 p, uint p_c
 		if (w == 0u) {
 			continue;
 		}
-		uint idx = base + (uint(t.y) * RT_CAUSTICS_RES + uint(t.x)) * 3u;
+		uint idx = base + (uint(t.y) * RT_CAUSTICS_LAMP_RES + uint(t.x)) * 3u;
 		atomicAdd(rt_caustics.data[idx + p_channel], w);
 		if (p_channel == 1u) {
 			atomicAdd(rt_caustics.data[idx + 2u], w * depth);
@@ -371,12 +386,17 @@ float rt_caustics_lamp_ratio(RTLightData p_light, vec3 p) {
 		return 1.0;
 	}
 	uint slot = (rt_caustics_write_slot() + 2u) % 3u;
-	uint h = RT_CAUSTICS_LAMP_HEADER + slot * 4u;
-	if (rt_caustics.data[h + 3u] == 0u) {
-		return 1.0; // none of its photons entered water
+	uint lamp = RT_CAUSTICS_LAMPS;
+	for (uint k = 0u; k < RT_CAUSTICS_LAMPS; k++) {
+		uint h = RT_CAUSTICS_LAMP_HEADER + (slot * RT_CAUSTICS_LAMPS + k) * 4u;
+		vec3 lp = vec3(uintBitsToFloat(rt_caustics.data[h]), uintBitsToFloat(rt_caustics.data[h + 1u]), uintBitsToFloat(rt_caustics.data[h + 2u]));
+		if (all(equal(lp, p_light.position))) {
+			// None of its photons entered water: its light is as the straight shadow ray has it.
+			lamp = rt_caustics.data[h + 3u] == 0u ? RT_CAUSTICS_LAMPS : k;
+			break;
+		}
 	}
-	vec3 lp = vec3(uintBitsToFloat(rt_caustics.data[h]), uintBitsToFloat(rt_caustics.data[h + 1u]), uintBitsToFloat(rt_caustics.data[h + 2u]));
-	if (any(notEqual(lp, p_light.position))) {
+	if (lamp == RT_CAUSTICS_LAMPS) {
 		return 1.0;
 	}
 	CausticsLampFrame f;
@@ -390,13 +410,13 @@ float rt_caustics_lamp_ratio(RTLightData p_light, vec3 p) {
 	float bent = 0.0;
 	float straight = 0.0;
 	float depth_sum = 0.0;
-	uint base = RT_CAUSTICS_LAMP_BASE + slot * RT_CAUSTICS_SLOT_UINTS;
+	uint base = RT_CAUSTICS_LAMP_BASE + slot * RT_CAUSTICS_LAMP_SLOT_UINTS + lamp * RT_CAUSTICS_LAMP_MAP_UINTS;
 	for (int k = 0; k < 4; k++) {
 		ivec2 o = ivec2(k & 1, k >> 1);
-		ivec2 t = clamp(i0 + o, ivec2(0), ivec2(RT_CAUSTICS_RES - 1u));
+		ivec2 t = clamp(i0 + o, ivec2(0), ivec2(RT_CAUSTICS_LAMP_RES - 1u));
 		vec2 w2 = mix(1.0 - fr, fr, vec2(o));
 		float w = w2.x * w2.y;
-		uint idx = base + (uint(t.y) * RT_CAUSTICS_RES + uint(t.x)) * 3u;
+		uint idx = base + (uint(t.y) * RT_CAUSTICS_LAMP_RES + uint(t.x)) * 3u;
 		bent += w * float(rt_caustics.data[idx]);
 		straight += w * float(rt_caustics.data[idx + 1u]);
 		depth_sum += w * float(rt_caustics.data[idx + 2u]);
@@ -406,12 +426,12 @@ float rt_caustics_lamp_ratio(RTLightData p_light, vec3 p) {
 	}
 	float dist = distance(p, f.apex);
 	// A texel's width at that distance, as the sun's tolerance.
-	float texel = 2.0 * f.ext * dist / float(RT_CAUSTICS_RES);
+	float texel = 2.0 * f.ext * dist / float(RT_CAUSTICS_LAMP_RES);
 	float tolerance = max(RT_CAUSTICS_DEPTH_TOLERANCE, 2.0 * texel) * RT_CAUSTICS_DEPTH_SCALE;
 	if (abs(depth_sum / straight - rt_caustics_lamp_depth(f, p)) > tolerance) {
 		return 1.0;
 	}
-	float res = float(RT_CAUSTICS_RES);
+	float res = float(RT_CAUSTICS_LAMP_RES);
 	vec2 edge = min(st + 0.5, vec2(res - 0.5) - st);
 	float fade = smoothstep(0.0, RT_CAUSTICS_EDGE_FADE * res, min(edge.x, edge.y));
 	return mix(1.0, min(bent / straight, RT_CAUSTICS_MAX_RATIO), fade);

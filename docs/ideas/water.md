@@ -4005,5 +4005,11 @@ another texel brings its own power; the map is the lamp's perspective view, the 
 that lamp multiplies its shadow ray's light by bent over straight. Under flat water this is the bend itself (the
 patch on the bed drawn in toward the vertical and brighter), under waves the moving lines. Dry surfaces within 30 cm
 of the lamp (its housing, its glass) let the photons through, as the lamp's shadow rays see it past them. While a
-lamp's photons meet no water, one pixel in sixteen probes for it. Not covered: the beam inside the water still
-follows the straight shadow ray (its edges are those of the unbent cone), and only one lamp at a time is mapped.
+lamp's photons meet no water, one pixel in sixteen probes for it. 
+**Later the same night (Paulo: "All three").** Four lamps at once: the four brightest round the map's centre,
+each with its own map of 256 texels across (the same memory as the one 512 map). The beam in the water bends too: a
+scattering point in the water lit by a lamp over it probes straight up for the surface, solves the same refraction
+point as the raster (Newton), spreads the light as the bent tube does, and casts two shadow rays, the water leg up
+through the surface and the air leg on to the lamp (rt_volume_bent in the raygen). So the beam narrows toward the
+vertical under the surface as the patch on the bed does. Waves move the patch's lines (the map) but the beam's bend
+takes the surface as level over each point.

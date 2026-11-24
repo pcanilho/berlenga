@@ -383,13 +383,93 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 	imageStore(plight_images[write * 2u + 1u], ivec3(cell), b);
 }
 
+bool rt_caustics_trace(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out PathState r_ps);
+
+// A lamp over the water lighting a point x in it (docs/ideas/water.md "Lamps above the water", path tracer): its light
+// bends at the surface over x (taken level there, found by a probe straight up), along the one ray Snell's law allows
+// (Newton's method from the paraxial point, as the raster water_lamp_at), and spreads as that bent tube of rays does:
+// drawn in toward the vertical, so the beam in the water narrows under the lamp instead of carrying on its straight cone.
+// Two shadow rays: the water leg up through the surface (its transmission and the water's absorption, as a straight
+// one), and the air leg on to the lamp. r_e: the lamp's light scattered along -p_dir (phase g, its volumetric energy);
+// false where it does not apply (the lamp under the water, no level surface over x), for the straight estimate.
+bool rt_volume_bent(RTLightData p_light, vec3 x, vec3 p_dir, float g, out vec3 r_e, inout uint rng) {
+	r_e = vec3(0.0);
+	PathState ps;
+	if (!rt_caustics_trace(x, vec3(0.0, 1.0, 0.0), 0.0, 0u, ps) || (ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u ||
+			ps.bsdf_pdf >= 0.0 || abs(ps.offset_normal.y) < 0.7) {
+		return false;
+	}
+	float level = x.y + ps.hit_t;
+	vec3 c = p_light.position;
+	float a = c.y - level;
+	if (a <= 0.01) {
+		return false;
+	}
+	const float n = 1.333;
+	float b = max(level - x.y, 1e-3);
+	vec2 hv = x.xz - c.xz;
+	float rho = length(hv);
+	vec2 u = rho > 1e-6 ? hv / rho : vec2(1.0, 0.0);
+	float s = rho * a / (a + b / n);
+	for (int k = 0; k < 4; k++) {
+		float ra = sqrt(a * a + s * s);
+		float rb = sqrt(b * b + (rho - s) * (rho - s));
+		float f = s / ra - n * (rho - s) / rb;
+		float df = a * a / (ra * ra * ra) + n * b * b / (rb * rb * rb);
+		s = clamp(s - f / df, 0.0, rho);
+	}
+	float ra = sqrt(a * a + s * s);
+	float rb = sqrt(b * b + (rho - s) * (rho - s));
+	float ci = a / ra;
+	float si = s / ra;
+	float ct = b / rb;
+	float e2 = (a + b / n) * (a + b / n);
+	if (si > 1e-4) {
+		e2 = rho * (a / (ci * ci) + b / (ct * ct) * ci / (n * ct)) * ct / si;
+	}
+	float path = ra + rb;
+	if (p_light.max_range_squared > 0.0 && path * path > p_light.max_range_squared) {
+		return true;
+	}
+	float atten = pow(max(e2, 1e-8), -0.5 * p_light.attenuation);
+	if (p_light.inv_max_range >= 0.0) {
+		float nd = path * p_light.inv_max_range;
+		nd *= nd;
+		nd *= nd;
+		nd = max(1.0 - nd, 0.0);
+		atten *= nd * nd;
+	}
+	vec3 r_pt = vec3(c.x + u.x * s, level, c.z + u.y * s);
+	vec3 air = (c - r_pt) / ra; // up from the surface to the lamp
+	if (p_light.type == RT_LIGHT_TYPE_SPOT) {
+		float scos = dot(-air, lights_rotate(p_light.orientation, vec3(0.0, 0.0, -1.0)));
+		float cos_spot = 1.0 - p_light.one_minus_cos_spot;
+		if (scos <= cos_spot) {
+			return true;
+		}
+		atten *= 1.0 - pow(max(1e-4, (1.0 - scos) / max(p_light.one_minus_cos_spot, 1e-4)), p_light.inv_spot_attenuation);
+	}
+	vec3 up = (r_pt - x) / rb; // toward the light, in the water
+	vec3 e = p_light.emission * atten * rt_volume_hg(dot(up, p_dir), g) * p_light.volume_energy;
+	if (plight_luma(e) <= 0.0) {
+		return true;
+	}
+	// The water leg runs a little past the level point, through the surface where the waves have it.
+	vec3 tr = lights_shadow_transmittance(p_light, x, up, rb + 0.3, 0xFFu, rng);
+	if (max(tr.r, max(tr.g, tr.b)) > 0.0) {
+		tr *= lights_shadow_transmittance(p_light, r_pt + air * 0.3, air, max(ra - 0.31, 0.002), 0xFFu, rng);
+	}
+	r_e = e * tr;
+	return true;
+}
+
 // Light reaching a scattering point in simulated gas and scattered along -p_dir (the ray arrived
 // travelling along p_dir): every directional light, and one positional light chosen among the light
 // grid's candidates in proportion to its unshadowed contribution (as plight_update), each through a
 // shadow ray whose transmittance includes the gas (ratio tracking), weighted by the
 // Henyey-Greenstein phase function of anisotropy g (the gas's, or a water medium's). With p_cloud_beam
 // (the open air's haze), the sun's light is its direct beam through the clouds over x.
-vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, bool p_cloud_beam, inout uint rng) {
+vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, bool p_cloud_beam, bool p_water, inout uint rng) {
 	vec3 sum = vec3(0.0);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 	uint dir_count = lights_directional_count(light_count);
@@ -445,7 +525,13 @@ vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, bool p_cloud_beam, inout uint
 			}
 		}
 		if (w_sel > 0.0) {
-			sum += e_sel * (w_sum / w_sel) * lights_shadow_transmittance(lights_get(li_sel), x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
+			RTLightData sel = lights_get(li_sel);
+			vec3 e_bent;
+			if (p_water && rt_volume_bent(sel, x, p_dir, g, e_bent, rng)) {
+				sum += e_bent * (w_sum / w_sel);
+			} else {
+				sum += e_sel * (w_sum / w_sel) * lights_shadow_transmittance(sel, x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
+			}
 		}
 	}
 	return sum;
@@ -807,7 +893,7 @@ void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uve
 // One photon from the lamp over the map's tangent square, and its straight twin (raytracing_caustics_inc.glsl, lamp
 // caustics). p_sub of p_count stratifies the pixel's photons, as the sun's. Dry surfaces within
 // RT_CAUSTICS_LAMP_FIXTURE of the lamp (its housing, its glass) are passed, as its shadow rays see the lamp past them.
-void rt_caustics_lamp_photon(RTLightData p_light, CausticsLampFrame f, uint p_write, uvec2 p_pixel, uint p_sub, uint p_count, inout uint rng) {
+void rt_caustics_lamp_photon(RTLightData p_light, CausticsLampFrame f, uint p_write, uint p_lamp, uvec2 p_pixel, uint p_sub, uint p_count, inout uint rng) {
 	vec2 j = rand2(rng);
 	j.x = (float(p_sub) + j.x) / float(p_count);
 	vec2 uv = (vec2(p_pixel) + j) / vec2(RT_LAUNCH_SIZE.xy);
@@ -843,21 +929,21 @@ void rt_caustics_lamp_photon(RTLightData p_light, CausticsLampFrame f, uint p_wr
 		o = offset_ray_origin(hit, dot(ps.offset_normal, dir) > 0.0 ? ps.offset_normal : -ps.offset_normal, ps.hit_t);
 	}
 	if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u) {
-		rt_caustics_lamp_deposit(f, p_write, hit, 0u, weight);
-		rt_caustics_lamp_deposit(f, p_write, hit, 1u, weight);
+		rt_caustics_lamp_deposit(f, p_write, p_lamp, hit, 0u, weight);
+		rt_caustics_lamp_deposit(f, p_write, p_lamp, hit, 1u, weight);
 		return;
 	}
 	if (ps.bsdf_pdf < 0.5) {
 		return;
 	}
-	atomicAdd(rt_caustics.data[RT_CAUSTICS_LAMP_HEADER + p_write * 4u + 3u], 1u);
+	atomicAdd(rt_caustics.data[RT_CAUSTICS_LAMP_HEADER + (p_write * RT_CAUSTICS_LAMPS + p_lamp) * 4u + 3u], 1u);
 	vec3 oo = offset_ray_origin(hit, ps.offset_normal, ps.hit_t);
 	vec3 p;
 	if (rt_caustics_land(oo, ps.next_ray_dir, 0.0, rng, p)) {
-		rt_caustics_lamp_deposit(f, p_write, p, 0u, weight);
+		rt_caustics_lamp_deposit(f, p_write, p_lamp, p, 0u, weight);
 	}
 	if (rt_caustics_land(oo, dir, 0.0, rng, p)) {
-		rt_caustics_lamp_deposit(f, p_write, p, 1u, weight);
+		rt_caustics_lamp_deposit(f, p_write, p_lamp, p, 1u, weight);
 	}
 }
 
@@ -883,17 +969,17 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 		}
 	}
 	{
-		// The lamp map's slot, and its count of photons into water.
-		uint base = RT_CAUSTICS_LAMP_BASE + clear * RT_CAUSTICS_SLOT_UINTS;
-		uint share = (RT_CAUSTICS_SLOT_UINTS + threads - 1u) / threads;
+		// The lamp maps' slot, and their counts of photons into water.
+		uint base = RT_CAUSTICS_LAMP_BASE + clear * RT_CAUSTICS_LAMP_SLOT_UINTS;
+		uint share = (RT_CAUSTICS_LAMP_SLOT_UINTS + threads - 1u) / threads;
 		for (uint k = 0u; k < share; k++) {
 			uint i = tid * share + k;
-			if (i < RT_CAUSTICS_SLOT_UINTS) {
+			if (i < RT_CAUSTICS_LAMP_SLOT_UINTS) {
 				rt_caustics.data[base + i] = 0u;
 			}
 		}
-		if (tid == 0u) {
-			rt_caustics.data[RT_CAUSTICS_LAMP_HEADER + clear * 4u + 3u] = 0u;
+		if (tid < RT_CAUSTICS_LAMPS) {
+			rt_caustics.data[RT_CAUSTICS_LAMP_HEADER + (clear * RT_CAUSTICS_LAMPS + tid) * 4u + 3u] = 0u;
 		}
 	}
 
@@ -931,30 +1017,44 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 		}
 	}
 
-	// The lamp map: the lamp reaching nearest the area's centre. While its photons last frame met no water, one pixel
-	// in sixteen probes for it (a lamp over dry ground costs a sixteenth).
-	RTLightData lamp;
-	CausticsLampFrame lf;
-	uint lh = RT_CAUSTICS_LAMP_HEADER + write * 4u;
-	if (rt_caustics_pick_lamp(center, lamp) && rt_caustics_lamp_frame(lamp, lf)) {
-		if (all(equal(p_pixel, uvec2(0u)))) {
-			rt_caustics.data[lh] = floatBitsToUint(lamp.position.x);
-			rt_caustics.data[lh + 1u] = floatBitsToUint(lamp.position.y);
-			rt_caustics.data[lh + 2u] = floatBitsToUint(lamp.position.z);
+	// The lamp maps: the four lamps reaching brightest round the area's centre. While a lamp's photons last frame met no
+	// water, one pixel in sixteen probes for it (a lamp over dry ground costs a sixteenth).
+	uint picks[RT_CAUSTICS_LAMPS];
+	uint lamps = rt_caustics_pick_lamps(center, picks);
+	uint nl = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_LAMP_RES * RT_CAUSTICS_LAMP_RES + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
+	for (uint k = 0u; k < RT_CAUSTICS_LAMPS; k++) {
+		uint lh = RT_CAUSTICS_LAMP_HEADER + (write * RT_CAUSTICS_LAMPS + k) * 4u;
+		RTLightData lamp;
+		CausticsLampFrame lf;
+		bool live = k < lamps;
+		if (live) {
+			lamp = lights_get(picks[k]);
+			live = rt_caustics_lamp_frame(lamp, lf);
 		}
-		uint lh_last = RT_CAUSTICS_LAMP_HEADER + last * 4u;
-		bool wet_last = rt_caustics_history() && rt_caustics.data[lh_last + 3u] > 0u &&
-				all(equal(vec3(uintBitsToFloat(rt_caustics.data[lh_last]), uintBitsToFloat(rt_caustics.data[lh_last + 1u]), uintBitsToFloat(rt_caustics.data[lh_last + 2u])), lamp.position));
-		if (wet_last || ((tid ^ p_frame) & 15u) == 0u) {
-			uint nl = clamp((RT_CAUSTICS_MIN_PHOTONS * RT_CAUSTICS_RES * RT_CAUSTICS_RES + threads - 1u) / threads, 1u, RT_CAUSTICS_MAX_PER_PIXEL);
-			for (uint k = 0u; k < nl; k++) {
-				rt_caustics_lamp_photon(lamp, lf, write, p_pixel, k, nl, rng);
+		if (all(equal(p_pixel, uvec2(0u)))) {
+			vec3 lp = live ? lamp.position : vec3(1e30);
+			rt_caustics.data[lh] = floatBitsToUint(lp.x);
+			rt_caustics.data[lh + 1u] = floatBitsToUint(lp.y);
+			rt_caustics.data[lh + 2u] = floatBitsToUint(lp.z);
+		}
+		if (!live) {
+			continue;
+		}
+		// Last frame's map of this lamp, wherever it stood in that frame's list.
+		bool wet_last = false;
+		if (rt_caustics_history()) {
+			for (uint q = 0u; q < RT_CAUSTICS_LAMPS; q++) {
+				uint hq = RT_CAUSTICS_LAMP_HEADER + (last * RT_CAUSTICS_LAMPS + q) * 4u;
+				if (rt_caustics.data[hq + 3u] > 0u && all(equal(vec3(uintBitsToFloat(rt_caustics.data[hq]), uintBitsToFloat(rt_caustics.data[hq + 1u]), uintBitsToFloat(rt_caustics.data[hq + 2u])), lamp.position))) {
+					wet_last = true;
+				}
 			}
 		}
-	} else if (all(equal(p_pixel, uvec2(0u)))) {
-		rt_caustics.data[lh] = floatBitsToUint(1e30);
-		rt_caustics.data[lh + 1u] = floatBitsToUint(1e30);
-		rt_caustics.data[lh + 2u] = floatBitsToUint(1e30);
+		if (wet_last || ((tid ^ p_frame ^ (k * 5u)) & 15u) == 0u) {
+			for (uint j = 0u; j < nl; j++) {
+				rt_caustics_lamp_photon(lamp, lf, write, k, p_pixel, j, nl, rng);
+			}
+		}
 	}
 }
 
@@ -1242,7 +1342,7 @@ void main() {
 					vec3 albedo = rt_volume.smoke_color.rgb * rt_volume.medium.y;
 					ps.radiance = radiance_pre + throughput_entry * vol_emitted;
 					ps.throughput = throughput_entry * albedo;
-					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, rt_volume.medium.z, false, ps.rng_state);
+					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, rt_volume.medium.z, false, false, ps.rng_state);
 					// Free of the surface budget while within the volume's own: the total only leaves 0 (no longer the
 					// primary ray), so the surfaces the path meets later still get their max_bounces.
 					uint vol_flags = flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG);
@@ -1300,7 +1400,7 @@ void main() {
 						float t_ne = rt_haze_distance(h_a, h_k, -log(max(1.0 - rand(ps.rng_state) * p_scatter, 1e-30)), seg_len);
 						t_ne = t_ne < 0.0 ? seg_len : min(t_ne, seg_len);
 						haze_light = throughput_entry * (get_rt_param(RT_PARAM_HAZE_ALBEDO) * p_scatter) *
-								rt_volume_direct(ray_origin + ray_dir * t_ne, ray_dir, 0.6, true, ps.rng_state);
+								rt_volume_direct(ray_origin + ray_dir * t_ne, ray_dir, 0.6, true, false, ps.rng_state);
 					}
 					float t_haze = rt_haze_distance(h_a, h_k, -log(max(1.0 - rand(ps.rng_state), 1e-30)), seg_len);
 					if (t_haze > 0.0 && t_haze < seg_len) {
@@ -1346,7 +1446,7 @@ void main() {
 					vec3 x = ray_origin + ray_dir * t_coll;
 					ps.radiance = radiance_pre;
 					ps.throughput = throughput_entry * medium_albedo * medium_sigma_t * tr / max(pdf, 1e-30);
-					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, false, ps.rng_state);
+					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, false, true, ps.rng_state);
 					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG | MEDIUM_CHANGE_FLAG)) |
 							NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
 					ps.hit_t = t_coll;
