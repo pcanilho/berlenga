@@ -1204,6 +1204,20 @@ func _ready() -> void:
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(args["pt-pair"])
 			_log("saved %s (path traced pair, paused)" % args["pt-pair"])
+		if args.has("rock-pair") and rocks != null:
+			# --rock-pair=PATH --rock-pair-prop=name:value[;...]: the same moment with RockField3D properties changed
+			# (a docs on/off pair from one run): the scene paused, the rocks rebuilt, --rock-pair-frames (90) more frames.
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			rocks.process_mode = Node.PROCESS_MODE_ALWAYS
+			for kv in String(args.get("rock-pair-prop", "")).split(";", false):
+				var pv := kv.split(":")
+				rocks.set(pv[0], str_to_var(pv[1]))
+			for i in int(args.get("rock-pair-frames", "90")):
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["rock-pair"])
+			_log("saved %s (rocks %s, paused)" % [args["rock-pair"], args.get("rock-pair-prop", "")])
 		if data_map != null and data_map.has_method("get_aridity_at"):
 			var cq: Camera3D = get_viewport().get_camera_3d()
 			var gq := cq.global_position - cq.global_basis.z * 6.0
@@ -3226,6 +3240,28 @@ func _docs_links_setup() -> void:
 		scar.age_years = float(b[3]) if b.size() > 3 else 1.0
 		await get_tree().process_frame
 		_log("burn scar at %s, %s m, %.1f years" % [str(scar.global_position), str(scar.size), scar.age_years])
+	if args.has("snow-fall") and snow != null:
+		# --snow-fall=CM: a fresh fall of about CM over the whole snowpack before the frame (a cold storm's snowfall
+		# for --snow-fall-hours, 1, then the weather set above again): thin, even snow for ground-detail pairs.
+		var hrs := float(args.get("snow-fall-hours", "1"))
+		var keep := [weather.rain_rate, weather.temperature, weather.air_follows_climate]
+		weather.air_follows_climate = false
+		weather.temperature = minf(weather.temperature, -4.0)
+		weather.rain_rate = float(args["snow-fall"]) * float(args.get("snow-fall-density", "100")) / 1000.0 / hrs
+		weather.snap_to_settings()
+		var tf := Time.get_ticks_msec()
+		snow.advance(hrs * 3600.0)
+		var wf := 0
+		while snow.is_updating() and wf < 600:
+			await get_tree().process_frame
+			wf += 1
+		weather.rain_rate = keep[0]
+		weather.temperature = keep[1]
+		weather.air_follows_climate = keep[2]
+		weather.snap_to_settings()
+		var cq: Camera3D = get_viewport().get_camera_3d()
+		var fq := cq.global_position if cq != null else Vector3.ZERO
+		_log("snow fall: %.3f m deep at the camera after %.1f h (%d ms)" % [snow.get_depth_at(fq), hrs, Time.get_ticks_msec() - tf])
 	if args.has("snow-days") and snow != null:
 		var days := float(args["snow-days"])
 		var t := Time.get_ticks_msec()
