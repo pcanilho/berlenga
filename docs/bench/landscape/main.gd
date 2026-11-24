@@ -1246,6 +1246,23 @@ func _ready() -> void:
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(args["rock-pair"])
 			_log("saved %s (rocks %s, paused)" % [args["rock-pair"], args.get("rock-pair-prop", "")])
+		if args.has("weather-pair") and weather != null:
+			# --weather-pair=PATH --weather-pair-prop=name:value[;...]: the same moment with WeatherMap3D properties
+			# changed (a docs on/off pair from one run): the scene paused, the weather maps refreshed, then
+			# --weather-pair-frames (24) more frames. After --pt-pair it is path traced too.
+			process_mode = Node.PROCESS_MODE_ALWAYS
+			get_tree().paused = true
+			weather.process_mode = Node.PROCESS_MODE_ALWAYS
+			for kv in String(args.get("weather-pair-prop", "")).split(";", false):
+				var pv := kv.split(":")
+				weather.set(pv[0], str_to_var(pv[1]))
+			if weather.has_method("update_cloud_shadow"):
+				weather.update_cloud_shadow()
+			for i in int(args.get("weather-pair-frames", "24")):
+				await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(args["weather-pair"])
+			_log("saved %s (weather %s, paused)" % [args["weather-pair"], args.get("weather-pair-prop", "")])
 		if data_map != null and data_map.has_method("get_aridity_at"):
 			var cq: Camera3D = get_viewport().get_camera_3d()
 			var gq := cq.global_position - cq.global_basis.z * 6.0
