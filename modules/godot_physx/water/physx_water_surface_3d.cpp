@@ -230,6 +230,10 @@ uniform vec4 wake_rect_0 = vec4(0.0);
 uniform vec4 wake_rect_1 = vec4(0.0);
 uniform vec4 wake_rect_2 = vec4(0.0);
 uniform vec4 wake_rect_3 = vec4(0.0);
+// White water round bodies breaking the surface (docs/ideas/water.md "White water round bodies in the water"): the
+// node's foam grid round the camera (b: foam 0..1, world-fixed) and its rect (xy corner, z side; 0 = none).
+uniform sampler2D body_foam_tex : hint_default_black, filter_linear, repeat_disable;
+uniform vec4 body_foam_rect = vec4(0.0);
 // Mean surface height (node-relative), what the ripple layer settles back to
 // past the edge of its domain when the surface is rendered further out.
 uniform float water_level = 0.0;
@@ -287,6 +291,11 @@ uniform float shore_foam_breakup : hint_range(0.0, 1.0) = 0.85;
 // r = distance to where a body stands out of the water / 8 m, g = that face's steepness, b = wash over a rock
 // top under the surface.
 uniform sampler2D contact_foam_tex : hint_default_black, filter_linear, repeat_disable;
+// Waves meeting cliffs and stacks (docs/ideas/water.md "Waves reflected off cliffs, sheltered behind stacks"), over the
+// contact map: reflected off steep faces up to wave_reflection (method of images), and the lee's wave-height factor in
+// the map's alpha (diffraction round the rock's edges) where wave_shelter.
+uniform float wave_reflection = 0.0;
+uniform bool wave_shelter = false;
 uniform bool contact_foam_on = false;
 uniform vec2 contact_center = vec2(0.0);
 uniform float contact_extent = 96.0;
@@ -582,7 +591,7 @@ vec4 cascade_tex(sampler2D tex, vec2 domain, vec2 world_xz) {
 }
 
 // All cascades summed (heights, displacements and their derivatives add; foam is the most of any).
-vec4 ocean_height_all(vec2 world_xz) {
+vec4 ocean_height_all_inc(vec2 world_xz) {
 	vec4 v = ocean_tex(ocean_height_tex, world_xz);
 	if (wave_cascade_count > 1) {
 		v += cascade_tex(cascade_height_1, cascade_domain_1, world_xz);
@@ -596,7 +605,7 @@ vec4 ocean_height_all(vec2 world_xz) {
 	return v;
 }
 
-vec4 ocean_disp_all(vec2 world_xz) {
+vec4 ocean_disp_all_inc(vec2 world_xz) {
 	vec4 v = ocean_tex(ocean_disp_tex, world_xz);
 	if (wave_cascade_count > 1) {
 		v += cascade_tex(cascade_disp_1, cascade_domain_1, world_xz);
@@ -610,7 +619,7 @@ vec4 ocean_disp_all(vec2 world_xz) {
 	return v;
 }
 
-vec4 ocean_deriv_all(vec2 world_xz) {
+vec4 ocean_deriv_all_inc(vec2 world_xz) {
 	vec4 v = ocean_tex(ocean_deriv_tex, world_xz);
 	if (wave_cascade_count > 1) {
 		v += cascade_tex(cascade_deriv_1, cascade_domain_1, world_xz);
@@ -652,7 +661,7 @@ float far_shown(int i, float footprint) {
 	return mix(1.0, shown, far_filter);
 }
 
-vec4 ocean_deriv_filtered(vec2 world_xz, float footprint, out vec4 r_all, out float r_hidden) {
+vec4 ocean_deriv_filtered_inc(vec2 world_xz, float footprint, out vec4 r_all, out float r_hidden) {
 	vec4 d0 = ocean_tex(ocean_deriv_tex, world_xz);
 	float s0 = far_shown(0, footprint);
 	r_all = d0;
@@ -680,6 +689,110 @@ vec4 ocean_deriv_filtered(vec2 world_xz, float footprint, out vec4 r_all, out fl
 		r_hidden += cascade_variance.w * (1.0 - sh);
 	}
 	r_hidden *= far_filter;
+	return f;
+}
+
+// The waves reflected off a steep face nearby (method of images: for a straight reflecting wall the reflected field is
+// the incident one mirrored across it, so the surface reads the sea at its mirror image behind the face; heights
+// double at the face, the motion into it cancels). Its share kr (0 where none): wave_reflection on a vertical face,
+// eased off over the half of the contact map's 16 m nearest its reach, and r_m the mirror point, r_n the face's normal
+// (out into the water).
+float reflect_at(vec2 world_xz, out vec2 r_m, out vec2 r_n) {
+	r_m = world_xz;
+	r_n = vec2(0.0);
+	if (!contact_foam_on || wave_reflection <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (world_xz - contact_center) / contact_extent + 0.5;
+	vec2 edge = min(uv, 1.0 - uv);
+	float inside = smoothstep(0.0, 0.05, min(edge.x, edge.y));
+	if (inside <= 0.0) {
+		return 0.0;
+	}
+	vec4 c = textureLod(contact_foam_tex, uv, 0.0);
+	float d = c.r * 16.0;
+	float kr = wave_reflection * smoothstep(0.5, 0.9, c.g) * (1.0 - smoothstep(8.0, 16.0, d)) * smoothstep(0.02, 0.1, d) * inside;
+	if (kr <= 0.0) {
+		return 0.0;
+	}
+	vec2 texel = vec2(1.0) / vec2(textureSize(contact_foam_tex, 0));
+	vec2 g = vec2(textureLod(contact_foam_tex, uv + vec2(texel.x, 0.0), 0.0).r - textureLod(contact_foam_tex, uv - vec2(texel.x, 0.0), 0.0).r,
+			textureLod(contact_foam_tex, uv + vec2(0.0, texel.y), 0.0).r - textureLod(contact_foam_tex, uv - vec2(0.0, texel.y), 0.0).r);
+	if (dot(g, g) < 1e-10) {
+		return 0.0;
+	}
+	r_n = normalize(g);
+	r_m = world_xz - r_n * (2.0 * d);
+	return kr;
+}
+
+// Mirrored across the face (R = I - 2 n n^T): a horizontal vector, and the displacement's symmetric Jacobian
+// J = [[a, c], [c, b]] (a = dDx/dx, b = dDz/dz, c = dDx/dz) as R J R.
+vec2 mirror_vec(vec2 v, vec2 n) {
+	return v - 2.0 * dot(v, n) * n;
+}
+
+vec3 mirror_jacobian(float a, float b, float c, vec2 n) {
+	mat2 r = mat2(1.0) - 2.0 * mat2(vec2(n.x * n.x, n.x * n.y), vec2(n.x * n.y, n.y * n.y));
+	mat2 j = r * mat2(vec2(a, c), vec2(c, b)) * r;
+	return vec3(j[0][0], j[1][1], j[1][0]);
+}
+
+vec4 ocean_height_all(vec2 world_xz) {
+	vec4 v = ocean_height_all_inc(world_xz);
+	vec2 m, n;
+	float kr = reflect_at(world_xz, m, n);
+	if (kr > 0.0) {
+		v.r += kr * ocean_height_all_inc(m).r;
+	}
+	return v;
+}
+
+vec4 ocean_disp_all(vec2 world_xz) {
+	vec4 v = ocean_disp_all_inc(world_xz);
+	vec2 m, n;
+	float kr = reflect_at(world_xz, m, n);
+	if (kr > 0.0) {
+		vec4 dm = ocean_disp_all_inc(m);
+		vec4 jm = ocean_deriv_all_inc(m);
+		vec3 j = mirror_jacobian(jm.z, jm.w, dm.b, n);
+		v.rg += kr * mirror_vec(dm.rg, n);
+		v.b += kr * j.z;
+	}
+	return v;
+}
+
+vec4 ocean_deriv_all(vec2 world_xz) {
+	vec4 v = ocean_deriv_all_inc(world_xz);
+	vec2 m, n;
+	float kr = reflect_at(world_xz, m, n);
+	if (kr > 0.0) {
+		vec4 jm = ocean_deriv_all_inc(m);
+		vec3 j = mirror_jacobian(jm.z, jm.w, ocean_disp_all_inc(m).b, n);
+		v.xy += kr * mirror_vec(jm.xy, n);
+		v.zw += kr * j.xy;
+	}
+	return v;
+}
+
+vec4 ocean_deriv_filtered(vec2 world_xz, float footprint, out vec4 r_all, out float r_hidden) {
+	vec4 f = ocean_deriv_filtered_inc(world_xz, footprint, r_all, r_hidden);
+	vec2 m, n;
+	float kr = reflect_at(world_xz, m, n);
+	if (kr > 0.0) {
+		vec4 all_m;
+		float hidden_m;
+		vec4 f_m = ocean_deriv_filtered_inc(m, footprint, all_m, hidden_m);
+		float c_m = ocean_disp_all_inc(m).b;
+		vec3 jf = mirror_jacobian(f_m.z, f_m.w, c_m, n);
+		vec3 ja = mirror_jacobian(all_m.z, all_m.w, c_m, n);
+		f.xy += kr * mirror_vec(f_m.xy, n);
+		f.zw += kr * jf.xy;
+		r_all.xy += kr * mirror_vec(all_m.xy, n);
+		r_all.zw += kr * ja.xy;
+		// The reflected waves' hidden slopes add their variance.
+		r_hidden += kr * kr * hidden_m;
+	}
 	return f;
 }
 
@@ -747,8 +860,22 @@ float beyond_w(vec2 world_xz) {
 
 // The ocean chop multiplier / the still-water depth at world_xz (cuv_r = its clamped ripple UV): open, deep sea past
 // the square with open_sea_beyond.
+// The lee behind cliffs and stacks (the contact map's alpha, 1 in the open): the waves' height there.
+float lee_at(vec2 world_xz) {
+	if (!contact_foam_on || !wave_shelter) {
+		return 1.0;
+	}
+	vec2 uv = (world_xz - contact_center) / contact_extent + 0.5;
+	vec2 edge = min(uv, 1.0 - uv);
+	float inside = smoothstep(0.0, 0.05, min(edge.x, edge.y));
+	if (inside <= 0.0) {
+		return 1.0;
+	}
+	return mix(1.0, textureLod(contact_foam_tex, uv, 0.0).a, inside);
+}
+
 float fade_r(vec2 world_xz, vec2 cuv_r) {
-	return mix(texture(ocean_fade_tex, cuv_r).r, 1.0, beyond_w(world_xz));
+	return mix(texture(ocean_fade_tex, cuv_r).r, 1.0, beyond_w(world_xz)) * lee_at(world_xz);
 }
 
 float depth_r(vec2 world_xz, vec2 cuv_r) {
@@ -1291,6 +1418,23 @@ float shore_foam_at(vec2 world_xz, float footprint) {
 // the lee, draining outward into the lace and holes of the open sea's foam (foam_structure: fresh foam is a sheet,
 // older foam a web of borders), plus a wash over rock tops just under the surface as the crests cross them.
 // footprint: the pixel's size on the water (m), so the lace fades to its mean cover where finer than a pixel.
+float body_foam_at(vec2 world_xz, float footprint) {
+	if (body_foam_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (world_xz - body_foam_rect.xy) / body_foam_rect.z;
+	float edge = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
+	if (edge <= 0.0) {
+		return 0.0;
+	}
+	float amount = min(texture(body_foam_tex, uv).b, 1.0) * smoothstep(0.0, 0.1, edge);
+	if (amount < 0.01) {
+		return 0.0;
+	}
+	// The sea's own foam structure at its amount: churned where fresh, opening into lace as it drains.
+	return foam_structure(world_xz, amount, footprint);
+}
+
 float contact_foam_at(vec2 world_xz, float footprint) {
 	if (!contact_foam_on) {
 		return 0.0;
@@ -1305,7 +1449,7 @@ float contact_foam_at(vec2 world_xz, float footprint) {
 	if (c.g < 0.004 && c.b < 0.004) {
 		return 0.0;
 	}
-	float d = c.r * 8.0;
+	float d = c.r * 16.0; // (WaterContactMap::RANGE)
 	// Away from the rock: the distance's gradient (a texel either way). Waves travel with the wind: the water on the
 	// rock's upwind side takes their impact, the lee their spent foam.
 	vec2 texel = vec2(1.0) / vec2(textureSize(contact_foam_tex, 0));
@@ -1799,7 +1943,7 @@ void fragment() {
 	// The pixel's size on the water where it is drawn (the path tracer has no derivatives: full detail there).
 	vec2 fw_drawn = fwidth(v_drawn_xz);
 	float contact_footprint = max(max(fw_drawn.x, fw_drawn.y), 1e-4);
-	float foam = max(v_foam, contact_foam_at(v_drawn_xz, contact_footprint));
+	float foam = max(v_foam, max(contact_foam_at(v_drawn_xz, contact_footprint), body_foam_at(v_drawn_xz, contact_footprint)));
 	float water_roughness = pathtraced_roughness;
 	if (per_pixel_normals && v_lip < 0.5) {
 		// The pixel's longer side (along the view at grazing angles), so no band aliases there.
@@ -1809,7 +1953,7 @@ void fragment() {
 		// The normal takes the bands the pixel shows; the foam reads the whole surface (its crests break as they are).
 		vec4 der_n = ocean_deriv_filtered(v_rest_xz, footprint_px, der, hidden_var);
 		vec3 disp = ocean_disp_all(v_rest_xz).rgb;
-		foam = max(foam_at_with(v_rest_xz, der, disp), contact_foam_at(v_drawn_xz, contact_footprint));
+		foam = max(foam_at_with(v_rest_xz, der, disp), max(contact_foam_at(v_drawn_xz, contact_footprint), body_foam_at(v_drawn_xz, contact_footprint)));
 		der = der_n;
 		{
 			float a = pathtraced_roughness * pathtraced_roughness;
@@ -2075,7 +2219,18 @@ void fragment() {
 		vec3 seen;
 		vec3 bed_p;
 		float sun_share;
-		base_rgb = water_clear_through_ex(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, (pathtraced_absorption + sediment_absorption), water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), water_medium_g(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, false, seen, bed_p, sun_share);
+		vec3 amb;
+		base_rgb = water_clear_through_ex(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, (pathtraced_absorption + sediment_absorption), water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), water_medium_g(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, false, seen, bed_p, sun_share, amb);
+		if (raster_lamp_count > 0) {
+			// Lamps above or in the water: their light on the bed put right, and their beams in the water.
+			vec3 st_w = pathtraced_absorption + sediment_absorption + water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy);
+			float lvl = MODEL_MATRIX[3].y + water_level;
+			base_rgb += seen * water_lamp_bed(bed_p, lvl, st_w, amb);
+			vec3 t_w = refract(normalize(p_s - CAMERA_POSITION_WORLD), world_normal, 1.0 / 1.33);
+			if (dot(t_w, t_w) > 1e-6) {
+				base_rgb += water_lamp_beams(p_s, t_w, distance(p_s, bed_p), lvl, st_w, water_medium_scattering(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), water_medium_g(pathtraced_scattering, sediment_scattering, pathtraced_scattering_anisotropy), water_jitter(FRAGCOORD.xy, TIME));
+			}
+		}
 		if (caustics_on && sun_share > 0.0) {
 			// The bed point back up its refracted sun ray to the surface, then down it to the map's reference
 			// depth: where the map holds that ray's light (a bed at the reference depth reads its own point).
@@ -2177,10 +2332,19 @@ void fragment() {
 	float sun_a2 = 1.0;
 	if (camera_above) {
 		// Open water reflects; foam and dry sand are rough.
-		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), edge_rough, open_unlit, sun_body, sun_glint, sun_a2);
+		vec3 sky_part;
+		float sky_f;
+		refl = water_raster_reflect_ex(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), edge_rough, open_unlit, sun_body, sun_glint, sun_a2, sky_part, sky_f);
 #if !defined(BREAKER_LIP)
-		if (!raster_reflections && screen_reflections) {
-			refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, smoothstep(0.0, soft, shore) * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
+		if (screen_reflections) {
+			if (raster_reflections) {
+				// The scene in the mirror where the screen holds it (a stack, a cliff, a hull, the far shore), the sky
+				// elsewhere (docs/ideas/water.md "the scene mirrored in raster water"). Marched further than the
+				// river's: the sea's mirror holds headlands hundreds of metres off.
+				refl = water_screen_over_sky(clear_screen, clear_depth, refl, sky_part, sky_f, n, VERTEX, water_jitter(FRAGCOORD.xy, TIME), 240.0, PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
+			} else {
+				refl = water_screen_reflect(clear_screen, clear_depth, refl, n, VERTEX, SCREEN_UV, smoothstep(0.0, soft, shore) * (1.0 - foam), water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, INV_PROJECTION_MATRIX);
+			}
 		}
 #endif
 	}
@@ -2416,6 +2580,15 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_shore_spray_amount", "amount"), &PhysXWaterSurface3D::set_shore_spray_amount);
 	ClassDB::bind_method(D_METHOD("get_shore_spray_amount"), &PhysXWaterSurface3D::get_shore_spray_amount);
 	ClassDB::bind_method(D_METHOD("get_breaker_stats"), &PhysXWaterSurface3D::get_breaker_stats);
+	ClassDB::bind_method(D_METHOD("set_wave_reflection", "coefficient"), &PhysXWaterSurface3D::set_wave_reflection);
+	ClassDB::bind_method(D_METHOD("get_wave_reflection"), &PhysXWaterSurface3D::get_wave_reflection);
+	ClassDB::bind_method(D_METHOD("set_wave_shelter", "enabled"), &PhysXWaterSurface3D::set_wave_shelter);
+	ClassDB::bind_method(D_METHOD("get_wave_shelter"), &PhysXWaterSurface3D::get_wave_shelter);
+	ClassDB::bind_method(D_METHOD("set_impact_spray", "enabled"), &PhysXWaterSurface3D::set_impact_spray);
+	ClassDB::bind_method(D_METHOD("get_impact_spray"), &PhysXWaterSurface3D::get_impact_spray);
+	ClassDB::bind_method(D_METHOD("set_impact_spray_amount", "amount"), &PhysXWaterSurface3D::set_impact_spray_amount);
+	ClassDB::bind_method(D_METHOD("get_impact_spray_amount"), &PhysXWaterSurface3D::get_impact_spray_amount);
+	ClassDB::bind_method(D_METHOD("get_impact_spray_rate"), &PhysXWaterSurface3D::get_impact_spray_rate);
 	ClassDB::bind_method(D_METHOD("set_crest_spray", "enabled"), &PhysXWaterSurface3D::set_crest_spray);
 	ClassDB::bind_method(D_METHOD("get_crest_spray"), &PhysXWaterSurface3D::get_crest_spray);
 	ClassDB::bind_method(D_METHOD("set_crest_spray_amount", "amount"), &PhysXWaterSurface3D::set_crest_spray_amount);
@@ -2487,6 +2660,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_whitecap_target_cover"), &PhysXWaterSurface3D::get_whitecap_target_cover);
 	ClassDB::bind_method(D_METHOD("get_whitecap_cover"), &PhysXWaterSurface3D::get_whitecap_cover);
 	ClassDB::bind_method(D_METHOD("get_effective_foam_threshold"), &PhysXWaterSurface3D::get_effective_foam_threshold);
+	ClassDB::bind_method(D_METHOD("set_body_foam", "rate"), &PhysXWaterSurface3D::set_body_foam);
+	ClassDB::bind_method(D_METHOD("get_body_foam"), &PhysXWaterSurface3D::get_body_foam);
 	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXWaterSurface3D::set_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXWaterSurface3D::get_foam_persistence);
 	ClassDB::bind_method(D_METHOD("set_shore_foam_band", "depth"), &PhysXWaterSurface3D::set_shore_foam_band);
@@ -2604,6 +2779,12 @@ void PhysXWaterSurface3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(WAVE_SPREADING_HASSELMANN);
 	ClassDB::bind_method(D_METHOD("set_wave_spreading", "spreading"), &PhysXWaterSurface3D::set_wave_spreading);
 	ClassDB::bind_method(D_METHOD("get_wave_spreading"), &PhysXWaterSurface3D::get_wave_spreading);
+	ClassDB::bind_method(D_METHOD("set_swell_height", "height"), &PhysXWaterSurface3D::set_swell_height);
+	ClassDB::bind_method(D_METHOD("get_swell_height"), &PhysXWaterSurface3D::get_swell_height);
+	ClassDB::bind_method(D_METHOD("set_swell_period", "period"), &PhysXWaterSurface3D::set_swell_period);
+	ClassDB::bind_method(D_METHOD("get_swell_period"), &PhysXWaterSurface3D::get_swell_period);
+	ClassDB::bind_method(D_METHOD("set_swell_direction", "direction"), &PhysXWaterSurface3D::set_swell_direction);
+	ClassDB::bind_method(D_METHOD("get_swell_direction"), &PhysXWaterSurface3D::get_swell_direction);
 	ClassDB::bind_method(D_METHOD("set_swell", "swell"), &PhysXWaterSurface3D::set_swell);
 	ClassDB::bind_method(D_METHOD("get_swell"), &PhysXWaterSurface3D::get_swell);
 
@@ -2663,11 +2844,18 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fetch", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), "set_fetch", "get_fetch");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_spreading", PROPERTY_HINT_ENUM, "Cos2,Donelan-Banner,Hasselmann"), "set_wave_spreading", "get_wave_spreading");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swell", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_swell", "get_swell");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swell_height", PROPERTY_HINT_RANGE, "0,8,0.05,or_greater,suffix:m"), "set_swell_height", "get_swell_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swell_period", PROPERTY_HINT_RANGE, "4,25,0.1,suffix:s"), "set_swell_period", "get_swell_period");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "swell_direction"), "set_swell_direction", "get_swell_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "choppiness", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_choppiness", "get_choppiness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "foam_enabled"), "set_foam_enabled", "get_foam_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_threshold", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_foam_threshold", "get_foam_threshold");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "whitecap_auto"), "set_whitecap_auto", "get_whitecap_auto");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "whitecap_cover_scale", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_whitecap_cover_scale", "get_whitecap_cover_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_reflection", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wave_reflection", "get_wave_reflection");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wave_shelter"), "set_wave_shelter", "get_wave_shelter");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "impact_spray"), "set_impact_spray", "get_impact_spray");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "impact_spray_amount", PROPERTY_HINT_RANGE, "16,50000,1,or_greater"), "set_impact_spray_amount", "get_impact_spray_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crest_spray"), "set_crest_spray", "get_crest_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "crest_spray_amount", PROPERTY_HINT_RANGE, "16,65536,1"), "set_crest_spray_amount", "get_crest_spray_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crest_sheets"), "set_crest_sheets", "get_crest_sheets");
@@ -2682,6 +2870,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "open_sea_beyond"), "set_open_sea_beyond", "get_open_sea_beyond");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_undertow", PROPERTY_HINT_RANGE, "0,1.5,0.01,or_greater,suffix:m/s"), "set_shore_undertow", "get_shore_undertow");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.05,20,0.05,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "body_foam", PROPERTY_HINT_RANGE, "0,4,0.05,or_greater"), "set_body_foam", "get_body_foam");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swash_run_up", PROPERTY_HINT_RANGE, "0,1,0.01,or_greater,suffix:m"), "set_swash_run_up", "get_swash_run_up");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swash_drain_speed", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater,suffix:m/s"), "set_swash_drain_speed", "get_swash_drain_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_sand_dry_time", PROPERTY_HINT_RANGE, "0.1,60,0.1,or_greater,suffix:s"), "set_wet_sand_dry_time", "get_wet_sand_dry_time");
@@ -3120,7 +3309,91 @@ void PhysXWaterSurface3D::contract_water_impulse(const Vector3 &p_position, floa
 }
 
 PhysXWaterSurface3D::~PhysXWaterSurface3D() {
+	_clear_body_foam();
 	_clear_cascades();
+}
+
+void PhysXWaterSurface3D::set_body_foam(float p_rate) {
+	body_foam = MAX(p_rate, 0.0f);
+	body_contacts.foam_rate = body_foam;
+	if (body_foam <= 0.0f) {
+		body_foam_sources.clear();
+	}
+}
+
+void PhysXWaterSurface3D::_clear_body_foam() {
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("body_foam_tex", Variant());
+		water_material->set_shader_parameter("body_foam_rect", Vector4());
+	}
+	if (body_foam_texture.is_valid()) {
+		body_foam_texture->set_texture_rd_rid(RID());
+		body_foam_texture.unref();
+	}
+	if (body_foam_solver != nullptr) {
+		memdelete(body_foam_solver);
+		body_foam_solver = nullptr;
+	}
+	body_foam_sources.clear();
+	body_foam_idle = 1e6f;
+}
+
+// White water round bodies (docs/ideas/water.md "White water round bodies in the water"): the foam body_contacts
+// asks for this step goes into a foam-only wake grid round the camera (world-fixed: it stays where it was churned,
+// so a running body leaves a trail), fading over foam_persistence like the whitecaps. Stepped only while foam is on it.
+void PhysXWaterSurface3D::_update_body_foam(double p_delta) {
+	if (!body_foam_sources.is_empty()) {
+		body_foam_idle = 0.0f;
+	} else {
+		body_foam_idle += (float)p_delta;
+	}
+	// Nothing churned in for long enough that what was there has faded (e^-8): stop stepping.
+	if (body_foam_idle > 8.0f * foam_persistence + 1.0f) {
+		if (body_foam_solver != nullptr && water_material.is_valid()) {
+			water_material->set_shader_parameter("body_foam_rect", Vector4());
+		}
+		return;
+	}
+	if (body_foam_solver == nullptr) {
+		body_foam_solver = memnew(WaterWakeSolver);
+		if (!body_foam_solver->is_available()) {
+			memdelete(body_foam_solver);
+			body_foam_solver = nullptr;
+			body_foam_idle = 1e6f;
+			return;
+		}
+		body_foam_solver->build(BODY_FOAM_CELLS, BODY_FOAM_SIZE, false);
+		body_foam_texture.instantiate();
+		body_foam_texture->set_texture_rd_rid(body_foam_solver->get_height_texture_rd_rid());
+	}
+	// Centred on the camera (the foam is only seen near it), else on the bodies.
+	Vector2 center;
+	const Viewport *vp = get_viewport();
+	const Camera3D *cam = vp != nullptr ? vp->get_camera_3d() : nullptr;
+	if (cam != nullptr) {
+		const Vector3 c = cam->get_global_position();
+		center = Vector2(c.x, c.z);
+	} else if (!body_foam_sources.is_empty()) {
+		center = body_foam_sources.begin()->value.world_xz;
+	} else {
+		center = grid_center;
+	}
+	Vector<WaterWakeSolver::Source> sources;
+	for (const KeyValue<int, WaterWakeSolver::Source> &kv : body_foam_sources) {
+		if (sources.size() >= WaterWakeSolverGPU::MAX_SOURCES) {
+			break;
+		}
+		sources.push_back(kv.value);
+	}
+	// Foam only: no dips, no hull, no pushing; the wave equation stays flat. The slope test never fires.
+	body_foam_solver->step(p_delta, center, sources, 1.0f, 4.0f, 8.0f, 4.0f, foam_persistence, 1e6f, 0.0f, center, center, 0.0f, 1.0f, 0.0f, 0.0f);
+	if (water_material.is_valid()) {
+		const Vector2 o = body_foam_solver->get_origin();
+		if (water_material->get_shader_parameter("body_foam_tex") != Variant(body_foam_texture)) {
+			water_material->set_shader_parameter("body_foam_tex", body_foam_texture);
+		}
+		water_material->set_shader_parameter("body_foam_rect", Vector4(o.x, o.y, body_foam_solver->get_size(), 0.0f));
+	}
 }
 
 void PhysXWaterSurface3D::set_shore_waves(bool p_enabled) {
@@ -4647,6 +4920,247 @@ float PhysXWaterSurface3D::_ocean_jacobian_at(float p_x, float p_z, float p_fade
 // downwind. Spume appears once the wind passes about 9 m/s (Monahan et al. 1986; Andreas 1998's spray
 // generation function rises steeply above that), so its rate eases in between 9 and 20 m/s. Candidates fall
 // denser near the camera (radius drawn uniformly, not by area), where droplets show.
+// Wave impact spray (docs/ideas/water.md "Wave impact spray on rocks and cliffs"): the sites are the rock contact map's
+// cells at the foot of a steep face, on the water side, with the horizontal direction out of the face.
+void PhysXWaterSurface3D::_build_impact_sites() {
+	impact_sites.clear();
+	const int n = contact_map.get_resolution();
+	const Vector<uint8_t> &px = contact_map.get_pixels();
+	if (n <= 2 || px.size() < n * n * 4) {
+		return;
+	}
+	const float extent = contact_map.get_extent();
+	const Vector2 corner = contact_map.get_center() - Vector2(extent, extent) * 0.5f;
+	const float cell = extent / n;
+	const uint8_t *p = px.ptr();
+	auto dist = [&](int x, int y) { return float(p[(CLAMP(y, 0, n - 1) * n + CLAMP(x, 0, n - 1)) * 4]) / 255.0f * WaterContactMap::RANGE; };
+	for (int y = 1; y < n - 1; y++) {
+		for (int x = 1; x < n - 1; x++) {
+			const uint8_t *c = p + (y * n + x) * 4;
+			const float d = float(c[0]) / 255.0f * WaterContactMap::RANGE;
+			const float steep = float(c[1]) / 255.0f;
+			// The water at the face's foot (not the rock's own top, where the distance is nil), on steep faces only:
+			// a beach's gentle slope spills its waves (the shore breakers), it does not throw them up.
+			if (d < 0.1f || d > 0.6f || steep < 0.5f) {
+				continue;
+			}
+			Vector2 g(dist(x + 1, y) - dist(x - 1, y), dist(x, y + 1) - dist(x, y - 1));
+			if (g.length_squared() < 1e-8f) {
+				continue;
+			}
+			ImpactSite s;
+			s.xz = corner + (Vector2(x, y) + Vector2(0.5f, 0.5f)) * cell;
+			s.away = g.normalized();
+			impact_sites.push_back(s);
+		}
+	}
+}
+
+void PhysXWaterSurface3D::_impact_spray_off() {
+	impact_spray_rate = 0.0f;
+	if (impact_spray_node != nullptr) {
+		impact_spray_node->set_emitting(false);
+		impact_cloud_node->set_emitting(false);
+	}
+}
+
+// Each arriving crest at a steep face (Peregrine 2003, "Water-wave impact on walls", Annu. Rev. Fluid Mech. 35):
+// gentle, unbroken waves are reflected (a standing wave: the water rises and falls at the face, no spray); a wave
+// breaking or about to break as it reaches the face focuses into a vertical jet ("flip-through") or slams an air
+// pocket, with up-rush speeds of two to three times sqrt(g (h + H)) and more, which breaks into drops and a white
+// cloud. Breaking at the face: the depth-limited index H / h past about 0.4 (McCowan's 0.78 at full; Takahashi et
+// al. 1994 see impulsive wall pressures from there) or a crest already folding (the whitecap test). The jet launch
+// speed is (1.5 + 1.5 breaking) sqrt(g H): it peaks at 1.1 to 4.5 wave heights.
+void PhysXWaterSurface3D::_update_impact_spray() {
+	const Viewport *vp = get_viewport();
+	const Camera3D *cam = vp != nullptr ? vp->get_camera_3d() : nullptr;
+	if (!impact_spray || !contact_foam || !contact_shown || impact_sites.is_empty() || cam == nullptr || Engine::get_singleton()->is_editor_hint() || cached_ocean_height.is_empty()) {
+		_impact_spray_off();
+		return;
+	}
+	if (impact_spray_node != nullptr && impact_spray_node->is_emitting() && (impact_spray_tick++ & 3) != 0) {
+		return;
+	}
+	constexpr int CANDIDATES = 384;
+	constexpr int POINTS = 256;
+	constexpr float RADIUS = 90.0f;
+	constexpr float GRAVITY = 9.81f;
+	const Vector3 origin = get_global_position();
+	const float level = origin.y + water_level;
+	const Vector3 cam_pos = cam->get_global_position();
+	// The sea's significant height and the way its energy travels (both systems, by variance).
+	const float u = MAX(wind_speed, 0.5f);
+	const float hs_wind = MIN(0.21f * u * u / GRAVITY, 0.0016f * u * Math::sqrt(get_effective_fetch() / GRAVITY)) * wave_amplitude;
+	const Vector4 rs = _remote_swell();
+	const float hs = Math::sqrt(hs_wind * hs_wind + rs.x * rs.x);
+	if (hs < 0.05f) {
+		_impact_spray_off();
+		return;
+	}
+	const Vector2 wd = wind_direction.length_squared() > 1e-6f ? wind_direction.normalized() : Vector2(1, 0);
+	Vector2 travel = wd * hs_wind * hs_wind + Vector2(rs.z, rs.w) * rs.x * rs.x;
+	travel = travel.length_squared() > 1e-8f ? travel.normalized() : wd;
+	const float threshold = _live_foam_threshold();
+	LocalVector<Vector3> pts;
+	LocalVector<Vector3> dirs;
+	LocalVector<float> wts;
+	float total = 0.0f;
+	float speed_sum = 0.0f;
+	float height_sum = 0.0f;
+	const int count = impact_sites.size();
+	for (int i = 0; i < CANDIDATES; i++) {
+		const ImpactSite &s = impact_sites[impact_rng.rand() % count];
+		if (Vector2(s.xz.x - cam_pos.x, s.xz.y - cam_pos.z).length_squared() > RADIUS * RADIUS) {
+			continue;
+		}
+		const Vector3 at(s.xz.x, level, s.xz.y);
+		const float surface = sample_height(at);
+		if (!Math::is_finite(surface)) {
+			continue;
+		}
+		const float eta = surface - level;
+		const float rise = sample_vertical_speed(at);
+		// A crest arriving: the water up by a good part of the crest height and still rising.
+		const float arrival = Math::smoothstep(0.15f, 0.6f, eta / (0.5f * hs)) * Math::smoothstep(0.0f, 0.4f, rise);
+		if (arrival <= 0.0f) {
+			continue;
+		}
+		const float x = s.xz.x - grid_center.x;
+		const float z = s.xz.y - grid_center.y;
+		const float h = MAX(_rest_depth_at(x, z), 0.25f);
+		const float wave_h = 2.0f * eta; // crest to trough, about twice the crest's rise
+		float breaking = Math::smoothstep(0.4f, 0.78f, wave_h / h);
+		const float fade = _ocean_fade_at(x, z);
+		Vector3 fold_p;
+		const float jac = _ocean_jacobian_at(x, z, fade, fold_p);
+		breaking = MAX(breaking, CLAMP((threshold - jac) / 0.25f, 0.0f, 1.0f));
+		// The faces the waves run at take the impact; waves bend round a rock, so its flanks still get some.
+		const float exposure = 0.3f + 0.7f * MAX(-s.away.dot(travel), 0.0f);
+		const float wgt = arrival * breaking * exposure;
+		if (wgt <= 0.0f) {
+			continue;
+		}
+		const float speed = (1.5f + 1.5f * breaking) * Math::sqrt(GRAVITY * MAX(wave_h, 0.1f));
+		pts.push_back(Vector3(s.xz.x, surface, s.xz.y));
+		// Up the face, leaning a little out over the water (the jet peels off the face as it slows).
+		dirs.push_back(Vector3(s.away.x * 0.25f, 1.0f, s.away.y * 0.25f).normalized());
+		wts.push_back(wgt);
+		total += wgt;
+		speed_sum += speed * wgt;
+		height_sum += wave_h * wgt;
+	}
+	if (total <= 0.0f) {
+		_impact_spray_off();
+		return;
+	}
+	const float speed = speed_sum / total;
+	const float wave_h = height_sum / total;
+	const float lifetime = 3.0f;
+	if (impact_spray_node == nullptr) {
+		impact_spray_node = memnew(GPUParticles3D);
+		impact_spray_node->set_name("ImpactSpray");
+		impact_spray_node->set_use_local_coordinates(false);
+		impact_spray_node->set_lifetime(lifetime);
+		impact_spray_material.instantiate();
+		impact_spray_material->set_emission_shape(ParticleProcessMaterial::EMISSION_SHAPE_DIRECTED_POINTS);
+		impact_spray_material->set_direction(Vector3(0, 1, 0));
+		impact_spray_material->set_spread(12.0f);
+		impact_spray_material->set_param_min(ParticleProcessMaterial::PARAM_DAMPING, 0.2f);
+		impact_spray_material->set_param_max(ParticleProcessMaterial::PARAM_DAMPING, 0.8f);
+		impact_spray_material->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.015f);
+		impact_spray_material->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 0.05f);
+		impact_spray_node->set_process_material(impact_spray_material);
+		impact_spray_node->set_draw_pass_mesh(0, _spray_droplet_mesh());
+		add_child(impact_spray_node, false, INTERNAL_MODE_BACK);
+		// The white cloud: the jet's broken water and fine spray, soft puffs as the crest spume draws them.
+		if (crest_spume_node == nullptr) {
+			_make_crest_spume();
+		}
+		impact_cloud_node = memnew(GPUParticles3D);
+		impact_cloud_node->set_name("ImpactCloud");
+		impact_cloud_node->set_use_local_coordinates(false);
+		impact_cloud_node->set_lifetime(2.5);
+		impact_cloud_material = crest_spume_material->duplicate();
+		impact_cloud_material->set_emission_shape(ParticleProcessMaterial::EMISSION_SHAPE_DIRECTED_POINTS);
+		impact_cloud_material->set_direction(Vector3(0, 1, 0));
+		impact_cloud_material->set_spread(25.0f);
+		impact_cloud_node->set_process_material(impact_cloud_material);
+		impact_cloud_node->set_draw_pass_mesh(0, crest_spume_node->get_draw_pass_mesh(0));
+		add_child(impact_cloud_node, false, INTERNAL_MODE_BACK);
+	}
+	if (impact_spray_node->get_amount() != impact_spray_amount) {
+		impact_spray_node->set_amount(impact_spray_amount);
+	}
+	const int cloud_amount = MAX(16, impact_spray_amount / 16);
+	if (impact_cloud_node->get_amount() != cloud_amount) {
+		impact_cloud_node->set_amount(cloud_amount);
+	}
+	// Systematic resampling by weight into the emission points, spread along the face.
+	Ref<Image> img = Image::create_empty(POINTS, 1, false, Image::FORMAT_RGBF);
+	Ref<Image> nrm = Image::create_empty(POINTS, 1, false, Image::FORMAT_RGBF);
+	const float step = total / POINTS;
+	float next = step * impact_rng.randf();
+	float acc = 0.0f;
+	int used = 0;
+	AABB box(pts[0], Vector3());
+	for (uint32_t i = 0; i < pts.size() && used < POINTS; i++) {
+		acc += wts[i];
+		box.expand_to(pts[i]);
+		while (next < acc && used < POINTS) {
+			const Vector3 p = pts[i] + Vector3(impact_rng.random(-0.4f, 0.4f), impact_rng.random(0.0f, 0.2f), impact_rng.random(-0.4f, 0.4f));
+			img->set_pixel(used, 0, Color(p.x, p.y, p.z));
+			nrm->set_pixel(used, 0, Color(dirs[i].x, dirs[i].y, dirs[i].z));
+			used++;
+			next += step;
+		}
+	}
+	if (impact_points_tex.is_null()) {
+		impact_points_tex = ImageTexture::create_from_image(img);
+		impact_normals_tex = ImageTexture::create_from_image(nrm);
+		impact_spray_material->set_emission_point_texture(impact_points_tex);
+		impact_spray_material->set_emission_normal_texture(impact_normals_tex);
+		impact_cloud_material->set_emission_point_texture(impact_points_tex);
+		impact_cloud_material->set_emission_normal_texture(impact_normals_tex);
+	} else {
+		impact_points_tex->update(img);
+		impact_normals_tex->update(nrm);
+	}
+	impact_spray_material->set_emission_point_count(used);
+	impact_cloud_material->set_emission_point_count(used);
+	// The jet's speeds about the mean, carried a little downwind as it falls.
+	impact_spray_material->set_param_min(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.6f * speed);
+	impact_spray_material->set_param_max(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 1.15f * speed);
+	impact_spray_material->set_gravity(Vector3(wd.x * 0.1f * wind_speed, -GRAVITY, wd.y * 0.1f * wind_speed));
+	impact_cloud_material->set_param_min(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.25f * speed);
+	impact_cloud_material->set_param_max(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.5f * speed);
+	impact_cloud_material->set_gravity(Vector3(wd.x * 0.2f * wind_speed, -3.0f, wd.y * 0.2f * wind_speed));
+	// The cloud's puffs as wide as the jet is high, a few metres for a metre wave.
+	impact_cloud_material->set_param_min(ParticleProcessMaterial::PARAM_SCALE, CLAMP(0.5f * wave_h, 0.4f, 3.0f));
+	impact_cloud_material->set_param_max(ParticleProcessMaterial::PARAM_SCALE, CLAMP(1.5f * wave_h, 1.0f, 6.0f));
+	// Rate: the impacting share of the candidates, up to amount / lifetime.
+	const float share = total / CANDIDATES;
+	impact_spray_rate = impact_spray_amount / lifetime * CLAMP(share * 12.0f, 0.0f, 1.0f);
+	const float ratio = CLAMP(impact_spray_rate * lifetime / impact_spray_amount, 0.0f, 1.0f);
+	impact_spray_node->set_amount_ratio(ratio);
+	impact_cloud_node->set_amount_ratio(ratio);
+	const float reach = speed * speed / (2.0f * GRAVITY) + 6.0f;
+	impact_spray_node->set_visibility_aabb(box.grow(reach));
+	impact_cloud_node->set_visibility_aabb(box.grow(reach));
+	impact_spray_node->set_emitting(true);
+	impact_cloud_node->set_emitting(true);
+}
+
+void PhysXWaterSurface3D::set_impact_spray(bool p_enabled) {
+	impact_spray = p_enabled;
+	if (!impact_spray) {
+		_impact_spray_off();
+	}
+}
+
+void PhysXWaterSurface3D::set_impact_spray_amount(int p_amount) {
+	impact_spray_amount = MAX(p_amount, 16);
+}
+
 void PhysXWaterSurface3D::_update_crest_spray() {
 	const float wind_f = Math::smoothstep(9.0f, 20.0f, wind_speed);
 	const Viewport *vp = get_viewport();
@@ -6231,6 +6745,187 @@ void PhysXWaterSurface3D::_push_shore_wave_activity() {
 	}
 }
 
+// The direction the waves travel and their dominant wavelength (m): the wind sea and the remote swell weighted by
+// their variance; the wavelength of the more energetic system's peak (deep water, L = g T^2 / 2 pi).
+Vector2 PhysXWaterSurface3D::_wave_travel(float *r_lambda) const {
+	const float g = 9.81f;
+	const float u = MAX(wind_speed, 0.5f);
+	const float fetch_m = MAX(get_effective_fetch(), 1.0f);
+	const float hs_wind = MIN(0.21f * u * u / g, 0.0016f * u * Math::sqrt(fetch_m / g)) * wave_amplitude;
+	const Vector4 rs = _remote_swell();
+	const Vector2 wd = wind_direction.length_squared() > 1e-6f ? wind_direction.normalized() : Vector2(1, 0);
+	Vector2 t = wd * hs_wind * hs_wind + Vector2(rs.z, rs.w) * rs.x * rs.x;
+	t = t.length_squared() > 1e-8f ? t.normalized() : wd;
+	if (r_lambda != nullptr) {
+		const float wp = 22.0f * Math::pow(g * g / (u * fetch_m), 1.0f / 3.0f); // the JONSWAP peak (rad/s)
+		const float tp = rs.x > hs_wind ? rs.y : Math::TAU / wp;
+		*r_lambda = MAX(g * tp * tp / Math::TAU, 1.0f);
+	}
+	return t;
+}
+
+bool PhysXWaterSurface3D::_obstacle_texel(float p_wx, float p_wz, Color &r_c) const {
+	if (obstacle_res <= 0 || obstacle_pixels.size() < obstacle_res * obstacle_res * 4) {
+		return false;
+	}
+	const float u = (p_wx - obstacle_center.x) / obstacle_extent + 0.5f;
+	const float v = (p_wz - obstacle_center.y) / obstacle_extent + 0.5f;
+	if (u <= 0.0f || v <= 0.0f || u >= 1.0f || v >= 1.0f) {
+		return false;
+	}
+	const int x = CLAMP(int(u * obstacle_res), 0, obstacle_res - 1);
+	const int y = CLAMP(int(v * obstacle_res), 0, obstacle_res - 1);
+	const uint8_t *c = obstacle_pixels.ptr() + (y * obstacle_res + x) * 4;
+	r_c = Color(c[0] / 255.0f, c[1] / 255.0f, c[2] / 255.0f, c[3] / 255.0f);
+	return true;
+}
+
+// The lee's wave-height factor at a world point (1 in the open and outside the map), as the shader's fade_r() takes it.
+float PhysXWaterSurface3D::_obstacle_lee_at(float p_wx, float p_wz) const {
+	Color c;
+	if (!wave_shelter || !contact_foam || !_obstacle_texel(p_wx, p_wz, c)) {
+		return 1.0f;
+	}
+	const float u = (p_wx - obstacle_center.x) / obstacle_extent;
+	const float v = (p_wz - obstacle_center.y) / obstacle_extent;
+	const float inside = Math::smoothstep(0.0f, 0.05f, 0.5f - MAX(Math::abs(u), Math::abs(v)));
+	return Math::lerp(1.0f, c.a, inside);
+}
+
+// The reflected waves at a world point (the shader's reflect_at()): their share (0 where none) and the mirror image
+// of the point behind the face, where the incident sea is read.
+float PhysXWaterSurface3D::_obstacle_reflect_at(float p_wx, float p_wz, Vector2 &r_mirror) const {
+	Color c;
+	if (wave_reflection <= 0.0f || !contact_foam || !_obstacle_texel(p_wx, p_wz, c)) {
+		return 0.0f;
+	}
+	const float d = c.r * WaterContactMap::RANGE;
+	if (d <= 0.02f) {
+		return 0.0f;
+	}
+	const float e = obstacle_extent / obstacle_res;
+	Color cx0, cx1, cz0, cz1;
+	if (!_obstacle_texel(p_wx + e, p_wz, cx1) || !_obstacle_texel(p_wx - e, p_wz, cx0) || !_obstacle_texel(p_wx, p_wz + e, cz1) || !_obstacle_texel(p_wx, p_wz - e, cz0)) {
+		return 0.0f;
+	}
+	Vector2 g(cx1.r - cx0.r, cz1.r - cz0.r);
+	if (g.length_squared() < 1e-10f) {
+		return 0.0f;
+	}
+	const Vector2 n = g.normalized();
+	r_mirror = Vector2(p_wx, p_wz) - n * (2.0f * d);
+	const float u = (p_wx - obstacle_center.x) / obstacle_extent;
+	const float v = (p_wz - obstacle_center.y) / obstacle_extent;
+	const float inside = Math::smoothstep(0.0f, 0.05f, 0.5f - MAX(Math::abs(u), Math::abs(v)));
+	return wave_reflection * Math::smoothstep(0.5f, 0.9f, c.g) * (1.0f - Math::smoothstep(0.5f * WaterContactMap::RANGE, WaterContactMap::RANGE, d)) * inside;
+}
+
+// The lee behind cliffs and stacks: from each cell, up the waves' travel to the first rock standing out of the water;
+// in its shadow the waves arrive only round its edges, each edge a Sommerfeld half-plane (Penney and Price 1952),
+// whose amplitude past the shadow line is the knife-edge diffraction loss of the Fresnel parameter
+// v = e sqrt(2 / (lambda s)) (e how far into the shadow, s the distance behind the edge; ITU-R P.526's fit
+// J(v) = 6.9 + 20 log10(sqrt((v - 0.1)^2 + 1) + v - 0.1) dB, 0.5 at the shadow line). The two edges' waves add,
+// up to the open sea's. Measured on 1 m cells and spread to the map's pixels (alpha).
+void PhysXWaterSurface3D::_build_wave_obstacles() {
+	const int n = contact_map.get_resolution();
+	obstacle_pixels = contact_map.get_pixels();
+	obstacle_res = n;
+	obstacle_center = contact_map.get_center();
+	obstacle_extent = contact_map.get_extent();
+	obstacle_travel = _wave_travel(&obstacle_lambda);
+	if (n <= 2 || obstacle_pixels.size() < n * n * 4) {
+		return;
+	}
+	uint8_t *px = obstacle_pixels.ptrw();
+	const float cell = obstacle_extent / n;
+	const Vector2 corner = obstacle_center - Vector2(obstacle_extent, obstacle_extent) * 0.5f;
+	// Rock standing out of the water: distance nil and a steep face (a beach's dry sand is not a breakwater either,
+	// but its waves are the shore breakers' already).
+	auto land = [&](const Vector2 &w) -> bool {
+		const int x = int((w.x - corner.x) / cell);
+		const int y = int((w.y - corner.y) / cell);
+		if (x < 0 || y < 0 || x >= n || y >= n) {
+			return false;
+		}
+		const uint8_t *c = px + (y * n + x) * 4;
+		return c[0] == 0 && c[1] > 64;
+	};
+	const Vector2 t = obstacle_travel;
+	const Vector2 side(-t.y, t.x);
+	const float lambda = obstacle_lambda;
+	auto edge_amp = [](float v) -> float {
+		if (v <= -0.78f) {
+			return 1.0f;
+		}
+		const float j = 6.9f + 8.685889638f * Math::log(Math::sqrt((v - 0.1f) * (v - 0.1f) + 1.0f) + v - 0.1f); // 20 log10(x) dB
+		return MIN(Math::pow(10.0f, -j / 20.0f), 1.0f);
+	};
+	const int cn = MAX(n / 4, 2); // 1 m cells on the 0.25 m map
+	const float cc = obstacle_extent / cn;
+	LocalVector<float> lee;
+	lee.resize(cn * cn);
+	const float reach = MIN(obstacle_extent, 8.0f * lambda);
+	for (int cy = 0; cy < cn; cy++) {
+		for (int cx = 0; cx < cn; cx++) {
+			const Vector2 p = corner + (Vector2(cx, cy) + Vector2(0.5f, 0.5f)) * cc;
+			float k = 1.0f;
+			if (wave_shelter && !land(p)) {
+				// Up the waves' travel, in half-metre steps, to the first rock.
+				float s = -1.0f;
+				for (float r = 0.5f; r < reach; r += 0.5f) {
+					if (land(p - t * r)) {
+						s = r;
+						break;
+					}
+				}
+				if (s > 0.0f) {
+					// The rock's two edges across the travel, at that distance (up to 40 m out).
+					const Vector2 q = p - t * s;
+					float el = 0.0f, er = 0.0f;
+					while (el < 40.0f && land(q + side * (el + 0.25f))) {
+						el += 0.25f;
+					}
+					while (er < 40.0f && land(q - side * (er + 0.25f))) {
+						er += 0.25f;
+					}
+					const float f = Math::sqrt(2.0f / (lambda * s));
+					k = MIN(edge_amp(el * f) + edge_amp(er * f), 1.0f);
+				}
+			}
+			lee[cy * cn + cx] = k;
+		}
+	}
+	// Bilinear onto the map's pixels.
+	for (int y = 0; y < n; y++) {
+		const float fy = CLAMP(((y + 0.5f) * cell) / cc - 0.5f, 0.0f, float(cn - 1));
+		const int y0 = MIN(int(fy), cn - 2);
+		const float ty = fy - y0;
+		for (int x = 0; x < n; x++) {
+			const float fx = CLAMP(((x + 0.5f) * cell) / cc - 0.5f, 0.0f, float(cn - 1));
+			const int x0 = MIN(int(fx), cn - 2);
+			const float tx = fx - x0;
+			const float a = Math::lerp(lee[y0 * cn + x0], lee[y0 * cn + x0 + 1], tx);
+			const float b = Math::lerp(lee[(y0 + 1) * cn + x0], lee[(y0 + 1) * cn + x0 + 1], tx);
+			px[(y * n + x) * 4 + 3] = uint8_t(CLAMP(Math::lerp(a, b, ty), 0.0f, 1.0f) * 255.0f + 0.5f);
+		}
+	}
+}
+
+void PhysXWaterSurface3D::set_wave_reflection(float p_coefficient) {
+	wave_reflection = CLAMP(p_coefficient, 0.0f, 1.0f);
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("wave_reflection", wave_reflection);
+	}
+}
+
+void PhysXWaterSurface3D::set_wave_shelter(bool p_enabled) {
+	wave_shelter = p_enabled;
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("wave_shelter", wave_shelter);
+	}
+	contact_dirty = true; // rebuilt with the next measure
+}
+
 void PhysXWaterSurface3D::_push_contact_foam() {
 	if (water_material.is_null()) {
 		return;
@@ -6248,13 +6943,30 @@ void PhysXWaterSurface3D::_push_contact_foam() {
 	// The sea's significant height: fully developed (Pierson-Moskowitz, 0.21 U^2 / g) or fetch limited (JONSWAP,
 	// 0.0016 U sqrt(F / g)), whichever is lower.
 	const float u = MAX(wind_speed, 0.5f);
-	const float hs = MIN(0.21f * u * u / 9.81f, 0.0016f * u * Math::sqrt(get_effective_fetch() / 9.81f));
+	const float hs_wind = MIN(0.21f * u * u / 9.81f, 0.0016f * u * Math::sqrt(get_effective_fetch() / 9.81f));
+	// With the remote swell: the two systems' variances add (Hs = 4 sqrt(m0)).
+	const float hs_swell = _remote_swell().x;
+	const float hs = Math::sqrt(hs_wind * hs_wind + hs_swell * hs_swell);
 	water_material->set_shader_parameter("contact_wave_height", MAX(hs, 0.1f));
+	water_material->set_shader_parameter("wave_reflection", wave_reflection);
+	water_material->set_shader_parameter("wave_shelter", wave_shelter);
 }
 
 void PhysXWaterSurface3D::_update_contact_foam() {
 	if (!contact_foam || !is_inside_tree()) {
 		return;
+	}
+	// The lee follows the waves: rebuilt when they turn or lengthen (a weather change), from the last finished map.
+	if (contact_shown && contact_texture.is_valid() && obstacle_res > 0 && !contact_map.is_busy()) {
+		float lambda = 0.0f;
+		const Vector2 t = _wave_travel(&lambda);
+		if (t.dot(obstacle_travel) < 0.996f || Math::abs(lambda - obstacle_lambda) > 0.15f * obstacle_lambda) {
+			_build_wave_obstacles();
+			const int n = obstacle_res;
+			if (contact_texture->get_width() == n && contact_texture->get_height() == n) {
+				contact_texture->update(Image::create_from_data(n, n, false, Image::FORMAT_RGBA8, obstacle_pixels));
+			}
+		}
 	}
 	Viewport *vp = get_viewport();
 	const Camera3D *cam = vp != nullptr ? vp->get_camera_3d() : nullptr;
@@ -6288,13 +7000,15 @@ void PhysXWaterSurface3D::_update_contact_foam() {
 		return;
 	}
 	const int n = contact_map.get_resolution();
-	Ref<Image> img = Image::create_from_data(n, n, false, Image::FORMAT_RGBA8, contact_map.get_pixels());
+	_build_wave_obstacles();
+	Ref<Image> img = Image::create_from_data(n, n, false, Image::FORMAT_RGBA8, obstacle_pixels);
 	if (contact_texture.is_valid() && contact_texture->get_width() == n && contact_texture->get_height() == n) {
 		contact_texture->update(img);
 	} else {
 		contact_texture = ImageTexture::create_from_image(img);
 	}
 	contact_shown = true;
+	_build_impact_sites();
 	_push_contact_foam();
 }
 
@@ -6427,6 +7141,45 @@ void PhysXWaterSurface3D::set_wave_spreading(WaveSpreading p_spreading) {
 void PhysXWaterSurface3D::set_swell(float p_swell) {
 	swell = CLAMP(p_swell, 0.0f, 1.0f);
 	_set_spreading();
+}
+
+void PhysXWaterSurface3D::set_swell_height(float p_height) {
+	swell_height = MAX(p_height, 0.0f);
+	_apply_remote_swell();
+}
+
+void PhysXWaterSurface3D::set_swell_period(float p_period) {
+	swell_period = CLAMP(p_period, 4.0f, 25.0f);
+	_apply_remote_swell();
+}
+
+void PhysXWaterSurface3D::set_swell_direction(Vector2 p_direction) {
+	swell_direction = p_direction;
+	_apply_remote_swell();
+}
+
+// Open sea only: a lake or pool (a surface_mesh outline) has no swell from outside.
+Vector4 PhysXWaterSurface3D::_remote_swell() const {
+	if (surface_mesh.is_valid() || swell_height <= 0.0f) {
+		return Vector4();
+	}
+	const Vector2 d = swell_direction.length_squared() > 1e-8f ? swell_direction.normalized() : Vector2(0.8f, 0.6f);
+	return Vector4(swell_height, swell_period, d.x, d.y);
+}
+
+void PhysXWaterSurface3D::_apply_remote_swell() {
+	if (solver.is_available() && !Engine::get_singleton()->is_editor_hint()) {
+		const Vector4 s = _remote_swell();
+		solver.set_remote_swell(s);
+		for (WaveCascade *c : extra_cascades) {
+			c->solver.set_remote_swell(s);
+		}
+		if (detail_cascade != nullptr) {
+			detail_cascade->solver.set_remote_swell(s);
+		}
+		return;
+	}
+	_rebuild();
 }
 
 void PhysXWaterSurface3D::_set_spreading() {
@@ -6847,6 +7600,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			// The solver's textures go with this node (or are rebuilt on the
 			// way back in): let go of them first.
 			_detach_textures();
+			_clear_body_foam();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			_follow_weather(get_physics_process_delta_time());
@@ -6855,16 +7609,32 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			_update(get_physics_process_delta_time());
 			_update_breakers();
 			_update_crest_spray();
+			_update_impact_spray();
 			_update_crest_sheets((float)get_physics_process_delta_time());
 			_wet_ground();
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				body_contacts.update(
 						get_tree(), get_physics_process_delta_time(),
 						[this](const Vector3 &p) { return sample_height(p); },
-						[](const Vector3 &) { return Vector3(); },
+						[this](const Vector3 &p) { return live_flow ? sample_flow(p) : Vector3(); },
+						[this](const Vector3 &p) { return sample_vertical_speed(p); },
 						[this](int o, const Vector3 &p, float r, float s) { submit_sphere(o, p, r, s); },
 						[this](int o) { clear_sphere(o); },
-						[this](const Vector3 &p, float r, float s) { submit_impulse(p, r, s); });
+						[this](const Vector3 &p, float r, float s) { submit_impulse(p, r, s); },
+						[this](int o, const Vector3 &p, float r, float rate) {
+							if (rate <= 0.0f) {
+								body_foam_sources.erase(o);
+								return;
+							}
+							WaterWakeSolver::Source src;
+							src.world_xz = Vector2(p.x, p.z);
+							src.radius = MAX(r, 0.05f);
+							src.depth = 0.0f;
+							src.foam = rate;
+							src.drift = false;
+							body_foam_sources[o] = src;
+						});
+				_update_body_foam(get_physics_process_delta_time());
 			}
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
@@ -7162,6 +7932,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.ocean_k_max = 0.0f;
 	s.wave_spreading = int(wave_spreading);
 	s.swell = swell;
+	s.remote_swell = _remote_swell();
 	// configure() frees the solver's textures and makes new ones: let go of
 	// the old ones first (a runtime change -- wave_amplitude, say -- drew with
 	// freed textures until the new ones were bound).
@@ -7638,7 +8409,8 @@ float PhysXWaterSurface3D::_ocean_fade_at(float p_x, float p_z) const {
 	const float fade = cell_fade.is_empty() ? 1.0f : _bilinear_sample(cell_fade, grid_resolution, active_domain_size, p_x, p_z);
 	// Open sea past the square: full chop there, not the edge cell's (the shader's fade_r()).
 	const float beyond = (open_sea_beyond && _open_beyond()) ? Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_x / active_domain_size.x), Math::abs(p_z / active_domain_size.y))) : 0.0f;
-	return Math::lerp(fade, 1.0f, beyond);
+	// Sheltered behind a stack or a cliff (the lee's factor, as the shader's).
+	return Math::lerp(fade, 1.0f, beyond) * _obstacle_lee_at(p_x + grid_center.x, p_z + grid_center.y);
 }
 
 // With choppy displacement the surface point above (x, z) rested somewhere else: find p0 with p0 + s * D(p0) = (x, z) by
@@ -7770,7 +8542,16 @@ float PhysXWaterSurface3D::_sample_height_at(Vector3 p_world_pos, ObjectID p_wak
 	// readback lands. Both are relative to the node, like the rendered mesh.
 	const float ripple = cached_ripple_height.is_empty() ? water_level : _ripple_height_at(cached_ripple_height, x, z);
 	const float fade = _ocean_fade_at(x, z);
-	const float ocean = _ocean_height_at(false, x, z, fade);
+	float ocean = _ocean_height_at(false, x, z, fade);
+	// The waves reflected off a steep face nearby: the incident sea read at the point's mirror image behind it.
+	{
+		Vector2 m;
+		const float kr = _obstacle_reflect_at(p_world_pos.x, p_world_pos.z, m);
+		if (kr > 0.0f) {
+			const float mx = m.x - grid_center.x, mz = m.y - grid_center.y;
+			ocean += kr * _ocean_height_at(false, mx, mz, _ocean_fade_at(mx, mz));
+		}
+	}
 	const float beyond = (open_sea_beyond && _open_beyond()) ? Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(x / active_domain_size.x), Math::abs(z / active_domain_size.y))) : 0.0f;
 	// Wakes, everywhere (as the shader draws them).
 	float wake = 0.0f;

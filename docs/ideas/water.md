@@ -1796,6 +1796,13 @@ The two methods:
 Recommendation: method 1, with `raster_scene_reflections` as an opt-out and the sky panorama as the fallback.
 Planar stays a possible later option for a single hero plane. Not built until Paulo picks it.
 
+**Built (24 Nov, Paulo's ocean queue).** Method 1 on the sea: with `raster_reflections` on, PhysXWaterSurface3D
+lays `water_screen_over_sky()` (the rivers' screen march, 18 Nov) over its mirrored sky, as the rivers already did:
+the stacks, cliffs, hulls and far shore where the screen holds them, the sky panorama elsewhere. The march reaches
+240 m on the sea (24 on rivers), its 24 steps growing with the square of their index. The opt-out is the existing
+`screen_reflections` uniform. Moonlight on raster water: `find_sun()` now picks the brightest shown directional light
+every second, so the moon takes over when a sky clock hides the sun.
+
 ## Step 5j: multigrid flow bakes (11 Nov, audit item 10)
 
 The flow bakes solve a stream function: `div(grad(psi) / h) = 0` over the sea or lake's simulated square
@@ -3819,3 +3826,184 @@ lakes answer `WorldWater.high_water_at` through `contract_water_high_water_at`.
   the beach (the swash's). Every water surface without outlets and with shore_waves answers this, so fixed-level lakes
   get their wind-wave strandline too. No tides or surge in the sea yet: when they come, the still level becomes the
   spring high tide plus the surge.
+
+## White water round bodies in the water (24 Nov, Paulo: "only if realistic")
+
+**The gap.** Every other white water persists and fades (whitecaps, shore foam, rock contact foam, live-flow foam, boat
+hull and propeller foam), but a body that is not a boat (a character wading or running through the shallows, a wheel
+fording, a floating prop drifting in a current) only pushes ripples. Paulo's bar: foam only where it would really form.
+
+**The physics.** White water round a surface-piercing body is air entrained where the free surface breaks against it:
+the bow wave spills over and the lee cavity ventilates. Both are set by the Froude number on the body's width,
+Fr = U / sqrt(g D), U the speed of the water past it.
+- Ageorges, Peixinho and Perret (2019, Phys. Rev. Fluids 4, 064801, "Flow and air-entrainment around partially
+  submerged vertical cylinders"): air is entrained in the cavity behind the cylinder past a critical speed, and the
+  flow changes regime at Fr_D about 1.2 (drag then linear in Fr). Gonçalves et al. (2015) studied the low range, Fr_D
+  0.07 to 0.36. Chaplin and Teigen (2003): the run-up and lee cavity grow as Fr^2; Keough et al. (2016): the
+  bow fountain's height ~ Fr^2; Hay (1947): fully ventilated at larger Fr.
+- So slow wading (a 0.5 m wide body at 1 m/s: Fr 0.45) makes ripples and no white water; running through the shallows
+  (3.5 m/s: Fr 1.6), a wheel fording a stream or a post in a fast current does churn it. Falling in entrains air in
+  the impact crown and cavity on the same measure with the entry speed.
+- Lifetime: it is the sea's own bubbly foam, draining in seconds as the whitecaps do (Callaghan, Deane and Stokes 2013, two regimes of whitecap foam decay), so it
+  fades with the surface's own foam persistence and rides with the water.
+
+**How others do it.** Crest registers foam inputs (`RegisterFoamInput`, "Add From Texture") into its persistent foam
+sim, faded by `Foam Fade Rate`; moving objects otherwise only make dynamic waves. Sea of Thieves draws foam round
+objects from the depth buffer, blurred over frames with feedback (Ang et al. 2018). Both add it unconditionally; we
+gate it by the Froude number.
+
+**What we build.**
+1. `WaterBodyContacts` (the bodies in `world_contact`) measures each piercing body's speed through the water, its
+   horizontal speed against the water's flow and its vertical speed against the surface's rise and fall, and its
+   Fr on its width. Foam is churned in at `body_foam` per second times smoothstep(0.8, 2.0, Fr) (none below the
+   onset, full where the bow wave breaks and the lee ventilates), over a patch growing from the body's radius to twice
+   it with Fr (the run-up and cavity ~ Fr^2). Falling in through the surface does the same once, on the entry speed.
+2. Sea and lakes (`PhysXWaterSurface3D`): a fine persistent foam grid round the camera (the boat wakes' solver, foam
+   only, 48 m at 25 cm; the shore ripple grid is 16 m a cell on a generated coast, far too coarse), fading over
+   `foam_persistence`, read with the wakes' foam so it shades, damps the chop and path traces as all foam does. It
+   runs only while there is foam on it.
+3. Rivers (`PhysXRiver3D`): straight into the live window's flow foam, which is already carried with the current and
+   fades over `flow_foam_persistence`, so the white water trails downstream of a wading leg.
+
+`body_foam` (1, on) on both; 0 = off.
+
+## Remote swell (24 Nov, Paulo's pick from the ocean gap analysis)
+
+**The gap.** `swell` only narrows the local wind sea's spreading (Horvath 2015's swell term): the long waves still run
+with the wind, at the wind sea's own peak. A real open sea is nearly always two systems at once: the local wind sea
+and swell from a distant storm, longer, more regular and from its own direction. Their crossing is the lumpy,
+criss-crossed look of open water in Black Flag and Sea of Thieves.
+
+**The established method.** Two-peaked (bimodal) sea-state spectra: Ochi and Hubble (1976, six parameters, a swell and
+a wind-sea generalised Pierson-Moskowitz peak summed), Torsethaugen (1993, two JONSWAP peaks, the North Sea design
+spectrum in DNV-RP-C205). Horvath (2015, "Empirical directional wave spectra for computer graphics", section 6.1)
+recommends the same sum for graphics. Each system keeps its own directional spreading; swell that has travelled far is
+very narrow: Mitsuyasu's cos^2s(theta / 2) with Goda's (1985) s_max 75 for long-decay swell (10 for wind waves, 25 for
+short-decay swell), s = s_max (w / wp)^5 below the peak and s_max (w / wp)^-2.5 above. A swell's frequency spectrum is
+JONSWAP with a sharper peak (gamma 3 to 7); Goda's (1988) significant-height form sets it straight from Hs and Tp:
+S(f) = beta Hs^2 Tp^-4 f^-5 exp(-1.25 (Tp f)^-4) gamma^r, beta = 0.0624 / (0.230 + 0.0336 gamma - 0.185 / (1.9 +
+gamma)) (1.094 - 0.01915 ln gamma), so its variance is Hs^2 / 16.
+
+**What we build.** `swell_height` (Hs, m), `swell_period` (Tp, s) and `swell_direction` (the direction it travels,
+world xz, independent of the wind) on PhysXWaterSurface3D. The spectrum pass adds the swell term (gamma 5, s_max 75,
+the TMA depth factor as the wind sea's) to every cascade's band, unscaled by `wave_amplitude` (that is the wind sea's).
+Default on for open sea: Hs 1.2 m at 11 s, a moderate North Atlantic swell (the common case: Young 1999, "Wind
+generated ocean waves"; Semedo et al. 2011, J. Climate 24, swell dominates the open ocean most of the year), crossing
+the default wind at 37 degrees. Enclosed water (a `surface_mesh` lake) gets none. The rock contact foam's wave height
+takes both systems (variances add). Changing them regenerates h0 in place, like the wind (no rebuild).
+
+## Wave impact spray on rocks and cliffs (24 Nov, Paulo's pick from the ocean gap analysis)
+
+**The gap.** A crest meeting a sea stack or a cliff foot draws the rock contact foam ring (swelling as it arrives) but
+throws nothing up the face: the white column that is the signature shot of a rocky coast in a swell.
+
+**The physics.** Peregrine (2003, "Water-wave impact on walls", Annu. Rev. Fluid Mech. 35): gentle waves are
+"perfectly reflected" (a standing wave, the water rising and falling at the face); a wave breaking or about to break
+as it reaches the face focuses into a vertical jet ("flip-through"), or slams an air pocket, or arrives broken as an
+air-water mixture; the wave's shape just before impact decides which. A freely breaking wave already moves at two to
+three times sqrt(g (h + H)), and the wall can drive "water velocities many times greater"; the jet "rapidly breaks
+up into drops", and for large waves "there is always a substantial entrainment of air". Impulsive wall pressures
+grow as the wave nears breaking at the wall (Takahashi, Tanimoto and Shimosako 1994's impulsive pressure coefficient);
+depth-limited breaking is McCowan's H / h = 0.78. The ramp from 0.4 below is our judgement, not a measured onset.
+
+**How others do it.** Black Flag and Sea of Thieves trigger splash effects where waves meet rocks and hulls (hull
+depth probes in Black Flag); Crest leaves it to the user's particle systems. None ties it to the breaking state.
+
+**What we build (`impact_spray`, on).**
+1. Sites: the rock contact map's water cells 0.1 to 0.6 m from a steep face (steepness over 0.5, so beaches, which
+   spill their waves, are left to the shore breakers), each with the direction out of the face.
+2. Every fourth physics tick, 384 sites within 90 m of the camera: a crest arriving (the surface up by a good part of
+   half the significant height and still rising), breaking by H / h (0.4 to 0.78, H about twice the crest's rise,
+   h the seabed's still depth there) or by the whitecap fold test, times the face's exposure to the waves' travel
+   (both the wind sea and the remote swell, by variance; 0.3 on flanks the waves bend round to).
+3. The jet: droplets launched up the face, leaning a quarter out over the water, at (1.5 + 1.5 breaking) sqrt(g H)
+   (peaking 1.1 to 4.5 wave heights up), carried a little downwind; and the white cloud of broken water, soft puffs
+   as wide as the jet is high (the crest spume's), slower and held up longer. Gentle reflection makes none.
+`impact_spray_amount` (8000) caps the droplets alive; the cloud gets a sixteenth. The rate follows the impacting share.
+
+## Waves reflected off cliffs, sheltered behind stacks (24 Nov, Paulo's pick from the ocean gap analysis)
+
+**The gap.** The FFT sea runs through rock as if it were not there: no choppy, confused water in front of a cliff where
+the reflected waves cross the incoming ones, and no calmer water in the lee of a stack or a headland.
+
+**The established methods.**
+- Reflection. In front of a reflecting wall the sea is the incident waves plus their reflection: for a straight
+  vertical wall the reflected field is the incident one mirrored across the wall (the method of images; a partial
+  standing wave with the reflection coefficient Kr, Dean and Dalrymple, "Water Wave Mechanics for Engineers and
+  Scientists", ch. 4). Heights double at the face (an antinode), the horizontal motion into it cancels. Kr is near 1
+  for a smooth vertical wall and falls on slopes with the surf similarity parameter (Battjes 1974; Seelig and Ahrens
+  1981): beaches reflect little, natural steep rock somewhat less than a wall.
+- Shelter. Behind a barrier the waves reach the shadow only by diffraction round its ends. Penney and Price (1952)
+  showed Sommerfeld's half-plane solution applies to water waves behind a semi-infinite breakwater (Wiegel 1962's
+  diagrams); the amplitude is one half on the geometric shadow line and falls into the shadow with the Fresnel
+  parameter v = e sqrt(2 / (lambda s)) (e how far into the shadow, s the distance behind the edge), as in optics'
+  knife-edge diffraction (ITU-R P.526's fit J(v) = 6.9 + 20 log10(sqrt((v - 0.1)^2 + 1) + v - 0.1) dB). A narrow stack
+  (both edges within a Fresnel zone) casts almost no shadow; a wide cliff a deep one.
+- In graphics, reflection and diffraction come from wave simulations (Jeschke and Wojtan's water wave packets 2017
+  and surface wavelets 2018, iWave/eWave grids, Crest's dynamic waves): costly over a large sea, and they carry only
+  the waves the grid resolves. The image and Fresnel-zone forms act on the FFT sea itself.
+
+**What we build (near the camera, over the rock contact map, now 16 m of distance range).**
+1. Reflection (`wave_reflection`, 0.8): every ocean read (height, displacement, derivatives, the filtered normal)
+   adds kr times the sea at the point's mirror image across the nearest face, the vectors and the displacement's
+   Jacobian mirrored (R = I - 2 n n^T, J' = R J R). kr = wave_reflection on vertical faces (contact steepness 0.5 to
+   0.9; beaches none), eased off between 8 and 16 m from the face (the map's reach; a finite face's reflection also
+   spreads). Raster and path tracing draw the same geometry; sample_height() adds it too, so floaters feel it.
+2. Shelter (`wave_shelter`, on): on 1 m cells, up the waves' travel (the wind sea and remote swell by variance) to
+   the first rock standing out of the water within eight wavelengths; the rock's two edges across the travel give
+   two half-plane amplitudes, summed up to 1. Stored in the contact map's alpha, it multiplies the ocean's fade (so
+   height, chop, normals and foam all calm alike, raster and path traced, and sample_height() matches). Rebuilt when
+   the map is re-measured or the waves turn by 5 degrees or lengthen by 15%.
+Limits: the map covers 96 m round the camera, so a headland's lee beyond it is not seen; the shore waves (ray-traced
+over the seabed) already refract round headlands on their own.
+
+## Lamps above the water (24 Nov, Paulo: "would we get two distinct lighted zones?")
+
+A spot or a torch shone onto clear water from above should give two zones: the patch on the surface (its
+glint, already drawn by Godot's own lighting of the water) and the patch on the bed, smaller and dimmer, joined by
+a beam in the water. Raster had neither of the last two right: the clear-water view showed the bed as Godot lit it,
+straight through the air with no surface and no water on the way down, and the lamp scattered nothing in the water.
+Lamps under the water were handled only with the camera under it ("Lamp beams under water").
+
+**What the physics says.**
+- At a flat surface the light bends toward the vertical (Snell, n = 1.33) and loses its Fresnel reflection. The
+  bent tube of rays is squeezed: a lamp at height a over a bed at depth b lights the bed below it as a lamp at
+  a + b/n straight overhead would (the paraxial limit). Off to the side the exact spread is
+  E_h = I T sin(i) / (rho d rho/d i), with rho = a tan(i) + b tan(t) and
+  d rho/d i = a / cos^2(i) + b / cos^2(t) * cos(i) / (n cos(t)) (the ray-tube or "n^2 law of radiance" result;
+  Mobley, Light and Water, 1994, ch. 4; the same geometry as the Snell window seen from below).
+- The one ray from the lamp to a point under the water is found from sin(i) = n sin(t) along the lamp-to-point
+  plane: one unknown (where it crosses the surface), solved by Newton's method from the paraxial point in three
+  or four steps (as Hanika et al. 2015, Manifold Next Event Estimation, solve the general case per path).
+- The water then absorbs and scatters per channel over the water leg only; a beam is the single scattering of
+  that light along the view ray (Nishita et al. 1987; as the sun's in-scatter and the underwater lamp beams).
+
+**What others do.** Games draw lamp beams in water with froxel fog (Wronski 2014; Godot's Volumetric Fog), which
+has no surface to bend at and a grey medium, or with hand-placed light-shaft cards. Neither refracts.
+
+**Built (raster).** WaterRasterReflections (sea and rivers) hands the shader the four omni or spot lights whose
+light comes nearest the camera, in Godot's own terms (range window, falloff exponent, spot cone and rim). In the
+clear-water view:
+- water_lamp_at: the lamp's light at a point in the water, bent at a level surface (Newton), Fresnel, the tube's
+  spread above, the spot's cone along the ray in the air. A lamp under the water shines straight.
+- water_lamp_beams: 12 jittered steps along the refracted view ray within each lamp's range, the phase
+  (Henyey-Greenstein, the water's own anisotropy) and the extinction on both legs.
+- water_lamp_bed: the bed's lamp light as Godot drew it on the screen, put right: each lamp's share of the bed's
+  light (its straight irradiance on a level bed against the sun's and sky's, the bed's colour cancelling) times
+  the bent irradiance through the water over the straight one.
+
+**Limits, said plainly.** No shadow shafts in the raster beams: a spatial shader cannot read a lamp's shadow map
+(Godot keeps them in its own atlas). The path tracer draws the shafts. No lamp caustics in raster (the sun's come
+from a projected map; a lamp's would need its own). The surface is taken as level for the bend (waves move the
+patch on the bed in the path tracer only).
+
+**Built (path tracer).** The sun's caustics map (bent photons over straight twins; Gruen 2019, Yang and Ouyang 2021)
+gains a lamp map: the one omni or spot light whose light reaches nearest the map's centre, brightest by the inverse
+square. Its photons leave the lamp evenly over the tangent plane of its axis (a spot's cone, an omni light's lower
+60 degrees), each weighted by the lamp's intensity that way and its texel's solid angle (cos^3), so a photon bent into
+another texel brings its own power; the map is the lamp's perspective view, the depth its distance. A point lit by
+that lamp multiplies its shadow ray's light by bent over straight. Under flat water this is the bend itself (the
+patch on the bed drawn in toward the vertical and brighter), under waves the moving lines. Dry surfaces within 30 cm
+of the lamp (its housing, its glass) let the photons through, as the lamp's shadow rays see it past them. While a
+lamp's photons meet no water, one pixel in sixteen probes for it. Not covered: the beam inside the water still
+follows the straight shadow ray (its edges are those of the unbent cone), and only one lamp at a time is mapped.

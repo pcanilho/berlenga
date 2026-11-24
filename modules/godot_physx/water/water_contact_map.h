@@ -44,7 +44,7 @@ class PhysicsDirectSpaceState3D;
 // the wash over rock tops just under the surface.
 class WaterContactMap {
 public:
-	static constexpr float RANGE = 8.0f; // metres of distance the map's red channel spans
+	static constexpr float RANGE = 16.0f; // metres of distance the map's red channel spans (the reflected waves reach this far)
 
 	// Starts a measure of the square of p_extent metres at p_center (world xz), p_resolution cells a side, for
 	// water at p_level (world y), washing over tops up to p_depth under it.

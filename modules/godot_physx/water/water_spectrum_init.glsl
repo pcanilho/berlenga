@@ -22,6 +22,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 misc; // x wind_dir_z, y gravity, z amplitude (squared multiplier), w swell (0..1)
 	ivec4 res; // x N, y spreading (0 = cos^2, 1 = Donelan-Banner, 2 = Hasselmann; 1 and 2 with Horvath's swell), zw unused
 	vec4 extra; // x fetch (m), y depth (m), z k_min, w k_max (rad/m, 0 = unbounded: one cascade's band)
+	vec4 remote; // remote swell: x significant height (m, 0 = none), y peak period (s), zw direction it travels (unit)
 };
 
 layout(set = 0, binding = 1, std430) restrict buffer H0 {
@@ -144,6 +145,41 @@ float jonswap(vec2 k, vec2 wind_dir, float wind_speed, float gravity, float fetc
 	return s_w * dw_dk / kl * spread;
 }
 
+// Remote swell (docs/ideas/water.md "Remote swell"): waves from a distant storm, arriving from their own direction
+// with their own period, on top of the local wind sea -- a two-peaked sea state (Ochi and Hubble 1976; Torsethaugen
+// 1993; Horvath 2015 section 6.1 sums a swell spectrum the same way). The frequency spectrum is JONSWAP in Goda's
+// (1988) significant-height form with a narrow peak (gamma 5: swell that has travelled far):
+//   S(f) = beta Hs^2 Tp^-4 f^-5 exp(-1.25 (Tp f)^-4) gamma^r,
+// and the spreading Mitsuyasu's cos^2s(theta / 2) with Goda's s_max 75 for long-decay swell (Goda 1985),
+// s = s_max (w / wp)^5 below the peak and s_max (w / wp)^-2.5 above. The TMA depth factor as the wind sea's.
+float remote_swell(vec2 k, float gravity, float depth) {
+	float hs = remote.x;
+	float tp = remote.y;
+	float kl = length(k);
+	if (hs <= 0.0 || tp <= 0.0 || kl < 1e-6) {
+		return 0.0;
+	}
+	float th = tanh(min(kl * depth, 20.0));
+	float w = sqrt(gravity * kl * th);
+	float dw_dk = gravity * (th + kl * depth * (1.0 - th * th)) / (2.0 * w);
+	float f = w / 6.28318530718;
+	float fp = 1.0 / tp;
+	const float gamma = 5.0;
+	float beta = 0.0624 / (0.230 + 0.0336 * gamma - 0.185 / (1.9 + gamma)) * (1.094 - 0.01915 * log(gamma));
+	float sg = f <= fp ? 0.07 : 0.09;
+	float r = exp(-(f - fp) * (f - fp) / (2.0 * sg * sg * fp * fp));
+	float s_f = beta * hs * hs * pow(tp, -4.0) * pow(f, -5.0) * exp(-1.25 * pow(tp * f, -4.0)) * pow(gamma, r);
+	float s_w = s_f / 6.28318530718; // S(w) = S(f) / 2 pi
+	float wh = w * sqrt(depth / gravity);
+	s_w *= wh <= 1.0 ? 0.5 * wh * wh : (wh < 2.0 ? 1.0 - 0.5 * (2.0 - wh) * (2.0 - wh) : 1.0);
+	float ratio = f / fp;
+	float s = clamp(75.0 * (ratio <= 1.0 ? pow(ratio, 5.0) : pow(ratio, -2.5)), 0.01, 2000.0);
+	float q = exp(ln_gamma(s + 1.0) - ln_gamma(s + 0.5)) / 3.5449077; // Q(s): cos^2s(theta / 2) over the circle is 1
+	float c = dot(k / kl, normalize(remote.zw));
+	float spread = q * pow(max(0.5 * (1.0 + c), 0.0), s);
+	return s_w * dw_dk / kl * spread;
+}
+
 void main() {
 	ivec2 c = ivec2(gl_GlobalInvocationID.xy);
 	int n = res.x;
@@ -181,8 +217,9 @@ void main() {
 		return;
 	}
 	float dk2 = (6.28318530718 / domain.x) * (6.28318530718 / domain.y);
-	float p1 = jonswap(k, wind_dir, wind_speed, gravity, fetch, depth, res.y, misc.w) * dk2 * 0.5 * amplitude;
-	float p2 = jonswap(-k, wind_dir, wind_speed, gravity, fetch, depth, res.y, misc.w) * dk2 * 0.5 * amplitude;
+	// The remote swell is not the wind's: wave_amplitude does not scale it.
+	float p1 = jonswap(k, wind_dir, wind_speed, gravity, fetch, depth, res.y, misc.w) * dk2 * 0.5 * amplitude + remote_swell(k, gravity, depth) * dk2 * 0.5;
+	float p2 = jonswap(-k, wind_dir, wind_speed, gravity, fetch, depth, res.y, misc.w) * dk2 * 0.5 * amplitude + remote_swell(-k, gravity, depth) * dk2 * 0.5;
 	vec2 a = g1 * sqrt(p1 * 0.5);
 	vec2 b_pre = g2 * sqrt(p2 * 0.5);
 	vec2 b = vec2(b_pre.x, -b_pre.y); // conj(h0(-k))

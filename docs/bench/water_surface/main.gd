@@ -6,6 +6,7 @@ extends Node3D
 #   --view=beach    the shore from above: shallows, swash and the sea beyond (default)
 #   --view=under    looking down into the shallows, where the floor shows through
 #   --lamps          a spot light and an omni lamp under the water by the submerged view (beams in the water)
+#   --lamp-above     a spot light 3 m over the shallows shining down into them (view=lamp; --sun-energy=0 for night)
 #   --view=submerged  the camera 1.4 m under the water, looking along the floor to the rock (--slope=12)
 #   --view=waterline  the camera at the surface: the lens split between above and below
 #   --view=up       from 2.5 m down, looking up at the surface: Snell's window and the mirror past it
@@ -36,6 +37,12 @@ extends Node3D
 #                   and the wetness up the beach is printed every 60 frames
 #   --wader         two legs (capsules) walking along the shallows at 1.5 m/s with a PhysXWaterPusher3D
 #                   (--wader-nopush: without it); --view=wader looks at them
+#   --wader-speed=U  the legs' speed (m/s), e.g. 4 for running through the shallows
+#   --wader-contact  the legs also in the world_contact group (WaterBodyContacts: ripples and the Froude-gated white
+#                   water round bodies; docs/ideas/water.md "White water round bodies in the water")
+#   --stack         a sea stack (8 x 6 m, 10 m tall) in 3 m of water at z = -30: wave impact spray up its face, the
+#                   waves reflected off it and the lee behind it; --view=stack looks at its face from the side,
+#                   --view=stack_top straight down on it and its lee
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N      frames rendered before --out is saved (default 12)
 #   --set=setting:value  any project setting, e.g. --set=rendering/pathtracing/refraction:0
@@ -98,6 +105,10 @@ var cam_dy := 0.0
 var ride_y := 0.0 # --view=storm_sheets: the eased sea height under the camera
 var sun_energy := 1.0
 var lamps := false
+var lamp_above := false
+var wader_speed := 1.5
+var wader_contact := false
+var stack := false
 var dive := 0.0
 var shade := Vector2(INF, INF)
 var sun_pitch := 50.0
@@ -189,6 +200,10 @@ func _ready() -> void:
 		elif a == "--taa": get_viewport().use_taa = true # resolves the jittered ray marches (wave shadows), as in a game
 		elif a == "--wader": wader_on = true
 		elif a == "--lamps": lamps = true
+		elif a == "--lamp-above": lamp_above = true
+		elif a.begins_with("--wader-speed="): wader_speed = float(a.substr(14))
+		elif a == "--wader-contact": wader_contact = true
+		elif a == "--stack": stack = true
 		elif a.begins_with("--shadow-bar="): _add_shadow_bar.call_deferred(float(a.substr(13)))
 		elif a == "--clip-test": _add_clip_test.call_deferred()
 		elif a == "--contact": contact = true
@@ -352,6 +367,8 @@ func _ready() -> void:
 		var d := -sun.global_transform.basis.z
 		var top := Vector3(shade.x, 0.0, shade.y) - d * (12.0 / -d.y)
 		_slab(Vector3(60, 0.4, 5), top, Vector3.ZERO, rock_mat)
+	if stack:
+		_slab(Vector3(8.0, 10.0, 6.0), Vector3(0.0, 1.0, -30.0), Vector3(0.0, 0.35, 0.0), rock_mat)
 	# A rock standing out of the water, for a current to go round.
 	if not storm:
 		_slab(Vector3(2.0, 4.0, 3.0), Vector3(-6.0, -1.0, -9.0), Vector3(0.0, 0.4, 0.0), rock_mat)
@@ -459,6 +476,17 @@ func _ready() -> void:
 		omni.light_energy = 6.0
 		omni.light_color = Color(0.85, 0.95, 1.0)
 		add_child(omni)
+	if lamp_above:
+		# Over the shallows, aimed down and away: the lit patch on the surface, the beam in the water and the patch
+		# on the bed, drawn in toward the vertical by the surface.
+		var above := SpotLight3D.new()
+		add_child(above)
+		above.look_at_from_position(Vector3(-2.0, 3.0, -3.0), Vector3(-3.5, -2.5, -7.5))
+		above.spot_angle = 16.0
+		above.spot_range = 20.0
+		above.light_energy = 16.0
+		above.light_color = Color(1.0, 0.93, 0.8)
+		above.shadow_enabled = true
 	var cam := Camera3D.new()
 	cam.fov = 45
 	add_child(cam)
@@ -492,6 +520,12 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(7.0, 2.5, 15.0), Vector3(0.0, -0.3, 6.5))
 		"wader":
 			cam.look_at_from_position(Vector3(4.0, 1.4, 5.5), Vector3(1.5, -0.2, 2.0))
+		"lamp":
+			cam.look_at_from_position(Vector3(5.0, 3.5, 3.0), Vector3(-3.0, -1.5, -7.0))
+		"stack":
+			cam.look_at_from_position(Vector3(16.0, 3.0, -14.0), Vector3(0.0, 1.5, -30.0))
+		"stack_top":
+			cam.look_at_from_position(Vector3(0.0, 55.0, -38.0), Vector3(0.0, 0.0, -38.01))
 		"sea":
 			cam.look_at_from_position(Vector3(0, 4.0, -40.0), Vector3(0, -1.0, -110.0))
 		"boat", "boat_low", "boat_sun":
@@ -623,13 +657,15 @@ func _add_wader() -> void:
 	# On the sand at z = 2 (its top is at -0.7 at z = 0 and rises to the waterline near z = 8): half a metre deep.
 	wader.position = Vector3(-6.0, -0.7 + 2.0 * tan(deg_to_rad(5.0)), 2.0)
 	add_child(wader)
+	if wader_contact:
+		wader.add_to_group("world_contact")
 	if wader_push:
 		wader.add_child(ClassDB.instantiate("PhysXWaterPusher3D"))
 
 
 func _physics_process(delta: float) -> void:
 	if wader != null:
-		wader.position.x = minf(wader.position.x + 1.5 * delta, 4.0)
+		wader.position.x = minf(wader.position.x + wader_speed * delta, 4.0)
 	if boat != null:
 		boat.linear_velocity = Vector3(boat_speed, 0.0, 0.0)
 		boat.angular_velocity = Vector3.ZERO

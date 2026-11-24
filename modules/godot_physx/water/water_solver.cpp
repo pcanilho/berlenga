@@ -57,7 +57,7 @@
 
 namespace {
 constexpr int PARAMS_BYTES = 80; // 5 * vec4, std140 -- see water_inc.glsl's Params
-constexpr int OCEAN_INIT_PARAMS_BYTES = 64; // 4 * vec4 -- see water_spectrum_init.glsl's Params
+constexpr int OCEAN_INIT_PARAMS_BYTES = 80; // 5 * vec4 -- see water_spectrum_init.glsl's Params
 constexpr int OCEAN_EVOLVE_PARAMS_BYTES = 32; // 2 * vec4 -- see water_spectrum_evolve.glsl's Params
 constexpr int FFT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_fft.glsl's Params
 constexpr int FFT_ROWS_MAX_N = 1024; // water_fft_rows.glsl's MAX_N (shared memory); larger grids take the per-stage passes
@@ -270,7 +270,7 @@ void WaterSolverGPU::_rt_build_buffers() {
 		zeros.resize(cells * sizeof(float));
 		buf_height = rd->storage_buffer_create(zeros.size(), zeros);
 	}
-	buf_spheres = rd->storage_buffer_create(MAX_SPHERES * 4 * sizeof(float));
+	buf_spheres = rd->storage_buffer_create(MAX_SPHERES * SPHERE_FLOATS * sizeof(float));
 	buf_impulses = rd->storage_buffer_create(MAX_IMPULSES * 4 * sizeof(float));
 
 	// Per-cell still-water depth (R16F) and the ocean chop fade derived from
@@ -729,6 +729,10 @@ void WaterSolverGPU::_rt_spectrum_init() {
 		put_f(52, _init_depth);
 		put_f(56, _init_k_min);
 		put_f(60, _init_k_max);
+		put_f(64, _init_remote_swell.x);
+		put_f(68, _init_remote_swell.y);
+		put_f(72, _init_remote_swell.z);
+		put_f(76, _init_remote_swell.w);
 		rd->buffer_update(buf_ocean_init_params, 0, OCEAN_INIT_PARAMS_BYTES, ib.ptr());
 
 		RD::ComputeListID cl = rd->compute_list_begin();
@@ -746,6 +750,12 @@ void WaterSolverGPU::_rt_spectrum_init() {
 		// rt_step() runs, and rt_build()/rt_step() are always posted to the
 		// render thread in that order, so ordering is already guaranteed.
 	}
+}
+
+void WaterSolverGPU::rt_set_remote_swell(Ref<WaterSolverGPU> p_self, Vector4 p_swell) {
+	const Vector2 d = Vector2(p_swell.z, p_swell.w);
+	const Vector2 dn = d.length_squared() > 1e-8f ? d.normalized() : Vector2(1.0f, 0.0f);
+	_init_remote_swell = Vector4(MAX(p_swell.x, 0.0f), MAX(p_swell.y, 0.0f), dn.x, dn.y);
 }
 
 void WaterSolverGPU::rt_set_band(Ref<WaterSolverGPU> p_self, float p_k_min, float p_k_max, int p_spreading, float p_swell) {
@@ -1126,7 +1136,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 			const float dt = (float)p_deltas[t];
 			const int sphere_count = t < p_sphere_counts.size() ? p_sphere_counts[t] : 0;
 			const int impulse_count = t < p_impulse_counts.size() ? p_impulse_counts[t] : 0;
-			const float *spheres = p_spheres.ptr() + sphere_at * 4;
+			const float *spheres = p_spheres.ptr() + sphere_at * SPHERE_FLOATS;
 			const float *impulses = p_impulses.ptr() + impulse_at * 4;
 			sphere_at += sphere_count;
 			impulse_at += impulse_count;
@@ -1159,12 +1169,12 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 				rd->buffer_update(buf_params, 0, PARAMS_BYTES, b.ptr());
 				params_bytes = b;
 			}
-			const bool same_spheres = sphere_count > 0 && prev_sphere_count == sphere_count && memcmp(prev_spheres, spheres, sphere_count * 4 * sizeof(float)) == 0;
+			const bool same_spheres = sphere_count > 0 && prev_sphere_count == sphere_count && memcmp(prev_spheres, spheres, sphere_count * SPHERE_FLOATS * sizeof(float)) == 0;
 			if (sphere_count > 0 && !same_spheres) {
 				Vector<uint8_t> sb;
-				sb.resize(MAX_SPHERES * 4 * sizeof(float));
+				sb.resize(MAX_SPHERES * SPHERE_FLOATS * sizeof(float));
 				memset(sb.ptrw(), 0, sb.size());
-				memcpy(sb.ptrw(), spheres, MIN((size_t)sphere_count * 4 * sizeof(float), (size_t)sb.size()));
+				memcpy(sb.ptrw(), spheres, MIN((size_t)sphere_count * SPHERE_FLOATS * sizeof(float), (size_t)sb.size()));
 				rd->buffer_update(buf_spheres, 0, sb.size(), sb.ptr());
 			}
 			prev_spheres = spheres;
@@ -1893,6 +1903,15 @@ void WaterSolver::set_spreading(int p_spreading, float p_swell) {
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_reinit_spectrum).bind(gpu, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.fetch));
 }
 
+void WaterSolver::set_remote_swell(const Vector4 &p_swell) {
+	settings.remote_swell = p_swell;
+	if (gpu.is_null()) {
+		return;
+	}
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_remote_swell).bind(gpu, settings.remote_swell));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_reinit_spectrum).bind(gpu, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.fetch));
+}
+
 void WaterSolver::recenter(Vector2 p_grid_center) {
 	flush_ticks(); // ticks recorded so far ran on the old centre (their bodies are relative to it)
 	settings.grid_center = p_grid_center;
@@ -2011,6 +2030,7 @@ void WaterSolver::configure(const Settings &p_settings) {
 	// Before the build, so it uploads the flow (an empty one clears it).
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_base_flux).bind(gpu, base_flux, wall_friction));
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_band).bind(gpu, settings.ocean_k_min, settings.ocean_k_max, settings.wave_spreading, settings.swell));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_remote_swell).bind(gpu, settings.remote_swell));
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled, settings.cell_depth, settings.depth, settings.shallow_fade_depth, settings.fetch));
 }
 
@@ -2024,6 +2044,11 @@ PackedFloat32Array WaterSolver::_pack_spheres() const {
 		out.push_back(s.world_pos.z - settings.grid_center.y);
 		out.push_back(s.radius);
 		out.push_back(s.strength);
+		// Second vec4: white water churned in per second (WaterBodyContacts' Froude-gated foam).
+		out.push_back(s.foam);
+		out.push_back(0.0f);
+		out.push_back(0.0f);
+		out.push_back(0.0f);
 	}
 	return out;
 }
@@ -2052,14 +2077,14 @@ void WaterSolver::queue_tick(double p_delta) {
 	const PackedFloat32Array impulses = _pack_impulses();
 	queued_deltas.push_back(p_delta);
 	queued_spheres.append_array(spheres);
-	queued_sphere_counts.push_back(spheres.size() / 4);
+	queued_sphere_counts.push_back(spheres.size() / SPHERE_FLOATS);
 	queued_impulses.append_array(impulses);
 	queued_impulse_counts.push_back(impulses.size() / 4);
 	if (!impulses.is_empty()) {
 		queued_disturbed = true;
 	}
-	for (int i = 3; i < spheres.size(); i += 4) {
-		if (spheres[i] != 0.0f) {
+	for (int i = 0; i + 4 < spheres.size(); i += SPHERE_FLOATS) {
+		if (spheres[i + 3] != 0.0f || spheres[i + 4] != 0.0f) {
 			queued_disturbed = true;
 			break;
 		}
@@ -2095,13 +2120,14 @@ void WaterSolver::_clear_queue() {
 	queued_disturbed = false;
 }
 
-void WaterSolver::submit_sphere(uint64_t p_owner, const Vector3 &p_world_pos, float p_radius, float p_strength) {
+void WaterSolver::submit_sphere(uint64_t p_owner, const Vector3 &p_world_pos, float p_radius, float p_strength, float p_foam) {
 	int free_slot = -1;
 	for (int i = 0; i < MAX_SPHERES; i++) {
 		if (sphere_slots[i].enabled && sphere_slots[i].owner == p_owner) {
 			sphere_slots[i].world_pos = p_world_pos;
 			sphere_slots[i].radius = p_radius;
 			sphere_slots[i].strength = p_strength;
+			sphere_slots[i].foam = MAX(p_foam, 0.0f);
 			return;
 		}
 		if (free_slot < 0 && !sphere_slots[i].enabled) {
@@ -2115,7 +2141,17 @@ void WaterSolver::submit_sphere(uint64_t p_owner, const Vector3 &p_world_pos, fl
 	sphere_slots[free_slot].world_pos = p_world_pos;
 	sphere_slots[free_slot].radius = p_radius;
 	sphere_slots[free_slot].strength = p_strength;
+	sphere_slots[free_slot].foam = MAX(p_foam, 0.0f);
 	sphere_slots[free_slot].enabled = true;
+}
+
+void WaterSolver::set_sphere_foam(uint64_t p_owner, float p_per_second) {
+	for (SphereSlot &s : sphere_slots) {
+		if (s.enabled && s.owner == p_owner) {
+			s.foam = MAX(p_per_second, 0.0f);
+			return;
+		}
+	}
 }
 
 void WaterSolver::clear_sphere(uint64_t p_owner) {

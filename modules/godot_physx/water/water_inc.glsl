@@ -38,7 +38,8 @@ layout(set = 0, binding = 3, std430) restrict buffer HeightOut {
 // buoyant_body.gd (or similar) via PhysXWaterSurface3D::submit_sphere()/
 // submit_impulse() -- see the plan's "push, not discovery" rationale. The
 // ripple field is 2D (height over XZ), so these pack world XZ, not a full
-// 3D point: x=world_x, y=world_z, z=radius, w=strength (0..1).
+// 3D point: x=world_x, y=world_z, z=radius, w=strength (0..1). Two vec4 a sphere: the second's x is the white
+// water it churns in per second (WaterBodyContacts' Froude-gated foam).
 layout(set = 0, binding = 4, std430) restrict buffer Spheres {
 	vec4 spheres[];
 };
