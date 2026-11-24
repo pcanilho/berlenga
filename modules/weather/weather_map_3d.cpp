@@ -4519,7 +4519,7 @@ void WeatherMap3D::_build_light_grid_texture() {
 // tau / cos(theta); the light through it is the cloud's diffuse transmission, 1 / (1 + 3/4 (1 - g) tau) (two-stream,
 // g 0.85, as the cloud shadow), and the visibility its cosine-weighted mean over the hemisphere (32 directions, 4
 // rings by 8). Red: that visibility at the followed point's height; green: the column's depth; blue: its height;
-// alpha: the followed point's height. The surfaces dim their sky light by it against the camera's own (the sky they
+// alpha: the column's transmission straight up (mipmapped, so its last level is the clouds' mean past the map). The surfaces dim their sky light by it against the camera's own (the sky they
 // read is the one the camera sees, clouds and all).
 void WeatherMap3D::_build_cloud_sky_map() {
 	const LightGridBake &lb = *light_grid_bake;
@@ -4575,10 +4575,11 @@ void WeatherMap3D::_build_cloud_sky_map() {
 			o[i * 4 + 0] = v / 32.0f;
 			o[i * 4 + 1] = cw[i * 2 + 0];
 			o[i * 4 + 2] = cw[i * 2 + 1];
-			o[i * 4 + 3] = lb.ground_y;
+			o[i * 4 + 3] = 1.0f / (1.0f + 0.75f * (1.0f - 0.85f) * cw[i * 2 + 0]);
 		}
 	}
 	const Ref<Image> image = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, bytes);
+	image->generate_mipmaps(); // the last level's alpha: the clouds' mean transmission, past the map
 	if (cloud_sky_texture.is_null()) {
 		cloud_sky_texture = ImageTexture::create_from_image(image);
 	} else {

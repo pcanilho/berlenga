@@ -1097,5 +1097,18 @@ brightness at 7 km in the bench (path traced 2%, raster 1.3%: the path tracer's 
 overcast the camera is under it too and nothing changes, as the radiance map is already overcast. Per direction in
 the path tracer (the cloud along each ray against the camera's) was tried: capped at 1 it biased the mean dark, and
 uncapped it would light single rays by the map's bright cloud many times over; it uses the same hemisphere ratio as
-raster. Gap seen on the way: the cloud shadow map spans 6 km round the camera, and the overcast bench shows the far
-ground past it in full sun (a band at the horizon).
+raster.
+
+## Cloud shadow to the horizon: a far cascade from the column map (24 Nov; bug: far ground sunlit under an overcast)
+
+The cloud shadow map (the sun's projector) spans 6 km round the camera; past it the sun was uncut, so under an overcast
+the ground from about 3 km to the horizon lay in full sun. Technique: a coarse far cloud shadow past the detailed one,
+as engines extend a cloud shadow map over a large extent at a low resolution. It is read from the cloud sky map's
+columns (32 km, 256 m): where the sun's ray from the point reaches the column's mean cloud height, the slant depth
+tau / sun.y and the same two-stream transmission the near map stores. The near map holds where it reaches and blends
+into the far one over its outer tenth (no seam); past the column map (16 km out) the clouds' mean (the map's last mip
+of the transmission straight up, so scattered cloud is not darkened as a deck). Raster (directional_cloud_projector(),
+also sun_visibility()) and the path tracer (lights_directional_projector_color()) read it alike. Checked: the near
+ground and the sky are bit-identical to before; the overcast bench's sunlit band at the horizon is gone in both, and
+distant cumulus now shade the far fields. Not yet: the froxel fog's and the path tracer's volume beam past the map,
+and the Mobile renderer.

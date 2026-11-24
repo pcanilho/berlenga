@@ -1646,17 +1646,17 @@ layout(set = 0, binding = 33) uniform texture2D sky_screen_texture;
 layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
 
 // The share of the clear sky's diffuse light reaching p (relative to rt_origin) through the clouds, from WeatherMap3D's
-// cloud sky map (a cloud ambient occlusion map: red its hemisphere visibility, blue the clouds' height, alpha the
-// height the visibility is for), eased to 1
-// from the height it is for up to the clouds' (raster's cloud_sky_visibility()).
-float rt_cloud_sky_visibility(uint p_map, vec3 p) {
+// cloud sky map (a cloud ambient occlusion map: red its hemisphere visibility, blue the clouds' height), eased to 1
+// from p_ground (the height it is for: the camera's, which the map follows) up to the clouds' (raster's
+// cloud_sky_visibility()).
+float rt_cloud_sky_visibility(uint p_map, vec3 p, float p_ground) {
 	vec3 w = p + rt_origin.xyz;
 	vec2 uv = (w.xz - vec2(get_rt_param(RT_PARAM_CLOUD_SKY_X), get_rt_param(RT_PARAM_CLOUD_SKY_Z))) / RT_CLOUD_SKY_EXTENT;
 	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
 		return 1.0;
 	}
 	vec4 m = textureLod(sampler2D(bindless_textures[p_map], SAMPLER_LINEAR_CLAMP), uv, 0.0);
-	return mix(1.0, m.r, clamp((m.b - w.y) / max(m.b - m.a, 1.0), 0.0, 1.0));
+	return mix(1.0, m.r, clamp((m.b - w.y) / max(m.b - p_ground, 1.0), 0.0, 1.0));
 }
 
 #ifdef USE_RADIANCE_OCTMAP_ARRAY
@@ -1797,7 +1797,8 @@ void main() {
 		uint cloud_sky_map = uint(get_rt_param(RT_PARAM_CLOUD_SKY_MAP));
 		if (get_total_bounces(ps.packed_bounces_flags) > 0u && cloud_sky_map != 0u) {
 			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w, scene_data_block.data.inv_view_matrix[2].w);
-			sky_color *= min(rt_cloud_sky_visibility(cloud_sky_map, gl_WorldRayOriginEXT) / max(rt_cloud_sky_visibility(cloud_sky_map, cam), 0.02), 1.0);
+			float ground = cam.y + rt_origin.y;
+			sky_color *= min(rt_cloud_sky_visibility(cloud_sky_map, gl_WorldRayOriginEXT, ground) / max(rt_cloud_sky_visibility(cloud_sky_map, cam, ground), 0.02), 1.0);
 		}
 
 		// The environment's ambient light switched off (ambient_light_source DISABLED): raster's ambient term is
