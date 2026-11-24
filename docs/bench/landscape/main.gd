@@ -4427,7 +4427,7 @@ func _build_camera() -> void:
 				cam.position = pc
 				cam.look_at(pp + Vector3.UP * 0.1)
 				var pv2: Vector2 = rocks.get_pedestal_at(pp)
-				_log("pedestals view: spot %s stone share %.2f soil lost %.3f m, camera %s" % [str(pp.round()), pv2.x, pv2.y, str(pc.round())])
+				_log("pedestals view: spot %s (spot depth %.3f m) stone share %.2f soil lost %.3f m, camera %s" % [str(pp.round()), pbest, pv2.x, pv2.y, str(pc.round())])
 		"ledge":
 			# A stepped hard-bed bench with its caprock slabs (RockField3D.ledge_slabs) from --ledge-back (22) m out:
 			# the 16 m cell within --ledge-search (1000) m holding the most overhanging lip (TerrainGenerator3D
