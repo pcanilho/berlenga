@@ -1748,6 +1748,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Rain splash pedestals",
+   "settings": [
+    "RockField3D.rain_pedestals"
+   ],
+   "note": "",
+   "what": "on bare, rained-on soil, stones stand on little columns of the soil they shielded from the splash, and some topple off.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
    "name": "Breakable stones",
    "settings": [
     "RockField3D.break_stone"
