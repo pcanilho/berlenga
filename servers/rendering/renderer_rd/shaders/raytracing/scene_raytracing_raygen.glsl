@@ -3161,6 +3161,45 @@ vec4 ground_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
 	return vec4(f, share / chance / sqrt(max(share * grains, 1.0)));
 }
 
+// A cover map read with a cubic B-spline in four bilinear taps, as snow_map_bspline() in the raster shader.
+vec4 snow_map_bspline(uint p_map, vec2 p_uv) {
+	vec2 size = max(vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(p_map)], SAMPLER_LINEAR_CLAMP), 0)), vec2(1.0));
+	vec2 st = p_uv * size - 0.5;
+	vec2 i = floor(st);
+	vec2 f = st - i;
+	vec2 f2 = f * f;
+	vec2 f3 = f2 * f;
+	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+	vec2 w3 = f3 / 6.0;
+	vec2 g0 = w0 + w1;
+	vec2 g1 = w2 + w3;
+	vec2 half_texel = 0.5 / size;
+	vec2 t0 = clamp((i + 0.5 - 1.0 + w1 / g0) / size, half_texel, 1.0 - half_texel);
+	vec2 t1 = clamp((i + 0.5 + 1.0 + w3 / g1) / size, half_texel, 1.0 - half_texel);
+	return g0.y * (g0.x * textureLod(sampler2D(bindless_textures[nonuniformEXT(p_map)], SAMPLER_LINEAR_CLAMP), t0, 0.0) + g1.x * textureLod(sampler2D(bindless_textures[nonuniformEXT(p_map)], SAMPLER_LINEAR_CLAMP), vec2(t1.x, t0.y), 0.0)) +
+			g1.y * (g0.x * textureLod(sampler2D(bindless_textures[nonuniformEXT(p_map)], SAMPLER_LINEAR_CLAMP), vec2(t0.x, t1.y), 0.0) + g1.x * textureLod(sampler2D(bindless_textures[nonuniformEXT(p_map)], SAMPLER_LINEAR_CLAMP), t1, 0.0));
+}
+
+float snow_value_noise(vec2 p_p) {
+	vec2 i = floor(p_p);
+	vec2 f = fract(p_p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = fract(sin(dot(i, vec2(127.1, 311.7))) * 43758.5453);
+	float b = fract(sin(dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453);
+	float c = fract(sin(dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+	float d = fract(sin(dot(i + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Depth within a cell over the cell's mean, lognormal (CV 0.5, Liston 2004): as snow_subgrid() in raster.
+float snow_subgrid(vec2 p_xz) {
+	float n = 0.55 * snow_value_noise(p_xz / 9.0) + 0.3 * snow_value_noise(p_xz / 3.5 + 17.0) + 0.15 * snow_value_noise(p_xz / 1.3 + 5.0);
+	float z = clamp((n - 0.5) / 0.15, -3.0, 3.0);
+	return exp(0.47 * z - 0.11);
+}
+
 vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint, float p_hoar) {
 	// Surface hoar (p_hoar, mm): its crystals are flat ice plates and feathers a few mm to cm across, standing
 	// on the snow (Colbeck 1988; Lang et al. 1984), each one a mirror. Over hoar, the cell is the crystal's size,
@@ -4132,9 +4171,7 @@ void main() {
 				vec2 wuv = (spos.xz - wrect.xy) / wrect.zw;
 				if (all(greaterThanEqual(wuv, vec2(0.0))) && all(lessThanEqual(wuv, vec2(1.0)))) {
 					uint wmap = uint(get_rt_param(RT_PARAM_SNOW_WORLD_MAP));
-					vec2 wsize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), 0));
-					vec2 wh = 0.5 / max(wsize, vec2(1.0));
-					s = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), clamp(wuv, wh, 1.0 - wh), 0.0);
+					s = snow_map_bspline(wmap, wuv);
 					have = true;
 				}
 			}
@@ -4147,7 +4184,7 @@ void main() {
 					uint smap = uint(get_rt_param(RT_PARAM_SNOW_MAP));
 					vec2 ssize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), 0));
 					vec2 half_texel = 0.5 / max(ssize, vec2(1.0));
-					s = mix(s, textureLod(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
+					s = mix(s, snow_map_bspline(smap, nuv), nw);
 					have = true;
 					// Shelter and tree crowns from the catch map, as the raster shader.
 					uint cmap = uint(get_rt_param(RT_PARAM_SNOW_CATCH_MAP));
@@ -4167,7 +4204,7 @@ void main() {
 			if (have) {
 				// Niu and Yang (2007) snow-covered fraction.
 				float snow_amt = snow_cover;
-				snow_cover *= tanh(max(s.r, 0.0) / (0.025 * max(s.a * 10.0, 0.5))) * (1.0 - snow_under);
+				snow_cover *= tanh(max(s.r, 0.0) * snow_subgrid(spos.xz) / (0.025 * max(s.a * 10.0, 0.5))) * (1.0 - snow_under);
 				snow_cover = mix(snow_cover, snow_amt * min(snow_crown_load * 2.0, 1.0), snow_crown);
 				snow_albedo = s.g;
 				snow_wet = clamp(s.b, 0.0, 1.0);

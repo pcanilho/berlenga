@@ -1066,6 +1066,50 @@ global uniform vec4 snow_map_rect;
 global uniform sampler2D snow_world_map;
 global uniform vec4 snow_world_rect;
 
+// A cover map read with a cubic B-spline (four bilinear taps, Sigg and Hadwiger 2005, GPU Gems 2 ch. 20), so a
+// cell's edge is a smooth curve, not the corners and straight runs of the bilinear read.
+vec4 snow_map_bspline(sampler2D p_map, vec2 p_uv) {
+	vec2 size = vec2(textureSize(p_map, 0));
+	vec2 st = p_uv * size - 0.5;
+	vec2 i = floor(st);
+	vec2 f = st - i;
+	vec2 f2 = f * f;
+	vec2 f3 = f2 * f;
+	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+	vec2 w3 = f3 / 6.0;
+	vec2 g0 = w0 + w1;
+	vec2 g1 = w2 + w3;
+	vec2 half_texel = 0.5 / size;
+	vec2 t0 = clamp((i + 0.5 - 1.0 + w1 / g0) / size, half_texel, 1.0 - half_texel);
+	vec2 t1 = clamp((i + 0.5 + 1.0 + w3 / g1) / size, half_texel, 1.0 - half_texel);
+	return g0.y * (g0.x * textureLod(p_map, t0, 0.0) + g1.x * textureLod(p_map, vec2(t1.x, t0.y), 0.0)) +
+			g1.y * (g0.x * textureLod(p_map, vec2(t0.x, t1.y), 0.0) + g1.x * textureLod(p_map, t1, 0.0));
+}
+
+float snow_value_noise(vec2 p_p) {
+	vec2 i = floor(p_p);
+	vec2 f = fract(p_p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = fract(sin(dot(i, vec2(127.1, 311.7))) * 43758.5453);
+	float b = fract(sin(dot(i + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453);
+	float c = fract(sin(dot(i + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+	float d = fract(sin(dot(i + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// The depth within a cell over the cell's mean: the map holds a cell's mean depth, and within it the depth is
+// spread lognormally (coefficient of variation 0.5, open terrain in Liston 2004, "Representing subgrid snow
+// cover heterogeneities in regional and global models"), laid out by a fixed field of drifts and hollows some
+// metres across. So a thinning cell melts out in patches that follow that field, its covered share falling
+// along the depletion curve, not all at once along the cell's edge.
+float snow_subgrid(vec2 p_xz) {
+	float n = 0.55 * snow_value_noise(p_xz / 9.0) + 0.3 * snow_value_noise(p_xz / 3.5 + 17.0) + 0.15 * snow_value_noise(p_xz / 1.3 + 5.0);
+	float z = clamp((n - 0.5) / 0.15, -3.0, 3.0);
+	return exp(0.47 * z - 0.11);
+}
+
 // The snowpack at a world position: (covered share, albedo, melt water, 1 where a pack answers). The world tier
 // (the coarse pack over the whole terrain), then the near square over it, faded in across its outer tenth.
 vec4 snow_cover_at(vec3 p_world_pos) {
@@ -1077,8 +1121,7 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 	if (snow_world_rect.z > 0.0) {
 		vec2 wuv = (p_world_pos.xz - snow_world_rect.xy) / snow_world_rect.zw;
 		if (all(greaterThanEqual(wuv, vec2(0.0))) && all(lessThanEqual(wuv, vec2(1.0)))) {
-			vec2 wh = 0.5 / vec2(textureSize(snow_world_map, 0));
-			s = textureLod(snow_world_map, clamp(wuv, wh, 1.0 - wh), 0.0);
+			s = snow_map_bspline(snow_world_map, wuv);
 			have = true;
 		}
 	}
@@ -1089,7 +1132,7 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
 		if (nw > 0.0) {
 			vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
-			s = mix(s, textureLod(snow_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
+			s = mix(s, snow_map_bspline(snow_map, nuv), nw);
 			have = true;
 			// Shelter: well under the surface the pack lies on (a roof, an overhang) stays bare; well above it,
 			// in a tree crown, the snow is what the canopy holds (docs/ideas/snow.md, follow-ups).
@@ -1107,7 +1150,7 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 	}
 	// Snow-covered fraction from depth and density, Niu and Yang (2007):
 	// tanh(depth / (2.5 z0 (rho / rho_new)^m)), z0 0.01 m, rho_new 100 kg/m3, m 1.
-	float cover = tanh(max(s.r, 0.0) / (0.025 * max(s.a * 10.0, 0.5))) * (1.0 - under);
+	float cover = tanh(max(s.r, 0.0) * snow_subgrid(p_world_pos.xz) / (0.025 * max(s.a * 10.0, 0.5))) * (1.0 - under);
 	// A crown shows its load: half its capacity whitens the upward needles.
 	cover = mix(cover, min(crown_load * 2.0, 1.0), crown);
 	return vec4(cover, s.g, clamp(s.b, 0.0, 1.0), 1.0);

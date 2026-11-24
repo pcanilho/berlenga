@@ -2115,6 +2115,24 @@ Built:
 - `--test=stones`, `--view=stones` (generated rocks on a snowfield after a drifting day and two days of the bench's
   still sun; `--no-stones` without).
 
+## Follow-up 58: patchy melt-out without the cover map's grid (24 Nov 2026)
+
+Fault: past the snow surface's square, on the bench's far hill, the ground's own snow lay as a blocky patchwork of
+white and bare ground with straight, axis-aligned edges. Cause: the cover map holds each 2 m cell's mean depth;
+after two sunny days the thin cells melt out whole while their neighbours keep 10 to 20 cm, and the bilinear read
+of the map draws that step as straight runs and square corners a few cells long.
+
+Technique: sub-grid snow distribution. A cell's depth is not uniform: in open terrain it spreads lognormally
+round the mean with a coefficient of variation near 0.5 (Liston 2004, "Representing subgrid snow cover
+heterogeneities in regional and global models", J. Climate 17), so a thinning cell melts out in patches, its
+covered share following the depletion curve. The shader now:
+- reads the cover maps (near square and world tier) with a cubic B-spline in four bilinear taps (Sigg and
+  Hadwiger 2005, GPU Gems 2 ch. 20), so a cell's edge is a smooth curve;
+- scales the mean depth by a fixed lognormal field of drifts and hollows 1 to 9 m across (`snow_subgrid`, three
+  octaves of value noise, CV 0.5) before the Niu and Yang covered share.
+Raster (`snow_cover_at` in material.cpp, so BaseMaterial3D and the terrain material) and the path tracer (raygen
+snow block) read alike. `snow_pack_at` (the load on plants) keeps the cell mean. No setting.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**
