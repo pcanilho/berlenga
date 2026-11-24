@@ -965,7 +965,7 @@ float wave_plate_depression(const State &p_state, const Vector3 &p_pos) {
 	}
 	const float d = (p_pos.y - p_state.mid_height) / (0.75f * p_state.mid_thickness + 150.0f);
 	const float sheets = 0.5f + 0.5f * Math::sin(float(Math::TAU) * ((p_pos.y - p_state.mid_height) / 220.0f + 0.15f * value_noise(xz / 15000.0f) + 0.7f * value_noise(xz / 3000.0f + Vector2(8.3f, 2.9f))));
-	return stack * Math::exp(-d * d) * Math::lerp(-0.8f, 3.0f, smoothstep(0.35f, 0.65f, sheets));
+	return stack * Math::exp(-d * d) * Math::lerp(-0.8f, 5.0f, smoothstep(0.35f, 0.65f, sheets));
 }
 
 float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
@@ -981,7 +981,7 @@ float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
 	// wave_dew_depression_at() adds the plates' sheets; their dry gaps close where the lift is large (wc_plate_x()).
 	const float pd = wave_plate_depression(p_state, p_pos);
 	const float x0 = eta - 125.0f * (wave_dew_depression_at(p_state, p_pos) - pd);
-	const float x = x0 - 125.0f * (pd > 0.0f ? pd * (1.0f - smoothstep(120.0f, 400.0f, x0)) : pd);
+	const float x = x0 - 125.0f * (pd > 0.0f ? pd * (1.0f - smoothstep(900.0f, 2000.0f, x0)) : pd);
 	if (x <= 0.0f) {
 		return 0.0f;
 	}
@@ -990,9 +990,9 @@ float wave_extinction_at(const State &p_state, const Vector3 &p_pos) {
 	const float rho_air = 1.225f * Math::exp(-p_pos.y / 8500.0f);
 	const float water = rho_air * rate * x; // kg/m^3
 	const float ice = CLAMP((-20.0f - tc) / 10.0f, 0.0f, 1.0f);
-	// Adiabatic droplets (as wc_wave_sigma()): the drops condense on a fixed number of nuclei, so their radius grows as
-	// the cube root of the water, 10 um 150 m past saturation; just past it they are small and many.
-	const float r_liq = 10e-6f * MAX(Math::pow(MIN(x / 150.0f, 1.0f), 1.0f / 3.0f), 0.3f);
+	// Adiabatic droplets (as wc_wave_sigma()): the drops condense on a fixed number of nuclei, 150 per cm^3 (wave clouds
+	// carry 100 to 300, Heymsfield and Miloshevich 1993), so their radius is the cube root of the water over that number.
+	const float r_liq = CLAMP(Math::pow(water / (4188.8f * 1.5e8f), 1.0f / 3.0f), 1.0e-6f, 20.0e-6f);
 	return 1.5f * water / Math::lerp(1000.0f * r_liq, 917.0f * 30e-6f, ice);
 }
 
@@ -2026,8 +2026,12 @@ float wc_wave_sigma(vec3 p, float eta, float x) {
 	// fixed number of nuclei, so the radius grows as the cube root of the water and the extinction as its 2/3 power,
 	// not linearly. A lens is optically crisp from its first metres (a glassy rim in photographs); with 10 um drops
 	// everywhere the rim was a soft gradient tens of metres of lift deep.
-	float r_liq = 10e-6 * max(pow(min(x / 150.0, 1.0), 1.0 / 3.0), 0.3);
-	return 1.5 * rho_air * rate * x / mix(1000.0 * r_liq, 917.0 * 30e-6, ice);
+	// The radius from the water over a fixed 150 droplets per cm^3 (wave clouds carry 100 to 300, Heymsfield and
+	// Miloshevich 1993; 4/3 pi rho_w = 4188.8): about 6 um 150 m past saturation, 2 um 10 m past it. At 10 um the
+	// count was some 30 per cm^3, too few: the lens took hundreds of metres to turn opaque and its rim was soft.
+	float water = rho_air * rate * x;
+	float r_liq = clamp(pow(water / (4188.8 * 1.5e8), 1.0 / 3.0), 1.0e-6, 20.0e-6);
+	return 1.5 * water / mix(1000.0 * r_liq, 917.0 * 30e-6, ice);
 }
 
 // Pile of plates: the drier sheets' extra dew point depression (wave_plate_depression() on the CPU), read at each
@@ -2042,14 +2046,14 @@ float wc_plate_dep(vec3 p) {
 	}
 	float d = (p.y - cloud_mid_height) / (0.75 * cloud_mid_thickness + 150.0);
 	float sheets = 0.5 + 0.5 * sin(6.2831853 * ((p.y - cloud_mid_height) / 220.0 + 0.15 * wc_value_noise(p.xz / 15000.0) + 0.7 * wc_value_noise(p.xz / 3000.0 + vec2(8.3, 2.9))));
-	return stack * exp(-d * d) * mix(-0.8, 3.0, smoothstep(0.35, 0.65, sheets));
+	return stack * exp(-d * d) * mix(-0.8, 5.0, smoothstep(0.35, 0.65, sheets));
 }
 
 // The lift left after the plates: the dry sheets' gaps close where the lift is large (inside the lens the plates merge,
 // as wave_plate_x() on the CPU), so the plates show at the lens's edges and no level cut rings its middle.
 float wc_plate_x(float x0, vec3 p) {
 	float pd = wc_plate_dep(p);
-	pd = pd > 0.0 ? pd * (1.0 - smoothstep(120.0, 400.0, x0)) : pd;
+	pd = pd > 0.0 ? pd * (1.0 - smoothstep(900.0, 2000.0, x0)) : pd;
 	return x0 - 125.0 * pd;
 }
 

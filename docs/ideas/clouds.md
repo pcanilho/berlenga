@@ -1019,3 +1019,19 @@ no relief between its turrets.
 
 Bench: weather --view=shafts --sun-up=18 --cover=0.15 --high-cover=0 --wind=1 --storm=-3000,-20000,2500,30,10
 --fov=70 (backlit), --view=towers (relief); A/B with --sky-params=cloud_sky_occlusion_reach:0,cloud_storm_shell_density:0.
+
+## Lenticulars: crisp rim, separate plates (24 Nov; docs: soft near rim, plates without sky between)
+
+- **Droplet count.** The lens's droplets were a fixed 10 um at 150 m of lift, which at its water is some 30 per cm^3.
+  Wave clouds carry 100 to 300 (Heymsfield and Miloshevich 1993), so the radius now comes from the water over a fixed
+  150 per cm^3 (adiabatic: r^3 = LWC / (4/3 pi rho_w N)), about 6 um inside and 2 um at the edge. The extinction nearly
+  doubles and the lens turns opaque within metres of its edge: a near lens has a defined rim, not a soft fade
+  (wc_wave_sigma(), wave_extinction_at() on the CPU).
+- **Analytic edge.** The lens march places the edge between samples, at the linear crossing of the lift past
+  saturation, and counts only that share of the interval (an analytic coverage instead of a whole fine step).
+- **Plates.** The dry sheets of a pile are 5 K drier (was 3) and their gaps stay open through the lens up to 900 m
+  of lift (closed from 120 m before), so a pile reads as plates with sky between them, each with its own ends. Seen
+  from below they overlap; from the lens's height they separate.
+
+Bench: weather --view=lenticular (far), --cam=9000,300,11570,5000,4800,11570 (under a near lens),
+--cam=17000,3600,11570,3150,4000,11570 (the pile from its own height).
