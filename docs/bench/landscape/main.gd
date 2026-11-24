@@ -4486,7 +4486,14 @@ func _build_camera() -> void:
 				var sun_flat := Vector3(sun.global_basis.z.x, 0, sun.global_basis.z.z).normalized()
 				var brun: Array = []
 				var bsc := -INF
+				var most := 0
 				for r in runs.values():
+					most = maxi(most, r.size())
+				# The light bonus only among runs near the longest (--ledge-min-slabs, else the longest less 2).
+				var min_sl := int(args.get("ledge-min-slabs", str(maxi(most - 2, 1))))
+				for r in runs.values():
+					if r.size() < min_sl:
+						continue
 					var ro := Vector3()
 					for s in r:
 						ro += s["out"]
