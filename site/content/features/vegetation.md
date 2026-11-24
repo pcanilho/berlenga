@@ -21,7 +21,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Cereal crops** (`GrassField3D.crop`, `crop_stage`): wheat, barley, oats and rye as real plants in drill rows, with spikelet ears and barley awns, through their growth stages from green rows to gold ears and stubble with straw swaths.
 - **Crop fields** (`GrassField3D.fields`): field outlines with their own drill direction, sowing date, tramlines and headland; the ground carries the crop's colour into the distance.
 - **Hedgerows and margins** (`GrassField3D.hedges`, `hedge_voxel_lods`, `PlantGenerator.make_margin()`): field edges carry hedgerows of mixed native shrubs with a gateway per field, and headland and verge strips of field weeds; far hedges switch to voxel levels.
-- **Clear of boulders** (`VegetationField3D.obstacles`, `GrassField3D.obstacles`): grass, ground plants, tree feet and fallen logs keep out of boulders.
+- **Clear of boulders** (`VegetationField3D.obstacles`, `GrassField3D.obstacles`, `rock_field`): grass, ground plants, tree feet and fallen logs keep out of boulders; with a rock field set, each tile fetches only the stones round it as it is placed.
 - **Waterfall spray** (`PlantSpecies.spray_range`): plants keep out of the soaked ground in a waterfall's spray zone, where only mosses grow.
 - **Plant cover map** (`VegetationField3D.cover_map_enabled`): a colour map of the plant cover baked from the planting rules, for distant terrain.
 - **Canopy shade** (`canopy_radius`, `shade_range`; `weather_map`): understorey placed by the shade of placed crowns; crowns feed the weather's canopy map.
