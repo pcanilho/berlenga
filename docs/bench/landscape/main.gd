@@ -5253,6 +5253,9 @@ func _build_cover() -> void:
 			for st in [PlantGenerator.SCRUB_GARRIGUE, PlantGenerator.SCRUB_MAQUIS]:
 				calls.append(["make_scrub", [st, 3, true, season, woody]])
 				keys.append("make_scrub:%d" % st)
+		if args.get("flowering-grasses", "0") != "0" and ClassDB.class_has_method("PlantGenerator", "make_flowering_grasses"):
+			calls.append(["make_flowering_grasses", [3, true, season]])
+			keys.append("make_flowering_grasses:0")
 		if args.get("dry-tussocks", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_dry_tussocks"):
 			calls.append(["make_dry_tussocks", [3, true, season]])
 			keys.append("make_dry_tussocks:0")
@@ -5372,6 +5375,13 @@ func _build_cover() -> void:
 			for sp in (pre["make_scrub:%d" % st] if pre.has("make_scrub:%d" % st) else PlantGenerator.make_scrub(st, 3, true, season, woody)):
 				sp.set_meta("own_rules", true)
 				b.species.append(sp)
+	if args.get("flowering-grasses", "0") != "0" and ClassDB.class_has_method("PlantGenerator", "make_flowering_grasses"):
+		# The tall meadow (Yorkshire fog, false oat-grass, foxtail, hair-grass, ox-eye daisy, cranesbill, red campion)
+		# in drifts over the sward, in season. Opt-in (--flowering-grasses=1) until it is approved for the default meadow.
+		var fg: Array = pre["make_flowering_grasses:0"] if pre.has("make_flowering_grasses:0") else ClassDB.class_call_static("PlantGenerator", "make_flowering_grasses", 3, true, season)
+		for sp in fg:
+			b.species.append(sp)
+		_log("flowering grasses: %d species" % fg.size())
 	if args.get("dry-tussocks", "1") != "0" and ClassDB.class_has_method("PlantGenerator", "make_dry_tussocks"):
 		# Dry tussocks over the cured cover (esparto 150-470 mm of rain, thatching grass 320-850 mm; vegetation
 		# d9dfa4a8): only under 1000 mm, off rock, shade and bare patches, curing with the season, by their own rules.
