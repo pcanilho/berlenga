@@ -1399,6 +1399,9 @@ slab hangs), slide along the lip to abut a neighbour instead of being dropped, a
 slab whose free part would start in the ground is never loosed. The rain-pedestal bare check reads the climate's
 precipitation captured on the main thread (the weather provider is a node; workers read only the factor map).
 
-Open (24 Nov, evening): in the rocks bench the falling front part drops straight through the collision ground, even
-where its upper middle starts clear of both the heightfield and the drawn relief, so live rockfall leaves ledge slabs
-out for now; trigger_rockfall still loosens them. The bench's `--ledge-fall` probes the collision under the slab.
+Open (24 Nov, evening): measured with the bench's `--ledge-fall` probe, the ground under a slab's free part is the
+face below the lip at about 60 degrees, and its collision (the landscape, heightfield plus relief) stands over the
+free part's middle: the relief draws the soffit's undercut for the eye but no heightfield can hold it, so the freed
+part starts inside the one-sided surface and falls through it. A slab now falls only where its free part's middle
+starts in the air (on the bench world the 8 biggest are refused, the 9th is loosed); live rockfall leaves ledges out. Falling
+ledges need collision for the undercut (for example a soffit collision strip along the lips from the terrain side).

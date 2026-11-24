@@ -6649,10 +6649,10 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 		// (A slab whose front stands on the bench all along still breaks a fifth of the way in: its joint.)
 		t = CLAMP(t, depth * 0.2, depth * 0.6);
 		root = front - za * t - ya * (root_thick * 0.5);
-		// The part that falls must start out over the face below the lip, not in the ground: its upper middle in the
-		// air (its underside may start in the face, which the heightfield draws without the undercut; it eases out).
+		// The part that falls must start out over the face below the lip, not in the ground: its middle in the air.
+		// (A convex body whose middle starts under the collision's one-sided surface falls through it.)
 		// (The drawn ground, heightfield plus the landscape's relief: what the collision follows.)
-		const Vector3 free_mid = front - za * (t * 0.5) - ya * (root_thick * 0.25);
+		const Vector3 free_mid = front - za * (t * 0.5) - ya * (root_thick * 0.5);
 		// (Clear of the heightfield as well: the collision may follow it without the relief's undercut.)
 		if (MAX(drawn(free_mid), rf_height(gen, free_mid)) > free_mid.y) {
 			node->queue_free();
@@ -6666,8 +6666,9 @@ Node3D *RockField3D::_spawn_breakable(Group &p_grp, int p_k, uint64_t p_key, boo
 		node->set("impact_radius", MAX(p_grp.reach[p_k] * 1.5f, real_t(0.5)));
 		node->set("shatter_speed", 0.6); // the crack's own spall: a few chips, not a blast
 		node->set("freeze_when_asleep", true);
-		// Where its underside starts in the face below the lip, it eases out rather than leaping.
-		node->set("max_depenetration_velocity", 1.0);
+		// Where its underside starts in the face below the lip (the heightfield has no undercut), the contact pushes
+		// it out faster than gravity draws it in (at 1 m/s it sank through), yet without a leap.
+		node->set("max_depenetration_velocity", 4.0);
 	} else if (p_fall) {
 		// A block loosed from the wall: a rigid body from the start, moved out of the face by its reach so it does
 		// not start inside the heightfield. It breaks where it hits hard: one contact taking the impulse of a 3 m/s
