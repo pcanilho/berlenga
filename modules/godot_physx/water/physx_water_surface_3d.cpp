@@ -411,6 +411,8 @@ uniform vec3 caustics_right = vec3(1.0, 0.0, 0.0);
 uniform vec3 caustics_up = vec3(0.0, 0.0, 1.0);
 uniform float caustics_half_extent = 1.0;
 uniform float caustics_ref_depth = 2.5;
+// Half the width of the water grid the map is drawn from (metres, about caustics_origin): past it the map holds no pattern.
+uniform float caustics_grid_half = 1e6;
 // Waves shadowing themselves (raster; the path tracer traces it): the sun's ray from each point toward the sun,
 // marched over the surface's heights, is inside the water wherever it crosses a crest in front. Glitter needs
 // the sun in the open, so it goes where the ray is inside; foam and wet sand are lit through the crest's water
@@ -2246,6 +2248,11 @@ void fragment() {
 				vec2 edge = min(cuv, 1.0 - cuv);
 				float zr = caustics_ref_depth * max(-r.y, 0.05);
 				e = mix(1.0, e, smoothstep(0.0, 0.08, min(edge.x, edge.y)) * (1.0 - smoothstep(3.0 * zr, 8.0 * zr, z)));
+				// And over the last eighth of the grid the map is drawn from, where its light entered the water: the map
+				// spans further than that grid (room for the refracted shift), and the pattern stopped at the grid's edge
+				// in a straight line across the bed.
+				vec2 x_in = abs(bed_p.xz - r.xz * (z / max(-r.y, 0.05)) - caustics_origin.xz);
+				e = mix(1.0, e, 1.0 - smoothstep(0.875 * caustics_grid_half, caustics_grid_half, max(x_in.x, x_in.y)));
 				// Only the sun that reached the bed (its shadow is already in the bed's colour).
 				float vis = dot(sun_visibility(bed_p), vec3(1.0 / 3.0));
 				base_rgb += seen * sun_share * vis * (e - 1.0);
@@ -8137,6 +8144,8 @@ void PhysXWaterSurface3D::_render_caustics() {
 			water_material->set_shader_parameter("caustics_up", solver.get_caustics_light_up());
 			water_material->set_shader_parameter("caustics_half_extent", solver.get_caustics_half_extent());
 			water_material->set_shader_parameter("caustics_ref_depth", caustics_reference_depth);
+			const Vector2 tile = solver.get_caustics_tile_size();
+			water_material->set_shader_parameter("caustics_grid_half", MIN(tile.x, tile.y) * 0.5f * WaterSolverGPU::CAUSTICS_TILE_MARGIN);
 		}
 	} else if (water_material.is_valid()) {
 		water_material->set_shader_parameter("caustics_on", false);
