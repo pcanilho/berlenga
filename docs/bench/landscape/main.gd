@@ -814,6 +814,25 @@ func _ready() -> void:
 			get_tree().quit()
 			return
 		var built := rocks.build_area(Rect2(rc.x - ra * 0.5, rc.z - ra * 0.5, ra, ra))
+		if args.has("dump-stones"):
+			# --dump-stones=x,z,r: every stone over 0.4 m within r m of (x, z), by layer, then quit (placement checks).
+			var dz := String(args["dump-stones"]).split(",")
+			var dc := Vector2(float(dz[0]), float(dz[1]))
+			var dr := float(dz[2])
+			var big := []
+			for li in 12:
+				var ls: Array = rocks.get_stones(li, Rect2(dc.x - dr, dc.y - dr, 2.0 * dr, 2.0 * dr))
+				_log("  layer %d: %d stones" % [li, ls.size()])
+				for st in ls:
+					var q: Vector3 = st.get("position", Vector3.INF)
+					if is_finite(q.x) and Vector2(q.x, q.z).distance_to(dc) < dr:
+						var sc: Variant = st.get("scale", 1.0)
+						big.append([sc.x if sc is Vector3 else float(sc), li, q, st.get("family", -1), st.get("rock_type", -1), st.get("variant", -1), (st.get("basis", Basis()) as Basis).get_euler()])
+			big.sort_custom(func(a, b): return a[0] > b[0])
+			for k in mini(40, big.size()):
+				_log("  scale %.2f layer %d at %s family %s type %s variant %s euler %s" % big[k])
+			get_tree().quit()
+			return
 		_log("rocks: %d cells, %d stones in %d ms (shape libraries %.0f ms, %d library triangles)" % [built, rocks.get_stone_count(), Time.get_ticks_msec() - rb, rocks.get_last_library_msec(), rocks.get_library_triangle_count()])
 		# The far tier (modules/rocks): stones over 2 m and landmarks past each layer's radius, to far_radius (4 km).
 		# --no-far: off (the before frame); --far-thin=0: far_thinning off.

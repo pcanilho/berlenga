@@ -1283,10 +1283,13 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 		} break;
 		case LAYER_RIVER: {
 			_prepare_rivers();
-			for (const River &rv : rivers) {
+			for (uint32_t r = 0; r < rivers.size(); r++) {
+				const River &rv = rivers[r];
 				if (!rv.bounds.grow(20.0).intersects(p_rect)) {
 					continue;
 				}
+				// The riffles' phase along this river, as _river_segments gives the detail bed.
+				const float phase = float(hash_murmur3_one_32(r * 7919u + 17u) & 0xffffu) / 65536.0f * float(Math::TAU);
 				const float labr = RockGenerator::get_lithology(rv.head_type).abrasion_length;
 				for (uint32_t i = 0; i + 1 < rv.points.size(); i++) {
 					const Vector3 a = rv.points[i], b = rv.points[i + 1];
@@ -1318,12 +1321,28 @@ void RockField3D::_place(Layer p_layer, const Rect2 &p_cell_rect, uint32_t p_see
 					const float round = 1.0f - Math::exp(-(dist + 300.0f) / labr);
 					const int bin = round < 0.4f ? 0 : (round < 0.8f ? 1 : 2);
 					const float area = len * w * 1.2f;
+					// The count over the bed's real width; laid over a bed at least three medians wide, so a rill
+					// narrower than its stones does not string them out single file along its line (a bed's
+					// coarse grains sit side by side across it).
+					const float we = MAX(w, 3.0f * d50);
+					// Two tries per stone kept: the riffles keep the coarse ones, the pools between them about six
+					// widths apart hold few (Leopold, Wolman and Miller 1964; the detail bed's riffles, same phase),
+					// so the stones come in clusters, not at an even spacing.
 					const float want = 0.45f * area * float(density) / (float(Math::PI) * 0.25f * d50 * d50 * 1.4f);
-					const int count = MIN(int(want), max_stones_per_cell);
+					const int count = MIN(int(2.0f * want), 2 * max_stones_per_cell);
+					const float riffle_len = 6.0f * MAX(w, 1.0f);
 					for (int k = 0; k < count; k++) {
 						const float t = rng.randf();
-						const float u = (rng.randf() - 0.5f) * 1.2f;
-						const Vector2 p = Vector2(a.x, a.z).lerp(Vector2(b.x, b.z), t) + side * (u * w);
+						const float s_at = rv.distance[i] + t * len;
+						const float riffle = 0.5f + 0.5f * Math::cos(float(Math::TAU) * s_at / riffle_len + phase);
+						if (rng.randf() > 0.1f + 0.9f * riffle * riffle) {
+							continue;
+						}
+						// The thalweg swings from bank to bank between riffles (alternate bars, twice the riffle
+						// spacing), and the coarse stones gather about it: no straight row along the line.
+						const float swing = 0.3f * Math::sin(float(Math::TAU) * s_at / (2.0f * riffle_len) + 1.7f * phase);
+						const float u = CLAMP(swing + (rng.randf() + rng.randf() - 1.0f) * 0.6f, -0.6f, 0.6f);
+						const Vector2 p = Vector2(a.x, a.z).lerp(Vector2(b.x, b.z), t) + side * (u * we);
 						if (!p_rect.has_point(p)) {
 							continue;
 						}

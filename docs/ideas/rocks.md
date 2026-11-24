@@ -1417,3 +1417,11 @@ full detail wherever a pixel shows it), and every rock MultiMesh takes its bigge
 primitives, image difference at the run-to-run noise (4.6% of pixels over 8/255 against 4.2% between two runs of
 the old build). The path tracer keeps full meshes (rendering/pathtracing/mesh_lod off). Tried and dropped: splitting
 heavy cell groups into 8 m clusters (no gain, twice the draw calls). `--prim-report` lists the heaviest MultiMeshes.
+
+## River bed stones off the line (24 Nov)
+
+A narrow steep rill (well under a metre wide, cobbles of 20 to 30 cm) laid its coarse stones in a band 0.6 of its width
+either side of the line, so they ran single file and evenly spaced along each straight polyline segment, like stepping
+stones. Now the band is at least three medians wide (the bed's coarse grains sit side by side), the stones keep to the
+riffles (the detail bed's riffle phase, about six widths apart; pools between hold few) and gather about a thalweg
+that swings from bank to bank at twice the riffle spacing (alternate bars). Same count per segment on average.
