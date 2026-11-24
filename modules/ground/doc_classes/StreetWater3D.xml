@@ -34,6 +34,13 @@
 				The main thread's time in the last frame (milliseconds): placing the window, measuring entering cells' beds, queuing the GPU passes.
 			</description>
 		</method>
+		<method name="get_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
+				The water's depth (metres) at a world point, from the map last read back (a frame or two old, at [member readback_rate]): for footsteps, splashes and spray. 0 where it is dry or outside the window.
+			</description>
+		</method>
 		<method name="get_map" qualifiers="const">
 			<return type="Texture2DRD" />
 			<description>
@@ -81,6 +88,9 @@
 		<member name="follow_path" type="NodePath" setter="set_follow_path" getter="get_follow_path" default="NodePath(&quot;&quot;)">
 			The node the window centres on. Empty: the ground a little short of where the current camera looks.
 		</member>
+		<member name="frame_path" type="NodePath" setter="set_frame_path" getter="get_frame_path" default="NodePath(&quot;&quot;)">
+			The space the water lives in. Empty: the world. A node (a city strip sliding past a train): the window, the beds, the bodies and their velocities are in its space, so the water moves with the street under it. The materials get [code]street_water_frame[/code] (the world to that space) with the map.
+		</member>
 		<member name="height_sources" type="NodePath[]" setter="set_height_sources" getter="get_height_sources" default="[]">
 			Nodes giving the bed: [RoadRelief3D] (read from its mesh with [method RoadRelief3D.get_surface_height_at]) or anything with [code]get_height_at(world_position)[/code] returning a world height or -INF. The highest wins; cells with none are walls the water never enters.
 		</member>
@@ -93,11 +103,17 @@
 		<member name="max_steps" type="int" setter="set_max_steps" getter="get_max_steps" default="4">
 			Steps in one frame at most; a long frame does not run the water on.
 		</member>
+		<member name="prefill" type="float" setter="set_prefill" getter="get_prefill" default="0.0">
+			The share of the relief's ponding ([method RoadRelief3D.get_pond_depth_at]) a cell entering the window starts with: 0 a dry street, 1 every hollow full to its rim. A street coming into view in rain shows the puddles it has instead of a dry road. Inlets start empty.
+		</member>
 		<member name="rain_from_weather" type="bool" setter="set_rain_from_weather" getter="get_rain_from_weather" default="true">
 			Adds the weather's rainfall at the window ([code]WorldWeather.rainfall_at[/code]) to [member rain_rate].
 		</member>
 		<member name="rain_rate" type="float" setter="set_rain_rate" getter="get_rain_rate" default="0.0">
 			Rain on the window (mm/h), on top of the weather's.
+		</member>
+		<member name="readback_rate" type="float" setter="set_readback_rate" getter="get_readback_rate" default="8.0">
+			How often (Hz) the map is read back for [method get_depth_at]. 0: never.
 		</member>
 		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="512">
 			Cells along each side of the window (a multiple of 8). The cost scales with its square.

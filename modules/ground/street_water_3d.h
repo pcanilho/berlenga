@@ -32,6 +32,7 @@
 
 #pragma once
 
+#include "core/os/mutex.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
@@ -49,6 +50,18 @@ class StreetWater3D : public Node3D {
 	int resolution = 512;
 	float cell = 0.025f; // m
 	NodePath follow_path;
+	NodePath frame_path;
+	float prefill = 0.0f; // share of the relief's ponding cells entering the window start with
+	float readback_rate = 8.0f; // Hz
+	double last_readback = -1.0;
+	// The map read back for get_depth_at().
+	mutable Mutex readback_mutex;
+	PackedByteArray rb_data;
+	int rb_n = 0;
+	Vector2i rb_origin;
+	float rb_cell = 1.0f;
+	void _rt_on_readback(const PackedByteArray &p_data, int p_n, Vector2i p_origin, float p_cell);
+	Transform3D _frame_xform() const;
 	TypedArray<NodePath> height_sources;
 	float rain_rate = 0.0f; // mm/h
 	bool rain_from_weather = true;
@@ -99,11 +112,11 @@ class StreetWater3D : public Node3D {
 	int rt_n = 0;
 	int rt_load_bytes = 0;
 	bool rt_failed = false;
-	void _rt_frame(int p_n, const PackedByteArray &p_records, const PackedFloat32Array &p_items, const PackedFloat32Array &p_loads);
+	void _rt_frame(int p_n, const PackedByteArray &p_records, const PackedFloat32Array &p_items, const PackedFloat32Array &p_loads, int p_readback, Vector2i p_origin, float p_cell);
 	void _rt_free();
 
 	Vector3 _follow_point() const;
-	float _bed_at(const Vector3 &p_world, const LocalVector<Node *> &p_sources) const;
+	float _bed_at(const Vector3 &p_world, const LocalVector<Node *> &p_sources, float &r_pond, bool &r_inlet) const;
 	void _frame(double p_delta);
 	void _release();
 
@@ -121,6 +134,18 @@ public:
 	float get_cell() const { return cell; }
 	void set_follow_path(const NodePath &p_v) { follow_path = p_v; }
 	NodePath get_follow_path() const { return follow_path; }
+	void set_frame_path(const NodePath &p_v) {
+		frame_path = p_v;
+		placed = false;
+	}
+	NodePath get_frame_path() const { return frame_path; }
+	void set_prefill(float p_v) { prefill = CLAMP(p_v, 0.0f, 1.0f); }
+	float get_prefill() const { return prefill; }
+	void set_readback_rate(float p_v) { readback_rate = CLAMP(p_v, 0.0f, 60.0f); }
+	float get_readback_rate() const { return readback_rate; }
+	// The water's depth (m) at a world point from the last map read back (a frame or two old), 0 where dry or
+	// outside the window.
+	float get_depth_at(const Vector3 &p_world_position) const;
 	void set_height_sources(const TypedArray<NodePath> &p_v);
 	TypedArray<NodePath> get_height_sources() const { return height_sources; }
 	void set_rain_rate(float p_v) { rain_rate = MAX(p_v, 0.0f); }

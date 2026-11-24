@@ -73,6 +73,17 @@ private:
 	float cell = 0.08f; // m, the mesh's grid
 	bool collision = true;
 	uint32_t collision_layer = 1;
+	// Storm drains: an inlet (a grate's recess in the gutter pan) every inlet_spacing metres along each gutter, at
+	// places hashed from the world, or where inlets says (x along the road, y the side: -1 the -Z kerb, +1 the +Z).
+	float inlet_spacing = 30.0f; // m, 0 none
+	// The space the relief is a function of: the world, or this node's (a city strip that slides past).
+	NodePath relief_frame;
+	Transform3D built_xform;
+	Transform3D _relief_xform() const;
+	PackedVector2Array inlets;
+	LocalVector<Vector2> inlet_at; // resolved: x along, y side
+	void _resolve_inlets();
+	float _inlet_dip(float p_x, float p_z) const;
 
 	bool dirty = true;
 	StaticBody3D *body = nullptr;
@@ -84,6 +95,12 @@ private:
 	float grid_dx = 1.0f;
 	float grid_dz = 1.0f;
 	float _grid_height(float p_x, float p_z) const;
+	// Where water stands when the relief is full (Priority-Flood, Barnes, Lehman and Mulla 2014, outlets the road's
+	// ends and its inlets): per grid point the depth over the bed; and which grid points are inlets.
+	LocalVector<float> pond;
+	LocalVector<uint8_t> inlet_mask;
+	void _flood(const LocalVector<float> &p_h, int p_nx, int p_nz, float p_dx, float p_dz);
+	bool _grid_point(const Vector3 &p_world, float &r_u, float &r_v) const;
 
 	// Spectral roughness: cosines in world x, z.
 	struct Wave {
@@ -112,6 +129,11 @@ public:
 	// The same, read from the built mesh (its triangles, as drawn and as the collider has them): far cheaper, for
 	// anything sampling many points (StreetWater3D's bed). -INF off the road or before the first build.
 	float get_surface_height_at(const Vector3 &p_world) const;
+	// The depth of water the relief holds at a world point when full (its hollows filled to their spill points, the
+	// gutters draining to the inlets and the road's ends), 0 off the road or before the first build.
+	float get_pond_depth_at(const Vector3 &p_world) const;
+	// Whether a world point lies over an inlet's grate (water reaching it leaves the street).
+	bool is_inlet_at(const Vector3 &p_world) const;
 	bool contains(const Vector3 &p_world) const;
 	void rebuild();
 
@@ -157,6 +179,12 @@ public:
 	bool has_collision() const { return collision; }
 	void set_collision_layer(uint32_t p_v);
 	uint32_t get_collision_layer() const { return collision_layer; }
+	void set_inlet_spacing(float p_v);
+	float get_inlet_spacing() const { return inlet_spacing; }
+	void set_relief_frame(const NodePath &p_v);
+	NodePath get_relief_frame() const { return relief_frame; }
+	void set_inlets(const PackedVector2Array &p_v);
+	PackedVector2Array get_inlets() const { return inlets; }
 };
 
 VARIANT_ENUM_CAST(RoadRelief3D::RoughnessClass);

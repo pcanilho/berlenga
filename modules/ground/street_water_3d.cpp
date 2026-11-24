@@ -120,17 +120,19 @@ void StreetWater3D::submit_sphere(int64_t p_owner, const Vector3 &p_world_positi
 		spheres.erase(p_owner);
 		return;
 	}
+	// Kept in water space (frame_path's), so a body's velocity is its speed over the street it runs on.
+	const Vector3 at = _frame_xform().affine_inverse().xform(p_world_position);
 	Body *b = spheres.getptr(p_owner);
 	if (!b) {
 		b = &spheres.insert(p_owner, Body())->value;
 		b->time = clock;
 	} else if (clock > b->time) {
 		// The body's velocity from its last place (on the water's own clock), smoothed a little against uneven frames.
-		const Vector3 v = (p_world_position - b->at) / (clock - b->time);
+		const Vector3 v = (at - b->at) / (clock - b->time);
 		b->velocity = b->velocity.lerp(v, 0.5f);
 		b->time = clock;
 	}
-	b->at = p_world_position;
+	b->at = at;
 	b->radius = p_radius;
 }
 
@@ -143,7 +145,7 @@ void StreetWater3D::add_water(const Vector3 &p_world_position, float p_volume, f
 		return;
 	}
 	Pour p;
-	p.at = p_world_position;
+	p.at = _frame_xform().affine_inverse().xform(p_world_position);
 	// At least a cell across, so a drip is never lost between cell centres.
 	p.radius = MAX(p_radius, cell * 0.75f);
 	p.volume = p_volume;
@@ -152,6 +154,41 @@ void StreetWater3D::add_water(const Vector3 &p_world_position, float p_volume, f
 
 Vector4 StreetWater3D::get_water_window() const {
 	return Vector4(float(origin.x * real_t(cell)), float(origin.y * real_t(cell)), resolution * cell, cell);
+}
+
+Transform3D StreetWater3D::_frame_xform() const {
+	if (!frame_path.is_empty() && is_inside_tree()) {
+		if (const Node3D *f = Object::cast_to<Node3D>(get_node_or_null(frame_path))) {
+			return f->get_global_transform();
+		}
+	}
+	return Transform3D();
+}
+
+float StreetWater3D::get_depth_at(const Vector3 &p_world_position) const {
+	MutexLock lock(readback_mutex);
+	const int n = rb_n;
+	if (n <= 0 || rb_data.size() < n * n * 8) {
+		return 0.0f;
+	}
+	const Vector3 l = _frame_xform().affine_inverse().xform(p_world_position);
+	const int cx = int(Math::floor(l.x / rb_cell));
+	const int cz = int(Math::floor(l.z / rb_cell));
+	if (cx - rb_origin.x < 0 || cz - rb_origin.y < 0 || cx - rb_origin.x >= n || cz - rb_origin.y >= n) {
+		return 0.0f;
+	}
+	const int t = imod(cz, n) * n + imod(cx, n);
+	uint16_t h;
+	memcpy(&h, rb_data.ptr() + t * 8, 2);
+	return MAX(Math::half_to_float(h), 0.0f);
+}
+
+void StreetWater3D::_rt_on_readback(const PackedByteArray &p_data, int p_n, Vector2i p_origin, float p_cell) {
+	MutexLock lock(readback_mutex);
+	rb_data = p_data;
+	rb_n = p_n;
+	rb_origin = p_origin;
+	rb_cell = p_cell;
 }
 
 Vector3 StreetWater3D::_follow_point() const {
@@ -171,17 +208,27 @@ Vector3 StreetWater3D::_follow_point() const {
 	return get_global_position();
 }
 
-float StreetWater3D::_bed_at(const Vector3 &p_world, const LocalVector<Node *> &p_sources) const {
+float StreetWater3D::_bed_at(const Vector3 &p_world, const LocalVector<Node *> &p_sources, float &r_pond, bool &r_inlet) const {
 	float best = -Math::INF;
+	r_pond = 0.0f;
+	r_inlet = false;
 	for (Node *n : p_sources) {
 		float h;
-		if (const RoadRelief3D *road = Object::cast_to<RoadRelief3D>(n)) {
+		const RoadRelief3D *road = Object::cast_to<RoadRelief3D>(n);
+		if (road) {
 			h = road->get_surface_height_at(p_world);
 		} else {
 			h = n->call(SNAME("get_height_at"), p_world);
 		}
 		if (Math::is_finite(h) && h > best) {
 			best = h;
+			if (road) {
+				r_pond = road->get_pond_depth_at(p_world);
+				r_inlet = road->is_inlet_at(p_world);
+			} else {
+				r_pond = 0.0f;
+				r_inlet = false;
+			}
 		}
 	}
 	return best;
@@ -202,7 +249,12 @@ void StreetWater3D::_frame(double p_delta) {
 			sources.push_back(s);
 		}
 	}
-	const Vector3 center = _follow_point();
+	// Water space: frame_path's (a street sliding past keeps its water), else the world's. Window cells are whole cells
+	// of it; beds and bodies come into it from the world.
+	const Transform3D fx = _frame_xform();
+	const Transform3D fx_inv = fx.affine_inverse();
+	const Vector3 center_world = _follow_point();
+	const Vector3 center = fx_inv.xform(center_world);
 	const Vector2i want(int(Math::floor(center.x / cell)) - n / 2, int(Math::floor(center.z / cell)) - n / 2);
 	struct Rect {
 		int x0, z0, w, h;
@@ -236,13 +288,24 @@ void StreetWater3D::_frame(double p_delta) {
 	PackedFloat32Array loads;
 	for (const Rect &r : rects) {
 		const int off = loads.size();
-		loads.resize(off + r.w * r.h);
+		loads.resize(off + 2 * r.w * r.h);
 		float *w = loads.ptrw() + off;
 		for (int z = 0; z < r.h; z++) {
 			for (int x = 0; x < r.w; x++) {
-				const Vector3 p(corner_x + (r.x0 + x + 0.5f) * cell, center.y, corner_z + (r.z0 + z + 0.5f) * cell);
-				const float h = _bed_at(p, sources);
-				w[z * r.w + x] = Math::is_finite(h) ? float(h - ref_y) : WALL_BED;
+				const Vector3 l(corner_x + (r.x0 + x + 0.5f) * cell, center.y, corner_z + (r.z0 + z + 0.5f) * cell);
+				const Vector3 p = fx.xform(l);
+				float pond;
+				bool inlet;
+				const float h = _bed_at(p, sources, pond, inlet);
+				const int k = 2 * (z * r.w + x);
+				if (Math::is_finite(h)) {
+					w[k] = float(fx_inv.xform(Vector3(p.x, h, p.z)).y - ref_y);
+					// (the flood's last tenth of a millimetre over flat ground is no puddle)
+					w[k + 1] = inlet ? -1.0f : (pond > 1e-4f ? prefill * pond : 0.0f);
+				} else {
+					w[k] = WALL_BED;
+					w[k + 1] = 0.0f;
+				}
 			}
 		}
 		Push p;
@@ -296,7 +359,7 @@ void StreetWater3D::_frame(double p_delta) {
 	float rain = rain_rate;
 	if (rain_from_weather && is_inside_tree()) {
 		if (const WorldWeather *weather = WorldContracts::weather(); weather->has_provider()) {
-			rain += weather->rainfall_at(center);
+			rain += weather->rainfall_at(center_world);
 		}
 	}
 	last_rain = rain;
@@ -329,7 +392,12 @@ void StreetWater3D::_frame(double p_delta) {
 		p.d[1] = cell;
 		add_record(records, p, groups, groups);
 	}
-	rs->call_on_render_thread(callable_mp(this, &StreetWater3D::_rt_frame).bind(n, records, items, loads));
+	// Read the map back now and then for get_depth_at() (footsteps, splashes): a frame or two late, asynchronously.
+	const bool readback = readback_rate > 0.0f && clock - last_readback >= 1.0 / readback_rate;
+	if (readback) {
+		last_readback = clock;
+	}
+	rs->call_on_render_thread(callable_mp(this, &StreetWater3D::_rt_frame).bind(n, records, items, loads, readback ? 1 : 0, origin, cell));
 
 	if (map->get_texture_rd_rid() != tex_map && tex_map.is_valid()) {
 		map->set_texture_rd_rid(tex_map);
@@ -340,13 +408,14 @@ void StreetWater3D::_frame(double p_delta) {
 		if (m.is_valid()) {
 			m->set_shader_parameter(SNAME("street_water_map"), map);
 			m->set_shader_parameter(SNAME("street_water_window"), window);
+			m->set_shader_parameter(SNAME("street_water_frame"), fx_inv);
 		}
 	}
 	cost_ms = float(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0f;
 }
 
 // Render thread.
-void StreetWater3D::_rt_frame(int p_n, const PackedByteArray &p_records, const PackedFloat32Array &p_items, const PackedFloat32Array &p_loads) {
+void StreetWater3D::_rt_frame(int p_n, const PackedByteArray &p_records, const PackedFloat32Array &p_items, const PackedFloat32Array &p_loads, int p_readback, Vector2i p_origin, float p_cell) {
 	RenderingDevice *rd = RenderingServer::get_singleton()->get_rendering_device();
 	if (!rd || rt_failed) {
 		return;
@@ -432,6 +501,9 @@ void StreetWater3D::_rt_frame(int p_n, const PackedByteArray &p_records, const P
 		rd->compute_list_add_barrier(cl);
 	}
 	rd->compute_list_end();
+	if (p_readback) {
+		rd->texture_get_data_async(tex_map, 0, callable_mp(this, &StreetWater3D::_rt_on_readback).bind(p_n, p_origin, p_cell));
+	}
 }
 
 void StreetWater3D::_rt_free() {
@@ -465,6 +537,9 @@ void StreetWater3D::_release() {
 		rs->sync();
 	}
 	placed = false;
+	MutexLock lock(readback_mutex);
+	rb_n = 0;
+	rb_data.clear();
 }
 
 void StreetWater3D::_notification(int p_what) {
@@ -490,21 +565,24 @@ String StreetWater3D::get_shader_include() {
 // StreetWater3D.get_map() and get_water_window() (or list the material in its materials).
 uniform sampler2D street_water_map : filter_linear, repeat_enable;
 uniform vec4 street_water_window = vec4(0.0, 0.0, 0.0, 1.0);
+// World to water space (StreetWater3D.frame_path's frame; identity without one).
+uniform mat4 street_water_frame = mat4(1.0);
 
-// The water at a world point: x depth (m), y z the water surface's slope along world x and z, w damp (0..1, where
+// The water at a world point: x depth (m), y z the water surface's slope along water space's x and z, w damp (0..1, where
 // water stood or rain falls). Zero outside the window, faded over its last cells.
 vec4 street_water_sample(vec3 world) {
 	if (street_water_window.z <= 0.0) {
 		return vec4(0.0);
 	}
-	vec2 rel = (world.xz - street_water_window.xy) / street_water_window.z;
+	vec2 wp = (street_water_frame * vec4(world, 1.0)).xz;
+	vec2 rel = (wp - street_water_window.xy) / street_water_window.z;
 	float edge = min(min(rel.x, rel.y), min(1.0 - rel.x, 1.0 - rel.y));
 	if (edge <= 0.0) {
 		return vec4(0.0);
 	}
 	// The window is a ring buffer: world cell c is texel c mod N, so the world position over the window's size is
 	// the UV, repeated.
-	vec4 w = texture(street_water_map, world.xz / street_water_window.z);
+	vec4 w = texture(street_water_map, wp / street_water_window.z);
 	return w * smoothstep(0.0, 0.04, edge);
 }
 
@@ -524,7 +602,8 @@ float street_water_apply(vec3 world, mat4 view_matrix, inout vec3 albedo, inout 
 	roughness = mix(roughness, min(roughness, 0.15), film);
 	albedo *= mix(1.0, 0.85, puddle);
 	roughness = mix(roughness, 0.03, puddle);
-	vec3 wn = normalize(vec3(-w.y, 1.0, -w.z));
+	// The slope is in water space: back to the world (the frame's rotation is the inverse's transpose).
+	vec3 wn = normalize(transpose(mat3(street_water_frame)) * vec3(-w.y, 1.0, -w.z));
 	normal = normalize(mix(normal, (view_matrix * vec4(wn, 0.0)).xyz, puddle));
 	return puddle;
 }
@@ -536,6 +615,13 @@ void StreetWater3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_resolution"), &StreetWater3D::get_resolution);
 	ClassDB::bind_method(D_METHOD("set_cell", "cell"), &StreetWater3D::set_cell);
 	ClassDB::bind_method(D_METHOD("get_cell"), &StreetWater3D::get_cell);
+	ClassDB::bind_method(D_METHOD("set_frame_path", "path"), &StreetWater3D::set_frame_path);
+	ClassDB::bind_method(D_METHOD("get_frame_path"), &StreetWater3D::get_frame_path);
+	ClassDB::bind_method(D_METHOD("set_prefill", "fill"), &StreetWater3D::set_prefill);
+	ClassDB::bind_method(D_METHOD("get_prefill"), &StreetWater3D::get_prefill);
+	ClassDB::bind_method(D_METHOD("set_readback_rate", "hz"), &StreetWater3D::set_readback_rate);
+	ClassDB::bind_method(D_METHOD("get_readback_rate"), &StreetWater3D::get_readback_rate);
+	ClassDB::bind_method(D_METHOD("get_depth_at", "world_position"), &StreetWater3D::get_depth_at);
 	ClassDB::bind_method(D_METHOD("set_follow_path", "path"), &StreetWater3D::set_follow_path);
 	ClassDB::bind_method(D_METHOD("get_follow_path"), &StreetWater3D::get_follow_path);
 	ClassDB::bind_method(D_METHOD("set_height_sources", "sources"), &StreetWater3D::set_height_sources);
@@ -572,7 +658,9 @@ void StreetWater3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "resolution", PROPERTY_HINT_RANGE, "64,2048,8"), "set_resolution", "get_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cell", PROPERTY_HINT_RANGE, "0.005,1,0.001,suffix:m"), "set_cell", "get_cell");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "follow_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_follow_path", "get_follow_path");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "frame_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_frame_path", "get_frame_path");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "height_sources", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_height_sources", "get_height_sources");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "prefill", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_prefill", "get_prefill");
 	ADD_GROUP("Water", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rain_rate", PROPERTY_HINT_RANGE, "0,200,0.1,suffix:mm/h"), "set_rain_rate", "get_rain_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rain_from_weather"), "set_rain_from_weather", "get_rain_from_weather");
@@ -584,6 +672,7 @@ void StreetWater3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "step_rate", PROPERTY_HINT_RANGE, "30,480,1,suffix:Hz"), "set_step_rate", "get_step_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_steps", PROPERTY_HINT_RANGE, "1,16,1"), "set_max_steps", "get_max_steps");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simulating"), "set_simulating", "is_simulating");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "readback_rate", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:Hz"), "set_readback_rate", "get_readback_rate");
 	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "materials", PROPERTY_HINT_ARRAY_TYPE, "ShaderMaterial"), "set_materials", "get_materials");
 }

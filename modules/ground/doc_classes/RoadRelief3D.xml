@@ -23,11 +23,25 @@
 				The height (world Y) of the road surface above or below [param world_position], or -INF where the point is not over the road. Water, props and characters read the same surface the mesh shows.
 			</description>
 		</method>
+		<method name="get_pond_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
+				The depth of water the relief holds at a world point when full: its hollows filled to their spill points, the gutters draining to the inlets and to the road's ends (Priority-Flood, Barnes, Lehman and Mulla 2014, run at each build). 0 off the road or before the first build. [StreetWater3D] starts cells with a share of it ([member StreetWater3D.prefill]).
+			</description>
+		</method>
 		<method name="get_surface_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="world_position" type="Vector3" />
 			<description>
 				The same height as [method get_height_at], read from the built mesh's triangles (as drawn and as the collider has them) instead of the relief's function: far cheaper, for anything sampling many points, such as [StreetWater3D]'s bed. -INF off the road or before the first build.
+			</description>
+		</method>
+		<method name="is_inlet_at" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
+				Whether a world point lies over an inlet's grate (see [member inlet_spacing]).
 			</description>
 		</method>
 		<method name="local_height" qualifiers="const">
@@ -70,6 +84,12 @@
 		<member name="gutter_width" type="float" setter="set_gutter_width" getter="get_gutter_width" default="0.3">
 			The gutter pan's width along each kerb (metres).
 		</member>
+		<member name="inlet_spacing" type="float" setter="set_inlet_spacing" getter="get_inlet_spacing" default="30.0">
+			Storm drains: an inlet every this many metres along each gutter (along the low kerb only on a one-way street), at places hashed from the world (or [member relief_frame]), each a grate 0.9 m long set 3 cm into the gutter pan with a short apron round it (a depressed curb inlet, FHWA HEC-22). Water reaching one leaves the street. 0: none.
+		</member>
+		<member name="inlets" type="PackedVector2Array" setter="set_inlets" getter="get_inlets" default="PackedVector2Array()">
+			Inlets at given places instead of [member inlet_spacing]'s: x metres along the road, y the side (-1 the -Z kerb, +1 the +Z kerb).
+		</member>
 		<member name="lanes" type="int" setter="set_lanes" getter="get_lanes" default="2">
 			Lanes across the road; each has two wheel-path ruts.
 		</member>
@@ -87,6 +107,9 @@
 		</member>
 		<member name="pothole_depth" type="float" setter="set_pothole_depth" getter="get_pothole_depth" default="0.045">
 			The deepest pothole (metres).
+		</member>
+		<member name="relief_frame" type="NodePath" setter="set_relief_frame" getter="get_relief_frame" default="NodePath(&quot;&quot;)">
+			The space the relief is a function of. Empty: the world, so a moved road is a different stretch of street. A node (a city strip that slides past a train's windows): positions in its space, so the road keeps its relief while the strip moves, and pieces laid along the strip still join.
 		</member>
 		<member name="roughness_class" type="int" setter="set_roughness_class" getter="get_roughness_class" enum="RoadRelief3D.RoughnessClass" default="1">
 			The ISO 8608 roughness class of the surface: its displacement spectrum Gd(n) = Gd(n0) (n / n0)^-2 over wavelengths 0.12 to 3 m.

@@ -251,7 +251,7 @@ float RoadRelief3D::local_height(float p_x, float p_z) const {
 		const float g = CLAMP(into_gutter / gutter_width, 0.0f, 1.0f);
 		h -= gutter_drop * rr_smooth(g);
 	}
-	const Transform3D xf = get_global_transform();
+	const Transform3D xf = _relief_xform();
 	const Vector3 wp = xf.xform(Vector3(x, 0.0f, z));
 	const float wx = float(wp.x);
 	const float wz = float(wp.z);
@@ -281,7 +281,221 @@ float RoadRelief3D::local_height(float p_x, float p_z) const {
 	}
 	h += _sag(wx, wz);
 	h += _features(wx, wz, xf.basis.inverse());
+	h -= _inlet_dip(x, z);
 	return h;
+}
+
+// A storm-drain inlet: a curb-and-grate inlet's grate, 0.9 m along and the gutter's width across, set 3 cm into the
+// gutter pan with a short apron round it (a depressed gutter at the inlet, as highway drainage manuals have it: FHWA
+// HEC-22, 2013, ch. 4), so water running down the gutter falls in.
+static constexpr float INLET_LEN = 0.9f;
+static constexpr float INLET_DROP = 0.03f;
+
+Transform3D RoadRelief3D::_relief_xform() const {
+	if (!is_inside_tree()) {
+		return get_transform();
+	}
+	if (!relief_frame.is_empty()) {
+		if (const Node3D *f = Object::cast_to<Node3D>(get_node_or_null(relief_frame))) {
+			return f->get_global_transform().affine_inverse() * get_global_transform();
+		}
+	}
+	return get_global_transform();
+}
+
+void RoadRelief3D::set_relief_frame(const NodePath &p_v) {
+	relief_frame = p_v;
+	_queue_build();
+}
+
+void RoadRelief3D::_resolve_inlets() {
+	inlet_at.clear();
+	if (!inlets.is_empty()) {
+		for (const Vector2 &v : inlets) {
+			inlet_at.push_back(Vector2(v.x, v.y < 0.0f ? -1.0f : 1.0f));
+		}
+		return;
+	}
+	if (inlet_spacing <= 0.0f || !is_inside_tree()) {
+		return;
+	}
+	// Along the street, from the world (or relief_frame): the same inlets whatever pieces the street is laid in.
+	const Transform3D xf = _relief_xform();
+	const Vector3 dir = xf.basis.get_column(0).normalized();
+	const float o = float(xf.origin.dot(dir));
+	for (int side = -1; side <= 1; side += 2) {
+		if (one_way && side < 0) {
+			continue; // a one-way street falls to its +Z kerb: its gutter is there
+		}
+		const int k0 = int(Math::floor(o / inlet_spacing)) - 1;
+		const int k1 = int(Math::floor((o + length) / inlet_spacing)) + 1;
+		for (int k = k0; k <= k1; k++) {
+			const float jitter = (rr_unit(rr_hash3(k, side, uint32_t(seed) * 7u + 401u)) - 0.5f) * 0.5f * inlet_spacing;
+			const float x = (float(k) + 0.5f) * inlet_spacing + jitter - o;
+			if (x > INLET_LEN && x < length - INLET_LEN) {
+				inlet_at.push_back(Vector2(x, float(side)));
+			}
+		}
+	}
+}
+
+float RoadRelief3D::_inlet_dip(float p_x, float p_z) const {
+	if (inlet_at.is_empty() || gutter_width <= 0.0f) {
+		return 0.0f;
+	}
+	const float half = 0.5f * width;
+	float dip = 0.0f;
+	for (const Vector2 &in : inlet_at) {
+		const float into = in.y > 0.0f ? p_z - (half - gutter_width) : (-half + gutter_width) - p_z;
+		if (into < -0.25f) {
+			continue;
+		}
+		const float ax = Math::abs(p_x - in.x) - 0.5f * INLET_LEN;
+		if (ax > 0.4f) {
+			continue;
+		}
+		// The grate flat at the bottom, the apron sloping up over 0.4 m along and 0.25 m into the road.
+		const float fx = 1.0f - rr_smooth(CLAMP(ax / 0.4f, 0.0f, 1.0f));
+		const float fz = 1.0f - rr_smooth(CLAMP(-into / 0.25f, 0.0f, 1.0f));
+		dip = MAX(dip, INLET_DROP * fx * fz);
+	}
+	return dip;
+}
+
+// Priority-Flood (Barnes, Lehman and Mulla 2014): from the outlets inward in order of height, each cell raised to the
+// lowest spill level that reaches it; the water a full relief holds is that level less the bed.
+void RoadRelief3D::_flood(const LocalVector<float> &p_h, int p_nx, int p_nz, float p_dx, float p_dz) {
+	const int n = p_nx * p_nz;
+	pond.resize(n);
+	inlet_mask.resize(n);
+	for (int k = 0; k < n; k++) {
+		inlet_mask[k] = 0;
+	}
+	const float half = 0.5f * width;
+	for (const Vector2 &in : inlet_at) {
+		const int i0 = MAX(int(Math::floor((in.x - 0.5f * INLET_LEN) / p_dx)), 0);
+		const int i1 = MIN(int(Math::ceil((in.x + 0.5f * INLET_LEN) / p_dx)), p_nx - 1);
+		for (int j = 0; j < p_nz; j++) {
+			const float z = -half + j * p_dz;
+			const bool in_pan = in.y > 0.0f ? z >= half - gutter_width : z <= -half + gutter_width;
+			if (in_pan) {
+				for (int i = i0; i <= i1; i++) {
+					inlet_mask[j * p_nx + i] = 1;
+				}
+			}
+		}
+	}
+	struct Item {
+		float h;
+		int k;
+	};
+	LocalVector<Item> heap;
+	LocalVector<uint8_t> done;
+	done.resize(n);
+	auto less = [](const Item &a, const Item &b) { return a.h > b.h; }; // a min-heap
+	auto push = [&](int k, float h) {
+		heap.push_back({ h, k });
+		int c = int(heap.size()) - 1;
+		while (c > 0) {
+			const int p = (c - 1) / 2;
+			if (!less(heap[p], heap[c])) {
+				break;
+			}
+			SWAP(heap[p], heap[c]);
+			c = p;
+		}
+	};
+	auto pop = [&]() {
+		const Item top = heap[0];
+		heap[0] = heap[heap.size() - 1];
+		heap.resize(heap.size() - 1);
+		int c = 0;
+		const int m = int(heap.size());
+		while (true) {
+			const int l = 2 * c + 1;
+			const int r = l + 1;
+			int b = c;
+			if (l < m && less(heap[b], heap[l])) {
+				b = l;
+			}
+			if (r < m && less(heap[b], heap[r])) {
+				b = r;
+			}
+			if (b == c) {
+				break;
+			}
+			SWAP(heap[b], heap[c]);
+			c = b;
+		}
+		return top;
+	};
+	LocalVector<float> fill;
+	fill.resize(n);
+	for (int k = 0; k < n; k++) {
+		const int i = k % p_nx;
+		done[k] = 0;
+		if (i == 0 || i == p_nx - 1 || inlet_mask[k]) {
+			done[k] = 1;
+			fill[k] = p_h[k];
+			push(k, p_h[k]);
+		}
+	}
+	while (!heap.is_empty()) {
+		const Item it = pop();
+		const int i = it.k % p_nx;
+		const int j = it.k / p_nx;
+		const int nb[4][2] = { { i - 1, j }, { i + 1, j }, { i, j - 1 }, { i, j + 1 } };
+		for (const auto &q : nb) {
+			if (q[0] < 0 || q[1] < 0 || q[0] >= p_nx || q[1] >= p_nz) {
+				continue;
+			}
+			const int kq = q[1] * p_nx + q[0];
+			if (done[kq]) {
+				continue;
+			}
+			done[kq] = 1;
+			fill[kq] = MAX(p_h[kq], it.h);
+			push(kq, fill[kq]);
+		}
+	}
+	for (int k = 0; k < n; k++) {
+		pond[k] = fill[k] - p_h[k];
+	}
+}
+
+bool RoadRelief3D::_grid_point(const Vector3 &p_world, float &r_u, float &r_v) const {
+	if (!is_inside_tree() || grid_nx < 2 || grid_nz < 2) {
+		return false;
+	}
+	const Vector3 l = get_global_transform().affine_inverse().xform(p_world);
+	if (l.x < 0.0f || l.x > length || Math::abs(float(l.z)) > 0.5f * width) {
+		return false;
+	}
+	r_u = CLAMP(float(l.x) / grid_dx, 0.0f, float(grid_nx - 1));
+	r_v = CLAMP((float(l.z) + 0.5f * width) / grid_dz, 0.0f, float(grid_nz - 1));
+	return true;
+}
+
+float RoadRelief3D::get_pond_depth_at(const Vector3 &p_world) const {
+	float u, v;
+	if (pond.size() != uint32_t(grid_nx * grid_nz) || !_grid_point(p_world, u, v)) {
+		return 0.0f;
+	}
+	const int i = MIN(int(u), grid_nx - 2);
+	const int j = MIN(int(v), grid_nz - 2);
+	const float fx = u - i;
+	const float fz = v - j;
+	const float *r0 = &pond[j * grid_nx + i];
+	const float *r1 = r0 + grid_nx;
+	return Math::lerp(Math::lerp(r0[0], r0[1], fx), Math::lerp(r1[0], r1[1], fx), fz);
+}
+
+bool RoadRelief3D::is_inlet_at(const Vector3 &p_world) const {
+	float u, v;
+	if (inlet_mask.size() != uint32_t(grid_nx * grid_nz) || !_grid_point(p_world, u, v)) {
+		return false;
+	}
+	return inlet_mask[int(Math::round(v)) * grid_nx + int(Math::round(u))] != 0;
 }
 
 bool RoadRelief3D::contains(const Vector3 &p_world) const {
@@ -362,7 +576,9 @@ void RoadRelief3D::_build() {
 		return;
 	}
 	dirty = false;
+	built_xform = _relief_xform();
 	_build_waves();
+	_resolve_inlets();
 	const int nx = MAX(int(Math::ceil(length / cell)), 1) + 1;
 	const int nz = MAX(int(Math::ceil(width / cell)), 1) + 1;
 	const float dx = length / float(nx - 1);
@@ -374,6 +590,7 @@ void RoadRelief3D::_build() {
 			hs[j * nx + i] = local_height(i * dx, -0.5f * width + j * dz);
 		}
 	}
+	_flood(hs, nx, nz, dx, dz);
 	grid = hs;
 	grid_nx = nx;
 	grid_nz = nz;
@@ -469,8 +686,11 @@ void RoadRelief3D::_notification(int p_what) {
 			_build();
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
-			// The relief follows the world: a moved road is a different stretch of street.
-			_queue_build();
+			// The relief follows the world (or relief_frame): a moved road is a different stretch of street. One
+			// that only moves with its frame (a street sliding past a train window) keeps its relief.
+			if (!_relief_xform().is_equal_approx(built_xform)) {
+				_queue_build();
+			}
 		} break;
 	}
 }
@@ -496,6 +716,12 @@ RR_SETTER(patch_density, patch_density, CLAMP(p_v, 0.0f, 0.69f))
 RR_SETTER(pothole_density, pothole_density, CLAMP(p_v, 0.0f, 0.44f))
 RR_SETTER(pothole_depth, pothole_depth, CLAMP(p_v, 0.0f, 0.12f))
 RR_SETTER(cell, cell, CLAMP(p_v, 0.02f, 1.0f))
+RR_SETTER(inlet_spacing, inlet_spacing, CLAMP(p_v, 0.0f, 500.0f))
+
+void RoadRelief3D::set_inlets(const PackedVector2Array &p_v) {
+	inlets = p_v;
+	_queue_build();
+}
 
 #undef RR_SETTER
 
@@ -535,6 +761,11 @@ void RoadRelief3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("local_height", "x", "z"), &RoadRelief3D::local_height);
 	ClassDB::bind_method(D_METHOD("get_height_at", "world_position"), &RoadRelief3D::get_height_at);
 	ClassDB::bind_method(D_METHOD("get_surface_height_at", "world_position"), &RoadRelief3D::get_surface_height_at);
+	ClassDB::bind_method(D_METHOD("set_relief_frame", "path"), &RoadRelief3D::set_relief_frame);
+	ClassDB::bind_method(D_METHOD("get_relief_frame"), &RoadRelief3D::get_relief_frame);
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "relief_frame", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_relief_frame", "get_relief_frame");
+	ClassDB::bind_method(D_METHOD("get_pond_depth_at", "world_position"), &RoadRelief3D::get_pond_depth_at);
+	ClassDB::bind_method(D_METHOD("is_inlet_at", "world_position"), &RoadRelief3D::is_inlet_at);
 	ClassDB::bind_method(D_METHOD("contains", "world_position"), &RoadRelief3D::contains);
 	ClassDB::bind_method(D_METHOD("rebuild"), &RoadRelief3D::rebuild);
 
@@ -563,6 +794,9 @@ void RoadRelief3D::_bind_methods() {
 	RR_BIND(pothole_density, get_pothole_density, FLOAT, PROPERTY_HINT_RANGE, "0,0.44,0.01")
 	RR_BIND(pothole_depth, get_pothole_depth, FLOAT, PROPERTY_HINT_RANGE, "0,0.12,0.001,suffix:m")
 	RR_BIND(seed, get_seed, INT, PROPERTY_HINT_NONE, "")
+	ADD_GROUP("Drainage", "");
+	RR_BIND(inlet_spacing, get_inlet_spacing, FLOAT, PROPERTY_HINT_RANGE, "0,500,0.1,suffix:m")
+	RR_BIND(inlets, get_inlets, PACKED_VECTOR2_ARRAY, PROPERTY_HINT_NONE, "")
 	ADD_GROUP("Mesh", "");
 	RR_BIND(cell, get_cell, FLOAT, PROPERTY_HINT_RANGE, "0.02,1,0.01,suffix:m")
 	RR_BIND(collision, has_collision, BOOL, PROPERTY_HINT_NONE, "")

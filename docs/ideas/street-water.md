@@ -86,3 +86,16 @@ fronts, the shallow water equations:
   contract's disturb; add_water for drips and pours.
 - Shading: get_map() (a Texture2DRD, sampled with repeat at world x z / window size) and get_window(); materials in
   `materials` get both each frame; get_shader_include() returns the GLSL the road material calls.
+
+## For a game's streets (24 Nov, before the game's swap)
+
+- A street that slides past (the metro's city strip): RoadRelief3D.relief_frame and StreetWater3D.frame_path put the
+  relief and the water in the strip's space, so the road is not rebuilt as it moves and the water rides with it (bodies'
+  velocities are over the street). The road shader gets street_water_frame (world to water space).
+- Puddles already there: a street entering the window at speed would start dry. RoadRelief3D floods its own grid at
+  each build (Priority-Flood, outlets the road's ends and its inlets) and StreetWater3D.prefill starts each entering cell
+  with that share of the ponding (the storm's fill), then the solver takes over.
+- Storm drains: inlets in the gutters every inlet_spacing metres (world-hashed) or where the game says, each a
+  depressed curb inlet (FHWA HEC-22, 2013): a grate 3 cm down with an apron; water reaching it leaves the street, so a
+  long gutter does not fill end to end.
+- get_depth_at(): the map read back a few times a second, for footsteps, splashes and spray.

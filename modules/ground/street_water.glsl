@@ -12,7 +12,9 @@
 //   bed (wet/dry fronts); outflows scaled together so a cell never gives more than it holds.
 // - DEPTH: the flows' divergence; rain, pours, soaking in and evaporation; the damp left where water stood.
 // - PACK: the map the road's material reads: depth, the water surface's slope in x and z, damp.
-// - LOAD: beds for cells entering the window, dry.
+// - LOAD: cells entering the window: their bed, and their water to start with (the relief's ponding at the storm's
+//   fill, so a street sliding into view shows the puddles it has, not a dry road); negative marks an inlet's grate,
+//   which takes all the water reaching it (damp -1 keeps the mark).
 
 #define MODE_OCCUPY 0
 #define MODE_FLUX 1
@@ -25,7 +27,8 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-// x depth (m), y bed (m over the window's reference height), z damp (0..1), w occupied (m of body below the surface)
+// x depth (m), y bed (m over the window's reference height), z damp (0..1; -1 an inlet), w occupied (m of body below
+// the surface)
 layout(set = 0, binding = 0, std430) restrict buffer State {
 	vec4 data[];
 }
@@ -207,6 +210,11 @@ void depth_pass(ivec2 rel, int i) {
 		}
 	}
 	d = max(d - pc.e.x - pc.e.y, 0.0);
+	if (s.z < 0.0) {
+		// An inlet: the water falls through its grate.
+		state.data[i].x = 0.0;
+		return;
+	}
 	float damp = s.z * pc.e.z;
 	if (d > 1e-5 || rain > 0.0) {
 		damp = 1.0;
@@ -231,7 +239,9 @@ void pack(ivec2 rel, int i) {
 	float he = e.x > 0.0 && e.y < WALL ? e.y + e.x : h;
 	vec2 slope = vec2(hb - ha, he - hc) / (2.0 * l);
 	ivec2 t = (rel + pc.a.zw) % N();
-	imageStore(out_map, t, vec4(s.y >= WALL ? 0.0 : s.x, slope, s.z));
+	// Damp is on or off per cell; averaged with the four neighbours its edge is a soft line, not 2.5 cm steps.
+	float damp = (abs(s.z) * 2.0 + abs(a.z) + abs(b.z) + abs(c.z) + abs(e.z)) / 6.0;
+	imageStore(out_map, t, vec4(s.y >= WALL ? 0.0 : s.x, slope, damp));
 }
 
 void main() {
@@ -243,7 +253,10 @@ void main() {
 		}
 		ivec2 rel = pc.b.xy + g;
 		int i = texel_index(rel);
-		state.data[i] = vec4(0.0, load_buf.data[pc.c.z + g.y * pc.b.z + g.x], 0.0, 0.0);
+		int li = pc.c.z + 2 * (g.y * pc.b.z + g.x);
+		float bed = load_buf.data[li];
+		float start = load_buf.data[li + 1];
+		state.data[i] = start < 0.0 ? vec4(0.0, bed, -1.0, 0.0) : vec4(start, bed, start > 0.0003 ? 1.0 : 0.0, 0.0);
 		flux.data[i] = vec4(0.0);
 		return;
 	}
