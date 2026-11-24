@@ -2933,6 +2933,15 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z, LedgeProbe *r_l
 			const double L = double(cliff_ledge_spacing);
 			const uint32_t ls = uint32_t(seed) * 0x9E3779B1u + 77u;
 			const double wob = L * (0.8 * _gen_value_noise(ls, p_x, p_z, 240.0) + 0.25 * _gen_value_noise(ls + 1u, p_x, p_z, 60.0));
+			// Caprock armour: a cliff of bedded rock retreats as a whole, its hard beds shielding the softer ones below,
+			// so its benches run level along the strike for tens to hundreds of metres and gullies notch it only here
+			// and there (Ward, Anderson and Haff 2011, "Numerical modeling of cliff and talus" in layered rock; the
+			// caprock-and-ledge walls of plateau country). The bedrock gullies of the detail filter fade on the ledged
+			// faces by cliff_ledge_armour (wandering over 300 m, so some faces keep more of them), so the beds' contours,
+			// and with them the benches and their lips, run long and straight instead of bending into every gully.
+			if (cliff_ledge_armour > 0.0) {
+				off *= 1.0 - double(cliff_ledge_armour) * w * CLAMP(0.6 + 0.6 * _gen_value_noise(ls + 5u, p_x, p_z, 300.0), 0.0, 1.0);
+			}
 			const double h0 = double(base) + off;
 			// Beds of uneven thickness: the bed count runs on a monotonic warp of height (two incommensurate waves,
 			// slope stays positive), and each bed's ledge share is its own.
@@ -3087,7 +3096,19 @@ void TerrainGenerator3D::get_ledge_lips(const Rect2 &p_rect, real_t p_step, Loca
 				continue;
 			}
 			LedgeLip lip;
-			lip.out = Vector3(real_t(-up.gx / g), 0, real_t(-up.gz / g));
+			// Out across the bed's own contour, the gradient of q at the lip: a bed boundary is level, so along it the
+			// lip neither rises nor falls. The surface's smoothed slope (up.gx, up.gz) misses the gullies the lip
+			// bends round, and a tangent across it ran down their sides (half the lips of a world fell a metre per metre
+			// along their tangent).
+			{
+				const real_t e = 0.5;
+				const LedgeProbe px0 = _ledge_probe(p_hi.x - e, p_hi.y), px1 = _ledge_probe(p_hi.x + e, p_hi.y);
+				const LedgeProbe pz0 = _ledge_probe(p_hi.x, p_hi.y - e), pz1 = _ledge_probe(p_hi.x, p_hi.y + e);
+				const double qx = px1.valid && px0.valid ? px1.q - px0.q : 0.0;
+				const double qz = pz1.valid && pz0.valid ? pz1.q - pz0.q : 0.0;
+				const double ql = Math::sqrt(qx * qx + qz * qz);
+				lip.out = ql > 1e-9 ? Vector3(real_t(-qx / ql), 0, real_t(-qz / ql)) : Vector3(real_t(-up.gx / g), 0, real_t(-up.gz / g));
+			}
 			lip.position = Vector3(p_hi.x, h_at(p_hi.x, p_hi.y), p_hi.y);
 			lip.bed_thickness = float(MAX(B - dn.b0, 0.05) * up.spacing);
 			lip.cap_thickness = CLAMP(0.3f * lip.bed_thickness, 0.3f, 1.5f);
@@ -9513,6 +9534,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_cliff_ledge_spacing"), &TerrainGenerator3D::get_cliff_ledge_spacing);
 	ClassDB::bind_method(D_METHOD("set_cliff_ledge_strength", "value"), &TerrainGenerator3D::set_cliff_ledge_strength);
 	ClassDB::bind_method(D_METHOD("get_cliff_ledge_strength"), &TerrainGenerator3D::get_cliff_ledge_strength);
+	ClassDB::bind_method(D_METHOD("set_cliff_ledge_armour", "value"), &TerrainGenerator3D::set_cliff_ledge_armour);
+	ClassDB::bind_method(D_METHOD("get_cliff_ledge_armour"), &TerrainGenerator3D::get_cliff_ledge_armour);
 	ClassDB::bind_method(D_METHOD("set_glacial_enabled", "value"), &TerrainGenerator3D::set_glacial_enabled);
 	ClassDB::bind_method(D_METHOD("is_glacial_enabled"), &TerrainGenerator3D::is_glacial_enabled);
 	ClassDB::bind_method(D_METHOD("set_glacial_ela", "value"), &TerrainGenerator3D::set_glacial_ela);
@@ -9817,6 +9840,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_GROUP("Cliffs", "cliff_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_ledge_spacing", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_cliff_ledge_spacing", "get_cliff_ledge_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_ledge_strength", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_cliff_ledge_strength", "get_cliff_ledge_strength");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_ledge_armour", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_cliff_ledge_armour", "get_cliff_ledge_armour");
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_enabled"), "set_detail_enabled", "is_detail_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_wavelength", PROPERTY_HINT_RANGE, "1,2000,1,or_greater,suffix:m"), "set_detail_wavelength", "get_detail_wavelength");

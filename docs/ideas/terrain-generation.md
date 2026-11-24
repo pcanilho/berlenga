@@ -1565,6 +1565,17 @@ A bench rises a quarter of its bed, so only about two lips in three are a real b
 those (the first metre of bench rises less than 0.8 of the first metre of riser falls). Flatter benches (a tenth) made
 every lip one, but every bench then held snow and the range read as regular white stripes, so they stay as they were.
 
+Long level benches (24 Nov, rocks' ask). Caprock walls show benches running level along the strike for tens to
+hundreds of metres, notched by gullies only here and there: the hard beds shield the softer ones below and the wall
+retreats as a whole (Ward, Anderson and Haff 2011, cliff and talus in layered rock). Two changes:
+- `out` now crosses the bed's own contour (the gradient of the bed coordinate at the lip), so the lip's tangent is level.
+  It went by the surface's smoothed slope before, which misses the gullies a lip bends round: a sixth of the lips on
+  the bench world (half on rocks' world) fell over a metre per metre along their tangent; now 17 of 19,000.
+- `cliff_ledge_armour` (0.6): the detail filter's bedrock gullies fade on ledged faces by up to that share (wandering
+  over 300 m, so some faces keep more), so the beds' contours run straighter. Bench (`--lips`, 4 km world, 16 m beds):
+  lips in runs of 8 or more (chained within 3 m at the same height) 61% to 73%, longest run 172 to 224 lips (2 m apart),
+  fragments 5262 to 3385. `--armour=0` gives the old ground.
+
 ### Contract: `TerrainGenerator3D.get_ledge_lips(rect, step)`
 
 - Provider: TerrainGenerator3D (C++: `get_ledge_lips(Rect2, real_t, LocalVector<LedgeLip> &)`; script: an Array of
@@ -1576,7 +1587,8 @@ every lip one, but every bench then held snow and the range read as regular whit
   a lip are about `step` apart. Cost: about 4 microseconds a grid point (2 m step: about 1 ms per 1000 m2).
 - Each point:
   - `position` (world, m): on the generator's surface (`get_height`) at the bench's outer edge.
-  - `out`: horizontal unit vector out of the face (downhill), the way a cap overhangs.
+  - `out`: horizontal unit vector out of the face (downhill, across the bed's contour), the way a cap overhangs; the
+    lip runs level along its perpendicular.
   - `face_normal`: unit normal of the riser half way down the bed under the lip (the face a cap overhangs).
   - `bed_thickness` (m): height of the bed under the lip, down to the bench below.
   - `cap_thickness` (m): the hard cap's thickness, 0.3 of the bed, 0.3 to 1.5 m.
