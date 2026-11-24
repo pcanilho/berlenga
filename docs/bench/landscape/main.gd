@@ -4488,7 +4488,7 @@ func _build_camera() -> void:
 					for s in r:
 						ro += s["out"]
 					ro.y = 0.0
-					var sc := float(r.size()) * 100.0 + float(r[0]["run_length"]) + (10000.0 if ro.normalized().dot(sun_flat) > float(args.get("ledge-sun", "0.3")) else 0.0)
+					var sc := float(r.size()) * 100.0 + float(r[0]["run_length"]) + (10000.0 if ro.normalized().dot(sun_flat) > float(args.get("ledge-sun", "0.0")) and absf(Vector3(r[0]["along"]).normalized().dot(sun_flat)) > float(args.get("ledge-rake", "0.6")) else 0.0)
 					if sc > bsc:
 						bsc = sc
 						brun = r
