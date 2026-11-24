@@ -10,6 +10,7 @@ extends Node3D
 #   --test            run the link checks, print PASS/FAIL/GAP, quit
 #   --out=path.png    render a view (path traced unless --raster)
 #   --raster          raster only (TAA + SMAA; --aa=0 without)
+#   --prim-report     with --out: every mesh and MultiMesh ranked by the triangles it draws at its LOD (perf hunts)
 #   --spp=N           path tracing samples (default 16)
 #   --boulders=D     rockfall blocks below cliffs at density D (default 1, 0 none), grey stand-ins
 #   --no-far         no rock far tier (big stones and landmarks to 4 km), the before frame
@@ -1207,6 +1208,8 @@ func _ready() -> void:
 			_log("rocks rt: %s (rt_instanced_cells %s)" % [str(rocks.get_rt_stats()), str(rocks.rt_instanced_cells)])
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved %s (%d primitives in the frame)" % [out, int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))])
+		if args.has("prim-report"):
+			_prim_report()
 		if args.has("pt-pair") and not env.pathtracing_enabled:
 			# --pt-pair=PATH (with --raster): the same moment path traced, from this run (Flow is not repeatable run to
 			# run): the scene paused, path tracing on, TAA off, --spp-frames more frames once the tracer is ready.
@@ -9265,3 +9268,83 @@ func _frame_struck() -> void:
 	if veg.streaming:
 		await _forest_settle()
 	_log("lightning cam %.1f,%.1f,%.1f at the struck spruce %s" % [cp.x, cp.y, cp.z, str(best.round())])
+
+
+# --prim-report (with --out): every mesh and MultiMesh in the scene ranked by the triangles it draws at the LOD the
+# renderer picks for it (the camera pass; each shadow cascade draws its casters again), and the totals per system.
+# For perf hunts: a big count with no LODs, or LOD 0 far away, is the pattern to look for. Not culled by the frustum.
+func _prim_report() -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var cp := cam.global_position
+	var th: float = get_viewport().mesh_lod_threshold / float(get_viewport().size.x)
+	var lodmul: float = 2.0 / cam.get_camera_projection().x.x
+	var rows := []
+	var per := {}
+	var lod_cache := {}
+	var stack: Array = [get_tree().root]
+	while stack.size() > 0:
+		var n: Node = stack.pop_back()
+		stack.append_array(n.get_children(true))
+		var mesh: Mesh = null
+		var cnt := 1
+		if n is MultiMeshInstance3D:
+			var mm := (n as MultiMeshInstance3D).multimesh
+			if mm == null:
+				continue
+			mesh = mm.mesh
+			cnt = mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count
+		elif n is MeshInstance3D:
+			mesh = (n as MeshInstance3D).mesh
+		if mesh == null or cnt <= 0 or not (n as GeometryInstance3D).is_visible_in_tree():
+			continue
+		var gi := n as GeometryInstance3D
+		var ab := gi.global_transform * gi.get_aabb()
+		var d := Vector3.ZERO.max(ab.position - cp).max(cp - ab.end).length()
+		var dc := (cp - ab.get_center()).length() # the renderer's visibility range distance: to the box's centre
+		if gi.visibility_range_end > 0.0 and dc > gi.visibility_range_end + gi.visibility_range_end_margin:
+			continue
+		if gi.visibility_range_begin > 0.0 and dc < gi.visibility_range_begin - gi.visibility_range_begin_margin:
+			continue
+		var scale: float = gi.global_transform.basis.get_scale().abs().x * gi.lod_bias
+		var tris := 0
+		var lods := ""
+		for si in mesh.get_surface_count():
+			var key := str(mesh.get_rid()) + ":" + str(si)
+			if not lod_cache.has(key):
+				var sd: Dictionary = RenderingServer.mesh_get_surface(mesh.get_rid(), si)
+				var ls := []
+				for l in sd.get("lods", []):
+					ls.append([l["edge_length"], (l["index_data"] as PackedByteArray).size() / (4 if sd.get("vertex_count", 0) > 65535 else 2) / 3])
+				var ic: int = sd.get("index_count", 0)
+				lod_cache[key] = [ic / 3 if ic > 0 else int(sd.get("vertex_count", 0)) / 3, ls]
+			var c: Array = lod_cache[key]
+			var t: int = c[0]
+			var li := 0
+			for k in (c[1] as Array).size():
+				var l: Array = c[1][k]
+				if l[0] * scale / max(d * lodmul, 0.0001) > th:
+					break
+				t = l[1]
+				li = k + 1
+			tris += t
+			lods += "%d/%d " % [li, (c[1] as Array).size()]
+		var path := str(n.get_path()).trim_prefix("/root/Main/")
+		var sys := path.get_slice("/", 0)
+		per[sys] = int(per.get(sys, 0)) + tris * cnt
+		rows.append([tris * cnt, cnt, tris, d, lods, path.left(90), gi.lod_bias])
+	rows.sort_custom(func(a, b): return a[0] > b[0])
+	var tot := 0
+	for r in rows:
+		tot += r[0]
+	_log("prim report: %d drawables, %d triangles at their LODs (camera pass, not frustum culled)" % [rows.size(), tot])
+	var sl := []
+	for k in per:
+		sl.append([per[k], k])
+	sl.sort_custom(func(a, b): return a[0] > b[0])
+	for i in min(15, sl.size()):
+		_log("  system %12d %s" % sl[i])
+	for i in min(30, rows.size()):
+		_log("  %12d = %6d x %7d tris, dist %.1f m, lod %s, %s (lod_bias %.2f)" % rows[i])
+
