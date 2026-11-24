@@ -369,6 +369,193 @@ void PlantGenerator::_build_drinn() {
 	}
 }
 
+// Dry tussocks over the cured cover (docs/ideas/vegetation.md, "Dry tussocks"). Esparto (Macrochloa, formerly Stipa,
+// tenacissima), the alfa grass of the semi-arid Iberian and North African steppes (250 to 450 mm a year): a dense
+// clump 40 to 60 cm across (to over a metre when old) of wiry, rolled, grey-green leaves 30 to 70 cm that arch out
+// like a fountain, much of it standing dead straw; old clumps die back in the middle and open into rings (an
+// estimate of how often, here a third). Culms to about 1 m carry a narrow, dense panicle 20 to 30 cm of pale
+// spikelets with long plumed awns, in March and April (Gasque and Garcia-Fayos 2003), straw in seed.
+void PlantGenerator::_build_esparto() {
+	const bool ring = _rand(0.0f, 1.0f) < 0.33f; // An old clump, dead in the middle.
+	const float radius = ring ? _rand(0.16f, 0.24f) : _rand(0.09f, 0.15f);
+	const int blades = int(_rand(260.0f, 360.0f) * (ring ? 1.3f : 1.0f));
+	for (int i = 0; i < blades; i++) {
+		const float u = Math::sqrt(_rand(0.0f, 1.0f));
+		const float r = radius * (ring ? Math::lerp(0.35f, 1.0f, u) : u);
+		const float a = _rand(0.0f, Math::TAU);
+		const Vector3 at(Math::cos(a) * r, 0.0f, Math::sin(a) * r);
+		// Dead straw: about 40% of the leaves, more towards the dying middle of an old clump.
+		const bool old = _rand(0.0f, 1.0f) < (ring ? Math::lerp(0.7f, 0.35f, u) : 0.4f);
+		const Wither wither(this, old ? _rand(0.7f, 1.0f) : _rand(0.0f, 0.15f));
+		Leaf l;
+		l.shape = LEAF_LINEAR;
+		l.length = _rand(0.3f, 0.6f) * (old ? 0.75f : 1.0f);
+		l.width = _rand(0.003f, 0.0042f); // Rolled into a wire 1.5 to 2 mm thick (drawn a little wider: a folded strip shows half).
+		l.fold = 0.95f;
+		l.bend = old ? _rand(0.6f, 1.2f) : _rand(0.2f, 0.55f); // The live ones arch out; the dead ones flop and break.
+		l.twist = _rand(-0.6f, 0.6f);
+		l.segments = 8;
+		const float out = r / radius;
+		// The middle stands, the rim leans out: the fountain.
+		const float elev = old ? _rand(0.7f, 1.2f) : Math::lerp(1.5f, 1.1f, out) + _rand(-0.12f, 0.12f);
+		_add_leaf(SURFACE_LEAF, Transform3D(dune_frame(dune_dir(a + _rand(-0.5f, 0.5f), elev), Vector3(0, 1, 0)), at), l, 0.0f, Math::lerp(0.7f, 0.95f, out));
+	}
+	// A dead clump's middle: a mat of broken straw and old leaf bases.
+	if (ring) {
+		const Wither wither(this, 1.0f);
+		Leaf l;
+		l.shape = LEAF_LINEAR;
+		l.width = 0.0025f;
+		l.fold = 0.9f;
+		l.segments = 3;
+		const int n = int(_rand(25.0f, 40.0f));
+		for (int i = 0; i < n; i++) {
+			const float r = radius * 0.35f * Math::sqrt(_rand(0.0f, 1.0f));
+			const float a = _rand(0.0f, Math::TAU);
+			l.length = _rand(0.04f, 0.12f);
+			l.bend = _rand(0.0f, 0.4f);
+			_add_leaf(SURFACE_LEAF, Transform3D(dune_frame(dune_dir(_rand(0.0f, Math::TAU), _rand(0.05f, 0.5f)), Vector3(0, 1, 0)), Vector3(Math::cos(a) * r, 0.0f, Math::sin(a) * r)), l, 0.0f, 0.75f);
+		}
+	}
+	const int culms = int(_rand(2.0f, 7.0f) * (ring ? 1.5f : 1.0f));
+	Leaf awn;
+	awn.shape = LEAF_LINEAR;
+	awn.width = 0.0014f; // Plumed below: the hairs read as a narrow feather.
+	awn.fold = 0.0f;
+	awn.segments = 3;
+	for (int c = 0; c < culms; c++) {
+		float progress = 0.0f, dead = 0.0f;
+		const Bloom bloom = _bloom(false, &progress, &dead);
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
+		const Wither wither(this, bloom == BLOOM_SEED ? 0.55f : dead * 0.4f);
+		const float az = _rand(0.0f, Math::TAU);
+		const float rr = radius * (ring ? _rand(0.5f, 0.95f) : _rand(0.0f, 0.7f));
+		const Transform3D base = dune_base(az, _rand(1.32f, 1.5f), Vector3(Math::cos(az) * rr, 0.0f, Math::sin(az) * rr));
+		const float len = _rand(0.5f, 0.75f);
+		const Transform3D top = _add_stem(base, len, 0.0022f, 0.0015f, _rand(-0.15f, 0.15f), 8, 0.0f);
+		// The narrow panicle: short branches pressed to the axis over 20 to 30 cm, each with a few spikelets.
+		const float plen = _rand(0.2f, 0.3f);
+		const Transform3D axis = _add_stem(top, plen, 0.0014f, 0.0006f, _rand(0.05f, 0.25f), 6, 0.6f);
+		const Vector3 ax = (axis.origin - top.origin).normalized();
+		const int nodes = int(_rand(12.0f, 18.0f));
+		for (int k = 0; k < nodes; k++) {
+			const float f = (k + _rand(0.0f, 1.0f)) / nodes;
+			const Vector3 at = top.origin.lerp(axis.origin, f);
+			const int sp = int(_rand(1.0f, 3.99f));
+			for (int j = 0; j < sp; j++) {
+				const Vector3 side = dune_dir(_rand(0.0f, Math::TAU), 0.0f);
+				const Vector3 d = (ax + side * _rand(0.12f, 0.3f)).normalized();
+				// Glumes 2.5 to 3 cm, papery.
+				_add_spikelet(at + side * 0.003f, d, side.cross(d).normalized(), _rand(0.022f, 0.03f), 0.0035f, Color(1, 1, 1));
+				// The awn, 4 to 6 cm, bent once and plumed.
+				awn.length = _rand(0.04f, 0.06f);
+				awn.bend = _rand(0.4f, 1.0f);
+				const Vector3 adir = (d + side * 0.25f).normalized();
+				_add_leaf(SURFACE_CENTRE, Transform3D(dune_frame(adir, Vector3(0, 1, 0)), at + d * 0.02f), awn, 0.95f);
+			}
+		}
+	}
+}
+
+// Thatching grass (Hyparrhenia hirta) of the warm, dry Mediterranean slopes and Iberian andropogonid steppes
+// (EUNIS E1.2 / E1.3 descriptions): a caespitose tuft of narrow, flat or folded grey-green leaves 20 to 40 cm under
+// culms 30 to 100 cm (Grass Genera of the World: Hyparrhenia culms 30 to 300 cm), branched above, each branch ending
+// in a reddish spathe and a pair of short racemes of white-hairy spikelets with dark, bent awns 2 to 3 cm. Flowers
+// from spring into autumn; the tuft cures straw with a red cast in the summer drought.
+void PlantGenerator::_build_thatching_grass() {
+	const float radius = _rand(0.05f, 0.09f);
+	const int blades = int(_rand(90.0f, 130.0f));
+	for (int i = 0; i < blades; i++) {
+		const float u = Math::sqrt(_rand(0.0f, 1.0f));
+		const float a = _rand(0.0f, Math::TAU);
+		const Vector3 at(Math::cos(a) * radius * u, 0.0f, Math::sin(a) * radius * u);
+		const bool old = _rand(0.0f, 1.0f) < 0.3f;
+		const Wither wither(this, old ? _rand(0.7f, 1.0f) : _rand(0.0f, 0.15f));
+		Leaf l;
+		l.shape = LEAF_LINEAR;
+		l.length = _rand(0.2f, 0.45f) * (old ? 0.8f : 1.0f);
+		l.width = _rand(0.0025f, 0.004f);
+		l.fold = 0.55f;
+		l.bend = old ? _rand(0.6f, 1.1f) : _rand(0.4f, 1.0f);
+		l.twist = _rand(-0.8f, 0.8f);
+		l.segments = 7;
+		const float elev = old ? _rand(0.7f, 1.1f) : Math::lerp(1.4f, 1.05f, u) + _rand(-0.1f, 0.1f);
+		_add_leaf(SURFACE_LEAF, Transform3D(dune_frame(dune_dir(a + _rand(-0.6f, 0.6f), elev), Vector3(0, 1, 0)), at), l, 0.0f, Math::lerp(0.7f, 0.95f, u));
+	}
+	const int culms = int(_rand(5.0f, 12.0f));
+	Leaf awn;
+	awn.shape = LEAF_LINEAR;
+	awn.width = 0.0008f;
+	awn.fold = 0.0f;
+	awn.segments = 3;
+	Leaf spathe;
+	spathe.shape = LEAF_LANCEOLATE;
+	spathe.width = 0.004f;
+	spathe.fold = 0.6f;
+	spathe.segments = 3;
+	for (int c = 0; c < culms; c++) {
+		float progress = 0.0f, dead = 0.0f;
+		const Bloom bloom = _bloom(true, &progress, &dead);
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
+		const Wither wither(this, bloom == BLOOM_SEED ? 0.5f : dead * 0.35f);
+		const float az = _rand(0.0f, Math::TAU);
+		const float rr = radius * _rand(0.0f, 0.8f);
+		const Transform3D base = dune_base(az, _rand(1.25f, 1.5f), Vector3(Math::cos(az) * rr, 0.0f, Math::sin(az) * rr));
+		const float len = _rand(0.4f, 0.95f);
+		// The culm in two parts: the lower bare, the upper half branching.
+		const Transform3D mid = _add_stem(base, len * 0.55f, 0.0018f, 0.0014f, _rand(-0.2f, 0.2f), 5, 0.0f);
+		// A leaf or two up the culm, from the sheaths.
+		{
+			Leaf cl;
+			cl.shape = LEAF_LINEAR;
+			cl.width = _rand(0.0025f, 0.0035f);
+			cl.fold = 0.5f;
+			cl.segments = 5;
+			const int n = int(_rand(1.0f, 2.99f));
+			for (int k = 0; k < n; k++) {
+				cl.length = _rand(0.08f, 0.18f);
+				cl.bend = _rand(0.4f, 1.0f);
+				const Vector3 at = base.origin.lerp(mid.origin, _rand(0.3f, 0.95f));
+				_add_leaf(SURFACE_LEAF, Transform3D(dune_frame(dune_dir(_rand(0.0f, Math::TAU), _rand(0.5f, 1.1f)), Vector3(0, 1, 0)), at), cl, 0.3f, 0.9f);
+			}
+		}
+		const Transform3D top = _add_stem(mid, len * 0.45f, 0.0014f, 0.0009f, _rand(-0.3f, 0.3f), 5, 0.4f);
+		const int branches = int(_rand(4.0f, 8.0f));
+		for (int b = 0; b < branches; b++) {
+			const float f = b == 0 ? 1.0f : _rand(0.0f, 0.95f);
+			const Vector3 from = mid.origin.lerp(top.origin, f);
+			const Vector3 up = (top.origin - mid.origin).normalized();
+			const Vector3 side = dune_dir(_rand(0.0f, Math::TAU), 0.0f);
+			const Vector3 d = b == 0 ? up : (up + side * _rand(0.4f, 0.8f)).normalized();
+			const Transform3D bt = b == 0 ? Transform3D(dune_frame(up, Vector3(0, 1, 0)), top.origin) : _add_stem(Transform3D(dune_frame(d, Vector3(0, 1, 0)), from), _rand(0.03f, 0.08f), 0.0007f, 0.0005f, 0.2f, 3, 0.6f);
+			const Vector3 bd = bt.basis.get_column(2).normalized();
+			// The spathe that wraps the raceme pair: a narrow reddish bract.
+			spathe.length = _rand(0.025f, 0.04f);
+			spathe.bend = _rand(0.2f, 0.6f);
+			_add_leaf(SURFACE_STEM, Transform3D(dune_frame((bd + side * 0.3f).normalized(), Vector3(0, 1, 0)), bt.origin - bd * 0.01f), spathe, 0.7f);
+			// The pair of racemes, splayed, each 2 to 3 cm with a few hairy spikelets and their dark awns.
+			for (int q = 0; q < 2; q++) {
+				const Vector3 rs = side.cross(bd).normalized() * (q == 0 ? 1.0f : -1.0f);
+				const Vector3 rd = (bd + rs * 0.6f).normalized();
+				const float rl = _rand(0.025f, 0.04f);
+				const int spk = int(_rand(5.0f, 8.0f));
+				for (int k = 0; k < spk; k++) {
+					const Vector3 at = bt.origin + rd * rl * (k + 0.5f) / spk;
+					_add_spikelet(at, rd, rs, 0.007f, 0.003f, Color(1, 1, 1)); // White-hairy: drawn a little full.
+					awn.length = _rand(0.02f, 0.032f);
+					awn.bend = _rand(1.0f, 1.8f); // Kneed and twisted below the bend.
+					const Vector3 ad = (rd + rs * 0.5f + Vector3(0, 0.2f, 0)).normalized();
+					_add_leaf(SURFACE_CENTRE, Transform3D(dune_frame(ad, Vector3(0, 1, 0)), at + rd * 0.004f), awn, 0.95f);
+				}
+			}
+		}
+	}
+}
+
 // The rain-flush annuals of the interdunes ("acheb"; Ozenda 1977; Gutterman 2002, "Survival Strategies of Annual
 // Desert Plants"): after a good rain the corridors green within days with small grasses (Schismus, Stipa capensis)
 // and rosette herbs (Plantago, Erodium) 3 to 15 cm, flower within weeks and dry to straw that stands for months.

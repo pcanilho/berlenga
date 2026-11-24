@@ -2261,6 +2261,27 @@ from Stace (2010), added to make_flowering_grasses after the grasses, each in it
 - Drought: ox-eye and cranesbill brown at 0.45 of the grass cure, campion 0.75 (shallower roots; an estimate).
 - Cost: 2 to 9k triangles a plant; plants bench checks height, flowering month, March bare and the 40k cap.
 
+## Dry tussocks (Paulo, 24 Nov: yes to real tussocks over the cured straw)
+Terrain cures the soil cover to straw under 1000 mm a year (WorldContracts::cured_share_for_precipitation) and by the
+season (greenness_for_season); from about 15 m that straw is a texture. Real summer-dry grassland stands in
+perennial bunchgrass tussocks with bare or annual-grass ground between (the two-phase mosaic of arid grasslands), so
+`PlantGenerator.make_dry_tussocks` adds two as geometry, keeping off the climate's bare patches (bare_patch):
+- Esparto (PRESET_ESPARTO, Macrochloa tenacissima): the alfa steppe of south-east Spain and North Africa at 250 to
+  375 mm (Gasque and Garcia-Fayos 2003), "a perennial tussock grass ... forms a dense clump"; flowers March and April,
+  seed shed May and June. Size from horticultural floras (30 cm leafy, 60 to 80 cm in flower, 40 to 60 cm wide;
+  mymediterraneangarden.com) and dimensions.com (61 to 122 cm, spread 91 to 152 cm): leaves 30 to 60 cm, rolled and
+  wiry, grey-green, about 40% standing dead (an estimate), a third of clumps dead in the middle as rings (an
+  estimate); culms 0.5 to 0.75 m plus a 20 to 30 cm narrow panicle, awns 4 to 6 cm. Rain 150 to 470 mm. Spacing
+  0.95 m (an estimate; no field cover figure found).
+- Thatching grass (PRESET_THATCHING_GRASS, Hyparrhenia hirta): a dominant of the Mediterranean tall perennial dry
+  grassland and Iberian andropogonid steppes (EUNIS); culms 30 to 300 cm in the genus (Grass Genera of the World),
+  here 40 to 95 cm, caespitose, narrow flat or folded leaves; paired racemes with bent awns. Rain 320 to 850 mm (an
+  estimate from its range), slopes to 45 degrees.
+- Drought: esparto rolls its leaves and greys rather than curing through (reach 0.4, an estimate); thatching grass
+  cures as the grasses (0.62). Far colour: the cured leaf colour, never under a 0.35 cure (the standing dead).
+- Cost: 15 to 27k triangles a plant; plants bench checks heights, spread, the 60k cap and the set's rainfall.
+- Wiring: the landscape takes the set where it builds its species (scene's bench).
+
 ## Thin snow on the sward (GrassField3D.get_snow_sward_shader_code)
 The scene's burial scout (valley, 10 Jan, about 1.6 cm of fresh snow) left the far hills green: the terrain laid its
 snow, but the blades and the far shell drew the green sward over it, and the blades only whitened below the snow's

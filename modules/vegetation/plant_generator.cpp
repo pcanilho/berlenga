@@ -38,6 +38,7 @@
 #include "plant_species.h"
 
 #include "modules/weather/weather_map_3d.h"
+#include "modules/world/world_contracts.h"
 
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
@@ -479,6 +480,12 @@ bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
 		case PRESET_DRINN:
 			r_phenology = { 250.0f, 900.0f, -1.0f, true }; // Late winter and spring in the Sahara; plumes stand on.
 			return true;
+		case PRESET_ESPARTO:
+			r_phenology = { 200.0f, 650.0f, 350.0f, true }; // March and April in south-east Spain (Gasque and Garcia-Fayos 2003); seed shed May and June.
+			return true;
+		case PRESET_THATCHING_GRASS:
+			r_phenology = { 450.0f, 2300.0f, 400.0f, false }; // Spring to autumn, a long flowering.
+			return true;
 		case PRESET_FIREWEED:
 			r_phenology = { 1000.0f, 1700.0f, 500.0f, true }; // July to September; the pods split and the fluff blows into autumn.
 			return true;
@@ -720,6 +727,8 @@ float PlantGenerator::get_pollen_amount(Preset p_preset) {
 		case PRESET_DRY_GRASS:
 		case PRESET_CORD_GRASS:
 		case PRESET_DRINN:
+		case PRESET_ESPARTO:
+		case PRESET_THATCHING_GRASS:
 		case PRESET_BURNT_TUSSOCK:
 			return 0.6f;
 		case PRESET_DOCK:
@@ -817,6 +826,8 @@ float PlantGenerator::get_trample_resistance(Preset p_preset) {
 		case PRESET_MARRAM:
 		case PRESET_LYME_GRASS:
 		case PRESET_DRINN:
+		case PRESET_ESPARTO:
+		case PRESET_THATCHING_GRASS:
 			return 150.0f;
 		case PRESET_CHARRED_STEMS:
 			return 5.0f; // Brittle charcoal snaps underfoot.
@@ -990,6 +1001,8 @@ float PlantGenerator::get_burn_recovery(Preset p_preset) {
 		case PRESET_ALPINE_SEDGE:
 		case PRESET_CORD_GRASS:
 		case PRESET_DRINN:
+		case PRESET_ESPARTO:
+		case PRESET_THATCHING_GRASS:
 		case PRESET_DESERT_ANNUALS:
 			return 0.7f;
 		case PRESET_BRACKEN:
@@ -5740,6 +5753,8 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 		case PRESET_MARRAM:
 		case PRESET_LYME_GRASS:
 		case PRESET_DRINN:
+		case PRESET_ESPARTO:
+		case PRESET_THATCHING_GRASS:
 		case PRESET_DESERT_ANNUALS:
 			l.shape = LEAF_LINEAR;
 			t.aspect = preset == PRESET_LYME_GRASS ? 0.05f : 0.03f;
@@ -7710,6 +7725,18 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.55f, 0.08f, 0.06f); // The tentacles.
 			centre_color = Color(0.85f, 0.82f, 0.78f); // The dew drops.
 			break;
+		case PRESET_ESPARTO:
+			leaf_color = Color(0.34f, 0.38f, 0.26f); // Grey-green rolled leaves, dull with wax.
+			stem_color = Color(0.58f, 0.52f, 0.38f);
+			petal_color = Color(0.62f, 0.58f, 0.44f); // The spikelets, pale straw.
+			centre_color = Color(0.8f, 0.76f, 0.64f); // Plumed awns.
+			break;
+		case PRESET_THATCHING_GRASS:
+			leaf_color = Color(0.3f, 0.36f, 0.22f); // Grey-green; cures straw with a red cast.
+			stem_color = Color(0.5f, 0.4f, 0.28f);
+			petal_color = Color(0.78f, 0.74f, 0.68f); // White-hairy spikelets.
+			centre_color = Color(0.25f, 0.17f, 0.1f); // Dark brown bent awns.
+			break;
 		case PRESET_DRINN:
 			leaf_color = Color(0.36f, 0.38f, 0.27f); // Grey-green and dusty; much of the tussock dead straw.
 			stem_color = Color(0.55f, 0.5f, 0.36f);
@@ -7928,8 +7955,12 @@ float PlantGenerator::get_drought_cure(Preset p_preset, const Dictionary &p_seas
 		case PRESET_FALSE_OAT_GRASS:
 		case PRESET_MEADOW_FOXTAIL:
 		case PRESET_TUFTED_HAIR_GRASS:
+		case PRESET_THATCHING_GRASS:
 		case PRESET_DRY_GRASS:
 			reach = 0.62f; // Grasses: straw.
+			break;
+		case PRESET_ESPARTO:
+			reach = 0.4f; // Rolls its leaves and goes grey in the drought rather than curing through (an estimate).
 			break;
 		case PRESET_DANDELION:
 		case PRESET_PLANTAIN:
@@ -7968,7 +7999,8 @@ float PlantGenerator::get_drought_cure(Preset p_preset, const Dictionary &p_seas
 	const float moisture = float(p_season["soil_moisture"]);
 	const float temperature = float(p_season.get("temperature", 10.0f));
 	// Dry and warm: a frozen soil's low water is winter, not drought.
-	const float dry = (1.0f - smoothstep_f(0.1f, 0.4f, moisture)) * smoothstep_f(2.0f, 8.0f, temperature);
+	// The soil-water part of the shared rule (WorldContracts::cured_share_for_season, taken warm), times warmth.
+	const float dry = WorldContracts::cured_share_for_season(moisture, 10.0f) * smoothstep_f(2.0f, 8.0f, temperature);
 	return reach * dry;
 }
 
@@ -8331,6 +8363,12 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_DRINN:
 			_build_drinn();
+			break;
+		case PRESET_ESPARTO:
+			_build_esparto();
+			break;
+		case PRESET_THATCHING_GRASS:
+			_build_thatching_grass();
 			break;
 		case PRESET_DESERT_ANNUALS:
 			_build_desert_annuals();
@@ -8860,6 +8898,69 @@ TypedArray<Resource> PlantGenerator::make_flowering_grasses(int p_variants, bool
 		const Color fc = gr.lerp(hc, 0.65f * hd);
 		ts->set_far_color(Color(fc.r, fc.g, fc.b, hd > 0.01f ? CLAMP(0.3f + 0.5f * hd, 0.25f, 0.8f) : 0.0f));
 		ts->set_meta("flowering_grass", true);
+		tag_species(ts, t.preset);
+		out.push_back(ts);
+	}
+	return out;
+}
+
+// Dry tussocks (docs/ideas/vegetation.md, "Dry tussocks"): the perennial bunchgrasses standing over the cured cover of
+// a summer-dry climate (WorldContracts::cured_share_for_precipitation: under 1000 mm a year), as real geometry where
+// the ground's straw is a texture. Esparto in the semi-arid steppe, thatching grass on the wetter dry slopes; both
+// keep off the climate's bare patches (VegetationField3D, WorldContracts::bare_patch) and cure by the season.
+TypedArray<Resource> PlantGenerator::make_dry_tussocks(int p_variants, bool p_textures, const Dictionary &p_season) {
+	TypedArray<Resource> out;
+	struct Dry {
+		Preset preset;
+		uint32_t seed;
+		float spacing, footprint, density, patch_scale, patch_cover, visibility;
+		Vector2 rain; // mm a year, and its fade.
+		float rain_fade, slope_max;
+		Color seeded; // The heads' far tint (both carry pale straw heads).
+	};
+	const Dry dry[2] = {
+		{ PRESET_ESPARTO, 6101, 0.95f, 0.25f, 0.8f, 16.0f, 0.75f, 110.0f, Vector2(150.0f, 470.0f), 90.0f, 40.0f, Color(0.66f, 0.6f, 0.45f) },
+		{ PRESET_THATCHING_GRASS, 6203, 0.55f, 0.1f, 0.65f, 9.0f, 0.55f, 75.0f, Vector2(320.0f, 850.0f), 130.0f, 45.0f, Color(0.7f, 0.62f, 0.5f) },
+	};
+	for (const Dry &t : dry) {
+		Ref<PlantGenerator> g;
+		g.instantiate();
+		g->set_textures(p_textures);
+		g->set_preset(t.preset);
+		g->apply_preset_colors();
+		g->set_seed(int(t.seed));
+		g->set_season(p_season);
+		Ref<PlantSpecies> ts;
+		ts.instantiate();
+		TypedArray<Mesh> tm;
+		const TypedArray<ArrayMesh> tv = g->generate_variants(MAX(p_variants, 1));
+		for (int i = 0; i < tv.size(); i++) {
+			tm.push_back(tv[i]);
+		}
+		ts->set_meshes(tm);
+		ts->set_spacing(t.spacing);
+		ts->set_footprint(t.footprint);
+		ts->set_density(t.density);
+		ts->set_scale_range(Vector2(0.8f, 1.3f));
+		ts->set_patch_scale(t.patch_scale);
+		ts->set_patch_cover(t.patch_cover);
+		ts->set_patch_seed(int(t.seed) + 2);
+		ts->set_visibility_range(t.visibility);
+		ts->set_rule_range(PlantSpecies::RULE_PRECIPITATION, t.rain);
+		ts->set_rule_fade(PlantSpecies::RULE_PRECIPITATION, t.rain_fade);
+		ts->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.3f));
+		ts->set_rule_fade(PlantSpecies::RULE_SHADE, 0.15f);
+		ts->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, t.slope_max));
+		ts->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
+		ts->set_rule_range(PlantSpecies::RULE_ROCK, Vector2(0.0f, 0.6f));
+		ts->set_rule_fade(PlantSpecies::RULE_ROCK, 0.15f);
+		// Far: the leaves as the season cures them, much of each clump standing straw, and the heads while they stand.
+		const Vector3 sh = get_bloom_shares(t.preset, p_season);
+		const float hd = sh.y + sh.z;
+		const Color gr = _cured_leaf_color(g->get_leaf_color(), MAX(get_drought_cure(t.preset, p_season), 0.35f)) * 0.8f;
+		const Color fc = gr.lerp(t.seeded, 0.4f * hd);
+		ts->set_far_color(Color(fc.r, fc.g, fc.b, CLAMP(0.3f + 0.3f * hd, 0.3f, 0.6f)));
+		ts->set_meta("dry_tussock", true);
 		tag_species(ts, t.preset);
 		out.push_back(ts);
 	}
@@ -9784,8 +9885,11 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_OX_EYE_DAISY);
 	BIND_ENUM_CONSTANT(PRESET_MEADOW_CRANESBILL);
 	BIND_ENUM_CONSTANT(PRESET_RED_CAMPION);
+	BIND_ENUM_CONSTANT(PRESET_ESPARTO);
+	BIND_ENUM_CONSTANT(PRESET_THATCHING_GRASS);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_sets", "calls"), &PlantGenerator::make_sets);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_flowering_grasses", "variants", "textures", "season"), &PlantGenerator::make_flowering_grasses, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_dry_tussocks", "variants", "textures", "season"), &PlantGenerator::make_dry_tussocks, DEFVAL(3), DEFVAL(true), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("set_parallel_sets", "enable"), &PlantGenerator::set_parallel_sets);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("is_parallel_sets"), &PlantGenerator::is_parallel_sets);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));

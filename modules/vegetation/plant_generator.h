@@ -197,6 +197,8 @@ public:
 		PRESET_OX_EYE_DAISY, // Leucanthemum vulgare: stems 20 to 70 cm, single white-rayed heads 25 to 50 mm on a yellow disc (May to September).
 		PRESET_MEADOW_CRANESBILL, // Geranium pratense: stems 30 to 80 cm, pairs of violet-blue saucers 25 to 40 mm over palmate leaves; beaked fruits (June to September).
 		PRESET_RED_CAMPION, // Silene dioica: stems 30 to 90 cm, loose clusters of rose-pink notched flowers 18 to 25 mm on reddish calyces (May to June).
+		PRESET_ESPARTO, // Macrochloa (Stipa) tenacissima: a dense tussock of wiry rolled grey-green leaves 30 to 70 cm, much of it dead straw, culms to about 1 m with a narrow plumed panicle (spring). Semi-arid steppe.
+		PRESET_THATCHING_GRASS, // Hyparrhenia hirta: a tuft of narrow grey-green leaves 20 to 40 cm under culms 30 to 100 cm carrying paired hairy racemes with dark bent awns; cures straw-red. Dry Mediterranean slopes.
 		PRESET_MAX,
 	};
 
@@ -339,6 +341,8 @@ private:
 	void _build_leaf_litter();
 	void _build_ground_ivy();
 	void _build_drinn();
+	void _build_esparto();
+	void _build_thatching_grass();
 	void _build_desert_annuals();
 	void _build_soil_crust();
 	// Burnt ground (plant_burn.cpp): the season's "burn_age" sets each one's stage.
@@ -724,6 +728,7 @@ public:
 	// The meadow's flowering grasses (Yorkshire fog): culms and heads standing over the sward from May to August, gone
 	// out of season; the far ground takes the heads' tint while they flower.
 	static TypedArray<Resource> make_flowering_grasses(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
+	static TypedArray<Resource> make_dry_tussocks(int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	static TypedArray<Resource> make_mounds(MoundSet p_set, int p_variants = 3, bool p_textures = true, const Dictionary &p_season = Dictionary());
 	// Grazing roughs and dung (docs/ideas/vegetation.md, "Grazing roughs and dung").
 	enum GrazeSet {

@@ -165,6 +165,15 @@
 				Returns the plants of a bog as [PlantSpecies]: sphagnum hummocks and lawns, cotton grass, bog asphodel and sundew, with heather on the hummocks of a blanket bog. They keep to wet, nearly level ground ([constant PlantSpecies.RULE_WETNESS], [constant PlantSpecies.RULE_SLOPE]) and share one patch noise per stand, the hummock species in its patches and the hollow species outside them ([member PlantSpecies.patch_invert]), so hummocks and hollows sort themselves. They do not colour the far ground. Each species has the meta [code]bog[/code] set to [code]true[/code]. [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for flowering, the cotton and the autumn colours.
 			</description>
 		</method>
+		<method name="make_dry_tussocks" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="textures" type="bool" default="true" />
+			<param index="2" name="season" type="Dictionary" default="{}" />
+			<description>
+				Perennial bunchgrass tussocks for summer-dry country, as geometry over the ground's cured cover: esparto ([constant PRESET_ESPARTO]) in the semi-arid steppe (RULE_PRECIPITATION 150 to 470 mm) and thatching grass ([constant PRESET_THATCHING_GRASS]) on the wetter dry slopes (320 to 850 mm), both under 1000 mm where the terrain cures its cover. They keep off rock, shade and the climate's bare patches, and cure by the [param season] as [method get_drought_cure] says. Species carry the meta [code]dry_tussock[/code].
+			</description>
+		</method>
 		<method name="make_dunes" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.DuneStand" />
@@ -827,7 +836,13 @@
 		<constant name="PRESET_RED_CAMPION" value="122" enum="Preset">
 			Red campion (Silene dioica): stems 30 to 90 cm, loose forked clusters of rose-pink flowers 18 to 25 mm with five notched petals on dark reddish calyces, May to June. Tolerates part shade.
 		</constant>
-		<constant name="PRESET_MAX" value="123" enum="Preset">
+		<constant name="PRESET_ESPARTO" value="123" enum="Preset">
+			Esparto (Macrochloa tenacissima, Stipa tenacissima): a dense clump of wiry, rolled, grey-green leaves 30 to 60 cm arching out like a fountain, much of it standing dead straw; old clumps die in the middle into rings. Culms to about 1 m with a narrow panicle of pale spikelets and long plumed awns, March and April. Semi-arid steppe.
+		</constant>
+		<constant name="PRESET_THATCHING_GRASS" value="124" enum="Preset">
+			Thatching grass (Hyparrhenia hirta): a tuft of narrow grey-green leaves 20 to 45 cm under culms 40 to 95 cm, branched above, each branch with a reddish spathe and a pair of short racemes of white-hairy spikelets with dark bent awns; spring to autumn, curing straw. Dry Mediterranean slopes.
+		</constant>
+		<constant name="PRESET_MAX" value="125" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="GRAZE_CATTLE" value="0" enum="GrazeSet">
