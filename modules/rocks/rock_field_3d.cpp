@@ -40,6 +40,7 @@
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/math/convex_hull.h"
+#include "core/io/marshalls.h"
 #include "core/math/random_pcg.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -188,7 +189,63 @@ void library_job(void *p_userdata, uint32_t p_index) {
 	g->set_lods(!job.close_up && job.fracture == 0); // a close-up shape only draws within close_up_radius
 	g->set_fracture_pieces(job.fracture);
 	g->set_marks_scale(job.marks_scale);
+	// The world cache (world_cache.h): a library shape is the same bytes from the same inputs (and the same
+	// executable, in the key), so a later launch loads it instead of building it again. Not close-ups or fracture
+	// pieces, built on demand and carrying more than the mesh.
+	const bool cacheable = !job.close_up && job.fracture == 0 && WorldCache::is_enabled();
+	String name;
+	if (cacheable) {
+		WorldCacheKey key("rock_shape");
+		key.value(int32_t(job.type));
+		key.value(int32_t(job.family));
+		key.value(int32_t(job.seed));
+		key.value(job.transport);
+		key.value(job.detail);
+		key.value(job.marks_scale);
+		name = key.finish();
+		Vector<uint8_t> data;
+		if (WorldCache::load_any("rock_shape", name, data)) {
+			Variant v;
+			int len = 0;
+			if (decode_variant(v, data.ptr(), data.size(), &len, false) == OK && len == data.size() && v.get_type() == Variant::ARRAY) {
+				const Array a = v;
+				if (a.size() == 2 && a[0].get_type() == Variant::DICTIONARY && a[1].get_type() == Variant::DICTIONARY) {
+					Ref<ImporterMesh> im;
+					im.instantiate();
+					im->set("_data", a[0]);
+					if (im->get_surface_count() > 0) {
+						for (int i = 0; i < im->get_surface_count(); i++) {
+							im->set_surface_material(i, RockGenerator::get_material(job.type));
+						}
+						job.mesh = im;
+						job.meta = a[1];
+						return;
+					}
+				}
+			}
+		}
+	}
 	job.mesh = g->build_importer_mesh(job.meta);
+	if (cacheable && job.mesh.is_valid()) {
+		// The surfaces without their material (the rock type's, set again on load).
+		Dictionary d = Dictionary(job.mesh->get("_data")).duplicate(true);
+		Array surfaces = d.get("surfaces", Array());
+		for (int i = 0; i < surfaces.size(); i++) {
+			Dictionary sd = surfaces[i];
+			sd.erase("material");
+		}
+		Array a;
+		a.push_back(d);
+		a.push_back(job.meta);
+		int len = 0;
+		if (encode_variant(a, nullptr, len, false) == OK && len > 0) {
+			Vector<uint8_t> data;
+			data.resize(len);
+			if (encode_variant(a, data.ptrw(), len, false) == OK) {
+				WorldCache::store("rock_shape", name, data.ptr(), data.size());
+			}
+		}
+	}
 }
 
 void close_job(void *p_userdata) {
