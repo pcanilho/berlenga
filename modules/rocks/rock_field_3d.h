@@ -47,6 +47,10 @@
 #include "scene/resources/multimesh.h"
 #include "scene/resources/image_texture.h"
 
+// Rain splash pedestals' column shapes: standing ones (under a stone), then empty ones (their stone toppled off).
+static constexpr int RF_PEDESTAL_STANDING = 4;
+static constexpr int RF_PEDESTAL_SHAPES = 6;
+
 class TerrainGenerator3D;
 class MultiMeshInstance3D;
 class StaticBody3D;
@@ -94,7 +98,7 @@ public:
 		float ground = 0.0f; // ground height under it
 		float film = 0.0f; // water film 0..1
 		float footprint = 0.0f; // radius where it meets the ground
-		float pedestal = 0.0f; // m of soil column it stands on (rain splash pedestals), 0 none
+		float pedestal = 0.0f; // m of soil column it stands on (rain splash pedestals), 0 none; < 0 toppled off one
 		uint32_t library = 0; // library key
 		uint16_t variant = 0;
 		uint16_t layer = 0;
@@ -296,7 +300,7 @@ private:
 	// Any thread: the bare, erodible soil's share at a point (0..1: the stones lying on it), and the soil the splash
 	// has taken off round them (m, r_depth).
 	float _rain_soil(const TerrainGenerator3D *p_gen, const RainClimate &p_rain, const Vector3 &p_at, float &r_depth) const;
-	Ref<ArrayMesh> pedestal_mesh;
+	Ref<ArrayMesh> pedestal_meshes[RF_PEDESTAL_SHAPES]; // standing columns, then empty ones (their stone toppled)
 	Ref<ShaderMaterial> pedestal_material;
 	void _pedestal_resources();
 	Ref<ImageTexture> cover_tex[2];
@@ -425,7 +429,7 @@ private:
 		StandWear wear;
 		FrostClimate frost;
 		RainClimate rain;
-		LocalVector<float> pedestals; // soil columns under the pedestalled stones: 12 floats each (MultiMesh 3D)
+		LocalVector<float> pedestals[RF_PEDESTAL_SHAPES]; // soil columns per shape: 12 floats each (MultiMesh 3D)
 		ReliefGrid relief;
 		Vector3i key;
 		TerrainGenerator3D *gen = nullptr;
