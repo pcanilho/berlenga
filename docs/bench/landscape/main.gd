@@ -1215,6 +1215,12 @@ func _ready() -> void:
 				rocks.set(pv[0], str_to_var(pv[1]))
 			for i in int(args.get("rock-pair-frames", "90")):
 				await get_tree().process_frame
+			var rpw := 0
+			while rocks.has_method("get_ground_detail_pending") and int(rocks.get_ground_detail_pending()) > 0 and rpw < 1200:
+				await get_tree().process_frame
+				rpw += 1
+			for i in 8:
+				await get_tree().process_frame
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(args["rock-pair"])
 			_log("saved %s (rocks %s, paused)" % [args["rock-pair"], args.get("rock-pair-prop", "")])
@@ -4377,7 +4383,16 @@ func _build_camera() -> void:
 			var pr := float(args.get("ped-search", "600"))
 			var pbest := 0.0
 			var pp := Vector3.INF
-			if rocks != null and rocks.has_method("get_pedestal_at"):
+			if rocks != null and rocks.has_method("get_pedestal_spots"):
+				# Rocks 3589ba9f: the pedestals' own spots (bare patches only), deepest splash first; the first on
+				# gentle ground.
+				for sp4 in rocks.get_pedestal_spots(Rect2(-pr, -pr, 2.0 * pr, 2.0 * pr), float(args.get("ped-step", "2")), 64):
+					var q := Vector3(sp4.x, sp4.y, sp4.z)
+					if rad_to_deg(data_map.get_slope_at(q)) <= 15.0:
+						pp = q
+						pbest = sp4.w
+						break
+			elif rocks != null and rocks.has_method("get_pedestal_at"):
 				for zz in range(-int(pr), int(pr) + 1, 8):
 					for xx in range(-int(pr), int(pr) + 1, 8):
 						var q := Vector3(xx, height_at(xx, zz), zz)
@@ -4404,67 +4419,110 @@ func _build_camera() -> void:
 			# the 16 m cell within --ledge-search (1000) m holding the most overhanging lip (TerrainGenerator3D
 			# get_ledge_lips), the camera out from the face and --ledge-side (9) m along it so the run of slabs
 			# recedes, at --ledge-up (-2) m from the lip (below it: the overhangs read against the sky).
+			# Rocks 3589ba9f: the slabs themselves (get_ledge_slabs), the run with the most slabs (sunlit, longer
+			# first), seen along the run from in front of it at --ledge-front (10) m out and --ledge-side (9) m past its end.
+			var ldone := false
 			var lr := float(args.get("ledge-search", "1000"))
-			var lips: Array = gen.get_ledge_lips(Rect2(-lr, -lr, 2.0 * lr, 2.0 * lr), 4.0)
-			var cells := {}
-			for l in lips:
-				if float(l["overhang"]) <= 0.05:
-					continue
-				var lp: Vector3 = l["position"]
-				# A lip high on an open, sunlit face: the ground 22 m out (either way) at least 8 m below it, and the
-				# face turned to the sun.
-				var lo: Vector3 = l["out"]
-				lo.y = 0.0
-				lo = lo.normalized()
-				var ga := height_at(lp.x + lo.x * 22.0, lp.z + lo.z * 22.0)
-				var gb := height_at(lp.x - lo.x * 22.0, lp.z - lo.z * 22.0)
-				if gb < ga:
-					lo = -lo
+			if rocks != null and rocks.has_method("get_ledge_slabs"):
+				var runs := {}
+				for s in rocks.get_ledge_slabs(Rect2(-lr, -lr, 2.0 * lr, 2.0 * lr)):
+					var r := int(s["run"])
+					if not runs.has(r):
+						runs[r] = []
+					runs[r].append(s)
 				var sun_flat := Vector3(sun.global_basis.z.x, 0, sun.global_basis.z.z).normalized()
-				if height_at(lp.x, lp.z) - minf(ga, gb) < 8.0 or lo.dot(sun_flat) < 0.3:
-					continue
-				var key := Vector2i(int(floor(lp.x / 16.0)), int(floor(lp.z / 16.0)))
-				var c: Array = cells.get(key, [0.0, l])
-				c[0] = float(c[0]) + float(l["overhang"]) * float(l["weight"])
-				if float(l["overhang"]) > float((c[1] as Dictionary)["overhang"]):
-					c[1] = l
-				cells[key] = c
-			var lbest := -1.0
-			var lpick := {}
-			for key in cells:
-				if float(cells[key][0]) > lbest:
-					lbest = float(cells[key][0])
-					lpick = cells[key][1]
-			if lpick.is_empty():
-				_log("ledge view: no overhanging lips within %.0f m (%d lips)" % [lr, lips.size()])
-			else:
-				var lpos: Vector3 = lpick["position"]
-				var lip_y := lpos.y
-				lpos.y = height_at(lpos.x, lpos.z) # the ground at the lip (the lip's own y is logged beside it)
-				var lout: Vector3 = lpick["out"]
-				lout.y = 0.0
-				lout = lout.normalized()
-				# Out from the face: the side where the ground falls away (below the lip), not into the hill.
-				var lbk := float(args.get("ledge-back", "22"))
-				if height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk) > height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk):
-					lout = -lout
-				var along := lout.cross(Vector3.UP).normalized()
-				# Steep ground: try both sides and a few distances, keeping the spot whose ground sits furthest under the lip.
-				var lsd := float(args.get("ledge-side", "9"))
-				var lc := lpos + lout * lbk + along * lsd
-				var lgb := INF
-				for bk in [lbk, lbk * 0.7, lbk * 1.4]:
-					for sd in [lsd, -lsd, 0.0]:
-						var q: Vector3 = lpos + lout * float(bk) + along * float(sd)
-						var qh := height_at(q.x, q.z)
-						if qh < lgb:
-							lgb = qh
-							lc = q
-				lc.y = maxf(height_at(lc.x, lc.z) + 1.7, lpos.y + float(args.get("ledge-up", "-2")))
-				cam.fov = 55.0
-				cam.position = lc
-				cam.look_at(lpos)
-				_log("ledge view: %d lips, pick %s (lip y %.1f) overhang %.2f m cap %.2f m, score %.1f, camera %s, ground out %.1f / in %.1f" % [lips.size(), str(lpos.round()), lip_y, float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round()), height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk), height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk)])
+				var brun: Array = []
+				var bsc := -INF
+				for r in runs.values():
+					var ro := Vector3()
+					for s in r:
+						ro += s["out"]
+					ro.y = 0.0
+					var sc := float(r.size()) * 100.0 + float(r[0]["run_length"]) + (50.0 if ro.normalized().dot(sun_flat) > 0.2 else 0.0)
+					if sc > bsc:
+						bsc = sc
+						brun = r
+				if not brun.is_empty():
+					var c := Vector3()
+					var o := Vector3()
+					for s in brun:
+						c += s["front"]
+						o += s["out"]
+					c /= brun.size()
+					o.y = 0.0
+					o = o.normalized()
+					var al: Vector3 = brun[0]["along"]
+					al.y = 0.0
+					al = al.normalized()
+					var rl := float(brun[0]["run_length"])
+					var lc := c + o * float(args.get("ledge-front", "10")) + al * (rl * 0.5 + float(args.get("ledge-side", "9")))
+					lc.y = maxf(height_at(lc.x, lc.z) + 1.7, c.y + float(args.get("ledge-up", "-1")))
+					cam.fov = 55.0
+					cam.position = lc
+					cam.look_at(c - al * rl * 0.25)
+					ldone = true
+					_log("ledge view: %d runs, pick %d slabs %.1f m at %s, camera %s" % [runs.size(), brun.size(), rl, str(c.round()), str(lc.round())])
+			if not ldone:
+				var lips: Array = gen.get_ledge_lips(Rect2(-lr, -lr, 2.0 * lr, 2.0 * lr), 4.0)
+				var cells := {}
+				for l in lips:
+					if float(l["overhang"]) <= 0.05:
+						continue
+					var lp: Vector3 = l["position"]
+					# A lip high on an open, sunlit face: the ground 22 m out (either way) at least 8 m below it, and the
+					# face turned to the sun.
+					var lo: Vector3 = l["out"]
+					lo.y = 0.0
+					lo = lo.normalized()
+					var ga := height_at(lp.x + lo.x * 22.0, lp.z + lo.z * 22.0)
+					var gb := height_at(lp.x - lo.x * 22.0, lp.z - lo.z * 22.0)
+					if gb < ga:
+						lo = -lo
+					var sun_flat := Vector3(sun.global_basis.z.x, 0, sun.global_basis.z.z).normalized()
+					if height_at(lp.x, lp.z) - minf(ga, gb) < 8.0 or lo.dot(sun_flat) < 0.3:
+						continue
+					var key := Vector2i(int(floor(lp.x / 16.0)), int(floor(lp.z / 16.0)))
+					var c: Array = cells.get(key, [0.0, l])
+					c[0] = float(c[0]) + float(l["overhang"]) * float(l["weight"])
+					if float(l["overhang"]) > float((c[1] as Dictionary)["overhang"]):
+						c[1] = l
+					cells[key] = c
+				var lbest := -1.0
+				var lpick := {}
+				for key in cells:
+					if float(cells[key][0]) > lbest:
+						lbest = float(cells[key][0])
+						lpick = cells[key][1]
+				if lpick.is_empty():
+					_log("ledge view: no overhanging lips within %.0f m (%d lips)" % [lr, lips.size()])
+				else:
+					var lpos: Vector3 = lpick["position"]
+					var lip_y := lpos.y
+					lpos.y = height_at(lpos.x, lpos.z) # the ground at the lip (the lip's own y is logged beside it)
+					var lout: Vector3 = lpick["out"]
+					lout.y = 0.0
+					lout = lout.normalized()
+					# Out from the face: the side where the ground falls away (below the lip), not into the hill.
+					var lbk := float(args.get("ledge-back", "22"))
+					if height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk) > height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk):
+						lout = -lout
+					var along := lout.cross(Vector3.UP).normalized()
+					# Steep ground: try both sides and a few distances, keeping the spot whose ground sits furthest under the lip.
+					var lsd := float(args.get("ledge-side", "9"))
+					var lc := lpos + lout * lbk + along * lsd
+					var lgb := INF
+					for bk in [lbk, lbk * 0.7, lbk * 1.4]:
+						for sd in [lsd, -lsd, 0.0]:
+							var q: Vector3 = lpos + lout * float(bk) + along * float(sd)
+							var qh := height_at(q.x, q.z)
+							if qh < lgb:
+								lgb = qh
+								lc = q
+					lc.y = maxf(height_at(lc.x, lc.z) + 1.7, lpos.y + float(args.get("ledge-up", "-2")))
+					cam.fov = 55.0
+					cam.position = lc
+					cam.look_at(lpos)
+					_log("ledge view: %d lips, pick %s (lip y %.1f) overhang %.2f m cap %.2f m, score %.1f, camera %s, ground out %.1f / in %.1f" % [lips.size(), str(lpos.round()), lip_y, float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round()), height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk), height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk)])
 		"gully":
 			# A raised oblique down a real gully onto its fan (RockField3D.runoff_gravel: a coarse lag on the floor,
 			# fine grains on the fan). The strongest open gully on soil (TerrainGenerator3D.get_gully_at, as the rocks
