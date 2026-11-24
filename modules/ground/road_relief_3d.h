@@ -77,6 +77,14 @@ private:
 	bool dirty = true;
 	StaticBody3D *body = nullptr;
 
+	// The built mesh's heights (node frame), for get_surface_height_at().
+	LocalVector<float> grid;
+	int grid_nx = 0;
+	int grid_nz = 0;
+	float grid_dx = 1.0f;
+	float grid_dz = 1.0f;
+	float _grid_height(float p_x, float p_z) const;
+
 	// Spectral roughness: cosines in world x, z.
 	struct Wave {
 		float kx, kz; // radians per metre
@@ -101,6 +109,9 @@ public:
 	float local_height(float p_x, float p_z) const;
 	// The road's surface height at a world point (y of the surface above the point's x, z), or -INF off the road.
 	float get_height_at(const Vector3 &p_world) const;
+	// The same, read from the built mesh (its triangles, as drawn and as the collider has them): far cheaper, for
+	// anything sampling many points (StreetWater3D's bed). -INF off the road or before the first build.
+	float get_surface_height_at(const Vector3 &p_world) const;
 	bool contains(const Vector3 &p_world) const;
 	void rebuild();
 

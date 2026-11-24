@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="RoadRelief3D" inherits="MeshInstance3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+<class name="RoadRelief3D" inherits="MeshInstance3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
 		A used asphalt street's relief as real geometry that holds puddles.
 	</brief_description>
@@ -21,6 +21,13 @@
 			<param index="0" name="world_position" type="Vector3" />
 			<description>
 				The height (world Y) of the road surface above or below [param world_position], or -INF where the point is not over the road. Water, props and characters read the same surface the mesh shows.
+			</description>
+		</method>
+		<method name="get_surface_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_position" type="Vector3" />
+			<description>
+				The same height as [method get_height_at], read from the built mesh's triangles (as drawn and as the collider has them) instead of the relief's function: far cheaper, for anything sampling many points, such as [StreetWater3D]'s bed. -INF off the road or before the first build.
 			</description>
 		</method>
 		<method name="local_height" qualifiers="const">

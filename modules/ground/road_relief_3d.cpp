@@ -308,6 +308,40 @@ float RoadRelief3D::get_height_at(const Vector3 &p_world) const {
 	return float(s.y);
 }
 
+float RoadRelief3D::_grid_height(float p_x, float p_z) const {
+	const float u = CLAMP(p_x / grid_dx, 0.0f, float(grid_nx - 1));
+	const float v = CLAMP((p_z + 0.5f * width) / grid_dz, 0.0f, float(grid_nz - 1));
+	const int i = MIN(int(u), grid_nx - 2);
+	const int j = MIN(int(v), grid_nz - 2);
+	const float fx = u - i;
+	const float fz = v - j;
+	const float *r0 = &grid[j * grid_nx + i];
+	const float *r1 = r0 + grid_nx;
+	// The quad's two triangles, split along (i, j)-(i + 1, j + 1) as the mesh is.
+	if (fx >= fz) {
+		return r0[0] + fx * (r0[1] - r0[0]) + fz * (r1[1] - r0[1]);
+	}
+	return r0[0] + fz * (r1[0] - r0[0]) + fx * (r1[1] - r1[0]);
+}
+
+float RoadRelief3D::get_surface_height_at(const Vector3 &p_world) const {
+	if (!is_inside_tree() || grid_nx < 2 || grid_nz < 2) {
+		return -Math::INF;
+	}
+	const Transform3D xf = get_global_transform();
+	const Transform3D inv = xf.affine_inverse();
+	Vector3 l = inv.xform(p_world);
+	if (l.x < 0.0f || l.x > length || Math::abs(float(l.z)) > 0.5f * width) {
+		return -Math::INF;
+	}
+	Vector3 s;
+	for (int i = 0; i < 2; i++) {
+		s = xf.xform(Vector3(l.x, _grid_height(float(l.x), float(l.z)), l.z));
+		l = inv.xform(Vector3(p_world.x, s.y, p_world.z));
+	}
+	return float(s.y);
+}
+
 void RoadRelief3D::_queue_build() {
 	if (dirty) {
 		return;
@@ -340,6 +374,11 @@ void RoadRelief3D::_build() {
 			hs[j * nx + i] = local_height(i * dx, -0.5f * width + j * dz);
 		}
 	}
+	grid = hs;
+	grid_nx = nx;
+	grid_nz = nz;
+	grid_dx = dx;
+	grid_dz = dz;
 	PackedVector3Array verts;
 	PackedVector3Array normals;
 	PackedFloat32Array tangents;
@@ -495,6 +534,7 @@ void RoadRelief3D::set_collision_layer(uint32_t p_v) {
 void RoadRelief3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("local_height", "x", "z"), &RoadRelief3D::local_height);
 	ClassDB::bind_method(D_METHOD("get_height_at", "world_position"), &RoadRelief3D::get_height_at);
+	ClassDB::bind_method(D_METHOD("get_surface_height_at", "world_position"), &RoadRelief3D::get_surface_height_at);
 	ClassDB::bind_method(D_METHOD("contains", "world_position"), &RoadRelief3D::contains);
 	ClassDB::bind_method(D_METHOD("rebuild"), &RoadRelief3D::rebuild);
 

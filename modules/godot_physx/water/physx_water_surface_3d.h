@@ -1000,6 +1000,7 @@ private:
 	void _update(double p_delta); // one physics tick
 	void _frame_update(); // per-frame mode: the frame's ticks in one step
 	void _after_step();
+	void _render_caustics();
 	// p_repeat: wrap around instead of clamping at the edge (the FFT ocean is
 	// periodic).
 	float _bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z, bool p_repeat = false) const;

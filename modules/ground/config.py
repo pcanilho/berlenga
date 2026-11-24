@@ -16,6 +16,7 @@ def get_doc_classes():
         "GroundStreamers3D",
         "GroundSurface3D",
         "RoadRelief3D",
+        "StreetWater3D",
     ]
 
 

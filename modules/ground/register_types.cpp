@@ -38,6 +38,7 @@
 #include "ground_leg_mud_3d.h"
 #include "ground_surface_3d.h"
 #include "road_relief_3d.h"
+#include "street_water_3d.h"
 
 #include "core/object/class_db.h"
 
@@ -53,6 +54,7 @@ void initialize_ground_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(GroundClods3D);
 	GDREGISTER_CLASS(GroundDebrisFlow3D);
 	GDREGISTER_CLASS(RoadRelief3D);
+	GDREGISTER_CLASS(StreetWater3D);
 }
 
 void uninitialize_ground_module(ModuleInitializationLevel p_level) {
