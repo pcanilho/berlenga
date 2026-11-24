@@ -38,6 +38,7 @@ extends Node3D
 #                    under it combed flat and silted (WorldWater.high_water_at through a script stub)
 #   --seed-down      with --day (late summer, e.g. 245): thistledown loosed by a 10 m/s dry wind (SeedDown3D),
 #                    seen from beside a thistle in seed
+#   --thin-snow=D    a uniform fresh snowpack D m deep on the snow globals (thin snow on the sward; no SnowCover3D)
 #   --snowy          with --day: a snowy winter (January -6 C, July 18 C, 1100 mm): a long lie, then the sward after
 #                    the melt (GrassField3D.snowmelt); prints GRASS_MELT (days lain, days since the melt, matting)
 #   --hay=D          the meadow round the camera mown D days ago (GrassField3D.hay_meadows): 0 swaths, 1-2 tedded,
@@ -137,6 +138,7 @@ var season_day := 0
 var drought := false
 var frost := false
 var snowy := false
+var thin_snow := 0.0 # --thin-snow=D: a uniform fresh snowpack D m deep (100 kg/m3) on the snow globals, no SnowCover3D.
 var seed_down := false
 var pollen_cloud := false
 var hay_days := -1.0
@@ -384,6 +386,13 @@ func _ready() -> void:
 		elif a == "--drought": drought = true
 		elif a == "--frost": frost = true
 		elif a == "--snowy": snowy = true
+		elif a.begins_with("--thin-snow="):
+			thin_snow = float(a.get_slice("=", 1))
+			# The world tier of the snow globals (material.cpp snow_pack_at()): r depth m, g albedo, b melt, a density / 1000.
+			var si := Image.create(4, 4, false, Image.FORMAT_RGBAF)
+			si.fill(Color(thin_snow, 0.85, 0.0, 0.1))
+			RenderingServer.global_shader_parameter_set("snow_world_map", ImageTexture.create_from_image(si))
+			RenderingServer.global_shader_parameter_set("snow_world_rect", Vector4(-5000.0, -5000.0, 10000.0, 10000.0))
 		elif a == "--seed-down": seed_down = true
 		elif a == "--pollen-cloud": pollen_cloud = true
 		elif a.begins_with("--hay="): hay_days = float(a.get_slice("=", 1))

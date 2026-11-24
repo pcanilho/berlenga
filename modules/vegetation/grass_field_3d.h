@@ -733,6 +733,7 @@ public:
 	Color get_ground_tint() const { return ground_tint; }
 	void set_ground_tint_enabled(bool p_enabled);
 	bool is_ground_tint_enabled() const { return ground_tint_enabled; }
+	static String get_snow_sward_shader_code(); // grass_snow_cover(), grass_snow_coat(): thin snow on the sward (needs the snow functions).
 	static String get_ground_shader_code();
 	// grass_ground_opened(xz): what the ground's ruts, digs and puddles do to plants there (mud round 5): x lays them
 	// flat, y takes them away, z the ground's drop (m). Shared with PlantGenerator's plant shader.

@@ -2248,6 +2248,19 @@ Flora of the British Isles (3rd ed. 2010), added to make_flowering_grasses after
 - Cost: 8 to 25k triangles a plant (spikelets as glume pairs, the fog's technique); plants bench checks heights, stages
   and the 60k cap.
 
+## Thin snow on the sward (GrassField3D.get_snow_sward_shader_code)
+The scene's burial scout (valley, 10 Jan, about 1.6 cm of fresh snow) left the far hills green: the terrain laid its
+snow, but the blades and the far shell drew the green sward over it, and the blades only whitened below the snow's
+surface (1.6 cm of a 20 to 50 cm blade). Snow falls onto the sward's canopy, not under it: blades catch the flakes and
+bow under them, so a centimetre or two whitens a short sward with only the tips showing.
+- Covered share seen from above: Niu and Yang (2007), tanh(d / (2.5 z0 (rho / rho_new))), the same form as
+  snow_cover_at(), with the sward's roughness z0 = 0.1 h (the usual grass rule) instead of the bare ground's 0.004 m.
+  Fresh snow (100 kg/m3) 1.6 cm deep: 86% of a 5 cm sward, 31% of 20 cm, 13% of 50 cm; 5 cm deep: 100%, 76%, 38%.
+- Blades (and the far rings, the same shader; raster and path tracer run the same vertex code): a blade is laden
+  when its hash is under the share, white along its lower 70% with its tip clear; the burial term (below the snow's
+  surface) stays for deep packs. Far shell: its colour goes to the snow's albedo by the share at the sward's mean height.
+- Grass bench --thin-snow=D sets a uniform fresh pack on the snow globals (no SnowCover3D).
+
 ## Terracettes (GrassField3D.terracettes)
 Steep grazed hillsides carry sub-parallel steps along the contours (Wikipedia, "Terracette"). A grazing model
 (Seleb, Chatterjee and Bhamla 2025, arXiv 2504.17496) forms them from stock walking cross-slope routes and treads

@@ -594,6 +594,7 @@ float grass_salt_burn(vec2 p_xz) {
 	code += get_ground_opened_shader_code();
 	// The snowpack (SnowCover3D globals; material.cpp snow_pack_at(), snow_press()): it presses the sward flat.
 	code += BaseMaterial3D::get_snow_functions_code(true);
+	code += get_snow_sward_shader_code();
 	code += R"(
 // weather_wind() as felt by a blade: a damped oscillator of angular frequency omega0 and damping
 // zeta (Py, de Langre and Moulia 2006). The mean wind and the gust patches are slow and pass as
@@ -1030,7 +1031,7 @@ void vertex() {
 	v_wet = 0.0;
 	v_frost = 0.0;
 	v_salt = grass_salt_burn(base_w.xz);
-	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
+	v_snow = max(snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0, grass_snow_coat(snow_pk, rnd, t, h + ear_len));
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
@@ -1542,7 +1543,7 @@ void vertex() {
 	v_wet = 0.0;
 	v_frost = 0.0;
 	v_salt = grass_salt_burn(base_w.xz);
-	v_snow = snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0;
+	v_snow = max(snow_pk.x > 0.01 ? clamp((snow_pk.x - p.y) / 0.01 + 0.5, 0.0, 1.0) : 0.0, grass_snow_coat(snow_pk, rnd, t, h));
 	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
 	v_soft = 0.0;
 	// Softness with distance (docs/ideas/grass.md, "Colour without blotches"; Ghost of Tsushima, GDC 2021: normals
@@ -4240,11 +4241,15 @@ void GrassField3D::_update_shell(const Vector2 &p_center, TerrainDataMap3D *p_ma
 		sh.instantiate();
 		String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
 		code += "// GrassField3D far shell (docs/ideas/grass.md, \"Far grass\"): the sward as voxel columns on the ground.\n";
+		code += "uniform float sward_height = 0.3; // The blades' mean height (m): how thin snow covers the sward.\n";
 		code += "uniform vec2 shell_center;\nuniform vec4 shell_band; // x: where it is fully up, y: the band it rises over, z: where it is gone, w: the band it sinks over.\n";
 		// The climate code first: the turf (get_ground_shader_code()) cures by its wc_climate_cured.
 		code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
 		code += WorldContracts::climate_bare_shader_code();
 		code += get_ground_shader_code();
+		// Thin snow over the far sward, as on the blades (get_snow_sward_shader_code()).
+		code += BaseMaterial3D::get_snow_functions_code(true);
+		code += get_snow_sward_shader_code();
 		code += R"(
 varying vec3 v_wp;
 void vertex() {
@@ -4269,6 +4274,12 @@ void fragment() {
 	}
 	ALBEDO = grass_ground(v_wp, vec3(0.2, 0.16, 0.1)) * COLOR.r;
 	ROUGHNESS = 0.95;
+	// Snow on the sward: its covered share whitens the columns (the snow's albedo, the blades' tips the rest).
+	float sw = grass_snow_cover(snow_pack_at(v_wp), sward_height);
+	if (sw > 0.0) {
+		ALBEDO = mix(ALBEDO, vec3(snow_cover_at(v_wp).y), sw);
+		ROUGHNESS = mix(ROUGHNESS, 0.7, sw);
+	}
 	// The ground's own sheen under the sward (little): a plain 0.5 lit the columns' tops grey with the sky at grazing.
 	SPECULAR = grass_ground_specular(v_wp, 0.3);
 }
@@ -4278,6 +4289,7 @@ void fragment() {
 		shell_material->set_shader(sh);
 		shell_material->set_shader_parameter("climate_bare", climate_bare);
 	}
+	shell_material->set_shader_parameter("sward_height", 0.5f * (blade_height.x + blade_height.y));
 	shell_material->set_shader_parameter("shell_center", p_center);
 	shell_material->set_shader_parameter("shell_band", Vector4(in_end, in_band, out_end, out_band));
 	const float start = in_end - in_band;
@@ -6489,6 +6501,34 @@ void GrassField3D::_ground_bake_publish(const Vector4 &p_rect, const Ref<Image> 
 	rs->global_shader_parameter_set("grass_ground_dry", Vector4(dry_color.r, dry_color.g, dry_color.b, _dryness()));
 	ground_published = true;
 	rs->global_shader_parameter_set("grass_ground_params", Vector4(color_variation, trample_resistance, 0.0f, 0.0f));
+}
+
+// Thin snow on the sward (docs/ideas/vegetation.md, "Thin snow on the sward"). Snow falls onto the sward's canopy, not
+// under it: the blades catch the flakes and bow under them, so a centimetre or two whitens a short sward with only the
+// tips showing, long before the pack is deep enough to bury the blades. The share covered seen from above is Niu and
+// Yang's (2007) snow-covered fraction, tanh(d / (2.5 z0 (rho / rho_new))), with the sward's own roughness, z0 = 0.1 h
+// (the bare ground's is 0.004 m in snow_cover_at()): fresh snow (100 kg/m3) 1.6 cm deep covers 86% of a 5 cm sward,
+// 31% of a 20 cm one, 13% of a 50 cm one; settled, denser snow covers less for its depth. Each blade is laden or not
+// by that share, its lower 70% white and its tip clear; deeper, the pack buries the blades from the ground up (v_snow's
+// burial term).
+String GrassField3D::get_snow_sward_shader_code() {
+	return R"(
+// The share of a sward p_height (m) tall under snow seen from above, for a pack of depth p_pack.x (m) and density
+// p_pack.y (kg/m3). The sward's roughness length is a tenth of its height (the usual rule for grass, z0 = 0.1 h).
+float grass_snow_cover(vec2 p_pack, float p_height) {
+	if (p_pack.x <= 0.002) {
+		return 0.0;
+	}
+	float z0 = max(0.1 * p_height, 0.004);
+	return tanh(p_pack.x / (2.5 * z0 * max(p_pack.y / 100.0, 0.5)));
+}
+// How white a blade p_height (m) tall is at p_t along it (0 base, 1 tip) under that snow: the laden blades (p_rnd under
+// the share).
+float grass_snow_coat(vec2 p_pack, float p_rnd, float p_t, float p_height) {
+	float f = grass_snow_cover(p_pack, p_height);
+	return f > 0.0 ? step(fract(p_rnd * 29.37 + 0.71), f) * (1.0 - smoothstep(0.7, 0.97, p_t)) : 0.0;
+}
+)";
 }
 
 String GrassField3D::get_ground_shader_code() {
