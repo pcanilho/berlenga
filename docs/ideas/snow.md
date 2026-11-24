@@ -2133,6 +2133,11 @@ covered share following the depletion curve. The shader now:
 Raster (`snow_cover_at` in material.cpp, so BaseMaterial3D and the terrain material) and the path tracer (raygen
 snow block) read alike. `snow_pack_at` (the load on plants) keeps the cell mean. No setting.
 
+Thinning fringe (same day, from the docs review): the edges were still a clean switch from snow to ground. A
+second, fine lognormal field (1.1 m and 0.45 m, the scale of stones and tussocks under the last centimetres)
+multiplies the depth too, so near the melt-out line the snow breaks into specks and islands over a metre or so.
+Where the pack is deep the covered share saturates and the fine field does not show.
+
 ## Next round (proposed 19 Nov 2026, round 3): powder cloud, triggers, sharper flow
 
 **Triggers from people and vehicles.**

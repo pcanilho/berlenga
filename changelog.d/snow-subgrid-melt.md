@@ -1,1 +1,2 @@
 - Snow: thin snow melts out in organic patches (a smooth read of the cover map and a sub-grid depth spread) instead of blocks along the map's cells.
+- Snow: the melt-out line breaks into specks and islands over a short fringe instead of a clean edge.

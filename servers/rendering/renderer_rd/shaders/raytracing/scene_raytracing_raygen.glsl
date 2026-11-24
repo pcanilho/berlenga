@@ -3197,7 +3197,11 @@ float snow_value_noise(vec2 p_p) {
 float snow_subgrid(vec2 p_xz) {
 	float n = 0.55 * snow_value_noise(p_xz / 9.0) + 0.3 * snow_value_noise(p_xz / 3.5 + 17.0) + 0.15 * snow_value_noise(p_xz / 1.3 + 5.0);
 	float z = clamp((n - 0.5) / 0.15, -3.0, 3.0);
-	return exp(0.47 * z - 0.11);
+	// The thinning fringe: near the melt-out line the last centimetres break up at the scale of stones and
+	// tussocks under them, so the edge goes over a metre or so of speckle, not at once.
+	float m = 0.6 * snow_value_noise(p_xz / 1.1 + 3.0) + 0.4 * snow_value_noise(p_xz / 0.45 + 9.0);
+	float zf = clamp((m - 0.5) / 0.17, -3.0, 3.0);
+	return exp(0.47 * z + 0.5 * zf - 0.235);
 }
 
 vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint, float p_hoar) {
