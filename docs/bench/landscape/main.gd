@@ -7302,20 +7302,23 @@ func _frost_sorted_cam() -> void:
 	var bp := Vector3.ZERO
 	var bu := Vector3.ZERO
 	var upd := float(args.get("fs-up", "25"))
+	var gmax := 0.0
+	var fmin := float(args.get("fs-min", "0.6")) # --fs-min: the sorting strength a spot and its ring need
 	var xx := wr.position.x + 100.0
 	while xx < wr.end.x - 100.0:
 		var zz := wr.position.y + 100.0
 		while zz < wr.end.y - 100.0:
 			var p := Vector3(xx, 0, zz)
 			var g0: Vector2 = rocks.call("get_frost_at", p)
-			if g0.x > 0.6 and rad_to_deg(atan(_slip_grad(p).length())) < 2.0:
+			gmax = maxf(gmax, g0.x)
+			if g0.x > fmin and rad_to_deg(atan(_slip_grad(p).length())) < float(args.get("fs-flat", "2")):
 				var ok := true
 				var lo := 1.0
 				for k in 8:
 					var q := p + Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0)) * 15.0
 					var gq: Vector2 = rocks.call("get_frost_at", q)
 					lo = minf(lo, gq.x)
-				if lo > 0.6:
+				if lo > fmin:
 					# upslope: the steepest rise within 40 m
 					var up := Vector3.ZERO
 					var rise := -INF
@@ -7338,7 +7341,7 @@ func _frost_sorted_cam() -> void:
 			zz += 16.0
 		xx += 16.0
 	if best < 0.0:
-		_log("frost sorted: no sorted ground found")
+		_log("frost sorted: no sorted ground found (strongest sorting anywhere %.2f, needs %.2f)" % [gmax, fmin])
 		return
 	var c3: Camera3D = get_viewport().get_camera_3d()
 	var dir := bu.rotated(Vector3.UP, deg_to_rad(float(args.get("fs-yaw", "0"))))
