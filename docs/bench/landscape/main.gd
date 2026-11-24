@@ -4402,7 +4402,8 @@ func _build_camera() -> void:
 				# gentle ground.
 				for sp4 in rocks.get_pedestal_spots(Rect2(-pr, -pr, 2.0 * pr, 2.0 * pr), float(args.get("ped-step", "2")), 64):
 					var q := Vector3(sp4.x, sp4.y, sp4.z)
-					if rad_to_deg(data_map.get_slope_at(q)) <= 15.0:
+					var sdeg := rad_to_deg(data_map.get_slope_at(q))
+					if sdeg >= float(args.get("ped-min-slope", "0")) and sdeg <= float(args.get("ped-max-slope", "25")):
 						pp = q
 						pbest = sp4.w
 						break
