@@ -18,6 +18,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | `WeatherMap3D` shelter | weather | canopy height and closure, lee of obstacles (`get_shelter_at`) |
 | `WeatherMap3D` cloud shadow | weather | `get_sun_visibility_at` |
 | `WeatherMap3D` season | weather | `get_season()`, `get_season_at_height()`: phenology, snowpack, soil frost |
+| `weather_climate` global | weather | x the season's precipitation (mm a year), w 1 while a WeatherMap3D sets it (zeroed when it leaves the tree); read by shaders where no `terrain_climate_map` reaches (24 Nov, 6c0fc3de) |
 | `SkyClock` | weather | date, time, sun and moon |
 | `GroundSurface3D` | ground | soil per point (`get_soil`), deformation field (`ground_deform_map`), standing water, puddle ice, frost |
 | `SnowCover3D` | snow | `snow_cover` maps, depth, air at height (`get_air_temperature_at`) |
@@ -61,6 +62,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 | Ground → dust (Flow) | linked | Flow | |
 | Tyres, wind → dust off dry silt and sand | linked (20 Nov, mud a4571642) | `GroundSurface3D.add_dust(position, velocity, strength)` (strength = width x speed) | dry silt skins and dry sand answer; wind lifts dust off dry silt |
 | Terrain → runoff, rivers | linked | terrain runoff (monthly) | storm runoff to rivers: rain work |
+| Climate → bare soil between plants | linked (24 Nov, 6c0fc3de) | `WorldContracts::bare_share_for_precipitation(mm)` (0.9 at 200 mm to 0 at 700 mm a year), `climate_bare_share_at(p)`; shaders `terrain_climate_map` (g) else `weather_climate` | TerrainMaterial3D `climate_bare_soil`: soil and alluvium break into bare patches by the share (two-octave noise under its quantile, Rietkerk et al. 2004), `bare_soil_color` / `bare_alluvium_color`; `contract_albedo_at` mixes the mean. No climate: unchanged. Note: terrain-material.md, "Bare soil from the climate" |
 
 ### Snow
 
@@ -231,6 +233,7 @@ copy of shared state is listed under "Private copies" until it moves onto the so
 ## Private copies of shared state
 
 - `VegetationField3D` placement skew reads the wind setting: placement time only, harmless.
+- `RockField3D` rain splash pedestals keep their own bare-share copy until the rocks work reads `climate_bare_share_at` (24 Nov).
 
 ## Techniques for the planned links
 
