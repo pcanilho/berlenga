@@ -713,6 +713,16 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	bool uses_ior = false;
 	actions.usage_flag_pointers["IOR"] = &uses_ior;
 	actions.function_renames["fwidth"] = "rt_fwidth";
+	actions.function_renames["fwidthCoarse"] = "rt_fwidth";
+	actions.function_renames["fwidthFine"] = "rt_fwidth";
+	// No screen derivatives in a hit shader: a material that takes its own (a texture's mip from coordinates it
+	// computes) compiles instead of falling back to the default material.
+	actions.function_renames["dFdx"] = "rt_dfd";
+	actions.function_renames["dFdy"] = "rt_dfd";
+	actions.function_renames["dFdxCoarse"] = "rt_dfd";
+	actions.function_renames["dFdxFine"] = "rt_dfd";
+	actions.function_renames["dFdyCoarse"] = "rt_dfd";
+	actions.function_renames["dFdyFine"] = "rt_dfd";
 	int blend_modei = RendererRD::MaterialStorage::ShaderData::BLEND_MODE_MIX;
 	actions.render_mode_values["blend_add"] = Pair<int *, int>(&blend_modei, RendererRD::MaterialStorage::ShaderData::BLEND_MODE_ADD);
 	actions.render_mode_values["blend_mix"] = Pair<int *, int>(&blend_modei, RendererRD::MaterialStorage::ShaderData::BLEND_MODE_MIX);

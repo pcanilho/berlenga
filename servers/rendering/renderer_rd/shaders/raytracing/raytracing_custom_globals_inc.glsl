@@ -150,6 +150,24 @@ vec4 rt_fwidth(vec4 value) {
 	return vec4(RT_FWIDTH_EPSILON);
 }
 
+// dFdx/dFdy: none across a ray's hit either. Zero (a textureGrad() given them reads the finest mip, which the path
+// tracer's many samples a pixel average anyway).
+float rt_dfd(float value) {
+	return 0.0;
+}
+
+vec2 rt_dfd(vec2 value) {
+	return vec2(0.0);
+}
+
+vec3 rt_dfd(vec3 value) {
+	return vec3(0.0);
+}
+
+vec4 rt_dfd(vec4 value) {
+	return vec4(0.0);
+}
+
 /* RT_CUSTOM_TEXTURE_DEFINES */
 /* RT_CUSTOM_FRAGMENT_GLOBALS */
 

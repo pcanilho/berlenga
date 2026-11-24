@@ -128,6 +128,12 @@ private:
 	bool salt_bloom = true; // the spray's salt crust on rock and scree (WeatherMap3D sea spray)
 	bool snow_enabled = true;
 	float snow_max_slope = 60.0f;
+	// Soil and alluvium bare of plants by the climate's dryness (WorldContracts::bare_share_for_precipitation): the
+	// layers' colours are a vegetated topsoil; bare, dry soil takes these (Munsell 10YR 5/3 brown loam, 10YR 6/2
+	// grey-brown silt).
+	bool climate_bare_soil = true;
+	Color bare_soil_color = Color(0.49, 0.40, 0.33);
+	Color bare_alluvium_color = Color(0.60, 0.55, 0.49);
 	bool far_blend_enabled = true;
 	float far_start = 300.0;
 	bool far_start_from_vegetation = true;
@@ -213,6 +219,12 @@ public:
 	bool is_snow_enabled() const { return snow_enabled; }
 	void set_snow_max_slope(float p_degrees);
 	float get_snow_max_slope() const { return snow_max_slope; }
+	void set_climate_bare_soil(bool p_enabled);
+	bool is_climate_bare_soil() const { return climate_bare_soil; }
+	void set_bare_soil_color(const Color &p_color);
+	Color get_bare_soil_color() const { return bare_soil_color; }
+	void set_bare_alluvium_color(const Color &p_color);
+	Color get_bare_alluvium_color() const { return bare_alluvium_color; }
 	void set_ground_deform_enabled(bool p_enabled);
 	bool is_ground_deform_enabled() const { return ground_deform_enabled; }
 

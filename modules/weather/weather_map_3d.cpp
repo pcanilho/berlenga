@@ -1371,6 +1371,9 @@ void WeatherMap3D::_publish_globals() {
 	_set_global("weather_map_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("weather_wind_info", Vector4(cur_wind_direction.x, cur_wind_direction.y, gust_sigma_scale, z0), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("weather_ground_height", ground_height, RSE::GLOBAL_VAR_TYPE_FLOAT);
+	// The season climate for ground shaders (x precipitation mm a year, w 1 while published): the terrain material's
+	// bare soil where no TerrainDataMap3D climate map reaches (WorldContracts::bare_share_for_precipitation).
+	_set_global("weather_climate", Vector4(_season_climate().precipitation, 0.0f, 0.0f, 1.0f), RSE::GLOBAL_VAR_TYPE_VEC4);
 	// Vortices added before this map was active (a dust devil spawned on ready) reach the shaders here.
 	if (vortices_unpublished) {
 		_publish_vortices();
@@ -1535,6 +1538,9 @@ void WeatherMap3D::_notification(int p_what) {
 					RenderingServer::get_singleton()->global_shader_parameter_set(name, Vector4());
 				}
 				published_rects.clear();
+				if (publish_shader_globals && wind_texture.is_valid()) { // published with the maps (_publish_globals)
+					RenderingServer::get_singleton()->global_shader_parameter_set("weather_climate", Vector4());
+				}
 			}
 			WorldContracts::unregister_weather(this);
 			set_physics_process_internal(false);

@@ -406,6 +406,27 @@ The dark ovals in that frame were not the trail: the scree's parallax stones cas
 where the scree weight thins to a few per cent (stones millimetres tall, but a penumbra and bias that do not shrink
 with them). tm_rd_pom_shadow now fades with the stones' height.
 
+## Bare soil from the climate (24 Nov, gap from ground detail)
+
+The soil and alluvium layers' colours are a vegetated topsoil (olive), right under a closed sward and wrong in a dry
+climate: at 350 mm a year about 70% of the ground is bare. Research: perennial plant cover on soil follows the year's
+rain, about a tenth of the ground at 200 mm to most of it by 700 mm (rain-use curves of semi-arid rangelands, Le
+Houerou 1984), and dryland cover is patchy, not thin: clumps with bare soil between, patches of metres (self-organised
+patchiness, Rietkerk et al. 2004). Bare dry soil colours from the Munsell soil charts: a brown loam 10YR 5/3, a
+grey-brown silt 10YR 6/2.
+
+- One rule: `WorldContracts::bare_share_for_precipitation(mm)` (0.9 at 200 mm to 0 at 700 mm) and
+  `climate_bare_share_at(p)` (the weather's season climate times the climate's factor there). The stones' rain
+  splash pedestals read the same share (RockField3D keeps its own copy until the rocks work switches to this).
+- Shader: precipitation from TerrainDataMap3D's `terrain_climate_map` (g, m a year) where it reaches, else the
+  weather's new `weather_climate` global (x mm a year, w 1 while set; WeatherMap3D publishes it, zeroed when it
+  leaves). No climate: the layers' colours as before, so humid worlds are unchanged.
+- Soil and alluvium break into bare patches and cover by the share: a two-octave noise (4 m, 1.3 m) under the share's
+  quantile (logistic probit; measured mean 0.5, sd 0.16), so the bare area is the share; past a footprint of about half
+  a metre the patches fade to the share. Bare patches take `bare_soil_color` / `bare_alluvium_color` with the scans'
+  detail kept. Grass fields and far plant cover still draw over it.
+- CPU: `contract_albedo_at` mixes the same share (the patches' mean). Setting: `TerrainMaterial3D.climate_bare_soil`.
+
 ## Next round candidates (21 Nov, card posted)
 
 ### Rills and gullies as geometry (recommended)

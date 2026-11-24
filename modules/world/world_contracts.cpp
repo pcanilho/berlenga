@@ -1274,6 +1274,19 @@ float WorldContracts::climate_precipitation_factor_at(const Vector3 &p_position)
 	return 1.0f;
 }
 
+float WorldContracts::bare_share_for_precipitation(float p_mm) {
+	return 0.9f * (1.0f - Math::smoothstep(200.0f, 700.0f, p_mm));
+}
+
+float WorldContracts::climate_bare_share_at(const Vector3 &p_position) {
+	WeatherSeason::Climate cl;
+	const WorldWeather *w = weather();
+	if (!w || !w->season_climate(cl)) {
+		return -1.0f;
+	}
+	return bare_share_for_precipitation(cl.precipitation * climate_precipitation_factor_at(p_position));
+}
+
 void WorldContracts::register_ground_color(WorldGroundColorProvider *p_provider) {
 	if (singleton && p_provider && singleton->ground_color_providers.find(p_provider) < 0) {
 		singleton->ground_color_providers.push_back(p_provider);

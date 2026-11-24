@@ -1351,3 +1351,7 @@ Niagara's and the Colorado Plateau's ledges). The overhang is limited by the cap
   back must stand on the bench, so a spur or gully corner gets none. Its own random stream keeps the cliff blocks'
   draws unchanged. Bench view: `--world --view=cliff --form=ledge` (the biggest sunlit slab, from out over its lip).
 - The library key's family field grew to 5 bits (17 families); the roundness bin moved up one bit.
+- Plants keep off them (24 Nov): `get_obstacles` now includes the cliff layer while `ledge_slabs` is on, placing
+  only its ledge slabs (the wall blocks stand in faces too steep for plants). Each slab is a row of discs a depth
+  apart along the lip, as wide as the slab is deep, at the top's height, with obstacle height 0 (so not a wind
+  obstacle). Test: "ledge slabs as plant obstacles".

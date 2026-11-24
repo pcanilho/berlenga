@@ -1385,7 +1385,7 @@ func _frame_log() -> void:
 			if tp.distance_to(c3.global_position) > float(args.get("log-radius", "70")):
 				continue
 			# Inside views (--stand-in): only logs under the closed stand, never at the meadow's rim.
-			if args.has("stand-in") and veg.get_stand_shade_at(tp) < 0.5:
+			if args.has("stand-in") and veg.get_stand_shade_at(tp) < 0.75:
 				continue
 			# The axis: the heading along which the ground stays under the log (get_deadwood_at side < 0).
 			var dir := Vector3.ZERO
@@ -1429,10 +1429,12 @@ func _frame_log() -> void:
 	var side := axis.cross(Vector3.UP).normalized()
 	if Vector2(side.x, side.z).dot(sun_flat) < 0.0:
 		side = -side
-	var cp := best_a.lerp(best_b, float(args.get("log-from", "0.15"))) + side * float(args.get("log-side", "1.3"))
+	# Inside views (--stand-in) stand back so the log fills the near third with the boles rising behind it.
+	var inside := args.has("stand-in")
+	var cp := best_a.lerp(best_b, float(args.get("log-from", "0.15"))) + side * float(args.get("log-side", "5" if inside else "1.3"))
 	cp.y = height_at(cp.x, cp.z) + float(args.get("log-height", "1.7" if args.has("stand-in") else "1.2"))
 	var mid := best_a.lerp(best_b, float(args.get("log-at", "0.55")))
-	mid.y = height_at(mid.x, mid.z) + 0.1
+	mid.y = height_at(mid.x, mid.z) + float(args.get("log-look-h", "2.2" if inside else "0.1"))
 	c3.global_position = cp
 	c3.look_at(mid)
 	var n := 0
@@ -4223,9 +4225,7 @@ func _build_camera() -> void:
 			# Where the clearing's mask meets the forest: walk north up the valley from the plain until the sediment
 			# thins out, then look at that edge from the grass.
 			var ex := float(args.get("treeline-x", "300"))
-			var ez := 400.0
-			while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
-				ez -= 16.0
+			var ez := _meadow_edge(ex)
 			cam.fov = 50.0
 			var cz := ez + 220.0
 			cam.position = Vector3(ex - 60.0, height_at(ex - 60.0, cz) + 14.0, cz)
@@ -4321,16 +4321,32 @@ func _build_camera() -> void:
 				_log("ledge view: no overhanging lips within %.0f m (%d lips)" % [lr, lips.size()])
 			else:
 				var lpos: Vector3 = lpick["position"]
+				var lip_y := lpos.y
+				lpos.y = height_at(lpos.x, lpos.z) # the ground at the lip (the lip's own y is logged beside it)
 				var lout: Vector3 = lpick["out"]
 				lout.y = 0.0
 				lout = lout.normalized()
+				# Out from the face: the side where the ground falls away (below the lip), not into the hill.
+				var lbk := float(args.get("ledge-back", "22"))
+				if height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk) > height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk):
+					lout = -lout
 				var along := lout.cross(Vector3.UP).normalized()
-				var lc := lpos + lout * float(args.get("ledge-back", "22")) + along * float(args.get("ledge-side", "9"))
+				# Steep ground: try both sides and a few distances, keeping the spot whose ground sits furthest under the lip.
+				var lsd := float(args.get("ledge-side", "9"))
+				var lc := lpos + lout * lbk + along * lsd
+				var lgb := INF
+				for bk in [lbk, lbk * 0.7, lbk * 1.4]:
+					for sd in [lsd, -lsd, 0.0]:
+						var q: Vector3 = lpos + lout * float(bk) + along * float(sd)
+						var qh := height_at(q.x, q.z)
+						if qh < lgb:
+							lgb = qh
+							lc = q
 				lc.y = maxf(height_at(lc.x, lc.z) + 1.7, lpos.y + float(args.get("ledge-up", "-2")))
 				cam.fov = 55.0
 				cam.position = lc
 				cam.look_at(lpos)
-				_log("ledge view: %d lips, pick %s overhang %.2f m cap %.2f m, score %.1f, camera %s" % [lips.size(), str(lpos.round()), float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round())])
+				_log("ledge view: %d lips, pick %s (lip y %.1f) overhang %.2f m cap %.2f m, score %.1f, camera %s, ground out %.1f / in %.1f" % [lips.size(), str(lpos.round()), lip_y, float(lpick["overhang"]), float(lpick["cap_thickness"]), lbest, str(lc.round()), height_at(lpos.x + lout.x * lbk, lpos.z + lout.z * lbk), height_at(lpos.x - lout.x * lbk, lpos.z - lout.z * lbk)])
 		"gully":
 			# A raised oblique down a real gully onto its fan (RockField3D.runoff_gravel: a coarse lag on the floor,
 			# fine grains on the fan). The strongest open gully on soil (TerrainGenerator3D.get_gully_at, as the rocks
@@ -4352,7 +4368,8 @@ func _build_camera() -> void:
 					var ny := Vector3(-gx, 16.0, -gz).normalized().y
 					if ny < cos(deg_to_rad(35.0)) or ny > cos(deg_to_rad(15.0)):
 						continue
-					var gl: Vector2 = gen.get_gully_at(p, ny)
+					# --gully-any: any open soil slope in the range (bare-soil and slope views), not only gullies.
+					var gl: Vector2 = Vector2(1.0, 0.0) if args.has("gully-any") else gen.get_gully_at(p, ny)
 					if gl.x < 0.5 or gl.y > 0.3:
 						continue
 					var tt := Vector3(-gz, 0, gx).normalized() * 10.0
@@ -4374,9 +4391,7 @@ func _build_camera() -> void:
 			# Standing in the clearing at eye height, 60 m short of the forest edge (the treeline view's edge), looking
 			# across the herbs and grass at it.
 			var ex := float(args.get("treeline-x", "300"))
-			var ez := 400.0
-			while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
-				ez -= 16.0
+			var ez := _meadow_edge(ex)
 			cam.fov = 55.0
 			var cz := ez + 60.0
 			cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, cz) + 1.7, cz)
@@ -5132,6 +5147,17 @@ func _build_cover() -> void:
 		if "undergrowth_field" in g:
 			g.undergrowth_field = g.get_path_to(cover) # the sward thins under bracken and bramble stands
 	_log("cover: %d species streaming round the camera, set up in %d ms" % [b.species.size(), Time.get_ticks_msec() - t])
+
+
+# The meadow's forest edge along x = ex: walking down z from 400, past any wood first (the floodplain meadow need
+# not reach z = 400 in every world), across the meadow (sediment over 0.4) to where the wood starts again.
+func _meadow_edge(ex: float) -> float:
+	var ez := 400.0
+	while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) <= 0.4:
+		ez -= 16.0
+	while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
+		ez -= 16.0
+	return ez if ez > -1500.0 else 400.0
 
 
 func _has_prop(cls: String, prop: String) -> bool:
@@ -7306,9 +7332,7 @@ func _hay_list() -> Array:
 	if at == "" and args.get("view", "wide") == "meadow" and gen != null:
 		# The meadow view's clearing: between the camera and the forest edge it looks at (as _place_camera).
 		var ex := float(args.get("treeline-x", "300"))
-		var ez := 400.0
-		while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
-			ez -= 16.0
+		var ez := _meadow_edge(ex)
 		w = float(args.get("hay-w", "22"))
 		l = float(args.get("hay-l", "56"))
 		cx = ex - 10.0

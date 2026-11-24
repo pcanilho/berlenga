@@ -938,6 +938,13 @@ public:
 	static void unregister_climate(WorldClimateProvider *p_provider);
 	// The climate's precipitation factor at the point (1 where no climate reaches it).
 	static float climate_precipitation_factor_at(const Vector3 &p_position);
+	// The share of soil left bare of plants by the climate's dryness (0..0.9): perennial plant cover on soil follows
+	// the year's rain, about a tenth of the ground at 200 mm to most of it by 700 mm (rain-use curves of semi-arid
+	// rangelands, Le Houerou 1984), so the bare share falls from 0.9 to 0 over 200 to 700 mm. One rule for every
+	// reader: the terrain material's soil colour (its shader mirrors it), the stones' rain splash pedestals.
+	static float bare_share_for_precipitation(float p_mm);
+	// At a point: the season climate's precipitation times the climate's factor there; -1 with no weather climate.
+	static float climate_bare_share_at(const Vector3 &p_position);
 	static void register_ground_color(WorldGroundColorProvider *p_provider); // any number: the first that knows the point answers
 	static void unregister_ground_color(WorldGroundColorProvider *p_provider);
 	static void register_relief(WorldReliefProvider *p_provider); // any number: the first that knows the point answers

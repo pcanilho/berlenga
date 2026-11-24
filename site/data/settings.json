@@ -1089,7 +1089,7 @@
     "use_generator()"
    ],
    "note": "",
-   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). Rock faces weather by aspect, with lichen rosettes in colonies, moss on shaded ledges and seep stripes down gullies (`tm_face_weathering`, `tm_latitude`).",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow; layer textures are hex-tiled (Mikkelsen 2022), so no tiling repeat shows, and scanned textures can serve as detail around the geology's own colours (`TerrainMaterialLayer.detail_only`). In dry climates the ground breaks into patches of bare soil and plant cover by the year's rain (`climate_bare_soil`). Rock faces weather by aspect, with lichen rosettes in colonies, moss on shaded ledges and seep stripes down gullies (`tm_face_weathering`, `tm_latitude`).",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1743,6 +1743,17 @@
    ],
    "note": "",
    "what": "coarse lag gathers on gully floors and fine grains spread on the fans below.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Rain splash pedestals",
+   "settings": [
+    "RockField3D.rain_pedestals"
+   ],
+   "note": "",
+   "what": "on bare, rained-on soil, stones stand on little columns of the soil they shielded from the splash, and some topple off.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
