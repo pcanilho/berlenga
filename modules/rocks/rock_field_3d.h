@@ -480,6 +480,7 @@ private:
 	ObjectID generator_id;
 	LocalVector<River> rivers;
 	bool rivers_ready = false;
+	bool ledge_slabs = true; // the caprock slabs along the benches' lips (TerrainGenerator3D.get_ledge_lips)
 	Mutex rivers_lock; // _prepare_rivers: workers may ask for the list at once
 	HashMap<uint32_t, Library> libraries;
 	HashMap<int, Ref<ShaderMaterial>> materials; // per rock type, with this field's lichen and moss
@@ -700,6 +701,7 @@ private:
 
 private:
 	// p_libs and p_seeds: the ground detail's snapshot (DetailJob) when placing off the main thread.
+	void _place_ledges(const TerrainGenerator3D *p_gen, Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones);
 	void _place(Layer p_layer, const Rect2 &p_rect, uint32_t p_seed, LocalVector<Stone> &r_stones, const HashMap<uint32_t, Library *> *p_libs = nullptr, const LocalVector<DetailSeed> *p_seeds = nullptr);
 	void _rest(const TerrainGenerator3D *p_gen, Stone &r_stone, const Library &p_lib, const Vector3 &p_xz, real_t p_yaw, real_t p_sink, const Vector3 &p_tilt_axis, real_t p_tilt, real_t p_follow_ground) const;
 	Ref<ShaderMaterial> _material(RockGenerator::RockType p_type, RockGenerator::Family p_family = RockGenerator::FAMILY_ROCKFALL, bool p_detail = false);
@@ -826,6 +828,8 @@ public:
 	void set_layer_density(int p_layer, real_t p_density);
 	real_t get_layer_density(int p_layer) const;
 	void set_far_thinning(bool p_enabled) { far_thinning = p_enabled; }
+	void set_ledge_slabs(bool p_enabled);
+	bool is_ledge_slabs() const { return ledge_slabs; }
 	void set_rt_instanced_cells(bool p_enabled);
 	bool is_rt_instanced_cells() const { return rt_instanced_cells; }
 	Dictionary get_rt_stats() const;

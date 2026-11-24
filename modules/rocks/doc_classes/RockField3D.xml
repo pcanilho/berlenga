@@ -422,7 +422,7 @@
 			Rock type of glacial erratics, carried from elsewhere.
 		</member>
 		<member name="rt_instanced_cells" type="bool" setter="set_rt_instanced_cells" getter="is_rt_instanced_cells" default="false">
-			The path tracer draws the cells' stones as instances of their shapes (one shared acceleration structure per shape, one entry per stone) instead of a merged structure per group that holds a copy of every stone's triangles. The same image in less memory; more instances to trace. See [method get_rt_stats].
+			The path tracer draws the cells' stones as instances of their shapes (one shared acceleration structure per shape, one entry per stone) instead of a merged structure per group that holds a copy of every stone's triangles. The same image; less memory only where many groups would be merged (where most are already over the cap, the CPU copies of the records cost more than the merged copies saved), and more instances to trace. See [method get_rt_stats].
 		</member>
 		<member name="far_widen" type="bool" setter="set_far_widen" getter="is_far_widen" default="true">
 			While [member far_thinning] thins a cell, the stones it still draws grow (up to 1.6 times) so the field keeps the stone cover of the records it dropped, as the ground's far stones take over. The far tier's big stones are never widened, so they meet their far copies.
@@ -498,6 +498,9 @@
 		</member>
 		<member name="landform_radius" type="float" setter="set_layer_radius" getter="get_layer_radius" default="900.0">
 			How far round the follow target landforms are built.
+		</member>
+		<member name="ledge_slabs" type="bool" setter="set_ledge_slabs" getter="is_ledge_slabs" default="true">
+			Caprock slabs along the lips of the terrain's benches ([method TerrainGenerator3D.get_ledge_lips]): one slab between two cross joints after another, each as thick as the lip's cap, hanging out by its overhang, its back under the bench; a gap now and then where a block fell.
 		</member>
 		<member name="lichen_cover" type="float" setter="set_lichen_cover" getter="get_lichen_cover" default="0.5">
 			Lichen crust on upper faces, from 0 to 1.

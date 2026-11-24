@@ -1323,3 +1323,31 @@ dropped them: near rocks went missing in path traced frames while raster drew th
 shapes both gone; with the cut-out line removed they came back). camera_cutout_discard() now returns false in path
 tracer shaders (raygen starts camera rays past the cut), and a shader whose only discards are the guarded cut-out
 stays opaque with no any-hit (12b84872).
+
+## Instanced cells in the path tracer, measured (23 Nov)
+
+`rt_instanced_cells` stays off. At the gully (1080, path traced) it traced 1.4% slower, and at 640 it held 1.37 GB
+more (AS 1676 against 1061 MB, buffers 2264 against 1507 MB). There only 168 small groups (396 stones, 4.8M
+triangles) take the merged path anyway; the rest are over the cap and already instanced, and the toggle adds the CPU
+copy of every instanced group's records. It would pay only where many groups sit under the cap.
+
+## Ledge slabs (23 Nov)
+
+Hard beds over weaker ones weather into benches whose caprock stands out over the lip: the weak bed under it retreats
+faster (differential erosion), the cap hangs out as a cantilever until it breaks off along its cross joints and a fresh
+tension fracture, and the block topples onto the talus (Lamb and Dietrich 2009, block toppling of jointed caprock;
+Niagara's and the Colorado Plateau's ledges). The overhang is limited by the cap's strength and thickness.
+
+- Shape: `RockGenerator.FAMILY_LEDGE`, a tabular slab (x along the lip 1.5 to 2.6 times its depth, y the bed's
+  thickness, 0.17 to 0.4 of its depth, z out over the lip). The beds' laminae run in it as in a cliff block. The lip
+  carries one or two slanted breaks (the last sometimes fresh), the soffit's front edge is bevelled up (the drip line),
+  the ends are cross joints at a slant in plan, and 60% of slabs have a stress-release crack open behind the lip.
+- Placement: `RockField3D.ledge_slabs` (on), in the cliff layer, along `TerrainGenerator3D.get_ledge_lips` (terrain's
+  contract, docs/ideas/terrain-generation.md, "Ledge lips"). Slab after slab along each lip, each as thick as the lip's
+  cap and hanging out by its overhang, but never more than 45% of its depth (as much lies under the bench as hangs
+  out). The top sits a few centimetres under the drawn bench's edge (heightfield plus WorldGround.relief_at) and
+  follows the bench's rise behind the lip, never a shelf on it. The lip points come in no order, so each slab (or
+  gap) claims its stretch of lip. The lip's `weight` is the chance of a slab, so gaps show where blocks fell. Ends and
+  back must stand on the bench, so a spur or gully corner gets none. Its own random stream keeps the cliff blocks'
+  draws unchanged. Bench view: `--world --view=cliff --form=ledge` (the biggest sunlit slab, from out over its lip).
+- The library key's family field grew to 5 bits (17 families); the roundness bin moved up one bit.

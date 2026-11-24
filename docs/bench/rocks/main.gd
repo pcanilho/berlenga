@@ -30,7 +30,7 @@ extends Node3D
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
 #   --cell=m              with --world: the generator's cell size (8; 4 for close shore and cliff shots)
-#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
+#   --form=stack|arch     with --view=coast: frame the biggest stack or arch; --form=ledge with --view=cliff: the ledge slabs; --form=pavement|fin|hoodoo|pothole|goblin|cave_mouth with --view=landform
 #   --seaward [--side=f --cam-height=m --look-height=m] with --view=coast: from the land side, looking out to sea
 #   --no-ground-blend     the stones' feet not blended into the ground (for a before frame)
 #   --no-ground-contact   no damp ring or banked fines on the ground round the stones (for a before frame)
@@ -130,7 +130,7 @@ class SwellStub extends WorldWater:
 
 
 const TYPES := ["granite", "limestone", "sandstone", "basalt", "slate"]
-const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth"]
+const FAMILIES := ["rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth", "ledge"]
 const LAYERS := ["rockfall", "scree", "glacial", "river", "shore", "cliff", "tor", "coast", "landform"]
 var WORLD := 2048.0 # --world-size=m (a smaller world for path traced stills that would not fit the memory)
 
@@ -947,6 +947,16 @@ func _world() -> void:
 		cam.position = mouth + best_dir * d
 		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, mouth.y + float(args.get("cam-up", "1.6")))
 		look = mouth + Vector3(0, float(args.get("look-height", "3")), 0)
+	if form_stone.has("basis") and args.get("form", "") == "ledge" and not args.has("cam"):
+		# A ledge slab from out over its lip and to one side, a little under its top: the overhang and its soffit.
+		var lb: Basis = form_stone["basis"]
+		var o := Vector3(lb.z.x, 0, lb.z.z).normalized()
+		var sd := Vector3(-o.z, 0, o.x)
+		var lip: Vector3 = form_stone["position"] + lb.z * 0.8
+		var d := float(args.get("dist", "9"))
+		cam.position = lip + (o + sd * float(args.get("side", "0.9"))).normalized() * d
+		cam.position.y = maxf(gen.get_height(cam.position) + 1.7, lip.y + float(args.get("cam-up", "0.5")))
+		look = lip
 	cam.look_at(look)
 	if args.has("cam"):
 		# --cam/--look win over the view's camera (a fixed shot of a spot in the world).
@@ -2047,6 +2057,24 @@ func _densest(layer: int) -> Vector3:
 				best["score"] = score
 		if not best.is_empty():
 			print("%s at %s" % [args["form"], best["position"]])
+			form_stone = best
+			return best["position"]
+	if layer == RockField3D.LAYER_CLIFF and args.get("form", "") == "ledge":
+		# --view=cliff --form=ledge: where the ledge slabs stand thickest.
+		var ledges := []
+		for s in stones:
+			if int(s["family"]) == RockGenerator.FAMILY_LEDGE:
+				ledges.append(s)
+		print("ledge slabs in view range: %d" % ledges.size())
+		# The biggest in the sun, framed from out and to one side (the ledge view below).
+		var best := {}
+		for s in ledges:
+			var sc := float(s["scale"]) + (100.0 if _sunlit(s["position"] + Vector3(0, 1, 0)) else 0.0)
+			if best.is_empty() or sc > float(best["score"]):
+				best = s.duplicate()
+				best["score"] = sc
+		if not best.is_empty():
+			print("ledge slab at %s (scale %.2f)" % [best["position"], best["scale"]])
 			form_stone = best
 			return best["position"]
 	var cells := {}

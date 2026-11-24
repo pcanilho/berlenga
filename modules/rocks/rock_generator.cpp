@@ -82,7 +82,7 @@ String RockGenerator::get_rock_type_name(RockType p_type) {
 }
 
 String RockGenerator::get_family_name(Family p_family) {
-	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth" };
+	static const char *names[FAMILY_MAX] = { "rockfall", "scree", "glacial", "cobble", "pebble", "cliff_block", "corestone", "sea_stack", "sea_arch", "sea_platform", "hoodoo", "pavement", "fin", "pothole", "goblin", "cave_mouth", "ledge" };
 	return names[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -95,7 +95,7 @@ void RockGenerator::set_family(Family p_family) {
 }
 
 int RockGenerator::get_base_resolution() const {
-	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224, 220, 128, 176 };
+	static const int res[FAMILY_MAX] = { 112, 88, 96, 56, 48, 112, 104, 256, 224, 220, 200, 240, 224, 220, 128, 176, 192 };
 	return resolution > 0 ? resolution : res[family];
 }
 
@@ -122,7 +122,7 @@ real_t RockGenerator::get_marks_metres_per_unit() const {
 }
 
 real_t RockGenerator::get_family_metres_per_unit(Family p_family) {
-	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0, 2.5, 1.2, 5.0 };
+	static const real_t mpu[FAMILY_MAX] = { 0.65, 0.16, 0.85, 0.11, 0.035, 0.65, 1.0, 3.5, 5.0, 5.0, 2.5, 4.0, 5.0, 2.5, 1.2, 5.0, 2.0 };
 	return mpu[CLAMP(int(p_family), 0, int(FAMILY_MAX) - 1)];
 }
 
@@ -134,6 +134,7 @@ real_t RockGenerator::get_effective_transport_distance() const {
 	switch (family) {
 		case FAMILY_ROCKFALL:
 		case FAMILY_CLIFF_BLOCK:
+		case FAMILY_LEDGE:
 			return 0.0;
 		case FAMILY_SCREE:
 			return 30.0; // the talus run: chipped, not rounded
@@ -152,7 +153,7 @@ real_t RockGenerator::get_effective_weathering() const {
 	if (weathering >= 0.0) {
 		return weathering;
 	}
-	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f, 0.85f, 0.6f };
+	static const float w[FAMILY_MAX] = { 0.45f, 0.2f, 0.6f, 0.15f, 0.05f, 0.7f, 0.95f, 0.6f, 0.6f, 0.45f, 0.7f, 0.6f, 0.75f, 0.1f, 0.85f, 0.6f, 0.65f };
 	return w[family];
 }
 
@@ -818,6 +819,13 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	} else if (family == FAMILY_POTHOLE) {
 		a = 1.8f + 0.6f * rng.randf(); // x: down the channel; z: across; y: the slab's depth below the bed
 		c = 0.26f + 0.08f * rng.randf();
+	} else if (family == FAMILY_LEDGE) {
+		// A ledge slab: the hard caprock bed over a weaker one that weathers back faster, left standing out as a
+		// cantilever until it breaks off along its joints (differential erosion; Lamb and Dietrich 2009 for the
+		// toppling of the joint blocks). x: along the lip, between two cross joints; y: the bed's thickness; z: out
+		// over the lip (+z), the back half under the bench. As thick as a fifth to two fifths of its depth.
+		a = 1.5f + 1.1f * rng.randf();
+		c = 0.17f + 0.23f * rng.randf();
 	}
 	const bool landform = family == FAMILY_HOODOO || family == FAMILY_PAVEMENT || family == FAMILY_FIN || family == FAMILY_POTHOLE || family == FAMILY_GOBLIN || family == FAMILY_CAVE_MOUTH;
 	const bool upright = family == FAMILY_SEA_STACK || family == FAMILY_HOODOO || family == FAMILY_GOBLIN; // stood on end in the field: beds cross x
@@ -894,7 +902,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			const Vector3 n = Vector3(1.0f, slope * Math::cos(az), slope * Math::sin(az)).normalized();
 			planes.push_back({ n, float(n.x * a * off), k > 0 && rng.randf() < 0.5f });
 		}
-	} else if (lith.columnar && family != FAMILY_PEBBLE && family != FAMILY_SEA_ARCH && family != FAMILY_SEA_PLATFORM && family != FAMILY_PAVEMENT && family != FAMILY_FIN && family != FAMILY_POTHOLE && family != FAMILY_CAVE_MOUTH) {
+	} else if (lith.columnar && family != FAMILY_PEBBLE && family != FAMILY_SEA_ARCH && family != FAMILY_SEA_PLATFORM && family != FAMILY_PAVEMENT && family != FAMILY_FIN && family != FAMILY_POTHOLE && family != FAMILY_CAVE_MOUTH && family != FAMILY_LEDGE) {
 		// Columnar basalt: a 5 to 7-sided prism (contraction joints, mean six; Goehring 2009) along x, cut across.
 		const int sides = CLAMP(int(Math::round(6.0f + rng.randfn(0.0f, 0.8f))), 5, 7);
 		const float phase = rng.randf() * float(Math::TAU);
@@ -924,7 +932,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 				const float j = (axis == 1 ? lith.joint_jitter * 0.4f : lith.joint_jitter) * (fresh_block ? 2.0f : 1.0f);
 				RockPlane pl = { jitter_dir(n, j), float(half[axis] * (0.88f + 0.24f * rng.randf())), false };
 				// Steps on some faces of fresh fragments and wall blocks.
-				if ((fresh_block || family == FAMILY_CLIFF_BLOCK) && rng.randf() < 0.35f) {
+				if ((fresh_block || family == FAMILY_CLIFF_BLOCK || family == FAMILY_LEDGE) && rng.randf() < 0.35f) {
 					const Vector3 any = Math::abs(pl.n.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
 					pl.t = pl.n.cross(any).normalized();
 					pl.t = Basis(pl.n, (rng.randf() - 0.5f) * 1.2f).xform(pl.t);
@@ -966,6 +974,30 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 			planes.push_back({ n, support * (0.7f + 0.2f * rng.randf()), false });
 		}
 	}
+	if (family == FAMILY_LEDGE) {
+		// The lip (+z): not the clean joint face but where the last blocks broke off, one or two steep breaks across
+		// it at a slant, the last of them fresh rock (Lamb and Dietrich 2009: the cantilever fails along the joints
+		// and fresh tension fractures, and the block that goes leaves a scar).
+		const int breaks = 1 + int(rng.randf() * 1.99f);
+		for (int k = 0; k < breaks; k++) {
+			const Vector3 n = Vector3((rng.randf() - 0.5f) * 1.1f, (rng.randf() - 0.35f) * 0.3f, 1.0f).normalized();
+			const float support = Math::abs(n.x) * a + Math::abs(n.y) * c + n.z;
+			planes.push_back({ n, support * (0.8f + 0.12f * rng.randf()), k == breaks - 1 && rng.randf() < 0.5f });
+		}
+		// The soffit's front edge: the weak bed under it weathers back into the slab's underside at the lip, a
+		// bevel up into the lip rather than a square edge (the drip line of an undercut ledge).
+		{
+			const Vector3 n = Vector3(0.0f, -1.0f, 0.5f + 0.5f * rng.randf()).normalized();
+			const float support = -n.y * c + n.z;
+			planes.push_back({ n, support * (0.9f + 0.06f * rng.randf()), false });
+		}
+		// The ends: the cross joints meet the lip at a slant in plan, so the lip is a row of uneven blocks.
+		for (int sgn = -1; sgn <= 1; sgn += 2) {
+			const Vector3 n = Vector3(float(sgn), 0.0f, (rng.randf() - 0.3f) * 0.9f).normalized();
+			const float support = Math::abs(n.x) * a + Math::abs(n.z);
+			planes.push_back({ n, support * (0.78f + 0.15f * rng.randf()), false });
+		}
+	}
 	// Secondary fractures: corner and edge cuts, fresh faces where the block broke when it fell or was struck.
 	const int cuts = (family == FAMILY_SEA_PLATFORM || landform) ? 0 : int(lith.extra_cuts * (family == FAMILY_ROCKFALL || family == FAMILY_SCREE ? 3.0f : 1.0f) * (0.5f + rng.randf()) + 0.5f);
 	for (int k = 0; k < cuts; k++) {
@@ -993,7 +1025,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		planes.push_back({ n, float(n.y * c * (0.15f + 0.25f * rng.randf()) + Math::abs(n.x) * a * 0.3f), true });
 	}
 	// Impact chips: conchoidal scoops off corners and edges (bed-load chipping, Novák-Szabó et al. 2018), fresh.
-	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	static const int chips_per_family[FAMILY_MAX] = { 3, 5, 3, 3, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
 	LocalVector<RockScoop> scoops;
 	const int chips = chips_per_family[family] + int(rng.randf() * 2.0f);
 	for (int k = 0; k < chips; k++) {
@@ -1017,6 +1049,9 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	LocalVector<RockCrack> cracks;
 	// A loose fragment broke along its cracks; open partial cracks stay on blocks still in the wall.
 	const int crack_count = family == FAMILY_CLIFF_BLOCK ? int(rng.randf() * 1.6f) : (family == FAMILY_GLACIAL ? int(rng.randf() * 1.3f) : 0);
+	// A ledge's stress-release crack: open behind the lip and along it, where the next block will part (the tension
+	// crack of a cantilevered caprock).
+	const bool ledge_crack = family == FAMILY_LEDGE && rng.randf() < 0.6f;
 
 	// 2. The field. A coarse grid carries the abrasion (the flow is smooth and needs many small steps); the fine grid
 	// carries the detail.
@@ -1071,6 +1106,18 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 		cr.depth = MIN((0.12f + 0.2f * rng.randf()) * c, 0.3f * c);
 		cracks.push_back(cr);
 	}
+	if (ledge_crack) {
+		RockCrack cr;
+		cr.n = jitter_dir(Vector3(0, 0, 1), lith.joint_jitter);
+		cr.t = Vector3(1, 0, 0);
+		cr.t = (cr.t - cr.n * cr.n.dot(cr.t)).normalized();
+		cr.d = 0.15f + 0.35f * rng.randf();
+		cr.t0 = (rng.randf() - 0.5f) * 0.6f * a;
+		cr.half_length = (0.3f + 0.4f * rng.randf()) * a;
+		cr.width = MAX(1.6f * hb, 0.012f) * (1.5f + rng.randf());
+		cr.depth = (0.3f + 0.3f * rng.randf()) * c;
+		cracks.push_back(cr);
+	}
 	auto shape = [&](const Vector3 &p, bool *r_fresh) {
 		float phi = -1e9f;
 		bool fresh = false;
@@ -1100,7 +1147,7 @@ Ref<ImporterMesh> RockGenerator::build_importer_mesh(Dictionary &r_meta) {
 	// for a corner radius r is about r^2 / 2. A fully rounded stone has corners as round as half its thickness.
 	// Spheroidal weathering of granite and basalt rounds blocks in place along the joints in the same way (corners
 	// attacked from three sides), so it adds to the rounding of blocks left lying (tors, corestones).
-	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }; // coast and landforms: their own shaping
+	static const float spheroidal_share[FAMILY_MAX] = { 0.05f, 0.0f, 0.5f, 0.15f, 0.15f, 0.25f, 0.75f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.1f }; // coast and landforms: their own shaping
 	const float spheroidal = lith.spheroidal * weather * spheroidal_share[family];
 	// Tor blocks rotted in place for a long time: woolsack edges whatever the rock (at least half rounded).
 	const float round_eff = MIN(1.0f, MAX(roundness + spheroidal * (1.0f - roundness), family == FAMILY_CORESTONE ? 0.55f : 0.0f));
@@ -3772,5 +3819,6 @@ void RockGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FAMILY_POTHOLE);
 	BIND_ENUM_CONSTANT(FAMILY_GOBLIN);
 	BIND_ENUM_CONSTANT(FAMILY_CAVE_MOUTH);
+	BIND_ENUM_CONSTANT(FAMILY_LEDGE);
 	BIND_ENUM_CONSTANT(FAMILY_MAX);
 }
