@@ -4293,6 +4293,35 @@ func _build_camera() -> void:
 			cam.position = ce
 			cam.look_at(la)
 			_log("woodedge camera at %s, litter %.2f at the rim, %.2f under the camera" % [str(ce), veg.get_litter_at(pick + pdir * 3.0), veg.get_litter_at(ce)])
+		"pedestals":
+			# Rain splash pedestals (RockField3D.rain_pedestals): low and close over the bare soil where the rain has
+			# taken the most soil from round the stones (get_pedestal_at: stone share x soil lost), within
+			# --ped-search (600) m on gentle ground; the camera --ped-back (3.5) m off at --ped-up (1.3) m, side-lit.
+			var pr := float(args.get("ped-search", "600"))
+			var pbest := 0.0
+			var pp := Vector3.INF
+			if rocks != null and rocks.has_method("get_pedestal_at"):
+				for zz in range(-int(pr), int(pr) + 1, 8):
+					for xx in range(-int(pr), int(pr) + 1, 8):
+						var q := Vector3(xx, height_at(xx, zz), zz)
+						if rad_to_deg(data_map.get_slope_at(q)) > 15.0:
+							continue
+						var pv: Vector2 = rocks.get_pedestal_at(q)
+						if pv.x * pv.y > pbest:
+							pbest = pv.x * pv.y
+							pp = q
+			if pp == Vector3.INF:
+				_log("pedestals view: no bare soil losing soil round stones within %.0f m" % pr)
+			else:
+				var to_sun := sun.global_basis.z
+				var sd := Vector3(to_sun.x, 0, to_sun.z).normalized().cross(Vector3.UP).normalized()
+				var pc := pp + sd * float(args.get("ped-back", "3.5"))
+				pc.y = height_at(pc.x, pc.z) + float(args.get("ped-up", "1.3"))
+				cam.fov = 50.0
+				cam.position = pc
+				cam.look_at(pp + Vector3.UP * 0.1)
+				var pv2: Vector2 = rocks.get_pedestal_at(pp)
+				_log("pedestals view: spot %s stone share %.2f soil lost %.3f m, camera %s" % [str(pp.round()), pv2.x, pv2.y, str(pc.round())])
 		"ledge":
 			# A stepped hard-bed bench with its caprock slabs (RockField3D.ledge_slabs) from --ledge-back (22) m out:
 			# the 16 m cell within --ledge-search (1000) m holding the most overhanging lip (TerrainGenerator3D
