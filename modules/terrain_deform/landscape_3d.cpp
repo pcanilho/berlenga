@@ -2560,6 +2560,18 @@ Vector2 Landscape3D::contract_relief_at(const Vector3 &p_position) const {
 	return _relief_at_local(xf.affine_inverse().xform(p_position));
 }
 
+// What contract_relief_at reads besides the stored properties: the placement, the grid and its heights as read so far.
+void Landscape3D::contract_relief_state(void (*p_add)(void *p_user, const void *p_data, size_t p_size), void *p_user) const {
+	RWLockRead hl(heights_lock);
+	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
+	p_add(p_user, &xf, sizeof(xf));
+	const real_t grid[] = { origin.x, origin.y, spacing, cliff_relief, bank_relief };
+	p_add(p_user, grid, sizeof(grid));
+	const int32_t dims[] = { gw, gh };
+	p_add(p_user, dims, sizeof(dims));
+	p_add(p_user, heights.ptr(), sizeof(float) * heights.size());
+}
+
 void Landscape3D::_update_relief_map(const Vector3 &p_camera) {
 	if (heights.is_empty() || (cliff_relief <= 0.0 && bank_relief <= 0.0)) {
 		_clear_relief_map();

@@ -147,6 +147,10 @@ private:
 	// as the coarse tier places); a cell that asks for a shape library not built yet is placed again on the main
 	// thread, as before, so the result is the same.
 	static void _obstacle_place_job(void *p_job, uint32_t p_index);
+	// The world cache's key for everything the obstacle cells read (world_cache.h): this field's and the generator's
+	// stored properties, the generator's result and the drawn relief. False when some of it cannot be keyed (a script
+	// ground stub, a relief provider without a key): then the cells are placed as before and not cached.
+	bool _obstacle_cache_base(const TerrainGenerator3D *p_gen, String &r_base) const;
 
 	struct Group {
 		uint32_t library = 0;

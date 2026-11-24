@@ -71,6 +71,15 @@ public:
 		double max_depth = 15.0; // m: deepest cut and highest fill against the input, so channels cannot run away
 		int thermal_passes = 8;
 		double thermal_rate = 0.25; // share of the excess moved per pass
+
+		// Every field, for a cache key (world_cache.h).
+		template <typename F>
+		void hash_into(const F &p_add) const {
+			const double d[] = { dx, droplets_per_cell, inertia, capacity, min_slope, erosion, deposition, evaporation, gravity, rock_hardness, repose, max_depth, thermal_rate };
+			const int64_t k[] = { nx, ny, int64_t(seed), max_steps, radius, thermal_passes };
+			p_add(d, sizeof(d));
+			p_add(k, sizeof(k));
+		}
 	};
 
 	static uint32_t hash(uint32_t x) {

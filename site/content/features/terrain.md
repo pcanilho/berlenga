@@ -25,6 +25,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Crests: before, a thin regular comb along the summits; now, irregular crests and pinnacles.*
 
+- **World cache** (`world/cache/enabled`, `world/cache/path`): generated terrain and dunes are stored by their inputs and reloaded on the next launch.
+
 - **Terrain guides** (`TerrainGuide3D`: Raise, Lower, Bar, `apron_slope`): paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion. With `guide_preview`, a 4x coarser run follows a guide in the editor as it is drawn.
 
   ![A generated valley from above, without and with a drawn ridge guide](media/terrain-guide.jpg)

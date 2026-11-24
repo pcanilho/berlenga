@@ -1225,12 +1225,22 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 		}
 		bool ambient_done = false;
 		vec3 ambient_lens = vec3(0.0);
+		// The lens's edge placed between samples (as an analytic coverage): the lift past saturation x is smooth along the
+		// ray, so where it changes sign between two samples the cloud starts (or ends) at the linear crossing, and only that
+		// share of the interval is cloud. A whole interval either way drew the rim as a dithered gradient one fine step
+		// (tens of metres) deep, which under a near lens spread over many pixels.
+		bool have_prev = false;
+		float x_prev = 0.0;
+		float sig_prev = 0.0;
+		vec3 l_prev = vec3(0.0);
+		float h = 0.125 * ds;
 		// Eight fine samples, jittered per revisit (the reprojection's R1 sequence averages them over 12 revisits): four
 		// fixed ones stepped a plate's end and a pile's 100 m gaps into stairs and dots.
 		for (int k = 0; k < 8; k++) {
 			float t = t0 + (float(i) + (float(k) + jitter) * 0.125) * ds;
 			vec3 p = vec3(cam.x + rd.x * t, length(ro + rd * t) - PLANET_RADIUS, cam.z + rd.z * t);
 			if (p.y < y0 || p.y > y1) {
+				have_prev = false;
 				continue;
 			}
 			// Striations: the detail noise stretched along the wind, a few tens of metres on the saturation level.
@@ -1243,10 +1253,20 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 			float eta = wc_wave_eta(p);
 			float x = wc_plate_x(eta - 125.0 * dep, p) + 10.0 * (st - 0.5);
 			if (x <= 0.0) {
+				if (have_prev && x_prev > 0.0) {
+					// Leaving the cloud: the share of the interval before the crossing, lit as the last sample inside.
+					float tr_x = exp(-sig_prev * h * x_prev / (x_prev - x));
+					radiance += transmittance * l_prev * (1.0 - tr_x);
+					depth_sum += transmittance * (1.0 - tr_x) * t;
+					transmittance *= tr_x;
+				}
+				have_prev = true;
+				x_prev = x;
 				continue;
 			}
 			float sigma = wc_wave_sigma(p, eta, x);
 			if (sigma <= 0.0) {
+				have_prev = false;
 				continue;
 			}
 			// Fibres: the water in thin sheets tens of metres deep, drawn out along the wind (the lens's silky, striated
@@ -1287,7 +1307,12 @@ vec4 march_wave(vec2 slab, vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, v
 				ambient_done = true;
 			}
 			vec3 l = light + ambient_lens * mix(0.35, 1.0, sqrt(1.0 - profile)) * 1.4;
-			float tr = exp(-sigma * 0.125 * ds);
+			float cover = have_prev && x_prev <= 0.0 ? x / (x - x_prev) : 1.0; // entering: from the crossing on
+			float tr = exp(-sigma * h * cover);
+			have_prev = true;
+			x_prev = x;
+			sig_prev = sigma;
+			l_prev = l;
 			radiance += transmittance * l * (1.0 - tr);
 			depth_sum += transmittance * (1.0 - tr) * t;
 			transmittance *= tr;

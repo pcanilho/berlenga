@@ -53,6 +53,9 @@ void initialize_terrain_deform_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(TerrainDeformer3D);
 	GDREGISTER_CLASS(TerrainDataMap3D);
 	GDREGISTER_CLASS(TerrainGenerator3D);
+	// The world cache (world_cache.h): stage results kept on disk under a hash of their inputs.
+	GLOBAL_DEF("world/cache/enabled", true);
+	GLOBAL_DEF(PropertyInfo(Variant::STRING, "world/cache/path", PROPERTY_HINT_GLOBAL_DIR), "");
 	// Landscape3D's stand map (worn trails, fresh rooting), declared so the terrain material compiles before it is
 	// published (rect width 0 = none), whichever module registers first.
 	const char *globals[4][2] = { { "terrain_stand_map", "sampler2D" }, { "terrain_stand_rect", "vec4" }, { "terrain_cliff_relief", "vec4" }, { "terrain_bank_relief", "vec4" } };

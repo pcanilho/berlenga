@@ -3918,6 +3918,12 @@
 		<member name="threading/worker_pool/max_threads" type="int" setter="" getter="" default="-1">
 			Maximum number of threads to be used by [WorkerThreadPool]. On Web, a value of [code]-1[/code] means [code]1[/code]. On other platforms, it means all [i]logical[/i] CPU cores available (see [method OS.get_processor_count]).
 		</member>
+		<member name="world/cache/enabled" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], the terrain's expensive deterministic stages (dune and erosion tiles) keep their results on disk under a hash of every input they read, and a later run with the same inputs and the same engine executable loads them instead of computing them again. The loaded results are the same bytes.
+		</member>
+		<member name="world/cache/path" type="String" setter="" getter="" default="&quot;&quot;">
+			The folder of the world cache. Empty: [code]berlenga/world[/code] in the operating system's cache folder.
+		</member>
 		<member name="xr/openxr/binding_modifiers/analog_threshold" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], enables the analog threshold binding modifier if supported by the XR runtime.
 		</member>
