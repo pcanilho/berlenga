@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="StreetWater3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Shallow water over a street's relief, on the GPU, in a window following the view: puddles that fill, slosh, spill, soak in and dry.
+	</brief_description>
+	<description>
+		Solves the shallow water equations over a road's relief in a square of [member resolution] × [member resolution] cells of [member cell] metres (512 × 2.5 cm: 12.8 m) that follows [member follow_path], or the ground the camera looks at. The window is a ring buffer: world cell c lives in texel c mod N, so it slides by whole cells without copying, and cells entering it take their bed from [member height_sources] and start dry.
+		Rain lands on the whole road and runs off it as a thin film into the ruts, hollows and gutters, where it stands as puddles; the same grid carries the film and the puddles (virtual pipes in the local inertial form with Manning's bed friction, wet and dry fronts moving with the water). Bodies pushed into the water with [method submit_sphere] displace their volume and throw the water ahead and to the sides at their own speed, so a tyre leaves a bow wave and a V wake, empties the rut behind it, and the water it pushes out runs onto dry road and wets it. Water soaks in at [member soak_rate] and evaporates at [member evaporation_rate]; where it stood the road stays damp for about [member drying_time].
+		The road's material draws the water: [method get_map] is the map (depth, the water surface's slope, damp) and [method get_water_window] where it lies; materials listed in [member materials] get both every frame as [code]street_water_map[/code] and [code]street_water_window[/code]. [method get_shader_include] returns the shader code that samples it and applies wet asphalt and standing water to a material's albedo, roughness and normal, so raster and the path tracer read the same water.
+		Needs the RenderingDevice (Forward+ or Mobile).
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="add_water">
+			<return type="void" />
+			<param index="0" name="world_position" type="Vector3" />
+			<param index="1" name="volume" type="float" />
+			<param index="2" name="radius" type="float" default="0.05" />
+			<description>
+				Pours [param volume] m³ over a disc of [param radius] metres round [param world_position] at the next step (a drip off an eave, a bucket). At least a cell across.
+			</description>
+		</method>
+		<method name="clear_sphere">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<description>
+				Removes the body [param owner] put in with [method submit_sphere].
+			</description>
+		</method>
+		<method name="get_cost_ms" qualifiers="const">
+			<return type="float" />
+			<description>
+				The main thread's time in the last frame (milliseconds): placing the window, measuring entering cells' beds, queuing the GPU passes.
+			</description>
+		</method>
+		<method name="get_map" qualifiers="const">
+			<return type="Texture2DRD" />
+			<description>
+				The water map: R depth (m), G and B the water surface's slope along world X and Z, A damp (0..1). Sample it with repeat at world X Z divided by the window's size (see [method get_shader_include]).
+			</description>
+		</method>
+		<method name="get_shader_include" qualifiers="static">
+			<return type="String" />
+			<description>
+				Shader code for a spatial shader: the [code]street_water_map[/code] and [code]street_water_window[/code] uniforms, [code]street_water_sample(world)[/code] (the map at a world point, zero outside the window) and [code]street_water_apply(world, VIEW_MATRIX, albedo, roughness, normal)[/code], which darkens and smooths damp asphalt and turns standing water into a mirror with the water's own normal, returning the puddle's cover.
+			</description>
+		</method>
+		<method name="get_water_window" qualifiers="const">
+			<return type="Vector4" />
+			<description>
+				Where the window lies: X and Z of its corner in world space, its size and its cell (metres).
+			</description>
+		</method>
+		<method name="reset">
+			<return type="void" />
+			<description>
+				Starts over at the next frame: the beds measured again, the road dry.
+			</description>
+		</method>
+		<method name="submit_sphere">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<param index="1" name="world_position" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<description>
+				A body pushing the water, kept until [method clear_sphere] or moved by calling again with the same [param owner]; its velocity comes from its successive places. A tyre is a sphere of its radius at the hub, set lower by the tyre's deflection (a couple of centimetres) so it presses a contact patch into the road; a foot a small one at the sole.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="cell" type="float" setter="set_cell" getter="get_cell" default="0.025">
+			The cells' size (metres).
+		</member>
+		<member name="drying_time" type="float" setter="set_drying_time" getter="get_drying_time" default="1200.0">
+			How long (seconds) the road stays damp where water stood or rain fell, once it is gone (the damp fades exponentially over this).
+		</member>
+		<member name="evaporation_rate" type="float" setter="set_evaporation_rate" getter="get_evaporation_rate" default="0.2">
+			Evaporation from the water (mm/h). Open water on a road in mild weather loses about 0.1 to 0.3 mm/h.
+		</member>
+		<member name="follow_path" type="NodePath" setter="set_follow_path" getter="get_follow_path" default="NodePath(&quot;&quot;)">
+			The node the window centres on. Empty: the ground a little short of where the current camera looks.
+		</member>
+		<member name="height_sources" type="NodePath[]" setter="set_height_sources" getter="get_height_sources" default="[]">
+			Nodes giving the bed: [RoadRelief3D] (read from its mesh with [method RoadRelief3D.get_surface_height_at]) or anything with [code]get_height_at(world_position)[/code] returning a world height or -INF. The highest wins; cells with none are walls the water never enters.
+		</member>
+		<member name="manning" type="float" setter="set_manning" getter="get_manning" default="0.013">
+			Manning's roughness of the bed (s/m^1/3): 0.013 for asphalt, 0.011 smooth concrete, 0.016 worn cobbles. It slows thin films far more than deep water.
+		</member>
+		<member name="materials" type="Material[]" setter="set_materials" getter="get_materials" default="[]">
+			Shader materials that get [code]street_water_map[/code] and [code]street_water_window[/code] every frame.
+		</member>
+		<member name="max_steps" type="int" setter="set_max_steps" getter="get_max_steps" default="4">
+			Steps in one frame at most; a long frame does not run the water on.
+		</member>
+		<member name="rain_from_weather" type="bool" setter="set_rain_from_weather" getter="get_rain_from_weather" default="true">
+			Adds the weather's rainfall at the window ([code]WorldWeather.rainfall_at[/code]) to [member rain_rate].
+		</member>
+		<member name="rain_rate" type="float" setter="set_rain_rate" getter="get_rain_rate" default="0.0">
+			Rain on the window (mm/h), on top of the weather's.
+		</member>
+		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="512">
+			Cells along each side of the window (a multiple of 8). The cost scales with its square.
+		</member>
+		<member name="simulating" type="bool" setter="set_simulating" getter="is_simulating" default="true">
+			When disabled, the water holds still and is drawn as it was (no GPU work). A game's options can switch it off on low settings.
+		</member>
+		<member name="soak_rate" type="float" setter="set_soak_rate" getter="get_soak_rate" default="0.0">
+			Water soaking into the pavement (mm/h): near 0 for dense asphalt, hundreds for porous asphalt.
+		</member>
+		<member name="step_rate" type="float" setter="set_step_rate" getter="get_step_rate" default="120.0">
+			Solver steps a second. 120 keeps water up to about half a metre deep stable at 2.5 cm cells.
+		</member>
+	</members>
+</class>

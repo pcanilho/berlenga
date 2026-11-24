@@ -38,3 +38,51 @@ sags, depressions, patches, potholes), all from world x, z. It builds:
   metres along and across (as the game's Kit.road);
 - an optional static collider of the same surface (PhysX trimesh where PhysX is the physics server);
 - get_height_at(world point) from the same function, for the water and for anything placed on the road.
+
+## Street water: research
+
+What the water on a street has to do (Paulo, 23 Nov): fill the relief's hollows from rain and runoff, slosh when a
+tyre or a foot goes through, spill over a puddle's rim onto dry road and wet it, change shape as it does, and soak in
+and dry out. A ripple field over fixed puddle masks (the game's iWave WaterSim, Tessendorf 2004) cannot: its water
+has no volume, so a wave stops at the mask. Water that moves its own edge needs a depth-carrying solver with wet/dry
+fronts, the shallow water equations:
+- Virtual pipes (O'Brien and Hodgins 1995; Mei, Decaudin and Hu 2007): each cell keeps its outflow through four
+  pipes, accelerated by the surface-height difference, scaled down together when they would take more than the cell
+  holds. Depth never goes negative, volume is kept exactly, and dry cells are simply cells with no water, so fronts
+  move for free. The standard real-time choice (the engine's PhysXLiveWater3D on the CPU, the ground's standing
+  water on the GPU).
+- Thin sheets need bed friction or they race: the local inertial form (Bates, Horritt and Fewtrell 2010) with
+  Manning's friction taken semi-implicitly, n = 0.013 for asphalt (Chow 1959, Open-Channel Hydraulics, table 5-6), and
+  the face-depth rule for wet/dry faces (flow depth = the higher surface over the higher bed). The same grid then
+  carries both the runoff film (a sheet a fraction of a millimetre deep running to the ruts and gutters) and the
+  puddles, so the film costs nothing extra.
+- Bodies displace volume (Chentanez and Mueller 2010, sec. 6.1): the part of a body below the water's surface counts
+  as head in the pipes, so a tyre lifts water in front of it into a bow wave, leaves a hollow behind that refills, and
+  the water it pushes out runs onto dry road.
+- Waves in water a centimetre deep travel at sqrt(g h), about 0.3 m/s: the pipes carry them. Raindrop rings (5 mm to
+  2 cm) are below any grid a street window can afford; they stay procedural (Lagarde 2013, world-anchored rings), drawn
+  only where the solver says there is water.
+- Camera window: a square of cells following the view as a ring buffer (toroidal addressing, as the game's WaterSim):
+  a texel holds world cell (i mod N, k mod N), so the window slides by whole cells without copying; cells entering it
+  take their bed from the road (RoadRelief3D.get_height_at, or a ray cast) and start dry.
+- Out: soaking into the pavement (porous asphalt drains quickly, dense asphalt almost not at all) and evaporation
+  (open water on a road in mild weather: about 0.1 to 0.3 mm/h, Penman 1948 orders of magnitude). A damp channel
+  remembers where water stood and fades over drying_time, so a puddle that drained leaves a dark patch.
+- Drawn by the road's own material, not a second mesh: a puddle a centimetre deep is a surface layer (Lagarde,
+  "Water drop 2/3", 2013: albedo darkened by wetness, roughness to the water's, the normal to the water's), so the
+  raster and the path tracer read the same map and nothing floats or z-fights.
+
+## Street water: design (StreetWater3D, modules/ground)
+
+- GPU compute on the main RenderingDevice, one shader, four passes per step: OCCUPY (bodies' displaced height per
+  cell), FLUX (local inertial pipes with Manning), DEPTH (flux divergence, rain, film rule, soak, evaporation, damp),
+  PACK (an RGBA16F map: depth, the surface's slope x and z, damp). LOAD writes beds of cells entering the window.
+- Window: resolution N (512) cells of cell (2.5 cm), 12.8 m, following follow_path or the camera.
+- Rain: rain_rate mm/h plus the weather's rainfall_at at the window, on the whole road; it runs off as the film. The
+  film is not a separate system and has no switch: it is how the puddles fill (rain landing only on standing water
+  never starts one, tried), and it costs nothing beyond the grid. The cost levers a game's options can use are the
+  grid's: simulating (off: the water holds still, drawn as it was), resolution and step_rate.
+- Bodies: submit_sphere/clear_sphere (a tyre is a sphere of its radius at the hub, a foot a small one) and the water
+  contract's disturb; add_water for drips and pours.
+- Shading: get_map() (a Texture2DRD, sampled with repeat at world x z / window size) and get_window(); materials in
+  `materials` get both each frame; get_shader_include() returns the GLSL the road material calls.
