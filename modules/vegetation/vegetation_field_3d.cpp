@@ -5095,6 +5095,14 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 				g *= 1.0f - share;
 				a_cover *= 1.0f - share;
 			}
+			// The climate's dry-season cured share (WorldContracts::climate_cured_share_at, the terrain's cured soil
+			// cover and GrassField3D's turf) in the dry season: the far sward straw, the cover plants partly (the evergreen
+			// shrubs among them keep green). The grass fields' far colours carry the season's own dryness already.
+			const float cured = WorldContracts::climate_cured_share_at(p) * job.dry_season;
+			if (cured > 0.0f) {
+				grass = grass.lerp(job.cured, 0.9f * cured);
+				plants = plants.lerp(job.cured * job.plant_shade, 0.5f * cured);
+			}
 		}
 		const float ground_a = 1.0f - (1.0f - g) * (1.0f - a_cover);
 		Vector3 ground = ground_a > 0.0f ? (grass * (g * (1.0f - a_cover)) + plants * a_cover) / ground_a : Vector3();
@@ -5141,6 +5149,12 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 		}
 		job.grass.push_back(rules);
 		job.grass_far.push_back(grass->get_far_color());
+		if (job.grass_far.size() == 1) {
+			const Color d = grass->get_dry_color().srgb_to_linear() * 0.8f;
+			job.cured = Vector3(d.r, d.g, d.b);
+			// The dry season by the sward's own dryness (its turf's gate, get_ground_shader_code()).
+			job.dry_season = Math::smoothstep(0.3f, 0.7f, grass->get_effective_dryness());
+		}
 		// The grass measures its far colour from a render a few frames in: the map follows it.
 		const Callable on_far = callable_mp(this, &VegetationField3D::_on_grass_far_color);
 		if (!grass->is_connected(SNAME("far_color_changed"), on_far)) {

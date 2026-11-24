@@ -4241,9 +4241,10 @@ void GrassField3D::_update_shell(const Vector2 &p_center, TerrainDataMap3D *p_ma
 		String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
 		code += "// GrassField3D far shell (docs/ideas/grass.md, \"Far grass\"): the sward as voxel columns on the ground.\n";
 		code += "uniform vec2 shell_center;\nuniform vec4 shell_band; // x: where it is fully up, y: the band it rises over, z: where it is gone, w: the band it sinks over.\n";
-		code += get_ground_shader_code();
+		// The climate code first: the turf (get_ground_shader_code()) cures by its wc_climate_cured.
 		code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
 		code += WorldContracts::climate_bare_shader_code();
+		code += get_ground_shader_code();
 		code += R"(
 varying vec3 v_wp;
 void vertex() {
@@ -5305,7 +5306,10 @@ Color GrassField3D::_far_color_hand() const {
 	const Color b = base_color.srgb_to_linear();
 	const Color t = tip_color.srgb_to_linear();
 	const Color d = dry_color.srgb_to_linear();
-	const Color far = b.lerp(t, 0.65f).lerp(d, _dryness() * 0.35f) * 0.355f;
+	// A dormant sward (dryness towards 1: drought or winter) is dead blades over its few green ones, so the dry share
+	// rises to 0.9 there; a living sward's dryness is only its dry tips.
+	const float dry = _dryness();
+	const Color far = b.lerp(t, 0.65f).lerp(d, MIN(dry * 0.35f + 0.55f * Math::smoothstep(0.4f, 1.0f, dry), 0.9f)) * 0.355f;
 	return Color(far.r, far.g, far.b, 1.0f);
 }
 
@@ -6653,8 +6657,8 @@ vec3 grass_mow_ground(vec3 world_pos, vec3 turf) {
 	return turf;
 }
 
-// The turf colour at a point: blades' root colour, patch tint, streaks, thatch.
-vec3 grass_turf(vec3 world_pos) {
+// The living turf's colour at a point: blades' root colour, patch tint, streaks, thatch.
+vec3 grass_turf_green(vec3 world_pos) {
 	vec2 xz = world_pos.xz;
 	// Streaks: fine noise stretched along a direction that turns slowly, like matted blades.
 	float streak = grass_streaks(xz, 0.6, 0.0, vec2(9.0, 70.0), vec2(4.0, 31.0), 7.1);
@@ -6669,6 +6673,34 @@ vec3 grass_turf(vec3 world_pos) {
 	// The lawn's young leaves, brighter and yellower than a lax sward's (the blades' tint).
 	c *= mix(vec3(1.0), vec3(1.06, 1.16, 0.88), lawn);
 	return c;
+}
+
+// Cured sward (docs/ideas/vegetation.md, "Cured turf"): the share of the turf gone to straw. The field's own season
+// dryness (follow_weather: the blades' dryness, so turf and blades cure together) and, where the shared climate code
+// is declared before this, the climate's dry-season cured share (the WorldContracts cured contract, wc_climate_cured:
+// the terrain's cured soil cover) while the season is dry, the larger of the two. r_climate: the climate's share
+// alone (the far bake already carries the season's).
+float grass_turf_cured(vec3 world_pos, out float r_climate) {
+	r_climate = 0.0;
+#ifdef WC_CLIMATE_CODE
+	// In the dry season only: the field's season dryness says when (a semi-arid sward is green after the rains).
+	r_climate = wc_climate_cured(world_pos) * smoothstep(0.3, 0.7, grass_ground_dry.a);
+#endif
+	return max(smoothstep(0.45, 0.95, grass_ground_dry.a), r_climate);
+}
+
+// The cured turf: the blades' dry colour, shaded at the sward's base, in drifts. A deer lawn keeps more green.
+vec3 grass_turf_cure(vec3 world_pos, vec3 c, float cured) {
+	vec2 xz = world_pos.xz;
+	// grass_ground_dry carries the sRGB dry_color (the blades take it as source_color): to linear.
+	vec3 straw = pow(grass_ground_dry.rgb, vec3(2.2)) * (0.65 + 0.25 * grass_noise(xz * 1.7 + 5.1)) * (0.9 + 0.2 * grass_noise(xz * 0.7 + 3.3));
+	return mix(c, straw, cured * 0.9 * (1.0 - 0.6 * grass_graze_at(world_pos).r));
+}
+
+// The turf colour at a point, cured as the season and the climate say.
+vec3 grass_turf(vec3 world_pos) {
+	float climate;
+	return grass_turf_cure(world_pos, grass_turf_green(world_pos), grass_turf_cured(world_pos, climate));
 }
 
 // Within the blades, partial cover (a rule's fade: scree, rock, shade) as patches of turf and gaps
@@ -7015,7 +7047,10 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 	if (grass_ground_under.w > 0.0 && grass_ground_under_far.a > 0.0) {
 		gone_u = 1.0 - clamp((grass_ground_under.z - length(world_pos.xz - grass_ground_under.xy)) / grass_ground_under.w, 0.0, 1.0);
 	}
-	vec3 turf = grass_turf(world_pos);
+	vec3 turf_green = grass_turf_green(world_pos);
+	float cured_climate;
+	float cured = grass_turf_cured(world_pos, cured_climate);
+	vec3 turf = grass_turf_cure(world_pos, turf_green, cured);
 	if (gone > 0.0 || gone_u > 0.0) {
 		vec2 xz = world_pos.xz;
 		vec3 tint = grass_patch_tint(xz, grass_noise(xz * 3.0), 0.5, grass_ground_params.x);
@@ -7029,8 +7064,8 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 			lobe = max(1.0 + grass_ground_sun.z * (grass_ground_far_lobe1.rgb * c1 + grass_ground_far_lobe2.rgb * (2.0 * c1 * c1 - 1.0)), vec3(0.1));
 		}
 		// Keep the turf's streaks and thatch as brightness, so the far sward is not flat.
-		float lum = clamp(dot(turf, vec3(0.3, 0.59, 0.11)) / max(dot(grass_ground_color.rgb, vec3(0.3, 0.59, 0.11)), 1e-3), 0.5, 1.5);
-		vec3 under = grass_ground_under_far.rgb * tint * lobe;
+		float lum = clamp(dot(turf_green, vec3(0.3, 0.59, 0.11)) / max(dot(grass_ground_color.rgb, vec3(0.3, 0.59, 0.11)), 1e-3), 0.5, 1.5);
+		vec3 under = mix(grass_ground_under_far.rgb, pow(grass_ground_dry.rgb, vec3(2.2)) * 0.8, cured_climate * 0.9) * tint * lobe;
 		if (gone_u > 0.0) {
 			turf = mix(turf, under * lum, gone_u);
 		}
@@ -7039,6 +7074,8 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 			if (grass_ground_under_far.a > 0.0) {
 				far = mix(under, far, grass_ground_far.a); // The tall patches over the undercoat.
 			}
+			// The bake carries the season's dryness; the climate's cured share over it, as on the turf.
+			far = mix(far, pow(grass_ground_dry.rgb, vec3(2.2)) * 0.8 * tint * lobe, cured_climate * 0.9);
 			turf = mix(turf, far * lum, gone);
 		}
 		// Hay meadows: what the far blades would show of the stubble and the rows.
@@ -7923,6 +7960,9 @@ void GrassField3D::_season_step() {
 	if (season_baked_dryness < 0.0f || Math::abs(d - season_baked_dryness) > 0.05f) {
 		season_baked_dryness = d;
 		_queue_far_bake();
+		if (!far_bake && is_inside_tree()) {
+			emit_signal(SNAME("far_color_changed")); // No bake to wait for: the hand-matched colour and the cover map follow now.
+		}
 	}
 }
 void GrassField3D::set_fallback_wind(const Vector2 &p_wind) {

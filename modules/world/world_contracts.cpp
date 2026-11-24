@@ -1402,7 +1402,9 @@ vec3 wc_terracette(vec3 p, vec2 grad) {
 }
 
 String WorldContracts::climate_bare_shader_code() {
+	// WC_CLIMATE_CODE: code included before or after this (GrassField3D's turf) can tell whether these are declared yet.
 	return R"(
+#define WC_CLIMATE_CODE
 float wc_vn_hash(vec3 p) {
 	uvec3 q = uvec3(ivec3(p));
 	uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u) ^ (q.z * 2741598763u);

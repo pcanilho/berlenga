@@ -7450,6 +7450,23 @@ float PlantGenerator::get_drought_cure(Preset p_preset, const Dictionary &p_seas
 	return reach * dry;
 }
 
+// The plant shader's dead tissue (fragment(): 1 - vertex alpha) on a leaf colour, for colours measured off the mesh
+// (the far colour): yellowing, then browning to dead_color's default.
+static Color _cured_leaf_color(const Color &p_leaf, float p_dead) {
+	if (p_dead <= 0.0f) {
+		return p_leaf;
+	}
+	// In linear, as the shader works (the leaf colour and dead_color are sRGB, source_color).
+	const Color leaf = p_leaf.srgb_to_linear();
+	const float luma = 0.2126f * leaf.r + 0.7152f * leaf.g + 0.0722f * leaf.b;
+	const Color yellow = Color(0.30f, 0.20f, 0.025f) * CLAMP(luma * 8.0f, 0.6f, 1.4f);
+	const Color brown = Color(0.36f, 0.24f, 0.11f).srgb_to_linear() * CLAMP(luma * 6.0f, 0.55f, 1.5f);
+	const Color dead = yellow.lerp(brown, smoothstep_f(0.35f, 0.85f, p_dead));
+	Color c = leaf.lerp(dead, smoothstep_f(0.0f, 0.5f, p_dead)).linear_to_srgb();
+	c.a = p_leaf.a;
+	return c;
+}
+
 void PlantGenerator::_drought_cure() {
 	const float cure = get_drought_cure(preset, season);
 	if (cure <= 0.0f) {
@@ -8813,7 +8830,8 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		if (f.preset != P::PRESET_LEAF_LITTER && f.preset != P::PRESET_NEEDLE_LITTER && f.preset != P::PRESET_TWIGS && !is_mushroom(f.preset) && v.size() > 0) {
 			const Ref<ArrayMesh> m0 = v[0];
 			const float h = m0.is_valid() ? m0->get_aabb().get_end().y : 0.2f;
-			const Color lc = gen->get_leaf_color() * 0.8f;
+			// Cured by a summer drought (get_drought_cure) as the plant shader turns the leaves (yellow, then brown).
+			const Color lc = _cured_leaf_color(gen->get_leaf_color(), get_drought_cure(f.preset, p_season)) * 0.8f;
 			sp->set_far_color(Color(lc.r, lc.g, lc.b, CLAMP(h / 0.6f, 0.2f, 0.9f)));
 		}
 		// The larger shrubs, dense with thousands of triangles each, turn into impostors past the
