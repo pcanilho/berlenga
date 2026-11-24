@@ -148,6 +148,15 @@ private:
 	Rect2 density_mask_rect;
 	PackedVector4Array obstacles;
 	VegetationObstacles obstacle_grid;
+	// A RockField3D whose stones the plants keep out of, fetched round each tile as it is placed (get_obstacles), in
+	// place of (or as well as) the obstacles array: no world-wide list of every stone.
+	NodePath rock_field;
+	float rock_obstacle_min = 0.25f; // The smallest stone (its size) the plants keep out of.
+	float rock_footprint_max = 32.0f; // The widest stone footprint expected: tiles fetch rocks this far past their reach.
+	VegetationRockCache rock_cache;
+	VegetationObstacles rock_grid; // obstacles and every fetched stone, for get_litter_drift_at (under rock_lock).
+	mutable RWLock rock_lock;
+	Object *_get_rock_field() const;
 	Array paths; // Worn paths (VegetationPaths): Dictionaries of points, width, passes a year.
 	VegetationPaths path_grid; // paths and the world's game trails.
 	Array world_trails; // WorldStand.get_trails() as last read.
@@ -284,6 +293,8 @@ private:
 		float litter_reach = 0.0f; // How far past a crown its litter can land.
 		float deadwood_reach = 0.0f; // The widest a log reaches from its origin plus the widest deadwood band of a species.
 		VegetationObstacles obstacles; // Rocks the plants keep out of (a copy, for the worker threads).
+		bool rocks_any = false; // The field has rocks (an obstacles array, or a rock_field) somewhere.
+		float rock_reach = 0.0f; // How far past a tile's edge a placement there reads the rocks (with the halo).
 		VegetationPaths paths; // Worn paths that thin and shorten the plants (a copy).
 		GrassField3D::CropFieldMask crop_fields; // Crop fields nothing else grows in (a copy).
 		VegetationObstacles stone_tops; // Caps of stones that stone_top species grow on (a copy).
@@ -429,7 +440,11 @@ private:
 	static void _edge_row(void *p_job, uint32_t p_row);
 	static constexpr float EDGE_CLOSED = 0.35f; // Canopy species' summed density times suitability that counts as forest.
 	Rect2 _update_stand(PlaceSetup &r_setup, const Rect2 &p_area) const;
-	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
+	// p_rocks: the rocks round these tiles (a rock_field's), read in place of p_setup.obstacles.
+	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles, const VegetationObstacles *p_rocks = nullptr) const;
+	// Main thread: the rock_field's stones (and the obstacles array's) within reach of placements in p_core, into
+	// r_grid. False without a rock_field.
+	bool _rocks_for(const PlaceSetup &p_setup, const Rect2 &p_core, VegetationObstacles &r_grid);
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes, float p_max_rank = 1.0f);
 	Vector3 stream_eye; // The stream centre when tiles were last committed (skyline trees, trees.md 9c).
 	bool stream_eye_valid = false;
@@ -555,6 +570,8 @@ private:
 	struct StreamJob {
 		VegetationField3D *field = nullptr;
 		Vector2i tile;
+		VegetationObstacles rocks; // The rock_field's stones round the tile (own_rocks), fetched before it starts.
+		bool own_rocks = false;
 		LocalVector<TileOut> out;
 		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
 		SafeFlag done;
@@ -744,6 +761,13 @@ public:
 	// GroundSurface3D's sand shelter (its wind_shelters).
 	float sample_lateral_cover(const Vector3 &p_position) const;
 	PackedVector4Array get_obstacles() const { return obstacles; }
+	void set_rock_field(const NodePath &p_path);
+	NodePath get_rock_field() const { return rock_field; }
+	void set_rock_obstacle_min(float p_size);
+	float get_rock_obstacle_min() const { return rock_obstacle_min; }
+	void set_rock_footprint_max(float p_radius);
+	float get_rock_footprint_max() const { return rock_footprint_max; }
+	int get_rock_chunk_count() const { return rock_cache.chunks.size(); }
 	void set_stone_tops(const PackedVector4Array &p_tops);
 	PackedVector4Array get_stone_tops() const { return stone_tops; }
 	void set_stone_top_normals(const PackedVector3Array &p_normals);

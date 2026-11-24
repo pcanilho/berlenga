@@ -159,7 +159,15 @@ private:
 	NodePath data_map;
 	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
 	PackedVector4Array obstacles; // Rocks, (x, ground y, z, radius at the soil): no blade grows inside one.
-	VegetationObstacles obstacle_grid;
+	VegetationObstacles obstacle_grid; // obstacles, the mounds and the rock_field's stones fetched so far.
+	// A RockField3D whose stones the blades keep out of, fetched round each tile and far ring tile before it is built
+	// (get_obstacles), in place of (or as well as) the obstacles array.
+	NodePath rock_field;
+	float rock_obstacle_min = 0.25f;
+	float rock_footprint_max = 32.0f;
+	VegetationRockCache rock_cache;
+	void _rebuild_obstacle_grid();
+	void _rocks_for(const Rect2 &p_rect); // Main thread: fetches the rock_field's stones that reach into p_rect.
 	Array paths; // Worn paths (VegetationPaths): the sward thins and shortens towards the trodden line.
 	VegetationPaths path_grid;
 	float trample_resistance = 300.0f; // Passes a year that halve the sward's cover (Cole 1995: grasses resist).
@@ -644,6 +652,13 @@ public:
 	float get_trample_resistance() const { return trample_resistance; }
 	static constexpr float OBSTACLE_MARGIN = 0.02f; // Blades root this far off a rock's foot.
 	PackedVector4Array get_obstacles() const { return obstacles; }
+	void set_rock_field(const NodePath &p_path);
+	NodePath get_rock_field() const { return rock_field; }
+	void set_rock_obstacle_min(float p_size);
+	float get_rock_obstacle_min() const { return rock_obstacle_min; }
+	void set_rock_footprint_max(float p_radius);
+	float get_rock_footprint_max() const { return rock_footprint_max; }
+	int get_rock_chunk_count() const { return rock_cache.chunks.size(); }
 	void set_rules(const Ref<PlantSpecies> &p_rules);
 	Ref<PlantSpecies> get_rules() const { return rules; }
 	void set_density(float p_density);

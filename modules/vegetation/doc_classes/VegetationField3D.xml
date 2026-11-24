@@ -235,6 +235,12 @@
 				The placed crowns reaching within [param radius] of [param position] (horizontal distance), one [Dictionary] each: [code]position[/code] (the stem's foot, world), [code]preset[/code] (the species' [code]preset[/code] meta, or -1), [code]height[/code], [code]crown_base[/code] and [code]crown_radius[/code] in metres, scaled by the instance. [code]conifer[/code] is true for a needle-leaved crown. Height and crown base come from the species' first mesh's [code]crown[/code] meta (height, crown base, crown radius, unscaled) when it has one, else the crown's top and a third of it.
 			</description>
 		</method>
+		<method name="get_rock_chunk_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The chunks (32 m squares) of the [member rock_field]'s stones fetched so far.
+			</description>
+		</method>
 		<method name="get_shade_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -390,6 +396,15 @@
 		</member>
 		<member name="obstacles" type="PackedVector4Array" setter="set_obstacles" getter="get_obstacles" default="PackedVector4Array()">
 			Rocks on the ground that no plant grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, for example from [method TerrainGenerator3D.get_boulders]. A ground plant's stem keeps 3 cm off a rock, a tree's trunk foot and a log's length keep clear of it. A ground plant's leaves reach at most 8 cm in over a rock's foot: one that would reach farther grows smaller and leans away from the rock (down to 45% of its size), or is not placed. Give the widest radius of a rock that bulges out above the soil. Give the same list to the [GrassField3D] layers. Takes effect at the next [method populate].
+		</member>
+		<member name="rock_field" type="NodePath" setter="set_rock_field" getter="get_rock_field" default="NodePath(&quot;&quot;)">
+			A [RockField3D] whose stones the plants keep out of, as [member obstacles] does, fetched with [method RockField3D.get_obstacles] round each tile just before it is placed and kept in 32 m chunks: no world-wide list of every stone is made, and only the rock cells near the tiles are placed. The placements are the same as with that rock field's stones given as [member obstacles]. Both can be set: the plants keep out of both. Setting it fetches the stones again.
+		</member>
+		<member name="rock_footprint_max" type="float" setter="set_rock_footprint_max" getter="get_rock_footprint_max" default="32.0">
+			The widest stone footprint (radius at the soil, metres) the [member rock_field] is expected to have: each tile fetches the stones this far past the reach of its plants. A warning is printed if a wider stone is fetched.
+		</member>
+		<member name="rock_obstacle_min" type="float" setter="set_rock_obstacle_min" getter="get_rock_obstacle_min" default="0.25">
+			The smallest stone (its size, metres) of the [member rock_field] the plants keep out of, the [code]min_size[/code] of [method RockField3D.get_obstacles].
 		</member>
 		<member name="still_shot" type="bool" setter="set_still_shot" getter="is_still_shot" default="false">
 			For still shots on a tight memory budget: once [member streaming] has settled round its centre, the field stops streaming and drops its placement patterns until the centre moves 0.5 m. [method is_still_frozen] says when it has settled.

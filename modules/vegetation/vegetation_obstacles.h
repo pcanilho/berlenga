@@ -34,7 +34,9 @@
 #include "core/math/vector2.h"
 #include "core/math/vector2i.h"
 #include "core/math/vector4.h"
+#include "core/object/object.h"
 #include "core/templates/hash_map.h"
+#include "core/templates/hash_set.h"
 #include "core/templates/local_vector.h"
 #include "core/variant/variant.h"
 
@@ -63,10 +65,24 @@ struct VegetationObstacles {
 		}
 	}
 
+	// Adds more obstacles to the grid (built or empty).
+	void add(const PackedVector4Array &p_items) {
+		for (int i = 0; i < p_items.size(); i++) {
+			const Vector4 o = p_items[i];
+			if (o.w <= 0.0f) {
+				continue;
+			}
+			items.push_back(o);
+			max_radius = MAX(max_radius, float(o.w));
+			const Vector2i c(int(Math::floor(o.x / CELL)), int(Math::floor(o.z / CELL)));
+			grid[c].push_back(items.size() - 1);
+		}
+	}
 	bool is_empty() const { return items.is_empty(); }
 
 	// The distance from a point on the ground to the nearest obstacle's edge (negative inside it),
-	// looked for out to p_reach past the edges; p_reach + 1 when none is that near. r_away, if
+	// looked for out to p_reach past the edges; p_reach + 1 when none is that near (an edge further
+	// than p_reach never counts, so a grid of only the obstacles near the point answers the same). r_away, if
 	// given, gets the unit direction from that obstacle's centre to the point.
 	float clearance(const Vector2 &p_xz, float p_reach, Vector2 *r_away = nullptr, int *r_index = nullptr) const {
 		float best = p_reach + 1.0f;
@@ -85,7 +101,7 @@ struct VegetationObstacles {
 					const Vector4 &o = items[i];
 					const Vector2 to(p_xz.x - float(o.x), p_xz.y - float(o.z));
 					const float d = to.length() - float(o.w);
-					if (d < best) {
+					if (d < best && d <= p_reach) {
 						best = d;
 						if (r_index) {
 							*r_index = int(i);
@@ -123,6 +139,9 @@ struct VegetationObstacles {
 				for (uint32_t i : *bucket) {
 					const Vector4 &o = items[i];
 					const float d = Vector2(p_xz.x - float(o.x), p_xz.y - float(o.z)).length() - float(o.w);
+					if (d > p_reach) {
+						continue; // Only within the reach: the answer is the same whichever grid holds the rocks.
+					}
 					if (d < first) {
 						second = first;
 						first = d;
@@ -177,5 +196,86 @@ struct VegetationObstacles {
 	// Whether a point lies within p_margin of an obstacle.
 	bool blocks(const Vector2 &p_xz, float p_margin) const {
 		return !items.is_empty() && clearance(p_xz, p_margin) < p_margin;
+	}
+};
+
+// The rocks of a RockField3D (its get_obstacles()) fetched as the plant fields need them, in square chunks, instead
+// of one world-wide array: a field asks for the rocks round the tiles it is about to place, on the main thread
+// (RockField3D places its stone cells there), and the chunks are kept. A stone belongs to the chunk its centre is in
+// (get_obstacles() keeps the stones whose centre is in its rect), so the chunks hold exactly the stones of a
+// world-wide query, each once.
+struct VegetationRockCache {
+	static constexpr float CHUNK = 32.0f;
+	HashMap<Vector2i, PackedVector4Array> chunks;
+	float max_radius = 0.0f; // The widest stone fetched so far.
+	static Vector2i chunk_of(float p_x, float p_z) { return Vector2i(int(Math::floor(p_x / CHUNK)), int(Math::floor(p_z / CHUNK))); }
+	void clear() {
+		chunks.clear();
+		max_radius = 0.0f;
+	}
+	// Fetches the chunks over p_rect not fetched yet, with one get_obstacles() call over the rect they span (the
+	// rock field places their cells on its workers together). The new stones are appended to r_new when given.
+	// True when any chunk was fetched.
+	bool fetch(Object *p_rocks, const Rect2 &p_rect, float p_min_size, PackedVector4Array *r_new = nullptr) {
+		if (!p_rocks || !p_rect.has_area()) {
+			return false;
+		}
+		const Vector2i c0 = chunk_of(p_rect.position.x, p_rect.position.y);
+		const Vector2i c1 = chunk_of(p_rect.get_end().x, p_rect.get_end().y);
+		Vector2i lo(INT32_MAX, INT32_MAX), hi(INT32_MIN, INT32_MIN);
+		LocalVector<Vector2i> missing;
+		for (int z = c0.y; z <= c1.y; z++) {
+			for (int x = c0.x; x <= c1.x; x++) {
+				const Vector2i k(x, z);
+				if (!chunks.has(k)) {
+					missing.push_back(k);
+					lo = Vector2i(MIN(lo.x, x), MIN(lo.y, z));
+					hi = Vector2i(MAX(hi.x, x), MAX(hi.y, z));
+				}
+			}
+		}
+		if (missing.is_empty()) {
+			return false;
+		}
+		for (const Vector2i &k : missing) {
+			chunks.insert(k, PackedVector4Array());
+		}
+		const Rect2 span(Vector2(lo) * CHUNK, Vector2(hi - lo + Vector2i(1, 1)) * CHUNK);
+		const PackedVector4Array got = p_rocks->call(SNAME("get_obstacles"), span, p_min_size);
+		HashSet<Vector2i> wanted;
+		for (const Vector2i &k : missing) {
+			wanted.insert(k);
+		}
+		for (int i = 0; i < got.size(); i++) {
+			const Vector4 o = got[i];
+			const Vector2i k = chunk_of(o.x, o.z);
+			if (!wanted.has(k)) {
+				continue; // A chunk fetched before (the span covers some).
+			}
+			chunks[k].push_back(o);
+			max_radius = MAX(max_radius, float(o.w));
+			if (r_new) {
+				r_new->push_back(o);
+			}
+		}
+		return true;
+	}
+	// The stones of the fetched chunks over p_rect, appended to r_out.
+	void gather(const Rect2 &p_rect, PackedVector4Array &r_out) const {
+		const Vector2i c0 = chunk_of(p_rect.position.x, p_rect.position.y);
+		const Vector2i c1 = chunk_of(p_rect.get_end().x, p_rect.get_end().y);
+		for (int z = c0.y; z <= c1.y; z++) {
+			for (int x = c0.x; x <= c1.x; x++) {
+				if (const PackedVector4Array *c = chunks.getptr(Vector2i(x, z))) {
+					r_out.append_array(*c);
+				}
+			}
+		}
+	}
+	// Every stone fetched, appended to r_out.
+	void gather_all(PackedVector4Array &r_out) const {
+		for (const KeyValue<Vector2i, PackedVector4Array> &kv : chunks) {
+			r_out.append_array(kv.value);
+		}
 	}
 };

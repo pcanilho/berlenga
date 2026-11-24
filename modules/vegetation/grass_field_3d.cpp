@@ -3693,6 +3693,8 @@ void GrassField3D::_update_rings(const Vector2 &p_center, TerrainDataMap3D *p_ma
 			ring_tiles.erase(w.key);
 		}
 		RingTile tile;
+		const float ring_size = RING_TILE * float(1 << w.key.z);
+		_rocks_for(Rect2(w.key.x * ring_size, w.key.y * ring_size, ring_size, ring_size));
 		// Built for a quarter of the tile nearer than now, so walking does not rebuild it every step.
 		_build_ring_tile(w.key, MAX(w.d - 0.25f * RING_TILE * float(1 << w.key.z), 0.0f), p_map, tile);
 		ring_tiles.insert(w.key, tile);
@@ -6172,6 +6174,7 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 			_free_tile(*existing);
 			tiles.erase(w.tile);
 		}
+		_rocks_for(Rect2(w.tile.x * tile_size, w.tile.y * tile_size, tile_size, tile_size));
 		_build_tile(w.tile, _lod_for(w.d), map);
 		built++;
 	}
@@ -7440,10 +7443,51 @@ void GrassField3D::set_trample_resistance(float p_passes) {
 
 void GrassField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
 	obstacles = p_obstacles;
+	_rebuild_obstacle_grid();
+	rebuild();
+}
+
+void GrassField3D::_rebuild_obstacle_grid() {
 	PackedVector4Array all = obstacles;
 	all.append_array(mound_obstacles);
+	rock_cache.gather_all(all);
 	obstacle_grid.build(all);
+}
+
+// The rock field's stones are fetched again from scratch, as the tiles are built again.
+void GrassField3D::set_rock_field(const NodePath &p_path) {
+	rock_field = p_path;
+	rock_cache.clear();
+	_rebuild_obstacle_grid();
 	rebuild();
+}
+
+void GrassField3D::set_rock_obstacle_min(float p_size) {
+	rock_obstacle_min = MAX(p_size, 0.0f);
+	set_rock_field(rock_field);
+}
+
+void GrassField3D::set_rock_footprint_max(float p_radius) {
+	rock_footprint_max = MAX(p_radius, 0.0f);
+}
+
+void GrassField3D::_rocks_for(const Rect2 &p_rect) {
+	if (rock_field.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	Node *rf = get_node_or_null(rock_field);
+	if (!rf || !rf->has_method(SNAME("get_obstacles"))) {
+		return;
+	}
+	// A blade tests the rocks within OBSTACLE_MARGIN of its root (and a tile, within its half diagonal of its centre):
+	// every stone whose centre is within the widest footprint of the rect.
+	PackedVector4Array fresh;
+	if (rock_cache.fetch(rf, p_rect.grow(rock_footprint_max + OBSTACLE_MARGIN + 1.0f), rock_obstacle_min, &fresh)) {
+		if (rock_cache.max_radius > rock_footprint_max) {
+			WARN_PRINT_ONCE(vformat("GrassField3D: a stone %.1f m wide at its foot, wider than rock_footprint_max (%.1f m): raise it.", rock_cache.max_radius, rock_footprint_max));
+		}
+		obstacle_grid.add(fresh); // Main thread: the tiles are built here.
+	}
 }
 
 // The mounds the fields have placed near the blades, as obstacle discs (x, y, z, radius): each species with the meta
@@ -7495,9 +7539,7 @@ bool GrassField3D::_follow_mounds() {
 		}
 	}
 	mound_obstacles = now;
-	PackedVector4Array all = obstacles;
-	all.append_array(mound_obstacles);
-	obstacle_grid.build(all);
+	_rebuild_obstacle_grid();
 	_stale_tiles_over(changed);
 	return true;
 }
@@ -7771,6 +7813,10 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")
 	GRASS_BIND(set_undergrowth_field, get_undergrowth_field, "path")
 	GRASS_BIND(set_obstacles, get_obstacles, "obstacles")
+	GRASS_BIND(set_rock_field, get_rock_field, "path")
+	GRASS_BIND(set_rock_obstacle_min, get_rock_obstacle_min, "size")
+	GRASS_BIND(set_rock_footprint_max, get_rock_footprint_max, "radius")
+	ClassDB::bind_method(D_METHOD("get_rock_chunk_count"), &GrassField3D::get_rock_chunk_count);
 	GRASS_BIND(set_paths, get_paths, "paths")
 	GRASS_BIND(set_trample_resistance, get_trample_resistance, "passes")
 	GRASS_BIND(set_density, get_density, "density")
@@ -7879,6 +7925,9 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "undergrowth_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_undergrowth_field", "get_undergrowth_field");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "obstacles"), "set_obstacles", "get_obstacles");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "rock_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "RockField3D"), "set_rock_field", "get_rock_field");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_obstacle_min", PROPERTY_HINT_RANGE, "0,4,0.05,suffix:m"), "set_rock_obstacle_min", "get_rock_obstacle_min");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_footprint_max", PROPERTY_HINT_RANGE, "0,128,0.5,suffix:m"), "set_rock_footprint_max", "get_rock_footprint_max");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "paths", PROPERTY_HINT_ARRAY_TYPE, "Dictionary"), "set_paths", "get_paths");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "trample_resistance", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:passes/yr"), "set_trample_resistance", "get_trample_resistance");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
