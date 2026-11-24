@@ -66,6 +66,9 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Layered meadow: finer, denser grass with turf between the blades instead of bare ground.*
 
+- **Tall meadow** (`PlantGenerator.make_flowering_grasses()`): waist-high flowering grasses and meadow flowers stand in drifts over the sward, by season.
+- **Dry tussocks** (`PlantGenerator.make_dry_tussocks()`): bunchgrass clumps grow where the ground cures in dry climates.
+
 - **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back; grass, flowers and herbs lie flat on light ground prints and are gone from deep ruts and puddles. Lying snow presses grass, crops and plants down under its weight, soft stems first, and buries short grass; a river's current lays the plants under it downstream, fully flat in a fast stream. Wet gales lodge tall grass flat in swirled patches that stand again over days (`GrassField3D.lodging`).
 
   ![A body walking through grass that lies down and springs back, raster](media/grass-trample.gif)

@@ -2636,6 +2636,28 @@
    "topic": "Grass"
   },
   {
+   "name": "Tall meadow",
+   "settings": [
+    "PlantGenerator.make_flowering_grasses()"
+   ],
+   "note": "",
+   "what": "waist-high flowering grasses and meadow flowers stand in drifts over the sward, by season.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
+   "name": "Dry tussocks",
+   "settings": [
+    "PlantGenerator.make_dry_tussocks()"
+   ],
+   "note": "",
+   "what": "bunchgrass clumps grow where the ground cures in dry climates.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Trampling",
    "settings": [
     "grass_trample",
