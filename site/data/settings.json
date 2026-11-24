@@ -3899,6 +3899,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Stones in snow",
+   "settings": [
+    "SnowSurface3D.stone_relief"
+   ],
+   "note": "",
+   "what": "stones standing out of the snow get melt moats on their sunny side, windward scour and lee tails.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Spindrift",
    "settings": [
     "SnowCover3D.spindrift_enabled"

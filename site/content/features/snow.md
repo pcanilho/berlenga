@@ -40,6 +40,12 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Wind transport: after a day of 15 m/s wind the windward side is scoured bare and the lee is loaded.*
 
+- **Stones in snow** (`SnowSurface3D.stone_relief`): stones standing out of the snow get melt moats on their sunny side, windward scour and lee tails.
+
+  ![Flat stones standing out of a snowfield with moats and scoured hollows round them, raster](media/snow-stone-relief.jpg)
+
+  *Stones in snow: melt moats and scoured hollows round stones standing out of the snow.*
+
 - **Spindrift** (`SnowCover3D.spindrift_enabled`): in strong wind, dry snow streams off sharp lee crests as plumes that drift downwind and thin as they sublimate.
 
 - **Melt-freeze crusts** (`SnowCover3D.crust_enabled`; `SnowSurface3D.crust_plates`): a thawed surface refreezes into a crust that hardens each cycle; boots stand on hard ones and break thin ones into flat, sharp-edged plates tipped into the hole, with steps between them.
