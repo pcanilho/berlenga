@@ -572,6 +572,35 @@ void GrassField3D::_build_material() {
 	code += "uniform bool climate_bare = true;\nglobal uniform sampler2D terrain_climate_map : hint_default_black, filter_linear;\nglobal uniform vec4 terrain_climate_rect;\nglobal uniform vec4 weather_climate;\n";
 	code += WorldContracts::climate_bare_shader_code();
 	code += WorldContracts::terracette_shader_code();
+	// The ground's terracette steps (WorldContracts::terracette_step): Landscape3D's share in terrain_bank_relief.y, gated
+	// to open soil by the generator's geology (terrain_deform and terrain_material register these globals).
+	code += R"(global uniform vec4 terrain_bank_relief;
+global uniform sampler2D terrain_geology_map;
+global uniform vec4 terrain_geology_rect;
+// The steps' height over the smooth ground at a blade's root (m), as the ground draws them: the heights the blades are
+// placed on leave the steps out (a 3 m pattern on metre texels aliases), so each root adds its own.
+float grass_terracette_lift(vec3 root) {
+	if (terrain_bank_relief.y <= 0.0 || ground_data_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 ts = vec2(textureSize(ground_data_map, 0));
+	vec2 uv = (root.xz - ground_data_rect.xy) / ground_data_rect.zw;
+	vec2 du = vec2(1.0 / ts.x, 0.0);
+	vec2 dv = vec2(0.0, 1.0 / ts.y);
+	vec2 cell = 2.0 * ground_data_rect.zw / ts;
+	vec2 grad = vec2(textureLod(ground_data_map, uv + du, 0.0).r - textureLod(ground_data_map, uv - du, 0.0).r, textureLod(ground_data_map, uv + dv, 0.0).r - textureLod(ground_data_map, uv - dv, 0.0).r) / cell;
+	// The heightfield's own height, as Landscape3D phases the steps (its relief left out).
+	vec3 p = vec3(root.x, textureLod(ground_data_map, uv, 0.0).r, root.z);
+	float share = terrain_bank_relief.y;
+	if (terrain_geology_rect.z > 0.0) {
+		vec2 gs = vec2(textureSize(terrain_geology_map, 0));
+		vec2 g = clamp((root.xz - terrain_geology_rect.xy) / terrain_geology_rect.zw, 0.0, 1.0);
+		share *= wc_terracette_soil(textureLod(terrain_geology_map, (g * (gs - 1.0) + 0.5) / gs, 0.0));
+	}
+	// Filtered over half a metre, as Landscape3D draws the near ground.
+	return wc_terracette_step(p, grad, 0.5, share).x;
+}
+)";
 	code += "global uniform sampler2D weather_state_map;\nglobal uniform sampler2D weather_contact_map;\nglobal uniform vec4 weather_contact_rect;\nglobal uniform sampler2D weather_frost_map;\nglobal uniform sampler2D weather_spray_map;\nglobal uniform vec4 weather_spray_rect;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	// Sea salt on the blades (WeatherMap3D sea_spray, G: 1 - exp(-salt / 10 g/m2)): salt spray burns leaf tips brown
@@ -1535,6 +1564,8 @@ void vertex() {
 	if (v_hay >= 0.0) {
 		p += to_local * (hay_shift + vec3(0.0, hay_lift, 0.0));
 	}
+	// On the ground's terracette steps (WorldContracts::terracette_step), which the placed heights leave out.
+	p += to_local * vec3(0.0, grass_terracette_lift(base_w), 0.0);
 	VERTEX = p;
 	NORMAL = normalize(n + across * side * 0.9);
 
